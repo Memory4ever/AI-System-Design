@@ -1,0 +1,1999 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Omni: Context Unrolling in Omni Models</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:       #ffffff;
+      --surface:  #f7f7fa;
+      --surface2: #ededf2;
+      --border:   rgba(0,0,0,0.08);
+      --text:     #0d0d0d;
+      --text-2:   #222222;
+      --text-3:   #666666;
+      --accent:   #7c6df0;
+      --accent-2: #6d5ce8;
+      --accent-light: rgba(124,109,240,0.07);
+      --grad:     linear-gradient(135deg, #7c6df0 0%, #a78bfa 100%);
+      --shadow:   0 4px 24px rgba(0,0,0,0.06);
+      --radius:   12px;
+    }
+
+    html { scroll-behavior: smooth; font-size: 17px; }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.75;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    ::-webkit-scrollbar { width: 5px; }
+    ::-webkit-scrollbar-track { background: var(--bg); }
+    ::-webkit-scrollbar-thumb { background: #ccc; border-radius: 3px; }
+
+    /* ── Layout ── */
+    .wrap      { max-width: 1100px; margin: 0 auto; padding: 0 1.5rem; }
+    .wrap-wide { max-width: 1300px; margin: 0 auto; padding: 0 1.5rem; }
+
+    /* ── Header ── */
+    .site-header {
+      position: sticky; top: 0; z-index: 200;
+      background: rgba(255,255,255,0.88);
+      backdrop-filter: blur(18px) saturate(150%);
+      border-bottom: 1px solid var(--border);
+      opacity: 0; visibility: hidden;
+      transition: opacity .3s ease, visibility .3s ease;
+    }
+    .site-header.nav-visible {
+      opacity: 1; visibility: visible;
+    }
+    .header-inner {
+      max-width: 1300px; margin: 0 auto;
+      padding: 0 1.5rem; height: 56px;
+      display: flex; align-items: center; justify-content: center;
+    }
+    /* ── Sub-nav (contextual, only thing in header) ── */
+    .sub-nav {
+      display: none; align-items: center; gap: 1.75rem;
+    }
+    .sub-nav.visible { display: flex; }
+    .sub-nav a {
+      font-size: .82rem; font-weight: 500; letter-spacing: .02em;
+      color: var(--text-3); text-decoration: none;
+      white-space: nowrap;
+      padding-bottom: 3px;
+      border-bottom: 2px solid transparent;
+      transition: color .2s, border-color .2s;
+    }
+    .sub-nav a:hover { color: var(--text); }
+    .sub-nav a.active {
+      color: var(--text);
+      font-weight: 600;
+      border-bottom-color: var(--accent);
+    }
+    .sub-nav-section-name {
+      font-size: .82rem; font-weight: 700; color: var(--text);
+      letter-spacing: .02em; white-space: nowrap; flex-shrink: 0;
+    }
+    .sub-nav-divider {
+      color: var(--text-3); font-size: .85rem; flex-shrink: 0;
+      margin: 0 -.35rem;
+    }
+    .sub-nav-up-btn {
+      background: none; border: none; cursor: pointer;
+      color: var(--text-3); font-size: .95rem; padding: 0 .15rem;
+      line-height: 1; flex-shrink: 0; margin-left: .1rem;
+      transition: color .2s;
+    }
+    .sub-nav-up-btn:hover { color: var(--accent); }
+    /* Page-top button fixed beside theme toggle */
+    .page-top-btn {
+      position: fixed; top: 1rem;
+      right: calc(1.25rem + 40px + .6rem);
+      z-index: 300;
+      width: 40px; height: 40px; border-radius: 50%;
+      background: var(--surface2); border: 1px solid var(--border);
+      color: var(--text-2); font-size: 1rem; cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+      transition: background .2s, border-color .2s, box-shadow .2s, color .2s;
+    }
+    .page-top-btn:hover {
+      background: var(--surface); border-color: var(--accent);
+      color: var(--accent); box-shadow: 0 2px 16px rgba(124,109,240,0.22);
+    }
+    @media (max-width: 600px) { .sub-nav { display: none !important; } }
+
+    /* ── Sections ── */
+    section { padding: 5rem 0; }
+
+    .section-title {
+      font-size: clamp(1.25rem, 2vw, 1.65rem);
+      font-weight: 700; line-height: 1.2; color: var(--text);
+      margin-bottom: .6rem; letter-spacing: -0.01em;
+      text-align: center;
+    }
+    .section-subtitle {
+      font-size: 1rem; color: var(--text-3);
+      max-width: 640px; margin: 0 auto 2.5rem;
+      text-wrap: balance;
+      line-height: 1.8; text-align: center;
+    }
+
+    /* ── Hero ── */
+    #hero {
+      padding: 6rem 0 4rem;
+      text-align: center;
+    }
+    .hero-date {
+      font-size: .85rem; color: var(--text-3); font-weight: 400;
+      margin: .65rem 0 1.75rem; letter-spacing: 0;
+    }
+    .hero-title {
+      font-size: clamp(1.65rem, 3vw, 2.2rem);
+      font-weight: 400; line-height: 1.25; letter-spacing: -0.02em;
+      color: var(--text); margin-bottom: 0;
+    }
+    .title-brand {
+      background: var(--grad);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .brand-word {
+      display: inline;
+      color: var(--accent-2);
+      font-weight: 700;
+      line-height: inherit;
+      vertical-align: baseline;
+      white-space: nowrap;
+    }
+    .brand-word .brand-bagel {
+      display: inline-block;
+      width: .98em;
+      height: .98em;
+      object-fit: contain;
+      margin: 0 -0.03em 0 .02em;
+      vertical-align: -0.12em;
+    }
+    .hero-title .brand-word {
+      font-size: 1.12em;
+      font-weight: 800;
+    }
+    .sub-nav-section-name .brand-word,
+    table .brand-word {
+      font-size: 1em;
+      vertical-align: baseline;
+    }
+    .hero-authors { font-size: .9rem; color: var(--text-2); margin-bottom: .2rem; line-height: 1.9; max-width: 680px; margin-left: auto; margin-right: auto; }
+    .hero-affil   { font-size: .78rem; color: var(--text-3); margin-bottom: .85rem; }
+    .author-link { color: inherit; text-decoration: none; border-bottom: 1px solid transparent; transition: border-color .15s, color .15s; }
+    .author-link:hover { color: var(--accent); border-bottom-color: var(--accent); }
+    .hero-links {
+      display: flex; justify-content: center; gap: .6rem;
+      margin-bottom: 2rem;
+    }
+    .paper-link {
+      display: inline-flex; align-items: center; justify-content: center;
+      min-height: 2rem; padding: .28rem .85rem;
+      border: 1px solid rgba(124,109,240,0.22); border-radius: 999px;
+      background: rgba(124,109,240,0.06); color: var(--accent-2);
+      font-size: .78rem; font-weight: 600; line-height: 1;
+      text-decoration: none;
+      transition: background .15s, border-color .15s, color .15s, transform .15s;
+    }
+    .paper-link:hover {
+      background: rgba(124,109,240,0.12); color: var(--accent);
+      border-color: rgba(124,109,240,0.38);
+      transform: translateY(-1px);
+    }
+
+    /* ── Hero abstract ── */
+    .hero-summary {
+      font-size: 1.02rem; line-height: 1.85; color: var(--text-2);
+      max-width: 860px; margin: 0 auto 3rem;
+      text-align: left;
+    }
+    .hero-summary strong { color: var(--text); font-weight: 600; }
+    .hero-summary em {
+      color: var(--accent-2); font-style: normal; font-weight: 600;
+    }
+
+    /* ── Teaser figure ── */
+    .teaser-fig {
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 1.5rem 1.5rem 1rem;
+      box-shadow: 0 4px 32px rgba(0,0,0,0.06), 0 1px 4px rgba(0,0,0,0.04);
+      max-width: 960px;
+      margin: 0 auto;
+    }
+    .teaser-fig img {
+      width: 100%; display: block; border-radius: 8px;
+    }
+    .teaser-fig figcaption {
+      margin-top: .9rem; font-size: .82rem;
+      color: var(--text-3); line-height: 1.65;
+      text-align: center; padding-bottom: .25rem;
+    }
+
+    /* ── Modality Icons ── */
+    .modality-icons {
+      display: flex; gap: 2rem; justify-content: center;
+      flex-wrap: wrap; margin: 2rem 0 2.5rem;
+    }
+    .mod-icon {
+      display: flex; flex-direction: column; align-items: center; gap: .5rem;
+    }
+    .mod-circle {
+      width: 60px; height: 60px; border-radius: 50%;
+      background: var(--accent-light);
+      border: 1.5px solid rgba(124,109,240,0.15);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 1.6rem;
+      transition: transform .2s, box-shadow .2s;
+    }
+    .mod-circle:hover { transform: scale(1.08); box-shadow: 0 4px 16px rgba(124,109,240,0.15); }
+    .mod-label { font-size: .78rem; font-weight: 500; color: var(--text-3); }
+
+    /* ── Capability Rows ── */
+    .cap-list {
+      max-width: 880px; margin: 0 auto;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+    .cap-row {
+      display: flex; align-items: center; gap: 1rem;
+      padding: 1rem 1.5rem;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg);
+      transition: background .15s;
+    }
+    .cap-row:last-child { border-bottom: none; }
+    .cap-row:hover { background: var(--surface); }
+    .cap-row-icon { font-size: 1.2rem; flex-shrink: 0; width: 32px; text-align: center; }
+    .cap-row-name { font-size: .92rem; font-weight: 600; color: var(--text); min-width: 180px; flex-shrink: 0; }
+    .cap-row-stats { display: flex; gap: 1.25rem; flex-wrap: wrap; margin-left: auto; }
+    .cap-stat {
+      font-size: .82rem; color: var(--text-3); white-space: nowrap;
+    }
+    .cap-stat strong {
+      color: var(--accent-2); font-weight: 700; font-size: .95rem;
+      margin-right: .2rem;
+    }
+    @media (max-width: 700px) {
+      .cap-row { flex-direction: column; align-items: flex-start; gap: .5rem; }
+      .cap-row-stats { margin-left: 0; }
+      .cap-row-name { min-width: auto; }
+    }
+
+    /* ── Context Unrolling ── */
+    #unrolling { background: var(--bg); }
+
+    .quote-block {
+      max-width: 780px; margin: 1.5rem auto 3rem;
+      padding: 2rem 2.5rem;
+      background: var(--bg);
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      position: relative;
+    }
+    .quote-block::before {
+      content: '\201C';
+      position: absolute; top: .2rem; left: 1.2rem;
+      font-size: 3.5rem; color: rgba(124,109,240,0.2);
+      font-family: Georgia, serif; line-height: 1;
+    }
+    .quote-block p {
+      font-size: .95rem; color: var(--text-2); line-height: 1.8;
+      font-style: italic; text-align: left;
+    }
+
+    /* ── Evidence Blocks ── */
+    .evidence-section { margin-top: 3rem; }
+    .evidence-block {
+      margin-top: 3rem; padding-top: 3rem;
+    }
+    .evidence-block:first-child { margin-top: 0; padding-top: 0; }
+    .evidence-title {
+      font-size: 1.05rem; font-weight: 600; color: var(--text);
+      margin-bottom: 1rem; line-height: 1.4;
+      text-align: center;
+    }
+    .evidence-desc {
+      font-size: .93rem; color: var(--text-3); line-height: 1.82;
+      max-width: 760px; margin: 0 auto 1.5rem;
+      text-align: left;
+    }
+    .evidence-fig {
+      margin: 1.75rem auto 0;
+      max-width: 720px;
+      background: #ffffff;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 1.25rem 1.25rem .75rem;
+      box-shadow: 0 2px 18px rgba(0,0,0,0.05), 0 1px 4px rgba(0,0,0,0.04);
+    }
+    .evidence-fig img {
+      width: 100%; display: block;
+      border-radius: 8px;
+    }
+    .evidence-fig figcaption {
+      margin-top: .85rem; font-size: .83rem; color: var(--text-3); line-height: 1.65;
+      text-align: center; padding-bottom: .25rem;
+    }
+
+    /* ── Evidence figures gallery (bottom of section) ── */
+    .evidence-figs-all {
+      margin-top: 4rem; padding-top: 3rem;
+      border-top: 1px solid var(--border);
+      display: flex; flex-direction: column; align-items: center; gap: 1.75rem;
+    }
+    .evidence-figs-label {
+      font-size: .78rem; font-weight: 600; letter-spacing: .08em; text-transform: uppercase;
+      color: var(--text-3); text-align: center; align-self: stretch; margin-bottom: .25rem;
+    }
+    .evidence-figs-all .evidence-fig { margin: 0; }
+
+    /* ── Qualitative Results Carousel ── */
+    .evidence-carousel-section { margin-top: 3.5rem; }
+    .carousel-container {
+      position: relative; overflow: hidden;
+      border-radius: 16px;
+      background: #fff;
+      border: 1px solid var(--border);
+      box-shadow: 0 4px 28px rgba(0,0,0,0.06);
+    }
+    .carousel-track { position: relative; }
+    .carousel-slide {
+      width: 100%; padding: 2.5rem 3rem 1.75rem;
+      box-sizing: border-box;
+      display: none;
+    }
+    .carousel-slide.active {
+      display: block;
+      animation: carouselFadeIn .38s ease;
+    }
+    @keyframes carouselFadeIn {
+      from { opacity: 0; transform: translateY(8px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .carousel-slide img {
+      width: 100%; display: block; border-radius: 8px;
+    }
+    .carousel-caption { margin-top: 1rem; text-align: center; padding-bottom: .25rem; }
+    .carousel-caption strong {
+      font-size: .9rem; font-weight: 600; color: var(--text-2);
+      display: block; margin-bottom: .35rem;
+    }
+    .carousel-caption p {
+      font-size: .83rem; color: var(--text-3);
+      line-height: 1.68; max-width: 700px; margin: 0 auto;
+    }
+    .carousel-prev, .carousel-next {
+      position: absolute; top: 44%; transform: translateY(-50%);
+      background: rgba(255,255,255,0.92);
+      border: 1px solid var(--border); border-radius: 50%;
+      width: 40px; height: 40px;
+      font-size: 1.5rem; line-height: 1; color: var(--text-3);
+      cursor: pointer; display: flex; align-items: center; justify-content: center;
+      transition: all .2s; z-index: 10;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.07);
+    }
+    .carousel-prev { left: .85rem; }
+    .carousel-next { right: .85rem; }
+    .carousel-prev:hover, .carousel-next:hover {
+      border-color: var(--accent); color: var(--accent);
+      box-shadow: 0 2px 14px rgba(124,109,240,0.18);
+    }
+    .carousel-dots {
+      display: flex; justify-content: center; gap: .5rem; margin-top: 1rem;
+    }
+    .carousel-dot {
+      width: 7px; height: 7px; border-radius: 50%;
+      background: var(--surface2);
+      cursor: pointer; border: none; padding: 0;
+      transition: background .2s, transform .2s;
+    }
+    .carousel-dot.active { background: var(--accent); transform: scale(1.4); }
+
+    /* ── Carousel slide header ── */
+    .slide-header {
+      text-align: center; margin-bottom: 1.25rem;
+    }
+    .slide-title {
+      font-size: 1rem; font-weight: 600; color: var(--text);
+      display: block; margin-bottom: .25rem;
+    }
+    .slide-hint {
+      font-size: .78rem; color: var(--text-3);
+    }
+
+    /* ── t2i grid (hover caption) ── */
+    .t2i-grid {
+      display: grid; grid-template-columns: repeat(4, 1fr); gap: .6rem;
+    }
+    .t2i-item {
+      position: relative; border-radius: 8px; overflow: hidden;
+      cursor: default; line-height: 0;
+    }
+    .t2i-item img { width: 100%; display: block; border-radius: 8px; }
+    .t2i-hover-caption {
+      position: absolute; inset: 0;
+      background: rgba(0,0,0,0.76);
+      color: #f0f0f0;
+      padding: .85rem .9rem;
+      font-size: .70rem; line-height: 1.6; font-family: 'Inter', sans-serif;
+      opacity: 0;
+      transition: opacity .22s ease;
+      overflow-y: auto;
+      display: flex; align-items: center; justify-content: center;
+      text-align: left;
+      border-radius: 8px;
+    }
+    .t2i-item:hover .t2i-hover-caption { opacity: 1; }
+
+    /* ── Depth grid ── */
+    .depth-grid {
+      display: grid; grid-template-columns: repeat(4, 1fr); gap: .6rem;
+    }
+    .depth-item img { width: 100%; display: block; border-radius: 7px; }
+    .depth-item-label {
+      text-align: center; font-size: .72rem; color: var(--text-3);
+      margin-top: .35rem; line-height: 1;
+    }
+
+    /* ── NVS grid ── */
+    .nvs-scenes { display: flex; flex-direction: column; gap: 1.25rem; }
+    .nvs-scene-label {
+      font-size: .7rem; font-weight: 600; letter-spacing: .08em;
+      text-transform: uppercase; color: var(--text-3); margin-bottom: .45rem;
+    }
+    .nvs-scene-desc {
+      text-transform: none; font-weight: 400; letter-spacing: 0;
+      font-size: .68rem; color: var(--text-3);
+    }
+    .nvs-grid {
+      display: grid; grid-template-columns: repeat(4, 1fr); gap: .35rem;
+    }
+    .nvs-cell { position: relative; overflow: hidden; border-radius: 5px; }
+    .nvs-cell img { width: 100%; display: block; }
+    .nvs-hover-caption {
+      position: absolute; inset: 0;
+      background: rgba(0,0,0,0.78); color: #f0f0f0;
+      padding: .75rem .9rem;
+      font-size: .68rem; line-height: 1.65; font-family: 'Inter', sans-serif;
+      opacity: 0; transition: opacity .22s ease;
+      overflow-y: auto;
+      display: flex; align-items: center; justify-content: center;
+      text-align: left;
+    }
+    .nvs-cell:hover .nvs-hover-caption { opacity: 1; }
+    .nvs-cell-label {
+      text-align: center; font-size: .62rem; color: var(--text-3);
+      margin-top: .18rem; font-weight: 500;
+    }
+
+    /* ── Benchmarks ── */
+    #benchmarks { background: var(--bg); }
+
+    .bench-panel { display: block; }
+    .bench-panel + .bench-panel {
+      margin-top: 3.5rem; padding-top: 3.5rem;
+      border-top: 1px solid var(--border);
+    }
+    .bench-panel-title {
+      font-size: 1rem; font-weight: 700; color: var(--text);
+      margin-bottom: .5rem; letter-spacing: -0.01em;
+    }
+
+    .bench-callout {
+      padding: .9rem 1.2rem; margin: 1.5rem 0;
+      background: var(--accent-light);
+      border-radius: var(--radius);
+      border: 1px solid rgba(124,109,240,0.12);
+    }
+    .bench-callout p { font-size: .9rem; color: var(--text-2); line-height: 1.65; }
+    .bench-callout strong { color: var(--accent-2); }
+
+    /* ── Tables ── */
+    .table-wrap {
+      overflow-x: auto; margin: 1.5rem 0;
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+    }
+    table {
+      width: 100%; border-collapse: collapse;
+      font-size: .83rem;
+    }
+    thead th {
+      background: rgba(124,109,240,0.05);
+      color: var(--text-2); font-weight: 600;
+      padding: .7rem 1rem; text-align: center;
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap; letter-spacing: .02em;
+    }
+    thead th:first-child { text-align: left; }
+    tbody tr:nth-child(even):not(.ours) { background: var(--surface); }
+    tbody tr { border-bottom: 1px solid rgba(0,0,0,0.03); }
+    tbody tr:last-child { border-bottom: none; }
+    tbody td {
+      padding: .65rem 1rem; color: var(--text-2);
+      text-align: center; white-space: nowrap;
+    }
+    tbody td:first-child { text-align: left; color: var(--text-2); }
+    tbody tr.ours { background: rgba(124,109,240,0.05); }
+    tbody tr.ours td { color: var(--text); }
+    tbody tr.ours td:first-child { color: var(--accent-2); font-weight: 600; }
+    .best { color: var(--accent-2) !important; font-weight: 700; }
+    .table-caption {
+      font-size: .78rem; color: var(--text-3); margin-bottom: .6rem;
+      line-height: 1.5;
+    }
+    .table-caption strong { color: var(--text-2); }
+    .table-subtitle {
+      font-size: .92rem; font-weight: 600; color: var(--text);
+      margin: 2rem 0 .6rem;
+    }
+
+    /* ── Showcase vis blocks ── */
+    .sg-vis-block {
+      margin-top: 3.5rem; text-align: left;
+    }
+    .sg-vis-label {
+      font-size: .88rem; font-weight: 600; color: var(--text);
+      text-align: center; margin-bottom: .25rem;
+    }
+    .sg-vis-hint {
+      font-weight: 400; color: var(--text-3); font-size: .8rem;
+    }
+
+    /* ── Video Generation blocks ── */
+    .vgen-grid-2 {
+      display: grid; grid-template-columns: repeat(2, 1fr); gap: .8rem;
+      margin-top: .75rem;
+      max-width: 720px; margin-left: auto; margin-right: auto;
+    }
+    .vgen-grid-4 {
+      display: grid; grid-template-columns: repeat(4, 1fr); gap: .8rem;
+      margin-top: .75rem;
+      align-items: start;
+    }
+    .vgen-item {
+      position: relative; border-radius: 8px; overflow: hidden; line-height: 0;
+    }
+    .vgen-item video { width: 100%; display: block; border-radius: 8px; }
+    /* Crop taller videos to match 16:9 aspect ratio of neighbours */
+    .vgen-item.i2v-crop { aspect-ratio: 736/416; }
+    .vgen-item.i2v-crop .vid-player { width: 100%; height: 100%; }
+    .vgen-item.i2v-crop video { width: 100%; height: 100%; object-fit: cover; object-position: center; }
+    .vgen-hover-caption {
+      position: absolute; inset: 0;
+      background: rgba(0,0,0,0.76); color: #f0f0f0;
+      padding: .85rem 1rem;
+      font-size: .72rem; line-height: 1.6; font-family: 'Inter', sans-serif;
+      opacity: 0; transition: opacity .22s ease;
+      overflow-y: auto;
+      display: flex; align-items: center; justify-content: center;
+      text-align: left; border-radius: 8px;
+    }
+    .vgen-item:hover .vgen-hover-caption { opacity: 1; }
+
+    /* S2V vertical */
+    .s2v-vertical { margin-top: .75rem; display: flex; flex-direction: column; gap: .85rem; }
+    .s2v-instruct {
+      padding: .65rem .9rem;
+      background: var(--accent-light);
+      border-radius: 8px; border: 1px solid rgba(124,109,240,0.12);
+      font-size: .78rem; color: var(--text-2); line-height: 1.65;
+    }
+    .s2v-instruct-label {
+      font-size: .66rem; font-weight: 700; letter-spacing: .07em;
+      text-transform: uppercase; color: var(--accent); margin-bottom: .3rem;
+    }
+    /* Side-by-side: reference subjects image + output video */
+    /* video col = same width as one edit-step: (container - arrow 140px - gaps 1.1rem) / 2 */
+    .s2v-row { display: grid; grid-template-columns: 1fr calc((100% - 140px - 1.1rem) / 2); gap: 1rem; align-items: stretch; }
+    .s2v-subjects-col { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .35rem; }
+    .s2v-subjects-col img { width: 100%; display: block; border-radius: 8px; }
+    .s2v-subjects-label { font-size: .7rem; color: var(--text-3); }
+    .s2v-video-col { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .35rem; }
+    .s2v-video-col .vid-player,
+    .s2v-video-col video { width: 100%; display: block; border-radius: 8px; }
+
+    /* Edit chain */
+    .edit-cases { display: flex; flex-direction: column; gap: 1.5rem; margin-top: .75rem; }
+    .edit-cases-2col { display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem 1.75rem; }
+    .edit-chain { display: flex; align-items: center; gap: .55rem; }
+    .edit-step { flex: 1; min-width: 0; }
+    .edit-step video { width: 100%; display: block; border-radius: 8px; }
+    .edit-step img   { width: 100%; display: block; border-radius: 8px; }
+
+    /* ── Custom video player ── */
+    .vid-player {
+      position: relative; display: block; line-height: 0;
+      border-radius: 8px; overflow: hidden;
+    }
+    /* Remove per-video border-radius — parent wrapper handles it */
+    .vid-player > video { border-radius: 0 !important; width: 100%; display: block; }
+    /* s2v video col: vid-player fills the column */
+    .s2v-video-col .vid-player { width: 100%; }
+    .vid-controls {
+      position: absolute; bottom: 0; left: 0; right: 0;
+      background: linear-gradient(transparent, rgba(0,0,0,.72));
+      padding: .38rem .52rem .44rem;
+      display: flex; align-items: center; gap: .45rem;
+      opacity: 0; transition: opacity .18s ease;
+    }
+    .vid-player:hover .vid-controls,
+    .vid-player.is-paused .vid-controls { opacity: 1; }
+    .vid-play-btn {
+      background: none; border: none; cursor: pointer;
+      color: #fff; font-size: .88rem; padding: 0; line-height: 1;
+      flex-shrink: 0; opacity: .9; width: 1.1rem; text-align: center;
+    }
+    .vid-play-btn:hover { opacity: 1; }
+    .vid-seek {
+      flex: 1; height: 3px; border-radius: 2px;
+      appearance: none; -webkit-appearance: none;
+      background: rgba(255,255,255,.35); cursor: pointer; outline: none;
+    }
+    .vid-seek::-webkit-slider-thumb {
+      -webkit-appearance: none; width: 11px; height: 11px;
+      border-radius: 50%; background: #fff; cursor: pointer;
+    }
+    .vid-seek::-moz-range-thumb {
+      width: 11px; height: 11px; border-radius: 50%;
+      background: #fff; border: none; cursor: pointer;
+    }
+    .vid-time {
+      font-size: .6rem; color: rgba(255,255,255,.82);
+      flex-shrink: 0; font-variant-numeric: tabular-nums; white-space: nowrap;
+    }
+    .edit-arrow-wrap {
+      flex-shrink: 0; display: flex; flex-direction: column;
+      align-items: center; gap: .3rem; max-width: 140px;
+    }
+    .edit-arrow-icon { font-size: 1.25rem; color: var(--accent); line-height: 1; }
+    .edit-arrow-instruct {
+      font-size: .78rem; color: var(--accent);
+      background: var(--accent-light); border-radius: 6px;
+      padding: .28rem .52rem; line-height: 1.5; text-align: center;
+    }
+
+    /* ── World Nav physics videos ── */
+    .nav-physics-grid {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 1.1rem;
+      margin-top: 1.75rem; text-align: left;
+    }
+    .nav-physics-card {
+      border-radius: 12px; overflow: hidden;
+      border: 1px solid var(--border);
+      background: var(--surface);
+    }
+    .nav-physics-card video {
+      width: 100%; display: block;
+    }
+    .nav-physics-body {
+      padding: .8rem 1rem .95rem;
+    }
+    .nav-physics-tag {
+      display: inline-block;
+      font-size: .68rem; font-weight: 700; letter-spacing: .07em;
+      text-transform: uppercase;
+      color: var(--accent); background: var(--accent-light);
+      padding: .18rem .52rem; border-radius: 4px;
+      margin-bottom: .4rem;
+    }
+    .nav-physics-title {
+      font-size: .92rem; font-weight: 600; color: var(--text);
+      margin-bottom: .28rem;
+    }
+    .nav-physics-desc {
+      font-size: .8rem; color: var(--text-3); line-height: 1.65;
+    }
+
+    /* ── Showcase ── */
+    #showcase { background: var(--bg); }
+
+    .showcase-group { margin-bottom: 4rem; text-align: center; }
+    .showcase-group:last-child { margin-bottom: 0; }
+    .showcase-group h3 {
+      font-size: 1.3rem; font-weight: 600; color: var(--text);
+      margin-bottom: .5rem;
+    }
+    .showcase-group .sg-desc {
+      font-size: .92rem; color: var(--text-3);
+      max-width: 680px; margin: 0 auto 2rem; line-height: 1.75;
+      text-align: center;
+    }
+    .sg-key-legend {
+      display: flex; flex-wrap: wrap; justify-content: center; align-items: center;
+      gap: .45rem .85rem; margin: -1.1rem auto 2rem; max-width: 680px;
+      font-size: .8rem; color: var(--text-3);
+    }
+    .sg-key-legend .key-group { display: flex; align-items: center; gap: .28rem; }
+    .sg-key-legend .key-label { margin-left: .18rem; }
+    kbd {
+      display: inline-flex; align-items: center; justify-content: center;
+      min-width: 1.55rem; height: 1.55rem; padding: 0 .38rem;
+      background: var(--surface2); border: 1px solid var(--border);
+      border-bottom-width: 2px; border-radius: 5px;
+      font-family: inherit; font-size: .72rem; font-weight: 600;
+      color: var(--text-2); line-height: 1; white-space: nowrap;
+      box-shadow: 0 1px 0 var(--border);
+    }
+
+    /* ── Placeholder boxes ── */
+    .ph {
+      background: var(--bg);
+      border: 1px dashed rgba(0,0,0,0.1);
+      border-radius: var(--radius);
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: .5rem; color: var(--text-3); font-size: .88rem;
+    }
+    .ph .ph-icon  { font-size: 2rem; opacity: .5; }
+    .ph-label { font-weight: 500; color: var(--text-2); }
+    .ph-cap   { font-size: .75rem; color: var(--text-3); }
+    .ph-xl  { height: 440px; }
+    .ph-lg  { height: 320px; }
+    .ph-md  { height: 230px; }
+    .ph-sm  { height: 190px; }
+
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: .75rem; margin-top: .75rem; }
+    .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: .75rem; margin-top: .75rem; }
+    @media (max-width: 768px) {
+      .t2i-grid,
+      .depth-grid,
+      .nvs-grid,
+      .vgen-grid-4 {
+        grid-template-columns: repeat(2, 1fr);
+      }
+      .vgen-grid-2,
+      .edit-cases-2col,
+      .s2v-row,
+      .nav-physics-grid {
+        grid-template-columns: 1fr;
+      }
+      .edit-chain {
+        flex-direction: column;
+        align-items: stretch;
+      }
+      .edit-arrow-wrap {
+        max-width: none;
+      }
+    }
+
+    @media (max-width: 680px) {
+      .grid-2, .grid-3 { grid-template-columns: 1fr; }
+      .t2i-grid,
+      .depth-grid,
+      .nvs-grid,
+      .vgen-grid-4 {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 480px) {
+      .wrap,
+      .wrap-wide,
+      .header-inner,
+      .carousel-slide {
+        padding-left: 1rem;
+        padding-right: 1rem;
+      }
+    }
+
+    /* ── Citation ── */
+    #citation { background: var(--bg); }
+    .code-wrap {
+      background: #f4f4f8; border-radius: var(--radius);
+      padding: 1.5rem 1.75rem;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: .8rem; line-height: 1.8; color: var(--text-2);
+      overflow-x: auto; position: relative;
+      border: 1px solid var(--border);
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .code-wrap .k { color: #2563eb; }
+    .code-wrap .v { color: #16a34a; }
+    .code-wrap .p { color: #111; }
+    .copy-btn {
+      position: absolute; top: 1rem; right: 1rem;
+      background: #e8e8ee; color: #666;
+      border: 1px solid #ddd; border-radius: 6px;
+      padding: .26rem .65rem; font-size: .72rem; cursor: pointer;
+      font-family: 'Inter', sans-serif; font-weight: 500;
+      transition: all .2s;
+    }
+    .copy-btn:hover { background: #ddd; color: #111; }
+
+    /* ── Footer ── */
+    footer {
+      border-top: 1px solid var(--border); padding: 2rem 1.5rem;
+      text-align: center; font-size: .8rem; color: var(--text-3);
+    }
+
+    /* ══════════════════════════════════════
+       Dark Mode
+    ══════════════════════════════════════ */
+    [data-theme="dark"] {
+      --bg:           #0e0e14;
+      --surface:      #18181f;
+      --surface2:     #22222d;
+      --border:       rgba(255,255,255,0.09);
+      --text:         #f2f2f6;       /* primary: near-white */
+      --text-2:       #e4e4ec;       /* body text: clearly white */
+      --text-3:       #c0c0d0;       /* secondary / captions: light grey, still legible */
+      --accent:       #9d8ff5;
+      --accent-2:     #8b7ef0;
+      --accent-light: rgba(157,143,245,0.13);
+      --grad:         linear-gradient(135deg, #9d8ff5 0%, #c4aeff 100%);
+      --shadow:       0 4px 24px rgba(0,0,0,0.5);
+    }
+    [data-theme="dark"] ::-webkit-scrollbar-thumb { background: #3a3a4a; }
+
+    /* Header glass in dark */
+    [data-theme="dark"] .site-header {
+      background: rgba(14,14,20,0.9);
+    }
+    /* Hardcoded-white backgrounds */
+    [data-theme="dark"] .teaser-fig {
+      background: var(--surface);
+      box-shadow: 0 4px 32px rgba(0,0,0,0.3), 0 1px 4px rgba(0,0,0,0.2);
+    }
+    [data-theme="dark"] .evidence-fig {
+      background: var(--surface);
+      box-shadow: 0 2px 18px rgba(0,0,0,0.2), 0 1px 4px rgba(0,0,0,0.15);
+    }
+    [data-theme="dark"] .carousel-container {
+      background: var(--surface);
+      box-shadow: 0 4px 28px rgba(0,0,0,0.3);
+    }
+    [data-theme="dark"] .carousel-prev,
+    [data-theme="dark"] .carousel-next {
+      background: rgba(24,24,31,0.94);
+      color: var(--text-2);
+    }
+    /* Code block */
+    [data-theme="dark"] .code-wrap {
+      background: #12121a;
+      color: var(--text-2);
+    }
+    [data-theme="dark"] .code-wrap .k { color: #82aaff; }
+    [data-theme="dark"] .code-wrap .v { color: #c3e88d; }
+    [data-theme="dark"] .code-wrap .p { color: var(--text-2); }
+    [data-theme="dark"] .copy-btn {
+      background: var(--surface2);
+      border-color: rgba(255,255,255,0.12);
+      color: var(--text-3);
+    }
+    [data-theme="dark"] .copy-btn:hover {
+      background: #2e2e3e; color: var(--text);
+    }
+
+    /* ── Theme Toggle Button ── */
+    .theme-toggle {
+      position: fixed;
+      top: 1rem; right: 1.25rem;
+      z-index: 500;
+      width: 40px; height: 40px;
+      border-radius: 50%;
+      border: 1.5px solid var(--border);
+      background: var(--bg);
+      color: var(--text-2);
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.1);
+      transition: background .2s, border-color .2s, box-shadow .2s, color .2s;
+    }
+    .theme-toggle:hover {
+      background: var(--surface);
+      border-color: var(--accent);
+      color: var(--accent);
+      box-shadow: 0 2px 16px rgba(124,109,240,0.22);
+    }
+    .theme-toggle svg {
+      width: 17px; height: 17px; flex-shrink: 0;
+    }
+    /* Show moon in light mode, sun in dark mode */
+    .icon-sun  { display: none;  }
+    .icon-moon { display: block; }
+    [data-theme="dark"] .icon-sun  { display: block; }
+    [data-theme="dark"] .icon-moon { display: none;  }
+  </style>
+
+  <!-- Anti-FOUC: apply saved theme before first paint -->
+  <script>
+    (function(){
+      try {
+        var t = localStorage.getItem('omni-theme');
+        if (t === 'dark' || (!t && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+          document.documentElement.setAttribute('data-theme', 'dark');
+        }
+      } catch(e) {}
+    })();
+  </script>
+</head>
+<body>
+
+<!-- ═══ PAGE TOP BUTTON ═══ -->
+<button class="page-top-btn" aria-label="Back to top" onclick="window.scrollTo({top:0,behavior:'smooth'})">↑</button>
+
+<!-- ═══ THEME TOGGLE ═══ -->
+<button class="theme-toggle" id="theme-toggle" aria-label="Toggle dark mode" onclick="toggleTheme()">
+  <!-- Moon: shown in light mode -->
+  <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+  </svg>
+  <!-- Sun: shown in dark mode -->
+  <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <circle cx="12" cy="12" r="5"/>
+    <line x1="12" y1="1" x2="12" y2="3"/>
+    <line x1="12" y1="21" x2="12" y2="23"/>
+    <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
+    <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+    <line x1="1" y1="12" x2="3" y2="12"/>
+    <line x1="21" y1="12" x2="23" y2="12"/>
+    <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
+    <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+  </svg>
+</button>
+
+<!-- ═══ HEADER ═══ -->
+<header class="site-header" id="site-header">
+  <div class="header-inner">
+    <!-- Sub-nav: Context Unrolling -->
+    <div id="sub-nav-unrolling" class="sub-nav">
+      <span class="sub-nav-section-name">Context Unrolling</span>
+      <span class="sub-nav-divider">|</span>
+      <a href="#ev-und">Visual Understanding</a>
+      <a href="#ev-text">Visual Generation</a>
+      <a href="#ev-depth">Depth Estimation</a>
+      <a href="#ev-3d">Spatial Understanding</a>
+      <button class="sub-nav-up-btn" onclick="document.getElementById('unrolling').scrollIntoView({behavior:'smooth'})" aria-label="Back to section top">↑</button>
+    </div>
+    <!-- Sub-nav: System Performance -->
+    <div id="sub-nav-benchmarks" class="sub-nav">
+      <span class="sub-nav-section-name">System Performance</span>
+      <span class="sub-nav-divider">|</span>
+      <a href="#b-vlm">Understanding</a>
+      <a href="#b-imgen">Image Gen</a>
+      <a href="#b-edit">Image Editing</a>
+      <a href="#b-video">Video Gen</a>
+      <a href="#b-five">Video Edit</a>
+      <a href="#b-3d">3D Geometry</a>
+      <button class="sub-nav-up-btn" onclick="document.getElementById('benchmarks').scrollIntoView({behavior:'smooth'})" aria-label="Back to section top">↑</button>
+    </div>
+    <!-- Sub-nav: Showcase -->
+    <div id="sub-nav-showcase" class="sub-nav">
+      <span class="sub-nav-section-name">See What <span class="brand-word"><img src="https://lf3-static.bytednsdoc.com/obj/eden-cn/slnhi/ljhwZthlaukjlkulzlp/Bagelmni/omni-o-bagel.png" alt="O" class="brand-bagel" />mni</span> Can Do</span>
+      <span class="sub-nav-divider">|</span>
+      <a href="#sc-imgen">Image Gen &amp; Edit</a>
+      <a href="#sc-videogen">Video Gen &amp; Edit</a>
+      <a href="#sc-worldnav">World Navigation</a>
+      <button class="sub-nav-up-btn" onclick="document.getElementById('showcase').scrollIntoView({behavior:'smooth'})" aria-label="Back to section top">↑</button>
+    </div>
+  </div>
+</header>
+
+<!-- ═══ HERO ═══ -->
+<section id="hero">
+  <div class="wrap">
+    <h1 class="hero-title">Context Unrolling in <span class="brand-word"><img src="https://lf3-static.bytednsdoc.com/obj/eden-cn/slnhi/ljhwZthlaukjlkulzlp/Bagelmni/omni-o-bagel.png" alt="O" class="brand-bagel" />mni</span> Models</h1>
+    <p class="hero-date">Released on April, 2026</p>
+    <p class="hero-authors">
+      <a class="author-link" href="https://ceyuan.me/" target="_blank">Ceyuan Yang</a><sup>*†</sup>,
+      <a class="author-link" href="https://openreview.net/profile?id=%7EZhijie_Lin1" target="_blank">Zhijie Lin</a><sup>*</sup>,
+      <a class="author-link" href="https://openreview.net/profile?id=~Yang_Zhao14" target="_blank">Yang Zhao</a><sup>*</sup>,
+      <a class="author-link" href="#" target="_blank">Fei Xiao</a><sup>*</sup>,
+      <a class="author-link" href="https://hehao13.github.io/" target="_blank">Hao He</a><sup>*</sup>,
+      <a class="author-link" href="https://kevinz8866.github.io/" target="_blank">Qi Zhao</a><sup>*</sup>, <br>
+      <a class="author-link" href="https://scholar.google.com/citations?user=k0TWfBoAAAAJ&hl=en" target="_blank">Chaorui Deng</a>,
+      <a class="author-link" href="https://andy1621.github.io/" target="_blank">Kunchang Li</a>,
+      <a class="author-link" href="https://quantumiracle.github.io/webpage/" target="_blank">Zihan Ding</a>,
+      <a class="author-link" href="https://guoyww.github.io/" target="_blank">Yuwei Guo</a>,
+      <a class="author-link" href="https://g-u-n.github.io/" target="_blank">Fuyun Wang</a>,
+      <a class="author-link" href="https://fangqi-zhu.github.io/" target="_blank">Fangqi Zhu</a>,
+      <a class="author-link" href="https://codecaution.github.io/" target="_blank">Xiaonan Nie</a>,
+      <a class="author-link" href="https://scholar.google.com/citations?user=8KDcE5UAAAAJ&hl=en" target="_blank">Shenhan Zhu</a>,
+      <a class="author-link" href="https://peter-lin.com/" target="_blank">Shanchuan Lin</a>,
+      <a class="author-link" href="https://www.ee.cuhk.edu.hk/~hsli/" target="_blank">Hongsheng Li</a>,
+      <a class="author-link" href="#" target="_blank">Weilin Huang</a>,
+      <a class="author-link" href="#" target="_blank">Guang Shi</a><sup>†</sup>,
+      <a class="author-link" href="https://haoqifan.github.io/" target="_blank">Haoqi Fan</a>
+    </p>
+    <p class="hero-affil">ByteDance Seed &nbsp;·&nbsp; <sup>*</sup> Equal contribution &nbsp;·&nbsp; <sup>†</sup> Corresponding authors</p>
+    <div class="hero-links">
+      <a class="paper-link" href="https://arxiv.org/pdf/2604.21921" target="_blank" rel="noopener">Paper PDF</a>
+    </div>
+
+    <!-- Abstract -->
+    <p class="hero-summary">
+      We present <strong><span class="brand-word"><img src="https://lf3-static.bytednsdoc.com/obj/eden-cn/slnhi/ljhwZthlaukjlkulzlp/Bagelmni/omni-o-bagel.png" alt="O" class="brand-bagel" />mni</span></strong>, a unified multimodal model natively trained on diverse
+      modalities, including text, images, videos, 3D geometry, and hidden representations.
+      We find that such training enables <em>Context Unrolling</em>, where the model explicitly reasons
+      across multiple modal representations before producing predictions. This process enables the model to
+      aggregate complementary information across heterogeneous modalities, facilitating a more faithful
+      approximation of the shared multimodal knowledge manifold and improving downstream reasoning fidelity.
+      As a result, <strong><span class="brand-word"><img src="https://lf3-static.bytednsdoc.com/obj/eden-cn/slnhi/ljhwZthlaukjlkulzlp/Bagelmni/omni-o-bagel.png" alt="O" class="brand-bagel" />mni</span></strong> achieves strong performance on both multimodal generation
+      and understanding benchmarks, while demonstrating advanced multimodal reasoning capabilities,
+      including in-context generation of text, image, video, and 3D geometry.
+    </p>
+
+  </div>
+</section>
+
+<!-- ═══ CONTEXTS UNROLLING ═══ -->
+<section id="unrolling">
+  <div class="wrap">
+    <h2 class="section-title">Context Unrolling</h2>
+    <p class="section-subtitle">
+      A model natively trained across diverse modalities develops the ability to <em style="color:var(--accent-2);font-style:normal;font-weight:500;">unroll</em> its internal reasoning across heterogeneous modal representations before producing outputs. Each modality becomes an atomic primitive — composable, invocable, and writable back into a shared context.
+    </p>
+
+    <!-- Teaser overview figure -->
+    <figure class="teaser-fig" style="margin-bottom: 3rem;">
+      <img src="https://lf3-static.bytednsdoc.com/obj/eden-cn/slnhi/ljhwZthlaukjlkulzlp/Bagelmni/Omni_teaser.png" alt="Omni teaser overview">
+      <figcaption>
+        <strong style="color:var(--text-2);">Context Unrolling in <span class="brand-word"><img src="https://lf3-static.bytednsdoc.com/obj/eden-cn/slnhi/ljhwZthlaukjlkulzlp/Bagelmni/omni-o-bagel.png" alt="O" class="brand-bagel" />mni</span>.</strong> Given an arbitrary task, <span class="brand-word"><img src="https://lf3-static.bytednsdoc.com/obj/eden-cn/slnhi/ljhwZthlaukjlkulzlp/Bagelmni/omni-o-bagel.png" alt="O" class="brand-bagel" />mni</span> selectively activates task-relevant contexts from a heterogeneous context pool—spanning text, image, video, 3D geometry, and beyond—into a shared workspace before producing predictions. This mechanism enables the model to aggregate complementary information across modalities, improving downstream reasoning and generation fidelity.
+      </figcaption>
+    </figure>
+
+    <!-- ══ Evidence ══ -->
+    <div class="evidence-section">
+
+      <!-- 5.1 Visual Understanding -->
+      <div class="evidence-block" id="ev-und">
+        <h3 class="evidence-title">Visual Understanding</h3>
+        <p class="evidence-desc">Context unrolling in visual understanding primarily occurs through CoT-style textual rollout, which enriches the latent workspace with finer semantic decompositions before producing the final answer. Text thinking context yields consistent gains across perception, reasoning, document, and spatial understanding benchmarks.</p>
+        <p class="table-caption"><strong>Understanding with Text-Thinking.</strong> Validated on downsampled mutiple benchmarks. Text thinking context improves performance consistently across all evaluated dimensions.</p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th style="text-align:left;">Context</th>
+                <th>BLINK ↑</th>
+                <th>MMStar ↑</th>
+                <th>MMBench-V11 ↑</th>
+                <th>SimpleVQA ↑</th>
+                <th>AI2D ↑</th>
+                <th>Chartqa ↑</th>
+                <th>Docvqa ↑</th>
+                <th>HallusionBench ↑</th>
+                <th>Erqa ↑</th>
+                <th>MMSI ↑</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td>baseline</td><td>60.8</td><td>59.4</td><td>76.2</td><td>50.4</td><td>90.2</td><td>85.5</td><td>93.5</td><td>69.6</td><td>41.5</td><td>31.5</td></tr>
+              <tr class="ours"><td>+ text thinking</td><td class="best">61.6</td><td class="best">66.5</td><td class="best">77.1</td><td class="best">51.4</td><td class="best">92.3</td><td class="best">88.0</td><td class="best">94.0</td><td class="best">71.3</td><td class="best">44.5</td><td class="best">32.6</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- 5.2 Visual Generation -->
+      <div class="evidence-block" id="ev-text">
+        <h3 class="evidence-title">Visual Generation</h3>
+        <p class="evidence-desc">Visual generation benefits from multi-granularity context, reducing the inherent ambiguity of mapping language to images. Before synthesizing an image, <span class="brand-word"><img src="https://lf3-static.bytednsdoc.com/obj/eden-cn/slnhi/ljhwZthlaukjlkulzlp/Bagelmni/omni-o-bagel.png" alt="O" class="brand-bagel" />mni</span> can (i) roll out fine-grained textual specifications — attributes, counts, spatial constraints — via text thinking, and/or (ii) unroll visual context representations carrying strong structural information. Longer textual context consistently improves both aggregate and high-atomicity performance; combining text thinking with visual token unrolling yields the most consistent gains, confirming that textual and visual contexts are complementary.</p>
+        <p class="table-caption"><strong>Text-to-Image Generation Ablation.</strong> GenEval-2 (TIFA<sub>GM</sub>) and per-attribute breakdown. Higher is better.</p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th style="text-align:left;">Context</th>
+                <th>TIFA<sub>GM</sub></th>
+                <th>Object</th>
+                <th>Attr.</th>
+                <th>Count</th>
+                <th>Pos.</th>
+                <th>Verb</th>
+                <th>Overall</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td>baseline</td><td>29.25</td><td>91.64</td><td>90.00</td><td>52.03</td><td>77.67</td><td>26.25</td><td>0.56</td></tr>
+              <tr><td>+ short text</td><td>37.35</td><td>93.18</td><td>92.45</td><td>60.14</td><td>76.92</td><td>38.83</td><td>0.59</td></tr>
+              <tr><td>+ long text</td><td>43.94</td><td>91.86</td><td>91.13</td><td>67.03</td><td>77.03</td><td>38.31</td><td>0.61</td></tr>
+              <tr><td>+ visual unrolling</td><td>48.02</td><td class="best">94.42</td><td class="best">92.96</td><td>66.92</td><td>79.28</td><td class="best">53.96</td><td>0.61</td></tr>
+              <tr><td>+ short text &amp; visual unrolling</td><td>49.16</td><td>93.13</td><td>92.68</td><td>68.36</td><td>76.83</td><td>43.34</td><td>0.64</td></tr>
+              <tr class="ours"><td>+ long text &amp; visual unrolling</td><td class="best">53.44</td><td>92.34</td><td>92.32</td><td class="best">72.98</td><td class="best">80.23</td><td>42.81</td><td class="best">0.66</td></tr>
+              <tr style="background:var(--surface2);color:#bbb;"><td>+ oracle &amp; visual unrolling</td><td>57.21</td><td>94.77</td><td>97.89</td><td>69.47</td><td>90.64</td><td>56.00</td><td>0.73</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Depth Estimation -->
+      <div class="evidence-block" id="ev-depth">
+        <h3 class="evidence-title">Depth Estimation</h3>
+        <p class="evidence-desc">Context unrolling also benefits monocular depth estimation. A depth-related caption describes the scene's structural layout (textual context) recovers key geometric features; combining it with unrolled visual context further corrects residual ambiguities, yielding sharper depth boundaries and globally consistent depth maps.</p>
+        <p class="table-caption"><strong>Depth Estimation Ablation.</strong> δ₁ ↑ higher is better; AbsRel ↓ lower is better. Evaluated on NYU-Depth v2.</p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th style="text-align:left;">Metric</th>
+                <th>baseline</th>
+                <th>text context</th>
+                <th>visual context</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td>δ₁ ↑</td><td>83.21%</td><td>83.27%</td><td class="best">84.01%</td></tr>
+              <tr><td>AbsRel ↓</td><td>0.2028</td><td>0.2029</td><td class="best">0.1970</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- 5.3 Spatial Understanding -->
+      <div class="evidence-block" id="ev-3d">
+        <h3 class="evidence-title">Spatial Understanding</h3>
+        <p class="evidence-desc">Spatial understanding requires resolving geometric ambiguities — viewpoint changes, foreshortening, and occlusions — that freeform text reasoning alone cannot handle. <span class="brand-word"><img src="https://lf3-static.bytednsdoc.com/obj/eden-cn/slnhi/ljhwZthlaukjlkulzlp/Bagelmni/omni-o-bagel.png" alt="O" class="brand-bagel" />mni</span> incorporates camera pose estimation and novel-view synthesis as atomic primitives: camera pose provides geometry-grounded textual context, while synthesized views enable visual imagination as context. Both substantially improve spatial reasoning on MMSI-Bench compared to text chain-of-thought alone.</p>
+        <p class="table-caption"><strong>Spatial Understanding Evaluation.</strong> Textual contexts denote geometry-grounded text (e.g., camera pose estimation results). Visual contexts refer to novel-view synthesis results used as context. Evaluated on a downsampled MMSI-Bench.</p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th style="text-align:left;">Context</th>
+                <th>Overall</th>
+                <th>Positional Relationship</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td>baseline</td><td>27.14</td><td>19.63</td></tr>
+              <tr><td>+ text thinking</td><td>28.15</td><td>30.25</td></tr>
+              <tr><td>+ text geometric contexts</td><td>30.15</td><td>33.95</td></tr>
+              <tr class="ours"><td>+ visual geometric contexts</td><td class="best">34.17</td><td class="best">35.80</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ═══ BENCHMARKS ═══ -->
+<section id="benchmarks">
+  <div class="wrap">
+    <h2 class="section-title">System Performance</h2>
+    <p class="section-subtitle">State-of-the-art results across understanding, generation, and geometry benchmarks — from a single unified model with only 3B activated parameters.</p>
+
+
+    <!-- ── MULTIMODAL UNDERSTANDING ── -->
+    <div id="b-vlm" class="bench-panel active">
+      <p class="table-caption">
+        <strong>Multimodal Understanding.</strong> Compared against models with similar MoE architecture and activation scale (no thinking). <strong>Bold</strong> = best in column.
+      </p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Benchmark</th>
+              <th>Qwen3-VL-30B-A3B</th>
+              <th>InternVL3.5-30B-A3B</th>
+              <th><span class="brand-word"><img src="https://lf3-static.bytednsdoc.com/obj/eden-cn/slnhi/ljhwZthlaukjlkulzlp/Bagelmni/omni-o-bagel.png" alt="O" class="brand-bagel" />mni</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>BLINK</td>       <td class="best">67.7</td> <td>60.4</td>           <td>63.0</td></tr>
+            <tr><td>MMStar</td>      <td class="best">78.4</td> <td>72.0</td>           <td>63.8</td></tr>
+            <tr><td>MMBench-v11</td> <td>78.4</td>             <td class="best">84.8</td><td>75.3</td></tr>
+            <tr><td>VlmsAreBlind</td><td>67.5</td>             <td>—</td>               <td class="best">76.4</td></tr>
+            <tr><td>SimpleVQA</td>   <td>52.7</td>             <td>—</td>               <td class="best">53.3</td></tr>
+            <tr><td>RealWorldQA</td> <td>73.7</td>             <td>72.3</td>           <td class="best">76.0</td></tr>
+            <tr><td>Textvqa</td>     <td>—</td>                <td>80.5</td>           <td class="best">81.0</td></tr>
+            <tr><td>AI2D</td>        <td>85.0</td>             <td>86.8</td>           <td class="best">91.5</td></tr>
+            <tr><td>Chartqa</td>     <td>86.8</td>             <td class="best">87.4</td><td>86.9</td></tr>
+            <tr><td>Docvqa</td>      <td class="best">95.0</td> <td>94.2</td>           <td>92.8</td></tr>
+            <tr><td>HallusionBench</td><td>61.5</td>           <td>53.8</td>           <td class="best">70.1</td></tr>
+            <tr><td>MuirBench</td>   <td class="best">73.0</td> <td>53.1</td>           <td>64.2</td></tr>
+            <tr><td>Erqa</td>        <td>51.3</td>             <td>41.5</td>           <td>45.0</td></tr>
+            <tr><td>MMSI-Bench</td>  <td>30.3</td>             <td>27.5</td>           <td class="best">31.5</td></tr>
+            <tr><td>MVBench</td>     <td class="best">72.3</td> <td>72.1</td>           <td>68.4</td></tr>
+            <tr><td>Video-MME</td>   <td class="best">74.5</td> <td>68.7</td>           <td>67.2</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ── IMAGE GENERATION ── -->
+    <div id="b-imgen" class="bench-panel">
+      <p class="table-caption">
+        <strong>Text-to-Image Generation.</strong> GenEval2 measures compositional accuracy; DPG measures dense prompt following; LongText measures long-form prompt following. Higher is better.
+      </p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Model</th>
+              <th>GenEval2 ↑</th>
+              <th>DPG ↑</th>
+              <th>LongText-EN ↑</th>
+              <th>LongText-CN ↑</th>
+              <th>Inhouse ↑</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>Qwen-Image</td><td>30.67</td><td>88.32</td><td>94.3</td><td>94.6</td><td>55.16</td></tr>
+            <tr><td>Z-Image</td><td>41.83</td><td>88.14</td><td>93.5</td><td>93.6</td><td>55.19</td></tr>
+            <tr><td>Flux</td><td>34.59</td><td>83.84</td><td>60.7</td><td>-</td><td>49.91</td></tr>
+            <tr class="ours">
+              <td><span class="brand-word"><img src="https://lf3-static.bytednsdoc.com/obj/eden-cn/slnhi/ljhwZthlaukjlkulzlp/Bagelmni/omni-o-bagel.png" alt="O" class="brand-bagel" />mni</span></td>
+              <td class="best">54.12</td>
+              <td class="best">88.55</td>
+              <td class="best">97.5</td>
+              <td class="best">96.8</td>
+              <td class="best">63.87</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ── IMAGE EDITING ── -->
+    <div id="b-edit" class="bench-panel">
+      <p class="table-caption">
+        <strong>Image Editing — GEdit-Bench EN (Full set).</strong> G_SC = semantic correctness; G_PQ = perceptual quality; G_O = overall. Higher is better.
+      </p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Model</th>
+              <th>G_SC ↑</th>
+              <th>G_PQ ↑</th>
+              <th>G_O ↑</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>Flux-Kontext-dev</td><td>7.16</td><td>7.37</td><td>6.51</td></tr>
+            <tr><td>Step1X-Edit v1.1</td><td>7.66</td><td>7.35</td><td>6.97</td></tr>
+            <tr><td>Step1X-Edit v1.2</td><td>7.77</td><td>7.65</td><td>7.24</td></tr>
+            <tr><td>Emu-3.5</td><td>8.11</td><td>7.70</td><td>7.59</td></tr>
+            <tr><td>Z-Image-Edit</td><td>8.11</td><td>7.72</td><td>7.57</td></tr>
+            <tr><td>Qwen-Image-Edit</td><td>8.15</td><td class="best">7.86</td><td>7.54</td></tr>
+            <tr class="ours">
+              <td><span class="brand-word"><img src="https://lf3-static.bytednsdoc.com/obj/eden-cn/slnhi/ljhwZthlaukjlkulzlp/Bagelmni/omni-o-bagel.png" alt="O" class="brand-bagel" />mni</span></td>
+              <td class="best">8.42</td>
+              <td>7.85</td>
+              <td class="best">7.75</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ── VIDEO GENERATION ── -->
+    <div id="b-video" class="bench-panel">
+      <p class="table-caption">
+        <strong>Text-to-Video Generation — VBench 1.0.</strong> Total Score combines Quality Score and Semantic Score. Higher is better.
+      </p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Model</th>
+              <th>Total Score ↑</th>
+              <th>Quality Score ↑</th>
+              <th>Semantic Score ↑</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>Wan2.1</td><td>85.59</td><td>83.43</td><td>76.11</td></tr>
+            <tr><td>Hunyuan Video</td><td>83.69</td><td>83.35</td><td>76.88</td></tr>
+            <tr class="ours">
+              <td><span class="brand-word"><img src="https://lf3-static.bytednsdoc.com/obj/eden-cn/slnhi/ljhwZthlaukjlkulzlp/Bagelmni/omni-o-bagel.png" alt="O" class="brand-bagel" />mni</span></td>
+              <td class="best">85.07</td>
+              <td class="best">84.29</td>
+              <td class="best">83.11</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ── VIDEO EDITING (FiVE) ── -->
+    <div id="b-five" class="bench-panel">
+      <p class="table-caption">
+        <strong>Video Editing — FiVE Benchmark.</strong> Evaluated across structure preservation, background fidelity, text alignment, motion quality, and instruction-following (FiVE score). Higher is better except Dist.↓ and LPIPS↓.
+      </p>
+      <div class="table-wrap" style="font-size:.78rem;">
+        <table>
+          <thead>
+            <tr>
+              <th rowspan="2" style="vertical-align:bottom;">Method</th>
+              <th style="text-align:center;border-bottom:1px solid var(--border);padding-bottom:.3rem;">Structure</th>
+              <th colspan="3" style="text-align:center;border-bottom:1px solid var(--border);padding-bottom:.3rem;">Background Preservation</th>
+              <th colspan="2" style="text-align:center;border-bottom:1px solid var(--border);padding-bottom:.3rem;">Text Alignment</th>
+              <th style="text-align:center;border-bottom:1px solid var(--border);padding-bottom:.3rem;">Motion</th>
+              <th colspan="5" style="text-align:center;border-bottom:1px solid var(--border);padding-bottom:.3rem;">FiVE ↑</th>
+            </tr>
+            <tr>
+              <th>Dist.×10³ ↓</th>
+              <th>PSNR ↑</th><th>LPIPS×10² ↓</th><th>SSIM×10² ↑</th>
+              <th>CLIPS ↑</th><th>CLIPS<sub>edit</sub> ↑</th>
+              <th>Fid.S.×10² ↑</th>
+              <th>YN ↑</th><th>MC ↑</th><th>∪ ↑</th><th>∩ ↑</th><th>Acc ↑</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>TokenFlow</td><td>35.62</td><td>19.06</td><td>263.61</td><td>72.51</td><td>26.46</td><td>21.15</td><td>89.00</td><td>19.36</td><td>35.51</td><td>36.68</td><td>18.18</td><td>27.43</td></tr>
+            <tr><td>DMT</td><td>85.95</td><td>14.71</td><td>404.60</td><td>51.64</td><td>26.66</td><td>21.44</td><td>82.30</td><td>34.78</td><td>62.06</td><td>62.98</td><td>33.86</td><td>48.42</td></tr>
+            <tr><td>Vid2Me</td><td>22.37</td><td>21.15</td><td>263.91</td><td>70.69</td><td>26.84</td><td>21.05</td><td class="best">90.06</td><td>20.03</td><td>33.50</td><td>36.20</td><td>17.34</td><td>26.77</td></tr>
+            <tr><td>AnyV2V</td><td>71.36</td><td>15.90</td><td>348.59</td><td>50.77</td><td>24.89</td><td>19.72</td><td>60.36</td><td>30.62</td><td>45.42</td><td>48.96</td><td>27.09</td><td>38.02</td></tr>
+            <tr><td>VideoGrain</td><td class="best">12.40</td><td class="best">27.05</td><td>185.21</td><td class="best">79.13</td><td>25.69</td><td>20.31</td><td>88.57</td><td>30.50</td><td>43.97</td><td>44.30</td><td>30.17</td><td>37.23</td></tr>
+            <tr><td>Pyramid-Edit</td><td>28.65</td><td>20.84</td><td>276.59</td><td>71.72</td><td>26.82</td><td>20.20</td><td>80.59</td><td>33.67</td><td>54.01</td><td>56.36</td><td>31.31</td><td>43.84</td></tr>
+            <tr><td>Wan-Edit</td><td>12.53</td><td>25.57</td><td class="best">94.61</td><td>82.55</td><td>26.39</td><td>21.23</td><td>89.43</td><td>41.41</td><td>52.53</td><td>55.72</td><td>38.22</td><td>46.97</td></tr>
+            <tr class="ours">
+              <td><span class="brand-word"><img src="https://lf3-static.bytednsdoc.com/obj/eden-cn/slnhi/ljhwZthlaukjlkulzlp/Bagelmni/omni-o-bagel.png" alt="O" class="brand-bagel" />mni</span></td>
+              <td>42.96</td><td>20.30</td><td>245.18</td><td>67.00</td>
+              <td class="best">27.32</td><td class="best">21.47</td>
+              <td>83.37</td>
+              <td class="best">69.67</td><td class="best">86.15</td><td class="best">88.50</td><td class="best">67.23</td><td class="best">78.03</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ── 3D GEOMETRY ── -->
+    <div id="b-3d" class="bench-panel">
+
+      <p class="table-subtitle">Camera Pose Estimation on RealEstate10K and CO3Dv2</p>
+      <p class="table-caption">AUC@30↑ higher is better; RPE trans↓ and RPE rot↓ lower is better.</p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th rowspan="2" style="vertical-align:bottom;">Method</th>
+              <th colspan="3" style="text-align:center; border-bottom:1px solid var(--border); padding-bottom:.3rem;">RealEstate10K</th>
+              <th colspan="3" style="text-align:center; border-bottom:1px solid var(--border); padding-bottom:.3rem;">CO3Dv2</th>
+            </tr>
+            <tr>
+              <th>AUC@30 ↑</th><th>RPE trans ↓</th><th>RPE rot ↓</th>
+              <th>AUC@30 ↑</th><th>RPE trans ↓</th><th>RPE rot ↓</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>Flare</td><td>84.42</td><td>0.4215</td><td>0.0532</td><td>72.23</td><td>2.1242</td><td>0.0342</td></tr>
+            <tr><td>Cut3r</td><td>85.32</td><td>0.4023</td><td>0.0424</td><td>75.62</td><td>1.5321</td><td>0.0331</td></tr>
+            <tr><td>VGGT</td><td>88.23</td><td>0.3886</td><td>0.0386</td><td class="best">86.23</td><td class="best">1.1432</td><td>0.0285</td></tr>
+            <tr class="ours"><td><span class="brand-word"><img src="https://lf3-static.bytednsdoc.com/obj/eden-cn/slnhi/ljhwZthlaukjlkulzlp/Bagelmni/omni-o-bagel.png" alt="O" class="brand-bagel" />mni</span></td><td class="best">88.32</td><td class="best">0.3766</td><td class="best">0.0289</td><td>75.21</td><td>1.5955</td><td class="best">0.0269</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p class="table-subtitle" style="margin-top:2rem;">Monocular Depth Estimation</p>
+      <p class="table-caption">δ₁↑ higher is better; AbsRel↓ lower is better. Zero-shot evaluation across five standard benchmarks.</p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th rowspan="2" style="vertical-align:bottom;">Method</th>
+              <th colspan="2" style="text-align:center; border-bottom:1px solid var(--border); padding-bottom:.3rem;">NYU</th>
+              <th colspan="2" style="text-align:center; border-bottom:1px solid var(--border); padding-bottom:.3rem;">KITTI</th>
+              <th colspan="2" style="text-align:center; border-bottom:1px solid var(--border); padding-bottom:.3rem;">SINTEL</th>
+              <th colspan="2" style="text-align:center; border-bottom:1px solid var(--border); padding-bottom:.3rem;">ETH3D</th>
+              <th colspan="2" style="text-align:center; border-bottom:1px solid var(--border); padding-bottom:.3rem;">DIODE</th>
+            </tr>
+            <tr>
+              <th>δ₁ ↑</th><th>AbsRel ↓</th>
+              <th>δ₁ ↑</th><th>AbsRel ↓</th>
+              <th>δ₁ ↑</th><th>AbsRel ↓</th>
+              <th>δ₁ ↑</th><th>AbsRel ↓</th>
+              <th>δ₁ ↑</th><th>AbsRel ↓</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>Marigold</td><td>92.75</td><td>0.0781</td><td>87.87</td><td>0.1108</td><td>62.24</td><td>0.4666</td><td>97.12</td><td>0.0564</td><td>81.64</td><td>0.2266</td></tr>
+            <tr><td>Cut3r</td><td>91.64</td><td>0.0824</td><td>86.42</td><td>0.1253</td><td>55.64</td><td>0.4723</td><td>95.34</td><td>0.0632</td><td>73.21</td><td>0.3521</td></tr>
+            <tr><td>DA3 giant</td><td>94.78</td><td>0.0579</td><td>93.96</td><td>0.0824</td><td>66.54</td><td>0.3821</td><td>98.79</td><td>0.0324</td><td>82.69</td><td>0.2050</td></tr>
+            <tr><td>VGGT</td><td>96.10</td><td class="best">0.0499</td><td>94.29</td><td>0.0803</td><td>66.11</td><td>0.4551</td><td>98.35</td><td>0.0326</td><td>82.15</td><td>0.2115</td></tr>
+            <tr class="ours"><td><span class="brand-word"><img src="https://lf3-static.bytednsdoc.com/obj/eden-cn/slnhi/ljhwZthlaukjlkulzlp/Bagelmni/omni-o-bagel.png" alt="O" class="brand-bagel" />mni</span></td><td class="best">96.22</td><td>0.0542</td><td class="best">96.92</td><td class="best">0.0621</td><td class="best">74.27</td><td class="best">0.3340</td><td class="best">98.91</td><td class="best">0.0312</td><td class="best">83.83</td><td class="best">0.2034</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ═══ SHOWCASE ═══ -->
+<section id="showcase">
+  <div class="wrap-wide" style="text-align:center;">
+    <h2 class="section-title">See What <span class="brand-word"><img src="https://lf3-static.bytednsdoc.com/obj/eden-cn/slnhi/ljhwZthlaukjlkulzlp/Bagelmni/omni-o-bagel.png" alt="O" class="brand-bagel" />mni</span> Can Do</h2>
+
+    <!-- Image Generation — always visible -->
+    <div id="sc-imgen" class="showcase-group">
+      <h3>Image Generation &amp; Editing</h3>
+      <p class="sg-desc"><span class="brand-word"><img src="https://lf3-static.bytednsdoc.com/obj/eden-cn/slnhi/ljhwZthlaukjlkulzlp/Bagelmni/omni-o-bagel.png" alt="O" class="brand-bagel" />mni</span> generates images from complex textural prompts and performs precise instruction-following edits. The model can also estimate depth from a single image and synthesize novel views from arbitrary camera poses.</p>
+
+      <!-- Text-to-Image -->
+      <div class="sg-vis-block">
+        <div class="sg-vis-label">Text-to-Image Generation</div>
+        <div class="sg-vis-hint" style="text-align:center;margin-bottom:.75rem;">Hover over an image to see its text prompt</div>
+        <div class="t2i-grid">
+          <div class="t2i-item">
+            <img src="https://lf3-static.bytednsdoc.com/obj/eden-cn/slnhi/ljhwZthlaukjlkulzlp/Bagelmni/image_gen_visualizations/t2i_1.jpg" alt="t2i 1">
+            <div class="t2i-hover-caption">Double exposure portrait of a woman's side profile silhouette combined with a misty pine forest at sunrise. Flock of birds flying out from the back of her head. The forest is inside her silhouette. White background, high contrast, surreal art, dreamy, monochrome with a splash of orange light, minimal style.</div>
+          </div>
+          <div class="t2i-item">
+            <img src="https://lf3-static.bytednsdoc.com/obj/eden-cn/slnhi/ljhwZthlaukjlkulzlp/Bagelmni/image_gen_visualizations/t2i_2.jpg" alt="t2i 2">
+            <div class="t2i-hover-caption">A hyper-realistic close-up of a miniature world inside an ancient, cracked lightbulb. Inside the bulb is a lush, bioluminescent rainforest with tiny waterfalls and glowing mushrooms. A small wooden cabin sits on a mossy rock. Volumetric lighting beams through the glass cracks, dust particles dancing in the light. 8k resolution, macro photography, tilt-shift effect, octane render, unreal engine 5 style.</div>
+          </div>
+          <div class="t2i-item">
+            <img src="https://lf3-static.bytednsdoc.com/obj/eden-cn/slnhi/ljhwZthlaukjlkulzlp/Bagelmni/image_gen_visualizations/t2i_3.jpg" alt="t2i 3">
+            <div class="t2i-hover-caption">A tiny, cute fluffy hedgehog wearing vintage aviator goggles and a small leather scarf, standing on a mossy log in a magical forest. Soft sunlight filtering through giant fern leaves (Tyndall effect). Macro photography, shallow depth of field, bokeh, highly detailed fur, Pixar movie style, adorable, cinematic lighting.</div>
+          </div>
+          <div class="t2i-item">
+            <img src="https://lf3-static.bytednsdoc.com/obj/eden-cn/slnhi/ljhwZthlaukjlkulzlp/Bagelmni/image_gen_visualizations/t2i_4.jpg" alt="t2i 4">
+            <div class="t2i-hover-caption">A cute anthropomorphic red fox wearing a vintage green adventurer outfit and a small hat. It is standing on a mossy rock in a sunlit magical forest, holding a wooden sign board with both paws. The text on the sign reads "Welcome back, my friend" written in rustic paint. Soft cinematic lighting, fluffy fur texture, 3D render, Pixar movie style, 8k resolution.</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Image Editing -->
+      <div class="sg-vis-block">
+        <div class="sg-vis-label">Image Editing</div>
+        <div class="edit-cases edit-cases-2col">
+
+          <!-- Case 1: remove motorcycle -->
+          <div class="edit-chain">
+            <div class="edit-step"><img src="https://lf3-static.bytednsdoc.com/obj/eden-cn/slnhi/ljhwZthlaukjlkulzlp/Bagelmni/image_gen_visualizations/image_edit11.png" alt="Before: motorcycle"></div>
+            <div class="edit-arrow-wrap">
+              <span class="edit-arrow-icon">&#8594;</span>
+              <span class="edit-arrow-instruct">Remove the motorcycle.</span>
+            </div>
+            <div class="edit-step"><img src="https://lf3-static.bytednsdoc.com/obj/eden-cn/slnhi/ljhwZthlaukjlkulzlp/Bagelmni/image_gen_visualizations/image_edit12.png" alt="After: motorcycle removed"></div>
+          </div>
+
+          <!-- Case 2: digital painting brushstroke -->
+          <div class="edit-chain">
+            <div class="edit-step"><img src="https://lf3-static.bytednsdoc.com/obj/eden-cn/slnhi/ljhwZthlaukjlkulzlp/Bagelmni/image_gen_visualizations/image_edit21.png" alt="Before: photo"></div>
+            <div class="edit-arrow-wrap">
+              <span class="edit-arrow-icon">&#8594;</span>
+              <span class="edit-arrow-instruct">Present the brushstroke characteristics of digital painting.</span>
+            </div>
+            <div class="edit-step"><img src="https://lf3-static.bytednsdoc.com/obj/eden-cn/slnhi/ljhwZthlaukjlkulzlp/Bagelmni/image_gen_visualizations/image_edit22.png" alt="After: digital painting style"></div>
+          </div>
+
+          <!-- Case 3: candle on cake -->
+          <div class="edit-chain">
+            <div class="edit-step"><img src="https://lf3-static.bytednsdoc.com/obj/eden-cn/slnhi/ljhwZthlaukjlkulzlp/Bagelmni/image_gen_visualizations/image_edit31.png" alt="Before: cake"></div>
+            <div class="edit-arrow-wrap">
+              <span class="edit-arrow-icon">&#8594;</span>
+              <span class="edit-arrow-instruct">Add a candle on top of the cake.</span>
+            </div>
+            <div class="edit-step"><img src="https://lf3-static.bytednsdoc.com/obj/eden-cn/slnhi/ljhwZthlaukjlkulzlp/Bagelmni/image_gen_visualizations/image_edit32.png" alt="After: cake with candle"></div>
+          </div>
+
+          <!-- Case 4: photo filter -->
+          <div class="edit-chain">
+            <div class="edit-step"><img src="https://lf3-static.bytednsdoc.com/obj/eden-cn/slnhi/ljhwZthlaukjlkulzlp/Bagelmni/image_gen_visualizations/image_edit41.png" alt="Before: photo"></div>
+            <div class="edit-arrow-wrap">
+              <span class="edit-arrow-icon">&#8594;</span>
+              <span class="edit-arrow-instruct">Please help me add a filter suitable for this picture.</span>
+            </div>
+            <div class="edit-step"><img src="https://lf3-static.bytednsdoc.com/obj/eden-cn/slnhi/ljhwZthlaukjlkulzlp/Bagelmni/image_gen_visualizations/image_edit42.png" alt="After: filtered photo"></div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- Depth Estimation -->
+      <div class="sg-vis-block">
+        <div class="sg-vis-label">Depth Estimation</div>
+        <div class="depth-grid">
+          <div class="depth-item">
+            <img src="https://lf3-static.bytednsdoc.com/obj/eden-cn/slnhi/ljhwZthlaukjlkulzlp/Bagelmni/image_gen_visualizations/depth_rgb_1.png" alt="RGB Scene 1">
+            <div class="depth-item-label">RGB &mdash; Scene 1</div>
+          </div>
+          <div class="depth-item">
+            <img src="https://lf3-static.bytednsdoc.com/obj/eden-cn/slnhi/ljhwZthlaukjlkulzlp/Bagelmni/image_gen_visualizations/depth_pred_1.png" alt="Depth Scene 1">
+            <div class="depth-item-label">Depth &mdash; Scene 1</div>
+          </div>
+          <div class="depth-item">
+            <img src="https://lf3-static.bytednsdoc.com/obj/eden-cn/slnhi/ljhwZthlaukjlkulzlp/Bagelmni/image_gen_visualizations/depth_rgb_2.png" alt="RGB Scene 2">
+            <div class="depth-item-label">RGB &mdash; Scene 2</div>
+          </div>
+          <div class="depth-item">
+            <img src="https://lf3-static.bytednsdoc.com/obj/eden-cn/slnhi/ljhwZthlaukjlkulzlp/Bagelmni/image_gen_visualizations/depth_pred_2.png" alt="Depth Scene 2">
+            <div class="depth-item-label">Depth &mdash; Scene 2</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Novel View Synthesis -->
+      <div class="sg-vis-block">
+        <div class="sg-vis-label">Novel View Synthesis</div>
+        <div class="sg-vis-hint" style="text-align:center;margin-bottom:.9rem;line-height:1.7;">
+          The first image is the condition input; subsequent images are generated autoregressively.
+          Each step uses an instruct caption containing the camera pose template
+          <code style="font-size:.78em;background:rgba(120,100,240,.1);padding:.1em .4em;border-radius:3px;white-space:nowrap;">&lt;campose&gt;t<sub>x</sub> t<sub>y</sub> t<sub>z</sub> r<sub>x</sub> r<sub>y</sub> r<sub>z</sub>&lt;/campose&gt; &lt;fov&gt;fov<sub>h</sub>&lt;/fov&gt;&lt;fov&gt;fov<sub>w</sub>&lt;/fov&gt;</code>
+          — the six values give the translation and rotation of the next view relative to the current one, fov<sub>h</sub> and fov<sub>w</sub> are field of views in the vertical and horizontal directions.
+          The entire instruct, including all camera pose and FOV values, is encoded purely by the language tokenizer with no separate geometric encoder.
+          Hover over each image to see the full instruct prompt used to generate the next view.
+        </div>
+        <div class="nvs-scenes">
+          <div class="nvs-scene">
+            <div class="nvs-scene-label">Scene A</div>
+            <div class="nvs-grid">
+              <div class="nvs-cell">
+                <img src="https://lf3-static.bytednsdoc.com/obj/eden-cn/slnhi/ljhwZthlaukjlkulzlp/Bagelmni/image_gen_visualizations/000_round000_0.jpg" alt="">
+                <div class="nvs-hover-caption">The relative camera pose from the next image to the current image is &lt;campose&gt;0.011252 0.099488 0.19671 -0.049303 -0.015919 0.002047&lt;/campose&gt; &lt;fov&gt;65&lt;/fov&gt;&lt;fov&gt;96&lt;/fov&gt;, generate the next image.</div>
+              </div>
+              <div class="nvs-cell">
+                <img src="https://lf3-static.bytednsdoc.com/obj/eden-cn/slnhi/ljhwZthlaukjlkulzlp/Bagelmni/image_gen_visualizations/000_round004_0.jpg" alt="">
+                <div class="nvs-hover-caption">The relative camera pose from the next image to the current image is &lt;campose&gt;-0.054978 0.182972 0.185104 -0.131286 -0.010527 -0.007159&lt;/campose&gt; &lt;fov&gt;65&lt;/fov&gt;&lt;fov&gt;96&lt;/fov&gt;, generate the next image.</div>
+              </div>
+              <div class="nvs-cell">
+                <img src="https://lf3-static.bytednsdoc.com/obj/eden-cn/slnhi/ljhwZthlaukjlkulzlp/Bagelmni/image_gen_visualizations/000_round008_0.jpg" alt="">
+                <div class="nvs-hover-caption">The relative camera pose from the next image to the current image is &lt;campose&gt;-0.088696 0.00953 0.157078 -0.05298 0.002812 -0.000716&lt;/campose&gt; &lt;fov&gt;65&lt;/fov&gt;&lt;fov&gt;96&lt;/fov&gt;, generate the next image.</div>
+              </div>
+              <div class="nvs-cell">
+                <img src="https://lf3-static.bytednsdoc.com/obj/eden-cn/slnhi/ljhwZthlaukjlkulzlp/Bagelmni/image_gen_visualizations/000_round011_0.jpg" alt="">
+              </div>
+            </div>
+          </div>
+          <div class="nvs-scene">
+            <div class="nvs-scene-label">Scene B</div>
+            <div class="nvs-grid">
+              <div class="nvs-cell">
+                <img src="https://lf3-static.bytednsdoc.com/obj/eden-cn/slnhi/ljhwZthlaukjlkulzlp/Bagelmni/image_gen_visualizations/016_round000_0.jpg" alt="">
+                <div class="nvs-hover-caption">The relative camera pose from the next image to the current image is &lt;campose&gt;-0.366414 -0.118678 0.246736 0.068828 0.178609 0.192226&lt;/campose&gt; &lt;fov&gt;65&lt;/fov&gt;&lt;fov&gt;96&lt;/fov&gt;, generate the next image.</div>
+              </div>
+              <div class="nvs-cell">
+                <img src="https://lf3-static.bytednsdoc.com/obj/eden-cn/slnhi/ljhwZthlaukjlkulzlp/Bagelmni/image_gen_visualizations/016_round004_0.jpg" alt="">
+                <div class="nvs-hover-caption">The relative camera pose from the next image to the current image is &lt;campose&gt;-0.334792 -0.095082 0.187188 0.118345 0.204825 0.225027&lt;/campose&gt; &lt;fov&gt;65&lt;/fov&gt;&lt;fov&gt;96&lt;/fov&gt;, generate the next image.</div>
+              </div>
+              <div class="nvs-cell">
+                <img src="https://lf3-static.bytednsdoc.com/obj/eden-cn/slnhi/ljhwZthlaukjlkulzlp/Bagelmni/image_gen_visualizations/016_round008_0.jpg" alt="">
+                <div class="nvs-hover-caption">The relative camera pose from the next image to the current image is &lt;campose&gt;0.068664 0.046758 0.156604 0.041073 -0.020259 -0.039201&lt;/campose&gt; &lt;fov&gt;65&lt;/fov&gt;&lt;fov&gt;96&lt;/fov&gt;, generate the next image.</div>
+              </div>
+              <div class="nvs-cell">
+                <img src="https://lf3-static.bytednsdoc.com/obj/eden-cn/slnhi/ljhwZthlaukjlkulzlp/Bagelmni/image_gen_visualizations/016_round011_0.jpg" alt="">
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Video Generation — always visible -->
+    <div id="sc-videogen" class="showcase-group">
+      <h3>Video Generation &amp; Editing</h3>
+      <p class="sg-desc"><span class="brand-word"><img src="https://lf3-static.bytednsdoc.com/obj/eden-cn/slnhi/ljhwZthlaukjlkulzlp/Bagelmni/omni-o-bagel.png" alt="O" class="brand-bagel" />mni</span> handles diverse video generation tasks in a single unified model: generating from text prompts or reference images, composing specified subjects into new scenes, and applying instruction-based edits — all with high temporal consistency.</p>
+
+      <!-- T2V -->
+      <div class="sg-vis-block">
+        <div class="sg-vis-label">Text-to-Video</div>
+        <div class="sg-vis-hint" style="text-align:center;margin-bottom:.75rem;">Hover over a video to see its text prompt</div>
+        <div class="vgen-grid-4">
+          <div class="vgen-item">
+            <video src="https://lf3-static.bytednsdoc.com/obj/eden-cn/slnhi/ljhwZthlaukjlkulzlp/Bagelmni/video_gen_visualizations/T2V_1.mp4" autoplay loop muted playsinline></video>
+            <div class="vgen-hover-caption">A fluffy gray domestic cat laps water from a blue ceramic bowl on a sunlit wooden floor. The camera holds a steady close-up, capturing the cat's gentle movements and small ripples forming in the water as it drinks.</div>
+          </div>
+          <div class="vgen-item">
+            <video src="https://lf3-static.bytednsdoc.com/obj/eden-cn/slnhi/ljhwZthlaukjlkulzlp/Bagelmni/video_gen_visualizations/T2V_2.mp4" autoplay loop muted playsinline></video>
+            <div class="vgen-hover-caption">A beautiful coastal beach in spring, waves lapping on sand, zoom out.</div>
+          </div>
+          <div class="vgen-item">
+            <video src="https://lf3-static.bytednsdoc.com/obj/eden-cn/slnhi/ljhwZthlaukjlkulzlp/Bagelmni/video_gen_visualizations/T2V_3.mp4" autoplay loop muted playsinline></video>
+            <div class="vgen-hover-caption">酒吧里，一只长毛猫坐在桌子前，面前一杯啤酒，两个爪子端起酒杯对着屏幕敬酒。</div>
+          </div>
+          <div class="vgen-item">
+            <video src="https://lf3-static.bytednsdoc.com/obj/eden-cn/slnhi/ljhwZthlaukjlkulzlp/Bagelmni/video_gen_visualizations/T2V_4.mp4" autoplay loop muted playsinline></video>
+            <div class="vgen-hover-caption">穿着白色长上衣，深蓝色裤子，拟人化的马，在办公室内的工位，疲惫的葛优瘫在椅子上，放下手臂，眼睛在看电脑。皮克斯风格，侧面90度视角，广角。</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- I2V -->
+      <div class="sg-vis-block">
+        <div class="sg-vis-label">Image-to-Video</div>
+        <div class="sg-vis-hint" style="text-align:center;margin-bottom:.75rem;">First frame is the condition image</div>
+        <div class="vgen-grid-4">
+          <div class="vgen-item"><video src="https://lf3-static.bytednsdoc.com/obj/eden-cn/slnhi/ljhwZthlaukjlkulzlp/Bagelmni/video_gen_visualizations/i2v_1.mp4" autoplay loop muted playsinline></video></div>
+          <div class="vgen-item"><video src="https://lf3-static.bytednsdoc.com/obj/eden-cn/slnhi/ljhwZthlaukjlkulzlp/Bagelmni/video_gen_visualizations/i2v_2.mp4" autoplay loop muted playsinline></video></div>
+          <div class="vgen-item i2v-crop"><video src="https://lf3-static.bytednsdoc.com/obj/eden-cn/slnhi/ljhwZthlaukjlkulzlp/Bagelmni/video_gen_visualizations/i2v_3.mp4" autoplay loop muted playsinline></video></div>
+          <div class="vgen-item i2v-crop"><video src="https://lf3-static.bytednsdoc.com/obj/eden-cn/slnhi/ljhwZthlaukjlkulzlp/Bagelmni/video_gen_visualizations/i2v_4.mp4" autoplay loop muted playsinline></video></div>
+        </div>
+      </div>
+
+      <!-- S2V -->
+      <div class="sg-vis-block">
+        <div class="sg-vis-label">Subject-to-Video</div>
+        <div class="s2v-vertical">
+          <div class="s2v-instruct">
+            <div class="s2v-instruct-label">Prompt</div>
+            In a serene park setting, a young person with pink hair is seated on a stone bench, engrossed in handling a vintage camera. Surrounding her are tall trees with purple foliage, hinting at the onset of autumn with fallen leaves scattered on the ground. Parked cars line the distant background, subtly blending into the serene environment. The person, dressed in a floral blouse and stylish green high-waisted pants, appears focused on preparing the camera, adjusting its settings diligently. The scene captures a moment of quiet reflection intermixed with the vintage charm of analog photography.
+          </div>
+          <div class="s2v-row">
+            <div class="s2v-subjects-col">
+              <img src="https://lf3-static.bytednsdoc.com/obj/eden-cn/slnhi/ljhwZthlaukjlkulzlp/Bagelmni/video_gen_visualizations/s2v_input.jpg" alt="Reference subjects">
+              <div class="s2v-subjects-label">Reference Subjects</div>
+            </div>
+            <div class="s2v-video-col">
+              <video src="https://lf3-static.bytednsdoc.com/obj/eden-cn/slnhi/ljhwZthlaukjlkulzlp/Bagelmni/video_gen_visualizations/s2v_output.mp4" autoplay loop muted playsinline></video>
+              <div class="s2v-subjects-label">Generated Video</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Edit -->
+      <div class="sg-vis-block">
+        <div class="sg-vis-label">Video Editing</div>
+        <div class="edit-cases">
+
+          <!-- Case 1: ibises → drones -->
+          <div class="edit-chain">
+            <div class="edit-step"><video src="https://lf3-static.bytednsdoc.com/obj/eden-cn/slnhi/ljhwZthlaukjlkulzlp/Bagelmni/video_gen_visualizations/edit_11.mp4" autoplay loop muted playsinline></video></div>
+            <div class="edit-arrow-wrap">
+              <span class="edit-arrow-icon">&#8594;</span>
+              <span class="edit-arrow-instruct">Replace the white ibises with drones and change pecking to scanning.</span>
+            </div>
+            <div class="edit-step"><video src="https://lf3-static.bytednsdoc.com/obj/eden-cn/slnhi/ljhwZthlaukjlkulzlp/Bagelmni/video_gen_visualizations/edit_12.mp4" autoplay loop muted playsinline></video></div>
+          </div>
+
+          <!-- Case 2: remove backpack -->
+          <div class="edit-chain">
+            <div class="edit-step"><video src="https://lf3-static.bytednsdoc.com/obj/eden-cn/slnhi/ljhwZthlaukjlkulzlp/Bagelmni/video_gen_visualizations/edit_21.mp4" autoplay loop muted playsinline></video></div>
+            <div class="edit-arrow-wrap">
+              <span class="edit-arrow-icon">&#8594;</span>
+              <span class="edit-arrow-instruct">Remove the backpack from the man.</span>
+            </div>
+            <div class="edit-step"><video src="https://lf3-static.bytednsdoc.com/obj/eden-cn/slnhi/ljhwZthlaukjlkulzlp/Bagelmni/video_gen_visualizations/edit_22.mp4" autoplay loop muted playsinline></video></div>
+          </div>
+
+          <!-- Case 3: dog — original in centre, two parallel edits on sides -->
+          <div class="edit-chain">
+            <div class="edit-step"><video src="https://lf3-static.bytednsdoc.com/obj/eden-cn/slnhi/ljhwZthlaukjlkulzlp/Bagelmni/video_gen_visualizations/edit_42.mp4" autoplay loop muted playsinline></video></div>
+            <div class="edit-arrow-wrap">
+              <span class="edit-arrow-icon">&#8592;</span>
+              <span class="edit-arrow-instruct">Replace the real dog with a plush dog.</span>
+            </div>
+            <div class="edit-step"><video src="https://lf3-static.bytednsdoc.com/obj/eden-cn/slnhi/ljhwZthlaukjlkulzlp/Bagelmni/video_gen_visualizations/edit_41.mp4" autoplay loop muted playsinline></video></div>
+            <div class="edit-arrow-wrap">
+              <span class="edit-arrow-icon">&#8594;</span>
+              <span class="edit-arrow-instruct">Add sunglasses to the dog.</span>
+            </div>
+            <div class="edit-step"><video src="https://lf3-static.bytednsdoc.com/obj/eden-cn/slnhi/ljhwZthlaukjlkulzlp/Bagelmni/video_gen_visualizations/edit_43.mp4" autoplay loop muted playsinline></video></div>
+          </div>
+
+        </div>
+      </div>
+
+    </div>
+
+    <!-- World Navigation — always visible -->
+    <div id="sc-worldnav" class="showcase-group">
+      <h3>World Navigation</h3>
+      <p class="sg-desc"><span class="brand-word"><img src="https://lf3-static.bytednsdoc.com/obj/eden-cn/slnhi/ljhwZthlaukjlkulzlp/Bagelmni/omni-o-bagel.png" alt="O" class="brand-bagel" />mni</span> predicts the next first-person or third-person views from discrete action text inputs — no separate policy network required. Trained on diverse video navigation data, the model develops precise action control and internalizes fundamental physical laws: objects carry inertia, characters obey gravity, and solid boundaries enforce collision constraints. These behaviors emerge naturally from unified multimodal training rather than explicit physics simulation.</p>
+
+      <p class="sg-key-legend">
+        <span class="key-group"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><span class="key-label">Camera movement</span></span>
+        <span class="key-group"><kbd>↑</kbd><kbd>↓</kbd><kbd>←</kbd><kbd>→</kbd><span class="key-label">View rotation</span></span>
+        <span class="key-group"><kbd>Space</kbd><span class="key-label">Jump</span></span>
+      </p>
+
+      <div class="nav-physics-grid">
+
+        <!-- Inertia -->
+        <div class="nav-physics-card">
+          <video src="https://lf3-static.bytednsdoc.com/obj/eden-cn/slnhi/ljhwZthlaukjlkulzlp/Bagelmni/world_nav_visualizations/inertia.mp4" autoplay loop muted playsinline></video>
+          <div class="nav-physics-body">
+            <span class="nav-physics-tag">Inertia</span>
+            <div class="nav-physics-title">Momentum Persistence on Water</div>
+            <div class="nav-physics-desc">Even after the forward action is released, the boat continues gliding — the model has learned that momentum persists in the absence of resistance, faithfully following inertia in a dynamic aquatic environment.</div>
+          </div>
+        </div>
+
+        <!-- Gravity & Swimming -->
+        <div class="nav-physics-card">
+          <video src="https://lf3-static.bytednsdoc.com/obj/eden-cn/slnhi/ljhwZthlaukjlkulzlp/Bagelmni/world_nav_visualizations/swimming_fall.mp4" autoplay loop muted playsinline></video>
+          <div class="nav-physics-body">
+            <span class="nav-physics-tag">Gravity &amp; Buoyancy</span>
+            <div class="nav-physics-title">Gravity-Driven Fall &amp; Swimming</div>
+            <div class="nav-physics-desc">After jumping, the character arcs upward and naturally falls back under gravity.</div>
+          </div>
+        </div>
+
+        <!-- Collision outdoor -->
+        <div class="nav-physics-card">
+          <video src="https://lf3-static.bytednsdoc.com/obj/eden-cn/slnhi/ljhwZthlaukjlkulzlp/Bagelmni/world_nav_visualizations/Collision_jump_outdoor.mp4" autoplay loop muted playsinline></video>
+          <div class="nav-physics-body">
+            <span class="nav-physics-tag">Collision</span>
+            <div class="nav-physics-title">Obstacle Collision &amp; Jumping (Outdoor)</div>
+            <div class="nav-physics-desc">In an open outdoor scene, forward movement halts upon contact solid structures, demonstrating physically coherent collision response in unstructured environments.</div>
+          </div>
+        </div>
+
+        <!-- Collision indoor -->
+        <div class="nav-physics-card">
+          <video src="https://lf3-static.bytednsdoc.com/obj/eden-cn/slnhi/ljhwZthlaukjlkulzlp/Bagelmni/world_nav_visualizations/Collision_indoor.mp4" autoplay loop muted playsinline></video>
+          <div class="nav-physics-body">
+            <span class="nav-physics-tag">Collision</span>
+            <div class="nav-physics-title">Indoor Spatial Constraint Navigation</div>
+            <div class="nav-physics-desc">Navigating a structured indoor space, the agent consistently stops when approaching walls. The model infers solid geometry purely from visual context, enforcing physically plausible movement constraints without any explicit collision map.</div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ CITATION ═══ -->
+<section id="citation">
+  <div class="wrap">
+    <h2 class="section-title" style="font-size:1.5rem;">Cite this work</h2>
+    <div class="code-wrap" id="cite-block"><button class="copy-btn" onclick="copyCite()">Copy</button><span class="p">@article{</span>yang2026omni<span class="p">,</span>
+  <span class="k">title</span><span class="p">=</span><span class="v">{Context Unrolling in Omni Models}</span><span class="p">,</span>
+  <span class="k">author</span><span class="p">=</span><span class="v">{Yang, Ceyuan and Lin, Zhijie and Zhao, Yang and Xiao, Fei and He, Hao and Zhao, Qi and Deng, Chaorui and Li, Kunchang and Ding, Zihan and Guo, Yuwei and Wang, Fuyun and Zhu, Fangqi and Nie, Xiaonan and Zhu, Shenhan and Lin, Shanchuan and Li, Hongsheng and Huang, Weilin and Shi, Guang and Fan, Haoqi}</span><span class="p">,</span>
+  <span class="k">journal</span><span class="p">=</span><span class="v">{arXiv preprint arXiv:2604.21921}</span><span class="p">,</span>
+  <span class="k">year</span><span class="p">=</span><span class="v">{2026}</span>
+<span class="p">}</span></div>
+  </div>
+</section>
+
+<!-- ═══ FOOTER ═══ -->
+<footer>
+  <p>&#169; 2026 ByteDance Seed &nbsp;&middot;&nbsp; Omni Project</p>
+</footer>
+
+<!-- ═══ SCRIPTS ═══ -->
+<script>
+  // ── Theme toggle ──
+  function toggleTheme() {
+    const html = document.documentElement;
+    const isDark = html.getAttribute('data-theme') === 'dark';
+    const next = isDark ? 'light' : 'dark';
+    html.setAttribute('data-theme', next);
+    try { localStorage.setItem('omni-theme', next); } catch(e) {}
+    const btn = document.getElementById('theme-toggle');
+    if (btn) btn.setAttribute('aria-label', isDark ? 'Switch to dark mode' : 'Switch to light mode');
+  }
+
+  function copyCite() {
+    const text = `@article{yang2026omni,
+  title={Context Unrolling in Omni Models},
+  author={Yang, Ceyuan and Lin, Zhijie and Zhao, Yang and Xiao, Fei and He, Hao and Zhao, Qi and Deng, Chaorui and Li, Kunchang and Ding, Zihan and Guo, Yuwei and Wang, Fuyun and Zhu, Fangqi and Nie, Xiaonan and Zhu, Shenhan and Lin, Shanchuan and Li, Hongsheng and Huang, Weilin and Shi, Guang and Fan, Haoqi},
+  journal={arXiv preprint arXiv:2604.21921},
+  year={2026}
+}`;
+    navigator.clipboard.writeText(text).then(() => {
+      const btn = document.querySelector('.copy-btn');
+      btn.textContent = 'Copied!';
+      setTimeout(() => btn.textContent = 'Copy', 2000);
+    });
+  }
+
+  /* ── Contextual header nav ──
+     Header appears only when inside a section that has a sub-nav.
+     Sub-nav links are highlighted based on which anchor is currently in view. */
+  const headerEl = document.getElementById('site-header');
+  const SUB_NAV_SECTIONS = ['unrolling', 'benchmarks', 'showcase'];
+
+  function updateNavState() {
+    const scrollY = window.scrollY;
+    const viewMid = scrollY + window.innerHeight * 0.38;
+
+    // Find which sub-nav section the viewport midpoint is inside
+    let active = null;
+    for (const id of SUB_NAV_SECTIONS) {
+      const el = document.getElementById(id);
+      if (!el) continue;
+      const rect = el.getBoundingClientRect();
+      const elTop = rect.top + scrollY;
+      if (viewMid >= elTop && viewMid < elTop + rect.height) {
+        active = id;
+        break;
+      }
+    }
+
+    // Toggle each sub-nav; update active link within the active sub-nav
+    SUB_NAV_SECTIONS.forEach(id => {
+      const navEl = document.getElementById(`sub-nav-${id}`);
+      if (!navEl) return;
+      const isCurrentSection = id === active;
+      navEl.classList.toggle('visible', isCurrentSection);
+
+      if (isCurrentSection) {
+        // Highlight the last anchor whose offsetTop is above viewMid
+        const links = navEl.querySelectorAll('a');
+        let activeLink = links[0] || null;
+        links.forEach(link => {
+          const targetId = link.getAttribute('href').slice(1);
+          const targetEl = document.getElementById(targetId);
+          if (targetEl && targetEl.getBoundingClientRect().top + scrollY <= viewMid) {
+            activeLink = link;
+          }
+        });
+        links.forEach(a => a.classList.remove('active'));
+        if (activeLink) activeLink.classList.add('active');
+      } else {
+        navEl.querySelectorAll('a').forEach(a => a.classList.remove('active'));
+      }
+    });
+
+    // Show/hide the header itself
+    headerEl.classList.toggle('nav-visible', active !== null);
+  }
+
+  window.addEventListener('scroll', updateNavState, { passive: true });
+  window.addEventListener('resize', updateNavState);
+  updateNavState(); // run on load
+
+  // ── Qualitative Results Carousel (fade) ──
+  (function() {
+    const track = document.getElementById('carousel-track');
+    if (!track) return;
+    const slides = Array.from(track.querySelectorAll('.carousel-slide'));
+    const dotsEl  = document.getElementById('carousel-dots');
+    const dots    = dotsEl ? Array.from(dotsEl.querySelectorAll('.carousel-dot')) : [];
+    let cur = 0;
+
+    // Activate first slide
+    slides[0].classList.add('active');
+
+    function go(n) {
+      slides[cur].classList.remove('active');
+      cur = ((n % slides.length) + slides.length) % slides.length;
+      slides[cur].classList.add('active');
+      dots.forEach((d, i) => d.classList.toggle('active', i === cur));
+    }
+
+    window.moveCarousel = dir => go(cur + dir);
+    window.gotoSlide    = n   => go(n);
+
+    // Touch / swipe support
+    let startX = 0;
+    track.addEventListener('touchstart', e => { startX = e.touches[0].clientX; }, {passive: true});
+    track.addEventListener('touchend',   e => {
+      const dx = e.changedTouches[0].clientX - startX;
+      if (Math.abs(dx) > 40) go(cur + (dx < 0 ? 1 : -1));
+    }, {passive: true});
+
+    // Keyboard when carousel is in view
+    document.addEventListener('keydown', e => {
+      const rect = track.getBoundingClientRect();
+      if (rect.top < window.innerHeight && rect.bottom > 0) {
+        if (e.key === 'ArrowRight') go(cur + 1);
+        if (e.key === 'ArrowLeft')  go(cur - 1);
+      }
+    });
+  })();
+
+  // ── Custom video player + edit-chain sync ──
+  (function () {
+    function fmt(s) {
+      s = isFinite(s) ? Math.floor(s) : 0;
+      return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+    }
+
+    function wrapVideo(vid) {
+      const wrapper = document.createElement('div');
+      wrapper.className = 'vid-player';
+
+      vid.parentNode.insertBefore(wrapper, vid);
+      wrapper.appendChild(vid);
+
+      // Build control bar
+      const ctrl = document.createElement('div');
+      ctrl.className = 'vid-controls';
+
+      const btn = document.createElement('button');
+      btn.className = 'vid-play-btn';
+      btn.innerHTML = '⏸';
+
+      const seek = document.createElement('input');
+      seek.type = 'range';
+      seek.className = 'vid-seek';
+      seek.min = 0; seek.max = 1000; seek.step = 1; seek.value = 0;
+
+      const time = document.createElement('span');
+      time.className = 'vid-time';
+      time.textContent = '0:00';
+
+      ctrl.append(btn, seek, time);
+      wrapper.appendChild(ctrl);
+
+      // Play / pause button
+      btn.addEventListener('click', e => {
+        e.stopPropagation();
+        vid.paused ? vid.play() : vid.pause();
+      });
+      vid.addEventListener('play',  () => { btn.innerHTML = '⏸'; wrapper.classList.remove('is-paused'); });
+      vid.addEventListener('pause', () => { btn.innerHTML = '▶'; wrapper.classList.add('is-paused'); });
+
+      // Progress bar update
+      function refreshSeek() {
+        if (!seek._dragging && vid.duration) {
+          seek.value = (vid.currentTime / vid.duration) * 1000;
+          time.textContent = fmt(vid.currentTime) + ' / ' + fmt(vid.duration);
+        }
+      }
+      vid.addEventListener('timeupdate', refreshSeek);
+      vid.addEventListener('loadedmetadata', () => {
+        time.textContent = '0:00 / ' + fmt(vid.duration);
+      });
+
+      // Scrubbing
+      seek.addEventListener('pointerdown', () => { seek._dragging = true; });
+      window.addEventListener('pointerup', () => { seek._dragging = false; });
+      seek.addEventListener('input', () => {
+        if (vid.duration) vid.currentTime = (seek.value / 1000) * vid.duration;
+      });
+
+      return { vid, wrapper, seek, time };
+    }
+
+    // Init all videos
+    const players = Array.from(document.querySelectorAll('video')).map(wrapVideo);
+
+    // Edit-chain sync: group players by their chain container
+    document.querySelectorAll('.edit-chain').forEach(chain => {
+      const group = players.filter(p => chain.contains(p.vid));
+      if (group.length < 2) return;
+
+      const leader = group[0].vid;
+      const followers = group.slice(1).map(p => p.vid);
+
+      // rAF-based continuous time sync (leader → followers)
+      (function syncLoop() {
+        if (!leader.paused && isFinite(leader.duration)) {
+          followers.forEach(v => {
+            if (Math.abs(v.currentTime - leader.currentTime) > 0.08)
+              v.currentTime = leader.currentTime;
+          });
+        }
+        requestAnimationFrame(syncLoop);
+      })();
+
+      // Play / pause sync
+      leader.addEventListener('play',  () => followers.forEach(v => v.paused && v.play()));
+      leader.addEventListener('pause', () => followers.forEach(v => !v.paused && v.pause()));
+      followers.forEach(v => {
+        v.addEventListener('play',  () => { if (leader.paused) leader.play(); });
+        v.addEventListener('pause', () => { if (!leader.paused) leader.pause(); });
+      });
+
+      // Seek any → sync all in chain
+      group.forEach(({ vid: v, seek }) => {
+        seek.addEventListener('input', () => {
+          group.forEach(p => { if (p.vid !== v && p.vid.duration) p.vid.currentTime = v.currentTime; });
+        });
+      });
+
+      // Keep follower seek bars in sync with leader's timeupdate
+      leader.addEventListener('timeupdate', () => {
+        group.slice(1).forEach(({ seek: s, time: t, vid: v }) => {
+          if (!s._dragging && v.duration) {
+            s.value = (leader.currentTime / v.duration) * 1000;
+            t.textContent = fmt(leader.currentTime) + ' / ' + fmt(v.duration);
+          }
+        });
+      });
+    });
+  })();
+</script>
+
+</body>
+</html>

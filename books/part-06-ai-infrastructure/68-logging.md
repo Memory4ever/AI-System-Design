@@ -33,6 +33,8 @@ schema_version
 
 Message 用于人类理解，字段用于机器聚合。若字段语义随代码版本漂移，dashboard 与 audit query 会静默失真，因此 schema 也需要 version。
 
+Schema 可查不等于日志足以诊断，像开发者原有日志也不等于更有用。一个离线插桩分支让模型只提议带插入行号的日志清单，重插原程序后先过编译，再让 critic 依据实际运行日志提出 traceability、state visibility 与 causal-linkage 的缺口，有界增删日志并重验；评价检查有源码时的定位/修复与无源码时的定位，而非只测日志文本相似度。[ReLog 的受限对照](https://arxiv.org/html/2603.29122v1)支持这个效用接口，critic 的“足够”仍非因果真值，原逻辑不被重生成也不保证插桩无副作用或时序扰动。五轮上限、复跑/编译、日志生成和诊断判分都付费；311/225个Java故障人口与语义等价判分不认证开放环境、等预算净收益或production安全。执行不可复现、代理未校准或日志暴露敏感信息时，保留原结构化日志、定点人工插桩与独立测试/排障，不由较高诊断F1批准在线自动改程序。<!-- source-family:SF-2026-ARXIV-2603-29122 -->
+
 ## 三类日志不能混用
 
 | 类型 | 目的 | 典型保留与访问 |
@@ -157,3 +159,5 @@ Logging 把系统状态转换、错误和政策决策保留下来。可靠日志
 - NIST Privacy Framework: https://www.nist.gov/privacy-framework
 - PyTorch Flight Recorder（collective timeout 的 participant-local failure snapshot）:
   https://pytorch.org/blog/flight-recorder-debugging-tools-for-collectives/
+
+- `SF-2026-ARXIV-2603-29122` — Daily2026-04-02补04-01；[ReLog exact-v1](https://arxiv.org/html/2603.29122v1)必要§3–5/7，2+1+2=5；developer-log gold与source-visible/indirect诊断效用分账，log-list/compiler/critic有界迭代。保311/225人口、5轮、修复equivalence判分未充分独立、删组件非等预算及全部日志/运行/判断费用，非production插桩安全或程序语义不变证明；未核代码或复现。

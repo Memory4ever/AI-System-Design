@@ -40,6 +40,10 @@ Vocabulary token 是 action，prefix 是 state，EOS 或 max length 结束 traje
 J(theta) = E_(tau ~ pi_theta)[R(tau)]
 ```
 
+这一目标适合反复部署的 policy；若交付物变为“在单个可验证问题上找到一次最好的解”，最大样本 reward 与平均 policy return 就不再是同一目标。一个受限分支用 `log E_a[exp(beta(s) R(s,a))]` 强调高 reward 尾部，按当前起始 state 调节 beta，再以子节点的最大 reward 而非均值选择复用的解状态。它同时改变训练偏好与搜索起点：复用历史 artifact 延长有效修改链，不代表获得可反复部署、跨状态稳健的 policy；下文仍以普通期望目标解释 PPO。<!-- source-family:SF-2026-ARXIV-2601-16175 -->
+
+[必要方法与同采样对照](https://arxiv.org/html/2601.16175v1#S3)只支持可信、连续可测 reward 下的适应性目标分支，GPU kernel 例证须先通过 correctness/timeout evaluator。beta 过大早期不稳定、过小后期改进信号消失，max-child 也依赖历史状态与探索预算；LoRA 更新、重复执行、远端评价和 artifact 保存均付费，同 sampling 次数并不匹配总训练 compute，单 run 最佳 kernel 也不是统计支配或生产 SLO。reward 不可信、只关心复用 policy 或净预算不足时，保留 frozen-policy 搜索/普通期望优化和独立解验证，不由一次极值改写通用 RLHF 目标。
+
 Policy gradient 可写成：
 
 ```text
@@ -50,6 +54,12 @@ grad J(theta)
 若 `A_t > 0`，提高该 token 在该 state 下的概率；若 `A_t < 0`，降低其概率。Advantage 不是原始 reward，而是相对于 baseline 的“比预期好多少”。
 
 直接使用 terminal reward 会有高方差：同一 scalar 被传播到整个 response，无法区分哪些 tokens 真正造成结果。Value model 用 state 估计预期 return，提供 baseline。
+
+上式的score-function路径不要求沿动作坐标取得Q的梯度，因而仍适合离散token；连续控制若同时具有可微动作密度、可用的Q动作梯度及合法的支持/边界条件，还可先在动作空间提出概率质量的输运方向，再局部投影回参数化策略。[WPO的受限分支](https://arxiv.org/html/2505.00663v1)由此将“怎样移动动作分布”与“当前策略族怎样实现这次移动”分开，但理论Fisher逆投影不等于实践中对Gaussian均值/尺度梯度按variance重标的启发式，后者没有计算完整网络Fisher。另加旧策略到当前策略的KL只能缓解、不能保证阻止variance坍缩；replay中的旧state与当前重新抽取的action也有不同分布身份，不能合称无偏on-policy轨迹。此接口依赖critic梯度质量，有限步、神经近似和更高局部Q不认证真实return单调；密度/边界不适用、方差或质量失配时，保留原score-function、已验SAC/MPO路径及独立rollout评价。critic、混合导数、多action采样、投影近似、KL、环境交互与调参全部付费，受限控制对照不授离散LLM更新、全局保证或完整训练加速。<!-- source-family:SF-2025-ARXIV-2505-00663 -->
+
+随机更新还会改变动作之间的竞争顺序，而不只增加同一梯度估计的方差。在一个受限的 Gaussian bandit 连续模型中，令 `pi_a` 为动作概率，`gap_a` 为最优动作与动作 a 的平均 reward 差，`R` 为当前策略相对最优动作的即时期望 regret。最优动作与竞争动作的 logit 差，其漂移为 `eta * [pi_a * gap_a + (pi_best - pi_a) * R]`，其中 eta 是恒定学习率。两动作且存在唯一最优动作时，括号化为正值 `2 * pi_best * pi_a * gap_a`；多动作且最优动作概率已被噪声压低时，第二项却可能使相对漂移变负。提高最优动作自身的期望 logit，因而不等于及时恢复它相对于强竞争者的采样概率；探索预算与有限训练时域必须一起看，不能从渐近学习能力反推当前预算内一定脱离错误竞争状态。<!-- source-family:SF-2026-ARXIV-2603-10219 -->
+
+这条边界由[连续模型与 logit 差推导](https://arxiv.org/html/2603.10219v1#S3)支持：固定 Gaussian reward、tabular softmax、无 clipping、恒定学习率及指定初始化。作者去掉 action-sampling 随机性，并未证明其扩散近似给离散训练同样的 regret 保证；特殊多臂下界也不能移作通用 PPO 或 LLM 学习率公式。已知 gap、动作概率和噪声资格不可信时，应保留普通 rollout/critic 与较保守更新，独立监测采样概率和实际行为，不把理论步长当发布许可；更小步长延长所需更新时域，重新采样与诊断同样付费，本文没有验证真实训练总成本或 SLO。下面的 baseline 解决估计与归因问题，不凭自身消除上述竞争效应。
 
 ## Value、Return 与 Advantage
 
@@ -71,6 +81,22 @@ prompt-only Critic + policy revision
 policy 变化或 stochastic environment 会让 scalar baseline 过期。短 horizon 需要 step credit 时 token Critic 仍合理；
 group rollout 便宜且同 prompt variance 可测时 GRPO 仍合理。SPPO 的证据仅覆盖其 math/control contract，不是
 长时程 Agent 的通用方案。
+
+不另训练policy规模的critic，还可以用actor已有hidden state与entropy训练轻量value probe，但“来自模型自己”不能取消baseline的独立性条件。每题采两条独立rollout，让一条的baseline读取另一条的features；先用历史冻结probe形成stop-gradient advantage并更新actor，再以当前交叉reward训练probe和维护短buffer，才避免用当前受更新rollout的reward反向泄漏入它自己的baseline。[POISE的有限RLVR对照](https://arxiv.org/html/2605.07579v1)支持这个producer接口，不把raw score-function条件无偏扩大为clipped PPO、多inner epoch或token长度平均的完整保证。Probe预测误差、advantage方差和gradnorm也不是同一个降噪量，promptbatch/rollout数/训练步数齐变时不能只归probe。Hooks、buffer、probe与完整actor采样/训练均付费；policy漂移、独立性或校准失准时保留独立scalar/token critic、可信group baseline与真实rollout验收，不由较少sample或较低gradnorm签发稳定、无偏或通用credit。<!-- source-family:SF-2026-ARXIV-2605-07579 -->
+
+传统 scalar value head 在一次 forward 中直接估计 prefix return，延迟和训练路径简单；若它在受限长推理状态上持续失准，还可以保留语言建模 head，让 critic 先生成一段分析，再把解析出的 0～10 整数分除以 10 作为 value。这里新增的是估值计算路径，而不是给 actor 增加部署时推理；value 仍应表示沿当前 continuation policy 的预期 outcome，而非这段分析是否正确。显式条件可以附上 actor 的模型规模和近期训练成功率，再用当前 actor 的 sampled outcomes 更新 critic；能力 hint 不能代替 policy revision、真实目标和独立校准。一个具体流程以合成分析做格式冷启动、冻结 actor 时用 outcome 的平方误差奖励训练 critic，之后交替更新 actor 与 critic；按启发式分段的估值可广播至段内 token，但必须绑定实际读取的 prefix、广播到哪些 token states 与 return 定义，广播本身不证明逐 token 对齐、无偏 advantage 或因果 credit。<!-- source-family:SF-2026-ARXIV-2604-10701 -->
+
+这条分支以 critic 自回归生成、冷启动监督和额外训练换取更强的受限估值能力，并新增 score 解析失败、policy hint 过时与分析迎合监督等风险。[GenAC 的支持范围](https://arxiv.org/html/2604.10701v1#S5)是 Qwen3 数学训练、Monte Carlo continuation 估值和所列校准/排序对照；生成分析不证明解释忠实，较少 actor samples 也不代表总算力更少。其 FLOPs 是带分段长度和 prefix 复用假设的估算，且六个任务并非全部改善，不能签发通用 critic 更优或 wall-clock 加速。预算不合算、policy 改变后失准或解析不稳定时，保留一次 forward 的 scalar critic、真实 rollout 估值或 group baseline，并独立验收 actor outcome。<!-- source-family:SF-2026-ARXIV-2604-10701 -->
+
+多个client的策略面对不同transition时，共享critic表示不等于共享policy，更不等于把所有参数平均。一个[有条件的联学分支](https://arxiv.org/pdf/2605.14423v1)把value拆成跨client共同的特征子空间、本地线性head和本地actor：服务器只聚合子空间更新并重新正交化，本地head与actor保留各自身份。它还区分两份采样合同：critic读取原环境链，actor读取带初分布reset的伴随链，不能拿同一份任意replay替换二者。其分析要求已知有限特征、所有相关policy的value都精确落在共同低维子空间、统一探索/混合及跨client子空间覆盖；单时间尺度是步长保持固定比例，不是免除稳定条件。按轮数的主导收益还需随client数增加轨迹长度并控制高阶项，不认证固定总交互下的线性加速；非线性PPO迁移实验也不证明这些线性假设。两条采样链、可reset环境、通信/正交化、前期联学与迁移回归均付费。共享结构不成立、reset不可得或本地value失准时，保留独立critic/head与本地策略、真实rollout校准，不由共享维度较小批准异构任务间的行为保持。<!-- source-family:SF-2026-ARXIV-2605-14423 -->
+
+长轨迹若每次环境动作都有可核的dense反馈，critic也不必复制actor的整套语言模型：可让小型视觉网络读取每turn观察，回归该策略下的discounted return，再把turn advantage交给生成该动作的policy更新。此处value时间单位是环境交互，不是文字token，也不让当前frame自动成为完整Markov state。[必要游戏对照](https://arxiv.org/html/2605.00347v1)支持所测CNN critic相对critic-free分支的稳定作用，不证明所有长任务都需critic或小网络总够用；只保正advantage及其人口归一又改变目标，不能附带原无偏/安全保证。真实rollout、critic与完整actor训练、teacher冷启动都计费，多任务逆轨迹长度采样也须与真正难度/保留质量分验。观察不足、value漂移、负样本过滤损害行为或总费用不合适时，保留原token/turn critic、可信group baseline、更多真实状态支持与独立controller，不由局部进度提升批准通用Agent或物理执行。<!-- source-family:SF-2026-ARXIV-2605-00347 -->
+
+#### 同一昂贵状态的候选复用，不等于多条真实 Transition
+
+当在线状态来自延迟高、不能可靠 fork 的 GUI 环境时，每次实际动作都让环境进入下一状态，直接收集同状态的多条后续轨迹很贵。一条条件分支先用真实执行轨迹训练 action-value critic，再在已观察状态上由当前策略独立抽取多个候选动作，只用 critic 估值而不执行；每个候选的优势减去其余候选 Q 值的均值。它以更多 action 采样和 Q forward 换取较少环境交互，也省去单独的 state-value baseline，却没有获得这些候选的真实 transition 或扩大已观察 state 的覆盖。过程奖励与真实终局结果形成 critic target，二者的身份和误差仍须分开，不能把未执行动作的预测值当作环境真值。<!-- source-family:SF-2026-ARXIV-2604-07277 -->
+
+对固定 critic、同状态独立采样的普通 score-function 更新，leave-one-out baseline 不改变该 Q 代理的期望梯度；这不修正 critic 与真实 Q 的差异，也不消除 PPO clipping 的偏差。常数平移不变仅说明优势使用相对值，不足以证明完整梯度方差总会降低。[受限 GUI 对照](https://arxiv.org/html/2604.07277v1#S3)支持候选复用接口，收益仍受 critic 预训练、过程监督与部署外状态漂移限制；新增模型训练、采样、估值和 verifier 都计费，同在线 RL 时间预算不证明全部预处理费用已匹配。critic 失准、过程标签不可核或总预算不合算时，保留真实执行的 PPO；环境多 rollout 便宜时，也可保留不训练 critic 的 group baseline，而非让预测候选自签优化收益。<!-- source-family:SF-2026-ARXIV-2604-07277 -->
 
 Value model：
 
@@ -98,9 +124,13 @@ A_t^GAE
 
 `lambda` 在低方差、有偏估计与高方差、低偏估计之间折中。LLM RLHF 常有稀疏 terminal reward，并加入每 token KL shaping；具体 return construction 必须与实现一致。
 
+固定token时间的GAE无需额外边界判定，适合状态变化较均匀的轨迹；若希望减少段内反复引入intermediate value的影响，还可在rollout已采token的旧策略概率低于阈值时划界，让段内trace系数为1、跨界才用λ。在[SAE的受限定义](https://arxiv.org/html/2601.07320v1#S3)中γ=1、只有terminal binary outcome并明确终点value约定，仍递推每个token的`A_t=delta_t+lambda_t A_(t+1)`、保留一个flat critic，不是仅边界token接收更新，也不同于连续熵时间或下面换两value head的subgoal分支。采样token低概率只提供控制sensor，不证明真实语义转折或因果credit；阈值、rollout/checkpoint、return与critic状态须共同绑定，不能直接迁移到一般γ/KL shaping。uniform等长分段的误差上界不授动态边界实际bias或方差更低，端点各32次续写所得value差广播全段也只是构造的近似reference，不是真实逐token advantage。所测数学切片并非处处胜出，GRPO对照更新步数也不同；阈值校准、policy/critic与额外reference rollouts均付费，不能以相关性或较少衰减签发净收益。边界不稳、critic失准或总费不合算时，保留固定token GAE、普通PPO与独立outcome验收。<!-- source-family:SF-2026-ARXIV-2601-07320 -->
+
 GAE 把每个 token 当作同样长的一步，在中间状态信息量近似均匀时最简单；长推理中大量低不确定性 token 也会消耗折扣跨度，使末端奖励难回传到早期分叉。一个实验性分支以冻结旧策略的下一 token 熵作为局部“信息时间”代理，让折扣与 trace decay 按累计代理量而非裸 token 数推进，再按同一代理量调节 clipping；token state/action 没有消失，改变的是 credit horizon 与允许更新幅度。熵高不等于语义重要、真实因果贡献或正确答案，且代理随策略迭代需重算；这换取较少无效衰减，也增加全词表熵计算、归一化和更新稳定性负担。无法验证代理与任务关键转折相关、或固定时间 PPO 已稳定时，应保留普通 GAE 与固定 clip。现有分析依赖论文的信息密度/策略散度假设，实证只覆盖所测 Qwen3 数学 RLVR，不能外推任意长链、工具环境或在线对齐。<!-- semantic-body-binding:SF-2026-ARXIV-2609-24380 -->
 
 工具轨迹若已经按 subgoal 分段，credit 的时间单位还可以显式绑定执行边界，而不只改变 token 折扣。一个条件分支在段内用 low-level value 估计执行 advantage，在段尾改为 bootstrap 到下一边界的 high-level value；high-level 用该段累计 reward 与持续时间折扣评价 subgoal，switch 则比较继续旧 subgoal 与重新选择的 value。一个 actor 可以顺序输出 KEEP/SWITCH、subgoal 和 action，一个 critic backbone 也可以带两种 value head；这不是只把 Plan–Execute prompt 拆成两模型。[HiPER 的有限对照](https://arxiv.org/html/2602.16165v1#S4)支持 boundary-aware advantage 这条接口，但所证方差对象是同策略、exact value/Monte Carlo条件下的低层 advantage，不是完整 score-weighted gradient 的普遍方差下降；实际 λ 小于1与 learned critic仍有偏差。critic训练/显存、分段状态与switch正则都有成本，KEEP penalty也显著影响收益，较少optimizer steps不等端到端wallclock加速。subgoal边界不稳定、critic失准或额外状态不合算时，保留 flat GAE、普通 PPO 或无需critic的group baseline，不让显式层级自身充当正确 credit 的证明。<!-- source-family:SF-2026-ARXIV-2602-16165 -->
+
+Advantage 也可以从同批轨迹的目标可达性代理产生，而不先回归手工 reward 的 return：用当前轨迹的未来 observation 做 hindsight positive、其他轨迹做 negative，训练 state-action 与 goal encoder，再把所选 action 的负距离分数减去当前 policy 下 action 分数的均值，送入普通 PPO clipping。[CPPO 的有限对照](https://arxiv.org/html/2605.13554v1)支持这条 contrastive producer 分支，但它仍训练 Q-like proxy，不是 critic-free；负距离也不自动成为校准的 occupancy probability。离散 action 可全枚举均值，连续 action 要 Monte Carlo，所测连续任务反而落后；不能把差额唯一归因采样方差，更不由 clipping 得到硬 trust-region 或单调改进。Goal 与 hindsight 规则仍含人工设计，免 reward 不等免目标与 shaping 先验；更新顺序和 negative-set 身份未闭时不拼完整执行 recipe。Encoder、动作采样、rollout、调参及重复评估均计费，匹配环境步数不等全生命周期预算相同；目标不稳、代理失准或连续均值代价不合时，保留已验 reward、learned value 与 GAE，不让目标可达性分数替真实 outcome 和稳定 policy update 签字。<!-- source-family:SF-2026-ARXIV-2605-13554 -->
 
 Value model 也需要训练：
 
@@ -109,6 +139,8 @@ L_value(psi) = E[(V_psi(s_t) - R_target_t)^2]
 ```
 
 若 value estimate 很差，advantage 噪声会直接污染 policy update。
+
+估值误差需要控制，也不意味着所有 critic 都只应忠实拟合当前策略的 return。面对昂贵的未知环境交互，另一条探索分支共同选择 Q 与 policy：提高起始状态的预测价值，同时惩罚它们对已有转移的 Bellman 不一致；辅助回归项把数据可解释的误差与候选 Q 的额外误差分开。这是有意偏向高价值、又受观测约束的探索目标，不是普通 PPO baseline 自行变乐观。[VAC 的条件理论](https://arxiv.org/html/2506.22401v1)依赖函数类可实现性、Bellman 闭合与受控复杂度等假设，联合优化的 regret 界不自动属于实际神经网络的交替梯度步骤，更不等降低总训练时间。历史转移、辅助 critic、策略期望与探索均付费；函数支持、优化或真实 outcome 不合时，保留原 value 回归、已验探索和独立 rollout，不由一个更高的预测值签发策略进步。<!-- source-family:SF-2025-ARXIV-2506-22401 -->
 
 ### Final-only Reward 到 Temporally Coherent Prefix Value
 
@@ -194,9 +226,19 @@ rho_t(theta)
 
 当 `rho_t=1`，新旧策略对已采样 token 概率相同；`rho_t>1` 表示概率增大，`rho_t<1` 表示概率减小。
 
+旧概率还要说明来自哪条前向路径。同一weights版本的training policy与实际inference behavior可能因数值路径不同；总current/behavior比值可拆为current/历史training与历史training/behavior两项，分别观察版本陈旧和两栈差异。异步partial rollout若跨更新，保存behavior log-prob并不等于保存每段历史training log-prob。[Missing Old Logits的受限对照](https://arxiv.org/html/2605.12070v1#S4)比较保历史snapshot后重载、独立old-model求值、更新前中断partial rollout并补算三种精确路线，分别支付状态与IO、专用资源、同步停顿费用。若改用当前或平滑policy作proxy，两个因子虽仍代数相消，其单项已不再是纯staleness或纯train-infer discrepancy；由它们决定的mask和clip也会改变。EWMA参数平均不是历史policy分布的精确混合，经验reset阈值不是有效性证明；质量、版本归属或净费用失准时，保留可核历史density、收紧异步窗口或回同步rollout，不由可计算比值签发无偏更新与普遍稳定。<!-- source-family:SF-2026-ARXIV-2605-12070 -->
+
 这个写法要求能够计算 action 的 policy density。Categorical token 或显式 Gaussian action 很自然；flow/diffusion 这样的隐式连续策略则可以采样，却未必能便宜得到 marginal log-probability。一条条件性分支先从冻结 reference policy 采样 `a0`，再用可计算密度的 conditional Gaussian 生成 `a`；PPO ratio 在给定 `a0` 的条件分布上更新，随后用 flow matching 将 reference 与 conditional correction 的 marginal 重新蒸馏成下一轮可采样策略。由全期望得到的未裁剪收益恒等式解释了为何能保留复杂 reference 的表达，而不需要每轮累积所有历史 correction。<!-- source-family:arxiv:2603.04790v1 -->
 
 但全期望恒等不证明 conditional clipping 与 marginal clipping 等价，也不授迭代单调改进保证。实际 rollout policy、reference 与蒸馏后的策略可能不同，conditional entropy 也不是 marginal entropy；EMA、score regularization 与 fitting budget 都成为稳定性条件。CPPO 的受限连续控制实验显示 flow steps 不进入全部优化反向链，却仍增加采样、额外训练与拟合误差；作者 Ant 配置比 Gaussian PPO 慢约七成到一倍，不能当作无成本表达扩展。它不是离散 LLM policy 的现成替代；density 可得、预算有限或蒸馏不稳定时保留标准 PPO/Gaussian。 [机制与限制](https://arxiv.org/html/2603.04790v1)见 §3.1–3.3、§4.2/4.3 与 Appendix A/C。
+
+另一条连续动作分支不再为 flow policy 构造可计算的 conditional density ratio，而是从当前策略为同一 state 生成多个候选，让 critic 的相对值形成归一化软权重，再用候选端点与噪声之间的条件 flow-matching 回归拟合下一策略。这样训练保留多个候选，不必反传全部采样 solver 链；但[受限加权回归](https://arxiv.org/html/2603.17685v1)在交互和 critic backup 时仍选最高值候选，训练人口与真实执行消费者并不相同。共同高估、候选支持缺失和回归误差不会由 softmax 自动消失；它不是原 PPO ratio/clipping 的等价改写，也不直接替换离散 LLM policy。<!-- source-family:SF-2026-ARXIV-2603-17685 -->
+
+该选择把密度求值压力换成候选采样、critic 与回归预算，ODE 积分并未从交互路径消失。若另用 latent divergence 和 tanh Jacobian 修正调节探索，需分别核实际 flow 人口、线性训练插值人口和部署离散 solver：某点的 trace 无偏不保证真实策略熵已无偏，候选权重的集中度也不签发训练后策略的硬 trust region。原有限控制对照有任务和阶段反退、不同网络/候选/solver预算及最大 checkpoint 选择；全部采样、双 critic、trace 梯度、拟合与评价付费，不授免费表达扩展、单调改进或真实安全。密度可得、critic 或代理不稳时，保留显式 Gaussian/标准 PPO、独立结果验收与受限拟合，而不以坐标落界或更分散权重批准物理行动。<!-- source-family:SF-2026-ARXIV-2603-17685 -->
+
+隐式连续 policy 还可以用学习的平均 divergence 近似动作密度，再用两种 proposal 估计由 Q 诱导的 Boltzmann 目标分布下的速度场：一支来自当前策略，另一支来自显式 Gaussian，各自形成 self-normalized importance estimate，再按估计 ESS 提议混合。MeanFlow 的少步动作生成、Hutchinson/JVP divergence 训练与候选 Q 选择需要分别验收；有限步生成映射不自动等于连续 ODE 的精确密度，SNIS 的有限样本归一化也有偏。<!-- source-family:SF-2026-ARXIV-2604-14698 -->
+
+[MFPO 的必要连续控制对照](https://arxiv.org/html/2604.14698v1)支持这条有限近似分支，而非精确无偏或普遍最小方差保证。ESS 主要诊断权重退化，不代表任意被积函数的方差；由同批样本估出的随机混合权，不继承固定权且独立估计器的最优证明。受测两步、十候选仍慢于 Gaussian TD3/SAC，额外 divergence 训练、双 proposal、critic 与 rerank 都计费，步数不是完整速度。密度拟合、proposal 支持或总预算不可靠时，回显式 Gaussian/标准 PPO 与独立结果验收，不从 MeanFlow 投影误差或局部控制分数推出全局 soft policy improvement、LLM 策略或真实机器人安全。
 
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-07331:start -->
 逐 token ratio 只比较当前 action probability，不能直接表达更早 token 已改变当前 prefix state；把截至位置 `t` 的 ratios 累乘可更贴近 prefix-level policy shift，却让 log-ratio variance 随位置增长。PPO branch 因而要把 ratio granularity 与 position-adaptive clipping 一起版本化：后部 token 使用按校准长度增长的 log-space bound，并分别报告位置 clip rate。它以较低 state mismatch 换更高方差和长度敏感性；policy lag 过大、长序列比率爆炸或校准不足时，回退 token ratio、sequence ratio 或更频繁 rollout 同步。`arXiv:2605.07331v1` 只支持论文披露的任务、长度与训练设置，不证明任意长文本或异步 rollout 稳定。
@@ -210,6 +252,14 @@ N-step ratio 在单 token 与完整 prefix 累乘之间选择一个有限 horizo
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-20865:end -->
 
 若进一步从历史 policies 中选择可重用 rollout，admission 不应只看每条 importance ratio，也要看这些估计量共同形成的采样人口。可以先估计各历史 policy 的 likelihood-ratio gradient variance，再按阈值决定 reuse set；但平均后的方差还含跨历史估计量的 covariance，不能自动按集合大小同比下降。动作概率 ratio 也未修正 evolving-policy history 的 state occupancy，随机 downsampling 只改变抽样方式，不把已有历史变成独立数据。[VRER 的 exact-v1](https://arxiv.org/html/2602.05379v1)在有限控制任务中支持这种 variance-conditioned reuse 分支；moving-block bootstrap、KL/Adam-moment 近似各有混合与矩估计前提，buffer 增长还进入偏差和收敛条件，不授通用 LLM 收益或无偏保证。选择、KL、历史参数与重用计算都需计费；高相关、近似失真或旧数据退化时，应缩小 buffer、收紧 admission 或重新采样，普通短窗口 PPO 与更频繁同步仍是合理基线。<!-- source-family:SF-2026-ARXIV-2602-05379 -->
+
+重用旧rollout也可以只作为早期训练阶段，而不永久维持同一混合比例：在历史与fresh样本间分配预算、重复更新后，再显式清空历史池、转回fresh采样，并将正则anchor重置为交接时的policy。[受限混合策略分支](https://arxiv.org/html/2507.06892v1#S3)同时改变样本支持、更新次数与约束目标，不能把切阶段简化成只降低policy lag。每条trajectory的behavior概率、每批更新的起点policy与KL所用base/recentanchor是不同身份，重置后也不能替旧样本改写生成概率；双KL加权不是对一个混合分布的KL，clip或短历史不自动修好stateoccupancy与advantage估计。应独立验收交接前后质量、保留能力和全部生成/更新费用，较少rollout、较短回答或reflection词频不能自证净加速及稳定推理。额外history/logprob、critic/双anchor与回归均付费；漂移、模板或质量失配时，缩短重用窗口、保原reference并回普通fresh PPO/GRPO，不从有限阶段收益批准无偏、单调或无限训练稳定。
+
+<!-- source-family:SF-2025-ARXIV-2507-06892 -->
+
+重用历史还可以改变更新目标，而不只为 PPO 选择低方差旧策略。对离散语言模型，一条 value-based 替代分支把同一模型的 logits 当作 soft Q、其 log-sum-exp 当作 V，以起点 value 相对 reference 的偏移、整条 response 的 log-probability 差与已验证 outcome 构造 trajectory residual；FIFO 保留轨迹供当前模型重新求值，再对这个 residual 回归。这不是把旧 rollout 自动变成 on-policy，也不是原 clipped policy-gradient 的等价改写；完全同参数初始化且零 reward 时 residual 为零，只是初始一致性检查，不证明所有最优解唯一、value 校准或所有历史支持充分。<!-- source-family:SF-2026-ARXIV-2603-23355 -->
+
+[ReVal 的受限数学对照](https://arxiv.org/html/2603.23355v1#S4)把 fresh 与旧数据更新、reference 重置、reward 归一化和 β 共同带入训练合同：reference 重置改变锚点，零 reward 也不等显式压低错误答案；过弱/过强约束和不同负样本构造均可退化。部分任务低于 GRPO，重复更新预算、局部达到目标的步数与全训练 wall-clock 不能互代；原文 reward-shaping/Bellman 桥与 value 项反传说明尚未闭合，不能据此补造已验证执行配方。轨迹、reward/参考版本、重新求值、buffer 与额外更新及评价都计费，应分别验更新目标和真实 outcome；数据覆盖、偏移或实现不可靠时，缩小历史支持、重新采样并保留普通 PPO/GRPO，而不由可算 residual 自签收敛或净加速。
 
 朴素 surrogate objective：
 
@@ -269,6 +319,10 @@ Policy 已把坏 action 概率降低过多，objective 采用更保守的 `-1.60
 
 这两个例子说明不能只记“ratio 限制在 `[0.8,1.2]`”；必须结合 `min` 和 advantage sign 理解。
 
+若确实希望限制更新比率，另一条分支是先构造已归一的目标 policy，再拟合它，而不把 clipped surrogate 当投影。[BRRL/BPO 的有限定义](https://arxiv.org/html/2604.18578v1)用旧 policy 加权的 soft median 中心化真实 action value，经有界 tanh 得到目标比率，再用加权 TV 型目标拟合；归一依赖这个中心条件，普通组 median/std 不自动满足它。理想目标的界不等于参数网络拟合后的硬界，旧 occupancy、value 误差、覆盖和优化残差也不能消失；它与 PPO 的逐样本 min-surrogate 不是只差常数的同一函数，例如正 advantage、比率低于下界时，原 PPO 仍有增大概率的梯度。有限控制与小模型实验有收益及反退，不把 group 近似继承为任意多轮单调改进。目标估计、拟合、rollout 与回归均有成本；归一、覆盖或预算不成立时，保留普通 PPO/可靠 value 与独立结果验收，不由 bounded-target 名称认证实际 trust region。<!-- source-family:SF-2026-ARXIV-2604-18578 -->
+
+Clipping 的半径还可以按轨迹而不是固定为同一 ε：以当前 policy 的全词表 token 熵求轨迹均值，再在该 batch 内 min–max 归一化，结合 advantage sign 提议样本半径。[SWE-Fuse 的受限规则](https://arxiv.org/html/2603.07927v1)让正 advantage 的高熵轨迹采用较大半径，而非正 advantage 的高熵轨迹采用较小半径；不是“所有高熵样本都更宽”，也不同于前述冻结旧策略的局部信息时间。熵不是真实难度或正确性，batch 人口、退化的 min=max、策略 revision 与半径计算进入训练身份；entropy/ε 是否 detach 及最终 loss/guard 未披露，不能补成只缩放 gradient 的实现或参数 trust 硬界。该规则仍须回到 min-surrogate 与符号解释，不替代 reference KL；冷启动、模型规模与测试选择的联合对照没有独立隔离 clipping 因果，不能由终态 tests-pass 签发完整 patch 正确或无泄漏。全词表 entropy、轨迹与 batch 状态、teacher/sandbox、训练和全部候选测试均计费；代理或 outcome 失配时保留固定 clip、原有 baseline 与独立结果/污染核查，不由可变半径自动认证稳定收敛。<!-- source-family:SF-2026-ARXIV-2603-07927 -->
+
 ## KL penalty 与 PPO clipping 不是同一约束
 
 RLHF 常同时加入 reference policy KL：
@@ -311,6 +365,8 @@ L_total
 ```
 
 Reference KL 可以进入 reward shaping 或独立 loss。系数、normalization、masking 和 sign convention 依实现而异，阅读代码时必须先恢复数学定义。
+
+系数本身也可能需要反馈，但先区分熵正则的权重与生成时的采样温度：前者改变训练目标，后者改变采样分布。固定熵权重或围绕目标熵调节，在阶段稳定时更简单；一条受限的平均奖励 actor–critic 分支，改用近期奖励的时间自协方差估计策略适应的阻力，在波动持续时减慢熵权重退火。它改变调度器的观测量，不改变 reward 的真实性，也不是 PPO clipping 的替代。相关几何解释依赖策略近似平稳、混合与缓慢驱动；实际使用 replay 近期片段会混入旧策略，重新收集当前策略轨迹则增加成本。单个连续控制环境的五次实验不证明 LLM/PPO 更优，单调退火还可能妨碍重新探索；统计不稳或阶段变化时，应保留固定系数、目标熵反馈和独立质量对照，而非把理论路径当通用训练保证。<!-- source-family:SF-2026-ARXIV-2603-12324 --> [受限方法与证据](https://arxiv.org/html/2603.12324v1)。
 
 ## PPO 的一次训练迭代
 
@@ -438,6 +494,18 @@ PPO 把 policy rollout、advantage estimation 和受限更新组织成循环。P
 
 ## Review notes
 
+- `SF-2026-ARXIV-2605-12070` — Daily05-14补May13；exactv1 §3–6/B/H必要，3+2+2=7。只采historical training density/behavior分责、三精确恢复路线与proxy分解语义，保EWMA/reset启发式、mask/clip耦合、resource-ratio反退与完整费用；不授无偏或生产普遍收益，未核实现/复现。root实际必要Source/owner/A10逐字PRE已通过并授本单段/独立marker/本人注窄位；作者实际保存，非writer actualPOST待，不预支整合或DAY。 截至后续有效结论：root R6已实际非writer完整新正文/直接两侧/本人注POST通过，窄位释放；此前待核仅过程时态，本注只行政同步，不授DAY。
+
+- `SF-2026-ARXIV-2605-07579` — Daily2026-05-12补May11，POISE exact-v1必要§2–5/8/Alg1/B4–5，2+2+3=7。只采actor内部cross-rollout probe及冻结/更新时序，保独立性仅raw scorefunction、clipping/length/multiepoch不继承、batch/step/rollout混杂和4B反退；hooks/buffer/完整采样训练全费，未核代码/复现。reader Source/actual owner/逐字PRE通过，root单段窄授后保存，actual非writer POST待执行。 截至本轮后续有效结论：本项独立reader已实际完整新增/直接两侧/本人注非writer POST通过，root已接纳并释放指定窄位；此前“待”仅过程时态，本次纯行政同步、不重Source/正文、不预授DAY。
+
+- `SF-2026-ARXIV-2605-00347` — Daily2026-05-05补May04；[exact-v1](https://arxiv.org/html/2605.00347v1)，2+2+2=6，具体gap深入。必要Source/date/反侧见唯一SUP A20/R38；root C20实际owner完整邻接/逐字PRE通过，授单段与本人注。数学/实验边界及全费近正文，不授完整配方、普遍性能或安全；作者已保存，root C21非writer实际正文/完整局部及本人注POST通过，窄lease释放，不预签DAY；未核实现/复现。
+
+- `SF-2026-ARXIV-2603-12324` — Daily `2026-03-17`补03/16自然日；[exact-v1](https://arxiv.org/html/2603.12324v1) §2–5/Appendix A–B/Eq4–9/Algorithm1，2+1+2=5，近期reward时间自协方差调节熵系数观测量差额深入。root必要原证/实际owner及逐字一段PRE经resume_review17_18独核通过，resume_mar17不重复原证，仅顺读实际Ch32 278–350完整局部后依root窄锁落实。平均奖励ASAC/平稳混合慢驱动、replay偏差、五次单环境而非LLM/PPO、总成本/原系数回退近文；非writer resume_review17_18实际Ch32 310–347完整局部邻接及449–461本人455注回对已核PRE/必要Source，局部POST通过；更新本人注后最终定点回读待核，不授DAY、一般最优、artifact核验或复现。
+
+- `SF-2026-ARXIV-2601-16175` — Daily `2026-01-24`补查；[Learning to Discover at Test Time exact-v1](https://arxiv.org/html/2601.16175v1) §3/4.2/4.5，method与matched-sampling/无复用反侧。2+2+3=7，采用single-best artifact与期望policy return分责、adaptive entropic与max-child复用的条件目标；仅GPU kernel例证，不展开Science。50×512=25600，不采Fig4错分母256000；sampler/learner与总compute分账、可信reward及beta失效近文。root必要原证及actual Ch32 opening PRE通过授窄锁；作者实际正文/完整邻接/自身末注顺读，root非写入者实际35–74邻接与自身末注447 POST通过，窄锁释放，不授日级。未核artifact/复现。
+
+- `SF-2026-ARXIV-2601-07320` — Daily `2026-01-14`；[SAE exact-v1](https://arxiv.org/html/2601.07320v1) §3–5必要完整读；Eq5–10、Table1、§5.3.2/3与uniform theorem假设仅采用受限边界，非全附录证明。2+1+2=5，sampled-token概率二值trace gate相对固定GAE/连续entropy-time的字段差额深入。γ1/terminalbinary、flat单critic/逐token更新、低prob非语义/因果、uniform bound非动态保证、32×端点reference近似与AMC负侧/不同更新步数/全费保留近正文。root实际必要源与actual owner PRE通过授一短段窄锁；作者新正文与完整局部邻接已实际顺读，peer非writer实际新101/完整75–117/自身443注POST PASS，root采纳释放窄锁；未核artifact/复现，不授日级Gate。
+
 - `SF-2026-ARXIV-2602-16165` — Daily `2026-02-20`；[HiPER exact-v1](https://arxiv.org/html/2602.16165v1) Eq6–15/Th4.2–4.3、§5.3–5.4与AppA.3/C/D1–D2有限条件。2+2+2=6，segment boundary换value head的credit接口差额深入；advantage variance非完整gradient variance、critic误差/KEEP penalty/样本效率非wallclock保留近正文。root必要source/actual owner PRE通过授一段窄锁；作者正文/完整邻接已顺读，root实际正文/完整邻接/末注非作者POST通过，窄锁释放，未核实现或复现，非日级Gate。
 
 - Daily 2026-03-07：[CPPO exact-v1](https://arxiv.org/html/2603.04790v1) §3.1–3.3、AppendixA与§4.2–4.3。conditional Gaussian update与marginal flow蒸馏分责，全期望identity不证明clip等价；Isaac八任务五seed、Ant 1kepochs的4.68/8.05/9.31min与拟合代价保留，不采用免费PPO/通用LLM保证。root已实际核必要原文、两段正文及邻接，非作者POST通过；未复现实验。
@@ -474,3 +542,29 @@ Primary-source 校验入口：
 - `SF-2026-ARXIV-2607-25091` — Daily `2026-07-29`；primary `arXiv:2607.25091v1`；正文锚点“稳定算法之前，先验证三条更新链路”。
   证据限 70M–500M 模型与 250-step PPO，支持区分 adapter 可训练性、ratio 数值与 reward 判别三类故障，不给出大规模训练的通用阈值。
 <!-- daily-books-trace:SF-2026-ARXIV-2607-25091:end -->
+
+- `SF-2026-ARXIV-2603-10219` — Daily `2026-03-13`补查；[exact-v1](https://arxiv.org/html/2603.10219v1) §1、连续算法、Lemma7与Appendix D。2+1+2=5；root非准备者实际独核采用的多动作相对logit漂移、合法三动作例、两动作正漂移和未证明离散近似边界，Ch32具体差额/PRE通过。两段融入policy-gradient方差与baseline交接；不采用整套上下界为离散PPO保证，未核artifact或复现。mar13_supplement非writer实际新增、完整局部邻接与本人末注POST通过，root实际回读、同步并释放窄锁，不授日级验收。
+
+- `SF-2026-ARXIV-2603-07927` — Daily `2026-03-11`补查；[SWE-Fuse exact-v1](https://arxiv.org/html/2603.07927v1) 必要94–192/242–280/405–494（§5仅header）。2+2+2=6，数据泄漏/clip身份边界与actual owner差额深入；Ch27数据责任已有，不双owner新增。review_mar11_continue实际必要Source/Ch32 owner及逐字PRE通过，root授原276完整后单段+本人末注窄锁；作者实际204–321完整局部与Ch31/33交接已读，新增已写。Current entropy/sign、退化minmax/梯度guard未补、非参数硬界、因果与test权限、全费用与固定clip/独立audit退路近文；review_mar11_continue非writer实际完整正文/邻接与本人注POST通过，窄锁已由root确认释放，不授DAY、artifact核验或复现。
+
+- `SF-2026-ARXIV-2603-17685` — [FMER exact-v1](https://arxiv.org/html/2603.17685v1)必要§3–5/Eqs4–20/Alg1/T1–5与A1–3/B/C/D，current [v3受影响entropy/ESS](https://arxiv.org/html/2603.17685v3)§4.2–4.3/B4–6定点。仅候选加权CFM回归与交互Top1分责；保Gaussian-path ELBO→部署ODE桥、真实flow/OT人口和ESS非硬KL隔离、质量反退、solver/critic/trace及全费用。不采严格entropy/单调改进/全域trustregion、离散LLM替代或物理安全，未核代码/全部曲线像素/复现。
+
+- SF-2026-ARXIV-2603-23355 exact-v1 §4–5/Eq2–3/Alg1/T1/F3–9+A/C/D/E必要范围；只采用独立定义的logit Q/V trajectory residual与FIFO重复求值更新合同，初始zero仅同参数，不采两shaping转换/Bellman等价桥、Eq4遗漏value梯度完整recipe、唯一定理/全局optimum或4.3x全费；保β/negative/reset与任务反退、预算/评估人口及全费用，未核实现/复现。
+
+- [Android Coach v1](https://arxiv.org/html/2604.07277v1) §3.2–3.4/Eq2–4、§4.1–4.3、A1/A2与D：深入审阅，仅采用已观察state候选重采/Q代理及独立LOO baseline边界；不采通用真实梯度无偏/方差下降或端到端1.4x，8A10080GB/BF16/受限GUI作者评价。必要证据、逐字正文与实际写后独立复核通过；未核代码或复现。<!-- source-family:SF-2026-ARXIV-2604-07277 -->
+
+- `SF-2026-ARXIV-2604-10701` — Apr15 来源补查（Apr14 自然日）；[GenAC exact-v1](https://arxiv.org/html/2604.10701v1) §5.1–5.2/§6.1–6.3、AppB Alg1/T5、AppC T7：6分具体缺口深入，只采用生成式估值×policy能力hint、分段prefix/state/return广播合同与校准成本边界，不采用TC0/P真实LLM普遍障碍、faithful解释或因果信用保证。Qwen3/DeepScaleR数学、MCcontinuation标签及10seed近似实验限定；A10080GB节点的GPU数量/precision未披露，2.1倍FLOPs是有prefix复用假设的估算，非实测wallclock/全预训练成本。root实际必要Source/日期/owner/PRE与正文完整局部邻接/本人注非writer POST通过，作者已读回同步注，窄锁释放；未核代码或复现。
+
+- SF-2026-ARXIV-2604-14698 — Daily2026-04-18补Apr17；[MFPO exact-v1](https://arxiv.org/html/2604.14698v1) §4.1–4.4/Eq9–30/5.1–5.2/T1、§8.4/§10T2，2+2+2=6。平均divergence近似density/双SNIS与随机ESS不继承精确/最优证明，finiteT/critic rerank/全费用和Gaussian反侧近文。必要Source/root独核及date有效，作者actual owner，root逐字PRE通过；限定保存，root实际正文/完整邻接/本人注POST通过，窄lease已释放；未复现。
+
+- `SF-2026-ARXIV-2604-18578` — Daily2026-04-22补Apr21；[exact-v1](https://arxiv.org/html/2604.18578v1)fresh必要Source与root互斥actual owner/PRE有效，原分6，具体接口差额必要深入。只采用上述限定机制，保近文反侧/全费与原回退，不授普遍质量、分布等价、安全或SLO。root逐字PRE通过授本窄lease；作者实际保存并顺读完整邻接，root实际非writer新单段/完整前后/本人注POST通过，窄lease释放；作者仅行政同步并实际读回，未核实现/复现，不授DAY。
+
+- `SF-2025-ARXIV-2505-00663` — Noether，Daily2025-05-03补May2；[exact-v1](https://arxiv.org/html/2505.00663v1)必要§2/4–7、A.2/Algorithm1、B.1–2/C.3与限制，Ohm131实际Source/2+1+2=5、132唯一TRAIN-PPO/Ch32具体差额通过；仅取连续可微密度的action-gradient输运→局部参数投影分支。不照录W2/TD/指数冲突公式，不采一般policy/完整Fisher实现、有限步单调或离散LLM保证；保坍缩、target/预算混杂、反退及全部费用。未核代码/曲线像素或复现，AI for Science应用不采用；Ohm136逐字PRE通过，root已实际读稿/当前完整两侧及末注并授本指定单段/本人注；作者已保存，已完整self-read新增/完整两侧/本人注，Ohm141已实际非writer完整新增/完整两侧/本人注POST通过，按root最新一次POST即生效规则，本指定窄位已生效释放；本注仅同步既成事实，不授DAY。
+
+- `SF-2025-ARXIV-2506-22401` — Boyle，Daily2025-07-01补Jun30；[exact-v1](https://arxiv.org/html/2506.22401v1)§2.1、§3.1–3.2/Eq13–22/Alg1/Assumptions1–3、B.3/Assumptions4–7/Theorem2，2+1+2=5，仅乐观Q与数据约束探索的有限理论接口差额深入。root为原件请求者/研究者，Boyle§86实际非请求者必要原域/反侧及当前owner校准通过；不采任意函数类、交替神经梯度的regret或总时间保证，保辅助回归/全费用/原value回归退路。未核全证明、代码或复现；root明确授本单段与本人注窄位，Boyle实际保存并完整self-read，root本日§74已实际完整新增/完整两侧/本人注非writer POST通过，接纳实际整合并释放指定位置；本注只同步既成事实，非DAY。
+
+- `SF-2025-ARXIV-2507-06892` — Godel，Daily2025-07-11补Jul10；[exact-v1](https://arxiv.org/html/2507.06892v1)§2.2/3/4.1/4.3/4.4/A/C/Tables1–8必要，current/v3具名4.3与caption差额限定，2+2+2=6。只采行为比率/双KL与清buffer/fresh/reset的stagehandoff，不采未闭完整loss/Vtrace配方、占用校正/知识保持或30–450倍净费；保局部反退、T/7B与图/模板口径问题。未看图像素/核代码/复现，handoffidentity/退路为项目推导；必要Source/逐字PRE已Newton87/88通过，root已协调本指定单段/独立marker/本人注；已按批准稿实际保存，作者已实际完整顺读新增/完整直接两侧/本人注，限定两层diff-check通过；Newton93已实际完整新增/完整直接两侧/本人注非writer POST通过，按已协调规则生效并释放指定窄位；本注仅同步既成事实，不代整日DAY。
+
+- `SF-2026-ARXIV-2605-13554` — Daily2026-05-15补May14；[exact-v1](https://arxiv.org/html/2605.13554v1)§2–4/Alg1/Eqs1–9/T2/B/D及Limit必要域，readerR67独核、2+1+3=6/contrastive advantage producer具体差额深入。保same-batch hindsight/goal先验、负L2非校准occupancy、连续MC反侧、更新次序/negative-set未闭与H100/搜索重复全费；不授critic-free、硬trust-region/单调改善或普遍省费，未核实现/复现。
+
+- `SF-2026-ARXIV-2605-14423` — [exact-v1](https://arxiv.org/pdf/2605.14423v1)正文§3–7/Al1/Eq5–12/Ass1–5/Th1必要域，2+2+2=6；root R153首读、作者A159另一人核。只共享critic子空间/本地head与actor、原链/伴随reset链分责；保全policy线性/覆盖混合条件、L=K²和非线性PPO不同权限及全部采样/通信费，不授K倍墙钟、全局最优或行为保持。未核全部证明/实现/复现。

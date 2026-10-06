@@ -1,0 +1,789 @@
+URL: https://arxiv.org/html/2603.25994v1
+Scope: core before References, max50000chars; core chars=36390
+
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Related Work
+3 Problem Formulation
+4 Method
+4.1 Stage 1: Representation-Space Modulation
+4.2 Stage 2: Attention-Guided Spatial Gating
+4.3 Stage 3: Gated Feature Clean-up
+5 Experiments and Result Analysis
+5.1 Datasets
+5.2 Baselines and Evaluation Metrics
+5.3 Results on Fine-Grained Dataset
+5.4 Results on Celebrity Dataset
+5.5 Results on I2P Dataset
+5.6 Results on the Artistic Dataset
+5.7 Multiple Concepts Erasure
+5.8 Ablation Study
+5.9 Time Consumption
+6 Conclusion
+7 Acknowledge
+References
+A Details of Datasets and Metrics.
+A.1 Fine-Grained Erasure (Oxford Flowers and Stanford Dogs)
+A.2 Identity Erasure (Celebrity Dataset)
+A.3 Explicit Content Erasure: I2P Benchmark
+A.4 Artistic Style Erasure
+B Detail of Baselines
+C Environment Setup
+D Hyper Parameters
+E Localized Metric for Celebrity Dataset
+Face Detection.
+High-Quality Mask Generation via SAM.
+LPIPS Computation.
+Pipeline Overview.
+F Time Consumption
+G Quantitative Results on Artistic Style
+H Binary Mask Visualization
+I Qualitative Analysis of Fine-Grained Concept Erasure
+J Adversarial Prompt Robustness
+K Neighbor Lists
+Visual CLIP Re-ranking.
+L Limitations and Failure Cases
+M More Qualitative Example
+License: CC BY 4.0
+arXiv:2603.25994v1 [cs.CV] 27 Mar 2026
+Neighbor-Aware Localized Concept Erasure in Text-to-Image Diffusion Models
+Zhuan Shi
+††thanks: Equal contribution.
+Affiliation: McGill University
+Affiliation: Mila - Quebec AI Institute
+Email: zhuan.shi@mila.quebec
+Alireza Dehghanpour Farashah11footnotemark:
+1
+Affiliation: McGill University
+Affiliation: Mila - Quebec AI Institute
+Rik de Vries
+Affiliation: EPFL
+Golnoosh Farnadi
+Affiliation: McGill University
+Affiliation: Mila - Quebec AI Institute
+Abstract
+Concept erasure in text-to-image diffusion models seeks to remove undesired concepts while preserving overall generative capability. Localized erasure methods aim to restrict edits to the spatial region occupied by the target concept. However, we observe that suppressing a concept can unintentionally weaken semantically related neighbor concepts, reducing fidelity in fine-grained domains. We propose Neighbor-Aware Localized Concept Erasure (NLCE), a training-free framework designed to better preserve neighboring concepts while removing target concepts. It operates in three stages: (1) a spectrally-weighted embedding modulation that attenuates target concept directions while stabilizing neighbor concept representations, (2) an attention-guided spatial gate that identifies regions exhibiting residual concept activation, and (3) a spatially-gated hard erasure that eliminates remaining traces only where necessary. This neighbor-aware pipeline enables localized concept removal while maintaining the surrounding concept neighborhood structure. Experiments on fine-grained datasets (Oxford Flowers, Stanford Dogs) show that our method effectively removes target concepts while better preserving closely related categories. Additional results on celebrity identity, explicit content and artistic style demonstrate robustness and generalization to broader erasure scenarios.
+Code is available at https://github.com/alirezafarashah/NLCE.git
+††footnotetext: Corresponding author: zhuan.shi@mila.quebec.
+1 Introduction
+Recently, text-to-image (T2I) diffusion models have been widely adopted in creative and industrial domains for generating high-quality visuals from a wide range of prompts [42, 29, 35, 34, 36, 48, 25]. However, their training on large-scale, uncurated datasets [38, 6] poses risks of generating harmful content [28, 37], reproducing copyrighted works or closely imitating distinctive artistic expressions [16, 39, 40]. To enable safe and compliant deployment, concept erasure, which refers to the removal of specific visual concepts from the model’s generative capacity, has become a critical requirement.
+Figure 1: Erasure Effectiveness and Neighbor Retention: GLoCE vs. NLCE (Ours)
+To address this need, a growing body of work has explored concept erasure mechanisms for T2I diffusion models. Early work pursues training-based erasure, adjusting model weights or prompt embeddings through fine-tuning and gradient-based editing [26, 27, 10, 50, 21, 24, 23]. While effective, these methods require compute, curated data, and internal model access. To improve scalability, recent efforts explore training-free erasure, manipulating embeddings or attention without requiring extensive retraining [11, 37, 12, 46, 4, 32, 49]. However, most operate globally, which can cause unintended semantic drift.
+To maintain fidelity and spatial precision, Localized Concept Erasure has recently been proposed in GLoCE [20], which seeks to remove the target concept only from the region of the image where it visibly appears, leaving the remainder of the scene untouched. In detail, GLoCE applies a gated low-rank adapter on image embeddings, where the gate activates only for target concepts to selectively suppress them. However, we identify a critical limitation in this formulation: the neighbor gap-a phenomenon where semantically adjacent concepts are unintentionally suppressed alongside the target. To illustrate this, we conduct an experiment in which a specific dog breed is erased. As shown in Fig. 1, while both methods succeed in suppressing the target, GLoCE also degrades the generation quality of other dog breeds, indicating a lack of semantic precision in preserving neighboring concepts.
+To bridge this gap, we propose Neighbor-Aware Localized Concept Erasure (NLCE), a training-free framework that progressively removes target concepts while preserving semantically related neighbors and global image quality.
+NLCE operates in three coordinated stages:
+(1) Representation-space modulation suppresses target subspace directions through spectrally-weighted editing and restores neighboring semantics via CLIP-guided low-rank reinjection;
+(2) Attention-guided spatial gating extracts attention maps to localize residual activations, selectively reducing attention to live tokens in identified regions;
+and (3) Gated feature clean-up applies a spatially hard erasure within these gated areas, ensuring complete removal of residual traces while preserving unaffected features.
+Experiments on fine-grained datasets (Oxford Flowers, Stanford Dogs) demonstrate that NLCE suppresses target concepts while retaining closely related categories.
+Additional evaluations on celebrity identity, explicit content and artistic style confirm the robustness and generality of the approach. Our contributions are as follows:
+•
+We identify and formalize Concept Neighborhood gap in current localized, training-free concept erasure methods.
+•
+We propose NLCE, a principled, training-free pipeline that explicitly preserves neighbor concepts while achieving complete and localized erasure of the target.
+•
+Experiments show that NLCE achieves high erasure precision, preserves semantic neighbors, and maintains overall generation quality across different datasets and settings.
+2 Related Work
+Concept Erasure in Diffusion Models.
+Concept erasure aims to remove specific semantics from text-to-image models while retaining generative capacity.
+Training-based methods achieve erasure through learned parameter updates or prompt finetuning, including weight regularization, preference optimization, and adversarial training [50, 21, 24, 23, 22, 41, 33, 8, 26, 14].
+Although often effective, they require data and compute resources and may introduce distribution shifts or inadvertent forgetting [7].
+Training-free approaches update weights without requiring retraining, or intervene during inference without updating model weights.
+Closed-form model editing techniques modify the cross-attention weights to realign concept mappings [11, 12]. Spectral suppression modulates concept-aligned directions [4] and attention-guided editing suppresses cross-attention to target tokens [32].
+These methods are lightweight and scalable, yet global edits may propagate across the scene and suppress nearby, valid concepts.
+Localized Concept Erasure.
+To preserve spatial fidelity, localized erasure restricts editing to regions where the target concept appears, typically guided by cross-attention or latent image activations [20].
+By avoiding global suppression, these methods better maintain scene structure and minimize collateral distortion.
+However, focusing on where to erase does not fully resolve what semantics should be preserved: erasing one fine-grained concept may weaken visually or semantically adjacent categories, exposing a concept neighborhood gap in localized, training-free settings.
+Neighbor-Aware Erasure.
+Recent work notes that concept representations are entangled and removing one may inadvertently attenuate neighbors [43].
+Finetuning-based disentanglement can mitigate this but sacrifices efficiency.
+Training-free methods leverage embedding geometry and attention routing [11, 4] but do not explicitly stabilize neighboring semantics.
+In contrast, our approach adopts localized inference-time editing while explicitly preserving semantic neighbors.
+We combine spectrally-weighted representation modulation, attention-guided spatial localization, and gated residual removal to selectively suppress targets while maintaining the fidelity of adjacent concepts.
+Figure 2: Overview of NLCE. The method proceeds in three stages: (1) representation-space modulation to suppress the target subspace while reinforcing neighbors; (2) attention-guided gating to localize residual concept activations; (3) gated feature clean-up to irreversibly remove remaining traces. For multi-concept erasure, we activate operators per concept based on prompt tokens or embedding similarity.
+3 Problem Formulation
+Let \mathcal{M}_{\theta} be a pretrained text-to-image diffusion model generating \mathbf{x}_{0} from noise \mathbf{x}_{T} conditioned on a prompt \mathcal{P}=[w_{1},\ldots,w_{n}] with text embeddings X=[x_{1},\ldots,x_{n}], x_{j}\in\mathbb{R}^{d}. Given a target concept set F, where each concept c\in F corresponds to token set F_{c}\subset\mathcal{V} and embeddings X_{F_{c}}=\{x_{j}\mid w_{j}\in F_{c}\}, the objective is to construct an inference-time edited model \tilde{\mathcal{M}} that removes visual evidence of c while retaining generation quality. For each c, let \mathcal{N}_{c} denote its semantic neighborhood (tokens similar to F_{c} but not to be erased).
+Our objective is to construct a modified model \tilde{\mathcal{M}} that satisfies: (1) Erasure completeness: For any prompt containing tokens in F_{c}, images sampled from \tilde{\mathcal{M}} should contain no identifiable visual evidence of the target concept. (2) Neighbor preservation: For prompts containing tokens in \mathcal{N}c\setminus F_{c}, the output distribution of \tilde{\mathcal{M}} should remain close to that of the original model \mathcal{M}\theta. (3) Global fidelity: For prompts unrelated to F_{c} or \mathcal{N}c, image quality and diversity should be indistinguishable from \mathcal{M}\theta. (4) Training-free operation: The transition \mathcal{M}_{\theta}!\rightarrow!\tilde{\mathcal{M}} must require no gradient updates, dataset curation, or parameter finetuning.
+For multi-concept erasure, we instantiate a per-concept modulation operator (Sec. 4) and activate those relevant to the input prompt or closely aligned in embedding space.
+4 Method
+We introduce Neighbor-Aware Localized Concept Erasure (NLCE), a training-free, three-stage pipeline that removes the target concept while preserving semantically related neighbor concepts and maintaining generation fidelity.
+Overview of NLCE shows in Fig. 2.
+4.1 Stage 1: Representation-Space Modulation
+Stage 1 is to operate in the token-level representation space to selectively suppress the semantics of the target concept while restoring coherent generation capacity by reinforcing semantically related neighbor concepts.
+This is achieved by attenuating embeddings along the target concept subspace and re-injecting a controlled, weighted subspace spanned by neighbor tokens.
+Identifying the Target Concept Subspace. For a single target concept c, given the set of text tokens F_{c}\subset\mathcal{V} and their corresponding embeddings X_{F_{c}}=\{x_{j}\mid w_{j}\in F_{c}\}\subset\mathbb{R}^{d}, we compute the low-rank representation of the target concept via Singular Value Decomposition (SVD)[45, 1], obtaining a rank-r orthonormal basis:
+X_{F_{c}}=U_{F_{c}}\Sigma_{F_{c}}V_{F_{c}}^{\top},\hskip 9.24994ptU_{F_{c}}\in\mathbb{R}^{d\times r}
+(1)
+where \Sigma_{F_{c}}=\mathrm{diag}(s_{1},\ldots,s_{r}).
+Inspired by [4], we adopt a Spectral Expansion mechanism for spectral regularization which selectively modulates singular vectors based on their relative significance to control the strength of forgetting. Specifically, we define:
+\lambda_{i}^{(F_{c})}=\frac{\alpha_{\text{target}}\cdot r_{i}^{(F_{c})}}{(\alpha_{\text{target}}-1)\cdot r_{i}^{(F_{c})}+1},\hskip 18.49988ptr_{i}^{(F_{c})}=\frac{s_{i}^{2}}{\sum_{j}s_{j}^{2}},
+(2)
+We first construct a spectrally-weighted projection operator that modulates concept-aligned directions according to their singular-value importance:
+P_{F_{c}}=U_{F_{c}}\Lambda_{F_{c}}U_{F_{c}}^{\top},\hskip 18.49988pt\Lambda_{F_{c}}=\mathrm{diag}(\lambda_{1}^{(F_{c})},\ldots,\lambda_{r}^{(F_{c})})
+(3)
+This formulation enables fine-grained control over suppression strength along each semantic axis of the target concept.
+Mining Neighbor Concepts.
+Given the target embeddings X_{F_{c}}, we retrieve semantically related neighbors from a large external pool \mathcal{C}_{\text{all}} (e.g., Wikipedia titles).
+(1) First, we compute cosine similarities \cos(x_{f},x_{i})=\frac{x_{f}^{\top}x_{i}}{\|x_{f}\|\cdot\|x_{i}\|} between each x_{f}\in X_{F_{c}} and x_{i}\in\mathcal{C}_{\text{all}} using a pretrained embedding model and retain the top-k most similar concepts to form the initial candidate neighbor set \mathcal{C}_{k}.
+(2) Next, we filter these candidates using a RoBERTa-based SVR model [47] to retain only those with concreteness scores s_{i}\geq\tau, and discard rare or abstract terms by enforcing \text{Pop}(c_{i})\geq P_{\text{thresh}}, where \text{Pop}(c_{i}) is measured via Wikipedia page views.
+(3) Finally, the remaining candidates are re-ranked according to their visual CLIP similarity to the target concept, yielding the final neighbor set \mathcal{N}_{c}.
+Neighbor Subspace Construction.
+Let X_{\mathcal{N}_{c}} be the stacked embeddings of the selected neighbors.
+Using the same SVD-based construction as for the target concept, we compute the neighbor projection:
+P_{\mathcal{N}_{c}}=U_{\mathcal{N}_{c}}\Lambda_{\mathcal{N}_{c}}U_{\mathcal{N}_{c}}^{\top},\hskip 18.49988pt\Lambda_{\mathcal{N}_{c}}=\mathrm{diag}(\lambda_{1}^{(\mathcal{N}_{c})},\ldots,\lambda_{r}^{(\mathcal{N}_{c})})
+(4)
+Final Operator.
+P_{c}=(I-\beta P_{F_{c}})+\gamma P_{\mathcal{N}_{c}}P_{F_{c}},
+(5)
+where \beta,\gamma\in[0,1].
+UNet Cross-Attention Rewriting.
+Let W_{K},W_{V}\in\mathbb{R}^{d\times d} be the original Key and Value projection matrices. Apply: W_{K}^{\prime}=P_{c}W_{K},\quad W_{V}^{\prime}=P_{c}W_{V}.
+We apply P_{c} globally to cross-attention key and value projections to provide consistent concept removal throughout denoising. A token-selective formulation (editing only target tokens) is conceptually possible, but we find global editing more reliable in preventing latent reactivation through indirect attention routes, a phenomenon also noted in recent concept erasure studies [10].
+Multi-Concept Setting. NLCE naturally extends to scenarios involving multiple target concepts.
+For a concept set \mathcal{C}, we pre-compute one concept-specific projection operator P_{c} per concept.
+At inference time, we detect which concepts appear in the prompt using lexical and embedding-based matching following [27].
+Only the operators corresponding to the detected concepts are activated, and the final editing operator is obtained by composing them:
+P_{\text{multi}}=\prod_{c\in\mathcal{A}}P_{c},
+where \mathcal{A}\subseteq\mathcal{C} denotes the set of detected concepts.
+Because each P_{c} acts in a separate concept-aligned subspace, this modular formulation avoids cross-concept interference and preserves the neighbor structure around non-target regions.
+4.2 Stage 2: Attention-Guided Spatial Gating
+While Stage 1 neutralizes target semantics, some residual influence may persist in the network’s attention flow. Stage 2 introduces a spatial attention gate to locate and suppress these signals. In detail, this stage modifies the model’s cross-attention layers using a two-pass mechanism for each denoising timestep t.
+Attention Map Extraction at First Pass.
+We run a dry forward pass using the modified embeddings and extract attention maps A^{\ell}_{t}(x,y,j) from the DownBlock-2 of the UNet, where each A^{\ell}_{t} reflects the attention at pixel (x,y) to token j at timestep t.
+Residual Influence Detection.
+For each token x_{j}, we compute its activation under the erased concept subspace: s_{j}=\|P_{F_{c}}x_{j}\|_{2}. We then build the live token set for concept c: F_{c,\text{live}}=\{j\mid s_{j}>\delta_{\text{token}}\}.
+Gate Map Construction.
+We derive a spatial gate by summing attention over the live target tokens:
+G_{t}(x,y)=\sum_{j\in F_{c,\text{live}}}A^{\ell}_{t}(x,y,j)
+(6)
+This gate identifies the pixels where residual presence of the erased concept persists.
+Attention Suppression at the Second Pass.
+For each layer \ell, we apply
+A^{\ell}(x,y,j)\leftarrow(1-G_{t}(x,y))\cdot A^{\ell}(x,y,j),\hskip 9.24994pt\text{if }j\in F_{c,\text{live}}
+(7)
+This suppresses target concept attention in gated spatial regions while preserving unaffected ones.
+4.3 Stage 3: Gated Feature Clean-up
+In the final stage, we eliminate residual target signals via a spatially-gated hard erasure, zeroing latent features only within gate-identified regions to ensure irreversible removal where leakage remains.
+Step 3.1 Gate Upsampling and Mask Generation.
+Let G_{t}\in\mathbb{R}^{32\times 32} be the spatial attention gate derived from Stage 2. For each scrubbed UNet layer \ell operating at spatial resolution H_{\ell}\times W_{\ell}, we upsample the gate via bilinear interpolation:
+G_{t}^{\ell}=\text{Upsample}(G_{t})\in\mathbb{R}^{H_{\ell}\times W_{\ell}}
+We then convert the gate into a binary mask:
+\mathbf{1}_{t}^{\ell}(x,y)=\begin{cases}1,&G_{t}^{\ell}(x,y)\geq\delta_{\text{scrub}}\\
+0,&\text{otherwise}\end{cases}
+(8)
+Examples of binary mask are provided in Appendix H.
+Step 3.2 Hard Erasure of Gated Regions.
+For each activated scrub layer \ell, we directly zero latent representations in the gated regions. Let h_{t}^{\ell}(x,y)\in\mathbb{R}^{d} denote the latent at spatial position (x,y):
+h_{t}^{\ell}(x,y)\leftarrow\begin{cases}\mathbf{0},&\mathbf{1}_{t}^{\ell}(x,y)=1\\
+h_{t}^{\ell}(x,y),&\text{otherwise}\end{cases}
+(9)
+This irreversible, spatially-localized removal guarantees that any remaining target-concept activations are eliminated, while leaving unaffected regions untouched. Unlike projection-based suppression, this hard erasure enforces strict safety to prevent residual concept recovery.
+5 Experiments and Result Analysis
+Table 1: Quantitative Comparison of Oxford Flowers and Stanford Dogs Erasure. Our NLCE achieves a superior balance between the target erasure and neighbor concepts preservation while maintain the quality.
+Method
+Oxford Flowers
+Stanford Dogs
+Alpine Sea Holly
+Camellia
+Chesapeake Bay Retriever
+Bluetick
+Acct (↓)
+Accr (↑)
+H_{o} (↑)
+CS (↑)
+KID (↓)
+Acct (↓)
+Accr (↑)
+H_{o} (↑)
+CS (↑)
+KID (↓)
+Acct (↓)
+Accr (↑)
+H_{o} (↑)
+CS (↑)
+KID (↓)
+Acct (↓)
+Accr (↑)
+H_{o} (↑)
+CS (↑)
+KID (↓)
+SD v1.4
+100.00
+100.00
+0.00
+32.52
+-
+100.00
+100.00
+0.00
+32.55
+-
+100.00
+100.00
+0.00
+34.97
+-
+100.00
+100.00
+0.00
+34.98
+-
+MACE
+4.00
+58.67
+72.83
+30.81
+0.92
+4.00
+54.18
+69.27
+31.37
+0.61
+0.00
+42.58
+59.73
+33.49
+0.96
+0.00
+45.63
+62.67
+33.87
+0.73
+SPM
+4.00
+68.97
+80.27
+32.72
+0.20
+28.00
+69.09
+70.52
+32.75
+0.17
+8.00
+60.43
+72.95
+34.96
+0.07
+12.00
+60.77
+71.90
+34.99
+0.06
+ESD-x
+4.00
+69.70
+80.76
+31.98
+0.11
+8.00
+63.27
+74.98
+31.59
+0.30
+24.00
+49.51
+59.96
+33.63
+0.59
+12.00
+67.10
+76.14
+34.46
+0.12
+ESD-u
+16.00
+65.82
+73.81
+32.22
+0.21
+8.00
+63.27
+74.98
+31.36
+0.57
+32.00
+41.94
+51.88
+33.65
+1.16
+4.00
+48.04
+64.04
+33.94
+0.83
+UCE
+0.00
+61.58
+76.22
+32.00
+0.48
+32.00
+58.18
+62.71
+31.56
+0.63
+4.00
+49.12
+64.99
+34.14
+0.30
+0.00
+56.65
+72.32
+34.57
+0.14
+RECE
+0.00
+64.85
+78.68
+31.25
+0.15
+0.00
+70.18
+82.48
+31.77
+0.10
+0.00
+61.46
+76.13
+34.10
+0.18
+0.00
+73.33
+84.62
+34.51
+0.04
+SLD
+0.00
+81.58
+89.85
+31.11
+1.08
+16.00
+71.76
+77.40
+31.68
+0.51
+0.00
+56.56
+72.25
+33.82
+0.69
+8.00
+66.62
+77.28
+34.69
+0.48
+AdaVD
+0.00
+70.67
+82.81
+32.89
+0.27
+60.00
+69.94
+50.89
+32.91
+0.26
+0.00
+60.65
+75.50
+35.03
+0.10
+0.00
+60.77
+75.60
+35.03
+0.10
+GLoCE
+32.00
+78.91
+73.05
+32.17
+0.22
+92.00
+78.55
+14.52
+32.18
+0.18
+84.00
+74.49
+26.34
+34.40
+0.12
+28.00
+73.59
+72.79
+34.39
+0.17
+NLCE (Ours)
+0.00
+82.06
+90.15
+32.18
+0.03
+12.00
+84.24
+86.08
+32.36
+0.00
+16.00
+79.13
+81.49
+34.70
+0.07
+0.00
+75.91
+86.31
+34.75
+0.06
+Figure 3:
+Qualitative comparison of Oxford Flowers and Stanford Dogs Erasure.
+Top: Oxford Flowers — NLCE effectively removes the target concept ’Alpine Sea Holly’ while preserving neighbor concepts such as ’Rose’ and ’Spring Crocus’.
+Bottom: Stanford Dogs — NLCE successfully eliminates the target concept ’Bluetick’ while maintaining visually similar breeds.
+5.1 Datasets
+Fine-Grained Erasure.
+We evaluate NLCE on the Oxford Flowers [30] and Stanford Dogs [17] datasets, which contain many visually and semantically similar classes (e.g., flower types or dog breeds).
+Identity Erasure.
+We conduct localized identity erasure on the Celebrity dataset [26], where both target and non-target individuals appear in the same prompt.
+Explicit Content Erasure.
+We evaluate NLCE on the I2P benchmark [37], which comprises 4,703 real-world prompts spanning sensitive categories such as violence, self-harm, and sexual content.
+Artistic Style Erasure.
+We further assess NLCE on the Artistic dataset [11, 12], consisting of 20 prompts for each of ten artists across classical and modern styles.
+Method
+Anna Kendrick
+Elon Musk
+Bill Clinton
+Acc_{t} (↓)
+Acc_{r} (↑)
+H_{o} (↑)
+Acc_{t} (↓)
+Acc_{r} (↑)
+H_{o} (↑)
+Acc_{t} (↓)
+Acc_{r} (↑)
+H_{o} (↑)
+MACE
+10.00
+78.00
+83.57
+0.00
+70.67
+82.81
+8.00
+65.33
+76.41
+SPM
+0.00
+43.33
+60.46
+58.00
+72.67
+53.23
+5.33
+58.00
+71.93
+ESD-x
+0.67
+61.33
+75.84
+26.67
+57.33
+65.54
+4.00
+46.00
+62.20
+ESD-u
+0.67
+22.67
+36.91
+0.67
+39.33
+56.35
+0.00
+14.67
+25.58
+UCE
+0.00
+58.00
+73.41
+2.00
+56.67
+71.81
+0.00
+58.67
+73.95
+RECE
+0.00
+46.66
+63.64
+0.67
+24.67
+39.52
+0.00
+20.00
+33.33
+SLD
+0.00
+93.33
+96.55
+3.33
+92.00
+94.28
+2.67
+94.67
+95.98
+AdaVD
+0.00
+72.67
+84.17
+0.00
+84.00
+91.30
+0.00
+82.00
+90.11
+GLoCE
+1.33
+94.67
+96.63
+0.67
+95.33
+97.29
+0.00
+95.33
+97.61
+NLCE (Ours)
+0.00
+94.00
+96.91
+0.00
+93.33
+96.55
+1.33
+96.67
+97.66
+Table 2: Quantitative comparison of Celebrity Erasure. NLCE provides a balanced trade-off between effective target-identity removal and preservation of remaining celebrities.
+Figure 4: LPIPS on Non-Target Regions for Each Celebrity.
+Figure 5:
+Qualitative Comparison of Celebrity Erasure. Our NLCE can effectively remove the target celebrity while preserving non-target celebrity in the same image.
+Figure 6: Quantitative Comparison on I2P Dataset. The number following each category represents the number of nude items
+generated by original SD, while each bar illustrates the success rate of erasing the corresponding nude items for each method. NLCE outperforms other baselines in most of categories and in total number of detected items.
+Figure 7:
+Qualitative comparisons on the I2P dataset. The first four rows show samples from I2P, while the last two rows present examples from COCO Captions with non-nudity prompts.
+Figure 8: Qualitative Comparison of Artistic Style Erasure. Our NLCE can effectively remove the target style ’Van Gogh’ while preserving style like ’Pablo Picasso’ and ’Andy Warhol’.
+5.2 Baselines and Evaluation Metrics
+Baselines.
+We benchmark our approach against a curated set of recent state-of-the-art concept erasure methods.
+These methods are categorized as either training-based (MACE [26], SPM [27], ESD-x [10], and ESD-u [10]) or training-free (UCE [11], SLD [37], RECE [12], AdaVD [46], and GLoCE [19]).
+Evaluation Metrics:
+For the Oxford Flowers and Stanford Dogs datasets, we report Target Accuracy (Acc_{t}), Retain Accuracy (Acc_{r}), and the overall erasure performance (H_{o}) defined as Harmonic mean between (1 - Acc_{t}) and (Acc_{r}).
+We also report CLIP Score (CS) [15] and Kernel Inception Distance (KID) [5] to evaluate image-text alignment and visual quality after unlearning.
+For localized celebrity erasure, we also use Acc_{t}, Acc_{r}, and H_{o} to assess identity erasure performance.
+To further assess localization behavior during erasure, we compute LPIPSu [51] on non-target regions segmented by the Segment Anything Model (SAM) [18] to evaluate perceptual similarity preservation.
+For the I2P dataset, we quantify explicit content removal using the NudeNet detector [2] with a confidence threshold of 0.6 to count images containing nudity after unlearning.
+Semantic alignment on unrelated prompts are evaluated using CLIP Score (CS) [15] on images generated from the COCO-30k captions.
+For the artistic dataset, we report LPIPSt and LPIPSr for erased and unerased artists, where a higher LPIPSt indicates stronger removal of target style, and a lower LPIPSr reflects better preservation of unrelated artists.
+we additionally use GPT-5 [31] to classify artistic styles of the generated images: Acc_{t} shows how often the unlearned style is still predicted and Acc_{r} measures accuracy on non-erased styles.
+The detail of dataset settings, metrics and baselines can be found in Appendix. A and B. We also put the environmental setup and sensitivity of hyper parameters experiment in Appendix. C and D.
+(a) Oxford Flowers
+(b) Stanford Dogs
+(c) Celebrity Dataset
+(d) I2P Dataset
+Figure 9:
+Ablation study on the four datasets across model stages (Stage 1, Stage 1+2, and Stage 1+2+3).
+Our NLCE adapts to each dataset: early stages suffice for easier cases, while full pipeline strengthens erasure without harming non-target content as well as generative quality.
+5.3 Results on Fine-Grained Dataset
+For fine-grained erasure, We evaluate NLCE on Oxford Flowers and Stanford Dogs.
+For each dataset, we erase one fine-grained class (flower type or dog breed) and measure retention over the remaining categories. Classification accuracy is computed using SR-GNN [3] for Stanford Dogs (97.3% accuracy) and a fine-tuned ViT-L [9] for Oxford Flowers (99% accuracy).
+As shown in Tab. 1, we erase ‘Alpine Sea Holly’ and ‘Camellia‘ on Oxford Flowers, and ’Chesapeake Bay Retriever‘ and ’Bluetick‘ on Stanford Dogs—the latter being more challenging due to strong intra-class similarity. Across both datasets, NLCE achieves effective removal while attaining the highest Acc_{r} and H_{o} among all baselines, demonstrating clear neighbor preservation. Its localized editing further yields superior KID and strong CLIP alignment, indicating that visual quality and prompt consistency remain intact. Fig. 3 presents a qualitative comparison. Among baselines, MACE and UCE perform strong erasure but frequently suppress related classes, while GLoCE’s lightweight edits are often insufficient, reflected in its high Acc_{t}. AdaVD sometimes improves CS by shifting focus toward remaining classes, though erasure is inconsistent. RECE achieves complete suppression but at the cost of severe neighbor forgetting.
+In contrast, NLCE maintains substantially higher H_{o} and retain accuracy, demonstrating a more favorable balance between precise erasure and neighbor preservation.
+5.4 Results on Celebrity Dataset
+For localized identity erasure, we follow the benchmark proposed in GLoCE [20], which evaluates the ability to remove a target celebrity while preserving a co-occurring identity. Prompts take the form “an image of [target] and [retained]” across three targets (‘Anna Kendrick’, ‘Elon Musk’, ‘Bill Clinton’) and accuracy is measured using the celebrity classifier from [13].
+As shown in Tab. 2, NLCE achieves state-of-the-art performance among all evaluated methods. Most baselines either over-edit the entire image or fail to suppress the target identity; only SLD and GLoCE produce reasonably localized edits. Compared with these two strongest baselines, NLCE offers a more favorable balance: it achieves stronger target suppression overall, while retaining co-occurring identities more reliably, as illustrated in Fig. 5. Although GLoCE attains slightly higher retain accuracy in certain cases, the two methods are comparable in H_{o}. To assess spatial fidelity, we report LPIPSu in Fig. 4, which measures perceptual change in non-target regions. NLCE achieves lower LPIPSu than SLD and outperforms GLoCE on two of the three targets, indicating superior preservation of surrounding context.
+5.5 Results on I2P Dataset
+For explicit-content erasure, we evaluate NLCE on the I2P dataset.
+Erasure strength is measured with the NudeNet detector [2], while image–text consistency is assessed using CLIP Score on COCO-30k captions.
+As shown in Fig. 6, NLCE achieves strong suppression of explicit content, outperforming all baselines in reducing NudeNet detections. RECE and MACE obtain comparable erasure but at the cost of reduced image–text alignment. In contrast, NLCE maintains a high CLIP Score (29.70), exceeding RECE (29.41) while preserving similar erasure strength, whereas methods with higher CLIP generally exhibit markedly weaker removal. It is worth noting that our method is designed for neighbor-aware, spatially localized erasure, prioritizing suppression in regions associated with the explicit concept rather than applying a global modification. Consequently, in some challenging cases, complete nudity removal may not occur under balanced hyperparameters.
+This can be addressed by increasing \beta and decreasing \gamma to enforce stronger erasure, though this adjustment inherently trades off generation quality and semantic fidelity.
+5.6 Results on the Artistic Dataset
+We apply NLCE and all baselines to remove two styles: ‘Van Gogh’ and ‘Kelly McKernan’.
+As seen in Tab. 10 in Appendix. G and Fig. 8, NLCE achieves the most balanced performance among all methods. For both target artists, NLCE produces the highest LPIPSe under removal prompts, indicating strong suppression of the target style, while keeping LPIPSu low under normal prompts, showing minimal distortion when the style is not expected.
+NLCE also maintains competitive QA accuracy on both Acce and Accu, outperforming prior training-free baselines that either under-remove (e.g., SPM, GLoCE) or over-remove with noticeable global degradation (e.g., ESD-x/u, AdaVD).
+Overall, NLCE delivers consistent erasure effectiveness and preserves global image quality across different artistic styles. Further qualitative results are provided in Appendix. G.
+5.7 Multiple Concepts Erasure
+For experiments involving multiple target concepts, we use the modular multi-concept mechanism described in Sec. 4.
+We evaluate NLCE on the task of removing ten dog breeds or flower types at once. As shown in Tab 3, training-based baselines such as MACE, UCE, and RECE lose the ability to generate the remaining classes, while methods including SPM, ESD-x, ESD-u, and SLD exhibit similar drops in both target and retain accuracy. GLoCE performs only mild localized edits and therefore provides limited erasure. AdaVD improves class separation but remains constrained without explicit neighbor modeling. NLCE achieves competitive removal of all ten target concepts while preserving the remaining categories with high retain accuracy and H_{o}. Higher CS and KID further verify that semantic structure and visual quality are well-maintained. These results demonstrate that NLCE scales reliably to multi-concept erasure settings.
+Table 3: Quantitative Comparison of Multi-Concept Erasure. Our NLCE achieves a superior balance between the target erasure and neighbor concepts preservation while maintain the quality.
+Variant
+Erasure 10 Dogs
+Erasure 10 Flowers
+Acc_{t} (↓)
+Acc_{r} (↑)
+H_{o} (↑)
+CS (↑)
+KID (↓)
+Acc_{t} (↓)
+Acc_{r} (↑)
+H_{o} (↑)
+CS (↑)
+KID (↓)
+SD
+100.00
+100.00
+0.00
+34.99
+-
+100.00
+100.00
+0.00
+32.70
+-
+MACE
+0.40
+1.52
+3.00
+21.67
+10.68
+1.03
+0.00
+0.00
+20.16
+15.51
+SPM
+43.20
+58.05
+57.42
+34.97
+0.10
+58.80
+67.50
+51.17
+32.84
+0.23
+ESD-x
+24.80
+35.57
+48.30
+32.40
+1.57
+23.60
+34.50
+47.53
+30.34
+1.19
+ESD-u
+19.20
+27.19
+40.69
+32.06
+2.55
+32.80
+29.33
+40.84
+29.42
+2.04
+UCE
+3.60
+10.24
+18.51
+26.74
+5.29
+10.40
+23.33
+37.02
+29.46
+1.40
+RECE
+2.00
+19.52
+32.56
+30.05
+2.38
+2.00
+11.33
+20.32
+26.17
+3.42
+SLD
+70.00
+64.48
+40.95
+34.48
+0.53
+53.20
+73.67
+57.24
+32.16
+1.36
+AdaVD
+34.40
+60.00
+62.68
+35.03
+0.10
+42.40
+69.33
+62.92
+33.02
+0.35
+GLoCE
+78.00
+78.33
+34.35
+34.54
+0.04
+80.00
+79.17
+31.93
+32.27
+0.09
+NLCE (Ours)
+26.80
+91.90
+81.49
+34.94
+0.02
+24.40
+91.83
+82.93
+32.66
+0.09
+5.8 Ablation Study
+Fig. 9 illustrates how each stage contributes across datasets.
+On Oxford Flowers, Stage 1 provides the strongest CS, while the addition of Stage 2 and Stage 3 improves Acct and H_{o}, indicating more complete erasure at a small cost to textual alignment.
+For Stanford Dogs, Stage 2 already removes most residual breed signals, so Stage 3 rarely activates and the curves nearly coincide.
+On the celebrity dataset, Stage 1 achieves the best LPIPSu but leaves identity leakage; later stages slightly reduce LPIPSu while strengthening removal.
+For I2P, certain categories (e.g., Breasts) are well handled by Stage 1, whereas others require Stage 2 or Stage 3 for stronger suppression.
+We omit ablations on the artistic dataset because artistic style lacks localized or neighbor-structured semantics, making stage-wise effects less meaningful.
+Overall, the stages are complementary: Stage 1 performs semantic suppression, Stage 2 localizes residual activation, and Stage 3 activates selectively to ensure complete removal without unnecessary distortion.
+5.9 Time Consumption
+The computational cost of concept erasure mainly includes data preparation, model fine-tune and image generation.
+Tab. 9 in Appendix. F reports the time required to remove ten concepts on a single NVIDIA A100 GPU.
+Training-based methods such as MACE, SPM, and ESD-x/u involve costly fine-tuning and data collection, resulting in high runtime, with SPM reaching 6951 seconds.
+Training-free methods are faster since they operate purely at inference.
+Our NLCE introduces moderate overhead from neighbor retrieval and the two-pass U-Net execution, which are essential for precise localization and neighbor preservation.
+Even with these steps, the total time of 530 seconds remains lower than that of all training-based baselines while achieving fine-grained erasure and stable neighbor retention.
+This confirms that NLCE provides an efficient and semantically reliable framework for concept removal.
+6 Conclusion
+We presented Neighbor-Aware Localized Concept Erasure (NLCE), a training-free framework that enables precise removal of target concepts in text-to-image diffusion models while maintaining the semantics of closely related neighbors. NLCE integrates spectrally-weighted representation modulation, attention-guided spatial gating, and gated feature clean-up into a coherent coarse-to-fine pipeline, providing both semantic and spatial specificity without retraining. Experiments on fine-grained benchmarks demonstrate effective target suppression with strong neighbor preservation, and additional results on celebrity identity, explicit content and artistic style validate NLCE’s generalization and robustness. NLCE offers a practical, efficient solution for safe and controllable concept removal, and provides a foundation for future extensions to multi-concept erasure.
+7 Acknowledge
+This research was supported in part by the Canada CIFAR AI Chair, an Open Philanthropy Award, a Google award, an NSERC Discovery Grant, and the Fonds de recherche du Québec (FRQ), grant no. 369001 (DOI: https://doi.org/10.69777/369001).
+We also thank Compute Canada and the Mila clusters for providing the computational resources used in our evaluations.

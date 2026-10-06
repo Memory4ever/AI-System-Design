@@ -51,6 +51,10 @@ target prefix -> decoder self-attention + cross-attention -> next token
 
 [T5Gemma 2 的局部架构消融](https://arxiv.org/html/2512.14856v1#S2)展示了这种参数冗余与质量之间的取舍，同时保留一个反例：只在每六层中的 global 层保留 cross-attention，平均质量下降更大。这是在 Gemma 2 2B 初始化、400B tokens 和 PrefixLM+KD 配置下得到的局部对照，不是最终 Gemma 3 配方的全任务无损证明，也未给出端到端加速或节能的受控证据。Encoder-decoder 因而仍有设计空间，但不能据此宣称它普遍取代 decoder-only；跨架构比较还需要分开数据、训练预算和后训练配方。<!-- source-family:SF-2025-GOOGLE-T5GEMMA-2 -->
 
+输入与输出职责还可以分配给已预训练的外部模块，而不重新训练中央语言模型：多语encoder先把源文本变成状态，经学习到的映射交给冻结的语言模型；中央模型仍逐token生成英语序列，再把相应hidden经另一映射作为多语decoder的cross-attention K/V，由目标语言标记控制最终输出。这改变的是语言输入、中央计算与目标语言表达的组合接口，不是省去英语中间生成，也不证明冻结参数使知识能力必然不变。不同tokenizer产生的序列未必逐位置对应；同一中央输出再经encoder得到的表示可提供兼容监督，但相似度与放松匹配不认证语义等价、顺序或全部内容保真。<!-- source-family:SF-2026-ARXIV-2603-17512 -->
+
+这一组合要同时验输入理解、中央结果和最终目标语言表达，不能用平均翻译分数把三者合成一个“语言无关知识core”证书。[有限XBridge对照](https://arxiv.org/html/2603.17512v1#S4)中，一些语言方向及decoder输出仍退步，额外decoder也比只运行原语言模型更慢。两侧映射与cross-attention训练、机器翻译数据、额外encoder/英语生成/目标decoder及接口回归都付费；部署应共同绑定三个checkpoint、两侧tokenizer、映射和取层位置，再分别检查内容保持、语言遵守与端到端预算。语言覆盖、接口或质量不适配时，保留原native生成、显式translate-test或重新适配，而不把外部表达流畅当成中央结论正确。
+
 ### Decoder-only
 
 Decoder-only 把指令、上下文、示例和答案放进同一 token sequence，只使用 causal self-attention：
@@ -162,6 +166,10 @@ W_vocab = E^T [d_model,V]
 
 模型用同一组词表坐标完成输入 lookup 与输出评分。是否共享取决于 checkpoint，不能把它当作 decoder-only 必然条件。
 
+Decoder的hidden state也可以服务于非文字输出，但必须更换并训练目标读出，而不是让词表概率自动成为数值预测。一个受限回归分支冻结LLM token表示，以一个可学习latent query反复cross-attend这些状态，再输出scalar；训练split上的target normalization和Huber loss属于这份任务head，不能在测试人口重估尺度。与参数匹配MLP的有限对照支持该读出选择，ranking reward还可能改善相关排序而不改善RMSE，WMT和STS也有收益差异，故不能说backbone天然拥有通用精确数值知识。冻结前向、head训练/优化与多次候选ranking都计费；任务、尺度或完整预算失配时，保留简单linear/MLP readout、普通numeric-text输出与独立回归验收，不由一个任务head替代标准next-token生成接口。 [必要机制与反侧](https://arxiv.org/html/2604.01206v1)。<!-- source-family:SF-2026-ARXIV-2604-01206 -->
+
+若消费者的输出空间已经有限，还可绕开词表生成，直接为候选内容评分：让候选和决策位置经过原主干 contextualization，再复用预训练 attention 的 Q/K 作为匹配读出，不必另添随机初始化的 head。这仍需任务适配，不是原 checkpoint 天然会决策。[受限空间任务对照](https://arxiv.org/html/2610.22276v1)中，各种读出没有全任务赢家；数值区间和图像区域还需按声明的单位、codebook、溢出和原图坐标逐级细化，早层选错会排除真答案。训练把所有 stage 的 teacher-forced loss 放进一次 causal forward，不使部署时依赖自身选择的 stage 并行；crop 重编码、多点树展开、候选 context 与适配均计费。范围不完整、开放回答或质量回归时，原 AR、显式任务 head 与可靠 parser 仍合理，少 answer tokens 不认证通用空间能力或行动安全。<!-- source-family:SF-2026-ARXIV-2610-22276 -->
+
 ## 从 logits 到 token 还差一步
 
 Decoder stack 的直接输出不是文字，也不是唯一 token，而是 `[B,T,V]` logits。生成时通常只使用每个 sequence 最后一个有效 position 的 logits：
@@ -265,6 +273,8 @@ analytical FLOPs 又没有计入状态物化、memory traffic 与 launch overhea
 
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-12460 -->
 
+因果生成顺序也不必等于最终display顺序：模型可逐步产生marker与cursor来打开/结束编辑，把新token插入、替换或删除已生成文本；inverse-edit扰动训练让它学习位置与修复，而非只学习下一个可见字。此时generation clock仍因果，parser维护display位置与可见性；删除仅从后续attention和最终输出隐藏旧span，不物理释放历史KV。K/V可存unrotated并按本次编辑位置旋转，缓存精确限定在这套Chain-of-Edits语义，不等重排文本后普通decoder重新前向。这个分支增加pointer/marker训练、segment/packing和仍保留的历史状态；[AutoIndexer v1](https://arxiv.org/html/2610.12545v1)的单corruption诊断中插入常不触发，exact repair远低于teacher-forced定位率，能力保持也只限matched-LoRA对照。质量、cursor或预算不稳定时，原追加式AR及外部显式编辑仍合理；显示修订不撤销已发送内容或外部effect。<!-- source-family:SF-2026-ARXIV-2610-12545 -->
+
 ## 从显式 CoT 到 Latent Reasoning：减少 Token 不等于消除状态
 
 前面的分支重新安排了目标、KV 生产者或外部流，但没有要求取消中间可见 token。若瓶颈恰恰来自把每一步推理都写出来，才会进入另一个表示选择。显式 Chain-of-Thought 把中间步骤写成 token，优点是训练目标、停止条件、缓存和人工审计都复用语言模型接口；代价是每一步都要经过 vocabulary projection、采样和下一轮 Decode。将中间推理压缩成连续 latent state，可以少生成可见 token，却没有消除递归依赖：系统仍需决定 state representation、更新次数、termination、checkpoint identity 与失败恢复。
@@ -324,6 +334,10 @@ explicit token trace
 增加推理循环数也不自动获得深度泛化：共享 block 必须先在训练中学会反复使用其状态更新。在受控的合成多跳实验中，训练 recurrence 的覆盖范围影响增加推理循环后的收益；不同课程可能暴露不同 hop 深度，因此不能把它们的最大外推深度直接归因于动态循环。即使固定同一训练数据，更多循环也可能在已有正确状态后继续漂移，形成 overthinking，而不是单调逼近答案。普通固定深度 decoder 与固定 loop 在任务、预算或停止信号不稳定时仍是合理基线。
 
 停止条件须分开“输出不再变化”和“已有可提交结果”。相邻循环分布的 KL 很小，可能只是停在高熵的含糊分布；一个受限替代是同时要求 KL 小与输出熵低，再决定是否停止。它增加阈值校准和逐轮 readout 成本，也不能阻止稳定、低熵的错误；熵是集中度 sensor，不是真值。作者用于解释 overthinking 的正确 token logit margin 依赖答案标签，不能直接当作线上可用停止器。该分支目前由从头训练的合成关系任务支持，不能外推到任意预训练 LLM；超出已验训练/推理循环范围时，仍应保留循环上限、固定预算与显式验证。<!-- source-family:SF-2026-ARXIV-2604-07822 -->
+
+在某轮已能读出正确答案，也不表示该hidden state已能停止更新并供后续位置复用。可以把三件事分开干预：在指定loop检查计算结果，继续运行观察答案是否保持，再从该轮冻结状态、让依赖它的后续计算继续执行。缓存一个已验证答案与冻结生成它的全部hidden state不同；后者可能同时携带尚未完成的顺序、时间或交互信息。只用最后位置/固定exit监督而得到的保持性，也不代表随机位置或更长执行预算下同样稳定。
+
+[有限Mealy-machine与递归maze诊断](https://arxiv.org/html/2610.19768v1)中，正确读出、延后保持与freeze复用确有分离；成对swap能支持所测位置对后续计算的counterfactual sufficiency，却不证明唯一符号编码，freeze失败亦不证明信息已经丢失。多轮诊断、状态保存与干预都增加费用，部分forward匹配不等同完整反传/FLOPs匹配；用clean未来最后变化定义的到达时间是离线oracle，不能直接充当线上停止器。没有可核验复用边界时，保留统一执行预算、原recurrent更新和独立任务验证，不把延后若干loop当跨任务通用修复配方。<!-- source-family:SF-2026-ARXIV-2610-19768 -->
 
 ### 循环中的读取位置与表示更新也不必同时冻结
 
@@ -429,3 +443,13 @@ Primary-source 校验入口：
 - `SF-2026-ARXIV-2601-08061` — Daily `2026-01-15`；[random AR operational-string simulation exact-v1](https://arxiv.org/html/2601.08061v1) §3–7、Theorem1/Corollary3及Methods E。2+2+2=6，conditional external-string machine接口差额深入；不反驳固定接口可达性，不把冻结随机网络等同全pipeline无训练，不授任意随机网络/自然prompt/效率。未运行代码或复现实验；root实际必要原源/现owner写前核通过，实际正文与前后邻接非作者POST通过；日级Gate未授。
 
 - `SF-2026-ARXIV-2602-10229` — Daily `2026-02-13`；[exact-v1](https://arxiv.org/html/2602.10229v1)，必要方法/关键评价/直接反侧见本日 V3_EVIDENCE_SIX；2+1+2=5，具体owner差额深入。只采用hidden→input embedding融合接口/adapter与质量反退，非untied因果、非faithfulness或少总compute。root实际必要原源与current owner/邻接PRE通过；root实际正文、前后邻接与末注非作者POST通过，窄锁释放，日级未授；未运行代码或复现实验。
+
+- `SF-2026-ARXIV-2603-17512` — [XBridge exact-v1](https://arxiv.org/html/2603.17512v1)§3–5/Limitations、A1–4及必要Tables1/2/6–10；仅冻结LM与多语encoderdecoder的两侧映射/英语中间序列/输出K/V接口及分验边界。relaxedOT非语义等价、lambda/表口径、局部反退/推理变慢与全费用限制保留；未核代码/复现，不授全语言保真或生产性能。
+
+- `SF-2026-ARXIV-2604-01206` — Daily2026-04-03；[exact-v1](https://arxiv.org/html/2604.01206v1)§3.1–3.3/4.1/C3.3–3.6，2+1+2=5，仅single-query scalar readout与next-token/targetscale接口分责；保parameter-matched/STS tie、ranking≠RMSE和冻结前向/训练/候选费用，不授数值真值或全任务/SLO，未核实现/复现。
+
+- `SF-2026-ARXIV-2610-12545` — Daily2026-10-13；[AutoIndexer exact-v1](https://arxiv.org/html/2610.12545v1)§2–3/5/AppA.1–3及必要protocol，2+2+2=6，causal generation/display编辑具体gap深入。CoE缓存不授普通fresh-forward等价，deletedspan不物理freeKV，pointer/marker/inverseedit训练及有限exactrepair/matchedLoRA反侧保留。root必要Source/实际owner/邻接及PRE独核通过，today_institutions已按窄锁写入，作者顺读正文/完整局部邻接与本注；root已实际读正文/完整局部邻接和本注非writer POST通过，六owner窄锁释放；不授DAY。未核代码、复现或生产SLO。
+
+- `SF-2026-ARXIV-2610-19768` — Daily2026-10-16窗10-15；[exact-v1](https://arxiv.org/html/2610.19768v1)必要Source/实际命题与反侧见本日LIVE A9/R16及root具名独核层，2+1+3=6，具体owner差额深入。只采本两段的测量/状态接口，不授因果真值、普遍质量/加速或部署停止保证，全部费用、直接反侧与旧路径近正文。reader A9/R20逐字PRE通过，root授指定两段与本人注窄lease；作者已保存并实际读回，独立reader R21实际正文、完整邻接与本人注POST通过，root接纳并释放指定窄lease；作者仅行政同步本注并实际读回，不授DAY。未核代码/复现。
+
+- `SF-2026-ARXIV-2610-22276` — Daily2026-10-17窗10-16；[exact-v1](https://arxiv.org/html/2610.22276v1) §3–4/E.1–2必要，2+2+2=6。只采contextual candidate/nativeQK与分层controller消费，保全量语言适配、head对照无全胜、pilot非release/多点反侧和crop/tree全费，不授全任务单forward或行动安全。root已实际Source/owner/PRE通过并授权；作者已保存并自读，root实际正文/完整直接两侧/本人注POST通过，未复现，不授DAY。

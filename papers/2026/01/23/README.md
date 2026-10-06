@@ -4,13 +4,17 @@
 **窗口：** 2026-01-22T09:00:00+08:00 ～ 2026-01-23T09:00:00+08:00
 **状态：** 完成
 **Books：** 纳入本次
-**检查时间：** 2026-10-04T07:54:31+08:00
+**检查时间：** 2026-10-08T05:17:43+08:00
+**窗口说明：** 用户明确只补已有2026日报遗漏；原窗口、候选日期/评分与有效审阅保持，原验收仍作为历史有效结果，不代替本轮补查验收。
+**补充窗口：** 2026-01-22 ～ 2026-01-22
 
 ## 1. 结论
 
 本窗保留五条经独立原源与写后复核的知识差额：variance调制与正交化顺序不可交换；dLLM训练policy与推理sampler分账；固定action/observation的CoT-only判分干预；批内positionwise compact与跨请求KV复用分开；普通安全/utility不替代contextual privacy。已分别窄写Ch28、Ch24、Ch66、Ch43、Ch72，非作者root实际顺读新增段、前后邻接和末注POST通过（后两处位置/population合并问题已局部修正）。
 
-独立从本日原始来源重建，未沿用旧Daily/Weekly判断。107个相关/含糊exact-v1完整题摘（78初查+29有界相关标题补检）已终处置：候选冻结50个唯一家族，26标准完成、18深入完成、6低分关闭；Books5整合、45仅报告。48个贡献前关闭只保留原始筛选依据，9个日期保留项不计候选。普通待办0，来源历史/日期不足与Eq10子命题已精确隔离；非作者root已批准完整日级语义验收。本窗完成不授这些隔离项正面Coverage/Evidence/Books或无遗漏保证。
+原运行有效结果：独立从本日原始来源重建，未沿用旧Daily/Weekly判断。107个相关/含糊exact-v1完整题摘（78初查+29有界相关标题补检）已终处置：候选冻结50个唯一家族，26标准完成、18深入完成、6低分关闭；Books5整合、45仅报告。48个贡献前关闭只保留原始筛选依据，9个日期保留项不计候选。普通待办0，来源历史/日期不足与Eq10子命题已精确隔离；非作者root已批准完整日级语义验收。本窗完成不授这些隔离项正面Coverage/Evidence/Books或无遗漏保证。
+
+本轮独立补查：原50保持，新增5=4paper+1Jan22artifact，均5分标准必要审阅；总55唯一家族、Books原5整合保持，新增5仅报告、0新增改书。新增读取19完整exact-v1AB、15贡献前关闭；14源有限检查与具体缺段见下，非作者root已实际读六部分并授予本轮DAY通过；外部保留项不支持正面Coverage/Evidence或无遗漏。
 
 ## 2. 来源覆盖
 
@@ -32,6 +36,23 @@
 | SRC-XIAOMI-MIMO | Paper实际Jan8→Feb3目标邻接；Blog15个无日期标题/More未形成可复查历史切片，官方repo有限补检 | 受阻 | Paper切片已检查；Blog目标日期/历史列表不可恢复，隔离 |
 | SRC-MINIMAX | EN Blog完整可见Jan27→Dec23；中文对应Jan28→Dec23，已到本窗下界；Agent Tech Blog目标主题有限首查，无实际next历史链接，不采用猜测?page2 | 已检查 | 此官方dated catalog无Jan22新研究事件；不称未列artifacts或全站无遗漏 |
 | SRC-ARXIV | 原生list/API406后Computer FOS+registered Jan22～Jan23 00:59:59Z线索；language-training/multimodal-agent/systems三组title查询55/94/36条均page-size100一页止；跨组去重。原生月目录仅作title查漏线索：cs.CL/cs.CV各前1–2000、cs.DC的1–270；只看当窗恢复的final-ID段2601.14260～15288相关标题，补29完整题摘到该下界停止，绝非全月/整类题摘队列。总107完整exact-v1AB：50候选、48贡献关闭、9日期隔离；当前官方abs/comments/直接marks实际核，不扩完整版本史 | 已检查 | 原生入口受限与非全分类召回边界保留；9拟相关事件缺首次公开包络隔离，不授其Evidence/Books；[查询原值](../_sources/daily-20260123/datacite-scoped-results.json)、[排除依据](../_sources/daily-20260123/screening.md) |
+
+本轮补查（2026-10-08）另按 Jan22 完整自然日执行以下14源有限切片记录；原表是原运行记录，继续保留，不以其完成措辞代替本轮验收。[补查原始入口](../_sources/daily-20260123/supplement-official-daily.txt)、[有限恢复](../_sources/daily-20260123/supplement-catalog-stops.txt)、[本轮筛选与日期权限](../_sources/daily-20260123/supplement-screening.md)。
+
+- SRC-OPENAI：Research/News有限日期主题恢复，RSS恢复XML并只取Jan21–23邻接；Jan22三个原始核心（PostgreSQL、Praktika、Work usage）贡献前关闭；Jan23 Codex loop仅窗外恢复线索。结果：已检查；限制：RSS初次403/文本解析失败不当零；成功恢复见[RSS](../_sources/daily-20260123/supplement-openai-rss.json)，不授全站召回。
+- SRC-ANTHROPIC：Jan22 Constitution核心规范与训练解释实际读，缺新增受控机制；Jan21 AI-resistant及Jan22警告只复用原有效身份/隔离，不扩大repo。结果：受阻；限制：原警告first-public缺口仍隔离；Constitution不因机构/价值规范准入。
+- SRC-GOOGLE-AI：Jan22 D4RT核心指向Dec2512.08924既有首次公开家族，没有新delta；publications只有year过滤，停止动态恢复。结果：受阻；限制：publications目标Jan22历史切片缺失，不把传播页当新paper。
+- SRC-META-AI：Research提取0行，一次Jan22主题日期恢复未形成可核历史段。结果：受阻；限制：目标历史研究列表仍缺，空响应不证明零事件。
+- SRC-QWEN：旧blog重定向后静态停Sep2025，qwen.ai Jan22页空；官方repo NewsJan22与PyPI0.0.2 wheel/date可核。结果：受阻；限制：新artifact接口边界入选；Blog历史段及技术论文首公开保留项仍隔离，不把Jan23论文前移。
+- SRC-DEEPSEEK：当前主页列V4/V3.2等身份、news入口返回初始API页不是完整历史news；原Jan12→Jan28已核段有效复用。结果：受阻；限制：当前主页/误入初始news页不提供新Jan22研究覆盖；不重开原有效结论，不授全站零事件。
+- SRC-MOONSHOT：Platform Blog当前latest Nov7/6 2025、有限日期主题恢复；不扫全GitHub。结果：受阻；限制：Jan22历史列表缺段，当前旧列表不是完整target archive。
+- SRC-TENCENT-HUNYUAN：Research0行；浏览器初次timeout/reset，随后本子任务不支持IAB可见性，有限主题恢复后停止。结果：受阻；限制：All历史列表未得；不反复等待，不以当前页零提取作零命中。
+- SRC-ZAI：Research首查成功恢复dated切片Feb2→Jan19→Jan13，越过目标下界。结果：已检查；限制：仅本dated research切片无Jan22条目；原未恢复目录记录保留为历史事实，不外推全机构发布。
+- SRC-BYTEDANCE-SEED：public_papers page1/13、1–20of242仅Aug18→May14，停止无目标页链接的分页；原Research Jan27→Dec2段去重复用。结果：受阻；限制：page1不覆盖Jan22，论文目录目标页缺口保留，未逐项处理242条。
+- SRC-BAIDU-ERNIE：Blog新访问timeout，有限日期恢复未形成新段；原Jan29→Jan15→Jan8 dated切片有效复用。结果：受阻；限制：原限定切片判断保持；此次新访问失败不称新增覆盖，不遍历repo。
+- SRC-XIAOMI-MIMO：Paper Jan8→Feb3目标邻接复核；Blog15个无日期标题，More不形成可核历史段。结果：受阻；限制：Paper限定切片已处理；Blog目标日期/历史列表仍缺，不读无日期晚期材料。
+- SRC-MINIMAX：EN Blog Jan27→Dec23、CN邻接及Agent Tech Blog有限首查，dated catalog已越过目标下界。结果：已检查；限制：本目录无Jan22主线新研究，不称未列artifact/全站无遗漏。
+- SRC-ARXIV：原生Jan月CL前25/API本窗Submitted发现cachemiss；Computer FOS+本自然日registered发现三主题18/94/36、148 appearances/139unique、一页/no next；旧身份定点去重，19完整exact-v1AB作实际相关/含糊筛选，不将139变逐项队列。结果：受阻；限制：4新paper公开日由schedule/final-ID+同日deposit上界联合核定；原早Submitted8hold保持。注册独立非公开证明，元数据新版本不回填v1；[发现原值](../_sources/daily-20260123/supplement-discovery.json)。
 
 ## 3. 候选与判断
 
@@ -93,6 +114,14 @@
 | [HiNS: Hierarchical Negative Sampling for More Comprehensive Memory Retrieval Embedding Model](https://arxiv.org/abs/2601.14857v1) | 2026-01-22T09:00:00+08:00 ～ 2026-01-22T10:57:19+08:00 | hard-only/删easy不必优于混合→联合sampling configuration局部反侧→比较比例、数量与曝光而非仅提高hardness；2+1+2=5 | 标准完成 | 仅报告：不采negative类别因果/自然比例最优，实际受限对照见 §4 |
 
 上述44项限定准入、必要证据与Only/4分关闭处置均已由非作者root实际顺读§4并复核；15013/15220窄写及局部修正POST通过。尾5（14594/14602/14622/14788/14959）的限定必要证据/Only处置亦经root实际逐段核验，加HiNS抽检改判共50项；日期与分层排除汇总及日级语义验收已通过。全部 exact-v1 official abs 页面已核身份、comments 与直接 notice 信号；没有遇到官方 withdrawn/erratum 标记。15141/15286 的 correction 匹配是摘要方法词，非勘误公告。只核当前事件，不遍历修订史。
+
+本轮新增按补充窗 Jan22 公开日期归属，原50行及其公开包络逐字保留。新5家族均5分标准，具体必要证据与仅报告处置见§4；新增0处Books写入，不把owner映射当准入。
+
+| [Prosody-Guided Harmonic Attention for Phase-Coherent Neural Vocoding in the Complex Spectrum](https://arxiv.org/abs/2601.14472v1) | 2026-01-22 | mel条件弱化prosody/phase → F0参与harmonic attention、直接real/imag谱与phase loss → 比较条件与渲染责任；2+1+2=5 | 标准完成 | 仅报告：局部voiced-vocoder模块，未证明组件独立收益或实时SLO |
+| [Diffusion Epistemic Uncertainty with Asymmetric Learning for Diffusion-Generated Image Detection](https://arxiv.org/abs/2601.14625v1) | 2026-01-22 | reconstruction confound → Laplace参数采样与noise均值拆分、非对称margin → 分开估计特征与generalization；2+1+2=5 | 标准完成 | 仅报告：近似diffusion detector sensor，不授一般uncertainty分解或LLM truth |
+| [HyperNet-Adaptation for Diffusion-Based Test Case Generation](https://arxiv.org/abs/2601.15041v1) | 2026-01-22 | curated condition pairs/latent搜索受限 → final SUT loss驱动实例级HyperNet → 比较白盒适配、预算与语义保留；2+1+2=5 | 标准完成 | 仅报告：局部test generator，单次调用预算不等总算力/真实失败真值 |
+| [Learning Consistent Taxonomic Classification through Hierarchical Reasoning](https://arxiv.org/abs/2601.14610v1) | 2026-01-22 | leaf正确可掩盖中间层失配 → leaf-conditioned二阶段及HCA反侧 → 同时报告leaf、条件一致性与联合正确；2+1+2=5 | 标准完成 | 仅报告：局部taxonomy评价反侧，不授普遍层级reasoning或因果控制 |
+| [Qwen3-TTS Jan22 artifact：qwen-tts0.0.2](https://pypi.org/project/qwen-tts/0.0.2/) | 2026-01-22 | model流式宣称不等wrapper可流式交付 → False参数仅模拟文本流式、完整codes后decode返回 → 核实际消费接口而非参数名；2+1+2=5 | 标准完成 | 仅报告：精确公开artifact兼容边界，不提前采用Jan23技术论文 |
 
 ## 4. 证据与知识整合
 
@@ -309,11 +338,33 @@ Table4在LoCoMo/Mem0的joint sampling configurations为Full平均F1 .2449、NoEa
 
 上述均为作者受限原源判断，未运行代码或复现实验；未披露的生产 concurrency/SLO、完整端到端质量预算写为 Not Disclosed，不由 microbenchmark/动作频率/调用数补造。非作者root已分批实际核全部50项限定命题/必要反侧及Books处置，不无差别重读无关附件。4分关闭项只要求身份/落窗/去重与不采用理由，不为达到标准审阅遍历全文。
 
+本轮增量必要证据（Jan22自然日；原§4前述连续正文及反侧原样保留）：
+
+### [Prosody-Guided Harmonic Attention for Phase-Coherent Neural Vocoding in the Complex Spectrum](https://arxiv.org/abs/2601.14472v1)
+
+精确v1 HTML受限后读PDF §2–4/TableI：[必要原文](../_sources/daily-20260123/supplement-openai-core-first.txt)、[表及直接限制](../_sources/daily-20260123/supplement-necessary-fourth.txt)。Harvest提取F0参与attention，decoder给real/imag complex谱、iSTFT与unit-magnitude phase loss；这不证明预测谱总满足STFT consistency或完美phase coherence。LJSpeech1.1/VCTK、22.05kHz、FFT/window1024、hop256，AdamW2e-4/batch16、单NVIDIA GPU（型号、precision、训练epochs/总预算 Not Disclosed）。TableI F0-RMSE HiFiGAN21.6→16.8，MOS4.2→4.45、20listeners；摘要MOS+.15对应另一baseline4.3，不能混成对HiFiGAN增幅。未见单模块消融/CI及样本分母，不能唯一归因F0 attention或phase loss；实时部署是future work。仅报告：是局部voiced声码器替代，[Ch23连续表示](../../../../books/part-03-multimodal-world-models/23-multimodal-representation.md#连续表示)实际分开encoder/独立waveform decoder与reconstruction责任，此稿不足改写一般codec或整个生成范式，不改Books、未核代码/复现。
+
+### [Diffusion Epistemic Uncertainty with Asymmetric Learning for Diffusion-Generated Image Detection](https://arxiv.org/abs/2601.14625v1)
+
+精确v1 §3.3/4/5、Tables1–4：[核心](../_sources/daily-20260123/supplement-core-first.txt)、[对照/反侧](../_sources/daily-20260123/supplement-core-second.txt)。last-layer diagonal Laplace参数posterior，经noise重复均值后对参数求方差，结合CLIP与real类较小contrastive margin；采用的是该模型下近似特征，不采Lemma1/Eq8–10把total variance比例归parameter variance的一般等式，noise条件方差项与expectation/norm平方不能随意消去。SD1.5、t200、224²、CLIPResNet50、batch48、V100、lr1e-4；Table4无DEU/ASL76.1/90.7、DEU90.3/98.7、ASL81.7/93.8、joint91.5/99.7是ACC/AP的受限组件对照。BigGAN弱及Table2 DRCT训练人口更换将近chance推到较高ACC，不能把跨dataset全部收益归估计器。采样次数/完整预处理成本、precision、重复seed/CI Not Disclosed，不授免成本或probability校准。仅报告：sensor只支持diffusion-derived detection局部机制，不推广为LLM epistemic truth；[Ch66 Claim Sensor](../../../../books/part-06-ai-infrastructure/66-evaluation-system.md#从-raw-score-到可定位可校准的-claim-sensor)正文明确“该probe是传感器，不是真值概率”，并要求model-specific sensor→deployment-slice calibration；[标签校准](../../../../books/part-06-ai-infrastructure/66-evaluation-system.md#raw-score-只有经过标签校准才是概率)已承载通用采用合同，不强造Books差额。
+
+### [HyperNet-Adaptation for Diffusion-Based Test Case Generation](https://arxiv.org/abs/2601.15041v1)
+
+精确v1 §3/4.5–4.7/Tables1–4：[方法](../_sources/daily-20260123/supplement-necessary-fifth.txt)、[评价与限制](../_sources/daily-20260123/supplement-hynea-eval.txt)。冻结prior、复制block+zero layers与output→spatial projector，每例调HyperNet、最终image loss穿全部denoise，白盒SUT梯度；免新curated failure pairs不等免预训练或免每例训练，Driving还用已训练segmentation ControlNet。600 test cases、equal ceiling2700SUT evaluations/early-stop；REPA-E/SD/StyleGAN等不同backbone，调用数不配平FLOPs。ImageNet94.41s、CelebA220.89s而Mimicry51.87s更快；Driving diversity .094低于GIFT .102，模拟diffusion-Mimicry耗时是extrapolation不是运行。ImageNet human label preservation .787、20valid responses/Fleissκ.336，misclassification=输出变化不等真实语义失败；FID相关不替代另两域标签审查。lr提高可损质量、低lr可到20min；hardware/precision、完整cost Not Disclosed。仅报告：局部failure test generator，不将可导SUT score升为真值、普遍OOD生成或通用性能优势；[Ch24 DDPM](../../../../books/part-03-multimodal-world-models/24-multimodal-generative-paradigms.md#ddpm从可采样的加噪过程得到训练目标)正文明确guidance/VJP与solver均付费、生成器只拥有proposal，其特定实例调参配方不要求新增Books机制正文，原prompt/latent搜索仍共存。
+
+### [Learning Consistent Taxonomic Classification through Hierarchical Reasoning](https://arxiv.org/abs/2601.14610v1)
+
+实际反侧纠正了原拟“成熟SFT/RL recipe”关闭：精确v1 §1/Table2、§3、§4.1/4.3：[必要原文](../_sources/daily-20260123/supplement-taxon-necessary.txt)、[反侧及人口](../_sources/daily-20260123/supplement-taxon-final.txt)。同一VL-Taxon推理去reasoning时animal leaf稍升而HCA下降；在DirectListing leaf正确集合给GT leaf的HCA79.14→99.52，是特权诊断不是部署收益。Stage1 open-set leaf预测→Stage2 leaf条件问答；Qwen2.5VL7B、Plant3771species×10、species两半SFT/GRPO LoRA各1epoch，batch128/lr5e-5/rank64/G8/KL.4；测试similar-choice使用SigLIP distractors，非任意自由回答。Table5各model条件correct-leaf集合不同，不当matched population因果比较；generalization亦受plant-only训练/SFT collapse及较弱open-set结果约束。GT/leaf错误会传播，二次推理/训练均计费，hardware/precision/CI Not Disclosed。仅报告：叶级准确率与全层联合正确必须分账的局部反证，[Ch66聚合指标](../../../../books/part-06-ai-infrastructure/66-evaluation-system.md#聚合指标必须能暴露不同-failure-type)正文要求counterexample slice揭露总分掩盖的失效类型；[联合可靠性](../../../../books/part-06-ai-infrastructure/66-evaluation-system.md#组件分数不能在相关错误下直接合成系统可靠性)正文要求联合故障样本、拒绝组件准确率直接合成保证，已承载这里的通用边界，未新增普遍taxonomy reasoning能力保证，不改Books。
+
+### [Qwen3-TTS Jan22 artifact：qwen-tts0.0.2](https://pypi.org/project/qwen-tts/0.0.2/)
+
+仅本日公开artifact，不采用Jan23技术论文。[PyPI版本/公开上界](../_sources/daily-20260123/supplement-qwen002-date.json)与官方NewsJan22确认release，wheel SHA256807de60fd454156a68839bfd7401ebea7d5b4dd149f23b067eadf4e614bc8a5f。[精确代码必要行](../_sources/daily-20260123/supplement-qwen002-core.json)：qwen3_tts_model.py513/655/753说明non_streaming_mode=False只模拟streaming text，不启用true streaming input/generation；voice clone/design/custom wrapper先生成完整codes再decode、返回wav列表+sr，而非chunk iterator。模型声称具备流式能力≠该wrapper真正逐块输出；仅称公开wrapper限制，不否定底层架构stream能力，也不采用97ms作为此wrapper实际延迟，不把参数名当生产接口。x-vector-only忽略reftext/refcode，ICL须reftext，属于条件身份补充，选项本身不构成新机制准入。未运行GPU/完整SLO benchmark。仅报告：此版本可测试兼容边界，[Ch42 Streaming与完成](../../../../books/part-05-inference-system/42-what-happens-during-inference.md#streaming-与完成)及[指标时间边界](../../../../books/part-05-inference-system/42-what-happens-during-inference.md#指标必须绑定时间边界)已分开模型输出与客户端可见终止；[Ch24生成范式正文](../../../../books/part-03-multimodal-world-models/24-multimodal-generative-paradigms.md)的音频分支明确renderer/buffer费用、已播放音频不可回滚的commit边界，版本限定实现事实不改变长期合同。
+
 ## 5. 缺口与下一步
 
 本窗终态保留项：以下隔离材料不用于正面证据，不支持Books或无遗漏断言；逐项保留定点重开条件。
 
-无可执行普通待办；日级独立语义验收已通过，完成态V3、引用及限定diff检查同步于§6。
+原运行有效结果：无可执行普通待办；原日级独立语义验收已通过，原完成态V3、引用及限定diff检查同步于§6；不代替本輪补查验收。
 
 - arXiv早Submitted、当前final-ID registered但缺首次公开下界的8项： [GCG Attack 14266](https://arxiv.org/abs/2601.14266v1)（Submitted2025-12-30）、[llama.cpp quantization 14277](https://arxiv.org/abs/2601.14277v1)（Jan11）、[KV learned scoring 14279](https://arxiv.org/abs/2601.14279v1)（Jan13）、[Chain-of-Memory 14287](https://arxiv.org/abs/2601.14287v1)（Jan14）、[Guided audio plan 14304](https://arxiv.org/abs/2601.14304v1)（Jan18）、[SilentDrift 14323](https://arxiv.org/abs/2601.14323v1)（Jan20 01:24Z）、[LAEP 14327](https://arxiv.org/abs/2601.14327v1)（Jan20 08:39Z）、[LURE 14330](https://arxiv.org/abs/2601.14330v1)（Jan20 10:39Z）。完整exact-v1AB与当前official metadata已实际读，潜在机制/安全信号不因日期未知排除贡献；它们早于Jan20 19Z提交，所以scheduled availability+registered不能证明全部公开包络落窗。有限ID/title/date检索、当前official abs、availability、DataCite已耗尽；14279官方repo早commit与14304 Siren Aug2025 README也不提供精确公开时刻。不无限回溯。可接受该具体正文官方首次公开公告/具有时区的author公开时刻或完整目标公告列表；到达后先重开归属，不先升级已审/入选。当前不评分、不采攻击效果或所有量化比较，必要已读片段保留到各html缓存。
 - [STEAD 14778](https://arxiv.org/abs/2601.14778v1)：准入5及必要受影响审阅有效，但官方comments为NeurIPS2025 poster，已实际找到[同题同作者官方正文入口](https://proceedings.nips.cc/paper_files/paper/2025/hash/3d03800841fa1bb2f43ef1750aafcce4-Abstract-Conference.html)及OpenReview正文/官方2025日程。该具体更早公开反证阻止按本窗首次paper入选；notes日期API403 challenge后停止。原有same-denoising-round independent positions、容量与tamper恢复条件的局部审阅保留，不授跨模型安全或普遍ECC保证。可接受正文first-public证据或真本窗重要新delta，先定点裁日期/事件；不因arXiv初收录视为重要修订，不做旧新版diff。
@@ -322,13 +373,26 @@ Table4在LoCoMo/Mem0的joint sampling configurations为Full平均F1 .2449、NoEa
 - 历史目录：Google Research publications、Meta Research、Moonshot Blog、Hunyuan Research All、ZAI Research、Seed Public Papers目标窗口页、MiMo Blog及Qwen Blog缺口按§2已穷尽有限可用原始入口。不以无结果/当前新列表当零命中；可接受这些明确来源的完整Jan22窗口研究列表/有日期发布链接等原始材料，分别重开受影响切片，不重跑整月/每周。
 - [RayRoPE 15275 Eq10](https://arxiv.org/abs/2601.15275v1)：exact relative-expectation子命题已由root独立数学核，平均rotation非一般正交、inverse比值与独立期望乘积不等；明确不采用。该争议不扩为整家族争议，局部实验已终处置。只有作者更正公式及所需条件或可核新证明才重开此子命题，不能静默将inverse改transpose。
 
+本轮补查停点：作者已完成14源有限尝试、19完整题摘及5新增必要审阅/Books判断；5项必要原证/Only处置与本轮六部分DAY均已非作者root实际通过，本轮无可执行普通待办；完成态校验见§6，原验收与新验收分账。候选等比数与所有新结论只支持上述有限范围。
+
+本轮外部终态保留：Meta/Hunyuan/Google publications/Moonshot/Qwen Blog、Seed public_papers目标页及MiMo Blog的完整Jan22历史列表仍未恢复；DeepSeek/ERNIE此次新访问仅受限、原有效dated切片继续复用。可接受对应来源有日期Jan22研究列表或具名primary publication链接，重开仅该source slice。空页面/搜索无命中不支持零事件、完整Coverage或无遗漏。ZAI此次恢复的Feb2→Jan19dated切片已单独处理，不用它消除其他来源缺口。
+
+Qwen原“技术正文”隔离保持，不与新artifact准入矛盾：paper15621按官方normal Thursday announcement归Jan23BJT不落Jan22补充窗，已确认窗外只留恢复线索，不深入读/挪入；release+wheel身份只授权Jan22artifact命题。OpenAI [Codex agent loop](https://openai.com/index/unrolling-the-codex-agent-loop) RSS Jan23明确窗外，只记录真实归属日线索，不在本日深审。本日新增不消除旧8早Submitted日期holds、AI-resistant warning首次public hold或RayRoPE Eq10子命题隔离；必要材料以后到达只重开受影响项。
+
 ## 6. 复核
 
-复核者：root（非报告作者）
-结论：通过
+原运行复核者：root（非报告作者；历史有效验收只用于原50与原Books5处）
+原运行结论：通过
 
 实际核实际主题查询与native标题查漏/停止边界，确认宽月目录不作逐项题摘/全文队列；日期公开包络、9项隔离与有限历史来源终态已验收。全部50候选的准入、§4限定必要机制／关键对照／直接反側、Books处置分批实际复核；5处窄增量原源/owner及实际正文、前后邻接、末注POST通过，Ch43位置与Ch72两组population合并错误已局部修正后重核。HiNS由原关闭改准入5只基于实际联合sampling-config反側，不因成熟原则或审阅质量改分；14778具体更早正文日期反证隔离，15275 Eq10不采用判断已独立数学核，未把子命题争议扩到其有限实验。
 
 排除复核实际覆盖25/48：必要信号14项（14567、15232、14615、14914、15118、15075、15130、15288、14528、14738、14698、15077、15059、14260）完整题摘或决定性受影响原源核验有效复用；按来源/主题/理由层抽检11项（14290、14298、14339、14351、14446、14460、14479、14490、15282、14523、15047），覆盖repair/safety模块、benchmark人口、Agent执行分层、BBO/信任/统计judge、OCR、video指标、GPU搜索与综述。普通样本原12中14857转入候选后为11；14523已把GPU代码优化纳入主线可能性，关闭主理由改为成熟搜索/经验复用组合未新增编译正确性或执行预算边界，科学负载仅补充；15282定点metric/§5核到MLLM VQA+VMBench robot checklist、新population及新rank协议，未给旧指标same-video控制失误，具体关闭而非统一拒绝benchmark。未抽检23项（14514、14568、14569、14598、14601、14714、14722、14735、14741、14821、14874、14895、14921、14942、14949、14973、15016、15017、15124、15160、15221、15250、15260）维持作者完整题摘/当前official marks与具体原始筛选理由，不称全量独立验证；原检查及共同错误受影响集合已定点纠偏，不扩大无关附件。
 
 机器：完成态 `python3 scripts/validate_research.py --report papers/2026/01/23/README.md` 通过；本日README的58个localrefs、与STOP/screening合计107个localrefs均missing0；限定五Books/本日报/cache的unstaged `git diff --check` 与已有staged `git diff --cached --check` 均通过。第一次完成态校验因§5“不用于／支持”措辞和§6复核短字段未单独成行而失败，已仅修可读格式后重跑通过，没有修改validator或重授证据。五Books整体diff含运行前及其他作者变更，本日仅5段+末注，不把617新增行当本日产出；保护既有MM/M/未跟踪状态，未stage、commit或push。机器不替代上述真实日级语义验收。
+
+复核者：root（非补查报告作者；本轮补查及最终六部分DAY）
+结论：通过
+
+本轮机器（完成状态）：V3单日报校验通过；README与本轮screening合计82个本地引用missing0，新增JSON缓存全部可解析。本轮保存原件比较：原50候选表的52行（含header/separator）全部逐行保持、原§4正文作为连续完整前缀保留、原窗口字面值保持。仅本日报及daily-20260123缓存范围的unstaged与cached diff检查均通过；未stage、commit或push。先前本轮格式校验因第二source表/候选重复header产生误计，已只修新增结构后通过，未改validator、原候选或有效原审阅；机器不替代下述独立语义验收。
+
+本轮准入校准已实际读首批14595/14936/15188/14850/14343完整题摘并通过具体关闭理由、允许14472/14625/Qwen继续标准5；后包14606/14270/14980/14855/14968/14466等代表完整题摘复核，HyNeA准入5。14610被指出leaf正确而coarse失败的新反侧后定点重开，root已实际核HCA定义、Table5条件集合、§1/Table2 GT诊断与§4.3.1同模型推理反侧，5/Only限定通过，不把共同错误扩为所有应用论文全文队列。19实际完整AB中4paper新增、15贡献前关闭；50原候选证据/评分及原§4连续正文保持有效，不重复授分或移动日期。root已实际核HyNeA §3.2–3.3/必要Tables1–3及Qwen wheel655/753/834，二者5/Only限定通过；root已实际核14472方法/训练/有限评价及14625 Eq6–15、Table4/§5.2/V100/BigGAN反側，两者5/Only限定通过；新4paper公开日期由官方availability/final-ID分配与scoped raw registered4值联合核，Qwen exact-wheel上传身份核过。root已最终实际读六部分并授予DAY：Jan22补充窗/原50与时间包络保持、14来源有限主题/query停止、19AB漏斗4paper+artifact5、5×5分标准必要证据/Only及外部隔离/重开一致；0新增Books写入，不存在POST伪完成。外部缺段不授Coverage/Evidence，不用旧状态字段代替本轮DAY。

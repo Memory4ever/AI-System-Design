@@ -1,0 +1,13 @@
+# 本日补查题摘处置（不将宽目录当全部关闭队列）
+
+四主题API实际124 occurrences/116 unique，fullAB只具体36，CL/DC相关title有界补漏另7 fullAB；原有效family去重先于新审阅。43条不是43当日候选：20 arXiv本窗具体潜在贡献准入并日期通过，另UniT官方date-only，共新增21 family；12贡献前关闭、10后来finalID线索、1Omni日期保留。另Seed native具名10560/10885 fullAB日期保留，不入池。原58冻结。
+
+root已实际完整AB校准通过的贡献前关闭：AIDev09185只有真实PR规模/数据未揭新的评价盲区/条件；RoboSubtask10015传统I3D/MS-TCN分段映robot primitive未接foundation机制；SceneSmith09153多agent分工+既有asset/physics组合/指标未改具体系统判断；双语词表09388初始化续训localgain未给新成立条件；VideoAfford09638视频prior+seg/loss/dataset组合未辨新增条件；AFRL10006 answerfirst/SFT混GRPO成熟原则未给新可靠条件；quad10111传统ATS+nominal residual未形成foundation/VLA机制；timeseries09869已知oracle bootstrap/twoway sparsity未给主线noise/sparse新条件；RashomonFL09520无foundation选择增量。MATA09642决定准入处定点算法后只是既有cascade/一致性/unchangedbreak/.1 confidence heuristic，贡献前关闭，不用低分保留。
+
+root最后已实际完整AB校准关闭：RKO09583 Preference Aligned Visuomotor Diffusion Policies…题摘只RL/preference/robot任务与局部成绩组合，未说新的偏好credit、更新成立条件或旧policy失效机制；TeleOmni09609 Unified…题摘只统一condition、generation/editing联合训练与数据/成绩，未给新的兼容/factorization/缓存/编辑成立条件。不因视觉/机器人主题自动候选，不因为scope外或小指标拒；root已核此两项没有新增成立条件，关闭不评分。
+
+later10 exact-v1原AB在new-abs.jsonl，作者全部读；finalID不是提交当日公开，Submitted Feb9/10不改first-public规则，未认定延迟的具体原因。潜在具体delta7：SPEED2604.09557合成/throughput draft-batch diversity proxy；Expert2603.00054 JSD MoE路由与域specialization；WebGPU2604.02344 API/Python dispatch层measure；AtomicRAG2604.20844 chunk粗粒度→atom与无实体edge检索；RouterKD2603.02217压缩router与专家变更失配fine/coarse校准；AutoHarness2603.03329环境反馈合成harness以减少运行LLM；CktEvo2603.08718孤立snippet→跨文件行为保持与完整toolchain PPA评价contract。仅有后来Mar/Apr arXiv ID存在事件；late-date-fields只含原6具名字段，原6有限标题primary搜索没有Feb11先行正文，CktEvo仅现有AB/history及官方最终ID规则，不声称做过同样搜索。保留可能更早非arXiv正文，但不补造。Expert有2025匿名OpenReview同名信号，未恢复其正式正文firstpublic，不开展2025全文。七项本日日期隔离/窗外恢复线索，不评分不深审不Books，不以本窗零命中宣称无遗漏。
+
+later3 root实际完整AB校准贡献前关闭：ChatStyle2603.03324线性direction组合未给新成立条件；KernelCraft2603.08721 ISAcompile/sim/agent benchmark扩任务未给新判定/可靠条件；SiliconMind2603.08719 multiagent distill/debug/testbench组合未辨新增机制。CktEvo此前按benchmark模板关闭错误已纠正：AB具体指出跨文件依赖造成PPA与行为保持评价契约差额，潜在贡献成立，仅首公开日期尚不能归本窗。该误理由只重开CktEvo，不重开其余9关闭，不评分/Source/Books绕日期门。其exact-v1 AB/history已保留new-abs；v1 Submitted2026-02-10T02:46:15Z不授public，finalID2603.08718由官方ID规则表明arXiv公开在March批次。late-date-fields原件仅原6项，没有CktEvo专属DataCite字段，不编造其创建日或声称已做同样primary标题搜索。现有原件无Feb11先行正文可核，按root指令不新扩检索，精确隔离；可接受替代为作者/官方Feb11已公开正文或可核正式公告，今后只重开本family日期。
+
+没有数量配额/保留率目标，不为了补21而关闭余项；只处理已触发具名可能相关题摘，整个1936 CL宽库不是本日队列。上述根核层级待最终§6汇总，不以本文作者筛选自授整日验收。

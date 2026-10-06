@@ -1,0 +1,2252 @@
+Neural Induction of Finite-State Transducers
+Michael Ginn1 and Alexis Palmer 1 and Mans Hulden 2
+1University of Colorado 2New College of Florida
+michael.ginn@colorado.edu
+Abstract
+Finite-State Transducers (FSTs) are effective
+models for string-to-string rewriting tasks, of-
+ten providing the efficiency necessary for high-
+performance applications, but constructing
+transducers by hand is difficult. In this work,
+we propose anovel method for automatically
+constructing unweighted FSTsfollowing the
+hidden state geometry learned by a recurrent
+neural network. We evaluate our methods on
+real-world datasets for morphological inflec-
+tion, grapheme-to-phoneme prediction, and his-
+torical normalization, showing that the con-
+structed FSTs are highly accurate and robust
+for many datasets,substantially outperform-
+ing classical transducer learning algorithms
+by up to 87% accuracy on held-out test sets.
+1 Introduction
+Finite-State Transducers (FSTs)are effective mod-
+els for string-to-string tasks such as spellcheck-
+ing and autocomplete (Ouyang et al., 2017), mor-
+phological inflection (Žiga Golob et al., 2012),
+grapheme-to-phoneme conversion (G2P, Manohar
+et al., 2022), and transliteration (Hellsten et al.,
+2017). Neural networks have largely supplanted
+FSTs in research settings, thanks to their im-
+proved accuracy, tolerance for noise, and ease of
+construction from data (e.g. Kann and Schütze,
+2016). However, FSTs are typically more effi-
+cient and less resource-intensive than neural net-
+works, making them an appropriate choice for high-
+performance applications such as mobile keyboards
+(Wolf-Sonkin et al., 2019) and embedded systems
+(Wang et al., 2012).
+Construction of FSTs is difficult, requiring do-
+main knowledge and significant human effort—for
+example, Beemer et al. (2020) observed that it took
+approximately forty hours for an expert to hand-
+craft a single transducer for basic morphological
+inflection. Prior research has proposed grammar in-
+duction algorithms to automatically learn transduc-
+Figure 1: There is a theoretical and empirical correspon-
+dence between recurrent neural network’s continuous
+state space (left) and the finite-state space of an automa-
+ton (right). In the RNN state space, individual activation
+values may form clusters that correspond to finite states
+in the FSA (blue). Transitions between individual acti-
+vations can be aggregated to form the transitions of the
+FSA (purple).
+ers from datasets with pairs of inputs and outputs,
+but these algorithms generally struggle to general-
+ize robustly (Gildea and Jurafsky, 1995) or require
+an oracle to verify arbitrary examples (Vilar, 1996).
+In this work, we propose a novel approach for
+unweighted transducer induction1 which utilizes
+neural networks as intermediate learners. Neural
+networks are highly effective at learning from data,
+even in the presence of noise. Furthermore, there
+is a clear theoretical correspondence between the
+continuous, vector-valued hidden state space of a
+recurrent neural network (RNN) and the discrete
+state space of a transducer. Our method is inspired
+by the seminal work of Giles et al. (1992); Omlin
+and Giles (1996), which sought to understand RNN
+behavior by forming finite-state automata (FSAs)
+from clusters of hidden state vectors. Our work is
+novel in three key ways
+1. We use real-world, noisy datasets instead of
+small toy grammars.
+1Weighted transducer induction is a distinct, and typically
+easier problem, and has a number of solutions discussed in §7
+1
+arXiv:2601.10918v1  [cs.CL]  16 Jan 2026
+2. We extract FSTs instead of FSAs.
+3. We propose architectural modifications for the
+intermediate neural networks that facilitate
+transducer extraction. Specifically, we design
+a custom transduction training objective and
+use a spectral penalty to encourage the RNN
+to model finite-state-esque dynamics.
+We evaluate our method on real-world datasets
+for morphological inflection, grapheme-to-
+phoneme conversion, and historical normalization.
+We find that our method is highly accurate on
+inflection, but struggles on grapheme-to-phoneme
+and normalization data due to bidirectional
+dependencies. Nonetheless, our method produces
+more accurate transducers than existing methods
+for nearly every dataset in the study. For inflection,
+the extracted transducers often achievesimilar
+accuracy to transducers hand-crafted by human
+experts. Our code will be released on GitHub.2
+2 Background
+A finite-state transducer is defined as a tuple A=
+(Σ,Π, Q, q 0, δ), where:
+•Σ is theinput alphabetof the automaton, a
+finite non-empty set of input symbols.
+•Π is theoutput alphabetof the automaton
+(often the same as the input alphabet).
+•Qis a finite non-empty set of states.
+•q 0 ∈Sis theinitial state.
+•δ:Q×Σ→Q×Π is thetransition function,
+which maps a given state and input symbol to
+a new state and output symbol.
+In this work, we focus onregular transducers,
+which are deterministic, i.e. a given input string
+only has one possible output. An example FST
+is given in Figure 2, which inflects the word ‘cat’
+to the plural ‘cats’. For this FST, Σ ={c, a, t} ,
+Π ={c, a, t, s},Q= 0,1,2,3,4, andq 0 = 0.
+Σ: {a,c,s,t}
+41 2a 3t ϵ:s0 c
+Figure 2: Example FST that rewrites "cat" to "cats".
+The input and output alphabet are combined.
+2Link removed for anonymity
+Transducers are closely related tofinite-state au-
+tomata (FSAs), which recognize a set of strings.
+Automata have a single alphabet of symbols, and
+each transition is associated with a single symbol
+rather than an input and output symbol. Every
+automaton can be formulated as a transducer that
+performs the identity function, mapping each al-
+lowed string to itself. Likewise, every transducer
+can be formulated as an automaton that recognizes
+a valid sequence of (input symbol : output symbol)
+tuples. We make use of this equivalence in order
+to extend existing automaton induction methods
+(Giles et al., 1989) to transducers.
+3 Method
+3.1 Motivation
+Early work on recurrent neural networks (RNNs)
+recognized an intuitive correspondence between
+RNNs and finite-state automata (Cleeremans et al.,
+1989a; Giles et al., 1989; Pollack, 1991). Both mod-
+els process input sequences symbol-by-symbol,
+moving through a state space (continuous for RNNs
+and discrete for FSAs) according to a transition
+function. These similarities motivated attempts
+to extract automata from RNNs using a method
+known asstate clustering. The method, first pro-
+posed by Giles et al. (1991, 1992), clusters hidden-
+state values to form the states of the automaton
+(Figure 1). These attempts were highly successful
+at recovering automata from RNNs trained on syn-
+thetic data generated by regular languages such as
+the Tomita grammars (Tomita, 1982). Furthermore,
+Casey (1996) proved that an RNN which robustly
+learns to model a regular languagemustorganize
+its state space to correspond with the target FSA.
+3.2 Overview
+We propose an algorithm for FST inference in-
+spired by these earlier findings. Prior work fo-
+cused on interpretability, using state clustering to
+understand the internal dynamics of standard RNN
+models. Because we are more interested in creating
+high-accuracy transducers, we modify the architec-
+ture and training process of the RNN to facilitate
+transducer extraction. Our method is as follows:
+1. Performalignmentof input and output strings
+(§3.3.1).
+2. Train an RNN ontransduction(§3.3.2).
+3. Collecthidden-state valuesfrom the RNN
+2
+for input strings from the training set and ad-
+ditional synthetically-generated input strings.
+4. Performclusteringon hidden-state values to
+form the states of the FST (§3.3.4).
+5. For each cluster, select the most common tran-
+sition per input symbol, and use astate split-
+ting algorithmto resolve non-deterministic
+transitions (§3.3.5).
+3.3 Steps
+3.3.1 Alignment
+A unique challenge in transducer induction is that
+analignmentbetween pairs of input and output
+characters must be learned in addition to learning
+the structure of the automaton. In our method,
+alignment learning is performed prior to structure
+learning. We perform alignment of all the input
+and output strings in thetraining dataset only
+using theChinese Restaurant Process Alignment
+(CRPAlign), a Bayesian Monte Carlo alignment
+algorithm first described in Cotterell et al. (2016).
+We provide this algorithm in Appendix A.
+For examples where the input and output string
+are the same length, the alignment algorithm simply
+aligns each pair of characters. For example, given
+(run, ran), the alignment would be:
+r u n
+r a n
+However, if the input and output strings are dif-
+ferent lengths, the method will insertepsilons ( ϵ),
+which represent an empty string. For(run, runs) ,
+the alignment might be:
+r u nϵ
+r u n s
+Epsilons in the output string are left alone. Epsilons
+in the input string, though, are problematic as they
+can introduce non-determinism when we later con-
+vert the aligned pairs into transducer transitions.3
+To solve this, we remove epsilons in the input string
+and merge the corresponding outputs. We use two
+merging strategies. For G2P and normalization, we
+always merge outputs to the right:
+aϵc→a c
+x y z→x yz
+For inflection, we use a greedy merging strategy
+based on global probabilities. We count all pairs of
+3Because an epsilon-input transition is optional, potentially
+resulting in multiple possible paths through the automaton if
+there is also a valid non-epsilon transition from a given state.
+aligned characters involving epsilon inputs, merge
+the most common pair, and repeat until no more
+epsilon inputs remain. In the preceding example, if
+(a,x)(ϵ,y) is the most common pair, the merged
+example would be:
+aϵc→a c
+x y z→xy z
+These aligned pairs form the transitions of the
+FST. For example, an aligned pair (a,xy) would
+correspond to a transition with input a and out-
+put xy. Next, we will use an RNN to induce the
+structure of the transducer, given these alignments.
+3.3.2 RNN Training
+We use one-layer simple RNNs (also known as
+Elman RNNs). RNNs can be trained on different
+tasks/training objectives, with implications for the
+types of hidden states that are learned. Virtually all
+prior work trained RNNs on binary classification,
+where the RNN should predict whether or not a
+string is a valid member of the target formal lan-
+guage (Giles et al., 1991, 1992; Watrous and Kuhn,
+1992; Omlin and Giles, 1996; Weiss et al., 2018a).
+This approach works well on simple datasets, but
+we hypothesized, and then empirically verified, that
+it does not induce well-separated hidden states for
+challenging, real-world datasets.
+Instead, we propose a noveltransduction train-
+ing objectivethat directly matches the structure of
+a finite-state transducer, providing explicit super-
+vision of every hidden state in a training example.
+We formulate the transduction task as follows. For
+each position in the aligned sequence, we compute
+the hidden state using the standard update rule.
+ht =σ(W hht−1 +W xxt)(1)
+where ht is the hidden state at time t, xt is the
+input symbol embedding, andWh, Wx are trainable
+weight matrices. At each timestep, we train the
+model to predict the next output symbol given some
+input symbol. We use a linear layer that takes
+a concatenated hidden state and the embedding
+for thenext input symbol xt+1 and predicts the
+corresponding output symboly t+1:
+p(y) =softmax(W y ·concat(h t, xt+1))(2)
+Our objective function is standard cross-entropy
+loss over the output symbol logits, CEL(p(y), y ∗)
+where y∗ is the true output symbol. This training
+objective closely matches key features of an FST:
+intermediate states are solely determined by the
+3
+sequence of input symbols up to that point, and
+states are differentiated by their outgoing transi-
+tions. In addition, we use aspectral normpenalty
+LSN , estimated using the power iteration on the
+weights of each linear layer for updating the hidden
+state (Miyato et al., 2018). We hypothesized that
+by encouraging a small spectral norm, and thus a
+small Lipschitz constant for the hidden state update
+function, the RNN will tend to have finite-state-like
+dynamics (i.e. fixed point attractors), and we found
+empirically that this enabled more robust FST ex-
+traction. We weight the spectral norm penalty using
+a hyperparameter λSN , giving our full objective as:
+L=L CE (p(y), y∗) +λ SN LSN (3)
+We choose to use Elman RNNs because their
+simple update rule imposes a Markov assumption,
+where the next hidden state is dependent only on
+the current state. Gated RNNs (LSTMs and GRUs)
+violate this assumption, since by design, the mem-
+ory cells retain information about the full sequence
+of prior states. Furthermore, Wang et al. (2018) find
+that these complex hidden-state dynamics make ex-
+tracting finite-state automata more difficult. We
+find empirically that increasing the number of lay-
+ers does not improve the extracted FST. Details for
+the training process in Appendix B.
+3.3.3 Collecting Hidden States
+Next, we collect hidden state activation values ob-
+tained by inputting strings to the RNN. We use two
+sources of input-side strings: 1) the examples in
+the training dataset, and 2) synthetically-generated
+strings that are plausible for the task.
+The latter is necessary because of a difference in
+how neural models and FSTs encode theirdomain,
+i.e. the strings that can be inputted to the model. An
+RNN can produce an output for any input string,
+allowing it to generalize to strings outside of its
+training set. Meanwhile, an FST must explicitly
+encode the set of accepted strings through the in-
+put side of the transition labels. If a string does
+not have a valid sequence of transitions, the FST
+cannot produce an output. Thus, if we only collect
+activations for the strings in the training set, we
+are very unlikely to observe every possible transi-
+tion. To solve this, we create additional strings that
+provide greater coverage over the domain.
+The particular strategy we use for synthetic
+string generation depends on the task. For inflec-
+tion, the domain is finite, consisting of a fixed num-
+ber of lemma and feature tag combinations, so we
+can generate synthetic strings by swapping feature
+tags for lemmas in the training set. For G2P and
+normalization, the domain is theoretically infinite.
+We approximate the domain by creating an n-gram
+language model from the training set strings. Then,
+we generate all possible strings from these n-grams
+up to a max length (we use 6 for efficiency).
+Finally, for every training and synthetic exam-
+ple, we feed the string to the RNN and collect the
+hidden state activation values and predicted out-
+put string (ignoring predictions for the training set,
+where we have a gold output already). Every sym-
+bol in the input string is assigned a hidden state,
+which is computed by recursively applying the up-
+date rule for all of the preceding symbols.
+3.3.4 State Clustering
+Thanks to the training objective, we expect hidden
+states that are close together to be more likely to
+correspond to the same state of the transducer. We
+standardize activations and perform k-means clus-
+tering (McQueen, 1967). We also tested other clus-
+tering algorithms (OPTICS, DBSCAN) but found
+no clear performance benefit.
+The clusters of activations form the states of the
+FST. Next, we create transitions between states
+by aggregating the transitions between activations
+assigned to each cluster (Figure 3, part 1). For the
+activations collected from the training data, we use
+the ground-truth input and output labels. For the
+activations predicted for the full domain, we use the
+output labels as predicted by the RNN transducer.
+A key desideratum for our extracted transducer
+isinput determinism. In some cases, activations
+within a single cluster may violate input determin-
+ism and have multiple transitions for the same input
+symbol with different outputs or different destina-
+tion states. In this case, we try to recover using the
+state splitting algorithm described in the following
+section.
+3.3.5 State Splitting
+Our state splitting algorithm (diagram in Figure 3,
+pseudocode in Appendix F) is closely inspired by
+the refinement approach of Weiss et al. (2018a).
+Starting at the initial state, we check whether the
+aggregated transitions violate input determinism.
+Specifically, we look for multiple possible transi-
+tions for the same input symbol that occur more
+than a minimum threshold, λtrans, a tuned hyper-
+parameter. If there is no violation, we continue to
+downstream states. If there is a violation, we iden-
+4
+Figure 3: State splitting algorithm, where the minimum
+threshold λtrans = 2. If a cluster has multiple possible
+transitions each over the threshold (1), the points are
+split using an SVM or logistic regression (2). If there
+are still conflicting transitions, but one of them is under
+the threshold, it is removed (3). Finally, clusters are
+materialized into FST states (4).
+tify the conflicting activations and fit a classifier (ei-
+ther SVM or logistic regression; we try both during
+the hyperparameter sweep) to separate the cluster
+into two or more new states (including the non-
+conflicting activations). Since upstream states may
+now be input non-deterministic, we requeue these
+states. After splitting concludes, we remove inac-
+cessible states and minimize the transducer using
+FSA minimization that treats input/output labels as
+single symbols (Hopcroft, 1971).
+4 Experiments
+4.1 Datasets
+We evaluate our method on benchmarks for three
+tasks that can be represented as regular transduc-
+tions. We evaluate the constructed transducers
+based on exact-match accuracy for output strings.
+We evaluate on held-out test datasets, seeking trans-
+ducers that generalize to unseen examples.4
+4In other grammatical inference setups, the goal is to learn
+a minimal transducer that perfectly models the training dataset.
+We can trivially construct a prefix tree transducer with perfect
+accuracy on seen data, but that performs no generalization.
+Morphological inflectionWe use the 2020 SIG-
+MORPHON Shared Task datasets for morphologi-
+cal inflection (Vylomova et al., 2020). The shared
+task included datasets for 90 languages; we use
+the 24 languages (full breakdown in Table 7) used
+in Beemer et al. (2020), allowing us to compare
+to their hand-crafted transducers. Morphological
+inflection is formulated as predicting an inflected
+word-form given a lemma and morphological tags,
+such as the following English verb:
+[3P][Sg][Prs] run→runs
+Grapheme-to-phonemeWe also use the 2020
+SIGMORPHON Shared Task data on grapheme-to-
+phoneme prediction (Gorman et al., 2020) for 15
+languages (Table 8). The task consists of predicting
+the phonemic (using the International Phonetic Al-
+phabet) string for a word written in the language’s
+orthography, as in the following French example:
+hébergement→ebE4ZEm˜ A
+Historical normalizationWe use datasets from
+Bollmann (2019) for historical normalization
+(which involves mapping spelling variants of the
+same word to a single canonical form) for seven
+languages (Table 9). An example in historical En-
+glish is given below:
+thaire→their
+4.2 Baselines
+We compare against the main algorithms for
+domain-agnostic transducer induction from un-
+aligned data. We do not compare to domain-
+specific methods requiring expert task knowledge.
+OSTIAOSTIA (Oncina et al., 1993) is a seminal
+algorithm for transducer induction from unaligned
+data. OSTIA involves building a prefix tree for
+the labeled examples, pushing output substrings
+as early as possible, and merging states when it
+does not violate the input determinism condition.
+Transducers produced by OSTIA perfectly model
+the training dataset, but often struggle to general-
+ize to other examples. Furthermore, the algorithm
+has polynomial complexity with the number of ex-
+amples. We provide a highly-optimized Cython
+implementation,5 but even still the algorithm may
+take nearly 100 days to run on large datasets. For
+practicality, we set a time limit of one day and stop
+merging after reaching the limit; these runs are
+marked with an asterisk (*) in the results table.
+5Link removed for anonymity
+5
+Data-Driven OSTIADD-OSTIA is a modifica-
+tion to OSTIA which can converge with fewer ex-
+amples, by considering states in breadth-first order
+(Oncina, 1998). We use the variation described in
+de la Higuera (2010), which omits the costly equiv-
+alence measure and performs merges greedily.
+No ChangeFor historical normalization, many
+examples do not have any changes. We compute a
+simple baseline that outputs the input unchanged.
+Human ExpertFor inflection, we compare
+against the transducers from Beemer et al. (2020),
+which were handcrafted by linguistics students af-
+ter studying inflection datasets. These transducers
+are highly accurate thanks to the students’ knowl-
+edge of common morphological processes, but re-
+quired roughly forty hours for an expert to create.
+4.3 Hyperparameter Tuning
+Since our system cannot be optimized end-to-end,
+any error from the intermediate model is propa-
+gated to the final transducer. Instead, we perform
+extensive hyperparameter sweeps to minimize er-
+ror for each component, using a held-out evalua-
+tion set (distinct from the test set) to select the best
+model. Because the models involved are very small,
+this can be completed rapidly, with the largest lan-
+guages requiring roughly a day using an NVIDIA
+A100 GPU. We describe the tuned hyperparam-
+eters for the RNN (Appendix B) and extraction
+algorithm (Appendix C).
+5 Results
+We present our main experimental comparison for
+inflection in Table 1, G2P in Table 2, and historical
+normalization in Table 3.
+Performance across TasksAcross tasks, our
+method is nearly always superior to OSTIA-based
+methods and simple no-change baselines. However,
+our method is typically more effective for inflection
+than the other two tasks. One possible explanation
+is that our RNNs are unidirectional. For inflec-
+tion, the RNN can separate states based on the
+initial feature tags, avoiding conflicting transitions.
+Meanwhile, G2P often has transitions dependent
+on the right-side context, which the RNN is unable
+to distinguish. For example:
+cat→kæP
+cent→s En t
+Expert OSTIA DD-OSTIA Ours
+aka 1.000 0.533 0.6150.975
+ceb 0.865 0.135 0.1080.865
+crh 0.964 0.020 0.005*0.888
+czn 0.725 0.013 0.0360.666
+dje 1.000 0.125 0.4380.750
+gaa 1.000 0.391 0.3310.959
+izh 0.929 0.009 0.0000.438
+kon 0.987 0.141 0.1790.846
+lin 1.000 0.043 0.0650.978
+mao 0.667 0.000 0.0480.452
+mlg 1.000 0.189 0.3070.969
+nya 1.000 0.618 0.5330.993
+ood 0.710 0.010 0.0130.570
+orm 0.990 0.037 0.0120.798
+sot 1.000 0.424 0.4240.727
+swa 1.000 0.5690.541 0.526
+syc 0.883 0.031 0.0070.870
+tgk 0.938 0.000 0.0000.938
+tgl 0.778 0.019 0.0130.383
+xty 0.817 0.122 0.0000.808
+zpv 0.789 0.175 0.1450.706
+zul 0.833 0.000 0.0000.692
+Table 1: Accuracy of learned transducers for morpho-
+logical inflection datasets on held-out test sets. * marks
+OSTIA runs that reached the time limit before ending.
+The choice of (c, k) or (c, s) is impossible to
+predict from only the left context. There are two
+clear paths to address this. First, an alternate align-
+ment algorithm could avoid this issue by delaying
+outputs until they can be distinguished–in the prior
+example, the symbols could be aligned as:
+(c,ϵ) (a,kæ) (t,P)
+(c,ϵ) (e,sE) (n,n) (t,t)
+The other option is to replace the unidirectional
+RNN with a bidirectional RNN (or transformer).
+Then, one could extract transducers by first learn-
+ing abimachine(Reutenauer and Schutzenberger,
+1991), which can be thought of as a transducer con-
+taining two components and which emits its output
+depending on the joint states of both left-to-right
+and right-to-left reading components. A bimachine
+can be converted to a regular FST.
+Comparison to OSTIAWhile OSTIA attempts
+to learn generalizable transducers via greedy state
+merging, it does this by simply checking whether
+merging two states would violate an example in
+the training dataset. This means that two dissimilar
+states could be incorrectly merged so long as there
+is no counter-example. Meanwhile, our method
+leverages the hidden-state space geometry learned
+by the RNN, which should naturally organize so
+that states with similar outgoing transitions and
+6
+OSTIA DD-OSTIA Ours
+fre 0.047 0.0980.200
+dut 0.009 0.011*0.149
+arm 0.067 0.0910.589
+geo 0.013 0.056*0.596
+bul 0.038 0.0490.236
+gre 0.087 0.0800.307
+ady 0.013 0.0490.184
+kor 0.029 0.0330.057
+ice 0.029 0.062*0.278
+hin 0.029 0.1000.411
+lit 0.144 0.1670.171
+jpn 0.029 0.0710.369
+rum 0.298 0.2710.598
+vie 0.022 0.0380.233
+hun 0.053 0.1400.522
+Table 2: Accuracy of learned transducers for grapheme-
+to-phoneme datasets on held-out test sets. * marks OS-
+TIA runs that reached the time limit.
+No Change OSTIA DD-OSTIA Ours
+deu 0.0870.251*0.223* 0.214
+hun 0.055 0.160 0.147*0.316
+swe 0.431 0.348 0.338*0.579
+por 0.3950.5590.546* 0.503
+slv 0.754 0.644 0.628*0.801
+isl 0.3380.5810.563* 0.507
+spa 0.550 0.568 0.5660.646
+Table 3: Accuracy of learned transducers for historical
+normalization datasets on held-out test sets. * marks
+OSTIA runs that reached the time limit.
+prefixes are close. In addition, OSTIA learns to
+align input and output symbols by greedily pushing
+output symbols as early as possible in the prefix
+tree. However, this can result in poor generaliza-
+tion. Our method achieves better generalization by
+using a statistical algorithm that optimizes align-
+ments globally across the dataset.
+An alternative method could use a standard neu-
+ral inflection model to predict output strings for the
+full domain, and then use OSTIA on the expanded
+dataset. This is a coarser version of our approach,
+treating the neural network as a black box and dis-
+regarding any information from its hidden state
+geometry. Accuracy would match that of the best
+possible neural model (since OSTIA retains perfect
+recall on its training data), but OSTIA’s reliance
+on naive state merging would likely produce very
+large and/or uninterpretable transducers.
+Comparison to Human ExpertIn many cases,
+the automatically extracted transducers are compet-
+itive to human expert-created ones (and achieve per-
+fect performance in some cases). For practical use,
+an expert could then correct erroneous outputs with
+small edits, saving significant effort compared to
+building the transducer manually. The constructed
+FSTs tend to be far larger than expert-crafted trans-
+ducers; for example, the inflection ceb constructed
+FST has 280 states while the expert-crafted FST
+has 30 states (see Appendix G).
+6 Analysis
+We randomly selected four datasets to perform ab-
+lations: the czn and kon inflection datasets, thegeo
+G2P dataset, and theswe normalization dataset. We
+use the optimal RNN hyperparameters (except for
+the third ablation, where we run a sweep), and we
+run a full sweep for FST extraction.
+6.1 Ablation: CRPAlign
+The CRPAlign algorithm makes use of global prob-
+abilities to predict alignments. We ablate this align-
+ment algorithm and use a simple local minimum-
+edit distance (MED) for a small subset of datasets
+in Figure 4. For the datasets where the input and
+output alphabets are overlapping (inflection and
+normalization), MED achieves very similar scores
+to CRPAlign. However, for G2P where the output
+alphabet is disjoint from the input alphabet, CR-
+PAlign is far more effective, as MED will always
+need to replace the entire string.
+0.0 0.2 0.4 0.6 0.8 1.0
+Accuracy
+czn
+(inflect.)
+kon
+(inflect.)
+geo
+(g2p)
+swe
+(norm.)
+CRPAlign
+MED
+Figure 4: Scores with CRPAlign algorithm and simple
+minimum-edit distance (MED).
+6.2 Ablation: Extraction with Synthetic Data
+We omit the synthetic data described in 3.3.3 and
+only collect activations for the training examples.
+For the inflection and G2P datasets, the ablated per-
+formance is worse by up to 8 points. This supports
+our hypothesis that collecting additional activations
+to attain better coverage of the input domain is ben-
+eficial to generalization.
+7
+0.0 0.2 0.4 0.6 0.8 1.0
+Accuracy
+czn
+(inflect.)
+kon
+(inflect.)
+geo
+(g2p)
+swe
+(norm.)
+Train + Synth
+Train
+Figure 5: Scores with and without synthetic data.
+6.3 Ablation: Transduction Objective
+We initially considered three different training ob-
+jectives for the RNN: binary classification, next-
+aligned-pair prediction, and transduction (which
+we selected). For binary classification, we gener-
+ated negative samples by randomly replacing out-
+put characters in training examples, and trained the
+RNN to distinguish correct and incorrect samples.
+For next-pair prediction, we trained a language
+modeling head using sequences of aligned pairs
+of input and output symbols. We provide results
+for some datasets in Figure 6, with no clear trends.
+While we had hypothesized that transduction would
+be necessary for well-separated states, these results
+would indicate that the process was robust to train-
+ing objective.
+0.0 0.2 0.4 0.6 0.8 1.0
+Accuracy
+czn
+(inflect.)
+kon
+(inflect.)
+geo
+(g2p)
+swe
+(norm.)
+Transd.
+LM
+Class.
+Figure 6: Scores for transducers extracted from RNNs
+trained for transduction, language modeling, and binary
+classification.
+7 Related Work
+This work is closely inspired by early work on
+RNNs that identified similarities to finite-state au-
+tomata, providing empirical and theoretical results
+that suggested that RNNs trained on regular lan-
+guages would learn to replicate finite-state dynam-
+ics (Cleeremans et al., 1989b; Giles et al., 1989;
+Pollack, 1991; Casey, 1996). The basic procedure
+for state clustering was first proposed by Giles et al.
+(1991, 1992), though we have made heavy modi-
+fications to adapt it to transducers. Various works
+have proposed alternate clustering techniques such
+as k-means (Frasconi et al., 1996; Gori et al., 1998)
+and hierarchical clustering (Alquezar and Sanfeliu,
+1994). Ti ˇno and Šajda (1995) is one of the few
+works that examined transducer inference, though
+they only studied small synthetic languages and
+assumed a provided alignment between inputs and
+outputs. Schellhammer et al. (1998) represents the
+only (to the best of our knowledge) study that ex-
+tracted automata from naturally-occurring datasets;
+here, sequences of part-of-speech tags.
+More recent work has studied gated RNNs such
+as LSTMs, finding that it is far more difficult to
+extract accurate automata (Wang et al., 2018; Weiss
+et al., 2018b; Hou and Zhou, 2020). Weiss et al.
+(2018a) proposed an effective method for active
+learning that repeatedly refines the states of the
+automaton based on a validation set, inspiring our
+splitting procedure. Hong et al. (2022) proposed a
+similar refinement algorithm that performs merging
+instead of splitting. Other work has attempted to in-
+fer automata from transformers with mixed success
+(Adriaensen and Maene, 2024; Zhang et al., 2024),
+but it is unclear whether transformers are even ca-
+pable of learning regular languages robustly (Hahn,
+2020; Bhattamishra et al., 2020; Liu et al., 2023),
+though hard attention transformers can be con-
+structed to act as transducers (Strobl et al., 2025).
+Other work has studied weighted transducer in-
+ference using neural networks on real-world tasks
+such as speech recognition (Lecorvé and Motlicek,
+2012) and morphological inflection (Rastogi et al.,
+2016). Our approach could be adapted to produce
+weighted transducers by creating probability distri-
+butions for transitions.
+8 Conclusion
+We proposed a method for automatically construct-
+ing finite-state transducers from unaligned data,
+using RNNs as intermediate representations that
+enable transducer learning via gradient descent.
+We test our system on morphological inflection,
+grapheme-to-phoneme prediction, and historical
+normalization. Our system produces transducers
+that generalize well to unseen data on two of three
+tasks, far outperforming existing algorithms and
+approaching the accuracy of transducers created by
+human experts. These results provide a tractable
+way to create highly-performant symbolic systems,
+and they validate the theoretical claim that recur-
+rent neural networks organize their hidden states
+with dynamics similar to finite-state automata.
+8
+9 Limitations
+Our method is intended for data which can be effi-
+ciently represented as an unweighted finite-state
+transducer. For datasets which violate Markov
+assumptions or require probabilistic outputs, this
+method will not work without modification. As
+noted, our method struggles on right-side depen-
+dencies. We run a wide variety of experiments on
+several tasks using appropriate baselines, but we do
+not test methods such as LLM in-context learning
+or reinforcement learning approaches to transducer
+inference. We did not have the budget to run full
+ablations across every dataset, which may reveal
+other trends.
+10 Ethical Considerations
+Our method is intended to enable transducer in-
+ference for many languages and tasks, enabling
+highly performant language technology for under-
+resourced languages. However, when using data
+from minority languages, there is always risk of
+misuse. We strive to use data as intended and do not
+claim ownership over this data. Furthermore, our
+work used significant computing resources, which
+carry an environmental cost.
+References
+Rik Adriaensen and Jaron Maene. 2024. Extracting
+Finite State Machines from Transformers.arXiv
+preprint. ArXiv:2410.06045 [cs].
+R. Alquezar and A. Sanfeliu. 1994. A hybrid
+connectionist-symbolic approach to regular grammat-
+ical inference based on neural learning and hierarchi-
+cal clustering. In Jaime G. Carbonell, Jörg Siekmann,
+G. Goos, J. Hartmanis, J. Leeuwen, Rafael C. Car-
+rasco, and Jose Oncina, editors,Grammatical Infer-
+ence and Applications, volume 862, pages 203–211.
+Springer Berlin Heidelberg, Berlin, Heidelberg. Se-
+ries Title: Lecture Notes in Computer Science.
+Sarah Beemer, Zak Boston, April Bukoski, Daniel Chen,
+Princess Dickens, Andrew Gerlach, Torin Hopkins,
+Parth Anand Jawale, Chris Koski, Akanksha Mal-
+hotra, Piyush Mishra, Saliha Muradoglu, Lan Sang,
+Tyler Short, Sagarika Shreevastava, Elizabeth Spauld-
+ing, Testumichi Umada, Beilei Xiang, Changbing
+Yang, and Mans Hulden. 2020. Linguist vs. ma-
+chine: Rapid development of finite-state morphologi-
+cal grammars. InProceedings of the 17th SIGMOR-
+PHON Workshop on Computational Research in Pho-
+netics, Phonology, and Morphology, pages 162–170,
+Online.
+Satwik Bhattamishra, Kabir Ahuja, and Navin Goyal.
+2020. On the Ability and Limitations of Transform-
+ers to Recognize Formal Languages. InProceedings
+of the 2020 Conference on Empirical Methods in
+Natural Language Processing (EMNLP), pages 7096–
+7116, Online.
+Marcel Bollmann. 2019. A large-scale comparison of
+historical text normalization systems. InProceedings
+of the 2019 Conference of the North American Chap-
+ter of the Association for Computational Linguistics:
+Human Language Technologies, Volume 1 (Long and
+Short Papers), pages 3885–3898, Minneapolis, Min-
+nesota.
+Mike Casey. 1996. The Dynamics of Discrete-Time
+Computation, with Application to Recurrent Neural
+Networks and Finite State Machine Extraction.Neu-
+ral Computation, 8(6):1135–1178.
+HongSeok Choi, Dongha Choi, and Hyunju Lee. 2022.
+Early stopping based on unlabeled samples in text
+classification. InProceedings of the 60th Annual
+Meeting of the Association for Computational Lin-
+guistics (Volume 1: Long Papers), pages 708–718,
+Dublin, Ireland.
+Axel Cleeremans, David Servan-Schreiber, and James L.
+McClelland. 1989a. Finite state automata and simple
+recurrent networks.Neural Computation, 1(3):372–
+381.
+Axel Cleeremans, David Servan-Schreiber, and James L.
+McClelland. 1989b. Finite State Automata and
+Simple Recurrent Networks.Neural Computation,
+1(3):372–381.
+Ryan Cotterell, Christo Kirov, John Sylak-Glassman,
+David Yarowsky, Jason Eisner, and Mans Hulden.
+2016. The SIGMORPHON 2016 shared Task—
+Morphological reinflection. InProceedings of the
+14th SIGMORPHON Workshop on Computational
+Research in Phonetics, Phonology, and Morphology,
+pages 10–22, Berlin, Germany.
+Colin de la Higuera. 2010.Grammatical Inference:
+Learning Automata and Grammars. Cambridge Uni-
+versity Press, USA.
+Paolo Frasconi, Marco Gori, Marco Maggini, and Gio-
+vanni Soda. 1996. Representation of finite state au-
+tomata in Recurrent Radial Basis Function networks.
+Machine Learning, 23(1):5–32.
+Daniel Gildea and Daniel Jurafsky. 1995. Automatic
+induction of finite state transducers for simple phono-
+logical rules. In33rd Annual Meeting of the Asso-
+ciation for Computational Linguistics, pages 9–15,
+Cambridge, Massachusetts, USA.
+C. Giles, Guo-Zheng Sun, Hsing-Hen Chen, Yee-Chun
+Lee, and Dong Chen. 1989. Higher Order Recurrent
+Networks and Grammatical Inference. InAdvances
+in Neural Information Processing Systems, volume 2.
+Morgan-Kaufmann.
+9
+C. L. Giles, C. B. Miller, D. Chen, H. H. Chen, G. Z.
+Sun, and Y . C. Lee. 1992. Learning and Extracting
+Finite State Automata with Second-Order Recurrent
+Neural Networks.Neural Computation, 4(3):393–
+405.
+C. L. Giles, C. B. Miller, D. Chen, G. Z. Sun, H. H.
+Chen, and Y . C. Lee. 1991. Extracting and Learn-
+ing an Unknown Grammar with Recurrent Neural
+Networks. InAdvances in Neural Information Pro-
+cessing Systems, volume 4. Morgan-Kaufmann.
+M. Gori, M. Maggini, E. Martinelli, and G. Soda. 1998.
+Inductive inference from noisy examples using the hy-
+brid finite state filter.IEEE Transactions on Neural
+Networks, 9(3):571–575. Conference Name: IEEE
+Transactions on Neural Networks.
+Kyle Gorman, Lucas F.E. Ashby, Aaron Goyzueta, Arya
+McCarthy, Shijie Wu, and Daniel You. 2020. The
+SIGMORPHON 2020 shared task on multilingual
+grapheme-to-phoneme conversion. InProceedings
+of the 17th SIGMORPHON Workshop on Computa-
+tional Research in Phonetics, Phonology, and Mor-
+phology, pages 40–50, Online.
+Michael Hahn. 2020. Theoretical limitations of self-
+attention in neural sequence models.Transactions of
+the Association for Computational Linguistics, 8:156–
+171.
+Lars Hellsten, Brian Roark, Prasoon Goyal, Cyril Al-
+lauzen, Françoise Beaufays, Tom Ouyang, Michael
+Riley, and David Rybach. 2017. Transliterated Mo-
+bile Keyboard Input via Weighted Finite-State Trans-
+ducers. InProceedings of the 13th International
+Conference on Finite State Methods and Natural Lan-
+guage Processing (FSMNLP 2017), pages 10–19,
+Umeå, Sweden. Association for Computational Lin-
+guistics.
+Dat Hong, Alberto Maria Segre, and Tong Wang. 2022.
+AdaAX: Explaining Recurrent Neural Networks by
+Learning Automata with Adaptive States. InPro-
+ceedings of the 28th ACM SIGKDD Conference on
+Knowledge Discovery and Data Mining, pages 574–
+584, Washington DC USA. ACM.
+John Hopcroft. 1971. An n log n algorithm for min-
+imizing states in a finite automaton. InTheory of
+machines and computations, pages 189–196. Else-
+vier.
+Bo-Jian Hou and Zhi-Hua Zhou. 2020. Learning with
+Interpretable Structure from Gated RNN.arXiv
+preprint. ArXiv:1810.10708 [cs].
+Katharina Kann, Kyunghyun Cho, and Samuel R. Bow-
+man. 2019. Towards realistic practices in low-
+resource natural language processing: The develop-
+ment set. InProceedings of the 2019 Conference on
+Empirical Methods in Natural Language Processing
+and the 9th International Joint Conference on Natu-
+ral Language Processing (EMNLP-IJCNLP), pages
+3342–3349, Hong Kong, China.
+Katharina Kann and Hinrich Schütze. 2016. MED: The
+LMU system for the SIGMORPHON 2016 shared
+task on morphological reinflection. InProceedings
+of the 14th SIGMORPHON Workshop on Computa-
+tional Research in Phonetics, Phonology, and Mor-
+phology, pages 62–70, Berlin, Germany.
+Gwénolé Lecorvé and Petr Motlicek. 2012. Conver-
+sion of recurrent neural network language models to
+weighted finite state transducers for automatic speech
+recognition. InInterspeech, pages 1668–1671.
+Lisha Li, Kevin Jamieson, Giulia DeSalvo, Afshin Ros-
+tamizadeh, and Ameet Talwalkar. 2018. Hyperband:
+A novel bandit-based approach to hyperparameter op-
+timization.Journal of Machine Learning Research,
+18(185):1–52.
+Bingbin Liu, Jordan T. Ash, Surbhi Goel, Akshay Kr-
+ishnamurthy, and Cyril Zhang. 2023. Transform-
+ers Learn Shortcuts to Automata.arXiv preprint.
+ArXiv:2210.10749 [cs].
+Kavya Manohar, A. R. Jayan, and Rajeev Rajan. 2022.
+Mlphon: A multifunctional grapheme-phoneme con-
+version tool using finite state transducers.IEEE Ac-
+cess, 10:97555–97575.
+James B McQueen. 1967. Some methods of classifi-
+cation and analysis of multivariate observations. In
+Proc. of 5th Berkeley Symposium on Math. Stat. and
+Prob., pages 281–297.
+Takeru Miyato, Toshiki Kataoka, Masanori Koyama,
+and Yuichi Yoshida. 2018. Spectral normalization
+for generative adversarial networks. InInternational
+Conference on Learning Representations.
+Christian W. Omlin and C. Lee Giles. 1996. Extraction
+of rules from discrete-time recurrent neural networks.
+Neural Networks, 9(1):41–52.
+J. Oncina, P. Garcia, and E. Vidal. 1993. Learning subse-
+quential transducers for pattern recognition interpre-
+tation tasks.IEEE Transactions on Pattern Analysis
+and Machine Intelligence, 15(5):448–458. Confer-
+ence Name: IEEE Transactions on Pattern Analysis
+and Machine Intelligence.
+Jose Oncina. 1998. The data driven approach applied to
+the ostia algorithm. InInternational Colloquium on
+Grammatical Inference, pages 50–56. Springer.
+Tom Ouyang, David Rybach, Françoise Beaufays, and
+Michael Riley. 2017. Mobile Keyboard Input De-
+coding with Finite-State Transducers.arXiv preprint.
+ArXiv:1704.03987 [cs].
+Jordan B. Pollack. 1991. The induction of dynamical
+recognizers.Machine Learning, 7(2-3):227–252.
+Pushpendre Rastogi, Ryan Cotterell, and Jason Eisner.
+2016. Weighting finite-state transductions with neu-
+ral context. InProceedings of the 2016 Conference
+of the North American Chapter of the Association
+for Computational Linguistics: Human Language
+Technologies, pages 623–633, San Diego, California.
+10
+Christophe Reutenauer and Marcel-Paul Schutzenberger.
+1991. Minimization of rational word functions.
+SIAM Journal on Computing, 20(4):669–685.
+Ingo Schellhammer, Joachim Diederich, Michael
+Towsey, and Claudia Brugman. 1998. Knowledge
+Extraction and Recurrent Neural Networks: An Anal-
+ysis of an Elman Network trained on a Natural Lan-
+guage Learning Task. InNew Methods in Language
+Processing and Computational Natural Language
+Learning.
+Jasper Snoek, Hugo Larochelle, and Ryan P Adams.
+2012. Practical bayesian optimization of machine
+learning algorithms. InAdvances in Neural Informa-
+tion Processing Systems, volume 25. Curran Asso-
+ciates, Inc.
+Lena Strobl, Dana Angluin, David Chiang, Jonathan
+Rawski, and Ashish Sabharwal. 2025. Transformers
+as transducers.Transactions of the Association for
+Computational Linguistics, 13:200–219.
+Peter Ti ˇno and Jozef Šajda. 1995. Learning and Ex-
+tracting Initial Mealy Automata with a Modular Neu-
+ral Network Model.Neural Computation, 7(4):822–
+844.
+Masaru Tomita. 1982. Learning of Construction of
+Finite Automata from Examples Using Hill- Climb-
+ing. RR: Regular Set Recognizer:. Technical report,
+Defense Technical Information Center, Fort Belvoir,
+V A.
+Juan Miguel Vilar. 1996. Query learning of subsequen-
+tial transducers. InGrammatical Interference: Learn-
+ing Syntax from Sentences, pages 72–83, Berlin, Hei-
+delberg. Springer Berlin Heidelberg.
+Ekaterina Vylomova, Jennifer White, Elizabeth Salesky,
+Sabrina J. Mielke, Shijie Wu, Edoardo Maria
+Ponti, Rowan Hall Maudslay, Ran Zmigrod, Josef
+Valvoda, Svetlana Toldova, Francis Tyers, Elena
+Klyachko, Ilya Yegorov, Natalia Krizhanovsky,
+Paula Czarnowska, Irene Nikkarinen, Andrew
+Krizhanovsky, Tiago Pimentel, Lucas Torroba Hen-
+nigen, and 9 others. 2020. SIGMORPHON 2020
+shared task 0: Typologically diverse morphologi-
+cal inflection. InProceedings of the 17th SIGMOR-
+PHON Workshop on Computational Research in Pho-
+netics, Phonology, and Morphology, pages 1–39, On-
+line.
+Jhing-Fa Wang, Po-Chun Lin, and Bo-Wei Chen. 2012.
+Design and applications of embedded systems for
+speech processing. InEmbedded Systems-High Per-
+formance Systems, Applications and Projects. Inte-
+chOpen.
+Qinglong Wang, Kaixuan Zhang, Alexander G. Oror-
+bia II, Xinyu Xing, Xue Liu, and C. Lee Giles.
+2018. A Comparative Study of Rule Extraction
+for Recurrent Neural Networks.arXiv preprint.
+ArXiv:1801.05420 [cs].
+Raymond L. Watrous and Gary M. Kuhn. 1992. Induc-
+tion of Finite-State Languages Using Second-Order
+Recurrent Networks.Neural Computation, 4(3):406–
+414.
+Gail Weiss, Yoav Goldberg, and Eran Yahav. 2018a. Ex-
+tracting Automata from Recurrent Neural Networks
+Using Queries and Counterexamples. InProceedings
+of the 35th International Conference on Machine
+Learning, pages 5247–5256. PMLR. ISSN: 2640-
+3498.
+Gail Weiss, Yoav Goldberg, and Eran Yahav. 2018b. On
+the Practical Computational Power of Finite Preci-
+sion RNNs for Language Recognition. InProceed-
+ings of the 56th Annual Meeting of the Association for
+Computational Linguistics (Volume 2: Short Papers),
+pages 740–745, Melbourne, Australia. Association
+for Computational Linguistics.
+Lawrence Wolf-Sonkin, Vlad Schogol, Brian Roark,
+and Michael Riley. 2019. Latin script keyboards for
+South Asian languages with finite-state normaliza-
+tion. InProceedings of the 14th International Confer-
+ence on Finite-State Methods and Natural Language
+Processing, pages 108–117, Dresden, Germany.
+Yihao Zhang, Zeming Wei, and Meng Sun. 2024. Au-
+tomata Extraction from Transformers.arXiv preprint.
+ArXiv:2406.05564 [cs].
+Žiga Golob, Jerneja Žganec Gros, Mario Žganec, Bošt-
+jan Vesnicer, and Simon Dobrišek. 2012. Fst-based
+pronunciation lexicon compression for speech en-
+gines.International Journal of Advanced Robotic
+Systems, 9(5):211.
+A Chinese Restaurant Process Alignment
+The goal of the alignment algorithm is to maximize
+the joint probability of each aligned character pair
+across the pairs of words in the training corpus
+(most commonly, aligning the same character to
+itself). However, computing the global maximum
+for this posterior is very inefficient as the corpus
+grows, so the aligner uses a Markov Chain Monte
+Carlo method:
+1. Initially, each pair is assigned a random as-
+signment. From that, we count the number
+of each type of aligned pair, which gives us
+probabilities with respect to the total number
+of pairs.
+2. Going word-by-word, we resample the align-
+ment according to the probabilities defined in
+step 1.
+3. Once we have resampled every word, we re-
+compute probabilities and repeat for a speci-
+fied number of iterations.
+11
+B RNN Training
+We train Elman RNNs with a single layer with the
+following hyperparameters, where parameters with
+multiple values were tuned via a hyperparameter
+sweep.
+Parameter Value(s)
+Optimizer AdamW (default params)
+Activation tanh
+Spec-norm weight 0.1
+Model dim. {16,32,64,128}
+Dropout {0,0.1,0.3}
+Learning rate {2E−4,1E−3,2E−3,1E−2}
+Label smoothing 0.1
+Batch size {2×10 k : 1≤k≤12}
+Epochs {200,600,1000}
+Table 4: Hyperparameters for RNN training.
+Batch size is limited to the four largest values
+that are less than one-fifth of the size of the training
+set. No early stopping is used, since this can result
+in stopping before the target metric has reached
+its peak (Choi et al., 2022). The hyperparame-
+ter sweep uses Bayesian Optimization, which opti-
+mizes a surrogate model to predict which combina-
+tion of hyperparameters should be selected (Snoek
+et al., 2012). We optimize for the validation set
+loss and use Hyperband with min and max epochs
+75 and 1000 respectively, which allows for bad-
+performing runs to be stopped early (Li et al., 2018;
+Kann et al., 2019). We limit to 50 runs for each
+dataset, except for datasets which have more than
+5,000 examples, for which we limit to 25 runs.
+C FST Extraction Sweep
+We run a Bayesian sweep over the hyperparameters
+for FST extraction with 100 runs for most datasets
+and 25 runs for datasets larger than 5,000 examples.
+We optimize the following parameters to maximize
+F1 on the evaluation set:
+Parameter Value(s)
+Clustering algorithm k-means
+Num. clusters {n: 50≤n≤n max}
+Splitting Classifier {SVM,Logistic Regression}
+λtrans (Split Threshold ) {None, 2, 3, 4, 5, 10, 15, 20,
+25, 30, 40, 50}
+Table 5: Hyperparameters for FST extraction algorithm.
+nmax is the maximum number of unique hidden-state
+values for a given dataset. If the split threshold is None,
+then the splitting algorithm is not used.
+D Ablation Results
+Results for the ablations are given in Table 6.
+Setting czn kon geo swe
+Base 0.666 0.846 0.596 0.539
+MED (Abl 1) 0.646 0.878 0.407 0.539
+Train only (Abl 2) 0.643 0.814 0.516 0.546
+LM (Abl 3) 0.636 0.840 0.511 0.579
+Class. (Abl 3) 0.580 0.859 0.560 0.549
+Table 6: Numerical results for ablation figures.
+E Datasets
+Code Language # Train # Dev # Test
+aka Akan 2,793 380 763
+ceb Cebuano 420 58 111
+crh Crimean Tatar 5,215 745 1,490
+czn Zapotecan 1,088 154 305
+dje Zarma 56 9 16
+gaa Ga 607 79 169
+izh Ingrian 763 112 224
+kon Kongo 568 76 156
+lin Lingala 159 23 46
+mao Maori 145 21 42
+mlg Malagasy 447 62 127
+nya Chewa 3,031 429 853
+ood O’odham 1,123 160 314
+orm Oromo 1,424 203 405
+ote Mezquital Otomi 22,962 3,231 6,437
+san Sanskrit 22,968 3,188 6,272
+sot Sotho 345 50 99
+swa Swahili 3,374 469 910
+syc Syriac 1,917 275 548
+tgk Tajik 53 8 16
+tgl Tagalog 1,870 236 478
+xty Yoloxóchitl Mixtec 2,110 299 600
+zpv Chichicapan Zapotec 805 113 228
+zul Zulu 322 42 78
+Table 7: Inflection datasets from Vylomova et al. (2020).
+Code Language # Train # Dev # Test
+ady Adyghe 3,600 450 450
+arm Armenian 3,600 450 450
+bul Bulgarian 3,600 450 450
+dut Dutch 3,600 450 450
+fre French 3,600 450 450
+geo Georgian 3,600 450 450
+gre Modern Greek 3,600 450 450
+hin Hindi 3,600 450 450
+hun Hungarian 3,600 450 450
+ice Icelandic 3,600 450 450
+jpn Japanese 3,600 450 450
+kor Korean 3,600 450 450
+lit Lithuanian 3,600 450 450
+rum Romanian 3,600 450 450
+vie Vietnamese 3,600 450 450
+Table 8: G2P datasets (Gorman et al., 2020).
+12
+Code Language # Train # Dev # Test
+deu German - Anselm 8,268 8,242 10,000*
+hun Hungarian 46,907 8,987 8,946
+isl Icelandic 10,864 2,490 2,470
+por Portuguese - 19th
+c.
+15,699 3,544 3,670
+slv Slovenian - Gaj 35,436 8,330 8,614
+spa Spanish - 19th c. 5,577 1,086 1,204
+swe Swedish 8,465 1,308 9,576
+Table 9: Normalization datasets (Bollmann, 2019)
+We report statistics for each of the datasets used
+in Table 7, Table 8 and Table 9. For historical nor-
+malization, if there were multiple distinct sources
+(often based on different time periods), we selected
+on source.
+F Clustering and Splitting Algorithm
+The pseudocode for the splitting algorithm is given
+in Appendix F.
+G Example Transducers
+We visualize transducers for the inflection ceb
+dataset, comparing the expert-crafted (Figure 7)
+and automatically constructed (Figure 8) transduc-
+ers.
+13
+Algorithm 1State clustering and splitting. Assume TRANS(q, σ) gives the transitions for state q and input
+symbol σ, returned as a set of tuples (π, qdest) with the output symbol and destination state. Likewise,
+TRANSOVERTHRESHOLDreturns only transitions that occur more than the threshold. SVM splits a state
+to resolve multiple possible transitions for a given input.
+1:procedureRESOLVETRANSITIONS(q 0,λ trans)
+2:Q←[q 0]
+3:visited← {}
+4:whilelength ofQ> 0do
+5:q←Q 0
+6:Q←Q 1...|Q|
+7:forσ∈Σdo
+8:T q ←TRANSOVERTHRESHOLD(q, σ, λ trans)
+9:if|T q|= 0then
+10:continue
+11:else if|T q|= 1then
+12:TRANS(q, σ)←T q
+13:(π, q dest)←T q0
+14:Q←Q·[q dest]
+15:else
+16:Q upstream ←SPLIT(q)
+17:Q←Q·Q upstream
+18:procedureSPLIT(q,λ trans)
+19:σ worst =argmax σ|TRANSOVERTHRESHOLD(q, σ, λ trans)|
+20:Q new ←SVM(q, σ worst)
+21:return{q source : [∃qnew ∈Q new : (∗, qnew)∈TRANS(q source,∗)]}
+0
+1
+@ [FUT] [NFIN] [PRF]
+[PROG] [PRS] [PST]
+[V] 
+10
+m 
+12a   - b d e g h i k l n o
+p r s t u w y 
+13
+<m:n> 
+2
+a   - b d e g h i k l m n
+o p r s t u w y 
+a   - b d e g h i k l m n
+o p r s t u w y 
+3<[V]:0> 
+4<[PRF]:0> 
+5<[NFIN]:0> 
+6<[FUT]:0> 
+7
+<[PRS]:0> 
+8<[PROG]:0> 
+9
+<[PST]:0> 
+<[NFIN]:0> 
+<[FUT]:0> 
+<[PRS]:0> 
+<[PROG]:0> <[PST]:0> 
+<[FUT]:0> 
+<[PRS]:0> 
+<[PST]:0> <[FUT]:0> 
+<[NFIN]:0> 
+<[FUT]:0> 
+<[PRS]:0> 
+<[PST]:0> 
+<[FUT]:0> 
+<[PRS]:0> 
+a   - b d e g h i k l m n
+o p r s t u w y 11
+<[V]:0> 
+<[FUT]:0> <[NFIN]:0>
+a   - b d e g h i k l m n
+o p r s t u w y 
+<[V]:0> 
+14<o:a> 
+21a 
+24
+<o:i> 
+15
+<0:g> 
+18
+a   - b d e g h i k l m n
+o p r s t u w y 
+16
+a   - b d e g h i k l m n
+o p r s t u w y 
+a   - b d e g h i k l m n
+o p r s t u w y 17<[V]:0> 
+<[PRS]:0> 
+a   - b d e g h i k l m n
+o p r s t u w y 
+19
+<[V]:0> 20
+<[PRF]:0> 
+<[PST]:0> 
+22
+a   - b d e g h i k l m n
+o p r s t u w y 
+a   - b d e g h i k l m n
+o p r s t u w y 23<[V]:0> 
+<[PST]:0> <[PRS]:0>
+<[PROG]:0> 
+<[PRF]:0> 
+25<0:n> 
+29
+a   - b d e g h i k l m n
+o p r s t u w y 
+26
+<0:g> 
+27
+a   - b d e g h i k l m n
+o p r s t u w y 
+a   - b d e g h i k l m n
+o p r s t u w y 
+28
+<[V]:0> 
+<[PROG]:0> 
+<[V]:0> 
+a   - b d e g h i k l m n
+o p r s t u w y 
+Figure 7: Expert-crafted FST for inflectioncebdataset.
+14
+Σ: {}
+148/0
+135
+279
+<unk>:n/1
+257
+m/1
+11
+k/1
+63
+s/1
+140
+g/1
+147
+t/1
+215
+w/1
+68
+h/1
+261
+<unk>:g/1
+223
+a/1
+209
+a/1
+239
+a/1
+231
+<unk>:a/1
+97
+a/1
+17
+t/1
+79
+k/1
+13
+l/1
+30
+u/1
+<sink>/1
+254
+a/1
+181
+i/1
+1
+29
+<unk>:-/1
+60
+e/1, u/1
+113
+i/1
+164
+g/1
+34s/1
+218
+a/1
+53
+d/1
+7
+k/1
+114
+h/1
+269p/1
+247
+b/1
+100l/1
+185
+m/1
+212
+t/1
+s/1
+15
+g/1
+24
+l/1
+25
+i/1
+27
+m/1
+201
+a/1
+120
+p/1
+192
+t/1
+105
+h/1
+107<unk>:-/1
+177
+b/1
+128
+d/1
+108
+k/1
+260
+s/1
+205
+m/1
+i/1
+256
+u/1
+76
+a/1
+77
+u/1
+220
+i/1
+85
+y/1
+a/1
+152
+n/1
+145
+w/1
+26
+b/1
+229
+d/1
+216
+r/1
+<sink>/1
+e/1
+179
+u/1
+174
+a/1
+248
+a/1
+39
+u/1
+278
+u/1
+111
+a/1
+122
+i/1
+249
+a/1
+264
+i/1
+227
+y/1
+23
+u/1
+32a/1
+131
+a/1
+234
+i/1
+83
+u/1
+<sink>/1
+12
+a/1
+139
+a/1
+228
+r/1
+180
+u/1
+136 175<sep>/1
+232
+d/1
+46
+a/1
+196
+m:n/1
+2
+159
+g/1
+238
+l/1
+237
+m/1
+157
+k/1
+8
+n/1
+d/1
+66
+u/1
+141
+a/1
+50
+o/1
+92
+a/1
+134
+h/1
+u/1
+14
+o/1
+3
+163
+m/1
+d/1
+a/1
+82
+<unk>:o/1
+95
+a/1
+200
+o/1
+170
+a/1
+150
+d/1
+n/1
+137
+48
+a/1
+72
+w/1
+4
+88
+d/1
+217
+e/1
+5 207t/1
+<sink>/1
+91
+a/1
+6
+123p/1
+253
+t/1
+252
+a/1
+o/1
+35t/1
+57
+o/1
+255n/1
+42
+h/1
+138
+s/1
+a/1
+p/1
+l/1
+n/1
+206
+b/1
+132
+h/1
+226g/1
+33
+t/1
+<sink>/1
+273
+a/1
+a/1
+i/1
+a/1
+<sink>/1
+a/1
+r/1
+71
+n/1
+236
+w/1
+36
+b/1
+244
+g/1
+41a/1
+194
+-/1
+<sink>/1
+153a/1
+202
+a/1
+210
+o/1
+251
+a/1
+19
+l/1
+d/1
+59
+m/1
+110b/1
+<sink>/1
+m/1
+d/1
+93r/1
+l/1
+233
+<unk>:a/1
+<sink>/1
+169
+n/1
+75
+m/1
+98
+w/1
+204i/1
+31
+i/1
+199
+u/1
+a/1
+9
+188
+o/1
+m/1
+10
+o/1
+w/1
+h/1
+b/1
+d/1
+t/1
+154
+l/1
+240
+u/1
+<sink>/1
+g/1
+156
+e/1
+t/1
+n/1
+173
+k/161
+t/1
+<sink>/1
+a/1
+<sink>/1
+u/1
+y/1
+a/1
+k/1
+197
+i/1
+109
+u/1
+n/1
+t/1
+262
+t/1
+40
+h/1
+119
+n/1
+16 y/1
+182a/1
+45n/1
+142
+<sink>/1
+w/1
+219
+g/1
+i/1
+18 w/1
+211
+o/1
+<sink>/1
+d/1, g/1, k/1
+20
+a/1
+<sink>/1
+k/1
+21
+g/1
+143 <sink>/1
+127
+n/1
+<sink>/1
+a/1
+80
+g/1
+144
+178
+o:a/1
+274
+a/1
+112
+<unk>:ag/1
+<unk>:g/1
+d/1
+96g/1
+m/1
+k/1
+s/1
+g/1
+t/1
+w/1
+h/1
+n/1
+b/1
+78
+<unk>:g/1
+176
+<unk>:g/1
+22 <sink>/1
+o/1
+259
+a/1
+w/1
+y/1
+55
+g/1
+130
+a/1
+a/1
+g/1, y/1
+d/1
+t/1
+h/1
+235a/1
+203
+a/1
+i/1
+222
+a/1
+k/1
+u/1
+a/1
+i/1
+146
+m/1
+k/1
+s/1
+g/1
+n/1
+w/1
+b/1
+117
+<unk>:k/1
+271
+h/1
+u/1
+168l/1
+52
+i/1
+a/1
+<unk>:i/1
+i/1
+129
+u/1
+n/1
+i/1
+74
+l/1
+104
+n/1
+214
+h/1
+<unk>:g/1
+i/1
+a/1
+245
+<unk>:p/1
+n/1
+<sink>/1
+s/1
+n/1
+w/1
+b/1
+<unk>:k/1
+g/1
+67
+t/1
+m/1
+h/1
+198k/1
+28
+a/1
+<sink>/1
+n/1
+w/1
+b/1
+116
+r/1
+n/1
+a/1
+i/1
+u/1 r/1
+a/1
+155
+i/1
+a/1
+186
+u/1
+e/1, u/1
+183
+a/1
+y/1
+u/1
+69
+a/1
+e/1
+l/1
+u/1
+a/1
+u/1
+a/1
+a/1
+190
+d/1
+a/1
+149 a/1
+275
+o/1
+d/1
+t/1
+n/1
+g/1
+160
+a/1
+-/1
+s/1
+263
+l/1
+n/1
+t/1
+184
+r/1
+161
+i/1
+t/1
+g/1
+<sink>/1
+i/1
+-/1
+a/1
+o/1
+43
+a/1
+84
+n/1
+47
+g/1
+171
+l/1
+r/1
+a/1
+<sink>/1
+y/1
+162
+b/1
+151
+<unk>:o/1
+e/1, u/1
+m/1
+b/1
+<unk>:o/1
+133
+a/1
+<sink>/1
+l/1
+i/1
+u/1
+89
+o/1
+102
+k/1
+106
+h/1
+<sink>/1
+m/1
+t/1
+37
+n/1
+m/1
+b/1
+38
+m/1
+<sink>/1
+t/1
+u/1
+-/1
+i/1
+a/1
+g/1
+l/1 m/1
+k/1
+n/1
+t/1
+<sink>/1
+t/1
+o/1
+u/1
+p/1
+t/1
+l/1
+o/1
+n/1
+<sink>/1
+w/1
+224
+h/1
+241
+a/1
+<sink>/1
+b/1
+<unk>:[PRS]/1
+158
+o/1
+d/1
+g/1, n/1
+44
+a/1
+225o:i/1
+230
+<unk>:a/1
+189<unk>:n/1
+172
+<unk>:g/1
+g/1
+a/1
+u/1
+k/1
+h/1
+277a/1
+d/1
+o/1
+87
+m/1
+a/1
+<sink>/1
+246
+a/1
+k/1
+g/1
+49
+167
+a/1
+73
+l/1
+<sink>/1
+t/1
+213
+ /1
+193n/1
+51
+187
+<sep>/1
+m:n/1
+166
+a/1
+268<unk>:n/1
+i/1
+118
+w/1
+w/1
+o/1
+65
+g/1
+54
+266
+a/1
+n/1
+m/1
+94
+<unk>:k/1
+<sink>/1
+o/1
+e/1, u/1
+g/1
+s/1
+a/1
+d/1
+k/1
+h/1
+p/1
+b/1
+l/1
+m/1
+t/1
+i/1
+<sink>/1
+a/1
+t/1
+k/1
+n/1
+m/1
+w/1
+165
+m/1
+k/1
+s/1
+g/1
+w/1
+h/1
+56 o:a/1
+g/1, n/1
+58
+s/1
+g/1
+l/1
+i/1
+m/1
+p/1
+t/1
+h/1
+b/1
+d/1
+k/1
+<unk>:o/1
+a/1
+n/1
+w/1
+b/1
+d/1
+r/1
+o/1
+d/1
+i/1
+t/1
+a/1
+62
+e/1, u/1
+g/1
+s/1
+a/1
+d/1
+k/1
+p/1
+b/1
+l/1
+m/1
+t/1
+i/1
+70
+h/1
+i/1
+u/1
+a/1
+o/1i/1
+64
+115
+<sep>/1
+m:n/1
+a/1
+270
+d/1
+a/1
+i/1
+u/1
+a/1
+<sink>/1
+a/1
+m/1
+y/1
+t/1
+b/1
+s/1
+n/1
+r/1
+l/1
+t/1
+<sink>/1
+i/1
+m/1
+w/1
+n/1
+t/1
+99
+l/1
+<sink>/1
+w/1
+o/1
+g/1
+a/1
+o/1
+t/1
+i/1
+<unk>:p/1
+<sink>/1
+o/1
+<unk>:o/1
+a/1
+242
+k/1
+o:i/1
+a/1
+208
+<unk>:i/1
+o:a/1
+<unk>:o/1
+a/1
+n/1
+t/1
+w/1
+b/1
+d/1
+g/1
+r/1
+m/1
+<unk>:p/1
+t/1
+i/1
+a/1
+y/1
+t/1
+272
+a/1
+<unk>:g/1
+u/1
+h/1
+k/1
+267a/1
+86
+o/1
+81
+265
+<sep>/1
+d/1
+a/1
+276m/1
+d/1
+b/1
+p/1
+<sink>/1
+h/1
+e/1, o/1
+i/1
+u/1
+a/1
+g/1
+l/1
+m/1
+w/1
+n/1
+i/1
+a/1
+124
+<unk>:i/1
+<unk>:g/1
+d/1
+191
+<unk>:k/1
+r/1
+<sink>/1
+y/1n/1
+g/1
+w/1
+n/1
+195 a/1
+<unk>:a/1
+221
+o:a/1
+<unk>:g/1
+e/1, u/1
+g/1
+s/1
+a/1
+d/1
+k/1
+h/1
+p/1
+b/1
+l/1
+m/1
+t/1
+i/1
+<unk>:a/1
+a/1
+i/1
+g/1
+h/1
+k/1
+90
+[PRS]/1
+t/1
+<unk>:a/1
+n/1
+r/1
+s/1
+d/1
+i/1
+o/1
+101
+l/1
+103 126
+<sep>/1
+d/1
+a/1
+m:n/1
+l/1
+250
+n/1
+i/1
+a/1
+g/1
+l/1
+k/1
+n/1
+m:y/1
+<sink>/1
+g/1
+a/1
+243
+i/1
+a/1
+<sink>/1
+t/1
+b/1
+g/1
+h/1
+k/1
+l/1
+i/1
+t/1
+w/1
+b/1
+d/1
+g/1
+h/1
+k/1
+l/1
+i/1
+t/1
+l/1
+121 [PST]/1
+[PRS]/1
+[NFIN]/1
+[PROG]/1
+258
+[PRF]/1
+125[FUT]/1
+[PST]/1
+<sep>/1
+s/1
+m:n/1
+a/1
+o/1
+0 [V]/1
+Figure 8: Automatically-constructed FST for inflectioncebdataset.
+15

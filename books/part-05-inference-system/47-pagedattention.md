@@ -129,6 +129,10 @@ request B table: [#7, #2, #19]
 
 Memory manager 因此需要引用计数或等价 ownership 机制。释放 request A 时，`#7` 和 `#2` 只有在 B 等其他引用也结束后才能回收。
 
+软件上的不可变还不等于物理字节完整。共享prefix的同一份KV若在驻留期间受到内存故障，后续命中的key、block table和refcount都可能仍合法，却反复读取损坏状态；影响范围是实际引用该块的请求，不必扩散到其它prefix。可以在整块计算完成后封存tensor内容摘要，并在复用前按同一布局验核，失配时使块失效、从可信模型重算。这增加的是materialization-ready、sealed与reuse-check状态，不能把登记进hash map的时刻当GPU写入已完成，也不让内容仍流畅替代字节完整性。<!-- source-family:SF-2026-ARXIV-2604-17249 -->
+
+[共享KV的有限故障注入](https://arxiv.org/html/2604.17249v1#S6)只支持理想目标、单bit/BF16与所测驻留窗口，不证明真实租户已能实施定向硬件攻击。CPU调度时验核仍有检查到GPU读取之间的窗口，新块延迟封存也须处理，因此“一批内的损害界”依赖具体同步和失效语义，不是零错误保证；单batch、统一内存的微小吞吐差又不能外推独立GPU与并发命中。摘要保存、搬运、验核和失配后的prefill均计费，硬件ECC、salt隔离与TTL重算仍各有用途；完整性或费用前提不齐时，保留私有缓存、缩短复用期或重新计算，不由高命中率批准长期共享。<!-- source-family:SF-2026-ARXIV-2604-17249 -->
+
 ## Kernel 怎样保持语义
 
 Attention kernel 对每个 logical token position 计算其 block index 与 block offset：
@@ -249,3 +253,5 @@ Primary-source 校验入口：
 
   **已吸收的语义增量：** Programmable sparse-attention indexes and kernels change request-level serving state and execution for Agent workloads.
 <!-- daily-books-trace:SF-2026-ARXIV-2606-06453:end -->
+
+- `SF-2026-ARXIV-2604-17249` — Daily2026-04-22补Apr21，supp_apr22_author_fresh；[exact-v1](https://arxiv.org/html/2604.17249v1) §3/4、§5.2–5.4/T5、§6/7，2+2+2=6，安全受影响内容深入。只采共享物理块ready/seal/reuse-check生命周期与条件性失效重算；理想SFI非真实租户攻击、TCR非harm、同步窗口和统一内存/单batch成本限制近文。root必要Source/实际owner/A18逐字PRE通过，作者限定保存两段与本人注，root非writer实际完整COW/refcount→新两段→Kernel及本人注POST通过，窄lease释放；作者仅同步已发生行政状态。日期资格另核，不授零错误、实现/复现或日级。

@@ -62,7 +62,22 @@ y = sum_(e in S(x)) g_e(x) * Expert_e(x)
 
 `g_e(x)` 是选中 expert 的路由权重，可能在 top-k 集合内重新归一化。不同架构可使用 top-1、top-2 或其他 routing，稳定问题都是“谁被选中、权重多少、负载怎样”。
 
+Router选择“执行哪个expert”，还不等于规定expert内部只能是同形MLP；当输入存在值得建模的周期性结构，可以保持原Top-K与加权输出接口，另让被选函数并列计算learned phase的sin/cos特征与time-linear分支，再拼接送给后层。[一个受限表示分支](https://arxiv.org/html/2507.06502v1#S3)把这种函数偏置放在attention之后，而不是从真实物理频谱读取已知周期；router加权不证明周期专家被唯一识别，频率更多也不保证更好。小型时序对照同时依赖预训、归一化与迁移人口，个别目标仍反退，不能把平均预测分数归因于harmonic单一部件或外推语言模型。新增谐波计算、拼接投影、训练与全部dispatch均付费，完整任务质量与净费用不合时，普通MLP expert、原dense分支及原已验证router仍合理，不因函数形式新颖就改变容量和执行合同。
+<!-- source-family:SF-2025-ARXIV-2507-06502 -->
+
+固定 linear router 还允许一项更窄的输入诊断：把当前 hidden state 分成 router 权重列空间中的分量和其正交补，后一分量乘当前 router 矩阵为零，因此只沿该补空间改变输入，不改变这一层、这一接口的 raw logits。这个代数不认证“content”与“control”的唯一语义分区：两部分可统计相关，expert 输出仍读完整输入，后续层的 hidden state 与 router 又会改变。[有限路由表示分析](https://arxiv.org/html/2604.17837v1)中的线性 probe、路径聚类和自动语义解释应保留其 layer/token/Top-1 人口，不把可预测或少数高幅值坐标称作已干预证明的因果充分性，更不能由几何正交推出行为互不干扰。SVD、activation采集、probe和跨层回归付费；需要改变模型或执行选择时，仍回到原 Top-k/输出和独立任务、负载验收，而非用一层 nullspace 批准全路径语义。<!-- source-family:SF-2026-ARXIV-2604-17837 -->
+
+产生 expert logits 也不一定需要新增 `W_r`：当 expert 数为 E 时，可以将当前 hidden state 最后 E 个坐标直接作为路由分数，继续执行原 Top-k 和权重聚合。省掉的是独立 projection 的参数，backbone 仍端到端更新这些坐标，因此无参数 router 不等于 routing 没有学习；content representation 同时承担选择信号，也使两种用途更紧地耦合。<!-- source-family:SF-2026-ARXIV-2604-00421 -->
+
+这条有限替代在小型 GPT-2、8 experts/Top-2 和无 auxiliary loss 的训练对照中可以工作，但固定随机 projection 也有竞争力，WikiText perplexity 27.4 仍高于 learned router 的26.7。省下的约0.07M参数只占约520.81M模型很小一部分；较高的跨token路由entropy不是每batch负载、capacity admission 或通信均衡的保证，早期仍可能集中于少数 experts。训练预算、选择统计和完整 dispatch 成本需分别验收；hidden 坐标耦合、负载或质量回归时，保留独立 linear router、均衡约束与原容量限制，不由移除一层参数签发部署收益。<!-- source-family:SF-2026-ARXIV-2604-00421 -->
+
 Linear router 保留输入在方向上的符号；另一条受限分支为每个 expert 学正交低秩基 `U_e`，用 `κ_e ||U_e^T x||²` 作为 softmax logit，让相反方向但相同投影能量得到同一 affinity。[子空间路由的原版本机制](https://arxiv.org/html/2602.17798v1#S3)改变的是如何度量 token 与 expert 的匹配，不证明这些子空间就是独立语义专家。基与 concentration 仍需训练；固定 logits 时增大共同尺度使熵下降，是所有 softmax 的性质，不是此路由独有的无 collapse 保证，论文的 balance 界也依赖 uniform mixture 与 affinity separation。原 Algorithm 1 求和全部 experts，软概率变尖不自动跳过计算；若要稀疏执行，Top-k/threshold、capacity 与 dispatch 仍须另验。每 token 的投影路由为 `O(N d k_r)` 而非 linear 的 `O(N d)`，还增加基约束与校准成本；已披露主要实验配置限350M/1.3B，不能把未对应的摘要规模或局部负载收益外推为所有 corpus 保证。符号信息有用、负载或质量回归、计算不合算时，linear router、auxiliary loss 与原 dense/shared 路径继续合理。<!-- source-family:SF-2026-ARXIV-2602-17798 -->
+
+确定性 router 适合需要固定执行语义与低额外成本的场景，但一次 logit 打分不能描述同一输入下路由决策的变化。一个受限替代分支保留原 linear logits，在其上学习输入条件化的残差均值与 Gaussian 协方差：mean-field 只预测逐 expert 方差，full-covariance 以 Cholesky 因子表示相关性，再用以原 logits 为中心的 Gaussian prior 约束这条新增路径。训练时采一组 logits，推理时采多组、分别 softmax 后平均，最后只做一次 Top-k 与 expert 执行；这不等于多次运行所有 experts，也不等于 softmax 平均 logits。另一种较窄的分支只学正温度并随机抽取 experts；温度自身不改变 fixed logits 的 Top-k 排序，随机选择、实际 gate 权重与代理梯度必须另说明，不能把概率更平直接叫稳定执行。两者都只建模局部路由变量，不是全模型权重后验，也不由 router mass、协方差或温度自签任务正确与通用 epistemic uncertainty。
+
+这条分支用额外训练、协方差构造和采样换路由校准，但校准误差下降与答案准确率不下降是不同验收：有限 MCQA 对照中，两者可以一升一退，近域 shift 的检测也不必优于原 gate entropy。Gaussian-logit 推理可把 expert 执行保留为一次，却仍增加 inference network、逐样本 softmax/聚合与 full-covariance 的平方级 expert-count 成本；并行采样时的参数计数和单 forward FLOPs 不等峰值显存、全生成延迟或通信费用。[必要机制、评价与反侧](https://arxiv.org/html/2603.09453v1)只支持已披露模型、任务、敏感层选择和微调协议的受限分支；temperature 的熵正则代理及省略的离散 gating 不能当作已核一致实现。发布时应共同验收任务质量、校准、路由负载与完整费用；不改善、分布漂移或预算不允许时，原 linear/固定 Top-k、子空间匹配与独立质量检查仍保留，而不是由一个 uncertainty 分数覆盖容量和 dispatch 约束。<!-- source-family:SF-2026-ARXIV-2603-09453 -->
+
+固定 checkpoint 也可诊断“表示里有可用信息，但原 router 未把它送到合适 experts”，而不先重训 gate。一条受限分支比较少量 domain-reference 与一般文本的 expert 激活频率，提出候选集合，再按当前层 logit 标准差施加小幅 soft bias；reference、layer、干预强度与任务人口必须共同绑定，频率差和 JSD 相关不是专家语义身份或因果证明。[视觉 MoE 的必要反侧](https://arxiv.org/html/2604.08541v1)中，强制 hard routing 与失配领域参照都会退步，Top-1 模型尤其敏感；干预不能修复本来就缺失的感知证据。参考 forward、层选择与强度搜索、logit 修改及独立任务/负载回归均计费；质量或路由负载失配时退回原 gate、较弱偏置或专门训练，不由局部 expert 提案绕过 capacity、dispatch 和 modality 合同。<!-- source-family:SF-2026-ARXIV-2604-08541 -->
 
 ## 一个 top-2 小例子
 
@@ -123,6 +138,8 @@ active expert parameters ~= k * P_expert per token
 
 理想路由同时追求 specialization 与 balanced load，但二者可能冲突。训练通常加入 auxiliary load-balancing objective，让平均 router probability 与实际 token assignment 不要过度集中。
 
+Expert 数量均衡也不保证低频类别有足够的可学容量。可给每个已知类别指定 preferred expert subset，在训练时仅向该subset的 Top-K selection scores 加偏置，选中后仍用未加偏置的 router scores 计算贡献；类别的 preferred expert share 因而可以高于其 data token share，而每token激活的 K 不变。这是允许跨类别共享的软先验，不是硬分区、固定资源配额或新增专家。[COAX 的有限对照](https://arxiv.org/html/2610.13370v1#S3)支持这条容量分配分支，却显示强偏置训练后直接拔除会产生严重 train–inference mismatch，退火仍可损伤主类别，保留偏置推理又有负载与吞吐代价；细分每个少数类别也未必比 dominant-vs-rest 更好。类别标签、subset、bias/退火、数据配比和原load balancing共同版本化，制备、训练与全部质量/执行费用计价；无偏置推理或主/尾类回归未通过时，保留原router、global均衡、数据重采样或经核的类别条件路径，不由preferred share认证专家语义独立或生产收益。<!-- source-family:SF-2026-ARXIV-2610-13370 -->
+
 Auxiliary loss 是代理约束，不证明所有 experts 语义均匀，也不保证每个 batch 完全平衡。权重过强还可能牺牲内容路由质量。
 
 同样，某 expert 在一个领域中经常被选中，并不等于它对该领域输出最重要。可以在固定输入与冻结模型下分账测量：先记录原 router 的选择频率，再对某个 expert 的 pre-softmax gate logit 作规定幅度扰动，观察输出分布 KL 的变化。[受限 MoE 探测](https://arxiv.org/html/2601.10159v1)因此把 domain activation 与 routing sensitivity 配对，而不是用热门 expert 直接命名“数学专家”。后者仍是局部扰动敏感性：logit 改变可能同时改变 Top-k membership 和其他 expert 的相对权重，不能视为隔离单 expert 功能的因果干预。<!-- source-family:SF-2026-ARXIV-2601-10159 -->
@@ -134,6 +151,10 @@ Auxiliary loss 是代理约束，不证明所有 experts 语义均匀，也不�
 从探测转向编辑时，冻结 router 参数仍不等于保留原路由：某层 expert 的 down-projection 输出改变后，后续层 router 消费的 hidden input 也会改变。一条有限 preservation 分支先收集应保留的 expert 输入，将更新投影到这些 keys 协方差的低特征值子空间，再按固定 gate 权重联合拟合多个 active experts 的输出；block coordinate 更新处理它们在同一 token 输出上的耦合，而非让每个 expert 独立取得全部目标变化。只有固定 features/gates 下的**精确 nullspace**满足更新乘 preservation keys 为零；阈值选择的 near-null 子空间只是近似约束，未采到的输入与 Top-k membership 变化仍需另验。<!-- source-family:SF-2026-ARXIV-2602-10965 -->
 
 协方差采集、投影、缓存与局部线性求解把一部分成本前移，但不让路由稳定成为免费或全局保证。[MoEEdit 的受限对照](https://arxiv.org/html/2602.10965v1)有同方法去 projection 的局部支持，也有编辑层范围不一致的跨方法混杂、泛化指标退步及非零 routing KL；小扰动 softmax 分析略去 Top-k，不能替代离散边界验收。保留人口、regularization、编辑层与 preprocessing 成本应进入同一 artifact identity；路由或保留任务回归失败时，恢复未编辑 reference、原 router 与独立质量检查，而不是凭参数冻结自授输入不变。
+
+保留旧 experts 和旧 router 参数，也不能让扩容后的旧函数自动保持。新增专家带来新的 logits，改变 Top-K 候选集合和归一化人口；旧 expert 的输入还可能随先前层的路由变化而变化。持续适配可以先区分旧/新 expert 组的相对倾向，只让明确偏新组的 token 学习新路由，把含糊或偏旧的 token 留给旧组，再辅助约束两组分离与新组利用。这里的“旧”“新”是当期 router score 的训练分类，不是 token 知识年龄或独立语义真值。
+
+`arXiv:2603.27481v1` §3–4 的有限动态 LoRA-expert 对照支持这种训练分工，但部署不保留训练 mask，宽含糊阈值又会牺牲新任务学习。Absolute-logit 相对差不等概率置信度，masked 与未masked population 的辅助目标也不能混拼成统一配方；冻结或高总体 BWT 更不认证每个旧任务精确保留。新增 expert/logit 状态、mask与正则、训练/阈值回归及部署选择费用都要记录；任务分组、路由身份或新旧质量失配时，保留固定 pool、task-specific router、replay 或冻结独立 adapter，不由参数隔离批准长期无遗忘。<!-- source-family:SF-2026-ARXIV-2603-27481 -->
 
 路由权重解释了单个 token 如何使用容量，负载均衡则约束一批 token 如何共享容量。即使训练目标鼓励均衡，某一轮仍可能拥挤，因此执行前还需要明确每个 expert 能接收多少 token。
 
@@ -154,6 +175,8 @@ capacity ~= capacity_factor * N * k / E
 `capacity_factor > 1` 提供不均衡余量。具体论文与实现对 batch、group、rounding 和 top-k 的定义可能不同，这个公式只用于理解方向。
 
 当 token 超出 capacity，系统可能 drop、选择备选 expert、增加 padding，或采用 dropless execution。每种选择都会影响质量、显存、通信和吞吐。
+
+Capacity admission 也可以放在 token-side Top-K 之后：先保留 router 的候选选择，再由每个 expert 按 token affinity、阈值和 microbatch 容量筛选 assignments；strict 分支清零被拒贡献，reroute 分支则尝试仍有容量且满足阈值的其他 expert，shared experts 与 token 本身的序列/loss 位置不随之删除。因而“Top-K 不变”不能解释为实际 expert 贡献集合或梯度不变。[CIPHER-MoE 的受限训练对照](https://arxiv.org/html/2610.05744v1#S3)支持这一执行分支，但其条件保留定理及固定 expert-output 的局部界不保证整个训练无损；strict 有任务与平均质量反退，V4-Pro 原 baseline OOM 也不能生成有限加速倍数。Affinity 排序、过滤/重路由、辅助 loss 和通信都需计费，capacity、训练人口及 quality regression 随模型绑定；失败时保留原路由、更宽容量或经核的固定分支，不由负载变平签发质量保持。<!-- source-family:SF-2026-ARXIV-2610-05744 -->
 
 ## Expert Parallelism 为什么需要 All-to-All
 
@@ -234,6 +257,10 @@ MoE 减少的是未选 expert GEMMs，但新增：
 提高 expert branch 占比可以放大条件计算收益，也会放大 routing error、capacity overflow 和通信；只调整 top-k 甚至可能在固定架构下反转 sparse-vs-dense 排序。batch-axis Soft-MoE 在 per-sample CNN 中还可能跨样本混合不该共享的状态。exact-v1 只支持 §3 的 hard/soft routing、§4–5 的视觉模型与受控 sweep，不证明该阈值跨 Transformer、硬件和 workload 普适。leverage 低、batch 语义不允许混合或通信成为主导时，应回退 Dense/较小 expert pool 或重新设计 backbone，而不是继续增加 experts。<!-- source-family:SF-2026-ARXIV-2605-15484 -->
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-15484:end -->
 
+推理时还可以只降低 prefill 的 routed top-k，保留 generated tokens 与 shared experts 的原路径；统一减配最容易执行和回退，却假定各输入位置对答案同样重要。长 prompt 下，可以把专家预算按位置分配，但先要把“回答格式变了”与“检索到的内容丢了”分开测量：短答 F1 会受答案长度与措辞影响，F1 上升也可能同时伴随 gold containment 下降。质量 Gate 因而应并列格式、内容命中和完整任务结果，不能只凭一个 F1 或 attention-sink 均值批准减配。<!-- source-family:SF-2026-ARXIV-2610-22454 -->
+
+[有限位置干预证据](https://arxiv.org/html/2610.22454v1)表明保护少量位置可能缓解损失，但模板边界与物理末端仍混杂，保护预算也并非所有布局均获益；它没有给出可直接移植的通用重要性 selector。校准、位置标记、dispatch shape 与实际 serving 计时都需付费，少专家调用不等端到端必然提速，短输入还可能更慢。位置规则迁移失效、内容回归或净延迟不合算时，恢复原 top-k；不能用局部位置统计替完整任务和执行验收。
+
 ## 扩大容量时，先决定稀疏单位与共享边界
 
 基础闭环已经成立，但“更多参数、较少激活”还没有决定参数应放在哪里。以下分支分别改变架构预算、共享方式、路由单位和序列单位：它们可以在条件允许时组合，也可能相互冲突，不能排列成所有模型都应依次升级的路线。
@@ -263,6 +290,8 @@ choice 与 communication fan-out。
 parallel divisibility、load imbalance、topology、kernel efficiency、training tokens 与 Serving SLO 加入
 约束；当这些条件变化时，论文搜索空间内的“最优”也会变化。因此 total/active parameters 继续作为
 model-card 粗 contract，architecture search 则必须用 loss evidence 与 system cost model 联合裁决。
+
+调整expert组织还要分开固定active与固定total两种比较。[一次有限配置扫描](https://arxiv.org/html/2605.11689v1#S3)中，增加inactive容量可以获益，但将原dense FFN拆细、在相同active预算中加入always-active generalist，或改成所测两种宽度池，并不自动改善质量；最佳granularity也随总预算与有效规模变化。Active FFN参数匹配不是完整FLOPs或墙钟匹配，较小模型的反侧还随训练token预算改变。高expertcount下固定bias增量可能过粗，dropless收益也可饱和，不能据此宣布balance无关或sharedexpert普遍有害。全部sweep、常驻权重、路由和通信仍付费；预算、数据或执行形状改变时，保留dense、同宽固定pool与邻近规模校准，不将局部最佳配置当跨规模配方。<!-- source-family:SF-2026-ARXIV-2605-11689 -->
 
 同宽 expert 让 GEMM、placement 与容量估算简单；若不同 token 确实需要不同 FFN 宽度，可以先路由到宽度组、再选组内 expert。结构预算随之多出两层责任：模型 owner 选择宽度与组间/组内路由，执行 owner 则决定每设备是否放置跨所有宽度组的一套 expert。后者能使**静态参数组合**对称，却不能保证动态 token 工作量或 GPU 时间对称；组内路由、padding、通信和真实利用率仍需分别验收。宽度选择错误、窄组欠训练或大 expert 热点会破坏收益；布局成本高或质量差异不足时，同宽 expert 与固定 placement 仍是可靠路径。[异宽分组的 exact-v1](https://arxiv.org/html/2604.23108v1)只给受测模型的质量、路由比例与布局证据，不把 activated parameters 或难度 proxy 升格为真实时延保证。
 
@@ -400,6 +429,8 @@ encoder/decoder、重建误差与专用 kernel 成本时成立。论文的 match
 
 因此扩容收益要按完整训练路线记账：先前训练是否为沉没成本、复制/扩展操作、继续训练预算、最终质量与下游回归分别报告，不能将“只算扩展后的省时”和“从头训练的总预算”放在同一个比例里。[受限 MoE 对照](https://arxiv.org/html/2604.19835v1)支持 utility-copy 这一选择分支，凸 OCO 里的共享最优解/提升假设却不是非凸网络的收敛保证；目标分布改变、复制偏置或 CPT 预算不足时，延长当前阶段、均匀扩展或固定最终 pool 仍是合理替代。<!-- source-family:SF-2026-ARXIV-2604-19835 -->
 
+增长的对象也可以是既有expert内部的适配起点，而不是再加一个expert网络。单一meta-initialization适合多个domain共享适配方向时；异质segment相互牵动时，一条受限分支让各expert分别维护多份初始化，按当前segment的训练loss选择一份做内层适配，再由validation更新，并在训练期以带正则的可学习步长信号提出扩张、从已分配segment中选择参数距离较远的适配结果加入集合。这里的meta-domain划分可因expert不同，不是全局真实领域标签；步长大与参数距离远也只是有条件的增长heuristic，不保证无负迁移。[CICADA的有限证据](https://arxiv.org/html/2505.00415v1)还把适配选择与输出组合分开：其他初始化仍可提供features供attention融合，故选一份更新不等Top1执行或免费稀疏；测试只对固定集合/步长适配新segment，在线streaming增长仍是future。应保存初始化池、segment划分、选择loss、validation、增长时刻及测试适配状态，并另验时间可见性与异常污染；整段适配、test最大F1阈值和PA结果不认证因果在线早报，工业任务亦有基线更优。全部候选评分、内外层更新、增长state、全features融合和校准均付费，增长容量消融不是等总参数因果；支持或费用不合适时保留固定初始化池、独立expert与受控重训，不从该非Transformer组合推token级MoE的吞吐或安全保证。<!-- source-family:SF-2025-ARXIV-2505-00415 -->
+
 ### Expert 数量改变后，超参数也需要架构身份
 
 Dense FFN 或固定 expert 配置中，直接复用一组已经调好的 learning rate、初始化尺度和 width scaling，在架构不变时成本最低，也容易比较实验。当 Dense FFN 被拆成更多、更窄或更宽的 experts 后，总参数、单 token active parameters、router 分配和每个 expert 实际接收的样本量不再同步变化；此时把旧超参数原样搬过去，会把“条件计算机制是否有效”与“参数化是否失配”混在同一次训练里。
@@ -426,6 +457,15 @@ parameter count 解释。训练 recipe 因而应把 activation ratio、routing r
 
 改变容量组织后，下一问是 router 如何学会使用它。基础 auxiliary loss 只限制负载集中；计算是否值得、expert 是否获得有效训练以及输出贡献多少，需要不同证据。先分清训练信号，再讨论从 batch 内统计、历史状态或外部记忆产生路由的分支。
 
+Router与expert也不是两份独立学习的几何：在固定当前选择、未跨Top-k边界的反传中，两者的输入侧梯度都包含当前hidden方向，但系数不同，实际optimizer并不保证它们同向或语义一致。一条[受限constructive分支](https://arxiv.org/html/2605.12476v1#S6)不训练router权重，改为对已分配token的hidden均值维护centroid EMA，以cosine加负载bias选expert；去掉trainable参数没有去掉路由状态。它在单配置中降低MaxVio，却损失perplexity，辅助loss对照还同时改变z-loss，不能归为全部均衡梯度必然破坏specialization。Centroid、bias、归一/空集合保护、刷新和全部训练均需独立验收计费；输入几何、质量或负载失配时，保留原learnedrouter、已核balance与固定Top-k，不由较低负载proxy批准吞吐或专家语义。<!-- source-family:SF-2026-ARXIV-2605-12476 -->
+
+均衡约束还应声明它作用于哪一份输入人口，而不默认所有模态共享同一正则目标。一条受限视觉语言分支在同一MoE路由中保留language token的balance项，对vision token撤去该项，再用每个视觉token的专家概率方差相对批内均值提出额外调用资格：受选成员从普通Top-2扩到全部四个experts，其余成员仍走原预算。这是正则支持与执行fanout两份控制，不是增加训练样本；概率方差高也不证明真实罕见语义、前景或专属expert。[有限模态路由对照](https://arxiv.org/html/2507.01351v1)仍有任务、幻觉评价与单项推理时间反退，额外计算和正则尺度变化也未被完全隔离。模态mask、统计人口、阈值及expert数须共同保存，批内动态调用、负载倾斜、容量/overflow与通信均计费，不能让去掉balance loss取消实际dispatch约束。代理失配、尾部质量或净预算不合时，保留原均衡与固定Top-k、较窄模态适配和独立分项回归，不从路由更尖锐批准专家语义或普遍加速。
+<!-- source-family:SF-2025-ARXIV-2507-01351 -->
+
+固定 Top-k 在训练与部署使用同一预算，执行人口容易预测；但 cutoff 附近的专家只在跨过排名边界时获得任务梯度。训练时可以随机采样以部署 k 为中心的局部 Top-k 预算，使边界 rank 的 exposure 由硬阶跃变成采样分布的 survival probability；推理仍回到固定 k。这不是 Top-k 的可微放松，也不是部署随机增加计算，而是让 router 与 experts 在邻域预算下共同适应。<!-- source-family:SF-2026-ARXIV-2610-11575 -->
+
+[受限 MoE 对照](https://arxiv.org/html/2610.11575v1)保持 expected active-expert count，却不保证 dispatcher、padding、通信或实际壁时相同；受测 SFT 每步仍增加约1%–5%。Router-swap 也未恢复全部收益，说明不能唯一归因新 router；中层选择只是诊断，不是已搜到全局最佳层集。预算过宽或负载更敏感时，固定 k 联合训练仍更简单。Exposure 与后面的负载/价值信号分别验收，不让“更常被选”成为 expert 有用性的证明。
+
 ### 负载代理与计算价值 Teacher 分开验收
 
 计算价值 teacher 与负载稳定 auxiliary 还要分开验有效性。在 conditional-depth 的 full/cheap 当层分叉上，用未来层全部执行 full 的 loss 差作稳定标签，衡量的是该未来策略下的局部价值；部署 gate 若只允许部分未来层 full，标签并不自动代表其真实预算下的价值。quality teacher 应绑定分叉状态、未来执行策略与实际 gate，而 load/util/rank proxy 仍只管理稳定性，不因它可优化便取得任务收益真值。<!-- source-family:SF-2026-ARXIV-2604-17228 -->
@@ -439,6 +479,10 @@ parameter count 解释。训练 recipe 因而应把 activation ratio、routing r
 路由信号也可以来自当前token刚形成的attention history，而不只来自hidden-state投影或外部teacher。一个受限分支把最近attention权重的时间窗口和频域视图变为辅助expert logits，以学习gate与原router logits混合；gate表示可训练权重，不是可靠性已经校准的概率。即使attention与expert参数被冻结，只更新router也会改变expert输出，进而改变后层hidden state与attention行为；“参数未更新”因此不等于“该计算路径的行为没有被干预”。
 
 这条耦合既可能帮助局部推理，也可能损伤检索：在受测模型中，全部层接入与仅深层接入出现不同任务取舍，不能把layer depth当成普遍功能分界，attention sink与收益相关也未证明其必要因果作用。额外视图、gate和权重materialization增加成本，所测实现的active层不能直接沿用FlashAttention；较短错误回答不证明端到端SLO改善。任务回归、窗口失配或内核成本超界时，应保留原hidden-state router、减少接入层位，并以matched任务切片与实际执行开销决定是否启用。 [原文必要机制与反证](https://arxiv.org/html/2609.20974v1)。<!-- source-family:SF-2026-ARXIV-2609-20974 -->
+
+除了复用attention history，也可显式维护每sequence的衰减router state：先积累当前表示，再让预测头读取当前表示与这份历史，为原gate添加下一状态的修正；另一份batch级expert误差EMA只管理可靠度，不等于负载频率。这是用持久状态、额外预测和误差追踪换取时间线索的受限分支，不证明原Transformer的contextual hidden state没有历史。[受控transition对照](https://arxiv.org/html/2605.00604v1)支持历史积累与预测的协作，但固定切换位置给了饱和/位置cue；小型字符模型加入预测只使路由更稳定，并未进一步降低预测loss，统一可靠度时误差加权也没有额外收益。
+
+因此显式router state需要定义初始化、sequence隔离和更新时序，并另验任务质量与真实执行代价，不能把toy里正确expert的软概率当作大型MoE设计的普遍反证。重复独立抽样的覆盖公式不等于确定性Top-k实际会选几个expert，未经实测不能推出激活数、预取或端到端加速；衰减过慢可能滞留旧域，过快又会丢历史。缺少可预测时间结构、真实context已足够或状态/质量费用不合算时，原hidden-state router与固定Top-k继续合理；候选集驻留和权重placement仍留给后面的runtime边界。<!-- source-family:SF-2026-ARXIV-2605-00604 -->
 
 ### Global Balance、局部负载与训练动态分别观测
 
@@ -503,9 +547,11 @@ ReMix 在单一模型家族和若干任务上的结果只证明这种分责可�
 adapter paging、batch locality 或多租户 serving。Softmax mixture 在 top-1、规模较小或需要平滑端到端优化时仍合理；离散选择
 只有在额外训练方差与推理状态成本小于有效容量收益时才成立。
 
+训练时的探索也可利用这种分责。共享路径很强时，更换 routed expert 对最终表示的影响可能很小；增加可选组合，并不保证 router 获得可辨别的探索信号。一条[受限训练分支](https://arxiv.org/html/2610.22353v1)用原 logits 与反向 logits 所诱导概率的混合来确定性地选择 Top-K 支持集，再按原概率聚合被选输出，随训练调整混合程度及平衡项。低原概率 expert 仍实际执行，只是贡献可能较小，因此 effective support 下降不能登记为 dispatch、通信或 FLOPs 减少。这增加路由概率计算、退火与配方耦合；其共享/非共享实验的部分硬件和 batch 条件不同，归一化理论对象也不与实验设置完全相同，不能把质量差全归于共享路径或宣称探索保证。固定 Top-K 和原平衡配方仍是稳定基线，只有在匹配训练预算、真实执行和质量回归后才比较这一替代分支。<!-- source-family:SF-2026-ARXIV-2610-22353 -->
+
 ### Dispatch 与 Aggregation 是两种不同责任
 
-前一分支通过固定贡献系数约束有效支持度；另一方向是保留已选 expert IDs，却为其输出另学组合权重。两者都分开选择与贡献，但并不采用相同的训练目标或容量约束。
+前述固定贡献系数分支约束有效支持度；另一方向是保留已选 expert IDs，却为其输出另学组合权重。两者都分开选择与贡献，但并不采用相同的训练目标或容量约束。
 
 Top-k router 同时决定“哪些 expert 计算”和“这些结果以多大权重提交”时，选择与信任被耦合。固定 expert IDs 和计算量后，单独学习 aggregation 仍可能改变结果，说明 dispatch 负责容量与通信，aggregation 才负责对候选 expert 输出的 commitment。
 
@@ -617,6 +663,10 @@ Top-k score 高只说明 router 偏好某条路径，不能证明该 expert 对�
 
 <!-- source-family:SF-2026-ARXIV-2604-14246 -->
 
+如果目标不只是让当前 token 少调用，而是发布一个常驻 expert 更少的 checkpoint，排序提案也可以完全来自权重：把每个 expert 的 gate、up、down 三份投影拼成同一向量，以绝对均值与 RMS 的比值在同层排序，按固定比例删除较高比值的 experts 及相应 router rows，并在剩余集合中继续原 top-k。这个比例刻画权重分布形状，不是功能冗余或知识重要度；尺度不变与数值范围有限，也不证明剪除后的损失受控。它把校准输入和 activation 采集成本换成静态 proxy 偏差及完整产物验收，[受限 MoE 对照](https://arxiv.org/html/2603.18492v1)中更强平均表现仍伴编码、数学或其他任务反退。少存 experts 不等每 token 调用数同比减少，排序秒数也不含加载、改写、质量检查和 serving 的全部费用。裁后 expert 列表、router 坐标与 checkpoint 必须共同发布；任务专化、proxy 失配或质量失败时，保留输入相关校准、较保守裁剪与完整原 experts，不能由无需校准数据推出无需回归证据。<!-- source-family:SF-2026-ARXIV-2603-18492 -->
+
+若希望少存 Expert 权重而不删除原 Router 的坐标，还可以把低变化路径的输出替成校准常量：在同一 checkpoint 的已路由样本上收集该 Expert 输出，以其参考均值作替代，推断仍由原 Top-k 选它并乘原 Gate 权重，只省去这次输入相关 MLP。它不同于删 Expert 后重归一化，也不同于新增零输出路径；常量只能保留参考人口的平均分量，不能认证知识冗余或任意输入无损。选择应分别记录输出变化、入选条件下的 Gate 权重和实际访问人口，样本不足、未被选中或分布改变时不能套用一个未定义均值。[受限校准与剪裁对照](https://arxiv.org/html/2507.00390v1)仍有任务反退与继续预训练费用，论文的求和误差目标也不等于逐样本重建最优，不能照抄成无偏保证。校准 forward、常量与 Router 版本、Checkpoint 发布及真实 dispatch/质量回归都要计费；某些 token 少执行 MLP 不等端到端时延同比下降。参考失配、质量或净成本未通过时，保留完整 Experts、较保守裁剪与原 Top-k 路径。<!-- source-family:SF-2025-ARXIV-2507-00390 -->
+
 ### Post-training 后再增加可跳过路径，不等于删除旧 Experts
 
 已经完成 post-training 的 static top-k MoE 若直接减少 top-k，会改变原 router 的概率质量和行为。一个更保守的
@@ -649,6 +699,8 @@ phase-throughput 与训练样本合同，不证明生产 latency/SLO 或“跳�
 
 Expert 可能对某些 token 类型、语言或模式表现出统计偏好，但 router/expert specialization 是训练结果，不保证每个 expert 对应一个可命名领域。
 
+若问题是“适配后哪些专家参与了新增偏好”，还可配对 base/adapted activations，用共同字典提出适配特有方向，再按这些方向触发时的路由频率差提议 expert 集合。方向的语义名仍是解释假说；latent patch、随机/共享方向控制与 gate 小幅干预，只检验指定输入、层和模型的局部输出作用，不由 next-token KL 更近宣布唯一 persona owner。[受限个性化研究](https://arxiv.org/html/2610.22127v1)使用群体级合成偏好，跨任务迁移较弱，且存在用 test 表现挑最佳层/专家的选择偏差；应另保独立选择/评价人口和字典重构误差。双模型前向、字典训练、解释/评分、网格搜索及任务/负载回归均付费；方向或选择不稳时，保留原 gate、普通适配与直接偏好验收，而不按可解码标签裁成独立知识模块。<!-- source-family:SF-2026-ARXIV-2610-22127 -->
+
 因此，诊断 expert 的“工作”不能只数它被 route 了多少次。被选中只是获得处理机会，输出可能接近零；可先用 `g_i(x) × ||E_i(x)||₂` 衡量写入 residual stream 的幅度，再从高贡献片段、promoted tokens 和 held-out 对照提出功能假设。受限 MoE 分析中，标签常对应括号闭合、形态或语义操作，而非完整的“代码领域”；k-sparse probe 则检查概念是否能由少量坐标读出。二者分别刻画可读性与候选功能，不能把大输出范数、route 频率或自然语言标签直接等同于因果必要性。<!-- source-family:SF-2026-ARXIV-2604-02178 -->
 
 这条诊断路线用更细的功能解释换取样本、探针及解释器成本，也引入 best-layer 选择与自动标签偏差：同系列 LLM 解释和评分不是独立真值，局部 logit attribution 不替代删除/替换后完整行为验收。所测模型未覆盖最大的 MoE，expert 也未被证明完全 monosemantic；不能按这些标签直接裁成可部署的领域子网。Placement 与 capacity 仍以真实负载和质量为准；标签不稳定时回退路由统计与具体行为干预，而不是预先给专家划知识部门。
@@ -666,6 +718,11 @@ MoE 的稳定定义是 conditional computation，不是人工预先划分知识�
 前面的标准联合训练与独立模块组合需要不同的初始化条件；以下先沿独立模块组合展开，再比较从同一 dense 模型拆分专家的分支。
 
 这条组合路线也不只有“随机初始化 Router 后做联合微调”一种收尾。如果各 Dense Expert 来自兼容的架构、词表与初始化，且保留带领域标签的校准样本，可以平均非 MLP 参数、保留各自 MLP 为 Expert，再从合并模型的中间表示累积特征统计，以闭式 ridge regression 初始化逐层 Router。这样将 Router 校准从反向传播优化改为一次带标签的前向统计与线性求解，适用于无法集中进行多任务再训练、但能提供相容专家和校准数据的情形。它并非“训练免费”：独立专家训练、校准样本前向、统计矩阵与求解仍有成本；深层 Router 所用特征还来自按领域指定 Expert 的路径，而非最终 Router 的真实路径，形成分布偏差。若专家坐标不兼容、领域标签不足或输入跨域混合，联合训练或微调仍可能更稳健。作者在 115M/3B Llama 系列和披露任务上的结果只说明这条受限分支可行，不证明任意模型组合后都无需校准或保持原专家能力。<!-- source-family:SF-2026-ARXIV-2603-29765 -->
+
+若数据owner不能汇集原语料，独立模块的兼容性也可以在各自训练时建立，而不只在合并后校准：从同一public模型出发，冻结共享层、public expert与公共router参照，仅训练本地expert和对应routerrow，再将这些row与expert拼装。[受限模块训练分支](https://arxiv.org/html/2507.07024v1#S3)用共同anchor约束坐标，但成对训练不自动给所有expert之间的最优选择；domain初始化、bias与可选publicproxy调优仍须按新组合验收。移去expert和对应route停止的是该模块参与，不自动擦除其他模块已见的同源知识、训练衍生产物或先前输出，也不提供差分隐私。应保public/本地数据及参数依赖、共享anchor和允许的expert集合，分别核opt-out后质量、路由负载与数据暴露；局部低extraction率不是全攻击上界。全部专家训练、域表示/proxy校准、模型驻留和各允许组合的回归都计费；坐标、质量或来源责任失配时，保原public模型、独立服务与有权限的联合训练，不用可拔插模块自签遗忘、合规或无损成本保证。
+<!-- source-family:SF-2025-ARXIV-2507-07024 -->
+
+这里还要区分模型内部的expert MLP与多个独立预测器的输出混合。若各encoder已固定、客户端只能调整自己的线性residual readout，server只更新混合权重，那么独立拟合每个readout并不等于优化共同输出；可在历史窗口上周期协调readout与混合贡献，间隔内退回便宜的本地ridge更新。[受限在线混合证据](https://arxiv.org/html/2505.00216v1)允许权重有符号且只约束总和，不是抽样概率，也不因此减少encoder执行。该接口需要可改readout并交换features、预测与反馈，分布式求解还会暴露激活/增加逐步通信，实验实际集中在server计算；只有文本输出的商业API不自动适用，隐藏架构也不提供formal privacy。矩阵可解/可逆与look-back、同步频率共同限定该分支，低频同步可失稳，更多history不单调更好；计算、通信、预训练与调参全费。没有这些权限或净预算失配时，保留固定encoder、独立readout和简单混合，不从条件均衡推任意模型全局收敛、稳定或通用净加速。<!-- source-family:SF-2025-ARXIV-2505-00216 -->
 
 另一条初始化分支不是组合独立训练的领域模型，而是从同一 dense checkpoint 中打破 expert 对称性。简单复制 FFN 可以在初始化时保留原函数，却让各专家起点相同；若保有代表性 activation 校准样本，可以先按输入方向聚类，利用各簇的协方差对第一层线性映射作 whitening / truncated-SVD 近似，再按簇 centroid 初始化 router，并以 dense EMA teacher 的 expert ensemble 输出约束 Top-k 路径。这里输入分区形成不同初始化先验，不是已发现固定的知识领域；第一层矩阵的加权近似也不等于优化了完整非线性 FFN 的输出目标，不能宣称整块函数被精确保留。
 
@@ -693,11 +750,17 @@ selector evidence 不足时，完整 standard MoE 仍是更稳妥的旧方案。
 checkpoint、corpus、task 与 validation contract 下支持“小 expert subset 可以保留更多任务表现”，不证明
 experts 已成为 faithful capability modules，也不证明 latency 会随参数子集同比下降。
 
+模态相关的路由也可以面向设备组形成，而不先把 token 硬分成真 text 或真 image。一条受限多模态分支用 attention 与 residual norm 传播模态比例代理，或以 Gaussian EMA 估计代理，再按 expert 的近期 text 偏好排序分组，以跨组 mutual information 与组内负载约束共同训练。[必要软/硬代理及分组对照](https://arxiv.org/html/2604.23996v1)中，更高的硬模态 specialization 指标仍可伴质量下降，不能把代理分离当语义真值；分组后的部署去重也不改变 expert 的数学贡献。统计、排序、训练与设备通信都付费，作者同步 baseline 对异步新路径的时延差同时包含 placement、去重和 overlap，不可全归 MI。模态代理、设备映射或质量失配时，保留原 router、固定 placement 与普通 balance，分别验质量和真实执行负载，不由 specialization 自签吞吐或无损。<!-- source-family:SF-2026-ARXIV-2604-23996 -->
+
 ### Routing Overlap 也限定 Post-training 的参数更新域
 
 可部署子集与可安全更新子集不是同一个问题。即使没有改变原 objective，也可以先按目标语言、层级和任务记录 expert 的经验激活频次，再依据语言specificity ratio、共享频次的变异系数与绝对频次选择更新域：浅深层较独有的 routes 与中层共享 routes，应承担不同的更新预算，再冻结未选 experts 与 router。此时 selector 只提出待更新域；“偏向某语言”并不赋予 expert 独占该语言能力的语义身份。<!-- source-family:SF-2026-ARXIV-2604-03592 -->
 
 只有 router 固定、非目标语言实际走到的支持集与更新域不相交等条件成立时，才可推导对应路径未被改写；现实 overlap 和输入漂移会破坏这个前提。减少待更新参数可以节省 gradient/optimizer state，却不消除全模型常驻和 activation 成本，也增加 profile 偏差与他语回归测试。作者 multilingual MoE 的个别目标语言劣于 Top-K，剪除其余 experts 更会损伤其他语言；overlap 不稳、共享能力重要或新域未被校准时，应扩大更新域、回退普通 SFT/adapter，而不是把低 routing 频次视作无影响证明。
+
+记录 routing profile 还可以服务于另一条不改参数的分支：当约束是不做 post-training、只调整当前目标语言的推理路径时，先按语言与层统计 expert 选择频次，再对中层候选 experts 的 router logits 施加由该 profile、原 logit 幅度与 steering strength 调节的 bias，保留浅层与深层原 routing。这与前面的更新域选择不同：一个改变哪些参数学习，另一个改变当前 token 访问哪些既有容量。Profile 只是经验关联；高频不证明 expert 拥有该语言语义，中层共享也不授予唯一内部因果解释。<!-- source-family:SF-2026-ARXIV-2601-14050 -->
+
+这条路径新增离线语言 profile、层与 steering-source 选择、强度校准和他语回归检查。[单模型的受限干预](https://arxiv.org/html/2601.14050v1)在 Qwen3-30B-A3B、选定语言及 PolyMath 子集上呈现 source/目标语言相关的收益，逐语言并非全为正值；把 steering 移到浅深层反而退步。语言近邻、输入分布或层级改变后不能继承原校准，也不能把离线任务分数换算成 latency/SLO 保证；缺对应验证时，保留原 router，或在确有训练预算时回到前述受控更新域，而不是让 routing 频率直接决定能力身份。
 
 ### 长尾 Expert 低频不等于无知识
 
@@ -801,6 +864,9 @@ fabric topology 与生效 epoch；迁移期间还要处理 optimizer/checkpoint 
 
 Placement 还可分开跨层 transition affinity 与每层近期 activation load：先将筛选后的少量 affinity-linked experts 固定到人工指定 anchor GPU，再把其他 experts 按新负载 greedy 分布，并按 epoch 刷新。它优先降低跨层搬运，却可能增加 anchor 局部 imbalance；容量不足时必须收紧 threshold/top-E、裁 affinity pool，不是所有关联都可同时驻留，也不是昂贵 MILP 已获在线最优。随机输入 profile 不认证真实流量依赖，计数可陈旧，迁移、参数 identity 与生效 epoch 仍由 runtime controller 负责。有限实现的 baseline 与实现版本不同，主性能关闭 prefix cache，不能与另一人口的缓存 hit 提升合并为质量/SLO 保证。Profile、调参与搬迁付费，稳定负载或容量冲突时保留固定 placement、普通 EPLB 与原 dispatch。<!-- source-family:SF-2026-ARXIV-2602-21626 -->
 
+缓存价值还可能由同一次Top-K调用的expert组合决定，而不是各expert热度的独立加总。[一个受限分布式缓存模型](https://arxiv.org/html/2507.06567v1#S3)让router先固定同层调用集合，再由本地、邻近edge与cloud的placement决定activation如何转发和返回；多个expert若共享一次节点访问或固定通信开销，新增其中一个的边际收益就会随其他成员所在位置改变。于是Top1缓存下成立的递减收益/greedy依据不能自动推广到任意TopK组合，也不意味着所有TopK实例都必然失败。这一分支假设低负载、不计多用户计算争用，并用固定链路/计算代价与历史共激活概率评价，不能从模拟平均时延收益推出真实端到端latency或隐私。规划、统计、权重迁移/版本同步、activation往返和排队均须另计，topology或group分布漂移后重估；组合画像不可靠、规划费用过高或全驻留更合算时，保留固定placement、独立热度策略或原dispatch，不让cache controller改变已验router语义。
+<!-- source-family:SF-2025-ARXIV-2507-06567 -->
+
 ### 固定显存下，副本数量与精度预算必须联合选择
 
 固定显存预算还会限制“复制热点 expert”这条路径：若所有原件保持同一精度，新增副本可能根本放不下。一个受限的
@@ -825,6 +891,8 @@ epoch dispatch。它用 calibration、量化误差和更复杂的 artifact 组�
 若压缩对象不是副本的位宽，而是 expert 权重的低秩表示，预算还要决定每组保留多少 rank。一条受限分支把 experts 按校准 routing frequency 分组，共享低秩 basis，再用归一化频率与奇异值谱的 effective rank 共同提出组内 rank 分配：频率反映这组被读取的机会，谱反映其权重的可压缩结构，二者都不是质量重要度真值。较小组保留最低 rank，稀疏 one-hot 投影则把未被低秩近似解释的残差映入较小 latent 空间，再以可训练残差修正权重。这与前面的 replica/precision 选择共存，改变的是参数表示，而不改变 router 的 token 选择语义。
 
 分组、校准人口、rank 与残差预算须一同绑定 artifact；残差本身占用参数预算，最低 rank 的取整规则也不能直接证明总预算精确守恒。投影列归一后在 latent 空间满足正交条件，不代表任意全维残差或任务语义无损。[受限原始证据](https://arxiv.org/html/2602.09316v1)只压 expert up/gate，校准集、压缩率及权重融合系数会改变质量，部分任务与更激进工作点仍退步；未给端到端部署吞吐。因此 rank/frequency 是 compression proposal，仍需与统一 rank、单信号分配及原权重在同一任务切片比较；预算宽裕、组内结构不共享或长尾回归时，保留独立权重、统一 rank 或原精度路径。<!-- source-family:SF-2026-ARXIV-2602-09316 -->
+
+压缩 artifact 还可以合并 expert 参数，而不只是减少其rank或裁 runtime routes。一条[受限 merge 分支](https://arxiv.org/html/2604.04356v1#S4)以routing加权的activation与weights共同匹配神经元permutation，保护clustercentroids后吸收较低saliency的experts；前层改变后，再重算后层calibration，避免把旧统计当当前输入。被合并expert的参数信息不等原function无损保留，routerfrequency也不认证稀有任务重要度；calibration mix会改变MC/生成前沿，许多singleton保留了不能安全合并的分支。匹配、逐层重校准、重建artifact与完整任务回归均付费，不代表runtime自动少算或最优全模型压缩。长尾、对齐或质量失配时，保留独立experts、较温和rank/precision压缩与原router，不让平均activation批准删除能力。<!-- source-family:SF-2026-ARXIV-2604-04356 -->
 
 ### 低频 Expert 的精度需求不能由热度替代
 
@@ -861,6 +929,8 @@ batch churn、selector cost 与 fairness。高风险请求、低相关 batch、�
 作者结果只覆盖其模型、batch、expert-parallel 与 speculative 设置，不能成为通用吞吐或质量承诺。
 
 <!-- source-family:SF-2026-ARXIV-2602-07265 -->
+
+共享集合还要与“这一轮究竟提交了哪些输出”一起测量。块扩散每轮处理许多位置，却可能只接受少数 token；每个位置各取少量 expert，整轮并集与每个已提交 token 摊销的 weight activation 仍可能很大。[一条受限分支](https://arxiv.org/html/2602.08404v1#S3)先让新接受位置及可能近期提交的 hot 位置选择完整 experts，再把剩余 cold 位置的路由限制到该并集；accepted 位置延后一次前向才缓存，hot 候选探索则用额外计算尝试提高每轮提交数。此时 expert 并集、accepted token 数与真实质量、时延必须分账：cold 路由已被近似改变，缓存稳定和 hot 判定不是正确性概率，额外候选也不等于分布精确的 speculation。有限单 GPU 块扩散模型对照存在数学任务退步，无刷新并非所有任务质量保持；分类、分支验证、缓存状态与路由预算应随版本验收，质量或净成本退化时回退完整路由、受控刷新或原生成路径，不由摊销 expert 指标授端到端 SLO 保证。<!-- source-family:SF-2026-ARXIV-2602-08404 -->
 
 ### Prefill 与 Decode 可以使用不同 Expert Set，但必须共享误差合同
 
@@ -925,6 +995,16 @@ MoE 把 Dense MLP 改造成条件计算：Router 为每个 token 选择少数 ex
 参数容量的扩展到此回到同一个判断：被选中的容量是否在质量与执行约束内真正有用。第 22 章转向另一条正交轴——序列容量，把 Position、Attention 与 KV Cache 的约束放在一起，而不是在 MoE 后再增加一个算子。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2610-22454` — Daily2026-10-20，Oct19窗；[exact-v1](https://arxiv.org/html/2610.22454v1) §2–6/§8/T1–3，3+2+2=7。只采prefill位置预算及form/content分账；保模板/物理末端混杂、有限保护反侧及短输入成本，不采通用selector、唯一sink因果或吞吐保证。root实际必要Source/owner PRE通过并授两段/本人注窄写；作者已真实保存，root已实际完整新增/直接两侧/本人note非作者POST通过（ROOT_REVIEW §4），本窄位释放。未核代码或复现，不授日级完成。
+
+- `SF-2026-ARXIV-2610-22353` — [Daily 2026-10-17](../../papers/2026/10/17/README.md)，精确v1 §2–4及必要B.1/3/5–7；只采用选择/聚合分责的探索分支，保真实dispatch与effective support区别及比较混杂，不采普遍收敛或加速。必要独立Source见REVIEW R2；实际非作者写后复核已通过（本日REVIEW及root接纳）。
+
+- `SF-2026-ARXIV-2605-00604` — Daily2026-05-05补May04；[exact-v1](https://arxiv.org/html/2605.00604v1)必要Source由独立reader R4实际完成，显式时间state与受控识别边界差额深入。只采受限协作/状态隔离验收，保固定切换cue、charLM预测loss反退、统一可靠度无额外收益和独立抽样不等Top-k；不采大型MoE无context/MTP错误/激活或延迟收益。root实际owner/逐字PRE通过；作者实际保存/读回，root C3非writer实际完整正文/两侧/本人注POST通过并释放窄位；作者仅行政同步既成事实并读回，不授DAY；未核实现/复现。
+
+- `SF-2026-ARXIV-2604-23996` — Daily2026-04-29补Apr28自然日；[exact-v1](https://arxiv.org/html/2604.23996v1)§3.2–3.5/4.1/4.3/4.5/T2–6必要层，2+2+2=6，具体owner接口深入。softmodality代理→devicebins/MI与withinbin balance，不授modality真值或把异步时延全归MI；root必要Source/actual owner/逐字PRE通过；root非writer实际新增正文、完整前后邻接与本人注POST通过，指定窄lease释放，作者仅同步已发生行政状态。全费/反退/退路近文，未核实现/复现，不授DAY。
+
+- `SF-2026-ARXIV-2604-04356` — Daily2026-04-08补Apr07；[REAM exact-v1](https://arxiv.org/html/2604.04356v1) §4–5，2+2+2=6，permutation-aligned artifact合并与逐层校准差额深入。非runtime裁route/无损/稀有任务importance；singleton、calibration人口/MC生成前沿、匹配重校准和回归费用保留。supp_apr08_reader必要Source/日门与真实正文、完整局部POST通过；本注待其实际读回，未核实现/复现。
 
 - `SF-2026-ARXIV-2602-21626`：[v1 Algorithm 3 / §IV–V](https://arxiv.org/html/2602.21626v1)。fixed-anchor affinity pool + remaining greedy load，不采 MILP 全局最优；vLLM 0.9.1/0.9.2 差异、主性能 prefix cache disabled 与独立 ShareGPT hit 人口保留。非原 packet 作者必要原证/owner PRE 后窄写；root已实际顺读正文、完整邻接与自身末注，POST通过，未复现。
 
@@ -1034,3 +1114,42 @@ Primary-source 校验入口：
 - `SF-2026-ARXIV-2602-15521` — Daily `2026-02-19`；[exact-v1](https://arxiv.org/html/2602.15521v1) §3–4/Tables2–3、A2/F/L；2+1+2=5，激活 profile/shared 比例及 dense 切片转 softmax routing 的函数变化深入。全部权重、25% sparsity 掉分、校准/CPT/SFT 与单 GPU 固定并发限制保留，不授函数保持或总成本/SLO 保证。root 必要原源及 actual owner PRE 通过并授窄锁；作者已顺读正文/完整邻接，root 实际正文/完整邻接/末注非作者 POST 通过，窄锁释放，未核实现或复现，非日级 Gate。
 
 - `SF-2026-ARXIV-2602-12746` — Daily `2026-02-17`；[exact-v1](https://arxiv.org/html/2602.12746v1) 必要方法/关键控制/直接限制；2+1+2=5，具体owner差额定点深入。仅采用正文条件机制；相关理论/效果强保证隔离，成本与回退近正文。root必要原源/actualowner PRE通过并授窄锁；作者正文/完整邻接已顺读，root非作者实际正文/完整邻接/末注POST通过，窄锁释放，未核实现或复现，非日级Gate。
+
+- `SF-2026-ARXIV-2601-14050` — Daily `2026-01-22`补查；[exact-v1](https://arxiv.org/html/2601.14050v1) §3/7.1–7.2/Table4/Limitations，2+2+2=6，具体owner差额深入。inference routing bias 与 post-training 更新域；不授语义owner或唯一因果，单模型/语言/profile/层级校准、浅深层反退与逐语言非全正近正文。root实际必要原源/owner PRE通过并授两段窄锁；作者实际正文/完整邻接顺读，root非写入者实际正文/完整邻接/自身末注POST通过，窄锁释放。未核artifact/复现，非日级验收。
+
+- `SF-2026-ARXIV-2602-08404` — Daily `2026-02-11`补查；[TEAM exact-v1](https://arxiv.org/html/2602.08404v1) 完整§3/4。2+2+2=6，accepted 人口摊销与 new/hot→cold 双轮 expert 集合具体差额深入；Eq4 forall 近邻歧义、EA 空集合与 branch verifier 完整 recipe 未披露，不采用 exact 路由/分布/无 drift。SDAR30B-A3B/单 A10080GB、块32/accept.95/hot.7/距离3/四branches，数学任务退步、refresh4反侧与默认非全质量最优保留；precision/I/O/batch/concurrency/SLO/repeat CI未披露。root实际必要Source、actual owner与最小拟文PRE通过并授窄锁，作者已写与顺读完整邻接，root 非写入者实际853–885/新869完整邻接与1046自身末注POST通过，Ch21窄锁释放；未核artifact/复现，不授DAY。
+
+- `SF-2026-ARXIV-2603-09453` — Daily `2026-03-12`增量；[exact-v1](https://arxiv.org/html/2603.09453v1)。2+1+2=5，具体Gaussian-logit残差/协方差→softmax均值→一次Top-k差额深入。作者实际§2–5/7、A.2/C.1–2/D.1–3/E；root实际§2–5/C.1–2/D.2/T7–8/E、日期及逐字PRE通过并授窄锁。MCQA accuracy/calibration反退、rawtemperature/OOD、VTSR proxy/index未闭合和全费用边界保留；作者实际写67/69两段并顺读，root非writer实际顺读55–97完整邻接、新两段和本人1052注并回对必要原证，actualPOST通过，锁释放。未核全部附件、实现/复现或完整SLO，不授DAY。
+
+- `SF-2026-ARXIV-2603-18492` — [AIMER exact-v1](https://arxiv.org/html/2603.18492v1) §3–5/7、Alg1/Eqs3–7/Tables1–4；只采用三投影绝对均值/RMS的weight-only同层排序→删expert/router rows→保原top-k的条件分支。高ratio先删、代数界非质量界、random/任务/高裁比反侧、points与percent、scoring/loading/服务费用分账保留；不授功能冗余真值、全taskagnostic无损或端到端加速，未核代码/复现。
+
+- `SF-2026-ARXIV-2603-27481` — [DyMoE exact-v1](https://arxiv.org/html/2603.27481v1) §3.2–3.5/Eq1–8、§4.1–4.3/Tables1–5及A1/B10，只采用扩expert池仍改变Top-K/归一人口与训练期old/new组分工的限定接口。Masked/raw辅助目标与detach未闭合，不混拼配方或授无遗忘；LLaVA7B/4H100/BF16/ZeRO2局部任务退步、阈值/容量增长及全费保留，未核代码或复现。
+
+- `SF-2026-ARXIV-2604-00421` — Daily2026-04-03；[exact-v1](https://arxiv.org/html/2604.00421v1)§2–4/Tables1–2，2+1+2=5，仅采用last-E hidden routing与骨干学习分责；保fixedrandom/质量反侧、小参数份额、非batch均衡与完整费用，未核代码/复现。
+
+- `SF-2026-ARXIV-2610-13370` — Daily2026-10-13，窗10-12；[exact-v1](https://arxiv.org/html/2610.13370v1)必要位置、采用边界与actual-owner差额见[本日模型证据](../../papers/2026/10/_sources/daily-20261013/model-evidence.md)。today_models必要Source与逐字PRE经root独立定点通过后授本局部/本人末注窄锁，today_models已最小写入；root已实际顺读新增正文、完整邻接、diff及本人末注，nonwriter POST通过，窄锁释放，不授DAY。保正文category preferred share非配额、强bias拔除失配与推理负载代价，必要位置与采用命题仅按本日对应family记录，未核代码、复现或生产SLO。
+- `SF-2026-ARXIV-2604-08541` — [exact-v1](https://arxiv.org/html/2604.08541v1) §3–5/Limit；domain-reference expert-frequency提案与small softbias，保hard/mismatch/Top1反退、layer强度搜索和费用；JSD非因果，不授固定语义expert/感知纠错，未核实现/复现。
+
+- `SF-2026-ARXIV-2604-17837` — Daily2026-04-22补Apr21；[exact-v1](https://arxiv.org/html/2604.17837v1) §2–5与A/B/C/Dsetup/E/F/H必要，2+1+2=5。只采用当前linearrouter input正交补对rawlogits的代数性质；Top-1 probe/路径聚类非因果充分或全路径语义唯一，shape/precision/population与SVD/probe费用近文。fresh实际必要Source与root actual owner/A50单段逐字PRE通过，作者按窄lease保存并顺读邻接；root实际非writer正文/完整邻接/本人注POST通过，lease释放，作者仅行政同步并实际读回，未核代码/复现或DAY。
+
+- `SF-2025-ARXIV-2505-00216` — Noether，Daily2025-05-03补May2；[exact-v1](https://arxiv.org/html/2505.00216v1)，2+2+2=6。Ohm§36日期/current、§41受限Source/owner通过；本地HTML超时部分原件，§2–3/4.1–4.3/4.6/5已完整，A证明/C详细配置和B算法尾未采用。只采readout/mixture协调与同步权限/费用，保signed非概率、activation暴露、条件可解及不稳定/筛选反侧；主文/B可见式口径冲突不拼recipe。未看像素、核代码或复现；root实际逐字PRE通过并授指定单段/marker/本人注窄位，作者已真实保存并self-read，Ohm§44非writer完整新增/两侧/本人注POST通过，root实际完整消费并接纳整合、释放指定窄位；本注仅同步既成事实，不授DAY。
+
+- `SF-2025-ARXIV-2505-00415` — Daily2025-05-03补May2自然日；[exact-v1](https://arxiv.org/html/2505.00415v1)§3–6/AppendixA两算法/D.1–2及D.4必要层，2+1+2=5，expert内部meta-init选择/训练期增长和测试适配分责的具体差额深入。保步长heuristic条件、全features消费、容量/费用混杂、工业反退、test阈值/PA与时间支持，不授防负迁移、在线扩张或生产SLO。未核B全部专家推导/C全部合成式/D.3全图/E类比、像素/实现或复现；Ohm§51必要Source/5分及§52逐字PRE通过，root实际读完整稿/当前邻接并授指定单段/marker/本人注窄位；作者已实际保存/self-read，Ohm§54非writer完整新增/完整两侧/本人注POST通过，root已实际完整消费并接纳整合、释放该窄位；本注仅同步既成事实，不授DAY。
+
+- `SF-2026-ARXIV-2610-22127` — Daily2026-10-17窗10-16；[exact-v1](https://arxiv.org/html/2610.22127v1) §3–6.5/Limitations必要，2+1+2=5。仅采用配对适配方向→expert提名→局部干预分责，保synthetic group偏好、test选择/重构误差、较弱迁移与双模型/字典/搜索全费，不授专家语义独立或persona满足。root实际必要Source/具体owner及最小PRE通过并授单段/本人注；作者已保存并自读，root实际正文/完整直接两侧/本人注POST通过。未核实现/复现，不授DAY。
+
+- `SF-2025-ARXIV-2507-00390` — Boyle，Daily2025-07-03补Jul2；[exact-v1](https://arxiv.org/html/2507.00390v1) §3–5/Eqs3–8/T1–2及AppD必要域，2+1+2=5，小gap深入。仅采用保TopK/gate、校准常量替代expert输出的接口，不授frequency概率、Eq8重建最优/零样本均值、无偏/无损或通用加速；校准人口、额外恢复训练与真实反退近文。未核全部附图表/代码或复现；root§16必要Source/owner/12.1逐字PRE通过并授本位，Boyle实际保存并顺读完整两侧/本人注，root§22已实际新增全文/完整两侧/本人注非writer POST通过，整合生效、窄位释放。
+
+- `SF-2025-ARXIV-2507-06567` — Godel，Daily2025-07-11补Jul10；[exact-v1](https://arxiv.org/html/2507.06567v1)III/IV构造、V-C/VI必要，2+1+2=5。仅同层group固定通信费/缓存边际收益条件，不采全部非次模/greedy失败、近似率或仿真SLO/隐私；lowtraffic/历史概率、版本同步和全部费用保留。V-A/B完整算法证明/图像/实现未核、未复现，绑定/重估/退路是项目推导。Newton15/24实际必要Source/owner/逐字PRE通过，root仅授本单段/独立marker/本人注，已按批准稿真实保存并自读完整两侧/本人注，Newton28已实际完整新增/完整两侧/本人注非writer POST通过，指定单段生效释放；不授整日DAY。
+
+- `SF-2025-ARXIV-2507-01351` — Noether，Daily2025-07-04补Jul3；[LTDR exact-v1](https://arxiv.org/html/2507.01351v1)必要§3–5/AppA/B/C原域沿Ohm40实际层复用，2+1+2=5，模态正则支持/额外expert预算接口深入。RPV非foreground/罕见语义真值，保Eq8/10尺度未闭、非等计算对照、单项质量/POPE/时延反退及全费，不授唯一recipe/普效/SLO。未看图像/热图/核实现/复现；Ohm43正式Source/5分/具体owner及逐字PRE通过，root已协调本指定单段与本人注；作者已实际保存，Ohm61已实际完整新增/完整两侧/本人注非writer POST通过，依root授权本项生效并释放指定窄位；本注仅同步既成事实，不授DAY。
+
+- `SF-2025-ARXIV-2507-06502` — Godel，Daily2025-07-11补Jul10；[exact-v1](https://arxiv.org/html/2507.06502v1)§3.1–3.3作者实际，4.1–2/4.4–4.6/5必要Source复用Newton20实际非writer层，2+1+2=5。仅expert函数偏置/router分责；保符号/方差/复数歧义、非等参数/预训混杂与实际反退，不采真实谱、普效或速度。未看图像/核代码/复现，执行合同/回退为项目推导；Newton20/26必要Source/5分/具体owner/逐字PRE通过；root已协调本精确单段/独立marker/本人注，已按批准稿实际保存，Newton39已真实完整新增/直接两侧/本人注非writer POST通过，生效并释放本精确位；不代表整日DAY。
+
+- `SF-2025-ARXIV-2507-07024` — Godel，Daily2025-07-11补Jul10；[exact-v1](https://arxiv.org/html/2507.07024v1)§3–6/Tables1–3/A.2/D实际必要，2+2+2=6。只采共同anchor下localFFN/routerrow独训与参与撤销分责，保pairwise路由/可选proxy调优/分布和费用，模型移除非全知识删除、extraction非DP/安全/法律证明；同FLOP/data对照与任务反退保持。未读全制备/评测附件/像素、核代码或复现，依赖绑定/独立验收与回退为项目推导；Newton82必要Source/6分与逐字PRE通过；root已协调本指定单段/独立marker/本人注，已按稿真实保存，Newton86一次实际完整新增/完整直接两侧/本人注非writer POST通过，已生效并释放指定窄位；不代整日DAY。
+
+- `SF-2026-ARXIV-2605-11689` — Daily05-14补May13，exactv1§3/5/A1–A2.2/C1必要，2+1+2=5；actual预算/activationratio/balance局部有具体有限反证gap。保activeFFN非完整等费、shared/hetero/densegranularity反例、smalltokenbudget/highn bias与dropless边界、5seed仅两配置/CE反侧；未核实现/复现，root实际必要域§2/3/A4/C1与完整owner/逐字PRE通过授唯一单段/本人注；其他作者域分开，root非writer实际完整新增/直接完整两侧/本人注POST通过并释放本窄位；仅行政同步既成事实，不授DAY。
+
+- `SF-2026-ARXIV-2605-12476` — Daily05-14补May13；exactv1§2–6/8/A–B必要，2+1+2=5，assignedhidden centroid分支gap深入。保cross-Jacobian原系数不采、AdamW非scalarx/β非永非零、aux+z混杂、T1质量损、fi单位/emptyguard未闭不照recipe；全state/全费近文，未核实现/复现，root实际必要域§2/3/5/6/8/B与完整owner/逐字PRE通过授唯一单段/本人注；其他作者域分开，root非writer实际完整新增/直接完整两侧/本人注POST通过并释放本窄位；仅行政同步既成事实，不授DAY。
+
+- `SF-2026-ARXIV-2610-05744` — Daily2026-10-07 Oct6；exact-v1 §3–4/T1–3/A4.4/A5T8必要，2+2+2=6。仅affinity-aware expert侧admission及Top-K/实际贡献集合分责；保定理假设、strict质量反退、Pro baseline OOM不可算有限倍率、硬件/precision Not Disclosed与全部训练/过滤费用，不采通用无损、代码或复现。oct11_missing必要Source/逐字PRE、root授权通过，作者已实际保存并自读；实际非作者POST另记，不预整日验收。

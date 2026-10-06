@@ -1,0 +1,204 @@
+Hierarchical Precision and Recursion for Accelerating Symmetric Linear Solves on MXUs (https://arxiv.org/html/2601.08082v1)
+citeturn30719view0 [wordlim: 200] Crawled: 6 days ago; Content type: text/html; Source: open({"ref_id":"https://arxiv.org/html/2601.08082v1","lineno":null}); Total lines: 327
+L0: ##### Report GitHub Issue
+L1: 
+L2: [Button: ×]
+L3: 
+L4: Title: [Input: Enter title]
+L5: 
+L6: Content selection saved. Describe the issue below:
+L7: 
+L8: Description:
+L9: 
+L10: [Button: Submit without GitHub] [Button: Submit in GitHub]
+L11: 
+L12: cite0†Back to arXiv L13: 
+L14: cite1†Why HTML?†info.arxiv.org cite2†Report Issue cite3†Back to Abstract cite4†Download PDF L15:   1. cite5†Abstract L16:   2. cite6†I Introduction L17:   3. cite7†II Background L18:     1. cite8†II-A Recursive Decomposition L19:     2. cite9†II-B Mixed-Precision Linear Algebra L20:     3. cite10†II-C Julia Language abstractions L21:   4. cite11†III Methods L22:     1. cite12†III-A Nested Recursive Algorithm Design L23:     2. cite13†III-B Nested recursive data structure L24:     3. cite14†III-C Hierarchical Mixed Precision on the recursion structure L25:     4. cite15†III-D Layered Quantization and Dequantization Strategy L26:       1. cite16†Pre-Algorithm Phase. L27:       2. cite17†Post-Algorithm Phase. L28:   5. cite18†IV Results L29:     1. cite19†IV-A Hardware and Software Specifications L30:     2. cite20†IV-B Results Analysis on NVIDIA H200 L31:       1. cite21†SYRK Performance L32:       2. cite22†TRSM Performance L33:       3. cite23†Cholesky Throughput: L34:       4. cite24†Cholesky Performance L35:       5. cite25†Cholesky Accuracy L36:     3. cite26†IV-C Results Analysis on AMD MI300X L37:     4. cite27†IV-D Effect of Recursive Depth and Matrix Scale L38:     5. cite28†IV-E Portability and impact of hardware L39:   6. cite29†V Conclusion and Future Work L40:   7. cite30†References L41: cite31†License: arXiv.org perpetual non-exclusive license†info.arxiv.org L42: 
+L43: arXiv:2601.08082v1 [cs.DC] 12 Jan 2026
+L44: # Hierarchical Precision and Recursion for Accelerating Symmetric Linear Solves on MXUs
+L45: 
+L46: Vicki Carrica^{1}, Rabab Alomairy^{2}, Evelyne Ringoot^{3} and Alan Edelman^{4} Affiliation: CS and AI Laboratories, Massachusetts Institute of Technology, Cambridge, MA
+L47: Email: ^{1}vickicar@mit.edu, ^{2}rabab53@mit.edu, ^{3}eringoot@mit.edu, ^{4}edelman@mit.edu
+L48: ###### Abstract
+L49: Symmetric linear solves are fundamental to a wide range of scientific and engineering applications, from climate modeling and structural analysis to machine learning and optimization. These workloads often rely on Cholesky (POTRF) decomposition and its supporting operations—triangular solves (TRSM) and symmetric rank-k updates (SYRK)—which together form the computational core for solving symmetric positive-definite systems.
+L50: To accelerate these kernels, we present a portable, mixed-precision solver designed for Matrix Processing Units (MXUs), including NVIDIA Tensor Cores (H200) and AMD Matrix Cores (MI300X). Our algorithm builds on a nested recursive formulation in which Cholesky exposes parallelism through recursive decomposition of its TRSM and SYRK sub-problems. This structure yields a hierarchical recursion that maximizes GEMM throughput while enabling fine-grained control over numerical precision.
+L51: We introduce a custom recursive data structure that assigns low-precision FP16 arithmetic to large off-diagonal blocks, while preserving high precision on diagonal blocks to ensure numerical stability. The solver is implemented in Julia, leveraging array programming, multiple dispatch, and dynamic type inference to enable seamless expression of mixed-precision computation.
+L52: This design provides a high-level, hardware-agnostic interface while efficiently interfacing with low-level vendor libraries for backend portability. On H200, our recursive FP64 SYRK achieves a 14$\times$ speedup over cuBLAS, while mixed-precision delivers up to 27.0$\times$ speedup in SYRK and 5.3$\times$ in TRSM over full-precision baselines.
+L53: This results in a 5.32$\times$ overall speedup for Cholesky versus cuSOLVER FP64, with 100$\times$ better accuracy than pure FP16 while retaining 88% of its peak speedup. Comparable performance and accuracy trends are observed on MI300X, demonstrating broad applicability across GPUs.
+L54: ###### Index Terms:
+L55: 
+L56: Cholesky decomposition, mixed precision, recursive algorithms, GPU acceleration, symmetric positive definite matrices, triangular solve (TRSM), symmetric rank-k update (SYRK), tensor cores, matrix processing units (MXUs), Julia language, layered precision, quantization.
+L57: ## I Introduction
+L58: Symmetric linear systems arise ubiquitously in computational science and engineering, including for example, computational fluid dynamics[cite32†1 , cite33†2 ], climate modeling[cite34†3 ], and Gaussian process regression[cite35†4 ]. Direct solution methods of such symmetric linear system involve calculating its Cholesky decomposition, which relies on triangular solve (TRSM) and symmetric rank-k update (SYRK).
+L59: As scientific workloads grow in scale and complexity, these dense linear algebra operations increasingly dominate the runtime of end-to-end simulations, making them a critical performance bottleneck.
+L60: Traditional solvers, such as blocked Cholesky factorization[cite36†5 ], typically rely on uniform high precision (e.g., FP64), which limits their ability to exploit the growing class of AI accelerators. In particular, recent hardware trends have given rise to Matrix Processing Units (MXUs), such as NVIDIA Tensor Cores and AMD Matrix Cores, which deliver orders-of-magnitude higher throughput for low-precision arithmetic (e.g., FP16) [cite37†6 ].
+L61: However, deploying these capabilities in scientific computing is non-trivial due to stringent numerical accuracy and stability requirements. This motivates the development of new algorithms that can selectively exploit low-precision performance without sacrificing correctness.
+L62: Our solution builds upon the well-known recursive subdivision strategy [cite38†7 , cite36†5 , cite39†8 ], which enhances data locality and parallelism in Cholesky factorization. While prior recursive formulations typically apply only to the diagonal POTRF operation—leaving off-diagonal updates (TRSM and SYRK) in standard blocked form—we extend this into a fully nested recursive formulation.
+L63: In our approach, the decomposition tree recursively subdivides not only POTRF but also TRSM and SYRK, resulting in a structure that breaks the matrix at each level into two recursive POTRFs, one TRSM, and one SYRK. This strategy increases the granularity of GEMM operations, exposing deeper parallelism and enabling greater hardware utilization on GPUs [cite40†9 ].
+L64: In parallel, our solver introduces a tree-structured mixed-precision hierarchy that assigns low precision (FP16) to large off-diagonal blocks and progressively higher precision (FP32 or FP64) to recursively refined diagonal regions. This contrasts with most prior mixed-precision approaches, which either focus on iterative refinement [cite41†10 , cite42†11 ] or apply uniform low precision to predefined matrix partitions [cite43†12 , cite44†13 ].
+L65: By integrating fully nested recursion with layered precision control, our algorithm aligns naturally with the architecture of matrix processing units (MXUs), such as NVIDIA Tensor Cores and AMD Matrix Cores—enabling both high performance and numerical robustness.
+L66: To complement this algorithmic design, we implement a layered mixed-precision scheme via a custom recursive data structure in Julia. While prior work [cite43†12 ] applied uniform mixed-precision to block-partitioned matrices, our approach introduces precision layering in a tree-structured layout. Large, off-diagonal blocks—where throughput is critical—are processed using FP16 on MXUs, while accuracy-critical diagonal blocks are retained in higher precision (FP32 or FP64).
+L67: To mitigate FP16’s limited dynamic range, we apply lightweight per-block quantization and dequantization, preserving numerical stability with minimal overhead.
+L68: Our solver is implemented in Julia, leveraging its powerful abstractions including multiple dispatch, array programming, and dynamic type inference. This enables a high-level yet efficient expression of mixed-precision logic with portability across vendor libraries. On NVIDIA H200 GPUs, our solver achieves a $5.32\times$ speedup over FP64 cuSOLVER, with $100\times$ better accuracy than pure FP16 and 88% of its peak performance.
+L69: Similar trends are observed on AMD MI300X, showcasing the cross-platform scalability and practicality of our approach.
+L70: The main contributions of this paper are
+L71: 
+L72:   1. 1.
+L73: 
+L74: A nested recursive Cholesky framework: we introduced a nested recursive formulation for Cholesky decomposition that extends recursion beyond the diagonal factorization. By recursively subdividing TRSM and implementing the first recursive SYRK, we expose more GEMM operations. This allows for deeper hardware utilization on modern MXUs.
+L75: 
+L76:   2. 2.
+L77: Tree-structured mixed precision scheme with quantization: we utilized a hierarchical mixed-precision strategy implemented with a custom recursive data structure. This design maps performance-critical off-diagonal blocks to low precision (FP16) for high throughput, while preserving accuracy-critical diagonal blocks in higher precision (FP32 or FP64). To ensure numerical stability within the limited dynamic range of FP16, we integrate a blockwise quantization scheme at every level of the recursion.
+L78: 
+L79:   3. 3.
+L80: Performance and portability: We provide a high-performance implementation in Julia that serves as a unified algorithmic template, achieving cross-platform portability by dispatching to vendor-specific libraries (e.g., cuBLAS, rocBLAS) for the base cases. On the NVIDIA H200, the full solver achieves a 5.32x speedup over the FP64 baseline. For our SYRK implementation, the recursive FP64 achieves a 14x speedup at $n=65,536$, while mixed-precision delivers up to a 27x speedup with practical accuracy.
+L81: The remainder of this paper is organized as follows. Section cite7†II reviews background and related work on recursive dense factorizations, mixed-precision linear algebra, and Julia language abstractions that motivate our design. Section cite11†III presents our nested recursive Cholesky formulation, the tree-structured data layout, and the hierarchical mixed-precision and quantization schemes tailored for MXUs.
+L82: Section cite20†IV-B describes the experimental setup, including hardware and software configurations, and reports performance and accuracy results on NVIDIA H200 and AMD MI300X GPUs, together with a detailed analysis of the observed trade-offs between precision and performance. Finally, Section cite29†V concludes the paper and outlines directions for future work.
+L83: ## II Background
+L84: Here, we provide the background and related work that motivate our design. We first review symmetric linear systems and the core kernels used in their direct solution—Cholesky factorization (POTRF), triangular solve (TRSM), and symmetric rank-$k$ update (SYRK). Then, we survey mixed-precision techniques in linear algebra, including iterative refinement and blockwise precision assignment, and positions our hierarchical scheme within this landscape.
+L85: Finally, we introduce the relevant Julia language abstractions—multiple dispatch, parametric types, and GPU backends—that we leverage to express our recursive, mixed-precision solver in a portable way.
+L86: ### II-A Recursive Decomposition
+L87: Recursive formulations have long been studied as a strategy to improve data locality and expose parallelism in dense linear algebra. In particular, dense linear algebra algorithms such as the Cholesky decomposition are often bounded by communication cost, rather than arithmetic cost[cite45†14 ], making the introduction of recursion that group communication at the cost of additional arithmetic particularly relevant.
+L88: Early efforts in dense matrix settings—such as [cite36†5 , cite38†7 ]—proposed recursive blocked factorizations to enhance cache reuse and reduce synchronization overhead. Related approaches have also employed recursive formulations in the context of hierarchical low-rank solvers [cite46†15 , cite47†16 ], where recursion facilitates domain decomposition and multilevel structure.
+L89: In most of these works, recursion is limited to the diagonal factorization, with off-diagonal updates computed via standard blocked methods following LAPACK-style parallelism [cite48†17 ].
+L90: Recursive TRSM has been explored more in the GPU setting. Charara et al. [cite49†18 ] introduced a recursive triangular solver designed to exploit data locality and task decomposition on GPU architectures. In the context of high-level portable programming, Carrica et al. [cite40†9 ] implemented a recursive GPU TRSM in Julia, demonstrating its benefits on tensor-core hardware.
+L91: To the best of our knowledge, our work is the first to propose and evaluate a recursive GPU-based SYRK, along with a mixed-precision variant that strategically exploits low-precision GEMM acceleration. This completes the decomposition of the Cholesky update path into fully recursive components. Our recursive SYRK not only enables fine-grained task decomposition but also outperforms vendor-optimized SYRK implementations on modern GPUs.
+L92: As a result, all three phases—POTRF, TRSM, and SYRK—generate tightly packed GEMM subproblems, making the entire factorization highly compatible with GPU-accelerated compute pipelines.
+L93: ### II-B Mixed-Precision Linear Algebra
+L94: Mixed-precision techniques have gained significant attention as a means to accelerate numerical algorithms while reducing energy consumption. Higham et al. [cite41†10 ], along with others  [cite50†19 , cite51†20 , cite42†11 , cite52†21 , cite53†22 , cite54†23 ] studied mixed-precision iterative refinement for dense and sparse systems.
+L95: More recently, task-based and batched GPU solvers have explored integrating low-precision arithmetic at the kernel level [cite44†13 , cite55†24 , cite43†12 , cite56†25 ], often relying on uniform block-level precision assignment. Our work extends these ideas by introducing a tree-structured precision hierarchy, assigning FP16 to large off-diagonal blocks and higher precision (FP32 or FP64) to recursively refined diagonal regions.
+L96: This enables controlled use of MXU-accelerated low-precision GEMM operations without compromising stability. Our approach also integrates lightweight per-block quantization and dequantization [cite57†26 ], ensuring robustness when operating near FP16’s dynamic range limits.
+L97: To our knowledge, this is the first work to unify recursive decomposition and layered mixed-precision execution in a single portable solver framework, targeting both NVIDIA and AMD matrix engines.
+L98: ### II-C Julia Language abstractions
+L99: The implementation of our recursive mixed-precision Cholesky solver is greatly facilitated by the Julia programming language [cite58†27 ], which provides a unique combination of high-level expressiveness and low-level performance. Julia’s core features—including multiple dispatch, parametric types, and metaprogramming—allow us to construct a recursive solver framework that is both modular and efficient.
+L100: Julia’s multiple dispatch and type inference with compile-time specialization permit to write single hardware-agnostic calls to specialized core operations—POTRF, TRSM, SYRK, and GEMM—which the compilers then resolves and optimizes automatically based on data type (e.g., Float16, Float32, Float64), tile shape, and matrix position (diagonal vs. off-diagonal) for best performance.
+L101: This significantly reduces development overhead while ensuring both portability and high performance [cite59†28 , cite60†29 , cite61†30 ], and enables a unified implementation of mixed-precision arithmetic with fine-grained control over computation paths. We also exploit Julia’s array programming paradigm to express tiled GEMM operations over hierarchical matrix blocks using broadcast and comprehension syntax.
+L102: These array-level abstractions map naturally onto GPU kernels via libraries such as GPUArrays.jl [cite62†31 ], which we use to generate backend-specific code for both NVIDIA and AMD GPUs. Overall, the Julia language ecosystem empowers our solver design by enabling a unified expression of algorithmic structure, data layout, and precision logic—all within a single, expressive language runtime, without sacrificing performance[cite59†28 ].
+L103: There are two possible degrees of hardware-agnosticism: high-level, where we still call into vendor-optimized functionalities through multiple-dispatch in the high-level algorithm; and low-level, where the full algorithm is reintegrated on every level based on only hardware-specialized communication, and compilation to GPU kernel machine language.
+L104: In previous work, such a full-cycle low-level implementation of TRSM and TRMM was demonstrated to provide performance on-par with vendor-optimized functions[cite40†9 ]. In the current work, we focus on the recursive implementation of cholesky, and lean on low-level vendor library functionalities of POTRF, TRSM, SYRK, and GEMM for the base cases.
+L105: This algorithm could in the future be a critical building block towards the performant low-level hardware-agnostic implementation of cholesky decomposition for small and large data sizes, that provides such functionality for all GPU hardware, including Apple Metal.
+L106: ## III Methods
+L107: Here we detail the proposed algorithmic framework. First, we introduce the nested recursive Cholesky design, showing how POTRF, TRSM, and SYRK are all expressed recursively to expose a rich hierarchy of GEMM-dominated subproblems. We then describe the recursive matrix data structure that mirrors this decomposition tree and serves as the backbone for our implementation.
+L108: Building on this layout, we specify the hierarchical mixed-precision scheme, in which off-diagonal blocks are computed in low precision while diagonal regions are refined in higher precision. Finally, we present the blockwise quantization and dequantization strategy that safely maps FP16 computations onto MXUs by controlling dynamic range at each level of the recursion.
+L109: ### III-A Nested Recursive Algorithm Design
+L110: We implement a nested recursive Cholesky algorithm that decomposes symmetric positive-definite (SPD) matrices by hierarchically breaking down all three core computational phases: POTRF (Cholesky factorization), TRSM (triangular solve), and SYRK (symmetric rank-$k$ update). Unlike traditional recursive Cholesky algorithms, which apply recursion only to the diagonal POTRF blocks, our method recursively subdivides TRSM and SYRK as well.
+L111: For TRSM, this form of recursion was first introduced for GPUs in [cite49†18 ], and its portable Julia implementation was recently explored in [cite40†9 ]. In contrast, to the best of our knowledge, our work presents the first recursive GPU-based implementation of SYRK.
+L112: This unified design exposes a rich hierarchy of matrix–matrix multiplication (GEMM) operations throughout the decomposition process, significantly increasing arithmetic intensity and parallelism—two properties well suited for modern GPU architectures.
+L113: Algorithm cite63†1 outlines the recursive Cholesky factorization for an SPD matrix $A$. At each level, the matrix is split into a diagonal block $A_{11}$ and a trailing submatrix $A_{22}$. The diagonal block undergoes a recursive POTRF (line 7), while the off-diagonal and trailing blocks are updated using recursive TRSM (line 8) and SYRK (line 9) calls. By replacing standard TRSM and SYRK updates with their recursive counterparts, we expose more parallelism and achieve deeper task granularity.
+L114: This structure increases arithmetic intensity and enables greater utilization of BLAS3 routines, particularly GEMM, which are highly optimized on modern GPU architectures.
+L115: Algorithm cite64†2 applies TRSM recursively to solve $B\leftarrow BL^{-T}$ for a lower-triangular matrix $L$. If the matrix size falls below the threshold $b$, a standard TRSM kernel is used (line 2). Otherwise, $L$ and $B$ are split, and the update $B_{2}\leftarrow B_{2}-B_{1}L_{21}^{T}$ is computed using GEMM (line 7). Similarly, Algorithm cite65†3 performs the SYRK update $C\leftarrow\beta C+\alpha AA^{T}$ recursively.
+L116: The off-diagonal contribution $C_{21}\leftarrow\beta C_{21}+\alpha A_{2}A_{1}^{T}$ is explicitly computed via GEMM (line 7), while the diagonal blocks are handled recursively.
+L117: Through this unified recursive design, the majority of floating-point operations in our solver are cast as GEMMs—ideal for acceleration on MXUs, including NVIDIA Tensor Cores and AMD Matrix Cores. This formulation enables hardware-friendly scheduling, fine-grained parallelism, and modular precision control. As we show later, this design maps efficiently onto modern GPU architectures and serves as a foundation for layered mixed-precision execution.
+L118: Algorithm 1 Tree-POTRF${}_{L}(A,b)$: Nested-recursive Cholesky (lower)
+L119: 
+L120: 1: $A\in\mathbb{R}^{n\times n}$ SPD; leaf size $b$
+L121: 
+L122: 2: if $n\leq b$ then
+L123: 
+L124: 3:   $A\leftarrow\mathrm{POTRF}_{L}(A)$
+L125: 
+L126: 4:   return
+L127: 
+L128: 5: end if
+L129: 
+L130: 6: Choose $n_{1}$ (e.g. $n_{1}=\lfloor n/2\rfloor$); $n_{2}=n-n_{1}$
+L131: 
+L132: 7: Partition $A=\left[\begin{smallmatrix}A_{11}&0\\
+L133: A_{21}&A_{22}\end{smallmatrix}\right]$
+L134: 
+L135: 8: Tree-POTRF_{L}($A_{11},\,b$) $\triangleright$ $A_{11}\leftarrow L_{11}L_{11}^{\top}$
+L136: 9: Tree-TRSM_{R,L,T}($A_{21},\,L_{11},\,b$) $\triangleright$ $A_{21}\leftarrow A_{21}L_{11}^{-\top}$
+L137: 
+L138: 10: Tree-SYRK_{L}($A_{22},\,A_{21},\,\alpha=-1,\,\beta=1,\,b$) $\triangleright$ $A_{22}\leftarrow A_{22}-A_{21}A_{21}^{\top}$
+L139: 
+L140: 11: Tree-POTRF_{L}($A_{22},\,b$)
+L141: 
+L142: Algorithm 2 Tree-TRSM${}_{R,L,T}(B,L,b)$: solve $B\leftarrow B\,L^{-\top}$
+L143: 
+L144: 1: $B\in\mathbb{R}^{m\times n}$, $L\in\mathbb{R}^{n\times n}$ lower-triangular; leaf size $b$
+L145: 
+L146: 2: if $\min(m,n)\leq b$ then
+L147: 3:   $B\leftarrow\mathrm{TRSM}(\text{Right},\text{Lower},\text{Trans},\text{NonUnit};\,L,B)$
+L148: 
+L149: 4:   return
+L150: 
+L151: 5: end if
+L152: 
+L153: 6: $n_{1}=\lfloor n/2\rfloor$, Split $L=\left[\begin{smallmatrix}L_{11}&0\\
+L154: L_{21}&L_{22}\end{smallmatrix}\right]$, $B=[\,B_{1}\mid B_{2}\,]$
+L155: 
+L156: 7: Tree-TRSM_{R,L,T}($B_{1},L_{11},b$) $\triangleright$ $B_{1}\leftarrow B_{1}L_{11}^{-\top}$
+L157: 
+L158: 8: $B_{2}\leftarrow B_{2}-B_{1}L_{21}^{\top}$ $\triangleright$ GEMM
+L159: 
+L160: 9: Tree-TRSM_{R,L,T}($B_{2},L_{22},b$)
+L161: Algorithm 3 Tree-SYRK${}_{L}(C,A,\alpha,\beta,b)$: $C\leftarrow\beta C+\alpha AA^{\top}$ (lower)
+L162: 
+L163: 1: $C\in\mathbb{R}^{n\times n}$ symmetric (use lower); $A\in\mathbb{R}^{n\times k}$; leaf size $b$
+L164: 
+L165: 2: if $n\leq b$ then
+L166: 
+L167: 3:   $C\leftarrow\mathrm{SYRK}(\text{Lower},\text{NoTrans};\,\alpha,A,\beta,C)$
+L168: 
+L169: 4:   return
+L170: 
+L171: 5: end if
+L172: 
+L173: 6: $n_{1}=\lfloor n/2\rfloor$, Split $A=\left[\begin{smallmatrix}A_{1}\\
+L174: A_{2}\end{smallmatrix}\right]$, $C=\left[\begin{smallmatrix}C_{11}&0\\
+L175: C_{21}&C_{22}\end{smallmatrix}\right]$
+L176: 7: Tree-SYRK_{L}($C_{11},A_{1},\alpha,\beta,b$)
+L177: 
+L178: 8: $C_{21}\leftarrow\beta C_{21}+\alpha A_{2}A_{1}^{\top}$ $\triangleright$ GEMM
+L179: 
+L180: 9: Tree-SYRK_{L}($C_{22},A_{2},\alpha,\beta,b$)
+L181: ### III-B Nested recursive data structure
+L182: Figure cite66†1 illustrates the structure of our nested recursive Cholesky algorithm. The decomposition proceeds through four recursive stages: (1) a diagonal Cholesky factorization (POTRF), (2) a triangular solve (TRSM) to eliminate the off-diagonal block, (3) a symmetric rank-$k$ update (SYRK) on the trailing submatrix, and (4) a second recursive POTRF on the updated diagonal block.
+L183: Unlike traditional recursive Cholesky approaches, which apply recursion only to diagonal POTRF calls, our formulation recursively subdivides both TRSM and SYRK operations. This nested strategy exposes significantly more parallelism by revealing additional GEMM subproblems within each TRSM and SYRK phase (highlighted in green), enabling deeper utilization of BLAS3 routines that are particularly well suited to recent AI hardware equipped with matrix processing units.
+L184: This hierarchical recursion naturally supports our mixed-precision strategy. Large, GEMM-heavy off-diagonal blocks are computed in low precision (FP16), leveraging the high throughput of matrix processing units (MXUs) such as NVIDIA Tensor Cores and AMD Matrix Cores.
+L185: Meanwhile, diagonal blocks—where numerical accuracy and conditioning are most critical—are assigned progressively higher precision as we ascend the recursive tree (e.g., FP16 $\rightarrow$ FP32 $\rightarrow$ FP64), ensuring that the final Cholesky factors maintain high numerical fidelity. This layered precision design maximizes performance while preserving overall stability.
+L186: To mitigate FP16’s limited dynamic range and avoid numerical overflow, we introduce a lightweight, per-block quantization and dequantization step at each level of the recursive tree.
+L187: cite67†Image: Refer to caption Fig. 1: Nested Recursive Cholesky Decomposition Tree
+L188: ### III-C Hierarchical Mixed Precision on the recursion structure
+L189: To exploit the computational efficiency of low-precision hardware while preserving the numerical stability required for symmetric linear solvers, we design a layered mixed-precision scheme integrated into our recursive Cholesky algorithm. Our method is based on a custom recursive data structure implemented in Julia, which represents a symmetric matrix $A$ as a tree of submatrices.
+L190: This tree mirrors the structure of the nested Cholesky decomposition: at each recursive level, the matrix is partitioned into a diagonal block and off-diagonal blocks, which are then further subdivided recursively until reaching a user-defined leaf size.
+L191: This hierarchical layout enables us to assign different floating-point precisions to different parts of the matrix based on their role in the factorization. Specifically, we assign:
+L192: 
+L193:   * •
+L194: 
+L195: Low precision (e.g., FP16) to large, off-diagonal blocks that dominate the computation but are less sensitive to numerical error. These are typically updated using GEMM during TRSM and SYRK phases.
+L196: 
+L197:   * •
+L198: Higher precision (e.g., FP32 or FP64) to diagonal blocks, which undergo POTRF and are more susceptible to round-off errors. These blocks contribute directly to the factorization’s stability and accuracy.
+L199: This precision layering is illustrated in Figure cite68†2 , where precision increases as we move closer to the diagonal of the recursive structure. In the context of Cholesky, this assignment is particularly effective because positive definite matrices are often diagonally dominant, meaning the most numerically sensitive operations reside near the diagonal.
+L200: To ensure safe usage of FP16 and avoid numerical overflows or underflows due to its limited dynamic range, we apply a lightweight, per-block quantization and dequantization scheme. Prior to each low-precision GEMM operation, matrix blocks are rescaled into a dynamic range appropriate for FP16 execution, and then scaled back after the operation completes. This technique maintains numerical integrity without introducing significant overhead.
+L201: By combining recursive structure with layered precision, our method not only aligns with the strengths of modern matrix processing units (MXUs), such as NVIDIA Tensor Cores and AMD Matrix Cores, but also provides a principled way to balance performance and accuracy. The result is a fine-grained, architecture-aware solver capable of adapting precision dynamically throughout the computation.
+L202: cite69†Image: Refer to caption Fig. 2: Recursive data structure enabling layered mixed precision. Off-diagonal blocks are computed in FP16 for performance, while diagonal regions use FP32 and/or FP64 to preserve accuracy.
+L203: ### III-D Layered Quantization and Dequantization Strategy
+L204: 
+L205: To safely leverage FP16 performance in the recursive Cholesky factorization, we apply a blockwise quantization scheme to the matrix inputs before computation, and a corresponding dequantization step after. Figure cite70†3 illustrates this process.
+L206: #### Pre-Algorithm Phase.
+L207: Let $A$ be the symmetric positive definite matrix to factorize, and $B$ an associated data block (e.g., right-hand side or update block) with large dynamic range. To prevent overflow when operating in low precision, we explicitly manage the dynamic range relative to $R_{\text{max}}$, the maximum representable finite value of the target format (e.g., $R_{\text{max}}\approx 65,504$ for FP16). We compute a scaling factor $\alpha$ by comparing the maximum absolute value in $B$ to this limit:
+L208:  | $$\alpha=\max\left(1,\frac{\|B\|_{\infty}}{R_{\text{max}}}\right)$$  |
+L209: 
+L210: If the values in $B$ exceed the range (i.e., $\frac{\|B\|_{\infty}}{R_{\text{max}}}>1$), this scaling compresses $B_{\text{alg}}$ into the safe range $[-R_{\text{max}},R_{\text{max}}]$. If the values are already within range, $\alpha$ remains 1, and $B_{\text{alg}}$ preserves the original scale.
+L211: #### Post-Algorithm Phase.
+L212: 
+L213: After running the algorithm on $B_{\text{alg}}$, we obtain an intermediate result $B_{\text{res}}$. To recover the correct scale, we apply dequantization:
+L214: 
+L215:  | $$B_{\text{final}}=B_{\text{res}}\cdot\alpha$$  |
+L216: 
+L217: This quantization–dequantization process is embedded at each level of the recursive solver and is applied only to off-diagonal blocks. Combined with our tree-structured precision layering, this enables high throughput on MXUs while preserving numerical stability.
+L218: cite71†Image: Refer to caption Fig. 3: Blockwise quantization and dequantization in recursive mixed-precision algorithm.
+L219: ## IV Results
+L220: In this section, we first describe the hardware and software ecosystem used to run our experiments. We then analyze performance on NVIDIA architectures, starting with the symmetric rank-$k$ update (SYRK) and triangular solve (TRSM), followed by a detailed study of the Cholesky factorization (POTRF).
+L221: We then present results on an AMD MI300X system focusing on the AI-style mixed-precision Cholesky configurations; we omit the AMD TRSM and SYRK results, since they mirror the NVIDIA trends and lead to the same qualitative conclusions. Finally, we discuss cross-platform portability, demonstrating that our Julia-based implementation achieves consistent behavior across both NVIDIA and AMD GPUs.
+L222: ### IV-A Hardware and Software Specifications
+L223: We evaluated our implementation on two high-end GPU platforms: the NVIDIA H200 and the AMD MI300X. The NVIDIA H200, based on the Hopper™ architecture, features 141 GB of HBM3e memory and delivers up to 4.8 TB/s of memory bandwidth. The AMD MI300X offers 192 GB of HBM3 memory with a peak bandwidth of 2.1 TB/s, along with 304 compute units and 256 MB of L3 cache.
+L224: These architectural capabilities provide the memory capacity and bandwidth required to support fine-grained recursive workloads and efficient reuse of intermediate results.
+L225: All benchmarks were conducted using Julia 1.12.0, with GPU support enabled via CUDA.jl (v5.9.5), AMDGPU.jl (v2.1.4), KernelAbstractions.jl (v0.9.39), and GPUArrays.jl (v11.3.1). Our Julia-based implementation is fully portable across vendors, with performance-critical kernels dispatching to either NVIDIA’s cuBLAS/cuSOLVER or AMD’s rocBLAS/hipSOLVER backends, depending on the target device.
+L226: For our benchmarks, we generated dense, symmetric positive-definite matrices with random uniform entries. To ensure positive definiteness and robust conditioning, we added the dimension $n$ to the diagonal elements of the matrix.
+L227: cite72†Image: Refer to caption Fig. 4: Speedup of Recursive SYRK on NVIDIA H200. Relative performance of the recursive Symmetric Rank-k update compared to cuBLAS FP64. The pure FP16 implementation achieves up to 149x speedup, while layered mixed-precision configurations deliver between 19x and 27x acceleration.
+L228: ### IV-B Results Analysis on NVIDIA H200
+L229: #### SYRK Performance
+

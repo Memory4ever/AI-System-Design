@@ -1,0 +1,569 @@
+: Multimodal Judgment via Grounded Verification
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Methodology
+2.1 Grounded Verification Chain
+2.2 Training Pipeline
+3 Analysis
+3.1 Visual Grounding Failure in Judgment
+3.2 Structural Resistance to Shortcuts
+3.3 Empirical Validation
+4 Main Result
+5 Conclusion
+References
+A Training Data
+B Training Dynamics
+C Prompt Templates
+License: CC BY 4.0
+arXiv:2603.07990v1 [cs.LG] 09 Mar 2026
+: Multimodal Judgment via Grounded Verification
+Bhavesh Kumar
+Dylan Feng
+Leonard Tang
+Affiliation:   Haize Labs
+Affiliation: {bhavesh, dylan, leonard}@haizelabs.com
+Abstract
+Multimodal judges struggle to ground decisions in visual evidence. We present MJ1, a reinforcement-learning–trained multimodal judge that enforces visual grounding through a structured grounded verification chain (observations →\rightarrow claims →\rightarrow verification →\rightarrow evaluation →\rightarrow scoring) and a counterfactual consistency reward that penalizes position bias. Even without training, our mechanism improves base-model accuracy on MMRB2 by +3.8 points on Image Editing and +1.7 on Multimodal Reasoning. After training, MJ1, with only 3B active parameters, achieves 77.0% accuracy on MMRB2 and surpasses orders-of-magnitude larger models like Gemini-3-Pro. These results show that grounded verification and consistency-based training substantially improve multimodal judgment without increasing model scale.
+1 Introduction
+The ability to measure the extent to which generated images satisfy a user’s intent is core to how we align, evaluate, and improve vision-language models. It underlies reward modeling for RLHF (Ouyang et al., 2022), automated benchmark evaluation (Zheng et al., 2023), and data quality filtering at scale. However, despite its criticality, multimodal judge performance lags behind text judges. On Multimodal RewardBench 2 (MMRB2), the current most comprehensive multimodal judgement benchmark, frontier models like Gemini-3-Pro and GPT-5 achieve only 70–76% accuracy, and the best open-source models saturate near 64% (Hu and others, 2025). Multimodal RewardBench and VL-RewardBench offer similar results: both frontier and fine-tuned open-source models underperform on tasks requiring sustained visual reasoning (Yasunaga and others, 2025; Li and others, 2025). These results suggest the bottleneck is not model scale but rather a mechanical failure in how VLMs process and reason about visual evidence.
+Multiple prior works investigate this failure. FastV demonstrates that visual tokens receive vanishingly small attention weights in deeper transformer layers and can be pruned by 50% after layer 2 with negligible performance loss. Visual information largely stops propagating well before the model’s final layers (Chen and others, 2024). SparseVLM finds that visual tokens carry sparser information density than text tokens and that text tokens effectively gate which visual tokens receive attention at all (Zhang and others, 2025b). LLaVA-Mini extends this to an extreme, compressing 576 visual tokens to a single token while matching full performance by pre-fusing visual content into text representations in the earliest layers (Zhang and others, 2025a). Concurrently, Fu and others (2025) show that VLMs perform dramatically worse than their own visual encoders on vision-centric tasks because the VLM over-attends language priors. Han and others (2025) demonstrate that the same model that hallucinates objects in long detailed captions will correctly deny those hallucinations when directly questioned, suggesting that visual knowledge is encoded but becomes inaccessible as generation extends. These failures are amplified in multimodal judgment, which requires simultaneous processing of multiple images and extended reasoning to determine human preference.
+Recent work on training thinking judges via reinforcement learning has shown that RL-trained judges with explicit chain-of-thought dramatically outperform SFT-based approaches, particularly on reasoning-intensive evaluation tasks. J1 (Whitehouse et al., 2025) introduces a unified RL framework for training text-domain judges with verifiable rewards, achieving state-of-the-art performance across multiple text benchmarks. JudgeLRM (Chen et al., 2025) independently confirms that SFT benefits negatively correlate with reasoning difficulty, and that GRPO-trained judges at 3B–7B surpass GPT-4 and DeepSeek-R1. EvalPlanner (Saha et al., 2025) separates evaluation into explicit planning and execution phases, achieving strong results with minimal synthetic data. However, all of these approaches operate exclusively in the text domain. Extending RL-trained thinking judges to multimodal judgment introduces a qualitatively different challenge: the judge must not only reason well but must do so while respecting visual evidence across multiple images, where attention decay is most severe.
+We address this with MJ1, which makes two contributions:
+1.
+A grounded verification chain that decomposes multimodal judgment into a structured sequence of stages. The model first extracts visual observations from each image when text context is minimal and visual attention is highest; extracts claims from each response; verifies claims against observations; evaluates claims against task-specific criteria; and finally produces a final score. We show that this structured prompting alone improves accuracy by +3.8 points on MMRB2 Image Editing and +1.7 points on Multimodal Reasoning over open-ended prompting (Section 3.3).
+2.
+A counterfactual consistency reward for training position-invariant multimodal judges. Extending J1’s insight (Whitehouse et al., 2025) that consistency-based rewards mitigate positional bias in text judges, we enforce answer invariance under swapped image inputs. Prior to this reward, the model selected Response A roughly twice as often as Response B within each training batch despite balanced ground-truth labels. The consistency reward largely eliminated this to near parity.
+We train Qwen3-VL-30B-A3B (Qwen Team, 2025) via SFT on distilled reasoning traces followed by GRPO (Shao et al., 2024) with a three-component reward covering format compliance, correctness, and counterfactual consistency. MJ1 achieves state-of-the-art performance on MMRB2, surpassing Gemini-3-Pro with orders of magnitude less parameters.
+2 Methodology
+A (preference) multimodal judge receives a prompt pp, and two candidate responses RAR_{A} and RBR_{B}. pp, RAR_{A}, and RBR_{B} can each contain both text and images. The judge’s task is to determine which response better fulfills the prompt. Standard autoregressive judgement produces a final score at the end extended text generation where attention to visual tokens has substantially decayed (Chen and others, 2024; Huang and others, 2024). These scores are often not grounded in the input images.
+2.1 Grounded Verification Chain
+To combat visual attention degradation, MJ1 generates answers in the following sequence:
+(p,RA,RB)→gOO→gCC→gVV→gEE→gss(p,R_{A},R_{B})\xrightarrow{g_{O}}O\xrightarrow{g_{C}}C\xrightarrow{g_{V}}V\xrightarrow{g_{E}}E\xrightarrow{g_{s}}s
+(1)
+The five stages proceed as follows. First, in the visual observation stage (OO), the model describes the visual content of images in pp, RAR_{A}, and RBR_{B}. Second, in claim extraction (CC), the model decomposes RAR_{A} and RBR_{B} into claims. Third, in consistency verification (VV), each claim is verified against the observations from OO. This produces a binary signal: 11 for claim-observation consistency and 00 otherwise. This forces the reasoning to attend to the initial visual evidence. Fourth, in criteria evaluation (EE), the model evaluates both responses against task-specific criteria (see Appendix C). Finally, in scoring (ss), the model produces integer scores {sA,sB}\{s_{A},s_{B}\} where sA,sB∈[1,10]s_{A},s_{B}\in[1,10] and sA≠sBs_{A}\neq s_{B}.
+Prompt pp + Responses RA,RBR_{A},R_{B}ObservationsOp,OA,OBO_{p},O_{A},O_{B}ClaimsCA,CBC_{A},C_{B}VerificationVA,VBV_{A},V_{B}Evaluationper criterionScoressA,sB\boxed{s_{A},s_{B}}Visual Grounding
+Figure 1: MJ1 grounded verification chain. Judgement scores are generated based on verifying response claims against visual observations. Explicit visual grounding of the reasoning chain mitigates visual attention degradation.
+The combination of early visual observation and consistency verification between reasoning and visual observations is the key advantage that enables MJ1’s state-of-the-art performance.
+2.2 Training Pipeline
+Training proceeds in two phases (Figure 2). A cold-start SFT phase is followed by GRPO (Shao et al., 2024) with the following composite reward, where JJ is MJ1’s prediction and y∗y^{*} is the ground-truth label:
+R⁡(J)=Rformat​(J)+Rcorrect​(J,y∗)+Rcons​(J,J′,y∗)R(J)=R_{\text{format}}(J)+R_{\text{correct}}(J,y^{*})+R_{\text{cons}}(J,J^{\prime},y^{*})
+(2)
+Cold-Start SFT10k Distilled tracesGRPO1 epochRformat∈[0,0.2]R_{\text{format}}\in[0,0.2]XML tag complianceRcorrect∈{0,1}R_{\text{correct}}\in\{0,1\}Preference accuracyRcons∈{0,1}R_{\text{cons}}\in\{0,1\}Counterfactual flip
+Figure 2: Two-phase training pipeline. Cold-start SFT on distilled reasoning traces establishes format and basic judgment capability. GRPO then optimizes a composite reward that incentivizes both correctness and position invariance.
+The format reward Rformat∈[0,0.2]R_{\text{format}}\in[0,0.2] validates XML structure, assigning 0.211\tfrac{0.2}{11} per correctly formed tag across 11 required tags (5 standalone sections plus 2 parent sections each with 2 nested sub-tags). If score parsing fails entirely (no valid sA,sB\boxed{s_{A},s_{B}} extracted), the total reward is set to zero regardless of format compliance, ensuring the model cannot earn reward without producing a parseable judgment. The correctness reward Rcorrect∈{0,1}R_{\text{correct}}\in\{0,1\} indicates whether s​i​g​n​(sA−sB)sign(s_{A}-s_{B}) matches the ground-truth label y∗y^{*}, with no ties allowed (sA≠sBs_{A}\neq s_{B}).
+The consistency reward Rcons∈{0,1}R_{\text{cons}}\in\{0,1\} mitigates positional bias. J1 (Whitehouse et al., 2025) introduced consistency-based rewards for mitigating positional bias in text judges, granting a reward when the model produces the correct verdict under both orderings of a response pair. We extend this idea to the multimodal setting under our grounding mechanism.
+During GRPO, we swap the inputs to MJ1 and also swap all references of RAR_{A} to RBR_{B} in the response understanding, claim, and verification sections. The original evaluation and scores are discarded. The model resumes reasoning from the truncation point with temperature 0, regenerating only the evaluation and scoring stages rather than the full reasoning chain. We check whether the preference correctly inverts: Rcons=1R_{\text{cons}}=1 if it does, and Rcons=0R_{\text{cons}}=0 otherwise.
+For each training point, we generate a group of 32 completions at temperature 0.7. Each completion is copied to calculate the positional consistency reward, yielding a total group size of 64. Advantages are then computed as group-relative deviations from the mean reward, pooling both original and flipped generations:
+A^i=Ri−1|𝒢|​∑j∈𝒢Rj\hat{A}_{i}=R_{i}-\frac{1}{|\mathcal{G}|}\sum_{j\in\mathcal{G}}R_{j}
+(3)
+where 𝒢\mathcal{G} includes both the original 32 completions and their corresponding flipped continuations. Forward-backward passes are filtered to sequences with |A^i|>0.01|\hat{A}_{i}|>0.01, avoiding near-zero-gradient updates. Samples for which all original completions have zero accuracy are skipped entirely, preventing reward hacking on format-only signal. We use LoRA with rank 64 and a cosine learning rate schedule (5×10−5→1×10−75\times 10^{-5}\to 1\times 10^{-7}, 10% warmup).
+3 Analysis
+This section provides a formal analysis of why the MJ1 architecture incentivizes visual grounding. We first characterize visual grounding failure (Section 3.1), then analyze how MJ1’s structure blocks the computational shortcuts that enable it (Section 3.2), and finally validate these claims empirically (Section 3.3).
+3.1 Visual Grounding Failure in Judgment
+Consider the multimodal judgment task: given a prompt pp and two candidate responses RA,RBR_{A},R_{B}, a judge produces scores sA,sB∈[1,10]s_{A},s_{B}\in[1,10]. Let y∗∈{A,B}y^{*}\in\{A,B\} denote the ground-truth preference. The judge succeeds when sign​(sA−sB)\text{sign}(s_{A}-s_{B}) matches y∗y^{*}.
+We say a judge exhibits visual grounding failure when it achieves above-chance accuracy while ignoring image contents ℐ\mathcal{I} of p,RA,RBp,R_{A},R_{B}. Formally, let πθ​(s∣p,RA,RB)\pi_{\theta}(s\mid p,R_{A},R_{B}) denote the judge’s scoring distribution. Grounding failure occurs when
+πθ​(s∣p,RA,RB)≈πθ​(s∣p,RA,RB∖ℐ)\pi_{\theta}(s\mid p,R_{A},R_{B})\approx\pi_{\theta}(s\mid p,R_{A},R_{B}\setminus\mathcal{I})
+(4)
+meaning that the score distribution is approximately invariant to the image. This pathology arises when text-only features such as response fluency, length, or formatting correlate with quality in the training distribution, enabling the model to exploit shortcut features (Geirhos and others, 2020). The attention decay mechanism provides a physical basis whereby, as generation proceeds, attention to image tokens decreases monotonically (Huang and others, 2024; Jiang and others, 2025), and scoring tokens appear at the end of extended outputs when image attention is minimal.
+(a) Standardp,RA,RBp,R_{A},R_{B}p,RA,RB∖ℐp,R_{A},R_{B}\setminus\mathcal{I}Scores ssshortcut(b) MJ1Images ℐ\mathcal{I}p,RA,RB∖ℐp,R_{A},R_{B}\setminus\mathcal{I}Obs. OOClaims CCVerif. VVScores ssVisual GroundingRconsR_{\text{cons}}
+Figure 3: Computational structure comparison. (a) Standard judgment permits a shortcut path (dashed red) where scores depend minimally on images. (b) MJ1 forces computation through observations OO, claim extraction CC, and verification VV. The dashed arrow indicates the forced back-reference from verification to observations. The consistency reward RconsR_{\text{cons}} couples verification to scores, requiring coherent image-grounded reasoning.
+3.2 Structural Resistance to Shortcuts
+The grounded verification chain and counterfactual consistency reward interact to make visual grounding the path of least resistance. In MJ1, scores ss are computed by the function composition gs∘gE∘gV∘gC∘gOg_{s}\circ g_{E}\circ g_{V}\circ g_{C}\circ g_{O}. The verification stage gVg_{V} evaluates consistency between claims CC (from responses) and observations OO (from images). A shortcut policy that generates observations independent of image content produces OO that are generic or hallucinated. When evaluating claim-observation consistency, such observations will be correct on easy samples where text alone suffices,but uncorrelated with ground truth on hard samples where image evidence is necessary. This creates a natural curriculum in which shortcut policies perform adequately on easy samples but are penalized via RcorrectR_{\text{correct}} on hard ones, generating a gradient signal toward grounded observation extraction.
+The flip mechanism directly tests whether scores track content or position. Consider a biased policy πpos\pi_{\text{pos}} that tends to assign higher scores to whichever response appears first. When we swap A↔\leftrightarrowB in both the input and the reasoning, πpos\pi_{\text{pos}} will still prefer the first-position response, which now contains different content. The flip check detects this as Rcons=0R_{\text{cons}}=0. The only way to consistently achieve Rcons=1R_{\text{cons}}=1 is to produce evaluations that depend on response content rather than response position.
+The two mechanisms are synergistic. The chain structure ensures that the model’s reasoning contains explicit A/B-separated observations, claims, and sccores. The counterfactual flip exploits this structure by swapping the A/B assignments and checking whether the judgment tracks the swap. A model that generates visually grounded observations will produce scores that correctly identify which response’s claims align with visual evidence. When the swap occurs, these verdicts correctly invert, supporting the correct flipped judgment. A model that generates ungrounded observations will produce arbitrary verdicts that do not systematically invert, causing flip failure. Thus RconsR_{\text{cons}} preferentially reinforces trajectories where the chain was genuinely grounded.
+Under GRPO, we optimize J(θ)=𝔼x∼𝒟𝔼J∼πθ(⋅∣x)[R(J)]J(\theta)=\mathbb{E}_{x\sim\mathcal{D}}\mathbb{E}_{J\sim\pi_{\theta}(\cdot\mid x)}[R(J)] with policy gradient:
+∇θJ=𝔼⁡[∇θ​log​πθ​(O,C,V,E,s∣x)⋅R⁡(J)]\nabla_{\theta}J=\mathbb{E}\left[\nabla_{\theta}\log\pi_{\theta}(O,C,V,E,s\mid x)\cdot R(J)\right]
+(5)
+For autoregressive generation, log⁡πθ​(J∣x)=∑tlog⁡πθ​(Jt∣J<t,x)\log\pi_{\theta}(J\mid x)=\sum_{t}\log\pi_{\theta}(J_{t}\mid J_{<t},x), distributing gradient across all generation steps. When RconsR_{\text{cons}} is high, the entire trajectory including early observation extraction is reinforced. When RconsR_{\text{cons}} is low, the trajectory is penalized. This creates gradient coupling between late-stage scores and early-stage observations, mediated by the verification chain.
+We note two important caveats. First, our argument establishes that visual grounding is a sufficient condition for high reward, not that it is strictly necessary. In principle, a model could achieve high RconsR_{\text{cons}} through elaborate “consistency theater,” generating internally coherent but image-independent outputs that happen to flip correctly. We argue that this is difficult, since the model must commit to observations before generating claims and verdicts in the autoregressive order, analogous to the difficulty of faking chain-of-thought reasoning (Lanham and others, 2023). However, we do not formally rule this possibility out.
+Second, the effectiveness of RconsR_{\text{cons}} depends on the training distribution containing samples where image evidence is necessary for correct judgment. On purely text-discriminable samples, the flip reward provides no additional grounding signal beyond what RcorrectR_{\text{correct}} already supplies.
+3.3 Empirical Validation
+We validate our analysis with two experiments on untrained base models, isolating the effects of the grounding chain and the consistency mechanism independently of MJ1 training.
+Grounding chain improves judgment without training. We compare two prompting strategies applied to the untrained Qwen3-VL-30B-A3B base model on a subset of 500 samples from MMRB2’s Image Editing and Multimodal Reasoning subtasks. The first uses open-ended reasoning where the model is instructed to compare the responses and select the better one without structural guidance. The second uses the MJ1 grounding prompt described in Section 2.1, which instructs the model to extract observations, claims, and verification before scoring.
+Table 1: Effect of grounded verification prompting on untrained base model. Accuracy (%) on 500 samples each from MMRB2 Image Editing and Multimodal Reasoning. Structured grounding improves accuracy without any training.
+Prompting Strategy
+Image Editing
+Multimodal Reasoning
+Open-ended reasoning
+62.4
+53.4
+MJ1 grounded verification
+66.2 (+3.8)
+55.1 (+1.7)
+Table 1 shows that structured grounding improves accuracy by +3.8 points on Image Editing and +1.7 points on Multimodal Reasoning with zero training. This is consistent with our hypothesis that front-loading visual observation extraction when attention to image tokens is highest preserves visual information that would otherwise be lost during extended open-ended generation. The larger gain on Image Editing likely reflects that editing tasks require fine-grained visual comparison (e.g., detecting whether a specific edit was applied correctly), where explicit observation extraction is particularly valuable.
+Consistency reward correlates with visual grounding. We prompt Qwen3-VL-30B-A3B with the MJ1 structured format (no training) and evaluate the same MMRB2 subset under three image conditions: (1) real images, where each sample receives its correct corresponding image; (2) shuffled images, where images are randomly permuted such that each sample receives an image from a different sample; and (3) blank image, where the model receives a blank grey square as input. For each condition we measure both RconsR_{\text{cons}} and RcorrectR_{\text{correct}}.
+(a) Consistency by image condition
+(b) Correctness by image condition
+Figure 4: Consistency as a grounding signal. (a) Mean RconsR_{\text{cons}} under three image conditions on an untrained base model. Shuffled images yield the lowest consistency, below even the no-image baseline. (b) Mean RcorrectR_{\text{correct}} shows degraded performance when visual grounding is disrupted, with both shuffled and blank conditions approaching random chance.
+Figure 4 validates our framework. Real images yield the highest consistency, shuffled images produce the lowest, and the no-image condition falls between them. The critical finding is the asymmetry: shuffled images perform worse than no images. With no image, the model hallucinates observations that may accidentally cohere with response claims. With a shuffled image, the model extracts observations that accurately describe the wrong scene, creating systematic conflict between observations and claims written for the correct image. The drop from real to shuffled demonstrates that RconsR_{\text{cons}} measures visual-reasoning alignment, not mere textual coherence. The correctness results (Figure 4(b)) further show that consistency correlates with accuracy even without any consistency-based training. The parallel degradation in both metrics confirms that our grounding chain and consistency reward both incentivize visual-reasoning alignment.
+4 Main Result
+We use Qwen3-VL-30B-A3B-Instruct (Qwen Team, 2025) as our base model. This is a mixture-of-experts model with 30B total parameters and 3B active parameters per token, providing a strong base with efficient inference. All training uses LoRA with rank 64. Cold-start SFT runs for 5 epochs with batch size 16 and learning rate 5×10−55\times 10^{-5}. GRPO training uses 32 candidate completions per prompt with temperature 0.7, max tokens 6,144, and the composite reward R=Rformat+Rcorrect+RconsR=R_{\text{format}}+R_{\text{correct}}+R_{\text{cons}}. We train with batch size 16, learning rate 5×10−5→1×10−75\times 10^{-5}\to 1\times 10^{-7} cosine schedule.
+We evaluate on MMRB2 (Hu and others, 2025), which consists of four subtasks, each containing 1,000 samples with binary preference labels: Text-to-Image (T2I) evaluates judgments of generated images against text prompts, Image Editing evaluates judgments of edit quality and instruction following, Interleaved Generation evaluates judgments of multi-turn conversations with images, and Multimodal Reasoning evaluates judgments requiring complex visual understanding and logical inference.
+Table 2: Main results on MMRB2. Accuracy (%) across four subtasks. MJ1 achieves state-of-the-art with only 3B active parameters, surpassing all API-based and open-source models. Best results in bold, second-best underlined.
+Judge
+T2I
+Editing
+Interleaved
+Reasoning
+Avg.
+Open-source multimodal LLMs
+Gemma 3 4B (Gemma Team, 2025)
+51.7
+51.0
+51.3
+48.8
+50.7
+Gemma 3 12B (Gemma Team, 2025)
+56.0
+58.0
+58.0
+49.3
+55.3
+Gemma 3 27B (Gemma Team, 2025)
+58.3
+60.2
+61.1
+49.4
+57.3
+Qwen2.5-VL-7B (Bai et al., 2025)
+50.4
+57.1
+48.4
+47.5
+50.9
+Qwen2.5-VL-72B (Bai et al., 2025)
+59.1
+64.6
+62.3
+50.0
+59.0
+Qwen3-VL-8B (Qwen Team, 2025)
+59.4
+61.7
+61.5
+54.6
+59.3
+Qwen3-VL-32B (Qwen Team, 2025)
+64.1
+67.3
+70.5
+56.6
+64.6
+Qwen3-VL-30B-A3B (Qwen Team, 2025)
+60.0
+59.5
+57.3
+57.3
+58.5
+Qwen3-VL-235B-A22B (Qwen Team, 2025)
+62.0
+64.8
+69.0
+55.9
+62.9
+API-based Models
+GPT-4o (Hurst et al., 2024)
+60.3
+65.0
+61.5
+51.9
+59.7
+GPT-4.1 (OpenAI, 2025a)
+65.8
+68.2
+67.0
+53.0
+63.5
+GPT-5 (OpenAI, 2025b)
+70.5
+73.8
+74.4
+70.2
+72.2
+Gemini 2.5 Flash (Gemini Team, 2025)
+63.1
+66.5
+69.4
+57.5
+64.1
+Gemini 2.5 Pro (Gemini Team, 2025)
+70.5
+71.3
+75.1
+66.6
+70.9
+Gemini 3 Pro (Google DeepMind, 2025)
+74.4
+74.9
+76.4
+79.5
+76.3
+MJ1 (Qwen3-VL-30B-A3B + LoRA)
+80.2
+78.1
+73.5
+76.4
+77.0
+Table 2 shows results on MMRB2. MJ1 achieves 77.0% overall accuracy, surpassing Gemini-3-Pro and all existing models. The gains are consistent across all four subtasks, demonstrating that our approach generalizes across the qualitatively different evaluation dimensions covered by MMRB2. With only 3B active parameters, MJ1 substantially outperforms models with orders of magnitude more parameters, reinforcing findings from J1 (Whitehouse et al., 2025) and JudgeLRM (Chen et al., 2025) that the training recipe matters more than model scale for judgment tasks.
+5 Conclusion
+We present MJ1, an RL-trained multimodal judge that achieves state-of-the-art performance on MMRB2 with only 3B active parameters. Our approach rests on two ideas: a grounded verification chain that front-loads visual observation extraction to mitigate attention decay, and a consistency reward that eliminates positional bias. We showed that structured grounding improves accuracy even without training, that our consistency mechanism incentivizes visual-reasoning alignment, and that the training recipe yields a model that surpasses orders-of-magnitude larger models at multimodal reward modeling.
+References
+Bai et al. (2025)
+S. Bai, K. Chen, X. Liu, J. Wang, W. Ge, S. Song, K. Dang, P. Wang, S. Wang, J. Tang, et al.
+Qwen2.5-vl technical report.
+arXiv preprint arXiv:2502.13923.
+Cited by: Table 2,
+Table 2.
+Chen et al. (2024)
+L. Chen et al.
+An image is worth 1/2 tokens after layer 2: plug-and-play inference acceleration for large vision-language models.
+arXiv preprint arXiv:2403.06764.
+Cited by: §1,
+§2.
+Chen et al. (2025)
+N. Chen, Z. Hu, Q. Zou, J. Wu, Q. Wang, B. Hooi, and B. He
+JudgeLRM: large reasoning models as a judge.
+arXiv preprint arXiv:2504.00050.
+Cited by: §1,
+§4.
+EditReward Team (2024)
+EditReward Team
+EditReward: a preference dataset for image editing.
+Note: https://huggingface.co/datasets/EditReward
+Cited by: Table 3.
+Fu et al. (2025)
+A. Fu et al.
+Hidden in plain sight: evaluating abstract shape recognition in vision-language models.
+In COLM,
+Cited by: §1.
+Geirhos et al. (2020)
+R. Geirhos et al.
+Shortcut learning in deep neural networks.
+Nature Machine Intelligence 2, pp. 665–673.
+Cited by: §3.1.
+Gemini Team (2025)
+Gemini Team
+Gemini 2.5: our most intelligent ai model.
+Note: https://blog.google/technology/google-deepmind/gemini-model-thinking-updates-march-2025/
+Cited by: Table 2,
+Table 2.
+Gemma Team (2025)
+Gemma Team
+Gemma 3 technical report.
+arXiv preprint arXiv:2503.19786.
+Cited by: Table 2,
+Table 2,
+Table 2.
+Google DeepMind (2025)
+Google DeepMind
+Gemini 3 pro technical report.
+Note: https://deepmind.google/technologies/gemini/pro/
+Cited by: Table 2.
+Han et al. (2025)
+J. Han et al.
+Do vision-language models really understand visual language?.
+arXiv preprint arXiv:2410.00304.
+Cited by: §1.
+Hu et al. (2025)
+Y. Hu et al.
+Multimodal rewardbench 2: benchmarking reward models for omni-modal understanding and generation.
+arXiv preprint arXiv:2512.16899.
+Cited by: §1,
+§4.
+Huang et al. (2024)
+Q. Huang et al.
+OPERA: alleviating hallucination in multi-modal large language models via over-trust penalty and retrospection-allocation.
+In CVPR,
+Cited by: §2,
+§3.1.
+Hurst et al. (2024)
+A. Hurst, A. Lerer, A. P. Goucher, A. Perelman, A. Ramesh, A. Clark, A. Ostrow, et al.
+GPT-4o system card.
+arXiv preprint arXiv:2410.21276.
+Cited by: Table 2.
+Jiang et al. (2025)
+Z. Jiang et al.
+Devils in middle layers: detecting and mitigating object hallucination via attention analysis.
+In CVPR,
+Cited by: §3.1.
+Lanham et al. (2023)
+T. Lanham et al.
+Measuring faithfulness in chain-of-thought reasoning.
+arXiv preprint arXiv:2307.13702.
+Cited by: §3.2.
+Li et al. (2025)
+L. Li et al.
+VL-rewardbench: a challenging benchmark for vision-language generative reward models.
+In CVPR,
+Cited by: §1.
+OpenAI (2025a)
+OpenAI
+Introducing gpt-4.1 in the api.
+Note: https://openai.com/index/gpt-4-1/
+Cited by: Table 2.
+OpenAI (2025b)
+OpenAI
+Introducing gpt-5.
+Note: https://openai.com/index/introducing-gpt-5/
+Cited by: Table 2.
+Ouyang et al. (2022)
+L. Ouyang, J. Wu, X. Jiang, D. Almeida, C. Wainwright, P. Mishkin, C. Zhang, S. Agarwal, K. Slama, A. Ray, et al.
+Training language models to follow instructions with human feedback.
+NeurIPS.
+Cited by: §1.
+Qwen Team (2025)
+Qwen Team
+Qwen3 technical report.
+arXiv preprint arXiv:2505.09388.
+Cited by: §1,
+Table 2,
+Table 2,
+Table 2,
+Table 2,
+§4.
+Rapidata (2024)
+Rapidata
+Rapidata coherence dataset.
+Note: https://huggingface.co/datasets/Rapidata/Rapidata_Coherence
+Cited by: Table 3.
+Saha et al. (2025)
+S. Saha, X. Li, M. Ghazvininejad, J. E. Weston, and T. Wang
+Learning to plan & reason for evaluation with thinking-llm-as-a-judge.
+In ICML,
+Cited by: §1.
+Shao et al. (2024)
+Z. Shao, P. Wang, Q. Zhu, R. Xu, J. Song, X. Bi, H. Zhang, M. Zhang, Y. Li, Y. Wu, et al.
+DeepSeekMath: pushing the limits of mathematical reasoning in open language models.
+arXiv preprint arXiv:2402.03300.
+Cited by: §1,
+§2.2.
+Whitehouse et al. (2025)
+C. Whitehouse, T. Wang, P. Yu, X. Li, J. Weston, I. Kulikov, and S. Saha
+J1: incentivizing thinking in llm-as-a-judge via reinforcement learning.
+arXiv preprint arXiv:2505.10320.
+Cited by: item 2,
+§1,
+§2.2,
+§4.
+Yasunaga et al. (2025)
+M. Yasunaga et al.
+Multimodal rewardbench: holistic evaluation of reward models for vision language models.
+arXiv preprint arXiv:2502.14191.
+Cited by: §1.
+Yu et al. (2024)
+T. Yu et al.
+RLAIF-v: aligning mllms through open-source ai feedback for super gpt-4v trustworthiness.
+arXiv preprint arXiv:2405.17220.
+Cited by: Table 3.
+Zhang et al. (2025a)
+S. Zhang et al.
+LLaVA-mini: efficient image and video large multimodal models with one vision token.
+In ICLR,
+Cited by: §1.
+Zhang et al. (2025b)
+Y. Zhang et al.
+SparseVLM: visual token sparsification for efficient vision-language model inference.
+In ICML,
+Cited by: §1.
+Zheng et al. (2023)
+L. Zheng, W. Chiang, Y. Sheng, S. Zhuang, Z. Wu, Y. Zhuang, Z. Lin, Z. Li, D. Li, E. Xing, et al.
+Judging llm-as-a-judge with mt-bench and chatbot arena.
+NeurIPS.
+Cited by: §1.
+Appendix A Training Data
+We construct training data spanning domains aligned with MMRB2 evaluation categories (Table 3).
+Table 3: Training data composition. Samples, sources, and citations for each domain.
+Domain
+Source Datasets
+Samples
+Text-to-Image
+Rapidata Coherence [Rapidata, 2024]
+12K
+Image Editing
+EditReward [EditReward Team, 2024]
+38K
+Reasoning
+RLAIF-V [Yu and others, 2024]
+20K
+Total
+70K
+Appendix B Training Dynamics
+Figure 5 shows the smoothed cross-entropy loss during cold-start SFT on distilled reasoning traces.
+Appendix C Prompt Templates
+Figure 5: Cold-start SFT training loss.
+(a) Correctness reward RcorrectR_{\text{correct}}
+(b) Consistency reward RconsR_{\text{cons}}
+Figure 6: GRPO reward curves.
+MJ1 Grounded Verification Prompt
+⬇
+You are an expert in multimodal quality analysis and
+generative AI evaluation. Your role is to act as an
+objective judge for comparing two AI-generated responses
+to the same prompt. You will evaluate which response is
+better based on a comprehensive rubric.
+**Reason through your evaluation using this structure:**
+1. Extract key observations from any provided image(s).
+2. Extract verifiable claims from each response.
+3. Check whether each claim is consistent with your
+observations.
+4. Using your consistency verification, evaluate both
+responses against each evaluation criterion to
+determine which performs better.
+5. Provide final scores (no ties allowed).
+**Evaluation Criteria:**
+{EVALUATION_CRITERIA}
+**REQUIRED OUTPUT FORMAT:**
+<prompt_img_understanding>
+[Describe what the prompt image shows (if it exists)]
+</prompt_img_understanding>
+<response_a_img_understanding>
+[Describe what response A image shows (if it exists)]
+</response_a_img_understanding>
+<response_b_img_understanding>
+[Describe what response B image shows (if it exists)]
+</response_b_img_understanding>
+<response_claims>
+<response_a_claims>
+[Verifiable claims from response A]
+</response_a_claims>
+<response_b_claims>
+[Verifiable claims from response B]
+</response_b_claims>
+</response_claims>
+<consistency_verification>
+<response_a_verification>
+[Verify Response A’s claims against observations]
+</response_a_verification>
+<response_b_verification>
+[Verify Response B’s claims against observations]
+</response_b_verification>
+</consistency_verification>
+<evaluate_criteria>
+[For each criterion, evaluate both responses and explain
+which performs better based on observations and
+verification.]
+</evaluate_criteria>
+<scores>
+\boxed{response_A_score, response_B_score}
+</scores>
+**Rules:**
+- Scores are integers from 1 to 10 (higher is better)
+- Scores must be different (no ties allowed)
+- Higher accuracy and consistency = higher score
+- Check for errors, hallucinations, and missing
+requirements
+Figure 7: MJ1 grounded verification prompt. The five-stage structure (observations →\to claims →\to verification →\to evaluation →\to scores) enforces visual grounding by requirting the model to extract and cross-reference image content before scoring. The {EVALUATION_CRITERIA} placeholder is filled with task-specific criteria at runtime.
+Text-to-Image Generation Criteria
+1.
+faithfulness_to_prompt: Which response better adheres to the composition, objects, attributes, and spatial relationships described in the text prompt?
+2.
+text_rendering: If either response contains rendered text, which one has better text quality (spelling, legibility, integration)? If none, state “Not Applicable.”
+3.
+input_faithfulness: If an input image is provided, which response better respects and incorporates the key elements and style of that source image? If none, state “Not Applicable.”
+4.
+image_consistency: If multiple images are generated, which response has better visual consistency between images? If none, state “Not Applicable.”
+5.
+text_image_alignment: Which response has better alignment between text descriptions and visual content?
+6.
+text_quality: If text was generated, which response has better linguistic quality (correctness, coherence, grammar, tone)?
+7.
+overall_quality: Which response has better general technical and aesthetic quality, realism, coherence, and fewer visual artifacts?
+Figure 8: Task-specific evaluation criteria for Text-to-Image Generation.
+Image Editing Criteria
+1.
+text_faithfulness: Which response better adheres to the text editing instruction? Consider how well each response follows the specific editing instructions (e.g., adding objects, changing colors, modifying scenes).
+2.
+image_faithfulness: Which response better preserves important aspects of the original image (composition, lighting, style, background elements) while making the requested changes?
+3.
+overall_image_quality: Which response has better general technical and aesthetic quality, with fewer visual artifacts or inconsistencies introduced during editing?
+4.
+text_rendering: If either response contains rendered text, which one has better text quality (spelling, legibility, integration)? If none, state “Not Applicable.”
+Figure 9: Task-specific evaluation criteria for Image Editing.
+Interleaved Generation Criteria
+1.
+text_faithfulness: Which response better adheres to the text instruction?
+2.
+image_faithfulness: Which response better respects and incorporates the key elements of the input image? If no input image, state “Not Applicable.”
+3.
+overall_image_quality: Which response has better overall quality of generated images?
+4.
+congruence: If multiple images are generated, which response has better cross-generation visual consistency? If none, state “Not Applicable.”
+5.
+text_image_alignment: Which response has better generated text-image alignment?
+6.
+text_quality: If text was generated, which response has better linguistic quality? If none, state “Not Applicable.”
+7.
+text_rendering: If either response contains rendered text within images, which has better correctness? If none, state “Not Applicable.”
+Figure 10: Task-specific evaluation criteria for Interleaved Generation.
+Visual Reasoning Criteria
+1.
+visual_understanding: Which response demonstrates better comprehension of the visual content? Consider accuracy in identifying objects, spatial relationships, colors, quantities, and other visual details.
+2.
+reasoning_quality: Which response shows stronger logical reasoning and analytical thinking? Evaluate the coherence of arguments, validity of inferences, and ability to connect visual observations to conclusions.
+3.
+accuracy: Which response provides more accurate and factually correct information based on the provided images and context?
+4.
+completeness: Which response more thoroughly addresses all aspects of the question?
+5.
+clarity: Which response communicates its analysis more clearly and effectively?
+6.
+depth: Which response provides deeper insight and analysis beyond surface-level observations?
+7.
+helpfulness: Which response would be more helpful to someone trying to understand the visual content or solve the reasoning problem?
+Figure 11: Task-specific evaluation criteria for Visual Reasoning.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

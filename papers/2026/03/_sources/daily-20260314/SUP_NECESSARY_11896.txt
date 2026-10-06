@@ -1,0 +1,4380 @@
+Think While Watching: Online Streaming Segment-Level Memory for Multi-Turn Video Reasoning in Multimodal Large Language Models
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Related Work
+2.1
+Offline Video Understanding
+2.2
+Online Streaming Video Understanding
+3
+Preliminary
+3.1
+Streams and Turns
+3.2
+Streaming Protocols
+3.3
+Streaming Unit Notation
+4
+Method
+4.1
+Segment-level Memory Notes
+4.2
+Streaming Architecture
+4.3
+Streaming Training
+4.4
+Streaming Inference
+5
+Experiments
+5.1
+Datasets and Setup
+5.2
+Baselines
+5.3
+Metrics
+5.4
+Main Results
+5.5
+Analysis
+6
+Conclusion
+References
+A
+Future Work
+B
+Implementation Details
+C
+Theoretical Latency Derivation
+D
+Additional Baseline Details
+E
+Dataset and Benchmark Details
+E.1
+Benchmark Details
+E.2
+Overall Dataset Composition
+E.3
+Pseudo Streaming CoT Generation Principles
+F
+Case Studies
+G
+Error Analysis
+License: arXiv.org perpetual non-exclusive license
+arXiv:2603.11896v1 [cs.CV] 12 Mar 2026
+Think While Watching: Online Streaming Segment-Level Memory for Multi-Turn Video Reasoning in Multimodal Large Language Models
+Lu Wang
+Affiliation:
+The Key Laboratory of Cognition and Decision Intelligence for Complex SystemsInstitute of Automation, Chinese Academy of Sciences, Beijing, China
+Email:
+wanglu2026@ia.ac.cn
+Zhuoran Jin
+Affiliation:
+The Key Laboratory of Cognition and Decision Intelligence for Complex SystemsInstitute of Automation, Chinese Academy of Sciences, Beijing, China
+Email:
+zhuoran.jin@nlpr.ia.ac.cn
+Yupu Hao
+Affiliation:
+The Key Laboratory of Cognition and Decision Intelligence for Complex SystemsInstitute of Automation, Chinese Academy of Sciences, Beijing, China
+Email:
+haoyupu2023@ia.ac.cn
+Yubo Chen
+Affiliation:
+The Key Laboratory of Cognition and Decision Intelligence for Complex SystemsInstitute of Automation, Chinese Academy of Sciences, Beijing, China
+Email:
+yubo.chen@nlpr.ia.ac.cn
+Kang Liu
+Affiliation:
+The Key Laboratory of Cognition and Decision Intelligence for Complex SystemsInstitute of Automation, Chinese Academy of Sciences, Beijing, China
+Email:
+kliu@nlpr.ia.ac.cn
+Yulong Ao
+Affiliation:
+Beijing Academy of Artificial Intelligence (BAAI), Beijing, China
+Email:
+aoyulong@outlook.com
+Jun Zhao
+Affiliation:
+The Key Laboratory of Cognition and Decision Intelligence for Complex SystemsInstitute of Automation, Chinese Academy of Sciences, Beijing, China
+Email:
+jzhao@nlpr.ia.ac.cn
+Abstract
+Multimodal large language models (MLLMs) have demonstrated strong performance in offline video understanding tasks, but most remain constrained to offline inference or exhibit weak online reasoning ability, rendering online multi-turn interaction over continuously arriving video streams challenging. Existing streaming approaches adopt an interleaved perception-generation paradigm, which precludes concurrent perception and generation and induces early memory decay with growing streams, degrading long-range dependency modeling. We propose
+Think While Watching
+, a memory-anchored streaming video reasoning framework that maintains continuous segment-level memory during multi-turn interaction. We construct a three-stage, multi-round, chain-of-thought (CoT) dataset with a stage-matched training strategy while enforcing strict causality in streaming reasoning via a segment-level streaming causal mask and streaming positional encoding. At inference, we design an efficient pipeline that overlaps watching and thinking and adaptively selects the optimal attention backend. We evaluate our method under single-round and multi-round streaming input protocols. Based on Qwen3-VL, we improve single-round accuracy by 2.6% on StreamingBench and 3.79% on OVO-Bench. In the multi-round protocol, we maintain performance while reducing output tokens by 56%. Our code is available at
+GitHub
+.
+1
+Introduction
+Figure 1:
+Overview of Think While Watching.
+(a) Interleaved baseline.
+Video perception and answer generation are executed sequentially, which can cause
+memory erosion
+, where early memory is forgotten, and a
+serialization bottleneck
+, where generation stalls further input ingestion.
+(b) Think While Watching (ours).
+The video frames are processed in segments (SEG 1 to SEG 4) to build a continuous
+segment-level memory
+. During streaming, questions are answered online by retrieving implicitly relevant memories while continuing to watch.
+(c) Latency comparison.
+A schematic timeline showing that interleaved processing accumulates queueing delay, while our decoupled design parallelizes segment processing and answering to reduce latency.
+Video understanding and reasoning are becoming central capabilities for multimodal assistants. While multimodal large language models (MLLMs) have achieved strong performance in offline video benchmarks where the full video is available before inference in a single-turn setting
+[
+1
+,
+2
+,
+3
+,
+4
+]
+, many high-impact scenarios are inherently
+streaming
+: live broadcasting
+[
+5
+,
+6
+]
+, monitoring, robotic assistants
+[
+7
+]
+, and other streaming scenarios. In these settings, users may ask questions at any time, and the assistant must answer in real time while staying faithful to the visual evidence observed so far, especially under
+multi-turn
+interaction, where later questions often depend on earlier memories.
+A widely adopted approach for streaming MLLMs is to interleave perception and generation
+[
+8
+,
+9
+,
+6
+]
+. Although this reduces delay compared to offline approaches, it remains fundamentally serialized: text decoding blocks further video ingestion. This interleaved pattern leads to two phenomena.
+First,
+Memory Erosion
+: multi-turn subsequent questions frequently refer back to earlier questions or earlier visual cues, but interleaving with generation tends to erode long-range capability. The failure case in Fig.
+1
+(a) makes this explicit: a later query about the first two questions becomes unanswerable because the model forgets who Q1 refers to. This issue is also validated by our experimental results: for the Qwen3-VL-4B Thinking model, accuracy in the online multi-round setting drops
+40.39
+%
+40.39\%
+compared to the offline setting, highlighting the severe challenge of maintaining long-term temporal consistency.
+Second,
+Serialization Bottleneck
+: as illustrated on the top right of Fig.
+1
+(a), once the model starts generation, the decoder effectively locks the streaming sequence, directly harming responsiveness in dynamic streams. The root cause is that autoregressive models use unified positional encoding, so new inputs must align with generated outputs whose length is unknown, forcing ingestion to pause and causing a serialization bottleneck. Fig.
+1
+(c) further visualizes this effect: under interleaved processing, as the number of rounds accumulates, the input keeps piling up, leading to increasing end-to-end latency. To mitigate
+Memory Erosion
+, we make memory writing an explicit online behavior: for each observed segment, the model writes a memory note and appends it to a memory bank; when a question arrives, the model answers by implicitly integrating the relevant notes via the attention mechanism in Fig.
+1
+(b). To break the
+Serialization Bottleneck
+, we assign independent positional encodings to decouple input and output streams at inference time, enabling input-output parallelism so the model can keep watching while thinking and thus reduce latency.
+We propose
+Think While Watching
+, a memory-anchored streaming video reasoning framework for online multi-turn interaction. We represent a continuously arriving video as a sequence of segments and maintain a persistent
+segment-level memory
+throughout the dialogue. To make the framework practical, we design corresponding training and inference procedures. On the training side, we construct a three-stage, multi-round chain-of-thought (CoT) dataset with training matched to each stage, together with a
+segment-level streaming causal mask
+and
+streaming positional encoding
+, which jointly enforce strict causality throughout streaming reasoning. On the inference side, we design an efficient pipeline that overlaps watching with thinking. Our implementation is inspired by CPU process scheduling
+[
+10
+]
+in operating systems: we organize inference as a
+multi-stage pipeline
+as illustrated in Fig.
+1
+(c) and decouple continuous visual ingestion from text decoding via a dual KV cache
+[
+11
+,
+12
+,
+13
+]
+, enabling parallelism between perception and generation and mitigating serialization.
+We evaluate Think While Watching under two streaming input protocols:
+single-round
+, where the input contains many arriving segments but the assistant answers one question, and
+multi-round
+, where the input contains many arriving segments and the assistant answers multiple questions over time. In the Qwen3-VL family, we improve single-round accuracy by 2.6% on StreamingBench and 3.79% on OVO-Bench. In the multi-round protocol, we preserve performance while reducing output tokens by 56%.
+Our contributions
+are as follows:
+•
+We propose
+Think While Watching
+, which maintains
+segment-level memory
+as a persistent state and answers each query by implicitly retrieving and integrating relevant memories, improving multi-turn consistency and enabling decoupled perception and generation. We further provide a practical
+training and inference
+pipeline with
+three-stage training
+,
+streaming segment masking
+, and
+streaming positional encoding
+for causal segment-level modeling, and a dual KV cache at inference time to support parallelism between perception and generation.
+•
+We construct a three-stage, stage-aligned streaming CoT dataset with multi-round dialogues to support the proposed training strategy.
+•
+On Qwen3-VL, we improve single-round accuracy by 2.6% on StreamingBench and 3.79% on OVO-Bench, while in multi-round streaming, we reduce output tokens by 56% without accuracy drop.
+2
+Related Work
+2.1
+Offline Video Understanding
+Offline video MLLMs are improved by structured perception and cognition pipelines and temporal reasoning designs
+[
+4
+,
+1
+,
+2
+]
+, and by reinforcement learning for complex temporal reasoning
+[
+3
+,
+14
+]
+. Most of these methods assume the full video is available before answering, leaving causal online multi-turn interaction less explored.
+2.2
+Online Streaming Video Understanding
+Benchmarks.
+StreamingBench evaluates the gap between offline models and streaming video understanding
+[
+15
+]
+, while OVO-Bench emphasizes real-world online video understanding
+[
+16
+]
+. Recent work further studies streaming along with active perception and multi-turn interaction
+[
+17
+,
+18
+,
+19
+,
+20
+,
+21
+]
+.
+Interleaved perception and generation.
+Many streaming systems alternate visual ingestion and text decoding, as in VideoLLM-online
+[
+8
+]
+and StreamChat
+[
+9
+]
+, and scale streaming supervision for online interaction
+[
+6
+,
+22
+]
+. This coupling limits input-output parallelism and makes it harder to model dependencies over a long horizon across multiple turns.
+Memory and efficient inference for long-horizon streaming.
+For efficiency, one line reduces redundant visual tokens in streaming videos
+[
+23
+,
+24
+,
+25
+,
+26
+]
+. Another line reuses historical context via KV cache retrieval and compression
+[
+27
+,
+28
+,
+29
+,
+30
+,
+31
+,
+32
+]
+. Persistent memory and long-term multimodal agent memory further support evidence reuse across long streams
+[
+33
+,
+34
+,
+35
+]
+. Our work emphasizes stable segment-level memory for multi-turn streaming and an inference design that keeps perception and generation decoupled.
+3
+Preliminary
+This section introduces the online multi-turn streaming video question answering setting studied in this work. A video is observed sequentially as a stream of segments, while a user may ask questions at arbitrary segment boundaries. The central requirement is strict streaming causality: at each turn, the system must produce its response using only the video content observed so far and the dialogue history, without accessing any future segments.
+3.1
+Streams and Turns
+Segmented stream.
+We represent a video stream as an ordered sequence of segments
+𝐒
+1
+:
+T
+≜
+⟨
+𝐒
+1
+,
+…
+,
+𝐒
+T
+⟩
+,
+\mathbf{S}_{1:T}\triangleq\langle\mathbf{S}_{1},\ldots,\mathbf{S}_{T}\rangle,
+(1)
+where each
+𝐒
+t
+\mathbf{S}_{t}
+denotes a contiguous chunk of frames. Segments arrive in temporal order, and the system processes them online.
+Multi-turn questioning.
+We consider an interaction with
+R
+R
+question and answer turns. At turn
+r
+∈
+{
+1
+,
+…
+,
+R
+}
+r\in\{1,\ldots,R\}
+, the user asks a question
+q
+r
+q_{r}
+after the system has observed a prefix of the stream. Let
+τ
+r
+∈
+{
+1
+,
+…
+,
+T
+}
+\tau_{r}\in\{1,\ldots,T\}
+denote the index of the latest observed segment when
+q
+r
+q_{r}
+is issued. Equivalently,
+q
+r
+q_{r}
+is asked after ingesting the segment prefix
+𝐒
+1
+:
+τ
+r
+≜
+⟨
+𝐒
+1
+,
+…
+,
+𝐒
+τ
+r
+⟩
+.
+\mathbf{S}_{1:\tau_{r}}\triangleq\langle\mathbf{S}_{1},\ldots,\mathbf{S}_{\tau_{r}}\rangle.
+(2)
+Since questions arrive over time, the indices are nondecreasing:
+1
+≤
+τ
+1
+≤
+τ
+2
+≤
+⋯
+≤
+τ
+R
+≤
+T
+.
+1\leq\tau_{1}\leq\tau_{2}\leq\cdots\leq\tau_{R}\leq T.
+(3)
+The dialogue history before turn
+r
+r
+is
+ℋ
+r
+−
+1
+≜
+⟨
+⟨
+q
+1
+,
+a
+1
+⟩
+,
+…
+,
+⟨
+q
+r
+−
+1
+,
+a
+r
+−
+1
+⟩
+⟩
+.
+\mathcal{H}_{r-1}\triangleq\langle\langle q_{1},a_{1}\rangle,\ldots,\langle q_{r-1},a_{r-1}\rangle\rangle.
+(4)
+Under strict causality, the answer
+a
+r
+a_{r}
+at turn
+r
+r
+is conditioned only on the observed video prefix
+𝐒
+1
+:
+τ
+r
+\mathbf{S}_{1:\tau_{r}}
+, the question
+q
+r
+q_{r}
+, and the dialogue history
+ℋ
+r
+−
+1
+\mathcal{H}_{r-1}
+.
+3.2
+Streaming Protocols
+We consider two online evaluation protocols that share the same segmented stream
+𝐒
+1
+:
+T
+\mathbf{S}_{1:T}
+but differ in the number of question turns.
+Single-round streaming.
+Only one question is asked, so
+R
+=
+1
+R=1
+. The system processes segments online and produces a single output for the question asked at
+τ
+1
+\tau_{1}
+. We denote the model output as
+⟨
+π
+1
+,
+a
+1
+⟩
+\langle\pi_{1},a_{1}\rangle
+, where
+π
+1
+\pi_{1}
+is an optional intermediate rationale such as chain of thought and
+a
+1
+a_{1}
+is the final answer.
+Multi-round streaming.
+Multiple questions are asked, so
+R
+>
+1
+R>1
+, at different times with nondecreasing
+τ
+r
+\tau_{r}
+. At each turn
+r
+r
+, the system must answer online using only the stream prefix
+𝐒
+1
+:
+τ
+r
+\mathbf{S}_{1:\tau_{r}}
+and the dialogue history
+ℋ
+r
+−
+1
+\mathcal{H}_{r-1}
+, producing an output pair
+⟨
+π
+r
+,
+a
+r
+⟩
+\langle\pi_{r},a_{r}\rangle
+.
+3.3
+Streaming Unit Notation
+To describe training and inference in a single causal formulation, we serialize a streaming interaction as an interleaved sequence of received units and a one-to-one aligned sequence of generated units.
+Received units.
+Let the received unit sequence be
+𝐑
+1
+:
+U
+≜
+⟨
+R
+1
+,
+…
+,
+R
+U
+⟩
+,
+\mathbf{R}_{1:U}\triangleq\langle R_{1},\ldots,R_{U}\rangle,
+(5)
+where each
+R
+u
+R_{u}
+is either a visual segment unit
+S
+t
+S_{t}
+that contains the content of
+𝐒
+t
+\mathbf{S}_{t}
+, or a question unit
+Q
+r
+Q_{r}
+that contains the text
+q
+r
+q_{r}
+. We write
+R
+u
+∈
+{
+S
+,
+Q
+}
+R_{u}\in\{S,Q\}
+to indicate the unit type. Let
+idx
+⁡
+[
+⋅
+]
+\operatorname{idx}[\cdot]
+return the arrival index in
+𝐑
+1
+:
+U
+\mathbf{R}_{1:U}
+, so
+idx
+⁡
+[
+S
+t
+]
+\operatorname{idx}[S_{t}]
+is the index
+u
+u
+where segment
+t
+t
+appears, and
+idx
+⁡
+[
+Q
+r
+]
+\operatorname{idx}[Q_{r}]
+is the index
+u
+u
+where question
+r
+r
+appears.
+Generated units.
+For each received unit
+R
+u
+R_{u}
+, the model generates exactly one output unit
+C
+u
+C_{u}
+in the same order, forming
+𝐂
+1
+:
+U
+≜
+⟨
+C
+1
+,
+…
+,
+C
+U
+⟩
+.
+\mathbf{C}_{1:U}\triangleq\langle C_{1},\ldots,C_{U}\rangle.
+(6)
+If
+R
+u
+=
+S
+t
+R_{u}=S_{t}
+, then
+C
+u
+C_{u}
+is a memory note denoted
+m
+t
+m_{t}
+. If
+R
+u
+=
+Q
+r
+R_{u}=Q_{r}
+, then
+C
+u
+C_{u}
+is the question answering output that contains the rationale
+π
+r
+\pi_{r}
+and answer
+a
+r
+a_{r}
+.
+Token lengths and visual grids.
+For any text unit
+Y
+Y
+in
+{
+Q
+1
+,
+…
+,
+Q
+R
+,
+C
+1
+,
+…
+,
+C
+U
+}
+\{Q_{1},\ldots,Q_{R},C_{1},\ldots,C_{U}\}
+, let
+L
+⁡
+[
+Y
+]
+L[Y]
+denote its text token length. For any segment unit
+S
+t
+S_{t}
+, let its visual token grid sizes be
+⟨
+T
+t
+,
+H
+t
+,
+W
+t
+⟩
+\langle T_{t},H_{t},W_{t}\rangle
+. Here
+T
+t
+T_{t}
+is the number of visual tokens along the temporal axis,
+H
+t
+H_{t}
+is the height axis, and
+W
+t
+W_{t}
+is the width axis, defined by the vision encoder token grid for this segment. We will also use a unit span function
+Δ
+⁡
+[
+R
+u
+]
+\Delta[R_{u}]
+that assigns each received unit a nonoverlapping input position span:
+Δ
+⁡
+[
+R
+u
+]
+=
+{
+max
+⁡
+{
+T
+u
+,
+H
+u
+,
+W
+u
+}
+,
+R
+u
+∈
+{
+S
+}
+,
+L
+⁡
+[
+R
+u
+]
+,
+R
+u
+∈
+{
+Q
+}
+.
+\Delta[R_{u}]=\begin{cases}\max\{T_{u},H_{u},W_{u}\},&R_{u}\in\{S\},\\
+L[R_{u}],&R_{u}\in\{Q\}.\end{cases}
+(7)
+4
+Method
+Figure 2:
+Training components of Think While Watching.
+(a) segment-level streaming attention mask and streaming positional encoding: example input stream
+𝐑
+=
+⟨
+S
+1
+,
+Q
+1
+,
+S
+2
+,
+Q
+2
+,
+S
+3
+,
+S
+4
+,
+Q
+3
+⟩
+\mathbf{R}=\langle S_{1},Q_{1},S_{2},Q_{2},S_{3},S_{4},Q_{3}\rangle
+with generated outputs
+𝐂
+=
+⟨
+C
+1
+,
+…
+,
+C
+7
+⟩
+\mathbf{C}=\langle C_{1},\ldots,C_{7}\rangle
+. Green indicates the source prefix available at time step
+u
+u
+, which
+C
+u
+C_{u}
+is allowed to attend to. Red masks all future segments to prevent information leakage. For positional encoding, we use separate position indices for the input and output streams.
+(b) Three-stage training strategy: single-round CoT for streaming input adaptation, multi-round CoT for multi-turn interaction, and long-range capability training for long-term memory, uncertainty handling, and distractor learning.
+A simple streaming design interleaves perception and generation but is inherently serial: autoregressive decoding halts further input ingestion, and the interleaving pattern mismatches the LLM pretraining format. Think While Watching generates segment-level memory notes online and decouples perception and generation, enabling interaction in real time across multiple turns. Details are shown in Fig.
+2
+.
+4.1
+Segment-level Memory Notes
+To mitigate Memory Erosion, our method maintains a persistent segment-level memory bank as the online state for multi-turn streaming. For each arriving segment
+𝐒
+t
+\mathbf{S}_{t}
+, the model writes exactly one memory note and appends it to the bank. The memory bank after observing the segment prefix
+𝐒
+1
+:
+t
+\mathbf{S}_{1:t}
+is defined as
+ℳ
+t
+≜
+{
+⟨
+i
+,
+m
+i
+⟩
+}
+i
+=
+1
+t
+.
+\mathcal{M}_{t}\triangleq\{\langle i,m_{i}\rangle\}_{i=1}^{t}.
+(8)
+Each note
+m
+t
+m_{t}
+is a compact text unit grounded in
+𝐒
+t
+\mathbf{S}_{t}
+that records reusable evidence, including key entities and attributes, salient actions and interactions, scene changes, and short-range temporal relations. We denote the memory-writing function implemented by the MLLM backbone with parameters
+θ
+\theta
+as
+Mem
+θ
+​
+[
+⋅
+]
+\mathrm{Mem}_{\theta}[\cdot]
+, and write
+m
+t
+=
+Mem
+θ
+​
+[
+𝐒
+t
+]
+,
+C
+idx
+⁡
+[
+S
+t
+]
+=
+m
+t
+.
+m_{t}=\mathrm{Mem}_{\theta}[\mathbf{S}_{t}],\qquad C_{\operatorname{idx}[S_{t}]}=m_{t}.
+(9)
+When a question
+q
+r
+q_{r}
+is issued after observing segment
+τ
+r
+\tau_{r}
+, the model answers by conditioning on the current question, the dialogue history, and the available memory prefix, while letting attention implicitly select relevant notes:
+⟨
+π
+r
+,
+a
+r
+⟩
+∼
+p
+θ
+[
+π
+r
+,
+a
+r
+∣
+q
+r
+,
+ℋ
+r
+−
+1
+,
+ℳ
+τ
+r
+]
+.
+\langle\pi_{r},a_{r}\rangle\sim p_{\theta}\!\left[\pi_{r},a_{r}\mid q_{r},\mathcal{H}_{r-1},\mathcal{M}_{\tau_{r}}\right].
+(10)
+4.2
+Streaming Architecture
+Prefix and suffix formatting.
+To match the standard SFT format of LLMs, we serialize each training example as a source prefix followed by a target suffix. The source prefix contains the entire received unit stream
+𝐑
+1
+:
+U
+\mathbf{R}_{1:U}
+, while the target suffix contains the aligned generated stream
+𝐂
+1
+:
+U
+\mathbf{C}_{1:U}
+. Without additional constraints, this serialization would leak future received units to earlier generated units.
+Segment-level streaming attention mask.
+We feed the concatenated sequence
+⟨
+R
+1
+,
+…
+,
+R
+U
+,
+C
+1
+,
+…
+,
+C
+U
+⟩
+\langle R_{1},\ldots,R_{U},\,C_{1},\ldots,C_{U}\rangle
+with a segment-level mask
+M
+seg
+M^{\mathrm{seg}}
+to enforce streaming causality. Let
+A
+A
+denote the segment that contributes query tokens and
+B
+B
+denote the segment that contributes key and value tokens, with
+A
+,
+B
+∈
+{
+R
+1
+,
+…
+,
+R
+U
+,
+C
+1
+,
+…
+,
+C
+U
+}
+A,B\in\{R_{1},\ldots,R_{U},C_{1},\ldots,C_{U}\}
+.
+The mask is defined as:
+M
+seg
+​
+[
+A
+,
+B
+]
+=
+{
+𝕀
+[
+v
+≤
+u
+]
+,
+A
+=
+R
+u
+,
+B
+=
+R
+v
+,
+𝕀
+[
+v
+≤
+u
+]
+,
+A
+=
+C
+u
+,
+B
+=
+R
+v
+,
+𝕀
+[
+k
+≤
+u
+]
+,
+A
+=
+C
+u
+,
+B
+=
+C
+k
+,
+0
+,
+otherwise.
+M^{\mathrm{seg}}[A,B]=\begin{cases}\mathbb{I}[v\leq u],&A=R_{u},\;B=R_{v},\\
+\mathbb{I}[v\leq u],&A=C_{u},\;B=R_{v},\\
+\mathbb{I}[k\leq u],&A=C_{u},\;B=C_{k},\\
+0,&\text{otherwise.}\end{cases}
+(11)
+Here
+u
+u
+is the arrival index of the querying unit
+A
+A
+. For the attended unit
+B
+B
+, we use
+v
+v
+if
+B
+B
+is a received unit
+R
+v
+R_{v}
+and
+k
+k
+if
+B
+B
+is a generated unit
+C
+k
+C_{k}
+. The first three cases in Eq. (
+11
+) enforce streaming causality: the received stream is causal in arrival order, each generated unit
+C
+u
+C_{u}
+can attend to the received prefix up to step
+u
+u
+, and generated units are causal with access only to
+C
+1
+:
+u
+C_{1:u}
+. All remaining connections are masked, including
+R
+u
+→
+C
+k
+R_{u}\rightarrow C_{k}
+and
+C
+u
+→
+R
+v
+C_{u}\rightarrow R_{v}
+for
+v
+>
+u
+v>u
+. We obtain token-level masks by expanding
+M
+seg
+M^{\mathrm{seg}}
+and applying standard causal masking within each
+C
+u
+C_{u}
+. As shown in Fig.
+2
+(a),
+C
+1
+C_{1}
+attends only to
+S
+1
+S_{1}
+,
+C
+2
+C_{2}
+attends to
+⟨
+S
+1
+,
+Q
+1
+⟩
+\langle S_{1},Q_{1}\rangle
+, and
+C
+3
+C_{3}
+attends to
+⟨
+S
+1
+,
+Q
+1
+,
+S
+2
+⟩
+\langle S_{1},Q_{1},S_{2}\rangle
+.
+Streaming positional encoding with MRoPE.
+We build on Multimodal Rotary Positional Embeddings MRoPE
+[
+36
+]
+, but decouple the input and output to support parallel reasoning. Specifically, the input stream follows the standard cumulative offset scheme, while the output stream independently starts positional encoding from
+0
+0
+. We use
+B
+B
+to represent the base offset and compute the start offsets of the
+k
+k
+-th visual segment
+S
+k
+S_{k}
+input, the
+k
+k
+-th question
+Q
+k
+Q_{k}
+input, and the
+k
+k
+-th generated unit
+C
+k
+C_{k}
+output:
+B
+k
+=
+{
+B
+k
+S
+=
+∑
+u
+<
+idx
+⁡
+[
+S
+k
+]
+Δ
+⁡
+[
+R
+u
+]
+,
+B
+k
+Q
+=
+∑
+u
+<
+idx
+⁡
+[
+Q
+k
+]
+Δ
+⁡
+[
+R
+u
+]
+,
+B
+k
+C
+=
+{
+0
+,
+k
+=
+1
+,
+∑
+i
+=
+1
+k
+−
+1
+L
+⁡
+[
+C
+i
+]
+,
+k
+≥
+2
+.
+B_{k}=\left\{\begin{aligned} B_{k}^{S}&=\sum_{u<\operatorname{idx}\!\left[S_{k}\right]}\Delta\!\left[R_{u}\right],\\
+B_{k}^{Q}&=\sum_{u<\operatorname{idx}\!\left[Q_{k}\right]}\Delta\!\left[R_{u}\right],\\
+B_{k}^{C}&=\begin{cases}0,&k=1,\\
+\sum_{i=1}^{k-1}L\!\left[C_{i}\right],&k\geq 2.\end{cases}\end{aligned}\right.
+(12)
+In this design,
+B
+k
+S
+B_{k}^{S}
+and
+B
+k
+Q
+B_{k}^{Q}
+are computed only from the received input prefix, while
+B
+k
+C
+B_{k}^{C}
+is computed only from previously generated tokens. Therefore, even when the output length is still unknown during decoding, newly arriving input segments can always be assigned correct input positions.
+1
+1
+1
+MRoPE extends RoPE to multimodal tokens by applying rotary positional encoding along modality-specific axes. For a visual segment unit
+S
+k
+S_{k}
+with token grid size
+⟨
+T
+k
+,
+H
+k
+,
+W
+k
+⟩
+\langle T_{k},H_{k},W_{k}\rangle
+, a token at local grid coordinate
+⟨
+t
+,
+h
+,
+w
+⟩
+\langle t,h,w\rangle
+is assigned global coordinates
+⟨
+t
++
+B
+k
+S
+,
+h
++
+B
+k
+S
+,
+w
++
+B
+k
+S
+⟩
+\langle t+B_{k}^{S},\,h+B_{k}^{S},\,w+B_{k}^{S}\rangle
+, where the start offset
+B
+k
+S
+B_{k}^{S}
+is given in Eq. (
+12
+). For a text unit
+Y
+∈
+{
+Q
+k
+,
+C
+k
+}
+Y\in\{Q_{k},C_{k}\}
+with length
+L
+⁡
+[
+Y
+]
+L[Y]
+, a token at local position
+n
+n
+uses
+n
++
+B
+k
+Q
+n+B_{k}^{Q}
+for question inputs and
+n
++
+B
+k
+C
+n+B_{k}^{C}
+for generated outputs. The contribution of each received unit to the input position budget is determined by the unit span
+Δ
+⁡
+[
+R
+u
+]
+\Delta[R_{u}]
+in Eq. (
+7
+).
+4.3
+Streaming Training
+Three-stage training.
+We fine-tune the MLLM in three stages: Stage 1 learns to write segment-level memory notes and answer single-round queries. Stage 2 scales to multi-round dialogues. Stage 3 targets long-range behaviors on long videos, including long-term evidence recall, uncertainty handling, and distractor segment learning where we insert irrelevant frames as distractors. In Fig.
+2
+(b), Stage 3 covers three long-horizon behaviors:
+long-term memory
+for recalling early evidence in late queries,
+uncertainty handling
+for deferring commitment when evidence is not yet observable, and
+distractor robustness
+for ignoring irrelevant segments during streaming.
+Three-stage Streaming CoT Dataset Generation.
+Streaming CoT
+[
+37
+]
+datasets for MLLMs are extremely scarce. Multi-round streaming CoT with memory notes is largely absent. We therefore synthesize a three-stage dataset that matches our three-stage training.
+Stage 1 and Stage 2 short video streaming CoT.
+We use VideoChatOnline-IT
+[
+38
+]
+as the source pool and sample up to 64 frames per instance. Stage 1 constructs 5,160 single-round instances from temporal perception subsets. Stage 2 converts 8,513 short video QA instances into 2,752 multi-round dialogues by grouping questions over the same video prefix. For both stages, we use GPT-5.2 to generate memory-anchored CoT based on the original dataset QAs.
+Stage 3 long-range streaming CoT.
+We collect long videos from YouTube using 500 keywords spanning three categories: tutorial for procedural content, lecture for explanatory content, and longform for continuous recordings. We then generate 1,500 long video instances with balanced input lengths of 100 to 200 frames, 200 to 300 frames, and 300 or more frames, and each instance contains 3 to 5 rounds. QA and CoT generation follow the same procedure as in Stage 1 and Stage 2. Details of the dataset and the prompt can be found in Appendix
+E
+.
+Quality inspection.
+We enforce the core constraints in Table
+A5
+during synthesis, and additionally verify that each example contains exactly
+S
++
+Q
+S+Q
+output items.
+Table 1:
+Dataset statistics across three training stages.
+Stages 1&2 are built from VideoChatOnline-IT short videos, while Stage 3 contains long-range multi-round dialogues from YouTube. Video duration is reported in seconds (min/avg/max).
+Stage
+Source
+Instances
+Rounds
+Avg. rounds
+Frames
+Min (s)
+Avg (s)
+Max (s)
+1
+VideoChatOnline-IT
+5,160
+5,160
+1.00
+≤
+64
+\leq 64
+8.18
+79.40
+3550.10
+2
+VideoChatOnline-IT
+2,752
+8,513
+3.09
+≤
+64
+\leq 64
+2.00
+400.92
+3443.97
+3
+YouTube
+1,500
+6,000
+4.00
+100-300+
+600.12
+1697.30
+3595.03
+4.4
+Streaming Inference
+Parallel reasoning.
+For real-time deployment, we adopt a dual KV cache implementation that decouples continuous source ingestion from autoregressive decoding. This engineering pattern is common in recent streaming systems
+[
+12
+]
+. Meanwhile, we keep the same segment-level streaming mask and streaming MRoPE at inference time to ensure consistency with training.
+Adaptive attention backend.
+During decoding, our streaming mask is not always a standard causal mask: queries must attend to an allowed source prefix while remaining causal over the generated suffix, so the query and key lengths can differ (
+q
+len
+≠
+k
+len
+q_{\text{len}}\neq k_{\text{len}}
+). We therefore choose the attention backend adaptively—using Flash Attention
+[
+39
+]
+when the pattern is standard causal, and otherwise applying an explicit streaming mask with memory-efficient attention
+[
+40
+]
+. Specifically, we use Flash Attention for source prefilling (
+q
+len
+=
+k
+len
+q_{\text{len}}=k_{\text{len}}
+) and for autoregressive steps (
+q
+len
+=
+1
+q_{\text{len}}=1
+), and switch to memory-efficient attention when
+1
+<
+q
+len
+<
+k
+len
+1<q_{\text{len}}<k_{\text{len}}
+to enforce the custom streaming mask. This preserves segment-level causality while keeping inference fast.
+5
+Experiments
+5.1
+Datasets and Setup
+We evaluate online streaming performance on StreamingBench
+[
+15
+]
+and OVO-Bench
+[
+16
+]
+. StreamingBench focuses on streaming video understanding and includes four subsets. OVO-Bench emphasizes real-world video understanding under three subsets. More details of datasets are in Appendix
+E
+.
+Evaluation protocols.
+We evaluate models under both offline and online protocols. In the offline protocol, we adopt a Batch setting where all sampled frames from the entire video are provided as a single input, and the model answers the question after observing the complete video. In the online protocol, we consider single-turn and multi-turn interaction. For single-turn online evaluation, we segment each video according to the question timestamps provided by the benchmark, forming consecutive temporal segments
+[
+0
+,
+t
+1
+]
+[0,t_{1}]
+,
+[
+t
+1
+,
+t
+2
+]
+[t_{1},t_{2}]
+, and so on. If any segment lasts longer than
+60
+60
+s, we further split it into
+30
+30
+s chunks. For multi-turn evaluation, we use the same segmentation strategy, but the model must answer multiple questions online as segments continuously arrive.
+Backbones and checkpoints.
+We evaluate our method with Qwen3-VL backbones at 2B, 4B, and 8B scales. We use the Instruct model for training and compare its performance with the Thinking model. TWW is used to denote our method in the following. Stage 2 and Stage 3 refer to the checkpoints obtained after training up to the second and third stages.
+5.2
+Baselines
+Offline evaluation.
+We evaluate Gemini 1.5 Pro
+[
+41
+]
+and GPT-4o
+[
+42
+]
+as representative closed-source MLLMs. Qwen3-VL-Instruct and Qwen3-VL-Thinking are used as open-source baselines. We also report results for our TWW
+Batch,S2
+{}_{\text{Batch,S2}}
+and TWW
+Batch,S3
+{}_{\text{Batch,S3}}
+checkpoints, corresponding to Stage 2 and Stage 3, evaluated under the offline batch protocol.
+Online evaluation.
+For online evaluation, Instruct
+online
+{}_{\text{online}}
+and Thinking
+online
+{}_{\text{online}}
+run Qwen3-VL-Instruct and Qwen3-VL-Thinking, respectively, under the multi-turn protocol in Sec.
+5.1
+. We further evaluate our checkpoints under streaming settings: TWW
+single-turn,S2
+{}_{\text{single-turn,S2}}
+and TWW
+single-turn,S3
+{}_{\text{single-turn,S3}}
+follow the single-round streaming protocol, while TWW
+multi-turn,S2
+{}_{\text{multi-turn,S2}}
+and TWW
+multi-turn,S3
+{}_{\text{multi-turn,S3}}
+follow the multi-round streaming protocol. Finally, Interleaved alternates between ingesting one segment and decoding text, coupling perception and generation as a naive streaming baseline. More online baselines and details are in Appendix
+D
+.
+5.3
+Metrics
+We use accuracy to evaluate performance on each benchmark and each evaluation regime. We also report Avg Tokens, the average number of generated output tokens per query. Token Reduce, denoted by
+Δ
+\Delta
+%, is the percentage reduction of Avg Tokens compared with the Thinking baseline of the same backbone size, and Avg Frames, the average number of processed frames per query. For latency, we report TTFT, time to first token, measured as the number of tokens processed before the first answer token is produced.
+5.4
+Main Results
+Tables
+2
+and
+3
+report results on two streaming benchmarks, StreamingBench and OVO-Bench. We summarize the key findings below.
+1.
+Naive streaming inference collapses without streaming-aligned training, highlighting the difficulty of multi-turn streaming.
+On StreamingBench, directly running Instruct
+online
+{}_{\text{online}}
+and Thinking
+online
+{}_{\text{online}}
+achieves only 21.47% and 18.13% overall, compared with 56.67% and 58.52% with Qwen3-VL-4B in the offline batch setting. A similar drop is observed on OVO-Bench: 21.45% and 16.21% versus 50.32% and 50.70%, showing that multi-turn streaming is nontrivial and requires streaming-aligned supervision.
+2.
+Streaming-aligned supervision improves accuracy.
+With Qwen3-VL-4B, TWW
+single-turn,S3
+{}_{\text{single-turn,S3}}
+improves overall accuracy from 58.52% to 60.04% on StreamingBench and from 50.70% to 55.02% on OVO-Bench compared with the Thinking baseline.
+3.
+Long-video training strengthens streaming behavior.
+Stage 3 generally improves upon Stage 2. For example, on OVO-Bench with the 4B backbone, TWW
+single-turn,S3
+{}_{\text{single-turn,S3}}
+improves from 54.51% to 55.02%.
+4.
+Multi-turn segment-level memory yields a strong accuracy–efficiency tradeoff.
+Under the multi-turn protocol, TWW
+multi-turn,S3
+{}_{\text{multi-turn,S3}}
+maintains competitive accuracy while substantially reducing decoding tokens. With the 4B backbone, it achieves 57.40% on StreamingBench with an average of 302.56 tokens, reducing token usage by 56.10%. On OVO-Bench, it obtains 51.80% with 255.91 tokens on average, reducing token usage by 45.80%.
+We further analyzed the types of errors in Appendix
+G
+.
+Table 2:
+StreamingBench results
+with accuracy. Columns left of the double bar report
+performance
+, higher is better, while columns on the right report
+efficiency
+for open-source models only.
+Δ
+\Delta
+is computed against the same backbone Thinking baseline. Avg Frames is 148.35 for the single-turn protocol and 62.58 for the multi-turn protocol.
+Performance
+Efficiency
+Regime
+Method
+SQA
+↑
+\uparrow
+OmniSource
+↑
+\uparrow
+Realtime
+↑
+\uparrow
+Proactive
+↑
+\uparrow
+Overall
+↑
+\uparrow
+Δ
+\Delta
+↑
+\uparrow
+Avg Tokens
+↓
+\downarrow
+Token Reduce
+↑
+\uparrow
+Closed-source models
+Offline
+Gemini 1.5 Pro
+[
+41
+]
+54.80
+67.80
+77.39
+45.10
+70.26
+-
+-
+-
+GPT-4o
+[
+42
+]
+32.80
+50.95
+74.54
+56.86
+64.10
+-
+-
+-
+Open-source models
+Online
+Flash-VStream-7B
+[
+32
+]
+26.80
+26.00
+23.23
+1.96
+24.04
+-
+-
+-
+VideoLLM-online-8B
+[
+8
+]
+30.80
+28.45
+35.99
+3.92
+32.48
+-
+-
+-
+Dispider-7B
+[
+43
+]
+34.80
+35.66
+67.63
+25.34
+53.12
+-
+-
+-
+StreamAgent-7B
+[
+35
+]
+39.60
+36.26
+74.28
+28.90
+57.02
+-
+-
+-
+Qwen3-VL-2B
+Offline
+Instruct
+37.60
+31.60
+68.36
+29.60
+52.24
+-1.17
+-
+-
+Thinking
+34.00
+31.73
+70.02
+36.80
+53.41
++0.00
+1232.91
+0.00
+TWW
+Batch,S2
+{}_{\text{Batch,S2}}
+44.00
+33.13
+69.16
+33.20
+53.75
++0.34
+1012.35
+17.89
+TWW
+Batch,S3
+{}_{\text{Batch,S3}}
+44.80
+33.20
+69.20
+36.00
+54.00
++0.59
+1102.34
+10.59
+Online
+Instruct
+online
+{}_{\text{online}}
+9.20
+28.80
+21.28
+13.20
+22.67
+-30.74
+-
+-
+Thinking
+online
+{}_{\text{online}}
+8.40
+11.60
+12.92
+19.20
+12.58
+-40.83
+832.23
+32.50
+TWW
+single-turn,S2
+{}_{\text{single-turn,S2}}
+47.20
+34.20
+71.84
+32.80
+55.76
++2.35
+923.58
+25.09
+TWW
+single-turn,S3
+{}_{\text{single-turn,S3}}
+48.00
+34.27
+72.00
+34.40
+56.00
++2.59
+930.23
+24.55
+TWW
+multi-turn,S2
+{}_{\text{multi-turn,S2}}
+42.40
+31.33
+69.20
+33.60
+53.11
+-0.30
+285.42
+76.85
+TWW
+multi-turn,S3
+{}_{\text{multi-turn,S3}}
+45.20
+31.47
+69.24
+34.80
+53.40
+-0.01
+300.20
+75.65
+Qwen3-VL-4B
+Offline
+Instruct
+37.20
+38.47
+71.36
+38.40
+56.67
+-1.85
+-
+-
+Thinking
+46.40
+36.53
+74.50
+42.80
+58.52
++0.00
+689.22
+0.00
+TWW
+Batch,S2
+{}_{\text{Batch,S2}}
+42.40
+39.60
+71.84
+39.60
+57.67
+-0.85
+594.28
+13.77
+TWW
+Batch,S3
+{}_{\text{Batch,S3}}
+44.00
+39.67
+71.88
+40.80
+57.87
+-0.65
+620.35
+9.99
+Online
+Instruct
+online
+{}_{\text{online}}
+12.80
+21.53
+22.88
+15.60
+21.47
+-37.05
+-
+-
+Thinking
+online
+{}_{\text{online}}
+21.20
+21.47
+16.92
+7.20
+18.13
+-40.39
+482.24
+30.03
+TWW
+single-turn,S2
+{}_{\text{single-turn,S2}}
+46.00
+40.67
+74.36
+41.20
+59.71
++1.19
+558.12
+19.02
+TWW
+single-turn,S3
+{}_{\text{single-turn,S3}}
+46.80
+41.00
+74.48
+43.20
+60.04
++1.52
+570.68
+17.20
+TWW
+multi-turn,S2
+{}_{\text{multi-turn,S2}}
+40.80
+39.20
+71.20
+40.00
+57.11
+-1.41
+291.86
+57.65
+TWW
+multi-turn,S3
+{}_{\text{multi-turn,S3}}
+43.60
+39.33
+71.28
+40.80
+57.40
+-1.12
+302.56
+56.10
+Qwen3-VL-8B
+Offline
+Instruct
+44.40
+37.53
+73.60
+36.00
+57.87
+-0.35
+-
+-
+Thinking
+45.60
+35.47
+74.46
+44.80
+58.21
++0.00
+759.30
+0.00
+TWW
+Batch,S2
+{}_{\text{Batch,S2}}
+52.80
+38.93
+74.56
+38.00
+59.44
++1.23
+708.16
+6.70
+TWW
+Batch,S3
+{}_{\text{Batch,S3}}
+53.20
+39.07
+74.64
+40.00
+59.67
++1.45
+720.30
+5.10
+Online
+Instruct
+online
+{}_{\text{online}}
+17.20
+21.47
+25.12
+17.60
+23.04
+-35.17
+-
+-
+Thinking
+online
+{}_{\text{online}}
+14.80
+13.00
+17.56
+16.40
+15.82
+-42.39
+573.75
+24.41
+TWW
+single-turn,S2
+{}_{\text{single-turn,S2}}
+54.00
+40.07
+77.60
+39.60
+61.67
++3.46
+651.74
+14.13
+TWW
+single-turn,S3
+{}_{\text{single-turn,S3}}
+54.40
+40.67
+77.68
+41.60
+62.04
++3.83
+660.92
+12.92
+TWW
+multi-turn,S2
+{}_{\text{multi-turn,S2}}
+48.80
+37.40
+74.32
+38.40
+58.60
++0.39
+288.64
+61.97
+TWW
+multi-turn,S3
+{}_{\text{multi-turn,S3}}
+50.00
+37.47
+74.40
+40.00
+58.82
++0.61
+290.82
+61.68
+Table 3:
+OVO-Bench results
+. Avg Frames is 63.23 for the single-turn protocol and 25.47 for the multi-turn protocol.
+Performance
+Efficiency
+Regime
+Method
+Backward
+↑
+\uparrow
+Realtime
+↑
+\uparrow
+Forward
+↑
+\uparrow
+Overall
+↑
+\uparrow
+Δ
+\Delta
+↑
+\uparrow
+Avg Tokens
+↓
+\downarrow
+Token Reduce
+↑
+\uparrow
+Closed-source models
+Offline
+Gemini 1.5 Pro
+[
+41
+]
+69.32
+62.54
+57.15
+63.00
+-
+-
+-
+GPT-4o
+[
+42
+]
+64.46
+60.75
+53.40
+59.54
+-
+-
+-
+Open-source models
+Online
+Flash-VStream-7B
+[
+32
+]
+27.38
+28.37
+45.09
+33.61
+-
+-
+-
+Dispider-7B
+[
+43
+]
+36.06
+54.55
+34.72
+41.78
+-
+-
+-
+StreamForest-7B
+[
+33
+]
+52.02
+61.20
+53.49
+55.57
+-
+-
+-
+StreamAgent-7B
+[
+35
+]
+41.70
+61.30
+45.40
+49.40
+-
+-
+-
+Qwen3-VL-2B
+Offline
+Instruct
+37.29
+56.65
+51.51
+49.97
++2.23
+-
+-
+Thinking
+41.78
+57.27
+45.04
+47.74
++0.00
+590.25
+0.00
+TWW
+Batch,S2
+{}_{\text{Batch,S2}}
+43.25
+56.52
+44.72
+47.67
+-0.07
+518.64
+12.13
+TWW
+Batch,S3
+{}_{\text{Batch,S3}}
+44.37
+56.87
+45.31
+48.30
++0.56
+530.32
+10.15
+Online
+Instruct
+online
+{}_{\text{online}}
+11.89
+16.01
+26.87
+20.76
+-26.98
+-
+-
+Thinking
+online
+{}_{\text{online}}
+8.56
+19.47
+20.29
+17.63
+-30.11
+478.74
+18.89
+TWW
+single-turn,S2
+{}_{\text{single-turn,S2}}
+44.58
+57.85
+47.35
+49.67
++1.93
+456.28
+22.70
+TWW
+single-turn,S3
+{}_{\text{single-turn,S3}}
+45.96
+58.18
+47.86
+50.31
++2.57
+470.20
+20.34
+TWW
+multi-turn,S2
+{}_{\text{multi-turn,S2}}
+40.85
+55.42
+44.34
+46.67
+-1.07
+278.52
+52.81
+TWW
+multi-turn,S3
+{}_{\text{multi-turn,S3}}
+42.16
+55.79
+44.54
+47.15
+-0.59
+280.32
+52.51
+Qwen3-VL-4B
+Offline
+Instruct
+44.32
+62.39
+46.29
+50.32
+-0.38
+-
+-
+Thinking
+50.78
+61.17
+45.08
+50.70
++0.00
+472.18
+0.00
+TWW
+Batch,S2
+{}_{\text{Batch,S2}}
+52.45
+62.18
+47.37
+52.51
++1.81
+412.37
+12.67
+TWW
+Batch,S3
+{}_{\text{Batch,S3}}
+53.88
+62.37
+47.86
+53.11
++2.41
+430.51
+8.83
+Online
+Instruct
+online
+{}_{\text{online}}
+13.63
+20.79
+24.95
+21.45
+-29.25
+-
+-
+Thinking
+online
+{}_{\text{online}}
+14.42
+14.10
+18.06
+16.21
+-34.49
+360.63
+23.62
+TWW
+single-turn,S2
+{}_{\text{single-turn,S2}}
+53.92
+64.25
+49.55
+54.51
++3.81
+358.45
+24.09
+TWW
+single-turn,S3
+{}_{\text{single-turn,S3}}
+55.47
+64.52
+49.78
+55.02
++4.32
+378.64
+19.81
+TWW
+multi-turn,S2
+{}_{\text{multi-turn,S2}}
+48.65
+60.85
+47.67
+51.51
++0.81
+251.36
+46.77
+TWW
+multi-turn,S3
+{}_{\text{multi-turn,S3}}
+49.13
+61.17
+47.86
+51.80
++1.10
+255.91
+45.80
+Qwen3-VL-8B
+Offline
+Instruct
+42.63
+62.86
+51.02
+52.54
+-1.28
+-
+-
+Thinking
+54.24
+61.34
+49.63
+53.82
++0.00
+390.42
+0.00
+TWW
+Batch,S2
+{}_{\text{Batch,S2}}
+55.82
+63.15
+51.83
+55.78
++1.96
+325.82
+16.55
+TWW
+Batch,S3
+{}_{\text{Batch,S3}}
+57.37
+63.68
+52.01
+56.34
++2.52
+340.22
+12.86
+Online
+Instruct
+online
+{}_{\text{online}}
+15.69
+25.57
+21.12
+21.22
+-32.60
+-
+-
+Thinking
+online
+{}_{\text{online}}
+11.25
+19.59
+18.51
+17.30
+-36.52
+330.67
+15.30
+TWW
+single-turn,S2
+{}_{\text{single-turn,S2}}
+56.45
+64.52
+52.78
+56.78
++2.96
+276.19
+29.26
+TWW
+single-turn,S3
+{}_{\text{single-turn,S3}}
+57.05
+64.76
+52.97
+57.07
++3.25
+290.07
+25.70
+TWW
+multi-turn,S2
+{}_{\text{multi-turn,S2}}
+52.05
+63.25
+52.85
+55.55
++1.73
+224.68
+42.45
+TWW
+multi-turn,S3
+{}_{\text{multi-turn,S3}}
+52.77
+63.68
+53.29
+56.05
++2.23
+227.33
+41.77
+5.5
+Analysis
+Figure 3:
+Answer attention vs. segment distance
+on TWW
+multi-turn
+{}_{\text{multi-turn}}
+. After Stage 3, attention mass shifts from near-history to more distant segments.
+Figure 4:
+Ablation
+under frame masking on TWW
+multi-turn,S3
+{}_{\text{multi-turn,S3}}
+. Overall represents the accuracy rate. The remaining curves represent the results of the subsets.
+Generalization to Offline Video Understanding.
+Although our training is designed for streaming scenarios, we also evaluate whether the learned behaviors can transfer to offline video understanding tasks. We evaluate on two offline benchmarks:
+Video-MME
+[
+44
+]
+and
+LV-Bench
+[
+45
+]
+, following their official evaluation settings.
+Table
+4
+shows that streaming training also benefits offline evaluation. In particular, TWW
+single-turn,S3
+{}_{\text{single-turn,S3}}
+improves Video-MME from 68.89% to
+73.41%
+and LV-Bench from 53.47% to
+57.68%
+, showing that long-range streaming supervision transfers effectively to offline long-video reasoning. Unless otherwise stated, the following analyses use Qwen3-VL-4B on StreamingBench.
+Table 4:
+Offline video understanding results
+on Video-MME and LV-Bench.
+Video-MME
+LV-Bench
+Method
+Short
+Medium
+Long
+Overall
+ER
+EU
+KIR
+TG
+Rea
+Sum
+Overall
+Thinking
+77.78
+66.67
+62.22
+68.89
+54.22
+51.62
+62.07
+46.82
+55.50
+40.35
+53.47
+Instruct
+78.22
+66.78
+62.89
+69.30
+56.15
+53.78
+65.86
+50.45
+60.00
+43.86
+56.19
+TWW
+Batch,S3
+{}_{\text{Batch,S3}}
+78.89
+67.11
+64.00
+70.00
+58.07
+54.24
+66.21
+51.36
+62.00
+47.37
+57.39
+TWW
+multi-turn,S3
+{}_{\text{multi-turn,S3}}
+79.00
+67.11
+62.33
+69.48
+56.44
+54.39
+66.55
+50.91
+61.50
+45.61
+56.81
+TWW
+single-turn,S3
+{}_{\text{single-turn,S3}}
+83.22
+70.11
+66.89
+73.41
+57.33
+54.70
+67.59
+51.36
+62.50
+52.63
+57.68
+Long-Range Attention Analysis.
+We analyze how far back the model consults history when generating answers by aggregating the last-layer attention from answer tokens to historical tokens and grouping the attended history by segment distance
+d
+=
+τ
+r
+−
+i
+d=\tau_{r}-i
+, where
+τ
+r
+\tau_{r}
+denotes the index of the latest observed segment when answering the
+r
+r
+-th question, and
+i
+≤
+τ
+r
+i\leq\tau_{r}
+denotes the index of a historical segment being attended to. Here,
+d
+=
+0
+d=0
+corresponds to the most recent segment, and larger
+d
+d
+indicates segments further in the past.
+We separately measure attention to
+FRAME
+tokens, which are visual tokens from prior segments, and
+MEMORY
+tokens, which are accumulated memory note tokens written for those segments.
+Figure
+4
+shows that the Stage 2 checkpoint exhibits a strong recency bias, whereas Stage 3 reallocates attention mass from near-history buckets to more distant buckets. The shift is more pronounced on
+MEMORY
+tokens than on visual tokens, consistent with the intended role of memory notes as a compact long-range state for multi-turn interaction.
+Ablation Studies.
+We conduct ablations to isolate the roles of the memory bank, visual inputs, and segmentation granularity. Removing the memory bank causes a clear accuracy drop from
+57.40
+57.40
+% to
+52.35
+52.35
+% in
+Table
+6
+, confirming that memory notes serve as an effective persistent state in multi-round streams. For visual ablations, Fig.
+4
+shows a monotonic degradation as more frames are masked. Performance remains relatively stable under moderate corruption, suggesting that once written, segment-level memory notes provide a stabilizing signal. Under severe corruption, accuracy approaches the no-memory regime, which is expected because memory writing becomes unreliable without sufficient visual evidence. For segmentation granularity, Table
+6
+reveals a clear accuracy and efficiency tradeoff. Using longer segments
+120
+120
+s/
+60
+60
+s reduces the average decoding length from 302.56 to 230.46 tokens but causes a noticeable accuracy drop of
+2.07
+2.07
+%. Conversely, using shorter segments
+30
+30
+s/
+15
+15
+s preserves accuracy but increases the average decoding length to 380.50 tokens (+
+25.8
+25.8
+%), due to more frequent memory updates.
+Table 5:
+Ablations
+on StreamingBench. a/b represents the maximum segment duration and the chunk duration.
+Category
+Setting
+Acc
+↑
+\uparrow
+Avg Tok
+↓
+\downarrow
+Memory
+with notes
+57.40
+302.56
+Memory
+without notes
+52.35
+330.73
+Segment
+60
+60
+s/
+30
+30
+s
+57.40
+302.56
+Segment
+120
+120
+s/
+60
+60
+s
+55.33
+230.46
+Segment
+30
+30
+s/
+15
+15
+s
+57.20
+380.50
+Table 6:
+TTFT on StreamingBench.
+Overall accuracy and time-to-first-token of Qwen3-VL-4B for batch, interleaved streaming, and our TWW
+multi-turn,S3
+{}_{\text{multi-turn,S3}}
+pipeline.
+Method
+Overall Acc
+↑
+\uparrow
+TTFT
+↓
+\downarrow
+Thinking
+58.52
+31203.69
+Interleaved
+55.35
+2304.28
+TWW
+multi-turn,S3
+{}_{\text{multi-turn,S3}}
+57.40
+2304.28
+TTFT Analysis.
+Table
+6
+reports overall accuracy and TTFT on StreamingBench with the 4B backbone. Compared with batch Thinking, our streaming pipeline reduces TTFT by
+92.6%
+, from 31203.69 to 2304.28 tokens, while maintaining comparable accuracy. The interleaved baseline achieves a similar TTFT for multi-turn streaming but is consistently less accurate.
+Theoretical Latency Analysis.
+Our method decouples ingestion from decoding, largely eliminating decoder-induced ingestion backlog, thereby avoiding backlog explosion as
+ρ
+\rho
+(arrival rate over processing rate) approaches
+1
+1
+and significantly reducing latency. The complete derivation is in Appendix
+C
+.
+6
+Conclusion
+We presented
+Think While Watching
+, a memory-anchored streaming video reasoning framework for multi-turn interaction over continuously arriving streams. Our approach maintains
+segment-level memory notes
+as a persistent state, enforces strict causality through a
+segment-level streaming causal mask
+and
+streaming positional encoding
+, and enables practical real-time deployment via a dual KV cache pipeline with adaptive attention backends. Experiments on StreamingBench and OVO-Bench validate the proposed method’s effectiveness, consistently improving online accuracy while maintaining strong efficiency.
+References
+[1]
+J. Tong, Y. Mou, H. Li, M. Li, Y. Yang, M. Zhang, Q. Chen, T. Liang, X. Hu, Y. Zheng, X. Chen, J. Zhao, X. Huang, and X. Qiu
+(2025)
+Thinking with video: video generation as a promising multimodal reasoning paradigm
+.
+CoRR
+abs/2511.04570
+.
+External Links:
+Link
+,
+Document
+,
+2511.04570
+Cited by:
+§1
+,
+§2.1
+.
+[2]
+H. Zhang, X. Gu, J. Li, C. Ma, S. Bai, C. Zhang, B. Zhang, Z. Zhou, D. He, and Y. Tang
+(2025)
+Thinking with videos: multimodal tool-augmented reinforcement learning for long video reasoning
+.
+CoRR
+abs/2508.04416
+.
+External Links:
+Link
+,
+Document
+,
+2508.04416
+Cited by:
+§1
+,
+§2.1
+.
+[3]
+K. Feng, K. Gong, B. Li, Z. Guo, Y. Wang, T. Peng, B. Wang, and X. Yue
+(2025)
+Video-r1: reinforcing video reasoning in mllms
+.
+CoRR
+abs/2503.21776
+.
+External Links:
+Link
+,
+Document
+,
+2503.21776
+Cited by:
+§1
+,
+§2.1
+.
+[4]
+H. Fei, S. Wu, W. Ji, H. Zhang, M. Zhang, M. Lee, and W. Hsu
+(2025)
+Video-of-thought: step-by-step video reasoning from perception to cognition
+.
+CoRR
+abs/2501.03230
+.
+External Links:
+Link
+,
+Document
+,
+2501.03230
+Cited by:
+§1
+,
+§2.1
+.
+[5]
+Z. Yang, K. Zhang, Y. Hu, B. Wang, S. Qian, B. Wen, F. Yang, T. Gao, W. Dong, and C. Xu
+(2025)
+LiveStar: live streaming assistant for real-world online video understanding
+.
+CoRR
+abs/2511.05299
+.
+External Links:
+Link
+,
+Document
+,
+2511.05299
+Cited by:
+§1
+.
+[6]
+J. Chen, Z. Zeng, Y. Lin, W. Li, Z. Ma, and M. Z. Shou
+(2025)
+LiveCC: learning video LLM with streaming speech transcription at scale
+.
+In
+IEEE/CVF Conference on Computer Vision and Pattern Recognition,
+CVPR 2025, Nashville, TN, USA, June 11-15, 2025
+,
+pp. 29083–29095
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§1
+,
+§1
+,
+§2.2
+.
+[7]
+Y. Wang, Z. Li, T. Qian, H. Zheng, Z. Wang, Y. Fu, and X. Wang
+(2025)
+StreamEQA: towards streaming video understanding for embodied scenarios
+.
+External Links:
+2512.04451
+,
+Link
+Cited by:
+§1
+.
+[8]
+J. Chen, Z. Lv, S. Wu, K. Q. Lin, C. Song, D. Gao, J. Liu, Z. Gao, D. Mao, and M. Z. Shou
+(2024)
+VideoLLM-online: online video large language model for streaming video
+.
+In
+IEEE/CVF Conference on Computer Vision and Pattern Recognition,
+CVPR 2024, Seattle, WA, USA, June 16-22, 2024
+,
+pp. 18407–18418
+.
+External Links:
+Link
+,
+Document
+Cited by:
+Appendix D
+,
+§1
+,
+§2.2
+,
+Table 2
+.
+[9]
+J. Liu, Z. Yu, S. Lan, S. Wang, R. Fang, J. Kautz, H. Li, and J. M. Álvarez
+(2024)
+StreamChat: chatting with streaming video
+.
+CoRR
+abs/2412.08646
+.
+External Links:
+Link
+,
+Document
+,
+2412.08646
+Cited by:
+§1
+,
+§2.2
+.
+[10]
+A. Silberschatz, P. B. Galvin, and G. Gagne
+(2018)
+Operating system concepts, 10th edition
+.
+Wiley
+.
+External Links:
+Link
+,
+ISBN 978-1-118-06333-0
+Cited by:
+§1
+.
+[11]
+J. Tong, J. Fu, Z. Lin, Y. Fan, A. Zhao, H. Su, and X. Shen
+(2025)
+LLM as effective streaming processor: bridging streaming-batch mismatches with group position encoding
+.
+In
+Findings of the Association for Computational Linguistics, ACL 2025,
+Vienna, Austria, July 27 - August 1, 2025
+,
+W. Che, J. Nabende, E. Shutova, and M. T. Pilehvar (Eds.)
+,
+pp. 23497–23517
+.
+External Links:
+Link
+Cited by:
+§1
+.
+[12]
+J. Tong, Y. Fan, A. Zhao, Y. Ma, and X. Shen
+(2025)
+StreamingThinker: large language models can think while reading
+.
+CoRR
+abs/2510.17238
+.
+External Links:
+Link
+,
+Document
+,
+2510.17238
+Cited by:
+§1
+,
+§4.4
+.
+[13]
+J. Lin, J. Tong, H. Wu, J. Zhang, J. Liu, X. Jin, and X. Shen
+(2026)
+Speak while watching: unleashing true real-time video understanding capability of multimodal large language models
+.
+External Links:
+2601.06843
+,
+Link
+Cited by:
+§1
+.
+[14]
+Y. Chen, W. Huang, B. Shi, Q. Hu, H. Ye, L. Zhu, Z. Liu, P. Molchanov, J. Kautz, X. Qi, S. Liu, H. Yin, Y. Lu, and S. Han
+(2025)
+Scaling RL to long videos
+.
+CoRR
+abs/2507.07966
+.
+External Links:
+Link
+,
+Document
+,
+2507.07966
+Cited by:
+§2.1
+.
+[15]
+J. Lin, Z. Fang, C. Chen, Z. Wan, F. Luo, P. Li, Y. Liu, and M. Sun
+(2024)
+StreamingBench: assessing the gap for mllms to achieve streaming video understanding
+.
+External Links:
+2411.03628
+,
+Link
+Cited by:
+§E.1
+,
+§2.2
+,
+§5.1
+.
+[16]
+J. Niu, Y. Li, Z. Miao, C. Ge, Y. Zhou, Q. He, X. Dong, H. Duan, S. Ding, R. Qian, P. Zhang, Y. Zang, Y. Cao, C. He, and J. Wang
+(2025)
+OVO-bench: how far is your video-llms from real-world online video understanding?
+.
+In
+IEEE/CVF Conference on Computer Vision and Pattern Recognition,
+CVPR 2025, Nashville, TN, USA, June 11-15, 2025
+,
+pp. 18902–18913
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§E.1
+,
+§2.2
+,
+§5.1
+.
+[17]
+S. Fu, Q. Yang, Y. Li, Y. Peng, K. Lin, X. Wei, J. Hu, X. Xie, and W. Zheng
+(2025)
+ViSpeak: visual instruction feedback in streaming videos
+.
+CoRR
+abs/2503.12769
+.
+External Links:
+Link
+,
+Document
+,
+2503.12769
+Cited by:
+§2.2
+.
+[18]
+D. Lee, S. Mukherjee, B. Kveton, R. A. Rossi, V. D. Lai, S. Yoon, T. Bui, F. Dernoncourt, and M. Bansal
+(2025)
+StreamGaze: gaze-guided temporal reasoning and proactive understanding in streaming videos
+.
+External Links:
+2512.01707
+,
+Link
+Cited by:
+§2.2
+.
+[19]
+Y. Zhang, C. Shi, Y. Wang, and S. Yang
+(2025)
+Eyes wide open: ego proactive video-llm for streaming video
+.
+CoRR
+abs/2510.14560
+.
+External Links:
+Link
+,
+Document
+,
+2510.14560
+Cited by:
+§2.2
+.
+[20]
+Z. Yang, Y. Hu, Z. Du, D. Xue, S. Qian, J. Wu, F. Yang, W. Dong, and C. Xu
+(2025)
+SVBench: A benchmark with temporal multi-turn dialogues for streaming video understanding
+.
+In
+The Thirteenth International Conference on Learning Representations,
+ICLR 2025, Singapore, April 24-28, 2025
+,
+External Links:
+Link
+Cited by:
+§2.2
+.
+[21]
+S. Xun, S. Tao, J. Li, Y. Shi, Z. Lin, Z. Zhu, Y. Yan, H. Li, L. Zhang, S. Wang, Y. Liu, H. Zhang, Y. Ma, and X. Hu
+(2025)
+RTV-bench: benchmarking MLLM continuous perception, understanding and reasoning through real-time video
+.
+CoRR
+abs/2505.02064
+.
+External Links:
+Link
+,
+Document
+,
+2505.02064
+Cited by:
+§2.2
+.
+[22]
+R. Xu, G. Xiao, Y. Chen, L. He, K. Peng, Y. Lu, and S. Han
+(2025)
+StreamingVLM: real-time understanding for infinite video streams
+.
+CoRR
+abs/2510.09608
+.
+External Links:
+Link
+,
+Document
+,
+2510.09608
+Cited by:
+§2.2
+.
+[23]
+L. Yao, Y. Li, Y. Wei, L. Li, S. Ren, Y. Liu, K. Ouyang, L. Wang, S. Li, S. Li, L. Kong, Q. Liu, Y. Zhang, and X. Sun
+(2025)
+TimeChat-online: 80% visual tokens are naturally redundant in streaming videos
+.
+CoRR
+abs/2504.17343
+.
+External Links:
+Link
+,
+Document
+,
+2504.17343
+Cited by:
+§2.2
+.
+[24]
+X. Zhou, A. Arnab, S. Buch, S. Yan, A. Myers, X. Xiong, A. Nagrani, and C. Schmid
+(2024)
+Streaming dense video captioning
+.
+In
+IEEE/CVF Conference on Computer Vision and Pattern Recognition,
+CVPR 2024, Seattle, WA, USA, June 16-22, 2024
+,
+pp. 18243–18252
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§2.2
+.
+[25]
+X. Chen, K. Tao, K. Shao, and H. Wang
+(2025)
+StreamingTOM: streaming token compression for efficient video understanding
+.
+CoRR
+abs/2510.18269
+.
+External Links:
+Link
+,
+Document
+,
+2510.18269
+Cited by:
+§2.2
+.
+[26]
+H. Xiong, Z. Yang, J. Yu, Y. Zhuge, L. Zhang, J. Zhu, and H. Lu
+(2025)
+Streaming video understanding and multi-round interaction with memory-enhanced knowledge
+.
+In
+The Thirteenth International Conference on Learning Representations,
+ICLR 2025, Singapore, April 24-28, 2025
+,
+External Links:
+Link
+Cited by:
+§2.2
+.
+[27]
+D. Kim, S. Yang, W. Shin, and J. Kim
+(2025)
+V-rex: real-time streaming video llm acceleration via dynamic kv cache retrieval
+.
+External Links:
+2512.12284
+,
+Link
+Cited by:
+§2.2
+.
+[28]
+Y. Chen, X. Bai, Z. Wang, C. Bai, Y. Dai, M. Lu, and S. Zhang
+(2025)
+StreamKV: streaming video question-answering with segment-based KV cache retrieval and compression
+.
+CoRR
+abs/2511.07278
+.
+External Links:
+Link
+,
+Document
+,
+2511.07278
+Cited by:
+§2.2
+.
+[29]
+S. Di, Z. Yu, G. Zhang, H. Li, T. Zhong, H. Cheng, B. Li, W. He, F. Shu, and H. Jiang
+(2025)
+Streaming video question-answering with in-context video kv-cache retrieval
+.
+In
+The Thirteenth International Conference on Learning Representations,
+ICLR 2025, Singapore, April 24-28, 2025
+,
+External Links:
+Link
+Cited by:
+§2.2
+.
+[30]
+Z. Ning, G. Liu, Q. Jin, W. Ding, M. Guo, and J. Zhao
+(2025)
+LiveVLM: efficient online video understanding via streaming-oriented KV cache and retrieval
+.
+CoRR
+abs/2505.15269
+.
+External Links:
+Link
+,
+Document
+,
+2505.15269
+Cited by:
+§2.2
+.
+[31]
+T. Maeda, J. Cao, N. Ukita, and K. Kitani
+(2025)
+CacheFlow: fast human motion prediction by cached normalizing flow
+.
+CoRR
+abs/2505.13140
+.
+External Links:
+Link
+,
+Document
+,
+2505.13140
+Cited by:
+§2.2
+.
+[32]
+H. Zhang, Y. Wang, Y. Tang, Y. Liu, J. Feng, and X. Jin
+(2025)
+Flash-vstream: efficient real-time understanding for long video streams
+.
+CoRR
+abs/2506.23825
+.
+External Links:
+Link
+,
+Document
+,
+2506.23825
+Cited by:
+Appendix D
+,
+§2.2
+,
+Table 2
+,
+Table 3
+.
+[33]
+X. Zeng, K. Qiu, Q. Zhang, X. Li, J. Wang, J. Li, Z. Yan, K. Tian, M. Tian, X. Zhao, Y. Wang, and L. Wang
+(2025)
+StreamForest: efficient online video understanding with persistent event memory
+.
+CoRR
+abs/2509.24871
+.
+External Links:
+Link
+,
+Document
+,
+2509.24871
+Cited by:
+Appendix D
+,
+§2.2
+,
+Table 3
+.
+[34]
+L. Long, Y. He, W. Ye, Y. Pan, Y. Lin, H. Li, J. Zhao, and W. Li
+(2025)
+Seeing, listening, remembering, and reasoning: A multimodal agent with long-term memory
+.
+CoRR
+abs/2508.09736
+.
+External Links:
+Link
+,
+Document
+,
+2508.09736
+Cited by:
+§2.2
+.
+[35]
+H. Yang, F. Tang, L. Zhao, X. An, M. Hu, H. Li, X. Zhuang, B. Wang, Y. Lu, X. Zhang, A. Swikir, J. He, Z. Ge, and I. Razzak
+(2025)
+StreamAgent: towards anticipatory agents for streaming video understanding
+.
+CoRR
+abs/2508.01875
+.
+External Links:
+Link
+,
+Document
+,
+2508.01875
+Cited by:
+Appendix D
+,
+§2.2
+,
+Table 2
+,
+Table 3
+.
+[36]
+P. Wang, S. Bai, S. Tan, S. Wang, Z. Fan, J. Bai, K. Chen, X. Liu, J. Wang, W. Ge, Y. Fan, K. Dang, M. Du, X. Ren, R. Men, D. Liu, C. Zhou, J. Zhou, and J. Lin
+(2024)
+Qwen2-vl: enhancing vision-language model’s perception of the world at any resolution
+.
+CoRR
+abs/2409.12191
+.
+External Links:
+Link
+,
+Document
+,
+2409.12191
+Cited by:
+§4.2
+.
+[37]
+Y. Hu, Z. Yang, S. Wang, S. Qian, B. Wen, F. Yang, T. Gao, and C. Xu
+(2025)
+StreamingCoT: A dataset for temporal dynamics and multimodal chain-of-thought reasoning in streaming videoqa
+.
+CoRR
+abs/2510.25332
+.
+External Links:
+Link
+,
+Document
+,
+2510.25332
+Cited by:
+§4.3
+.
+[38]
+Z. Huang, X. Li, J. Li, J. Wang, X. Zeng, C. Liang, T. Wu, X. Chen, L. Li, and L. Wang
+(2024)
+Online video understanding: a comprehensive benchmark and memory-augmented method
+.
+arXiv e-prints
+,
+pp. arXiv–2501
+.
+Cited by:
+§4.3
+.
+[39]
+T. Dao, D. Y. Fu, S. Ermon, A. Rudra, and C. Ré
+(2022)
+FlashAttention: fast and memory-efficient exact attention with io-awareness
+.
+External Links:
+2205.14135
+,
+Link
+Cited by:
+§4.4
+.
+[40]
+M. N. Rabe and C. Staats
+(2022)
+Self-attention does not need
+O
+⁡
+(
+n
+2
+)
+O(n^{2})
+memory
+.
+External Links:
+2112.05682
+,
+Link
+Cited by:
+§4.4
+.
+[41]
+G. Team, P. Georgiev, V. I. Lei, R. Burnell, L. Bai, A. Gulati, G. Tanzer, D. Vincent, Z. Pan, S. Wang, S. Mariooryad, Y. Ding, X. Geng, F. Alcober, R. Frostig, M. Omernick, L. Walker, C. Paduraru, C. Sorokin, A. Tacchetti, C. Gaffney, S. Daruki, O. Sercinoglu, Z. Gleicher, J. Love, P. Voigtlaender, R. Jain, G. Surita, K. Mohamed, R. Blevins, J. Ahn, T. Zhu, K. Kawintiranon, O. Firat, Y. Gu, Y. Zhang, M. Rahtz, M. Faruqui, N. Clay, J. Gilmer, J. Co-Reyes, I. Penchev, R. Zhu, N. Morioka, K. Hui, K. Haridasan, V. Campos, M. Mahdieh, M. Guo, S. Hassan, K. Kilgour, A. Vezer, H. Cheng, R. de Liedekerke, S. Goyal, P. Barham, D. Strouse, S. Noury, J. Adler, M. Sundararajan, S. Vikram, D. Lepikhin, M. Paganini, X. Garcia, F. Yang, D. Valter, M. Trebacz, K. Vodrahalli, C. Asawaroengchai, R. Ring, N. Kalb, L. B. Soares, S. Brahma, D. Steiner, T. Yu, F. Mentzer, A. He, L. Gonzalez, B. Xu, R. L. Kaufman, L. E. Shafey, J. Oh, T. Hennigan, G. van den Driessche, S. Odoom, M. Lucic, B. Roelofs, S. Lall, A. Marathe, B. Chan, S. Ontanon, L. He, D. Teplyashin, J. Lai, P. Crone, B. Damoc, L. Ho, S. Riedel, K. Lenc, C. Yeh, A. Chowdhery, Y. Xu, M. Kazemi, E. Amid, A. Petrushkina, K. Swersky, A. Khodaei, G. Chen, C. Larkin, M. Pinto, G. Yan, A. P. Badia, P. Patil, S. Hansen, D. Orr, S. M. R. Arnold, J. Grimstad, A. Dai, S. Douglas, R. Sinha, V. Yadav, X. Chen, E. Gribovskaya, J. Austin, J. Zhao, K. Patel, P. Komarek, S. Austin, S. Borgeaud, L. Friso, A. Goyal, B. Caine, K. Cao, D. Chung, M. Lamm, G. Barth-Maron, T. Kagohara, K. Olszewska, M. Chen, K. Shivakumar, R. Agarwal, H. Godhia, R. Rajwar, J. Snaider, X. Dotiwalla, Y. Liu, A. Barua, V. Ungureanu, Y. Zhang, B. Batsaikhan, M. Wirth, J. Qin, I. Danihelka, T. Doshi, M. Chadwick, J. Chen, S. Jain, Q. Le, A. Kar, M. Gurumurthy, C. Li, R. Sang, F. Liu, L. Lamprou, R. Munoz, N. Lintz, H. Mehta, H. Howard, M. Reynolds, L. Aroyo, Q. Wang, L. Blanco, A. Cassirer, J. Griffith, D. Das, S. Lee, J. Sygnowski, Z. Fisher, J. Besley, R. Powell, Z. Ahmed, D. Paulus, D. Reitter, Z. Borsos, R. Joshi, A. Pope, S. Hand, V. Selo, V. Jain, N. Sethi, M. Goel, T. Makino, R. May, Z. Yang, J. Schalkwyk, C. Butterfield, A. Hauth, A. Goldin, W. Hawkins, E. Senter, S. Brin, O. Woodman, M. Ritter, E. Noland, M. Giang, V. Bolina, L. Lee, T. Blyth, I. Mackinnon, M. Reid, O. Sarvana, D. Silver, A. Chen, L. Wang, L. Maggiore, O. Chang, N. Attaluri, G. Thornton, C. Chiu, O. Bunyan, N. Levine, T. Chung, E. Eltyshev, X. Si, T. Lillicrap, D. Brady, V. Aggarwal, B. Wu, Y. Xu, R. McIlroy, K. Badola, P. Sandhu, E. Moreira, W. Stokowiec, R. Hemsley, D. Li, A. Tudor, P. Shyam, E. Rahimtoroghi, S. Haykal, P. Sprechmann, X. Zhou, D. Mincu, Y. Li, R. Addanki, K. Krishna, X. Wu, A. Frechette, M. Eyal, A. Dafoe, D. Lacey, J. Whang, T. Avrahami, Y. Zhang, E. Taropa, H. Lin, D. Toyama, E. Rutherford, M. Sano, H. Choe, A. Tomala, C. Safranek-Shrader, N. Kassner, M. Pajarskas, M. Harvey, S. Sechrist, M. Fortunato, C. Lyu, G. Elsayed, C. Kuang, J. Lottes, E. Chu, C. Jia, C. Chen, P. Humphreys, K. Baumli, C. Tao, R. Samuel, C. N. dos Santos, A. Andreassen, N. Rakićević, D. Grewe, A. Kumar, S. Winkler, J. Caton, A. Brock, S. Dalmia, H. Sheahan, I. Barr, Y. Miao, P. Natsev, J. Devlin, F. Behbahani, F. Prost, Y. Sun, A. Myaskovsky, T. S. Pillai, D. Hurt, A. Lazaridou, X. Xiong, C. Zheng, F. Pardo, X. Li, D. Horgan, J. Stanton, M. Ambar, F. Xia, A. Lince, M. Wang, B. Mustafa, A. Webson, H. Lee, R. Anil, M. Wicke, T. Dozat, A. Sinha, E. Piqueras, E. Dabir, S. Upadhyay, A. Boral, L. A. Hendricks, C. Fry, J. Djolonga, Y. Su, J. Walker, J. Labanowski, R. Huang, V. Misra, J. Chen, R. Skerry-Ryan, A. Singh, S. Rijhwani, D. Yu, A. Castro-Ros, B. Changpinyo, R. Datta, S. Bagri, A. M. Hrafnkelsson, M. Maggioni, D. Zheng, Y. Sulsky, S. Hou, T. L. Paine, A. Yang, J. Riesa, D. Rogozinska, D. Marcus, D. E. Badawy, Q. Zhang, L. Wang, H. Miller, J. Greer, L. L. Sjos, A. Nova, H. Zen, R. Chaabouni, M. Rosca, J. Jiang, C. Chen, R. Liu, T. Sainath, M. Krikun, A. Polozov, J. Lespiau, J. Newlan, Z. Cankara, S. Kwak, Y. Xu, P. Chen, A. Coenen, C. Meyer, K. Tsihlas, A. Ma, J. Gottweis, J. Xing, C. Gu, J. Miao, C. Frank, Z. Cankara, S. Ganapathy, I. Dasgupta, S. Hughes-Fitt, H. Chen, D. Reid, K. Rong, H. Fan, J. van Amersfoort, V. Zhuang, A. Cohen, S. S. Gu, A. Mohananey, A. Ilic, T. Tobin, J. Wieting, A. Bortsova, P. Thacker, E. Wang, E. Caveness, J. Chiu, E. Sezener, A. Kaskasoli, S. Baker, K. Millican, M. Elhawaty, K. Aisopos, C. Lebsack, N. Byrd, H. Dai, W. Jia, M. Wiethoff, E. Davoodi, A. Weston, L. Yagati, A. Ahuja, I. Gao, G. Pundak, S. Zhang, M. Azzam, K. C. Sim, S. Caelles, J. Keeling, A. Sharma, A. Swing, Y. Li, C. Liu, C. G. Bostock, Y. Bansal, Z. Nado, A. Anand, J. Lipschultz, A. Karmarkar, L. Proleev, A. Ittycheriah, S. H. Yeganeh, G. Polovets, A. Faust, J. Sun, A. Rrustemi, P. Li, R. Shivanna, J. Liu, C. Welty, F. Lebron, A. Baddepudi, S. Krause, E. Parisotto, R. Soricut, Z. Xu, D. Bloxwich, M. Johnson, B. Neyshabur, J. Mao-Jones, R. Wang, V. Ramasesh, Z. Abbas, A. Guez, C. Segal, D. D. Nguyen, J. Svensson, L. Hou, S. York, K. Milan, S. Bridgers, W. Gworek, M. Tagliasacchi, J. Lee-Thorp, M. Chang, A. Guseynov, A. J. Hartman, M. Kwong, R. Zhao, S. Kashem, E. Cole, A. Miech, R. Tanburn, M. Phuong, F. Pavetic, S. Cevey, R. Comanescu, R. Ives, S. Yang, C. Du, B. Li, Z. Zhang, M. Iinuma, C. H. Hu, A. Roy, S. Bijwadia, Z. Zhu, D. Martins, R. Saputro, A. Gergely, S. Zheng, D. Jia, I. Antonoglou, A. Sadovsky, S. Gu, Y. Bi, A. Andreev, S. Samangooei, M. Khan, T. Kocisky, A. Filos, C. Kumar, C. Bishop, A. Yu, S. Hodkinson, S. Mittal, P. Shah, A. Moufarek, Y. Cheng, A. Bloniarz, J. Lee, P. Pejman, P. Michel, S. Spencer, V. Feinberg, X. Xiong, N. Savinov, C. Smith, S. Shakeri, D. Tran, M. Chesus, B. Bohnet, G. Tucker, T. von Glehn, C. Muir, Y. Mao, H. Kazawa, A. Slone, K. Soparkar, D. Shrivastava, J. Cobon-Kerr, M. Sharman, J. Pavagadhi, C. Araya, K. Misiunas, N. Ghelani, M. Laskin, D. Barker, Q. Li, A. Briukhov, N. Houlsby, M. Glaese, B. Lakshminarayanan, N. Schucher, Y. Tang, E. Collins, H. Lim, F. Feng, A. Recasens, G. Lai, A. Magni, N. D. Cao, A. Siddhant, Z. Ashwood, J. Orbay, M. Dehghani, J. Brennan, Y. He, K. Xu, Y. Gao, C. Saroufim, J. Molloy, X. Wu, S. Arnold, S. Chang, J. Schrittwieser, E. Buchatskaya, S. Radpour, M. Polacek, S. Giordano, A. Bapna, S. Tokumine, V. Hellendoorn, T. Sottiaux, S. Cogan, A. Severyn, M. Saleh, S. Thakoor, L. Shefey, S. Qiao, M. Gaba, S. Chang, C. Swanson, B. Zhang, B. Lee, P. K. Rubenstein, G. Song, T. Kwiatkowski, A. Koop, A. Kannan, D. Kao, P. Schuh, A. Stjerngren, G. Ghiasi, G. Gibson, L. Vilnis, Y. Yuan, F. T. Ferreira, A. Kamath, T. Klimenko, K. Franko, K. Xiao, I. Bhattacharya, M. Patel, R. Wang, A. Morris, R. Strudel, V. Sharma, P. Choy, S. H. Hashemi, J. Landon, M. Finkelstein, P. Jhakra, J. Frye, M. Barnes, M. Mauger, D. Daun, K. Baatarsukh, M. Tung, W. Farhan, H. Michalewski, F. Viola, F. de Chaumont Quitry, C. L. Lan, T. Hudson, Q. Wang, F. Fischer, I. Zheng, E. White, A. Dragan, J. Alayrac, E. Ni, A. Pritzel, A. Iwanicki, M. Isard, A. Bulanova, L. Zilka, E. Dyer, D. Sachan, S. Srinivasan, H. Muckenhirn, H. Cai, A. Mandhane, M. Tariq, J. W. Rae, G. Wang, K. Ayoub, N. FitzGerald, Y. Zhao, W. Han, C. Alberti, D. Garrette, K. Krishnakumar, M. Gimenez, A. Levskaya, D. Sohn, J. Matak, I. Iturrate, M. B. Chang, J. Xiang, Y. Cao, N. Ranka, G. Brown, A. Hutter, V. Mirrokni, N. Chen, K. Yao, Z. Egyed, F. Galilee, T. Liechty, P. Kallakuri, E. Palmer, S. Ghemawat, J. Liu, D. Tao, C. Thornton, T. Green, M. Jasarevic, S. Lin, V. Cotruta, Y. Tan, N. Fiedel, H. Yu, E. Chi, A. Neitz, J. Heitkaemper, A. Sinha, D. Zhou, Y. Sun, C. Kaed, B. Hulse, S. Mishra, M. Georgaki, S. Kudugunta, C. Farabet, I. Shafran, D. Vlasic, A. Tsitsulin, R. Ananthanarayanan, A. Carin, G. Su, P. Sun, S. V, G. Carvajal, J. Broder, I. Comsa, A. Repina, W. Wong, W. W. Chen, P. Hawkins, E. Filonov, L. Loher, C. Hirnschall, W. Wang, J. Ye, A. Burns, H. Cate, D. G. Wright, F. Piccinini, L. Zhang, C. Lin, I. Gog, Y. Kulizhskaya, A. Sreevatsa, S. Song, L. C. Cobo, A. Iyer, C. Tekur, G. Garrido, Z. Xiao, R. Kemp, H. S. Zheng, H. Li, A. Agarwal, C. Ngani, K. Goshvadi, R. Santamaria-Fernandez, W. Fica, X. Chen, C. Gorgolewski, S. Sun, R. Garg, X. Ye, S. M. A. Eslami, N. Hua, J. Simon, P. Joshi, Y. Kim, I. Tenney, S. Potluri, L. N. Thiet, Q. Yuan, F. Luisier, A. Chronopoulou, S. Scellato, P. Srinivasan, M. Chen, V. Koverkathu, V. Dalibard, Y. Xu, B. Saeta, K. Anderson, T. Sellam, N. Fernando, F. Huot, J. Jung, M. Varadarajan, M. Quinn, A. Raul, M. Le, R. Habalov, J. Clark, K. Jalan, K. Bullard, A. Singhal, T. Luong, B. Wang, S. Rajayogam, J. Eisenschlos, J. Jia, D. Finchelstein, A. Yakubovich, D. Balle, M. Fink, S. Agarwal, J. Li, D. Dvijotham, S. Pal, K. Kang, J. Konzelmann, J. Beattie, O. Dousse, D. Wu, R. Crocker, C. Elkind, S. R. Jonnalagadda, J. Lee, D. Holtmann-Rice, K. Kallarackal, R. Liu, D. Vnukov, N. Vats, L. Invernizzi, M. Jafari, H. Zhou, L. Taylor, J. Prendki, M. Wu, T. Eccles, T. Liu, K. Kopparapu, F. Beaufays, C. Angermueller, A. Marzoca, S. Sarcar, H. Dib, J. Stanway, F. Perbet, N. Trdin, R. Sterneck, A. Khorlin, D. Li, X. Wu, S. Goenka, D. Madras, S. Goldshtein, W. Gierke, T. Zhou, Y. Liu, Y. Liang, A. White, Y. Li, S. Singh, S. Bahargam, M. Epstein, S. Basu, L. Lao, A. Ozturel, C. Crous, A. Zhai, H. Lu, Z. Tung, N. Gaur, A. Walton, L. Dixon, M. Zhang, A. Globerson, G. Uy, A. Bolt, O. Wiles, M. Nasr, I. Shumailov, M. Selvi, F. Piccinno, R. Aguilar, S. McCarthy, M. Khalman, M. Shukla, V. Galic, J. Carpenter, K. Villela, H. Zhang, H. Richardson, J. Martens, M. Bosnjak, S. R. Belle, J. Seibert, M. Alnahlawi, B. McWilliams, S. Singh, A. Louis, W. Ding, D. Popovici, L. Simicich, L. Knight, P. Mehta, N. Gupta, C. Shi, S. Fatehi, J. Mitrovic, A. Grills, J. Pagadora, T. Munkhdalai, D. Petrova, D. Eisenbud, Z. Zhang, D. Yates, B. Mittal, N. Tripuraneni, Y. Assael, T. Brovelli, P. Jain, M. Velimirovic, C. Akbulut, J. Mu, W. Macherey, R. Kumar, J. Xu, H. Qureshi, G. Comanici, J. Wiesner, Z. Gong, A. Ruddock, M. Bauer, N. Felt, A. GP, A. Arnab, D. Zelle, J. Rothfuss, B. Rosgen, A. Shenoy, B. Seybold, X. Li, J. Mudigonda, G. Erdogan, J. Xia, J. Simsa, A. Michi, Y. Yao, C. Yew, S. Kan, I. Caswell, C. Radebaugh, A. Elisseeff, P. Valenzuela, K. McKinney, K. Paterson, A. Cui, E. Latorre-Chimoto, S. Kim, W. Zeng, K. Durden, P. Ponnapalli, T. Sosea, C. A. Choquette-Choo, J. Manyika, B. Robenek, H. Vashisht, S. Pereira, H. Lam, M. Velic, D. Owusu-Afriyie, K. Lee, T. Bolukbasi, A. Parrish, S. Lu, J. Park, B. Venkatraman, A. Talbert, L. Rosique, Y. Cheng, A. Sozanschi, A. Paszke, P. Kumar, J. Austin, L. Li, K. Salama, B. Perz, W. Kim, N. Dukkipati, A. Baryshnikov, C. Kaplanis, X. Sheng, Y. Chervonyi, C. Unlu, D. de Las Casas, H. Askham, K. Tunyasuvunakool, F. Gimeno, S. Poder, C. Kwak, M. Miecnikowski, V. Mirrokni, A. Dimitriev, A. Parisi, D. Liu, T. Tsai, T. Shevlane, C. Kouridi, D. Garmon, A. Goedeckemeyer, A. R. Brown, A. Vijayakumar, A. Elqursh, S. Jazayeri, J. Huang, S. M. Carthy, J. Hoover, L. Kim, S. Kumar, W. Chen, C. Biles, G. Bingham, E. Rosen, L. Wang, Q. Tan, D. Engel, F. Pongetti, D. de Cesare, D. Hwang, L. Yu, J. Pullman, S. Narayanan, K. Levin, S. Gopal, M. Li, A. Aharoni, T. Trinh, J. Lo, N. Casagrande, R. Vij, L. Matthey, B. Ramadhana, A. Matthews, C. Carey, M. Johnson, K. Goranova, R. Shah, S. Ashraf, K. Dasgupta, R. Larsen, Y. Wang, M. R. Vuyyuru, C. Jiang, J. Ijazi, K. Osawa, C. Smith, R. S. Boppana, T. Bilal, Y. Koizumi, Y. Xu, Y. Altun, N. Shabat, B. Bariach, A. Korchemniy, K. Choo, O. Ronneberger, C. Iwuanyanwu, S. Zhao, D. Soergel, C. Hsieh, I. Cai, S. Iqbal, M. Sundermeyer, Z. Chen, E. Bursztein, C. Malaviya, F. Biadsy, P. Shroff, I. Dhillon, T. Latkar, C. Dyer, H. Forbes, M. Nicosia, V. Nikolaev, S. Greene, M. Georgiev, P. Wang, N. Martin, H. Sedghi, J. Zhang, P. Banzal, D. Fritz, V. Rao, X. Wang, J. Zhang, V. Patraucean, D. Du, I. Mordatch, I. Jurin, L. Liu, A. Dubey, A. Mohan, J. Nowakowski, V. Ion, N. Wei, R. Tojo, M. A. Raad, D. A. Hudson, V. Keshava, S. Agrawal, K. Ramirez, Z. Wu, H. Nguyen, J. Liu, M. Sewak, B. Petrini, D. Choi, I. Philips, Z. Wang, I. Bica, A. Garg, J. Wilkiewicz, P. Agrawal, X. Li, D. Guo, E. Xue, N. Shaik, A. Leach, S. M. Khan, J. Wiesinger, S. Jerome, A. Chakladar, A. W. Wang, T. Ornduff, F. Abu, A. Ghaffarkhah, M. Wainwright, M. Cortes, F. Liu, J. Maynez, A. Terzis, P. Samangouei, R. Mansour, T. Kępa, F. Aubet, A. Algymr, D. Banica, A. Weisz, A. Orban, A. Senges, E. Andrejczuk, M. Geller, N. D. Santo, V. Anklin, M. A. Merey, M. Baeuml, T. Strohman, J. Bai, S. Petrov, Y. Wu, D. Hassabis, K. Kavukcuoglu, J. Dean, and O. Vinyals
+(2024)
+Gemini 1.5: unlocking multimodal understanding across millions of tokens of context
+.
+External Links:
+2403.05530
+,
+Link
+Cited by:
+§5.2
+,
+Table 2
+,
+Table 3
+.
+[42]
+OpenAI, :, A. Hurst, A. Lerer, A. P. Goucher, A. Perelman, A. Ramesh, A. Clark, A. Ostrow, A. Welihinda, A. Hayes, A. Radford, A. Mądry, A. Baker-Whitcomb, A. Beutel, A. Borzunov, A. Carney, A. Chow, A. Kirillov, A. Nichol, A. Paino, A. Renzin, A. T. Passos, A. Kirillov, A. Christakis, A. Conneau, A. Kamali, A. Jabri, A. Moyer, A. Tam, A. Crookes, A. Tootoochian, A. Tootoonchian, A. Kumar, A. Vallone, A. Karpathy, A. Braunstein, A. Cann, A. Codispoti, A. Galu, A. Kondrich, A. Tulloch, A. Mishchenko, A. Baek, A. Jiang, A. Pelisse, A. Woodford, A. Gosalia, A. Dhar, A. Pantuliano, A. Nayak, A. Oliver, B. Zoph, B. Ghorbani, B. Leimberger, B. Rossen, B. Sokolowsky, B. Wang, B. Zweig, B. Hoover, B. Samic, B. McGrew, B. Spero, B. Giertler, B. Cheng, B. Lightcap, B. Walkin, B. Quinn, B. Guarraci, B. Hsu, B. Kellogg, B. Eastman, C. Lugaresi, C. Wainwright, C. Bassin, C. Hudson, C. Chu, C. Nelson, C. Li, C. J. Shern, C. Conger, C. Barette, C. Voss, C. Ding, C. Lu, C. Zhang, C. Beaumont, C. Hallacy, C. Koch, C. Gibson, C. Kim, C. Choi, C. McLeavey, C. Hesse, C. Fischer, C. Winter, C. Czarnecki, C. Jarvis, C. Wei, C. Koumouzelis, D. Sherburn, D. Kappler, D. Levin, D. Levy, D. Carr, D. Farhi, D. Mely, D. Robinson, D. Sasaki, D. Jin, D. Valladares, D. Tsipras, D. Li, D. P. Nguyen, D. Findlay, E. Oiwoh, E. Wong, E. Asdar, E. Proehl, E. Yang, E. Antonow, E. Kramer, E. Peterson, E. Sigler, E. Wallace, E. Brevdo, E. Mays, F. Khorasani, F. P. Such, F. Raso, F. Zhang, F. von Lohmann, F. Sulit, G. Goh, G. Oden, G. Salmon, G. Starace, G. Brockman, H. Salman, H. Bao, H. Hu, H. Wong, H. Wang, H. Schmidt, H. Whitney, H. Jun, H. Kirchner, H. P. de Oliveira Pinto, H. Ren, H. Chang, H. W. Chung, I. Kivlichan, I. O’Connell, I. O’Connell, I. Osband, I. Silber, I. Sohl, I. Okuyucu, I. Lan, I. Kostrikov, I. Sutskever, I. Kanitscheider, I. Gulrajani, J. Coxon, J. Menick, J. Pachocki, J. Aung, J. Betker, J. Crooks, J. Lennon, J. Kiros, J. Leike, J. Park, J. Kwon, J. Phang, J. Teplitz, J. Wei, J. Wolfe, J. Chen, J. Harris, J. Varavva, J. G. Lee, J. Shieh, J. Lin, J. Yu, J. Weng, J. Tang, J. Yu, J. Jang, J. Q. Candela, J. Beutler, J. Landers, J. Parish, J. Heidecke, J. Schulman, J. Lachman, J. McKay, J. Uesato, J. Ward, J. W. Kim, J. Huizinga, J. Sitkin, J. Kraaijeveld, J. Gross, J. Kaplan, J. Snyder, J. Achiam, J. Jiao, J. Lee, J. Zhuang, J. Harriman, K. Fricke, K. Hayashi, K. Singhal, K. Shi, K. Karthik, K. Wood, K. Rimbach, K. Hsu, K. Nguyen, K. Gu-Lemberg, K. Button, K. Liu, K. Howe, K. Muthukumar, K. Luther, L. Ahmad, L. Kai, L. Itow, L. Workman, L. Pathak, L. Chen, L. Jing, L. Guy, L. Fedus, L. Zhou, L. Mamitsuka, L. Weng, L. McCallum, L. Held, L. Ouyang, L. Feuvrier, L. Zhang, L. Kondraciuk, L. Kaiser, L. Hewitt, L. Metz, L. Doshi, M. Aflak, M. Simens, M. Boyd, M. Thompson, M. Dukhan, M. Chen, M. Gray, M. Hudnall, M. Zhang, M. Aljubeh, M. Litwin, M. Zeng, M. Johnson, M. Shetty, M. Gupta, M. Shah, M. Yatbaz, M. J. Yang, M. Zhong, M. Glaese, M. Chen, M. Janner, M. Lampe, M. Petrov, M. Wu, M. Wang, M. Fradin, M. Pokrass, M. Castro, M. O. T. de Castro, M. Pavlov, M. Brundage, M. Wang, M. Khan, M. Murati, M. Bavarian, M. Lin, M. Yesildal, N. Soto, N. Gimelshein, N. Cone, N. Staudacher, N. Summers, N. LaFontaine, N. Chowdhury, N. Ryder, N. Stathas, N. Turley, N. Tezak, N. Felix, N. Kudige, N. Keskar, N. Deutsch, N. Bundick, N. Puckett, O. Nachum, O. Okelola, O. Boiko, O. Murk, O. Jaffe, O. Watkins, O. Godement, O. Campbell-Moore, P. Chao, P. McMillan, P. Belov, P. Su, P. Bak, P. Bakkum, P. Deng, P. Dolan, P. Hoeschele, P. Welinder, P. Tillet, P. Pronin, P. Tillet, P. Dhariwal, Q. Yuan, R. Dias, R. Lim, R. Arora, R. Troll, R. Lin, R. G. Lopes, R. Puri, R. Miyara, R. Leike, R. Gaubert, R. Zamani, R. Wang, R. Donnelly, R. Honsby, R. Smith, R. Sahai, R. Ramchandani, R. Huet, R. Carmichael, R. Zellers, R. Chen, R. Chen, R. Nigmatullin, R. Cheu, S. Jain, S. Altman, S. Schoenholz, S. Toizer, S. Miserendino, S. Agarwal, S. Culver, S. Ethersmith, S. Gray, S. Grove, S. Metzger, S. Hermani, S. Jain, S. Zhao, S. Wu, S. Jomoto, S. Wu, Shuaiqi, Xia, S. Phene, S. Papay, S. Narayanan, S. Coffey, S. Lee, S. Hall, S. Balaji, T. Broda, T. Stramer, T. Xu, T. Gogineni, T. Christianson, T. Sanders, T. Patwardhan, T. Cunninghman, T. Degry, T. Dimson, T. Raoux, T. Shadwell, T. Zheng, T. Underwood, T. Markov, T. Sherbakov, T. Rubin, T. Stasi, T. Kaftan, T. Heywood, T. Peterson, T. Walters, T. Eloundou, V. Qi, V. Moeller, V. Monaco, V. Kuo, V. Fomenko, W. Chang, W. Zheng, W. Zhou, W. Manassra, W. Sheu, W. Zaremba, Y. Patil, Y. Qian, Y. Kim, Y. Cheng, Y. Zhang, Y. He, Y. Zhang, Y. Jin, Y. Dai, and Y. Malkov
+(2024)
+GPT-4o system card
+.
+External Links:
+2410.21276
+,
+Link
+Cited by:
+§5.2
+,
+Table 2
+,
+Table 3
+.
+[43]
+R. Qian, S. Ding, X. Dong, P. Zhang, Y. Zang, Y. Cao, D. Lin, and J. Wang
+(2025)
+Dispider: enabling video llms with active real-time interaction via disentangled perception, decision, and reaction
+.
+In
+IEEE/CVF Conference on Computer Vision and Pattern Recognition,
+CVPR 2025, Nashville, TN, USA, June 11-15, 2025
+,
+pp. 24045–24055
+.
+External Links:
+Link
+,
+Document
+Cited by:
+Appendix D
+,
+Table 2
+,
+Table 3
+.
+[44]
+C. Fu, Y. Dai, Y. Luo, L. Li, S. Ren, R. Zhang, Z. Wang, C. Zhou, Y. Shen, M. Zhang, P. Chen, Y. Li, S. Lin, S. Zhao, K. Li, T. Xu, X. Zheng, E. Chen, C. Shan, R. He, and X. Sun
+(2025)
+Video-mme: the first-ever comprehensive evaluation benchmark of multi-modal llms in video analysis
+.
+In
+IEEE/CVF Conference on Computer Vision and Pattern Recognition,
+CVPR 2025, Nashville, TN, USA, June 11-15, 2025
+,
+pp. 24108–24118
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§E.1
+,
+§5.5
+.
+[45]
+W. Wang, Z. He, W. Hong, Y. Cheng, X. Zhang, J. Qi, X. Gu, S. Huang, B. Xu, Y. Dong, M. Ding, and J. Tang
+(2025)
+LVBench: an extreme long video understanding benchmark
+.
+External Links:
+2406.08035
+,
+Link
+Cited by:
+§E.1
+,
+§5.5
+.
+Appendix A
+Future Work
+Future work will explore adaptive segmentation that selects segment boundaries online based on scene changes and question demands, reducing redundant memory updates while preserving evidence coverage. We also plan to incorporate audio cues and speech transcripts to support richer streaming understanding in real-world settings. Another direction is improving robustness on very long streams through better uncertainty estimation, memory verification, and training with harder distractors and domain shifts. Finally, we will develop more comprehensive evaluation protocols that jointly measure accuracy, latency, and resource usage in multi-turn interaction.
+Appendix B
+Implementation Details
+All experiments are conducted on 8
+×
+\times
+NVIDIA RTX A6000 GPUs (48GB each). We fine-tune Qwen3-VL-2/4/8B-Instruct using full-parameter supervised fine-tuning (SFT). Table
+A1
+summarizes the main training settings.
+Table A1:
+Implementation details and training hyperparameters.
+Item
+Setting
+GPUs
+8
+×
+\times
+NVIDIA RTX A6000 (48GB)
+Model
+Qwen3-VL-2/4/8B-Instruct
+Training method
+Full-parameter SFT
+Precision
+bf16
+Global batch size
+128
+Optimizer
+AdamW
+Peak learning rate
+1.0
+×
+10
+−
+5
+1.0\times 10^{-5}
+Learning rate schedule
+Cosine decay
+Warmup ratio
+3%
+Weight decay
+0.1
+Stage 1 strategy
+DeepSpeed ZeRO-3
+Gradient checkpointing
+Enabled
+Communication overlap
+Enabled
+Appendix C
+Theoretical Latency Derivation
+We derive a simple queueing-style model to quantify decoder-induced ingestion backlog in interleaved streaming, as illustrated in Fig.
+A1
+.
+Stream arrival and processing rates.
+Assume that video segments arrive in real time at a rate of
+λ
+\lambda
+segments per second. When the model is watching, meaning that it is ingesting and prefilling, it processes segments at a rate of
+μ
+\mu
+segments per second. We define the utilization by
+ρ
+≜
+λ
+/
+μ
+\rho\triangleq\lambda/\mu
+.
+Interleaved decoding as server downtime.
+In the interleaved baseline, generation is non-preemptive: during a decoding period of duration
+T
+dec
+T_{\mathrm{dec}}
+, the system does not ingest new segments. While decoding, the stream continues to arrive, creating a backlog of
+B
+=
+λ
+​
+T
+dec
+.
+B\;=\;\lambda\,T_{\mathrm{dec}}.
+(13)
+B
+B
+represents backlog, which refers to the number of video segments that are accumulated and yet to be processed. After decoding, the system resumes watching at rate
+μ
+\mu
+while new segments still arrive at rate
+λ
+\lambda
+. Thus the backlog drains at a net rate
+(
+μ
+−
+λ
+)
+(\mu-\lambda)
+(assuming
+μ
+>
+λ
+\mu>\lambda
+), and the
+catch-up time
+is
+T
+catch
+=
+B
+μ
+−
+λ
+=
+λ
+μ
+−
+λ
+​
+T
+dec
+=
+ρ
+1
+−
+ρ
+​
+T
+dec
+.
+T_{\mathrm{catch}}\;=\;\frac{B}{\mu-\lambda}\;=\;\frac{\lambda}{\mu-\lambda}\,T_{\mathrm{dec}}\;=\;\frac{\rho}{1-\rho}\,T_{\mathrm{dec}}.
+(14)
+This yields an amplification effect: each second spent decoding induces an additional
+ρ
+/
+(
+1
+−
+ρ
+)
+\rho/(1-\rho)
+second of future delay before the system fully catches up, which diverges as
+ρ
+→
+1
+\rho\rightarrow 1
+.
+Think While Watching weakens backlog coupling.
+Our inference design decouples ingestion from decoding via dual KV caching, so decoding no longer forces a full stop of stream ingestion as in interleaved streaming. As a result, the decoder-induced backlog is greatly reduced. In an ideal fully overlapped implementation, the additional ingestion downtime during decoding approaches zero, yielding
+B
+ours
+≈
+0
+⇒
+T
+catch
+≈
+0
+.
+B_{\mathrm{ours}}\approx 0\quad\Rightarrow\quad T_{\mathrm{catch}}\approx 0.
+(15)
+In practice, however, a residual backlog may still arise from system overheads such as scheduling, synchronization, cache maintenance, and time overlapping. Therefore, the main benefit of our design is not to guarantee zero backlog but to substantially reduce the coupling between decoding and future stream lag.
+A quality real-time constraint in interleaving.
+Let
+c
+tok
+c_{\mathrm{tok}}
+be the average decoding time per output token and
+L
+L
+be the number of generated tokens per step. Interleaving spends
+T
+dec
+=
+c
+tok
+​
+L
+T_{\mathrm{dec}}=c_{\mathrm{tok}}L
+during which ingestion is paused, inducing
+T
+catch
+=
+ρ
+1
+−
+ρ
+​
+c
+tok
+​
+L
+T_{\mathrm{catch}}=\frac{\rho}{1-\rho}c_{\mathrm{tok}}L
+by Eq. (
+14
+). Therefore, increasing
+L
+L
+to improve quality directly increases future stream lag. Our method weakens this coupling by allowing ingestion to proceed while decoding.
+Figure A1:
+Decoder-induced ingestion backlog under interleaved streaming.
+As utilization
+ρ
+\rho
+increases, interleaved decoding pauses can amplify the catch-up delay and enter a backlog explosion regime, while our decoupled design substantially reduces decoder-induced backlog growth.
+Appendix D
+Additional Baseline Details
+Flash-VStream-7B
+[
+32
+]
+.
+Flash-VStream is an efficient video language model for long video streams. It introduces a flash memory module composed of a low-capacity context memory for aggregating long-range temporal information and a high-capacity augmentation memory for retrieving detailed spatial evidence, enabling real-time responses to user queries over extremely long videos.
+VideoLLM-online-8B
+[
+8
+]
+.
+VideoLLM-online proposes the LIVE framework, short for learning in video streams, to enable temporally aligned, long-context, and real-time conversation over continuous video streams. Specifically, LIVE introduces a streaming training objective, a data generation scheme that converts offline temporal annotations into streaming dialogue data, and an optimized inference pipeline with a continuous KV cache as well as parallelized visual encoding and language decoding for efficient online responses.
+Dispider-7B
+[
+43
+]
+.
+Dispider targets active real-time interaction by explicitly disentangling perception, decision, and reaction. It uses a lightweight proactive streaming video processing module to continuously monitor the stream and identify suitable moments for interaction, while an asynchronous interaction module generates detailed responses without blocking continued observation.
+StreamForest-7B
+[
+33
+]
+.
+StreamForest is designed for efficient online video understanding with persistent event memory. Its core Persistent Event Memory Forest organizes historical frames into event-level tree structures for long-term retention under limited computational resources, while a Fine-grained Spatiotemporal Window preserves detailed short-term perception.
+StreamAgent-7B
+[
+35
+]
+.
+StreamAgent studies anticipatory agents for streaming video understanding. Instead of reacting only to current observations, it integrates question semantics and historical observations to anticipate future task-relevant temporal intervals and spatial regions, and combines this strategy with a streaming KV cache memory for selective recall, enabling proactive and goal-directed responses in evolving video streams.
+Appendix E
+Dataset and Benchmark Details
+E.1
+Benchmark Details
+StreamingBench
+[
+15
+]
+.
+StreamingBench is a benchmark tailored for streaming video understanding, containing 18 tasks over 900 videos and 4,500 human-curated QA pairs, where each question is associated with a specific timestamp in the video stream. The benchmark covers three major aspects of streaming understanding: real-time visual understanding, omnisource understanding, and contextual understanding. In our main tables, we further summarize the reported results into four subset-level metrics:
+Realtime
+,
+OmniSource
+,
+SQA
+, and
+Proactive
+. For evaluation, we follow the adaptive frame extraction protocol reported in StreamingBench: videos shorter than 5 minutes are sampled at 1 fps, videos between 5 and 10 minutes at 0.5 fps, and videos longer than 10 minutes at 0.2 fps.
+OVO-Bench
+[
+16
+]
+.
+OVO-Bench is designed to evaluate online video understanding with explicit temporal awareness. It organizes evaluation into three subsets:
+Backward
+, which requires tracing back to past events;
+Realtime
+, which focuses on understanding what is happening at the current timestamp; and
+Forward
+, which evaluates whether the model can defer its response until sufficient future evidence becomes available. In our experiments, we follow the common OVO-Bench comparison setting for offline video LLMs and cap the visual input at no more than 64 frames per query.
+Video-MME
+[
+44
+]
+.
+Video-MME is a comprehensive offline video benchmark with 900 videos and 2,700 multiple-choice QA pairs, spanning 6 primary visual domains and 30 subfields, and reporting results on
+Short
+,
+Medium
+, and
+Long
+duration subsets. To adapt Video-MME to our streaming-style evaluation, we aggregate all QA pairs sharing the same video ID into a single example and convert each video into an ordered stream of temporal segments. The model receives these segments sequentially, and the associated questions are issued only after the full video stream has been observed. This preserves the original benchmark content while turning Video-MME into a suffix-query streaming protocol.
+LV-Bench
+[
+45
+]
+.
+LV-Bench is an extreme long-video benchmark for evaluating long-range video understanding. It measures six core capabilities, namely
+ER
+(Entity Recognition),
+EU
+(Event Understanding),
+KIR
+(Key Information Retrieval),
+TG
+(Temporal Grounding),
+Rea
+(Reasoning), and
+Sum
+(Summarization). In our adaptation, we first aggregate samples by video ID, and then use the end time of the official annotated time span as the segment boundary to construct a streaming input sequence. The model is queried when the stream reaches the corresponding boundary, making the evaluation compatible with our streaming inference pipeline while preserving the original supervision structure.
+(a) Single-round CoT.
+(b) Multi-round CoT.
+(c) Long-range CoT.
+Figure A2:
+Dataset composition
+E.2
+Overall Dataset Composition
+Figure
+A2
+visualizes the three-stage data composition and its alignment with our training objectives: Stage 1 for single-round memory writing and answering, Stage 2 for multi-round consistency, and Stage 3 for long-horizon recall, uncertainty handling, and distractor robustness.
+VideoChatOnline-IT Source Pool.
+Stage 1 and Stage 2 are both constructed from VideoChatOnline-IT, a video instruction-tuning corpus for online video understanding. It unifies multiple temporally grounded video QA sources in a streaming-style format, making it a suitable source pool for our pseudo streaming chain-of-thought (CoT) construction. We use different subsets for different training objectives. Stage 1 targets single-round streaming CoT and uses HiREST, DiDeMo, and QuerYD. Stage 2 targets multi-round streaming CoT and uses AVA, COIN, GOT-10K, HiREST-Step, ViTT, and YouCook2. Detailed statistics are reported in Table
+A2
+and Table
+A3
+.
+Stage 1: Single-round CoT Statistics.
+Stage 1 focuses on training the model to write segment-level memory notes and answer a single streaming question grounded in the observed prefix. Table
+A2
+reports the breakdown by source subset.
+Table A2:
+Stage 1 detailed statistics.
+Subset
+Samples
+Proportion (%)
+HiREST
+352
+6.8
+DiDeMo
+4023
+78.0
+QuerYD
+785
+15.2
+Total
+5,160
+100.0
+Stage 2: Multi-round CoT Statistics.
+Stage 2 trains multi-turn consistency: later answers must reuse earlier segment-level memory notes without peeking into future segments. Table
+A3
+reports detailed statistics, including the number of segments and questions aggregated from the underlying sources.
+Table A3:
+Stage 2 detailed statistics.
+Segments counts the number of segment units after stream segmentation, and Questions counts the number of question turns in the synthesized dialogues. Avg. Segs. and Avg. Qs. denote the average numbers of segments and questions per sample.
+Subset
+Samples
+Segments
+Questions
+Avg. Segs.
+Avg. Qs
+AVA
+610
+6,136
+1,902
+10.06
+3.12
+COIN
+501
+2,793
+1,109
+5.57
+2.21
+GOT-10K
+999
+2,830
+2,820
+2.83
+2.82
+HiREST-Step
+102
+320
+422
+3.14
+4.14
+ViTT
+346
+1,090
+1,436
+3.15
+4.15
+YouCook2
+194
+630
+824
+3.25
+4.25
+Total
+2,752
+13,799
+8,513
+5.01
+3.09
+Stage 3: Long-range CoT Statistics and Retrieval Keywords.
+Stage 3 targets long-horizon streaming behaviors on long videos collected from YouTube. We use 500+ keywords to retrieve candidate long videos, covering procedural workflows (tutorial), explanatory content (lecture), and continuous recordings (longform). Table
+A4
+reports the resulting dataset statistics by category, and Table
+A6
+lists representative query examples used for video retrieval.
+Table A4:
+Stage 3 statistics by category.
+Category
+Samples
+Segments
+Questions
+Avg. Segs.
+Avg. Qs
+Tutorial
+487
+5,631
+2,017
+11.56
+4.14
+Lecture
+521
+4,532
+1,893
+8.70
+3.63
+Longform
+492
+5,536
+2,090
+11.25
+4.25
+Total
+1,500
+15,699
+6,000
+10.47
+4.00
+Table A5:
+Core constraints for pseudo streaming CoT generation.
+ID
+Constraint
+A
+Strict one-to-one alignment:
+exactly one output chunk per input unit, preserving order.
+B
+No empty segment:
+each segment must update/maintain grounded state based on visual evidence.
+C
+No future information:
+segment reasoning uses only current and past units; QA uses evidence up to its timestamp.
+D
+No answer leakage:
+do not reveal reference answers in reasoning; copy the answer only in the final Answer field.
+E
+Video-grounded only:
+rely on provided frames/timestamps/metadata; avoid external assumptions.
+F
+Streaming quality:
+emphasize boundary cues and conservative state updates across segments.
+G
+Question awareness:
+track unanswered questions and prioritize collecting relevant evidence online.
+Table A6:
+Representative YouTube search queries used for Stage 3 video retrieval.
+Query keyword
+Video type
+Tutorial
+sourdough bread tutorial
+Complete bread-making workflow
+furniture restoration
+Furniture restoration project
+oil painting tutorial
+Oil painting step-by-step tutorial
+car repair tutorial complete
+Full car repair walkthrough
+sewing tutorial complete
+Complete sewing tutorial
+woodworking project tutorial
+Woodworking project tutorial
+pottery making tutorial
+Pottery making process
+knife making tutorial
+Knife forging tutorial
+Lecture
+machine learning lecture
+Machine learning course lecture
+organic chemistry lecture
+Organic chemistry lecture
+quantum mechanics lecture
+Quantum mechanics lecture
+algorithm course full
+Full algorithm course
+system design lecture
+System design lecture
+neuroscience lecture
+Neuroscience lecture
+deep learning tutorial
+Deep learning lecture/tutorial
+computer vision lecture
+Computer vision lecture
+Longform
+hiking trail complete
+Full hiking trail recording
+train journey scenic
+Scenic train journey
+safari wildlife documentary
+Safari wildlife documentary
+Tokyo walking tour
+City walking tour (Tokyo)
+northern lights footage
+Northern lights raw footage
+coral reef documentary
+Coral reef documentary
+mountain climbing documentary
+Mountain climbing documentary
+storm chasing footage
+Storm chasing raw footage
+E.3
+Pseudo Streaming CoT Generation Principles
+We synthesize pseudo streaming CoT annotations to match the streaming protocol in Sec.
+3
+. A key constraint is strict alignment: for a stream with
+S
+S
+segments and
+Q
+Q
+questions, the synthesized output must contain exactly
+S
++
+Q
+S+Q
+generated items, one for each interleaved unit and in temporal order. Table
+A5
+summarizes the core constraints enforced during CoT synthesis.
+Prompt template.
+For reproducibility, we provide the complete prompt used to synthesize pseudo streaming CoT. We use special tokens to delimit streaming units:
+<
+<
+EOS
+>
+>
+ends an input segment unit,
+<
+<
+EOQ
+>
+>
+ends an input question unit (and also the corresponding QA output), and
+<
+<
+EOT
+>
+>
+ends a generated segment-reasoning chunk. In training data, we keep only essential delimiters to reduce overfitting to superficial formatting.
+general_prompt = ’’’
+You are a pseudo streaming Video Chain-of-Thought (CoT) generator.
+You will receive the FULL input at once (all video segments + all questions + reference answers),
+but you MUST generate reasoning that looks as if you processed the video incrementally, in time order.
+====================
+1) CORE CONSTRAINTS
+====================
+(A) STRICT ONE-TO-ONE ALIGNMENT (mandatory)
+- The input is a chronological sequence of interleaved units.
+- Video segment units end with <EOS>.
+- Question units end with <EOQ>.
+- You MUST output exactly ONE reasoning chunk per input unit.
+- Output order must exactly match input order.
+- Total output chunks = (#segment units + #question units).
+- Do NOT merge units.
+- Do NOT split units.
+- Do NOT reorder units.
+(B) EVERY SEGMENT REQUIRES REASONING (no empty segments)
+- For every video segment unit, produce meaningful reasoning grounded in that segment.
+- If no task-relevant change occurs, explicitly state that the scene, action, or tracked state remains stable.
+- Avoid meta statements; focus on video evidence and state continuity.
+(C) pseudo streaming / NO FUTURE INFORMATION
+- Although you see the full input, behave as if you only know information up to the current unit.
+- In [SEG k THINK], you may ONLY use evidence from segment k and all earlier segments.
+- NEVER use or hint at information that appears only in future segments, questions, or answers.
+- In [Q j THINK], reason ONLY with evidence available up to the question timestamp t.
+(D) NO ANSWER LEAKAGE
+- Each question includes a Reference Answer (for alignment only).
+- NEVER reveal, paraphrase, or hint at any reference answer in any segment reasoning.
+- In [Q j THINK], output the final answer ONLY inside the Answer field.
+- The Answer MUST be copied EXACTLY and VERBATIM from the Reference Answer.
+- Do NOT leak the answer in the Reasoning field.
+(E) VIDEO-GROUNDED ONLY
+- Use only visual evidence provided by frames, timestamps, bounding boxes, and metadata.
+- Do NOT rely on external knowledge, assumptions, or commonsense completion.
+(F) STREAMING VIDEO REASONING QUALITY
+Each segment reasoning should:
+- Describe what is visually observed or confirmed in this segment.
+- Emphasize continuity, change, or boundary cues (start / end / ongoing).
+- Update internal task-specific state clearly and conservatively.
+(G) QUESTION AWARENESS (when applicable)
+- If one or more questions have appeared:
+- Maintain an "Active Question": the earliest question that has not been answered.
+- Segment reasoning should prioritize collecting evidence relevant to the Active Question.
+- If NO question has appeared yet:
+- Focus ONLY on understanding the video stream itself: scene setup, object/person continuity,
+motion patterns, emerging actions.
+- Do NOT speculate about future questions.
+====================
+2) INPUT FORMAT
+====================
+Units are interleaved in chronological order.
+Video segment unit:
+[SEG k | time = start-end | frames = ... | optional: bboxes / ids / actions] <EOS>
+Question unit:
+[Q j | t = timestamp]
+Question: ...
+Reference Answer: ...
+<EOQ>
+Notes:
+- Timestamps may not start at 0; follow the provided time system exactly.
+- Reference Answers are provided for alignment only.
+====================
+3) OUTPUT FORMAT (STRICT)
+====================
+For each video segment unit:
+[SEG k THINK]
+Focus: (either the Active Question in <= 15 words, OR "video understanding (no question yet)")
+Evidence from this segment: (2-5 sentences, strictly video-grounded)
+State update: (1-3 sentences, task-specific state or continuity)
+<EOT>
+For each question unit:
+[Q j THINK]
+Reasoning: (2-6 sentences, justify the answer using ONLY evidence available up to time t;
+you may reference segment indices/timestamps, but MUST NOT use future units
+and MUST NOT reveal/paraphrase the Reference Answer in Reasoning)
+Answer: (copy the Reference Answer EXACTLY and VERBATIM)
+<EOQ>
+’’’
+Appendix F
+Case Studies
+This section presents three qualitative examples that complement the quantitative results.
+Figure
+A3
+shows a dataset-derived pseudo streaming CoT example under the single-round protocol.
+Figure
+A4
+shows a dataset-derived pseudo streaming CoT example under the multi-round protocol.
+Figure
+A5
+shows a real multi-round streaming example and illustrates how segment-level memory supports cross-turn reference resolution and temporal state tracking.
+Appendix G
+Error Analysis
+Although Stage 3 substantially improves long-horizon streaming reasoning, representative residual failures still remain in challenging multi-turn settings. Consistent with the three long-horizon behaviors explicitly targeted in Stage 3 training—long-term evidence retention, uncertainty handling, and distractor learning, as described in Sec.
+4.3
+—we observe three recurring error patterns. First, the model may retain the coarse event trace while forgetting an early fine-grained attribute, such as which object, side, or entity was involved. This is consistent with our segment-level memory design: compact memory notes support long-range access but can still over-compress details over long temporal gaps. Second, under incomplete evidence, the model may commit to a specific hypothesis too early rather than deferring judgment until decisive visual evidence appears, reflecting a residual limitation of the uncertainty-handling objective in Sec.
+4.3
+. Third, later retrieval can still be corrupted by visually salient but task-irrelevant segments, causing recent distractors to override the true earlier evidence. This aligns with the ablation results in Table
+6
+, which show that memory notes help stabilize retrieval but remain limited by the quality of written evidence and incoming visual context. As shown in Fig.
+A6
+, these failures are residual edge cases of (a) long-range recall failure, (b) premature commitment under incomplete evidence, and (c) distractor-induced memory contamination in streaming multi-turn reasoning.
+Figure A3:
+Dataset-derived pseudo streaming CoT example under the single-round protocol.
+A question is asked once after the observed video prefix. The model first writes a segment-level memory note from the incoming frames, identifying the tutorial title card, the cleaning material, the faucet, and the rinsing action around the keg. When queried at 49.1s, it answers using only the accumulated evidence so far and correctly concludes that the event
+Clean a Beer Keg
+is still ongoing.
+Figure A4:
+Dataset-derived pseudo streaming CoT example under the multi-round protocol.
+The stream follows a crochet tutorial. Memory notes from Segments 1 to 8 trace the progression from the introduction to close-up hand actions and the gradual formation of the crochet pattern. After the first event-listing question, the model reports only the completed events observed so far. As additional segments arrive, it updates the memory with later stitching and finishing steps. When the same question is asked again at 417.6s, the answer includes only the newly completed events that were not reported earlier, which illustrates incremental reasoning across multiple turns over a continuous stream.
+Figure A5:
+Real multi-round streaming example.
+Left: Segment-level memory notes summarize the contestant’s appearance, location, and actions across seven streamed segments. Middle: Representative frames show the progression of a card routine from the main stage to the judges’ desk and finally to a red-lit table. Right: Five temporally ordered questions are interleaved with the stream. Questions Q2 to Q5 depend on earlier turns, requiring the model to resolve the previously mentioned person, identify the current interaction partner, recall the recent fist bump, update the contestant’s outfit after the scene transition, and track the object held in hand at the end. This example illustrates how persistent segment-level memory supports consistent reasoning across multiple turns over a changing stream.
+Figure A6:
+Residual failure cases in multi-turn streaming reasoning.
+(a) Long-range recall failure.
+The model fails to recover an early fine-grained identity cue across turns. As illustrated in the top row, the
+green box
+marks the correct person referred to in the first question, whereas the
+red box
+marks the person incorrectly retrieved by the model in the later question, indicating that the coarse event context is retained but the specific identity association is lost.
+(b) Premature commitment under incomplete evidence.
+The middle row shows that, at the queried moment, the decisive visual evidence for whether the red-jersey player is taking a corner kick has not yet become sufficiently clear. Instead of deferring its response until the event is visually confirmed, the model commits to a specific answer too early.
+(c) Distractor-induced memory contamination.
+The bottom row shows repeated alternation between the speaker and inserted movie clips. Because these inserted clips appear interleaved with the main explanation, the model is distracted by the intervening visual switches and produces an incorrect insertion count.
+These failures are residual edge cases of the three long-horizon behaviors explicitly targeted in Stage 3 training, namely long-term evidence retention, uncertainty handling, and distractor robustness.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

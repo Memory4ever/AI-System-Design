@@ -1,0 +1,174 @@
+Owen-Shapley Policy Optimization (OSPO): A Principled RL Algorithm for Generative Search LLMs (https://arxiv.org/html/2601.08403v1)
+citeturn30806view0 [wordlim: 200] Crawled: today; Content type: text/html; Source: open({"ref_id":"https://arxiv.org/html/2601.08403v1","lineno":133}); Total lines: 851
+L120: A trajectory $\tau=(s_{0},a_{0},s_{1},a_{1},\ldots,s_{T},a_{T})$ corresponds to autoregressively generating a complete sequence $y=(y_{1},\ldots,y_{T})$ via the policy $\pi_{\theta}(y_{t}|s_{t})=\pi_{\theta}(y_{t}|x,y_{<t})$, where $\pi_{\theta}(y|x)=\prod_{t=1}^{T}\pi_{\theta}(y_{t}|x,y_{<t})$.
+L121: The learning objective^{2}^{2} 2 We set the KL coefficient to $\beta=0$, following prior work (cite66†Lin et al., 2025 ). is to find a policy that maximizes expected downstream performance:
+L122: 
+L123:  | $$\max_{\theta}\;\mathcal{J}(\theta)=\mathbb{E}_{x\sim\mathcal{D},~y\sim\pi_{\theta}(\cdot|x)}[\,r(x,y)\,],$$  |  | (1)
+L124: 
+L125: where $r(x,y)\in\mathbb{R}$ is a terminal reward from the downstream system—for instance, NDCG in product search or a reward-model score in user profile generation (cite129†Zheng et al., 2023 ).
+L126: Because $r(x,y)$ is sequence-level and terminal, with $r_{t}=0$ for $t<T$ and $r_{T}=r(x,y)$, the policy receives no signal about which tokens—or, more meaningfully, which semantic segments of the response—contributed to success, creating the credit assignment problem. To address sparse feedback, methods like Group Relative Policy Optimization (GRPO) (cite69†Shao et al., 2024a ; cite66†Lin et al., 2025 ) replace the learned value function with a sampling-based baseline.
+L127: GRPO samples $G$ responses per prompt and computes group-relative advantages by normalizing rewards within the batch:
+L128:  | $$\scriptsize\hat{A}^{(g)}=\frac{r^{(g)}-\bar{r}}{\sigma_{r}},\hskip 8.19447pt\text{where}\hskip 8.19447pt\bar{r}=\tfrac{1}{G}\sum_{g^{\prime}=1}^{G}r^{(g^{\prime})},\hskip 8.19447pt\sigma_{r}=\sqrt{\tfrac{1}{G}\sum_{g^{\prime}=1}^{G}(r^{(g^{\prime})}-\bar{r})^{2}}.$$  |  | (2)
+L129: 
+L130: The GRPO objective is then:
+L131:  | $$\scriptsize\mathcal{J}^{\text{GRPO}}(\theta)=\frac{1}{G}\sum_{g=1}^{G}\frac{1}{T}\sum_{t=1}^{T}\min\!\Big(\rho_{t}^{(g)}\hat{A}^{(g)},\operatorname{clip}(\rho_{t}^{(g)},\,1-\epsilon,\,1+\epsilon)\hat{A}^{(g)}\Big),$$  |  | (3)
+L132: where $\rho_{t}^{(g)}=\frac{\pi_{\theta}(y_{t}^{(g)}\mid x,y_{<t}^{(g)})}{\pi_{\theta_{\text{old}}}(y_{t}^{(g)}\mid x,y_{<t}^{(g)})}$ is the importance sampling ratio. While GRPO reduces variance via group normalization, it applies a uniform advantage $\hat{A}^{(g)}$ to all tokens in a sequence (cite130†Samineni et al., 2025 ), offering no mechanism to distinguish which tokens—or meaningful semantic segments—actually drove the final reward $r^{(g)}$.
+L133: ### 3.1 Owen-Shapley Policy Optimization: Segment-Level Credit Assignment
+L134: The mismatch between GRPO’s token-level uniform advantages and the compositional structure of recommendation tasks motivates a shift in granularity. To resolve this, our approach, OSPO, leverages the structure of Owen “coalitions” (cite82†Owen, 1977 )—groups of segments or players in game theory—that compute what value should be assigned to each segment based on its expected marginal contribution to the total reward.
+L135: Intuitively, this allows the policy $\pi_{\theta}$ to learn which among the segments it generated actually led to the observed feedback. In other words, the policy learns counterfactually—reasoning over which parts of its response were relatively “more valuable” than others.
+L136: Specifically, let a generated response $y^{(g)}$ from the policy $\pi_{\theta}$ during group-based^{3}^{3} 3 References to a response’s index in the group $g$ in dropped when the context is clear.
+L137: sampling be decomposed into $N$ semantically meaningful segments $\mathcal{A}^{(g)}=\{a_{1},\dots,a_{N}\}$, where each $a_{j}$ denotes a textual span corresponding to a linguistically coherent unit—such spans may represent noun phrases, adjective-noun pairs, or verb-led expressions or even full sentences depending on the task (see cite53†Section A.7 for extraction details).
+L138: For any coalition $S\subseteq\{1,\ldots,N\}$, we define the characteristic function $v(S)$ as the reward obtained when only the segments indexed by $S$ are present. To implement this, we construct a partial query $y_{S}$ by concatenating the segments in coalition $S$ while keeping the input context $x$ fixed: $y_{S}=a_{i}\oplus a_{i+1}\oplus\cdots$ for $i\in S$, where $\oplus$ denotes string concatenation.
+L139: Classical Shapley values (cite81†Shapley, 1953 ) assign to each segment $j\in\{1,\ldots,N\}$ its average marginal contribution across all possible subsets:
+L140: 
+L141:  | $$\small\phi_{j}~=~\sum_{S\subseteq\{1,\ldots,N\}\setminus\{j\}}\frac{|S|!\,(N-|S|-1)!}{N!}\,\Big(v(S\cup\{j\})-v(S)\Big).$$  |  | (4)
+L142: This formulation ensures key fairness properties—efficiency ($\sum_{j}\phi_{j}=v(\{1,\ldots,N\})$), symmetry, and linearity—but quickly becomes intractable as $N$ grows, requiring evaluation of $2^{N}$ coalitions. The Owen value (cite82†Owen, 1977 ) extends Shapley’s framework by restricting the coalitions to a structured subset while preserving the core fairness guarantees (cite107†Owen, 2014 ).
+L143: In our case, we impose a contiguity constraint: we only evaluate coalitions $S=\{i,i+1,\ldots,i+w-1\}$ consisting of consecutive segments, where $w\leq w_{\max}$ is a maximum coalition width hyperparameter.
+L144: This restriction serves two purposes: (1) it reduces computational complexity from $O(2^{N})$ to $O(N\cdot w_{\max})$, making online evaluation tractable during RL training, and (2) it preserves semantic coherence, as non-contiguous coalitions (e.g., skipping middle segments) would produce fragmented queries that may confound reward evaluation.
+L145: We denote the resulting segment attributions as $\phi_{j}^{\text{Owen}}$, computed by averaging marginal contributions $v(S\cup\{j\})-v(S)$ only over contiguous coalitions $S$ where $j\notin S$ but $S\cup\{j\}$ remains contiguous:
+L146:  | $$\small\phi_{j}^{\text{Owen}}~=~\frac{1}{|C_{j}|}\sum_{S\in C_{j}}\Big(v(S\cup\{j\})-v(S)\Big),$$  |  | (5)
+L147: 
+L148: where $C_{j}=\{S:S\text{ contiguous},j\notin S,S\cup\{j\}\text{ contiguous}\}$ is the set of applicable coalitions for segment $j$. The full coalition generation and sampling strategy, including how we manage computational budgets via sampling when $N$ is large, is detailed in cite47†Section A.6 .
+L149: This coalitional view naturally aligns with the linguistic structure of LLM outputs in recommendation tasks, where contiguous spans—such as attribute–intent phrases (“blue midi dress”) or preference clauses (“prefers seasonal styles”)—form coherent compositional units. By assigning credit to these coalitions, OSPO captures how phrase combinations jointly influence downstream reward without enumerating all $2^{n}$ subsets.
+L150: Conceptually, this mirrors options or temporal abstractions in reinforcement learning (cite88†Sutton & Barto, 2018 ; cite131†Konidaris & Barto, 2009 ; cite86†Chai et al., 2025 ), allowing more efficient exploration and faster credit propagation across a response.
+L151: ##### From Segment Attributions to Token Advantages.
+L152: While Owen values $\phi_{j}^{\text{Owen}}$ quantify segment-level contributions, we must bridge two granularity gaps to effectively use such fine-grained values in policy optimization.
+L153: First, standard baseline-based advantage computation requires exploring multiple completions per prompt via Monte Carlo sampling (cite78†Williams, 1992b ; cite132†Kool et al., 2019 ) to estimate which responses are better than average—yielding per-sequence advantages $\hat{A}^{(g)}=R^{(g)}-\bar{R}$ that indicate whether completion $g$ should be reinforced or suppressed.
+--------------------------------------------------------------------------------
+AtomMem : Learnable Dynamic Agentic Memory with Atomic Memory Operation (https://arxiv.org/html/2601.08323v1)
+citeturn30806view1 [wordlim: 200] Crawled: 3 days ago; Content type: text/html; Source: open({"ref_id":"https://arxiv.org/html/2601.08323v1","lineno":80}); Total lines: 348
+L72: To address this issue, we propose AtomMem , which reframes memory management of LLM-based agents not as a fixed pipeline, but as a decision-making problem. Drawing inspiration from agent tool learning (toolLLM; llmtoolssurvey)—where models learn when to invoke tools based on context, we deconstruct high-level memory processes into their fundamental atoms: the standard CRUD (Create, Read, Update, Delete) operations.
+L73: This atomization transforms a static memory workflow into a learnable decision process (semi-MDPs; HRL). By training with reinforcement learning (RL), the agent learns a policy over these atomic operations, enabling it to autonomously orchestrate memory behaviors that are adaptively tailored to the specific demands of each decision step.
+L74: Across three augmented multi-hop long-context QA tasks, including HotpotQA (hotpotQA), 2WikiMultihopQA (2wiki), and Musique (Musique), our approach consistently outperforms prior methods reliant on static memory workflows by approximately 2-5 percentage points under the same Qwen3-8B backbone. Moreover, our framework shows an increasing performance advantage as document length grows in Needle-in-a-Haystack evaluations.
+L75: Together, these results demonstrate that treating memory management as an atomic-level capability optimized via RL is more effective than relying on predefined routines. Beyond overall performance gains, we further uncover an empirical insight into how memory should be managed for QA tasks.
+L76: The learned policy exhibits a systematic shift in memory operation usage: the frequencies of Create, Update, and Delete operations steadily increase, while reliance on Read actions decreases and stabilizes at a lower level. This suggests that effective memory control for QA tasks benefits from learning structured, task-aligned patterns of memory operation usage, rather than maintaining a fixed or unstructured access strategy.
+L77: cite46†Image: Refer to caption Figure 2: Overview of the AtomMem framework. The agent interacts with long documents, web, or real-world environments while maintaining an external memory. High-level memory workflows are decomposed into atomic CRUD (Create, Read, Update, Delete) operations over a vector database.
+L78: Through end-to-end reinforcement learning, the agent learns a task-aligned memory management policy that dynamically decides when to store, retrieve, update, or delete information based on task demands.
+L79: ## 2 Related Works
+L80: ##### Static Memory Workflow
+L81: Early memory mechanisms in LLM-based agents typically relied on heuristic-based static workflows. These memory mechanisms can be categorized into two types: 1) Imitation-Based: Imitation-based approaches refer to transferring designs from natural systems or other engineering domains into agent memory architectures. For example, MemoryBank (MemoryBank) draws an analogy between agent memory and human memory, while MemGPT (MemGPT) likens the agent’s context to computer memory.
+L82: 2) Prior-Based: Prior-based approaches refer to carefully crafted workflows designed by human experts based on prior knowledge (MemTree; ChatDB; MemoRAG). Despite their theoretical appeal, these methods share a common limitation: the memory workflow is hard-coded by experts. This rigidity prevents the agent from adapting its memory strategy to the complexity of specific tasks. In contrast, our work moves beyond static rules, aiming to learn a dynamic memory policy directly from data.
+L83: ##### Toward Dynamic Memory Management
+L84: Beyond static rules, research has shifted toward adaptive memory management (dynamicaffective; Memory-R1; GAM), which we categorize into three paradigms: Intuition-Based: Works like SCM (SCM), and AgentFold (AgentFold) introduced decision gates for specific memory actions like memory summarization, fusion, pruning, or folding. While enabling some dynamic control, these designs treat flexibility as an ancillary feature rather than a core principle, resulting in fragmented and incomplete action spaces.
+L85: Summarization-Based: MemAgent (MemAgent) and Mem1 (MEM1) utilize step-wise overwriting summaries. Although overwriting can theoretically emulate any atomic operation, the workflow is restricted to a mandatory “update-at-every-step” routine. This ignores information density, forcing redundant updates even when new data is sparse.
+L86: Hyperparameter-Based: Some prior work recognizes the importance of dynamic memory but achieves this dynamism solely by tuning the hyperparameters of a fixed workflow (learntomemorize; SEDM). As a result, the limited optimization space restricts the agent to learning only suboptimal strategies. In contrast, by decomposing memory strategies into atomic operations, we ensure a wide optimization space, increasing the likelihood that the model learns an optimal strategy.
+L87: ## 3 Method
+L88: 
+L89: In this section, we formulate the memory management of LLM-based agents as a sequential decision-making problem and introduce a complete action space over memory operations.
+L90: ### 3.1 Problem Formulation
+L91: 
+L92: We formulate the memory management of an LLM-based agent as a Partially Observable Markov Decision Process (POMDP), defined by the tuple $(\mathcal{S},\mathcal{A},P,\Omega,\mathcal{O},\mathcal{R},\gamma)$. In this framework, the agent must not only interact with the external environment but also manage its internal storage to bridge information gaps over long horizons.
+L93: $\triangleright$ Global State $\mathcal{S}$. $s_{t}\in\mathcal{S}$ at time $t$ consists of two components: $s_{t}=(s_{t}^{env},s_{t}^{mem})$. Here, $s_{t}^{env}$ represents the external environment (e.g., stream input progress), and $s_{t}^{mem}$ represents the current state of the agent’s internal memory.
+L94: $\triangleright$ Action Space $\mathcal{A}$. An action $a_{t}\in\mathcal{A}$ is a joint decision $a_{t}=(a_{t}^{env},a_{t}^{mem})$. While $a_{t}^{env}$ represents task-specific execution (e.g., answering a question), $a_{t}^{mem}$ denotes a memory management action chosen from our atomic CRUD space (Create, Read, Update, Delete).
+L95: $\triangleright$ Transition Function $P$. The transition $P(s_{t+1}|s_{t},a_{t})$ defines how the state evolves. Notably, the internal memory state $s_{t+1}^{mem}$ is directly modified by the agent’s memory action (Create/Update/Delete).
+L96: $\triangleright$ Observation Function $\mathcal{O}$. The agent does not have direct access to the underlying state $s_{t}$. Instead, it receives an observation $o_{t}\sim\mathcal{O}(s_{t},a_{t-1}^{mem})$, which consists of the current environmental input and the memory contents. Crucially, the memory state is not fully observable. Access to memory contents is mediated by explicit Read operations, whose execution is decided by the learned policy.
+L97: $\triangleright$ Observation Space $\Omega$. An observation $o_{t}\in\Omega$ represents the agent’s visible context at time $t$, formulated as $o_{t}=(o_{t}^{env},o_{t}^{mem})$. Here, $o_{t}^{env}$ is the direct environmental input, and $o_{t}^{mem}$ contains the memory content (e.g., scratchpad or retrieved entries) determined by the previous action $a_{t-1}^{mem}$.
+--------------------------------------------------------------------------------
+ORBIT: On-policy Exploration-Exploitation for Controllable Multi-Budget Reasoning (https://arxiv.org/html/2601.08310v1)
+citeturn30806view2 [wordlim: 200] Crawled: today; Content type: text/html; Source: open({"ref_id":"https://arxiv.org/html/2601.08310v1","lineno":113}); Total lines: 402
+L100:  |  | $\displaystyle r_{i,t}(\theta)=\frac{\pi_{\theta}(o_{i,t}|q,o_{i,<t})}{\pi_{\theta_{\text{old}}}(o_{i,t}|q,o_{i,<t})},$  |  | (3)
+L101:  |  | $\displaystyle\hat{A}_{i}=\frac{r(q,o_{i})-\text{mean}(\{r(q,o_{j})\})}{\text{std}(\{r(q,o_{j})\})}.$  |  | (4)
+L102: ## 3 Methodology
+L103: 
+L104: cite56†Image: Refer to caption Figure 2: The ORBIT framework overview: (1) In the Exploration stage, multi-stage RL discovers specialized reasoning frontiers under varying context from the expansion-compression loop. (2) In the Exploitation stage, these behaviors are unified into a single student model via model merging and multi-teacher on-policy distillation.
+L105: We approach controllable multi-budget reasoning through an exploration–exploitation perspective. The challenge is twofold: for each reasoning mode, the model must achieve high task performance within a specified reasoning budget, while simultaneously supporting multiple modes within a single model.
+L106: To address this, we decompose the problem into two complementary phases. In the Exploration phase, multi-stage RL places computational effort in generating sequences in semantic space for exploring under varying context budgets, thus discovering high-quality per-mode strategies. In the Exploitation phase, we consolidate these discovered policies into a single student model via on-policy distillation, preserving mode-specific behaviors while enabling a single efficient model for all reasoning modes.
+L107: Figure cite57†2 provides an overview of this framework.
+L108: ### 3.1 Expansion-Compression Loop for Mode-Specific Policy Exploration
+L109: During exploration, each reasoning mode $c\in\mathcal{C}$ is subject to a context budget reflecting its intended reasoning effort. The training objective is to discover high-quality strategies that maximize task accuracy under this budget. To achieve this, we adopt the simple length regularizing method–truncation along with a scheduling strategy and formalize the exploration stage as traversal along the accuracy–length Pareto frontier.
+L110: #### Dual-Objectivity under Truncation
+L111: 
+L112: For a given context budget $L_{k}$ and reasoning mode $c\in\mathcal{C}$, we consider a policy $\pi_{\theta_{k}}$ and define its truncated, mode-specific version:
+L113: 
+L114:  | $$\tilde{\pi}_{\theta_{k}}^{(c)}(o;L_{k}):=\pi_{\theta_{k}}(o\mid q,c)\,\mathbb{I}(|o|\leq L_{k}),$$  |  | (5)
+L115: 
+L116: For a given mode $c$, the expected reward (accuracy) under truncation is
+L117:  | $$J^{(c)}(\pi_{\theta_{k}})=\mathbb{E}_{q\sim\mathcal{D}}\mathbb{E}_{o\sim\tilde{\pi}_{\theta_{k}}^{(c)}(\cdot\mid q)}[r(q,o)],$$  |  | (6)
+L118: 
+L119: We define the non-truncation probability
+L120: 
+L121:  | $$p_{\text{non-trunc}}^{\pi,(c)}(q):=\mathbb{P}_{o\sim\pi_{\theta_{k}}(\cdot\mid q,c)}(|o|\leq L_{k}),$$  |  | (7)
+L122: 
+L123: and the corresponding renormalized truncated policy
+L124:  | $$\pi_{\theta_{k}}^{T_{k},(c)}(o\mid q):=\frac{\pi_{\theta_{k}}(o\mid q,c)\,\mathbb{I}(|o|\leq L_{k})}{p_{\text{non-trunc}}^{\pi,(c)}(q)}.$$  |  | (8)
+L125: 
+L126: Then the truncated expected reward decomposes as
+L127:  | $\displaystyle J^{(c)}(\pi_{\theta_{k}})$  | $\displaystyle=\mathbb{E}_{q\sim\mathcal{D}}\Big[p_{\text{non-trunc}}^{\pi,(c)}(q)\,\bar{r}_{\text{non-trunc}}^{\pi,(c)}(q)\Big],$  |  | (9)
+L128:  | $\displaystyle\bar{r}_{\text{non-trunc}}^{\pi,(c)}(q)$  | $\displaystyle:=\mathbb{E}_{o\sim\pi_{\theta_{k}}^{T_{k},(c)}(\cdot\mid q)}[r(q,o)].$  |  | (10)
+L129: 
+L130: This decomposition shows that, for each mode $c$, optimization under truncation involves two coupled directions:
+L131: 
+L132:   * •
+L133: increasing $p_{\text{non-trunc}}^{\pi,(c)}$, i.e., concentrating probability mass on valid-length trajectories;
+L134: 
+L135:   * •
+L136: 
+L137: increasing $\bar{r}_{\text{non-trunc}}^{\pi,(c)}$, i.e., improving the semantic quality of non-truncated trajectories.
+L138: #### Harvesting Along the Frontier via an Expansion–Compression Loop
+L139: 
+L140: To efficiently obtain high-quality per-mode strategies under truncation, we introduce a one-time Expansion–Compression Loop for scheduling context window in RLVR training:
+L141: 
+L142:   * •
+L143: Expansion (Semantic Optimality). We first enlarge the context budget to $L_{\mathrm{exp}}\gg\mathbb{E}[|o^{+}|]$, where $o^{+}$ denotes correct, within-window trajectories, ensuring truncation is inactive and the policy focuses on semantic correctness. This allows exploration of harder instances and establishes a global performance ceiling.
+L144: 
+L145:   * •
+L146: 
+L147: Sequential Compression (Density Optimality).
+L148: Starting from the expanded policy, we progressively tighten the context budget $L_{k}$. This constraint imposes truncation, inducing a discontinuous length distribution that can destabilize training through two mechanisms: (i) increased reward variance due to the scarcity of valid-length correct trajectories, which leads to noisy gradient estimates; and (ii) “survival mode,” where the model collapses to the shortest, trivial solutions, suppressing the complex reasoning required for harder instances.
+L149: To balance the need for mode separability with training stability, we adopt a logarithmic compression schedule (i.e., $L_{k+1}=L_{k}/2$). Furthermore, we train each stage to saturation—monitored via a Monte Carlo estimate of the truncation ratio. This ensures that the policy remains locally stable, maintains semantic quality, and preserves a sufficient density of valid trajectories before the next compression.
+L150: The loop yields stage-wise, Pareto-optimal per-mode experts along the accuracy–length frontier, which then serve as teachers for on-policy distillation to consolidate all modes into a single model.
+L151: ### 3.2 On-policy Distillation for Frontier Policy Exploitation
+L152: 
+L153: While the exploration stage identifies frontier policies, REINFORCE-style updates provide only a sparse $O(1)$ supervision signal per rollout sequence (uniform $\hat{A}$ across all tokens). Such scalar feedback is insufficient not only for efficient consolidation, but also for fine-grained, token-level reasoning behaviors anchoring across multiple mode-specific experts.
+L154: Transitioning from discovery to consolidation, we therefore adopt distillation as a high-bandwidth alternative, enabling supervision at a tokenwise $O(N)$ resolution. Specifically, we treat the frontier expert models obtained during the exploration stage,$\{\pi_{\theta^{(k)}}\}_{k=1}^{K}$, as teachers and fuse their mode-specific behaviors into a single student model $\pi_{\phi}$.
+L155: This is achieved through a unified pipeline that combines Multi-teacher On-Policy Distillation with an Mode-aware Initialization, allowing diverse reasoning modes to be consolidated in a structured and controllable manner.
+L156: #### On-Policy Distillation Mode Fusing
+L157: 
+L158: Common intuition trains distillation with an offline dataset with query and responses sampled from the teacher model and train the student in an SFT manner.
+--------------------------------------------------------------------------------
+ToolACE-MCP: Generalizing History-Aware Routing from MCP Tools to the Agent Web (https://arxiv.org/html/2601.08276v1)
+citeturn30806view3 [wordlim: 200] Crawled: today; Content type: text/html; Source: open({"ref_id":"https://arxiv.org/html/2601.08276v1","lineno":95}); Total lines: 340
+L86: Scalability Bottlenecks. Mainstream approaches adopt two architectural patterns. Hard-coding predefined tool sets into system prompts leads to context saturation as tool numbers grow cite67†Yao et al. (2023) ; cite68†Schick et al. (2023) ; cite69†Shen et al. (2023) ; cite48†Yang et al. (2024b) . Alternatively, "retrieve-inject" pipelines filter tool subsets through retrieval before context injection cite70†Patil et al. (2023) ; cite61†Qin et al. (2023) ; cite71†Zhang et al. (2024) ; cite72†Song et al. (2023) ; cite73†Lumer et al.
+L87: (2025) , though processing numerous schemas still incurs substantial context overhead.
+L88: Training Data Gaps. Current datasets cite74†Li et al. (2023) ; cite61†Qin et al. (2023) operate at scales below MCP levels. Traditional synthesis methods cite75†Wu et al. (2024) ; cite76†Lu et al. (2024) ; cite77†Patil et al. (2025) ; cite78†Chen et al. (2024) generate isolated query-tool pairs from flat collections, lacking multi-step reasoning patterns and inter-tool dependencies.
+L89: ### 2.2 Dynamic Tool Routing
+L90: 
+L91: Static Semantic Matching. Tool selection typically relies on embedding-based similarity between user queries and tool descriptions cite70†Patil et al. (2023) ; cite72†Song et al. (2023) , where single-turn matching determines relevance without considering multi-turn dynamics.
+L92: Context-Aware Approaches. Recent methods incorporate execution context through two paradigms: statistics-driven approaches match via probabilistic patterns in usage history cite79†Yang et al. (2024a) ; cite80†Patel et al. (2025) , while graph-based methods model dependencies through neural networks or search algorithms cite81†Du et al. (2025c) ; cite71†Zhang et al. (2024) ; cite82†Zhuang et al. (2023) ; cite83†Li et al. (2025a) .
+L93: These approaches compress dialogue information into fixed representations without directly leveraging raw conversation history for routing decisions in evolving multi-agent scenarios.
+L94: cite84†Image: Refer to caption Figure 2: The overall framework of ToolACE-MCP. It consists of three key stages: (1) Self-evolutionary Graph Construction, which expands and structures the candidate space via mutation and relation modeling; (2) Multi-Agent Simulation, which synthesizes interaction trajectories to extract history-aware supervision signals; and (3) The Light Routing Agent, designed to seamlessly integrate the trained router into the inference pipeline.
+L95: ## 3 Method
+L96: ### 3.1 Overview
+L97: Figure cite85†2 illustrates the overall framework of ToolACE-MCP.
+L98: The pipeline operates in a sequential manner: first, we perform a Graph-based Extension with Self-Evolutionary Mutation on the initial candidate set; subsequently, we leverage a multi-agent system to synthesize interaction trajectories, from which we derive supervision signals for the router; finally, we deploy the Light Routing Agent, which serves as the practical implementation of the router trained via ToolACE-MCP, designed to seamlessly integrate into existing agent pipelines.
+L99: We provide a detailed elaboration of these components in the following sections.
+L100: ### 3.2 Problem Formulation.
+L101: 
+L102: We formulate routing as the problem of selecting an appropriate candidate from a given candidate space $\mathcal{C}$, conditioned on the current user query $Q$ and the dialogue history $H$.
+L103: 
+L104: At each routing step, the candidate space $\mathcal{C}$ is specified beforehand and is drawn from a predefined set of candidate types, such as a tool set $\mathcal{T}$ or an agent set $\mathcal{A}$:
+L105: 
+L106:  | $$\mathcal{C}\in\{\mathcal{T},\mathcal{A},...\}.$$  |  | (1)
+L107: Formally, each candidate $c\in\mathcal{C}$ is associated with a structured specification $\phi(c)$. For tools, $\phi(c)$ includes the tool description and schema, while for agents, $\phi(c)$ corresponds to the agent profile and its available tool, characterizing the agent’s specific capability scope.
+L108: 
+L109: Given $(Q,H)$ and the specified candidate space $\mathcal{C}$, we train a parameterized router $\pi_{\theta}$ to model a conditional distribution over candidates within $\mathcal{C}$:
+L110:  | $$\pi_{\theta}(c\mid Q,H,\mathcal{C}),\quad c\in\mathcal{C}.$$  |  | (2)
+L111: 
+L112: At inference time, the router selects the candidate with the highest posterior probability:
+L113: 
+L114:  | $$c^{*}=\arg\max_{c\in\mathcal{C}}\pi_{\theta}(c\mid Q,H,\mathcal{C}).$$  |  | (3)
+L115: ### 3.3 Candidate Graph-based Extension With Self-Evolutionary Mutation
+L116: 
+L117: The goal of the router is to select candidates that best match the current state from a set of semantically and functionally related options. To support this objective during trajectory synthesis, it is crucial to expose the router to candidates that are not only relevant to the current query, but also closely related in terms of functionality or dependency structure.
+L118: To effectively scale the candidate space and bolster the discriminative capability against semantically close candidates, we construct a candidate graph over the initial candidate set, where nodes correspond to candidates (e.g., tools or agents), and edges capture semantic similarity or functional dependencies between them.Building on this graph, we further enrich the candidate space through a Self-Evolutionary mutation process, which synthesizes new candidate variants from existing ones.
+L119: #### 3.3.1 Graph Construction
+L120: Given a candidate set $\mathcal{C}=\{c_{1},c_{2},\ldots,c_{N}\}$, we first derive a vector representation for each candidate by encoding its structured specification $\phi(c)$. Using a pretrained embedding model $\mathcal{E}$, the embedding vector $\mathbf{h}_{i}\in\mathcal{R}^{d}$ for candidate $c_{i}$ is computed as $\mathbf{h}_{i}=\mathcal{E}(\phi(c_{i}))$. For instance, within the tool subset $\mathcal{T}\subseteq\mathcal{C}$, $\phi(c_{i})$ serializes the tool’s textual description and input schema.
+L121: To capture latent relationships, we define the semantic similarity between any pair of candidates $c_{i}$ and $c_{j}$ as the cosine similarity of their embeddings:
+L122: 
+L123:  | $$\mathrm{sim}(c_{i},c_{j})=\cos(\mathbf{h}_{i},\mathbf{h}_{j})=\frac{\mathbf{h}_{i}\cdot\mathbf{h}_{j}}{\|\mathbf{h}_{i}\|\|\mathbf{h}_{j}\|}.$$  |  | (4)
+L124: We construct an undirected edge between nodes $c_{i}$ and $c_{j}$ if their similarity exceeds a predefined threshold $\tau$ (empirically set to $0.82$), i.e., $\mathrm{sim}(c_{i},c_{j})>\tau$. This procedure yields an initial connectivity graph $\mathcal{G}=(\mathcal{C},\mathcal{E}_{\text{sim}})$, which captures the local semantic neighborhoods among candidates.
+L125: #### 3.3.2 Self-Evolutionary Mutation
+L126: 
+L127: To mitigate overfitting caused by an overly narrow candidate space $\mathcal{C}$, we introduce a novel Self-Evolutionary strategy to construct new candidate elements. The key idea is to iteratively expand the candidate graph with controlled mutations that preserve semantic relevance to existing candidates.
+L128: Specifically, we define a set of mutation operators $\mathcal{M}$ for tool, which include Function Enhancement, Parameter Mutation, Workflow Chaining, Helper Operation, and Usage Extension. Detailed specifications of these operators, along with the agent mutation strategies, are provided in Appendix cite31†A . At each iteration, we randomly sample an existing candidate $c\in\mathcal{C}$ and a mutation operator $m\in\mathcal{M}$.
+

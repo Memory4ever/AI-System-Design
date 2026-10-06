@@ -4,9 +4,15 @@
 **窗口：** 2026-02-01T09:00:00+08:00 ～ 2026-02-02T09:00:00+08:00
 **状态：** 完成
 **Books：** 纳入本次
-**检查时间：** 2026-10-02T10:42:14+08:00
+**检查时间：** 2026-10-08T12:11:03+08:00
+**窗口说明：** 用户授权只补已有报告来源遗漏；原窗口、候选日期、评分与有效审阅冻结保留。
+**补充窗口：** 2026-02-01 ～ 2026-02-01
 
 ## 1. 结论
+
+2026-10-08补查：原1家族冻结，补充Feb1自然日新增1个共同报告家族，合计2；新家族标准完成、仅报告，不新增Books。8个OpenAI安全页按共同报告归并，采用单次拒绝与活动最终结果不可混同的受限部署观察，不证明替代模型执行、真实规模或总体阻断率。14源有限扫描已停止，ByteDistill公开日和具名历史切片终态隔离；首批/必要Source及六部分DAY均已由非作者root实际通过，本轮普通待办0；历史限制不授零发布、无遗漏或全源正面Coverage。
+
+以下三段为2026-10-02原轮已完成范围，数量和工作状态只指原窗口；不替代上面的补查合计与本轮实际验收。
 
 本窗确定入选1个唯一材料家族：Codex app 发布案例披露的随机 continuation protocol，使“初始任务数量”与“整个 run 的外部指令预算”必须分账。贡献不是产品界面、七百万 tokens 或通用自主性表现；一次初始任务与自动续跑不矛盾。完成标准核心审阅，并针对当前 Ch66 的具体评价知识缺口加深；两段及证据注已写入唯一 owner `PLATFORM-EVALUATION-SYSTEM`，root实际写后及日级非作者复核通过，本窗可执行工作0。
 
@@ -35,11 +41,32 @@
 
 没有触发独立的每周源或会议/release全站扫描。必要的GLM-OCR GitHub、K2.5官方Blog、SPARKLING exact-v1都属于具名材料的定点核验，不增加来源家族或扩大每日池。
 
+
+### 2026-10-08 补充来源（2026-02-01自然日）
+
+原表记录冻结，只适用于原窗口。以下是本轮实际入口、有限停止和限制；不由原完成状态授新覆盖。完整查询及原件路由见[补查停点](../_sources/daily-20260202/supplement-20261008.md)。
+
+- `SRC-OPENAI`：本轮RSS1255项只取Feb1/Feb2；八个Feb1安全页必要核心，按共同报告家族归并；停于具名案例，不扩完整地缘PDF。 结果：已检查；缺口：作者检测/OSINT局部观察，不证明真实规模或总体阻断率。
+- `SRC-ANTHROPIC`：官方Research174 dated metadata，仅核Jan29 Coding skills→Feb5 zero-days邻域，无Feb1条目；不将174正文变队列。 结果：已检查；缺口：当前目录有限邻域，不声称所有独立发布均收录。
+- `SRC-GOOGLE-AI`：当前pubs年度/首15不是本窗历史切片；DeepMind page4/page3不可读后有限恢复，定点官方Project Genie Jan29与Feb1模型/系统主题查询，未扩全年库存。 结果：受阻；缺口：本窗pubs/DeepMind历史事件切片未恢复，查询空不能证明零发布。
+- `SRC-META-AI`：Research0行，publications page3本轮不可读；限定官方域Feb1模型主题查询只返回非本窗应用说明，停止于这组入口。 结果：受阻；缺口：必要Feb1历史目录尚缺；不是全年论文已读。
+- `SRC-QWEN`：旧站2025正文/redirect、新Blog0行；日期/模型Agent限定检索恢复官方索引Qwen3-Coder-Next Feb2、ASR Jan28，只作边界，不改候选归属。 结果：受阻；缺口：新站完整Feb1切片未恢复；Feb2不入本补充窗。
+- `SRC-DEEPSEEK`：官方news研究Jan28 OCR2→Feb25 DualPath、动态Dec1→Apr24邻域，未定位Feb1，停止当前有限目录。 结果：已检查；缺口：当前索引不穷尽所有独立原稿。
+- `SRC-MOONSHOT`：Platform26项至2025，org首页10个repo仅定位K2.5；限定Feb1原始域检索，旧PARL有效core复用但未建立新事件。 结果：受阻；缺口：Feb1历史切片及K2.5本窗事件日期/版本未知。
+- `SRC-TENCENT-HUNYUAN`：Research timeout后官方publicList page1/pageSize1000/renderType0实回9/total9，仅读取日期metadata；最早Learning from context的两公开字段均Feb3，停。 结果：受阻；缺口：当前九条不是Feb1历史目录；旧条目保留未知，不能称零发布。
+- `SRC-ZAI`：Research Jan19 Flash→Feb2 OCR边界；不重新评分Feb2旧hold；有限Feb1查询未建立新事件。 结果：已检查；缺口：原GLM-OCR版本hold继续作为原窗记录；不声称全Github事件覆盖。
+- `SRC-BYTEDANCE-SEED`：type1升序2026 count100实回20/total82/next20，Jan31 A²D→Feb2 SPARKLING已越过Feb1，停首段；type2实回9/total23/next20，首3为Feb12～14，日期辅助检索未建立Feb1事件。 结果：受阻；缺口：type2有限返回与total差额；不把接口声明数当已读分母或历史零发布。
+- `SRC-BAIDU-ERNIE`：技术Blog第一页Jan29 PaddleOCRVL1.5→Feb6 ERNIE5.0邻域停止，不扩更早第2页。 结果：已检查；缺口：当前技术Blog邻域，不穷尽所有版本仓库事件。
+- `SRC-XIAOMI-MIMO`：Paper Jan8→Feb3 HySparse，15个无日期Blog卡片只作目录线索；Feb1有限日期查询后停。 结果：受阻；缺口：无日期Blog本窗事件切片未恢复。
+- `SRC-MINIMAX`：en/cn Blog本轮有限入口，cn Jan28 M2her→Feb12后续越过Feb1；TechBlog HTML外壳后markdown恢复当前May13单项，停止，未扩docs树。 结果：受阻；缺口：AgentTech历史切片未恢复；当前单项不能证明当时无发布。
+- `SRC-ARXIV`：实核官方availability、四组日期主题＋四同义组；唯一相关新线索2602.01007v1完整题摘/作者仓库有限日期恢复。cs.CL Feb月首25题名仅有界查漏，不转逐项队列；无catchup。 结果：已检查；缺口：日程没有本北京Sunday计划公告是推断，不证明独立站零发布；ByteDistill公开日保留，不用Submitted作落窗依据。
+
 ## 3. 候选与判断
 
 | 材料 | 公开时间 | 项目贡献与评分 | 审阅结果 | Books决定 |
 | --- | --- | --- | --- | --- |
 | [Introducing the Codex app](https://openai.com/index/introducing-the-codex-app/) | 2026-02-02T08:00:00+08:00 | 原“单一初始任务”叙述可能被当作整个run只有一次外部指令→原文另披露随机持续continuation→长期评价需分离初始任务和controller续跑输入；2+2+2=6 | 深入完成 | 整合：`PLATFORM-EVALUATION-SYSTEM` [Ch66 长任务run contract](../../../../books/part-06-ai-infrastructure/66-evaluation-system.md)，实际两段及末注，root写后复核通过 |
+| [OpenAI February 2026恶用报告：Cyber Special Operations及共同案例](https://openai.com/index/disrupting-malicious-uses-of-ai-cyber-special-operations/) | 2026-02-01 | 单次拒绝不能证明跨模型/人工工作流终止→后续状态文本与部分OSINT匹配是受限反侧→分开拒绝事件与活动结果；2+2+2=6 | 标准完成 | 仅报告：具体部署观察不披露新的防护机制，无Books新写入 |
 
 ## 4. 证据与知识整合
 
@@ -55,7 +82,30 @@ Books写前实际比较Ch66 subject/harness及长任务段：已有task/instruct
 
 代表性准入前关闭：同页多线程、worktree、skills和automation说明产品组织方式；sandbox一节明确承接既有CLI模式，未披露新的隔离/授权contract或足以改变旧设计选择的反证，因此不作为其他候选。这不是因其为产品Blog而拒绝安全/可靠性贡献；若出现具体新的失效或contract改变须重开。Feb1八个安全页在本轮RSS中位于起点前，未见本窗新事件提示，未把前日处理结果或零候选数当作本日依据。
 
+
+### [OpenAI February 2026恶用报告：Cyber Special Operations及共同案例](https://openai.com/index/disrupting-malicious-uses-of-ai-cyber-special-operations/)
+
+本轮补充家族为 `SF-2026-OPENAI-DISRUPTING-MALICIOUS-USES-FEB2026`。八个官方页面共同指向Feb2026报告；RSS与页面均核Feb1，新增按完整自然日，不因原09:00起点排除。采用精确对象是2026-10-08访问的这些官方HTML，不声称早期PDF各版本已比较。[原件与停止](../_sources/daily-20260202/supplement-20261008.md)。
+
+Cyber Special Operations必要位置为Actor/Behavior、Operational Planning and Reporting及Impact。作者记录一次规划请求被拒绝，后来收到相关状态文本并发现部分跨站匹配；这足以反驳“此调用拒绝就证明整条活动结束”的推断。用户报告与局部外部匹配不因果证明替代模型如何执行、为何继续或真实规模，也不建立一般阻断率。未比较各安全系统效果，未复现调查；不读整份无关地缘历史附件。
+
+评分2+2+2=6仅针对这个部署反侧：拒绝事件与活动结果要分开，跨模型/人工与分发跨边界，限定可复用。其余案例只是共同家族的上下文/反侧，不分别评分：Romance的阶段命名沿用旧概念；Fish Food的同批传播差异提示分发混杂、没有识别因果；False Witness/Date Bait影响依赖用户自报；Silver Lining未确认发送结果。不能把安全题材、workflow标签或规模数字当新增机制。模型精确配置、完整安全检测协议、对照和整体影响为 `Not Disclosed`；普通硬件/SLO对该观察命题不适用。
+
+root已独立核Cyber Special必要核心及Fish Food/Romance反侧，首批准入与受限Source结论通过。Books决定为**仅报告**：新增的是具体部署观察，不是新的隔离、分类器、授权或跨模型防护机制；通用“局部拒绝不能外推端到端效果”不足以单凭此案例制造书稿diff。本轮无Books写入，原Codex Ch66有效结果不变。日级六部分验收已由非作者root实际通过。
+
 ## 5. 缺口与下一步
+
+### 补充窗口的实际限制与停点（2026-10-08）
+
+本轮普通可执行工作0；独立DAY验收已由非作者root实际通过，状态同步完成。原段落的“本窗可执行工作0/已通过”仍只指原稿，不替代本轮独立验收。
+
+新增具名外部保留为[Distilling Token-Trained Models into Byte-Level Models v1](https://arxiv.org/abs/2602.01007v1)：完整题摘新增token→byte逐步表征蒸馏与byte-SFT转换路径，不能以AI主题或125B数字决定准入。官方仅Submitted Feb1，不是公开日期；当前v2 Oct5未审未用。作者[初始仓库README](../_sources/daily-20260202/supplement-byte-initial-readme-20261008.md)只有Coming Soon，三commit有限记录的Initial Release Code为Feb11，不能恢复Feb1全文公开。已有限核官方v1/作者仓库与首版文本；需要可核Feb1全文公开日期及对应原稿身份（作者dated announcement或官方公告），不求小时。当前不列当窗候选、不评分、不进Books、不作正面证据；得到材料只重开此家族真实归属日。
+
+本补充窗口的Google/Meta/Qwen/Hunyuan/MiMo/MiniMax AgentTech历史切片及Seed type2有限返回差额，逐源实际停止见§2补充说明。有限native/metadata/日期主题恢复均已执行；接受本窗官方索引/RSS、保存的原目录或具名dated作者材料，不要求遍历全站。它们是历史材料保留项，不是尚未读完的候选，不能支持零发布、无遗漏或正面Coverage。Kimi PARL仅有日期未知线索/历史切片，未证实Feb1有新事件；若提供原始公开或实质修订日期与对应版本，只核真实归属窗口，不要求它恰为Feb1。
+
+原§5的SPARKLING/GLM-OCR描述冻结保留；本轮官方日期分别为Feb2、API为Feb3，因此不纳入新增Feb1窗口，也不重评分或迁动原候选。Qwen3-Coder-Next官方索引Feb2、MiMo HySparse Feb3及ByteDistill后续代码Feb11仅用于定点边界，不启动别的Daily。
+
+### 原稿终态保留（冻结，原窗口）
 
 本窗可执行工作：0。root对完整本日报六部分的日级验收、Ch66实际两段/末注及相邻衔接的非作者写后复核均已通过。没有未读候选或待扩张扫描；下面均是精确外部终态保留项，不支持本窗正面Evidence、Books采用或无遗漏声明。
 
@@ -68,6 +118,8 @@ Books写前实际比较Ch66 subject/harness及长任务段：已有task/instruct
 
 ## 6. 复核
 
+### 原稿有效复核（冻结，不代替补查DAY）
+
 复核者：root（非日报/本项Books写入作者）
 
 结论：通过
@@ -77,3 +129,12 @@ root实际核对14来源本日查询、有限停止与历史局限；重开官�
 代表性负侧抽检为Codex同页worktree/skills/automation/sandbox核心四组说明，已实际读；排除理由是未改变具体机制或contract，不以缺少受控实验自动拒绝。三项具名潜在的题摘/核心与日期身份全部独立核；其余窗外边界按14源实际目录/查询检查，不声称机构历年材料、所有Github提交或4363篇arXiv全量复核。机器校验仅辅助，语义验收来自以上实际非作者范围。
 
 机器校验：`python3 scripts/validate_research.py --report papers/2026/02/02/README.md`；限定报告/本轮sources/Ch66的 `git diff --check` 已通过。机器只检查结构和可判定一致性，不替代非作者语义验收。
+### 2026-10-08 补充复核
+
+复核者：root（非补查报告作者）
+
+结论：通过
+
+root实际读Cyber Special Feb1页面的Actor/Behavior/Operational Planning/Impact必要核心，并抽核Fish Food、Romance反侧，批准共同家族和6分受限部署证据；没有要求重复原Codex有效审阅或整份PDF。新增仅报告，不产生需POST的新书稿。日级实际重读六部分全部补充diff和全部14源停止说明，并核原始RSS1255中目标8项、Seed20/82跨Feb1边界、cs.CL首25有限题名及ByteDistill完整题摘/版本日期；其余同家族上下文按首包分层抽核范围复用，不称全部附件独核。原1候选行、原窗口、连续原§4实值保留及33本地引用0缺失已独立核，旧Codex有效Source/Books结果复用。终态日期/历史切片隔离不授零发布或无遗漏，root实际DAY通过后才同步完成态。
+
+完成态V3结构/一致性校验、本日限定unstaged/cached diff检查均通过。第一次校验发现第二来源表重复ID及新增§4标题未逐字匹配候选，已改为原14行表＋自包含补充逐源说明并统一新增标题，重新校验通过；没有修改公共校验器。完成态原窗口、原1候选行与连续原§4逐字比对通过，33本地引用0缺失。本轮未stage/commit/push，结束本日，不接别日。

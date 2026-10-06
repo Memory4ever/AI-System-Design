@@ -1,0 +1,1633 @@
+DrBencher: Can Your Agent Identify the Entity, Retrieve Its Properties and Do the Math?
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Related Work
+3 DrBencher’s Pipeline
+3.1 Algorithm Walkthrough
+3.2 Compositional Complexity Index
+3.3 Diversity Filter
+4 Experimental Setup
+4.1 Topic Entities
+4.2 Reasoning Templates
+4.3 Benchmark Domains
+5 Results
+5.1 Human Evaluations
+Annotator qualifications, annotation protocol and evaluation criteria
+5.2 Automatic Evaluations
+5.3 Benchmark Distinctiveness
+6 Conclusion
+References
+A Model Configuration and Verification Hyperparameters
+B Knowledge-Graph Parameters
+C Infrastructure
+D Topic Entities
+Biochemistry (20 topics).
+Financial (20 topics).
+Geophysical (39 topics).
+History (20 topics).
+Security (20 topics).
+E Data Sources
+Biochemistry.
+Financial.
+Geophysical.
+History.
+Security.
+F Human Annotation Interface
+G Inter-Annotator Agreement Details
+H Automatic Evaluation Prompt and Inference Configuration
+I Statistical Significance Tests
+J CCI Distribution and Domain-Controlled Accuracy
+K Benchmark Domain Samples
+License: CC BY-SA 4.0
+arXiv:2604.09251v1 [cs.AI] 10 Apr 2026
+DrBencher: Can Your Agent Identify the Entity, Retrieve Its Properties and Do the Math?
+Young-Suk Lee
+Ramón Fernandez Astudillo
+Radu Florian
+Email: ysuklee@us.ibm.com
+Abstract
+Deep research agents increasingly interleave web browsing with
+multi-step computation, yet existing benchmarks evaluate these
+capabilities in isolation, creating a blind spot in assessing
+real-world performance. We introduce DrBencher, a synthetic
+benchmark generator for questions that require both browsing and
+computation. It enforces four criteria: verifiability (gold
+answers are computed by executing parameterized code over
+knowledge-graph values), complexity (multi-hop entity
+identification, property retrieval, and domain-specific computation),
+difficulty (a two-stage verification cascade filters out
+questions solvable by the generating model), and diversity (a
+greedy max-min embedding filter maximizes coverage). These criteria
+are realized via a unified answer-first pipeline spanning five
+domains: biochemistry, financial, geophysical, security, and history.
+Human evaluation shows 76% validity (84% excluding stale data), with
+35% of errors due to outdated knowledge-graph entries, highlighting
+an inherent limitation of systems that reason over evolving data.
+Automatic evaluation shows that the strongest frontier model achieves
+only 20% answer accuracy. Compared to manually constructed
+benchmarks (BrowseComp+, MATH-500, GPQA), DrBencher achieves
+the highest semantic diversity.
+1 Introduction
+Large language models (LLMs) have rapidly advanced from single-turn question answering to multi-step deep research agents that orchestrate web search, code execution, and iterative reasoning to answer complex questions (Yao et al., 2023; Mialon et al., 2024). Evaluating such agents demands benchmarks whose questions simultaneously require browsing and computation.
+Curated multi-hop datasets such as HotpotQA (Yang et al., 2018), MuSiQue (Trivedi et al., 2022), and 2WikiMultihopQA (Ho et al., 2020) were constructed for a prior generation of models and are increasingly solvable by current systems. The recent BrowseComp (Wei et al., 2025) and FRAMES (Krishna et al., 2025) benchmarks target agentic browsing and multi-hop factual retrieval, yet their questions focus on a single skill, i.e. browsing. Static benchmarks such as MMLU (Hendrycks et al., 2021a) and MATH (Hendrycks et al., 2021b) risk contamination through training-set memorization Yang et al. (2023); Zhao et al. (2025). Answers to fixed-set benchmarks leak onto the public web; frontier models have been observed to independently identify which benchmark they are running and locate the answer key (Coleman, 2026).
+Domain D∈D\in {bio, fin, geo, hist, sec}, Topic T∈T\in {mountains, tech, enzymes, CVEs, wars, …}
+Phase 0 — Seed Entity Discovery & Gold Answer Computation
+∙\bullet
+Query Wikidata for typed entities
+→\to Mount Fuji
+∙\bullet
+Fetch multi-hop KG chains + domain data
+→\to Fuji →\to located in →\to Shizuoka →\to …
+∙\bullet
+Select reasoning template
+→\to atmospheric_pressure
+∙\bullet
+Execute code →\to gold answer a∗a^{*}
+→\to “63.4 kPa”
+Phase 1 — Entity Clue Derivation from KG Chains
+∙\bullet
+Derive natural-language description per chain about the seed entity
+∙\bullet
+Require clues spanning ≥\geq3 distinct chains
+e.g. Clue 1: “Located in a prefecture whose capital hosted the 1957 National Sports Festival”
+Clue 2: “Highest peak on an island where the Jomon period began”
+Phase 1.5 — Fact Verification against Wikipedia
+∙\bullet
+For each derived fact, verify claim is supported by the corresponding Wikipedia article
+∙\bullet
+Reject ungrounded facts; require ≥\geq3 survivors
+e.g. “hosted the 1957 National Sports Festival” ✓\checkmark confirmed in Wikipedia on Shizuoka;
+“famous for cherry blossoms” ×\times rejected
+Phase 2 — Question Composition
+Compose a natural-language question from derived entity clues and the reasoning template
+e.g. “It is a mountain located in a prefecture whose capital hosted the 1957 National Sports Festival. It is the highest peak on an island where the Jomon period began. What is the atmospheric pressure at its summit in kPa?”
+Phase 3 — Programmatic QA Validation
+∙\bullet
+Re-compute the answer (must match a∗a^{*})
+→\to 63.4 kPa == a∗a^{*} ✓\checkmark
+∙\bullet
+Gold entity/value leak check in the question
+→\to “Mount Fuji” not in question ✓\checkmark
+∙\bullet
+Question ambiguity check →\to unique answer
+→\to clues uniquely identify Mount Fuji ✓\checkmark
+Two-Stage Difficulty Verification — ensure challengingness of each QA pair
+V1 Closed-book:
+k1k_{1} samples, no tools;
+discard if acc≥τ1\mathrm{acc}\geq\tau_{1}
+(too easy from parametric knowledge)
+V2 Tool-augmented:
+k2k_{2} samples with browser + Python tools;
+discard if acc≥τ2\mathrm{acc}\geq\tau_{2}
+(solvable with tools)
+Diversity Filter
+Graph-based max-min embedding filter
+selects maximally spread subset from survivors
+Benchmark 𝒬∗\mathcal{Q}^{*}
+×\times discard×\times discard×\times discardVerifiabilityComplexityCorrectnessDifficultyDiversity
+Figure 1: The unified DrBencher pipeline, shared across all five domains
+(biochemistry, financial, geophysical, history, security).
+A running example using Mount Fuji (atmospheric pressure template) illustrates each stage.
+Phases 0–2 ensure verifiability (code-executed gold answers from KG-sourced values)
+and complexity (multi-hop entity identification, property retrieval, and domain-specific reasoning). Phase 3 programmatically validates answer correctness,
+entity-name leak absence, and clue uniqueness.
+Two-stage verification calibrates difficulty:
+V1 (closed-book) and V2 (tool-augmented) discard easy questions.
+A diversity filter selects the maximally diverse questions. Dashed arrows indicate discard paths.
+There is a growing need for benchmarks that test multi-skill reasoning
+and that can be instantiated fresh on demand, eliminating static answer keys
+susceptible to leakage or reverse-engineering. In this paper, we
+propose DrBencher (Deep Research Benchmarker), a novel synthetic benchmark generator for
+questions that require both browsing and computation.
+Figure 1 illustrates the overall pipeline. We
+identify four optimization axes and formalize them as criteria for
+synthetic benchmark generation. Verifiability concerns the
+answer: every gold answer is deterministically checkable by
+executing parameterized code against KG-sourced
+values (Vrandečić and Krötzsch, 2014), eliminating subjective judgment.
+Complexity concerns the question: each question
+demands entity identification from multi-hop KG clues, retrieval of
+quantitative properties, and computation over those values—no stage
+can be skipped. We quantify this with a Compositional Complexity
+Index (CCI =E+P=E+P), where EE counts entities and PP counts
+property lookups. CCI is model-independent and correlates with
+extrinsic difficulty (Table 6). Difficulty: a
+two-stage self-referential filter discards questions solvable by the
+generating model, either closed-book or with tool-augmented
+agents (Li et al., 2025). Diversity: a graph-based
+max-min embedding filter (Friedman and Dieng, 2023) maximizes coverage
+of entities, templates, and linguistic expression. We evaluate
+DrBencher along three axes: validity—human
+annotators rate 76% of question and answer pairs as valid (84%
+excluding stale data), with 35% of all errors traced to outdated
+knowledge-graph entries; difficulty—the strongest frontier
+model identifies entities 86% of the time yet achieves only 20%
+accuracy, with property retrieval as the primary bottleneck; and
+diversity—compared to manually constructed benchmarks
+(BrowseComp+, MATH-500, GPQA), DrBencher attains the highest
+semantic diversity.
+We make the following new contributions:
+•
+Multi-skill compositional questions.
+To our knowledge, this is the first benchmark generator that combines
+indirect identification of withheld entities from KG-chain clues with
+domain-specific quantitative computation over their
+properties. Existing multi-hop datasets (Yang et al., 2018; Trivedi et al., 2022; Ho et al., 2020; Press et al., 2023) test
+retrieval composition but not mathematical or scientific
+computation. Conversely, mathematical
+benchmarks (Hendrycks et al., 2021b; Chen et al., 2021) test computation
+but not information retrieval.
+•
+Benchmark generation as multi-criterion enforcement. We
+frame synthetic benchmark construction around four jointly enforced
+criteria. Prior work on synthetic benchmarks—notably
+AutoBencher (Li et al., 2025)—addresses topic coverage and
+difficulty but neither enforces programmatic verifiability nor
+controls multi-skill compositional complexity measured by
+model-independent metric Compositional Complexity Index (CCI).
+•
+Human evaluation and analysis.
+Seven domain experts reviewed the full set of 354 questions, yielding
+76% validity—or 84% once errors attributable to stale database
+entries are set aside. The 86 invalid questions mostly fall into three
+categories: stale KG data (35%), question ambiguity (28%), and LLM
+hallucination (22%).
+•
+Contamination resistance by design. Each benchmark instance can be generated on demand from live KG data with programmatically verified reference answers, eliminating the static answer key that enables leakage and reverse-engineering in fixed-set benchmarks (Coleman, 2026).
+2 Related Work
+Multi-hop question answering.
+HotpotQA (Yang et al., 2018), MuSiQue (Trivedi et al., 2022),
+and 2WikiMultihopQA (Ho et al., 2020) test multi-hop
+retrieval over Wikipedia, while Bamboogle (Press et al., 2023)
+and StrategyQA (Geva et al., 2021) target compositionality that
+resists single-search shortcuts. DROP (Dua et al., 2019) tests
+numerical reasoning over a given paragraph, requiring no browsing or
+entity identification. Our benchmark unifies these threads: agents
+must identify an unnamed entity and apply quantitative
+reasoning to its properties through multi-hop retrieval.
+Knowledge-graph–based question generation.
+LC-QuAD (Trivedi et al., 2017),
+LC-QuAD 2.0 (Dubey et al., 2019), and
+KQA Pro (Cao et al., 2022) generate questions by sampling SPARQL
+templates over Wikidata or DBpedia. These benchmarks evaluate
+structured-query translation rather than entity identification from
+indirect clues or quantitative reasoning beyond the KG. Our pipeline
+uses Wikidata differently: KG chains supply both entity-identification
+clues and numerical properties, while domain-specific templates
+perform the computation. To guard against KG noise, all clue facts
+extracted from chains are verified against the corresponding Wikipedia
+articles before question composition.
+Benchmarks for agentic and deep-research systems.
+GAIA (Mialon et al., 2024), BrowseComp (Wei et al., 2025), and
+FRAMES (Krishna et al., 2025) evaluate tool-augmented agents but
+focus exclusively on retrieval—whether through web browsing or
+retrieval-augmented lookup—without requiring computation. Our
+benchmark demands both: browsing to resolve the unnamed entity and its
+properties, and code execution to derive the numerical answer,
+ensuring that neither skill alone suffices.
+Synthetic and dynamic benchmark generation.
+DyVal (Zhu et al., 2024) and LiveBench (White et al., 2024)
+generate fresh evaluation instances to resist
+contamination. AutoBencher (Li et al., 2025) optimizes for
+salience, difficulty, and novelty, while Zero-shot
+Benchmarking (Pombal et al., 2025) uses LLMs to both generate
+synthetic test data and judge responses, requiring only two prompts
+per task. These approaches rely on model-based scoring; our pipeline
+instead produces programmatically verifiable gold answers. Unlike
+single-call benchmarks, our questions couple multi-hop entity
+identification and property retrieval with quantitative reasoning,
+requiring tool-augmented agents to solve.
+Mathematical and scientific reasoning.
+GSM8K (Cobbe et al., 2021), MATH (Hendrycks et al., 2021b), and
+GPQA (Rein et al., 2024) test mathematical and scientific reasoning
+in isolation: each problem fully specifies all inputs. Our questions
+withhold the entity identity, coupling retrieval with reasoning
+in a way that these computation-only benchmarks do not.
+Benchmark
+Multihop
+HybridQ
+Prog. gold
+Syn
+KG
+Comp. calib.
+HotpotQA (Yang et al., 2018)
+✓
+✗
+✗
+✗
+✗
+✗
+MATH (Hendrycks et al., 2021b)
+✗
+✗
+✓
+✗
+✗
+✗
+MuSiQue (Trivedi et al., 2022)
+✓
+✗
+✗
+✗
+✗
+✗
+LC-QuAD (Trivedi et al., 2017)
+✓
+✗
+✗
+✗
+✓
+✗
+GAIA (Mialon et al., 2024)
+✓
+✗
+✗
+✗
+✗
+✗
+AutoBencher (Li et al., 2025)
+✗
+✗
+✗
+✓
+✗
+✗
+BrowseComp (Wei et al., 2025)
+✓
+✗
+✗
+✗
+✗
+✗
+DrBencher
+✓
+✓
+✓
+✓
+✓
+✓
+Table 1: Comparison of DrBencher with related benchmarks. HybridQ = each question jointly requires retrieval and computation, Prog. gold = programmatic gold answer, Syn = questions are synthetically generated, KG = clue facts verified against knowledge graph and Wikipedia, Comp. calib. = complexity calibration. ✓ = supported, ✗ = not supported.
+3 DrBencher’s Pipeline
+The DrBencher pipeline follows an answer-first design:
+ground-truth data is fetched from authoritative sources, the gold
+answer is computed before the question is composed, and every
+generated question passes through programmatic validation, two-stage
+difficulty verification, and a diversity filter before entering
+the final benchmark.
+Algorithm 1 DrBencher Unified Algorithm.
+Input: Domain D∈{bio,fin,geo,hist,sec}D\in\{\texttt{bio},\texttt{fin},\texttt{geo},\texttt{hist},\texttt{sec}\},
+topic set 𝒯\mathcal{T}, template bank BB, tool stack 𝒮D\mathcal{S}_{D}
+Param: V1 samples (k1k_{1}) / threshold (τ1\tau_{1}); V2 (k2k_{2}, τ2\tau_{2})
+Output: Final benchmark Q∗Q^{*}
+1
+Q∗←∅Q^{*}\leftarrow\emptyset
+2
+foreach topic T∈𝒯T\in\mathcal{T} do
+3
+ℰ←FetchEntities​(D,T)\mathcal{E}\leftarrow\textsc{FetchEntities}(D,T)
+4
+foreach entity e∈ℰe\in\mathcal{E} do
+5
+e.chains←FetchChains​(e,hops=2)e.\texttt{chains}\leftarrow\textsc{FetchChains}(e,\text{hops}{=}2); e.data←FetchDomainData​(D,e)e.\texttt{data}\leftarrow\textsc{FetchDomainData}(D,e)
+6
+t←SelectTemplate​(B,e)t\leftarrow\textsc{SelectTemplate}(B,e); if t=nilt=\texttt{nil} then continue
+7
+𝒂∗\boldsymbol{a^{*}} (gold answer) ←Execute(t,e.data)\leftarrow\textsc{Execute}(t,e.\texttt{data})
+8
+F←DeriveClues(e.chains)F\leftarrow\textsc{DeriveClues}(e.\texttt{chains}); F′←GroundViaWikipedia(F,e.chains)F^{\prime}\leftarrow\textsc{GroundViaWikipedia}(F,e.\texttt{chains})
+9
+if FF does not span ≥\geq3 chains or |F′|<3|F^{\prime}|<3 then continue
+10
+𝒒\boldsymbol{q} (question) ←LLM-Compose​(F′,t)\leftarrow\textsc{LLM-Compose}(F^{\prime},t); if q=nilq=\texttt{nil} then continue
+11
+add (q,a∗,t,e)(q,a^{*},t,e) to candidates
+12
+foreach candidate (q,a∗,t,e)(q,a^{*},t,e) do
+13
+discard if Execute(t,e.data)≠a∗\textsc{Execute}(t,e.\texttt{data})\neq a^{*} // answer mismatch
+14
+discard if e.namee.\texttt{name} or a∗a^{*} appears in qq // entity/value leak
+15
+discard if qq is ambiguous // non-unique answer
+16
+foreach survivor (q,a∗,t,e)(q,a^{*},t,e) do
+17
+discard if acc of k1k_{1} closed-book samples ≥τ1\geq\tau_{1} // V1: too easy
+18
+discard if acc of k2k_{2} samples from Agent​(q,𝒮D)≥τ2\textsc{Agent}(q,\mathcal{S}_{D})\geq\tau_{2} // V2: tool-solvable
+19
+Q∗←Q∗∪Q^{*}\leftarrow Q^{*}\cup survivors
+20
+Q∗←DiversityFilter​(Q∗)Q^{*}\leftarrow\textsc{DiversityFilter}(Q^{*})
+21
+return Q∗Q^{*}
+3.1 Algorithm Walkthrough
+We describe Algorithm 1 (see also Figure 1) in detail. Given a topic from a domain (e.g., mountains from geophysical, CVEs from security), the pipeline proceeds as follows.
+Phase 0: Entity Discovery and Reasoning-Context Selection
+(lines 3–7). We query the Wikidata SPARQL endpoint for entities
+of the target type that possess quantitative properties (population,
+area, elevation, coordinates, etc.). For each entity, we fetch
+multi-hop knowledge-graph chains—two-hop paths radiating from the
+entity through diverse predicates—and retrieve its numerical
+properties. A reasoning template is then selected from one of several
+template families: currently quantitative modeling
+(e.g., exponential growth, population density, compound interest) and
+scientific inference (e.g., boiling point at altitude,
+atmospheric pressure, great-circle distance), though new families can
+be added without changing the pipeline. The gold answer is computed
+deterministically by executing the template’s formula over KG-sourced
+values.
+Phase 1: Clue Fact Extraction (lines 8–9). An LLM extracts
+one descriptive fact per Wikidata chain about the seed entity,
+selecting specific, low-frequency predicates (e.g., “hosted the 1964
+Olympics,” “founded by Romulus”) over generic ones. Each fact is
+grounded: we verify that the claimed triple exists in the chain data
+and that the fact is supported by the corresponding Wikipedia
+article. Facts that fail grounding are rejected. At least three
+grounded facts spanning three distinct chains are required to proceed.
+Phase 2: Question Composition (lines 10–11). A second LLM
+call composes a natural-language question that (i) describes the
+unnamed entity using the grounded clue facts from Phase 1, and
+(ii) poses the quantitative reasoning task from Phase 0. To solve the
+question, an agent must: (1) identify the entity from the clues,
+(2) retrieve its quantitative properties, and (3) execute the
+computation.
+Phase 3: Programmatic QA Validation (lines 12–15). Each
+candidate question is subjected to three programmatic checks: the gold
+answer is reproducible by re-executing the computation code, and the
+entity name does not leak into the question text, and the question
+should not be ambiguous. Questions that fail any check are discarded.
+Verification Stages V1/V2 (lines 16–18). Surviving
+questions are subjected to two verification rounds. In V1, the
+generating model is prompted k1k_{1} times in closed-book mode (no
+tools, no context); questions answered correctly above
+threshold τ1\tau_{1} are discarded as too easy. In V2, the model is
+given access to domain tools, a browser, and a Python interpreter
+across k2k_{2} independent trials; questions solved above τ2\tau_{2} are
+discarded.
+Diversity Filter (line 20).
+A graph-based filter removes near-duplicate questions from the surviving pool, selecting an approximately maximum independent set over cosine-dissimilarity edges (Section 3.3).
+3.2 Compositional Complexity Index
+We quantify the intrinsic complexity of each generated question with a
+Compositional Complexity Index CCI⁡(q)=E+P\mathrm{CCI}(q)=E+P.
+Number of entities (EE). The number of real-world entities
+the agent must identify from multi-hop clue facts. Single-entity
+questions have E=1E{=}1; comparative questions requiring two entities
+have E=2E{=}2. For example, in the pendulum-drift question of
+Figure 2 (a), E=1E{=}1: the model must discover the
+entity identity (Zugspitze) from the clues.
+Number of properties (PP). The number of distinct Wikidata
+property types the agent must retrieve per entity. In
+Figure 2 (a), P=1P{=}1: the property elevation
+(h=2,962h{=}2{,}962 m) has to be retrieved. In
+Figure 2 (b), two properties, population
+and area, have to be retrieved, i.e. P=2P{=}2.
+(a) E=1,P=1E{=}1,\;P{=}1
+“A pendulum clock calibrated at sea level is taken to the summit of
+a mountain that hosted the 1936 Winter Olympics and is the highest
+peak in Germany. How many seconds does it lose per day?”
+Entity:Browse clues →\toZugspitzeProperty:P2044 (elevation) →\toh=2,962h=2{,}962 mCCI =1+1=2=1+1=2Computation:gh=g0​(RR+h)2g_{h}{=}g_{0}(\frac{R}{R+h})^{2}→\to 9.801g0/gh\sqrt{g_{0}/g_{h}}→\to 1.00047×(⋅−1)86400\!\times\!(\cdot{-}1)→\to40.28 s(b) E=1,P=2E{=}1,\;P{=}2
+“This place’s official language is Spanish, it is the capital of
+Bío Bío Province, and its province borders Loncopué
+Department. Compute its population density in people/km2.”
+Entity:Browse clues →\toLos Ángeles, ChileProperties:P1082 (population)→\to 143,023P2046 (area)→\to 29.99 km2CCI =1+2=3=1+2=3Computation:143,023÷29.99143{,}023\div 29.99→\to4,769.02
+Figure 2: CCI illustrated for two questions.
+(a) E=1,P=1E{=}1,P{=}1 (CCI == 2): the model identifies
+one entity (Zugspitze) and retrieves one property (elevation).
+(b) E=1,P=2E{=}1,P{=}2 (CCI == 3): the model identifies
+one entity (Los Ángeles, Chile) but must retrieve two
+properties (population and area) to apply the population density
+template.
+CCI is model-independent and correlates well with extrinsic difficulty, as
+shown in Table 6.
+3.3 Diversity Filter
+We enforce question diversity via a graph-based filter that
+approximates a maximum independent set over a near-duplicate
+graph. We embed each candidate question with
+all-MiniLM-L6-v2 (Reimers and Gurevych, 2019) (d=384d{=}384) and ℓ2\ell_{2}-normalize the
+resulting vectors. Let 𝒞={q1,…,qn}\mathcal{C}=\{q_{1},\dots,q_{n}\} be the
+candidate questions and ϕ⁡(q)∈ℝ384\phi(q)\in\mathbb{R}^{384} the unit-norm
+embedding of qq. We define the cosine dissimilarity δ⁡(qi,qj)=1−ϕ​(qi)⊤​ϕ​(qj)\delta(q_{i},q_{j})=1-\phi(q_{i})^{\top}\phi(q_{j}) and construct an undirected graph G=(𝒞,E)G=(\mathcal{C},E) where (qi,qj)∈E(q_{i},q_{j})\in E iff δ⁡(qi,qj)<τd\delta(q_{i},q_{j})<\tau_{d} (i.e., the pair is too similar). The filter iteratively removes the most redundant question, the one connected to the largest number of near-duplicate neighbors (ties broken by total cosine dissimilarity to those neighbors) — and updates the adjacency graph until no near-duplicate pairs remain. This procedure approximates a minimum vertex cover over the near-duplicate graph; the surviving nodes form the complementary approximate maximum independent set, i.e., the largest subset in which every pair satisfies δ⁡(qi,qj)≥τd\delta(q_{i},q_{j})\geq\tau_{d} (τd\tau_{d} is set to 0.30.3).
+4 Experimental Setup
+We instantiate the pipeline described in Section 3 across five benchmark domains biochemistry, financial, geophysical, history, security. All generation, verification, and judging use a single model: gpt-oss-120b (OpenAI, 2025a), a 120-billion-parameter Mixture-of-Experts tool-calling agentic language model served via vLLM (Kwon et al., 2023). Model serving (Table 8), verification hyperparameters (Table 9), KG parameters, and infrastructure details are provided in Appendices A–C.
+4.1 Topic Entities
+Each domain defines a set of topic entities that determine which seed entities enter the pipeline (see Appendix D for the full listing).
+Regardless of domain, every entity is resolved to a Wikidata QID, which serves as the common key for KG-chain extraction and clue grounding.
+The entry point varies by domain: geophysical categories issue SPARQL queries filtered by quantitative properties and minimum sitelink count (≥20{\geq}20); the other four domains resolve domain-specific identifiers—SEC EDGAR tickers, NVD CVE IDs, PubChem/UniProt accessions, or Wikidata temporal entities—to their corresponding QIDs.
+Static seed lists curated from authoritative registries serve as fallbacks when dynamic discovery yields insufficient candidates.
+All five domains converge to the same downstream pipeline: Wikidata QID →\to multi-hop KG chains →\to clue fact extraction →\to Wikipedia grounding; only the entry point to the QID differs. A new topic requires only a Wikidata type identifier or a seed list, with no changes to the pipeline. This allows the benchmark to scale both sample count and topical diversity as needed.
+4.2 Reasoning Templates
+We instantiate reasoning templates across multiple template families, as illustrated in Table 2. Template–entity compatibility is governed by which quantitative properties each entity type possesses: countries and cities are routed to quantitative-modeling templates (population, area, GDP), while mountains use elevation-based scientific-inference templates, planets use mass/radius templates, and cities with coordinate data are eligible for haversine distance calculations. Each entity may generate up to 3 questions from distinct templates, ensuring template diversity within a topic.
+Family
+Template
+Computation
+Properties
+Unit
+Quantitative modeling
+Exponential growth
+⌊P​(1+r)t⌉\lfloor P(1{+}r)^{t}\rceil
+P1082
+people
+Quantitative modeling
+GDP per capita
+G/PG/P
+P2131, P1082
+USD
+Scientific inference
+Surface gravity
+G​M/r2GM/r^{2}
+P2067, P2120
+m/s2
+Scientific inference
+Atmospheric pressure
+P0e−Mgh/RT/1000P_{0}e^{-Mgh/RT}/1000
+P2044
+kPa
+Table 2: Representative reasoning templates (4 of 37)
+4.3 Benchmark Domains
+All five domains share Wikidata and Wikipedia as base knowledge sources for entity discovery, KG-chain extraction, and fact grounding; domain-specific APIs supply the quantitative data needed for gold-answer computation (Appendix E). Table 3 summarizes the benchmark before human validations: composition after diversity filtering (a), Compositional Complexity Index (CCI == E+PE{+}P) and KG chain statistics (b).
+(a) Benchmark statistics
+Domain
+QAs
+Tmpl.
+Top.
+Art.
+Biochem
+53
+21
+20
+491
+Financial
+104
+35
+47
+558
+Geophysical
+76
+33
+26
+405
+History
+73
+26
+19
+388
+Security
+48
+14
+23
+140
+Total
+354
+129
+135
+1982
+(b) CCI and KG chain statistics
+Domain
+E=1E{=}1
+E=2E{=}2
+P¯\bar{P}
+CCI
+CCI¯\overline{\text{CCI}}
+C/Q
+H/C
+H/Q
+Biochem
+31
+22
+1.5
+2–4
+2.9
+10.9
+1.0
+10.8
+Financial
+87
+17
+1.8
+2–6
+2.9
+17.2
+0.6
+10.3
+Geophysical
+61
+15
+1.2
+2–6
+2.5
+13.0
+0.6
+7.9
+History
+51
+22
+1.7
+2–10
+3.1
+4.3
+0.8
+3.5
+Security
+27
+21
+2.0
+2–5
+3.4
+13.2
+0.4
+5.4
+Total
+257
+97
+1.7
+2–10
+2.9
+11.7
+0.7
+7.6
+Table 3: Benchmark summary.
+(a) Tmpl.: unique templates; Top.: entity topics; Art.: grounding articles.
+(b) EE: entities; P¯\bar{P}: mean property lookups; CCI == E+PE{+}P; C/Q: chains/question; H/C: hops/chain; H/Q: hops/question.
+5 Results
+We evaluate DrBencher along three axes:
+validity—human evaluation of question-answer pair qualities
+(Section 5.1); difficulty—automatic
+evaluation against 3 frontier and 3 open weight models
+(Section 5.2); and diversity—post-hoc
+diversity score comparison to manually constructed benchmarks
+BrowseComp+, MATH-500, GPQA
+(Section 5.3).
+5.1 Human Evaluations
+Annotator qualifications, annotation protocol and evaluation criteria
+We recruit seven expert annotators, each with over five years of professional experience in QA system evaluation and linguistic annotations such as semantic parsing and benchmark creation. Each of the five benchmark domains is independently assigned to two annotators, yielding two judgments per question. Annotators use a custom Streamlit-based annotation tool that, for each question, displays: (i) the generated question text, (ii) the gold answer, (iii) the gold entity chain with entity identification and property lookup steps, (iv) the computation code, and (v) grounding Wikipedia articles. Annotators evaluate each QA pair on two axes:
+1.
+Entity Identification Accuracy — verify that the entity identified in the gold entity chain is correct given the clue facts.
+2.
+Question Clarity — verify that the question is unambiguous and contains no erroneous descriptions.
+Each item receives a binary Correct/Incorrect verdict; Incorrect items require a free-text comment describing the issue.
+The annotation interface is shown in Figure 3 (Appendix F).
+Accuracy and Error Analysis.
+Table 4 summarizes the results: of the 354 generated questions reviewed by annotators and adjudicated by the first author, 76% are valid (84% when stale database entries are excluded).
+Error analysis reveals three primary error types: (i) stale or incorrect KG data (DB, 30 errors, 35% of all errors), concentrated in financial filings where XBRL values change quarterly; (ii) ambiguous or non-unique entity descriptions (Amb, 24 errors, 28%), where clue facts do not sufficiently distinguish the target entity; and (iii) LLM hallucination (LLM, 19 errors, 22%).
+LLM hallucination manifests at two pipeline stages. In Phase 1
+(fact extraction), the LLM reads a KG triple correctly but
+overstates its semantics in natural language—e.g., Wikidata P703
+(found in taxon) records that a compound was detected in
+an organism, yet the LLM renders this as “produced by,” implying a
+biosynthetic origin that does not hold (7 of the biochemistry errors).
+In Phase 2 (question composition), the LLM fabricates
+relationships absent from any extracted fact—e.g., inventing “twin
+headlands” between two unrelated capes, or attributing one entity’s
+properties to another in a comparative question. Multi-hop property
+flattening (MH, 4 errors) occurs when a property of an
+intermediate entity in a 2-hop chain is incorrectly attributed
+to the target entity. For example, Wikidata records that
+Nufenen Pass lies in the Lepontine Alps, which in turn
+share a boundary with the Uri Alps. The generated question
+drops the intermediary range and instead states that Nufenen Pass
+itself “shares a boundary with the Uri Alps.”
+Inter-annotator agreement.
+We compute inter-annotator agreement for all five domains with two
+independent annotators per domain, pooled over 159 items; details are
+shown in Table 10 (Appendix G). The
+overall raw agreement is 76.1% with Krippendorff’s α=0.30\alpha=0.30.
+Following Krippendorff (2018), α<0.667\alpha<0.667 signals
+insufficient reliability for unadjudicated labels; our α=0.30\alpha=0.30
+is typical of error-detection tasks with low base rates
+(∼20{\sim}20–2525%). Agreement varies across domains, motivating
+third-party adjudication: the first author reviewed all annotations
+and rendered the final verdict.
+Domain
+nn
+Err
+DB
+LLM
+MH
+Amb
+Ent
+Acc
+Acc*
+Geophysical
+76
+11
+1
+7
+2
+1
+0
+85.5
+86.8
+History
+73
+11
+4
+2
+1
+3
+1
+84.9
+90.4
+Biochemistry
+53
+16
+2
+7
+1
+3
+3
+69.8
+73.6
+Security
+48
+13
+1
+3
+0
+7
+2
+72.9
+75.0
+Financial
+104
+35
+22
+0
+0
+10
+3
+66.3
+87.5
+Total
+354
+86
+30
+19
+4
+24
+9
+75.7
+84.2
+Table 4: Human verification accuracy and error breakdown. nn: questions after diversity filtering; Err: total errors; Acc: accuracy (%); Acc*: accuracy excluding DB errors (%).
+Error categories—DB: incorrect/stale KG data; LLM: LLM hallucination in fact extraction or question composition; MH: multi-hop property flattening; Amb: ambiguous or non-unique entity description; Ent: entity misidentification.
+5.2 Automatic Evaluations
+We evaluate three proprietary (Claude
+Opus 4.6 (Anthropic, 2026),
+Gemini 2.5 Flash (Comanici et al., 2025),
+GPT-5.2 (OpenAI, 2025b)) and three open-weight
+(Llama 4 Maverick (Meta AI, 2025),
+Qwen3-30B-A3B (Yang et al., 2025),
+Mistral-Small-3.2-24B (Mistral AI, 2025)) models on the 268
+human-validated questions. All evaluations use a
+three-sample protocol (n=3n{=}3) with default API temperature and
+domain-appropriate tolerance (2% relative, exact match for
+history). Table 5.2 reports accuracy; the
+evaluation prompt and inference configuration are in
+Appendix H; pairwise McNemar’s tests are in
+Appendix I. The best frontier model
+achieves only 20% answer accuracy across the 5 domains, suggesting
+that the benchmark is quite challenging.
+The gap between entity
+identification and answer accuracy—86% vs. 20% for the best
+model—indicates that property retrieval and computation, not entity
+identification, are the primary bottlenecks.
+Table 6 reveals a monotonic decline in accuracy as CCI
+increases. A Jonckheere–Terpstra trend
+test (Jonckheere, 1954; Terpstra, 1952) confirms a
+significant decreasing trend across CCI levels (Z=6.75Z=6.75, p<0.001p<0.001, one-sided), corroborated by Spearman’s ρ=−0.22\rho=-0.22 (p<0.001p<0.001, N=268N{=}268). The CCI trend largely explains the low answer
+accuracy of financial and security domains. Security averages
+CCI==3.49, with 91% of questions at CCI≥\geq3, followed by
+financial CCI==2.84. A residual domain-specific effect persists even
+after controlling for CCI (Appendix J): at
+CCI==2, financial (6.0%) and security (5.6%) still trail
+biochemistry (34.7%) and history (37.5%), likely reflecting the
+obscurity of SEC EDGAR XBRL tags and NVD/CVSS vulnerability data in
+LLM pretraining corpora.
+Biochem
+Financial
+Geophysical
+History
+Security
+All
+nn
+37
+69
+65
+62
+35
+268
+Model
+Ent
+Ans
+Ent
+Ans
+Ent
+Ans
+Ent
+Ans
+Ent
+Ans
+Ent
+Ans
+Claude Opus 4.6
+80.2
+35.1
+94.2
+10.6
+77.4
+20.0
+82.8
+30.6
+98.1
+4.8
+86.1
+20.1
+Gemini 2.5 Flash
+57.7
+28.8
+88.9
+7.7
+72.3
+26.7
+79.6
+24.7
+81.0
+1.9
+77.4
+18.4
+GPT-5.2
+67.6
+14.4
+93.7
+3.9
+79.5
+10.3
+77.4
+22.0
+87.6
+0.0
+82.1
+10.6
+Llama 4 Maverick
+64.0
+27.9
+82.1
+6.3
+69.7
+21.5
+81.7
+30.6
+74.3
+1.0
+75.5
+17.9
+Qwen3-30B-A3B-Thinking
+55.0
+14.4
+80.7
+2.9
+39.0
+5.6
+68.3
+24.2
+70.5
+1.9
+62.8
+10.0
+Mistral-Small-3.2-24B-Instruct
+59.5
+10.8
+81.2
+2.4
+59.5
+2.1
+71.5
+18.3
+81.0
+0.0
+70.6
+6.8
+Avg
+64.0
+21.9
+86.8
+5.6
+66.2
+14.4
+76.9
+25.1
+82.1
+1.6
+75.7
+14.0
+Table 5: Entity identification (Ent) and answer accuracy (Ans) (%) across five DrBencher domains. Top: proprietary models; bottom: open-weight. Each model accuracy is the average of 3 runs.
+McNemar’s test (All, N=268N{=}268, majority vote over 3 runs): Opus, Gemini, and Llama form a statistical tie (pairwise p>>0.05); Opus significantly outperforms GPT5.2, Qwen, and Mistral at p<<0.001.
+EE
+PP
+CCI
+nn
+Op.
+Gem.
+GPT
+Llm.
+Qwn.
+Mst.
+Avg
+1
+1
+2
+137
+28.2
+23.8
+15.3
+24.1
+12.2
+9.0
+18.8
+1
+2
+3
+54
+14.2
+13.0
+5.6
+16.7
+8.6
+8.6
+11.1
+≥\geq2
+≥\geq2
+≥\geq4
+77
+10.0
+12.6
+5.6
+7.8
+6.9
+1.7
+7.4
+Table 6: Accuracy (%) by entities (EE) and data lookups (PP) (N=268N{=}268). CCI == E+PE{+}P. Each model accuracy is the average of 3 runs. A Jonckheere–Terpstra test confirms a significant decreasing trend in accuracy across CCI levels (Z=6.75Z=6.75, p<0.001p<0.001, one-sided), with Spearman’s ρ=−0.22\rho=-0.22 (p<0.001p<0.001, N=268N{=}268).
+SB
+Dist. ↑\uparrow
+Benchmark
+↓\downarrow
+BGE
+Granite
+E5
+DrBencher
+0.384
+.548
+.295
+.248
+BrowseComp+
+0.248
+.498
+.275
+.229
+MATH-500
+0.199
+.448
+.239
+.200
+GPQA
+0.168
+.446
+.261
+.206
+Table 7: Diversity comparison. SB: Self-BLEU. Dist.: mean pairwise cosine dissimilarity measured with three independent embeddings: BGE, Granite, E5.
+5.3 Benchmark Distinctiveness
+We evaluate DrBencher’s distinctiveness using Self-BLEU (lexical redundancy) and mean pairwise cosine dissimilarity (semantic spread). Because the diversity filter (Section 3.3) uses all-MiniLM-L6-v2, we measure post-hoc diversity with three independent embedding models—BGE (Xiao et al., 2023), Granite Embedding (Awasthy et al., 2025), and E5 (Wang et al., 2022)—to ensure the result is not an artifact of the filtering model. Table 7 compares DrBencher against BrowseComp-Plus (Wei et al., 2025) (multi-hop entity identification), MATH-500 (Hendrycks et al., 2021b) (mathematical reasoning), and GPQA (Rein et al., 2024) (graduate-level science) using equal-sized samples (N=198N{=}198, limited by the smallest GPQA diamond sample size).
+Across all three embedding models, DrBencher achieves the highest mean pairwise cosine dissimilarity. Its higher Self-BLEU (0.384) reflects shared domain terminology without reducing semantic spread. Notably, DrBencher is synthetically generated, yet exceeds the diversity of all three manually curated benchmarks regardless of embedding model.
+6 Conclusion
+We presented DrBencher, a synthetic benchmark generator that
+produces questions requiring joint multi-hop entity identification,
+property retrieval and quantitative reasoning across five
+domains. Human evaluation yields 76% validity (84% excluding stale
+data); automatic evaluation shows the best performing frontier model
+(Claude Opus 4.6) achieves 20% accuracy, with monotonic difficulty
+scaling as Compositional Complexity Index (CCI) increases. Diversity analysis
+against manually constructed benchmarks (BrowseComp+, MATH-500, GPQA)
+shows DrBencher achieves the highest semantic diversity.
+Ethics Statement
+All data used in this work is drawn from publicly available sources: Wikidata, Wikipedia, SEC EDGAR, NIST NVD, PubChem, and UniProt. No personally identifiable information is collected or generated by the benchmark pipeline.
+Human evaluation (Section 5.1) was conducted by seven expert annotators with professional experience in QA evaluation and semantic annotation. Annotators participated voluntarily and were compensated at standard institutional rates.
+The benchmark generator uses LLMs for question composition (Phase 2) and difficulty verification (V1/V2), as described in Sections 3–4. All gold answers are computed deterministically by executing parameterized code against knowledge-graph values; no LLM output is used as a gold answer.
+Limitations
+The DrBencher pipeline uses gpt-oss-120b for question composition, QA validation, and difficulty filtering — a practical choice rather than an architectural one. Any capable instruction-following model with tool access can fill these roles; the method itself is model-agnostic, and the reported numbers should be understood as calibrated against this particular model rather than as absolute hardness guarantees.
+This introduces one concrete limitation: the V1/V2 difficulty filter discards questions that gpt-oss-120b can solve, so a model with a substantially different capability profile may find the retained questions easier than intended although automatic evaluation on 3 frontier models and 3 open weight models suggests that the generated questions are highly challenging to all models. Additionally, sharing the same model across generation and filtering creates a potential blind spot, as systematic hallucination patterns of the generator may evade the verifier. Human evaluation (Section 5.1) and programmatic gold-answer verification (Phase 3) provide model-independent checks that partially mitigate this, and the same limitation applies to prior self-referential generators such as AutoBencher (Li et al., 2025). Future work should explore multi-model pipelines to reduce generator-verifier dependence.
+References
+Anthropic (2026)
+Anthropic
+Introducing Claude Opus 4.6.
+Note: Anthropic Blog
+External Links: Link
+Cited by: §5.2.
+Awasthy et al. (2025)
+P. Awasthy, A. Trivedi, Y. Li, M. Doshi, R. Bhat, V. P, V. Kumar, Y. Yang, B. Iyer, A. Daniels, R. Murthy, K. Barker, M. Franz, M. Lee, T. Ward, S. Roukos, D. Cox, L. Lastras, J. Sen, and R. Florian
+Granite embedding r2 models.
+arXiv preprint arXiv:2508.21085.
+Cited by: §5.3.
+BerriAI (2024)
+BerriAI
+LiteLLM: a unified interface for large language model APIs.
+Note: Open-source library
+External Links: Link
+Cited by: Appendix H.
+Cao et al. (2022)
+S. Cao, J. Shi, L. Pan, L. Nie, Y. Xiang, L. Hou, J. Li, B. He, and H. Zhang
+KQA Pro: a dataset with explicit compositional programs for complex question answering over knowledge base.
+In Proceedings of the 60th Annual Meeting of the Association for Computational Linguistics (ACL),
+pp. 6101–6119.
+Cited by: §2.
+Chen et al. (2021)
+M. Chen, J. Tworek, H. Jun, Q. Yuan, H. P. d. O. Pinto, J. Kaplan, H. Edwards, Y. Burda, N. Joseph, G. Brockman, et al.
+Evaluating large language models trained on code.
+arXiv preprint arXiv:2107.03374.
+Cited by: 1st item.
+Cobbe et al. (2021)
+K. Cobbe, V. Kosaraju, M. Bavarian, M. Chen, H. Jun, L. Kaiser, M. Plappert, J. Tworek, J. Hilton, R. Nakano, C. Hesse, and J. Schulman
+Training verifiers to solve math word problems.
+arXiv preprint arXiv:2110.14168.
+Cited by: §2.
+Coleman (2026)
+R. Coleman
+Eval awareness in Claude Opus 4.6’s BrowseComp performance.
+Note: Anthropic Engineering Blog
+External Links: Link
+Cited by: 4th item,
+§1.
+Comanici et al. (2025)
+G. Comanici, E. Bieber, M. Schaekermann, I. Pasupat, N. Sachdeva, I. Dhillon, et al.
+Gemini 2.5: pushing the frontier with advanced reasoning, multimodality, long context, and next generation agentic capabilities.
+arXiv preprint arXiv:2507.06261.
+Cited by: §5.2.
+Dua et al. (2019)
+D. Dua, Y. Wang, P. Dasigi, G. Stanovsky, S. Singh, and M. Gardner
+DROP: a reading comprehension benchmark requiring discrete reasoning over paragraphs.
+In Proceedings of the 2019 Conference of the North American Chapter of the Association for Computational Linguistics (NAACL),
+pp. 2368–2378.
+Cited by: §2.
+Dubey et al. (2019)
+M. Dubey, D. Banerjee, A. Abdelkawi, and J. Lehmann
+LC-QuAD 2.0: a large dataset for complex question answering over Wikidata and DBpedia.
+In International Semantic Web Conference (ISWC),
+pp. 69–78.
+Cited by: §2.
+Friedman and Dieng (2023)
+D. Friedman and A. B. Dieng
+The Vendi score: a diversity evaluation metric for machine learning.
+Transactions on Machine Learning Research (TMLR).
+Cited by: §1.
+Geva et al. (2021)
+M. Geva, D. Khashabi, E. Segal, T. Khot, D. Roth, and J. Berant
+Did aristotle use a laptop? A question answering benchmark with implicit reasoning strategies.
+Transactions of the Association for Computational Linguistics (TACL) 9, pp. 346–361.
+Cited by: §2.
+Hendrycks et al. (2021a)
+D. Hendrycks, C. Burns, S. Basart, A. Zou, M. Mazeika, D. Song, and J. Steinhardt
+Measuring massive multitask language understanding.
+In International Conference on Learning Representations (ICLR),
+Cited by: §1.
+Hendrycks et al. (2021b)
+D. Hendrycks, C. Burns, S. Kadavath, A. Arora, S. Basart, E. Tang, D. Song, and J. Steinhardt
+Measuring mathematical problem solving with the MATH dataset.
+In Advances in Neural Information Processing Systems (NeurIPS),
+Cited by: 1st item,
+§1,
+Table 1,
+§2,
+§5.3.
+Ho et al. (2020)
+X. Ho, A. D. Nguyen, S. Sugawara, and A. Aizawa
+Constructing a multi-hop QA dataset for comprehensive evaluation of reasoning steps.
+In Proceedings of the 28th International Conference on Computational Linguistics (COLING),
+Cited by: 1st item,
+§1,
+§2.
+Jonckheere (1954)
+A. R. Jonckheere
+A distribution-free kk-sample test against ordered alternatives.
+Biometrika 41 (1–2), pp. 133–145.
+Cited by: §5.2.
+Krippendorff (2018)
+K. Krippendorff
+Content analysis: an introduction to its methodology.
+4th edition, Sage Publications.
+Cited by: Appendix G,
+§5.1.
+Krishna et al. (2025)
+S. Krishna, K. Krishna, A. Mohananey, S. Schwarcz, A. Stambler, S. Upadhyay, and M. Faruqui
+Fact, fetch, and reason: a unified evaluation of retrieval-augmented generation.
+In Proceedings of the 2025 Annual Conference of the North American Chapter of the Association for Computational Linguistics (NAACL),
+Cited by: §1,
+§2.
+Kwon et al. (2023)
+W. Kwon, Z. Li, S. Zhuang, Y. Sheng, L. Zheng, C. H. Yu, J. Gonzalez, H. Zhang, and I. Stoica
+Efficient memory management for large language model serving with PagedAttention.
+In Proceedings of the 29th Symposium on Operating Systems Principles (SOSP),
+Cited by: §4.
+Li et al. (2025)
+X. L. Li, F. Kaiyom, E. Z. Liu, Y. Mai, P. Liang, and T. Hashimoto
+AutoBencher: towards declarative benchmark construction.
+In International Conference on Learning Representations (ICLR),
+Cited by: 2nd item,
+§1,
+Table 1,
+§2,
+Limitations.
+Meta AI (2025)
+Meta AI
+The Llama 4 herd: the beginning of a new era of natively multimodal AI.
+Note: Meta AI Blog
+External Links: Link
+Cited by: §5.2.
+Mialon et al. (2024)
+G. Mialon, C. Fourrier, C. Swift, T. Wolf, Y. LeCun, and T. Scialom
+GAIA: a benchmark for general AI assistants.
+In International Conference on Learning Representations (ICLR),
+Cited by: §1,
+Table 1,
+§2.
+Mistral AI (2025)
+Mistral AI
+Mistral small 3.2 24b instruct.
+Technical report
+Mistral AI.
+External Links: Link
+Cited by: §5.2.
+OpenAI (2025a)
+OpenAI
+Gpt-oss-120b & gpt-oss-20b model card.
+External Links: 2508.10925,
+Link
+Cited by: §4.
+OpenAI (2025b)
+OpenAI
+Introducing GPT-5.2.
+Note: OpenAI Blog
+External Links: Link
+Cited by: §5.2.
+Pombal et al. (2025)
+J. Pombal, N. M. Guerreiro, R. Rei, and A. F. T. Martins
+Zero-shot benchmarking: a framework for flexible and scalable automatic evaluation of language models.
+In Proceedings of the Conference on Language Modeling (COLM),
+External Links: 2504.01001,
+Link
+Cited by: §2.
+Press et al. (2023)
+O. Press, M. Zhang, S. Min, L. Schmidt, N. A. Smith, and M. Lewis
+Measuring and narrowing the compositionality gap in language models.
+In Findings of the Association for Computational Linguistics: EMNLP 2023,
+Cited by: 1st item,
+§2.
+Reimers and Gurevych (2019)
+N. Reimers and I. Gurevych
+Sentence-BERT: sentence embeddings using siamese BERT-networks.
+In Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing and the 9th International Joint Conference on Natural Language Processing (EMNLP-IJCNLP),
+pp. 3982–3992.
+Cited by: §3.3.
+Rein et al. (2024)
+D. Rein, B. L. Hou, A. C. Stickland, J. Petty, R. Y. Pang, J. Dirani, J. Michael, and S. R. Bowman
+GPQA: a graduate-level Google-proof Q&A benchmark.
+In Conference on Language Modeling (COLM),
+Cited by: §2,
+§5.3.
+Terpstra (1952)
+T. J. Terpstra
+The asymptotic normality and consistency of Kendall’s test against trend, when ties are present in one ranking.
+Indagationes Mathematicae 14 (3), pp. 327–333.
+Cited by: §5.2.
+Trivedi et al. (2022)
+H. Trivedi, N. Balasubramanian, T. Khot, and A. Sabharwal
+MuSiQue: multihop questions via single-hop question composition.
+Transactions of the Association for Computational Linguistics (TACL) 10, pp. 539–554.
+Cited by: 1st item,
+§1,
+Table 1,
+§2.
+Trivedi et al. (2017)
+P. Trivedi, G. Maheshwari, M. Dubey, and J. Lehmann
+LC-QuAD: a corpus for complex question answering over knowledge graphs.
+In International Semantic Web Conference (ISWC),
+Cited by: Table 1,
+§2.
+Vrandečić and Krötzsch (2014)
+D. Vrandečić and M. Krötzsch
+Wikidata: a free collaborative knowledgebase.
+Communications of the ACM 57 (10), pp. 78–85.
+Cited by: §1.
+Wang et al. (2022)
+L. Wang, N. Yang, X. Huang, B. Jiao, L. Yang, D. Jiang, R. Majumder, and F. Wei
+Text embeddings by weakly-supervised contrastive pre-training.
+arXiv preprint arXiv:2212.03533.
+Cited by: §5.3.
+Wei et al. (2025)
+J. Wei, Z. Sun, S. Papay, S. McKinney, J. Han, I. Fulford, H. W. Chung, A. T. Passos, W. Fedus, and A. Glaese
+BrowseComp: a simple yet challenging benchmark for browsing agents.
+arXiv preprint arXiv:2504.12516.
+Cited by: §1,
+Table 1,
+§2,
+§5.3.
+White et al. (2024)
+C. White, S. Dooley, M. Roberts, A. Pal, et al.
+LiveBench: a challenging, contamination-free LLM benchmark.
+arXiv preprint arXiv:2406.19314.
+Cited by: §2.
+Xiao et al. (2023)
+S. Xiao, Z. Liu, P. Zhang, and N. Muennighoff
+C-pack: packaged resources to advance general chinese embedding.
+arXiv preprint arXiv:2309.07597.
+Cited by: §5.3.
+Yang et al. (2025)
+A. Yang, A. Li, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Gao, C. Huang, C. Lv, et al.
+Qwen3 technical report.
+arXiv preprint arXiv:2505.09388.
+Cited by: §5.2.
+Yang et al. (2023)
+S. Yang, W. Chiang, L. Zheng, J. E. Gonzalez, and I. Stoica
+Rethinking benchmark and contamination for language models with rephrased samples.
+arXiv preprint arXiv:2311.04850.
+External Links: 2311.04850
+Cited by: §1.
+Yang et al. (2018)
+Z. Yang, P. Qi, S. Zhang, Y. Bengio, W. W. Cohen, R. Salakhutdinov, and C. D. Manning
+HotpotQA: a dataset for diverse, explainable multi-hop question answering.
+In Proceedings of the 2018 Conference on Empirical Methods in Natural Language Processing (EMNLP),
+Cited by: 1st item,
+§1,
+Table 1,
+§2.
+Yao et al. (2023)
+S. Yao, J. Zhao, D. Yu, N. Du, I. Shafran, K. Narasimhan, and Y. Cao
+ReAct: synergizing reasoning and acting in language models.
+In International Conference on Learning Representations (ICLR),
+Cited by: §1.
+Zhao et al. (2025)
+Q. Zhao, Y. Huang, T. Lv, L. Cui, Q. Sun, S. Mao, X. Zhang, Y. Xin, Q. Yin, S. Li, and F. Wei
+MMLU-CF: a contamination-free multi-task language understanding benchmark.
+In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics,
+External Links: 2412.15194
+Cited by: §1.
+Zhu et al. (2024)
+K. Zhu, J. Chen, J. Wang, N. Z. Gong, D. Yang, and X. Xie
+DyVal: graph-informed dynamic evaluation of large language models for reasoning.
+In International Conference on Learning Representations (ICLR),
+Note: Spotlight
+Cited by: §2.
+Appendix A Model Configuration and Verification Hyperparameters
+Table 8 lists the model serving configuration. Table 9 summarizes the verification-stage hyperparameters.
+Parameter
+Value
+Architecture
+MoE, 120B parameters
+Quantization
+MXFP4
+Precision
+bfloat16
+Tensor parallel size
+8
+GPU memory utilization
+0.9
+Max sequence length
+131,072 tokens
+Chunked prefill
+Enabled (batch 2,048)
+Prefix caching
+Enabled
+Attention backend
+FlashAttention
+CUDA graph capture
+Full + Piecewise
+Table 8: Model serving configuration.
+Parameter
+V1
+V2
+Samples per question (nn)
+10
+10
+Sampling temperature
+0.7
+1.0
+Accuracy threshold (τ\tau)
+0.5
+0.5
+Max agentic iterations (KK)
+—
+200
+Tool timeout
+—
+60 s
+Answer tolerance (ϵ\epsilon)
+5%
+Table 9: Verification hyperparameters. V1: closed-book; V2: agentic with tool calls. ϵ=5%\epsilon{=}5\% relative tolerance is used during generation-time difficulty filtering; a stricter 2% tolerance is applied during evaluation scoring (Section 5.2).
+The V2 temperature (T2=1.0T_{2}=1.0) is set higher than V1 (T1=0.7T_{1}=0.7) to encourage diverse reasoning paths in the agentic loop, increasing the chance that at least one sample finds a successful strategy. The threshold τ=0.5\tau=0.5 means a question is retained only if fewer than half the model’s attempts produce the correct answer, ensuring substantial difficulty.
+Appendix B Knowledge-Graph Parameters
+For each entity, we fetch up to 20 two-hop KG chains from Wikidata, with a 10×10\times over-fetch factor (up to 500 raw chains) to enable diversification. The SPARQL endpoint is queried with a 120-second timeout and exponential backoff (up to 5 retries with jitter). Up to 3 questions are generated per entity, each using a distinct reasoning template. Entities with fewer than 3 surviving chains after blacklist filtering are discarded.
+Appendix C Infrastructure
+Each job requests a single node with 8 NVIDIA GPUs in exclusive-process mode and 500 GB host memory. Per-topic jobs run in parallel as independent LSF batch jobs, with a final merge job that depends on all topic jobs completing. Wave-based scheduling limits concurrency to 2 concurrent topic jobs for Wikidata-sourced benchmarks, preventing SPARQL endpoint rate-limiting. Typical per-topic wall-clock time is 2–6 hours depending on the number of entities and the V2 agentic loop depth. The merge job completes in under 10 minutes.
+Appendix D Topic Entities
+Each domain defines a set of topic categories that seed entity discovery.
+Within each category, entities are resolved to Wikidata QIDs via domain-specific identifiers or SPARQL queries (Section 4.1).
+Biochemistry (20 topics).
+neurotransmitters, analgesics, antineoplastics, antidepressants, antivirals, amino acids, sugars, nucleotides, antifungals, toxins, metabolites, steroids, kinases, proteases, transporters, cytokines, structural proteins, transcription factors, viruses, parasites.
+Financial (20 topics).
+construction, chemicals, mining & metals, hospitality & travel, freight & logistics, medical devices, restaurants & dining, payments & fintech, clean energy, enterprise software, e-commerce, regional banks, asset management, healthcare providers, agribusiness, cybersecurity, gaming & casinos, specialty finance, apparel & footwear, oil field services.
+Geophysical (39 topics).
+mountains, volcanoes, cities, countries, islands, rivers, lakes, deserts, glaciers, buildings, towers, bridges, dams, waterfalls, peninsulas, caves, canals, cliffs, plateaus, passes, hills, ridges, valleys, craters, gorges, canyons, fjords, harbors, observatories, national parks, archaeological sites, oases, capes, lighthouses, monuments, stadiums, chimneys, minarets, wind turbines.
+History (20 topics).
+empires, assassinations, sieges, religious events, coups, migrations, constitutions, independence movements, civil wars, genocides & atrocities, economic crises, naval battles, peace accords, scientific institutions, technological milestones, famines, liberation leaders, cold war events, world fairs & olympics, trade routes.
+Security (20 topics).
+container platforms, CI/CD tools, messaging systems, web servers, identity providers, VPN solutions, email servers, firewalls, SIEM tools, CMS platforms, programming runtimes, SCADA/ICS, endpoint security, mobile platforms, DNS services, package managers, IoT platforms, data breaches, ransomware families, load balancers.
+Appendix E Data Sources
+All five domains share the following knowledge-graph and encyclopedic sources for entity discovery, multi-hop chain extraction, and clue grounding:
+•
+Wikidata SPARQL Endpoint: https://query.wikidata.org/sparql
+•
+Wikidata REST API: https://www.wikidata.org/w/api.php
+•
+Wikipedia Action API: https://en.wikipedia.org/w/api.php
+Domain-specific APIs supply the quantitative data for gold-answer computation:
+Biochemistry.
+•
+PubChem PUG REST API: https://pubchem.ncbi.nlm.nih.gov/rest/pug/
+•
+UniProt REST API: https://rest.uniprot.org/uniprotkb/
+•
+RCSB PDB REST API: https://data.rcsb.org/rest/v1/
+•
+ChEMBL REST API: https://www.ebi.ac.uk/chembl/api/data/
+Financial.
+•
+SEC EDGAR XBRL API: https://data.sec.gov/api/xbrl/companyfacts/
+•
+SEC Company Tickers: https://www.sec.gov/files/company_tickers.json
+Geophysical.
+Entity quantitative properties (elevation, coordinates, mass, height) are retrieved exclusively via the shared Wikidata SPARQL endpoint listed above.
+History.
+Temporal properties (inception, dissolution, point in time) are retrieved via the shared Wikidata SPARQL endpoint listed above.
+Security.
+•
+NIST NVD API v2.0: https://services.nvd.nist.gov/rest/json/cves/2.0
+•
+FIRST EPSS API: https://api.first.org/data/v1/epss
+•
+CISA KEV Feed: https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json
+Appendix F Human Annotation Interface
+Figure 3 shows a representative page from the Streamlit-based annotation tool used for human verification (Section 5.1).
+For each QA pair, the annotator sees the generated question, the gold answer, the gold entity chain (with entity identification and property lookup steps), the computation code that derives the answer, and grounding Wikipedia articles with semantic highlighting of question-relevant (blue) and answer-relevant (green) passages.
+The annotator assigns a binary verdict (Correct or Incorrect) and may add a free-text comment for rejected items.
+Item 17 / 59 geophysical / mountains
+Question
+A towering figure created in the Neoclassicism movement, whose internal structure is made from steel, offers a view of Lower Manhattan.
+If a simple pendulum were suspended from the top of this structure, what would be its period of oscillation in seconds?
+Round your answer to two decimal places.
+Gold Answer
+13.61 seconds
+Gold Entity Chain
+Entity Identification:
+Statue of Liberty (Q9202)
+Property Lookup:
+height (P2048) = 46.0 m [Wikidata]
+Computation:
+T=2​π​h/gT=2\pi\sqrt{h/g} = 13.61 s
+Computation Code
+import math
+h = 46.0 # height (m)
+g = 9.81 # gravity
+T = 2 * math.pi * math.sqrt(h/g)
+print(round(T, 2)) # 13.61
+Grounding Evidence
+[C3_F1] The Statue of Liberty was created in the Neoclassical artistic movement.
+[C8_F1] The Statue of Liberty has a steel internal structure designed by Gustave Eiffel.
+[C18_F1] From the pedestal of the Statue of Liberty, visitors can see Lower Manhattan.
+[P2048] Height = 46.0 m [Wikidata]
+Annotation
+Verdict: ●\CIRCLE Correct ○\Circle Incorrect
+Comment:
+Save Save & Next
+Figure 3: Representative page from the human annotation interface. The tool displays the question, gold answer, gold entity chain, computation code, and grounding evidence with semantic highlighting (blue: question-relevant entities; green: answer-relevant values). Annotators assign a binary verdict and optional comment.
+Appendix G Inter-Annotator Agreement Details
+Table 10 reports inter-annotator agreement across all five domains with two independent annotators per domain.
+Raw agreement is computed over all items with overlapping annotations; Krippendorff’s α\alpha accounts for chance agreement and is computed using the coincidence matrix approach (Krippendorff, 2018).
+Domain
+nn
+Agr.
+α\alpha
+Geophysical
+47
+78.7
+0.25
+History
+30
+86.7
+0.43
+Biochemistry
+32
+68.8
+0.10
+Security
+11
+81.8
+0.56
+Financial
+39
+69.2
+0.36
+Overall
+159
+76.1
+0.30
+Table 10: Inter-annotator agreement across all five domains. nn: questions with overlapping annotations from two annotators; Agr.: raw agreement (%); α\alpha: Krippendorff’s alpha. Overall statistics are weighted by domain size.
+Appendix H Automatic Evaluation Prompt and Inference Configuration
+All models receive the same system prompt and inference configuration via LiteLLM (BerriAI, 2024).
+Table 11 lists the key inference parameters.
+The system prompt instructs each model to reason step by step, identify the unnamed entity, and return a structured response:
+You are solving a benchmark question. The question describes one or more unnamed entities using factual clues. Think step by step, then give your response in the exact format below (each on its own line):
+ENTITY: <the entity or entities you identified, comma-separated>
+ANSWER: <your numerical answer>
+The ENTITY line should contain the name(s) of the real-world entity (e.g., compound, company, country, person) you identified from the clues.
+The ANSWER should be a single number --- no units, no explanation.
+Answers are extracted by parsing the ANSWER: tag from the model response (falling back to the last non-empty line if absent).
+Entity identification is extracted from the ENTITY: tag and matched against gold entity names using normalized substring matching.
+Parameter
+Value
+Samples per question (nn)
+3
+Temperature
+model default (omitted)
+Max response tokens
+8,192
+Answer tolerance
+2% relative (exact for history)
+Retry on failure
+5 attempts, exponential backoff
+Table 11: Evaluation inference configuration.
+Appendix I Statistical Significance Tests
+We conduct pairwise McNemar’s tests to assess whether observed differences in answer accuracy between models are statistically significant.
+McNemar’s test is appropriate for paired binary outcomes (correct/incorrect predictions on the same question set) and tests the null hypothesis that the two models have equal error rates.
+Table 12 reports p-values for all pairwise comparisons across all 268 evaluated questions.
+Opus
+Gemini
+GPT5.2
+Llama
+Qwen
+Gemini
+0.243
+GPT5.2
+<.001∗∗∗
+<.001∗∗∗
+Llama
+0.155
+0.868
+0.004∗∗
+Qwen
+<.001∗∗∗
+<.001∗∗∗
+0.404
+<.001∗∗∗
+Mistral
+<.001∗∗∗
+<.001∗∗∗
+0.095
+<.001∗∗∗
+0.522
+Table 12: McNemar’s test p-values for answer accuracy (All N=268N{=}268). Per-question correctness is determined by majority vote across 3 runs. ∗∗p<<0.01, ∗∗∗p<<0.001.
+The results show that Claude Opus 4.6 (20.1% accuracy) significantly
+outperforms GPT-5.2 (10.6%, p<0.001), Qwen3-30B (10.0%, p<0.001),
+Mistral-Small-3.2 (6.8%, p<0.001). The differences between Opus and
+Gemini Flash (18.4%, p=0.243), and Llama Maverick (17.9%, p=0.155)
+are not statistically significant. Among open-weight models, Llama 4
+Maverick achieves the highest accuracy (17.9%) and significantly
+outperforms Mistral-Small-3.2 (p<0.001).
+Appendix J CCI Distribution and Domain-Controlled Accuracy
+Table 13 shows the CCI distribution across domains.
+Security has the highest mean CCI (3.49), with 91% of questions at
+CCI≥\geq3, while geophysical has the lowest (2.35), with 82% at
+CCI==2. Security has the largest share of CCI≥\geq4 questions
+(57%). To determine whether the lower accuracy of financial and security is
+explained solely by their higher CCI, Table 14
+compares per-domain accuracy at matched CCI levels.
+Domain
+nn
+Mean
+Med.
+CCI=2
+CCI=3
+CCI=4
+CCI=6
+Geophysical
+65
+2.35
+2
+53
+3
+8
+1
+Biochemistry
+37
+2.81
+2
+20
+4
+13
+0
+History
+62
+2.82
+3
+24
+25
+13
+0
+Financial
+69
+2.84
+2
+37
+10
+20
+2
+Security
+35
+3.49
+4
+3
+12
+20
+0
+Table 13: CCI distribution by domain. Mean: mean CCI; Med.: median CCI.
+CCI
+Biochem
+Financial
+Geophysical
+History
+Security
+All
+2
+34.7 (20)
+6.0 (37)
+13.9 (53)
+37.5 (24)
+5.6 (3)
+18.8
+3
+6.9 (4)
+6.1 (10)
+31.5 (3)
+15.6 (25)
+2.3 (12)
+11.1
+≥\geq4
+6.8 (13)
+4.8 (22)
+11.1 (9)
+20.5 (13)
+0.6 (20)
+7.4
+Table 14: CCI-controlled accuracy (%) by domain (number of questions
+in parentheses). Each cell is the average across 6 models ×\times 3
+runs.
+Financial Domain financial / pharmaceuticals
+Question
+The firm is headquartered in Thousand Oaks, California (Pacific Time Zone) and produces erenumab, a monoclonal-antibody medication for migraine. It is listed on both Nasdaq and the Hong Kong Stock Exchange. Based on the company’s FY 2023 filing, what was its operating expense ratio (operating expenses / total revenue) as a percentage?
+Gold Answer
+45.75%
+Gold Entity Chain
+Entity: Amgen Inc. (Q470517, AMGN)
+Lookup: SEC EDGAR XBRL (FY 2023): Rev. = $25.98 B, CoR = $6.45 B, OI = $7.64 B
+Formula: OpEx/R×100\text{OpEx}/R\times 100; OpEx =R−CoR−OI=R-\text{CoR}-\text{OI}
+Computation Code
+R = 25979000000.0
+CoR = 6454000000.0
+OI = 7639000000.0
+opex = R - CoR - OI
+print(round(opex/R*100, 2)) # 45.75
+Grounding Evidence
+[C1] Amgen →hq\!\xrightarrow{\text{hq}} Thousand Oaks →tz\!\xrightarrow{\text{tz}} Pacific TZ [C2] Amgen →product\!\xrightarrow{\text{product}} erenumab →role\!\xrightarrow{\text{role}} mAb →treats\!\xrightarrow{\text{treats}} migraine
+[C3] Amgen →exchange\!\xrightarrow{\text{exchange}} Nasdaq; Amgen →exchange\!\xrightarrow{\text{exchange}} HKSE [XBRL] Rev. = $25.98 B; CoR = $6.45 B; OI = $7.64 B
+Security Domain security / software
+Question
+The platform powers the UK’s Care Quality Commission, supports multilingual content, and is built on a PHP-based framework that runs on Unix-like OSes. Using NVD data, determine how many CRITICAL-severity CVEs are listed for this product, then calculate the percentage of the critical attack surface reduced if 16 of those CVEs have been patched. Express as a percent to two decimal places.
+Gold Answer
+39.02%
+Gold Entity Chain
+Entity: Drupal (Q170855)
+Lookup: NVD — 41 CRITICAL CVEs (of 1,336 total)
+Formula: Reduction =16/41×100=16/41\times 100
+Computation Code
+critical = 41; patched = 16
+reduction = patched/critical*100
+print(round(reduction, 2)) # 39.02
+Grounding Evidence
+[C1] Drupal →used by\!\xrightarrow{\text{used by}} CQC →country\!\xrightarrow{\text{country}} UK [C2] Drupal →platform\!\xrightarrow{\text{platform}} Symfony →lang\!\xrightarrow{\text{lang}} PHP [C3] Drupal →OS\!\xrightarrow{\text{OS}} Unix-like
+[C4] Drupal →lang. of work\!\xrightarrow{\text{lang.\ of work}} multilingual [NVD] CRITICAL = 41; patched = 16
+Figure 4: Representative QA pairs from the Financial (top) and Security (bottom) domains.
+Even at matched CCI, financial and security remain 3–7×\times harder
+than other domains. At CCI==2, financial (6.0%) and security
+(5.6%) trail biochemistry (34.7%) and history (37.5%). At CCI==3,
+the gap persists: security (2.3%) and financial (6.1%) versus
+geophysical (31.5%) and history (15.6%). This residual difficulty is likely to reflect
+the obscurity of the underlying data sources—SEC EDGAR XBRL tags and
+NVD/CVSS vulnerability scores—which are specialized structured data
+rarely encountered in LLM pretraining corpora, making accurate property
+retrieval particularly challenging regardless of question complexity.
+Appendix K Benchmark Domain Samples
+Figure 4 presents representative QA pairs from the Financial and Security domains, rendered in the same format used by the human annotation interface (Figure 3).
+Each panel shows the generated question, the gold answer, the gold entity chain with data-source lookup, the computation code, and the grounding evidence linking entity-identification clues (blue) and answer-relevant values (green) to their KG sources.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

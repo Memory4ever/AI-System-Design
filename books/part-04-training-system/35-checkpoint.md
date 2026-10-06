@@ -40,6 +40,10 @@ deployment artifact      runtime-ready converted model
 
 三个对象可能共享 tensors，但完成标准不同。
 
+即使当前预测与 loss 相同，两份权重也未必是可互换的训练起点。正标量互逆缩放 Q/K、V/O 或满足齐次条件的 MLP 矩阵对，可以保持当前函数，却改变梯度与相对更新尺度；GELU 的 up/down 不满足这项精确对称，SwiGLU 也只覆盖 value–output 对而非 gate。另以 `c>0` 表示某坐标块的缩放，对精确对称坐标 `θ′=cθ`，对应历史中的 Adam moments 应为 `m′=m/c`、`v′=v/c²`；但仅转换 moments 仍不足以让下一步等变，还需同时满足 `η′=cη`、`ε′=ε/c` 与 `decay′=decay/c`，并保持 counters 与随机性相同。函数等价因而不能代替 resume-state 等价。<!-- source-family:SF-2026-ARXIV-2610-18085 -->
+
+一种受限恢复方式是在第一次 resumed update 前，把精确对称轨道上的矩阵对及 moments 一起规范到同一 balanced state；它不是任意权重重标定，也不等同只周期性调整权重。变换与校验增加状态迁移成本，错误的 pair、Norm 或 optimizer 耦合会破坏前提。[受控 checkpoint 实验](https://arxiv.org/html/2610.18085v1#S5)主要恢复人为引入的尺度失衡，未失衡 control 没有可靠改善，不能推出正常大模型默认获益；soft damping 仍依赖起始位置，也不是 exact canonical restart。不能证明对称与完整状态变换时，保持原参数化，保留原 checkpoint 并按新优化轨迹验收，不以恢复时 loss 接近签发连续性。
+
 ## 一个完整训练状态清单
 
 可恢复 checkpoint 通常包括：
@@ -76,6 +80,9 @@ identity:
 ```
 
 并非每种算法都需要全部字段。例如 weights-only SFT export 不需要 optimizer；LoRA adapter 可以只保存 adapter weights。但 artifact 必须明确自己承诺的是 resume、warm start 还是 deployment。
+
+恢复也有不从snapshot重启的受限分支，但前提是进程还活着、异常能够被拦截，已有训练上下文没有被不可逆破坏。可以先把Python入口长函数按loop body拆成带异常barrier的cells，让它们共享原对象reference；失败cell退出调用栈后，按异常或批准的代码修改位置合成尚未完成的procedure，再在保留context中继续。这不同于热改正在执行的frame，也不同于复制一份已提交的in-memory checkpoint。[DaiFu的有限恢复对照](https://arxiv.org/html/2507.01628v1)支持这种开发期continuation更新，但程序位置不等于一致optimizer step，语句重试也不会撤销已改参数、数据cursor、随机性或外部副作用；原非幂等scope失败正说明修代码不能自动修旧状态。多rank仍须确认通信context和共同边界，不能由等待barrier宣任意collective故障可恢复。AST变换、变量间接访问、人工debug/patch、状态与质量回归均付费，秒级restore不含完整故障诊断或到最终质量的时间。进程消失、context损坏、编译域不兼容或副作用无法核清时，退回可信durable checkpoint、独立修复与受控重跑；保留代码/runtime版本和实际恢复边界，不用“继续跑到末尾”批准exact resume。
+<!-- source-family:SF-2025-ARXIV-2507-01628 -->
 
 ## Checkpoint Size 为什么远大于模型文件
 
@@ -118,6 +125,9 @@ scheduler and data cursor corresponding to s
 如果 rank 0 保存了 step `s`，rank 1 保存了 `s+1`，单个文件都能反序列化，组合模型仍然不一致。
 
 安全保存点通常位于 optimizer step 完成后，所有必要状态已达到明确边界。Pipeline、gradient accumulation 和 asynchronous optimizer 会让“step 完成”需要更精确定义。
+
+故障发生在一次更新的不同phase，还会改变健康状态能代表哪个恢复边界：在optimizer之前设共同入口，forward/backward期间失败时不让幸存者继续提交更新；若已进入optimizer，则先等健康参与者完成该步，再决定可恢复的下一step，而不能在半更新时立即清空执行队列。[FlashRecovery的受限分支](https://arxiv.org/html/2509.03047v1)用step/phase标签协调这两种路径，说明停止、等待和选取状态是不同责任，不由入口barrier或一条heartbeat自动证明全部device更新完成。恢复仍以所需参数、optimizer及数据/随机状态能从同一边界重建为前提，ZeRO/FSDP分片不能因叫DP就假定完整副本存在；进程替换和通信组重建也须绑定新epoch与旧逻辑shard。监控、等待、状态复制、控制面/共享metadata、备用容量和完整恢复验证均付费，有限注入的重启时间不授任意规模或故障下固定RTO。若完成证据、完整state、通信重建或故障域支持不足，应停在未知边界并回退已提交的持久checkpoint/受控重跑，不把恢复进程启动或局部phase标签当作exact resume。
+<!-- source-family:SF-2025-ARXIV-2509-03047 -->
 
 ## Checkpoint 应像事务一样提交
 
@@ -175,6 +185,8 @@ rank-local sharded state
 ```
 
 PyTorch Distributed Checkpoint 与 Megatron distributed checkpoint 都提供面向 sharded state 的 save/load 能力。具体 API 会演化，稳定要求是保存 global tensor identity、local shard offsets、dtype/shape 与 layout metadata。
+
+这里的 tensor identity 还包括 checkpoint 文件之外的构造状态。RoPE frequency 等 non-persistent buffer 可能由初始化计算生成，不在 `state_dict` 中；若 meta-init、整模块 dtype 转换与 materialization 将原本显式 FP32 的 buffer 变成 BF16，再按现有 buffer dtype 恢复，相同权重也会产生随位置变化的 log-probability 偏移。恢复路径应区分持久状态与构造派生状态，保存或确定性重建后者的值、shape 和构造 dtype，再用固定输入验输出；不能把“全部转成模型 dtype”当成统一正确性规则。[UniRL 的限定修正](https://github.com/Tencent-Hunyuan/UniRL/pull/596)支持这一生命周期边界，但其 Qwen 路径对照不证明任意架构均等价。构造快照、copy 与 wrapper 校验仍有成本；无法重建或输出失配时，保留已验证的完整加载路径，不由 weights 加载成功批准 policy 一致。
 
 ### 低精度参数恢复要区分数值、编码与更新状态
 
@@ -282,6 +294,8 @@ job 标为失败或无最终 checkpoint，而不是把“已提交异步保存�
 
 因此要先确定所比较的成本合同，再选择 file-per-rank、tensor 文件或共享文件及聚合方式。共享文件需要 offset、padding 和多 rank 协调，request 合并也增加 staging 与布局状态；direct/cached I/O 则必须在完整读写路径上测量。[Checkpoint I/O v1 §3.2、§3.4–3.5](https://arxiv.org/html/2512.24511v1)在 Polaris/Lustre 的 checkpoint 布局中显示，孤立小读的 cache 优势并未使 direct-write/buffered-read 混合路径更优，扣除 allocation 后 framework 与原生 I/O 差距也会缩小。该局部反证不指定所有文件系统的最佳 backend，更不证明较快写盘已经可恢复；布局、cache 条件或参与者变化后要重验，收益不足时保留简单布局，并继续以 manifest、全局 commit 与 restore test 判断 checkpoint correctness。<!-- source-family:SF-2026-ARXIV-2512-24511 -->
 
+链路利用率低也不独占“网络不是瓶颈”的解释。恢复诊断还可沿 GPU staging、host page cache、NFS 请求及服务端分别对齐 save/load 阶段，再把每请求排队与传输、服务时间分账，检查应用是否真的向链路提供了足够工作。[一份生产集群的受限观察](https://arxiv.org/html/2605.09370v1)中，checkpoint 的 RPC 等待与阶段负载共同上升，但没有通过调 slot 或网络带宽的受控实验识别唯一原因；粗采样、残余 page cache 和不同故障恢复人口也会改变总时长。因此该信号只提出定点验证，不批准“提高某个 RPC 参数必然恢复吞吐”或“升级网络无效”。跨层采样、阶段对齐与对照重放都有成本；归因不足时保留原配置、已验证存储路径及实际 restore 测试，再以相同 checkpoint/workload 比较候选改动，不能让局部队列指标替可恢复性或总训练效率签字。<!-- source-family:SF-2026-ARXIV-2605-09370 -->
+
 ### 从统一 Object Graph 到 Composable State Providers
 
 早期 checkpoint API 把整个训练状态交给统一 serializer，这在对象较少、单一内存层和单文件布局下合理。
@@ -318,6 +332,10 @@ throughput 也不能替代真实 restore、reshard 和故障注入测试。
 若故障在区间内近似均匀发生，平均丢失工作约为 `I/2` steps。实际选择还要考虑 save duration、failure rate、checkpoint size、恢复时间和 storage budget。
 
 重要 milestone、训练结束和 preemption signal 可以触发额外保存，但 signal handler 不能假设在任意算子中间都能形成一致 checkpoint。
+
+选择保存路径时还要拆开正常训练开销与故障后的不同阶段：发现故障、找到有效 recovery generation、恢复状态、重建 process group/通信机制，以及重放丢失工作。只比较 state restore 时间，会漏掉进入恢复前的等待和重新形成可执行 topology 的代价。共同的 group 重建成本不改变两个 restore 路径的绝对差，却会压缩它们的相对恢复倍率；周期保存、内存副本与有预警的 emergency save 因而要连同 failure interval、lost work、信号覆盖和稳态成本选择，不从最快 load 单项排名。<!-- source-family:SF-2026-ARXIV-2610-07688 -->
+
+这些阶段须分别标明实测、解析下界或敏感性假设，能读回状态不等于 survivors 已完成恢复。[受限 crash harness 的 timeout 干预](https://arxiv.org/html/2610.07688v1)表明，约定 process-group watchdog 可以决定观测检测时间，而不是训练拓扑天然需要同样长的等待；缩短 timeout 又须另验误报与实际通信尾部。预警不足时 JIT save 不保护该次 crash，减少同步后更多 samples/s 也不自动改善 loss progress。绝对成本应在目标 workload、状态量和完整恢复链上重测；只有解析恢复或简化 proxy 时，保留持久 checkpoint 与实际 orchestration，不签发完成恢复或生产容错保证。
 
 对于以随机种子和标量更新日志表示每一步的零阶微调，逐步记日志比保存完整参数轻，却不能据此认为恢复是免费的：从最初状态重放的成本随训练步数增长；若为了加速跳过实际执行的原地扰动顺序，浮点舍入又会让恢复轨迹偏离原过程。条件性折中是让 CPU 影子状态按原操作顺序消费已提交日志，在 GPU 训练之外形成 clean-step 快照并异步落盘；故障后从最近已持久化影子状态重放剩余日志。影子副本只拥有恢复材料，GPU 的已完成更新仍是训练真值。它以 host memory、CPU replay 和持久化带宽换取更短 rollback，影子若跟不上 GPU 或存储积压就须增加间隔、定期同步或回退普通 anchor checkpoint。ZOCheck 的直接实验限于所列 L40S/A100、Qwen/Llama/OPT 及以 FP32、batch 16、长度 512 的零阶任务为主；其模型结果不能外推到普通一阶 Adam 训练，因为后者不能仅凭 seed 与标量日志重建更新。<!-- source-family:SF-2026-ARXIV-2609-27189 -->
 
@@ -360,6 +378,9 @@ DeadPool 的作者实验在 Perlmutter 与 Vista、最多 512 张 A100 或 64 �
 “持续内存保护 + 在线节点替换”这一机制在其合同中可行；具体恢复时间与正常路径开销只属于这些平台、模型布局和
 headroom 条件，不作为本章通用性能结论。它没有覆盖 silent corruption、软件语义错误、没有 spare 的集群或所有 replicas 同域失败。因此
 在线 repair 是持久 checkpoint 之上的 `Layering / Dependency`，不能替代跨故障域的 durable recovery point。
+
+当没有可立即接入的spare、但survivors仍保有所需状态时，恢复策略还可比较两条不同执行路径：暂沿原pipeline把失败位置的微批转给同stage的健康peer，或重新划分DP/PP、layer与microbatch后在剩余资源上重建plan。前者少付切换费，却可能耗尽原有bubble、长期拉低step吞吐并增加activation驻留；后者付搜索、状态搬移与通信域重建，才可能改善后续有效吞吐。[受限恢复规划](https://arxiv.org/html/2508.21613v1#S3)提示应联合核这段过渡与恢复后运行，而不能只比最快load或单步时间；原候选搜索/估计并未闭合任意故障间隔下的全局最优policy，不转抄成自动最优picker。Layer重合的最小迁移匹配也只减少被计价的搬运，不替代同一恢复世代的optimizer、RNG、cursor与collective identity；本项目仍要求在可核step边界形成一致状态、验证新group后再恢复。故障覆盖、同stage副本、memory headroom或数值轨迹不可靠时，停用候选plan并回退可信durable checkpoint/受控重跑，尤其完整stage已丢失时不能继续用失效分母估吞吐。Profile/search、等待、全部state与通信重建、失败回退和独立质量检查都计费，单一Ascend原型加模拟对照不证明生产故障、无OOM或收敛无损；故障较少、任务短或重建无法摊销时，固定plan与持久恢复仍合理。
+<!-- source-family:SF-2025-ARXIV-2508-21613 -->
 
 ### Failure Domain 决定 Checkpoint 的存储层级
 
@@ -423,8 +444,14 @@ training checkpoint
 
 LoRA merge、TP reshard、tensor-name mapping 和 quantization 都可能改变输出。转换完成必须重新验证，不应把源 checkpoint 的评估结果无条件继承给目标 artifact。
 
+完整转换与全量装载仍是容易校验的权重交接路径；频繁、跨区域的 policy 更新可改传相对共同已提交版本的 changed bits。训练 shard 先映射到 canonical tensor coordinates，再由唯一 source owner 投影到目标 loader 的存储位置；只有转换和 dtype 保持存储位、写入范围不冲突时才用 XOR，其余位置绝对覆写。省下的是更新传输，不是源 baseline、全模型比较、转换或目标装载。
+
+Delta 要求所有 receiver 以同一 baseline 应用固定 candidate：XOR 必须去重；失败先隔离并等待旧写入停止，再对完整 changed set 作 absolute overwrite；新 receiver 先恢复已提交全量版本。Device apply 与所需 ACK 完成后才原子提交版本、推进 source baseline，KV 每次 transition 失效。[NeMo-DCR v1](https://arxiv.org/html/2610.08430v1)只支持 fail-stop、可信通道与可用且 fenced 的控制面。比较、host staging、drain 和 apply 仍付费；无法满足 loader 条件或变化密集时保留 dense refit，合成1T扩层及 transport-only 对照不授通用端到端 RL 加速。<!-- source-family:SF-2026-ARXIV-2610-08430 -->
+
 融合两个从共同 base 出发的 task vectors，还可能需要任务不对称的筛选，而不只是统一平均。在受限 reasoning/task 合并分支中，分别用各自 calibration 数据的梯度幅度，选择 reasoning 向量的低梯度位置与任务向量的高梯度位置，再从双方集合都去掉 overlap，按缩放系数加回共同 base。这个 mask 是模型、loss 与校准数据依赖的转换 proposal；不同选择方向和交集排除不证明推理或安全知识已被定位到独立地址，也不保证参数互不重叠就没有行为干扰。[有限模型与mask消融](https://arxiv.org/html/2601.05560v1)支持该受测分支，同时提醒低攻击成功率可能来自输出崩溃；因此目标 artifact 要同时再验任务效用、reasoning、输出完整性和安全，而不继承源模型成绩。梯度采集、筛选与发布矩阵都有成本；共同 base 不同、校准迁移或回归未过时，保留源 artifact、原合并方法或不合并。
 <!-- source-family:SF-2026-ARXIV-2601-05560 -->
+
+对同一基座、架构与张量坐标兼容，且均已完成后训练与对齐的最终 checkpoints，统一平均是成本和语义都容易解释的起点，但总体分数接近不等于各能力类别互补。另一条受限分支是在类别评分矩阵中寻找低相关的能力切片，从各切片选择 checkpoint experts，再搜索非均匀平均系数；因此“平均哪些模型”和“用什么权重平均”必须与用于选择的类别样本、评分及搜索过程一起成为 artifact build 的输入，而不能只记录最终权重文件。[同基座 checkpoint 的受限对照](https://arxiv.org/pdf/2511.13254v1)区分全体均匀平均、选定子集均匀平均与选定子集加权平均，支持这个选择分支，不证明任意架构、任务或弱互补类别都获益；其公开榜单分数参与选择和调权，独立开发集只是后续建议，不能把所报结果当测试独立的泛化证据。候选加载、类别评价、系数搜索及目标验收仍有费用，“不再训练”不等于零成本。由此推导的发布要求是保留 source checkpoints、子集与系数、选择人口和 scorer lineage，再按第 66 章分离开发反馈与独立最终验收；类别样本不足以分辨互补、回归不稳或验收失败时，保留均匀方案、单一已验模型或不合并，而不是让搜索结果直接取得 release 资格。<!-- source-family:SF-2025-ARXIV-2511-13254 -->
 
 第 66 章将进一步要求 equivalence Evaluation 绑定 source/target artifact、转换配置、runtime、dataset 与 scorer identity。只有证据可追溯到实际被部署的 target artifact，Registry 和 release gate 才能消费它。
 
@@ -591,6 +618,10 @@ Checkpoint 是训练系统的状态事务。模型参数只是其中一部分；
 
 ## Review notes
 
+- `SF-2026-ARXIV-2605-09370` — Daily2026-05-13补May12；exact-v1 §§4.2/4.3.4–5/5及必要3.1，2+2+2=6，具体归因反证深入。只phase/path/RPCqueue-service诊断，不采128slot唯一因果、网络upgrade无效、粗样18s精确pause或2.7xchain-vs-session因果；保观察/配置/成本边界，未核内部frameworktrace/代码/复现。Source rootR10通过；逐字PRE/窄写许可已通过，正文/marker/本人注真实保存并作者完整局部顺读；root R13非作者实际POST通过，窄位释放。 本次仅同步已成事实，不重写机制或认证实现/复现、全覆盖或整日Gate。
+
+- Daily `2026-10-08`：`SF-2026-ARXIV-2610-07688`，[FailBench v1](https://arxiv.org/html/2610.07688v1) IV–X受影响评价；142tuple中10直接恢复/继续、123analytical lower bound、9infeasible，process-group重建2–10s为敏感性假设。两节点8V100/FP32小型proxy与watchdog干预不授完整LLM/survivor orchestration；只采用恢复成本分账与测量人口边界。
+
 - **Exploring Silent Data Corruption as a Reliability Challenge in LLM Training（arXiv:2604.00726v1；Status: Experimental）**：exact-v1 的故障注入支持“检测后重算最近 step”在作者三种 LLaMA 规模中的缓解效果；不证明检测覆盖率、跨硬件表现或生产长期可靠性。https://arxiv.org/abs/2604.00726v1
 
 本章区分 weights-only、resumable 与 deployment artifacts，覆盖 model-state 容量、事务提交、distributed sharding、resharding、data/RNG state、async save、restore validation 和 RLHF 多模型一致性。本轮进一步将量化 deployment artifact 拆成 numerical、graph、execution 与 evidence contracts，避免把“有 4-bit tensors”误写成“已定义可部署执行语义”。具体 ZeRO/FSDP 参数生命周期留给第 39 章，GPU execution plan 留给第 49 章，框架 API 留给第 40～41 章。
@@ -622,3 +653,11 @@ Primary-source / official documentation 校验入口：
 - `SF-2026-ARXIV-2512-24511`：[exact v1](https://arxiv.org/html/2512.24511v1) §3.1 Polaris/Lustre setup、§3.2 tensor/request/file 粒度、§3.4 direct/cached 混合路径反证、§3.5 restore allocation/framework 对照。采用 I/O microbenchmark 与端到端 restore 的不同成本合同；真实 BLOOM3B/LLaMA7B/13B 的 4/8/16 ranks 与 8GB 连续 host-buffer 测试分开，不采用通用 34% 加速或 mixed-path 优势。必要原源与实际正文/邻接/末注已由 root 非作者复核通过；未运行代码或复现实验。
 
 - `SF-2026-ARXIV-2601-05560` — Daily `2026-01-13`；[ReasonAny exact-v1](https://arxiv.org/html/2601.05560v1) §2–4。原评分保持，具体owner差额深入；采用同base BottomK/TopK双向overlap排除、mask calibration依赖与target回归；低ASR输出collapse反侧。未运行代码或复现实验；root实际必要源/现owner写前核通过并授窄锁；root已实际核正文/前后邻接及末注，非作者POST通过。
+
+- `SF-2025-ARXIV-2511-13254` — Daily `2025-11-19`补充窗口Nov18；[Meta官方publication](https://ai.meta.com/research/publications/souper-model-how-simple-arithmetic-unlocks-state-of-the-art-llm-performance/)明确Nov18日期，仅作机构披露事件；[SoCE精确v1 PDF](https://arxiv.org/pdf/2511.13254v1) §3/Algorithm1、§4.1三对照/§4.2.3条件及§7.1支持同base、架构/张量坐标兼容且均已完成后训练与对齐的最终checkpoint的类别互补子集/系数选择分支；张量兼容不代替posttraining/alignment资格。公开榜参与选择，独立dev仅后续建议，不能授测试独立泛化/普遍鲁棒性；选择人口、artifact lineage、独立最终验收及回退是受此边界约束的工程推断，不冒原论文已验证release流程。晚v2的precision-collapse叙述不回填v1；未运行代码或复现实验，不授生产效果。Ohm独核§15真实非写入者POST通过；root独核§2实际读回接纳本项整合并释放Ch35窄锁，不代表Nov19日级验收。
+
+- `SF-2025-ARXIV-2507-01628` — Noether，Daily2025-07-04补Jul3；[DaiFu exact-v1](https://arxiv.org/html/2507.01628v1)§3–6/Alg1–2/Tables5–8必要，2+2+2=6，活context continuation与durable恢复分责具体差额深入，必要原域沿Ohm57有效层复用。只采受限cell/barrier/原对象上下文恢复，不授exact-resume/任意fault/collective恢复或p不显著即等价；非幂等失败、同step/副作用条件、编译限制/全部费用近文。未看图像/核Python变换/分布式实现或复现；Ohm63正式PRE通过，按root协调的精确单段/本人注已保存，Ohm66真实非writer完整新增/完整两侧/本人注POST通过，现已生效并释放指定窄位，不授DAY。
+
+- `SF-2025-ARXIV-2508-21613` — Godel，Daily2025-09-02补Sep01；[Odyssey exact-v1](https://arxiv.org/html/2508.21613v1)II-B/C、III–VI/Alg1/eq1–14必要Source，2+2+2=6。仅无spare恢复policy/reroute-vs重分plan与状态一致/过渡费用分责；保planner仅minstep/缺全间隔选择、Fi=Ndp边界、greedy非全局/weight非全state、真实Ascendvs模拟及全部费，不授optimal/生产故障或exact-resume。世代/consumer验收与退路为项目推导，未看像素/核代码/复现，不回投current Chameleon。Newton46实际必要Source/具体owner/本有限逐字PRE通过，root协调DeadPool完整在线repair末段后/FailureDomain标题前本单段/独立marker/本人注；已按稿保存，Newton50一次真实完整新增/直接两侧/本人注POST通过，指定窄位即时生效释放；不预整日DAY。
+
+- `SF-2025-ARXIV-2509-03047` — Boyle，Daily2025-09-05补Sep4；exact-v1 II–IV/原建模式/T1–3/必要caption已实际读，2+2+2=6。只optimizer前/中phase→等待/停止→可恢复step交接；保DP完整state前提、sharding/标签完成与group身份、相关fault/持久退路及全费，不授任意一step精确恢复/scaleindependentSLO。未看图像素/核补丁或复现；root72必要Source/具体owner/原PRE与本精确位通过，本一段/独立marker/本人注已真实保存并自读完整两侧，待root一次真实非writer POST，不预生效/DAY。

@@ -1,0 +1,3082 @@
+ 
+ 
+ 
+ Learning to See What You Need: Gaze Attention for Multimodal Large Language Models 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ Report GitHub Issue
+
+ × 
+ 
+
+ 
+ Title: 
+ 
+
+ Content selection saved. Describe the issue below:
+
+
+ Description: 
+ 
+ 
+
+
+ 
+ Submit without GitHub 
+ Submit in GitHub 
+ 
+ 
+ 
+ 
+ arXiv is now an independent nonprofit! 
+ Learn more 
+ &times; 
+ 
+
+
+ 
+ 
+ 
+ Back to arXiv 
+ 
+ 
+
+ 
+ 
+ Why HTML? 
+ 
+ 
+ 
+ 
+ Report Issue 
+ 
+ 
+ 
+ 
+ 
+ 
+ Back to Abstract 
+ 
+ 
+ 
+ 
+ 
+ 
+ Download PDF 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ Abstract 
+
+ 1 Introduction 
+
+ 2 Related Works 
+ 
+ Multimodal Large Language Models. 
+
+ VideoLLM with Token Reductions. 
+
+ VideoLLM with KV-Cache Retrievals. 
+
+ Visual Saliency & Gaze in Vision Models. 
+
+ Long Video Generation & Long-Context LLM. 
+
+ 
+
+ 3 Method 
+ 
+ 3.1 Preliminaries: Dense Attention in MLLMs 
+
+ 3.2 Gaze Regions, Descriptors, and Visual Routing 
+ 
+ Towards Stable Training. 
+
+ 
+
+ 3.3 Learnable Context Tokens 
+
+ 3.4 Gaze Attention 
+
+ 3.5 Cost Analysis. 
+
+ 
+
+ 4 Results 
+ 
+ 4.1 Experimental Setup 
+ 
+ Architecture & Hyperparameters. 
+
+ Training & Dataset 
+
+ Evaluation. 
+
+ 
+
+ 4.2 Image Question & Answering 
+ 
+ Attention map visualization. 
+
+ Visual routing examples. 
+
+ Quantitative results. 
+
+ 
+
+ 4.3 Video Question & Answering 
+ 
+ Visual routing examples. 
+
+ Quantitative results. 
+
+ 
+
+ 4.4 Analysis 
+ 
+ Number of learnable context tokens. 
+
+ Progressive \mathrm{TopK} Schedule. 
+
+ Gaze region size. 
+
+ FLOPs & Memory Usage. 
+
+ 
+
+ 
+
+ 5 Conclusion 
+
+ References 
+
+ A Limitations and Future Directions. 
+
+ B Training Details 
+
+ C Evaluation Benchmarks 
+
+ 
+ 
+ 
+ 
+ 
+ License: CC BY 4.0
+ 
+ 
+arXiv:2605.13080v1 [cs.CV] 13 May 2026
+
+
+ 
+ 
+ Learning to See What You Need: Gaze Attention for Multimodal Large Language Models
+
+ 
+ 
+ Junha Song
+ 
+ Affiliation:  KAIST
+ 
+ Affiliation:  NAVER AI Lab
+ 
+    
+ Byeongho Heo
+ 
+ Affiliation:  NAVER AI Lab
+ 
+    
+ Geonmo Gu
+ 
+ Affiliation:  NAVER AI Lab
+ 
+    
+ Jaegul Choo
+ 
+ Affiliation:  KAIST
+ 
+    
+ Dongyoon Han
+ 
+ Affiliation:  NAVER AI Lab
+ 
+ Corresponding authors
+ 
+    
+ Sangdoo Yun
+ 
+ Affiliation:  NAVER AI Lab
+ 
+ Corresponding authors
+ 
+
+
+ Abstract
+
+ 
+ When humans describe a visual scene, they do not process the entire image uniformly; instead, they selectively fixate on regions relevant to their intended description. In contrast, current multimodal large language models (MLLMs) attend to all visual tokens at each generation step, leading to diluted focus and unnecessary computational overhead.
+In this work, we introduce Gaze Attention, a novel mechanism that enables MLLMs to selectively attend to task-relevant visual regions during generation. Specifically, we spatially group visual embeddings—stored as key-value caches—into compact gaze regions, each represented by a lightweight descriptor. At each decoding step, the model dynamically selects the most relevant regions and restricts attention to them, reducing redundant computation while enhancing focus.
+To mitigate the loss of global context caused by localized attention, we further propose learnable context tokens appended to each image or frame, allowing the model to maintain holistic visual awareness.
+Extensive experiments on image and video understanding benchmarks demonstrate that Gaze Attention matches or surpasses dense-attention baselines, while using up to 90% fewer visual KV entries in the attention computation.
+
+ 
+
+ † † date: August 24, 2026 
+ 
+ 1 Introduction
+
+
+ 
+ MLLMs encode images or videos into sequences of visual embeddings, which are concatenated with textual inputs and processed by an LLM  ( Liu et al., 2023a ; Li et al., 2025a ; Wang et al., 2024 ; Chen et al., 2024c ) .
+During generation, these models attend to all visual tokens, including regions that may be irrelevant to the current prediction.
+In contrast, human visual perception is inherently selective: rather than processing an entire scene, humans dynamically shift their gaze to fixate on regions relevant to their intended description  ( Yarbus, 2013 ; Henderson, 2003 ) .
+This discrepancy suggests that current MLLMs lack selective visual attention, motivating the development of such mechanisms.
+
+
+
+ 
+ Existing efforts have explored reducing the visual information attended to by the LLM, primarily for efficiency rather than selective gaze. They are illustrated in figure  1 .
+Some methods compress visual tokens before they are passed to the LLM  ( Weng et al., 2024 ; Li et al., 2026 ; Li et al., 2025b ) , while others evict visual KV cache entries using importance scores computed from the question  ( Di et al., 2025 ; Wan et al., 2025 ; Zhang et al., 2026 ; Yang et al., 2025e ; Chen et al., 2026 ) . Both directions determine the usable visual information in advance, before the model knows which region will matter at each generation step. As a result, they can either discard fine-grained details or fail to adapt when generation requires information from multiple distinct regions. Neither direction enables the model to select visual regions dynamically at each generation step.
+
+
+
+ 
+ In this work, we propose Gaze Attention, a mechanism that allows the model to focus on the visual regions needed for each generation step.
+Specifically, the cached key vectors of visual tokens are spatially grouped into gaze regions, each represented by a lightweight descriptor. At each decoding step, the model routes attention to a small subset of regions based on these descriptors and attends exclusively to them.
+This enables the model to perform more focused attention on task-relevant regions, improving generation quality. At the same time, because only the selected regions participate in attention computation, cost scales with the attended fraction rather than the full visual token count.
+
+
+
+ 
+ Figure 1: 
+ Overview of visual attention approaches. We aim to enable MLLMs to selectively fixate on task-relevant regions during generation, rather than attending to all visual tokens. Several methods pursue this direction through token compression  ( Li et al., 2026 ; Li et al., 2025b ) or KV-cache eviction  ( Zhang et al., 2026 ; Xu et al., 2026 ; Di et al., 2025 ) , but rely on a one-time relevance estimate from the question. In contrast, gaze attention dynamically selects query-relevant regions at each generation step.
+ 
+ 
+ 
+ Selective attention alone, however, can limit access to global scene information. To address this, we introduce learnable context tokens that capture a compact summary of the visual content.
+These tokens are appended to each image or video frame and are processed within the LLM’s native attention layers.
+During generation, every text query has access to the KV caches of these tokens, allowing the model to retain global visual awareness while attending selectively to local regions, much as humans take in a scene as a whole before focusing on specific details.
+
+
+
+ 
+ We evaluate Gaze Attention on both image and video understanding benchmarks. While attending to up to 90% fewer visual KV entries, it matches or outperforms dense-attention baselines across 13 image and 6 video understanding benchmarks. Visualization analyses further confirm that Gaze Attention yields concentrated, interpretable attention maps at each generation step, in contrast to the diffuse patterns of dense attention. These results suggest that enabling MLLMs to selectively attend to relevant visual regions is a promising alternative to dense attention.
+
+
+
+
+
+ 
+ 2 Related Works
+
+
+ 
+ Multimodal Large Language Models.
+
+
+ 
+ Recent MLLMs adopt a similar pipeline that encodes images or videos into visual features, and processes them with an LLM backbone  ( Liu et al., 2024a ; Li et al., 2024a ; Team et al., 2025 ; Chen et al., 2025 ; Clark et al., 2026 ) .
+As images and video frames are information-dense, they typically yield far more visual tokens than text.
+This issue becomes more pronounced for high-resolution images  ( Li et al., 2025a ; Yang et al., 2025a ; Chen et al., 2024b ) and videos  ( Yang et al., 2025d ; Yang et al., 2025c ; Xu et al., 2026 ) , which require an enormous number of tokens to faithfully represent their content.
+Despite the growing demand on LLM backbones to process large amounts of visual information, there remains limited exploration into how such information should be handled effectively within the LLM.
+
+
+
+
+
+ 
+ VideoLLM with Token Reductions.
+
+
+ 
+ To reduce the cost of long visual contexts, prior work has explored compressing visual tokens before they are processed by the LLM. Several strategies include token resampling  ( Zhang et al., 2023 ; Tan et al., 2024 ; Li et al., 2024b ; Weng et al., 2024 ) and pooling  ( Maaz et al., 2024 ; Liu et al., 2025 ; Li et al., 2025b ) , which reduce token count by compressing or aggregating visual information. Other works adopt importance-based pruning to remove less relevant tokens  ( Chen et al., 2024a ; Li et al., 2026 ) . While these methods improve efficiency, they often blur or discard fine-grained details that may be needed later during generation.
+
+
+
+
+
+ 
+ VideoLLM with KV-Cache Retrievals.
+
+
+ 
+ Since attention is the dominant computational cost in LLMs, several works aim to improve efficiency, particularly in streaming scenarios, by reducing the amount of visual KV cache  ( Di et al., 2025 ) .
+Some works focus on removing low-importance entries  ( Wan et al., 2025 ; Zhang et al., 2026 ; Ning et al., 2025 ) , while others consolidate redundant entries within a fixed budget  ( Di et al., 2025 ; Kim et al., 2025b ; Yang et al., 2025e ; Chen et al., 2026 ) .
+In most cases, importance scores between question and visual tokens are computed once at the first generation step, and only high-scoring entries are memorized.
+This limits adaptivity during decoding, especially when later queries require different visual details.
+Our method instead routes each query to relevant visual chunks, maintaining dynamic access throughout generation.
+
+
+
+
+
+ 
+ Visual Saliency & Gaze in Vision Models.
+
+
+ 
+ Computational modeling of visual attention has a long history in computer vision.
+Classical saliency models  ( Itti et al., 1998 ) predict where humans fixate using low-level features,
+and deep learning approaches such as DeepGaze II  ( Kümmerer et al., 2016 ) and its successors  ( Linardos et al., 2021 ) 
+substantially improved fixation prediction by leveraging features from recognition networks.
+Complementary efforts have addressed gaze following—predicting where a person in an image is looking  ( Recasens et al., 2015 ) —and
+task-driven scanpath prediction  ( Chen et al., 2021 ) .
+More recently, several works have incorporated explicit human gaze into vision-language models.
+Voila-A  ( Yan et al., 2024 ) conditions VLMs on user gaze traces or heatmaps through dedicated perceiver modules, while Gaze-VLM  ( Pani and Yang, 2025 ) uses gaze during training to regularize transformer attention toward human
+gaze maps.
+These methods rely on external gaze signals to guide where the model attends, while largely preserving dense visual attention.
+In contrast, our method requires neither gaze annotations nor gaze input, and learns query-adaptive routing that restricts each decoding query to a small subset of visual KV regions.
+
+
+
+
+
+ 
+ Long Video Generation & Long-Context LLM.
+
+
+ 
+ Long video generation also faces the prohibitive cost of dense attention. While LCT  ( Guo et al., 2025 ) relies on full attention, MoC-VideoGen  ( Cai et al., 2026 ) demonstrates the effectiveness of query-adaptive context selection. In parallel, scaling the context window of LLMs has been widely studied through efficient attention mechanisms such as sliding windows  ( Jiang et al., 2023 ; Beltagy et al., 2020 ) and sparse attention  Jiang et al. (2024) ; Zaheer et al. (2020) .
+Recent works such as NSA  ( Yuan et al., 2025 ) , MoBA  ( Lu et al., 2025 ) , and DSA  ( DeepSeek-AI, 2025 ) show that trainable sparse attention can match dense baselines, and KVzip  ( Kim et al., 2025a ; Kim et al., 2026 ) demonstrates effective query-agnostic KV cache compression for long-context text LLMs.
+However, these methods target unimodal text and do not address selective attention over visual tokens. Our work bridges this gap by studying selective visual attention for multimodal understanding.
+
+
+
+
+
+
+
+ 
+ 3 Method
+
+
+ 
+ This section presents Gaze Attention and describes its key components: gaze regions, descriptors, and visual routing ( section   3.2 ), learnable context tokens ( section   3.3 ), and attention formulation ( section   3.4 ).
+A method overview is illustrated in figure  2 .
+
+
+
+ 
+ Figure 2: 
+ Overview of Gaze Attention . Unlike dense attention, which attends over all visual tokens, our approach selectively attends to query-relevant regions. Visual keys k^{u}_{i} are partitioned into gaze regions and summarized by lightweight descriptors d(\cdot) , which guide each decoding query q toward relevant regions. Learnable context tokens are propagated through the LLM and form key-value vectors k^{u}_{c} , providing global visual context.
+ 
+ 
+ 
+ 3.1 Preliminaries: Dense Attention in MLLMs
+
+
+ 
+ An MLLM receives visual tokens from a vision encoder, followed by text tokens processed by the LLM. For a visual unit u ( i.e. , an image or a video frame), let \{x_{i}^{u}\}_{i=0}^{N^{u}-1} denote its visual tokens arranged on an H^{u}\times W^{u} grid, where N^{u}=H^{u}W^{u} .
+As these tokens pass through each LLM layer, they are projected into key–value pairs \{(k_{i}^{u},v_{i}^{u})\}_{i=0}^{N^{u}-1} and stored in the KV cache (K,V) . In dense attention, the query q_{j} at decoding step j attends to all cache entities:
+
+ 
+
+ 
+ 
+ \mathrm{Attn}(q_{j},K,V)=\mathrm{Softmax}\!\left(\frac{q_{j}K^{\top}}{\sqrt{d}}\right)V, 
+ 
+ (1) 
+ 
+
+
+ where d is the key dimension.
+This makes every visual token accessible, regardless of its relevance to the current prediction. In contrast, humans direct their gaze toward regions relevant to what they are about to describe. Motivated by this, we design a region-based attention mechanism that attends only to the visual regions needed at each generation step.
+
+
+
+
+
+ 
+ 3.2 Gaze Regions, Descriptors, and Visual Routing
+
+
+ 
+ Visual data, unlike text, is inherently structured in space and time, making one-dimensional partitioning unsuitable for selective attention.
+We therefore reshape the visual keys into their original spatial and temporal layout and partition them into regions, each containing r^{h}\times r^{w}\times r^{t} tokens. Let \mathcal{R}_{g}^{u}\subseteq\{0,\ldots,N^{u}-1\} denote the set of token indices belonging to region g in visual unit u .
+Each region is summarized by a descriptor d_{g}^{u} , obtained by mean-pooling the key vectors in \mathcal{R}_{g}^{u} . This descriptor serves as a compact routing unit, reducing the candidate set from the full token sequence to the region level.
+At decoding step j , the query q_{j} measures its similarity to the region descriptors \{d_{g}^{u}\} and selects the \mathrm{TopK} regions:
+
+ 
+
+ 
+ 
+ s_{g}^{u}=q_{j}^{\top}d_{g}^{u},\quad\mathcal{G}_{j}=\mathrm{TopK}(\{s_{g}^{u}\}_{u,g},K), 
+ 
+ (2) 
+ 
+
+
+ where \mathcal{G}_{j} denotes the selected visual-unit and region index pairs. The query then attends only to the visual key–value pairs within these regions, allowing the model to focus its attention computation on task-relevant content without being diluted by irrelevant visual tokens .
+Crucially, unlike KV cache eviction methods  ( Kim et al., 2025b ; Zhang et al., 2026 ) that discard entries based on a one-time importance estimate, our approach retains the visual KV cache and re-selects regions per query at every decoding step. This means a region ignored at one step can still be attended to at a later step if it becomes relevant.
+This enables MLLMs to adapt their visual focus at each decoding step, similar to how humans shift their gaze to examine details while describing different subjects.
+
+
+
+ 
+ Towards Stable Training.
+
+
+ 
+ Training visual routing from scratch can be unstable  ( Lu et al., 2025 ; Yuan et al., 2025 ) because the relationship between the descriptors and the decoding queries is weak at the beginning of training. We therefore adopt a progressive \mathrm{TopK} schedule  ( Gao et al., 2024 ; Cai et al., 2026 ) , starting from a dense setting and gradually reducing \mathrm{K} as training proceeds. While the \mathrm{TopK} operation itself is non-differentiable, the selected regions still receive gradient signals through the attention computation, which flow back to the visual keys k_{i}^{u} for (u,g)\in\mathcal{G}_{j} and i\in\mathcal{R}_{g}^{u} .
+This encourages the key projections to produce increasingly discriminative routing signals, leading to more stable routing behavior.
+
+
+
+
+
+
+
+ 
+ 3.3 Learnable Context Tokens
+
+
+ 
+ Localized attention can limit access to global scene information. To alleviate this, we introduce a small set of learnable context tokens. For each visual unit u , these tokens are appended to its visual tokens at the input of the LLM. The attention mask restricts each context token to attend only to tokens from its corresponding unit, producing compact summary keys k_{C}^{u} . This design incurs negligible overhead, as it adds only a few extra token embeddings processed jointly within the LLM’s standard parallel computation. Unlike routed visual regions, which vary per query, k_{C}^{u} remains visible throughout generation, providing a persistent global summary even when most visual regions are hidden.
+
+
+
+
+
+ 
+ 3.4 Gaze Attention
+
+
+ 
+ We now combine the above components into a unified attention formulation. For the query q_{j} at decoding step j , the key–value pairs are constructed from three sources: textual tokens, global context keys k_{C}^{u} , and visual tokens from the routed regions. Specifically, we define
+
+ 
+
+ 
+ 
+ K_{\mathrm{Gaze}}(q_{j})=K_{\mathrm{text}}\cup\left\{k_{C}^{u}\mid\forall u\right\}\cup\left\{k_{i}^{u}\;\middle|\;(u,g)\in\mathcal{G}_{j},\;i\in\mathcal{R}_{g}^{u}\right\}, 
+ 
+ (3) 
+ 
+
+
+ where V_{\mathrm{Gaze}}(q_{j}) is constructed analogously from the corresponding values of the selected tokens and context tokens. The resulting attention is then given by:
+
+ 
+
+ 
+ 
+ \mathrm{GazeAttn}(q_{j})=\mathrm{Softmax}\!\left(\frac{q_{j}K_{\mathrm{Gaze}}(q_{j})^{\top}}{\sqrt{d}}\right)V_{\mathrm{Gaze}}(q_{j}). 
+ 
+ (4) 
+ 
+
+
+ This allows the model to preserve linguistic coherence and global visual awareness while allocating most of its visual computation to task-relevant regions.
+
+
+
+
+
+ 
+ 3.5 Cost Analysis.
+
+
+ 
+ Gaze Attention restricts each query to attend only to the selected regions and context tokens, rather than all visual tokens.
+As a concrete example, consider an 8-frame video where each frame produces 576 visual tokens after the vision encoder, yielding N_{v}{=}4608 in total. With region size m=r^{h}r^{w}r^{t}=36 ( G{=}128 regions), \mathrm{K}{=}20 selected regions, and |C|{=}4 , U{=}8 ,
+the attended set per query is \mathrm{K}m+|C|U=752 , reducing the attention FLOPs and per-head score matrix to roughly 752/4608\approx 16.3\% of dense attention.
+For video inputs where N_{v} can exceed 10^{4} , the computational and memory savings become even more substantial.
+We provide detailed FLOPs and memory measurements in section   4.4 .
+
+
+
+ 
+ Figure 3: 
+ Attention map visualization of dense attention vs. gaze attention. Dense attention spreads across all visual tokens with weak focus on relevant regions. Gaze attention routes over lightweight region descriptors and attends only to the selected regions, yielding more concentrated attention on needed visual content.
+ 
+ 
+
+
+
+
+ 
+ 4 Results
+
+
+ 
+ 4.1 Experimental Setup
+
+
+ 
+ Architecture & Hyperparameters.
+
+
+ 
+ Our implementation is based on the Cambrian codebase  ( Tong et al., 2024a ) . We pair SigLIP2-So/16 384px  ( Tschannen et al., 2025 ) as the vision encoder with either Qwen3-4B  ( Yang et al., 2025b ) or Qwen2.5-7B  ( Yang et al., 2025a ) as the LLM, denoted Cambrian-4B and Cambrian-7B, respectively. Both configurations use a 2-layer MLP as the multimodal projector.
+We optionally adapt a token compression method  ( Li et al., 2025b ) where the projector is augmented with a 3\times 3 convolution layer that reduces the number of visual tokens by 4\times ; this is used by default for video inputs.
+Gaze regions are set to r^{h}\times r^{w}\times r^{t}=6\times 6\times 1 by default, except for image inputs with token compression where we use 3\times 3\times 1 . We use |C|=4 learnable context tokens per visual unit.
+Following prior work on sparse attention  ( Kim et al., 2025b ; Cai et al., 2026 ; Lu et al., 2025 ) ,
+we allow each attention head to independently select its own set of regions.
+
+
+
+ 
+ Figure 4: 
+ Comparison with existing methods and visual routing examples. 
+InfiniPot-V  ( Kim et al., 2025b ) and HERMES  ( Zhang et al., 2026 ) fix attended tokens once from the question, whereas gaze attention dynamically routes to query-relevant regions at each step, shifting focus to match each generated token. More examples can be found in fig.   A .
+ 
+ 
+
+
+ 
+ Training & Dataset
+
+
+ 
+ We follow the training strategy of the Cambrian codebase. Our training consists of two stages: in Stage 1, we train only the multimodal projector on the Cambrian-Align dataset  ( Tong et al., 2024a ) to align the visual and language embedding spaces; in Stage 2, we perform full-parameter fine-tuning. For image training, we use the Cambrian-7M dataset  ( Tong et al., 2024a ) . For video training, we sample a 20% subset of the Cambrian-S-3M dataset  ( Yang et al., 2025d ) to keep the training cost manageable; each configuration requires approximately 384 H100 GPU-hours for both image and video training. Additional details are in appendix   B .
+Following standard practice in video LLMs  ( Zhang et al., 2023 ; Li et al., 2025a ) , video frames are extracted at 1 FPS up to a configured maximum, beyond which uniform subsampling is applied.
+
+
+
+
+
+ 
+ Evaluation.
+
+
+ 
+ Recent methods in visual token reduction and KV cache compression are built on different architectures and training recipes, making direct comparison difficult. We therefore build baselines under an identical architecture and token-matched training setup to isolate the effect of our method. We additionally report published results of existing methods on their original architectures for reference. More details of the evaluation benchmarks are provided in appendix   C .
+
+
+
+
+
+
+
+ 
+ 4.2 Image Question & Answering
+
+
+ 
+ Attention map visualization.
+
+
+ 
+ To provide an intuitive comparison between Gaze Attention and dense attention, we visualize their attention maps in  fig.   3 . In this example, dense attention attends over all 576 visual cache entries, whereas Gaze Attention attends to only 72 selected entries ( i.e. , 2 regions of 36 entries each). Dense attention yields diffuse and ambiguous patterns, as it lacks an explicit mechanism to filter out irrelevant visual content. In contrast, Gaze Attention first selects a small subset of regions, producing more concentrated attention patterns at lower attention cost.
+
+
+
+
+
+ 
+ Visual routing examples.
+
+
+ 
+ Gaze Attention allows each query to attend to the visual regions it needs. Figure   4 illustrates how this region selection evolves over the course of generation: much like humans shift their gaze toward the flowers , the cat , and the grass when describing a scene, the model correspondingly adjusts its attended regions at each step. Notably, this behavior emerges without any explicit supervision over where to look, arising solely from the next-token prediction signal.
+In addition, we compare with KV-cache eviction methods such as InfiniPot-V  ( Kim et al., 2025b ) and HERMES  ( Zhang et al., 2026 ) , which determine retained entries during prefill before the required information is known. Here, they appear to preserve a globally dispersed set of tokens, yet produce some incorrect predictions.
+
+
+
+
+
+ 
+ Quantitative results.
+
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ General 
+ Science & Math 
+ Chart & OCR 
+ 
+ Model 
+ KV Size 
+ Avg 
+ 
+ 
+ MME {}^{\text{P}} 
+ 
+ 
+ 
+ MMB {}^{\text{EN}} 
+ 
+ 
+ 
+ MMB {}^{\text{CN}} 
+ 
+ 
+ 
+ MMVP 
+ 
+ 
+ 
+ RealWorldQA 
+ 
+ 
+ 
+ ADE 
+ 
+ 
+ 
+ OmniBench 
+ 
+ 
+ 
+ GQA 
+ 
+ 
+ 
+ SQA {}^{\text{I}} 
+ 
+ 
+ 
+ MMMU {}^{\text{V}} 
+ 
+ 
+ 
+ MathVista 
+ 
+ 
+ 
+ ChartQA 
+ 
+ 
+ 
+ OCRBench 
+ 
+ 
+ 
+ TextVQA 
+ 
+ 
+ BLIP-2-7B ( 2023 ) 
+ 576 
+ – 
+ 1333.7 
+ – 
+ – 
+ 23.3 
+ 42.4 
+ – 
+ 31.5 
+ 57.3 
+ 63.0 
+ 26.8 
+ 11.3 
+ 58.8 
+ 43.7 
+ 50.9 
+ 
+ SPHINX-7B ( 2024 ) 
+ – 
+ – 
+ 1515.8 
+ – 
+ – 
+ 38.7 
+ 48.5 
+ – 
+ 61.7 
+ 61.1 
+ 68.6 
+ 31.6 
+ 9.8 
+ 37.8 
+ 29.8 
+ 38.3 
+ 
+ LLaVA-Next-LLaMA-3-8B ( 2024a ) 
+ 784 
+ – 
+ 1526.0 
+ 74.0 
+ – 
+ 40.0 
+ 60.1 
+ – 
+ 67.7 
+ 65.3 
+ 72.9 
+ 39.6 
+ 11.8 
+ 69.2 
+ 58.1 
+ 64.7 
+ 
+ LLaVA-Next-Qwen2-7B ( 2024a ) 
+ 784 
+ – 
+ 1453.3 
+ 75.2 
+ – 
+ 49.3 
+ 60.0 
+ – 
+ 69.7 
+ 63.6 
+ 73.5 
+ 36.1 
+ 30.0 
+ 67.1 
+ 54.2 
+ 63.6 
+ 
+ Cambrian-8B-DINOv2-L ( 2024a ) 
+ 576 
+ – 
+ 1366.7 
+ 65.6 
+ – 
+ 34.7 
+ 54.6 
+ 58.9 
+ 57.8 
+ 63.7 
+ 68.7 
+ 36.3 
+ 35.5 
+ 18.6 
+ 4.4 
+ 47.9 
+ 
+ Cambrian-8B-CLIP-L ( 2024a ) 
+ 576 
+ – 
+ 1585.3 
+ 72.7 
+ – 
+ 31.3 
+ 56.2 
+ 59.0 
+ 56.2 
+ 64.0 
+ 77.4 
+ 36.1 
+ 37.3 
+ 59.4 
+ 48.0 
+ 62.4 
+ 
+ Qwen2.5-VL-3B ( 2025a ) 
+ 256 
+ 71.0 
+ 1599.0 
+ 77.0 
+ 77.4 
+ 40.7 
+ 59.5 
+ 63.2 
+ 73.3 
+ 60.5 
+ 80.5 
+ 46.6 
+ 23.3 
+ 70.9 
+ 65.2 
+ 68.2 
+ 
+ + InfiniPot-V ( 2025b ) 
+ 128 
+ 68.8  ( - 2.2 ) 
+ 1574.1 
+ 74.7 
+ 74.1 
+ 35.3 
+ 54.1 
+ 60.2 
+ 70.0 
+ 58.5 
+ 80.5 
+ 45.8 
+ 21.8 
+ 67.0 
+ 57.3 
+ 66.1 
+ 
+ + InfiniPot-V ( 2025b ) 
+ 50 
+ 61.4  ( - 9.6 ) 
+ 1426.5 
+ 68.5 
+ 67.6 
+ 24.7 
+ 48.1 
+ 50.7 
+ 65.5 
+ 52.5 
+ 79.0 
+ 44.2 
+ 18.0 
+ 51.0 
+ 38.4 
+ 60.2 
+ 
+ LLaVA-OV-7B ( 2025a ) 
+ 196 
+ 68.7 
+ 1522.1 
+ 81.0 
+ 82.2 
+ 54.0 
+ 58.6 
+ 61.1 
+ 72.9 
+ 62.3 
+ 95.6 
+ 45.1 
+ 26.3 
+ 63.0 
+ 51.1 
+ 44.2 
+ 
+ + HERMES ( 2026 ) 
+ 100 
+ 64.7  ( - 4.0 ) 
+ 1452.2 
+ 79.8 
+ 80.6 
+ 45.3 
+ 49.0 
+ 58.8 
+ 73.1 
+ 57.6 
+ 90.9 
+ 48.0 
+ 21.0 
+ 36.8 
+ 39.5 
+ 58.0 
+ 
+ + HERMES ( 2026 ) 
+ 40 
+ 58.7  ( - 10.0 ) 
+ 1323.4 
+ 75.2 
+ 74.8 
+ 34.0 
+ 50.2 
+ 52.8 
+ 73.7 
+ 52.0 
+ 87.6 
+ 46.0 
+ 16.8 
+ 25.0 
+ 27.1 
+ 50.5 
+ 
+ Cambrian-4B 
+ 576 
+ 68.6 
+ 1580.5 
+ 74.9 
+ 73.4 
+ 45.3 
+ 59.9 
+ 58.8 
+ 70.6 
+ 56.4 
+ 79.9 
+ 46.4 
+ 17.5 
+ 60.2 
+ 49.6 
+ 64.2 
+ 
+ + Gaze attention 
+ 288+4 
+ 69.6   ( + 1.0) 
+ 1589.8 
+ 76.4 
+ 74.8 
+ 45.3 
+ 61.7 
+ 60.8 
+ 71.3 
+ 57.7 
+ 81.5 
+ 47.4 
+ 17.5 
+ 62.9 
+ 52.6 
+ 66.0 
+ 
+ + Gaze attention 
+ 144+4 
+ 69.0  ( + 0.4) 
+ 1561.8 
+ 76.3 
+ 76.3 
+ 45.7 
+ 60.9 
+ 59.8 
+ 71.3 
+ 58.2 
+ 82.0 
+ 46.3 
+ 19.1 
+ 64.4 
+ 52.4 
+ 66.2 
+ 
+ + Gaze attention 
+ 72+4 
+ 68.1  ( - 0.5) 
+ 1539.3 
+ 74.6 
+ 75.0 
+ 43.3 
+ 59.5 
+ 58.0 
+ 71.1 
+ 57.8 
+ 82.1 
+ 46.4 
+ 19.7 
+ 64.9 
+ 52.0 
+ 64.6 
+ 
+ Cambrian-4B + TokenCompre. 
+ 144 
+ 66.5 
+ 1533.6 
+ 74.3 
+ 73.0 
+ 47.3 
+ 55.9 
+ 58.5 
+ 71.3 
+ 53.0 
+ 80.7 
+ 45.9 
+ 17.6 
+ 52.6 
+ 42.0 
+ 60.1 
+ 
+ + Gaze attention 
+ 54+4 
+ 67.4   ( + 0.9) 
+ 1537.0 
+ 74.7 
+ 71.6 
+ 47.3 
+ 56.5 
+ 59.7 
+ 71.0 
+ 55.8 
+ 79.3 
+ 45.3 
+ 31.1 
+ 52.4 
+ 44.7 
+ 62.7 
+ 
+ + Gaze attention 
+ 36+4 
+ 66.4  ( - 0.1) 
+ 1515.3 
+ 74.0 
+ 73.1 
+ 40.0 
+ 54.8 
+ 60.0 
+ 70.1 
+ 55.4 
+ 79.5 
+ 45.7 
+ 30.7 
+ 52.2 
+ 42.8 
+ 62.3 
+ 
+ 
+ 
+
+ 
+
+ Table 1: 
+ Evaluation on Image QA tasks. We evaluate the effect of Gaze Attention (GA) on image understanding benchmarks.
+InfiniPot-V and HERMES suffer significant performance drops as the KV size decreases, whereas GA maintains or improves over the dense-attention baseline.
+“KV Size” denotes the number of visual KV cache entries attended to during generation. GA controls the KV size by adjusting \mathrm{K} , the number of gaze regions. The ‘+4’ in KV Size indicates the number of learnable context tokens.
+ 
+ 
+ 
+ Table  1 summarizes results on image understanding benchmarks. Different MLLMs produce varying numbers of visual tokens depending on their vision encoder, and KV reduction methods further decrease this count ( i.e. , gray background row). For instance, LLaVA-OV-7B uses SigLIP2-SO/14 at 384px, producing 784 visual features; after 2{\times}2 spatial pooling, 196 tokens enter the LLM. For Gaze Attention, the KV size is determined by the number of attended regions \mathrm{K} : given 576 visual tokens partitioned into 16 regions of 36 tokens each, setting \mathrm{K}{=}2 means each query attends to 36{\times}2=72 entries.
+
+
+
+ 
+ We begin by examining existing cache eviction methods. Both HERMES and InfiniPot-V show significant performance drops as the KV size is reduced. This is perhaps unsurprising:
+these methods were primarily designed and validated on video benchmarks,
+where eviction still leaves over 1K visual cache entries for the LLM. In this single-image setting, however, the same aggressive reduction can leave as few as {\sim} 30 entries,
+providing insufficient visual information to support reliable generation.
+This issue is also compounded by the training-free nature of both methods, which introduces a misalignment—the MLLM was never exposed to such sparse visual inputs during training.
+In contrast, Gaze Attention remains robust under comparable or more aggressive compression. Moreover, Gaze Attention operates within the LLM’s intermediate layers, allowing it to be combined with input-level token compression: applying TokenCompression  ( Li et al., 2025b ) with Gaze Attention at only 36 KV entries yields performance comparable to dense attention with 144 entries.
+
+
+
+ 
+ Figure 5: 
+ Video visual routing examples. Gaze attention selects relevant spatial regions and temporal frames jointly during generation. When describing different subjects or actions, attended regions ( i.e. , red boxes) shift to the corresponding frame-region pairs.
+ 
+ 
+
+
+
+
+ 
+ 4.3 Video Question & Answering
+
+
+ 
+ The computational burden of visual attention is particularly pronounced in video understanding, where a large number of frames produce an extensive set of visual tokens. We evaluate Gaze Attention on video benchmarks to demonstrate its effectiveness in this setting.
+
+
+
+ 
+ Visual routing examples.
+
+
+ 
+ While the image setting involves only spatial region selection, video understanding additionally requires temporal routing across frames. As shown in fig.   5 , Gaze Attention faithfully performs visual routing in this spatio-temporal setting: different queries select distinct frame-region pairs, demonstrating that the gaze shift behavior observed in images extends to the temporal dimension in videos.
+
+
+
+
+
+ 
+ Quantitative results.
+
+
+ 
+ The results are in table   2 . Unlike the image setting, prior cache eviction methods maintain competitive performance on video benchmarks, consistent with their original design targets. We evaluate Gaze Attention on both Cambrian-4B and Cambrian-7B, and observe that both models improve in average score despite substantial KV size reductions. We hypothesize that selectively attending to relevant regions within lengthy video sequences can be more beneficial, rather than distributing attention uniformly across all frames. Additionally, for Cambrian-4B, a dense-attention baseline constrained to the same 4K KV budget averages only 60.6 across the six video benchmarks, whereas Gaze Attention with the same KV budget achieves 63.6. This suggests that Gaze Attention is more effective than simply reducing the number of input tokens under a constrained visual KV budget.
+
+
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ Model 
+ 
+ 
+ KV size 
+ 
+ 
+ 
+ Gap Avg 
+ 
+ 
+ 
+ VideoMME 
+ 
+ 
+ 
+ MLVU 
+ 
+ 
+ 
+ EgoSchema 
+ 
+ 
+ 
+ LongVideoB. 
+ 
+ 
+ 
+ NExT-QA 
+ 
+ 
+ 
+ TempCom. 
+ 
+ 
+ 
+ GPT-4o ( 2023 ) 
+ – 
+ – 
+ 77.2 
+ 66.2 
+ 72.2 
+ 66.7 
+ 79.1 
+ 74.5 
+ 
+ 
+ Gemini 2.0 Flash ( 2025 ) 
+ – 
+ – 
+ 70.3 
+ – 
+ 71.5 
+ – 
+ 81.9 
+ 76.9 
+ 
+ 
+ Qwen2-VL-7B ( 2024 ) 
+ 50K 
+ – 
+ 63.9 
+ 65.8 
+ 65.2 
+ – 
+ – 
+ – 
+ 
+ 
+ + InfiniPot-V ( 2025b ) 
+ 6K 
+ -0.2 
+ 62.8  ( - 1.1) 
+ 65.8  ( + 0.0) 
+ 65.6  ( + 0.4) 
+ – 
+ – 
+ – 
+ 
+ 
+ + StreamMem ( 2025e ) 
+ 6K 
+ +0.1 
+ 62.1  ( - 1.8) 
+ 65.9   ( + 0.1) 
+ 67.2   ( + 2.0) 
+ – 
+ – 
+ – 
+ 
+ 
+ Qwen2.5-VL-3B ( 2025a ) 
+ 50K 
+ – 
+ 60.3 
+ 63.3 
+ 64.4 
+ 59.9 
+ 76.8 
+ 63.0 
+ 
+ 
+ + InfiniPot-V ( 2025b ) 
+ 6K 
+ -2.1 
+ 59.3  ( - 1.0) 
+ 62.1  ( - 1.2) 
+ 61.8  ( - 2.6) 
+ 56.5  ( - 3.4) 
+ – 
+ – 
+ 
+ 
+ 
+ Open-weight 
+ 
+ + StreamMem ( 2025e ) 
+ 6K 
+ -1.3 
+ 59.5  ( - 0.8) 
+ 62.3  ( - 1.0) 
+ 62.2  ( - 2.2) 
+ – 
+ – 
+ – 
+ 
+ 
+ InternVL2.5-4B ( 2024b ) 
+ – 
+ – 
+ 62.3 
+ – 
+ 66.6 
+ 59.3 
+ 82.5 
+ 65.2 
+ 
+ 
+ PLM-3B ( 2025 ) 
+ – 
+ – 
+ 54.9 
+ – 
+ 66.9 
+ – 
+ 83.4 
+ 69.3 
+ 
+ 
+ LLaVA-OV-7B 
+ 25K 
+ – 
+ 58.2 
+ 64.7 
+ 60.1 
+ 57.0 
+ 81.0 
+ 67.8 
+ 
+ 
+ + ReKV ( 2025 ) 
+ 6K 
+ -0.0 
+ 57.7  ( - 0.5) 
+ – 
+ 60.7   ( + 0.6) 
+ 56.8  ( - 0.2) 
+ – 
+ – 
+ 
+ 
+ + HERMES ( 2026 ) 
+ 6K 
+ +0.1 
+ 58.4  ( + 0.2) 
+ – 
+ 60.2  ( + 0.1) 
+ 57.0  ( + 0.0) 
+ – 
+ – 
+ 
+ 
+ + HERMES ( 2026 ) 
+ 4K 
+ +0.3 
+ 58.9  ( + 0.7) 
+ – 
+ 60.3  ( + 0.2) 
+ 56.9  ( - 0.1) 
+ – 
+ – 
+ 
+ 
+ Cambrian-4B 
+ 4K 
+ – 
+ 55.7 
+ 61.4 
+ 53.2 
+ 54.0 
+ 75.3 
+ 63.7 
+ 
+ 
+ Cambrian-4B 
+ 20K 
+ – 
+ 58.8 
+ 65.9 
+ 53.5 
+ 57.5 
+ 77.1 
+ 60.5 
+ 
+ 
+ + HERMES ( 2026 ) 
+ 4K 
+ -0.2 
+ 58.1  ( - 0.7) 
+ 65.0  ( - 0.9) 
+ 53.4  ( - 0.1) 
+ 56.2  ( - 1.3) 
+ 76.5  ( - 0.6) 
+ 62.7  ( + 2.2) 
+ 
+ 
+ + Gaze attention 
+ 4K 
+ + 1.4 
+ 60.4   ( + 1.6) 
+ 67.5   ( + 1.6) 
+ 53.8  ( + 0.3) 
+ 56.8  ( - 0.7) 
+ 80.4  ( + 3.3) 
+ 62.9  ( + 2.4) 
+ 
+ 
+ + Gaze attention 
+ 2K 
+ +1.1 
+ 59.4  ( + 0.6) 
+ 67.1  ( + 1.2) 
+ 53.2  ( - 0.3) 
+ 56.6  ( - 0.9) 
+ 79.9  ( + 2.8) 
+ 63.8  ( + 3.3) 
+ 
+ 
+ Cambrian-7B 
+ 10K 
+ – 
+ 60.0 
+ 66.5 
+ 55.8 
+ 58.9 
+ 78.4 
+ 60.9 
+ 
+ 
+ + HERMES ( 2026 ) 
+ 1.5K 
+ +0.4 
+ 60.1  ( + 0.1) 
+ 66.3  ( - 0.2) 
+ 55.6  ( - 0.2) 
+ 58.5  ( - 0.4) 
+ 78.1  ( - 0.3) 
+ 64.2  ( + 3.3) 
+ 
+ 
+ 
+ Open-weight & data 
+ 
+ + Gaze attention 
+ 1.5K 
+ +1.0 
+ 60.4   ( + 0.4) 
+ 67.0  ( + 0.5) 
+ 56.2  ( + 0.4) 
+ 58.6  ( - 0.3) 
+ 80.4  ( + 2.0) 
+ 63.7  ( + 2.8) 
+ 
+ 
+ 
+
+ 
+
+ Table 2: 
+ Evaluation on video QA tasks. We evaluate Gaze Attention on video understanding benchmarks across two baseline model sizes. It consistently matches or surpasses the dense-attention baseline while attending to a fraction of the visual KV cache. For gaze attention, KV Size includes the learnable context tokens.
+ 
+ 
+
+
+
+
+ 
+ 4.4 Analysis
+
+
+ 
+ 
+
+
+
+ 
+ Figure 6: 
+ Hyperparameter ablation. Effect of learnable context tokens (top) and gaze region size (bottom).
+ 
+ 
+ 
+ Number of learnable context tokens.
+
+
+ 
+ We evaluate the effect of learnable context tokens on performance, with results shown in the upper plot of fig.   6 . Removing context tokens entirely ( |C|{=}0 ) leads to a notable drop of -1.5 compared to |C|{=}32 , confirming that they provide complementary information beyond the routed regions. Performance improves gradually as the number of context tokens increases; for example, |C|{=}4 already yields a +0.9 improvement over the no-context baseline. Since context tokens are appended per visual unit, their KV overhead scales with the number of frames in video inputs. Balancing performance and efficiency, we adopt |C|{=}4 as the default.
+
+
+
+
+
+ 
+ Progressive \mathrm{TopK} Schedule.
+
+
+ 
+ Training a model to learn sparse attention from scratch is inherently challenging  ( Lu et al., 2025 ; Yuan et al., 2025 ; DeepSeek-AI, 2025 ) .
+For instance, in the Cambrian-4B + Gaze Attention experiment with 36+4 KV size in table   1 , removing the progressive \mathrm{TopK} schedule results in an average score of only 63.5, compared to 66.4 when the schedule is applied.
+Our method relies solely on the cross-entropy loss (next-token prediction), without any explicit supervision on where the model should attend. Under such a learning signal, the similarity between decoding queries and region descriptors is unlikely to be well aligned at the early stage of training.
+We therefore speculate that applying visual routing with a low region selection ratio (cf. appendix   B ) from the outset introduces training instability. The model is forced to make routing decisions before meaningful query–descriptor alignment is established. This leads to the observed performance degradation.
+
+
+
+
+
+ 
+ Gaze region size.
+
+
+ 
+ Choosing an appropriate region size involves a trade-off: overly large regions include irrelevant tokens, diluting the focus of selective attention, while overly small regions increase the number of routing candidates, undermining efficiency.
+The lower plot of fig.   6 confirms this, where finer regions ( 1{\times}1 , 2{\times}2 ) achieve slightly higher scores but at significantly greater routing cost, while 12{\times}12 regions are too coarse and lead to a clear performance drop. We adopt 6{\times}6 as the default, balancing competitive performance with efficient routing.
+
+
+
+ 
+ 
+ 
+ 
+ All 
+ Vision 
+ FLOPs (GFLOPs) 
+ Mem. (GB) 
+
+ 
+ attn layers 
+ KV size 
+ Attn 
+ Route 
+ Lct 
+ KV Cache 
+
+ 
+ Dense 
+ 10K 
+ 5.52 
+ – 
+ – 
+ 1.37 
+
+ 
+ Gaze 
+ 1.5K 
+ 0.89 
+ 0.19 
+ 0.15 
+ 0.27 
+
+ 
+ Saving 
+ 81.6% 
+ 83.9% 
+ – 
+ – 
+ 79.8% 
+
+ 
+
+
+ Table 3: Computational cost. Route and Lct are the overhead from visual routing and learnable context tokens. 
+ 
+
+
+ 
+ FLOPs & Memory Usage.
+
+
+ 
+ Table   3 summarizes the attention FLOPs and KV-cache memory of Gaze Attention versus dense attention. For a fair comparison, all FLOPs are measured without kernel-level fused operators in either method. In addition, we adopt the KV-cache offloading strategy of ReKV  ( Di et al., 2025 ; Ning et al., 2025 ) , where the full cache resides in CPU RAM/SSD and only the selected regions are loaded onto the GPU. Under these conditions, Gaze Attention reduces attention FLOPs by approximately 81% and KV-cache memory by 79%.
+With kernel-level algorithms like FlashAttention  ( Dao et al., 2022 ) enabled, InfiniPot-V and HERMES require 3.5{\times} and 3.6{\times} the wall-clock time of their respective dense baselines, while Gaze Attention incurs 2.6{\times} , reflecting an engineering challenge shared by existing approaches that we consider an important direction for future effort.
+
+
+
+
+
+
+
+
+
+ 
+ 5 Conclusion
+
+
+ 
+ We presented Gaze Attention, a selective attention mechanism that enables MLLMs to focus on task-relevant visual regions, analogous to how humans shift their gaze while describing a scene. Visual KV caches are spatially grouped into compact regions, and each query is dynamically routed to a small relevant subset. This replaces the diluted focus of dense attention with targeted, fine-grained visual processing. Learnable context tokens complement this localized attention by preserving global visual awareness at negligible cost. Experiments on image and video understanding benchmarks show that Gaze Attention matches or surpasses dense-attention baselines while reducing the visual KV cache by up to 90%, and visualization analyses confirm that the model acquires interpretable, human-like gaze patterns without any explicit gaze supervision. We discuss limitations and future directions in appendix   A .
+
+
+
+
+
+ 
+ References
+
+
+ 
+ Achiam et al. (2023) 
+ J. Achiam, S. Adler, S. Agarwal, L. Ahmad, I. Akkaya, F. L. Aleman, D. Almeida, J. Altenschmidt, S. Altman, S. Anadkat, et al. 
+ 
+ Gpt-4 technical report .
+ 
+ arXiv preprint arXiv:2303.08774 .
+ 
+ Cited by: Table 2 .
+ 
+
+ Beltagy et al. (2020) 
+ I. Beltagy, M. E. Peters, and A. Cohan 
+ 
+ Longformer: the long-document transformer .
+ 
+ arXiv preprint arXiv:2004.05150 .
+ 
+ Cited by: §2 .
+ 
+
+ Cai et al. (2026) 
+ S. Cai, C. Yang, L. Zhang, Y. Guo, J. Xiao, Z. Yang, Y. Xu, Z. Yang, A. Yuille, L. Guibas, M. Agrawala, L. Jiang, and G. Wetzstein 
+ 
+ Mixture of contexts for long video generation .
+ 
+ In ICLR ,
+ 
+ Cited by: §2 ,
+ §3.2 ,
+ §4.1 .
+ 
+
+ Chen et al. (2025) 
+ G. Chen, Z. Li, S. Wang, J. Jiang, Y. Liu, L. Lu, D. Huang, W. Byeon, M. Le, T. Rintamaki, et al. 
+ 
+ Eagle 2.5: boosting long-context post-training for frontier vision-language models .
+ 
+ arXiv preprint arXiv:2504.15271 .
+ 
+ Cited by: §2 .
+ 
+
+ Chen et al. (2024a) 
+ L. Chen, H. Zhao, T. Liu, S. Bai, J. Lin, C. Zhou, and B. Chang 
+ 
+ An image is worth 1/2 tokens after layer 2: plug-and-play inference acceleration for large vision-language models .
+ 
+ In ECCV ,
+ 
+ Cited by: §2 .
+ 
+
+ Chen et al. (2021) 
+ X. Chen, M. Jiang, and Q. Zhao 
+ 
+ Predicting human scanpaths in visual question answering .
+ 
+ In CVPR ,
+ 
+ Cited by: §2 .
+ 
+
+ Chen et al. (2026) 
+ Y. Chen, X. Bai, Z. Wang, C. Bai, Y. Dai, M. Lu, and S. Zhang 
+ 
+ StreamKV: streaming video question-answering with segment-based KV cache retrieval and compression .
+ 
+ In AAAI ,
+ 
+ Cited by: §1 ,
+ §2 .
+ 
+
+ Chen et al. (2024b) 
+ Z. Chen, W. Wang, Y. Cao, Y. Liu, Z. Gao, E. Cui, J. Zhu, S. Ye, H. Tian, Z. Liu, et al. 
+ 
+ Expanding performance boundaries of open-source multimodal models with model, data, and test-time scaling .
+ 
+ arXiv preprint arXiv:2412.05271 .
+ 
+ Cited by: §2 ,
+ Table 2 .
+ 
+
+ Chen et al. (2024c) 
+ Z. Chen, J. Wu, W. Wang, W. Su, G. Chen, S. Xing, M. Zhong, Q. Zhang, X. Zhu, L. Lu, et al. 
+ 
+ Internvl: scaling up vision foundation models and aligning for generic visual-linguistic tasks .
+ 
+ In CVPR ,
+ 
+ Cited by: §1 .
+ 
+
+ Cho et al. (2025) 
+ J. H. Cho, A. Madotto, E. Mavroudi, T. Afouras, T. Nagarajan, M. Maaz, Y. Song, T. Ma, S. Hu, S. Jain, et al. 
+ 
+ Perceptionlm: open-access data and models for detailed visual understanding .
+ 
+ arXiv preprint arXiv:2504.13180 .
+ 
+ Cited by: Table 2 .
+ 
+
+ Choudhury et al. (2026) 
+ R. Choudhury, J. Kim, J. Park, E. Yang, L. A. Jeni, and K. Kitani 
+ 
+ Faster vision transformers with adaptive patches .
+ 
+ In ICLR ,
+ 
+ Cited by: item 2 .
+ 
+
+ Clark et al. (2026) 
+ C. Clark, J. Zhang, Z. Ma, J. S. Park, M. Salehi, R. Tripathi, S. Lee, Z. Ren, C. D. Kim, Y. Yang, et al. 
+ 
+ Molmo2: open weights and data for vision-language models with video understanding and grounding .
+ 
+ arXiv preprint arXiv:2601.10611 .
+ 
+ Cited by: §2 .
+ 
+
+ Dao et al. (2022) 
+ T. Dao, D. Fu, S. Ermon, A. Rudra, and C. Ré 
+ 
+ Flashattention: fast and memory-efficient exact attention with io-awareness .
+ 
+ Advances in neural information processing systems 35 , pp. 16344–16359 .
+ 
+ Cited by: §4.4 .
+ 
+
+ DeepSeek-AI (2025) 
+ DeepSeek-AI 
+ 
+ DeepSeek-v3.2: pushing the frontier of open large language models .
+ 
+ arXiv preprint arXiv:2512.02556 .
+ 
+ Cited by: §2 ,
+ §4.4 .
+ 
+
+ Di et al. (2025) 
+ S. Di, Z. Yu, G. Zhang, H. Li, T. Zhong, H. Cheng, B. Li, W. He, F. Shu, and H. Jiang 
+ 
+ Streaming video question-answering with in-context video KV-cache retrieval .
+ 
+ In ICLR ,
+ 
+ Cited by: Figure 1 ,
+ §1 ,
+ §2 ,
+ §4.4 ,
+ Table 2 .
+ 
+
+ Fu et al. (2023) 
+ C. Fu, P. Chen, Y. Shen, Y. Qin, M. Zhang, X. Lin, Z. Qiu, W. Lin, J. Yang, X. Zheng, et al. 
+ 
+ MME: a comprehensive evaluation benchmark for multimodal large language models. corr abs/2306.13394 (2023) .
+ 
+ Cited by: Table A .
+ 
+
+ Fu et al. (2025) 
+ C. Fu, Y. Dai, Y. Luo, L. Li, S. Ren, R. Zhang, Z. Wang, C. Zhou, Y. Shen, M. Zhang, et al. 
+ 
+ Video-mme: the first-ever comprehensive evaluation benchmark of multi-modal llms in video analysis .
+ 
+ In CVPR ,
+ 
+ Cited by: Table A .
+ 
+
+ Gao et al. (2024) 
+ Y. Gao, Z. Zeng, D. Du, S. Cao, P. Zhou, J. Qi, J. Lai, H. K. So, T. Cao, F. Yang, et al. 
+ 
+ Seerattention: learning intrinsic sparse attention in your llms .
+ 
+ arXiv preprint arXiv:2410.13276 .
+ 
+ Cited by: §3.2 .
+ 
+
+ Google (2025) 
+ Google 
+ 
+ Gemini 2.0 flash .
+ 
+ Note: https://docs.cloud.google.com/vertex-ai/generative-ai/docs/models/gemini/2-0-flash Official model documentation, accessed 2026-03-30 
+ 
+ Cited by: Table 2 .
+ 
+
+ Guo et al. (2025) 
+ Y. Guo, C. Yang, Z. Yang, Z. Ma, Z. Lin, Z. Yang, D. Lin, and L. Jiang 
+ 
+ Long context tuning for video generation .
+ 
+ In ICCV ,
+ 
+ Cited by: §2 .
+ 
+
+ Henderson (2003) 
+ J. M. Henderson 
+ 
+ Human gaze control during real-world scene perception .
+ 
+ Trends in cognitive sciences , pp. 498–504 .
+ 
+ Cited by: §1 .
+ 
+
+ Hudson and Manning (2019) 
+ D. A. Hudson and C. D. Manning 
+ 
+ GQA: a new dataset for real-world visual reasoning and compositional question answering .
+ 
+ In CVPR ,
+ 
+ Cited by: Table A .
+ 
+
+ Itti et al. (1998) 
+ L. Itti, C. Koch, and E. Niebur 
+ 
+ A model of saliency-based visual attention for rapid scene analysis .
+ 
+ IEEE Transactions on Pattern Analysis and Machine Intelligence .
+ 
+ Cited by: §2 .
+ 
+
+ Jiang et al. (2023) 
+ A. Q. Jiang, A. Sablayrolles, A. Mensch, C. Bamford, D. S. Chaplot, D. de las Casas, F. Bressand, G. Lengyel, G. Lample, L. Saulnier, L. R. Lavaud, M. Lachaux, P. Stock, T. L. Scao, T. Lavril, T. Wang, T. Lacroix, and W. E. Sayed 
+ 
+ Mistral 7b .
+ 
+ arXiv preprint arXiv:2310.06825 .
+ 
+ Cited by: §2 .
+ 
+
+ Jiang et al. (2024) 
+ H. Jiang, Y. Li, C. Zhang, Q. Wu, X. Luo, S. Ahn, Z. Han, A. H. Abdi, D. Li, C. Lin, et al. 
+ 
+ Minference 1.0: accelerating pre-filling for long-context llms via dynamic sparse attention .
+ 
+ NeurIPS .
+ 
+ Cited by: §2 .
+ 
+
+ Kim et al. (2026) 
+ J. Kim, D. Han, and S. Yun 
+ 
+ Fast kvzip: efficient and accurate llm inference with gated kv eviction .
+ 
+ arXiv preprint arXiv:2601.17668 .
+ 
+ Cited by: §2 .
+ 
+
+ Kim et al. (2025a) 
+ J. Kim, J. Kim, S. Kwon, J. W. Lee, S. Yun, and H. O. Song 
+ 
+ KVzip: query-agnostic kv cache compression with context reconstruction .
+ 
+ In NeurIPS ,
+ 
+ Cited by: §2 .
+ 
+
+ Kim et al. (2025b) 
+ M. Kim, K. Shim, J. Choi, and S. Chang 
+ 
+ InfiniPot-V: memory-constrained KV cache compression for streaming video understanding .
+ 
+ In NeurIPS ,
+ 
+ Cited by: §2 ,
+ §3.2 ,
+ Figure 4 ,
+ §4.1 ,
+ §4.2 ,
+ Table 1 ,
+ Table 1 ,
+ Table 2 ,
+ Table 2 .
+ 
+
+ Kümmerer et al. (2016) 
+ M. Kümmerer, T. S. Wallis, and M. Bethge 
+ 
+ DeepGaze ii: reading fixations from deep features trained on object recognition .
+ 
+ arXiv preprint arXiv:1610.01563 .
+ 
+ Cited by: §2 .
+ 
+
+ Li et al. (2025a) 
+ B. Li, Y. Zhang, D. Guo, R. Zhang, F. Li, H. Zhang, K. Zhang, P. Zhang, Y. Li, Z. Liu, et al. 
+ 
+ Llava-onevision: easy visual task transfer .
+ 
+ TMLR .
+ 
+ Cited by: §1 ,
+ §2 ,
+ §4.1 ,
+ Table 1 .
+ 
+
+ Li et al. (2024a) 
+ F. Li, R. Zhang, H. Zhang, Y. Zhang, B. Li, W. Li, Z. Ma, and C. Li 
+ 
+ Llava-next-interleave: tackling multi-image, video, and 3d in large multimodal models .
+ 
+ arXiv preprint arXiv:2407.07895 .
+ 
+ Cited by: §2 ,
+ Table 1 ,
+ Table 1 .
+ 
+
+ Li et al. (2023) 
+ J. Li, D. Li, S. Savarese, and S. Hoi 
+ 
+ Blip-2: bootstrapping language-image pre-training with frozen image encoders and large language models .
+ 
+ In ICML ,
+ 
+ Cited by: Table 1 .
+ 
+
+ Li et al. (2026) 
+ X. Li, Y. Wang, J. Yu, X. Zeng, Y. Zhu, H. Huang, J. Gao, K. Li, Y. He, C. Wang, et al. 
+ 
+ Videochat-flash: hierarchical compression for long-context video modeling .
+ 
+ In ICLR ,
+ 
+ Cited by: Figure 1 ,
+ §1 ,
+ §2 .
+ 
+
+ Li et al. (2024b) 
+ Y. Li, C. Wang, and J. Jia 
+ 
+ Llama-vid: an image is worth 2 tokens in large language models .
+ 
+ In ECCV ,
+ 
+ Cited by: §2 .
+ 
+
+ Li et al. (2025b) 
+ Y. Li, C. Tang, J. Zhuang, Y. Yang, G. Sun, W. Li, Z. Ma, and C. Zhang 
+ 
+ Improving llm video understanding with 16 frames per second .
+ 
+ In ICML ,
+ 
+ Cited by: Figure 1 ,
+ §1 ,
+ §2 ,
+ §4.1 ,
+ §4.2 .
+ 
+
+ Lin et al. (2024) 
+ Z. Lin, C. Liu, R. Zhang, P. Gao, L. Qiu, H. Xiao, H. Qiu, C. Lin, W. Shao, K. Chen, et al. 
+ 
+ Sphinx: the joint mixing of weights, tasks, and visual embeddings for multi-modal large language models .
+ 
+ In ECCV ,
+ 
+ Cited by: Table 1 .
+ 
+
+ Linardos et al. (2021) 
+ A. Linardos, M. Kümmerer, O. Press, and M. Bethge 
+ 
+ DeepGaze iie: calibrated prediction in and out-of-domain for state-of-the-art saliency modeling .
+ 
+ In ICCV ,
+ 
+ Cited by: §2 .
+ 
+
+ Liu et al. (2024a) 
+ H. Liu, C. Li, Y. Li, and Y. J. Lee 
+ 
+ Improved baselines with visual instruction tuning .
+ 
+ In CVPR ,
+ 
+ Cited by: §2 .
+ 
+
+ Liu et al. (2023a) 
+ H. Liu, C. Li, Q. Wu, and Y. J. Lee 
+ 
+ Visual instruction tuning .
+ 
+ In NeurIPS ,
+ 
+ Cited by: §1 .
+ 
+
+ Liu et al. (2024b) 
+ S. Liu, Z. Zeng, T. Ren, F. Li, H. Zhang, J. Yang, Q. Jiang, C. Li, J. Yang, H. Su, et al. 
+ 
+ Grounding dino: marrying dino with grounded pre-training for open-set object detection .
+ 
+ In ECCV ,
+ 
+ Cited by: item 3 .
+ 
+
+ Liu et al. (2024c) 
+ Y. Liu, H. Duan, Y. Zhang, B. Li, S. Zhang, W. Zhao, Y. Yuan, J. Wang, C. He, Z. Liu, et al. 
+ 
+ Mmbench: is your multi-modal model an all-around player? .
+ 
+ In ECCV ,
+ 
+ Cited by: Table A .
+ 
+
+ Liu et al. (2024d) 
+ Y. Liu, S. Li, Y. Liu, Y. Wang, S. Ren, L. Li, S. Chen, X. Sun, and L. Hou 
+ 
+ TempCompass: do video llms really understand videos? .
+ 
+ In ACL ,
+ 
+ Cited by: Table A .
+ 
+
+ Liu et al. (2023b) 
+ Y. Liu, Z. Li, H. Li, W. Yu, M. Huang, D. Peng, M. Liu, M. Chen, C. Li, L. Jin, et al. 
+ 
+ On the hidden mystery of ocr in large multimodal models .
+ 
+ arXiv preprint arXiv:2305.07895 .
+ 
+ Cited by: Table A .
+ 
+
+ Liu et al. (2025) 
+ Z. Liu, L. Zhu, B. Shi, Z. Zhang, Y. Lou, S. Yang, H. Xi, S. Cao, Y. Gu, D. Li, et al. 
+ 
+ Nvila: efficient frontier visual language models .
+ 
+ In CVPR ,
+ 
+ Cited by: §2 .
+ 
+
+ Lu et al. (2025) 
+ E. Lu, Z. Jiang, J. Liu, Y. Du, T. Jiang, C. Hong, S. Liu, W. He, E. Yuan, Y. Wang, Z. Huang, H. Yuan, S. Xu, X. Xu, G. Lai, Y. Chen, H. Zheng, J. Yan, J. Su, Y. Wu, N. Y. Zhang, Z. Yang, X. Zhou, M. Zhang, and J. Qiu 
+ 
+ MoBA: mixture of block attention for long-context LLMs .
+ 
+ In NeurIPS ,
+ 
+ Cited by: §2 ,
+ §3.2 ,
+ §4.1 ,
+ §4.4 .
+ 
+
+ Lu et al. (2023) 
+ P. Lu, H. Bansal, T. Xia, J. Liu, C. Li, H. Hajishirzi, H. Cheng, K. Chang, M. Galley, and J. Gao 
+ 
+ Mathvista: evaluating mathematical reasoning of foundation models in visual contexts .
+ 
+ In ICLR ,
+ 
+ Cited by: Table A .
+ 
+
+ Lu et al. (2022) 
+ P. Lu, S. Mishra, T. Xia, L. Qiu, K. Chang, S. Zhu, O. Tafjord, P. Clark, and A. Kalyan 
+ 
+ Learn to explain: multimodal reasoning via thought chains for science question answering .
+ 
+ In NeurIPS ,
+ 
+ Cited by: Table A .
+ 
+
+ Maaz et al. (2024) 
+ M. Maaz, H. Rasheed, S. Khan, and F. Khan 
+ 
+ Video-chatgpt: towards detailed video understanding via large vision and language models .
+ 
+ In ACL ,
+ 
+ Cited by: §2 .
+ 
+
+ Mangalam et al. (2023) 
+ K. Mangalam, R. Akshulakov, and J. Malik 
+ 
+ EgoSchema: a diagnostic benchmark for very long-form video language understanding .
+ 
+ In NeurIPS Datasets and Benchmarks Track ,
+ 
+ Cited by: Table A .
+ 
+
+ Masry et al. (2022) 
+ A. Masry, D. X. Long, J. Q. Tan, S. Joty, and E. Hoque 
+ 
+ Chartqa: a benchmark for question answering about charts with visual and logical reasoning .
+ 
+ In ACL ,
+ 
+ Cited by: Table A .
+ 
+
+ Meng et al. (2022) 
+ L. Meng, H. Li, B. Chen, S. Lan, Z. Wu, Y. Jiang, and S. Lim 
+ 
+ Adavit: adaptive vision transformers for efficient image recognition .
+ 
+ In CVPR ,
+ 
+ Cited by: item 2 .
+ 
+
+ Ning et al. (2025) 
+ Z. Ning, G. Liu, Q. Jin, W. Ding, M. Guo, and J. Zhao 
+ 
+ LiveVLM: efficient online video understanding via streaming-oriented KV cache and retrieval .
+ 
+ arXiv preprint arXiv:2505.15269 .
+ 
+ Cited by: §2 ,
+ §4.4 .
+ 
+
+ Pani and Yang (2025) 
+ A. Pani and Y. Yang 
+ 
+ Gaze-vlm: bridging gaze and vlms through attention regularization for egocentric understanding .
+ 
+ In NeurIPS ,
+ 
+ Cited by: §2 .
+ 
+
+ Qi et al. (2020) 
+ P. Qi, Y. Zhang, Y. Zhang, J. Bolton, and C. D. Manning 
+ 
+ Stanza: a python natural language processing toolkit for many human languages .
+ 
+ In Proceedings of the 58th annual meeting of the association for computational linguistics: system demonstrations ,
+ 
+ Cited by: item 3 .
+ 
+
+ Recasens et al. (2015) 
+ A. Recasens, A. Khosla, C. Vondrick, and A. Torralba 
+ 
+ Where are they looking? .
+ 
+ In NeurIPS ,
+ 
+ Cited by: §2 .
+ 
+
+ Singh et al. (2019) 
+ A. Singh, V. Natarajan, M. Shah, Y. Jiang, X. Chen, D. Batra, D. Parikh, and M. Rohrbach 
+ 
+ Towards vqa models that can read .
+ 
+ In CVPR ,
+ 
+ Cited by: Table A .
+ 
+
+ Tan et al. (2024) 
+ R. Tan, X. Sun, P. Hu, J. Wang, H. Deilamsalehy, B. A. Plummer, B. Russell, and K. Saenko 
+ 
+ Koala: key frame-conditioned long video-LLM .
+ 
+ In CVPR ,
+ 
+ Cited by: §2 .
+ 
+
+ Team et al. (2025) 
+ K. Team, A. Du, B. Yin, B. Xing, B. Qu, B. Wang, C. Chen, C. Zhang, C. Du, C. Wei, et al. 
+ 
+ Kimi-vl technical report .
+ 
+ arXiv preprint arXiv:2504.07491 .
+ 
+ Cited by: §2 .
+ 
+
+ Tong et al. (2024a) 
+ P. Tong, E. Brown, P. Wu, S. Woo, A. J. V. IYER, S. C. Akula, S. Yang, J. Yang, M. Middepogu, Z. Wang, et al. 
+ 
+ Cambrian-1: a fully open, vision-centric exploration of multimodal llms .
+ 
+ NeurIPS .
+ 
+ Cited by: Table A ,
+ Table A ,
+ §4.1 ,
+ §4.1 ,
+ Table 1 ,
+ Table 1 .
+ 
+
+ Tong et al. (2024b) 
+ S. Tong, Z. Liu, Y. Zhai, Y. Ma, Y. LeCun, and S. Xie 
+ 
+ Eyes wide shut? exploring the visual shortcomings of multimodal llms .
+ 
+ In CVPR ,
+ 
+ Cited by: Table A .
+ 
+
+ Tschannen et al. (2025) 
+ M. Tschannen, A. Gritsenko, X. Wang, M. F. Naeem, I. Alabdulmohsin, N. Parthasarathy, T. Evans, L. Beyer, Y. Xia, B. Mustafa, et al. 
+ 
+ Siglip 2: multilingual vision-language encoders with improved semantic understanding, localization, and dense features .
+ 
+ arXiv preprint arXiv:2502.14786 .
+ 
+ Cited by: §4.1 .
+ 
+
+ Wan et al. (2025) 
+ Z. Wan, H. Shen, X. Wang, C. Liu, Z. Mai, and M. Zhang 
+ 
+ MEDA: dynamic KV cache allocation for efficient multimodal long-context inference .
+ 
+ In NAACL ,
+ 
+ Cited by: §1 ,
+ §2 .
+ 
+
+ Wang et al. (2024) 
+ P. Wang, S. Bai, S. Tan, S. Wang, Z. Fan, J. Bai, K. Chen, X. Liu, J. Wang, W. Ge, et al. 
+ 
+ Qwen2-vl: enhancing vision-language model’s perception of the world at any resolution .
+ 
+ arXiv preprint arXiv:2409.12191 .
+ 
+ Cited by: §1 ,
+ Table 2 .
+ 
+
+ Weng et al. (2024) 
+ Y. Weng, M. Han, H. He, X. Chang, and B. Zhuang 
+ 
+ Longvlm: efficient long video understanding via large language models .
+ 
+ In ECCV ,
+ 
+ Cited by: §1 ,
+ §2 .
+ 
+
+ Wu et al. (2024) 
+ H. Wu, D. Li, B. Chen, and J. Li 
+ 
+ LongVideoBench: a benchmark for long-context interleaved video-language understanding .
+ 
+ In NeurIPS Datasets and Benchmarks Track ,
+ 
+ Cited by: Table A .
+ 
+
+ xAI (2024) 
+ xAI 
+ 
+ Grok .
+ 
+ External Links: Link 
+ 
+ Cited by: Table A .
+ 
+
+ Xiao et al. (2021) 
+ J. Xiao, X. Shang, A. Yao, and T. Chua 
+ 
+ NExT-qa: next phase of question-answering to explaining temporal actions .
+ 
+ In CVPR ,
+ 
+ pp. 9777–9786 .
+ 
+ Cited by: Table A .
+ 
+
+ Xu et al. (2026) 
+ R. Xu, G. Xiao, Y. Chen, L. He, K. Peng, Y. Lu, and S. Han 
+ 
+ Streamingvlm: real-time understanding for infinite video streams .
+ 
+ In ICLR ,
+ 
+ Cited by: Figure 1 ,
+ §2 .
+ 
+
+ Yan et al. (2024) 
+ K. Yan, Z. Wang, L. Ji, Y. Wang, N. Duan, and S. Ma 
+ 
+ Voila-a: aligning vision-language models with user’s gaze attention .
+ 
+ In NeurIPS ,
+ 
+ Cited by: §2 .
+ 
+
+ Yang et al. (2025a) 
+ A. Yang, A. Li, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Gao, C. Huang, C. Lv, et al. 
+ 
+ Qwen2.5 technical report .
+ 
+ arXiv preprint arXiv:2412.15115 .
+ 
+ Cited by: §2 ,
+ §4.1 ,
+ Table 1 ,
+ Table 2 .
+ 
+
+ Yang et al. (2025b) 
+ A. Yang, A. Li, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Gao, C. Huang, C. Lv, et al. 
+ 
+ Qwen3 technical report .
+ 
+ arXiv preprint arXiv:2505.09388 .
+ 
+ Cited by: §4.1 .
+ 
+
+ Yang et al. (2025c) 
+ J. Yang, S. Yang, A. W. Gupta, R. Han, L. Fei-Fei, and S. Xie 
+ 
+ Thinking in space: how multimodal large language models see, remember, and recall spaces .
+ 
+ In CVPR ,
+ 
+ Cited by: §2 .
+ 
+
+ Yang et al. (2025d) 
+ S. Yang, J. Yang, P. Huang, E. Brown, Z. Yang, Y. Yu, S. Tong, Z. Zheng, Y. Xu, M. Wang, et al. 
+ 
+ Cambrian-s: towards spatial supersensing in video .
+ 
+ In ICLR ,
+ 
+ Cited by: §2 ,
+ §4.1 .
+ 
+
+ Yang et al. (2025e) 
+ Y. Yang, Z. Zhao, S. N. Shukla, A. Singh, S. K. Mishra, L. Zhang, and M. Ren 
+ 
+ StreamMem: query-agnostic KV cache memory for streaming video understanding .
+ 
+ arXiv preprint arXiv:2508.15717 .
+ 
+ Cited by: §1 ,
+ §2 ,
+ Table 2 ,
+ Table 2 .
+ 
+
+ Yarbus (2013) 
+ A. L. Yarbus 
+ 
+ Eye movements and vision .
+ 
+ Springer .
+ 
+ Cited by: §1 .
+ 
+
+ Yuan et al. (2025) 
+ J. Yuan, H. Gao, D. Dai, J. Luo, L. Zhao, Z. Zhang, Z. Xie, Y. X. Wei, L. Wang, Z. Xiao, Y. Wang, C. Ruan, M. Zhang, W. Liang, and W. Zeng 
+ 
+ Native sparse attention: hardware-aligned and natively trainable sparse attention .
+ 
+ In ACL ,
+ 
+ Cited by: §2 ,
+ §3.2 ,
+ §4.4 .
+ 
+
+ Yue et al. (2024) 
+ X. Yue, Y. Ni, K. Zhang, T. Zheng, R. Liu, G. Zhang, S. Stevens, D. Jiang, W. Ren, Y. Sun, et al. 
+ 
+ Mmmu: a massive multi-discipline multimodal understanding and reasoning benchmark for expert agi .
+ 
+ In CVPR ,
+ 
+ Cited by: Table A .
+ 
+
+ Zaheer et al. (2020) 
+ M. Zaheer, G. Guruganesh, K. A. Dubey, J. Ainslie, C. Alberti, S. Ontanon, P. Pham, A. Ravula, Q. Wang, L. Yang, et al. 
+ 
+ Big bird: transformers for longer sequences .
+ 
+ Cited by: §2 .
+ 
+
+ Zhang et al. (2023) 
+ H. Zhang, X. Li, and L. Bing 
+ 
+ Video-llama: an instruction-tuned audio-visual language model for video understanding .
+ 
+ In EMNLP ,
+ 
+ Cited by: §2 ,
+ §4.1 .
+ 
+
+ Zhang et al. (2026) 
+ H. Zhang, S. Yang, J. Fu, S. Ng, and X. Qiu 
+ 
+ HERMES: KV cache as hierarchical memory for efficient streaming video understanding .
+ 
+ arXiv preprint arXiv:2601.14724 .
+ 
+ Cited by: Figure 1 ,
+ §1 ,
+ §2 ,
+ §3.2 ,
+ Figure 4 ,
+ §4.2 ,
+ Table 1 ,
+ Table 1 ,
+ Table 2 ,
+ Table 2 ,
+ Table 2 ,
+ Table 2 .
+ 
+
+ Zhang et al. (2024) 
+ K. Zhang, B. Li, P. Zhang, F. Pu, J. A. Cahyono, K. Hu, S. Liu, Y. Zhang, J. Yang, C. Li, and Z. Liu 
+ 
+ LMMs-eval: reality check on the evaluation of large multimodal models .
+ 
+ External Links: 2407.12772 ,
+ Link 
+ 
+ Cited by: Appendix C .
+ 
+
+ Zhou et al. (2025) 
+ J. Zhou, Y. Shu, B. Zhao, B. Wu, S. Xiao, X. Yang, Y. Xiong, B. Zhang, T. Huang, and Z. Liu 
+ 
+ MLVU: a comprehensive benchmark for multi-task long video understanding .
+ 
+ In CVPR ,
+ 
+ Cited by: Table A .
+ 
+
+ 
+
+
+ 
+
+ 
+
+ 
+ Appendix A Limitations and Future Directions.
+
+
+ 
+ Gaze Attention demonstrates that MLLMs can achieve competitive performance while selectively attending to a small fraction of visual tokens, yielding interpretable gaze patterns and substantial KV cache reductions. Nevertheless, the current design has some limitations, which we outline below.
+
+
+
+ 
+ 
+ 1. 
+ 
+ Fixed-size regions. The current design partitions visual tokens into fixed-size spatial regions, which may not align well with the semantic boundaries of objects or scenes. Content-adaptive region partitioning could yield more reliable gaze routing.
+
+
+
+
+ 2. 
+ 
+ Descriptor design. Region descriptors are obtained by straightforwardly mean-pooling the visual cache keys within each region, which avoids additional learnable parameters. However, this treats all tokens within a region equally, including redundant or less informative ones. For instance, if a region contains a salient object, a descriptor more oriented toward that object could help decoding queries select the region more reliably. One possible remedy is to incorporate entropy-based importance weighting  Choudhury et al. (2026) ; Meng et al. (2022) at the cost of extra computation, and finding the right trade-off between descriptor quality and efficiency is worth further investigation.
+
+
+
+
+ 3. 
+ 
+ Gaze supervision. Our model is trained solely with the cross-entropy loss (next-token prediction), without any explicit signal indicating where each decoding query should look. An interesting future direction is to investigate the effect of explicit gaze guidance on visual routing. Consider how a parent reads a picture book to a child: the parent points to specific parts of the illustration while explaining the story, and the child naturally learns to associate the description with the corresponding scene. Likewise, providing the model with such pointing signals during training—indicating which regions to focus on for a given description—could help it learn more accurate vision-language grounding. In practice, this could be realized by combining sentence parsing ( e.g. , Stanza  ( Qi et al., 2020 ) ) with an open-vocabulary detector ( e.g. , Grounding DINO  ( Liu et al., 2024b ) ) to automatically generate region-level supervision during training.
+
+
+
+
+ 
+
+
+ 
+ We believe that addressing these limitations will bring MLLMs closer to perceiving and reasoning about visual scenes in a manner that mirrors human gaze behavior.
+
+
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ Benchmark 
+ 
+ 
+ 
+ Task 
+ 
+ 
+ 
+ Domain 
+ 
+ 
+ 
+ Citation 
+ 
+
+ 
+ Image Understanding Benchmarks 
+
+ 
+ 
+ 
+ GQA 
+ 
+ 
+ 
+ all 
+ 
+ 
+ 
+ General 
+ 
+ 
+ 
+ Hudson and Manning (2019) 
+ 
+
+ 
+ 
+ 
+ MME 
+ 
+ 
+ 
+ perception 
+ 
+ 
+ 
+ General 
+ 
+ 
+ 
+ Fu et al. (2023) 
+ 
+
+ 
+ 
+ 
+ MMBench 
+ 
+ 
+ 
+ all 
+ 
+ 
+ 
+ General 
+ 
+ 
+ 
+ Liu et al. (2024c) 
+ 
+
+ 
+ 
+ 
+ MMVP 
+ 
+ 
+ 
+ all 
+ 
+ 
+ 
+ General 
+ 
+ 
+ 
+ Tong et al. (2024b) 
+ 
+
+ 
+ 
+ 
+ RealWorldQA 
+ 
+ 
+ 
+ all 
+ 
+ 
+ 
+ General 
+ 
+ 
+ 
+ xAI (2024) 
+ 
+
+ 
+ 
+ 
+ ADE 
+ 
+ 
+ 
+ all 
+ 
+ 
+ 
+ General 
+ 
+ 
+ 
+ Tong et al. (2024a) 
+ 
+
+ 
+ 
+ 
+ OmniBench 
+ 
+ 
+ 
+ all 
+ 
+ 
+ 
+ General 
+ 
+ 
+ 
+ Tong et al. (2024a) 
+ 
+
+ 
+ 
+ 
+ ScienceQA 
+ 
+ 
+ 
+ image-based 
+ 
+ 
+ 
+ Science & Math 
+ 
+ 
+ 
+ Lu et al. (2022) 
+ 
+
+ 
+ 
+ 
+ MMMU 
+ 
+ 
+ 
+ vision 
+ 
+ 
+ 
+ Science & Math 
+ 
+ 
+ 
+ Yue et al. (2024) 
+ 
+
+ 
+ 
+ 
+ MathVista 
+ 
+ 
+ 
+ math 
+ 
+ 
+ 
+ Science & Math 
+ 
+ 
+ 
+ Lu et al. (2023) 
+ 
+
+ 
+ 
+ 
+ ChartQA 
+ 
+ 
+ 
+ all 
+ 
+ 
+ 
+ Chart & OCR 
+ 
+ 
+ 
+ Masry et al. (2022) 
+ 
+
+ 
+ 
+ 
+ OCRBench 
+ 
+ 
+ 
+ all 
+ 
+ 
+ 
+ Chart & OCR 
+ 
+ 
+ 
+ Liu et al. (2023b) 
+ 
+
+ 
+ 
+ 
+ TextVQA 
+ 
+ 
+ 
+ all 
+ 
+ 
+ 
+ Chart & OCR 
+ 
+ 
+ 
+ Singh et al. (2019) 
+ 
+
+ 
+ Video Understanding Benchmarks 
+
+ 
+ 
+ 
+ VideoMME 
+ 
+ 
+ 
+ all 
+ 
+ 
+ 
+ Video 
+ 
+ 
+ 
+ Fu et al. (2025) 
+ 
+
+ 
+ 
+ 
+ MLVU 
+ 
+ 
+ 
+ dev 
+ 
+ 
+ 
+ Video 
+ 
+ 
+ 
+ Zhou et al. (2025) 
+ 
+
+ 
+ 
+ 
+ EgoSchema 
+ 
+ 
+ 
+ all 
+ 
+ 
+ 
+ Video 
+ 
+ 
+ 
+ Mangalam et al. (2023) 
+ 
+
+ 
+ 
+ 
+ LongVideoBench 
+ 
+ 
+ 
+ val 
+ 
+ 
+ 
+ Video 
+ 
+ 
+ 
+ Wu et al. (2024) 
+ 
+
+ 
+ 
+ 
+ NExT-QA 
+ 
+ 
+ 
+ mc test 
+ 
+ 
+ 
+ Video 
+ 
+ 
+ 
+ Xiao et al. (2021) 
+ 
+
+ 
+ 
+ 
+ TempCompass 
+ 
+ 
+ 
+ multi choice 
+ 
+ 
+ 
+ Video 
+ 
+ 
+ 
+ Liu et al. (2024d) 
+ 
+
+ 
+
+
+ 
+
+ Table A: 
+ List of benchmarks used. To evaluate MLLMs, we used 19 benchmarks: 13 image benchmarks across three domains (General, Science & Math, and Chart & OCR) and 6 video benchmarks. 
+ 
+
+
+ 
+ Appendix B Training Details
+
+
+ 
+ We build our models using the LLaVA-OneVision 1 1 
+ 1 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ https://github.com/LLaVA-VL/LLaVA-NeXT and Cambrian 2 2 
+ 2 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ https://github.com/cambrian-mllm/cambrian source codes.
+Our experiments adopt two sizes of Qwen-Instruct LLMs:
+ Qwen/Qwen2.5-7B-Instruct and
+ Qwen/Qwen3-4B-Instruct-2507 , paired with the SigLIP2 vision encoder
+ google/siglip2-So/16-patch16-384 .
+The multimodal projector is a 2-layer MLP with a GELU activation.
+When applying Token Compression, the projector is augmented with a GELU followed by a 3{\times}3 convolution layer with stride 2, which reduces the number of visual tokens by 4{\times} .
+For the training data, we use the Cambrian-Alignment dataset 3 3 
+ 3 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ https://huggingface.co/datasets/nyu-visionx/Cambrian-Alignment for projector-only pretraining, and the Cambrian-7M 4 4 
+ 4 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ https://huggingface.co/datasets/nyu-visionx/Cambrian-10M/blob/main/jsons/Cambrian7M_withsystemprompt.jsonl dataset and a randomly sampled subset of Cambrian-S-3M 5 5 
+ 5 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ https://huggingface.co/datasets/nyu-visionx/Cambrian-S-3M for full-parameter fine-tuning.
+We follow the training hyperparameters from the standard scripts 6 6 
+ 6 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ https://github.com/LLaVA-VL/LLaVA-NeXT/blob/main/scripts/train/pretrain_siglip.sh , 7 7 
+ 7 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ https://github.com/LLaVA-VL/LLaVA-NeXT/blob/main/scripts/train/finetune_si.sh . Specifically, the learning rate is set to 1{\times}10^{-3} for pretraining and 1{\times}10^{-5} for fine-tuning, with a batch size of 256. To implement the progressive \mathrm{TopK} schedule, we define a region selection ratio that is gradually decreased over the course of training. The ratio starts at 100% (i.e., all regions are selected) and is linearly reduced to 10% by 60% of the total training steps, after which it remains fixed.
+
+
+
+
+
+ 
+ Appendix C Evaluation Benchmarks
+
+
+ 
+ A list of evaluation benchmarks, along with their domain assignments and citations, is provided in table   A .
+For image understanding tasks, we adopt the evaluation suite from Cambrian 8 8 
+ 8 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ https://github.com/cambrian-mllm/cambrian/tree/main/eval , which consists of 13 benchmarks categorized into three domains: General, Science & Math, and Chart & OCR.
+Since MME is scored on a 0–2000 scale unlike other benchmarks that range from 0 to 100, we divide the MME scores by 20 when computing the average to ensure a consistent scale across all benchmarks.
+For video understanding tasks, we consider 6 benchmarks spanning diverse categories and video lengths, and employ the lmms-eval 9 9 
+ 9 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ https://github.com/evolvinglmms-lab/lmms-eval   ( Zhang et al., 2024 ) framework for evaluation.
+
+
+
+ 
+ Figure A: 
+ Additional image visual routing examples. Following the same setup as fig.   4 , we present more comparisons between existing KV cache eviction methods and gaze attention. Gaze attention routes to the relevant regions for each generated token, while the baselines produce errors due to their fixed visual cache entities.
+ 
+ 
+ 
+ 
+
+
+
+
+
+ 
+
+
+
+
+ 
+ 
+ Experimental support, please
+ view the build logs 
+ for errors. Generated by
+ 
+ 
+ L
+ A 
+ T
+ E 
+ 
+ xml 
+ 
+ .
+ 
+
+ 
+ Instructions for reporting errors
+
+ We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+ support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+ methods listed below:
+
+ 
+ Click the "Report Issue" ( 
+ 
+ ) button, located in the page header.
+
+ 
+ Tip: You can select the relevant text first, to include it in your report.
+
+ Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+ may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+ should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+ all.
+
+ Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+
+ 
+
+ 
+ 
+ 
+ 
+ We gratefully acknowledge support from
+ our major funders ,
+ member institutions , ,
+ and all contributors.
+ 
+
+ 
+ About 
+ &middot; 
+ Help 
+ &middot; 
+ Contact 
+ &middot; 
+ Subscribe 
+ &middot; 
+ Copyright 
+ &middot; 
+ Privacy 
+ &middot; 
+ Accessibility 
+ &middot; 
+ Operational Status (opens in new tab) 
+ 
+ 
+
+
+ 
+ Major funding support from
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+
+ 
+
+ 
+
+ 
+ 
+ 
+ 
+ 
+ 
+
+ 
+ 
+
+

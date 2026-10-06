@@ -1,0 +1,2514 @@
+HiAP: A Multi-Granular Stochastic Auto-Pruning Framework for Vision Transformers
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Related Work
+3
+Method
+3.1
+Hierarchical Gating Mechanism
+3.2
+Differentiable Cost Modeling
+3.3
+Training with Gumbel-Sigmoid
+3.4
+Single-Phase End-to-End Discovery
+4
+Theoretical Remarks
+5
+Experiments
+5.1
+Experimental Setup
+5.2
+ImageNet-1K
+5.3
+Hierarchical Search Dynamics and Structure Analysis
+5.4
+Ablations and Latency on CIFAR-10
+6
+Conclusion
+References
+A
+Extended Ablation Studies
+A.1
+Early Performance at Various Macro-Micro Settings
+A.2
+Sensitivity to Cost Penalty Ratios
+B
+Decomposition of Expected Prunable Cost (Proof of Proposition 1)
+License: CC BY 4.0
+arXiv:2603.12222v1 [cs.CV] 12 Mar 2026
+HiAP: A Multi-Granular Stochastic Auto-Pruning Framework for Vision Transformers
+Andy Li
+†
+†
+thanks:
+Corresponding author: a.li.21@abdn.ac.uk
+Affiliation:
+School of Natural and Computing Sciences, University of Aberdeen, Aberdeen, UK
+Aiden Durrant
+Affiliation:
+School of Natural and Computing Sciences, University of Aberdeen, Aberdeen, UK
+Affiliation:
+School of Computing Sciences, University of East Anglia, Norwich, UK
+Milan Markovic
+Affiliation:
+School of Natural and Computing Sciences, University of Aberdeen, Aberdeen, UK
+Georgios Leontidis
+Affiliation:
+School of Natural and Computing Sciences, University of Aberdeen, Aberdeen, UK
+Affiliation:
+Department of Physics and Technology, UiT The Arctic University of Norway, Tromsø, Norway
+Abstract
+Vision Transformers require significant computational resources and memory bandwidth, severely limiting their deployment on edge devices. While recent structured pruning methods successfully reduce theoretical FLOPs, they typically operate at a single structural granularity and rely on complex, multi-stage pipelines with post-hoc thresholding to satisfy sparsity budgets. In this paper, we propose Hierarchical Auto-Pruning (HiAP), a continuous relaxation framework that discovers optimal sub-networks in a single end-to-end training phase without requiring manual importance heuristics or predefined per-layer sparsity targets. HiAP introduces stochastic Gumbel-Sigmoid gates at multiple granularities: macro-gates to prune entire attention heads and FFN blocks, and micro-gates to selectively prune intra-head dimensions and FFN neurons. By optimizing both levels simultaneously, HiAP addresses both the memory-bound overhead of loading large matrices and the compute-bound mathematical operations. HiAP naturally converges to stable sub-networks using a loss function that incorporates both structural feasibility penalties and analytical FLOPs. Extensive experiments on ImageNet demonstrate that HiAP organically discovers highly efficient architectures, and achieves a competitive accuracy-efficiency Pareto frontier for models like DeiT-Small, matching the performance of sophisticated multi-stage methods while significantly simplifying the deployment pipeline.
+1
+Introduction
+Vision Transformers (ViTs)
+[
+1
+]
+are a dominant architecture in computer vision, but their high computation and memory costs make them difficult to deploy on resource-constrained devices. Model pruning resolves this via removing redundant parts of a network, reducing its parameters and FLOPs. While unstructured pruning (removing individual weights) offers the highest flexibility and theoretical compression ratio, the resulting irregular sparsity patterns require specialized hardware to achieve an actual acceleration. Structured pruning, which removes entire components such as attention heads or feed-forward neurons, has become the preferred method, as it results in a smaller, dense sub-network that natively accelerates on standard hardware.
+Despite recent advances in structured pruning for ViT, many methods still have two limitations. First, they typically operate at a single granularity. Methods that exclusively prune micro-structures (e.g., intra-head dimensions)
+[
+2
+]
+successfully reduce FLOPs, but the true latency and energy bottleneck on modern hardware is often dominated by memory bandwidth (DRAM/SRAM access)
+[
+3
+,
+4
+]
+, and not strictly computation. Because micro-pruning preserves the overall depth and number of attention heads, the hardware must still incur the high memory access overhead of loading every layer and materializing each attention map
+[
+4
+]
+. Conversely, methods that exclusively prune macro structures (e.g., entire heads, blocks)
+[
+5
+]
+can bypass these memory transfers, but often risk more performance degradation as they lose the network’s representation capacity to a greater extent. Second, modern differentiable search methods frequently rely on post-hoc magnitude thresholding. Although effective, these approaches often require expert knowledge and manual intervention.
+Our goal is to develop a pruning strategy that eliminates this dependence by allowing the model itself to learn what to prune. We introduce Hierarchical Auto-Pruning (HiAP), which frames pruning as a single-shot, budget-aware learning problem, where the model autonomously discovers its optimal sub-architecture without requiring predefined sparsity targets or manual thresholding heuristics. HiAP introduces stochastic Gumbel-Sigmoid gates simultaneously at multiple granularities. These gates allow gradients to flow through these otherwise discrete pruning decisions in an end-to-end manner. At the macro level, gates control the retention of entire attention heads and FFN blocks. At the micro level, gates selectively prune intra-head dimensions and individual FFN neurons. We also integrate an analytical FLOPs formulation into the loss function, HiAP naturally routes its capacity to satisfy hardware constraints organically. Furthermore, we design explicit structural feasibility penalties to mathematically prevent the widespread issue of layer collapse, guaranteeing a valid, unbroken forward pass. We validate HiAP on CIFAR-10 with ViT-Tiny and demonstrate its scalability on ImageNet-1K with DeiT-Small. Our key contributions are:
+•
+We propose HiAP, a multi-level gating system that unifies macro-level (heads and blocks) and micro-level (neurons and dimensions) structured pruning into a single differentiable framework.
+•
+We design a budget-aware objective that allows the network to discover and harden its own optimal sub-architecture end-to-end. This eliminates the need for manual importance heuristics, proxy ranking metrics, or expensive secondary fine-tuning phases.
+•
+We empirically validate HiAP on CIFAR-10 and ImageNet, showing that it automatically produces models with substantial MAC reductions while preserving accuracy.
+2
+Related Work
+Structured Transformer Pruning.
+Early structural pruning techniques established foundational heuristics like magnitude thresholding
+[
+3
+]
+, second-order approximations
+[
+6
+]
+, and Taylor-based scoring
+[
+7
+]
+. As these approaches transitioned to ViT, early studies showed that showed that entire attention heads could be removed with little impact
+[
+8
+]
+. Recent structured pruning methods have evolved to target specific architectural granularities, with the majority focusing on compressing the network’s width
+[
+9
+,
+10
+]
+. For instance, ViT-Slim
+[
+2
+]
+searches for sparsity within intra-head dimensions and FFN channels. Other methods expand the search space to include entire attention heads. GOHSP
+[
+11
+]
+and X-Pruner
+[
+12
+]
+prunes heads and intra-head/FFN columns using graph-based ranking
+[
+13
+]
+. NViT
+[
+14
+]
+and SAViT
+[
+15
+]
+perform global structured pruning across heads and internal dimensions using Hessian-aware Taylor scoring and collaborative optimization. Recent efforts even strive to maintain isomorphic structures while reducing the transformer width
+[
+16
+]
+.
+Because the true latency bottleneck on modern hardware is often High-Bandwidth Memory (HBM) access rather than pure computation
+[
+4
+]
+, preserving all structural layers forces the hardware to incur significant memory-bound overhead of traversing every block and materializing every
+N
+×
+N
+N\times N
+attention map. To alleviate this, early literature explored shallowing deep networks
+[
+17
+]
+, discrimination-based block pruning
+[
+18
+]
+, interpretable layer pruning
+[
+19
+]
+and fusible residual pruning
+[
+20
+]
+. For ViT, macro-level methods like UPDP
+[
+5
+]
+and Layerdrop
+[
+21
+]
+focus on dropping entire transformer blocks bypassing attention and FFN layers all together. Multi-granular pruning approaches have emerged formulating the joint pruning of ViT blocks, heads, neurons, etc. MDP
+[
+22
+]
+formulates the joint removal of ViT blocks, heads, and channels as a mathematical problem (MINLP) that relies on specialized offline solvers to calculate the best combination of structures to keep.
+In parallel, a separate line of work focuses on dynamic token pruning (reducing sequence length). Methods such as DynamicViT
+[
+23
+]
+, EViT
+[
+24
+]
+, SPViT
+[
+25
+]
+, A-ViT
+[
+26
+]
+, Peeling an Onion
+[
+27
+]
+and ToMe
+[
+28
+]
+drop or merge tokens to reduce complexity. Our work strictly outputs a static, hardware-friendly sub-network, and it is entirely complementary to these input-dependent token-reduction techniques.
+Table 1:
+Comparison of recent structured pruning frameworks for ViTs.
+Existing methods target distinct subsets of the architecture, such as focusing on depth or a mix of attention heads and internal dimensions. HiAP unifies all architectural granularities to simultaneously optimize memory bandwidth (blocks/heads) and compute FLOPs (micro-structures).
+Method
+Macro (Depth & Heads)
+Micro (Intra-Head & FFN)
+Search & Budget Enforcement
+ViT-Slim
+[
+2
+]
+None
+Intra-Head Dims, FFN Neurons
+ℓ
+1
+\ell_{1}
+Sparsity + Rank Thresholding
+SAViT
+[
+15
+]
+Attention Heads
+FFN Neurons, Embedding
+Taylor Joint Optimization + EA
+GOHSP
+[
+11
+]
+Attention Heads
+Intra-Head Dims, FFN Neurons
+Graph-based Ranking + Optimization
+NViT
+[
+14
+]
+Attention Heads
+Intra-Head Dims, FFN Neurons
+Latency-Aware Taylor Ranking
+UPDP
+[
+5
+]
+FFN Blocks
+None
+Genetic Algorithm
+S2ViTE
+[
+29
+]
+Attention Heads
+FFN Neurons
+Dynamic Sparse Training
+WDPruning
+[
+30
+]
+Transformer Blocks, Heads
+Intra-Head Dims, FFN Neurons
+Saliency score
+HiAP (Ours)
+FFN Blocks, Heads
+Intra-Head Dims, FFN Neurons
+End-to-End Auto-Penalty
+Learnable Gates for Pruning.
+Learnable gates or masks provide an alternative to fixed heuristics, allowing models to learn sparsity organically. Earlier work explored conditional computation
+[
+31
+]
+and sparse CNNs with continuous differentiable relaxations
+[
+32
+]
+. In transformers, SViTE
+[
+29
+]
+incorporated gating mechanisms, while X-Pruner
+[
+12
+]
+trained masks to reflect class-wise importance. HiAP extends this paradigm by deploying Gumbel-Sigmoid relaxations across a hierarchical, two-level gating scheme: macro-gates to prune entire heads and FFN blocks, and micro-gates to trim their internal widths.
+Budget-Aware Regularization.
+For pruned models to be practically deployable, they must meet hardware constraints. Several works integrate budget constraints into the loss function or search space. ProxylessNAS
+[
+33
+]
+adds latency models to NAS, while AutoSlim
+[
+34
+]
+regularized channel counts. ViT pruning methods have adopted similar strategies. SPViT
+[
+25
+]
+introduces a latency budget during the token selection process during token selection while NViT
+[
+14
+]
+integrates latency-aware regularization into its structural pruning criteria. HiAP aligns with this idea and uses a loss function with the expected MACs, making the process both automatic and resource-aware.
+3
+Method
+Figure 1:
+Overview of the Hierarchical Auto-Pruning (HiAP) framework applied to a standard Vision Transformer block. The architecture’s topology is governed by learnable Gumbel-Sigmoid gates operating at two distinct granularities. Macro-gates (Block and Head logits) evaluate whether to retain or bypass entire MLP modules and attention heads. Concurrently, micro-gates (Neuron and Dimension logits) prune fine-grained structures within the surviving active structures. This dual-level formulation allows the network to autonomously carve out an optimal, hardware-efficient sub-network during a single end-to-end training phase.
+At its core, HiAP is a framework of learnable, stochastic gates that jointly search for the optimal sub-architecture of a Vision Transformer (ViT) during training. Unlike prior work, HiAP is designed to produce a sub-network autonomously without including an importance ranking system or manual heuristics with rules for structural removal.
+Notation.
+We consider a ViT with
+L
+L
+layers,
+H
+H
+attention heads, head dimension
+D
+h
+D_{h}
+, and feed-forward network (FFN) hidden width
+D
+ffn
+D_{\text{ffn}}
+. We introduce binary gates to regulate these structures. Macro-gates, denoted as
+g
+l
+,
+h
+∈
+{
+0
+,
+1
+}
+g_{l,h}\in\{0,1\}
+and
+b
+l
+∈
+{
+0
+,
+1
+}
+b_{l}\in\{0,1\}
+, control the presence of entire attention heads and FFN blocks, respectively. Micro-gates, denoted as
+d
+l
+,
+h
+,
+j
+∈
+{
+0
+,
+1
+}
+d_{l,h,j}\in\{0,1\}
+and
+c
+l
+,
+k
+∈
+{
+0
+,
+1
+}
+c_{l,k}\in\{0,1\}
+, control the finer capacity within these active macro-structures (i.e., specific attention dimensions and FFN neurons). We refer to the complete set of gates as
+𝒢
+\mathcal{G}
+.
+3.1
+Hierarchical Gating Mechanism
+We introduce two distinct levels of gating inside each Transformer block. This hierarchy is central to our method, and it allows the network to independently decide whether to drop a coarse structure entirely to save substantial computational overhead, or merely narrow its width to preserve representation.
+Macro-Level Pruning.
+The macro-gates control coarse units like entire attention heads (
+g
+l
+,
+h
+g_{l,h}
+) and FFN blocks (
+b
+l
+b_{l}
+). When
+g
+l
+,
+h
+=
+0
+g_{l,h}=0
+, the
+h
+h
+-th attention head in layer
+l
+l
+is completely bypassed. When
+b
+l
+=
+0
+b_{l}=0
+, the entire FFN block in layer
+l
+l
+is removed.
+AttnOut
+l
+,
+h
+​
+(
+X
+)
+\displaystyle\text{AttnOut}_{l,h}(X)
+=
+g
+l
+,
+h
+⋅
+Attention
+​
+(
+X
+​
+W
+l
+,
+h
+Q
+,
+X
+​
+W
+l
+,
+h
+K
+,
+X
+​
+W
+l
+,
+h
+V
+)
+,
+\displaystyle=g_{l,h}\cdot\text{Attention}(XW^{Q}_{l,h},XW^{K}_{l,h},XW^{V}_{l,h}),
+(1)
+FFNOut
+l
+​
+(
+X
+)
+\displaystyle\text{FFNOut}_{l}(X)
+=
+b
+l
+⋅
+FFN
+​
+(
+X
+)
+.
+\displaystyle=b_{l}\cdot\text{FFN}(X).
+(2)
+Micro-Level Pruning.
+The micro-gates operate within active macro-structures, and they dynamically prune the internal matrix dimensions. For an active attention head, the gates
+d
+l
+,
+h
+∈
+{
+0
+,
+1
+}
+D
+h
+d_{l,h}\in\{0,1\}^{D_{h}}
+prune the value-path dimensions. For an active FFN block, the gates
+c
+l
+∈
+{
+0
+,
+1
+}
+D
+ffn
+c_{l}\in\{0,1\}^{D_{\text{ffn}}}
+prune the intermediate hidden neurons:
+Head
+l
+,
+h
+′
+​
+(
+X
+)
+\displaystyle\text{Head}^{\prime}_{l,h}(X)
+=
+g
+l
+,
+h
+​
+[
+softmax
+​
+(
+Q
+l
+,
+h
+​
+K
+l
+,
+h
+⊤
+D
+h
+)
+​
+(
+V
+l
+,
+h
+⊙
+d
+l
+,
+h
+)
+]
+,
+\displaystyle=g_{l,h}\left[\text{softmax}\!\left(\frac{Q_{l,h}K_{l,h}^{\top}}{\sqrt{D_{h}}}\right)\left(V_{l,h}\odot d_{l,h}\right)\right],
+(3)
+FFN
+l
+′
+​
+(
+X
+)
+\displaystyle\text{FFN}^{\prime}_{l}(X)
+=
+b
+l
+​
+[
+(
+ϕ
+⁡
+(
+X
+​
+W
+1
+,
+l
+)
+⊙
+c
+l
+)
+​
+W
+2
+,
+l
+]
+,
+\displaystyle=b_{l}\left[\left(\phi(XW_{1,l})\odot c_{l}\right)W_{2,l}\right],
+(4)
+where
+⊙
+\odot
+denotes channel-wise broadcasting and
+ϕ
+\phi
+is the non-linear activation (e.g., GELU).
+During training, these binary gates are relaxed to continuous variables
+z
+^
+∈
+(
+0
+,
+1
+)
+\hat{z}\in(0,1)
+using the Gumbel-Sigmoid distribution, enabling end-to-end differentiable optimization. When we export the pruned model, Equation
+4
+corresponds to the physical removal of specific columns from
+W
+1
+,
+l
+W_{1,l}
+and their matching rows from
+W
+2
+,
+l
+W_{2,l}
+.
+3.2
+Differentiable Cost Modeling
+To guide the architecture search, we formulate an exact, differentiable accounting of the network’s Multiply-Accumulate operations (MACs). Let
+N
+N
+be the sequence length and
+D
+D
+be the embedding dimension. The computational cost of the network is decomposed into a static overhead
+C
+const
+C^{\text{const}}
+(e.g., patch embedding, layer normalization) and the dynamic costs governed by our gates.
+We isolate the marginal MACs cost into three specific constants:
+•
+C
+1
+=
+2
+​
+N
+​
+D
+​
+(
+3
+​
+D
+h
+)
++
+2
+​
+N
+2
+​
+D
+h
+C_{1}=2ND(3D_{h})+2N^{2}D_{h}
+: The macro-overhead for computing the dense
+Q
+,
+K
+,
+V
+Q,K,V
+projections and the attention map
+Q
+​
+K
+⊤
+QK^{\top}
+for a single head.
+•
+C
+2
+=
+2
+​
+N
+​
+D
++
+2
+​
+N
+2
+C_{2}=2ND+2N^{2}
+: The micro-cost of computing the attention output for a single surviving value dimension
+j
+j
+.
+•
+C
+3
+=
+4
+​
+N
+​
+D
+C_{3}=4ND
+: The micro-cost of computing a single surviving intermediate neuron in the FFN block.
+Because the FFN macro-gate
+b
+l
+b_{l}
+strictly acts as an enabler for its internal neurons
+c
+l
+,
+k
+c_{l,k}
+, the FFN block possesses no empty structural overhead. Furthermore, we deliberately exclude the static computational overhead of unpruned layers (e.g., patch embedding, layer normalization, and the final classification head) from our differentiable cost function, as their derivatives with respect to the architecture gates are zero.
+Therefore, the total prunable computational cost of the search space
+𝒢
+\mathcal{G}
+is linearly decomposed as:
+𝔼
+⁡
+[
+C
+⁡
+(
+𝒢
+)
+]
+=
+∑
+l
+=
+1
+L
+∑
+h
+=
+1
+H
+(
+C
+1
+⋅
+𝔼
+⁡
+[
+g
+l
+,
+h
+]
++
+C
+2
+​
+∑
+j
+=
+1
+D
+h
+𝔼
+⁡
+[
+g
+l
+,
+h
+⋅
+d
+l
+,
+h
+,
+j
+]
+)
++
+∑
+l
+=
+1
+L
+∑
+k
+=
+1
+D
+ffn
+C
+3
+⋅
+𝔼
+⁡
+[
+b
+l
+⋅
+c
+l
+,
+k
+]
+.
+\mathbb{E}[C(\mathcal{G})]=\sum_{l=1}^{L}\sum_{h=1}^{H}\Big(C_{1}\cdot\mathbb{E}[g_{l,h}]+C_{2}\sum_{j=1}^{D_{h}}\mathbb{E}[g_{l,h}\cdot d_{l,h,j}]\Big)+\sum_{l=1}^{L}\sum_{k=1}^{D_{\text{ffn}}}C_{3}\cdot\mathbb{E}[b_{l}\cdot c_{l,k}].
+(5)
+This linear decomposition is crucial: it allows the optimization process to cleanly attribute hardware penalties to individual structures, explicitly penalizing the network for keeping empty attention heads open, while allowing FFN blocks to scale costs purely by their active neuron count.
+3.3
+Training with Gumbel-Sigmoid
+To train the binary gates, we use the Gumbel-Sigmoid relaxation. Each gate is parameterized by a learnable logit
+α
+\alpha
+. During the forward pass, we sample a continuous gate value
+z
+^
+∈
+(
+0
+,
+1
+)
+\hat{z}\in(0,1)
+by adding Logistic noise
+ϵ
+\epsilon
+and applying a sigmoid with temperature
+τ
+\tau
+:
+z
+^
+=
+σ
+⁡
+(
+α
++
+ϵ
+τ
+)
+.
+\hat{z}=\sigma\!\left(\frac{\alpha+\epsilon}{\tau}\right).
+(6)
+During the backward pass, we employ the Straight-Through Estimator (STE) to compute gradients.
+The total optimization objective during training is a combination of the primary task loss, cost-aware structural regularization, and a set of architectural feasibility penalties:
+ℒ
+total
+=
+ℒ
+task
++
+λ
+macro
+​
+ℒ
+macro
++
+λ
+micro
+​
+ℒ
+micro
++
+ℒ
+feasibility
+.
+\mathcal{L}_{\text{total}}=\mathcal{L}_{\text{task}}+\lambda_{\text{macro}}\mathcal{L}_{\text{macro}}+\lambda_{\text{micro}}\mathcal{L}_{\text{micro}}+\mathcal{L}_{\text{feasibility}}.
+(7)
+For the task loss, we use a combination of standard cross-entropy and Knowledge Distillation (KD). A pre-trained, dense teacher model provides soft targets, which are crucial for maintaining the representations of the student network as its capacity is dynamically pruned.
+Rather than using a global, squared-error budget target, we directly penalize the expected macro and micro computational costs derived in Equation
+5
+. We decouple these into
+ℒ
+macro
+\mathcal{L}_{\text{macro}}
+(penalizing
+C
+1
+C_{1}
+) and
+ℒ
+micro
+\mathcal{L}_{\text{micro}}
+(penalizing
+C
+2
+C_{2}
+and
+C
+3
+C_{3}
+), controlled by independent hyperparameters
+λ
+macro
+\lambda_{\text{macro}}
+and
+λ
+micro
+\lambda_{\text{micro}}
+. This decoupling allows us to explicitly manage the trade-off between coarse and fine-grained sparsity.
+A common failure mode in differentiable architecture search is structural collapse, where the network greedily prunes entire layers to minimize the cost penalty before the weights can adapt. To prevent this, we introduce a feasibility penalty
+ℒ
+feasibility
+\mathcal{L}_{\text{feasibility}}
+that enforces minimum retention quotas using a ReLU threshold:
+ℒ
+feasibility
+=
+β
+head
+​
+ℒ
+f
+,
+head
++
+β
+dim
+​
+ℒ
+f
+,
+dim
++
+β
+ffn
+​
+ℒ
+f
+,
+ffn
+.
+\mathcal{L}_{\text{feasibility}}=\beta_{\text{head}}\mathcal{L}_{f,\text{head}}+\beta_{\text{dim}}\mathcal{L}_{f,\text{dim}}+\beta_{\text{ffn}}\mathcal{L}_{f,\text{ffn}}.
+(8)
+For example,
+ℒ
+f
+,
+head
+=
+∑
+l
+ReLU
+​
+(
+k
+min
+−
+∑
+h
+g
+l
+,
+h
+)
+2
+\mathcal{L}_{f,\text{head}}=\sum_{l}\text{ReLU}(k_{\text{min}}-\sum_{h}g_{l,h})^{2}
+heavily penalizes the network if the active head count in layer
+l
+l
+falls below a predefined threshold
+k
+min
+k_{\text{min}}
+. Similar constraints (
+γ
+attn
+\gamma_{\text{attn}}
+and
+γ
+ffn
+\gamma_{\text{ffn}}
+) guarantee a minimum ratio of surviving attention dimensions and FFN neurons within any active macro-structure, ensuring stable gradient flow throughout the training process.
+3.4
+Single-Phase End-to-End Discovery
+A significant limitation of prior differentiable architecture search methods is their reliance on a computationally expensive two-phase pipeline: an initial search phase to discover the architecture mask, followed by a mandatory, isolated fine-tuning phase to recover the degraded weights.
+HiAP eliminates this inefficiency by unifying search and training into a single, continuous phase. The dense ViT is trained end-to-end alongside the gate logits using
+ℒ
+total
+\mathcal{L}_{\text{total}}
+. Throughout the training process, the Gumbel-Sigmoid temperature
+τ
+\tau
+is gradually annealed from an initial value
+τ
+0
+\tau_{0}
+to a near-zero minimum
+τ
+min
+\tau_{\text{min}}
+(as illustrated in Figure
+2
+).
+Figure 2:
+Gumbel-Sigmoid temperature annealing over the course of the single-phase training. During the early epochs (e.g.,
+τ
+=
+2.0
+\tau=2.0
+), the distribution resembles a Gaussian, acting as a soft, continuous regularizer. As training progresses and
+τ
+\tau
+decays, the probability density sharply bi-furcates toward 0 and 1, naturally hardening the network into a discrete sub-architecture without inducing gradient shock.
+Dynamic Co-Adaptation.
+In the early epochs (high
+τ
+\tau
+), the gates behave as stochastic dropout mechanisms, continuously forcing the surviving network weights to learn robust, distributed representations. As training progresses and
+τ
+\tau
+decays, the gate distributions sharpen, naturally converging toward deterministic binary decisions. Because the weights are co-adapted to this gradually hardening topology, the network seamlessly transitions into its final sparse state without the catastrophic "gradient shock" typically associated with sudden structural pruning.
+Physical Sub-network Extraction.
+In prior works, sub-networks are often left with "soft" masks or require sparse convolution engines to realize speedups. In contrast, upon completion of the training cycle, HiAP physically extracts the discovered architecture. The stochastic gates are deterministically hardened using a simple probability threshold (
+z
+^
+>
+0.5
+\hat{z}>0.5
+). The dimensions of the query, key, and value matrices are physically truncated according to the micro-gates, and entirely pruned heads and FFN blocks are deleted. This yields a natively fast, physically compressed Vision Transformer ready for immediate inference without the need for secondary fine-tuning.
+4
+Theoretical Remarks
+Lemma 1
+(Expressivity: strict superset)
+.
+Let
+𝒜
+head
+\mathcal{A}_{\text{head}}
+be the set of architectures reachable by head/block (macro) gates only, and let
+𝒜
+hiap
+\mathcal{A}_{\text{hiap}}
+be those additionally using micro-gates over attention dimensions or FFN neurons. If any layer has
+D
+h
+>
+1
+D_{h}>1
+or
+D
+ffn
+>
+1
+D_{\text{ffn}}>1
+, then
+𝒜
+head
+⊊
+𝒜
+hiap
+\mathcal{A}_{\text{head}}\subsetneq\mathcal{A}_{\text{hiap}}
+.
+Proof sketch.
+Fix a layer/head with
+D
+h
+>
+1
+D_{h}>1
+(the FFN case is analogous). Pick an architecture that keeps a head (
+g
+l
+,
+h
+=
+1
+g_{l,h}=1
+) but zeros a strict subset of its dimensions with
+d
+l
+,
+h
+∈
+{
+0
+,
+1
+}
+D
+h
+,
+d
+l
+,
+h
+∉
+{
+𝟎
+,
+𝟏
+}
+d_{l,h}\in\{0,1\}^{D_{h}},\;d_{l,h}\notin\{\mathbf{0},\mathbf{1}\}
+. This cannot be realized by macro gates alone (which toggle whole heads), hence
+𝒜
+head
+⊊
+𝒜
+hiap
+\mathcal{A}_{\text{head}}\subsetneq\mathcal{A}_{\text{hiap}}
+.
+∎
+Proposition 1
+(Budget linearity)
+.
+Under the accounting convention above, there exist nonnegative weights
+{
+w
+i
+}
+\{w_{i}\}
+for each prunable unit such that the expected prunable cost decomposes linearly as
+𝔼
+⁡
+[
+C
+]
+=
+∑
+i
+w
+i
+​
+𝔼
+​
+[
+z
+i
+]
+\mathbb{E}[C]=\sum_{i}w_{i}\,\mathbb{E}[z_{i}]
+, where
+z
+i
+∈
+{
+g
+l
+,
+h
+,
+g
+l
+,
+h
+​
+d
+l
+,
+h
+,
+j
+,
+b
+l
+​
+c
+l
+,
+k
+}
+z_{i}\in\{g_{l,h},\;g_{l,h}d_{l,h,j},\;b_{l}c_{l,k}\}
+. No independence assumptions are required.
+Proof sketch.
+Define
+w
+i
+w_{i}
+as the marginal MACs saved by removing unit
+i
+i
+(see Appendix). By linearity of expectation,
+𝔼
+⁡
+[
+C
+]
+=
+∑
+i
+w
+i
+​
+𝔼
+​
+[
+z
+i
+]
+\mathbb{E}[C]=\sum_{i}w_{i}\,\mathbb{E}[z_{i}]
+holds regardless of correlations among gates, since each term is a linear functional of the corresponding binary variable.
+∎
+Proposition 2
+(Soft-to-hard budget alignment)
+.
+Let
+τ
+→
+0
+\tau\to 0
+anneal the Gumbel-Sigmoid gates to near-binary samples. Let
+f
+⁡
+(
+θ
+)
+f(\theta)
+denote the realized cost after hardening via a threshold
+θ
+\theta
+on gate probabilities. Because the differentiable expected cost
+𝔼
+⁡
+[
+C
+]
+\mathbb{E}[C]
+converges to the discrete cost as variance collapses, using a fixed threshold
+θ
+=
+0.5
+\theta=0.5
+natively finds a sub-network such that
+|
+f
+⁡
+(
+0.5
+)
+−
+C
+target
+|
+≤
+ε
+|f(0.5)-C_{\text{target}}|\leq\varepsilon
+for a small tolerance
+ε
+>
+0
+\varepsilon>0
+, subject to the discrete step size of widths.
+Proof sketch.
+As
+τ
+→
+0
+\tau\to 0
+, the continuous gate outputs converge to the Heaviside step function around
+0.5
+0.5
+. This guarantees the continuous expected cost directly approximates the hardened discrete cost. Discreteness yields a minimum granularity determined by head/neuronal counts; the tolerance
+ε
+\varepsilon
+absorbs this quantization.
+∎
+Annealing and hardening.
+As
+τ
+→
+0
+\tau\to 0
+, the Gumbel-Sigmoid entropy decreases monotonically and samples concentrate on threshold decisions; a soft-to-hard schedule stabilizes learning, aligning with the single-phase discovery and direct hardening.
+5
+Experiments
+We evaluate the HiAP framework on both large-scale (ImageNet-1K) and controlled (CIFAR-10) datasets. Our experiments demonstrate that HiAP can compress standard Vision Transformers to strict computational budgets in a single training phase, producing physically extractable subnetworks without the need for secondary fine-tuning.
+5.1
+Experimental Setup
+Datasets and Baselines.
+We conduct our primary evaluations on ImageNet, applying HiAP to the widely adopted DeiT-Small architecture with the dense baseline requiring 4.6G MACs. For controlled ablations and latency profiling, we utilize CIFAR-10 with a custom 6-layer ViT-Tiny variant (embedding dimension 192, 3 heads) which natively requires 174M MACs.
+Implementation Details.
+Unlike prior works that require a multi-stage pipeline, HiAP discovers and trains the sub-network simultaneously. For ImageNet, we train for a total of 200 epochs using the AdamW optimizer with a learning rate of
+5
+×
+10
+−
+5
+5\times 10^{-5}
+and a global batch size of 256. The Gumbel-Sigmoid temperature
+τ
+\tau
+is annealed exponentially over the training process from an initial value of 2.0 down to a minimum of 0.5. Knowledge Distillation (KD) is used guiding the search of the sub-network. We use a dense, pre-trained DeiT-Small as the teacher model (
+α
+KD
+=
+0.7
+\alpha_{\text{KD}}=0.7
+,
+T
+=
+4.0
+T=4.0
+). For CIFAR-10, models are trained for 200 epochs under similar annealing conditions. At the conclusion of training, the gates are deterministically hardened at a 0.5 threshold, and the physical sub-network is extracted.
+5.2
+ImageNet-1K
+We compare against other ViT pruning methods. A critical metric for practical deployment is not just the final inference MACs, but the training budget required to produce the compressed model.
+Table 2:
+Comparison of HiAP against other pruning methods on the DeiT-Small baseline. FLOPs are reported in Billions (G).
+Method
+Params (M)
+FLOPs (G)
+Top-1 Acc (%)
+Change (%)
+Dense Baseline
+22.1
+4.6
+79.85
+–
+WDPruning
+15.0
+3.1
+78.55
+-1.30
+WDPruning
+13.3
+2.6
+78.38
+-1.47
+S2ViT
+15.3
+3.1
+79.22
+-0.63
+S2ViT
+13.5
+2.8
+78.44
+-1.41
+ViT-Slim
+15.6
+3.1
+79.90
++0.05
+ViT-Slim
+13.5
+2.8
+79.50
+-0.35
+GOHSP
+14.4
+3.0
+79.98
++0.13
+GOHSP
+11.1
+2.8
+79.86
++0.01
+HiAP (Ours)
+15.0
+3.1
+79.10
+-0.75
+HiAP (Ours)
+12.3
+2.5
+77.95
+-1.90
+As shown in Table
+2
+, HiAP compresses DeiT-Small to 3.1G MACs (a
+∼
+\sim
+33% reduction in computational cost) while maintaining a competitive Top-1 accuracy of 79.1%.
+HiAP achieves these competitive trade-offs through an elegantly simple, unified mechanism. While SOTA methods like GOHSP and ViT-Slim can retain most accuracy out of the network, they rely on highly complex, heavily engineered pipelines. These approaches typically require auxiliary graph evaluations, iterative importance ranking, and multi-stage masking etc. before a final sub-network can be isolated. In contrast, HiAP requires no manual heuristics, surrogate ranking metrics, or multi-stage architectural extraction. By embedding Gumbel-Sigmoid gates and a differentiable cost penalty directly into the primary training objective, the network autonomously discovers and hardens its own heterogeneous topology.
+5.3
+Hierarchical Search Dynamics and Structure Analysis
+A fundamental advantage of HiAP is its ability to autonomously distribute sparsity across different architectural granularities. To understand the pruning policy discovered by our method, we analyzed the evolution of the structural gates over the course of the training phase on ImageNet.
+Early Macro-Level Reductions.
+We observe that HiAP prioritizes the removal of coarse macro-structures early in the training process, as these provide the largest immediate reductions in the computational penalty
+ℒ
+macro
+\mathcal{L}_{\text{macro}}
+. For instance, within the first 10 epochs, the network aggressively reduces the number of active attention heads from 6 to an average of 2-4 per layer. Most notably, the algorithm consistently identifies the FFN block in the final transformer layer (
+L
+=
+12
+L=12
+) as entirely redundant, permanently closing its macro-gate (
+b
+12
+=
+0
+b_{12}=0
+). This demonstrates that HiAP can effectively perform depth-wise pruning and bypass entire sub-components without requiring human-designed heuristics.
+Micro-Level Fine-Tuning.
+As the macro-gates stabilize, the network transitions to exploiting micro-sparsity to smoothly satisfy the remaining MACs budget. Instead of uniformly shrinking the network, HiAP learns a highly heterogeneous width distribution. By the intermediate epochs, the surviving FFN blocks exhibit varying degrees of sparsity; earlier layers maintain nearly full capacity (
+∼
+\sim
+1400 active neurons out of 1536), while deeper layers are compressed much more aggressively (
+∼
+\sim
+1200 active neurons). Similarly, the intra-head dimensions within the surviving attention modules are dynamically truncated (often reduced from 64 down to 32 or fewer dimensions per head).
+Figure 3:
+The architecture topology at end of training
+Validation of the Decoupled Loss.
+This temporal pruning behavior perfectly validates our decoupled cost formulation (Equation
+5
+). Because empty structural overhead (
+C
+1
+C_{1}
+) is heavily penalized, the network learns to drop entire heads rather than keeping all 6 heads open with tiny, inefficient dimensions. Once the overhead is minimized, the network meticulously trims the micro-dimensions (
+C
+2
+,
+C
+3
+C_{2},C_{3}
+) to trade capacity for computational efficiency. Ultimately, the network co-adapts its weights to this gradually hardening sub-architecture, allowing it to seamlessly achieve the target 3.1G MACs limit by the end of the single 200-epoch phase without suffering catastrophic representational collapse.
+5.4
+Ablations and Latency on CIFAR-10
+To validate the autonomous gating mechanism, we compare HiAP against standard structured pruning heuristics on CIFAR-10:
+ℓ
+1
+\ell_{1}
+-norm importance ranking (targeting FFN neurons) and a Uniform-Ratio baseline.
+Table 3:
+Comparison with structured pruning baselines on CIFAR-10 (ViT-Tiny). All methods are constrained to specific structural MAC reduction targets.
+Method
+MACs (M)
+Reduction (%)
+Final Acc. (%)
+Dense Baseline
+174.0
+0.0
+90.50
+Uniform-Ratio
+116.6
+33.0
+86.63
+ℓ
+1
+\ell_{1}
+-Structured (FFN)
+116.5
+33.0
+87.15
+HiAP (Moderate)
+116.3
+33.1
+87.56
+ℓ
+1
+\ell_{1}
+-Structured (FFN)
+87.3
+49.8
+86.80
+HiAP (Aggressive)
+87.1
+49.9
+87.25
+As shown in Table
+3
+, HiAP consistently outperforms manual heuristics at both moderate (
+∼
+\sim
+33%) and aggressive (
+∼
+\sim
+50%) compression regimes. Because HiAP’s budget-aware loss dynamically distributes sparsity across all layers rather than applying a fixed uniform ratio, the network retains critical feature pathways, yielding a
++
+0.93
+%
++0.93\%
+accuracy improvement over the uniform baseline at the 33% budget.
+Throughput and Hardware Efficiency.
+Because HiAP physically truncates the attention dimensions and FFN matrices, the theoretical MACs reductions translate directly to on-device speedups. When profiling the 33.1% pruned model (batch size 1, 50 inference runs), measured latency improves from 5.57 ms to 3.86 ms on a single GPU. This represents a
+≈
+\approx
+1.44
+×
+\times
+inference speedup, confirming that the discovered sub-networks do not rely on sparse convolution engines to realize their efficiency.
+6
+Conclusion
+HiAP transforms ViT pruning from hand
+-
+tuned heuristics into a single, budget
+-
+aware learning problem. By placing Gumbel–Sigmoid gates at both macro (blocks, heads) and micro (intra
+-
+head dimensions, FFN neurons) levels, it jointly reduces memory traffic and FLOPs without preset sparsity ratios or thresholding. An exact, differentiable MACs objective with feasibility constraints guides the search and prevents collapse, while a one
+-
+phase annealing schedule co
+-
+adapts weights and structure to produce a dense, deployable sub
+-
+network at convergence. On CIFAR
+-
+10 and ImageNet (e.g., DeiT
+-
+Small), HiAP automatically discovers compact models that improve the accuracy–efficiency Pareto frontier and deliver immediate throughput gains on standard hardware. Our experimental results demonstrate HiAP’s practicality, showing state
+-
+of
+-
+the
+-
+art efficiency and requiring no post
+-
+hoc tuning. In terms of limitations, our method’s objective has been to optimize expected MACs, not calibrated latency/energy, so realized speedups can vary with hardware/kernels. Future directions could include closing the MACs
+-
+to
+-
+latency gap with platform
+-
+calibrated latency/energy signals, and composing HiAP with token pruning, quantization, and compiler
+-
+level optimizations to expand beyond classification.
+References
+[1]
+A. Dosovitskiy, L. Beyer, A. Kolesnikov, D. Weissenborn, X. Zhai, T. Unterthiner, M. Dehghani, M. Minderer, G. Heigold, S. Gelly,
+et al.
+(2020)
+An image is worth 16x16 words: transformers for image recognition at scale
+.
+arXiv preprint arXiv:2010.11929
+.
+Cited by:
+§1
+.
+[2]
+A. Chavan, Z. Shen, Z. Liu, Z. Liu, K. Cheng, and E. P. Xing
+(2022)
+Vision transformer slimming: multi-dimension searching in continuous optimization space
+.
+In
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition
+,
+pp. 4931–4941
+.
+Cited by:
+§1
+,
+Table 1
+,
+§2
+.
+[3]
+S. Han, H. Mao, and W. J. Dally
+(2015)
+Deep compression: compressing deep neural networks with pruning, trained quantization and huffman coding
+.
+arXiv preprint arXiv:1510.00149
+.
+Cited by:
+§1
+,
+§2
+.
+[4]
+T. Dao, D. Fu, S. Ermon, A. Rudra, and C. Ré
+(2022)
+Flashattention: fast and memory-efficient exact attention with io-awareness
+.
+Advances in neural information processing systems
+35
+,
+pp. 16344–16359
+.
+Cited by:
+§1
+,
+§2
+.
+[5]
+J. Liu, D. Tang, Y. Huang, L. Zhang, X. Zeng, D. Li, M. Lu, J. Peng, Y. Wang, F. Jiang,
+et al.
+(2024)
+Updp: a unified progressive depth pruner for cnn and vision transformer
+.
+In
+Proceedings of the AAAI conference on artificial intelligence
+,
+Vol.
+38
+,
+pp. 13891–13899
+.
+Cited by:
+§1
+,
+Table 1
+,
+§2
+.
+[6]
+B. Hassibi and D. Stork
+(1992)
+Second order derivatives for network pruning: optimal brain surgeon
+.
+Advances in neural information processing systems
+5
+.
+Cited by:
+§2
+.
+[7]
+P. Molchanov, A. Mallya, S. Tyree, I. Frosio, and J. Kautz
+(2019)
+Importance estimation for neural network pruning
+.
+In
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition
+,
+pp. 11264–11272
+.
+Cited by:
+§2
+.
+[8]
+P. Michel, O. Levy, and G. Neubig
+(2019)
+Are sixteen heads really better than one?
+.
+Advances in neural information processing systems
+32
+.
+Cited by:
+§2
+.
+[9]
+M. Zhu, Y. Tang, and K. Han
+(2021)
+Vision transformer pruning
+.
+arXiv preprint arXiv:2104.08500
+.
+Cited by:
+§2
+.
+[10]
+S. Yu, T. Chen, J. Shen, H. Yuan, J. Tan, S. Yang, J. Liu, and Z. Wang
+(2022)
+Unified visual transformer compression
+.
+arXiv preprint arXiv:2203.08243
+.
+Cited by:
+§2
+.
+[11]
+M. Yin, B. Uzkent, Y. Shen, H. Jin, and B. Yuan
+(2023)
+Gohsp: a unified framework of graph and optimization-based heterogeneous structured pruning for vision transformer
+.
+In
+Proceedings of the AAAI Conference on Artificial Intelligence
+,
+Vol.
+37
+,
+pp. 10954–10962
+.
+Cited by:
+Table 1
+,
+§2
+.
+[12]
+L. Yu and W. Xiang
+(2023)
+X-pruner: explainable pruning for vision transformers
+.
+In
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition
+,
+pp. 24355–24363
+.
+Cited by:
+§2
+,
+§2
+.
+[13]
+G. Fang, X. Ma, M. Song, M. B. Mi, and X. Wang
+(2023)
+DepGraph: towards any structural pruning
+.
+In
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)
+,
+pp. 16091–16101
+.
+Cited by:
+§2
+.
+[14]
+H. Yang, H. Yin, M. Shen, P. Molchanov, H. Li, and J. Kautz
+(2023)
+Global vision transformer pruning with hessian-aware saliency
+.
+In
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition
+,
+pp. 18547–18557
+.
+Cited by:
+Table 1
+,
+§2
+,
+§2
+.
+[15]
+C. Zheng, K. Zhang, Z. Yang, W. Tan, J. Xiao, Y. Ren, S. Pu,
+et al.
+(2022)
+Savit: structure-aware vision transformer pruning via collaborative optimization
+.
+Advances in Neural Information Processing Systems
+35
+,
+pp. 9010–9023
+.
+Cited by:
+Table 1
+,
+§2
+.
+[16]
+G. Fang, X. Ma, M. B. Mi, and X. Wang
+(2024)
+Isomorphic pruning for vision models
+.
+In
+European Conference on Computer Vision
+,
+pp. 232–250
+.
+Cited by:
+§2
+.
+[17]
+S. Chen and Q. Zhao
+(2019)
+Shallowing deep networks: layer-wise pruning based on feature representations
+.
+IEEE Transactions on Pattern Analysis and Machine Intelligence
+41
+(
+12
+),
+pp. 3048–3056
+.
+External Links:
+Document
+Cited by:
+§2
+.
+[18]
+W. Wang, S. Zhao, M. Chen, J. Hu, D. Cai, and H. Liu
+(2019)
+Dbp: discrimination based block-level pruning for deep model acceleration
+.
+arXiv preprint arXiv:1912.10178
+.
+Cited by:
+§2
+.
+[19]
+H. Tang, Y. Lu, and Q. Xuan
+(2023)
+Sr-init: an interpretable layer pruning method
+.
+In
+ICASSP 2023-2023 IEEE International Conference on Acoustics, Speech and Signal Processing (ICASSP)
+,
+pp. 1–5
+.
+Cited by:
+§2
+.
+[20]
+P. Xu, J. Cao, F. Shang, W. Sun, and P. Li
+(2020)
+Layer pruning via fusible residual convolutional block for deep neural networks
+.
+arXiv preprint arXiv:2011.14356
+.
+Cited by:
+§2
+.
+[21]
+A. Fan, E. Grave, and A. Joulin
+(2019)
+Reducing transformer depth on demand with structured dropout
+.
+arXiv preprint arXiv:1909.11556
+.
+Cited by:
+§2
+.
+[22]
+X. Sun, B. Lakshmanan, M. Shen, S. Lan, J. Chen, and J. M. Alvarez
+(2025)
+MDP: multidimensional vision model pruning with latency constraint
+.
+arXiv preprint arXiv:2504.02168
+.
+Cited by:
+§2
+.
+[23]
+Y. Rao, W. Zhao, B. Liu, J. Lu, J. Zhou, and C. Hsieh
+(2021)
+Dynamicvit: efficient vision transformers with dynamic token sparsification
+.
+Advances in neural information processing systems
+34
+,
+pp. 13937–13949
+.
+Cited by:
+§2
+.
+[24]
+Y. Liang, C. Ge, Z. Tong, Y. Song, J. Wang, and P. Xie
+(2022)
+Not all patches are what you need: expediting vision transformers via token reorganizations
+.
+arXiv preprint arXiv:2202.07800
+.
+Cited by:
+§2
+.
+[25]
+Z. Kong, P. Dong, X. Ma, X. Meng, W. Niu, M. Sun, X. Shen, G. Yuan, B. Ren, H. Tang,
+et al.
+(2022)
+Spvit: enabling faster vision transformers via latency-aware soft token pruning
+.
+In
+European conference on computer vision
+,
+pp. 620–640
+.
+Cited by:
+§2
+,
+§2
+.
+[26]
+H. Yin, A. Vahdat, J. M. Alvarez, A. Mallya, J. Kautz, and P. Molchanov
+(2022)
+A-vit: adaptive tokens for efficient vision transformer
+.
+In
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition
+,
+pp. 10809–10818
+.
+Cited by:
+§2
+.
+[27]
+Z. Kong, H. Ma, G. Yuan, M. Sun, Y. Xie, P. Dong, X. Meng, X. Shen, H. Tang, M. Qin,
+et al.
+(2023)
+Peeling the onion: hierarchical reduction of data redundancy for efficient vision transformer training
+.
+In
+Proceedings of the AAAI Conference on Artificial Intelligence
+,
+Vol.
+37
+,
+pp. 8360–8368
+.
+Cited by:
+§2
+.
+[28]
+D. Bolya, C. Fu, X. Dai, P. Zhang, C. Feichtenhofer, and J. Hoffman
+(2022)
+Token merging: your vit but faster
+.
+arXiv preprint arXiv:2210.09461
+.
+Cited by:
+§2
+.
+[29]
+T. Chen, Y. Cheng, Z. Gan, L. Yuan, L. Zhang, and Z. Wang
+(2021)
+Chasing sparsity in vision transformers: an end-to-end exploration
+.
+Advances in neural information processing systems
+34
+,
+pp. 19974–19988
+.
+Cited by:
+Table 1
+,
+§2
+.
+[30]
+F. Yu, K. Huang, M. Wang, Y. Cheng, W. Chu, and L. Cui
+(2022)
+Width & depth pruning for vision transformers
+.
+In
+Proceedings of the AAAI conference on artificial intelligence
+,
+Vol.
+36
+,
+pp. 3143–3151
+.
+Cited by:
+Table 1
+.
+[31]
+E. Bengio, P. Bacon, J. Pineau, and D. Precup
+(2015)
+Conditional computation in neural networks for faster models
+.
+arXiv preprint arXiv:1511.06297
+.
+Cited by:
+§2
+.
+[32]
+C. Louizos, M. Welling, and D. P. Kingma
+(2017)
+Learning sparse neural networks through
+L
+​
+_
+​
+0
+L\_0
+regularization
+.
+arXiv preprint arXiv:1712.01312
+.
+Cited by:
+§2
+.
+[33]
+H. Cai, L. Zhu, and S. Han
+(2018)
+Proxylessnas: direct neural architecture search on target task and hardware
+.
+arXiv preprint arXiv:1812.00332
+.
+Cited by:
+§2
+.
+[34]
+J. Yu and T. Huang
+(2019)
+Autoslim: towards one-shot architecture search for channel numbers
+.
+arXiv preprint arXiv:1903.11728
+.
+Cited by:
+§2
+.
+Appendix A
+Extended Ablation Studies
+A.1
+Early Performance at Various Macro-Micro Settings
+The decoupling of macro and micro-structural penalty is a core contribution of HiAP. To determine the optimal balance between coarse and fine-grained sparsity, we evaluated various penalty ratios over 50 epochs on ImageNet using DeiT-small. We tested macro-to-micro ratios of 2:1, 5:1, and 1.5:1, as well as macro-only and micro-only configurations. The Pareto frontier evaluating the accuracy versus computational cost for these configurations is illustrated in Figure
+4
+Figure 4:
+Top-1 Accuracy vs GFLOP evaluated at early training stage across different penalty configurations
+A.2
+Sensitivity to Cost Penalty Ratios
+We provide extended ablation studies analyzing the sensitivity of our decoupled cost penalty terms,
+λ
+macro
+\lambda_{\text{macro}}
+and
+λ
+micro
+\lambda_{\text{micro}}
+, as well as visualizations of the changes of network’s architecture during the training process. The states of substructures using these configurations are shown in Figure
+5
+- Figure
+9
+. Darker colors indicate more neurons or heads remaining while lighter colors indicate more pruning. The empirical data (Figure
+4
+) suggests that a balanced 2:1 ratio (Figure
+5
+) may be the sweet spot for DeiT-Small for achieving optimal Pareto efficiency. It natively enforces a stable, hierarchical pruning trajectory that balances between the macro and micro structures.
+With aggressive
+λ
+m
+​
+a
+​
+c
+​
+r
+​
+o
+\lambda_{macro}
+(i.e., Figure
+9
+), the network shows a very high reduction in the remaining heads. Early in training, the optimizer bypasses several blocks entirely to force an immediate drop in computational cost. Because of the residual connections, the network maintains gradient flow and avoids complete accuracy degradation. The MLP blocks retain nearly 100% of the neurons. This results in an inefficient and unbalanced distribution of the remaining FLOP budget.
+Interestingly, aggressive
+λ
+m
+​
+i
+​
+c
+​
+r
+​
+o
+\lambda_{micro}
+(i.e., Figure
+9
+) not only directly reduces neurons, but also results in the indirect elimination of entire MLP blocks. Without a macro penalty, the network retains all heads for every transformer layer. Early in training, many MLP blocks are effectively pruned, albeit some have recovered later in training. For the remaining MLP blocks, the neurons have been significantly reduced to a fraction of their dense capacity.
+In our not so extreme, but more skewed penalty ratios 5:1 (Figure
+6
+) and 1.5:1 (Figure
+9
+), we do not observe an overwhelming number of heads or neurons pruned. The 5:1 ratio prioritizes dropping attention heads while the weak micro penalty leaves remaining neurons bloated. The 1.5:1 ratio has a more balanced topology and competes with the 2:1 ratio.
+Figure 5:
+λ
+m
+​
+a
+​
+c
+​
+r
+​
+o
+=
+0.9
+,
+λ
+m
+​
+i
+​
+c
+​
+r
+​
+o
+=
+0.45
+\lambda_{macro}=0.9,\lambda_{micro}=0.45
+Figure 6:
+λ
+m
+​
+a
+​
+c
+​
+r
+​
+o
+=
+1.0
+,
+λ
+m
+​
+i
+​
+c
+​
+r
+​
+o
+=
+0.2
+\lambda_{macro}=1.0,\lambda_{micro}=0.2
+Figure 7:
+λ
+m
+​
+a
+​
+c
+​
+r
+​
+o
+=
+1.2
+,
+λ
+m
+​
+i
+​
+c
+​
+r
+​
+o
+=
+0.8
+\lambda_{macro}=1.2,\lambda_{micro}=0.8
+Figure 8:
+λ
+m
+​
+a
+​
+c
+​
+r
+​
+o
+=
+1.5
+,
+λ
+m
+​
+i
+​
+c
+​
+r
+​
+o
+=
+0.0
+\lambda_{macro}=1.5,\lambda_{micro}=0.0
+Figure 9:
+λ
+m
+​
+a
+​
+c
+​
+r
+​
+o
+=
+0.0
+,
+λ
+m
+​
+i
+​
+c
+​
+r
+​
+o
+=
+1.5
+\lambda_{macro}=0.0,\lambda_{micro}=1.5
+Appendix B
+Decomposition of Expected Prunable Cost (Proof of Proposition 1)
+To prove Proposition 1, we show that the expected prunable computational cost of the network can be expressed as an exact linear combination of the expected joint gate states,
+𝔼
+⁡
+[
+C
+]
+=
+∑
+i
+w
+i
+​
+𝔼
+​
+[
+z
+i
+]
+\mathbb{E}[C]=\sum_{i}w_{i}\,\mathbb{E}[z_{i}]
+. Let
+C
+C
+be the total prunable cost of a network. Then
+C
+C
+of a ViT of
+L
+L
+layers can be decoupled into Attention and FFN components.
+Attention Cost:
+For a given layer
+l
+l
+, the macro-gate
+g
+l
+,
+h
+∈
+{
+0
+,
+1
+}
+g_{l,h}\in\{0,1\}
+dictates the retention of an entire attention head
+h
+h
+.
+The micro-gate
+d
+l
+,
+h
+,
+j
+∈
+{
+0
+,
+1
+}
+d_{l,h,j}\in\{0,1\}
+dictates the retention of the
+j
+j
+-th intra-head dimension. Within a head, the dimensions are only computed if the parent head is active. Therefore, the join state variable is
+z
+l
+,
+h
+,
+j
+attn
+=
+g
+l
+,
+h
+​
+d
+l
+,
+h
+,
+j
+z_{l,h,j}^{\text{attn}}=g_{l,h}d_{l,h,j}
+. Because attention projection and dot-product MACs scale linearly with the inner dimensions, let
+w
+attn
+w_{\text{attn}}
+represent the deterministic marginal MACs required to compute a single attention dimension.
+FFN Cost:
+Similarly, let
+b
+l
+∈
+{
+0
+,
+1
+}
+b_{l}\in\{0,1\}
+be the macro-gate for the entire FFN block, and
+c
+l
+,
+k
+∈
+{
+0
+,
+1
+}
+c_{l,k}\in\{0,1\}
+be the micro-gate for the
+k
+k
+-th intermediate neuron.
+The neuron is only active if the block is active. Therefore, the joint variable becomes
+z
+l
+,
+k
+ffn
+=
+b
+l
+​
+c
+l
+,
+k
+z_{l,k}^{\text{ffn}}=b_{l}c_{l,k}
+.
+Let
+w
+ffn
+w_{\text{ffn}}
+be the marginal MACs of a single neuron in MLP. The total discrete prunable cost of the sub-network is the strict sum of the active components:
+C
+=
+∑
+l
+=
+1
+L
+(
+∑
+h
+=
+1
+H
+∑
+j
+=
+1
+D
+h
+w
+attn
+​
+(
+g
+l
+,
+h
+​
+d
+l
+,
+h
+,
+j
+)
++
+∑
+k
+=
+1
+D
+ffn
+w
+ffn
+​
+(
+b
+l
+​
+c
+l
+,
+k
+)
+)
+.
+C=\sum_{l=1}^{L}\left(\sum_{h=1}^{H}\sum_{j=1}^{D_{h}}w_{\text{attn}}(g_{l,h}d_{l,h,j})+\sum_{k=1}^{D_{\text{ffn}}}w_{\text{ffn}}(b_{l}c_{l,k})\right).
+By substituting the joint variables
+z
+i
+z_{i}
+, the total prunable cost simplifies to a single linear combination
+C
+=
+∑
+i
+w
+i
+​
+z
+i
+C=\sum_{i}w_{i}z_{i}
+. Taking the expected value gives
+𝔼
+⁡
+[
+C
+]
+=
+𝔼
+⁡
+[
+∑
+i
+w
+i
+​
+z
+i
+]
+\mathbb{E}[C]=\mathbb{E}\left[\sum_{i}w_{i}z_{i}\right]
+. By the linearity of expectation, the expected value of a sum equals the sum of the expected values,
+𝔼
+⁡
+[
+X
++
+Y
+]
+=
+𝔼
+⁡
+[
+X
+]
++
+𝔼
+⁡
+[
+Y
+]
+\mathbb{E}[X+Y]=\mathbb{E}[X]+\mathbb{E}[Y]
+.
+This property holds universally for all random variables, regardless of whether they are independent. Therefore, despite the strict hierarchical correlation between the micro-gates and macro-gates, the expectation distributes directly through the summation,
+𝔼
+⁡
+[
+C
+]
+=
+∑
+i
+w
+i
+​
+𝔼
+​
+[
+z
+i
+]
+\mathbb{E}[C]=\sum_{i}w_{i}\,\mathbb{E}[z_{i}]
+. This confirms that the continuous expected budget constraint directly and linearly approximates the discrete cost without requiring independence assumptions.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

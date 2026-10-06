@@ -33,6 +33,8 @@ agent identity monitor 以固定 probe 的 next-token distribution、sqrt-JSD ge
 
 [有限 API 与受控小变化结果](https://arxiv.org/html/2602.11083v1)只支持这一告警分支。provider 的 T=0 实现不必等于低温极限，隐藏 reasoning 或空输出会使 first-token sensor 不可用，prompt 初始化和 reference 也有费用；token 变化可能来自 system prompt、routing 或硬件/负载，而非唯一的权重变化，未告警同样不证明模型没变。输出不可观测、reference 漂移或误报无法校准时，保留显式版本/changelog 证据与常规任务 canary，把变化告警交给诊断和 evaluation，不由 monitor 认证底层身份或质量。
 
+内部可观测时，还可把 circuit 相对参考输入的边排序或权重变化作为质量漂移 proxy，而不是把 activation 看成真实能力。跨模型的浅/深层 divergence 与固定模型相对 ID circuit 的 structural similarity 是两个不同 sensor，不能共享一个适用性声明。[ViT 的受限测量](https://arxiv.org/html/2604.08192v1)中，固定模型 CSS 的 threshold 由39个有 gold 结果的 corruption surrogate 校准；目标切片不再读 label，并不意味着整条方法无标签或无需目标分布假设。Circuit discovery、近似 edge attribution、参考数据与校准本身都有费用，CSS 与准确率相关也不解释内部因果或内在 truth；revision、输入域或阈值失配时，应退回带标签 canary 和独立 evaluation，监控只报变化及校准边界，不直接认证 release 质量。<!-- source-family:SF-2026-ARXIV-2604-08192 -->
+
 容易采集的指标不一定重要。应从用户与平台契约反推：
 
 ```text
@@ -78,6 +80,12 @@ throttling 与 application goodput 必须联合解释。
 可按 policy 聚合判断，attestation 只证明指定 software/boundary 的身份与完整性；任何一层都不能自动证明设备
 会故障、模型结果正确或 workload 应迁移。NVIDIA Fleet Intelligence 作为版本化实现案例支持这类分层，不支持
 把厂商 predictive-failure 效果外推为通用因果结论。
+
+### 缓存探针必须绑定可比较的前缀
+
+客户端 prompt-cache 探针还要先定义什么本来可以命中。把不可复用的新尾部也放进分母，或把客户端改写的 prefix 当作原请求，会把正常差异误报成服务端 reuse 失败。可以在同步复制消息时一起捕获 revision，消费探针时再检查 revision、model namespace 与 tool/system 身份，并以父请求的已知 usage 建立可比较基线；缺少父请求数据应记 unknown，而不是零命中。只截去尾部、仍保留严格前缀的 undo，不必机械丢弃基线。
+
+[Kimi 的受限实现](https://github.com/MoonshotAI/kimi-code/pull/4179)支持这种诊断分账，不认证真正的服务端 miss：tool/system 相同仍不保证完整序列化或 thinking 设置相同，从流式结束计的 gap 也不等于 cache 写入年龄，长输出会系统性低估这一间隔。快照、身份核验、比较与重放均有成本；身份不足时保留 provider 的实际 usage 和受控重放，把失配交给诊断，不以客户端 probe 签发缓存有效性、输出质量或端到端收益。作者定向测试未在本项目复现。<!-- source-family:SF-2026-GITHUB-KIMI-CODE-PR4179 -->
 
 ### Autonomy 不是一个纯模型指标
 
@@ -145,6 +153,8 @@ Monitoring 可以把已经校准的 evaluation results 聚合为时间序列，�
 有些 runtime 已经为 speculative decoding 训练了 MTP/draft head。与其另跑完整 guard model，一条受限分支可把 draft hidden states 送入轻量 context-aware probe，使同一 speculative work 同时产生 token proposal 与风险信号。这样降低边际监控成本，却让 sensor quality 依赖 draft 的训练预算、层选择和当前 model revision；它仍不拥有阻断或输出 commit 权。没有原生 draft head、风险分布漂移或 probe 置信不足时，应回退独立 guard/evaluator。`arXiv:2608.28099v1` 只证明其受测 MTP 架构与分类任务中的准确率—成本关系，不证明近零成本、开放攻击覆盖或生产安全保证。
 
 <!-- source-family:SF-2026-ARXIV-2608-28099 -->
+
+若原生激活不能直接表达待监测任务，还可把已产生的对话重排为文本、附上任务提示，对同一模型另做一次forward，再在所得激活上拟合或读取probe；这不是复用policy原请求的hidden state，而是另一个有template、model和任务身份的观测调用。任务只在suffix出现时，各类别可共享重排后长prefix的一次forward，再分别计算suffix；任务进入prefix后，早层表示已随类别改变，不能沿用同一份共享费用。选择raw probe、SAE特征或prompted读出时，应同时比较目标标签数量、离线表示训练和额外推理预算，SAE未用目标标签不等上游训练免费。[受限activation-monitor对照](https://arxiv.org/html/2504.20271v1#S3)只支持所测模型与人口下的选择，SAE的分布外表现和组合收益并非一致改善；原请求激活与重排调用必须分别校准、记录捕获和特征处理费用。调用预算不足、模板或风险人口漂移时，保留原生probe、独立带标签evaluator与原monitor配对，不由内部可读或低风险score授予安全放行。<!-- source-family:SF-2025-ARXIV-2504-20271 -->
 
 ### 从 Error Counter 到 Layer × Detectability Failure Coordinate
 
@@ -297,6 +307,8 @@ authority 仍属于独立 policy；无法取得内部状态时回退 output/traj
 
 HVP、多个 probes 与重采样增加训练开销，probe 方差、batch noise 或 shared-weight 处理错误还会伪造异常。估计不稳时应增加 probes、转离线高精度审计，或回退 loss/gradient norm 和人工判断。作者规模与 memorisation setting 只证明所测 detector，不构成大模型训练的通用阈值。
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-25674:end -->
+
+表示变化还可由增量拓扑提出诊断信号：在固定邻域尺度下，只刷新位移最大的部分点及邻接星，局部修复Morse matching并重新约化受影响列，结合critical-cell churn、cycle fragility与touched-column footprint构成监测量。精确Betti只针对这份edited complex，不保证等于每轮全量重建的当前embedding图；footprint也只是更新工作量代理，不是最坏时延证书。[受限训练对照](https://arxiv.org/html/2604.26984v1#S4)的语言实验是BERT/SBERT/MiniLM的STS-B、30epochs/3seeds，部分BERT设定的预警方向不稳定，不能称LLM全域collapse detector或已证明可用干预避免退化。Embedding snapshots、邻域/匹配维护与阈值搜索仍付费；信号或费用失配时保留loss、任务canary、谱统计和离线重建核对，监测只触发诊断，不直接停训。<!-- source-family:SF-2026-ARXIV-2604-26984 -->
 
 只采集请求级 metrics 成本最低，却看不到 activation、attention、router 或 hidden-state 异常；在每个 kernel 上同步
 复制完整 tensor 最直接，又会让诊断本身改变 latency、显存与调度。内部可观测性因此需要从“是否插桩”演进为一条
@@ -600,6 +612,10 @@ degeneracy 或 base-rate inversion 会产生看似有保证的错误工作点。
 
 ## Review notes
 
+- `SF-2026-ARXIV-2604-26984` — 原路由为Daily2026-05-02补May01（保留历史字段，非已核公开日）；reader R79/R80发现早提交至registered跨日且有限原始日组未恢复，实际May1归属未确认，隔离于本窗候选/覆盖/整合计数；技术审阅与有效正文保留，取得该ID官方首公告日或同日有效组合后仅恢复日期层；v1 §3–5/结论，2+1+2=5，edited-complex/footprint传感范围差额深入。保STS-B encoder非7Bdecoder、BERT相关方向反侧、lag/超参选择、实际snapshot/更新费用；不授全量等价、最坏时延、必然预警或干预因果。reader必要Source及actual owner/逐字PRE R18通过，root授指定窄lease；作者已保存并顺读完整邻接，非writer reader actual POST R21通过，root接纳并释放该窄lease；仅行政同步本注，未核实现/复现，不授DAY。
+
+- `SF-2026-GITHUB-KIMI-CODE-PR4179` — Daily2026-10-14；[精确 merge fed19d24](https://github.com/MoonshotAI/kimi-code/commit/fed19d24f00203205b1fa4d23e60afce0609cc00)的必要实现及测试。消息/revision 同步快照、消费时身份验证与可比较前缀分母；保留 thinking/序列化盲区及流末 gap 非写入年龄，不授服务端归因或复现。
+
 本章复用 Part V 已冻结的 TTFT、TPOT、SLO attainment 与 goodput，不重新定义推理机制；自检答案回填明确了 transport、contract 与 semantic errors 的不同证据来源。第 68 章拥有事件，第 69 章拥有因果链，第 66 章继续拥有质量口径和发布判断。
 
 Primary-source 与官方入口：
@@ -709,3 +725,6 @@ Primary-source 与官方入口：
 <!-- daily-books-trace:SF-2026-ARXIV-2607-17525:end -->
 
 - `SF-2026-ARXIV-2602-11083` — Daily `2026-02-13`；[exact-v1](https://arxiv.org/html/2602.11083v1)；必要证据与直接反侧见本日 V3_EVIDENCE_CSIX_FOUR。2+1+2=5；token-only边界prompt init/detect sensor差额深入，不授底层身份认证、无限power或无告警即未变化。root已实际核必要原源/current owner及邻接PRE并授窄锁；root已实际顺读新增两段、邻接与末注，非作者POST通过，窄锁释放，未核代码/复现，日级未授。
+- `SF-2026-ARXIV-2604-08192` — [exact-v1](https://arxiv.org/html/2604.08192v1) §3.2–3.4/4.1–4.3及Limit；只采用cross-model divergence与fixed-model CSS分责、39个有gold surrogate校准及target slice身份，保threshold敏感/近似edge与费用，不授内在truth、因果或全链label-free，未核实现/复现。
+
+- `SF-2025-ARXIV-2504-20271` — Daily2025-05-01补Apr30自然日；[activation-monitor exact-v1](https://arxiv.org/html/2504.20271v1)必要§3–5/Table1，2+2+2=6，任务重排额外forward与policy原激活的观测人口/调用身份差额深入。保suffix共享/prefix按任务重跑、标签/SAE上游训练/捕获/特征/推理全费、单snapshot/筛选人口及OOD反退，不授内部意图真值、全compute最优或安全放行。Newton§10实际Source/owner/逐字拟段通过，root修首句并授唯一单段及本人注窄位，作者已保存并self-read；Newton§13实际非writer新段/完整两侧/本人注POST通过，root实际读回接纳并释放窄位。未核代码/SAE训练或复现，不授DAY。

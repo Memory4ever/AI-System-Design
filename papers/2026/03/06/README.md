@@ -2,11 +2,15 @@
 
 **规范：** V3
 **窗口：** 2026-03-05T09:00:00+08:00 ～ 2026-03-06T09:00:00+08:00
+**窗口说明：** 用户授权保留原候选日期与原窗口，仅补遗漏，新增检查前一BJT完整自然日；旧候选只去重，不搬移归属。
+**补充窗口：** 2026-03-05 ～ 2026-03-05
 **状态：** 完成
 **Books：** 纳入本次
-**检查时间：** 2026-10-01T22:04:28+08:00
+**检查时间：** 2026-10-09T04:38:23+08:00
 
 ## 1. 结论
+
+本轮按用户“保留已有候选日期、原窗与原证据，只补遗漏”的授权，独立检查 BJT 03/05 完整自然日。[运行前原文](../_sources/daily-20260306/SUP_BASELINE_20261009.md)已先保存；原14候选行、评分、日期及原§4连续正文逐字保留。以下三段是原窗有效结论，不代表本轮补查已验收。
 
 本窗确定候选14个唯一家族：12篇 arXiv v1、GPT-5.4 发布/安全说明一个家族及 CoT controllability 研究一个家族。必要机制、评价与直接反证已读；13项得到受限采用结论，DPPO 中心无偏主张与确定性剪枝实现仍冲突，保留争议，不用于正面证据或 Books。8项可能有贡献但首次公开下界不足，另列日期隔离，未评分、不计候选。宽563库存只作有界查漏，不继承旧20候选、评分或563逐项完成声明。
 
@@ -14,30 +18,36 @@
 
 所有14个每日来源均已实际尝试；有限可见目录与历史子入口受阻分开记录，保留项不支撑“无遗漏”。未进行实验复现、生产部署或全附件审阅。
 
+本轮实际尝试14个Daily入口，有限主线查询及相关题名查漏后，新增完整题摘判断34项：32项有具体机制/条件/反证潜力但 first-public 日期未恢复，精确隔离；DBenchBio、LilMoo 两项贡献关闭。官方 Mar05 另读4条原窗09时前 OpenAI 核心，均贡献关闭；Anthropic UE Blog与02/26同家族无新差额，不重复评分。确认新增候选0、新增Books差额0；旧有效源及实际POST复用，不重审原分母。Google、Meta、MiMo及arXiv具体外部缺口不授 Coverage/Evidence 通过。root非作者完整DAY通过，普通待办0；完成仅指安全终态。
+
 ## 2. 来源覆盖
 
-执行仅限本窗、来源清单主线；[原始停止与分层负样本](../_sources/daily-20260306/V3_SOURCE_NOTES.md)保留过程依据。四组 arXiv 主题覆盖语言/训练、系统、视觉世界模型及 Agent；不扫描每周来源。
+执行仅限原窗与上述补充自然日、来源清单主线；[旧有效停止与负样本](../_sources/daily-20260306/V3_SOURCE_NOTES.md)保留原依据。下表为本轮真实停止；[首次入口](../_sources/daily-20260306/SUP_OFFICIAL_WEB_20261009.json)、[官方恢复](../_sources/daily-20260306/SUP_OFFICIAL_RECOVERY_20261009.json)、[子目录停止](../_sources/daily-20260306/SUP_SUBDIRECTORY_STOP_20261009.json)及[API逐行/BJT记录](../_sources/daily-20260306/SUP_API_STOPS_20261009.md)保留 raw。四组 arXiv 主题覆盖语言/训练、系统、视觉世界模型及 Agent；不扫描每周来源。
 
 | 来源 | 检查范围与依据 | 结果 | 缺口 |
 | --- | --- | --- | --- |
-| SRC-OPENAI |Research当前141行；官方RSS HTTP200/754928bytes，限定3/5～6目标item，再读核心。release/card/CoT均Thu05Mar10GMT；客户两项Fri06Mar00GMT；2候选家族；应用/教育核心贡献关闭 | 已检查 | 当前RSS不证明全世界此前无作者公开；不泛查全部feed |
-| SRC-ANTHROPIC |Research与Labor Market Impacts核心；datePublished=2026-03-05T19:59:21.508Z；dateModified9/9不回填；职业exposure/就业范围前关闭 | 已检查 | 有限主线检查不授全机构历史无遗漏 |
-| SRC-GOOGLE-AI |DeepMind research/pubs和Blog p3跨May→Feb，邻接3/10AlphaGo、3/3FlashLite；Research March p1停止3/6 WAXAL，p2实际InternalError；四个域主题补检；可见WAXAL数据资源贡献关闭 | 受阻 | Research月p2本窗必要历史段缺失，见§5 |
-| SRC-META-AI | Research返回0行；March5/6官方域定点主题查询无结果 | 受阻 | 空目录/搜索不能证明零命中；本窗研究目录或原文 |
-| SRC-QWEN |旧Blog迁移，新Blog0行；March5/6定点查询；QwenCode3/6核心及ImportantFixes PR2021实际追读；普通UI更新关闭；重要修复真实归属窗外 | 受阻 | 模型Blog历史目录缺失；PR2021不是本窗候选 |
-| SRC-DEEPSEEK |en/news实际Research index10行，02/25DualPath→06/24V4；News首5条至Apr24，ViewAll未展开；有限可见研究行无本窗 | 已检查 | 不外推全News、隐藏或删除历史 |
-| SRC-MOONSHOT |Kimi官方Blog完整可见19条至2024/06，02/09AgentSwarm→04/20K2.6跨本窗；完整可见19行无本窗 | 已检查 | 不以旧platform2025截断制造永久缺口，不保证未列历史 |
-| SRC-TENCENT-HUNYUAN |Research shell；实际HTML脚本发现publicList只读POST renderType0/page1/size20，总11/11，重新对读两日期字段；publishedAt无March、display邻接02/13→04/23，无本窗目录行 | 已检查 | 两日期不能互当first-public，不授全机构历史无遗漏 |
-| SRC-ZAI |Research175行，02/21GLM5→03/15Turbo；查看更多以下旧Dec未展开；可见目标邻接无项 | 已检查 | 隐藏/删除历史未恢复 |
-| SRC-BYTEDANCE-SEED | public_papers p1 1–20/242、13页、Aug→May，Next动态无href；Research86行、March5/6主题补检 | 受阻 | 必要历史page未恢复；不是242篇队列 |
-| SRC-BAIDU-ERNIE |中文Blog68行p1，02/06ERNIE5→04/15Image跨本窗；可见目录无本窗 | 已检查 | 有限Blog不授全GitHub历史 |
-| SRC-XIAOMI-MIMO | Paper338行02/03HySparse→03/13ARLTangram；Blog15行无日期More shell，域主题补检 | 受阻 | Paper有限已查，必要Blog历史段未恢复 |
-| SRC-MINIMAX | EN76/CN68行，03/18→02/14/12；TechBlog shell15行；llms.txt48行指向techblog.md，实际InternalError | 受阻 | 主Blog有限已查；Agent TechBlog必要历史子目录未恢复 |
-| SRC-ARXIV |四主题site查询after03/03 before03/06；宽库存仅有界题名查漏；20项精确v1题摘/日期，另03394/04390负侧；cs.CL/LG月表show2000实际404、CL show200 InternalError；12确定论文、8日期隔离，另2贡献关闭 | 受阻 | 搜索after不等first-public；8身份具体首次batch缺失，不称全类或563全审 |
+| SRC-OPENAI |Research142行及本轮RSS748k；仅Mar05八item：10GMT三条旧两家族、09GMT旧教育关闭、00GMT四条新核心Excel/AdoptionChannel/FiveValue/Wolfsburg；四条贡献关闭，停止日期切片 | 已检查 | 当前RSS不证明此前作者从未公开，不遍历全部feed |
+| SRC-ANTHROPIC |Research56行＋官方域主题检索；Mar05 UE Challenges/Hopes官方核心及所链2602.20400家族；旧就业关闭复用，不反复追日期 | 已检查 | UE同家族无新增差额；不外推完整机构历史 |
+| SRC-GOOGLE-AI |DeepMindResearch309行、Google pubs1269行只有限相关题名；March archive p2及DeepMindBlog p3本轮InternalError，旧有效DM邻接3/10→3/3、WAXAL关闭复用；官方域主题补检停止 | 受阻 | GoogleResearch March p2必要历史切片缺失；当前辅助失败不抹旧有效源 |
+| SRC-META-AI |Research实际0行；官方域Mar05/2026模型/训练/Agent定点主题补检停止，未得可恢复目录或原文 | 受阻 | 空目录/搜索零结果不能证明零事件 |
+| SRC-QWEN |旧Blog36行、新Blog0行后真实article/retrieval官方API40条题名/extra.date，02/16Qwen3.5→03/19MaxPreview，无03/05；API未提供续页token，停止返回40 | 已检查 | 不推断未返回历史；旧PR2021窗外隔离复用 |
+| SRC-DEEPSEEK |en/news39行，Research index10行，02/25DualPath→06/24V4；News当前首屏至Apr24，停止未展开ViewAll；有限可见研究行无03/05 | 已检查 | 不外推隐藏/删除历史 |
+| SRC-MOONSHOT |Kimi当前Blog155行/19研究条目至2024/06，02/09AgentSwarm→04/20K2.6；停止可见19条，无03/05 | 已检查 | 旧platform109行截断不作为永久缺口，不保证未列历史 |
+| SRC-TENCENT-HUNYUAN |Research shell后实际publicList POST zh page1/size20/renderType0，total11/list11；publishedAt及display逐行BJT，02/13→04/23(display)/04/27(published)，无03/05；停止一页全部当前返回 | 已检查 | 日期字段不互当first-public，不授整个历史无遗漏 |
+| SRC-ZAI |Research175行，02/21GLM5→03/15Turbo；停止可见目标邻接，无03/05；查看更多以下Dec历史未展开 | 已检查 | 不外推隐藏/删除历史 |
+| SRC-BYTEDANCE-SEED |Research86行/public_papers164行后恢复官方articleAPI：type1/year2026/token20默认locale 14行，root另核x-tt-locale: US 18行，两者总82/next40，BJT02/27/03/01/03/02→03/12均无03/05；type2/token0 9行，总23/next20，BJT02/14→04/01；停止已返回目标邻接段 | 已检查 | locale影响可见条目；count100不等返回全年，目录日期不代替first-public，不授完整历史覆盖 |
+| SRC-BAIDU-ERNIE |中文Blog68行，02/06ERNIE5→04/15Image；停止可见邻接，无03/05 | 已检查 | 不授全GitHub/机构历史覆盖 |
+| SRC-XIAOMI-MIMO |Paper338行02/03HySparse→03/13ARLTangram；Blog15行无日期More shell；官方域主题补检停止 | 受阻 | Paper有限已查，必要Blog历史段仍缺失 |
+| SRC-MINIMAX |EN76/CN68行，03/18→02/14/12；Agent TechBlog本轮真实恢复66行，三条09/19、09/22、10/08，无03/05；停止可见目录 | 已检查 | 旧techblog.md失败不作为永久缺口；不外推未列历史 |
+| SRC-ARXIV |四主线各Mar05/Mar04两组共8query；563库存仅相关题名有界查漏，29条选择性完整AB＋搜索5条完整AB，旧Helios只去重。一次cs2026-03 skip2000/show500官方月表恢复CacheMiss/InternalError，四标题日期补检未得原始首次公开，停止 | 受阻 | 32新潜力日期隔离；搜索Date/Submitted/Updated/Registered/月ID都不是first-public；没有563逐条AB/全文队列 |
 
 具名负样本按层保留：03394 Governance-Aware Sandbox 是审批/隔离/audit常规组合，未增验证保证；04390 WebGIS DualHelix 是组件组合与单例refactor，未改迁移机制；Anthropic Labor Market Impacts 是就业测量；WAXAL 是数据资源；OpenAI Balyasny/Descript 是局部应用，教育是政策；QwenCode3/6是普通界面更新。其具体理由已读完整题摘或核心，不为不影响关闭的日期扩大请求。安全/正确性信号 PR2021 单独处理为窗外线索，见§5，不用“普通版本”掩盖。
 
+本轮新增负侧：DBenchBio03322以生物知识发现为目标，按ROADMAP科学发现暂停边界关闭；LilMoo03508公开题摘为语料启发式/LLM-judge筛选与双语扩增组合、Hindi对比，未给新recipe成立条件，非因0.6B而关闭。两项first-public日期未核实，现有官方事件页未见影响关闭的纠错/安全信号，按具体贡献理由停止。OpenAI《Introducing the Adoption news channel》为栏目发布；《Five AI value models driving business reinvention》为成熟组织/ROI/治理工作流组合；Wolfsburg客户案例未披露可迁移受控机制。Excel官方细胞引用、Excel-native计算、permission/undo描述成熟工具边界，未公开新状态/验证/执行协议，财务内部benchmark不足因果对照，故关闭；April22/May5修订窗外，不吸收。完整AB/必要核心由root实际读并校准通过。
+
 ## 3. 候选与判断
+
+本轮确认新增候选0；原表14行原样保留。32日期潜力列§5，未评分、未入候选、未作证据审阅完成或Books判断；两条明确题摘关闭及四条官方核心关闭列§2，不为它们补不影响关闭的日期。Anthropic UE Blog是同家族传播事件，仅比较实际差额，见§4新增尾段。
 
 低分候选加深理由：HyperParallel、CAT、Helios、ZipMap已有具体长期机制缺口；RubricCritic、04069及CoTControl分别涉及评价反证或安全变化，故只深入受影响命题，不上调分数。
 
@@ -154,19 +164,77 @@ Blog本窗事件；较晚[论文v1](https://arxiv.org/html/2603.05706v1)仅佐�
 
 §6明确instruction-following是恶意规避能力代理，并非真实恶意目标、自适应RL或充分monitorability。低CoT control不能认证安全，直接优化可侵蚀边界。Ch66 ReasoningTrace安全对象原段只区分输入/trace/输出及定位，本次补两段channel controllability与monitorability的不同验证对象；权限、观察缺失和回退外部effect验收保留。6分安全评价窄深入，root POST通过。
 
+### 本轮增量：同家族事件与必要消歧（不改上述原连续正文）
+
+Anthropic [Three Challenges and Two Hopes for Unsupervised Elicitation](https://alignment.anthropic.com/2026/challenges-hopes/)官方明确Mar05，无需追时刻。实际核心列出非truth、类别不均衡、任务不可完成三压力，UE与E2H/ensemble仅有条件改善；与所链[2602.20400](https://arxiv.org/abs/2602.20400)旧02/26同家族§4定点对读，Ch66现有三压力/70B例外/人工shift、无SFT、oracle方向边界已覆盖，Blog未增机制或有效性条件。只复用该家族有效Source及具体owner判断，不加载旧日整个分母、不重评分、不新增Books。
+
+本轮完整题摘34条的原字段分为[26条选择性AB](../_sources/daily-20260306/SUP_AB_INVENTORY_SELECTED_20261009.json)、[3条extra AB](../_sources/daily-20260306/SUP_AB_EXTRA_SELECTED_20261009.json)、[Mar05搜索4条完整AB](../_sources/daily-20260306/SUP_ARXIV_SEARCH_20261009.json)及[Mar04搜索Energy完整AB](../_sources/daily-20260306/SUP_ARXIV_SEARCH_MAR04_20261009.json)；后者Helios只旧去重，MAGE/COREA与extra不重复计。所有题摘是语义准入而非机制验证。CSA03565仅为消歧读§4.2：联合prompt bundle及hybrid用户回放/NLI，而非仅把workflow映射现有章；DarkPattern03881仅消歧读§7：完成执行条件分母排除失败，DOM/视觉限制可带来评价反证。二者仍缺first-public，不采用作者效果数字、不因此进入全文队列。
+
+原始日期恢复仅一次有界官方cs月表及四标题原始公开记录检索，见[日期/核心恢复](../_sources/daily-20260306/SUP_DATE_CORE_RECOVERY_20261009.json)与[标题日期恢复](../_sources/daily-20260306/SUP_TITLE_DATE_RECOVERY_20261009.json)。MEM作者原入口也实际InternalError。检索Date、Submitted/Updated、Registered及月ID不能补首公开；LinearRNN等后续v2/v3标记不能自动当重要修订事件。未发现可确认Mar05公开且有新差额的revision，不重评分family。官方明确日期可直接用日期，不要求时区或秒。
+
 ## 5. 缺口与下一步
 
-可执行待办：无。全部14候选及12家族实际Books、Memex(RL)已有覆盖、DPPO争议隔离经root非作者最终复核通过；没有待扩大的全站扫描或普通题摘队列。下列外部终态保留项仍不可支持正面证据。
+本轮普通待办0：来源检查、题摘、必要消歧及完整DAY非作者复核均结束，没有待扩大的全站或全文队列。原14候选及12家族实际Books、Memex(RL)已有覆盖、DPPO争议隔离的旧有效非作者POST复用。下列外部保留项不支持正面Coverage/Evidence/Books或无遗漏。
+
+本轮32项新日期隔离完整名单（均未评分）：每行身份链接及具体潜力是重开对象，不是全文队列；局部、小模型、理论、复制或负面结果本身不构成EX。
+
+| 精确身份 | 新机制/条件/反证潜力 |
+| --- | --- |
+| [03292 MA-RAG](https://arxiv.org/abs/2603.03292v1) | 语义disagreement转查询及history修复，不因医疗应用排除 |
+| [03295 Goal Selection](https://arxiv.org/abs/2603.03295v1) | 受控目标选择揭示人类proxy与LM差异 |
+| [03329 AutoHarness](https://arxiv.org/abs/2603.03329v1) | 反馈合成code harness限制非法动作与代码policy，不仅工作流类比 |
+| [03459 MLP Budget](https://arxiv.org/abs/2603.03459v1) | 上下文gated线性化/预算重分配及语料不迁移条件 |
+| [03565 CSA](https://arxiv.org/abs/2603.03565v1) | 跨节点联合prompt与hybrid回放评价条件，必要消歧§4.2 |
+| [03583 ByteFlow](https://arxiv.org/abs/2603.03583v1) | coding-rate自适应字节压缩/TopK静态执行图 |
+| [03596 MEM](https://arxiv.org/abs/2603.03596v1) | 短视频/长文本memory共同进入动作policy |
+| [03612 Linear RNN](https://arxiv.org/abs/2603.03612v1) | 精度/复杂度/并行性与表达力的条件取舍 |
+| [03680 MAGE](https://arxiv.org/abs/2603.03680v1) | episode末meta-RL与population/agent归一化探索 |
+| [03752 COREA](https://arxiv.org/abs/2603.03752v1) | RL置信度校准改变small/large cascade路由 |
+| [03753 Agentic P2P](https://arxiv.org/abs/2603.03753v1) | soft-state能力descriptor、canary/fallback及drift/Sybil条件 |
+| [03761 AgentSelect](https://arxiv.org/abs/2603.03761v1) | positive-only/长尾推荐的counterfactual transfer边界 |
+| [03781 LifeBench](https://arxiv.org/abs/2603.03781v1) | 多源轨迹中的非声明习惯与时间关系记忆测量 |
+| [03818 VLA Forgetting](https://arxiv.org/abs/2603.03818v1) | 预训练/replay下遗忘基线反转，保留负面/旧方案成立条件 |
+| [03823 SWE-CI](https://arxiv.org/abs/2603.03823v1) | 连续commit/维护分母，不把一次patch成功等同维护 |
+| [03824 Evaluation Awareness](https://arxiv.org/abs/2603.03824v1) | adversarial context与评价觉察因果线索，暂不采效果数字 |
+| [03881 Dark Pattern Audits](https://arxiv.org/abs/2603.03881v1) | completed-execution条件分母排除失败及DOM/视觉限制 |
+| [03955 GIPO](https://arxiv.org/abs/2603.03955v1) | log-ratio Gaussian trust weighting与stale replay非零梯度 |
+| [03973 Dual-Solver](https://arxiv.org/abs/2603.03973v1) | 学习预测/domain/residual保留二阶的低NFE条件 |
+| [03993 Attention Specialization](https://arxiv.org/abs/2603.03993v1) | attention head专门化动力学的条件理论 |
+| [04127 DARKFormer](https://arxiv.org/abs/2603.04127v1) | 协方差学习/importance proposal的各向异性近似 |
+| [04308 Activation Outliers](https://arxiv.org/abs/2603.04308v1) | clipping复现反例/群组差异及硬件profiling收益边界 |
+| [04346 One-Shot Probe](https://arxiv.org/abs/2603.04346v1) | counterfactual文本与regressor估计预训练覆盖 |
+| [04364 DMAST](https://arxiv.org/abs/2603.04364v1) | DOM同时影响screenshot/AX的共享攻击与self-play |
+| [04366 LatCH](https://arxiv.org/abs/2603.04366v1) | selective training-free latent guidance避免decoder反传 |
+| [04370 τ-Knowledge](https://arxiv.org/abs/2603.04370v1) | 非结构化知识检索、tool state与重复pass下降 |
+| [04378 AAJR](https://arxiv.org/abs/2603.04378v1) | trajectory对抗方向Jacobian与正式稳定性条件 |
+| [04956 WaterSIC](https://arxiv.org/abs/2603.04956v1) | 非均匀列rate/shaping及信息论量化界，不因理论排除 |
+| [05168 Sparse-BitNet](https://arxiv.org/abs/2603.05168v1) | 低bit与动态N:M稀疏交互/训练稳定条件 |
+| [05369 ProRes](https://arxiv.org/abs/2603.05369v1) | 更深层更迟的residual warmup优化路径 |
+| [08747 FP4 Sensitivity](https://arxiv.org/abs/2603.08747v1) | 组件/深度/format控制，小模型与早层反例 |
+| [20223 Inference Energy](https://arxiv.org/abs/2603.20223v1) | hardware/cache开关/量化的energy-latency测量校验，不按教育应用EX |
+
+以上32项共同缺少可确认其实际首公开归属日的原始记录，宽检索时间/提交/DOI元数据不足。一次有界原始日期恢复仍受阻，继续读全文不能补日期。恢复条件为每个精确v1的首次announcement batch/公开正文记录，或作者原始项目/发布正文明确公开日期及版本身份；官方明确日期无需追时刻。材料到达只重开该身份的日期归属，再按真实归属日准入，不先评分/写Books、不复扫其他31项。DBenchBio/LilMoo关闭不需要这组日期请求。
 
 本窗外部终态保留项，均不支持正面Coverage/Evidence/Books或无遗漏：
 
 - arXiv日期： [03293 SE-Search](https://arxiv.org/abs/2603.03293v1)、[03296 PlugMem](https://arxiv.org/abs/2603.03296v1)、[03305 DCCD](https://arxiv.org/abs/2603.03305v1)、[03333 DropMatch](https://arxiv.org/abs/2603.03333v1)、[03371 SleeperCell](https://arxiv.org/abs/2603.03371v1)、[03379 MemSifter](https://arxiv.org/abs/2603.03379v1)、[03383 OpenPangu](https://arxiv.org/abs/2603.03383v1)、[03417 MSV](https://arxiv.org/abs/2603.03417v1)。early Submitted+Mar5 registered只给过宽区间；精确月表恢复404/InternalError。需每篇v1官方首次announcement batch/正文公开记录，或带原时区/版本的作者项目公开记录。材料到达只重开该身份与真实归属日，不先评分/写Books。03383已窄读static-tree/NPU机制消歧；03371安全线索保留而非贡献关闭。
 - DPPO04135中心争议：需要冻结代码revision说明随机pruning的真实inclusion probability、support P<1及C归一化，与组advantage在剪枝前/后的计算关系，并证明适用于实际是否clipped/KL surrogate；或明确勘误撤回无偏保证。AppendixA deterministic fraction未满足当前证明条件，不能用一般IS原理或现有Ch33补洞。精确重开§4.1、Algorithm1/AppendixA，其他候选不受影响。
-- 机构历史子目录：GoogleResearch March p2、Meta本窗Research目录、Qwen模型Blog、Seed本窗论文/Blog页、MiMo Blog、MiniMax AgentTechBlog。均已用当前官方入口及有限March5/6主线补检，仍空壳/动态页或InternalError。可接受精确本窗发布行及原文（含timezone/版本）、可恢复官方feed/archive，不需要全年目录；到达后只重开该来源本窗切片。其有限可见目录无项不授历史零命中。
+- 当前机构历史子目录：GoogleResearch March p2、Meta本窗Research目录、MiMo Blog。均已用当前官方入口及有限Mar05主线补检，仍空壳或InternalError；加上上述arXiv日期为本轮四来源缺口。可接受03/05精确发布行/官方feed/archive及原文明确公开日期与必要版本身份，不需要时刻、全年目录。到达后只重开该来源本日切片。Qwen/Seed/AgentTechBlog本轮实际有限恢复，旧缺口不再沿用；其有限目录无项仍不授未列历史零事件。
 
 窗外恢复线索，不属于本窗、不阻塞本日：QwenCode PR2021 created02/28T11:25:53Z、merged03/02T12:59:36Z，v0.11.1 published03/03T13:08:44Z，真实03/04release线索已交root；未冒充已审重复。AgentIRv2/v3、CoT paper较晚arXiv事件及GPT5.4 mini附录不进入本窗事件。完成本日后不自动扩日。
 
 ## 6. 复核
+
+### 本轮补查
+
+复核者：root（非本日作者 supplement_20260306）。
+结论：通过
+
+首批准入已通过：root实际读26＋3＋5全部34完整AB（Helios仅旧去重），Anthropic核心与同家族差额、CSA§4.2、DarkPattern§7、Excel核心L48–89；DBenchBio/LilMoo具体关闭可，Energy及其余32潜力不得因local/theory/small/negative排除。Excel成熟工具边界未公开新协议、finance数字无受控机制，April/May窗外不吸收。该批校准不替代14来源实际停点、日期隔离、freeze和本轮完整DAY独立验收；作者不自验自己的DAY。
+
+root本轮完整DAY实际核14来源的入口与有限停止、全部34完整题摘及必要准入core、32具体日期隔离和2关闭；独立负侧还核Excel、栏目/组织框架及Wolfsburg官方核心，UE同家族具体Ch66论点无差额。Seed默认14与US18的locale差额经root实际请求补核，目标Mar05均无条目，不授其他日期或历史全覆盖。全部六部分增量已核，旧14行/原窗口/连续§4保持，旧有效Source及POST复用。没有将563库存或Google全年目录逐项审阅，也没有在缺公开日期时展开全文。普通待办0，无新增Books写入；V3、链接、冻结与限定diff检查见实际工具结果，不替代上述语义验收。未stage、commit、push。
+
+### 原窗已通过复核（历史有效记录，非本轮验收）
 
 复核者：root（非本日作者 mar02_v3）。
 结论：通过

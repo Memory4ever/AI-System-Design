@@ -77,6 +77,8 @@ Control Plane 不应进入每个 token 的毫秒级调度循环；Data Plane 也
 
 第 56 章的推理 scheduler 属于服务执行域，调度 token work。Part VI 的平台控制面负责把模型、SLO、租户和 cluster capacity 连接起来。两者通过资源声明、指标和策略交互，而不是共享一个巨大的全局调度循环。
 
+平台边界还可横跨两套执行域，而不必先把成熟HPC训练栈全部搬进Kubernetes：持久VM保存控制与服务配置，diskless GPU节点按需注册进集群、重启后重新enroll；训练继续交Slurm/既有fabric调优，Kubernetes提供用户入口和推理路径，由受限API/脚本交接作业。这种分工复用旧优化，却使端点可用性、控制状态和计算节点生命周期分开；控制VM持续运行，不表示维护期间GPU请求仍可用。[HPC foundation-model平台的有限运行记录](https://arxiv.org/html/2604.12599v1)仍有共享存储、弹性、身份迁移与managed fine-tuning未完成项，namespace或Git配置不自动构成成熟安全/HA。节点重新配置、RAMdisk与持久存储、权重搬运及网络接口/NCCL选择都付费，容器能加入集群也不等fabric性能已追平原生训练；多节点推理还出现timeout与精度/架构支持失败。恢复、SLO或完整费用未满足时，保留Slurm训练与显式维护窗口，隔离未成熟服务，不用统一UI或存活controlplane签发整个平台生产能力。<!-- source-family:SF-2026-ARXIV-2604-12599 -->
+
 ### 控制权迁移：共享库何时不再是平台边界
 
 在单一产品、少量调用方且协议稳定时，把路由、鉴权和重试封装在共享 client library 里是合理的：请求少一次网络跳转，团队也可以直接随业务扩展接口。问题不在“client 太旧”，而在规模变化后控制权仍被复制到每个进程。调用方和服务数量增加，区域路由、数据驻留、访问控制、流量整形与协议迁移便需要所有 client 协同升级；一次无关回滚甚至可能重新带回已修复的策略，使发布 fan-out 本身成为故障源。
@@ -218,3 +220,5 @@ OpenAI Habitat 的 2026-09-11 工程报告支持共享 Python library 向集中�
 #### 2026-06-25 source-specific Review notes
 
 - **SF-2026-ARXIV-2606-25532**：Primary `arXiv:2606.25532v1`；Method `https://arxiv.org/html/2606.25532v1 — §Physically constrained multi-agent discovery engine; Evolutionary Knowledge Graph and algorithmic chain of thought`；Evaluation `https://arxiv.org/html/2606.25532v1 — §Hardware-compliance evaluation and discovered-system validation`；未证明边界 `https://arxiv.org/html/2606.25532v1 — §Exact-v1 research-prototype and evaluated hardware-design boundary`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
+
+- `SF-2026-ARXIV-2604-12599` — Daily2026-04-16补Apr15；[exact-v1](https://arxiv.org/html/2604.12599v1) §4.1–4.4/5.1–5.3/6.1–6.5，2+2+2=6。只2026实际运行接口/恢复成熟度，不将2025genericarchitecture重归新；disklessGPU/持久VM、Slurm/K8s分责、NCCL/存储/多节点失败与全费近文。R108Source/R86date与resume_apr16_review实际A48逐字PRE有效，root授本窄位置，resume_apr16_review实际真实正文/完整邻接/本人注POST通过；作者仅同步此注并实际读回，不授部署复现/HA/安全或DAY。

@@ -1,0 +1,640 @@
+PairSight: Characterizing and Predicting Operator-Level Interference in GPU Sharing for DNN Inference
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+I   Introduction
+II   Interference among Concurrent DNN Tasks
+II-A    Shared Resources under SM Partitioning
+II-B    Observations
+II-C    Where Interference Comes From
+III   PairSight: Hardware-Aware Interference Prediction
+IV   Evaluation
+IV-A    Experiment Setup
+IV-B    Accuracy and Cost
+IV-C    Design Ablation
+IV-D    Generalization and Adaptation
+V   Conclusion
+References
+License: arXiv.org perpetual non-exclusive license
+arXiv:2610.23086v1 [cs.PF] 16 Oct 2026
+PairSight: Characterizing and Predicting Operator-Level
+Interference in GPU Sharing for DNN Inference
+Xiao Liu 1,2 , Yujia Fu 1 ,
+Yue Yu 2 , Dan
+Huang 1,*
+†    †  thanks:   * Corresponding author.
+Affiliation:   1  Sun Yat-sen University , Guangzhou, China  2  Peng Cheng Laboratory , Shenzhen, China
+{liux276, fuyj25}@mail2.sysu.edu.cn, yuy@pcl.ac.cn,
+huangd79@mail.sysu.edu.cn
+Abstract
+Serving DNN inference is costly, yet a single task seldom saturates both the
+compute units and the memory bandwidth of a GPU. GPU sharing raises
+utilization by co-locating several tasks on one GPU, at the cost of
+interference among them. Existing systems estimate this interference with
+binary compute–memory rules, standalone scaling curves, or model-level
+predictors. However, these estimates rest on a limited understanding of
+interference. They leave the software and hardware properties of co-located
+operators largely unexplored and give no slowdown prediction that is both
+interpretable and accurate.
+We conduct an operator-level study of interference under SM partitioning and use hardware
+counters to trace it to contention on the shared memory path, where the
+slowdown depends jointly on both co-located operators. Based on these
+findings, we propose PairSight, a hardware-aware interference predictor
+that learns how the hardware behaviors of co-located tasks interact and
+predicts the latency of each task before co-location. On six DNN models
+including LLMs, PairSight predicts latency under sharing with     4.3  %   4.3\%    mean
+error, against     19.0  %   19.0\%    for a compute–memory intensity rule, and adapts to
+unseen models and inputs with a few samples.
+Index Terms:
+GPU sharing, multi-tenant inference, performance interference, hardware
+performance counters, learned performance prediction
+I   Introduction
+(a)  Linear
+(b)  BatchNorm
+(c)  Pairwise HP slowdown
+(d)  Fixed SM allocation, varying co-runner
+Fig. 1:  Operator-level interference. (a, b) Normalized performance of a
+compute-intensive Linear and a memory-intensive BatchNorm operator as
+HP, alone and beside each co-runner, on an A10. (c)    δ  \delta    of
+operator pairs from four models on an A100, with HP operators as rows
+and LP operators as columns sorted by decreasing compute intensity.
+(d) Latency of ResNet-50 beside three co-runners at fixed SM
+allocations on an A100, with their spread dashed.
+Serving DNN inference is expensive and occupies large numbers of GPUs, yet a
+single inference task seldom saturates both the compute units and the
+memory bandwidth of a
+GPU  [ 1 ,  2 ,  3 ] . GPU sharing
+reclaims the unused resources by co-locating several tasks on one GPU and
+dividing its time or its streaming multiprocessors (SMs) among them  [ 4 ,  5 ,  6 ,  7 ,  8 ,  9 ,  10 ,  11 ,  12 ,  13 ,  14 ,  15 ,  3 ,  16 ,  17 ] ,
+and whether it pays off depends on how much the co-located tasks slow each
+other down.
+Existing systems estimate this interference with a binary compute–memory
+complementarity rule  [ 3 ,  16 ] , standalone
+scaling curves  [ 8 ,  9 ,  10 ,  13 ] ,
+or predictors built per model on
+identity  [ 12 ,  18 ,  19 ] .
+However, these estimates reflect a limited understanding of interference
+and do not relate the GPU performance metrics of individual operators to
+their slowdown under co-location. They can neither identify which co-located
+operators interfere nor quantify how much each operator slows down. For example, the
+complementarity rule expects a memory-intensive operator to suffer little
+interference beside a compute-intensive one, yet memory-intensive operators
+slow down markedly beside compute-intensive and memory-intensive operators
+alike.
+We study interference in the setting adopted by recent GPU sharing systems,
+where a latency-critical high-priority (HP) inference task shares a GPU with
+a low-priority (LP) best-effort
+task  [ 15 ,  3 ,  14 ,  18 ] ,
+consistent with how production clusters co-locate latency-sensitive and
+best-effort work  [ 20 ] . A scheduler in
+this setting co-locates segments of consecutive operators from the two tasks
+under an SM split. To keep the HP task within its latency budget, it must
+predict how long each segment will run beside the other before co-location.
+An underestimate violates the budget, and an overestimate rejects a feasible
+co-location and forgoes LP throughput.
+Predicting this latency is hard. First, SM partitions leave the L2 cache, the
+DRAM channels, and the interconnect shared  [ 21 ] ,
+whereas MIG isolates them only across a few statically configured
+instances  [ 22 ] . Second, the effect of the co-located task, the
+co-runner, depends on the target and is hidden in aggregate statistics. Third, the prediction must precede co-location, yet measuring each of
+the many candidate segments and SM splits on the GPU takes about    0.2  0.2    s, and
+offline profiling of co-executions covers only short segments of known
+models.
+Our operator-level study shows that interference is an interaction between
+the hardware behavior of two operators rather than a property of either task
+or of its intensity. The memory traffic of the co-runner delays the accesses of an operator to
+the shared L2 and DRAM path. The resulting slowdown is large for an
+operator with heavy memory traffic and poor latency hiding, and small
+otherwise. The memory traffic of both operators and the latency hiding of
+each can be measured when each task runs alone, and PairSight, as hardware-aware interference
+predictor, learns their interaction to predict latency before co-location.
+Our contributions are as follows.
+•
+Interference study.  We characterize operator-level
+interference under SM partitioning, analyze its correlation with
+the hardware counters of both co-located operators, and model it as
+contention on the shared L2 and DRAM path. Interference is
+directional, operator-specific within the same intensity, and
+dependent on the co-runner at a fixed SM allocation.
+•
+PairSight.  We build PairSight on a gradient-boosted
+segment model that reads the standalone latency and memory-path
+counters of every operator of both tasks and predicts the latency
+of each task under a given SM split before co-location. Window
+composition extends it to segments longer than those in training,
+and continued training on a few samples adapts it to unseen models
+and batch sizes.
+•
+Evaluation.  We evaluate PairSight on 730k co-execution
+samples of six models including Llama-3.2 on an A100, covering
+accuracy, cost, ablation, and generalization. PairSight predicts the HP
+latency with     4.3  %   4.3\%    mean error, against     19.0  %   19.0\%    for an intensity
+rule.
+II   Interference among Concurrent DNN Tasks
+II-A    Shared Resources under SM Partitioning
+A DNN model executes as a sequence of operators, each usually one GPU
+kernel. We partition the SMs between two co-located tasks at the granularity
+of a Texture Processing Cluster (TPC), a pair of SMs, by attaching a TPC mask
+to every kernel launch through  libsmctrl   [ 23 ] .
+Partitioning isolates registers, shared memory, the L1 cache, and the warp
+schedulers, while the L2 cache, the DRAM channels, and the interconnect
+remain shared  [ 21 ] .
+For a target operator, or a segment of consecutive operators, that runs on
+p  p    TPCs beside a co-runner on    q  q    TPCs, we define its slowdown as
+δ  =      T  share   ​   (  p  ,  q  )    /   T  solo    ​   (  p  )     ,   \delta=T_{\mathrm{share}}(p,q)/T_{\mathrm{solo}}(p),
+(1)
+where      T  solo   ​   (  p  )    T_{\mathrm{solo}}(p)    is its standalone latency on the same    p  p    TPCs.
+The denominator removes the effect of receiving fewer SMs, and    δ  \delta
+retains only the cost of concurrent execution.
+II-B    Observations
+Directional interference.  Interference is directional, and a
+memory-intensive operator slows down markedly more than a compute-intensive
+one beside co-runners of either intensity. Figs.   1a   and   1b
+co-execute a compute-intensive  Linear  and a memory-intensive
+BatchNorm  operator, each as HP, beside each of the two operators.
+In the complementary pair, Linear retains most of its standalone
+performance. BatchNorm loses less beside Linear than beside another
+BatchNorm, yet it remains far below its standalone performance.
+A complementarity rule that admits this pair as low-interference
+underestimates the slowdown of BatchNorm.
+Variation within the same intensity.  The slowdown varies widely
+among operators of the same intensity.
+Fig.   1c   extends the measurement to operator pairs from four
+real models. Compute-intensive HP operators stay near     δ  =  1   \delta=1    beside every
+co-runner, whereas memory-intensive HP operators slow down markedly beside
+both compute-intensive and memory-intensive co-runners. Even within the
+memory-intensive group, one operator remains almost unaffected, and the
+slowdown of a single HP operator ranges from negligible to more than
+2  ×   2\times    across its co-runners.
+Dependence on the co-runner.  The co-runner changes the slowdown of
+a target even when the SM allocation
+of the target is fixed. Fig.   1d   fixes the HP model and its
+SM allocation and varies only the co-runner. With a small SM allocation,
+ResNet-50 runs up to     1.31  ×   1.31\times    longer beside ResNet-101 than beside BERT,
+and the spread narrows as the allocation grows. This spread bounds the error of any estimator
+that ignores the co-runner.
+II-C    Where Interference Comes From
+Under SM partitioning, interference arises mainly on the shared memory
+path. The latency of a target operator can be approximated as
+T  ≈    T  compute   +    N  miss   ​   (    L  base   +   Q  shared    )      ,   T\approx T_{\mathrm{compute}}+N_{\mathrm{miss}}\left(L_{\mathrm{base}}+Q_{\mathrm{shared}}\right),
+(2)
+where     N  miss   N_{\mathrm{miss}}    counts the accesses of the target to the shared L2
+and DRAM path,     L  base   L_{\mathrm{base}}    is their uncontended service latency, and
+Q  shared   Q_{\mathrm{shared}}    is the queueing delay added by concurrent traffic. The
+co-runner can only raise     Q  shared   Q_{\mathrm{shared}}   , and the resulting cost
+scales with     N  miss   N_{\mathrm{miss}}    and with the fraction of the added latency
+that the target fails to hide. The model is consistent with the three
+observations. A compute-intensive operator hides most of its memory
+latency, whereas a memory-intensive operator pays the added queueing delay
+on its memory accesses, which yields the directional interference.
+Operators of the same intensity still differ in     N  miss   N_{\mathrm{miss}}    and in
+how much latency they hide. Finally,     Q  shared   Q_{\mathrm{shared}}    grows with the memory traffic of the co-runner, the
+overlap of the two operators, and the SMs allocated to each, which makes
+the slowdown depend on the co-runner even at a fixed SM allocation.
+Fig. 2:  Correlation of hardware counters with the slowdown of the
+target. Bubble area and color encode     |  r  |   |r|   . All target correlations
+are significant at     p  <  0.05   p<0.05   , and no co-runner correlation is. Bold
+labels mark the counters used by PairSight. Labels denote standalone
+duration (Dur), L2 and DRAM bytes (L2RW, DRAM), long-scoreboard,
+MIO-throttle, and LG-throttle stalls (LScore, MIOThr, LGThr), compute
+and memory utilization (CU, MU), and L2 throughput and hit rate
+(L2Thr, L2Hit).
+A correlation analysis of hardware counters identifies the shared L2 and
+DRAM path as the main source of interference. Over 7.7k co-executed operator
+pairs, we compute the correlation between    δ  \delta    of the target and ten
+Nsight Compute  [ 24 ]  counters of each operator
+(Fig.   2  ). Every target counter is significantly
+correlated with    δ  \delta   , with     |  r  |   |r|    above    0.9  0.9    for standalone duration and
+L2 traffic, whereas no co-runner counter is. The variation of    δ  \delta    is
+thus dominated by differences between targets. Within groups that share the
+target segment and the SM split, however,    δ  \delta    increases with the DRAM
+traffic rate of the co-runner in two thirds of the 4.2k groups, which
+indicates that the effect of the co-runner depends on the target. PairSight
+takes standalone duration, DRAM traffic, and three memory-related stall
+counters of both tasks as input and models their interaction with a
+nonlinear learner.
+III   PairSight: Hardware-Aware Interference Prediction
+PairSight predicts the co-execution latency of a candidate pair of segments
+under a given SM split (Fig.   3  ). Its core is
+a segment model of two XGBoost regressors trained on measured co-executions
+of segments with at most    16  16    operators per side. The representation holds
+one slot per operator, which limits the segment model to this length, and
+PairSight serves longer segments by dividing both segments into windows
+and composing the window predictions. Its inputs come from profiling each
+DNN model once with Nsight Compute  [ 24 ]  for per-operator counters
+and once per TPC count for per-operator standalone latency.
+The segment model predicts the slowdown of a target segment beside a
+co-runner segment. For a target segment    a  a    of consecutive operators on    p  p
+TPCs and a co-runner segment    b  b    on    q  q    TPCs, both within the trained
+length, it returns
+δ  ^   a   =   f  ⁡   (   Φ  a   ,   Φ  b   ,  p  ,  q  )     ,     T  ^   a   =    T   solo  ,  a    ​   (  p  )   ​    δ  ^   a      ,   \hat{\delta}_{a}=f\left(\Phi_{a},\Phi_{b},p,q\right),\qquad\hat{T}_{a}=T_{\mathrm{solo},a}(p)\,\hat{\delta}_{a},
+(3)
+where     Φ  a   \Phi_{a}    and     Φ  b   \Phi_{b}    describe the two segments and
+T   solo  ,  a    ​   (  p  )    T_{\mathrm{solo},a}(p)    comes from the per-TPC profile. Separate
+regressors serve the HP and the LP side to match the directional
+interference, and each regressor sees both segments.
+The representation describes both segments operator by operator with the
+quantities of Eq. (  2  ). Each operator becomes one token
+with its standalone duration at the assigned SM allocation, four memory-path
+counters, and a presence flag. Total DRAM bytes represent
+N  miss   N_{\mathrm{miss}}   . Long-scoreboard stalls measure how much memory latency
+the operator fails to hide, and LG-throttle and MIO-throttle stalls, which
+count warps blocked by full load-store and memory-I/O queues, indicate how
+close the operator runs to the regime where     Q  shared   Q_{\mathrm{shared}}    grows. For the co-runner, the same
+counters measure the pressure that it adds to the shared path. Separate
+tokens preserve which operator suffers unhidden memory latency and which
+operator generates traffic, information that a per-segment sum would merge. The
+input also carries    p  p   ,    q  q   , and the standalone latency of both segments,
+from which the model can weigh the fixed dispatch cost that every
+co-execution adds to    δ  \delta   .
+Fig. 3:  Overview of PairSight.
+The segment model consists of gradient-boosted regression trees, which
+combine the two profiles without a hand-specified interaction form. We fit
+them with XGBoost  [ 25 ]  on     log  ⁡  δ   \log\delta   . By branching on
+the unhidden memory latency of the target, the trees can route compute-bound segments to
+leaves where co-runner counters barely matter and memory-bound segments to
+leaves where these counters dominate, capturing the interaction of
+Section   II-C  .
+Tree depth and learning rate are chosen on the validation set, and each
+regressor trains on CPU with early stopping within    45  45    s. Adding trees to
+an existing ensemble adapts the segment model to a new DNN model or batch
+size with a few samples.
+For segments beyond the trained length, PairSight composes predictions of
+the segment model over windows. Both segments are divided in order into windows of at most
+16  16    operators, and the    k  k   -th window     a  k   a_{k}    of the target is queried beside
+the    k  k   -th window of the co-runner under the same SM split, with the
+standalone latency of each window as input. With    K  K    windows on the side
+with fewer operators, the target latency is
+T  ^   a   =     ∑   k  ≤  K      T   solo  ,   a  k     ​   (  p  )   ​    δ  ^    a  k      +    ∑   k  >  K      T   solo  ,   a  k     ​   (  p  )       .   \hat{T}_{a}=\sum_{k\leq K}T_{\mathrm{solo},a_{k}}(p)\,\hat{\delta}_{a_{k}}+\sum_{k>K}T_{\mathrm{solo},a_{k}}(p).
+(4)
+Both segments start together, and windows beyond    K  K    run after the shorter
+segment has finished and add their standalone latency. Pairing windows by
+index assumes that the two streams progress at comparable rates per
+window, and
+Section   IV-D   measures the error of this
+approximation on segments of up to    96  96    operators.
+IV   Evaluation
+IV-A    Experiment Setup
+Platform.  Experiments run on a server with eight NVIDIA
+A100-SXM4-40GB GPUs connected over PCIe without NVLink and an Intel Xeon
+Gold 6348 CPU.
+Models and Dataset.  We use ResNet-50, ResNet-101, MobileNetV2,
+BERT-base, and Llama-3.2-1B and -3B  [ 26 ] , combined
+into    20  20    ordered HP/LP pairs of models and batch sizes. Each profiling
+experiment co-executes an HP segment with an LP segment under a setting of
+SM splits and repeats 30 runs. The co-execution latency     T  share   T_{\mathrm{share}}
+is measured with CUDA events on the stream of each task, whereas the standalone latency      T  solo   ​   (  p  )    T_{\mathrm{solo}}(p)    sums the
+device times of the operators. The 730k samples from 52k
+experiments are divided by experiment into training, validation, and test
+sets in an     80  /  10  /  10   80/10/10    ratio.
+Baselines.  The baselines represent existing interference
+estimates and separate the contribution of the learner from that of the
+input. Following the compute–memory rule of Orion and
+Usher  [ 3 ,  16 ] , the  intensity rule
+scales the standalone latency of each operator by a fixed factor per
+intensity, and the  complementarity table  uses the median training
+slowdown per pair of intensities and SM split.  Abacus   [ 19 ] ,
+a model-level predictor, feeds model identity, batch size, operator
+positions, the SM split, and the standalone latencies to a multilayer
+perceptron.  Linear  is a ridge regression on the PairSight input, as
+in linear contention models  [ 27 ,  9 ] , and
+PairSight-MLP  replaces the trees with a three-layer perceptron. All
+learned methods predict     log  ⁡  δ   \log\delta   .
+TABLE I:  Prediction error and cost on the test set. HP and LP give the
+latency MAPE of each side,       ≤   10  %    {\leq}10\%    the share of HP predictions
+within     10  %   10\%   , and Llama the HP MAPE on the Llama pairs. Training uses
+64  64    CPU threads, and query time is per candidate in batches of 1k on
+16  16    cores.
+Method
+HP
+≤   10  %    {\leq}10\%
+LP
+Llama
+Train
+Query
+(%)
+(%)
+(%)
+(%)
+(s)
+(   μ  \mu   s)
+Intensity rule
+19.0  19.0
+37.9  37.9
+15.6  15.6
+45.0  45.0
+–
+0.4  0.4
+Compl. table
+14.8  14.8
+50.0  50.0
+12.5  12.5
+39.7  39.7
+0.5  0.5
+0.4  0.4
+Linear
+12.2  12.2
+50.9  50.9
+10.2  10.2
+24.0  24.0
+8  8
+1.1  1.1
+Abacus
+9.2  9.2
+80.1  80.1
+8.0  8.0
+13.0  13.0
+111  111
+1.3  1.3
+PairSight-MLP
+4.3  \mathbf{4.3}
+90.0  90.0
+2.4  \mathbf{2.4}
+8.3  \mathbf{8.3}
+135  135
+0.8  0.8
+PairSight
+4.3  \mathbf{4.3}
+90.6  \mathbf{90.6}
+2.4  \mathbf{2.4}
+10.3  10.3
+79  79
+5.3  5.3
+IV-B    Accuracy and Cost
+PairSight and PairSight-MLP are the most accurate predictors
+(Table   I  ). PairSight errs by     4.3  %   4.3\%    on the HP side and
+2.4  %   2.4\%    on the LP side. The two take the same inputs, and differ only in the learner, so the accuracy stems from this operator-level input of both tasks rather than from a particular nonlinear learner.
+Fig. 4:  Design ablation. HP and LP latency MAPE with one design change
+at a time.
+IV-C    Design Ablation
+Each ablation changes one design choice of PairSight at a time
+(Fig.   4  ).
+Removing the co-runner tokens produces the largest loss and raises the HP error
+from     4.3  %   4.3\%    to     7.7  %   7.7\%    and the LP error from     2.4  %   2.4\%    to     6.7  %   6.7\%   . Summing the
+tokens of each segment raises the HP error to     5.1  %   5.1\%   , and keeping only the
+operator durations of both segments raises it to     4.6  %   4.6\%   . Replacing the DRAM and stall counters with the compute and memory
+utilization of each operator keeps the error at     4.3  %   4.3\%   , indicating that
+continuous per-operator utilization of both tasks is as informative as the
+memory-path counters.
+TABLE II:  Generalization to unseen models and batch sizes. HP and LP
+latency MAPE (%) on held-out groups for predictors trained on the
+four classic models at default batch sizes. The bottom rows continue
+training PairSight on    k  k    new experiments per held-out pair.
+Llama
+Batch 16
+Batch 64
+Method
+HP
+LP
+HP
+LP
+HP
+LP
+Intensity rule
+45.0  45.0
+27.7  27.7
+47.1  47.1
+39.3  39.3
+16.8  16.8
+18.8  18.8
+Linear
+37.7  37.7
+43.9  43.9
+36.9  36.9
+31.1  31.1
+19.6  19.6
+18.6  18.6
+Abacus
+65.9  65.9
+>  100   {>}100
+35.7  35.7
+>  100   {>}100
+19.3  19.3
+>  100   {>}100
+PairSight-MLP
+25.5  25.5
+25.8  25.8
+33.9  33.9
+28.6  28.6
+10.0  10.0
+8.3  8.3
+PairSight
+30.2  30.2
+18.5  18.5
+35.1  35.1
+26.8  26.8
+15.0  15.0
+9.9  9.9
+PairSight, continued training
+k  =  20   k=20
+17.4  17.4
+11.3  11.3
+24.6  24.6
+16.9  16.9
+13.9  13.9
+8.1  8.1
+k  =  100   k=100
+13.5  13.5
+8.0  8.0
+18.9  18.9
+10.9  10.9
+10.4  10.4
+6.3  6.3
+All
+9.1  9.1
+5.1  5.1
+12.0  12.0
+7.6  7.6
+6.8  6.8
+3.7  3.7
+IV-D    Generalization and Adaptation
+PairSight transfers to unseen DNN models and batch sizes better than the
+existing estimates and adapts to them with a few samples (Table   II  ).
+Trained only on the four classic models at their default batch sizes and
+tested on the Llama pairs and on unseen batch sizes    16  16
+and    64  64   , PairSight and PairSight-MLP give the two lowest errors in every
+held-out group, whereas Abacus, which relies on model identity, errs by more
+than     100  %   100\%    on the LP side. Continued training on    100  100    new data samples lowers the HP error from     30.2  %   30.2\%    to     13.5  %   13.5\%    on Llama, with each update taking at most
+5  5    s on CPU.
+Window composition lets PairSight predict segments longer than its
+16  16   -operator window without new samples. On    400  400    separate
+co-executions with segments of    24  24    to    96  96    operators and SM splits absent
+from training, PairSight errs by     5.5  %   5.5\%    and     5.4  %   5.4\%    on the HP and LP
+sides, against     9.8  %   9.8\%    and     17.0  %   17.0\%    for the intensity rule.
+On the    80  80    asymmetric co-executions, where the segment with fewer windows
+runs longer and the windows that Eq. (  4  ) pairs by index do
+not coincide in time, it errs by     4.9  %   4.9\%    and     5.5  %   5.5\%   .
+V   Conclusion
+Interference among co-located DNN tasks under SM partitioning arises mainly
+on the shared L2 and DRAM path and depends jointly on both operators.
+PairSight learns this interaction from the per-operator standalone profiles
+of both tasks and predicts the latency of each task with     4.3  %   4.3\%    mean error,
+against     19.0  %   19.0\%    for an intensity rule. Continued training on a few samples
+and window composition extend it to unseen models, batch sizes, and longer segments.
+Accurate interference prediction before co-location lets GPU sharing
+systems select co-locations that meet their performance requirements.
+References
+[1]
+W. Kwon, Z. Li, S. Zhuang, Y. Sheng, L. Zheng, C. H. Yu, J. E. Gonzalez,
+H. Zhang, and I. Stoica, “Efficient memory management for large language
+model serving with PagedAttention,” in  SOSP ’23 , 2023, pp.
+611–626.
+[2]
+P. Patel, E. Choukse, C. Zhang, A. Shah, Í. Goiri, S. Maleki, and
+R. Bianchini, “Splitwise: Efficient generative LLM inference using phase
+splitting,” in  ISCA ’24 , 2024, pp. 118–132.
+[3]
+F. Strati, X. Ma, and A. Klimovic, “Orion: Interference-aware, fine-grained
+gpu sharing for ml applications,” in  EuroSys ’24 , 2024, pp.
+1075–1092.
+[4]
+Q. Chen, H. Yang, J. Mars, and L. Tang, “Baymax: QoS awareness and increased
+utilization for non-preemptive accelerators in warehouse scale computers,”
+in  ASPLOS ’16 , 2016, pp. 681–696.
+[5]
+P. Yu and M. Chowdhury, “Salus: Fine-grained GPU sharing primitives for deep
+learning applications,” in  Proceedings of Machine Learning and Systems
+2 (MLSys 2020) , 2020, pp. 98–111.
+[6]
+B. Wu, Z. Zhang, Z. Bai, X. Liu, and X. Jin, “Transparent GPU sharing in
+container clouds for deep learning workloads,” in  NSDI 23 , 2023, pp.
+69–85.
+[7]
+K. K. W. Ng, H. M. Demoulin, and V. Liu, “Paella: Low-latency model serving
+with software-defined GPU scheduling,” in  SOSP ’23 , 2023, pp.
+595–610.
+[8]
+A. Dhakal, S. G. Kulkarni, and K. K. Ramakrishnan, “GSLICE: Controlled
+spatial sharing of GPUs for a scalable inference platform,” in  SoCC
+’20 , 2020, pp. 492–506.
+[9]
+S. Choi, S. Lee, Y. Kim, J. Park, Y. Kwon, and J. Huh, “Serving heterogeneous
+machine learning models on multi-GPU servers with spatio-temporal
+sharing,” in  2022 USENIX Annual Technical Conference (USENIX ATC 22) ,
+2022, pp. 199–216.
+[10]
+Y. Kim, Y. Choi, and M. Rhu, “PARIS and ELSA: An elastic scheduling
+algorithm for reconfigurable multi-GPU inference servers,” in  DAC
+’22 , 2022, pp. 607–612.
+[11]
+B. Li, T. Patel, S. Samsi, V. Gadepally, and D. Tiwari, “MISO: Exploiting
+multi-instance GPU capability on multi-tenant GPU clusters,” in
+SoCC ’22 , 2022, pp. 173–189.
+[12]
+F. Xu, J. Xu, J. Chen, L. Chen, R. Shang, Z. Zhou, and F. Liu, “iGniter:
+Interference-aware GPU resource provisioning for predictable DNN
+inference in the cloud,”  IEEE Transactions on Parallel and Distributed
+Systems , vol. 34, no. 3, pp. 812–827, 2023.
+[13]
+M. Chow, A. Jahanshahi, and D. Wong, “Krisp: Enabling kernel-wise right-sizing
+for spatial partitioned gpu inference servers,” in  HPCA ’23 . IEEE, 2023, pp. 624–637.
+[14]
+Y. Zhang, H. Yu, C. Han, C. Wang, B. Lu, Y. Li, Z. Jiang, Y. Li, X. Chu, and
+H. Li, “Sgdrc: Software-defined dynamic resource control for concurrent dnn
+inference on nvidia gpus,” in  PPoPP ’25 , 2025, pp. 267–281.
+[15]
+M. Han, H. Zhang, R. Chen, and H. Chen, “Microsecond-scale preemption for
+concurrent    {  \{   GPU-accelerated   }  \}      {  \{   DNN   }  \}    inferences,” in  OSDI
+22 , 2022, pp. 539–558.
+[16]
+S. S. Shubha, H. Shen, and A. Iyer, “   {  \{   USHER   }  \}   : Holistic interference
+avoidance for resource optimized    {  \{   ML   }  \}    inference,” in  OSDI 24 ,
+2024, pp. 947–964.
+[17]
+S. Zhang, Q. Chen, W. Cui, H. Zhao, C. Xue, Z. Zheng, W. Lin, and M. Guo,
+“Improving gpu sharing performance through adaptive bubbleless
+spatial-temporal sharing,” in  EuroSys ’25 , 2025, pp. 573–588.
+[18]
+W. Chen, C. Lu, H. Xu, K. Ye, and C. Xu, “Multiplexing dynamic deep learning
+workloads with SLO-awareness in GPU clusters,” in  EuroSys ’25 ,
+2025.
+[19]
+W. Cui, H. Zhao, Q. Chen, N. Zheng, J. Leng, J. Zhao, Z. Song, T. Ma, Y. Yang,
+C. Li  et al. , “Enable simultaneous dnn services based on
+deterministic operator overlap and precise latency prediction,” in  SC
+’21 , 2021, pp. 1–15.
+[20]
+A. Verma, L. Pedrosa, M. Korupolu, D. Oppenheimer, E. Tune, and J. Wilkes,
+“Large-scale cluster management at google with borg,” in  EuroSys
+’15 , 2015, pp. 1–17.
+[21]
+P. Elvinger, F. Strati, N. Enright Jerger, and A. Klimovic, “Understanding
+GPU resource interference one level deeper,” in  Proceedings of the
+2025 ACM Symposium on Cloud Computing (SoCC ’25) , 2025, pp. 687–694.
+[22]
+NVIDIA Community, “NVIDIA Multi-Instance GPU,” NVIDIA Corporation, 2020.
+[Online]. Available:
+https://docs.nvidia.com/datacenter/tesla/mig-user-guide
+[23]
+J. Bakita and J. H. Anderson, “Hardware compute partitioning on nvidia gpus,”
+in  RTAS ’23 . IEEE, 2023, pp.
+54–66.
+[24]
+NVIDIA Corporation,  Nsight Compute Documentation , July 2025, last
+updated 2025-07-19. [Online]. Available:
+https://docs.nvidia.com/nsight-compute/index.html
+[25]
+T. Chen and C. Guestrin, “XGBoost: A scalable tree boosting system,” in
+KDD ’16 , 2016, pp. 785–794.
+[26]
+Llama Team, AI @ Meta, “The Llama 3 herd of models,” arXiv preprint
+arXiv:2407.21783, 2024. [Online]. Available:
+https://arxiv.org/abs/2407.21783
+[27]
+B.-S. Han, T. Paul, Z. Liu, and A. Gandhi, “KACE: Kernel-aware colocation
+for efficient GPU spatial sharing,” in  Proceedings of the 2024 ACM
+Symposium on Cloud Computing (SoCC ’24) , 2024, pp. 460–469.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue"  (
+)  button, located in the page header.
+Tip:  You can select the relevant text first, to include it in your report.
+Our team has already identified  the following issues . We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a  list of packages that need conversion , and welcome  developer contributions .
+We gratefully acknowledge support from
+our  major funders ,
+member institutions   ,    ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status  (opens in new tab)
+Major funding support from

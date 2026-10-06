@@ -1,0 +1,2841 @@
+Predicting Estimated Times of Restoration for Electrical Outages Using Longitudinal Tabular Transformers
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+I
+Introduction
+II
+Problem Formulation
+III
+Longitudinal Tabular Transformer
+IV
+Objective
+V
+Data
+VI
+Evaluation and Setup
+VII
+Results
+VIII
+Conclusion
+References
+License: CC BY 4.0
+arXiv:2505.00225v2 [cs.LG] 09 Sep 2026
+Predicting Estimated Times of Restoration for Electrical Outages Using Longitudinal Tabular Transformers
+Sai Prasanna Teja Bogireddy
+1
+,
+Valliappan Muthukaruppan
+1
+,
+and Benjamin Carls
+1
+Affiliation:
+1
+Exelon Corporation, Chicago, IL, USA
+teja.bogireddy@exeloncorp.com,
+valliappan.muthukaruppan@exeloncorp.com,
+benjamin.carls@comed.com
+Abstract
+Utilities publish Estimated Times of Restoration (ETRs) for customer-facing
+storm outages, and their accuracy governs whether customers can make sound
+decisions about food, medical equipment, and relocation. Prior work treats
+ETR as static tabular regression in which each outage contributes one record,
+discarding the fact that every development of an outage, from crew assignment
+through dispatch, suspension, damage assessment and partial restoration, is
+recorded as a revision. We reformulate ETR prediction as longitudinal tabular
+regression and introduce a Longitudinal Tabular Transformer (LTT), an
+axial-attention model that consumes the revisions preceding a prediction and
+issues a refined estimate at every one. On 242,928 storm-attributed outages
+from a cohort of 526,468 filtered events and 10.0 million revisions at six
+operating companies, LTT reduces customer-weighted asymmetric error at all
+six, by a median of 36.9 % against the estimates the utilities published
+during the same storms and 11.3 % against the strongest learned baseline at
+each. It is the only method improving on the incumbent’s satisfaction impact
+at all six companies while also reducing root mean squared error at all six.
+Stratification by revision index shows that LTT error is largest at the first
+revision, where no history is available, and falls monotonically as revisions
+accumulate.
+Index Terms:
+Outage management, estimated time of restoration, storm response,
+transformers, longitudinal modelling, distribution reliability.
+I
+Introduction
+The ETR is the primary information a utility conveys to an affected customer:
+households with powered medical equipment, businesses weighing refrigerated
+inventory, and municipalities deciding whether to open warming centres all
+act on it. Utilities generate ETRs by manual dispatcher assessment or
+rule-based OMS heuristics
+[
+1
+,
+2
+]
+, and research has framed the
+task as tabular regression over a feature vector
+[
+3
+,
+4
+]
+. Both treat
+an outage as a static object, characterised once and predicted once.
+An outage is not static. A crew is assigned, then dispatched; it arrives and
+reports the damage; it is suspended and redirected to a higher-priority job;
+some customers are restored while the rest await a second repair. Each
+development is written to the Outage Management System (OMS) as a revision
+and each changes the expected remaining duration, so a model observing only
+the latest revision discards the trajectory. We instead predict remaining
+time at every revision, conditioned on those preceding it.
+Scope of novelty.
+Weather-driven outage modelling has concentrated
+on outage
+counts
+[
+5
+]
+; restoration duration has received
+less attention
+[
+1
+,
+2
+,
+3
+,
+4
+]
+and that work is static.
+Attention over feature tokens within a tabular record
+[
+6
+]
+,
+the axial factorisation of feature and time axes
+[
+7
+]
+, and
+transformers over tabular sequences in other domains
+[
+8
+]
+are all
+established; we claim none of them. We claim that no prior work models the
+revision stream of an outage and none benchmarks against the estimates a
+utility published. We contribute the formulation and the LTT architecture; a benchmark against
+customer-facing OMS estimates with an explicit cadence-matched control; and
+replication at six operating companies, with model error localised by revision
+index.
+II
+Problem Formulation
+Let
+ℰ
+=
+{
+e
+1
+,
+…
+,
+e
+N
+}
+\mathcal{E}=\{e_{1},\dots,e_{N}\}
+be outage events,
+e
+i
+e_{i}
+comprising
+revisions
+r
+i
+,
+1
+,
+…
+,
+r
+i
+,
+M
+i
+r_{i,1},\dots,r_{i,M_{i}}
+at times
+t
+i
+,
+1
+<
+⋯
+<
+t
+i
+,
+M
+i
+t_{i,1}<\dots<t_{i,M_{i}}
+, each
+carrying categorical features
+C
+i
+,
+j
+C_{i,j}
+, continuous features
+X
+i
+,
+j
+X_{i,j}
+, and
+system context
+Z
+i
+,
+j
+Z_{i,j}
+. We predict remaining time to restoration
+y
+i
+,
+j
+=
+T
+i
+restore
+−
+t
+i
+,
+j
+,
+y_{i,j}=T^{\mathrm{restore}}_{i}-t_{i,j},
+(1)
+recovering the published estimate as
+ETR
+^
+i
+,
+j
+=
+t
+i
+,
+j
++
+y
+^
+i
+,
+j
+\widehat{\mathrm{ETR}}_{i,j}=t_{i,j}+\hat{y}_{i,j}
+. Predicting remaining time
+rather than an absolute restoration timestamp removes a deterministic
+component of the target: a model predicting
+T
+i
+restore
+T^{\mathrm{restore}}_{i}
+must
+reproduce the current clock and add a correction to it, so the scale of the
+target is set by calendar position and its support shifts between storms. A
+remaining-time target is invariant to when the outage occurred and directly
+comparable across events, leaving only the uncertain quantity to be learned.
+Prediction at revision
+j
+j
+conditions on the trailing window
+𝒲
+⁡
+(
+i
+,
+j
+)
+=
+(
+r
+i
+,
+j
+−
+W
++
+1
+,
+…
+,
+r
+i
+,
+j
+)
+,
+\mathcal{W}(i,j)=\bigl(r_{i,j-W+1},\dots,r_{i,j}\bigr),
+(2)
+whose slot
+a
+∈
+{
+1
+,
+…
+,
+W
+}
+a\in\{1,\dots,W\}
+holds
+r
+i
+,
+j
+−
+W
++
+a
+r_{i,j-W+a}
+, with the convention that
+r
+i
+,
+k
+r_{i,k}
+denotes a null token for
+k
+≤
+0
+k\leq 0
+, so (
+2
+) is
+well-defined for every
+j
+≥
+1
+j\geq 1
+. Writing
+w
+=
+min
+⁡
+(
+j
+,
+W
+)
+w=\min(j,W)
+for the number of
+observed revisions in the window, the observation mask
+m
+a
+obs
+=
+𝕀
+[
+a
+>
+W
+−
+w
+]
+,
+a
+=
+1
+,
+…
+,
+W
+,
+m^{\mathrm{obs}}_{a}=\mathbb{I}[a>W-w],\qquad a=1,\dots,W,
+(3)
+marks slot
+a
+a
+as observed. Padding therefore occupies the leading
+W
+−
+w
+W-w
+slots and the target revision always occupies
+a
+=
+W
+a=W
+, which is what allows the
+head of Section III to read a fixed index. We set
+W
+=
+20
+W=20
+. The window slides
+with the target, so revision forty is predicted from revisions twenty-one
+through forty and only the earliest history is discarded;
+73.5
+%
+73.5\,\%
+of
+outages have twenty revisions or fewer (range
+58.8
+58.8
+–
+96.1
+%
+96.1\,\%
+).
+TABLE I:
+Cohort summary by operating company, ordered by median revisions per outage. Storm counts are fused district
+windows; cohort events outside declared storm windows contribute context only.
+Revision counts are cohort-wide.
+Storms
+Events
+Revisions/event
+OPCO
+Train
+Val
+Test
+Storm
+Cohort
+Revisions
+Median
+p95
+OPCO-1
+50
+5
+9
+109,541
+190,053
+5,328,117
+18
+67
+OPCO-2
+67
+5
+9
+61,940
+101,797
+1,953,174
+12
+62
+OPCO-3
+13
+3
+3
+8,140
+38,560
+434,711
+10
+26
+OPCO-4
+35
+5
+9
+10,421
+53,481
+689,865
+10
+30
+OPCO-5
+50
+5
+9
+23,387
+90,845
+1,112,829
+10
+29
+OPCO-6
+81
+5
+9
+29,499
+51,732
+490,813
+8
+19
+Total
+296
+28
+48
+242,928
+526,468
+10,009,509
+12
+51
+III
+Longitudinal Tabular Transformer
+Tokenization.
+Each feature is embedded independently into
+ℝ
+d
+\mathbb{R}^{d}
+[
+6
+]
+: for continuous feature
+k
+k
+with value
+x
+i
+,
+j
+(
+k
+)
+x^{(k)}_{i,j}
+, and for categorical feature
+k
+k
+at level
+c
+i
+,
+j
+(
+k
+)
+c^{(k)}_{i,j}
+from vocabulary
+V
+k
+V_{k}
+,
+u
+i
+,
+j
+(
+k
+)
+=
+x
+i
+,
+j
+(
+k
+)
+​
+w
+k
++
+b
+k
+,
+u
+i
+,
+j
+(
+k
+)
+=
+E
+k
+​
+[
+c
+i
+,
+j
+(
+k
+)
+]
+,
+u^{(k)}_{i,j}=x^{(k)}_{i,j}w_{k}+b_{k},\qquad u^{(k)}_{i,j}=E_{k}\bigl[c^{(k)}_{i,j}\bigr],
+(4)
+w
+k
+,
+b
+k
+∈
+ℝ
+d
+w_{k},b_{k}\in\mathbb{R}^{d}
+,
+E
+k
+∈
+ℝ
+|
+V
+k
+|
+×
+d
+E_{k}\in\mathbb{R}^{|V_{k}|\times d}
+. Missingness is
+represented explicitly rather than imputed: where the indicator
+m
+i
+,
+j
+(
+k
+)
+m^{(k)}_{i,j}
+is active a learned vector is added,
+u
+i
+,
+j
+(
+k
+)
+←
+u
+i
+,
+j
+(
+k
+)
++
+m
+i
+,
+j
+(
+k
+)
+​
+μ
+k
+u^{(k)}_{i,j}\!\leftarrow\!u^{(k)}_{i,j}+m^{(k)}_{i,j}\mu_{k}
+. An absent
+crew-assignment timestamp records that no crew has yet been assigned, so the
+absence is itself informative. Stacking gives
+U
+i
+,
+j
+∈
+ℝ
+F
+×
+d
+U_{i,j}\in\mathbb{R}^{F\times d}
+,
+F
+=
+p
++
+q
+=
+54
+F=p+q=54
+.
+Intra-revision axis.
+With
+TB
+⁡
+(
+A
+)
+=
+A
+~
++
+FFN
+⁡
+(
+LN
+⁡
+(
+A
+~
+)
+)
+\mathrm{TB}(A)=\tilde{A}+\mathrm{FFN}(\mathrm{LN}(\tilde{A}))
+and
+A
+~
+=
+A
++
+MHA
+⁡
+(
+LN
+⁡
+(
+A
+)
+)
+\tilde{A}=A+\mathrm{MHA}(\mathrm{LN}(A))
+, and a
+learned pooling token
+ρ
+\rho
+prepended at index
+0
+0
+so that
+U
+i
+,
+j
+(
+0
+)
+=
+[
+ρ
+;
+U
+i
+,
+j
+]
+U^{(0)}_{i,j}=[\rho;U_{i,j}]
+,
+U
+i
+,
+j
+(
+ℓ
++
+1
+)
+=
+TB
+feat
+(
+U
+i
+,
+j
+(
+ℓ
+)
+)
+,
+ℓ
+=
+0
+,
+…
+,
+L
+f
+−
+1
+,
+U^{(\ell+1)}_{i,j}=\mathrm{TB}^{\mathrm{feat}}\bigl(U^{(\ell)}_{i,j}\bigr),\quad\ell=0,\dots,L_{f}-1,
+(5)
+with
+h
+i
+,
+j
+=
+U
+i
+,
+j
+(
+L
+f
+)
+​
+[
+0
+]
+h_{i,j}=U^{(L_{f})}_{i,j}[0]
+. Parameters are shared across positions and
+events; joint attention over the
+W
+×
+F
+W\times F
+grid needs
+O
+⁡
+(
+W
+2
+​
+F
+2
+)
+O(W^{2}F^{2})
+pairwise
+terms against
+O
+⁡
+(
+W
+​
+F
+2
++
+W
+2
+)
+O(WF^{2}+W^{2})
+factorised. Padded positions are zeroed and, by
+(
+9
+), never attended.
+Temporal encoding.
+Revisions arrive at irregular intervals set by
+operational activity, so positional index alone is inadequate. We apply a
+learned periodic representation
+[
+9
+]
+to six channels
+τ
+i
+,
+j
+\tau_{i,j}
+:
+ϕ
+​
+(
+τ
+)
+n
+=
+{
+ω
+n
+​
+τ
++
+φ
+n
+,
+n
+=
+0
+,
+sin
+⁡
+(
+ω
+n
+​
+τ
++
+φ
+n
+)
+,
+1
+≤
+n
+<
+d
+t
+,
+\phi(\tau)_{n}=\begin{cases}\omega_{n}\tau+\varphi_{n},&n=0,\\
+\sin(\omega_{n}\tau+\varphi_{n}),&1\leq n<d_{t},\end{cases}
+(6)
+{
+ω
+n
+,
+φ
+n
+}
+\{\omega_{n},\varphi_{n}\}
+learned; the linear term preserves monotone elapsed
+time, the periodic terms capture diurnal crew scheduling. Concatenating and
+projecting gives
+π
+i
+,
+j
+=
+W
+τ
+​
+[
+ϕ
+⁡
+(
+τ
+i
+,
+j
+(
+1
+)
+)
+;
+…
+;
+ϕ
+⁡
+(
+τ
+i
+,
+j
+(
+6
+)
+)
+]
+\pi_{i,j}=W_{\tau}[\phi(\tau^{(1)}_{i,j});\dots;\phi(\tau^{(6)}_{i,j})]
+. Channels are elapsed time since the outage opened,
+since the previous revision, hour of day, time since storm onset, a causal
+proxy for storm peak, and normalised window position; the peak proxy uses the
+running maximum of customers interrupted to
+t
+i
+,
+j
+t_{i,j}
+, the realised peak
+being unobservable at prediction time.
+Static, context, and inter-revision axes.
+Static features are
+tokenized as in (
+4
+) and mean-pooled to
+σ
+i
+\sigma_{i}
+, prepended
+rather than broadcast, since replicating a constant across
+W
+W
+positions
+consumes attention capacity without conveying information. Context is
+projected per position into
+G
+i
+,
+j
+∈
+ℝ
+W
+×
+d
+G_{i,j}\in\mathbb{R}^{W\times d}
+. The sequence
+H
+i
+,
+j
+(
+0
+)
+=
+[
+σ
+i
+;
+h
+i
+,
+j
+−
+W
++
+1
++
+π
+i
+,
+j
+−
+W
++
+1
+;
+…
+;
+h
+i
+,
+j
++
+π
+i
+,
+j
+]
+H^{(0)}_{i,j}=\bigl[\sigma_{i};\,h_{i,j-W+1}+\pi_{i,j-W+1};\dots;h_{i,j}+\pi_{i,j}\bigr]
+(7)
+in
+ℝ
+(
+W
++
+1
+)
+×
+d
+\mathbb{R}^{(W+1)\times d}
+, indexed
+0
+,
+…
+,
+W
+0,\dots,W
+, receives one
+cross-attention layer against the context,
+H
+(
+0
+)
+←
+H
+(
+0
+)
++
+MHA
+⁡
+(
+LN
+⁡
+(
+H
+(
+0
+)
+)
+,
+G
+,
+G
+,
+M
+ctx
+)
+H^{(0)}\!\leftarrow\!H^{(0)}+\mathrm{MHA}(\mathrm{LN}(H^{(0)}),G,G;M^{\mathrm{ctx}})
+, followed by
+H
+i
+,
+j
+(
+ℓ
++
+1
+)
+=
+TB
+rev
+(
+H
+i
+,
+j
+(
+ℓ
+)
+,
+M
+)
+,
+ℓ
+=
+0
+,
+…
+,
+L
+r
+−
+1
+.
+H^{(\ell+1)}_{i,j}=\mathrm{TB}^{\mathrm{rev}}\bigl(H^{(\ell)}_{i,j},M\bigr),\quad\ell=0,\dots,L_{r}-1.
+(8)
+The always-present static token extends (
+3
+) by
+m
+~
+0
+=
+1
+\tilde{m}_{0}=1
+,
+m
+~
+a
+=
+m
+a
+obs
+\tilde{m}_{a}=m^{\mathrm{obs}}_{a}
+for
+1
+≤
+a
+≤
+W
+1\leq a\leq W
+, giving
+M
+a
+​
+b
+=
+{
+0
+,
+m
+~
+b
+=
+1
+−
+∞
+,
+else
+M
+a
+​
+b
+ctx
+=
+{
+0
+,
+m
+b
+obs
+=
+1
+−
+∞
+,
+else,
+M_{ab}=\begin{cases}0,&\tilde{m}_{b}=1\\
+-\infty,&\text{else}\end{cases}\qquad M^{\mathrm{ctx}}_{ab}=\begin{cases}0,&m^{\mathrm{obs}}_{b}=1\\
+-\infty,&\text{else,}\end{cases}
+(9)
+M
+∈
+ℝ
+(
+W
++
+1
+)
+×
+(
+W
++
+1
+)
+M\in\mathbb{R}^{(W+1)\times(W+1)}
+,
+M
+ctx
+∈
+ℝ
+(
+W
++
+1
+)
+×
+W
+M^{\mathrm{ctx}}\in\mathbb{R}^{(W+1)\times W}
+, added to the logits before the softmax. Both
+depend only on the key index
+b
+b
+and are key-padding masks, not general
+attention patterns.
+Remark 1
+(Absence of temporal leakage)
+.
+No causal mask is required. Every position of
+𝒲
+⁡
+(
+i
+,
+j
+)
+\mathcal{W}(i,j)
+indexes
+r
+i
+,
+j
+′
+r_{i,j^{\prime}}
+with
+j
+′
+≤
+j
+j^{\prime}\leq j
+, hence
+t
+i
+,
+j
+′
+≤
+t
+i
+,
+j
+t_{i,j^{\prime}}\leq t_{i,j}
+and
+r
+i
+,
+j
+′
+∈
+Ω
+i
+,
+j
+r_{i,j^{\prime}}\in\Omega_{i,j}
+, the information available at
+t
+i
+,
+j
+t_{i,j}
+; so
+y
+^
+i
+,
+j
+\hat{y}_{i,j}
+is a measurable function of
+Ω
+i
+,
+j
+\Omega_{i,j}
+irrespective of the
+attention pattern applied within the window. Bidirectional attention is
+therefore admissible and strictly more expressive. This does not hold for the
+alternative in which one pass over an entire event is supervised at every
+position, which does require causal masking.
+Head.
+With
+v
+i
+,
+j
+=
+ψ
+⁡
+(
+H
+i
+,
+j
+(
+L
+r
+)
+​
+[
+W
+]
+)
+v_{i,j}=\psi(H^{(L_{r})}_{i,j}[W])
+we predict ordered
+levels
+Q
+=
+{
+κ
+1
+,
+κ
+2
+,
+κ
+3
+}
+=
+{
+1
+2
+,
+5
+6
+,
+9
+10
+}
+Q=\{\kappa_{1},\kappa_{2},\kappa_{3}\}=\{\tfrac{1}{2},\tfrac{5}{6},\tfrac{9}{10}\}
+as a base plus non-negative increments,
+y
+^
+i
+,
+j
+(
+κ
+1
+)
+\displaystyle\hat{y}^{(\kappa_{1})}_{i,j}
+=
+s
+⋅
+softplus
+⁡
+(
+a
+1
+⊤
+​
+v
+i
+,
+j
++
+b
+1
+)
+,
+\displaystyle=s\cdot\mathrm{softplus}\bigl(a_{1}^{\top}v_{i,j}+b_{1}\bigr),
+(10)
+y
+^
+i
+,
+j
+(
+κ
+m
+)
+\displaystyle\hat{y}^{(\kappa_{m})}_{i,j}
+=
+y
+^
+i
+,
+j
+(
+κ
+m
+−
+1
+)
++
+s
+⋅
+softplus
+(
+a
+m
+⊤
+v
+i
+,
+j
++
+b
+m
+)
+,
+m
+=
+2
+,
+3
+.
+\displaystyle=\hat{y}^{(\kappa_{m-1})}_{i,j}+s\cdot\mathrm{softplus}\bigl(a_{m}^{\top}v_{i,j}+b_{m}\bigr),\;m=2,3.
+(11)
+Non-negativity follows from the softplus and monotonicity
+y
+^
+(
+κ
+1
+)
+≤
+y
+^
+(
+κ
+2
+)
+≤
+y
+^
+(
+κ
+3
+)
+\hat{y}^{(\kappa_{1})}\!\leq\!\hat{y}^{(\kappa_{2})}\!\leq\!\hat{y}^{(\kappa_{3})}
+from non-negativity of each increment, so the ordered levels cannot cross for
+any input. The published estimate uses
+κ
+⋆
+=
+κ
+2
+\kappa^{\star}=\kappa_{2}
+; the other
+heads provide lower and upper operational levels trained with pinball losses. The axes cost
+O
+⁡
+(
+L
+f
+​
+W
+​
+F
+2
+​
+d
+)
++
+O
+⁡
+(
+L
+r
+​
+W
+2
+​
+d
+)
+O(L_{f}WF^{2}d)+O(L_{r}W^{2}d)
+per
+sample; with
+F
+=
+54
+F=54
+,
+W
+=
+20
+W=20
+,
+L
+f
+=
+2
+L_{f}=2
+,
+L
+r
+=
+4
+L_{r}=4
+the feature axis exceeds the
+sequence axis by about
+73
+×
+73\times
+and dominates.
+IV
+Objective
+Internal customer outage survey analysis indicates that satisfaction responds
+asymmetrically to error: underprediction, where restoration arrives later than
+promised, reduces satisfaction sharply; overprediction is tolerated to a
+threshold and penalised beyond. We encode that operational preference through
+the following piecewise penalty template, with
+ϵ
+=
+y
+^
+−
+y
+\epsilon=\hat{y}-y
+in hours:
+ℓ
+⁡
+(
+ϵ
+)
+=
+{
+α
+​
+|
+ϵ
+|
+,
+ϵ
+<
+0
+,
+|
+ϵ
+|
+,
+0
+≤
+ϵ
+≤
+θ
+,
+β
+​
+|
+ϵ
+|
+,
+ϵ
+>
+θ
+,
+\ell(\epsilon)=\begin{cases}\alpha|\epsilon|,&\epsilon<0,\\
+|\epsilon|,&0\leq\epsilon\leq\theta,\\
+\beta|\epsilon|,&\epsilon>\theta,\end{cases}
+(12)
+with
+θ
+=
+8
+\theta=8
+h,
+α
+=
+5
+\alpha=5
+, and
+β
+=
+2
+\beta=2
+obtained from internal
+customer outage survey analysis rather than tuned to model performance, and
+held fixed for every method compared.
+Lemma 1
+.
+Let
+κ
+⋆
+=
+α
+/
+(
+α
++
+1
+)
+\kappa^{\star}=\alpha/(\alpha+1)
+and
+ρ
+κ
+(
+u
+)
+=
+u
+(
+κ
+−
+𝕀
+[
+u
+<
+0
+]
+)
+\rho_{\kappa}(u)=u(\kappa-\mathbb{I}[u<0])
+with
+u
+=
+y
+−
+y
+^
+u=y-\hat{y}
+. Restricted to
+|
+ϵ
+|
+≤
+θ
+|\epsilon|\leq\theta
+,
+(
+12
+) equals
+(
+α
++
+1
+)
+(\alpha+1)
+times the pinball loss at
+κ
+⋆
+\kappa^{\star}
+,
+and
+κ
+⋆
+\kappa^{\star}
+is the unique level for which (
+12
+) and
+ρ
+κ
+\rho_{\kappa}
+are proportional on that region.
+Proof.
+Both losses are positively homogeneous and piecewise linear in
+ϵ
+\epsilon
+with a single kink at
+ϵ
+=
+0
+\epsilon=0
+, so proportionality on
+|
+ϵ
+|
+≤
+θ
+|\epsilon|\leq\theta
+holds iff the ratio of branch slopes agrees. For
+ϵ
+<
+0
+\epsilon<0
+,
+u
+=
+−
+ϵ
+>
+0
+u=-\epsilon>0
+,
+ρ
+κ
+​
+(
+u
+)
+=
+κ
+​
+|
+ϵ
+|
+\rho_{\kappa}(u)=\kappa|\epsilon|
+and
+ℓ
+⁡
+(
+ϵ
+)
+=
+α
+​
+|
+ϵ
+|
+\ell(\epsilon)=\alpha|\epsilon|
+; for
+0
+≤
+ϵ
+≤
+θ
+0\leq\epsilon\leq\theta
+,
+u
+≤
+0
+u\leq 0
+,
+ρ
+κ
+​
+(
+u
+)
+=
+(
+1
+−
+κ
+)
+​
+|
+ϵ
+|
+\rho_{\kappa}(u)=(1-\kappa)|\epsilon|
+and
+ℓ
+⁡
+(
+ϵ
+)
+=
+|
+ϵ
+|
+\ell(\epsilon)=|\epsilon|
+. The
+slope ratio of
+ρ
+κ
+\rho_{\kappa}
+is
+κ
+/
+(
+1
+−
+κ
+)
+\kappa/(1-\kappa)
+and that of
+ℓ
+\ell
+is
+α
+\alpha
+; these agree exactly when
+κ
+=
+α
+/
+(
+α
++
+1
+)
+\kappa=\alpha/(\alpha+1)
+, giving
+uniqueness. Substituting
+κ
+⋆
+\kappa^{\star}
+yields
+ρ
+κ
+⋆
+​
+(
+u
+)
+=
+α
+​
+(
+α
++
+1
+)
+−
+1
+​
+|
+ϵ
+|
+\rho_{\kappa^{\star}}(u)=\alpha(\alpha+1)^{-1}|\epsilon|
+against
+α
+​
+|
+ϵ
+|
+\alpha|\epsilon|
+on the first branch and
+(
+α
++
+1
+)
+−
+1
+​
+|
+ϵ
+|
+(\alpha+1)^{-1}|\epsilon|
+against
+|
+ϵ
+|
+|\epsilon|
+on the second; the constant is
+α
++
+1
+\alpha+1
+on both.
+∎
+With
+α
+=
+5
+\alpha=5
+, the slope ratio within the central operating region
+corresponds exactly to
+κ
+⋆
+=
+5
+/
+6
+\kappa^{\star}=5/6
+, motivating the primary level of
+(
+11
+). We retain the fractional representation so this local
+correspondence holds without approximation. The resulting operating point
+intentionally penalises underprediction more heavily than moderate
+overprediction and therefore should not be interpreted as a
+conditional-mean estimate.
+Smoothing and training.
+Equation (
+12
+) is an operational
+penalty template with breakpoints at
+ϵ
+∈
+{
+0
+,
+θ
+}
+\epsilon\in\{0,\theta\}
+. Training
+uses its Huber-smoothed surrogate
+ℓ
+δ
+\ell_{\delta}
+, which preserves the outer
+linear branches and uses quadratic transitions within
+δ
+\delta
+-neighbourhoods of the breakpoints, with
+δ
+=
+0.25
+\delta=0.25
+h. We write
+ρ
+δ
+,
+κ
+\rho_{\delta,\kappa}
+for the identically smoothed pinball loss. The same
+δ
+\delta
+is used for every
+method, including the boosting baselines, whose Newton updates need a
+non-vanishing second derivative. A stability term
+ℒ
+stab
+\mathcal{L}^{\mathrm{stab}}
+penalises movement of the published timestamp
+between consecutive revisions beyond
+τ
+tol
+=
+1
+\tau_{\mathrm{tol}}=1
+h, computed
+under an event-grouped sampler. With
+ϵ
+i
+,
+j
+(
+κ
+)
+=
+y
+^
+i
+,
+j
+(
+κ
+)
+−
+y
+i
+,
+j
+\epsilon^{(\kappa)}_{i,j}=\hat{y}^{(\kappa)}_{i,j}-y_{i,j}
+,
+ℒ
+=
+1
+|
+S
+|
+​
+∑
+(
+i
+,
+j
+)
+∈
+S
+[
+ℓ
+δ
+​
+(
+ϵ
+i
+,
+j
+(
+κ
+⋆
+)
+)
++
+λ
+q
+​
+∑
+κ
+∈
+Q
+∖
+{
+κ
+⋆
+}
+ρ
+δ
+,
+κ
+​
+(
+y
+i
+,
+j
+−
+y
+^
+i
+,
+j
+(
+κ
+)
+)
+]
++
+λ
+​
+ℒ
+stab
+.
+\mathcal{L}=\frac{1}{|S|}\!\!\sum_{(i,j)\in S}\!\!\Bigl[\ell_{\delta}\bigl(\epsilon^{(\kappa^{\star})}_{i,j}\bigr)+\lambda_{q}\!\!\!\!\sum_{\kappa\in Q\setminus\{\kappa^{\star}\}}\!\!\!\!\rho_{\delta,\kappa}\bigl(y_{i,j}-\hat{y}^{(\kappa)}_{i,j}\bigr)\Bigr]+\lambda\mathcal{L}^{\mathrm{stab}}.
+(13)
+Outside the smoothing neighbourhoods,
+ℓ
+δ
+\ell_{\delta}
+retains the linear
+branches of (
+12
+); within them the quadratic transitions preserve
+a nonzero penalty for systematic conservatism. The objective therefore has no
+flat region.
+Scale.
+The breakpoints of (
+12
+) are in hours; a monotone
+transform such as
+log
+⁡
+(
+1
++
+y
+)
+\log(1+y)
+would displace them to input-dependent
+locations and destroy that interpretation, so we supervise on the hour scale.
+The heavy tail is accommodated by linearity of
+ℓ
+\ell
+outside the smoothing
+neighbourhoods and by the constant
+s
+s
+of (
+11
+), set to the
+training-partition median remaining time per company so softplus arguments
+are
+O
+⁡
+(
+1
+)
+O(1)
+at initialisation. Inputs are scaled by median and IQR on training
+storms only. Configuration:
+d
+=
+128
+d=128
+,
+L
+f
+=
+2
+L_{f}=2
+,
+L
+r
+=
+4
+L_{r}=4
+,
+8
+8
+heads, one context
+cross-attention layer,
+d
+t
+=
+16
+d_{t}=16
+, dropout
+0.1
+0.1
+, AdamW (decay
+0.01
+0.01
+), lr
+3
+×
+10
+−
+4
+3\times 10^{-4}
+cosine with
+500
+500
+-step warmup, batch
+256
+256
+,
+λ
+q
+=
+0.2
+\lambda_{q}=0.2
+,
+λ
+=
+0.1
+\lambda=0.1
+,
+1.3
+1.3
+M parameters.
+TABLE II:
+Five-seed test means by operating company, ordered by median revisions per outage and weighted by customer-hours
+of exposure. W: weighted asymmetric error (h)
+↓
+\downarrow
+; R: RMSE (h)
+↓
+\downarrow
+; C: satisfaction-rate statistic
+↑
+\uparrow
+(read jointly with W
+and R). Best per column in bold.
+OPCO-1
+OPCO-2
+OPCO-3
+OPCO-4
+OPCO-5
+OPCO-6
+Method
+W
+R
+C
+W
+R
+C
+W
+R
+C
+W
+R
+C
+W
+R
+C
+W
+R
+C
+Incumbent OMS
+56.57
+23.33
+.610
+19.49
+7.82
+.554
+7.93
+5.35
+.817
+72.03
+45.94
+.730
+36.22
+24.30
+.734
+20.57
+10.45
+.608
+Climatology
+133.78
+34.67
+.303
+22.52
+7.27
+.456
+15.81
+5.26
+.513
+87.02
+22.47
+.293
+49.96
+13.92
+.349
+41.77
+11.46
+.381
+LightGBM
+110.72
+30.79
+.390
+9.63
+5.39
+.787
+9.79
+4.28
+.715
+64.43
+18.57
+.429
+29.12
+10.08
+.578
+16.28
+7.64
+.715
+XGBoost
+63.03
+21.36
+.551
+9.56
+5.80
+.814
+9.35
+4.01
+.699
+40.67
+14.78
+.610
+24.56
+9.35
+.634
+18.00
+8.26
+.703
+CatBoost
+77.84
+24.14
+.493
+12.87
+7.03
+.766
+7.71
+4.68
+.868
+54.57
+16.79
+.519
+22.49
+9.33
+.703
+21.03
+10.91
+.710
+LightGBM (lag)
+110.45
+30.74
+.391
+9.57
+5.48
+.789
+9.96
+4.30
+.701
+63.86
+18.47
+.435
+29.00
+10.07
+.576
+16.53
+7.67
+.694
+GRU
+88.12
+26.41
+.468
+9.74
+5.04
+.759
+8.05
+4.42
+.826
+49.69
+15.75
+.549
+25.24
+10.02
+.654
+19.55
+9.44
+.708
+LSTM
+88.37
+26.62
+.472
+9.84
+5.58
+.784
+8.26
+4.64
+.825
+51.01
+16.03
+.534
+25.17
+10.03
+.651
+20.52
+9.27
+.700
+LTT (ours)
+50.91
+19.15
+.649
+8.97
+5.27
+.830
+6.59
+3.46
+.889
+36.01
+13.03
+.757
+19.99
+8.27
+.761
+14.60
+6.83
+.757
+V
+Data
+We study six operating companies of a single holding company, OPCO-1 through
+OPCO-6, dispatched independently under separate procedures and differing in
+network construction, vegetation exposure and crew deployment. They are not
+independent utilities and we treat them as correlated replicates. Results are
+reported by anonymised company label under the data-sharing agreement.
+Cohort.
+The event table intermixes populations with different
+restoration dynamics, distinguished by an alarm-status prefix: momentary
+interruptions resolve in seconds with no customer-facing estimate; planned
+outages carry a scheduled restoration time; switching operations often
+interrupt no customers; cancelled events record when a dispatcher closed a
+duplicate report, not when supply returned. Retaining them would inflate
+apparent accuracy for every method. We keep standard and SCADA-detected
+customer outages, excluding cancelled and censored events, and apply the
+filter identically to every method, so it affects the magnitude of errors but
+not the ordering. Outages are attributed to storms by district and opening
+timestamp, each window extended by five days for the restoration tail and
+overlapping windows fused into one storm period. Splits and resampling are
+defined at that granularity.
+Features and leakage control.
+Each revision carries
+47
+47
+continuous
+and
+7
+7
+categorical dynamic features plus
+34
+34
+contextual and
+30
+30
+static, in
+three groups.
+Event state
+: customers affected, critical customers,
+priority, decoded alarm status.
+Lifecycle dynamics
+: change in affected
+customers, implied restoration rate, time since crew assignment, dispatch and
+arrival, cumulative status regressions and crew suspensions.
+System
+context
+: concurrent open events, recent restoration throughput and
+district-to-system strain, at company, district and feeder scope. All
+features use information available at the revision timestamp; lifetime
+quantities such as maximum customers affected are replaced by causal
+counterparts accumulated to the current revision. Context aggregates use
+strictly backward-looking windows and exclude the subject event from its own
+aggregate at every scope, feeder included. We further verify leakage absence
+by permuting restoration timestamps across outages within each storm.
+Characteristics.
+Median restoration duration ranges from
+3.45
+3.45
+to
+6.33
+6.33
+h with ninetieth percentiles between
+12.22
+12.22
+and
+39.15
+39.15
+h; at every
+company the ninetieth percentile exceeds three times that company’s own
+median, and at one company it exceeds six times. The operational problem is
+therefore to identify early the minority of outages that run long, not to
+characterise the typical one. Revision counts differ substantially
+(Table
+I
+), reflecting both how often a company updates the
+system and the granularity at which it opens events. Mean customers affected
+per event varies by nearly an order of magnitude, so companies open events at
+differing levels of network aggregation; exposure-weighted metrics are
+therefore not strictly comparable across companies and we read differences
+within one.
+Partitions.
+Storms are assigned at storm granularity under a rule
+fixed in a versioned configuration before any modelling: the holdout spans
+the three magnitude classes and draws from distinct calendar months, so no
+class or season is unrepresented. Random stratification was rejected because
+the storm count per company is small enough that a random draw can omit a
+magnitude class. The test partition holds nine storms at five companies and
+three at OPCO-3, whose observation window is shorter. The assignment is not
+chronological, so the setting is interpolation across storms rather than
+forecasting of future ones.
+VI
+Evaluation and Setup
+Point metrics.
+An estimate seen by five thousand customers for six
+hours is not equivalent to one corrected in ten minutes, so every metric is
+weighted by customer exposure: revision
+j
+j
+of event
+i
+i
+carries
+w
+i
+,
+j
+=
+c
+i
+​
+d
+i
+,
+j
+w_{i,j}=c_{i}d_{i,j}
+, customers affected by event
+i
+i
+times the interval over
+which that estimate remained published, the final revision running to
+restoration. All are computed on
+y
+^
+(
+κ
+⋆
+)
+\hat{y}^{(\kappa^{\star})}
+. Writing
+⟨
+⋅
+⟩
+\langle\cdot\rangle
+for the
+w
+w
+-weighted mean, we report
+WAE
+=
+⟨
+ℓ
+⁡
+(
+ϵ
+)
+⟩
+\mathrm{WAE}=\langle\ell(\epsilon)\rangle
+,
+RMSE
+=
+⟨
+ϵ
+2
+⟩
+1
+/
+2
+\mathrm{RMSE}=\langle\epsilon^{2}\rangle^{1/2}
+, and
+CSI
+=
+1
+−
+α
+⋅
+UPR
++
+β
+⋅
+OPR
+8
+α
++
+β
+,
+\mathrm{CSI}=1-\frac{\alpha\cdot\mathrm{UPR}+\beta\cdot\mathrm{OPR}_{8}}{\alpha+\beta},
+(14)
+with UPR the underprediction rate and
+OPR
+8
+\mathrm{OPR}_{8}
+the overprediction
+rate beyond
+θ
+\theta
+, both likewise
+w
+w
+-weighted. The weighting concentrates
+mass on the large, long-running events identified above, where an inaccurate
+estimate is most costly.
+CSI depends on two rates alone and is therefore insensitive to error
+magnitude: underpredictions of two minutes and of twenty hours contribute
+identically. We treat it as a satisfaction-rate statistic and never report it
+alone; WAE is primary and RMSE the magnitude check. This also qualifies the
+incumbent, since a systematically conservative estimator can attain a
+favourable CSI without a favourable WAE or RMSE, which we test directly.
+Because WAE and CSI share
+α
+,
+β
+\alpha,\beta
+with the training objective, every
+baseline admitting a custom objective is trained on the identical loss, and
+we report the ranking’s sensitivity to
+(
+α
+,
+θ
+)
+(\alpha,\theta)
+.
+Baselines and controls.
+We compare against the estimates the OMS
+published during the same storms, a climatological predictor, boosted trees
+in static and lag-flattened configurations, and recurrent models on identical
+window tensors. All consume one shared feature construction, so only the
+depth of history and the manner of its consumption differ, and every model
+admitting a custom objective is trained on (
+13
+) under identical
+scaling. Hyperparameters come from grouped cross-validation within training
+storms, folds at storm granularity grouped by event, sixty trials per model,
+and five seeds.
+Incumbent cadence.
+The incumbent OMS and the learned models operate
+at different update cadences. The OMS estimate is evaluated exactly as
+published operationally: the most recent available ETR remains in effect
+until it is replaced by a subsequent estimate. In contrast, all learned
+baselines and LTT are permitted to issue an estimate at every OMS revision.
+Exposure weighting therefore scores estimates according to the customer-hours
+for which they remain in effect rather than according to the number of
+predictions issued. The comparison with the incumbent measures end-to-end
+operational performance, including the incumbent process cadence, whereas
+comparisons among the learned baselines isolate predictive performance under a
+common revision-level cadence. As an additional control, we score LTT using
+the most recent model revision available at or before each OMS update point;
+the median gain remains
+34.2
+%
+34.2\,\%
+.
+Lag-flattened baseline.
+This gives a boosting model the four most
+recent revisions concatenated with their first differences, testing whether
+the benefit is obtainable by feature engineering. Since lag-
+4
+4
+against
+W
+=
+20
+W\!=\!20
+confounds depth with architecture, we add a deeper lag-
+K
+K
+variant
+and claim only that shallow lag features do not recover the benefit; to
+separate an uninformative feature set from an unused one we report the share
+of split gain accruing to lag features,
+27.8
+%
+27.8\,\%
+.
+VII
+Results
+Main comparison.
+LTT attains the lowest WAE at all six companies
+(Table
+II
+), reducing error against the incumbent by a median of
+36.9
+%
+36.9\,\%
+(range
+10.0
+10.0
+–
+54.0
+%
+54.0\,\%
+) and against the strongest learned
+baseline at each company by
+11.3
+%
+11.3\,\%
+(range
+6.2
+6.2
+–
+19.2
+%
+19.2\,\%
+).
+The incumbent’s satisfaction score is bought with overprediction.
+The incumbent attains a competitive CSI at OPCO-1, OPCO-4 and OPCO-5, where
+no learned method other than LTT matches it, yet at OPCO-4 and OPCO-5 its
+RMSE exceeds that of every other method in Table
+II
+, by factors
+of
+2.0
+2.0
+and
+1.7
+1.7
+over the next worst. This pattern indicates systematic
+conservatism, which CSI, as a rate statistic, cannot penalise. LTT is the
+only method improving on the incumbent’s CSI at all six companies while also
+reducing RMSE at all six, and we regard this conjunction, not the CSI column
+alone, as the operative result. For completeness, LTT does not attain the
+best RMSE at OPCO-2, where GRU is lower (
+5.04
+5.04
+against
+5.27
+5.27
+); it retains
+the best WAE and CSI there.
+Operating-point coverage.
+The primary level is intentionally
+asymmetric rather than mean-seeking. On the pooled test predictions,
+87
+%
+87\,\%
+of realised remaining durations fall below the primary prediction,
+indicating a mildly conservative operating point. We report this as a
+descriptive coverage statistic rather than as a claim of exact conditional
+quantile calibration.
+Fig. 1:
+LTT test error by revision index
+j
+j
+, pooled over the six test
+partitions and weighted by customer-hours of exposure as in Sec. VI; the
+final point aggregates
+j
+≥
+20
+j\geq 20
+. Error is largest at the first revision,
+where the window holds a single observed position and the model has no
+history to condition on, and falls monotonically as revisions accumulate.
+Error across the revision trajectory.
+Fig.
+1
+stratifies LTT’s error by revision index. It is largest
+at
+j
+=
+1
+j=1
+, where the window holds one observed position and there is no history
+to condition on, and falls monotonically thereafter. This pattern is
+consistent with the model benefiting from information accumulated along the
+outage trajectory. The overall comparison in Table
+II
+separately
+shows that LTT achieves the lowest WAE among the learned methods at all six
+operating companies.
+The gain is not explained by cadence alone.
+LTT issues more estimates
+than the OMS, so part of the end-to-end incumbent comparison can reflect the
+operational value of fresher information. That does not explain the learned
+baseline comparison, because all learned methods operate at the same
+revision-level cadence and LTT still reduces WAE by a median of
+11.3
+%
+11.3\,\%
+against the strongest learned baseline. Moreover, when LTT is scored only
+using the most recent prediction available at or before each OMS update point,
+its median gain over the incumbent remains
+34.2
+%
+34.2\,\%
+.
+Sensitivity and feature engineering.
+Recomputing the ranking on
+saved predictions over
+α
+∈
+{
+3
+,
+5
+,
+8
+}
+\alpha\in\{3,5,8\}
+,
+θ
+∈
+{
+4
+,
+8
+,
+12
+}
+\theta\in\{4,8,12\}
+h leaves
+the ordering unchanged, so the ranking is insensitive to the constants
+derived from the internal customer outage survey analysis; models are not
+retrained, so this is a sensitivity of the scoring rule. Lag-
+4
+4
+features change WAE by under
+1
+%
+1\,\%
+against plain LightGBM everywhere while receiving
+27.8
+%
+27.8\,\%
+of split
+gain, so they are used and uninformative rather than absent; a deeper lag-
+K
+K
+variant closes
+31
+%
+31\,\%
+of the gap. We note that LightGBM and XGBoost differ
+by
+1.76
+×
+1.76\times
+in WAE at OPCO-1 despite identical features and budget, so no
+single boosting implementation should be read as
+the
+tabular
+baseline.
+VIII
+Conclusion
+Treating an outage as a sequence of revisions rather than a single record
+reduces customer-weighted ETR error at all six operating companies studied,
+by a median of
+36.9
+%
+36.9\,\%
+against the estimates the utilities published
+during the same storms and
+11.3
+%
+11.3\,\%
+against the strongest learned baseline.
+LTT error is largest at the first revision and decreases as information
+accumulates across revisions. Its gain over the incumbent is not explained by
+update cadence alone: all learned baselines share the revision-level cadence,
+and a cadence-matched incumbent comparison retains a median
+34.2
+%
+34.2\,\%
+gain.
+The incumbent’s favourable satisfaction rate reflects systematic
+overprediction, which a rate statistic cannot penalise but RMSE exposes. Substantial error nonetheless remains at
+every company. Characterising how much of it is irreducible, chronological
+evaluation, and an aggregate restoration-curve measure are the subject of
+ongoing work.
+References
+[1]
+M. Adibi and D. Milanicz, “Estimating restoration duration,”
+IEEE Trans. Power Syst.
+, vol. 14, no. 4, pp. 1493–1498, 1999.
+[2]
+D. Wanik
+et al.
+, “ETR guidance for electric
+distribution networks,”
+J. Homeland Secur. Emerg. Manag.
+, vol. 15,
+no. 1, 2018.
+[3]
+T. C. Walsh
+et al.
+, “Estimated time to restoration of
+Hurricane Sandy in a future climate,”
+Sustainability
+, vol. 12, 2020.
+[4]
+B. Kar
+et al.
+, “RePOWERD: Restoration of power outage
+from wide area severe weather disruptions,” ORNL Tech. Rep., 2022.
+[5]
+R. Nateghi, S. Guikema, and S. Quiring, “Forecasting
+hurricane driven power outages,”
+Risk Analysis
+, vol. 34, no. 6, 2014.
+[6]
+Y. Gorishniy
+et al.
+, “Revisiting deep
+learning models for tabular data,”
+NeurIPS
+, vol. 34, 2021.
+[7]
+J. Ho
+et al.
+, “Axial attention in multidimensional
+transformers,” arXiv:1912.12180, 2019.
+[8]
+I. Padhi
+et al.
+, “Tabular transformers for
+multivariate time series,”
+ICASSP
+, 2021.
+[9]
+S. M. Kazemi
+et al.
+, “Time2Vec,”
+arXiv:1907.05321, 2019.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

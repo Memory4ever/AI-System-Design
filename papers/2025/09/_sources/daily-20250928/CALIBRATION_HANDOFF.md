@@ -1,5 +1,11 @@
 # 2025-09-28 作者侧交接
 
+## 当前恢复：可复用作者包，待root独立DAY
+
+本日独立重读AGENTS、Prompt、两合同、Sources使用/Daily/arXiv、ROADMAP与本日§5–6/本交接。实际检查同日fetch/recovery/narrow-Qwen-agent记录，旧gzip/元数据恢复有效，不因续跑重新抓全列表。普通作者研究待办0、确定候选0、Books No Change仍仅本次无可采用新命题。窄纠正Meta Research历史壳/目标目录未恢复，正式行记受阻（Blog有限切片已处理）；不得从已检查Blog授Research覆盖。
+
+本次重读search.json实际为检索返回字符串，而非逐线程原JSON：404提问者自归因旧代码、filename/base64-vs-ID讨论、框架替换求建议属于不采用的用户问题/索引文本；暗换模型投诉无后端身份或受控证据，仅未证负面保留，不等厂商事实或设计反证已证。README§4已显式注明材料权限，不虚称原始core。非作者应围绕这些被引用负侧/使用问题与14来源分层核真实停点，日期不足不授Coverage/Evidence/Books或零事件。source历史与arXiv429/400按§5精确重开，当前无普通未读被伪装外部受阻。未写共享文件、未操作Git，未自授DAY。
+
 最新窄恢复：本日独立重载适用合同/路由后实际Qwen API200完整60项，逐一核原date无落窗项；MiniMax Agent Tech Blog200及完整llms.txt只列2026-05-13一篇技术文章，无历史分页。原响应/metadata/执行时刻在 `narrow-qwen-agent-fetch.json` 等。Qwen当前处置改已检查（仅实际数组），MiniMax仍保留2025历史缺口；正式来源/缺口同步，以下旧入口壳状态只保留过程。不改候选、Books决定；作者ready，rootDAY未做。
 
 作者：Archimedes。独占本日README及本目录；Books/月README/LEARNING_STATE均未写。默认窗口Sep27 09+08至Sep28 09+08，作者侧ready，日级仍进行中，root尚未实际验收。

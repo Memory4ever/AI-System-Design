@@ -19,6 +19,8 @@ Prefill 像一次大块作业：prompt 越长，计算越重，KV Cache 写入�
 
 Decode 像持续小步循环：每一步生成一个 token，用户正在等待 stream。它的目标不是一次性做完大块计算，而是稳定、低抖动地产生 token，控制 `TPOT`。
 
+阶段拆分还可以深入计算数据流，而不只是把同样的 GPU 分成两池：Prefill 的大矩阵可使用 systolic array，包含 SSM 的模型还须安排局部 recurrent state 的保留与递推；小 batch Decode 则可能更适合 vector reduction、局部状态与更高内存带宽。这样用阶段专用计算换取更多硬件类型、封装和 KV/state handoff 耦合，不取消两池排队和资源匹配责任。[受限硬件设计](https://arxiv.org/html/2603.15530v1)的收益来自 RTL/周期仿真，计算峰值与内存配置也不等同 GPU 对照，并假设两池吞吐匹配而未模拟多请求调度；不能据此授生产 SLO 或将全部差距归给数据流。专用硬件不可得、handoff 或突发负载抵消收益时，同构 GPU 分池或原共驻路径仍是合理基线。<!-- source-family:SF-2026-ARXIV-2603-15530 -->
+
 如果一个 worker 同时处理大量长 Prefill 和正在 Decode 的请求，Prefill 的大计算可能影响 Decode 的 `TPOT`。
 
 ## 分离之后发生什么
@@ -71,6 +73,13 @@ Prefill 在兼容性、链路成本或质量 evidence 不足时仍成立。
 
 软件 TPC mask 约束 SM 份额，却不隔离 HBM 带宽，共驻仍会争夺内存，因此 Decode 保持专池，视频等 workload 也可能不适合 Encode–Prefill 共驻。Profile 与搜索有准备成本，突发到达或输入尺寸漂移还会改变容量模型；作者单机、指定模型与合成到达实验中，吞吐小幅变化并不阻止 tail TTFT 明显退化。不能由 microbatch age、阶段峰值或配置搜索宣称生产 SLO 已保证。端到端 goodput、传输和质量未达标时，保留 co-located、独立 Encode/Prefill/Decode 或更保守的批等待配置，而不是强制所有模态采用同一分离比例。<!-- source-family:SF-2026-ARXIV-2609-31551 -->
 
+当主要压力是同一GPU内的阶段干扰，而不是跨池容量不足，还可把Prefill和Decode拆成独立队列与stream，在同一GPU内动态分配SM份额，而不要求两套完整设备池。[一种受限实现](https://arxiv.org/html/2507.06608v1#S4)以kernel饱和profile和KV流量代理估计阶段代价、调整SM份额，并以请求长度和年龄修正Prefill排序；这区别于让Decode继续专池的Encode–Prefill共驻，但SM划分仍不隔离共享显存带宽。模型估计与异步重配也不提供任意负载的硬SLO：单独把资源偏向Decode可推迟Prefill，短请求优先又可能伤长尾，两者须按同一请求人口共同验收。profile、layout准备、重配/调度、拆批重复权重读取与所有KV状态均付费，不能把不同GPU数量的基线或局部迭代延迟当同预算goodput。成本模型失配、重配不稳定、队列公平性或尾延迟不过关时，保留静态份额、chunked共批或独立PD池，并绑定实际producer/consumer及状态恢复边界，不由逻辑阶段分离宣称带宽、内存或输出正确性已隔离。
+<!-- source-family:SF-2025-ARXIV-2507-06608 -->
+
+多模态切分还须先声明搬运的对象。把encoder留在独立tier、只把其输出embedding交给语言模型，与Prefill完成后搬全层KV是两条不同边；embedding只覆盖编码后的模态序列，而KV还随语言模型层数、KV-head形态及文本与模态总token数增长。因此embedding交接可能改变可用链路和encoder placement，却不能把一条standard-KV比较推广成所有内部cut的最优证明；bytes、dtype、model/encoder revision与消费者身份仍要实测匹配。<!-- source-family:SF-2026-ARXIV-2603-12707 -->
+
+[HeteroServe的受限机制](https://arxiv.org/html/2603.12707v1)支持比较这两类payload，不支持“更小embedding自动消除vision排队”或同预算的普遍吞吐优势。跨tier还要支付encoder queue、权重驻留/复用、transfer与辅助执行；若work stealing接管整条sequence，相应KV、后续语言计算和assist状态不能只按embedding bytes计费。原文延迟/timeout与经济表口径不一致时，不采用性能保证；输入、链路或完整成本不匹配时，保留原Encode–Prefill共驻、独立E/P/D或单池，并按完整TTFT/TPOT与goodput决定拓扑。<!-- source-family:SF-2026-ARXIV-2603-12707 -->
+
 ## 新问题：KV 怎么移动
 
 分离不是免费优化。Prefill 产生的 KV Cache 必须被 Decode 使用。如果 Prefill 和 Decode 不在同一张 GPU，系统就要处理 KV transfer。
@@ -119,6 +128,8 @@ compression gain on exact KV bytes
 
 ### 从 Full Transfer 到 Demand-corrected Selective Transfer
 
+在弱链路、但目标仍有可用计算时，完整 KV 与原 token 全重算之间还可混合：部分层发送输入 activation，由目标用相同层权重重构 KV，其余层直接传 KV，并尝试把重构与后续传输重叠。这让目标计算与带宽共同决定分界，不因 activation 较小就自动胜出。[受限边缘迁移实验](https://arxiv.org/html/2610.22172v1)未认证完整 serving tail 或无损续写；其两个成本式对 startup/drain 的处理不一致，不能将简化最大值式或近似比保证当精确物理计划。保留 activation、重构、调度和启动/排空都付费，模型、adapter、dtype、position 及 destination completion 另须一致；身份或净预算不可靠时，保留全 KV、已验重算和原 handoff，不由实验迁移时间签发状态安全。<!-- source-family:SF-2026-ARXIV-2610-22172 -->
+
 Full KV transfer 在链路充足时仍是最清楚的 baseline。受 profile 支持时，可以先 proactive 发送预测重要的 exact KV；Decode consumption 作为最终 demand signal，并行修复缺失 entry，再用 early-decode behavior 做 bounded speculative prefetch。Importance drift、metadata、remote-fetch tail 与 wasted transfer 是新增代价；低负载或 prediction 不稳时必须回到 full transfer。
 
 链路异构后，“统一使用 RDMA”也只是实现基线，不再是完整 placement policy。更严格的 handoff plan 应读取 source/destination 的 topology epoch，为 NVLink/NVSwitch、PCIe、RDMA 或 TCP 选择可用 transport，并可按 layer 形成 `produce → transfer → consume` 流水；只有该 layer 的 destination completion 已确认，Decode 才能读取。这样能把部分传输隐藏在剩余 Prefill 后面，却新增拓扑发现、并发上限、重试、跨层完成顺序与故障恢复状态。拓扑同构、payload 很小或 transfer 不在 critical path 时，统一传输仍更简单。
@@ -155,6 +166,8 @@ handoff 同时占用同一关键链路，软件调度只能改变等待顺序，
 <!-- source-family:SF-2026-ARXIV-2606-13708 -->
 
 ### 从完整到达再执行到 Progressive Verified Handoff
+
+在讨论何时提前执行之前，先区分传输格式与接收端驻留格式。Q4序列化包可以减少被搬动的payload，却仍可能在注入时恢复FP16 `past_key_values`，因此不自动节省接收端attention的驻留空间或算术。应分别计量打包、搬运、反量化/注入和下一次forward，并将重Prefill与原生cache恢复都作为参照。[受限多Agent交接原型](https://arxiv.org/pdf/2605.03884v1)恰采用这种Q4→FP16兼容路径，且与基线runtime不同、时延仅两次测量；它支持拆账与重Prefill取舍，不证明原生低比特attention、拓扑分配优于局部策略或生产PD加速。逐hop质量误差与兼容metadata也要另验，费用或误差不划算时仍保留完整cache复制或重算。这里复用的是handoff原理，不把多Agent原型等同于PD实现。<!-- source-family:SF-2026-ARXIV-2605-03884 -->
 
 传统 handoff 以完整、精确的 KV 为 commit unit：destination 只有收到全部 bytes 并验证 metadata 后才开始 Decode。
 它浪费了传输与计算可重叠的机会，却最容易证明 correctness。若低比特近似能够较早到达，可以把 handoff 拆成
@@ -559,6 +572,14 @@ PD 分离把一个共享 worker 的 interference 问题改写成两个独立 cap
 
 ## Review notes
 
+- `SF-2026-ARXIV-2605-03884` — [exact-v1 PDF](https://arxiv.org/pdf/2605.03884v1) §4.2/6–7；2+2+2=6。Q4 CacheCard注入恢复FP16、uniform时延n=2/runtime不同，topology优于local未证；多Agent原型仅原理复用，不是生产PD或原生Q4驻留证据；未核实现或复现。
+
+- `SF-2026-ARXIV-2610-22172` — Daily2026-10-17窗10-16；[EdgeFlow v1](https://arxiv.org/html/2610.22172v1) §III-A/B、IV前部及V-A/B必要，2+2+2=6。root Source经ORG_B S42独核；仅采layer混合ACT重构/directKV，不采Eq5/9物理精确与未核2-approx，保状态身份、startup/drain和全部费用；实际非作者写后复核通过（ORG_B S47），未复现。
+
+- `SF-2026-ARXIV-2603-12707` — Daily `2026-03-17`补03/16；[HeteroServe exact-v1](https://arxiv.org/html/2603.12707v1) §4/Alg1/§5.3.4–5/§6/Table8/§6.5必要反侧。2+2+2=6，embedding与全层KV切点的payload/whole-sequence assist差额深入；不授所有cut最优、vision零排队、冲突timeout/经济表或同预算普遍速度。root必要Source有效复用，review_mar17_18 actual Ch55邻接与两段PRE通过，root授两段/本人注窄锁。作者fresh确认DUET段/注保留，实际写并顺读完整局部；review_mar17_18非writer实际65–99完整邻接、新76/78及本人568/DUET邻注回对原证，POST局部通过，非DAY。未核artifact/复现。
+
+- `SF-2026-ARXIV-2603-15530` — Daily `2026-03-18` 补 `03-17`；[DUET exact-v1](https://arxiv.org/html/2603.15530v1) §3.2–3.3/4.1–4.5，2+2+2=6，阶段专用compute dataflow的差额深入：Prefill systolic/局部SSM state与Decode vector/HBM分工，不复制模型SSM推导。RTL/synthesis和周期仿真，不是物理芯片或实测B200；每chiplet192arrays×16、96vectors×8、峰值/内存资源不等。4.4假设两池吞吐匹配而不模拟multi-request scheduler，完整handoff/资源/费用与同构/共驻回退近文，不授生产SLO。review_mar17_18必要Source/actual Ch55/邻接与逐字一段PRE通过，root授本段及本注窄锁；作者写后顺读完整局部，review_mar17_18 非 writer 实际顺读15–37完整邻接、新22及559–570本人注并回对原证，POST局部通过，不授DAY。未核artifact或复现。
+
 - `SF-2026-ARXIV-2603-02599` — [SUN exact-v1](https://arxiv.org/html/2603.02599v1)，Daily `2026-03-05`；必要 §3.1–3.3、§4/Tables1–2、Appendix A.1–A.2。仅采用冻结共享 Decoder 下训练任务 Prefiller 的兼容与多任务复用边界；DGX-A100/vLLM、固定长度/到达分布的作者吞吐按 Decode GPU 归一化，不等整体 GPU 预算、生产 SLO 或跨模型家族保证。摘要与正文交互退化口径不同，不采用统一百分比；未复现或审读 artifact。root已实际对读必要源、新增正文与邻接，非作者 POST 通过。
 
 - `SF-2026-ZAI-SCALING-PAIN` — [智谱官方《Scaling Pain》](https://www.zhipuai.cn/zh/research/159)，2026-04-29 16:00 北京时间；§BugFix#1 的 Decode Abort 未传播、旧 Prefill/RDMA 写覆盖已复用 KV 槽位、Prefill safe-to-release ACK。只采 Ch55 反向回收时序；§BugFix#2 的 Indexer read-before-ready 属 Ch54 已有 tier readiness 的受限实例，LayerSplit 的 CP rank 按层驻留/广播另由Ch54承载并已非作者root实际写后通过，同一来源家族不拆计数。不采用作者异常率为跨引擎保证；root 已对照官方正文与 Ch55 相邻交接完成非作者实际写后复核，未复现实验。
@@ -665,3 +686,5 @@ Primary-source 校验入口：
 - `SF-2026-ARXIV-2601-22002` — Daily `2026-01-31`；[Rate-Distortion Optimization exact-v1](https://arxiv.org/html/2601.22002v1) §3.1、§4.1–4.4、B.4/C。2+2+2=6，split activation 的 joint body/codec task-distortion 与 append-only hyperprior 接口差额深入；不同 λ 重新训练、CPU codec/Zstandard 反侧和假设带宽交点近正文，不授冻结 checkpoint 无损、37.77Mbps 线上或更深 entropy 必然更好。A40/bf16 训练与 RTX2080Ti/i9 单核 codec 测量分账；未核实现/复现。root 必要源及实际 Ch55 owner PRE 通过，实际 Ch54/55/56 handoff 已读；两段正文、前后及本末注经 root 非作者实际 POST 通过，窄锁释放，不授日级 Gate。
 
 - `SF-2026-ARXIV-2602-12029` — Daily `2026-02-14`；[exact-v1](https://arxiv.org/html/2602.12029v1) §3.1–3.3、§4.1–4.3/Table1–2。只采用冻结共享 Prefiller/任务 Decoder 的反向分工、新生成 token 回放与 KV producer 身份；同架构、额外训练及负载/质量反侧保留，不授无损或任意模型 KV 共用。 root 必要源/具体 owner PRE 通过并授单文件两段窄锁；实际两段正文、前后邻接与本末注经 root 非作者 POST 通过，窄锁释放；已落实。未运行代码或复现实验，非日级 Gate。
+
+- `SF-2025-ARXIV-2507-06608` — Godel，Daily2025-07-11补Jul10；[v1必要原域](https://arxiv.org/html/2507.06608v1)§3–6/Alg1–2/8，2+2+2=6。仅PD独立队列/单GPU SM份额/共享HBM与端到端取舍，保成本模型/异步重配/可行出口及SPF长尾限制，不采headline/同预算或SLO/输出等价保证；current v5只核完整AB/history且不回填v1优先权。未看图像/核代码/复现，runtime状态绑定与回退为项目推导；Newton9/11实际Source/逐字收紧PRE通过，按root协调保存profile/KV调SM而age修正排序稿，Newton§19已实际完整新增/两侧/本人注非writer POST通过，指定单段已生效释放；不授整日DAY。

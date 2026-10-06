@@ -222,11 +222,19 @@ GQA/MQA 仍缓存显式 K 与 V，只是改变 head sharing；更激进的结构
 
 收益是缩小理论缓存对象，代价是专用训练、额外重构计算和 kernel 复杂度。当前证据来自 350M 模型与 30B training tokens，且缺少端到端 decode kernel；无法证明质量和延迟同时成立时，GQA/MQA 的显式 KV 仍是可靠基线。
 
+重复同一层栈的 looped 模型还要区分参数共享与状态共享：各 loop 的 hidden state 不同，朴素缓存仍保存每轮 K/V。一个可重训的分支让旧 token 各轮状态共同写出低维 latent，第一轮另留较小 latent；当前 query 在 latent 空间读出加权表示，再映回输出，不为全历史重构逐轮 K/V。近期窗口仍保留 exact K/V，两部分共同归一化，窗口外的 token 并非直接丢弃。
+
+这同时改变缓存容量与读取计算，却增加 writer/reader、uptraining、位置对齐和固定窗口成本。[HLA 的受限实验](https://arxiv.org/html/2610.07940v1)中，Ouro T=4、A100 80GB、16bit 的短上下文单序列反而更慢；扩大可容纳 batch 的吞吐收益不等于同 batch latency 或生产 SLO。低秩拟合也不是无损 attention，16K 之外尚未测。无法重训、布局不兼容或质量回归失败时，逐轮显式 KV 与已验收的共享布局仍成立。<!-- source-family:SF-2026-ARXIV-2610-07940 -->
+
+Loop深度不扩cache还有一条不同于汇集历史loop的路径：每个layer维护一份latent memory，当前token在各loop以gate覆写，再投影为K/V；新token只有一行位置，但下一token必须消费前token完成最终loop后的状态。这把保存逐loop历史换成学习到的压缩更新，对loop常数不等对context常数，也不继承原模型函数。[MELT的受限迁移](https://arxiv.org/html/2605.07721v1)因而需要chunk-wise训练在并行与部署次序间折中，再用插值和teacher alignment适配；较低KV加weights估计不等完整VRAM或同质量SLO。所有loop、teacher与重训/回归都计费，部分质量仍低于原逐loop缓存，被比较的Ouro在作者所查默认配置下，early-exit只影响所选logit，并不省掉后续loop；MELT的adaptive depth仍未验；更新次序、训练或质量不成立时，保留逐loop显式KV、HLA式已验共享布局与普通decoder，不让固定memory名义批准任意adaptive depth。<!-- source-family:SF-2026-ARXIV-2605-07721 -->
+
 ## Position 与 Cache 的一致性
 
 采用 RoPE 的模型通常缓存已旋转的 K；采用其他位置机制时，应按其实际作用位置解释缓存，不是所有机制都把位置信息写入 K。Decode 新 token 必须使用正确 position index，否则新 Query 与历史 Keys 的相对几何错误。位置编码不会阻止同一请求继续复用 cache：历史 token 在后续 Decode steps 中仍处于原位置，所以它的 K 不需要重算。
 
 跨请求的 Prefix reuse 则更严格：模型配置、token ids、position ids、adapter 和相关 Attention 语义都要兼容。文本看起来相同但 normalization、special tokens 或起始 position 不同，cache 都未必可复用；除非模型与 runtime 明确定义并验证了位置变换，不能把位于不同 offset 的 K 当作同一对象。Prefix Cache 是对这段已验证 KV state 的物理复用索引，不是另一种 Attention 语义，也不是“按文本相似度命中”的语义缓存。
+
+流式输入与输出交替追加时，保持已生成 token 的 position 不变还需要显式分配位置，而不能每来一段输入就把旧输出向后挤。一个可重训的分支预留固定长度的输入 slots，输出从这些 slots 之后开始；slots 用满时，在当前序列末尾分配下一块，训练 Attention mask 同时对齐部署时的 read/write policy，避免旧输出读取当时尚未到达的输入。这样位置与可见性一起构成 cache reuse contract，而不是只改 position id 就让任意已有 hidden state 可复用。[受限流式翻译对照](https://arxiv.org/html/2603.14903v1)支持这种分支，slot 长度与训练/推理 policy 失配会损失质量；算法延迟与 FLOPs 不等端到端吞吐或 SLO。预留空间、专门微调和 mask 管理都付费；不能重训、输入模式不匹配或质量回归时，保留普通因果追加、必要重计算或已验收的 encoder–decoder 分工，不静默改变通用模型的 cache 语义。<!-- source-family:SF-2026-ARXIV-2603-14903 -->
 
 ## Cache 没有解决什么
 
@@ -289,6 +297,10 @@ KV Cache 利用 causal model 的不变量：未来 token 不会改变历史位�
 它显著减少重复计算，却让每个请求拥有随长度增长的显存状态。`L`、`T`、`H_kv`、`d_h`、dtype 和并发共同决定容量，这正是模型架构开始约束推理 runtime 的位置。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2605-07721` — Daily2026-05-12补May11，MELT exact-v1必要§3/4/T1–4/5/C/F1–2，2+2+3=7。仅perlayer latent loop覆写/final-loop后token依赖和chunk训练分责；保非context常数/非dropin、weights+KV非完整VRAM、质量反侧、Ouro配置earlyexit producer与MELT adaptive未验，全部teacher/loop/重训费。未核代码/完整proof/复现；reader Source/actual owner/唯一修版PRE通过，root单段窄授后保存，actual非writer POST待执行。 截至本轮后续有效结论：本项独立reader已实际完整新增/直接两侧/本人注非writer POST通过，root已接纳并释放指定窄位；此前“待”仅过程时态，本次纯行政同步、不重Source/正文、不预授DAY。
+
+- `SF-2026-ARXIV-2603-14903` — Daily `2026-03-18` 补03/17；[ExPosST exact-v1](https://arxiv.org/html/2603.14903v1) §2–4及AppA；2+2+2=6，流式位置预留与policy-consistent mask具体差额深入。保持输入/输出position与可见性合同、重训/slot/质量回退成本，LAAL/FLOPs不授端到端SLO。root必要Source/实际owner/逐字PRE通过并授Ch19窄锁；作者正文与完整局部邻接顺读，root实际225–247正文/完整邻接与本人注299非writer POST通过。未核实现/复现，不授日级验收。
 
 - Stochastic KV Routing（training-time depth-wise KV sharing；Status: Experimental）:
   https://arxiv.org/abs/2604.22782

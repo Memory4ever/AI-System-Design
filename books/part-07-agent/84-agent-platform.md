@@ -87,7 +87,15 @@ goal
 
 因此，模型负责产生语义判断与 action proposal，Agent Runtime 负责状态转换和编排，Tool/Environment 拥有真实副作用，Policy plane 决定哪些转换被允许。只有 terminal evidence 满足任务 contract，才能把“请求成功”提升为“任务完成”。
 
+这条分责还留下一个执行问题：模型只有运行后才选择工具和后续分支，完整依赖图未必能在请求开始时冻结。短小、无状态的 workflow 用直接调用或固定 placement 最容易实现；任务变长、消费者陆续出现后，可以让调用先返回 future，由创建、登记消费者与取值等待这三个事件逐步发现依赖。future 的已完成输出保持不可变，消费者与待执行位置等 metadata 则允许更新；session 关联的用户状态与 KV 驻留另由运行时管理。这样改变的是依赖可见性和 placement 控制，不是让 future 成为外部副作用的提交凭证。
+
+全局控制器若同步参与每次调用，会把局部短任务也拖入全局协调；只在创建时排一次，又不能响应后来显现的依赖和排队压力。一条替代分支由全局周期性计算并安装 policy，再由局部控制器按事件即时执行。迁移时，先确认依赖值是否在途，更新消费者与 executor metadata，待所需依赖和 session state 转移后再激活目标 future；不能只改一个地址就假定状态已到达。这购买动态 routing、优先级和缓存放置能力，也增加 metadata/store 一致性、policy 传播迟滞与迁移成本。Nalar 的受限原型支持这一分工，但不证明外部 effect exactly-once 或故障原子迁移；其不同 policy 的平均完成时间改善也可能伴随 P95 退步，CPU profile emulation 不等真实大规模 GPU 验收。依赖稳定、局部排队已足够，或迁移状态无法安全恢复时，固定 placement 与更简单的执行路径仍应保留。<!-- source-family:SF-2026-ARXIV-2601-05109 -->
+
 这一分责也要反映到 client 接口。把 Agent 当作一个 MCP callable tool，或让一次非交互命令执行到结束，在短任务与既有工具工作流中仍然合理；IDE、桌面和 Web UI 却需要呈现同一请求产生的多个动作、增量内容和审批等待。接口可以把持久会话 Thread、一次用户输入驱动的工作 Turn、以及带类型的输入输出 Item 分开：Item 有 started、可选 delta 和 completed，Turn 则另有自己的结束事件；server 发出的 approval request 暂停当前 Turn，直到 client 回答 allow 或 deny。这样的 presentation primitives 让 UI 能正确归并局部结果，却不授予业务完成权，也不能把一条 agent message 或 item 完成当成整个任务验收。
+
+Typed Item 能承载增量事件，但“等完整文本再渲染”仍会把表现层延迟绑到整个生成结束。当回答需要图表、表单或可交互控件时，一条替代分支是先限制在原生组件库内，再由流式编译器随生成逐步构建界面：模型决定组件组合，展示运行时决定当前片段如何被解释和呈现。这样将用户可见进度与完整回答的等待分开，却没有把已显示的控件变成已经验证的语义结果或行动授权。
+
+这增加组件/schema 兼容、部分状态和交互事件的维护成本；生成尚未结束时，界面必须能表达未完成或失败，涉及外部副作用的按钮仍经既有权限与 tool commit 路径。这是从分责推导的工程要求，不是厂商已公开实现的安全保证。Intelligent UI 的[官方说明](https://openai.com/index/gpt-6-for-everyone/)只披露原生可流式组件及增量编译；没有公开编译器实现、验证协议或可复算的延迟实验，不能由视觉完整推断结果正确或操作安全。纯文本、低交互或无法可靠解释部分结构的任务仍可保留完成后展示的简单路径。<!-- source-family:SF-2026-OPENAI-INTELLIGENT-UI -->
 
 长运行任务的权威状态还必须留在 runtime，而不是浏览器连接里。Client 断线应触发持久 Thread 的回读与展示状态重建，不应仅为恢复界面而重新提交原任务；事件投影需要按身份去重，但这不等于外部 effect 已有 exactly-once 保证。Codex App Server 的公开设计给出了双向事件流、server-side thread persistence 与 ephemeral Web client 分离的例子；代价是 typed binding/schema、client/server 配对与兼容性维护，无法协商所需能力时应保留已验证版本配对或退回较简单的调用接口。其 backward-compatible 目标不证明任意版本配对无故障，TUI 改走这一协议在原文中仍是计划，而非已实现的恢复保证。<!-- source-family:SF-2026-OPENAI-CODEX-APP-SERVER -->
 
@@ -251,6 +259,14 @@ Competence estimate 是随 model、prompt、handbook、tool 和 environment 漂�
 SkillOrchestra 的实验支持 taxonomy、capability routing 与 cost-aware assignment 的组合，但固定 agent pool 和
 benchmark 不证明动态编排普遍优于静态 Workflow。高风险或难以独立验证的任务仍应固定 owner 和 approval。
 
+每回合选择模型也可以先预测终态效用，而不只在当前动作风险越界后升级。一个受限分支编码当前 history，将模型 metadata 与 learned residual 合成候选表示，用离线多模型轨迹的终态分数减后续错误罚项训练共享 estimator，再按预测值选择本回合 executor。它学到的是日志条件下的 outcome proxy，不是已识别每个未选模型的反事实收益；预算耗尽仍由外部 runtime 终止。[必要 history/model 消融](https://arxiv.org/html/2604.23530v1)只支持固定候选池与两类受限任务，商用 router 的不同 pool 不作公平性能证据。轨迹采集、embedding、错误标签、模型切换和重处理 prefix 全计费，少 switch 的相关性不证明 cache 或尾延迟已优化；新模型、环境或代理失配时回固定 executor、经验证的局部升级与独立最终检查，不由预测效用取得动作授权。<!-- source-family:SF-2026-ARXIV-2604-23530 -->
+
+按 task slice 选择能力匹配的 Agent 后，executor 也不必冻结到整个 trajectory 结束。轻量模型可先提出下一 structured tool action，再由当前参数/schema、自身生成信号、状态历史与局部风险元数据判断：低疑虑由本地继续，中间区间付出有限复核，高疑虑把必要状态和候选动作交给强模型；每次工具观测后重新选择，最后仍只提交一个 executor 的动作。这把“整个任务交给谁”细化为“当前一步由谁生成”，不把候选置信度或 MCP 注解升级为行动权限，既有 schema、authorization 与 outcome gate 保持独立。<!-- source-family:SF-2026-ARXIV-2610-07816 -->
+
+这个分支增加 gate 数据、阈值漂移、复核样本与 handoff 成本；失败概率也不等于强模型能救回的概率。[STEPGATE v1](https://arxiv.org/html/2610.07816v1)在同一 Qwen 家族和100个脚本工具任务中支持观测后重路由的局部取舍，但与同预算 random、以及使用更高升级预算的 self-consistency 的差值均不确定，单步对照的实际升级率又不完全一致。经验拟合与小样本 ECE 不签有限风险界，风险标签不是真实危害率，减少远端 token 也不是隐私或端到端成本保证。陌生工具、状态分布漂移或 gate 收益不可靠时，固定 executor、明确人工升级或强模型路径仍合理；强模型亦须过相同执行与最终结果合同。Executor 的选择与 skill 依赖关系因此是不同平台状态。
+
+升级对象换成人，也不能把handoff本身记成质量已恢复：人接手的是已经演进的任务状态，还可能承受等待累积的用户挫折、并发负载和有限处理容量。因此平台设计应把升级原因、等待/交接时点、交给人的原始状态与接管后的真实结果分开保留，分别检验能力缺口和交互恶化，而不是只数“已转人工”。[一组现场部署证据](https://arxiv.org/pdf/2605.14830v1)显示，带人工监督的整套AI部署仍可降低适用任务的客户评分；不同升级类型的差额只是匹配后的关联，不能据此认证更早接管的因果收益、最优阈值或人的固定恢复能力。这里提出的是恢复验收的系统要求，不是论文已交付的监控算法：少数主动评分与重试proxy不替全部用户结果，部署速度也不抵销质量退步。模型/monitor、人工监控、等待和后续修复均计费；恢复支持或人的可用容量不足时，保留直接人工处理、较短自动化路径与明确停止/责任交接，不让升级按钮取得最终完成权。<!-- source-family:SF-2026-ARXIV-2605-14830 -->
+
 Skill 之间也不能只靠平面 tag。`requires`、`composes-with`、`specializes` 或 `supersedes` 等 typed relation 可以
 改善检索与组合，却会把 relation evidence、version、transitive permission 和 revocation 传播变成平台状态：
 
@@ -291,8 +307,7 @@ tests 或紧 SLO 下，应允许把它降级为 advisory，而不是让复用 gu
 
 ### 从 Trajectory 到 Skill 是一次受治理的 Compilation
 
-把成功/失败 trajectory 原样存入 catalog，最忠实却会携带偶然步骤、环境噪声和大量 Context；让模型直接
-总结成“最佳实践”更短，却容易抹掉适用条件和失败 provenance。平台可以把这一步视为 artifact compilation：
+把成功/失败 trajectory 原样存入 catalog，最忠实却会携带偶然步骤、环境噪声和大量 Context；让模型直接总结成“最佳实践”更短，却容易抹掉适用条件和失败 provenance。平台可以把这一步视为 artifact compilation：先冻结原Skill revision，让每个分析者只读共同base与自己的trace，形成相互不可见的proposal，再合并，而不是每份经验立即改变后续分析上下文。错误分析可读取原输入/输出与ground truth，局部fix并重验；它只证明当前oracle下修好，不证明根因唯一或规则可迁移，原episode/fix证据仍作为compilation输入保留。
 
 ```text
 immutable source trajectories
@@ -303,10 +318,7 @@ immutable source trajectories
 → admit / supersede / reject / rollback
 ```
 
-Raw trace、extractor、patch、merge decision、Skill version 和 evaluation result 必须分别保存。Hierarchical merge
-降低重复，却可能把局部建议错误泛化；held-out selection 也会过拟合有限任务，且 patch/section attribution
-并不天然因果。External Skill 易撤销、可审计，适合快速试验；sequential manual edit 在高风险或证据稀少时
-更稳；derived memory 和参数更新则是不同下游分支，不能因 trajectory 被“编译”就获得训练或执行 authority。
+Raw trace、extractor、patch、merge decision、Skill version 和 evaluation result 必须分别保存。Hierarchical merge降低重复，却可能把局部建议错误泛化；新reference与root skill新增链接应成对接纳或丢弃，不让文件存在、无重叠line或格式通过代替语义/迁移验收。[Trace2Skill的有限对照](https://arxiv.org/html/2603.25158v1)支持同base并行与局部修验分支，但较强executor不必是较强Skill author，success总结、跨user/domain和小model并行仍有反退；成对规则是其合并要求，不是已证程序事务保证。Held-out selection也会过拟合有限任务，patch/section attribution并不天然因果。轨迹、工具/GT重验、多worker分析、层merge、格式/diff检查及整skillcontext均付费；External Skill易撤销、可审计，适合快速试验；迁移、引用关系或总费用不合用途时，保留原human skill、rawtrace/较窄reference或sequential manual edit，不由同源多数批准永久替换。Derived memory和参数更新仍是不同下游分支，不能因trajectory被‘编译’就获得训练或执行authority。<!-- source-family:SF-2026-ARXIV-2603-25158 -->
 
 一次 verified execution 也只能成为 compilation input，而不是可直接复用的权威 Skill。去实例化得到的 symbolic
 policy 必须携带 applicability、输入/输出 schema、可靠性证据、revision、失效条件和 fallback；否则“技能复用”
@@ -373,6 +385,8 @@ localization、类 optimizer patch 和 benefit decomposition 的实验性证据�
 库维护本身也可能由可训练策略承担：决策策略选择 action 与 retrieval，维护策略则选择 trajectory segmentation、skill contract 与 curation。决策产生维护数据，维护又改变决策下一轮所见的检索分布，因而 catalog 更新不能只按文本 diff 验收；要分别登记两侧训练目标、reward 与 bank 状态，并以冻结的 policy × bank 交叉测试区分 consumer 升级和库升级。这样才能发现某个 policy 只适配共同演化的库，而非把最终任务收益全归给“更好的 skill”。
 
 双侧学习增加 rollout、库维护和回归组合成本；[受限六游戏实验](https://arxiv.org/html/2604.20987v1)只支持这种共适应分支与交叉对照的必要性，不证明共同训练普遍优于冻结库，也不把训练后 8B 与未匹配总训练预算的 frontier 对照当作等成本比较。原文 episode-end 与 skill-switch 的检索奖励叙述仍有粒度差异，不能补造统一 credit 规则。分布变化或 reward 归属不可复验时，冻结库或人工维护继续合理；可训练维护者也必须经过下面的独立 admission，而不能自行发布新 bank。<!-- source-family:SF-2026-ARXIV-2604-20987 -->
+
+当适配会修改真正的动作policy时，卡住后的检索就不再只是增加context：还可能同时改变训练集、伪动作标签器与决定何时学习的进度sensor。一个[受限闭环分支](https://arxiv.org/html/2605.14211v1#S3)让各agent保留自己的短史与关键帧记忆、共享policy；任一agent长期未见新视觉cluster便暂停全部agent，更新cluster classifier，用真实动作轨迹适配IDM，再由IDM给检索视频标伪动作、训练policy后续跑。因此分类器、IDM、检索数据和policy都要保存对应版本与采集/生成关系，不能把换过进度定义后的“新关键时刻”当作同一测量，或让视觉相关性替伪动作正确性签字。离线IDM读取未来帧不使部署policy获得未来信息，动作标签仍依赖真实交互；某些按钮从像素不可区分，也不会因监督更多而自动可识别。所测两游戏的局部对照不证明真实任务进度、终身不遗忘或开放执行安全，停全部agent还引入同步阻塞。轨迹采集、全视频索引、cluster/IDM/policy训练、暂停与回归均付费；支持或标签失准时，冻结这组共同artifact、保留旧policy/进度定义及独立真实行为验收，而不由卡住信号直接批准新policy。<!-- source-family:SF-2026-ARXIV-2605-14211 -->
 
 Skill admission 的评估还必须拆成三层：artifact 是否覆盖任务与安全约束、Agent 是否在 trajectory 中正确采用、
 最终 outcome 是否通过 verifier。高质量 instructions 可能无人使用，频繁使用也可能执行错误：
@@ -478,6 +492,10 @@ Workspace 不是新的授权主体：credential 必须按 step 和 resource 缩�
 和 least privilege，却新增镜像/secret rotation、policy skew、tenant escape、orphan cleanup 与成本回收问题。
 短、只读、无副作用的任务仍适合轻量 sandbox。NVIDIA Secure Agent Workspace 只提供 reference-architecture
 证据，不能作为其 alpha implementation 已具备生产多租户成熟度的证明。
+
+部署开关还须区分新执行准入与已受理工作的回执、取消和收尾。关闭高风险Shell可以拒绝fresh初始输入和后续Turn，但原幂等key应先找回既有决定，合资格的approval/cancel/settlement仍沿原授权处理，不能为阻止新工作而遗失旧状态。固定definition的profile、approval、revision与digest不由新默认覆盖；公有和可信内部执行policy若共享入口，重放也必须核对policy-kind，公开allowlist不能自行mint内部身份。<!-- source-family:SF-2026-QWEN-CODE-13674 -->
+
+这增加reader升级、持久policy和跨层negative controls的成本；禁止fresh work不证明旧worker物理静默，更不授权新的background、child或lifecycle能力。[Qwen Code的受限公开Shell切片](https://github.com/QwenLM/qwen-code/pull/13674)保持默认off、强制询问审批与内部profile隔离，其H2/特定CI证据不覆盖Windows、物理恢复或完整生命周期。前提不齐时保持未开放并允许合资格收尾，不把一次界面能力标志当作全链执行验收。
 
 ## 三个平面
 
@@ -597,7 +615,12 @@ Agent parent 的整体预算不能充分表达一次 tool subprocess 的短时�
 
 [AgentCgroup 的必要对照](https://arxiv.org/html/2602.09345v1)支持这一资源域分支，却仅在 patched kernel 上将三条 trace 加速50倍重放；HIGH allocation P95 改善不是 live Agent 端到端 latency 或生产多租户保证。memcg_bpf_ops 尚在 upstream review，优先级保护会给 LOW 工具增加等待，初始化、大镜像与 retry 积累仍未解决。新控制点需要 kernel/runtime 资格、child 生命周期和 tool deadline 对齐；hooks 不可用、冻结会破坏工具时限或身份无法归属时，保留已验证的容器限额、较保守资源预留和显式失败/恢复路径，不以平均 burst 特征替代 admission。<!-- source-family:SF-2026-ARXIV-2602-09345 -->
 
+控制每次 tool 的资源之后，还要独立选择**实例粒度与生命周期**。共享大实例容纳多个 Agent，能减少创建与管理工作，在资源需求相近时仍合理；另一条分支让较小实例承载单个 task/Agent，再分别选择每任务创建回收的 ephemeral 模式，或从 persistent pool 领取并复用实例。小粒度不自动等于 ephemeral，复用也不等于恢复完整任务状态：任务完成事件、实例生命周期及后续 metadata/artifact 收集是不同观察对象，不能由“释放了实例”推出外部 effect 或证据已经提交。<!-- source-family:SF-2026-ARXIV-2601-07526 -->
+
+[MegaFlow 的受限实现](https://arxiv.org/html/2601.07526v1#S2)把生命周期选择与实例粒度分开，并在任务入口同时考虑 API rate、并发 semaphore 与管理员配额。较小的单 Agent 实例和共享大实例具有不同 CPU、内存与网络配置，persistent 复用又减少冷启动；Alibaba 下的成本/完成时间结果因而只是这些配置的取舍，不证明同资源算法加速、GPU 利用率或其他云收益。管理、启动、配额协调与证据收集仍付费，低稳态 CPU 使用也不等于更高计算利用率；动态模式切换仍是未来工作，更没有原子恢复、强一致或完美隔离保证。冷启动/控制面配额占优时保留池复用，短小稳定任务可继续共享实例；失败后的任务恢复仍交由独立的 run state 与 effect 验收，不能只复用物理环境。
+
 ### Harness、Protocol 与 Credit 都是 Platform-owned Artifact
+
 
 <!-- semantic-body-binding:SF-PROTOCOL-DRIVEN-DEVELOPMENT-GOVERNING-GENERATED-SOFTWARE-THROUGH-INVARIA:start -->
 生成代码若只是最终文本，reviewer 无法知道哪些 invariant 在演化中持续成立。Protocol-driven 分支把允许的 state
@@ -652,6 +675,10 @@ load internal checkpoint
 Checkpoint owner 只能证明内部状态已恢复；Tool/Environment 拥有外部副作用，Policy plane 拥有继续授权，Workflow owner 必须根据对账结果提交 resume。这会增加 event receipt、dependency snapshot、compensation 和人工升级成本；短、无副作用、可完全重算的 run 仍可直接从头执行，不必引入重型恢复协议。现有实验证明多个 Agent framework 存在这类 execution-continuity 缺口，却不证明一种恢复算法已对任意工具链完备。
 
 <!-- source-family:SF-2026-ARXIV-2608-29381 -->
+
+恢复compute前还要区分“看不到writer”与“已确认旧incarnation终止”。Node离线、daemon断开、paused VM或unknown observation不能授权replacement；拥有该compute的节点重新在线后，只有证明exact incarnation不存在或已终止、exact cleanup成功且保留的Session可继续，才进入release。Device撤权、allocation/placement释放与retainability应在Session lock中复核compute revision；并发archive、delete或新的compute transition优先，不能让旧观察覆盖新状态。<!-- source-family:SF-2026-OPENAGENTCORE-667 -->
+
+这种qualified recovery减少永久owned的废弃compute，却增加provider语义、lease、锁顺序和native-history验证成本。[OpenAgentCore的受限实现](https://github.com/MiniMax-AI/OpenAgentCore/pull/667)保留filesystem、native ID和pending input，并不重放旧输入；缺history须显式失败，不能悄悄创建新native root。其VM-loss验收不证明host-crash持久性或任意crash-tail完整，ID相同也检不出可解析的截断尾。不能取得上述资格时继续保留ownership、隔离或人工恢复，不能用超时或新容器可启动替代旧writer已被安全释放。
 
 Runtime 还需要显式的 **stop controller**。固定 step/token cap 在成本可预测、缺少可靠 outcome sensor 时仍最安全，但它会让已经收敛的 trajectory 继续消耗资源，也可能在尚有高价值下一步时粗暴终止。更细的 controller 在每个可恢复边界估计下一步的 expected task value，并与 marginal energy、token/tool cost、deadline risk 和 failure exposure 比较：
 
@@ -807,6 +834,8 @@ causal links 都正确。平台应保存 transformer/model revision、node-to-ev
 
 Agent definition 更新可能改变 tool path 和长期 state，rollout 比模型 endpoint 更复杂：
 
+模块测试和单个 tool receipt 能确认局部行为，却可能漏掉真实入口没有启用新功能、配置未传到下游或后台恢复走回旧路径。发布验证应从完整用户入口和默认配置执行，让下游消费本次真实上游 artifact，并保存固定 baseline 与能让错误实现必失败的场景；否则测试全绿仍不证明新路径被实际采用。依赖串链也不能由更多 Agent 自动变成并行收益。MiniMax 的局部工作流审计为这些缺口提供具名反例，不证明单 owner 或跨模型复核具有普遍因果优势；入口重放、独立复核与回归维护均付费，链路未接通或验证范围不足时保留旧版本与人工验收，不让作者完成声明自行触发 rollout。<!-- source-family:SF-2026-MINIMAX-WORKFLOW-20261008 -->
+
 - shadow 在 sandbox 执行或只比较 proposals；
 - canary 按 tenant/task class 放量；
 - old/new versions 可能读取不同 memory schema；
@@ -949,6 +978,8 @@ sealed identity 减少供应链歧义，却增加签名、缓存和发布治理�
 ### Idle Time 只能生成可取消的 Speculation
 
 Agent 空闲时什么都不做最安全；在下一需求可预测且 memory 可控时，可预读记忆或预取证据。Proactive controller 必须把这些结果保存为未提交 speculation，绑定预测需求、权限、freshness 与取消条件，真正请求到来后重新 admission。收益是降低首响应延迟，代价是额外 compute、隐私暴露和 stale work；预测错误或成本过高时应取消并回退 demand-driven path。exact-v1 只支持 ProActEval/MemBench 与论文设定，不证明生产用户意图可预测。<!-- source-family:SF-2026-ARXIV-2605-25971 -->
+
+Idle window中的能力学习还需把投资与实际复用分开：只有qualified、publish并真正被使用的产物才获得复用收益，durable progress、停止ack、memory释放与真实capacity-ready不是同一时刻。保留服务 runtime 状态用驻留换较短return time；冷恢复费用也可能使等待更长窗口优于立即开工。[LearnSched 的受限模型](https://arxiv.org/html/2610.06212v1)只在准确有限transition、价值与safe actions下保证rollout不退，不能给未知arrivals硬SLO。所测960个warm情景全部持平、rollout仍有13例未达DP，实机部件测量不等在线控制器验收。Failed、unpublished、unused投资和GPU/host驻留都计费；收益预测、ready时延或资源安全未过时保留不启动、costed-window基线与前台优先，不以command ack或少token替代可复用能力及资源归还。<!-- source-family:SF-2026-ARXIV-2610-06212 -->
 
 ### Agent Lifespan 需要纵向 Reliability Contract
 
@@ -1140,9 +1171,21 @@ versioned、addressable 且 dependency-aware 的 durable state，并声明 autho
 
 短 workflow 把中间输出当临时文件最轻量，但中断恢复、增量复算和多消费者需要 typed、versioned、addressable、dependency-aware 的 artifact。数据模型应记录 authoritative producer、consumers 与 lineage，模型只能提出 materialization，平台验证后提交或替换。持久化增加存储、索引、schema migration、权限和 stale dependency；authority 冲突时应停止物化，回退 append-only event/log state 与人工 reconciliation。可寻址只证明能恢复，不证明 artifact 语义正确，仍需对应 verifier。
 
+中间产物较大时，可寻址还要转成明确的读取协议：生产者把完整分析和工具结果保留在 raw artifact，另写较短的 map，指明有哪些对象、路径与用途；消费者先按 map 选择，再读取所需原件，而不让每次交接都重发全部内容。map 是导航和读取 proposal，不是 raw 语义或事实的替代，须与生产者、原件版本和可接受的读取权限绑定。[有限模型研究工作流对照](https://arxiv.org/html/2604.13018v1#S3)以文件总线和 append-only 分工承载这一接口，但整体去掉总线的消融不识别 map／raw 单层因果，较简单工作流还更便宜，也不证明通用自动研究质量。文件维护、上下文读取、实验 GPU、grader 与恢复验证全部计费；路径失效、版本漂移或权限冲突时，保留已核验的直接交接和原始日志／artifact，不从短 map 或追加日志签发完整性、事务性或完成 verdict。<!-- source-family:SF-2026-ARXIV-2604-13018 -->
+
 <!-- semantic-body-binding:SF-INTERMEDIATE-ARTIFACTS-AS-FIRST-CLASS-CITIZENS-A-DATA-MODEL-FOR-DURABLE- -->
 
 ## Review notes
+
+- `SF-2026-ARXIV-2604-23530` — Daily2026-04-29补Apr28自然日；[exact-v1](https://arxiv.org/html/2604.23530v1)§3/4.1–4.2/Limitations，2+1+2=5，history×model logged-outcome estimator逐turn选择的具体gap深入。不是反事实Q，外budget termination非已给显式budgetfeature，pool差异/CI与std/switchcache及一次offline采集全费近文；不授通用SLO/动作合法性。root必要Source/actual owner/A22逐字PRE通过并授本单段+本人注窄lease；root非writer实际新增正文、完整两侧及本人注POST通过，窄lease释放，作者仅同步已发生行政状态，未核实现/复现，不授DAY。
+
+- `SF-2026-MINIMAX-WORKFLOW-20261008` — Daily `2026-10-09`；[官方工作流审计](https://agent.minimax.io/docs/techblog/coding-agent-workflow-and-skills) 必要完整核心，2+1+2=5。仅采用默认入口、配置传播、background resume 的具名反例与真实 artifact/baseline 验证条件；不授单 owner/跨模型复核的因果最优或实现/生产效果。root Source/逐字 PRE 与非writer实际818–852完整邻接、新827正文和本注 POST 通过，非日级验收。
+
+- Daily `2026-10-08`：`SF-2026-ARXIV-2610-07816`，[STEPGATE v1](https://arxiv.org/html/2610.07816v1) §3–5/A.6/C；采用observation后action-level executor gate，不采用finite-risk/cost/energy/privacy保证。Qwen1.5/7B4bit、100脚本平均4.1步/max8、paired bootstrap10k/McNemar与同预算random/更高预算selfcons的不确定差值近正文；single-step实际升级率不同、协议建议非已完整执行，未核artifact。
+
+- `SF-2026-ARXIV-2601-07526` — Daily `2026-01-14` 增量；[MegaFlow exact-v1](https://arxiv.org/html/2601.07526v1) §2–3。2+2+2=6，实例granule×ephemeral/persistent生命周期差额深入；Alibaba配置/低CPU/启动配额和证据收集费用近文，不授原子恢复、强一致、完美隔离或GPU加速。peer必要原证/actual owner PRE通过、root授窄锁；作者实际正文与完整邻接顺读，root 非写者 actual POST 已通过（新正文、完整局部邻接与自身末注实际顺读）。未核artifact/复现，不授整日Gate。
+
+- `SF-2026-ARXIV-2601-05109`（Experimental）：Daily `2026-01-10`补查；[exact-v1](https://arxiv.org/html/2601.05109v1) §3.1–3.4、§4.1–4.3、§6.1–6.3。采用动态future消费发现、immutable output/mutable placement及global-policy/local-enforcement分责；迁移次序保留，不授effect exactly-once或故障原子性。2节点各4 A10080GB/100GbE/vLLM LLaMA8B与64 CPU节点emulation分开，SRTF/LPT的P95反侧保留，precision/完整length与质量等价未充分披露，不采用通用倍数。日作者必要源/actual owner PRE，root实际方法、迁移及必要评价/完整邻接核后写两段；非写入者实际顺读52–113的两段、完整邻接与末注，POST通过，未核实现/复现，非日级完成。
 
 - `SF-2026-ARXIV-2603-02176`：[exact-v1](https://arxiv.org/html/2603.02176v1) §2.1–2.2/§3/§4.1–4.2；Daily 2026-03-04，2+2+2=6。采用 active/dormant/run-selected graph 生命周期，不采200k部署或纯DAG同预算收益；oracle同skills但额外Opus planner、图深度/调用预算、pairwise judge及artifact转换反证保留。作者必要源→owner差额及实际MCP/Platform邻接检查完成，root非作者必要源→实际正文/邻接POST通过，未复现实验。
 
@@ -1201,8 +1244,7 @@ Primary-source 与官方入口：
   https://arxiv.org/abs/2603.18743
 - Agent Skills Can Be Harmful（differential failure/cost attribution；Status: Experimental）:
   https://arxiv.org/abs/2608.11888
-- Trace2Skill（Status: Experimental；trajectory-to-versioned-Skill compilation）:
-  https://arxiv.org/abs/2603.25158
+- `SF-2026-ARXIV-2603-25158` — [Trace2Skill exact-v1](https://arxiv.org/html/2603.25158v1) §2–4/T1/T3–6/§6、B2.1/B3.1；仅同baseproposal/局部修验与reference-link合并资格。保跨author/user/任务反退、共享oracle、merge层数和总费用；不采根因唯一、程序事务、普遍transfer/检索差因果或生产SLO，未核代码/复现。
 - Notes2Skills（Status: Experimental；epistemic-status-preserving note-to-Skill compilation）:
   https://arxiv.org/abs/2606.11897
 - ASPIRE（trajectory-to-Skill discovery and validation；Status: Experimental）:
@@ -1328,3 +1370,15 @@ Review note：`SF-2026-ARXIV-2606-29472`；Method `https://arxiv.org/pdf/2606.29
 - `SF-2026-KIMI-CLI-1-9` — Daily `2026-02-07`；[官方 1.9.0 release](https://github.com/MoonshotAI/kimi-cli/releases/tag/1.9.0)、[Wire replay PR #1005](https://github.com/MoonshotAI/kimi-cli/pull/1005)、[接口背景 PR #910](https://github.com/MoonshotAI/kimi-cli/pull/910)。仅采用 request-shaped archive 与 live replyability 的分责；release `2026-02-06T18:38:03Z`，背景接口在窗前合并，不作为本日新贡献。必要 source 与实际 typed Session owner 已由 root 写前独立核验，实际正文待非作者 POST；仅静态审阅 patch 与新增测试，未运行客户端或复现实验，不声明恶意客户端已被完整阻止。
 
 - `SF-2026-ARXIV-2602-09345` — Daily `2026-02-12`；[AgentCgroup exact-v1](https://arxiv.org/html/2602.09345v1) §3.1–3.4、§5–7。2+2+2=6，具体 resource-domain 缺口深入，仅采用 agent parent/tool child cgroup 与 soft-limit throttle/freeze 分责；patched kernel、3trace×50 replay、allocation≠Agent E2E、LOW等待及初始化/retry限制邻近。root 必要 source→owner 写前核通过并授窄锁；root 已实际核两段、邻接及本末注，非作者 POST 通过，窄锁释放。未运行代码/复现，非日级 Gate。
+
+- `SF-2026-QWEN-CODE-13674` — Daily2026-10-13；[PR13674](https://github.com/QwenLM/qwen-code/pull/13674)及merge `a8990042e648a7807e251d99b3d37c0ee8c16100` Store replay/fresh gate、reserved Compiler/profile、Properties及两admission tests，1+2+2=5，受影响安全接口深入。只采fresh admission/合资格settlement与public/internal policy provenance分离，保defaultoff、旧reader/Windows/physical恢复及作者CLI661/663限制，未运行部署。root必要源与实际owner/PRE通过；today_institutions窄写已落实，root实际正文/完整邻接与本末注非writer POST通过，窄锁释放。
+
+- `SF-2026-OPENAGENTCORE-667` — Daily2026-10-13；[PR667](https://github.com/MiniMax-AI/OpenAgentCore/pull/667)、merge `48292f409a042e2b8bb8588c87e1e1a7004dc867` Confirmed-compute-loss文档/idleCompute/releaseLostCompute/cleanup与positive/negative/concurrent tests，2+2+2=6，writer-release正确性资格深入。仅exact incarnation/cleanup/locked revision/retained continuation，保offline/paused/unknown与host-crash/crash-tail未qualify，不授任意无丢失或exactly-once。root实际必要源、owner与PRE通过；today_institutions窄写已落实，root实际正文/完整邻接与本末注非writer POST通过，窄锁释放，未复现native场景。
+
+- `SF-2026-ARXIV-2604-13018` — Daily2026-04-16补Apr15，supp_apr16_author；[exact-v1](https://arxiv.org/html/2604.13018v1)必要filebus方法/评价/限制见本日SUP R53，2+2+2=6，map/raw artifact读取分层具体owner差额受影响深入。保append-only权限而非真值、去bus整体消融/简单工作流反侧与全部费用；不授单层因果/完整自动研究或ACID，未核实现或复现。R53 Source/R28date有效，reader R53必要Source/R28 date/R76逐字PRE/R80实际单段、完整邻接及本人注POST通过；作者仅同步本人注并实际读回，不授DAY。
+
+- `SF-2026-ARXIV-2605-14830` — Daily2026-05-16补May15，supp_may16_author；[exact-v1 PDF](https://arxiv.org/pdf/2605.14830v1)pp7–17、24–25/T1–5、35–37/B–C，2+2+2=6，human接管的状态/恢复边界深入。仅采随机整套部署仍可能质量退步与handoff恢复分责；升级类型/时点是匹配关联，保主动评分缺失、人数分配比例/表均值口径与log系数限制，不授早接管因果/阈值/心理机制。监控实现与全费/生产SLO未披露，未取得私有chat或复现实验；恢复验收要求为本项目推导。
+
+- `SF-2026-ARXIV-2605-14211` — [exact-v1](https://arxiv.org/html/2605.14211v1)§3/Al1–4、§4.1–4.5/T1/§5/F Al5/H必要域，2+2+2=6，root R162首读、作者A167另一人/root R170具体owner核。仅检索集/进度classifier/IDM/policy共同更新与暂停恢复分责；保真实动作/视觉不可辨、cluster非进度、12轨迹非12训练、288/384GPUh及全索引/训练费，不授开放学习安全/终身无遗忘或v5榜单。未核实现/复现。
+
+- `SF-2026-ARXIV-2610-06212` — [exact-v1](https://arxiv.org/html/2610.06212v1)，Daily2026-10-07/Oct6窗，2+2+2=6；§2–7投资/reuse-window/durableprogress/ready与有限模型、warm全tie反侧；reader1 §17必要Source/date/owner通过，literal PRE/实际POST另记，未核实现/复现。

@@ -1,0 +1,1660 @@
+Rethinking the design space of Vanilla Pixel Diffusion Transformers
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Related Work
+3 Model Prediction Parameterization
+3.1 Motivation
+3.2 MFlow: Direction-Adaptive Learnable Reparameterization
+3.3 Toy Example
+4 Signal Modeling
+4.1 Motivation
+4.2 ConvRefiner: A simple post-hoc fix
+5 Experiments
+6 Discussion
+7 Conclusion
+References
+A Appendix
+A.1 Hyperparameters
+A.2 MFlow Implementation Details
+A.3 Why MFlow Uses uu-prediction
+A.4 Surprising behaviour LPIPS on the Learned 𝑴{\bm{M}}-Curve
+A.5 A Capacity-Constrained View of 𝒙0{\bm{x}}_{0}- and 𝒖{\bm{u}}-Prediction
+A soft velocity budget.
+A.6 Radially-Averaged Power Spectrum
+A.7 Refiners
+A.8 Limitations.
+License: CC BY-SA 4.0
+arXiv:2610.23854v1 [cs.CV] 16 Oct 2026
+Rethinking the design space of Vanilla Pixel Diffusion Transformers
+Soumik Mukhopadhyay
+††thanks: Work done while an intern at Adobe Research.
+Affiliation:  University of Maryland, College Park
+Affiliation:  Adobe Research
+Long Mai
+Affiliation:  Adobe Research
+Abhinav Shrivastava
+Affiliation:  University of Maryland, College Park
+Aniruddha Mahapatra
+††thanks: Project lead.
+Affiliation:  Adobe Research
+Abstract
+Pixel-space diffusion models have recently re-emerged as a compelling alternative to latent diffusion, avoiding the lossy latent bottleneck and separately trained autoencoder. JiT shows that a vanilla diffusion transformer can generate directly in pixel space by replacing the commonly used velocity prediction (𝒖{\bm{u}}) with clean image prediction (𝒙0{\bm{x}}_{0}). In this work, we revisit this choice and introduce MFlow, an adaptive parameterization that learns to interpolate between 𝒙0{\bm{x}}_{0} and 𝒖{\bm{u}} prediction across principal directions of the data, which can be learned end-to-end with diffusion model training. We find that the preferred parameterization varies systematically with the data representation and model capacity. Notably, increasing model capacity shifts preference toward 𝒖{\bm{u}} prediction from 𝒙0{\bm{x}}_{0} prediction. We evaluate MFlow across ImageNet, UCF-101 video, and large-scale text-to-image generation, demonstrating competitive or improved generative performance across diverse settings.
+In addition, we find that vanilla pixel diffusion transformers, irrespective of parameterization, retain a persistent high-frequency deficit relative to real images. To address this, we introduce ConvRefiner, a lightweight convolutional module trained post-hoc with adversarial loss while keeping the diffusion backbone frozen. With only a small amount of additional training, ConvRefiner restores the high-frequency statistics of generated images while preserving FID.
+Project webpage: soumik-kanad.github.io/mflow-diffusion.
+Figure 1: Sample 512px text-to-image generations with our MFlow-XXL/16 model.
+1 Introduction
+Diffusion and flow-based models have become a leading paradigm for visual generation in recent years.
+Modern versions of these models predominantly operate in the latent space, obtained from compressing the pixel-space data with a separately-trained autoencoder.
+However, latent diffusion models (LDMs) (Rombach et al. (2022); Peebles and Xie (2023); Ma et al. (2024); Esser et al. (2024); Yu et al. (2025); Singh et al. (2026)) introduce their own limitations – a lossy bottleneck leads to unfaithful reconstruction after compression, and there is a need for a separately trained compression autoencoder, which is typically unaware of the downstream generative objective.
+Recent works (Li and He (2026); Chen et al. (2026b); Yu et al. (2026); Mukhopadhyay et al. (2026); Chen et al. (2025b); Ma et al. (2026b); Ma et al. (2026c); Wang et al. (2026c)) have revived diffusion directly in pixel space for image generation, removing the
+aforementioned drawbacks in LDMs.
+In particular, JiT (Li and He (2026)), demonstrates that vanilla diffusion transformers can achieve competitive generative performance directly on raw pixels, eliminating the need for pretrained autoencoders or complicated architectural modifications.
+Its aggressive patchification keeps the
+sequence length manageable, e.g., its 16×1616\times 16 patchification produces
+equivalent number of tokens as a 16×16\times spatial compression VAE followed
+by 1×11\times 1 latent patchification.
+At the same time, such aggressive patchification poses a challenge in pixel-space diffusion as each token must
+model a high-dimensional block of raw pixels, raising two questions:
+what prediction parameterization is best suited to such high-dimensional
+patches, and can a vanilla large-patch transformer faithfully model
+fine-scale image details? In this work, we aim to improve the
+pixel-space diffusion paradigm along these axes.
+JiT addresses the first question with clean-image (𝒙0{\bm{x}}_{0}) prediction.
+Under the manifold assumption, clean data lies near a low-dimensional
+manifold, whereas noise and velocity span the ambient space, making
+𝒙0{\bm{x}}_{0} easier for an undercomplete network to predict. However, sampling requires converting 𝒙0{\bm{x}}_{0} to 𝒖{\bm{u}} (velocity), which becomes ill-conditioned near the low-noise regime.
+AsymFlow (Chen et al. (2026a)) reduces this problem by predicting
+𝒖{\bm{u}} in a selected rank-rr PCA subspace and 𝒙0{\bm{x}}_{0} in its
+complement, keeping the prediction target effectively in a low dimensionality. However, this hard binary cutoff rank must be chosen for each setting through expensive training sweeps, e.g., AsymFlow needed 6 trainings to tune the rank-rr.
+Where as Jin and Wang (2026) use a learnable but globally shared interpolation between 𝒙0{\bm{x}}_{0} and 𝒖{\bm{u}}, not reducing the effective noise dimensionality.
+We introduce MFlow, an adaptive parameterization with a
+continuous gain mi∈[0,1]m_{i}\in[0,1] for every principal direction of data. Notably, this differentiable velocity-recovery formulation
+lets us jointly train the generator and gains with the standard
+velocity-space flow-matching loss, letting model learn the best combination of 𝒖{\bm{u}} and 𝒙0{\bm{x}}_{0} per principal component. MFlow therefore
+replaces the AsymFlow’s manually selected rank and binary mask with a
+continuous parameterization that adapts to the data representation,
+objective, and model capacity.
+Our experiments show that MFlow can be adapted not only to pixel-space image generation, but also to diverse paradigms, like pixel-space video generation, text-to-image generation at multiple model capacities, and high-dimensional latents like RAEv2 (Singh et al. (2026)). Further visualization of the learned
+direction-wise gains as 𝑴{\bm{M}}-curves, a plot of mim_{i}’s in decreasing direction variance order, reveal interesting insights, such as increasing model capacity
+shifts more directions toward velocity-like prediction.
+Prediction parameterization alone does not resolve all limitations of
+vanilla pixel diffusion transformers. Irrespective of the parameterization,
+we find that JiT-family models exhibit a persistent high-frequency deficit
+relative to real images. This suggests a limitation
+of the minimalist large-patch design, where patch tokens are projected
+directly back to pixels using MLP-layers without an explicit local refinement pathway. We
+introduce ConvRefiner, a lightweight residual convolutional
+module trained post hoc with perceptual and adversarial supervision while
+keeping the diffusion backbone frozen. With only 5% post-hoc training,
+ConvRefiner brings the generated high-frequency spectrum closer to that of
+real images while preserving FID.
+Overall, this work presents adaptive prediction parameterization and fine-scale signal modeling
+as complementary directions for improving vanilla pixel diffusion transformers.
+To summarize, the key contributions are:
+•
+We introduce MFlow, a framework of continuous, direction-adaptive prediction
+parameterization whose gains are learned jointly with the generator
+under a standard velocity-space flow-matching objective. We show MFlow is a general framework and can be used for diverse domains like pixel-space video generation, high-dimensional latents (like RAEv2) in addition to pixel-space image generation.
+•
+We identify a high-frequency deficit in vanilla
+JiT-style models and introduce ConvRefiner, a lightweight post-hoc
+module that restores high-frequency details while preserving fidelity matching the frequency spectrum of real images.
+Figure 2: Additional Text-to-Image Results. Sample 512px text-to-image generations with our MFLOW-XXL/16 model.
+2 Related Work
+Pixel-space diffusion and prediction parameterization.
+Early diffusion models generated directly in pixel space (Ho et al. (2020); Nichol and Dhariwal (2021); Dhariwal and Nichol (2021); Karras et al. (2022)), while subsequent works improved the scalability of end-to-end pixel generation through architectural and formulation advances (Jabri et al. (2023); Hoogeboom et al. (2023); Hoogeboom et al. (2025); Crowson et al. (2024); Chen et al. (2025b); Mukhopadhyay et al. (2026)). Recent approaches have renewed interest in pixel-space generation using vanilla or specialized transformer architectures (Li and He (2026); Chen et al. (2026b); Yu et al. (2026); Guo et al. (2026)), with recent studies further exploring its scaling to text-to-image generation (Jiang et al. (2026); Wang et al. (2026c); Ma et al. (2026b); Yu et al. (2026); Ma et al. (2026c); Chen et al. (2025b)). In the context of our parameterization study, JiT (Li and He (2026)) advocates clean-image prediction for high-dimensional pixel modeling, an approach also adopted by recent large-scale pixel-space models such as Tuna-2 (Liu et al. (2026)). k-Diff Jin and Wang (2026) and AsymFlow Chen et al. (2026a) further explore adaptive combinations of clean-data and velocity prediction. Instead of deciding a predefined fixed formulation, which can vary across architectures and datasets, MFlow lets the model learn the best fit between clean image and velocity prediction.
+Details and frequency modeling.
+Several recent works study the difficulty of modeling fine-scale information in
+vanilla pixel-space diffusion transformers with large spatial patch sizes, such as
+16×1616\times 16–32×3232\times 32. Existing approaches use perceptual
+supervision (Ma et al. (2026c)), frequency-aware objectives or
+flows (Degeorge et al. (2026); Pavasovic et al. (2026); Fan et al. (2026)), frequency-specialized
+architectures (Ma et al. (2026b); Ma et al. (2026a)),
+or improved information pathways (Guo et al. (2026)). Concurrent work also shows
+that a frozen JiT model can recover additional high-frequency detail through
+self-guidance (Fu et al. (2026)). Although some of these approaches also improve
+training efficiency (Degeorge et al. (2026); Ma et al. (2026b)), they generally introduce specialized
+architectural components or modify the training objective, and their generated
+frequency statistics can still exhibit a high-frequency gap relative to real
+images (Degeorge et al. (2026); Ma et al. (2026b); Pavasovic et al. (2026)). In contrast, our lightweight ConvRefiner is trained
+post hoc while keeping the pretrained diffusion backbone frozen. It recovers the
+missing high-frequency statistics without modifying the backbone or its original
+training procedure, while preserving FID.
+3 Model Prediction Parameterization
+3.1 Motivation
+Flow Matching. In the linear stochastic interpolant/rectified-flow formulation used by SiT (Ma et al. (2024)) and JiT (Li and He (2026)), for signal 𝒙0∼pdata{\bm{x}}_{0}\sim p_{\text{data}} and noise ϵ∼𝒩⁡(𝟎,𝑰)\bm{\epsilon}\sim\mathcal{N}(\bm{0},{\bm{I}}), both in ℝD\mathbb{R}^{D}, the forward interpolation at timestep tt:
+𝒙t=t​𝒙0+(1−t)​ϵ{\bm{x}}_{t}\;=\;t\,{\bm{x}}_{0}+(1-t)\,\bm{\epsilon}.
+The generative process is the probability-flow ODE that transports pure noise ϵ\bm{\epsilon} (t=0t=0) to clean signal 𝒙0{\bm{x}}_{0} (t=1t=1) along the conditional expectation of the interpolant’s time derivative, the velocity field 𝒖(𝒙t,t)=𝔼[⁡d​𝒙t⁡d​t|𝒙t]=𝔼[𝒙0−ϵ|𝒙t]{\bm{u}}({\bm{x}}_{t},t)=\mathbb{E}\mathopen{}\mathclose{{\left[\frac{\mathop{}\!\mathrm{d}{\bm{x}}_{t}}{\mathop{}\!\mathrm{d}t}\middle|{\bm{x}}_{t}}}\right]=\mathbb{E}\mathopen{}\mathclose{{\left[{\bm{x}}_{0}-\bm{\epsilon}\middle|{\bm{x}}_{t}}}\right].
+A network f𝜽​(𝒙t,t)f_{\bm{\theta}}({\bm{x}}_{t},t) is trained by regressing a target derived from
+(𝒙0,ϵ,t)({\bm{x}}_{0},\bm{\epsilon},t).
+Adaptive parameterization. Common non-adaptive parameterization/regression-targets include: noise ϵ\bm{\epsilon}-prediction, velocity 𝒖{\bm{u}}-prediction , and clean signal 𝒙0{\bm{x}}_{0}-prediction. These are algebraically equivalent but differ in conditioning. EDM (Karras et al. (2022)) introduces an input/output preconditioning, where the network effectively predicts a noise-level dependent combination of clean data and noise. However, JiT (Li and He (2026)) demonstrates that such a preconditioning substantially underperforms 𝒙0{\bm{x}}_{0}-prediction for high-dimensional pixel patches using a vanilla transformer backbone, motivating the use of standard clean image prediction. More recently, k-Diff (Jin and Wang (2026)) introduces a learnable scalar interpolation between prediction targets, showing that the preferred parameterization varies across pixel and latent representations. However, its globally shared coefficient cannot account for directional differences within a representation.
+AsymFlow (Chen et al. (2026a)) addresses this limitation by assigning velocity 𝒖{\bm{u}}-prediction to a selected low-rank subspace while clean image 𝒙0{\bm{x}}_{0}-prediction in its complement.
+More concretely, let
+𝑼=[𝒗1,…,𝒗D]{\bm{U}}=[{\bm{v}}_{1},\dots,{\bm{v}}_{D}] be the orthonormal patch-PCA eigenvectors of the data (variances
+λ1≥⋯≥λD\lambda_{1}\geq\dots\geq\lambda_{D}), and let 𝑨=𝑼:,1:r{\bm{A}}={\bm{U}}_{:,1:r} be the top-rr directions with 𝑨T​𝑨=𝑰r{\bm{A}}^{\mathrm{T}}{\bm{A}}={\bm{I}}_{r}, then the orthogonal projector 𝑷=𝑨​𝑨T{\bm{P}}\;=\;{\bm{A}}{\bm{A}}^{\mathrm{T}} has the properties 𝑷2=𝑷{\bm{P}}^{2}={\bm{P}} and (𝑰−𝑷)​𝑷=𝟎({\bm{I}}-{\bm{P}}){\bm{P}}=\bm{0}. Their model predicts the asymmetric target 𝒖A=𝒙0−𝑷​ϵ{\bm{u}}_{\mathrm{A}}\;=\;{\bm{x}}_{0}-{\bm{P}}\bm{\epsilon},
+i.e.,
+predict the full clean signal, but only the low-rank projection of the noise.
+Because 𝑷{\bm{P}} is
+a projector, the target splits cleanly into the velocity inside the subspace 𝑷​𝒖A=𝑷⁡(𝒙0−ϵ)=𝑷​𝒖{\bm{P}}\,{\bm{u}}_{\mathrm{A}}={\bm{P}}({\bm{x}}_{0}-\bm{\epsilon})={\bm{P}}\,{\bm{u}}, and the clean data on the complement (𝑰−𝑷)​𝒖A=(𝑰−𝑷)​𝒙0({\bm{I}}-{\bm{P}})\,{\bm{u}}_{\mathrm{A}}=({\bm{I}}-{\bm{P}}){\bm{x}}_{0}. So each PCA direction is treated either as velocity (i≤ri\leq r) or as 𝒙0{\bm{x}}_{0} (i>ri>r). The full velocity is recovered from 𝒖A{\bm{u}}_{\mathrm{A}} and 𝒙t{\bm{x}}_{t} by: 𝒖=𝑷​𝒖A+(𝑰−𝑷)​𝒙t+𝒖A 1−t{\bm{u}}\;=\;{\bm{P}}\,{\bm{u}}_{\mathrm{A}}\;+\;({\bm{I}}-{\bm{P}})\,\frac{{\bm{x}}_{t}+{\bm{u}}_{\mathrm{A}}}{\,1-t\,}.
+Limitations of previous adaptive parameterizations. Chen et al. (2026a) note that the default 𝒙0{\bm{x}}_{0}-prediction and k-Diff parameterization are less expressive.
+On the other hand, AsymFlow makes hard-cutoff decision at a fixed rank rr, and this chosen subspace is dataset/modality dependent, requiring an expensive hyperparameter search over multiple parameterization setting.
+Furthermore, restricting the noise term to the top-rr (highest-variance) directions is arbitrary – e.g., we found that PCA[:16]\mathrm{PCA}[9\!:\!16] can beat PCA[:8]\mathrm{PCA}[1\!:\!8] (FID 3.543.54 vs 3.593.59 on the B-level model trained on ImageNet).
+Finally, the binary nature of the cutoff, while useful for interpretation, is not necessary: it extends naturally to a continuous, per-direction weighting that softly mixes the clean-signal (𝒙0{\bm{x}}_{0}) and velocity (𝒗{\bm{v}}) prediction. Building on these insights, we introduce MFlow, which learns a continuous, direction-dependent parameterization, allowing the prediction target to adapt across directions without requiring a hard subspace partition or costly search for parameterization.
+Figure 3: Overview of MFlow Formulation. We propose a principal data direction-wise learnable parameterization as a generalized framework in contrast with previous fixed parameterizations.
+3.2 MFlow: Direction-Adaptive Learnable Reparameterization
+Instead of a hard cutoff, we assign each spectral direction a soft, learnable weight in [0,1][0,1]. Replace the binary projector 𝑷{\bm{P}} by a symmetric graded operator:
+𝑴=𝑼​diag​(m1,…,mD)​𝑼T,mi∈[0,1],𝑴​𝒗i=mi​𝒗i,{\bm{M}}\;=\;{\bm{U}}\,\mathrm{diag}(m_{1},\dots,m_{D})\,{\bm{U}}^{\mathrm{T}},\qquad m_{i}\in[0,1],\qquad{\bm{M}}{\bm{v}}_{i}=m_{i}{\bm{v}}_{i},
+(1)
+with the graded target (as shown in Fig. 3):
+𝒖G=𝒙0−𝑴​ϵ.\,{\bm{u}}_{\mathrm{G}}\;=\;{\bm{x}}_{0}-{\bm{M}}\bm{\epsilon}\,.
+(2)
+𝑴{\bm{M}} is generally not a projector (𝑴2≠𝑴{\bm{M}}^{2}\neq{\bm{M}} unless every mi∈{0,1}m_{i}\in\{0,1\}), so it does
+not split ℝD\mathbb{R}^{D} into the low-rank subspace Im⁡(𝑷)\mathrm{Im}({\bm{P}}) and its orthogonal complement Im⁡(𝑰−𝑷)\mathrm{Im}({\bm{I}}-{\bm{P}}). Instead every direction carries its own
+continuous velocity-data mixing weight.
+Component-wise (PCA basis).
+Let 𝒙~≔𝑼T​𝒙\tilde{{\bm{x}}}\coloneqq{\bm{U}}^{\mathrm{T}}{\bm{x}} denote the transformation of 𝒙{\bm{x}} in the PCA basis, then we have the ithi^{\text{th}} component x~i=𝒗iT​𝒙\tilde{x}_{i}={\bm{v}}_{i}^{\mathrm{T}}{\bm{x}}. Because 𝑴{\bm{M}} is diagonal in this basis, (𝑴​𝒙~)i=mi​x~i(\widetilde{{\bm{M}}{\bm{x}}})_{i}=m_{i}\tilde{x}_{i}, and the graded target decouples per direction:
+u~G,i=x~0,i−mi​ϵ~i\tilde{u}_{\mathrm{G},i}\;=\;\tilde{x}_{0,i}-m_{i}\,\tilde{\epsilon}_{i}
+(3)
+where the directional velocity is u~i=x~0,i−ϵ~i\tilde{u}_{i}=\tilde{x}_{0,i}-\tilde{\epsilon}_{i}. Here mim_{i} denotes how velocity-like the target is in this direction: mi=1⇒𝒖​-predm_{i}=1\Rightarrow{\bm{u}}\text{-pred} while mi=0⇒𝒙0​-predm_{i}=0\Rightarrow{\bm{x}}_{0}\text{-pred}. MFlow therefore strictly generalizes both the endpoints as well as AsymFlow (mi=𝟏[i≤r]m_{i}=\mathbf{1}[i\leq r]).
+Choosing the gains.
+We initialize the gains with mi=λ^iλ^i+cm_{i}=\frac{\hat{\lambda}_{i}}{\hat{\lambda}_{i}+c} where
+λ^i=λi/λmax\hat{\lambda}_{i}=\lambda_{i}/\lambda_{\max} is the normalized variance, and cc is a small constant. By default these gains are learnable mi=sigmoid⁡(ϕi)m_{i}=\mathrm{sigmoid}(\phi_{i}) with a learnable
+per-direction logit ϕi\phi_{i}.
+Exact velocity recovery.
+The forward
+𝒙t=t​𝒙0+(1−t)​ϵ{\bm{x}}_{t}\;=\;t\,{\bm{x}}_{0}+(1-t)\,\bm{\epsilon}
+and
+target Eq. (3) give two linear equations in the two unknowns(x~0,i,ϵ~i)(\tilde{x}_{0,i},\tilde{\epsilon}_{i}) in each eigendirection:
+[x~t,iu~G,i]=[t1−t1−mi]​[x~0,iϵ~i],\begin{bmatrix}\tilde{x}_{t,i}\\[2.0pt]
+\tilde{u}_{\mathrm{G},i}\end{bmatrix}=\begin{bmatrix}t&1-t\\[2.0pt]
+1&-m_{i}\end{bmatrix}\begin{bmatrix}\tilde{x}_{0,i}\\[2.0pt]
+\tilde{\epsilon}_{i}\end{bmatrix},
+(4)
+The system matrix has determinant −Δi-\Delta_{i} with Δi=(1−t)+mi​t≥1−t>0\Delta_{i}\;=\;(1-t)+m_{i}t\geq 1-t>0; since it is nonzero (strictly negative) for every mi∈[0,1]m_{i}\in[0,1]
+, the solve is always exact:
+x~0,i=(1−t)​u~G,i+mi​x~t,iΔi,ϵ~i=x~t,i−t​u~G,iΔi,\;\tilde{x}_{0,i}\;=\;\frac{(1-t)\,\tilde{u}_{\mathrm{G},i}+m_{i}\,\tilde{x}_{t,i}}{\Delta_{i}}\;,\qquad\tilde{\epsilon}_{i}\;=\;\frac{\tilde{x}_{t,i}-t\,\tilde{u}_{\mathrm{G},i}}{\Delta_{i}},
+(5)
+Equivalently, in the operator form the v​x0vx_{0} and v​uvu can be recovered from the target 𝒖G{\bm{u}}_{\mathrm{G}} using:
+𝒙0\displaystyle{\bm{x}}_{0}
+=[t​𝑴+(1−t)​𝑰]−1​[(1−t)​𝒖G+𝑴​𝒙t],\displaystyle=\;\big[t\,{\bm{M}}+(1-t)\,{\bm{I}}\big]^{-1}\big[(1-t)\,{\bm{u}}_{\mathrm{G}}+{\bm{M}}\,{\bm{x}}_{t}\big],
+(6)
+𝒖\displaystyle{\bm{u}}
+=𝒙0−𝒙t1−t=[t​𝑴+(1−t)​𝑰]−1​[𝒖G−(𝑰−𝑴)​𝒙t].\displaystyle=\;\frac{{\bm{x}}_{0}-{\bm{x}}_{t}}{1-t}\;=\;\big[t\,{\bm{M}}+(1-t)\,{\bm{I}}\big]^{-1}\big[{\bm{u}}_{\mathrm{G}}-({\bm{I}}-{\bm{M}})\,{\bm{x}}_{t}\big].
+Setting mi∈{0,1}m_{i}\in\{0,1\} reduces Eq (6) exactly
+to the AsymFlow recovery rule.
+Training and sampling. 𝑴{\bm{M}} changes neither the forward process nor the
+transport target 𝒖{\bm{u}}, only the coordinate-wise conditioning of the
+network’s regression target. The network outputs 𝒖^G\hat{{\bm{u}}}_{G} as the learned approximation for target 𝒖G{\bm{u}}_{\mathrm{G}} which we map it to the
+full velocity 𝒖^\hat{{\bm{u}}} via Eq (6) and train a velocity-space flow-matching loss,
+ℒ⁡(𝜽)=𝔼𝒙0,ϵ,t​[w⁡(t)​‖𝒖^​(𝒖^G,𝒙t,t)−(𝒙0−ϵ)‖22].\mathcal{L}({\bm{\theta}})=\mathbb{E}_{{\bm{x}}_{0},\bm{\epsilon},t}\big[\,w(t)\,\|\hat{{\bm{u}}}(\hat{{\bm{u}}}_{G};{\bm{x}}_{t},t)-({\bm{x}}_{0}-\bm{\epsilon})\|_{2}^{2}\,\big].
+(7)
+Additionally, we can add an LPIPS loss on the predicted clean signal when required. At sampling
+time we run standard Euler/Heun on 𝒙˙=𝒖\dot{{\bm{x}}}={\bm{u}} with 𝒖{\bm{u}} from
+Eq. (6).
+3.3 Toy Example
+Figure 4:
+Toy manifold experiment.
+A 2-D spiral is embedded in
+D∈{2,8,16,512}D\in\{2,8,16,512\} dimensions and projected back for visualization.
+Full 𝒖{\bm{u}}-prediction degrades with DD, while 𝒙0{\bm{x}}_{0}-prediction,
+rank-matched AsymFlow, and fixed or learned MFlow recover the spiral,
+including in the undercomplete D=512D=512 setting.
+We revisit the toy manifold experiment of JiT (Li and He (2026)) to test two
+properties of MFlow: (a) whether continuous, non-binary m-values remain tractable
+in high-dimensional observation spaces, and (b) whether they can be
+learned jointly with the generator. We sample a
+2D spiral and embed it into a DD-dimensional space using a
+fixed random column-orthogonal projection. We fix the intrinsic dimension to d=2d=2, vary
+D∈{2,8,16,512}D\in\{2,8,16,512\}, and train a five-layer ReLU MLP with 256 hidden
+units. We compare 𝒙0{\bm{x}}_{0}-prediction, full 𝒖{\bm{u}}-prediction,
+AsymFlow with r=dr=d, MFlow with fixed
+normalized-variance gains, and MFlow with gains learned from the same
+initialization. All variants use the same architecture and
+velocity-space training objective.
+As shown in Fig. 4, full 𝒖{\bm{u}}-prediction deteriorates
+as DD increases, whereas 𝒙0{\bm{x}}_{0}-prediction and rank-matched AsymFlow
+remain stable. Both fixed and learnable MFlow also recover the spiral,
+including at D=512D=512. Thus,
+high-dimensional tractability does not require binary gains
+mi∈{0,1}m_{i}\in\{0,1\}: continuous gains remain effective. The learnable variant further shows that this allocation can
+be optimized end-to-end rather than specified in a heuristic manner.
+4 Signal Modeling
+4.1 Motivation
+JiT lacks high-frequency but some other pixel diffusion models do not. JiT’s minimalist architecture lacks an explicit pathway dedicated to fine-grained signal details, like skip connections (Bao et al. (2023); Hoogeboom et al. (2023); Hoogeboom et al. (2025)) or parallel refinement networks (Chen et al. (2026b); Yu et al. (2026)), motivating an investigation into whether this simplicity introduces limitations in its generated frequency distribution.
+We study the frequency spectrum of the images generated by models we trained which share the JiT architecture. We use radially averaged power spectrum (RAPS) for this analysis. For context, images on a pixel grid can have at most 0.50.5 cycles/pixel horizontal or vertical frequencies (fxf_{x},fyf_{y}). However, in the case of radial averaging, the radial frequencies frf_{r} can reach till the diagonal frequency of 0.7070.707 (=0.52+0.52=\sqrt{0.5^{2}+0.5^{2}}). Interestingly, as seen in Fig. 5, we observe that all these models lack radial frequencies in the range of 0.5−0.70.5-0.7. Recent concurrent works (Pavasovic et al. (2026); Degeorge et al. (2026); Fu et al. (2026)) have also observed this.
+As seen in Fig. 6, we tried investigating other LDMs and pixel diffusion backbones. We find that neither VAE-reconstruction/generations of DiT (Peebles and Xie (2023)), REPA-E (Leng et al. (2025)), nor the generations of PixelDiT (Yu et al. (2026)) (which as a pixel level pathway) suffer from this issue, indicating that it might be a JiT backbone specific problem, more explicitely the use of high patchidication (and unpatchification) of 16−32×16-32\times without any intra-patch local operation.
+Figure 5: JiT-family generations lacks high frequency irrespective of parameterization.
+Figure 6: Latent model generations, VAE reconstructions, and other pixel diffusion models like PixelDiT do not lack high frequency.
+Figure 7: Overview of ConvRefiner Formulation.
+We propose a residual convolutional refiner post hoc training for a few epochs, with a fixed backbone, to regain the high-frequency similar to real images spectrum in vanilla vision transformers.
+Method
+FID↓
+HF-deficit(dB)
+JiT-H/16
+01.82
+-6.69
+MFlow-H/16 MFlow
+01.81
+-6.63
+MFlow-H/16 + ConvRefiner (ours)
+01.81
+-1.29
+Table 1: Summary of Results. Our MFlow + ConvRefiner provides a flexible parameterization, saving expensive hyperparameter sweeps while having better FID, as well as solving the high-frequency deficit (measured in mean radial power deficit compared to real images) on ImageNet-1K 256×\times256.
+4.2 ConvRefiner: A simple post-hoc fix
+Based on our analysis we suspect that this high-frequency deficit might be specific to the JiT-based pixel diffusion architecture. However, as seen in the previous section, convolutional VAE decoders are able to recover high-frequency. Chen et al. (2025a) note that only finetuning the last few layers of a pretrained VAE with an adversarial loss can improve local details at a reduced training cost.
+Motivated by this, we add a few lightweight convolutional blocks and post-hoc train only these blocks using an additional GAN loss apart from flow-matchting losses (Fig 7). We keep the JiT backbone frozen to keep the refinement light. The ConvRefiner predicts a residual over 𝒙{\bm{x}}-prediction of the network on which the perceptual and adversarial losses are then applied. For other parameterizations, the prediction is first converted to 𝒙{\bm{x}} (clean image) and then the ConvRefiner residual is applied on top of it.
+5 Experiments
+We extensively evaluate our proposed method on class-conditional ImageNet image generation to validate its effectiveness, as summarized in Table 1. Then we delve into individual components – MFlow and ConvRefiner. We further show that MFlow can be extended to video generation and scaled to text-to-image generation. Finally, we ablate the design decision of each component.
+Datasets and Evaluation.
+For class-conditioned image generation experiments we train on ImageNet-1K (Russakovsky et al. (2015)). By default we show results on the standard 256×{}\times{}256 resolution images with the training and evaluation similar to Li and He (2026). For evaluation we use
+FID@50K (Heusel et al. (2017)).
+We conduct class-conditioned video generation experiments on UCF-101 (Soomro et al. (2012)) dataset. We use 16 frames of 128×{}\times{}128 resolution videos for training and evaluation following Wang et al. (2025). Similar to images,
+FVD@10K (Unterthiner et al. (2018))
+serves as our video generation evaluation metric.
+For text-to-image generation, we train on internal dataset of around 900M images (pretraining) and 33.5M (SFT), and evaluate on standard benchmarks of GenEval (Ghosh et al. (2023)), DPG-Bench (Hu et al. (2024)), and PRISM-Bench (Fang et al. (2026)).
+Method
+FID↓
+w/o LPIPS
+w/ LPIPS
+JiT-B/16 (Li and He (2026))
+03.70
+3.42
+AsymFlow-B/16 (Chen et al. (2026a))
+03.59
+3.40
+MFlow-B/16 (ours)
+03.74
+3.33
+Table 2: Effect of LPIPS on ImageNet 256×256 generation. We see that LPIPS helps all the models in FID (evaluated on base JiT-B evaluation hyperparameters). However, it improves MFlow performance the most, beating the baselines.
+Implementation Details. We build on top of the JiT repository and use their architecture for conditional image and video generation experiments. Hence, we use JiT both to refer to the vanilla transformer backbone and 𝒙0{\bm{x}}_{0}-prediction parameterization (especially when comparing against MFlow parameterization). We refer the base, large, and huge sizes as B-/L-/H-level. For these experiments, for ImageNet we used patch size of 16×1616\times 16 leading to 256 tokens (with additional 32 in-context tokens like JiT), while for video we use 4×8×84\times 8\times 8 patch size (with 4 as the temporal patch size) leading to 1024 tokens. For text-to-image, we train with a patch size of 16×1616\times 16 on mixed-resolution 256p and 512p images with LPIPS loss (0.10.1 loss weighting).
+For calculating patch-wise PCA-basis we follow AsymFlow.
+In the case of ConvRefiner, we use a PatchGAN (Isola et al. (2017)) to apply the GAN loss only on the near-clean images (see appendix for details).
+Table 3: ImageNet 256×256 comparisons. We trained JiT, AsymFlow, and MFlow from scratch with additional LPIPS (Zhang et al. (2018)) loss (but without REPA (Yu et al. (2025))) and evaluated under the JiT protocol with individual hyperparameter tuning (denoted by *). We use the best hyperparameter for each after doing a sweep. The AsymFlow number remains in the range of the non-REPA performance noted in Chen et al. (2026a). We use AsymFlow’s FLOP convention as reported in Yu et al. (2026).
+Method
+Pred (±)
+Params
+GFLOPs
+FID↓
+Hierarchical CNNs (skip connections / U-Net-like (Ronneberger et al. (2015))
+ADM-G (Dhariwal and Nichol (2021))
+ϵ\bm{\epsilon}
+554M
+2240
+4.59
+Hierarchical transformers (skip connections / U-ViT-like (Bao et al. (2023)))
+RIN (Jabri et al. (2023))
+ϵ\bm{\epsilon}
+320M
+668
+3.42
+SiD, U-ViT/2 (Hoogeboom et al. (2023))
+ϵ\bm{\epsilon}
+2B
+1110
+2.44
+VDM++, U-ViT/2 (Kingma and Gao (2023))
+ϵ\bm{\epsilon}
+2B
+1110
+2.12
+SiD2, U-ViT/1 (Hoogeboom et al. (2025))
+ϵ\bm{\epsilon}
+-
+1306
+1.38
+Hierarchical transformers (decoder head / DDT-like (Wang et al. (2026b)))
+DiP-XL/16 (Chen et al. (2026b))
+𝒙0−ϵ{\bm{x}}_{0}-\bm{\epsilon}
+631M
+-
+1.79
+DeCo-XL/16 (Ma et al. (2026b))
+𝒙0−ϵ{\bm{x}}_{0}-\bm{\epsilon}
+682M
+245
+1.62
+PixelDiT-XL/16 (Yu et al. (2026))
+𝒙0−ϵ{\bm{x}}_{0}-\bm{\epsilon}
+797M
+311
+1.61
+Vanilla transformers (DiT-like (Peebles and Xie (2023)))
+PixelFlow-XL/4 (Chen et al. (2025b))
+𝒙0−ϵ{\bm{x}}_{0}-\bm{\epsilon}
+677M
+5818
+1.98
+PixelGen-XL/16 (Ma et al. (2026c))
+𝒙0{\bm{x}}_{0}
+676M
+260
+1.83
+PixelREPA-H/16 (Shin et al. (2026))
+𝒙0{\bm{x}}_{0}
+953M
+363
+1.81
+JiT-H/16 (Li and He (2026))
+𝒙0{\bm{x}}_{0}
+953M
+363
+1.82*
+AsymFlow-H/16 (Chen et al. (2026a))
+𝒙0−𝑷​ϵ{\bm{x}}_{0}-{\bm{P}}\bm{\epsilon}
+953M
+363
+1.79*
+MFlow-H/16 (Ours)
+𝒙0−𝑴​ϵ{\bm{x}}_{0}-{\bm{M}}\bm{\epsilon}
+953M
+363
+1.81*
+Table 4: UCF-101 video comparisons (B-level). We show results on models we trained with best-tuned hyperparameters for each.
+Method
+FVD↓
+Latent diffusion models
+WAN-VAE2.1-1.3B(4×8×8) + latent-DiT-B/1×1×1
+0169
+Pixel diffusion models
+Video JiT-B/4×8×8 (Li and He (2026))
+0152
+Video AsymFlow-B/4×8×8 (Li and He (2026))
+0126
+Video MFlow-B/4×8×8 (ours)
+0122
+Table 5: UCF-101 video comparisons (L-level). The rows in gray were trained by us and evaluated with individual hyperparameter tuning. †Note that we use the mapping network as generator and synthesis network as tokenizer convention from Ren et al. (2026).
+Method
+Params
+#Tokens
+FVD↓
+Tokenizer
+Generator
+Autoregressive Models
+CogVideo (Hong et al. (2022))
+–
+9.4B
+2065
+0625
+TATS (Ge et al. (2022))
+32M
+321M
+1024
+0332
+MAGVIT-AR (Yu et al. (2023))
+158M
+306M
+1024
+0265
+OmniTokenizer (Wang et al. (2024))
+82.2M
+650M
+1280
+0191
+MAGVITv2-AR (Yu et al. (2024))
+–
+840M
+1280
+0109
+LARP (Wang et al. (2025))
+173M
+343M
+1024
+0102
+Implicit weight-space generation
+DIGAN (Yu et al. (2022))
+58M†
+5.5M†
+–
+0465
+NeRV-Diffusion-L (Ren et al. (2026))
+∼\sim229M
+467M
+128
+097
+Pixel diffusion models
+VideoFusion (Luo et al. (2023))
+–
+2B
+–
+0173
+Video JiT-L/4×8×8 (Li and He (2026))
+–
+458M
+1024
+0111
+Video AsymFlow-L/4×8×8 (Chen et al. (2026a))
+–
+458M
+1024
+0098
+Video MFlow-L/4×8×8 (ours)
+–
+458M
+1024
+0097
+000+ post-hoc Framewise-LPIPS (ours)
+–
+458M
+1024
+0094
+ImageNet. (a) MFlow: On class-conditioned image generation on
+ImageNet 256×256 experiment at B-level, as shown in Table 2, without LPIPS loss and at the base JiT-B parameters, we observe that AsymFlow works better than both JiT and MFlow. Based on PixelGen (Ma et al. (2026c)) we tried to add LPIPS loss to our baselines and MFlow model, and found that it provides performance gain across the board. Surprisingly, we see that this addition makes MFlow the best at this configuration. Subsequently, we train the same models with LPIPS at H-scale as shown in Table 5. We hypothesize the very slight lead of AsymFlow as a result of it being heavily tuned for ImageNet. Even so, we find that MFlow is very competitive to all the prior pixel diffusion transformer models without any parameterization search.
+(b) ConvRefiner: We experiment with training the JiT and MFlow models on ImageNet 256×256256\times 256 using our ConvRefiner for an additional 30 epochs on top of the frozen 600 epoch trained base model. As shown in Fig. 8 (left), at both B- and H-levels and across both JiT and MFlow we see that the high radial frequency deficit is fixed. At the same time, Fig. 8 (right) shows that this training maintains the FID. Hence, ConvRefiner is effective at solving the high-frequency problem without affecting the FID at all. We provide some visual improvement results in Fig. 22.
+Figure 8: (Left) ConvRefiner recovers high frequency across JiT/MFlow and model sizes B/H. (Right) The generative performance remains almost the same in this post-training.
+Figure 9: Visualizing effect of ConvRefiner for text-to-image generation. Here we visualize the effect of adding our post-training to MFlow-XXL on text-to-image generations. (left) We see improved details in the leaf veins in the generated image. (right) We also note the average power gain in the high-frequency (0.5–0.7) region. We see overall improvement in texture details comparable to real image spectrum.
+Videos.
+We show the effectiveness of MFlow in the domain of videos apart from images. At the B-level class-conditioned UCF-101 video generation as shown in Table 5, we see that MFlow outperforms the WAN2.1 (Team (2025)) latent diffusion model, pixel-based JiT, and AsymFlow models we trained.
+We expand to L-level, where MFlow beats JiT and AsymFlow. With a small post-hoc Framewise-LPIPS training, we achieve best performance. Notably, we find training with Framewise-LPIPS from start (like ImageNet) hurts video generation.
+Text-to-Image.
+(a) MFlow: We study whether MFlow scales beyond class-conditioned generation to
+large-scale text-to-image (T2I). We instantiate JiT, AsymFlow
+(r=8r=8), and MFlow using the same 1.1B-parameter MMDiT-L/16 backbone and
+compare them under the same SFT setting. This controlled comparison isolates the effect of prediction parameterization while keeping the backbone and reported model size fixed. As shown in Table 6, the three
+parameterizations perform similarly at this scale, but MFlow is best
+on every benchmark, even when compared against
+previous pixel-space T2I models.
+Figure 10 presents the benchmark progression over
+training iterations.
+We further scale MFlow to an MMDiT-XXL/16 mixture-of-experts (MoE) model with
+13B total parameters and 2.9B active parameters that
+achieves the best performance among all models in the
+comparison.
+Interestingly, model scaling also changes the parameterization learned by
+MFlow as seen in Sec. 6, and MFlow can leverage this capacity automatically without any manual tuning.
+(b) ConvRefiner:
+We further apply ConvRefiner as a post-training stage for text-to-image generation with MFlow-XXL. Starting from the SFT checkpoint, we train the ConvRefiner for an additional 5k steps on top of the frozen base model. As shown in Fig. 9 (right), without ConvRefiner we observe the same high-frequency deficit in the 0.50.5–0.70.7 band, even though it seems to be somewhat alleviated with increased model capacity compared to Fig. 8 (left). ConvRefiner completely closes in this gap. This also shows up visually: Fig. 9 (left) shows sharper fine-scale texture, such as the veins of the leaf. Hence, ConvRefiner also fixes the high-frequency problem at scale for text-to-image generation. Additionally, as seen in 6, ConvRefiner does not have noticable effect on text-to-image benchmark performance.
+Figure 10: Text-to-Image scores over training steps.
+Table 6:
+Comparison on text-to-image generation benchmarks.
+Parameter counts include only the image-generation model and
+exclude the text encoder. Higher is better for all metrics.
+Best results are in bold, and second-best results are
+underlined.
+Model
+Params
+GenEval ↑\uparrow
+DPG ↑\uparrow
+PRISM ↑\uparrow
+PixelDiT-T2I (Yu et al. (2026))
+1.3B
+0.7359
+84.58
+69.6
+PixNerd-XXL/16 (Wang et al. (2026a))
+1.2B
+0.7015
+81.61
+65.7
+PixelFlow-XL/4 (Chen et al. (2025b))
+882M
+0.6463
+77.90
+67.6
+PixelGen-XXL/16 (Ma et al. (2026c))
+1.1B
+0.7835
+79.62
+64.7
+DeCo-XXL/16 (Ma et al. (2026b))
+1.1B
+0.8600
+81.96
+66.5
+MiniT2I-L/16 (Wang et al. (2026c))
+912M
+0.8822
+84.66
+72.9
+MMDiT (JiT)-L/16-SFT*
+1.1B
+0.8839
+84.65
+73.6
+MMDiT (Asym8)-L/16-SFT*
+1.1B
+0.8832
+84.61
+73.9
+MMDiT (MFlow)-L/16-SFT* (Ours)
+1.1B
+0.8843
+84.70
+73.9
+MMDiT (MFlow)-XXL/16-SFT* (Ours)
+13B-MoE (2.9B active)
+0.8898
+86.10
+75.2
+0000000000000000
++ ConvRefiner (Ours)
+13B-MoE (2.9B active)
+0.8896
+86.16
+75.4
+MFlow Ablations. We ablated multiple axes of choices for MFlow on ImageNet B-level model. We clamp the initializations to [0.05,0.95][0.05,0.95], as otherwise the sigmoid\mathrm{sigmoid} function will blow up 𝑴{\bm{M}}. In terms of loss parameterization we see that using 𝒖G{\bm{u}}_{\mathrm{G}} loss over 𝒖{\bm{u}} loss significantly deteriorates performance, bringing FID from
+3.663.66 to 4.884.88. Training on 𝒖G{\bm{u}}_{\mathrm{G}} creates
+a trivial incentive to reduce mim_{i} toward 𝒙0{\bm{x}}_{0}-prediction without
+improving the recovered transport field
+(Appendix A.3). Subsequently, by varying the 𝑴{\bm{M}} initialization to the normalized-variance (‘norm_var’) as described in 3.2, we see slight improvement over ’asym8’ initialization, FID reduces from 3.843.84 to 3.803.80. Given that ‘norm_var’ has a smoother dependence on the PCA direction’s variance, we choose it as default. We also experiment with learning-rate of 𝑴{\bm{M}} parameters, and see that having a higher learning rate multiplier seems to help a bit bringing FID down from 3.803.80 to 3.743.74.
+We use this final setting (init ‘norm_var’, 𝐮{\bm{u}}-loss, learnable 𝐌{\bm{M}} w/ 10×\times{} lr-multiplier) as our default unless specified otherwise.
+Figure 11: (Left) Increasing blocks of Conv-refiner and the weight of GAN loss helps recover high frequency. (Right) Other baselines refining does not help except DiP patch detailer(Chen et al. (2026b)). This probably reflects a convolutions bias.
+ConvRefiner Ablations.
+Our preliminary control experiment showed that JiT trained normally for 5% more epochs does not improve the frequency spectrum. In Fig. 11 (left) we investigate the effect of number of blocks (b∈2,4,8b\in{2,4,8}) and the weight of the adversarial loss (w∈0.005,0.01,0.02w\in{0.005,0.01,0.02}).
+Firstly, we see that only using the refiner without the adversarial loss helps a bit.
+However, the frequency spectrum gets closer to real with more blocks and more GAN weight. Favoring a smaller lightweight network, we finally select b=4b=4 and w=0.02w=0.02 as our final setting. This improves pixel level details as seen in Fig. 23.
+Ablating the choice of refiner family (Fig. 11 (right)), we see that just finetuning the unpatchify layer or using a residual attention refiner has negligible effect. Another readily available convolutional refiner choice DiP patch-detailer(Chen et al. (2026b)) does improve the high-frequency and even overshoots with the GAN loss. However, it degrades the base JiT’s FID 3.42 to 3.90 and 4.46 respectively, bolstering our choice of ConvRefiner.
+6 Discussion
+Figure 12: Learned M{\bm{M}} values. Variations in the MFlow gain curves across multiple axes: objectives – w/ vs w/o LPIPS, domains – images vs videos, representations – pixel vs latent 𝒙0{\bm{x}}_{0}-prediction models, model capacities – 1B vs 13B-MoE.
+𝑴{\bm{M}}-curve Analysis. Given the learned nature of the gain parameters mim_{i}, we analyze how they vary across objectives, domains, representations, and model capacities. In Fig. 12, we visualize the learned mim_{i} values ordered by decreasing PCA variance, which we call an 𝑴{\bm{M}}-curve. Here, mi=0m_{i}=0 corresponds to 𝒙0{\bm{x}}_{0}-prediction and mi=1m_{i}=1 to 𝒖{\bm{u}}-prediction; the ‘norm_var’ initialization is shown in gray.
+1.
+On ImageNet (a), adding LPIPS drives all but the leading few directions toward 𝒙0{\bm{x}}_{0}-prediction while also improving FID (Table 2), suggesting less need for 𝐮{\bm{u}}-like prediction beyond the dominant PCA directions.
+2.
+Moving to videos (b), the number of directions with non-negligible gains shrinks further, showing that the preferred parameterization varies across domains. We discuss in detail about the behaviour of LPIPS on 𝑴{\bm{M}}-curve in A.4.
+3.
+With RAEv2 (Singh et al. (2026)) (c), whose latent model uses 𝒙0{\bm{x}}_{0}-prediction, the gains collapse almost entirely toward zero, recovering an approximately pure 𝒙0{\bm{x}}_{0} parameterization. Yet forcing 𝒖{\bm{u}}-prediction on a small leading subspace changes FID only marginally (Table 10), indicating that a low-rank 𝐮{\bm{u}} subspace can still be tolerated.
+4.
+Finally, in text-to-image generation (d), increasing model capacity shifts more directions toward 𝒖{\bm{u}}-prediction. Together with the RAEv2 result, this suggests that model capacity influences how much 𝐮{\bm{u}}-prediction a model can accommodate, whereas the statistics of the data representation determine where that 𝐮{\bm{u}}-prediction is most useful.
+In particular, for a fixed budget of NN u{\bm{u}}-predicted directions, the allocation should remain data-dependent, with the leading high-variance PCA directions providing a natural choice. MFlow can exploit increased capacity or adapt to domain change, without requiring a manually chosen rank.
+7 Conclusion
+We revisit two design questions in vanilla pixel diffusion transformers: how their prediction parameterization should adapt to the data, and whether their minimalist architecture captures high-frequency. We introduce MFlow, a direction-adaptive parameterization that learns a continuous interpolation between clean-data and velocity prediction across principal data directions, avoiding the need for manual subspace selection, saving parameterization search cycles.
+Our analysis of the learned M-curves further shows that the preferred parameterization changes systematically with both data statistics and model capacity.
+Beyond parameterization, we identify a persistent high-frequency deficit in JiT-style models and address it with ConvRefiner, a lightweight post-hoc convolutional module that restores high-frequency statistics while preserving generative quality. Together, these results suggest that both adaptive prediction targets and explicit treatment of fine-scale signal structure are important ingredients for scaling simple pixel-space diffusion transformers.
+AI use statement
+In this work, we used AI tools only in supporting non-research roles under author supervision. Specifically, we used it to correct grammatical errors and improve the clarity of author-written text, and to assist with software tooling. In particular, we used it for plotting and visualization code used to produce some of the figures in this paper. We did not use AI tools for research ideations, for deriving results, for designing experiments, or for generating any scientific claims. We have reviewed all the AI-assisted text and figures for correctness.
+Reproducibility statement
+We provide the MFlow’s closed-form velocity-recovery rule in Sec. 3.2 and Python-like pseudocode in Sec. A.2. The post-hoc ConvRefiner is specified as an architecture figure in Fig. 7, and its training objective is provided in Section 4 and Appendix A.7. Full training and sampling configurations like optimizer, learning-rate schedule, batch size, EMA, noise schedule, and the guidance interval, guidance scale, and number of sampling steps used at evaluation, are tabulated per model in Appendix A.1. Radially-averaged power spectrum (RAPS) evaluation protocol are described in Appendix A.6. All reported metrics (FID, FVD, RAPS, GenEval, DPG, Prism) are computed with standard public implementations we cite.
+Acknowledgments
+We would like to thank Harsha Walvekar, Vatsal Agarwal, Prateksha Udhayanan, Namitha Padmanabhan, and Matthew Gwilliam for their help shaping this paper.
+References
+Bao et al. (2023)
+F. Bao, S. Nie, K. Xue, Y. Cao, C. Li, H. Su, and J. Zhu
+All are worth words: a vit backbone for diffusion models.
+In 2023 IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR),
+pp. 22669–22679.
+Cited by: §4.1,
+Table 5.
+Chen et al. (2026a)
+H. Chen, J. Ackermann, M. Kim, G. Wetzstein, and L. Guibas
+Asymmetric flow models.
+arXiv preprint arXiv:2605.12964.
+External Links: Link
+Cited by: §1,
+§2,
+§3.1,
+§3.1,
+Table 2,
+Table 5,
+Table 5,
+Table 5.
+Chen et al. (2025a)
+J. Chen, H. Cai, J. Chen, E. Xie, S. Yang, H. Tang, M. Li, and S. Han
+Deep compression autoencoder for efficient high-resolution diffusion models.
+In International Conference on Learning Representations,  Y. Yue, A. Garg, N. Peng, F. Sha, and R. Yu (Eds.),
+Vol. 2025, pp. 96539–96560.
+External Links: Link
+Cited by: §4.2.
+Chen et al. (2025b)
+S. Chen, C. Ge, S. Zhang, P. Sun, and P. Luo
+Pixelflow: pixel-space generative models with flow.
+arXiv preprint arXiv:2504.07963.
+Cited by: §1,
+§2,
+Table 5,
+Table 6.
+Chen et al. (2026b)
+Z. Chen, J. Zhu, X. Chen, J. Zhang, X. Hu, H. Zhao, C. Wang, J. Yang, and Y. Tai
+DiP: taming diffusion models in pixel space.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR),
+pp. 36136–36146.
+Cited by: §1,
+§2,
+§4.1,
+Figure 11,
+Table 5,
+§5.
+Crowson et al. (2024)
+K. Crowson, S. A. Baumann, A. Birch, T. M. Abraham, D. Z. Kaplan, and E. Shippole
+Scalable high-resolution pixel-space image synthesis with hourglass diffusion transformers.
+In Proceedings of the 41st International Conference on Machine Learning,  R. Salakhutdinov, Z. Kolter, K. Heller, A. Weller, N. Oliver, J. Scarlett, and F. Berkenkamp (Eds.),
+Proceedings of Machine Learning Research, Vol. 235, pp. 9550–9575.
+External Links: Link
+Cited by: §2.
+Degeorge et al. (2026)
+L. Degeorge, P. Couairon, A. Ghosh, A. A. Efros, D. Picard, and V. Kalogeiton
+Balancing frequencies and pixels in flow matching.
+External Links: 2609.02748,
+Link
+Cited by: §2,
+§4.1.
+Dhariwal and Nichol (2021)
+P. Dhariwal and A. Nichol
+Diffusion models beat gans on image synthesis.
+Advances in neural information processing systems 34, pp. 8780–8794.
+Cited by: §2,
+Table 5.
+Esser et al. (2024)
+P. Esser, S. Kulal, A. Blattmann, R. Entezari, J. Müller, H. Saini, Y. Levi, D. Lorenz, A. Sauer, F. Boesel, et al.
+Scaling rectified flow transformers for high-resolution image synthesis.
+In Forty-first international conference on machine learning,
+Cited by: §1.
+Fan et al. (2026)
+W. Fan, H. Diao, P. Wu, and Z. Liu
+Show the signal, hide the noise: spectral forcing for pixel-space diffusion.
+External Links: 2606.15236,
+Link
+Cited by: §2.
+Fang et al. (2026)
+R. Fang, A. Yu, C. Duan, L. Huang, S. Bai, Y. Cai, K. Wang, S. Liu, X. Liu, and H. Li
+Flux-reason-6m & prism-bench: a million-scale text-to-image reasoning dataset and comprehensive benchmark.
+In International Conference on Learning Representations,
+Vol. 2026, pp. 63157–63186.
+Cited by: §5.
+Fu et al. (2026)
+Z. Fu, C. Wang, L. Guo, K. Zhou, J. Nie, and B. Wen
+A frozen pixel-space diffusion model can guide itself with its own samples.
+arXiv preprint arXiv:2607.29122.
+Cited by: §2,
+§4.1.
+Ge et al. (2022)
+S. Ge, T. Hayes, H. Yang, X. Yin, G. Pang, D. Jacobs, J. Huang, and D. Parikh
+Long video generation with time-agnostic vqgan and time-sensitive transformer.
+In European conference on computer vision,
+pp. 102–118.
+Cited by: Table 5.
+Ghosh et al. (2023)
+D. Ghosh, H. Hajishirzi, and L. Schmidt
+Geneval: an object-focused framework for evaluating text-to-image alignment.
+Advances in Neural Information Processing Systems 36, pp. 52132–52152.
+Cited by: §5.
+Guo et al. (2026)
+Z. Guo, L. Ma, Y. He, X. Fu, J. Fu, J. Huang, and Y. Li
+PixelU: a u-shaped transformer for efficient end-to-end pixel diffusion.
+In European Conference on Computer Vision,
+pp. 425–442.
+Cited by: §2,
+§2.
+Heusel et al. (2017)
+M. Heusel, H. Ramsauer, T. Unterthiner, B. Nessler, and S. Hochreiter
+Gans trained by a two time-scale update rule converge to a local nash equilibrium.
+Advances in neural information processing systems 30.
+Cited by: §5.
+Ho et al. (2020)
+J. Ho, A. Jain, and P. Abbeel
+Denoising diffusion probabilistic models.
+Advances in neural information processing systems 33, pp. 6840–6851.
+Cited by: §2.
+Hong et al. (2022)
+W. Hong, M. Ding, W. Zheng, X. Liu, and J. Tang
+Cogvideo: large-scale pretraining for text-to-video generation via transformers.
+arXiv preprint arXiv:2205.15868.
+Cited by: Table 5.
+Hoogeboom et al. (2023)
+E. Hoogeboom, J. Heek, and T. Salimans
+Simple diffusion: end-to-end diffusion for high resolution images.
+In International Conference on Machine Learning,
+pp. 13213–13232.
+Cited by: §2,
+§4.1,
+Table 5.
+Hoogeboom et al. (2025)
+E. Hoogeboom, T. Mensink, J. Heek, K. Lamerigts, R. Gao, and T. Salimans
+Simpler diffusion: 1.5 fid on imagenet512 with pixel-space diffusion.
+In 2025 IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR),
+pp. 18062–18071.
+Cited by: §2,
+§4.1,
+Table 5.
+Hu et al. (2024)
+X. Hu, R. Wang, Y. Fang, B. Fu, P. Cheng, and G. Yu
+Ella: equip diffusion models with llm for enhanced semantic alignment.
+arXiv preprint arXiv:2403.05135.
+Cited by: §5.
+Isola et al. (2017)
+P. Isola, J. Zhu, T. Zhou, and A. A. Efros
+Image-to-image translation with conditional adversarial networks.
+In 2017 IEEE conference on computer vision and pattern recognition (CVPR),
+pp. 5967–5976.
+Cited by: §A.7,
+§5.
+Jabri et al. (2023)
+A. Jabri, D. J. Fleet, and T. Chen
+Scalable adaptive computation for iterative generation.
+In Proceedings of the 40th International Conference on Machine Learning,
+ICML’23.
+Cited by: §2,
+Table 5.
+Jiang et al. (2026)
+D. Jiang, R. Du, Z. Chen, D. Liu, Z. Wang, M. Zheng, X. Yang, H. Cai, A. Hao, Y. Jiang, P. Gao, H. Yang, and S. Hoi
+An empirical study of training pixel-space text-to-image diffusion models.
+External Links: 2608.16887,
+Link
+Cited by: §2.
+Jin and Wang (2026)
+Q. Jin and C. Wang
+Revisiting diffusion model predictions through dimensionality.
+arXiv preprint arXiv:2601.21419.
+Cited by: §1,
+§2,
+§3.1.
+Karras et al. (2022)
+T. Karras, M. Aittala, T. Aila, and S. Laine
+Elucidating the design space of diffusion-based generative models.
+Advances in neural information processing systems 35, pp. 26565–26577.
+Cited by: §2,
+§3.1.
+Kingma and Gao (2023)
+D. P. Kingma and R. Gao
+Understanding diffusion objectives as the ELBO with simple data augmentation.
+In NeurIPS,
+External Links: Link
+Cited by: Table 5.
+Leng et al. (2025)
+X. Leng, J. Singh, Y. Hou, Z. Xing, S. Xie, and L. Zheng
+Repa-e: unlocking vae for end-to-end tuning with latent diffusion transformers.
+In 2025 IEEE/CVF International Conference on Computer Vision (ICCV),
+pp. 18262–18272.
+Cited by: §4.1.
+Li and He (2026)
+T. Li and K. He
+Back to basics: let denoising generative models denoise.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR),
+pp. 36115–36125.
+Cited by: Table 7,
+§1,
+§2,
+§3.1,
+§3.1,
+§3.3,
+Table 2,
+Table 5,
+Table 5,
+Table 5,
+Table 5,
+§5.
+Liu et al. (2021)
+Z. Liu, Y. Lin, Y. Cao, H. Hu, Y. Wei, Z. Zhang, S. Lin, and B. Guo
+Swin transformer: hierarchical vision transformer using shifted windows.
+In 2021 IEEE/CVF international conference on computer vision (ICCV),
+pp. 9992–10002.
+Cited by: §A.7.
+Liu et al. (2026)
+Z. Liu, W. Ren, X. Huang, S. Chen, T. Li, M. Chen, Y. Ji, S. He, J. Schult, B. Zeng, T. Xiang, W. Chen, P. Luo, L. Zettlemoyer, and Y. Cong
+Tuna-2: pixel embeddings beat vision encoders for multimodal understanding and generation.
+External Links: 2604.24763,
+Link
+Cited by: §2.
+Luo et al. (2023)
+Z. Luo, D. Chen, Y. Zhang, Y. Huang, L. Wang, Y. Shen, D. Zhao, J. Zhou, and T. Tan
+Videofusion: decomposed diffusion models for high-quality video generation.
+arXiv preprint arXiv:2303.08320.
+Cited by: Table 5.
+Ma et al. (2026a)
+L. Ma, Z. Guo, Y. He, X. Fu, L. Liu, J. Fu, J. Huang, and Y. Li
+FrequencyBooster: full-frequency modeling for high-fidelity pixel diffusion.
+External Links: 2605.17759,
+Link
+Cited by: §2.
+Ma et al. (2024)
+N. Ma, M. Goldstein, M. S. Albergo, N. M. Boffi, E. Vanden-Eijnden, and S. Xie
+Sit: exploring flow and diffusion-based generative models with scalable interpolant transformers.
+In European Conference on Computer Vision,
+pp. 23–40.
+Cited by: §1,
+§3.1.
+Ma et al. (2026b)
+Z. Ma, L. Wei, S. Wang, S. Zhang, and Q. Tian
+DeCo: frequency-decoupled pixel diffusion for end-to-end image generation.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR),
+pp. 43600–43610.
+Cited by: §1,
+§2,
+§2,
+Table 5,
+Table 6.
+Ma et al. (2026c)
+Z. Ma, R. Xu, and S. Zhang
+PixelGen: improving pixel diffusion with perceptual supervision.
+External Links: 2602.02493,
+Link
+Cited by: §1,
+§2,
+§2,
+Table 5,
+Table 6,
+§5.
+Mukhopadhyay et al. (2026)
+S. Mukhopadhyay, P. Udhayanan, and A. Shrivastava
+Scale space diffusion.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR),
+pp. 35851–35860.
+Cited by: §1,
+§2.
+Nichol and Dhariwal (2021)
+A. Q. Nichol and P. Dhariwal
+Improved denoising diffusion probabilistic models.
+In International conference on machine learning,
+pp. 8162–8171.
+Cited by: §2.
+Pavasovic et al. (2026)
+K. L. Pavasovic, T. Vallaeys, S. Mallat, G. Biroli, L. Zettlemoyer, B. Karrer, and J. Verbeek
+WaiT for the signal: simple frequency-aware flow-matching.
+External Links: 2607.28760,
+Link
+Cited by: §2,
+§4.1.
+Peebles and Xie (2023)
+W. Peebles and S. Xie
+Scalable diffusion models with transformers.
+In 2023 IEEE/CVF International Conference on Computer Vision (ICCV),
+pp. 4172–4182.
+Cited by: §1,
+§4.1,
+Table 5.
+Ren et al. (2026)
+Y. Ren, H. Wang, B. He, H. Chen, and A. Shrivastava
+NeRV-diffusion: diffuse implicit neural representation for video synthesis.
+In International Conference on Learning Representations,
+Vol. 2026, pp. 15548–15577.
+Cited by: Table 5,
+Table 5.
+Rombach et al. (2022)
+R. Rombach, A. Blattmann, D. Lorenz, P. Esser, and B. Ommer
+High-resolution image synthesis with latent diffusion models.
+In 2022 IEEE/CVF conference on computer vision and pattern recognition (CVPR),
+pp. 10674–10685.
+Cited by: §1.
+Ronneberger et al. (2015)
+O. Ronneberger, P. Fischer, and T. Brox
+U-net: convolutional networks for biomedical image segmentation.
+In International Conference on Medical image computing and computer-assisted intervention,
+pp. 234–241.
+Cited by: Table 5.
+Russakovsky et al. (2015)
+O. Russakovsky, J. Deng, H. Su, J. Krause, S. Satheesh, S. Ma, Z. Huang, A. Karpathy, A. Khosla, M. Bernstein, et al.
+Imagenet large scale visual recognition challenge.
+International journal of computer vision 115 (3), pp. 211–252.
+Cited by: §5.
+Shin et al. (2026)
+J. Shin, J. Kim, and H. Shim
+Representation alignment for just image transformers is not easier than you think.
+External Links: 2603.14366,
+Link
+Cited by: Table 5.
+Singh et al. (2026)
+J. Singh, B. Zheng, Z. Wu, R. Zhang, E. Shechtman, and S. Xie
+Improved baselines with representation autoencoders.
+arXiv preprint arXiv:2605.18324.
+Cited by: §A.8,
+Table 10,
+§1,
+§1,
+item 3.
+Skorokhodov et al. (2024)
+I. Skorokhodov, W. Menapace, A. Siarohin, and S. Tulyakov
+Hierarchical patch diffusion models for high-resolution video generation.
+In 2024 IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR),
+pp. 7569–7579.
+Cited by: §A.1.
+Soomro et al. (2012)
+K. Soomro, A. R. Zamir, and M. Shah
+Ucf101: a dataset of 101 human actions classes from videos in the wild.
+arXiv preprint arXiv:1212.0402.
+Cited by: §5.
+Team (2025)
+W. Team
+Wan: open and advanced large-scale video generative models.
+.
+Cited by: §5.
+Unterthiner et al. (2018)
+T. Unterthiner, S. Van Steenkiste, K. Kurach, R. Marinier, M. Michalski, and S. Gelly
+Towards accurate generative models of video: a new metric & challenges.
+arXiv preprint arXiv:1812.01717.
+Cited by: §5.
+Wang et al. (2025)
+H. Wang, S. Suri, Y. Ren, H. Chen, and A. Shrivastava
+Larp: tokenizing videos with a learned autoregressive generative prior.
+In International Conference on Learning Representations,
+Vol. 2025, pp. 60671–60697.
+Cited by: Table 5,
+§5.
+Wang et al. (2024)
+J. Wang, Y. Jiang, Z. Yuan, B. Peng, Z. Wu, and Y. Jiang
+Omnitokenizer: a joint image-video tokenizer for visual generation.
+Advances in Neural Information Processing Systems 37, pp. 28281–28295.
+Cited by: Table 5.
+Wang et al. (2026a)
+S. Wang, Z. Gao, C. Zhu, W. Huang, and L. Wang
+Pixnerd: pixel neural field diffusion.
+In International Conference on Learning Representations,
+Vol. 2026, pp. 43559–43580.
+Cited by: Table 6.
+Wang et al. (2026b)
+S. Wang, Z. Tian, W. Huang, and L. Wang
+Ddt: decoupled diffusion transformer.
+In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition,
+pp. 40633–40642.
+Cited by: Table 5.
+Wang et al. (2026c)
+X. Wang, H. Zhao, Y. Lu, K. Zhou, L. Ma, and K. He
+MiniT2I: a minimalist baseline for text-to-image generation.
+External Links: Link
+Cited by: §1,
+§2,
+Table 6.
+Yu et al. (2023)
+L. Yu, Y. Cheng, K. Sohn, J. Lezama, H. Zhang, H. Chang, A. G. Hauptmann, M. Yang, Y. Hao, I. Essa, et al.
+Magvit: masked generative video transformer.
+In 2023 IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR),
+pp. 10459–10469.
+Cited by: Table 5.
+Yu et al. (2024)
+L. Yu, J. Lezama, N. B. Gundavarapu, L. Versari, K. Sohn, D. Minnen, Y. Cheng, A. Gupta, X. Gu, A. G. Hauptmann, et al.
+Language model beats diffusion-tokenizer is key to visual generation.
+In International Conference on Learning Representations,
+Vol. 2024, pp. 765–783.
+Cited by: Table 5.
+Yu et al. (2025)
+S. Yu, S. Kwak, H. Jang, J. Jeong, J. Huang, J. Shin, and S. Xie
+Representation alignment for generation: training diffusion transformers is easier than you think.
+In International Conference on Learning Representations,
+Cited by: §1,
+Table 5.
+Yu et al. (2022)
+S. Yu, J. Tack, S. Mo, H. Kim, J. Kim, J. Ha, and J. Shin
+Generating videos with dynamics-aware implicit generative adversarial networks.
+arXiv preprint arXiv:2202.10571.
+Cited by: Table 5.
+Yu et al. (2026)
+Y. Yu, W. Xiong, W. Nie, Y. Sheng, S. Liu, and J. Luo
+PixelDiT: pixel diffusion transformers for image generation.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR),
+pp. 14273–14282.
+Cited by: §1,
+§2,
+§4.1,
+Table 5,
+Table 5,
+Table 6.
+Zhang et al. (2018)
+R. Zhang, P. Isola, A. A. Efros, E. Shechtman, and O. Wang
+The unreasonable effectiveness of deep features as a perceptual metric.
+In 2018 IEEE/CVF conference on computer vision and pattern recognition,
+pp. 586–595.
+Cited by: Table 5.
+Appendix A Appendix
+A.1 Hyperparameters
+We provide our training hyperparameters in Table 7. For the ImageNet and UCF101 experiments we do not specifically change any of the base architecture, unless specified otherwise. Furthermore, we also provide evaluation time hyperparameters for these experiments in Table 8. Because the model parameterization changes over training for MFlow and hence it is not clear if the defaults work. We report inference steps, classifier-free guidance (CFG), sampling velocity-recovery clamp σmin\sigma_{\min}, and CFG Interval.
+We use the default JiT-B hyperparameters (Heun 50 steps, CFG 2.9, CFG Interval [0.10,1.0][0.10,1.0], σmin=0.04\sigma_{\text{min}}=0.04) for initial ImageNet B-level experiments to isolate the effect of training objective.
+For H-scale results we first conducted a coarse per-model CFG scan at σmin=0.04\sigma_{\min}=0.04, interval [0.10,1][0.10,1], followed by a finer CFG×σmin\times\sigma_{\min} grid on the strongest (LPIPS) variant.
+For UCF-101, we firstly observed that a smaller spatial patch size of 8×88\times 8 worked better than 16×1616\times 16. For the Wan2.1 latent model we used the ‘Wan-AI/Wan2.1-T2V-1.3B-Diffusers’ VAE and a DiT based on JiT’s modern architecture. For evaluation hyperparameters, we use a two-stage search because full-scale FVD evaluation is expensive. We first run a FVD@2K grid over CFG
+and
+σmin\sigma_{\min}
+with Heun/100 to find the basin.
+And then over a narrowed CFG×σmin\times\sigma_{\min} grid around the coarse optimum we calculate the full-scale FVD@10K. On the baseline, we also found 100100 steps of Heun works the best around the basin, so we use that for all the experiments. The MFlow + post-hoc Framewise-LPIPS loss model was trained for an additional 10% epochs. (We note that, the UCF101 results in Skorokhodov et al. (2024) is evaluated at a different spatial resolution of 256 with temporal subsampling and without a publicly available codebase or checkpoint it is not comparable. Hence, we omit them.)
+We additionally port the three objectives to a large text-to-image (T2I) stack: a multimodal
+DiT (MMDiT) over a weight-free PixelVAE latent (16×1616\times 16 pixel patchify →\to 768768-d
+tokens) with a frozen Qwen3-VL-8B text encoder (hidden layers {10,20,−1}\{10,20,-1\}). We train a dense
+1.11.1B model and a 1313B mixture-of-experts (2.92.9B active) on ∼900{\sim}900M images
+(multi-resolution 256/512256/512) with captions, then supervised-fine-tune for
+44K steps on a high-quality mixture 33.533.5M aesthetic-filtered images. All variants share the same natural-image patch-PCA basis
+(uncentered, 16×1616\times 16) as the ImageNet models, and MFlow again uses rational gains
+(c=0.05c{=}0.05) with a 10×10\times gain learning rate. Unlike the ImageNet-H and UCF settings, we do
+not run a per-model CFG×σmin\times\sigma_{\min} search for T2I. We fix a single
+shared sampler for all variants (DDIM, 5050 steps, CFG 3.03.0; Table 8), so
+the T2I numbers reflect out-of-the-box behavior.
+Table 7: Configuration for our JiT / AsymFlow / MFlow models. Architecture and optimizer follow JiT-B/L/H (Li and He (2026) Tab. 9) for image/video; the text-to-image (T2I) stack is a PixelVAE-latent MMDiT. We list the settings we update.
+Image (ImageNet-256)
+Video (UCF-101, 16×128216{\times}128^{2})
+Text-to-Image
+Architecture
+Backbone
+JiT-B/H (JiT Tab. 9)
+VideoJiT-B/L (= JiT depth/width)
+MMDiT
+Params
+131M / 953M
+131M / 458M
+1.1B / 13B-MoE 2.9B act
+Patch
+16×1616\times 16
+4×8×84{\times}8{\times}8
+16×1616\times 16 (PixelVAE)
+Sequence length
+256 (+32+32 in-context)
+1024
+res-dep. (10241024 @ 512512px)
+Bottleneck
+128 (B), 256 (H)
+256
+– (none)
+Text encoder
+– (class label)
+– (class label)
+Qwen3-VL-8B (frozen)
+Latent
+pixel
+pixel
+pixel
+Dropout
+0 (B), 0.2 (H)
+0
+0
+Training
+Optimizer
+AdamW, β=(0.9,0.95)\beta{=}(0.9,0.95)
+same
+AdamW , β=(0.95,0.95)\beta{=}(0.95,0.95)
+Epochs / warmup
+600 / 5
+3000 / 5
+300300K++4K steps / 11K
+Effective batch
+1024
+512 (B), 256 (L)
+20482048†
+Learning rate
+×10−42\!\times\!10^{-4}
+×10−41\!\times\!10^{-4}/×10−55\!\times\!10^{-5}
+×10−41\!\times\!10^{-4}
+LR schedule
+constant
+constant
+warmup-stable-decay
+EMA decay
+{0.9996,0.9998,0.9999}
+same
+0.9995
+Time sampler
+logit-normal μ=−0.8,σ=0.8\mu{=}{-}0.8,\sigma{=}0.8
+same
+resolution-shifted†
+Precision
+bf16, no grad-clip
+same
+bf16, grad-clip 1.01.0
+Class drop (CFG)
+0.1
+0.1
+0.05 (text drop)
+AsymFlow / MFlow
+AsymFlow rank
+r=8r{=}8
+r=8r{=}8
+r=8r{=}8
+MFlow gains init
+m=λ^/(λ^+c)m{=}\hat{\lambda}/(\hat{\lambda}{+}c), c=0.05c{=}0.05
+same
+same
+MFlow θ\theta
+learnable, init ‘norm_var’
+same
+learnable, init ‘type’ (clamp)
+MFlow loss space
+velocity (uu)
+velocity (uu)
+velocity (uu)
+MFlow gain LR mult.
+×10\times 10
+×1\times 1
+×10\times 10
+PCA basis
+fixed patch-PCA, ImageNet
+fixed tubelet-PCA, UCF-101
+fixed patch-PCA, natural img
+(uncentered, 16×1616{\times}16)
+(uncentered, 4×8×84{\times}8{\times}8)
+(uncentered, 16×1616{\times}16)
+LPIPS
+Backbone / gate
+VGG, t≥0.3t\!\geq\!0.3
+VGG, t≥0.3t\!\geq\!0.3
+VGG, t≥0.3t\!\geq\!0.3
+Weight
+0.1
+0.2
+0.1
+Spatial extent
+full frame
+random H/2×W/2H/2{\times}W/2
+full frame
+Frames
+–
+all 16 (framewise)
+–
+Table 8: Evaluation / sampling hyperparameters for our trained models (Tables 2, 5,  5,  5). Table 1 uses a single shared base JiT-B configuration while the rest are tuned per model.
+Table
+Model
+Solver
+Steps
+CFG
+σmin\sigma_{\min}
+CFG Interval
+Table 5
+(ImageNet, H, tuned)
+JiT-H ++LPIPS
+Heun
+50
+2.50
+0.04
+[0.10,1.0][0.10,1.0]
+AsymFlow-H ++LPIPS
+Heun
+50
+2.20
+0.04
+[0.10,1.0][0.10,1.0]
+MFlow-H ++LPIPS
+Heun
+50
+2.35
+0.04
+[0.10,1.0][0.10,1.0]
+Table 5
+(UCF, B, tuned)
+Video JiT-B
+Heun
+100
+3.0
+10−510^{-5}
+[0,1.0][0,1.0]
+Video AsymFlow-B
+Heun
+100
+3.5
+0.04
+[0,1.0][0,1.0]
+Video MFlow-B
+Heun
+100
+3.5
+0.04
+[0,1.0][0,1.0]
+Table 5
+(UCF, L, tuned)
+Video JiT-L
+Heun
+100
+3.0
+10−510^{-5}
+[0,1.0][0,1.0]
+Video AsymFlow-L
+Heun
+100
+4.0
+0.04
+[0,1.0][0,1.0]
+Video MFlow-L
+Heun
+100
+4.0
+0.04
+[0,1.0][0,1.0]
+++post-hoc FW-LPIPS
+Heun
+100
+3.0
+0.04
+[0,1.0][0,1.0]
+Tables 5∗
+(T2I, shared)
+MMDiT JiT-L ++SFT
+DDIM
+50
+3.0
+10−510^{-5}
+[0,1.0][0,1.0]
+MMDiT AsymFlow-L ++SFT
+DDIM
+50
+3.0
+0.04
+[0,1.0][0,1.0]
+MFlow-L ++SFT
+DDIM
+50
+3.0
+0.04
+[0,1.0][0,1.0]
+MFlow-XXL (MoE) ++SFT
+DDIM
+50
+3.0
+0.04
+[0,1.0][0,1.0]
+† Normalized time τ=t/T\tau{=}t/T (with t/T=σ⁡(z),z∼𝒩⁡(0,1)t/T{=}\sigma(z),\ z\!\sim\!\mathcal{N}(0,1)) is warped as
+τ↦s​τ1+(s−1)​τ\tau\mapsto\dfrac{s\,\tau}{1+(s-1)\,\tau}, where s=min⁡(N/Nref,smax)s{=}\min\!\big(\sqrt{N/N_{\mathrm{ref}}},\,s_{\max}\big),
+NN is the latent token count (H​W⋅min⁡(T,4)HW\!\cdot\!\min(T,4); images T=1T{=}1), Nref=256N_{\mathrm{ref}}{=}256 (16×1616{\times}16),
+and smax=6s_{\max}{=}6 (SD3/Hunyuan-style resolution shift).
+A.2 MFlow Implementation Details
+All operators are diagonal in the fixed patch-PCA basis 𝑼{\bm{U}}, so every step is a change of basis
+(img→\topatch coeffs @ U), a per-direction scalar op, and a change back (@ U⊤→{}^{\top}\to img).
+Below, x is a batch of patch-token tensors, t∈\in[0,1] is flow matching timestep, U (D,D)
+and lam (D,) are the precomputed PCA basis/variances. These mirror the JiT codebase.
+⬇
+# One-time setup: fixed gains from lambda, or learnable
+# params. lam_n is the normalized variance (lam_max = 1).
+def setup_gains(lam):
+lam_n = lam.clamp(min=0) / lam.clamp(min=0).max()
+m_fixed = lam_n / (lam_n + c)
+return m_fixed
+# Learnable variant (default): phi (D,) logits + scalar
+# m_i = sigmoid(phi_i).
+def gains():
+if learnable:
+m = sigmoid(phi)     # phi is init with torch.logit(m_fixed)
+else:
+m = m_fixed
+return m
+⬇
+# Graded target u_G = x0 - M eps (Using Eq. 2), in the PCA basis.
+def mflow_target(x0, eps, t):
+m  = gains()
+ce = to_patch_coeffs(eps) @ U        # eps in PCA coords
+Me = (m * ce) @ U.T                  # M eps = U diag(m) U^T eps
+return x0 - to_img(Me)               # u_G
+⬇
+# Exact recovery of x0-hat from the output u_G (Using Eq. 5, Using Eq. 6).
+def mflow_to_x0(u_M, x_t, t):
+m   = gains(t)
+omt = clamp_min(1 - t, t_eps)        # (1 - t)
+cu  = to_patch_coeffs(u_M) @ U       # u_M coeffs
+cz  = to_patch_coeffs(x_t) @ U       # x_t coeffs
+denom = clamp_min(omt + m * t, t_eps)  # Delta_i = (1-t)+m_i t
+x0_c  = (omt * cu + m * cz) / denom  # x0-hat coeffs (eq. 11)
+return to_img(x0_c @ U.T)
+⬇
+# Velocity for sampling (Using Eq. 6).
+def mflow_to_velocity(u_M, x_t, t):
+x0_hat = mflow_to_x0(u_M, x_t, t)
+return (x0_hat - x_t) / clamp_min(1 - t, t_eps)
+⬇
+# Training step: velocity-space flow-matching loss.
+def training_loss(net, x0, t):
+eps = randn_like(x0)
+x_t = t * x0 + (1 - t) * eps         # forward interpolant
+u_M = net(x_t, t, cond)              # raw output ~= u_G
+u_pred = mflow_to_velocity(u_M, x_t, t)  # -> full velocity
+loss   = weight(t) * mse(u_pred, x0 - eps)  # Using Eq. 7
+return loss
+⬇
+# Sampling: Euler/Heun on velocity, integrating t: 0 -> 1.
+def sample(net, steps):
+x = randn(...)                       # t = 0, pure noise
+for t0, t1 in schedule(steps):
+u = mflow_to_velocity(net(x, t0, cond), x, t0)
+x = heun_step(x, u, t0, t1, net)
+return x
+A.3 Why MFlow Uses uu-prediction
+MFlow predicts the graded target
+𝒖G=𝒙0−𝑴​ϵ,{\bm{u}}_{\mathrm{G}}={\bm{x}}_{0}-{\bm{M}}\bm{\epsilon},
+(8)
+where the direction-wise gains
+mi=sigmoid⁡(ϕi)m_{i}=\operatorname{sigmoid}(\phi_{i}) are optimized jointly with the
+network. A natural alternative would be to directly regress this target:
+ℒG(𝜽,ϕ)=𝔼[w(t)‖𝒖^G−𝒖G‖22].\mathcal{L}_{\mathrm{G}}({\bm{\theta}},{\bm{\phi}})=\mathbb{E}\mathopen{}\mathclose{{\left[w(t)\mathopen{}\mathclose{{\left\|\hat{{\bm{u}}}_{\mathrm{G}}-{\bm{u}}_{\mathrm{G}}}}\right\|_{2}^{2}}}\right].
+(9)
+Here, 𝒖G{\bm{u}}_{\mathrm{G}} is not detached from the computation graph, so
+this objective does propagate gradients to the gains. We show, however,
+that it introduces an undesirable dependence on the scale of the chosen
+parameterization.
+Recall that
+𝒙t=t​𝒙0+(1−t)​ϵ,𝒖=𝒙0−ϵ.{\bm{x}}_{t}=t{\bm{x}}_{0}+(1-t)\bm{\epsilon},\qquad{\bm{u}}={\bm{x}}_{0}-\bm{\epsilon}.
+(10)
+In PCA direction ii, the graded target can be rewritten as
+u~G,i=(1−mi)​x~t,i+Δi​(t)​u~i,Δi​(t)≔(1−t)+t​mi.\tilde{u}_{\mathrm{G},i}=(1-m_{i})\tilde{x}_{t,i}+\Delta_{i}(t)\tilde{u}_{i},\qquad\Delta_{i}(t)\coloneqq(1-t)+tm_{i}.
+(11)
+Consequently, the velocity recovered from a network prediction
+u~^G,i\hat{\tilde{u}}_{\mathrm{G},i} is
+u~^i=u~^G,i−(1−mi)​x~t,iΔi​(t).\hat{\tilde{u}}_{i}=\frac{\hat{\tilde{u}}_{\mathrm{G},i}-(1-m_{i})\tilde{x}_{t,i}}{\Delta_{i}(t)}.
+(12)
+Combining Eqs. equation 11
+and equation 12 gives the exact error
+relation
+OPENu~^G,i−u~G,i=Δi​(t)​(u~^i−u~iCLOSE).\hat{\tilde{u}}_{\mathrm{G},i}-\tilde{u}_{\mathrm{G},i}=\Delta_{i}(t)\mathopen{}\mathclose{{\left(\hat{\tilde{u}}_{i}-\tilde{u}_{i}}}\right).
+(13)
+Thus, direct graded-target supervision is equivalent to
+ℒG=𝔼[w(t)∑iΔi(t)2(u~^i−u~iCLOSE)2].\mathcal{L}_{\mathrm{G}}=\mathbb{E}\mathopen{}\mathclose{{\left[w(t)\sum_{i}\Delta_{i}(t)^{2}\mathopen{}\mathclose{{\left(\hat{\tilde{u}}_{i}-\tilde{u}_{i}}}\right)^{2}}}\right].
+(14)
+The same recovered-velocity error therefore receives a different penalty
+depending on mim_{i} and tt.
+The gains receive gradients.
+Because the target is not detached, the per-sample derivative of the
+direct loss is
+⁡∂⁡ℓG,i⁡∂⁡mi|u~^G,i=2w(t)(u~^G,i−u~G,iCLOSE)ϵ~i.\mathopen{}\mathclose{{\left.\frac{\mathop{}\!\mathrm{\partial}\ell_{\mathrm{G},i}}{\mathop{}\!\mathrm{\partial}m_{i}}}}\right|_{\hat{\tilde{u}}_{\mathrm{G},i}}=2w(t)\mathopen{}\mathclose{{\left(\hat{\tilde{u}}_{\mathrm{G},i}-\tilde{u}_{\mathrm{G},i}}}\right)\tilde{\epsilon}_{i}.
+(15)
+Equivalently,
+OPEN⁡∂⁡ℓG,i⁡∂⁡ϕi=2​w​(t)​(u~^G,i−u~G,iCLOSE)​ϵ~i​mi​(1−mi).\frac{\mathop{}\!\mathrm{\partial}\ell_{\mathrm{G},i}}{\mathop{}\!\mathrm{\partial}\phi_{i}}=2w(t)\mathopen{}\mathclose{{\left(\hat{\tilde{u}}_{\mathrm{G},i}-\tilde{u}_{\mathrm{G},i}}}\right)\tilde{\epsilon}_{i}\,m_{i}(1-m_{i}).
+(16)
+This gradient is generally nonzero, but its sign depends on the current
+prediction residual. The issue with direct supervision is therefore not
+that the gains cannot learn, but that the objective admits a
+parameterization-scale shortcut.
+A parameterization-scale shortcut.
+Consider any fixed recovered-velocity predictor
+u~¯i​(𝒙t,t)\bar{\tilde{u}}_{i}({\bm{x}}_{t},t). For every value of mim_{i}, define the
+corresponding graded prediction
+u~^G,i(mi)=(1−mi)​x~t,i+Δi​(t)​u~¯i.\hat{\tilde{u}}_{\mathrm{G},i}^{(m_{i})}=(1-m_{i})\tilde{x}_{t,i}+\Delta_{i}(t)\bar{\tilde{u}}_{i}.
+(17)
+Substituting Eq. equation 17 into the recovery
+map always yields the same predictor:
+u~^G,i(mi)−(1−mi)​x~t,iΔi​(t)=u~¯i.\frac{\hat{\tilde{u}}_{\mathrm{G},i}^{(m_{i})}-(1-m_{i})\tilde{x}_{t,i}}{\Delta_{i}(t)}=\bar{\tilde{u}}_{i}.
+(18)
+Hence, changing mim_{i} along this family does not change the recovered
+transport field. Nevertheless, the direct graded-target loss becomes
+OPENℓG,i​(mi)=w⁡(t)​Δi​(t)2​(u~¯i−u~iCLOSE)2.\ell_{\mathrm{G},i}(m_{i})=w(t)\,\Delta_{i}(t)^{2}\mathopen{}\mathclose{{\left(\bar{\tilde{u}}_{i}-\tilde{u}_{i}}}\right)^{2}.
+(19)
+Its derivative along this equivalent-predictor family is
+OPENd​ℓG,id​mi=2​w​(t)​t​Δi​(t)​(u~¯i−u~iCLOSE)2≥0.\frac{\mathrm{d}\ell_{\mathrm{G},i}}{\mathrm{d}m_{i}}=2w(t)\,t\,\Delta_{i}(t)\mathopen{}\mathclose{{\left(\bar{\tilde{u}}_{i}-\tilde{u}_{i}}}\right)^{2}\geq 0.
+(20)
+Therefore, whenever t>0t>0 and the recovered velocity has nonzero error,
+decreasing mim_{i} reduces the graded-target loss while leaving the
+recovered velocity unchanged. The direct objective can thus improve by
+making the target more 𝒙0{\bm{x}}_{0}-like, rather than by learning a more
+accurate transport field.
+This does not imply that every instantaneous minibatch gradient must
+decrease mim_{i}. Instead, Eq. equation 20 shows that
+the joint optimization problem contains a loss-reducing direction that is
+unrelated to transport accuracy.
+For the binary AsymFlow parameterization,
+Δi​(t)2={1,mi=1,(1−t)2,mi=0.\Delta_{i}(t)^{2}=\begin{cases}1,&m_{i}=1,\\
+(1-t)^{2},&m_{i}=0.\end{cases}
+(21)
+Direct 𝒖G{\bm{u}}_{\mathrm{G}} supervision therefore suppresses
+recovered-velocity errors in the clean-image-prediction subspace by
+(1−t)2(1-t)^{2}. Near the clean endpoint, t→1t\rightarrow 1, these errors become
+almost unpenalized, even though they are amplified when the prediction is
+converted back to velocity.
+Velocity-space supervision.
+MFlow instead applies the standard flow-matching objective after exact
+velocity recovery:
+ℒ𝒖(𝜽,ϕ)=𝔼[w(t)∑i(u~^i−u~iCLOSE)2].\mathcal{L}_{{\bm{u}}}({\bm{\theta}},{\bm{\phi}})=\mathbb{E}\mathopen{}\mathclose{{\left[w(t)\sum_{i}\mathopen{}\mathclose{{\left(\hat{\tilde{u}}_{i}-\tilde{u}_{i}}}\right)^{2}}}\right].
+(22)
+Using Eq. equation 13, this is equivalently
+ℒ𝒖=𝔼[w(t)∑iOPEN(u~^G,i−u~G,iCLOSE)2Δi​(t)2].\mathcal{L}_{{\bm{u}}}=\mathbb{E}\mathopen{}\mathclose{{\left[w(t)\sum_{i}\frac{\mathopen{}\mathclose{{\left(\hat{\tilde{u}}_{\mathrm{G},i}-\tilde{u}_{\mathrm{G},i}}}\right)^{2}}{\Delta_{i}(t)^{2}}}}\right].
+(23)
+The inverse factor from velocity recovery cancels the artificial
+Δi​(t)2\Delta_{i}(t)^{2} scaling of the graded target. In particular, along the
+equivalent-predictor family in
+Eq. equation 17,
+dd​mi[w(t)(u~¯i−u~iCLOSE)2]=0.\frac{\mathrm{d}}{\mathrm{d}m_{i}}\mathopen{}\mathclose{{\left[w(t)\mathopen{}\mathclose{{\left(\bar{\tilde{u}}_{i}-\tilde{u}_{i}}}\right)^{2}}}\right]=0.
+(24)
+Velocity-space supervision therefore evaluates all parameterizations using
+the same transport objective. The gains can still adapt because they alter
+the conditioning and finite-capacity approximation problem faced by the
+network, but they cannot reduce the objective merely by shrinking the
+scale of the regression target.
+A.4 Surprising behaviour LPIPS on the Learned 𝑴{\bm{M}}-Curve
+Figure 12(a) shows that LPIPS substantially
+changes the prediction parameterization learned by MFlow. Without
+LPIPS, the gains decrease approximately monotonically with PCA variance:
+high-variance directions receive more 𝒖{\bm{u}}-like prediction, while
+lower-variance directions become increasingly 𝒙0{\bm{x}}_{0}-like. This behavior
+is consistent with the normalized-variance initialization. With LPIPS,
+however, the leading gains become non-monotonic. Using zero-based
+indexing, PC0 and PC1 retain high gains, PC2–PC3 exhibit a pronounced
+dip, and PC4 rises again.
+Figure 13:
+Leading modes of the uncentered patch-PCA basis.
+We reshape the first 64 eigenvectors of the
+16×16×316\times 16\times 3 patch-PCA basis into RGB patches; the value
+λ\lambda denotes the variance of each direction. The leading
+ordering interleaves patch-global or very low-frequency modes
+with spatially varying modes. In particular, PC0 is dominated by
+low-frequency patch-level tone, PC1 is an approximately uniform
+chromatic mode, PC2–PC3 encode spatial gradients, and PC4 returns
+to an approximately uniform chromatic mode. Eigenvector signs are
+arbitrary, so the interpretation is based on spatial structure
+rather than the displayed color polarity.
+The PCA modes in Fig. 13 provide a structural
+interpretation of this pattern. PC0 represents a patch-global,
+low-spatial-frequency component, while PC1 is nearly constant across the
+patch and primarily changes its color. In contrast, PC2 and PC3 contain
+vertical and horizontal spatial gradients. PC4 then returns to a nearly
+spatially uniform chromatic component. The leading sequence is therefore
+approximately
+patch-global,patch-global,spatial,spatial,patch-global,\text{patch-global},\quad\text{patch-global},\quad\text{spatial},\quad\text{spatial},\quad\text{patch-global},
+which closely matches the learned gain pattern
+high,high,low,low,high.\text{high},\quad\text{high},\quad\text{low},\quad\text{low},\quad\text{high}.
+In particular, PC4 has substantially lower variance than PC2 and PC3
+(λ4=3.74\lambda_{4}=3.74, compared with
+λ2=9.41\lambda_{2}=9.41 and λ3=7.93\lambda_{3}=7.93), yet LPIPS assigns it a
+larger gain. The spike at PC4 is therefore not explained by variance
+ordering alone; it coincides with the return of a patch-global chromatic
+mode after two spatial-gradient modes.
+This effect is also more specific than a preference for color. Several
+later PCA directions contain strong chromatic variation but are spatially
+non-uniform, and they do not receive the same gain increase. The observed
+pattern instead suggests that LPIPS distinguishes between patch-global
+tone or color changes and spatially varying patterns.
+One possible explanation follows from the conditional-mean behavior of
+squared-error regression. In a finite-capacity model, a more
+𝒙0{\bm{x}}_{0}-like parameterization can shrink uncertain components toward
+their conditional means. For a spatially varying component, such
+shrinkage may primarily smooth a local gradient or texture. For a
+patch-global component, however, it can coherently alter the brightness,
+contrast, or color of the entire patch. Because LPIPS is applied to the
+recovered clean image, it may make these perceptually coherent shifts
+more costly. The learned parameterization responds by retaining a larger
+velocity-like component for the patch-global modes, thereby reducing
+their tendency toward mean reversion.
+The controlled comparison establishes that adding LPIPS produces the
+non-monotonic 𝑴{\bm{M}}-curve and that the unusually high gains align with
+patch-global PCA modes. The mean-reversion explanation is a plausible
+interpretation of this alignment rather than a causal mechanism directly
+established by the ablation.
+A.5 A Capacity-Constrained View of 𝒙0{\bm{x}}_{0}- and 𝒖{\bm{u}}-Prediction
+The choice between clean-data and velocity prediction involves two
+competing considerations. Clean-data prediction avoids asking the model
+to reproduce full-dimensional Gaussian noise, which can be advantageous
+when a high-dimensional representation has much lower intrinsic
+dimension. Velocity prediction, on the other hand, provides better
+numerical conditioning near the clean endpoint. Our RAEv2 experiment
+illustrates this trade-off particularly clearly.
+RAEv2 predominantly favors clean-data prediction.
+In our clean-latent RAEv2 setup, the pure 𝒙0{\bm{x}}_{0}-prediction baseline
+obtains an FID of 1.051.05, while AsymFlow with r=8r=8 and MFlow obtain
+1.081.08 and 1.091.09, respectively, after 80 epochs
+(Table 10). Consistently, the learned MFlow gains in
+Fig. 12(c) move almost entirely toward zero,
+recovering an approximately pure 𝒙0{\bm{x}}_{0} parameterization. These results
+indicate that, for this representation, model, and training budget, the
+network prefers to avoid predicting noise in most latent directions.
+At the same time, the AsymFlow result is only 0.030.03 FID behind the
+pure-𝒙0{\bm{x}}_{0} baseline, despite using full velocity prediction in its
+leading eight PCA directions. This result does not show that velocity
+prediction is superior in this setting; pure 𝒙0{\bm{x}}_{0}-prediction remains
+best in Table 10. It instead shows that a small
+velocity-prediction subspace can be accommodated at little measured cost,
+even in a representation that strongly favors 𝒙0{\bm{x}}_{0}-prediction overall.
+Numerical conditioning versus target complexity.
+The benefit of retaining a velocity-like component can be understood from
+the recovery map. Under our convention,
+𝒙t=t​𝒙0+(1−t)​ϵ,t=1​ is the clean endpoint.{\bm{x}}_{t}=t{\bm{x}}_{0}+(1-t)\bm{\epsilon},\qquad t=1\text{ is the clean endpoint}.
+For pure 𝒙0{\bm{x}}_{0}-prediction, the velocity is recovered as
+u~^i=x~^0,i−x~t,i1−t.\hat{\tilde{u}}_{i}=\frac{\hat{\tilde{x}}_{0,i}-\tilde{x}_{t,i}}{1-t}.
+(25)
+Consequently, an error
+δix=x~^0,i−x~0,i\delta_{i}^{x}=\hat{\tilde{x}}_{0,i}-\tilde{x}_{0,i} in the clean-data
+prediction produces a velocity error
+u~^i−u~i=δix1−t.\hat{\tilde{u}}_{i}-\tilde{u}_{i}=\frac{\delta_{i}^{x}}{1-t}.
+(26)
+The factor 1/(1−t)1/(1-t) becomes ill-conditioned as t→1t\rightarrow 1.
+For MFlow, the corresponding relation is
+u~^i−u~i=u~^G,i−u~G,iΔi​(t),Δi​(t)=(1−t)+t​mi.\hat{\tilde{u}}_{i}-\tilde{u}_{i}=\frac{\hat{\tilde{u}}_{\mathrm{G},i}-\tilde{u}_{\mathrm{G},i}}{\Delta_{i}(t)},\qquad\Delta_{i}(t)=(1-t)+tm_{i}.
+(27)
+When mi=0m_{i}=0, this reduces to the same 1/(1−t)1/(1-t) amplification as
+𝒙0{\bm{x}}_{0}-prediction. For any mi>0m_{i}>0, however,
+limt→1Δi​(t)=mi,\lim_{t\rightarrow 1}\Delta_{i}(t)=m_{i},
+so the clean-endpoint singularity is removed in that direction. Thus,
+conditional on comparable target-prediction errors, a nonzero velocity
+component gives better-conditioned velocity recovery near clean samples.
+This conditioning advantage comes with an opposing cost. Increasing
+mim_{i} changes the target from clean-data prediction toward
+u~G,i=x~0,i−mi​ϵ~i,\tilde{u}_{\mathrm{G},i}=\tilde{x}_{0,i}-m_{i}\tilde{\epsilon}_{i},
+requiring the finite-capacity network to retain a larger Gaussian-noise
+component. Full velocity prediction is therefore well conditioned during
+recovery but can be difficult to approximate in high-dimensional spaces,
+whereas pure 𝒙0{\bm{x}}_{0}-prediction removes the noise-prediction burden but
+retains the clean-endpoint amplification. The optimal parameterization
+must balance these two effects.
+A soft velocity budget.
+This trade-off suggests viewing MFlow as learning both how much
+velocity prediction the model can support and where it should be
+allocated. A useful summary of the former is the soft velocity rank
+reff≔tr⁡(𝑴)=∑imi.r_{\mathrm{eff}}\coloneqq\operatorname{tr}({\bm{M}})=\sum_{i}m_{i}.
+(28)
+Pure 𝒙0{\bm{x}}_{0}-prediction has reff=0r_{\mathrm{eff}}=0, full
+𝒖{\bm{u}}-prediction has reff=Dr_{\mathrm{eff}}=D, and rank-rr AsymFlow has
+reff=rr_{\mathrm{eff}}=r. For MFlow, this quantity is continuous and learned.
+Our results suggest a capacity-constrained principle:
+use velocity-like prediction in as many directions as the model can
+accurately support, and retain clean-data-like prediction in the remaining
+directions. The RAEv2 curve indicates a small velocity budget for this
+high-dimensional latent representation, whereas the text-to-image curves
+show that increasing model capacity shifts more directions toward
+velocity prediction. We therefore interpret model capacity as influencing
+the available velocity budget, while the data representation and training
+objective determine how that budget should be distributed.
+Why leading PCA directions are a natural default.
+Suppose that only NN directions can be assigned substantial velocity
+gains. In the absence of perceptual or other auxiliary losses, the leading
+PCA directions provide a natural initial allocation. In the PCA basis,
+Var⁡(x~0,i)=λi,Var⁡(ϵ~i)=1,\operatorname{Var}(\tilde{x}_{0,i})=\lambda_{i},\qquad\operatorname{Var}(\tilde{\epsilon}_{i})=1,
+(29)
+where λi\lambda_{i} decreases with ii, while the isotropic noise variance
+is identical in every direction. The velocity target therefore becomes
+increasingly noise-dominated as λi\lambda_{i} decreases. Allocating a
+limited velocity budget to high-variance directions concentrates the
+noise-prediction burden in the dominant data subspace, while keeping the
+many low-variance, predominantly off-manifold directions closer to
+𝒙0{\bm{x}}_{0}-prediction. It also improves near-clean conditioning in the
+directions carrying the largest fraction of the data variation.
+This PCA ordering should nevertheless be viewed as an initialization
+prior rather than a universal rule. Auxiliary objectives can favor
+directions according to their visual function rather than variance, as
+shown by the non-monotonic LPIPS 𝑴{\bm{M}}-curve in
+Fig. 12(a). We also observe that a non-leading PCA
+block can outperform the first eight directions in one ImageNet pilot.
+MFlow therefore initializes gains using normalized variance but lets the
+model modify both the effective velocity budget and its direction-wise
+allocation through end-to-end training.
+A.6 Radially-Averaged Power Spectrum
+To quantify how faithfully a model reproduces the spatial-frequency content of natural images, we compare the azimuthally-averaged 2D power spectrum of generated and real images. Each image is converted to luma (Y=0.299​R+0.587​G+0.114​BY=0.299R+0.587G+0.114B), mean-subtracted to remove the DC component, and multiplied by a separable 2D Hann window to suppress boundary leakage. We compute the squared magnitude of its 2D DFT, P⁡(𝐟)=|ℱ​g​(𝐟)|2P(\mathbf{f})=|\mathcal{F}{g}(\mathbf{f})|^{2}, center it (fftshift), and azimuthally average it, i.e., average over all orientations at each fixed radius r=∥𝐟∥r=\lVert\mathbf{f}\rVert, to obtain a 1D profile P⁡(f)P(f) as a function of radial frequency ff (cycles/pixel). Averaging P⁡(f)P(f) over N=4000N=4000 images gives the RAPS of a distribution.
+A.7 Refiners
+For our ConvRefiner we use a tt-conditioned PatchGAN discriminator (Isola et al. (2017)) (NLayerDiscriminator, 3 layers, ndf=64) with a hinge adversarial loss, applied to the refined 𝒙^0\hat{{\bm{x}}}_{0}. We have two types of batches – all-tt batch and near-clean batch (t∼𝒰⁡(0.9,0.98)t\sim\mathcal{U}(0.9,0.98)). For the all-tt batch the flow-matching and LPIPS(t≥0.3t\geq 0.3) losses are normally applied. For the near-clean batch, additional GAN loss is applied with a 0.020.02 weight, if not otherwise specified, and the flow-matching and LPIPS loss are downweighted by a factor of 0.250.25. For Attention Refiner we used a 2 blocks of swin-style (Liu et al. (2021)) windowed attention residual refiner in the clean image space, as a drop in replacement for the ConvRefiner. Note that DiP patch-detailer also takes as input 𝒙t{\bm{x}}_{t} apart from the model output.
+Table 9:
+Learnable gains on UCF-101 (B-level).
+Results use the default sampling hyperparameters, without an
+evaluation sweep.
+Method
+FVD↓\downarrow
+Video MFlow, fixed gains
+169.4
+Video MFlow, learnable gains
+155.5
+Table 10:
+RAEv2 results.
+H-level models trained on ImageNet for 80 epochs.
+Method
+FID↓\downarrow
+RAEv2 Singh et al. (2026)
+1.05
+RAEv2 + Asym8
+1.08
+RAEv2 + MFlow
+1.09
+Figure 14: ImageNet Loss Curves at H-level. We usually observe that the 𝒖{\bm{u}}-loss of MFlow training is very slightly better.
+Figure 15: Faster convergence on ImageNet with LPIPS at B-level. This corresponds to the results noted in Table 2.
+A.8 Limitations.
+Although MFlow is a general formulation that transfers across
+pixel-space image and video generation, high-dimensional representation
+latents such as RAEv2 Singh et al. (2026), and text-to-image models
+of different capacities, its improvements over strong fixed
+parameterizations are sometimes modest. One possible reason is the joint
+optimization of the gains and network weights. While the underlying
+velocity target remains fixed, updating 𝑴{\bm{M}} continuously changes the
+network’s direct output parameterization
+𝒖G=𝒙0−𝑴​ϵ{\bm{u}}_{\mathrm{G}}={\bm{x}}_{0}-{\bm{M}}\bm{\epsilon}, creating an effectively moving
+regression target and allowing the gains and network to co-adapt. Indeed,
+under the same velocity-space objective, MFlow attains a slightly lower
+training loss than JiT and AsymFlow on the ImageNet H-level experiment
+(Fig. 21); we observe similar trends for
+B-level models with and without LPIPS. However, the lower diffusion loss
+does not consistently translate into better FID. This mismatch suggests
+that improved regression conditioning need not directly improve
+distribution-level sample quality, and its precise cause remains unclear.
+Staged or decoupled optimization of the gains is an important direction
+for future work.
+ConvRefiner reveals a complementary evaluation limitation. It
+substantially closes the high-frequency spectral gap and brings the
+generated spectrum closer to that of real images, yet this improvement
+produces little or no change in FID. This suggests that FID is relatively
+insensitive to the local frequency statistics modified by the refiner.
+Consequently, spectral fidelity and FID should be viewed as complementary
+rather than interchangeable measures; texture-sensitive metrics and
+human evaluation are needed to determine how strongly the recovered
+high-frequency content translates to perceived image quality.
+Figure 16: Qualitative Text-to-Image Results on DPG-Bench. Images generated by our method and baselines on DPG-Bench prompts.
+Figure 17: Qualitative Text-to-Image Results on PRISM-Bench. Images generated by our method and baselines on PRISM-Bench prompts.
+Figure 18: Qualitative ImageNet Results. Images generated by MFlow +ConvRefiner H-level model.
+Figure 19: More Class-wise Uncurated Qualitative ImageNet Results. Images generated by MFlow +ConvRefiner H-level model.
+Figure 20: More Class-wise Uncurated Qualitative ImageNet Results. Images generated by MFlow +ConvRefiner H-level model.
+Figure 21: Qualitative UCF-101 Results. Frames generated by MFlow +post-hoc FW-LPIPS L-level model.
+Figure 22: Visualizing effect of ConvRefiner. Here we visualize the effect of adding our post-training to MFlow-H+LPIPS on ImageNet generations. We also note the average power gain in the high-frequency(0.5–0.7) region. We see overall improvement in texture details.
+Figure 23: Qualitative Ablation for ConvRefiner. Here we visualize the effect of adding our post-training to JiT-B on ImageNet generations. We also note the average power gain in the high-frequency(0.5–0.7) region. We also show the visual improvements – we see that b4 adds additional texture details, while b8 sometimes overshoots in texture.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

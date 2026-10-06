@@ -50,6 +50,8 @@ L(theta) = - sum_t log p_theta(x_t | x_<t)
 
 但“压缩”在这里是解释性视角，不代表模型一定构建了正确、简洁或因果的世界模型。错误相关性同样可以降低 loss，互相矛盾的文本也可能共同进入参数。语言中的世界结构只是训练分布的一部分投影。
 
+训练数据没有显式给出某条规则，并不等于它没有提供支持该规则的分布线索；因此稀疏构式的泛化应固定构式、读出和过滤人口，分别测直接正证与剩余线索，而不从某个测试成功推出先天规则或完整语法。[PoSH的受限检验](https://arxiv.org/html/2602.09992v1)在过滤后的幼儿语言/文本上观察到部分泛化，同时部分层级构式仍接近或低于机会水平；加入所测认知bias也没有稳定改善指定目标。这修正的是“缺少直接例子必然无法学习”和“bias必然帮助”的两项强判断，不否定所有bias或认知解释。抽样核查仍发现binding泄漏，训练上下文/预算不完全匹配；过滤、人工核查和配对评价都付费，应保留普通分布学习解释及独立构式测试，不把有限未检出写成整个语料零正证。 <!-- source-family:SF-2026-ARXIV-2602-09992 -->
+
 语法形式与构式意义也不能互相代签。判断句子是否可接受，与判断某个结构约束了怎样的事件或参与者关系，是不同的行为接口；即使采用相同 checkpoint 与 likelihood 读出，两种能力的学习进度仍可能不同。[受限最小对照](https://arxiv.org/html/2602.21978v1)中，OLMo2 的形式可接受性指标较早趋平，构式意义选择仍继续改善；这不是新的普遍 scaling law，也不证明内部已形成可读语法规则。人名/实体互换、虚构词与 base/instruct 对照可帮助诊断词汇依赖，但保留的闭类词、形态和生成器筛选仍影响支持，局部 instruction tuning 也会让部分构式退步。应分别固定形式与意义的任务、读出和候选人口，计入材料生成、人评与模型评分成本；只需要形式检查时，原可接受性基线仍合理，需要意义泛化时则增加独立语义对照，不用一个通过分数替另一个接口验收。
 <!-- source-family:SF-2026-ARXIV-2602-21978 -->
 
@@ -102,7 +104,15 @@ p_theta(output | instruction, examples, query)
 
 Context 内的“学习”可以是一次 forward 中执行估计程序，不必是参数更新。一条受限构造先按 query 的局部几何拟合 tangent，再在稳定的局部坐标中聚合样本、求回归；ambient cutoff防止投影把远处样本伪装成邻居。这里局部sample mass、维度、smoothness、separation与扰动共同决定可估计尺度，算法还需要结构信息与数值guard，不能把它解释为任意预训练模型已经自动发现同一程序。
 
+要检验 context 内执行了什么估计，可以先选择解析统计量已知的任务，再分开比较输出、内部可解码性与因果控制。一项受限构造在每个 episode 改变 Gaussian 的均值偏移或 variance，用带标签的有限 context 预测新 query；线性任务与二次 energy 任务呈现不同的可读出深度。它比 few-shot 分数提供更多诊断对象，但只对 raw dot-product kernel 作弱相关对照，不能排除 learned/centered kernel；LogitLens 与 OV 对齐仍是相关证据，不是 heads 实际投票或某层唯一必要算法的证明。[原始受限机制](https://arxiv.org/html/2603.10573v1)。<!-- source-family:SF-2026-ARXIV-2603-10573 -->
+
+已知生成任务参数的 oracle 与模型只见有限 context，不拥有同一信息。有限 context 通常留下参数 posterior，正确 predictive ratio 需要对它积分，不能直接把隐藏真参数的 likelihood ratio 当作 context 已完全识别的 Bayes 规则。该实验 variance 任务接近更有信息的 oracle，mean-shift 任务仍有 gap，较大域外 shift 和所测 label-noise 条件下结果退步，增加 context 的所测均值也未改善；没有认证任意 LLM 的通用统计算法。构造 oracle、生成任务、训练与 probe 均付费；进一步确认因果机制还需额外的定点干预预算。部署仍用当前 context/held-out 行为验收，不把高 rank correlation 或低 loss 当作因果机制和普遍最优证书。
+
 构造出可实现的 comparator，与有限pretraining真正选到它，是两个问题。新任务prompt内的样本数限制该函数能被估计多准，独立训练任务数则约束选择程序的泛化；实现误差和near-ERM优化gap仍须另外计入。固定head的存在构造也可能随context增长workspace、width与数值范围；有限实验增加任务数时同时增加更新预算，且模型与理论构造不同。条件失配或无匹配机制证据时，继续以held-out任务和当前context协议验收，不从minimax或存在性定理推出任意LLM可靠学习。[构造与条件](https://arxiv.org/html/2609.31458v1) <!-- source-family:SF-2026-ARXIV-2609-31458 -->
+
+Context 中显式给出结构，与模型自己构造出同样结构，也必须分开验证。将同一关系图写成文本或正确 ASCII 布局，可以测试外部组织是否帮助读出；要求模型先画再答，则同时加入了结构构造错误和额外输出。训练“从文本构造图”与训练“读取给定图”改变的任务接口也不同，推理时是否真的展示该图须另列，不能把两种训练和两种输入合并成更深推理的单一证据。<!-- source-family:SF-2026-ARXIV-2604-14641 -->
+
+[有限合成关系任务的对照](https://arxiv.org/html/2604.14641v1)中，给定正确 ASCII 的受测得分高于纯文本，而自行先画反而更差；构造训练和阅读训练在外部空间任务上的迁移也不同，部分阅读训练切片仍有收益。因此一致的文字与图形输出可能共同出错，不能由一致性或选出的高分子集认证内部空间表示。图构造、微调、输出 token 与独立回归都付费；布局错误、迁移或预算不合格时，保留原文本、可信外部结构与任务级验收，不把可视化步骤强加给每次推理。
 
 ## Post-training 把通用预测器塑造成可用接口
 
@@ -170,6 +180,10 @@ model policy
 第六，目标错位。模型可能优化“看起来像好答案”，而不是业务真正需要的事实、合规和可执行结果。
 
 所以 Evaluation 需要区分 capability ceiling 与 reliability distribution。可以分别测试 pass@k、单次成功率、最坏切片、校准、鲁棒性、拒答、恢复和成本。允许多次尝试能展示潜在能力，却可能掩盖一次请求的用户体验和资源代价。
+
+显式解释还增加一个独立接口：同一问题换措辞后输出是否一致、答案是否正确，以及解释是否忠实于真实计算，不能共用一个分数。把另一模型的解释去掉答案标签后转给目标模型，可以改善某些任务的一致性，却仍可能稳定地答错；删除标签也没有独立证明解释未携带答案线索。跨模型解释是外部条件，不是内部 reasoning 轨迹的直接读取。<!-- source-family:SF-2026-ARXIV-2601-11517 -->
+
+[受限跨模型解释对照](https://arxiv.org/html/2601.11517v1)在有限 MedCalc 与 instruction tasks 中，Deepseek-R1-Distill-Qwen-1.5B 经 GRPO 后，转移解释给五个模型的平均 pairwise consistency 从0.11到0.39，平均 transfer accuracy却从0.30到0.29；另一个受测模型可同时改善两者，故不能把这种分离写成所有RL设置的规律。逐句多候选与 perplexity 选择增加调用/评分成本，人类感知 rating 也不是实际解题效果。需要正确性或高风险判断时，保留答案验证、无解释/自己解释的匹配对照与独立证据；成本或迁移失配时沿用较简单解释接口，不把“更稳定、更可信的措辞”当作更可靠的模型。
 
 ## 能力不等于知道自己知道
 
@@ -274,6 +288,10 @@ scalable architecture
 
 上述 bridge-state 是一条受控的组合机制，不能把探针何时读出实体直接当作原任务的因果计算顺序。若把不同 layer、subject/末 token 的 hidden state 转入另一个解释 prompt，所观察的是该解释接口中的可解码性；raw、按解释相似度过滤的 GF/LF，以及只保留原子事实与组合均答对的 Correct 人口，也不是同一测量对象。[受限多跳观察](https://arxiv.org/html/2601.03542v1)中三、四跳的最终实体可以比中间实体更早被该探针读出，两跳却未见同样反转。这要求比较层顺序时固定位置、解释 prompt、过滤规则与条件人口，而不是据此否定所有逐步组合，或反向证明模型先完成真实 recall 再提取桥状态；概率 recall、Attention/MLP 功能与必要因果 hop 仍需独立干预。旧的受控电路解释继续成立，可读表示与实际使用分开验收，探针失配时回退行为对照和受控干预。<!-- source-family:SF-2026-ARXIV-2601-03542 -->
 
+“换一个环境还能答”与“组合长度变长还能答”应作为两条独立的泛化轴。在受控最短路径任务中，可以保留地图拓扑、改变路径长度，或固定长度、改变用于最短路径微调的地图；再只看两个短子路径均已答对的实例，检查模型是否仍能给出对应长路径。这样能把基础局部能力与更长组合的行为失败分开，却不能由失败直接定位某个内部电路。所谓未见地图也必须注明相对哪一阶段未见：随机游走预训练已经接触该地图，不等于微调外地图是模型从未接触的环境。<!-- source-family:SF-2026-ARXIV-2604-15306 -->
+
+[最短路径的受限对照](https://arxiv.org/html/2604.15306v1)中，条件长路径成功率随长度从0.811降至0.589；受测 RL、十候选投票或最短选择没有突破最佳 SFT，并不证明所有奖励学习或测试时计算都无效。加入少量较长训练样例可以改善长度外推，过长样例又会反退；固定样例记录数也没有控制总 token 和 compute。应共同记录预训练接触、微调支持、条件人口与完整训练/搜索预算；长度外推失效时，保留更长监督、外部搜索或可验证图算法，不能把空间迁移分数当作可无限复用的组合程序。
+
 ## 自检问题
 
 1. 为什么 next-token 接口是局部的，却可能要求模型使用长程和高阶结构？
@@ -326,6 +344,8 @@ depth / breadth scaling 获益，但“轨迹收敛”只说明内部动力学�
 
 ## Review notes
 
+- `SF-2026-ARXIV-2601-11517` — Daily `2026-01-20`增量；[explanation transfer exact-v1](https://arxiv.org/html/2601.11517v1) §2/3、Table4与必要AppA2。2+1+2=5，跨模型一致性/正确性/faithfulness接口差额深入；保留一致错、答案去除混杂、GRPO transfer accuracy不升、多候选费用和人评性质，不授忠实解释或高风险可靠性。root实际必要原证/owner PRE通过并授窄锁；作者实际正文/完整邻接/本注已顺读，root实际顺读150–187/本注，POST通过，窄锁释放。未核artifact/复现，非日级验收。
+
 - `SF-2025-ARXIV-2509-04664` — Daily `2025-09-06`；精确 v1 §3.1–3.2、Appendix A 与 §4.1/Appendix E。正文采用有效性分类到生成错误的条件联系，不采用无条件必然幻觉、部署错误率或 truth-calibration 保证；评分激励的完整机制归属 Ch66。必要原文和现有论证已核对，Mendel非写入者实际核正文及完整邻接并通过；未复现实验。
 
 - `SF-2026-ARXIV-2602-14759` — Daily `2026-02-18`；[exact-v1](https://arxiv.org/html/2602.14759v1) §II–IV必要方法与直接反侧。2+1+2=5，frozen-loop参考缓存/插值的条件差额深入；naive扫描全退、WinoGrande区间选择、跨模型/norm混杂、ARC-E与局部MCQ人口保留，不采用有效激活域保证或零成本。root 必要源/actual owner PRE通过；实际正文/完整邻接与本末注经root非作者POST通过，窄锁释放，未核artifact/复现，非日级。
@@ -362,3 +382,11 @@ depth / breadth scaling 获益，但“轨迹收敛”只说明内部动力学�
 - `SF-2026-ARXIV-2602-22441` — Daily `2026-02-28`；[Latent supervision exact-v1](https://arxiv.org/html/2602.22441v1) §2/4/5、blocks26–32、43–67、73–100。3+1+3=7；末embedding干预保留早latent/KV，计算路径与末答案差额深入；训练混杂、Pass@N/Maj@N反侧与费用近文，Table4/paragraph78冲突数字不采用。root必要原源/actual owner PRE通过并授单段及自身末注窄锁；作者实际正文及完整邻接顺读，root非作者实际正文/完整邻接/自身末注POST通过，窄锁释放。未核实现/复现，非日级Gate。
 
 - `SF-2026-ARXIV-2602-21978` — Daily `2026-02-27`；[CxMP exact-v1](https://arxiv.org/html/2602.21978v1) §3–4/Fig3/5/6/Table3必要控制，2+1+2=5；形式acceptability与constructionmeaning学习/验收不互签差额深入，samecheckpoint/likelihood有限证据、生成器/实体/虚构词支持限制、instruction反侧及材料/人评/评分费用近正文。root必要原源/actual owner PRE及实际正文53/完整邻接37–60与自身末注358非作者POST通过，窄lease释放。未核artifact/复现，非日级验收。
+
+- `SF-2026-ARXIV-2602-09992` — Daily `2026-02-12`补遗漏；[exact-v1](https://arxiv.org/html/2602.09992v1)。本日具名必要方法、关键评价与直接反侧由root独立Source限定通过，actual owner/局部邻接及逐字拟文PRE通过后授窄锁；作者已写最小差额，review_20260214非作者实际新正文、完整局部邻接及本人末注POST通过，窄锁释放，不授DAY。原件与配置/中心争议边界见本日同名前缀review笔记；未核artifact或复现。
+
+- `SF-2026-ARXIV-2603-10573` — Daily `2026-03-13`补查；[exact-v1](https://arxiv.org/html/2603.10573v1) §2–5、T1及B/C必要对照。2+1+2=5，mar13_admission_review非准备者实际Source、Ch8具体差额及收紧PRE通过；root两段融入ICL估计程序与comparator资格交接。只采用局部mean/variance任务、known-parameter oracle权限与相关/因果边界，不采用Eq2为有限context严格Bayes身份，不排除learned kernel。未核artifact或复现；mar13_admission_review非writer实际新增、完整ICL邻接和本人末注POST通过，root回读确认、窄锁释放，不授DAY。
+
+- SF-2026-ARXIV-2604-15306 — Daily2026-04-18补Apr17；[ShortestPath exact-v1](https://arxiv.org/html/2604.15306v1) §2–7/T1–2/A/D1–2，3+1+3=7。空间迁移与组合长度双轴/conditionalcomposition；预训已见test地图、MLPprobe非causal、RL/TTC有限预算、长监督反退和record非compute匹配近文。独立reader必要Source/root接纳与date有效，作者actual owner比较，A30逐字PRE与root实际正文/完整邻接/本人注POST通过，指定窄lease释放；作者仅行政同步，不授DAY；未核代码/复现。
+
+- SF-2026-ARXIV-2604-14641 — Daily2026-04-18补Apr17；[Text/ASCII exact-v1](https://arxiv.org/html/2604.14641v1) §3–6/T1–3/限制必要层，2+1+2=5。gold外显结构≠自构、construct/read训练和推理展示分责；83.7/75.0/66.6及迁移负侧、consistency非truth/全费用近文。必要Source/root独核及date有效，作者actual owner，root逐字PRE通过；限定保存，root实际正文/完整邻接/本人注POST通过，窄lease已释放；未复现。

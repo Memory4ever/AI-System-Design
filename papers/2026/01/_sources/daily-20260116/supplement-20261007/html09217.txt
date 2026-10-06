@@ -1,0 +1,16154 @@
+Relational Hoare Logic for High-Level Synthesis of Hardware Accelerators
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Language
+2.1
+Syntax of the Languages
+2.2
+Operational Semantics
+3
+Formalization of Translation
+3.1
+Translation Relation
+3.2
+Translation Rules
+3.3
+Correctness of the Translation
+4
+Automation of Translation
+4.1
+Restriction on Pre-conditions and Post-conditions
+Limitations
+4.2
+Buffer Insertion
+4.3
+Verification Condition Generation
+5
+Experiment
+5.1
+Implementation
+5.2
+Setup
+5.3
+Evaluation and Discussion
+6
+Related Work
+7
+Conclusion
+References
+0.A
+Correctness of the Translation
+0.A.1
+Assertion language
+0.A.2
+Proof of the Correctness
+Notation.
+License: arXiv.org perpetual non-exclusive license
+arXiv:2601.09217v1 [cs.PL] 14 Jan 2026
+Relational Hoare Logic for High-Level Synthesis of Hardware Accelerators
+Izumi Tanaka
+Affiliation:
+The University of Tokyo, Japan
+Ken Sakayori
+Affiliation:
+E-mail
+{i.tanaka,sakayori,shinya,koba}@is.s.u-tokyo.ac.jp
+Shinya Takamaeda-Yamazaki
+Naoki Kobayashi
+Abstract
+High-level synthesis (HLS) is a powerful tool for developing efficient hardware accelerators
+that rely on specialized memory systems to achieve sufficient on-chip data reuse and off-chip bandwidth utilization.
+However, even with HLS, designing such systems still requires careful manual tuning,
+as automatic optimizations provided by existing tools are highly sensitive to programming style
+and often lack transparency.
+To address these issues,
+we present a formal translation framework based on
+relational Hoare logic, which enables robust and transparent transformations.
+Our method recognizes complex memory access patterns in naïve
+HLS programs and automatically transforms them by inserting on-chip buffers
+to enforce linear access to off-chip memory, and by replacing non-sequential processing with stream processing,
+while preserving program semantics.
+Experiments using our prototype translator, combined with an off-the-shelf
+HLS compiler and a real FPGA board, have demonstrated significant performance improvements.
+1
+Introduction
+With the end of Moore’s Law approaching,
+advances in computing performance increasingly rely on architectural innovation rather than
+continued transistor scaling
+[
+12
+]
+.
+Domain-specific hardware accelerators have been recognized as an effective solution
+for high-performance and energy-efficient computing, particularly in fields such as machine learning
+[
+16
+]
+,
+image processing
+[
+11
+]
+, and other specialized applications
+[
+32
+,
+29
+,
+18
+]
+.
+Among various platforms—such as general-purpose processors, graphics processing units (GPUs),
+and application-specific integrated circuits (ASICs)—field-programmable gate arrays (FPGAs) offer a compelling balance of performance,
+flexibility, and energy efficiency, making them well-suited for developing customized accelerators.
+High-level synthesis (HLS)
+[
+7
+,
+8
+,
+33
+,
+23
+,
+15
+]
+,
+which translates programs written in high-level languages such as C
++
++
+into hardware description languages (HDLs),
+is a powerful method for developing application- or domain-specific hardware accelerators on FPGAs.
+This approach enables software developers to generate hardware without requiring in-depth knowledge of low-level design.
+⬇
+1
+//
+Infers
+burst
+transfers
+for
+array
+accesses
+2
+void
+divide
+(
+int
+*
+input
+,
+int
+*
+output
+)
+{
+3
+for
+(
+int
+i
+=
+0;
+i
+<
+N
+;
+i
+++)
+{
+4
+output
+[
+i
+]
+=
+input
+[
+i
+]
+/
+2;
+5
+}
+6
+}
+⬇
+1
+//
+Infers
+a
+single
+transfer
+for
+each
+word
+of
+arrays
+2
+void
+divide_rev
+(
+int
+*
+input
+,
+int
+*
+output
+)
+{
+3
+for
+(
+int
+i
+=
+N
+-1;
+i
+>=
+0;
+i
+--)
+{
+4
+output
+[
+i
+]
+=
+input
+[
+i
+]
+/
+2;
+5
+}
+6
+}
+Figure 1:
+Pitfall of Vitis HLS: The first (top) uses burst transfers, whereas the second (bottom) fails to do so.
+Despite the abstraction provided by HLS, writing high-performance code remains challenging.
+Developers often need to manually insert annotations such as pragmas and carefully restructure their code to guide the compiler’s optimization process.
+In particular, achieving high-performance hardware acceleration depends on
+specialized memory systems that enable sufficient on-chip data reuse and efficient off-chip bandwidth utilization,
+both of which typically require careful manual optimization in HLS code.
+While existing HLS tools can automatically apply a variety of optimizations,
+these optimizations often lack robustness, as their effectiveness heavily depends on the specific programming style.
+For example, Vitis HLS
+[
+2
+]
+, one of the most widely used HLS tools,
+can apply the burst data transfer optimization when memory is accessed consecutively in increasing order,
+as in the first program at the top of Figure
+1
+.
+When this optimization is applied, the synthesized hardware can transfer
+multiple consecutive data between on-chip and off-chip memory in a single transaction, significantly improving performance;
+indeed, our experimental results (presented in Section
+5
+) show
+that the synthesized hardware runs more than five times faster than that without burst transfers.
+However, the optimization is not applied to the second program at the bottom of Figure
+1
+,
+where the memory is accessed in reverse order.
+Although the two programs perform the same computation, the reverse-access version prevents Vitis HLS from recognizing the consecutive access pattern.
+This example highlights how minor syntactic differences can lead to significant performance gaps.
+Furthermore, because the internal optimization strategies of these tools are insufficiently documented
+and lack a formal specification of the underlying program transformations,
+it is often unclear how to modify inefficient programs to achieve better results.
+These observations indicate three major limitations of existing HLS tools:
+(i) they require manual annotations and code restructuring to achieve high performance;
+(ii) their automatic optimizations are sensitive to superficial variations; and
+(iii) their optimization strategies lack transparency, making performance tuning difficult.
+To address these issues, we propose a formally defined automatic translation framework for HLS programs,
+grounded in programming language techniques, specifically
+relational Hoare logic
+.
+Hoare logic
+[
+13
+]
+has been used as
+the
+standard program logic for
+proving the correctness of programs. It is robust in that it enables precise reasoning about
+program behavior, regardless of the programming style, as guaranteed by the relative completeness theorem
+[
+9
+]
+.
+Relational Hoare logic
+[
+20
+]
+is an extension of Hoare logic for reasoning about
+the relationship between two programs. It has recently been used for reasoning about probabilistic programs and security properties
+[
+5
+,
+4
+,
+19
+]
+.
+Here, we adopt and tailor relational Hoare logic to formalize program transformations for HLS,
+leveraging well-established verification techniques to enable sound and automated translation.
+This approach allows our method to recognize complex memory access patterns and systematically transform them,
+ensuring robustness against variations in programming style.
+For instance, the programs in Figure
+1
+can be uniformly transformed into a form that enables burst data transfers,
+regardless of their access order.
+Another advantage of our formally defined transformation is its transparent and predictable behavior, in contrast to existing HLS tools.
+⬇
+1
+//
+Infers
+a
+single
+transfer
+for
+each
+word
+of
+arrays
+2
+void
+filter
+(
+int
+*
+input
+,
+int
+*
+output
+)
+{
+3
+for
+(
+int
+i
+=
+0;
+i
+<
+N
+-1;
+i
+++)
+{
+4
+output
+[
+i
+]
+=
+(
+input
+[
+i
+]
++
+input
+[
+i
++1])
+/
+2;
+5
+}
+6
+}
+7
+8
+int
+main
+()
+{
+9
+int
+input
+[
+N
+],
+output
+[
+N
+-1];
+10
+for
+(
+int
+i
+=
+0;
+i
+<
+N
+;
+i
+++)
+{
+11
+input
+[
+i
+]
+:=
+i
+;
+12
+}
+13
+filter
+(
+input
+,
+output
+);
+14
+...
+15
+}
+⬇
+1
+//
+Enables
+burst
+transfers
+via
+streaming
+interfaces
+2
+typedef
+hls
+::
+axis
+<
+int
+,
+0,
+0,
+0>
+StreamData
+;
+3
+void
+filter
+(
+hls
+::
+stream
+<
+StreamData
+>
+&
+input
+,
+4
+hls
+::
+stream
+<
+StreamData
+>
+&
+output
+)
+{
+5
+int
+b0
+=
+input
+.
+read
+();
+6
+for
+(
+int
+i
+=
+0;
+i
+<
+N
+-1;
+i
+++)
+{
+7
+int
+b1
+=
+input
+.
+read
+();
+8
+output
+.
+write
+((
+b0
++
+b1
+)
+/
+2);
+9
+b0
+=
+b1
+;
+10
+}
+11
+}
+12
+13
+int
+main
+()
+{
+14
+hls
+::
+stream
+<
+StreamData
+>
+input
+,
+output
+;
+15
+for
+(
+int
+i
+=
+0;
+i
+<
+N
+;
+i
+++)
+{
+16
+input
+.
+write
+(
+i
+);
+17
+}
+18
+filter
+(
+input
+,
+output
+);
+19
+...
+20
+}
+Figure 2:
+Naïve filtering program without burst transfers (top) vs. translated program with burst transfers (bottom).
+We now present a brief overview of our translation method using a running example given in Figure
+2
+.
+The figure shows a naïve filtering program (top) and its translated counterpart (bottom).
+Our translation relation takes the form
+⊢
+{
+ℬ
+}
+​
+s
+⟹
+t
+⁡
+{
+ℬ
+′
+}
+\vdash\{\mathcal{B}\}s\Longrightarrow t\{\mathcal{B}^{\prime}\}
+, which roughly means that, with the additional information specified as the pre-condition
+ℬ
+\mathcal{B}
+, the source program
+s
+s
+can be translated into the target program
+t
+t
+(and the post-condition
+ℬ
+′
+\mathcal{B}^{\prime}
+holds after the execution of these programs).
+A notable aspect of our formalization is that the pre- and post-conditions may refer to the access pattern of an array as a sequence of array indices.
+For example, in line 13 of the naïve program, the pre-codnition takes the form
+{
+⋯
+∧
+ι
+i
+​
+n
+​
+p
+​
+u
+​
+t
+=
+0
+⋅
+1
+⋯
+(
+N
+−
+1
+)
+∧
+⋯
+}
+\{\cdots\land\iota_{input}=0\cdot 1\cdots(N-1)\land\cdots\}
+.
+Here
+ι
+i
+​
+n
+​
+p
+​
+u
+​
+t
+\iota_{input}
+is a special variable to denote the access pattern of
+input
+and the equality indicates that the caller has
+written
+to
+input
+in the order
+0
+⋅
+1
+⋯
+(
+N
+−
+1
+)
+0\cdot 1\cdots(N-1)
+.
+The basic idea of the translation is to replace the array
+input
+to a stream if we can deduce that the array
+input
+is
+read
+in this order in the body of
+filter
+.
+Unfortunately, this is not the case because the read access pattern of
+input
+is
+0
+⋅
+1
+⋅
+1
+⋅
+2
+⋅
+2
+⋯
+(
+N
+−
+1
+)
+0\cdot 1\cdot 1\cdot 2\cdot 2\cdots(N-1)
+.
+To handle this kind of situation, we have a rule for on-chip buffer insertion
+so that an implicit non-linear array access to off-chip memory can be replaced by a read from the on-chip buffer.
+Lines 5 and 7 of the second program are results of the buffer insertion rule.
+After the buffer insertions, the duplications in the read access pattern of
+input
+are removed, and the access pattern becomes
+0
+⋅
+1
+⋯
+(
+N
+−
+1
+)
+0\cdot 1\cdots(N-1)
+.
+This allows us to translate
+input
+into a stream, and enables existing HLS tools to infer burst data transfers.
+Our framework supports automatic translation—without requiring any manual annotations—from naïve programs
+such as the first program in Figure
+2
+.
+This is achieved by using standard automated verification techniques based on Hoare logic and verification condition generation.
+To enable automation,
+we restrict the shape of the access pattern to
+i
+⋅
+(
+i
++
+k
+)
+⋅
+(
+i
++
+2
+k
+)
+⋯
+(
+i
++
+m
+k
+)
+i\cdot(i+k)\cdot(i+2k)\cdots(i+mk)
+.
+This restriction allows each access pattern to be concisely represented as a triple
+(
+i
+,
+j
+,
+k
+)
+(i,j,k)
+(where
+j
+=
+i
++
+m
+​
+k
+j=i+mk
+),
+which in turn simplifies the verification conditions that are to be discharged by SMT solvers.
+Despite this restriction, our method can still handle a wide range of access patterns—including reversed, overlapping, and non-consecutive accesses—as confirmed by our experiments.
+We have implemented a prototype tool that automates the translation based on the formalization.
+Figure
+3
+illustrates the tool architecture.
+Our tool takes as input a source program written in a C-like language, which includes both
+a
+kernel function
+—a function designated to be synthesized into a hardware accelerator by an HLS tool—and
+other components, such as a main function.
+(The other components, commonly called
+host code
+, manage the execution of the accelerator on the FPGA from the host CPU.)
+The tool then performs translation (when applicable), and generates an optimized version of the kernel function and host code.
+For our running example, the input program is at the top of Figure
+2
+,
+and the output kernel and host codes are shown at the bottom of the same figure.
+The kernel function is then compiled into hardware description language (HDL) using
+Vitis HLS
+[
+2
+]
+and synthesized into hardware with Vivado
+[
+3
+]
+.
+As discussed in Section
+7
+, our framework could potentially be applied to various program analyses and transformations,
+such as identifying when tiling is required and coordinating multiple functional units through formally verified scheduling.
+These applications are made possible by the expressive reasoning power of relational Hoare logic,
+which allows flexible yet provably correct analyses and transformations.
+Translation
+Emission
+Vivado
+[
+3
+]
+Vitis HLS
+[
+2
+]
+Source Program
+Target Program
+Host Code
+Kernel Function
+(C
++
++
+)
+HDL
+Hardware
+on FPGA
+Our Tool
+Figure 3:
+High-level synthesis toolchain with our tool.
+The contributions of this paper are summarized as follows.
+•
+Formalization of the program translation based on relational Hoare logic,
+and proofs of their correctness. To our knowledge, we are the first to
+employ relational Hoare logic to formalize HLS-level program transformations.
+•
+Automation of the translation by a suitable restriction on the shape of access patterns.
+•
+Implementation of the proposed method and experiments. Our experiments confirm the effectiveness of
+our approach: it achieves significant performance improvement in cases where Vitis HLS fails to optimize.
+The rest of this paper is organized as follows.
+Section
+2
+introduces the source and target languages.
+Section
+3
+presents the formalization of our translation method.
+Section
+4
+describes how to automate the translation.
+Section
+5
+reports experimental results.
+Section
+6
+discusses related work, and Section
+7
+concludes the paper.
+2
+Language
+This section defines the syntax of the source and target languages
+used in the formalization of our translation.
+To highlight the core ideas, we deliberately keep the languages minimal.
+The actual implementation supports more primitives such as
+function definitions and adopts a C-like syntax.
+2.1
+Syntax of the Languages
+The source language is essentially a
+While
+language
+[
+13
+]
+with arrays, except that loops are expressed using “for” instead of “while”.
+The target language shares the same core syntax as the source language, but it uses streams instead of arrays.
+Functions are omitted without loss of generality,
+since recursive functions are typically not supported in HLS programs, and non-recursive functions can be inlined.
+The set of statements and arithmetic expressions are defined as follows:
+(Statements)
+​
+s
+\displaystyle\text{(Statements)}\ s
+:
+:=
+x
+:=
+a
+⁡
+[
+e
+]
+|
+a
+⁡
+[
+e
+]
+:=
+x
+\displaystyle::={\color[rgb]{0,0,1}x:=a[e]\mid a[e]:=x}
+∣
+x
+:=
+a
+.
+r
+e
+a
+d
+(
+)
+∣
+a
+.
+w
+r
+i
+t
+e
+(
+x
+)
+\displaystyle\mid{\color[rgb]{0.5,0.5,0}x:=a.read()\mid a.write(x)}
+∣
+x
+:=
+e
+∣
+s
+1
+;
+s
+2
+∣
+[
+s
+]
+K
+\displaystyle\mid x:=e\mid s_{1};s_{2}\mid[s]_{K}
+∣
+𝐢𝐟
+x
+𝐭𝐡𝐞𝐧
+s
+1
+𝐞𝐥𝐬𝐞
+s
+2
+\displaystyle\mid\mathbf{if}\ x\ \mathbf{then}\ s_{1}\ \mathbf{else}\ {s_{2}}
+∣
+𝐟𝐨𝐫
+(
+x
+:=
+e
+;
+x
+≠
+m
+;
+x
+:=
+x
++
+n
+)
+s
+\displaystyle\mid\mathbf{for}(x:=e;x\neq m;x:=x+n)s
+(Arithmetic expressions)
+​
+e
+\displaystyle\text{(Arithmetic expressions)}\ e
+:
+:=
+n
+​
+∣
+x
+∣
+​
+x
+​
+𝚘𝚙
+​
+y
+\displaystyle::=n\mid x\mid x\ \mathtt{op}\ y
+The first line defines the array access operations for the source language,
+and the second line defines the stream operations for the target language.
+The remaining lines define the syntax common to both the source and target languages.
+Here,
+x
+,
+y
+,
+…
+x,y,...
+are variables, and
+𝚘𝚙
+\mathtt{op}
+denotes integer operations such as
++
++
+and
+−
+-
+;
+a
+a
+denotes an array variable in the source language,
+or a stream variable in the target language.
+1
+1
+1
+We assume that
+all
+arrays are translated into streams by our translation to simplify the exposition.
+The translation can easily be modified to apply only to
+some
+arrays, as in our implementation.
+We briefly explain the meaning of the statements; the formal semantics is given later in Section
+2.2
+.
+A branch statement
+𝐢𝐟
+​
+x
+​
+𝐭𝐡𝐞𝐧
+​
+s
+1
+​
+𝐞𝐥𝐬𝐞
+​
+s
+2
+\mathbf{if}\ x\ \mathbf{then}\ s_{1}\ \mathbf{else}\ {s_{2}}
+executes
+s
+1
+s_{1}
+if
+x
+x
+is non-zero, and
+s
+2
+s_{2}
+otherwise.
+A for-loop is written as
+𝐟𝐨𝐫
+⁡
+(
+x
+:=
+e
+,
+x
+≠
+m
+,
+x
+:=
+x
++
+n
+)
+​
+s
+\mathbf{for}(x:=e;x\neq m;x:=x+n)s
+, which executes the body
+s
+s
+while
+x
+≠
+m
+x\neq m
+,
+allowing both ascending and descending iterations to be uniformly expressed.
+The construct
+[
+⋅
+]
+K
+[\cdot]_{K}
+is just a marker indicating that
+s
+s
+is kernel code.
+It does not affect program execution but plays a role in the translation, as described in Section
+3
+.
+We require that
+[
+s
+]
+K
+[s]_{K}
+cannot be nested, i.e.
+s
+s
+cannot have a substatement of the form
+[
+s
+′
+]
+K
+[s^{\prime}]_{K}
+.
+Example 1
+Recall the naïve filtering function in Figure
+2
+.
+The kernel function and host code which calls it can be expressed in our source language as follows:
+𝐟𝐨𝐫
+(
+x
+:=
+0
+;
+x
+≠
+N
+;
+x
+:=
+x
++
+1
+)
+{
+\displaystyle\mathbf{for}(x:=0;x\neq N;x:=x+1)\{
+i
+​
+n
+​
+[
+x
+]
+:=
+x
+;
+\displaystyle\quad in[x]:=x;
+}
+;
+\displaystyle\};
+[
+\displaystyle[
+𝐟𝐨𝐫
+(
+x
+:=
+0
+;
+x
+≠
+N
+−
+1
+;
+x
+:=
+x
++
+1
+)
+{
+\displaystyle\mathbf{for}(x:=0;x\neq N-1;x:=x+1)\{
+y
+0
+:=
+i
+​
+n
+​
+[
+x
+]
+;
+\displaystyle\quad y_{0}:=in[x];
+y
+1
+:=
+i
+​
+n
+​
+[
+x
++
+1
+]
+;
+\displaystyle\quad y_{1}:=in[x+1];
+z
+0
+:=
+y
+0
++
+y
+1
+;
+\displaystyle\quad z_{0}:=y_{0}+y_{1};
+z
+1
+:=
+z
+0
+/
+2
+;
+\displaystyle\quad z_{1}:=z_{0}/2;
+o
+​
+u
+​
+t
+​
+[
+x
+]
+:=
+z
+1
+\displaystyle\quad out[x]:=z_{1}
+}
+\displaystyle\}
+]
+K
+\displaystyle]_{K}
+The statement of the kernel function is indicated by
+[
+[
+and
+]
+K
+]_{K}
+.
+We will use (variants of) this code as a running example throughout the paper.
+∎
+2.2
+Operational Semantics
+This section defines the big-step operational semantics of the source language.
+The reduction relation is of the form
+⟨
+R
+,
+H
+,
+s
+⟩
+⇓
+⟨
+R
+′
+,
+H
+′
+⟩
+\langle R,H,s\rangle\Downarrow\langle R^{\prime},H^{\prime}\rangle
+meaning that if we evaluate the statement
+s
+s
+under the
+state
+⟨
+R
+,
+H
+⟩
+\langle R,H\rangle
+we result in a state
+⟨
+R
+′
+,
+H
+′
+⟩
+\langle R^{\prime},H^{\prime}\rangle
+.
+A state is a pair of a
+register file
+R
+R
+, which is a finite map from variables to integers, and a
+heap
+H
+H
+, which is a finite map from
+addresses
+of the form
+(
+a
+,
+m
+)
+(a,m)
+to integers.
+Intuitively, the array variable
+a
+a
+represents an address of a base pointer and the integer
+m
+m
+represents the offset from the base pointer; since we use array variables as a part of the address, different arrays never collide.
+We write
+𝑑𝑜𝑚
+⁡
+(
+H
+)
+\mathit{dom}(H)
+for the domain of
+H
+H
+, and
+H
+{
+(
+a
+,
+m
+)
+↦
+n
+}
+H\{(a,m)\mapsto n\}
+for a heap that maps
+(
+a
+,
+m
+)
+(a,m)
+to
+n
+n
+and maps all the other addresses according to
+H
+H
+.
+Notations
+𝑑𝑜𝑚
+⁡
+(
+R
+)
+\mathit{dom}(R)
+and
+R
+{
+x
+↦
+n
+}
+R\{x\mapsto n\}
+for register files are defined similarly.
+⟨
+R
+,
+e
+⟩
+⇓
+n
+\langle R,e\rangle\Downarrow n
+dummy
+⟨
+R
+,
+n
+⟩
+⇓
+n
+\displaystyle\frac{\begin{array}[]{@{}c@{}}\end{array}}{\begin{array}[]{@{}c@{}}\langle R,n\rangle\Downarrow n\end{array}}
+(
+R-Const
+)
+R
+⁡
+(
+x
+)
+=
+n
+⟨
+R
+,
+x
+⟩
+⇓
+n
+\displaystyle\frac{\begin{array}[]{@{}c@{}}R(x)=n\end{array}}{\begin{array}[]{@{}c@{}}\langle R,x\rangle\Downarrow n\end{array}}
+(
+R-Var
+)
+R
+⁡
+(
+x
+)
+=
+n
+1
+R
+⁡
+(
+y
+)
+=
+n
+2
+⟨
+R
+,
+x
+​
+𝚘𝚙
+​
+y
+⟩
+⇓
+⟦
+𝚘𝚙
+⟧
+​
+(
+n
+1
+,
+n
+2
+)
+\displaystyle\frac{\begin{array}[]{@{}c@{}}R(x)=n_{1}\quad\quad R(y)=n_{2}\end{array}}{\begin{array}[]{@{}c@{}}\langle R,x\ \mathtt{op}\ y\rangle\Downarrow{\llbracket\mathtt{op}\rrbracket(n_{1},n_{2})}\end{array}}
+(
+R-Op
+)
+⟨
+R
+,
+H
+,
+s
+⟩
+⇓
+⟨
+R
+′
+,
+H
+′
+⟩
+\langle R,H,s\rangle\Downarrow\langle R^{\prime},H^{\prime}\rangle
+dummy
+⟨
+R
+,
+e
+⟩
+⇓
+m
+H
+⁡
+(
+a
+,
+m
+)
+=
+n
+⟨
+R
+,
+H
+,
+x
+:=
+a
+[
+e
+]
+⟩
+⇓
+⟨
+R
+{
+x
+↦
+n
+}
+,
+H
+⟩
+\displaystyle\frac{\begin{array}[]{@{}c@{}}\langle R,e\rangle\Downarrow m\quad\quad H(a,m)=n\end{array}}{\begin{array}[]{@{}c@{}}\langle R,H,x:=a[e]\rangle\Downarrow\langle R\{x\mapsto n\},H\rangle\end{array}}
+(
+R-ReadArray
+)
+⟨
+R
+,
+e
+⟩
+⇓
+m
+⟨
+R
+,
+H
+,
+a
+[
+e
+]
+:=
+x
+⟩
+⇓
+⟨
+R
+,
+H
+{
+(
+a
+,
+m
+)
+↦
+R
+(
+x
+)
+}
+⟩
+\displaystyle\frac{\begin{array}[]{@{}c@{}}\langle R,e\rangle\Downarrow m\end{array}}{\begin{array}[]{@{}c@{}}\langle R,H,a[e]:=x\rangle\Downarrow\langle R,H\{(a,m)\mapsto R(x)\}\rangle\end{array}}
+(
+R-WriteArray
+)
+⟨
+R
+,
+e
+⟩
+⇓
+n
+⟨
+R
+,
+H
+,
+x
+:=
+e
+⟩
+⇓
+⟨
+R
+{
+x
+↦
+n
+}
+,
+H
+⟩
+\displaystyle\frac{\begin{array}[]{@{}c@{}}\langle R,e\rangle\Downarrow n\end{array}}{\begin{array}[]{@{}c@{}}\langle R,H,x:=e\rangle\Downarrow\langle R\{x\mapsto n\},H\rangle\end{array}}
+(
+R-Assign
+)
+⟨
+R
+,
+H
+,
+s
+1
+⟩
+⇓
+⟨
+R
+′′
+,
+H
+′′
+⟩
+⟨
+R
+′′
+,
+H
+′′
+,
+s
+2
+⟩
+⇓
+⟨
+R
+′
+,
+H
+′
+⟩
+⟨
+R
+,
+H
+,
+s
+1
+;
+s
+2
+⟩
+⟶
+⟨
+R
+′
+,
+H
+′
+⟩
+\displaystyle\frac{\begin{array}[]{@{}c@{}}\langle R,H,s_{1}\rangle\Downarrow\langle R^{\prime\prime},H^{\prime\prime}\rangle\quad\quad\langle R^{\prime\prime},H^{\prime\prime},s_{2}\rangle\Downarrow\langle R^{\prime},H^{\prime}\rangle\end{array}}{\begin{array}[]{@{}c@{}}\langle R,H,s_{1};s_{2}\rangle\longrightarrow\langle R^{\prime},H^{\prime}\rangle\end{array}}
+(
+R-Seq
+)
+R
+⁡
+(
+x
+)
+≠
+0
+⟨
+R
+,
+H
+,
+s
+1
+⟩
+⇓
+⟨
+R
+′
+,
+H
+′
+⟩
+⟨
+R
+,
+H
+,
+𝐢𝐟
+​
+x
+​
+𝐭𝐡𝐞𝐧
+​
+s
+1
+​
+𝐞𝐥𝐬𝐞
+​
+s
+2
+⟩
+⇓
+⟨
+R
+′
+,
+H
+′
+⟩
+\displaystyle\frac{\begin{array}[]{@{}c@{}}R(x)\neq 0\quad\quad\langle R,H,s_{1}\rangle\Downarrow\langle R^{\prime},H^{\prime}\rangle\end{array}}{\begin{array}[]{@{}c@{}}\langle R,H,\mathbf{if}\ x\ \mathbf{then}\ s_{1}\ \mathbf{else}\ {s_{2}}\rangle\Downarrow\langle R^{\prime},H^{\prime}\rangle\end{array}}
+(
+R-IfTrue
+)
+R
+⁡
+(
+x
+)
+=
+0
+⟨
+R
+,
+H
+,
+s
+2
+⟩
+⇓
+⟨
+R
+′
+,
+H
+′
+⟩
+⟨
+R
+,
+H
+,
+𝐢𝐟
+​
+x
+​
+𝐭𝐡𝐞𝐧
+​
+s
+1
+​
+𝐞𝐥𝐬𝐞
+​
+s
+2
+⟩
+⇓
+⟨
+R
+′
+,
+H
+′
+⟩
+\displaystyle\frac{\begin{array}[]{@{}c@{}}R(x)=0\quad\quad\langle R,H,s_{2}\rangle\Downarrow\langle R^{\prime},H^{\prime}\rangle\end{array}}{\begin{array}[]{@{}c@{}}\langle R,H,\mathbf{if}\ x\ \mathbf{then}\ s_{1}\ \mathbf{else}\ {s_{2}}\rangle\Downarrow\langle R^{\prime},H^{\prime}\rangle\end{array}}
+(
+R-IfFalse
+)
+⟨
+R
+,
+e
+⟩
+⇓
+k
+k
+≠
+m
+⟨
+R
+{
+x
+↦
+k
+}
+,
+H
+,
+s
+′
+⟩
+⇓
+⟨
+R
+′
+,
+H
+′
+⟩
+s
+′
+≡
+s
+;
+𝐟𝐨𝐫
+(
+x
+:=
+x
++
+n
+;
+x
+≠
+m
+;
+x
+:=
+x
++
+n
+)
+s
+⟨
+R
+,
+H
+,
+𝐟𝐨𝐫
+⁡
+(
+x
+:=
+e
+,
+x
+≠
+m
+,
+x
+:=
+x
++
+n
+)
+​
+s
+⟩
+⇓
+⟨
+R
+′
+,
+H
+′
+⟩
+\displaystyle\frac{\begin{array}[]{@{}c@{}}\langle R,e\rangle\Downarrow k\quad\quad k\neq m\\
+\langle R\{x\mapsto k\},H,s^{\prime}\rangle\Downarrow\langle R^{\prime},H^{\prime}\rangle\quad s^{\prime}\equiv{s;\mathbf{for}(x:=x+n;x\neq m;x:=x+n)s}\end{array}}{\begin{array}[]{@{}c@{}}\langle R,H,\mathbf{for}(x:=e;x\neq m;x:=x+n)s\rangle\Downarrow\langle R^{\prime},H^{\prime}\rangle\end{array}}
+(
+R-ForLoop
+)
+⟨
+R
+,
+e
+⟩
+⇓
+k
+k
+=
+m
+⟨
+R
+,
+H
+,
+𝐟𝐨𝐫
+(
+x
+:=
+e
+;
+x
+≠
+m
+;
+x
+:=
+x
++
+n
+)
+s
+⟩
+⇓
+⟨
+R
+{
+x
+↦
+k
+}
+,
+H
+⟩
+\displaystyle\frac{\begin{array}[]{@{}c@{}}\langle R,e\rangle\Downarrow k\quad\quad k=m\end{array}}{\begin{array}[]{@{}c@{}}\langle R,H,\mathbf{for}(x:=e;x\neq m;x:=x+n)s\rangle\Downarrow\langle R\{x\mapsto k\},H\rangle\end{array}}
+(
+R-ForExit
+)
+⟨
+R
+,
+H
+,
+s
+⟩
+⇓
+⟨
+R
+′
+,
+H
+′
+⟩
+⟨
+R
+,
+H
+,
+[
+s
+]
+K
+⟩
+⇓
+⟨
+R
+′
+,
+H
+′
+⟩
+\displaystyle\frac{\begin{array}[]{@{}c@{}}\langle R,H,s\rangle\Downarrow\langle R^{\prime},H^{\prime}\rangle\end{array}}{\begin{array}[]{@{}c@{}}\langle R,H,[s]_{K}\rangle\Downarrow\langle R^{\prime},H^{\prime}\rangle\end{array}}
+(
+R-CallKer
+)
+Figure 4:
+Reduction rules for the source language.
+S
+⁡
+(
+a
+)
+=
+n
+⋅
+m
+~
+⟨
+R
+,
+S
+,
+x
+:=
+a
+.
+r
+e
+a
+d
+(
+)
+⟩
+⇓
+⟨
+R
+{
+x
+↦
+n
+}
+,
+S
+{
+a
+↦
+m
+~
+}
+⟩
+\displaystyle\frac{\begin{array}[]{@{}c@{}}S(a)=n\cdot\widetilde{m}\end{array}}{\begin{array}[]{@{}c@{}}\langle R,S,x:={a}.read()\rangle\Downarrow\langle R\{x\mapsto n\},S\{a\mapsto\widetilde{m}\}\rangle\end{array}}
+(
+R-Read
+)
+⟨
+R
+,
+S
+,
+a
+.
+w
+r
+i
+t
+e
+(
+x
+)
+⟩
+⇓
+⟨
+R
+,
+S
+{
+a
+↦
+S
+(
+a
+)
+⋅
+R
+(
+x
+)
+}
+⟩
+\displaystyle\frac{\begin{array}[]{@{}c@{}}\end{array}}{\begin{array}[]{@{}c@{}}\langle R,S,{a}.write(x)\rangle\Downarrow\langle R,S\{a\mapsto S(a)\cdot R(x)\}\rangle\end{array}}
+(
+R-Write
+)
+Figure 5:
+Reduction rules for the stream operations in the target language.
+The reduction relation for the source language is defined by the rules in Figure
+4
+, and the rules are mostly standard.
+We only explain points that may need clarification.
+In rule
+R-Op
+,
+⟦
+𝚘𝚙
+⟧
+\llbracket\mathtt{op}\rrbracket
+denotes the mathematical function represented by
+𝚘𝚙
+\mathtt{op}
+.
+The loop expression
+𝐟𝐨𝐫
+⁡
+(
+x
+:=
+e
+,
+x
+≠
+m
+,
+x
+:=
+x
++
+n
+)
+​
+e
+\mathbf{for}(x:=e;x\neq m;x:=x+n)e
+first executes the initialization statement
+x
+:=
+e
+x:=e
+, which is executed only once, and then checks the condition
+x
+≠
+m
+x\neq m
+.
+If the condition does not hold, the for-loop terminates as expressed by
+R-ForExit
+.
+Otherwise, the statement
+s
+s
+inside the body of the for-loop is executed, and the loop continues with
+x
+x
+incremented by
+n
+n
+as defined by
+R-ForLoop
+.
+We note that the variable
+x
+x
+is not local to the for-loop. (In fact, all variables in the program are global variables.)
+The rule
+R-CallKer
+just says that
+[
+[
+and
+]
+K
+]_{K}
+do not affect the reduction.
+The reduction rules for the stream operations in the target language are given in Figure
+5
+.
+Here the state takes a
+stream pool
+S
+S
+instead of a heap.
+A stream pool is a finite map from array variables to (possibly empty) integer sequences.
+We write
+m
+~
+\widetilde{m}
+for an integer sequence and
+n
+⋅
+m
+~
+n\cdot\widetilde{m}
+(resp.
+m
+~
+⋅
+n
+\widetilde{m}\cdot n
+) for the sequence obtained by adding
+n
+n
+to the head (resp. end) of
+m
+~
+\widetilde{m}
+.
+The rule
+R-Read
+pops an integer from the head of a stream, and assigns it to
+x
+x
+(if the stream is empty, the reduction is stuck), and
+R-Write
+adds the value assigned to
+x
+x
+to the end of the sequence.
+The remaining rules are identical to those of the source language, and are therefore omitted.
+3
+Formalization of Translation
+This section defines the translation for inserting buffering commands and replacing array accesses with stream operations.
+The translation relation is defined by using a kind of relational Hoare logic.
+The source and target languages for the translation are the language defined in Section
+2
+.
+3.1
+Translation Relation
+The set of types, ranged over by
+τ
+\tau
+, is given by:
+τ
+\displaystyle\tau
+:
+:=
+𝐢𝐧𝐭
+|
+𝐛𝐮𝐟
+​
+∣
+𝐫𝐚𝐫𝐫𝐚𝐲
+∣
+​
+𝐰𝐚𝐫𝐫𝐚𝐲
+\displaystyle::=\mathbf{int}\mid\mathbf{buf}\mid\mathbf{rarray}\mid\mathbf{warray}
+Here,
+𝐢𝐧𝐭
+\mathbf{int}
+is the type of integer expressions, and
+𝐛𝐮𝐟
+\mathbf{buf}
+is the type of buffer variables;
+a variable of type
+𝐛𝐮𝐟
+\mathbf{buf}
+is also used to store an integer, but only occurs in the target of the translation.
+The types
+𝐫𝐚𝐫𝐫𝐚𝐲
+\mathbf{rarray}
+and
+𝐰𝐚𝐫𝐫𝐚𝐲
+\mathbf{warray}
+respectively describe read- and write-only arrays.
+The translation relation is of the form
+Γ
+⊢
+{
+ℬ
+}
+​
+s
+⟹
+t
+⁡
+{
+ℬ
+′
+}
+\Gamma\vdash\{\mathcal{B}\}s\Longrightarrow t\{\mathcal{B}^{\prime}\}
+, where
+(i)
+Γ
+\Gamma
+is a type environment of the form
+x
+1
+:
+τ
+1
+,
+…
+,
+x
+n
+:
+τ
+n
+x_{1}\mathbin{:}\tau_{1},\ldots,x_{n}\mathbin{:}\tau_{n}
+;
+(ii)
+s
+s
+and
+t
+t
+are source and target programs respectively;
+and
+(iii)
+ℬ
+\mathcal{B}
+and
+ℬ
+′
+\mathcal{B}^{\prime}
+are respectively the pre- and post-conditions;
+i.e.,
+ℬ
+\mathcal{B}
+(
+ℬ
+′
+\mathcal{B}^{\prime}
+, resp.) describes a (relational) property that holds for
+the states of the source and target programs before (after, resp.) the executions of
+s
+s
+and
+t
+t
+.
+We will also introduce an auxiliary relation of the form
+Γ
+⊢
+{
+ℬ
+}
+∙
+⟹
+t
+{
+ℬ
+′
+}
+\Gamma\vdash\{\mathcal{B}\}\bullet\Longrightarrow t\{\mathcal{B}^{\prime}\}
+, which
+means that
+t
+t
+may be inserted in the place where
+ℬ
+\mathcal{B}
+holds;
+∙
+\bullet
+may be regarded as
+a skip command.
+For example, we have:
+x
+:
+𝐢𝐧𝐭
+,
+a
+:
+𝐫𝐚𝐫𝐫𝐚𝐲
+,
+b
+:
+𝐛𝐮𝐟
+⊢
+{
+b
+=
+a
+[
+1
+]
+}
+x
+:=
+a
+[
+1
+]
+⟹
+x
+:=
+b
+{
+x
+=
+a
+[
+1
+]
+}
+.
+\displaystyle x\mathbin{:}\mathbf{int},a\mathbin{:}\mathbf{rarray},b\mathbin{:}\mathbf{buf}\vdash\{b=a[1]\}x:=a[1]\Longrightarrow x:=b\{x=a[1]\}.
+It means that if
+b
+=
+a
+⁡
+[
+1
+]
+b=a[1]
+holds, i.e., the value of
+a
+⁡
+[
+1
+]
+a[1]
+is stored in
+b
+b
+(which serves as a buffer),
+then we can replace
+x
+:=
+a
+⁡
+[
+1
+]
+x:=a[1]
+in the source program with
+x
+:=
+b
+x:=b
+, to avoid reading
+a
+⁡
+[
+1
+]
+a[1]
+again.
+Specifying relational properties of programs using pre- and post-conditions is in the style of relational Hoare logic.
+In the above example, the pre-condition expresses a relational property:
+b
+b
+refers to the value of
+b
+b
+in the target program, while
+a
+⁡
+[
+1
+]
+a[1]
+refers to the value of
+a
+⁡
+[
+1
+]
+a[1]
+in the source program.
+Each array
+a
+a
+in the source program
+s
+s
+is converted to a stream (of the same name
+a
+a
+) in the target program
+t
+t
+.
+For each array variable
+a
+a
+,
+ℬ
+\mathcal{B}
+may refer to the special variable
+ι
+a
+\iota_{a}
+,
+which denotes a
+sequence
+of indices of
+a
+a
+,
+indicating the order in which elements are stored in the stream
+a
+a
+in the target program.
+For instance,
+ι
+a
+=
+1
+⋅
+3
+⋅
+5
+\iota_{a}=1\cdot 3\cdot 5
+means that the values of
+a
+⁡
+[
+1
+]
+a[1]
+,
+a
+⁡
+[
+3
+]
+a[3]
+and
+a
+⁡
+[
+5
+]
+a[5]
+are stored in this order in the stream
+a
+a
+.
+As a concrete example, we have:
+Γ
+⊢
+{
+ι
+a
+=
+1
+⋅
+J
+}
+x
+:=
+a
+[
+1
+]
+⟹
+b
+:=
+a
+.
+r
+e
+a
+d
+(
+)
+;
+x
+:=
+b
+{
+ι
+a
+=
+J
+∧
+x
+=
+b
+=
+a
+[
+1
+]
+}
+\displaystyle\Gamma\vdash\{\iota_{a}=1\cdot J\}x:=a[1]\Longrightarrow b:={a}.read();x:=b\{\iota_{a}=J\land x=b=a[1]\}
+where
+Γ
+=
+x
+:
+𝐢𝐧𝐭
+,
+a
+:
+𝐫𝐚𝐫𝐫𝐚𝐲
+,
+b
+:
+𝐛𝐮𝐟
+\Gamma=x\mathbin{:}\mathbf{int},a\mathbin{:}\mathbf{rarray},b\mathbin{:}\mathbf{buf}
+.
+The judgment means that if
+ι
+a
+=
+1
+⋅
+J
+\iota_{a}=1\cdot J
+holds,
+then the command
+x
+:=
+a
+⁡
+[
+1
+]
+x:=a[1]
+may be replaced with
+b
+:=
+a
+.
+r
+​
+e
+​
+a
+​
+d
+​
+(
+)
+;
+x
+:=
+b
+b:={a}.read();x:=b
+,
+and
+ι
+a
+=
+J
+∧
+x
+=
+b
+=
+a
+⁡
+[
+1
+]
+\iota_{a}=J\land x=b=a[1]
+hold afterwards.
+The pre-condition
+ι
+a
+=
+1
+⋅
+J
+\iota_{a}=1\cdot J
+ensures that the value of
+a
+⁡
+[
+1
+]
+a[1]
+is stored in the head of the stream in the target
+program; thus, the array read
+a
+⁡
+[
+1
+]
+a[1]
+can safely be replaced with the stream read
+a
+.
+r
+​
+e
+​
+a
+​
+d
+​
+(
+)
+{a}.read()
+, and
+ι
+a
+\iota_{a}
+is updated to
+J
+J
+afterwards, as expressed by the post-condition
+ι
+a
+=
+J
+\iota_{a}=J
+.
+The other post-condition
+x
+=
+b
+=
+a
+⁡
+[
+1
+]
+x=b=a[1]
+states that
+x
+x
+and
+b
+b
+hold the value of
+a
+⁡
+[
+1
+]
+a[1]
+in the source program.
+Note that a sequence of indices refers to a finite sequence, whose elements may include variables or expressions.
+3.2
+Translation Rules
+Γ
+⁡
+(
+x
+)
+=
+𝐢𝐧𝐭
+Γ
+⁡
+(
+a
+)
+=
+𝐫𝐚𝐫𝐫𝐚𝐲
+Γ
+⊢
+e
+:
+𝐢𝐧𝐭
+Γ
+⁡
+(
+b
+)
+=
+𝐛𝐮𝐟
+Γ
+⊢
+{
+b
+=
+a
+[
+e
+]
+∧
+[
+b
+/
+x
+]
+ℬ
+}
+x
+:=
+a
+[
+e
+]
+⟹
+x
+:=
+b
+{
+ℬ
+}
+\displaystyle\frac{\begin{array}[]{@{}c@{}}\Gamma(x)=\mathbf{int}\quad\quad\Gamma(a)=\mathbf{rarray}\\
+\Gamma\vdash e:\mathbf{int}\quad\quad\Gamma(b)=\mathbf{buf}\end{array}}{\begin{array}[]{@{}c@{}}\Gamma\vdash\{b=a[e]\land[b/x]\mathcal{B}\}x:=a[e]\Longrightarrow x:=b\{\mathcal{B}\}\end{array}}
+(
+Tr-ReadMem
+)
+Γ
+⁡
+(
+x
+)
+=
+𝐢𝐧𝐭
+Γ
+⁡
+(
+a
+)
+=
+𝐰𝐚𝐫𝐫𝐚𝐲
+Γ
+⊢
+e
+:
+𝐢𝐧𝐭
+Γ
+⁡
+(
+b
+)
+=
+𝐛𝐮𝐟
+Γ
+⊢
+{
+e
+∉
+ι
+a
+∧
+[
+x
+/
+b
+,
+a
+{
+e
+↦
+x
+}
+/
+a
+]
+ℬ
+}
+a
+[
+e
+]
+:=
+x
+⟹
+b
+:=
+x
+{
+ℬ
+}
+\displaystyle\frac{\begin{array}[]{@{}c@{}}\Gamma(x)=\mathbf{int}\quad\quad\Gamma(a)=\mathbf{warray}\\
+\Gamma\vdash e:\mathbf{int}\quad\quad\Gamma(b)=\mathbf{buf}\end{array}}{\begin{array}[]{@{}c@{}}\Gamma\vdash\{e\not\in\iota_{a}\land[x/b,a\{e\mapsto x\}/a]\mathcal{B}\}a[e]:=x\Longrightarrow b:=x\{\mathcal{B}\}\end{array}}
+(
+Tr-WriteMem
+)
+Γ
+⁡
+(
+x
+)
+=
+𝐢𝐧𝐭
+Γ
+⊢
+e
+:
+𝐢𝐧𝐭
+Γ
+⊢
+{
+[
+e
+/
+x
+]
+​
+ℬ
+}
+​
+x
+:=
+e
+⟹
+x
+:=
+e
+⁡
+{
+ℬ
+}
+\displaystyle\frac{\begin{array}[]{@{}c@{}}\Gamma(x)=\mathbf{int}\quad\quad\Gamma\vdash e:\mathbf{int}\end{array}}{\begin{array}[]{@{}c@{}}\Gamma\vdash\{[e/x]\mathcal{B}\}x:=e\Longrightarrow x:=e\{\mathcal{B}\}\end{array}}
+(
+Tr-Assign
+)
+Γ
+⊢
+{
+ℬ
+}
+​
+s
+1
+⟹
+t
+1
+​
+{
+ℬ
+′′
+}
+Γ
+⊢
+{
+ℬ
+′′
+}
+​
+s
+2
+⟹
+t
+2
+​
+{
+ℬ
+′
+}
+Γ
+⊢
+{
+ℬ
+}
+s
+1
+;
+s
+2
+⟹
+t
+1
+;
+t
+2
+{
+ℬ
+′
+}
+\displaystyle\frac{\begin{array}[]{@{}c@{}}\Gamma\vdash\{\mathcal{B}\}s_{1}\Longrightarrow t_{1}\{\mathcal{B}^{\prime\prime}\}\quad\quad\Gamma\vdash\{\mathcal{B}^{\prime\prime}\}s_{2}\Longrightarrow t_{2}\{\mathcal{B}^{\prime}\}\end{array}}{\begin{array}[]{@{}c@{}}\Gamma\vdash\{\mathcal{B}\}s_{1};s_{2}\Longrightarrow t_{1};t_{2}\{\mathcal{B}^{\prime}\}\end{array}}
+(
+Tr-Seq
+)
+Γ
+(
+x
+)
+=
+𝐢𝐧𝐭
+Γ
+⊢
+{
+ℬ
+∧
+x
+≠
+0
+}
+s
+1
+⟹
+t
+1
+{
+ℬ
+′
+}
+Γ
+⊢
+{
+ℬ
+∧
+x
+=
+0
+}
+s
+2
+⟹
+t
+2
+{
+ℬ
+′
+}
+Γ
+⊢
+{
+ℬ
+}
+​
+𝐢𝐟
+​
+x
+​
+𝐭𝐡𝐞𝐧
+​
+s
+1
+​
+𝐞𝐥𝐬𝐞
+​
+s
+2
+⟹
+𝐢𝐟
+​
+x
+​
+𝐭𝐡𝐞𝐧
+​
+t
+1
+​
+𝐞𝐥𝐬𝐞
+​
+t
+2
+​
+{
+ℬ
+′
+}
+\displaystyle\frac{\begin{array}[]{@{}c@{}}\Gamma(x)=\mathbf{int}\quad\quad\Gamma\vdash\{\mathcal{B}\land x\neq 0\}s_{1}\Longrightarrow t_{1}\{\mathcal{B}^{\prime}\}\\
+\Gamma\vdash\{\mathcal{B}\land x=0\}s_{2}\Longrightarrow t_{2}\{\mathcal{B}^{\prime}\}\end{array}}{\begin{array}[]{@{}c@{}}\Gamma\vdash\{\mathcal{B}\}\mathbf{if}\ x\ \mathbf{then}\ s_{1}\ \mathbf{else}\ {s_{2}}\Longrightarrow\mathbf{if}\ x\ \mathbf{then}\ t_{1}\ \mathbf{else}\ {t_{2}}\{\mathcal{B}^{\prime}\}\end{array}}
+(
+Tr-If
+)
+Γ
+⊢
+{
+ℬ
+∧
+x
+≠
+m
+}
+s
+⟹
+t
+{
+[
+x
++
+n
+/
+x
+]
+ℬ
+}
+Γ
+⊢
+{
+[
+e
+/
+x
+]
+​
+ℬ
+}
+​
+𝐟𝐨𝐫
+​
+(
+x
+:=
+e
+,
+x
+≠
+m
+,
+x
+:=
+x
++
+n
+)
+​
+s
+⟹
+𝐟𝐨𝐫
+(
+x
+:=
+e
+;
+x
+≠
+m
+;
+x
+:=
+x
++
+n
+)
+t
+{
+ℬ
+∧
+x
+=
+m
+}
+\displaystyle\frac{\begin{array}[]{@{}c@{}}\Gamma\vdash\{\mathcal{B}\land x\neq m\}s\Longrightarrow t\{[x+n/x]\mathcal{B}\}\end{array}}{\begin{array}[]{@{}c@{}}\Gamma\vdash\{[e/x]\mathcal{B}\}\mathbf{for}(x:=e;x\neq m;x:=x+n)s\\
+\Longrightarrow\mathbf{for}(x:=e;x\neq m;x:=x+n)t\{\mathcal{B}\land x=m\}\end{array}}
+(
+Tr-For
+)
+Γ
+⊢
+{
+ℬ
+}
+∙
+⟹
+t
+0
+{
+ℬ
+′′
+}
+Γ
+⊢
+{
+ℬ
+′′
+}
+s
+⟹
+t
+{
+ℬ
+′
+}
+Γ
+⊢
+{
+ℬ
+}
+​
+s
+⟹
+t
+0
+;
+t
+⁡
+{
+ℬ
+′
+}
+\displaystyle\frac{\begin{array}[]{@{}c@{}}\Gamma\vdash\{\mathcal{B}\}\bullet\Longrightarrow t_{0}\{\mathcal{B}^{\prime\prime}\}\quad\quad\Gamma\vdash\{\mathcal{B}^{\prime\prime}\}s\Longrightarrow t\{\mathcal{B}^{\prime}\}\end{array}}{\begin{array}[]{@{}c@{}}\Gamma\vdash\{\mathcal{B}\}s\Longrightarrow t_{0};t\{\mathcal{B}^{\prime}\}\end{array}}
+(
+Tr-InsertL
+)
+Γ
+⊢
+{
+ℬ
+}
+s
+⟹
+t
+{
+ℬ
+′′
+}
+Γ
+⊢
+{
+ℬ
+′′
+}
+∙
+⟹
+t
+0
+{
+ℬ
+′
+}
+Γ
+⊢
+{
+ℬ
+}
+​
+s
+⟹
+t
+;
+t
+0
+​
+{
+ℬ
+′
+}
+\displaystyle\frac{\begin{array}[]{@{}c@{}}\Gamma\vdash\{\mathcal{B}\}s\Longrightarrow t\{\mathcal{B}^{\prime\prime}\}\quad\quad\Gamma\vdash\{\mathcal{B}^{\prime\prime}\}\bullet\Longrightarrow t_{0}\{\mathcal{B}^{\prime}\}\end{array}}{\begin{array}[]{@{}c@{}}\Gamma\vdash\{\mathcal{B}\}s\Longrightarrow t;t_{0}\{\mathcal{B}^{\prime}\}\end{array}}
+(
+Tr-InsertR
+)
+Γ
+⁡
+(
+a
+)
+=
+𝐫𝐚𝐫𝐫𝐚𝐲
+Γ
+⁡
+(
+b
+)
+=
+𝐛𝐮𝐟
+ℬ
+=
+[
+a
+⁡
+[
+ℎ𝑒𝑎𝑑
+⁡
+(
+ι
+a
+)
+]
+/
+b
+,
+𝑡𝑎𝑖𝑙
+⁡
+(
+ι
+a
+)
+/
+ι
+a
+]
+​
+ℬ
+′
+Γ
+⊢
+{
+ℬ
+}
+∙
+⟹
+b
+:=
+a
+.
+r
+e
+a
+d
+(
+)
+{
+ℬ
+′
+}
+\displaystyle\frac{\begin{array}[]{@{}c@{}}\Gamma(a)=\mathbf{rarray}\quad\quad\Gamma(b)=\mathbf{buf}\\
+\mathcal{B}=[a[\mathit{head}(\iota_{a})]/b,\mathit{tail}(\iota_{a})/\iota_{a}]\mathcal{B}^{\prime}\end{array}}{\begin{array}[]{@{}c@{}}\Gamma\vdash\{\mathcal{B}\}\bullet\Longrightarrow b:={a}.read()\{\mathcal{B}^{\prime}\}\end{array}}
+(
+Tr-InsRBuf
+)
+Γ
+⁡
+(
+a
+)
+=
+𝐰𝐚𝐫𝐫𝐚𝐲
+Γ
+⁡
+(
+b
+)
+=
+𝐛𝐮𝐟
+Γ
+⊢
+{
+n
+∉
+ι
+a
+∧
+a
+[
+n
+]
+=
+b
+∧
+[
+ι
+a
+⋅
+n
+/
+ι
+a
+]
+ℬ
+}
+∙
+⟹
+a
+.
+w
+r
+i
+t
+e
+(
+b
+)
+{
+ℬ
+}
+\displaystyle\frac{\begin{array}[]{@{}c@{}}\Gamma(a)=\mathbf{warray}\quad\quad\Gamma(b)=\mathbf{buf}\end{array}}{\begin{array}[]{@{}c@{}}\Gamma\vdash\{n\not\in\iota_{a}\land a[n]=b\land[\iota_{a}\cdot n/\iota_{a}]\mathcal{B}\}\bullet\Longrightarrow{a}.write(b)\{\mathcal{B}\}\end{array}}
+(
+Tr-InsWBuf
+)
+Γ
+⁡
+(
+x
+)
+=
+𝐛𝐮𝐟
+Γ
+⁡
+(
+y
+)
+∈
+{
+𝐢𝐧𝐭
+,
+𝐛𝐮𝐟
+}
+Γ
+⊢
+{
+[
+y
+/
+x
+]
+ℬ
+}
+∙
+⟹
+x
+:=
+y
+{
+ℬ
+}
+\displaystyle\frac{\begin{array}[]{@{}c@{}}\Gamma(x)=\mathbf{buf}\quad\quad\Gamma(y)\in\{\mathbf{int},\mathbf{buf}\}\end{array}}{\begin{array}[]{@{}c@{}}\Gamma\vdash\{[y/x]\mathcal{B}\}\bullet\Longrightarrow x:=y\{\mathcal{B}\}\end{array}}
+(
+Tr-InsMove
+)
+⊧
+ℬ
+⇒
+ℬ
+1
+Γ
+⊢
+{
+ℬ
+1
+}
+​
+s
+⟹
+t
+⁡
+{
+ℬ
+1
+′
+}
+⊧
+ℬ
+1
+′
+⇒
+ℬ
+′
+Γ
+⊢
+{
+ℬ
+}
+​
+s
+⟹
+t
+⁡
+{
+ℬ
+′
+}
+\displaystyle\frac{\begin{array}[]{@{}c@{}}\models\mathcal{B}\Rightarrow\mathcal{B}_{1}\quad\quad\Gamma\vdash\{\mathcal{B}_{1}\}s\Longrightarrow t\{\mathcal{B}_{1}^{\prime}\}\quad\quad\models\mathcal{B}_{1}^{\prime}\Rightarrow\mathcal{B}^{\prime}\end{array}}{\begin{array}[]{@{}c@{}}\Gamma\vdash\{\mathcal{B}\}s\Longrightarrow t\{\mathcal{B}^{\prime}\}\end{array}}
+(
+Tr-Conseq
+)
+⊧
+ℬ
+⇒
+ℬ
+1
+Γ
+⊢
+{
+ℬ
+1
+}
+∙
+⟹
+t
+{
+ℬ
+1
+′
+}
+⊧
+ℬ
+1
+′
+⇒
+ℬ
+′
+Γ
+⊢
+{
+ℬ
+}
+∙
+⟹
+t
+{
+ℬ
+′
+}
+\displaystyle\frac{\begin{array}[]{@{}c@{}}\models\mathcal{B}\Rightarrow\mathcal{B}_{1}\quad\quad\Gamma\vdash\{\mathcal{B}_{1}\}\bullet\Longrightarrow t\{\mathcal{B}_{1}^{\prime}\}\quad\quad\models\mathcal{B}_{1}^{\prime}\Rightarrow\mathcal{B}^{\prime}\end{array}}{\begin{array}[]{@{}c@{}}\Gamma\vdash\{\mathcal{B}\}\bullet\Longrightarrow t\{\mathcal{B}^{\prime}\}\end{array}}
+(
+Tr-InsConseq
+)
+Γ
+♯
+⊢
+{
+ℬ
+}
+​
+s
+⟹
+t
+⁡
+{
+ℬ
+′
+}
+Γ
+⊢
+{
+ℬ
+}
+​
+[
+s
+]
+K
+⟹
+[
+t
+]
+K
+​
+{
+ℬ
+′
+}
+\displaystyle\frac{\begin{array}[]{@{}c@{}}\Gamma^{\sharp}\vdash\{\mathcal{B}\}s\Longrightarrow t\{\mathcal{B}^{\prime}\}\end{array}}{\begin{array}[]{@{}c@{}}\Gamma\vdash\{\mathcal{B}\}[s]_{K}\Longrightarrow[t]_{K}\{\mathcal{B}^{\prime}\}\end{array}}
+(
+Tr-Kernel
+)
+Figure 6:
+Translation rules.
+Γ
+⊢
+e
+:
+𝐢𝐧𝐭
+\Gamma\vdash e:\mathbf{int}
+means that all the variables in
+e
+e
+have type
+𝐢𝐧𝐭
+\mathbf{int}
+.
+The translation relation
+Γ
+⊢
+{
+ℬ
+}
+​
+s
+⟹
+t
+​
+a
+​
+b
+​
+{
+ℬ
+′
+}
+\Gamma\vdash\{\mathcal{B}\}s\Longrightarrow tab\{\mathcal{B}^{\prime}\}
+is defined by the rules in Figure
+6
+.
+In the figure,
+[
+e
+1
+/
+x
+1
+,
+…
+,
+e
+n
+/
+x
+n
+]
+[e_{1}/x_{1},\ldots,e_{n}/x_{n}]
+denotes the simultaneous substitutions of
+e
+1
+,
+…
+,
+e
+n
+e_{1},\ldots,e_{n}
+for
+x
+1
+,
+…
+,
+x
+n
+x_{1},\ldots,x_{n}
+.
+The expression
+a
+{
+e
+↦
+x
+}
+a\{e\mapsto x\}
+denotes the array obtained from
+a
+a
+by replacing the value at index
+e
+e
+with
+x
+x
+;
+the syntax of the assertion language for describing
+ℬ
+\mathcal{B}
+is given in Appendix
+0.A
+.
+Most of the rules in the figure are analogous to the corresponding (partial correctness) rules of Hoare logic.
+In the rule
+Tr-ReadMem
+, a read from the array
+a
+a
+is translated to a read from the buffer variable
+b
+b
+,
+on the assumption that the value of
+a
+⁡
+[
+e
+]
+a[e]
+has already been copied to
+b
+b
+; that is achieved by the rule
+Tr-InsRBuf
+explained later.
+Thus, when
+a
+⁡
+[
+e
+]
+a[e]
+is accessed for the first time,
+x
+:=
+a
+⁡
+[
+e
+]
+x:=a[e]
+is translated to
+b
+:=
+a
+.
+r
+​
+e
+​
+a
+​
+d
+​
+(
+)
+;
+x
+:=
+b
+b:={a}.read();x:=b
+, which can be optimized to
+x
+:=
+a
+.
+r
+​
+e
+​
+a
+​
+d
+​
+(
+)
+x:={a}.read()
+if the value of
+a
+⁡
+[
+e
+]
+a[e]
+is not used later; this redundancy is for the sake of simplicity, and in the actual implementation,
+x
+:=
+a
+⁡
+[
+e
+]
+x:=a[e]
+is just transformed to
+x
+:=
+a
+.
+r
+​
+e
+​
+a
+​
+d
+​
+(
+)
+x:={a}.read()
+if
+a
+⁡
+[
+e
+]
+a[e]
+is not accessed more than once.
+The pre-condition
+b
+=
+a
+⁡
+[
+e
+]
+b=a[e]
+asserts that
+b
+b
+indeed holds the value of
+a
+⁡
+[
+e
+]
+a[e]
+. We additionally require
+[
+b
+/
+x
+]
+​
+ℬ
+[b/x]\mathcal{B}
+as a pre-condition to ensure that
+ℬ
+\mathcal{B}
+holds after the execution of
+x
+:=
+a
+⁡
+[
+e
+]
+x:=a[e]
+and
+x
+:=
+b
+x:=b
+.
+This is analogous to the rule
+{
+[
+b
+/
+x
+]
+​
+ℬ
+}
+​
+x
+:=
+b
+​
+{
+ℬ
+}
+\{[b/x]\mathcal{B}\}x:=b\{\mathcal{B}\}
+for assignment in the standard Hoare logic.
+In our case,
+x
+x
+is updated to
+a
+⁡
+[
+e
+]
+a[e]
+and
+b
+b
+respectively in the source and target programs, but requiring
+[
+b
+/
+x
+]
+​
+ℬ
+[b/x]\mathcal{B}
+suffices since the other condition
+b
+=
+a
+⁡
+[
+e
+]
+b=a[e]
+ensures that
+[
+a
+⁡
+[
+e
+]
+/
+x
+]
+​
+ℬ
+[a[e]/x]\mathcal{B}
+also holds.
+Similarly, in the rule
+Tr-WriteMem
+, a write to the array
+a
+a
+is translated to a write to the buffer variable
+b
+b
+.
+The code for writing the contents of the buffer to the stream is then inserted by the rule
+Tr-InsWBuf
+explained later.
+Thus, if
+a
+⁡
+[
+e
+]
+a[e]
+is updated just once in the source program,
+a
+⁡
+[
+e
+]
+:=
+x
+a[e]:=x
+is translated to
+b
+:=
+x
+;
+a
+.
+w
+​
+r
+​
+i
+​
+t
+​
+e
+​
+(
+b
+)
+b:=x;{a}.write(b)
+, which can be optimized
+to
+a
+.
+w
+​
+r
+​
+i
+​
+t
+​
+e
+​
+(
+x
+)
+{a}.write(x)
+.
+This is again for the sake of simplicity;
+a
+⁡
+[
+e
+]
+:=
+x
+a[e]:=x
+is directly translated to
+a
+.
+w
+​
+r
+​
+i
+​
+t
+​
+e
+​
+(
+x
+)
+{a}.write(x)
+in the actual implementation in such a case.
+The pre-condition
+e
+∉
+ι
+a
+e\not\in\iota_{a}
+checks that
+a
+⁡
+[
+e
+]
+a[e]
+has not been written before. The part
+[
+x
+/
+b
+,
+a
+{
+e
+↦
+x
+}
+/
+a
+]
+ℬ
+[x/b,a\{e\mapsto x\}/a]\mathcal{B}
+corresponds to the precondition for
+the two successive assignments
+a
+⁡
+[
+e
+]
+:=
+x
+;
+b
+:=
+x
+a[e]:=x;b:=x
+in the standard Hoare logic.
+Here, the substitution can be applied in parallel because
+the two assignments do not interfere; note that (i) the buffer variable
+b
+b
+may occur only in the target program,
+and (ii) the array variable
+a
+a
+in pre-/post-conditions refers to that of the source program.
+The rules
+Tr-Assign
+,
+Tr-Seq
+, and
+Tr-If
+are just relational versions of the corresponding rules
+for Hoare logic. The rule
+Tr-For
+is also essentially a relational version of the rule for loops in Hoare logic,
+except that we chose for-statements as primitives instead of while-statements.
+With while-statements as primitives, the rule
+Tr-For
+would be derived from the following rule:
+Γ
+⊢
+{
+ℬ
+∧
+𝑐𝑜𝑛𝑑
+}
+​
+s
+⟹
+t
+⁡
+{
+ℬ
+}
+Γ
+⊢
+{
+ℬ
+}
+​
+𝐰𝐡𝐢𝐥𝐞
+​
+𝑐𝑜𝑛𝑑
+​
+𝐝𝐨
+​
+s
+⟹
+𝐰𝐡𝐢𝐥𝐞
+​
+𝑐𝑜𝑛𝑑
+​
+𝐝𝐨
+​
+t
+​
+{
+ℬ
+∧
+¬
+𝑐𝑜𝑛𝑑
+}
+\displaystyle\frac{\begin{array}[]{@{}c@{}}\Gamma\vdash\{\mathcal{B}\land\mathit{cond}\}s\Longrightarrow t\{\mathcal{B}\}\end{array}}{\begin{array}[]{@{}c@{}}\Gamma\vdash\{\mathcal{B}\}\mathbf{while}\ \mathit{cond}\ \mathbf{do}\ s\Longrightarrow\mathbf{while}\ \mathit{cond}\ \mathbf{do}\ t\{\mathcal{B}\land\neg\mathit{cond}\}\end{array}}
+(
+Tr-While
+)
+Note that, using a while-statement,
+𝐟𝐨𝐫
+⁡
+(
+x
+:=
+e
+,
+x
+≠
+m
+,
+x
+:=
+x
++
+n
+)
+​
+s
+\mathbf{for}(x:=e;x\neq m;x:=x+n)s
+can be expressed as
+x
+:=
+e
+;
+𝐰𝐡𝐢𝐥𝐞
+​
+x
+≠
+m
+​
+𝐝𝐨
+​
+(
+s
+,
+x
+:=
+x
++
+n
+)
+x:=e;\mathbf{while}\ x\neq m\ \mathbf{do}\ (s;x:=x+n)
+.
+The rules
+Tr-InsertL
+and
+Tr-InsertR
+are for inserting buffering commands.
+Here, we use the auxiliary relation
+Γ
+⊢
+{
+ℬ
+}
+∙
+⟹
+t
+{
+ℬ
+′
+}
+\Gamma\vdash\{\mathcal{B}\}\bullet\Longrightarrow t\{\mathcal{B}^{\prime}\}
+(where
+∙
+\bullet
+can be considered a skip command)
+for inserting
+u
+u
+in the target program.
+The rule
+Tr-InsRBuf
+is for copying a value from a stream to a buffer.
+The substitution
+[
+𝑡𝑎𝑖𝑙
+⁡
+(
+ι
+a
+)
+/
+ι
+a
+]
+[\mathit{tail}(\iota_{a})/\iota_{a}]
+reflects the
+update (
+ι
+a
+:=
+𝑡𝑎𝑖𝑙
+⁡
+(
+ι
+a
+)
+\iota_{a}:=\mathit{tail}(\iota_{a})
+) of the sequence of array indices stored in the stream.
+Here,
+ℎ𝑒𝑎𝑑
+⁡
+(
+J
+)
+\mathit{head}(J)
+denotes the first element of the sequence
+J
+J
+,
+𝑡𝑎𝑖𝑙
+⁡
+(
+J
+)
+\mathit{tail}(J)
+denotes the sequence obtained by removing the first element from
+J
+J
+.
+In the rule
+Tr-InsWBuf
+for copying a value from a buffer to a stream,
+the pre-condition
+n
+∉
+ι
+a
+n\not\in\iota_{a}
+checks that
+a
+⁡
+[
+n
+]
+a[n]
+has not been written before. The substitution
+[
+(
+ι
+a
+⋅
+n
+)
+/
+ι
+a
+]
+[(\iota_{a}\cdot n)/\iota_{a}]
+reflects the fact that the value of
+a
+⁡
+[
+n
+]
+a[n]
+is added at the end of the stream.
+Here,
+J
+1
+⋅
+J
+2
+J_{1}\cdot J_{2}
+denotes the concatenation of two sequences
+J
+1
+J_{1}
+and
+J
+2
+J_{2}
+.
+The rule
+Tr-InsMove
+is for moving the value of a buffer or integer variable to another buffer variable;
+that is needed, for example, for inserting
+b0 = b1
+in Figure
+2
+given in Section
+1
+.
+The rules
+Tr-Conseq
+and
+Tr-InsConseq
+are for adjusting pre-/post-conditions, corresponding to the consequence rule of
+the standard Hoare logic.
+The rule
+Tr-Kernel
+handles the swapping of read-only and write-only array types when entering a kernel function.
+The operation
+Γ
+♯
+\Gamma^{\sharp}
+on type environments flips between read/write-only array types, as defined by:
+(
+a
+1
+:
+τ
+1
+,
+…
+,
+a
+n
+:
+τ
+n
+)
+♯
+=
+a
+1
+:
+τ
+1
+♯
+,
+…
+,
+a
+n
+:
+τ
+n
+♯
+τ
+♯
+=
+{
+𝐫𝐚𝐫𝐫𝐚𝐲
+if
+​
+τ
+=
+𝐰𝐚𝐫𝐫𝐚𝐲
+𝐰𝐚𝐫𝐫𝐚𝐲
+if
+​
+τ
+=
+𝐫𝐚𝐫𝐫𝐚𝐲
+τ
+otherwise
+\displaystyle(a_{1}\mathbin{:}\tau_{1},\ldots,a_{n}\mathbin{:}\tau_{n})^{\sharp}=a_{1}\mathbin{:}\tau_{1}^{\sharp},\ldots,a_{n}\mathbin{:}\tau_{n}^{\sharp}\qquad{\tau}^{\sharp}=\left\{\begin{array}[]{ll}\mathbf{rarray}&\text{if }\tau=\mathbf{warray}\\
+\mathbf{warray}&\text{if }\tau=\mathbf{rarray}\\
+\tau&\text{otherwise}\end{array}\right.
+This flipping is necessary because arrays read (resp. written) inside the kernel are written (resp. read) by the host code.
+Example 2
+Recall the following judgment considered in Section
+3.1
+.
+Γ
+⊢
+{
+ι
+a
+=
+1
+⋅
+J
+}
+x
+:=
+a
+[
+1
+]
+⟹
+b
+:=
+a
+.
+r
+e
+a
+d
+(
+)
+;
+x
+:=
+b
+{
+ι
+a
+=
+J
+∧
+x
+=
+b
+=
+a
+[
+1
+]
+}
+.
+\Gamma\vdash\{\iota_{a}=1\cdot J\}x:=a[1]\Longrightarrow b:={a}.read();x:=b\{\iota_{a}=J\land x=b=a[1]\}.
+It is obtained from the following two judgments by using
+Tr-InsertL
+:
+Γ
+⊢
+{
+ι
+a
+=
+1
+⋅
+J
+}
+∙
+⟹
+b
+:=
+a
+.
+r
+e
+a
+d
+(
+)
+{
+ι
+a
+=
+J
+∧
+b
+=
+a
+[
+1
+]
+}
+\displaystyle\Gamma\vdash\{\iota_{a}=1\cdot J\}\bullet\Longrightarrow b:={a}.read()\{\iota_{a}=J\land b=a[1]\}
+Γ
+⊢
+{
+ι
+a
+=
+J
+∧
+b
+=
+a
+[
+1
+]
+}
+x
+:=
+a
+[
+1
+]
+⟹
+x
+:=
+b
+{
+ι
+a
+=
+J
+∧
+x
+=
+b
+=
+a
+[
+1
+]
+}
+.
+\displaystyle\Gamma\vdash\{\iota_{a}=J\land b=a[1]\}x:=a[1]\Longrightarrow x:=b\{\iota_{a}=J\land x=b=a[1]\}.
+The first judgment is obtained as follows.
+(Tr-InsRBuf)
+Γ
+⊢
+{
+ℎ𝑒𝑎𝑑
+(
+ι
+a
+)
+=
+1
+∧
+[
+a
+[
+1
+]
+/
+b
+,
+𝑡𝑎𝑖𝑙
+(
+ι
+a
+)
+/
+ι
+a
+]
+ℬ
+}
+∙
+⟹
+b
+:=
+a
+.
+r
+e
+a
+d
+(
+)
+{
+ℬ
+}
+‾
+(Tr-InsConseq)
+Γ
+⊢
+{
+ι
+a
+=
+1
+⋅
+J
+}
+∙
+⟹
+b
+:=
+a
+.
+r
+e
+a
+d
+(
+)
+{
+ℬ
+}
+‾
+\Gamma\vdash\{\iota_{a}=1\cdot J\}\bullet\Longrightarrow b:={a}.read()\{\mathcal{B}\}\Gamma\vdash\{\mathit{head}(\iota_{a})=1\land[a[1]/b,\mathit{tail}(\iota_{a})/\iota_{a}]\mathcal{B}\}\bullet\Longrightarrow b:={a}.read()\{\mathcal{B}\}
+Here,
+ℬ
+≡
+ι
+a
+=
+J
+∧
+b
+=
+a
+⁡
+[
+1
+]
+\mathcal{B}\equiv\iota_{a}=J\land b=a[1]
+.
+Note that
+ι
+a
+=
+1
+⋅
+J
+\iota_{a}=1\cdot J
+implies
+ℎ𝑒𝑎𝑑
+⁡
+(
+ι
+a
+)
+=
+1
+∧
+[
+a
+⁡
+[
+1
+]
+/
+b
+,
+𝑡𝑎𝑖𝑙
+⁡
+(
+ι
+a
+)
+/
+ι
+a
+]
+​
+ℬ
+\mathit{head}(\iota_{a})=1\land[a[1]/b,\mathit{tail}(\iota_{a})/\iota_{a}]\mathcal{B}
+, i.e.,
+ℎ𝑒𝑎𝑑
+⁡
+(
+ι
+a
+)
+=
+1
+∧
+𝑡𝑎𝑖𝑙
+⁡
+(
+ι
+a
+)
+=
+J
+∧
+a
+⁡
+[
+1
+]
+=
+a
+⁡
+[
+1
+]
+\mathit{head}(\iota_{a})=1\land\mathit{tail}(\iota_{a})=J\land a[1]=a[1]
+.
+The second judgment can be obtained by using
+Tr-ReadMem
+and
+Tr-InsConseq
+. ∎
+//
+Γ
+;
+ι
+𝑖𝑛
+=
+ι
+𝑜𝑢𝑡
+=
+ϵ
+\Gamma;\iota_{\mathit{in}}=\iota_{\mathit{out}}=\epsilon
+𝐟𝐨𝐫
+(
+x
+:=
+0
+;
+x
+≠
+N
+;
+x
+:=
+x
++
+1
+)
+{
+\displaystyle\mathbf{for}(x:=0;x\neq N;x:=x+1)\{
+𝐟𝐨𝐫
+(
+x
+:=
+0
+;
+x
+≠
+N
+;
+x
+:=
+x
++
+1
+)
+{
+\displaystyle\mathbf{for}(x:=0;x\neq N;x:=x+1)\{
+//
+Γ
+;
+ι
+𝑖𝑛
+=
+0
+⋯
+(
+x
+−
+1
+)
+∧
+ι
+𝑜𝑢𝑡
+=
+ϵ
+∧
+x
+≠
+N
+\Gamma;\iota_{\mathit{in}}=0\cdots(x-1)\land\iota_{\mathit{out}}=\epsilon\land x\neq N
+i
+​
+n
+​
+[
+x
+]
+:=
+x
+;
+\displaystyle\quad in[x]:=x;
+b
+:=
+x
+;
+\displaystyle\quad b:=x;
+//
+Γ
+;
+ι
+𝑖𝑛
+=
+0
+⋯
+(
+x
+−
+1
+)
+∧
+ι
+𝑜𝑢𝑡
+=
+ϵ
+∧
+b
+=
+i
+n
+[
+x
+]
+∧
+x
+≠
+N
+\Gamma;\iota_{\mathit{in}}=0\cdots(x-1)\land\iota_{\mathit{out}}=\epsilon\land b=in[x]\land x\neq N
+i
+​
+n
+.
+w
+​
+r
+​
+i
+​
+t
+​
+e
+​
+(
+b
+)
+;
+\displaystyle\quad{in}.write(b);
+//
+Γ
+;
+ι
+𝑖𝑛
+=
+0
+⋯
+x
+∧
+ι
+𝑜𝑢𝑡
+=
+ϵ
+∧
+x
+≠
+N
+\Gamma;\iota_{\mathit{in}}=0\cdots x\land\iota_{\mathit{out}}=\epsilon\land x\neq N
+}
+;
+\displaystyle\};
+}
+;
+\displaystyle\};
+//
+Γ
+;
+ι
+𝑖𝑛
+=
+0
+⋯
+(
+N
+−
+1
+)
+∧
+ι
+𝑜𝑢𝑡
+=
+ϵ
+\Gamma;\iota_{\mathit{in}}=0\cdots(N-1)\land\iota_{\mathit{out}}=\epsilon
+[
+\displaystyle[
+[
+\displaystyle[
+//
+Γ
+♯
+;
+ι
+𝑖𝑛
+=
+0
+⋯
+(
+N
+−
+1
+)
+∧
+ι
+𝑜𝑢𝑡
+=
+ϵ
+\Gamma^{\sharp};\iota_{\mathit{in}}=0\cdots(N-1)\land\iota_{\mathit{out}}=\epsilon
+b
+0
+:=
+i
+​
+n
+.
+r
+​
+e
+​
+a
+​
+d
+​
+(
+)
+\displaystyle b_{0}:={in}.read()
+//
+Γ
+♯
+;
+ι
+𝑖𝑛
+=
+1
+⋯
+(
+N
+−
+1
+)
+∧
+ι
+𝑜𝑢𝑡
+=
+ϵ
+∧
+b
+0
+=
+i
+n
+[
+0
+]
+\Gamma^{\sharp};\iota_{\mathit{in}}=1\cdots(N-1)\land\iota_{\mathit{out}}=\epsilon\land b_{0}=in[0]
+𝐟𝐨𝐫
+(
+x
+:=
+0
+;
+x
+≠
+N
+−
+1
+;
+x
+:=
+x
++
+1
+)
+{
+\displaystyle\mathbf{for}(x:=0;x\neq N-1;x:=x+1)\{
+𝐟𝐨𝐫
+(
+x
+:=
+0
+;
+x
+≠
+N
+−
+1
+;
+x
+:=
+x
++
+1
+)
+{
+\displaystyle\mathbf{for}(x:=0;x\neq N-1;x:=x+1)\{\hskip 15.00002pt
+//
+Γ
+♯
+;
+ι
+𝑖𝑛
+=
+(
+x
++
+1
+)
+⋯
+(
+N
+−
+1
+)
+∧
+ι
+𝑜𝑢𝑡
+=
+0
+⋯
+(
+x
+−
+1
+)
+∧
+b
+0
+=
+i
+n
+[
+x
+]
+∧
+x
+≠
+N
+−
+1
+\Gamma^{\sharp};\iota_{\mathit{in}}=(x+1)\cdots(N-1)\land\iota_{\mathit{out}}=0\cdots(x-1)\land b_{0}=in[x]\land x\neq N-1
+y
+0
+:=
+i
+​
+n
+​
+[
+x
+]
+;
+\displaystyle\quad y_{0}:=in[x];
+y
+0
+:=
+b
+0
+;
+\displaystyle\quad y_{0}:=b_{0};
+//
+Γ
+♯
+;
+ι
+𝑖𝑛
+=
+(
+x
++
+1
+)
+⋯
+(
+N
+−
+1
+)
+∧
+ι
+𝑜𝑢𝑡
+=
+0
+⋯
+(
+x
+−
+1
+)
+∧
+x
+≠
+N
+−
+1
+\Gamma^{\sharp};\iota_{\mathit{in}}=(x+1)\cdots(N-1)\land\iota_{\mathit{out}}=0\cdots(x-1)\land x\neq N-1
+b
+0
+:=
+i
+​
+n
+.
+r
+​
+e
+​
+a
+​
+d
+​
+(
+)
+\displaystyle\quad b_{0}:={in}.read()
+//
+Γ
+♯
+;
+ι
+𝑖𝑛
+=
+(
+x
++
+2
+)
+⋯
+(
+N
+−
+1
+)
+∧
+ι
+𝑜𝑢𝑡
+=
+0
+⋯
+(
+x
+−
+1
+)
+∧
+b
+0
+=
+i
+n
+[
+x
++
+1
+]
+∧
+x
+≠
+N
+−
+1
+\Gamma^{\sharp};\iota_{\mathit{in}}=(x+2)\cdots(N-1)\land\iota_{\mathit{out}}=0\cdots(x-1)\land b_{0}=in[x+1]\land x\neq N-1
+y
+1
+:=
+i
+​
+n
+​
+[
+x
++
+1
+]
+;
+\displaystyle\quad y_{1}:=in[x+1];
+y
+1
+:=
+b
+0
+;
+\displaystyle\quad y_{1}:=b_{0};
+z
+0
+:=
+y
+0
++
+y
+1
+;
+\displaystyle\quad z_{0}:=y_{0}+y_{1};
+z
+0
+:=
+y
+0
++
+y
+1
+;
+\displaystyle\quad z_{0}:=y_{0}+y_{1};
+z
+1
+:=
+z
+0
+/
+2
+;
+\displaystyle\quad z_{1}:=z_{0}/2;
+z
+1
+:=
+z
+0
+/
+2
+;
+\displaystyle\quad z_{1}:=z_{0}/2;
+//
+Γ
+♯
+;
+ι
+𝑖𝑛
+=
+(
+x
++
+2
+)
+⋯
+(
+N
+−
+1
+)
+∧
+ι
+𝑜𝑢𝑡
+=
+0
+⋯
+(
+x
+−
+1
+)
+∧
+b
+0
+=
+i
+n
+[
+x
++
+1
+]
+∧
+x
+≠
+N
+−
+1
+\Gamma^{\sharp};\iota_{\mathit{in}}=(x+2)\cdots(N-1)\land\iota_{\mathit{out}}=0\cdots(x-1)\land b_{0}=in[x+1]\land x\neq N-1
+o
+​
+u
+​
+t
+​
+[
+x
+]
+:=
+z
+1
+\displaystyle\quad out[x]:=z_{1}
+b
+1
+:=
+z
+1
+;
+\displaystyle\quad b_{1}:=z_{1};
+//
+Γ
+♯
+;
+ι
+𝑖𝑛
+=
+(
+x
++
+2
+)
+⋯
+(
+N
+−
+1
+)
+∧
+ι
+𝑜𝑢𝑡
+=
+0
+⋯
+(
+x
+−
+1
+)
+∧
+b
+0
+=
+i
+n
+[
+x
++
+1
+]
+\Gamma^{\sharp};\iota_{\mathit{in}}=(x+2)\cdots(N-1)\land\iota_{\mathit{out}}=0\cdots(x-1)\land b_{0}=in[x+1]
+∧
+b
+1
+=
+o
+​
+u
+​
+t
+​
+[
+x
+]
+∧
+x
+≠
+N
+−
+1
+{}\land b_{1}=out[x]\land x\neq N-1
+o
+​
+u
+​
+t
+.
+w
+​
+r
+​
+i
+​
+t
+​
+e
+​
+(
+b
+1
+)
+\displaystyle\quad{out}.write(b_{1})
+//
+Γ
+♯
+;
+ι
+𝑖𝑛
+=
+(
+x
++
+2
+)
+⋯
+(
+N
+−
+1
+)
+∧
+ι
+𝑜𝑢𝑡
+=
+0
+⋯
+x
+∧
+b
+0
+=
+i
+n
+[
+x
++
+1
+]
+∧
+x
+≠
+N
+−
+1
+\Gamma^{\sharp};\iota_{\mathit{in}}=(x+2)\cdots(N-1)\land\iota_{\mathit{out}}=0\cdots x\land b_{0}=in[x+1]\land x\neq N-1
+}
+\displaystyle\}
+}
+\displaystyle\}
+//
+Γ
+♯
+;
+ι
+𝑖𝑛
+=
+ϵ
+∧
+ι
+𝑜𝑢𝑡
+=
+0
+⋯
+(
+N
+−
+2
+)
+\Gamma^{\sharp};\iota_{\mathit{in}}=\epsilon\land\iota_{\mathit{out}}=0\cdots(N-2)
+]
+K
+\displaystyle]_{K}
+]
+K
+\displaystyle]_{K}
+//
+Γ
+;
+ι
+𝑖𝑛
+=
+ϵ
+∧
+ι
+𝑜𝑢𝑡
+=
+0
+⋯
+(
+N
+−
+2
+)
+\Gamma;\iota_{\mathit{in}}=\epsilon\land\iota_{\mathit{out}}=0\cdots(N-2)
+Figure 7:
+Translation for the running example. The left side shows the original program, and the right side shows the transformed program.
+Comments indicate
+ℬ
+\mathcal{B}
+at each program point.
+(Here, for simplicity, we omit conditions that are not relevant to buffering or stream replacement.)
+Example 3
+Recall the program in Example
+1
+:
+𝐟𝐨𝐫
+⁡
+(
+x
+:=
+0
+,
+x
+≠
+N
+,
+x
+:=
+x
++
+1
+)
+\displaystyle\mathbf{for}(x:=0;x\neq N;x:=x+1)
+{
+i
+n
+[
+x
+]
+:=
+x
+}
+;
+\displaystyle\quad\{in[x]:=x\};
+𝐟𝐨𝐫
+⁡
+(
+x
+:=
+0
+,
+x
+≠
+N
+−
+1
+,
+x
+:=
+x
++
+1
+)
+\displaystyle\mathbf{for}(x:=0;x\neq N-1;x:=x+1)
+{
+y
+0
+:=
+i
+​
+n
+​
+[
+x
+]
+;
+y
+1
+:=
+i
+​
+n
+​
+[
+x
++
+1
+]
+;
+z
+0
+:=
+y
+0
++
+y
+1
+;
+z
+1
+:=
+z
+0
+/
+2
+;
+o
+​
+u
+​
+t
+​
+[
+x
+]
+:=
+z
+1
+}
+.
+\displaystyle\quad\{y_{0}:=in[x];y_{1}:=in[x+1];z_{0}:=y_{0}+y_{1};z_{1}:=z_{0}/2;out[x]:=z_{1}\}.
+It is transformed as shown in Figure
+7
+.
+For readability, instead of showing a derivation tree based on the transformation rules,
+the figure shows the source and target programs side-by-side, with
+ℬ
+\mathcal{B}
+for each program point
+shown as a comment.
+The type environment
+Γ
+\Gamma
+used in the translation is:
+𝑖𝑛
+:
+𝐫𝐚𝐫𝐫𝐚𝐲
+,
+𝑜𝑢𝑡
+:
+𝐰𝐚𝐫𝐫𝐚𝐲
+,
+y
+0
+:
+𝐢𝐧𝐭
+,
+y
+1
+:
+𝐢𝐧𝐭
+,
+z
+0
+:
+𝐢𝐧𝐭
+,
+z
+1
+:
+𝐢𝐧𝐭
+,
+b
+0
+:
+𝐛𝐮𝐟
+,
+b
+1
+:
+𝐛𝐮𝐟
+.
+\displaystyle\mathit{in}\mathbin{:}\mathbf{rarray},\mathit{out}\mathbin{:}\mathbf{warray},y_{0}\mathbin{:}\mathbf{int},y_{1}\mathbin{:}\mathbf{int},z_{0}\mathbin{:}\mathbf{int},z_{1}\mathbin{:}\mathbf{int},b_{0}\mathbin{:}\mathbf{buf},b_{1}\mathbin{:}\mathbf{buf}.
+For example, the three lines before the second for-loop represent the judgment:
+Γ
+♯
+⊢
+{
+ι
+𝑖𝑛
+=
+0
+\displaystyle\Gamma^{\sharp}\vdash\{\iota_{\mathit{in}}=0
+⋯
+(
+N
+−
+1
+)
+∧
+ι
+𝑜𝑢𝑡
+=
+∅
+}
+∙
+⟹
+\displaystyle\cdots(N-1)\land\iota_{\mathit{out}}=\emptyset\}\bullet\Longrightarrow
+b
+0
+:=
+𝑖𝑛
+.
+r
+e
+a
+d
+(
+)
+{
+ι
+𝑖𝑛
+=
+1
+⋯
+(
+N
+−
+1
+)
+∧
+ι
+𝑜𝑢𝑡
+=
+∅
+∧
+b
+0
+=
+𝑖𝑛
+[
+0
+]
+}
+.
+\displaystyle b_{0}:={\mathit{in}}.read()\{\iota_{\mathit{in}}=1\cdots(N-1)\land\iota_{\mathit{out}}=\emptyset\land b_{0}=\mathit{in}[0]\}.
+It is obtained by using the rules
+Tr-InsRBuf
+and
+Tr-InsConseq
+as in the previous example.
+∎
+Note that the order of array access does not matter
+as long as the producer and consumer follow the same access sequence.
+For example, consider a filter program that reads only the even indices of the input array.
+In this case, the access sequence in the pre-/post-condition becomes
+ι
+𝑖𝑛
+=
+0
+⋅
+2
+⋯
+(
+2
+N
+−
+2
+)
+\iota_{\mathit{in}}=0\cdot 2\cdots(2N-2)
+.
+While Vitis HLS cannot apply burst data transfer optimization to such non-consecutive patterns,
+our translation treats them in the same way as for a program with consecutive accesses.
+Similarly, the programs in Figure
+1
+can be translated identically,
+regardless of whether the access order is forward or reversed.
+Example 4
+Figure
+8
+shows a translation
+for a program that merges two arrays
+𝑖𝑛
+1
+\mathit{in}_{1}
+and
+𝑖𝑛
+2
+\mathit{in}_{2}
+into
+𝑜𝑢𝑡
+\mathit{out}
+in the increasing order,
+assuming that the elements of
+𝑖𝑛
+1
+\mathit{in}_{1}
+and
+𝑖𝑛
+2
+\mathit{in}_{2}
+are sorted in the increasing order. For readability, the example uses the ordinary if-expressions, which is easy to support.
+As in Example
+3
+, the source and target of the stream translation
+are shown side-by-side, and comments denote
+ℬ
+\mathcal{B}
+used at each program point.
+We write
+i
+.
+.
+j
+i..j
+for the sequence consisting of integers from
+i
+i
+to
+j
+j
+; it denotes the empty sequence
+ϵ
+\epsilon
+when
+i
+>
+j
+i>j
+.
+The type environment
+Γ
+\Gamma
+is
+𝑖𝑛
+1
+:
+𝐫𝐚𝐫𝐫𝐚𝐲
+,
+𝑖𝑛
+2
+:
+𝐫𝐚𝐫𝐫𝐚𝐲
+,
+𝑜𝑢𝑡
+:
+𝐰𝐚𝐫𝐫𝐚𝐲
+,
+i
+:
+𝐢𝐧𝐭
+,
+j
+:
+𝐢𝐧𝐭
+,
+k
+:
+𝐢𝐧𝐭
+,
+x
+:
+𝐢𝐧𝐭
+,
+N
+:
+𝐢𝐧𝐭
+\mathit{in}_{1}\mathbin{:}\mathbf{rarray},\mathit{in}_{2}\mathbin{:}\mathbf{rarray},\mathit{out}\mathbin{:}\mathbf{warray},i\mathbin{:}\mathbf{int},j\mathbin{:}\mathbf{int},k\mathbin{:}\mathbf{int},x\mathbin{:}\mathbf{int},N\mathbin{:}\mathbf{int}
+. In this example, the loop invariant
+i
++
+j
+=
+k
+<
+2
+​
+N
+∧
+i
+≤
+N
+∧
+j
+≤
+N
+i+j=k<2N\land i\leq N\land j\leq N
+is required for the translation.
+In fact, in order to ensure that
+i
+∈
+ι
+𝑖𝑛
+1
+i\in\iota_{\mathit{in}_{1}}
+in the first conditional branch, the condition
+i
+<
+N
+i<N
+is required,
+which can be obtained by the entailment
+i
++
+j
+<
+2
+​
+N
+∧
+j
+=
+N
+⇒
+i
+<
+N
+i+j<2N\land j=N\Rightarrow i<N
+.
+Here,
+i
++
+j
+<
+2
+​
+N
+i+j<2N
+and
+j
+=
+N
+j=N
+respectively come from the loop invariant and the branching condition.
+Thanks to the use of relational Hoare logic, we can correctly reason about such invariants.
+∎
+//
+ι
+𝑖𝑛
+1
+=
+ι
+𝑖𝑛
+2
+=
+0
+.
+.
+(
+N
+−
+1
+)
+∧
+ι
+𝑜𝑢𝑡
+=
+ϵ
+∧
+i
+=
+j
+=
+0
+\iota_{\mathit{in}_{1}}=\iota_{\mathit{in}_{2}}=0..(N-1)\land\iota_{\mathit{out}}=\epsilon\land i=j=0
+𝐟𝐨𝐫
+(
+k
+:=
+0
+;
+k
+≠
+N
+∗
+2
+;
+k
+:=
+k
++
+1
+)
+{
+\displaystyle\mathbf{for}(k:=0;k\neq N*2;k:=k+1)\{
+𝐟𝐨𝐫
+(
+k
+:=
+0
+;
+k
+≠
+N
+∗
+2
+;
+k
+:=
+k
++
+1
+)
+{
+\displaystyle\mathbf{for}(k:=0;k\neq N*2;k:=k+1)\{\hskip 15.00002pt
+//
+ι
+𝑖𝑛
+1
+=
+i
+.
+.
+(
+N
+−
+1
+)
+∧
+ι
+𝑖𝑛
+2
+=
+j
+.
+.
+(
+N
+−
+1
+)
+∧
+ι
+𝑜𝑢𝑡
+=
+0
+.
+.
+(
+k
+−
+1
+)
+∧
+i
++
+j
+=
+k
+<
+2
+​
+N
+\iota_{\mathit{in}_{1}}=i..(N-1)\land\iota_{\mathit{in}_{2}}=j..(N-1)\land\iota_{\mathit{out}}=0..(k-1)\land i+j=k<2N
+∧
+i
+≤
+N
+∧
+j
+≤
+N
+{}\land i\leq N\land j\leq N
+𝐢𝐟
+j
+=
+N
+{
+\displaystyle\ \ \mathbf{if}\ j=N\ \{
+𝐢𝐟
+j
+=
+N
+{
+\displaystyle\ \ \mathbf{if}\ j=N\ \{
+//
+ι
+𝑖𝑛
+1
+=
+i
+.
+.
+(
+N
+−
+1
+)
+∧
+ι
+𝑖𝑛
+2
+=
+ϵ
+∧
+ι
+𝑜𝑢𝑡
+=
+0
+.
+.
+(
+k
+−
+1
+)
+∧
+i
++
+N
+=
+k
+<
+2
+​
+N
+∧
+i
+<
+N
+∧
+j
+=
+N
+\iota_{\mathit{in}_{1}}=i..(N-1)\land\iota_{\mathit{in}_{2}}=\epsilon\land\iota_{\mathit{out}}=0..(k-1)\land i+N=k<2N\land i<N\land j=N
+x
+:=
+𝑖𝑛
+1
+​
+[
+i
+]
+;
+𝑜𝑢𝑡
+⁡
+[
+k
+]
+:=
+x
+;
+\displaystyle\quad x:=\mathit{in}_{1}[i];\mathit{out}[k]:=x;
+x
+:=
+𝑖𝑛
+1
+.
+r
+​
+e
+​
+a
+​
+d
+​
+(
+)
+;
+𝑜𝑢𝑡
+.
+w
+​
+r
+​
+i
+​
+t
+​
+e
+​
+(
+x
+)
+;
+\displaystyle\quad x:={\mathit{in}_{1}}.read();{\mathit{out}}.write(x);
+i
+:=
+i
++
+1
+\displaystyle\quad i:=i+1
+i
+:=
+i
++
+1
+\displaystyle\quad i:=i+1
+//
+ι
+𝑖𝑛
+1
+=
+i
+.
+.
+(
+N
+−
+1
+)
+∧
+ι
+𝑖𝑛
+2
+=
+ϵ
+∧
+ι
+𝑜𝑢𝑡
+=
+0
+.
+.
+k
+∧
+i
+−
+1
++
+N
+=
+k
+<
+2
+​
+N
+∧
+i
+≤
+N
+∧
+j
+=
+N
+\iota_{\mathit{in}_{1}}=i..(N-1)\land\iota_{\mathit{in}_{2}}=\epsilon\land\iota_{\mathit{out}}=0..k\land i-1+N=k<2N\land i\leq N\land j=N
+}
+𝐞𝐥𝐬𝐞
+𝐢𝐟
+i
+=
+N
+{
+\displaystyle\ \ \}\ \mathbf{else}\ \mathbf{if}\ i=N\ \{
+}
+𝐞𝐥𝐬𝐞
+𝐢𝐟
+i
+=
+N
+{
+\displaystyle\ \ \}\ \mathbf{else}\ \mathbf{if}\ i=N\ \{
+//
+ι
+𝑖𝑛
+1
+=
+ϵ
+∧
+ι
+𝑖𝑛
+2
+=
+j
+.
+.
+(
+N
+−
+1
+)
+∧
+ι
+𝑜𝑢𝑡
+=
+0
+.
+.
+(
+k
+−
+1
+)
+∧
+N
++
+j
+=
+k
+<
+2
+​
+N
+∧
+i
+=
+N
+∧
+j
+<
+N
+\iota_{\mathit{in}_{1}}=\epsilon\land\iota_{\mathit{in}_{2}}=j..(N-1)\land\iota_{\mathit{out}}=0..(k-1)\land N+j=k<2N\land i=N\land j<N
+x
+:=
+𝑖𝑛
+2
+​
+[
+i
+]
+;
+𝑜𝑢𝑡
+⁡
+[
+k
+]
+:=
+x
+;
+\displaystyle\quad x:=\mathit{in}_{2}[i];\mathit{out}[k]:=x;
+x
+:=
+𝑖𝑛
+2
+.
+r
+​
+e
+​
+a
+​
+d
+​
+(
+)
+;
+𝑜𝑢𝑡
+.
+w
+​
+r
+​
+i
+​
+t
+​
+e
+​
+(
+x
+)
+;
+\displaystyle\quad x:={\mathit{in}_{2}}.read();{\mathit{out}}.write(x);
+j
+:=
+j
++
+1
+\displaystyle\quad j:=j+1
+j
+:=
+j
++
+1
+\displaystyle\quad j:=j+1
+//
+ι
+𝑖𝑛
+1
+=
+ϵ
+∧
+ι
+𝑖𝑛
+2
+=
+j
+.
+.
+(
+N
+−
+1
+)
+∧
+ι
+𝑜𝑢𝑡
+=
+0
+.
+.
+k
+∧
+N
++
+j
+−
+1
+=
+k
+<
+2
+​
+N
+∧
+i
+=
+N
+∧
+j
+≤
+N
+\iota_{\mathit{in}_{1}}=\epsilon\land\iota_{\mathit{in}_{2}}=j..(N-1)\land\iota_{\mathit{out}}=0..k\land N+j-1=k<2N\land i=N\land j\leq N
+}
+𝐞𝐥𝐬𝐞
+𝐢𝐟
+𝑖𝑛
+1
+[
+i
+]
+<
+𝑖𝑛
+2
+[
+j
+]
+{
+\displaystyle\ \ \}\ \mathbf{else}\ \mathbf{if}\ \mathit{in}_{1}[i]<\mathit{in}_{2}[j]\ \{
+}
+𝐞𝐥𝐬𝐞
+𝐢𝐟
+𝑖𝑛
+1
+[
+i
+]
+<
+𝑖𝑛
+2
+[
+j
+]
+{
+\displaystyle\ \ \}\ \mathbf{else}\ \mathbf{if}\ \mathit{in}_{1}[i]<\mathit{in}_{2}[j]\ \{
+//
+ι
+𝑖𝑛
+1
+=
+i
+.
+.
+(
+N
+−
+1
+)
+∧
+ι
+𝑖𝑛
+2
+=
+j
+.
+.
+(
+N
+−
+1
+)
+∧
+ι
+𝑜𝑢𝑡
+=
+0
+.
+.
+(
+k
+−
+1
+)
+∧
+i
++
+j
+=
+k
+<
+2
+​
+N
+\iota_{\mathit{in}_{1}}=i..(N-1)\land\iota_{\mathit{in}_{2}}=j..(N-1)\land\iota_{\mathit{out}}=0..(k-1)\land i+j=k<2N
+∧
+i
+<
+N
+∧
+j
+<
+N
+{}\land i<N\land j<N
+x
+:=
+𝑖𝑛
+1
+​
+[
+i
+]
+;
+𝑜𝑢𝑡
+⁡
+[
+k
+]
+:=
+x
+;
+\displaystyle\quad x:=\mathit{in}_{1}[i];\mathit{out}[k]:=x;
+x
+:=
+𝑖𝑛
+1
+.
+r
+​
+e
+​
+a
+​
+d
+​
+(
+)
+;
+𝑜𝑢𝑡
+.
+w
+​
+r
+​
+i
+​
+t
+​
+e
+​
+(
+x
+)
+;
+\displaystyle\quad x:={\mathit{in}_{1}}.read();{\mathit{out}}.write(x);
+i
+:=
+i
++
+1
+\displaystyle\quad i:=i+1
+i
+:=
+i
++
+1
+\displaystyle\quad i:=i+1
+//
+ι
+𝑖𝑛
+1
+=
+i
+.
+.
+(
+N
+−
+1
+)
+∧
+ι
+𝑖𝑛
+2
+=
+j
+.
+.
+(
+N
+−
+1
+)
+∧
+ι
+𝑜𝑢𝑡
+=
+0
+.
+.
+k
+∧
+i
+−
+1
++
+j
+=
+k
+<
+2
+​
+N
+\iota_{\mathit{in}_{1}}=i..(N-1)\land\iota_{\mathit{in}_{2}}=j..(N-1)\land\iota_{\mathit{out}}=0..k\land i-1+j=k<2N
+∧
+i
+≤
+N
+∧
+j
+<
+N
+{}\land i\leq N\land j<N
+}
+𝐞𝐥𝐬𝐞
+{
+\displaystyle\ \ \}\ \mathbf{else}\ \{
+}
+𝐞𝐥𝐬𝐞
+{
+\displaystyle\ \ \}\ \mathbf{else}\ \{
+//
+ι
+𝑖𝑛
+1
+=
+i
+.
+.
+(
+N
+−
+1
+)
+∧
+ι
+𝑖𝑛
+2
+=
+j
+.
+.
+(
+N
+−
+1
+)
+∧
+ι
+𝑜𝑢𝑡
+=
+0
+.
+.
+(
+k
+−
+1
+)
+∧
+i
++
+j
+=
+k
+<
+2
+​
+N
+\iota_{\mathit{in}_{1}}=i..(N-1)\land\iota_{\mathit{in}_{2}}=j..(N-1)\land\iota_{\mathit{out}}=0..(k-1)\land i+j=k<2N
+∧
+i
+≤
+N
+∧
+j
+≤
+N
+{}\land i\leq N\land j\leq N
+x
+:=
+𝑖𝑛
+2
+​
+[
+i
+]
+;
+𝑜𝑢𝑡
+⁡
+[
+k
+]
+:=
+x
+;
+\displaystyle\quad x:=\mathit{in}_{2}[i];\mathit{out}[k]:=x;
+x
+:=
+𝑖𝑛
+2
+.
+r
+​
+e
+​
+a
+​
+d
+​
+(
+)
+;
+𝑜𝑢𝑡
+.
+w
+​
+r
+​
+i
+​
+t
+​
+e
+​
+(
+x
+)
+;
+\displaystyle\quad x:={\mathit{in}_{2}}.read();{\mathit{out}}.write(x);
+j
+:=
+j
++
+1
+\displaystyle\quad j:=j+1
+j
+:=
+j
++
+1
+\displaystyle\quad j:=j+1
+//
+ι
+𝑖𝑛
+1
+=
+i
+.
+.
+(
+N
+−
+1
+)
+∧
+ι
+𝑖𝑛
+2
+=
+j
+.
+.
+(
+N
+−
+1
+)
+∧
+ι
+𝑜𝑢𝑡
+=
+0
+.
+.
+k
+∧
+i
++
+j
+−
+1
+=
+k
+<
+2
+​
+N
+\iota_{\mathit{in}_{1}}=i..(N-1)\land\iota_{\mathit{in}_{2}}=j..(N-1)\land\iota_{\mathit{out}}=0..k\land i+j-1=k<2N
+∧
+i
+<
+N
+∧
+j
+≤
+N
+{}\land i<N\land j\leq N
+}
+\displaystyle\ \ \}
+}
+\displaystyle\ \ \}
+//
+ι
+𝑖𝑛
+1
+=
+i
+.
+.
+(
+N
+−
+1
+)
+∧
+ι
+𝑖𝑛
+2
+=
+j
+.
+.
+(
+N
+−
+1
+)
+∧
+ι
+𝑜𝑢𝑡
+=
+0
+.
+.
+k
+∧
+i
++
+j
+=
+k
++
+1
+≤
+2
+​
+N
+\iota_{\mathit{in}_{1}}=i..(N-1)\land\iota_{\mathit{in}_{2}}=j..(N-1)\land\iota_{\mathit{out}}=0..k\land i+j=k+1\leq 2N
+∧
+i
+≤
+N
+∧
+j
+≤
+N
+{}\land i\leq N\land j\leq N
+}
+\displaystyle\}
+}
+\displaystyle\}
+//
+ι
+𝑖𝑛
+1
+=
+ϵ
+∧
+ι
+𝑖𝑛
+2
+=
+ϵ
+∧
+ι
+𝑜𝑢𝑡
+=
+0
+.
+.
+(
+2
+​
+N
+)
+∧
+k
+=
+2
+​
+N
+∧
+i
+=
+j
+=
+N
+\iota_{\mathit{in}_{1}}=\epsilon\land\iota_{\mathit{in}_{2}}=\epsilon\land\iota_{\mathit{out}}=0..(2N)\land k=2N\land i=j=N
+Figure 8:
+Translation for a merge program.
+3.3
+Correctness of the Translation
+To show that the semantics of the program is preserved by the translation,
+we define a relation
+⟨
+R
+,
+H
+⟩
+∼
+Γ
+|
+ℬ
+⟨
+R
+′
+,
+S
+′
+⟩
+\langle R,H\rangle\sim_{\Gamma\mid\mathcal{B}}\langle R^{\prime},S^{\prime}\rangle
+between
+the runtime states of programs before and after the translation as follows.
+R
+(
+x
+)
+=
+R
+′
+(
+x
+)
+for each
+x
+:
+𝐢𝐧𝐭
+∈
+Γ
+𝐼𝑑𝑥
+⁡
+(
+H
+,
+a
+)
+⊇
+𝑠𝑒𝑡𝑜𝑓
+⁡
+(
+Θ
+⁡
+(
+a
+)
+)
+​
+for each
+a
+such that
+Γ
+⁡
+(
+a
+)
+∈
+{
+𝐫𝐚𝐫𝐫𝐚𝐲
+,
+𝐰𝐚𝐫𝐫𝐚𝐲
+}
+H
+⁡
+(
+a
+,
+Θ
+⁡
+(
+a
+)
+​
+[
+i
+]
+)
+=
+S
+′
+​
+(
+a
+)
+​
+[
+i
+]
+​
+for each
+a
+and
+i
+such that
+Γ
+⁡
+(
+a
+)
+∈
+{
+𝐫𝐚𝐫𝐫𝐚𝐲
+,
+𝐰𝐚𝐫𝐫𝐚𝐲
+}
+,
+0
+≤
+i
+<
+|
+Θ
+⁡
+(
+a
+)
+|
+R
+′
+,
+H
+,
+Θ
+⊧
+ℬ
+⟨
+R
+,
+H
+⟩
+∼
+Γ
+|
+ℬ
+⟨
+R
+′
+,
+S
+′
+⟩
+\displaystyle\frac{\begin{array}[]{@{}c@{}}R(x)=R^{\prime}(x)\mbox{ for each $x\mathbin{:}\mathbf{int}\in\Gamma$}\\
+\mathit{Idx}(H,a)\supseteq\mathit{setof}(\Theta(a))\mbox{ for each $a$ such that $\Gamma(a)\in\{\mathbf{rarray},\mathbf{warray}\}$}\\
+H(a,\Theta(a)[i])=S^{\prime}(a)[i]\mbox{ for each $a$ and $i$ such that}\\
+\hskip 113.81102pt\mbox{$\Gamma(a)\in\{\mathbf{rarray},\mathbf{warray}\}$, $0\leq i<|\Theta(a)|$}\\
+R^{\prime},H,\Theta\models\mathcal{B}\end{array}}{\begin{array}[]{@{}c@{}}\langle R,H\rangle\sim_{\Gamma\mid\mathcal{B}}\langle R^{\prime},S^{\prime}\rangle\end{array}}
+Here,
+Θ
+⁡
+(
+a
+)
+\Theta(a)
+denotes a sequence of indices  of array
+a
+a
+and
+Θ
+​
+(
+a
+)
+​
+[
+i
+]
+\Theta(a)[i]
+denotes the
+i
+i
+-th element of the sequence; the sequence describes
+how the values of an array
+a
+a
+of the source program are stored in the stream
+a
+a
+of
+the target program.
+For example, if
+S
+′
+​
+(
+a
+)
+=
+2
+⋅
+3
+S^{\prime}(a)=2\cdot 3
+and
+Θ
+⁡
+(
+a
+)
+=
+1
+⋅
+0
+\Theta(a)=1\cdot 0
+,
+then
+H
+⁡
+(
+a
+,
+1
+)
+=
+2
+H(a,1)=2
+and
+H
+⁡
+(
+a
+,
+0
+)
+=
+3
+H(a,0)=3
+.
+To avoid undefined accesses to the heap, we require that the elements of
+Θ
+⁡
+(
+a
+)
+\Theta(a)
+are included in
+𝐼𝑑𝑥
+⁡
+(
+H
+,
+a
+)
+=
+def
+{
+m
+∣
+(
+a
+,
+m
+)
+∈
+𝑑𝑜𝑚
+⁡
+(
+H
+)
+}
+\mathit{Idx}(H,a)\stackrel{{\scriptstyle\text{def}}}{{=}}\{m\mid(a,m)\in\mathit{dom}(H)\}
+.
+The last premise
+R
+′
+,
+H
+,
+Θ
+⊧
+ℬ
+R^{\prime},H,\Theta\models\mathcal{B}
+means that
+ℬ
+\mathcal{B}
+holds under the interpretation which maps (i) each integer and buffer variable
+x
+x
+to
+R
+′
+​
+(
+x
+)
+R^{\prime}(x)
+, (ii) each array
+a
+a
+to
+{
+m
+↦
+H
+(
+a
+,
+m
+)
+}
+\{m\mapsto H(a,m)\}
+, and
+(iii) each index sequence variable
+ι
+a
+\iota_{a}
+to
+Θ
+⁡
+(
+a
+)
+\Theta(a)
+.
+Note here that array variables are interpreted by using the state of the program
+before
+the translation, while integer and buffer variables and
+ι
+a
+\iota_{a}
+are interpreted by using the state of the
+program
+after
+the translation.
+The following theorem on the correctness of the translation states
+that the evaluation of source and target programs can be simulated by each other.
+Theorem 3.1
+(Correctness of translation)
+Suppose
+Γ
+⊢
+{
+ℬ
+}
+​
+s
+⟹
+t
+⁡
+{
+ℬ
+′
+}
+\Gamma\vdash\{\mathcal{B}\}s\Longrightarrow t\{\mathcal{B}^{\prime}\}
+and
+⟨
+R
+,
+H
+⟩
+∼
+Γ
+|
+ℬ
+⟨
+R
+′
+,
+S
+′
+⟩
+\langle R,H\rangle\sim_{\Gamma\mid\mathcal{B}}\langle R^{\prime},S^{\prime}\rangle
+.
+1.
+If
+⟨
+R
+,
+H
+,
+s
+⟩
+⇓
+⟨
+R
+1
+,
+H
+1
+⟩
+\langle R,H,s\rangle\Downarrow\langle R_{1},H_{1}\rangle
+, then
+there exist
+R
+1
+′
+R_{1}^{\prime}
+and
+S
+1
+′
+S_{1}^{\prime}
+such that
+⟨
+R
+′
+,
+S
+′
+,
+u
+⟩
+⇓
+⟨
+R
+1
+′
+,
+S
+1
+′
+⟩
+\langle R^{\prime},S^{\prime},u\rangle\Downarrow\langle R^{\prime}_{1},S^{\prime}_{1}\rangle
+and
+⟨
+R
+1
+,
+H
+1
+⟩
+∼
+Γ
+|
+ℬ
+′
+⟨
+R
+1
+′
+,
+S
+1
+′
+⟩
+\langle R_{1},H_{1}\rangle\sim_{\Gamma\mid\mathcal{B}^{\prime}}\langle R^{\prime}_{1},S^{\prime}_{1}\rangle
+.
+2.
+If
+⟨
+R
+′
+,
+S
+′
+,
+t
+⟩
+⇓
+⟨
+R
+1
+′
+,
+S
+1
+′
+⟩
+\langle R^{\prime},S^{\prime},t\rangle\Downarrow\langle R^{\prime}_{1},S^{\prime}_{1}\rangle
+, then
+there exist
+R
+1
+R_{1}
+and
+H
+1
+H_{1}
+such that
+⟨
+R
+,
+H
+,
+s
+⟩
+⇓
+⟨
+R
+1
+,
+H
+1
+⟩
+\langle R,H,s\rangle\Downarrow\langle R_{1},H_{1}\rangle
+and
+⟨
+R
+1
+,
+H
+1
+⟩
+∼
+Γ
+|
+ℬ
+′
+⟨
+R
+1
+′
+,
+S
+1
+′
+⟩
+\langle R_{1},H_{1}\rangle\sim_{\Gamma\mid\mathcal{B}^{\prime}}\langle R^{\prime}_{1},S^{\prime}_{1}\rangle
+.
+Proof
+Given in Appendix
+0.A
+.
+∎
+Since
+⟨
+R
+1
+,
+H
+1
+⟩
+∼
+Γ
+|
+ℬ
+′
+⟨
+R
+1
+′
+,
+S
+1
+′
+⟩
+\langle R_{1},H_{1}\rangle\sim_{\Gamma\mid\mathcal{B}^{\prime}}\langle R^{\prime}_{1},S^{\prime}_{1}\rangle
+requires that
+R
+1
+​
+(
+x
+)
+=
+R
+1
+′
+​
+(
+x
+)
+R_{1}(x)=R^{\prime}_{1}(x)
+for each integer variable
+x
+x
+, the above theorem says that the results of the programs before and after the translation are the same.
+Furthermore, the mutual simulation ensures that the translated program never gets stuck nor diverges if and only if the source program does not.
+4
+Automation of Translation
+Below we describe how our translation is automated; experimental results are reported
+in Section
+5
+.
+4.1
+Restriction on Pre-conditions and Post-conditions
+For the purpose of automating the translation, we have restricted the shape of
+ℬ
+\mathcal{B}
+to the form
+ι
+a
+1
+=
+[
+𝑙𝑜𝑤
+1
+,
+ℎ𝑖𝑔ℎ
+1
+;
+s
+1
+]
+∧
+⋯
+∧
+ι
+a
+k
+=
+[
+𝑙𝑜𝑤
+k
+,
+ℎ𝑖𝑔ℎ
+k
+;
+s
+k
+]
+∧
+φ
+,
+\iota_{a_{1}}=[\mathit{low}_{1},\mathit{high}_{1};s_{1}]\land\cdots\land\iota_{a_{k}}=[\mathit{low}_{k},\mathit{high}_{k};s_{k}]\land\varphi,
+where
+[
+𝑙𝑜𝑤
+i
+,
+ℎ𝑖𝑔ℎ
+i
+;
+s
+i
+]
+[\mathit{low}_{i},\mathit{high}_{i};s_{i}]
+denotes the sequence of integers from
+𝑙𝑜𝑤
+i
+\mathit{low}_{i}
+to
+ℎ𝑖𝑔ℎ
+i
+\mathit{high}_{i}
+with gap
+s
+i
+s_{i}
+(e.g.,
+[
+0
+,
+6
+;
+2
+]
+[0,6;2]
+denotes the sequence
+0
+⋅
+2
+⋅
+4
+⋅
+6
+0\cdot 2\cdot 4\cdot 6
+),
+and
+φ
+\varphi
+consists of only (i) buffer information
+b
+=
+a
+⁡
+[
+e
+]
+b=a[e]
+and (ii) conditions on loop variables
+(that can automatically be extracted from for-loops; this is the reason why we preferred for-loops over while-loops).
+The bounds
+𝑙𝑜𝑤
+i
+\mathit{low}_{i}
+and
+ℎ𝑖𝑔ℎ
+i
+\mathit{high}_{i}
+can be linear expressions on free variables
+(whose coefficients are automatically inferred as described in Section
+4.3
+).
+Limitations
+As described above, our current implementation imposes restrictions on index access patterns, although our formalization does not have such restrictions.
+At present, the tool requires that, across loop iterations, the range of accessed indices
+shifts by a constant, as in sliding-window or forward/backward scans.
+Consequently, it does not support unconventional index orders such as column-major access
+(e.g.,
+A[j][i]
+instead of the usual
+A[i][j]
+) in matrix computations.
+In future work, we plan to relax this restriction by fully exploiting the power of the relational Hoare logic,
+possibly allowing users to specify loop invariants.
+4.2
+Buffer Insertion
+Our tool first insert buffering commands as follows.
+For each loop and each array accessed in the loop, the tool collect the set of indices (as symbolic expressions)
+accessed during each iteration. For example, in the source program of Figure
+7
+,
+the sets of indices for arrays
+𝑖𝑛
+\mathit{in}
+and
+𝑜𝑢𝑡
+\mathit{out}
+are
+{
+x
+,
+x
++
+1
+}
+\{x,x+1\}
+and
+{
+x
+}
+\{x\}
+respectively.
+The tool order the indices symbolically, and decide that all indices except the largest one should be read from
+buffers. On line 13 of Figure
+7
+, the read from
+𝑖𝑛
+⁡
+[
+x
+]
+\mathit{in}[x]
+is thus replaced
+with a read from buffer
+b
+0
+b_{0}
+, and on line 14, the value read from the corresponding stream is stored in the buffer
+for use in the next iteration. In contrast, buffering is unnecessary for
+𝑜𝑢𝑡
+\mathit{out}
+since only a single index
+x
+x
+of
+𝑜𝑢𝑡
+\mathit{out}
+is accessed. (As already explained,
+the replacement of
+𝑜𝑢𝑡
+⁡
+[
+x
+]
+:=
+z
+1
+\mathit{out}[x]:=z_{1}
+with
+b
+1
+:=
+z
+1
+;
+𝑜𝑢𝑡
+.
+w
+​
+r
+​
+i
+​
+t
+​
+e
+​
+(
+b
+1
+)
+b_{1}:=z_{1};\mathit{out}.write(b_{1})
+is for the sake of simplicity of
+translation rules. In the actual implementation, this is replaced directly with
+𝑜𝑢𝑡
+.
+w
+​
+r
+​
+i
+​
+t
+​
+e
+​
+(
+z
+1
+)
+\mathit{out}.write(z_{1})
+.)
+We also note that, for two-dimensional arrays,
+the tool introduce line buffers and apply the same reasoning as above for the first index of each two-dimensional array.
+4.3
+Verification Condition Generation
+Once the buffers are inserted, to check whether a program can be translated, we can generate verification conditions and check if they are valid.
+The verification condition generation algorithm typically requires annotations for loop invariants, but in our case, loop invariants are automatically inferred.
+This is made possible by the restriction explained in Section
+4.1
+.
+For each
+𝑙𝑜𝑤
+i
+\mathit{low}_{i}
+,
+ℎ𝑖𝑔ℎ
+i
+\mathit{high}_{i}
+and
+s
+i
+s_{i}
+introduced in Section
+4.1
+,
+the tool prepare a linear template
+c
+0
++
+c
+1
+​
+x
+1
++
+⋯
++
+c
+ℓ
+​
+x
+ℓ
+c_{0}+c_{1}x_{1}+\cdots+c_{\ell}x_{\ell}
+, where
+x
+1
+,
+…
+,
+x
+ℓ
+x_{1},\ldots,x_{\ell}
+are integer variables occurring in the given
+program
+2
+2
+2
+In the current implementation, we further restrict
+x
+1
+,
+…
+,
+x
+ℓ
+x_{1},\ldots,x_{\ell}
+to loop variables,
+but that restriction is easy to remove.
+and
+c
+0
+,
+…
+,
+c
+ℓ
+c_{0},\ldots,c_{\ell}
+are unknown constants.
+For example, for the second loop of Figure
+7
+, the tool prepare the following template
+for loop invariant, which we denote
+𝐼𝑛𝑣
+\mathit{Inv}
+:
+3
+3
+3
+For simplicity, here
+N
+N
+is treated as a constant not depending on
+b
+b
+.
+ι
+𝑖𝑛
+=
+[
+c
+0
+,
+0
++
+c
+0
+,
+1
+​
+x
+,
+c
+1
+,
+0
++
+c
+1
+,
+1
+​
+x
+;
+c
+2
+,
+0
++
+c
+2
+,
+1
+​
+x
+]
+\displaystyle\iota_{\mathit{in}}=[c_{0,0}+c_{0,1}x,c_{1,0}+c_{1,1}x;c_{2,0}+c_{2,1}x]
+∧
+ι
+𝑜𝑢𝑡
+=
+[
+c
+3
+,
+0
++
+c
+3
+,
+1
+​
+x
+,
+c
+4
+,
+0
++
+c
+4
+,
+1
+​
+x
+;
+c
+5
+,
+0
++
+c
+5
+,
+1
+​
+x
+]
+∧
+x
+≠
+N
+−
+1
+\displaystyle\land\iota_{\mathit{out}}=[c_{3,0}+c_{3,1}x,c_{4,0}+c_{4,1}x;c_{5,0}+c_{5,1}x]\land x\neq N-1
+We briefly explain how the verification conditions are generated.
+As in the standard Hoare Logic, the verification condition is calculated using the approximate weakest precondition
+awp
+⁡
+(
+s
+,
+ℬ
+)
+\mathrm{awp}(s,\mathcal{B})
+, which is defined based on the translation rules in Section
+3
+.
+For example, the approximate weakest precondition for a write to an array is defined by
+awp
+(
+a
+[
+e
+]
+:=
+x
+,
+ℬ
+)
+=
+def
+e
+∉
+ι
+a
+∧
+[
+a
+{
+e
+↦
+x
+}
+/
+a
+,
+ι
+a
+⋅
+e
+/
+ι
+a
+]
+ℬ
+.
+\mathrm{awp}(a[e]:=x,\mathcal{B})\stackrel{{\scriptstyle\text{def}}}{{=}}e\notin\iota_{a}\land[a\{e\mapsto x\}/a,\iota_{a}\cdot e/\iota_{a}]\mathcal{B}.
+Note that this is exactly the precondition of
+Tr-WriteMem
+. In the end of the second loop of Figure
+7
+, the (template) invariant
+[
+x
++
+1
+/
+x
+]
+​
+𝐼𝑛𝑣
+[x+1/x]\mathit{Inv}
+must hold, and thus, the condition
+awp
+⁡
+(
+𝑜𝑢𝑡
+⁡
+[
+x
+]
+:=
+z
+1
+,
+[
+x
++
+1
+/
+x
+]
+​
+𝐼𝑛𝑣
+)
+≡
+x
+∉
+ι
+𝑜𝑢𝑡
+∧
+[
+ι
+𝑜𝑢𝑡
+⋅
+x
+/
+ι
+𝑜𝑢𝑡
+,
+x
++
+1
+/
+x
+]
+​
+𝐼𝑛𝑣
+\mathrm{awp}(\mathit{out[x]:=z_{1}},[x+1/x]\mathit{Inv})\equiv x\notin\iota_{\mathit{out}}\land[\iota_{\mathit{out}}\cdot x/\iota_{\mathit{out}},x+1/x]\mathit{Inv}
+must hold before the statement
+o
+​
+u
+​
+t
+​
+[
+x
+]
+:=
+z
+1
+out[x]:=z_{1}
+.
+Thanks to the shape of the template,
+x
+∉
+ι
+𝑜𝑢𝑡
+x\notin\iota_{\mathit{out}}
+and
+ι
+𝑜𝑢𝑡
+⋅
+x
+\iota_{\mathit{out}}\cdot x
+can be represented as formulas in the theory of (quantified) integer arithmetic.
+For instance,
+x
+∉
+ι
+𝑜𝑢𝑡
+x\notin\iota_{\mathit{out}}
+is represented as
+¬
+∃
+⁡
+d
+⁡
+(
+𝑙𝑜𝑤
+𝑜𝑢𝑡
++
+d
+×
+s
+𝑜𝑢𝑡
+=
+x
+∧
+𝑙𝑜𝑤
+𝑜𝑢𝑡
+≤
+x
+≤
+ℎ𝑖𝑔ℎ
+𝑜𝑢𝑡
+)
+\lnot\exists d(\mathit{low}_{\mathit{out}}+d\times s_{\mathit{out}}=x\land\mathit{low}_{\mathit{out}}\leq x\leq\mathit{high}_{\mathit{out}})
+By chaining this backward reasoning, the actual verification condition for the loop is calculated as
+I
+​
+n
+​
+v
+∧
+x
+<
+N
+⟹
+awp
+⁡
+(
+s
+,
+[
+x
++
+1
+/
+x
+]
+​
+𝐼𝑛𝑣
+)
+Inv\land x<N\implies\mathrm{awp}(s,[x+1/x]\mathit{Inv})
+, where
+s
+s
+is the body of the loop.
+This condition checks whether
+𝐼𝑛𝑣
+\mathit{Inv}
+is a genuine loop invariant.
+4
+4
+4
+The actual verification condition also contains the entailment among pre-/post-condition and the invariant.
+For the example above,
+c
+0
+,
+0
+=
+c
+0
+,
+1
+=
+c
+2
+,
+0
+=
+c
+4
+,
+1
+=
+c
+5
+,
+0
+=
+1
+,
+c
+1
+,
+0
+=
+N
+−
+1
+,
+c
+1
+,
+1
+=
+c
+2
+,
+1
+=
+c
+3
+,
+0
+=
+c
+3
+,
+1
+=
+c
+5
+,
+1
+=
+0
+,
+c
+4
+,
+0
+=
+−
+1
+c_{0,0}=c_{0,1}=c_{2,0}=c_{4,1}=c_{5,0}=1,c_{1,0}=N-1,c_{1,1}=c_{2,1}=c_{3,0}=c_{3,1}=c_{5,1}=0,c_{4,0}=-1
+yields the loop invariant as shown on line 12 of Figure
+7
+and makes the verification condition valid.
+Then the tool transform the program according to the translation rules and obtain the program in the right-hand-side of Figure
+7
+.
+If the verification condition is unsatisfiable, the tool give up replacing (some of) the arrays with streams,
+and keep the arrays as they are.
+5
+Experiment
+5.1
+Implementation
+We have implemented a prototype tool based on the formalization of our translation presented in
+Section
+3
+.
+As described in Section
+4
+,
+we have imposed certain restrictions to enable automated translation in the implementation.
+To assess the individual contributions of buffer insertion and stream replacement to performance improvement,
+our implementation allows the stream replacement phase to be optionally skipped.
+In what follows, we refer to the translation that performs only buffer insertion as
+buffer translation
+,
+and the subsequent stream replacement step as
+stream translation
+.
+We have designed a C-like domain-specific language (DSL) as the source language of our tool,
+with C
++
++
+and hardware optimization directives as the target language.
+The DSL supports (non-recursive) functions and two-dimensional arrays in addition to the primitives of the source language
+presented in Section
+2
+.
+5.2
+Setup
+To evaluate our proposal, we conduct computing performance measurements on a real FPGA platform using our prototype tool.
+We use Z3
+[
+10
+]
+version 4.11.2 as the backend SMT solver to discharge verification conditions.
+We use AMD Vitis HLS 2024.1 as the backend compiler of our tool to generate register transfer level (RTL) code from translated C
++
++
+source code with directives,
+and we use AMD Vivado 2024.1 to generate an FPGA bitstream of the target hardware accelerator.
+We use AMD Kria KV260 Vision AI Starter Kit
+[
+1
+]
+, an SoC FPGA consisting of a programmable logic (PL) part (i.e., reconfigurable logic) and processing system (PS) part (i.e., CPU cores) as the target FPGA platform.
+Without the stream translation, off-chip memory accesses are conducted via the AXI Main (formerly Master) interface of the generated accelerator.
+With the stream translation, the AXI Main interfaces are replaced with AXI Stream interfaces, if possible, and the AXI DMA controller transfers the input and output data to the accelerator in a burst manner.
+We use PYNQ
+[
+34
+]
+, a Python-based infrastructure providing software libraries to control hardware accelerators on the programmable logic from the integrated CPU.
+The host software code, which consists of a non-kernel part of the translated program, including DMA requests, is executed on the CPU.
+We use the following base benchmark programs for the performance measurements:
+•
+Filter
+: The motivating example shown in Figure
+2
+in Section
+1
+.
+•
+Filter-Dilated
+: A variant of
+Filter
+that computes the average of elements at distant indices.
+•
+Divide
+: The motivating example shown in Figure
+1
+in Section
+1
+.
+•
+MatVecMul
+: A program that performs matrix-vector multiplication.
+•
+MatAdd
+: A program that performs addition of two matrices.
+•
+Filter-2D
+: A version of
+Filter
+that processes a two-dimensional array.
+•
+Stencil-2D
+: A structured grid computation applying a fixed-size filter over a 2D array.
+•
+KMP
+: A classic string-matching algorithm.
+•
+GeMM
+: Multiplication of two dense matrices.
+•
+SpMV
+: Multiplication of a sparse matrix and a dense vector.
+To evaluate the applicability of our framework to realistic workloads,
+we include several programs
+5
+5
+5
+We used Stencil-2D, KMP, GeMM, and SpMV from MachSuite.
+The remaining MachSuite benchmarks were not included because they fall outside the scope of our transformation.
+For example, programs such as AES perform only small, fixed memory lookups without reuse,
+so the translated program is identical to the original and provides no additional insight.
+from MachSuite
+[
+26
+]
+, a widely used benchmark suite for accelerator research.
+6
+6
+6
+We also attempted to evaluate existing source-to-source HLS frameworks,
+such as Stream-HLS
+[
+6
+]
+, as comparison targets.
+However, the framework targets different input models (e.g., Torch-MLIR or
+restricted affine programs) and could not be applied to our C/C++ benchmarks
+in a fully automatic manner.
+Note that the MachSuite programs are originally written in C
++
++
+, so we manually simplified them to fit our DSL.
+We configure the benchmarks so that their maximum input sizes are at least
+2
+18
+2^{18}
+elements.
+In addition, to show the capability of the proposal for non-trivial memory access patterns, we consider two variants for each base benchmark program, as described below.
+•
+Rev
+: A version that reads the input array in reverse order.
+•
+Skip
+: A version in which the loop index is incremented by 2.
+These variants represent non-trivial memory access patterns that can arise in practical applications.
+For instance, reverse traversal appears in backward scans (e.g., in dynamic programming or image processing),
+and skip-like patterns occur in signal and image processing tasks such as subsampling, decimation, or downsampling.
+Filter
+Filter-Rev
+Filter-Skip
+Filter-Dilated
+Filter-Dilated-Rev
+Filter-Dilated-Skip
+Divide
+Divide-Rev
+Divide-Skip
+MatVecMul
+MatVecMul-Rev
+MatVecMul-Skip
+MatAdd
+MatAdd-Rev
+MatAdd-Skip
+0
+0
+200
+200
+400
+400
+384
+384
+551
+551
+194
+194
+422
+422
+551
+551
+421
+421
+35.6
+35.6
+188
+188
+71.8
+71.8
+29.2
+29.2
+157
+157
+79.2
+79.2
+35.7
+35.7
+201
+201
+97.3
+97.3
+35.6
+35.6
+188
+188
+28.6
+28.6
+35.6
+35.6
+188
+188
+35.6
+35.6
+35.6
+35.6
+188
+188
+71.8
+71.8
+29.2
+29.2
+157
+157
+79.5
+79.5
+35.7
+35.7
+201
+201
+97.3
+97.3
+30.5
+30.5
+30.8
+30.8
+30
+30
+30.5
+30.5
+30.8
+30.8
+30.6
+30.6
+30.6
+30.6
+30.3
+30.3
+30.5
+30.5
+31.1
+31.1
+144
+144
+144
+144
+31
+31
+30.7
+30.7
+30.7
+30.7
+Execution Time [ms]
+Src
+Buf
+Str
+(a)
+Filter-2D
+Filter-2D-Rev
+Filter-2D-Skip
+Stencil-2D
+Stencil-2D-Rev
+Stencil-2D-Skip
+KMP
+KMP-Rev
+KMP-Skip
+GeMM
+GeMM-Rev
+GeMM-Skip
+SpMV
+SpMV-Rev
+SpMV-Skip
+0
+0
+2,000
+2{,}000
+4,000
+4{,}000
+1,150
+1{,}150
+1,200
+1{,}200
+580
+580
+1,150
+1{,}150
+1,210
+1{,}210
+579
+579
+1,950
+1{,}950
+1,960
+1{,}960
+1,270
+1{,}270
+5,000
+5{,}000
+5,250
+5{,}250
+2,640
+2{,}640
+1,260
+1{,}260
+1,600
+1{,}600
+797
+797
+36.6
+36.6
+189
+189
+72.3
+72.3
+36.6
+36.6
+324
+324
+46.8
+46.8
+1,950
+1{,}950
+1,960
+1{,}960
+1,280
+1{,}280
+5,000
+5{,}000
+5,010
+5{,}010
+2,500
+2{,}500
+1,260
+1{,}260
+1,600
+1{,}600
+809
+809
+31.1
+31.1
+31.2
+31.2
+73.2
+73.2
+31.1
+31.1
+58.9
+58.9
+46.1
+46.1
+1,870
+1{,}870
+1,880
+1{,}880
+1,250
+1{,}250
+5,000
+5{,}000
+5,030
+5{,}030
+2,530
+2{,}530
+1,260
+1{,}260
+1,260
+1{,}260
+635
+635
+Execution Time [ms]
+Src
+Buf
+Str
+(b)
+Figure 9:
+Execution time of the kernel functions.
+Src
+indicates the execution time in the original source program,
+Buf
+shows the time after applying buffer translation only,
+and
+Str
+shows the time after completing stream translation.
+Benchmarks are split across (a) and (b) for layout reasons.
+5.3
+Evaluation and Discussion
+Figure
+9
+shows the execution times of the kernel functions of the benchmark programs.
+Note that translation time of each program by our tool was less than a second.
+First, we begin the discussion for the base benchmarks.
+The programs
+Filter
+,
+Filter-Dilated
+,
+Filter-2D
+,
+and
+Stencil-2D
+exhibited significant performance improvements thanks to the buffer translation.
+The performance improvements can be attributed to two main factors:
+(1) a reduction in the number of costly off-chip memory accesses, and
+(2) the simplification of memory access patterns, which enabled Vitis HLS to infer burst transfers and obtain the required data in bulk from the off-chip memory.
+A burst transfer delivers multiple words of contiguous addresses on the off-chip memory for each transaction, unlike a single transfer, which delivers only one word.
+Utilizing burst transfers is crucial for efficient memory bandwidth utilization and effective computing performance.
+The backend high-level synthesis compiler (Vitis HLS in this experiment) can infer burst transfers through identifications of sequential memory accesses in a program, and multiple words are transferred at high throughput between on-chip fabrics and the off-chip memory.
+However, original access patterns to the off-chip memory in
+Filter
+,
+Filter-Dilated
+,
+Filter-2D
+,
+and
+Stencil-2D
+are not in sequential order, and no burst transfer can be synthesized.
+In our approach, the buffer translation inserts on-chip reuse buffers using block RAMs in the FPGA for marshaling access orders to the off-chip memory.
+The first memory access to a word is still represented as off-chip memory access, but the obtained word is stored on the inserted on-chip reuse buffer.
+Then, subsequent memory accesses are replaced with on-chip reuse buffer accesses, and the corresponding off-chip memory accesses are eliminated.
+Finally, the remaining off-chip memory accesses become in sequential order, so the backend high-level synthesis compiler can successfully synthesize burst transfers.
+In contrast, the performance of other base benchmarks remained largely unchanged.
+For the programs
+Divide
+,
+MatVecMul
+,
+MatAdd
+,
+KMP
+, and
+SpMV
+,
+the original memory access patterns are already in sequential order.
+Consequently, the buffer translation does not insert any on-chip reuse buffers for these programs.
+As a result, the backend compiler can synthesize efficient burst transfers in the original programs, and no additional performance benefit was observed.
+For
+GeMM
+, although line buffers are introduced, at least one input matrix is accessed in a non-linear order.
+Therefore, the buffer translation does not insert reuse buffers for that matrix
+and the access to it likely constitutes the performance bottleneck.
+Next, we consider the variant programs.
+The performance of the
+Rev
+variants, except for
+MatVecMul
+,
+KMP
+and
+GeMV
+, was improved with the stream translation.
+In their original forms, these programs exhibited sequential but reverse memory access patterns, which prevent the backend compiler from inferring burst accesses.
+In contrast, the stream translation removed the indexing parts of off-chip memory accesses from the accelerator, and off-chip memory accesses were conducted via the AXI DMA controller instead.
+Note that the off-chip data transfer behavior and performance of the AXI DMA controller are the same as those of the burst transfer by the AXI Main interface, and the maximum off-chip bandwidth utilization by the AXI DMA controller is equivalent to that of the burst transfer.
+Here, the stream translation changes the access order to the normal sequential order for the AXI DMA controller because the DMA controller does not support the reverse order.
+Finally, the translated programs after the stream translation can receive and send the input and output data to/from the off-chip memory in the burst mode at high bandwidth utilization.
+Unfortunately, in the case of
+MatVecMul-Rev
+, the performance remained unchanged.
+The vectors in this program are accessed in non-linear order, making them unsuitable for the stream translation.
+The existence of such non-linear accesses prevents our method from converting the program into the stream style and the backend compiler from inferring efficient burst transfers.
+For
+KMP-Rev
+and
+GeMM-Rev
+, although the translation enables the backend compiler to infer burst transfers,
+other parts of the programs likely became performance bottlenecks, and thus no improvements were observed.
+In the cases of
+Skip
+variants, the stream translation provides performance improvements for
+Divide-Skip
+,
+MatAdd-Skip
+, and
+SpMV-Skip
+.
+After the stream translation, in addition to the essential words in the computation, unused words in the original program are transferred from/to the off-chip memory so that the AXI DMA controller can utilize the burst transfer.
+Finally, the data transfer throughput and computing performance were successfully improved while the number of transferred words was increased.
+In contrast, the stream translation does not provide sufficient performance improvements for the
+Skip
+variants of
+Filter
+,
+Filter-Dilated
+,
+Filter-2D
+and
+Stencil-2D
+compared to their
+Rev
+counterparts.
+This is because the buffer translation before the stream translation already marshaled the off-chip memory accesses very well, and the off-chip memory access patterns are contiguous, allowing the backend compiler to infer burst transfers.
+As a result, there are no additional benefits to the stream translation.
+Table 1:
+Area and power consumption of the kernel functions,
+as reported by Vivado after synthesizing the corresponding hardware implementations.
+Src
+,
+Buf
+, and
+Str
+denote the original source kernel,
+the buffered version, and the stream-replaced version, respectively.
+Name
+Power [W]
+LUT
+LUTRAM
+FF
+BRAM
+DSP
+Src
+Buf
+Str
+Src
+Buf
+Str
+Src
+Buf
+Str
+Src
+Buf
+Str
+Src
+Buf
+Str
+Src
+Buf
+Str
+Filter
+2.748
+2.751
+2.746
+3003
+3161
+4003
+473
+485
+515
+3575
+3764
+5007
+1
+1
+5
+4
+4
+4
+Filter-Rev
+2.746
+2.752
+2.746
+3000
+3139
+4003
+467
+481
+515
+3533
+3697
+5007
+1
+1
+5
+4
+4
+4
+Filter-Skip
+2.748
+2.750
+2.746
+2980
+3041
+3951
+462
+486
+515
+3566
+3730
+4940
+1
+1
+5
+4
+4
+4
+Filter-Dilated
+2.748
+2.752
+2.746
+3070
+3218
+4012
+471
+483
+515
+3677
+3883
+5137
+1
+1
+5
+4
+4
+4
+Filter-Dilated-Rev
+2.749
+2.752
+2.746
+3029
+3138
+4012
+466
+479
+515
+3616
+3810
+5137
+1
+1
+5
+4
+4
+4
+Filter-Dilated-Skip
+2.748
+2.752
+2.746
+3052
+3131
+3984
+460
+472
+515
+3667
+3702
+4974
+1
+1
+5
+4
+4
+4
+Divide
+2.747
+2.746
+2.743
+2792
+2799
+3819
+478
+480
+515
+3416
+3420
+4839
+1
+1
+5
+0
+0
+0
+Divide-Rev
+2.748
+2.748
+2.743
+2834
+2843
+3819
+476
+478
+515
+3444
+3448
+4839
+1
+1
+5
+0
+0
+0
+Divide-skip
+2.747
+2.747
+2.743
+2803
+2815
+3812
+461
+463
+515
+3414
+3418
+4839
+1
+1
+5
+0
+0
+0
+MatVecMul
+2.758
+2.758
+2.756
+3560
+3567
+4546
+655
+657
+677
+4395
+4399
+5837
+1.5
+1.5
+5.5
+3
+3
+3
+MatVecMul-Rev
+2.760
+2.759
+2.757
+3636
+3685
+4574
+658
+664
+705
+4452
+4464
+5874
+1.5
+1.5
+5.5
+3
+3
+3
+MatVecMul-Skip
+2.759
+2.759
+2.756
+3610
+3625
+4580
+651
+657
+721
+4408
+4420
+5939
+1.5
+1.5
+5.5
+3
+3
+3
+MatAdd
+2.759
+2.759
+2.753
+3487
+3496
+4777
+650
+654
+701
+4404
+4412
+6155
+1.5
+1.5
+7.5
+0
+0
+0
+MatAdd-Rev
+2.761
+2.759
+2.753
+3598
+3646
+4777
+648
+652
+701
+4469
+4477
+6155
+1.5
+1.5
+7.5
+0
+0
+0
+MatAdd-Skip
+2.759
+2.760
+2.753
+3571
+3584
+4736
+650
+654
+701
+4439
+4447
+6152
+1.5
+1.5
+7.5
+0
+0
+0
+Filter-2D
+2.752
+2.818
+2.787
+3205
+5835
+6869
+484
+623
+733
+3893
+5911
+7182
+1
+53
+57
+4
+4
+4
+Filter-2D-Rev
+2.754
+2.818
+2.787
+3377
+5985
+6896
+459
+659
+733
+3922
+5987
+7182
+1
+53
+57
+4
+4
+4
+Filter-2D-Skip
+2.753
+2.790
+2.779
+3228
+5752
+6620
+467
+674
+745
+3962
+5970
+7189
+1
+7.5
+11.5
+4
+4
+4
+Stencil-2D
+2.764
+2.864
+2.814
+4022
+6545
+7598
+645
+800
+896
+5143
+6868
+8266
+1.5
+65.5
+69.5
+3
+27
+27
+Stencil-2D-Rev
+2.762
+2.854
+2.806
+4119
+6790
+7748
+635
+844
+916
+5200
+6841
+8210
+1.5
+65.5
+69.5
+3
+27
+27
+Stencil-2D-Skip
+2.760
+2.853
+2.819
+3969
+6664
+7711
+645
+807
+903
+5138
+6721
+8141
+1.5
+65.5
+69.5
+3
+27
+27
+Kmp
+2.759
+2.759
+2.755
+3621
+3632
+4139
+601
+607
+626
+4514
+4526
+5255
+1.5
+1.5
+3.5
+0
+0
+0
+Kmp-Rev
+2.760
+2.756
+2.755
+3750
+3737
+4218
+601
+607
+626
+4524
+4559
+5297
+1.5
+1.5
+3.5
+0
+0
+0
+Kmp-Skip
+2.756
+2.757
+2.754
+3712
+3733
+4216
+601
+607
+626
+4544
+4556
+5295
+1.5
+1.5
+3.5
+0
+0
+0
+GeMM
+2.759
+2.762
+2.758
+3681
+3630
+4628
+655
+646
+713
+4447
+4526
+5967
+1.5
+2
+6
+3
+3
+3
+GeMM-Rev
+2.761
+2.762
+2.760
+3693
+3728
+4663
+671
+674
+716
+4497
+4647
+5973
+1.5
+2
+6
+3
+3
+3
+GeMM-skip
+2.759
+2.761
+2.758
+3676
+3616
+4643
+655
+655
+716
+4443
+4553
+5980
+1.5
+2
+6
+3
+3
+3
+SpMV
+2.782
+2.782
+2.776
+5147
+5148
+5873
+979
+983
+1023
+6531
+6539
+7545
+2.5
+2.5
+6.5
+3
+3
+3
+SpMV-Rev
+2.783
+2.783
+2.777
+5233
+5244
+5876
+979
+983
+1027
+6531
+6539
+7529
+2.5
+2.5
+6.5
+3
+3
+3
+SpMV-Skip
+2.783
+2.783
+2.777
+5247
+5275
+5911
+979
+983
+1027
+6530
+6583
+7599
+2.5
+2.5
+6.5
+3
+3
+3
+Table
+1
+reports the area and power consumption of the generated hardware implementations.
+Here, LUT, LUTRAM, FF, BRAM, and DSP denote standard FPGA resources:
+look-up tables, LUT-based RAMs, flip-flops, block RAMs, and DSP blocks, respectively.
+It indicates that the use of additional buffers moderately increases area but has little effect on power consumption.
+For all benchmark instances, except for
+Filter-2D
+and
+Stencil-2D
+, the buffer translation does not significantly change the area, and the stream translation adds only a small overhead in BRAM usage, presumably reflecting the cost of FIFO buffers used for stream interfaces.
+In
+Filter-2D
+and
+Stencil-2D
+, the buffer translation leads to a noticeable increase in BRAM usage, likely due to the insertion of line buffers for handling two-dimensional data.
+To summarize our evaluation, the buffer translation can change the off-chip memory access patterns to sequential order by using on-chip reuse buffers, and data transfer throughputs are improved thanks to the effective use of burst transfers.
+In addition, the stream translation is effective for non-trivial memory access patterns by enforcing burst transfers using the DMA controller and stream processing even with redundant data transfers and computations.
+6
+Related Work
+Program Transformation for High-Level Synthesis
+Several program transformation approaches for high-level synthesis (HLS) have been proposed, although none are based on relational Hoare logics.
+
+Seto et al.
+[
+30
+,
+31
+]
+optimize affine C programs for HLS using scalar replacement and the polyhedral model,
+improving performance and reducing hardware area.
+POLSCA
+[
+40
+]
+, ScaleHLS
+[
+35
+]
+, HIDA
+[
+36
+]
+, POM
+[
+38
+]
+,
+and Stream-HLS
+[
+6
+]
+are MLIR-based transformation frameworks that target affine programs and apply
+polyhedral analysis, multi-level design abstractions, or dataflow-oriented restructuring to generate optimized, HLS-friendly code.
+These approaches do not provide formal guarantees of semantic preservation for the applied program transformations.
+In contrast, our method differs significantly:
+by leveraging relational Hoare logic, it supports more flexible transformations
+and enables reasoning about precise invariants required for tricky transformations,
+providing formal guarantees of correctness.
+Although we considered only array types in this paper, the use of types will allow us to handle non-array data structures and
+control structures such as recursion.
+In fact, in a different context, Kodama et al.
+[
+17
+,
+28
+]
+apply ordered linear types to transform tree-processing programs to stream-processing programs.
+We expect that a similar idea can be applied to compile tree-processing HLS programs to efficient hardware
+accelerators.
+In Section
+4
+, we have restricted array access information (represented by
+ι
+a
+\iota_{a}
+)
+to certain shapes; this has been partially inspired by previous work on array access analysis
+in the context of compiler optimizations
+[
+22
+]
+.
+DSE-Based Approaches to High-Level Synthesis
+Several DSE-based approaches
+[
+39
+,
+25
+,
+37
+,
+14
+]
+transform high-level programs into intermediate representations and perform automated design space exploration (DSE)
+on parameters such as loop pipelining and array partitioning.
+These methods assume hardware-friendly input and focus on tuning synthesis parameters for optimal performance.
+In contrast, our method automatically transforms naïve high-level programs into hardware-friendly forms.
+It could potentially serve as a preprocessing step for DSE frameworks, broadening their applicability to less optimized input.
+Formal Approaches to High-Level Synthesis
+Nigam et al.
+[
+21
+]
+propose a type system based on affine types that
+restricts programs to hardware-friendly forms, effectively limiting the design space to efficient patterns.
+Pouchet et al.
+[
+24
+]
+develop a program equivalence checker for HLS optimizations, based on abstract interpretation and symbolic analysis.
+While these studies assist in writing efficient HLS code, they are not optimizers for naïve programs.
+A code that type-checks or an optimized code that is given to the equivalence checker needs to be written by humans or generated by external tools.
+Relational Hoare Logics
+Relational Hoare logics have been drawing attention recently
+in the context of relational program verification
+[
+4
+,
+19
+,
+5
+]
+:
+see
+[
+20
+]
+for a survey.
+They have also been used to establish the correctness of program transformations
+[
+27
+]
+,
+but to our knowledge, have not been applied in the context of high-level synthesis for hardware acceleration.
+The specific design of relational Hoare logic, including index-set variables and other features, is also novel and tailored for automatic translation to HLS programs.
+7
+Conclusion
+We have proposed a formally defined framework for translating naïve programs into efficient ones for high-level synthesis (HLS),
+using relational Hoare logic to ensure robustness to programming style.
+We have implemented a prototype tool that automatically translates C-like programs to HLS C
++
++
+,
+and confirmed that the translation improved the hardware performance of certain programs, achieving
+up to 38.5x speed-ups.
+Future Work
+Extending our method to support more complex data such as trees and control structures is an important next step.
+We also plan to allow user annotations of loop invariants, to further leverage the expressive power of relational Hoare logic
+and enable more flexible transformations.
+Beyond these extensions, our RHL-based framework has potential applications beyond buffer insertion and stream processing.
+It could help reason about hardware-level constraints—for example, suggesting tiling when the inferred buffer size
+exceeds on-chip memory capacity—or be applied to scheduling to fully utilize FPU pipelines and coordinate
+multiple functional units while preserving data dependencies.
+These directions demonstrate the broader applicability of our RHL-based approach.
+Acknowledgments
+We would like to thank anonymous reviewers for useful comments.
+This work was supported by JSPS KAKENHI Grant Number JP20H05703,
+and JST SPRING Grant Number JPMJSP2108.
+References
+[1]
+AMD
+(2025)
+Kria k26 and kv260 vision starter kit
+.
+Note:
+Accessed: 2025-10-16
+External Links:
+Link
+Cited by:
+§5.2
+.
+[2]
+AMD
+(2025)
+Vitis unified software platform
+.
+Note:
+Accessed: 2025-10-16
+External Links:
+Link
+Cited by:
+Figure 3
+,
+§1
+,
+§1
+.
+[3]
+AMD
+(2025)
+Vivado design suite - overview
+.
+Note:
+Accessed: 2025-10-16
+External Links:
+Link
+Cited by:
+Figure 3
+,
+§1
+.
+[4]
+M. Avanzini, G. Barthe, D. Davoli, and B. Grégoire
+(2025)
+A quantitative probabilistic relational hoare logic
+.
+Proceedings of the ACM on Programming Languages
+9
+(
+POPL
+),
+pp. 1167–1195
+.
+Cited by:
+§1
+,
+§6
+.
+[5]
+G. Barthe, B. Grégoire, and S. Zanella Béguelin
+(2009)
+Formal certification of code-based cryptographic proofs
+.
+In
+Proceedings of the 36th annual ACM SIGPLAN-SIGACT symposium on Principles of programming languages
+,
+pp. 90–101
+.
+Cited by:
+§1
+,
+§6
+.
+[6]
+S. Basalama and J. Cong
+(2025)
+Stream-hls: towards automatic dataflow acceleration
+.
+In
+Proceedings of the 2025 ACM/SIGDA International Symposium on Field Programmable Gate Arrays
+,
+pp. 103–114
+.
+Cited by:
+§6
+,
+footnote 6
+.
+[7]
+A. Canis, J. Choi, M. Aldham, V. Zhang, A. Kammoona, J. H. Anderson, S. Brown, and T. Czajkowski
+(2011)
+LegUp: high-level synthesis for fpga-based processor/accelerator systems
+.
+In
+Proceedings of the 19th ACM/SIGDA international symposium on Field programmable gate arrays
+,
+pp. 33–36
+.
+Cited by:
+§1
+.
+[8]
+J. Cong, B. Liu, S. Neuendorffer, J. Noguera, K. Vissers, and Z. Zhang
+(2011)
+High-level synthesis for fpgas: from prototyping to deployment
+.
+IEEE Transactions on Computer-Aided Design of Integrated Circuits and Systems
+30
+(
+4
+),
+pp. 473–491
+.
+Cited by:
+§1
+.
+[9]
+S. A. Cook
+(1978)
+Soundness and completeness of an axiom system for program verification
+.
+SIAM Journal on Computing
+7
+(
+1
+),
+pp. 70–90
+.
+Cited by:
+§1
+.
+[10]
+L. De Moura and N. Bjørner
+(2008)
+Z3: an efficient smt solver
+.
+In
+International conference on Tools and Algorithms for the Construction and Analysis of Systems
+,
+pp. 337–340
+.
+Cited by:
+§5.2
+.
+[11]
+A. HajiRassouliha, A. J. Taberner, M. P. Nash, and P. M. Nielsen
+(2018)
+Suitability of recent hardware accelerators (dsps, fpgas, and gpus) for computer vision and image processing algorithms
+.
+Signal Processing: Image Communication
+68
+,
+pp. 101–119
+.
+Cited by:
+§1
+.
+[12]
+J. L. Hennessy and D. A. Patterson
+(2021)
+A new golden age for computer architecture
+.
+Communications of the ACM
+64
+(
+6
+),
+pp. 34–43
+.
+Note:
+Accessed: 2025-10-16
+External Links:
+Link
+Cited by:
+§1
+.
+[13]
+C. A. R. Hoare
+(1969)
+An axiomatic basis for computer programming
+.
+Communications of the ACM
+12
+(
+10
+),
+pp. 576–580
+.
+Cited by:
+§1
+,
+§2.1
+.
+[14]
+S. Huang, K. Wu, H. Jeong, C. Wang, D. Chen, and W. Hwu
+(2021)
+Pylog: an algorithm-centric python-based fpga programming and synthesis flow
+.
+IEEE Transactions on Computers
+70
+(
+12
+),
+pp. 2015–2028
+.
+Cited by:
+§6
+.
+[15]
+Intel
+Intel high level synthesis compiler
+.
+Note:
+Intel websiteAccessed: 2025-10-16
+External Links:
+Link
+Cited by:
+§1
+.
+[16]
+N. P. Jouppi, C. Young, N. Patil, D. Patterson, G. Agrawal, R. Bajwa, S. Bates, S. Bhatia, N. Boden, A. Borchers,
+et al.
+(2017)
+In-datacenter performance analysis of a tensor processing unit
+.
+In
+Proceedings of the 44th annual international symposium on computer architecture
+,
+pp. 1–12
+.
+Cited by:
+§1
+.
+[17]
+K. Kodama, K. Suenaga, and N. Kobayashi
+(2004)
+Translation of tree-processing programs into stream-processing programs based on ordered linear type
+.
+In
+Programming Languages and Systems: Second Asian Symposium, APLAS 2004, Taipei, Taiwan, November 4-6, 2004. Proceedings 2
+,
+pp. 41–56
+.
+Cited by:
+§6
+.
+[18]
+S. Lin, Y. Zhang, C. Hsu, M. Skach, M. E. Haque, L. Tang, and J. Mars
+(2018)
+The architectural implications of autonomous driving: constraints and acceleration
+.
+In
+Proceedings of the Twenty-Third International Conference on Architectural Support for Programming Languages and Operating Systems
+,
+pp. 751–766
+.
+Cited by:
+§1
+.
+[19]
+R. Nagasamudram and D. A. Naumann
+(2021)
+Alignment completeness for relational hoare logics
+.
+In
+2021 36th Annual ACM/IEEE Symposium on Logic in Computer Science (LICS)
+,
+pp. 1–13
+.
+Cited by:
+§1
+,
+§6
+.
+[20]
+D. A. Naumann
+(2020)
+Thirty-seven years of relational hoare logic: remarks on its principles and history
+.
+In
+International Symposium on Leveraging Applications of Formal Methods
+,
+pp. 93–116
+.
+Cited by:
+§1
+,
+§6
+.
+[21]
+R. Nigam, S. Atapattu, S. Thomas, Z. Li, T. Bauer, Y. Ye, A. Koti, A. Sampson, and Z. Zhang
+(2020)
+Predictable accelerator design with time-sensitive affine types
+.
+In
+Proceedings of the 41st ACM SIGPLAN Conference on Programming Language Design and Implementation
+,
+pp. 393–407
+.
+Cited by:
+§6
+.
+[22]
+Y. Paek, J. Hoeflinger, and D. Padua
+(2002)
+Efficient and precise array access analysis
+.
+ACM Transactions on Programming Languages and Systems (TOPLAS)
+24
+(
+1
+),
+pp. 65–109
+.
+Cited by:
+§6
+.
+[23]
+C. Pilato and F. Ferrandi
+(2013)
+Bambu: a modular framework for the high level synthesis of memory-intensive applications
+.
+In
+2013 23rd International conference on field programmable logic and applications
+,
+pp. 1–4
+.
+Cited by:
+§1
+.
+[24]
+L. Pouchet, E. Tucker, N. Zhang, H. Chen, D. Pal, G. Rodríguez, and Z. Zhang
+(2024)
+Formal verification of source-to-source transformations for hls
+.
+In
+Proceedings of the 2024 ACM/SIGDA International Symposium on Field Programmable Gate Arrays
+,
+pp. 97–107
+.
+Cited by:
+§6
+.
+[25]
+S. Pouget, L. Pouchet, and J. Cong
+(2025)
+Automatic hardware pragma insertion in high-level synthesis: a non-linear programming approach
+.
+ACM Transactions on Design Automation of Electronic Systems
+30
+(
+2
+),
+pp. 1–44
+.
+Cited by:
+§6
+.
+[26]
+B. Reagen, R. Adolf, Y. S. Shao, G. Wei, and D. Brooks
+(2014)
+MachSuite: benchmarks for accelerator design and customized architectures
+.
+In
+2014 IEEE International Symposium on Workload Characterization (IISWC)
+,
+pp. 110–119
+.
+Cited by:
+§5.2
+.
+[27]
+M. Rinard
+(1999)
+Credible compilers
+.
+Technical report
+Technical Report
+Technical Report MIT-LCS-TR-776
+,
+Massachusets Institute of Technology
+.
+Cited by:
+§6
+.
+[28]
+R. Sato, K. Suenaga, and N. Kobayashi
+(2011)
+Ordered types for stream processing of tree-structured data
+.
+Information and Media Technologies
+6
+(
+2
+),
+pp. 385–398
+.
+Cited by:
+§6
+.
+[29]
+S. Sen Gupta, A. Chattopadhyay, and A. Khalid
+(2013)
+Designing integrated accelerator for stream ciphers with structural similarities
+.
+Cryptography and Communications
+5
+,
+pp. 19–47
+.
+Cited by:
+§1
+.
+[30]
+K. Seto
+(2018)
+Scalar replacement with polyhedral model
+.
+IPSJ Transactions on System and LSI Design Methodology
+11
+,
+pp. 46–56
+.
+Cited by:
+§6
+.
+[31]
+K. Seto
+(2019)
+Scalar replacement with circular buffers
+.
+IPSJ Transactions on System and LSI Design Methodology
+12
+,
+pp. 13–21
+.
+Cited by:
+§6
+.
+[32]
+Y. Turakhia, G. Bejerano, and W. J. Dally
+(2018)
+Darwin: a genomics co-processor provides up to 15,000 x acceleration on long read assembly
+.
+ACM SIGPLAN Notices
+53
+(
+2
+),
+pp. 199–213
+.
+Cited by:
+§1
+.
+[33]
+Xilinx
+(2021)
+Vivado design suite user guide: high-level synthesis
+.
+UG902 v2020.1 edition
+.
+Note:
+Accessed: 2025-10-16
+External Links:
+Link
+Cited by:
+§1
+.
+[34]
+Xilinx
+(2025)
+Kria pynq
+.
+Note:
+Accessed: 2025-10-16
+External Links:
+Link
+Cited by:
+§5.2
+.
+[35]
+H. Ye, C. Hao, J. Cheng, H. Jeong, J. Huang, S. Neuendorffer, and D. Chen
+(2022)
+Scalehls: a new scalable high-level synthesis framework on multi-level intermediate representation
+.
+In
+2022 IEEE international symposium on high-performance computer architecture (HPCA)
+,
+pp. 741–755
+.
+Cited by:
+§6
+.
+[36]
+H. Ye, H. Jun, and D. Chen
+(2024)
+Hida: a hierarchical dataflow compiler for high-level synthesis
+.
+In
+Proceedings of the 29th ACM International Conference on Architectural Support for Programming Languages and Operating Systems, Volume 1
+,
+pp. 215–230
+.
+Cited by:
+§6
+.
+[37]
+C. H. Yu, P. Wei, M. Grossman, P. Zhang, V. Sarker, and J. Cong
+(2018)
+S2FA: an accelerator automation framework for heterogeneous computing in datacenters
+.
+In
+Proceedings of the 55th Annual Design Automation Conference
+,
+pp. 1–6
+.
+Cited by:
+§6
+.
+[38]
+W. Zhang, J. Zhao, G. Shen, Q. Chen, C. Chen, and M. Guo
+(2024)
+An optimizing framework on mlir for efficient fpga-based accelerator generation
+.
+In
+2024 IEEE International Symposium on High-Performance Computer Architecture (HPCA)
+,
+pp. 75–90
+.
+Cited by:
+§6
+.
+[39]
+J. Zhao, L. Feng, S. Sinha, W. Zhang, Y. Liang, and B. He
+(2017)
+COMBA: a comprehensive model-based analysis framework for high level synthesis of real applications
+.
+In
+2017 IEEE/ACM International Conference on Computer-Aided Design (ICCAD)
+,
+pp. 430–437
+.
+Cited by:
+§6
+.
+[40]
+R. Zhao, J. Cheng, W. Luk, and G. A. Constantinides
+(2022)
+Polsca: polyhedral high-level synthesis with compiler transformations
+.
+In
+2022 32nd International Conference on Field-Programmable Logic and Applications (FPL)
+,
+pp. 235–242
+.
+Cited by:
+§6
+.
+Appendix 0.A
+Correctness of the Translation
+0.A.1
+Assertion language
+We define the syntax and the semantics of the assertion language that was only informally given in the body of the paper.
+The grammar of the assertion language as follows:
+(array term)
+𝚊
+\displaystyle\text{(array term)}\quad{\color[rgb]{1,0,1}\mathtt{a}}
+⩴
+a
+∣
+𝚊
+{
+𝚎
+1
+↦
+𝚎
+2
+}
+\displaystyle\Coloneqq a\mid{\color[rgb]{1,0,1}\mathtt{a}}\{{\color[rgb]{1,0,1}\mathtt{e}}_{1}\mapsto{\color[rgb]{1,0,1}\mathtt{e}}_{2}\}
+(integer term)
+𝚎
+\displaystyle\text{(integer term)}\quad{\color[rgb]{1,0,1}\mathtt{e}}
+⩴
+e
+​
+∣
+𝚊
+⁡
+[
+𝚎
+]
+∣
+​
+𝚎
+1
+𝚘𝚙
+𝚎
+2
+|
+ℎ𝑒𝑎𝑑
+⁡
+(
+ℐ
+)
+\displaystyle\Coloneqq e\mid{\color[rgb]{1,0,1}\mathtt{a}}[{\color[rgb]{1,0,1}\mathtt{e}}]\mid{\color[rgb]{1,0,1}\mathtt{e}}_{1}\mathbin{\mathtt{op}}{\color[rgb]{1,0,1}\mathtt{e}}_{2}\mid\mathit{head}({\color[rgb]{1,0,1}\mathcal{I}})
+(index sequence term)
+ℐ
+\displaystyle\text{(index sequence term)}\quad{\color[rgb]{1,0,1}\mathcal{I}}
+⩴
+ι
+a
+​
+∣
+𝗇𝗂𝗅
+∣
+​
+𝚎
+⋅
+ℐ
+​
+∣
+ℐ
+⋅
+𝚎
+∣
+​
+𝑡𝑎𝑖𝑙
+​
+(
+ℐ
+)
+\displaystyle\Coloneqq\iota_{a}\mid\mathsf{nil}\mid{\color[rgb]{1,0,1}\mathtt{e}}\cdot{\color[rgb]{1,0,1}\mathcal{I}}\mid{\color[rgb]{1,0,1}\mathcal{I}}\cdot{\color[rgb]{1,0,1}\mathtt{e}}\mid\mathit{tail}({\color[rgb]{1,0,1}\mathcal{I}})
+(formula)
+ℬ
+\displaystyle\text{(formula)}\quad{\color[rgb]{1,0,1}\mathcal{B}}
+⩴
+𝐭𝐫𝐮𝐞
+|
+𝚎
+1
+=
+𝚎
+2
+|
+𝚎
+1
+≤
+𝚎
+2
+|
+𝚎
+∈
+ℐ
+\displaystyle\Coloneqq\mathbf{true}\mid{\color[rgb]{1,0,1}\mathtt{e}}_{1}={\color[rgb]{1,0,1}\mathtt{e}}_{2}\mid{\color[rgb]{1,0,1}\mathtt{e}}_{1}\leq{\color[rgb]{1,0,1}\mathtt{e}}_{2}\mid{\color[rgb]{1,0,1}\mathtt{e}}\in{\color[rgb]{1,0,1}\mathcal{I}}
+∣
+ℬ
+1
+∧
+ℬ
+2
+∣
+​
+¬
+ℬ
+\displaystyle\mid{\color[rgb]{1,0,1}\mathcal{B}}_{1}\land{\color[rgb]{1,0,1}\mathcal{B}}_{2}\mid\neg{\color[rgb]{1,0,1}\mathcal{B}}
+Here
+a
+a
+and
+e
+e
+are array variable and expression that are used in the syntax of source or target language, respectively.
+The term
+ι
+a
+\iota_{a}
+represents the
+sequence
+of indices of an array variable
+a
+a
+; intuitively it represents the access pattern of the array
+a
+a
+.
+The constant
+𝗇𝗂𝗅
+\mathsf{nil}
+represents the empty list; and
+𝚎
+⋅
+ℐ
+{\color[rgb]{1,0,1}\mathtt{e}}\cdot{\color[rgb]{1,0,1}\mathcal{I}}
+and
+ℐ
+⋅
+𝚎
+{\color[rgb]{1,0,1}\mathcal{I}}\cdot{\color[rgb]{1,0,1}\mathtt{e}}
+respectively represent concatenating an integer
+𝚎
+{\color[rgb]{1,0,1}\mathtt{e}}
+to the head and the tail of the list
+ℐ
+{\color[rgb]{1,0,1}\mathcal{I}}
+.
+As expected, the operations
+ℎ𝑒𝑎𝑑
+\mathit{head}
+and
+𝑡𝑎𝑖𝑙
+\mathit{tail}
+returns the head and tail of a sequence.
+The intuitive meaning for the rest of the constructors should be clear; see below for their formal interpretation.
+We now define the semantics.
+We first give the interpretation of terms.
+As expected, array terms are interpreted as a partial map from integers to integers, integer terms are interpreted as integers and index set terms are interpreted as set of integers.
+The semantics depends on three parameters
+R
+R
+,
+H
+H
+and
+Θ
+\Theta
+.
+Recall that
+Θ
+\Theta
+is a finite map from array variables to integer sequence whose elements are pairwise distinct.
+It is used to give the meaning of
+ι
+a
+\iota_{a}
+.
+⟦
+a
+⟧
+R
+,
+H
+,
+Θ
+​
+(
+m
+)
+\displaystyle\llbracket a\rrbracket_{R,H,\Theta}(m)
+=
+def
+H
+⁡
+(
+a
+,
+m
+)
+\displaystyle\stackrel{{\scriptstyle\text{def}}}{{=}}H(a,m)
+⟦
+𝚊
+{
+𝚎
+1
+↦
+𝚎
+2
+}
+⟧
+R
+,
+H
+,
+Θ
+(
+m
+)
+\displaystyle\llbracket{\color[rgb]{1,0,1}\mathtt{a}}\{{\color[rgb]{1,0,1}\mathtt{e}}_{1}\mapsto{\color[rgb]{1,0,1}\mathtt{e}}_{2}\}\rrbracket_{R,H,\Theta}(m)
+=
+def
+{
+⟦
+𝚎
+2
+⟧
+R
+,
+H
+,
+Θ
+if
+⟦
+𝚎
+1
+⟧
+R
+,
+H
+,
+Θ
+=
+m
+⟦
+𝚊
+⟧
+R
+,
+H
+,
+Θ
+​
+(
+m
+)
+otherwise
+\displaystyle\stackrel{{\scriptstyle\text{def}}}{{=}}\begin{cases}\llbracket{\color[rgb]{1,0,1}\mathtt{e}}_{2}\rrbracket_{R,H,\Theta}&\text{if $\llbracket{\color[rgb]{1,0,1}\mathtt{e}}_{1}\rrbracket_{R,H,\Theta}=m$}\\
+\llbracket{\color[rgb]{1,0,1}\mathtt{a}}\rrbracket_{R,H,\Theta}(m)&\text{otherwise}\end{cases}
+⟦
+e
+⟧
+R
+,
+H
+,
+Θ
+\displaystyle\llbracket e\rrbracket_{R,H,\Theta}
+=
+def
+{
+n
+if
+⟨
+R
+,
+e
+⟩
+⇓
+n
+undefined
+otherwise
+\displaystyle\stackrel{{\scriptstyle\text{def}}}{{=}}\begin{cases}n&\text{if $\langle R,e\rangle\Downarrow n$}\\
+\text{undefined}&\text{otherwise}\end{cases}
+⟦
+𝚊
+⁡
+[
+𝚎
+]
+⟧
+R
+,
+H
+,
+Θ
+\displaystyle\llbracket{\color[rgb]{1,0,1}\mathtt{a}}[{\color[rgb]{1,0,1}\mathtt{e}}]\rrbracket_{R,H,\Theta}
+=
+def
+⟦
+𝚊
+⟧
+R
+,
+H
+,
+Θ
+​
+(
+⟦
+𝚎
+⟧
+R
+,
+H
+,
+Θ
+)
+\displaystyle\stackrel{{\scriptstyle\text{def}}}{{=}}\llbracket{\color[rgb]{1,0,1}\mathtt{a}}\rrbracket_{R,H,\Theta}(\llbracket{\color[rgb]{1,0,1}\mathtt{e}}\rrbracket_{R,H,\Theta})
+⟦
+𝚎
+1
+𝚘𝚙
+𝚎
+2
+⟧
+R
+,
+H
+,
+Θ
+\displaystyle\llbracket{\color[rgb]{1,0,1}\mathtt{e}}_{1}\mathbin{\mathtt{op}}{\color[rgb]{1,0,1}\mathtt{e}}_{2}\rrbracket_{R,H,\Theta}
+=
+def
+⟦
+𝚘𝚙
+⟧
+​
+(
+⟦
+𝚎
+1
+⟧
+R
+,
+H
+,
+Θ
+,
+⟦
+𝚎
+2
+⟧
+R
+,
+H
+,
+Θ
+)
+\displaystyle\stackrel{{\scriptstyle\text{def}}}{{=}}\llbracket\mathtt{op}\rrbracket(\llbracket{\color[rgb]{1,0,1}\mathtt{e}}_{1}\rrbracket_{R,H,\Theta},\llbracket{\color[rgb]{1,0,1}\mathtt{e}}_{2}\rrbracket_{R,H,\Theta})
+⟦
+ℎ𝑒𝑎𝑑
+⁡
+(
+ℐ
+)
+⟧
+R
+,
+H
+,
+Θ
+\displaystyle\llbracket\mathit{head}({\color[rgb]{1,0,1}\mathcal{I}})\rrbracket_{R,H,\Theta}
+=
+def
+{
+undefined
+if
+⟦
+ℐ
+⟧
+R
+,
+H
+,
+Θ
+=
+ε
+m
+if
+⟦
+ℐ
+⟧
+R
+,
+H
+,
+Θ
+=
+m
+⋅
+n
+~
+\displaystyle\stackrel{{\scriptstyle\text{def}}}{{=}}\begin{cases}\text{undefined}\quad\text{if $\llbracket{\color[rgb]{1,0,1}\mathcal{I}}\rrbracket_{R,H,\Theta}=\varepsilon$}\\
+m\quad\text{if $\llbracket{\color[rgb]{1,0,1}\mathcal{I}}\rrbracket_{R,H,\Theta}=m\cdot\widetilde{n}$}\end{cases}
+⟦
+ι
+a
+⟧
+R
+,
+H
+,
+Θ
+\displaystyle\llbracket\iota_{a}\rrbracket_{R,H,\Theta}
+=
+def
+Θ
+⁡
+(
+a
+)
+\displaystyle\stackrel{{\scriptstyle\text{def}}}{{=}}\Theta(a)
+⟦
+𝗇𝗂𝗅
+⟧
+R
+,
+H
+,
+Θ
+\displaystyle\llbracket\mathsf{nil}\rrbracket_{R,H,\Theta}
+=
+def
+ε
+\displaystyle\stackrel{{\scriptstyle\text{def}}}{{=}}\varepsilon
+⟦
+𝚎
+⋅
+ℐ
+⟧
+R
+,
+H
+,
+Θ
+\displaystyle\llbracket{\color[rgb]{1,0,1}\mathtt{e}}\cdot{\color[rgb]{1,0,1}\mathcal{I}}\rrbracket_{R,H,\Theta}
+=
+def
+⟦
+𝚎
+⟧
+R
+,
+H
+,
+Θ
+⋅
+⟦
+ℐ
+⟧
+R
+,
+H
+,
+Θ
+\displaystyle\stackrel{{\scriptstyle\text{def}}}{{=}}\llbracket{\color[rgb]{1,0,1}\mathtt{e}}\rrbracket_{R,H,\Theta}\cdot\llbracket{\color[rgb]{1,0,1}\mathcal{I}}\rrbracket_{R,H,\Theta}
+⟦
+ℐ
+⋅
+𝚎
+⟧
+R
+,
+H
+,
+Θ
+\displaystyle\llbracket{\color[rgb]{1,0,1}\mathcal{I}}\cdot{\color[rgb]{1,0,1}\mathtt{e}}\rrbracket_{R,H,\Theta}
+=
+def
+⟦
+ℐ
+⟧
+R
+,
+H
+,
+Θ
+⋅
+⟦
+𝚎
+⟧
+R
+,
+H
+,
+Θ
+\displaystyle\stackrel{{\scriptstyle\text{def}}}{{=}}\llbracket{\color[rgb]{1,0,1}\mathcal{I}}\rrbracket_{R,H,\Theta}\cdot\llbracket{\color[rgb]{1,0,1}\mathtt{e}}\rrbracket_{R,H,\Theta}
+⟦
+𝑡𝑎𝑖𝑙
+⁡
+(
+𝚎
+)
+⟧
+R
+,
+H
+,
+Θ
+\displaystyle\llbracket\mathit{tail}({\color[rgb]{1,0,1}\mathtt{e}})\rrbracket_{R,H,\Theta}
+=
+def
+{
+undefined
+if
+⟦
+ℐ
+⟧
+R
+,
+H
+,
+Θ
+=
+ε
+n
+~
+if
+⟦
+ℐ
+⟧
+R
+,
+H
+,
+Θ
+=
+m
+⋅
+n
+~
+\displaystyle\stackrel{{\scriptstyle\text{def}}}{{=}}\begin{cases}\text{undefined}\quad\text{if $\llbracket{\color[rgb]{1,0,1}\mathcal{I}}\rrbracket_{R,H,\Theta}=\varepsilon$}\\
+\widetilde{n}\quad\text{if $\llbracket{\color[rgb]{1,0,1}\mathcal{I}}\rrbracket_{R,H,\Theta}=m\cdot\widetilde{n}$}\end{cases}
+Note that the interpretation
+⟦
+𝚊
+⟧
+R
+,
+H
+,
+Θ
+\llbracket{\color[rgb]{1,0,1}\mathtt{a}}\rrbracket_{R,H,\Theta}
+and
+⟦
+𝚎
+⟧
+R
+,
+H
+,
+Θ
+\llbracket{\color[rgb]{1,0,1}\mathtt{e}}\rrbracket_{R,H,\Theta}
+do not rely on
+Θ
+\Theta
+unless they contain
+ℎ𝑒𝑎𝑑
+⁡
+(
+𝚎
+)
+\mathit{head}({\color[rgb]{1,0,1}\mathtt{e}})
+as a subterm.
+The satisfaction relation
+R
+,
+H
+,
+Θ
+⊧
+ℬ
+R,H,\Theta\models{\color[rgb]{1,0,1}\mathcal{B}}
+is defined in a standard manner
+R
+,
+H
+,
+Θ
+⊧
+𝚎
+∈
+ℐ
+⇔
+def
+⟦
+𝚎
+⟧
+R
+,
+H
+,
+Θ
+∈
+𝑠𝑒𝑡𝑜𝑓
+⁡
+(
+⟦
+ℐ
+⟧
+R
+,
+H
+,
+Θ
+)
+\displaystyle R,H,\Theta\models{\color[rgb]{1,0,1}\mathtt{e}}\in{\color[rgb]{1,0,1}\mathcal{I}}\stackrel{{\scriptstyle\mathrm{def}}}{{\iff}}\llbracket{\color[rgb]{1,0,1}\mathtt{e}}\rrbracket_{R,H,\Theta}\in\mathit{setof}(\llbracket{\color[rgb]{1,0,1}\mathcal{I}}\rrbracket_{R,H,\Theta})
+R
+,
+H
+,
+Θ
+⊧
+𝐭𝐫𝐮𝐞
+\displaystyle R,H,\Theta\models\mathbf{true}
+always holds
+R
+,
+H
+,
+Θ
+⊧
+𝚎
+1
+=
+𝚎
+2
+\displaystyle R,H,\Theta\models{\color[rgb]{1,0,1}\mathtt{e}}_{1}={\color[rgb]{1,0,1}\mathtt{e}}_{2}
+⇔
+def
+⟦
+𝚎
+1
+⟧
+R
+,
+H
+,
+Θ
+=
+⟦
+𝚎
+2
+⟧
+R
+,
+H
+,
+Θ
+\displaystyle\stackrel{{\scriptstyle\mathrm{def}}}{{\iff}}\llbracket{\color[rgb]{1,0,1}\mathtt{e}}_{1}\rrbracket_{R,H,\Theta}=\llbracket{\color[rgb]{1,0,1}\mathtt{e}}_{2}\rrbracket_{R,H,\Theta}
+R
+,
+H
+,
+Θ
+⊧
+𝚎
+1
+≤
+𝚎
+2
+\displaystyle R,H,\Theta\models{\color[rgb]{1,0,1}\mathtt{e}}_{1}\leq{\color[rgb]{1,0,1}\mathtt{e}}_{2}
+⇔
+def
+⟦
+𝚎
+1
+⟧
+R
+,
+H
+,
+Θ
+≤
+⟦
+𝚎
+2
+⟧
+R
+,
+H
+,
+Θ
+\displaystyle\stackrel{{\scriptstyle\mathrm{def}}}{{\iff}}\llbracket{\color[rgb]{1,0,1}\mathtt{e}}_{1}\rrbracket_{R,H,\Theta}\leq\llbracket{\color[rgb]{1,0,1}\mathtt{e}}_{2}\rrbracket_{R,H,\Theta}
+R
+,
+H
+,
+Θ
+⊧
+𝚎
+∈
+ℐ
+\displaystyle R,H,\Theta\models{\color[rgb]{1,0,1}\mathtt{e}}\in{\color[rgb]{1,0,1}\mathcal{I}}
+⇔
+def
+⟦
+𝚎
+⟧
+R
+,
+H
+,
+Θ
+∈
+𝑠𝑒𝑡𝑜𝑓
+⁡
+(
+⟦
+ℐ
+⟧
+R
+,
+H
+,
+Θ
+)
+\displaystyle\stackrel{{\scriptstyle\mathrm{def}}}{{\iff}}\llbracket{\color[rgb]{1,0,1}\mathtt{e}}\rrbracket_{R,H,\Theta}\in\mathit{setof}(\llbracket{\color[rgb]{1,0,1}\mathcal{I}}\rrbracket_{R,H,\Theta})
+R
+,
+H
+,
+Θ
+⊧
+ℬ
+1
+∧
+ℬ
+2
+\displaystyle R,H,\Theta\models{\color[rgb]{1,0,1}\mathcal{B}}_{1}\land{\color[rgb]{1,0,1}\mathcal{B}}_{2}
+⇔
+def
+R
+,
+H
+,
+Θ
+⊧
+ℬ
+1
+​
+and
+​
+R
+,
+H
+,
+Θ
+⊧
+ℬ
+2
+\displaystyle\stackrel{{\scriptstyle\mathrm{def}}}{{\iff}}R,H,\Theta\models{\color[rgb]{1,0,1}\mathcal{B}}_{1}\text{ and }R,H,\Theta\models{\color[rgb]{1,0,1}\mathcal{B}}_{2}
+R
+,
+H
+,
+Θ
+⊧
+¬
+ℬ
+\displaystyle R,H,\Theta\models\neg{\color[rgb]{1,0,1}\mathcal{B}}
+⇔
+def
+R
+,
+H
+,
+Θ
+⊧̸
+ℬ
+\displaystyle\stackrel{{\scriptstyle\mathrm{def}}}{{\iff}}R,H,\Theta\not\models{\color[rgb]{1,0,1}\mathcal{B}}
+Here
+𝑠𝑒𝑡𝑜𝑓
+\mathit{setof}
+is simply a cast operator that converts a sequence of indices to a set of sequence.
+In the sequel we may simply use the notation
+n
+∈
+m
+~
+n\in\widetilde{m}
+, to make the notation concise.
+Remark 1
+(Partiality of the interpretation)
+Since
+⟦
+a
+⟧
+R
+,
+H
+,
+Θ
+\llbracket a\rrbracket_{R,H,\Theta}
+is defined as a partial map and we use partial operations such as
+ℎ𝑒𝑎𝑑
+\mathit{head}
+and
+𝑡𝑎𝑖𝑙
+\mathit{tail}
+the interpretation of terms may be undefined.
+We stipulate that if a formula contains a term whose interpretation is undefined, then its semantics is false.
+Another way to deal with this partiality is to define the interpretation of array variables as a total function by using a dummy value, say
+0
+0
+, for the case
+a
+⁡
+[
+e
+]
+a[e]
+is undefined, and add a formula for boundary check such as
+e
+∈
+ι
+a
+e\in\iota_{a}
+for each array access; similarly we can do a “nil check” before taking the head or the tail of a sequence.
+While such encoding might be needed when we invoke SMT solvers, here, we do not take this approach to keep the presentation simple.
+∎
+We list some substitution lemmas that will be used in the sequel.
+Lemma 1
+Let
+𝚎
+{\color[rgb]{1,0,1}\mathtt{e}}
+be an integer term and
+x
+x
+be an integer variable.
+Suppose that
+⟦
+𝚎
+⟧
+R
+,
+H
+,
+Θ
+=
+n
+\llbracket{\color[rgb]{1,0,1}\mathtt{e}}\rrbracket_{R,H,\Theta}=n
+.
+Then we have
+1.
+⟦
+[
+𝚎
+/
+x
+]
+𝚊
+⟧
+R
+,
+H
+,
+Θ
+=
+⟦
+𝚊
+⟧
+R
+{
+x
+↦
+n
+}
+,
+H
+,
+Θ
+\llbracket[{\color[rgb]{1,0,1}\mathtt{e}}/x]{\color[rgb]{1,0,1}\mathtt{a}}\rrbracket_{R,H,\Theta}=\llbracket{\color[rgb]{1,0,1}\mathtt{a}}\rrbracket_{R\{x\mapsto n\},H,\Theta}
+2.
+⟦
+[
+𝚎
+/
+x
+]
+𝚎
+2
+⟧
+R
+,
+H
+,
+Θ
+=
+⟦
+𝚎
+2
+⟧
+R
+{
+x
+↦
+n
+}
+,
+H
+,
+Θ
+\llbracket[{\color[rgb]{1,0,1}\mathtt{e}}/x]{\color[rgb]{1,0,1}\mathtt{e}}_{2}\rrbracket_{R,H,\Theta}=\llbracket{\color[rgb]{1,0,1}\mathtt{e}}_{2}\rrbracket_{R\{x\mapsto n\},H,\Theta}
+,
+3.
+⟦
+[
+𝚎
+/
+x
+]
+ℐ
+⟧
+R
+,
+H
+,
+Θ
+=
+⟦
+ℐ
+⟧
+R
+{
+x
+↦
+n
+}
+,
+H
+,
+Θ
+\llbracket[{\color[rgb]{1,0,1}\mathtt{e}}/x]{\color[rgb]{1,0,1}\mathcal{I}}\rrbracket_{R,H,\Theta}=\llbracket{\color[rgb]{1,0,1}\mathcal{I}}\rrbracket_{R\{x\mapsto n\},H,\Theta}
+, and
+4.
+R
+,
+H
+,
+Θ
+⊧
+[
+𝚎
+/
+x
+]
+​
+ℬ
+R,H,\Theta\models[{\color[rgb]{1,0,1}\mathtt{e}}/x]{\color[rgb]{1,0,1}\mathcal{B}}
+if and only if
+R
+{
+x
+↦
+n
+}
+,
+H
+,
+Θ
+⊧
+ℬ
+R\{x\mapsto n\},H,\Theta\models{\color[rgb]{1,0,1}\mathcal{B}}
+.
+Proof
+By induction on the structure of terms and formulas.
+The case (1), (2) (3) are proved simultaneously, and the proof of (4) uses (1) to (3).
+∎
+Lemma 2
+Let
+𝚎
+1
+{\color[rgb]{1,0,1}\mathtt{e}}_{1}
+and
+𝚎
+2
+{\color[rgb]{1,0,1}\mathtt{e}}_{2}
+be an integer term and
+a
+a
+be an array variable.
+Suppose that
+⟦
+𝚎
+1
+⟧
+R
+,
+H
+,
+Θ
+=
+m
+\llbracket{\color[rgb]{1,0,1}\mathtt{e}}_{1}\rrbracket_{R,H,\Theta}=m
+and
+⟦
+𝚎
+1
+⟧
+R
+,
+H
+,
+Θ
+=
+n
+\llbracket{\color[rgb]{1,0,1}\mathtt{e}}_{1}\rrbracket_{R,H,\Theta}=n
+.
+Then we have
+1.
+⟦
+[
+a
+{
+𝚎
+1
+↦
+𝚎
+2
+}
+/
+a
+]
+𝚊
+⟧
+R
+,
+H
+,
+Θ
+=
+⟦
+𝚊
+⟧
+R
+,
+H
+{
+(
+a
+,
+m
+)
+↦
+n
+}
+,
+Θ
+\llbracket[a\{{\color[rgb]{1,0,1}\mathtt{e}}_{1}\mapsto{\color[rgb]{1,0,1}\mathtt{e}}_{2}\}/a]{\color[rgb]{1,0,1}\mathtt{a}}\rrbracket_{R,H,\Theta}=\llbracket{\color[rgb]{1,0,1}\mathtt{a}}\rrbracket_{R,H\{(a,m)\mapsto n\},\Theta}
+2.
+⟦
+[
+a
+{
+𝚎
+1
+↦
+𝚎
+2
+}
+/
+a
+]
+𝚎
+3
+⟧
+R
+,
+H
+,
+Θ
+=
+⟦
+𝚎
+3
+⟧
+R
+,
+H
+{
+(
+a
+,
+m
+)
+↦
+n
+}
+,
+Θ
+\llbracket[a\{{\color[rgb]{1,0,1}\mathtt{e}}_{1}\mapsto{\color[rgb]{1,0,1}\mathtt{e}}_{2}\}/a]{\color[rgb]{1,0,1}\mathtt{e}}_{3}\rrbracket_{R,H,\Theta}=\llbracket{\color[rgb]{1,0,1}\mathtt{e}}_{3}\rrbracket_{R,H\{(a,m)\mapsto n\},\Theta}
+,
+3.
+⟦
+[
+a
+{
+𝚎
+1
+↦
+𝚎
+2
+}
+/
+a
+]
+ℐ
+⟧
+R
+,
+H
+,
+Θ
+=
+⟦
+ℐ
+⟧
+R
+,
+H
+{
+(
+a
+,
+m
+)
+↦
+n
+}
+,
+Θ
+\llbracket[a\{{\color[rgb]{1,0,1}\mathtt{e}}_{1}\mapsto{\color[rgb]{1,0,1}\mathtt{e}}_{2}\}/a]{\color[rgb]{1,0,1}\mathcal{I}}\rrbracket_{R,H,\Theta}=\llbracket{\color[rgb]{1,0,1}\mathcal{I}}\rrbracket_{R,H\{(a,m)\mapsto n\},\Theta}
+, and
+4.
+R
+,
+H
+,
+Θ
+⊧
+[
+a
+{
+𝚎
+1
+↦
+𝚎
+2
+}
+/
+a
+]
+ℬ
+R,H,\Theta\models[a\{{\color[rgb]{1,0,1}\mathtt{e}}_{1}\mapsto{\color[rgb]{1,0,1}\mathtt{e}}_{2}\}/a]{\color[rgb]{1,0,1}\mathcal{B}}
+if and only if
+R
+,
+H
+{
+(
+a
+,
+m
+)
+↦
+n
+}
+,
+Θ
+⊧
+ℬ
+R,H\{(a,m)\mapsto n\},\Theta\models{\color[rgb]{1,0,1}\mathcal{B}}
+.
+Proof
+Similar to the previous lemma.
+∎
+Lemma 3
+1.
+Suppose that
+Θ
+⁡
+(
+a
+)
+\Theta(a)
+is nonempty. Then we have
+(a)
+⟦
+[
+(
+𝑡𝑎𝑖𝑙
+(
+ι
+a
+)
+/
+ι
+a
+]
+ℐ
+⟧
+R
+,
+H
+,
+Θ
+=
+⟦
+ℐ
+⟧
+R
+,
+H
+,
+Θ
+{
+a
+↦
+𝑡𝑎𝑖𝑙
+(
+Θ
+(
+a
+)
+)
+}
+\llbracket[(\mathit{tail}(\iota_{a})/\iota_{a}]{\color[rgb]{1,0,1}\mathcal{I}}\rrbracket_{R,H,\Theta}=\llbracket{\color[rgb]{1,0,1}\mathcal{I}}\rrbracket_{R,H,\Theta\{a\mapsto\mathit{tail}(\Theta(a))\}}
+and
+(b)
+R
+,
+H
+,
+Θ
+⊧
+[
+𝑡𝑎𝑖𝑙
+⁡
+(
+ι
+a
+)
+/
+ι
+a
+]
+​
+ℬ
+R,H,\Theta\models[\mathit{tail}(\iota_{a})/\iota_{a}]{\color[rgb]{1,0,1}\mathcal{B}}
+if and only if
+R
+,
+H
+,
+Θ
+{
+a
+↦
+𝑡𝑎𝑖𝑙
+(
+Θ
+(
+a
+)
+)
+}
+⊧
+ℬ
+R,H,\Theta\{a\mapsto\mathit{tail}(\Theta(a))\}\models{\color[rgb]{1,0,1}\mathcal{B}}
+.
+2.
+Suppose the
+⟦
+𝚎
+⟧
+R
+,
+H
+,
+Θ
+=
+n
+\llbracket{\color[rgb]{1,0,1}\mathtt{e}}\rrbracket_{R,H,\Theta}=n
+. Then we have
+(a)
+⟦
+[
+ι
+a
+⋅
+𝚎
+/
+ι
+a
+]
+ℐ
+⟧
+R
+,
+H
+,
+Θ
+=
+⟦
+ℐ
+⟧
+R
+,
+H
+,
+Θ
+{
+a
+↦
+Θ
+(
+a
+)
+⋅
+n
+}
+\llbracket[\iota_{a}\cdot{\color[rgb]{1,0,1}\mathtt{e}}/\iota_{a}]{\color[rgb]{1,0,1}\mathcal{I}}\rrbracket_{R,H,\Theta}=\llbracket{\color[rgb]{1,0,1}\mathcal{I}}\rrbracket_{R,H,\Theta\{a\mapsto\Theta(a)\cdot n\}}
+and
+(b)
+R
+,
+H
+,
+Θ
+⊧
+[
+ι
+a
+⋅
+𝚎
+/
+ι
+a
+]
+​
+ℬ
+R,H,\Theta\models[\iota_{a}\cdot{\color[rgb]{1,0,1}\mathtt{e}}/\iota_{a}]{\color[rgb]{1,0,1}\mathcal{B}}
+if and only if
+R
+,
+H
+,
+Θ
+{
+a
+↦
+Θ
+(
+a
+)
+⋅
+n
+}
+⊧
+ℬ
+R,H,\Theta\{a\mapsto\Theta(a)\cdot n\}\models{\color[rgb]{1,0,1}\mathcal{B}}
+.
+Proof
+By induction on the structure of the index sequence terms and formulas.
+∎
+0.A.2
+Proof of the Correctness
+Notation.
+For convenience, the simulation relation
+⟨
+R
+,
+H
+⟩
+∼
+Γ
+|
+ℬ
+⟨
+R
+′
+,
+S
+′
+⟩
+\langle R,H\rangle\sim_{\Gamma\mid{\color[rgb]{1,0,1}\mathcal{B}}}\langle R^{\prime},S^{\prime}\rangle
+, will sometimes be written as
+⟨
+R
+,
+H
+⟩
+∼
+Γ
+|
+ℬ
+Θ
+⟨
+R
+′
+,
+S
+′
+⟩
+\langle R,H\rangle\sim_{\Gamma\mid{\color[rgb]{1,0,1}\mathcal{B}}}^{\Theta}\langle R^{\prime},S^{\prime}\rangle
+exhibiting the
+Θ
+\Theta
+, which is a witness of the simulation relation.
+To avoid the overuse of
+=
+=
+, we write
+≡
+\equiv
+for equality of syntactical terms such as integer terms and formulas.
+For example, we will write
+ℬ
+≡
+b
+=
+a
+⁡
+[
+0
+]
+{\color[rgb]{1,0,1}\mathcal{B}}\equiv b=a[0]
+; here the
+≡
+\equiv
+represents the syntactical equality whereas
+=
+=
+is the equality symbol of the first-order logic.
+We start with proving some auxiliary lemmas.
+Lemma 4
+Suppose that
+⟨
+R
+,
+H
+⟩
+∼
+Γ
+|
+ℬ
+⟨
+R
+′
+,
+S
+⟩
+\langle R,H\rangle\sim_{\Gamma\mid{\color[rgb]{1,0,1}\mathcal{B}}}\langle R^{\prime},S\rangle
+and
+Γ
+⊢
+e
+:
+𝐢𝐧𝐭
+\Gamma\vdash e:\mathbf{int}
+.
+Then we have
+⟨
+R
+,
+e
+⟩
+⇓
+n
+\langle R,e\rangle\Downarrow n
+if and only if
+⟨
+R
+′
+,
+e
+⟩
+⇓
+n
+\langle R^{\prime},e\rangle\Downarrow n
+.
+Proof
+By a straightforward induction on the derivation of the evaluations.
+∎
+The following is a correctness result for the auxiliary relation
+Γ
+⊢
+{
+ℬ
+}
+∙
+⟹
+u
+{
+ℬ
+′
+}
+\Gamma\vdash\{{\color[rgb]{1,0,1}\mathcal{B}}\}\bullet\Longrightarrow u\{{\color[rgb]{1,0,1}\mathcal{B}}^{\prime}\}
+.
+While this is stated as a lemma it may be considered as one of the key parts of the proof of the correctness.
+Lemma 5
+Assume that
+Γ
+⊢
+{
+ℬ
+}
+∙
+⟹
+u
+{
+ℬ
+′
+}
+\Gamma\vdash\{{\color[rgb]{1,0,1}\mathcal{B}}\}\bullet\Longrightarrow u\{{\color[rgb]{1,0,1}\mathcal{B}}^{\prime}\}
+and
+⟨
+R
+,
+H
+⟩
+∼
+Γ
+|
+ℬ
+⟨
+R
+1
+,
+S
+1
+⟩
+\langle R,H\rangle\sim_{\Gamma\mid{\color[rgb]{1,0,1}\mathcal{B}}}\langle R_{1},S_{1}\rangle
+.
+Then there uniquely exist
+R
+2
+R_{2}
+and
+S
+2
+S_{2}
+such that
+⟨
+R
+1
+,
+S
+1
+,
+u
+⟩
+⇓
+⟨
+R
+2
+,
+S
+2
+⟩
+\langle R_{1},S_{1},u\rangle\Downarrow\langle R_{2},S_{2}\rangle
+, and moreover,
+⟨
+R
+,
+H
+⟩
+∼
+Γ
+|
+ℬ
+′
+⟨
+R
+2
+,
+S
+2
+⟩
+\langle R,H\rangle\sim_{\Gamma\mid{\color[rgb]{1,0,1}\mathcal{B}}^{\prime}}\langle R_{2},S_{2}\rangle
+.
+Proof
+By induction on the derivation of
+Γ
+⊢
+{
+ℬ
+}
+∙
+⟹
+u
+{
+ℬ
+′
+}
+\Gamma\vdash\{{\color[rgb]{1,0,1}\mathcal{B}}\}\bullet\Longrightarrow u\{{\color[rgb]{1,0,1}\mathcal{B}}^{\prime}\}
+with a case analysis on the last rule used.
+Tr-InsRBuf
+It must be the case that
+u
+≡
+b
+:=
+a
+.
+r
+​
+e
+​
+a
+​
+d
+​
+(
+)
+u\equiv b:={a}.read()
+, where
+Γ
+⁡
+(
+a
+)
+=
+𝐫𝐚𝐫𝐫𝐚𝐲
+\Gamma(a)=\mathbf{rarray}
+and
+Γ
+⁡
+(
+b
+)
+=
+𝐛𝐮𝐟
+\Gamma(b)=\mathbf{buf}
+, and
+ℬ
+=
+[
+a
+⁡
+[
+ℎ𝑒𝑎𝑑
+⁡
+(
+ι
+a
+)
+]
+/
+b
+,
+(
+𝑡𝑎𝑖𝑙
+⁡
+(
+ι
+a
+)
+)
+/
+ι
+a
+]
+​
+ℬ
+′
+.
+\displaystyle{\color[rgb]{1,0,1}\mathcal{B}}=[a[\mathit{head}(\iota_{a})]/b,(\mathit{tail}(\iota_{a}))/\iota_{a}]{\color[rgb]{1,0,1}\mathcal{B}}^{\prime}.
+Observe that the only reduction rule that can be applied to the statement of the form
+b
+:=
+a
+.
+r
+​
+e
+​
+a
+​
+d
+​
+(
+)
+b:={a}.read()
+is
+R-Read
+.
+In order to apply this rule, we must check whether
+S
+1
+​
+(
+a
+)
+=
+n
+⋅
+m
+~
+S_{1}(a)=n\cdot\widetilde{m}
+, that is
+S
+1
+​
+(
+a
+)
+S_{1}(a)
+is not an empty string.
+Indeed,
+S
+1
+​
+(
+a
+)
+S_{1}(a)
+is non-empty because
+R
+1
+,
+H
+,
+Θ
+⊧
+ℬ
+R_{1},H,\Theta\models{\color[rgb]{1,0,1}\mathcal{B}}
+for some
+Θ
+\Theta
+; recall that if
+ℎ𝑒𝑎𝑑
+⁡
+(
+ι
+a
+)
+\mathit{head}(\iota_{a})
+is undefined, then
+ℬ
+{\color[rgb]{1,0,1}\mathcal{B}}
+is false.
+Therefore, we have
+⟨
+R
+1
+,
+S
+1
+,
+b
+:=
+a
+.
+r
+e
+a
+d
+(
+)
+⟩
+⇓
+⟨
+R
+1
+{
+b
+↦
+n
+}
+,
+S
+1
+{
+a
+↦
+m
+~
+}
+⟩
+\langle R_{1},S_{1},b:={a}.read()\rangle\Downarrow\langle R_{1}\{b\mapsto n\},S_{1}\{a\mapsto\widetilde{m}\}\rangle
+.
+It remains to show
+⟨
+R
+,
+H
+⟩
+∼
+Γ
+|
+ℬ
+′
+Θ
+′
+⟨
+R
+1
+{
+b
+↦
+n
+}
+,
+S
+{
+a
+↦
+m
+~
+}
+⟩
+\langle R,H\rangle\sim_{\Gamma\mid{\color[rgb]{1,0,1}\mathcal{B}}^{\prime}}^{\Theta^{\prime}}\langle R_{1}\{b\mapsto n\},S\{a\mapsto\widetilde{m}\}\rangle
+for some
+Θ
+′
+\Theta^{\prime}
+.
+For
+Θ
+′
+\Theta^{\prime}
+, we take
+Θ
+{
+a
+↦
+𝑡𝑎𝑖𝑙
+(
+Θ
+(
+a
+)
+)
+}
+\Theta\{a\mapsto\mathit{tail}(\Theta(a))\}
+.
+We need to show
+R
+(
+x
+)
+=
+(
+R
+1
+{
+b
+↦
+n
+}
+)
+(
+x
+)
+for each
+x
+:
+𝐢𝐧𝐭
+∈
+Γ
+\displaystyle R(x)=(R_{1}\{b\mapsto n\})(x)\text{ for each $x\mathbin{:}\mathbf{int}\in\Gamma$}
+𝐼𝑑𝑥
+⁡
+(
+H
+,
+a
+′
+)
+⊇
+𝑠𝑒𝑡𝑜𝑓
+⁡
+(
+Θ
+′
+​
+(
+a
+′
+)
+)
+​
+for each
+a
+′
+such that
+Γ
+⁡
+(
+a
+′
+)
+∈
+{
+𝐫𝐚𝐫𝐫𝐚𝐲
+,
+𝐰𝐚𝐫𝐫𝐚𝐲
+}
+\displaystyle\mathit{Idx}(H,a^{\prime})\supseteq\mathit{setof}(\Theta^{\prime}(a^{\prime}))\mbox{ for each $a^{\prime}$ such that $\Gamma(a^{\prime})\in\{\mathbf{rarray},\mathbf{warray}\}$}
+H
+(
+a
+′
+,
+Θ
+′
+(
+a
+′
+)
+[
+i
+]
+)
+=
+S
+{
+a
+↦
+m
+~
+}
+(
+a
+′
+)
+[
+i
+]
+for each
+a
+′
+such that
+Γ
+⁡
+(
+a
+′
+)
+∈
+{
+𝐫𝐚𝐫𝐫𝐚𝐲
+,
+𝐰𝐚𝐫𝐫𝐚𝐲
+}
+,
+0
+≤
+i
+<
+|
+Θ
+′
+​
+(
+a
+′
+)
+|
+R
+1
+,
+H
+,
+Θ
+′
+⊧
+ℬ
+′
+.
+\displaystyle\begin{aligned} &H(a^{\prime},\Theta^{\prime}(a^{\prime})[i])=S{\{a\mapsto\widetilde{m}\}}(a^{\prime})[i]\\
+&\quad\mbox{ for each $a^{\prime}$ such that $\Gamma(a^{\prime})\in\{\mathbf{rarray},\mathbf{warray}\}$, $0\leq i<|\Theta^{\prime}(a^{\prime})|$}\\
+&R_{1},H,\Theta^{\prime}\models{\color[rgb]{1,0,1}\mathcal{B}}^{\prime}\end{aligned}.
+Most of these are straightforward consequence of
+⟨
+R
+,
+H
+⟩
+∼
+Γ
+|
+ℬ
+Θ
+⟨
+R
+1
+,
+S
+1
+⟩
+\langle R,H\rangle\sim_{\Gamma\mid{\color[rgb]{1,0,1}\mathcal{B}}}^{\Theta}\langle R_{1},S_{1}\rangle
+.
+The first condition holds because, only the
+b
+b
+part of
+R
+1
+R_{1}
+has been updated and
+b
+b
+does not have type
+𝐢𝐧𝐭
+\mathbf{int}
+.
+The second condition holds because
+𝑠𝑒𝑡𝑜𝑓
+⁡
+(
+Θ
+′
+​
+(
+a
+′
+)
+)
+⊆
+𝑠𝑒𝑡𝑜𝑓
+⁡
+(
+Θ
+⁡
+(
+a
+′
+)
+)
+\mathit{setof}(\Theta^{\prime}(a^{\prime}))\subseteq\mathit{setof}(\Theta(a^{\prime}))
+for all
+a
+′
+:
+𝐫𝐚𝐫𝐫𝐚𝐲
+∈
+Γ
+a^{\prime}:\mathbf{rarray}\in\Gamma
+.
+The third condition holds since
+H
+(
+a
+,
+Θ
+′
+(
+a
+)
+[
+i
+]
+)
+=
+H
+(
+a
+,
+Θ
+(
+a
+)
+[
+i
++
+1
+]
+)
+=
+S
+1
+(
+a
+)
+[
+i
++
+1
+]
+=
+S
+1
+{
+a
+↦
+m
+~
+}
+(
+a
+)
+[
+i
+]
+H(a,\Theta^{\prime}(a)[i])=H(a,\Theta(a)[i+1])=S_{1}(a)[i+1]=S_{1}\{a\mapsto\widetilde{m}\}(a)[i]
+for all
+0
+≤
+i
+<
+|
+Θ
+⁡
+(
+a
+)
+|
+−
+1
+0\leq i<|\Theta(a)|-1
+, and
+Θ
+′
+\Theta^{\prime}
+is the same as
+Θ
+\Theta
+for addresses other than
+a
+a
+.
+Finally, the satisfaction relation holds thanks to Lemma
+1
+and
+3
+with the facts that
+⟦
+a
+⁡
+[
+ℎ𝑒𝑎𝑑
+⁡
+(
+ι
+a
+)
+]
+⟧
+R
+1
+,
+H
+,
+Θ
+=
+n
+\llbracket a[\mathit{head}(\iota_{a})]\rrbracket_{R_{1},H,\Theta}=n
+and
+Θ
+′
+=
+Θ
+{
+a
+↦
+𝑡𝑎𝑖𝑙
+(
+Θ
+(
+a
+)
+)
+}
+\Theta^{\prime}=\Theta\{a\mapsto\mathit{tail}(\Theta(a))\}
+.
+Tr-InsWBuf
+In this case, we have
+u
+=
+a
+.
+w
+​
+r
+​
+i
+​
+t
+​
+e
+​
+(
+b
+)
+u={a}.write(b)
+, where
+Γ
+⁡
+(
+a
+)
+=
+𝐰𝐚𝐫𝐫𝐚𝐲
+\Gamma(a)=\mathbf{warray}
+and
+Γ
+⁡
+(
+b
+)
+=
+𝐛𝐮𝐟
+\Gamma(b)=\mathbf{buf}
+, and
+ℬ
+=
+n
+∉
+ι
+a
+∧
+a
+⁡
+[
+n
+]
+=
+b
+∧
+[
+(
+ι
+a
+⋅
+n
+)
+/
+ι
+a
+]
+​
+ℬ
+′
+.
+\displaystyle{\color[rgb]{1,0,1}\mathcal{B}}=n\not\in\iota_{a}\land a[n]=b\land[(\iota_{a}\cdot n)/\iota_{a}]{\color[rgb]{1,0,1}\mathcal{B}}^{\prime}.
+The only reduction rule that can be applied to the statement of the form
+a
+.
+w
+​
+r
+​
+i
+​
+t
+​
+e
+​
+(
+b
+)
+{a}.write(b)
+is
+R-Write
+.
+Hence, we have
+⟨
+R
+1
+,
+S
+1
+,
+a
+.
+w
+r
+i
+t
+e
+(
+b
+)
+⟩
+⇓
+⟨
+R
+1
+,
+S
+1
+{
+a
+↦
+S
+1
+(
+a
+)
+⋅
+R
+1
+(
+b
+)
+}
+⟩
+\langle R_{1},S_{1},{a}.write(b)\rangle\Downarrow\langle R_{1},S_{1}\{a\mapsto S_{1}(a)\cdot R_{1}(b)\}\rangle
+and this is the unique resulting state.
+We prove that
+⟨
+R
+,
+H
+⟩
+∼
+Γ
+|
+ℬ
+′
+Θ
+′
+⟨
+R
+1
+,
+S
+1
+{
+a
+↦
+S
+1
+(
+a
+)
+⋅
+R
+1
+(
+b
+)
+}
+⟩
+\langle R,H\rangle\sim_{\Gamma\mid{\color[rgb]{1,0,1}\mathcal{B}}^{\prime}}^{\Theta^{\prime}}\langle R_{1},S_{1}\{a\mapsto S_{1}(a)\cdot R_{1}(b)\}\rangle
+where
+Θ
+′
+=
+def
+Θ
+{
+a
+↦
+Θ
+(
+a
+)
+⋅
+n
+}
+\Theta^{\prime}\stackrel{{\scriptstyle\text{def}}}{{=}}\Theta\{a\mapsto\Theta(a)\cdot n\}
+and
+Θ
+\Theta
+is a chosen witness such that
+⟨
+R
+,
+H
+⟩
+∼
+Γ
+|
+ℬ
+Θ
+⟨
+R
+1
+,
+S
+1
+⟩
+\langle R,H\rangle\sim_{\Gamma\mid{\color[rgb]{1,0,1}\mathcal{B}}}^{\Theta}\langle R_{1},S_{1}\rangle
+.
+It should be noted that
+Θ
+′
+\Theta^{\prime}
+is well-defined in the sense that
+Θ
+′
+​
+(
+a
+)
+\Theta^{\prime}(a)
+is a sequence without any duplicated element because of the precondition
+n
+∉
+ι
+a
+n\notin\iota_{a}
+.
+The only nontrivial conditions to check to show that
+⟨
+R
+,
+H
+⟩
+∼
+Γ
+|
+ℬ
+′
+Θ
+′
+⟨
+R
+1
+,
+S
+1
+{
+a
+↦
+S
+1
+(
+a
+)
+⋅
+R
+1
+(
+b
+)
+}
+⟩
+\langle R,H\rangle\sim_{\Gamma\mid{\color[rgb]{1,0,1}\mathcal{B}}^{\prime}}^{\Theta^{\prime}}\langle R_{1},S_{1}\{a\mapsto S_{1}(a)\cdot R_{1}(b)\}\rangle
+are:
+𝐼𝑑𝑥
+⁡
+(
+H
+,
+a
+)
+⊇
+𝑠𝑒𝑡𝑜𝑓
+⁡
+(
+Θ
+′
+​
+(
+a
+)
+)
+\displaystyle\mathit{Idx}(H,a)\supseteq\mathit{setof}(\Theta^{\prime}(a))
+H
+(
+a
+,
+Θ
+′
+(
+a
+)
+[
+ℓ
+]
+)
+=
+S
+1
+{
+a
+↦
+S
+1
+(
+a
+)
+⋅
+R
+1
+(
+b
+)
+}
+(
+a
+)
+[
+ℓ
+]
+where
+ℓ
+=
+|
+Θ
+′
+|
+−
+1
+\displaystyle H(a,\Theta^{\prime}(a)[\ell])=S_{1}\{a\mapsto S_{1}(a)\cdot R_{1}(b)\}(a)[\ell]\text{where $\ell=|\Theta^{\prime}|-1$}
+R
+1
+,
+H
+,
+Θ
+{
+a
+↦
+Θ
+(
+a
+)
+⋅
+n
+}
+⊧
+ℬ
+′
+.
+\displaystyle R_{1},H,\Theta\{a\mapsto\Theta(a)\cdot n\}\models{\color[rgb]{1,0,1}\mathcal{B}}^{\prime}.
+(The other cases are trivial because the register file is untouched, and the only stream that was modified is that stored in the address
+a
+a
+.)
+To check the first condition, since
+𝑠𝑒𝑡𝑜𝑓
+⁡
+(
+Θ
+′
+​
+(
+a
+)
+)
+=
+𝑠𝑒𝑡𝑜𝑓
+⁡
+(
+Θ
+⁡
+(
+a
+)
+)
+∪
+{
+n
+}
+\mathit{setof}(\Theta^{\prime}(a))=\mathit{setof}(\Theta(a))\cup\{n\}
+and
+𝐼𝑑𝑥
+⁡
+(
+H
+,
+a
+)
+⊇
+𝑠𝑒𝑡𝑜𝑓
+⁡
+(
+Θ
+⁡
+(
+a
+)
+)
+\mathit{Idx}(H,a)\supseteq\mathit{setof}(\Theta(a))
+, it suffices to show that
+n
+∈
+𝐼𝑑𝑥
+⁡
+(
+H
+,
+a
+)
+n\in\mathit{Idx}(H,a)
+.
+This holds because
+H
+,
+R
+1
+,
+Θ
+⊧
+b
+=
+a
+⁡
+[
+n
+]
+H,R_{1},\Theta\models b=a[n]
+.
+In more detail, we have
+⟦
+a
+⁡
+[
+n
+]
+⟧
+H
+,
+R
+1
+,
+Θ
+=
+H
+⁡
+(
+a
+,
+n
+)
+\llbracket a[n]\rrbracket_{H,R_{1},\Theta}=H(a,n)
+and
+⟦
+b
+⟧
+R
+1
+,
+H
+,
+Θ
+=
+R
+1
+​
+(
+b
+)
+\llbracket b\rrbracket_{R_{1},H,\Theta}=R_{1}(b)
+, and thus
+H
+​
+(
+a
+,
+n
+)
+=
+R
+1
+​
+(
+b
+)
+H(a,n)=R_{1}(b)
+.
+This equality allows us to prove the second condition because
+H
+(
+a
+,
+Θ
+′
+(
+a
+)
+[
+ℓ
+]
+)
+=
+H
+(
+a
+,
+n
+)
+=
+R
+1
+(
+b
+)
+=
+S
+1
+{
+a
+↦
+S
+1
+(
+a
+)
+⋅
+R
+1
+(
+b
+)
+}
+(
+a
+)
+[
+ℓ
+]
+H(a,\Theta^{\prime}(a)[\ell])=H(a,n)=R_{1}(b)=S_{1}\{a\mapsto S_{1}(a)\cdot R_{1}(b)\}(a)[\ell]
+The satisfaction relation holds by Lemma
+3
+.
+Tr-InsMove
+In this case, we have
+u
+≡
+x
+:=
+y
+u\equiv x:=y
+, where
+Γ
+⁡
+(
+x
+)
+=
+𝐛𝐮𝐟
+\Gamma(x)=\mathbf{buf}
+and
+Γ
+⁡
+(
+y
+)
+∈
+{
+𝐢𝐧𝐭
+,
+𝐛𝐮𝐟
+}
+\Gamma(y)\in\{\mathbf{int},\mathbf{buf}\}
+, and
+ℬ
+=
+[
+y
+/
+x
+]
+​
+ℬ
+′
+{\color[rgb]{1,0,1}\mathcal{B}}=[y/x]{\color[rgb]{1,0,1}\mathcal{B}}^{\prime}
+.
+The rule
+R-Assign
+is the only rule that can be applied to
+⟨
+R
+1
+,
+S
+1
+,
+x
+:=
+y
+⟩
+\langle R_{1},S_{1},x:=y\rangle
+, and thus,
+⟨
+R
+1
+{
+x
+↦
+R
+1
+(
+y
+)
+}
+,
+S
+1
+⟩
+\langle R_{1}\{x\mapsto R_{1}(y)\},S_{1}\rangle
+is the only state such that
+⟨
+R
+1
+,
+S
+1
+,
+x
+:=
+y
+⟩
+⇓
+⟨
+R
+1
+{
+x
+↦
+R
+1
+(
+y
+)
+}
+,
+S
+1
+⟩
+\langle R_{1},S_{1},x:=y\rangle\Downarrow\langle R_{1}\{x\mapsto R_{1}(y)\},S_{1}\rangle
+.
+We need to check that
+⟨
+R
+1
+{
+x
+↦
+R
+1
+(
+y
+)
+}
+,
+S
+1
+⟩
+∼
+Γ
+|
+ℬ
+′
+⟨
+R
+1
+,
+S
+1
+⟩
+\langle R_{1}\{x\mapsto R_{1}(y)\},S_{1}\rangle\sim_{\Gamma\mid{\color[rgb]{1,0,1}\mathcal{B}}^{\prime}}\langle R_{1},S_{1}\rangle
+.
+Since
+⟨
+R
+,
+S
+⟩
+∼
+Γ
+|
+ℬ
+Θ
+⟨
+R
+1
+,
+S
+1
+⟩
+\langle R,S\rangle\sim_{\Gamma\mid{\color[rgb]{1,0,1}\mathcal{B}}}^{\Theta}\langle R_{1},S_{1}\rangle
+, for some
+Θ
+\Theta
+, and the stream pool is unchanged by the reduction, it suffices to check
+R
+(
+z
+)
+=
+R
+1
+{
+x
+↦
+R
+1
+(
+y
+)
+}
+(
+z
+)
+for each
+z
+:
+𝐢𝐧𝐭
+∈
+Γ
+\displaystyle R(z)=R_{1}\{x\mapsto R_{1}(y)\}(z)\text{ for each $z:\mathbf{int}\in\Gamma$}
+R
+1
+{
+x
+↦
+R
+1
+(
+y
+)
+}
+,
+H
+,
+Θ
+⊧
+ℬ
+′
+\displaystyle R_{1}\{x\mapsto R_{1}(y)\},H,\Theta\models{\color[rgb]{1,0,1}\mathcal{B}}^{\prime}
+The former holds because
+R
+​
+(
+z
+)
+=
+R
+1
+​
+(
+z
+)
+R(z)=R_{1}(z)
+for every
+z
+:
+𝐢𝐧𝐭
+∈
+Γ
+z:\mathbf{int}\in\Gamma
+and
+x
+x
+is not of type
+𝐢𝐧𝐭
+\mathbf{int}
+.
+The latter is a consequence of Lemma
+1
+together with the facts
+R
+1
+,
+H
+,
+Θ
+⊧
+[
+y
+/
+x
+]
+​
+ℬ
+′
+R_{1},H,\Theta\models[y/x]{\color[rgb]{1,0,1}\mathcal{B}}^{\prime}
+and
+⟦
+y
+⟧
+R
+1
+,
+H
+,
+Θ
+=
+R
+1
+​
+(
+y
+)
+\llbracket y\rrbracket_{R_{1},H,\Theta}=R_{1}(y)
+.
+Tr-Conseq
+In this case, we have
+Γ
+⊢
+{
+ℬ
+1
+}
+∙
+⟹
+u
+{
+ℬ
+1
+′
+}
+\displaystyle\Gamma\vdash\{{\color[rgb]{1,0,1}\mathcal{B}}_{1}\}\bullet\Longrightarrow u\{{\color[rgb]{1,0,1}\mathcal{B}}_{1}^{\prime}\}
+for some
+ℬ
+1
+{\color[rgb]{1,0,1}\mathcal{B}}_{1}
+and
+ℬ
+1
+′
+{\color[rgb]{1,0,1}\mathcal{B}}_{1}^{\prime}
+satisfying
+⊧
+ℬ
+⟹
+ℬ
+1
+and
+⊧
+ℬ
+1
+′
+⟹
+ℬ
+′
+.
+\displaystyle\models{\color[rgb]{1,0,1}\mathcal{B}}\implies{\color[rgb]{1,0,1}\mathcal{B}}_{1}\quad\text{and}\quad\models{\color[rgb]{1,0,1}\mathcal{B}}_{1}^{\prime}\implies{\color[rgb]{1,0,1}\mathcal{B}}^{\prime}.
+Since
+⟨
+R
+,
+H
+⟩
+∼
+Γ
+|
+ℬ
+Θ
+⟨
+R
+1
+,
+S
+1
+⟩
+\langle R,H\rangle\sim_{\Gamma\mid{\color[rgb]{1,0,1}\mathcal{B}}}^{\Theta}\langle R_{1},S_{1}\rangle
+for some
+Θ
+\Theta
+, we have
+R
+1
+,
+H
+,
+Θ
+⊧
+ℬ
+R_{1},H,\Theta\models{\color[rgb]{1,0,1}\mathcal{B}}
+, and thus
+R
+1
+,
+H
+,
+Θ
+⊧
+ℬ
+1
+R_{1},H,\Theta\models{\color[rgb]{1,0,1}\mathcal{B}}_{1}
+from the above implication.
+Therefore, we have
+⟨
+R
+,
+H
+⟩
+∼
+Γ
+|
+ℬ
+1
+Θ
+⟨
+R
+1
+,
+S
+1
+⟩
+\langle R,H\rangle\sim_{\Gamma\mid{\color[rgb]{1,0,1}\mathcal{B}}_{1}}^{\Theta}\langle R_{1},S_{1}\rangle
+.
+By the induction hypothesis, there uniquely exists
+⟨
+R
+2
+,
+S
+2
+⟩
+\langle R_{2},S_{2}\rangle
+such that
+⟨
+R
+1
+,
+S
+1
+,
+u
+⟩
+⇓
+⟨
+R
+2
+,
+S
+2
+⟩
+\langle R_{1},S_{1},u\rangle\Downarrow\langle R_{2},S_{2}\rangle
+.
+Moreover, we have
+⟨
+R
+,
+H
+⟩
+∼
+Γ
+|
+ℬ
+1
+′
+⟨
+R
+2
+,
+S
+2
+⟩
+\langle R,H\rangle\sim_{\Gamma\mid{\color[rgb]{1,0,1}\mathcal{B}}_{1}^{\prime}}\langle R_{2},S_{2}\rangle
+.
+It remains to show that
+⟨
+R
+,
+H
+⟩
+∼
+Γ
+|
+ℬ
+′
+⟨
+R
+2
+,
+S
+2
+⟩
+\langle R,H\rangle\sim_{\Gamma\mid{\color[rgb]{1,0,1}\mathcal{B}}^{\prime}}\langle R_{2},S_{2}\rangle
+, but this is obvious from
+⟨
+R
+,
+H
+⟩
+∼
+Γ
+|
+ℬ
+1
+′
+⟨
+R
+2
+,
+S
+2
+⟩
+\langle R,H\rangle\sim_{\Gamma\mid{\color[rgb]{1,0,1}\mathcal{B}}_{1}^{\prime}}\langle R_{2},S_{2}\rangle
+and
+⊧
+ℬ
+1
+′
+⟹
+ℬ
+′
+\models{\color[rgb]{1,0,1}\mathcal{B}}_{1}^{\prime}\implies{\color[rgb]{1,0,1}\mathcal{B}}^{\prime}
+.∎
+Now we prove the simulation relations for the stream translation.
+See
+3.1
+Proof
+(Proof of (1))
+By induction on the derivation of
+⟨
+R
+,
+H
+,
+s
+⟩
+⇓
+⟨
+R
+1
+,
+H
+1
+⟩
+\langle R,H,s\rangle\Downarrow\langle R_{1},H_{1}\rangle
+with a case analysis on the last rule used.
+In the proof, we also do a case analysis on the derivation of the translation.
+We assume, without loss of generality, that the derivation of the translation does not contain any use of
+Tr-InsertL
+,
+Tr-InsertR
+and
+Tr-Conseq
+.
+For
+Tr-InsertL
+and
+Tr-InsertR
+, we can simply apply the Lemma
+5
+.
+If we have
+Γ
+⊢
+{
+ℬ
+}
+​
+s
+⟹
+ℬ
+′
+​
+{
+u
+}
+\Gamma\vdash\{{\color[rgb]{1,0,1}\mathcal{B}}\}s\Longrightarrow{\color[rgb]{1,0,1}\mathcal{B}}^{\prime}\{u\}
+and the last rule used is
+Tr-Conseq
+, then we have
+⊧
+ℬ
+⟹
+ℬ
+1
+⊧
+ℬ
+1
+′
+⟹
+ℬ
+′
+\displaystyle\models{\color[rgb]{1,0,1}\mathcal{B}}\implies{\color[rgb]{1,0,1}\mathcal{B}}_{1}\quad\models{\color[rgb]{1,0,1}\mathcal{B}}_{1}^{\prime}\implies{\color[rgb]{1,0,1}\mathcal{B}}^{\prime}
+Γ
+⊢
+{
+ℬ
+1
+}
+​
+s
+⟹
+ℬ
+1
+′
+​
+{
+u
+}
+.
+\displaystyle\Gamma\vdash\{{\color[rgb]{1,0,1}\mathcal{B}}_{1}\}s\Longrightarrow{\color[rgb]{1,0,1}\mathcal{B}}_{1}^{\prime}\{u\}.
+So, if
+⟨
+R
+,
+H
+⟩
+∼
+Γ
+|
+ℬ
+⟨
+R
+′
+,
+H
+′
+⟩
+\langle R,H\rangle\sim_{\Gamma\mid{\color[rgb]{1,0,1}\mathcal{B}}}\langle R^{\prime},H^{\prime}\rangle
+, then from
+⊧
+ℬ
+⟹
+ℬ
+1
+\models{\color[rgb]{1,0,1}\mathcal{B}}\implies{\color[rgb]{1,0,1}\mathcal{B}}_{1}
+, it is easy to see that we have
+⟨
+R
+,
+H
+⟩
+∼
+Γ
+|
+ℬ
+1
+⟨
+R
+′
+,
+H
+′
+⟩
+\langle R,H\rangle\sim_{\Gamma\mid{\color[rgb]{1,0,1}\mathcal{B}}_{1}}\langle R^{\prime},H^{\prime}\rangle
+.
+Similarly, if
+⟨
+R
+,
+H
+⟩
+∼
+Γ
+|
+ℬ
+1
+′
+⟨
+R
+′
+,
+H
+′
+⟩
+\langle R,H\rangle\sim_{\Gamma\mid{\color[rgb]{1,0,1}\mathcal{B}}_{1}^{\prime}}\langle R^{\prime},H^{\prime}\rangle
+is shown, then we have
+⟨
+R
+,
+H
+⟩
+∼
+Γ
+|
+ℬ
+1
+⟨
+R
+′
+,
+H
+′
+⟩
+\langle R,H\rangle\sim_{\Gamma\mid{\color[rgb]{1,0,1}\mathcal{B}}_{1}}\langle R^{\prime},H^{\prime}\rangle
+.
+Hence, it suffices to prove our claim against
+Γ
+⊢
+{
+ℬ
+1
+}
+​
+s
+⟹
+ℬ
+1
+′
+​
+{
+u
+}
+\Gamma\vdash\{{\color[rgb]{1,0,1}\mathcal{B}}_{1}\}s\Longrightarrow{\color[rgb]{1,0,1}\mathcal{B}}_{1}^{\prime}\{u\}
+, implying that we can ignore the use of
+Tr-Conseq
+.
+Now we proceed to the case analysis.
+In what follows, we let
+Θ
+\Theta
+to be the witness of
+⟨
+R
+,
+H
+⟩
+∼
+Γ
+|
+ℬ
+⟨
+R
+′
+,
+S
+′
+⟩
+\langle R,H\rangle\sim_{\Gamma\mid{\color[rgb]{1,0,1}\mathcal{B}}}\langle R^{\prime},S^{\prime}\rangle
+, i.e. we assume that
+Θ
+\Theta
+has been chosen such that
+⟨
+R
+,
+H
+⟩
+∼
+Γ
+|
+ℬ
+Θ
+⟨
+R
+′
+,
+S
+′
+⟩
+\langle R,H\rangle\sim_{\Gamma\mid{\color[rgb]{1,0,1}\mathcal{B}}}^{\Theta}\langle R^{\prime},S^{\prime}\rangle
+.
+We first prove the interesting cases, namely those that involve array accesses and the case for the kernel code.
+R-ReadArray
+In this case, we have
+⟨
+R
+,
+e
+⟩
+⇓
+m
+H
+⁡
+(
+a
+,
+m
+)
+=
+n
+⟨
+R
+,
+H
+,
+x
+:=
+a
+[
+e
+]
+⟩
+⇓
+⟨
+R
+{
+x
+↦
+n
+}
+,
+H
+⟩
+‾
+\langle R,H,x:=a[e]\rangle\Downarrow\langle R\{x\mapsto n\},H\rangle\langle R,e\rangle\Downarrow m\quad\quad H(a,m)=n
+By the inversion on the translation rule, we must also have
+Γ
+⊢
+{
+b
+=
+a
+[
+e
+]
+∧
+[
+b
+/
+x
+]
+ℬ
+′
+}
+x
+:=
+a
+[
+e
+]
+⟹
+x
+:=
+b
+{
+ℬ
+′
+}
+\displaystyle\Gamma\vdash\{b=a[e]\land[b/x]{\color[rgb]{1,0,1}\mathcal{B}}^{\prime}\}x:=a[e]\Longrightarrow x:=b\{{\color[rgb]{1,0,1}\mathcal{B}}^{\prime}\}
+Γ
+⁡
+(
+a
+)
+=
+𝐫𝐚𝐫𝐫𝐚𝐲
+Γ
+⁡
+(
+x
+)
+=
+𝐢𝐧𝐭
+Γ
+⊢
+e
+:
+𝐢𝐧𝐭
+Γ
+⁡
+(
+b
+)
+=
+𝐛𝐮𝐟
+\displaystyle\Gamma(a)=\mathbf{rarray}\quad\Gamma(x)=\mathbf{int}\quad\Gamma\vdash e:\mathbf{int}\quad\Gamma(b)=\mathbf{buf}
+where
+ℬ
+≡
+b
+=
+a
+⁡
+[
+e
+]
+∧
+[
+b
+/
+x
+]
+​
+ℬ
+′
+{\color[rgb]{1,0,1}\mathcal{B}}\equiv b=a[e]\land[b/x]{\color[rgb]{1,0,1}\mathcal{B}}^{\prime}
+and
+t
+≡
+x
+:=
+b
+t\equiv x:=b
+.
+Observe that we have
+H
+⁡
+(
+a
+,
+m
+)
+=
+n
+=
+R
+′
+​
+(
+b
+)
+H(a,m)=n=R^{\prime}(b)
+because
+R
+′
+,
+H
+,
+Θ
+⊧
+b
+=
+a
+⁡
+[
+e
+]
+R^{\prime},H,\Theta\models b=a[e]
+.
+Thus, as the matching evaluation, we can take
+⟨
+R
+′
+,
+b
+⟩
+⇓
+n
+⟨
+R
+′
+,
+S
+′
+,
+x
+:=
+b
+⟩
+⇓
+⟨
+R
+′
+{
+x
+↦
+n
+}
+,
+S
+′
+⟩
+‾
+\langle R^{\prime},S^{\prime},x:=b\rangle\Downarrow\langle R^{\prime}\{x\mapsto n\},S^{\prime}\rangle\langle R^{\prime},b\rangle\Downarrow n
+using
+R-Read
+.
+It remains to show that
+⟨
+R
+{
+x
+↦
+n
+}
+,
+H
+⟩
+∼
+Γ
+|
+ℬ
+′
+Θ
+⟨
+R
+′
+{
+x
+↦
+n
+}
+,
+S
+′
+⟩
+\langle R\{x\mapsto n\},H\rangle\sim_{\Gamma\mid{\color[rgb]{1,0,1}\mathcal{B}}^{\prime}}^{\Theta}\langle R^{\prime}\{x\mapsto n\},S^{\prime}\rangle
+.
+Since
+H
+H
+and
+S
+′
+S^{\prime}
+are not modified, the only condition we need to check is
+R
+′
+{
+x
+↦
+n
+}
+,
+H
+,
+Θ
+⊧
+ℬ
+′
+.
+R^{\prime}\{x\mapsto n\},H,\Theta\models{\color[rgb]{1,0,1}\mathcal{B}}^{\prime}.
+This follows from Lemma
+1
+with
+R
+′
+,
+H
+,
+Θ
+⊧
+[
+b
+/
+x
+]
+​
+ℬ
+′
+R^{\prime},H,\Theta\models[b/x]{\color[rgb]{1,0,1}\mathcal{B}}^{\prime}
+and
+⟦
+a
+⁡
+[
+e
+]
+⟧
+R
+′
+,
+H
+,
+Θ
+=
+n
+\llbracket a[e]\rrbracket_{R^{\prime},H,\Theta}=n
+.
+R-WriteArray
+In this case, the last step of the derivation must be of the form:
+⟨
+R
+,
+e
+⟩
+⇓
+m
+⟨
+R
+,
+H
+,
+a
+[
+e
+]
+:=
+x
+⟩
+⇓
+⟨
+R
+,
+H
+{
+(
+a
+,
+m
+)
+↦
+R
+(
+x
+)
+}
+⟩
+‾
+\displaystyle\langle R,H,a[e]:=x\rangle\Downarrow\langle R,H\{(a,m)\mapsto R(x)\}\rangle\langle R,e\rangle\Downarrow m
+By the inversion on the translation rule, we also have
+Γ
+⊢
+{
+e
+∉
+ι
+a
+∧
+[
+x
+/
+b
+,
+a
+{
+e
+↦
+x
+}
+/
+a
+]
+ℬ
+′
+}
+a
+[
+e
+]
+:=
+x
+⟹
+b
+:=
+x
+{
+ℬ
+′
+}
+\displaystyle\Gamma\vdash\{e\not\in\iota_{a}\land[x/b,a\{e\mapsto x\}/a]{\color[rgb]{1,0,1}\mathcal{B}}^{\prime}\}a[e]:=x\Longrightarrow b:=x\{{\color[rgb]{1,0,1}\mathcal{B}}^{\prime}\}
+ℬ
+=
+e
+∉
+ι
+a
+∧
+[
+x
+/
+b
+,
+a
+{
+e
+↦
+x
+}
+/
+a
+]
+ℬ
+′
+\displaystyle{\color[rgb]{1,0,1}\mathcal{B}}=e\not\in\iota_{a}\land[x/b,a\{e\mapsto x\}/a]{\color[rgb]{1,0,1}\mathcal{B}}^{\prime}
+Γ
+⁡
+(
+x
+)
+=
+𝐢𝐧𝐭
+Γ
+⁡
+(
+a
+)
+=
+𝐰𝐚𝐫𝐫𝐚𝐲
+Γ
+⊢
+e
+:
+𝐢𝐧𝐭
+Γ
+⁡
+(
+b
+)
+=
+𝐛𝐮𝐟
+.
+\displaystyle\Gamma(x)=\mathbf{int}\quad\Gamma(a)=\mathbf{warray}\quad\Gamma\vdash e:\mathbf{int}\quad\Gamma(b)=\mathbf{buf}.
+As the matching transition, we take
+⟨
+R
+′
+,
+H
+′
+,
+b
+:=
+x
+⟩
+⇓
+⟨
+R
+′
+{
+b
+↦
+R
+(
+x
+)
+}
+,
+H
+′
+⟩
+\langle R^{\prime},H^{\prime},b:=x\rangle\Downarrow\langle R^{\prime}\{b\mapsto R(x)\},H^{\prime}\rangle
+.
+We are left to show that
+⟨
+R
+,
+H
+{
+(
+a
+,
+m
+)
+↦
+R
+(
+x
+)
+}
+⟩
+∼
+Γ
+|
+ℬ
+′
+Θ
+⟨
+R
+′
+{
+b
+↦
+R
+(
+x
+)
+}
+,
+S
+′
+⟩
+\langle R,H\{(a,m)\mapsto R(x)\}\rangle\sim_{\Gamma\mid{\color[rgb]{1,0,1}\mathcal{B}}^{\prime}}^{\Theta}\langle R^{\prime}\{b\mapsto R(x)\},S^{\prime}\rangle
+.
+In particular, we need to show that
+H
+⁡
+(
+a
+,
+Θ
+⁡
+(
+a
+)
+​
+[
+i
+]
+)
+=
+S
+′
+​
+(
+a
+)
+​
+[
+i
+]
+​
+for each
+a
+such that
+Γ
+⁡
+(
+a
+)
+∈
+{
+𝐫𝐚𝐫𝐫𝐚𝐲
+,
+𝐰𝐚𝐫𝐫𝐚𝐲
+}
+,
+0
+≤
+i
+<
+|
+Θ
+⁡
+(
+a
+)
+|
+\displaystyle H(a,\Theta(a)[i])=S^{\prime}(a)[i]\mbox{ for each $a$ such that $\Gamma(a)\in\{\mathbf{rarray},\mathbf{warray}\}$, $0\leq i<|\Theta(a)|$}
+R
+′
+,
+H
+,
+Θ
+⊧
+ℬ
+′
+.
+\displaystyle R^{\prime},H,\Theta\models{\color[rgb]{1,0,1}\mathcal{B}}^{\prime}.
+The other conditions are straightforward consequence of
+⟨
+R
+,
+H
+⟩
+∼
+Γ
+|
+ℬ
+Θ
+⟨
+R
+′
+,
+S
+′
+⟩
+\langle R,H\rangle\sim_{\Gamma\mid{\color[rgb]{1,0,1}\mathcal{B}}}^{\Theta}\langle R^{\prime},S^{\prime}\rangle
+because
+R
+′
+R^{\prime}
+is modified only for a buffer variable and the domain of the heap has gotten bigger while
+Θ
+\Theta
+remains the same.
+To show that the condition on the relation between
+H
+H
+and
+S
+′
+S^{\prime}
+holds, it suffices to show that
+m
+∉
+Θ
+⁡
+(
+a
+)
+m\notin\Theta(a)
+.
+We have
+m
+∉
+Θ
+⁡
+(
+a
+)
+m\notin\Theta(a)
+because
+R
+′
+,
+H
+,
+Θ
+⊧
+e
+∉
+ι
+a
+R^{\prime},H,\Theta\models e\notin\iota_{a}
+,
+⟦
+e
+⟧
+R
+′
+,
+H
+,
+Θ
+=
+m
+\llbracket e\rrbracket_{R^{\prime},H,\Theta}=m
+and
+⟦
+ι
+a
+⟧
+R
+,
+H
+,
+Θ
+=
+Θ
+⁡
+(
+a
+)
+\llbracket\iota_{a}\rrbracket_{R,H,\Theta}=\Theta(a)
+.
+The satisfaction relation
+R
+′
+,
+H
+,
+Θ
+⊧
+ℬ
+′
+R^{\prime},H,\Theta\models{\color[rgb]{1,0,1}\mathcal{B}}^{\prime}
+holds by applying Lemma
+1
+and
+2
+to
+R
+′
+,
+H
+,
+Θ
+⊧
+[
+x
+/
+b
+,
+a
+{
+e
+↦
+x
+}
+/
+a
+]
+ℬ
+′
+R^{\prime},H,\Theta\models[x/b,a\{e\mapsto x\}/a]{\color[rgb]{1,0,1}\mathcal{B}}^{\prime}
+.
+R-CallKer
+For this case, we just need to check that
+⟨
+R
+,
+H
+⟩
+∼
+Γ
+|
+ℬ
+⟨
+R
+′
+,
+S
+′
+⟩
+\langle R,H\rangle\sim_{\Gamma\mid{\color[rgb]{1,0,1}\mathcal{B}}}\langle R^{\prime},S^{\prime}\rangle
+implies
+⟨
+R
+,
+H
+⟩
+∼
+Γ
+♯
+|
+ℬ
+⟨
+R
+′
+,
+S
+′
+⟩
+\langle R,H\rangle\sim_{\Gamma^{\sharp}\mid{\color[rgb]{1,0,1}\mathcal{B}}}\langle R^{\prime},S^{\prime}\rangle
+;the rest of the proof is a straightforward application of the induction hypothesis.
+This indeed holds because the two conditions
+𝐼𝑑𝑥
+⁡
+(
+H
+,
+a
+)
+⊇
+𝑠𝑒𝑡𝑜𝑓
+⁡
+(
+Θ
+⁡
+(
+a
+)
+)
+​
+for each
+a
+such that
+Γ
+⁡
+(
+a
+)
+∈
+{
+𝐫𝐚𝐫𝐫𝐚𝐲
+,
+𝐰𝐚𝐫𝐫𝐚𝐲
+}
+\displaystyle\mathit{Idx}(H,a)\supseteq\mathit{setof}(\Theta(a))\mbox{ for each $a$ such that $\Gamma(a)\in\{\mathbf{rarray},\mathbf{warray}\}$}
+H
+⁡
+(
+a
+,
+Θ
+⁡
+(
+a
+)
+​
+[
+i
+]
+)
+=
+S
+′
+​
+(
+a
+)
+​
+[
+i
+]
+​
+for each
+a
+such that
+Γ
+⁡
+(
+a
+)
+∈
+{
+𝐫𝐚𝐫𝐫𝐚𝐲
+,
+𝐰𝐚𝐫𝐫𝐚𝐲
+}
+,
+0
+≤
+i
+<
+|
+Θ
+⁡
+(
+a
+)
+|
+\displaystyle H(a,\Theta(a)[i])=S^{\prime}(a)[i]\mbox{ for each $a$ such that $\Gamma(a)\in\{\mathbf{rarray},\mathbf{warray}\}$, $0\leq i<|\Theta(a)|$}
+of
+⟨
+R
+,
+H
+⟩
+∼
+Γ
+|
+ℬ
+⟨
+R
+′
+,
+S
+′
+⟩
+\langle R,H\rangle\sim_{\Gamma\mid{\color[rgb]{1,0,1}\mathcal{B}}}\langle R^{\prime},S^{\prime}\rangle
+involving the array types are symmetric between
+𝐫𝐚𝐫𝐫𝐚𝐲
+\mathbf{rarray}
+and
+𝐰𝐚𝐫𝐫𝐚𝐲
+\mathbf{warray}
+.
+Now we prove the remaining cases, which are rather standard.
+R-Assign
+Similar to the case for
+R-ReadArray
+.
+R-Seq
+The last step of the derivation must be of the form:
+⟨
+R
+,
+H
+,
+s
+1
+⟩
+⇓
+⟨
+R
+2
+,
+H
+2
+⟩
+⟨
+R
+2
+,
+H
+2
+,
+s
+2
+⟩
+⇓
+⟨
+R
+1
+,
+H
+1
+⟩
+⟨
+R
+,
+H
+,
+s
+1
+;
+s
+2
+⟩
+⇓
+⟨
+R
+1
+,
+H
+1
+⟩
+‾
+\langle R,H,s_{1};s_{2}\rangle\Downarrow\langle R_{1},H_{1}\rangle\langle R,H,s_{1}\rangle\Downarrow\langle R_{2},H_{2}\rangle\quad\quad\langle R_{2},H_{2},s_{2}\rangle\Downarrow\langle R_{1},H_{1}\rangle
+where
+s
+≡
+s
+1
+;
+s
+2
+s\equiv s_{1};s_{2}
+.
+By inversion on the translation rule, we must also have
+Γ
+⊢
+{
+ℬ
+}
+​
+s
+1
+⟹
+u
+1
+​
+{
+ℬ
+′′
+}
+and
+Γ
+⊢
+{
+ℬ
+′′
+}
+​
+s
+2
+⟹
+u
+2
+​
+{
+ℬ
+′
+}
+with
+​
+u
+≡
+u
+1
+;
+u
+2
+\displaystyle\Gamma\vdash\{{\color[rgb]{1,0,1}\mathcal{B}}\}s_{1}\Longrightarrow u_{1}\{{\color[rgb]{1,0,1}\mathcal{B}}^{\prime\prime}\}\quad\text{and}\quad\Gamma\vdash\{{\color[rgb]{1,0,1}\mathcal{B}}^{\prime\prime}\}s_{2}\Longrightarrow u_{2}\{{\color[rgb]{1,0,1}\mathcal{B}}^{\prime}\}\quad\text{with }u\equiv u_{1};u_{2}
+Since
+⟨
+R
+,
+H
+⟩
+∼
+Γ
+|
+ℬ
+⟨
+R
+′
+,
+S
+′
+⟩
+\langle R,H\rangle\sim_{\Gamma\mid{\color[rgb]{1,0,1}\mathcal{B}}}\langle R^{\prime},S^{\prime}\rangle
+from the assumption, we have
+⟨
+R
+′
+,
+S
+′
+,
+u
+1
+⟩
+⇓
+⟨
+R
+2
+′
+,
+S
+2
+′
+⟩
+and
+⟨
+R
+2
+,
+H
+2
+⟩
+∼
+Γ
+|
+ℬ
+′′
+⟨
+R
+2
+′
+,
+S
+2
+′
+⟩
+\displaystyle\langle R^{\prime},S^{\prime},u_{1}\rangle\Downarrow\langle R^{\prime}_{2},S^{\prime}_{2}\rangle\quad\text{and}\quad\langle R_{2},H_{2}\rangle\sim_{\Gamma\mid\mathcal{B}^{\prime\prime}}\langle R^{\prime}_{2},S^{\prime}_{2}\rangle
+for some
+R
+2
+′
+R^{\prime}_{2}
+and
+S
+2
+′
+S^{\prime}_{2}
+by the induction hypothesis.
+By applying the induction hypothesis, this time to
+⟨
+R
+2
+,
+H
+2
+,
+s
+2
+⟩
+⇓
+⟨
+R
+1
+,
+H
+1
+⟩
+\langle R_{2},H_{2},s_{2}\rangle\Downarrow\langle R_{1},H_{1}\rangle
+, we get
+⟨
+R
+2
+′
+,
+S
+2
+′
+,
+u
+2
+⟩
+⇓
+⟨
+R
+1
+′
+,
+S
+1
+′
+⟩
+and
+⟨
+R
+1
+,
+H
+1
+⟩
+∼
+Γ
+|
+ℬ
+′
+⟨
+R
+1
+′
+,
+S
+1
+′
+⟩
+\displaystyle\langle R^{\prime}_{2},S^{\prime}_{2},u_{2}\rangle\Downarrow\langle R^{\prime}_{1},S^{\prime}_{1}\rangle\quad\text{and}\quad\langle R_{1},H_{1}\rangle\sim_{\Gamma\mid\mathcal{B}^{\prime}}\langle R^{\prime}_{1},S^{\prime}_{1}\rangle
+for some
+R
+1
+′
+R^{\prime}_{1}
+and
+S
+1
+′
+S^{\prime}_{1}
+.
+R-IfTrue
+In this case, we must have
+R
+⁡
+(
+x
+)
+=
+0
+⟨
+R
+,
+H
+,
+s
+1
+⟩
+⇓
+⟨
+R
+1
+,
+H
+1
+⟩
+⟨
+R
+,
+H
+,
+𝐢𝐟
+​
+x
+​
+𝐭𝐡𝐞𝐧
+​
+s
+1
+​
+𝐞𝐥𝐬𝐞
+​
+s
+2
+⟩
+⇓
+⟨
+R
+1
+,
+H
+1
+⟩
+‾
+\langle R,H,\mathbf{if}\ x\ \mathbf{then}\ s_{1}\ \mathbf{else}\ {s_{2}}\rangle\Downarrow\langle R_{1},H_{1}\rangle R(x)=0\quad\quad\langle R,H,s_{1}\rangle\Downarrow\langle R_{1},H_{1}\rangle
+where
+s
+≡
+𝐢𝐟
+​
+x
+​
+𝐭𝐡𝐞𝐧
+​
+s
+1
+​
+𝐞𝐥𝐬𝐞
+​
+s
+2
+s\equiv\mathbf{if}\ x\ \mathbf{then}\ s_{1}\ \mathbf{else}\ {s_{2}}
+.
+Thus, we must also have
+Γ
+⊢
+{
+ℬ
+∧
+x
+=
+0
+}
+s
+1
+⟹
+u
+1
+{
+ℬ
+′
+}
+and
+Γ
+⊢
+{
+ℬ
+∧
+x
+≠
+0
+}
+s
+2
+⟹
+u
+2
+{
+ℬ
+′
+}
+\displaystyle\Gamma\vdash\{{\color[rgb]{1,0,1}{\color[rgb]{1,0,1}\mathcal{B}}\land x=0}\}s_{1}\Longrightarrow u_{1}\{{\color[rgb]{1,0,1}\mathcal{B}}^{\prime}\}\quad\text{and}\quad\Gamma\vdash\{{\color[rgb]{1,0,1}{\color[rgb]{1,0,1}\mathcal{B}}\land x\neq 0}\}s_{2}\Longrightarrow u_{2}\{{\color[rgb]{1,0,1}\mathcal{B}}^{\prime}\}
+for
+u
+≡
+𝐢𝐟
+​
+x
+​
+𝐭𝐡𝐞𝐧
+​
+u
+1
+​
+𝐞𝐥𝐬𝐞
+​
+u
+2
+u\equiv\mathbf{if}\ x\ \mathbf{then}\ u_{1}\ \mathbf{else}\ {u_{2}}
+.
+By Lemma
+4
+, we have
+⟨
+R
+′
+,
+x
+⟩
+⇓
+0
+\langle R^{\prime},x\rangle\Downarrow 0
+, and thus,
+R
+′
+,
+H
+,
+Θ
+⊧
+x
+=
+0
+R^{\prime},H,\Theta\models x=0
+.
+This together with
+⟨
+R
+,
+H
+⟩
+∼
+Γ
+|
+ℬ
+Θ
+⟨
+R
+′
+,
+S
+′
+⟩
+\langle R,H\rangle\sim_{\Gamma\mid{\color[rgb]{1,0,1}\mathcal{B}}}^{\Theta}\langle R^{\prime},S^{\prime}\rangle
+implies that
+⟨
+R
+,
+H
+⟩
+∼
+Γ
+|
+ℬ
+∧
+x
+=
+0
+Θ
+⟨
+R
+′
+,
+S
+′
+⟩
+\langle R,H\rangle\sim_{\Gamma\mid{\color[rgb]{1,0,1}\mathcal{B}}\land x=0}^{\Theta}\langle R^{\prime},S^{\prime}\rangle
+.
+Hence, by the induction hypothesis, there exists
+⟨
+R
+1
+′
+,
+S
+1
+′
+⟩
+\langle R^{\prime}_{1},S^{\prime}_{1}\rangle
+such that
+⟨
+R
+′
+,
+H
+′
+,
+u
+1
+⟩
+⇓
+⟨
+R
+1
+′
+,
+S
+1
+′
+⟩
+\langle R^{\prime},H^{\prime},u_{1}\rangle\Downarrow\langle R^{\prime}_{1},S^{\prime}_{1}\rangle
+and
+⟨
+R
+1
+,
+H
+1
+⟩
+∼
+Γ
+|
+ℬ
+′
+⟨
+R
+1
+′
+,
+S
+1
+′
+⟩
+\langle R_{1},H_{1}\rangle\sim_{\Gamma\mid{\color[rgb]{1,0,1}\mathcal{B}}^{\prime}}\langle R^{\prime}_{1},S^{\prime}_{1}\rangle
+.
+By
+R-IfTrue
+, we also have
+⟨
+R
+1
+,
+H
+1
+,
+u
+⟩
+⇓
+⟨
+R
+1
+′
+,
+S
+1
+′
+⟩
+\langle R_{1},H_{1},u\rangle\Downarrow\langle R^{\prime}_{1},S^{\prime}_{1}\rangle
+as desired.
+R-IfFalse
+Similar to the previous case.
+R-ForExit
+In this case, we have
+⟨
+R
+,
+e
+⟩
+⇓
+k
+k
+≥
+m
+⟨
+R
+,
+H
+,
+𝐟𝐨𝐫
+(
+x
+:=
+e
+;
+x
+≠
+m
+;
+x
+:=
+x
++
+n
+)
+s
+1
+⟩
+⇓
+⟨
+R
+{
+x
+↦
+k
+}
+,
+H
+⟩
+‾
+\displaystyle\langle R,H,\mathbf{for}(x:=e;x\neq m;x:=x+n)s_{1}\rangle\Downarrow\langle R\{x\mapsto k\},H\rangle\langle R,e\rangle\Downarrow k\quad\quad k\geq m
+with
+s
+≡
+𝐟𝐨𝐫
+⁡
+(
+x
+:=
+e
+,
+x
+≠
+m
+,
+x
+:=
+x
++
+n
+)
+​
+s
+1
+s\equiv\mathbf{for}(x:=e;x\neq m;x:=x+n)s_{1}
+.
+By the inversion on the translation rule, we have
+Γ
+⊢
+{
+[
+e
+/
+x
+]
+ℬ
+′′
+}
+s
+⟹
+𝐟𝐨𝐫
+(
+x
+:=
+e
+;
+x
+≠
+m
+;
+x
+:=
+x
++
+n
+)
+u
+1
+{
+ℬ
+′′
+∧
+x
+≥
+m
+}
+\displaystyle{\Gamma\vdash\{[e/x]{\color[rgb]{1,0,1}\mathcal{B}}^{\prime\prime}\}s\Longrightarrow\mathbf{for}(x:=e;x\neq m;x:=x+n)u_{1}\{{\color[rgb]{1,0,1}\mathcal{B}}^{\prime\prime}\land x\geq m\}}
+where
+u
+≡
+𝐟𝐨𝐫
+⁡
+(
+x
+:=
+e
+,
+x
+≠
+m
+,
+x
+:=
+x
++
+n
+)
+​
+u
+1
+u\equiv\mathbf{for}(x:=e;x\neq m;x:=x+n)u_{1}
+and
+ℬ
+=
+[
+e
+/
+x
+]
+​
+ℬ
+′′
+{\color[rgb]{1,0,1}\mathcal{B}}=[e/x]{\color[rgb]{1,0,1}\mathcal{B}}^{\prime\prime}
+.
+Since
+⟨
+R
+,
+e
+⟩
+⇓
+k
+\langle R,e\rangle\Downarrow k
+, we also have
+⟨
+R
+′
+,
+e
+⟩
+⇓
+k
+\langle R^{\prime},e\rangle\Downarrow k
+by Lemma
+4
+.
+Therefore, we have
+⟨
+R
+′
+,
+S
+′
+,
+u
+⟩
+⇓
+⟨
+R
+′
+{
+x
+↦
+k
+}
+,
+S
+′
+⟩
+\langle R^{\prime},S^{\prime},u\rangle\Downarrow\langle R^{\prime}\{x\mapsto k\},S^{\prime}\rangle
+using
+R-ForExit
+.
+We can check that
+⟨
+R
+{
+x
+↦
+k
+}
+,
+H
+⟩
+∼
+Γ
+|
+ℬ
+′′
+∧
+x
+≥
+m
+Θ
+⟨
+R
+′
+{
+x
+↦
+k
+}
+,
+S
+′
+⟩
+\langle R\{x\mapsto k\},H\rangle\sim_{\Gamma\mid{\color[rgb]{1,0,1}\mathcal{B}}^{\prime\prime}\land x\geq m}^{\Theta}\langle R^{\prime}\{x\mapsto k\},S^{\prime}\rangle
+as in the case of
+R-ReadArray
+and
+R-Assign
+.
+The only difference is that, in this case, we additionally need to check
+R
+′
+{
+x
+↦
+k
+}
+,
+H
+,
+Θ
+⊧
+x
+≥
+m
+R^{\prime}\{x\mapsto k\},H,\Theta\models x\geq m
+, but this trivially holds because
+R
+′
+{
+x
+↦
+k
+}
+(
+x
+)
+=
+k
+≥
+m
+R^{\prime}\{x\mapsto k\}(x)=k\geq m
+.
+R-ForLoop
+In this case, the last rule of the derivation is
+⟨
+R
+,
+e
+⟩
+⇓
+k
+k
+<
+m
+⟨
+R
+{
+x
+↦
+k
+}
+,
+H
+,
+s
+′
+⟩
+⇓
+⟨
+R
+1
+,
+H
+1
+⟩
+s
+′
+≡
+s
+1
+;
+𝐟𝐨𝐫
+⁡
+(
+x
+:=
+x
++
+n
+,
+x
+≠
+m
+,
+x
+:=
+x
++
+n
+)
+​
+s
+1
+⟨
+R
+,
+H
+,
+𝐟𝐨𝐫
+⁡
+(
+x
+:=
+e
+,
+x
+≠
+m
+,
+x
+:=
+x
++
+n
+)
+​
+s
+1
+⟩
+⇓
+⟨
+R
+1
+,
+H
+1
+⟩
+\frac{\begin{multlined}\langle R,e\rangle\Downarrow k\quad\quad k<m\quad\langle R\{x\mapsto k\},H,s^{\prime}\rangle\Downarrow\langle R_{1},H_{1}\rangle\\
+\\
+s^{\prime}\equiv{s_{1};\mathbf{for}(x:=x+n;x\neq m;x:=x+n)s_{1}}\end{multlined}}{\langle R,H,\mathbf{for}(x:=e;x\neq m;x:=x+n)s_{1}\rangle\Downarrow\langle R_{1},H_{1}\rangle}
+with
+s
+≡
+𝐟𝐨𝐫
+⁡
+(
+x
+:=
+e
+,
+x
+≠
+m
+,
+x
+:=
+x
++
+n
+)
+​
+s
+1
+s\equiv\mathbf{for}(x:=e;x\neq m;x:=x+n)s_{1}
+.
+Observe that this means that there exists a state
+⟨
+R
+2
+,
+H
+2
+⟩
+\langle R_{2},H_{2}\rangle
+such that
+⟨
+R
+{
+x
+↦
+k
+}
+,
+H
+,
+s
+1
+⟩
+⇓
+⟨
+R
+2
+,
+H
+2
+⟩
+\langle R\{x\mapsto k\},H,s_{1}\rangle\Downarrow\langle R_{2},H_{2}\rangle
+and
+⟨
+R
+2
+,
+H
+2
+,
+𝐟𝐨𝐫
+⁡
+(
+x
+:=
+x
++
+n
+,
+x
+≠
+m
+,
+x
+:=
+x
++
+n
+)
+​
+s
+1
+⟩
+⇓
+⟨
+R
+1
+,
+H
+1
+⟩
+\langle R_{2},H_{2},\mathbf{for}(x:=x+n;x\neq m;x:=x+n)s_{1}\rangle\Downarrow\langle R_{1},H_{1}\rangle
+.
+By the inversion on the translation rule, we have
+Γ
+⊢
+{
+ℬ
+′′
+∧
+x
+<
+m
+}
+s
+1
+⟹
+u
+1
+{
+[
+x
++
+n
+/
+x
+]
+ℬ
+′′
+}
+\displaystyle\Gamma\vdash\{{\color[rgb]{1,0,1}{\color[rgb]{1,0,1}\mathcal{B}}^{\prime\prime}\land x<m}\}s_{1}\Longrightarrow u_{1}\{[x+n/x]{\color[rgb]{1,0,1}\mathcal{B}}^{\prime\prime}\}
+(1)
+for some
+u
+1
+u_{1}
+and
+ℬ
+′′
+{\color[rgb]{1,0,1}\mathcal{B}}^{\prime\prime}
+such that
+u
+≡
+𝐟𝐨𝐫
+⁡
+(
+x
+:=
+e
+,
+x
+≠
+m
+,
+x
+:=
+x
++
+n
+)
+​
+u
+1
+,
+\displaystyle u\equiv\mathbf{for}(x:=e;x\neq m;x:=x+n)u_{1},
+ℬ
+=
+[
+e
+/
+x
+]
+​
+ℬ
+′′
+,
+and
+​
+ℬ
+′
+=
+ℬ
+′′
+∧
+x
+≥
+m
+.
+\displaystyle{\color[rgb]{1,0,1}\mathcal{B}}=[e/x]{\color[rgb]{1,0,1}\mathcal{B}}^{\prime\prime},\text{ and }{\color[rgb]{1,0,1}\mathcal{B}}^{\prime}={\color[rgb]{1,0,1}{\color[rgb]{1,0,1}\mathcal{B}}^{\prime\prime}\land x\geq m}.
+It is easy to check that we have
+⟨
+R
+{
+x
+↦
+k
+}
+,
+H
+⟩
+∼
+Γ
+|
+ℬ
+′′
+∧
+x
+<
+m
+⟨
+R
+′
+{
+x
+↦
+k
+}
+,
+S
+′
+⟩
+\langle R\{x\mapsto k\},H\rangle\sim_{\Gamma\mid{\color[rgb]{1,0,1}\mathcal{B}}^{\prime\prime}\land x<m}\langle R^{\prime}\{x\mapsto k\},S^{\prime}\rangle
+.
+
+By applying the induction hypothesis to
+⟨
+R
+{
+x
+↦
+k
+}
+,
+H
+,
+s
+1
+⟩
+⇓
+⟨
+R
+2
+,
+H
+2
+⟩
+\langle R\{x\mapsto k\},H,s_{1}\rangle\Downarrow\langle R_{2},H_{2}\rangle
+, we obtain a state
+⟨
+R
+2
+′
+,
+S
+2
+′
+⟩
+\langle R^{\prime}_{2},S^{\prime}_{2}\rangle
+such that
+⟨
+R
+′
+{
+x
+↦
+k
+}
+,
+S
+′
+,
+u
+1
+⟩
+⇓
+⟨
+R
+2
+′
+,
+S
+2
+′
+⟩
+\langle R^{\prime}\{x\mapsto k\},S^{\prime},u_{1}\rangle\Downarrow\langle R^{\prime}_{2},S^{\prime}_{2}\rangle
+and
+⟨
+R
+2
+,
+H
+2
+⟩
+∼
+Γ
+|
+[
+x
++
+n
+/
+x
+]
+​
+ℬ
+′′
+⟨
+R
+1
+′
+,
+S
+2
+′
+⟩
+\langle R_{2},H_{2}\rangle\sim_{\Gamma\mid[x+n/x]{\color[rgb]{1,0,1}\mathcal{B}}^{\prime\prime}}\langle R^{\prime}_{1},S^{\prime}_{2}\rangle
+.
+Now we apply the induction hypothesis to
+⟨
+R
+2
+,
+H
+2
+,
+𝐟𝐨𝐫
+⁡
+(
+x
+:=
+x
++
+n
+,
+x
+≠
+m
+,
+x
+:=
+x
++
+n
+)
+​
+s
+1
+⟩
+⇓
+⟨
+R
+1
+,
+H
+1
+⟩
+\langle R_{2},H_{2},\mathbf{for}(x:=x+n;x\neq m;x:=x+n)s_{1}\rangle\Downarrow\langle R_{1},H_{1}\rangle
+.
+To this end, we first show that
+Γ
+⊢
+{
+[
+x
++
+n
+/
+x
+]
+​
+ℬ
+′′
+}
+\displaystyle\Gamma\vdash\{[x+n/x]{\color[rgb]{1,0,1}\mathcal{B}}^{\prime\prime}\}
+𝐟𝐨𝐫
+⁡
+(
+x
+:=
+x
++
+n
+,
+x
+≠
+m
+,
+x
+:=
+x
++
+n
+)
+​
+s
+1
+\displaystyle{\mathbf{for}(x:=x+n;x\neq m;x:=x+n)s_{1}}
+⟹
+𝐟𝐨𝐫
+⁡
+(
+x
+:=
+x
++
+n
+,
+x
+≠
+m
+,
+x
+:=
+x
++
+n
+)
+​
+u
+1
+​
+{
+ℬ
+′
+}
+\displaystyle\Longrightarrow{\mathbf{for}(x:=x+n;x\neq m;x:=x+n)u_{1}}\{{\color[rgb]{1,0,1}\mathcal{B}}^{\prime}\}
+This is derivable by applying
+R-For
+to (
+1
+).
+We can now apply the induction hypothesis, and obtain a state
+⟨
+R
+1
+′
+,
+S
+1
+′
+⟩
+\langle R_{1}^{\prime},S_{1}^{\prime}\rangle
+such that
+⟨
+R
+2
+′
+,
+H
+2
+′
+,
+𝐟𝐨𝐫
+⁡
+(
+x
+:=
+x
++
+n
+,
+x
+≠
+m
+,
+x
+:=
+x
++
+n
+)
+​
+u
+1
+⟩
+⇓
+⟨
+R
+1
+′
+,
+S
+1
+′
+⟩
+\langle R^{\prime}_{2},H^{\prime}_{2},\mathbf{for}(x:=x+n;x\neq m;x:=x+n)u_{1}\rangle\Downarrow\langle R^{\prime}_{1},S^{\prime}_{1}\rangle
+and
+⟨
+R
+1
+,
+H
+1
+⟩
+∼
+Γ
+|
+ℬ
+′′
+∧
+x
+≥
+m
+⟨
+R
+1
+′
+,
+S
+1
+′
+⟩
+\langle R_{1},H_{1}\rangle\sim_{\Gamma\mid{\color[rgb]{1,0,1}\mathcal{B}}^{\prime\prime}\land x\geq m}\langle R^{\prime}_{1},S^{\prime}_{1}\rangle
+.
+Using the rule
+R-ForLoop
+, we also have
+⟨
+R
+′
+,
+S
+′
+,
+u
+⟩
+⇓
+⟨
+R
+1
+′
+,
+S
+1
+′
+⟩
+\langle R^{\prime},S^{\prime},u\rangle\Downarrow\langle R^{\prime}_{1},S^{\prime}_{1}\rangle
+as desired.
+∎
+We only sketch the proof for the opposite direction since the proof is essentially the same.
+Proof
+(Proof Sketch of (2))
+By induction on the derivation of
+⟨
+R
+′
+,
+S
+′
+,
+u
+⟩
+⇓
+⟨
+R
+1
+′
+,
+S
+1
+′
+⟩
+\langle R^{\prime},S^{\prime},u\rangle\Downarrow\langle R^{\prime}_{1},S^{\prime}_{1}\rangle
+with a case analysis on the last rule used.
+The nontrivial cases are the case when the rules
+R-Read
+or
+R-Write
+are used or a buffer is accessed.
+Since the proof for the other cases are identical to those of (1) we omit these cases.
+That is, if the last rule used in the derivation are not the above mentioned rules, then we can use the same rule for the source program to obtain a matching transition; proving the relation
+⟨
+R
+1
+,
+H
+1
+⟩
+∼
+Γ
+|
+ℬ
+⟨
+R
+1
+′
+,
+S
+1
+′
+⟩
+\langle R_{1},H_{1}\rangle\sim_{\Gamma\mid{\color[rgb]{1,0,1}\mathcal{B}}}\langle R^{\prime}_{1},S^{\prime}_{1}\rangle
+is done as in the proof of (1).
+If
+R-Read
+or
+R-Write
+are the last rule used, then
+u
+u
+is of the form
+x
+:=
+a
+.
+r
+​
+e
+​
+a
+​
+d
+​
+(
+)
+x:={a}.read()
+or
+a
+.
+w
+​
+r
+​
+i
+​
+t
+​
+e
+​
+(
+x
+)
+{a}.write(x)
+.
+In these cases, the last ruled applied must be (if we ignore the consequence rule)
+Tr-InsertL
+or
+Tr-InsertR
+.
+These cases follows from Lemma
+5
+.
+The remaining interesting case is the case
+R-Assign
+.
+That is, the case where the last rule applied is of the form:
+⟨
+R
+′
+,
+e
+⟩
+⇓
+n
+⟨
+R
+′
+,
+S
+′
+,
+x
+:=
+e
+⟩
+⇓
+⟨
+R
+′
+{
+x
+↦
+n
+}
+,
+S
+′
+⟩
+‾
+\displaystyle\langle R^{\prime},S^{\prime},x:=e\rangle\Downarrow\langle R^{\prime}\{x\mapsto n\},S^{\prime}\rangle\langle R^{\prime},e\rangle\Downarrow n
+By the definition of the translation rules, the only cases where this rule involves a buffer is the when (i)
+x
+:
+𝐛𝐮𝐟
+x:\mathbf{buf}
+or (ii)
+e
+e
+is a buffer
+b
+b
+and
+x
+:
+𝐢𝐧𝐭
+x:\mathbf{int}
+.
+We first consider the case (i).
+In this case let us rename
+x
+x
+to
+b
+b
+so that it is clear that the variable is of type
+𝐛𝐮𝐟
+\mathbf{buf}
+.
+By inversion on the transformation rule, we must have
+e
+≡
+y
+Γ
+⁡
+(
+y
+)
+=
+𝐢𝐧𝐭
+\displaystyle e\equiv y\quad\Gamma(y)=\mathbf{int}
+u
+≡
+b
+:=
+y
+s
+≡
+a
+⁡
+[
+e
+′
+]
+:=
+y
+Γ
+⁡
+(
+a
+)
+=
+𝐰𝐚𝐫𝐫𝐚𝐲
+Γ
+⊢
+e
+′
+:
+𝐢𝐧𝐭
+\displaystyle u\equiv b:=y\quad s\equiv a[e^{\prime}]:=y\quad\Gamma(a)=\mathbf{warray}\quad\Gamma\vdash e^{\prime}:\mathbf{int}
+Γ
+⊢
+{
+e
+′
+∉
+ι
+a
+∧
+[
+y
+/
+b
+,
+a
+{
+e
+′
+↦
+y
+}
+/
+a
+]
+ℬ
+′
+}
+a
+[
+e
+′
+]
+:=
+y
+⟹
+b
+:=
+y
+{
+ℬ
+′
+}
+\displaystyle{\Gamma\vdash\{e^{\prime}\not\in\iota_{a}\land[y/b,a\{e^{\prime}\mapsto y\}/a]{\color[rgb]{1,0,1}\mathcal{B}}^{\prime}\}a[e^{\prime}]:=y\Longrightarrow b:=y\{{\color[rgb]{1,0,1}\mathcal{B}}^{\prime}\}}
+ℬ
+≡
+e
+′
+∉
+ι
+a
+∧
+[
+y
+/
+b
+,
+a
+{
+e
+′
+↦
+y
+}
+/
+a
+]
+ℬ
+′
+.
+\displaystyle{\color[rgb]{1,0,1}\mathcal{B}}\equiv e^{\prime}\not\in\iota_{a}\land[y/b,a\{e^{\prime}\mapsto y\}/a]{\color[rgb]{1,0,1}\mathcal{B}}^{\prime}.
+for some
+y
+y
+and
+e
+′
+e^{\prime}
+.
+As the matching reduction we can take
+⟨
+R
+,
+H
+,
+s
+⟩
+⇓
+⟨
+R
+,
+H
+{
+(
+a
+,
+m
+)
+↦
+R
+(
+y
+)
+}
+⟩
+\langle R,H,s\rangle\Downarrow\langle R,H\{(a,m)\mapsto R(y)\}\rangle
+, where
+⟨
+R
+,
+e
+′
+⟩
+⇓
+m
+\langle R,e^{\prime}\rangle\Downarrow m
+, using
+R-WriteArray
+.
+We are left to check that
+⟨
+R
+,
+H
+{
+(
+a
+,
+m
+)
+↦
+R
+(
+y
+)
+}
+⟩
+∼
+Γ
+|
+ℬ
+′
+⟨
+R
+′
+{
+b
+↦
+R
+′
+(
+y
+)
+}
+,
+S
+′
+⟩
+\langle R,H\{(a,m)\mapsto R(y)\}\rangle\sim_{\Gamma\mid{\color[rgb]{1,0,1}\mathcal{B}}^{\prime}}\langle R^{\prime}\{b\mapsto R^{\prime}(y)\},S^{\prime}\rangle
+under the assumption that
+⟨
+R
+,
+H
+⟩
+∼
+Γ
+|
+ℬ
+⟨
+R
+′
+,
+S
+′
+⟩
+\langle R,H\rangle\sim_{\Gamma\mid{\color[rgb]{1,0,1}\mathcal{B}}}\langle R^{\prime},S^{\prime}\rangle
+.
+We have already showed this in the proof of (1) (the case for
+R-WriteArray
+).
+Now we consider the case (ii).
+In this case, the last transformation rule applied must be
+Tr-READMem
+, and thus, we must have
+u
+≡
+x
+:=
+b
+s
+≡
+x
+:=
+a
+⁡
+[
+e
+′
+]
+\displaystyle u\equiv x:=b\quad s\equiv x:=a[e^{\prime}]
+Γ
+⁡
+(
+x
+)
+=
+𝐢𝐧𝐭
+Γ
+⁡
+(
+a
+)
+=
+𝐫𝐚𝐫𝐫𝐚𝐲
+Γ
+⊢
+e
+′
+:
+𝐢𝐧𝐭
+Γ
+⁡
+(
+b
+)
+=
+𝐛𝐮𝐟
+\displaystyle\Gamma(x)=\mathbf{int}\quad\Gamma(a)=\mathbf{rarray}\quad\Gamma\vdash e^{\prime}:\mathbf{int}\quad\Gamma(b)=\mathbf{buf}
+Γ
+⊢
+{
+b
+=
+a
+[
+e
+]
+∧
+[
+b
+/
+x
+]
+ℬ
+′
+}
+x
+:=
+a
+[
+e
+′
+]
+⟹
+x
+:=
+b
+{
+ℬ
+′
+}
+\displaystyle\Gamma\vdash\{b=a[e]\land[b/x]{\color[rgb]{1,0,1}\mathcal{B}}^{\prime}\}x:=a[e^{\prime}]\Longrightarrow x:=b\{{\color[rgb]{1,0,1}\mathcal{B}}^{\prime}\}
+ℬ
+≡
+b
+=
+a
+⁡
+[
+e
+]
+∧
+[
+b
+/
+x
+]
+​
+ℬ
+′
+\displaystyle{\color[rgb]{1,0,1}\mathcal{B}}\equiv b=a[e]\land[b/x]{\color[rgb]{1,0,1}\mathcal{B}}^{\prime}
+We can take
+⟨
+R
+,
+H
+,
+s
+⟩
+⇓
+⟨
+R
+{
+R
+↦
+H
+(
+a
+,
+m
+)
+}
+,
+H
+⟩
+\langle R,H,s\rangle\Downarrow\langle R\{R\mapsto H(a,m)\},H\rangle
+as the matching transition.
+Here, we used the rule
+R-ReadArray
+and
+m
+m
+is the evaluation result of
+e
+′
+e^{\prime}
+.
+It remains to show that
+⟨
+R
+{
+x
+↦
+H
+(
+a
+,
+m
+)
+}
+,
+H
+⟩
+∼
+Γ
+|
+ℬ
+′
+⟨
+R
+′
+{
+x
+↦
+R
+′
+(
+b
+)
+}
+,
+S
+′
+⟩
+\langle R\{x\mapsto H(a,m)\},H\rangle\sim_{\Gamma\mid{\color[rgb]{1,0,1}\mathcal{B}}^{\prime}}\langle R^{\prime}\{x\mapsto R^{\prime}(b)\},S^{\prime}\rangle
+under the assumption that
+⟨
+R
+,
+H
+⟩
+∼
+Γ
+|
+ℬ
+⟨
+R
+′
+,
+S
+′
+⟩
+\langle R,H\rangle\sim_{\Gamma\mid{\color[rgb]{1,0,1}\mathcal{B}}}\langle R^{\prime},S^{\prime}\rangle
+.
+Again, this is something we already proved in the proof of (1) (the case for
+R-ReadArray
+).
+∎
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

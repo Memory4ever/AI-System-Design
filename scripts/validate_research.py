@@ -2236,11 +2236,13 @@ def validate_report_text(
     registry: Mapping[str, Mapping[str, str]],
     strict: bool = False,
     stable_node_ids: Optional[set] = None,
+    root: Optional[Path] = None,
+    path: Optional[Path] = None,
 ) -> List[str]:
     """Validate one report; legacy/unmarked Score V1 reports are accepted unchanged."""
     if is_v3_report(text):
         return validate_markdown_structure(text) + check_report_v3.validate(
-            text, registry, stable_node_ids=stable_node_ids,
+            text, registry, root=root, path=path, stable_node_ids=stable_node_ids,
         )
     if METADATA_MARKER not in text:
         if strict:
@@ -3515,7 +3517,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             if args.registry is not None:
                 errors.append(f"{path}: 当前报告必须使用当前来源清单；--registry 仅用于旧格式结构核对。")
                 continue
-            for error in validate_report_text(text, registry, strict=True, stable_node_ids=stable_node_ids):
+            for error in validate_report_text(text, registry, strict=True, stable_node_ids=stable_node_ids, root=root, path=path):
                 errors.append(f"{path}: {error}")
         elif simple_source_list and (METADATA_MARKER in text or path in strict_paths or re.match(r"# (Daily|Weekly) Research", text)):
             errors.extend(validate_local_markdown_links(text, path, root))

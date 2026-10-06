@@ -95,6 +95,10 @@ connect
 
 Client 与 Server 必须处理不支持的 version/capability，而不是猜测兼容。Tool/resource identity 还需要 server identity 与 version，否则同名工具在不同 server 上可能有完全不同语义。
 
+会话已建立，也不代表多个 server 的工具目录同时完整就绪。启动时等待所有连接 settle，使首轮发现基于全部连接尝试的终态，失败的 server 仍不能提供工具；在集合小且首轮必须确认全部能力时很合理，最慢 server 却会阻塞整个首 turn。另一分支在后台建立连接，只为首轮发现提供有界等待，让模型先消费 ready subset。此时缺少工具可能仅表示“这次视图尚未就绪”，不能直接解释为 server 不存在或永久没有该能力；后续发现与连接管理必须分别记录完成条件，部分就绪更不能授予调用权限。
+
+[MiMo-Code 的固定实现](https://github.com/XiaomiMiMo/MiMo-Code/pull/2657)只把 startup Deferred 的等待限制为3秒，其后的 host refresh 仍可能同步建立连接，所以这不是 `tools()` 的端到端3秒 SLO。通常管理访问等待全 settle，`clients(context)` 则可返回捕获的 turn 视图，不能概括成所有 accessor 一律等待。它以视图变化、重试及取消清理的成本换较早开始，localhost 手动释放慢连接的 fixture 只验证子集到后续完整视图，不证明公网时延或完整生命周期无泄漏。首轮必须用齐目录、或后续重发现无法确认时，应保留全 settle 或明确 defer，避免把早期缺项固化成模型的能力判断。<!-- source-family:SF-2026-GITHUB-MIMO-CODE-PR2657 -->
+
 ### 协议比较必须拆开五类契约
 
 用 transport 或产品名称给 Agent protocol 分类，会把不同层的问题混在一起。更稳定的比较坐标是：counterparty 决定谁与谁通信，payload 定义传递什么，interaction state 描述请求、流式和回调如何推进，discovery 负责能力如何被找到，schema 则约束数据与错误的可解释性。认证、delivery、ordering、backpressure 与 effect semantics 仍是横跨这些维度的独立保证，不能从“同属一种协议”推导互操作。
@@ -244,6 +248,10 @@ MCP 可以承载 tool/resource connection，却不定义：
 
 本节以核验时的 [A2A 1.0 规范](https://a2a-protocol.org/latest/specification/)为接口案例，不把 SDK 或远端服务的版本视为已同步升级。Agent Card 声明接口、protocol version、能力与认证要求，声明本身不构成能力质量或业务授权证明。简单交互可以只返回 `Message`，需要跟踪的工作才形成 `Task`；`contextId` 关联交互上下文，task ID 标识具体工作，`Artifact` 承载产物而不是状态消息。等待补充输入或认证是可继续的中断状态，不应当作失败；完成、失败、取消或拒绝等终态也不能混成一个“HTTP 成功”。[任务生命周期说明](https://a2a-protocol.org/latest/topics/life-of-a-task/)保留了这些区别。
 
+跨 Agent 消息还需选择保留原生模态还是传递转码摘要。接收接口已声明可消费音频或图像时，保留原载荷能避免先把声音、空间细节压成文字；文本路径在载荷预算紧、接收方只需要摘要或原媒体不可授权时仍合理。路由声明、实际 decoder 与最终决策消费者分别验收：中间 Agent 收到原始媒体不证明末端已经读取或正确使用其中的信息，转码文本也只是派生视图，须保留原内容、转换和接收接口身份。<!-- source-family:SF-2026-ARXIV-2604-12213 -->
+
+[MMA2A 的有限配对实验](https://arxiv.org/html/2604.12213v1)利用既有 A2A 载荷与能力声明，没有新增协议 schema；同底模的原生与文本路由在建议动作标签上有差额，换成关键词决策后差额消失，但这不是所有任务都必须采用原生模态的定理，也未验真实业务副作用。原生处理增加模型调用延迟与敏感媒体暴露，局部路由成功仍可能导致过度动作；因此任务质量、转换损失、完整调用费用和权限分验。消费者不会使用额外信号、文本已足够或预算/授权不合格时，保留文本接口、显式转码限制与独立行为检查，不从“可接收此模态”批准正确性或安全。下面的 runtime 映射继续保存对象关联与状态，委派策略与最终提交仍分别由第82章和第81章负责，而不是路由器。
+
 协议对象进入本地持久执行时，还需要显式映射。下面是本书的 runtime 接口要求，不是 A2A 已替应用实现的保证：
 
 | 远端可见对象或事件 | 本地应保存的关联 | 不能据此推断 |
@@ -259,6 +267,8 @@ Streaming 和 push notification 必须先核对对端声明的 capability，不�
 当远端需要原生工具链直接操作多文件环境时，还可把委派对象扩展为临时workspace投影，而不是把目录内容反复序列化进消息。先协商task、资源路径、read-only/read-write与TTL，再把绝对到期和transport handle绑定到delegation identity；control消息只管理生命周期，live mount、archive、object storage或Git adapter各自承担数据访问与回传。任务状态、传输可用与产物验收仍是不同对象，不能从START或DONE推出文件effect安全或目标已完成。<!-- source-family:SF-2026-ARXIV-2602-20493 -->
 
 [有限协议原型](https://arxiv.org/html/2602.20493v1#S4.SS2)还暴露effect时点差异：snapshot transport可先staged再申请本地采用，live同步则文件操作已回写，不能靠事后review补出同一道提交门。应按transport能力选择隔离副本/只读或明确事前授权，并保存lease、快照identity、失败和清理回执；投影、状态恢复与detach/release均需预算。细粒度ACL/审计和多方冲突处理在原型中仍未闭合；权限、同步或恢复不能确认时回退原消息/只读artifact交换，由Ch81继续负责重试、补偿与最终提交，不把临时mount当隔离保证。
+
+加密会话还不能自动限制一次委派能发送多少任务消息：用户可以签署绑定session的hash-chain终值，每发送一个task-msg消耗一个可验证前像，再以Merkle根承诺多个子session的预算分配；发现服务核联系ACL，接收端另核消息顺序与时钟预算。这把传输认证、联系授权和可核销额度分开，不让新连接重置同一session总额。[受限协议设计](https://arxiv.org/html/2605.06933v1)依赖受信用户软件/密钥状态、CA、同步时钟、可用provider及至少一诚实执行端，不能约束双方恶意、证明消息内容安全或防DoS。签名预计算、证明、状态与每次验收仍付费，one-to-many还需显式分配而非复制总额度；身份、时钟或余额不能确认时拒绝该session并回到显式小额度/本地许可，不以PQ-TLS成功替业务授权或最终effect验收签字。<!-- source-family:SF-2026-ARXIV-2605-06933 -->
 
 因此，本章只拥有连接与对象映射；是否委派、交付什么证据归 [Ch82 Multi-Agent](82-multi-agent.md#message-不是-state)，重试、补偿、批准与最终提交归 [Ch81 Workflow](81-workflow.md#resume-的语义必须比有-checkpoint更具体)。远端 task 的终态是输入证据，不是可以越过本地 policy 与验收的命令。
 
@@ -285,6 +295,8 @@ Catalog/index owner 负责 schema version、refresh 与 deletion ordering；auth
 工具少、名称唯一且操作者熟悉目录时，description 只是帮助文本；一旦模型根据自然语言 description 决定是否发现和调用工具，遗漏用途、参数约束、前置条件、side effect 或相近工具差异就会直接改变控制流。Catalog owner 应把 description、input schema、server/tool identity 与版本视为同一发布 artifact，并在 admission 时执行 smell lint、schema 一致性检查以及冻结 query set 上的 selection-effect test；retriever 只返回候选，authorization 与 executor 仍在 effect time 复核权限和精确 identity。
 
 更完整的描述能提高可发现性，却消耗 context、暴露能力信息，也可能被关键词堆砌或 prompt injection 操纵；lint 通过只说明已知缺陷未出现，不证明工具正确或安全。目录很小或描述质量不足时，可以回退 allowlisted full schema 与人工选择；任何 description 更新都应使 discovery evidence 失效并重测，而不能沿用旧命中率。
+
+能力目录还可以用实际执行结果校准，而不只相信card文字：先从agent文档构造任务query，对候选执行，再把任务反馈作为检索/重排标签。这样的标签绑定任务、agent接口版本、工具权限与评判器，不是publisher声称的通用能力；只从文档生成query又会留下目录之外需求的盲区。[AgentSearch的受限对照](https://arxiv.org/html/2604.22436v1)还筛掉全成功和全失败样本，对成功却未在文档中声明对应能力的候选打折只是标注先验，不是可靠性真值。给定候选集上的oracle重排上界不等端到端召回，多子任务各找到一个可用agent也不证明已协作完成。执行探测、弱label生成、评价、刷新与在线检索均计费；接口变化、标签或召回失配时，保留原card/allowlisted目录、受预算的真实能力probe和人工选择，调用时权限与effect验收仍独立，不由检索排名批准可执行或可信。<!-- source-family:SF-2026-ARXIV-2604-22436 -->
 
 <!-- SF-2026-ARXIV-2602-18914 -->
 
@@ -407,6 +419,12 @@ MCP 提供可演进的连接协议，让 AI host 以统一方式发现和调用�
 
 ## Review notes
 
+- `SF-2026-ARXIV-2605-06933` — [MAGIQ exact-v1](https://arxiv.org/html/2605.06933v1)，Daily2026-05-12补充。2+2+3=7；双方必要§2.3/3、4.1、5 theorem/sketch、6.1–2/6.8，作者另§4.2–4.4/6.3–6.7；未核完整F proof或实现/复现。只采session-bound可核销task-msg预算、Merkle子额/ACL/clock分责；保static-corruption及CA/受信user/provider/至少一honest端条件、不授语义安全/DoS、36s签名预计算/异框架成本与6.8数值冲突。reader Source/实际owner/逐字PRE通过、root指定窄授权后保存，reader R13已实际完整新增/两侧/本人注非writer POST通过，root接纳整合并释放指定窄位；仅同步既成事实。
+
+- `SF-2026-ARXIV-2604-22436` — Daily2026-04-28补Apr27；2+1+2=5，v1§3～5/AppA/B必要；execution产弱label校准检索评价，成功未docdeclared折扣仅标注先验；oracleTop20非端到端/COMP非协作成功，外部接口/费用与标签人口近文。reader必要Source/date/实际owner与修后逐字PRE通过，root授指定单段+本人注窄lease；作者已保存并顺读完整邻接，reader实际非writer正文/完整两侧/本人注POST已通过，root接纳释放指定窄lease；作者仅行政同步本注并实际读回。未核实现/复现，不授DAY。
+
+- `SF-2026-GITHUB-MIMO-CODE-PR2657` — Daily2026-10-14；[精确 merge MCP index.ts](https://github.com/XiaomiMiMo/MiMo-Code/blob/b258d28f436446bb1c9768fe0134693219be7cdc/packages/cli/src/mcp/index.ts)与[first-turn fixture](https://github.com/XiaomiMiMo/MiMo-Code/blob/b258d28f436446bb1c9768fe0134693219be7cdc/packages/cli/test/mcp/first-turn-wait.test.ts)。startup await、refreshHost 与 captured view 分责；未运行测试，不授完整 tools SLO 或生产连接安全。
+
 - `SF-2026-ARXIV-2602-20493` — Daily `2026-02-26`；[exact-v1](https://arxiv.org/html/2602.20493v1) §3/4/5/6。2+2+2=6，workspaceprojection/control-data与live/snapshot effect边界差额深入；两demo非matched性能/安全/恢复一致性证明，细粒度ACL/RBAC/audit与多方CRDT future、全投影/清理费用近正文。root实际必要源/owner PRE通过并授自身两段+末注窄锁；作者正文/完整邻接已顺读，root非作者实际正文259/261、完整251～270与自身末注410 POST通过，窄锁已释放；未核代码/复现，非日级Gate。
 
 - `SF-2026-ARXIV-2604-14512`：采用 exact-v1 §III-B–D/IV-A–G/V–VI/VII-D–E；复用 ORIGINAL_GAP §14512 有效非作者必要源审及 root 当前 owner 反向采用核。仅增解释规则安装/registry 与每次展开执法，保留原业务授权；未复现，root已实际顺读正文及两侧交接，写后PASS。
@@ -464,3 +482,5 @@ request contract。协议字段只写稳定抽象；SDK 默认行为与 fleet ad
 <!-- daily-books-trace:SF-2026-ARXIV-2607-25635:end -->
 
 - `SF-2025-MOONSHOT-KIMI-CLI-0-68`：Daily `2025-12-25`；官方 release `published_at=2025-12-24T12:40:22Z`；固定 commit `d5ae5b809d19086db2d823ca6f1997bd68c3db2d`。实际静态核验 `acp/mcp.py` 配置转换、`soul/toolset.py` 连接队列及 `acp/tools.py` 的 `replace_tools` / `Terminal.__call__`；采用配置/连接/执行分责及 approval、timeout/handle 边界，不把 OAuth 本地缓存清除称服务端 revoke。未部署、未跑 ACP/OAuth/cancellation 测试，不能推出通用终止或性能保证；必要源审、日期及Mill实际写后复核通过的依据见[本日记录](../../papers/2025/12/_sources/daily-20251225/ROOT_ADMISSION_REVIEW.md)。
+
+- `SF-2026-ARXIV-2604-12213` — Daily2026-04-16补Apr15，supp_apr16_author；[exact-v1](https://arxiv.org/html/2604.12213v1)§3–6，2+1+2=5，具体payload选择接口差额深入。仅原生/转码路径与声明/decoder/最终consumer分责，不采A2A新schema或协议兼容保证。保50paired同底模推荐action标签、keyword反侧/过度动作、API延迟/全费用与媒体privacy，不授真实effect/普适收益或SLO；未核artifact/复现。reader R3必要Source/R9 date/R11 finalPRE实际通过；作者按root窄锁实际写入，reader R12实读两段/完整局部邻接/本人注POST通过，作者仅同步本注并实际读回；不授DAY。

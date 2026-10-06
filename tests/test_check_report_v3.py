@@ -1,6 +1,7 @@
 """Small, offline tests for the human-readable V3 report contract."""
 import importlib.util
 from pathlib import Path
+import tempfile
 import unittest
 
 
@@ -24,8 +25,8 @@ AUDIT_SUMMARY = "已核对窗口、来源范围、候选证据及 Books 处置�
 
 def report(candidate="", body="", weekly=False, state="完成", gap="无"):
     title = "Weekly Research — 2026-W35" if weekly else "Daily Research — 2026-08-25"
-    window = ("2026-08-23T09:00:00+08:00 ～ 2026-08-30T09:00:00+08:00" if weekly
-              else "2026-08-24T09:00:00+08:00 ～ 2026-08-25T09:00:00+08:00")
+    window = ("2026-08-23 ～ 2026-08-29" if weekly
+              else "2026-08-24 ～ 2026-08-24")
     extra = "\n| SRC-B | https://example.org/weekly 全部页面 | 已检查 | 无 |" if weekly else ""
     return f"""# {title}
 
@@ -84,37 +85,39 @@ class ReportV3Tests(unittest.TestCase):
 
     def test_historical_weekly_uses_identical_format(self):
         text = report(weekly=True).replace("2026-W35", "2024-W35")
-        text = text.replace("2026-08-23", "2024-08-25").replace("2026-08-30", "2024-09-01")
+        text = text.replace("2026-08-23", "2024-08-25").replace("2026-08-29", "2024-08-31")
         text = text.replace("2026-08-31", "2024-09-02")
         self.assertEqual(self.errors(text), [])
 
     def test_valid_reviewed_candidate_needs_no_machine_receipts(self):
         self.assertEqual(self.errors(report(CANDIDATE, BODY)), [])
 
-    def test_timezone_required_and_full_timestamp_is_checked(self):
-        self.rejects(report().replace("2026-08-24T09:00:00+08:00", "2026-08-24T09:00:00"), "时区")
-        self.rejects(report(CANDIDATE.replace("12:00:00", "08:59:59"), BODY), "窗口")
+    def test_timezone_required_and_timestamps_use_calendar_day_bounds(self):
+        self.rejects(report(CANDIDATE.replace("12:00:00+08:00", "12:00:00"), BODY), "时区")
+        self.assertEqual(self.errors(report(CANDIDATE.replace("12:00:00", "08:59:59"), BODY)), [])
         self.rejects(report(CANDIDATE.replace("2026-08-24T12:00:00+08:00", "2026-08-25T09:00:00+08:00"), BODY), "窗口")
 
-    def test_date_only_overlap_is_not_proof_of_window_membership(self):
-        for value in ("2026-08-24", "2026-08-25"):
-            self.rejects(report(CANDIDATE.replace("2026-08-24T12:00:00+08:00", value), BODY), "窗口")
-        self.rejects(report(CANDIDATE.replace("2026-08-24T12:00:00+08:00", "2026-08-23"), BODY), "窗口")
+    def test_date_only_is_normal_membership_for_the_covered_day(self):
+        candidate = CANDIDATE.replace("2026-08-24T12:00:00+08:00", "2026-08-24")
+        self.assertEqual(self.errors(report(candidate, BODY)), [])
+        for value in ("2026-08-23", "2026-08-25"):
+            self.rejects(report(CANDIDATE.replace("2026-08-24T12:00:00+08:00", value), BODY), "日期范围")
 
     def test_date_only_inside_weekly_window_and_bounded_time_interval(self):
         candidate = CANDIDATE.replace("2026-08-24T12:00:00+08:00", "2026-08-24")
         self.assertEqual(self.errors(report(candidate, BODY, weekly=True)), [])
         for interval in ("2026-08-24T10:00:00+08:00 ～ 2026-08-24T16:00:00+08:00",
-                         "2026-08-24T01:00:00Z ～ 2026-08-25T01:00:00Z"):
+                         "2026-08-23T16:00:00Z ～ 2026-08-24T16:00:00Z"):
             candidate = CANDIDATE.replace("2026-08-24T12:00:00+08:00", interval)
             self.assertEqual(self.errors(report(candidate, BODY)), [])
-        for interval in ("2026-08-24T08:00:00+08:00 ～ 2026-08-24T16:00:00+08:00",
+        for interval in ("2026-08-23T23:59:59+08:00 ～ 2026-08-24T16:00:00+08:00",
                          "2026-08-25T08:00:00+08:00 ～ 2026-08-25T10:00:00+08:00",
+                         "2026-08-24T16:00:00+08:00 ～ 2026-08-24T12:00:00+08:00",
                          "2026-08-24T12:00:00+08:00 ～ 2026-08-24T12:00:00+08:00"):
             self.rejects(report(CANDIDATE.replace("2026-08-24T12:00:00+08:00", interval), BODY), "窗口")
 
     def test_unresolved_date_is_a_gap_not_a_fake_timestamp(self):
-        text = report(state="进行中", gap="[材料](https://example.org/paper) 仅披露日期，需公开时刻或可证实的时间范围；不伪造候选落窗。")
+        text = report(state="进行中", gap="[材料](https://example.org/paper) 公开日期未确认，需官方公告日或可复查的日级包络；不伪造候选落窗。")
         self.assertEqual(self.errors(text), [])
         self.rejects(text.replace("**状态：** 进行中", "**状态：** 完成"), "完成")
 
@@ -137,12 +140,19 @@ class ReportV3Tests(unittest.TestCase):
             self.rejects(report().replace(SOURCE, source.replace("机构在目标历史窗口尚未成立", reason)), "不适用")
 
     def test_custom_window_requires_explicit_explanation(self):
-        text = report().replace("2026-08-24T09:00:00", "2026-08-24T08:00:00")
+        text = report().replace("2026-08-24 ～ 2026-08-24",
+                                "2026-08-24T09:00:00+08:00 ～ 2026-08-25T09:00:00+08:00")
         self.rejects(text, "窗口说明")
-        self.assertEqual(self.errors(text.replace("**状态：**", "**窗口说明：** 用户授权提前一小时开始。\n**状态：**")), [])
+        authorized = text.replace("**状态：**", "**窗口说明：** 用户授权保留旧小时窗口。\n**状态：**")
+        self.assertEqual(self.errors(authorized), [])
+        early = report(CANDIDATE.replace("12:00:00", "08:59:59"), BODY)
+        early = early.replace("2026-08-24 ～ 2026-08-24",
+                              "2026-08-24T09:00:00+08:00 ～ 2026-08-25T09:00:00+08:00")
+        self.rejects(early.replace("**状态：**", "**窗口说明：** 用户授权保留旧小时窗口。\n**状态：**"), "窗口")
 
     def test_future_window_cannot_be_closed_before_its_end(self):
-        self.rejects(report().replace("2026-08-31T10:00:00+08:00", "2026-08-25T08:59:59+08:00"), "检查时间")
+        self.rejects(report().replace("2026-08-31T10:00:00+08:00", "2026-08-24T23:59:59+08:00"), "检查时间")
+        self.assertEqual(self.errors(report().replace("2026-08-31T10:00:00+08:00", "2026-08-25T00:00:00+08:00")), [])
 
     def test_missing_required_source_and_not_triggered_fixed_source(self):
         self.rejects(report().replace(SOURCE, ""), "SRC-A")
@@ -223,7 +233,7 @@ class ReportV3Tests(unittest.TestCase):
         self.assertEqual(self.errors(report().replace("https://example.org/research", "../_sources/manual-notes.md")), [])
 
     def test_equivalent_offset_is_compared_as_an_instant(self):
-        text = report().replace("2026-08-24T09:00:00+08:00", "2026-08-24T01:00:00Z")
+        text = report(CANDIDATE.replace("2026-08-24T12:00:00+08:00", "2026-08-24T04:00:00Z"), BODY)
         self.assertEqual(self.errors(text), [])
 
     def test_headings_and_required_metadata_are_not_optional(self):
@@ -235,15 +245,16 @@ class ReportV3Tests(unittest.TestCase):
         text = report(weekly=True).replace("| SRC-B | https://example.org/weekly 全部页面 | 已检查 | 无 |", "")
         self.rejects(text, "SRC-B")
 
-    def test_weekly_closes_on_sunday_cutoff_without_monday_tail(self):
-        text = report(weekly=True).replace("2026-08-31T10:00:00+08:00", "2026-08-30T09:00:00+08:00")
+    def test_weekly_closes_at_sunday_midnight_without_monday_tail(self):
+        text = report(weekly=True).replace("2026-08-31T10:00:00+08:00", "2026-08-30T00:00:00+08:00")
         self.assertEqual(self.errors(text), [])
-        self.rejects(text.replace("**检查时间：** 2026-08-30T09:00:00+08:00", "**检查时间：** 2026-08-30T08:59:59+08:00"), "检查时间")
-        self.rejects(report(weekly=True).replace("2026-08-23T09:00:00+08:00 ～ 2026-08-30T09:00:00+08:00", "2026-08-24T00:00:00+08:00 ～ 2026-08-31T00:00:00+08:00"), "窗口说明")
+        self.assertEqual(self.errors(text.replace("2026-08-30T00:00:00+08:00", "2026-08-30T08:59:59+08:00")), [])
+        self.rejects(text.replace("**检查时间：** 2026-08-30T00:00:00+08:00", "**检查时间：** 2026-08-29T23:59:59+08:00"), "检查时间")
+        self.rejects(report(weekly=True).replace("2026-08-23 ～ 2026-08-29", "2026-08-24 ～ 2026-08-30"), "窗口说明")
 
-    def test_weekly_year_boundary_uses_cutoff_sundays_iso_week(self):
+    def test_weekly_year_boundary_uses_archive_sundays_iso_week(self):
         text = report(weekly=True).replace("2026-W35", "2026-W01")
-        text = text.replace("2026-08-23T09:00:00", "2025-12-28T09:00:00").replace("2026-08-30T09:00:00", "2026-01-04T09:00:00")
+        text = text.replace("2026-08-23", "2025-12-28").replace("2026-08-29", "2026-01-03")
         self.assertEqual(self.errors(text), [])
 
     def test_out_of_window_followups_may_be_kept_in_gap_section(self):
@@ -294,6 +305,57 @@ class ReportV3Tests(unittest.TestCase):
         for review in ("受阻", "争议"):
             self.rejects(report(CANDIDATE.replace("深入完成", review), state="进行中"), "§5")
         self.rejects(report(CANDIDATE.replace("仅报告：未改变长期命题", "暂缓：缺少必要材料"), BODY, state="进行中"), "§5")
+
+    def frozen_report_errors(self, current_material=None, current_date=None, archive_extra=""):
+        material = "[Original title](https://arxiv.org/html/2608.00123v1)"
+        old_row = CANDIDATE.replace("[材料](https://example.org/paper)", material).replace(
+            "2026-08-24T12:00:00+08:00", "2026-08-25")
+        original = report(old_row + archive_extra, BODY).replace(
+            "**窗口：** 2026-08-24 ～ 2026-08-24",
+            "**窗口：** 2026-08-24T09:00:00+08:00 ～ 2026-08-25T09:00:00+08:00\n"
+            "**窗口说明：** 用户授权保留已有候选日期，仅补遗漏。")
+        candidate = old_row.replace(material, current_material or material)
+        if current_date:
+            candidate = candidate.replace("2026-08-25", current_date)
+        current = original.replace(old_row + archive_extra, candidate).replace(
+            "**状态：**", "**补充窗口：** 2026-08-24 ～ 2026-08-24\n"
+            "**冻结候选日期：** [原报告](../_sources/daily-20260825/baseline-before-supplement-20261016.md)\n"
+            "**状态：**", 1)
+        actual_material = current_material or material
+        current = current.replace(BODY, "### " + actual_material + "\n\n已核原文的受限机制。")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / "papers/2026/08/25/README.md"
+            archive = root / "papers/2026/08/_sources/daily-20260825/baseline-before-supplement-20261016.md"
+            archive.parent.mkdir(parents=True)
+            path.parent.mkdir(parents=True)
+            archive.write_text(original, encoding="utf-8")
+            return self.errors(current, root=root, path=path)
+
+    def test_frozen_v3_candidate_title_can_be_corrected_without_moving_date(self):
+        self.assertEqual(self.frozen_report_errors(
+            "[Correct exact-v1 title](https://arxiv.org/html/2608.00123v1)"), [])
+
+    def test_frozen_v3_unchanged_candidate_still_passes(self):
+        self.assertEqual(self.frozen_report_errors(), [])
+
+    def test_corrected_title_cannot_move_frozen_date_into_supplement_window(self):
+        errors = self.frozen_report_errors(
+            "[Correct exact-v1 title](https://arxiv.org/html/2608.00123v1)", "2026-08-24")
+        self.assertTrue(any("冻结候选公开日期不得改变" in error for error in errors), errors)
+
+    def test_title_match_cannot_freeze_different_url_or_version(self):
+        for url in ("https://example.org/new-paper", "https://arxiv.org/html/2608.00123v2"):
+            with self.subTest(url=url):
+                errors = self.frozen_report_errors(f"[Original title]({url})")
+                self.assertTrue(any("公开日期不在报告日期范围内" in error for error in errors), errors)
+
+    def test_frozen_archive_rejects_same_url_under_different_titles(self):
+        extra = "\n" + CANDIDATE.replace("[材料](https://example.org/paper)",
+            "[Alias](https://arxiv.org/html/2608.00123v1)").replace(
+                "2026-08-24T12:00:00+08:00", "2026-08-25")
+        errors = self.frozen_report_errors(archive_extra=extra)
+        self.assertTrue(any("原候选精确身份重复" in error for error in errors), errors)
 
     def test_backstop_access_limit_does_not_block_complete_report(self):
         extra = "\n| SRC-D | https://example.org/search 查询入口 | 检索受限 | 无历史检索入口 |"

@@ -1,0 +1,369 @@
+VisualScratchpad: Inference-time Visual Concepts Analysis in Vision Language Models
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Method
+3 Case studies: Revealing three failure modes
+4 Related work
+5 Conclusion
+References
+A Appendix
+A.1 SAE training details
+A.2 Heatmap visualization and filtering details
+A.3 Causal Analysis
+A.4 Interface
+Exploring SAE latents.
+Model inference: VQA using VLM.
+Model inference: Classification using CLIP.
+Model inference with steering.
+Observe active latents.
+Option control panels.
+A.5 Case study
+Dataset.
+Experimental setup.
+Details for Case 2.
+License: CC BY 4.0
+arXiv:2603.07335v1 [cs.AI] 07 Mar 2026
+VisualScratchpad: Inference-time Visual Concepts Analysis in Vision Language Models
+Hyesu Lim†‡
+††thanks: This work was done during internship at NAVER AI Lab. $ˆc$ Correspondence author.
+Jinho Choi†
+Taekyung Kim‡
+Byeongho Huh‡
+Jaegul Choo†
+Dongyoon Han†KAIST AI, ‡NAVER AI Lab
+Abstract
+High-performing vision language models still produce incorrect answers, yet their failure modes are often difficult to explain.
+To make model internals more accessible and enable systematic debugging, we introduce VisualScratchpad, an interactive interface for visual concept analysis during inference. We apply sparse autoencoders to the vision encoder and link the resulting visual concepts to text tokens via text-to-image attention, allowing us to examine which visual concepts are both captured by the vision encoder and utilized by the language model. VisualScratchpad also provides a token-latent heatmap view that suggests a sufficient set of latents for effective concept ablation in causal analysis. Through case studies, we reveal three underexplored failure modes: limited cross-modal alignment, misleading visual concepts, and unused hidden cues. Demos are available here.
+1 Introduction
+Figure 1: VisualScratchpad pipeline. A. During inference in a vision-language model, we extract the intermediate representation z from the vision encoder. B. A sparse autoencoder processes z to produce concept activations. The attention map from output text tokens to image tokens is applied at the patch level to weight these activations. Latents exhibiting similar activation patterns across output tokens are then clustered and visualized in a token–latent heatmap. C. The causal influence of these concepts on the model’s output can be evaluated through latent ablation.
+Why do vision-language models (VLMs) make errors? Do the failures come from perceiving insufficient visual cues or relying on misleading ones? Although this question appears simple, answering it rigorously is challenging due to the limited interpretability of current VLMs. Mechanistic interpretability aims to address such questions through analyzing model weights and their activation patterns, and by reverse-engineering the functional roles of individual neurons (Bereska and Gavves, 2024; Sharkey et al., 2025).
+A central challenge is that a single neuron is often activated by multiple unrelated concepts (Elhage et al., 2022). Sparse autoencoders (SAEs) (Ng and Autoencoder, 2011; Ranzato et al., 2007) mitigate this issue by expanding dense representations into a higher-dimensional sparse basis. In the last couple of years, SAEs have shown their potential in large language models (Cunningham et al., 2023), vision encoders (Lim et al., 2025), diffusion models (Surkov et al., 2025), and more domain-specific foundation models, including those for medical imaging (Dasdelen et al., 2025). SAEs decompose representations into granular units that can be assigned semantic meaning through reverse engineering, typically by examining the inputs that strongly activate them. These sparse units are known to be more interpretable than the original model representation.
+Although recent work has achieved technical improvements in SAE architectures and training strategies (Bussmann et al., 2024; Fel et al., 2025), practical applications that effectively leverage SAE latents remain at an early stage, in part because the community still lacks an interface that supports a systematic analysis pipeline. Nevertheless, a growing body of research has begun to illustrate the promise of SAEs, for AI safety (Bereska and Gavves, 2024), scientific discovery (Wang et al., 2026), explaining mechanisms for adaptation to downstream tasks (Lim et al., 2025), and enabling scalable auto-annotation of dataset analysis (Choi et al., 2025). Motivated by these emerging directions, we introduce an interface that provides a unified and practical pipeline for SAE-based concept exploration, inference-time debugging, and causal analysis.
+In this work, we apply SAEs to understand and debug inference-time behavior of vision-language models (VLMs). Specifically, we aim to discover which visual concepts are captured by the vision encoder and subsequently used by the language model. To this end, we introduce VisualScratchpad, an interactive interface that supports inference-time concept inspection and causal testing through latent ablation. To avoid confounds introduced by projection layers and cross-modal attention when interpreting visual tokens inside the language model, we propose to apply SAEs directly to the vision encoders and link visual concepts to language tokens via text-to-image attention maps. We verify causal influence by replacing a latent’s activation with a user-specified value. However, because SAE latents vary in semantic granularity (Bricken et al., 2023), selecting an appropriate subset for effective concept steering can be challenging. To make this selection process more tractable, we introduce a token–latent activation heatmap, where the latents are clustered and visualized based on their activation similarity across output tokens.
+Lastly, we share several findings that address our research question of why VLMs produce incorrect responses through three case studies. The results highlight the potential and use cases of our proposed VisualScratchpad interface. First, we observe that even when the correct cue was captured by the vision encoder, the model may fail to utilize it; modifying the input prompt with a more direct description corrected the output. Second, when the model relies on a misleading cue, removing it changes the prediction. Third, although the vision encoder may capture multiple plausible visual concepts, the model often relies only on the most dominant one. Adjusting the relative activation strengths flips the output. These findings highlight key failure modes in VLMs and demonstrate how VisualScratchpad can support systematic debugging.
+2 Method
+Extracting visual concepts.
+Following Lim et al. (2025), we train vanilla SAEs on frozen CLIP-ViT-large (Radford et al., 2021)
+with an expansion factor of 32. Image token representations z∈ℝdmodelz\in\mathbb{R}^{d_{\text{model}}} are used as the input of the SAE, and the 1024-dimensional hidden representations are expanded into 32,768 latents h∈ℝdSAEh\in\mathbb{R}^{d_{\text{SAE}}}, i.e., h=ReLU​(Wenc⊤​z),z^=Wdec⊤​h.h=\text{ReLU}(W_{\text{enc}}^{\top}z),\hat{z}=W_{\text{dec}}^{\top}h. After training, both train and validation images are passed through the SAE to collect maximally activating images, from which activation frequency and mean activation strength are computed. More details are provided in § A.1.
+Linking visual concepts via text-to-image attention.
+We analyze VLMs following the typical architecture, where the vision encoder produces image tokens that are concatenated with text tokens, and text tokens attend to image tokens through cross-attention. This architecture has been utilized by multiple popular model families, including LLaVA (Liu et al., 2023), LLaMA (Grattafiori et al., 2024), Qwen (Bai et al., 2025), InternVL (Chen et al., 2024), and Gemma (Team et al., 2024). We refer to the attention weights from a single text token to all image tokens (patches) as an attention map. We average these weights over all layers and attention heads, resulting in attn∈ℝnpatches\rm{attn}\in\mathbb{R}^{n_{\text{patches}}}. This attention map indicates which image regions the model focuses on when processing that specific text token, with a higher value for stronger attention.
+To link visual concepts in the vision encoder with the language model, we multiply the attention map with SAE latent activations 𝐡∈ℝnpatches×dSAE\mathbf{h}\in\mathbb{R}^{n_{\text{patches}}\times d_{\text{SAE}}} in a patch-wise manner, i.e., 𝐡⊤​attn\mathbf{h}^{\top}\rm{attn}. Attention-weighted averaging re-ranks the activated visual concepts by pushing latents from attended regions toward the top of the ranking, while down-ranking concepts originating from less attended regions. Figure 2 illustrates the attention-based concept re-ranking and example results.
+Figure 2: Attention-based concept re-ranking. A. SAEs return latent activations for each image patch. B. Image-level activations can be computed by naïvely averaging activations across all patches, or C. by applying a weighted average where the text-to-image attention map serves as the weighting coefficient, promoting concepts relevant to the text tokens to the top of the ranking. The bottom row shows the top-ranked concept obtained from the corresponding method.
+Testing causal influence.
+To verify whether the identified visual concepts exert causal influence on the model’s generated outputs, we compare the original output with the output obtained after zeroing out the activations of selected latents. Because SAE latents vary in semantic granularity, they often exhibit hierarchical or correlated relationship (Chanin et al., 2024; Wittenmayer et al., 2026). As a result, a concept may reappear through another interconnected latent even after one latent is ablated. Identifying a group of latents corresponding to a single concept is therefore crucial for performing effective concept ablation.
+To support this, we construct a token–latent activation heatmap. We first remove noisy latents based on activation statistics (§ A.2; Figure 6), then select, for each text token, the top-kk (k=20k=20) latents ranked by attention-weighted activation strength. This filters out non-activated latents and yields a more interpretable, user-friendly view. Taking the union across tokens produces a set of meaningfully activated latents that are likely to carry causal influence. Depending on the number of tokens, the resulting heatmap ranges from size n×(n⋅k)n\times(n\cdot k) to n×kn\times k for nn tokens. We cluster these latents based on their activation similarity across tokens, and normalize each column for clearer visualization (§ A.2; Figure 5).
+In Figure 7, for instance, we identify four major semantic topics within the generated caption and their corresponding latent clusters. Ablating each topic removes only the associated portion of the output while leaving unrelated content intact, demonstrating that clusters based on token-wise activation similarity indeed show causal influence on the model’s predictions.
+Interface. We introduce VisualScratchpad, an interactive interface for inference-time visual concept inspection and ablation.
+As illustrated in Figure 8, The interface consists of four main components: SAE latent exploration, model inference, internal observation, and internal modification.
+The exploration panel provides statistics of latent activations in the training or validation dataset and the decoder weight based U-map view of latent clusters, which allows overall understanding of learned concepts.
+Model inference of user-provided input supports the vision-question answering style or CLIP-style classification tasks.
+Internal observation shows attention maps, token-wise latent activation, token-latent heatmap, and selected latent’s input mask with reference images.
+By analyzing this, users can confirm their causal relationship through concept steering.
+Demos are available here.
+3 Case studies: Revealing three failure modes
+Figure 3: Case studies. A. Limited cross-alignment, B. misleading visual cues, and C. unused hidden cues can cause wrong answer.
+We present three failure cases where LLaVA-Next-8B (Liu et al., 2024) initially produces incorrect outputs, but analysis with VisualScratchpad allows us to debug and correct its behavior. For Case 1 and Case 2, we use examples from the MMVP dataset (Tong et al., 2024). We identify two distinct failure modes: in Case 1, the model detects the correct visual cues but fails to utilize them, whereas in Case 2, the model is misled by incorrectly detected cues. Although the dataset is designed to expose the perceptual limitations in current vision encoders for VLMs (Tong et al., 2024), our results illustrate how model failures can stem from either underusing relevant information or over-relying on spurious signals. Motivated by these observations, we pose a further question: What happens when there are multiple plausible visual cues that could all be correct? To explore this, we design Case 3 using an optical illusion, where competing interpretations coexist. Details are in § A.5.
+Case 1: Limited cross-modal alignment.
+Figure 3 A shows an example where the model is asked whether a cup is placed on a surface or a hand. The original response was incorrect, stating that the cup is on the surface. The model incorrectly answers “on a surface,” even though the corresponding attention map shows it attends to the hand and activates concepts like (knitted) gloves. We hypothesize that the textual concept “hand” is not directly aligned with the visual concept of “gloves,” leading the model to underutilize the correct cue. After rephrasing the question to include more detail (“Is the cup placed on a surface or on a hand with a mitten?”), the model produces the correct answer. This suggests that the relevant visual concept exists in the representation but can be poorly aligned with its linguistic counterpart.
+Case 2: Grounding on misleading cues.
+In Figure 3 B, the question asks whether an elderly person is sitting or standing. The model incorrectly predicts “sitting”. Although the model attends to the “walker” in the image, concepts related to a “(wheel)chair” and “sitting” are activated. Removing these concepts flips the response to “standing.” This case illustrates a common failure mode in VLMs: reliance on associative yet semantically inappropriate cues.
+Case 3: Unused hidden cues.
+Figure 3 C examines a case with multiple plausible interpretations. Given an optical-illusion image, the model initially describes a “duck’, though rabbit-related concepts are also activating. Ablating duck-related latents and amplifying rabbit-related ones shifts the output to describing a “rabbit”. This demonstrates that VLMs may internally encode richer visual information than what appears in their final output, shedding light on their inconsistent behaviors.
+4 Related work
+SAEs for VLMs.
+SAE-V (Lou et al., 2025) applies an SAE to an intermediate language-model layer of VLMs, where cross-attention integrates text and vision features, and uses the resulting latents to assess dataset quality in terms of cross-modal alignment. VL-SAE (Shen et al., 2025) proposes a method to align and interpret concepts from the vision and text encoders. In contrast, VisualScratchpad links visual concepts from the vision encoder to text tokens post hoc via attention maps, enabling analysis across different cross-modal linking mechanisms while retaining direct control over the vision encoder.
+Interface for SAEs.
+Only a few interactive tools exist for working with SAEs. Neuronpedia (Lin, 2023) and ConceptViz (Li et al., 2025) provide interfaces for concept analysis and latent steering but are limited to language models. PatchSAE (Lim et al., 2025) offers a demo for inspecting vision-model concepts but does not support latent steering or VLM inference. VisualScratchpad provides a unified interface for multimodal analysis, integrating concept inspection, steering, and inference-time debugging for VLMs.
+5 Conclusion
+In summary, we examine pure visual concepts by applying SAEs directly to the vision encoder and inspect output-specific concepts through attention-based linking. To support effective concept steering, we introduce a token–latent heatmap view that helps users identify sufficient and relevant latents. Together, these components form an interactive interface that unifies inference-time analysis and general SAE-based concept exploration. Through case studies, we show that VLM failures can stem from limited cross-modal alignment, misleading concepts, or unused hidden cues.
+Limitation and outlook
+Connecting vision SAEs to language models does not explicitly capture how image-token representations are transformed inside the language model during cross-modal processing. In addition, the interface is built for interactive analysis and does not directly scale to large, fully automated experiments. Nonetheless, the approach provides a practical framework for dissecting VLM behaviors and opens the door to future extensions, such as integrating deeper cross-modal tracing, automating large-scale causal analyses, and applying similar techniques to broader multimodal architectures.
+Author Contributions
+Conceptualization: HsL with comments from TkK, BhH, JgC, and DyH;
+Methodology: HsL, DyH;
+Software: HsL, JhC;
+Formal analysis: HsL, JhC;
+Investigation: HsL;
+Writing–Original Draft: HsL.
+Acknowledgments
+This work is supported by NAVER AI Lab and NAVER Smart Machine Learning (NSML) platform (Sung et al., 2017).
+References
+Bai et al. (2025)
+S. Bai, K. Chen, X. Liu, J. Wang, W. Ge, S. Song, K. Dang, P. Wang, S. Wang, J. Tang, et al.
+Qwen2. 5-vl technical report.
+arXiv preprint arXiv:2502.13923.
+Cited by: §2.
+Bereska and Gavves (2024)
+L. Bereska and E. Gavves
+Mechanistic interpretability for ai safety–a review.
+arXiv preprint arXiv:2404.14082.
+Cited by: §1,
+§1.
+Bricken et al. (2023)
+T. Bricken, A. Templeton, J. Batson, B. Chen, A. Jermyn, T. Conerly, N. Turner, C. Anil, C. Denison, A. Askell, R. Lasenby, Y. Wu, S. Kravec, N. Schiefer, T. Maxwell, N. Joseph, Z. Hatfield-Dodds, A. Tamkin, K. Nguyen, B. McLean, J. E. Burke, T. Hume, S. Carter, T. Henighan, and C. Olah
+Towards monosemanticity: decomposing language models with dictionary learning.
+Transformer Circuits Thread.
+Note: https://transformer-circuits.pub/2023/monosemantic-features/index.html
+Cited by: §1.
+Bussmann et al. (2024)
+B. Bussmann, P. Leask, and N. Nanda
+Batchtopk sparse autoencoders.
+arXiv preprint arXiv:2412.06410.
+Cited by: §1.
+Caron et al. (2021)
+M. Caron, H. Touvron, I. Misra, H. Jégou, J. Mairal, P. Bojanowski, and A. Joulin
+Emerging properties in self-supervised vision transformers.
+In Proceedings of the IEEE/CVF international conference on computer vision,
+pp. 9650–9660.
+Cited by: §A.5.
+Chanin et al. (2024)
+D. Chanin, J. Wilken-Smith, T. Dulka, H. Bhatnagar, S. Golechha, and J. Bloom
+A is for absorption: studying feature splitting and absorption in sparse autoencoders.
+arXiv preprint arXiv:2409.14507.
+Cited by: §2.
+Chen et al. (2024)
+Z. Chen, J. Wu, W. Wang, W. Su, G. Chen, S. Xing, M. Zhong, Q. Zhang, X. Zhu, L. Lu, et al.
+Internvl: scaling up vision foundation models and aligning for generic visual-linguistic tasks.
+In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition,
+pp. 24185–24198.
+Cited by: §2.
+Choi et al. (2025)
+J. Choi, H. Lim, S. Schneider, and J. Choo
+ConceptScope: characterizing dataset bias via disentangled visual concepts.
+NeurIPS.
+Cited by: §1.
+Cunningham et al. (2023)
+H. Cunningham, A. Ewart, L. Riggs, R. Huben, and L. Sharkey
+Sparse autoencoders find highly interpretable features in language models.
+arXiv preprint arXiv:2309.08600.
+Cited by: §1.
+Dasdelen et al. (2025)
+M. F. Dasdelen, H. Lim, M. Buck, K. S. Götze, C. Marr, and S. Schneider
+Cytosae: interpretable cell embeddings for hematology.
+In International Conference on Medical Image Computing and Computer-Assisted Intervention,
+pp. 77–86.
+Cited by: §1.
+Elhage et al. (2022)
+N. Elhage, T. Hume, C. Olsson, N. Schiefer, T. Henighan, S. Kravec, Z. Hatfield-Dodds, R. Lasenby, D. Drain, C. Chen, et al.
+Toy models of superposition.
+arXiv preprint arXiv:2209.10652.
+Cited by: §1.
+Fel et al. (2025)
+T. Fel, E. S. Lubana, J. S. Prince, M. Kowal, V. Boutin, I. Papadimitriou, B. Wang, M. Wattenberg, D. Ba, and T. Konkle
+Archetypal sae: adaptive and stable dictionary learning for concept extraction in large vision models.
+arXiv preprint arXiv:2502.12892.
+Cited by: §1.
+Grattafiori et al. (2024)
+A. Grattafiori, A. Dubey, A. Jauhri, A. Pandey, A. Kadian, A. Al-Dahle, A. Letman, A. Mathur, A. Schelten, A. Vaughan, et al.
+The llama 3 herd of models.
+arXiv preprint arXiv:2407.21783.
+Cited by: §2.
+Li et al. (2025)
+H. Li, Z. Wen, Q. Jiang, C. Li, Y. Wu, Y. Yang, Y. Wang, X. Huang, M. Zhu, and W. Chen
+ConceptViz: a visual analytics approach for exploring concepts in large language models.
+IEEE Transactions on Visualization and Computer Graphics.
+Cited by: §4.
+Lim et al. (2025)
+H. Lim, J. Choi, J. Choo, and S. Schneider
+Sparse autoencoders reveal selective remapping of visual concepts during adaptation.
+In The Thirteenth International Conference on Learning Representations,
+Cited by: §A.1,
+§A.1,
+§1,
+§2,
+§4.
+Lin (2023)
+J. Lin
+Neuronpedia: interactive reference and tooling for analyzing neural networks.
+Note: Software available from neuronpedia.org
+External Links: Link
+Cited by: §4.
+Liu et al. (2024)
+H. Liu, C. Li, Y. Li, B. Li, Y. Zhang, S. Shen, and Y. J. Lee
+LLaVA-next: improved reasoning, ocr, and world knowledge.
+External Links: Link
+Cited by: §A.1,
+§3.
+Liu et al. (2023)
+H. Liu, C. Li, Q. Wu, and Y. J. Lee
+Visual instruction tuning.
+Advances in neural information processing systems 36, pp. 34892–34916.
+Cited by: §2.
+Lou et al. (2025)
+H. Lou, C. Li, J. Ji, and Y. Yang
+Sae-v: interpreting multimodal models for enhanced alignment.
+arXiv preprint arXiv:2502.17514.
+Cited by: §4.
+Ng and Autoencoder (2011)
+A. Ng and S. Autoencoder
+CS294A lecture notes.
+Dosegljivo: https://web. stanford. edu/class/cs294a/sparseAutoencoder_2011new. pdf.[Dostopano 20. 7. 2016].
+Cited by: §1.
+Radford et al. (2021)
+A. Radford, J. W. Kim, C. Hallacy, A. Ramesh, G. Goh, S. Agarwal, G. Sastry, A. Askell, P. Mishkin, J. Clark, et al.
+Learning transferable visual models from natural language supervision.
+In International conference on machine learning,
+pp. 8748–8763.
+Cited by: §A.5,
+§2.
+Ranzato et al. (2007)
+M. Ranzato, Y. Boureau, Y. Cun, et al.
+Sparse feature learning for deep belief networks.
+Advances in neural information processing systems 20.
+Cited by: §1.
+Sharkey et al. (2025)
+L. Sharkey, B. Chughtai, J. Batson, J. Lindsey, J. Wu, L. Bushnaq, N. Goldowsky-Dill, S. Heimersheim, A. Ortega, J. Bloom, et al.
+Open problems in mechanistic interpretability.
+arXiv preprint arXiv:2501.16496.
+Cited by: §1.
+Shen et al. (2025)
+S. Shen, J. Sun, Q. Huang, and S. Wang
+VL-sae: interpreting and enhancing vision-language alignment with a unified concept set.
+arXiv preprint arXiv:2510.21323.
+Cited by: §4.
+Sung et al. (2017)
+N. Sung, M. Kim, H. Jo, Y. Yang, J. Kim, L. Lausen, Y. Kim, G. Lee, D. Kwak, J. Ha, et al.
+Nsml: a machine learning platform that enables you to focus on your models.
+arXiv preprint arXiv:1712.05902.
+Cited by: §5.
+Surkov et al. (2025)
+V. Surkov, C. Wendler, M. Terekhov, J. Deschenaux, R. West, and C. Gulcehre
+Unpacking sdxl turbo: interpreting text-to-image models with sparse autoencoders.
+In Mechanistic Interpretability for Vision at CVPR 2025 (Non-proceedings Track),
+Cited by: §1.
+Team et al. (2024)
+G. Team, T. Mesnard, C. Hardin, R. Dadashi, S. Bhupatiraju, S. Pathak, L. Sifre, M. Rivière, M. S. Kale, J. Love, et al.
+Gemma: open models based on gemini research and technology.
+arXiv preprint arXiv:2403.08295.
+Cited by: §2.
+Tong et al. (2024)
+S. Tong, Z. Liu, Y. Zhai, Y. Ma, Y. LeCun, and S. Xie
+Eyes wide shut? exploring the visual shortcomings of multimodal llms.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition,
+pp. 9568–9578.
+Cited by: §A.5,
+§3.
+Wang et al. (2026)
+N. Wang, C. Fang, M. Bissell, D. Hazra, M. Pearce, C. Nalmpantis, P. Niki, P. Kathail, A. Karailiev, J. Ganbat, L. Giacomoni, J. Wan, R. Solanki, A. Jain, and D. Balsam
+Using interpretability to identify a novel class of biomarkers for alzheimer’s detection.
+Note: Goodfire and Prima Mente collaboration
+External Links: Link
+Cited by: §1.
+Wittenmayer et al. (2026)
+K. Wittenmayer, S. Rao, A. Parchami-Araghi, B. Schiele, and J. Fischer
+Insight: interpretable semantic hierarchies in vision-language encoders.
+arXiv preprint arXiv:2601.13798.
+Cited by: §2.
+Appendix A Appendix
+A.1 SAE training details
+We follow the PatchSAE training setup introduced in Lim et al. (2025), using CLIP-ViT-large11
+1
+https://huggingface.co/openai/clip-vit-large-patch14 as a vision backbone and a vanilla sparse autoencoder (SAE) trained with mean-squared error reconstruction loss and an L1 sparsity penalty of 8×10−58\times 10^{-5}. The SAEs are trained on ImageNet-1K for 2M steps with a learning rate of 1×10−41\times 10^{-4} with decay. CLIP-ViT-large has 24 layers in total (layer.0 from layer.23), and we extract activations from layers 2, 6, 10, 14, 18, and 22 (the penultimate layer used as the image feature in LLaVA-Next-8B (Liu et al., 2024)).
+In accordance with the observation from previous work (Lim et al., 2025), across layers, we observe a progression in the learned concepts: early layers capture colors and simple textures, middle layers encode object-level representations, and deeper layers focus on scene-level semantics. For our case studies, we use layer.18 due to its strong alignment with object-centric concepts. Figure 4 shows examples of activated latents across layers. Trained checkpoints are released in our codebase.
+Figure 4: Complexity of visual concepts across layers. Early layers capture simple visual components, including position and color, mid layers capture object-level shape and patterns, and late layers understand scene-level events.
+A.2 Heatmap visualization and filtering details
+For the heatmap visualization, we apply column-wise normalization and correlation-based clustering (Figure 5). The interface offers multiple configuration options, including no normalization, row-wise normalization, or column-wise normalization, combined with either hierarchical or k-means clustering using correlation or Euclidean distance. In addition, we leverage latent statistics to filter out noisy latents, removing the top 2% based on mean activation and activation frequency. Figure 6 illustrates the computation of these statistics.
+Figure 5: Token-Latent heatmap visualization. Raw values are difficult to analyze, so we normalize in column-wise to show if the latent is specifically attended by certain tokens or by overall tokens. Moreover, we cluster and sort by activation correlation in column-wise, using hierarchical clustering.
+Figure 6: Illustration on how SAE latent statistics are computed. After training the SAE, we pass the dataset through the model and compute each latent’s mean activation and sparsity, yielding a compact summary of its activation distribution. Right: Based on the mean activation and sparsity, we filter out latents in top kk% of each axis treating them as noisy latents.
+A.3 Causal Analysis
+To illustrate the effectiveness of the token–latent heatmap view for concept steering in causal analysis, we present an example in Figure 7. Given an underwater image, the VLM’s caption contains four major semantic topics. The token–latent heatmap reveals four corresponding latent clusters. When each cluster is ablated, only the associated part of the caption disappears while unrelated content remains unchanged, demonstrating that these latent clusters exert causal influence on the model’s output.
+Figure 7: Causal analysis example. Given an image and a prompt to describe it, the VLM generates a caption and VisualScratchpad produces a token–latent heatmap. Latents are re-ranked using token attention and clustered based on activation similarity. Each cluster roughly corresponds to a main topic in the caption. By zeroing out the latents in each cluster and reconstructing the representations, we observe how the outputs change relative to the original. Ablating latent clusters that correspond to distinct semantic topics removes those topics from the generated caption, demonstrating their causal role in shaping the model’s predictions.
+A.4 Interface
+Figure 8: Three main components of VisualScratchpad include (1) exploring SAE latents, (2) model inference with SAE (vision-question answering using VLMs and image classification using CLIP), and (3) close-up observation on activated concepts.
+Figure 9: Control pannels of VisualScratchpad. Users can adjust visualization settings for spatial attribution masks, configure options for activation-value plots, and customize heatmap displays.
+Figure 8 shows the overview of our interface. Demo videos and codes are available in our project page22
+2
+https://iclrworkshop-visualscratchpad.github.io/visual_scratchpad_projectpage/.
+Exploring SAE latents.
+As shown in Figure 8 (1), the top panel provides an overview of SAE latent statistics and concept clusters.
+Mean activation and sparsity are computed from validation data, while label entropy is derived from the top-kk maximally activating samples (Figure 6).
+Decoder weights, which are considered as latent semantic directions, are visualized and clustered in a UMAP projection.
+The statistics scatter plot offers a quick overview of how latents are distributed in terms of activation frequency, while the clusters reveal semantic structure and relationships between concepts.
+Model inference: VQA using VLM.
+During VQA inference, the input image (and text prompt) is forwarded through both the backbone model and the SAE.
+We additionally display the cross-attention map from each question or generated token to the image tokens, providing an intuitive view of where the model attends during generation (Figure 8 (2)).
+Because PatchSAE operates on patch-level embeddings aligned with the attention map, attention-weighted pooling highlights the most relevant concepts for each token.
+To make this interpretable at scale, we display token-latent heatmap.
+This allows users to follow the model’s reasoning step-by-step and observe clusters of jointly activated concepts.
+Model inference: Classification using CLIP.
+We also support CLIP-based image classification using the text encoder. (Figure 8 (3))
+Users can select from built-in example class lists or provide custom class names.
+Prompt templates are editable, and classification outputs along with probabilities are displayed.
+Model inference with steering.
+VisualScratchpad enables steering by modifying the latent activations before decoding (Figure 8 (4)).
+By default, selected latents are ablated by setting their activations to zero, but users can alternatively emphasize targeted concepts by increasing activation values.
+UMAP-based latent clusters and token–latent heatmap clusters provide natural starting points for selecting latents to steer, allowing users to adjust specific concepts and observe the resulting changes in model outputs.
+Observe active latents.
+During model forward passes, SAE activations are displayed as an activation bar (Figure 8 (4)).
+Selecting a latent reveals reference images together with their spatial attribution masks.
+In VQA settings, the activation bar can be displayed either with attention-weighted activations or in an unweighted form.
+Option control panels.
+To facilitate focused exploration, VisualScratchpad provides filtering based on latent statistics, allowing users to exclude uninformative or low-impact latents.
+Latents that activate in most images are often difficult to interpret, since their maximally activating samples may contain multiple unrelated concepts.
+We therefore filter out latents with high activation frequency and high mean activation, which are more likely to reflect generic or mixed features.
+Each panel supports interactive hyperparameters, such as clustering settings, masking options, filtering modes, and weighting strategies, enabling fine-grained control over the visualization and analysis workflow (Figure 9).
+A.5 Case study
+Dataset.
+We use examples from the MMVP dataset (Tong et al., 2024), which contains image pairs with high CLIP (Radford et al., 2021) cosine similarity but low DINO (Caron et al., 2021) similarity, referred to as “CLIP-blind pairs.” These pairs capture cases where CLIP fails to distinguish subtle visual differences. The dataset includes questions focused on those fine-grained distinctions. We use MMVP images for Case 1 and Case 2 to analyze why VLMs fail to identify such differences, and for Case 3, we use a standard optical illusion image.
+Experimental setup.
+We perform concept ablation using latents from layer 18. When training SAEs on multiple layers of CLIP and comparing the resulting concepts, we observe that earlier layers primarily encode colors and simple patterns, mid-level layers capture object-level concepts, and later layers reflect scene-level understanding (§ A.1; Figure 4).
+Details for Case 2.
+In Case 2, we apply concept steering for two iterative rounds. Increasing the value of
+kk in the token–latent heatmap construction can reduce the number of required iterations. The full process is illustrated in Figure 10.
+Figure 10: Details for Case 2. We iterated for two turns to remove sitting-related concepts.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

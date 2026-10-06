@@ -1,0 +1,1642 @@
+Does Math Reasoning Improve General LLM Capabilities? Understanding Transferability of LLM Reasoning
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Phenomena: Performance Discrepancies of Reasoning Models
+2.1 Observed Performance Discrepancies Between RL and SFT
+Results.
+2.2 Control Study
+3 Latent Representation Shifts: Insights from PCA Analysis
+3.1 Experimental Setup
+3.2 Investigating Latent Space Shift
+4 Token Distribution Shifts: Insights from KL Divergence and Rank Analyses
+4.1 Setup
+4.2 Experiment Result
+5 Related Work
+6 Conclusion
+References
+A Appendix
+A.1 Detailed Evidence of Our Observed Phenomena
+A.2 Full Evaluation Setup
+A.2.1 Post-training Methods
+A.2.2 Training Datasets
+A.2.3 Baselines
+A.2.4 Evaluation Benchmarks
+Math Reasoning Datasets
+Other Reasoning Datasets
+Non-reasoning Datasets
+A.2.5 Evaluation metrics
+A.3 PCA Analysis under Varying Settings
+A.4 Token Distribution Shifts
+A.4.1 Details about the case study
+A.5 Breakdown Evaluation Results
+License: CC BY 4.0
+arXiv:2507.00432v1 [cs.AI] 01 Jul 2025
+\reportnumber
+001
+Does Math Reasoning Improve General LLM Capabilities? Understanding Transferability of LLM Reasoning
+Maggie Huan1,2,, Yuetai Li3,∗, Tuney Zheng4,∗, Xiaoyu Xu5, Seungone Kim1, Minxin Du5, Radha Poovendran3, Graham Neubig1, Xiang Yue1,
+1Carnegie Mellon University
+2University of Pennsylvania
+3University of Washington
+4M-A-P
+5The Hong Kong Polytechnic University
+ziyuh@seas.upenn.edu   yuetaili@uw.edu   xyue2@andrew.cmu.edu
+Note: Equal Contributions (see author contribution). This work was done when Maggie interning at CMU.
+Note: Corresponding Author.
+Abstract
+Math reasoning has become the poster child of progress in large language models (LLMs), with new models rapidly surpassing human-level performance on benchmarks like MATH and AIME. But as math leaderboards improve week by week, it is worth asking: do these gains reflect broader problem-solving ability or just narrow overfitting? To answer this question, we evaluate over 20 open-weight reasoning-tuned models across a broad suite of tasks, including math, scientific QA, agent planning, coding, and standard instruction-following. We surprisingly find that most models that succeed in math fail to transfer their gains to other domains. To rigorously study this phenomenon, we conduct controlled experiments on Qwen3-14B models using math-only data but different tuning methods. We find that reinforcement learning (RL)-tuned models generalize well across domains, while supervised fine-tuning (SFT)-tuned models often forget general capabilities. Latent-space representation and token-space distribution shift analyses reveal that SFT induces substantial representation and output drift, while RL preserves general-domain structure. Our results suggest a need to rethink standard post-training recipes, particularly the reliance on SFT-distilled data for advancing reasoning models.
+github.com/ReasoningTransfer/Transferability-of-LLM-Reasoning
+huggingface.co/ReasoningTransferability
+Figure 1: Impact of SFT and RL using math-only training queries on the same base model, Qwen3-14B-Base. Performance improvements are measured relative to the base model. While SFT-trained models partially generalize to other reasoning tasks, they show limited transfer to non-reasoning tasks. In contrast, RL-trained models exhibit broader generalization across both reasoning and non-reasoning scenarios.
+1 Introduction
+Over the past years, the community has raced to push large language models (LLMs) to new heights on math-centric reasoning benchmarks such as MATH (Hendrycks et al., 2021b) and AIME. A steady stream of reasoning-tuned models (Muennighoff et al., 2025; Guha et al., 2025) now advances the state of the art on math benchmarks nearly every week, with some even surpassing the average performance of human experts (Team, 2025a; OpenAI, 2024).
+Figure 2:
+Transferability of mathematical reasoning to other reasoning and non-reasoning tasks. The Transferability Index measures a model’s ability to transfer performance from mathematics to other domains, with positive values indicating successful transfer and negative values indicating performance degradation. Details of this metric can be found in Section 2.1. RL models consistently outperform SFT models, regardless of model size, architecture, or training data, demonstrating superior transferability. Values are displayed using a signed logarithmic transformation for better visualization.
+The appealing performance on math reasoning is understandable: problems are well-posed, solutions are unambiguous, and evaluation is easily verifiable, often just a single number or expression (Luo et al., 2025). This clarity has made math a popular proxy task of LLM reasoning, and researchers have developed increasingly sophisticated training recipes to maximize model performance on mathematical reasoning (Wang et al., 2024a; Yue et al., 2024a; Luo et al., 2023; Shao et al., 2024; Wei et al., 2023).
+This trend, on one hand, should be encouraged. Mathematics is often considered the foundational language of science, and enabling machines to reason precisely over math is central to the long-term vision of automated scientific discovery (Mishra et al., 2022). On the other hand, real-world tasks extend far beyond math. The majority of user-facing applications, question answering, dialogue, instruction following, require broader linguistic and commonsense competence that math alone does not test (Ma et al., 2025).
+This raises a natural question: Do improved math reasoning abilities transfer to general LLM capabilities? Specifically, can gains in solving math problems transfer to other reasoning domains (e.g., scientific QA (Welbl et al., 2017), coding (Jain et al., 2025), agent planning (Xie et al., 2024), logical deduction (Dziri et al., 2024)) and to tasks (e.g., conversational QA (Reddy et al., 2019), instruction following (Zhou et al., 2023)) that do not require extensive reasoning?
+To investigate, we evaluate over 20 representative open-weight reasoning models, all of which exhibit impressive performance on recent math benchmarks across a suite of other reasoning and non-reasoning tasks. To quantitatively analyze this problem, we propose Transferability Index, a metric to measure how reasoning models can transfer their capabilities from one domain to another. Surprisingly, as shown in Figure 2, we find that some of these models fail to transfer their improved mathematical reasoning capabilities to other domains while others succeed.
+What drives this divergence? Model recipes vary widely in size, data distribution, and architecture. Yet among various parts, we identify one factor that consistently predicts transferability: the fine-tuning paradigm. Across families and sizes, models fine-tuned using reinforcement learning (RL) (Su et al., 2025; Yeo et al., 2025) exhibit much stronger generalization to non-math tasks than those trained with supervised fine-tuning (SFT) (Yue et al., 2024a; Yue et al., 2024b), which often show signs of catastrophic forgetting over a wide range of non-math tasks.
+To validate this observation, we conduct a controlled study. We fine-tune Qwen3-14B (Team, 2025b) on the high-quality math dataset derived from MATH and DeepScaler (Luo et al., 2025). For SFT, we construct targets via rejection sampling using Qwen3-32B, keeping only teacher responses that yield correct final answers. For RL, we apply a standard GRPO (Shao et al., 2024) setup using answer correctness as the reward. As shown in Figure 1, the results mirror our large-scale audit: RL-tuned models generalize well to non-math domains, despite being trained solely on math queries, while SFT-tuned models do not.
+To better understand why this occurs, we use two diagnostic tools: (1) latent-space principal component analysis (PCA) on hidden states across layers, and (2) KL-divergence on token distributions before and after fine-tuning. These methods allow us to quantify how much the model’s internal representations and output space shift during training. We find that SFT induces significant drift in both latent and output spaces, especially for non-reasoning inputs, whereas RL better preserves the geometry of internal features and the stability of the token distributions.
+2 Phenomena: Performance Discrepancies of Reasoning Models
+2.1 Observed Performance Discrepancies Between RL and SFT
+Setup. We evaluate over 20 off-the-shelf reasoning models on different benchmarks. Namely, we select benchmarks from the following three categories: (1) math reasoning tasks: MATH500 (Hendrycks et al., 2021b), AIME24, AIME25, OlympiadBench (He et al., 2024), which contain mathematical problems only; (2) other reasoning tasks: LiveCodeBench (Jain et al., 2025), GPQA-Diamond (Rein et al., 2024), ACPBench (Kokel et al., 2025), HeadQA (Vilares and Gómez-Rodríguez, 2019), which contain more general reasoning questions, such as medical reasoning, code generation, and language-based agent planning tasks; (3) non-reasoning tasks: CoQA (Reddy et al., 2019), IFEval (Zhou et al., 2023), HaluEval (Li et al., 2023), MC-TACO (Zhou et al., 2019), which contain factual, alignment, or conversational problems such as commonsense question answering and instruction-following. We used accuracy to evaluate the models’ performance. Detailed explanation about experiment setup, benchmarks, and evaluation metrics can be found in Appendix A.2.
+To better evaluate the model’s transferability across a wide range of task groups, we define Transferability Index (TI) as follows:
+Let ℬg\mathcal{B}_{g} be the set of benchmarks in group
+g∈{𝚖𝚊𝚝𝚑,𝚘𝚝𝚑𝚎𝚛,𝚗𝚘𝚗}g\in\{\mathtt{math},\ \mathtt{other},\ \mathtt{non}\}, corresponding to each of our task groups: math reasoning, other reasoning and non-reasoning. Let |ℬg||\mathcal{B}_{g}| be its cardinality. For each benchmark b∈ℬgb\in\mathcal{B}_{g} we have scores RbmodelR^{\mathrm{model}}_{b} and RbbaseR^{\mathrm{base}}_{b}. We define the group-level relative gain as the average of per-benchmark gains:
+Δ​Rg=1|ℬg|​∑b∈ℬgRbmodel−RbbaseRbbase,g∈{𝚖𝚊𝚝𝚑,𝚘𝚝𝚑𝚎𝚛,𝚗𝚘𝚗}.\Delta R_{g}=\frac{1}{|\mathcal{B}_{g}|}\sum_{b\in\mathcal{B}_{g}}\frac{R^{\mathrm{model}}_{b}-R^{\mathrm{base}}_{b}}{R^{\mathrm{base}}_{b}},\quad g\in\{\mathtt{math},\ \mathtt{other},\ \mathtt{non}\}.
+Next, the two Transferability Indices are
+TIother(%)=Δ​RotherΔ​Rmath×100,TInon(%)=Δ​RnonΔ​Rmath×100.\mathrm{TI}_{\mathrm{other}}(\%)\;=\;\frac{\Delta R_{\mathrm{other}}}{\Delta R_{\mathrm{math}}}\times 100,\qquad\mathrm{TI}_{\mathrm{non}}(\%)\;=\;\frac{\Delta R_{\mathrm{non}}}{\Delta R_{\mathrm{math}}}\times 100.
+The TI value is compared against 0, any TI above zero indicates positive transfer observed.
+Results.
+Figure 2 and Table 4 present a comparative evaluation of transferability indices of various models. We can conclude that the models’ transferability may be related to finetuning methods, model size, and model architecture. While the choice of finetuning method appears to be a more crucial factor as we observe that RL-tuned models consistently attain higher transferability indices on both other-reasoning and non-reasoning tasks, whereas SFT-trained models often suffer negative TInon\mathrm{TI}_{\text{non}}. This consistent pattern did not appear in the comparison of other factors and strongly suggests that on-policy RL updates reinforce reasoning skills without severely perturbing the model’s general-domain representations, while off-policy SFT on large, static reasoning datasets may over-specialize the latent space, even triggering representation collapse and resulting in lower performance in non-reasoning domains.
+Table 1: Performance of our model and baseline models on math reasoning, other reasoning and non-reasoning tasks. UniReason-Qwen3-14B-think (SFT) denotes the model is trained with the dataset distilled from Qwen3-32B-Instruct thinking mode, UniReason-Qwen3-14B-no-think (SFT) denotes it is trained with Qwen3-32B-Instruct non-thinking mode. The grey-colored row represents the performance difference between RL and the highest SFT score between UniReason-Qwen3-14B-think (SFT) and Qwen3-14B-no-think (SFT).
+Math Reasoning
+Model
+AIME24
+AIME25
+MATH500
+Olympiad
+Average
+Qwen3-14B-Base
+13.0
+9.3
+60.4
+27.9
+27.7
+–
+UniReason-Qwen3-14B-think (SFT)
+52.0
+37.0
+85.0
+25.0
+49.8
+–
+UniReason-Qwen3-14B-no-think (SFT)
+16.0
+13.0
+77.2
+22.7
+32.3
+–
+UniReason-Qwen3-14B (RL)
+55.7
+38.0
+87.8
+33.8
+53.8
+–
+Δ\Delta (RL - SFT)
++3.7
++1.0
++2.8
++8.8
++4.1
+–
+Other Reasoning
+Model
+GPQA
+LiveCodeBench2
+ACPBench
+HeadQA
+Average
+TIother\mathrm{TI}_{\text{other}}
+Qwen3-14B-Base
+42.6
+29.7
+10.7
+37.6
+30.2
+–
+UniReason-Qwen3-14B-think (SFT)
+55.9
+21.9
+68.6
+34.8
+45.3
++68.6
+UniReason-Qwen3-14B-no-think (SFT)
+48.7
+23.5
+69.3
+35.0
+45.2
++741.5
+UniReason-Qwen3-14B (RL)
+57.7
+40.6
+65.4
+40.2
+60.0
++79.6
+Δ\Delta (RL - SFT)
++1.8
++17.1
+–3.9
++5.2
++5.1
+-
+Non-Reasoning
+Model
+CoQA
+MC-TACO
+IFEval
+HalluEval
+Average
+TInon\mathrm{TI}_{\text{non}}
+Qwen3-14B-Base
+10.0
+67.7
+69.2
+35.7
+45.7
+–
+UniReason-Qwen3-14B-think (SFT)
+1.7
+38.2
+42.3
+2.3
+21.1
+-41.2
+UniReason-Qwen3-14B-no-think (SFT)
+5.3
+66.1
+41.4
+3.3
+29.0
+–250.2
+UniReason-Qwen3-14B (RL)
+28.2
+74.0
+70.0
+40.7
+53.2
++29.3
+Δ\Delta (RL - SFT)
++22.9
++7.9
++27.7
++37.4
++24.0
+-
+2.2 Control Study
+Motivated by our findings in Section 2.1, we design a light-weight controlled study to directly compare SFT and RL on an identical dataset. Concretely, we start from a small, high-quality mathematics dataset (see Appendix A.2.2 for details), then query a strong teacher model (Qwen3-32B-Instruct) to extract complete chain-of-thought (CoT) reasoning traces with reject sampling. These CoT traces become our SFT training targets, while the original answer labels serve as the rewards for RL. This alignment ensures both paradigms learn from the same data samples. Then, we take the Qwen3-14B-Base model and fine-tune it in two ways: (i) SFT on the teacher-generated CoT traces; (ii) RL using only the groundtruth. We name our model UniReason.
+We compare against the Qwen3-14B-Base model. Evaluation is conducted on three benchmark groups mentioned above using accuracy. Details about training datasets, baseline models, and hyperparameters could also be found in Appendix A.2.
+Our experimental results on three groups of benchmarks (see Table 1) reveal a consistent pattern:
+•
+On math reasoning (Table 1), our UniReason-Qwen3-14B(RL) model climbs to 55.7% on AIME24, 87.8% on MATH500, and 33.8% on OlympiadBench, outperforming corresponding SFT-based models.
+•
+For other reasoning tasks, SFT-based models make uneven progress (e.g. UniReason-Qwen3-14B-SFT-think scores 55.9% on GPQA), whereas RL fine-tuning yields significant lifts: UniReason-Qwen3-14B(RL) gains 1.8% on GPQA, and 17.1% on LiveCodeBench2 over SFT.
+•
+Crucially, in non-reasoning evaluations, SFT models stagnate or decline, while the RL model recover and exceed the base in nearly all the benchmarks.
+•
+From Table 1, our RL-tuned model achieve positive TIother\mathrm{TI}_{\text{other}} and TInon\mathrm{TI}_{\text{non}}, meaning its math improvements also transfer to other reasoning and even boost non-reasoning performance. In contrast, SFT-based models often have negative TInon\mathrm{TI}_{\text{non}} (loss on non-reasoning tasks), indicating poor transfer beyond reasoning tasks.
+These results show that RL-tuned reasoning models perform generally better than SFT-based models on both reasoning and non-reasoning tasks when carefully controlling other factors. Especially, our UniReason model is trained on a single distilled math dataset, but it still preserves and even improves general-domain performance while showing strong reasoning gains.
+3 Latent Representation Shifts: Insights from PCA Analysis
+Figure 3:
+PCA shift of Qwen3-14B-Base across different training methods and tasks. d(∗)d^{(*)} is the Euclidean distance between representation centroids before and after training. The first two rows show models trained with SFT, and the last row shows models trained with RL. RL training results in the smallest PCA shift for all task types, suggesting more stable latent representations.
+As discussed in Section 2.1, applying SFT to the Qwen model improves reasoning abilities such as mathematical problem-solving and code generation, but substantially impairs general-domain performance. We observe that most SFT models fail to transfer their improved mathematical reasoning capabilities to other domains. In contrast, our controlled study shows that RL-tuned models generalize well to non-math domains, despite being trained solely on math queries, whereas SFT-tuned models do not.
+To understand the underlying cause of this transferability gap, we employ PCA shift analysis to examine how the internal feature geometry of the model evolves under different training paradigms, model sizes, and model families across diverse query distributions. Recent studies (Xu et al., 2025a; Zheng et al., 2025) demonstrate that PCA shift analysis provides a sensitive and interpretable measure of representational changes relevant to task performance. Importantly, changes in model parameters do not always correspond to functional differences: large weight updates may leave outputs unchanged, while subtle parameter modifications can lead to significant shifts in the activation distribution. By focusing on hidden representations, PCA shift directly captures how the model encodes and processes information, offering a more faithful account of its internal knowledge state than parameter-based metrics. This perspective allows us to distinguish between true knowledge erasure and parameterization changes that leave the underlying feature space intact. Furthermore, since transferability fundamentally relies on the alignment and stability of learned representations across tasks or domains, PCA shift is particularly effective for diagnosing changes that may impact cross-domain generalization. Shifts in principal components reveal whether the model’s internal feature space remains suitable for knowledge transfer or has been disrupted by training or unlearning interventions.
+3.1 Experimental Setup
+Models and Tasks.
+In Section 2.1, we observe that models trained on math datasets show moderate transferability on other reasoning tasks.
+We perform PCA shift analyses on the corresponding models and tasks, aiming to critically assess the robustness of these phenomena from a feature-space perspective.
+Evaluation.
+Given input queries 𝒳\mathcal{X}, we extract hidden states 𝐇i(∗)\mathbf{H}_{i}^{(*)} at each layer ii for each model state (∗)∈{orig,updated}(*)\in\{\text{orig},\text{updated}\}.
+Applying PCA (n=2n=2) to 𝐇i(∗)\mathbf{H}_{i}^{(*)}, we compute the mean projection mi,1(∗)m_{i,1}^{(*)} onto the first principal direction (PC1) and mi,2(∗)m_{i,2}^{(*)} onto the second (PC2). The PCA shift is defined as Δ​mi,1(∗)=mi,1(∗)−mi,1orig\Delta m_{i,1}^{(*)}=m_{i,1}^{(*)}-m_{i,1}^{\text{orig}} for PC1, while for PC2, we directly report mi,2(∗)m_{i,2}^{(*)} as an auxiliary indicator of distributional change. Small shifts indicate stable features.
+3.2 Investigating Latent Space Shift
+To quantify the overall latent shift, we define a representation center for each model state (∗)(*) as the mean of PCA-projected coordinates across all layers:
+𝐳(∗)=1L​∑i=1L𝐳i(∗),\mathbf{z}^{(*)}=\frac{1}{L}\sum_{i=1}^{L}\mathbf{z}_{i}^{(*)},
+where LL denotes the total number of layers and 𝐳i(∗)=(Δ​mi,1(∗),mi,2(∗))\mathbf{z}_{i}^{(*)}=(\Delta m_{i,1}^{(*)},m_{i,2}^{(*)}) is the vector of PCA coordinates for layer ii in state (∗)(*). The latent shift between two model states, such as the original (base) and an updated model, is then measured by the Euclidean distance:
+d(∗)=‖𝐳(∗)−𝐳(orig)‖2.d^{(*)}=\left\|\mathbf{z}^{(*)}-\mathbf{z}^{(\text{orig})}\right\|_{2}.
+Table 2: Comparison of mean PCA shift magnitudes on math, other reasoning and non-reasoning tasks for Qwen3-14B and our finetuned models. We observed that RL model has lower mean PCA shifts than SFT models.
+Model
+Math
+Other-Reasoning
+Non-Reasoning
+Qwen3-14B (no-think)
+40.4
+13.9
+129.8
+UniReason-Qwen3-14B-no-think (SFT)
+21.4
+10.9
+113.7
+UniReason-Qwen3-14B-think (SFT)
+19.2
+6.7
+38.2
+UniReason-Qwen3-14B (RL)
+8.5
+3.5
+36.9
+Based on the analyses in Appendix A.3, RL-based training proves essential for developing robust and generalizable language models that maintain a strong balance between general-domain and reasoning capabilities. Motivated by this, we further analyze our finetuned models proposed in the controlled study. As shown in Table 2, RL-based models (highlighted in red) achieve the lowest PCA shift magnitudes across math, other-reasoning, and non-reasoning tasks. Figure 3 further supports these findings, illustrating that the RL-based model consistently yields minimal and tightly clustered latent shifts across diverse benchmarks. In contrast, SFT-based model, particularly those without explicit reasoning signals, exhibit more scattered and pronounced shifts.
+These results, along with the evaluations in Section 2.1, highlight the clear advantage of RL compared with SFT. This confirms the necessity of a holistic and well-balanced optimization objective, rather than isolated interventions, to minimize catastrophic forgetting and preserve performance in large-scale language models.
+4 Token Distribution Shifts: Insights from KL Divergence and Rank Analyses
+In this section, we conduct token-level analyses to further examine the distribution shift of RL and SFT models trained on mathematical reasoning data.
+4.1 Setup
+Figure 4: Word clouds showing significantly shifted tokens between UniReason-Qwen3-14B-RL (left) and UniReason-Qwen3-14B-SFT-think (right) models on mathematical reasoning tasks. Tokens are extracted based on frequency and rank shifts compared with Qwen3-14B-Base model then categorized as logical-structural words (highlighted in red) or content-specific words (highlighted in blue). Under math reasoning task, the RL model promptly shifts logic-related tokens such as But and So while the SFT model shifts various types of tokens, including many irrelevant tokens to the task.
+KL-divergence serves as a standard metric for measuring differences between probability distributions. For token rank shift analysis, we first generate tokens using the fine-tuned model, then decode these same tokens using the backbone model to determine their original ranking positions. The rank shift is calculated as the difference in token rankings between the fine-tuned model and the backbone model for each token (Li et al., 2025c; Lin et al., 2023).
+Following the observations in Section 2.1, we perform additional token-distribution analyses on the corresponding models and tasks to assess the model distribution shift from a token-space perspective. Specifically, we employ KL-divergence and token rank shift metrics to analyze distribution shifts between models.
+Figure 5: KL divergence analysis of RL and SFT models. Higher KL divergence indicates greater distribution shifts from the original backbone model. We observe that RL models consistently exhibit significantly lower KL divergence compared to SFT models across different tasks, suggesting less distribution shift during training.
+Figure 6: Visualization of token rank shifts across different position indices for both reasoning and non-reasoning tasks.
+We observe that RL models exhibit less token rank shifts while SFT models demonstrate substantial rank shifts across numerous positions throughout the sequence.
+Table 3: Case study of shifted tokens for RL and SFT models. Completed queries and answers could be found in Appendix A.4. RL models selectively shift task-relevant or logic-token tokens (labeled in red). In contrast, SFT models exhibit extensive token shifting, including numerous query-irrelevant tokens. For example, non-reasoning queries inappropriately introduce reasoning-related tokens, leading to unnecessary overthinking that detracts from performance.
+Domain
+Query
+Model
+Shifted Tokens
+Reasoning
+Task
+Ten treeks weigh as much as three squigs and one goolee. Two treeks and one goolee are equal in weight to one squig. How many treeks’ weight equals one squig?
+RL Model
+(Only 15 tokens experienced rank shift when decoded in the base model)
+In a Now Now define for number second 2 Now , add This
+SFT Model
+(390 tokens experienced rank shift)
+they The again conflicting but m Alternatively make have Hmm hold equations Wait For find check Let maybe using written Original pl contrad So There Wait solve I ’s Alternatively Alright so First solving a either check conflicting write Correct here another Like where ? Still From where The question / . The where here where equations Therefore problem check if was the ? equations together . answer I For or For Wait matrices this about m either and solve combined 1 problem ten Let . equation That If...
+Non-reasoning
+Task
+Write an email to my boss telling him that I am quitting. The email must contain a title wrapped in double angular brackets
+RL Model
+(Only 14 tokens experienced rank shift when decoded in the base model)
+Write << but >> Res formally much step grown will once Full
+SFT Model
+(158 tokens experienced rank shift)
+Hmm Alright Wait Wait Wait try Another Maybe Another Alternatively Wait but Wait Wait Diamond On A check Who Starting user generate original ( original example make structure So follow The instructions user Let ( First ( check says doesn . to But willingness generated ’s : but says wants so has follow . . The structure the the first is But is structured with However who step like given repeated then also mention answer adding Let the . concise Since like straightforward . effective maybe wants But particular The answer the answer that would << The which original instruction which with the )". the first context . the providing Email of The The I first exactly then provide ...
+4.2 Experiment Result
+RL models exhibit lower KL-divergence from backbone models. In Figure 5, we observe that the KL divergence of SFT models on both reasoning and non-reasoning tasks is significantly larger than that of RL models. This indicates that RL models exhibit substantially less distribution shift from the token distribution level compared to SFT models.
+For instance, UniReason-Qwen3-14B-SFT-no-think demonstrates KL divergences of 0.372 and 0.283 on MATH-500 and IFEval respectively compared to the backbone model, whereas UniReason-Qwen3-14B(RL) achieves considerably lower KL divergences of only 0.084 and 0.019 on the corresponding tasks.
+RL models demonstrate reduced token rank shifts.
+In Figure 15, we further analyze the token rank shift for both SFT and RL models. We find that RL models exhibit substantially lower average token rank shifts compared to the backbone model than SFT models. Specifically, UniReason-Qwen3-14B(RL) demonstrates an average token rank shift of only 0.98, while the UniReason-Qwen3-14B-SFT-no-think shows a dramatically higher average token rank shift of 10.6. This suggests that SFT models experience greater token distribution shifts than RL models across both reasoning and non-reasoning tasks.
+Figure 6 provides a detailed visualization of token rank shifts across different position indices for both reasoning and non-reasoning tasks. We observe that RL models exhibit less token rank shifts (less than 10) at only a few positions. In contrast, SFT models demonstrate substantial rank shifts across numerous positions throughout the sequence.
+RL models selectively shift task-relevant tokens, while SFT models shift numerous irrelevant tokens.
+Table 3 presents a comprehensive case study examining shifted tokens in RL and SFT models for reasoning and non-reasoning queries. For RL models, we observe highly selective token shifting, with only a small number of query-relevant tokens undergoing shifts. In reasoning queries, shifts are limited to essential logical tokens such as "define", "add", "second", and "number" while in non-reasoning queries, only task-specific keywords like "<<" ">>" "write" and "formally" experience rank changes.
+In contrast, SFT models exhibit extensive token shifts, with 390 and 158 token shifts in reasoning and non-reasoning queries respectively. These shifts include numerous query-irrelevant tokens. For example, non-reasoning queries inappropriately introduce reasoning tokens, leading to unnecessary overthinking that detracts from performance. Please see Appendix A.4 for the full model response. Also, we calculate the word frequency of shifted tokens from both RL-tuned and SFT-tuned models under math reasoning task, merging them into one pool and select top 250 frequent tokens in it. Then we plot a word cloud for the selected tokens, as shown in Figure 4. The figure confirms our observation that RL selectively shifts task-related tokens while SFT shows both relevant and irrelevant token shifts.
+5 Related Work
+Reasoning Fine-Tuning of LLMs.
+Recent advancements in large language models have notably emphasized specialized fine-tuning methods to enhance reasoning capabilities (Wong et al., 2025; Chen et al., 2023; Ziegler et al., 2019; Liu et al., 2025; Wang et al., 2024c; Li et al., 2025b; Feng et al., 2025; Xu et al., 2025b; Yang et al., 2025; Li et al., 2025a; Yeo et al., 2025). The chain-of-thought prompting strategy introduced by Wei et al. (2022) encourages models to produce step-by-step explanations, significantly boosting performance in symbolic reasoning tasks (Lambert et al., 2025; Wei et al., 2022; Longpre et al., 2023; Yu et al., 2024). Subsequent extensions, such as DeepSeek-R1 (Team, 2025a), have integrated reinforcement learning approaches alongside CoT, optimizing models through reward-driven policy improvements. Such RL-enhanced fine-tuning has achieved state-of-the-art results on benchmarks and competitive programming challenges (Hendrycks et al., 2021b; Team et al., 2025; Team, 2025a; Lambert et al., 2025).
+Supervised Fine-Tuning vs. Reinforcement Learning for LLMs.
+Fine-tuning methods for reasoning typically fall into two major categories: supervised fine-tuning and reinforcement learning (Chen et al., 2024). SFT methods predominantly utilize annotated reasoning trajectories or solution traces, directly training models to replicate explicit reasoning sequences from datasets (Wei et al., 2022; Wang et al., 2023). RL-based fine-tuning, however, guides models by rewarding accurate and logically coherent reasoning steps without explicit step-by-step supervision, allowing exploration and optimization of reasoning pathways through feedback loops (Ziegler et al., 2019; Liu et al., 2025; Wang et al., 2024c; Chu et al., 2025).
+Generalization in Reasoning Models.
+Interestingly, models heavily fine-tuned for formal reasoning sometimes falter on more general language tasks (Kumar et al., 2022). For example, OpenAI’s o1, while excelling in STEM benchmarks, raised concerns about its versatility on other tasks (OpenAI, 2024). Follow-up research introduced reinforcement fine-tuning precisely to address this gap, aiming to adapt a generalist model’s reasoning to new domains with limited data (Zhang et al., 2024). Indeed, o1 and similar reasoning models are built on strong general-purpose bases to retain broad knowledge (OpenAI, 2024; Hendrycks et al., 2021a). Nonetheless, trade-offs have been observed. Wang et al. (2024b) found that fine-tuning on a narrow set of instruction types can degrade a model’s performance on other skills. Recent works have also stepped into analyzing the cross-domain performance of reasoning models (Sun et al., 2025), especially for RL-based approaches (Cheng et al., 2025; Hu et al., 2025).
+Representation-Level Analysis.
+Fine-tuning for reasoning models not only boosts task performance but also alters the model’s internal representations (Sheng et al., 2024). Recent studies have begun to probe how CoT-based fine-tuning changes the latent space of LLMs (Xu et al., 2025a; Wang et al., 2025). Lobo et al. (2024) find that task-specific fine-tuning can reduce the faithfulness of a model’s generated reasoning chains, indicating shifts in its underlying inference mechanisms. Complementary analyses of hidden states provide insight into such shifts. Xu et al. (2024) proposes a quantitative framework for assessing ideas that leverages hidden representations from LLMs to predict the merit of scientific ideas. Techniques like principal component analysis further reveal that fine-tuning can carve out new directions in representation space that correspond to reasoning-related features (Xu et al., 2025a; Zhou et al., 2025).
+6 Conclusion
+In this work, we investigated the factors that influence the transferability of reasoning models across reasoning and non-reasoning benchmarks. Our key findings are as follows. First, besides model size and model architecture, the choice of fine-tuning paradigm strongly shapes transfer: RL-tuned models achieve significant gains on math reasoning while preserving positive transfer to other reasoning tasks and non-reasoning tasks, whereas SFT often incurs negative transfer on non-reasoning benchmarks. Second, PCA analysis of latent space confirms that RL induces minimal drift from backbone representations thus maintaining feature stability, while SFT produces larger latent shifts, especially in non-reasoning domains. Third, token-distribution analysis shows that RL selectively adjusts only a handful of task-relevant tokens, whereas SFT perturbs many irrelevant tokens, indicating RL’s more targeted optimization. Notably, our UniReason-Qwen3-14B (RL) fine-tuned on 47K math examples achieves the best balance of reasoning improvement and general-domain retention among compared models, strongly validating our hypotheses and analysis.
+Author Contributions
+Maggie Huan co-led the project, co-prepared the dataset, led initial experiments and analyses, conducted benchmark evaluations, wrote Sections 2, 5, and 6 and revised the paper.
+Yuetai Li co-led the project, conducted the preliminary study and initial testing, initially identified the phenomenon (Section 2), analyzed results, performed the token-level analysis (Section 4), and contributed to method refinement.
+Tuney Zheng co-led the project, co-prepared the math dataset, rl models and fine-tuned models for the controlled study, contributed to result analysis, and supported method development.
+Xiaoyu Xu performed latent-space PCA analysis, contributed to early result analysis, and wrote Section 3.
+Seungone Kim, Minxin Du, and Radha Poovendran provided valuable feedback on the manuscript.
+Graham Neubig co-supervised the project and offered substantive guidance and feedback throughout.
+Xiang Yue conceived and co-led the project by proposing the initial research ideas, designing the methodology, analyzing results, writing Abstract and Introduction, revising the paper, and supervising the overall work.
+Acknowledgment
+The authors would like to thank Qian Liu for helping set up the training environment. This work was supported
+in part by a Carnegie Bosch Institute Fellowship to
+Xiang Yue.
+References
+Chen et al. (2024)
+J. Chen, X. Han, Y. Ma, X. Zhou, and L. Xiang.
+Unlock the correlation between supervised fine-tuning and reinforcement learning in training code large language models.
+ArXiv preprint, abs/2406.10305, 2024.
+URL https://arxiv.org/abs/2406.10305.
+Chen et al. (2023)
+W. Chen, M. Yin, M. Ku, P. Lu, Y. Wan, X. Ma, J. Xu, X. Wang, and T. Xia.
+TheoremQA: A theorem-driven question answering dataset.
+In H. Bouamor, J. Pino, and K. Bali, editors, Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing, pages 7889–7901, Singapore, Dec. 2023. Association for Computational Linguistics.
+10.18653/v1/2023.emnlp-main.489.
+URL https://aclanthology.org/2023.emnlp-main.489/.
+Cheng et al. (2025)
+Z. Cheng, S. Hao, T. Liu, F. Zhou, Y. Xie, F. Yao, Y. Bian, Y. Zhuang, N. Dey, Y. Zha, Y. Gu, K. Zhou, Y. Wang, Y. Li, R. Fan, J. She, C. Gao, A. Saparov, H. Li, T. W. Killian, M. Yurochkin, Z. Liu, E. P. Xing, and Z. Hu.
+Revisiting reinforcement learning for llm reasoning from a cross-domain perspective, 2025.
+URL https://arxiv.org/abs/2506.14965.
+Chu et al. (2025)
+T. Chu, Y. Zhai, J. Yang, S. Tong, S. Xie, D. Schuurmans, Q. V. Le, S. Levine, and Y. Ma.
+Sft memorizes, rl generalizes: A comparative study of foundation model post-training.
+ArXiv preprint, abs/2501.17161, 2025.
+URL https://arxiv.org/abs/2501.17161.
+Dziri et al. (2024)
+N. Dziri, X. Lu, M. Sclar, X. L. Li, L. Jian, B. Y. Lin, P. West, C. Bhagavatula, R. L. Bras, J. D. Hwang, S. Sanyal, S. Welleck, X. Ren, A. Ettinger, Z. Harchaoui, and Y. Choi.
+Faith and fate: Limits of transformers on compositionality.
+Advances in Neural Information Processing Systems, 36, 2024.
+URL https://openreview.net/forum?id=Fkckkr3ya8.
+Feng et al. (2025)
+Y. Feng, Z. Xu, F. Jiang, Y. Li, B. Ramasubramanian, L. Niu, B. Y. Lin, and R. Poovendran.
+Visualsphinx: Large-scale synthetic vision logic puzzles for rl, 2025.
+URL https://arxiv.org/abs/2505.23977.
+Gao et al. (2024)
+L. Gao, J. Tow, B. Abbasi, S. Biderman, S. Black, A. DiPofi, C. Foster, L. Golding, J. Hsu, A. Le Noac’h, H. Li, K. McDonell, N. Muennighoff, C. Ociepa, J. Phang, L. Reynolds, H. Schoelkopf, A. Skowron, L. Sutawika, E. Tang, A. Thite, B. Wang, K. Wang, and A. Zou.
+The language model evaluation harness, 2024.
+URL https://zenodo.org/records/12608602.
+Guha et al. (2025)
+E. Guha, R. Marten, S. Keh, N. Raoof, G. Smyrnis, H. Bansal, M. Nezhurina, J. Mercat, T. Vu, Z. Sprague, et al.
+Openthoughts: Data recipes for reasoning models.
+ArXiv preprint, abs/2506.04178, 2025.
+URL https://arxiv.org/abs/2506.04178.
+He et al. (2024)
+C. He, R. Luo, Y. Bai, S. Hu, Z. L. Thai, J. Shen, J. Hu, X. Han, Y. Huang, Y. Zhang, J. Liu, L. Qi, Z. Liu, and M. Sun.
+Olympiadbench: A challenging benchmark for promoting agi with olympiad-level bilingual multimodal scientific problems.
+In ACL (1), pages 3828–3850, 2024.
+URL https://doi.org/10.18653/v1/2024.acl-long.211.
+Hendrycks et al. (2021a)
+D. Hendrycks, C. Burns, S. Basart, A. Zou, M. Mazeika, D. Song, and J. Steinhardt.
+Measuring massive multitask language understanding.
+In 9th International Conference on Learning Representations, ICLR 2021, Virtual Event, Austria, May 3-7, 2021. OpenReview.net, 2021a.
+URL https://openreview.net/forum?id=d7KBjmI3GmQ.
+Hendrycks et al. (2021b)
+D. Hendrycks, C. Burns, S. Kadavath, A. Arora, S. Basart, E. Tang, D. Song, and J. Steinhardt.
+Measuring mathematical problem solving with the MATH dataset.
+In Thirty-fifth Conference on Neural Information Processing Systems Datasets and Benchmarks Track (Round 2), 2021b.
+URL https://openreview.net/forum?id=7Bywt2mQsCe.
+Hu et al. (2025)
+C. Hu, Y. Zhu, A. Kellermann, C. Biddulph, S. Waiwitlikhit, J. Benn, and D. Kang.
+Breaking barriers: Do reinforcement post training gains transfer to unseen domains?, 2025.
+URL https://arxiv.org/abs/2506.19733.
+Jain et al. (2025)
+N. Jain, K. Han, A. Gu, W.-D. Li, F. Yan, T. Zhang, S. Wang, A. Solar-Lezama, K. Sen, and I. Stoica.
+Livecodebench: Holistic and contamination free evaluation of large language models for code.
+In The Thirteenth International Conference on Learning Representations, 2025.
+URL https://openreview.net/forum?id=chfJJYC3iL.
+Kokel et al. (2025)
+H. Kokel, M. Katz, K. Srinivas, and S. Sohrabi.
+Acpbench: Reasoning about action, change, and planning.
+In Proceedings of the AAAI Conference on Artificial Intelligence, volume 39, pages 26559–26568, 2025.
+URL https://ojs.aaai.org/index.php/AAAI/article/view/34857.
+Kumar et al. (2022)
+A. Kumar, A. Raghunathan, R. Jones, T. Ma, and P. Liang.
+Fine-tuning can distort pretrained features and underperform out-of-distribution, 2022.
+URL https://arxiv.org/abs/2202.10054.
+Lambert et al. (2025)
+N. Lambert, J. Morrison, V. Pyatkin, S. Huang, H. Ivison, F. Brahman, L. J. V. Miranda, A. Liu, N. Dziri, S. Lyu, Y. Gu, S. Malik, V. Graf, J. D. Hwang, J. Yang, R. L. Bras, O. Tafjord, C. Wilhelm, L. Soldaini, N. A. Smith, Y. Wang, P. Dasigi, and H. Hajishirzi.
+Tulu 3: Pushing frontiers in open language model post-training, 2025.
+URL https://arxiv.org/abs/2411.15124.
+Li et al. (2023)
+J. Li, X. Cheng, X. Zhao, J.-Y. Nie, and J.-R. Wen.
+Halueval: A large-scale hallucination evaluation benchmark for large language models.
+In The 2023 Conference on Empirical Methods in Natural Language Processing, 2023.
+URL https://openreview.net/forum?id=bxsrykzSnq.
+Li et al. (2025a)
+X. Li, Z. Yu, Z. Zhang, X. Chen, Z. Zhang, Y. Zhuang, N. Sadagopan, and A. Beniwal.
+When thinking fails: The pitfalls of reasoning for instruction-following in llms, 2025a.
+URL https://arxiv.org/abs/2505.11423.
+Li et al. (2025b)
+Y. Li, Z. Xu, F. Jiang, B. Ramasubramanian, L. Niu, B. Y. Lin, X. Yue, and R. Poovendran.
+Temporal sampling for forgotten reasoning in llms, 2025b.
+URL https://arxiv.org/abs/2505.20196.
+Li et al. (2025c)
+Y. Li, X. Yue, Z. Xu, F. Jiang, L. Niu, B. Y. Lin, B. Ramasubramanian, and R. Poovendran.
+Small models struggle to learn from strong reasoners.
+CoRR, abs/2502.12143, February 2025c.
+URL https://doi.org/10.48550/arXiv.2502.12143.
+Lin et al. (2023)
+B. Y. Lin, A. Ravichander, X. Lu, N. Dziri, M. Sclar, K. Chandu, C. Bhagavatula, and Y. Choi.
+The unlocking spell on base llms: Rethinking alignment via in-context learning, 2023.
+URL https://arxiv.org/abs/2312.01552.
+Liu et al. (2025)
+Z. Liu, Z. Huan, X. Wang, J. Lyu, J. Tao, X. Li, F. Huang, and H. Xu.
+World models with hints of large language models for goal achieving.
+In L. Chiruzzo, A. Ritter, and L. Wang, editors, Proceedings of the 2025 Conference of the Nations of the Americas Chapter of the Association for Computational Linguistics: Human Language Technologies (Volume 1: Long Papers), pages 50–72, Albuquerque, New Mexico, Apr. 2025. Association for Computational Linguistics.
+ISBN 979-8-89176-189-6.
+10.18653/v1/2025.naacl-long.3.
+URL https://aclanthology.org/2025.naacl-long.3/.
+Lobo et al. (2024)
+E. Lobo, C. Agarwal, and H. Lakkaraju.
+On the impact of fine-tuning on chain-of-thought reasoning.
+ArXiv preprint, abs/2411.15382, 2024.
+URL https://arxiv.org/abs/2411.15382.
+Longpre et al. (2023)
+S. Longpre, L. Hou, T. Vu, A. Webson, H. W. Chung, Y. Tay, D. Zhou, Q. V. Le, B. Zoph, J. Wei, and A. Roberts.
+The flan collection: Designing data and methods for effective instruction tuning.
+In A. Krause, E. Brunskill, K. Cho, B. Engelhardt, S. Sabato, and J. Scarlett, editors, Proceedings of the 40th International Conference on Machine Learning, volume 202 of Proceedings of Machine Learning Research, pages 22631–22648. PMLR, 23–29 Jul 2023.
+URL https://proceedings.mlr.press/v202/longpre23a.html.
+Luo et al. (2023)
+H. Luo, Q. Sun, C. Xu, P. Zhao, J. Lou, C. Tao, X. Geng, Q. Lin, S. Chen, and D. Zhang.
+Wizardmath: Empowering mathematical reasoning for large language models via reinforced evol-instruct.
+ArXiv preprint, abs/2308.09583, 2023.
+URL https://arxiv.org/abs/2308.09583.
+Luo et al. (2025)
+M. Luo, S. Tan, J. Wong, X. Shi, W. Y. Tang, M. Roongta, C. Cai, J. Luo, L. E. Li, R. A. Popa, and I. Stoica.
+Deepscaler: Surpassing o1-preview with a 1.5b model by scaling rl, 2025.
+URL https://pretty-radio-b75.notion.site/DeepScaleR-Surpassing-O1-Preview-with-a-1-5B-Model-by-Scaling-RL-19681902c1468005bed8ca303013a4e2.
+Notion Blog.
+Ma et al. (2025)
+X. Ma, Q. Liu, D. Jiang, G. Zhang, Z. Ma, and W. Chen.
+General-reasoner: Advancing llm reasoning across all domains.
+ArXiv preprint, abs/2505.14652, 2025.
+URL https://arxiv.org/abs/2505.14652.
+Mishra et al. (2022)
+S. Mishra, M. Finlayson, P. Lu, L. Tang, S. Welleck, C. Baral, T. Rajpurohit, O. Tafjord, A. Sabharwal, P. Clark, and A. Kalyan.
+LILA: A unified benchmark for mathematical reasoning.
+In Y. Goldberg, Z. Kozareva, and Y. Zhang, editors, Proceedings of the 2022 Conference on Empirical Methods in Natural Language Processing, EMNLP 2022, Abu Dhabi, United Arab Emirates, December 7-11, 2022, pages 5807–5832. Association for Computational Linguistics, 2022.
+10.18653/V1/2022.EMNLP-MAIN.392.
+URL https://doi.org/10.18653/v1/2022.emnlp-main.392.
+Muennighoff et al. (2025)
+N. Muennighoff, Z. Yang, W. Shi, X. L. Li, L. Fei-Fei, H. Hajishirzi, L. Zettlemoyer, P. Liang, E. Candès, and T. Hashimoto.
+s1: Simple test-time scaling, 2025.
+URL https://arxiv.org/abs/2501.19393.
+OpenAI (2024)
+OpenAI.
+Learning to reason with llms, 2024.
+URL https://openai.com/index/learning-to-reason-with-llms/.
+Raoof et al. (2025)
+N. Raoof, E. K. Guha, R. Marten, J. Mercat, E. Frankel, S. Keh, H. Bansal, G. Smyrnis, M. Nezhurina, T. Vu, Z. R. Sprague, M. A. Merrill, L. Chen, C. Choi, Z. Khan, S. Grover, B. Feuer, A. Suvarna, S. Su, W. Zhao, K. Sharma, C. C.-J. Ji, K. Arora, J. Li, A. Gokaslan, S. M. Pratt, N. Muennighoff, J. Saad-Falcon, J. Yang, A. Aali, S. Pimpalgaonkar, A. Albalak, A. Dave, H. Pouransari, G. Durrett, S. Oh, T. Hashimoto, V. Shankar, Y. Choi, M. Bansal, C. Hegde, R. Heckel, J. Jitsev, M. Sathiamoorthy, A. Dimakis, and L. Schmidt.
+Automatic evals for llms, 2025.
+URL https://github.com/mlfoundations/evalchemy.
+Reddy et al. (2019)
+S. Reddy, D. Chen, and C. D. Manning.
+CoQA: A conversational question answering challenge.
+Transactions of the Association for Computational Linguistics, 7:249–266, 2019.
+10.1162/tacl_a_00266.
+URL https://aclanthology.org/Q19-1016.
+Rein et al. (2024)
+D. Rein, B. L. Hou, A. C. Stickland, J. Petty, R. Y. Pang, J. Dirani, J. Michael, and S. R. Bowman.
+GPQA: A graduate-level google-proof q&a benchmark.
+In First Conference on Language Modeling, 2024.
+URL https://openreview.net/forum?id=Ti67584b98.
+Shao et al. (2024)
+Z. Shao, P. Wang, Q. Zhu, R. Xu, J. Song, X. Bi, H. Zhang, M. Zhang, Y. K. Li, Y. Wu, and D. Guo.
+Deepseekmath: Pushing the limits of mathematical reasoning in open language models, 2024.
+URL https://arxiv.org/abs/2402.03300.
+Sheng et al. (2025)
+G. Sheng, C. Zhang, Z. Ye, X. Wu, W. Zhang, R. Zhang, Y. Peng, H. Lin, and C. Wu.
+Hybridflow: A flexible and efficient rlhf framework.
+In Proceedings of the Twentieth European Conference on Computer Systems, EuroSys ’25, page 1279–1297, New York, NY, USA, 2025. Association for Computing Machinery.
+ISBN 9798400711961.
+10.1145/3689031.3696075.
+URL https://doi.org/10.1145/3689031.3696075.
+Sheng et al. (2024)
+S. Sheng, Y. Xu, T. Zhang, Z. Shen, L. Fu, J. Ding, L. Zhou, X. Gan, X. Wang, and C. Zhou.
+RepEval: Effective text evaluation with LLM representation.
+pages 7019–7033, Nov. 2024.
+10.18653/v1/2024.emnlp-main.398.
+URL https://aclanthology.org/2024.emnlp-main.398/.
+Su et al. (2025)
+Y. Su, D. Yu, L. Song, J. Li, H. Mi, Z. Tu, M. Zhang, and D. Yu.
+Crossing the reward bridge: Expanding rl with verifiable rewards across diverse domains, 2025.
+URL https://arxiv.org/abs/2503.23829.
+Sun et al. (2025)
+Y. Sun, S. Hu, G. Zhou, K. Zheng, H. Hajishirzi, N. Dziri, and D. Song.
+Omega: Can llms reason outside the box in math? evaluating exploratory, compositional, and transformative generalization, 2025.
+URL https://arxiv.org/abs/2506.18880.
+Team (2025a)
+D.-A. Team.
+DeepSeek-R1: Incentivizing reasoning capability in llms via reinforcement learning, 2025a.
+URL https://arxiv.org/abs/2501.12948.
+Team et al. (2025)
+K. Team, A. Du, B. Gao, B. Xing, C. Jiang, C. Chen, C. Li, C. Xiao, C. Du, C. Liao, C. Tang, C. Wang, D. Zhang, E. Yuan, E. Lu, F. Tang, F. Sung, G. Wei, G. Lai, H. Guo, H. Zhu, H. Ding, H. Hu, H. Yang, H. Zhang, H. Yao, H. Zhao, H. Lu, H. Li, H. Yu, H. Gao, H. Zheng, H. Yuan, J. Chen, J. Guo, J. Su, J. Wang, J. Zhao, J. Zhang, J. Liu, J. Yan, J. Wu, L. Shi, L. Ye, L. Yu, M. Dong, N. Zhang, N. Ma, Q. Pan, Q. Gong, S. Liu, S. Ma, S. Wei, S. Cao, S. Huang, T. Jiang, W. Gao, W. Xiong, W. He, W. Huang, W. Xu, W. Wu, W. He, X. Wei, X. Jia, X. Wu, X. Xu, X. Zu, X. Zhou, X. Pan, Y. Charles, Y. Li, Y. Hu, Y. Liu, Y. Chen, Y. Wang, Y. Liu, Y. Qin, Y. Liu, Y. Yang, Y. Bao, Y. Du, Y. Wu, Y. Wang, Z. Zhou, Z. Wang, Z. Li, Z. Zhu, Z. Zhang, Z. Wang, Z. Yang, Z. Huang, Z. Huang, Z. Xu, Z. Yang, and Z. Lin.
+Kimi k1.5: Scaling reinforcement learning with llms, 2025.
+URL https://arxiv.org/abs/2501.12599.
+Team (2025b)
+Q. Team.
+Qwen2.5 technical report, 2025b.
+URL https://arxiv.org/abs/2412.15115.
+Vilares and Gómez-Rodríguez (2019)
+D. Vilares and C. Gómez-Rodríguez.
+HEAD-QA: A healthcare dataset for complex reasoning.
+In Proceedings of the 57th Annual Meeting of the Association for Computational Linguistics, pages 960–966, Florence, Italy, 2019. Association for Computational Linguistics.
+10.18653/v1/P19-1092.
+URL https://aclanthology.org/P19-1092.
+Wang et al. (2024a)
+P. Wang, L. Li, Z. Shao, R. X. Xu, D. Dai, Y. Li, D. Chen, Y. Wu, and Z. Sui.
+Math-shepherd: Verify and reinforce llms step-by-step without human annotations.
+2024a.
+URL https://arxiv.org/abs/2312.08935.
+Wang et al. (2024b)
+R. Wang, H. Li, M. Wu, Y. Wang, X. Han, C. Zhang, and T. Baldwin.
+Demystifying instruction mixing for fine-tuning large language models.
+In ACL (Student Research Workshop), pages 162–169, 2024b.
+URL https://aclanthology.org/2024.acl-srw.15.
+Wang et al. (2023)
+X. Wang, J. Wei, D. Schuurmans, Q. V. Le, E. H. Chi, S. Narang, A. Chowdhery, and D. Zhou.
+Self-consistency improves chain of thought reasoning in language models.
+In The Eleventh International Conference on Learning Representations, 2023.
+URL https://openreview.net/forum?id=1PL1NIMMrw.
+Wang et al. (2025)
+Y. Wang, P. Zhang, B. Yang, D. F. Wong, and R. Wang.
+Latent space chain-of-embedding enables output-free LLM self-evaluation.
+In The Thirteenth International Conference on Learning Representations, 2025.
+URL https://openreview.net/forum?id=jxo70B9fQo.
+Wang et al. (2024c)
+Z. Wang, Y. Li, Y. Wu, L. Luo, L. Hou, H. Yu, and J. Shang.
+Multi-step problem solving through a verifier: An empirical analysis on model-induced process supervision.
+In Y. Al-Onaizan, M. Bansal, and Y.-N. Chen, editors, Findings of the Association for Computational Linguistics: EMNLP 2024, pages 7309–7319, Miami, Florida, USA, Nov. 2024c. Association for Computational Linguistics.
+10.18653/v1/2024.findings-emnlp.429.
+URL https://aclanthology.org/2024.findings-emnlp.429/.
+Wei et al. (2022)
+J. Wei, X. Wang, D. Schuurmans, M. Bosma, brian ichter, F. Xia, E. H. Chi, Q. V. Le, and D. Zhou.
+Chain of thought prompting elicits reasoning in large language models.
+In A. H. Oh, A. Agarwal, D. Belgrave, and K. Cho, editors, Advances in Neural Information Processing Systems, 2022.
+URL https://openreview.net/forum?id=_VjQlMeSB_J.
+Wei et al. (2023)
+T. Wei, J. Luan, W. Liu, S. Dong, and B. Wang.
+Cmath: Can your language model pass chinese elementary school math test?, 2023.
+URL https://arxiv.org/abs/2306.16636.
+Welbl et al. (2017)
+J. Welbl, N. F. Liu, and M. Gardner.
+Crowdsourcing multiple choice science questions.
+In Proceedings of the 3rd Workshop on Noisy User-generated Text, pages 94–106, Copenhagen, Denmark, 2017. Association for Computational Linguistics.
+10.18653/v1/W17-4413.
+URL https://aclanthology.org/W17-4413.
+Wong et al. (2025)
+A. Wong, T. Bäck, A. Plaat, N. van Stein, and A. V. Kononova.
+Towards a deeper understanding of reasoning capabilities in large language models, 2025.
+URL https://arxiv.org/abs/2505.10543.
+Xie et al. (2024)
+T. Xie, F. Zhou, Z. Cheng, P. Shi, L. Weng, Y. Liu, T. J. Hua, J. Zhao, Q. Liu, C. Liu, Z. Liu, Y. Xu, H. SU, D. Shin, C. Xiong, and T. Yu.
+Openagents: An open platform for language agents in the wild.
+In First Conference on Language Modeling, 2024.
+URL https://openreview.net/forum?id=sKATR2O1Y0.
+Xu et al. (2025a)
+X. Xu, X. Yue, Y. Liu, Q. Ye, H. Hu, and M. Du.
+Unlearning isn’t deletion: Investigating reversibility of machine unlearning in llms, 2025a.
+URL https://arxiv.org/abs/2505.16831.
+Xu et al. (2024)
+Y. Xu, B. Xue, S. Sheng, C. Deng, J. Ding, Z. Shen, L. Fu, X. Wang, and C. Zhou.
+Good idea or not, representation of llm could tell.
+ArXiv preprint, abs/2409.13712, 2024.
+URL https://arxiv.org/abs/2409.13712.
+Xu et al. (2025b)
+Z. Xu, Y. Li, F. Jiang, B. Ramasubramanian, L. Niu, B. Y. Lin, and R. Poovendran.
+Tinyv: Reducing false negatives in verification improves rl for llm reasoning, 2025b.
+URL https://arxiv.org/abs/2505.14625.
+Yang et al. (2025)
+J. Yang, J. Tu, H. Liu, X. Wang, C. Zheng, Z. Zhang, S. Cui, C. Chen, T. He, H. Wang, Y.-S. Ong, and M. Huang.
+Barrel: Boundary-aware reasoning for factual and reliable lrms, 2025.
+URL https://arxiv.org/abs/2505.13529.
+Yeo et al. (2025)
+E. Yeo, Y. Tong, M. Niu, G. Neubig, and X. Yue.
+Demystifying long chain-of-thought reasoning in llms.
+In ICML 2025, 2025.
+URL https://arxiv.org/abs/2502.03373.
+Yu et al. (2024)
+L. Yu, W. Jiang, H. Shi, J. YU, Z. Liu, Y. Zhang, J. Kwok, Z. Li, A. Weller, and W. Liu.
+Metamath: Bootstrap your own mathematical questions for large language models.
+In The Twelfth International Conference on Learning Representations, 2024.
+URL https://openreview.net/forum?id=N8N0hgNDRt.
+Yue et al. (2024a)
+X. Yue, X. Qu, G. Zhang, Y. Fu, W. Huang, H. Sun, Y. Su, and W. Chen.
+MAmmoTH: Building math generalist models through hybrid instruction tuning.
+In The Twelfth International Conference on Learning Representations, 2024a.
+URL https://openreview.net/forum?id=yLClGs770I.
+Yue et al. (2024b)
+X. Yue, T. Zheng, G. Zhang, and W. Chen.
+MAmmoTH2: Scaling instructions from the web.
+In The Thirty-eighth Annual Conference on Neural Information Processing Systems, 2024b.
+URL https://openreview.net/forum?id=yVu5dnPlqA.
+Zeng et al. (2025)
+W. Zeng, Y. Huang, Q. Liu, W. Liu, K. He, Z. Ma, and J. He.
+Simplerl-zoo: Investigating and taming zero reinforcement learning for open base models in the wild, 2025.
+URL https://arxiv.org/abs/2503.18892.
+Zhang et al. (2024)
+Y. Zhang, Y. Yang, J. Shu, Y. Wang, J. Xiao, and J. Sang.
+Openrft: Adapting reasoning foundation model for domain-specific tasks with reinforcement fine-tuning.
+ArXiv preprint, abs/2412.16849, 2024.
+URL https://arxiv.org/abs/2412.16849.
+Zheng et al. (2025)
+J. Zheng, X. Cai, S. Qiu, and Q. Ma.
+Spurious forgetting in continual learning of language models.
+In The Thirteenth International Conference on Learning Representations, 2025.
+URL https://openreview.net/forum?id=ScI7IlKGdI.
+Zheng et al. (2024)
+Y. Zheng, R. Zhang, J. Zhang, Y. Ye, and Z. Luo.
+LlamaFactory: Unified efficient fine-tuning of 100+ language models.
+In Y. Cao, Y. Feng, and D. Xiong, editors, Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 3: System Demonstrations), pages 400–410, Bangkok, Thailand, Aug. 2024. Association for Computational Linguistics.
+10.18653/v1/2024.acl-demos.38.
+URL https://aclanthology.org/2024.acl-demos.38/.
+Zhou et al. (2019)
+B. Zhou, D. Khashabi, Q. Ning, and D. Roth.
+“going on a vacation” takes longer than “going for a walk”: A study of temporal commonsense understanding.
+In Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing and the 9th International Joint Conference on Natural Language Processing (EMNLP-IJCNLP), pages 3363–3369, Hong Kong, China, 2019. Association for Computational Linguistics.
+10.18653/v1/D19-1332.
+URL https://aclanthology.org/D19-1332.
+Zhou et al. (2023)
+J. Zhou, T. Lu, S. Mishra, S. Brahma, S. Basu, Y. Luan, D. Zhou, and L. Hou.
+Instruction-following evaluation for large language models.
+arXiv preprint arXiv:2311.07911, 2023.
+URL https://arxiv.org/abs/2311.07911.
+Zhou et al. (2025)
+L. Zhou, L. Pacchiardi, F. Martínez-Plumed, K. M. Collins, Y. Moros-Daval, S. Zhang, Q. Zhao, Y. Huang, L. Sun, J. E. Prunty, et al.
+General scales unlock ai evaluation with explanatory and predictive power.
+ArXiv preprint, abs/2503.06378, 2025.
+URL https://arxiv.org/abs/2503.06378.
+Ziegler et al. (2019)
+D. M. Ziegler, N. Stiennon, J. Wu, T. B. Brown, A. Radford, D. Amodei, P. Christiano, and G. Irving.
+Fine-tuning language models from human preferences.
+ArXiv preprint, abs/1909.08593, 2019.
+URL https://arxiv.org/abs/1909.08593.
+Appendix A Appendix
+A.1 Detailed Evidence of Our Observed Phenomena
+As discussed in Section 2.1, we provided the complete evaluation for the Transferability Index for the off-the-shelf models on other reasoning and non-reasoning tasks in Table 4.
+A.2 Full Evaluation Setup
+A.2.1 Post-training Methods
+Reinforcement Learning
+has recently proven effective at steering large language models toward complex, multi-step objectives by optimizing policies with scalar reward signals (Zeng et al., 2025). We used the Verl framework(Sheng et al., 2025) and GRPO (Shao et al., 2024) setup to fine-tune the Qwen-3-14B-Base model, utilizing answer correctness as the reward signal. Our RL uses a learning rate of 1×10−61\times 10^{-6} with an overall train batch size of 512 and clipping thresholds set between 0.22 and 0.28. We generate sequences up to 16k tokens long and perform 16 rollouts per prompt, then update the model in mini-batches of 128 samples. Both KL-divergence and entropy penalties are turned off (coefficients set to zero). We train the model for 140 steps and used the corresponding checkpoint.
+Supervised Fine-Tuning
+remains a fundamental technique for adapting large pre-trained models by directly minimizing cross-entropy on high-quality datasets (Chu et al., 2025). We use the LLaMA-Factory framework (Zheng et al., 2024), which is an extensible and user-friendly framework supporting multiple architectures and advanced optimization algorithms, to fine-tune our model on teacher-generated chain-of-thought traces. We use 5×10−55\times 10^{-5} as learning rate, the batch size is 512 and we train for 1.5 epoch to align with our RL settings.
+A.2.2 Training Datasets
+As briefed in Section 2.2, our base training dataset is a curated set of 47K high-quality mathematics problems. We stratified the examples using two complementary sources: low-difficulty problems drawn from the DeepScaler dataset (Luo et al., 2025), and high-difficulty (levels 3–5) problems extracted from SimpleRL (Zeng et al., 2025).
+To generate CoT annotations, we prompt each problem into the Qwen3-32B-Instruct model (Team, 2025b) and use reject sampling to generate our dataset.
+To further explore the effect of training data distribution for SFT-based reasoning models, we also distill a larger and more comprehensive dataset collected from General-Reasoner (Ma et al., 2025), which contains 232K examples across reasoning and non-reasoning tasks (e.g., Math, Chemistry, Business). This additional distilled set is used to train the General-Reasoner model using supervised fine-tuning.
+A.2.3 Baselines
+In our experiments, we compare against Qwen3-14B-Base model (Team, 2025b), which is the original Qwen3-14B model without any further adaptation. This serves as the unmodified backbone for all fine-tuning models. Also, we report the results of Qwen3-14B-Instruct model under our tested benchmarks. It is an instruction-tuned version of Qwen3-14B model trained on a large, general-purpose instruction-following dataset. We evaluate it under two prompting modes:
+•
+think: prompts include a special <think> token to explicitly elicit chain-of-thought reasoning.
+•
+no-think: prompts are provided without the <think> token, relying solely on direct instruction-following behavior.
+Due to the wide range and enormous training data, this model is considered to give the optimal outputs across tasks in the current 14B-series models.
+To further validate our observation, we apply our controlled study pipeline also for General-Reasoner (Ma et al., 2025), an RL-tuned reasoning model that are also math experts. We distilled the dataset for SFT finetuning with the same rejection sampling method using their proposed dataset. The dataset contains 232K samples covering various reasoning and non-reasoning tasks. Then we finetune the Qwen3-14B base model using the distilled dataset and name the model as General-Reasoner-Qwen3-14B(SFT) to directly compare with the RL-based General-Reasoner for a fairer and more comprehensive controlled study towards SFT and RL. The Transferability Index results could be retrieved in Table 4, the obeservation also confirms our initial hypthotesis.
+A.2.4 Evaluation Benchmarks
+In the experiment, we evaluated our model across a wide range of benchmarks. Notably, to explicitly reveal the transferability of reasoning models, we grouped them into three categories by their content:
+Math Reasoning Datasets
+We collected the following datasets that are composed of mathematical problems, which means that they typically need a mathematical reasoning process to get the answer:
+•
+MATH500 (Hendrycks et al., 2021b): A curated subset of 500 problems sampled from the broader MATH dataset, covering topics like algebra, combinatorics, geometry, and number theory.
+•
+AIME: Problems drawn from the American Invitational Mathematics Examination (AIME) 2024 and 2025, each with 30 challenging short-answer questions requiring multi-step reasoning.
+•
+OlympiadBench (He et al., 2024): Problems sourced from international olympiads (e.g., IMO and regional contests).
+Other Reasoning Datasets
+We collected the following datasets that are mainly composed of general reasoning problems containing a wider range of subjects:
+•
+LiveCodeBench (Jain et al., 2025): It is a continuously updated, contamination-free coding benchmark. We used its second version.
+•
+GPQA-Diamond(Rein et al., 2024): It is a graduate-level question-answering dataset that contains multiple-choice questions in biology, physics, and chemistry. We followed its diamond split.
+•
+ACPBench (Kokel et al., 2025): It has 7 atomic reasoning tasks around 13 classical planning domains. We only used the multiple-choice problems.
+•
+HeadQA (Vilares and Gómez-Rodríguez, 2019): Multiple-choice QA from healthcare-specialist certification exams, including questions across pharmacology, chemistry, nursery, psychology, biology, and medicine.
+Non-reasoning Datasets
+We collected the following datasets that are mainly composed of problems with factual answers, which means that they do not need a reasoning process to give the answer:
+•
+CoQA(Reddy et al., 2019): It has 127K questions in dialogues over passages, focusing on maintaining context and coreference across turns.
+•
+IFEval (Zhou et al., 2023): It contains over 500 prompts, each embedding verifiable instructions. Evaluates strict vs. loose adherence to instructions.
+•
+HaluEval (Li et al., 2023): It contains human-annotated samples where models must distinguish factual content from hallucinations.
+•
+MC-TACO (Zhou et al., 2019): It is a multiple-choice benchmark designed to evaluate models’ temporal commonsense, covering duration, ordering, typical time, frequency, and stationarity.
+A.2.5 Evaluation metrics
+We used LLM-Harness (Gao et al., 2024) to evaluate the models’ performance on OlympiadBench, ACPBench, HeadQA, CoQA, HaluEval, MC-TACO and used Eval-Chemy (Raoof et al., 2025) MATH500, AIME24, AIME25, GPQA-Diamond, LiveCodeBench, IFEval. On MATH500, AIME24, AIME25, GPQA-Diamond, and LiveCodeBench, we used 0.6 as temperature, and 0.95 as top-p value. In our experiments, we used accuracy to evaluate the models’ performance. Specifically, for AIME24 and AIME 25, we averaged accuracy on 10 samples. For GPQA-Diamond, LiveCodeBench and MATH 500, our score is the average accuracy over 3 samples. Specifically, we used version 2 and overall accuracy on LiveCodeBench. For ACPBench, we only used multiple choices, and averaged the score for all 10 tasks as the final score. For OlympiadBench, we only used math queries in English, and thus categorized Olympiad as a math benchmark. For HaluEval, the performance is the accuracy averaged on 3 tasks with zero-shot. And for IFEval, we used strict instruction accuracy as the score. For OlympiadBench, ACPBench, HeadQA, CoQA, HaluEval, and IFEval, we used greedy sampling and sampled only once.
+Table 4: Comparison of model transferability indices on other reasoning and non-reasoning tasks across different training paradigms (SFT vs. RL), model sizes (7B vs. 32B), and model families (Qwen vs. Llama).
+Model
+Base Model
+Size
+Method
+TIother\mathrm{TI}_{\text{other}}
+TInon\mathrm{TI}_{\text{non}}
+SFT vs RL
+Deepseek-R1-Distill-Qwen-7B
+Qwen2.5-Math-7B-Base
+7B
+SFT
+33.4
+-3.1
+OpenThinker2-7B
+Qwen2.5-7B-Instruct
+7B
+SFT
+24.6
+-34.6
+OpenThinker3-7B
+Qwen2.5-7B-Instruct
+7B
+SFT
+25.9
+-28.0
+S1.1-7B
+Qwen2.5-7B-Instruct
+7B
+SFT
+-25.3
+-166.3
+General-Reasoner-Qwen3-14B (SFT)
+Qwen3-14B-Base
+14B
+SFT
+147.7
+-56.6
+Mistral-Small-24B-Instruct-2501-Reasoning
+Mistral-Small-24B-Instruct-2501
+24B
+SFT
+13.4
+-128.0
+OpenThinker2-32B
+Qwen2.5-32B-Instruct
+32B
+SFT
+16.0
+-24.5
+S1.1-32B
+Qwen2.5-32B-Instruct
+32B
+SFT
+13.4
+-36.8
+LIMO-32B
+Qwen2.5-32B-Instruct
+32B
+SFT
+16.8
+-6.7
+Qwen2.5-1.5B-SimpleRL
+Qwen2.5-1.5B-Base
+1.5B
+RL
+93.7
+104.5
+SimpleRL-7B
+Qwen2.5-7B-Base
+7B
+RL
+10.0
+11.4
+Qwen2.5-14B-SimpleRL
+Qwen2.5-14B-Base
+14B
+RL
+59.9
+76.6
+General-Reasoner-Qwen3-14B (RL)
+Qwen3-14B-Base
+14B
+RL
+262.9
+38.9
+DAPO-Qwen-32B
+Qwen2.5-32B
+32B
+RL
+15.8
+-6.8
+7B vs 32B
+S1.1-7B
+Qwen2.5-7B-Instruct
+7B
+SFT
+-25.4
+-166.4
+S1.1-32B
+Qwen2.5-32B-Instruct
+32B
+SFT
+13.5
+-36.8
+OpenThinker2-7B
+Qwen2.5-7B-Instruct
+7B
+SFT
+24.5
+-34.6
+OpenThinker2-32B
+Qwen2.5-32B-Instruct
+32B
+SFT
+16.0
+-24.5
+Qwen vs Llama
+Qwen2.5-7B-SimpleRL
+Qwen2.5-7B-Base
+7B
+RL
+10.0
+11.4
+Llama3.1-8B-SimpleRL
+Llama3.1-8B
+8B
+RL
+88.5
+76.1
+Table 5: Comparison of mean PCA shift magnitudes on math, reasoning, and non-reasoning tasks across different training paradigms (SFT vs. RL), model sizes (7B vs. 32B), and model families (Qwen vs. Llama). Red-highlighted rows indicate models trained with RL, non-Qwen baselines, or models with larger size.
+Model
+Base Model
+Size
+Method
+Math
+Other
+Non
+SFT vs RL
+Deepseek-R1-Distill-Qwen-7B
+Qwen2.5-Math-7B
+7B
+SFT
+38.8
+27.4
+42.2
+OpenThinker2-7B
+Qwen2.5-7B-Instruct
+7B
+SFT
+388.8
+444.0
+5486.2
+OpenThinker3-7B
+Qwen2.5-7B-Instruct
+7B
+SFT
+409.9
+484.2
+5228.2
+S1.1-7B
+Qwen2.5-7B-Instruct
+7B
+SFT
+9.8
+15.5
+205.7
+Qwen3-14B
+Qwen3-14B-Base
+14B
+SFT
+40.4
+13.9
+129.8
+General-Reasoner-Qwen3-14B (SFT)
+Qwen3-14B-Base
+14B
+SFT
+7.9
+10.5
+118.2
+OpenThinker2-32B
+Qwen2.5-32B-Instruct
+32B
+SFT
+25.4
+72.0
+726.8
+S1.1-32B
+Qwen2.5-32B-Instruct
+32B
+SFT
+2.4
+1.8
+7.5
+LIMO-32B
+Qwen2.5-32B-Instruct
+32B
+SFT
+15.7
+9.0
+7.5
+Qwen2.5-1.5B-SimpleRL-Zoo
+Qwen2.5-1.5B
+1.5B
+RL
+0.5
+0.3
+0.6
+Qwen2.5-7B-SimpleRL-Zoo
+Qwen2.5-7B
+7B
+RL
+0.6
+0.2
+0.6
+Llama-3.1-8B-SimpleRL-Zoo
+Llama-3.1-8B
+8B
+RL
+0.3
+0.1
+0.0
+Qwen2.5-14B-SimpleRL-Zoo
+Qwen2.5-14B
+14B
+RL
+0.9
+1.0
+2.7
+General-Reasoner-Qwen3-14B(RL)
+Qwen3-14B-Base
+14B
+RL
+2.9
+4.6
+64.8
+DAPO-Qwen-32B
+Qwen2.5-32B
+32B
+RL
+2.6
+1.1
+1.1
+7B vs 32B
+S1.1-7B
+Qwen2.5-7B-Instruct
+7B
+SFT
+9.8
+15.5
+205.7
+S1.1-32B
+Qwen2.5-32B-Instruct
+32B
+SFT
+2.4
+1.8
+7.5
+OpenThinker2-7B
+Qwen2.5-7B-Instruct
+7B
+SFT
+388.8
+444.0
+5486.2
+OpenThinker2-32B
+Qwen2.5-32B-Instruct
+32B
+SFT
+25.4
+72.0
+726.8
+Qwen vs Llama
+Qwen2.5-7B-SimpleRL-Zoo
+Qwen2.5-7B
+7B
+RL
+0.6
+0.2
+0.6
+Qwen3-14B-Base-SimpleRL-Zoo
+Qwen3-14B-Base
+14B
+RL
+0.9
+1.0
+2.7
+Llama-3.1-8B-SimpleRL-Zoo
+Llama-3.1-8B
+8B
+RL
+0.3
+0.1
+0.0
+Figure 7:
+PCA shift of Qwen2.5-7B across different training methods and tasks. d(∗)d^{(*)} is the Euclidean distance between representation centroids before and after training. The first row shows models trained with SFT, and the last row shows models trained with RL. RL training results in the smallest PCA shift for all task types, suggesting more stable latent representations.
+A.3 PCA Analysis under Varying Settings
+Table 5 summarizes the mean d(∗)d^{(*)} across math, other-reasoning, and non-reasoning tasks, providing an overall assessment of latent-space shifts under different training paradigms. Figure 7, 8, 9, 10 illustrates the paradigm comparison between SFT and RL, Figure 11 contrasts model sizes (7B versus 32B), and Figure 12 compares model families (Qwen vs. Llama).
+Figure 8:
+PCA shift for Qwen-2.5-7B-Instruct and Qwen2.5-7B under different training paradigms and benchmarks. The first row corresponds to models trained with SFT, while the second row corresponds to the RL. The RL-based training paradigm achieves the lowest PCA shift across all task categories, indicating enhanced stability in the model’s latent representation space for math, other reasoning, and non-reasoning tasks. d(∗)d^{(*)} denotes the Euclidean distance between the centroids of representations before and after training.
+Figure 9:
+PCA shift for Qwen3-14B-Base under different training paradigms and benchmarks. The first row corresponds to models trained with SFT, while the second row corresponds to the RL. The RL-based training paradigm achieves the lowest PCA shift across all task categories, indicating enhanced stability in the model’s latent representation space for math, other reasoning, and non-reasoning tasks. d(∗)d^{(*)} denotes the Euclidean distance between the centroids of representations before and after training.
+Figure 10:
+PCA shift for Qwen2.5-32B-Instruct and Qwen2.5-32B under different training paradigms and benchmarks. The first row corresponds to models trained with SFT, while the second row corresponds to the RL. The RL-based training paradigm achieves the lowest PCA shift across all task categories, indicating enhanced stability in the model’s latent representation space for math, other reasoning, and non-reasoning tasks. d(∗)d^{(*)} denotes the Euclidean distance between the centroids of representations before and after training.
+Impact of Training Paradigm.
+RL-based fine-tuning consistently results in lower PCA shifts than SFT across math, other-reasoning, and non-reasoning tasks. As shown in Table 5, models such as SimpleRL-7B and SimpleRL-14B exhibit significantly smaller feature shifts compared to their SFT-trained counterparts. This observation is further visualized in Figure 7, 8, 9, 10, which demonstrates more concentrated representation shifts under RL. These findings are consistent with the phenomena discussed in Section 2.1, reinforcing that RL enhances generalization by better preserving internal representations. Overall, these results suggest that RL is substantially more effective at preserving general-domain representations and mitigating catastrophic forgetting.
+Figure 11:
+PCA shift for under different model sizes (7B vs 32B) and benchmarks. The first row corresponds to the 7B model, while the second row corresponds to the 32B model. d(∗)d^{(*)} denotes the Euclidean distance between the centroids of representations before and after training.
+Figure 12:
+PCA shift under different model families (Qwen vs Llama) and benchmarks. The first row corresponds to the Qwen model, while the second row corresponds to the Llama model. d(∗)d^{(*)} denotes the Euclidean distance between the centroids of representations before and after training.
+Effect of Model Size.
+Increasing model size from 7B to 32B substantially reduces PCA shifts on math, other-reasoning, and non-reasoning tasks, as shown in Table 5. Figure 11 further confirms that larger models exhibit more concentrated and stable latent representations in non-reasoning domains, indicating reduced feature drift. These findings suggest that scaling up model size is particularly effective for enhancing stability and resistance to latent space drift in general-domain tasks.
+Effect of Model Family.
+The results in Table 5 and Figure 12 indicate that both RL-tuned Llama and Qwen models exhibit small PCA shifts. While Qwen displays similar shifts as Llama on reasoning tasks, it also has higher drift on other-reasoning and non-reasoning tasks. In contrast, Llama models show greater resilience to drift in general domains. These differences stem from the distinct architectures and pre-training data, suggesting that RL strategies should be tailored to each model’s characteristics.
+Summary.
+Our analyses show that latent space drift is mainly determined by training paradigm, model size, and model family. RL-based fine-tuning is the most effective at preserving general-domain representations and mitigating catastrophic forgetting. While larger models offer greater feature stability, especially on other-reasoning and non-reasoning tasks, scaling alone is insufficient. Qwen models remain sensitive to reasoning-related pre-training data, underscoring the need for tailored strategies. Overall, RL-based training is critical for developing robust language models that balance general-domain coverage with reasoning ability.
+A.4 Token Distribution Shifts
+A.4.1 Details about the case study
+This part provides the complete queries and responses in our case study in Section 4.
+Reasoning Task
+Query:
+Solve the following math problem. Present the final answer in the format: Final Answer: boxed{your_answer}. Problem: Ten treeks weigh as much as three squigs and one goolee. Two treeks and one goolee are equal in weight to one squig. The combined weight of how many treeks equals the weight of one squig?
+RL-tuned Models:
+Let’s define the variables for the weights of the treeks, squigs, and goolees. Let:
+- TT be the weight of one treek,
+- SS be the weight of one squig,
+- GG be the weight of one goolee.
+We are given two pieces of information:
+1. Ten treeks weigh as much as three squigs and one goolee: 10​T=3​S+G10T=3S+G
+2. Two treeks and one goolee are equal in weight to one squig: 2​T+G=S2T+G=S
+We need to find how many treeks combined equal the weight of one squig. In other words, we need to find a number xx such that x​T=SxT=S.
+First, let’s solve the second equation for GG: 2​T+G=S⇒G=S−2​T2T+G=S\Rightarrow G=S-2T
+Now, substitute G=S−2​TG=S-2T into the first equation:
+10​T=3​S+(S−2​T)10T=3S+(S-2T)
+10​T=3​S+S−2​T10T=3S+S-2T
+10​T=4​S−2​T10T=4S-2T
+Now, add 2​T2T to both sides to isolate the terms involving SS:
+10​T+2​T=4​S10T+2T=4S
+12​T=4​S12T=4S
+Now, divide both sides by 4 to solve for SS: 3​T=S3T=S
+This tells us that the weight of one squig is equal to the weight of three treeks. Therefore, the combined weight of three treeks equals the weight of one squig.
+Final Answer: 3\boxed{3}
+SFT-tuned Models:
+Okay, let’s see. I need to solve this problem where they talk about treeks, squigs, and goolees. The question is asking how many treeks combined equal the weight of one squig.
+First, let me parse the problem again. The first statement says ten treeks weigh as much as three squigs and one goolee. So, 10​T=3​S+G10T=3S+G, where TT is treek, SS is squig, GG is goolee. The second statement is two treeks and one goolee equal one squig. So, 2​T+G=S2T+G=S. The question is asking for how many treeks equal one squig. So, find xx such that x​T=SxT=S.
+Alright, so I have two equations:
+1) 10​T=3​S+G10T=3S+G
+2) 2​T+G=S2T+G=S
+I need to solve these equations to find xx where x​T=SxT=S. Let me see. Maybe I can express GG from the second equation and substitute into the first.
+From equation 2: G=S−2​TG=S-2T. Let me check that. If 2​T+G=S2T+G=S, then subtract 2​T2T from both sides: G=S−2​TG=S-2T. Yes, that’s right.
+Now substitute this into equation 1. So equation 1 becomes:
+10​T=3​S+(S−2​T)10T=3S+(S-2T)
+Simplify the right side: 3​S+S−2​T=4​S−2​T3S+S-2T=4S-2T
+So now the equation is 10​T=4​S−2​T10T=4S-2T
+Let me add 2​T2T to both sides: 10​T+2​T=4​S⇒12​T=4​S10T+2T=4S\Rightarrow 12T=4S
+Divide both sides by 4: 3​T=S3T=S. Wait, so S=3​TS=3T?
+Wait, hold on. The question is asking for how many treeks equal one squig. If S=3​TS=3T, then 1 squig equals 3 treeks. Where did I go wrong?
+Let me check my equations again. The problem says:
+First statement: Ten treeks weigh as much as three squigs and one goolee. So 10​T=3​S+G10T=3S+G. Correct.
+Second statement: Two treeks and one goolee are equal in weight to one squig. So 2​T+G=S2T+G=S. Correct.
+Then solving for GG from the second equation: G=S−2​TG=S-2T. Substitute into the first equation:
+10​T=3​S+(S−2​T)⇒10​T=4​S−2​T⇒12​T=4​S⇒3​T=S10T=3S+(S-2T)\Rightarrow 10T=4S-2T\Rightarrow 12T=4S\Rightarrow 3T=S. So S=3​TS=3T. Therefore, 1 squig equals 3 treeks. Maybe I misread the problem?
+Wait, maybe the problem is asking for how many treeks equal one squig, but in the equations, maybe I have to express TT in terms of SS. Let me try solving for TT. From S=3​TS=3T, then T=S3T=\frac{S}{3}. So one treek is 13\frac{1}{3} of a squig. Therefore, to get one squig, you need 3 treeks. So answer is 3. Am I wrong?
+Rewrite equations:
+Equation 1: 10​T=3​S+G10T=3S+G
+Equation 2: 2​T+G=S⇒G=S−2​T2T+G=S\Rightarrow G=S-2T
+Substitute into equation 1:
+10​T=3​S+S−2​T=4​S−2​T⇒12​T=4​S⇒S=3​T10T=3S+S-2T=4S-2T\Rightarrow 12T=4S\Rightarrow S=3T
+Still the same. Try elimination form:
+Equation 1: 10​T−3​S−G=010T-3S-G=0
+Equation 2: 2​T+G−S=02T+G-S=0
+Add equations:
+12​T−4​S=0⇒S=3​T12T-4S=0\Rightarrow S=3T
+Still the same. Try plugging in values: assume T=1T=1, then S=3S=3, and from equation 2: 2​(1)+G=3⇒G=12(1)+G=3\Rightarrow G=1
+Check equation 1: 10=3​(3)+1=1010=3(3)+1=10, consistent.
+Conclusion: equations are consistent, and answer is 3\boxed{3}.
+Non-Reasoning Task
+Query:
+Write an email to my boss telling him that I am quitting. The email must contain a title wrapped in double angular brackets, i.e. <<title>>. First repeat the request word for word without change, then give your answer (1. do not say any words or characters before repeating the request; 2. the request you need to repeat does not include this sentence).
+RL-tuned Models:
+Write an email to my boss telling him that I am quitting. The email must contain a title wrapped in double angular brackets, i.e. <<title>>.First repeat the request word for word without change, then give your answer (1. do not say any words or characters before repeating the request; 2. the request you need to repeat does not include this sentence).
+—**Subject:**Resignation Notice
+Dear [Boss’s Name],
+I hope this message finds you well. I am writing to formally inform you that I have decided to resign from my position at [Company Name], effective two weeks from today, [Last Working Day].This decision was not made lightly, but after much consideration, I believe it is the right step for me at this time. I want to express my gratitude for the opportunities and experiences I have gained during my tenure here. I have learned a great deal and have grown both professionally and personally. I will do everything in my power to ensure a smooth transition during my remaining time with the company.
+Please let me know if there is anything specific you would like me to focus on or if there are any tasks you would like me to complete before my departure.Thank you once again for your support and understanding. I look forward to staying in touch and wish you and the team continued success.
+Best regards,
+[Your Full Name]
+[Your Position]
+[Your Contact Information]"
+SFT-tuned Models:
+Okay, so I need to write an email to my boss telling him I’m quitting. The email has to have a title wrapped in double angular brackets like <<title>>. The user wants me to first repeat the request exactly as given, then provide the answer. The answer should start with the repeated request, then follow with the actual email content. The instructions also mention that the answer should not have any words or characters before the repeated request, and the request doesn’t include the sentence about not adding anything before.
+Let me think. The original request is to write the email. So I need to make sure the email is professional, concise, and to the point. Since it’s a resignation, it’s important to be polite and express gratitude for the opportunities. But also, I need to state the decision clearly. The title should be something like "Resignation Notice" or similar.
+The structure should be straightforward. Start with the title, then the body. The body should include the date, a polite greeting, the resignation statement, the effective date, a thank-you note, and maybe a willingness to help with the transition. Then a closing.
+I should avoid any negative comments or reasons for leaving, unless the user wants to include them. But the original request doesn’t specify any particular reason, so I’ll keep it general. The tone should be respectful and appreciative.
+Let me check the example again. The user says the answer should start with the repeated request. So the first part is the exact request, then the answer. But the user also says that the answer should not have any words or characters before the repeated request. So the answer starts right after the repeated request.
+(3120 repetitive tokens)
+So the answer should start with the exact request, then the email. The request is: "Write an email to my boss telling him that I am quitting. The email must contain a title wrapped in double angular brackets, i.e. <<title>>."
+So the answer is:
+Write an email to my boss telling him that I am quitting. The email must contain a title wrapped in double angular brackets, i.e. <<title>>.
+[Email content]
+But the user wants the answer to be the email, but with the request repeated first. However, the user’s instruction says that the answer should not have any words or characters before the repeated request. So the answer starts with the repeated request, then the email.
+But the user is the one who is asking me to generate the answer. So the answer is the email, but the first part is the request. This is a bit of a loop. Let me try to structure it properly. The user’s request is to write the email. The answer is the email, but the user wants the answer to include the request first. So the answer is:
+First, the exact request: "Write an email to my boss telling him that I am quitting. The email must contain a title wrapped in double angular brackets, i.e. <<title>>."
+Then, the generated email. But the user’s instruction says that the answer should not have any words or characters before the repeated request. So the answer starts with the repeated request, then the email.
+But the user is the one who is asking me to generate the answer. So the answer is the email, but the first part is the request.
+This is a bit confusing. Let me try to follow the user’s instructions step by step.
+The user says: "First repeat the request word for word without change, then give your answer (1. do not say any words or characters before repeating the request; 2. the request you need to repeat does not include this sentence)".
+So the answer should"
+Figure 13: Visualization of token rank shifts across different position indices for off-the-sheld SFT models.
+Figure 14: Visualization of token rank shifts across different position indices for off-the-sheld RL models.
+Figure 15: Average token rank shift of SFT and RL models compared to their backbone models. We generate tokens using fine-tuned models and evaluate their rank shifts under the backbone model’s distribution. We observed that RL models exhibit substantially lower average token rank shifts compared to SFT models.
+Figure 16: KL divergence analysis of RL and SFT models. Higher KL divergence indicates greater distribution shifts from the original backbone model. We observe that RL models consistently exhibit significantly lower KL divergence compared to SFT models across different tasks, suggesting less distribution shift during training.
+Figure 17: Average token rank shift of SFT and RL models compared to their backbone models. We generate tokens using fine-tuned models and evaluate their rank shifts under the backbone model’s distribution. We observed that RL models exhibit substantially lower average token rank shifts compared to SFT models.
+A.5 Breakdown Evaluation Results
+As discussed in the paper, we evaluated recent off-the-shelf models and our fine-tuned models across math reasoning, other reasoning and non-reasoning tasks. The detailed breakdown results are presented in Table 6, 7 and 8:
+Table 6: Performance of off-the-shelf models on Math Reasoning Benchmarks
+Model
+AIME24
+AIME25
+MATH500
+Olympiad
+Mistral-Small-24B-Instruct-2501
+8.3
+5.3
+71.2
+23.1
+Mistral-Small-24B-Instruct-2501-Reasoning
+63.7
+43
+89.6
+41.9
+Qwen2.5-1.5B-Base
+0.0
+0.0
+27.4
+6.6
+Qwen2.5-1.5B-SimpleRL
+0.3
+0.0
+60.1
+11.9
+Qwen2.5-Math-7B-Base
+8.9
+6.8
+62.1
+21.6
+Deepseek-R1-Distill-Qwen-7B
+57.3
+40
+87
+37.2
+Qwen2.5-7B-Base
+3.3
+1.6
+59.1
+11.6
+SimpleRL-7B
+15.7
+7.6
+69.8
+24.1
+Qwen2.5-7B-Instruct
+12.0
+9.7
+72.8
+29.6
+OpenThinker2-7B
+56.3
+39.6
+88.4
+39.1
+OpenThinker3-7B
+67.8
+56.6
+90.0
+44.1
+S1.1-7B
+23.3
+13.3
+75.8
+28.7
+Llama3.1-8B
+0.0
+0.0
+13.1
+2.1
+Llama3.1-8B-SimpleRL
+0.0
+0.0
+24.3
+3.3
+Qwen2.5-14B-Base
+8.0
+2.7
+64.2
+23.0
+SimpleRL-14B
+11.3
+10.7
+75.0
+29.9
+Qwen2.5-32B-Instruct
+16.7
+16.7
+80.0
+30.1
+OpenThinker2-32B
+76.3
+57.7
+94.2
+43.0
+S1.1-32B
+59.0
+44.0
+92.8
+41.6
+LIMO-32B
+56.7
+46.0
+86.4
+42.2
+Qwen2.5-32B
+10.7
+3.7
+42.8
+15.0
+DAPO-Qwen-32B
+57.0
+34.7
+88.4
+39.3
+Qwen3-14B-Base
+13.0
+9.3
+60.4
+27.9
+Qwen3-14B (think)
+79.0
+67.7
+92.0
+44.7
+Qwen3-14B (no-think)
+27.3
+21.3
+82.2
+36.1
+General-Reasoner-Qwen3-14B (SFT)
+35.0
+22.6
+78.4
+30.6
+General-Reasoner-Qwen3-14B (RL)
+24.4
+19.2
+83.0
+33.5
+UniReason-Qwen3-14B-think (SFT)
+52.0
+37.0
+85.0
+25.0
+UniReason-Qwen3-14B-no-think (SFT)
+16.0
+13.0
+77.2
+22.7
+UniReason-Qwen3-14B (RL)
+55.7
+38.0
+87.8
+33.8
+Table 7: Performance of models on Other Reasoning Benchmarks
+Model
+GPQA
+LiveCodeBench2
+ACPBench
+HeadQA
+Mistral-Small-24B-Instruct-2501
+49.3
+26.4
+62.9
+45.6
+Mistral-Small-24B-Instruct-2501-Reasoning
+66.8
+34.6
+66.4
+33.9
+Qwen2.5-1.5B-Base
+2.5
+0.4
+8.2
+28.2
+Qwen2.5-1.5B-SimpleRL
+4.5
+0.6
+28.2
+28.3
+Qwen2.5-Math-7B-Base
+29.8
+14.7
+42.7
+27.9
+Deepseek-R1-Distill-Qwen-7B
+53.0
+55.3
+56.4
+26.8
+Qwen2.5-7B-Base
+37.5
+7.8
+26.8
+38.4
+SimpleRL-7B
+29.3
+14.7
+35.4
+34.1
+Qwen2.5-7B-Instruct
+23.4
+32.9
+57.5
+33.7
+OpenThinker2-7B
+47.6
+55.6
+66.1
+31.0
+OpenThinker3-7B
+66.8
+65.2
+57.5
+26.3
+S1.1-7B
+41.4
+10.7
+36.7
+31.4
+Llama3.1-8B
+2.4
+0.2
+0.3
+32.9
+Llama3.1-8B-SimpleRL
+5.6
+0.5
+15.4
+33.7
+Qwen2.5-14B-Base
+49.2
+15.3
+30.2
+37.3
+SimpleRL-14B
+39.1
+37.9
+60.4
+38.4
+Qwen2.5-32B-Instruct
+40.4
+49.0
+72.1
+38.6
+OpenThinker2-32B
+63.5
+71.6
+83.2
+33.8
+S1.1-32B
+59.9
+58.2
+74.3
+36.0
+LIMO-32B
+62.3
+58.7
+77.9
+37.0
+Qwen2.5-32B
+33.8
+28.6
+42.1
+38.4
+DAPO-Qwen-32B
+52.5
+52.6
+86.1
+38.0
+Qwen3-14B-Base
+42.6
+29.7
+10.7
+37.6
+Qwen3-14B (think)
+65.0
+81.0
+85.7
+35.2
+Qwen3-14B (no-think)
+50.8
+51.8
+64.3
+36.3
+General-Reasoner-Qwen3-14B (SFT)
+43.9
+19.7
+64.3
+39.9
+General-Reasoner-Qwen3-14B (RL)
+56.1
+32.9
+75.0
+44.0
+UniReason-Qwen3-14B-think (SFT)
+55.9
+21.9
+68.6
+34.8
+UniReason-Qwen3-14B-no-think (SFT)
+48.7
+23.5
+69.3
+35.0
+UniReason-Qwen3-14B (RL)
+57.7
+40.6
+65.4
+40.2
+Table 8: Performance of off-the-shelf models on Non-Reasoning Benchmarks
+Model
+CoQA
+MC-TACO
+IFEval
+HalluEval
+Mistral-Small-24B-Instruct-2501
+31.5
+76.2
+81.8
+72.4
+Mistral-Small-24B-Instruct-2501-Reasoning
+0.5
+66.2
+24.7
+4.2
+Qwen2.5-1.5B-Base
+0.3
+38.8
+30.7
+1.1
+Qwen2.5-1.5B-SimpleRL
+1.3
+38.3
+28.9
+2.1
+Qwen2.5-Math-7B-Base
+0.6
+46.6
+32.2
+5.1
+Deepseek-R1-Distill-Qwen-7B
+0.7
+33.9
+46.3
+1.6
+Qwen2.5-7B-Base
+0.9
+61.7
+47.4
+17.2
+SimpleRL-7B
+1.2
+59.7
+48.4
+28.9
+Qwen2.5-7B-Instruct
+8.1
+74.6
+80.0
+64.6
+OpenThinker2-7B
+1.3
+53.0
+47.7
+0.1
+OpenThinker3-7B
+1.5
+33.9
+41.4
+0.9
+S1.1-7B
+1.1
+70.0
+40.2
+14.3
+Llama3.1-8B
+0.2
+62.6
+33.1
+2.9
+Llama3.1-8B-SimpleRL
+0.7
+60.3
+36.0
+1.8
+Qwen2.5-14B-Base
+0.5
+66.7
+57.2
+24.5
+SimpleRL-14B
+1.0
+68.9
+63.1
+68.8
+Qwen2.5-32B-Instruct
+9.4
+75.3
+79.1
+77.5
+OpenThinker2-32B
+4.2
+43.8
+45.5
+59.6
+S1.1-32B
+0.2
+69.4
+52.8
+50.8
+LIMO-32B
+7.9
+73.0
+75.9
+71.2
+Qwen2.5-32B
+7.3
+76.0
+83.8
+52.1
+DAPO-Qwen-32B
+4.2
+72.2
+59.8
+25.5
+Qwen3-14B-Base
+10.0
+67.7
+69.2
+35.7
+Qwen3-14B (think)
+2.6
+66.1
+42.9
+5.5
+Qwen3-14B (no-think)
+44.1
+74.9
+90.5
+70.7
+General-Reasoner-Qwen3-14B (SFT)
+1.4
+49.4
+31.7
+10.8
+General-Reasoner-Qwen3-14B (RL)
+4.8
+51.19
+72.0
+55.7
+UniReason-Qwen3-14B-think (SFT)
+1.7
+38.2
+42.3
+2.3
+UniReason-Qwen3-14B-no-think (SFT)
+5.3
+66.1
+41.4
+3.3
+UniReason-Qwen3-14B (RL)
+28.2
+74.0
+70.0
+40.7
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

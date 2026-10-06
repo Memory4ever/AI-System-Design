@@ -1,0 +1,1442 @@
+=== PAGE 1 ===
+Understanding KV Residency in Production-Scale
+Agentic LLM Workloads
+Mayank Arya
+Indian Institute of Science (IISc)
+Agrim Bari
+Microsoft M365 Research
+Anjaly Parayil
+Microsoft M365 Research
+Yogesh Simmhan
+Indian Institute of Science (IISc)
+Renee St. Amant
+Microsoft M365 Research
+Victor Rühle
+Microsoft M365 Research
+Saravan Rajmohan
+Microsoft M365 Research
+Email: mayankarya@iisc.ac.in; agrimbari@microsoft.com; aparayil@microsoft.com;
+simmhan@iisc.ac.in
+Abstract
+Agentic large language model (LLM) applications turn a single user request into a se-
+quence of model and tool calls over a growing context. Retaining the key-value (KV) state
+computed for this context in GPU memory allows subsequent calls to reuse it rather than re-
+compute it. However, retaining KV state across a serving fleet can require substantial GPU
+memory. We characterize four productionMicrosoft M365 workload traces, namely Deep
+Research, Enterprise Assistant, Coding Agent, and Enterprise Chat, spanning more than
+121 million model calls. Agentic applications issue most calls within a session, and each call
+re-reads the growing context. In Deep Research, the application issues 89% of model calls.
+Sessions have a median of 13 model calls, while Enterprise Chat, our lower-agency reference,
+has 333. The median context grows from approximately 10K tokens to 68K tokens by the
+30th call. About 80% of context tokens are served from the prefix cache, and a predictable
+class of models accounts for 67% of call-context KV.
+This reusable KV state is large and remains idle for most of its lifetime. Since the produc-
+tion models are confidential, we use the public Llama-2-70B KV layout, with grouped-query
+attention and 16-bit values, to estimate the memory demand consistently across models. Un-
+der this assumption, the KV state of a single 99th-percentile Deep Research session exceeds
+the 80 GB high-bandwidth memory (HBM) capacity of an NVIDIA H100 GPU. Retaining
+the KV state of all live sessions at their peak, which we term the hold-all-live ceiling, requires
+an estimated 501.8TB of GPU HBM. However, model inference occupies only 5.6% of the
+time for which this state is retained. Enterprise Chat has smaller sessions but approximately
+349K concurrent live sessions, resulting in a similar capacity challenge.
+Trace-driven replay shows that an idle cap of one hour reduces the hold-all-live ceiling by
+3.6×, whileincreasingthefractionofcallsthatrecomputetheircontextfrom4.07%to4.53%.
+However, eviction alone is insufficient under tighter memory budgets. With a pooled budget
+equal to one tenth of the busiest hour’s no-eviction demand, least recently used (LRU)
+eviction causes 63% of Deep Research calls to recompute their context. Furthest-next-use
+(FNU), a clairvoyant policy based on Belady’s rule, reduces this to 31%. Multi-resolution
+retention (MRR) instead demotes the LRU session’s KV state to an int4 representation
+within the same memory budget. MRR reduces the recomputation rate to 13.6%,2.3×
+lower than FNU, despite selecting sessions using recency alone.
+1
+arXiv:2610.22863v1  [cs.DC]  16 Oct 2026
+=== PAGE 2 ===
+Placement imposes a separate limit on reuse. When the next call to the same model
+reaches a different deployment within the region, cached-context reuse drops from 89% to
+29%. A Deep Research session accesses 4.5 deployments on average. Treating KV state as
+local to a deployment increases the first-touch floor, the fraction of calls that recompute
+their context even with unlimited memory, from 5.4% to 20.2%. Additional memory and
+better eviction cannot reduce this floor.
+These findings motivate retention mechanisms that change the representation of KV
+state, together with deployment-aware routing or migration. Since the production traces
+cannot be shared, we plan to releaseAgenticTraceSim, a parametric trace generator, and a
+residency replay framework for reproducible counterfactual studies.
+Keywords:Large language model serving, agentic AI, KV cache, prefix caching, KV reuse, KV
+working set, KV cache residency, GPU memory capacity, fleet provisioning, deployment-aware
+routing, workload characterization
+1 Introduction
+Production LLM serving is shifting from individual requests to persistent, tool-interleaved ses-
+sions. In conventionalchat, a user request opens aturn: the serving system performs a short
+sequence of model and optional tool calls, and control returns to the user. In anagenticwork-
+load, the request that opens a turn initiates a longer internal loop in which an orchestrator (e.g.,
+one following the ReAct or Magentic pattern [58, 11]) repeatedly invokes models and tools, ap-
+pends their results, and decides when the task is complete [66, 60, 28]. Asessionis a user’s
+ongoing interaction with one application: a sequence of one or more turns that share a ses-
+sion identifier, together with the context they accumulate (Section 2.2 defines calls, turns, and
+sessions precisely).
+This distinction changes thestatethat an LLM serving system must manage. Within a turn,
+a chat application typically returns control to the user after a short orchestration path, whereas
+an agentic application may re-enter the model many times without human input (Figure 1); a
+session repeats this loop once per turn. Each model call firstprefillsits input context, computing
+the attention keys and values of every context token in aKey-Value (KV) cache[20], and then
+decodesoutput tokens one at a time. Keeping reusable KV resident in GPU memory lets a
+later call skip prefill over a context prefix that an earlier call already processed, so the retained
+state remains valuable across otherwise idle intervals. Serving must therefore manage the size,
+lifetime, and placement of a session’s evolving KV working set, in addition to scheduling the
+prefill and decode phases of individual model calls.
+Agentic applications are emerging as a substantial component of datacenter LLM work-
+loads, but their long-running control loops create KV residency and placement demands that
+request-level measurements do not capture. Recent studies (TraceLab [66], the GitHub Copilot
+study [28], and the ReAct study [60]) show that agents repeatedly invoke models and tools,
+carry growing contexts, and produce comparatively short outputs. None exposes theserving
+deploymentselected for each call, and only the Copilot study operates atproduction scale, for a
+single coding workload and at the granularity of logical model endpoints. At hyperscaler scale,
+even modest errors in estimating prefix reuse, KV residency lifetime, or placement locality can
+translate intoterabytes of excess GPU memory or extensive context reconstruction.
+We address these gaps using four production traces fromMicrosoft M365.Deep Research
+2
+=== PAGE 3 ===
+(Research), an agent that answers a request through a long loop of model and enterprise-search
+tool calls;Enterprise Assistant(Assist), a single-model productivity assistant; andCoding
+Agent(Code). The fourth,Enterprise Chat(Chat), also invokes tools, but its internal loops
+are much shorter, so it serves as the lower-agency reference (Section 2.4). Together, the traces
+contain more than121million model calls. The primary agentic trace,Research, contains
+17M model calls in691k sessions over eight days in June 2026;Chatcontains104M model
+calls in13.2M sessions over 24 hours in July 2026 (Table 2); a session averages2.62user turns
+inResearchand2.29inChat. Unlike prior traces, our telemetry combines production-scale
+enterprise workloads with session structure, token accounting, model identity, and, for three
+workloads, the serving region and deployment selected for each call.
+We follow an agentic session’s KV state through five questions, from how the state accumu-
+lates and is reused, to how memory capacity and deployment placement affect its residency.
+Q1.How agentic is each workload?Orchestration metrics place the traces on a spectrum of
+agency (Section 2).
+Q2.Why does KV matter?The model–tool loop makes agentic sessions deep:Research
+has a mediansession depthof 13 model calls and a P99 of 160, compared with 3 and 52
+forChat. Context keeps growing across these calls, and the three agentic workloads achieve
+aggregateKV reuseof0.50–0.80, compared with0.27forChat, although all four have median
+within-sessionidle gapsof6–10s (Code: tool-execution cadence; Figure 2; Sections 3.5 and 4.3).
+These measurements show that the agentic workloads carrysubstantially more reusable KV state
+across idle intervals with similar median durations (Section 3).
+Q3.Why not keep all of it?Under the reference fp16 grouped-query-attention (GQA)
+KV representation (Section 2.3), a single session’s KV can approach the memory of an entire
+GPU; holding every liveResearchsession at its peak working set would require an estimated
+501.8TB; the state sits idle across heavy-tailed gaps; and its reuse is associated with staying on
+the serving endpoint, which we call adeployment, that built it (Section 4).
+Q4.What can be done?Reclaiming state after one idle hour lowers theResearchhold-
+all-live ceiling from501.8to140.8TB (Section 5.1), and replaying residency under constrained
+memory separatesrecomputationcaused by insufficient GPU memory from that caused byrout-
+ingwhen KV is deployment-local, and quantifies the potential value ofaffinity-aware rout-
+ing[45, 38, 29] andmulti-resolution KV retention[32, 17, 30, 57] (Section 5).
+Q5.How can others study this?Because the traces cannot be released, we plan to release a
+parametric trace generator (Section 6).
+Contributions.Thisoperational systemsarticle makes five contributions, one per question.
+1. We present a production-scale characterization offour Microsoft M365 workloadsspanning
+three agentic applications and one enterprise-chat workload, and compare their agency where
+the telemetry permits. The traces contain more than121million model calls and expose ses-
+sion, token, and model structure and, for three workloads, deployment structure (Section 2).
+2. Wecharacterizehow persistent model-tool loops shape session depth, context growth, and
+KV reuse. Context continues growing across deep sessions, reuse is bimodal at the call level,
+and inResearchcall-context KV concentrates in a predictablemodel class: the heavyweight
+Spineclass, which carries the long-running context, holds67%of call-context KV bytes but
+only32%of uncached-context tokens and has a self-transition probability of0.97(Section 3).
+3. We show why retaining every session’s KV is a fleet-wide GPU-memory capacity problem.
+3
+=== PAGE 4 ===
+User Model T ool Model Response
+Short orchestration path
+Mean: 2.49 model calls/turn
+(a) Chat turn
+User Model T ool Model T ool Model Response
+Repeated model-tool loop
+Mean: 9.38 model calls/turn
+(b) Agentic turn
+Figure 1: Control flow within one user turn.
+Aturnruns from a user request until control
+returns to the user; asessionis the sequence
+of turns that share a session identifier, so this
+loop repeats once per turn. In-figure means are
+model calls per user turn (total model calls di-
+vided by total user turns), as in Table 2.
+0.0 0.2 0.4 0.6 0.8 1.0
+aggregate KV reuse R
+0
+2
+4
+6
+8
+10
+12median idle gap (s)
+Research
+(0.80, 8.4 s)
+Assist
+(0.51, 9.9 s)
+Code
+(0.50, 6.3 s)
+Chat
+(0.27, 7.9 s)
+Figure 2: Aggregate KV reuseR(Eq. 2) ver-
+sus the median within-session idle gap (time
+between consecutive model calls, intra- and
+inter-turn gaps pooled) for the four work-
+loads; the shaded band spans 6–10 s.Code’s
+Ruses its session-cumulativecache_read
+accounting, and its idle value is its median
+tool-execution cadence; the other traces use
+provider-reported cached tokens.
+Under the reference KV representation, a single P99Researchsession requires81.6GiB,
+exceeding the 80GB high-bandwidth memory (HBM) of an NVIDIA H100 GPU, and holding
+every liveResearchsession at its peak lifetime working set requires an estimated501.8TB
+at the exact peak. InResearch, mean same-model reuse is also associated with deployment
+continuity:88.9%when consecutive calls remain on one deployment versus29.0%after a
+same-model deployment change within the region (Section 4).
+4. We identify two distinct sources ofKV recomputation: eviction under limited memory and
+unavailability under deployment-local placement. At a pooled memory budget of10%of the
+busiest-hour current-context peak (the KV that hour needs with no eviction), even clair-
+voyant eviction by Belady’s furthest-next-use rule (FNU) leaves31.1%ofResearchcalls to
+recompute their context, while int4 multi-resolution retention (MRR), which keeps an evicted
+session’s KV as a 4-bit copy instead of discarding it, reduces this call-level miss rate to13.6%.
+Separately, modeling KV asdeployment-localraises the first-touch floor, the share of calls
+that miss even with unlimited memory, from5.4%to20.2%, motivating both recoverable KV
+retention and affinity-aware routing (Section 5).
+5. Because the production telemetry cannot be released without risking client confidentiality,
+we plan to releaseAgenticTraceSim, a parametric trace generator, together with a residency
+replay; the generator reproduces the principalResearchdistributions, their dependencies,
+and the downstream policy ordering without exposing production events (Section 6).
+2 Agentic Workloads and How We Measure Them
+Before examining KV behavior, we establish what prior characterizations leave unmeasured,
+describe the four production workloads and how we measure them, and show how agentic each
+4
+=== PAGE 5 ===
+workload is.
+2.1 What Prior Characterizations Miss
+Existing LLM serving systems primarily optimize request-level prefill, decode, and latency [20, 3,
+65]. Agentic applications instead compose repeated model and tool calls into persistent sessions
+whoseKV cacheremains valuable between model calls [26]. The closest agentic workload char-
+acterizations cover coding-agent traces and benchmark-driven agents [66, 28, 60]. They establish
+that agentic workloads contain repeated model and tool calls, growing contexts, short outputs,
+and substantial prefix reuse. None jointly examines diverse production enterprise workloads, the
+serving deployment of each call, byte-valued KV residency, and capacity-constrained residency
+replay at fleet scale (Table 1).
+These studies record the logical model of each call but not the servingdeploymentselected
+for it. Consequently, they cannot measure how KV reuse changes when consecutive calls to
+the same model are served by different deployments. Our telemetry includes the serving region
+and deployment for three traces, allowing us to compare same-deployment continuations with
+same-model calls routed to another deployment (Section 4.4.2). Prior characterizations also
+report demand primarily in tokens. We convert peak session context toKV bytesusing an
+explicit, linearly rescalable model assumption and aggregate these estimates across concurrently
+live sessions (Sections 2.3 and 4.2). This enables comparisons withGPU memory capacityand
+exposes the sensitivity of fleet estimates to how long a session counts as live and to temporal
+resolution. TraceLab evaluates cache timeouts against hit rate and relative storage, but prior
+studies do not compare destructive eviction policies, which discard an evicted session’s KV, using
+byte-valued session state. We therefore develop atrace-driven residency replaythat consumes
+the observed production calls under fixed memory budgets (Sections 5.2–5.5). It separates
+recomputation caused by limited memory from that caused by deployment-local placement, and
+evaluates retaining displaced KV at lower precision.
+2.2 Four Production M365 Workloads
+Table 2 summarizes the four traces, collected between late June and early August 2026. We
+call a workloadagenticwhen a user request can initiate an extended internal loop of model and
+tool calls without human input between calls; agency is a matter of degree, which Section 2.4
+measures. For eachmodel calli, the available telemetry includescontext tokensxi,cached tokens
+ci,output tokenso i,timestampt i andmodel identity; additional timing and tool-activity fields
+are available for a subset of traces. The analyzed telemetry excludes user request/response
+content and contains only the operational metadata required for the measurements reported in
+this paper.
+Calls, turns and sessions.Amodel callis one inference request to an LLM. Aturnpairs
+one user request with the application’s complete response: its first model call isuser-initiated,
+and each later call isinternal, issued by the orchestrator (for example, after a tool returns)
+without new human input. Asessionis the ordered sequence of model calls that share a session
+identifier; it spans one or more turns, and itsdepthcounts its model calls. Theidle gapbefore
+a call is the time since the preceding call of its session; it isinter-turnif the call opens a turn
+5
+=== PAGE 6 ===
+Table 1: Features of closest agentic workload characterizations.
+FeatureT raceLab[66]Copilot[28]ReAct study[60]This work (M365)
+Workload domain Coding Coding Benchmarks
+Enterprise research,
+assistant, coding,
+chat
+Trace scale4,265sessions
+761M
+calls/13.5M
+sessions
+5 benchmarks 121M calls/13.9M
+sessions
+Fleet-scale production
+trace –•–•
+Multiple agent/chat
+workloads – –• •
+Per-call cache
+accounting • • • •
+Serving deployment per
+call – – –•
+KV residency in bytes – – –•
+Capacity-constrained
+replay – – –•
+Released trace or
+generator •– – Planned
+andintra-turnotherwise.ResearchandChatlog a usable turn counter;Assist’s counter is
+empty, andCodelogs tool and session events rather than model calls.
+ForResearch,Assist, andChat, the telemetry also identifies the serving region and
+endpoint instance selected for each model call. We call this endpoint instance adeployment;
+multiple deployments may serve the same model.Codedoes not expose region or deployment
+information.
+The traces differ in granularity and cache accounting.Research,Assist, andChatreport
+model calls with per-call context and provider-cached token counts.Codecontains tool exe-
+cutions, command-line runs, and other session events rather than model calls; its token counts
+are cumulative over the session, and it has an Anthropic-stylecache_readfield. We therefore
+measureCodedepth in events, report its reuse separately, and exclude it from the byte-valued
+working-set and placement analyses.
+2.3 Measurement Methodology
+Unless stated otherwise, descriptive measurements use the complete traces. Reuse and session-
+level analyses exclude calls without a valid session identifier, retaining essentially allResearch
+calls but only75.22M of the104MChatcalls; theAssisttrace in Table 2 already contains
+only calls with a session identifier. The capacity-policy experiment replays the busiest one-hour
+Researchinterval (176k calls), while the fleet-residency and idle-cap analyses (Sections 4.2
+and 5.1) use the complete eligibleResearchtrace. We report the applicable population when-
+ever it differs from the trace total. We parse ISO-8601 timestamps directly into elapsed seconds,
+order calls by timestamp within each session, and remove exact duplicateCodeevents before
+analysis.Codesamples sessions selected on June 30, 2026, and retains their complete histories,
+so its events span 34 days.
+We distinguish three kinds of results.Measuredquantities are computed directly from pro-
+6
+=== PAGE 7 ===
+Table 2: Four production Microsoft M365 traces. Turns and internal calls are defined in Sec-
+tion 2.2; “–” marks traces without a usable turn counter.Ris aggregate reuse (Eq. 2) over calls
+with a session identifier;Codereports session-cumulativecache_readtokens instead.
+Research Assist Code Cha t
+Deep Research Enterprise
+Assistant Coding Agent Enterprise Chat
+Window 8 days 8 days 34-day event span 24 hours
+Model Calls 17,008,715 217,106 1,119,432events104,013,216
+Sessions 691,293 23,538 8,157 13,184,080
+Models Multiple models Single model Multiple models Multiple models
+User turns per
+session 2.62 – – 2.29
+Internal calls 89.3% – – 59.9%
+Model calls per
+user turn 9.38 – – 2.49
+Median session
+depth 13 calls 1 call 14 events 3 calls
+Realized reuseR0.803 0.506 0.496 0.270
+duction telemetry, including token counts, reuse, timestamps, and placement transitions.Es-
+timatedquantities convert token counts to KV bytes using an explicit KV representation as-
+sumption.Replayedquantities report outcomes from applying counterfactual residency policies
+to the observed call stream.
+KV representation assumption.To avoid disclosing confidential details of the deployed
+models, we convert tokens to bytes using apublic stand-in: the KV geometry of the released
+Llama-2-70B model [49], a Grouped-Query Attention (GQA) model [4] with 80 layers, eight
+KV heads, and a head dimension of 128. Separate key and value tensors in fp16 giveβ=
+327,680bytes/token, which we apply to every model. Absolute byte estimates (working sets,
+fleet ceilings, budgets, and transfer volumes) scale linearly withβ, while reuse, context share,
+temporal ratios, and reconstruction rates at budgets set as fractions of a measured peak are
+independent ofβ.
+Reuse.The serving system keeps aprefix cache: KV computed by earlier calls, indexed by the
+token prefix that produced it [50];ci counts the leading context tokens of callifound there. For a
+call withx i >0,per-call reuseis the provider-reported cached fraction of its context,ri =c i/xi,
+Eq. (1), andaggregate reuseis the token-weighted fractionR= P
+i ci
+P
+i xi, Eq. (2). Because
+ci records cache behavior realized by the deployed infrastructure, reuse is a serving outcome
+rather than an intrinsic workload property. We define every other metric where it is first used.
+2.4 How Agentic Is Each Workload?
+InResearch, over89%of classified model calls are issued internally by the application, not the
+user. ForResearchandChat, the loggedturn counterlets us measure this directly (Table 2):
+aResearchuser turn triggers far more model calls than aChatturn, and a larger share
+ofResearchcalls occur without a new user turn.Researchdepth is therefore generated
+7
+=== PAGE 8 ===
+primarily by the application’s internal orchestration rather than by additional user turns.
+Chatshows the same behavior to a lesser degree: it invokes tools, routes turns through
+multiple models, and a majority of its calls occur without a new user turn. Its loops are, however,
+much shorter (fewer model calls per user turn), and its sessions are shallower (Section 3.1). We
+therefore treatChatas the lower-agency reference, not as a non-agentic, single-response chat
+baseline. The event-levelCodetrace provides complementary evidence:84.2%of its events
+are explicit tool executions, and the median session contains 10 tool calls. Neither figure is
+a model-to-tool call ratio.Assistlacks a usable turn counter and tool field, so its internal
+orchestration is not measured directly; its depth distribution indicates a mixture of single-call
+sessions and longer multi-call sessions (Section 3.1), and as a single-model workload it later
+serves as a placement control.
+Figure 2 adds a serving outcome: the three agentic workloads realize much higher reuse
+thanChat, while all four idle for similar median intervals between calls (Code: tool-execution
+cadence). The next section asks what the agentic loop does to a session’s KV state.
+2.5 Use of generative AI
+Generative AI tools were used to refine language and presentation, and to help implement code
+for trace-analysis, figure-generation, claim-verification, trace-generator and residency-replay.
+They were not used to generate the study’s ideas, telemetry or conclusions. The authors re-
+viewed all assisted edits and source code, and accept responsibility for the manuscript and its
+artifacts.
+2.6 Privacy Considerations
+We analyze only aggregate operational metadata, excluding prompts, responses, retrieved con-
+tent and other message content, and report no production identifiers. Confidential production
+traces are not released, and the public artifact uses only aggregate fitted parameters and syn-
+thetic traces.
+3 The Agentic Loop Makes KV Retention Valuable
+This section measures how persistent orchestration shapes session depth, context growth, token
+volume, model-class structure, and KV reuse. Within each turn, agentic sessions re-enter the
+model repeatedly without human input and accumulate context across these calls, which creates
+sustained demand for reusable KV state.
+3.1 Agentic Sessions Are Deep
+Figure 3(a,b) shows the distribution ofsession depth, the number of model calls in a session,
+summed over all of its turns; inResearch, this depth comes primarily from internal orches-
+tration (Section 2.4).Researchsessions have a median depth of 13 calls and a P99 of 160,
+compared with 3 and 52 forChat.Assisthas a median of one call but a P90 of 28, a mixture
+of single-call sessions and longer multi-call sessions.Codecounts logged events, mostly tool
+executions, so we report it separately and do not plot it: its median session has 14 events and
+its P99 session 963.
+8
+=== PAGE 9 ===
+0 50
+calls per session
+0.0
+0.5
+1.0P(depth > x)
+Research
+Assist
+Chat
+(a) Session-depth CCDF, linear
+axes.
+100 101 102
+calls per session
+100
+10−1
+10−2
+10−3
+P(depth > x)
+(b) Session-depth CCDF, log–log
+axes.
+1 10 20 30
+call index
+0
+50
+100context (K tokens)depth P50
+Q1–Q3
+median
+(c)Researchcontext by call in-
+dex.
+Figure 3: Agentic sessions are deep and keep accumulating context.
+3.2 Context Accumulates Across the Loop
+Deeper sessions tend to require more KV memorybecause context continues growing across
+model calls. Figure 3(c) shows that the medianResearchcontext grows from9,764tokens
+on the first call to41,045by call 11 and68,118by call 30, and first reaches95%of its call-30
+value at call 27. Thus, estimating session demand from its first few calls would systematically
+understate the KV required by deep sessions.
+Individual sessions, however, do not grow monotonically. InResearch,90.9%of multi-call
+sessions contain at least onecontext reduction, a call with less context than its predecessor,
+and the median reduction leaves23.7%of the preceding call’s context. The rising median
+in Figure 3(c) therefore reflects net growth across repeated growth-and-reduction cycles. A
+reduction may reflectcompaction, summarization, truncation, or a transition between model
+roles; the telemetry does not record its cause. Compaction near the model’s context-window
+limit is a plausible cause, but we do not equate every reduction with an explicit compaction
+event.
+3.3 Context, Not Generation, Dominates Token Volume
+We measure thecontext share, the fraction of input-plus-output token volume contributed by
+context, asρ= P
+i xi
+P
+i(xi +o i), Eq. (3). Across all four traces,context tokensconstitute at
+least98%of combined input and output token volume processed by model calls, withgenerated
+output tokensaccounting for less than2%. The context shares areρ= 0.98forResearch,0.99
+forAssistandChat, and0.997forCode. Equivalently, aggregate context-to-output ratios
+range from52:1forResearchto357:1forCode.
+Context share counts cached tokens, so it measures the KV state carried by model calls, not
+the prefill compute spent on uncached context; the phase comparison of the ReAct study [60]
+instead counts recomputed work, so the two are not interchangeable.Memory demanddepends
+on how much context remains resident, whereasrecomputationdepends on how much of it has
+been evicted when the session resumes.
+3.4 The Loop Is Multi-model, and One Class Holds Most Reusable State
+A singleResearchsession may invoke several models. We group them into four functional
+classes: a heavyweightSpineclass that carries the long-running context, aMidclass for or-
+9
+=== PAGE 10 ===
+chestration and general reasoning, aScopedclass for bounded subtasks, and aF anoutclass
+containing all remaining models. The classes describe model roles within a session; they do not
+imply that every lighter-model call comes from a distinct subagent. The telemetry carries no
+class labels, so we assign each call to a class by matching substrings of its model name; we do not
+disclose the model names. TheSpine–Midboundary is a choice: our defaultconservativemap-
+ping places only the deep-research models inSpineand the reasoning models inMid, whereas
+abroadermapping also places the reasoning models inSpine. We report both.
+3.4.1 Call-context KV concentrates on theSpine.
+We measure each class’s share ofcall-context KV: every call’s context, summed over the class’s
+calls, so a context carried by ten calls counts ten times; because oneβapplies to every model,
+byte and token shares coincide. Figure 4(a) shows that call-context KV is highly concentrated.
+Under the conservative mapping, theSpinecarries67%of call-context KV bytes, followed by
+Midat31%;ScopedandF anouttogether carry less than2%. The broader mapping raises its
+share to90%. The class boundary is definition-dependent, but one heavyweight class dominates
+Researchcall-context KV under both mappings.
+3.4.2 Call-context bytes and uncached prefill have different class distributions.
+TheSpinedominates call-context bytes, not uncached prefill. Under the conservative mapping,
+it carries67%of call-context KV bytes but only32%of uncached-context tokens,P
+i max(xi −
+ci,0), the context the serving system had to prefill (Figure 4(b)), so mostSpinecontext is served
+from the prefix cache rather than recomputed. This asymmetry makes theSpineahigh-value
+targetfor residency management: it occupies substantial GPU memory, and losing its cached
+prefix would turn a large reused context into costly recomputation.
+3.4.3 Model-class transitions are predictable.
+Consecutive calls within a session also follow a strong class-transition structure (Figure 4(c)).
+TheSpineandF anoutself-transition with probabilities0.97and0.95,Scopedtransitions
+toMidwith probability0.86, andMideither remains in its class or transitions toScopedor
+Spine. Predicting the next class as the most frequent successor of the current class is correct
+for≈88%of observedResearchtransitions. This low-cost signal indicates which model, and
+hence which KV state, a session is likely to access next. The opportunity isworkload-dependent:
+it exists in multi-classResearchbut not in single-modelAssist.
+3.4.4 Reuse declines after model-class excursions.
+Model-class control flow is also associated with whether retainedSpinestate remains reusable.
+For eachSpinecalliafter the first in its session, letkbe the number of non-Spinecalls since
+the precedingSpinecall (theexcursionlength), and defineh(k) =E[r i |i∈Spine, k], Eq. (4).
+Mean reuse is92.5%for consecutiveSpinecalls (k= 0), falls to45.1%after one intervening
+call, and is30.1%after three or more (Figure 5). Most of the decline comes with the first
+intervening call. Model-class history is therefore a candidate signal, alongside wall-clock age
+(the idle time examined in Section 4.3), for estimating the future value of resident KV state.
+Because the analysis does not control for elapsed time or deployment placement, the decline is
+10
+=== PAGE 11 ===
+Spine Mid Scoped Fanout0
+20
+40
+60
+call-context KV
+byte share (%)
+67.1%
+31.1%
+0.7% 1.1%
+(a) Call-context KV byte share.
+call-context
+KV
+uncached
+context
+0
+25
+50
+75
+100Spine share (%)
+67.1%
+31.9% (b)Spinecall-context and
+uncached-context shares.
+Spine Mid Scoped Fanout
+next class
+Spine
+Mid
+Scoped
+Fanout
+current class
+0.973 0.027 0.001 0.000
+0.135 0.636 0.226 0.002
+0.009 0.860 0.112 0.019
+0.003 0.020 0.026 0.951
+(c) Model-class transition probabilities.
+Figure 4: Call-context KV concentrates on a predictable model class. (a) Under the conservative
+mapping,Spinecarries67.1%of call-context KV bytes; the broader mapping raises this share to
+90.0%. (b)Spineaccounts for only31.9%of uncached-context tokens. (c)Spineis strongly self-
+transitioning, withP SpineSpine = 0.97; selecting the most frequent outgoing transition predicts
+the next class for approximately88%of observed transitions.
+0 1 2 3
+intervening non-Spine calls k
+0
+25
+50
+75
+100
+Spine reuse h(k) (%)
+92.5%
+45.1% 40.3%
+30.1%
+Figure 5:Spinereuse declines after an excur-
+sion. Mean reuse falls from92.5%for consecu-
+tiveSpinecalls to45.1%after one intervening
+non-Spinecall. The analysis does not indepen-
+dently control for elapsed time or deployment
+placement.
+0.0 0.2 0.4 0.6 0.8 1.0
+per-call reuse ri = ci/xi
+0
+10
+20
+30
+40
+50% of calls
+Research
+Assist
+Chat
+Figure 6: Per-call KV reuse is bimodal, but
+differently weighted.Researchis warm-
+weighted, with51.9%of calls achieving at least
+95%reuse, whereasChatis cold-weighted,
+with47.6%of calls below20%reuse.Assist
+has the largest intermediate-reuse share.
+an association, not evidence of a causal effect of model-class interference; Section 4.4.2 examines
+how deployment continuity relates to reuse.
+3.5 Reuse Is Bimodal at the Call Level
+KV reuselets a model call skip recomputing context that earlier calls in its session already
+processed, whether the call continues a turn or opens a new one. Figure 6 shows that per-call
+reuser i is bimodal: calls concentrate near low or high reuse, but the weights of the cold and
+warm modes differ across workloads.Researchis warm-weighted, with51.9%of calls having at
+least95%reuse and only11.4%having reuse below20%.Chatis cold-weighted:47.6%of calls
+have reuse below20%, while only21.1%reach≥95%.Assistis more evenly distributed, with
+29.9%of calls in the intermediate20–80%range. The bimodality is aper-call property: only
+40.7%ofResearchsessions have a session-level aggregate reuse of at least0.8, and52.1%lie
+between0.2and0.8, because sessions mix cold calls with warm continuations. Prefix-level reuse
+11
+=== PAGE 12 ===
+is therefore a useful residency signal, but a policy must combine it with session continuation,
+working-set size, and fleet memory pressure.
+Aggregate reuseRis0.27forChat,0.50forCode,0.51forAssist, and0.80forResearch.
+The highResearchvalue reflects repeated access to accumulated context, but realized reuse
+also depends on theserving system’sability to retain and recover that context; Section 4.4.2
+shows that reuse is strongly associated with whether consecutive calls remain on the same
+deployment. Equivalently,Researchhas acontext-carry taxτ= 1/(1−R)of5.1: it processes
+5.1context tokens for every uncached context token it must prefill, and the rest is served from the
+prefix cache. Losing that cached context would multiply aggregate context prefill work by up to
+5.1×, which is why KV retention matters. The tax is close to TraceLab’s prefill amplification [66]
+(5.1×versus5.3×), although the denominators differ.
+Retained KV is therefore valuable: agentic sessions are deep, their context keeps growing,
+much of it is served from the prefix cache, and inResearchmost call-context KV bytes sit
+in one large, predictableSpinestate. Why, then, not keep every session’s KV resident for the
+session’s lifetime? Section 4 examines the hurdles this policy faces.
+4 Why Not Keep Every Session’s KV Resident?
+The simplest residency policy retains each session’s KV state from its first to its last call. We
+now show four hurdles to this policy: a single session can fill a GPU’s memory, live sessions
+add up across the fleet, the retained state sits idle across heavy-tailed gaps, and its reuse is
+associated with staying on the deployment that built it.
+4.1 A Single Session Can Fill a GPU
+Under the reference KV representation (Section 2.3), the estimatedper-session KV working set
+is the peak KV state of sessions,Ws =β·max i∈s(xi), Eq. (5). This is a byte estimate, not a
+measurement of observed physical HBM allocation.
+AResearchsession requires an estimated25.7GiB at P50,59.2GiB at P90, and81.6GiB
+at P99 (Figure 7). These estimates include KV state alone: model weights, activations, and
+runtime state require additional GPU memory. For scale, the P90 working set is comparable
+to most of the 80 GB HBM of one H100, while the P99 estimate exceeds this capacity. In
+practice, a model with the reference attention configuration may be served by a tensor-parallel
+group of GPUs, each holding the KV of a subset of the attention heads [20]; the tensor-parallel
+model replica, rather than one GPU, must collectively hold the session’s KV. The working-
+set distributions also differ across workloads (Figure 7): a medianResearchsession carries
+approximately2.5×the KV state of a medianChatsession.
+4.2 Across the Fleet, Live Sessions Add Up
+Across the serving fleet, the large working sets of concurrent, long-running agentic sessions
+place sustained pressure on scarce and costly HBM. We bound this pressure with a deliberately
+pessimistichold-all-livemodel in which each session retains its peak lifetime KV working set
+from its first through its last observed call. LetS(t) ={s|tfirst
+s ≤t≤t last
+s }denote the sessions
+live at timet. The estimated fleet-wide KV residency isKlive(t) =P
+s∈S(t) Ws, Eq. (6), and the
+full-trace residency ceiling isK⋆
+live = max t(Klive(t)).
+12
+=== PAGE 13 ===
+1 10 100
+per-session peak KV working set (GiB, log)
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0CDF
+H100 80 GB
+Research
+Assist
+Chat
+Figure 7: Per-session KV working sets differ
+across workloads. The dashed line marks the
+80 GB (74.5GiB) HBM of an H100.
+10−1 101 103 105
+within-session idle gap (s, log)
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0CDF
+Research
+Assist
+Chat
+Figure8: Gapsbetweenconsecutivemodelcalls
+of a session (intra- and inter-turn pooled) are
+heavy-tailed: mediansare7.9–9.9s, butthetail
+extends to minutes or days.
+Treating all regions as one logical pool, an exact event sweep of Equation 6 over the eight-day
+Researchtrace givesK ⋆
+live = 501.8TB, and the number of concurrently live sessions peaks at
+11,358. This is the estimated footprint of KV state alone under the reference representation; it
+excludes model weights and other runtime memory.Temporal resolutionmatters for this ceiling.
+One-minute bins give504.9TB,0.6%above the exact value, whereas hourly bins, which count
+a session as resident for every hour its lifetime touches, give709.4TB, a1.41×overstatement.
+We use the exact ceiling for capacity results and report the hourly value only as a resolution
+warning.
+4.3 Retained State Sits Idle Across Heavy-tailed Gaps
+A session’s KV state remains potentially reusable between model calls, but retaining it consumes
+scarce GPU memory while the session is idle. Within-session idle gaps, measured between con-
+secutive model calls of a session and pooling intra- and inter-turn gaps (Section 2.2), have similar
+medians across the three traces that report per-call tokens:8.38s forResearch,9.87s forAs-
+sist, and7.87s forChat. Their tails are substantially longer, with P99 gaps of approximately
+20,50, and93minutes, respectively (Figure 8). The longest observedResearchgap is7.9days,
+indicating that some sessions are parked and later resumed. In the two traces with a usable
+turn counter, intra-turn gaps dominate the short-gap body of the distribution, while inter-turn
+gaps account for most of the total idle time: inResearch, inter-turn gaps constitute7.0%
+of gaps but92.6%of total idle time (median125.0s versus7.5s for intra-turn gaps), and in
+Chat, whose maximum gap is bounded by its 24-hour window, they constitute27.4%of gaps
+and97.3%of idle time (146.5s versus4.6s).
+This range makes any single retention timeout a compromise: a short timeout discards KV
+that returning sessions would have reused, forcing reconstruction, while a long timeout holds
+state for sessions that stay inactive for hours or days. Section 5.1 quantifies this trade-off by
+varying the idle interval after which a session’s KV state is reclaimed.
+4.4 Reuse Is Associated with Staying on One Deployment
+The preceding analysis treats resident KV as logically available whenever a session returns.
+In a distributed fleet, however, reusable KV may remain local to the serving deployment that
+13
+=== PAGE 14 ===
+constructedit. Usingthecall-levelregionanddeploymentfieldsavailableforResearch,Assist,
+andChat, we examine how deployment continuity is associated with reuse.
+4.4.1 LongResearchsessions span multiple deployments.
+We summarize placement continuity using single-region (SR) and single-deployment (SD) session
+subsets. Both are defined per model: every model a session invokes stays within one region (SR)
+or on one deployment (SD), although different models may use different regions or deployments.
+Placement stability differs substantially across workloads. Only45.0%ofResearchsessions
+are SD and57.6%are SR, compared with80.2%and83.3%for single-modelAssist, and79.1%
+and80.0%forChat. AResearchsession touches a mean of4.48deployments across3.04
+regions, reflecting its longer, multi-model orchestration path.
+The SR and SD subsets are structurally different from the complete workloads. For example,
+the medianResearchdepth falls from 13 calls overall to 5 in SR and 3 in SD. Their aggregate
+reuse and capacity values therefore cannot be interpreted as the causal effect of applying a
+placement policy. We use these subsets only to describe placement stability; the per-transition
+analysis below provides the cleaner comparison of reuse immediately following a deployment
+change.
+4.4.2 Reuse is strongly associated with deployment continuity.
+For each model call, we condition per-call reuse on its transition from the preceding call in the
+session. We distinguish a continuation on the preceding call’s deployment, a model switch, a
+same-model move to another deployment within the region, a same-model cross-region move,
+and a session’s first call. Figure 9 reports the resulting mean reuse.
+ForResearch, same-deployment continuations achieve mean reuse of88.9%. When the
+same model is served by another deployment within the region, mean reuse falls to29.0%; for a
+cross-region move, it falls to23.5%. These transitions account for only2.0%and0.9%of calls,
+but their reuse is less than one-third that of same-deployment continuations; same-deployment
+reuse is stable across the eight observed days.
+The single-modelAssisttrace removes the model-switch confound. Its mean reuse is64.8%
+for same-deployment continuations,27.7%after a cross-deployment move, and7.5%after a
+cross-region move. The consistent decline in bothResearchandAssistprovides evidence
+that deployment continuity is strongly associated with preserving reusable KV state.
+Chatdoes not show the same pattern. Model switches account for64.0%of its calls, while
+same-model deployment and region moves together account for less than2.5%. These rare moves
+show higher mean reuse than same-deployment continuations, but the categories can differ in
+session depth and composition, so we treatChatas selection-confounded for this comparison
+and base the deployment-continuity finding onResearchand the single-modelAssistcontrol.
+Together, these measurements show why holding all KV state is costly: under the reference
+representation a tail session can exceed one GPU’s memory, live sessions add up to a fleet-wide
+capacity problem, much of the state idles for long intervals, and its reuse is associated with the
+deployment continuity that routing provides. The next section evaluates what residency policies
+can recover under these constraints.
+14
+=== PAGE 15 ===
+Same
+deployment
+Model
+switch
+Cross-
+deployment
+Cross-
+region
+Session's
+first call
+0
+25
+50
+75
+100per-call reuse (%)
+n/a
+Research Assist Chat
+Figure 9:KV reuse is associated with de-
+ployment continuity in the agentic traces.
+ForResearch, mean reuse falls from88.9%on
+same-deployment continuations to29.0%when
+the same model moves to another deployment.
+The single-modelAssistcontrol shows a similar
+decline from64.8%to27.7%.Chatis selection-
+confounded: its same-model deployment moves
+are rare, and the categories can differ in session
+composition.
+1m 5m 15m 1h 6h 1d ∞
+idle cap θ
+0
+200
+400
+Fleet ceiling
+K ⋆
+live (TB)
+hold-all-live
+evict >1h idle
+K ⋆
+live reconstruction duty cycle
+0
+25
+50
+75
+Reconstruction rate,
+duty cycle (%)
+Figure 10:An idle cap substantially re-
+duces fleet KV demand.ForResearch,
+reclaimingstateafteroneidlehourreducesthe
+exact fleet ceilingK⋆
+live from501.8to140.8TB
+while increasing reconstruction from4.07%to
+4.53%. The dotted line (right axis) is the duty
+cycle, engine time as a share of resident session
+time. The penalty rises more rapidly when the
+cap enters the short-gap body of the distribu-
+tion.
+5 What Can Be Done? Residency Policies Under Constrained
+Memory
+Because holding every session’s KV state is costly, we replay residency policies on the observed
+call streams. We first sweep an idle cap over the completeResearchtrace, then compare
+destructive eviction with multi-resolution retention (MRR), which keeps displaced KV as a
+recoverable int4 copy, under fixed budgets with one KV object per session, and finally measure
+the miss rate that remains with unlimited memory when KV objects are deployment-local.
+Atrace-driven residency replayprocesses an ordered call streamCunder a pooled memory
+budgetB, shared by all sessions in the stream, and KV residency policyπ: it handles calls
+in timestamp order and keeps the KV states thatπretains withinB. A call whose KV state
+is absent when it arrives is amissand requiresreconstruction: its whole context must be
+recomputed by prefill. Withmπ,B misses, the replayed reconstruction (miss) rate isMπ(B) =
+mπ,B
+|C| , Eq. (7);M LRU,M FNU, andM MRR denote it for the policies below. The replay treats a
+session’s current KV state as one variable-sized object, updates its size at each call, and applies
+πwhenever resident KV exceedsB. Because each replay starts with an empty cache, its first
+access to each KV object inCmisses, independent of the policy and budget. Thisfirst-touch
+floor, the number of distinct KV objects divided by|C|, is the compulsory-miss rate of classical
+cache analysis, and every policy reaches it onceBis at least the stream’s no-eviction peak.
+5.1 Reclaiming Idle State: Nominally Live State Is Not Always Residency-
+worthy
+Thehold-all-liveceiling is deliberately pessimistic: a session whose consecutive calls are days
+apart holds its peak KV state throughout the gap. We therefore ask which live sessions are
+residency-worthy, likely to resume soon enough that keeping their KV resident pays off, and
+15
+=== PAGE 16 ===
+parameterize liveness by anidle capθ: once a session has been idle forθ, its KV state is evicted
+from HBM and its next model call requires reconstruction. Each session is still sized at its peak
+lifetime working set, andθ=∞recovers the hold-all-live model.
+Figure 10 shows that most of the hold-all-live ceiling can be reclaimed at little reconstruction
+cost. A one-hour cap lowers theResearchceiling3.6×, from501.8to140.8TB, while the
+replayed reconstruction rate over the complete trace rises only from4.07%atθ=∞, where only
+first touches count, to4.53%. The long idle tail thus inflates the ceiling, yet few calls follow such
+gaps. The trade-off remains favorable at a 15-minute cap, where the ceiling falls to97.2TB and
+reconstruction reaches5.2%. As the cap falls further below the approximately 20-minute P99
+idle gap (Section 4.3), reconstruction rises quickly, to6.7%at five minutes and14.1%at one
+minute. The source of this penalty shifts with the cap: inter-turn gaps (Section 4.3) are98.0–
+99.8%of the gaps reclaimed at caps of 15 minutes or longer, whereas at one minute intra-turn
+gaps contribute5.23of the10.04added percentage points.Fleet provisioningshould therefore
+distinguish nominally live sessions from those likely to resume soon, rather than treating each
+session’s first-to-last-call span as continuously resident.
+5.2 Capacity Limits Destructive Eviction
+The idle-cap analysis charges each resident session its peak lifetime working set; we next replay
+current-context KV residency under a fixed memory budgetB.
+The replay processes the176,007model calls that9,486sessions issue in the busiestRe-
+searchhour, so its first-touch floor is5.4%, and sizes each session by itscurrent contextat
+each call rather than its lifetime peak. Without eviction, the current-context peak in this hour
+isK ⋆
+hr = 47.0TB, a different quantity from the whole-trace, lifetime-peak ceilingK⋆
+live. We set
+B= 0.1K ⋆
+hr = 4.7TB, a deliberately constrained operating point at which policy differences
+are visible, and sweep the full budget range in Figure 11. HereBis a pooled budget: the replay
+treats the KV memory of all replicas serving the stream as one tier and selects victims across
+the whole stream. Physical replicas, each a tensor-parallel group of GPUs, enforce residency
+on their own memory, so at the same total capacity we expect per-replica caches to reconstruct
+more often than the pooled replay reports. Because of its lower volume,Assistis replayed over
+its complete retained stream, whose no-eviction current-context peak we denoteK⋆
+win (8.1TB).
+We compare twodestructivepolicies, which discard an evicted session’s KV.LRUevicts the
+least recently accessed session [50, 52]. The clairvoyantfurthest-next-use (FNU)policy applies
+Belady’s rule [5]: it knows the next access to each resident KV object and evicts the object whose
+next access lies furthest in the future. Belady’s rule minimizes misses when all objects have the
+same size; because session KV objects vary in size and grow with context, FNU is here a strong
+clairvoyant heuristic rather than an optimum [6]. AtB= 4.7TB, LRU reconstructs context
+for62.9%ofResearchmodel calls and FNU for31.1%. Future knowledge thus approximately
+halves reconstruction, yet nearly a third of calls still rebuild their context.
+5.3 Retaining a Lower-precision Copy: Multi-resolution Retention
+In the replay,MRRreplaces eviction withdemotion: when resident KV exceedsB, it retains
+the least recently used session as an int4 copy, a quarter of its fp16 size, which stays in HBM
+and is charged to the same budget. A later call to a demoted session is modeled aspromoting
+the copy back to fp16 instead of reconstructing its context, building on KV quantization and
+16
+=== PAGE 17 ===
+2 5 10 20 50 100
+budget B (% of K ⋆
+hr)
+0
+25
+50
+75
+100
+reconstruction rate
+Mπ(B) (%)
+B = 0.1K ⋆
+hr
+(a)Research, busiest hour:
+K ⋆
+hr = 47.0TB.
+2 5 10 20 50 100
+budget B (% of K ⋆
+win)
+0
+25
+50
+75
+100
+reconstruction rate
+Mπ(B) (%)
+B = 0.1K ⋆
+win
+LRU
+FNU
+MRR (int4)
+first-touch floor
+(b)Assist, full window:K ⋆
+win =
+8.1TB.
+2 5 10 20 50 100
+budget B (% of K ⋆
+hr)
+0
+25
+50
+75
+100
+reconstruction rate
+Mπ(B) (%)
+B = 0.1K ⋆
+hr
+(c)Chat, busiest hour:K ⋆
+hr =
+1,876.7TB.
+Figure 11:Capacity constrains destructive eviction, while multi-resolution retention
+reduces reconstruction.AtB= 0.1K ⋆
+hr,Researchcall-level reconstruction ratesM π(B)
+are62.9%for LRU,31.1%for FNU, and13.6%for int4 MRR.Chatalso exhibits substantial
+policy separation, whereasAssistdoes not.ResearchandChatuse their busiest-hour replay
+streams;Assistuses its complete retained stream because of its lower volume. Budgets are
+pooled and expressed as fractions of each stream’s no-eviction current-context peak:K⋆
+hr in (a)
+and (c),K ⋆
+win in (b). MRR keeps int4 copies within the same pooled memory budget. The
+dashed line marks the first-touch floor (Section 5.2). MRR reaches this floor when displaced KV
+instead moves to a host-memory tier four times the pooled memory budget (Section 5.3). The
+legend in (b) applies to all panels.
+compression [32, 30]; VeriCache likewise keeps a compressed KV copy close to the GPU [57].
+MRR chooses which session to demote by recency alone, without future knowledge; only when
+every other session is already int4 and the budget is still exceeded does it discard int4 copies,
+least recently used first, and a session whose copy was discarded is reconstructed on its next call.
+The replay does not measure how int4 KV changes responses, but published evaluations of open
+Llama models report modest costs. Adding 4-bit KV quantization to an already weight- and
+activation-quantizedmodelraisesWikiText-2perplexityby0.12forAtom(W4A4Llama-7B)[63]
+and0.14for QoQ (W4A8 Llama-2-7B) [27]. Group-quantized W4A8KV4 Llama-2 models from
+7B to 70B lose at most1.03points of FP16 average zero-shot accuracy; the 70B model has the
+reference KV geometry used in our byte estimates. W4A8KV4 Llama-3.1-8B loses0.14points
+of its BF16 LongBench average [27]. These evaluations use single-request benchmarks rather
+than agentic sessions.
+With the same pooled HBM budget, MRRreduces the replayed reconstruction rateto13.6%,
+2.3×below FNU. Because MRR demotes in LRU’s victim order, the drop from LRU’s62.9%
+isolates the effect of keeping a smaller, lower-precision copy instead of destroying the state, at
+a potentially modest quality cost. This does not contradict Belady’s result, which applies to
+policies that keep or discard whole objects: a quarter-size copy lets the same budget hold up
+to four times as much session state, and MRR’s rate atBnearly equals LRU’s at4B(13.56%
+versus13.35%). The advantage is therefore one of capacity, not foresight; at the tightest budget
+evaluated,0.02K ⋆
+hr, FNU is lower (67.60%versus72.92%; Figure 11a). Demoting displaced
+KV to a separate host-memory (CPU DRAM) tier, rather than keeping the int4 copy in HBM,
+lowers the rate further: a host tier equal to the pooled HBM budget gives9.46%, and one
+twice as large gives5.57%, close to the5.4%first-touch floor (dashed line in Figure 11) that a
+17
+=== PAGE 18 ===
+tier four times the budget reaches. Doing so moves1,026.1TB of int4 KV between host and
+GPU memory in the hour,285.0GB/s on average. The replay charges no promotion latency,
+dequantization, or transfer cost and treats a promoted int4 copy as equivalent to an fp16 hit.
+Counting per-group quantization metadata enlarges each int4 copy beyond a quarter of fp16 and
+raises the in-HBM MRR rate to between14.99%and19.25%. These results therefore motivate
+retaining recoverable KV representations across memory tiers, subject to the quality, latency,
+and bandwidth costs the replay omits.
+5.4 Policy Separation Differs Across Workloads
+The capacity result is not uniform across workloads.Assisthas comparable reconstruction
+rates of12.6%,11.9%, and11.1%for LRU, FNU, and MRR, respectively, all close to its10.8%
+first-touch floor, which leaves better policies little to recover at the 10% pooled budget.Chat,
+despite smaller per-session working sets, separates the three policies at40.7%,28.4%, and22.5%,
+above its16.4%first-touch floor; its9,749TB hold-all-live ceiling over 24 h comes from concur-
+rency, not session size. These workloads exposetwo routes to fleet GPU-memory pressure: deep
+agentic sessions create large per-session working sets, whileChatcreates a large aggregate foot-
+print through concurrency. Capacity planning must therefore account for both thedistribution
+of session working setsand thenumber of concurrently live sessions; neither session size nor
+workload category alone determines whether KV residency becomes HBM capacity-bound.
+5.5 Routing: Deployment-local KV Creates an Independent Floor
+The replay so far models one KV object per session. To represent deployment-local state, we
+repeat the busiest-hourResearchreplay with KV objects keyed by both session and deploy-
+ment. Over the same176,007calls, this increases the number of modeled cache objects from
+9,486to35,588, because a session routed among deployments may establish separate state at
+each one.
+With unlimited residency capacity, reconstruction occurs only on the first access to each
+modeled cache object. Session-only keying gives the5.4%first-touch floor of Section 5.2, while
+session-and-deployment keying raises it to20.2%. Deployment-local state thus imposes a routing
+floor that neither more memory nor better eviction within a deployment can remove; lowering
+it requires deployment affinity, KV replication, or migration. This replay assumes that KV
+remains local to the deployment identifier reported by the telemetry and is not automatically
+shared across deployments.
+Together, the capacity and placement results identify two distinct sources of reconstruction.
+Limited GPU memory displaces reusable KV even under clairvoyant FNU eviction, while deploy-
+ment changes make state unavailable under deployment-local caching. Recoverable retention,
+such as MRR, mitigates the first; affinity-aware routing, replication, or migration mitigates the
+second.
+5.6 Lessons learned
+Relative to prior serving work, our production measurements offer four lessons. First, request-
+levelKVmanagement[20,50]doesnotconsiderreuseacrosscallswithinasession. InResearch,
+89.3% of calls are internal and 80.3% of context tokens hit the prefix cache, motivating session-
+18
+=== PAGE 19 ===
+level residency decisions. Second, retaining KV throughout a session’s lifetime can overestimate
+demand: a one-hour idle cap reduces theResearchceiling from 501.8 to 140.8TB, while
+reconstruction increases from 4.07% to 4.53%. Third, eviction policy has limited impact under
+tight memory: clairvoyant FNU reconstructs 31.1% of calls, while retaining an int4 copy within
+the same budget reduces this to 13.6%. Finally, locality-aware routing [29, 38, 45] is relevant in
+production, since mean reuse falls from 88.9% to 29.0% after a same-model deployment change.
+5.7 Open Problems and Limitations
+OurmeasurementsexposetwocomplementaryopportunitiesforagenticLLMserving: preserving
+reusableKVunderlimited GPUmemoryandcoordinatingitsplacementwithapplicationcontrol
+flow. We frame these as research directions rather than evaluated system designs.
+Reversible, multi-resolution KV residency.MRR isolates one effect, keeping displaced
+KV recoverable instead of destroying it; it does not show that int4 retention is the best mecha-
+nism. Residency mechanisms leave the context unchanged and decide only whether, where, and
+at what precision its KV is kept: discard and recompute, exact offload to host or remote storage
+with a fetch on resumption [41, 29, 1], or quantized retention as in MRR [32, 17, 30]. Context
+reduction, such as compaction, rolling summaries, or agent memories that keep a pointer and
+retrieve content on demand [19, 37, 9], changes the context itself: it can change the response,
+and because prefix caching reuses only an unchanged prefix, each edit invalidates the cached KV
+after it. Context reduction and KV residency can be combined: reduction shrinksWs, residency
+retains the remaining state, and our replay already sizes sessions after the application’s own
+reductions (Section 3.2). Exact offload avoids MRR’s precision loss but moves four times the
+bytes of an int4 copy; it beats reconstruction only if fetch bandwidth exceedsβRprefill, at least
+about1GB/s for fp16, and its latency adds to the resumed call unless the fetch is issued during
+the preceding idle gap. Hybrids such as VeriCache decode from a compressed copy and verify
+against a full-precision copy fetched from a lower tier [57]. The open problem is to decide, for
+each session, whether its state should be retained exactly, quantized, offloaded, summarized, or
+discarded and reconstructed, given the workload’s idle gaps, reuse and quality tolerance, while
+meeting latency and output-quality objectives.
+Application-awareplacementandlifecyclecontrol.Model-classpredictability, excursion-
+conditioned reuse (Section 3.4), and deployment continuity (Sections 4.4 and 5.5) motivate
+coordinating application control flow with KV placement and retention; a context reduction
+(Section 3.2) likewise lowers the session’s current KV requirement and provides a natural point
+for releasing or demoting superseded state. Current serving interfaces reveal little about an
+agent’s expected next model, tool interval, context reduction, or likelihood of resumption. Prior
+systems expose parts of this structure through semantic variables, program-level scheduling,
+cache-aware routing, and application hints [26, 33, 16, 38, 2]. A broader interface could allow
+the orchestrator to communicate model role, expected continuation, and session-lifecycle events
+explicitly, while the serving layer returns memory pressure and placement constraints. Designing
+this interface without compromising isolation, load balance, or failure tolerance remains an open
+problem. Such mechanisms also require portable measurement. In our traces, three workloads
+report provider-cached tokens per call, whileCodeuses session-cumulativecache_read
+19
+=== PAGE 20 ===
+accounting. A provider-neutral definition of cache objects, KV reuse, deployment continuity,
+and reconstruction would enable residency policies to be compared consistently across serving
+stacks [36, 50, 52].
+Scope and limitations.Our results describe four Microsoft M365 workloads observed over
+specific windows between late June and early August 2026 and should not be interpreted as
+universal properties of agentic or chat serving.Cached tokensreported by the LLM endpoint
+measure the reuse realized by the deployed infrastructure, whereas our byte-valued working sets
+scale linearly with the assumed per-token KV sizeβ. The deployment identifier, the finest re-
+ported placement label, may not expose worker-level placement or cache sharing. Finally, several
+results depend on analysis choices: the model-class boundary (Section 3.4.1), the observation
+window, the liveness definition (Section 5.1), the cache-object key (Section 5.5), and the pooling
+of the replay budget across replicas (Section 5.2). We describe each analysis choice alongside
+the corresponding result.
+Studying the open problems above requires workloads with the structure measured here;
+because the production traces cannot be released, the next section addresses this gap.
+6 AgenticTraceSim: Reproducible Agentic Traces
+The production traces contain sensitive serving telemetry and cannot be released without risk-
+ing client and operational confidentiality. We therefore plan to release AgenticTraceSim, a
+parametric trace generator that captures the principal distributions and dependencies observed
+inResearchwithout exposing production events or user content, together with a residency
+replay (LRU, FNU, and an unbounded-tier MRR variant whose int4 tier never fills) that accepts
+synthetic or user-supplied call streams.
+AgenticTraceSim models six workload components: time-varying session arrivals, session
+depth (a lognormal mixture), context growth, model-class transitions, per-call reuse, and idle
+gaps. Thecomponentsarecoupledtopreservetherelationshipsimportanttoresidency, including
+depth with peak context and duration, andSpinereuse with intervening model-class excursions.
+The generator exposes workload knobs for cache effectiveness, the number of model classes, and
+the session arrival rate, and the planned release also includes SR and SD population profiles,
+refitted to those subsets, for sensitivity analysis; these do not model deployment transitions and
+are not a placement-policy simulator.
+We validate both the generated distributions and their principal dependencies. For depth,
+idle gaps, and per-call reuse, the Kolmogorov–Smirnov distance from the measuredResearch
+distributions is at most0.10. Context is less closely matched at the per-call level because
+it is calibrated to reproduce the residency-relevant per-session peak: generated P50/P90/P99
+working sets are21.6/55.9/82.5GiB, versus25.7/59.2/81.6GiB measured. The generator also
+reproduces the measured depth–peak-context and depth–duration rank correlations within0.05.
+Synthetic traces also preserve the downstream residency conclusions. Under the same re-
+play, with budgets as fractions of each stream’s own no-eviction peak (notK⋆
+hr, so LRU rates
+are not comparable to Section 5.2’s62.9%), matched real and synthetic workloads retain the
+reconstruction-rate ordering LRU≥FNU≥unbounded-tier MRR at every evaluated budget
+(Figure 12). This unbounded-tier variant of multi-resolution retention demotes displaced KV
+to a separate int4 tier sized to the no-eviction peak, so the tier never fills and its rate equals
+20
+=== PAGE 21 ===
+1 2 5 10 20 50 100
+budget B (% of no-eviction peak)
+0
+20
+40
+60
+80
+reconstruction rate
+Mπ(B) (%)
+LRU
+FNU
+unbounded-tier MRR
+measured
+synthetic
+Figure 12:AgenticTraceSim preserves
+downstream residency-policy behavior.
+Matched measured and synthetic workloads re-
+tain the ordering LRU≥FNU≥unbounded-
+tier MRR at every evaluated budget. This
+MRR variant uses a separate int4 tier that never
+fills, unlike the capacity-shared variant in Fig-
+ure 11. The measured and generated LRU-
+to-multi-resolution improvements are2.45×and
+2.50×, respectively, with overlapping bootstrap
+intervals.
+the first-touch floor; it is not the capacity-shared variant of Section 5.3. The LRU-to-multi-
+resolution improvement is2.45×on the matched measuredResearchsample and2.50×on
+the synthetic trace, with overlapping bootstrap intervals. A marginals-only generator fails to
+reproduce this improvement, showing that the modeled dependencies are necessary for policy
+evaluation.
+The generator and replay produce the synthetic side of every comparison in this section,
+including the LRU≥FNU≥unbounded-tier MRR ordering. The generator reproduces shapes,
+ratios, and orderings, not absolute fleet magnitudes, which depend on production arrival vol-
+ume, observation window, and placement topology. The measured side of these comparisons,
+the capacity-shared MRR replay of Section 5.3, and the deployment-local routing and place-
+ment results (the generator emits no deployment identifiers) require the production traces; the
+production values in Sections 4 and 5 therefore remain measured results rather than generator
+outputs.
+The AgenticTraceSim trace generator and additional appendices offering supplementary ma-
+terial on the trace analysis will be released in the near future.
+7 Related Work
+Agentic workload characterization.TraceLab characterizes Claude Code and Codex ses-
+sions, the GitHub Copilot study measures production coding-agent traffic at scale, and the
+ReAct study instruments ReAct-style agents on five benchmarks [66, 28, 60]; Section 2.1 and
+Table 1 compare them with this work. KVCache in the Wild characterizes production KV-cache
+reuse in single- and multi-turn requests at a large cloud provider [52]; we focus on multi-call
+agentic sessions and their deployment placement.
+State retention, migration and caching bounds.CachedAttention and Pensieve retain
+multi-turn KV state across memory tiers [12, 59], while HCache reconstructs KV state from
+stored intermediate activations [13]. Llumnix supports cross-instance request and KV-cache
+migration [46]. These systems provide candidate mechanisms for the capacity and locality re-
+quirements characterized here; we do not compare their implementation-level latency or transfer
+costs. Moreover, because FNU is not optimal for variable-size objects, we treat it only as
+a clairvoyant reference policy; flow-based offline bounds provide a more principled optimality
+benchmark but are outside our present replay [6].
+21
+=== PAGE 22 ===
+LLM serving and KV management.PagedAttention and vLLM established paged KV
+management for high-throughput inference [20]; Sarathi-Serve co-schedules prefill and decode
+with chunked prefills [3], whereas Splitwise, DistServe, and Mooncake run the two phases on
+separate resources and transfer KV between them [40, 65, 41]. Prefix-caching systems improve
+reuse via structured caching, cache-aware scheduling, and distributed KV transport [64, 15,
+45, 30, 29]. These systems provide KV-management mechanisms; we measure the session- and
+fleet-level demand they must serve in production agentic workloads.
+Agent-aware serving and orchestration.Parrot, Teola, ALTO, Autellix, and Pie optimize
+serving for whole LLM applications rather than individual requests [26, 48, 43, 33, 16]. More
+recent systems use agent semantics for KV prefetching, pruning, and cache management, and
+for admission control, program-aware scheduling, and GPU allocation [38, 23, 7, 8, 18, 53].
+InferCept and Continuum decide whether to keep, discard, or swap a request’s KV while it waits
+on a tool call [1, 22], a per-request counterpart of the idle cap in Section 5.1. Model-routing
+systems choose among models, reasoning modes, or quantized model variants to balance quality,
+cost, and latency [35, 51, 10, 47]. Our measurements inform these directions by quantifying
+model-class predictability, idle-gap structure, deployment-conditioned reuse, and the separate
+reconstruction costs of limited memory and routing.
+Context reduction and external memory.Prompt and context compression reduce the
+state that must be materialized into KV [55, 39, 34, 19], while agent-memory systems externalize
+information beyond the active context window [37, 9, 42, 56, 25]. These approaches determine
+what enters the model context; we characterize how the resulting KV state is reused, retained,
+and placed across a production serving fleet; Section 5.7 discusses how the two compose.
+KV compression and tiering.When KV capacity is insufficient, prior work evicts selected
+tokens [62, 31, 54, 24, 14], quantizes retained state [32, 17, 61], or moves state across memory
+tiers [44, 21, 30, 57]. These techniques define representations and storage tiers for displaced KV;
+our trace-driven replay asks a complementary workload-level question: how much reconstruction
+remains under destructive eviction, and how much of it a retained lower-precision copy removes.
+8 Conclusion
+We characterized the KV working set of four production Microsoft M365 workloads span-
+ning three agentic applications and enterprise chat. Agentic sessions repeatedly re-enter LLMs
+through internal model-tool loops, accumulate context, and reuse much of it across idle intervals;
+inResearch, a P99 session’s estimated KV exceeds one H100’s HBM, and a predictableSpine
+class holds most call-context KV bytes. Retaining all of this state is costly, and the result-
+ing memory pressure is not determined by per-session size alone: deep agentic sessions create
+large individual working sets, while enterprise chat creates substantial fleet demand through
+concurrency.
+Reclaiming state after one idle hour lowers theResearchhold-all-live ceiling by3.6×while
+raising the replayed reconstruction rate from4.07%to4.53%. Beyond idle reclamation, the
+busiest-hour residency replay identifies two distinct sources of reconstruction. Under a pooled
+22
+=== PAGE 23 ===
+memory budget equal to10%of the busiest-hour current-context peak, even clairvoyant de-
+structive eviction by Belady’s furthest-next-use rule (FNU) reconstructs context for31.1%of
+Researchcalls, while int4 MRR, which keeps evicted KV as a recoverable copy, reduces this
+rate to13.6%. Separately, even with unlimited memory, modeling KV as deployment-local raises
+thefirst-touchfloorfrom5.4%to20.2%. Efficientagenticservingthereforerequiresbothmemory
+mechanisms that preserve recoverable KV under capacity pressure and placement mechanisms
+that maintain or move reusable state across deployments.
+Because the production traces contain sensitive enterprise telemetry, we plan to release Agen-
+ticTraceSim and a residency replay for synthetic or user-supplied call streams, for reproducible
+counterfactual studies. The generator preserves the workload dependencies needed to reproduce
+the reconstruction-rate ordering of LRU, FNU, and unbounded-tier MRR without exposing pro-
+duction events. Together, the measurements and the planned artifacts support the study of
+fleet-scale KV residency and routing policies that account for session working-set size, expected
+reuse, idle duration and deployment placement.
+23
+=== PAGE 24 ===
+References
+[1] Reyna Abhyankar, Zijian He, Vikranth Srivatsa, Hao Zhang, and Yiying Zhang. InferCept:
+Efficient intercept support for augmented large language model inference. InProceedings
+of the 41st International Conference on Machine Learning, volume 235 ofProceedings of
+Machine Learning Research, pages 81–95. PMLR, 2024.
+[2] Saurabh Agarwal, Marco Laju, Jayanth Srinivasa, Myungjin Lee, and Aditya Akella.
+Software-defined agentic serving.arXiv preprint arXiv:2601.03197, 2026.
+[3] Amey Agrawal, Nitin Kedia, Ashish Panwar, Jayashree Mohan, Nipun Kwatra, Bhargav
+Gulavani, AlexeyTumanov, andRamachandranRamjee. Tamingthroughput-latencytrade-
+off in LLM inference with Sarathi-Serve. InProc. USENIX OSDI, 2024.
+[4] Joshua Ainslie, James Lee-Thorp, Michiel de Jong, Yury Zemlyanskiy, Federico Lebron, and
+Sumit Sanghai. GQA: Training generalized multi-query transformer models from multi-
+head checkpoints. InProceedings of the 2023 Conference on Empirical Methods in Natural
+Language Processing, pages 4895–4901, Singapore, 2023. Association for Computational
+Linguistics.
+[5] L. A. Belady. A study of replacement algorithms for a virtual-storage computer.IBM
+Systems Journal, 5(2):78–101, 1966.
+[6] Daniel S. Berger, Nathan Beckmann, and Mor Harchol-Balter. Practical bounds on optimal
+caching with variable object sizes.Proceedings of the ACM on Measurement and Analysis
+of Computing Systems, 2(2):1–38, June 2018.
+[7] AnishBiswas, KanishkGoel, SrivarshineeS,JayashreeMohan, AlindKhare, AnjalyParayil,
+Ramachandran Ramjee, and Chetan Bansal. Sutradhara: An intelligent orchestrator-engine
+co-design for tool-based agentic inference.arXiv preprint arXiv:2601.12967, 2026.
+[8] Qiaoling Chen, Zhisheng Ye, Tian Tang, Peng Sun, Boyu Tian, Guoteng Wang, Sheng-
+gui Li, Yonggang Wen, Zhenhua Han, and Tianwei Zhang. CONCUR: high-throughput
+agentic batch inference of llm via congestion-based concurrency control.arXiv preprint
+arXiv:2601.22705, 2026.
+[9] Prateek Chhikara, Dev Khant, Saket Aryan, Taranjeet Singh, and Deshraj Yadav. Mem0:
+Building production-ready AI agents with scalable long-term memory. InECAI 2025:
+28th European Conference on Artificial Intelligence, volume 413 ofFrontiers in Artificial
+Intelligence and Applications, pages 2993–3000. IOS Press, 2025.
+[10] Yinwei Dai, Zhuofu Chen, Anand Iyer, and Ravi Netravali. Aragog: Just-in-time model
+routing for scalable serving of agentic workflows.arXiv preprint arXiv:2511.20975, 2025.
+[11] Adam Fourney, Gagan Bansal, Hussein Mozannar, Cheng Tan, Eduardo Salinas, Erkang
+Zhu, Friederike Niedtner, Grace Proebsting, Griffin Bassman, Jack Gerrits, Jacob Alber,
+Peter Chang, Ricky Loynd, Robert West, Victor Dibia, Ahmed Awadallah, Ece Kamar,
+Rafah Hosn, and Saleema Amershi. Magentic-One: A generalist multi-agent system for
+solving complex tasks.arXiv preprint arXiv:2411.04468, 2024.
+24
+=== PAGE 25 ===
+[12] Bin Gao, Zhuomin He, Puru Sharma, Qingxuan Kang, Djordje Jevdjic, Junbo Deng,
+Xingkun Yang, Zhou Yu, and Pengfei Zuo. Cost-efficient large language model serving
+for multi-turn conversations with cachedattention. InProceedings of the 2024 USENIX
+Annual Technical Conference (USENIX ATC 2024), pages 111–126. USENIX Association,
+2024.
+[13] Shiwei Gao, Youmin Chen, and Jiwu Shu. Fast state restoration in LLM serving with
+HCache. InProceedings of the Twentieth European Conference on Computer Systems (Eu-
+roSys 2025), pages 128–143, New York, NY, USA, 2025. Association for Computing Ma-
+chinery.
+[14] Suyu Ge, Yunan Zhang, Liyuan Liu, Minjia Zhang, Jiawei Han, and Jianfeng Gao. Model
+tells you what to discard: Adaptive KV cache compression for LLMs. InInternational
+Conference on Learning Representations, 2024.
+[15] In Gim, Guojun Chen, Seung-seob Lee, Nikhil Sarda, Anurag Khandelwal, and Lin Zhong.
+Prompt cache: Modular attention reuse for low-latency inference. InProceedings of Machine
+Learning and Systems, volume 6, 2024.
+[16] In Gim, Zhiyao Ma, Seung-seob Lee, and Lin Zhong. Pie: A programmable serving system
+for emerging LLM applications. InProceedings of the 31st ACM Symposium on Operating
+Systems Principles (SOSP), pages 415–430. Association for Computing Machinery, 2025.
+[17] ColemanHooper, SehoonKim, HivaMohammadzadeh, MichaelW.Mahoney, YakunSophia
+Shao, Kurt Keutzer, and Amir Gholami. KVQuant: Towards 10 million context length LLM
+inference with KV cache quantization. InProc. NeurIPS, 2024.
+[18] Hao Kang, Ziyang Li, Weili Xu, Xinyu Yang, Yinfang Chen, Junxiong Wang, Beidi Chen,
+Tushar Krishna, Chenfeng Xu, and Simran Arora. ThunderAgent: A simple, fast and
+program-aware agentic inference system.arXiv preprint arXiv:2602.13692, 2026.
+[19] Minki Kang, Wei-Ning Chen, Dongge Han, Huseyin A. Inan, Lukas Wutschitz, Yanzhi
+Chen, Robert Sim, and Saravan Rajmohan. ACON: Optimizing context compression for
+long-horizon LLM agents. InProceedings of the 43rd International Conference on Machine
+Learning, volume 306 ofProceedings of Machine Learning Research, pages 55321–55375.
+PMLR, 2026.
+[20] Woosuk Kwon, Zhuohan Li, Siyuan Zhuang, Ying Sheng, Lianmin Zheng, Cody Hao Yu,
+Joseph E. Gonzalez, Hao Zhang, and Ion Stoica. Efficient memory management for large
+language model serving with PagedAttention. InProceedings of the 29th ACM Sympo-
+sium on Operating Systems Principles (SOSP), pages 611–626. Association for Computing
+Machinery, 2023.
+[21] WonbeomLee, JungiLee, JunghwanSeo, andJaewoongSim. InfiniGen: Efficientgenerative
+inference of large language models with dynamic KV cache management. InProc. USENIX
+OSDI, 2024. arXiv:2406.19707.
+[22] Hanchen Li, Qiuyang Mang, Runyuan He, Qizheng Zhang, Huanzhi Mao, Xiaokun Chen,
+Hangrui Zhou, Alvin Cheung, Joseph E. Gonzalez, and Ion Stoica. Continuum: Efficient
+25
+=== PAGE 26 ===
+and robust multi-turn LLM agent scheduling with KV cache time-to-live. InICLR 2026
+Workshop on Lifelong Agents: Learning, Aligning, Evolving, 2026.
+[23] Junjie Li, Jiong Lou, and Jie Li. IntentKV: Cross-turn intent-aware KV cache pruning for
+agent inference.arXiv preprint arXiv:2606.09916, 2026.
+[24] Yuhong Li, Yingbing Huang, Bowen Yang, Bharat Venkitesh, Acyr Locatelli, Hanchen Ye,
+Tianle Cai, Patrick Lewis, and Deming Chen. SnapKV: LLM knows what you are looking
+for before generation. InProc. NeurIPS, 2024. arXiv:2404.14469.
+[25] Zhiyu Li, Shichao Song, Hanyu Wang, Simin Niu, Ding Chen, Jiawei Yang, Chenyang Xi,
+Huayi Lai, Jihao Zhao, Yezhaohui Wang, Junpeng Ren, Zehao Lin, Jiahao Huo, Tianyi
+Chen, Kai Chen, Kehang Li, Zhiqiang Yin, Qingchen Yu, Bo Tang, Hongkang Yang, Zhi-
+Qin John Xu, and Feiyu Xiong. MemOS: An operating system for memory-augmented
+generation (MAG) in large language models.arXiv preprint arXiv:2505.22101, 2025.
+[26] Chaofan Lin, Zhenhua Han, Chengruidong Zhang, Yuqing Yang, Fan Yang, Chen Chen,
+and Lili Qiu. Parrot: Efficient serving of LLM-based applications with semantic variable.
+InProc. USENIX OSDI, 2024.
+[27] Yujun Lin, Haotian Tang, Shang Yang, Zhekai Zhang, Guangxuan Xiao, Chuang Gan, and
+Song Han. QServe: W4A8KV4 quantization and system co-design for efficient LLM serving.
+InProceedings of Machine Learning and Systems (MLSys), 2025.
+[28] Banruo Liu, Haoran Qiu, Íñigo Goiri, Rodrigo Fonseca, Ricardo Bianchini, and Esha
+Choukse. Agentic coding in the wild: Characterizing GitHub Copilot traces at produc-
+tion scale.arXiv preprint arXiv:2608.00101, 2026.
+[29] Yuhan Liu, Yihua Cheng, Jiayi Yao, Yuwei An, Xiaokun Chen, Shaoting Feng, Yuyang
+Huang, Samuel Shen, Rui Zhang, Kuntai Du, and Junchen Jiang. LMCache: An efficient
+KV cache layer for enterprise-scale LLM inference.arXiv preprint arXiv:2510.09665, 2025.
+[30] Yuhan Liu, Hanchen Li, Yihua Cheng, Siddhant Ray, Yuyang Huang, Qizheng Zhang, Kun-
+tai Du, Jiayi Yao, Shan Lu, Ganesh Ananthanarayanan, Michael Maire, Henry Hoffmann,
+Ari Holtzman, and Junchen Jiang. CacheGen: KV cache compression and streaming for
+fast large language model serving. InProceedings of the ACM SIGCOMM 2024 Conference.
+Association for Computing Machinery, 2024.
+[31] Zichang Liu, Aditya Desai, Fangshuo Liao, Weitao Wang, Victor Xie, Zhaozhuo Xu, Anas-
+tasios Kyrillidis, and Anshumali Shrivastava. Scissorhands: Exploiting the persistence of
+importance hypothesis for LLM KV cache compression at test time. InProc. NeurIPS,
+2023. arXiv:2305.17118.
+[32] Zirui Liu, Jiayi Yuan, Hongye Jin, Shaochen Zhong, Zhaozhuo Xu, Vladimir Braverman,
+Beidi Chen, and Xia Hu. KIVI: A tuning-free asymmetric 2bit quantization for KV cache.
+InProceedings of the 41st International Conference on Machine Learning, volume 235 of
+Proceedings of Machine Learning Research, pages 32332–32344. PMLR, 2024.
+26
+=== PAGE 27 ===
+[33] Michael Luo, Xiaoxiang Shi, Colin Cai, Tianjun Zhang, Justin Wong, Yichuan Wang, Chi
+Wang, Yanping Huang, Zhifeng Chen, Joseph E. Gonzalez, and Ion Stoica. Autellix: An ef-
+ficient serving engine for LLM agents as general programs.arXiv preprint arXiv:2502.13965,
+2025.
+[34] Jesse Mu, Xiang Lisa Li, and Noah Goodman. Learning to compress prompts with gist
+tokens. InProc. NeurIPS, 2023.
+[35] Isaac Ong, Amjad Almahairi, Vincent Wu, Wei-Lin Chiang, Tianhao Wu, Joseph E. Gonza-
+lez, M Waleed Kadous, and Ion Stoica. RouteLLM: Learning to route LLMs from preference
+data. InProc. ICLR, 2025.
+[36] OpenAI. Prompt caching.https://developers.openai.com/api/docs/guides/
+prompt-caching, 2025. OpenAI API documentation, accessed October 2026.
+[37] Charles Packer, Sarah Wooders, Kevin Lin, Vivian Fang, Shishir G. Patil, Ion Stoica,
+and Joseph E. Gonzalez. MemGPT: Towards LLMs as operating systems.arXiv preprint
+arXiv:2310.08560, 2023.
+[38] Zaifeng Pan, Ajjkumar Patel, Yipeng Shen, Zhengding Hu, Yue Guan, Wan-Lu Li, Lianhui
+Qin, Yida Wang, and Yufei Ding. KVFlow: Efficient prefix caching for accelerating LLM-
+based multi-agent workflows. InProc. NeurIPS, 2025.
+[39] Zhuoshi Pan, Qianhui Wu, Huiqiang Jiang, Menglin Xia, Xufang Luo, Jue Zhang, Qingwei
+Lin, Victor Ruhle, Yuqing Yang, Chin-Yew Lin, H. Vicky Zhao, Lili Qiu, and Dongmei
+Zhang. LLMLingua-2: Data distillation for efficient and faithful task-agnostic prompt
+compression. InFindings of the Association for Computational Linguistics: ACL 2024,
+pages 963–981, Bangkok, Thailand, 2024. Association for Computational Linguistics.
+[40] Pratyush Patel, Esha Choukse, Chaojie Zhang, Aashaka Shah, Inigo Goiri, Saeed Maleki,
+and Ricardo Bianchini. Splitwise: Efficient generative LLM inference using phase split-
+ting. InProceedings of the 51st Annual International Symposium on Computer Architecture,
+pages 118–132. IEEE, 2024.
+[41] Ruoyu Qin, Zheming Li, Weiran He, Jialei Cui, Feng Ren, Mingxing Zhang, Yongwei Wu,
+Weimin Zheng, and Xinran Xu. Mooncake: Trading more storage for less computation —
+a KVCache-centric architecture for serving LLM chatbot. In23rd USENIX Conference on
+File and Storage Technologies (FAST 25), pages 155–170, Santa Clara, CA, February 2025.
+USENIX Association.
+[42] Preston Rasmussen, Pavlo Paliychuk, Travis Beauvais, Jack Ryan, and Daniel Chalef.
+Zep: A temporal knowledge graph architecture for agent memory.arXiv preprint
+arXiv:2501.13956, 2025.
+[43] Keshav Santhanam, Deepti Raghavan, Muhammad Shahir Rahman, Thejas Venkatesh,
+Neha Kunjal, Pratiksha Thaker, Philip Levis, and Matei Zaharia. ALTO: An efficient
+network orchestrator for compound AI systems. InProceedings of the 4th Workshop on
+Machine Learning and Systems (EuroMLSys), pages 117–125. Association for Computing
+Machinery, 2024.
+27
+=== PAGE 28 ===
+[44] Ying Sheng, Lianmin Zheng, Binhang Yuan, Zhuohan Li, Max Ryabinin, Beidi Chen, Percy
+Liang, Christopher Re, Ion Stoica, and Ce Zhang. FlexGen: High-throughput generative
+inference of large language models with a single GPU. InProceedings of the 40th Inter-
+national Conference on Machine Learning, volume 202 ofProceedings of Machine Learning
+Research, pages 31094–31116. PMLR, 2023.
+[45] Vikranth Srivatsa, Zijian He, Reyna Abhyankar, Dongming Li, and Yiying Zhang. Pre-
+ble: Efficient distributed prompt scheduling for LLM serving. InProc. ICLR, 2025.
+arXiv:2407.00023.
+[46] Biao Sun, Ziming Huang, Hanyu Zhao, Wencong Xiao, Xinyi Zhang, Yong Li, and Wei
+Lin. Llumnix: Dynamic scheduling for large language model serving. In18th USENIX
+Symposium on Operating Systems Design and Implementation (OSDI 24), pages 173–191,
+Santa Clara, CA, July 2024. USENIX Association.
+[47] Zuhair Ahmed Khan Taha, Mohammed Mudassir Uddin, and Shahnawaz Alam. AgentCom-
+press: Task-aware compression for affordable large language model agents.arXiv preprint
+arXiv:2601.05191, 2026.
+[48] Xin Tan, Yimin Jiang, Yitao Yang, and Hong Xu. Teola: Towards end-to-end optimization
+of LLM-based applications. InProceedings of the 30th ACM International Conference on
+Architectural Support for Programming Languages and Operating Systems, Volume 2, pages
+1302–1316. Association for Computing Machinery, 2025.
+[49] Hugo Touvron, Louis Martin, Kevin Stone, Peter Albert, Amjad Almahairi, Yasmine
+Babaei, Nikolay Bashlykov, Soumya Batra, Prajjwal Bhargava, Shruti Bhosale, Dan Bikel,
+Lukas Blecher, Cristian Canton Ferrer, Moya Chen, Guillem Cucurull, David Esiobu, Jude
+Fernandes, Jeremy Fu, Wenyin Fu, Brian Fuller, Cynthia Gao, Vedanuj Goswami, Na-
+man Goyal, Anthony Hartshorn, Saghar Hosseini, Rui Hou, Hakan Inan, Marcin Kardas,
+Viktor Kerkez, Madian Khabsa, Isabel Kloumann, Artem Korenev, Punit Singh Koura,
+Marie-Anne Lachaux, Thibaut Lavril, Jenya Lee, Diana Liskovich, Yinghai Lu, Yuning
+Mao, Xavier Martinet, Todor Mihaylov, Pushkar Mishra, Igor Molybog, Yixin Nie, Andrew
+Poulton, Jeremy Reizenstein, Rashi Rungta, Kalyan Saladi, Alan Schelten, Ruan Silva,
+Eric Michael Smith, Ranjan Subramanian, Xiaoqing Ellen Tan, Binh Tang, Ross Taylor,
+Adina Williams, Jian Xiang Kuan, Puxin Xu, Zheng Yan, Iliyan Zarov, Yuchen Zhang, An-
+gela Fan, Melanie Kambadur, Sharan Narang, Aurelien Rodriguez, Robert Stojnic, Sergey
+Edunov, and Thomas Scialom. Llama 2: Open foundation and fine-tuned chat models.
+arXiv preprint arXiv:2307.09288, 2023.
+[50] vLLM Project. Automatic prefix caching.https://docs.vllm.ai/en/stable/
+design/prefix_caching/, 2026. vLLM documentation, accessed October 2026.
+[51] Chen Wang, Xunzhuo Liu, Yuhan Liu, Yue Zhu, Xiangxi Mo, Junchen Jiang, and Huamin
+Chen. When to reason: Semantic router for vLLM. InNeurIPS ML for Systems Workshop,
+2025.
+[52] Jiahao Wang, Jinbo Han, Xingda Wei, Sijie Shen, Dingyan Zhang, Chenguang Fang, Rong
+Chen, Wenyuan Yu, and Haibo Chen. KVCache cache in the wild: Characterizing and
+28
+=== PAGE 29 ===
+optimizing KVCache cache at a large cloud provider. In2025 USENIX Annual Technical
+Conference (USENIX ATC 25), 2025.
+[53] Otto White, Marcel Wagenländer, Britannio Jarrett, Xijin Zhou, Yanda Tao, Pedro Sil-
+vestre, Guo Li, Huanzhou Zhu, Lluís Vilanova, and Peter Pietzuch. Scepsy: Serving agentic
+workflows using aggregate LLM pipelines.arXiv preprint arXiv:2604.15186, 2026.
+[54] Guangxuan Xiao, Yuandong Tian, Beidi Chen, Song Han, and Mike Lewis. Efficient stream-
+ing language models with attention sinks. InProc. ICLR, 2024.
+[55] Fangyuan Xu, Weijia Shi, and Eunsol Choi. RECOMP: Improving retrieval-augmented LMs
+with compression and selective augmentation. InProc. ICLR, 2024. arXiv:2310.04408.
+[56] Wujiang Xu, Zujie Liang, Kai Mei, Hang Gao, Juntao Tan, and Yongfeng Zhang. A-Mem:
+Agentic memory for LLM agents. InAdvances in Neural Information Processing Systems,
+volume 38, 2025.
+[57] Jiayi Yao, Samuel Shen, Kuntai Du, Shaoting Feng, Dongjoo Seo, Rui Zhang, Yuyang
+Huang, Yuhan Liu, Shan Lu, and Junchen Jiang. VeriCache: Turning lossy KV cache into
+lossless LLM inference.arXiv preprint arXiv:2605.17613, 2026.
+[58] Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak Shafran, Karthik Narasimhan, and
+Yuan Cao. ReAct: Synergizing reasoning and acting in language models. InInternational
+Conference on Learning Representations (ICLR), 2023.
+[59] Lingfan Yu, Jinkun Lin, and Jinyang Li. Stateful large language model serving with pen-
+sieve. InProceedings of the Twentieth European Conference on Computer Systems (EuroSys
+2025), pages 144–158, New York, NY, USA, 2025. Association for Computing Machinery.
+[60] Yichao Yuan, Ankita Nayak, Souvik Kundu, and Nishil Talati. Agentic AI workload charac-
+teristics. In2026 IEEE International Symposium on Workload Characterization (IISWC),
+2026. To appear.
+[61] Yuxuan Yue, Zhihang Yuan, Haojie Duanmu, Sifan Zhou, Jianlong Wu, and Liqiang Nie.
+WKVQuant: Quantizing weight and key/value cache for large language models gains more.
+arXiv preprint arXiv:2402.12065, 2024.
+[62] Zhenyu Zhang, Ying Sheng, Tianyi Zhou, Tianlong Chen, Lianmin Zheng, Ruisi Cai, Zhao
+Song, Yuandong Tian, Christopher Ré, Clark Barrett, Zhangyang Wang, and Beidi Chen.
+H2O: Heavy-hitter oracle for efficient generative inference of large language models. In
+Proc. NeurIPS, 2023.
+[63] Yilong Zhao, Chien-Yu Lin, Kan Zhu, Zihao Ye, Lequn Chen, Size Zheng, Luis Ceze, Arvind
+Krishnamurthy, Tianqi Chen, and Baris Kasikci. Atom: Low-bit quantization for efficient
+and accurate LLM serving. InProceedings of Machine Learning and Systems (MLSys),
+2024.
+[64] Lianmin Zheng, Liangsheng Yin, Zhiqiang Xie, Chuyue Sun, Jeff Huang, Cody Hao Yu,
+Shiyi Cao, Christos Kozyrakis, Ion Stoica, Joseph E. Gonzalez, Clark Barrett, and Ying
+Sheng. SGLang: Efficient execution of structured language model programs. InProc.
+NeurIPS, 2024.
+29
+=== PAGE 30 ===
+[65] Yinmin Zhong, Shengyu Liu, Junda Chen, Jianbo Hu, Yibo Zhu, Xuanzhe Liu, Xin Jin,
+and Hao Zhang. DistServe: Disaggregating prefill and decoding for goodput-optimized large
+language model serving. InProc. USENIX OSDI, 2024.
+[66] Kan Zhu, Mathew Jacob, Chenxi Ma, Yi Pan, Stephanie Wang, Arvind Krishnamurthy,
+and Baris Kasikci. TraceLab: Characterizing coding agent workloads for LLM serving.
+arXiv preprint arXiv:2606.30560, 2026.
+30

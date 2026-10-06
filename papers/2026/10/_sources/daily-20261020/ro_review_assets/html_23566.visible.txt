@@ -1,0 +1,1768 @@
+Enhancing Visual Task-Redirection Attacks on Vision-Language-Action Models via Closed-Loop Optimization
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+I Introduction
+II Related Work
+Vision-Language-Action Models
+Adversarial Attacks against VLA Models
+On-Policy Imitation Learning for VLA Models
+III Method
+III-A Problem Setup and Threat Model
+VLA policy
+Threat model
+Attack objective
+III-B Overview
+III-C Execution-Driven Supervision
+III-D Progress-Guided Selection
+Progress estimation
+Frontier and prefix supervision
+III-E Target Alignment
+III-F Perturbation Optimization
+IV Experiments
+IV-A Experimental Setup
+VLA models
+Tasks and evaluation metrics
+Compared methods
+Implementation details
+IV-B Overall Performance
+Qualitative examples
+IV-C Ablation and Mechanism Analysis
+Component ablation
+Effect of EDS on target action error
+Effect of PGS on task progress
+IV-D Additional Evaluations
+Current-round supervision and historical aggregation
+Parameter sensitivity
+Instruction variation
+Transfer across policy variants
+IV-E Real-World Evaluation
+IV-F Construction Cost and Limitations
+Construction cost
+V Conclusion
+-A Target Alignment Details
+Sequence targets
+Continuous actions
+Flow-matching policies
+Joint objectives
+-B Sensitivity to Flow-Time Probes
+-C Physical Robustness
+Homography transformations
+Color calibration
+Expectation over transformations
+-D VLA Model Details
+PI
+GR00T
+FAST
+OFT
+LangForce
+InstructVLA
+References
+License: arXiv.org perpetual non-exclusive license
+arXiv:2610.23566v1 [cs.RO] 16 Oct 2026
+Enhancing Visual Task-Redirection Attacks
+on Vision-Language-Action Models
+via Closed-Loop OptimizationThanks: Corresponding author: Xiaochun Cao.Thanks: Chunjin Ye, Jianjie Huang, and Xiaochun Cao are with
+Sun Yat-sen University, Shenzhen 518107, China, and also with
+Zhongguancun Academy, Beijing 100094, China
+(e-mail: s-ycj25@bza.edu.cn; caoxiaochun@mail.sysu.edu.cn).Thanks: Guanying Chen is with Sun Yat-sen University,
+Shenzhen 518107, China.Thanks: Jianhao Chen and Tieyun Qian are with Wuhan University,
+Wuhan 430072, China, and also with Zhongguancun Academy,
+Beijing 100094, China.Thanks: Quanlin Chen is with Sun Yat-sen University,
+Shenzhen 518107, China, and also with Shenzhen Loop Area
+Institute, Shenzhen 518000, China.Thanks: Hanjie Zhao is with Tianjin University, Tianjin 300350,
+China, and also with Zhongguancun Academy, Beijing 100094, China.Thanks: Haozhe Liang is with the University of Chinese Academy
+of Sciences, Beijing 100049, China, and also with Zhongguancun
+Academy, Beijing 100094, China.
+Chunjin Ye
+Guanying Chen
+Jianjie Huang
+Jianhao Chen
+Quanlin Chen
+Affiliation: Hanjie Zhao,
+Haozhe Liang,
+Tieyun Qian,
+and Xiaochun Cao
+Abstract
+Vision-language-action (VLA) models enable language-guided robot manipulation,
+but remain vulnerable to visual attacks that undermine user control over robot
+behavior. Prior studies optimize visual perturbations using fixed target
+supervision. However, the perturbation can change earlier actions
+and, in turn, the physical states reached later. As the attacked trajectory
+evolves, this supervision may no longer match the behavior needed at the
+states actually reached. Accurately matching these targets can therefore
+fail to advance the attacker-specified task. Even with suitable supervision,
+reducing average matching error does not ensure sustained task progress.
+The robot may still fail at a critical stage, and further updates can disrupt
+previously successful behavior. To address these limitations, we propose TRACO,
+a framework that enhances existing targeted visual attacks through closed-loop
+optimization. Its Execution-Driven Supervision rebuilds supervision for the states
+reached under attack to guide subsequent updates.
+Within this framework, Progress-Guided Selection focuses updates where
+progress stalls while maintaining supervision on the earlier behavior needed
+to reach that point.
+Experiments across VLA models and simulation environments show improved
+task-redirection success with TRACO, highlighting the security implications of
+closed-loop attack optimization.
+Index Terms: Vision-language-action models, adversarial attacks, robot security,
+closed-loop optimization.
+Fig. 1: Motivation for closed-loop attack optimization.
+(a) During offline optimization (top), the attacker learns a perturbation
+δ\delta by matching target behavior on observations from a recorded target
+trajectory (yellow). At test time (bottom), the same perturbation changes the
+robot’s actions under the user’s original instruction and can lead to different
+states (purple). The fixed targets may then no longer provide the behavior
+needed to complete the target task. (b,c) A single-scene example illustrates
+this mismatch. Three perturbations learned offline achieve lower action MSE
+on the recorded observations than TRACO, but show larger trajectory deviations and
+fail during execution, whereas TRACO succeeds.
+I Introduction
+Vision-language-action (VLA) models enable robots to perform diverse
+manipulation tasks from natural-language instructions [1, 2].
+During execution, they repeatedly use new camera observations to decide how
+to continue the task. This visual feedback allows the robot to adapt its
+actions as the scene changes [3]. However, visual perturbations can change the
+actions the model generates [4, 5]. By changing the robot’s actions, an attack can
+also change the physical states and observations encountered later. These
+altered observations then guide the robot’s subsequent actions. The attack
+can therefore influence how the robot proceeds through the task and what it
+ultimately accomplishes. Understanding these closed-loop effects is important
+for assessing the security of VLA systems.
+Recent studies have demonstrated the vulnerability of VLA models to visual
+attacks. Many of these attacks aim to make the user’s intended task fail [6, 5, 7, 8].
+Some pursue this goal by inducing prescribed actions or trajectories [4, 9].
+These targets specify how the robot should deviate, but not what task it should
+complete instead. In contrast, TRAP studies task-level behavior hijacking,
+where success requires the robot to complete an attacker-specified task [10].
+Its supervision includes reasoning and action targets.
+In both cases, target supervision is fixed before optimization. It comes from
+prescribed action targets or pre-collected target rollouts. This raises a central
+question: can fixed supervision still guide the robot to complete the target
+task as the attacked trajectory evolves?
+The challenge is that optimizing the perturbation can change the very states
+on which the robot must act. When attacks use pre-collected target rollouts,
+perturbation updates rely on the recorded observations and target outputs.
+During execution, however, the updated perturbation can lead the robot to
+states different from those in the recorded rollouts, as illustrated in
+Figure 1(a). To continue the target task from
+these attack-induced states, the robot may need to behave
+differently from what the recorded targets specify [11].
+Better matching to these fixed targets therefore need not translate into
+successful closed-loop execution [12, 13].
+Figure 1(b,c) illustrates this gap for action
+matching on recorded observations in one scene. This motivates using execution
+feedback to refresh target supervision as the attacked trajectory evolves.
+Execution feedback must also guide where optimization should focus and what
+earlier behavior it should preserve. Even with suitable targets, matching some
+behaviors more accurately can lower the average loss while an unresolved error
+still blocks task progress [14, 15].
+For example, in a pick-and-place task, better matching of placing actions
+cannot compensate for a failed grasp: the robot must grasp the object before
+it can place it.
+Because the same perturbation affects all execution steps, an update intended
+to improve the blocked behavior can also weaken earlier successful behavior.
+Optimization should therefore focus near where progress stalls
+while retaining the earlier behavior needed to reach that point.
+To address these problems, we propose TRACO (Task-Redirection Attacks via Closed-loop Optimization),
+a framework that enhances existing visual attacks through execution feedback.
+Its Execution-Driven Supervision (EDS) rebuilds target supervision
+for the states reached under the current perturbation.
+These targets guide subsequent perturbation updates. The resulting execution,
+in turn, supplies the states for rebuilding target supervision, closing the
+loop between attack optimization and execution.
+Within this loop, Progress-Guided Selection (PGS) selects states for supervision
+to advance the target task while retaining earlier behavior. Using a successful target
+rollout as an ordered reference, PGS identifies the matched prefix and progress
+frontier of the attacked rollout. Supervision at the frontier focuses updates
+on the behavior needed for further progress. Meanwhile, continued target
+supervision along the prefix helps retain the earlier behavior needed to reach
+the frontier. TRACO thus constructs and organizes supervision from actual
+execution. Existing targeted attacks can use this supervision with their own
+alignment objectives.
+Our contributions are summarized as follows:
+•
+We propose TRACO, a framework that extends visual task-redirection
+attacks on VLA models to closed-loop optimization. Its Execution-Driven
+Supervision (EDS) replaces fixed targets with supervision reconstructed at
+the states reached under attack. Existing attacks can thus
+account for the state changes they induce while retaining their alignment
+objectives.
+•
+We introduce Progress-Guided Selection (PGS) to organize supervision
+according to ordered trajectory progress. It combines frontier supervision
+with prefix supervision along the current attacked rollout. This design helps
+advance the target task while retaining earlier behavior under a visual
+perturbation shared across execution steps.
+•
+We evaluate TRACO across diverse VLA models and simulation environments.
+Results from simulation and real-robot experiments demonstrate TRACO’s
+effectiveness for visual task redirection, highlighting the value of closing
+the loop between attack optimization and execution.
+Fig. 2: Overview of TRACO.
+(a) Execution-Driven Supervision (EDS) records the states reached under the
+current perturbation.
+(b) Progress-Guided Selection (PGS) uses a successful target trajectory to
+select frontier and prefix states, helping advance the target task while
+preserving earlier behavior.
+EDS queries the frozen VLA under the target instruction to obtain supervision
+at these states.
+TRACO then updates the perturbation and repeats this cycle, using new
+rollouts to refresh supervision and guide subsequent updates.
+II Related Work
+Vision-Language-Action Models
+Generalist robot policies learn language-conditioned manipulation from
+diverse robot data [16, 17, 18].
+VLA models such as RT-2 and OpenVLA build on pretrained vision-language
+representations and predict actions autoregressively as discrete
+tokens [3, 1]. In parallel, diffusion-based action generation
+has been adopted in both visuomotor policies and VLA
+models [19, 20, 21, 22].
+Flow matching provides another route to continuous action
+generation [2, 23, 24]. Recent work
+also explores efficient action tokenization [25] and
+parallel action decoding [26]. Some VLAs further use
+intermediate reasoning to guide action
+generation [27]. During closed-loop
+execution, VLA models use updated visual observations to guide subsequent
+actions. We study how visual perturbations can redirect this execution
+toward an attacker-specified task.
+Adversarial Attacks against VLA Models
+Visual attacks seek to disrupt task execution or induce prescribed robot
+behavior. One line of work targets visual representations and vision–language
+alignment [6, 28]. Related studies develop patches
+that transfer across models and domains [5, 7],
+or learn fixed patches from short execution prefixes [8].
+Targeted visual attacks steer action outputs toward prescribed values or
+trajectories [4, 9, 29], or induce action
+freezing [30]. At the task level, TRAP hijacks robot
+behavior by jointly matching chain-of-thought (CoT) and action targets from clean target
+rollouts [10]. Language attacks likewise manipulate actions or disrupt
+execution through adversarial prompts [31, 32].
+Trajectory-Level Redirection uses closed-loop prompt search and queries target
+behavior on the states induced by candidate
+prompts [33]. For targeted visual attacks,
+TRACO provides a reusable closed-loop optimization framework. Existing attacks
+can retain their alignment objectives while TRACO updates target supervision
+on the states reached during attacked execution.
+On-Policy Imitation Learning for VLA Models
+During execution, VLA policies can reach states not covered by their training
+demonstrations. DAgger addresses this distribution shift by obtaining expert
+supervision on states visited by the learner [34].
+Related VLA methods obtain such supervision through human
+corrections [35, 36, 37, 38, 39]
+or teacher policies [40, 41].
+Building on this principle, TRACO optimizes a shared visual perturbation using
+supervision on attack-induced states while keeping the VLA fixed.
+PGS selects frontier and prefix states to advance the target task while
+maintaining supervision on earlier behavior needed for continued progress.
+III Method
+III-A Problem Setup and Threat Model
+VLA policy
+For a rollout from initial condition ee, the VLA policy πθ\pi_{\theta}
+generates actions at each policy query tt from the task instruction
+cc and a visual observation oe,to_{e,t} of the current physical state
+se,ts_{e,t}.
+After the robot acts, the policy makes its next decision from a new
+observation. The resulting sequence of states, observations, and actions
+forms a closed-loop trajectory ξe​(c)\xi_{e}(c).
+Threat model
+We consider a white-box adversary with access to the VLA’s parameters and
+gradients. The adversary optimizes a visual perturbation δ\delta
+against the frozen VLA. During attack construction, the adversary can
+execute closed-loop rollouts under the user’s source instruction
+csrcc_{\mathrm{src}}. The adversary can also query the VLA under an
+attacker-specified target instruction ctgtc_{\mathrm{tgt}} to obtain target
+supervision. At deployment, the VLA continues to receive
+csrcc_{\mathrm{src}}. For each
+model and source–target task pair, the learned perturbation remains fixed
+and is applied at every policy query across rollouts. We consider two
+visual attack settings: global digital perturbations constrained by an
+ℓ∞\ell_{\infty} bound [42] and localized adversarial
+patches [4]. For a
+visual observation o∈[0,1]do\in[0,1]^{d}, the perturbed observation is
+gδ​(o)={clip[0,1]d⁡(o+δ),global,(𝟏−M)⊙o+M⊙δ,patch,g_{\delta}(o)=\begin{cases}\operatorname{clip}_{[0,1]^{d}}(o+\delta),&\text{global},\\[2.0pt]
+(\mathbf{1}-M)\odot o+M\odot\delta,&\text{patch},\end{cases}
+(1)
+where M∈{0,1}dM\in\{0,1\}^{d} is a fixed binary mask defining the patch region.
+The operator ⊙\odot denotes element-wise multiplication. The feasible
+set is
+Δ={{δ:‖δ‖∞≤ϵ},global,{δ∈[0,1]d:δ=M⊙δ},patch,\Delta=\begin{cases}\{\delta:\|\delta\|_{\infty}\leq\epsilon\},&\text{global},\\[2.0pt]
+\{\delta\in[0,1]^{d}:\delta=M\odot\delta\},&\text{patch},\end{cases}
+where ϵ>0\epsilon>0 is the perturbation budget.
+Attack objective
+The adversary aims to make the robot complete the target task while
+the VLA continues to receive the source instruction.
+An attack succeeds when the resulting trajectory completes the
+target task:
+𝖲𝗎𝖼𝖼e​(δ)=Te​(ξeδ​(csrc)),\mathsf{Succ}_{e}(\delta)=T_{e}\bigl(\xi_{e}^{\delta}(c_{\mathrm{src}})\bigr),
+where ξeδ​(csrc)\xi_{e}^{\delta}(c_{\mathrm{src}}) is the trajectory generated
+under perturbation δ\delta and source instruction
+csrcc_{\mathrm{src}} from initial condition ee.
+The indicator Te​(ξ)T_{e}(\xi) equals one if ξ\xi completes the target
+task and zero otherwise.
+The objective is to find a single feasible perturbation that
+maximizes the number of successful construction rollouts:
+δ⋆∈arg​maxδ∈Δ∑e∈ℰ𝖲𝗎𝖼𝖼e(δ),\delta^{\star}\in\argmax_{\delta\in\Delta}\sum_{e\in\mathcal{E}}\mathsf{Succ}_{e}(\delta),
+(2)
+where ℰ\mathcal{E} indexes the initial conditions used for attack construction.
+III-B Overview
+TRACO optimizes visual perturbations using feedback from closed-loop execution
+, as shown in Figure 2. Execution-Driven Supervision (EDS)
+runs the VLA under the current perturbation and records the states reached.
+It rebuilds target supervision on these states to guide subsequent updates.
+Progress-Guided Selection (PGS) uses rollout feedback to focus supervision
+near where progress stalls. It also maintains supervision on earlier behavior
+to help preserve the progress already made. Using the supervision constructed
+by EDS and organized by PGS, TRACO updates the perturbation with the chosen
+attack’s alignment objective. TRACO repeats this cycle, using each new rollout
+to refresh supervision and adjust the focus of subsequent updates.
+III-C Execution-Driven Supervision
+The behavior needed to pursue the target task depends on the state reached.
+Unlike attacks that rely on pre-collected target rollouts, EDS uses closed-loop
+execution to construct supervision for the states induced by the current
+perturbation. In each round rr, we run the frozen VLA under the source
+instruction csrcc_{\mathrm{src}} and perturbation δr∈Δ\delta_{r}\in\Delta.
+We record the visited states and their unperturbed observations in 𝒟r\mathcal{D}_{r}.
+At a selected state in 𝒟r\mathcal{D}_{r}, we query the frozen VLA under the target
+instruction to obtain behavior for that state. The source prediction
+uisrc​(δ)u_{i}^{\mathrm{src}}(\delta) and target supervision uitgtu_{i}^{\mathrm{tgt}}
+thus correspond to the same physical state under different input conditions:
+(gδ​(oi),csrc)\displaystyle\bigl(g_{\delta}(o_{i}),c_{\mathrm{src}}\bigr)
+→πθuisrc​(δ),\displaystyle\xrightarrow{\pi_{\theta}}u_{i}^{\mathrm{src}}(\delta),
+(3)
+(oi,ctgt)\displaystyle\bigl(o_{i},c_{\mathrm{tgt}}\bigr)
+→πθuitgt.\displaystyle\xrightarrow{\pi_{\theta}}u_{i}^{\mathrm{tgt}}.
+Here, oio_{i} is the unperturbed observation of the selected state, and
+δ\delta is the perturbation being optimized.
+The updated perturbation can change the states reached during execution.
+EDS therefore rebuilds supervision from new rollouts, so subsequent updates
+use target behavior for the states currently reached.
+III-D Progress-Guided Selection
+The same perturbation affects every policy query, so updates aimed at further
+progress can also change earlier behavior. PGS uses progress in the current
+attacked rollout to determine where to focus these updates. It also maintains
+supervision on earlier behavior to help preserve the progress already made.
+Progress estimation
+For each initial condition, PGS uses a successful target rollout as an ordered
+progress reference. PGS estimates progress from consecutive position matches
+between the attacked rollout and this reference.
+At fixed policy queries 0=t0<⋯<tJ0=t_{0}<\cdots<t_{J}, we record the reference
+end-effector positions 𝐲¯j∈ℝ3\bar{\mathbf{y}}_{j}\in\mathbb{R}^{3} to form anchors
+(tj,𝐲¯j)(t_{j},\bar{\mathbf{y}}_{j}). We compare the two rollouts’ end-effector positions
+at each tjt_{j}. An anchor passes when the position error is within tolerance
+κ>0\kappa>0. The last anchor in the longest consecutively passing prefix
+defines the frontier:
+dj\displaystyle d_{j}
+=‖𝐲j−𝐲¯j‖2,\displaystyle=\|\mathbf{y}_{j}-\bar{\mathbf{y}}_{j}\|_{2},
+(4)
+f\displaystyle f
+=max⁡{0≤j≤L:dk≤κ​for all ​0≤k≤j},\displaystyle=\max\left\{0\leq j\leq L:d_{k}\leq\kappa\ \text{for all }0\leq k\leq j\right\},
+where 𝐲j\mathbf{y}_{j} is the end-effector position in the current attacked
+rollout, and L≤JL\leq J is the last anchor index observed before that
+rollout ends.
+Frontier and prefix supervision
+To advance beyond the frontier, PGS selects the corresponding state in the
+current attacked rollout for target supervision.
+It also maintains target supervision at earlier passing anchors
+to help retain the behavior needed to reach the frontier.
+We partition the passing prefix into frontier and prefix groups:
+ℱ={{f},f<J,∅,f=J,𝒫={0,…,f}∖ℱ.\mathcal{F}=\begin{cases}\{f\},&f<J,\\
+\varnothing,&f=J,\end{cases}\qquad\mathcal{P}=\{0,\ldots,f\}\setminus\mathcal{F}.
+(5)
+PGS forms frontier and prefix groups separately for each rollout using its own
+reference anchors. For the shared perturbation update, we pool frontier and
+prefix records into ℱr\mathcal{F}_{r} and 𝒫r\mathcal{P}_{r}, respectively.
+III-E Target Alignment
+When applying TRACO to an existing attack, we retain its choice of predictions
+to align and its matching loss 𝒟\mathcal{D}. At each state selected by PGS,
+we compare the source prediction with the corresponding target from EDS:
+ℓi​(δ)=𝒟⁡(uisrc​(δ),uitgt).\ell_{i}(\delta)=\mathcal{D}\!\left(u_{i}^{\mathrm{src}}(\delta),u_{i}^{\mathrm{tgt}}\right).
+(6)
+For example, continuous action chunks can be matched by squared error.
+Sequence targets, such as action tokens or CoT, are matched by minimizing
+their negative log-likelihood with teacher forcing. For flow-matching policies,
+we use squared error to compare source and target vector fields at the same
+flow states and times. For joint objectives, such as action–CoT alignment in TRAP [10],
+ℓi​(δ)\ell_{i}(\delta) combines the corresponding losses.
+Appendix -A
+provides detailed formulations of the alignment losses described above. We next combine
+these losses across the frontier and prefix groups to optimize the perturbation.
+III-F Perturbation Optimization
+To promote progress at the frontier while preserving earlier behavior, we
+first average ℓi​(δ)\ell_{i}(\delta) within each nonempty group formed by PGS. We then combine
+the two group means:
+ℓ¯G​(δ)\displaystyle\bar{\ell}_{G}(\delta)
+=1|G|∑i∈Gℓi(δ),G∈{ℱr,𝒫r},\displaystyle=\frac{1}{|G|}\sum_{i\in G}\ell_{i}(\delta),\qquad G\in\{\mathcal{F}_{r},\mathcal{P}_{r}\},
+(7)
+ℒr​(δ)\displaystyle\mathcal{L}_{r}(\delta)
+=12​[ℓ¯ℱr​(δ)2+ℓ¯𝒫r​(δ)2],\displaystyle=\frac{1}{2}\left[\bar{\ell}_{\mathcal{F}_{r}}(\delta)^{2}+\bar{\ell}_{\mathcal{P}_{r}}(\delta)^{2}\right],
+where ℓ¯G=0\bar{\ell}_{G}=0 for G=∅G=\varnothing. We square the group means to
+adaptively balance frontier and prefix supervision. This shifts the emphasis
+between advancing the frontier and preserving earlier behavior as the two
+groups’ relative matching errors change.
+Within each round, the selected observations and their target supervision
+remain fixed. With the VLA frozen, TRACO minimizes the group objective using
+KK projected sign-gradient steps, starting from δ(0)=δr\delta^{(0)}=\delta_{r}:
+δ(k+1)\displaystyle\delta^{(k+1)}
+=ΠΔ​[δ(k)−η​sign⁡(∇δℒr​(δ(k)))],\displaystyle=\Pi_{\Delta}\left[\delta^{(k)}-\eta\,\operatorname{sign}\left(\nabla_{\delta}\mathcal{L}_{r}(\delta^{(k)})\right)\right],
+(8)
+k=0,…,K−1.\displaystyle k=0,\ldots,K-1.
+Here, η\eta is the step size, and
+ΠΔ\Pi_{\Delta} projects onto the feasible perturbation set Δ\Delta.
+After KK updates, TRACO sets δr+1=δ(K)\delta_{r+1}=\delta^{(K)} and runs new
+construction rollouts. PGS uses the observed progress
+to revise the frontier and prefix groups. EDS then refreshes target supervision
+at the selected states for subsequent updates. TRACO also retains the updated
+perturbation δbest\delta_{\mathrm{best}} with the highest target-task success count
+across rounds. It returns δbest\delta_{\mathrm{best}} after at most RR rounds,
+stopping early if all construction rollouts complete the target task.
+Algorithm III-F summarizes the procedure.
+Algorithm 1. TRACO Attack Construction
+Input:
+Frozen VLA πθ\pi_{\theta}, instructions csrc,ctgtc_{\mathrm{src}},c_{\mathrm{tgt}}, initial
+conditions and corresponding target progress references, feasible set
+Δ\Delta, alignment loss ℓi\ell_{i}.
+Parameters: R≥1R\geq 1 rounds, KK updates per round,
+step size η\eta, position tolerance κ\kappa.
+Output:
+δbest\delta_{\mathrm{best}}.
+1:
+Initialize δ0∈Δ\delta_{0}\in\Delta.
+2:
+Collect 𝒟0\mathcal{D}_{0} under δ0\delta_{0} and csrcc_{\mathrm{src}}.
+3:
+for r=0,…,R−1r=0,\ldots,R-1 do
+4:
+Select ℱr,𝒫r\mathcal{F}_{r},\mathcal{P}_{r} from 𝒟r\mathcal{D}_{r} using PGS,
+Eqs. (4)–(5).
+5:
+Query uitgtu_{i}^{\mathrm{tgt}} from (oi,ctgt)(o_{i},c_{\mathrm{tgt}}) for
+i∈ℱr∪𝒫ri\in\mathcal{F}_{r}\cup\mathcal{P}_{r}, Eq. (3).
+6:
+Compute ℒr\mathcal{L}_{r} from ℓi\ell_{i},
+Eq. (7).
+7:
+Update δr\delta_{r} to δr+1\delta_{r+1} with KK projected steps,
+Eq. (8).
+8:
+Collect 𝒟r+1\mathcal{D}_{r+1} under δr+1\delta_{r+1} and csrcc_{\mathrm{src}}.
+9:
+Use 𝒟r+1\mathcal{D}_{r+1} to update δbest\delta_{\mathrm{best}} by the
+highest target-task success count so far.
+10:
+if all rollouts in 𝒟r+1\mathcal{D}_{r+1} complete the target task then
+11:
+return δr+1\delta_{r+1}
+12:
+end if
+13:
+end for
+14:
+return δbest\delta_{\mathrm{best}}
+IV Experiments
+TABLE I: Task-redirection performance on LIBERO. Best results are highlighted in bold red.
+Global perturbations
+Adversarial patches
+Seen
+Unseen
+Seen
+Unseen
+Model
+Method
+ASR (%)↑\uparrow
+H↑H\uparrow
+ASR (%)↑\uparrow
+H↑H\uparrow
+ASR (%)↑\uparrow
+H↑H\uparrow
+ASR (%)↑\uparrow
+H↑H\uparrow
+PI
+Random Noise
+0.0
+−-0.6030
+0.0
+−-0.6420
+0.0
+−-0.6650
+0.0
+−-0.6880
+Action Attack
+54.8
+0.3489
+45.6
+0.2530
+56.0
+0.3282
+54.0
+0.3308
+TRACO
+89.2
+0.6279
+79.6
+0.5334
+69.6
+0.4348
+67.2
+0.4458
+GR00T
+Random Noise
+0.4
+−-0.5930
+0.0
+−-0.8340
+0.0
+−-0.6430
+0.0
+−-0.6540
+Action Attack
+63.2
+0.4554
+60.0
+0.3912
+36.0
+0.0885
+39.6
+0.0533
+TRACO
+96.4
+0.7338
+93.6
+0.6831
+50.8
+0.3121
+48.0
+0.2959
+LangForce
+Random Noise
+0.0
+−-0.6470
+0.0
+−-0.8850
+0.0
+−-0.6860
+0.0
+−-0.7010
+Action Attack
+76.4
+0.5454
+77.6
+0.5118
+68.8
+0.3990
+68.8
+0.3889
+TRACO
+89.6
+0.6740
+81.6
+0.5719
+69.2
+0.4119
+68.4
+0.4042
+FAST
+Random Noise
+0.0
+−-0.5950
+0.0
+−-0.7260
+0.0
+−-0.6080
+0.0
+−-0.5640
+Action Attack
+11.6
+−-0.2587
+8.8
+−-0.3064
+48.4
+0.3294
+45.2
+0.3018
+TRACO
+56.8
+0.2477
+45.2
+0.0990
+58.8
+0.4303
+51.6
+0.3362
+OFT
+Random Noise
+0.0
+−-0.7680
+0.0
+−-0.7730
+0.0
+−-0.6230
+0.0
+−-0.6150
+Action Attack
+28.4
+0.0802
+24.0
+0.0296
+23.6
+0.1097
+23.2
+0.1187
+TRACO
+94.0
+0.6603
+79.6
+0.5222
+19.2
+0.1248
+18.0
+0.0922
+Avg.
+Random Noise
+0.1
+−-0.6412
+0.0
+−-0.7720
+0.0
+−-0.6450
+0.0
+−-0.6444
+Action Attack
+46.9
+0.2342
+43.2
+0.1758
+46.6
+0.2510
+46.2
+0.2387
+TRACO
+85.2
+0.5887
+75.9
+0.4819
+53.5
+0.3428
+50.6
+0.3149
+TABLE II: Adversarial patch attacks on InstructVLA in SimplerEnv. Best results are highlighted in bold red.
+Method
+Seen
+Unseen
+ASR (%)↑\uparrow
+H↑H\uparrow
+ASR (%)↑\uparrow
+H↑H\uparrow
+Random Noise
+0.0
+−-0.6748
+1.6
+−-0.6039
+Action Attack
+8.8
+−-0.4456
+9.6
+−-0.5474
++ TRACO
+12.8
+−-0.3809
+7.2
+−-0.4800
+TRAPCoT-only\mathrm{TRAP}_{\text{CoT-only}}
+11.2
+0.0602
+10.4
+−-0.0501
++ TRACO
+30.4
+0.0980
+20.0
+0.0019
+TRAP
+64.0
+0.4831
+44.0
+0.2663
++ TRACO
+72.8
+0.5293
+53.6
+0.2747
+Fig. 3: Qualitative examples of task redirection. (a) Global perturbation
+on LIBERO. (b,c) Adversarial patches on LIBERO and SimplerEnv, respectively.
+Each image sequence shows execution with TRACO under the source instruction.
+The 3D plots compare clean source, clean target, and attacked trajectories.
+We evaluate task redirection across VLA architectures, the contribution of
+each supervision mechanism, and the changes in behavior and progress during
+attack construction.
+IV-A Experimental Setup
+VLA models
+On LIBERO [43], we evaluate 5 VLA models spanning autoregressive action
+generation, direct regression, and flow matching. These include
+four StarVLA models [44]—PI, GR00T, FAST, and OFT—
+as well as LangForce [45].
+On SimplerEnv [46], we evaluate
+InstructVLA [27], which uses CoT reasoning to
+guide action generation. Appendix -D describes the model architectures.
+Tasks and evaluation metrics
+We pair each user-specified source task with an attacker-specified target
+task for evaluation. On LIBERO, we use 5 task pairs from LIBERO-Goal [43]
+in the global setting. These pairs require redirecting the robot to different placement goals or manipulation behaviors,
+such as switching from placing an object to turning on a stove.
+In the patch setting, we use 5 pick-and-place task pairs that change which
+object is moved or where it is placed.
+We select layouts from LIBERO-Plus [47] for the
+global setting and follow its scene-variation design
+for the patch setting. Each task pair has 10 Seen layouts for attack
+construction and 10 Unseen layouts.
+On SimplerEnv, we construct 5 task pairs in the patch setting, each
+changing which object the robot picks up. Each task pair has 5 Seen
+and 5 Unseen layouts.
+Table IX lists the task pairs, and
+Figure 9 shows example Seen and Unseen layouts in
+both environments.
+We evaluate each perturbation with 5 rollouts per layout.
+We report Attack Success Rate (ASR), the percentage of successful
+task-redirection rollouts under the source instruction. Following
+TRAP [10], we also use Hijack Score HH to compare the attacked
+trajectory ξ\xi with successful clean source and target references
+ξ¯src\bar{\xi}_{\mathrm{src}} and ξ¯tgt\bar{\xi}_{\mathrm{tgt}}:
+H⁡(ξ)=stgt−ssrcstgt+ssrc+εH,sq=1dDTW​(ξ,ξ¯q)+εH.H(\xi)=\frac{s_{\mathrm{tgt}}-s_{\mathrm{src}}}{s_{\mathrm{tgt}}+s_{\mathrm{src}}+\varepsilon_{H}},\quad s_{q}=\frac{1}{d_{\mathrm{DTW}}(\xi,\bar{\xi}_{q})+\varepsilon_{H}}.
+(9)
+Here, dDTWd_{\mathrm{DTW}} is the Dynamic Time Warping distance between
+end-effector trajectories, normalized by their combined sequence length,
+with εH=10−6\varepsilon_{H}=10^{-6}. Higher HH indicates greater relative
+similarity to the target trajectory. We compute both metrics over all
+rollouts within each task pair, then average equally across task pairs
+for Seen and Unseen separately.
+Compared methods
+In both environments, we compare TRACO with Random Noise and offline
+targeted attacks. Random Noise provides a non-optimized reference under
+the same perturbation constraints. The offline attacks optimize visual
+perturbations to match fixed targets from successful target-task rollouts.
+On LIBERO, we use Action Attack, the targeted action-matching
+baseline [4] evaluated in TRAP [10].
+On SimplerEnv, we evaluate Action Attack, TRAPCoT-only\mathrm{TRAP}_{\text{CoT-only}},
+and TRAP, which align actions, CoT, or both, respectively.
+We compare each of these three attacks with its TRACO variant, retaining
+the corresponding alignment loss terms.
+Implementation details
+Unless otherwise specified, global perturbations use an ℓ∞\ell_{\infty}
+bound of ϵ=8/255\epsilon=8/255.
+Patches cover approximately 3.5%3.5\% and 4.7%4.7\%
+of the image area on LIBERO and SimplerEnv, respectively.
+In the global setting on LIBERO, we report TRACO results
+within a budget of 15 rounds, with 30 updates per round.
+In the patch setting, the budget is 10 rounds with 100 updates per round
+in both environments.
+We optimize each offline perturbation for 8,000 gradient updates with a
+batch size of 4.
+The step sizes are 1/2551/255 for LIBERO global perturbations,
+4/2554/255 for LIBERO patches, and 8/2558/255 for SimplerEnv patches.
+We set the PGS position tolerance to κ=4\kappa=4 cm on LIBERO and κ=8\kappa=8 cm on SimplerEnv.
+We optimize each adversarial perturbation on a single NVIDIA A100 GPU
+with 80 GB of memory.
+IV-B Overall Performance
+On LIBERO, TRACO substantially improves task redirection over Action Attack
+in the global setting, as shown in Table I.
+Average Seen ASR increases from 46.9%46.9\% to 85.2%85.2\%.
+This advantage extends to Unseen layouts, where ASR increases from
+43.2%43.2\% to 75.9%75.9\%.
+Both ASR and Hijack Score improve for all 5 models on both splits.
+In the patch setting, TRACO also improves average ASR and Hijack Score on
+both splits, with gains varying across models.
+Together, these results support using execution feedback to optimize
+visual attacks across the three action-generation paradigms.
+On SimplerEnv, we examine whether TRACO can improve existing attacks while
+retaining their alignment loss terms. As shown in
+Table II, TRACO improves both ASR and
+Hijack Score for TRAPCoT-only\mathrm{TRAP}_{\text{CoT-only}} and TRAP on Seen and
+Unseen layouts. For TRAP, the strongest offline baseline, ASR rises from
+64.0%64.0\% to 72.8%72.8\% on Seen layouts and from 44.0%44.0\% to 53.6%53.6\%
+on Unseen layouts. These gains support TRACO as a reusable closed-loop
+optimization framework for existing targeted attacks.
+Qualitative examples
+Figure 3 shows the robot completing the
+attacker-specified task under the source instruction.
+The 3D plots show that the attacked trajectories follow target-task motion
+while differing locally from the clean target trajectories.
+Such deviations can change the behavior needed to continue the task.
+During attack construction, TRACO therefore refreshes target supervision
+at the states reached under the current perturbation.
+IV-C Ablation and Mechanism Analysis
+Component ablation
+To assess the effects of EDS and PGS, we conduct ablation studies
+on PI in the global and patch settings.
+w/o EDS, we keep the initial observations and target supervision fixed.
+w/o PGS, we replace progress-guided selection with random sampling using the same number of samples.
+TABLE III: Ablation of EDS and PGS on PI. Without EDS, the initial observations and target supervision remain fixed. Both variants without PGS use random sampling with the same sample counts.
+EDS
+PGS
+Seen
+Unseen
+ASR (%) ↑\uparrow
+HH ↑\uparrow
+ASR (%) ↑\uparrow
+HH ↑\uparrow
+Global
+–
+–
+43.6
+0.2723
+35.2
+0.1671
+✓\checkmark
+–
+58.4
+0.4415
+54.8
+0.3445
+✓\checkmark
+✓\checkmark
+89.2
+0.6279
+79.6
+0.5334
+Patch
+–
+–
+50.4
+0.2929
+49.6
+0.3113
+✓\checkmark
+–
+64.8
+0.3817
+62.4
+0.3797
+✓\checkmark
+✓\checkmark
+69.6
+0.4348
+67.2
+0.4458
+As shown in Table III, EDS improves ASR and
+HH over fixed supervision on Seen and Unseen layouts in both settings.
+In the global setting, Seen and Unseen ASR increase by 14.814.8% and
+19.619.6%, respectively.
+EDS rebuilds target supervision at the states reached under the current
+perturbation, allowing subsequent updates to follow the evolving
+attacked rollout.
+These gains support adapting supervision to the states encountered
+during execution, where the behavior needed to continue the target
+task can change.
+PGS complements EDS by organizing this refreshed supervision around
+task progress.
+Full TRACO achieves higher ASR and HH than EDS alone in both settings.
+In the global setting, Seen and Unseen ASR increase by 30.830.8% and
+24.824.8%, respectively.
+In the patch setting, ASR increases by 4.84.8% on
+both splits.
+These improvements suggest that combining frontier and prefix
+supervision helps the robot complete the target task.
+Frontier supervision encourages further progress, while prefix
+supervision helps retain the behavior needed to reach the frontier.
+Fig. 4: Effect of supervision refresh on target action error.
+Results cover five tasks with 10 Unseen layouts each.
+For each task–layout pair, we collect one rollout under each
+perturbation and evaluate both perturbations on all recorded observations.
+Normalized-action MSE is averaged within each rollout and then
+equally across the two rollouts.
+(a) Distributions of the 50 mean MSE values for Fixed and EDS.
+Boxes show interquartile ranges and median lines.
+Diamonds mark means.
+(b) Sorted differences in mean MSE for each task–layout pair
+(Fixed −- EDS). Positive values indicate lower error with EDS.
+Fig. 5: End-effector position error with and without PGS.
+Each curve shows end-effector distances to the successful target
+reference for one optimization round.
+Panels (a) and (b) compare w/o PGS and TRACO on PI
+in the global setting.
+Open circles mark the first sampled position error above
+the 4 cm tolerance.
+Attack success denotes target-task completion.
+Fig. 6: Progress gains and regressions with and without PGS.
+Bars show the mean percentages of progress increases, no changes,
+and decreases between consecutive optimization rounds.
+Progress is measured using the passing prefix under the
+position tolerance (4 cm), with target-task completion assigned full progress.
+Results are averaged across five tasks on PI in the global setting.
+Effect of EDS on target action error
+We examine whether EDS reduces target action error at states reached
+during attacked execution.
+On PI in the global setting, we compare perturbations optimized using
+fixed supervision or EDS, with PGS disabled in both cases.
+We collect rollouts under both perturbations across 5 tasks with
+10 Unseen layouts each.
+Both perturbations are then evaluated on every recorded observation.
+For each unperturbed observation, we query the VLA under the target
+instruction to obtain a shared reference action.
+We then compute the MSE between this reference and the source-instruction
+action predicted under each perturbation.
+As shown in Fig. 4, EDS reduces
+mean target action MSE by 30.0%30.0\%, with lower error in 42 of 50
+task–layout pairs.
+The lower error on shared states is consistent with EDS rebuilding
+supervision as the attacked rollout evolves, allowing subsequent
+updates to follow target behavior at newly reached states.
+Effect of PGS on task progress
+We next examine whether PGS helps advance task progress while preserving
+earlier gains.
+On PI in the global setting, we compare TRACO with w/o PGS,
+with EDS retained in both.
+Figure 5(a,b) shows rollouts from the same
+initial condition under perturbations obtained at different
+optimization rounds.
+Each curve plots the end-effector distance to a successful target
+reference at corresponding rollout steps.
+A later first violation of the position tolerance indicates
+a longer passing prefix.
+w/o PGS, further updates can move the first sampled violation
+to an earlier rollout step, indicating a loss of previously
+achieved progress.
+In contrast, TRACO extends the passing prefix to later steps,
+and its round-12 rollout completes the target task.
+To assess whether progress accumulates across tasks, we compare
+consecutive-round rollouts from the same initial condition.
+We record whether progress increases, remains unchanged, or decreases
+after each round of optimization.
+The outcome frequencies are averaged over 10 construction initial
+conditions per task and then over 5 tasks.
+As shown in Fig. 6, adding PGS increases
+the frequency of progress advances from 27.5%27.5\% to 61.6%61.6\%,
+while reducing the frequency of regressions from 21.9%21.9\% to 7.7%7.7\%.
+These results suggest that focusing supervision on the frontier while
+continuing to supervise earlier passing states helps task progress
+accumulate across rounds.
+IV-D Additional Evaluations
+Current-round supervision and historical aggregation
+DAgger [34] trains a policy on expert-labeled
+states accumulated across iterations.
+TRACO instead keeps the VLA frozen and rebuilds supervision
+from current attacked rollouts to optimize the visual perturbation.
+To examine whether historical aggregation benefits this optimization,
+we compare current-round sampling with DAgger-style historical
+aggregation on PI in the global setting.
+As shown in Table IV, current-round supervision
+improves Seen and Unseen ASR by 22.022.0% and 24.824.8%,
+respectively, with higher HH on both splits.
+Earlier perturbations may lead to states that the current
+perturbation no longer reaches.
+Focusing on current-round states keeps supervision tied to
+the execution being optimized.
+TABLE IV: Current-round and historical supervision on PI. Both variants disable PGS and use the same number of samples per update.
+Supervision source
+Seen
+Unseen
+ASR (%)↑\uparrow
+H↑H\uparrow
+ASR (%)↑\uparrow
+H↑H\uparrow
+Historical sampling
+36.4
+0.2094
+30.0
+0.1100
+Current round only
+58.4
+0.4415
+54.8
+0.3445
+Fig. 7: Parameter sensitivity of TRACO on PI.
+(a) PGS position tolerance. (b) Global perturbation budget. (c) Patch area. All three studies use flow-time probes at 0.50 and 0.75, as detailed in Appendix -B.
+Fig. 8: Physical setup and real-world task redirection with a printed TRACO patch.
+Both executions use the same source instruction.
+Parameter sensitivity
+To examine how the position tolerance κ\kappa affects task redirection, we vary it on PI and report five-task averages in Fig. 7(a).
+Increasing the PGS position tolerance from 1 to 4 cm improves both ASR and HH,
+whereas a tolerance of 16 cm sharply reduces Unseen performance. The tolerance
+determines where the passing prefix ends and where PGS focuses supervision.
+A tight tolerance can stop the prefix at small positional differences,
+while a loose tolerance can extend it despite substantial deviations from
+the reference. These results favor a moderate tolerance that allows trajectory
+variation while still identifying substantial deviations.
+Figure 7(b) shows higher ASR and HH at larger
+global perturbation budgets. For patches, Fig. 7(c)
+shows that increasing the area from 5%5\% to 7%7\% improves both metrics.
+TABLE V: Task redirection under instruction variations.
+ASR (%) / HH
+Method
+Split
+Original
+Paraphrased
+Extra-Context
+LIBERO Global ⋅\cdot Five-model average
+Action
+Attack
+Seen
+46.9/0.2342{46.9}/{0.2342}
+48.5/0.2672{48.5}/{0.2672}
+45.4/0.2325{45.4}/{0.2325}
+Unseen
+43.2/0.1758{43.2}/{0.1758}
+45.8/0.2127{45.8}/{0.2127}
+41.4/0.1701{41.4}/{0.1701}
+TRACO
+Seen
+85.2/0.5887{{\color[rgb]{0.707,0.3516,0.3516}\mathbf{85.2}}}/{{\color[rgb]{0.707,0.3516,0.3516}\mathbf{0.5887}}}
+81.2/0.5954{{\color[rgb]{0.707,0.3516,0.3516}\mathbf{81.2}}}/{{\color[rgb]{0.707,0.3516,0.3516}\mathbf{0.5954}}}
+85.6/0.6041{{\color[rgb]{0.707,0.3516,0.3516}\mathbf{85.6}}}/{{\color[rgb]{0.707,0.3516,0.3516}\mathbf{0.6041}}}
+Unseen
+75.9/0.4819{75.9}/{0.4819}
+76.0/0.5288{76.0}/{0.5288}
+77.0/0.5082{77.0}/{0.5082}
+SimplerEnv Patch ⋅\cdot InstructVLA
+Action
+Attack
+Seen
+8.8/−0.4456{8.8}/{-0.4456}
+10.8/−0.4195{10.8}/{-0.4195}
+7.2/−0.4494{7.2}/{-0.4494}
+Unseen
+9.6/−0.5474{9.6}/{-0.5474}
+9.6/−0.5056{9.6}/{-0.5056}
+8.0/−0.5144{8.0}/{-0.5144}
++ TRACO
+Seen
+12.8/−0.3809{{\color[rgb]{0.707,0.3516,0.3516}\mathbf{12.8}}}/{{\color[rgb]{0.707,0.3516,0.3516}\mathbf{-0.3809}}}
+11.6/−0.3321{{\color[rgb]{0.707,0.3516,0.3516}\mathbf{11.6}}}/{{\color[rgb]{0.707,0.3516,0.3516}\mathbf{-0.3321}}}
+9.2/−0.3635{{\color[rgb]{0.707,0.3516,0.3516}\mathbf{9.2}}}/{{\color[rgb]{0.707,0.3516,0.3516}\mathbf{-0.3635}}}
+Unseen
+7.2/−0.4800{7.2}/{-0.4800}
+9.6/−0.4103{9.6}/{-0.4103}
+8.4/−0.4168{8.4}/{-0.4168}
+TRAP
+Seen
+64.0/0.4831{64.0}/{0.4831}
+24.4/0.0013{24.4}/{0.0013}
+16.8/−0.0578{16.8}/{-0.0578}
+Unseen
+44.0/0.2663{44.0}/{0.2663}
+24.8/−0.0169{{\color[rgb]{0.707,0.3516,0.3516}\mathbf{24.8}}}/{-0.0169}
+18.8/−0.1251{{\color[rgb]{0.707,0.3516,0.3516}\mathbf{18.8}}}/{-0.1251}
++ TRACO
+Seen
+72.8/0.5293{{\color[rgb]{0.707,0.3516,0.3516}\mathbf{72.8}}}/{{\color[rgb]{0.707,0.3516,0.3516}\mathbf{0.5293}}}
+19.6/0.0461{19.6}/{{\color[rgb]{0.707,0.3516,0.3516}\mathbf{0.0461}}}
+16.4/0.0533{16.4}/{{\color[rgb]{0.707,0.3516,0.3516}\mathbf{0.0533}}}
+Unseen
+53.6/0.2747{53.6}/{0.2747}
+17.2/−0.1607{17.2}/{-0.1607}
+13.2/−0.2028{13.2}/{-0.2028}
+TABLE VI: Transferability of adversarial patches across InstructVLA variants.
+Method
+Seen
+Unseen
+ASR (%)↑\uparrow
+H↑H\uparrow
+ASR (%)↑\uparrow
+H↑H\uparrow
+TRAPCoT-only\mathrm{TRAP}_{\text{CoT-only}}
+0.8
+−-0.4393
+2.4
+−-0.4706
++ TRACO
+3.2
+−-0.3579
+3.2
+−-0.3324
+TRAP
+9.6
+−-0.3847
+7.2
+−-0.3855
++ TRACO
+12.0
+−-0.2358
+8.0
+−-0.3433
+Instruction variation
+Following TRAP [10], we evaluate source-instruction paraphrases and
+extra context while keeping each perturbation fixed. We average results over
+two variants for each modified instruction condition, with examples in
+Table X. As shown in Table V, TRACO largely
+preserves its average ASR across the 5 models in the LIBERO global setting.
+In contrast, ASR drops sharply for TRAP with and without TRACO
+on InstructVLA in the SimplerEnv patch setting. During attack construction, TRACO refreshes supervision
+as execution states change, but still optimizes the perturbation under the
+original source instruction. Changing the wording may therefore alter the induced behavior even
+when the intended task remains the same.
+Transfer across policy variants
+We keep the patches learned on CoT-enabled InstructVLA fixed and evaluate
+them on a variant with proprioceptive inputs and no CoT.
+As shown in Table VI,
+transfer ASR reaches at most 12.0%12.0\% on Seen layouts
+and 8.0%8.0\% on Unseen layouts. The negative Hijack Scores indicate that transferred
+trajectories remain closer to source behavior on average.
+For both CoT-only and joint attacks, TRACO yields higher ASR and Hijack Score
+than the corresponding offline attacks on both splits.
+Fig. 9: Example Seen and Unseen layouts in LIBERO and SimplerEnv.
+IV-E Real-World Evaluation
+We evaluate printed-patch attacks on StarVLA’s GR00T policy adapted to the
+SO-101 arm, using the setup shown in Figure 8(a).
+The source task is to pick up the toy bee, while the attack target is to
+pick up the watch. To improve physical robustness, we incorporate
+homography transformations and color calibration into patch optimization,
+following TRAP [10]. Details are provided in Appendix -C.
+Across 15 trials per condition, the clean
+policy achieves 100.0%100.0\% and 93.3%93.3\% success on the source and target
+tasks, respectively. With patches printed and placed at the same wall
+location, TRACO achieves 53.3%53.3\% ASR (8/158/15), compared with
+26.7%26.7\% (4/154/15) for Action Attack. As shown in
+Figure 8(b,c), the printed TRACO patch changes which
+object the robot picks up while the source instruction remains unchanged.
+During patch construction, TRACO refreshes target supervision at the states
+reached under the current patch, so optimization can respond to changes in
+the robot’s trajectory. The higher physical ASR suggests that closed-loop optimization can strengthen
+printed-patch attacks on real robots.
+IV-F Construction Cost and Limitations
+TABLE VII: Average attack construction cost per task on LIBERO and SimplerEnv. Times include model loading and auxiliary processing.
+Metric
+LIBERO Global
+(PI)
+SimplerEnv Patch
+(InstructVLA)
+Action
+Attack
+TRACO
+TRAP
+TRACO
+Total time (min)
+≈396.3\approx\!396.3
+≈88.8\approx\!\mathbf{88.8}
+≈513.4\approx\!513.4
+≈353.1\approx\!\mathbf{353.1}
+Optimization time (min)
+≈396.3\approx\!396.3
+≈50.0\approx\!50.0
+≈513.4\approx\!513.4
+≈280.8\approx\!280.8
+Rollout time (min)
+0.00.0
+≈38.8\approx\!38.8
+0.00.0
+≈72.3\approx\!72.3
+Sample uses (×103\times 10^{3})
+≈32\approx\!32
+≈6.1\mathbf{\approx\!6.1}
+≈32\approx\!32
+≈19.1\mathbf{\approx\!19.1}
+Construction cost
+Table VII compares construction costs averaged
+over 5 tasks under each method’s optimization settings.
+TRACO takes less total time and processes fewer samples across gradient
+updates than the offline
+baselines in both environments.
+Across all layouts, TRACO selects an average of 45.6 records per round on
+LIBERO and 20.6 on SimplerEnv, with maxima of 94 and 31, respectively.
+Optimization accounts for most of its construction time.
+The additional rollout stage covers closed-loop execution and supervision
+construction. TRACO collects an average of 50 and 56 rollouts per task in
+the two environments.
+These executions provide the state and progress feedback that lets TRACO
+refresh target supervision and focus subsequent updates while
+maintaining supervision on earlier behavior.
+However, TRACO requires repeated interaction with the environment during
+attack construction, adding execution time and computational cost.
+The benefit of supervision refresh also depends on whether the frozen VLA
+can guide the robot toward the target task from attack-induced states.
+When the policy struggles to recover, querying it at the current state may
+still provide ineffective guidance.
+PGS estimates progress from end-effector positions, which do not fully
+capture whether object interactions such as grasping succeed.
+V Conclusion
+We introduced TRACO, a closed-loop optimization framework for visual
+task-redirection attacks. It rebuilds target supervision at the states reached
+under attack, enabling existing attacks to use execution feedback while
+retaining their alignment objectives. Within this framework, PGS selects states
+for supervision to advance the target task while preserving earlier behavior.
+Experiments in simulation and on a real robot demonstrate the effectiveness
+of TRACO for visual task redirection. Together, these findings highlight the
+security implications of closing the loop between visual attack optimization
+and execution.
+-A Target Alignment Details
+We instantiate the alignment loss in Eq. (6)
+for sequence, continuous-action, and flow-field targets. At each selected
+observation oio_{i}, the source prediction and target supervision use the
+conditions in Eq. (3).
+Sequence targets
+For action tokens or CoT, the target query supplies a sequence
+𝐳itgt=(zi,1tgt,…,zi,Mitgt)\mathbf{z}_{i}^{\mathrm{tgt}}=(z_{i,1}^{\mathrm{tgt}},\ldots,z_{i,M_{i}}^{\mathrm{tgt}}). We minimize its length-normalized negative
+log-likelihood with teacher forcing:
+ℓi(δ)=−1Mi∑h=1Milogpθ(zi,htgt∣zi,<htgt,gδ(oi),csrc).\ell_{i}(\delta)=-\frac{1}{M_{i}}\sum_{h=1}^{M_{i}}\log p_{\theta}\!\left(z_{i,h}^{\mathrm{tgt}}\mid z_{i,<h}^{\mathrm{tgt}},g_{\delta}(o_{i}),c_{\mathrm{src}}\right).
+(10)
+Here, MiM_{i} is the sequence length, zi,<htgtz_{i,<h}^{\mathrm{tgt}} contains
+the preceding target tokens, and pθp_{\theta} is the frozen VLA’s next-token
+distribution.
+Continuous actions
+For a policy that directly predicts normalized action chunks, we match its
+prediction to the target action chunk
+𝐚itgt=πθ​(oi,ctgt)\mathbf{a}_{i}^{\mathrm{tgt}}=\pi_{\theta}(o_{i},c_{\mathrm{tgt}}):
+ℓi​(δ)=MSE⁡(πθ​(gδ​(oi),csrc),𝐚itgt).\ell_{i}(\delta)=\operatorname{MSE}\!\left(\pi_{\theta}(g_{\delta}(o_{i}),c_{\mathrm{src}}),\mathbf{a}_{i}^{\mathrm{tgt}}\right).
+(11)
+The MSE averages squared differences over all entries of the normalized
+action chunks.
+Flow-matching policies
+A flow-matching policy generates an action chunk by integrating a
+conditional vector field from noise 𝐱⁡(0)∼p0\mathbf{x}(0)\sim p_{0}:
+d​𝐱​(τ)d​τ=vθ(𝐱(τ),τ∣o,c),πθ(o,c)=𝐱(1).\frac{\mathrm{d}\mathbf{x}(\tau)}{\mathrm{d}\tau}=v_{\theta}(\mathbf{x}(\tau),\tau\mid o,c),\qquad\pi_{\theta}(o,c)=\mathbf{x}(1).
+(12)
+At each selected observation, TRACO records the source-conditioned flow
+states 𝐱i​(τ)\mathbf{x}_{i}(\tau) under (gδr​(oi),csrc)(g_{\delta_{r}}(o_{i}),c_{\mathrm{src}}).
+At selected flow times τ∈𝒯\tau\in\mathcal{T}, it queries the target field
+at the same flow state. The alignment loss is
+ℓi​(δ)\displaystyle\ell_{i}(\delta)
+=1|𝒯|∑τ∈𝒯MSE(vθ(𝐱i(τ),τ∣gδ(oi),csrc),\displaystyle=\frac{1}{|\mathcal{T}|}\sum_{\tau\in\mathcal{T}}\operatorname{MSE}\!\Bigl(v_{\theta}(\mathbf{x}_{i}(\tau),\tau\mid g_{\delta}(o_{i}),c_{\mathrm{src}}),
+(13)
+OPENvitgt​(τ)),\displaystyle v_{i}^{\mathrm{tgt}}(\tau)\Bigr),
+vitgt​(τ)\displaystyle v_{i}^{\mathrm{tgt}}(\tau)
+=vθ(𝐱i(τ),τ∣oi,ctgt).\displaystyle=v_{\theta}(\mathbf{x}_{i}(\tau),\tau\mid o_{i},c_{\mathrm{tgt}}).
+The probe set 𝒯\mathcal{T} selects times on the native solver grid.
+Within a round, the recorded flow states and target fields remain fixed,
+so updating δ\delta changes only the source field at these points.
+The next rollout provides the states used to rebuild both the flow probes
+and target fields.
+Joint objectives
+On InstructVLA, we retain TRAP’s action and CoT alignment terms [10].
+The action term compares the trajectories represented by predicted action
+chunks, while the CoT term uses target-sequence likelihood.
+Their joint loss is ℓCoT+2​ℓact\ell_{\mathrm{CoT}}+2\ell_{\mathrm{act}}.
+-B Sensitivity to Flow-Time Probes
+We vary the flow-time probe set 𝒯\mathcal{T} for vector-field alignment
+on PI across the five LIBERO global task pairs.
+As shown in Table VIII, the choice of flow times
+affects performance, but adding probes does not consistently improve ASR.
+The set {0.50,0.75}\{0.50,0.75\} yields the highest Seen ASR, while
+{0.50,0.75,1.00}\{0.50,0.75,1.00\} performs best on Unseen layouts.
+For perturbations on LIBERO, we use
+𝒯={0.25,0.50,0.75}\mathcal{T}=\{0.25,0.50,0.75\} for flow-matching models.
+The parameter sensitivity experiments in Fig. 7
+use a fixed probe set 𝒯={0.50,0.75}\mathcal{T}=\{0.50,0.75\}.
+TABLE VIII: Flow-time probe sensitivity on PI in the LIBERO global setting.
+Results are averaged over five tasks.
+Alignment
+Seen
+Unseen
+ASR (%)↑\uparrow
+H↑H\uparrow
+ASR (%)↑\uparrow
+H↑H\uparrow
+𝒯={0.25}\mathcal{T}=\{0.25\}
+88.0
+0.6392
+83.6
+0.5969
+𝒯={0.50}\mathcal{T}=\{0.50\}
+92.4
+0.6588
+84.4
+0.5812
+𝒯={0.75}\mathcal{T}=\{0.75\}
+91.6
+0.6702
+82.0
+0.5790
+𝒯={0.25,0.50}\mathcal{T}=\{0.25,0.50\}
+87.2
+0.6330
+78.4
+0.5631
+𝒯={0.25,0.75}\mathcal{T}=\{0.25,0.75\}
+93.6
+0.6845
+84.0
+0.5830
+𝒯={0.50,0.75}\mathcal{T}=\{0.50,0.75\}
+95.2
+0.6943
+88.4
+0.6324
+𝒯={0.25,0.50,0.75}\mathcal{T}=\{0.25,0.50,0.75\}
+89.2
+0.6279
+79.6
+0.5334
+𝒯={0.50,0.75,1.00}\mathcal{T}=\{0.50,0.75,1.00\}
+93.2
+0.6728
+90.8
+0.6416
+TABLE IX: Task pairs in LIBERO and SimplerEnv.
+Source task
+Target task
+LIBERO: Global
+Push plate to stove front
+Open middle cabinet drawer
+Open top drawer and place bowl inside
+Place wine bottle on cabinet top
+Place cream cheese in bowl
+Turn on stove
+Place bowl on plate
+Place bowl on cabinet top
+Place wine bottle on rack
+Place bowl on stove
+LIBERO: Patch
+Place BBQ sauce in basket
+Place chocolate pudding in basket
+Place milk in basket
+Place tomato sauce in basket
+Place cream cheese in basket
+Place milk in basket
+Place salad dressing in basket
+Place ketchup in basket
+Place bowl on plate
+Place bowl on cabinet top
+SimplerEnv: Patch
+Pick up orange
+Pick up Coke can
+Pick up apple
+Pick up orange
+Pick up apple
+Pick up Pepsi can
+Pick up Coke can
+Pick up 7up can
+Pick up orange
+Pick up sponge
+TABLE X: Examples of source-instruction variants.
+Condition
+Instruction
+LIBERO: Global
+Original
+push the plate to the front of the stove
+Paraphrased
+slide the plate to a position in front of the stove
+Extra-Context
+There are several objects in the workspace. Push the plate to the front of the stove.
+SimplerEnv: Patch
+Original
+pick orange
+Paraphrased
+Grasp and lift the orange.
+Extra-Context
+There are several objects on the table. Pick the orange.
+-C Physical Robustness
+Following TRAP [10], we account for geometric projection and changes
+in patch appearance during physical patch construction.
+Fig. 10: Color calibration for physical patch deployment.
+Homography transformations
+To model the patch’s perspective appearance in the camera image, we use a
+planar homography. A pixel at (u,v)(u,v) in the
+canonical patch plane maps to image coordinates (x,y)(x,y) as
+λ​[xy1]=𝐇​[uv1]=[h11h12h13h21h22h23h31h32h33]​[uv1],\lambda\begin{bmatrix}x\\
+y\\
+1\end{bmatrix}=\mathbf{H}\begin{bmatrix}u\\
+v\\
+1\end{bmatrix}=\begin{bmatrix}h_{11}&h_{12}&h_{13}\\
+h_{21}&h_{22}&h_{23}\\
+h_{31}&h_{32}&h_{33}\end{bmatrix}\begin{bmatrix}u\\
+v\\
+1\end{bmatrix},
+where 𝐇\mathbf{H} is the homography matrix and λ\lambda is the
+homogeneous scale factor. We use this mapping to render the patch in the
+camera view during optimization.
+Color calibration
+For physical deployment, we calibrate colors using a printed reference
+chart photographed by the robot’s camera. A third-order polynomial mapping
+models the color changes introduced by printing and camera capture. We
+keep this mapping fixed during optimization to predict the patch’s camera
+appearance. Figure 10 illustrates the
+calibration.
+Expectation over transformations
+We apply expectation over transformations (EoT) [48] during patch
+optimization. Random brightness changes and Gaussian noise model variation
+in illumination and image capture.
+-D VLA Model Details
+Table XI lists the VLM backbones and
+action-generation interfaces used in our evaluation.
+StarVLA [44] provides a modular framework that combines
+pretrained VLM backbones with different action-generation modules.
+Our LIBERO policies use this framework.
+PI
+PI follows the π0\pi_{0} design [2], coupling a VLM with a
+flow-matching action expert. The expert attends to hidden states from
+multiple VLM layers to generate continuous action chunks.
+GR00T
+GR00T [49] uses a dual-system architecture. Its VLM encodes the scene and
+instruction, and a diffusion-transformer (DiT) action module uses these
+features to generate continuous actions through flow matching.
+FAST
+FAST uses the FAST tokenizer [25] to encode action chunks
+as discrete tokens. The VLM predicts these tokens autoregressively, and
+the tokenizer decodes them into continuous actions.
+OFT
+OFT follows OpenVLA-OFT [26], using a lightweight multilayer
+perceptron to predict continuous actions. This head reads hidden states
+at action-token positions and predicts an action chunk in parallel.
+LangForce
+LangForce [45] uses learnable latent action queries to
+connect the VLM to a flow-matching action head. Its training objective
+rewards latent actions that help predict the instruction from the scene,
+encouraging instruction-dependent behavior.
+InstructVLA
+InstructVLA-Generalist [27] produces CoT reasoning
+before generating latent action representations.
+A flow-matching action expert uses these representations and visual
+features to produce continuous actions.
+TABLE XI: VLM backbones and action interfaces of the evaluated policies.
+Model
+VLM backbone
+Action generation
+PI
+Qwen3-VL-4B-Instruct
+Flow matching
+GR00T
+Qwen3-VL-4B-Instruct
+Flow matching
+FAST
+Qwen2.5-VL-3B-Instruct
+Autoregressive tokens
+OFT
+Qwen3-VL-4B-Instruct
+Direct regression
+LangForce
+Qwen3-VL-4B-Instruct
+Flow matching
+InstructVLA
+Eagle2-2B
+Flow matching
+References
+[1]
+M. J. Kim, K. Pertsch, S. Karamcheti, T. Xiao, A. Balakrishna, S. Nair, R. Rafailov, E. Foster, G. Lam, P. Sanketi, et al. (2024)
+Openvla: an open-source vision-language-action model.
+arXiv preprint arXiv:2406.09246.
+Cited by: §I,
+§II.
+[2]
+K. Black, N. Brown, D. Driess, A. Esmail, M. Equi, C. Finn, N. Fusai, L. Groom, K. Hausman, B. Ichter, et al. (2024)
+π0\pi_{0}: A vision-language-action flow model for general robot control.
+arXiv preprint arXiv:2410.24164.
+Cited by: §-D,
+§I,
+§II.
+[3]
+A. Brohan, N. Brown, J. Carbajal, Y. Chebotar, X. Chen, K. Choromanski, T. Ding, D. Driess, A. Dubey, C. Finn, et al. (2023)
+Rt-2: vision-language-action models transfer web knowledge to robotic control.
+arXiv preprint arXiv:2307.15818.
+Cited by: §I,
+§II.
+[4]
+T. Wang, C. Han, J. Liang, W. Yang, D. Liu, L. X. Zhang, Q. Wang, J. Luo, and R. Tang (2025)
+Exploring the adversarial vulnerabilities of vision-language-action models in robotics.
+In 2025 IEEE/CVF International Conference on Computer Vision (ICCV),
+pp. 6948–6958.
+Cited by: §I,
+§I,
+§II,
+§III-A,
+§IV-A.
+[5]
+H. Lu, Y. Yu, Y. Yang, C. Yi, Q. Zhang, B. Shen, A. C. Kot, and X. Jiang (2026)
+When robots obey the patch: universal transferable patch attacks on vision-language-action models.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition,
+pp. 22867–22878.
+Cited by: §I,
+§I,
+§II.
+[6]
+H. Xu, Y. S. Koh, S. Huang, Z. Zhou, D. Wang, J. Sakuma, and J. Zhang (2025)
+Model-agnostic adversarial attack and defense for vision-language-action models.
+arXiv preprint arXiv:2510.13237.
+Cited by: §I,
+§II.
+[7]
+J. Fu, K. Jiang, J. Jia, Z. Chen, X. Chen, L. Hong, S. Gao, C. Tan, D. Yang, and W. Zhang (2026)
+Vla-hijack: a transferable patch attack against vision-language-action models via visual proprioception hijacking.
+In European Conference on Computer Vision,
+pp. 265–283.
+Cited by: §I,
+§II.
+[8]
+X. Wang, M. Han, T. Hao, Y. Yang, Y. Zhao, and K. Tang (2026)
+Partially observable adversarial patch attacks on vision-language-action models in robotics.
+IEEE Robotics and Automation Letters.
+Cited by: §I,
+§II.
+[9]
+J. Chen, S. Huang, J. Du, S. Chen, Y. Tian, M. Wei, C. Yu, and Z. Yin (2026)
+Tex3D: objects as attack surfaces via adversarial 3d textures for vision-language-action models.
+arXiv preprint arXiv:2604.01618.
+Cited by: §I,
+§II.
+[10]
+Z. Huang, W. Zhu, H. Qiu, X. Ji, and W. Xu (2026)
+Trap: hijacking vla cot-reasoning via adversarial patches.
+arXiv preprint arXiv:2603.23117.
+Cited by: §-A,
+§-C,
+§I,
+§II,
+§III-E,
+§IV-A,
+§IV-A,
+§IV-D,
+§IV-E.
+[11]
+M. Laskey, J. Lee, R. Fox, A. Dragan, and K. Goldberg (2017)
+Dart: noise injection for robust imitation learning.
+In Conference on robot learning,
+pp. 143–156.
+Cited by: §I.
+[12]
+T. T. Zhang, D. Pfrommer, C. Pan, N. Matni, and M. Simchowitz (2025)
+Action chunking and exploratory data collection yield exponential improvements in behavior cloning for continuous control.
+arXiv preprint arXiv:2507.09061.
+Cited by: §I.
+[13]
+M. Bansal, A. Krizhevsky, and A. Ogale (2018)
+Chauffeurnet: learning to drive by imitating the best and synthesizing the worst.
+arXiv preprint arXiv:1812.03079.
+Cited by: §I.
+[14]
+O. Bastani, Y. Pu, and A. Solar-Lezama (2018)
+Verifiable reinforcement learning via policy extraction.
+Advances in neural information processing systems 31.
+Cited by: §I.
+[15]
+S. Park, H. Kim, S. Kim, W. Jeon, J. Yang, B. Jeon, Y. Oh, and J. Choi (2025)
+Saliency-aware quantized imitation learning for efficient robotic control.
+In 2025 IEEE/CVF International Conference on Computer Vision (ICCV),
+pp. 13140–13150.
+Cited by: §I.
+[16]
+A. Brohan, N. Brown, J. Carbajal, Y. Chebotar, J. Dabis, C. Finn, K. Gopalakrishnan, K. Hausman, A. Herzog, J. Hsu, et al. (2022)
+Rt-1: robotics transformer for real-world control at scale.
+arXiv preprint arXiv:2212.06817.
+Cited by: §II.
+[17]
+A. O’Neill, A. Rehman, A. Maddukuri, A. Gupta, A. Padalkar, A. Lee, A. Pooley, A. Gupta, A. Mandlekar, A. Jain, et al. (2024)
+Open x-embodiment: robotic learning datasets and rt-x models: open x-embodiment collaboration 0.
+In 2024 IEEE International Conference on Robotics and Automation (ICRA),
+pp. 6892–6903.
+Cited by: §II.
+[18]
+O. M. Team, D. Ghosh, H. Walke, K. Pertsch, K. Black, O. Mees, S. Dasari, J. Hejna, T. Kreiman, C. Xu, et al. (2024)
+Octo: an open-source generalist robot policy.
+arXiv preprint arXiv:2405.12213.
+Cited by: §II.
+[19]
+C. Chi, Z. Xu, S. Feng, E. Cousineau, Y. Du, B. Burchfiel, R. Tedrake, and S. Song (2025)
+Diffusion policy: visuomotor policy learning via action diffusion.
+The International Journal of Robotics Research 44 (10-11), pp. 1684–1704.
+Cited by: §II.
+[20]
+J. Wen, Y. Zhu, J. Li, M. Zhu, Z. Tang, K. Wu, Z. Xu, N. Liu, R. Cheng, C. Shen, et al. (2025)
+TinyVLA: toward fast, data-efficient vision-language-action models for robotic manipulation.
+IEEE Robotics and Automation Letters 10 (4), pp. 3988–3995.
+Cited by: §II.
+[21]
+Q. Li, Y. Liang, Z. Wang, L. Luo, X. Chen, M. Liao, F. Wei, Y. Deng, S. Xu, Y. Zhang, et al. (2024)
+Cogact: a foundational vision-language-action model for synergizing cognition and action in robotic manipulation.
+arXiv preprint arXiv:2411.19650.
+Cited by: §II.
+[22]
+J. Wen, Y. Zhu, M. Zhu, Z. Tang, J. Li, Z. Zhou, X. Liu, C. Shen, Y. Peng, and F. Feng (2025)
+DiffusionVLA: scaling robot foundation models via unified diffusion and autoregression..
+In ICML,
+Cited by: §II.
+[23]
+P. Intelligence, K. Black, N. Brown, J. Darpinian, K. Dhabalia, D. Driess, A. Esmail, M. Equi, C. Finn, N. Fusai, et al. (2025)
+π0.5\pi_{0.5}: A vision-language-action model with open-world generalization.
+arXiv preprint arXiv:2504.16054.
+Cited by: §II.
+[24]
+M. Shukor, D. Aubakirova, F. Capuano, P. Kooijmans, S. Palma, A. Zouitine, M. Aractingi, C. Pascal, M. Russi, A. Marafioti, et al. (2025)
+Smolvla: a vision-language-action model for affordable and efficient robotics.
+arXiv preprint arXiv:2506.01844.
+Cited by: §II.
+[25]
+K. Pertsch, K. Stachowicz, B. Ichter, D. Driess, S. Nair, Q. Vuong, O. Mees, C. Finn, and S. Levine (2025)
+Fast: efficient action tokenization for vision-language-action models.
+arXiv preprint arXiv:2501.09747.
+Cited by: §-D,
+§II.
+[26]
+M. J. Kim, C. Finn, and P. Liang (2025)
+Fine-tuning vision-language-action models: optimizing speed and success.
+arXiv preprint arXiv:2502.19645.
+Cited by: §-D,
+§II.
+[27]
+S. Yang, H. Li, B. Wang, Y. Chen, Y. Tian, T. Wang, H. Wang, F. Zhao, Y. Liao, and J. Pang (2026)
+Vision-language-action instruction tuning: from understanding to manipulation.
+In International Conference on Learning Representations,
+Vol. 2026, pp. 152896–152943.
+Cited by: §-D,
+§II,
+§IV-A.
+[28]
+N. Zhang, W. Tao, X. Xiao, Q. Sun, Y. Zheng, W. Mo, P. Wang, and N. Zhang (2025)
+Attention-guided patch-wise sparse adversarial attacks on vision-language-action models.
+arXiv preprint arXiv:2511.21663.
+Cited by: §II.
+[29]
+J. Han, Y. Yao, X. Wang, J. Cao, M. Zhang, D. Shan, H. Deng, G. Wang, and X. Hu (2026)
+Hidden in plain sight: diffusion-based unrestricted robotic attacks on vision-language-action models.
+arXiv preprint arXiv:2608.10393.
+Cited by: §II.
+[30]
+X. Wang, J. Li, Z. Weng, Y. Wang, Y. Gao, T. Pang, C. Du, Y. Teng, Y. Wang, Z. Wu, et al. (2025)
+Freezevla: action-freezing attacks against vision-language-action models.
+arXiv preprint arXiv:2509.19870.
+Cited by: §II.
+[31]
+E. K. Jones, A. Robey, A. Zou, Z. Ravichandran, G. J. Pappas, H. Hassani, M. Fredrikson, and J. Z. Kolter (2025)
+Adversarial attacks on robotic vision language action models.
+arXiv preprint arXiv:2506.03350.
+Cited by: §II.
+[32]
+X. Wu, G. Shi, Q. Wang, Z. Li, A. S. Bedi, and D. Manocha (2026)
+SABER: a stealthy agentic black-box attack framework for vision-language-action models.
+arXiv preprint arXiv:2603.24935.
+Cited by: §II.
+[33]
+G. Puthumanaillam, V. Dongre, P. Thangeda, H. Nayyeri, D. Hakkani-Tür, and M. Ornik (2026)
+Trajectory-level redirection attacks on vision-language-action models.
+arXiv preprint arXiv:2606.12978.
+Cited by: §II.
+[34]
+S. Ross, G. Gordon, and D. Bagnell (2011)
+A reduction of imitation learning and structured prediction to no-regret online learning.
+In Proceedings of the fourteenth international conference on artificial intelligence and statistics,
+pp. 627–635.
+Cited by: §II,
+§IV-D.
+[35]
+M. Pan, S. Feng, Q. Zhang, X. Li, J. Song, C. Qu, Y. Wang, C. Li, Z. Xiong, Z. Chen, et al. (2026)
+Sop: a scalable online post-training system for vision-language-action models.
+arXiv preprint arXiv:2601.03044.
+Cited by: §II.
+[36]
+H. Zang, S. Yu, H. Lin, T. Zhou, Z. Huang, Z. Guo, X. Xu, J. Zhou, Y. Sheng, S. Zhang, et al. (2026)
+Rlinf-user: a unified and extensible system for real-world online policy learning in embodied ai.
+arXiv preprint arXiv:2602.07837.
+Cited by: §II.
+[37]
+Y. Han, Z. Chen, Y. Zhao, C. Xu, Y. Shao, Y. Peng, Y. Mu, and W. Lian (2026)
+DexHiL: a human-in-the-loop framework for vision-language-action model post-training in dexterous manipulation.
+arXiv preprint arXiv:2603.09121.
+Cited by: §II.
+[38]
+Z. Li, L. Huang, W. Xu, Z. Zhu, N. Lin, X. Ma, X. Sheng, and R. Wen (2026)
+Hand-in-the-loop: improving vla policies for dexterous manipulation via seamless hand-arm intervention.
+arXiv preprint arXiv:2605.15157.
+Cited by: §II.
+[39]
+Y. Wang, W. Chen, Z. Wen, H. Xue, X. Li, W. Yu, Z. Chen, H. Yang, J. Lv, C. Wen, et al. (2026)
+Never too late for force: accelerating vla post-training with reactive force injection.
+arXiv preprint arXiv:2607.14236.
+Cited by: §II.
+[40]
+X. Xu, Y. Zhang, Y. Li, L. Han, and C. Lu (2024)
+Humanvla: towards vision-language directed object rearrangement by physical humanoid.
+Advances in Neural Information Processing Systems 37, pp. 18633–18659.
+Cited by: §II.
+[41]
+Z. Zhong, H. Yan, J. Li, J. He, T. Zhang, and H. Li (2026)
+Vla-opd: bridging offline sft and online rl for vision-language-action models via on-policy distillation.
+arXiv preprint arXiv:2603.26666.
+Cited by: §II.
+[42]
+Y. Chen, H. Xue, and Y. Chen (2024)
+Diffusion policy attacker: crafting adversarial attacks for diffusion-based policies.
+Advances in Neural Information Processing Systems 37, pp. 119614–119637.
+Cited by: §III-A.
+[43]
+B. Liu, Y. Zhu, C. Gao, Y. Feng, Q. Liu, Y. Zhu, and P. Stone (2023)
+Libero: benchmarking knowledge transfer for lifelong robot learning.
+Advances in Neural Information Processing Systems 36, pp. 44776–44791.
+Cited by: §IV-A,
+§IV-A.
+[44]
+S. Community (2026)
+StarVLA: a lego-like codebase for vision-language-action model developing.
+arXiv preprint arXiv:2604.05014.
+Cited by: §-D,
+§IV-A.
+[45]
+S. Lian, B. Yu, X. Lin, L. T. Yang, Z. Shen, C. Wu, Y. Miao, C. Huang, and K. Chen (2026)
+Langforce: bayesian decomposition of vision language action models via latent action queries.
+arXiv preprint arXiv:2601.15197.
+Cited by: §-D,
+§IV-A.
+[46]
+X. Li, K. Hsu, J. Gu, K. Pertsch, O. Mees, H. R. Walke, C. Fu, I. Lunawat, I. Sieh, S. Kirmani, et al. (2024)
+Evaluating real-world robot manipulation policies in simulation.
+arXiv preprint arXiv:2405.05941.
+Cited by: §IV-A.
+[47]
+S. Fei, S. Wang, J. Shi, Z. Dai, J. Cai, P. Qian, L. Ji, X. He, S. Zhang, Z. Fei, et al. (2025)
+Libero-plus: in-depth robustness analysis of vision-language-action models.
+arXiv preprint arXiv:2510.13626.
+Cited by: §IV-A.
+[48]
+A. Athalye, L. Engstrom, A. Ilyas, and K. Kwok (2018)
+Synthesizing robust adversarial examples.
+In International conference on machine learning,
+pp. 284–293.
+Cited by: §-C.
+[49]
+J. Bjorck, F. Castañeda, N. Cherniadev, X. Da, R. Ding, L. Fan, Y. Fang, D. Fox, F. Hu, S. Huang, et al. (2025)
+Gr00t n1: an open foundation model for generalist humanoid robots.
+arXiv preprint arXiv:2503.14734.
+Cited by: §-D.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

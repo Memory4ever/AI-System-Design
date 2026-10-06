@@ -1,0 +1,1233 @@
+Multi-Agent Decision-Focused Learning via Value-Aware Sequential Communication.
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Related Work
+3 Problem Setting
+4 SeqComm-DFL Framework
+4.1 Communication Architecture with Value-Aware Messaging
+4.1.1 The Value-Aware Communication Principle
+4.1.2 Value-Aware Training Loss
+4.1.3 Theoretical Connection to Decision-Focused Learning
+4.1.4 Message Refinement Architecture
+4.2 Sequential Action Selection with Stackelberg Conditioning
+4.2.1 Negotiation Phase: Guidance Potential
+4.2.2 Launching Phase: Sequential Conditioning
+4.2.3 Counterfactual Influence Regularization
+4.3 Decision-Focused World Model Learning
+4.3.1 Bilevel Optimization Formulation
+4.3.2 Inner Loop: Model-Based Critic Training
+4.3.3 Coordination-Aware Inner Loop: Preventing Message Apathy
+4.3.4 Outer Loop: Decision-Focused World Model Update
+4.3.5 Hypergradient Computation via Implicit Differentiation
+4.3.6 Efficient Computation via Conjugate Gradient
+4.4 Training Procedure
+5 Theoretical Analysis
+6 Experiments
+6.1 Hospital Environment: A Dec-POMDP with Structured Information Asymmetry
+6.1.1 Dec-POMDP Formulation
+6.1.2 Structured Partial Observability
+6.1.3 Coordination-Dependent Dynamics
+7 Results
+7.1 SMAC Benchmark
+8 Conclusion
+References
+A Notation
+B Optimal Model Design Details
+B.1 Implicit Function Theorem for Hypergradients
+B.2 Q∗Q^{*} Approximation Bounds
+C Detailed Proofs
+C.1 Proof of Theorem Necessity and Value of Communication under Partial Observability
+C.2 Proof of Theorem (Convergence)
+D Computational Complexity Analysis
+E Full SMAC Results
+F Ablation Study Details
+G Hyperparameters
+H Hospital Environment Details
+H.1 Reward Structure
+H.2 Penalty Terms
+H.3 Proof of Proposition (Communication Necessity)
+H.4 Hyperparameters and Fair Comparison
+Matched Hyperparameters.
+Architecture Matching.
+Preventing Overfitting.
+License: CC BY 4.0
+arXiv:2604.08944v1 [cs.LG] 10 Apr 2026
+Multi-Agent Decision-Focused Learning via
+Value-Aware Sequential Communication.
+Benjamin Amoh
+Affiliation: Thayer School of Engineering, Dartmouth College, Hanover, NH, U.S.A
+Correspondence to: benjamin.k.amoh.th@dartmouth.edu
+Geoffrey Parker
+Affiliation: Thayer School of Engineering, Dartmouth College, Hanover, NH, U.S.A
+Correspondence to: geoffrey.g.parker@dartmouth.edu
+Wesley Marrero
+Affiliation: Thayer School of Engineering, Dartmouth College, Hanover, NH, U.S.A
+Correspondence to: wesley.marrero@dartmouth.edu
+Abstract
+Multi-agent coordination under partial observability requires agents to share complementary private information. While recent methods optimize messages for intermediate objectives (e.g., reconstruction accuracy or mutual information), rather than decision quality, we introduce SeqComm-DFL, unifying the sequential communication with decision-focused learning for task performance. Our approach features value-aware message generation with sequential Stackelberg conditioning: messages maximize receiver decision quality and are generated in priority order, with agents conditioning on their predecessors. The guidance potential determined by their prosocial ordering. We extend Optimal Model Design to communication-augmented world models with QMIX factorization, enabling efficient end-to-end training via implicit differentiation. We prove information-theoretic bounds showing that communication value scales with coordination gaps and establish 𝒪⁡(1/T)\mathcal{O}(1/\sqrt{T}) convergence for the bilevel optimization, where TT denotes the number of training iterations. On collaborative healthcare and StarCraft Multi-Agent Challenge (SMAC) benchmarks, SeqComm-DFL achieves four to six times higher cumulative rewards and over 13% win rate improvements, enabling coordination strategies inaccessible under information asymmetry.
+Keywords:
+Reinforcement Learning, ICML
+1 Introduction
+Many real-world, decision-making problems involve multiple agents operating under partial observability, where each agent observes only a portion of an environment yet must coordinate with others to achieve shared objectives. This setting arises naturally in healthcare resource allocation (Pronovost et al., 2003), autonomous multi-robot coordination (Busoniu et al., 2008), and traffic control systems (Chu et al., 2019). The fundamental challenge is that optimal decisions require information distributed across agents, yet communication bandwidth and latency constraints often preclude sharing all observations directly.
+Consider intensive care unit management, where specialists (e.g., cardiologists, pulmonologists, neurologists) observe patient data relevant to their expertise but must coordinate treatment decisions that account for drug interactions and multi-system organ involvement (Vincent et al., 2009). No single specialist possesses complete information, yet decisions have cascading effects across specialties.
+The dominant paradigm for cooperative multi-agent reinforcement learning (MARL) is centralized training with decentralized execution (Oliehoek et al., 2008; Kraemer and Banerjee, 2016), where agents access global information during training but execute using only local observations. While methods like QMIX (Rashid et al., 2018), MAPPO (Yu et al., 2022), and MADDPG (Lowe et al., 2017) have achieved strong performance, they face fundamental challenges including non-stationarity (i.e., each agent’s environment changes as others learn) and credit assignment (i.e., determining individual contributions to team rewards). Learned communication offers a promising solution (Foerster et al., 2016; Sukhbaatar et al., 2016) to improving non-stationarity, but existing protocols typically optimize surrogate objectives such as message reconstruction or mutual information (Wang et al., 2020), rather than downstream decision quality.
+A parallel challenge arises from the well-documented objective mismatch problem in model-based reinforcement learning (Lambert et al., 2020): world models trained to maximize predictive accuracy may not support optimal policy learning because prediction errors in value-irrelevant dimensions contribute to training loss but not to policy quality. This mismatch extends to learned communication: standard protocols, like the maximum likelihood estimation (MLE), optimize for reconstruction accuracy rather than decision quality, wasting bandwidth on information that does not improve coordination.
+Decision-focused learning (DFL), also known as predict-and-optimize (Elmachtoub and Grigas, 2022; Tang and Khalil, 2024), addresses objective mismatch by training predictive models with downstream optimization tasks in an end-to-end approach. In this paradigm, a predictor forecasts uncertain parameters, and an optimizer solves a decision problem given those predictions. The key insight is to backpropagate through the optimization layer to train the predictor for decision quality rather than prediction accuracy (Donti et al., 2017). However, existing DFL methods focus primarily on single-agent settings with exogenous uncertainty, where predictions do not influence outcomes.
+We propose Sequential Communication for Decision-Focused Learning (SeqComm-DFL), unifying multi-agent communication learning, model-based reinforcement learning, and DFL. Viewed through the predict-and-optimize lens, SeqComm-DFL casts a communication module ϕθ\phi_{\theta} with parameter θ\theta as the “predictor” and MARL policy selection as the “optimization task.” Crucially, our setting involves endogenous uncertainty (Tang and Khalil, 2024): messages are not passive forecasts but active signals that change how other agents act, creating feedback loops absent in standard DFL. To our knowledge, SeqComm-DFL is the first framework to extend DFL to multi-agent systems with endogenous, communication-induced uncertainty.
+Our key innovation is value-aware message generation with sequential Stackelberg conditioning (Zheng et al., 2022): messages are optimized to maximize receiver decision quality and generated sequentially in priority order, creating a leader-follower structure. Building on prior work in sequential communication (Ding et al., 2023), we introduce guidance potential for prosocial priority ordering and extend Optimal Model Design (OMD) (Nikishin et al., 2022) to communication-augmented world models with QMIX factorization (Rashid et al., 2018). We provide information-theoretic bounds on communication value (Theorem 5.1) and convergence guarantees (Theorem 5.3). Experiments on healthcare coordination and SMAC benchmarks demonstrate 44–66 times reward improvements and above 13% point win rate gains.
+2 Related Work
+Cooperative MARL under the centralized training with decentralized execution paradigm (Oliehoek et al., 2008; Kraemer and Banerjee, 2016) has seen rapid progress. Value decomposition methods including VDN (Sunehag et al., 2018), QMIX (Rashid et al., 2018), QTRAN (Son et al., 2019), and QPLEX (Wang et al., 2021) factor joint action-values to enable scalable learning, while policy gradient approaches like MAPPO (Yu et al., 2022) and MADDPG (Lowe et al., 2017) extend actor-critic methods to multi-agent settings. Two fundamental challenges persist: non-stationarity (Hernandez-Leal et al., 2017; Papoudakis et al., 2019) and credit assignment (Foerster et al., 2018; Zhou et al., 2020). Opponent modeling (He et al., 2016) and hysteretic Q-learning (Omidshafiei et al., 2017) aim to mitigate non-stationarity, while COMA (Foerster et al., 2018) addresses credit assignment via counterfactual baselines. While these methods avoid explicit communication, our work (Table 1) unifies multi-agent coordination and decision-focused communication.
+Early works like CommNet (Sukhbaatar et al., 2016) and DIAL (Foerster et al., 2016) pioneered end-to-end communication, later enhanced by attention mechanisms (Das et al., 2019; Niu et al., 2021). To improve efficiency, NDQ (Wang et al., 2020) and I2C (Ding et al., 2020) use information-theoretic objectives to minimize overhead. More recently, SeqComm (Ding et al., 2023) introduced sequential message priority, and MAIC (Yuan et al., 2022) used messages as incentives for value modulation. However, these methods typically optimize for intermediate surrogates rather than final decision quality. Our work (Table 1) extends SeqComm with value-aware message optimization and integrates communication into decision-focused world model learning.
+Model-based reinforcement learning methods like World Models (Ha and Schmidhuber, 2018) and Dreamer (Hafner et al., 2020) learn dynamics for imagination. To solve the objective mismatch problem (Lambert et al., 2020), value-aware learning (Farahmand et al., 2017) and OMD (Nikishin et al., 2022) utilize bilevel optimization. Similarly, DFL (Donti et al., 2017; Elmachtoub and Grigas, 2022), or predict-and-optimize (Tang and Khalil, 2024), trains models end-to-end for downstream performance. While recent DFL research handles endogenous uncertainty, it remains focused on single-agent settings. SeqComm-DFL (Table 1) is the first to extend DFL principles to multi-agent communication with endogenous feedback.
+Table 1: Positioning of our work: A comparison of previous methods. MA=Multi-Agent, C=Communication, MB=Model-Based, DF=Decision-Focused.
+Method
+MA
+C
+MB
+DF
+QMIX
+✓
+CommNet
+✓
+✓
+TarMAC
+✓
+✓
+SeqComm
+✓
+✓
+Dreamer
+✓
+OMD
+✓
+✓
+DFL
+✓
+Ours
+✓
+✓
+✓
+✓
+3 Problem Setting
+We consider a cooperative, dencetralized partially-observable Markov decision process (Dec-POMDP) (𝒩,𝒮,{𝒜i}i=1N,{𝒪i}i=1N,P,R,γ)(\mathcal{N},\mathcal{S},\{\mathcal{A}_{i}\}_{i=1}^{N},\{\mathcal{O}_{i}\}_{i=1}^{N},P,R,\gamma) (Bernstein et al., 2002), where 𝒩={1,…,N}\mathcal{N}=\{1,\ldots,N\} is the set of agents, 𝒮\mathcal{S} is the global state space, 𝒜i\mathcal{A}_{i} is the action space for agent i∈𝒩i\in\mathcal{N}, 𝒪i\mathcal{O}_{i} is the local observation space for agent ii, P:𝒮×𝒜×𝒮→[0,1]P:\mathcal{S}\times\mathcal{A}\times\mathcal{S}\rightarrow[0,1] is the transition function, R:𝒮×𝒜↦ℝR:\mathcal{S}\times\mathcal{A}\mapsto\mathbb{R} is the shared reward function, and γ∈[0,1]\gamma\in[0,1] is the discount factor. The set 𝒜=𝒜1×…×𝒜N\mathcal{A}=\mathcal{A}_{1}\times\ldots\times\mathcal{A}_{N} denotes the joint action space, and a joint action is denoted a=(a1,…,aN)∈𝒜\textbf{a}=(a_{1},\ldots,a_{N})\in\mathcal{A}, where ai∈𝒜ia_{i}\in\mathcal{A}_{i} is the action chosen by agent ii. A communication module function ϕθ:𝒪↦ℝdm\phi_{\theta}:\mathcal{O}\mapsto\mathbb{R}^{d_{m}} with parameter θ∈ℝdθ\theta\in\mathbb{R}^{d_{\theta}} generates messages mi∈ℝdmm_{i}\in\mathbb{R}^{d_{m}} for each agent ii, where dmd_{m} is the dimension of the messages. We learn a communication-augmented world model fθ:𝒮×𝒜×ℳ→ℝ×𝒮f_{\theta}:\mathcal{S}\times\mathcal{A}\times\mathcal{M}\rightarrow\mathbb{R}\times\mathcal{S} for predicting rewards and next states conditioned on state, joint actions, and messages. See Appendix A for a summary of our notation
+4 SeqComm-DFL Framework
+Our framework addresses three interconnected challenges in multi-agent coordination under partial observability: (1) what to communicate: generating messages that improve teammates’ decisions rather than merely encoding observations; (2) how to coordinate: establishing a principled ordering for sequential action selection; and (3) how to learn: training world models that optimize for decision quality rather than prediction accuracy. We address these through value-aware message generation, Stackelberg sequential conditioning (Zheng et al., 2022), and decision-focused bilevel optimization (Nikishin et al., 2022), unified through QMIX-style (Rashid et al., 2018) value decomposition for scalability.
+4.1 Communication Architecture with Value-Aware Messaging
+Each agent ii first encodes its local observation oio_{i} through a shared message encoder ϕθ\phi_{\theta} to produce a base message: mibase=ϕθ​(oi)m_{i}^{\text{base}}=\phi_{\theta}(o_{i}), where ϕθ\phi_{\theta} is a multi-layer perceptron that maps observations to the message space ℝdm\mathbb{R}^{d_{m}}. Unlike standard approaches that optimize messages for mutual information, we train the communication module end-to-end with downstream decision quality (a key innovation that directly connects communication to the DFL objective).
+4.1.1 The Value-Aware Communication Principle
+Standard communication methods encode observations oio_{i} into messages mim_{i} without considering downstream decision impact. This encoding creates a misalignment: the communication module optimizes for information content (e.g., mutual information I⁡(mi,oi)I(m_{i};o_{i}) or reconstruction error ‖oi−o^i‖2\|o_{i}-\hat{o}_{i}\|^{2}), while the downstream task requires decision-relevant information. We address this misalignment by optimizing messages for receiver decision quality:
+Δ​Qj​(mi)=maxa∈𝒜j⁡Qj​(oj,mi,a)−maxa∈𝒜j⁡Qj​(oj,∅,a),\Delta Q_{j}(m_{i})=\max_{a\in\mathcal{A}_{j}}Q_{j}(o_{j},m_{i},a)-\max_{a\in\mathcal{A}_{j}}Q_{j}(o_{j},\emptyset,a),
+where ∅\emptyset denotes the null (zero-vector) message baseline. We use Qj(oj,mi,a)=𝔼[R(oj,mi,a)+γmaxa′∈𝒜jQj(o′,m′,a′)|oj,mi,a]Q_{j}(o_{j},m_{i},a)=\mathbb{E}[R(o_{j},m_{i},a)+\gamma\max_{a^{\prime}\in\mathcal{A}_{j}}Q_{j}(o^{\prime},m^{\prime},a^{\prime})|o_{j},m_{i},a] to quantify the value for agent jj associated with observation ojo_{j}, message mim_{i} from agent ii, discount factor γ\gamma, and a transition to observation o′o^{\prime} with message m′m^{\prime} after taking action aa. The receiver decision quality quantity Δ​Qj​(mi)\Delta Q_{j}(m_{i}) measures how much agent jj’s best achievable Q-value improves when receiving message mim_{i} from agent ii. The key insight is that Δ​Qj​(mi)\Delta Q_{j}(m_{i}) directly quantifies the decision value of communication: information that doesn’t improve decisions has Δ​Qj=0\Delta Q_{j}=0 regardless of its information-theoretic content.
+4.1.2 Value-Aware Training Loss
+We define a value-aware auxiliary loss that directly maximizes the sum of decision quality improvements across all receivers:
+ℒVA(θ)=−1B⋅N⁡(N−1)∑b=1B∑i=1N∑j≠iΔQj(mi(b))\mathord{{\raise 0.49991pt\hbox{$\mathcal{L}_{\text{VA}}(\theta)=-\genfrac{}{}{0.4pt}{}{1}{B \cdot N(N-1)}\sum_{b=1}^{B}\sum_{i=1}^{N}\sum_{j\neq i}\Delta Q_{j}(m_{i}^{(b)})$}}}
+(1)
+This loss is relevant because it addresses the core objective mismatch: standard communication training minimizes reconstruction error, but what matters for coordination is whether messages improve teammates’ decisions. By directly optimizing Δ​Q\Delta Q, we ensure messages encode coordination-critical information rather than observational details. This loss is incorporated into our decision-focused world learning (Subsection 4.3), ensuring communication optimization is coupled with world model training. Crucially, since Δ​Qj\Delta Q_{j} depends on the critic QwQ_{w}, which in turn depends on the world model fθf_{\theta}, this creates an end-to-end pathway from communication to downstream performance.
+4.1.3 Theoretical Connection to Decision-Focused Learning
+The value-aware objective aligns communication learning with minimizing true environmental error in DFL. Similar to previous DFL work (Nikishin et al., 2022), we consider a true environment loss ℒtrue​(w,θ)\mathcal{L}_{\text{true}}(w;\theta) that evaluates how well a critic QwQ_{w} with parameter w∈ℝ|w|w\in\mathbb{R}^{|w|} trained on model predictions performs on real environment data. By the envelope theorem (Bertsekas, 2012), for an optimal critic w∗w^{*}:
+∂ℒtrue​(w∗,θ)∂mi=∂ℒtrue∂Qw⋅∂Qw∂mi∝−∑j≠i∇miQj(oj,mi,aj∗).\mathord{{\raise 0.49991pt\hbox{$\genfrac{}{}{0.4pt}{}{\partial\Lc_{\text{true}}(w^*; \theta)}{\partial m_i}=\genfrac{}{}{0.4pt}{}{\partial\Lc_{\text{true}}}{\partial Q_w}\cdot\genfrac{}{}{0.4pt}{}{\partial Q_w}{\partial m_i}\propto-\sum_{j\neq i}\nabla_{m_{i}}Q_{j}(o_{j},m_{i},a_{j}^{*}).$}}}
+The gradient of the true loss with respect to messages points toward increasing receiver Q-values, precisely what Δ​Qj\Delta Q_{j} measures. This observation suggests that value-aware communication is not merely a heuristic but emerges naturally from the decision-focused objective.
+4.1.4 Message Refinement Architecture
+We implement value-aware communication through a refinement module Refineθ:ℝdm×ℝ→ℝdm\text{Refine}_{\theta}:\mathbb{R}^{d_{m}}\times\mathbb{R}\rightarrow\mathbb{R}^{d_{m}} that adjusts base messages based on estimated decision impact:
+mi=mibase+α⋅Refineθ​(mibase,Δ​Qi^),m_{i}=m_{i}^{\text{base}}+\alpha\cdot\text{Refine}_{\theta}(m_{i}^{\text{base}},\Delta\hat{Q_{i}}),
+where Δ​Q^i=1N−1​∑j≠iΔ​Q^j​(mibase)\Delta\hat{Q}_{i}=\frac{1}{N-1}\sum_{j\neq i}\Delta\hat{Q}_{j}(m_{i}^{\text{base}}) is the average estimated decision quality improvement across all receivers, computed via a lightweight prediction head trained alongside the critic.
+Monte Carlo Grounding for Δ​Q\Delta Q. A critical implementation detail: early in training, the critic QwQ_{w} is poorly calibrated, making Δ​Qj\Delta Q_{j} estimates unreliable. To avoid the “biased critic” problem common in DFL methods that rely on untrained value functions, we ground Δ​Q\Delta Q estimates using Monte Carlo (MC) rollouts during the warmup phase. For planning horizon TT (the maximum episode length), we collect KK trajectory samples and compute:
+Δ​QjMC​(mi)=1K​∑k=1K[Gj(k)​(mi)−Gj(k)​(∅)]\mathord{{\raise 0.49991pt\hbox{$\Delta Q_{j}^{\text{MC}}(m_{i})=\genfrac{}{}{0.4pt}{}{1}{K}\sum_{k=1}^{K}\left[G_{j}^{(k)}(m_{i})-G_{j}^{(k)}(\emptyset)\right]$}}}
+where Gj(k)=∑t=0Tγt​rj,t(k)G_{j}^{(k)}=\sum_{t=0}^{T}\gamma^{t}r_{j,t}^{(k)} is the kk-th MC return for agent jj. This provides unbiased estimates that bootstrap the value-aware training signal before the critic converges. We anneal from MC to critic-based estimates: Δ​Q^=(1−βt)​Δ​QMC+βt​Δ​Qw\Delta\hat{Q}=(1-\beta_{t})\Delta Q^{\text{MC}}+\beta_{t}\Delta Q_{w} with βt→1\beta_{t}\to 1 as training progresses. This hybrid approach ensures stable early learning without sacrificing asymptotic efficiency.
+4.2 Sequential Action Selection with Stackelberg Conditioning
+To resolve relative overgeneralization (Wei et al., 2018), where partial observability causes agents to perform sub-optimally due to an inability to anticipate teammates, we adopt a sequential Stackelberg (von Stackelberg, 1952) framework. Coordination proceeds in three stages: (1) negotiation, computing prosocial guidance potential for priority ordering; (2) launching, utilizing sequential conditioning on leaders’ committed actions and messages; and (3) regularization, using counterfactual influence to ensure causal message impact. This autoregressive structure breaks the symmetry of simultaneous selection, allowing followers to condition on leader intentions to reach Pareto-superior equilibria inaccessible under information asymmetry.
+4.2.1 Negotiation Phase: Guidance Potential
+We first determine priority ordering. Rather than using intention values (“Who wants to act most?”) (Ding et al., 2023), we employ guidance potential which measures each agent’s capacity to improve team outcomes by leading:
+GPi(s)=𝔼𝐚∗∼π∗[Q1:N(s,𝐚∗|i+)−Q1:N(s,𝐚∗|i−)]\mathord{{\raise 0.49991pt\hbox{$\text{GP}_{i}(s)=\mathbb{E}_{\mathbf{a}^{*}\sim\pi^{*}}\left[Q_{1:N}(s,\mathbf{a}^{*}|i^{+})-Q_{\text{1:N}}(s,\mathbf{a}^{*}|i^{-})\right]$}}}
+(2)
+where Q1:NQ_{1:N} denotes the total joint value across agents 11 to NN, i+i^{+} indicates agent ii acts as leader (early in sequence), and i−i^{-} indicates agent ii acts as follower (later in the sequence). This prosocial criterion allows us to prioritize agents who can most help the team, not those with the strongest individual preferences.
+Connection to Coordination Information Gap. The guidance potential is theoretically grounded in the coordination information gap ℐi\mathcal{I}_{i} (Definition C.1 in the Appendix). An agent with large ℐi\mathcal{I}_{i} possesses private information critical for optimal coordination (precisely the agent who should lead) . By prioritizing high-ℐi\mathcal{I}_{i} agents, we ensure that “strong decisions” (actions informed by coordination-critical observations) propagate first, conditioning the search space for followers. Formally, if agent ii has the largest information gap, then GPi\text{GP}_{i} is maximized because ii’s leadership most reduces uncertainty for teammates:
+GPi∝∑j≠iI⁡(Mi;aj∗∣oj)≈∑j≠imin⁡(ℐj,ℋ⁡(Mi))\mathord{{\raise 0.49991pt\hbox{$\text{GP}_{i}\propto\sum_{j\neq i}I(M_{i};a^{*}_{j}\mid o_{j})\approx\sum_{j\neq i}\min(\mathcal{I}_{j},\mathcal{H}(M_{i}))$}}}
+where ℋ⁡(Mi)\mathcal{H}(M_{i}) denotes the entropy associated with the message MiM_{i} and the approximation holds when messages are capacity-limited. For example, in a hospital environment, a cardiologist treating a patient with hidden cardiac risk has high ℐi\mathcal{I}_{i} if their message can “unlock” coordination strategies inaccessible without that information. We assign action priorities among agents using the Gumbel-softmax (Jang et al., 2017) π=argsort​(−GP)\pi=\text{argsort}(-\text{GP}) for differentiable exploration during training.
+4.2.2 Launching Phase: Sequential Conditioning
+Agents select actions sequentially according to π\pi. The kk-th agent, πk\pi_{k}, conditions on predecessor messages from higher-priority agents:
+aπk=argmaxa∈𝒜πkQπk(oπk,M1:πk−1,a),\mathord{{\raise 0.49991pt\hbox{$a_{\pi_{k}}=\arg\max_{a\in\mathcal{A}_{\pi_{k}}}Q_{\pi_{k}}(o_{\pi_{k}},M_{1:\pi_{k}-1},a),$}}}
+where M1:πk−1={mπj:j<k}M_{1:\pi_{k}-1}=\{m_{\pi_{j}}:j<k\} denotes the set of messages from all agents with higher priority than πk\pi_{k}. This creates explicit leader-follower structure: the first agent (leader) commits to an action based solely on local information; subsequent agents (followers) observe leader messages and adapt accordingly. The Stackelberg structure breaks symmetry and resolves coordination ambiguity that plagues parallel action selection. Algorithm 1 summarizes the action selection procedure.
+Algorithm 1 Value Aware SeqComm Action Selection
+0:
+State ss, comm. module ϕθ\phi_{\theta}, critic QwQ_{w}, refinement net Refineθ\text{Refine}_{\theta}
+1:
+Negotiation Phase: Compute GPi\text{GP}_{i} for all agents ii using Eq. 2
+2:
+Determine priority ordering: π←argsort​(−GP)\pi\leftarrow\text{argsort}(-\text{GP}) via Gumbel-softmax
+3:
+Message Generation Phase:
+4:
+for each agent i∈{1,…,N}i\in\{1,\ldots,N\} do
+5:
+Encode observation: mibase←ϕθ​(oi)m_{i}^{\text{base}}\leftarrow\phi_{\theta}(o_{i})
+6:
+Estimate decision impact (Eq. 4.1.1):Δ​Q^i←1N−1​∑j≠iΔ​Qj​(mibase)\Delta\hat{Q}_{i}\leftarrow\frac{1}{N-1}\sum_{j\neq i}\Delta Q_{j}(m_{i}^{\text{base}})
+7:
+Refine message: mi←mibase+α⋅Refineθ​(mibase,Δ​Q^i)m_{i}\leftarrow m_{i}^{\text{base}}+\alpha\cdot\text{Refine}_{\theta}(m_{i}^{\text{base}},\Delta\hat{Q}_{i})
+8:
+end for
+9:
+Launching Phase (Stackelberg):
+10:
+for k=1k=1 to NN do
+11:
+Agent πk\pi_{k} selects: aπk←argmaxaQπk(oπk,M1:k−1,a)a_{\pi_{k}}\leftarrow\arg\max_{a}Q_{\pi_{k}}(o_{\pi_{k}},M_{1:k-1},a)
+12:
+end for
+13:
+Return Joint action 𝐚=(a1,…,aN)\mathbf{a}=(a_{1},\ldots,a_{N})
+4.2.3 Counterfactual Influence Regularization
+To ensure messages have a causal effect on decisions rather than merely correlating with them, we add a counterfactual influence loss (Jaques et al., 2019):
+ℒinf(θ)=−1N⁡(N−1)∑i=1N∑j≠iDKL[πj(⋅|mi)∥πj(⋅|∅)]\mathord{{\raise 0.49991pt\hbox{$\mathcal{L}_{\text{inf}}(\theta)=-\genfrac{}{}{0.4pt}{}{1}{N(N-1)}\sum_{i=1}^{N}\sum_{j\neq i}D_{\text{KL}}\left[\pi_{j}(\cdot|m_{i})\,\|\,\pi_{j}(\cdot|\emptyset)\right]$}}}
+(3)
+This loss encourages messages that change receiver behavior, measured by KL divergence (Kullback and Leibler, 1951) between policies with/out communication. Combined with value-aware training, this ensures messages are both influential and beneficial.
+4.3 Decision-Focused World Model Learning
+To resolve objective mismatch (Lambert et al., 2020) we extend OMD (Nikishin et al., 2022) to multi-agent settings. A bilevel framework optimizes a world model fθf_{\theta} for downstream policy regret rather than prediction loss via: (1) an inner loop training the critic on model predictions while evaluating on real data in the outer loop; (2) a coordination-aware objective that prevents message apathy by incentivizing the critic to distinguish informative signals; and (3) hypergradient computation utilizing the Implicit Function Theorem (IFT) (Krantz and Parks, 2002) and an efficient Conjugate Gradient solver (Hestenes and Stiefel, 1952).
+4.3.1 Bilevel Optimization Formulation
+The core insight of our bilevel optimization for DFL is to merge world model accuracy and decision quality into a single objective: rather than training the model to predict well (inner loop) and hoping this transfers to good decisions, we train the model parameters to directly optimize performance when the resulting critic is evaluated on real environment data (outer loop). The outer problem optimizes model parameters θ\theta for true environment performance; the inner problem trains the critic QwQ_{w} using model predictions:
+(Outer)
+minθ⁡ℒtrue​(w∗​(θ),θ)\displaystyle\min_{\theta}\;\mathcal{L}_{\text{true}}(w^{*}(\theta);\theta)
+(4a)
+(Inner)
+s.t.​w∗​(θ)=arg⁡minw​ℒmodel​(w,θ)\displaystyle\text{s.t.}\hskip 9.24994ptw^{*}(\theta)=\arg\min_{w}\mathcal{L}_{\text{model}}(w;\theta)
+(4b)
+This formulation captures that the optimal critic w∗w^{*} depends on the world model θ\theta, so updating θ\theta affects the world model predictions and the critic that evaluates them.
+4.3.2 Inner Loop: Model-Based Critic Training
+The inner problem trains the critic QwQ_{w} to satisfy the Bellman equation under the learned world model dynamics, running KinnerK_{\text{inner}} gradient descent steps to approximately solve the inner optimization. Given a dataset 𝒟={(s(b),𝐚(b))}b=1B\mathcal{D}=\{(s^{(b)},\mathbf{a}^{(b)})\}_{b=1}^{B} of BB batches of state-action pairs, the model loss is:
+ℒmodel​(w,θ)=1B​∑b=1B(Qw​(s(b),𝐚(b),M(b))−ymodel(b))2+λreg​‖w‖22,\mathord{\raise 0.49991pt\hbox{$\displaystyle\begin{split}\mathcal{L}_{\text{model}}(w;\theta)&=\genfrac{}{}{0.4pt}{}{1}{B}\sum_{b=1}^{B}\left(Q_{w}(s^{(b)},\mathbf{a}^{(b)},M^{(b)})-y_{\text{model}}^{(b)}\right)^{2}\\
+&\quad+\lambda_{\text{reg}}\|w\|_{2}^{2},\end{split}$}}
+(5)
+where the target incorporates world model predictions: ymodel=r^+γ​Vw¯​(s^′,M′),(r^,s^′)=fθ​(s,𝐚,M),M′=ϕθ​(s^′)y_{\text{model}}=\hat{r}+\gamma V_{\bar{w}}(\hat{s}^{\prime},M^{\prime}),(\hat{r},\hat{s}^{\prime})=f_{\theta}(s,\mathbf{a},M),M^{\prime}=\phi_{\theta}(\hat{s}^{\prime}). Here w¯\bar{w} denotes target network parameters updated via exponential moving average (Polyak and Juditsky, 1992), M′M^{\prime} is the message tensor re-computed for the predicted next state, and Vw¯V_{\bar{w}} is the soft value function computed by enumerating joint actions before QMIX factorization is learned:
+Vw¯(s,M)=τ⋅log∑𝐚∈𝒜Nexp(Qw¯​(s,𝐚,M)τ),\mathord{{\raise 0.49991pt\hbox{$V_{\bar{w}}(s,M)=\tau\cdot\log\sum_{\mathbf{a}\in\mathcal{A}^{N}}\exp\left(\genfrac{}{}{0.4pt}{}{Q_{\bar{w}}(s, \ba, M)}{\tau}\right),$}}}
+where τ∈ℝ+⁣+\tau\in\mathbb{R}_{++} (i.e., τ>0\tau>0) is the temperature parameter of the soft value function. The inner loop runs KinnerK_{\text{inner}} gradient steps to approximately solve (4b), yielding w(Kinner)≈w∗​(θ)w^{(K_{\text{inner}})}\approx w^{*}(\theta).
+4.3.3 Coordination-Aware Inner Loop: Preventing Message Apathy
+A subtle failure mode arises in bilevel DFL for communication: if the critic QwQ_{w} learns to ignore messages, treating them as noise, then the hypergradient d​ℒtrued​θ\frac{d\mathcal{L}_{\text{true}}}{d\theta} vanishes with respect to the communication parameters, even when messages could improve decisions. We term this type of failure inner-loop apathy: the critic becomes message-agnostic, blocking gradient flow to the communication module.
+To address this problem, we augment the inner-loop loss with a message-awareness auxiliary term that incentivizes the critic to distinguish between informative and uninformative messages (Yuan et al., 2022):
+ℒaware​(w)=1B​∑b=1Bmax⁡(0,ϵmargin−|Qw​(s(b),𝐚(b),M(b))CLOSE−Qw(s(b),𝐚(b),𝟎)|)\mathord{{\raise 0.49991pt\hbox{$\begin{split}\mathcal{L}_{\text{aware}}(w)=\genfrac{}{}{0.4pt}{}{1}{B}\sum_{b=1}^{B}\max\Big(0,\;\epsilon_{\text{margin}}-|Q_{w}(s^{(b)},\mathbf{a}^{(b)},M^{(b)})\\
+-Q_{w}(s^{(b)},\mathbf{a}^{(b)},\mathbf{0})|\Big)\end{split}$}}}
+(6)
+where 𝟎\mathbf{0} denotes zero (null) messages and ϵmargin>0\epsilon_{\text{margin}}>0 is a margin hyperparameter. This hinge loss penalizes the critic when Q⁡(s,a,mgood)≈Q⁡(s,a,mzero)Q(s,a,m_{\text{good}})\approx Q(s,a,m_{\text{zero}}), forcing it to learn message-dependent value estimates. The complete inner-loop objective becomes: ℒinner​(w,θ)=ℒmodel​(w,θ)+λaware​ℒaware​(w)\mathcal{L}_{\text{inner}}(w;\theta)=\mathcal{L}_{\text{model}}(w;\theta)+\lambda_{\text{aware}}\mathcal{L}_{\text{aware}}(w).
+The ℒaware​(w)\mathcal{L}_{\text{aware}}(w) auxiliary loss ensures the critic provides meaningful gradients with respect to messages, enabling the outer loop to optimize communication for decision quality. Conceptually, we treat messages as “incentives” that modulate individual Q-values: an approach validated in multi-agent incentive communication (Yuan et al., 2022).
+4.3.4 Outer Loop: Decision-Focused World Model Update
+The outer problem evaluates the critic on true environment data to assess generalization. Given environment dataset 𝒟env={(s(b),𝐚(b),r(b),s′(b))}b=1B\mathcal{D}_{\text{env}}=\{(s^{(b)},\mathbf{a}^{(b)},r^{(b)},s^{\prime(b)})\}_{b=1}^{B}:
+ℒtrue​(w,θ)=1B​∑b=1B(Qw​(s(b),𝐚(b),M(b))−ytrue(b))2\mathord{{\raise 0.49991pt\hbox{$\mathcal{L}_{\text{true}}(w;\theta)=\genfrac{}{}{0.4pt}{}{1}{B}\sum_{b=1}^{B}\left(Q_{w}(s^{(b)},\mathbf{a}^{(b)},M^{(b)})-y_{\text{true}}^{(b)}\right)^{2}$}}}
+(7)
+with ytrue=r+γ​Vw¯​(s′,Mtrue′)y_{\text{true}}=r+\gamma V_{\bar{w}}(s^{\prime},M^{\prime}_{\text{true}}) using actual rewards and next states. The key distinction: ℒmodel\mathcal{L}_{\text{model}} uses (r^,s^′)(\hat{r},\hat{s}^{\prime}) from the world model, while ℒtrue\mathcal{L}_{\text{true}} uses (r,s′)(r,s^{\prime}) from the environment.
+4.3.5 Hypergradient Computation via Implicit Differentiation
+Since w∗w^{*} depends on θ\theta, the total derivative of the outer objective requires differentiating through the inner optimization. Applying the chain rule:
+d​ℒtrued​θ=∇θℒtrue​(w∗,θ)⏟direct effect+(d​w∗d​θ)⊤​∇wℒtrue​(w∗,θ)⏟indirect effect via critic\mathord{{\raise 0.49991pt\hbox{$\genfrac{}{}{0.4pt}{}{d\Lc_{\text{true}}}{d\theta}=\underbrace{\nabla_{\theta}\mathcal{L}_{\text{true}}(w^{*},\theta)}_{\text{direct effect}}+\underbrace{\left(\genfrac{}{}{0.4pt}{}{dw^*}{d\theta}\right)^{\top}\nabla_{w}\mathcal{L}_{\text{true}}(w^{*},\theta)}_{\text{indirect effect via critic}}$}}}
+(8)
+The Jacobian d​w∗d​θ∈ℝ|w|×|θ|\frac{dw^{*}}{d\theta}\in\mathbb{R}^{|w|\times|\theta|} is intractable to compute directly. We apply the IFT (Krantz and Parks, 2002) to the Bellman residual’s first-order optimality condition. At the inner-loop fixed point, ∇wℒmodel​(w∗,θ)=0\nabla_{w}\mathcal{L}_{\text{model}}(w^{*};\theta)=0. The IFT enables us to differentiate this optimality condition with respect to θ\theta, implicitly characterizing how w∗w^{*} changes as θ\theta varies without explicitly solving for w∗​(θ)w^{*}(\theta). Differentiating implicitly:
+d​w∗d​θ=−[∇w​w2​ℒmodel​(w∗,θ)]−1​∇θ​w2ℒmodel​(w∗,θ)\mathord{{\raise 0.49991pt\hbox{$\genfrac{}{}{0.4pt}{}{dw^*}{d\theta}=-\left[\nabla^{2}_{ww}\mathcal{L}_{\text{model}}(w^{*},\theta)\right]^{-1}\nabla^{2}_{\theta w}\mathcal{L}_{\text{model}}(w^{*},\theta)$}}}
+(9)
+This IFT application is the key insight from OMD (Nikishin et al., 2022): we do run KinnerK_{\text{inner}} gradient steps to obtain w(K)≈w∗​(θ)w^{(K)}\approx w^{*}(\theta), but we avoid differentiating through those steps (it suffers from vanishing/exploding gradients). Instead, we treat the converged inner loop as an implicit function and differentiate at equilibrium using the IFT. This decouples the forward solve (iterative gradient descent) from the backward pass (implicit differentiation). Full derivations and implementation details are in Appendix B. Substituting (9) into (8) yields the hypergradient:
+d​ℒtrued​θ=∇θℒtrue−(∇θ​w2ℒmodel)⊤⏟mixed Hessian​(∇w​w2ℒmodel)−1⏟inverse Hessian ​H−1​∇wℒtrue⏟b\mathord{{\raise 0.49991pt\hbox{$\genfrac{}{}{0.4pt}{}{d\Lc_{\text{true}}}{d\theta}=\nabla_{\theta}\mathcal{L}_{\text{true}}-\underbrace{(\nabla^{2}_{\theta w}\mathcal{L}_{\text{model}})^{\top}}_{\text{mixed Hessian}}\underbrace{(\nabla^{2}_{ww}\mathcal{L}_{\text{model}})^{-1}}_{\text{inverse Hessian }H^{-1}}\underbrace{\nabla_{w}\mathcal{L}_{\text{true}}}_{b}$}}}
+(10)
+This hypergradient updates θ\theta to minimize true environment loss while accounting for how critic parameters w∗w^{*} implicitly depend on θ\theta. However, computing H−1​bH^{-1}b directly is intractable for high-dimensional ww, requiring efficient approximation.
+4.3.6 Efficient Computation via Conjugate Gradient
+The inverse Hessian-vector product H−1​bH^{-1}b in (10) is computed without forming the full Hessian. We solve the linear system (H+λ​I)​v∗=b(H+\lambda I)v^{*}=b using conjugate gradient (CG) (Hestenes and Stiefel, 1952; Shewchuk, 1994), where H=∇w​w2ℒmodelH=\nabla^{2}_{ww}\mathcal{L}_{\text{model}} is the Hessian of the model loss with respect to the critic parameters, II is the identity matrix, b=∇wℒtrueb=\nabla_{w}\mathcal{L}_{\text{true}} is the gradient of the true loss with respect to the critic parameters, and λ>0\lambda>0 is a damping coefficient for numerical stability.
+Each CG iteration requires one Hessian-vector product, computed efficiently via two autodiff passes: H​v=∇w(∇wℒmodel⊤​v)Hv=\nabla_{w}(\nabla_{w}\mathcal{L}_{\text{model}}^{\top}v). The final hypergradient ∇θℒtrue−∇θ(∇wℒmodel⊤​v∗)\nabla_{\theta}\mathcal{L}_{\text{true}}-\nabla_{\theta}(\nabla_{w}\mathcal{L}_{\text{model}}^{\top}v^{*}) is then computed via a single backward pass through the mixed Hessian term. Our computational complexity analysis is in Appendix D.
+4.4 Training Procedure
+Algorithm 2 presents the complete training procedure. We employ a warmup schedule that gradually increases SeqComm-guided exploration, allowing the world model to stabilize before agents rely on learned communication.
+Algorithm 2 Value Aware SeqComm-DFL Training
+0:
+Env 𝔼c\mathbb{E}_{c}, iterations TT, warmup TwT_{w}, weights λVA,λinf,λaware\lambda_{\text{VA}},\lambda_{\text{inf}},\lambda_{\text{aware}}
+1:
+Init world model fθf_{\theta}, comm. module ϕθ\phi_{\theta}, critic QwQ_{w}, target Qw¯Q_{\bar{w}}
+2:
+Set annealing schedule: βt←min⁡(t/Tw,1)\beta_{t}\leftarrow\min(t/T_{w},1)
+3:
+for t=1t=1 to TT do
+4:
+Collect experience 𝒟,𝒟env\mathcal{D},\mathcal{D}_{\text{env}} from environment 𝔼c\mathbb{E}_{c}
+5:
+Compute hybrid Δ​Q\Delta Q: Δ​Q^←(1−βt)​Δ​QMC+βt​Δ​Qcritic\Delta\hat{Q}\leftarrow(1-\beta_{t})\Delta Q^{\text{MC}}+\beta_{t}\Delta Q^{\text{critic}}
+6:
+Inner Loop (Eq. 5, 6): For KinnerK_{\text{inner}} steps,w←arg⁡minw​ℒmodel​(w,θ)+λaware​ℒaware​(w)w\leftarrow\arg\min_{w}\mathcal{L}_{\text{model}}(w;\theta)+\lambda_{\text{aware}}\mathcal{L}_{\text{aware}}(w)
+7:
+Outer Loop (Eq. 1, 3, 10): θ←θ−η(d​ℒtrued​θ+λVA∇ℒVA+λinf∇ℒinf)\theta\leftarrow\theta-\eta\left(\frac{d\mathcal{L}_{\text{true}}}{d\theta}+\lambda_{\text{VA}}\nabla\mathcal{L}_{\text{VA}}+\lambda_{\text{inf}}\nabla\mathcal{L}_{\text{inf}}\right)
+8:
+Update target network: w¯←τema​w¯+(1−τema)​w\bar{w}\leftarrow\tau_{\text{ema}}\bar{w}+(1-\tau_{\text{ema}})w
+9:
+end for
+10:
+Return fθ,Qwf_{\theta},Q_{w}
+5 Theoretical Analysis
+We analyze SeqComm-DFL in the Dec-POMDP setting {𝒩,𝒮,{𝒜i},{𝒪i},P,R,γ}\{\mathcal{N},\mathcal{S},\{\mathcal{A}_{i}\},\{\mathcal{O}_{i}\},P,R,\gamma\} where agents receive local observations oi=𝒪i​(s)o_{i}=\mathcal{O}_{i}(s) but share a reward RR. We establish formal foundations for SeqComm-DFL by quantifying the necessity of communication, the advantage of decision-focused world models, and bilevel stability. Full proofs and regularity conditions are provided in Appendix B and C.
+Information-Theoretic Necessity. Partial observability creates a coordination information gap Ii=ℐ⁡(s;ai∗|oi)I_{i}=\mathcal{I}(s;a_{i}^{*}|o_{i}), representing the optimal action information contained in the state ss that is inaccessible from local observation oio_{i}. We present a bound on this gap in the following theorem:
+Theorem 5.1 (Communication Lower Bound).
+Let 𝛑comm\boldsymbol{\pi}^{\text{comm}} be a joint policy utilizing SeqComm messages and 𝛑no-comm\boldsymbol{\pi}^{\text{no-comm}} be a policy restricted to local observations. For a Dec-POMDP with Lipschitz reward constant LRL_{R} (Bertsekas, 2012) and discount factor γ\gamma, the expected performance gain from communication satisfies:
+𝔼⁡[V𝝅comm]−𝔼⁡[V𝝅no-comm]≥LR1−γ​∑i=1N2​ln⁡2⋅Ii⋅Var​(ai∗).\mathord{{\raise 0.49991pt\hbox{$\mathbb{E}[V^{\boldsymbol{\pi}^{\text{comm}}}]-\mathbb{E}[V^{\boldsymbol{\pi}^{\text{no-comm}}}]\geq\genfrac{}{}{0.4pt}{}{L_R}{1-\gamma}\sum_{i=1}^{N}\sqrt{2\ln 2\cdot I_{i}\cdot\text{Var}(a_{i}^{*})}.$}}}
+This bound proves that communication is necessary when Ii>0I_{i}>0. The Var​(ai∗)\sqrt{\text{Var}(a_{i}^{*})} term shows value scales with action exploration: when hidden state components cause optimal actions to vary, communication provides greater benefit. SeqComm’s sequential launching phase acts to reduce this gap toward zero by sharing actual actions, allowing followers to reach a Pareto-superior Stackelberg equilibrium.
+Decision-Focused Advantage: Let P^\hat{P} and R^\hat{R} be the learned transition and reward models using MLE, with errors ϵP=sups,a∥P(⋅|s,a)−P^(⋅|s,a)∥1\epsilon_{P}=\sup_{s,a}\|P(\cdot|s,a)-\hat{P}(\cdot|s,a)\|_{1} and ϵR=sups,a|R⁡(s,a)−R^​(s,a)|\epsilon_{R}=\sup_{s,a}|R(s,a)-\hat{R}(s,a)|. Moreover, let ϵ=sups,a|(ℬ​Q)​(s,a)−Q⁡(s,a)|\epsilon=\sup_{s,a}|(\mathcal{B}Q)(s,a)-Q(s,a)| denote the Bellman error (Sutton and Barto, 2018), where (ℬ​Q)​(s,a)=𝔼⁡[r+γ​maxa′⁡Q⁡(s′,a′)](\mathcal{B}Q)(s,a)=\mathbb{E}[r+\gamma\max_{a^{\prime}}Q(s^{\prime},a^{\prime})]. By minimizing the Bellman error via IFT, SeqComm-DFL’s bilevel formulation yields a tighter Q∗Q^{*} approximation than MLE, as shown in the following proposition:
+Proposition 5.2 (Q∗Q^{*} Approximation Error).
+Let Q^MLE\hat{Q}_{\text{MLE}} and Q^DFL\hat{Q}_{\text{DFL}} be fixed points of Bellman operators induced by MLE and SeqComm-DFL. With dynamics error ϵP\epsilon_{P}, reward error ϵR\epsilon_{R}, and Bellman error ϵ\epsilon, the DFL error is tighter:
+‖Q∗−Q^MLE‖∞≤ϵR1−γ+γ​ϵP​rmax2​(1−γ)2,\|Q^{*}-\hat{Q}_{\text{MLE}}\|_{\infty}\leq\frac{\epsilon_{R}}{1-\gamma}+\frac{\gamma\epsilon_{P}r_{\max}}{2(1-\gamma)^{2}},
+and
+‖Q∗−Q^DFL‖∞≤ϵ1−γ.\|Q^{*}-\hat{Q}_{\text{DFL}}\|_{\infty}\leq\frac{\epsilon}{1-\gamma}.
+By optimizing the Bellman error directly, the world model ignores value-irrelevant prediction errors that otherwise degrade performance in decoupled learning.
+Bilevel Convergence: Despite the complexity of differentiating through the inner-loop critic (ϵinner\epsilon_{\text{inner}} approximation error) and CG solver (ϵCG\epsilon_{\text{CG}} linearization error), the total bias ϵbias=ϵinner+ϵCG\epsilon_{\text{bias}}=\epsilon_{\text{inner}}+\epsilon_{\text{CG}} decays at O⁡(1/T)O(1/\sqrt{T}) (Ghadimi and Wang, 2018), yielding a standard first-order convergence:
+Theorem 5.3 (Convergence to Stationary Points).
+Under standard regularity conditions (see assumption C.3), using an outer learning rate ηθ=O⁡(1/T)\eta_{\theta}=O(1/\sqrt{T}) and maintaining iterations such that the hypergradient bias ϵbias=O⁡(1/T)\epsilon_{\text{bias}}=O(1/\sqrt{T}), the average squared gradient of the true loss satisfies:
+1T​∑t=1T𝔼​‖∇θℒtrue​(θ(t))‖2≤O⁡(1T)\mathord{{\raise 0.49991pt\hbox{$\genfrac{}{}{0.4pt}{}{1}{T}\sum_{t=1}^{T}\mathbb{E}\|\nabla_{\theta}\mathcal{L}_{\text{true}}(\theta^{(t)})\|^{2}\leq O\left(\genfrac{}{}{0.4pt}{}{1}{\sqrt{T}}\right)$}}}
+6 Experiments
+We evaluate SeqComm-DFL on: (1) a collaborative hospital environment with information asymmetry, and (2) the StarCraft Multi-Agent Challenge (SMAC). All experiments use 10 random seeds. The experiment hyperparameters are provided in Appendix G. In addition, we perform ablation studies in Appendix F.
+6.1 Hospital Environment: A Dec-POMDP with Structured Information Asymmetry
+We design a collaborative hospital environment that instantiates a Dec-POMDP with genuine partial observability, where communication provides measurable value.
+6.1.1 Dec-POMDP Formulation
+The environment has N=3N=3 specialist physician agents, each assigned one of C=3C=3 specialties (cardiology, pulmonology, neurology). The state comprises 𝒫=100\mathcal{P}=100 patients with vitals (heart rate, blood pressure, oxygen saturation), condition types κj∈{1,2,3}\kappa_{j}\in\{1,2,3\}, and hidden risk factors hj∈[0,1]3h_{j}\in[0,1]^{3} for each patient j∈𝒫j\in\mathcal{P}. Each physician i∈𝒩i\in\mathcal{N} has an action space 𝒜i={0,1,2}\mathcal{A}_{i}=\{0,1,2\}, representing low, medium, and high treatment intensity, and observes oio_{i} containing only the hidden risk hj,σih_{j,\sigma_{i}} for patients matching their specialty σi∈{1,2,3}\sigma_{i}\in\{1,2,3\}. Complete details, including reward and transition structures, are in Appendix H.
+6.1.2 Structured Partial Observability
+The critical feature is that hidden risk factors are specialty-gated. Each patient jj has risk vector hj=[hj,1,…,hj,C]∈[0,1]Ch_{j}=[h_{j,1},\ldots,h_{j,C}]\in[0,1]^{C}, but physician ii observes only:
+oi={hj,σiif specialty ​σi​ matches patient condition0otherwise (hidden)\mathord{{\raise 0.49991pt\hbox{$o_{i}=\begin{cases}h_{j,\sigma_{i}}&\text{if specialty }\sigma_{i}\text{ matches patient condition}\\
+0&\text{otherwise (hidden)}\end{cases}$}}}
+This creates fundamental information asymmetry: a cardiologist observes cardiac risk hj,1h_{j,1} but cannot see neurological risk hj,3h_{j,3}, which is visible only to the neurologist. The optimal treatment for a patient with both cardiac and neurological conditions requires information from both specialists, information that can only be shared through communication.
+6.1.3 Coordination-Dependent Dynamics
+The specialty-gating and drug interaction dynamics place this environment in the class of transition-coupled Dec-POMDPs, where communication is theoretically required to resolve NEXP-complete dependencies to achieve optimal coordination (Gabel and Riedmiller, 2008). We illustrate the performance gap between optimal policies with and without communication in the following proposition, proved in Appendix H:
+Proposition 6.1 (Communication Necessity).
+Let π∗\pi^{*} denote the optimal joint policy for the hospital Dec-POMDP and πno-comm\pi^{\text{no-comm}} the optimal policy without communication. Then:
+Vπ∗−Vπno-comm=Ω⁡(∑c=1C𝔼⁡[hc]⋅P⁡(ξ≠σ))\mathord{{\raise 0.49991pt\hbox{$V^{\pi^{*}}-V^{\pi^{\text{no-comm}}}=\Omega\left(\sum_{c=1}^{C}\mathbb{E}[h_{c}]\cdot P(\xi\neq\sigma)\right)$}}}
+(11)
+where ξ\xi is the patient’s condition type and σ\sigma is the treating agent’s specialty.
+The bound follows from the “blind” treatment risk penalty: without communication, agents treating mismatched patients (σi≠ξj\sigma_{i}\neq\xi_{j}) cannot learn hidden risks hj,ξjh_{j,\xi_{j}}, incurring penalties linear in risk magnitude. This establishes that the performance gap is inherent to the information structure, not an artifact of learning algorithms.
+More broadly, the hospital environment exhibits partially ordered dependencies (Gabel and Riedmiller, 2008): agent ii’s optimal action depends on the private information of agent i′i^{\prime} when their patients share drug interactions. This creates a Dec-POMDP with transition-coupled agent (a class known to be NEXP-complete in general (Bernstein et al., 2002)). The specialty-gating mechanism ensures that dependencies cannot be resolved through independent learning, placing the environment in the “hard” regime where communication provides super-linear benefits.
+7 Results
+Figure 1 (top) shows SeqComm-DFL achieves episode rewards of −70-70 to −30-30 versus OMD’s −200-200 plateau (4 to 6×\times improvement). The bottom panel shows SeqComm-DFL maintains severity improvement at 0.2, versus OMD’s 0.05, confirming agents effectively treat patients while avoiding blind treatment penalties through value-aware risk communication. The divergence after ∼\sim100 iterations coincides with warmup completion. Ablations (Appendix F) show removing ℒVA\mathcal{L}_{\text{VA}} reduces performance by 12%, parallel messages by 7%, selfish intentions by 5%.
+Figure 1: Comparative performance on hospital environment. Top: Episode reward. Bottom: Severity improvement. SeqComm-DFL (blue) substantially outperforms OMD baseline (orange).
+7.1 SMAC Benchmark
+We evaluate our SeqComm-DFL on the SMAC environment with 2s_vs_1sc (2 agents), 3s_vs_5z (3 agents), 2s3z (5 agents), and 8m (8 agents) over 10M training iterations. Table 2 shows SeqComm-DFL achieves the highest win rates across all maps, with 13 to 15 percentage point improvements over Original SeqComm and larger gaps over OMD baseline. Better performance means agents coordinate unit positioning, focus fire on priority targets, and avoid overextension through value-aware messages that encode tactical information (enemy health, positioning) rather than raw observations. Ablations on 3s_vs_5z (Appendix F) show removing ℒVA\mathcal{L}_{\text{VA}} reduces win rate by 9%, sequential conditioning by 6%, guidance potential by 4%, confirming each innovation’s necessity.
+Table 2: Complete SMAC benchmark results.
+Map
+SeqComm-DFL
+SeqComm
+OMD
+2s_vs_1sc
+0.78 ±\pm 0.04
+0.65 ±\pm 0.06
+0.52 ±\pm 0.08
+3s_vs_5z
+0.71 ±\pm 0.05
+0.58 ±\pm 0.07
+0.41 ±\pm 0.09
+2s3z
+0.64 ±\pm 0.06
+0.49 ±\pm 0.08
+0.35 ±\pm 0.10
+8m
+0.59 ±\pm 0.07
+0.45 ±\pm 0.09
+0.31 ±\pm 0.11
+8 Conclusion
+We introduced SeqComm-DFL, integrating sequential communication with DFL for multi-agent coordination under partial observability. Our key contributions (value-aware message generation, Stackelberg sequential conditioning, and guidance potential) enable agents to learn communication protocols that directly improve downstream decision quality. Through our theoretical analysis, we provided information-theoretic bounds on communication value and convergence guarantees. Further, our experiments demonstrate substantial improvements over both baselines.
+Broader Impact: SeqComm-DFL provides a principled framework for designing communication in multi-agent systems where coordination quality directly affects mission-critical outcomes. By unifying decision-focused learning with structured communication, our approach offers practitioners a theoretically-grounded method to train agents that share information strategically rather than exhaustively which is essential for bandwidth-constrained, safety-critical applications ranging from collaborative medical diagnosis to coordinated autonomous systems. The value-aware paradigm shifts communication design from information maximization to decision optimization, enabling deployable multi-agent systems that coordinate effectively under real-world information asymmetry.
+Future works: Extensions include continuous action spaces, dynamic communication topology, and real-world deployment in healthcare coordination systems.
+References
+Bernstein et al. (2002)
+D. S. Bernstein, R. Givan, N. Immerman, and S. Zilberstein
+The complexity of decentralized control of Markov decision processes.
+Mathematics of Operations Research 27 (4), pp. 819–840.
+Cited by: §3,
+§6.1.3.
+Bertsekas (2012)
+D. P. Bertsekas
+Dynamic programming and optimal control.
+4th edition, Vol. 1, Athena Scientific.
+Cited by: Theorem B.1,
+Theorem B.1,
+§C.1,
+§C.2,
+§4.1.3,
+Theorem 5.1.
+Busoniu et al. (2008)
+L. Busoniu, R. Babuska, and B. D. Schutter
+A comprehensive survey of multiagent reinforcement learning.
+IEEE Transactions on Systems, Man, and Cybernetics, Part C (Applications and Reviews) 38 (2), pp. 156–172.
+Cited by: §1.
+Chu et al. (2019)
+T. Chu, J. Wang, L. Codecà, and Z. Li
+Multi-agent deep reinforcement learning for large-scale traffic signal control.
+In IEEE Transactions on Intelligent Transportation Systems,
+Vol. 21, pp. 1086–1095.
+Cited by: §1.
+Csiszár and Körner (2011)
+I. Csiszár and J. Körner
+Information theory: coding theorems for discrete memoryless systems.
+2nd edition, Cambridge University Press.
+Cited by: §C.1.
+Das et al. (2019)
+A. Das, T. Gervet, J. Romoff, D. Batra, D. Parikh, M. Rabbat, and J. Pineau
+TarMAC: targeted multi-agent communication.
+In Proceedings of the 36th International Conference on Machine Learning (ICML 2019),
+pp. 1538–1546.
+Cited by: §2.
+Ding et al. (2020)
+Z. Ding, T. Huang, and Z. Lu
+Learning individually inferred communication for multi-agent cooperation.
+In Advances in Neural Information Processing Systems 33 (NeurIPS 2020),
+pp. 22069–22079.
+Cited by: §2.
+Ding et al. (2023)
+Z. Ding, Z. Liu, Z. Fang, K. Su, L. Zhu, and Z. Lu
+Multi-agent coordination via multi-level communication.
+In Proceedings of the 40th International Conference on Machine Learning (ICML 2023),
+Cited by: §1,
+§2,
+§4.2.1.
+Donti et al. (2017)
+P. L. Donti, B. Amos, and J. Z. Kolter
+Task-based end-to-end model learning in stochastic optimization.
+In Advances in Neural Information Processing Systems 30 (NeurIPS 2017), I. Guyon, U. V. Luxburg, S. Bengio, H. Wallach, R. Fergus, S. Vishwanathan, and R. Garnett (Eds.),
+pp. 5484–5494.
+Cited by: §1,
+§2.
+Elmachtoub and Grigas (2022)
+A. N. Elmachtoub and P. Grigas
+Smart “predict, then optimize”.
+Management Science 68 (1), pp. 9–26.
+Cited by: §1,
+§2.
+Farahmand et al. (2017)
+A. M. Farahmand, A. Barreto, and D. Nikovski
+Value-aware loss function for model-based reinforcement learning.
+arXiv preprint arXiv:1702.08892.
+Cited by: §2.
+Foerster et al. (2016)
+J. Foerster, Y. M. Assael, N. de Freitas, and S. Whiteson
+Learning to communicate with deep multi-agent reinforcement learning.
+In Advances in Neural Information Processing Systems 29 (NeurIPS 2016), D. Lee, M. Sugiyama, U. Luxburg, I. Guyon, and R. Garnett (Eds.),
+pp. 2137–2145.
+Cited by: §1,
+§2.
+Foerster et al. (2018)
+J. Foerster, G. Farquhar, T. Afouras, N. Nardelli, and S. Whiteson
+Counterfactual multi-agent policy gradients.
+In Proceedings of the 32nd AAAI Conference on Artificial Intelligence (AAAI 2018),
+pp. 2974–2982.
+Cited by: §2.
+Gabel and Riedmiller (2008)
+T. Gabel and M. Riedmiller
+Adaptive multi-agent reinforcement learning for dynamic coordination problems.
+In Proceedings of the 7th International Joint Conference on Autonomous Agents and Multiagent Systems (AAMAS),
+pp. 1383–1386.
+Cited by: §6.1.3,
+§6.1.3.
+Ghadimi and Wang (2018)
+S. Ghadimi and M. Wang
+Approximation methods for bilevel programming.
+In arXiv preprint arXiv:1802.02246,
+Cited by: §5.
+Ha and Schmidhuber (2018)
+D. Ha and J. Schmidhuber
+World models.
+arXiv preprint arXiv:1803.10122.
+Cited by: §2.
+Hafner et al. (2020)
+D. Hafner, T. Lillicrap, J. Ba, and M. Norouzi
+Dream to control: learning behaviors by latent imagination.
+In Proceedings of the 8th International Conference on Learning Representations (ICLR 2020),
+Addis Ababa, Ethiopia.
+Cited by: §2.
+He et al. (2016)
+H. He, J. Boyd-Graber, K. Kwok, and H. D. III
+Opponent modeling in deep reinforcement learning.
+In Proceedings of the 33rd International Conference on Machine Learning (ICML),
+pp. 1804–1813.
+Cited by: §2.
+Hernandez-Leal et al. (2017)
+P. Hernandez-Leal, M. Kaisers, T. Baarslag, and E. M. de Cote
+A survey of learning in multiagent environments: dealing with non-stationarity.
+arXiv preprint arXiv:1707.09183.
+Cited by: §2.
+Hestenes and Stiefel (1952)
+M. R. Hestenes and E. Stiefel
+Methods of conjugate gradients for solving linear systems.
+Journal of Research of the National Bureau of Standards 49 (6), pp. 409–436.
+Cited by: §4.3.6,
+§4.3.
+Jang et al. (2017)
+E. Jang, S. Gu, and B. Poole
+Categorical reparameterization with Gumbel-softmax.
+In Proceedings of the 5th International Conference on Learning Representations (ICLR 2017),
+Toulon, France.
+Cited by: §4.2.1.
+Jaques et al. (2019)
+N. Jaques, A. Lazaridou, E. Hughes, C. Gulcehre, P. A. Ortega, D. Strouse, J. Z. Leibo, and N. de Freitas
+Social influence as intrinsic motivation for multi-agent deep reinforcement learning.
+In Proceedings of the 36th International Conference on Machine Learning (ICML),
+pp. 3040–3049.
+Cited by: §4.2.3.
+Kraemer and Banerjee (2016)
+L. Kraemer and B. Banerjee
+Multi-agent reinforcement learning as a rehearsal for decentralized planning.
+Neurocomputing 190, pp. 82–94.
+Cited by: §1,
+§2.
+Krantz and Parks (2002)
+S. G. Krantz and H. R. Parks
+The implicit function theorem: history, theory, and applications.
+Birkhäuser, Boston, MA.
+Cited by: §B.1,
+§4.3.5,
+§4.3.
+Kullback and Leibler (1951)
+S. Kullback and R. A. Leibler
+On information and sufficiency.
+The Annals of Mathematical Statistics 22 (1), pp. 79–86.
+Cited by: §4.2.3.
+Lambert et al. (2020)
+N. Lambert, B. Amos, O. Yadan, and R. Calandra
+Objective mismatch in model-based reinforcement learning.
+In Proceedings of the 2nd Conference on Learning for Dynamics and Control (L4DC 2020),
+Berkeley, CA, pp. 761–770.
+Cited by: §1,
+§2,
+§4.3.
+Langley (2000)
+P. Langley
+Crafting papers on machine learning.
+In Proceedings of the 17th International Conference
+on Machine Learning (ICML 2000), P. Langley (Ed.),
+Stanford, CA, pp. 1207–1216.
+Cited by: §H.4.
+Lowe et al. (2017)
+R. Lowe, Y. Wu, A. Tamar, J. Harb, P. Abbeel, and I. Mordatch
+Multi-agent actor-critic for mixed cooperative-competitive environments.
+In Advances in Neural Information Processing Systems 30 (NeurIPS 2017),
+pp. 6379–6390.
+Cited by: §1,
+§2.
+Nikishin et al. (2022)
+E. Nikishin, R. Abachi, R. Agarwal, and P. Bacon
+Control-oriented model-based reinforcement learning with implicit differentiation.
+In Proceedings of the 36th AAAI Conference on Artificial Intelligence (AAAI 2022),
+pp. 7886–7894.
+Cited by: §B.1,
+§B.1,
+§B.2,
+§1,
+§2,
+§4.1.3,
+§4.3.5,
+§4.3,
+§4.
+Niu et al. (2021)
+Y. Niu, R. Paleja, and M. C. Gombolay
+Multi-agent graph-attention communication and teaming.
+In Proceedings of the 20th International Conference on Autonomous Agents and MultiAgent Systems (AAMAS 2021),
+pp. 964–973.
+Cited by: §2.
+Oliehoek et al. (2008)
+F. A. Oliehoek, M. T. J. Spaan, and N. Vlassis
+Optimal and approximate q-value functions for decentralized POMDPs.
+Journal of Artificial Intelligence Research 32, pp. 289–353.
+Cited by: §1,
+§2.
+Omidshafiei et al. (2017)
+S. Omidshafiei, J. Pazis, C. Amato, J. P. How, and J. Vian
+Deep decentralized multi-task multi-agent reinforcement learning under partial observability.
+In Proceedings of the 34th International Conference on Machine Learning (ICML),
+pp. 2681–2690.
+Cited by: §2.
+Papoudakis et al. (2019)
+G. Papoudakis, F. Christianos, A. Rahman, and S. V. Albrecht
+Dealing with non-stationarity in multi-agent deep reinforcement learning.
+arXiv preprint arXiv:1906.04737.
+Cited by: §2.
+Pinsker (1964)
+M. S. Pinsker
+Information and information stability of random variables and processes.
+Holden-Day.
+Cited by: §C.1.
+Polyak and Juditsky (1992)
+B. T. Polyak and A. B. Juditsky
+Acceleration of stochastic approximation by averaging.
+SIAM Journal on Control and Optimization 30 (4), pp. 838–855.
+Cited by: §4.3.2.
+Pronovost et al. (2003)
+P. J. Pronovost, D. C. Angus, T. Dorman, K. A. Robinson, T. T. Dremsizov, and T. L. Young
+Physician staffing patterns and clinical outcomes in critically ill patients: a systematic review.
+JAMA 288 (17), pp. 2151–2162.
+Cited by: §1.
+Rashid et al. (2018)
+T. Rashid, M. Samvelyan, C. S. de Witt, G. Farquhar, J. Foerster, and S. Whiteson
+QMIX: monotonic value function factorisation for deep multi-agent reinforcement learning.
+In Proceedings of the 35th International Conference on Machine Learning (ICML 2018),
+pp. 4295–4304.
+Cited by: §1,
+§1,
+§2,
+§4.
+Shewchuk (1994)
+J. R. Shewchuk
+An introduction to the conjugate gradient method without the agonizing pain.
+Note: Technical Report CMU-CS-94-125
+Cited by: §4.3.6.
+Son et al. (2019)
+K. Son, D. Kim, W. J. Kang, D. E. Hostallero, and Y. Yi
+QTRAN: learning to factorize with transformation for cooperative multi-agent reinforcement learning.
+In Proceedings of the 36th International Conference on Machine Learning (ICML 2019),
+pp. 5887–5896.
+Cited by: §2.
+Sukhbaatar et al. (2016)
+S. Sukhbaatar, A. Szlam, and R. Fergus
+Learning multiagent communication with backpropagation.
+In Advances in Neural Information Processing Systems 29 (NeurIPS 2016), D. Lee, M. Sugiyama, U. Luxburg, I. Guyon, and R. Garnett (Eds.),
+pp. 2244–2252.
+Cited by: §1,
+§2.
+Sunehag et al. (2018)
+P. Sunehag, G. Lever, A. Gruslys, W. M. Czarnecki, V. Zambaldi, M. Jaderberg, M. Lanctot, N. Sonnerat, J. Z. Leibo, K. Tuyls, and T. Graepel
+Value-decomposition networks for cooperative multi-agent learning.
+In Proceedings of the 17th International Conference on Autonomous Agents and MultiAgent Systems (AAMAS 2018),
+pp. 2085–2087.
+Cited by: §2.
+Sutton and Barto (2018)
+R. S. Sutton and A. G. Barto
+Reinforcement learning: an introduction.
+Second edition, MIT Press, Cambridge, MA.
+Cited by: Theorem B.1,
+§5.
+Tang and Khalil (2024)
+B. Tang and E. B. Khalil
+PyEPO: a PyTorch-based end-to-end predict-then-optimize library for linear and integer programming.
+Mathematical Programming Computation.
+Note: To appear
+Cited by: §1,
+§1,
+§2.
+Tsybakov (2009)
+A. B. Tsybakov
+Introduction to nonparametric estimation.
+Springer.
+Cited by: §C.1,
+§C.1,
+§C.1.
+Vincent et al. (2009)
+J. Vincent, Y. Sakr, C. L. Sprung, V. M. Ranieri, K. Reinhart, H. Gerlach, R. Moreno, J. Carlet, J. L. Gall, and D. Payen
+The prevalence of nosocomial infection in intensive care units in Europe: results of the European prevalence of infection in intensive care (EPIC II) study.
+JAMA 302 (21), pp. 2323–2329.
+Cited by: §1.
+von Stackelberg (1952)
+H. von Stackelberg
+The theory of the market economy.
+Oxford University Press.
+Note: English translation of Marktform und Gleichgewicht (1934)
+Cited by: §4.2.
+Wang et al. (2021)
+J. Wang, Z. Ren, T. Liu, Y. Yu, and C. Zhang
+QPLEX: duplex dueling multi-agent Q-learning.
+In Proceedings of the 9th International Conference on Learning Representations (ICLR 2021),
+Cited by: §2.
+Wang et al. (2020)
+T. Wang, J. Wang, C. Zheng, and C. Zhang
+Learning nearly decomposable value functions via communication minimization.
+In Proceedings of the 8th International Conference on Learning Representations (ICLR 2020),
+Cited by: §1,
+§2.
+Wei et al. (2018)
+E. Wei, D. Wicke, D. Freelan, and S. Luke
+Multiagent soft q-learning.
+In AAAI Spring Symposium on Distributed Autonomous Robotic Systems,
+Cited by: §4.2.
+Yu et al. (2022)
+C. Yu, A. Velu, E. Vinitsky, J. Gao, Y. Wang, A. Bayen, and Y. Wu
+The surprising effectiveness of PPO in cooperative multi-agent games.
+Advances in Neural Information Processing Systems 35, pp. 24611–24624.
+Cited by: §1,
+§2.
+Yuan et al. (2022)
+Z. Yuan, Y. Lu, K. Li, and Z. Lu
+Multi-agent incentive communication via decentralized teammate modeling.
+In Proceedings of the AAAI Conference on Artificial Intelligence,
+Vol. 36, pp. 9466–9474.
+Cited by: §2,
+§4.3.3,
+§4.3.3.
+Zheng et al. (2022)
+L. Zheng, T. Fiez, Z. Alumbaugh, B. Chasnov, and L. J. Ratliff
+Stackelberg actor-critic: game-theoretic reinforcement learning algorithms.
+In Proceedings of the 36th AAAI Conference on Artificial Intelligence (AAAI 2022),
+Vol. 36, Virtual Event, pp. 9078–9086.
+External Links: Link
+Cited by: §1,
+§4.
+Zhou et al. (2020)
+M. Zhou, Z. Liu, P. Sui, Y. Li, and Y. Y. Chung
+Learning implicit credit assignment for cooperative multi-agent reinforcement learning.
+In Advances in Neural Information Processing Systems (NeurIPS),
+pp. 11853–11864.
+Cited by: §2.
+Appendix A Notation
+Symbol
+Definition
+Environment
+NN
+Number of agents
+𝒮\mathcal{S}
+Global state space
+s∈𝒮s\in\mathcal{S}
+Global state (concatenation of local observations)
+𝒜i\mathcal{A}_{i}
+Action space for agent ii
+ai∈𝒜ia_{i}\in\mathcal{A}_{i}
+Action taken by agent ii
+𝐚=(a1,…,aN)\mathbf{a}=(a_{1},\ldots,a_{N})
+Joint action across all agents
+oi∈ℝdlocalo_{i}\in\mathbb{R}^{d_{\text{local}}}
+Local observation for agent ii
+r∈ℝr\in\mathbb{R}
+Scalar reward from environment
+γ∈[0,1)\gamma\in[0,1)
+Discount factor
+TT
+Number of training iterations
+TwT_{w}
+Warmup period for SeqComm annealing
+Communication
+M∈ℝN×dmM\in\mathbb{R}^{N\times d_{m}}
+Message tensor (all agents’ messages)
+mi∈ℝdmm_{i}\in\mathbb{R}^{d_{m}}
+Message for agent ii
+mibasem_{i}^{\text{base}}
+Base message from encoder (before refinement)
+M1:i−1M_{1:i-1}
+Predecessor messages (from higher-priority agents)
+dmd_{m}
+Message dimension (embedding size)
+ϕθ\phi_{\theta}
+Communication module (parameters θ\theta)
+Refineθ\text{Refine}_{\theta}
+Message refinement network
+α\alpha
+Refinement scaling coefficient
+GPi\text{GP}_{i}
+Guidance potential for agent ii (team improvement)
+π\pi
+Priority ordering (π1,…,πN)(\pi_{1},\ldots,\pi_{N})
+World Model & Critic
+fθf_{\theta}
+World model (parameters θ\theta)
+(r^,s^′)(\hat{r},\hat{s}^{\prime})
+Predicted reward and next state
+QwQ_{w}
+Critic function parameterized by ww
+w¯\bar{w}
+Target critic parameters (EMA)
+τema\tau_{\text{ema}}
+EMA coefficient for target network
+Vw​(s,M)V_{w}(s,M)
+Soft value function
+τ\tau
+Temperature for soft value and Gumbel-softmax
+Δ​Qj​(m)\Delta Q_{j}(m)
+Decision quality improvement for agent jj from message mm
+Δ​QMC\Delta Q^{\text{MC}}
+Monte Carlo estimate of Δ​Q\Delta Q
+Δ​Qcritic\Delta Q^{\text{critic}}
+Critic-based estimate of Δ​Q\Delta Q
+GjG_{j}
+Monte Carlo return for agent jj
+KK
+Number of MC rollout samples
+Optimization & Loss Functions
+ℒmodel​(w,θ)\mathcal{L}_{\text{model}}(w;\theta)
+Model-based TD loss (inner loop)
+ℒtrue​(w,θ)\mathcal{L}_{\text{true}}(w;\theta)
+True environment TD loss (outer loop)
+ℒVA​(θ)\mathcal{L}_{\text{VA}}(\theta)
+Value-aware communication loss
+ℒinf​(θ)\mathcal{L}_{\text{inf}}(\theta)
+Counterfactual influence loss
+ℒaware​(w)\mathcal{L}_{\text{aware}}(w)
+Message-awareness loss (prevents apathy)
+λVA\lambda_{\text{VA}}
+Weight for value-aware loss
+λinf\lambda_{\text{inf}}
+Weight for counterfactual influence loss
+λaware\lambda_{\text{aware}}
+Weight for message-awareness loss
+ϵmargin\epsilon_{\text{margin}}
+Margin for message-awareness hinge loss
+βt\beta_{t}
+MC-to-critic annealing coefficient
+ηθ\eta_{\theta}
+Learning rate for world model parameters
+𝒟\mathcal{D}, 𝒟env\mathcal{D}_{\text{env}}
+Model and environment datasets
+BB
+Batch size
+HH
+Hessian matrix ∇w​w2ℒmodel\nabla^{2}_{ww}\mathcal{L}_{\text{model}}
+bb
+Gradient vector ∇wℒtrue\nabla_{w}\mathcal{L}_{\text{true}}
+v∗v^{*}
+Adjoint variable (solution to H​v=bHv=b)
+λ\lambda
+CG damping coefficient for numerical stability
+KCGK_{\text{CG}}
+Number of conjugate gradient iterations
+KinnerK_{\text{inner}}
+Number of inner loop iterations
+Information Theory
+ℐi\mathcal{I}_{i}
+Coordination information gap for agent ii
+I⁡(⋅,⋅)I(\cdot;\cdot)
+Mutual information
+H⁡(⋅)H(\cdot)
+Entropy
+DKL(⋅∥⋅)D_{\text{KL}}(\cdot\|\cdot)
+Kullback-Leibler divergence
+∥⋅∥TV\|\cdot\|_{\text{TV}}
+Total variation distance
+Table 3: Notation summary for methodology section.
+Symbol
+Definition
+Environment
+Hospital Environment
+CC
+Number of specialties (condition types)
+PP
+Number of patients
+ξj∈{1,2,3}\xi_{j}\in\{1,2,3\}
+Patient jj’s condition type
+σi∈{1,2,3}\sigma_{i}\in\{1,2,3\}
+Agent ii’s specialty
+hj,c∈[0,1]h_{j,c}\in[0,1]
+Hidden risk for patient jj under condition cc
+ρblind,i\rho_{\text{blind},i}
+Blind treatment penalty for agent ii
+ρdrug\rho_{\text{drug}}
+Drug interaction penalty
+ρresource\rho_{\text{resource}}
+Resource constraint penalty
+Dc,c′D_{c,c^{\prime}}
+Drug interaction severity matrix
+Convergence Analysis
+LRL_{R}
+Lipschitz constant of reward function
+dπd^{\pi}
+State distribution under policy π\pi
+μ\mu
+Strong convexity parameter
+LL
+Smoothness parameter
+ρ\rho
+Lipschitz constant of Hessian
+κ\kappa
+Condition number (L/μL/\mu)
+ϵ(t)\epsilon^{(t)}
+Hypergradient estimation error at iteration tt
+Table 4: Notation summary for methodology section.
+Appendix B Optimal Model Design Details
+B.1 Implicit Function Theorem for Hypergradients
+The hypergradient computation in SeqComm-DFL follows the Implicit Function Theorem (Krantz and Parks, 2002) (IFT) approach developed by Nikishin et al. (2022) for bilevel optimization in reinforcement learning. At the inner-loop optimum w∗​(θ)w^{*}(\theta), the gradient vanishes: ∇wℒmodel​(w∗,θ)=0\nabla_{w}\mathcal{L}_{\text{model}}(w^{*};\theta)=0. Differentiating this optimality condition implicitly yields:
+d​w∗d​θ=−[∇w​w2​ℒmodel​(w∗,θ)]−1​∇θ​w2ℒmodel​(w∗,θ)\frac{dw^{*}}{d\theta}=-\left[\nabla^{2}_{ww}\mathcal{L}_{\text{model}}(w^{*},\theta)\right]^{-1}\nabla^{2}_{\theta w}\mathcal{L}_{\text{model}}(w^{*},\theta)
+(12)
+This IFT-based hypergradient enables differentiating through the inner optimization without backpropagating through gradient steps, avoiding vanishing/exploding gradients. The full derivation, regularity conditions (strong convexity, smoothness, Hessian invertibility), and Bellman-specific structure (I−γ​Pθ⊤​DI-\gamma P_{\theta}^{\top}D) are provided in Nikishin et al. (2022). Our contribution is extending this framework to multi-agent communication learning, where the world model must predict message-conditioned transitions.
+B.2 Q∗Q^{*} Approximation Bounds
+The following bounds on Q∗Q^{*} approximation error are adapted from Nikishin et al. (2022):
+Theorem B.1 (Q∗Q^{*} Approximation Error).
+(i) MLE bound: With dynamics error ϵP\epsilon_{P} and reward error ϵR\epsilon_{R}:
+‖Q∗−Q^MLE‖∞≤ϵR1−γ+γ​ϵP​rmax2​(1−γ)2\|Q^{*}-\hat{Q}_{\text{MLE}}\|_{\infty}\leq\frac{\epsilon_{R}}{1-\gamma}+\frac{\gamma\epsilon_{P}r_{\max}}{2(1-\gamma)^{2}}
+(13)
+Proof.
+MLE Bound: Let P^\hat{P} and R^\hat{R} be the learned transition and reward models with errors ϵP=sups,a∥P(⋅|s,a)−P^(⋅|s,a)∥1\epsilon_{P}=\sup_{s,a}\|P(\cdot|s,a)-\hat{P}(\cdot|s,a)\|_{1} and ϵR=sups,a|R⁡(s,a)−R^​(s,a)|\epsilon_{R}=\sup_{s,a}|R(s,a)-\hat{R}(s,a)|.
+The Bellman operator for the learned model is:
+(ℬP^,R^​Q)​(s,a)=R^​(s,a)+γ​∑s′P^​(s′|s,a)​maxa′⁡Q⁡(s′,a′)(\mathcal{B}_{\hat{P},\hat{R}}Q)(s,a)=\hat{R}(s,a)+\gamma\sum_{s^{\prime}}\hat{P}(s^{\prime}|s,a)\max_{a^{\prime}}Q(s^{\prime},a^{\prime})
+(14)
+By the triangle inequality and Bellman operator contraction property (Bertsekas, 2012):
+‖Q∗−Q^MLE‖∞≤‖Q∗−ℬP^,R^​Q∗‖∞+‖ℬP^,R^​Q∗−Q^MLE‖∞\|Q^{*}-\hat{Q}_{\text{MLE}}\|_{\infty}\leq\|Q^{*}-\mathcal{B}_{\hat{P},\hat{R}}Q^{*}\|_{\infty}+\|\mathcal{B}_{\hat{P},\hat{R}}Q^{*}-\hat{Q}_{\text{MLE}}\|_{\infty}
+(15)
+The second term contracts at rate γ\gamma, while the first term (model error) satisfies:
+‖Q∗−ℬP^,R^​Q∗‖∞\displaystyle\|Q^{*}-\mathcal{B}_{\hat{P},\hat{R}}Q^{*}\|_{\infty}
+≤ϵR+γ​ϵP​‖Q∗‖∞\displaystyle\leq\epsilon_{R}+\gamma\epsilon_{P}\|Q^{*}\|_{\infty}
+(16)
+≤ϵR+γ​ϵP​rmax1−γ\displaystyle\leq\epsilon_{R}+\gamma\epsilon_{P}\frac{r_{\text{max}}}{1-\gamma}
+(17)
+Solving the fixed-point inequality:
+‖Q∗−Q^MLE‖∞≤ϵR1−γ+γ​ϵP​rmax2​(1−γ)2\|Q^{*}-\hat{Q}_{\text{MLE}}\|_{\infty}\leq\frac{\epsilon_{R}}{1-\gamma}+\frac{\gamma\epsilon_{P}r_{\text{max}}}{2(1-\gamma)^{2}}
+(18)
+(ii) OMD bound: With Bellman residual error ϵ\epsilon:
+‖Q∗−Q^OMD‖∞≤ϵ1−γ\|Q^{*}-\hat{Q}_{\text{OMD}}\|_{\infty}\leq\frac{\epsilon}{1-\gamma}
+(19)
+DFL Bound: SeqComm-DFL minimizes the Bellman residual ϵ=sups,a|(ℬ​Q)​(s,a)−Q⁡(s,a)|\epsilon=\sup_{s,a}|(\mathcal{B}Q)(s,a)-Q(s,a)| directly via the outer loop, where (ℬ​Q)​(s,a)=𝔼⁡[r+γ​maxa′⁡Q⁡(s′,a′)](\mathcal{B}Q)(s,a)=\mathbb{E}[r+\gamma\max_{a^{\prime}}Q(s^{\prime},a^{\prime})] is the Bellman operator (Sutton and Barto, 2018; Bertsekas, 2012). By the Bellman error propagation lemma:
+‖Q∗−Q^DFL‖∞≤ϵ1−γ\|Q^{*}-\hat{Q}_{\text{DFL}}\|_{\infty}\leq\frac{\epsilon}{1-\gamma}
+(20)
+This avoids the (1−γ)−2(1-\gamma)^{-2} factor because the world model is trained to minimize TD error on decision-relevant trajectories, not raw prediction error. The key difference: MLE has (1−γ)−2(1-\gamma)^{-2} factor due to compounding transition errors, while DFL directly minimizes Bellman residual.
+∎
+Appendix C Detailed Proofs
+C.1 Proof of Theorem 5.1 Necessity and Value of Communication under Partial Observability
+We begin by defining the information-theoretic requirements for coordination. In a Dec-POMDP, an agent’s inability to see the global state ss creates a discrepancy between its local policy and the team-optimal policy.
+Definition C.1 (Coordination Information Gap).
+The coordination information gap for agent ii is defined as:
+Ii=ℐ⁡(s;ai∗|oi)=ℋ⁡(ai∗|oi)−ℋ⁡(ai∗|s)I_{i}=\mathcal{I}(s;a_{i}^{*}|o_{i})=\mathcal{H}(a_{i}^{*}|o_{i})-\mathcal{H}(a_{i}^{*}|s)
+(21)
+where ai∗a_{i}^{*} is the optimal action given full state access. IiI_{i} quantifies the information about optimal behavior contained in the global state ss that is structurally inaccessible from local observation oio_{i}.
+Proposition C.2 (Communication Value Lower Bound).
+Let 𝛑comm\boldsymbol{\pi}^{\text{comm}} be a joint policy utilizing SeqComm messages and 𝛑no-comm\boldsymbol{\pi}^{\text{no-comm}} be a policy restricted to local observations. For an environment with Lipschitz reward constant LRL_{R} and discount factor γ\gamma, the expected performance gain from communication satisfies:
+𝔼⁡[V𝝅comm]−𝔼⁡[V𝝅no-comm]≥LR1−γ​∑i=1N2​ln⁡2⋅Ii⋅Var​(ai∗)\mathbb{E}[V^{\boldsymbol{\pi}^{\text{comm}}}]-\mathbb{E}[V^{\boldsymbol{\pi}^{\text{no-comm}}}]\geq\frac{L_{R}}{1-\gamma}\sum_{i=1}^{N}\sqrt{2\ln 2\cdot I_{i}\cdot\text{Var}(a_{i}^{*})}
+(22)
+Proof.
+The proof proceeds in five steps by connecting information gaps to policy suboptimality via concentration inequalities.
+Step 1: Policy Deviation. Without communication, agent ii must select actions based only on local observation oio_{i}. Under a stochastic policy πino-comm​(a|oi)\pi^{\text{no-comm}}_{i}(a|o_{i}) (which explores to handle partial observability), the expected action deviates from the optimal policy πi∗​(a|s)\pi^{*}_{i}(a|s) which has access to full state ss. Let δi​(s)=𝔼a∼πino-comm​[a|s]−𝔼a∼πi∗​[a|s]\delta_{i}(s)=\mathbb{E}_{a\sim\pi^{\text{no-comm}}_{i}}[a|s]-\mathbb{E}_{a\sim\pi^{*}_{i}}[a|s] denote this deviation.
+Step 2: TVD and Pinsker’s Inequality. By Pinsker’s inequality (Pinsker, 1964; Tsybakov, 2009):
+‖πino-comm−πi∗‖TV≤12DKL(π∗i∥πno-commi)\|\pi^{\text{no-comm}}_{i}-\pi^{*}_{i}\|_{\text{TV}}\leq\sqrt{\frac{1}{2}D_{\text{KL}}(\pi^{*}_{i}\|\pi^{\text{no-comm}}_{i})}
+(23)
+where the total variation distance (TVD) is ‖P−Q‖TV=supA|P⁡(A)−Q⁡(A)|\|P-Q\|_{\text{TV}}=\sup_{A}|P(A)-Q(A)|. The coefficient is 1/2\sqrt{1/2} because δ⁡(P,Q)≤(1/2)DKL(P∥Q)\delta(P,Q)\leq\sqrt{(1/2)D_{\text{KL}}(P\|Q)} in the standard form according to (Tsybakov, 2009).
+Step 3: Linking KL-Divergence to Information Gap. The expected KL-divergence (with expectation over states s∼dπ∗s\sim d^{\pi^{*}}, the state distribution under optimal policy) lower bounds the information gap:
+𝔼s∼dπ∗[DKL(πi∗(⋅|s)∥πino-comm(⋅|oi))]≥I(s;ai∗|oi)=ℐi\mathbb{E}_{s\sim d^{\pi^{*}}}[D_{\text{KL}}(\pi^{*}_{i}(\cdot|s)\|\pi^{\text{no-comm}}_{i}(\cdot|o_{i}))]\geq I(s;a^{*}_{i}|o_{i})=\mathcal{I}_{i}
+(24)
+This inequality follows from the data processing inequality (Csiszár and Körner, 2011): since πino-comm\pi^{\text{no-comm}}_{i} is a function of oio_{i} only (not the full state ss), the mutual information I⁡(s;ai∗|oi)I(s;a^{*}_{i}|o_{i}) quantifies the irreducible information gap between what the optimal policy needs (ss) and what the local policy has access to (oio_{i}). The KL-divergence measures how distinguishable the two policies are on average; by Pinsker’s inequality and the variational characterization of mutual information, this distinguishability must be at least as large as the information gap ℐi\mathcal{I}_{i}. Intuitively, if the policies differ significantly (large KL), it’s because the optimal policy has access to coordination-critical information in ss that oio_{i} lacks.
+For discrete action spaces, the variance of the optimal action relates to TVD via (Tsybakov, 2009):
+𝔼⁡[|δi​(s)|]≥2​ln⁡2⋅ℐi⋅Var​(ai∗)\mathbb{E}[|\delta_{i}(s)|]\geq\sqrt{2\ln 2\cdot\mathcal{I}_{i}\cdot\text{Var}(a^{*}_{i})}
+(25)
+Step 4: Translation to Value Difference. The reward function R⁡(s,𝐚)R(s,\mathbf{a}) is LRL_{R}-Lipschitz in the joint action space as done by 𝐚\mathbf{a} (Bertsekas, 2012). Therefore, action deviations translate to value differences:
+|V𝝅∗​(s)−V𝝅no-comm​(s)|≥LR1−γ​𝔼​[‖𝐚∗−𝐚no-comm‖]|V^{\boldsymbol{\pi}^{*}}(s)-V^{\boldsymbol{\pi}^{\text{no-comm}}}(s)|\geq\frac{L_{R}}{1-\gamma}\mathbb{E}[\|\mathbf{a}^{*}-\mathbf{a}^{\text{no-comm}}\|]
+(26)
+where 𝔼⁡[‖𝐚∗−𝐚no-comm‖]=∑i=1N𝔼⁡[|δi​(s)|]\mathbb{E}[\|\mathbf{a}^{*}-\mathbf{a}^{\text{no-comm}}\|]=\sum_{i=1}^{N}\mathbb{E}[|\delta_{i}(s)|] by the triangle inequality. That is, the norm of the joint action deviation is the sum of individual deviations.
+Step 5: Summing over agents and noting 𝝅comm\boldsymbol{\pi}^{\text{comm}} can approximate 𝝅∗\boldsymbol{\pi}^{*}:
+𝔼⁡[V𝝅comm]−𝔼⁡[V𝝅no-comm]≥LR1−γ​∑i=1N2​ln⁡2⋅ℐi⋅Var​(ai∗)\mathbb{E}[V^{\boldsymbol{\pi}^{\text{comm}}}]-\mathbb{E}[V^{\boldsymbol{\pi}^{\text{no-comm}}}]\geq\frac{L_{R}}{1-\gamma}\sum_{i=1}^{N}\sqrt{2\ln 2\cdot\mathcal{I}_{i}\cdot\text{Var}(a^{*}_{i})}
+(27)
+∎
+Intuition for Readers: This bound proves that communication is not just "helpful" but mathematically necessary when Ii>0I_{i}>0. In our Hospital benchmark, IiI_{i} is high because specific drug interaction risks are specialty-gated; the cardiologist literally cannot see the information required for the optimal team decision without the message from the neurologist.
+C.2 Proof of Theorem 5.3 (Convergence)
+To establish the convergence of the bilevel SeqComm-DFL optimization, we first define the necessary regularity conditions. These ensure the stability of the Implicit Function Theorem (IFT) application and the reliability of the Conjugate Gradient (CG) solver.
+Assumption C.3 (Regularity Conditions).
+We assume the following properties for the model-based loss ℒmodel​(w,θ)\mathcal{L}_{\text{model}}(w;\theta) and the true environment loss ℒtrue​(w,θ)\mathcal{L}_{\text{true}}(w;\theta):
+1.
+Strong Convexity: ℒmodel​(w,θ)\mathcal{L}_{\text{model}}(w;\theta) is μ\mu-strongly convex in ww for a fixed θ\theta.
+2.
+Smoothness: Both ℒmodel\mathcal{L}_{\text{model}} and ℒtrue\mathcal{L}_{\text{true}} are LL-smooth in ww and θ\theta.
+3.
+Bounded Gradients: ‖∇θℒtrue‖\|\nabla_{\theta}\mathcal{L}_{\text{true}}\| and ‖∇wℒtrue‖\|\nabla_{w}\mathcal{L}_{\text{true}}\| are bounded by GG.
+4.
+Lipschitz Hessian: The Hessian ∇w​w2ℒmodel\nabla^{2}_{ww}\mathcal{L}_{\text{model}} is ρ\rho-Lipschitz with respect to θ\theta.
+Innovation: Unlike standard model-based reinforcement learning, SeqComm-DFL must account for the fact that we do not solve the inner loop (critic training) or the linear system (CG) perfectly. We decompose the hypergradient estimation error ϵ\epsilon into two components: ϵinner\epsilon_{\text{inner}} and ϵCG\epsilon_{\text{CG}} .
+Proposition C.4 (Hypergradient Estimation Error Decomposition).
+With KK inner iterations and KCGK_{\text{CG}} CG iterations:
+‖∇θℒtrue^−∇θℒtrue‖≤ρ​Gμ​‖w(K)−w∗‖+(κ−1κ+1)KCG​G\|\widehat{\nabla_{\theta}\mathcal{L}_{\text{true}}}-\nabla_{\theta}\mathcal{L}_{\text{true}}\|\leq\frac{\rho G}{\mu}\|w^{(K)}-w^{*}\|+\left(\frac{\kappa-1}{\kappa+1}\right)^{K_{\text{CG}}}G
+(28)
+where κ=(L+λ)/(μ+λ)\kappa=(L+\lambda)/(\mu+\lambda) represents the damped Hessian condition number.
+Proof of Theorem 5.3.
+Step 1: Descent Lemma. By LL-smoothness of ℒtrue\mathcal{L}_{\text{true}} (Assumption C.3), the standard descent lemma (Bertsekas, 2012) gives:
+ℒtrue​(θ(t+1))≤ℒtrue​(θ(t))−ηθ​⟨∇θℒtrue​(θ(t)),g(t)⟩+L​ηθ22​‖g(t)‖2\mathcal{L}_{\text{true}}(\theta^{(t+1)})\leq\mathcal{L}_{\text{true}}(\theta^{(t)})-\eta_{\theta}\langle\nabla_{\theta}\mathcal{L}_{\text{true}}(\theta^{(t)}),g^{(t)}\rangle+\frac{L\eta_{\theta}^{2}}{2}\|g^{(t)}\|^{2}
+(29)
+where θ(t+1)=θ(t)−ηθ​g(t)\theta^{(t+1)}=\theta^{(t)}-\eta_{\theta}g^{(t)} is the parameter update. This inequality captures the one-step decrease in loss: the first term is the linear decrease from descending along g(t)g^{(t)}, while the second term is the quadratic penalty from curvature. Our goal is to relate the inner product ⟨∇θℒtrue,g(t)⟩\langle\nabla_{\theta}\mathcal{L}_{\text{true}},g^{(t)}\rangle to the squared gradient norm ‖∇θℒtrue‖2\|\nabla_{\theta}\mathcal{L}_{\text{true}}\|^{2} to establish convergence.
+Step 2: Bias Decomposition. Let ϵ(t)=‖g(t)−g¯(t)‖\epsilon^{(t)}=\|g^{(t)}-\bar{g}^{(t)}\| be the hypergradient estimation error from Proposition C.4. By Cauchy-Schwarz:
+⟨∇θℒtrue​(θ(t)),g(t)⟩\displaystyle\langle\nabla_{\theta}\mathcal{L}_{\text{true}}(\theta^{(t)}),g^{(t)}\rangle
+=⟨g¯(t),g¯(t)⟩+⟨g¯(t),g(t)−g¯(t)⟩\displaystyle=\langle\bar{g}^{(t)},\bar{g}^{(t)}\rangle+\langle\bar{g}^{(t)},g^{(t)}-\bar{g}^{(t)}\rangle
+(30)
+≥‖g¯(t)‖2−‖g¯(t)‖⋅ϵ(t)\displaystyle\geq\|\bar{g}^{(t)}\|^{2}-\|\bar{g}^{(t)}\|\cdot\epsilon^{(t)}
+(31)
+≥‖∇θℒtrue​(θ(t))‖2−G​ϵ(t)\displaystyle\geq\|\nabla_{\theta}\mathcal{L}_{\text{true}}(\theta^{(t)})\|^{2}-G\epsilon^{(t)}
+(32)
+where GG is the gradient bound from Assumption C.3.
+Step 3: Rearrange and Bound. Substituting into Step 1 and using ‖g(t)‖≤G+ϵ(t)\|g^{(t)}\|\leq G+\epsilon^{(t)}:
+‖∇θℒtrue​(θ(t))‖2\displaystyle\|\nabla_{\theta}\mathcal{L}_{\text{true}}(\theta^{(t)})\|^{2}
+≤ℒtrue​(θ(t))−ℒtrue​(θ(t+1))ηθ+G​ϵ(t)+L​ηθ2​(G+ϵ(t))2\displaystyle\leq\frac{\mathcal{L}_{\text{true}}(\theta^{(t)})-\mathcal{L}_{\text{true}}(\theta^{(t+1)})}{\eta_{\theta}}+G\epsilon^{(t)}+\frac{L\eta_{\theta}}{2}(G+\epsilon^{(t)})^{2}
+(33)
+Step 4: Telescope and Average. Summing over iterations t=0,…,T−1t=0,\ldots,T-1 and taking expectations 𝔼⁡[⋅]\mathbb{E}[\cdot] over the randomness in gradient estimation and data sampling:
+1T​∑t=0T−1𝔼​‖∇θℒtrue​(θ(t))‖2\displaystyle\frac{1}{T}\sum_{t=0}^{T-1}\mathbb{E}\|\nabla_{\theta}\mathcal{L}_{\text{true}}(\theta^{(t)})\|^{2}
+≤𝔼⁡[ℒtrue​(θ(0))]−𝔼⁡[ℒtrue​(θ(T))]T​ηθ+G​ϵ¯+L​ηθ2​(G+ϵ¯)2\displaystyle\leq\frac{\mathbb{E}[\mathcal{L}_{\text{true}}(\theta^{(0)})]-\mathbb{E}[\mathcal{L}_{\text{true}}(\theta^{(T)})]}{T\eta_{\theta}}+G\bar{\epsilon}+\frac{L\eta_{\theta}}{2}(G+\bar{\epsilon})^{2}
+(34)
+where ϵ¯=1T​∑t𝔼⁡[ϵ(t)]\bar{\epsilon}=\frac{1}{T}\sum_{t}\mathbb{E}[\epsilon^{(t)}]. Since ℒtrue≥0\mathcal{L}_{\text{true}}\geq 0 and with learning rate ηθ=O⁡(1/T)\eta_{\theta}=O(1/\sqrt{T}) and error ϵ¯=O⁡(1/T)\bar{\epsilon}=O(1/\sqrt{T}) (from Proposition C.4):
+1T​∑t=0T−1𝔼​‖∇θℒtrue​(θ(t))‖2=O⁡(1/T)\frac{1}{T}\sum_{t=0}^{T-1}\mathbb{E}\|\nabla_{\theta}\mathcal{L}_{\text{true}}(\theta^{(t)})\|^{2}=O(1/\sqrt{T})
+(35)
+This establishes the O⁡(1/T)O(1/\sqrt{T}) convergence rate for the expected squared gradient norm.
+∎
+Note to readers: Despite the complexity of differentiating through sequential communication protocols and endogenous uncertainty, the framework achieves the standard O⁡(1/T)O(1/\sqrt{T}) convergence rate of first-order methods.
+Appendix D Computational Complexity Analysis
+Centralized: Enumerate all |𝒜|N|\mathcal{A}|^{N} joint actions (intractable for N>5N>5). Factored: Compute NN agent utilities, each over |𝒜||\mathcal{A}| actions, then mix.
+For N=3N=3 agents with |𝒜|=3|\mathcal{A}|=3 actions, this yields a 3×3\times speedup (2727 vs. 99 evaluations). For N=8N=8 agents (SMAC 8m), the speedup is ∼270×\sim 270\times. This efficiency enables scaling to larger teams while preserving the Stackelberg communication structure within the factorization.
+Table 5: Complexity comparison.
+Operation
+Orig. SeqComm
+SeqComm-DFL
+Action selection
+O⁡(F⋅H)=O⁡(40)O(F\cdot H)=O(40)
+O⁡(|𝒜|)=O⁡(3)O(|\mathcal{A}|)=O(3)
+Intention calc.
+FF trajectory samples
+Deterministic rollout
+Rollout horizon
+20
+3–5
+Forward passes/step
+O⁡(40​N)O(40N)
+O⁡(1.5​N)O(1.5N)
+Speedup
+1×1\times
+∼25×\sim 25\times
+Appendix E Full SMAC Results
+Table 6: Complete SMAC benchmark results (10 seeds).
+Map
+SeqComm-DFL
+Orig. SeqComm
+OMD
+2s_vs_1sc
+0.78 ±\pm 0.04
+0.65 ±\pm 0.06
+0.52 ±\pm 0.08
+3s_vs_5z
+0.71 ±\pm 0.05
+0.58 ±\pm 0.07
+0.41 ±\pm 0.09
+2s3z
+0.64 ±\pm 0.06
+0.49 ±\pm 0.08
+0.35 ±\pm 0.10
+8m
+0.59 ±\pm 0.07
+0.45 ±\pm 0.09
+0.31 ±\pm 0.11
+Appendix F Ablation Study Details
+Table 7: Component ablation (Hospital environment, 3 agents, 10 seeds).
+Configuration
+Episode Reward
+Δ\Delta vs Full
+Full SeqComm-DFL
+−48.3±5.2-48.3\pm 5.2
+—
+w/o Value-Aware (ℒVA\mathcal{L}_{\text{VA}})
+−54.1±6.1-54.1\pm 6.1
+−12.0%-12.0\%
+w/o Stackelberg (parallel msgs)
+−52.7±5.8-52.7\pm 5.8
+−9.1%-9.1\%
+w/o Guidance Potential
+−50.9±5.5-50.9\pm 5.5
+−5.4%-5.4\%
+w/o Counterfactual Influence
+−49.8±5.4-49.8\pm 5.4
+−3.1%-3.1\%
+Table 8: Communication dimension ablation.
+dmd_{m}
+Hospital Reward
+SMAC Win Rate
+4
+−56.2±6.3-56.2\pm 6.3
+0.69 ±\pm 0.05
+8 (default)
+−48.3±5.2-48.3\pm 5.2
+0.78 ±\pm 0.04
+16
+−47.8±5.4-47.8\pm 5.4
+0.77 ±\pm 0.05
+32
+−49.1±5.7-49.1\pm 5.7
+0.75 ±\pm 0.05
+Appendix G Hyperparameters
+Table 9: Hyperparameters for all experiments.
+Parameter
+Notation
+Value
+World model LR
+ηθ\eta_{\theta}
+3×10−53\times 10^{-5}
+Critic LR
+ηw\eta_{w}
+1×10−41\times 10^{-4}
+CG damping
+λ\lambda
+0.1
+Target EMA
+τema\tau_{\text{ema}}
+0.99
+Discount
+γ\gamma
+0.9
+Temperature
+τ\tau
+0.1
+Inner iterations
+KinnerK_{\text{inner}}
+15
+CG iterations
+KCGK_{\text{CG}}
+10
+Comm dimension
+dmd_{m}
+8
+Value-aware weight
+λVA\lambda_{\text{VA}}
+0.1
+Influence weight
+λinf\lambda_{\text{inf}}
+0.01
+Awareness weight
+λaware\lambda_{\text{aware}}
+0.05
+Awareness margin
+ϵmargin\epsilon_{\text{margin}}
+0.1
+MC anneal schedule
+βt\beta_{t}
+min⁡(t/Twarm,1)\min(t/T_{\text{warm}},1)
+Appendix H Hospital Environment Details
+The transition dynamics and rewards explicitly depend on cross-agent information:
+Blind Treatment Risk: Treating a patient without knowledge of hidden risks incurs penalty:
+ρblind,i=1.5⋅(1−𝟙[σi=κj])⋅hj,κj⋅ai\rho_{\text{blind},i}=1.5\cdot(1-\mathbbm{1}[\sigma_{i}=\kappa_{j}])\cdot h_{j,\kappa_{j}}\cdot a_{i}
+(36)
+A non-matching specialist treating aggressively (ai=2a_{i}=2) when hidden risk hj,κjh_{j,\kappa_{j}} is high suffers large penalties. Communication allows agents to warn teammates about high-risk patients.
+Drug Interaction Penalty. Simultaneous high-intensity treatments can cause adverse interactions:
+ρdrug=1.5∑i<j𝟙[ai=2]⋅𝟙[aj=2]⋅Dκi,κj\rho_{\text{drug}}=1.5\sum_{i<j}\mathbbm{1}[a_{i}=2]\cdot\mathbbm{1}[a_{j}=2]\cdot D_{\kappa_{i},\kappa_{j}}
+(37)
+where Dκi,κj∈[0,1]C×CD_{\kappa_{i},\kappa_{j}}\in[0,1]^{C\times C} is a drug interaction matrix. This penalty requires agents to coordinate treatment intensities—impossible without communication about intended actions.
+Resource Budget. Limited high-intensity resources require prioritization:
+ρresource=0.5⋅max(0,∑i𝟙[ai=2]−B)\rho_{\text{resource}}=0.5\cdot\max\left(0,\sum_{i}\mathbbm{1}[a_{i}=2]-B\right)
+(38)
+H.1 Reward Structure
+R=∑i(Δvi+0.4⋅𝟙[σi=κi]−0.6⋅Δci−3⋅𝟙[vi′>0.85])−ρdrug−ρresourceR=\sum_{i}\left(\Delta v_{i}+0.4\cdot\mathbbm{1}[\sigma_{i}=\kappa_{i}]-0.6\cdot\Delta c_{i}-3\cdot\mathbbm{1}[v_{i}^{\prime}>0.85]\right)-\rho_{\text{drug}}-\rho_{\text{resource}}
+(39)
+H.2 Penalty Terms
+Blind Treatment: ρblind,i=1.5⋅(1−𝟙[σi=κj])⋅hj,κj⋅ai\rho_{\text{blind},i}=1.5\cdot(1-\mathbbm{1}[\sigma_{i}=\kappa_{j}])\cdot h_{j,\kappa_{j}}\cdot a_{i}
+H.3 Proof of Proposition 6.1 (Communication Necessity)
+Proof.
+The hospital environment reward decomposes as:
+R=∑iRibase−∑iρblind,i−ρdrug−ρresourceR=\sum_{i}R_{i}^{\text{base}}-\sum_{i}\rho_{\text{blind},i}-\rho_{\text{drug}}-\rho_{\text{resource}}
+(40)
+Consider the blind treatment penalty:
+ρblind,i=1.5⋅(1−𝟙[σi=ξj])⋅hj,ξj⋅ai\rho_{\text{blind},i}=1.5\cdot(1-\mathbbm{1}[\sigma_{i}=\xi_{j}])\cdot h_{j,\xi_{j}}\cdot a_{i}
+(41)
+Step 1: Expected Penalty Without Communication.
+Without communication, agent ii cannot observe hj,ξjh_{j,\xi_{j}} when σi≠ξj\sigma_{i}\neq\xi_{j}. Under a non-communicating policy πno-comm\pi^{\text{no-comm}}, the agent must choose actions based only on oio_{i}, which does not contain this information. By linearity of expectation, the expected penalty is:
+𝔼πno-comm​[ρblind,i]=1.5⋅P⁡(σi≠ξj)⋅𝔼⁡[hj,ξj]⋅𝔼⁡[ai]\mathbb{E}^{\pi^{\text{no-comm}}}[\rho_{\text{blind},i}]=1.5\cdot P(\sigma_{i}\neq\xi_{j})\cdot\mathbb{E}[h_{j,\xi_{j}}]\cdot\mathbb{E}[a_{i}]
+(42)
+ß
+Step 2: With Communication.
+With optimal communication π∗\pi^{*}, agent ii receives message mjm_{j} encoding hj,ξjh_{j,\xi_{j}} from the specialist matching patient jj’s condition. The agent can then avoid aggressive treatment (ai<2a_{i}<2) when hj,ξjh_{j,\xi_{j}} is high, reducing:
+𝔼π∗​[ρblind,i]≈0(avoids blind treatment)\mathbb{E}^{\pi^{*}}[\rho_{\text{blind},i}]\approx 0\quad\text{(avoids blind treatment)}
+(43)
+Step 3: Performance Gap.
+Summing over all agents and condition types:
+Vπ∗−Vπno-comm\displaystyle V^{\pi^{*}}-V^{\pi^{\text{no-comm}}}
+≥∑i=1N𝔼πno-comm​[ρblind,i]−𝔼π∗​[ρblind,i]\displaystyle\geq\sum_{i=1}^{N}\mathbb{E}^{\pi^{\text{no-comm}}}[\rho_{\text{blind},i}]-\mathbb{E}^{\pi^{*}}[\rho_{\text{blind},i}]
+(44)
+≥∑c=1C1.5⋅P⁡(ξ≠σ)⋅𝔼⁡[hc]⋅a¯\displaystyle\geq\sum_{c=1}^{C}1.5\cdot P(\xi\neq\sigma)\cdot\mathbb{E}[h_{c}]\cdot\bar{a}
+(45)
+=Ω⁡(∑c=1C𝔼⁡[hc]⋅P⁡(ξ≠σ))\displaystyle=\Omega\left(\sum_{c=1}^{C}\mathbb{E}[h_{c}]\cdot P(\xi\neq\sigma)\right)
+(46)
+where a¯>0\bar{a}>0 is the average action intensity. This establishes the lower bound.
+∎
+H.4 Hyperparameters and Fair Comparison
+For fair comparison between SeqComm-DFL and the baseline OMD without communication, we ensure identical hyperparameters across both methods:
+Matched Hyperparameters.
+Hyperparameter
+Notation
+Value
+World model learning rate
+ηθ\eta_{\theta}
+3×10−53\times 10^{-5}
+Critic learning rate (inner loop)
+ηw\eta_{w}
+1×10−41\times 10^{-4}
+CG damping coefficient
+λ\lambda
+0.10.1
+Target critic EMA coefficient
+τema\tau_{\text{ema}}
+0.990.99
+Discount factor
+γ\gamma
+0.90.9
+Softmax temperature
+τ\tau
+0.10.1
+Critic regularization
+λreg\lambda_{\text{reg}}
+10−310^{-3}
+Gradient clipping norm
+-
+1.01.0
+Inner loop iterations
+KinnerK_{\text{inner}}
+1515
+CG iterations
+KCGK_{\text{CG}}
+1010
+Prediction loss weight
+αpred\alpha_{\text{pred}}
+5.05.0
+Table 10: Matched hyperparameters for fair comparison between SeqComm-DFL and baseline OMD.
+Architecture Matching.
+Both methods use:
+•
+Identical per-agent network architecture (2-layer MLP with hidden dimension dh=128d_{h}=128)
+•
+Same output heads for local state and reward prediction
+•
+Orthogonal weight initialization
+•
+LeakyReLU activations (negative slope =0.01=0.01)
+The only architectural difference is that SeqComm includes the communication module, which adds messages to each agent’s input. This ensures that any performance difference is attributable solely to the value of communication.
+Preventing Overfitting.
+To ensure fair comparison, we monitor validation metrics (true environment TD loss) and report results at consistent training iterations. The matched learning rate (3×10−53\times 10^{-5}) and high CG damping (0.10.1) provide implicit regularization that prevents overfitting in both methods.
+Glossary
+Acronyms
+Dec-POMDP
+dencetralized partially-observable Markov decision process
+DFL
+decision-focused learning
+MARL
+multi-agent reinforcement learning
+MLE
+maximum likelihood estimation
+OMD
+Optimal Model Design
+27
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

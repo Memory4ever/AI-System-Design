@@ -4,6 +4,10 @@
 
 ## 实际读取范围
 
+### 最新非作者裁决（2026-10-06T21:11:24+08:00，优先于下方作者原判断）
+
+sept07_10_author实际独立读取全部57完整题摘；最终39日期潜力/18贡献或范围关闭，另12标题范围关闭。10860恢复英/中文量词能力的局部评价潜力，不能因因果控制不足否定准入；19322既有metadata/MCP上下文组合无新执行/权限或可归因边界，关闭；10651仅HSI科学inverse solver的SVT替换、不建立foundation/LLM Infra桥，按暂缓范围关闭。10748仅保留VFM候选反馈/工具pointer grounding条件。root已确认这几项窄边界。原表保留作为作者历史判断，不删除反证。合法show250同skip800已恢复月身份，但无日公告日期；Seed既有分页已真实执行到80=false，见独立记录。39项不授正式落窗/评分/Books。完整FIRST/必要v1与DAY见INDEPENDENT_DAY_REVIEW.md。
+
 本日独立 GET 的 `arxiv-api.raw` 有69唯一当前版本，start0/max200/total69，一页读完69标题；12分类和八组模型/系统术语的 submittedDate 202509121800–202509131800 只作有限发现，不是首次公开队列。57完整题摘已读，原值在 `scoped-abstracts.json`；其中40潜力、17关闭建议。12其余标题仅范围判断，不冒充摘要或全文读取：index2糖尿病预测、6机械 simulation、12MRI应用比较、18COVID综述、37/46glioma医学影像、40音乐内容分析、53humor领域分析、57drone charging一般调度、60short-video用户决策、64传感器电路、68ESG领域ontology。AIS暂缓和缺少模型/系统桥是具体理由，不以领域标签排除通用优化贡献；因此10651的低秩SVT与10919的条件foundation表示另外保留。
 
 当前版本有后续v2/v3及后来月份ID。未取得本窗首次公开/重要修订证据，不评分、不计正式候选。没有把版本号、submitted、月份编号或API字段published当首次公开。官方 `arxiv-schedule.raw/txt` 说明质量审查与公告分离，通常仅美东周日至周四公告；这是当前规则，不单独证明2025历史公告没有特例。catchup日期入口实际400，记录在transport；尚无可落本窗的公告正文。重开必须取得指定ID/精确版本的官方公告或原始发布区间，完全落窗后才进入必要core，当前57摘要不构成全文队列。
@@ -89,4 +93,3 @@
 请root以完整题摘校准10798 JudgeQ、10712 MinatoLoader、10695 Kalman、13347 OpenHA、10918 ToMA、10656 goal-reaching、10651 SVT的贡献与日期隔离；代表关闭10682/10703/10708/10771/10838/10858/10887，安全控制保证不能因综述或组合名称跳过。其他潜力按表继续，不等待root遍历全部附件。无已落窗候选，所以本日没有可执行的确认候选core队列；若root取得精确公开日期，只重开对应ID，按当前评分和证据合同审必要内容。
 
 Books未写入，不能把路由当owner实读或NoChange。潜力owner建议来自ROADMAP：TRAIN-PRETRAINING、TRAIN-DATA、MODEL-LONG-CONTEXT、INFER-KV-CACHE、MULTIMODAL-REPRESENTATION/GENERATIVE-PARADIGMS/EMBODIED-VLA、PLATFORM-EVALUATION-SYSTEM/SECURITY、AGENT-CONTEXT/MEMORY/PLANNING。必要source/version/core位置未取得，因此不拟虚构自然整合段落。
-

@@ -1,0 +1,175 @@
+LMetric*: Simple is Better – Multiplication May Be All You Need for LLM Request Scheduling (https://arxiv.org/html/2603.15202v1)
+citeturn32990view0 [wordlim: 200] Crawled: today; Content type: text/html; Source: open({"ref_id":"https://arxiv.org/html/2603.15202v1","lineno":92}); Total lines: 345
+L79: Figure 2: The system view of how an LLM serving instance serves requests and some direct system indicators that can be collected by the global scheduler. The detailed meaning of each indicator will be described upon the first usage. BS is the abbreviation for b atch s ize.
+L80: Serving instance and KV$ cache (Figure cite51†2 ).   In an LLM serving system, an instance is the minimum unit that serves requests and hosts one complete copy of the LLM parameters. The instance can contain multiple GPUs if the LLM is too large to fit into a single GPU’s memory.
+L81: Regardless of single-or-multiple GPU instances, the overall serving flow is the same: when it receives a request, the request is pushed into a queue containing requests (either prefill or decode) waiting to be executed on this instance (❶). Once the GPU(s) become available, all queued requests are formed into a batch, and the batch is executed on GPU(s) efficiently with chunked prefill [cite52†3 ] (❷).
+L82: After the execution, the instance examines whether the current requests need further decoding; if so, the requests are re-enqueued (❸).
+L83: One notable feature is that the serving is stateful: the request’s KV$ is retained in GPU or CPU memory even after the request finishes its generation (KV$ cache [cite25†32 , cite53†14 , cite54†39 ]). The benefit is that if a future request is routed to an instance and there is a prefix match with a previously cached KV$, the instance can skip the computation for the matched prefix tokens and thus significantly reduce the computation cost.
+L84: In our example in Figure cite51†2 , tokens that are colored blue can skip the computation if they have a KV$ hit.
+L85: cite55†Image: Refer to caption L86: 
+L87: Figure 3: (a) System view of a cluster LLM serving system, and (b) comparison of per-request serving time and routing cost.
+L88: Request scheduling in a cluster (Figure cite56†3 ).   To handle large volumes of requests, LLM service providers typically deploy clusters of instances to serve a model, where each cluster has a dedicated global scheduler to route requests to the instances managed by it, as shown in (a). The scheduler executes a scheduling policy to determine the destination instance for each request, and this policy is our focus.
+L89: Note that the provider may deploy multiple clusters for the same model to enhance reliability and geo-affinity, and routing requests between clusters is out of the scope of this paper.
+L90: At a high level, all existing scheduling policies can be viewed as a three-step process: The router first (optionally) filters out some instances, then scores them according to a preference order, and finally routes the request to the best-scoring instance. The score is based on the indicators collected from each instance, and we will describe them in detail in our analysis (§cite10†4 ).
+L91: ## The Analysis Framework
+L92: To systematically analyze different scheduling policies in an apples-to-apples manner, we implement a flexible LLM scheduling analysis framework—LMetric. The key drivers for LMetric are twofold: (1) Existing policies are buried in concrete (both open-source and closed-source) implementations of different serving systems, making it hard to compare them in an apples-to-apples manner.
+L93: For example, the Go implementation of vLLM’s policy on AIBrix [cite44†4 ] is 6.2 $\times$ faster than vLLM’s Python implementation [cite31†38 ] due to a later confirmed performance bug [cite57†1 ]. Meanwhile, our Rust-based implementation achieves a further 1.2 $\times$ speedup over AIBrix with the same vLLM policy. (2) A unified framework simplifies implementing new policies for comparison: Though complex, all existing policies boil down to computing scheduling scores based on the indicators of the instances.
+L94: By providing a unified indicator factory, our framework allows exploring policies with a few lines of code (described below).
+L95: cite58†Image: Refer to caption L96: 
+L97: Figure 4: The system architecture of the LMetric metric factory and its programming model for scheduling algorithms.
+L98: Indicator factory.   LMetric is a standalone inference router implemented in Rust that can collaborate with any LLM serving engine. Its key component—as shown in Figure cite59†4 —is an indicator factory that automatically collects and computes the indicators (if necessary) required for different scheduling policies. Choosing Rust enables LMetric to be extremely efficient and robust. For high scalability, indicator collection is piggybacked on the receipt of responses from the instances.
+L99: For example, LMetric maintains a long-lived connection to each vLLM instance, and when vLLM sends a response back, LMetric extracts the required indicators from the response header and updates the corresponding indicators in the factory.
+L100: Programming model.   LMetric provides a simple API to implement different scheduling policies. Specifically, all policies essentially first compute a score for each instance and then route the request to the instance with the best (e.g., minimum or maximum) score. Our API allows developers to define score functions over per-instance symbolic indicators supported by our factory with a few lines of expressions.
+L101: Line 1 in Figure cite59†4 shows a concrete policy adopted by vLLM [cite31†38 ]: it computes the score as a weighted sum of Q-BS (queued batch size—the number of queued requests in an instance’s queue) and R-BS (the number of running requests on the instance).
+L102: With the defined score function, when deciding where to route a new request (line 4), LMetric first retrieves and computes the concrete indicator values from the indicator factory in parallel, then derives the scores for all instances, and finally routes the request to the instance with the minimum score.
+L103: ## Characterizing LLM Request Scheduling
+L104: 
+L105: Figure 5: Our studied traces that cover major scenarios in powering LLM services.
+L106: ### Characterization Methodology
+L107: Testbed and instance used.   Without explicit mention, we conduct all our experiments on a testbed containing 16 NVIDIA H20 GPUs—hardware similar to that used for hosting LLM services at Bailian. Each GPU has 96 GB HBM, which is sufficient for hosting common models available on the market [cite26†42 ]. The router is deployed on a high-end CPU server with 160 Intel Xeon cores and 1 TB of DRAM.
+L108: Our instance runs the latest vLLM-v1 (vLLM) [cite31†38 ]—the state-of-the-art LLM serving engine with the latest optimizations, such as chunked prefill [cite52†3 ] and fast GPU kernels [cite60†13 ].
+L109: Models.   We chose LLM models that are representative of different architectures and popular choices on the market, including dense (Qwen2-7B) and mixture-of-experts (MoE) models (Qwen3-30B) [cite26†42 ].
+L110: Workloads.   We conduct analyses on real-world LLM serving traces, both open-source and collected from Bailian, and cover common LLM applications: ChatBot (Qwen) and Agent (Qwen) [cite61†33 ] are open-sourced traces from Alibaba Cloud that collect requests sent from a chatbot service similar to ChatGPT and an LLM API calling agent service [cite40†7 , cite41†18 , cite42†28 ], respectively.
+L111: Coder collects requests issued by coding copilot services to a dedicated cluster in Bailian on a single day in November 2025, and ToolAgent (Kimi) [cite62†26 ] is another open-sourced trace from Kimi that also collects requests from an agent service. For traces except ToolAgent (Kimi), they are all collected from a single cluster routed by one global router. ToolAgent (Kimi) does not mention how the trace is collected.
+L112: Our analyzed workloads are representative—not only because of the breadth of application scenarios chosen, but also because each selected trace preserves the essential characteristics for evaluating LLM scheduling policies. Specifically, all requests in our traces contain the (hashed) content and the timestamp of the request issuance, which are critical for evaluating the impact of KV$-aware scheduling on global scheduling (see §cite12†4.2 ).
+L113: Other popular datasets like AzureLLMTrace [cite63†9 ] or BurstGPT [cite64†41 ] do not provide such content. Note that with traces containing hashed content, we can still replay it with behavior that exactly matches the original one by reconstructing inputs according to the hash value, and each instance executes the same number of decodes as in the traces regardless of the EOS token [cite65†40 ].
+L114: Figure cite66†5 visualizes key features of our evaluated traces, including their request arrival rates, input and output token numbers, and the KV$ hit rates assuming an infinite KV$ cache space. Note that the request arrival rate is normalized due to confidentiality considerations required for the Coder trace. For all these traces, we observe that over a given serving interval (e.g., 1 hour), the request arrival and KV$ hit rates are relatively stable, with a few short-term fluctuations.
+L115: Besides, though the input and output token numbers vary across traces, they are typically not so large except for a few outliers.
+L116: Trace scaling.   Since the traces are collected from clusters with different scales than our testbed, we scale the traces according to our testbed capability similar to prior work [cite67†25 , cite68†6 , cite69†20 , cite70†44 , cite71†35 ]. Without explicit mention, we scale the average request arrival rate to half of the maximum rate of our testbed obtained via offline profiling.
+--------------------------------------------------------------------------------
+DOS: Dependency-Oriented Sampler for Masked Diffusion Language Models (https://arxiv.org/html/2603.15340v1)
+citeturn32990view1 [wordlim: 200] Crawled: yesterday; Content type: text/html; Source: open({"ref_id":"https://arxiv.org/html/2603.15340v1","lineno":352}); Total lines: 513
+L323:   * Voita et al. (2019) E. Voita, D. Talbot, F. Moiseev, R. Sennrich, and I. Titov Analyzing multi-head self-attention: specialized heads do the heavy lifting, the rest can be pruned. In 57th Annual Meeting of the Association for Computational Linguistics, pp. 5797–5808. Cited by: cite114†§5 .
+L324:   * Wang et al. (2025) X. Wang, C. Xu, Y. Jin, J. Jin, H. Zhang, and Z. Deng Diffusion llms can do faster-than-ar inference via discrete diffusion forcing. arXiv preprint arXiv:2508.09192. Cited by: cite98†§1 .
+L325:   * Wu et al. (2025) C. Wu, H. Zhang, S. Xue, Z. Liu, S. Diao, L. Zhu, P. Luo, S. Han, and E. Xie Fast-dllm: training-free acceleration of diffusion llm by enabling kv cache and parallel decoding. arXiv preprint arXiv:2505.22618. Cited by: cite70†Figure 1 , cite105†§1 , cite127†§1 , cite106†§2 , cite140†3rd item .
+L326:   * Xia et al. (2024) H. Xia, Z. Yang, Q. Dong, P. Wang, Y. Li, T. Ge, T. Liu, W. Li, and Z. Sui Unlocking efficiency in large language model inference: a comprehensive survey of speculative decoding. In Findings of the Association for Computational Linguistics: ACL 2024, L. Ku, A. Martins, and V. Srikumar (Eds.), Bangkok, Thailand, pp. 7655–7671. External Links: cite141†Link†aclanthology.org , cite142†Document†dx.doi.org Cited by: cite96†§1 .
+L327:   * Yang et al. (2025a) A. Yang, A. Li, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Gao, C. Huang, C. Lv, et al. Qwen3 technical report. arXiv preprint arXiv:2505.09388. Cited by: cite96†§1 .
+L328:   * Yang et al. (2025b) Y. Yang, C. Wang, S. Wang, Z. Wen, B. Qi, H. Xu, and L. Zhang Diffusion llm with native variable generation lengths: let [eos] lead the way. arXiv preprint arXiv:2510.24605. Cited by: cite98†§1 .
+L329:   * Ye et al. (2025) J. Ye, Z. Xie, L. Zheng, J. Gao, Z. Wu, X. Jiang, Z. Li, and L. Kong Dream 7b: diffusion large language models. arXiv preprint arXiv:2508.15487. Cited by: cite133†§A.1 , cite103†Table 7 , cite98†§1 , cite99†§2 , cite135†§6.2 .
+L330: Appendix
+L331: ## Appendix A Experiment Details
+L332: 
+L333: ### A.1 Experimental Setup
+L334: 
+L335: We conduct all experiments with LLaDA-Instruct-8B (cite59†Nie et al., 2025 ) and Dream-v0-Instruct-7B (cite60†Ye et al., 2025 ). We run inference with batch size of 1 on a single NVIDIA L40 GPU with 48 GB memory. For deterministic decoding, we set temperature to 0 and random seed to 42 for all runs.
+L336: ### A.2 Baseline Methods
+L337: 
+L338: This subsection provides implementation details of the key baseline methods used in our experiments, including uncertainty-based methods and accelerated samplers. Denote the discrete distribution induced by the MDLM $f_{\theta}$ at time $t$ with input $x_{t}$ for position $i$ as $p_{t}^{i}=f^{i}_{\theta}(x_{t})$.
+L339: #### Confidence
+L340: 
+L341: (cite64†Chang et al., 2022 ; cite59†Nie et al., 2025 ) For MDLM $f_{\theta}$ at time $t$ and position $i$, Confidence selects tokens based on the maximum value of the discrete distribution $p_{t}^{i}$ over the vocabulary $\mathcal{V}$, defined as
+L342: 
+L343:  | $$\textit{conf}_{t}^{i}=\max_{v\in\mathcal{V}}p_{t}^{i}(v).$$  |
+L344: #### Entropy
+L345: 
+L346: (cite65†Koh et al., 2024 ) For MDLM $f_{\theta}$ at time $t$ and position $i$, Entropy measures the uncertainty of the discrete distribution $p_{t}^{i}$ over the vocabulary $\mathcal{V}$, defined as
+L347: 
+L348:  | $$\textit{ent}_{t}^{i}=-\sum_{v\in\mathcal{V}}p_{t}^{i}(v)\log p_{t}^{i}(v).$$  |
+L349: #### Margin confidence
+L350: 
+L351: (cite66†Kim et al., 2025a ) For MDLM $f_{\theta}$ at time $t$ and position $i$, Margin confidence considers the difference between the highest and the second-highest probabilities in the discrete distribution $p_{t}^{i}$,, defined as
+L352: 
+L353:  | $$\textit{margin}_{t}^{i}=p_{t}^{i}(v^{*})-\max_{v\in\mathcal{V}\setminus\{v^{*}\}}p_{t}^{i}(v),$$  |
+L354: 
+L355: where $v^{*}=\arg\max_{v\in\mathcal{V}}p_{t}^{i}(v)$.
+L356: #### Fast-dLLM
+L357: 
+L358: Fast-dLLM performs confidence-based parallel decoding by unmasking all positions whose confidence exceeds a confidence threshold $\epsilon$. Concretely, at each step $t$, let $\mathcal{M}_{t}$ denote the set of masked positions. It computes the confidence score $\text{conf}_{t}^{i}$ and masks the subset of positions
+L359: 
+L360:  | $\displaystyle\mathcal{S}_{t}$  | $\displaystyle=\left\{i\in\mathcal{M}_{t}\,\middle|\,\text{conf}_{t}^{i}=\max_{v\in\mathcal{V}}p_{t}^{i}(v)>\epsilon\right\}.$  |
+L361: Compared to fixed-budget top-$K$ unmasking, this approach yields a dynamic number of updates per iteration and can be integrated with semi-autoregressive block decoding for enhanced efficiency. Furthermore, while Fast-dLLM supports block-wise KV cache to eliminate redundant computations of key and value vectors across previous blocks, our evaluation focuses on decoding strategy rather than hardware-specific wall-clock speed; consequently, we do not utilize block-wise KV cache in our experiments.
+L362: #### KLASS.
+L363: 
+L364: KLASS performs stable-token selection by identifying positions where the predictive distribution is stable across steps and reaches high confidence. At each step $t$, let $\mathcal{M}_{t}$ denote the set of masked positions. KLASS selects a subset of stable tokens $\mathcal{S}_{t}\subseteq\mathcal{M}_{t}$ to be unmasked based on a history length $n$, a KL-divergence threshold $\epsilon_{\text{KL}}$, and a confidence threshold $\tau$:
+L365:  | $\displaystyle\mathcal{S}_{t}=$  | $\displaystyle\Big\{i\in\mathcal{M}_{t}\;\Big|\;\forall k\in\{1,\dots,n\},$  |
+L366:  |  | $\displaystyle D_{\text{KL}}(p_{t-k}^{i}\,\|\,p_{t-k+1}^{i})<\epsilon_{\text{KL}}\wedge\;\text{conf}_{t}^{i}>\tau\Big\},$  |
+L367: where $D_{\text{KL}}$ denotes the Kullback-Leibler divergence between the predictive distributions of consecutive steps at position $i$, and $\text{conf}_{t}^{i}=\max_{v\in\mathcal{V}}p_{t}^{i}(v)$ is the confidence score. By requiring predictions to remain consistent over $n$ steps, KLASS ensures that only stable tokens are updated in parallel, thereby improving generation reliability.
+L368: #### EB-Sampler.
+L369: 
+L370: The entropy-bounded sampler accelerates generation by unmasking a number of tokens per step that satisfy the entropy constraint. Concretely, at each step $t$, it first ranks all masked positions in $\mathcal{M}_{t}$ based on a specific score like confidence conf or our proposed dependency dep. Then, starting from the highest-ranked token, it selects the largest subset $\mathcal{S}_{t}\subseteq\mathcal{M}_{t}$ that satisfies the cumulative entropy constraint:
+L371:  | $$\sum_{i\in\mathcal{S}_{t}}\text{ent}_{t}^{i}-\max_{j\in\mathcal{S}_{t}}\text{ent}_{t}^{j}\leq\gamma,$$  |
+L372: 
+L373: where $\text{ent}_{t}^{i}=-\sum_{v\in\mathcal{V}}p_{t}^{i}(v)\log p_{t}^{i}(v)$ denotes the entropy of the predictive distribution at position $i$.
+L374: ### A.3 Hyperparameter Choices
+L375: 
+L376: We follow prior work whenever the recommended settings are available, and otherwise tune on a small held-out subset. The main hyperparameters for accelerated baselines are:
+L377: 
+L378:   * •
+L379: 
+L380: EB-Sampler: We set the entropy tolerance to $\gamma=0.01$ for all datasets.
+L381: 
+L382:   * •
+L383: 
+L384: Fast-dLLM: We set the confidence threshold to $\epsilon=0.95$ for all datasets.
+L385: 
+L386:   * •
+L387: KLASS: We follow the threshold configurations in prior work (cite69†Kim et al., 2025b ). KLASS uses two thresholds: a confidence threshold (Conf) and a KL-based threshold (KL). The history length $n$ is set to 2 for all datasets. We report the exact values used for each dataset and model in Table cite143†4 .
+L388: 
+L389:   * •
+L390: DOS: We report the optimal layer for DOS and DOS$+$EB in Table cite144†5 . Entries indicate the transformer layer indices from which the attention matrices are extracted to achieve the best accuracy under each setting.
+L391: 
+L392: Task  | LLaDA  | Dream
+L393:  | Conf  | KL  | Conf  | KL
+L394: MATH  | 0.6  | 0.010  | 0.9  | 0.005
+L395: GSM8K  | 0.6  | 0.015  | 0.9  | 0.001
+L396: HumanEval  | 0.9  | 0.010  | 0.8  | 0.001
+L397: MBPP  | 0.7  | 0.010  | 0.9  | 0.001
+L398: Table 4: Threshold configurations for KLASS.
+L399:  | HumanEval  | MBPP  | GSM8K  | MATH500
+L400: LLaDA-Instruct-8B
+L401: DOS (w/o block)  | 13  | 9  | 7  | 7
+L402: DOS (w/ block)  | 13  | 9  | 16  | 30
+L403: DOS$+$EB (w/o block)  | 29  | 5  | 4  | 3
+L404: DOS$+$EB (w/ block)  | 13  | 1  | 1  | 7
+L405: Dream-vo-Instruct-7B
+L406: DOS (w/o block)  | 1  | 22  | 6  | 7
+L407: DOS(w/ block)  | 6  | 6  | 6  | 7
+L408: DOS$+$EB (w/o block)  | 6  | 22  | 3  | 3
+L409: DOS$+$EB (w/ block)  | 6  | 26  | 3  | 1
+L410: Table 5: Transformer layers that yield the best performance for DOS under different settings. For DOS, w/o block corresponds to single-block decoding where the block length equals the generation length, while w/ block applies block partitioning with a fixed block size of 32.
+L411: ## Appendix B Additional Experiment Results
+L412: ### B.1 Experiments on LLaDA
+L413: Table cite102†6 presents the comparative results on HumanEval, MBPP, GSM8K, and MATH500 using the LLaDA-Instruct-8B model with a fixed block size of 32. DOS consistently demonstrates superior generation quality across both Top-1 and parallel sampling settings, proving effective regardless of whether block partitioning is applied. Specifically, in the Top-1 regime, DOS achieves the highest accuracy on all four benchmarks, significantly outperforming standard scoring methods such as Confidence and Entropy.
+L414: Furthermore, when integrated with the EB-sampler for parallel decoding, DOS maintains this performance advantage, validating the robustness of our scoring strategy in guiding the model toward high-quality outputs.
+L415: In terms of computational efficiency, Fast-dLLM exhibits a substantial reduction in the number of function evaluations (NFE), achieving the lowest inference cost across tasks. This efficiency is largely attributed to its threshold-based mechanism. However, this speed comes with a slight trade-off in accuracy compared to our method. Consequently, a promising avenue for future work is to synergize the precise scoring capability of DOS with dynamic threshold-based strategies similar to Fast-dLLM.
+--------------------------------------------------------------------------------
+LEXI: Lossless Exponent Coding for Efficient Inter-Chiplet Communication in Hybrid LLMs (https://arxiv.org/html/2603.15589v1)
+citeturn32990view2 [wordlim: 200] Crawled: today; Content type: text/html; Source: open({"ref_id":"https://arxiv.org/html/2603.15589v1","lineno":145}); Total lines: 269
+L132: 1. Sorting the exponents in descending order of their counts: We employ a parallel bitonic sorter (cite69†Batcher, 1968 ) optimized for small input sizes ($\leq$32 elements). The sorter requires $log_{2}(32)\times(log_{2}(32)+1)/2=15$ stages, completing in 15 cycles. This balances area efficiency with throughput requirements.
+L133: 2. Huffman coding tree construction: Following canonical Huffman procedures (cite70†Huffman, 1952 ), we build the code tree by repeatedly merging the two least-frequent symbols. Our hardware implementation uses a priority queue backed by the sorted frequency list, requiring 31 cycles for worst-case tree construction (32 elements).
+L134: 3. Code assignment and LUT programming: The tree is traversed to generate prefix-free codes, with code lengths stored in the encoding LUTs across all $M$ lanes. This requires 32 cycles to program all LUT entries. The entire process completes in 78 cycles (15+31+32), which is seamlessly pipelined with the incoming data stream for on-the-fly compression.
+L135: Exception handling for guaranteed functional correctness: To ensure correctness against raw exponents exceeding the $\mathbf{32}$-entry encoding limit, a lookup miss triggers a $\mathbf{32}$-bit fallback: a reserved $\mathbf{24}$-bit escape code (all ones) followed by the raw $\mathbf{8}$-bit exponent. Since such exceptions are extremely rare (not observed in our experiments), this mechanism imposes negligible bandwidth overhead while maintaining functional integrity.
+L136: ### 4.3. Parallel Stream Encoding and Transmission
+L137: 
+L138: Following the pipelined codebook generation, LEXI immediately commences continuous, high-throughput encoding.
+L139: 
+L140: Distributed parallel lookup: To eliminate lookup contention and maximize throughput, LEXI replicates the 32-entry encoding LUT constructed during codebook generation at each parallel lane. This ensures all $M$ lanes perform simultaneous, single-cycle lookups, transforming the 8-bit exponent into its codeword.
+L141: Flit-aligned packetization: A critical step for sustaining the maximum throughput is aggregating the variable-length codewords efficiently. The network interface receives the stream of codewords from all lanes, along with their associated sign and mantissa bits, and packs them into fixed-size flits. Since Huffman codes are prefix-free, a minimal, per-layer codebook header is simply prepended to the compressed stream for lossless decoder reconstruction.
+L142: Sustained line rate operation: The entire data path forms a non-blocking pipeline, sustaining one-flit-per-cycle output rate for full inter-layer link bandwidth utilization. Although an initial startup latency of $78$ cycles ($78~ns$ under $1~GHz$ in our experiments) is incurred once per layer, this cost is negligible against millisecond-scale communication of millions of activations.
+L143: Crucially, the effective overhead vanishes and maximum link utilization is maintained because all encoding steps (histogram accumulation, tree creation, LUT programming) are fully pipelined with subsequent data.
+L144: ### 4.4. On-the-fly Decompression Circuit
+L145: Since Huffman decoders process a variable-length bitstream, finding codeword boundaries is inherently sequential. A naive implementation uses a single large LUT indexed by $L_{max}$(24 bits) to return $\{\text{{exponent, bit-length}}\}$ in one cycle, but incurs prohibitive area cost and poor scalability. Thus, we design a multi-stage decompression circuit (Figure cite68†3 (b)). This multi-stage LUT segments the codebook based on frequency and code length.
+L146: Stage 1 indexes the first $B_{1}$ bits; it returns the symbol if available, else redirects to the next stage. Each subsequent stage k then consumes the additional $B_{k}$ bits and repeats until the symbol is resolved. Since shorter, high-frequency codes are often resolved in Stage 1 (one cycle), only longer, rarer codes traverse deeper stages.
+L147: The key design choice lies in determining the optimal bit-width for each stage. Through extensive design space exploration across all target workloads, we found that a four-stage configuration with $B_{1},B_{2},B_{3},B_{4}=8,16,24,32$ bits provides the optimal balance between area efficiency and decoding latency, as detailed in Section cite20†5.2 . The final stage can also program the reserved escape code.
+L148: To sustain required throughput, we instantiate multiple parallel decode lanes, distributing incoming flits in a round-robin manner for independent, parallel decoding. This configuration proved area-efficient and line-rate capable, as analyzed in Section cite20†5.2 .
+L149: ## 5. Implementation and Evaluation of LEXI
+L150: ### 5.1. Experimental Setup
+L151: Models and datasets: The proposed compression technique is evaluated using two hybrid models Jamba-tiny-dev (319M) (cite26†Lieber and others, 2024 ), Zamba2-1.2B-Instruct-v2 (cite27†Glorioso et al., 2024 )) and one transformer-only model (Qwen1.5-1.8B-Chat (cite28†Bai et al., 2023 )). In the remainder of this section, we refer to these models as Jamba, Zamba, and Qwen for simplicity.
+L152: All three models are tested using WikiText-2 (cite44†Merity et al., 2016 ) and C4 (cite45†Raffel et al., 2020 ) datasets, with input sequence lengths of 1K and 2K tokens, respectively. In both cases, the output sequence length is fixed at 512 tokens.
+L153: Target hardware: To demonstrate LEXI, we integrated it into a 6$\times$6 homogeneous chiplet array based on the Simba (cite43†Shao and others, 2019 ) architecture. This test case is selected since it was validated with hardware implementation. It uses a 2D mesh network-on-interposer (NoI) with 100 Gbps inter-chiplet links. Each chiplet executes block-level kernels (Mamba/SSM, attention, and feed-forward). LEXI transmits compressed weights and decompresses the weights on-the-fly before use.
+L154: Hybrid caches are compressed block-by-block when written back to memory, then retrieved and decompressed just prior to computation. Activations are transmitted between chiplets in compressed form and decompressed before being used. Inter-chiplet transfers are modeled using a modified cycle-accurate HeteroGarnet simulator (cite71†Bharadwaj et al., 2020 ), extended to support trace-driven traffic.
+L155: Hardware implementation: We implemented the proposed compression/decompression units using SystemVerilog. It is synthesized at a target operating frequency of 1 $\mathrm{GHz}$ using the Synopsis Design Compiler with the GF 22 $\mathrm{nm}$ technology node.
+L156: 
+L157: cite72†Image: Refer to caption Figure 4. Local cache hit rate vs. cache depth on WikiText-2 for three models: (a) Jamba, (b) Zamba, (c) Qwen
+L158: ### 5.2. Area-Performance Trade-off Optimization
+L159: Compressor trade-offs: The compressor consists of multi-lane caches, which have two knobs: per-lane cache depth and the number of lanes. Figure cite73†4 plots the local cache hit rate versus its depth during the encoding phase. A depth of 8 entries per lane achieves over 90% average hit rate for all tested models. Given the diminishing returns of larger sizes, we adopt 8-entry caches in each lane. Next, we analyze the total cache size to optimize codebook creation latency.
+L160: Figure cite74†5 shows this trade-off for the codebook generation latency with 512 activations. While a single lane with depth 4 is area-efficient, it requires 788 $\mathrm{ns}$ to complete at 1 $\mathrm{GHz}$. At the other extreme, 32 lanes with depth 16 reduce the latency to 17 $\mathrm{ns}$, but the total cache size grows to 4 $\mathrm{KiB}$. We select a balanced design point with 10 lanes and depth 8, which achieves codebook creation in about 55 $\mathrm{ns}$ with only 0.625 $\mathrm{KiB}$ of cache.
+L161: cite75†Image: Refer to caption Figure 5. Codebook generation latency vs. cache size with 512 activations in BF16.
+L162: Decompressor tradeoffs: To analyze the latency–area trade-offs in the decompression unit, we implemented it using different multi-stage LUTs configurations. As shown in Figure cite76†6 , a 4-stage LUT decoder indexed by 8/16/24/32-bit prefixes achieves an average latency of 11.6 $\mathrm{ns}$ with an area of 98.5 ${\mathrm{\SIUnitSymbolMicro m}}^{2}$.
+L163: For comparison, a single 32-bit LUT table achieves a slightly lower latency of 10 $\mathrm{ns}$ but requires 157.6 ${\mathrm{\SIUnitSymbolMicro m}}^{2}$ area, making it less area-efficient. The most optimistic case, required to saturate the $100~Gbps$ link, involves $10$ compressed values (each $10$ bits: $2$-bit codeword + $1$-bit sign + $7$-bit mantissa).
+L164: Thus, ten decode lanes we searched based on Figure cite74†5 are sufficient to sustain the full link bandwidth, distributing incoming flits in a round-robin manner. This design balances throughput and cost, delivering near line-rate performance with modest overhead.
+L165: cite77†Image: Refer to caption Figure 6. Average latency to decode 10 exponents versus decoder area. The highlighted point marks our chosen 4-stage LUT decoder with tables addressed by 8/16/24/32-bit prefixes, eight entries per stage.
+L166: ### 5.3. Communication and End-to-End Execution Time Evaluation
+L167: This section evaluates the BF16 exponent compression ratio (CR) for the Jamba, Zamba, and Qwen models. As shown in Table cite78†2 , LEXI yields the highest CR $\approx 3.1\times$, by leveraging per-layer frequency distribution. This significantly surpasses base-delta-immediate (BDI) compression (cite79†Pekhimenko et al., 2012 ) ($2.40\times$), which utilizes micro-local value correlation via $\mathbf{3}$-bit delta encoding.
+L168: Conversely, the CR of run-length encoding (RLE) (cite80†Golomb, 1966 ) $\approx 0.64\times$, results in data expansion, confirming that long runs of identical exponent values are infrequent. The primary compression potential thus lies in repeated value frequency, which Huffman coding leverages.
+

@@ -76,6 +76,10 @@ Continuous Batching 不是单独存在的，它必须和 KV Cache 管理配合�
 
 这也是为什么 PagedAttention、vLLM 这类系统会把 batching 和 KV Cache memory management 放在同一个设计框架中。没有高效的 cache 管理，动态 batch 会很快被显存碎片和生命周期复杂度拖垮。
 
+同一模型与 Decode phase 也不自动意味着能共享一次 forward。端云按 layer 固定切分时，各 session 的 hidden state 可能从不同深度到达；分别按 cut 分组最简单，却让共同后缀重复读取权重。另一条分支在 ready window 内选择最深 cut：各 cut 组先推进自己的缺失区间，到达共同深度后才合并 hidden states 与后缀 KV，执行一次 shared-tail forward，再按 row identity 拆回 session。权重常驻、每 session 的 cut 与 layer-KV owner 保持不变；它不是重算已经在 edge 执行的 prefix，也不是在线迁移 cut。<!-- source-family:SF-2026-ARXIV-2610-08268 -->
+
+对齐仍要支付 private-range compute、padding、KV merge/split 与等窗成本；共同 tail 太短、切点成簇或长 context 时，合并可能慢于 exact-match，低并发 interleaving 也可能更好。[DySCo 的受测多端](https://arxiv.org/html/2610.08268v1)只在受控单服务器、固定 cut 与 unbatched prefill 下支持该分支，不能拼接单端 WAN 结果授跨地域部署或 tail SLO。调度应分别检查时间 readiness、layer-depth 兼容性和状态搬排成本；收益不足时回到同 cut batching、interleaving 或单 session 执行。能否放进一个 batch 因此先由执行兼容性决定，再由下面的资源预算决定。
+
 ## 从 Batch Size 到 Token Budget
 
 固定 `batch_size=32` 不能完整描述一次 iteration。一个 Decode request 通常只推进一个 token，而一个 chunked Prefill request 可能推进数百个 tokens；两者的计算量、workspace 和 KV 增量不同。
@@ -294,6 +298,8 @@ Continuous Batching 将 batch 从静态输入张量改造成 iteration-level sch
 代价是 scheduler 必须同时维护 token progress 与 KV residency。下一章继续处理这一耦合中的 memory 一侧：怎样让变长 KV state 不依赖大块连续显存。
 
 ## Review notes
+
+- Daily `2026-10-08`：`SF-2026-ARXIV-2610-08268`，[DySCo v1](https://arxiv.org/html/2610.08268v1) IV–V；只采用固定cut的depth-aligned shared tail。BF16 greedy、3B模型、8ms/max8受控多端，unbatched prefill、clustered/4K/短tail反侧近正文，不将单端WAN与同服务器多端拼为真实WAN多端或SLO保证。
 
 本轮 Review 明确了 iteration-level scheduling 的稳定定义，并补充 admission、preemption 与 KV state 处置。Continuous Batching 的核心不是维护一个动态数组，而是在每个可重调度边界共同决定 token work 与 memory residency。
 

@@ -1,0 +1,194 @@
+Training-Free Distribution Adaptation for Diffusion Models via Maximum Mean Discrepancy Guidance (https://arxiv.org/html/2601.08379v1)
+citeturn30562view0 [wordlim: 200] Crawled: today; Content type: text/html; Source: open({"ref_id":"https://arxiv.org/html/2601.08379v1","lineno":100}); Total lines: 600
+L88: MMD and distribution alignment. The maximum mean discrepancy (MMD) is a kernel-based integral probability metric with strong finite-sample properties, widely used in two-sample testing [cite38†9 ], domain adaptation [cite62†32 ], and generative modeling [cite63†33 , cite64†34 , cite65†35 ]. In concurrent work, [cite66†36 ] replaces the static guidance weight $w$ with a timestep-dependent learnable function. They train a neural network to predict this function using MMD as the optimization objective.
+L89: In contrast, our training-free method applies MMD directly within the denoising process by injecting $\nabla_{x_{t}}\mathrm{MMD}^{2}$ into the diffusion sampler, guiding samples toward the reference distribution, whereas prior work primarily employs MMD as a training loss or evaluation metric.
+L90: ## 3 Preliminaries
+L91: ### 3.1 Kernel Functions and Maximum Mean Discrepancy (MMD)
+L92: 
+L93: Let $k:\mathcal{X}\times\mathcal{X}\to\mathbb{R}$ be a positive semi-definite kernel with associated reproducing kernel Hilbert space (RKHS) $\mathcal{H}_{k}$ and feature map $\varphi:\mathcal{X}\to\mathcal{H}_{k}$ satisfying $k(x,x^{\prime})=\langle\varphi(x),\varphi(x^{\prime})\rangle_{\mathcal{H}_{k}}$. The kernel mean embedding of a distribution $P$ over $\mathcal{X}$ is defined as:
+L94:  | $$\mu_{P}:=\mathbb{E}_{x\sim P}[\varphi(x)]\in\mathcal{H}_{k}.$$  |  | (1)
+L95: 
+L96: The Maximum Mean Discrepancy (MMD) between distributions $P$ and $Q$ measures the RKHS distance between their mean embeddings [cite38†9 ]:
+L97:  | $$\text{MMD}^{2}(P,Q)=\bigl\|\mu_{P}-\mu_{Q}\bigr\|_{\mathcal{H}_{k}}^{2}=\mathbb{E}_{x,x^{\prime}\stackrel{{\scriptstyle\text{iid}}}{{\sim}}P}\bigl[k(x,x^{\prime})\bigr]+\mathbb{E}_{y,y^{\prime}\stackrel{{\scriptstyle\text{iid}}}{{\sim}}Q}\bigl[k(y,y^{\prime})\bigr]-2\cdot\mathbb{E}_{x\sim P,y\sim Q}\bigl[k(x,y)\bigr].$$  |
+L98: For characteristic kernels (e.g., Gaussian kernel), MMD defines a metric on probability measures: $\text{MMD}(P,Q)=0$ if and only if $P=Q$, and it always satisfies the triangle inequality.
+L99: ### 3.2 Latent Diffusion Model (LDM)
+L100: 
+L101: Latent Diffusion Models (LDMs) [cite33†5 ] perform diffusion in the latent space of a pre-trained variational autoencoder (VAE), achieving computational efficiency while maintaining generation quality. Given encoder $\mathcal{E}:\mathcal{X}\to\mathcal{Z}$ and decoder $\mathcal{D}:\mathcal{Z}\to\mathcal{X}$, LDMs operate on latent codes $z=\mathcal{E}(x)$ in the latent space $\mathcal{Z}$. The forward diffusion process progressively adds Gaussian noise to latents:
+L102:  | $$q(z_{t}|z_{0})=\mathcal{N}(z_{t};\sqrt{\bar{\alpha}_{t}}z_{0},(1-\bar{\alpha}_{t})I),\quad z_{t}=\sqrt{\bar{\alpha}_{t}}z_{0}+\sqrt{1-\bar{\alpha}_{t}}\epsilon_{t},$$  |  | (2)
+L103: where $\epsilon_{t}\sim\mathcal{N}(0,I)$, $\bar{\alpha}_{t}=\prod_{s=1}^{t}\alpha_{s}$, and the parameters $\{\alpha_{t}\}_{t=1}^{T}$ follow a proper schedule. A denoising U-Net $\epsilon_{\theta}(z_{t},t,c)$ is trained to predict the noise $\epsilon$ given noisy latent $z_{t}$, timestep $t$, and optional conditioning $c$ (e.g., text embeddings from CLIP). The training objective is $\mathcal{L}(\theta)=\mathbb{E}_{z_{0},\epsilon,t,c}\left[\|\epsilon-\epsilon_{\theta}(z_{t},t,c)\|^{2}\right]$.
+L104: In the sampling phase, we proceed via iterative denoising starting from $z_{T}\sim\mathcal{N}(0,I)$:
+L105:  | $$z_{t-1}={\frac{1}{\sqrt{\alpha_{t}}}\left(z_{t}-\frac{1-\alpha_{t}}{\sqrt{1-\bar{\alpha}_{t}}}\epsilon_{\theta}(z_{t},t,c)\right)}+\sigma_{t}\eta,$$  |  | (3)
+L106: where $\eta\sim\mathcal{N}(0,I)$, $\sigma_{t}^{2}=\tilde{\beta}_{t}=\frac{1-\bar{\alpha}_{t-1}}{1-\bar{\alpha}_{t}}\beta_{t}$ for DDPM sampling [cite31†3 ]. The guidance mechanisms modify the predicted mean $\mu_{\theta}$ to steer generation. Notably, the classifier-free guidance [cite35†7 ] interpolates conditional and unconditional predictions as follows, in which $w>1$ amplifies conditioning strength,
+L107:  | $$\tilde{\epsilon}_{\theta}(z_{t},t,c)=(1-w)\cdot\epsilon_{\theta}(z_{t},t,\varnothing)+w\cdot\epsilon_{\theta}(z_{t},t,c)$$  |  | (4)
+L108: ## 4 MMD Guidance for Unconditional Diffusion Models
+L109: ### 4.1 Distribution Matching via Divergence Guidance in Diffusion Models
+L110: Consider the task of adapting a pre-trained diffusion model to generate samples matching a target distribution $Q$, specified only through a small set of reference samples $\mathcal{R}=\{x_{j}^{(r)}\}_{j=1}^{N_{r}}$. In our work, we aim to develop a guidance-based framework to address this challenge and perform a training-free adaptation of the pre-trained diffusion model.
+L111: To guide the sampling process toward this target, we propose augmenting the reverse diffusion with gradients of a divergence measure between the distributions of generated and reference samples.
+L112: The choice of divergence measure is critical when estimating from limited data. Standard $f$-divergences such as the KL-divergence and total variation distance suffer from the curse of dimensionality in high-dimensional spaces, requiring sample complexity exponential in dimension for reliable estimation [cite67†37 ].
+L113: Similarly, Wasserstein distances, while providing a powerful metric in distinguishing probability distributions, exhibit poor sample complexity in moderately high dimensions, with known minimax estimation rates scaling as $n^{-1/d}$ for $d$-dimensional data [cite68†38 ].
+L114: We propose using Maximum Mean Discrepancy (MMD) as the divergence measure in the distribution matching guidance process. The choice of MMD distance offers two key advantages: (i) sample complexity independent of ambient dimension for characteristic kernels, and (ii) closed-form gradient computation enabling efficient optimization.
+L115: More specifically, considering samples $\{z_{t}^{(i)}\}_{i=1}^{B}$ at timestep $t$ with empirical distribution $\widehat{P}_{t}=\frac{1}{B}\sum_{i=1}^{B}\delta_{z_{t}^{(i)}}$ and reference distribution $\widehat{Q}=\frac{1}{N_{r}}\sum_{j=1}^{N_{r}}\delta_{z_{j}^{(r)}}$, the empirical squared MMD is:
+L116:  | $$\widehat{\text{MMD}}^{2}(\widehat{P}_{t},\widehat{Q})=\frac{1}{B^{2}}\sum_{i,i^{\prime}=1}^{B}k(z_{t}^{(i)},z_{t}^{(i^{\prime})})+\frac{1}{N_{r}^{2}}\sum_{j,j^{\prime}=1}^{N_{r}}k(z_{j}^{(r)},z_{j^{\prime}}^{(r)})-\frac{2}{BN_{r}}\sum_{i=1}^{B}\sum_{j=1}^{N_{r}}k(z_{t}^{(i)},z_{j}^{(r)}).$$  |
+L117: ### 4.2 MMD-Guided Sampling in Diffusion Models
+L118: 
+L119: We incorporate MMD minimization into the diffusion sampling process by modifying the reverse trajectory with distribution-aware gradients. The MMD-guided sampling update will thus become:
+L120: 
+L121:  | $$z_{t-1}^{(i)}=\text{sampler}(z_{t}^{(i)},t,\epsilon_{\theta})-\lambda_{t}\nabla_{z_{t}^{(i)}}\widehat{\text{MMD}}^{2}(\widehat{P}_{t},\widehat{Q}),$$  |  | (5)
+L122: where $\text{sampler}(\cdot)$ denotes any standard sampling scheme (e.g. DDPM or DDIM), and $\lambda_{t}$ controls guidance strength. Note that we subtract the MMD-squared gradient in the guidance process, as we seek to minimize the MMD between distributions.
+--------------------------------------------------------------------------------
+Reliable Graph-RAG for Codebases: AST-Derived Graphs vs LLM-Extracted Knowledge Graphs (https://arxiv.org/html/2601.08773v1)
+citeturn30562view1 [wordlim: 200] Crawled: today; Content type: text/html; Source: open({"ref_id":"https://arxiv.org/html/2601.08773v1","lineno":200}); Total lines: 1098
+L181: Structure-aware chunking and code graphs. Structure-aware chunking using ASTs (e.g., cAST/CAST) improves retrieval by preventing semantically coupled code from being split across chunks and by avoiding malformed fragments that degrade embedding utility [cite99†9 ]. Graph-based retrieval methods for repository-level code generation, such as RepoGraph, explicitly leverage repository structure to retrieve and compose evidence across files, aligning with the core motivation of this paper [cite111†17 ].
+L182: Beyond retrieval, graph-integrated models (e.g., CGM) represent a complementary line of work that integrates graph signals into model architectures for repository-level software engineering tasks [cite112†18 ].
+L183: Determinism, robustness, and indexing reliability. While many GraphRAG systems assume a stable graph artifact, LLM-mediated graph extraction can introduce stochasticity and schema-compliance failures, and these effects are amplified in agentic RAG settings where multiple tool calls and intermediate steps can compound variance [cite94†21 ].
+L184: In practice, this may manifest as missing entities/edges or skipped inputs during indexing, producing blind spots at query time; our contribution is to measure this effect directly via run-log coverage signals in a codebase setting.
+L185: More broadly, when the downstream task is correctness-sensitive (e.g., vulnerability detection), systematic benchmarks have found meaningful gaps between LLM-driven approaches and traditional static analysis under controlled evaluation, reinforcing the value of deterministic signals where available [cite113†22 ].
+L186: ## 4 Problem Formulation and Research Questions
+L187: 
+L188: ### 4.1 Task Definition
+L189: 
+L190: Let $\mathcal{S}$ be a codebase, and let $q$ be a natural-language query about code behavior or architecture. A RAG system assembles context $\mathcal{C}(q)$ and produces an answer $a$. We study retrieval strategies that differ in whether and how they represent code structure [cite91†2 , cite92†5 ].
+L191: ### 4.2 Graph-Based Retrieval Formalization
+L192: 
+L193: We model code structure as a directed labeled graph $G=(V,E)$, where nodes represent code entities (classes, interfaces, etc.) and edges represent relations (e.g., extends, implements, injects) [cite93†20 , cite104†19 ].
+L194: 
+L195: A graph-aware retriever expands an initially retrieved node set $V_{0}$ using neighborhood expansion:
+L196: 
+L197:  | $$V_{d}=V_{0}\cup\bigcup_{v\in V_{0}}N_{d}(v),$$  |  | (1)
+L198: where $N_{d}(v)$ denotes the set of nodes within hop depth $d$ around node $v$ under selected edge directions (successors, predecessors, or both) [cite105†6 ].
+L199: 
+L200: The final assembled context can be expressed as:
+L201: 
+L202:  | $$\mathcal{C}(q)=\text{Concat}\left(\{\text{code}(v)\mid v\in V_{d}\}\right).$$  |  | (2)
+L203: ### 4.3 Research Questions
+L204: 
+L205:   * •
+L206: 
+L207: RQ1 (Efficiency): What are the indexing time and query latency trade-offs across vector-only, LLM-KB, and DKB? [cite92†5 ]
+L208: 
+L209:   * •
+L210: 
+L211: RQ2 (Retrieval adequacy): Does deterministic bidirectional expansion retrieve evidence that vector-only retrieval misses on multi-hop questions? [cite105†6 , cite104†19 ]
+L212: 
+L213:   * •
+L214: RQ3 (Stability): How variable is each approach in query-time latency, and does LLM-KB introduce higher variance or worst-case outliers due to multi-step/tool-mediated processing? [cite94†21 ]
+L215: 
+L216:   * •
+L217: 
+L218: RQ4 (Correctness): Which approach produces the most accurate answers across representative code comprehension and architecture discovery tasks? [cite100†14 , cite101†15 ]
+L219: 
+L220:   * •
+L221: RQ5 (Indexing reliability): How often does each approach preserve corpus coverage (files, entities, chunks), and does LLM-KB exhibit extraction-time skipping that reduces downstream retrievability?
+L222: ## 5 System Overview
+L223: 
+L224: ### 5.1 Compared Pipelines
+L225: 
+L226: We compare three pipelines:
+L227: 
+L228:   1. 1.
+L229: 
+L230: Naive RAG (No-Graph): top-$k$ vector similarity retrieval over code chunks [cite91†2 , cite97†3 ].
+L231: 
+L232:   2. 2.
+L233: 
+L234: LLM-KB: LLM-generated dependency graph at indexing time, plus graph-informed context expansion at query time [cite105†6 , cite104†19 ].
+L235: 
+L236:   3. 3.
+L237: 
+L238: DKB (Ours): deterministic AST-derived graph built with Tree-sitter, used for bidirectional traversal and interface-aware expansion at query time [cite93†20 , cite99†9 ].
+L239: ### 5.2 Graph Artifacts
+L240: 
+L241: Figure cite114†1 shows the two graph artifacts produced for the same codebase.
+L242: 
+L243: cite115†Image: Refer to caption (a) Deterministic AST-derived ontology graph (DKB).
+L244: 
+L245: cite116†Image: Refer to caption (b) LLM-extracted dependency graph (LLM-KB).
+L246: Figure 1: Graph artifacts generated for the same Java codebase (Shopizer). DKB: nodes are project-local Java types (classes/interfaces/enums/records/annotations) discovered via Tree-sitter; edges are typed injects, extends, and implements relations. LLM-KB: nodes are LLM-emitted class_name entities; edges are depends_on relations extracted from per-file structured outputs after filtering out standard-library and framework dependencies (e.g., java.*, Spring packages).
+L247: (This caption replaces the earlier placeholder request to specify node/edge definitions and filtering.)
+L248: ## 6 Methodology
+L249: 
+L250: ### 6.1 Strategy A: Naive Vector Retrieval (No-Graph)
+L251: 
+L252: We implement a standard RAG baseline that relies exclusively on vector similarity search [cite91†2 , cite97†3 ]. Source files are chunked using a recursive character splitter (chunk_size=1000, chunk_overlap=100), embedded, and indexed in a local vector store. At query time, the system retrieves the top-$k=10$ chunks by similarity and passes them to an LLM for answer generation.
+L253: ### 6.2 Strategy B: LLM-Generated Knowledge Graph (LLM-KB)
+L254: 
+L255: The LLM-KB approach constructs a dependency graph by prompting an LLM during indexing, aligned with graph-based retrieval-augmentation patterns in the broader GraphRAG literature [cite105†6 , cite104†19 ]. For each Java file, the LLM emits a structured JSON object containing entities and dependencies. A directed graph is then created and used to expand context at query time by appending neighboring nodes and their code content.
+L256: Practical constraint. To fit batch prompts in context limits, the implementation truncates file content when building per-batch inputs. This can contribute to partial extraction or omission of a file from the structured output, which the run logs surface as “SKIPPED/MISSED by LLM”.
+L257: While stricter prompting, smaller batch sizes, or retries can reduce the skip rate, complete coverage is not guaranteed in multi-step/agentic retrieval pipelines where intermediate tool outputs must satisfy schemas and control-flow checks [cite94†21 ].
+L258: ### 6.3 Strategy C: Deterministic AST Graph (DKB - Proposed)
+L259: DKB deterministically constructs a code graph using Tree-sitter (tree_sitter_java) [cite93†20 ]. The pipeline adds labeled edges for inheritance (extends/implements) and dependency injection patterns (field and constructor parameter types). At query time, DKB expands context using bidirectional graph traversal (successors and predecessors), and performs interface-consumer expansion to improve upstream discovery.
+L260: This design is complementary to structure-aware chunking approaches (e.g., AST-based chunking) that improve retrieval signal quality by aligning chunks with syntactic units [cite99†9 ].
+--------------------------------------------------------------------------------
+ActiveVLA: Injecting Active Perception into Vision-Language-Action Models for Precise 3D Robotic Manipulation (https://arxiv.org/html/2601.08325v1)
+citeturn30562view2 [wordlim: 200] Crawled: today; Content type: text/html; Source: open({"ref_id":"https://arxiv.org/html/2601.08325v1","lineno":105}); Total lines: 472
+L94: Multi-View Rendering. Given RGB-D images as visual input, ActiveVLA reconstructs a point cloud of the scene using images captured by calibrated cameras. To match the 2D image input required by the VLM backbone, we render three orthographic projection images of the point cloud from top, front, and right viewpoints. Specifically, for each view, we render three image maps with a total of 7 channels: RGB, depth, and the coordinates of the points in the world frame (3 channels).
+L95: The coordinates help establish the correspondence of pixels across views, i.e., if pixels from different views share the same $(x,y,z)$, they correspond to the same point in 3D. We use PyTorch3D [cite83†51 ] for rendering. The rendered image at viewpoint $v$ is given by:
+L96:  | $$I^{(v)}(u_{x},u_{y})=\sum_{i=1}^{N}\mathbf{c}_{i}\cdot\delta\big((u_{x},u_{y})-\pi^{(v)}(\mathbf{p}_{i})\big),$$  |  | (2)
+L97: 
+L98: where $\pi^{(v)}(\cdot)$ denotes the orthographic projection. The rendered color at each pixel is taken from the point with the minimal depth $z_{i}^{(v)}$ among all points projecting to that pixel, ensuring correct occlusion handling.
+L99: 3D Crucial Area Extraction. These images are then used as input for the VLM backbone, which is designed to process images along with accompanying text prompts. Since the VLM’s global representations are not sufficient for precise spatial localization, we introduce a heatmap prediction module to recover fine-grained spatial attention and identify object positions within each view.
+L100: To predict the heatmap, we first rearrange the output patch tokens $\{\mathbf{t}_{i}\}_{i=1}^{M}$ according to their spatial positions to form a feature grid. A convex upsampling block is then applied to the feature grid to obtain a heatmap that matches the resolution of the input image. This process can be expressed as:
+L101:  | $$\mathbf{H}=\mathcal{U}\Big(\mathrm{Rearrange}\big(\{\mathbf{t}_{i}\}_{i=1}^{M}\big)\Big),$$  |  | (3)
+L102: where $\mathcal{U}(\cdot)$ denotes the convex upsampling block, and $\mathrm{Rearrange}(\cdot)$ rearranges the tokens into a feature grid of size $H_{p}\times W_{p}$. Unlike fixed interpolation methods, the upsampling module learns pixel-wise weights for finer spatial detail recovery. The pipeline is trained with cross-entropy loss to predict heatmaps, which are then back-projected from all views to identify the crucial 3D region.
+L103: ### 3.2 3D Active Perception
+L104: 
+L105: ActiveVLA enables active perception, allowing robots to perform fine-grained manipulation. It includes two components: Active Viewpoint Selection and Active 3D Zoom-in.
+L106: Active Viewpoint Selection. To improve perceptual completeness in complex scenes, ActiveVLA proposes a hypothesis testing strategy for selecting active views that focuses on optimal camera viewpoints centered on key regions identified during the coarse stage. The goal is to maximize amodal relevance by ensuring full visibility of target objects and increasing view diversity. Together, these objectives help reduce occlusion and perceptual ambiguity through complementary observations.
+L107: Given the 3D key region of interest $p_{f}\in\mathbb{R}^{3}$ (e.g., the centroid of a partially observed object), we generate a set of candidate camera positions uniformly distributed around a sphere centered at $p_{f}$. To achieve isotropic coverage, we employ a geodesic sampling strategy based on recursive subdivision of a regular icosahedron, producing a near-uniform point distribution on the spherical surface.
+L108: This avoids sampling biases inherent in latitude-longitude parameterizations and provides scalable control over viewpoint density via subdivision level. The total number of sampling points $V(k)$ after $k$-level recursive subdivision (where $k\in\mathbb{N}$, a non-negative integer) is quantitatively described as:
+L109:  | $$V(k)=12+30k+\frac{20}{3}\left(4^{k}-1\right),$$  |  | (4)
+L110: 
+L111: where $k=0$ corresponds to the original icosahedron (12 vertices), and higher $k$ indicates successive subdivisions. Each candidate camera position $c_{i}$ is evaluated using a multi-objective scoring function that balances three criteria:
+L112: 
+L113:   * •
+L114: Visibility : ActiveVLA determines whether the line of sight from $c_{i}$ to $p_{f}$ is occluded by scene geometry. Using a KDTree-based nearest-neighbor search on the observed point cloud $\mathcal{S}$, it samples $N$ uniformly spaced points $\{q_{k}\}$ along the ray and computes their nearest-surface distances:
+L115: 
+L116:  | $$d_{k}=\min_{s\in\mathcal{S}}\|q_{k}-s\|.$$  |  | (5)
+L117: If all distances exceed a threshold $r$ ($d_{k}\geq r,\,\forall k$), the view is marked unoccluded with $v(c_{i},p_{f})=1$; otherwise, $v(c_{i},p_{f})=0$.
+L118: 
+L119:   * •
+L120: 
+L121: Distance: We normalize the distance $\|c_{i}-p_{f}\|$ and standardize it across candidates to prefer moderate viewing ranges that balance field-of-view and detail resolution.
+L122: 
+L123:   * •
+L124: Diversity: To ensure geometric diversity among selected viewpoints, we compute the total angular separation between the viewing direction of $c_{i}$ and all other candidates. Given candidate set $\mathcal{C}=\{c_{1},\dots,c_{M}\}$ and unit viewing vectors $\mathbf{v}_{i}\in\mathbb{S}^{2}$, the diversity score is defined as:
+L125: 
+L126:  | $$S_{\text{div}}(c_{i})=\sum_{j\neq i}\arccos(\mathbf{v}_{i}\cdot\mathbf{v}_{j}),$$  |  | (6)
+L127: A larger $S_{\text{div}}(c_{i})$ indicates greater angular diversity and more spatially distributed views.
+L128: 
+L129: These scores are Z-normalized and combined into a unified score:
+L130: 
+L131:  | $$s_{i}=w_{\text{vis}}\cdot s_{\text{vis}}+w_{\text{dis}}\cdot s_{\text{dis}}+w_{\text{div}}\cdot s_{\text{div}},$$  |  | (7)
+L132: where $w_{\text{vis}}+w_{\text{dis}}+w_{\text{div}}=1$ are the weighting coefficients, $s_{\text{vis}}$ denotes the visibility score, $s_{\text{dis}}$ denotes the distance score, and $s_{\text{div}}$ denotes the diversity score. The top-$K$ highest-scoring views are selected as the next observation poses. Each camera is configured using the look-at formulation with eye $c_{i}$, target $p_{f}$, and a dynamically adjusted up vector.
+L133: These views enable informative, unoccluded observations that support robust multi-view reasoning and precise manipulation, with the most informative view serving as the basis for active 3D zoom-in.
+L134: Active 3D Zoom-in. Previous VLA models rely on fixed camera views around the robot, which often fail to capture sufficient detail for fine-grained tasks involving small objects (e.g., welding a hole using a welding gun).
+L135: To overcome this limitation, ActiveVLA introduces an active 3D zoom-in mechanism that adaptively refines visual perception around key interaction regions. After selecting the optimal viewpoint, the system re-renders the scene from the same camera pose with a narrowed field of view, effectively magnifying the local region while maintaining high pixel resolution for precise gripper pose prediction.
+L136: This simulates an optical zoom effect in virtual rendering space, enabling detailed observation of small-scale structures without loss of visual fidelity. Let $\alpha$ denote the original FoV (in radians), $z>1$ the zoom-in factor, and $d$ the distance from the camera to the region of interest. The spatial coverage width $W$ of the rendered image (perpendicular to the viewing direction) is given by:
+--------------------------------------------------------------------------------
+HIPPO: Accelerating Video Large Language Models Inference via Holistic-aware Parallel Speculative Decoding (https://arxiv.org/html/2601.08273v1)
+citeturn30562view3 [wordlim: 200] Crawled: today; Content type: text/html; Source: open({"ref_id":"https://arxiv.org/html/2601.08273v1","lineno":128}); Total lines: 442
+L122: We define tokens located within a normalized distance of 10% from the top or bottom edges as boundary tokens (constituting approximately 20% of the total), while the remaining 80% are classified as interior tokens. We observe that among the selected tokens in each frame, boundary tokens account for a disproportionate share—exceeding 44% and peaking at 57.8%. This suggests that relying solely on attention-based token selection is insufficient for effectively capturing visual semantics.
+L123: We further conduct a controlled experiment using video-SALMONN2+ 7B as the draft model and video-SALMONN2+ 72B as the target model. We evaluate the draft model’s performance under three input configurations: full visual tokens, top-10% tokens selected via target model attention scores, and a random 10% selection of visual tokens. We report accuracy on three video-QA benchmarks: Video-MME (cite56†Fu et al., 2025 ), MLVU (cite78†Zhou et al., 2025 ), and LVBench (cite79†Wang et al., 2024b ).
+L124: As shown in Figure cite80†3 , both the attention-only and random strategies result in performance degradation compared to the full-token baseline. Notably, on MLVU, the random strategy outperforms attention-based pruning. This demonstrates the significance of preserving semantic visual tokens and suggests that attention-only selection can discard semantically important tokens due to position bias.
+L125: Figure 2: Statistics of per-frame positional bias. Figure 3: Performance comparison of three visual token inputs: random 10% sampling, target-model-guided top-10% attention selection, and full visual tokens. Figure 4: Statistics of average running time ratio of the draft and target model.
+L126: ### 4.2 Non-negligible Draft Latency
+L127: We conduct a series of real-world experiments to demonstrate that draft model latency is a significant bottleneck in speculative decoding. As shown in Figure cite81†4 , both the drafting phase and verification phase consume substantial time. At each decoding step, the draft model remains idle during verification while the target model remains idle during drafting. This mutual waiting dilutes the speedup from accepted draft tokens, and the overhead from rejected draft tokens degrades performance.
+L128: For example, suppose the target model is three times slower than the draft model, i.e., $T_{\text{target}}=3T_{\text{draft}}$. In each round, the draft model proposes 3 tokens. If all three tokens are accepted, the total computation corresponds to three forward passes of the draft model and one forward pass of the target model to obtain 4 correct tokens (3 draft tokens plus 1 token from the target model’s verification). The effective speedup is $4T_{\text{target}}/(3T_{\text{draft}}+1T_{\text{target}})=2$.
+L129: However, if the first draft token is rejected, the same amount of computation (three draft forward passes and one target forward pass) yields only 1 correct token (from the target model’s verification), and the effective speedup becomes $1T_{\text{target}}/(3T_{\text{draft}}+1T_{\text{target}})=0.5$, which is significantly worse than vanilla AR decoding.
+L130: Due to the serial execution of the draft and target models, together with the substantial draft model latency under long visual tokens, existing video-SD methods suffer from a fundamental bottleneck.
+L131: ## 5 Method
+L132: We propose HIPPO, a h olist i c-aware p arallel s p eculative dec o ding framework that promotes video-LLMs to focus on informative visual content and overlapping the non-negligible draft latency. HIPPO integrates semantic-aware token preservation—which holistically scores tokens across global, temporal, and spatial dimensions to mitigate position bias—and video parallel speculative decoding—which overlaps draft generation with target verification via adaptive strategy switching.
+L133: An overview of HIPPO is shown in Figure cite82†5 .
+L134: cite83†Image: Refer to caption Figure 5: An overview of HIPPO. (A) Semantic-aware Token Preservation: A holistic scoring mechanism integrates global semantic relevance, inter-frame temporal redundancy, and intra-frame spatial redundancy to select a compact subset of informative visual tokens, mitigating position bias.
+L135: (B) Video Parallel Speculative Decoding: Synchronous Draft-Target Prefill generates initial draft tokens while the target model processes input, followed by an Adaptive Decoding Strategy that dynamically switches between optimistic post-verification and conservative pre-verification modes based on draft quality to maximize parallelism.
+L136: ### 5.1 Semantic-aware Token Preservation
+L137: Consider a video of a news anchor. While the anchor’s lip movements, gestures, and expressions exhibit temporal variations, the background and studio layout remain static across adjacent frames. From a spatial perspective, large intra-frame regions—such as the desk and walls—contain little information. This example illustrates the dual nature of video redundancy: temporally, static backgrounds repeat across frames; spatially, uniform regions within each frame carry minimal information.
+L138: An effective token preservation strategy should capture both dimensions to preserve semantic completeness under aggressive compression.
+L139: As demonstrated by motivated experiments in Section cite13†4 , relying solely on attention scores neglects crucial visual information due to position bias (cite64†Xiao et al., 2024 ). To address this, we propose a semantic-aware scoring mechanism that comprehensively evaluates each video token by integrating three orthogonal signals: global semantic relevance, inter-frame temporal redundancy, and intra-frame spatial redundancy.
+L140: By scoring and ranking tokens holistically, we identify a compact subset that captures the essential visual semantics for the draft model.
+L141: #### Global Semantic Relevance.
+L142: To identify tokens aligned with the user prompt, we compute a global semantic relevance score $s_{\text{attn}}$ from language-to-video cross-attention. In our example, if the prompt is “What is the anchor reporting?”, tokens corresponding to the anchor’s face and on-screen graphics should receive high scores. Following prior work (cite58†Ji et al., 2025 ), we leverage KV-based reconstruction to avoid computing the full $O(L^{2})$ attention matrix.
+L143: Specifically, we extract visual keys $\mathbf{K}_{\text{vid}}\in\mathbb{R}^{N_{v}\times d_{k}}$ from the prefilled KV cache at minimal cost, obtain text queries $\mathbf{Q}_{\text{txt}}\in\mathbb{R}^{L_{\text{txt}}\times d_{k}}$, and compute the cross-modal attention matrix $\mathbf{S}_{\text{attn}}=\text{softmax}(\mathbf{Q}_{\text{txt}}\mathbf{K}_{\text{vid}}^{T}/\sqrt{d_{k}})\in\mathbb{R}^{L_{\text{txt}}\times N_{v}}$. We aggregate weights across layers and heads:
+L144:  | $$s_{\text{attn}}(\mathbf{v}_{j})=\frac{1}{N_{L}HL_{\text{txt}}}\sum_{\ell=1}^{N_{L}}\sum_{h=1}^{H}\sum_{i=1}^{L_{\text{txt}}}[\mathbf{S}_{\text{attn}}^{(\ell,h)}]_{i,j},$$  |  | (2)
+L145: where $L_{\text{txt}}$ is the text sequence length, $N_{L}$ is the number of layers, $H$ is the number of attention heads, $d_{k}$ is the key dimension, and $\ell,h$ index the layer and head respectively. This score effectively captures prompt-relevant content. However, it suffers from position bias, where boundary tokens receive inflated scores regardless of content.
+

@@ -1,0 +1,1152 @@
+ORD-WM: Learning Object-Centric Rigid Dynamics for 3D World Modeling in Robotic Manipulation
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1  Introduction
+2  Related Work
+3  Method
+3.1  Object-Centric 3D Observation
+3.2  Geometry-Aware Object Representation Learning
+3.3  Object-Centric Rigid Dynamics
+3.4  Model Predictive Control with ORD-WM
+4  Experiments
+4.1  Experimental setup
+4.2  Can ORD-WM accurately predict multi-step motion while preserving geometry?
+4.3  Which components enable stable geometry-preserving rollout?
+4.4  Can ORD-WM support efficient closed-loop MPC?
+5  Conclusion
+6  Limitations
+References
+A  SDF-VNVAE Details and Analysis
+A.1  Posterior Parameterization and Transformation Properties
+A.2  Network Architecture
+Input centering.
+Encoder.
+Omitting kNN graph features.
+Decoder.
+A.3  Training Objective
+SDF reconstruction loss.
+Eikonal regularization.
+KL regularization.
+A.4  Training Details
+A.5  Reconstruction Accuracy
+A.6  Reconstruction Visualization
+A.7  Latent-Space Analysis
+Latent interpolation.
+t-SNE visualization.
+B  Dynamics Model Details
+B.1  Network Architecture
+B.2  Training Objective
+B.3  Dataset
+B.4  Training Details
+C  Additional Rollout Results and Analysis
+C.1  Additional Multi-Step Rollout Results
+C.2  Counterfactual Action Rollouts
+C.3  Object Generalization in Rollout
+C.4  Geometry Preservation During Rollout
+D  MPC Implementation Details
+D.1  MPC Formulation
+D.2  Implementation Details
+License: arXiv.org perpetual non-exclusive license
+arXiv:2610.23156v1 [cs.RO] 16 Oct 2026
+ORD-WM: Learning Object-Centric Rigid Dynamics for 3D World Modeling in Robotic Manipulation
+Yueyang Weng *
+Xiaopeng Zhang *
+Yuxi Ou
+Yongjin Mu
+Chengzhi Zhao
+Yanjie Li ‡
+Affiliation:  Harbin Institute of Technology, Shenzhen
+Affiliation:   * Equal contribution,
+‡ Corresponding author
+Affiliation:   https://hitsz-wyy.github.io/ORD-WM/
+Abstract
+World models provide robots with a predictive mechanism for reasoning about how actions change object states in manipulation tasks. However, existing image-based and dense 3D world models do not explicitly impose object-level rigid motion, leaving rigid-object geometry preservation to be learned implicitly and making multi-step rollouts susceptible to shape drift or object-level motion inconsistency. To address this, we propose ORD-WM, a 3D world model that learns object-centric rigid dynamics for robotic manipulation. ORD-WM learns a vector-neuron variational autoencoder supervised by signed distance fields, which encodes each object point cloud as a geometry-aware latent representation composed of 3D vector features, and uses an action-conditioned dynamics model to predict object-wise SE(3) motion increments. Rather than generating unconstrained next latent states, ORD-WM analytically applies predicted object-wise rigid transformations to the current latent states, separating persistent object geometry from pose changes. Experiments show that ORD-WM enables stable, geometry-preserving multi-step prediction and supports efficient real-time replanning for closed-loop model predictive control in simulated and real-world manipulation scenarios.
+Figure 1:  In contrast to video-based rollout and point-based scene-flow prediction, which may suffer from visual artifacts, shape drift, or object-level inconsistency, ORD-WM performs multi-step prediction by analytically applying predicted object-wise SE(3) updates to geometry-aware object latents composed of 3D vector features, preserving object geometry while updating pose. This latent-space rollout enables real-world object motion prediction and closed-loop model predictive control, where candidate actions are evaluated by their predicted effects on object states.
+Keywords:  World Models, Robot Manipulation, 3D Dynamics Prediction
+1  Introduction
+Humans can anticipate how physical scenes evolve and how actions change object states, which is fundamental to everyday interaction with the physical world. Endowing robots with a similar predictive ability is an important step toward more capable manipulation: before pushing, grasping, or rearranging objects, a robot should reason about how its actions may move and transform the objects in a scene. World models provide a natural framework for acquiring such capability by learning action-conditioned dynamics and rolling out future states internally, enabling robots to evaluate candidate actions and plan toward desired object configurations without relying solely on trial-and-error interaction in the real world  [ 14 ,  18 ] .
+Recent robotic world models have explored several forms of action-conditioned prediction. Video-based models roll out future visual observations and can capture rich visual changes in robot-object interaction  [ 33 ] .
+However, because prediction is performed in image or visual latent space, these models lack an explicit metric 3D state. As a result, visual plausibility alone does not guarantee temporally consistent object geometry or physically plausible interactions during rollout  [ 23 ,  56 ] .
+Dense 3D world models based on point clouds, particles, or Gaussian scene representations move prediction closer to physical space by forecasting the motion of 3D elements  [ 1 ] . However, when modeling rigid object motion through local element-wise updates, these models must coordinate local motions to produce globally consistent object transformations, which may accumulate into shape distortions or object-level drift during multi-step rollout  [ 22 ] .
+For manipulation tasks involving rigid or approximately rigid objects, prediction should preserve object geometry while allowing object poses to change through interaction. Rigid-body simulators  [ 41 ]  offer a useful abstraction for this setting: they represent scenes as collections of bodies with persistent geometry and update object states through constrained body-level motion, rather than by independently moving dense visual or geometric elements. This separation between geometry and motion suggests a natural inductive bias for learned world models of rigid-object manipulation.
+Building on this perspective, we propose ORD-WM, a 3D world model that learns object-centric rigid dynamics for robotic manipulation (Fig.   1  ).
+ORD-WM represents a manipulation scene as a collection of geometry-aware object states and evolves them through object-wise rigid motion. To obtain such states, ORD-WM trains a signed-distance-field (SDF)-supervised vector-neuron (VN)  [ 7 ]  variational autoencoder (VAE)  [ 26 ] , denoted SDF-VNVAE. Its encoder maps each object point cloud to a geometry-aware latent state composed of 3D vector features that capture object geometry and can be analytically transformed by rigid motions in latent space. Instead of predicting unconstrained next latent states, ORD-WM predicts object-wise SE(3)  1    1
+1
+SE(3) denotes the Special Euclidean group in three dimensions, representing 3D rigid transformations consisting of a rotation     R  ∈   S  ​  O  ​   (  3  )     R\in SO(3)    and a translation     t  ∈   ℝ  3    t\in\mathbb{R}^{3}   .    motion increments conditioned on the current scene state and robot action, and applies these transformations directly to the object states.
+Together, these design choices yield an object-centric 3D world model in which object geometry is maintained as a persistent latent structure and future states are generated through structured rigid updates. We evaluate ORD-WM on multi-step dynamics prediction and model predictive control (MPC) for object pushing and pick-and-place, showing that its object-centric SE(3)-structured rollout improves geometric consistency and supports downstream model-based control.
+2  Related Work
+World Models for Robotic Manipulation.
+World models  [ 14 ]  learn action-conditioned predictions of future states or observations, providing a predictive substrate for planning and policy learning in imagination  [ 18 ,  17 ,  16 ,  19 ] .
+Recent robotic world models extend this paradigm by learning action-conditioned predictors from large-scale video and robot interaction data. These models forecast future images  [ 49 ,  57 ,  59 ]  or visual latents  [ 3 ,  2 ] , supporting policy learning  [ 50 ,  60 ] , policy conditioning  [ 20 ] , visual model-based control  [ 12 ,  9 ] , and policy evaluation  [ 37 ,  42 ] .
+However, prediction in image or visual-latent spaces does not by itself impose physical consistency: visually plausible rollouts may still fail to preserve object geometry, identity, or rigid-body motion over time. Another line of work grounds prediction in 3D, using point clouds  [ 22 ,  21 ] , particles  [ 28 ,  39 ] , or Gaussian scene representations  [ 31 ,  32 ]  to model physical scene evolution. While these representations move prediction closer to physical space  [ 52 ] , dense element-wise motion still leaves rigid consistency to be learned implicitly: all points of a rigid object must agree with a single object-level transformation  [ 5 ] . ORD-WM targets this rigid-object regime by evolving object states through object-wise SE(3) motion increments rather than future frames or dense point flows.
+Object-Centric Representations for Dynamics Modeling.
+Object-centric representations factorize a scene into entities rather than representing the entire scene with a single holistic latent, providing a natural structure for learning compositional dynamics  [ 1 ,  4 ,  47 ,  27 ] . This factorization mirrors physical scenes, where objects move independently, interact relationally, and form new configurations across contexts  [ 45 ] . Object-centric dynamics have been shown to benefit prediction  [ 47 ] , planning  [ 54 ] , model-based reinforcement learning  [ 10 ,  46 ] , and relation-aware manipulation  [ 34 ]  by making dynamics more modular and interpretable. However, existing methods typically use abstract object representations that support compositional reasoning but do not explicitly encode object geometry or constrain transitions to follow rigid-body motion  [ 27 ,  34 ,  30 ] . As a result, rigid geometry preservation remains an implicit property to be learned from data. ORD-WM builds on this object-centric view, but represents each object with a geometry-aware latent state composed of 3D vector features and updates the latent state through explicit rigid transformations, thereby imposing rigid structure directly on the latent transition.
+Implicit 3D Object Representations.
+Implicit 3D object representations, such as SDFs and occupancy fields, model object shape as continuous functions and provide geometric information beyond discrete surface samples  [ 24 ,  51 ] .
+In robotics, SDFs have been widely used for collision-aware motion planning, where reasoning about geometry and spatial proximity is essential  [ 61 ,  11 ,  44 ,  8 ] .
+Learning-based SDF methods use signed distance supervision to learn object shape representations for reconstruction  [ 36 ] , perception  [ 43 ,  40 ,  53 ] , and manipulation planning  [ 25 ,  15 ] .
+ORD-WM trains a VNVAE with an SDF reconstruction objective, producing geometry-aware latents composed of 3D vector features that serve as object states for rigid, geometry-preserving rollout.
+3  Method
+We present ORD-WM, a 3D world model that learns object-centric rigid dynamics for robotic manipulation. ORD-WM represents a manipulation scene as a collection of geometry-aware object states and evolves them through object-wise rigid motion. Given RGB-D observations, ORD-WM first constructs object-level point clouds and encodes each object into a geometry-aware latent state composed of 3D vector features. An action-conditioned dynamics model then predicts object-wise SE(3) motion increments, which are analytically applied to the current latent states to enable structured multi-step rollout while preserving object geometry and identity.
+3.1  Object-Centric 3D Observation
+ORD-WM operates on object-centric 3D observations constructed from multi-view RGB-D inputs.
+At each time step, the robot receives observations from    V  V    camera views,
+o  t   =    {   (   I  t  v   ,   D  t  v   )   }    v  =  1   V    ,   o_{t}=\{(I_{t}^{v},D_{t}^{v})\}_{v=1}^{V},
+(1)
+where     I  t  v   I_{t}^{v}    and     D  t  v   D_{t}^{v}    denote the RGB image and aligned depth map from view    v  v   .
+We use Segment Anything Model 3 (SAM 3)  [ 6 ]  to extract object masks in each RGB view, apply the masks to the corresponding depth maps, and back-project the masked depth pixels into a common world frame.
+Partial point clouds of the same object instance are merged across views, yielding
+𝒫  t   =    {   P  t  i   }    i  =  1    N  t     ,   \mathcal{P}_{t}=\{P_{t}^{i}\}_{i=1}^{N_{t}},
+(2)
+where     P  t  i   P_{t}^{i}    is the point cloud of object    i  i    and     N  t   N_{t}    is the number of detected object instances.
+3.2  Geometry-Aware Object Representation Learning
+Figure 2:  Overview of SDF-VNVAE. The VN encoder maps an object-centered point cloud to a latent representation composed of 3D vector features that rotate equivariantly with the input. The decoder predicts signed distance values from the latent sample     z  t  i   z_{t}^{i}    and query points, and is invariant under their shared 3D rotation. For visual simplicity, the encoder output is drawn as     z  t  i   z_{t}^{i}   ; during training,     z  t  i   z_{t}^{i}    is sampled from the posterior parameterized by     (   μ  t  i   ,   σ  t  i   )   (\mu_{t}^{i},\sigma_{t}^{i})   .
+To support structured rigid dynamics in latent space, ORD-WM requires object states that encode geometry while allowing rotations to be applied analytically. We therefore train a geometry-aware VNVAE that maps each object point cloud to a latent representation composed of 3D vector features. The key property of this representation is SO(3)-equivariance: rotating the input object induces the same rotation on each 3D vector feature, making it meaningful to apply predicted object rotations directly to the latent representation. The decoder predicts signed distance values from the latent representation and query points in a rotation-invariant manner, encouraging the latent to capture object geometry and surrounding distance structure, as illustrated in Fig.   2  .
+Before encoding, each object point cloud is centered by subtracting its centroid:
+P  ¯   t  i   =   {   p  −   c  t  i    ∣   p  ∈   P  t  i    }    ,   \bar{P}_{t}^{i}=\{p-c_{t}^{i}\mid p\in P_{t}^{i}\},
+(3)
+where      c  t  i   ∈   ℝ  3    c_{t}^{i}\in\mathbb{R}^{3}    denotes the centroid of     P  t  i   P_{t}^{i}   .
+For each centered point cloud      P  ¯   t  i   \bar{P}_{t}^{i}   , we use a VN-PointNet encoder     E  ϕ   E_{\phi}     [ 7 ]  to parameterize a latent distribution over 3D vector features:
+(   μ  t  i   ,   σ  t  i   )   =    E  ϕ   ​   (    P  ¯   t  i   )     ,    μ  t  i   ∈   ℝ   K  ×  3     ,    σ  t  i   ∈   ℝ  K     .   (\mu_{t}^{i},\sigma_{t}^{i})=E_{\phi}(\bar{P}_{t}^{i}),\qquad\mu_{t}^{i}\in\mathbb{R}^{K\times 3},\quad\sigma_{t}^{i}\in\mathbb{R}^{K}.
+(4)
+The mean     μ  t  i   \mu_{t}^{i}    is a set of three-dimensional vectors, while     σ  t  i   \sigma_{t}^{i}    parameterizes one isotropic uncertainty value per vector feature. By construction, the mean vectors transform equivariantly under rotations:
+μ  ⁡   (   R  ∘    P  ¯   t  i    )    =   R  ∘   μ  ⁡   (    P  ¯   t  i   )      ,   R  ∈   S  ​  O  ​   (  3  )      ,   \mu(R\circ\bar{P}_{t}^{i})=R\circ\mu(\bar{P}_{t}^{i}),\qquad R\in SO(3),
+(5)
+where     R  ∘  X   R\circ X    denotes applying rotation    R  R    to every point or 3D vector in    X  X   . This equivariance allows the dynamics model to apply predicted object rotations directly to the latent representation.
+The decoder represents each object as an implicit SDF conditioned on the object latent. During representation learning, we sample     z  t  i   z_{t}^{i}    from the posterior parameterized by     (   μ  t  i   ,   σ  t  i   )   (\mu_{t}^{i},\sigma_{t}^{i})    and query the decoder at a point     x  ∈   ℝ  3    x\in\mathbb{R}^{3}    in the object-centered frame to predict the signed distance value:
+d  ^   =    D  ψ   ​   (   z  t  i   ,  x  )     .   \hat{d}=D_{\psi}(z_{t}^{i},x).
+(6)
+We design the decoder to be invariant under a shared 3D rotation of the latent representation and query point. Together with encoder equivariance, this preserves the decoded geometry in the corresponding rotated frame.
+We train the VNVAE with an SDF reconstruction objective, augmented by Eikonal  [ 13 ]  and Kullback–Leibler (KL) regularization terms  [ 26 ] . After training, we use the posterior mean     μ  t  i   \mu_{t}^{i}    as the deterministic geometry latent and append the retained object center     c  t  i   c_{t}^{i}    as an additional 3D vector in the object state:
+s  t  i   =   [    μ  t  i   ;   c  t  i    ]   ∈   ℝ    (   K  +  1   )   ×  3     ,    S  t   =    {   s  t  i   }    i  =  1    N  t      .   s_{t}^{i}=[\mu_{t}^{i};c_{t}^{i}]\in\mathbb{R}^{(K+1)\times 3},\qquad S_{t}=\{s_{t}^{i}\}_{i=1}^{N_{t}}.
+(7)
+The full posterior parameterization, transformation properties, architecture, loss definitions and training details are provided in Appendix   A  .
+3.3  Object-Centric Rigid Dynamics
+Given the object-centric scene state     S  t   S_{t}   , robot proprioception     ρ  t   \rho_{t}   , and robot action     a  t   a_{t}   , ORD-WM learns a dynamics model that predicts action-conditioned object motion in the scene (Fig.   3  ).
+We partition scene objects into floating objects, whose poses can change over time, and fixed objects, which provide static context such as support surfaces.
+Robot proprioception is converted into geometry-aware gripper tokens by applying forward kinematics to pre-sampled points on each gripper part, which are then encoded with the same VNVAE encoder used for scene objects.
+Instead of using a single end-effector pose and gripper width, we represent the action as rigid transformations of individual gripper parts.
+Floating objects, fixed objects, gripper parts, and actions are tokenized with learned role embeddings and fed into a transformer dynamics module, which captures robot-object and object-object interactions and produces interaction-aware features     h  t  i   h_{t}^{i}    for each scene object.
+Figure 3:  Overview of the dynamics model. The current scene state, robot proprioception, and action are encoded into tokens, which are processed to predict object-wise rigid motions and update the scene state.
+For each floating object feature, an SE(3) motion head predicts a translation increment and a 6D rotation representation  [ 58 ] :
+(   Δ  ​    x  ^   t  i    ,    r  ^   t  i   )   =    Head  se3   ​   (   h  t  i   )         for   ​  i   ∈   ℱ  t     ,   (\Delta\hat{x}^{i}_{t},\hat{r}^{i}_{t})=\mathrm{Head}_{\mathrm{se3}}(h^{i}_{t})\quad\text{for }i\in\mathcal{F}_{t},
+(8)
+where     ℱ  t   \mathcal{F}_{t}    denotes the set of floating-object indices.
+The rotation output is mapped to a valid rotation matrix        Δ  ​  R   ^   t  i   =    Π   SO  ⁡   (  3  )     ​   (    r  ^   t  i   )     \hat{\Delta R}_{t}^{i}=\Pi_{\mathrm{SO(3)}}(\hat{r}_{t}^{i})   , yielding the object-wise rigid motion        Δ  ​  T   ^   t  i   =   (     Δ  ​  R   ^   t  i   ,     Δ  ​  x   ^   t  i   )    \hat{\Delta T}_{t}^{i}=(\hat{\Delta R}_{t}^{i},\hat{\Delta x}_{t}^{i})   .
+We additionally supervise auxiliary distances      d  ^     t  +  1   ,  grip   i   \hat{d}_{t+1,\mathrm{grip}}^{i}    and      d  ^     t  +  1   ,  float   i   \hat{d}_{t+1,\mathrm{float}}^{i}    from each scene object to the gripper and to its nearest floating object, encouraging the object features to encode geometric proximity for interaction modeling.
+The predicted rigid motion is analytically applied to the object state. For each floating object, the rotation is applied to every 3D vector feature in the geometry latent, and the translation updates the object center:
+μ  ^    t  +  1   i   =      Δ  ​  R   ^   t  i   ∘   μ  t  i     ,     c  ^    t  +  1   i   =    c  t  i   +     Δ  ​  x   ^   t  i      .   \hat{\mu}_{t+1}^{i}=\hat{\Delta R}_{t}^{i}\circ\mu_{t}^{i},\qquad\hat{c}_{t+1}^{i}=c_{t}^{i}+\hat{\Delta x}_{t}^{i}.
+(9)
+The next object state is       s  ^    t  +  1   i   =   [     μ  ^    t  +  1   i   ;    c  ^    t  +  1   i    ]    \hat{s}_{t+1}^{i}=[\hat{\mu}_{t+1}^{i};\hat{c}_{t+1}^{i}]   , while fixed objects remain unchanged and continue to provide static scene context. This structured update prevents the model from freely modifying object latents, preserving geometry by rolling out future states through object-level rigid motion. During multi-step prediction, ORD-WM recursively applies the predicted SE(3) updates in latent space, without repeated segmentation, point-cloud reconstruction, or object re-encoding.
+We train the dynamics model with supervised object-wise SE(3) motion losses on floating objects and auxiliary distance losses on scene objects. Full loss definitions and training details are provided in Appendix   B  .
+3.4  Model Predictive Control with ORD-WM
+A learned world model can be used in several ways, including online planning, policy learning from imagined rollouts, and policy evaluation. In this work, we use ORD-WM for model predictive control, where the learned dynamics model is used directly to evaluate candidate action sequences.
+At each control step, we construct the current scene state and proprioception, roll out future object states for candidate action sequences directly in latent space, and optimize the action sequence using the Cross-Entropy Method (CEM)  [ 38 ] .
+CEM iteratively samples candidate action sequences, evaluates them with the learned dynamics model and task cost, and refits the sampling distribution toward low-cost candidates.
+Only the first action of the optimized sequence is executed before the robot receives a new observation and replans, following a receding-horizon control scheme.
+The MPC objective measures the discrepancy between predicted scene states and desired target states over task-relevant components.
+Table 1:  Multi-step prediction comparison with PointWorld. Point-wise     ℓ  2   \ell_{2}    errors are reported for moving (mov.) and static (stat.) points at each horizon; Shape Consistency Chamfer Distance (CD) measures full-rollout drift from the initial object shape. All distances are in mm, and lower is better. PointWorld (ft) is fine-tuned on LIBERO.  Bold  marks the best result per metric.
+Method
+1-step
+10-step
+Full traj.
+Shape
+Cons. CD    ↓  \downarrow
+ℓ  2   \ell_{2}    mov.
+ℓ  2   \ell_{2}    stat.
+ℓ  2   \ell_{2}    mov.
+ℓ  2   \ell_{2}    stat.
+ℓ  2   \ell_{2}    mov.
+ℓ  2   \ell_{2}    stat.
+ORD-WM
+1.58
+0.12
+7.71
+0.86
+37.60
+8.50
+0.00
+PointWorld
+13.72
+6.61
+83.18
+8.75
+321.11
+216.15
+19.87
+PointWorld (ft)
+10.04
+1.09
+79.62
+5.50
+225.68
+18.84
+3.58
+For consistent point-based evaluation, ORD-WM’s     ℓ  2   \ell_{2}    errors and consistency CD use initial-frame points transformed by the predicted cumulative SE(3) motions.
+Figure 4:  Qualitative rollout predictions.
+Top: simulation rollouts and object position trajectories compared with ground truth.
+Bottom: real-world rollouts from observed scenes.
+4  Experiments
+We conduct comprehensive experiments in simulation and the real world to answer the following questions:
+(1) Can ORD-WM accurately predict multi-step object motion while preserving geometry?
+(2) Which components enable stable geometry-preserving rollout?
+(3) Can ORD-WM support efficient closed-loop MPC?
+4.1  Experimental setup
+Datasets.
+We train the SDF-VNVAE and its representation baselines using object assets from LIBERO  [ 29 ]  scenes and RoboCasa  [ 35 ] . For world-model training, we use trajectories from the LIBERO benchmark, including LIBERO-Spatial, LIBERO-Object, LIBERO-Goal, and LIBERO-Long, each containing 10 distinct tasks, together with 1,000 additional object-pushing trajectories. We reserve 10% of the trajectories for multi-step rollout evaluation.
+Real-world setup.
+Real-world experiments are conducted with a Franka Research 3 robot and three calibrated RealSense D435 cameras. Depth maps are estimated using FoundationStereo  [ 48 ] , and object-centric states are constructed from the resulting RGB-D observations following the perception pipeline in Sec.   3.1  .
+4.2  Can ORD-WM accurately predict multi-step motion while preserving geometry?
+We first evaluate whether ORD-WM can predict future object states while preserving geometry over multi-step rollouts.
+In simulation, we initialize ORD-WM with the initial scene state, roll it out using ground-truth action sequences from held-out trajectories, and compare the predictions with the corresponding ground truth at 1 step, 10 steps, and over the full trajectory.
+We compare ORD-WM with the publicly released PointWorld checkpoint  [ 22 ]  and a variant fine-tuned on LIBERO, denoted PointWorld (ft). Table   1   reports point-wise     ℓ  2   \ell_{2}    errors separately for moving and static points, together with Shape Consistency Chamfer Distance (CD). ORD-WM achieves lower prediction errors than both PointWorld variants for moving and static points across all evaluated horizons. Fine-tuning improves PointWorld’s prediction accuracy and shape consistency, but geometric drift remains over full trajectories. In contrast, ORD-WM preserves object geometry throughout rollout by applying object-wise SE(3) updates.
+Figure   4   complements the quantitative results with representative rollout visualizations.
+In simulation, ORD-WM predicts object trajectories that closely follow ground truth over multiple steps, indicating that the latent rollout captures object-level motion beyond one-step transitions.
+In real-world scenes, the predicted rollouts are visually consistent with the corresponding observations, suggesting that the same rollout procedure transfers beyond simulation.
+Additional rollout visualizations and generalization results are provided in Appendix   C  .
+Table 2:
+Multi-step rollout prediction and efficiency. Surface CD is computed using points sampled from decoded object surfaces and evaluated at 1 step, 10 steps, and over full trajectories (avg.    ∼  \sim   170 steps). Shape Consistency CD measures full-rollout drift from the initial object shape. All CD values are in mm; rollout FPS uses batch sizes      B  =  1   ,  8   B=1,8   .  Bold  marks the best reported result per metric.
+Method
+Surface CD    ↓  \downarrow
+Shape
+Cons. CD    ↓  \downarrow
+Rollout FPS    ↑  \uparrow
+1-step
+10-step
+Full traj.
+B  =  1   B=1
+B  =  8   B=8
+ORD-WM
+0.252
+0.670
+4.729
+𝟎  †   \mathbf{0}^{\dagger}
+784
+6179
+w/o SE(3) update
+0.620
+2.588
+131.600
+4.683
+902
+6443
+w/o VN and SE(3) update
+8.501
+9.763
+52.401
+34.611
+1232
+7439
+w/o VN
+1.005
+1.592
+9.218
+𝟎  †   \mathbf{0}^{\dagger}
+162
+124
+Decoupled Geo.+Pose
+0.994
+1.562
+11.287
+𝟎  †   \mathbf{0}^{\dagger}
+891
+6988
+†  \dagger    Geometry preserved by construction; numerical evaluation yields a residual below 0.05 mm.
+4.3  Which components enable stable geometry-preserving rollout?
+We next analyze which structural components enable the stable rollouts observed in Sec.   4.2  .
+At the core of ORD-WM are two key structures: a VN-based geometry latent that supports analytic object rotations, and a dynamics model that predicts object-wise SE(3) motion increments and applies them to the current object states in latent space.
+To isolate their effects, we compare ORD-WM with four variants: two that directly predict the next object state and two that retain SE(3) updates without using VN representations.
+The  w/o SE(3) update  variant uses the same VN-based object state as ORD-WM but directly predicts the next object state in latent space, removing the analytic rigid update.
+The  w/o VN and SE(3) update  variant replaces the VN-based geometry latent with a standard SDF-VAE latent and also predicts the next object state directly.
+The  w/o VN  baseline retains object-wise SE(3) prediction but uses a standard geometry latent. Since rotations cannot be applied directly to this latent, it transforms the object point cloud and re-encodes it at each rollout step.
+The  Decoupled Geo.+Pose  baseline stores persistent geometry and explicit pose separately, avoiding repeated geometry encoding.
+We evaluate these variants using Surface CD for prediction accuracy, Shape Consistency CD for geometric drift, and rollout FPS for computational efficiency.
+The comparisons in Table   2   show the value of SE(3) updates. For both VN-based and standard geometry representations, directly predicting future object states yields larger long-horizon errors than predicting and applying object-wise SE(3) motion increments. The direct-prediction variants also exhibit larger Shape Consistency CD, indicating that unconstrained latent updates can gradually alter the decoded geometry. In contrast, the variants with SE(3) updates preserve object shape by constraining state evolution to rigid motion. These results support the role of SE(3) updates in maintaining geometric consistency and improving multi-step prediction across both representations. Additional visualizations in Appendix   C.4   show how directly predicting future VN latents can accumulate geometric deformation over repeated rollout steps.
+Among the variants that retain SE(3) updates, the choice of geometry representation further affects prediction accuracy and rollout efficiency. Compared with  w/o VN , ORD-WM achieves lower Surface CD at all horizons. It also achieves higher throughput by applying rotations directly to the VN latent, avoiding per-step point cloud re-encoding. The  Decoupled Geo.+Pose  baseline also avoids re-encoding, but yields larger prediction errors across the evaluated horizons. A potential challenge of this factorization is reference-frame ambiguity: rotating the stored reference geometry and compensating in the explicit pose leaves the represented object unchanged. Unless a consistent reference-frame convention is enforced, equivalent physical states can therefore have different geometry–pose decompositions, potentially complicating dynamics learning. ORD-WM instead encodes geometry in its current orientation and updates it equivariantly, avoiding the need to select a separate canonical orientation.
+Additional SDF-VNVAE analyses, including reconstruction metrics, reconstruction visualizations, latent interpolation, and latent-space clustering, are provided in Appendix   A  , further supporting that the learned latent state captures reusable geometric structure.
+4.4  Can ORD-WM support efficient closed-loop MPC?
+Table 3:  Real-world pushing MPC performance and planning efficiency. A trial is successful if the final object position error is below 2 cm. Pos. Error and Avg. Steps report the mean final position error and mean number of executed task steps, respectively. Planning Time is measured per MPC replanning step.  Bold  marks the best result per metric.
+Candidates
+Success Rate    ↑  \uparrow
+Pos. Error    ↓  \downarrow
+Avg. Steps    ↓  \downarrow
+Planning Time    ↓  \downarrow
+64
+10%
+3.72 cm
+367
+55.4 ms
+256
+70%
+1.64 cm
+171
+115.7 ms
+1024
+90%
+0.972 cm
+85
+269.9 ms
+Figure 5:  Closed-loop MPC with ORD-WM. The black-bordered panel shows the initial scene. At each control step, ORD-WM rolls out candidate trajectories in latent space (blue), selects the lowest-cost trajectory (red), and executes the first action in a receding-horizon manner; the accumulated executed trajectory is shown in black.
+We finally evaluate whether ORD-WM can support closed-loop control through MPC.
+Following Sec.   3.4  , the controller uses ORD-WM to roll out candidate action sequences in latent space and selects actions by minimizing the discrepancy between predicted scene states and desired target states over task-relevant components. We evaluate object pushing and pick-and-place tasks, measuring task performance and planning efficiency. For pick-and-place, we use a staged planning strategy inspired by V-JEPA 2  [ 2 ] , sequentially performing grasping, lifting, and transport.
+Table   3   evaluates real-world pushing MPC performance under different candidate budgets, where each candidate is an 8-step action sequence, planning time is measured per MPC replanning step on a single NVIDIA RTX 3090 GPU, and success is defined as a final position error below 2 cm.
+Increasing the number of candidates improves task performance: success rate rises from 10% to 90%, mean final position error decreases from 3.72 cm to 0.972 cm, and the average number of executed task steps drops from 367 to 85.
+Although larger budgets increase computation, planning remains below 0.3 s per replanning step with 1024 candidates on this hardware, indicating that ORD-WM supports repeated online replanning on the real robot.
+Figure   5   visualizes representative MPC trials in simulation and real-world scenes. In simulation, the selected actions move objects toward the target configurations over successive replanning steps. The real-world examples further show that ORD-WM can support closed-loop pushing from observed scenes beyond the simulation setting.
+5  Conclusion
+We proposed ORD-WM, a 3D world model that learns object-centric rigid dynamics for robotic manipulation.
+By combining SDF-supervised, rotation-equivariant object representations with action-conditioned SE(3) motion prediction, ORD-WM evolves object states through analytic rigid transformations in latent space. This design preserves object geometry by construction and enables multi-step rollout without repeatedly reconstructing or re-encoding object point clouds.
+Experiments demonstrate improved multi-step prediction accuracy, while ablations highlight the importance of rigid updates for geometry preservation and the benefits of equivariant representations for prediction accuracy and rollout efficiency. ORD-WM also supports efficient online replanning for closed-loop manipulation in both simulation and real-world experiments. Together, these results highlight the value of explicit rigid-body structure in learning world models for robotic manipulation.
+6  Limitations
+While ORD-WM introduces an object-centric SE(3)-structured latent rollout for preserving rigid-object geometry, its current formulation focuses on a restricted class of object dynamics.
+Specifically, scene objects are modeled as either floating or fixed rigid bodies, which limits the method’s applicability to articulated, hinged, or deformable objects.
+Future work could extend ORD-WM with additional motion types: articulated or hinged objects could be updated by predicting constrained transformations that respect their joint degrees of freedom, while deformable objects could use shape-changing latent dynamics instead of purely rigid SE(3) updates.
+Even for rigid objects, ORD-WM targets low-dynamic, position-controlled manipulation. Mass, friction, and contact effects are learned implicitly from observed transitions, so the model cannot distinguish dynamics caused by different unobserved physical parameters under identical observed states and actions. Its SE(3) updates preserve object geometry but do not enforce contact constraints or non-penetration.
+Finally, due to computational constraints, we have not yet evaluated ORD-WM on substantially larger datasets or more diverse object and task distributions.
+Scaling the proposed object-centric structured rollout to broader manipulation scenarios remains an important direction for future work.
+Acknowledgments
+This work was supported by National Natural Science Foundation of China 62673160, Shenzhen Fundamental Research ZDCY20250901095402003, Guangdong Provincial Natural Science Foundation 2026A1515011727 and the Open Fund of Innovation Center for Control Actuators. This work was also supported by the Analysis and Testing Center at Harbin Institute of Technology, Shenzhen.
+References
+[1]
+B. Ai, S. Tian, H. Shi, Y. Wang, T. Pfaff, C. Tan, H. I. Christensen, H. Su, J. Wu, and Y. Li   (2025)
+A review of learning-based dynamics models for robotic manipulation .
+Science Robotics   10  ( 106 ),  pp. eadt1497 .
+Cited by:   §1  ,
+§2  .
+[2]
+M. Assran, A. Bardes, D. Fan, Q. Garrido, R. Howes, M. Muckley, A. Rizvi, C. Roberts, K. Sinha, A. Zholus,  et al.    (2025)
+V-JEPA 2: self-supervised video models enable understanding, prediction and planning .
+arXiv preprint arXiv:2506.09985 .
+Cited by:   §2  ,
+§4.4  .
+[3]
+A. Bardes, Q. Garrido, J. Ponce, X. Chen, M. Rabbat, Y. LeCun, M. Assran, and N. Ballas   (2024)
+Revisiting feature prediction for learning visual representations from video .
+Transactions on Machine Learning Research .
+Cited by:   §2  .
+[4]
+P. Battaglia, R. Pascanu, M. Lai, D. Jimenez Rezende,  et al.    (2016)
+Interaction networks for learning about objects, relations and physics .
+Advances in Neural Information Processing Systems   29 .
+Cited by:   §2  .
+[5]
+A. Byravan and D. Fox   (2017)
+SE3-Nets: learning rigid body motion using deep neural networks .
+In  2017 IEEE International Conference on Robotics and Automation (ICRA) ,
+pp. 173–180 .
+Cited by:   §2  .
+[6]
+N. Carion, L. Gustafson, Y. Hu, S. Debnath, R. Hu, D. Suris, C. Ryali, K. V. Alwala, H. Khedr, A. Huang, J. Lei, T. Ma, B. Guo, A. Kalla, M. Marks, J. Greer, M. Wang, P. Sun, R. Rädle, T. Afouras, E. Mavroudi, K. Xu, T. Wu, Y. Zhou, L. Momeni, R. Hazra, S. Ding, S. Vaze, F. Porcher, F. Li, S. Li, A. Kamath, H. K. Cheng, P. Dollár, N. Ravi, K. Saenko, P. Zhang, and C. Feichtenhofer   (2025)
+SAM 3: segment anything with concepts .
+External Links:   2511.16719 ,
+Link
+Cited by:   §3.1  .
+[7]
+C. Deng, O. Litany, Y. Duan, A. Poulenard, A. Tagliasacchi, and L. J. Guibas   (2021)
+Vector neurons: a general framework for SO(3)-equivariant networks .
+In  Proceedings of the IEEE/CVF International Conference on Computer Vision ,
+pp. 12200–12209 .
+Cited by:   §A.2  ,
+§A.2  ,
+§1  ,
+§3.2  .
+[8]
+D. Driess, J. Ha, M. Toussaint, and R. Tedrake   (2022)
+Learning models as functionals of signed-distance fields for manipulation planning .
+In  Conference on Robot Learning ,
+pp. 245–255 .
+Cited by:   §2  .
+[9]
+F. Ebert, C. Finn, S. Dasari, A. Xie, A. Lee, and S. Levine   (2018)
+Visual foresight: model-based deep reinforcement learning for vision-based robotic control .
+arXiv preprint arXiv:1812.00568 .
+Cited by:   §2  .
+[10]
+S. Ferraro, P. Mazzaglia, T. Verbelen, and B. Dhoedt   (2025)
+FOCUS: object-centric world models for robotic manipulation .
+Frontiers in Neurorobotics   19 ,  pp. 1585386 .
+Cited by:   §2  .
+[11]
+M. N. Finean, W. Merkt, and I. Havoutis   (2021)
+Predicted composite signed-distance fields for real-time motion planning in dynamic environments .
+In  Proceedings of the International Conference on Automated Planning and Scheduling ,
+Vol.  31 ,  pp. 616–624 .
+Cited by:   §2  .
+[12]
+C. Finn and S. Levine   (2017)
+Deep visual foresight for planning robot motion .
+In  2017 IEEE International Conference on Robotics and Automation (ICRA) ,
+pp. 2786–2793 .
+Cited by:   §2  .
+[13]
+A. Gropp, L. Yariv, N. Haim, M. Atzmon, and Y. Lipman   (2020)
+Implicit geometric regularization for learning shapes .
+In  International Conference on Machine Learning ,
+pp. 3789–3799 .
+Cited by:   §3.2  .
+[14]
+D. Ha and J. Schmidhuber   (2018)
+World models .
+eprint arXiv: 1803.10122 .
+Cited by:   §1  ,
+§2  .
+[15]
+J. Ha, D. Driess, and M. Toussaint   (2022)
+Deep visual constraints: neural implicit models for manipulation planning from visual input .
+IEEE Robotics and Automation Letters   7  ( 4 ),  pp. 10857–10864 .
+Cited by:   §2  .
+[16]
+D. Hafner, T. Lillicrap, J. Ba, and M. Norouzi   (2020)
+Dream to control: learning behaviors by latent imagination .
+In  International Conference on Learning Representations ,
+Cited by:   §2  .
+[17]
+D. Hafner, T. Lillicrap, I. Fischer, R. Villegas, D. Ha, H. Lee, and J. Davidson   (2019)
+Learning latent dynamics for planning from pixels .
+In  International Conference on Machine Learning ,
+pp. 2555–2565 .
+Cited by:   §2  .
+[18]
+D. Hafner, J. Pasukonis, J. Ba, and T. Lillicrap   (2025)
+Mastering diverse control tasks through world models .
+Nature   640  ( 8059 ),  pp. 647–653 .
+Cited by:   §1  ,
+§2  .
+[19]
+D. Hafner, W. Yan, and T. Lillicrap   (2025)
+Training agents inside of scalable world models .
+arXiv preprint arXiv:2509.24527 .
+Cited by:   §2  .
+[20]
+Y. Hu, Y. Guo, P. Wang, X. Chen, Y. Wang, J. Zhang, K. Sreenath, C. Lu, and J. Chen   (2025)
+Video prediction policy: a generalist robot policy with predictive visual representations .
+In  International Conference on Machine Learning ,
+pp. 24328–24346 .
+Cited by:   §2  .
+[21]
+S. Huang, Q. Chen, X. Zhang, J. Sun, and M. Schwager   (2025)
+ParticleFormer: a 3D point cloud world model for multi-object, multi-material robotic manipulation .
+In  9th Annual Conference on Robot Learning ,
+Cited by:   §2  .
+[22]
+W. Huang, Y. Chao, A. Mousavian, M. Liu, D. Fox, K. Mo, and L. Fei-Fei   (2026)
+PointWorld: scaling 3D world models for in-the-wild robotic manipulation .
+arXiv preprint arXiv:2601.03782 .
+Cited by:   §1  ,
+§2  ,
+§4.2  .
+[23]
+F. Jiang, Y. Chen, K. Xu, Y. Liu, H. Wang, Z. Shen, J. Lu, S. Huang, Y. Wang, C. Xie,  et al.    (2026)
+RoboWM-Bench: a benchmark for evaluating world models in robotic manipulation .
+arXiv preprint arXiv:2604.19092 .
+Cited by:   §1  .
+[24]
+M. W. Jones, J. A. Baerentzen, and M. Sramek   (2006)
+3D distance fields: a survey of techniques and applications .
+IEEE Transactions on Visualization and Computer Graphics   12  ( 4 ),  pp. 581–599 .
+Cited by:   §2  .
+[25]
+N. Khargonkar, N. Song, Z. Xu, B. Prabhakaran, and Y. Xiang   (2023)
+NeuralGrasps: learning implicit representations for grasps of multiple robotic hands .
+In  Conference on Robot Learning ,
+pp. 516–526 .
+Cited by:   §2  .
+[26]
+D. P. Kingma and M. Welling   (2013)
+Auto-encoding variational bayes .
+arXiv preprint arXiv:1312.6114 .
+Cited by:   §1  ,
+§3.2  .
+[27]
+T. N. Kipf, E. van der Pol, and M. Welling   (2020)
+Contrastive learning of structured world models .
+In  International Conference on Learning Representations ,
+Cited by:   §2  .
+[28]
+Y. Li, J. Wu, R. Tedrake, J. B. Tenenbaum, and A. Torralba   (2019)
+Learning particle dynamics for manipulating rigid bodies, deformable objects, and fluids .
+In  ICLR ,
+Cited by:   §2  .
+[29]
+B. Liu, Y. Zhu, C. Gao, Y. Feng, Q. Liu, Y. Zhu, and P. Stone   (2023)
+LIBERO: benchmarking knowledge transfer for lifelong robot learning .
+Advances in Neural Information Processing Systems   36 ,  pp. 44776–44791 .
+Cited by:   §4.1  .
+[30]
+F. Locatello, D. Weissenborn, T. Unterthiner, A. Mahendran, G. Heigold, J. Uszkoreit, A. Dosovitskiy, and T. Kipf   (2020)
+Object-centric learning with slot attention .
+Advances in Neural Information Processing Systems   33 ,  pp. 11525–11538 .
+Cited by:   §2  .
+[31]
+G. Lu, B. Jia, P. Li, Y. Chen, Z. Wang, Y. Tang, and S. Huang   (2025)
+GWM: towards scalable gaussian world models for robotic manipulation .
+In  Proceedings of the IEEE/CVF International Conference on Computer Vision ,
+pp. 9263–9274 .
+Cited by:   §2  .
+[32]
+G. Lu, S. Zhang, Z. Wang, C. Liu, J. Lu, and Y. Tang   (2024)
+ManiGaussian: dynamic gaussian splatting for multi-task robotic manipulation .
+In  European Conference on Computer Vision ,
+pp. 349–366 .
+Cited by:   §2  .
+[33]
+Z. Mei, T. Yin, O. Shorinwa, A. Badithela, Z. Zheng, J. Bruno, M. Bland, L. Zha, A. Hancock, J. F. Fisac,  et al.    (2026)
+Video Generation Models in Robotics – Applications, Research Challenges, Future Directions .
+arXiv preprint arXiv:2601.07823 .
+Cited by:   §1  .
+[34]
+M. Mosbach, J. N. Ewertz, A. Villar-Corrales, and S. Behnke   (2025)
+SOLD: slot object-centric latent dynamics models for relational manipulation learning from pixels .
+In  International Conference on Machine Learning ,
+pp. 44911–44935 .
+Cited by:   §2  .
+[35]
+S. Nasiriany, A. Maddukuri, L. Zhang, A. Parikh, A. Lo, A. Joshi, A. Mandlekar, and Y. Zhu   (2024)
+RoboCasa: large-scale simulation of everyday tasks for generalist robots .
+In  Robotics: Science and Systems (RSS) ,
+Cited by:   §4.1  .
+[36]
+J. J. Park, P. Florence, J. Straub, R. Newcombe, and S. Lovegrove   (2019)
+DeepSDF: learning continuous signed distance functions for shape representation .
+In  Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition ,
+pp. 165–174 .
+Cited by:   §2  .
+[37]
+J. Quevedo, P. Liang, and S. Yang   (2025)
+Evaluating robot policies in a world model .
+arXiv preprint arXiv:2506.00613 .
+Cited by:   §2  .
+[38]
+R. Y. Rubinstein   (1997)
+Optimization of computer simulation models with rare events .
+European Journal of Operational Research   99  ( 1 ),  pp. 89–112 .
+Cited by:   §D.1  ,
+§3.4  .
+[39]
+A. Sanchez-Gonzalez, N. Heess, J. T. Springenberg, J. Merel, M. Riedmiller, R. Hadsell, and P. Battaglia   (2018)
+Graph networks as learnable physics engines for inference and control .
+In  International Conference on Machine Learning ,
+pp. 4470–4479 .
+Cited by:   §2  .
+[40]
+M. Song, J. Ha, B. Park, and D. Park   (2025)
+Implicit neural-representation learning for elastic deformable-object manipulations .
+In  Robotics: Science and Systems (RSS) ,
+Cited by:   §2  .
+[41]
+E. Todorov, T. Erez, and Y. Tassa   (2012)
+MuJoCo: a physics engine for model-based control .
+In  2012 IEEE/RSJ international conference on intelligent robots and systems ,
+pp. 5026–5033 .
+Cited by:   §1  .
+[42]
+W. Tseng, J. Gu, Q. Zhang, H. Mao, M. Liu, F. Shkurti, and L. Yen-Chen   (2025)
+Scalable policy evaluation with video world models .
+arXiv preprint arXiv:2511.11520 .
+Cited by:   §2  .
+[43]
+M. Van der Merwe, Q. Lu, B. Sundaralingam, M. Matak, and T. Hermans   (2020)
+Learning continuous 3D reconstructions for geometrically aware grasping .
+In  2020 IEEE International Conference on Robotics and Automation (ICRA) ,
+pp. 11516–11522 .
+Cited by:   §2  .
+[44]
+V. Vasilopoulos, S. Garg, P. Piacenza, J. Huh, and V. Isler   (2023)
+Ramp: hierarchical reactive motion planning for manipulation tasks using implicit signed distance functions .
+In  2023 IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS) ,
+pp. 10551–10558 .
+Cited by:   §2  .
+[45]
+R. Veerapaneni, J. D. Co-Reyes, M. Chang, M. Janner, C. Finn, J. Wu, J. Tenenbaum, and S. Levine   (2020)
+Entity abstraction in visual model-based reinforcement learning .
+In  Conference on Robot Learning ,
+pp. 1439–1456 .
+Cited by:   §2  .
+[46]
+Z. Wang, K. Wang, L. Zhao, P. Stone, and J. Bian   (2025)
+Dyn-O: building structured world models with object-centric representations .
+In  The Thirty-ninth Annual Conference on Neural Information Processing Systems ,
+Cited by:   §2  .
+[47]
+N. Watters, D. Zoran, T. Weber, P. Battaglia, R. Pascanu, and A. Tacchetti   (2017)
+Visual interaction networks: learning a physics simulator from video .
+Advances in Neural Information Processing Systems   30 .
+Cited by:   §2  .
+[48]
+B. Wen, M. Trepte, J. Aribido, J. Kautz, O. Gallo, and S. Birchfield   (2025)
+FoundationStereo: zero-shot stereo matching .
+In  Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition ,
+Cited by:   §4.1  .
+[49]
+H. Wu, Y. Jing, C. Cheang, G. Chen, J. Xu, X. Li, M. Liu, H. Li, and T. Kong   (2024)
+Unleashing large-scale video generative pre-training for visual robot manipulation .
+In  International Conference on Learning Representations ,
+Cited by:   §2  .
+[50]
+P. Wu, A. Escontrela, D. Hafner, P. Abbeel, and K. Goldberg   (2023)
+Daydreamer: world models for physical robot learning .
+In  Conference on Robot Learning ,
+pp. 2226–2240 .
+Cited by:   §2  .
+[51]
+H. Xu and J. Barbič   (2020)
+Signed distance fields for polygon soup meshes .
+In  Graphics interface 2014 ,
+pp. 35–41 .
+Cited by:   §2  .
+[52]
+Z. Xu, Z. He, J. Wu, and S. Song   (2020)
+Learning 3D dynamic scene representations for robot manipulation .
+In  Proceedings of the 2020 Conference on Robot Learning ,
+Cited by:   §2  .
+[53]
+S. Yan, Z. Yang, H. Li, C. Song, L. Guan, H. Kang, G. Hua, and Q. Huang   (2023)
+Implicit autoencoder for point-cloud self-supervised representation learning .
+In  Proceedings of the IEEE/CVF International Conference on Computer Vision ,
+pp. 14530–14542 .
+Cited by:   §2  .
+[54]
+Y. Ye, D. Gandhi, A. Gupta, and S. Tulsiani   (2020)
+Object-centric forward modeling for model predictive control .
+In  Conference on Robot Learning ,
+pp. 100–109 .
+Cited by:   §2  .
+[55]
+X. Zhan, L. Yang, Y. Zhao, K. Mao, H. Xu, Z. Lin, K. Li, and C. Lu   (2024)
+OAKINK2: a dataset of bimanual hands-object manipulation in complex task completion .
+In  Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition ,
+pp. 445–456 .
+Cited by:   §A.5  .
+[56]
+J. Zhou, Z. Zhu, L. Du, L. Lyu, L. Zhou, Z. Wu, H. Luo, Z. Tian, B. Wang, G. Chen,  et al.    (2026)
+Toward physically consistent driving video world models under challenging trajectories .
+arXiv preprint arXiv:2603.24506 .
+Cited by:   §1  .
+[57]
+S. Zhou, Y. Du, J. Chen, Y. Li, D. Yeung, and C. Gan   (2024)
+RoboDreamer: learning compositional world models for robot imagination .
+In  International Conference on Machine Learning ,
+pp. 61885–61896 .
+Cited by:   §2  .
+[58]
+Y. Zhou, C. Barnes, J. Lu, J. Yang, and H. Li   (2019)
+On the continuity of rotation representations in neural networks .
+In  Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition ,
+pp. 5745–5753 .
+Cited by:   §3.3  .
+[59]
+F. Zhu, H. Wu, S. Guo, Y. Liu, C. Cheang, and T. Kong   (2025)
+IRASim: a fine-grained world model for robot manipulation .
+In  Proceedings of the IEEE/CVF International Conference on Computer Vision (ICCV) ,
+pp. 9834–9844 .
+Cited by:   §2  .
+[60]
+F. Zhu, Z. Yan, Z. Hong, Q. Shou, X. Ma, and S. Guo   (2025)
+WMPO: world model-based policy optimization for vision-language-action models .
+arXiv preprint arXiv:2511.09515 .
+Cited by:   §2  .
+[61]
+M. Zucker, N. Ratliff, A. D. Dragan, M. Pivtoraiko, M. Klingensmith, C. M. Dellin, J. A. Bagnell, and S. S. Srinivasa   (2013)
+Chomp: covariant hamiltonian optimization for motion planning .
+The International Journal of Robotics Research   32  ( 9-10 ),  pp. 1164–1193 .
+Cited by:   §2  .
+Appendix A  SDF-VNVAE Details and Analysis
+This appendix provides additional details on the SDF-supervised vector-neuron variational autoencoder (SDF-VNVAE) used to construct the geometry-aware object states in ORD-WM. We describe the posterior parameterization, transformation properties, network architecture, training objective, training details, reconstruction accuracy, and additional qualitative analyses.
+A.1  Posterior Parameterization and Transformation Properties
+For completeness, we provide the full posterior parameterization and clarify how the uncertainty term in the main text is computed. Given an object-centered point cloud      P  ¯   t  i   \bar{P}^{i}_{t}   , the VN encoder first outputs two sets of 3D vector features:
+(   μ  t  i   ,   u  t  i   )   =     E  ~   ϕ   ​   (    P  ¯   t  i   )     ,    μ  t  i   ∈   ℝ   K  ×  3     ,    u  t  i   ∈   ℝ   K  ×  3      .   (\mu^{i}_{t},u^{i}_{t})=\tilde{E}_{\phi}(\bar{P}^{i}_{t}),\qquad\mu^{i}_{t}\in\mathbb{R}^{K\times 3},\quad u^{i}_{t}\in\mathbb{R}^{K\times 3}.
+(A.1)
+Here,     μ  t  i   \mu^{i}_{t}    contains the posterior mean vectors, and     u  t  i   u^{i}_{t}    is an auxiliary vector-valued scale feature. The scalar uncertainty      σ  t  i   ∈   ℝ  K    \sigma^{i}_{t}\in\mathbb{R}^{K}    used in the main text is computed from     u  t  i   u^{i}_{t}    by taking the root mean square of each 3D auxiliary vector:
+σ   t  ,  k   i   =  RMS   (   u   t  ,  k   i   )   =      1  3   ​    ‖   u   t  ,  k   i   ‖   2  2    +  ϵ    ,  k  =  1  ,  …  ,  K  ,   \sigma^{i}_{t,k}=\operatorname{RMS}(u^{i}_{t,k})=\sqrt{\frac{1}{3}\left\|u^{i}_{t,k}\right\|_{2}^{2}+\epsilon},\qquad k=1,\ldots,K,
+(A.2)
+where    ϵ  \epsilon    is a small constant for numerical stability. Thus, the notation
+(   μ  t  i   ,   σ  t  i   )   =    E  ϕ   ​   (    P  ¯   t  i   )     (\mu^{i}_{t},\sigma^{i}_{t})=E_{\phi}(\bar{P}^{i}_{t})    in the main text should be understood as shorthand for this vector-to-scalar uncertainty parameterization.
+The approximate posterior is factorized over the    K  K    latent vector features:
+q  ϕ   ​   (   z  t  i   ∣    P  ¯   t  i   )    =    ∏   k  =  1   K    𝒩  ⁡   (   z   t  ,  k   i   ,   μ   t  ,  k   i   ,     (   σ   t  ,  k   i   )   2   ​   I  3    )      ,    z   t  ,  k   i   ∈   ℝ  3     .   q_{\phi}(z^{i}_{t}\mid\bar{P}^{i}_{t})=\prod_{k=1}^{K}\mathcal{N}\left(z^{i}_{t,k};\mu^{i}_{t,k},(\sigma^{i}_{t,k})^{2}I_{3}\right),\qquad z^{i}_{t,k}\in\mathbb{R}^{3}.
+(A.3)
+Therefore, each latent feature is a 3D Gaussian random vector with an isotropic covariance matrix. Importantly,     u   t  ,  k   i   u^{i}_{t,k}    is not used as an axis-wise standard deviation. Instead, it is converted into a single scalar uncertainty     σ   t  ,  k   i   \sigma^{i}_{t,k}   , which defines the isotropic covariance       (   σ   t  ,  k   i   )   2   ​   I  3    (\sigma^{i}_{t,k})^{2}I_{3}   .
+This parameterization is compatible with SO(3)-equivariance. Since both     μ  t  i   \mu^{i}_{t}    and     u  t  i   u^{i}_{t}    are produced by VN layers, they transform equivariantly under any rotation     R  ∈   S  ​  O  ​   (  3  )     R\in SO(3)   :
+μ  ϕ   ​   (   R  ∘    P  ¯   t  i    )    =    R  ∘   μ  ϕ    ​   (    P  ¯   t  i   )     ,     u  ϕ   ​   (   R  ∘    P  ¯   t  i    )    =    R  ∘   u  ϕ    ​   (    P  ¯   t  i   )      ,   \mu_{\phi}(R\circ\bar{P}^{i}_{t})=R\circ\mu_{\phi}(\bar{P}^{i}_{t}),\qquad u_{\phi}(R\circ\bar{P}^{i}_{t})=R\circ u_{\phi}(\bar{P}^{i}_{t}),
+(A.4)
+where     R  ∘  X   R\circ X    denotes applying the rotation    R  R    to every point or 3D vector in    X  X   . The RMS operation then converts the equivariant auxiliary vector into a rotation-invariant scalar:
+σ  ϕ   ​   (   R  ∘    P  ¯   t  i    )    =    σ  ϕ   ​   (    P  ¯   t  i   )     ,   \sigma_{\phi}(R\circ\bar{P}^{i}_{t})=\sigma_{\phi}(\bar{P}^{i}_{t}),
+(A.5)
+because
+RMS  ⁡   (   R  ​   u   t  ,  k   i    )    =      1  3   ​    ‖   R  ​   u   t  ,  k   i    ‖   2  2    +  ϵ    =      1  3   ​    ‖   u   t  ,  k   i   ‖   2  2    +  ϵ    =   RMS  ⁡   (   u   t  ,  k   i   )     .   \operatorname{RMS}(Ru^{i}_{t,k})=\sqrt{\frac{1}{3}\left\|Ru^{i}_{t,k}\right\|_{2}^{2}+\epsilon}=\sqrt{\frac{1}{3}\left\|u^{i}_{t,k}\right\|_{2}^{2}+\epsilon}=\operatorname{RMS}(u^{i}_{t,k}).
+(A.6)
+As a result, the posterior distribution is equivariant as a distribution. For a single latent vector,
+z  k   ∼   𝒩  ⁡   (   μ  k   ,    σ  k  2   ​   I  3    )     .   z_{k}\sim\mathcal{N}(\mu_{k},\sigma_{k}^{2}I_{3}).
+(A.7)
+After applying a rotation    R  R   , the transformed random vector satisfies
+R  ​   z  k    ∼   𝒩  ⁡   (   R  ​   μ  k    ,    R  ⁡   (    σ  k  2   ​   I  3    )    ​   R  ⊤    )    =   𝒩  ⁡   (   R  ​   μ  k    ,    σ  k  2   ​   I  3    )     .   Rz_{k}\sim\mathcal{N}\left(R\mu_{k},R(\sigma_{k}^{2}I_{3})R^{\top}\right)=\mathcal{N}\left(R\mu_{k},\sigma_{k}^{2}I_{3}\right).
+(A.8)
+Thus, encoding the rotated input produces the same distribution as rotating samples drawn from the original posterior:
+z  t  i   ∼    q  ϕ   ​   (   z  t  i   ∣    P  ¯   t  i   )       ⟹      R  ∘   z  t  i    ∼    q  ϕ   ​   (   z  t  i   ∣   R  ∘    P  ¯   t  i    )      .   z^{i}_{t}\sim q_{\phi}(z^{i}_{t}\mid\bar{P}^{i}_{t})\quad\Longrightarrow\quad R\circ z^{i}_{t}\sim q_{\phi}(z^{i}_{t}\mid R\circ\bar{P}^{i}_{t}).
+(A.9)
+During training, latent vectors are sampled using the reparameterization trick:
+z   t  ,  k   i   =    μ   t  ,  k   i   +    σ   t  ,  k   i   ​   ϵ  k      ,    ϵ  k   ∼   𝒩  ⁡   (  0  ,   I  3   )      .   z^{i}_{t,k}=\mu^{i}_{t,k}+\sigma^{i}_{t,k}\epsilon_{k},\qquad\epsilon_{k}\sim\mathcal{N}(0,I_{3}).
+(A.10)
+Since the standard Gaussian noise is rotation-invariant and     σ   t  ,  k   i   \sigma^{i}_{t,k}    is a scalar, the sampled posterior remains equivariant in distribution. At test time, we use the posterior mean     μ  t  i   \mu^{i}_{t}    as the deterministic geometry latent, so the equivariance is exact at the level of the object state.
+This design differs from using an axis-wise diagonal covariance for each 3D latent vector. If one directly interpreted a 3D vector as coordinate-wise standard deviations, the covariance would be
+diag  ⁡   (   σ  x  2   ,   σ  y  2   ,   σ  z  2   )    .   \operatorname{diag}(\sigma_{x}^{2},\sigma_{y}^{2},\sigma_{z}^{2}).
+(A.11)
+After rotation, this covariance would transform into
+R  ​   diag  ⁡   (   σ  x  2   ,   σ  y  2   ,   σ  z  2   )    ​   R  ⊤    ,   R\operatorname{diag}(\sigma_{x}^{2},\sigma_{y}^{2},\sigma_{z}^{2})R^{\top},
+(A.12)
+which is generally not diagonal in the original coordinate frame. Therefore, a coordinate-wise diagonal covariance would not preserve exact SO(3)-equivariance unless the full covariance transformation were explicitly modeled. By contrast, the isotropic covariance       (   σ  k   )   2   ​   I  3    (\sigma_{k})^{2}I_{3}    remains invariant under rotation, while still allowing the uncertainty magnitude to be predicted from equivariant vector features.
+The decoder predicts a signed distance value from the latent vectors and a query point:
+d  ^   =    D  ψ   ​   (   z  t  i   ,  x  )     ,   x  ∈   ℝ  3     .   \hat{d}=D_{\psi}(z^{i}_{t},x),\qquad x\in\mathbb{R}^{3}.
+(A.13)
+It is designed to be invariant under a shared rotation of the latent representation and the query point:
+D  ψ   ​   (   R  ∘   z  t  i    ,   R  ​  x   )    =    D  ψ   ​   (   z  t  i   ,  x  )     .   D_{\psi}(R\circ z^{i}_{t},Rx)=D_{\psi}(z^{i}_{t},x).
+(A.14)
+Combining encoder equivariance with decoder invariance ensures that rotating the input object rotates the latent vectors, while the decoded signed distance field is preserved in the correspondingly rotated coordinate frame.
+After training, ORD-WM uses the posterior mean as the deterministic object geometry latent and retains the object center separately:
+s  t  i   =   [    μ  t  i   ;   c  t  i    ]   ∈   ℝ    (   K  +  1   )   ×  3     .   s^{i}_{t}=[\mu^{i}_{t};c^{i}_{t}]\in\mathbb{R}^{(K+1)\times 3}.
+(A.15)
+Given a predicted object-wise rigid motion     (   Δ  ​   R  t  i    ,   Δ  ​   x  t  i    )   (\Delta R^{i}_{t},\Delta x^{i}_{t})   , the latent state is updated analytically as
+μ  ^    t  +  1   i   =    Δ  ​   R  t  i    ∘   μ  t  i     ,     c  ^    t  +  1   i   =    c  t  i   +   Δ  ​   x  t  i       .   \hat{\mu}^{i}_{t+1}=\Delta R^{i}_{t}\circ\mu^{i}_{t},\qquad\hat{c}^{i}_{t+1}=c^{i}_{t}+\Delta x^{i}_{t}.
+(A.16)
+This transformation structure allows ORD-WM to apply object rotations directly to the geometry latent while using the object center to represent translation in the world frame.
+A.2  Network Architecture
+The SDF-VNVAE architecture follows the vector-neuron (VN) framework of   Deng et al. [7]  , which represents features as channels of three-dimensional vectors and defines SO(3)-equivariant neural operations such as VN linear layers, VN nonlinearities, pooling, normalization, and standardization. We adapt these operations to an SDF-supervised variational autoencoder for object geometry encoding. In the architecture tables, “VNLinearLeakyReLU” denotes a VN linear layer followed by a VN LeakyReLU nonlinearity.
+All dimensions in VN layers are reported as vector-channel dimensions. A feature with    C  C    VN channels has shape     ℝ   C  ×  3    \mathbb{R}^{C\times 3}   , corresponding to    C  C    three-dimensional vector features. This differs from a standard scalar MLP, where the hidden dimension counts scalar channels.
+Input centering.
+For each object, let     P  =    {   p  j   }    j  =  1   N    P=\{p_{j}\}_{j=1}^{N}    denote its surface point cloud. Before encoding, the point cloud is centered by subtracting its centroid:
+p  ¯   j   =    p  j   −  c    ,   c  =    1  N   ​    ∑   j  =  1   N    p  j       .   \bar{p}_{j}=p_{j}-c,\qquad c=\frac{1}{N}\sum_{j=1}^{N}p_{j}.
+(A.17)
+SDF query points are expressed in the same object-centered coordinate frame, and the decoder predicts signed distance values in this centered frame.
+Encoder.
+The encoder is a VN-PointNet-style network without kNN graph construction. The centered point cloud is represented as one vector channel per point and processed by a shared VN trunk. Point-wise VN features are then fused with a pooled global VN feature, projected to a higher-dimensional vector representation, and mean-pooled over points to obtain an object-level representation. A VN latent head outputs    64  64    vector channels, which are split into posterior mean vectors and auxiliary scale vectors. In our implementation, the latent dimension is     K  =  32   K=32   , with
+μ  ∈   ℝ   32  ×  3     \mu\in\mathbb{R}^{32\times 3}    and auxiliary scale features in     ℝ   32  ×  3    \mathbb{R}^{32\times 3}   . The encoder architecture is summarized in Table   A.1  .
+Table A.1:  VN encoder architecture. Dimensions are reported as vector channels, and the batch dimension is omitted.
+Component
+Operation
+Output shape
+Input
+centered surface point cloud
+2048  ×  3   2048\times 3
+VN format
+coordinates as vector features
+1  ×  3  ×  2048   1\times 3\times 2048
+Point embedding
+VN layer with width    32  32
+32  ×  3  ×  2048   32\times 3\times 2048
+VN trunk
+VN layers with widths     [   32  ,  64  ,  64  ,  64   ]   [32,64,64,64]
+64  ×  3  ×  2048   64\times 3\times 2048
+Global feature
+point-wise VN feature extraction and pooling
+64  ×  3   64\times 3
+Feature fusion
+concatenate point and global features
+128  ×  3  ×  2048   128\times 3\times 2048
+Projection
+VN layers with widths     [  256  ,  1024  ]   [256,1024]
+1024  ×  3  ×  2048   1024\times 3\times 2048
+Global pooling
+mean pooling over points
+1024  ×  3   1024\times 3
+Latent head
+VN layers with widths     [  512,512,512  ,  64  ]   [512,512,512,64]
+64  ×  3   64\times 3
+Output split
+mean and auxiliary scale vectors
+32  ×  3   ,    32  ×  3    32\times 3,\;32\times 3
+The first     K  =  32   K=32    output vectors are used as the posterior mean     μ  ∈   ℝ   32  ×  3     \mu\in\mathbb{R}^{32\times 3}   . The remaining    32  32    vectors are used as auxiliary scale features, from which the scalar uncertainty     σ  ∈   ℝ  32    \sigma\in\mathbb{R}^{32}    is computed as described in Sec.   A.1  . Thus, the encoder notation used in the main text,
+(  μ  ,  σ  )   =    E  ϕ   ​   (   P  ¯   )     ,   (\mu,\sigma)=E_{\phi}(\bar{P}),
+(A.18)
+is shorthand for a VN encoder that outputs vector-valued mean and auxiliary scale features, followed by a rotation-invariant mapping from the auxiliary scale features to isotropic uncertainty scalars.
+Omitting kNN graph features.
+The original Vector Neurons work introduces VN variants of PointNet and DGCNN, and uses an input edge-convolution module in VN-PointNet to avoid the degeneracy that can occur when a shared VN-MLP is directly applied to single-vector point coordinates  [ 7 ] . In our final implementation, we omit kNN graph construction and directly process point coordinates with a VN-PointNet encoder. We found that this simplification slightly reduces reconstruction accuracy compared with the kNN-based variant, but improves efficiency and reduces sensitivity to the neighborhood structure. This trade-off is useful in our setting, where object point clouds are constructed from segmented RGB-D observations and can have non-uniform sampling density.
+Decoder.
+The decoder predicts the signed distance value at an object-centered query point     x  ∈   ℝ  3    x\in\mathbb{R}^{3}   , conditioned on the latent vector set     z  ∈   ℝ   32  ×  3     z\in\mathbb{R}^{32\times 3}   . For each query point, we concatenate    x  x    as an additional vector channel with the    32  32    latent vectors, yielding    33  33    input vector channels. The concatenated vector features are processed by VN layers, transformed by a VN standardization module, flattened into scalar features, and passed to an MLP that outputs a scalar SDF value. The decoder architecture is summarized in Table   A.2  .
+Table A.2:  SDF decoder architecture. VN dimensions are reported as vector channels, while MLP dimensions are scalar channels. The batch and query dimensions are omitted.
+Component
+Operation
+Output shape
+Latent input
+latent vector set
+32  ×  3   32\times 3
+Query input
+query point as vector channel
+1  ×  3   1\times 3
+Concatenation
+latent and query vectors
+33  ×  3   33\times 3
+VN trunk
+VN layers with widths     [  128,128,128  ]   [128,128,128]
+128  ×  3   128\times 3
+VN standardization
+canonical-frame projection
+128  ×  3   128\times 3
+Post-standardization VN layer
+VN layer with width    128  128
+128  ×  3   128\times 3
+Flatten
+vector features to scalar features
+384  384
+Scalar MLP
+MLP with widths     [  256,256,256  ,  1  ]   [256,256,256,1]
+1  1
+The VN standardization module converts equivariant vector features into canonical-frame coordinates that are invariant to a shared input rotation. Since the latent vectors and query point rotate together under a shared rotation, the VN layers before standardization preserve equivariance, while the canonical-frame projection produces rotation-invariant scalar features for SDF prediction. Therefore, the decoder satisfies
+D  ψ   ​   (   R  ∘  z   ,   R  ​  x   )    =    D  ψ   ​   (  z  ,  x  )     ,   R  ∈   S  ​  O  ​   (  3  )      .   D_{\psi}(R\circ z,Rx)=D_{\psi}(z,x),\qquad R\in SO(3).
+(A.19)
+A.3  Training Objective
+The SDF-VNVAE is trained with an SDF reconstruction loss, an Eikonal regularization term, and a KL regularization term. Given a centered point cloud     P  ¯   \bar{P}   , the encoder parameterizes the posterior      q  ϕ   ​   (  z  ∣   P  ¯   )    q_{\phi}(z\mid\bar{P})   , and the decoder predicts the signed distance value at an object-centered query point    x  x   :
+d  ^   =    D  ψ   ​   (  z  ,  x  )     .   \hat{d}=D_{\psi}(z,x).
+(A.20)
+SDF reconstruction loss.
+For query points      {   x  j   }    j  =  1   Q   \{x_{j}\}_{j=1}^{Q}    with ground-truth signed distance values      {   d  j   }    j  =  1   Q   \{d_{j}\}_{j=1}^{Q}   , we use an     ℓ  1   \ell_{1}    reconstruction loss:
+ℒ  sdf   =    1  Q   ​    ∑   j  =  1   Q    |     D  ψ   ​   (  z  ,   x  j   )    −   d  j    |      .   \mathcal{L}_{\mathrm{sdf}}=\frac{1}{Q}\sum_{j=1}^{Q}\left|D_{\psi}(z,x_{j})-d_{j}\right|.
+(A.21)
+Eikonal regularization.
+To encourage the decoder to represent a valid signed distance field, we regularize the gradient norm with respect to the query point:
+ℒ  eik   =    1   2  ​  Q    ​    ∑   j  =  1   Q    |     ‖     ∇  x    D  ψ    ​   (   sg  ⁡   (  z  )    ,   x  j   )    ‖   2   −  1   |      ,   \mathcal{L}_{\mathrm{eik}}=\frac{1}{2Q}\sum_{j=1}^{Q}\left|\left\|\nabla_{x}D_{\psi}(\operatorname{sg}(z),x_{j})\right\|_{2}-1\right|,
+(A.22)
+where     sg  ⁡   (  ⋅  )    \operatorname{sg}(\cdot)    denotes the stop-gradient operation. In other words, the latent variable is detached when computing the Eikonal term, so this regularization updates only the decoder parameters and does not backpropagate through the encoder. This prevents the Eikonal loss from shaping the posterior latent distribution directly, while still encouraging the decoder to produce a locally valid signed distance field around the queried points.
+KL regularization.
+The approximate posterior is regularized toward an isotropic Gaussian prior,
+p  ⁡   (  z  )    =    ∏   k  =  1   K    𝒩  ⁡   (  0  ,   I  3   )      .   p(z)=\prod_{k=1}^{K}\mathcal{N}(0,I_{3}).
+(A.23)
+Since each latent vector follows
+q  ϕ   ​   (   z  k   ∣   P  ¯   )    =   𝒩  ⁡   (   μ  k   ,    σ  k  2   ​   I  3    )     ,   q_{\phi}(z_{k}\mid\bar{P})=\mathcal{N}\left(\mu_{k},\sigma_{k}^{2}I_{3}\right),
+(A.24)
+the KL term is
+ℒ  KL   =    1   2  ​  K    ​    ∑   k  =  1   K    (      ‖   μ  k   ‖   2  2   +   3  ​   σ  k  2     −  3  −   3  ​   log  ⁡   σ  k  2      )      .   \mathcal{L}_{\mathrm{KL}}=\frac{1}{2K}\sum_{k=1}^{K}\left(\|\mu_{k}\|_{2}^{2}+3\sigma_{k}^{2}-3-3\log\sigma_{k}^{2}\right).
+(A.25)
+Here,     σ  k   \sigma_{k}    is the scalar uncertainty obtained from the auxiliary vector feature     u  k   u_{k}    as described in Sec.   A.1  .
+The final training objective is
+ℒ  VNVAE   =     λ  sdf   ​   ℒ  sdf    +    λ  eik   ​   ℒ  eik    +   β  ​   ℒ  KL      .   \mathcal{L}_{\mathrm{VNVAE}}=\lambda_{\mathrm{sdf}}\mathcal{L}_{\mathrm{sdf}}+\lambda_{\mathrm{eik}}\mathcal{L}_{\mathrm{eik}}+\beta\mathcal{L}_{\mathrm{KL}}.
+(A.26)
+A.4  Training Details
+We train the SDF-VNVAE using object assets from LIBERO and RoboCasa. For each object sample, surface points are used as the encoder input, and pre-generated SDF query points are used for decoder supervision. The query points are generated with a mixed sampling strategy and are shuffled and split into fixed-size chunks during training, rather than being re-sampled by category online. Here, batch size refers to the number of object samples per optimization step, while each object sample contains     N  p   N_{p}    surface points and    Q  Q    SDF query points.
+To account for imperfect RGB-D observations, we augment the input point clouds with partial or missing surfaces, nonuniform sampling, coordinate noise, outlier or background points, and simulated mask and camera perturbations. The object center is computed as the arithmetic mean of the observed points and can therefore vary with visibility and sampling density. These augmentations expose the encoder to the resulting variations in both the observed geometry and its centering.
+During training, latent vectors are sampled from the posterior using the reparameterization trick. During evaluation and downstream ORD-WM training, we use the posterior mean as the deterministic geometry latent. The main training hyperparameters are summarized in Table   A.3  .
+Table A.3:  Training hyperparameters of the SDF-VNVAE.
+Hyperparameter
+Value
+Surface points per object sample     N  p   N_{p}
+2048  2048
+SDF query points per object sample    Q  Q
+2048  2048
+Query sampling strategy
+pre-generated mixed samples
+Sampling ratio
+near / volume / far / shell =     0.75  /  0.12  /  0.08  /  0.05   0.75/0.12/0.08/0.05
+Near-surface noise
+σ  ∼   Uniform  ⁡   (  0.001  ,  0.05  )     \sigma\sim\mathrm{Uniform}(0.001,0.05)
+SDF truncation / clamping
+none; raw SDF values are used
+Optimizer
+Adam
+Encoder learning rate
+8  ×   10   −  5     8\times 10^{-5}
+Decoder learning rate
+8  ×   10   −  5     8\times 10^{-5}
+Weight decay
+10   −  6    10^{-6}
+Scheduler
+CosineAnnealingLR,      T  max   =  200   T_{\max}=200
+Epochs
+200  200
+Object samples per batch
+128  128
+λ  sdf   \lambda_{\mathrm{sdf}}
+1.0  1.0
+λ  eik   \lambda_{\mathrm{eik}}
+0.004  0.004
+β  \beta
+0.002  0.002
+KL annealing
+none
+A.5  Reconstruction Accuracy
+We evaluate the reconstruction accuracy of the learned object representation on both seen and unseen object sets. LIBERO objects are used as the seen evaluation set, while OakInk2  [ 55 ]  objects are used as an unseen evaluation set. For each object, we encode the centered surface point cloud and use the posterior mean as the deterministic latent representation during evaluation. We evaluate reconstruction accuracy under the original object pose and under randomly sampled SO(3) rotations.
+We compare three variants: a standard SDF-VAE, a standard SDF-VAE trained with pose augmentation, and our SDF-VNVAE. We report SDF     ℓ  1   \ell_{1}    error, Surface Chamfer Distance (CD), and Rotation Consistency CD, all in millimeters. The rotation consistency metric compares the reconstruction obtained from a rotated input with the rotated reconstruction obtained from the original input:
+CD  rot   =   CD  ⁡   (    𝒮  ^   ​   (   R  ∘   P  ¯    )    ,    R  ∘   𝒮  ^    ​   (   P  ¯   )    )     ,   R  ∈   S  ​  O  ​   (  3  )      ,   \mathrm{CD}_{\mathrm{rot}}=\mathrm{CD}\left(\hat{\mathcal{S}}(R\circ\bar{P}),R\circ\hat{\mathcal{S}}(\bar{P})\right),\qquad R\in SO(3),
+(A.27)
+where      𝒮  ^   ​   (   P  ¯   )    \hat{\mathcal{S}}(\bar{P})    denotes the reconstructed surface from the centered input point cloud     P  ¯   \bar{P}   . Lower Rotation Consistency CD indicates more consistent reconstruction under input rotations.
+Table A.4:  SDF reconstruction accuracy on seen and unseen object sets. LIBERO is used as the seen evaluation set, and OakInk2 is used as the unseen evaluation set. All distance-based metrics are reported in millimeters. Lower is better for all metrics.  Bold  indicates the best result for each metric.
+Dataset
+Method
+Original Pose
+Random SO(3) Pose
+Rotation
+Consistency CD
+SDF L1
+Surface CD
+SDF L1
+Surface CD
+LIBERO
+SDF-VAE
+1.255
+2.334
+9.010
+9.990
+11.112
+SDF-VAE + pose aug.
+1.938
+3.457
+1.913
+3.406
+3.023
+SDF-VNVAE
+0.854
+1.441
+0.853
+1.463
+0.228
+OakInk2
+SDF-VAE
+3.314
+4.011
+7.318
+9.099
+9.856
+SDF-VAE + pose aug.
+2.176
+2.960
+2.171
+3.692
+4.673
+SDF-VNVAE
+1.845
+2.269
+1.845
+2.256
+0.177
+As shown in Table   A.4  , SDF-VNVAE achieves the best reconstruction accuracy across both seen and unseen object sets. The standard SDF-VAE performs reasonably under the original pose but degrades substantially under random SO(3) rotations, indicating that the learned latent representation is sensitive to object orientation. Pose augmentation improves rotation robustness, but still yields higher reconstruction error and weaker rotation consistency than SDF-VNVAE. In contrast, SDF-VNVAE maintains nearly identical reconstruction accuracy under the original and randomly rotated poses, and achieves substantially lower Rotation Consistency CD. These results support that the vector-valued latent representation captures object geometry while transforming predictably under 3D rotations.
+A.6  Reconstruction Visualization
+(a)  Seen LIBERO objects.
+(b)  Unseen OakInk2 objects.
+Figure A.1:  Reconstruction visualization of SDF-VNVAE on seen and unseen objects. For each example, we show a predicted SDF slice and the reconstructed zero-level surface.
+We further visualize the reconstruction results of SDF-VNVAE on both seen and unseen objects. Figure   1(a)   shows examples from LIBERO objects, which correspond to the seen object set. Figure   1(b)   shows examples from OakInk2 objects, which are not used for training. For each example, we visualize a predicted SDF slice together with the reconstructed zero-level surface.
+The qualitative results are consistent with the quantitative evaluation in Table   A.4  . The SDF slices visualize the predicted distance structure around each object, while the zero-level surfaces provide a complementary view of the recovered three-dimensional shape. On seen LIBERO objects, SDF-VNVAE reconstructs diverse object geometries such as bottles, bowls, and mugs with accurate overall shape. On unseen OakInk2 objects, the model also produces reasonable reconstructions for novel shapes, suggesting that the learned vector-valued latent representation captures reusable geometric structure beyond the training object set. These visualizations further support that SDF-VNVAE learns geometry-aware object latents suitable for downstream object-centric rollout.
+A.7  Latent-Space Analysis
+We further analyze the learned latent space of SDF-VNVAE through latent interpolation and t-SNE visualization. These analyses qualitatively examine whether the learned vector-valued latents capture reusable geometric structure beyond point-wise reconstruction accuracy. Interpolation examines how decoded geometry varies between pairs of object representations, while t-SNE provides a complementary view of how representations of different objects are organized.
+Latent interpolation.
+Given two object latents     μ  a   \mu_{a}    and     μ  b   \mu_{b}   , we linearly interpolate between their posterior means:
+μ  ⁡   (  α  )    =     (   1  −  α   )   ​   μ  a    +   α  ​   μ  b      ,   α  ∈   [   0  ,  1   ]     .   \mu(\alpha)=(1-\alpha)\mu_{a}+\alpha\mu_{b},\qquad\alpha\in[0,1].
+(A.28)
+The interpolated latents are decoded into SDF fields, and the zero-level surfaces are extracted for visualization. As shown in Fig.   A.2  , the decoded shapes change smoothly between the two endpoint objects. For example, the bottle examples gradually vary in height and neck geometry, while the mug examples show smooth changes in body shape and handle geometry. This suggests that the learned latent space captures continuous geometric variations rather than only memorizing discrete object instances.
+Figure A.2:  Latent interpolation with SDF-VNVAE. The leftmost and rightmost shapes are reconstructed from endpoint object latents, while the shapes inside the dashed box are decoded from linearly interpolated latents. The smooth transitions indicate that the learned vector-valued latent space captures continuous object geometry.
+t-SNE visualization.
+We also visualize the learned object latents using t-SNE. Each point corresponds to an object latent, and colors indicate object categories. As shown in Fig.   A.3  , semantically and geometrically related objects tend to lie close to each other in the latent space. For example, bottle-like categories such as beer, bottled drink, and wine form nearby regions due to their similar elongated shapes. The visualization also reveals shape-level structure within a category: typical hot-dog instances form a compact group, while a visually distinct hot-dog instance appears as an outlier. These results suggest that the learned SDF-VNVAE latent space organizes objects according to geometric similarity, which is useful for representing object shape in downstream dynamics learning.
+Figure A.3:  t-SNE visualization of SDF-VNVAE object latents. Points are colored by object category. The latent space reflects geometric similarity: visually similar categories may appear close to each other, typical instances form compact local groups, and geometrically unusual instances can appear as outliers.
+Appendix B  Dynamics Model Details
+This appendix provides additional implementation details of the dynamics model used in ORD-WM, including its network architecture, training objective, and training data construction.
+B.1  Network Architecture
+Table B.1:  Architecture details of the dynamics model.
+Component
+Configuration
+Backbone
+Transformer encoder
+Object/Gripper token dimension
+99  99    (    32  ×  3   32\times 3    VN latent    +  +    3D center)
+Action token dimension
+9  9    (6D rotation delta    +  +    3D translation delta)
+Object/Gripper token projection
+99  →  512   99\rightarrow 512
+Action token projection
+9  →  512   9\rightarrow 512
+Transformer hidden dimension
+512  512
+Transformer layers
+4  4
+Attention heads
+8  8
+Feed-forward dimension
+1024  1024
+Activation
+GELU
+Dropout
+0.0  0.0
+SE(3) motion head
+512  →  9   512\rightarrow 9
+Gripper-distance head
+512  →  512  →  256  →  1   512\rightarrow 512\rightarrow 256\rightarrow 1
+Floating-object-distance head
+512  →  512  →  256  →  1   512\rightarrow 512\rightarrow 256\rightarrow 1
+The dynamics model is implemented as a Transformer encoder. Its input sequence is composed of four types of tokens: floating-object tokens, fixed-object tokens, gripper-part state tokens, and action tokens. Floating-object and fixed-object tokens encode the current object-centric scene state, where floating objects are allowed to move while fixed objects provide static scene context. The gripper-part state tokens describe the current poses and geometry of the gripper hand, left finger, and right finger. The action tokens encode the rigid pose changes of these same three gripper parts from time    t  t    to     t  +  1   t+1   , with one token for each part. To preserve the correspondence between gripper parts and their actions, the three gripper-part tokens and the three action tokens are inserted into the sequence using a fixed part order, and each pair is assigned the same part-specific positional embedding. The Transformer produces interaction-aware features for scene objects, and the outputs at floating-object positions are used to predict object-wise SE(3) motion increments. The main architecture parameters are summarized in Table   B.1  .
+B.2  Training Objective
+The dynamics model is trained with pose losses on floating objects and auxiliary distance losses on scene objects.
+For each floating object, the predicted rotation and translation increments are composed with the current object pose:
+R  ^    t  +  1   i   =   Δ  ​    R  ^   t  i   ​   R  t  i     ,     c  ^    t  +  1   i   =    c  t  i   +   Δ  ​    x  ^   t  i       .   \hat{R}^{i}_{t+1}=\Delta\hat{R}^{i}_{t}R^{i}_{t},\qquad\hat{c}^{i}_{t+1}=c^{i}_{t}+\Delta\hat{x}^{i}_{t}.
+(B.1)
+The pose loss is
+ℒ  pose   =     λ  rot   ​   1   |   ℱ  t   |    ​    ∑   i  ∈   ℱ  t       ‖     R  ^    t  +  1   i   −   R   t  +  1   i    ‖   F  2     +    λ  pos   ​   1   |   ℱ  t   |    ​    ∑   i  ∈   ℱ  t       ‖     c  ^    t  +  1   i   −   c   t  +  1   i    ‖   2  2       .   \mathcal{L}_{\mathrm{pose}}=\lambda_{\mathrm{rot}}\frac{1}{|\mathcal{F}_{t}|}\sum_{i\in\mathcal{F}_{t}}\left\|\hat{R}^{i}_{t+1}-R^{i}_{t+1}\right\|^{2}_{F}+\lambda_{\mathrm{pos}}\frac{1}{|\mathcal{F}_{t}|}\sum_{i\in\mathcal{F}_{t}}\left\|\hat{c}^{i}_{t+1}-c^{i}_{t+1}\right\|^{2}_{2}.
+(B.2)
+The two distance heads are supervised by masked MSE losses. The gripper-distance head predicts the nearest distance from each valid scene object to the gripper parts at     t  +  1   t+1   , and the floating-object-distance head predicts the nearest distance to floating objects at     t  +  1   t+1   :
+ℒ  dist   =     \displaystyle\mathcal{L}_{\mathrm{dist}}=
+λ  grip   ​    1   |   ℳ  grip   |     ​     ∑   i  ∈   ℳ  grip        ‖     d  ^     t  +  1   ,  grip   i   −   d    t  +  1   ,  grip   i    ‖   2  2     \displaystyle\lambda_{\mathrm{grip}}\frac{1}{|\mathcal{M}_{\mathrm{grip}}|}\sum_{i\in\mathcal{M}_{\mathrm{grip}}}\left\|\hat{d}^{i}_{t+1,\mathrm{grip}}-d^{i}_{t+1,\mathrm{grip}}\right\|^{2}_{2}
+(B.3)
++  λ     float     1   |   ℳ  float   |      ∑       i  ∈   ℳ  float     ‖   d  ^      i        t  +  1   ,  float    −  d     i        t  +  1   ,  float    ‖     2      2   .   \displaystyle+\lambda_{\mathrm{float}}\frac{1}{|\mathcal{M}_{\mathrm{float}}|}\sum_{i\in\mathcal{M}_{\mathrm{float}}}\left\|\hat{d}^{i}_{t+1,\mathrm{float}}-d^{i}_{t+1,\mathrm{float}}\right\|^{2}_{2}.
+Here,     ℳ  grip   \mathcal{M}_{\mathrm{grip}}    and     ℳ  float   \mathcal{M}_{\mathrm{float}}    denote valid distance-supervision masks. Padding tokens and missing annotations are ignored.
+The final objective is
+ℒ  =    ℒ  pose   +   ℒ  dist     .   \mathcal{L}=\mathcal{L}_{\mathrm{pose}}+\mathcal{L}_{\mathrm{dist}}.
+(B.4)
+In our experiments, all four loss weights are set to    1.0  1.0   .
+B.3  Dataset
+We train the dynamics model using two types of trajectories: LIBERO manipulation trajectories and an additional object-pushing dataset. The LIBERO portion contains trajectories from LIBERO-Spatial, LIBERO-Object, LIBERO-Goal, and LIBERO-Long. Each suite contains 10 tasks, and each task provides 50 demonstrations, resulting in 2,000 LIBERO trajectories in total.
+To increase the coverage of contact-rich rigid-object motion, we additionally collect 1,000 object-pushing trajectories in simulation. The pushing trajectories are collected fully automatically without human teleoperation. Each trajectory contains five consecutive pushing operations in the same scene. For each pushing operation, the data-collection script samples a movable target object and a planar pushing direction. Based on the target-object position and the sampled direction, the script automatically constructs a short waypoint sequence for the gripper: it first moves the gripper to a pre-contact pose behind the target object, then lowers the gripper to the pushing height, and finally moves the gripper along the sampled pushing direction.
+The executed action sequence is generated by interpolating between these waypoints. To increase motion diversity, the execution speed is randomly sampled for each pushing operation, so trajectories contain pushes with different contact durations and motion magnitudes. After one pushing operation is completed, the resulting scene state is kept, and the next target object, pushing direction, and speed are sampled. Repeating this process five times within one trajectory produces diverse object displacements, contact configurations, and object-object interactions.
+Both data sources are converted into the same center-aligned point-cloud trajectory format. For each frame, we store scene-object identities, object roles, object poses, gripper-part poses, and distance annotations. Scene objects are labeled as floating or fixed objects. Floating objects provide pose supervision for the SE(3) motion head, while fixed objects serve as static context. Object identities are matched with the pretrained SDF-VNVAE latent bank, and demonstrations without valid object matching or gripper information are filtered out.
+For dynamics learning, each demonstration is converted into one-step transitions between consecutive frames. The current frame provides object and gripper-part states, the relative motions of the three gripper parts define the action tokens, and the next frame provides pose and distance supervision. We split each data source at the trajectory level into 90% training and 10% test data, ensuring that transitions from the same trajectory do not appear in both sets.
+B.4  Training Details
+Table B.2:  Training hyperparameters of the dynamics model.
+Hyperparameter
+Value
+Optimizer
+AdamW
+Learning rate
+1  ×   10   −  4     1\times 10^{-4}
+Weight decay
+1  ×   10   −  6     1\times 10^{-6}
+Learning-rate schedule
+Cosine decay
+Batch size
+256  256
+Epochs
+10000  10000
+Context masking probability
+0.5  0.5
+The latents are obtained from the pretrained SDF-VNVAE latent bank, which includes posterior-mean representations of the augmented object observations described in Appendix   A.4  . During training, we randomly sample one initial latent for each object identity. This exposes the dynamics model to observation-induced variations in the representation of the same object and reduces overfitting to a single latent realization.
+For each training step, object tokens and gripper-part tokens are constructed from the current object states and gripper states. Action tokens are constructed from the relative rigid motions of the three gripper parts between two consecutive frames. The model predicts SE(3) motion increments for floating objects, which are composed with the current object poses before computing the pose losses. The auxiliary distance heads are supervised with next-step nearest-distance targets.
+We use masks to handle variable-size scenes and missing annotations. The token mask removes padded tokens. The floating-object mask restricts pose losses to valid floating objects. The distance masks remove objects without valid gripper-distance or floating-object-distance annotations.
+We additionally apply group-wise context masking during training. Object groups marked as mask-eligible are randomly removed with probability    0.5  0.5   , and the corresponding token masks and loss masks are updated accordingly. This serves as a data augmentation that reduces reliance on non-critical static context objects.
+The main training hyperparameters are summarized in Table   B.2  . We train the model with AdamW and a cosine learning-rate schedule. The materialized transitions are preloaded onto GPU memory before training to reduce HDF5 reading overhead and host-to-device transfer cost.
+Appendix C  Additional Rollout Results and Analysis
+This appendix provides supplementary rollout results and analyses that complement the main experimental evaluation. We include additional multi-step rollout visualizations on held-out trajectories, counterfactual rollouts under different future actions and object substitutions, and an analysis of geometry preservation during latent-space rollout.
+C.1  Additional Multi-Step Rollout Results
+We provide additional multi-step rollout visualizations on held-out test trajectories to complement the qualitative results in Fig.   4  . These examples cover different initial object configurations and interaction patterns, and show both the predicted object rollouts and the corresponding object position trajectories compared with ground truth.
+As shown in Figs.   C.1  –  C.4  , ORD-WM generally follows the ground-truth object motion across the held-out trajectories. In most examples, the predicted visual rollouts remain consistent with the ground-truth evolution, and the position trajectories closely track the corresponding ground-truth curves. These results further indicate that the learned dynamics model can predict multi-step object motion beyond one-step transitions while maintaining stable latent-space rollout behavior.
+Figure C.1:  Additional multi-step rollout results on held-out trajectories, part 1.
+Figure C.2:  Additional multi-step rollout results on held-out trajectories, part 2.
+Figure C.3:  Additional multi-step rollout results on held-out trajectories, part 3.
+Figure C.4:  Additional multi-step rollout results on held-out trajectories, part 4.
+C.2  Counterfactual Action Rollouts
+We further evaluate whether ORD-WM responds to changes in the future action sequence from the same intermediate state. As shown in Fig.   C.5  , all rollouts follow the same trajectory until the branching time step indicated by the arrow. Starting from this shared state, we roll out ORD-WM with different future action sequences, including the nominal action sequence, a larger-amplitude motion sequence, and a gripper-release sequence.
+Figure C.5:  Counterfactual action rollouts. Starting from the branching time step indicated by the arrow, ORD-WM is rolled out with a nominal action sequence, a larger-amplitude motion sequence, and a gripper-release sequence. The resulting futures respond differently to the action interventions, showing action-dependent object motion prediction.
+The predicted futures change consistently with the action intervention after the branching point. Under the nominal action sequence, the predicted object motion follows the reference behavior. When the motion amplitude is increased, ORD-WM predicts a larger subsequent object displacement. In contrast, when the gripper is released, the object is predicted to lose support from the gripper and drop onto the table. These comparisons show that ORD-WM uses the future action sequence to predict object motion, rather than merely extrapolating a fixed trajectory from the past rollout state.
+C.3  Object Generalization in Rollout
+We further examine the object generalization behavior of ORD-WM through counterfactual rollouts. Starting from a LIBERO rollout, we replace the original bowl representation with unseen bowl instances from RoboCasa that have different shapes. We then keep the action sequence fixed and roll out ORD-WM from the modified object-centric state. This setting qualitatively evaluates whether the learned dynamics model produces geometry-dependent predictions when the object geometry changes.
+As shown in Fig.   C.6  , the predicted outcomes vary consistently with the substituted bowl geometry. In the first two examples, ORD-WM predicts that the replaced bowls can be lifted by the gripper under the same action sequence. In the last example, the substituted bowl is not lifted, which is visually consistent with its shape and contact configuration. These counterfactual rollouts suggest that ORD-WM uses the geometry-aware object latent when predicting action-conditioned object motion, rather than simply replaying a fixed motion pattern from the original trajectory.
+Figure C.6:  Object generalization in counterfactual rollout. We replace the original bowl representation with unseen RoboCasa bowl instances while keeping the same action sequence. ORD-WM produces different rollouts according to the substituted object geometry.
+C.4  Geometry Preservation During Rollout
+We further analyze the effect of the structured SE(3) update in ORD-WM. To isolate this design choice, we compare ORD-WM with an ablated variant that removes the analytic SE(3) latent update. Instead of predicting an object-wise rigid motion increment and applying it to the current object latent, this variant directly predicts the next latent state for each object. The two models use the same object-centric input representation and rollout setting, but differ in whether object evolution is constrained to follow a rigid transformation in latent space.
+As shown in Fig.   C.7  , ORD-WM preserves object geometry throughout the rollout while updating object poses according to the predicted motion. In contrast, the variant without the SE(3) update gradually introduces geometric distortion when directly predicting future latents. These errors accumulate over time: object shapes first become slightly deformed, then progressively lose their original structure, and eventually collapse into unrealistic geometries. Once the predicted latents deviate substantially from valid object representations, subsequent dynamics prediction also becomes unstable, causing the rollout to diverge. This comparison highlights the importance of applying object-level rigid transformations in latent space rather than freely generating the next object state.
+Figure C.7:  Geometry preservation during rollout. ORD-WM preserves object geometry by updating object latents through predicted SE(3) transformations, whereas the variant without the SE(3) update directly predicts future latents and accumulates shape distortion over time.
+Appendix D  MPC Implementation Details
+This appendix provides additional details for the model predictive control (MPC) experiments with ORD-WM. We describe the receding-horizon planning procedure, the CEM optimization settings, and the target-pose cost used for evaluating candidate rollouts.
+D.1  MPC Formulation
+At each control step, the current object-centric scene state, gripper-part states, and predicted object dynamics are used to plan a sequence of future gripper motions. Only floating objects are actively predicted; fixed objects provide static context. The planner uses the Cross-Entropy Method (CEM)  [ 38 ]  to optimize a sequence of relative gripper motions over a finite horizon    H  H   . After optimization, only the first action in the selected sequence is executed, and the robot replans in a receding-horizon manner from updated observations.
+The MPC cost compares predicted scene states with target scene states over task-relevant components. For pushing, the cost at rollout step    h  h    is a weighted sum of object position and rotation discrepancies:
+𝒞  h   =    ∑  i    (     w  pos   ​    ‖     c  ^   h  i   −   c   i  ,  ⋆     ‖   2    +    w  rot   ​   d  R   ​   (    R  ^   h  i   ,   R   i  ,  ⋆    )     )     ,   \mathcal{C}_{h}=\sum_{i}\left(w_{\mathrm{pos}}\|\hat{c}^{i}_{h}-c^{i,\star}\|_{2}+w_{\mathrm{rot}}d_{R}(\hat{R}^{i}_{h},R^{i,\star})\right),
+(D.1)
+where     c   i  ,  ⋆    c^{i,\star}    and     R   i  ,  ⋆    R^{i,\star}    denote the target position and rotation of object    i  i   , and      d  R   ​   (  ⋅  ,  ⋅  )    d_{R}(\cdot,\cdot)    denotes the rotation discrepancy. The total horizon cost includes discounted intermediate steps and a terminal cost:
+𝒞  =     ∑   h  =  1   H     γ   h  −  1    ​   𝒞  h     +    w  final   ​   𝒞  H      .   \mathcal{C}=\sum_{h=1}^{H}\gamma^{h-1}\mathcal{C}_{h}+w_{\mathrm{final}}\mathcal{C}_{H}.
+(D.2)
+Discounting encourages early progress toward the target, while the terminal term emphasizes achieving the final configuration.
+D.2  Implementation Details
+CEM samples action sequences from a diagonal Gaussian distribution in the normalized action space and refits the distribution using the elite samples at each iteration. Sampled actions are clipped to valid bounds before being scaled to physical units.
+For pushing, CEM optimizes planar end-effector displacements      a  h   =   (   Δ  ​   x  h    ,   Δ  ​   y  h    )    a_{h}=(\Delta x_{h},\Delta y_{h})    with fixed orientation and a closed gripper. For pick-and-place, it optimizes three-dimensional displacements      a  h   =   (   Δ  ​   x  h    ,   Δ  ​   y  h    ,   Δ  ​   z  h    )    a_{h}=(\Delta x_{h},\Delta y_{h},\Delta z_{h})   . Candidate displacements are converted into the corresponding gripper-part rigid motions for dynamics prediction. Pick-and-place uses stage-specific target scene states for grasping, lifting, and transport. MPC replans toward the current stage’s target. Table   D.1   summarizes the pushing optimization and cost settings.
+Table D.1:  Pushing MPC optimization and cost settings.
+Item
+Value
+Optimization settings
+Action space
+relative     x  ​  y   xy    motion
+Horizon    H  H
+8  8
+Normalized action bounds
+[    −  1   ,  1   ]   2   [-1,1]^{2}
+Physical action range
+±  5   \pm 5    cm
+Gripper state
+closed
+Total candidates
+64  /  256  /  1024   64/256/1024
+Candidates / iter.
+32  /  64  /  256   32/64/256
+CEM iterations
+2  /  4  /  4   2/4/4
+Elite fraction
+0.05  0.05
+Initial mean
+0  0
+Initial std.
+0.2  0.2
+Minimum std.
+0.03  0.03
+Mean momentum
+0.1  0.1
+Std. momentum
+0.1  0.1
+Action clipping
+[    −  1   ,  1   ]   [-1,1]
+Warm start
+no
+Cost settings
+Position weight     w  pos   w_{\mathrm{pos}}
+5.0  5.0
+Rotation weight     w  rot   w_{\mathrm{rot}}
+0.5  0.5
+Discount    γ  \gamma
+0.8  0.8
+Final weight     w  final   w_{\mathrm{final}}
+5.0  5.0
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue"  (
+)  button, located in the page header.
+Tip:  You can select the relevant text first, to include it in your report.
+Our team has already identified  the following issues . We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a  list of packages that need conversion , and welcome  developer contributions .
+We gratefully acknowledge support from
+our  major funders ,
+member institutions   ,    ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status  (opens in new tab)
+Major funding support from

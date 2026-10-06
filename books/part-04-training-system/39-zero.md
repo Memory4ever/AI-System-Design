@@ -59,7 +59,9 @@ ZeRO-1减少副本数，低比特optimizer则减少每个副本的`b_o`；二者
 
 ### 低秩状态还需要保存坐标身份
 
-减少副本数与减少每个状态的 bit 数，都没有处理 activation 随 batch 和序列增长的压力。另一条可组合但并非 ZeRO 自身的分支，是在线学习输入 activation 的低秩基：forward 仍使用完整输入，只为 backward 保存投影；由投影得到低秩 weight gradient 和 optimizer state，再把更新映回完整权重。这不是冻结 base 只训练 adapter，也不保证 backward 与完整训练等价。
+低秩状态可以直接来自梯度，而不必先改变 activation 的保存方式。设某层梯度为 `G∈R^(m×n)`，选择 `r≤min(m,n)` 列的正交基 `U_r∈R^(m×r)`，则投影 `U_rᵀG` 为 `r×n`；在这个空间保存 moments、得到同形状更新 `Δ_r` 后，以 `U_rΔ_r` 更新完整权重。这不同于冻结基座的 LoRA，也不等于完整 Adam 更新。[GaLore2 的有限研究](https://arxiv.org/html/2504.20437v1)用随机截断 SVD 近似梯度谱，并调整基的刷新频率；随机 SVD 不等于任意随机投影，刷新过勤还可能受基的随机性和符号变化影响。rank、基及其版本、moment 坐标和刷新规则必须共同记录，但这不表示原研究已验证完整 checkpoint 恢复。它用投影、SVD、基存储和近似更新换容量，不自动降低 activation 峰值或全部通信；按层与 FSDP 组合还须另核 shard 形状、accumulation、global clipping 和更新边界，不能从组合概述推出任意布局等价。原文非方阵投影记号存在不一致，上述 shape 是用于解释机制的自洽例子，不冒充已核执行配方；子操作更快和局部质量接近也不是端到端普遍收益。谱不集中、刷新成本过高或质量回归失败时，保留更高 rank 或完整状态分片。<!-- source-family:SF-2025-ARXIV-2504-20437 -->
+
+直接压缩梯度状态仍没有处理 activation 随 batch 和序列增长的压力。另一条可组合但并非 ZeRO 自身的分支，是在线学习输入 activation 的低秩基：forward 仍使用完整输入，只为 backward 保存投影；由投影得到低秩 weight gradient 和 optimizer state，再把更新映回完整权重。这不是冻结 base 只训练 adapter，也不保证 backward 与完整训练等价。
 
 基随训练变化后，旧 moment 不能直接沿用原坐标。一个实现用 Oja 更新并重正交化 basis，以新旧基的重叠运输一阶 moment；二阶 moment 只保存逐坐标统计，无法精确恢复全部 cross-coordinate covariance，因此需要近似运输。basis、rank、运输规则和 moment 共同构成训练状态，而不是可随意替换的压缩附件。它用投影、重正交化、统计运输和近似更新换取容量，rank 或 subspace learning rate 失配会损害质量；梯度不集中、漂移过快或质量回归失败时，保留完整 activation、recompute 及普通分片更可靠。[OASIS 的有限实验](https://arxiv.org/html/2604.09406v1)有低 rank 退步，不能把 exact forward 写成精确训练或大规模分布式收敛保证。<!-- source-family:SF-2026-ARXIV-2604-09406 -->
 
@@ -270,6 +272,12 @@ Offload 是否有效取决于：
 
 目标不是移出最多 bytes，而是在不让 GPU 等待的前提下，把 cold state 放到更大层级。
 
+Offload 还可以在训练框架外改变 page 的 placement，而不替换 optimizer 或 shard owner。支持 UVM 的平台上，user-space shim 可把被拦截的 device allocation 转为 managed memory：一条政策从 warm-up 的 kernel/migration 关联合并地址区间，再在对应 launch 前预取；另一条根据迭代 phase 估计建立 GPU 对 host pages 的访问映射，让部分 spilled state 直接经 CPU–GPU 链路访问，减少反复迁入/驱逐。它扩大容量与执行配置空间，却仍支付 host memory、PCIe access、profiling 和映射维护，并不删除通信、训练状态身份或正确性责任。<!-- source-family:SF-2026-ARXIV-2610-07593 -->
+
+这种较透明的路径也缺少框架的 tensor/reuse 语义：migration history 不是真实访问频率，kernel-count midpoint 只是 phase heuristic，prefetch 与 zero-copy 并非已验证的联合最优。[受测 scale-in](https://arxiv.org/html/2610.07593v1)减少通信参与者，却把更多状态压到 host；保留 per-GPU efficiency 不等于保留 job 总吞吐，比较粗粒度 offload 时还须区分 CPU 中实际 bytes。并行度、精度、batch、recompute 与网络改变后，应重验整步时间、内存峰值与训练结果；profile 失配、host/link 不足或 API 路径无法覆盖时，保留框架显式 offload、HBM 驻留或原 scale-out，不把地址透明性签成性能与语义保证。
+
+直接读取host还可以由层的前向与反向需要分别决定，而不是只按一个phase切换所有page：一层可先搬到HBM再计算、全程由GPU读取mapped host，或前向直读host后趁链路空隙搬到HBM用于反向。Logical tensor与底层storage分离，让后一模式切换访问位置；选定梯度也可直接写host，省去HBM梯度buffer但仍支付链路写入。[MemFerry的有限对照](https://arxiv.org/html/2610.09657v1)支持这种逐层计算/驻留/写址分工，不保证profile规划全局最优、autograd兼容或训练质量等价。消费前同步、storage寿命和CPU更新版本仍须分别验收；V100低带宽下全梯度直写反而更慢，DeepSpeed梯度buffer的重建差异也不能归入DHA本身。Profile、注册host、所有搬运与CPU更新、额外辅助设备及恢复/质量回归都计费；链路、计划或状态身份失配时回显式HBM搬入、普通offload或原scale-out，不由更低显存签发整步性能与训练正确性。<!-- source-family:SF-2026-ARXIV-2610-09657 -->
+
 ### Full Host Cache 用容量换跨节点 Communication
 
 ZeRO/FSDP 在每次需要完整参数时通过 inter-node collective 重建 working set，在网络带宽充足、host memory 受限时最合理；若每个节点都有足够 DRAM 而跨节点链路成为瓶颈，可以让每个节点的 host memory 缓存完整参数，在节点内按 layer/operation 将 active shard stream 到 GPU。这样以 host capacity 与 PCIe traffic 换掉重复的 inter-node parameter collective：host cache 拥有完整 parameter generation，GPU 只拥有当前 working set，optimizer/gradient ownership 仍按并行计划提交，prefetch 不能让未完成的新版本提前可见。
@@ -293,6 +301,8 @@ CPU master parameters + gradients + optimizer state
 ```
 
 这条流式路径还需要把“已预取”细化成可检查的buffer生命周期。层执行模板不能永久绑定一组驻留GPU权重指针，而是在Weights-Ready之后绑定当前working set；Backward-Done表示梯度已可搬回CPU，Buffer-Free则必须等相关offload排空后才允许复用。同一ping-pong槽位若在D2H完成前被下一层覆盖，forward可能正常，CPU optimizer却消费了错误梯度。H2D、compute、D2H分流和有界pinned staging slabs减少互相等待，但不是把整模型pin住，也不是删除这些依赖。
+
+层流式执行还可以让 GPU cache unit 预分配复用，并让 CPU 的梯度接收与 FP32→低精度转换 buffer 按层共享：省去的是多层同时保留的中间副本，不是 FP32 master parameters、optimizer state 或当前层的存储。共享槽位仍须等搬运与 CPU 消费完成才可复用；当 host 容量也不足时，activation 和 optimizer state 可以进入 NVMe，而将下一层关键参数预取留在 host—GPU 路径，避免更慢存储落到每层计算的关键依赖上。该选择会新增 pinned memory、CPU 更新、activation 重算和 I/O 费用；只有当前计算能覆盖这些延迟才隐藏成本，较小 batch 或带宽不足时仍会等待。有限合成负载中更多 NVMe 容量伴随吞吐退步，不能以最大可训练模型或 GPU 利用率批准质量与恢复语义；应共同验收整步时间、状态版本和训练结果，必要时回到普通 offload、HBM 驻留或多 GPU ZeRO。<!-- source-family:SF-2026-ARXIV-2603-16428 -->
 
 因此overlap只在计算足以覆盖搬运时隐藏延迟；PCIe或CPU更新成为瓶颈时仍会串行等待。事件、layer绑定、gradient accumulation和CPU update版本须一并进入checkpoint一致性边界。这是[流式训练实现](https://arxiv.org/html/2604.05091v1)对前述容量分支的具体落实，不改变ZeRO的状态owner，也不把H200 PCIe与GH200 C2C看成同一传输条件。<!-- source-family:SF-2026-ARXIV-2604-05091 -->
 
@@ -381,6 +391,10 @@ ZeRO 逐步分片 optimizer states、gradients 和 parameters，消除标准 DP 
 
 ## Review notes
 
+- Daily `2025-05-01` 补查：`SF-2025-ARXIV-2504-20437`，[GaLore2 v1](https://arxiv.org/html/2504.20437v1) §3～7、Appendix A/C、Tables1～7，2+2+2=6；采用直接梯度谱投影、刷新与完整权重更新的分支，和 activation-basis/ZeRO 分开。非方阵原记号、任意 FSDP shard/accumulation/clipping、恢复正确性及全生命周期收益未闭合；未核代码或复现。root 必要原证与当前章节/邻接比较后保存，Newton §31 已实际检查新正文、完整前后与本注并通过；root 已接纳，不据此授日报完成。
+
+- Daily `2026-10-08`：`SF-2026-ARXIV-2610-07593`，[TRANSIT v1](https://arxiv.org/html/2610.07593v1) §3.3–4.2/5；UVM shim的prefetch与zero-copy两政策分开，migration非reuse，midpoint为heuristic。H100/host2TB/PCIe4或5/有限链路、精度与offloaded bytes混杂保留；per-GPU效率非job总吞吐，cluster部分模拟，质量与任意API兼容未证。
+
 - `SF-2026-ARXIV-2602-22437` — Daily `2026-02-28`；[exact-v1](https://arxiv.org/html/2602.22437v1) §3–6与必要 block-optimizer/padding 消融。2+2+3=7，现有原子 block、ragged placement、近似规划与生命周期/fallback 已覆盖，不重复扩写；仅删除未核 artifact 断言，改为作者实验不授通用 production 收益，不否认其工业部署经历。root 原源/actual owner Existing 与窄纠正 PRE 通过；实际纠正正文、邻接与自身末注经 root 非作者 POST 通过，窄锁释放。未核 artifact/复现，不授日级完成。
 
 - `SF-2026-ARXIV-2601-19362`，Status: Experimental：[ODC exact-v1](https://arxiv.org/html/2601.19362v1) §2–4、§5.1–5.4及§6.1–6.2支持按需 parameter gather/gradient scatter-accumulate、minibatch barrier 和 LB-Mini 分支。作者 LongAlign/SWE-Smith SFT、AIME GRPO 实验使用 R1-Distill-Qwen 1.5–32B、最多32×A100 80GB、NVSwitch及800Gbps/node RoCE；RL只统计训练，排除 rollout。SFT最高36%与RL最高10%不外推到任意负载；minibatch=1无收益、packing改善后差距缩小、跨节点 primitive 带宽低于 NCCL 均保留。必要原源与实际正文/相邻链路已由 root 独立复核通过，未运行实现或复现实验。
@@ -400,6 +414,10 @@ ZeRO 逐步分片 optimizer states、gradients 和 parameters，消除标准 DP 
 - MegaTrain（CPU-authoritative layer-streamed training；Status: Experimental）: https://arxiv.org/abs/2604.05091
 
 本轮 Review 在既有 Stage 1/2/3 边界上补齐逐项 memory formula、1B/8-rank 小例子、parameter lifecycle、activation 非目标项、FSDP 关系、offload、ZeRO++ 与 checkpoint correctness。
+
+- `SF-2026-ARXIV-2610-09657`，MemFerry，Experimental：supplement_20260311实际必要exact-v1 III-B/C、IV-B/C/D、V同步/存储与VI-A/C/D/E审阅，评分2+2+2=6；root必要Source及actual Ch39/邻接PRE通过，确认差额后深入这项层级FP/BP/梯度写址接口。仅采用有限profile规划和storage分离；慢写与buffer混杂近文，Alg记号/全局最优、训练质量等价、完整实现/恢复未授。root非写入者已实际顺读250–312完整局部/新增277及本人412注，回对有效必要源，actual POST通过；不预授本日完成。https://arxiv.org/html/2610.09657v1
+
+- `SF-2026-ARXIV-2603-16428` — [SlideFormer exact-v1](https://arxiv.org/html/2603.16428v1) §2.3/3.1–3.3/Table1/4.1–4.6；层共享梯度/转换buffer与NVMe state分责，低batch隐藏失败、NVMe容量—吞吐退步及synthetic/基线loss与kernel混杂保留。host FP32 master与层版本不消失，GPU缓存复用须等搬运/消费；有限PC/服务器配置不授全硬件零offload费、训练质量/恢复正确性或生产SLO。未核代码或复现实验。
 
 Primary-source / official documentation 校验入口：
 

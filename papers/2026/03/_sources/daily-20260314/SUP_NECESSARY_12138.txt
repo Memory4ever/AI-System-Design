@@ -1,0 +1,4450 @@
+HATS: Hardness-Aware Trajectory Synthesis for GUI Agents
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Related Works
+3
+Hardness-Aware Trajectory Synthesis
+3.1
+Hardness-Driven Exploration Module
+3.2
+Alignment-Guided Refinement Module
+3.3
+Closed-Loop Integration
+4
+Experiments
+5
+Conclusion
+References
+A
+Extended Related Works
+B
+Experimental Details
+B.1
+Evaluation Benchmarks
+B.1.1
+Environment Setup
+B.1.2
+Task Distribution and Categorization
+B.1.3
+Evaluation Protocol
+B.2
+Model Configuration and Training
+B.2.1
+Training Hyperparameters
+B.3
+Baselines
+B.4
+Trajectory-Based Training
+B.5
+Experimental Setup for Component Analysis
+C
+Prompt Summary
+D
+Instruction Refinement Examples
+E
+Illustrative Examples
+License: CC BY 4.0
+arXiv:2603.12138v1 [cs.CV] 12 Mar 2026
+HATS
+: Hardness-Aware Trajectory Synthesis for GUI Agents
+Rui Shao
+Affiliation:
+Harbin Institute of Technology, Shenzhen
+Affiliation:
+Shenzhen Loop Area Institute
+Email:
+shaorui@hit.edu.cn
+Ruize Gao
+Affiliation:
+National University of Singapore, CNRS@CREATE
+Email:
+ruizegao@u.nus.edu
+Bin Xie
+Affiliation:
+Harbin Institute of Technology, Shenzhen
+Email:
+chengongwei@hit.edu.cnhttps://github.com/JiuTian-VL/HATS
+Yixing Li
+Affiliation:
+Harbin Institute of Technology, Shenzhen
+Kaiwen Zhou
+Affiliation:
+Huawei Noah’s Ark Lab
+Shuai Wang
+Affiliation:
+Huawei Noah’s Ark Lab
+Weili Guan
+Affiliation:
+Harbin Institute of Technology, Shenzhen
+Affiliation:
+Shenzhen Loop Area Institute
+Gongwei Chen
+Affiliation:
+Harbin Institute of Technology, Shenzhen
+Abstract
+Graphical user interface (GUI) agents powered by large vision–language models (VLMs) have shown remarkable potential in automating digital tasks, highlighting the need for high-quality trajectory data to support effective agent training. Yet existing trajectory synthesis pipelines often yield agents that fail to generalize beyond simple interactions. We identify this limitation as stemming from the neglect of semantic-ambiguous actions—interactions whose meanings are context-dependent, sequentially dependent, or visually ambiguous. Such actions are crucial for real-world robustness but are under-represented and poorly processed in current datasets, leading to semantic misalignment between task instructions and execution. To address these issues, we propose
+HATS
+, a
+H
+ardness-
+A
+ware
+T
+rajectory
+S
+ynthesis framework designed to mitigate the impact of semantic ambiguity. We define hardness as the degree of semantic ambiguity associated with an action and develop two complementary modules: (1) a hardness-driven exploration that guides data collection toward ambiguous yet informative interactions, and (2) an alignment-guided refinement that iteratively validates and repairs instruction–execution alignment. The two modules operate in a closed-loop manner—exploration supplies refinement with challenging trajectories, while refinement feedback updates the hardness signal to guide future exploration. Extensive experiments show that agents trained with
+HATS
+consistently outperform state-of-the-art baselines across benchmark GUI environments.
+†
+†
+footnotetext:
+†
+Equal contribution
+∗
+Corresponding author
+Figure 1
+:
+Overview of trajectory synthesis paradigms. Compared with (a) existing methods, (b)
+HATS
+integrates hardness-driven exploration and alignment-guided refinement in a closed loop, producing high-quality trajectories with rich semantic coverage and strong instruction–execution alignment. (c) Experiments show
+HATS
+outperforms
+OS-Genesis
+by
+100%↑
+on
+AndroidWorld
+(
+22.60 vs. 11.30
+) and
+215%↑
+on
+WebArena
+(
+20.60 vs. 6.53
+).
+1
+Introduction
+Graphical User Interface
+(GUI) agents powered by large
+Vision–Language Models
+(VLMs) have emerged as a promising direction for automating complex digital workflows, from booking travel in mobile apps to configuring cloud services in browsers. A capable agent must perceive the screen, interpret a natural-language goal, decompose it into a plan, and execute actions such as
+Tap
+,
+Scroll
+, or
+Type
+. Training such autonomy requires instruction-aligned trajectories coupling task goals, step-level descriptions, and exact action–state pairs
+[
+77
+]
+. However, collecting such trajectories manually is prohibitively expensive, motivating recent efforts toward automated trajectory synthesis.
+Automating Trajectory Synthesis.
+To reduce human annotation, recent work automates trajectory generation. Early
+task-driven
+approaches begin with written goals and record agents or humans executing them
+[
+27
+,
+37
+,
+25
+]
+, but still depend on costly goal specification and yield inconsistent traces
+[
+39
+,
+44
+]
+.
+OS-Genesis
+[
+59
+]
+instead introduces
+reverse task synthesis
+, where the system explores applications via random UI actions and then synthesizes task instructions to describe observed outcomes, improving diversity by removing manual goal authoring.
+The Semantic-Ambiguity Gap.
+Despite these advantages, reverse task synthesis
+[
+59
+]
+still faces critical limitations.
+Exploration based on uniform random walks or shallow breadth-first search causes over 70% of collected traces to collapse into trivial
+semantic-intuitive actions
+(e.g., “open menu”, “tap back”), which quickly saturate learning yet dominate storage and training budgets.
+Conversely, the resulting corpora remain deficient in
+semantic-ambiguous actions
+—UI interactions whose functional meaning depends on subtle visual or contextual cues and are easily confused or hidden.
+As illustrated in Fig.
+2
+, these actions include (a) identical “plus” icons that trigger different functions depending on context, (b) operations that only succeed after prerequisite steps, and (c) visually similar elements leading to distinct outcomes.
+Such rare yet crucial actions represent the key bottlenecks where agents fail to generalize: without adequate exposure, they plateau at superficial behaviors and cannot handle unseen workflows.
+Moreover, when these actions do appear, their ambiguity often leads to
+instruction–execution misalignment
+: synthesized instructions may omit essential context or replay inconsistently, introducing noisy supervision that further degrades data quality. This issue is exacerbated by existing one-shot instruction generation methods
+[
+59
+]
+, which lack semantic validation and thus produce corpora that are both redundant and unreliable. The
+challenge
+is thus twofold: (i) how to focus exploration on high-value, semantically ambiguous regions of the state space rather than collecting redundant, intuitive actions; and (ii) how to ensure alignment between synthesized instructions and actual executions to prevent supervision noise. Existing one-shot instruction generation lacks semantic validation, making the resulting corpora both redundant and unreliable.
+Figure 2
+:
+Illustrative cases of semantic-ambiguous actions. Such actions constitute critical bottlenecks for robust agent generalization but are rarely captured by existing synthesis pipelines.
+Hardness-Aware Trajectory Synthesis (HATS).
+To address these challenges, we propose
+HATS
+, a closed-loop trajectory synthesis framework explicitly targeting semantic-ambiguous actions through two cooperative modules (Fig.
+1
+).
+The
+Hardness-Driven Exploration
+module (§
+3.1
+) steers search toward semantically complex, under-represented states,
+while the
+Alignment-Guided Refinement
+module (§
+3.2
+) performs multi-round replay and repair to ensure semantic consistency before data admission.
+Both modules operate under a unified
+Hardness-Driven Monte Carlo Tree Search (HD-MCTS)
+procedure,
+which orchestrates exploration, refinement, and feedback propagation in a single control loop.
+Exploration supplies challenging trajectories for validation, and refinement converts misalignment feedback into hardness signals that guide subsequent exploration.
+This closed-loop design systematically enhances both the diversity and fidelity of synthesized data, yielding more reliable and generalizable GUI agents.
+Figure 3
+:
+Architecture of the HATS framework.
+The framework integrates a
+Hardness-Driven Exploration
+module (§
+3.1
+) and an
+Alignment-Guided Refinement
+module (§
+3.2
+) within a unified
+HD-MCTS
+loop.
+Exploration corresponds to the
+Selection
+,
+Expansion
+, and
+Simulation Phase I
+, while refinement handles
+Simulation Phase II
+and
+Backpropagation
+.
+Misalignment detected during refinement is converted into a hardness reward that guides subsequent exploration, forming a closed loop for progressively improving both diversity and semantic fidelity of synthesized trajectories.
+Contributions.
+We summarize our contributions as follows:
+•
+I.
+We introduce
+HATS
+, a unified closed-loop trajectory synthesis framework that enhances the representation and handling of semantic-ambiguous actions.
+•
+II.
+We design a hardness-driven exploration module that prioritizes rare, high-value actions while reducing redundancy from intuitive ones.
+•
+III.
+We propose an alignment-guided refinement module that replaces one-shot synthesis with multi-round validation, ensuring instruction–execution alignment.
+These contributions collectively establish a scalable, semantically grounded pipeline that enhances diversity and fidelity in trajectory synthesis, advancing GUI agent training.
+2
+Related Works
+GUI Agents.
+Recent advances in large language and vision–language models (LLMs/VLMs) have accelerated progress in agents that perceive, reason, and act within graphical user interfaces
+[
+11
+,
+12
+,
+65
+]
+.
+Earlier systems relied on prompt programming or external tool execution
+[
+64
+,
+58
+]
+, while more recent work fine-tunes multimodal backbones to better recognize UI states
+[
+5
+,
+66
+]
+and execute atomic actions across web, desktop, and mobile environments
+[
+23
+,
+27
+,
+60
+]
+.
+Although these agents demonstrate strong generality, their performance remains heavily constrained by the quality and diversity of available trajectory data, especially when handling semantically complex interactions.
+GUI Trajectory Synthesis.
+A major challenge in data construction is obtaining large-scale, instruction-aligned trajectories that reflect realistic interface behaviors
+[
+8
+,
+54
+,
+48
+,
+78
+]
+.
+Existing approaches follow two paradigms.
+Task-driven
+demonstrations
+[
+27
+,
+37
+]
+require manually authored goals and human/model executions, but are expensive and often yield inconsistent traces
+[
+39
+,
+44
+]
+.
+To improve scalability,
+OS-Genesis
+[
+59
+]
+adopts an
+exploration-driven
+strategy, exploring UIs first and then synthesizing task instructions from observed outcomes.
+However, naive exploration oversamples repetitive
+semantic-intuitive actions
+while underrepresenting
+semantic-ambiguous actions
+whose functional meaning depends on contextual, sequential, or visual cues.
+Moreover, one-shot reverse synthesis frequently produces underspecified instructions that fail to replay, leading to
+instruction-execution misalignment
+. These limitations motivate our hardness-aware, closed-loop framework, which targets ambiguous interactions during exploration and verifies synthesized instructions through iterative alignment. Other contemporaneous efforts explore stochastic or intent-aware multi-app exploration
+[
+33
+]
+, which is largely orthogonal to our focus on addressing semantic ambiguity through hardness-aware sampling and alignment refinement.
+3
+Hardness-Aware Trajectory Synthesis
+Existing automated pipelines struggle in two key ways: (i) they rarely capture semantic-ambiguous actions, i.e., interactions whose semantics depend on contextual, sequential, or visual cues; and (ii) even when such actions are captured, one-shot instruction generation often produces noisy or misaligned descriptions that degrade supervision quality.
+Our framework
+HATS
+addresses both issues by tightly coupling targeted exploration with alignment-aware data verification.
+Method Overview.
+As illustrated in Fig.
+3
+,
+HATS
+consists of two interacting modules:
+a
+Hardness-Driven Exploration
+module that actively seeks semantically ambiguous, high-value actions (§
+3.1
+), and
+an
+Alignment-Guided Refinement
+module that validates and repairs the resulting instruction–trajectory pairs before admitting them into the training corpus (§
+3.2
+).
+These two modules are fused through a customized
+Hardness-Driven Monte Carlo Tree Search
+(HD-MCTS) procedure that forms the unified control loop of our framework. Instead of treating exploration and supervision cleanup as two separate offline stages,
+HATS
+unifies them into a single iterative search process.
+Each HD-MCTS iteration (Appendix Alg.
+1
+) performs four coordinated stages:
+•
+Selection
+: the agent traverses an action tree to balance exploitation and exploration using a UCB policy;
+•
+Expansion
+: the tree grows by executing previously unvisited actions and adding corresponding nodes;
+•
+Simulation
+: the agent rolls out a bounded-depth trajectory, reverse-synthesizes a natural-language instruction, replays and
+iteratively refines
+that instruction until it becomes executable and semantically aligned;
+•
+Backpropagation
+: an
+alignment-derived hardness reward
+is propagated up the tree to bias future exploration toward semantically challenging regions.
+Notations.
+Let
+ℰ
+\mathcal{E}
+denote a GUI environment.
+At time
+t
+t
+, the agent observes a state
+s
+t
+s_{t}
+(screenshot + optional UI tree), executes an action
+a
+t
+∈
+𝒜
+a_{t}\in\mathcal{A}
+, and transitions to
+s
+t
++
+1
+=
+ℰ
+⁡
+(
+s
+t
+,
+a
+t
+)
+s_{t+1}=\mathcal{E}(s_{t},a_{t})
+.
+The atomic action set is
+𝒜
+=
+{
+Tap
+,
+Type
+,
+Scroll
+,
+Back
+,
+Long
+-
+Press
+,
+Swipe
+}
+\mathcal{A}=\{\textsc{Tap},\textsc{Type},\textsc{Scroll},\textsc{Back},\textsc{Long\mbox{-}Press},\textsc{Swipe}\}
+.
+A trajectory
+τ
+=
+(
+s
+0
+,
+a
+0
+,
+s
+1
+,
+…
+,
+s
+T
+)
+\tau=(s_{0},a_{0},s_{1},\dots,s_{T})
+records a sequence of interactions.
+We represent
+ℰ
+\mathcal{E}
+as an
+action tree
+, where each node
+v
+v
+corresponds to a state
+s
+⁡
+(
+v
+)
+s(v)
+and each edge
+(
+v
+,
+a
+)
+(v,a)
+maintains a value estimate
+Q
+⁡
+(
+v
+,
+a
+)
+Q(v,a)
+and visit count
+N
+⁡
+(
+v
+,
+a
+)
+N(v,a)
+, with
+N
+⁡
+(
+v
+)
+=
+∑
+a
+N
+⁡
+(
+v
+,
+a
+)
+N(v)=\sum_{a}N(v,a)
+.
+𝒫
+\mathcal{P}
+denotes the current path (a sequence of
+(
+a
+,
+s
+)
+(a,s)
+pairs) with rollout depth limit
+T
+max
+T_{\max}
+.
+Figure 4
+:
+Comparison of exploration strategies.
+Uniform Random Exploration
+[
+59
+]
+often yields trivial and redundant actions, whereas our
+Hardness-Driven Exploration
+replaces random walking with a hardness-driven exploration policy that selectively targets under-represented yet semantically challenging actions.
+3.1
+Hardness-Driven Exploration Module
+We follow the
+interaction-driven discovery paradigm
+introduced by
+OS-Genesis
+[
+59
+]
+,
+where the agent explores by performing UI actions rather than following pre-defined goals. As contrasted in Fig.
+4
+, however,
+OS-Genesis
+performs
+reverse task synthesis
+from randomly sampled traces,
+often yielding trivial and redundant actions.
+In contrast, our approach replaces random walking with a
+hardness-driven exploration policy
+that selectively targets under-represented yet semantically challenging actions.
+This module corresponds to the
+Selection
+and
+Expansion
+phases, as well as
+Simulation Phase I
+in HD-MCTS.
+I. Selection on the Action Tree.
+Starting from the root node
+v
+0
+v_{0}
+with the initial GUI state
+s
+0
+s_{0}
+,
+HD-MCTS traverses the action tree by recursively selecting outgoing edges using an Upper Confidence Bound (UCB) rule:
+a
+⋆
+​
+(
+v
+)
+=
+arg
+⁡
+max
+a
+∈
+𝒜
+⁡
+(
+v
+)
+⁡
+Q
+⁡
+(
+v
+,
+a
+)
++
+C
+​
+ln
+⁡
+(
+N
+⁡
+(
+v
+)
++
+1
+)
+N
+⁡
+(
+v
+,
+a
+)
++
+1
+,
+a^{\star}(v)\;=\;\arg\max_{a\in\mathcal{A}(v)}Q(v,a)+\;C\,\sqrt{\tfrac{\ln(N(v)+1)}{N(v,a)+1}},
+(1)
+where
+C
+C
+controls exploration pressure. Unlike classical MCTS,
+Q
+⁡
+(
+v
+,
+a
+)
+Q(v,a)
+is updated via the
+hardness reward
+(Eq.
+3
+), which we formally define later in the closed-loop integration stage.
+This reward serves as an innovative bridge between exploration and semantic feedback—transforming alignment hardness into a guiding signal that steers future search toward more informative, ambiguous behaviors.
+II. Expansion.
+If the current node
+v
+v
+is not fully expanded, we select an unvisited action
+a
+e
+∈
+𝒜
+⁡
+(
+v
+)
+a_{e}\in\mathcal{A}(v)
+,
+apply it to obtain
+s
+e
+=
+ℰ
+⁡
+(
+s
+⁡
+(
+v
+)
+,
+a
+e
+)
+s_{e}=\mathcal{E}(s(v),a_{e})
+, create a child node
+u
+u
+with state
+s
+⁡
+(
+u
+)
+=
+s
+e
+s(u)=s_{e}
+,
+and append
+(
+a
+e
+,
+s
+e
+)
+(a_{e},s_{e})
+to
+𝒫
+\mathcal{P}
+.
+This grows the search frontier along under-explored branches and increases coverage of semantically diverse UI states.
+III. Simulation Phase I: Rollout.
+After selection and expansion, we perform a bounded-depth
+rollout
+from the current node by executing valid UI actions until
+𝒫
+\mathcal{P}
+reaches depth
+T
+max
+T_{\max}
+:
+𝒫
+←
+Rollout
+​
+(
+ℰ
+,
+v
+,
+s
+,
+𝒫
+,
+T
+max
+)
+.
+\mathcal{P}\leftarrow\textsc{Rollout}(\mathcal{E},v,s,\mathcal{P},T_{\max}).
+This process produces a concrete multi-step interaction trace, a candidate trajectory, which is then passed to the
+alignment-guided refinement module
+for subsequent processing.
+Figure 5
+:
+Comparison of instruction synthesis methods.
+One-Shot Instruction Generation
+[
+59
+]
+directly maps raw traces to text, often yielding vague or underspecified goals and inconsistent executions. In contrast, our
+Multi-Round Alignment-Guided Refinement
+iteratively replays and verifies task instructions to produce semantically faithful and executable Verified Trajectories.
+3.2
+Alignment-Guided Refinement Module
+This module corresponds to
+Simulation Phase II
+in HD-MCTS
+(see Fig.
+3
+).
+It receives noisy, partially meaningful
+Exploration Sequences
+from the previous stage
+and transforms them into executable, instruction-aligned
+Verified Trajectory
+.
+Unlike the
+One-Shot Instruction Generation
+paradigm in
+OS-Genesis
+[
+59
+]
+,
+which directly maps random traces to text,
+our method employs a
+Multi-Round Alignment-Guided Refinement
+process
+that iteratively replays, verifies, and corrects synthesized instructions
+until semantic and functional consistency are both achieved (Fig.
+5
+).
+Prompt-Based Implementation.
+All stages of refinement that sub-trajectory selection, instruction synthesis,
+execution replay, similarity verification, and contextual correction are
+implemented via prompt-driven VLM modules
+1
+1
+1
+The prompt templates used at each stage are provided in Appendix
+C
+.
+.
+I. Sub-Trajectory Selection.
+From the rolled-out
+Exploration Sequence
+𝒫
+\mathcal{P}
+,
+we first extract a semantically coherent segment:
+A
+←
+SelectSubsequence
+​
+(
+𝒫
+)
+,
+A\leftarrow\textsc{SelectSubsequence}(\mathcal{P}),
+representing one meaningful user intent, such as “add a new clock”.
+This selected segment is referred to as the
+Reference Sequence
+,
+serves as the behavioral ground truth for synthesis and verification.
+II. Instruction Synthesis.
+We then generate a natural-language description for the Reference Sequence via
+I
+←
+SynthesizeInstruction
+​
+(
+A
+)
+,
+I\leftarrow\textsc{SynthesizeInstruction}(A),
+yielding an initial hypothesized instruction.
+Unlike
+OS-Genesis
+, which treats this output as final,
+we regard
+I
+I
+as provisional and subject to replay-driven verification.
+Table 1
+:
+AndroidWorld evaluation results across task categories. All values are success rates (%). DLS = Daily Life & Services; S&C = Social & Communication; S&U = System & Utility; P&W = Productivity & Work. The final column shows overall success rate.
+Base Model
+Strategies
+Task Categories (%)
+Overall SR (%)
+DLS
+S&C
+S&U
+P&W
+GPT-4o
+[
+20
+]
+Zero-Shot
+[
+63
+]
+42.86
+N.A.
+66.67
+N.A.
+77.27
+N.A.
+29.09
+N.A.
+45.22
+N.A.
+InternVL2-4B
+[
+4
+]
+Zero-Shot
+[
+63
+]
+0.00
+-100.0%
+0.00
+-100.0%
+2.38
+-94.2%
+0.00
+-100.0%
+1.02
+-95.8%
+Task-Driven
+[
+25
+]
+3.49
+-79.8%
+0.00
+-100.0%
+19.70
+-51.8%
+3.70
+-57.2%
+7.90
+-65.1%
+Task-Driven w. Self-Instruct
+[
+62
+]
+2.30
+-86.7%
+3.70
+-90.4%
+21.21
+-48.2%
+0.62
+-92.8%
+6.09
+-73.4%
+OS-Genesis
+[
+59
+]
+7.14
+-58.6%
+11.11
+-71.2%
+36.36
+-11.1%
+3.64
+-57.9%
+11.30
+-50.0%
+HATS
+17.24
+0.0%
+38.46
+0.0%
+40.91
+0.0%
+8.64
+0.0%
+22.60
+0.0%
+InternVL2-8B
+[
+4
+]
+Zero-Shot
+[
+63
+]
+0.00
+-100.0%
+0.00
+-100.0%
+3.13
+-94.1%
+0.00
+-100.0%
+1.04
+-95.8%
+Task-Driven
+[
+25
+]
+1.15
+-92.9%
+0.00
+-100.0%
+12.12
+-77.2%
+0.62
+-95.4%
+3.48
+-85.7%
+Task-Driven w. Self-Instruct
+[
+62
+]
+5.95
+-63.1%
+0.00
+-100.0%
+13.64
+-74.3%
+3.09
+-77.2%
+6.25
+-72.4%
+OS-Genesis
+[
+59
+]
+13.79
+-14.3%
+0.00
+-100.0%
+47.62
+-10.2%
+4.08
+-70.0%
+14.81
+-39.4%
+HATS
+16.09
+0.0%
+25.93
+0.0%
+53.03
+0.0%
+13.58
+0.0%
+24.35
+0.0%
+Qwen2-VL-7B
+[
+61
+]
+Zero-Shot
+[
+63
+]
+0.00
+-100.0%
+0.00
+-100.0%
+7.58
+-85.3%
+0.00
+-100.0%
+1.75
+-92.6%
+Task-Driven
+[
+25
+]
+8.33
+-54.7%
+3.70
+-88.0%
+30.30
+-41.2%
+2.47
+-75.1%
+10.43
+-57.2%
+Task-Driven w. Self-Instruct
+[
+62
+]
+6.90
+-62.5%
+7.41
+-75.9%
+25.76
+-50.0%
+0.62
+-93.7%
+6.09
+-74.9%
+OS-Genesis
+[
+59
+]
+17.86
+-3.0%
+0.00
+-100.0%
+31.82
+-38.2%
+1.85
+-81.3%
+11.50
+-52.7%
+HATS
+18.39
+0.0%
+30.77
+0.0%
+51.52
+0.0%
+9.88
+0.0%
+24.35
+0.0%
+III. Replay and Execution.
+We execute the synthesized instruction
+I
+I
+from the start state of
+A
+A
+to obtain
+an
+Execution Sequence
+:
+B
+←
+ExecuteInstruction
+​
+(
+I
+)
+.
+B\leftarrow\textsc{ExecuteInstruction}(I).
+This sequence represents how the environment actually responds to the instruction.
+Discrepancies between
+A
+A
+(expected behavior) and
+B
+B
+(observed outcome)
+indicate semantic gaps in
+I
+I
+, e.g., missing contextual cues or ambiguity.
+IV. Similarity Verification.
+To quantitatively measure alignment between the
+Reference
+and
+Execution Sequences
+,
+we perform the similarity verification using the
+Action-Level Reconstruction Recall
+metric:
+R
+(
+A
+,
+B
+)
+=
+1
+|
+A
+a
+|
+∑
+a
+∈
+A
+a
+𝟏
+[
+∃
+b
+∈
+B
+a
+:
+match
+(
+a
+,
+b
+∣
+s
+)
+]
+.
+R(A,B)=\frac{1}{|A_{a}|}\sum_{a\in A_{a}}\mathbf{1}\bigl[\exists b\in B_{a}:\,\mathrm{match}(a,b\mid s)\bigr].
+(2)
+Here,
+match
+⁡
+(
+a
+,
+b
+∣
+s
+)
+\mathrm{match}(a,b\mid s)
+1
+1
+1
+The prompt templates used at each stage are provided in Appendix
+C
+.
+determines whether executing
+b
+b
+in state
+s
+s
+is semantically equivalent to action
+a
+a
+in its original context.
+A lower
+R
+⁡
+(
+A
+,
+B
+)
+R(A,B)
+implies that the instruction
+I
+I
+lacks critical contextual cues,
+for instance, it may omit widget identifiers, temporal dependencies, or navigation context.
+We later compare this recall metric with a precision-based alternative in our
+metric analysis (§
+4
+).
+V. Iterative Refinement and Final Verification.
+If
+R
+⁡
+(
+A
+,
+B
+)
+<
+R
+min
+R(A,B)<R_{\min}
+or execution fails,
+I
+I
+is refined by injecting missing context and re-executed to obtain an updated
+Execution Sequence
+.
+1
+1
+footnotemark:
+1
+This replay–refine loop continues until alignment improves (
+R
+⁡
+(
+A
+,
+B
+)
+≥
+R
+min
+R(A,B)\geq R_{\min}
+) or the refinement budget
+F
+max
+F_{\max}
+is reached. We set
+R
+min
+=
+0.7
+R_{\min}=0.7
+based on empirical validation balancing stability and coverage. When
+I
+I
+yields stable, deterministic execution, the pair
+(
+I
+,
+B
+)
+(I,B)
+is accepted as a
+Verified Trajectory
+. Otherwise, it is discarded, and its misalignment contributes to the
+hardness reward
+for future exploration.
+Only verified trajectories that pass alignment verification are admitted to the corpus, ensuring that synthesized data are both
+reliable
+(free from misaligned supervision) and
+informative
+(rich in semantic-ambiguous yet executable behaviors).
+The effectiveness of the refinement module is analyzed in §
+4
+, where multi-round replay is shown to monotonically increase action-level recall and substantially improve downstream task success.
+As visualized in Fig.
+5
+, iterative refinement transforms vague one-shot instructions into precise and executable task instructions, bridging the gap between textual goals and GUI-level actions.
+Table 2
+:
+WebArena evaluation results across website domains. All values are success rates (%).
+Base Model
+Strategies
+WebArena (Success Rate %)
+Gitlab
+Maps
+Reddit
+Overall
+GPT-4o
+[
+20
+]
+Zero-Shot
+[
+63
+]
+32.14
+N.A.
+6.42
+N.A.
+27.36
+N.A.
+22.82
+N.A.
+InternVL2-4B
+[
+4
+]
+Zero-Shot
+[
+63
+]
+1.11
+-95.1%
+0.00
+-100.0%
+0.94
+-94.8%
+0.76
+-96.3%
+Task-Driven
+[
+25
+]
+9.52
+-58.1%
+5.00
+-75.2%
+0.00
+-100.0%
+5.72
+-72.2%
+Task-Driven w. Self-Instruct
+[
+62
+]
+9.52
+-58.1%
+7.50
+-67.0%
+0.00
+-100.0%
+6.41
+-68.9%
+OS-Genesis
+[
+59
+]
+7.94
+-65.1%
+7.50
+-67.0%
+3.13
+-82.6%
+6.53
+-68.3%
+HATS
+22.73
+0.0%
+20.19
+0.0%
+17.92
+0.0%
+20.60
+0.0%
+InternVL2-8B
+[
+4
+]
+Zero-Shot
+[
+63
+]
+1.37
+-95.1%
+0.95
+-96.2%
+0.97
+-95.2%
+1.13
+-95.5%
+Task-Driven
+[
+25
+]
+6.35
+-77.2%
+2.50
+-89.9%
+0.00
+-100.0%
+3.58
+-85.6%
+Task-Driven w. Self-Instruct
+[
+62
+]
+7.94
+-71.4%
+0.00
+-100.0%
+6.25
+-69.0%
+5.30
+-78.7%
+OS-Genesis
+[
+59
+]
+6.35
+-77.2%
+10.00
+-59.6%
+9.34
+-53.7%
+8.16
+-67.2%
+HATS
+27.81
+0.0%
+24.77
+0.0%
+20.19
+0.0%
+24.87
+0.0%
+Qwen2-VL-7B
+[
+61
+]
+Zero-Shot
+[
+63
+]
+1.14
+-95.4%
+0.98
+-95.4%
+1.96
+-91.4%
+1.32
+-94.3%
+Task-Driven
+[
+25
+]
+6.35
+-74.6%
+5.00
+-76.3%
+6.25
+-72.6%
+5.95
+-74.4%
+Task-Driven w. Self-Instruct
+[
+62
+]
+4.84
+-80.6%
+7.50
+-64.5%
+3.13
+-86.3%
+5.12
+-78.0%
+OS-Genesis
+[
+59
+]
+15.87
+-36.5%
+5.00
+-76.4%
+15.63
+-31.3%
+12.81
+-44.9%
+HATS
+25.00
+0.0%
+21.10
+0.0%
+22.77
+0.0%
+23.28
+0.0%
+3.3
+Closed-Loop Integration
+This stage corresponds to the
+Backpropagation
+phase of HD-MCTS,
+where the alignment scores of refined trajectories are converted into a
+unified hardness feedback signal that guides subsequent exploration.
+In contrast to conventional MCTS, which backpropagates environment-provided task rewards, GUI trajectory synthesis exposes no such scalar supervision.
+We therefore propagate an
+alignment-derived hardness reward
+that quantifies semantic difficulty and serves as a task-adaptive surrogate objective.
+I. Motivation and Design of the Hardness Reward.
+The core idea is to turn semantic misalignment, typically noisy supervision, into informative feedback that prioritizes ambiguous or hard regions of the GUI state space. During refinement, we compute the
+action-level reconstruction recall
+R
+⁡
+(
+A
+,
+B
+)
+R(A,B)
+(Eq.
+2
+), which measures how well a synthesized instruction
+I
+I
+reproduces its reference sequence
+A
+A
+. High recall indicates clear semantic grounding, whereas low recall reflects ambiguous visual cues, missing preconditions, or unstable language–interface mappings. Thus,
+R
+R
+naturally serves as an empirical estimate of
+task hardness
+.
+Building on this insight, we define the
+hardness reward
+as an inverse function of
+R
+⁡
+(
+A
+,
+B
+)
+R(A,B)
+:
+r
+⁡
+(
+A
+,
+B
+)
+=
+(
+R
+⁡
+(
+A
+,
+B
+)
++
+ϵ
+)
+−
+α
+,
+ϵ
+>
+0
+,
+α
+>
+0
+.
+r(A,B)=(R(A,B)+\epsilon)^{-\alpha},\quad\epsilon>0,\ \alpha>0.
+(3)
+This formulation (i) yields a continuous, bounded score that increases smoothly as alignment deteriorates, and
+(ii) directly links exploration to the weakest regions of instruction–execution understanding.
+We additionally clip hardness into a stable range (e.g.,
+[
+0
+,
+H
+max
+]
+[0,H_{\max}]
+) to avoid extreme values.
+Within HD-MCTS, this reward replaces task-return signals and encourages revisiting trajectories that are hard to align yet semantically valuable.
+We use the default configuration
+(
+ϵ
+=
+0.01
+,
+α
+=
+1
+)
+(\epsilon{=}0.01,\ \alpha{=}1)
+, and analyze parameter sensitivity in §
+4
+.
+II. Hardness Propagation.
+After refinement, each verified instruction–trajectory pair
+(
+I
+,
+B
+)
+(I,B)
+yields a hardness value
+r
+⁡
+(
+A
+,
+B
+)
+r(A,B)
+.
+We backpropagate this reward along the
+tree-policy path
+from the expansion node to the root:
+N
+⁡
+(
+v
+,
+a
+)
+←
+N
+⁡
+(
+v
+,
+a
+)
++
+1
+,
+Q
+⁡
+(
+v
+,
+a
+)
+←
+Q
+⁡
+(
+v
+,
+a
+)
++
+r
+−
+Q
+⁡
+(
+v
+,
+a
+)
+N
+⁡
+(
+v
+,
+a
+)
+.
+N(v,a)\!\leftarrow\!N(v,a)+1,\ Q(v,a)\!\leftarrow\!Q(v,a)+\tfrac{r-Q(v,a)}{N(v,a)}.
+(4)
+Following standard MCTS, only nodes selected by the tree policy receive credit.
+Since hardness characterizes the entire instruction–trajectory pair rather than any single action,
+the same scalar reward is propagated along the path. These updates reshape the value estimates,
+biasing future UCB selection (Eq.
+1
+) toward semantically challenging regions.
+In summary, the closed loop of
+HATS
+turns semantic ambiguity from a training liability into a useful learning signal. Misalignment during replay generates the hardness reward, which in turn guides exploration toward richer and harder-to-align interactions.
+Verified trajectories
+annotated with hardness form a semantically grounded dataset for downstream SFT training. We follow the two-stage paradigm of
+OS-Genesis
+[
+59
+]
+for planning-level and action-level learning, with hardness-aware weighting detailed in Appendix
+B
+.
+Table 3
+:
+Parameter sensitivity of the hardness reward in Eq.
+3
+.
+Hardness Metric
+Hyperparameters
+Success Rate (%)
+ϵ
+\boldsymbol{\epsilon}
+𝜶
+\boldsymbol{\alpha}
+(
+R
+⁡
+(
+A
+,
+B
+)
++
+ϵ
+)
+−
+α
+(R(A,B)+\epsilon)^{-\alpha}
+0.01
+0.50
+22.7
+-55.3%
+0.01
+1.00
+50.8
+0.0%
+0.01
+2.00
+39.2
+-22.8%
+0.10
+0.50
+13.8
+-72.8%
+0.10
+1.00
+40.0
+-21.3%
+0.10
+2.00
+37.9
+-25.3%
+4
+Experiments
+We evaluate
+HATS
+on two representative GUI benchmarks:
+AndroidWorld
+[
+48
+]
+and
+WebArena
+[
+78
+]
+,
+which together span diverse mobile and web interaction patterns.
+On
+AndroidWorld
+, all 116 tasks are grouped into four functional categories,
+DLS
+,
+S&C
+,
+S&U
+, and
+P&W
+, defined by their interaction intent
+(see caption of Table
+1
+), with the full mapping provided in Appendix
+B.1
+.
+For
+WebArena
+, we evaluate three lightweight yet representative domains (
+Gitlab
+,
+Maps
+,
+Reddit
+) to reduce computational cost.
+Implementation Details.
+Following
+[
+59
+]
+, we use three VLM backbones
+(InternVL2-4B/8B
+[
+4
+]
+and Qwen2-VL-7B
+[
+61
+]
+),
+with
+GPT-4o
+[
+20
+]
+for instruction synthesis and reward modeling.
+All methods are trained under the same SFT setting with screenshots and
+a11ytree
+inputs. We compare
+HATS
+against four representative data–synthesis
+paradigms:
+Zero-Shot
+(CoT + M3A)
+[
+48
+]
+,
+Task-Driven
+Generation
+[
+25
+]
+,
+Self-Instruct
+[
+62
+]
+,
+and
+OS-Genesis
+[
+59
+]
+.
+HATS
+uses the same 1K-trajectory synthesis budget as
+OS-Genesis
+; the additional synthesis cost is bounded and tunable, with HD-MCTS controlled by the iteration budget and replay–refine capped by
+F
+max
+F_{\max}
+with early stopping. Full training and efficiency details are provided in Appendix
+B
+.
+Overall Performance.
+2
+2
+2
+Baseline reproduction uses available resources including official checkpoints, released data, and our own reimplementations (see Appendix
+B
+).
+Tables
+1
+and
+2
+show that
+HATS
+achieves the
+highest success rates across all backbones. Improvements are especially notable
+in categories where existing methods perform poorly. For example, on
+AndroidWorld
+S&C
+,
+OS-Genesis
+reaches only
+11.11%
+on InternVL2-4B and
+0.00%
+on Qwen2-VL-7B,
+while
+HATS
+attains
+38.46%
+and
+30.77%
+. Similar gains appear on
+P&W
+(e.g.,
+1.85%
+vs.
+9.88%
+on InternVL2-4B) and on
+WebArena
+domains such as
+Gitlab
+(
+7.94%
+vs.
+22.73%
+). During baseline reproduction, we also observed that adding
+Self-Instruct
+data sometimes degraded
+Task-Driven
+performance due to instruction–execution misalignment and noisy supervision, further illustrating the sensitivity of GUI agents to data quality. Following
+[
+59
+]
+, the GPT-4o–based M3A agent is reported only as a reference baseline. These representative cases highlight a consistent pattern:
+HATS
+substantially boosts performance precisely in interaction regimes that existing
+data-synthesis pipelines struggle with, leading to the highest overall success
+rates on both mobile and web environments.
+Component Analysis.
+3
+3
+3
+To save computation, we evaluate on a representative subset of
+AndroidWorld
+;
+see Appendix
+B.5
+.
+We next analyze the effectiveness of the three components of
+HATS
+: (i) the alignment-based hardness metric, (ii) hardness-driven exploration, and (iii) alignment-guided refinement.
+Table 4
+:
+Metric comparison of action-level alignment.
+Alignment Metric Definition in Eq.
+2
+Success Rate (%)
+1
+|
+A
+a
+|
+∑
+a
+∈
+A
+a
+[
+∃
+b
+∈
+B
+a
+:
+match
+(
+a
+,
+b
+|
+s
+)
+]
+\tfrac{1}{|A_{a}|}\sum_{a\in A_{a}}\mathbf{1}\!\left[\exists\,b\in B_{a}:\,\mathrm{match}(a,b\,|\,s)\right]
+50.8
+1
+|
+B
+a
+|
+∑
+b
+∈
+B
+a
+[
+∃
+a
+∈
+A
+a
+:
+match
+(
+a
+,
+b
+|
+s
+)
+]
+\tfrac{1}{|B_{a}|}\sum_{b\in B_{a}}\mathbf{1}\!\left[\exists\,a\in A_{a}:\,\mathrm{match}(a,b\,|\,s)\right]
+36.0
+Analysis I. Hardness Metric Validation.
+We validate the hardness definition in Eq.
+3
+through two complementary analyses: parameter sensitivity and metric substitution.
+•
+Parameter sensitivity.
+We vary
+ϵ
+\epsilon
+and
+α
+\alpha
+in Eq.
+3
+and observe consistent trends (Table
+3
+).
+Large
+ϵ
+\epsilon
+flattens hardness differences, while small or large
+α
+\alpha
+distort the reward landscape and reduce
+discriminative power.
+The default configuration (
+ϵ
+=
+0.01
+\epsilon{=}0.01
+,
+α
+=
+1
+\alpha{=}1
+) offers a balanced
+scaling that preserves sensitivity to semantic hardness while maintaining
+stable reward behavior.
+(a)
+Performance comparison on
+AndroidWorld
+with InternVL2-4B.
+(b)
+Distribution: Baseline
+[
+62
+]
+(c)
+Distribution: Ours
+Figure 6
+:
+Performance comparison & corpus composition.
+Top: performance comparison on
+AndroidWorld
+using InternVL2-4B.
+Bottom: corpus composition by task category for the baseline (left) and
+HATS
+(right), where
+HATS
+increases exploration in categories that are empirically harder for existing methods (e.g.,
+P&W
+), while reducing exploration in easier
+categories (e.g.,
+S&U
+).
+•
+Metric comparison.
+We substitute recall in Eq.
+2
+with an action-level precision
+metric and derive an analogous hardness mapping. As shown in Table
+4
+, recall-based hardness correlates
+substantially better with downstream performance: recall captures coverage of intended actions, which is the main failure mode in ambiguous GUI workflows; precision does not penalize missing steps.
+(a)
+Anal. II: Action Type Distribution
+(b)
+Anal. III: Refinement Effect
+Figure 7
+:
+Radar chart comparison.
+(a) Action-type distribution on
+WebArena
+, showing distributional differences
+between the baseline and
+HATS
+.
+(b) Per-task view of multi-round refinement, where the shaded area expands
+across rounds, indicating higher action-level recall and better synthesized
+trajectories.
+Analysis II. Effectiveness of Hardness-Driven Exploration.
+We use two qualitative analyses to show that hardness-driven exploration
+indeed shifts sampling coverage toward semantically valuable, ambiguity-rich regions.
+•
+Distributional coverage analyses.
+Fig.
+6
+a reveals a clear pattern across
+baselines: tasks in
+S&U
+exhibit uniformly high success rates, whereas
+P&W
+tasks show consistently lower success, suggesting that
+P&W
+contains a larger fraction of semantically complex, multi-step workflows.
+Motivated by this observation, we compare category proportions in the synthesized trajectories
+(Fig.
+6
+(b-c).
+Relative to the baseline
+4
+4
+4
+OS-Genesis (10/2025) does not provide category-labeled training data; we thus use
+Task-Driven w. Self-Instr.
+for category-level comparison.
+,
+HATS
+increases the sampling weight of
+P&W
+from
+31.2%
+to
+46.6%
+, while reducing
+S&U
+from
+30.8%
+to
+18.9%
+.
+This redistribution aligns with the empirical hardness indicated in
+Fig.
+6
+a: harder categories receive more
+coverage, while easier ones are deemphasized. A similar shift is observed in the action-type distributions on
+WebArena
+(Fig.
+7
+a), which likely contributes to its improved performance.
+•
+Semantics-focused auditing.
+We further compare whether the final trajectories synthesized by
+HATS
+contain
+more semantic ambiguity than those produced by
+OS-Genesis
+.
+Using a third-party LLM auditor (
+GPT-4o
+) following our rubric in Appendix
+B.5
+, each trajectory is independently evaluated for three
+ambiguity types: context dependency, sequential dependency, and visual
+ambiguity.
+As shown in Fig.
+8
+, a consistently larger fraction of
+HATS
+trajectories receive ambiguity labels across all three categories,
+indicating that hardness-driven exploration uncovers interactions where
+language–action grounding is intrinsically challenging.
+Figure 8
+:
+Semantic-ambiguity ratios at log scale.
+HATS
+vs.
+OS-Genesis
+across ambiguity types
+Vis, Seq, and Ctx on
+AndroidWorld
+(AW) and
+WebArena
+(WA). Bars correspond to AW/WA-Ctx/Seq/Vis pairs.
+Trajectories may involve multiple ambiguity types, so categories are not mutually exclusive.
+Analysis III. Effectiveness of Alignment-Guided Refinement.
+We evaluate how multi-round replay–refinement improves instruction–execution alignment.
+•
+Overall effect.
+Table
+5
+shows that, refinement yields substantial gains:
+the average action-level reconstruction recall
+R
+⁡
+(
+A
+,
+B
+)
+R(A,B)
+(Eq.
+2
+)
+increases from
+0.26
+to
+0.40
+,
+accompanied by a corresponding improvement in downstream success rate
+(from
+16.00%
+to
+23.07%
+).
+This indicates that iterative replay increasingly corrects mismatches and
+strengthens overall instruction fidelity.
+•
+Single-case insight.
+A per-task view in Fig.
+7
+b, using seven representative
+tasks (Appendix
+D
+), exhibits the same steadily improving trend:
+the radar area expands monotonically across rounds, showing that iterative correction
+progressively fills missing context, resolves sequential inconsistencies,
+and produces more executable task instructions for individual behaviors.
+Table 5
+:
+Ablation on multi-round refinement on AndroidWorld.
+Refinement Rounds
+R
+avg
+R_{\text{avg}}
+Success Rate (%)
+One-Shot
+0.26
+-35.0%
+16.00
+-30.6%
+Round 1
+0.19
+-52.5%
+15.56
+-32.6%
+Round 2
+0.29
+-27.5%
+21.43
+-7.1%
+Round 3
+0.40
+0.0%
+23.07
+0.0%
+5
+Conclusion
+We introduced
+HATS
+, a closed-loop framework that transforms instruction–execution feedback into a hardness signal to guide trajectory synthesis for GUI agents.
+Through the integration of a
+hardness-driven exploration
+module and an
+alignment-guided refinement
+module, the framework jointly enhances the diversity of semantic-ambiguous actions and the semantic consistency of generated data.
+By promoting exploration toward challenging yet informative interactions and ensuring alignment at the instruction–trajectory level,
+HATS
+produces higher-quality, more learnable datasets that enable GUI agents to generalize more robustly across real-world interfaces.
+References
+[1]
+Yoshua Bengio, Jérôme Louradour, Ronan Collobert, and Jason Weston.
+Curriculum learning.
+In
+ICML
+, 2009.
+[2]
+Yuxiang Chai, Siyuan Huang, Yazhe Niu, Han Xiao, Liang Liu, Dingyu Zhang, Peng Gao, Shuai Ren, and Hongsheng Li.
+Amex: Android multi-annotation expo dataset for mobile gui agents.
+In
+ACL
+, 2024.
+[3]
+Wentong Chen, Junbo Cui, Jinyi Hu, Yujia Qin, Junjie Fang, Yue Zhao, Chongyi Wang, Jun Liu, Guirong Chen, Yupeng Huo, Yuan Yao, Yankai Lin, Zhiyuan Liu, and Maosong Sun.
+Guicourse: From general vision language models to versatile gui agents.
+In
+ACL
+, 2025.
+[4]
+Zhe Chen, Jiannan Wu, Wenhai Wang, Weijie Su, Guo Chen, Sen Xing, Muyan Zhong, Qinglong Zhang, Xizhou Zhu, Lewei Lu, Bin Li, Ping Luo, Tong Lu, Yu Qiao, and Jifeng Dai.
+Internvl: Scaling up vision foundation models and aligning for generic visual-linguistic tasks.
+In
+CVPR
+, 2024.
+[5]
+Kanzhi Cheng, Qiushi Sun, Yougang Chu, Fangzhi Xu, Li YanTao, Jianbing Zhang, and Zhiyong Wu.
+SeeClick: Harnessing GUI grounding for advanced visual GUI agents.
+In
+ACL
+, 2024.
+[6]
+Kanzhi Cheng, Yantao Li, Fangzhi Xu, Jianbing Zhang, Hao Zhou, and Yang Liu.
+Vision-language models can self-improve reasoning via reflection.
+In
+ACL
+, 2025.
+[7]
+Thibault Le Sellier de Chezelles, Maxime Gasse, Alexandre Lacoste, Massimo Caccia, Alexandre Drouin, Léo Boisvert, Megh Thakkar, Tom Marty, Rim Assouel, Sahar Omidi Shayegan, Lawrence Keunho Jang, Xing Han Lù, Ori Yoran, Dehan Kong, Frank F. Xu, Siva Reddy, Graham Neubig, Quentin Cappart, Russ Salakhutdinov, and Nicolas Chapados.
+The browsergym ecosystem for web agent research.
+In
+TMLR
+, 2025.
+[8]
+Biplab Deka, Zifeng Huang, Chad Franzen, Joshua Hibschman, Daniel Afergan, Yang Li, Jeffrey Nichols, and Ranjitha Kumar.
+Rico: A mobile app dataset for building data-driven design applications.
+In
+UIST
+, 2017.
+[9]
+Xiang Deng, Yu Gu, Boyuan Zheng, Shijie Chen, Samuel Stevens, Boshi Wang, Huan Sun, and Yu Su.
+Mind2web: Towards a generalist agent for the web.
+In
+NeurIPS
+, 2023.
+[10]
+Alexandre Drouin, Maxime Gasse, Massimo Caccia, Issam H. Laradji, Manuel Del Verme, Tom Marty, David Vazquez, Nicolas Chapados, and Alexandre Lacoste.
+WorkArena: How capable are web agents at solving common knowledge work tasks?
+In
+ICML
+, 2024.
+[11]
+Zane Durante, Qiuyuan Huang, Naoki Wake, Ran Gong, Jae Sung Park, Bidipta Sarkar, Rohan Taori, Yusuke Noda, Demetri Terzopoulos, Yejin Choi, et al.
+Agent ai: Surveying the horizons of multimodal interaction.
+arXiv preprint arXiv:2401.03568
+, 2024.
+[12]
+Tao Feng, Chuanyang Jin, Jingyu Liu, Kunlun Zhu, Haoqin Tu, Zirui Cheng, Guanyu Lin, and Jiaxuan You.
+How far are we from agi.
+CoRR
+, 2024.
+[13]
+Carlos Florensa, David Held, Xinyang Geng, and Pieter Abbeel.
+Automatic goal generation for reinforcement learning agents.
+In
+ICML
+, 2018.
+[14]
+Ruize Gao, Feng Liu, Jingfeng Zhang, Bo Han, Tongliang Liu, Gang Niu, and Masashi Sugiyama.
+Maximum mean discrepancy test is aware of adversarial attacks.
+In
+ICML
+, 2021.
+[15]
+Ruize Gao, Jiongxiao Wang, Kaiwen Zhou, Feng Liu, Binghui Xie, Gang Niu, Bo Han, and James Cheng.
+Fast and reliable evaluation of adversarial robustness with minimum-margin attack.
+In
+ICML
+, 2022.
+[16]
+Boyu Gou, Ruohan Wang, Boyuan Zheng, Yanan Xie, Cheng Chang, Yiheng Shu, Huan Sun, and Yu Su.
+Navigating the digital world as humans do: Universal visual grounding for gui agents.
+In
+ICLR
+, 2025.
+[17]
+Alex Graves, Marc G Bellemare, Jacob Menick, Remi Munos, and Koray Kavukcuoglu.
+Automated curriculum learning for neural networks.
+In
+ICML
+, 2017.
+[18]
+Zhiting Hu and Tianmin Shu.
+Language models, agent models, and world models: The law for machine reasoning and planning.
+In
+NeurIPS
+, 2023.
+[19]
+Keke Huang, Ruize Gao, Bogdan Cautis, and Xiaokui Xiao.
+Scalable continuous-time diffusion framework for network inference and influence estimation.
+In
+WWW
+, 2024.
+[20]
+Aaron Hurst, Adam Lerer, Adam P Goucher, Adam Perelman, Aditya Ramesh, Aidan Clark, AJ Ostrow, Akila Welihinda, Alan Hayes, Alec Radford, et al.
+Gpt-4o system card.
+arXiv preprint arXiv:2410.21276
+, 2024.
+[21]
+Chengyou Jia, Minnan Luo, Zhuohang Dang, Qiushi Sun, Fangzhi Xu, Junlin Hu, Tianbao Xie, and Zhiyong Wu.
+Agentstore: Scalable integration of heterogeneous agents as specialized generalist computer assistant.
+In
+ICLR
+, 2024.
+[22]
+Chuanyang Jin, Yutong Wu, Jing Cao, Jiannan Xiang, Yen-Ling Kuo, Zhiting Hu, Tomer Ullman, Antonio Torralba, Joshua B Tenenbaum, and Tianmin Shu.
+Mmtom-qa: Multimodal theory of mind question answering.
+In
+ACL
+, 2024.
+[23]
+Raghav Kapoor, Yash Parag Butala, Melisa Russak, Jing Yu Koh, Kiran Kamble, Waseem Alshikh, and Ruslan Salakhutdinov.
+Omniact: A dataset and benchmark for enabling multimodal generalist autonomous agents for desktop and web.
+In
+ECCV
+, 2024.
+[24]
+M Kumar, Benjamin Packer, and Daphne Koller.
+Self-paced learning for latent variable models.
+In
+NeurIPS
+, 2010.
+[25]
+Hanyu Lai, Xiao Liu, Iat Long Iong, Shuntian Yao, Yuxuan Chen, Pengbo Shen, Hao Yu, Hanchen Zhang, Xiaohan Zhang, Yuxiao Dong, and Jie Tang.
+Autowebglm: A large language model-based web navigating agent.
+In
+KDD
+, 2024.
+[26]
+Hao Li, Qi Lv, Rui Shao, Xiang Deng, Yinchuan Li, Jianye Hao, and Liqiang Nie.
+Star: Learning diverse robot skill abstractions through rotation-augmented vector quantization.
+In
+ICML
+, 2025a.
+[27]
+Wei Li, William E Bishop, Alice Li, Christopher Rawles, Folawiyo Campbell-Ajala, Divya Tyamagundlu, and Oriana Riva.
+On the effects of data scale on UI control agents.
+In
+NeurIPS
+, 2024.
+[28]
+Wei Li, Renshan Zhang, Rui Shao, Jie He, and Liqiang Nie.
+Cogvla: Cognition-aligned vision-language-action model via instruction-driven routing & sparsification.
+In
+NeurIPS
+, 2025b.
+[29]
+Wei Li, Jizhihui Liu, Yixing Li, Junwen Tong, Rui Shao, and Liqiang Nie.
+Consisvla-4d: Advancing spatiotemporal consistency in efficient 3d-perception and 4d-reasoning for robotic manipulation.
+In
+CVPR
+, 2026a.
+[30]
+Wei Li, Renshan Zhang, Rui Shao, Zhijian Fang, Kaiwen Zhou, Zhuotao Tian, and Liqiang Nie.
+Semanticvla: Semantic-aligned sparsification and enhancement for efficient robotic manipulation.
+In
+AAAI
+, 2026b.
+[31]
+Zajing Li, Bing Hu, Rui Shao, Gongwei Chen, Dongmei Jiang, Pengwei Xie, Jianye Hao, and Liqiang Nie.
+Global prior meets local consistency: Dual-memory augmented vision-language-action model for efficient robotic manipulation.
+In
+CVPR
+, 2026c.
+[32]
+Zaijing Li, Bing Hu, Rui Shao, Gongwei Chen, Dongmei Jiang, Pengwei Xie, Jianye Hao, and Liqiang Nie.
+Global prior meets local consistency: Dual-memory augmented vision-language-action model for efficient robotic manipulation.
+arXiv preprint arXiv:2602.20200
+, 2026d.
+[33]
+Musen Lin, Minghao Liu, Taoran Lu, Lichen Yuan, Yiwei Liu, Haonan Xu, Yu Miao, Yuhao Chao, and Zhaojian Li.
+Gui-rewalk: Massive data generation for gui agent via stochastic exploration and intent-aware reasoning.
+arXiv preprint arXiv:2509.15738
+, 2025.
+[34]
+Evan Zheran Liu, Kelvin Guu, Panupong Pasupat, and Percy Liang.
+Reinforcement learning on web interfaces using workflow-guided exploration.
+In
+ICLR
+, 2018.
+[35]
+Ilya Loshchilov and Frank Hutter.
+Decoupled weight decay regularization.
+In
+ICLR
+, 2019.
+[36]
+Quanfeng Lu, Wenqi Shao, Zitao Liu, Fanqing Meng, Boxuan Li, Botong Chen, Siyuan Huang, Kaipeng Zhang, Yu Qiao, and Ping Luo.
+Gui odyssey: A comprehensive dataset for cross-app gui navigation on mobile devices.
+In
+ICCV
+, 2025.
+[37]
+Xing Han Lù, Zdeněk Kasner, and Siva Reddy.
+Weblinx: Real-world website navigation with multi-turn dialogue.
+In
+ICML
+, 2024.
+[38]
+Qi Lv, Hao Li, Xiang Deng, Rui Shao, Yinchuan Li, Jianye Hao, Longxiang Gao, Michael Yu Wang, and Liqiang Nie.
+Spatial-temporal graph diffusion policy with kinematic modeling for bimanual robotic manipulation.
+In
+CVPR
+, pages 17394–17404, 2025.
+[39]
+Shikhar Murty, Christopher D Manning, Peter Shaw, Mandar Joshi, and Kenton Lee.
+BAGEL: Bootstrapping agents by guiding exploration with language.
+In
+ICML
+, 2024.
+[40]
+Shikhar Murty, Dzmitry Bahdanau, and Christopher D Manning.
+Nnetscape navigator: Complex demonstrations for web agents without a demonstrator.
+In
+ICLR
+, 2025.
+[41]
+Runliang Niu, Jindong Li, Shiqi Wang, Yali Fu, Xiyu Hu, Xueyuan Leng, He Kong, Yi Chang, and Qi Wang.
+Screenagent: A vision language model-driven computer control agent.
+In
+IJCAI
+, 2024.
+[42]
+Vardaan Pahuja, Yadong Lu, Corby Rosset, Boyu Gou, Arindam Mitra, Spencer Whitehead, Yu Su, and Ahmed Hassan.
+Explorer: Scaling exploration-driven web trajectory synthesis for multimodal web agents.
+In
+ACL Findings
+, 2025.
+[43]
+Jiayi Pan, Yichi Zhang, Nicholas Tomlin, Yifei Zhou, Sergey Levine, and Alane Suhr.
+Autonomous evaluation and refinement of digital agents.
+In
+COLM
+, 2024.
+[44]
+Ajay Patel, Markus Hofmarcher, Claudiu Leoveanu-Condrei, Marius-Constantin Dinu, Chris Callison-Burch, and Sepp Hochreiter.
+Large language models can self-improve at web agent tasks.
+arXiv preprint arXiv:2405.20309
+, 2024.
+[45]
+Rémy Portelas, Cédric Colas, Lilian Weng, Katja Hofmann, and Pierre-Yves Oudeyer.
+Automatic curriculum learning for deep rl: A short survey.
+In
+IJCAI
+, 2020.
+[46]
+Jeff Rasley, Samyam Rajbhandari, Olatunji Ruwase, and Yuxiong He.
+Deepspeed: System optimizations enable training deep learning models with over 100 billion parameters.
+In
+KDD
+, 2020.
+[47]
+Christopher Rawles, Alice Li, Daniel Rodriguez, Oriana Riva, and Timothy P Lillicrap.
+Androidinthewild: A large-scale dataset for android device control.
+In
+NeurIPS
+, 2023.
+[48]
+Christopher Rawles, Sarah Clinckemaillie, Yifan Chang, Jonathan Waltz, Gabrielle Lau, Marybeth Fair, Alice Li, William Bishop, Wei Li, Folawiyo Campbell-Ajala, et al.
+Androidworld: A dynamic benchmarking environment for autonomous agents.
+In
+ICLR
+, 2025.
+[49]
+Rui Shao, Xiangyuan Lan, and Pong C Yuen.
+Deep convolutional dynamic texture learning with adaptive channel-discriminability for 3d mask face anti-spoofing.
+In
+IJCB
+, 2017.
+[50]
+Rui Shao, Xiangyuan Lan, Jiawei Li, and Pong C Yuen.
+Multi-adversarial discriminative deep domain generalization for face presentation attack detection.
+In
+CVPR
+, 2019.
+[51]
+Rui Shao, Tianxing Wu, and Ziwei Liu.
+Detecting and grounding multi-modal media manipulation.
+In
+CVPR
+, 2023.
+[52]
+Rui Shao, Tianxing Wu, Jianlong Wu, Liqiang Nie, and Ziwei Liu.
+Detecting and grounding multi-modal media manipulation and beyond.
+IEEE Transactions on Pattern Analysis and Machine Intelligence
+, 2024.
+[53]
+Rui Shao, Wei Li, Lingsen Zhang, Renshan Zhang, Zhiyang Liu, Ran Chen, and Liqiang Nie.
+Large vlm-based vision-language-action models for robotic manipulation: A survey.
+arXiv preprint arXiv:2508.13073
+, 2025.
+[54]
+Tianlin Shi, Andrej Karpathy, Linxi Fan, Jonathan Hernandez, and Percy Liang.
+World of bits: An open-domain platform for web-based agents.
+In
+ICML
+, 2017.
+[55]
+Noah Shinn, Federico Cassano, Ashwin Gopinath, Karthik Narasimhan, and Shunyu Yao.
+Reflexion: Language agents with verbal reinforcement learning.
+In
+NeurIPS
+, 2024.
+[56]
+Abhinav Shrivastava, Abhinav Gupta, and Ross Girshick.
+Training region-based object detectors with online hard example mining.
+In
+CVPR
+, 2016.
+[57]
+Qiushi Sun, Zhangyue Yin, Xiang Li, Zhiyong Wu, Xipeng Qiu, and Lingpeng Kong.
+Corex: Pushing the boundaries of complex reasoning through multi-model collaboration.
+In
+COLM
+, 2023.
+[58]
+Qiushi Sun, Zhirui Chen, Fangzhi Xu, Kanzhi Cheng, Chang Ma, Zhangyue Yin, Jianing Wang, Chengcheng Han, Renyu Zhu, Shuai Yuan, et al.
+A survey of neural code intelligence: Paradigms, advances and beyond.
+arXiv preprint arXiv:2403.14734
+, 2024.
+[59]
+Qiushi Sun, Kanzhi Cheng, Zichen Ding, Chuanyang Jin, Yian Wang, Fangzhi Xu, Zhenyu Wu, Chengyou Jia, Liheng Chen, Zhoumianze Liu, et al.
+Os-genesis: Automating gui agent trajectory construction via reverse task synthesis.
+In
+ACL
+, 2025.
+[60]
+Junyang Wang, Haiyang Xu, Jiabo Ye, Ming Yan, Weizhou Shen, Ji Zhang, Fei Huang, and Jitao Sang.
+Mobile-agent: Autonomous multi-modal mobile device agent with visual perception.
+In
+ICLR Workshop on LLM Agents
+, 2024a.
+[61]
+Peng Wang, Shuai Bai, Sinan Tan, Shijie Wang, Zhihao Fan, Jinze Bai, Keqin Chen, Xuejing Liu, Jialin Wang, Wenbin Ge, et al.
+Qwen2-vl: Enhancing vision-language model’s perception of the world at any resolution.
+arXiv preprint arXiv:2409.12191
+, 2024b.
+[62]
+Yizhong Wang, Yeganeh Kordi, Swaroop Mishra, Alisa Liu, Noah A. Smith, Daniel Khashabi, and Hannaneh Hajishirzi.
+Self-instruct: Aligning language models with self-generated instructions.
+In
+ACL
+, 2023.
+[63]
+Jason Wei, Xuezhi Wang, Dale Schuurmans, Maarten Bosma, brian ichter, Fei Xia, Ed H. Chi, Quoc V Le, and Denny Zhou.
+Chain of thought prompting elicits reasoning in large language models.
+In
+NeurIPS
+, 2022.
+[64]
+Qingyun Wu, Gagan Bansal, Jieyu Zhang, Yiran Wu, Shaokun Zhang, Erkang Zhu, Beibin Li, Li Jiang, Xiaoyun Zhang, and Chi Wang.
+Autogen: Enabling next-gen llm applications via multi-agent conversation framework.
+In
+COLM
+, 2023.
+[65]
+Zhiyong Wu, Chengcheng Han, Zichen Ding, Zhenmin Weng, Zhoumianze Liu, Shunyu Yao, Tao Yu, and Lingpeng Kong.
+OS-copilot: Towards generalist computer agents with self-improvement.
+In
+ICLR
+, 2024.
+[66]
+Zhiyong Wu, Zhenyu Wu, Fangzhi Xu, Yian Wang, Qiushi Sun, Chengyou Jia, Kanzhi Cheng, Zichen Ding, Liheng Chen, Paul Pu Liang, et al.
+Os-atlas: A foundation action model for generalist gui agents.
+In
+ICLR
+, 2025.
+[67]
+Tianbao Xie, Danyang Zhang, Jixuan Chen, Xiaochuan Li, Siheng Zhao, Ruisheng Cao, Toh Jing Hua, Zhoujun Cheng, Dongchan Shin, Fangyu Lei, Yitao Liu, Yiheng Xu, Shuyan Zhou, Silvio Savarese, Caiming Xiong, Victor Zhong, and Tao Yu.
+OSWorld: Benchmarking multimodal agents for open-ended tasks in real computer environments.
+In
+NeurIPS
+, 2024.
+[68]
+Fangzhi Xu, Qiushi Sun, Kanzhi Cheng, Jun Liu, Yu Qiao, and Zhiyong Wu.
+Interactive evolution: A neural-symbolic self-training framework for large language models.
+In
+ACL
+, 2025.
+[69]
+Shunyu Yao, Howard Chen, John Yang, and Karthik Narasimhan.
+Webshop: Towards scalable real-world web interaction with grounded language agents.
+In
+NeurIPS
+, 2022.
+[70]
+Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak Shafran, Karthik R Narasimhan, and Yuan Cao.
+React: Synergizing reasoning and acting in language models.
+In
+ICLR
+, 2023.
+[71]
+Aohan Zeng, Mingdao Liu, Rui Lu, Bowen Wang, Xiao Liu, Yuxiao Dong, and Jie Tang.
+AgentTuning: Enabling generalized agent abilities for LLMs.
+In
+ACL Findings
+, 2024.
+[72]
+Chi Zhang, Zhao Yang, Jiaxuan Liu, Yucheng Han, Xin Chen, Zebiao Huang, Bin Fu, and Gang Yu.
+Appagent: Multimodal agents as smartphone users.
+In
+CHI
+, 2025.
+[73]
+Jianguo Zhang, Tian Lan, Rithesh Murthy, Zhiwei Liu, Weiran Yao, Ming Zhu, Juntao Tan, Thai Hoang, Zuxin Liu, Liangwei Yang, et al.
+Agentohana: Design unified data and training pipeline for effective agent learning.
+arXiv preprint arXiv:2402.15506
+, 2024a.
+[74]
+Jiwen Zhang, Jihao Wu, Yihua Teng, Minghui Liao, Nuo Xu, Xiao Xiao, Zhongyu Wei, and Duyu Tang.
+Android in the zoo: Chain-of-action-thought for gui agents.
+In
+EMNLP Findings
+, 2024b.
+[75]
+Boyuan Zheng, Boyu Gou, Jihyung Kil, Huan Sun, and Yu Su.
+GPT-4V(ision) is a generalist web agent, if grounded.
+In
+ICML
+, 2024a.
+[76]
+Longtao Zheng, Zhiyuan Huang, Zhenghai Xue, Xinrun Wang, Bo An, and Shuicheng Yan.
+Agentstudio: A toolkit for building general virtual agents.
+In
+ICLR
+, 2024b.
+[77]
+Longtao Zheng, Rundong Wang, Xinrun Wang, and Bo An.
+Synapse: Trajectory-as-exemplar prompting with memory for computer control.
+In
+ICLR
+, 2024c.
+[78]
+Shuyan Zhou, Frank F. Xu, Hao Zhu, Xuhui Zhou, Robert Lo, Abishek Sridhar, Xianyi Cheng, Tianyue Ou, Yonatan Bisk, Daniel Fried, Uri Alon, and Graham Neubig.
+Webarena: A realistic web environment for building autonomous agents.
+In
+ICLR
+, 2024.
+[79]
+Xurui Zhou, Gongwei Chen, Yuquan Xie, Zajing Li, Kaiwen Zhou, Shuai Wang, Shuo Yang, Zhuotao Tian, and Rui Shao.
+Hiconagent: History context-aware policy optimization for gui agents.
+In
+CVPR
+, 2026.
+[80]
+Yijie Zhu, Rui Shao, Ziyang Liu, Jie He, Jizhihui Liu, Jiuru Wang, and Zitong Yu.
+H-gar: A hierarchical interaction framework via goal-driven observation-action refinement for robotic manipulation.
+In
+AAAI
+, 2026.
+Appendix A
+Extended Related Works
+Language-Driven GUI Automation.
+Large language models (LLMs) have become the engine behind a new wave of language-conditioned agents that perceive, reason, and act within graphical user interfaces
+[
+11
+,
+12
+,
+65
+,
+79
+]
+.
+Early efforts retained frozen parameters and relied on prompt programming, cooperative agent collectives
+[
+64
+,
+57
+,
+21
+]
+, external tool execution
+[
+58
+]
+, self-reflection loops
+[
+55
+,
+68
+,
+6
+]
+, and simulated world models
+[
+18
+,
+22
+,
+72
+]
+.
+A parallel line of work adapts model weights to acquire interface-specific skills: recognizing visual screen states
+[
+5
+,
+16
+,
+66
+]
+or hierarchical UI trees
+[
+67
+,
+75
+]
+, emitting atomic actions such as click and type
+[
+3
+]
+, and generalizing across web
+[
+69
+,
+9
+]
+, desktop
+[
+23
+,
+41
+]
+, and mobile domains
+[
+27
+,
+60
+]
+.
+Related trends are also visible beyond GUI automation, where multimodal grounding, history-aware policy optimization, and sequential decision-making have been studied in media understanding and embodied agents
+[
+51
+,
+52
+,
+28
+,
+30
+,
+29
+,
+31
+,
+32
+,
+80
+,
+53
+]
+.
+Collectively, these studies lay the groundwork for agents capable of non-trivial task execution in heterogeneous digital ecosystems.
+Benchmark Suites and GUI Corpora.
+Robust agent training hinges on rich, varied interface data capturing both static layouts and dynamic behaviours
+[
+65
+,
+71
+,
+43
+]
+.
+The
+Rico
+dataset introduced sequential screenshots and view hierarchies for mobile applications
+[
+8
+]
+, whereas
+MiniWob
+presented fine-grained web interactions
+[
+54
+]
+.
+Subsequent initiatives extended coverage: large-scale mobile GUI logs
+[
+47
+,
+74
+,
+36
+,
+2
+]
+, expansive web task collections
+[
+34
+,
+37
+,
+40
+]
+, and curated desktop traces for instructional tasks
+[
+3
+]
+.
+Related data-centric efforts in embodied and structured interaction learning have likewise emphasized scalable action datasets and temporal consistency
+[
+38
+,
+19
+]
+.
+These corpora supply the visual and structural context needed to ground language-conditioned policies.
+Trajectory-Centric Supervision.
+End-to-end agent learning benefits from trajectory data composed of instructions, sub-goals, actions, and intermediate states
+[
+27
+,
+73
+,
+76
+]
+.
+Two major paradigms exist:
+(i)
+Task-driven
+schemes recruit annotators or scripted bots to complete predefined tasks, producing high-fidelity but narrow-coverage demonstrations
+[
+27
+,
+37
+]
+;
+(ii)
+Exploration-driven
+pipelines allow autonomous agents to traverse environments and discover tasks through random walks
+[
+59
+,
+42
+]
+.
+Recent embodied-agent studies similarly rely on trajectory abstraction, hierarchical refinement, memory augmentation, and skill composition to improve long-horizon action quality
+[
+26
+,
+28
+,
+30
+,
+80
+,
+29
+,
+31
+,
+32
+]
+.
+While cost-efficient, naive exploration gathers large numbers of semantic-intuitive actions while failing to capture rarer but more valuable
+semantic-ambiguous actions
+.
+Consequently, existing corpora remain biased toward trivial behaviours and often contain incoherent instructions or execution errors, limiting generalization.
+Alleviating this imbalance and improving semantic alignment directly motivates the present work.
+Hardness-Aware Learning.
+The concept of hardness has been long studied in machine learning.
+Curriculum and self-paced learning
+[
+1
+,
+24
+]
+organize training from easy to hard samples, while automated curricula
+[
+17
+]
+and hardness-aware exploration
+[
+13
+,
+45
+]
+dynamically adjust sample hardness.
+In computer vision, hard-example mining techniques prioritize rare or ambiguous samples that improve model generalization
+[
+56
+]
+, and related robustness research further highlights the need to focus on adversarially sensitive, hard-to-evaluate, or domain-shifted cases
+[
+14
+,
+15
+,
+50
+,
+49
+]
+.
+Yet existing GUI trajectory synthesis pipelines seldom incorporate hardness-aware mechanisms
+[
+59
+,
+42
+]
+.
+Our method addresses this gap by transforming instruction–execution misalignment into a hardness signal to identify and prioritize under-represented, high-value semantic-ambiguous actions.
+Appendix B
+Experimental Details
+B.1
+Evaluation Benchmarks
+We evaluate our method on two representative GUI benchmarks:
+AndroidWorld
+[
+48
+]
+(mobile) and
+WebArena
+[
+78
+]
+(web).
+B.1.1
+Environment Setup
+•
+AndroidWorld
+[
+48
+]
+.
+This mobile-focused benchmark is executed in Android emulators and contains diverse user-oriented tasks such as app navigation, form filling, and in-app purchases, capturing realistic GUI layouts and interaction dependencies.
+We conduct all mobile experiments using Android Virtual Devices (AVD) configured with Pixel 6 hardware profiles and the Tiramisu system image (API Level 33), following the official setup guidelines.
+•
+WebArena
+[
+78
+]
+.
+This large-scale web interaction benchmark consists of functional websites, including email clients, calendars, and e-commerce platforms, presenting challenges due to dynamic page layouts and varied interaction semantics.
+For web-based evaluation, we employ the AgentLab framework
+[
+10
+,
+7
+]
+to standardize experiment execution and management, evaluating on three representative domains:
+Gitlab
+(180 tasks),
+Maps
+(109 tasks), and
+Reddit
+(106 tasks), which together cover diverse patterns of web interaction including repository management, location-based services, and social media platforms.
+Algorithm 1
+HD-MCTS
+: Hardness-Driven Exploration with Alignment-Guided Refinement.
+1:
+Environment
+ℰ
+\mathcal{E}
+; depth limit
+T
+max
+T_{\max}
+; UCB constant
+C
+C
+; thresholds
+R
+min
+,
+F
+max
+R_{\min},F_{\max}
+; hardness parameters
+ϵ
+,
+α
+\epsilon,\alpha
+2:
+for
+each iteration
+⊳
+\triangleright
+Each iteration generates one training sample
+do
+3:
+Retrieve root node
+v
+0
+←
+GetOrCreateNode
+​
+(
+a
+0
+,
+s
+0
+)
+v_{0}\!\leftarrow\!\textsc{GetOrCreateNode}(a_{0},s_{0})
+;
+𝒫
+←
+∅
+\mathcal{P}\!\leftarrow\!\emptyset
+4:
+v
+←
+v
+0
+v\!\leftarrow\!v_{0}
+;
+s
+←
+s
+0
+s\!\leftarrow\!s_{0}
+⊳
+\triangleright
+Selection
+: traverse by UCB until a frontier or depth limit (measured by
+|
+𝒫
+|
+|\mathcal{P}|
+)
+5:
+while
+v
+v
+is fully expanded
+and
+|
+𝒫
+|
+<
+T
+max
+|\mathcal{P}|<T_{\max}
+do
+6:
+a
+⋆
+←
+arg
+⁡
+max
+a
+∈
+𝒜
+⁡
+(
+v
+)
+⁡
+[
+Q
+⁡
+(
+v
+,
+a
+)
++
+C
+​
+ln
+⁡
+(
+N
+⁡
+(
+v
+)
++
+1
+)
+N
+⁡
+(
+v
+,
+a
+)
++
+1
+]
+a^{\star}\!\leftarrow\!\arg\max\limits_{a\in\mathcal{A}(v)}\Big[Q(v,a)+C\sqrt{\tfrac{\ln(N(v){+}1)}{N(v,a){+}1}}\Big]
+7:
+s
+′
+←
+ℰ
+⁡
+(
+s
+,
+a
+⋆
+)
+s^{\prime}\!\leftarrow\!\mathcal{E}(s,a^{\star})
+8:
+𝒫
+←
+𝒫
+∪
+{
+(
+a
+⋆
+,
+s
+′
+)
+}
+\mathcal{P}\!\leftarrow\!\mathcal{P}\cup\{(a^{\star},s^{\prime})\}
+;
+v
+←
+GetChildNode
+​
+(
+a
+⋆
+,
+s
+′
+)
+v\!\leftarrow\!\textsc{GetChildNode}(a^{\star},s^{\prime})
+;
+s
+←
+s
+′
+s\!\leftarrow\!s^{\prime}
+9:
+end
+while
+⊳
+\triangleright
+Expansion
+: add a previously unexpanded action if
+|
+𝒫
+|
+<
+T
+max
+|\mathcal{P}|{<}T_{\max}
+10:
+if
+v
+v
+is not
+fully expanded
+and
+|
+𝒫
+|
+<
+T
+max
+|\mathcal{P}|<T_{\max}
+then
+11:
+choose previously unexpanded action
+a
+e
+∈
+𝒜
+⁡
+(
+v
+)
+a_{e}\in\mathcal{A}(v)
+;
+s
+e
+←
+ℰ
+⁡
+(
+s
+,
+a
+e
+)
+s_{e}\!\leftarrow\!\mathcal{E}(s,a_{e})
+12:
+u
+←
+CreateNode
+​
+(
+a
+e
+,
+s
+e
+)
+u\!\leftarrow\!\textsc{CreateNode}(a_{e},s_{e})
+;
+𝒫
+←
+𝒫
+∪
+{
+(
+a
+e
+,
+s
+e
+)
+}
+\mathcal{P}\!\leftarrow\!\mathcal{P}\cup\{(a_{e},s_{e})\}
+;
+v
+←
+u
+v\!\leftarrow\!u
+;
+s
+←
+s
+e
+s\!\leftarrow\!s_{e}
+13:
+end
+if
+⊳
+\triangleright
+Simulation
+:
+rollout
+→
+\rightarrow
+selection
+→
+\rightarrow
+instruction synthesis
+→
+\rightarrow
+replay
+→
+\rightarrow
+refine
+→
+\rightarrow
+reward computation
+14:
+𝒫
+¯
+←
+Rollout
+​
+(
+ℰ
+,
+v
+,
+s
+,
+𝒫
+,
+T
+max
+)
+\bar{\mathcal{P}}\!\leftarrow\!\textsc{Rollout}(\mathcal{E},v,s,\mathcal{P},T_{\max})
+⊳
+\triangleright
+Extend path
+𝒫
+\mathcal{P}
+from current node until reaching
+T
+max
+T_{\max}
+15:
+A
+←
+SelectSubsequence
+​
+(
+𝒫
+¯
+)
+A\!\leftarrow\!\textsc{SelectSubsequence}(\bar{\mathcal{P}})
+⊳
+\triangleright
+Select a semantically coherent sub-trajectory from the path
+16:
+I
+←
+SynthesizeInstruction
+​
+(
+A
+)
+I\!\leftarrow\!\textsc{SynthesizeInstruction}(A)
+⊳
+\triangleright
+Instruction synthesis from
+A
+A
+17:
+𝔸
+←
+false
+\mathbb{A}\!\leftarrow\!\textbf{false}
+;
+F
+←
+0
+F\!\leftarrow\!0
+⊳
+\triangleright
+𝔸
+\mathbb{A}
+: alignment flag
+18:
+repeat
+19:
+B
+←
+ExecuteInstruction
+​
+(
+I
+)
+B\!\leftarrow\!\textsc{ExecuteInstruction}(I)
+⊳
+\triangleright
+Replay
+I
+I
+from the original start state of
+A
+A
+20:
+R
+←
+AlignmentScore
+​
+(
+A
+,
+B
+)
+R\!\leftarrow\!\textsc{AlignmentScore}(A,B)
+⊳
+\triangleright
+Action-level alignment, defined by Eq.
+2
+21:
+if
+R
+≥
+R
+min
+R\geq R_{\min}
+and
+Executable
+(
+B
+)
+(B)
+then
+22:
+𝔸
+←
+true
+\mathbb{A}\!\leftarrow\!\textbf{true}
+23:
+else
+24:
+I
+←
+RefineInstruction
+​
+(
+I
+,
+A
+,
+B
+)
+I\!\leftarrow\!\textsc{RefineInstruction}(I,A,B)
+⊳
+\triangleright
+Diagnose misalignment and refine
+25:
+F
+←
+F
++
+1
+F\!\leftarrow\!F+1
+26:
+end
+if
+27:
+until
+𝔸
+\mathbb{A}
+or
+F
+≥
+F
+max
+F\geq F_{\max}
+⊳
+\triangleright
+Hardness reward
+: convert alignment into exploration signal
+28:
+r
+←
+(
+R
++
+ϵ
+)
+−
+α
+r\!\leftarrow\!(R+\epsilon)^{-\alpha}
+⊳
+\triangleright
+Eq.
+3
+; lower alignment
+⇒
+\Rightarrow
+higher hardness
+⊳
+\triangleright
+Emission
+: keep only aligned pairs for training
+29:
+if
+𝔸
+\mathbb{A}
+then
+30:
+StoreSample
+(
+I
+,
+B
+,
+r
+)
+(I,B,r)
+⊳
+\triangleright
+Emit verified instruction–trajectory with hardness score
+31:
+end
+if
+⊳
+\triangleright
+Backpropagation
+: update edge values along the selected path
+𝒫
+\mathcal{P}
+32:
+for
+each
+(
+a
+i
+,
+s
+i
+)
+∈
+𝒫
+(a_{i},s_{i})\in\mathcal{P}
+do
+33:
+N
+⁡
+(
+a
+i
+)
+←
+N
+⁡
+(
+a
+i
+)
++
+1
+N(a_{i})\!\leftarrow\!N(a_{i}){+}1
+34:
+Q
+⁡
+(
+a
+i
+)
+←
+Q
+⁡
+(
+a
+i
+)
++
+r
+−
+Q
+⁡
+(
+a
+i
+)
+N
+⁡
+(
+a
+i
+)
+Q(a_{i})\!\leftarrow\!Q(a_{i}){+}\tfrac{r-Q(a_{i})}{N(a_{i})}
+35:
+end
+for
+36:
+end
+for
+B.1.2
+Task Distribution and Categorization
+AndroidWorld Task Categories.
+We organized AndroidWorld’s 116 evaluation tasks into four functional categories based on the primary application domain. Table
+6
+provides the complete mapping from applications to categories. The four categories are defined as:
+•
+DLS (Daily Life & Services):
+entertainment, media, and lifestyle apps
+•
+S&C (Social & Communication):
+messaging and social interaction apps
+•
+S&U (System & Utility):
+core system functions and utilities
+•
+P&W (Productivity & Work):
+task management and productivity tools.
+This categorization allows us to analyze performance across different levels of interaction complexity and semantic domains. The training corpus comprises
+1,000 trajectories
+collected through our synthesis pipeline, while the evaluation uses the full set of
+116 benchmark tasks
+from
+AndroidWorld
+.
+Table 6
+:
+Application categorization for AndroidWorld.
+Application
+Category
+Application
+Category
+Calculator
+P&W
+VLC
+DLS
+Calendar
+P&W
+Markor
+P&W
+Clock
+S&U
+RetroMusic
+DLS
+Contacts
+S&U
+Gallery
+DLS
+Dialer
+S&U
+Tasks
+P&W
+Settings
+S&U
+SMSMessenger
+S&C
+Chrome
+P&W
+Expense
+DLS
+Files
+P&W
+Joplin
+P&W
+Google Tasks
+P&W
+Camera
+S&U
+Keep Notes
+P&W
+Broccoli
+DLS
+Draw
+P&W
+Audio Recorder
+P&W
+Launcher
+S&U
+OsmAnd
+S&C
+Markup
+P&W
+OpenTracks
+P&W
+B.1.3
+Evaluation Protocol
+Success Criteria.
+We adopt the official evaluation protocol from both benchmarks. Success is determined by
+exact state matching
+: an agent completes a task successfully if and only if the final environment state exactly matches the ground-truth target state specified by the benchmark. Partial completion or near-miss outcomes are counted as failures.
+Execution Constraints.
+Each task is subject to the maximum step limit defined by the respective benchmark. For AndroidWorld, we enforce per-task step budgets as specified in the original evaluation suite. For WebArena, we similarly respect the official constraints for each domain.
+Retry Policy.
+We retry executions only in cases of
+environment-level failures
+(e.g., AVD unresponsiveness, API timeouts, network errors). Task failures due to agent limitations (incorrect actions, semantic misunderstandings) are
+not
+retried and are recorded as failures in the final evaluation.
+B.2
+Model Configuration and Training
+For instruction synthesis and reward modeling, we employ
+GPT-4o
+[
+20
+]
+.
+Two VLM backbones are used for agent training:
+•
+InternVL2-4B/8B
+[
+4
+]
+: general-purpose models without GUI-specific pretraining.
+•
+Qwen2-VL-7B-Instruct
+[
+61
+]
+: an instruction-tuned model with agentic reasoning capabilities.
+B.2.1
+Training Hyperparameters
+Table
+7
+summarizes the training configuration for each VLM backbone. All models are trained for
+15 epochs
+with a global batch size of
+128
+(achieved via gradient accumulation) on
+8
+×
+\times
+NVIDIA H100 80GB GPUs
+.
+Table 7
+:
+Training hyperparameters for VLM backbones.
+Model
+Learning Rate
+Batch Size
+Epochs
+InternVL2-4B
+4e-5
+128
+15
+InternVL2-8B
+4e-5
+128
+15
+Qwen2-VL-7B
+2e-6
+128
+15
+Optimization and Regularization.
+We use the
+AdamW
+optimizer
+[
+35
+]
+with a weight decay of
+0.05
+for all models. For Qwen2-VL-7B, we additionally apply gradient clipping with a maximum gradient norm of
+1.0
+to stabilize training. All models employ a
+cosine annealing
+learning rate schedule with a linear warmup phase covering
+3%
+of total training steps (warmup ratio = 0.03).
+Distributed Training Infrastructure.
+Training employs the
+DeepSpeed
+[
+46
+]
+framework for efficient distributed optimization. The effective batch size of 128 is achieved with a per-device batch size of
+2
+and
+8
+gradient accumulation steps. We use
+bfloat16
+(bf16) mixed precision to enable full fine-tuning of all model parameters while maintaining stable gradient updates and memory efficiency.
+Data Preprocessing.
+To accelerate training and inference, all input screenshots are resized to a resolution of
+460
+×
+\times
+1024
+pixels while preserving aspect ratio. This resolution balances visual detail retention with computational efficiency.
+Inference Configuration.
+During evaluation, we use
+greedy decoding
+(temperature = 0) to ensure deterministic and reproducible results. For AndroidWorld, we impose no explicit length constraints on model generation. For WebArena, due to longer observation sequences from complex web pages, we set
+max_model_len=16384
+to prevent out-of-memory errors while accommodating typical task contexts. For all experiments, we report results using the
+final checkpoint
+saved at the end of training (epoch 15).
+B.3
+Baselines
+We compare
+HATS
+against four representative data-synthesis paradigms, all using consistent multimodal inputs (
+a11ytree
+and screenshots):
+•
+Zero-Shot (CoT + M3A)
+[
+48
+]
+: a GPT-based agent guided by Chain-of-Thought prompting
+[
+63
+]
+, without additional training.
+•
+Task-Driven Generation
+[
+25
+]
+: the model receives predefined tasks and screenshots to synthesize trajectories.
+•
+Self-Instruct
+[
+62
+]
+: automatically generates new task instructions to expand trajectory diversity.
+•
+OS-Genesis
+[
+59
+]
+: a reverse task-synthesis pipeline that explores environments first and generates instructions post hoc, with instruction refinement and reward filtering.
+Baseline Reproduction Details.
+To ensure rigorous comparison, we adopted specific reproduction protocols for different benchmarks.
+On
+AndroidWorld
+, we evaluated
+OS-Genesis
+using their officially released weights and evaluation code on our identical AVD setup, while the
+Task-Driven
+and
+Self-Instruct
+pipelines were reproduced by ourselves following the methodologies described in
+[
+59
+]
+.
+On
+WebArena
+, consistent with
+AndroidWorld
+, we reproduced the
+Task-Driven
+and
+Self-Instruct
+baselines based on the descriptions in
+[
+59
+]
+. However, the official evaluation code for
+OS-Genesis
+is not publicly available. Our attempts to reproduce its results yielded significantly lower performance than reported in the original paper. This discrepancy likely stems from environmental differences—such as updates to the underlying LLM API (e.g., gpt-4o) and subtle variations in browser state simulation—that are difficult to align without a standardized evaluation framework.
+To avoid concerns about unfairly underestimating
+OS-Genesis
+, we report its original paper results in all main comparisons. Notably, our method still outperforms these baseline scores by a large margin, demonstrating that the observed gains are not affected by minor variances in reproduction.
+B.4
+Trajectory-Based Training
+All methods use
+Supervised Fine-Tuning
+(SFT) over synthesized trajectories with two complementary objectives:
+ℒ
+1
+=
+−
+∑
+t
+i
+∈
+𝒯
+log
+(
+p
+θ
+(
+ℓ
+∣
+s
+,
+h
+i
+,
+c
+)
+⋅
+p
+θ
+(
+a
+∣
+s
+,
+h
+i
+,
+c
+,
+ℓ
+)
+)
+\mathcal{L}_{1}=-\sum_{t_{i}\in\mathcal{T}}\log\left(p_{\theta}(\ell\mid s,h_{i},c)\cdot p_{\theta}(a\mid s,h_{i},c,\ell)\right)
+ℒ
+2
+=
+−
+∑
+t
+i
+∈
+𝒯
+log
+p
+θ
+(
+a
+∣
+s
+,
+c
+,
+ℓ
+)
+\mathcal{L}_{2}=-\sum_{t_{i}\in\mathcal{T}}\log p_{\theta}(a\mid s,c,\ell)
+where
+s
+s
+is the multimodal state,
+h
+i
+h_{i}
+the task instruction,
+c
+c
+the context,
+ℓ
+\ell
+the subgoal, and
+a
+a
+the predicted action.
+We use 1K trajectories for all methods except Self-Instruct (1.5K), with an average of 6.4 interaction steps per trajectory. ReAct-style reasoning
+[
+70
+]
+is adopted for interpretability.
+B.5
+Experimental Setup for Component Analysis
+To balance computational efficiency with representativeness, component analyses were conducted on a curated subset of
+AndroidWorld
+comprising 20 tasks. These tasks span diverse functional domains—such as social communication, productivity, and utilities—and vary in interaction depth (3–12 steps), ensuring broad coverage of real-world agent behaviors. For each analysis, we employed identical rollout trajectories and model backbones (InternVL2-4B) to isolate the effect of each proposed component. For instance, in Analysis I (Hardness Metric Validation), we computed hardness values across multiple
+(
+ϵ
+,
+α
+)
+(\epsilon,\alpha)
+configurations using the same trajectories, comparing both recall- and precision-based formulations under consistent conditions.
+Appendix C
+Prompt Summary
+We summarizes all prompt templates used in the paper:
+•
+Instruction Generation Prompt.
+For converting trajectories into natural-language instructions, we use a prompt that enforces step grounding, UI-action consistency,
+and minimal hallucination.
+This template ensures that generated instructions remain aligned with the underlying hard actions and faithfully reflect the agent’s behavior.
+•
+Alignment Verification Prompt.
+To evaluate whether a synthesized instruction is semantically compatible with a rollout, we employ an alignment-checking prompt that
+compares action semantics, reasoning flow, and intended outcomes.
+This template is used in the alignment-aware refinement stage to filter out misaligned trajectories.
+•
+Semantic-Ambiguity Detection Prompt.
+To identify context-, sequential-, and visually driven hard actions, we employ a structured ambiguity-classification prompt.
+This prompt guides the model to analyze trajectories and determine whether they contain any of the three types of semantic ambiguity defined in the main paper.
+Together, these prompts define the interface between the agent, the trajectory, and the verifier. For completeness and reproducibility, the full prompt templates are provided in the following pages.
+Appendix D
+Instruction Refinement Examples
+Table
+8
+shows the task instructions for the seven representative tasks in Fig.
+7
+b, refined over three rounds by the
+Alignment-Guided Refinement
+module. As the process progresses, instructions are systematically enriched with critical semantic details—such as precise UI element properties (e.g., “clickable and focusable”), required navigation steps (e.g., “scroll down if the target is off-screen”), and explicit interaction modalities—leading to a consistent and monotonic increase in action-level recall. This demonstrates how structured, grounded refinement directly enables more accurate and executable agent behavior.
+Appendix E
+Illustrative Examples
+In Figures
+E
+to
+E
+, we present four illustrative cases of alignment-guided refinement, drawn from
+AndroidWorld
+(three) and
+WebArena
+(one). These examples are deliberately selected for their clarity and representativeness, enabling clear visualization of each stage in our pipeline: exploration, reference selection, instruction synthesis, execution, and refinement. The initial
+Exploration Sequence
+is typically noisy and repetitive, obscuring the underlying task intent. For example, in Example 1, the agent repeatedly navigates across multiple pages with redundant actions, making it impossible to infer the target date. From this raw trajectory, we extract a compact
+Reference Sequence
+that retains only goal-relevant steps, effectively distilling intent—such as “perform operations for October 26.” This refined sequence guides the generation of an initial task instruction, which the agent executes to produce an
+Execution Sequence
+. While this first attempt shows improved logical structure, it often lacks critical details, resulting in failure. For instance, the agent may omit the specific date due to an underspecified instruction. Through our
+Refine
+phase, we enrich the instruction semantically by aligning it with the reference sequence, enabling the agent to recover missing context. In Example 1, the refined instruction explicitly states, “Navigate to October 26, then click ’Confirm,”’ leading to successful task completion. These cases demonstrate that our alignment-guided refinement mechanism transforms ambiguous, exploratory traces into precise, executable instructions, enabling agents to reliably complete complex, real-world GUI tasks.
+Table 8:
+Evolution of synthesized instructions across three refinement rounds for the tasks in Figure
+7
+b.
+Task ID
+Round
+Synthesized Instruction
+Task 1
+1
+In the Audio Recorder app, rename the audio recording titled ’05-06-2025 06.14.28PM’ to ’Meeting_Notes_05-06-2025’. First, double-click the text field containing ’05-06-2025 06.14.28PM’ to select it. Then, double-click the ’Copy’ option from the edit menu. Double-click the date and time field again to ensure focused editing, and double-click the ’Paste’ option from the edit menu. Finally, input ’Meeting_Notes_05-06-2025’ into the text field to set the new name.
+2
+In the Audio Recorder app, rename the audio recording titled ’05-06-2025 06.14.28PM’ to ’Meeting_Notes_05-06-2025’. First, locate the text field containing ’05-06-2025 06.14.28PM’ in the renaming prompt and double-click it to select the text. Then, double-click the ’Copy’ option from the edit menu above the selected text. Next, double-click the same text field again to ensure it is focused for editing. After that, click the ’Paste’ option from the edit menu to paste the copied text. Finally, input ’Meeting_Notes_05-06-2025’ into the text field to set the new name, and click the ’Save’ button to confirm the changes.
+3
+In the Audio Recorder app (package name: com.dimowner.audiorecorder), properly set up the renaming interface to change the audio recording titled ’05-06-2025 06.14.28PM’ to ’Meeting_Notes_05-06-2025’. Start by double-clicking the text field containing ’05-06-2025 06.14.28PM’ to select it in the renaming prompt. Then, double-click the ’Copy’ option from the edit menu above the selected text to copy it. Double-click the text field to refocus it if necessary. Click the ’Paste’ option from the edit menu to paste the copied text. Finally, manually input ’Meeting_Notes_05-06-2025’ into the text field for renaming and press the ’Save’ button to confirm the change. Ensure that you are on the renaming dialog screen directly accessing the desired recording and follow the sequence precisely.
+Task 2
+1
+Delete the audio records ’Record-10’ and ’Record-4’ in the Audio Recorder app.
+2
+In the Audio Recorder app, first tap on the bookmark icon next to ’Record-10’ to select it, then double-tap on ’Record-4’ to select it. Finally, tap on the trash bin icon in the top-right corner to delete the selected records.
+3
+In the Audio Recorder app, first tap on the bookmark icon next to ’Record-10’ to select it. Then scroll down if necessary to ensure ’Record-4’ is visible. Once visible, double-tap on ’Record-4’ to select it by quickly tapping twice on the bookmark icon next to ’Record-4’. After both ’Record-10’ and ’Record-4’ are selected, tap on the trash bin icon in the top-right corner to delete these selected records.
+Task 3
+1
+Sort the audio records by date (oldest) in the Audio Recorder app.
+2
+In the Audio Recorder app (com.dimowner.audiorecorder), first tap on the filter icon to access sorting options. Then select ’By date (oldest)’ to sort the audio records. After sorting, long-click on ’Record-11’ to select it.
+3
+In the Audio Recorder app (com.dimowner.audiorecorder), tap on the filter icon, which is clickable and focusable, to access sorting options. Ensure you select ’By date (oldest)’ from the sorting options to sort the audio records correctly. After sorting, locate ’Record-11’ on the screen and long-click on it to select it.
+Task 4
+1
+Disable all calendar notifications in the Simple Mobile Tools Calendar Pro app by navigating through the settings menu.
+2
+Disable all calendar notifications in the Simple Mobile Tools Calendar Pro app by navigating to the ’Settings’ menu, selecting ’Customize notifications’ under the ’Reminders’ section, toggling off the ’All Calendar notifications’ option, and verifying that notifications are fully disabled.
+3
+Disable all calendar notifications in the Simple Mobile Tools Calendar Pro app by following these steps: 1) Tap on the ’Settings’ icon located in the top-right corner of the app. 2) Select ’Customize notifications’ under the ’Reminders’ section. 3) Locate the toggle switch labeled ’All Calendar notifications’ and ensure it is turned off. 4) Tap on the ’Calendar’ icon to access additional notification settings. 5) Select ’Notifications’ to return to the app info screen and verify that all calendar notifications are fully disabled.
+Task 5
+1
+Explore Google’s privacy and safety resources by navigating through the Privacy Policy and Safety Centre pages in the Chrome app.
+2
+In the Chrome app, explore Google’s privacy and safety resources by first tapping on the ’Privacy Policy’ option in the Google Privacy & Terms menu. Then, double-tap on the ’Privacy Principles’ link within the Technologies page. Next, double-tap on the ’Safety Centre’ link to navigate to the Safety Centre page. Finally, tap on the ’Safety Centre’ logo to refresh or reload the page.
+3
+In the Chrome app, begin by navigating to the home screen if you are not already there, and open the Chrome app by tapping its icon. Once inside Chrome, access the Google Privacy & Terms menu by tapping on ’Settings’ and then ’Privacy and security’. Scroll down until you find the ’Privacy Policy’ option and tap on it. Next, navigate to the Technologies page and double-tap on the ’Privacy Principles’ link. Then, proceed to the Safety Centre page by double-tapping on the ’Safety Centre’ link. Finally, refresh the Safety Centre page by tapping on the ’Safety Centre’ logo.
+Task 6
+1
+Navigate through the sidebar in the Joplin app to explore different sections like ’All notes’, ’Notebooks’, and ’Trash’.
+2
+Open the sidebar menu in the Joplin app by tapping the ’Sidebar’ icon. Once the sidebar is visible, scroll left if necessary to make sure all options are accessible. Tap the ’Back’ arrow in the top-left corner to return to the previous screen, confirming each stage of navigation.
+3
+In the Joplin app, start by ensuring the main screen is visible. First, tap the ’Sidebar’ icon, ensuring it is a clickable UI element with the content description ’Sidebar’. If the sidebar does not appear fully open or options aren’t visible, scroll left on the scrollable UI element within the sidebar. Once you have verified the sidebar is open and accessible, identify the ’Back’ arrow; it should be a visible, clickable UI element in the top-left corner of the screen. Tap the ’Back’ arrow to return to the previous screen. Confirm each action by checking that the intended screen or menu appears after each tap or scroll.
+Task 7
+1
+In the Tasks app, switch to the ’Default list’, mark two ’New Task’ entries as completed, and ensure a task is created using the ’Create new task’ button by double tapping.
+2
+In the Tasks app (org.tasks), first tap on the ’Default list’ dropdown to select the ’Default list’ if it’s not already active. Then, locate the ’+’ icon with the ’Create new task’ description and double tap it to create a new task. Next, scroll through the task list and find two tasks labeled as ’New Task’. Tap on the checkbox next to each ’New Task’ entry to mark them as completed. Ensure the list is scrolled up or down as necessary to reveal the tasks and ’Create new task’ button.
+3
+In the Tasks app (org.tasks), start by tapping on the ’Default list’ dropdown to ensure the ’Default list’ is active. If it’s not already active, tap it once to select it. Next, locate each ’New Task’ entry in the task list and tap the checkbox next to them to mark them as completed. Tap on the checkbox, and ensure you have scrolled, if necessary, to bring the tasks into view. Once this is done, locate the ’+’ icon described as ’Create new task’, tap once to create a new task, then tap on the ’Save’ icon with the ’Save’ description to save the task. Make sure the sequence is followed as described to achieve the user goal.
+Prompt for Input Field Content Generation
+Generate appropriate input content for the input field marked with a green bounding box
+and labeled as number index in the screenshot. Your generated content should be suitable
+for the usage scenario shown in this screenshot and represent what real users would typically
+enter in daily use. Your response should contain only the text that needs to be entered into
+the input field.
+Prompt for Trajectory-to-Instruction Conversion (Android)
+You are an expert specializing in inferring specific user tasks based on changes observed
+in mobile phone screenshots within an interaction trajectory. I will provide you with an
+interaction trajectory containing:
+1. Action per Step: One of click, double_click, long_click, scroll_up, scroll_down,
+scroll_left, scroll_right, input. If the action is input, the input text is provided.
+Each non-scroll action includes the target element’s attributes
+(e.g., content_description, text, resource_id).
+2. Screenshots: A pre-action screenshot for each step (with a green bbox and step number)
+and one final post-trajectory screenshot. Pay close attention to the element inside the
+green bbox and all UI changes between consecutive screenshots.
+3. Package Name: The package_name of the active app (use it to infer the app’s common name).
+Note: In Sub-Instruction, Analysis, Knowledge, and Task-Instruction, do not use the
+numeric marker from the green bbox; refer to elements by their visible labels or roles
+(e.g., "the Settings icon", "the field labeled Username").
+Part 1: Analysis and Step Selection
+- Analyze the entire trajectory (all actions and screenshot changes).
+- Select a logically coherent subsequence that completes a clear user task.
+- Exclude redundant/irrelevant/irrational steps.
+Part 2: Output Generation
+Produce five parts (lists must match the original step count where specified):
+- Sub-Instruction (List[str]): For each original step, write a concise, actionable instruction
+grounded in the observed UI, including concrete identifiers (filenames, times, visible text).
+- Analysis (List[str]): For each original step, reason about likely next actions based on
+the new UI state.
+- Knowledge (List[str]): For each original step, describe the general functionality of the
+interacted element, inferred from before/after screenshots (1–2 sentences).
+- Selected-Step-ID (List[int]): The indices of the steps you chose for the coherent subsequence,
+in chronological order.
+- Task-Instruction (str): A single actionable instruction that captures the user goal
+of the selected subsequence. Explicitly mention the inferred app name and any crucial specifics.
+You must return only a JSON dictionary in the following format:
+{
+"Sub-Instruction": List[str],
+"Analysis": List[str],
+"Knowledge": List[str],
+"Selected-Step-ID": List[int],
+"Task-Instruction": str
+}
+The trajectory information will be provided below:
+’trajectory_information’
+RETURN ME THE DICTIONARY I ASKED FOR.
+Android Action Reasoning & Execution Prompt
+Role Definition
+You are an Android operation AI that fulfills user requests through precise screen interactions.
+Current and annotated screenshots are provided.
+Action Catalog (STRICT JSON FORMAT)
+1. Status Operations:
+- Task Complete:  "action_type": "status", "goal_status": "complete"
+- Task Infeasible:  "action_type": "status", "goal_status": "infeasible"
+2. Information Actions:
+- Answer Question:  "action_type": "answer", "text": "<answer_text>"
+3. Screen Interactions:
+- Tap Element:  "action_type": "click", "index": <visible_index>
+- Long Press:  "action_type": "long_press", "index": <visible_index>
+- Scroll:  "action_type": "scroll", "direction": "up|down|left|right",
+"index": <optional_container_index>
+4. Input Operations:
+- Text Entry:  "action_type": "input_text", "text": "<content>",
+"index": <text_field_index>
+- Keyboard Enter:  "action_type": "keyboard_enter"
+5. Navigation:
+- Home Screen:  "action_type": "navigate_home"
+- Back Navigation:  "action_type": "navigate_back"
+6. System Actions:
+- Wait Refresh:  "action_type": "wait"
+Current Objective
+User Goal: task_goal
+Execution Context
+Action History:
+history
+Visible UI Elements (only interact with visible=true):
+ui_elements
+Core Strategy
+1) Path Optimization: prioritize app drawer for app launch; always use input_text for
+text fields; verify visibility before interacting; scroll containers (if possible)
+before full-screen scrolls.
+2) Error Handling: switch approach after > 1 failures; use scroll to reveal off-screen
+targets; try opposite scroll if needed.
+3) Information Tasks: use answer for questions; verify data freshness.
+4) Expert Techniques: knowledge
+Response Format (STRICT)
+Reasoning: [step-by-step analysis covering visibility checks, history effectiveness,
+alternatives, scroll considerations]
+Action: [single JSON action from the catalog]
+Generate response:
+Step Summary Generation Prompt
+Goal: {task_goal}
+Before screenshot elements:
+{before_ui_elements}
+After screenshot elements:
+{after_ui_elements}
+Action: {action}
+Reasoning: {reasoning}
+Provide a concise single-line summary (< 50 words) comparing screenshots and action outcome.
+Include: intended effect; success/failure; key info for subsequent steps; critique if
+action/reasoning was flawed; any important data to remember across apps.
+For answer or wait (no screen change), assume success.
+Summary:
+Matching Exploration vs. Agent Trajectories Prompt(Alignment Verification)
+Objective: Determine which steps from the reference Exploration Trajectory were matched by
+the GUI Agent’s trajectory. Report the count, matched exploration step indices, and the
+corresponding agent step indices.
+Input:
+1) Task Instruction:
+task_instruction
+2) Exploration Trajectory (numbered "Step i"):
+exploration_trajectory_information
+3) GUI Agent Trajectory (numbered "Step i"):
+gui_agent_trajectory_information
+Task: Compare trajectories; identify each exploration step matched by one or more agent steps;
+list matched exploration indices; list all agent step indices contributing to any match;
+count unique matched exploration steps.
+Matching Rule: A match occurs if the agent performs the equivalent action or achieves the same
+sub-goal. Multiple agent steps mapping to the same exploration step count as one toward the
+match total. Still include all contributing agent step indices.
+Output (JSON only):
+{
+"match_num": <int>,
+"matched_exploration_id": [<int>, …],
+"matched_gui_agent_id": [<int>, …]
+}
+Constraints: match_num == len(matched_exploration_id); sort both index lists ascending.
+Refining Task Instruction Prompt
+Role: You refine a given task instruction so a GUI Agent’s execution more closely
+matches a reference exploration trajectory.
+Inputs:
+1) Initial Task Instruction:
+task_instruction
+2) Exploration Trajectory (ground-truth sequence):
+exploration_trajectory_information
+3) GUI Agent Trajectory (taken steps):
+gui_agent_trajectory_information
+4) Matched Exploration Steps (low-level instructions the agent achieved):
+matched_low_level_instructions
+5) Matched GUI Agent Steps (reasoning/action steps corresponding to matches):
+matched_gui_agent_steps
+Your Task: Identify exploration steps not matched by the agent; analyze agent deviations;
+rewrite the task instruction to guide execution toward the full exploration sequence.
+Refinement Guidelines: Add specifics from unmatched steps (element texts/descriptions,
+action types like long_click or scroll_up, required input text); clarify sequence; address
+agent misunderstandings; preserve the original goal; explicitly name the app inferred
+from package_name; keep it actionable.
+Output (JSON only):
+{
+"refined_high_level_instruction": "<refined instruction here>"
+}
+GUI Semantic Ambiguity Detection Prompt
+You are an expert GUI interaction analyst tasked with identifying semantic-ambiguous actions in agent trajectories. Semantic-ambiguous actions are UI interactions whose functional meaning is unclear, context-dependent, or visually confounded.
+Task Analyze
+Analyze the provided trajectory and determine whether it contains any of the following three types of semantic ambiguity. A trajectory is considered to contain a type if at least one action in the sequence exhibits that characteristic.
+Three Types of Semantic Ambiguity
+1. Context Dependency
+Definition
+: Identical or similar UI elements that trigger different functions depending on the surrounding context, application state, or screen location.
+Examples
+:
+- A "+" button that creates a new folder in one context but adds a contact in another
+- A "Save" button that behaves differently in edit mode vs. creation mode
+- The same icon appearing in different screens with distinct functions
+Key Indicators
+: Same element text/icon, different outcomes based on context; actions that require understanding the current application state or mode.
+2. Sequential Dependency
+Definition
+: Actions that only succeed or make sense after completing specific prerequisite steps, or interactions that form part of a multi-step workflow where order matters critically.
+Examples
+:
+- Submitting a form only after all required fields are filled
+- Confirming a deletion only after initiating the delete action
+- Accessing a feature that requires prior authentication or permission granting
+- Multi-step workflows where skipping intermediate steps causes failure
+Key Indicators
+: Actions that reference “after doing X” or “following Y”; failures due to missing prerequisites; explicit workflow sequences.
+3. Visual Ambiguity
+Definition
+: Visually similar or identical UI elements that correspond to distinct functions, making it difficult to distinguish their purpose based solely on appearance.
+Examples
+:
+- Multiple icons with similar shapes but different meanings
+- Text buttons with similar labels (“OK” vs. “Confirm” vs. “Done”) that have different effects
+- Structurally similar list items or menu entries that perform different actions
+- Elements that look clickable but aren’t, or vice versa
+Key Indicators
+: Reasoning mentions visual similarity, confusion between elements, or need to carefully distinguish between look-alike components.
+Analysis Guidelines
+1. Read the entire trajectory including the task goal and all reasoning-action pairs.
+2. For each action, consider:
+- Does the element’s function depend on context? → Context Dependency
+- Does this action require prior steps to work? → Sequential Dependency
+- Are there visually similar elements that could be confused? → Visual Ambiguity
+3. Mark True if ANY action in the trajectory exhibits the characteristic.
+4. Be conservative: Only mark True if there is clear evidence in the reasoning or sequence.
+Input Format
+You will receive a trajectory string containing:
+- Task Goal
+- Step-by-step reasoning-action information
+Output Format
+Return ONLY a valid JSON dictionary:
+{"context_dependency": true,
+"sequential_dependency": false,
+"visual_ambiguity": false
+}
+Important:
+- Use lowercase with underscores for keys
+- Use lowercase ‘true‘ and ‘false‘ (JSON boolean format)
+- Do not include any explanatory text, only the JSON dictionary
+- All three keys must be present
+Trajectory to Analyze
+{trajectory_string}
+Your Classification
+Provide your analysis as a JSON dictionary only:
+Prompt for Trajectory-to-Instruction Conversion (Web)
+You are an expert specializing in inferring specific user tasks based on changes observed in website screenshots within an
+interaction trajectory. I will provide you with an interaction trajectory containing the following information:
+1. Action per Step: The action performed at each step, chosen from one of these types: ‘click‘, ‘scroll_up‘, ‘scroll_down‘,
+‘input‘. If the action is ‘input‘, the input text will also be provided. Associated with each action (except scrolls) is
+information about the targeted UI element, including attributes like ‘bid‘, ‘type‘, ‘attributes‘, etc.
+2. Screenshots: A screenshot taken before each action (labeled "Step i" in the bottom-right corner, indicating it precedes
+the i-th action) and a final screenshot taken after the last action (labeled "Final" in the bottom-right). The pre-action
+screenshots will feature a green bounding box (marked with the step number ’i’ in the top-left corner, also identifying
+the i-th UI element.) highlighting the element being interacted with. Pay close attention to the content within or
+associated with the green bounding box and the changes between the ’before’ and ’after’ screenshots for each step.
+3. Current Page Title: The title of the current page after each action, which can provide context about the page’s content or
+purpose.
+4. Current URL: The URL of the current page after each action, which can help identify the specific page or resource being
+accessed.
+Note: In Sub-Instruction, Analysis, Knowledge, and Task-Instruction, do not use the numerical marker (from the
+top-left of the green box) to refer to the UI element. Instead, if you need to refer to the element, use a more natural
+description based on its visual characteristics or text content (e.g., "the ’Settings’ icon", "the text input field
+labeled ’Username’").
+Your task involves two main parts:
+Part 1: Analysis and Step Selection
+- Analyze the entire provided trajectory (actions and screenshot changes).
+- Identify a logically coherent subsequence of steps within the trajectory that represents a complete and reasonable user
+task.
+- You must select actions that follow a clear and rational sequence toward achieving a specific goal.
+- Eliminate any steps from the original trajectory that are redundant, irrelevant, irrational, or unnecessary for completing
+the identified task.
+Part 2: Output Generation
+Based on your analysis and step selection, devise the specific user goal or task. Your output must include five parts:
+- Sub-Instruction (List[str]): For each step in the original trajectory, generate a natural language instruction
+corresponding to the action performed, based on the UI changes observed. This instruction should be concise, clear,
+actionable, and must incorporate key specific details visible in the screenshot, such as filenames, times, text content,
+or other relevant identifiers associated with the interacted element. Examples: "Scroll up to open the app drawer,
+revealing all installed applications.", "Click on the chat interface labeled ’General Discussion’.", "Input the
+username ’Agent’ into the username field."
+- Analysis (List[str]): For each step in the original trajectory, provide an analysis of the potential subsequent
+actions or user intent, based on the UI changes resulting from the action and its Sub-Instruction. This analysis
+should involve step-by-step reasoning, considering the observed screen state and what actions become possible or
+logical next. Example: "After tapping the ’+’ button, a menu with options like ’New Document’ and ’New Folder’
+appeared. I can create something new. Next step would be to tap ’New Document’, which might then prompt for a filename."
+- Knowledge (List[str]): For each step ‘i‘ in the original trajectory, describe the general functionality of the UI
+element interacted with in that step. This description should be inferred by comparing the screenshot before
+action ‘i‘ (labeled "Step i") and the screenshot after action ‘i‘ (which will be the screenshot labeled "Step i+1",
+or "Final" for the last action). The description should be concise (1-2 sentences), focus on the general function
+revealed by the interaction (e.g., "Opens a settings menu," "Navigates back," "Selects an item," "Confirms an action"),
+avoid specific details unless necessary for clarity, and use generic terms like "this element" or "this button"
+or a functional description (e.g., "the search icon"). The length of this list must be equal to the number of steps in
+the original trajectory. Example: "Tapping this element initiates a search and displays matching results."
+- Selected-Step-ID (List[int]): A list containing the integer step IDs (the ’i’ from ’Step i’) of the actions
+you selected in Part 1 as part of the coherent, logical task sequence. The IDs must be listed in the chronological
+order they appear in the selected subsequence.
+- Task-Instruction (str): Based only on the selected subsequence of steps identified in Part 1, formulate a
+single, task instruction describing the overall task the user was likely trying to achieve through those
+selected steps. This instruction should correspond directly and efficiently to the selected sequence.
+You must return only a JSON dictionary in the following format:
+“‘json
+{{
+"Sub-Instruction": List[str],
+"Analysis": List[str],
+"Knowledge": List[str],
+"Selected-Step-ID": List[int],
+"Task-Instruction": str
+}}
+“‘
+The trajectory information will be provided below:
+‘trajectory_information‘
+RETURN ME THE DICTIONARY I ASKED FOR.
+Web Action Reasoning & Execution Prompt
+You are an agent trying to solve a web task based on the content of the page and user instructions. You can interact
+with the page and explore, and send messages to the user. Each time you submit an action it will be sent to the browser
+and you will receive a new page.
+Instructions
+Review the current state of the page and all other information to find the best possible next action to accomplish
+your goal. Your answer will be interpreted and executed by a program, make sure to follow the formatting instructions.
+Goal:
+goal
+Observation of current step:
+AXTree:
+Note: [bid] is the unique alpha-numeric identifier at the beginning of lines for each element in the AXTree.
+Always use bid to refer to elements in your actions.
+Note: You can only interact with visible elements. If the "visible" tag is not
+present, the element is not visible on the page.
+a11y_tree
+Focused element:
+focused_element
+History of interaction with the task:
+history
+Action space:
+Note: This action set allows you to interact with your environment. Most of them are python function executing playwright
+code. The primary way of referring to elements in the page is through bid which are specified in your observations.
+12 different types of actions are available:
+noop(wait_ms: float = 1000)
+scroll(delta_x: float, delta_y: float)
+fill(bid: str, value: str)
+select_option(bid: str, options: str | list[str])
+click(bid: str, button: Literal[’left’, ’middle’, ’right’] = ’left’)
+dblclick(bid: str, button: Literal[’left’, ’middle’, ’right’] = ’left’)
+hover(bid: str)
+press(bid: str, key_comb: str)
+focus(bid: str)
+clear(bid: str)
+drag_and_drop(from_bid: str, to_bid: str)
+upload_file(bid: str, file: str | list[str])
+Only a single action can be provided at once. Example:
+fill(’a12’, ’example with "quotes"’)
+Note:
+- Some tasks may be game like and may require to interact with the mouse position in x, y coordinates.
+- Some text field might have auto completion. To see it, you have to type a few characters and wait until next step.
+- If you have to cut and paste, don’t forget to select the text first.
+- Coordinate inside an SVG are relative to it’s top left corner.
+- Make sure to use bid to identify elements when using commands.
+- Interacting with combobox, dropdowns and auto-complete fields can be tricky, sometimes you need to use select_option,
+while other times you need to use fill or click and wait for the reaction of the page.
+Abstract Example
+Here is an abstract version of the answer with description of the content of each tag. Make sure you follow this
+structure, but replace the content with your answer:
+<think>
+Think step by step. If you need to make calculations such as coordinates, write them here. Describe the effect
+that your previous action had on the current content of the page.
+</think>
+<action>
+One single action to be executed. You can only use one action at a time.
+</action>
+Concrete Example
+Here is a concrete example of how to format your answer. Make sure to follow the template with proper tags:
+<think>
+From previous action I tried to set the value of year to "2022", using select_option, but it doesn’t appear to be in
+the form. It may be a
+dynamic dropdown, I will try using click with the bid "a324" and look at the response from the page.
+</think>
+<action>
+click(’a324’)
+</action>
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

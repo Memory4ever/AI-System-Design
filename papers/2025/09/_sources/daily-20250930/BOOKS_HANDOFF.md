@@ -1,16 +1,36 @@
 # 2025-09-30 作者证据与Books差额交接
 
-作者 Archimedes，仅建议；root FIRST尚待，作者不授采用/POST/DAY、不改Books。当前合同§3–6，owner以ROADMAP为准。未复现、未核候选代码。以下全部6家族拟2+2+2=6，评分只取具体命题，不借成熟原则/硬件倍率/排名。
+作者 Archimedes；以下保留原建议与身份纠正链，不作为当前待办。root已实际独立核六家族准入/必要证据，最终均2+2+2=6，并接受两整合/四已有覆盖；评分只取具体命题，不借成熟原则/硬件倍率/排名。作者不写Books、不自授DAY，未复现、未核候选代码。
+
+## 当前裁决与非writer POST（2026-10-06T20:20:34+08:00）
+
+root实际写入Ch14 `SF-2025-DEEPSEEK-V32-EXP` 128/130两段及Review notes580，Ch72 `SF-2025-OPENAI-SORA2` 1104自然段及Review notes3180。Archimedes作为非写入者fresh重读当前合同、本日窗口/停点及Books上下文，实际顺读Ch14 118～134/末注、Ch72 1088～1106/末注，并重开固定六页DSA§1～3/Eq1～4/AppA及初始七页Sora card§3.3～3.4，**两处POST通过**。选择训练与主模型梯度分责、core O(Lk)/indexer二次开销、预算/质量反侧与SLA2/Ch49承接准确；人物许可≠来源证明，许可状态及未来生成/存量/外部副本分责明确是工程推导，不倒填当前Blog的characters/撤销/草稿实现。正文没有普遍无损、生产SLO或安全有效率保证。
+
+Sonnet的Ch66 representation/verbalization/control、Code的Ch81受控joint snapshot/外部compensation、Parental的Ch72 sensor非authority与recipient/purpose披露范围、CSEA的Ch72输入/上下文/输出gate与sensor/enforcement分责均由root核为已有覆盖，不制造四篇产品摘要。日报§3/4已同步最终Books处置。此记录仅授实际两处Books POST，不授13风险/44关闭分层复核或全日DAY。
 
 ## Sora 2：拟差额，PLATFORM-SECURITY
 
+**本次精确身份窄修：** 实际再读Sept30七页PDF§3.3–3.4，支持explicit opt-in consent/likeness controls、初始cameo及生成输入限制，与provenance分账；它未明写creator scope/revocation/delete drafts。`30core1.json`原当前Blog L80及2026-10-06再次打开的[Launching responsibly](https://openai.com/index/launching-sora-responsibly/)L28–29虽明写这些功能，但当前用characters且有2026停服说明，不能称已冻结Sep原文。因此下方旧建议中的精确scope/撤销/草稿处置不作为Sep已证事实；保留支持充分的consent≠provenance为最小准入命题。若书稿需要撤销/存量分账，显式标为从许可状态推导的工程要求，不归因“Sept card已实现”，不承诺外部copy可删除。拟分仍仅2+2+2=6，待root FIRST；未以收窄为理由否定安全贡献。
+
 原公开RSS三条`Tue, 30 Sep 2025 00:00:00 GMT`即30日08BJT，见`openai-rss.xml`。原Sept30[七页system card](https://cdn.openai.com/pdf/50d5973c-c4ff-4c2d-986f-c72b5d0ff069/sora_2_system_card.pdf)，本地`sora-systemcard.pdf`，`recovery-fetch.json`，实际§1–6与Table1视觉读。发布Blog当前停服/character用语不回填Sept。
 
-具体链：photorealistic generation可描绘真实身份 → 初始只允许验证consent的cameo、owner限定谁可用及撤销；初始无video-to-video/无public-figure text-to-video → 人物相似性许可与generated-content provenance必须分账。撤销只约束产品内许可/草稿，不授外部拷贝可撤回。frames/audio transcripts/scene captions与人工/举报是分层sensor；C2PA、水印、内部detector不证明所有内容可验来源。Table1 not_unsafe/not_overrefuse各一分母概念，selected adversarial prompts/autojudge，N/CI Not Disclosed，不授生产recall。
+具体链：photorealistic generation可描绘真实身份 → 初始只允许明确opt-in consent并控制likeness使用的cameo；初始无video-to-video/无public-figure text-to-video → 人物相似性许可与generated-content provenance必须分账。精确creator scope/撤销/存量处置的Sep历史语义未采用，不能由来源证明推导所有身份许可或外部拷贝可回收。frames/audio transcripts/scene captions与人工/举报是分层sensor；C2PA、水印、内部detector不证明所有内容可验来源。Table1 not_unsafe/not_overrefuse各一分母概念，selected adversarial prompts/autojudge，N/CI Not Disclosed，不授生产recall。
 
 实际owner[Ch72](../../../../../books/part-06-ai-infrastructure/72-security.md) 602–628、1080–1116、1495–1535、1884–1972：模型verdict非authority、目的/同意/删除链、provenance互补；当前检索及实际段落未见人物likeness的验证授权、创作者scope与未来使用撤销的对象分账。建议在现provenance段1088–1102后自然接一段：可验证生成来源不表示有权使用被描绘者身份；分别绑定consent主体、许可用途/creator、撤销未来使用、产品内存量处置，不能由detector代签同意或承诺互联网删除。成本是身份验证、范围与撤销状态/误拒，未验证则限制真实人物路径/人工确认；保留原provenance路径。邻接[Ch71](../../../../../books/part-06-ai-infrastructure/71-multi-tenant.md)隔离与[Ch73](../../../../../books/part-06-ai-infrastructure/73-production-best-practice.md)发布验收不接管该权限语义。建议定位，非已写。
 
 ## DeepSeek-V3.2-Exp：拟差额，MODEL-SELF-ATTENTION
+
+### 可直接整合的自然论证段（待root裁决/写入，非已采用）
+
+在Ch14完整dense再选择的反侧之后、SLA2之前接：
+
+如果完整路由矩阵太贵，选择步骤就不能继续依赖它。另一条路线先用低维、少量head的可训练indexer估计query与历史位置的分数，再仅让主要Attention读取TopK支集；FP8与简单激活减少selector的常数成本，但indexer本身仍有二次序列复杂度，只有主要读取从全长转成固定k位置。选择接口因此也是训练合同：先保留dense Attention、冻结主模型，用聚合并归一化的原Attention分布预热indexer；切成稀疏读取后再继续训练主模型，并在被选支集上对齐indexer，selector输入detach、其KL目标与主模型language-model目标分别优化。不能把一个已有dense checkpoint临时删位置，等同于这一条学会稀疏读取的路径。
+
+这条分支把选择预算、稀疏继续训练和读取质量共同付费。[DeepSeek-V3.2-Exp固定报告](https://raw.githubusercontent.com/deepseek-ai/DeepSeek-V3.2-Exp/840f3c924a6b1604b1998baebf0c5f167e10375a/DeepSeek_V3_2.pdf)§1–2支持上述机制，但相同post-training流程并不抹去此前训练预算变化；若推理长度不同，部分任务成绩退步也不能称无损。TopK、gather与kernel成本仍需进入执行计划，短序列可以保留dense或模拟稀疏的分支，选择器质量未通过时回到已验收的读取路径。报告的H800成本估计与未来real-world验证计划不构成生产SLO证明，具体lowering与fallback由Ch49承接，不在组件章重复kernel收益。
+
+同日Sora在Ch72现provenance互补层之后可接的最小自然段：
+
+内容的来源能够验证，还不等于有权描绘其中的人。写着可信生成器签名的视频，可能仍没有被描绘者同意；人物许可与内容provenance因此需要分别判断。[Sora 2的原Sept30 card](https://cdn.openai.com/pdf/50d5973c-c4ff-4c2d-986f-c72b5d0ff069/sora_2_system_card.pdf)§3.3–3.4提供了一个明确边界：初始真实人物路径要求cameo中的opt-in consent与likeness controls，同时保留生成来源标记和内容审核；任何一层都不能替另外一层签发权限或安全真值。将这条边界落实到系统，还需要承担同意主体核验、许可范围与状态维护、误拒和人工处理成本，这是工程要求而非card已证明的控制效果。无法取得可信许可时应限制真实人物路径或转人工确认，来源不明则回到origin record/inconclusive；不要用detector阳性推导同意，也不要把当前产品的撤销/草稿功能倒填成Sept已证、或承诺外部拷贝可回收。
 
 官方原贴[1972604768309871061](https://x.com/deepseek_ai/status/1972604768309871061)的官方嵌入接口实际200：`deepseek-tweet.json` created_at=`2025-09-29T10:10:00.000Z`、@deepseek_ai、未编辑，即29日18:10BJT，`glm-tweet-fetch.json`保留请求。Git commit不承担first-public。
 

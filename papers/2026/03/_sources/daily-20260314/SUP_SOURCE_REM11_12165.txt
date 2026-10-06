@@ -1,0 +1,1919 @@
+QAQ: Bidirectional Semantic Coherence for Selecting High-Quality Synthetic Code Instructions
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Related Work
+Data Selection for Instruction Tuning.
+Synthetic Data for Code Generation.
+Mutual Information in NLP.
+Model Comparison for Data Quality.
+3
+QAQ: Reverse Mutual Information for Data Selection
+3.1
+Reverse Mutual Information
+Comparison with IFD.
+Why the Two Directions Differ.
+Implementation of
+PPL
+​
+(
+Q
+)
+\text{PPL}(Q)
+.
+Implementation of
+PPL
+​
+(
+Q
+|
+A
+)
+\text{PPL}(Q|A)
+.
+Validation of Chat Template.
+3.2
+Stratified RMI
+3.3
+Model Disagreement
+4
+Experiments
+4.1
+Experimental Setup
+Dataset.
+Models.
+Training Details.
+Evaluation.
+Baselines.
+4.2
+Main Results
+Case Study: Defect Patterns in High RMI.
+Case Study: Low RMI as Misalignment.
+4.3
+Analysis
+Why Does Model Disagreement Work?
+Ablation: Disagreement vs. Consensus.
+Stability of RMI Across Training.
+Sample Overlap Analysis.
+5
+Conclusion
+Single Dataset.
+Model Selection Sensitivity.
+Hyperparameter Tuning.
+Reproducibility.
+Computational Cost.
+References
+A
+Implementation Details and Model Configurations
+DeepSeek-Coder Template
+Qwen3 Template
+Implementation Note
+B
+Sensitivity to Chat Template and Task Framing
+Standard Implementations (Template-based).
+Variations for Sensitivity Analysis.
+Results and Analysis.
+Discussion: Why IFD is More Robust.
+License: CC BY 4.0
+arXiv:2603.12165v1 [cs.CL] 12 Mar 2026
+QAQ: Bidirectional Semantic Coherence for Selecting High-Quality Synthetic Code Instructions
+Jiayin Lei
+†
+†
+thanks:
+Equal contribution.
+†
+Corresponding author.
+Affiliation:
+Beijing University of Technology, Beijing, 100124, China
+Ming Ma
+Affiliation:
+Institute of Neuroscience, State Key Laboratory of Brain Cognition and Brain-inspiredIntelligence Technology, Center for Excellence in Brain Science and Intelligence Technology,Chinese Academy of Sciences, Shanghai, 200031, China
+Yunxi Duan
+Affiliation:
+Beijing University of Technology, Beijing, 100124, China
+Chenxi Li
+Affiliation:
+University of Chicago, Chicago, IL, USA
+xx_sg@emails.bjut.edu.cn, {mam2022, tyang}@ion.ac.cn
+Tianming Yang
+Affiliation:
+University of Chinese Academy of Sciences, Beijing, 100049, China
+Abstract
+Synthetic data has become essential for training code generation models, yet it introduces significant noise and hallucinations that are difficult to detect with current metrics. Existing data selection methods like Instruction-Following Difficulty (IFD) typically assess how hard a model generates an answer given a query (
+A
+|
+Q
+A|Q
+). However, this metric is ambiguous on noisy synthetic data, where low probability can distinguish between intrinsic task complexity and model-generated hallucinations. Here, we propose QAQ, a novel data selection framework that evaluates data quality from the reverse direction: how well can the answer predict the query (
+Q
+|
+A
+Q|A
+)? We define Reverse Mutual Information (RMI) to quantify the information gain about the query conditioned on the answer. Our analyses reveal that both extremes of RMI signal quality issues: low RMI indicates semantic misalignment, while excessively high RMI
+may contain defect patterns that LLMs easily recognize.
+Furthermore, we introduce a selection strategy based on the disagreement between strong and weak models to identify samples that are valid yet challenging. Experiments on the WarriorCoder dataset demonstrate that selecting just 25% of data using stratified RMI achieves comparable performance to full-data training, significantly outperforming existing data selection methods. Our approach highlights the importance of bidirectional semantic coherence in synthetic data curation, offering a scalable pathway to reduce computational costs without sacrificing model capability.
+Figure 1:
+(a)
+Two common failure modes in synthetic
+(
+Q
+,
+A
+)
+(Q,A)
+: keyword echo/paraphrase (high RMI) and misalignment (low RMI).
+(b)
+The comparisons between our method and
+traditional IFD method. Unlike previous work, QAQ scores question predictability given the answer
+(
+Q
+|
+A
+)
+(Q|A)
+and computes RMI.
+We keep the mid-range “sweet spot” and filter both extremes.
+1
+Introduction
+Synthetic data has become the dominant paradigm for training code generation models
+(
+Chen et al., 2021
+;
+Roziere et al., 2023
+;
+Li et al., 2023
+)
+. Seedless data synthesis methods like Magpie
+(
+Xu et al., 2024
+)
+and WarriorCoder
+(
+Feng et al., 2025
+)
+generate diverse instruction-response pairs by prompting aligned LLMs directly, without relying on human-curated seed data. While this approach enables unprecedented diversity by extracting knowledge directly from model interactions, it also produces massive amounts of noisy data that are difficult to curate.
+The quality issues in synthetic data are subtle and often undetectable by surface-level metrics. We observe two failure modes in practice: (1) queries containing fabricated terminology (e.g., “convert a gritty sulla matrix”), where models generate syntactically valid code that echoes these made-up terms, producing high surface-level quality scores while providing little learning signal; (2) off-topic queries that should not appear in a code dataset at all (e.g., a greeting “Hi!”), paired with incoherent responses (e.g., starting with “compensated…”)—indicating a completely broken Q-A pair. These failure modes are difficult for answer-focused metrics to detect.
+Notably, methods like WarriorCoder focus on
+answer quality
+: multiple models generate competing solutions, and the highest-scored answer is selected for each query. However, this pipeline largely overlooks
+query quality
+. A poorly-specified or semantically incoherent query, even when paired with a technically correct answer, provides limited learning signal.
+Existing data selection methods like Instruction-Following Difficulty (IFD)
+(
+Li et al., 2024b
+)
+operate in the
+A
+|
+Q
+A|Q
+direction.
+Although mutual information is theoretically symmetric, due to the autoregressive nature of language models, its practical estimation via conditional perplexity is not necessarily consistent. Empirically, we find low correlation (
+ρ
+=
+0.252
+\rho=0.252
+) between the two, confirming they capture distinct aspects of data quality.
+We propose
+QAQ
+(Query, Answer-Query), a method that measures quality from the reverse direction:
+PPL
+​
+(
+Q
+|
+A
+)
+\text{PPL}(Q|A)
+, which captures how well the answer
+explains
+the question. The intuition is analogous to a student who struggles to understand a problem, but finds clarity after seeing the solution. We define RMI as
+log
+⁡
+PPL
+​
+(
+Q
+)
+−
+log
+⁡
+PPL
+​
+(
+Q
+|
+A
+)
+\log\text{PPL}(Q)-\log\text{PPL}(Q|A)
+, which captures the information gain that the answer provides about the question:
+•
+Low RMI
+: The answer provides little information gain about the question; seeing the answer does not help predict the question.
+•
+Very high RMI
+:
+The answer makes the query trivially predictable, often due to superficial or shortcut patterns such as paraphrasing or repetition.
+Furthermore, we observe that strong and weak models disagree on sample quality. Samples where only the strong model recognizes high RMI may contain sophisticated patterns that weak models cannot capture. We call this the “cognitive gap”. Selecting samples with high cognitive gap yields better training signal than selecting samples where both models agree.
+Our contributions are:
+•
+We identify that seedless synthetic data pipelines overlook query quality, and propose QAQ, a data selection method based on Reverse Mutual Information (RMI) that captures query-answer semantic alignment.
+•
+We empirically show that RMI serves as an effective quality indicator, where both misaligned and shortcut-dominated samples can be filtered through its value distribution.
+•
+We introduce model disagreement as a selection signal, capturing samples with high “cognitive gap” between strong and weak models.
+•
+We demonstrate that 25% of data selected by our method achieves comparable performance to full-data training while outperforming existing data selection methods.
+Figure 2:
+Overall workflow of the QAQ framework for synthetic code data selection.
+(Top-left)
+RMI is calculated as the information gain provided by the answer about the query, using reverse perplexity.
+(Bottom-left)
+Our analysis identifies that RMI extremes signal quality issues: low RMI indicates semantic misalignment, while excessively high RMI indicates trivial paraphrasing or echoing.
+(Center)
+To eliminate the confounding factor of question complexity, RMI is stratified into 10 bins based on
+PPL
+​
+(
+Q
+)
+\text{PPL}(Q)
+to compute normalized within-bin ranks
+r
+r
+.
+(Right)
+The final selection targets the “Cognitive Gap” (
+Diff
+=
+r
+s
+−
+r
+w
+\text{Diff}=r_{s}-r_{w}
+) between a strong model
+M
+s
+M_{s}
+and a weak model
+M
+w
+M_{w}
+. Samples that are recognized as high-quality only by the strong model are retained, resulting in a high-quality 25% subset
+S
+S
+that provides the strongest learning signal.
+2
+Related Work
+Data Selection for Instruction Tuning.
+Several approaches have been proposed to select high-quality samples from instruction-tuning datasets. IFD
+(
+Li et al., 2024b
+)
+measures sample quality using
+PPL
+​
+(
+A
+|
+Q
+)
+/
+PPL
+​
+(
+A
+)
+\text{PPL}(A|Q)/\text{PPL}(A)
+, the ratio of conditional to unconditional answer perplexity. Samples with IFD close to (but less than) 1 are preferred: IFD
+≪
+1
+\ll 1
+suggests the answer is trivially predictable from the instruction, while IFD
+>
+1
+>1
+indicates the instruction actually hinders answer generation. Superfiltering
+(
+Li et al., 2024a
+)
+shows that weak models can approximate strong models’ IFD scores, enabling efficient filtering at scale. These methods operate in the
+A
+|
+Q
+A|Q
+direction, measuring generation difficulty rather than query-answer semantic alignment.
+Beyond perplexity-based methods, gradient-based approaches like LESS
+(
+Xia et al., 2024
+)
+use influence estimation to identify training samples most relevant to target tasks. Multi-dimensional methods like D3
+(
+Zhang et al., 2025
+)
+jointly optimize diversity, difficulty, and dependability via coreset objectives. Recent work explores orthogonal selection criteria: T-SHIRT
+(
+Fu et al., 2025
+)
+improves IFD through token-level selection and neighborhood robustness; SCAR
+(
+Li et al., 2025
+)
+targets style consistency between instructions and responses; ProDS
+(
+Guo et al., 2025
+)
+aligns selection with task-specific preferences via preference optimization. These methods optimize for diversity, style, or preference alignment, but do not directly assess query-answer semantic coherence.
+Synthetic Data for Code Generation.
+High-quality datasets are essential for code generation. Code Alpaca
+(
+Chaudhary, 2023
+)
+and WizardCoder
+(
+Luo et al., 2024
+)
+use Evol-Instruct to evolve seed instructions into more complex programming problems. OSS-Instruct
+(
+Wei et al., 2023
+)
+generates diverse problems by extracting coding concepts from open-source code snippets. These seed-based methods inherit biases from their curated seeds, constraining diversity to the patterns present in the original data. In contrast, seedless approaches like Magpie
+(
+Xu et al., 2024
+)
+and WarriorCoder
+(
+Feng et al., 2025
+)
+achieve greater diversity by prompting aligned LLMs directly without relying on human-curated data. However, this freedom comes at a cost: without seed constraints, the generated data contains more noise and semantic inconsistencies. While WarriorCoder selects the highest-scored answer for each query through cross-model evaluation, query quality itself remains largely unaddressed.
+Mutual Information in NLP.
+Pointwise mutual information (PMI) has been widely used in NLP for measuring word associations and semantic similarity
+(
+Church and Hanks, 1990
+)
+. At the token level, PMI helps identify collocations and construct semantic spaces. This concept can be extended to the sequence level, where mutual information between query and answer sequences reflects their semantic coherence.
+Model Comparison for Data Quality.
+Using multiple models to assess data has proven effective in various contexts.
+Helm et al. (2025)
+compare short-context and long-context models to weight tokens for long-range language modeling. Rho-1
+(
+Lin et al., 2024
+)
+compares trained and untrained versions of the same model to identify tokens with high “excess loss” for selective pre-training. These works focus on token-level selection, while sample-level selection using model disagreement remains underexplored.
+3
+QAQ: Reverse Mutual Information for Data Selection
+Given a large-scale instruction-tuning dataset
+𝒟
+=
+{
+(
+Q
+i
+,
+A
+i
+)
+}
+i
+=
+1
+N
+\mathcal{D}=\{(Q_{i},A_{i})\}_{i=1}^{N}
+for code generation, our goal is to select a high-quality subset
+𝒮
+⊂
+𝒟
+\mathcal{S}\subset\mathcal{D}
+that achieves comparable performance to training on the full dataset while significantly reducing computational costs.
+3.1
+Reverse Mutual Information
+Prior work such as IFD
+(
+Li et al., 2024b
+)
+captures whether the instruction facilitates answer generation. Samples with IFD close to (but less than) 1 are preferred, representing what the model “does not yet know”.
+We propose an alternative perspective: instead of measuring generation difficulty, we measure how well the answer
+explains
+the question. Specifically, we compute the
+Reverse Mutual Information (RMI)
+as:
+RMI
+​
+(
+Q
+,
+A
+)
+=
+log
+⁡
+PPL
+​
+(
+Q
+)
+−
+log
+⁡
+PPL
+​
+(
+Q
+|
+A
+)
+\text{RMI}(Q,A)=\log\text{PPL}(Q)-\log\text{PPL}(Q|A)
+(1)
+where
+PPL
+​
+(
+Q
+)
+\text{PPL}(Q)
+is the perplexity of the question alone, and
+PPL
+​
+(
+Q
+|
+A
+)
+\text{PPL}(Q|A)
+is the perplexity of the question conditioned on the answer. Perplexity is computed as:
+PPL
+(
+x
+)
+=
+exp
+(
+−
+1
+N
+∑
+i
+=
+1
+N
+log
+p
+(
+x
+i
+∣
+x
+<
+i
+)
+)
+\text{PPL}(x)=\exp\left(-\frac{1}{N}\sum_{i=1}^{N}\log p(x_{i}\mid x_{<i})\right)
+(2)
+where
+N
+N
+is the number of tokens in sequence
+x
+x
+.
+This formulation approximates the mutual information
+I
+⁡
+(
+Q
+,
+A
+)
+=
+H
+⁡
+(
+Q
+)
+−
+H
+⁡
+(
+Q
+|
+A
+)
+I(Q;A)=H(Q)-H(Q|A)
+, capturing the
+information gain
+that the answer provides about the question. Intuitively:
+•
+High RMI indicates that seeing the answer makes the question much easier to predict, suggesting strong semantic coherence between Q and A.
+•
+Low RMI suggests the answer does not relate well to the question (e.g., copy-paste errors, irrelevant responses).
+Comparison with IFD.
+While IFD operates in the
+A
+|
+Q
+A|Q
+direction, measuring “instruction-following difficulty”, our approach operates in the
+Q
+|
+A
+Q|A
+direction, measuring “answer explanatory power”. We argue that a good code solution should clearly reflect the original problem specification: given the code, one should be able to infer what problem it solves.
+Why the Two Directions Differ.
+As noted in the introduction, the
+A
+|
+Q
+A|Q
+and
+Q
+|
+A
+Q|A
+directions capture different signals due to length disparity, information density differences, and model capability asymmetry. Figure
+3
+shows the low correlation (
+ρ
+=
+0.252
+\rho=0.252
+) between RMI and IFD, confirming they measure distinct aspects of data quality.
+Figure 3:
+Scatter plot of RMI (Question-based) vs. -log(IFD) (Answer-based). Despite both being mutual information estimates, the Spearman rank correlation is low (
+ρ
+=
+0.252
+\rho=0.252
+), suggesting they capture different aspects of data quality.
+Implementation of
+PPL
+​
+(
+Q
+)
+\text{PPL}(Q)
+.
+We compute
+PPL
+​
+(
+Q
+)
+\text{PPL}(Q)
+using the standard chat template, which matches the format used during training:
+System
+: Standard system prompt
+User
+:
+[Q]
+We compute
+PPL
+​
+(
+Q
+)
+\text{PPL}(Q)
+on the question tokens in the user turn via teacher-forcing with per-token length normalization.
+Implementation of
+PPL
+​
+(
+Q
+|
+A
+)
+\text{PPL}(Q|A)
+.
+A naive implementation would simply concatenate the answer before the question, but this creates an unnatural input order. Instead, we frame the computation as a
+reverse generation task
+using the chat template:
+System
+: Standard system prompt
+User
+:
+TASK: Given an answer, generate the most likely computer science question that this answer is responding to. If the inferred question is outside computer science, respond with ‘‘INVALID’’. Answer: [A]
+Assistant
+:
+[Q]
+We compute
+PPL
+​
+(
+Q
+|
+A
+)
+\text{PPL}(Q|A)
+via teacher-forcing on the ground-truth question tokens in the assistant turn, with per-token length normalization. While the two computations use different message roles (user vs. assistant), the RMI score captures how much the answer
+A
+A
+reduces uncertainty about
+Q
+Q
+. The relative difference is meaningful even across different positional contexts.
+Validation of Chat Template.
+We verify that IFD remains highly robust across template variations (
+ρ
+=
+0.957
+\rho=0.957
+). In contrast, RMI is sensitive to context: removing the template causes a “cold start” in
+P
+​
+P
+​
+L
+​
+(
+Q
+)
+PPL(Q)
+calculation, where the lack of context artificially inflates perplexity and biases the score. This confirms that our template-based implementation is necessary to capture genuine semantic coherence. We provide a detailed sensitivity analysis in Appendix
+B
+.
+3.2
+Stratified RMI
+Directly filtering by global RMI rankings introduces a confounding factor: question complexity. Simple questions
+naturally have low
+PPL
+​
+(
+Q
+)
+\text{PPL}(Q)
+, leading to lower RMI scores regardless of answer quality. As shown in Figure
+4
+, the relationship between RMI and
+log
+⁡
+PPL
+​
+(
+Q
+)
+\log\text{PPL}(Q)
+exhibits clear heteroscedasticity: samples with low
+PPL
+​
+(
+Q
+)
+\text{PPL}(Q)
+have narrowly distributed RMI values (concentrated at lower ranges), while samples with high
+PPL
+​
+(
+Q
+)
+\text{PPL}(Q)
+show much greater RMI variance. This indicates that RMI and question complexity capture different aspects of data quality. Without stratification, simple but valid questions would be incorrectly filtered out due to their inherently lower RMI ceiling.
+Figure 4:
+Scatter plot of RMI vs.
+log
+⁡
+PPL
+​
+(
+Q
+)
+\log\text{PPL}(Q)
+. The heteroscedastic pattern (low variance at low PPL, high variance at high PPL) motivates stratification by question complexity.
+To address this, we propose
+Stratified RMI
+: we first partition the dataset into
+K
+=
+10
+K=10
+bins (deciles) based on
+PPL
+​
+(
+Q
+)
+\text{PPL}(Q)
+, then compute RMI rankings independently within each bin. We use
+K
+=
+10
+K=10
+as a simple default without extensive tuning, as our goal is to demonstrate the effectiveness of stratification rather than to optimize this hyperparameter. This ensures that samples are compared against others of similar question complexity.
+Formally, let
+ℬ
+k
+\mathcal{B}_{k}
+denote the
+k
+k
+-th bin containing samples with similar
+PPL
+​
+(
+Q
+)
+\text{PPL}(Q)
+values. For each sample
+(
+Q
+i
+,
+A
+i
+)
+∈
+ℬ
+k
+(Q_{i},A_{i})\in\mathcal{B}_{k}
+, we compute its within-bin rank and normalize to
+[
+0
+,
+1
+]
+[0,1]
+:
+r
+i
+(
+k
+)
+=
+Rank
+​
+(
+RMI
+​
+(
+Q
+i
+,
+A
+i
+)
+∣
+ℬ
+k
+)
+|
+ℬ
+k
+|
+r_{i}^{(k)}=\frac{\text{Rank}(\text{RMI}(Q_{i},A_{i})\mid\mathcal{B}_{k})}{|\mathcal{B}_{k}|}
+(3)
+where
+|
+ℬ
+k
+|
+|\mathcal{B}_{k}|
+is the number of samples in bin
+k
+k
+.
+3.3
+Model Disagreement
+Following prior work showing that weak models can approximate strong models’ data quality scores
+(
+Li et al., 2024a
+)
+, we first evaluate whether RMI exhibits similar model-invariance. While strong and weak models show high rank correlation (Spearman
+ρ
+≈
+0.7
+\rho\approx 0.7
+) and 76.1% overlap in top-50% selection, their downstream performance differs substantially (73.17 vs 68.90 on HumanEval+, Table
+1
+). This suggests the 24% non-overlapping samples are disproportionately important.
+We therefore explore
+model disagreement
+as an alternative signal. We compute stratified RMI ranks using two models:
+•
+A strong model
+M
+s
+M_{s}
+(e.g., DeepSeek-Coder-6.7B-Base)
+•
+A weak model
+M
+w
+M_{w}
+(e.g., Qwen3-0.6B)
+For each sample, we obtain two normalized ranks
+r
+s
+,
+r
+w
+∈
+[
+0
+,
+1
+]
+r_{s},r_{w}\in[0,1]
+and define:
+Diff
+=
+r
+s
+−
+r
+w
+(disagreement signal)
+\displaystyle=r_{s}-r_{w}\quad\text{(disagreement signal)}
+(4)
+High Diff indicates samples where the strong model gives high RMI rank while the weak model gives low RMI rank. We hypothesize that such samples are both
+valid
+(recognized by strong model) and
+learnable
+(challenging for weak model). We validate this hypothesis empirically in Section
+4.3
+. Our final selection filters samples with
+Diff
+>
+τ
+\text{Diff}>\tau
+, where we set
+τ
+=
+0.1
+\tau=0.1
+(approximately 25% of samples).
+4
+Experiments
+4.1
+Experimental Setup
+Dataset.
+We use a reproduction of the WarriorCoder dataset
+(
+Feng et al., 2025
+)
+from HuggingFace, containing 329K instruction-response pairs for code generation created through multi-agent collaboration. After filtering samples exceeding 2048 tokens, approximately 310K samples remain. The original dataset is not publicly available.
+Models.
+For computing RMI scores, we use:
+•
+Strong model: DeepSeek-Coder-6.7B-Base
+(
+Guo et al., 2024
+)
+•
+Weak model: Qwen3-0.6B
+(
+Team, 2025
+)
+For fine-tuning evaluation, we train DeepSeek-Coder-6.7B-Base on selected subsets.
+Training Details.
+We fine-tune for 3 epochs using LlamaFactory
+(
+Zheng et al., 2024
+)
+. Due to the noisy nature of our dataset, we refrain from excessively reducing the batch size. Batch sizes and learning rates are adjusted by dataset size: for full data, we use batch size 512 and learning rate 1.2e-4; for 50% data, batch size 256 and learning rate 0.8e-4; for 25% data, batch size 256 and learning rate 0.4e-4. Additionally, the learning rate scheduler follows a cosine decay with a warmup ratio of 0.2.
+Evaluation.
+We evaluate on HumanEval
+(
+Chen et al., 2021
+)
+, HumanEval+, MBPP
+(
+Austin et al., 2021
+)
+, and MBPP+ benchmarks
+(
+Liu et al., 2023
+)
+using greedy decoding.
+Baselines.
+We compare stratified RMI selection across different percentile ranges and models:
+•
+RMI Top 50%: Top 50% by strong model (DeepSeek-Coder-6.7B-Base) stratified RMI
+•
+RMI QW 50%: Top 50% by weak model (Qwen3-0.6B) stratified RMI
+•
+RMI 50-75%: Middle range by strong model stratified RMI
+•
+RMI Top/Bottom-25%: Extreme ranges by strong model stratified RMI
+•
+Random: Randomly sample 25% of the data
+•
+IFD
+(
+Li et al., 2024b
+)
+: Top 25% samples with IFD score closest to 1, computed using DeepSeek-Coder-6.7B-Base
+•
+RDS+
+(
+Ivison et al., 2025
+)
+: Representation-based selection with task-specific seeds (25 from HumanEval, 25 from MBPP)
+•
+SCAR
+(
+Li et al., 2025
+)
+: Top 25% by style consistency score, computed using
+lizhuang144/scar-gte-large
+All perplexity computations use the same chat template format for fair comparison.
+4.2
+Main Results
+We fine-tune DeepSeek-Coder-6.7B-Base on selected subsets from WarriorCoder (310K samples) and evaluate on HumanEval(+) and MBPP(+)
+(
+Liu et al., 2023
+)
+. Results are shown in Table
+1
+.
+Method
+%
+HumanEval
+HumanEval+
+MBPP
+MBPP+
+Full Data
+100
+78.05
+72.56
+71.69
+59.52
+RMI Top 50%
+50
+78.05
+73.17
+72.22
+58.20
+RMI 50% (G)
+50
+76.22
+70.12
+73.02
+60.58
+RMI QW 50%
+50
+72.56
+68.90
+70.63
+58.47
+RMI 50-75%
+25
+77.44
+72.56
+71.43
+58.47
+RMI Top-25%
+25
+73.17
+70.12
+70.11
+57.14
+RMI Bot-25%
+25
+72.56
+67.68
+65.34
+54.76
+Random
+25
+73.78
+69.51
+68.52
+57.67
+IFD
+25
+71.95
+66.46
+64.81
+54.76
+RDS+
+25
+76.83
+71.34
+71.69
+58.99
+SCAR
+25
+75.00
+70.73
+70.63
+57.67
+Table 1:
+Main results (pass@1 with greedy decoding). (G) = global ranking.
+Overall, stratified RMI selection with 50% data matches or exceeds full-data performance, while the mid-range 25% subset (RMI 50-75%) achieves comparable results. Both extremes (top-25% and bottom-25%) underperform, and RMI-based selection consistently outperforms baseline methods. Key findings:
+•
+RMI outperforms most baselines
+: At 25% data, RMI 50-75% outperforms Random, IFD, and SCAR on both benchmarks. It achieves results comparable to RDS+, surpassing it on HumanEval+ (72.56 vs 71.34) while remaining competitive on MBPP+.
+•
+Middle range is optimal
+: RMI 50-75% (25% data) matches full-data performance on HumanEval+ (72.56) and approaches it on MBPP+ (58.47 vs 59.52). This “sweet spot” contains samples with good semantic alignment without trivial paraphrasing.
+•
+Both extremes are harmful
+: RMI Top-25% underperforms full data by 2.4/2.4 points on HumanEval+/MBPP+ (70.12/57.14 vs 72.56/59.52), suggesting extremely high RMI indicates certain defect patterns that language models easily recognize, such as answer paraphrasing the query. RMI Bottom-25% underperforms by 4.9/4.8 points (67.68/54.76), confirming low RMI indicates semantic misalignment.
+Case Study: Defect Patterns in High RMI.
+To illustrate why extremely high RMI samples are harmful, we examine an example from the top RMI percentile (RMI
+=
+3.37
+=3.37
+):
+Query
+: How to convert a
+gritty sulla matrix
+with
+floating discharges
+into a fairly
+crisp supra array
+predominantly within
+specific thresholds
+using Python?
+Answer
+: Converting a
+Gritty Sulla Matrix
+… To convert a
+gritty sulla matrix
+with
+floating discharges
+into a fairly
+crisp supra array
+… (followed by generic NumPy thresholding code)
+The query contains nonsensical jargon, and the answer simply paraphrases these terms (underlined). The answer makes the query highly predictable (hence high RMI) but provides no genuine learning signal. This illustrates one type of defect pattern that concentrates in high-RMI regions: answers echo query keywords, reducing
+PPL
+​
+(
+Q
+|
+A
+)
+\text{PPL}(Q|A)
+without semantic substance.
+Case Study: Low RMI as Misalignment.
+Conversely, we examine a sample with negative RMI (RMI
+=
+−
+0.13
+=-0.13
+):
+Query
+: Hi!
+Answer
+: compensated, let’s get you the help you need. Could you please provide more details about what you’re working on or what specific Python coding question you have? I’m here to assist you with any Python-related challenges you might be facing. Whether it’s a beginner question, a complex algorithm, or anything in between, feel free to share the details, and I’ll do my best to help!
+The query “Hi!” is not a meaningful instruction for a code dataset. Consequently, the generated answer—despite attempting to be helpful—cannot provide information that helps predict the query. This is a typical example of
+semantic misalignment
+: a poorly-specified query leads to an answer that has little semantic connection to the query content (hence negative RMI). Such samples should be filtered out as they provide poor learning signal for code generation.
+4.3
+Analysis
+Why Does Model Disagreement Work?
+A single model’s RMI conflates multiple factors that cannot be easily separated:
+•
+Low RMI
+may indicate: (1) the sample is too
+difficult
+for the model to understand the Q-A relationship; (2) the Q-A pair is genuinely
+unrelated
+; (3) the data is
+corrupted
+; or (4) the model is already
+familiar
+with this Q-A pattern, so the answer provides little additional information.
+•
+High RMI
+may indicate: (1) the model recognizes a familiar pattern from pretraining; or (2) defect patterns such as paraphrasing or repetition.
+Models of different capabilities interpret these signals differently. A strong model’s high RMI more likely reflects genuine understanding of the Q-A relationship, as it can recognize complex patterns. A weak model’s low RMI more likely reflects difficulty rather than data quality issues.
+By comparing the two models, we can disentangle these signals: the strong model filters out corrupted or irrelevant samples (ensuring
+validity
+), while the weak model identifies samples that still present learning challenges (ensuring
+learnability
+). Table
+2
+summarizes the four cases.
+Strong
+Weak
+Action
+Interpretation
+High
+High
+Filter
+Defect patterns (e.g., repetition)
+Low
+Low
+Filter
+Corrupted, too hard, or trivial
+Low
+High
+Filter
+Easy for strong model
+High
+Low
+Retain
+Valid (strong) + learnable (weak)
+Table 2:
+Model agreement/disagreement cases.
+This explains why Diff-based selection outperforms both single-model selection and consensus-based selection (Sum-High).
+Ablation: Disagreement vs. Consensus.
+To validate the effectiveness of our disagreement-based selection, we compare four selection strategies using fixed hyperparameters (batch size 256, learning rate 4e-5, warmup ratio 0.2). We report results from the best checkpoint for each method. Results are shown in Table
+3
+.
+Method
+HumanEval
+HumanEval+
+MBPP
+MBPP+
+Diff-High
+77.44
+71.95
+71.43
+58.73
+Sum-High
+74.39
+68.90
+71.16
+59.52
+Sum-Low
+71.34
+65.85
+66.14
+55.56
+Diff-Low
+71.34
+67.07
+74.87
+62.43
+Table 3:
+Ablation on selection strategies (all 25% data).
+Key observations: (1)
+Diff
+>
+>
+Sum
+: Diff-High outperforms Sum-High by 3 points on HumanEval+ (71.95 vs 68.90), validating that disagreement signals are more informative than consensus. (2)
+Sum-Low is worst
+: Samples where both models agree on low RMI yield the poorest results, confirming they should be filtered out. (3)
+Diff-High vs Diff-Low
+: Diff-High favors HumanEval while Diff-Low favors MBPP. One possible explanation is that strong models identify complex patterns beneficial for challenging tasks, while weak models recognize simpler patterns beneficial for straightforward tasks.
+Stability of RMI Across Training.
+To verify that RMI captures intrinsic data properties, we compute RMI using the same model before and after fine-tuning. The Pearson correlation between pre-training and post-training RMI scores is
+ρ
+=
+0.9539
+\rho=0.9539
+, indicating that RMI rankings are highly stable across training. This makes RMI suitable for static one-time selection without requiring iterative re-scoring. However, the moderate correlation between strong and weak model rankings (
+ρ
+=
+0.70
+\rho=0.70
+) suggests that RMI also reflects model-specific knowledge: stronger models recognize quality patterns that weaker models miss. This dual nature of RMI (stable within a model, yet sensitive to model capability) is precisely what enables the Diff signal to capture “cognitive gap” samples.
+Sample Overlap Analysis.
+We analyze whether disagreement-based and consensus-based selection identify the same samples. Specifically, we compare two 25% selection strategies: (1) Diff-High: samples with high
+r
+s
+−
+r
+w
+r_{s}-r_{w}
+, and (2) Sum-High: samples with high
+r
+s
++
+r
+w
+r_{s}+r_{w}
+(“double-high”). The overlap between these two selected sets is only
+13.85%
+, indicating that they capture fundamentally different sample populations.
+This low overlap explains the performance gap in Table
+3
+: Diff-High and Sum-High achieve 71.95 vs. 68.90 on HumanEval+. We hypothesize that Sum-High samples include many
+paraphrasing
+cases, where the answer trivially echoes the question. Repetition is a common phenomenon in neural text generation
+(
+Holtzman et al., 2020
+)
+: models tend to repeat input phrases verbatim. Crucially, such repetition is a
+simple
+pattern that both strong and weak models can easily detect, leading to high RMI scores from both (
+r
+s
+r_{s}
+high,
+r
+w
+r_{w}
+high, hence Sum high but Diff low). By selecting Diff-High samples, we naturally filter out these defect patterns and retain samples with genuine semantic content that only strong models recognize.
+Additionally, we compare the overlap between strong and weak model top-50% selections (without using the Diff signal). The overlap is 76.1%, substantially higher than the 13.85% above. Despite this high overlap, the two selections yield different downstream performance (Table
+1
+), confirming that the remaining 23.9% non-overlapping samples carry significant training signal. The disagreement signal captures this unique subset that neither model alone would prioritize.
+5
+Conclusion
+We proposed a novel data selection framework for code generation based on reverse mutual information and model disagreement. Our key insight is that measuring “answer explanatory power” via
+PPL
+​
+(
+Q
+|
+A
+)
+\text{PPL}(Q|A)
+provides a different and complementary signal to traditional “generation difficulty” measured by
+PPL
+​
+(
+A
+|
+Q
+)
+\text{PPL}(A|Q)
+. Furthermore, samples with high cognitive gap, where strong models recognize quality that weak models miss, are particularly valuable for training.
+Our experiments reveal three key findings: (1) RMI-based selection with stratification consistently outperforms IFD-based selection, validating the importance of reverse direction analysis; (2)
+RMI outliers at both ends correlate with undesirable samples;
+(3) Model disagreement captures a unique subset of valuable samples (only 13.85% overlap with consensus-based selection) that significantly improves training efficiency.
+Practically, our method achieves comparable performance to full-data training using only 25% of the data, demonstrating that careful data selection can substantially reduce computational costs without sacrificing model capability.
+Looking forward, our framework opens several research directions: extending the approach to other domains beyond code generation, exploring alternative model pairs for disagreement signals, and investigating curriculum learning strategies that dynamically adjust selection criteria during training.
+Limitations
+Our work has several limitations that future research should address:
+Single Dataset.
+Our experiments are conducted exclusively on the WarriorCoder dataset for code generation. While WarriorCoder represents state-of-the-art seedless synthetic data generation, it may have specific noise patterns that differ from other datasets. Future work should validate the approach on diverse datasets including other code generation corpora (e.g., Evol-Instruct), general instruction-tuning datasets (e.g., Alpaca, WizardLM), and domain-specific datasets.
+Model Selection Sensitivity.
+The effectiveness of the disagreement signal depends on the choice of strong and weak models. We use DeepSeek-Coder-6.7B-Base and Qwen3-0.6B based on their availability and capability gap, but the optimal model pair may vary across domains. A systematic study of how model family, size, and training data affect the disagreement signal is needed.
+Hyperparameter Tuning.
+We use fixed hyperparameters throughout (
+K
+=
+10
+K=10
+bins,
+τ
+=
+0.1
+\tau=0.1
+threshold) without extensive tuning. While our experiments demonstrate robustness across different selection ratios, more fine-grained hyperparameter search may further improve performance.
+Reproducibility.
+Due to time constraints, we do not report results across multiple random seeds. While the large dataset size (310K samples) provides some stability, future work should include confidence intervals.
+Computational Cost.
+Computing RMI scores requires two forward passes per sample (for
+PPL
+​
+(
+Q
+)
+\text{PPL}(Q)
+and
+PPL
+​
+(
+Q
+|
+A
+)
+\text{PPL}(Q|A)
+), which adds overhead compared to standard training. However, this is a one-time cost that enables significant training data reduction.
+References
+Austin
+et al.
+(2021)
+J. Austin, A. Odena, M. Nye, M. Bosma, H. Michalewski, D. Dohan, E. Jiang, C. Cai, M. Terry, Q. Le,
+et al.
+Program synthesis with large language models
+.
+arXiv preprint arXiv:2108.07732
+.
+Cited by:
+§4.1
+.
+Chaudhary (2023)
+S. Chaudhary
+Code alpaca: an instruction-following llama model for code generation
+.
+Note:
+https://github.com/sahil280114/codealpaca
+Cited by:
+§2
+.
+Chen
+et al.
+(2021)
+M. Chen, J. Tworek, H. Jun, Q. Yuan,
+et al.
+Evaluating large language models trained on code
+.
+arXiv preprint arXiv:2107.03374
+.
+Cited by:
+§1
+,
+§4.1
+.
+Church and Hanks (1990)
+K. W. Church and P. Hanks
+Word association norms, mutual information, and lexicography
+.
+Computational Linguistics
+16
+(
+1
+),
+pp. 22–29
+.
+Cited by:
+§2
+.
+Feng
+et al.
+(2025)
+H. Feng, P. Zhao, Q. Sun, C. Xu, F. Yang, L. Wang, Q. Ma, Q. Lin, S. Rajmohan, D. Zhang,
+et al.
+Warriorcoder: learning from expert battles to augment code large language models
+.
+In
+Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers)
+,
+pp. 4955–4969
+.
+Cited by:
+§1
+,
+§2
+,
+§4.1
+.
+Fu
+et al.
+(2025)
+Y. Fu, F. Hamman, and S. Dutta
+T-shirt: token-selective hierarchical data selection for instruction tuning
+.
+In
+Proceedings of NeurIPS
+,
+Cited by:
+§2
+.
+Guo
+et al.
+(2024)
+D. Guo, Q. Zhu, D. Yang, Z. Xie, K. Dong, W. Zhang, G. Chen, X. Bi, Y. Wu, Y.K. Li, F. Luo, Y. Xiong, and W. Liang
+DeepSeek-coder: when the large language model meets programming – the rise of code intelligence
+.
+External Links:
+2401.14196
+,
+Link
+Cited by:
+1st item
+.
+Guo
+et al.
+(2025)
+W. Guo, Z. Zhang, X. Liu, Y. Zhang, Z. Lu, H. Zhu, X. Liu, and R. Yan
+ProDS: preference-oriented data selection for instruction tuning
+.
+arXiv preprint arXiv:2505.12754
+.
+Cited by:
+§2
+.
+Helm
+et al.
+(2025)
+F. Helm, N. Daheim, and I. Gurevych
+Token weighting for long-range language modeling
+.
+In
+Findings of NAACL
+,
+Cited by:
+§2
+.
+Holtzman
+et al.
+(2020)
+A. Holtzman, J. Buys, L. Du, M. Forbes, and Y. Choi
+The curious case of neural text degeneration
+.
+In
+Proceedings of ICLR
+,
+Cited by:
+§4.3
+.
+Ivison
+et al.
+(2025)
+H. Ivison, M. Zhang, F. Brahman, P. W. Koh, and P. Dasigi
+Large-scale data selection for instruction tuning
+.
+arXiv preprint arXiv:2503.01807
+.
+Cited by:
+7th item
+.
+Li
+et al.
+(2024a)
+M. Li, Y. Zhang, S. He, Z. Li, H. Zhao, J. Wang, N. Cheng, and T. Zhou
+Superfiltering: weak-to-strong data filtering for fast instruction-tuning
+.
+In
+Proceedings of ACL
+,
+Cited by:
+§2
+,
+§3.3
+.
+Li
+et al.
+(2024b)
+M. Li, Y. Zhang, Z. Li, J. Chen, L. Chen, N. Cheng, J. Wang, T. Zhou, and J. Xiao
+From quantity to quality: boosting llm performance with self-guided data selection for instruction tuning
+.
+In
+Proceedings of NAACL
+,
+Cited by:
+1st item
+,
+§1
+,
+§2
+,
+§3.1
+,
+6th item
+.
+Li
+et al.
+(2023)
+R. Li, L. B. Allal, Y. Zi, N. Muennighoff, D. Kocetkov, C. Mou, M. Marone, C. Akiki, J. Li, J. Chim,
+et al.
+Starcoder: may the source be with you!
+.
+arXiv preprint arXiv:2305.06161
+.
+Cited by:
+§1
+.
+Li
+et al.
+(2025)
+Z. Li, Y. Hua, T. Vu, H. Zhan, L. Qu, and G. Haffari
+SCAR: data selection via style consistency-aware response ranking for efficient instruction-tuning of large language models
+.
+In
+Proceedings of ACL
+,
+Cited by:
+§2
+,
+8th item
+.
+Lin
+et al.
+(2024)
+Z. Lin, Z. Gou, Y. Gong, X. Liu, Y. Shen, R. Xu, C. Lin, Y. Yang, J. Jiao, N. Duan,
+et al.
+Rho-1: not all tokens are what you need
+.
+arXiv preprint arXiv:2404.07965
+.
+Cited by:
+§2
+.
+Liu
+et al.
+(2023)
+J. Liu, C. S. Xia, Y. Wang, and L. Zhang
+Is your code generated by chatgpt really correct? rigorous evaluation of large language models for code generation
+.
+Advances in Neural Information Processing Systems
+36
+.
+Cited by:
+§4.1
+,
+§4.2
+.
+Luo
+et al.
+(2024)
+Z. Luo, C. Xu, P. Zhao, Q. Sun, X. Geng, W. Hu, C. Tao, J. Ma, Q. Lin, and D. Jiang
+WizardCoder: empowering code large language models with evol-instruct
+.
+In
+Proceedings of ICLR
+,
+Cited by:
+§2
+.
+Roziere
+et al.
+(2023)
+B. Roziere, J. Gehring, F. Gloeckle, S. Sootla, I. Gat, X. E. Tan, Y. Adi, J. Liu, R. Sauvestre, T. Remez,
+et al.
+Code llama: open foundation models for code
+.
+arXiv preprint arXiv:2308.12950
+.
+Cited by:
+§1
+.
+Team (2025)
+Q. Team
+Qwen3 technical report
+.
+External Links:
+2505.09388
+,
+Link
+Cited by:
+2nd item
+.
+Wei
+et al.
+(2023)
+Y. Wei, Z. Wang, J. Liu, Y. Ding, and L. Zhang
+Magicoder: source code is all you need
+.
+arXiv preprint arXiv:2312.02120
+.
+Cited by:
+§2
+.
+Xia
+et al.
+(2024)
+M. Xia, S. Malladi, S. Gururangan, S. Arora, and D. Chen
+LESS: selecting influential data for targeted instruction tuning
+.
+In
+Proceedings of ICML
+,
+Cited by:
+§2
+.
+Xu
+et al.
+(2024)
+Z. Xu, F. Jiang, L. Niu, Y. Deng, R. Poovendran, Y. Choi, and B. Y. Lin
+Magpie: alignment data synthesis from scratch by prompting aligned llms with nothing
+.
+arXiv preprint arXiv:2406.08464
+.
+Cited by:
+§1
+,
+§2
+.
+Zhang
+et al.
+(2025)
+J. Zhang, C. Zhang, Y. Liu, Y. Jin, X. Yang, B. Zheng, Y. Liu, and L. Guo
+D3: diversity, difficulty, and dependability-aware data selection for sample-efficient llm instruction tuning
+.
+Cited by:
+§2
+.
+Zheng
+et al.
+(2024)
+Y. Zheng, R. Zhang, J. Zhang, Y. Ye, Z. Luo, Z. Feng, and Y. Ma
+LlamaFactory: unified efficient fine-tuning of 100+ language models
+.
+In
+Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 3: System Demonstrations)
+,
+Bangkok, Thailand
+.
+External Links:
+Link
+Cited by:
+§4.1
+.
+Appendix A
+Implementation Details and Model Configurations
+To provide full transparency on how Reverse Mutual Information (RMI) is calculated, we present the exact chat templates and system prompts used for both the strong and weak models.
+DeepSeek-Coder Template
+The following template follows the official convention for DeepSeek-Coder-Instruct.
+System Template for DeepSeek-Coder
+System
+: You are an AI programming assistant, utilizing the Deepseek Coder model, developed by Deepseek Company, and you only answer questions related to computer science. For politically sensitive questions, security and privacy issues, and other non-computer science questions, you will refuse to answer.
+Qwen3 Template
+For Qwen3-0.6B, we use a consistent system prompt to focus the model on computer science tasks. Note that for this model, we explicitly set
+enable_thinking=False
+to maintain standard autoregressive behavior.
+System Template for Qwen3
+System
+: You are an AI programming assistant, and you only answer questions related to computer science. For politically sensitive questions, security and privacy issues, and other non-computer science questions, you will refuse to answer.
+Implementation Note
+In both cases,
+PPL
+​
+(
+Q
+|
+A
+)
+\text{PPL}(Q|A)
+is calculated by performing a forward pass on the ground-truth question tokens represented by
+[Q]
+in the Assistant turn, while teacher-forcing the System and User inputs as context.
+Appendix B
+Sensitivity to Chat Template and Task Framing
+We investigate how specific task instructions and formatting affect RMI and IFD signals.
+Standard Implementations (Template-based).
+In our main experiments, both metrics utilize structured chat templates. For **Standard RMI**, the reverse generation task is highly constrained:
+‘‘TASK: Given an answer, generate the most likely
+computer science
+question that this answer is responding to. If the inferred question is outside computer science, respond with
+‘INVALID’
+.’’
+For **Template-based IFD**, we compute the perplexity of the answer
+A
+A
+within the following structured templates:
+System
+: Standard system prompt
+User
+: [None]
+Assistant
+:
+[A]
+System
+: Standard system prompt
+User
+:
+[Q]
+Assistant
+:
+[A]
+Variations for Sensitivity Analysis.
+To isolate the impact of task framing, we compare our standard method against several variations:
+•
+Raw IFD
+: Following the original implementation proposed by
+Li et al. (2024b)
+, Raw IFD is computed via simple text concatenation:
+[Q] + [A]
+for the conditional part, and
+[A]
+for the unconditional part, without any system prompts or role indicators (User/Assistant).
+•
+Simplified Task Prompt (
+ρ
+=
+0.88
+\rho=0.88
+)
+: Removes both the domain specificity and the negative constraint, using a more general instruction:
+‘‘TASK: Given an answer, generate the most likely question that this answer is responding to.’’
+•
+System Context Only (
+ρ
+=
+0.79
+\rho=0.79
+)
+: For
+P
+​
+P
+​
+L
+​
+(
+Q
+)
+PPL(Q)
+, we retain the System Prompt but
+remove the explicit “TASK” instruction
+. This tests whether the model’s persona alone (e.g., “You are an AI assistant”) is sufficient for estimating query probability.
+•
+Prefix-only (
+ρ
+=
+0.70
+\rho=0.70
+)
+: For
+P
+​
+P
+​
+L
+​
+(
+Q
+)
+PPL(Q)
+, we strip away the System Prompt and use only a minimal newline-delimited indicator (
+"Question:"
+).
+•
+Pure Raw (
+ρ
+=
+0.62
+\rho=0.62
+)
+: For
+P
+​
+P
+​
+L
+​
+(
+Q
+)
+PPL(Q)
+, we calculate the perplexity from the very first token of the query with
+zero context
+(cold start).
+Results and Analysis.
+As shown in Table
+4
+, IFD is remarkably stable (
+ρ
+=
+0.957
+\rho=0.957
+) even under raw concatenation. In contrast, RMI drops as we strip away the template and context. The correlation decreases from 0.88 (Simplified Template) to 0.79 (System-Prefix), 0.70 (Prefix-only), and 0.62 (Pure Raw). This confirms that while the specific
+wording
+of the template matters less, the presence of
+sufficient context
+for
+P
+​
+P
+​
+L
+​
+(
+Q
+)
+PPL(Q)
+is critical. Even without a task template, providing the system prompt (
+ρ
+=
+0.79
+\rho=0.79
+) significantly stabilizes the metric compared to raw inputs.
+Comparison (vs. Standard RMI)
+Spearman
+ρ
+\rho
+IFD vs. Raw IFD
+0.957
+RMI vs. Simplified Task Prompt
+0.88
+RMI vs. System-Prefix (No Template)
+0.79
+RMI vs. Prefix-only (No Template)
+0.70
+RMI vs. Pure Raw (No Template)
+0.62
+Table 4:
+Spearman correlation of metrics under different task framings.
+The primary source of instability is the
+contextual imbalance in
+P
+​
+P
+​
+L
+​
+(
+Q
+)
+PPL(Q)
+calculation
+. In the
+Pure Raw
+setting, the model must predict the query from a "cold start" without knowing it is handling a CS query. Since queries are typically short, the high loss incurred by the initial tokens dominates the average
+P
+​
+P
+​
+L
+​
+(
+Q
+)
+PPL(Q)
+, biasing the
+R
+​
+M
+​
+I
+RMI
+upwards and introducing noise (see Figure
+5
+).
+Discussion: Why IFD is More Robust.
+IFD remains robust because
+P
+​
+P
+​
+L
+​
+(
+A
+)
+PPL(A)
+is calculated on answer sequences (code) that are typically longer and follow familiar structural patterns (
+def
+,
+import
+). Moreover,
+A
+A
+is always conditioned on
+Q
+Q
+in the IFD calculation, avoiding the "zero context" problem. The correlation jump from 0.62 to 0.70 by simply adding a
+"Question:"
+indicator proves that task framing is essential for RMI to capture genuine semantic coherence rather than prefix-induced surprise.
+Figure 5:
+Scatter plot comparing Standard RMI vs. Raw RMI. The lack of system context in the Raw version leads to inflated
+P
+​
+P
+​
+L
+​
+(
+Q
+)
+PPL(Q)
+and subsequent overestimation of RMI.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

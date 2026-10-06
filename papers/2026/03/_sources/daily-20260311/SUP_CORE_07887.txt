@@ -1,0 +1,1535 @@
+Reject, Resample, Repeat: Understanding Parallel Reasoning in Language Model Inference
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+Towards a theory of inference-time interventions
+1.1 Setting: Guided Generation with Imperfect Process Rewards
+Imperfect process rewards
+1.2 Theoretical Contributions: A Principled Analysis of Particle Filtering Methods for LLM Inference
+Contribution I: Simple criteria for success of SMC
+Contribution II: Beyond Sequential Monte Carlo
+Contribution III: Limits of particle filtering
+Addendum: backtracking as a form of particle filtering
+1.3 Empirical Contributions: Does the Theory Predict the Performance of SMC in LLMs?
+Evaluating SMC on math reasoning tasks
+Roadmap
+2 Preliminaries
+Partial Reward Model
+3 Theoretical Analysis of Particle Filtering Methods
+3.1 Simple Criteria for Success of SMC
+3.1.1 Handling Tail Behavior
+3.2 Beyond SMC: Faster Convergence under L∞L_{\infty}-condition
+3.3 Beyond SMC: Near-perfect PRM
+3.4 Limits of Particle Filtering Methods
+4 Experiments in Language Models
+4.1 Controlled Setting: Prompt-Switching Task
+Evaluation
+4.2 Evaluating Dependence on PRM Accuracy
+4.3 Evaluating Dependence on Action-level Coverage
+4.4 Dependence on the Number of Particles
+4.5 SMC on Math Problem-solving Tasks
+SMC improves performance on math
+SMC and PRM accuracy
+5 Discussion
+References
+A Comparison with Prior Work
+Action-level rejection sampling / sequential importance sampling (Yang and Klein, 2021)
+VGB (Rohatgi et al., 2025)
+B Technical Tools
+C Proofs for SMC
+Notation
+C.1 Useful Lemmas for SMC
+C.2 Proof of
+C.3 Insufficiency of Existing Analysis
+C.4 Proof of
+C.5 Proof of
+C.6 Lower Bound for SMC with Exact Value Function
+D Proofs for SMC-RS
+D.1 Proof of
+D.2 Analysis of SMC-RS with Heavy-tailed Errors
+D.3 Faster Convergence for SMC-RS
+E A Unified Perspective on Backtracking and Particle Filtering
+Outline of appendix
+E.1 Background on VGB
+E.2 Definition of SMC-IND
+E.3 Coupling VGB with SMC-IND
+Infinite-particle SMC-IND process
+Infinite-time VGB process
+F Proof of
+F.1 Myopic Particle Filtering Algorithms
+F.2 Specialized Setting and Formal Theorem Statement
+F.3 Proof of
+F.3.1 Intuition and Formal Construction
+Intuition for construction
+Formal construction: base case (N=1N=1)
+Formal construction: recursive case (N>1N>1)
+F.3.2 Base Case for Analysis
+F.3.3 Inductive Step for Analysis
+F.3.4 Completing the Induction
+G Additional Experimental Details
+G.1 Additional Evaluation Approaches
+G.2 Details for
+Details for the figures
+G.3 Details for
+G.4 SMC vs. Best-of-NN on AIME
+License: arXiv.org perpetual non-exclusive license
+arXiv:2603.07887v1 [cs.LG] 09 Mar 2026
+\declaretheorem
+[name=Theorem,parent=section]theorem
+\declaretheorem[name=Lemma,parent=section, numberlike=theorem]lemma
+\declaretheorem[name=Assumption, parent=section, numberlike=theorem]assumption
+\declaretheorem[name=Definition, parent=section, numberlike=theorem]definition
+\declaretheorem[name=Condition, parent=section, numberlike=theorem]condition
+\declaretheorem[name=Corollary, parent=section, numberlike=theorem]corollary
+\declaretheorem[name=Claim, parent=section, numberlike=theorem]claim
+\declaretheorem[qed=⊲\triangleleft,name=Example,style=definition, parent=section, numberlike=theorem]example
+\declaretheorem[name=Remark, parent=section, numberlike=theorem]remark
+\declaretheorem[name=Proposition, parent=section, numberlike=theorem]proposition
+\declaretheorem[name=Fact, parent=section, numberlike=theorem]fact
+Reject, Resample, Repeat:
+Understanding Parallel Reasoning in Language Model Inference
+Noah Golowich
+Microsoft Research
+nzg@cs.utexas.edu
+and
+Fan Chen
+MIT
+fanchen@mit.edu
+and
+Dhruv Rohatgi
+MIT
+drohatgi@mit.edu
+and
+Raghav Singhal
+NYU
+singhal.raghav@gmail.com
+and
+Carles Domingo-Enrich
+Microsoft Research
+carlesd@microsoft.com
+and
+Dylan J. Foster
+Microsoft Research
+dylanfoster@microsoft.com
+and
+Akshay Krishnamurthy
+Microsoft Research
+akshaykr@microsoft.com
+August 24, 2026
+Abstract
+Inference-time methods that aggregate and prune multiple samples have emerged as a powerful paradigm for steering large language models, yet we lack any principled understanding of their accuracy–cost tradeoffs.
+In this paper, we introduce a route to rigorously study such approaches using the lens of particle filtering algorithms such as Sequential Monte Carlo (SMC).
+Given a base language model and a process reward model estimating expected terminal rewards, we ask: how accurately can we sample from a target distribution given some number of process reward evaluations?
+Theoretically, we identify (1) simple criteria enabling non-asymptotic guarantees for SMC; (2) algorithmic improvements to SMC; and (3) a fundamental limit faced by all particle filtering methods. Empirically, we demonstrate that our theoretical criteria effectively govern the sampling error of SMC, though not necessarily its final accuracy, suggesting that theoretical perspectives beyond sampling may be necessary.
+1 Introduction
+Recent work on large language models (LLMs) has demonstrated the value of inference-time interventions that steer models towards higher-quality outputs. For instance, existing work has experimented with a combination of using parallel generations from LLMs (Madaan et al., 2025; Brown et al., 2024), techniques to aggregate such generations (Wang et al., 2023; Fu et al., 2025; Zhao et al., 2025), and ways to prune or compress them to fit in the context window for subsequent model calls (Yang et al., 2024; Wu et al., 2025). Even with no additional training, such interventions can significantly improve performance on challenging tasks such as mathematical reasoning and question answering. However, these methods are largely ad hoc, since we lack a unifying theoretical framework that can explain the benefits of different inference-time interventions and guide algorithm design towards the most effective ones.
+Figure 1: Performance of SMC (with NN particles) vs. Best-of-NN on Math500 problems; here we take N=32N=32. Each point is a different problem; thus, SMC with NN particles improves performance over Best-of-NN on most problems. See Section 4.5 for details.
+In this paper, we ask:
+Can we analyze inference-time interventions such as aggregation and pruning of parallel generations in a principled manner?
+To do so, we study the paradigm of guided LLM generation with a process reward model (Wang et al., 2025a; Puri et al., 2025b), where the process reward model numerically scores partial generations. In this paradigm, aggregation and pruning are naturally implemented by particle filtering algorithms, including the popular Sequential Monte Carlo (SMC) method, which use the process reward model to adaptively prune and replicate multiple particles (namely, partial generations from the base model), as tokens are generated. These strategies can have robust empirical benefits over simpler interventions such as Best-of-NN; see e.g. Fig. 1 or Puri et al. (2025b).
+While particle filtering methods have been extensively applied to tasks ranging from posterior inference (Pitt and Shephard, 1997) and robot localization (Montemerlo et al., 2002) to steering LLMs (Lipkin et al., 2025; Lew et al., 2023; Loula et al., 2025; Grand et al., 2025; Puri et al., 2025a; Zhao et al., 2024; Feng et al., 2024) and diffusion models (Skreta et al., 2025; Singhal et al., 2025), few non-asymptotic guarantees have been established for such methods. In this paper, we address this challenge, providing a user-friendly analysis of SMC and identifying benefits and limitations of more sophisticated particle filtering methods.
+Towards a theory of inference-time interventions
+Increasingly, inference-time interventions utilize models not just for generation and scoring, but also more complex operations such as splicing (Fu et al., 2025) or summarizing (Yu et al., 2025) generations. While these operations are not directly captured by our setting, we believe that our work is a necessary first step towards developing a framework for understanding (and improving) such interventions.
+1.1 Setting: Guided Generation with Imperfect Process Rewards
+For a fixed prompt, a language model defines a distribution πref∈Δ⁡(𝒜H)\pi_{\texttt{ref}}\in\Delta(\mathcal{A}^{H}) over sequences of HH actions in some set 𝒜\mathcal{A}.11
+1
+For simplicity, we assume that the language model produces generations of fixed length.
+One can think of 𝒜\mathcal{A} as the space of tokens, or more generally as blocks of tokens. Given a sequence a1:ha_{1:h}, we can efficiently sample from πref(ah+1=⋅∣a1:h)\pi_{\texttt{ref}}(a_{h+1}=\cdot\mid{}a_{1:h}), which enables autoregressive sampling from πref\pi_{\texttt{ref}}.
+We model the task of steering the language model towards some desired reward as a sampling problem, in line with recent work on LLM inference and post-training (Rohatgi et al., 2025; Geuter et al., 2025; Foster et al., 2025; Xiong et al., 2024; Zhu and Lu, 2026). Given query access to a reward function r⋆:𝒜H→ℝ≥0r^{\star}:\mathcal{A}^{H}\to\mathbb{R}_{\geq 0}, we aim to sample from the tilted distribution πH⋆(a1:H)∝πref(a1:H)r⋆(a1:H)\pi^{\star}_{H}(a_{1:H})\propto\pi_{\texttt{ref}}(a_{1:H})r^{\star}(a_{1:H}). For instance, in the context of mathematical reasoning, r⋆(a1:H)∈{0,1}r^{\star}(a_{1:H})\in\{0,1\} measures whether a1:Ha_{1:H} correctly solves the prompt.
+Imperfect process rewards
+Following Rohatgi et al. (2025), we theoretically formalize a process reward model (PRM) as an approximate value function. Given a sequence a1:ha_{1:h} of any length, the PRM provides an estimate V^(a1:h)∈ℝ≥0\widehat{V}(a_{1:h})\in\mathbb{R}_{\geq 0} of the
+expected reward of a1:ha_{1:h} under πref\pi_{\texttt{ref}}, i.e., V⋆(a1:h):=𝔼a′1:H∼πref[r⋆(a1:H′)∣a1:h′=a1:h]V^{\star}(a_{1:h}):=\mathbb{E}_{a^{\prime}_{1:H}\sim\pi_{\texttt{ref}}}[r^{\star}(a^{\prime}_{1:H})\mid a^{\prime}_{1:h}=a_{1:h}].
+In practice, there has been extensive effort to train transformers specifically to be PRMs (Lightman et al., 2023; Wang et al., 2024; Wang et al., 2025b; Zhang et al., 2025) for certain problems, such as math reasoning. If such a fine-tuned PRM adapted to a desired reward function r⋆r^{\star} is not available, there are several other popular choices for V^\widehat{V}—e.g. LLM-as-a-judge (Stephan et al., 2024) or LLM log-probabilities (Karan and Du, 2025; Lew et al., 2023); see also Section 4.
+The key algorithmic challenge in this setting is that the PRM is imperfect. To address this challenge, numerous parallel and sequential approaches have been proposed, including SMC (Puri et al., 2025b), block rejection sampling (Mudgal et al., 2024), and backtracking (Botta et al., 2025). Thus far, provable guarantees are only known for backtracking (Rohatgi et al., 2025) — an inherently sequential approach. We ask: given access to πref\pi_{\texttt{ref}} and V^\widehat{V} as above, what structural properties enable approximate sampling from πH⋆\pi^{\star}_{H} via efficient parallel methods such as particle filtering?
+1.2 Theoretical Contributions: A Principled Analysis of Particle Filtering Methods for LLM Inference
+Contribution I: Simple criteria for success of SMC
+Our first result identifies two  key properties that enable the success of SMC. For h∈[H]h\in[H], let πh⋆,π^h∈Δ⁡(𝒜h)\pi^{\star}_{h},\widehat{\pi}_{h}\in\Delta(\mathcal{A}^{h}) denote the true and approximate intermediate target distributions, defined by πh⋆(a1:h)∝πref(a1:h)V⋆(a1:h)\pi^{\star}_{h}(a_{1:h})\propto\pi_{\texttt{ref}}(a_{1:h})V^{\star}(a_{1:h}) and π^h(a1:h)∝πref(a1:h)V^(a1:h)\widehat{\pi}_{h}(a_{1:h})\propto\pi_{\texttt{ref}}(a_{1:h})\widehat{V}(a_{1:h}). Then we show the following:
+{theorem}
+[Corollary of Section 3.1]
+Suppose that the following hold.
+(1) Bounded action-level coverage: for all hh, a1:h+1a_{1:h+1}, π⋆(ah+1∣a1:h)/πref(ah+1∣a1:h)≤C𝖺𝖼𝗍\pi^{\star}(a_{h+1}\mid a_{1:h})/\pi_{\texttt{ref}}(a_{h+1}\mid a_{1:h})\leq C_{\sf act}.
+(2) Bounded χ2\chi^{2}-divergences (these control the error of V^\widehat{V} vs. V⋆V^{\star}, per Appendix A): Dχ2(πh⋆∥π^h)≤Cχ2D_{\chi^{2}}\left(\pi^{\star}_{h}\;\|\;{}\widehat{\pi}_{h}\right)\leq C_{\chi^{2}} for all hh.
+Then SMC with NN particles samples from a distribution μ^\widehat{\mu} satisfying D𝖳𝖵​(μ^,π⋆)≤H2​C𝖺𝖼𝗍​(Cχ2+1)ND_{\mathsf{TV}}\left(\widehat{\mu},\pi^{\star}\right)\leq\sqrt{\frac{H^{2}C_{\sf act}(C_{\chi^{2}}+1)}{N}}.
+This bound strengthens the guarantees for the backtracking-based algorithm VGB of Rohatgi et al. (2025). Moreover, the parallel runtime of SMC is O⁡(H)O(H) whereas VGB uses time Ω⁡(H2)\Omega(H^{2}) (and is inherently sequential). See Appendix A for additional discussion.
+{remark}
+[Connection to literature on refinements of SMC]
+Interestingly, the two  key properties listed above map quite cleanly onto various efforts in prior work focused on refining SMC algorithms. The latter of the two conditions (that V^\widehat{V} approximates V⋆V^{\star}) is related to the line of work on twisting targets for SMC. In particular, the distributions π^h\widehat{\pi}_{h} introduced above are often referred to as (intermediate) target distributions, and prior work has explored how to choose (or learn) V^\widehat{V} so as to bring π^h\widehat{\pi}_{h} as close as possible to πh⋆\pi^{\star}_{h} for all h∈[H]h\in[H] (Guarniero et al., 2017; Heng et al., 2017; Zhao et al., 2024; Lawson et al., 2022), which is a natural goal in light of Section 1.2.
+Moreover, the first condition (on action-level coverage) is related to the extensive literature on changing the proposal distribution πref,h\pi_{\texttt{ref},h} to better approximate the locally optimal proposal distribution (Naesseth et al., 2019; Doucet et al., 2000), which is defined as the distribution π^h+1(ah+1=⋅∣a1:h)\widehat{\pi}_{h+1}(a_{h+1}=\cdot\mid a_{1:h}). In the event that π^h+1≈πh+1⋆\widehat{\pi}_{h+1}\approx\pi^{\star}_{h+1}, then the locally optimal proposal distribution has action-level coverage close to 11, the smallest possible value. Thus, as long as V^\widehat{V} is sufficiently accurate, modifying πref,h\pi_{\texttt{ref},h} so as to approximate the locally optimal proposal is a way to decrease action-level coverage.22
+2
+Indeed, using π^h+1\widehat{\pi}_{h+1} as the proposal and appropriately modifying the weights in SMC yields a variant with improved convergence properties (see Section 3.3 and Section D.3). Summarizing, our result helps to unify the existing literature on variants of SMC by showing that they are effectively minimizing the key quantities Section 1.2.
+Contribution II: Beyond Sequential Monte Carlo
+Can particle filtering algorithms beyond SMC achieve stronger guarantees? First, we show that if π^h\widehat{\pi}_{h} is close to πh⋆\pi^{\star}_{h} in a stronger L∞L_{\infty} sense, then it is possible to achieve exponential decay in sampling error (rather than polynomial decay, as in Section 1.2) by wrapping SMC in an outer rejection sampling loop (Section 3.2).
+Second, we observe that even when the PRM is perfect, and hence Cχ2=0C_{\chi^{2}}=0, SMC requires Ω⁡(H)\Omega(\sqrt{H}) particles to achieve non-trivial sampling accuracy (Section C.6), even though there is a simple one-particle algorithm for this special case (Rohatgi et al., 2025). We show that a modified algorithm— Sequential Monte Carlo with Rejection Sampling (SMC-RS, Algorithm 2)—avoids this pathology, recovering Section 1.2 as well as the one-particle guarantee (Section 3.3).
+Contribution III: Limits of particle filtering
+A key limitation of SMC (and our modifications) is that even when πref\pi_{\texttt{ref}} has bounded action-level coverage (i.e. C𝖺𝖼𝗍=O⁡(1)C_{\sf act}=O(1)) and the approximate value function V^\widehat{V} is within a constant factor of the truth (and hence Cχ2=O⁡(1)C_{\chi^{2}}=O(1)), our algorithm requires maintaining poly⁡(H)\mathrm{poly}(H) particles and hence requires superlinear work. In Section 3.4 we show that fully avoiding this lower bound would require lookahead: any myopic method needs at least Ω⁡(log⁡H/log⁡log​H)\Omega(\log H/\log\log H) particles (Section 3.4). Closing this gap is open.
+Addendum: backtracking as a form of particle filtering
+In Appendix E, we show an interesting connection between particle filtering algorithms and the backtracking-based approach VGB (Rohatgi et al., 2025) — previously, the only algorithm for inference-time steering of LLMs that was known to be robust to PRM errors. VGB is a (one-particle) Markov chain method that generates tokens but sometimes also deletes the most recent token. We show that the execution of VGB can be coupled with the execution of a certain particle filtering method, potentially providing a new perspective on the benefits of both methods.
+1.3 Empirical Contributions: Does the Theory Predict the Performance of SMC in LLMs?
+We investigate empirically whether the quantities identified by Section 1.2 indeed predict the performance of SMC on LLM sampling problems. First, we consider a simple “prompt switching” task in which the base model πref\pi_{\texttt{ref}} corresponds to sampling from an LLM given some prompt pref\texttt{p}_{\texttt{ref}}, and π⋆\pi^{\star} corresponds to sampling from that LLM given another prompt p⋆\texttt{p}^{\star} (see Section 4 for details). By varying pref,p⋆\texttt{p}_{\texttt{ref}},\texttt{p}^{\star}, and the PRM V^\widehat{V}, we can control for each quantity in Section 1.2. First, in Fig. 2(a), we consider a dataset where V^=V⋆\widehat{V}=V^{\star} for all prompts in the dataset (so Cχ2=0C_{\chi^{2}}=0) but the action level coverage varies, and observe a strong correlation between the action-level coverage (measured via a KL-divergence proxy) and the sampling error of SMC. Second, in Fig. 2(b), we consider a dataset where the action-level coverage is identical across all prompts but the degree of accuracy of V^\widehat{V} with respect to V⋆V^{\star} varies, and again we observe a strong correlation between D𝖪𝖫(πh⋆∥π^h)D_{\mathsf{KL}}\left(\pi^{\star}_{h}\,\|\,\widehat{\pi}_{h}\right) and the sampling error of SMC. (We report the KL divergence instead of the χ2\chi^{2} divergence since the latter requires prohibitively large sample complexity to estimate.)
+(a) Action-level coverage.
+(b) D𝖪𝖫(πh⋆∥π^h)D_{\mathsf{KL}}\left(\pi^{\star}_{h}\,\|\,\widehat{\pi}_{h}\right).
+Figure 2: Empirical validation for our theory on the prompt-switching task (see Section 4). (a) We vary the action-level coverage (as measured by a KL-divergence proxy) across many prompts while keeping V^=V⋆\widehat{V}=V^{\star} fixed, and observe that action-level coverage predicts the sampling error of SMC. (b) We fix πref=π⋆\pi_{\texttt{ref}}=\pi^{\star} (so that action-level coverage is fixed) and observe that D𝖪𝖫(πh⋆∥π^h)D_{\mathsf{KL}}\left(\pi^{\star}_{h}\,\|\,\widehat{\pi}_{h}\right) predicts the sampling error of SMC.
+Evaluating SMC on math reasoning tasks
+Finally, we consider the performance of SMC on challenging math reasoning benchmarks including AIME and Math500. In Fig. 1, we plot, for each problem in Math500, the accuracy of SMC with NN particles against that of Best-of-NN (with N=32N=32); each of these quantities was estimated by running the requisite algorithm 100 times per problem. As most points lie below the line y=xy=x, we see that SMC improves performance over Best-of-NN in a uniform sense over all problems, which extends prior observations in Puri et al. (2025b); Chatziveroglou (2025) which observed that SMC improves upon Best-of-NN in an on-average sense over such benchmarks. Despite this strong evidence for superiority of SMC, as we discuss further in Section 4.5, the quality of the PRM V^\widehat{V} (as measured by an estimate of the chi-square divergence between π^h\widehat{\pi}_{h} and πh⋆\pi^{\star}_{h}) does not seem to positively correlate with performance, as often larger divergence leads to higher accuracy. We leave as an intriguing open question the development of a more refined framework that captures performance on such benchmarks.
+Roadmap
+Section 2 introduces the formal setting for our theoretical results. Section 3 contains our main theoretical results, and Section 4 contains our experimental results.
+2 Preliminaries
+Our theory applies to a setting that generalizes Section 1.1. It should capture settings such as guidance for diffusion models, though we do not investigate such settings concretely.
+Let 𝒳0,𝒳1,…,𝒳H\mathcal{X}_{0},\mathcal{X}_{1},\ldots,\mathcal{X}_{H} be arbitrary sets, and let 𝒳:=𝒳0⊔𝒳1⊔⋯⊔𝒳H\mathcal{X}:=\mathcal{X}_{0}\sqcup\mathcal{X}_{1}\sqcup\cdots\sqcup\mathcal{X}_{H} be their disjoint union. Let πref=(πref,h)h=0H−1\pi_{\texttt{ref}}=(\pi_{\texttt{ref},h})_{h=0}^{H-1} be a collection of transition kernels πref,h:𝒳h→Δ⁡(𝒳h+1)\pi_{\texttt{ref},h}:\mathcal{X}_{h}\to\Delta(\mathcal{X}_{h+1}). Without loss of generality, assume that 𝒳0={⟂}\mathcal{X}_{0}=\{\perp\} is a single element. The transition kernels induces a Markov chain x0→x1→x2⋯→xHx_{0}\to x_{1}\to x_{2}\cdots\to x_{H}, where xh+1∼πref,h(⋅∣xh)x_{h+1}\sim\pi_{\texttt{ref},h}(\cdot\mid x_{h}) for 0≤h≤H−10\leq h\leq H-1; we drop the subscript hh when clear from context. We write x1:H∼πrefx_{1:H}\sim\pi_{\texttt{ref}} to denote a sample from the Markov chain. Let πh∈Δ⁡(𝒳h)\pi_{h}\in\Delta(\mathcal{X}_{h}) be the induced marginal distribution of xhx_{h}.
+{remark}
+[Special case: autoregressive generation] In the specialization to LLMs discussed in Section 1, we would have 𝒳h=𝒜h\mathcal{X}_{h}=\mathcal{A}^{h}, and πref,h(⋅∣a1:h)\pi_{\texttt{ref},h}(\cdot\mid a_{1:h}) is the transition kernel which samples ah+1a_{h+1} (given a1:ha_{1:h}) and appends it to a1:ha_{1:h}.
+As in the setup of Section 1, given a terminal reward function r⋆:𝒳H→ℝ≥0r^{\star}:\mathcal{X}_{H}\to\mathbb{R}_{\geq 0}, the value function V⋆:𝒳→ℝ≥0V^{\star}:\mathcal{X}\to\mathbb{R}_{\geq 0} is defined, for x∈𝒳hx\in\mathcal{X}_{h}, by
+V⋆(x)=𝔼x1:H∼πref[r⋆(xH)∣xh=x]V^{\star}(x)=\En_{x_{1:H}\sim\pi_{\texttt{ref}}}[r^{\star}(x_{H})\mid x_{h}=x]. Note that V⋆​(xH)=r⋆​(xH)V^{\star}(x_{H})=r^{\star}(x_{H}) for xH∈𝒳Hx_{H}\in\mathcal{X}_{H}.
+For h∈[H]h\in[H], define the distribution πh⋆∈Δ⁡(𝒳h)\pi^{\star}_{h}\in\Delta(\mathcal{X}_{h}) by πh⋆​(x)∝πh​(x)⋅V⋆​(x)\pi^{\star}_{h}(x)\propto\pi_{h}(x)\cdot V^{\star}(x). One may check that the distributions πh⋆\pi^{\star}_{h} are induced by the Markov chain with kernel
+π⋆​(xh+1∣xh):=πref,h​(xh+1∣xh)​V⋆​(xh+1)Vh⋆​(xh),\displaystyle\pi^{\star}(x_{h+1}\mid x_{h}):=\frac{\pi_{\texttt{ref},h}(x_{h+1}\mid x_{h})V^{\star}(x_{h+1})}{V^{\star}_{h}(x_{h})},
+(2)
+as ∑xhπh⋆​(xh)​π⋆​(xh+1∣xh)=πh+1⋆​(xh+1)\sum_{x_{h}}\pi^{\star}_{h}(x_{h})\pi^{\star}(x_{h+1}\mid x_{h})=\pi^{\star}_{h+1}(x_{h+1}).33
+3
+We note the following slight abuse of notation: we use π⋆\pi^{\star} with no subscript to denote the transition kernel in Eq. 2, and πh⋆\pi^{\star}_{h} with a subscript to denote the corresponding intermediate distributions.
+Partial Reward Model
+We extend the definition of the PRM to our more general setting in the natural way: the PRM is denoted V^:𝒳→ℝ≥0\widehat{V}:\mathcal{X}\to\mathbb{R}_{\geq 0}, and satisfies V^​(xH)=r⋆​(xH)\widehat{V}(x_{H})=r^{\star}(x_{H}) for xH∈𝒳Hx_{H}\in\mathcal{X}_{H}. We define Z^h:=𝔼x∼πh​[V^​(x)]\widehat{Z}_{h}:=\mathbb{E}_{x\sim\pi_{h}}[\widehat{V}(x)] for h∈[H]h\in[H], and let π^h∈Δ⁡(𝒳h)\widehat{\pi}_{h}\in\Delta(\mathcal{X}_{h}) be defined by π^h​(x)=πh​(x)⋅V^​(x)/Z^h\widehat{\pi}_{h}(x)=\pi_{h}(x)\cdot\widehat{V}(x)/\widehat{Z}_{h}.
+3 Theoretical Analysis of Particle Filtering Methods
+3.1 Simple Criteria for Success of SMC
+Algorithm 1  Sequential Monte Carlo
+Input: Transition kernel πref\pi_{\texttt{ref}}, value function V^\widehat{V}.
+Parameter: Number of particles N≥1N\geq 1.
+Initialize ν^0=δ⟂\widehat{\nu}_{0}=\updelta_{\perp}.
+for h=1,⋯,Hh=1,\cdots,H do
+Sample NN particles x~h−11,…,x~h−1N​∼i.i.d.​ν^h−1​(⋅)\tilde{x}_{h-1}^{{\scriptscriptstyle 1}},\ldots,\tilde{x}_{h-1}^{{\scriptscriptstyle N}}\overset{\text{i.i.d.}}{\sim}\widehat{\nu}_{h-1}(\cdot{}).
+Generate xhi∼πref,h−1(⋅∣x~h−1i)x_{h}^{{\scriptscriptstyle i}}\sim\pi_{\texttt{ref},h-1}(\cdot\mid\tilde{x}_{h-1}^{{\scriptscriptstyle i}}) independently for i∈[N]i\in[N].
+Define weights whi=V^​(xhi)V^​(x~h−1i)w_{h}^{{\scriptscriptstyle i}}=\frac{\widehat{V}(x_{h}^{{\scriptscriptstyle i}})}{\widehat{V}(\tilde{x}_{h-1}^{{\scriptscriptstyle i}})}.
+Define weighted empirical measure ν^h:=1Wh​∑i=1Nwhi​δxhi\widehat{\nu}_{h}\vcentcolon={}\frac{1}{W_{h}}\sum_{i=1}^{N}w_{h}^{{\scriptscriptstyle i}}\updelta_{x_{h}^{{\scriptscriptstyle i}}}, where Wh=∑i=1NwhiW_{h}=\sum_{i=1}^{N}w_{h}^{{\scriptscriptstyle i}}.
+Define W^h:=∏i=1hWiN\widehat{W}_{h}:=\prod_{i=1}^{h}\frac{W_{i}}{N}.
+Output Option 1: Output xH∼ν^Hx_{H}\sim\widehat{\nu}_{H}.
+Output Option 2: With probability min⁡{W^H2​𝖢∞​V^​(⟂),1}\min\left\{\frac{\widehat{W}_{H}}{2\mathsf{C}_{\infty}\widehat{V}(\perp)},1\right\}, output x∼ν^Hx\sim\widehat{\nu}_{H}, and otherwise restart the algorithm.
+The first criterion is bounded action-level coverage:
+{assumption}
+There exists parameter C𝖺𝖼𝗍≥1C_{\sf act}\geq 1 such that for all h≥0h\geq 0, Vh+1⋆​(xh+1)≤C𝖺𝖼𝗍​Vh⋆​(xh)V^{\star}_{h+1}(x_{h+1})\leq C_{\sf act}V^{\star}_{h}(x_{h}) for any xh+1∈supp(πref(⋅∣xh))x_{h+1}\in\mathrm{supp}(\pi_{\texttt{ref}}(\cdot\mid x_{h})).
+We call this condition action-level coverage because
+V⋆​(xh+1)V⋆​(xh)=π⋆​(xh+1∣xh)πref,h​(xh+1∣xh)\frac{V^{\star}(x_{h+1})}{V^{\star}(x_{h})}=\frac{\pi^{\star}(x_{h+1}\mid x_{h})}{\pi_{\texttt{ref},h}(x_{h+1}\mid x_{h})}
+is exactly the density ratio between the conditional distributions π⋆\pi^{\star} and πref,h\pi_{\texttt{ref},h}.44
+4
+We remark that Section 3.1
+can be relaxed to the average sense (cf. Section C.4).
+The second criterion is bounded χ2\chi^{2}-divergences between πh⋆\pi^{\star}_{h} and π^h\widehat{\pi}_{h} for all hh. Quantitatively, the two criteria yield the following guarantee for SMC, which directly implies Section 1.2:
+{theorem}
+Under Section 3.1, SMC with NN particles achieves
+D𝖳𝖵​(𝔼⁡[ν^H],πH⋆)≤C𝖺𝖼𝗍N​(H+∑h=1H−1Dχ2(π⋆h∥π^h)).\displaystyle D_{\mathsf{TV}}\left(\En[\widehat{\nu}_{H}],\pi^{\star}_{H}\right)\leq\sqrt{\frac{C_{\sf act}}{N}}\left(H+\sum_{h=1}^{H-1}\sqrt{D_{\chi^{2}}\left(\pi^{\star}_{h}\;\|\;{}\widehat{\pi}_{h}\right)}\right).
+(3)
+We remark that bounding Dχ2(πh⋆∥π^h)D_{\chi^{2}}\left(\pi^{\star}_{h}\;\|\;{}\widehat{\pi}_{h}\right) only requires average-case closeness between V^\widehat{V} and V⋆V^{\star} (Appendix A). Existing theory for SMC (Schweizer, 2012; Zhu and Lu, 2026) can recover an analogous bound that requires worst-case closeness:
+{assumption}
+There exists parameter 𝖢∞≥1\mathsf{C}_{\infty}\geq 1 such that 𝖢∞−1≤V⋆​(x)V^​(x)≤𝖢∞\mathsf{C}_{\infty}^{-1}\leq\frac{V^{\star}(x)}{\widehat{V}(x)}\leq\mathsf{C}_{\infty} for any x∈𝒳x\in\mathcal{X}.
+While the proof technique of Schweizer (2012) can relax this assumption to some extent, it cannot recover Section 3.1 (see Section C.3). Moreover, as we show below, we can strengthen Section 3.1 further to tolerate heavy-tailed errors in V^\widehat{V}.
+3.1.1 Handling Tail Behavior
+While the χ2\chi^{2}-divergences in Section 3.1 provide an easy-to-interpret upper bound, Dχ2(πh⋆∥π^h)D_{\chi^{2}}\left(\pi^{\star}_{h}\;\|\;{}\widehat{\pi}_{h}\right) is sensitive to the tail behavior of π^h\widehat{\pi}_{h} with respect to πh⋆\pi^{\star}_{h} (equivalently, the tail behavior of V^\widehat{V} relative to V⋆V^{\star}); in the case of heavy-tailed errors, it can blow up and render Section 3.1 vacuous.
+However, the goal of SMC is to produce a sample from an approximately correct distribution, so the tail behavior should only appear as an error probability. This motivates the following notion of distributional closeness (Chen et al., 2025), which can be bounded in terms of χ2\chi^{2}-divergence but not vice versa—–in particular, it can be arbitrarily small even when Dχ2(πh⋆∥π^h)=∞D_{\chi^{2}}\left(\pi^{\star}_{h}\;\|\;{}\widehat{\pi}_{h}\right)=\infty.
+{definition}
+For parameter M≥1M\geq 1, h∈[H]h\in[H],
+we define
+CovM(πh⋆∥π^h)=ℙx∼πh⋆(πh⋆​(x)π^h​(x)≥M).\displaystyle\mathrm{Cov}_{M}\left(\pi^{\star}_{h}\,\|\,\widehat{\pi}_{h}\right)=\mathbb{P}_{x\sim\pi^{\star}_{h}}\left(\frac{\pi^{\star}_{h}(x)}{\widehat{\pi}_{h}(x)}\geq M\right).
+(4)
+{theorem}
+Under Section 3.1, SMC with NN particles achieves the following for any M≥1M\geq 1:
+D𝖳𝖵(𝔼[ν^H],πH⋆)≤HM​C𝖺𝖼𝗍N+∑h=1H−1CovM(πh⋆∥π^h).\displaystyle D_{\mathsf{TV}}\left(\En[\widehat{\nu}_{H}],\pi^{\star}_{H}\right)\leq H\sqrt{\frac{MC_{\sf act}}{N}}+\sum_{h=1}^{H-1}\mathrm{Cov}_{M}\left(\pi^{\star}_{h}\,\|\,\widehat{\pi}_{h}\right).
+(5)
+Let us compare the guarantee of Section 3.1.1 with that of Section 3.1: the coverage terms CovM(πh⋆∥π^h)\mathrm{Cov}_{M}\left(\pi^{\star}_{h}\,\|\,\widehat{\pi}_{h}\right) in Section 3.1.1 play the role of the chi-square divergences Dχ2(πh⋆∥π^h)D_{\chi^{2}}\left(\pi^{\star}_{h}\;\|\;{}\widehat{\pi}_{h}\right) in Section 3.1, capturing the amount by which π^h\widehat{\pi}_{h} deviates from πh⋆\pi^{\star}_{h}. A key difference, though, is that for any fixed value of MM, the TV error between 𝔼⁡[ν^H]\En[\widehat{\nu}_{H}] and πH⋆\pi^{\star}_{H} in Section 3.1.1 does not approach 00 as N→∞N\to\infty, i.e., we pay for the mass CovM(πh⋆∥π^h)\mathrm{Cov}_{M}\left(\pi^{\star}_{h}\,\|\,\widehat{\pi}_{h}\right) additively.
+3.2 Beyond SMC: Faster Convergence under L∞L_{\infty}-condition
+Below, we show that a simple modification to SMC (Output Option 2 of Algorithm 1) yields exponential (rather than polynomial) convergence when V^\widehat{V} and V⋆V^{\star} are close in a worst-case sense (Section 3.1).
+{theorem}
+Under Sections 3.1 and 3.1, Algorithm 1 with Output Option 2 samples from a distribution μ\mu that satisfies D𝖳𝖵​(μ,πH⋆)≤δD_{\mathsf{TV}}\left(\mu,\pi^{\star}_{H}\right)\leq\delta,
+as long as N≥Ω⁡(H​𝖢∞4​C𝖺𝖼𝗍2​log⁡(𝖢∞​H/δ))N\geq\Omega(H\mathsf{C}_{\infty}^{4}C_{\sf act}^{2}\log(\mathsf{C}_{\infty}H/\delta)), using a number of outer loop steps that is bounded by O⁡(𝖢∞2​log⁡(1/δ))O(\mathsf{C}_{\infty}^{2}\log(1/\delta)).
+The basic idea is to wrap SMC in an outer rejection sampling loop. This qualitatively matches the convergence rate of the backtracking-based method VGB of Rohatgi et al. (2025), which requires the same assumptions.
+3.3 Beyond SMC: Near-perfect PRM
+Even when V^=V⋆\widehat{V}=V^{\star} (i.e. the PRM is perfect), the upper bound in Section 3.1 still scales as HN\frac{H}{\sqrt{N}}. In fact, this is a fundamental limitation of SMC, not an artifact of the analysis: even when V^=V⋆\widehat{V}=V^{\star} and C𝖺𝖼𝗍=2C_{\sf act}=2, SMC cannot achieve o⁡(1)o(1) sampling error without at least N≥Ω⁡(H)N\geq\Omega(\sqrt{H}) particles (Section C.6).55
+5
+We leave the problem of determining the optimal HH-dependence as an open question. Note that V^=V⋆\widehat{V}=V^{\star}, the one-particle algorithm which simply samples xh∼π^​(xh∣xh−1)x_{h}\sim\widehat{\pi}(x_{h}\mid x_{h-1}) succeeds in exactly sampling from π⋆\pi^{\star}, so there is indeed hope to improve the upper bound of H/NH/\sqrt{N}.
+Algorithm 2  Sequential Monte Carlo with Rejection Sampling
+Input: Transition kernel πref\pi_{\texttt{ref}}, value function V^\widehat{V}.
+Parameter: initial sample size N≥1N\geq 1, parameter η≥1\eta\geq 1.
+Initialize 𝒮0\mathcal{S}_{0} to be NN copies of ⟂\perp.
+for h=1,⋯,Hh=1,\cdots,H do
+Initialize a multi-set 𝒮h={}\mathcal{S}_{h}=\{\}.
+while |𝒮h|<N|\mathcal{S}_{h}|<N do
+Sample xh−1∼Unif⁡(𝒮h−1)x_{h-1}\sim\mathrm{Unif}(\mathcal{S}_{h-1}).
+Sample xh∼πref,h−1(⋅∣xh−1)x_{h}\sim\pi_{\texttt{ref},h-1}(\cdot\mid x_{h-1}).
+With probability V^​(xh)η​V^​(xh−1)\frac{\widehat{V}(x_{h})}{\eta\widehat{V}(x_{h-1})}, update 𝒮h←𝒮h∪{xh}\mathcal{S}_{h}\leftarrow\mathcal{S}_{h}\cup\{x_{h}\}.
+Output: x∼ν^H=𝖴𝗇𝗂𝖿⁡(𝒮H)x\sim\widehat{\nu}_{H}=\mathsf{Unif}(\mathcal{S}_{H}).
+To mitigate this issue, we introduce Sequential Monte Carlo with Rejection Sampling (SMC-RS, Algorithm 2).
+Intuitively, SMC-RS fixes the issue that, in order to sample new particles, SMC normalizes the weighted empirical measure, which introduces interference between particles. SMC-RS instead uses rejection sampling, so that regardless of the other particles, the conditional distribution xh|xh−1x_{h}\mid{}x_{h-1} is
+π^​(xh∣xh−1)∝πref​(xh∣xh−1)​V^​(xh).\displaystyle\textstyle\widehat{\pi}(x_{h}\mid{}x_{h-1})\propto\pi_{\texttt{ref}}(x_{h}\mid{}x_{h-1})\widehat{V}(x_{h}).
+(6)
+This can be regarded as a refinement of the base proposal πref(⋅∣xh−1)\pi_{\texttt{ref}}(\cdot\mid{}x_{h-1}) with the knowledge of V^\widehat{V}.
+In particular, when N=1N=1, SMC-RS reduces to action-level rejection sampling (Yang and Klein, 2021), which, due to Eq. 2, is an exact sampler when V^=V⋆\widehat{V}=V^{\star} (see Appendix A for the definition).
+We analyze SMC-RS under the following action-level coverage condition, which we view as conceptually equivalent to Section 3.1 (and formally equivalent, up to a factor of 𝖢∞2\mathsf{C}_{\infty}^{2} under the L∞L_{\infty} condition of Section 3.1). In the event that we make the weaker assumption of controlling chi-square divergence between π⋆\pi^{\star} and π^\widehat{\pi} (as in Section 3.3 below), Section 3.3 is needed in order to ensure that a bounded value of the parameter η\eta in Algorithm 2 suffices.
+{assumption}
+There exists parameter C^𝖺𝖼𝗍≥1\widehat{C}_{\mathsf{act}}\geq 1 such that for all h≥0h\geq 0,
+V^h+1​(xh+1)≤C^𝖺𝖼𝗍​V^h​(xh)\widehat{V}_{h+1}(x_{h+1})\leq\widehat{C}_{\mathsf{act}}\widehat{V}_{h}(x_{h}) for any xh+1∈supp(πref(⋅∣xh))x_{h+1}\in\mathrm{supp}(\pi_{\texttt{ref}}(\cdot\mid x_{h})).
+{theorem}
+Under Section 3.3, suppose that SMC-RS (Algorithm 2) is instantiated with η≥C^𝖺𝖼𝗍\eta\geq\widehat{C}_{\mathsf{act}}. Then
+SMC-RS with NN particles achieves
+D𝖳𝖵​(𝔼⁡[ν^H],πH⋆)≤1N​∑h=1HDχ2(π⋆h∥π^h),\displaystyle D_{\mathsf{TV}}\left(\En[\widehat{\nu}_{H}],\pi^{\star}_{H}\right)\leq\frac{1}{\sqrt{N}}\sum_{h=1}^{H}\sqrt{D_{\chi^{2}}\left(\pi^{\star}_{h}\;\|\;{}\widehat{\pi}_{h}\right)},
+(7)
+and has time complexity O⁡(N​H​η)O(NH\eta) in expectation.
+In particular, suppose V^\widehat{V} is near-accurate so that Dχ2(πh⋆∥π^h)≤ϵ2D_{\chi^{2}}\left(\pi^{\star}_{h}\;\|\;{}\widehat{\pi}_{h}\right)\leq\epsilon^{2} for all h∈[H]h\in[H]. Then SMC-RS achieves
+D𝖳𝖵​(𝔼⁡[ν^H],πH⋆)≤ϵ​HN.\displaystyle D_{\mathsf{TV}}\left(\En[\widehat{\nu}_{H}],\pi^{\star}_{H}\right)\leq\frac{\epsilon H}{\sqrt{N}}.
+(8)
+If ϵ≤1H\epsilon\leq\frac{1}{H}, then SMC-RS achieves sampling error o⁡(1)o(1) with only N=O⁡(1)N=O(1) particles. This is in sharp contrast to SMC, where by Section C.6, N≥Ω⁡(H)N\geq\Omega(\sqrt{H}) particles are necessary even when V^=V⋆\widehat{V}=V^{\star} and C𝖺𝖼𝗍=O⁡(1)C_{\sf act}=O(1) (note that in this setting C^𝖺𝖼𝗍=C𝖺𝖼𝗍=O⁡(1)\widehat{C}_{\mathsf{act}}=C_{\sf act}=O(1) as well, so SMC-RS does indeed succeed).
+Finally, SMC-RS admits analogues of Section 3.1.1 (heavy-tailed errors) and Section 3.2 (fast-rate convergence); see Section D.2 and Section D.3, respectively.
+3.4 Limits of Particle Filtering Methods
+A key downside of SMC (and the discussed variants) is that, when the PRM is imperfect, avoiding error amplification requires the number of particles NN to grow at least linearly in the horizon HH. In this section, we show that some horizon dependence is necessary for all myopic particle filtering methods. Informally, a myopic particle filtering method is any algorithm that maintains a set of particles 𝒮h\mathcal{S}_{h} at each step hh, and does not use the PRM data from later steps k>hk>h to determine the set 𝒮h\mathcal{S}_{h}. SMC and SMC-RS are two examples of myopic methods; see Appendix F for a formal definition.
+We prove that even with mild (constant-factor) imperfections in the PRM, any myopic particle filtering algorithm requires nearly Ω⁡(log⁡H)\Omega(\log H) particles to even obtain non-trivial coverage of πH⋆\pi^{\star}_{H}:
+{theorem}
+Let N⁡(H):=log⁡(H)/(4​log⁡log⁡(H))N(H):=\log(H)/(4\log\log(H)). There is no myopic particle filtering algorithm Alg with the following guarantee for all sufficiently large HH: Alg uses at most N⁡(H)N(H) particles, and under Sections 3.1 and 3.1 with C𝖺𝖼𝗍=2C_{\sf act}=2 and 𝖢∞=e3\mathsf{C}_{\infty}=e^{3}, the output distribution ν\nu of Alg satisfies ν(ℰ)≥H−1/5\nu(\mathcal{E})\geq H^{-1/5}
+for all events ℰ⊂𝒳H\mathcal{E}\subset\mathcal{X}_{H} with πH⋆​(ℰ)≥1/2\pi^{\star}_{H}(\mathcal{E})\geq 1/2.
+As an immediate corollary, no such algorithm can achieve D𝖳𝖵​(ν,πH⋆)≤1/3D_{\mathsf{TV}}\left(\nu,\pi^{\star}_{H}\right)\leq 1/3. In contrast, with a perfect PRM (i.e. 𝖢∞=1\mathsf{C}_{\infty}=1), a single particle achieves zero error (Rohatgi et al., 2025). Moreover, Section 3.4 is particularly striking since, under Section 3.1, every intermediate distribution π^h\widehat{\pi}_{h} has constant coverage of πh⋆\pi^{\star}_{h} (i.e. π^h​(x)/πh⋆​(x)≥𝖢∞−2\widehat{\pi}_{h}(x)/\pi^{\star}_{h}(x)\geq\mathsf{C}_{\infty}^{-2} for all x∈𝒳hx\in\mathcal{X}_{h}). Section 3.4 shows that it is impossible for myopic methods to inductively “maintain” this coverage without a super-constant number of particles — and raises the question of whether some form of lookahead can improve computational efficiency.
+4 Experiments in Language Models
+Next, we investigate to what extent the quantities from Section 3.1 predict the performance of SMC on sampling problems involving LLMs.
+4.1 Controlled Setting: Prompt-Switching Task
+A key challenge in evaluating SMC and understanding its performance as a function of the aforementioned quantities is the difficulty of measuring them, as well as measuring the performance of SMC itself. Most notably, we need to measure quantities involving the target distribution πh⋆\pi^{\star}_{h}, which is typically not readily available. While prior work (e.g., Zhao et al. (2024)) has studied how to evaluate the performance of SMC using the algorithm’s estimate of the partition function Z:=𝔼πref​[V⋆​(xH)]Z:=\mathbb{E}_{\pi_{\texttt{ref}}}[V^{\star}(x_{H})], such techniques are only guaranteed to provide tight bounds if SMC is accurate. Moreover, these methods do not directly address the challenge of estimating other quantities such as action-level coverage.
+Thus, in this section, we consider an alternative approach, in a setting which will conveniently satisfy that πref,π⋆\pi_{\texttt{ref}},\pi^{\star} are both efficiently sampleable.
+In particular, we consider the prompt-switching task, where πref\pi_{\texttt{ref}} and π⋆\pi^{\star} correspond to the output distribution of a language model under different prompts. Formally, we fix a language model 𝖬\mathsf{M}, and consider the setting of Section 1 where 𝒜\mathcal{A} is the token space of 𝖬\mathsf{M} and 𝒳h=𝒜h\mathcal{X}_{h}=\mathcal{A}^{h}. Each instance of the prompt-switching task is determined by 3 prompts, (pref,p⋆,p)(\texttt{p}_{\texttt{ref}},\texttt{p}^{\star},\texttt{p}), as follows.
+Given choices of these prompts, we let πref\pi_{\texttt{ref}} be the output distribution of 𝖬\mathsf{M} for the prompt pref\texttt{p}_{\texttt{ref}}, and we denote it as πref(⋅)=𝖬(⋅∣pref)\pi_{\texttt{ref}}(\cdot)=\mathsf{M}(\cdot\mid\texttt{p}_{\texttt{ref}}). We then choose the terminal reward function to be r⋆(a1:H):=𝖬(a1:H∣p⋆)𝖬(a1:H∣pref)r^{\star}(a_{1:H}):=\frac{\mathsf{M}(a_{1:H}\mid\texttt{p}^{\star})}{\mathsf{M}(a_{1:H}\mid\texttt{p}_{\texttt{ref}})}, which gives that, for any intermediate step hh, V⋆(a1:h)=𝖬(a1:h∣p⋆)/𝖬(a1:h∣pref)V^{\star}(a_{1:h})={\mathsf{M}(a_{1:h}\mid\texttt{p}^{\star})/\mathsf{M}(a_{1:h}\mid\texttt{p}_{\texttt{ref}})}. It follows that πh⋆(a1:h)=𝖬(a1:h∣p⋆)\pi^{\star}_{h}(a_{1:h})=\mathsf{M}(a_{1:h}\mid\texttt{p}^{\star}). Since it is tractable to sample from 𝖬\mathsf{M} and compute sequence-level probabilities, sampling from πref,π⋆\pi_{\texttt{ref}},\pi^{\star} as well as computing V⋆V^{\star} is tractable. Finally, the prompt p determines V^\widehat{V}, in a way that will be discussed below.
+Evaluation
+To evaluate SMC on the prompt-switching task, we consider the following metric, inspired by more complex “LLM-as-judge” techniques and also the use of log-probabilities to characterize the output distributions of LLMs (Golowich et al., 2025). Given two distributions ν,ν′\nu,\nu^{\prime} over sequences of length HH, and a set of prompts 𝒫\mathcal{P}, we define the 𝒫\mathcal{P}-logprob discrepancy LPD𝒫​(ν,ν′)\mathrm{LPD}_{\mathcal{P}}(\nu,\nu^{\prime}) between ν\nu and ν′\nu^{\prime} as the difference between the mean token-level log-probabilities assigned to sequences sampled from ν\nu and ν′\nu^{\prime} under the prompts in 𝒫\mathcal{P} (summed over all positions hh). Formally, for ν,ν′∈Δ⁡(𝒜H)\nu,\nu^{\prime}\in\Delta(\mathcal{A}^{H}), we have:
+LPD𝒫​(ν,ν′):=\displaystyle\mathrm{LPD}_{\mathcal{P}}(\nu,\nu^{\prime}):=
+∑p∈𝒫∑h=1H|𝔼a1:H∼ν[log𝖬(ah∣p,a1:h−1)]−𝔼a1:H′∼ν′[log𝖬(ah′∣p,a1:h−1′)]|.\displaystyle\sum_{\texttt{p}\in\mathcal{P}}\sum_{h=1}^{H}\left|\mathbb{E}_{a_{1:H}\sim\nu}\left[\log\mathsf{M}(a_{h}\mid\texttt{p},a_{1:h-1})\right]\right.\left.-\mathbb{E}_{a_{1:H}^{\prime}\sim\nu^{\prime}}\left[\log\mathsf{M}(a_{h}^{\prime}\mid\texttt{p},a_{1:h-1}^{\prime})\right]\right|.
+In words, the 𝒫\mathcal{P}-logprob discrepancy uses the prompts in 𝒫\mathcal{P} as test functions to measure how different the two distributions ν,ν′\nu,\nu^{\prime} are. It can be thought of as a very simple (albeit more stable) “LLM-as-judge” metric, where instead of generating from 𝖬\mathsf{M} to evaluate ν,ν′\nu,\nu^{\prime}, we simply use the log-probabilities assigned by the model 𝖬\mathsf{M}. In our evaluations, we choose 𝒫={pref,p⋆}\mathcal{P}=\{\texttt{p}_{\texttt{ref}},\texttt{p}^{\star}\}, which is natural in light of the fact that the two most salient prompts in the prompt switching task are pref\texttt{p}_{\texttt{ref}} and p⋆\texttt{p}^{\star}.
+4.2 Evaluating Dependence on PRM Accuracy
+To evaluate the influence of PRM accuracy on SMC performance, we fix the action-level coverage between πref\pi_{\texttt{ref}} and π⋆\pi^{\star} (in particular, by fixing pref=p⋆\texttt{p}_{\texttt{ref}}=\texttt{p}^{\star}) and vary the PRM V^\widehat{V}. In particular, we consider a number k=50k=50 of instances of the prompt-switching task as described above: each instance i∈[k]i\in[k] is specified by three prompts ((pref)(i),(p⋆)(i),p(i))((\texttt{p}_{\texttt{ref}})^{(i)},(\texttt{p}^{\star})^{(i)},\texttt{p}^{(i)}), as well as a scalar α\alpha used in Eq. 9 below. In this subsection, the reference (pref)(i)(\texttt{p}_{\texttt{ref}})^{(i)} and target (p⋆)(i)(\texttt{p}^{\star})^{(i)} prompts are shared across all instances, so we denote them by pref,p⋆\texttt{p}_{\texttt{ref}},\texttt{p}^{\star}, respectively.
+Moreover, we in fact have pref=p⋆\texttt{p}_{\texttt{ref}}=\texttt{p}^{\star} --- this prompt asks the model to write a short story (e.g., ‘‘Write a scene about a dragon negotiating peace with the last human kingdom.’’).66
+6
+While in this setting it is trivial to sample from p⋆\texttt{p}^{\star}, we emphasize that our main goal here is studying the performance of SMC in terms of PRM accuracy as opposed to solving a challenging sampling problem. Each instance i∈[k]i\in[k] has a different value of V^\widehat{V}, denoted V^(i)\widehat{V}^{(i)}, which is given as follows: we fix kk prompts p(1),…,p(k)\texttt{p}^{(1)},\ldots,\texttt{p}^{(k)}, which are each identical to pref\texttt{p}_{\texttt{ref}} except they ask for the story in kk different styles (e.g., “…\ldots Tell it as a news article.”). For each such prompt p(i)\texttt{p}^{(i)}, we let π(i)\pi^{(i)} denote the distribution π(i)(a1:H)=𝖬(a1:H∣p(i))\pi^{(i)}(a_{1:H})=\mathsf{M}(a_{1:H}\mid\texttt{p}^{(i)}), which should be interpreted as a “perturbed” version of π⋆\pi^{\star}. Then we define
+V^(i)(a1:h):=π⋆(a1:h)πref(a1:h)⋅(π(i)(a1:h)π⋆(a1:h))(1−h/H)⋅α,\displaystyle\widehat{V}^{(i)}(a_{1:h}):=\frac{\pi^{\star}(a_{1:h})}{\pi_{\texttt{ref}}(a_{1:h})}\cdot\left(\frac{\pi^{(i)}(a_{1:h})}{\pi^{\star}(a_{1:h})}\right)^{(1-h/H)\cdot\alpha},
+(9)
+for some parameter α>0\alpha>0 controlling the degree of accuracy of V^(i)\widehat{V}^{(i)}. To get some intuition behind this definition, suppose α=1\alpha=1 for simplicity: for small hh, V^(i)(a1:h)≈π(i)(a1:h)/πref,h(a1:h)\widehat{V}^{(i)}(a_{1:h})\approx{\pi^{(i)}(a_{1:h})}/{\pi_{\texttt{ref},h}(a_{1:h})}, while at the final step h=Hh=H, V^(i)(a1:H)=V⋆(a1:H)\widehat{V}^{(i)}(a_{1:H})=V^{\star}(a_{1:H}). In particular, at early steps, V^h(i)\widehat{V}_{h}^{(i)} looks the value function of the “perturbed” target distribution π(i)\pi^{(i)}, meaning that for small hh, V^h(i)\widehat{V}_{h}^{(i)} is “misleading” in that it “points towards” π(i)\pi^{(i)} instead of π⋆\pi^{\star}. For larger hh, we attenuate the noise so as to ensure that sampling from VH⋆V^{\star}_{H} is information-theoretically possible (i.e., that V^H(i)=VH⋆\widehat{V}_{H}^{(i)}=V^{\star}_{H}).
+Natural variation in the choice of the prompts p(i)\texttt{p}^{(i)} (which were generated by GPT-5) leads the resulting functions V^h(i)\widehat{V}^{(i)}_{h} to have varying levels of accuracy with respect to Vh⋆V^{\star}_{h}. Define π^h(i)∈Δ⁡(𝒜h)\widehat{\pi}^{(i)}_{h}\in\Delta(\mathcal{A}^{h}) by π^h(i)(a1:h)∝πref(a1:h)⋅V^(i)(a1:h)\widehat{\pi}^{(i)}_{h}(a_{1:h})\propto\pi_{\texttt{ref}}(a_{1:h})\cdot\widehat{V}^{(i)}(a_{1:h}). While estimating Dχ2(πh⋆∥π^h(i))D_{\chi^{2}}\left(\pi^{\star}_{h}\;\|\;{}\widehat{\pi}^{(i)}_{h}\right) is in principle possible, we found that the ratios V⋆(a1:h)/V^(i)(a1:h)V^{\star}(a_{1:h})/\widehat{V}^{(i)}(a_{1:h}) needed to estimate the χ2\chi^{2} divergence are prohibitively high in variance.
+Thus, we instead estimate D𝖪𝖫(πh⋆∥π^h(i))D_{\mathsf{KL}}\left(\pi^{\star}_{h}\,\|\,\widehat{\pi}^{(i)}_{h}\right) to measure the divergence between πh⋆\pi^{\star}_{h} and π^h(i)\widehat{\pi}_{h}^{(i)}, which is much more stable because KL divergence can be written as an expectation of log-probabilities (see Section G.2 for further details).
+In our experiments, we use Qwen3-0.6B as the language model 𝖬\mathsf{M} and set the horizon to H=64H=64 tokens. For each choice of i∈[k]i\in[k] we run SMC with N=32N=32 particles given the PRM V^(i)\widehat{V}^{(i)}, and sample from its output distribution ν^H(i)\widehat{\nu}_{H}^{(i)}. In Fig. 2(b), we plot the values of D𝖪𝖫(πh⋆∥π^h(i))D_{\mathsf{KL}}\left(\pi^{\star}_{h}\,\|\,\widehat{\pi}_{h}^{(i)}\right) against the sampling error of SMC, measured via 𝒫\mathcal{P}-logprob discrepancies LPD𝒫​(𝔼⁡[ν^H(i)],πH⋆)\mathrm{LPD}_{\mathcal{P}}(\mathbb{E}[\widehat{\nu}_{H}^{(i)}],\pi^{\star}_{H}) (estimated by running SMC for 200 trials). We observe a clear correlation between the two quantities, thus validating our theoretical findings that PRM accuracy (as measured by the divergence between π^h\widehat{\pi}_{h} and πh⋆\pi^{\star}_{h}) predicts SMC’s sampling error.
+In Section G.2 we repeat the experiment for additional choices of pref,p⋆,p(i),α\texttt{p}_{\texttt{ref}},\texttt{p}^{\star},\texttt{p}^{(i)},\alpha and observe similar results.
+4.3 Evaluating Dependence on Action-level Coverage
+We next evaluate the influence of action-level coverage on SMC performance. We consider the same setup as in the previous subsection, except for each instance i∈[k]i\in[k] we take the target distribution, denoted (π⋆)(i)(\pi^{\star})^{(i)}, to be the same as π(i)\pi^{(i)}. In particular, each instance is determined by the tuple (pref,p(i),p(i))(\texttt{p}_{\texttt{ref}},\texttt{p}^{(i)},\texttt{p}^{(i)}). Moreover, we take α=0\alpha=0, so that V^(i)=(V⋆)(i)\widehat{V}^{(i)}=(V^{\star})^{(i)}. In this setting, the action-level coverage depends on ii. We again use Qwen3-0.6B, take the horizon to be H=32H=32 tokens, and run SMC with N=32N=32 particles.
+While the action-level coverage between (π⋆)(i)(\pi^{\star})^{(i)} and πref\pi_{\texttt{ref}} (in the L∞L_{\infty} sense of Section 3.1) is extremely large and essentially impossible to compute, we note that D𝖪𝖫((π⋆)(i)∥πref)D_{\mathsf{KL}}\left((\pi^{\star})^{(i)}\,\|\,\pi_{\texttt{ref}}\right) can be viewed as an “average-case proxy” for action-level coverage in light of the chain rule, which gives
+D𝖪𝖫((π⋆)(i)∥πref)=∑h=1H𝔼a1:h∼(π⋆)(i)h[log(π⋆)(i)h(ah∣a1:h−1)πref,h(ah∣a1:h−1)].D_{\mathsf{KL}}\left((\pi^{\star})^{(i)}\,\|\,\pi_{\texttt{ref}}\right)=\sum_{h=1}^{H}\mathbb{E}_{a_{1:h}\sim(\pi^{\star})^{(i)}_{h}}\left[\log\frac{(\pi^{\star})^{(i)}_{h}(a_{h}\mid a_{1:h-1})}{\pi_{\texttt{ref},h}(a_{h}\mid a_{1:h-1})}\right].
+(10)
+Figure 2(a) plots 1HD𝖪𝖫((π⋆)(i)∥πref)\frac{1}{H}D_{\mathsf{KL}}\left((\pi^{\star})^{(i)}\,\|\,\pi_{\texttt{ref}}\right) against the 𝒫\mathcal{P}-logprob discrepancies LPD𝒫​(𝔼⁡[ν^H(i)],πH⋆)\mathrm{LPD}_{\mathcal{P}}(\mathbb{E}[\widehat{\nu}_{H}^{(i)}],\pi^{\star}_{H}); we again observe a clear correlation between the two quantities, in line with our theory.
+4.4 Dependence on the Number of Particles
+Finally, in Fig. 3, we show the performance of SMC as a function of the number of particles NN for the prompt switching task, using a setup similar to that of Section 4.2. In particular, we consider 50 different prompt tuples (pref(i),(p⋆)(i),p(i))(\texttt{p}_{\texttt{ref}}^{(i)},(\texttt{p}^{\star})^{(i)},\texttt{p}^{(i)}), and for each tuple we use a PRM V^(i)\widehat{V}^{(i)} defined from p(i)\texttt{p}^{(i)} as in Eq. 9 with α=1\alpha=1. In addition to SMC, we also plot the performance of (a) sequential importance sampling using V^(i)\widehat{V}^{(i)} (Appendix A), and (b) the “best-of-NN” algorithm which samples NN sequences from πref\pi_{\texttt{ref}} and outputs the one with the highest value according to the terminal reward (V⋆)(i)(a1:H)(V^{\star})^{(i)}(a_{1:H}). We observe that SMC consistently outperforms both baselines, and moreover that its performance improves as NN increases; the latter conclusion is in line with our theoretical results.
+Figure 3: Performance of SMC on the prompt-switching task (Section 4.4). Each point represents SMC with some number of particles N∈{2,4,8,…,128}N\in\{2,4,8,\ldots,128\}. We average the sampling error and wall-clock time over all data points and all trials per data point. SMC consistently outperforms both sequential importance sampling (SIS) and Best-of-NN (BoN) baselines.
+4.5 SMC on Math Problem-solving Tasks
+Finally, we study the use of SMC to improve the performance of LLMs on math problem-solving tasks, including AIME and MATH500. In this setting, the base distribution πref\pi_{\texttt{ref}} corresponds to the output distribution of a language model prompted to solve a math problem, and the terminal reward function r⋆(a1:H)∈{0,1}r^{\star}(a_{1:H})\in\{0,1\} is the indicator that the answer a1:Ha_{1:H} is correct. Thus, π⋆\pi^{\star} is simply the base model distribution conditioned on producing a correct answer, and V⋆(a1:h)V^{\star}(a_{1:h}) is the probability that πref\pi_{\texttt{ref}} produces a correct answer conditioned on the prefix a1:ha_{1:h}.
+There are several open-source process reward models fine-tuned for math problems, which purport to yield good estimates of V⋆V^{\star}. In our experiments, we take the PRM V^\widehat{V} to be Qwen2.5-Math-PRM-7B, and the base model πref\pi_{\texttt{ref}} to be Qwen2.5-1B-Instruct. In the application of SMC to math reasoning tasks, since the goal is simply to find some correct answer, it is typical to combine SMC with Best-of-NN sampling in the following manner: at the end of SMC, we select the single particle with the highest value V^(a1:H)\widehat{V}(a_{1:H}). Note that this is distinct from the standard Best-of-NN sampling procedure, in which NN samples are drawn independently from πref\pi_{\texttt{ref}} and the one with highest V^\widehat{V}-value is selected.
+SMC improves performance on math
+Many papers (Puri et al., 2025b; Chatziveroglou, 2025) have reported that SMC typically improves the performance over Best-of-NN (as well as other baselines). However, such results are typically reported on-average over all problems in the dataset, which fails to account for the hetereogeneity between individual problems. For instance, it was not clear if SMC improves performance over Best-of-NN on all problems, or if SMC can actually hurt performance (compared to Best-of-NN) on a non-negligible fraction of the dataset.77
+7
+Indeed, much prior work has highlighted that SMC can suffer from pathologies such as mode collapse, which might decrease the diversity of responses from which Best-of-NN can choose. Certainly such a distinction is salient for any theoretical explanation for SMC’s performance.
+In Fig. 1, we estimate the performance of SMC and Best-of-NN for each problem in Math500 (using 100 trials per problem), and plot the accuracy of SMC against that of Best-of-NN. While there is variability in the relative performance of the two algorithms, we see that for the vast majority of problems, SMC’s accuracy is at least as large as that of Best-of-NN. In Fig. 5, we observe a similar conclusion for AIME24 and AIME25.
+Figure 4: Influence of PRM error (measured by Dχ2(πh⋆∥π^h)D_{\chi^{2}}\left(\pi^{\star}_{h}\;\|\;{}\widehat{\pi}_{h}\right)) on SMC accuracy for 10 Math500 problems. Different colors correspond to different values of the inverse temperature parameter λ\lambda parametrizing V^(λ)\widehat{V}^{(\lambda)}. The plots show SMC accuracy with respect to a random particle (not the best one) selected at the end of SMC.
+SMC and PRM accuracy
+Having established that SMC leads to a consistent increase in accuracy across most Math500 and AIME problems, we next turn to the question of what factors influence its performance on a given problem. In light of the fact that significant effort has been spent designing better PRMs V^\widehat{V} (Lightman et al., 2023; Wang et al., 2024; Wang et al., 2025b; Zhang et al., 2025), a natural follow-up question from our theory is whether the divergence between πh⋆\pi^{\star}_{h} and π^h\widehat{\pi}_{h} (as measured by, e.g., the χ2\chi^{2}-divergence Dχ2(πh⋆∥π^h)D_{\chi^{2}}\left(\pi^{\star}_{h}\;\|\;{}\widehat{\pi}_{h}\right)) predicts the performance of SMC.
+To address this question, we consider a range of PRMs V^(λ)\widehat{V}^{(\lambda)} by varying the inverse temperature parameter λ\lambda used by the PRM to produce its final probabilities. In Fig. 4, we select 10 Math500 problems, and for each value of λ\lambda, we plot an empirical estimate of Dχ2(πh⋆∥π^h)D_{\chi^{2}}\left(\pi^{\star}_{h}\;\|\;{}\widehat{\pi}_{h}\right) against the accuracy of SMC given V^(λ)\widehat{V}^{(\lambda)}. Interestingly, we observe that larger χ2\chi^{2}-divergence often leads to higher accuracy, which is in contrast to our theoretical findings which predict the opposite. We suspect that larger values of λ\lambda (lower temperature) lead to better performance since they more effectively weed out incorrect partial solutions; however, they will also potentially lead π^h\widehat{\pi}_{h} to miss some modes of πh⋆\pi^{\star}_{h}, which causes the χ2\chi^{2}-divergence to blow up. Thus, in order to accurately capture the performance of SMC on such problems, we need a modification to our framework that aims to not approximate πH⋆\pi^{\star}_{H} in a distributional sense but rather to simply cover some portion of its mass.
+5 Discussion
+In this paper, we have established theoretical guarantees for particle filtering algorithms under varioues assumptions relating the reference distribution πref\pi_{\texttt{ref}} to the target distribution π⋆\pi^{\star} and the PRM V^\widehat{V} (via the induced distributions π^\widehat{\pi}). We highlight below some intriguing directions for future work:
+•
+There are various polynomial gaps between our upper and lower bounds, including their the dependence on horizon HH, as discussed in Section 1.2, as well as the decay of the total variation distance as a function of NN: whereas our upper bounds of Sections 3.1 and 3.3 decay as 1/N1/\sqrt{N}, the lower bound of Section C.6 decays as only 1/N1/N.
+•
+Can we develop metrics for the performance of SMC (and other inference-time sampling algorithms) which are weaker than total variation distance but still meaningfully capture “usefulness” of outputs? For instance, for math problems, typically one only desires a correct answer, and the particular phrasing of the solution may not matter too much.
+•
+Can we develop provable guarantees for particle filtering algorithms or other types of inference-time sampling procedures which rely on weaker notions of discrepancy between πh⋆\pi^{\star}_{h} and π^h\widehat{\pi}_{h}? The values of Dχ2(πh⋆∥π^h)D_{\chi^{2}}\left(\pi^{\star}_{h}\;\|\;{}\widehat{\pi}_{h}\right) seen in, e.g., the experiments in Sections 4.2, 4.3 and 4.4 are extremely large (in particular, much larger than the values of NN seen in our experiments), yet particle filtering algorithms still are able to effectively make use of V^\widehat{V}.
+References
+Botta et al. (2025)
+E. Botta, Y. Li, A. Mehta, J. T. Ash, C. Zhang, and A. Risteski
+On the query complexity of verifier-assisted language generation.
+In Forty-second International Conference on Machine Learning,
+External Links: Link
+Cited by: §1.1.
+Brown et al. (2024)
+B. Brown, J. Juravsky, R. Ehrlich, R. Clark, Q. V. Le, C. Ré, and A. Mirhoseini
+Large language monkeys: scaling inference compute with repeated sampling.
+arXiv preprint arXiv:2407.21787.
+Cited by: §1.
+Cérou et al. (2011)
+F. Cérou, P. Del Moral, and A. Guyader
+A nonasymptotic theorem for unnormalized feynman–kac particle models.
+In Annales de l’IHP Probabilités et statistiques,
+Vol. 47, pp. 629–649.
+Cited by: §C.3,
+§C.3.
+Chatziveroglou (2025)
+G. Chatziveroglou
+A*-decoding: token-efficient inference scaling.
+External Links: 2505.13672,
+Link
+Cited by: §1.3,
+§4.5.
+Chen et al. (2025)
+F. Chen, A. Huang, N. Golowich, S. Malladi, A. Block, J. T. Ash, A. Krishnamurthy, and D. J. Foster
+The coverage principle: how pre-training enables post-training.
+arXiv preprint arXiv:2510.15020.
+Cited by: §3.1.1.
+Del Moral (2004)
+P. Del Moral
+Feynman-kac formulae.
+In Feynman-Kac Formulae: Genealogical and Interacting Particle Systems with Applications,
+pp. 47–93.
+Cited by: §C.3.
+Doucet et al. (2000)
+A. Doucet, S. J. Godsill, and C. Andrieu
+On sequential monte carlo sampling methods for bayesian filtering.
+Statistics and Computing 10 (3), pp. 197–208.
+Cited by: §1.2.
+Feng et al. (2024)
+S. Feng, X. Kong, S. Ma, A. Zhang, D. Yin, C. Wang, R. Pang, and Y. Yang
+Step-by-step reasoning for math problems via twisted sequential monte carlo.
+arXiv preprint arXiv:2410.01920.
+Cited by: §1.
+Foster et al. (2025)
+D. J. Foster, Z. Mhammedi, and D. Rohatgi
+Is a good foundation necessary for efficient reinforcement learning? the computational role of the base model in exploration.
+arXiv preprint arXiv:2503.07453.
+Cited by: §1.1.
+Fu et al. (2025)
+Y. Fu, X. Wang, Y. Tian, and J. Zhao
+Deep think with confidence.
+In NeurIPS 2025 Workshop on Efficient Reasoning,
+Cited by: §1,
+§1.
+Geuter et al. (2025)
+J. Geuter, Y. Mroueh, and D. Alvarez-Melis
+Guided speculative inference for efficient test-time alignment of LLMs.
+arXiv preprint arXiv:2506.04118.
+Cited by: §1.1.
+Golowich et al. (2025)
+N. Golowich, A. Liu, and A. Shetty
+Sequences of logits reveal the low rank structure of language models.
+External Links: 2510.24966,
+Link
+Cited by: §4.1.
+Grand et al. (2025)
+G. Grand, J. B. Tenenbaum, V. K. Mansinghka, A. K. Lew, and J. Andreas
+Self-steering language models.
+In Conference on Language Modeling (COLM),
+Note: arXiv:2504.07081
+Cited by: §1.
+Guarniero et al. (2017)
+P. Guarniero, A. M. Johansen, and A. Lee
+The iterated auxiliary particle filter.
+Journal of the American Statistical Association 112 (520), pp. 1636–1647.
+Cited by: §1.2.
+Heng et al. (2017)
+J. Heng, A. Bishop, G. Deligiannidis, and A. Doucet
+Controlled sequential monte carlo.
+arXiv preprint arXiv:1708.08396.
+Cited by: §1.2.
+Karan and Du (2025)
+A. Karan and Y. Du
+Reasoning with sampling: your base model is smarter than you think.
+External Links: 2510.14901,
+Link
+Cited by: §1.1.
+Lawson et al. (2022)
+J. Lawson, L. Raventos, A. Warrington, and S. Linderman
+SIXO: smoothing inference with twisted objectives.
+CoRR abs/2206.05952.
+Cited by: §1.2.
+Lee and Santana-Gijzen (2024)
+H. Lee and M. Santana-Gijzen
+Convergence bounds for sequential monte carlo on multimodal distributions using soft decomposition.
+arXiv preprint arXiv:2405.19553.
+Cited by: §C.3.
+Lew et al. (2023)
+A. K. Lew, Z. Tan, G. Grand, and V. K. Mansinghka
+Sequential monte carlo steering of large language models using probabilistic programs.
+arXiv preprint arXiv:2306.03081.
+Cited by: §1.1,
+§1.
+Lightman et al. (2023)
+H. Lightman, V. Kosaraju, Y. Burda, H. Edwards, B. Baker, T. Lee, J. Leike, J. Schulman, I. Sutskever, and K. Cobbe
+Let’s verify step by step.
+arXiv preprint arXiv:2305.20050.
+Cited by: §1.1,
+§4.5.
+Lipkin et al. (2025)
+B. Lipkin, B. LeBrun, J. H. Vigly, J. Loula, D. R. MacIver, L. Du, J. Eisner, R. Cotterell, V. K. Mansinghka, T. J. O’Donnell, A. K. Lew, and T. Vieira
+Fast controlled generation from language models with adaptive weighted rejection sampling.
+arXiv preprint arXiv:2504.05410.
+Cited by: §1.
+Loula et al. (2025)
+J. Loula, B. LeBrun, L. Du, B. Lipkin, C. Pasti, G. Grand, T. Liu, Y. Emara, M. Freedman, J. Eisner, R. Cotterell, V. K. Mansinghka, A. K. Lew, T. Vieira, and T. J. O’Donnell
+Syntactic and semantic control of large language models via sequential monte carlo.
+In International Conference on Learning Representations,
+Note: arXiv:2504.13139
+Cited by: §1.
+Madaan et al. (2025)
+L. Madaan, A. Didolkar, S. Gururangan, J. Quan, R. Silva, R. Salakhutdinov, M. Zaheer, S. Arora, and A. Goyal
+Rethinking thinking tokens: llms as improvement operators.
+arXiv preprint arXiv:2510.01123.
+Cited by: §1.
+Marion and Schmidler (2018)
+J. Marion and S. C. Schmidler
+Finite sample L​_​2L\_2 bounds for sequential monte carlo and adaptive path selection.
+arXiv preprint arXiv:1807.01346.
+Cited by: §C.3.
+Montemerlo et al. (2002)
+M. Montemerlo, S. Thrun, D. Koller, and B. Wegbreit
+FastSLAM: a factored solution to the simultaneous localization and mapping problem.
+In Proceedings of the AAAI Conference on Artificial Intelligence,
+Cited by: §1.
+Mudgal et al. (2024)
+S. Mudgal, J. Lee, H. Ganapathy, Y. Li, T. Wang, Y. Huang, Z. Chen, H. Cheng, M. Collins, T. Strohman, J. Chen, A. Beutel, and A. Beirami
+Controlled decoding from language models.
+In Forty-first International Conference on Machine Learning,
+External Links: Link
+Cited by: §1.1.
+Naesseth et al. (2019)
+C. A. Naesseth, F. Lindsten, and T. B. Schön
+High-dimensional filtering using nested sequential monte carlo.
+IEEE Transactions on Signal Processing 67 (16), pp. 4177–4188.
+External Links: Document
+Cited by: §1.2.
+Pitt and Shephard (1997)
+M. K. Pitt and N. Shephard
+Filtering via simulation: auxiliary particle filters.
+Technical report
+Technical Report W13,  Nuffield College, University of Oxford.
+Cited by: §1.
+Puri et al. (2025a)
+I. Puri, S. Sudalairaj, G. Xu, K. Xu, and A. Srivastava
+A probabilistic inference approach to inference-time scaling of LLMs using particle-based monte carlo methods.
+arXiv preprint arXiv:2502.01618.
+Cited by: §1.
+Puri et al. (2025b)
+I. Puri, S. Sudalairaj, G. Xu, K. Xu, and A. Srivastava
+A probabilistic inference approach to inference-time scaling of llms using particle-based monte carlo methods.
+arXiv preprint arXiv:2502.01618.
+Cited by: §1.1,
+§1.3,
+§1,
+§4.5.
+Rohatgi et al. (2025)
+D. Rohatgi, A. Shetty, D. Saless, Y. Li, A. Moitra, A. Risteski, and D. J. Foster
+Taming imperfect process verifiers: a sampling perspective on backtracking.
+arXiv preprint arXiv:2510.03149.
+Cited by: Appendix A,
+Appendix A,
+Appendix A,
+Appendix A,
+Appendix A,
+§E.1,
+§E.1,
+Appendix E,
+Appendix E,
+Appendix E,
+§F.3.1,
+§1.1,
+§1.1,
+§1.1,
+§1.2,
+§1.2,
+§1.2,
+§3.2,
+§3.4.
+Schweizer (2012)
+N. Schweizer
+Non-asymptotic error bounds for sequential mcmc methods in multimodal settings.
+arXiv preprint arXiv:1205.6733.
+Cited by: §C.3,
+§C.3,
+§C.3,
+§C.3,
+§3.1,
+§3.1.
+Singhal et al. (2025)
+R. Singhal, Z. Horvitz, R. Teehan, M. Ren, Z. Yu, K. McKeown, and R. Ranganath
+A general framework for inference-time scaling and steering of diffusion models.
+arXiv preprint arXiv:2501.06848.
+Cited by: §1.
+Skreta et al. (2025)
+M. Skreta, T. Akhound-Sadegh, V. Ohanesian, R. Bondesan, A. Aspuru-Guzik, A. Doucet, R. Brekelmans, A. Tong, and K. Neklyudov
+Feynman-kac correctors in diffusion: annealing, guidance, and product of experts.
+arXiv preprint arXiv:2503.02819.
+Cited by: §1.
+Stephan et al. (2024)
+A. Stephan, D. Zhu, M. Assenmacher, X. Shen, and B. Roth
+From calculation to adjudication: examining LLM judges on mathematical reasoning tasks.
+arXiv preprint arXiv:2409.04168.
+Cited by: §1.1.
+Wang et al. (2025a)
+K. Wang, J. P. Zhou, J. Chang, Z. Gao, N. Kallus, K. Brantley, and W. Sun
+Value-guided search for efficient chain-of-thought reasoning.
+arXiv preprint arXiv:2505.17373.
+Cited by: §1.
+Wang et al. (2025b)
+K. Wang, J. P. Zhou, J. Chang, Z. Gao, N. Kallus, K. Brantley, and W. Sun
+Value-guided search for efficient chain-of-thought reasoning.
+In Advances in Neural Information Processing Systems,
+Note: arXiv:2505.17373
+Cited by: §1.1,
+§4.5.
+Wang et al. (2024)
+P. Wang, L. Li, Z. Shao, R. X. Xu, D. Dai, Y. Li, D. Chen, Y. Wu, and Z. Sui
+Math-shepherd: verify and reinforce LLMs step-by-step without human annotations.
+arXiv preprint arXiv:2312.08935.
+Cited by: §1.1,
+§4.5.
+Wang et al. (2023)
+X. Wang, J. Wei, D. Schuurmans, Q. V. Le, E. H. Chi, S. Narang, A. Chowdhery, and D. Zhou
+Self-consistency improves chain of thought reasoning in language models.
+In The Eleventh International Conference on Learning Representations,
+External Links: Link
+Cited by: §1.
+Whiteley et al. (2012)
+N. Whiteley, N. Kantas, and A. Jasra
+Linear variance bounds for particle approximations of time-homogeneous feynman–kac formulae.
+Stochastic Processes and their Applications 122 (4), pp. 1840–1865.
+Cited by: §C.3,
+§C.3.
+Wu et al. (2025)
+X. Wu, K. Li, Y. Zhao, L. Zhang, L. Ou, H. Yin, Z. Zhang, X. Yu, D. Zhang, Y. Jiang, et al.
+ReSum: unlocking long-horizon search intelligence via context summarization.
+arXiv preprint arXiv:2509.13313.
+Cited by: §1.
+Xiong et al. (2024)
+W. Xiong, H. Dong, C. Ye, Z. Wang, H. Zhong, H. Ji, N. Jiang, and T. Zhang
+Iterative preference learning from human feedback: bridging theory and practice for RLHF under KL-constraint.
+arXiv preprint arXiv:2312.11456.
+Cited by: §1.1.
+Yang and Klein (2021)
+K. Yang and D. Klein
+FUDGE: controlled text generation with future discriminators.
+In Proceedings of the 2021 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies,
+pp. 3511–3535.
+Cited by: Appendix A,
+§3.3.
+Yang et al. (2024)
+L. Yang, Z. Yu, T. Zhang, S. Cao, M. Xu, W. Zhang, J. E. Gonzalez, and B. Cui
+Buffer of thoughts: thought-augmented reasoning with large language models.
+Advances in Neural Information Processing Systems 37, pp. 113519–113544.
+Cited by: §1.
+Yu et al. (2025)
+Y. Yu, Q. Di, Q. Gu, and D. Zhou
+On the limits of test-time compute: sequential reward filtering for better inference.
+arXiv preprint arXiv:2512.04558.
+Cited by: §1.
+Zhang et al. (2025)
+Z. Zhang, C. Zheng, Y. Wu, B. Zhang, R. Lin, B. Yu, D. Liu, J. Zhou, and J. Lin
+The lessons of developing process reward models in mathematical reasoning.
+arXiv preprint arXiv:2501.07301.
+Cited by: §1.1,
+§4.5.
+Zhao et al. (2024)
+S. Zhao, R. Brekelmans, A. Makhzani, and R. Grosse
+Probabilistic inference in language models via twisted sequential monte carlo.
+arXiv preprint arXiv:2404.17546.
+Cited by: §G.1,
+§1.2,
+§1,
+§4.1.
+Zhao et al. (2025)
+W. Zhao, P. Aggarwal, S. Saha, A. Celikyilmaz, J. Weston, and I. Kulikov
+The majority is not always right: rl training for solution aggregation.
+arXiv preprint arXiv:2509.06870.
+Cited by: §1.
+Zhu and Lu (2026)
+Y. Zhu and Y. Lu
+On the power of (approximate) reward models for inference-time scaling.
+arXiv preprint arXiv:2602.01381.
+Cited by: §1.1,
+§3.1.
+Contents of Appendix
+Appendix A Comparison with Prior Work
+In this section we discuss how our theoretical guarantees compare with prior work. We specify to the autoregressive generation setting, as the more general setting has not been theoretically studied in the past.
+Action-level rejection sampling / sequential importance sampling (Yang and Klein, 2021)
+This algorithm samples a1:Ha_{1:H} autoregressively via the conditional distributions
+π^(ah+1∣a1:h)∝πref(a1:h+1∣a1:h)V^(a1:h+1).\widehat{\pi}(a_{h+1}\mid{}a_{1:h})\propto\pi_{\texttt{ref}}(a_{1:h+1}\mid{}a_{1:h})\widehat{V}(a_{1:h+1}).
+(11)
+It can be implemented in expected time O⁡(H​C^𝖺𝖼𝗍)O(H\widehat{C}_{\mathsf{act}}) by rejection sampling / importance sampling Rohatgi et al. (2025), and by Eq. 2, it exactly samples from π⋆\pi^{\star} if V^=V⋆\widehat{V}=V^{\star}. However, even under assumption Section 3.1 with 𝖢∞=1+ϵ\mathsf{C}_{\infty}=1+\epsilon, it can incur Ω⁡(ϵ​H)\Omega(\epsilon\sqrt{H}) sampling error Rohatgi et al. (2025), which is vacuous if e.g. ϵ=Θ⁡(1)\epsilon=\Theta(1).
+VGB (Rohatgi et al., 2025)
+This algorithm is defined by a random walk on the tree of autoregressive generations, which has state space 𝒜0⊔⋯⊔𝒜H\mathcal{A}^{0}\sqcup\dots\sqcup\mathcal{A}^{H} and in which the parent of a1:ha_{1:h} is a1:h−1a_{1:h-1}. The first main result of Rohatgi et al. (2025) is that the random walk samples from π⋆\pi^{\star}, up to total variation error δ\delta, in time roughly O⁡(H2​C𝖺𝖼𝗍​𝖢∞4​log⁡(1/δ))O(H^{2}C_{\sf act}\mathsf{C}_{\infty}^{4}\log(1/\delta)). This guarantee is essentially matched by the guarantee of Section 3.2 for SMC, except the language model evaluations in SMC can be parallelized into HH rounds, whereas the language model evaluations in VGB are inherently sequential.88
+8
+The results of Appendix E suggest a potential approach to parallelizing VGB via particle filtering, but it is unclear in what generality such a simulation would be efficient.
+The second main result of Rohatgi et al. (2025) shows that under the following average-case closeness condition between V^\widehat{V} and V⋆V^{\star}, as well as bounded action-level coverage, VGB samples from a distribution that approximately covers π⋆\pi^{\star}.
+{assumption}
+[Average-case assumption of Rohatgi et al. (2025)]
+max{𝔼π⋆[V^(a1:h)V⋆(a1:h)],𝔼π⋆[V⋆(a1:h)V^(a1:h)]}≤C.\max\left\{\En^{\pi^{\star}}\left[\frac{\widehat{V}(a_{1:h})}{V^{\star}(a_{1:h})}\right],\En^{\pi^{\star}}\left[\frac{V^{\star}(a_{1:h})}{\widehat{V}(a_{1:h})}\right]\right\}\leq C.
+(12)
+We make the following observation:
+{fact}
+For each 0≤h≤H0\leq h\leq H, it holds that
+Dχ2(πh⋆∥π^h)=𝔼π⋆[V^(a1:h)V⋆(a1:h)]⋅𝔼π⋆[V⋆(a1:h)V^(a1:h)]−1.D_{\chi^{2}}\left(\pi^{\star}_{h}\;\|\;{}\widehat{\pi}_{h}\right)=\En^{\pi^{\star}}\left[\frac{\widehat{V}(a_{1:h})}{V^{\star}(a_{1:h})}\right]\cdot\En^{\pi^{\star}}\left[\frac{V^{\star}(a_{1:h})}{\widehat{V}(a_{1:h})}\right]-1.
+(13)
+Thus, under Appendix A as well as bounded action-level coverage, Section 3.1 shows that SMC with N≤(C+1)2​H2/ϵ2N\leq(C+1)^{2}H^{2}/\epsilon^{2} particles samples from a distribution that is ϵ\epsilon-close in total variation distance to π⋆\pi^{\star}. Note that closeness in total variation distance is a stronger guarantee than approximate coverage.
+Appendix B Technical Tools
+{proposition}
+For any R≥0R\geq 0, independent random variables X1,⋯,XnX_{1},\cdots,X_{n}, it holds that
+𝔼|∑i=1n(Xi−𝔼[Xi])|≤nR​maxi​𝔼⁡|Xi|+2nmaxi𝔼[|Xi|𝕀{|Xi|≥R}].\displaystyle\En\left\lvert\sum_{i=1}^{n}(X_{i}-\En[X_{i}])\right\rvert\leq\sqrt{nR\max_{i}\En\lvert X_{i}\rvert}+2n\max_{i}\En\left[\lvert X_{i}\rvert\mathbb{I}\{\lvert X_{i}\rvert\geq R\}\right].
+(14)
+Proof. We define Yi=min⁡{max⁡{Xi,−R},R}Y_{i}=\min\{\max\{X_{i},-R\},R\} and Zi=Xi−YiZ_{i}=X_{i}-Y_{i}. Then, we can bound
+𝔼⁡|∑i=1n(Xi−𝔼⁡[Xi])|≤\displaystyle\En\left\lvert\sum_{i=1}^{n}(X_{i}-\En[X_{i}])\right\rvert\leq
+𝔼⁡|∑i=1n(Yi−𝔼⁡[Yi])|+∑i=1n𝔼⁡|Zi−𝔼⁡[Zi]|.\displaystyle~\En\left\lvert\sum_{i=1}^{n}(Y_{i}-\En[Y_{i}])\right\rvert+\sum_{i=1}^{n}\En\lvert Z_{i}-\En[Z_{i}]\rvert.
+(15)
+Note that 𝔼|Zi−𝔼[Zi]|≤2𝔼|Zi|≤2𝔼[|Xi|𝕀{|Xi|≥R}]\En\lvert Z_{i}-\En[Z_{i}]\rvert\leq 2\En\lvert Z_{i}\rvert\leq 2\En\left[\lvert X_{i}\rvert\mathbb{I}\{\lvert X_{i}\rvert\geq R\}\right]. Further,
+(𝔼⁡|∑i=1n(Yi−𝔼⁡[Yi])|)2≤\displaystyle\left(\En\left\lvert\sum_{i=1}^{n}(Y_{i}-\En[Y_{i}])\right\rvert\right)^{2}\leq
+𝔼⁡(∑i=1n(Yi−𝔼⁡[Yi]))2\displaystyle~\En\left(\sum_{i=1}^{n}(Y_{i}-\En[Y_{i}])\right)^{2}
+(16)
+=\displaystyle=
+∑i=1n𝔼⁡(Yi−𝔼⁡[Yi])2≤∑i=1n𝔼⁡Yi2≤R​∑i=1n𝔼⁡|Xi|,\displaystyle~\sum_{i=1}^{n}\En(Y_{i}-\En[Y_{i}])^{2}\leq\sum_{i=1}^{n}\En Y_{i}^{2}\leq R\sum_{i=1}^{n}\En\lvert X_{i}\rvert,
+(17)
+where we use |Yi|≤min⁡{|Xi|,R}\lvert Y_{i}\rvert\leq\min\{\lvert X_{i}\rvert,R\}. The proof is then completed by combining the inequalities above.
+∎
+Appendix C Proofs for SMC
+Notation
+We define ℋh={(x~ℓi,xℓi)}ℓ∈[h],i∈[N]\mathcal{H}_{h}=\{(\tilde{x}_{\ell}^{i},x_{\ell}^{{\scriptscriptstyle i}})\}_{\ell\in[h],i\in[N]} to be the full history of the execution of SMC (Algorithm 1) up to the end of iteration hh. We write 𝔼h⁡[⋅]\En_{h}[\cdot] for the conditional distribution with respect to ℋh\mathcal{H}_{h}. We write Z:=𝔼x1:H∼πref[r⋆(xH)]Z:=\mathbb{E}_{x_{1:H}\sim\pi_{\texttt{ref}}}[r^{\star}(x_{H})] and observe that Z=𝔼x∼πh​[V⋆​(x)]Z=\mathbb{E}_{x\sim\pi_{h}}[V^{\star}(x)] for all hh.
+C.1 Useful Lemmas for SMC
+We first prove the following lemmas.
+{lemma}
+For any step hh and any function g:𝒳h→ℝg:\mathcal{X}_{h}\to\mathbb{R}, we have that
+𝔼h−1⁡[W^h⋅𝔼ν^h⁡[g]]=W^h−1⋅𝔼xh−1∼ν^h−1⁡[𝔼xh∼πref(⋅∣xh−1)[V^(xh)⋅g(xh)]V^​(xh−1)].\displaystyle\En_{h-1}\left[\widehat{W}_{h}\cdot\En_{\widehat{\nu}_{h}}\left[g\right]\right]=\widehat{W}_{h-1}\cdot\En_{x_{h-1}\sim\widehat{\nu}_{h-1}}\left[\frac{\En_{x_{h}\sim\pi_{\texttt{ref}}(\cdot\mid x_{h-1})}\left[\widehat{V}(x_{h})\cdot g(x_{h})\right]}{\widehat{V}(x_{h-1})}\right].
+(18)
+The next lemma follows from applying Section C.1 inductively.
+{lemma}
+For any gh:𝒳h→ℝg_{h}:\mathcal{X}_{h}\to\mathbb{R}, it holds that
+𝔼⁡[W^h⋅𝔼ν^h⁡[gh]]=𝔼xh∼πh⁡[V^​(xh)​gh​(xh)].\displaystyle\En\left[\widehat{W}_{h}\cdot\En_{\widehat{\nu}_{h}}\left[g_{h}\right]\right]=\En_{x_{h}\sim\pi_{h}}\left[\widehat{V}(x_{h})g_{h}(x_{h})\right].
+(19)
+In particular, 𝔼⁡[W^h]=Z^h=𝔼⁡[V^​(xh)]\En[\widehat{W}_{h}]=\widehat{Z}_{h}=\En[\widehat{V}(x_{h})] for h≥1h\geq 1 and
+𝔼⁡[W^H​ν^H​(x)]=Z⋅πH⋆​(x),∀x∈𝒳H.\displaystyle\En\left[\widehat{W}_{H}\widehat{\nu}_{H}(x)\right]=Z\cdot\pi^{\star}_{H}(x),\qquad\forall x\in\mathcal{X}_{H}.
+(20)
+Finally, we upper bound the TV error of Algorithm 1 by the deviation of W^H\widehat{W}_{H}.
+{lemma}
+For Algorithm 1, it holds that
+D𝖳𝖵​(𝔼⁡[ν^H],πH⋆)≤12​Z​𝔼⁡|W^H−Z|.\displaystyle D_{\mathsf{TV}}\left(\En[\widehat{\nu}_{H}],\pi^{\star}_{H}\right)\leq\frac{1}{2Z}\En\lvert\widehat{W}_{H}-Z\rvert.
+(21)
+Proof of Section C.1 and Section C.1.
+To prove Eq. 18, observe that
+𝔼h−1⁡[W^h⋅𝔼ν^h⁡[g]]\displaystyle\En_{h-1}\left[\widehat{W}_{h}\cdot\En_{\widehat{\nu}_{h}}\left[g\right]\right]
+(22)
+=W^h−1⋅𝔼h−1⁡[1N​∑i=1Nwhi​g​(xhi)]\displaystyle=\widehat{W}_{h-1}\cdot\En_{h-1}\left[\frac{1}{N}\sum_{i=1}^{N}w_{h}^{{\scriptscriptstyle i}}g(x_{h}^{{\scriptscriptstyle i}})\right]
+(23)
+=W^h−1⋅𝔼h−1⁡[1N​∑i=1NV^​(xhi)V^​(x~h−1i)​g​(xhi)].\displaystyle=\widehat{W}_{h-1}\cdot\En_{h-1}\left[\frac{1}{N}\sum_{i=1}^{N}\frac{\widehat{V}(x_{h}^{{\scriptscriptstyle i}})}{\widehat{V}(\tilde{x}_{h-1}^{{\scriptscriptstyle i}})}g(x_{h}^{{\scriptscriptstyle i}})\right].
+(24)
+Since {(x~h−1i,xhi)}\left\{(\tilde{x}_{h-1}^{{\scriptscriptstyle i}},x_{h}^{{\scriptscriptstyle i}})\right\} are i.i.d. given ℋh−1\mathcal{H}_{h-1}, for each i∈[N]i\in[N], we have
+𝔼h−1[V^​(xhi)V^​(x~h−1i)g(xhi)]=𝔼x~h−1∼ν^h−1𝔼xh∼πref(⋅∣x~h−1)[V^​(xh)V^​(x~h−1)g(xh)],\displaystyle\mathbb{E}_{h-1}\left[\frac{\widehat{V}(x_{h}^{{\scriptscriptstyle i}})}{\widehat{V}(\tilde{x}_{h-1}^{{\scriptscriptstyle i}})}g(x_{h}^{{\scriptscriptstyle i}})\right]=\mathbb{E}_{\tilde{x}_{h-1}\sim\hat{\nu}_{h-1}}\mathbb{E}_{x_{h}\sim\pi_{\texttt{ref}}(\cdot\mid\tilde{x}_{h-1})}\left[\frac{\widehat{V}(x_{h})}{\widehat{V}(\tilde{x}_{h-1})}g(x_{h})\right],
+(25)
+which establishes Eq. 18. Next, we argue that Eq. 19 holds inductively (noting that the base case is trivial since W^0=V^​(⟂)\widehat{W}_{0}=\widehat{V}(\perp) and ν^0=δ⟂\widehat{\nu}_{0}=\delta_{\perp}), using Eq. 18:
+𝔼⁡[W^h⋅𝔼ν^H​[gh]]=\displaystyle\mathbb{E}\left[\widehat{W}_{h}\cdot\mathbb{E}_{\widehat{\nu}_{H}}[g_{h}]\right]=
+𝔼⁡[W^h−1⋅𝔼xh−1∼ν^h−1​[𝔼xh∼πref(⋅∣xh−1)[V^(xh)⋅gh(xh)]V^​(xh−1)]]\displaystyle\mathbb{E}\left[\widehat{W}_{h-1}\cdot\mathbb{E}_{x_{h-1}\sim\widehat{\nu}_{h-1}}\left[\frac{\mathbb{E}_{x_{h}\sim\pi_{\texttt{ref}}(\cdot\mid x_{h-1})}\left[\widehat{V}(x_{h})\cdot g_{h}(x_{h})\right]}{\widehat{V}(x_{h-1})}\right]\right]
+(26)
+=\displaystyle=
+𝔼⁡[V^​(xh−1)⋅𝔼xh∼πref(⋅∣xh−1)[V^(xh)gh(xh)]V^​(xh−1)]\displaystyle\mathbb{E}\left[\widehat{V}(x_{h-1})\cdot\frac{\mathbb{E}_{x_{h}\sim\pi_{\texttt{ref}}(\cdot\mid x_{h-1})}[\widehat{V}(x_{h})g_{h}(x_{h})]}{\widehat{V}(x_{h-1})}\right]
+(27)
+=\displaystyle=
+𝔼⁡[V^​(xh)​gh​(xh)],\displaystyle\mathbb{E}[\widehat{V}(x_{h})g_{h}(x_{h})],
+(28)
+as desired. We get that 𝔼⁡[W^h]=𝔼⁡[V^​(xh)]\mathbb{E}[\widehat{W}_{h}]=\mathbb{E}[\widehat{V}(x_{h})] by using gh≡1g_{h}\equiv 1. Finally, Eq. 20 follows by setting gH(x)=𝕀{xH=x}g_{H}(x)=\mathbb{I}\{x_{H}=x\} in Eq. 19 and using that V^​(xH)=V⋆​(xH)\widehat{V}(x_{H})=V^{\star}(x_{H}) for xH∈𝒳Hx_{H}\in\mathcal{X}_{H}.
+∎
+Proof of Section C.1.
+By Eq. 20, we can write
+2​Z​D𝖳𝖵​(𝔼⁡[ν^H],πH⋆)=\displaystyle 2ZD_{\mathsf{TV}}\left(\En[\widehat{\nu}_{H}],\pi^{\star}_{H}\right)=
+∑x∈𝒳H|Z​𝔼⁡[ν^H​(x)]−Z​πH⋆​(x)|=∑x∈𝒳H|Z​𝔼⁡[ν^H​(x)]−𝔼⁡[W^H​ν^H​(x)]|\displaystyle~\sum_{x\in\mathcal{X}_{H}}\lvert Z\En[\widehat{\nu}_{H}(x)]-Z\pi^{\star}_{H}(x)\rvert=\sum_{x\in\mathcal{X}_{H}}\left\lvert Z\En[\widehat{\nu}_{H}(x)]-\En[\widehat{W}_{H}\widehat{\nu}_{H}(x)]\right\rvert
+(29)
+≤\displaystyle\leq
+∑x∈𝒳H𝔼⁡[|W^H−Z|​ν^H​(x)]=𝔼⁡[|W^H−Z|⋅∑x∈𝒳Hν^H​(x)]=𝔼⁡|W^H−Z|.\displaystyle~\sum_{x\in\mathcal{X}_{H}}\En\left[\left\lvert\widehat{W}_{H}-Z\right\rvert\widehat{\nu}_{H}(x)\right]=\En\left[\left\lvert\widehat{W}_{H}-Z\right\rvert\cdot\sum_{x\in\mathcal{X}_{H}}\widehat{\nu}_{H}(x)\right]=\En\left\lvert\widehat{W}_{H}-Z\right\rvert.
+(30)
+∎
+C.2 Proof of Section 3.1
+We prove a slightly stronger upper bound.
+{proposition}
+SMC (Algorithm 1) with NN particles achieves
+D𝖳𝖵​(𝔼⁡[ν^H],πH⋆)≤1N​∑h=1H𝔼πref⁡[V^​(xh−1)]​𝔼πref​[V⋆​(xh)2V^​(xh−1)].\displaystyle D_{\mathsf{TV}}\left(\En[\widehat{\nu}_{H}],\pi^{\star}_{H}\right)\leq\frac{1}{\sqrt{N}}\sum_{h=1}^{H}\sqrt{\En_{\pi_{\texttt{ref}}}[\widehat{V}(x_{h-1})]\En_{\pi_{\texttt{ref}}}\left[\frac{V^{\star}(x_{h})^{2}}{\widehat{V}(x_{h-1})}\right]}.
+(31)
+Section 3.1 then follows from the fact that V⋆​(xh)≤C𝖺𝖼𝗍​V⋆​(xh−1)V^{\star}(x_{h})\leq C_{\sf act}V^{\star}(x_{h-1}) almost surely under xh∼πref(⋅∣xh−1)x_{h}\sim\pi_{\texttt{ref}}(\cdot\mid{}x_{h-1}) and
+𝔼πref[V^(xh−1)]𝔼πref[V⋆​(xh−1)2V^​(xh−1)]=1+Dχ2(πh−1⋆∥π^h−1).\displaystyle\En_{\pi_{\texttt{ref}}}[\widehat{V}(x_{h-1})]\En_{\pi_{\texttt{ref}}}\left[\frac{V^{\star}(x_{h-1})^{2}}{\widehat{V}(x_{h-1})}\right]=1+D_{\chi^{2}}\left(\pi^{\star}_{h-1}\;\|\;{}\widehat{\pi}_{h-1}\right).
+(32)
+∎
+Proof of Section C.2.
+We define ρ⁡(x)=V⋆​(x)V^​(x)\rho(x)=\frac{V^{\star}(x)}{\widehat{V}(x)} and
+Mh=W^h⋅𝔼xh∼ν^h⁡[ρ⁡(xh)].\displaystyle M_{h}=\widehat{W}_{h}\cdot\En_{x_{h}\sim\widehat{\nu}_{h}}[\rho(x_{h})].
+(33)
+Then Eq. 18 with g⁡(x)=ρ⁡(x)g(x)=\rho(x) implies (Mh)(M_{h}) is a martingale with M0=ZM_{0}=Z and MH=W^HM_{H}=\widehat{W}_{H}. We can then decompose
+𝔼⁡|W^H−Z|≤∑h=1H𝔼⁡|Mh−Mh−1|.\displaystyle\En\lvert\widehat{W}_{H}-Z\rvert\leq\sum_{h=1}^{H}\En\lvert M_{h}-M_{h-1}\rvert.
+(34)
+Next, we note that
+Mh−Mh−1=\displaystyle{M_{h}-M_{h-1}}=
+W^h−1​(1N​∑i=1Nwhi​ρ​(xhi)−𝔼xh−1∼ν^h−1⁡[ρ⁡(xh−1)])\displaystyle~\widehat{W}_{h-1}\left(\frac{1}{N}\sum_{i=1}^{N}w_{h}^{{\scriptscriptstyle i}}\rho(x_{h}^{{\scriptscriptstyle i}})-\En_{x_{h-1}\sim\widehat{\nu}_{h-1}}[\rho(x_{h-1})]\right)
+(35)
+=\displaystyle=
+W^h−1​(1N​∑i=1NV⋆​(xhi)V^​(x~h−1i)−𝔼xh−1∼ν^h−1⁡[ρ⁡(xh−1)]).\displaystyle~\widehat{W}_{h-1}\left(\frac{1}{N}\sum_{i=1}^{N}\frac{V^{\star}(x_{h}^{{\scriptscriptstyle i}})}{\widehat{V}(\tilde{x}_{h-1}^{{\scriptscriptstyle i}})}-\En_{x_{h-1}\sim\widehat{\nu}_{h-1}}[\rho(x_{h-1})]\right).
+(36)
+Since the tuples (x~h−1i,xhi)(\tilde{x}_{h-1}^{{\scriptscriptstyle i}},x_{h}^{{\scriptscriptstyle i}}) are i.i.d. given ℋh−1\mathcal{H}_{h-1}, we can bound
+1W^h−12​𝔼h−1​(Mh−Mh−1)2≤\displaystyle\frac{1}{\widehat{W}_{h-1}^{2}}\En_{h-1}(M_{h}-M_{h-1})^{2}\leq
+1NVarxh−1∼ν^h−1,xh∼πref(⋅∣xh−1)[V⋆​(xh)V^​(xh−1)]\displaystyle~\frac{1}{N}\mathrm{Var}_{x_{h-1}\sim\widehat{\nu}_{h-1},x_{h}\sim\pi_{\texttt{ref}}(\cdot\mid{}x_{h-1})}\left[\frac{V^{\star}(x_{h})}{\widehat{V}(x_{h-1})}\right]
+(37)
+≤\displaystyle\leq
+1N​𝔼xh−1∼ν^h−1​[𝔼xh∼πref(⋅∣xh−1)[V⋆(xh)2]V^​(xh−1)2]=:Δh−1.\displaystyle~\frac{1}{N}\En_{x_{h-1}\sim\widehat{\nu}_{h-1}}\left[\frac{\En_{x_{h}\sim\pi_{\texttt{ref}}(\cdot\mid x_{h-1})}[V^{\star}(x_{h})^{2}]}{\widehat{V}(x_{h-1})^{2}}\right]=\vcentcolon\Delta_{h-1}.
+(38)
+Then, by Section C.1, it holds that
+𝔼⁡[W^h−1]​𝔼​[W^h−1​Δh−1]=1N​𝔼πref​[V^​(xh−1)]​𝔼πref​[V⋆​(xh)2V^​(xh−1)].\displaystyle\En[\widehat{W}_{h-1}]\En[\widehat{W}_{h-1}\Delta_{h-1}]=\frac{1}{N}\En_{\pi_{\texttt{ref}}}[\widehat{V}(x_{h-1})]\En_{\pi_{\texttt{ref}}}\left[\frac{V^{\star}(x_{h})^{2}}{\widehat{V}(x_{h-1})}\right].
+(39)
+Therefore, we can bound
+𝔼⁡|W^H−Z|≤\displaystyle\En\lvert\widehat{W}_{H}-Z\rvert\leq
+∑h=1H𝔼⁡[𝔼h−1⁡|Mh−Mh−1|]\displaystyle~\sum_{h=1}^{H}\En\left[\En_{h-1}\lvert M_{h}-M_{h-1}\rvert\right]
+(40)
+≤\displaystyle\leq
+∑h=1H𝔼⁡[W^h−1​Δh−1]≤∑h=1H𝔼⁡[W^h−1]⋅𝔼⁡[W^h−1​Δh−1]\displaystyle~\sum_{h=1}^{H}\En\left[\widehat{W}_{h-1}\sqrt{\Delta_{h-1}}\right]\leq\sum_{h=1}^{H}\sqrt{\En[\widehat{W}_{h-1}]\cdot\En\left[\widehat{W}_{h-1}\Delta_{h-1}\right]}
+(41)
+≤\displaystyle\leq
+1N​∑h=1H𝔼πref⁡[V^​(xh−1)]​𝔼πref​[V⋆​(xh)2V^​(xh−1)].\displaystyle~\frac{1}{\sqrt{N}}\sum_{h=1}^{H}\sqrt{\En_{\pi_{\texttt{ref}}}[\widehat{V}(x_{h-1})]\En_{\pi_{\texttt{ref}}}\left[\frac{V^{\star}(x_{h})^{2}}{\widehat{V}(x_{h-1})}\right]}.
+(42)
+Combining the inequalities above completes the proof.
+∎
+C.3 Insufficiency of Existing Analysis
+Most non-asymptotic analyses of SMC assume conditions at least as strong as the L∞L_{\infty} closeness in Section 3.1 (Del Moral, 2004; Cérou et al., 2011; Whiteley et al., 2012). Another line of work (Marion and Schmidler, 2018; Lee and Santana-Gijzen, 2024) imposes assumptions on the transition kernel, which are therefore incomparable to those in this paper.
+We note that these approaches might fail to capture SMC convergence when we assume only χ2\chi^{2}-closeness (Section 3.1). This is because many explicitly or implicitly control the variance (Var⁡(W^h))h∈[H](\mathrm{Var}(\widehat{W}_{h}))_{h\in[H]} (Cérou et al., 2011; Whiteley et al., 2012; Schweizer, 2012, etc.). In contrast, our proof of Section 3.1 proceeds via the absolute deviation 𝔼⁡|MH−Z|\En\lvert M_{H}-Z\rvert. The seemingly more natural attempt to study the variance 𝔼⁡(MH−Z)2\En(M_{H}-Z)^{2} must confront the fact that MH=W^H=∏h=1H(1N​∑i=1Nwhi)M_{H}=\widehat{W}_{H}=\prod_{h=1}^{H}\left(\frac{1}{N}\sum_{i=1}^{N}w_{h}^{{\scriptscriptstyle i}}\right) is a sequential product. As the following lemma suggests, Var⁡(W^h)\mathrm{Var}(\widehat{W}_{h}) need not be controlled when the χ2\chi^{2} divergences (Dχ2(πh⋆∥π^h))h∈[H](D_{\chi^{2}}\left(\pi^{\star}_{h}\;\|\;{}\widehat{\pi}_{h}\right))_{h\in[H]} are bounded.
+{lemma}
+Suppose that V^​(⟂)=1\widehat{V}(\perp)=1.
+For any h∈[H]h\in[H], it holds that
+Var⁡(W^h)=𝔼⁡(W^h−Z^h)2≥Varx1∼π1​(𝔼⁡[V^​(xh)∣x1])N.\displaystyle\mathrm{Var}(\widehat{W}_{h})=\En(\widehat{W}_{h}-\widehat{Z}_{h})^{2}\geq\frac{\mathrm{Var}_{x_{1}\sim\pi_{1}}(\En[\widehat{V}(x_{h})\mid x_{1}])}{N}.
+(43)
+In particular, for H≥2H\geq 2, there exists a problem instance (V⋆,V^)(V^{\star},\widehat{V}) such that Dχ2(πh⋆∥π^h)≤2D_{\chi^{2}}\left(\pi^{\star}_{h}\;\|\;{}\widehat{\pi}_{h}\right)\leq 2, and both Section 3.1 and Section 3.3 holds with C𝖺𝖼𝗍=2C_{\sf act}=2, but SMC with NN particles incurs
+maxh∈[H]⁡Var⁡(W^h)≥2⌊H/2⌋−2N.\displaystyle\max_{h\in[H]}\mathrm{Var}(\widehat{W}_{h})\geq\frac{2^{\lfloor H/2\rfloor}-2}{N}.
+(44)
+Therefore, if convergence of SMC is established via upper bounds on Var⁡(W^h)\mathrm{Var}(\widehat{W}_{h}), the rate can be vacuous unless we have N≥exp⁡(Ω⁡(H))N\geq\exp(\Omega(H)) particles. For example,
+Schweizer (2012) study SMC through the following relation (cf. Lemma 2.1 therein) for f:𝒳H→[0,1]f:\mathcal{X}_{H}\to[0,1]:
+𝔼⁡(𝔼ν^H⁡[f]−𝔼πH⋆⁡[f])2≤2​V​a​r​(W^H⋅𝔼ν^H⁡[f])+2​V​a​r​(W^H).\displaystyle\En\left(\En_{\widehat{\nu}_{H}}[f]-\En_{\pi^{\star}_{H}}[f]\right)^{2}\leq 2\mathrm{Var}(\widehat{W}_{H}\cdot\En_{\widehat{\nu}_{H}}[f])+2\mathrm{Var}(\widehat{W}_{H}).
+(45)
+Consequently, Schweizer (2012) establish upper bounds of the form
+N⋅Var⁡(W^H⋅𝔼ν^H⁡[f])≤C0​(f)+C1​(f)⋅ϵN,\displaystyle N\cdot\mathrm{Var}(\widehat{W}_{H}\cdot\En_{\widehat{\nu}_{H}}[f])\leq C_{0}(f)+C_{1}(f)\cdot\epsilon_{N},
+(46)
+where C0,C1C_{0},C_{1} are two problem-dependent functionals, and ϵN\epsilon_{N} is defined so that
+ϵN≥maxh∈[H]⁡Var⁡(W^h).\displaystyle\epsilon_{N}\geq\max_{h\in[H]}\mathrm{Var}(\widehat{W}_{h}).
+(47)
+This implies that the analysis in Schweizer (2012) cannot recover the upper bound of Section 3.1 (and Section 3.1.1).
+Proof of Section C.3.
+For any h≤ℓh\leq\ell, we define V~ℓ​(xh)=𝔼⁡[V^​(xℓ)∣xh]\widetilde{V}_{\ell}(x_{h})=\En[\widehat{V}(x_{\ell})\mid{}x_{h}] and ρℓ​(xh)=V~ℓ​(xh)V^​(xh)\rho_{\ell}(x_{h})=\frac{\widetilde{V}_{\ell}(x_{h})}{\widehat{V}(x_{h})}, and we define Mh,ℓ=W^h​𝔼ν^h​[ρℓ]M_{h,\ell}=\widehat{W}_{h}\En_{\widehat{\nu}_{h}}[\rho_{\ell}]. Then it is straightforward to verify that (Mh,ℓ)h∈[ℓ](M_{h,\ell})_{h\in[\ell]} is a martingale with M0,ℓ=Z^ℓM_{0,\ell}=\widehat{Z}_{\ell} and Mℓ,ℓ=W^ℓM_{\ell,\ell}=\widehat{W}_{\ell}.
+Therefore, we can lower bound
+𝔼⁡(W^ℓ−Z^ℓ)2≥\displaystyle\En(\widehat{W}_{\ell}-\widehat{Z}_{\ell})^{2}\geq
+𝔼⁡(M1,ℓ−Z^ℓ)2\displaystyle~\En(M_{1,\ell}-\widehat{Z}_{\ell})^{2}
+(48)
+=\displaystyle=
+𝔼⁡[(1N​∑i=1NV~ℓ​(x1i)V^​(x~0i)−𝔼ν^0⁡[ρℓ])2]\displaystyle~\En\left[\left(\frac{1}{N}\sum_{i=1}^{N}\frac{\widetilde{V}_{\ell}(x_{1}^{{\scriptscriptstyle i}})}{\widehat{V}(\tilde{x}_{0}^{{\scriptscriptstyle i}})}-\En_{\widehat{\nu}_{0}}[\rho_{\ell}]\right)^{2}\right]
+(49)
+=\displaystyle=
+1N​(𝔼x1∼π1⁡[V~ℓ​(x1)2]−Z^ℓ2),\displaystyle~\frac{1}{N}\left(\En_{x_{1}\sim\pi_{1}}[\widetilde{V}_{\ell}(x_{1})^{2}]-\widehat{Z}_{\ell}^{2}\right),
+(50)
+where we note that x~0i=⟂\tilde{x}_{0}^{{\scriptscriptstyle i}}=\perp for i∈[N]i\in[N].
+Now, consider n=⌊H/2⌋n=\lfloor H/2\rfloor. Consider the following simple example:
+•
+For each h∈[H]h\in[H], 𝒳h={(h,0),(h,1)}\mathcal{X}_{h}=\{(h,0),(h,1)\}, and P⁡((h+1,i)∣(h,i))=1P((h+1,i)\mid(h,i))=1 for i∈{0,1}i\in\{0,1\}.
+•
+The initial distribution is given by π1​((1,0))=12n=π1​((1,1))\pi_{1}((1,0))=\frac{1}{2^{n}}=\pi_{1}((1,1)).
+•
+The reward function is r≡1r\equiv 1, and hence V⋆​(x)=1V^{\star}(x)=1 for all x∈𝒳x\in\mathcal{X}.
+•
+For each h∈[H]h\in[H], we set V^​((,,,))=1\widehat{V}((h,1))=1 and V^​((,,,))=2h\widehat{V}((h,0))=2^{h} for h≤nh\leq n, and V^​((h,0))=2(2​n−h)+\widehat{V}((h,0))=2^{(2n-h)_{+}} for h≥nh\geq n.
+Then, it is clear that both Section 3.1 and Section 3.3 hold with C𝖺𝖼𝗍=2C_{\sf act}=2, and π^h\widehat{\pi}_{h} is given by π^​((,,,))=p​V^​((,,,))p​V^​((,,,))+1−p\widehat{\pi}((h,0))=\frac{p\widehat{V}((h,0))}{p\widehat{V}((h,0))+1-p}, and hence π^​((,,,))∈[p,12]\widehat{\pi}((h,0))\in[p,\frac{1}{2}]. This immediately implies Dχ2(πh⋆∥π^h)≤2D_{\chi^{2}}\left(\pi^{\star}_{h}\;\|\;{}\widehat{\pi}_{h}\right)\leq 2 for any h∈[H]h\in[H].
+However, we can then calculate V~n​((1,0))=2n\widetilde{V}_{n}((1,0))=2^{n}, and hence 𝔼⁡[V~n​(x1)2]≥p⋅22​n=2n\En[\widetilde{V}_{n}(x_{1})^{2}]\geq p\cdot 2^{2n}=2^{n}. This gives the desired statement.
+∎
+C.4 Proof of Section 3.1.1
+We prove the following general version of Section 3.1.1.
+{theorem}
+SMC with NN particles achieves the following for any M≥1M\geq 1, η≥1\eta\geq 1,
+D𝖳𝖵(𝔼[ν^H],πH⋆)≤HM​ηN+∑h=1H[CovM(πh⋆∥π^h)+Covη,h𝖺𝖼𝗍(π⋆∥πref)],\displaystyle D_{\mathsf{TV}}\left(\En[\widehat{\nu}_{H}],\pi^{\star}_{H}\right)\leq H\sqrt{\frac{M\eta}{N}}+\sum_{h=1}^{H}\left[\mathrm{Cov}_{M}\left(\pi^{\star}_{h}\,\|\,\widehat{\pi}_{h}\right)+\mathrm{Cov}_{\eta,h}^{\mathsf{act}}\left(\pi^{\star}\,\|\,\pi_{\texttt{ref}}\right)\right],
+(51)
+where we define
+Covη,h𝖺𝖼𝗍(π⋆∥πref):=\displaystyle\mathrm{Cov}_{\eta,h}^{\mathsf{act}}\left(\pi^{\star}\,\|\,\pi_{\texttt{ref}}\right)\vcentcolon=
+ℙxh−1∼π⋆h−1,xh∼π⋆(⋅∣xh−1)(π⋆​(xh∣xh−1)πref​(xh∣xh−1)≥η)\displaystyle~\mathbb{P}_{x_{h-1}\sim\pi^{\star}_{h-1},x_{h}\sim\pi^{\star}(\cdot\mid x_{h-1})}\left(\frac{\pi^{\star}(x_{h}\mid x_{h-1})}{\pi_{\texttt{ref}}(x_{h}\mid x_{h-1})}\geq\eta\right)
+(52)
+=\displaystyle=
+ℙxh−1∼π⋆h−1,xh∼π⋆(⋅∣xh−1)(V⋆​(xh)V⋆​(xh−1)≥η).\displaystyle~\mathbb{P}_{x_{h-1}\sim\pi^{\star}_{h-1},x_{h}\sim\pi^{\star}(\cdot\mid x_{h-1})}\left(\frac{V^{\star}(x_{h})}{V^{\star}(x_{h-1})}\geq\eta\right).
+(53)
+The quantity Covη,h𝖺𝖼𝗍(π⋆∥πref)\mathrm{Cov}_{\eta,h}^{\mathsf{act}}\left(\pi^{\star}\,\|\,\pi_{\texttt{ref}}\right) is the action-level analogue of Section 3.1.1.
+Under Section 3.1, this additional term is 00 when η≥C𝖺𝖼𝗍\eta\geq C_{\sf act}, recovering Section 3.1.1.
+Proof. We follow the notation of the proof of Section 3.1 (Section C.2). Recall that
+Mh−Mh−1=\displaystyle{M_{h}-M_{h-1}}=
+W^h−1​(1N​∑i=1NV⋆​(xhi)V^​(x~h−1i)−𝔼xh−1∼ν^h−1⁡[ρ⁡(xh−1)]),\displaystyle~\widehat{W}_{h-1}\left(\frac{1}{N}\sum_{i=1}^{N}\frac{V^{\star}(x_{h}^{{\scriptscriptstyle i}})}{\widehat{V}(\tilde{x}_{h-1}^{{\scriptscriptstyle i}})}-\En_{x_{h-1}\sim\widehat{\nu}_{h-1}}[\rho(x_{h-1})]\right),
+(54)
+where the tuples (x~h−1i,xhi)(\tilde{x}_{h-1}^{{\scriptscriptstyle i}},x_{h}^{{\scriptscriptstyle i}}) are i.i.d. given ℋh−1\mathcal{H}_{h-1}.
+By Appendix B, for any fixed parameter R>0R>0, we can bound
+1W^h−1​𝔼h−1​|Mh−Mh−1|\displaystyle~\frac{1}{\widehat{W}_{h-1}}\En_{h-1}\lvert M_{h}-M_{h-1}\rvert
+(55)
+≤\displaystyle\leq
+RN​𝔼xh−1∼ν^h−1​[V⋆​(xh−1)V^​(xh−1)]+2𝔼xh−1∼ν^h−1,xh∼πref(⋅∣xh−1)[V⋆​(xh)V^​(xh−1)𝕀{V⋆​(xh)V^​(xh−1)≥R}]\displaystyle~\sqrt{\frac{R}{N}\En_{x_{h-1}\sim\widehat{\nu}_{h-1}}\left[\frac{V^{\star}(x_{h-1})}{\widehat{V}(x_{h-1})}\right]}+2\En_{x_{h-1}\sim\widehat{\nu}_{h-1},x_{h}\sim\pi_{\texttt{ref}}(\cdot\mid x_{h-1})}\left[\frac{V^{\star}(x_{h})}{\widehat{V}(x_{h-1})}\mathbb{I}\left\{\frac{V^{\star}(x_{h})}{\widehat{V}(x_{h-1})}\geq R\right\}\right]
+(56)
+By Section C.1, we have
+𝔼⁡[W^h−1​𝔼xh−1∼ν^h−1⁡[ρ⁡(xh−1)]]≤𝔼⁡[W^h−1]​𝔼​[W^h−1​𝔼xh−1∼ν^h−1​[ρ⁡(xh−1)]]≤Z^h−1⋅Z,\displaystyle~\En\left[\widehat{W}_{h-1}\sqrt{\En_{x_{h-1}\sim\widehat{\nu}_{h-1}}[\rho(x_{h-1})]}\right]\leq\sqrt{\En[\widehat{W}_{h-1}]\En[\widehat{W}_{h-1}\En_{x_{h-1}\sim\widehat{\nu}_{h-1}}[\rho(x_{h-1})]]}\leq\sqrt{\widehat{Z}_{h-1}\cdot Z},
+(58)
+and similarly, for any η>0\eta>0,
+𝔼[W^h−1𝔼xh−1∼ν^h−1,xh∼πref(⋅∣xh−1)[V⋆​(xh)V^​(xh−1)𝕀{V⋆​(xh)V^​(xh−1)≥R}]]\displaystyle~\En\left[\widehat{W}_{h-1}\En_{x_{h-1}\sim\widehat{\nu}_{h-1},x_{h}\sim\pi_{\texttt{ref}}(\cdot\mid x_{h-1})}\left[\frac{V^{\star}(x_{h})}{\widehat{V}(x_{h-1})}\mathbb{I}\left\{\frac{V^{\star}(x_{h})}{\widehat{V}(x_{h-1})}\geq R\right\}\right]\right]
+(59)
+=\displaystyle=
+𝔼xh−1∼πh−1,xh∼πref(⋅∣xh−1)[V⋆(xh)𝕀{V⋆​(xh)V^​(xh−1)≥R}]\displaystyle~\En_{x_{h-1}\sim\pi_{h-1},x_{h}\sim\pi_{\texttt{ref}}(\cdot\mid x_{h-1})}\left[V^{\star}(x_{h})\mathbb{I}\left\{\frac{V^{\star}(x_{h})}{\widehat{V}(x_{h-1})}\geq R\right\}\right]
+(60)
+≤\displaystyle\leq
+𝔼xh−1∼πh−1,xh∼πref(⋅∣xh−1)[V⋆(xh)𝕀{V⋆​(xh−1)V^​(xh−1)≥η−1R}+V⋆(xh)𝕀{V⋆​(xh)V⋆​(xh−1)≥η}]\displaystyle~\En_{x_{h-1}\sim\pi_{h-1},x_{h}\sim\pi_{\texttt{ref}}(\cdot\mid x_{h-1})}\left[V^{\star}(x_{h})\mathbb{I}\left\{\frac{V^{\star}(x_{h-1})}{\widehat{V}(x_{h-1})}\geq\eta^{-1}R\right\}+V^{\star}(x_{h})\mathbb{I}\left\{\frac{V^{\star}(x_{h})}{V^{\star}(x_{h-1})}\geq\eta\right\}\right]
+(61)
+=\displaystyle=
+Z⋅[ℙxh−1∼πh−1⋆(V⋆​(xh−1)V^​(xh−1)≥η−1R)+ℙxh−1∼π⋆h−1,xh∼π⋆(⋅∣xh−1)(V⋆​(xh)V⋆​(xh−1)≥η)],\displaystyle~Z\cdot\left[\mathbb{P}_{x_{h-1}\sim\pi^{\star}_{h-1}}\left(\frac{V^{\star}(x_{h-1})}{\widehat{V}(x_{h-1})}\geq\eta^{-1}R\right)+\mathbb{P}_{x_{h-1}\sim\pi^{\star}_{h-1},x_{h}\sim\pi^{\star}(\cdot\mid x_{h-1})}\left(\frac{V^{\star}(x_{h})}{V^{\star}(x_{h-1})}\geq\eta\right)\right],
+(62)
+where we use πh−1​(xh−1)⋅V⋆​(xh−1)=πh−1⋆​(xh−1)⋅Z\pi_{h-1}(x_{h-1})\cdot V^{\star}(x_{h-1})=\pi^{\star}_{h-1}(x_{h-1})\cdot Z for xh−1∈𝒳h−1x_{h-1}\in\mathcal{X}_{h-1} and πref​(xh∣xh−1)⋅V⋆​(xh)=π⋆​(xh∣xh−1)⋅Z\pi_{\texttt{ref}}(x_{h}\mid{}x_{h-1})\cdot V^{\star}(x_{h})=\pi^{\star}(x_{h}\mid{}x_{h-1})\cdot Z.
+Therefore, we can choose R=M​η​ZZ^h−1R=M\eta\frac{Z}{\widehat{Z}_{h-1}} to derive
+1Z​𝔼⁡|Mh−Mh−1|≤\displaystyle\frac{1}{Z}\En\lvert M_{h}-M_{h-1}\rvert\leq
+M​ηN+2​ℙxh−1∼πh−1⋆​(V⋆​(xh−1)V^​(xh−1)≥M⋅ZZ^h−1)\displaystyle~\sqrt{\frac{M\eta}{N}}+2\mathbb{P}_{x_{h-1}\sim\pi^{\star}_{h-1}}\left(\frac{V^{\star}(x_{h-1})}{\widehat{V}(x_{h-1})}\geq M\cdot\frac{Z}{\widehat{Z}_{h-1}}\right)
+(63)
++2ℙxh−1∼π⋆h−1,xh∼π⋆(⋅∣xh−1)(V⋆​(xh)V⋆​(xh−1)≥η).\displaystyle~+2\mathbb{P}_{x_{h-1}\sim\pi^{\star}_{h-1},x_{h}\sim\pi^{\star}(\cdot\mid x_{h-1})}\left(\frac{V^{\star}(x_{h})}{V^{\star}(x_{h-1})}\geq\eta\right).
+(64)
+Taking summation completes the proof.
+∎
+C.5 Proof of Section 3.2
+We first prove the following lemma.
+{lemma}
+Under Section 3.1 and Section 3.1, for any δ∈(0,1)\delta\in(0,1), if we run SMC (Algorithm 1) with N=Ω⁡(H​𝖢∞4​C𝖺𝖼𝗍2​log⁡(H/δ))N=\Omega(H\mathsf{C}_{\infty}^{4}C_{\sf act}^{2}\log(H/\delta)) particles, then with probability at least 1−δ1-\delta, it holds that |W^H−Z|≤Z/2|\widehat{W}_{H}-Z|\leq Z/2.
+Proof. We follow the notation of the proof of Section 3.1 (Section C.2). Recall that
+Mh−Mh−1=\displaystyle{M_{h}-M_{h-1}}=
+W^h−1​(1N​∑i=1NV⋆​(xhi)V^​(x~h−1i)−𝔼xh−1∼ν^h−1⁡[ρ⁡(xh−1)]),\displaystyle~\widehat{W}_{h-1}\left(\frac{1}{N}\sum_{i=1}^{N}\frac{V^{\star}(x_{h}^{{\scriptscriptstyle i}})}{\widehat{V}(\tilde{x}_{h-1}^{{\scriptscriptstyle i}})}-\En_{x_{h-1}\sim\widehat{\nu}_{h-1}}[\rho(x_{h-1})]\right),
+(65)
+where the tuples (x~h−1i,xhi)(\tilde{x}_{h-1}^{{\scriptscriptstyle i}},x_{h}^{{\scriptscriptstyle i}}) are i.i.d. given ℋh−1\mathcal{H}_{h-1}.
+Note that by Section 3.1, it holds that almost surely
+0≤V⋆​(xhi)V^​(x~h−1i)=V⋆​(xhi)V⋆​(x~h−1i)⋅V⋆​(x~h−1i)V^​(x~h−1i)≤C𝖺𝖼𝗍​𝖢∞.\displaystyle 0\leq\frac{V^{\star}(x_{h}^{{\scriptscriptstyle i}})}{\widehat{V}(\tilde{x}_{h-1}^{{\scriptscriptstyle i}})}=\frac{V^{\star}(x_{h}^{{\scriptscriptstyle i}})}{V^{\star}(\tilde{x}_{h-1}^{{\scriptscriptstyle i}})}\cdot\frac{V^{\star}(\tilde{x}_{h-1}^{{\scriptscriptstyle i}})}{\widehat{V}(\tilde{x}_{h-1}^{{\scriptscriptstyle i}})}\leq C_{\sf act}\mathsf{C}_{\infty}.
+(66)
+Using the fact that for a random variable Y∈[0,A]Y\in[0,A], we can bound 𝔼⁡[eλ⁡(Y−𝔼⁡[Y])]≤eλ2​A2/8\mathbb{E}[e^{\lambda(Y-\mathbb{E}[Y])}]\leq e^{\lambda^{2}A^{2}/8}, we have that for any λ∈ℝ\lambda\in\mathbb{R},
+𝔼h−1​[exp⁡(λ⁡(Mh−Mh−1))]\displaystyle\mathbb{E}_{h-1}[\exp(\lambda(M_{h}-M_{h-1}))]
+(67)
+=\displaystyle=
+𝔼h−1​[exp⁡(λ​W^h−1⋅(1N​∑i=1NV⋆​(xhi)V^​(x~h−1i)−𝔼ν^h−1​[ρ⁡(xh−1)]))]\displaystyle\mathbb{E}_{h-1}\left[\exp\left(\lambda\widehat{W}_{h-1}\cdot\left(\frac{1}{N}\sum_{i=1}^{N}\frac{V^{\star}(x_{h}^{{\scriptscriptstyle i}})}{\widehat{V}(\tilde{x}_{h-1}^{{\scriptscriptstyle i}})}-\mathbb{E}_{\widehat{\nu}_{h-1}}[\rho(x_{h-1})]\right)\right)\right]
+(68)
+≤\displaystyle\leq
+exp⁡(1N​λ2​𝖢∞2​C𝖺𝖼𝗍2​W^h−12)≤exp⁡(1N​λ2​𝖢∞4​C𝖺𝖼𝗍2​Mh−12).\displaystyle{\exp\left(\frac{1}{N}\lambda^{2}\mathsf{C}_{\infty}^{2}C_{\sf act}^{2}\widehat{W}_{h-1}^{2}\right)}\leq{\exp\left(\frac{1}{N}\lambda^{2}\mathsf{C}_{\infty}^{4}C_{\sf act}^{2}M_{h-1}^{2}\right)}.
+(69)
+By Freedman’s inequality, for any h∈[H]h\in[H], it follows that with probability 1−δ1-\delta, we have that
+|Mh−Z|≤∑i=1h−1λ​𝖢∞4​C𝖺𝖼𝗍2​Mi2N+log⁡(2/δ)λ.\displaystyle|M_{h}-Z|\leq\sum_{i=1}^{h-1}\frac{\lambda\mathsf{C}_{\infty}^{4}C_{\sf act}^{2}M_{i}^{2}}{N}+\frac{\log(2/\delta)}{\lambda}.
+(70)
+Choosing λ=4​log⁡(2​H/δ)/Z\lambda=4\log(2H/\delta)/Z and using the union bound, it follows that with probability 1−δ1-\delta, for all h∈[H]h\in[H],
+|Mh−Z|≤\displaystyle|M_{h}-Z|\leq
+4​log⁡(2/δ)​𝖢∞4​C𝖺𝖼𝗍2N​∑i=0h−1Mi2Z+Z4.\displaystyle~\frac{4\log(2/\delta)\mathsf{C}_{\infty}^{4}C_{\sf act}^{2}}{N}\sum_{i=0}^{h-1}\frac{M_{i}^{2}}{Z}+\frac{Z}{4}.
+(71)
+Since we have chosen N=Ω⁡(H​log⁡(H/δ)​𝖢∞4​C𝖺𝖼𝗍2)N=\Omega(H\log(H/\delta)\mathsf{C}_{\infty}^{4}C_{\sf act}^{2}), it follows from induction on hh that in the event that Eq. 71 holds, we have that |Mh−Z|≤Z/2|M_{h}-Z|\leq Z/2 for all h∈[H]h\in[H]. In particular, this implies that |W^H−Z|≤Z/2|\widehat{W}_{H}-Z|\leq Z/2 with probability at least 1−δ1-\delta.
+∎
+Proof of Section 3.2.
+In any given round, let p^\widehat{p} be the distribution of the output of Algorithm 1 with Option 2 (when Algorithm 1 restarts we regard it as outputing the symbol “restart”). Then, the probability that the algorithm outputs any x∈𝒳Hx\in\mathcal{X}_{H} is given by
+p^​(x):=𝔼⁡[min⁡{1,W^H2​𝖢∞​Z^1}⋅ν^H​(x)]≤Z⋅πH⋆​(x)2​𝖢∞​Z^1,\displaystyle\widehat{p}(x):=\mathbb{E}\left[\min\left\{1,\frac{\widehat{W}_{H}}{2\mathsf{C}_{\infty}\widehat{Z}_{1}}\right\}\cdot\widehat{\nu}_{H}(x)\right]\leq\frac{Z\cdot\pi^{\star}_{H}(x)}{2\mathsf{C}_{\infty}\widehat{Z}_{1}},
+(72)
+where we have used Section C.1.
+Moreover, using that 2​𝖢∞​Z^1≥2​Z≥W^H2\mathsf{C}_{\infty}\widehat{Z}_{1}\geq 2Z\geq\widehat{W}_{H} with probability 1−δ2​𝖢∞21-\frac{\delta}{2\mathsf{C}_{\infty}^{2}} by Section C.5, for any subset X⊂𝒳HX\subset\mathcal{X}_{H},
+p^​(X)=𝔼⁡[min⁡{1,W^H2​𝖢∞​Z^1}⋅ν^H​(X)]≥Z⋅πH⋆​(x)2​𝖢∞​Z^1−δ2​𝖢∞2.\displaystyle\widehat{p}(X)=\mathbb{E}\left[\min\left\{1,\frac{\widehat{W}_{H}}{2\mathsf{C}_{\infty}\widehat{Z}_{1}}\right\}\cdot\widehat{\nu}_{H}(X)\right]\geq\frac{Z\cdot\pi^{\star}_{H}(x)}{2\mathsf{C}_{\infty}\widehat{Z}_{1}}-\frac{\delta}{2\mathsf{C}_{\infty}^{2}}.
+(73)
+In particular, it holds that Z2​𝖢∞​Z^1−δ4​𝖢∞2≤p^​(x≠restart)≤Z2​𝖢∞​Z^1\frac{Z}{2\mathsf{C}_{\infty}\widehat{Z}_{1}}-\frac{\delta}{4\mathsf{C}_{\infty}^{2}}\leq\widehat{p}(x\neq\text{restart})\leq\frac{Z}{2\mathsf{C}_{\infty}\widehat{Z}_{1}}, and hence using Z^1/Z≤𝖢∞\widehat{Z}_{1}/Z\leq\mathsf{C}_{\infty}, we know that for any X⊂𝒳HX\subset\mathcal{X}_{H}
+πH⋆​(X)−δ≤p^​(X∣not restart)≤(1+δ)​πH⋆​(X),\displaystyle\pi^{\star}_{H}(X)-\delta\leq\widehat{p}(X\mid{}\text{not restart})\leq(1+\delta)\pi^{\star}_{H}(X),
+(74)
+and hence D𝖳𝖵(πH⋆,p^(⋅∣not restart))≤δD_{\mathsf{TV}}\left(\pi^{\star}_{H},\widehat{p}(\cdot\mid{}\text{not restart})\right)\leq\delta. Finally, using the guarantee of rejection sampling, we know the number of outer loop steps is bounded by O⁡(𝖢∞2​log⁡(1/δ))O(\mathsf{C}_{\infty}^{2}\log(1/\delta))
+by noting that Z^1/Z≤𝖢∞\widehat{Z}_{1}/Z\leq\mathsf{C}_{\infty}.
+∎
+C.6 Lower Bound for SMC with Exact Value Function
+In the following proposition, we show that the horizon dependence of SMC when V^=V⋆\widehat{V}=V^{\star} is not an artifact of our analysis.
+{proposition}
+There exists a problem instance where V^=V⋆\widehat{V}=V^{\star} and Section 3.1 holds with C𝖺𝖼𝗍=2C_{\sf act}=2, however SMC with NN particles must incur
+D𝖳𝖵​(𝔼⁡[ν^H],πH⋆)≥c​min⁡{1,HN}.\displaystyle D_{\mathsf{TV}}\left(\En[\widehat{\nu}_{H}],\pi^{\star}_{H}\right)\geq c\min\left\{1,\frac{\sqrt{H}}{N}\right\}.
+(75)
+Proof. We construct a problem instance as follows. Fix λ>0\lambda>0. We consider 𝒳h={0,1}h\mathcal{X}_{h}=\{0,1\}^{h}, and define the transition kernel PP and value function V^=V⋆\widehat{V}=V^{\star} as follows:
+•
+For any xx, let πref(⋅∣x)=unif({(x,0),(x,1)})\pi_{\texttt{ref}}(\cdot\mid{}x)=\mathrm{unif}(\{(x,0),(x,1)\}).
+•
+Let V^=V⋆:𝒳→ℝ\widehat{V}=V^{\star}:\mathcal{X}\to\mathbb{R} be defined recursively as
+V⋆​(⟂)=0,V⋆​(x,0)=V⋆​(x),V⋆​(x,1)=(1+λ)​V⋆​(x).\displaystyle V^{\star}(\perp)=0,\qquad V^{\star}(x,0)=V^{\star}(x),\quad V^{\star}(x,1)=(1+\lambda)V^{\star}(x).
+(76)
+•
+Then, it holds that C𝖺𝖼𝗍≤1+λC_{\sf act}\leq 1+\lambda, and πH⋆=Ber​(p)⊗H\pi^{\star}_{H}=\mathrm{Ber}\left(p\right)^{\otimes H}, where p=1+λ2+λp=\frac{1+\lambda}{2+\lambda}.
+Under this construction, we can rewrite SMC as follows (where ν^0=δ⟂\widehat{\nu}_{0}=\delta_{\perp}).
+•
+For h≥1h\geq 1, sample NN particles x~h−11,…,x~hN​∼i.i.d.​ν^h−1​(⋅)\tilde{x}_{h-1}^{{\scriptscriptstyle 1}},\ldots,\tilde{x}_{h}^{{\scriptscriptstyle N}}\overset{\text{i.i.d.}}{\sim}\widehat{\nu}_{h-1}(\cdot{}) and generates ahi∼unif⁡({0,1})a_{h}^{{\scriptscriptstyle i}}\sim\mathrm{unif}(\{0,1\}) independently.
+•
+Assign weights whi=1+λ​ahiw_{h}^{{\scriptscriptstyle i}}=1+\lambda a_{h}^{{\scriptscriptstyle i}} to particle xhi=(x~h−1i,ahi)x_{h}^{{\scriptscriptstyle i}}=(\tilde{x}_{h-1}^{{\scriptscriptstyle i}},a_{h}^{{\scriptscriptstyle i}}).
+•
+Define weighted empirical measure ν^h:=1Wh​∑i=1Nwhi​δxhi\widehat{\nu}_{h}\vcentcolon={}\frac{1}{W_{h}}\sum_{i=1}^{N}w_{h}^{{\scriptscriptstyle i}}\updelta_{x_{h}^{{\scriptscriptstyle i}}}, where Wh=N+λ​∑i=1NahiW_{h}=N+\lambda\sum_{i=1}^{N}a_{h}^{{\scriptscriptstyle i}}.
+We make the following claims, proven below.
+{claim}
+It holds that 𝔼⁡[ν^H]=Ber​(pN)⊗H\En[\widehat{\nu}_{H}]=\mathrm{Ber}(p_{N})^{\otimes H}, where pNp_{N} is defined in Eq. 81.
+{claim}
+It holds that pN≤1+λ2+λ−cλNp_{N}\leq\frac{1+\lambda}{2+\lambda}-\frac{c_{\lambda}}{N}, where cλ=2​λ​(1+λ)(2+λ)3c_{\lambda}=\frac{2\lambda(1+\lambda)}{(2+\lambda)^{3}}.
+Now, we can lower bound
+D𝖳𝖵​(𝔼⁡[ν^H],πH⋆)=D𝖳𝖵​(Bin⁡(H,p),Bin⁡(H,pN))≥c​min​{1,H​|p−pN|},\displaystyle D_{\mathsf{TV}}\left(\En[\widehat{\nu}_{H}],\pi^{\star}_{H}\right)=D_{\mathsf{TV}}\left(\Bin(H,p),\Bin(H,p_{N})\right)\geq c\min\{1,\sqrt{H}\lvert p-p_{N}\rvert\},
+(77)
+where c>0c>0 is an absolute constant. Choosing λ=1\lambda=1 completes the proof of Section C.6.
+∎
+We prove the auxiliary claims:
+Proof of Section C.6.
+By definition, for any x∈𝒳h−1x\in\mathcal{X}_{h-1} and a∈{0,1}a\in\{0,1\},
+ν^h​(x,1)=1Wh​∑i=1Nwhi​𝕀​{x~h−1i=x,ahi=a}.\displaystyle\widehat{\nu}_{h}(x,1)=\frac{1}{W_{h}}\sum_{i=1}^{N}w_{h}^{{\scriptscriptstyle i}}\mathbb{I}\{\tilde{x}_{h-1}^{{\scriptscriptstyle i}}=x,a_{h}^{{\scriptscriptstyle i}}=a\}.
+(78)
+Note that {ahi}\{a_{h}^{{\scriptscriptstyle i}}\} and {x~h−1i}\{\tilde{x}_{h-1}^{{\scriptscriptstyle i}}\} are independent, we can calculate
+𝔼⁡[ν^h​(x,1)]=\displaystyle\En[\widehat{\nu}_{h}(x,1)]=
+𝔼[1Wh∑i=1Nwhi𝕀{ahi=1}⋅𝕀{x~h−1i=x}]\displaystyle~\En\left[\frac{1}{W_{h}}\sum_{i=1}^{N}w_{h}^{{\scriptscriptstyle i}}\mathbb{I}\{a_{h}^{{\scriptscriptstyle i}}=1\}\cdot\mathbb{I}\{\tilde{x}_{h-1}^{{\scriptscriptstyle i}}=x\}\right]
+(79)
+=\displaystyle=
+𝔼⁡[ν^h−1​(x)⋅(1+λ)​∑i=1NahiN+λ​∑i=1Nahi].\displaystyle~\En\left[\widehat{\nu}_{h-1}(x)\cdot\frac{(1+\lambda)\sum_{i=1}^{N}a_{h}^{{\scriptscriptstyle i}}}{N+\lambda\sum_{i=1}^{N}a_{h}^{{\scriptscriptstyle i}}}\right].
+(80)
+Note that Ah=∑i=1Nahi∼Bin⁡(N,12)A_{h}=\sum_{i=1}^{N}a_{h}^{{\scriptscriptstyle i}}\sim\Bin(N,\frac{1}{2}) is independent of ν^h−1\widehat{\nu}_{h-1}. Then, we know
+𝔼⁡[ν^h​(x,1)]=pN​𝔼⁡[ν^h−1​(x)],pN=(1+λ)​𝔼A∼Bin⁡(N,12)​[AN+λ​A].\displaystyle\En[\widehat{\nu}_{h}(x,1)]=p_{N}\En\left[\widehat{\nu}_{h-1}(x)\right],\qquad p_{N}=(1+\lambda)\En_{A\sim\Bin(N,\frac{1}{2})}\left[\frac{A}{N+\lambda A}\right].
+(81)
+Applying this equation recursively gives the desired result.
+∎
+Proof of Section C.6.
+We let Y=2​AN−1Y=\frac{2A}{N}-1 so that YhY_{h} symmetrically distributed on [−1,1][-1,1]. Then we can write
+NN+λ​A=22+λ⁡(Y+1)=22+λ⋅11+λ2+λ​Y=22+λ​∑k≥0(−1)k​(λ​Y2+λ)k.\displaystyle\frac{N}{N+\lambda A}=\frac{2}{2+\lambda(Y+1)}=\frac{2}{2+\lambda}\cdot\frac{1}{1+\frac{\lambda}{2+\lambda}Y}=\frac{2}{2+\lambda}\sum_{k\geq 0}(-1)^{k}\left(\frac{\lambda Y}{2+\lambda}\right)^{k}.
+(82)
+Note that 𝔼⁡Yk=0\En Y^{k}=0 for odd integer kk and 𝔼⁡Y2=1N\En Y^{2}=\frac{1}{N}, we can conclude
+𝔼⁡[NN+λ​A]≥22+λ​(1+(λ2+λ)2​1N).\displaystyle\En\left[\frac{N}{N+\lambda A}\right]\geq\frac{2}{2+\lambda}\left(1+\left(\frac{\lambda}{2+\lambda}\right)^{2}\frac{1}{N}\right).
+(83)
+Reorganizing yields
+pN=(1+λ)​𝔼⁡[AN+λ​A]=1+λλ​(1−𝔼⁡[NN+λ​A])≤1+λ2+λ−2​λ​(1+λ)(2+λ)3​N.\displaystyle p_{N}=(1+\lambda)\En\left[\frac{A}{N+\lambda A}\right]=\frac{1+\lambda}{\lambda}\left(1-\En\left[\frac{N}{N+\lambda A}\right]\right)\leq\frac{1+\lambda}{2+\lambda}-\frac{2\lambda(1+\lambda)}{(2+\lambda)^{3}N}.
+(84)
+∎
+Appendix D Proofs for SMC-RS
+Analogously to Appendix C,
+we introduce the following quantity for Algorithm 2:
+Wh:=𝔼xh−1∼ν^h−1,xh∼πref(⋅∣xh−1)[V^​(xh)V^​(xh−1)],W^h:=∏ℓ=1hWℓ.\displaystyle W_{h}\vcentcolon=\En_{x_{h-1}\sim\widehat{\nu}_{h-1},x_{h}\sim\pi_{\texttt{ref}}(\cdot\mid x_{h-1})}\left[\frac{\widehat{V}(x_{h})}{\widehat{V}(x_{h-1})}\right],\qquad\widehat{W}_{h}\vcentcolon=\prod_{\ell=1}^{h}W_{\ell}.
+(85)
+We define ℋh={𝒮1,⋯,𝒮h}\mathcal{H}_{h}=\{\mathcal{S}_{1},\cdots,\mathcal{S}_{h}\} to be the full history of the execution of SMC-RS (Algorithm 2) up to the end of iteration hh. We write 𝔼h⁡[⋅]\En_{h}[\cdot] to be the conditional distribution with respect to ℋh\mathcal{H}_{h}.
+{lemma}
+For step h∈[H]h\in[H] of SMC-RS (Algorithm 2), given ℋh−1\mathcal{H}_{h-1}, the set 𝒮h\mathcal{S}_{h} consists of i.i.d. samples from the distribution μ^h\widehat{\mu}_{h} given by
+μ^h​(xh)=1Wh​𝔼xh−1∼ν^h−1​[πref​(xh∣xh−1)​V^​(xh)V^​(xh−1)],∀xh∈𝒳h.\displaystyle\widehat{\mu}_{h}(x_{h})=\frac{1}{W_{h}}\En_{x_{h-1}\sim\widehat{\nu}_{h-1}}\left[\pi_{\texttt{ref}}(x_{h}\mid x_{h-1})\frac{\widehat{V}(x_{h})}{\widehat{V}(x_{h-1})}\right],\qquad\forall x_{h}\in\mathcal{X}_{h}.
+(86)
+Hence, for any gh:𝒳h→ℝg_{h}:\mathcal{X}_{h}\to\mathbb{R}, it holds that
+𝔼⁡[W^h⋅𝔼ν^h⁡[gh]]=𝔼⁡[W^h⋅𝔼μ^h⁡[gh]]=1Z^1​𝔼xh∼πh​[V^​(xh)​gh​(xh)].\displaystyle\En\left[\widehat{W}_{h}\cdot\En_{\widehat{\nu}_{h}}\left[g_{h}\right]\right]=\En\left[\widehat{W}_{h}\cdot\En_{\widehat{\mu}_{h}}\left[g_{h}\right]\right]=\frac{1}{\widehat{Z}_{1}}\En_{x_{h}\sim\pi_{h}}\left[\widehat{V}(x_{h})g_{h}(x_{h})\right].
+(87)
+Proof of Appendix D.
+The first claim follows immediately from the analysis of rejection sampling: For any xh∈𝒳hx_{h}\in\mathcal{X}_{h}, by Bayes’ rule, we have
+ℙ⁡(xh∣accept)∝ℙ⁡(accept∣xh)⋅ℙ⁡(xh)∝μ^h​(xh).\displaystyle\mathbb{P}(x_{h}\mid\text{accept})\propto\mathbb{P}(\text{accept}\mid x_{h})\cdot\mathbb{P}(x_{h})\propto\widehat{\mu}_{h}(x_{h}).
+(88)
+To prove the second claim, we prove the following result, from which Eq. 87 follows inductively:
+𝔼h−1[Wh⋅𝔼ν^h[gh]]=𝔼h−1[Wh⋅𝔼μ^h[gh]]=𝔼xh−1∼ν^h−1,xh∼πref(⋅∣xh−1)[V^​(xh)​gh​(xh)V^​(xh−1)].\displaystyle\En_{h-1}\left[W_{h}\cdot\En_{\widehat{\nu}_{h}}\left[g_{h}\right]\right]=\En_{h-1}\left[W_{h}\cdot\En_{\widehat{\mu}_{h}}\left[g_{h}\right]\right]=\En_{x_{h-1}\sim\widehat{\nu}_{h-1},x_{h}\sim\pi_{\texttt{ref}}(\cdot\mid x_{h-1})}\left[\frac{\widehat{V}(x_{h})g_{h}(x_{h})}{\widehat{V}(x_{h-1})}\right].
+(89)
+∎
+In particular, 𝔼⁡[W^h]=Z^h/Z^1\En[\widehat{W}_{h}]=\widehat{Z}_{h}/\widehat{Z}_{1} for h≥1h\geq 1 and
+𝔼⁡[W^H​ν^H​(x)]=Z⋅πH⋆​(x)/Z^1,∀x∈𝒳H.\displaystyle\En\left[\widehat{W}_{H}\widehat{\nu}_{H}(x)\right]=Z\cdot\pi^{\star}_{H}(x)/\widehat{Z}_{1},\qquad\forall x\in\mathcal{X}_{H}.
+(90)
+Further, we define ρ⁡(x)=V⋆​(x)V^​(x)\rho(x)=\frac{V^{\star}(x)}{\widehat{V}(x)} and
+Mh=W^h⋅𝔼xh∼ν^h⁡[ρ⁡(xh)].\displaystyle M_{h}=\widehat{W}_{h}\cdot\En_{x_{h}\sim\widehat{\nu}_{h}}[\rho(x_{h})].
+(91)
+Then Appendix D with g⁡(x)=ρ⁡(x)g(x)=\rho(x) implies (Mh)(M_{h}) is a martingale with M0=ZM_{0}=Z and MH=W^HM_{H}=\widehat{W}_{H}.
+Therefore, similar to Section C.1, we have the following upper bound.
+{lemma}
+For Algorithm 2, it holds that
+D𝖳𝖵​(𝔼⁡[ν^H],πH⋆)≤12​Z​𝔼⁡|W^H−Z|≤12​Z​∑h=1H𝔼⁡|Mh−Mh−1|.\displaystyle D_{\mathsf{TV}}\left(\En[\widehat{\nu}_{H}],\pi^{\star}_{H}\right)\leq\frac{1}{2Z}\En\lvert\widehat{W}_{H}-Z\rvert\leq\frac{1}{2Z}\sum_{h=1}^{H}\En\lvert M_{h}-M_{h-1}\rvert.
+(92)
+D.1 Proof of Section 3.3
+Note that Mh−Mh−1=W^h​(𝔼ν^h⁡[ρ]−𝔼μ^h⁡[ρ])M_{h}-M_{h-1}=\widehat{W}_{h}\left(\En_{\widehat{\nu}_{h}}[\rho]-\En_{\widehat{\mu}_{h}}[\rho]\right), and ν^h=unif⁡(𝒮h)\widehat{\nu}_{h}=\mathrm{unif}(\mathcal{S}_{h}), where 𝒮h\mathcal{S}_{h} consists of i.i.d samples from μ^h\widehat{\mu}_{h}.
+Then, we can bound
+𝔼h−1⁡|𝔼ν^h⁡[ρh]−𝔼μ^h⁡[ρh]|≤\displaystyle\En_{h-1}\lvert\En_{\widehat{\nu}_{h}}[\rho_{h}]-\En_{\widehat{\mu}_{h}}[\rho_{h}]\rvert\leq
+𝔼h−1⁡|1N​∑xh∈𝒮hρ⁡(xh)−𝔼μ^h⁡[ρ]|2=𝔼μ^h⁡[ρ​(xh)2]−(𝔼μ^h⁡[ρ⁡(xh)])2N,\displaystyle~\sqrt{\En_{h-1}\left\lvert\frac{1}{N}\sum_{x_{h}\in\mathcal{S}_{h}}\rho(x_{h})-\En_{\widehat{\mu}_{h}}[\rho]\right\rvert^{2}}=\sqrt{\frac{\En_{\widehat{\mu}_{h}}[\rho(x_{h})^{2}]-\left(\En_{\widehat{\mu}_{h}}[\rho(x_{h})]\right)^{2}}{N}},
+(93)
+and hence
+N​𝔼⁡|Mh−Mh−1|≤\displaystyle\sqrt{N}\En\lvert M_{h}-M_{h-1}\rvert\leq
+𝔼⁡[W^h​𝔼μ^h⁡[ρ​(xh)2]−(𝔼μ^h⁡[ρ⁡(xh)])2]\displaystyle~\En\left[\widehat{W}_{h}\sqrt{\En_{\widehat{\mu}_{h}}[\rho(x_{h})^{2}]-\left(\En_{\widehat{\mu}_{h}}[\rho(x_{h})]\right)^{2}}\right]
+(94)
+≤\displaystyle\leq
+𝔼⁡[W^h]​(𝔼⁡[W^h​𝔼μ^h​[ρ​(xh)2]]−𝔼⁡[W^h​(𝔼μ^h⁡[ρ⁡(xh)])2])\displaystyle~\sqrt{\En[\widehat{W}_{h}]\left(\En\left[\widehat{W}_{h}\En_{\widehat{\mu}_{h}}[\rho(x_{h})^{2}]\right]-\En\left[\widehat{W}_{h}\left(\En_{\widehat{\mu}_{h}}[\rho(x_{h})]\right)^{2}\right]\right)}
+(95)
+≤\displaystyle\leq
+Z^h​𝔼xh∼πh​[V⋆​(xh)2V^​(xh)]−Z2\displaystyle~\sqrt{\widehat{Z}_{h}\En_{x_{h}\sim\pi_{h}}\left[\frac{V^{\star}(x_{h})^{2}}{\widehat{V}(x_{h})}\right]-Z^{2}}
+(96)
+=\displaystyle=
+Z​𝔼xh∼πh⋆⁡[π⋆​(xh)π^​(xh)]−1=Z​Dχ2(π⋆h∥π^h),\displaystyle~Z\sqrt{\En_{x_{h}\sim\pi^{\star}_{h}}\left[\frac{\pi^{\star}(x_{h})}{\widehat{\pi}(x_{h})}\right]-1}=Z\sqrt{D_{\chi^{2}}\left(\pi^{\star}_{h}\;\|\;{}\widehat{\pi}_{h}\right)},
+(97)
+where the third line uses 𝔼⁡[W^h]​𝔼⁡[W^h​(𝔼μ^h⁡[ρ⁡(xh)])2]≥(𝔼⁡[W^h​𝔼μ^h​[ρ⁡(xh)]])2=Z2\En[\widehat{W}_{h}]\En\left[\widehat{W}_{h}\left(\En_{\widehat{\mu}_{h}}[\rho(x_{h})]\right)^{2}\right]\geq\left(\En[\widehat{W}_{h}\En_{\widehat{\mu}_{h}}[\rho(x_{h})]]\right)^{2}=Z^{2} (Cauchy inequality and Appendix D), and the last line follows from the definition of π⋆\pi^{\star}, π^\widehat{\pi}, and χ2\chi^{2}-divergence.
+Taking summation completes the proof.
+∎
+D.2 Analysis of SMC-RS with Heavy-tailed Errors
+Parallel to SMC, we show that SMC-RS also enjoys an upper bound that depends only on coverage (Section 3.1.1).
+{theorem}
+Under Section 3.3, suppose that SMC-RS (Algorithm 2) is instantiated with η≥C^𝖺𝖼𝗍\eta\geq\widehat{C}_{\mathsf{act}}. It holds that for any M≥1M\geq 1, Algorithm 2 achieves
+D𝖳𝖵(𝔼[ν^H],πH⋆)≤HMN+∑h=1HCovM(πh⋆∥π^h).\displaystyle D_{\mathsf{TV}}\left(\En[\widehat{\nu}_{H}],\pi^{\star}_{H}\right)\leq H\sqrt{\frac{M}{N}}+\sum_{h=1}^{H}\mathrm{Cov}_{M}\left(\pi^{\star}_{h}\,\|\,\widehat{\pi}_{h}\right).
+(98)
+The convergence rate of Section D.2 improves upon that of SMC (Section 3.1.1) by a factor of C𝖺𝖼𝗍C_{\sf act}, though the same factor reappears in the time complexity. The expected time complexity bound matches Section 3.3.
+Proof. We follow the proof of Section 3.3 (Section D.1).
+By Appendix B, it holds that
+𝔼h−1⁡|𝔼ν^h⁡[ρh]−𝔼μ^h⁡[ρh]|=\displaystyle\En_{h-1}\lvert\En_{\widehat{\nu}_{h}}[\rho_{h}]-\En_{\widehat{\mu}_{h}}[\rho_{h}]\rvert=
+𝔼h−1⁡|1N​∑xh∈𝒮hρ⁡(xh)−𝔼μ^h⁡[ρ]|\displaystyle~\En_{h-1}\left\lvert\frac{1}{N}\sum_{x_{h}\in\mathcal{S}_{h}}\rho(x_{h})-\En_{\widehat{\mu}_{h}}[\rho]\right\rvert
+(99)
+≤\displaystyle\leq
+RN​𝔼xh∼μ^h​[ρ⁡(xh)]+2R𝔼xh∼μ^h[ρ(xh)𝕀{ρ(xh)≥R}],\displaystyle~\sqrt{\frac{R}{N}\En_{x_{h}\sim\widehat{\mu}_{h}}[\rho(x_{h})]}+2R\En_{x_{h}\sim\widehat{\mu}_{h}}[\rho(x_{h})\mathbb{I}\{\rho(x_{h})\geq R\}],
+(100)
+where we use 𝒮h\mathcal{S}_{h} consists of NN i.i.d samples from μ^h\widehat{\mu}_{h}. Therefore, we can bound
+𝔼|Mh−Mh−1|≤2RN𝔼[W^h𝔼xh∼μ^h⁡[ρ⁡(xh)]]+2𝔼[W^h𝔼xh∼μ^h[ρ(xh)𝕀{ρ(xh)≥R}]]\displaystyle\En\lvert M_{h}-M_{h-1}\rvert\leq 2\sqrt{\frac{R}{N}}\En\left[\widehat{W}_{h}\sqrt{\En_{x_{h}\sim\widehat{\mu}_{h}}[\rho(x_{h})]}\right]+2\En\left[\widehat{W}_{h}\En_{x_{h}\sim\widehat{\mu}_{h}}[\rho(x_{h})\mathbb{I}\{\rho(x_{h})\geq R\}]\right]
+(101)
+Further, by Appendix D, we have
+𝔼⁡[W^h​𝔼xh∼μ^h⁡[ρ⁡(xh)]]≤𝔼⁡[W^h]​𝔼​[W^h​𝔼xh∼μ^h​[ρ⁡(xh)]]≤Z^h⋅Z,\displaystyle\En\left[\widehat{W}_{h}\sqrt{\En_{x_{h}\sim\widehat{\mu}_{h}}[\rho(x_{h})]}\right]\leq\sqrt{\En[\widehat{W}_{h}]\En[\widehat{W}_{h}\En_{x_{h}\sim\widehat{\mu}_{h}}[\rho(x_{h})]]}\leq\sqrt{\widehat{Z}_{h}\cdot Z},
+(102)
+and
+𝔼[W^h⋅𝔼xh∼μ^h[ρ(xh)𝕀{ρ(xh)≥R}]]=Z⋅ℙx∼πh⋆(ρ(xh)≥R).\displaystyle\En\left[\widehat{W}_{h}\cdot\En_{x_{h}\sim\widehat{\mu}_{h}}[\rho(x_{h})\mathbb{I}\{\rho(x_{h})\geq R\}]\right]=Z\cdot\mathbb{P}_{x\sim\pi^{\star}_{h}}\left(\rho(x_{h})\geq R\right).
+(103)
+Choosing R=M​ZZ^hR=M\frac{Z}{\widehat{Z}_{h}} gives
+𝔼|Mh−Mh−1|≤2ZMN+2ZCovM(πh⋆∥π^h).\displaystyle\En\lvert M_{h}-M_{h-1}\rvert\leq 2Z\sqrt{\frac{M}{N}}+2Z\mathrm{Cov}_{M}\left(\pi^{\star}_{h}\,\|\,\widehat{\pi}_{h}\right).
+(104)
+Taking summation completes the proof.
+∎
+D.3 Faster Convergence for SMC-RS
+In this section, we present and analyze a modification of SMC-RS, which we call SMC-RS with restart (Algorithm 3). Under the following assumption, we prove that Algorithm 3 achieves exponential convergence (analogous to Section 3.2 for SMC).
+{assumption}
+There are at most η\eta values of xh+1x_{h+1} for each xhx_{h} so that πref​(xh+1∣xh)>0\pi_{\texttt{ref}}(x_{h+1}\mid x_{h})>0, and these are efficiently enumerable.
+Algorithm 3  Diffusion Monte Carlo
+Input: Transition kernel πref\pi_{\texttt{ref}}, value function V^\widehat{V}.
+Parameter: initial sample size N≥1N\geq 1.
+Initialize 𝒮0\mathcal{S}_{0} to be NN copies of ⟂\perp.
+for h=1,⋯,Hh=1,\cdots,H do
+For each xh−1∈𝒮h−1x_{h-1}\in\mathcal{S}_{h-1}, compute V~​(xh−1)=𝔼πref⁡[V^​(xh)∣xh−1]\widetilde{V}(x_{h-1})=\En_{\pi_{\texttt{ref}}}[\widehat{V}(x_{h})\mid{}x_{h-1}].
+Define Wh−1=1N​∑xh−1∈𝒮h−1V~​(xh−1)V^​(xh−1)W_{h-1}=\frac{1}{N}\sum_{x_{h-1}\in\mathcal{S}_{h-1}}\frac{\widetilde{V}(x_{h-1})}{\widehat{V}(x_{h-1})}.
+Define the weighted empirical measure μ~h−1=1N​Wh−1​∑xh−1∈𝒮h−1V~​(xh−1)V^​(xh−1)​δxh−1\widetilde{\mu}_{h-1}=\frac{1}{NW_{h-1}}\sum_{x_{h-1}\in\mathcal{S}_{h-1}}\frac{\widetilde{V}(x_{h-1})}{\widehat{V}(x_{h-1})}\updelta_{x_{h-1}}.
+Generates x~h−1i∼μ~h−1,xhi∼π^(⋅∣x~h−1i)\tilde{x}_{h-1}^{{\scriptscriptstyle i}}\sim\widetilde{\mu}_{h-1},x_{h}^{{\scriptscriptstyle i}}\sim\widehat{\pi}(\cdot\mid{}\tilde{x}_{h-1}^{{\scriptscriptstyle i}}) independently for i∈[N]i\in[N].
+Define 𝒮h={xhi}i∈[N]\mathcal{S}_{h}=\{x_{h}^{{\scriptscriptstyle i}}\}_{i\in[N]} and ν^h=𝖴𝗇𝗂𝖿⁡(𝒮h)\widehat{\nu}_{h}=\mathsf{Unif}(\mathcal{S}_{h}).
+Define W^H=∏h=1HWh\widehat{W}_{H}=\prod_{h=1}^{H}W_{h}.
+Output: With probability min⁡{W^HZ~1,1}\min\left\{\frac{\widehat{W}_{H}}{\widetilde{Z}_{1}},1\right\}, output x∼ν^Hx\sim\widehat{\nu}_{H}, and otherwise restart the algorithm.
+We prove the following guarantee:
+{theorem}
+Suppose that Section 3.1 and Section D.3 hold, and we denote ϵ:=𝖢∞−1\epsilon\vcentcolon=\mathsf{C}_{\infty}-1. Further, suppose that we have Z≤Z~1≤J​ZZ\leq\widetilde{Z}_{1}\leq JZ. Then Algorithm 3 with Output Option 2 samples from a distribution μ\mu that satisfies
+D𝖳𝖵​(μ,πH⋆)≤δ,\displaystyle D_{\mathsf{TV}}\left(\mu,\pi^{\star}_{H}\right)\leq\delta,
+(105)
+as long as N≥Ω⁡(H​𝖢∞2​ϵ2​log⁡(J​H/δ))N\geq\Omega(H\mathsf{C}_{\infty}^{2}\epsilon^{2}\log(JH/\delta)), using a number of outer loop steps that is bounded by O⁡(J2​log⁡(1/δ))O(J^{2}\log(1/\delta)).
+Under Section D.3, we can always choose Z~1=𝖢∞​Z^1\widetilde{Z}_{1}=\mathsf{C}_{\infty}\widehat{Z}_{1}, so that Z≤Z~1≤𝖢∞2​ZZ\leq\widetilde{Z}_{1}\leq\mathsf{C}_{\infty}^{2}Z. Further, we can run Algorithm 3 1 time solely for estimating ZZ, with choice Z~1=2​W^H\widetilde{Z}_{1}=2\widehat{W}_{H} satisfies Z≤Z~≤4​ZZ\leq\widetilde{Z}\leq 4Z with high probability.
+Similar to the proof of Section 3.2, we first state and prove the following lemma (as an analogue to Section C.5). Section D.3 then follows from the argument in Section C.5.
+{lemma}
+Under the condition of Section D.3, for any δ∈(0,1)\delta\in(0,1), if we run SMC-RS (Algorithm 3) with N=Ω⁡(H​𝖢∞2​ϵ2​log⁡(H/δ))N=\Omega(H\mathsf{C}_{\infty}^{2}\epsilon^{2}\log(H/\delta)) particles, then with probability at least 1−δ1-\delta, it holds that |W^H−Z|≤Z/2|\widehat{W}_{H}-Z|\leq Z/2.
+Proof of Section D.3.
+We follow the proof of Section 3.3 (Section D.1). Recall that
+Mh−Mh−1W^h=\displaystyle\frac{M_{h}-M_{h-1}}{\widehat{W}_{h}}=
+1N​(∑i=1Nρ⁡(xhi)−𝔼μ^h⁡[ρ]),\displaystyle~\frac{1}{N}\left(\sum_{i=1}^{N}\rho(x_{h}^{{\scriptscriptstyle i}})-\En_{\widehat{\mu}_{h}}[\rho]\right),
+(106)
+where xh1,⋯,xhNx_{h}^{{\scriptscriptstyle 1}},\cdots,x_{h}^{{\scriptscriptstyle N}} are NN i.i.d. samples from μ^h\widehat{\mu}_{h} (given ℋh−1\mathcal{H}_{h-1}).
+Note that by Section 3.1, it holds that ρ⁡(xh)−1∈[−ϵ,ϵ]\rho(x_{h})-1\in[-\epsilon,\epsilon] for any xh∈𝒳hx_{h}\in\mathcal{X}_{h}.
+This implies that 𝔼xh∼μ^h​[eλ⁡(ρ⁡(xh)−𝔼μ^h​[ρ])]≤eλ2​ϵ2/8\mathbb{E}_{x_{h}\sim\widehat{\mu}_{h}}[e^{\lambda(\rho(x_{h})-\mathbb{E}_{\widehat{\mu}_{h}}[\rho])}]\leq e^{\lambda^{2}\epsilon^{2}/8} for λ∈ℝ\lambda\in\mathbb{R}, and hence
+𝔼h−1​[exp⁡(λ⁡(Mh−Mh−1))]\displaystyle\mathbb{E}_{h-1}[\exp(\lambda(M_{h}-M_{h-1}))]
+(107)
+=\displaystyle=
+𝔼h−1​[exp⁡(λ​W^h⋅(1N​(∑i=1Nρ⁡(xhi)−𝔼μ^h⁡[ρ])))]\displaystyle\mathbb{E}_{h-1}\left[\exp\left(\lambda\widehat{W}_{h}\cdot\left(\frac{1}{N}\left(\sum_{i=1}^{N}\rho(x_{h}^{{\scriptscriptstyle i}})-\En_{\widehat{\mu}_{h}}[\rho]\right)\right)\right)\right]
+(108)
+≤\displaystyle\leq
+exp⁡(1N​λ2​ϵ2​W^h2)≤exp⁡(1N​λ2​𝖢∞2​ϵ2​Mh−12),\displaystyle{\exp\left(\frac{1}{N}\lambda^{2}\epsilon^{2}\widehat{W}_{h}^{2}\right)}\leq{\exp\left(\frac{1}{N}\lambda^{2}\mathsf{C}_{\infty}^{2}\epsilon^{2}M_{h-1}^{2}\right)},
+(109)
+where we use Mh−1=𝔼h−1⁡[Mh]=W^h​𝔼μ^h​[ρ]≥𝖢∞−1​W^hM_{h-1}=\En_{h-1}[M_{h}]=\widehat{W}_{h}\En_{\widehat{\mu}_{h}}[\rho]\geq\mathsf{C}_{\infty}^{-1}\widehat{W}_{h}.
+By Freedman’s inequality, it follows that for any h∈[H]h\in[H], with probability 1−δ1-\delta, we have that
+|Mh−Z|≤∑i=1h−1λ​𝖢∞2​ϵ2​Mi2N+log⁡(2/δ)λ.\displaystyle|M_{h}-Z|\leq\sum_{i=1}^{h-1}\frac{\lambda\mathsf{C}_{\infty}^{2}\epsilon^{2}M_{i}^{2}}{N}+\frac{\log(2/\delta)}{\lambda}.
+(110)
+Choosing λ=4​log⁡(2​H/δ)/Z\lambda=4\log(2H/\delta)/Z and using the union bound, it follows that with probability 1−δ1-\delta, for all h∈[H]h\in[H],
+|Mh−Z|≤\displaystyle|M_{h}-Z|\leq
+4​log⁡(2/δ)​𝖢∞2​ϵ2N​∑i=0h−1Mi2Z+Z4.\displaystyle~\frac{4\log(2/\delta)\mathsf{C}_{\infty}^{2}\epsilon^{2}}{N}\sum_{i=0}^{h-1}\frac{M_{i}^{2}}{Z}+\frac{Z}{4}.
+(111)
+Since we have chosen N=Ω⁡(H​log⁡(H/δ)​𝖢∞2​ϵ2)N=\Omega(H\log(H/\delta)\mathsf{C}_{\infty}^{2}\epsilon^{2}), it follows from induction on hh that in the event that Eq. 71 holds, we have that |Mh−Z|≤Z/2|M_{h}-Z|\leq Z/2 for all h∈[H]h\in[H]. In particular, this implies that |W^H−Z|≤Z/2|\widehat{W}_{H}-Z|\leq Z/2 with probability at least 1−δ1-\delta.
+∎
+Appendix E A Unified Perspective on Backtracking and Particle Filtering
+Our main theoretical results demonstrated that particle filtering methods like SMC can achieve strong guarantees under the same assumptions on V^\widehat{V} as the backtracking-based method VGB introduced by Rohatgi et al. (2025) — while improving parallel runtime from O~​(H2)\widetilde{O}(H^{2}) to O~​(H)\widetilde{O}(H). In this section, we show that the connection goes deeper: for any problem instance, the execution of VGB can be coupled with the execution of SMC-IND, a variant of SMC in which the children of each particle are sampled independently.
+We defer formal definitions until after stating the result (Appendix E), but we make several remarks for context. Henceforth, we specify to the autoregressive setting (Section 2) in which VGB was defined Rohatgi et al. (2025). Recall that VGB implements a single-particle random walk in which the allowed transitions can not only add a token to the current particle (i.e. a1:h↦a1:h+1a_{1:h}\mapsto a_{1:h+1}) but also backtrack (i.e. a1:h↦a1:h−1a_{1:h}\mapsto a_{1:h-1}). For technical reasons, we augment the state space of the random walk with a state 𝔰\mathfrak{s} that is only adjacent to the empty string ⟂\perp. See Sections E.2 and E.1 for the formal definitions of SMC-IND and the VGB random walk.
+{theorem}
+Let 𝒮𝖣𝖬𝖢\mathcal{S}_{\mathsf{DMC}} be the (random) multiset of particles visited by SMC-IND with NN initial particles. Let 𝒮𝖵𝖦𝖡\mathcal{S}_{\mathsf{VGB}} be the (random) multiset of particles visited by VGB (initialized at 𝔰\mathfrak{s}) before the N+1N+1-st visit to 𝔰\mathfrak{s}. Then there is a coupling so that 𝒮𝖣𝖬𝖢=𝒮𝖵𝖦𝖡∖{𝔰}\mathcal{S}_{\mathsf{DMC}}=\mathcal{S}_{\mathsf{VGB}}\setminus\{\mathfrak{s}\} (with multiplicity) almost surely.
+Intuitively, each particle a1:ha_{1:h} visited by SMC-IND corresponds to an interval of time in which the VGB random walk started at a1:ha_{1:h}, ended at a1:ha_{1:h}, and never visited the parent node a1:h−1a_{1:h-1} (where we take the parent of ⟂\perp to be 𝔰\mathfrak{s}). This demonstrates that the paradigm of backtracking to tame error amplification Rohatgi et al. (2025) is, in a sense, equivalent to a form of particle filtering.
+Outline of appendix
+In Section E.1 we introduce the VGB random walk (slightly modified for technical reasons). In Section E.2 we introduce the SMC-IND stochastic process. In Section E.3 we prove Appendix E.
+E.1 Background on VGB
+The (non-lazy) VGB random walk Rohatgi et al. (2025) is defined on state space 𝒳=𝒳0⊔⋯⊔𝒳H\mathcal{X}=\mathcal{X}_{0}\sqcup\dots\sqcup\mathcal{X}_{H} where 𝒜\mathcal{A} is the token space and 𝒳h:=𝒜h\mathcal{X}_{h}:=\mathcal{A}^{h}. For technical convenience (specifically, to avoid casework at step 00 when coupling VGB with SMC-IND), we introduce an auxiliary state 𝔰\mathfrak{s} that is not in the original definition. We define the transition kernel ℙ𝖵𝖦𝖡\mathbb{P}_{\mathsf{VGB}} as follows. First, 𝔰\mathfrak{s} always transitions to ⟂\perp:
+ℙ𝖵𝖦𝖡(⟂∣𝔰)=1.\mathbb{P}_{\mathsf{VGB}}(\perp\mid{}\mathfrak{s})=1.
+(112)
+Second, any a1:h∈𝒜ha_{1:h}\in\mathcal{A}^{h} with 0≤h<H0\leq h<H can transition to either a “child” a1:h+1a_{1:h+1} or the “parent” a1:h−1a_{1:h-1}:
+ℙ𝖵𝖦𝖡(a1:h+1∣a1:h)=πref(ah+1∣a1:h)V^(a1:h+1)V^(a1:h)+∑ah+1′πref(ah+1′∣a1:h)V^(a1:h,ah+1′),\mathbb{P}_{\mathsf{VGB}}(a_{1:h+1}\mid{}a_{1:h})=\frac{\pi_{\texttt{ref}}(a_{h+1}\mid{}a_{1:h})\widehat{V}(a_{1:h+1})}{\widehat{V}(a_{1:h})+\sum_{a_{h+1}^{\prime}}\pi_{\texttt{ref}}(a_{h+1}^{\prime}\mid{}a_{1:h})\widehat{V}(a_{1:h},a_{h+1}^{\prime})},
+(113)
+ℙ𝖵𝖦𝖡(a1:h−1∣a1:h)=V^(a1:h)V^(a1:h)+∑ah+1′πref(ah+1′∣a1:h)V^(a1:h,ah+1′),\mathbb{P}_{\mathsf{VGB}}(a_{1:h-1}\mid{}a_{1:h})=\frac{\widehat{V}(a_{1:h})}{\widehat{V}(a_{1:h})+\sum_{a_{h+1}^{\prime}}\pi_{\texttt{ref}}(a_{h+1}^{\prime}\mid{}a_{1:h})\widehat{V}(a_{1:h},a_{h+1}^{\prime})},
+(114)
+with the convention that a1:0=⟂a_{1:0}=\perp (i.e. the empty string) and a1:−1=𝔰a_{1:-1}=\mathfrak{s}. Third, any a1:H∈𝒜Ha_{1:H}\in\mathcal{A}^{H} must transition to its parent:
+ℙ𝖵𝖦𝖡(a1:H−1∣a1:H)=1.\mathbb{P}_{\mathsf{VGB}}(a_{1:H-1}\mid{}a_{1:H})=1.
+(115)
+The transition kernel of the original VGB random walk Rohatgi et al. (2025) is identical conditioned on never visiting 𝔰\mathfrak{s}. Moreover, since 𝔰\mathfrak{s} is only reachable from ⟂\perp (and only transitions to ⟂\perp), our modification only affects the execution of VGB by stochastically inserting copies of the sequence (𝔰,⟂)(\mathfrak{s},\perp) into VGB’s random trajectory.
+For notational convenience, it is useful to define a transition kernel ℙ𝖽𝗈𝗐𝗇\mathbb{P}_{\mathsf{down}} as the VGB transition kernel conditioned on “downward” moves, i.e.
+ℙ𝖽𝗈𝗐𝗇(a1:h+1∣a1:h)=πref(ah+1∣a1:h)V^(a1:h+1)∑ah+1′πref(ah+1′∣a1:h)V^(a1:h,ah+1′).\mathbb{P}_{\mathsf{down}}(a_{1:h+1}\mid{}a_{1:h})=\frac{\pi_{\texttt{ref}}(a_{h+1}\mid{}a_{1:h})\widehat{V}(a_{1:h+1})}{\sum_{a_{h+1}^{\prime}}\pi_{\texttt{ref}}(a_{h+1}^{\prime}\mid{}a_{1:h})\widehat{V}(a_{1:h},a_{h+1}^{\prime})}.
+(116)
+E.2 Definition of SMC-IND
+In Algorithm 4, we describe how SMC-IND stochastically constructs multisets of particles 𝒮0,…,𝒮H\mathcal{S}_{0},\dots,\mathcal{S}_{H} for a given problem instance. Note that there is no specified output mechanism, since the coupling between SMC-IND and VGB will apply to the entire multiset of particles.
+Algorithm 4  Sequential Monte Carlo with Independent Sampling (SMC-IND)
+Input: Autoregressive language model πref\pi_{\texttt{ref}}, value function V^\widehat{V}.
+Parameter: initial sample size N≥1N\geq 1.
+Initialize 𝒮0\mathcal{S}_{0} to be NN copies of ⟂\perp.
+for h=1,⋯,Hh=1,\cdots,H do
+Initialize a multi-set 𝒮h={}\mathcal{S}_{h}=\{\}.
+for a1:h−1∈𝒮h−1a_{1:h-1}\in\mathcal{S}_{h-1} do
+Sample D∼Geom(ℙ𝖵𝖦𝖡(a1:h−2∣a1:h−1))D\sim\Geom(\mathbb{P}_{\mathsf{VGB}}(a_{1:h-2}\mid{}a_{1:h-1})) (with convention a1:−1=𝔰a_{1:-1}=\mathfrak{s}; see Section E.1)
+for 1≤i≤D1\leq i\leq D do
+Sample a1:h∼ℙ𝖽𝗈𝗐𝗇(⋅∣a1:h−1)a_{1:h}\sim\mathbb{P}_{\mathsf{down}}(\cdot\mid{}a_{1:h-1}).
+Update 𝒮h←𝒮h∪{a1:h}\mathcal{S}_{h}\leftarrow\mathcal{S}_{h}\cup\{a_{1:h}\}.
+E.3 Coupling VGB with SMC-IND
+We interpret the executions of SMC-IND and VGB as stochastically constructing forests of particles. We then show that these forests are actually the same (up to occurrences of 𝔰\mathfrak{s}) when the randomness is appropriately coupled.
+Infinite-particle SMC-IND process
+The execution of SMC-IND with N=∞N=\infty naturally defines a rooted forest ℱ𝖣𝖬𝖢\mathcal{F}_{\mathsf{DMC}} where each node is labelled by a particle in 𝒮0⊔⋯⊔𝒮H\mathcal{S}_{0}\sqcup\dots\sqcup\mathcal{S}_{H}. The roots are the particles in 𝒮0\mathcal{S}_{0}. For any h>0h>0, the parent of a particle in 𝒮h\mathcal{S}_{h} is the particle in 𝒮h−1\mathcal{S}_{h-1} that birthed it. Note that there may be multiple (or even infinitely many) occurrences of any particle a1:ha_{1:h} in 𝒮h\mathcal{S}_{h}, so ℱ𝖣𝖬𝖢\mathcal{F}_{\mathsf{DMC}} may contain multiple nodes with the same label. The parent of a node labelled a1:ha_{1:h} always has label a1:h−1a_{1:h-1}.
+Infinite-time VGB process
+We next show how an execution of VGB in the autoregressive tree 𝒯\mathcal{T} can be interpreted as a rooted tree ℱ𝖵𝖦𝖡\mathcal{F}_{\mathsf{VGB}}, similar to above. Fix an infinite trajectory (x0,x1,x2,x3,…)(x_{0},x_{1},x_{2},x_{3},\dots) of VGB with x0=𝔰x_{0}=\mathfrak{s}. Suppose that 𝔰\mathfrak{s} occurs infinitely often in the trajectory. The root node of ℱ𝖵𝖦𝖡\mathcal{F}_{\mathsf{VGB}} is indexed by ℕ\mathbb{N}, and labeled 𝔰\mathfrak{s}. Every other node is indexed by an interval [t,t′]⊂ℕ[t,t^{\prime}]\subset\mathbb{N} with the property that xt−1=xt′+1x_{t-1}=x_{t^{\prime}+1} is the parent of xt=xt′x_{t}=x_{t^{\prime}} in 𝒯\mathcal{T}, and this parent does not occur within {xt,xt+1,…,xt′}\{x_{t},x_{t+1},\dots,x_{t^{\prime}}\}. This node is labeled with xtx_{t}, and its parent in ℱ𝖵𝖦𝖡\mathcal{F}_{\mathsf{VGB}} is the unique node with label xt−1x_{t-1} whose interval contains [t,t′][t,t^{\prime}].
+{lemma}
+Suppose that VGB almost surely visits 𝔰\mathfrak{s} infinitely often. There is a coupling of the randomness of ℱ𝖣𝖬𝖢\mathcal{F}_{\mathsf{DMC}} and ℱ𝖵𝖦𝖡\mathcal{F}_{\mathsf{VGB}} such that ℱ𝖣𝖬𝖢\mathcal{F}_{\mathsf{DMC}} is almost surely equal to the forest ℱ𝖵𝖦𝖡∖{𝔰}\mathcal{F}_{\mathsf{VGB}}\setminus\{\mathfrak{s}\}.
+Proof. We construct the coupling layer by layer. By the lemma assumption, it is clear that the first layer of ℱ𝖣𝖬𝖢\mathcal{F}_{\mathsf{DMC}} is almost surely identical to that of ℱ𝖵𝖦𝖡\mathcal{F}_{\mathsf{VGB}}. Now fix h≥1h\geq 1 and condition on the forest structure and labels xtx_{t} (but not the indices [t,t′][t,t^{\prime}] themselves) of the first hh layers of ℱ𝖵𝖦𝖡\mathcal{F}_{\mathsf{VGB}}. Fix any node ι\iota with label a1:h−1a_{1:h-1}.
+Consider the law of the VGB random walk between these two visits to a1:h−1a_{1:h-1}. The walk is restricted to the subtree rooted at a1:h−1a_{1:h-1}, but since the walk is Markovian, its law is otherwise unchanged by the conditioning (and it is also independent of the children of other nodes ι′≠ι\iota^{\prime}\neq\iota at layer hh). Let p=ℙ(a1:h−2∣a1:h−1)p=\mathbb{P}(a_{1:h-2}\mid{}a_{1:h-1}) (with the convention a1:h−2=𝔰a_{1:h-2}=\mathfrak{s} if h=1h=1). The number of children D′D^{\prime} of ι\iota is the number of times that the walk goes to a child of a1:h−1a_{1:h-1} in 𝒯\mathcal{T} before it returns to a1:h−2a_{1:h-2}. Thus, ℙ[D′=k]=(1−p)kp\mathbb{P}[D^{\prime}=k]=(1-p)^{k}p for any k∈{0,1,2,…}k\in\{0,1,2,\dots\}. That is, D′D^{\prime} is a geometric random variable with success probability pp. Moreover, the label of each child of ι\iota is independent and distributed according to ℙ𝖽𝗈𝗐𝗇(⋅∣a1:h−1)\mathbb{P}_{\mathsf{down}}(\cdot\mid{}a_{1:h-1}). Thus, the coupling can be extended to the children of ι\iota.
+∎
+Proof of Appendix E.
+The first NN trees of ℱ𝖣𝖬𝖢\mathcal{F}_{\mathsf{DMC}} can be coupled to the forest induced by SMC-IND with NN initial particles. Similarly, the first NN trees of ℱ𝖵𝖦𝖡\mathcal{F}_{\mathsf{VGB}} correspond exactly to the prefix of the trajectory of VGB before 𝔰\mathfrak{s} is visited N+1N+1 times. The claim then follows from Section E.3.
+∎
+Appendix F Proof of Section 3.4
+In this appendix we formally state the requisite definitions for Section 3.4, and prove the theorem. In Section F.1, we formalize the definition of a myopic particle filtering algorithm. In Section F.2 we state Section F.2, which directly implies Section 3.4. In Section F.3, we provide intuition for and formally prove Section F.2.
+F.1 Myopic Particle Filtering Algorithms
+{definition}
+A myopic particle filtering algorithm with NN particles is defined as follows. The algorithm computes a stochastic sequence of multisets 𝒮0,…,𝒮H\mathcal{S}_{0},\dots,\mathcal{S}_{H} where 𝒮h⊂𝒜h\mathcal{S}_{h}\subset\mathcal{A}^{h} for all 0≤h≤H0\leq h\leq H, satisfying the following properties:
+1.
+It holds almost surely that for all 1≤h≤H1\leq h\leq H, for each y1:h∈𝒮hy_{1:h}\in\mathcal{S}_{h}, we have y1:h−1∈𝒮hy_{1:h-1}\in\mathcal{S}_{h}.
+2.
+|𝒮h|≤N|\mathcal{S}_{h}|\leq N for all hh almost surely.
+3.
+The law of (𝒮0,…,𝒮h)(\mathcal{S}_{0},\dots,\mathcal{S}_{h}) is determined by (πref(a1:h):a1:h∈𝒜h)(\pi_{\texttt{ref}}(a_{1:h}):a_{1:h}\in\mathcal{A}^{h}) and (V^(a1:k):a1:k∈𝒜k,k≤h)(\widehat{V}(a_{1:k}):a_{1:k}\in\mathcal{A}^{k},k\leq h) for all hh.
+The algorithm then (stochastically) outputs any element of 𝒮H\mathcal{S}_{H}.
+The first condition is a natural formalization of what it means to be a particle filtering method, i.e. a particle in 𝒮h\mathcal{S}_{h} cannot appear “out of nowhere”; rather, it must have a parent in 𝒮h−1\mathcal{S}_{h-1}. The second condition asserts that the number of particles is always at most NN. The third condition is the “myopic” condition, which enforces that, at the level of distributions, the algorithm does not use information from later steps k>hk>h to determine the multiset 𝒮h\mathcal{S}_{h}.
+{remark}
+[Sequential Monte Carlo and variants]
+It is straightforward from Algorithm 1 to see that Sequential Monte Carlo is indeed a myopic particle filtering algorithm, as is Sequential Monte Carlo with Rejection Sampling (Algorithm 2).
+{remark}
+[Computational efficiency]
+We remark that Section F.1 does not enforce any bound on computational efficiency or query complexity; in particular, a myopic particle filtering algorithm is allowed to examine V^(a1:h)\widehat{V}(a_{1:h}) for all a1:h∈𝒜ha_{1:h}\in\mathcal{A}^{h} before deciding on the set of particles 𝒮h\mathcal{S}_{h}; it is not restricted to e.g. only querying the children of particles in 𝒮h−1\mathcal{S}_{h-1}. This only makes our impossibility result stronger. That said, it is an interesting open question to prove an analogous result to Section 3.4 that applies to all algorithms that make o⁡(H2)o(H^{2}) queries to πref\pi_{\texttt{ref}} and V^\widehat{V}. Such a result would be formally incomparable to Section 3.4.
+F.2 Specialized Setting and Formal Theorem Statement
+Since we are proving a lower bound, it suffices to consider a special case of the general setting from Section 2. Thus, we restrict to the autoregressive generation setting (Section 2) and moreover set πref:=𝖴𝗇𝗂𝖿⁡(𝒜H)\pi_{\texttt{ref}}:=\mathsf{Unif}(\mathcal{A}^{H}) where 𝒜={0,1}\mathcal{A}=\{0,1\}.
+We define a problem instance by specifying some distribution μ∈Δ⁡(𝒜H)\mu\in\Delta(\mathcal{A}^{H}) and functions (μh)h(\mu_{h})_{h} with μh:𝒜h→ℝ≥0\mu_{h}:\mathcal{A}^{h}\to\mathbb{R}_{\geq 0}. These induce V⋆,V^V^{\star},\widehat{V} by
+V⋆(a1:h):=μ(a1:h)πref(a1:h)V^{\star}(a_{1:h}):=\frac{\mu(a_{1:h})}{\pi_{\texttt{ref}}(a_{1:h})}
+(117)
+and
+V^(a1:h):=μ^h(a1:h)πref(a1:h).\widehat{V}(a_{1:h}):=\frac{\widehat{\mu}_{h}(a_{1:h})}{\pi_{\texttt{ref}}(a_{1:h})}.
+(118)
+Note that the goal distribution π⋆\pi^{\star} is precisely μ\mu, and the third condition of Section F.1 precisely enforces that the law of (𝒮0,…,𝒮h)(\mathcal{S}_{0},\dots,\mathcal{S}_{h}) is determined by (μ^0,…,μ^h)(\widehat{\mu}_{0},\dots,\widehat{\mu}_{h}). For Section 3.1 to hold with parameter C𝖺𝖼𝗍C_{\sf act}, it suffices to have μ(ah+1∣a1:h)≤C𝖺𝖼𝗍/2\mu(a_{h+1}\mid{}a_{1:h})\leq C_{\sf act}/2 for all a1:h+1∈𝒜h+1a_{1:h+1}\in\mathcal{A}^{h+1}. Moreover, Section 3.1 holds with parameter 𝖢∞\mathsf{C}_{\infty} if and only if μ^\widehat{\mu} is 𝖢∞\mathsf{C}_{\infty}-accurate for μ\mu in the following sense:
+{definition}
+We say that μ^\widehat{\mu} is κ\kappa-accurate for μ∈Δ⁡(𝒜H)\mu\in\Delta(\mathcal{A}^{H}) if it holds that
+μ^(a1:h)μ(a1:h)∈[1/κ,κ]\frac{\widehat{\mu}(a_{1:h})}{\mu(a_{1:h})}\in[1/\kappa,\kappa]
+(119)
+for all a1:h∈𝒜ha_{1:h}\in\mathcal{A}^{h}, and moreover μ^(a1:H)=μ(a1:H)\widehat{\mu}(a_{1:H})=\mu(a_{1:H}) for all a1:H∈𝒜Ha_{1:H}\in\mathcal{A}^{H}.
+We can now formally state the main result of this appendix, which directly implies Section 3.4.
+{theorem}
+Define N⁡(H):=log⁡(H)/(4​log⁡log⁡(H))N(H):=\log(H)/(4\log\log(H)) for all H∈ℕH\in\mathbb{N}. There is no myopic particle filtering algorithm Alg with the following guarantee: fix HH sufficiently large. Alg uses at most N⁡(H)N(H) particles. For any μ∈Δ⁡(𝒜H)\mu\in\Delta(\mathcal{A}^{H}), for any e3e^{3}-accurate μ^:𝒜≤H→ℝ≥0\widehat{\mu}:\mathcal{A}^{\leq H}\to\mathbb{R}_{\geq 0}, the execution of Alg on μ^\widehat{\mu} has output o1:Ho_{1:H} satisfying
+ℙo1:H∼Alg[o1:H∈ℰ]≥H−1/5\mathbb{P}_{o_{1:H}\sim\texttt{Alg}}[o_{1:H}\in\mathcal{E}]\geq H^{-1/5}
+(120)
+for all events ℰ⊂𝒜H\mathcal{E}\subset\mathcal{A}^{H} with μ⁡(ℰ)≥1/2\mu(\mathcal{E})\geq 1/2.
+Proof of Section 3.4.
+Immediate from Section F.2 and the preceding discussion on Sections 3.1 and 3.1.
+∎
+F.3 Proof of Section F.2
+F.3.1 Intuition and Formal Construction
+To prove Section F.2, we construct a family of problem instances (each specified by a choice of μ\mu and μ^0,…,μ^H\widehat{\mu}_{0},\dots,\widehat{\mu}_{H}) such that any myopic particle filtering algorithm with at most NN particles must fail on at least one instance in the family. We do so recursively, by first constructing an instance for N=1N=1, then N=2N=2, and so forth. The analysis will be similarly inductive.
+Let ℌ:ℕ→ℕ\mathfrak{H}:\mathbb{N}\to\mathbb{N} be a function to be determined. Assume that ℌ⁡(N)\mathfrak{H}(N) is a multiple of ℌ⁡(N−1)+2\mathfrak{H}(N-1)+2 for all N>1N>1. For each N∈ℕN\in\mathbb{N} and y⋆∈𝒜ℌ⁡(N)y^{\star}\in\mathcal{A}^{\mathfrak{H}(N)}, we define μN​(⋅,y⋆)∈Δ⁡(𝒜ℌ⁡(N))\mu^{{\scriptscriptstyle N}}(\cdot;y^{\star})\in\Delta(\mathcal{A}^{\mathfrak{H}(N)}) and μ^N​(⋅,y⋆):𝒜≤ℌ⁡(N)→ℝ≥0\widehat{\mu}^{{\scriptscriptstyle N}}(\cdot;y^{\star}):\mathcal{A}^{\leq\mathfrak{H}(N)}\to\mathbb{R}_{\geq 0} recursively (in NN) as follows.
+Intuition for construction
+First, we provide intuition for the N=1N=1 construction, which essentially follows Example 3.2 in Rohatgi et al. (2025). We will have μ1​(⋅,y⋆)\mu^{{\scriptscriptstyle 1}}(\cdot;y^{\star}) be a product distribution where the marginal μ1​(yh)\mu^{{\scriptscriptstyle 1}}(y_{h}) is biased towards yh⋆y^{\star}_{h}. We will then have μ^1​(⋅,y⋆)\widehat{\mu}^{{\scriptscriptstyle 1}}(\cdot;y^{\star}) be “delayed” compared to μ1​(⋅,y⋆)\mu^{{\scriptscriptstyle 1}}(\cdot;y^{\star}), i.e. the marginal at step hh is biased towards yh−1⋆y^{\star}_{h-1} instead of yh⋆y^{\star}_{h}. Thus, the data of μ^11​(⋅,y⋆),…,μ^h1​(⋅,y⋆)\widehat{\mu}^{{\scriptscriptstyle 1}}_{1}(\cdot;y^{\star}),\dots,\widehat{\mu}^{{\scriptscriptstyle 1}}_{h}(\cdot;y^{\star}) is independent of yh⋆y^{\star}_{h}, and so as formalized in Section F.3.2, any 11-particle myopic particle filtering method must incur large sampling error.
+Next, we provide intuition for the N>1N>1 construction. The horizon H=ℌ⁡(N)H=\mathfrak{H}(N) is divided into blocks of size K=ℌ⁡(N−1)+2K=\mathfrak{H}(N-1)+2. Again μN​(⋅,y⋆)\mu^{{\scriptscriptstyle N}}(\cdot;y^{\star}) is a product distribution where the marginal at step hh is biased towards yh⋆y^{\star}_{h}. In block [i​K+1,(i+1)​K][iK+1,(i+1)K], we define μ^N​(⋅,y⋆)\widehat{\mu}^{{\scriptscriptstyle N}}(\cdot;y^{\star}) by “delaying” the dependence on yi​K+1⋆y^{\star}_{iK+1} to step (i+1)​K(i+1)K, and embedding a copy of the (N−1)(N-1)-particle construction in the intervening steps. Intuitively, any NN-particle myopic particle filtering algorithm has two choices at step i​K+1iK+1: either irrevocably guess yi​K+1⋆y^{\star}_{iK+1} (i.e. all particles y∈𝒮i​K+1y\in\mathcal{S}_{iK+1} will have the same value of yi​K+1y_{iK+1}), or split up the particles so that some have different values of yi​K+1y_{iK+1}. The basic idea, formalized in Section F.3.3, is that both choices lead to sampling error: the former because no data about yi​K+1⋆y^{\star}_{iK+1} is available at step i​K+1iK+1, and the latter by the inductive hypothesis on the (N−1)(N-1)-particle construction. The multiple blocks are needed to amplify the error induced by the first choice.
+Making this argument precise requires a careful probabilistic analysis to ensure that the errors in the two cases cannot “cancel out”. Before proceeding to this analysis, we make the construction formal.
+Let γ1,γ2,⋯∈(0,1/2)\gamma_{1},\gamma_{2},\dots\in(0,1/2) be a sequence of parameters to be determined later.
+Formal construction: base case (N=1N=1)
+Write H=ℌ⁡(1)H=\mathfrak{H}(1). We define
+μ1(yh∣y1:h−1;y⋆):=(1/2−γ1)𝕀[yh≠y⋆h](1/2+γ1)𝕀[yh=y⋆h]\mu^{{\scriptscriptstyle 1}}(y_{h}\mid{}y_{1:h-1};y^{\star}):=(1/2-\gamma_{1})^{\mathbb{I}[y_{h}\neq y^{\star}_{h}]}(1/2+\gamma_{1})^{\mathbb{I}[y_{h}=y^{\star}_{h}]}
+(121)
+and
+μ^1(yh∣y1:h−1;y⋆):={1/2 if ​h=1μ1(yh−1∣y1:h−2;y⋆) if ​1<h<H2μ1(yH−1:H∣y1:H−2;y⋆) if ​h=ℌ⁡(1).\widehat{\mu}^{{\scriptscriptstyle 1}}(y_{h}\mid{}y_{1:h-1};y^{\star}):=\begin{cases}1/2&\text{ if }h=1\\
+\mu_{1}(y_{h-1}\mid{}y_{1:h-2};y^{\star})&\text{ if }1<h<H\\
+2\mu_{1}(y_{H-1:H}\mid{}y_{1:H-2};y^{\star})&\text{ if }h=\mathfrak{H}(1)\end{cases}.
+(122)
+Formal construction: recursive case (N>1N>1)
+Define K:=ℌ⁡(N−1)+2K:=\mathfrak{H}(N-1)+2. For any nonnegative integer ii and h∈[ℌ⁡(N)]h\in[\mathfrak{H}(N)] with i​K<h≤(i+1)​KiK<h\leq(i+1)K, we define
+μN(yh∣y1:h−1;y⋆):={(1/2−γN)𝕀[yh≠y⋆h](1/2+γN)𝕀[yh=y⋆h] if ​h=i​K+1​ or ​h=(i+1)​KμN−1(yh∣yi​K+2:h−1;y⋆i​K+2:(i+1)​K−1) otherwise\mu^{{\scriptscriptstyle N}}(y_{h}\mid{}y_{1:h-1};y^{\star}):=\begin{cases}(1/2-\gamma_{N})^{\mathbb{I}[y_{h}\neq y^{\star}_{h}]}(1/2+\gamma_{N})^{\mathbb{I}[y_{h}=y^{\star}_{h}]}&\text{ if }h=iK+1\text{ or }h=(i+1)K\\
+\mu^{{\scriptscriptstyle N-1}}(y_{h}\mid{}y_{iK+2:h-1};y^{\star}_{iK+2:(i+1)K-1})&\text{ otherwise}\end{cases}
+(123)
+and
+μ^N(yh∣y1:h−1;y⋆):={1/2 if ​h=i​K+1μ^N−1(yh∣yi​K+2:h−1;y⋆i​K+2:(i+1)​K−1) if ​i​K+1<h<(i+1)​K2μN(yi​K+1∣y1:i​K;y⋆)μN(y(i+1)​K∣y1:(i+1)​K−1;y⋆) if ​h=(i+1)​K\widehat{\mu}^{{\scriptscriptstyle N}}(y_{h}\mid{}y_{1:h-1};y^{\star}):=\begin{cases}1/2&\text{ if }h=iK+1\\
+\widehat{\mu}^{{\scriptscriptstyle N-1}}(y_{h}\mid{}y_{iK+2:h-1};y^{\star}_{iK+2:(i+1)K-1})&\text{ if }iK+1<h<(i+1)K\\
+2\mu^{{\scriptscriptstyle N}}(y_{iK+1}\mid{}y_{1:iK};y^{\star})\mu^{{\scriptscriptstyle N}}(y_{(i+1)K}\mid{}y_{1:(i+1)K-1};y^{\star})&\text{ if }h=(i+1)K\end{cases}
+(124)
+In the following lemma we check that the desired accuracy condition is satisfied for all NN and y⋆y^{\star}.
+{lemma}
+For any N≥1N\geq 1 and y⋆∈𝒜ℌ⁡(N)y^{\star}\in\mathcal{A}^{\mathfrak{H}(N)}, it holds that μ^N​(⋅,y⋆)\widehat{\mu}^{{\scriptscriptstyle N}}(\cdot;y^{\star}) is exp⁡(3​∑i=1Nγi)\exp(3\sum_{i=1}^{N}\gamma_{i})-accurate for μN​(⋅,y⋆)\mu^{{\scriptscriptstyle N}}(\cdot;y^{\star}).
+Proof. We proceed by induction on NN. Fix N=1N=1. Set H=ℌ⁡(1)H=\mathfrak{H}(1). We observe that μ^1(y1:H;y⋆)=μ1(y1:H;y⋆)\widehat{\mu}^{{\scriptscriptstyle 1}}(y_{1:H};y^{\star})=\mu^{{\scriptscriptstyle 1}}(y_{1:H};y^{\star}) and, for any h<Hh<H,
+μ^1(y1:h;y⋆)μ1(y1:h;y⋆)\displaystyle\frac{\widehat{\mu}^{{\scriptscriptstyle 1}}(y_{1:h};y^{\star})}{\mu_{1}(y_{1:h};y^{\star})}
+=12μ1(yh∣y1:h−1;y⋆)\displaystyle=\frac{1}{2\mu^{{\scriptscriptstyle 1}}(y_{h}\mid{}y_{1:h-1};y^{\star})}
+(125)
+∈[1/(1+2​γ1),1/(1−2​γ1)]\displaystyle\in[1/(1+2\gamma_{1}),1/(1-2\gamma_{1})]
+(126)
+∈[e−3​γ1,e3​γ1].\displaystyle\in[e^{-3\gamma_{1}},e^{3\gamma_{1}}].
+(127)
+Fix N>1N>1 and suppose that the claim holds for μ^N−1\widehat{\mu}^{{\scriptscriptstyle N-1}}. Set H=ℌ⁡(N)H=\mathfrak{H}(N) and K=ℌ⁡(N−1)+2K=\mathfrak{H}(N-1)+2. For any h∈[H]h\in[H], if h=(i+1)​Kh=(i+1)K for some ii, then
+μ^N(yi​K+1:(i+1)​K∣y1:i​K;y⋆)\displaystyle\widehat{\mu}^{{\scriptscriptstyle N}}(y_{iK+1:(i+1)K}\mid{}y_{1:iK};y^{\star})
+(128)
+=12⋅(∏h′=i​K+2(i+1)​K−1μ^N−1(yh′∣yi​K+2:h′−1;yi​K+2:(i+1)​K−1⋆))\displaystyle=\frac{1}{2}\cdot\left(\prod_{h^{\prime}=iK+2}^{(i+1)K-1}\widehat{\mu}^{{\scriptscriptstyle N-1}}(y_{h^{\prime}}\mid{}y_{iK+2:h^{\prime}-1};y^{\star}_{iK+2:(i+1)K-1})\right)
+(129)
+⋅2μN(yi​K+1∣y1:i​K;y⋆)μN(y(i+1)​K∣y1:(i+1)​K−1;y⋆)\displaystyle\qquad\cdot 2\mu^{{\scriptscriptstyle N}}(y_{iK+1}\mid{}y_{1:iK};y^{\star})\mu^{{\scriptscriptstyle N}}(y_{(i+1)K}\mid{}y_{1:(i+1)K-1};y^{\star})
+(130)
+=μN−1(yi​K+2:(i+1)​K−1;yi​K+2:(i+1)​K−1⋆)⋅μN(yi​K+1∣y1:i​K;y⋆)μN(y(i+1)​K∣y1:(i+1)​K−1;y⋆)\displaystyle=\mu^{{\scriptscriptstyle N-1}}(y_{iK+2:(i+1)K-1};y^{\star}_{iK+2:(i+1)K-1})\cdot\mu^{{\scriptscriptstyle N}}(y_{iK+1}\mid{}y_{1:iK};y^{\star})\mu^{{\scriptscriptstyle N}}(y_{(i+1)K}\mid{}y_{1:(i+1)K-1};y^{\star})
+(131)
+=μN(yi​K+2:(i+1)​K−1∣y1:i​K+1;y⋆)⋅μN(yi​K+1∣y1:i​K;y⋆)μN(y(i+1)​K∣y1:(i+1)​K−1;y⋆)\displaystyle=\mu^{{\scriptscriptstyle N}}(y_{iK+2:(i+1)K-1}\mid{}y_{1:iK+1};y^{\star})\cdot\mu^{{\scriptscriptstyle N}}(y_{iK+1}\mid{}y_{1:iK};y^{\star})\mu^{{\scriptscriptstyle N}}(y_{(i+1)K}\mid{}y_{1:(i+1)K-1};y^{\star})
+(132)
+=μN(yi​K+1:(i+1)​K∣y1:i​K;y⋆).\displaystyle=\mu^{{\scriptscriptstyle N}}(y_{iK+1:(i+1)K}\mid{}y_{1:iK};y^{\star}).
+(133)
+Thus, it holds that μ^N(y1:(i+1)​K;y⋆)=μN(y1:(i+1)​K;y⋆)\widehat{\mu}^{{\scriptscriptstyle N}}(y_{1:(i+1)K};y^{\star})=\mu^{{\scriptscriptstyle N}}(y_{1:(i+1)K};y^{\star}), and in particular, μ^N(y1:H;y⋆)=μN(y1:H;y⋆)\widehat{\mu}^{{\scriptscriptstyle N}}(y_{1:H};y^{\star})=\mu^{{\scriptscriptstyle N}}(y_{1:H};y^{\star}). For any i​K+1≤h<(i+1)​KiK+1\leq h<(i+1)K, we have
+μ^N(y1:h;y⋆)\displaystyle\widehat{\mu}^{{\scriptscriptstyle N}}(y_{1:h};y^{\star})
+=μN(y1:i​K;y⋆)μ^N(yi​K+1:h∣y1:i​K;y⋆)\displaystyle=\mu^{{\scriptscriptstyle N}}(y_{1:iK};y^{\star})\widehat{\mu}^{{\scriptscriptstyle N}}(y_{iK+1:h}\mid{}y_{1:iK};y^{\star})
+(134)
+=μN(y1:i​K;y⋆)⋅12⋅μ^N−1(yi​K+2:h;yi​K+2:(i+1)​K−1⋆)\displaystyle=\mu^{{\scriptscriptstyle N}}(y_{1:iK};y^{\star})\cdot\frac{1}{2}\cdot\widehat{\mu}^{{\scriptscriptstyle N-1}}(y_{iK+2:h};y^{\star}_{iK+2:(i+1)K-1})
+(135)
+∈[e−3∑n=1N−1γn,e3​∑n=1N−1γn]⋅μN(y1:i​K;y⋆)⋅12⋅μN−1(yi​K+2:h;yi​K+2:(i+1)​K−1⋆)\displaystyle\in[e^{-3\sum_{n=1}^{N-1}\gamma_{n}},e^{3\sum_{n=1}^{N-1}\gamma_{n}}]\cdot\mu^{{\scriptscriptstyle N}}(y_{1:iK};y^{\star})\cdot\frac{1}{2}\cdot\mu^{{\scriptscriptstyle N-1}}(y_{iK+2:h};y^{\star}_{iK+2:(i+1)K-1})
+(136)
+∈[e−3∑n=1Nγn,e3​∑n=1Nγn]⋅μN(y1:i​K;y⋆)⋅μN(yi​K+1∣y1:i​K;y⋆)⋅μN−1(yi​K+2:h;yi​K+2:(i+1)​K−1⋆)\displaystyle\in[e^{-3\sum_{n=1}^{N}\gamma_{n}},e^{3\sum_{n=1}^{N}\gamma_{n}}]\cdot\mu^{{\scriptscriptstyle N}}(y_{1:iK};y^{\star})\cdot\mu^{{\scriptscriptstyle N}}(y_{iK+1}\mid{}y_{1:iK};y^{\star})\cdot\mu^{{\scriptscriptstyle N-1}}(y_{iK+2:h};y^{\star}_{iK+2:(i+1)K-1})
+(137)
+∈[e−3∑n=1Nγn,e3​∑n=1Nγn]⋅μN(y1:h;y⋆)\displaystyle\in[e^{-3\sum_{n=1}^{N}\gamma_{n}},e^{3\sum_{n=1}^{N}\gamma_{n}}]\cdot\mu^{{\scriptscriptstyle N}}(y_{1:h};y^{\star})
+(138)
+which completes the proof.
+∎
+To show that any NN-particle myopic particle filtering method fails to cover μN​(⋅,y⋆)\mu^{{\scriptscriptstyle N}}(\cdot;y^{\star}) (for some choice of y⋆y^{\star}), we will show that there are events ℱN​(y⋆)\mathcal{F}_{N}(y^{\star}) that are extremely likely under μN​(⋅,y⋆)\mu^{{\scriptscriptstyle N}}(\cdot;y^{\star}) (for any y⋆y^{\star}) but extremely unlikely under the execution of any NN-particle myopic particle filtering method (for a uniformly random choice of y⋆y^{\star}). Section F.3.1 formally defines these events. Section F.3.1 formalizes the claim about these events that we will prove inductively.
+{definition}
+[Key events for analysis]
+Fix N=1N=1 and H=ℌ⁡(1)H=\mathfrak{H}(1). We define
+ℱ1(y⋆):={o1:H:#{1<h<H:oh=yh⋆}≥(1/2+γ1/2)(H−2)}.\mathcal{F}_{1}(y^{\star}):=\{o_{1:H}:\#\{1<h<H:o_{h}=y^{\star}_{h}\}\geq(1/2+\gamma_{1}/2)(H-2)\}.
+(139)
+Fix N>1N>1 and write H:=ℌ⁡(N)H:=\mathfrak{H}(N) and K:=ℌ⁡(N−1)+2K:=\mathfrak{H}(N-1)+2. We define sets ℱN​(y⋆)\mathcal{F}_{N}(y^{\star}) as follows:
+ℱN∘(y⋆):=⋂i{o1:H:oi​K+2:(i+1)​K−1∈ℱN−1(yi​K+2:(i+1)​K−1⋆)}\mathcal{F}^{\circ}_{N}(y^{\star}):=\bigcap_{i}\left\{o_{1:H}:o_{iK+2:(i+1)K-1}\in\mathcal{F}_{N-1}(y^{\star}_{iK+2:(i+1)K-1})\right\}
+(140)
+ℱN□(y⋆):={o1:H:#{i:oi​K+1=yi​K+1⋆}≥1/2+γN/2}\mathcal{F}^{\square}_{N}(y^{\star}):=\{o_{1:H}:\#\{i:o_{iK+1}=y^{\star}_{iK+1}\}\geq 1/2+\gamma_{N}/2\}
+(141)
+ℱN​(y⋆):=ℱN∘​(y⋆)∩ℱN□​(y⋆).\mathcal{F}_{N}(y^{\star}):=\mathcal{F}^{\circ}_{N}(y^{\star})\cap\mathcal{F}^{\square}_{N}(y^{\star}).
+(142)
+{definition}
+[Inductive hypothesis for analysis]
+Fix N≥1N\geq 1. For parameter δN,1,δN,2∈(0,1)\delta_{N,1},\delta_{N,2}\in(0,1), we let 𝖨𝖧N​(δN,1,δN,2)\mathsf{IH}_{N}(\delta_{N,1},\delta_{N,2}) denote the following hypothesis. There are sets ℱN​(y⋆)⊆𝒜ℌ⁡(N)\mathcal{F}_{N}(y^{\star})\subseteq\mathcal{A}^{\mathfrak{H}(N)} with the following properties:
+•
+For all y⋆∈𝒜ℌ⁡(N)y^{\star}\in\mathcal{A}^{\mathfrak{H}(N)}, it holds that
+μN​(ℱN​(y⋆),y⋆)≥1−δN,1\mu^{{\scriptscriptstyle N}}(\mathcal{F}_{N}(y^{\star});y^{\star})\geq 1-\delta_{N,1}
+(143)
+•
+For any NN-particle particle filtering algorithm Alg, it holds that
+𝔼y⋆∼𝖴𝗇𝗂𝖿⁡(𝒜ℌ⁡(N))ℙo∼Alg[o∈ℱN(y⋆)]≤δN,2\EE_{y^{\star}\sim\mathsf{Unif}(\mathcal{A}^{\mathfrak{H}(N)})}\mathbb{P}_{o\sim\texttt{Alg}}[o\in\mathcal{F}_{N}(y^{\star})]\leq\delta_{N,2}
+(144)
+where the probability is over outputs oo of Alg executed on instance μ^N​(⋅,y⋆)\widehat{\mu}^{{\scriptscriptstyle N}}(\cdot;y^{\star}).
+F.3.2 Base Case for Analysis
+{lemma}
+For any y⋆∈𝒜ℌ⁡(1)y^{\star}\in\mathcal{A}^{\mathfrak{H}(1)}, it holds that
+μ1​(ℱ1​(y⋆),y⋆)≥1−exp⁡(−γ12​ℌ⁡(1)−216).\mu^{{\scriptscriptstyle 1}}(\mathcal{F}_{1}(y^{\star});y^{\star})\geq 1-\exp\left(-\gamma_{1}^{2}\frac{\mathfrak{H}(1)-2}{16}\right).
+(145)
+Moreover, for any 11-particle particle filtering algorithm Alg,
+𝔼y⋆∼𝖴𝗇𝗂𝖿⁡(𝒜ℌ⁡(1))ℙo∼Alg[o∈ℱ1(y⋆)]≤exp(−γ12ℌ⁡(1)−212)\EE_{y^{\star}\sim\mathsf{Unif}(\mathcal{A}^{\mathfrak{H}(1)})}\mathbb{P}_{o\sim\texttt{Alg}}[o\in\mathcal{F}_{1}(y^{\star})]\leq\exp\left(-\gamma_{1}^{2}\frac{\mathfrak{H}(1)-2}{12}\right)
+(146)
+where Alg is executed on instance μ^1​(⋅,y⋆)\widehat{\mu}^{{\scriptscriptstyle 1}}(\cdot;y^{\star}).
+Proof. Let X∼μ1​(⋅,y⋆)X\sim\mu^{{\scriptscriptstyle 1}}(\cdot;y^{\star}). Then X1,…,XHX_{1},\dots,X_{H} are independent with ℙ[Xh=yh⋆]=1/2+γ1\mathbb{P}[X_{h}=y^{\star}_{h}]=1/2+\gamma_{1} for each h∈[H]h\in[H]. It follows from a Chernoff bound that
+μ1​(ℱ1​(y⋆),y⋆)\displaystyle\mu^{{\scriptscriptstyle 1}}(\mathcal{F}_{1}(y^{\star});y^{\star})
+=ℙ[#{1<h<H:Xh=yh⋆}>(1/2+γ1/2)H]\displaystyle=\mathbb{P}[\#\{1<h<H:X_{h}=y^{\star}_{h}\}>(1/2+\gamma_{1}/2)H]
+(147)
+≥1−exp(−γ12(ℌ(1)−2)/16)\displaystyle\geq 1-\exp(-\gamma_{1}^{2}(\mathfrak{H}(1)-2)/16)
+(148)
+which proves the first claim of the lemma. Next, fix any 11-particle particle filtering algorithm Alg. Sample y⋆∼𝖴𝗇𝗂𝖿⁡(𝒜ℌ⁡(1))y^{\star}\sim\mathsf{Unif}(\mathcal{A}^{\mathfrak{H}(1)}) and let 𝒮0,…,𝒮H\mathcal{S}_{0},\dots,\mathcal{S}_{H} be the stochastic sequence of multisets obtained by executing Alg on μ^1​(⋅,y⋆)\widehat{\mu}^{{\scriptscriptstyle 1}}(\cdot;y^{\star}). Let oo be the output of Alg. Then 𝒮h={o1:h}\mathcal{S}_{h}=\{o_{1:h}\} for all 0≤h≤H0\leq h\leq H. Since the law of 𝒮0:h\mathcal{S}_{0:h} is determined by (μ^01​(⋅,y⋆),…,μ^h1​(⋅,y⋆))(\widehat{\mu}^{{\scriptscriptstyle 1}}_{0}(\cdot;y^{\star}),\dots,\widehat{\mu}^{{\scriptscriptstyle 1}}_{h}(\cdot;y^{\star})), it holds from the definition of μ^1​(⋅,y⋆)\widehat{\mu}^{{\scriptscriptstyle 1}}(\cdot;y^{\star}) that (𝒮0:h,y1:h−1⋆)(\mathcal{S}_{0:h},y^{\star}_{1:h-1}) is independent of yh⋆y^{\star}_{h} for each 1<h<H1<h<H. Thus, yh⋆y^{\star}_{h} is independent of 𝒮h\mathcal{S}_{h} conditioned on (𝒮0:h−1,y1:h−1⋆)(\mathcal{S}_{0:h-1},y^{\star}_{1:h-1}), and so we have
+ℙ[oh=yh⋆∣𝒮0:h−1,y1:h−1⋆]=12\mathbb{P}[o_{h}=y^{\star}_{h}\mid{}\mathcal{S}_{0:h-1},y^{\star}_{1:h-1}]=\frac{1}{2}
+(149)
+for all 1<h<H1<h<H. The second claim of the lemma then follows from Azuma’s inequality.
+∎
+F.3.3 Inductive Step for Analysis
+{lemma}
+Fix N>1N>1. Assume that 𝖨𝖧N−1​(δN−1,1,δN−1,2)\mathsf{IH}_{N-1}(\delta_{N-1,1},\delta_{N-1,2}) holds. Suppose ℌ⁡(N−1)≥2\mathfrak{H}(N-1)\geq 2. For any y⋆∈𝒜ℌ⁡(N)y^{\star}\in\mathcal{A}^{\mathfrak{H}(N)}, it holds that
+μN​(ℱN​(y⋆),y⋆)≥1−ℌ⁡(N)ℌ⁡(N−1)​δN−1,1−exp⁡(−γN2​ℌ⁡(N)16⋅ℌ⁡(N−1))\mu^{{\scriptscriptstyle N}}(\mathcal{F}_{N}(y^{\star});y^{\star})\geq 1-\frac{\mathfrak{H}(N)}{\mathfrak{H}(N-1)}\delta_{N-1,1}-\exp\left(-\gamma_{N}^{2}\frac{\mathfrak{H}(N)}{16\cdot\mathfrak{H}(N-1)}\right)
+(150)
+Proof. Set H:=ℌ⁡(N)H:=\mathfrak{H}(N) and K:=ℌ⁡(N−1)+2K:=\mathfrak{H}(N-1)+2. Let o∼μN​(⋅,y⋆)o\sim\mu^{{\scriptscriptstyle N}}(\cdot;y^{\star}). Then for each ii, the law of oi​K+2:(i+1)​K−1o_{iK+2:(i+1)K-1} is precisely μN−1(⋅;yi​K+2:(i+1)​K−1⋆)\mu^{{\scriptscriptstyle N-1}}(\cdot;y^{\star}_{iK+2:(i+1)K-1}). Thus,
+μN​(ℱN∘​(y⋆),y⋆)\displaystyle\mu^{{\scriptscriptstyle N}}(\mathcal{F}^{\circ}_{N}(y^{\star});y^{\star})
+(151)
+≥1−∑iμN(oi​K+2:(i+1)​K−1∉ℱN−1(yi​K+2:(i+1)​K−1⋆))\displaystyle\geq 1-\sum_{i}\mu^{{\scriptscriptstyle N}}(o_{iK+2:(i+1)K-1}\not\in\mathcal{F}_{N-1}(y^{\star}_{iK+2:(i+1)K-1}))
+(152)
+=1−HK(1−μN−1(ℱN−1(yi​K+2:(i+1)​K−1⋆);yi​K+2:(i+1)​K−1⋆))\displaystyle=1-\frac{H}{K}\left(1-\mu^{{\scriptscriptstyle N-1}}(\mathcal{F}_{N-1}(y^{\star}_{iK+2:(i+1)K-1});y^{\star}_{iK+2:(i+1)K-1})\right)
+(153)
+≥1−HK​δN−1,1\displaystyle\geq 1-\frac{H}{K}\delta_{N-1,1}
+(154)
+≥1−ℌ⁡(N)ℌ⁡(N−1)​δN−1,1.\displaystyle\geq 1-\frac{\mathfrak{H}(N)}{\mathfrak{H}(N-1)}\delta_{N-1,1}.
+(155)
+Next, note that the random variables (oi​K+1)i(o_{iK+1})_{i} are independent and ℙ[oi​K+1=yi​K+1⋆]=1/2+γN\mathbb{P}[o_{iK+1}=y^{\star}_{iK+1}]=1/2+\gamma_{N} for each ii. Thus,
+μN(ℱN□(y⋆);y⋆)≥1−exp(−γN2(H/K)/8)≥1−exp(−γN2(ℌ(N)/ℌ(N−1))/16\mu^{{\scriptscriptstyle N}}(\mathcal{F}^{\square}_{N}(y^{\star});y^{\star})\geq 1-\exp(-\gamma_{N}^{2}(H/K)/8)\geq 1-\exp(-\gamma_{N}^{2}(\mathfrak{H}(N)/\mathfrak{H}(N-1))/16
+(156)
+by Hoeffding’s inequality, so long as ℌ⁡(N−1)≥2\mathfrak{H}(N-1)\geq 2. The lemma follows from the union bound.
+∎
+{lemma}
+Fix N>1N>1 and δN−1,1,δN−1,2,δN,2∈(0,1/2)\delta_{N-1,1},\delta_{N-1,2},\delta_{N,2}\in(0,1/2). Assume that 𝖨𝖧N−1​(δN−1,1,δN−1,2)\mathsf{IH}_{N-1}(\delta_{N-1,1},\delta_{N-1,2}) holds. Set H:=ℌ⁡(N)H:=\mathfrak{H}(N) and K:=ℌ⁡(N−1)+2K:=\mathfrak{H}(N-1)+2. If
+γN>4​δN−1,2+8​K​log⁡(2/δN,2)H+8​KH​log⁡(4/δN,2),\gamma_{N}>4\delta_{N-1,2}+\sqrt{\frac{8K\log(2/\delta_{N,2})}{H}}+\frac{8K}{H}\log(4/\delta_{N,2}),
+(157)
+then for any NN-particle particle filtering algorithm Alg, it holds that
+𝔼y⋆∼𝖴𝗇𝗂𝖿⁡(𝒜ℌ⁡(N))ℙo∼Alg[o∈ℱN(y⋆)]≤δN,2\EE_{y^{\star}\sim\mathsf{Unif}(\mathcal{A}^{\mathfrak{H}(N)})}\mathbb{P}_{o\sim\texttt{Alg}}[o\in\mathcal{F}_{N}(y^{\star})]\leq\delta_{N,2}
+(158)
+where Alg is executed on instance μ^N​(⋅,y⋆)\widehat{\mu}^{{\scriptscriptstyle N}}(\cdot;y^{\star}).
+Proof. Consider the random process induced by sampling y⋆∼𝖴𝗇𝗂𝖿⁡(𝒜ℌ⁡(N))y^{\star}\sim\mathsf{Unif}(\mathcal{A}^{\mathfrak{H}(N)}) and executing Alg on μ^N​(⋅,y⋆)\widehat{\mu}^{{\scriptscriptstyle N}}(\cdot;y^{\star}). Fix ii and condition on 𝒮0:i​K\mathcal{S}_{0:iK}. Let ℰi\mathcal{E}^{i} be the event that yi​K+1≠yi​K+1′y_{iK+1}\neq y^{\prime}_{iK+1} for some y,y′∈𝒮(i+1)​K−1y,y^{\prime}\in\mathcal{S}_{(i+1)K-1}. For each b∈{0,1}b\in\{0,1\}, define process 𝒯(0,b),…,𝒯(K−2,b)\mathcal{T}^{(0,b)},\dots,\mathcal{T}^{(K-2,b)} where 𝒯(0,b)={∅}\mathcal{T}^{(0,b)}=\{\varnothing\} and, for each h′>0h^{\prime}>0,
+𝒯(h′,b)\mathcal{T}^{(h^{\prime},b)} consists of the first ≤N−1\leq N-1 elements of
+{yi​K+2:h′+i​K+1:y1:h′+i​K+1∈𝒮h′+i​K+1∧yi​K+1=b∧yi​K+2:h′+i​K∈𝒯(h′−1,b)}\{y_{iK+2:h^{\prime}+iK+1}:y_{1:h^{\prime}+iK+1}\in\mathcal{S}_{h^{\prime}+iK+1}\land y_{iK+1}=b\land y_{iK+2:h^{\prime}+iK}\in\mathcal{T}^{(h^{\prime}-1,b)}\}
+(159)
+according to some arbitrary ordering of 𝒜h′\mathcal{A}^{h^{\prime}}. Observe that 𝒯(0,b),…,𝒯(K−2,b)\mathcal{T}^{(0,b)},\dots,\mathcal{T}^{(K-2,b)} describes the execution of an (N−1)(N-1)-particle myopic particle filtering algorithm on μ^N−1(⋅;yi​K+2:(i+1)​K−1⋆)\widehat{\mu}^{{\scriptscriptstyle N-1}}(\cdot;y^{\star}_{iK+2:(i+1)K-1}). To see why, we check the conditions of Section F.1. First, it holds almost surely that |𝒯(h′,b)|≤N−1|\mathcal{T}^{(h^{\prime},b)}|\leq N-1 for all h′h^{\prime}. Second, by construction, if y1:h′∈𝒯(h′,b)y_{1:h^{\prime}}\in\mathcal{T}^{(h^{\prime},b)} then y1:h′−1∈𝒯(h′−1,b)y_{1:h^{\prime}-1}\in\mathcal{T}^{(h^{\prime}-1,b)}. Third, for any 0≤h≤K−20\leq h\leq K-2, the law of 𝒯(0,b),…,𝒯(h′,b)\mathcal{T}^{(0,b)},\dots,\mathcal{T}^{(h^{\prime},b)} is determined by the law of 𝒮0:h′+i​K+1\mathcal{S}_{0:h^{\prime}+iK+1}, which by definition of Alg is determined by (μ^hN(⋅;y⋆):h≤h′+iK+1)}(\widehat{\mu}^{{\scriptscriptstyle N}}_{h}(\cdot;y^{\star}):h\leq h^{\prime}+iK+1)\}, which by definition of μ^N\widehat{\mu}^{{\scriptscriptstyle N}} is determined by (μ^kN−1(⋅;yi​K+2:(i+1)​K−1⋆):0≤k≤h′)(\widehat{\mu}^{{\scriptscriptstyle N-1}}_{k}(\cdot;y^{\star}_{iK+2:(i+1)K-1}):0\leq k\leq h^{\prime}) (together with randomness independent of y⋆i​K+2:(i+1)​K−1y^{\star}_{iK+2:(i+1)K-1}).
+It follows from the inductive hypothesis that
+ℙ[∃y∈𝒯(K−2,b)∩ℱN−1(yi​K+2:(i+1)​K−1⋆)]≤δN−1,2.\mathbb{P}[\exists y\in\mathcal{T}^{(K-2,b)}\cap\mathcal{F}_{N-1}(y^{\star}_{iK+2:(i+1)K-1})]\leq\delta_{N-1,2}.
+(160)
+In the event ℰi\mathcal{E}^{i}, it holds almost surely that
+{yi​K+2:(i+1)​K−1:y1:(i+1)​K−1∈𝒮(i+1)​K−1}=𝒯(K−2,0)∪𝒯(K−2,1).\{y_{iK+2:(i+1)K-1}:y_{1:(i+1)K-1}\in\mathcal{S}_{(i+1)K-1}\}=\mathcal{T}^{(K-2,0)}\cup\mathcal{T}^{(K-2,1)}.
+(161)
+Moreover, the output o1:Ho_{1:H} of Alg satisfies o1:(i+1)​K−1∈𝒮(i+1)​K−1o_{1:(i+1)K-1}\in\mathcal{S}_{(i+1)K-1} almost surely, so
+ℙ[oi​K+2:(i+1)​K−1∈ℱN−1(yi​K+2:(i+1)​K−1⋆)∣𝒮0:i​K]\displaystyle\mathbb{P}[o_{iK+2:(i+1)K-1}\in\mathcal{F}_{N-1}(y^{\star}_{iK+2:(i+1)K-1})\mid{}\mathcal{S}_{0:iK}]
+(162)
+≤ℙ[∃y1:(i+1)​K−1∈𝒮(i+1)​K−1:yi​K+2:(i+1)​K−1∈ℱN−1(yi​K+2:(i+1)​K−1⋆)∣𝒮0:i​K]\displaystyle\leq\mathbb{P}[\exists y_{1:(i+1)K-1}\in\mathcal{S}_{(i+1)K-1}:y_{iK+2:(i+1)K-1}\in\mathcal{F}_{N-1}(y^{\star}_{iK+2:(i+1)K-1})\mid{}\mathcal{S}_{0:iK}]
+(163)
+≤ℙ[ℰ¯i∣𝒮0:i​K]+ℙ[∃y∈𝒯(K−2,0)∪𝒯(K−2,1):yi​K+2:(i+1)​K−1∈ℱN−1(yi​K+2:(i+1)​K−1⋆)∣𝒮0:i​K]\displaystyle\leq\mathbb{P}[\overline{\mathcal{E}}^{i}\mid{}\mathcal{S}_{0:iK}]+\mathbb{P}[\exists y\in\mathcal{T}^{(K-2,0)}\cup\mathcal{T}^{(K-2,1)}:y_{iK+2:(i+1)K-1}\in\mathcal{F}_{N-1}(y^{\star}_{iK+2:(i+1)K-1})\mid{}\mathcal{S}_{0:iK}]
+(164)
+≤ℙ[ℰ¯i∣𝒮0:i​K]+2δN−1,2.\displaystyle\leq\mathbb{P}[\overline{\mathcal{E}}^{i}\mid{}\mathcal{S}_{0:iK}]+2\delta_{N-1,2}.
+(165)
+Next, observe that in the event ℰ¯i\overline{\mathcal{E}}^{i}, it holds that oi​K+1=mode​{yi​K+1:y∈𝒮(i+1)​K−1}o_{iK+1}=\text{mode}\{y_{iK+1}:y\in\mathcal{S}_{(i+1)K-1}\}. Observe that 𝒮(i+1)​K−1\mathcal{S}_{(i+1)K-1} is independent of yi​K+1⋆y^{\star}_{iK+1}, so that
+ℙ[mode{yi​K+1:y∈𝒮(i+1)​K−1}=yi​K+1⋆∣𝒮0:i​K]=12.\mathbb{P}[\text{mode}\{y_{iK+1}:y\in\mathcal{S}_{(i+1)K-1}\}=y^{\star}_{iK+1}\mid{}\mathcal{S}_{0:iK}]=\frac{1}{2}.
+(166)
+Thus, we have
+ℙ[oi​K+1=yi​K+1⋆∣𝒮0:i​K]≤12+ℙ[ℰi∣𝒮0:i​K].\mathbb{P}[o_{iK+1}=y^{\star}_{iK+1}\mid{}\mathcal{S}_{0:iK}]\leq\frac{1}{2}+\mathbb{P}[\mathcal{E}^{i}\mid{}\mathcal{S}_{0:iK}].
+(167)
+It follows that
+ℙ[oi​K+1=yi​K+1⋆∣𝒮0:i​K]\displaystyle\mathbb{P}[o_{iK+1}=y^{\star}_{iK+1}\mid{}\mathcal{S}_{0:iK}]
+(168)
+≤12+ℙ[oi​K+2:(i+1)​K−1∉ℱN−1(yi​K+2:(i+1)​K−1⋆)∣𝒮0:i​K]+2δN−1,2.\displaystyle\leq\frac{1}{2}+\mathbb{P}[o_{iK+2:(i+1)K-1}\not\in\mathcal{F}_{N-1}(y^{\star}_{iK+2:(i+1)K-1})\mid{}\mathcal{S}_{0:iK}]+2\delta_{N-1,2}.
+(169)
+Define random variables
+Wi:=𝕀[oi​K+1=yi​K+1⋆]−ℙ[oi​K+1=yi​K+1⋆∣𝒮0:i​K].W_{i}:=\mathbb{I}[o_{iK+1}=y^{\star}_{iK+1}]-\mathbb{P}[o_{iK+1}=y^{\star}_{iK+1}\mid{}\mathcal{S}_{0:iK}].
+(170)
+Then W0,…,WH/KW_{0},\dots,W_{H/K} is a martingale difference sequence under filtration induced by (𝒮0:i​K)i=0H/K−1(\mathcal{S}_{0:iK})_{i=0}^{H/K-1}, so for any δ∈(0,1)\delta\in(0,1),
+ℙ[∑i=0H/K−1Wi>8​(H/K)​log⁡(1/δ)]≤δ.\mathbb{P}\left[\sum_{i=0}^{H/K-1}W_{i}>\sqrt{8(H/K)\log(1/\delta)}\right]\leq\delta.
+(171)
+Thus, with probability at least 1−δ1-\delta, it holds that
+KH∑i=0H/K−1𝕀[oi​K+1=yi​K+1⋆]\displaystyle\frac{K}{H}\sum_{i=0}^{H/K-1}\mathbb{I}[o_{iK+1}=y^{\star}_{iK+1}]
+(172)
+≤12+2​δN−1,2+8​K​log⁡(1/δ)H\displaystyle\leq\frac{1}{2}+2\delta_{N-1,2}+\sqrt{\frac{8K\log(1/\delta)}{H}}
+(173)
++KH∑i=0H/K−1ℙ[oi​K+2:(i+1)​K−1∉ℱN−1(yi​K+2:(i+1)​K−1⋆)∣𝒮0:i​K].\displaystyle\qquad+\frac{K}{H}\sum_{i=0}^{H/K-1}\mathbb{P}[o_{iK+2:(i+1)K-1}\not\in\mathcal{F}_{N-1}(y^{\star}_{iK+2:(i+1)K-1})\mid{}\mathcal{S}_{0:iK}].
+(174)
+By Freedman’s inequality, it holds with probability at least 1−δ1-\delta that
+∑i=0H/K−1ℙ[oi​K+2:(i+1)​K−1∉ℱN−1(yi​K+2:(i+1)​K−1⋆)∣𝒮0:i​K]\displaystyle\sum_{i=0}^{H/K-1}\mathbb{P}[o_{iK+2:(i+1)K-1}\not\in\mathcal{F}_{N-1}(y^{\star}_{iK+2:(i+1)K-1})\mid{}\mathcal{S}_{0:iK}]
+(175)
+≤2∑i=0H/K−1𝕀[oi​K+2:(i+1)​K−1∉ℱN−1(yi​K+2:(i+1)​K−1⋆)]+8log(2/δ).\displaystyle\leq 2\sum_{i=0}^{H/K-1}\mathbb{I}[o_{iK+2:(i+1)K-1}\not\in\mathcal{F}_{N-1}(y^{\star}_{iK+2:(i+1)K-1})]+8\log(2/\delta).
+(176)
+We conclude that with probability at least 1−2​δ1-2\delta,
+KH∑i=0H/K−1𝕀[oi​K+1=yi​K+1⋆]\displaystyle\frac{K}{H}\sum_{i=0}^{H/K-1}\mathbb{I}[o_{iK+1}=y^{\star}_{iK+1}]
+(177)
+≤12+2​δN−1,2+8​K​log⁡(1/δ)H+8​KH​log⁡(2/δ)\displaystyle\leq\frac{1}{2}+2\delta_{N-1,2}+\sqrt{\frac{8K\log(1/\delta)}{H}}+\frac{8K}{H}\log(2/\delta)
+(178)
++2​KH∑i=0H/K−1𝕀[oi​K+2:(i+1)​K−1∉ℱN−1(yi​K+2:(i+1)​K−1⋆)].\displaystyle\qquad+\frac{2K}{H}\sum_{i=0}^{H/K-1}\mathbb{I}[o_{iK+2:(i+1)K-1}\not\in\mathcal{F}_{N-1}(y^{\star}_{iK+2:(i+1)K-1})].
+(179)
+Condition on this event. If we moreover have o1:H∈ℱN(y⋆)o_{1:H}\in\mathcal{F}_{N}(y^{\star}), then we have both
+KH∑i=0H/K−1𝕀[oi​K+1=yi​K+1⋆]≥12+γN2\frac{K}{H}\sum_{i=0}^{H/K-1}\mathbb{I}[o_{iK+1}=y^{\star}_{iK+1}]\geq\frac{1}{2}+\frac{\gamma_{N}}{2}
+(180)
+and
+KH∑i=0H/K−1𝕀[oi​K+2:(i+1)​K−1∉ℱN−1(yi​K+2:(i+1)​K−1⋆)]=0.\frac{K}{H}\sum_{i=0}^{H/K-1}\mathbb{I}[o_{iK+2:(i+1)K-1}\not\in\mathcal{F}_{N-1}(y^{\star}_{iK+2:(i+1)K-1})]=0.
+(181)
+But then
+γN2≤2​δN−1,2+8​K​log⁡(1/δ)H+8​KH​log⁡(2/δ).\frac{\gamma_{N}}{2}\leq 2\delta_{N-1,2}+\sqrt{\frac{8K\log(1/\delta)}{H}}+\frac{8K}{H}\log(2/\delta).
+(182)
+Set δ:=δN,2/2\delta:=\delta_{N,2}/2. Then this bound contradicts the lemma assumption, so in fact o1:H∉ℱN(y⋆)o_{1:H}\not\in\mathcal{F}_{N}(y^{\star}) almost surely (under the preceding condition). It follows that ℙ[o1:H∈ℱN(y⋆)]≤2δ=δN,2\mathbb{P}[o_{1:H}\in\mathcal{F}_{N}(y^{\star})]\leq 2\delta=\delta_{N,2} as claimed.
+∎
+F.3.4 Completing the Induction
+Fix some NN. Define ℌ⁡(n):=N4​n\mathfrak{H}(n):=N^{4n} for all nn. Define γn:=1/N\gamma_{n}:=1/N for all nn.
+{lemma}
+It holds that
+μN​(ℱN​(y⋆),y⋆)≥1−exp⁡(−Ω⁡(N2))\mu^{{\scriptscriptstyle N}}(\mathcal{F}_{N}(y^{\star});y^{\star})\geq 1-\exp(-\Omega(N^{2}))
+(183)
+for all y⋆y^{\star}, and
+𝔼y⋆∼𝖴𝗇𝗂𝖿⁡(𝒜ℌ⁡(N))ℙo∼Alg[o∈ℱN(y⋆)]≤4exp(−N).\EE_{y^{\star}\sim\mathsf{Unif}(\mathcal{A}^{\mathfrak{H}(N)})}\mathbb{P}_{o\sim\texttt{Alg}}[o\in\mathcal{F}_{N}(y^{\star})]\leq 4\exp(-N).
+(184)
+Proof. We have from Sections F.3.2 and F.3.3 that
+μN(ℱN(y⋆);y⋆)≥1−∑n=1Nℌ⁡(N)ℌ⁡(n−1)exp(−γn2⋅Ω(ℌ(n)/ℌ(n−1)))≥1−N4​N+1exp(−Ω(N2)).\mu^{{\scriptscriptstyle N}}(\mathcal{F}_{N}(y^{\star});y^{\star})\geq 1-\sum_{n=1}^{N}\frac{\mathfrak{H}(N)}{\mathfrak{H}(n-1)}\exp(-\gamma_{n}^{2}\cdot\Omega(\mathfrak{H}(n)/\mathfrak{H}(n-1)))\geq 1-N^{4N+1}\exp(-\Omega(N^{2})).
+(185)
+Next, observe that if we set δn,2:=4​exp⁡(−N)\delta_{n,2}:=4\exp(-N) then the condition of Section F.3.3 is satisfied for each nn, so long as NN exceeds a sufficiently large constant. Thus, applying Section F.3.3 together with induction on NN (with Section F.3.2 providing the guarantee for N=1N=1) proves that
+𝔼y⋆∼𝖴𝗇𝗂𝖿⁡(𝒜ℌ⁡(n))ℙo∼Alg[o∈ℱn(y⋆)]≤4exp(−N)\EE_{y^{\star}\sim\mathsf{Unif}(\mathcal{A}^{\mathfrak{H}(n)})}\mathbb{P}_{o\sim\texttt{Alg}}[o\in\mathcal{F}_{n}(y^{\star})]\leq 4\exp(-N)
+(186)
+for each n≤Nn\leq N as needed.
+∎
+Proof of Section F.2.
+Immediate from Sections F.3.4 and F.3.1, together with the fact that the NN-particle construction has horizon H=ℌ⁡(N)=N4​NH=\mathfrak{H}(N)=N^{4N}, and hence N≥log⁡(H)/(4​log⁡log⁡(H))N\geq\log(H)/(4\log\log(H)).
+∎
+Appendix G Additional Experimental Details
+In this section, we provide further details regarding our experimental setup.
+G.1 Additional Evaluation Approaches
+First, we give additional context and motivation for our choice of the evaluation metric of logprob-discrepancy introduced in Section 4.1.
+One approach to evaluate SMC, which has been used in prior work, is to use the fact that the value W^H\widehat{W}_{H} computed in Algorithm 1 satisfies 𝔼⁡[W^H]=Z\mathbb{E}[\widehat{W}_{H}]=Z and moreover the difference log⁡Z−𝔼⁡[log⁡W^H]\log Z-\mathbb{E}[\log\widehat{W}_{H}] is an upper bound on the KL divergence D𝖪𝖫(𝔼[ν^H]∥πH⋆)D_{\mathsf{KL}}\left(\mathbb{E}[\widehat{\nu}_{H}]\,\|\,\pi^{\star}_{H}\right) between the output distribution of SMC, 𝔼⁡[ν^H]\mathbb{E}[\widehat{\nu}_{H}], and the target distribution πH⋆\pi^{\star}_{H} (Proposition 5 of Zhao et al. (2024)).99
+9
+Further, in Section C.1 we show that the difference |W^H−Z||\widehat{W}_{H}-Z| upper bounds the total variation distance D𝖳𝖵​(𝔼⁡[ν^H],πH⋆)D_{\mathsf{TV}}\left(\mathbb{E}[\widehat{\nu}_{H}],\pi^{\star}_{H}\right). However, there are several pitfalls with this approach: first, this is only an upper bound and is not guaranteed to be tight; further, it only applies to SMC and so does not allow us to compare the performance of SMC to other baselines. Finally, even for the relatively simple setting in which we operate, the number NN of particles is too small to get actual distributional closeness between 𝔼⁡[ν^H]\mathbb{E}[\widehat{\nu}_{H}] and the target πH⋆\pi^{\star}_{H} (for instance, the action-level coverage is too large).
+Thus, we aimed to use a weaker notion of distributional closeness that we can both (a) measure efficiently and (b) hope to have some bearing on the quality of samples produced by SMC. The 𝒫\mathcal{P}-logprob discrepancy certainly satisfies (a). Moreover, since its error is one-sided in nature (i.e., LPD𝒫​(ν,ν)=0\mathrm{LPD}_{\mathcal{P}}(\nu,\nu)=0) and it takes on a positive value in all of our experiments, we believe it is a good candidate in the context of the prompt switching task.
+G.2 Details for Section 4.2
+For the prompt switching task in Section 4.2, the prompts pref,p(i)\texttt{p}_{\texttt{ref}},\texttt{p}^{(i)} were all generated with GPT-5.2 (in particular, the gpt-5.2_2025-12-11 release).
+To estimate D𝖪𝖫(πh⋆∥π^h(i))D_{\mathsf{KL}}\left(\pi^{\star}_{h}\,\|\,\widehat{\pi}_{h}^{(i)}\right), we write
+D𝖪𝖫(πh⋆∥π^h(i))\displaystyle D_{\mathsf{KL}}\left(\pi^{\star}_{h}\,\|\,\widehat{\pi}_{h}^{(i)}\right)
+=𝔼a1:h∼π⋆h[logπ⋆h(a1:h)π^h(i)(a1:h)]\displaystyle=\mathbb{E}_{a_{1:h}\sim\pi^{\star}_{h}}\left[\log\frac{\pi^{\star}_{h}(a_{1:h})}{\widehat{\pi}_{h}^{(i)}(a_{1:h})}\right]
+=𝔼a1:h∼π⋆h[(1−h/H)⋅α⋅logπ⋆(a1:h)π(i)(a1:h)]+logZ^h(i),\displaystyle=\mathbb{E}_{a_{1:h}\sim\pi^{\star}_{h}}\left[(1-h/H)\cdot\alpha\cdot\log\frac{\pi^{\star}(a_{1:h})}{\pi^{(i)}(a_{1:h})}\right]+\log\widehat{Z}^{(i)}_{h},
+(187)
+where
+Z^h(i):=𝔼πref[V^(i)(a1:h)]=𝔼π⋆[(π(i)h(a1:h)π⋆h(a1:h))(1−h/H)⋅α].\displaystyle\widehat{Z}^{(i)}_{h}:=\mathbb{E}_{\pi_{\texttt{ref}}}[\widehat{V}^{(i)}(a_{1:h})]=\mathbb{E}_{\pi^{\star}}\left[\left(\frac{\pi^{(i)}_{h}(a_{1:h})}{\pi^{\star}_{h}(a_{1:h})}\right)^{(1-h/H)\cdot\alpha}\right].
+(188)
+We estimate the first term in Eq. 187 via Monte Carlo rollouts from πh⋆\pi^{\star}_{h}, and estimate log⁡Z^h(i)\log\widehat{Z}^{(i)}_{h} via Monte Carlo rollouts from π⋆\pi^{\star}, per Eq. 188 (each with 1000 samples).
+Notice that our estimate of of Z^h(i)\widehat{Z}_{h}^{(i)} is likely very noisy, since there is no logarithm inside the expectation. When we repeated the experiments without adding (our estimate of) the term log⁡Z^h(i)\log\widehat{Z}_{h}^{(i)} at all in Eq. 187, we observed similar results. Thus, the noise in our estimate of Z^h(i)\widehat{Z}_{h}^{(i)} seems unlikely to have affected our conclusions.
+Details for the figures
+In Fig. 2(b), we use the PRM defined in Eq. 9 with α=2\alpha=2. Moreover, the KL divergences are measured at step h=32h=32 (recall that H=64H=64); we observed similar results with other values of hh. The experiments were run on 32GB NVIDIA V100 GPUs. The Pearson correlation coefficient for the points plotted in Fig. 2(b) is 0.81.
+In Fig. 7, we plot additional runs of the same experiment as in Fig. 2(b), with 3 additional different choices of the dataset (i.e., different choices of pref\texttt{p}_{\texttt{ref}} and p(i)\texttt{p}^{(i)}). Finally, in Fig. 8, we repeat the same experiment for all 4 datasets but with α=1\alpha=1.
+G.3 Details for Section 4.3
+In Fig. 6, we repeat the experiment in Fig. 2(a) with 4 additional choices for the dataset (i.e., choices of pref\texttt{p}_{\texttt{ref}} and p(i)\texttt{p}^{(i)}, i∈[k]i\in[k]). The Pearson correlation coefficients rr are shown in the subcaptions of each subfigure. The experiments were run on 32GB NVIDIA V100 GPUs.
+G.4 SMC vs. Best-of-NN on AIME
+In our experiments on math problems in Section 4.5, we used Qwen2.5-1B-Instruct as the base model πref\pi_{\texttt{ref}} and Qwen2.5-Math-PRM-7B as the PRM V^\widehat{V}. For both SMC and Best-of-NN, we used N=32N=32 particles/samples. We sampled from the base model with temperature 0.80.8, and used systematic resampling in the implementation of SMC. We generated for a maximum of 3072 tokens for AIME and a maximum of 2048 tokens for Math500.
+As opposed to implementing SMC with 𝒜\mathcal{A} being the space of tokens (as in our experiments on prompt switching), we took 𝒜\mathcal{A} to be the space of blocks of some number BB of tokens; doing so significantly improves the efficiency of SMC, as calls to the PRM are the main computational bottleneck. We set B=64B=64 for Math500 and B=128B=128 for AIME. Moreover, we observed that the reward model V^(a1:h)\widehat{V}(a_{1:h}) often gave unreliable answers when passed as input a partial completion a1:ha_{1:h} which was truncated in the middle of a sentence or mathematical expression. Thus, we in fact truncated all blocks at the last instance of a delimiter character (e.g., new line, period).
+(a) AIME 2024
+(b) AIME 2025
+Figure 5: Performance of SMC vs. Best-of-NN on AIME problems (each point is a different problem). Similar to Fig. 1, the majority of points lie below the line y=xy=x, indicating that SMC improves performance over Best-of-NN on most problems.
+(a) r=0.83r=0.83
+(b) r=0.89r=0.89
+(c) r=0.88r=0.88
+(d) r=0.86r=0.86
+Figure 6: Additional instantiations of the experiment shown in Fig. 2(a), with different datasets (generated by GPT-5.2). Captions show Pearson correlation coefficients.
+(a) r=0.70r=0.70
+(b) r=0.79r=0.79
+(c) r=0.83r=0.83
+Figure 7: Additional instantiations of the experiment shown in Fig. 2(b), with different datasets (generated by GPT-5.2). Captions show Pearson correlation coefficients.
+(a) r=0.78r=0.78
+(b) r=0.85r=0.85
+(c) r=0.83r=0.83
+(d) r=0.82r=0.82
+Figure 8: Additional instantiations of the experiment shown with the 4 datasets in Figs. 2(b) and 7, except with α=1\alpha=1. Captions show Pearson correlation coefficients.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

@@ -1,0 +1,667 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="generator" content="Rspress v1.46.2">
+    <link rel="stylesheet" href="https://cdn.cnbj1.fds.api.mi-img.com/aife/mimo-blog-fe/doc_build/fonts/font-faces.b3ff14bbe16d.css"><script>// Inlined in <head>, so server-rendered text is protected before hydration.
+(() => {
+  const root = document.documentElement;
+  const selector = '[data-font-text]';
+  const imageSelector = '[data-font-image]';
+  const pendingSelector = '[data-font-text]:not([data-font-ready]), [data-font-image]:not([data-image-ready])';
+  const maxWait = 1500;
+  let currentPath = null;
+  let cleanup = () => {};
+
+  const isHome = (path) => /^\/(?:zh\/?)?(?:index(?:\.html)?)?$/.test(path);
+  const familyName = (name) => name.trim().replace(/^["']|["']$/g, '');
+
+  function stop() {
+    cleanup();
+    currentPath = null;
+    root.classList.remove('home-fonts-loading');
+  }
+
+  function start() {
+    const path = window.location.pathname;
+    if (!isHome(path) || !document.fonts) {
+      stop();
+      return;
+    }
+    if (currentPath === path) return;
+    stop();
+    currentPath = path;
+
+    let active = true;
+    let pending = 0;
+    let sawText = false;
+    const seen = new Set();
+    const requests = new Map();
+    const busy = new Map();
+    const imageListeners = new Set();
+    const blockedInteractions = new Set();
+    const ranges = new Map();
+
+    function syncInteractions() {
+      for (const element of document.querySelectorAll('[data-font-interactive]')) {
+        if (element.matches(pendingSelector) || element.querySelector(pendingSelector)) {
+          // Native inert also prevents keyboard focus and activation. Keep any
+          // pre-existing inert state owned by the component itself.
+          if (!element.inert) {
+            element.inert = true;
+            blockedInteractions.add(element);
+          }
+        } else if (blockedInteractions.delete(element)) {
+          element.inert = false;
+        }
+      }
+    }
+
+    function finish() {
+      if (!active) return;
+      active = false;
+      root.classList.remove('home-fonts-loading');
+      clearTimeout(timer);
+      observer.disconnect();
+      document.removeEventListener('DOMContentLoaded', scan);
+      for (const [element, readyKey] of busy) {
+        element.dataset[readyKey] = 'fallback';
+        element.removeAttribute('aria-busy');
+      }
+      for (const dispose of imageListeners) dispose();
+      for (const element of blockedInteractions) element.inert = false;
+      blockedInteractions.clear();
+      imageListeners.clear();
+      busy.clear();
+    }
+
+    function fontRanges() {
+      // Called after stylesheets are ready; keep the actual CSS unicode ranges.
+      if (ranges.size) return;
+      for (const face of document.fonts) {
+        const family = familyName(face.family);
+        const list = ranges.get(family) || [];
+        for (const part of face.unicodeRange.split(',')) {
+          const range = part.trim().replace(/^U\+/i, '').split('-');
+          const lower = parseInt(range[0].replace(/\?/g, '0'), 16);
+          const upper = parseInt((range[1] || range[0]).replace(/\?/g, 'F'), 16);
+          list.push([lower, upper]);
+        }
+        ranges.set(family, list);
+      }
+    }
+
+    function requiredFonts(element) {
+      const samples = new Map();
+      const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+      while (walker.nextNode()) {
+        const node = walker.currentNode;
+        if (!node.textContent.trim()) continue;
+        const style = getComputedStyle(node.parentElement);
+        const families = style.fontFamily.split(',').map(familyName);
+        for (const character of node.textContent) {
+          const point = character.codePointAt(0);
+          const family = families.find((name) => (ranges.get(name) || []).some(([a, b]) => a <= point && point <= b));
+          if (!family) continue; // System font or a character outside our fonts.
+          const spec = `${style.fontStyle} ${style.fontWeight} 16px "${family}"`;
+          if (!samples.has(spec)) samples.set(spec, new Set());
+          samples.get(spec).add(character);
+        }
+      }
+      return [...samples].map(([spec, chars]) => [spec, [...chars].join('')]);
+    }
+
+    function scan() {
+      if (!active) return;
+      if (document.readyState === 'loading') {
+        syncInteractions();
+        return;
+      }
+      fontRanges();
+      for (const image of document.querySelectorAll(imageSelector)) {
+        if (seen.has(image)) continue;
+        seen.add(image);
+        sawText = true;
+        if (image.complete) {
+          image.dataset.imageReady = image.naturalWidth ? 'cached' : 'fallback';
+          continue;
+        }
+        delete image.dataset.imageReady;
+        image.setAttribute('aria-busy', 'true');
+        busy.set(image, 'imageReady');
+        pending++;
+        const dispose = () => {
+          image.removeEventListener('load', loaded);
+          image.removeEventListener('error', failed);
+          imageListeners.delete(dispose);
+        };
+        const reveal = (status) => {
+          dispose();
+          if (!active) return;
+          release(image, status);
+        };
+        const loaded = () => {
+          if (image.decode) image.decode().then(() => reveal('loaded'), () => reveal('fallback'));
+          else reveal('loaded');
+        };
+        const failed = () => reveal('fallback');
+        imageListeners.add(dispose);
+        image.addEventListener('load', loaded, { once: true });
+        image.addEventListener('error', failed, { once: true });
+      }
+      for (const element of document.querySelectorAll(selector)) {
+        if (seen.has(element)) continue;
+        seen.add(element);
+        sawText = true;
+        const rect = element.getBoundingClientRect();
+        const style = getComputedStyle(element);
+        // Offscreen text, hidden Blog entries and the hero's back face never
+        // hold up the visible page. Their fonts still load normally through CSS.
+        if (!rect.width || !rect.height || rect.bottom <= 0 || rect.top >= window.innerHeight || style.visibility === 'hidden' || element.closest('[aria-hidden="true"], [data-font-skip]')) {
+          element.dataset.fontReady = 'offscreen';
+          continue;
+        }
+        const needed = requiredFonts(element);
+        const missing = needed.filter(([spec, text]) => !document.fonts.check(spec, text));
+        if (!missing.length) {
+          element.dataset.fontReady = 'cached';
+          continue;
+        }
+        delete element.dataset.fontReady;
+        element.setAttribute('aria-busy', 'true');
+        busy.set(element, 'fontReady');
+        pending++;
+        const promises = missing.map(([spec, text]) => {
+          const key = spec + text;
+          if (!requests.has(key)) requests.set(key, document.fonts.load(spec, text));
+          return requests.get(key);
+        });
+        Promise.all(promises).then(() => release(element, 'loaded'), () => release(element, 'fallback'));
+      }
+      syncInteractions();
+      if (sawText && pending === 0) finish();
+    }
+
+    function release(element, status) {
+      if (!active || !busy.has(element)) return;
+      element.dataset[busy.get(element)] = status;
+      element.removeAttribute('aria-busy');
+      busy.delete(element);
+      if (--pending === 0) finish();
+      else syncInteractions();
+    }
+
+    // The timer runs independently of React and font promises, including errors.
+    const timer = setTimeout(finish, maxWait);
+    const observer = new MutationObserver(scan);
+    cleanup = finish;
+    root.classList.add('home-fonts-loading');
+    document.querySelectorAll(selector).forEach((element) => delete element.dataset.fontReady);
+    observer.observe(root, { childList: true, subtree: true });
+    document.addEventListener('DOMContentLoaded', scan, { once: true });
+    scan();
+  }
+
+  window.__mimoHomeFonts = { start, stop };
+  window.addEventListener('pageshow', (event) => { if (event.persisted) stop(); });
+  start();
+})();
+</script><script>document.documentElement.classList.toggle('coder-docs',false);document.documentElement.classList.toggle('mimo-site',true);document.documentElement.classList.toggle('legal-docs',false);</script><title data-rh="true"></title><meta data-rh="true" name="description" content="MiMo Code is a terminal-based coding agent built by Xiaomi&#x27;s MiMo team on top of OpenCode and open-sourced under the MIT license. This article introduces its core technical design for long-horizon automated programming tasks through three themes: computation, memory, and evolution."/>
+  <link rel="icon" href="https://cdn.cnbj1.fds.api.mi-img.com/aife/mimo-blog-fe/doc_build/mimo.ico"><script defer src="https://cdn.cnbj1.fds.api.mi-img.com/aife/mimo-blog-fe/doc_build/static/js/styles.928fc8b8.js"></script><script defer src="https://cdn.cnbj1.fds.api.mi-img.com/aife/mimo-blog-fe/doc_build/static/js/lib-react.a6be410a.js"></script><script defer src="https://cdn.cnbj1.fds.api.mi-img.com/aife/mimo-blog-fe/doc_build/static/js/lib-router.93d86b80.js"></script><script defer src="https://cdn.cnbj1.fds.api.mi-img.com/aife/mimo-blog-fe/doc_build/static/js/4752.2908c99e.js"></script><script defer src="https://cdn.cnbj1.fds.api.mi-img.com/aife/mimo-blog-fe/doc_build/static/js/index.c5195ace.js"></script><link href="https://cdn.cnbj1.fds.api.mi-img.com/aife/mimo-blog-fe/doc_build/static/css/styles.f0e8146a.css" rel="stylesheet"></head>
+
+  <body >
+    <div id="root"><div class="navContainer_d18b1 rspress-nav px-6  sticky_ddfa7"><div class="container_e4235 flex justify-between items-center h-full"><div class="navTitleWrapper-w9ofxD " data-font-media="logo" data-font-interactive="true"><img src="https://cdn.cnbj1.fds.api.mi-img.com/aife/mimo-blog-fe/doc_build/static/image/logo.99baaffe.png" alt="logo" class="mimoLogo-KV4r25" data-font-image="true"/></div><div class="flex flex-1 justify-end items-center"><div class="rightNav_a2fea"><div class="rspress-nav-menu menu h-14"></div><div class="flex-center flex-row"><div class="translation menu-item_b8238 flex text-sm font-bold items-center px-3 py-2"><div><div class="relative flex-center h-14"><button class="rspress-nav-menu-group-button flex-center items-center font-medium text-sm text-text-1 hover:text-text-2 transition-colors duration-200"><span class="text-sm font-medium flex break-keep" style="margin-right:2px"><svg width="18" height="18" viewBox="0 0 32 32" style="width:18px;height:18px"><path fill="currentColor" d="M27.85 29H30l-6-15h-2.35l-6 15h2.15l1.6-4h6.85zm-7.65-6 2.62-6.56L25.45 23zM18 7V5h-7V2H9v3H2v2h10.74a14.7 14.7 0 0 1-3.19 6.18A13.5 13.5 0 0 1 7.26 9h-2.1a16.5 16.5 0 0 0 3 5.58A16.8 16.8 0 0 1 3 18l.75 1.86A18.5 18.5 0 0 0 9.53 16a16.9 16.9 0 0 0 5.76 3.84L16 18a14.5 14.5 0 0 1-5.12-3.37A17.64 17.64 0 0 0 14.8 7z"></path></svg></span><svg width="1em" height="1em" viewBox="0 0 32 32"><path fill="currentColor" d="M16 22 6 12l1.4-1.4 8.6 8.6 8.6-8.6L26 12z"></path></svg></button><div class="rspress-nav-menu-group-content absolute mx-0.8 transition-opacity duration-300" style="opacity:0;visibility:hidden;right:0;top:52px"><div class="p-3 pr-2 w-full h-full max-h-100vh whitespace-nowrap" style="box-shadow:var(--rp-shadow-3);z-index:100;border:1px solid var(--rp-c-divider-light);border-radius:var(--rp-radius-large);background:var(--rp-c-bg)"><div><div class="rounded-2xl my-1 flex" style="padding:0.4rem 1.5rem 0.4rem 0.75rem"><span class="text-brand">English</span></div></div><div><div class="font-medium my-1"><a href="/zh/blog/mimo-code-long-horizon" class="link_a7cea "><div class="rounded-2xl hover:bg-mute" style="padding:0.4rem 1.5rem 0.4rem 0.75rem"><div class="flex"><span>简体中文</span></div></div></a></div></div></div></div></div></div></div></div></div><div class="mimo-home-nav-links" aria-label="Main navigation"><div class="mimo-nav-dropdown" data-font-interactive="true"><button type="button" class="rspress-nav-menu-item mimo-nav-dropdown__trigger" data-font-text="true">Product<svg class="mimo-nav-dropdown__caret" width="1em" height="1em" viewBox="0 0 32 32" aria-hidden="true"><path fill="currentColor" d="M16 22 6 12l1.4-1.4 8.6 8.6 8.6-8.6L26 12z"></path></svg></button><div class="mimo-nav-dropdown__menu" role="menu"><a class="mimo-nav-dropdown__item" href="/mimocode" role="menuitem">MiMo Code</a><a class="mimo-nav-dropdown__item" href="/go/desktop" role="menuitem">MiMo Desktop</a></div></div><div class="mimo-nav-dropdown" data-font-interactive="true"><button type="button" class="rspress-nav-menu-item mimo-nav-dropdown__trigger" data-font-text="true">Research<svg class="mimo-nav-dropdown__caret" width="1em" height="1em" viewBox="0 0 32 32" aria-hidden="true"><path fill="currentColor" d="M16 22 6 12l1.4-1.4 8.6 8.6 8.6-8.6L26 12z"></path></svg></button><div class="mimo-nav-dropdown__menu" role="menu"><a class="mimo-nav-dropdown__item" href="/#paper" role="menuitem">Paper</a><a class="mimo-nav-dropdown__item" href="/#blog" role="menuitem">Blog</a></div></div><a class="rspress-nav-menu-item" href="/#joinUs" data-font-text="true" data-font-interactive="true">Join Us</a></div><div class="mobileNavMenu_e7045"><div class="navScreen_ec30c  rspress-nav-screen" id="navScreen"><div class="container_c935d"><div class="navMenu_b887b"></div><div class="flex-center flex-col gap-2"><div class="flex text-sm font-bold justify-center"><div class="mx-1.5 my-1"><div class=" navScreenMenuGroup_e771d relative"><button class="button_ea41e"><span class="buttonSpan_f4b8f"><svg width="18" height="18" viewBox="0 0 32 32" style="width:18px;height:18px"><path fill="currentColor" d="M27.85 29H30l-6-15h-2.35l-6 15h2.15l1.6-4h6.85zm-7.65-6 2.62-6.56L25.45 23zM18 7V5h-7V2H9v3H2v2h10.74a14.7 14.7 0 0 1-3.19 6.18A13.5 13.5 0 0 1 7.26 9h-2.1a16.5 16.5 0 0 0 3 5.58A16.8 16.8 0 0 1 3 18l.75 1.86A18.5 18.5 0 0 0 9.53 16a16.9 16.9 0 0 0 5.76 3.84L16 18a14.5 14.5 0 0 1-5.12-3.37A17.64 17.64 0 0 0 14.8 7z"></path></svg></span><svg width="1em" height="1em" viewBox="0 0 32 32" class=" down_f631a "><path fill="currentColor" d="M16 22 6 12l1.4-1.4 8.6 8.6 8.6-8.6L26 12z"></path></svg></button><div><div class="items_dd149"><div><div class="p-1 text-center"><span class="text-brand">English</span></div></div><div><div class="py-1 font-medium"><a href="/zh/blog/mimo-code-long-horizon" class="link_a7cea "><div><div class="flex justify-center"><span>简体中文</span></div></div></a></div></div></div></div></div></div></div></div></div></div><button aria-label="mobile hamburger" class=" rspress-mobile-hamburger navHamburger_ac64c text-gray-500"><svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32" fill="currentColor"><circle cx="8" cy="16" r="2" fill="currentColor"></circle><circle cx="16" cy="16" r="2" fill="currentColor"></circle><circle cx="24" cy="16" r="2" fill="currentColor"></circle></svg></button></div></div></div></div><section><!--$--><style>
+/* ========================================
+   MiMo Code — Scaling Coding Agents
+   Clean Article Style
+   ======================================== */
+
+:root {
+    --bg-primary: #FAF7F5;
+    --bg-secondary: #F5F0EB;
+    --text-primary: #1a1a1a;
+    --text-secondary: #555;
+    --text-tertiary: #888;
+    --accent: #E1A555;
+    --border: rgba(0, 0, 0, 0.1);
+    --font-serif: &quot;PT Serif&quot;, Georgia, serif;
+    --font-title: &quot;Ubuntu&quot;, -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-sans: -apple-system, BlinkMacSystemFont, &quot;SF Pro Text&quot;, &quot;Segoe UI&quot;, Roboto, sans-serif;
+    --font-mono: &quot;SF Mono&quot;, &quot;Fira Code&quot;, Consolas, monospace;
+}
+
+*::before, *::after {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+html {
+    font-size: 16px;
+    scroll-behavior: smooth;
+    overflow-x: hidden;
+}
+
+body {
+    overflow-x: hidden;
+    font-family: var(--font-serif);
+    font-weight: 450;
+    font-optical-sizing: auto;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    line-height: 1.8;
+    -webkit-font-smoothing: antialiased;
+    padding: 0;
+    margin: 0;
+}
+
+.article {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 4rem 2rem 6rem;
+}
+
+.hero-section {
+    text-align: center;
+    margin-bottom: 4rem;
+}
+
+.hero-title {
+    font-family: var(--font-title) !important;
+    font-size: 2.1rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: var(--text-primary);
+    margin-bottom: 1rem;
+    line-height: 1.25;
+}
+
+.hero-buttons {
+    display: flex;
+    justify-content: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    margin-top: 1.5rem;
+}
+
+.hero-buttons .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    font-family: var(--font-title) !important;
+    font-size: 0.78rem;
+    font-weight: 500;
+    text-decoration: none;
+    padding: 0.5rem 1.25rem;
+    border-radius: 100px;
+    transition: all 0.2s;
+    background: transparent;
+    color: var(--text-primary);
+    border: 1px solid #ccc;
+}
+
+.hero-buttons .btn:hover {
+    border-color: #999;
+    color: var(--text-primary);
+    text-decoration: none;
+}
+
+.hero-buttons .btn-chevron {
+    font-size: 1.1em;
+    line-height: 1;
+}
+
+.hero-buttons .btn-filled {
+    background: #1D0601;
+    color: #fff;
+    border: 1px solid #1D0601;
+}
+
+.hero-buttons .btn-filled:hover {
+    background: #3a1a10;
+    color: #fff;
+    border-color: #3a1a10;
+}
+
+.hero-buttons .btn-outline {
+    background: transparent;
+    color: var(--text-primary);
+    border: 1px solid #ccc;
+}
+
+.hero-buttons .btn-outline:hover {
+    border-color: #999;
+    color: var(--text-primary);
+}
+
+.hero-subtitle {
+    font-size: 1.125rem;
+    color: var(--text-secondary);
+    margin-bottom: 1.5rem;
+}
+
+.hero-date {
+    display: block;
+    text-align: center;
+    font-family: var(--font-title) !important;
+    font-size: 0.8rem;
+    color: var(--text-tertiary);
+    margin-bottom: 2rem;
+}
+
+.section {
+    margin-bottom: 4.5rem;
+}
+
+h2 {
+    font-size: 1.5rem;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    color: var(--text-primary);
+    margin-bottom: 1rem;
+    margin-top: 2.5rem;
+    font-family: var(--font-title) !important;
+}
+
+h3 {
+    font-size: 1.15rem;
+    font-weight: 600;
+    margin-bottom: 0.75rem;
+    margin-top: 1.75rem;
+    font-family: var(--font-title) !important;
+    color: var(--text-primary);
+}
+
+h4 {
+    font-size: 1rem;
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+    margin-top: 1.5rem;
+    font-family: var(--font-title) !important;
+    color: var(--text-primary);
+}
+
+p {
+    color: var(--text-secondary);
+    margin-bottom: 1rem;
+}
+
+strong {
+    font-weight: 500;
+    color: var(--text-primary);
+    font-family: var(--font-title) !important;
+}
+
+em {
+    font-style: italic;
+    color: var(--text-primary);
+}
+
+code {
+    font-family: var(--font-mono) !important;
+    font-size: 0.9em;
+    background: var(--bg-secondary);
+    padding: 0.1em 0.3em;
+    border-radius: 3px;
+    color: var(--text-primary);
+}
+
+pre {
+    font-family: var(--font-mono) !important;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem 1.25rem;
+    margin: 1.25rem 0 1.75rem;
+    overflow-x: auto;
+    line-height: 1.7;
+}
+
+pre code {
+    font-family: var(--font-mono) !important;
+    font-size: 0.85rem;
+    background: none;
+    padding: 0;
+    color: var(--text-primary);
+    white-space: pre;
+}
+
+ul, ol {
+    margin-bottom: 1rem;
+    padding-left: 1.5rem;
+}
+
+.article ul {
+    list-style-type: disc !important;
+}
+
+.article ul ul,
+.article ol ul {
+    list-style-type: circle !important;
+    margin-top: 0.4rem;
+    margin-bottom: 0.4rem;
+}
+
+.article ol {
+    list-style-type: decimal !important;
+}
+
+li {
+    margin-bottom: 0.5rem;
+    color: var(--text-secondary);
+}
+
+li::marker {
+    color: var(--text-tertiary);
+}
+
+blockquote {
+    border-left: 3px solid var(--accent);
+    padding: 0.75rem 1rem;
+    margin: 1rem 0;
+    font-style: italic;
+    color: var(--text-secondary);
+    background: rgba(255, 103, 0, 0.03);
+    border-radius: 0 4px 4px 0;
+}
+
+/* Inline subdued note */
+.note {
+    display: flex;
+    gap: 0.5rem;
+    margin: 1rem 0 1.5rem;
+    font-size: 0.85rem;
+    line-height: 1.7;
+    color: var(--text-tertiary);
+}
+
+.note .note-tag {
+    flex: none;
+    font-family: var(--font-title) !important;
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    color: var(--text-tertiary);
+    padding-top: 0.12rem;
+}
+
+.note p {
+    margin: 0;
+    color: var(--text-tertiary);
+}
+
+.lead p {
+    color: var(--text-secondary);
+}
+
+.external-link {
+    color: var(--accent);
+    text-decoration: underline;
+    font-weight: 500;
+}
+
+.external-link:hover {
+    color: #E55C00;
+    text-decoration: none;
+}
+
+/* Figure placeholder */
+.figure-placeholder {
+    margin: 1.5rem 0;
+    border: 1px dashed #d9cfc4;
+    border-radius: 10px;
+    background: var(--bg-secondary);
+    padding: 2.5rem 1.5rem;
+    text-align: center;
+}
+
+.figure-placeholder .ph-label {
+    font-family: var(--font-title) !important;
+    font-size: 0.8rem;
+    color: var(--text-tertiary);
+    letter-spacing: 0.02em;
+}
+
+/* References */
+.references {
+    margin-top: 2rem;
+    padding-top: 1.25rem;
+    border-top: 1px solid var(--border);
+}
+
+.references p {
+    font-family: var(--font-title) !important;
+    font-size: 0.78rem;
+    color: var(--text-tertiary);
+    margin-bottom: 0.4rem;
+    word-break: break-all;
+}
+
+/* Footer */
+.footer {
+    margin-top: 4rem;
+    padding-top: 2rem;
+    border-top: 1px solid #eee;
+    text-align: center;
+    font-family: var(--font-title) !important;
+    font-size: 0.75rem;
+    color: var(--text-tertiary);
+}
+
+.footer p {
+    font-family: var(--font-title) !important;
+    color: var(--text-tertiary);
+    margin-bottom: 0;
+}
+
+/* Comparison table */
+.data-table-wrap {
+    overflow-x: auto;
+    margin: 1rem 0 1.5rem;
+}
+
+.data-table-wrap .data-table {
+    display: table !important;
+    width: 70% !important;
+    min-width: 340px !important;
+    max-width: 720px !important;
+    margin: 0 auto !important;
+    border-collapse: collapse !important;
+    font-family: var(--font-title) !important;
+    font-size: 0.78rem !important;
+    line-height: 1.5 !important;
+    font-variant-numeric: tabular-nums;
+    background: #fff !important;
+    border: 1px solid var(--bg-secondary) !important;
+    border-radius: 10px !important;
+    overflow: hidden !important;
+}
+
+.data-table-wrap .data-table tr {
+    border: none !important;
+    background: transparent !important;
+}
+
+.data-table-wrap .data-table th,
+.data-table-wrap .data-table td {
+    font-family: var(--font-title) !important;
+    padding: 0.8rem 1.25rem !important;
+    text-align: left !important;
+    border: none !important;
+    border-bottom: 1px solid var(--bg-secondary) !important;
+}
+
+.data-table-wrap .data-table th + th,
+.data-table-wrap .data-table td + td {
+    border-left: 1px solid var(--bg-secondary) !important;
+}
+
+.data-table-wrap .data-table thead th {
+    background: var(--bg-secondary) !important;
+    font-weight: 600 !important;
+    color: var(--text-primary) !important;
+    font-size: 0.68rem !important;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    border-bottom: 1px solid #e0d9d0 !important;
+}
+
+.data-table-wrap .data-table tbody tr:last-child td {
+    border-bottom: none !important;
+}
+
+.data-table-wrap .data-table tbody td {
+    color: var(--text-secondary) !important;
+}
+
+.data-table-wrap .data-table tbody td:first-child {
+    color: var(--text-primary) !important;
+    font-weight: 500 !important;
+}
+
+.data-table-wrap .data-table tbody tr.is-highlight td,
+.data-table-wrap .data-table tbody tr.is-highlight td:first-child {
+    color: var(--accent) !important;
+    font-weight: 600 !important;
+}
+
+@media (max-width: 600px) {
+    html {
+        font-size: 16px;
+    }
+
+    .article {
+        padding: 2rem 1rem 4rem;
+    }
+
+    h2 {
+        font-size: 1.25rem;
+    }
+
+    .hero-title {
+        font-size: 1.5rem;
+    }
+
+    .data-table-wrap .data-table {
+        font-size: 0.72rem !important;
+    }
+
+    .data-table-wrap .data-table th,
+    .data-table-wrap .data-table td {
+        padding: 0.5rem 0.6rem !important;
+    }
+}
+
+::selection {
+    background: var(--accent);
+    color: white;
+}
+</style>
+<div class="article"><section class="hero-section"><time class="hero-date" dateTime="2026-06-10">June 10, 2026</time><h1 class="hero-title">MiMo Code: Scaling Coding Agents to Long-Horizon Tasks</h1><nav class="hero-buttons"><a href="/coder" class="btn btn-filled">Try it now <span class="btn-chevron">›</span></a><a href="/mimocode/start" class="btn btn-outline">Docs <span class="btn-chevron">›</span></a><a href="https://github.com/XiaomiMiMo/MiMo-Code" target="_blank" rel="noopener" class="btn btn-outline">GitHub <span class="btn-chevron">›</span></a></nav></section><section class="section lead"><figure class="mopd-figure" style="margin:1.5rem 0;text-align:center"><img src="/mimo-code-long-horizon/hero.jpeg" alt="MiMo Code terminal interface" style="display:block;width:100%;height:auto;border-radius:8px;cursor:zoom-in;transition:transform 0.2s ease" loading="lazy"/></figure><p>MiMo Code is a terminal-based coding agent built by Xiaomi&#x27;s MiMo team on top of OpenCode and open-sourced under the MIT license. It is designed for long-horizon automated programming tasks, with a core focus on how to maintain decision quality and state continuity over dozens or even hundreds of execution steps. This article introduces the core technical design of MiMo Code through three themes: <strong>computation, memory, and evolution</strong>.</p></section><section class="section"><h2>1. Design Motivation</h2><p>The basic structure of a coding agent is to place a language model inside a runtime and call it in a loop: the model is responsible for reasoning and decision-making, while the runtime manages tools, persists state, and assembles the input for each round. The model itself is stateless—each call starts from a blank slate, and all continuity is provided by the runtime.</p><p>For short tasks (typically fewer than 10 turns), this structure works well: simply passing the full conversation history to the model is enough, because the history itself serves as adequate working memory. But as the number of task turns increases, two problems gradually emerge.</p><p>First, the context window will eventually be exhausted. No matter how large the window is, dozens of rounds of tool outputs, code snippets, and error logs will eventually fill it up. At that point, part of the history must be compressed or discarded. A common approach is to generate a summary to replace the discarded content. But simple compression continually reinforces nearby information while weakening distant information. This approach runs into an inherent dilemma similar to that of recurrent models such as Mamba: it has state, but cannot look back on demand. What we need is not better compression, but an explicit storage-and-retrieval mechanism that decides what information should be written into persistent structures, and when it should be recalled.</p><p>Second, even if the context window is large enough, a model&#x27;s instruction-following ability declines as input length grows. Useful constraints and intentions are diluted by large volumes of tool output, making it increasingly difficult for the model to extract what it should do next.</p><p>We observed that the most prominent bottlenecks vary across different time scales: the quality of single-turn decisions within a session is mainly constrained by <strong>computation</strong>; the continuity of multi-turn tasks within a session is mainly constrained by <strong>state management</strong>; and improvement across sessions is mainly constrained by the <strong>mechanism for distilling experience</strong>. These three time scales correspond exactly to <strong>computation, memory, and evolution</strong>. MiMo Code is designed around these three themes.</p><figure class="mopd-figure" style="margin:1.5rem 0;text-align:center"><img src="/mimo-code-long-horizon/harness-state-machine.jpg" alt="MiMo Code harness main-loop state machine" style="display:block;width:100%;height:auto;border-radius:8px;cursor:zoom-in;transition:transform 0.2s ease" loading="lazy"/><figcaption style="font-family:var(--font-title, &quot;PT Serif&quot;, Georgia, serif);font-size:0.8125rem;color:#888;margin-top:0.75rem">Figure 1: MiMo Code harness main-loop state machine</figcaption></figure></section><section class="section"><h2>2. Computation: Scaling Single-Turn Reasoning</h2><p>When a task grows to dozens or even hundreds of steps, the error rate of each individual step compounds over time, while the agent often lacks external corrective signals during long-horizon execution. A direct response is to invest additional computation at different levels of granularity in exchange for reliability: reducing the probability of decision errors at the single-step level, preventing premature termination or directional drift at the task level, and reducing unnecessary back-and-forth overhead at the execution level.</p><h3>2.1 Parallel Sampling and Selection (Max Mode)</h3><p>Max Mode generates N candidate solutions in parallel at each turn (N is set to 5 by default). Each candidate independently completes reasoning and tool-call planning, but does not actually execute the plan. The same model is then used as a judge to compare the reasoning process and action plan of all candidates, selecting the best one for execution.</p><p>By default, temperature is set to 1, so five independent samples almost never produce identical results. If multiple candidates happen to converge, that itself indicates high confidence in that direction; when candidates differ significantly, having a low-temperature judge select the most robust plan is more reliable than depending on a single sample.</p><p>On SWE-Bench Pro, Max Mode improves performance by 10–20% compared with single sampling, at the cost of roughly 4–5 times the token consumption.</p><div class="note"><span class="note-tag">NOTE</span><p>Max Mode is currently an experimental feature and must be enabled manually through configuration.</p></div><h3>2.2 Independent Completion Verification (Goal)</h3><p>Max Mode addresses &quot;doing it right&quot;; Goal addresses &quot;finishing it.&quot;</p><p>A common failure mode in long tasks is that, after seeing prior progress in later turns, the agent tends to prematurely declare that it is &quot;done&quot; or ask a question. This is especially dangerous in automated execution, because there is no human standing by to correct it or provide feedback.</p><p>The Goal mechanism works as follows: the user defines a natural-language stopping condition, such as &quot;all tests pass and the code has been committed.&quot; Whenever the agent attempts to terminate, the system automatically launches an independent model call to review the full conversation history and determine whether the condition has truly been satisfied. If not, it feeds back the specific gap to the agent and lets it continue; if the task is confirmed to be impossible, it is marked as impossible.</p><p>This verifier does not participate in the actual work, so it does not develop an alignment bias toward the parts the agent has already completed. Each time, it receives exactly the same context as the agent, including the actual tool outputs.</p><p>In practice, false blocking—where the condition is already satisfied but the verifier judges that it is not—is more common than false passing. This mainly occurs when tests fail due to environment issues. Overall, the probability of an infinite loop is below 0.5%, and the system can automatically exit after reaching the limit.</p><p>Max Mode and Goal represent two orthogonal directions of test-time compute: Max Mode is parallel, spending N times the compute on the same step to select the best option; Goal is serial, spending more time on self-checking and continued execution within the same task. The two can be enabled simultaneously.</p><h3>2.3 Tool-Call Syntax</h3><p>The format through which the model issues tool calls directly affects accuracy and token efficiency. Some models (especially the GPT-5.5 series) have a relatively high formatting error rate when outputting structured JSON, and XML performs slightly better than JSON. We ultimately found that a constrained command-line syntax requires fewer tokens to express the same tool-call intent and also produces fewer formatting errors, because most models have been trained on dense shell-environment data. The syntax is intentionally constrained: it does not support pipes, redirection, or variable expansion. The goal is to borrow the conciseness of the shell, not to give the model an uncontrolled execution environment.</p><div class="note"><span class="note-tag">NOTE</span><p>MiMo Code has not yet migrated tool calls to this format. The replacement may be gradually completed in future versions.</p></div><h3>2.4 Large-Scale Parallel Orchestration (Dynamic Workflow)</h3><p>The mechanisms above address quality issues at the single-round and single-Agent levels. When the task scale becomes large enough—for example, migrating an entire project from one programming language to another—and dozens or even hundreds of parallel work units need to be coordinated simultaneously, round-by-round tool calls are no longer sufficient.</p><p>The traditional approach is to write the process into SKILL.md and use natural language to tell the model: &quot;do A first, then do B, and if C happens, do D.&quot; This works in simple scenarios, but systematically fails in complex workflows: context compression may swallow steps, the model may skip certain stages, branching and retry logic depend on the model&#x27;s judgment rather than being guaranteed by code, and the same workflow may follow different execution paths across two runs. The fundamental problem is that orchestration logic exists in natural language, and natural language is ambiguous, forgettable, and unverifiable.</p><p>Dynamic Workflow turns orchestration logic from prompt into code. The main Agent generates a JavaScript script, which is executed deterministically inside an isolated sandbox. The script dispatches sub-Agents through <code>agent()</code> and controls concurrency through <code>parallel()</code> / <code>pipeline()</code>—an <code>if</code> statement will not forget a branch, a <code>for</code> loop will not exit prematurely, and a barrier will not miss a sub-Agent. The model&#x27;s judgment is used only where it should be used, such as understanding and generating code, rather than being wasted on flow control.</p><p>Our implementation is compatible with the core semantics of Anthropic Dynamic Workflow, and extends it in several ways. The <code>workflow()</code> primitive allows scripts to call other scripts, so orchestration logic can be organized into reusable and composable building blocks. The result of each <code>agent()</code> call is synchronously written to disk, allowing the process to recover from logs after an interruption rather than rerunning from scratch. Files can also be read and written directly inside the sandbox. We believe that many skills currently defined in prompt form will gradually evolve into workflow scripts in code form. When every step of a process must be executed, branch conditions must be precise, and retry logic must be reliable, it should be guaranteed by code rather than natural language.</p></section><section class="section"><h2>3. Memory: Maintaining State Continuity Across Multi-Turn Tasks</h2><p>Scaling single-turn computation can reduce the error rate of each step, but it does not solve the core problem of multi-turn tasks: the context will eventually run out. This section discusses how to let a logical session extend indefinitely while keeping each physical window bounded.</p><figure class="mopd-figure" style="margin:1.5rem 0;text-align:center"><img src="/mimo-code-long-horizon/checkpoint-writer.jpg" alt="Main agent loop and checkpoint-writer subagent" style="display:block;width:100%;height:auto;border-radius:8px;cursor:zoom-in;transition:transform 0.2s ease" loading="lazy"/><figcaption style="font-family:var(--font-title, &quot;PT Serif&quot;, Georgia, serif);font-size:0.8125rem;color:#888;margin-top:0.75rem">Figure 2: How the main agent loop cooperates with the checkpoint-writer subagent</figcaption></figure><h3>3.1 Cycle: The Basic Unit of an Unbounded Session</h3><p>Imagine a session as a sequence of turns arranged from left to right. The window has an upper limit, the turns keep accumulating, and the window will eventually fill up. Without intervention, the session either ends when it reaches the limit or quietly degrades.</p><p>Before the limit is reached, the runtime intervenes at several fixed positions. We call these positions checkpoints. At each checkpoint, the runtime dispatches an independent writer subagent: it reads the conversation so far and writes a structured state file to disk. The main agent continues working while the writer runs concurrently, and the two do not interfere with each other.</p><p>When the window approaches the true upper limit, the runtime performs a rebuild: it cuts off the current window, opens a new one, and reconstructs the context using the persisted files as seeds. The main agent wakes up in the new window with the state already laid out in front of it, then continues working. From the model&#x27;s perspective, the conversation has never been interrupted; from the runtime&#x27;s perspective, a new physical window has begun.</p><p>A sequence of turns that has been checkpointed and ultimately ends with a rebuild is a <strong>cycle</strong>. There is no upper bound on the number of cycles—each cycle is limited by the size of the physical window, but the logical session is a chain of cycles, and that chain has no maximum length.</p><h3>3.2 Why Extract Early</h3><p>A natural intuition is to delay extraction until the window is almost full. We found that this is exactly backwards.</p><p>First, model capability degrades under high context utilization. This is known in the literature as &quot;lost in the middle&quot;: as the input grows longer, attention to the middle portion declines, and the reliability of structured extraction drops significantly. Asking the model to perform the most critical compression at the very moment when its compression ability is degrading is a bad trade-off.</p><p>Second, extraction itself requires space. The writer must read the history, maintain its interpretation, and produce structured output—all within the same window. At 95% utilization, there is no room left to think; at 30% utilization, there is ample room.</p><p>Therefore, checkpoints are triggered far below the upper limit—roughly at 20%, 45%, and 70% of the configured budget. Each trigger is an incremental update to the previous one; none of them is a one-shot summary. The final rebuild near the upper limit is not a rushed compression, but the moment when the structured records accumulated along the way are turned into working context.</p><h3>3.3 Writer: An Extractor Independent of the Main Agent</h3><p>The most natural reaction is to let the main agent maintain its own notes. We found that this does not hold up in long tasks: asking a model that is currently debugging a tricky issue to also maintain a structured log often causes it to do both tasks worse.</p><p>So we impose a different constraint: <strong>the main agent does not maintain its own memory.</strong> Extraction is moved entirely out of the main loop, triggered by the runtime and performed by an independent writer subagent—one that does not share the main agent&#x27;s attention or token budget.</p><p>The writer writes a checkpoint file with a fixed structure (11 fields: current intent, next action, working constraints, task tree, current work, involved files, cross-task discoveries, errors and fixes, runtime state, design decisions, and miscellaneous notes), and updates project-level memory when needed. For each structured file, exactly one actor is allowed to write to it—single-writer is the simplest invariant for preventing inconsistent state caused by concurrent writes.</p><h3>3.4 Four Layers of Memory</h3><p>The writer does not write only one file. It maintains a layered memory system, with each layer having a different lifecycle:</p><ul><li><strong>Session memory</strong> (checkpoint.md): Lives only within the current logical session and records the complete working state of that session.</li><li><strong>Project memory</strong> (MEMORY.md): Persistent project-level knowledge—architectural decisions, user rules, and repeatedly verified technical facts. When an observation stabilizes across multiple session checkpoints, the writer promotes it from the session layer to this layer.</li><li><strong>Global memory</strong>: User-level preferences that apply across projects.</li><li><strong>History</strong>: The full SQLite trace of each session—the raw text of every message and every tool call, stored without indexing. When a detail cannot be found in structured memory, the agent uses the history tool to trace back to the original record.</li></ul><p>The relationship among the four layers is as follows: the upper layers are more refined, more persistent, and smaller; the lower layers are more complete, larger, and slower. The writer is responsible for distilling upward, while history serves as the fallback below.</p><p>The main agent has read-only access to structured files, with one exception: <strong>notes.md</strong>, a session-level free-form scratchpad. The main agent can append scattered findings to it at any time; at each checkpoint, the writer reads it, routes its content into the appropriate structured fields, and then clears it. This is the only write channel available to the main agent.</p><h3>3.5 Rebuild Injection</h3><p>When the runtime performs a rebuild, it assembles the persisted files into a layered prompt and injects it into the new window, with an independent token limit for each section. The approximate order is: task list (the agent first needs to know what it is supposed to do) → session checkpoint → verbatim slices of recent user messages (to prevent the writer&#x27;s rewriting from drifting away from the user&#x27;s original intent) → project memory → global memory → notes → an index of memory file paths that can be read on demand → a tail reminder that tells the agent what to do next.</p><p>Even if every section reaches its limit, the total injected content is kept within roughly 65K tokens—well within the working budget of any reasonable context window. After recovering its state from this information, the agent continues working directly, without needing to reconfirm the goal or reread files that have already been processed.</p></section><section class="section"><h2>4. Evolution: Continuous Improvement from Experience</h2><p>The previous two sections address how to work well within a single turn and a single session. But in real development, a user may interact with the same project dozens or even hundreds of times. If all experience is lost after each session ends, the agent can never accumulate from past work; it has to rediscover the same project constraints and repeat the same mistakes every time.</p><h3>4.1 Project Memory</h3><p>MiMo Code maintains a project-level memory file (in Markdown format), persistently storing knowledge across sessions: project background, rules explicitly specified by the user, architectural decisions and their rationale, and repeatedly verified technical facts.</p><p>The core reason for choosing files rather than a pure vector database is reviewability: once memory affects the agent&#x27;s subsequent behavior, the user needs to be able to see what the system has remembered, delete incorrect entries, and modify outdated knowledge. Files can be directly manipulated by standard read/write tools without requiring a dedicated interface for every maintenance operation. A full-text index provides fast retrieval on top of the files.</p><p>The checkpoint writer only updates the current session&#x27;s checkpoint each time it is triggered, and write permissions are enforced at the code level. The background writer can only write to specified file paths, and any out-of-bounds write is directly rejected.</p><h3>4.2 Memory Maintenance (Dream and Distill)</h3><p>The project memory file grows over time. Without maintenance, outdated entries, duplicate records, and invalid file references gradually accumulate, lowering the signal-to-noise ratio.</p><p><strong>Dream</strong> is automatically triggered every 7 days. An independent agent reads historical session conversations and the existing memory file, then performs merging, deduplication, path-validity verification, and compression—converging scattered memories into a compact representation of the current state and updating global memory.</p><p><strong>Distill</strong> is automatically triggered every 30 days. It is also performed by an independent agent that reads historical sessions, but its focus is not knowledge—it is process. It identifies recurring work patterns and solidifies them into reusable skills, CLI commands, custom agents, SOP documents, and similar artifacts.</p></section><section class="section"><h2>5. Evaluation</h2><h3>5.1 Offline Benchmarks</h3><p>The table below shows the performance of MiMo Code and Claude Code with different models on three mainstream benchmarks.</p><figure class="mopd-figure" style="margin:1.5rem 0;text-align:center"><img src="/mimo-code-long-horizon/benchmark.jpg" alt="MiMo Code vs. Claude Code across three benchmarks" style="display:block;width:100%;height:auto;border-radius:8px;cursor:zoom-in;transition:transform 0.2s ease" loading="lazy"/><figcaption style="font-family:var(--font-title, &quot;PT Serif&quot;, Georgia, serif);font-size:0.8125rem;color:#888;margin-top:0.75rem">Figure 3: Performance of MiMo Code and Claude Code with different models across three benchmarks</figcaption></figure><p>MiMo Code + MiMo-V2.5-Pro outperforms Claude Code + Claude Sonnet 4.6 across all three evaluations. It should be noted, however, that these benchmarks still measure one-shot problem-solving ability on individual repository-level issues. Most of MiMo Code&#x27;s design goals—multi-turn memory, background state maintenance, completion verification, and cross-session evolution—mainly show their value in real development scenarios that continue for dozens of turns. These advantages can only be fully reflected in actual use.</p><h3>5.2 Human Double-Blind A/B Testing</h3><p>To address the limitations of offline benchmarks, we built a human-in-the-loop double-blind A/B evaluation: in developers&#x27; own real projects, two anonymous coding agents are launched in parallel for the same task. After they complete the task independently, the developer scores them, with automatic trajectory scoring and diff quantification used for triangulation.</p><p>During the reporting period, the internal beta covered 576 developers and 474 real private repositories, producing 1,213 A/B pairs with clear win/loss judgments, comparing the end-to-end real development experience of MiMo Code and Claude Code under the same target model.</p><p>In the evaluation, we found that MiMo Code&#x27;s advantage grows as task complexity increases: when the number of execution steps is within 200, the win rates of the two systems are close to 50%; when the number of steps exceeds 200 (including multi-turn user interaction), MiMo Code&#x27;s win rate rises to over 65%.</p></section><section class="section"><h2>6. Usage</h2><pre><code># One-line install, or install via npm
+curl -fsSL https://mimo.xiaomi.com/install | bash
+npm install -g @mimo-ai/cli</code></pre><p>On first launch, MiMo Code guides the user through selecting a model access method: MiMo Auto (free for a limited time, based on MiMo-V2.5 and supporting a 1-million-token context), Xiaomi MiMo platform login, importing from Claude Code configuration, or using a custom model.</p></section><footer class="footer"><p>Xiaomi MiMo Team · 2026</p></footer></div><!--/$--></section></div>
+    <div id="search-container"></div>
+  </body>
+</html>

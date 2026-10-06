@@ -1,0 +1,1 @@
+import{c as e,j as t,r,A as s}from"./App-BsX3z_jp.js";e.createRoot(document.getElementById("root")).render(t.jsx(r.StrictMode,{"code-path":"src/main-zh.tsx:7:3",children:t.jsx(s,{"code-path":"src/main-zh.tsx:8:5",lang:"zh"})}));

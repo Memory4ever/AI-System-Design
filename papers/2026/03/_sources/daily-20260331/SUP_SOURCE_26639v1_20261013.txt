@@ -1,0 +1,972 @@
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Related Work
+2.1 General Video Understanding
+2.2 Spatial Reasoning with VLMs
+3 Method
+3.1 Preliminary: Geometry-Aware Framework
+3.2 Geometry-Unleashing Masking
+3.3 Geometry-Guided Fusion
+3.4 Implementation Details
+4 Experiments
+4.1 Static Spatial Reasoning
+4.2 Dynamic Spatial Reasoning
+4.3 Ablation Studies
+4.4 Analysis
+5 Conclusion
+References
+0.A Qualitative Results
+0.B More Analysis
+0.C Limitations and Future Work
+License: arXiv.org perpetual non-exclusive license
+arXiv:2603.26639v1 [cs.CV] 27 Mar 2026
+Make Geometry Matter for Spatial Reasoning
+Shihua Zhang
+Qiuhong Shen
+Shizun Wang
+Tianbo Pan
+Xinchao Wang
+††thanks: Corresponding author.
+Affiliation: National University of Singapore, Singapore
+E-mail suhzhang001@gmail.com, qiuhong.shen@u.nus.edu, shizun.wang@u.nus.edu, e1583392@u.nus.edu, xinchao@nus.edu.sg
+Abstract
+Empowered by large-scale training, vision-language models (VLMs) achieve strong image and video understanding, yet their ability to perform spatial reasoning in both static scenes and dynamic videos remains limited. Recent advances try to handle this limitation by injecting geometry tokens from pretrained 3D foundation models into VLMs. Nevertheless, we observe that naive token fusion followed by standard fine-tuning in this line of work often leaves such geometric cues underutilized for spatial reasoning, as VLMs tend to rely heavily on 2D visual cues.
+In this paper, we propose GeoSR, a framework designed to make geometry matter by encouraging VLMs to actively reason with geometry tokens.
+GeoSR introduces two key components: (1) Geometry-Unleashing Masking, which strategically masks portions of 2D vision tokens during training to weaken non-geometric shortcuts and force the model to consult geometry tokens for spatial reasoning; and (2) Geometry-Guided Fusion, a gated routing mechanism that adaptively amplifies geometry token contributions in regions where geometric evidence is critical. Together, these designs unleash the potential of geometry tokens for spatial reasoning tasks.
+Extensive experiments on both static and dynamic spatial reasoning benchmarks demonstrate that GeoSR consistently outperforms prior methods and establishes new state-of-the-art performance by effectively leveraging geometric information.
+The project page is available at https://suhzhang.github.io/GeoSR/.
+Keywords: VLMs Spatial reasoning 3D foundation models
+1 Introduction
+Vision-language models (VLMs) that combine visual perception with language comprehension have advanced rapidly with large-scale training, showing strong capability in image and video understanding [42, 43, 47, 26, 8, 16].
+However, many real applications demand more than recognizing objects and events. They require spatial reasoning, namely answering questions about where things are, how they relate in 3D space, and how these relations evolve over time.
+This capability is essential in both static settings, where scenes remain largely rigid but viewpoints and visibility vary, and dynamic settings, where motion, occlusion, and temporal continuity play central roles.
+Recent benchmarks consistently reveal a significant gap: while prevalent VLMs excel at general visual semantics, they become brittle when faced with spatial questions involving viewpoint changes, motion continuity, and quantitative spatiotemporal judgments [29, 18, 9, 41, 54, 17, 57, 53].
+A natural direction to bridge this gap is introducing geometric cues that provide 3D structural information for spatial reasoning.
+Early 3D-aware MLLMs often rely on explicit 3D inputs, such as depth signals [55, 5], point clouds [12, 40, 51, 52], or pre-built 3D maps [20, 39].
+However, such pipelines typically require additional sensors or multi-stage 3D reconstruction processes, and the resulting geometry can be noisy, potentially degrading downstream performance and limiting scalability in the common scenarios where only monocular images or videos are available [50, 38].
+Recent work has shifted toward a more scalable paradigm that extracts implicit geometric features from monocular videos via pretrained visual geometry grounding models [32, 34, 36], and injects them into VLMs as geometry tokens to complement vanilla vision tokens [38, 50, 7, 53].
+This geometry-token injection paradigm appears straightforward by fusing geometry tokens with visual tokens and then fine-tuning the model under spatial reasoning supervision.
+While these pretrained priors excel at visual geometry grounding and integrating them appears intuitively promising, a fundamental question remains unexplored. Do geometry tokens actually help spatial reasoning, or are they merely dispensable side signals?
+Figure 1:
+Geometry injection can be underutilized and even harmful for spatial reasoning. We compare three variants: w/o Geo. (removing the geometry branch), w/ Geo. (injecting geometry tokens via naive fusion with standard fine-tuning), and Ours. The plots reveal a counterintuitive yet reproducible pattern: in static scenes, w/ Geo. brings only marginal gains over w/o Geo., whereas in dynamic videos, w/ Geo. can even underperform the w/o Geo. baseline. This suggests that VLMs often fall back to appearance-driven shortcuts in 2D visual tokens and treat geometry as a dispensable side signal. These observations motivate GeoSR (Ours), which compels models to use geometry as actionable evidence and yields consistent improvements across both static and dynamic spatial reasoning.
+Surprisingly, we observe a counterintuitive but reproducible phenomenon that under the common practice of naive token fusion followed by standard fine-tuning, geometry tokens are often underutilized for spatial reasoning.
+As illustrated in Figure 1, for static scenes, performance gains can be limited, and for dynamic scenes, injecting geometry tokens may even yield negative effects. This suggests that the models frequently default to appearance-driven shortcuts in 2D vision tokens, treating geometry as a dispensable auxiliary signal, rather than as actionable evidence for spatial reasoning.
+Moreover, indiscriminately mixing geometry with appearance may dilute useful geometric cues, thus the model still avoids consulting geometry when appearance shortcuts are barely sufficient.
+Clearly, it is insufficient to merely inject geometry tokens naively.
+We must compel the VLM to effectively rely on geometric information when spatial reasoning demands it.
+Motivated by this principle, we propose GeoSR, a framework that makes geometry matter for spatial reasoning in both static and dynamic settings.
+GeoSR addresses the problem from two complementary angles.
+First, to make geometry usage effective, we introduce Geometry-Unleashing Masking. During training, it strategically masks parts of the 2D vision tokens to weaken non-geometric shortcuts, so the model is encouraged to consult geometry tokens to answer spatial questions.
+Second, to make geometry usage reasonable, we propose Geometry-Guided Fusion, a gated routing mechanism that adaptively increases the contribution of geometry tokens at regions where geometric evidence is needed, instead of treating geometry as uniformly helpful across all tokens and frames.
+Together, these designs make geometry tokens actionable and controllable, rather than being easily ignored or indiscriminately fused.
+In summary, our main contributions are as follows.
+•
+We report a reproducible finding in spatial reasoning that implicit geometry injection can be ineffective under naive fusion and standard fine-tuning. Geometry tokens may be largely ignored, with limited or even negative gains on spatial reasoning in practice.
+•
+We propose GeoSR, a simple framework that encourages effective and reasonable use of geometry tokens. Geometry-Unleashing Masking reduces reliance on appearance shortcuts, and Geometry-Guided Fusion routes geometry information adaptively when geometric evidence is required.
+•
+We validate GeoSR on both static and dynamic spatial reasoning benchmarks, showing consistent improvements over prior methods.
+2 Related Work
+2.1 General Video Understanding
+Recent advances have extended vision-language models from static images to videos by representing a clip as multiple sampled frames and modeling temporal context for tasks such as video captioning [19, 45] and VideoQA [49, 44].
+Proprietary video-capable VLMs provide strong upper-bound baselines for general video understanding [13, 24, 6].
+In parallel, several open-source models are explicitly tailored for video understanding, typically enhancing temporal modeling and long-context handling for multi-frame inputs [49, 44, 4].
+Meanwhile, general-purpose VLMs have also been rapidly extended to video inputs via multi-frame prompting and instruction tuning, offering broad coverage across diverse video tasks [3, 2, 35].
+Despite strong performance on general video understanding, these models are often brittle on spatial reasoning [41, 18, 53].
+This is because common supervision mainly rewards semantic alignment, making models unstable under viewpoint changes, occlusion, and motion, thus requiring geometry-grounded evidence for reliable spatial reasoning [41, 18, 53].
+2.2 Spatial Reasoning with VLMs
+Spatial reasoning aims to answer questions about spatial layout and measurable relations, such as distance, direction, and motion changes over time.
+Recent benchmarks show that such queries remain challenging for modern VLMs, especially when viewpoints vary or relations evolve dynamically [41, 18, 53, 54, 17, 57].
+Static scenes.
+One of the common settings are reasoning in static scenes, where the environment is largely rigid while camera viewpoint and visibility vary across frames.
+VSI-Bench [41] is a representative benchmark for this regime and highlights the need for viewpoint-robust spatial understanding beyond frame-specific appearance cues.
+To strengthen spatial capability, one line of work scales spatial supervision through large spatial question-answer (QA) pairs and instruction tuning [46, 22].
+Another line of work injects geometric priors from pretrained 3D foundation models [32, 36, 34] and fuses them with 2D vision tokens [38, 50, 7].
+VG-LLM [50] extracts implicit geometry tokens from [32] and performs token-level fusion to improve spatial reasoning under viewpoint change.
+Spatial-MLLM [38] further argues that conventional semantic encoders under-emphasize structure, and proposes a spatial branch with space-aware frame sampling to better preserve geometry-relevant evidence under limited video context.
+VLM-3R [7] augments VLMs with instruction-aligned 3D reconstruction priors and integrates reconstruction-aware representations to improve static spatial reasoning.
+While these methods demonstrate the promise of geometry-aware enhancements, they often rely on uniform or naive fusion, which can leave geometry cues underutilized.
+Our work targets this gap by making injected geometry evidence more actionable during reasoning.
+Dynamic scenes.
+Dynamic spatial reasoning, also referred to as 4D reasoning, considers scenarios where spatial relations change over time due to camera motion and object motion. Correct answers require spatiotemporal consistency rather than single-frame cues [53].
+As an early attempt toward 4D scene understanding, LLaVA-4D [52] embeds spatiotemporal prompts into MLLMs to reason about evolving object states in 4D settings.
+Most closely related, GSM [53] retrieves question-relevant dynamic geometric evidence from pretrained dynamic geometry priors [36], and appends them to vision tokens as the input of VLM.
+All these methods try to inject geometry cues to improve 4D reasoning. However, the former requires multiple videos as input and relies on explicit SfM-style reconstruction [23, 48], which limits scalability in monocular in-the-wild videos. The latter actually shows limited gains from geometry injection, which will be discussed in our paper, highlighting that indiscriminate geometry fusion can be ineffective or even harmful without proper control.
+In contrast, our work focuses on making geometry tokens from monocular videos actionable for spatial reasoning.
+3 Method
+In this section, we first review the commonly used geometry injection framework for spatial reasoning, which augments a VLM with a pretrained geometry branch and a fusion module.
+We then present two key strategies in our GeoSR, Geometry-Unleashing Masking and Geometry-Guided Fusion, to make geometry tokens actionable rather than ignorable.
+Finally, we provide implementation details for both static and dynamic spatial reasoning.
+3.1 Preliminary: Geometry-Aware Framework
+Figure 2:
+Overview of the Geometry-Aware Framework for spatial reasoning.
+It augments a VLM with an additional geometry branch.
+A pretrained geometric tokenizer extracts geometry tokens \boldsymbol{F}_{\mathrm{G}} from the input video, which are fused with standard vision tokens \boldsymbol{F}_{\mathrm{V}} by a fusion module to form \boldsymbol{F}.
+The VLM answers the query based on the fused evidence together with the text tokens \boldsymbol{F}_{\mathrm{P}}.
+Snow and flame icons denote frozen and trainable components, respectively.
+This paradigm serves as our baseline.
+Our key observation is that naive fusion under standard fine-tuning can leave \boldsymbol{F}_{\mathrm{G}} underutilized, which motivates GeoSR to make geometry really matter for spatial reasoning.
+Traditional VLMs have to infer the 3D structure and dynamics of the scene from only 2D vision tokens for text-prompted spatial reasoning, which can be challenging and may lead to suboptimal performance. Accordingly, recent methods attempt to improve the geometric awareness of VLMs by introducing geometry tokens, forming a widely-used geometry-aware framework.
+The overall architecture of this framework is illustrated in Figure 2.
+Given a sequence of images or video frames \{\boldsymbol{I}_{t}|\boldsymbol{I}_{t}\in\mathbb{R}^{H_{I}\times W_{I}\times 3}\}_{t=1}^{T} and a text prompt Q, the goal is to answer the question based on the visual and textual information.
+For the tokenizer, except for the vision branch that encodes \{\boldsymbol{I}_{t}\}_{t=1}^{T} to 2D tokens \boldsymbol{F}_{\text{V}}\in\mathbb{R}^{(H_{\text{V}}W_{\text{V}}T)\times C_{\text{V}}} and the prompt branch that encodes Q to text tokens \boldsymbol{F}_{\text{P}}\in\mathbb{R}^{L_{\text{P}}\times C_{\text{P}}}, it introduces an additional geometry branch that extracts implicit geometry cues from \{\boldsymbol{I}_{t}\}_{t=1}^{T} typically using a pretrained 3D model [32, 34, 36]. The geometry tokens \boldsymbol{F}_{\text{G}}\in\mathbb{R}^{(H_{\text{G}}W_{\text{G}}T)\times C_{\text{G}}} are then merged with the 2D vision tokens \boldsymbol{F}_{\text{V}} in a fusion module \mathcal{F}(\cdot), and the fused tokens \boldsymbol{F}\in\mathbb{R}^{L\times C} are fed into the VLM backbone together with \boldsymbol{F}_{\text{P}}, generating the answer to the question. Generally, C_{\text{V}}=C_{\text{P}}=C are the same, while C_{\text{G}} can be different.
+And the fusion module \mathcal{F}(\cdot) often varies across different methods. We specify this in the following.
+(1) Additive Fusion is commonly used in static spatial reasoning [50]:
+\boldsymbol{F}=\boldsymbol{F}_{\text{V}}+\mathrm{MLP}(\mathrm{Reshape}(\boldsymbol{F}_{\text{G}})),
+(1)
+where \mathrm{Reshape}(\cdot) and \mathrm{MLP}(\cdot) are used to align the geometry tokens with the vision tokens in terms of resolution and dimensionality [50].
+(2) QFormer fusion, a more sophisticated module, is often needed to capture the complex spatiotemporal dynamics [53]. It first summarizes the text prompt’s intent using a small set of learnable bottleneck tokens \boldsymbol{B}\in\mathbb{R}^{L_{\text{B}}\times C} with cross-attention [31]:
+\boldsymbol{F}_{\text{B}}=\mathrm{CrossAttn}_{1}(\boldsymbol{B},\boldsymbol{F}_{\text{P}}),
+(2)
+where \boldsymbol{B} acts as the query set and \boldsymbol{F}_{\text{P}} serves as the key and value sets. L_{\text{B}} is the length of bottleneck tokens, which is typically small to avoid high computational cost.
+Then QFormer queries these tokens among geometry tokens \boldsymbol{F}_{\text{G}}:
+\boldsymbol{Z}_{\text{G}}=\mathrm{CrossAttn}_{2}(\boldsymbol{F}_{\text{B}},\hat{\boldsymbol{F}}_{\text{G}})=\mathrm{CrossAttn}_{2}(\boldsymbol{F}_{\text{B}},\mathrm{MLP}(\boldsymbol{F}_{\text{G}})),
+(3)
+\boldsymbol{F}_{\text{B}} is the query set, and \boldsymbol{F}_{\text{G}}\in\mathbb{R}^{(H_{\text{G}}W_{\text{G}}T)\times C_{\text{G}}} is projected to \hat{\boldsymbol{F}}_{\text{G}}\in\mathbb{R}^{(H_{\text{G}}W_{\text{G}}T)\times C} with \mathrm{MLP}(\cdot) to match the dimensionality, serving as the key and value sets. The output \boldsymbol{Z}_{\text{G}} is full of geometry cues, which is appended to the vision tokens:
+\boldsymbol{F}=[\boldsymbol{F}_{\text{V}},\mathrm{MLP}(\boldsymbol{Z}_{\text{G}})],
+(4)
+where [\cdot,\cdot] denotes concatenation along the token dimension.
+Note that for these spatiotemporal inputs, tokens are typically equipped with spatiotemporal positional encodings, such as Rotary Position Embedding (RoPE) [25] and its spatiotemporal extensions [33, 10], which we omit for clarity.
+In practice, all prompt, visual, and geometric tokenizers are typically kept frozen, while the fusion module \mathcal{F}(\cdot) is trained and the VLM backbone is fine-tuned on spatial reasoning datasets [38, 50, 7, 53].
+Albeit straightforward, we find that this common recipe does not make geometry tokens actively useful for spatial reasoning. The VLM can still rely on 2D visual cues and largely ignore the geometry stream, leading to suboptimal performance. And in some cases, performance even improves after removing the geometry branch, as shown in Fig. 1.
+To address this counterintuitive issue, we propose GeoSR with two strategies to encourage the VLM to reason with geometry cues, which will be introduced in the following sections.
+3.2 Geometry-Unleashing Masking
+Figure 3:
+Overview of the proposed strategies in GeoSR.
+(a) Geometry-Unleashing Masking suppresses appearance shortcuts during training by masking a subset of vision tokens \boldsymbol{F}_{\mathrm{V}}.
+For static settings, the mask is sampled randomly.
+For dynamic settings, bottleneck tokens \boldsymbol{B} first attend to text tokens \boldsymbol{F}_{\mathrm{P}} to obtain \boldsymbol{F}_{\mathrm{B}}, which then attend to geometry tokens \boldsymbol{F}_{\mathrm{G}} to produce question-relevant geometry evidence \boldsymbol{Z}_{\mathrm{G}} and a relevance score used for TopK masking.
+(b) Geometry-Guided Fusion redistributes the compact evidence \boldsymbol{Z}_{\mathrm{G}} back to token-level geometry features (if applicable) and applies a learned gate \boldsymbol{\alpha} to control the contributions of masked vision features \tilde{\boldsymbol{F}}_{\mathrm{V}} and geometry features \tilde{\boldsymbol{F}}_{\mathrm{G}}, producing fused tokens \boldsymbol{F} for the VLM backbone.
+As discussed in Section 1, the core challenge is that the geometry-aware VLM may still answer spatial reasoning questions from 2D appearance shortcuts, even when geometry tokens are provided.
+We therefore introduce Geometry-Unleashing Masking to suppress the shortcuts during training and force the model to effectively use geometric evidence.
+The detailed architecture of this is illustrated in Figure 3(a), where the masking process can be formulated as:
+\tilde{\boldsymbol{F}}_{\text{V}}=\boldsymbol{m}\odot\boldsymbol{F}_{\text{V}},
+(5)
+m_{j}=\begin{cases}0,&\text{if }\delta=1\ \wedge\ j\in\mathcal{M},\\
+1,&\text{otherwise},\end{cases}\quad\delta\sim\mathrm{Bernoulli}(\beta),
+(6)
+where \boldsymbol{m}=\{m_{j}\}\in\{0,1\}^{(H_{\text{V}}W_{\text{V}}T)} is a binary mask over vision tokens, \mathcal{M} is the mask set, \beta controls the probability of enabling masking during training, and \odot denotes element-wise multiplication.
+So, now the question is how to define \boldsymbol{m} in Eq. (5).
+A simple idea is to randomly mask vision tokens, such as MAE [11], which has been proven to be effective in many vision tasks [30, 15, 37].
+Inspired by this, GeoSR uniformly samples \mathcal{M} of size K from visual-token positions whose resolution is equal to H_{\text{V}}W_{\text{V}}T:
+\mathcal{M}=\mathrm{Rand}(H_{\text{V}}W_{\text{V}}T,K),\quad K=\lceil\gamma(H_{\text{V}}W_{\text{V}}T)\rceil,
+(7)
+where \gamma is the masking ratio.
+Random masking is a simple yet effective choice for static spatial reasoning baselines that use Additive Fusion as in Eq. (1) [38, 50, 7].
+Meanwhile, for dynamic spatial reasoning baselines that use QFormer Fusion as in Eqs. (2) to (4) [53], GeoSR instead selects mask regions under this query-style mechanism.
+With Eqs. (2) and (3) that effectively condense the question-related geometric information into \boldsymbol{Z}_{\text{G}}, we can identify the most relevant 3D tokens for answering the question, ranking all tokens according to the relevance score \boldsymbol{s}\in{[0,1]}^{(H_{\text{G}}W_{\text{G}}T)}. Then with the score, we select the positions of the most critical geometry tokens and mask the corresponding 2D vision tokens during training, which encourages the model to seek these important geometric cues from the geometry stream instead of relying on 2D appearance shortcuts.
+We use the attention weights in Eq. (3) to derive the relevance score \boldsymbol{s} for masking. This process can be formulated as:
+\boldsymbol{Z}_{\text{G}},\boldsymbol{A}=\mathrm{CrossAttn}_{2}(\boldsymbol{F}_{\text{B}},\hat{\boldsymbol{F}}_{\text{G}})=\mathrm{CrossAttn}_{2}(\boldsymbol{F}_{\text{B}},\mathrm{MLP}(\boldsymbol{F}_{\text{G}})),
+(8)
+\boldsymbol{s}=\{s_{j}\}=\left\{\frac{u_{j}-\min(\boldsymbol{u})}{\max(\boldsymbol{u})-\min(\boldsymbol{u})+\epsilon}\right\},\quad u_{j}=\frac{1}{hL_{\text{B}}}\sum_{k=1}^{h}\sum_{i=1}^{L_{\text{B}}}{A_{k,i,j}}.
+(9)
+Here, \boldsymbol{A}=\{A_{k,i,j}\}\in{[0,1]}^{h\times L_{\text{B}}\times(H_{\text{G}}W_{\text{G}}T)} is the attention probability tensor, where h is the number of attention heads. \boldsymbol{u}_{i} is the average attention probability of each geometry token across all heads and bottleneck tokens, regarding as the relevance measurement, and we further normalize \boldsymbol{u} to get the final relevance score \boldsymbol{s}. \epsilon is a small value to ensure numerical stability.
+Ideally, after obtaining \boldsymbol{s}, we can directly identify the mask set on high-relevant locations with TopK selection:
+\mathcal{M}=\mathrm{TopK}(\boldsymbol{s},K),\quad K=\lceil\gamma(H_{\text{G}}W_{\text{G}}T)\rceil,
+(10)
+which replaces the random mask in Eq. (7), and then perform masking process in Eqs. (5) and (6) for dynamic spatial reasoning.
+However, there is one more issue to be considered. Note that \boldsymbol{m} in Eq (5) should satisfy the resolution of {H_{\text{V}}\times W_{\text{V}}\times T}, which is the same as \boldsymbol{F}_{\text{V}}, while \mathcal{M} is obtained from \boldsymbol{F}_{\text{G}} with the resolution of H_{\text{G}}\times W_{\text{G}}\times T. The resolution may mismatch, silimar to Eq. (1).
+Therefore, the same 2D spatial interpolation may be needed here if the geometry tokens and vision tokens have different spatial resolutions:
+\hat{\boldsymbol{F}}_{\text{G}}^{\prime}=\mathrm{Interp}(\hat{\boldsymbol{F}}_{\text{G}},(H_{\text{V}},W_{\text{V}}))=\mathrm{MLP}(\mathrm{Reshape}(\hat{\boldsymbol{F}}_{\text{G}})).
+(11)
+In this case, \hat{\boldsymbol{F}}_{\text{G}}^{\prime} will replace \hat{\boldsymbol{F}}_{\text{G}} in Eq. (8) while others remain unchanged.
+From Eqs. (5) to (11), the Geometry-Unleashing Masking attempts to suppress some of the vision tokens during training, thus forcing the model to unleash geometry from the 3D branch, making effective geometric information utilization.
+Then, the model has to fuse these geometric cues into the VLM backbone reasonably, fully leveraging their capabilities for both static and dynamic spatial reasoning.
+3.3 Geometry-Guided Fusion
+Building on the above discussions, we next fuse the geometric cues with the visual tokens and feed the fused representations into the VLM backbone.
+However, uniformly mixing in Eq. (1) [50, 38] or simply concatenating in Eq. (4) [53] still leaves the model an easy option to down-weight geometry everywhere and fall back to the remaining visual evidence. GeoSR therefore introduces Geometry-Guided Fusion, as shown in Figure 3(b), which adaptively controls how much geometric evidence is injected into each fused token in a fine-grained manner, ensuring that geometry dominates when it is informative and necessary.
+Generally, this designed module fuses the geometry features \tilde{\boldsymbol{F}}_{\text{G}} (as defined in following Eqs. (13) and (14)) with the vision tokens \tilde{\boldsymbol{F}}_{\text{V}} that will be masked during training (as in Eq. (5)) adaptively under the guidance of a learned gate mechanism, which allows the model to increase reliance on geometry when visual cues are suppressed and geometry is informative, rather than treating geometry as uniformly helpful. The gated fusion weights are computed as follows:
+\boldsymbol{\alpha}=\sigma\!\left(\mathbf{W}_{g}[\boldsymbol{V}\|\boldsymbol{G}]+\boldsymbol{b}_{g}\right),\quad\boldsymbol{V}=\mathrm{LN}_{v}(\tilde{\boldsymbol{F}}_{\text{V}}),\quad\boldsymbol{G}=\mathrm{LN}_{g}(\tilde{\boldsymbol{F}}_{\text{G}}),
+(12)
+where [\cdot\|\cdot] denotes concatenation along the channel dimension, \mathbf{W}_{g} and \boldsymbol{b}_{g} are learnable parameters, and \sigma(\cdot) is the sigmoid function. \mathrm{LN}(\cdot) here denotes layer normalization [1]. This operation outputs \boldsymbol{\alpha}\in(0,1)^{(H_{\text{V}}W_{\text{V}}T)\times C}, which is a token-and-channel-wise gate, enabling fine-grained routing of geometry evidence.
+For static spatial reasoning, the geometry feature is defined as:
+\tilde{\boldsymbol{F}}_{\text{G}}=\mathrm{MLP}(\mathrm{Reshape}(\boldsymbol{F}_{\text{G}})),
+(13)
+While for dynamic spatial reasoning that conducts Eq. (8), the compact geometry evidence \boldsymbol{Z}_{\text{G}} is first redistributed back to the full spatiotemporal geometry tokens \hat{\boldsymbol{F}}_{\text{G}}^{\prime} aligned with the vision tokens (as in Eq. (11)). Then, Similar to Eqs. (2) and (8), we use cross-attention to retrieve location-aware fine-grained geometry features:
+\tilde{\boldsymbol{F}}_{\text{G}}=\mathrm{CrossAttn}_{3}\!\left(\hat{\boldsymbol{F}}_{\text{G}}^{\prime},\boldsymbol{Z}_{\text{G}}\right),
+(14)
+where \hat{\boldsymbol{F}}_{\text{G}}^{\prime} is the query set, and \boldsymbol{Z}_{\text{G}}\in\mathbb{R}^{L_{\text{B}}\times C} serves as the key and value sets. The output \tilde{\boldsymbol{F}}_{\text{G}}\in\mathbb{R}^{(H_{\text{V}}W_{\text{V}}T)\times C} is a fine-grained geometry feature map then fed to Eq. (12).
+This retrieval step emphasizes the dynamics condensed in \boldsymbol{Z}_{\text{G}}.
+Finally, after Eq. (12), we fuse the two streams adaptively with the learned gate for both static and dynamic spatial reasoning:
+\boldsymbol{F}=\boldsymbol{\alpha}\odot\boldsymbol{V}+(1-\boldsymbol{\alpha})\odot\boldsymbol{G},
+(15)
+where \odot denotes an element-wise multiplication. \boldsymbol{F} is the fused feature map, which inherits both visual and geometry cues reasonably under the control of the gate \boldsymbol{\alpha}.
+Typically, in static spatial reasoning, \boldsymbol{F} will be fed into the VLM backbone directly, together with the prompt tokens, to achieve spatial reasoning. In dynamic spatial reasoning, the overall dynamic geometry information in \boldsymbol{Z}_{\text{G}} (as in Eq. (8)) is also helpful to perceive the global context, which is appended further to \boldsymbol{F} as [\boldsymbol{F},\boldsymbol{Z}_{\text{G}}] and then fed into VLM in practice.
+From Eqs. (14) to (15), Geometry-Guided Fusion adaptively mixes geometric cues with vision tokens using a learned gate \boldsymbol{\alpha}.
+This design allows geometry features to dominate at locations where they provide useful evidence.
+3.4 Implementation Details
+This section provides implementation details of GeoSR, including training and inference settings for both static and dynamic spatial reasoning.
+Static spatial reasoning.
+For static spatial reasoning, we use Qwen2.5-VL-7B as the backbone VLM [3] and VGGT [32] as the pretrained 3D model to extract geometry tokens.
+Following our static masking design from Eqs. (5) to (7), we adopt MAE-style random masking with masking ratio \gamma=0.8 in Eq. (7) and masking enable probability \beta=0.5 in Eq. (6).
+During fine-tuning, we update the VLM backbone together with the Geometry-Guided Fusion module, while keeping the tokenizers and the 3D geometry model frozen.
+We use the same data splits of SPAR-7M [46] and LLaVA-Hound [49] as in [50].
+We train our model for 1 epoch with Adam [14] optimizer, a batch size of 64, and a learning rate of 1\times 10^{-5} with linear warmup for 150 steps followed by cosine decay to 0.
+Inference follows training except that masking is disabled and the full vision tokens are fed into the fusion module.
+Dynamic spatial reasoning.
+For dynamic spatial reasoning, we keep the Qwen2.5-VL-7B backbone [3] but switch the 3D model to \pi^{3} [36] to better capture dynamic geometry cues.
+We follow the dynamic masking design in Eqs. (2) to (10) with bottleneck length L_{\text{B}}=32 in Eq. (2), masking ratio \gamma=0.8 in Eq. (10), and enable masking with probability \beta=0.5 in Eq. (6).
+The training set is DSR-Train [53] following its official protocol.
+We train the model for 1 epoch with Adam [14] optimizer, a batch size of 32, and a learning rate of 2\times 10^{-7} with linear warmup for 50 steps.
+Inference is the same as training except that masking is disabled.
+All experiments are conducted on 4\timesH200 GPUs with 141GB memory each. Training takes about 14 hours for static spatial reasoning with DeepSpeed [21] ZeRO-2 and about 20 hours for dynamic spatial reasoning with ZeRO-3 Offload.
+4 Experiments
+We perform extensive experiments on both static and dynamic spatial reasoning benchmarks to evaluate the effectiveness of GeoSR, proving that it can significantly improve spatial reasoning performance by making geometry matter.
+We further conduct ablation studies to validate the contribution of each component and analyze the hyperparameters and the computational cost.
+Table 1:
+Performance on static spatial reasoning.
+Best, second-best, and third-best results are highlighted.
+Models
+Subtask Types
+Avg.
+Numerical Questions
+Multiple-Choice Questions
+Obj. Cnt.
+Abs. Dist.
+Obj. Size
+Room Size
+Rel. Dist.
+Rel. Dir.
+Route Plan
+Appr. Order
+Proprietary Models (API)
+GPT-4o [13]
+43.1
+34.1
+68.6
+64.2
+48.3
+43.1
+29.4
+51.3
+47.8
+Gemini-1.5 Flash [27]
+50.8
+33.6
+56.5
+45.2
+48.0
+39.8
+32.7
+59.2
+45.7
+Gemini-1.5-Pro [27]
+49.6
+28.8
+58.6
+49.4
+46.0
+48.1
+42.0
+68.0
+48.8
+General Video Understanding Models
+Qwen2.5-VL-7B [3]
+40.9
+14.8
+43.4
+10.7
+38.6
+38.5
+33.0
+29.8
+33.0
+Qwen2.5-VL-72B [3]
+25.1
+29.3
+54.5
+38.8
+38.2
+37.0
+34.0
+28.9
+37.0
+LLaVA-Video-7B [49]
+48.5
+14.0
+47.8
+24.2
+43.5
+42.4
+34.0
+30.6
+35.6
+LLaVA-Video-72B [49]
+48.9
+22.8
+57.4
+35.3
+42.4
+36.7
+35.0
+48.6
+40.9
+InternVL2-8B [28]
+25.7
+24.0
+20.0
+29.2
+32.1
+44.1
+30.4
+6.3
+26.5
+InternVL3-78B [56]
+71.2
+53.7
+44.4
+39.5
+55.9
+39.5
+28.9
+54.5
+48.4
+Spatial Reasoning Models
+SAT-LLaVA-Video [22]
+–
+–
+–
+47.3
+41.1
+37.1
+36.1
+40.4
+–
+SPAR [46]
+–
+–
+–
+–
+–
+–
+–
+–
+41.1
+Spatial-MLLM [38]
+65.3
+34.8
+63.1
+45.1
+41.3
+46.2
+33.5
+46.3
+48.4
+VG-LLM [50]
+67.9
+37.7
+58.6
+62.0
+46.6
+40.7
+32.4
+59.2
+50.7
+GeoSR (Ours)
+68.3
+38.7
+57.4
+62.3
+48.7
+44.4
+35.6
+59.5
+51.9
+4.1 Static Spatial Reasoning
+Benchmarks.
+We evaluate static spatial reasoning on VSI-Bench [41], which contains over 5k QA pairs from 288 real videos.
+It focuses on mostly rigid scenes where viewpoint and visibility change across frames, so correct answers often require stable geometric understanding rather than appearance cues.
+VSI-Bench includes numerical and multiple-choice questions.
+Numerical subtasks cover object counting (Obj. Cnt.), absolute distance estimation (Abs. Dist.), object size (Obj. Size), and room size (Room Size).
+Multiple-choice subtasks cover relative distance (Rel. Dist.), relative direction (Rel. Dir.), route planning (Route Plan), and appearance ordering (Appr. Order).
+Following the official protocol, we report accuracy for multiple-choice questions, and mean relative accuracy for numerical questions, which aggregates scores under several relative error tolerances.
+Baselines and results.
+We compare GeoSR with three groups of baselines: (1) proprietary API models as strong reference [13, 27], (2) representative open-source video models that are trained for general video understanding [3, 49, 28, 56], (3) spatial reasoning models that are enhanced by spatial supervision and geometry priors [22, 46, 38, 50].
+Overall, as shown in Table 1, GeoSR improves over the corresponding baselines under the same evaluation settings, which suggests that geometry tokens become more useful during reasoning rather than remaining auxiliary context.
+Table 2:
+Performance on dynamic spatial reasoning.
+Best, second-best, and third-best results are highlighted.
+Models
+Subtask Types
+Avg.
+Absolute
+Relative
+Non.
+Temp.
+Dist.
+Dir.
+Ori.
+Spd.
+Spd.
+Comp.
+Dir.
+Pred.
+Dist.
+Dir.
+Ori.
+Spd.
+Spd.
+Comp.
+Dir.
+Pred.
+Proprietary Models (API)
+GPT-4o [13]
+18.8
+29.2
+26.8
+29.7
+21.5
+26.2
+24.1
+23.8
+17.2
+32.3
+22.8
+24.4
+34.7
+26.4
+GPT-5 [24]
+21.1
+41.5
+48.7
+34.5
+33.3
+34.7
+17.2
+44.3
+41.9
+21.2
+25.0
+30.9
+26.7
+30.8
+Gemini-2.5-Flash [6]
+18.8
+27.6
+19.5
+25.0
+23.6
+22.0
+11.2
+28.4
+30.8
+23.2
+17.1
+22.6
+38.8
+24.9
+Gemini-2.5-Pro [6]
+20.0
+44.6
+53.6
+27.3
+38.7
+30.5
+23.2
+32.9
+43.2
+17.1
+28.5
+27.9
+34.3
+31.7
+General Video Understanding Models
+Qwen2.5-VL-7B [3]
+18.8
+15.3
+14.6
+42.8
+29.0
+19.4
+31.8
+19.3
+11.1
+22.2
+19.2
+20.2
+30.1
+23.5
+Qwen2.5-VL-32B [3]
+31.7
+21.5
+23.1
+44.0
+36.5
+25.4
+27.5
+23.8
+37.0
+27.2
+29.2
+21.4
+36.2
+29.9
+Qwen3-VL-8B-Instruct [2]
+23.5
+24.6
+42.6
+29.7
+27.9
+33.8
+18.1
+28.4
+34.5
+24.2
+22.1
+27.9
+33.5
+28.7
+Qwen3-VL-30B-A3B-Instruct [2]
+25.8
+27.6
+46.3
+30.9
+31.1
+34.7
+20.6
+29.5
+37.0
+28.2
+24.2
+31.5
+35.4
+31.1
+LLaVA-Video-7B [49]
+22.3
+16.9
+25.6
+33.3
+45.1
+24.5
+24.1
+15.9
+17.2
+19.1
+24.2
+21.4
+33.9
+25.9
+VideoRefer [44]
+23.5
+18.4
+25.6
+33.5
+45.4
+27.1
+25.0
+16.1
+18.5
+20.2
+26.4
+22.6
+34.7
+26.9
+InternVL3.5-8B [35]
+23.5
+27.6
+28.0
+34.5
+24.7
+27.9
+22.4
+17.0
+19.7
+28.2
+30.0
+14.2
+30.1
+25.4
+InternVL3.5-38B [35]
+25.8
+27.8
+29.2
+34.2
+24.7
+28.5
+26.7
+16.3
+23.4
+29.2
+32.1
+15.4
+31.3
+26.7
+Spatial Reasoning Models
+VLM-3R [7]
+28.2
+27.6
+31.7
+42.8
+38.7
+33.0
+34.4
+23.8
+30.8
+22.2
+26.4
+29.1
+35.0
+31.4
+VG-LLM [50]
+55.2
+32.3
+58.5
+57.1
+51.6
+32.2
+56.0
+36.3
+32.0
+30.3
+32.1
+29.1
+27.9
+38.4
+GSM [53]
+87.0
+73.8
+84.1
+73.8
+72.0
+35.5
+75.8
+76.1
+77.7
+60.6
+37.1
+35.1
+46.4
+58.9
+GeoSR (Ours)
+88.0
+84.4
+87.8
+83.3
+78.5
+41.0
+79.5
+83.0
+83.8
+76.5
+48.9
+39.8
+52.9
+66.1
+4.2 Dynamic Spatial Reasoning
+Benchmarks.
+We evaluate dynamic spatial reasoning on DSR-Bench [53], which contains 1484 QA pairs from 575 in-the-wild videos with evolving dynamic spatial relations due to object and camera motion.
+Correct answers require spatiotemporal consistency rather than static cues.
+DSR-Bench is organized into absolute, relative, and non-template question types.
+Absolute types include distance (Dist.), direction (Dir.), orientation (Ori.), and speed (Spd.), and also include comparison and prediction variants such as speed comparison (Spd. Comp.) and direction prediction (Dir. Pred.).
+Relative types ask about relations defined with respect to another entity, another time point, or another reference frame, including similar types to the absolute ones under such references.
+Beyond these structured categories, Non-Temp. contains questions with more flexible phrasing that are not restricted to fixed templates.
+We follow the official evaluation protocol in [53] and report accuracy for each type and the overall average.
+Baselines and results.
+Similar to the static spatial reasoning settings, Table 2 compares GeoSR with proprietary API models [13, 24, 6], general video understanding models [3, 2, 49, 44, 35] and spatial reasoning models [7, 50, 53].
+Results in Table 2 show that DSR-Bench is challenging for general models while spatial reasoning models perform significantly better, which suggests that geometry cues are particularly helpful for dynamic spatial reasoning.
+Furthermore, GeoSR rivals the best-performing model and achieves the highest score on each subtask type, which demonstrates that the proposed design highly benefits dynamic spatial reasoning by unleashing geometry cues and adaptively token fusing.
+Table 3: Ablations on GeoSR components for static spatial reasoning.
+Setting
+Module
+Subtask Types
+Avg.
+Geo.
+Mask.
+Geo.
+Fus.
+Ori.
+Fus.
+Obj.
+Cnt.
+Abs.
+Dist.
+Obj.
+Size
+Room
+Size
+Rel.
+Dist.
+Rel.
+Dir.
+Route
+Plan
+Appr.
+Order
+(a)
+\checkmark
+\checkmark
+68.3
+38.7
+57.4
+62.3
+48.7
+44.4
+35.6
+59.5
+51.9
+(b)
+\checkmark
+\checkmark
+67.7
+38.5
+57.7
+61.6
+46.5
+40.9
+34.0
+52.9
+50.0
+(c)
+\checkmark
+68.1
+38.8
+57.7
+60.5
+46.8
+42.1
+26.9
+55.7
+49.6
+(d)
+\checkmark
+68.2
+38.0
+58.7
+57.6
+45.6
+42.5
+34.5
+61.8
+50.9
+(e)
+\checkmark
+67.2
+37.8
+58.0
+60.9
+44.9
+41.8
+34.0
+56.6
+50.2
+(f)
+68.6
+36.0
+57.9
+59.7
+45.8
+38.9
+30.4
+60.2
+49.8
+Table 4: Ablations on GeoSR components for dynamic spatial reasoning.
+Setting
+Module
+Subtask Types
+Avg.
+Geo.
+Mask.
+Geo.
+Fus.
+Ori.
+Fus.
+Abs.
+Dist.
+Abs.
+Dir.
+Abs.
+Ori.
+Abs.
+Spd.
+Abs.
+Spd.
+Comp.
+Abs.
+Dir.
+Pred.
+Rel.
+Dist.
+Rel.
+Dir.
+Rel.
+Ori.
+Rel.
+Spd.
+Rel.
+Spd.
+Comp.
+Rel.
+Dir.
+Pred.
+Non.
+Temp.
+(a)
+\checkmark
+\checkmark
+88.0
+84.4
+87.8
+83.3
+78.5
+41.0
+79.5
+83.0
+83.8
+76.5
+48.9
+39.8
+52.9
+66.1
+(b)
+\checkmark
+\checkmark
+86.7
+81.3
+87.8
+78.6
+78.5
+41.9
+78.6
+84.1
+83.8
+75.5
+43.9
+34.9
+53.8
+64.7
+(c)
+\checkmark
+86.7
+67.2
+80.5
+76.2
+67.7
+40.2
+77.7
+75.0
+71.3
+55.1
+36.0
+32.5
+48.7
+58.1
+(d)
+\checkmark
+88.0
+84.4
+89.0
+77.4
+78.5
+41.9
+77.7
+87.5
+82.5
+70.4
+41.7
+38.6
+54.2
+64.9
+(e)
+\checkmark
+88.0
+78.1
+86.6
+75.0
+76.3
+40.2
+75.9
+79.5
+81.3
+69.4
+41.7
+35.5
+53.4
+62.8
+(f)
+86.7
+79.7
+85.3
+75.0
+79.6
+41.0
+75.0
+83.0
+82.5
+74.5
+43.9
+39.8
+51.7
+64.0
+4.3 Ablation Studies
+We conduct ablations on both static (Table 3) and dynamic (Table 4) benchmarks to assess the effects of Geometry-Unleashing Masking (Geo. Mask.), Geometry-Guided Fusion (Geo. Fus.), and the original naive fusion used in prior geometry-aware frameworks (Ori. Fus.).
+We take the full GeoSR model (a) as the reference.
+Replacing Geo. Fus. with the Ori. Fus. (b) reduces the performance on both benchmarks, indicating that naive fusion is less effective at turning geometry tokens into actionable evidence.
+Removing Geo. Fus. and Ori. Fus. together while keeping Geo. Mask. (c) further degrades the results, suggesting that masking alone cannot fully exploit geometry without a well-designed mechanism to route geometry cues into the VLM backbone.
+Conversely, removing Geo. Mask. but keeping Geo. Fus. (d) also leads to a noticeable drop compared to (a), showing that the model can still underutilize geometry without shortcut suppression.
+Retaining only Ori. Fus. (e) yields an inferior variant to (d), again highlighting the benefit of adaptive routing over the original fusion.
+Finally, we examine the no-geometry model (f).
+On the static benchmark, the performance drop from (e) to (f) is relatively moderate, suggesting that for static scenes, the gains from directly injecting geometry can be limited.
+On the dynamic benchmark, (f) even outperforms (e), indicating that simple geometry token injection may yield negative effects when geometry cues are fused without proper control, consistent with our motivation in the introduction.
+Overall, Geo. Mask. makes geometry effective by weakening appearance shortcuts during training, while Geo. Fus. makes geometry usage reasonable via adaptive routing.
+The improvements are more pronounced on the dynamic benchmark, where motion and occlusion make appearance cues less stable and thus benefit more from enforced geometry reliance and fine-grained fusion.
+4.4 Analysis
+Table 5: Hyperparameter analysis. The best configuration is bolded.
+\gamma
+0.8
+0.6
+0.4
+Avg.
+66.1
+65.9
+65.0
+\beta
+0.7
+0.5
+0.3
+Avg.
+64.5
+66.1
+64.9
+Table 6: Computational overhead. Model size includes the VLM backbone and all embedders.
+Models
+Time
+Size
+Mem.
+Qwen2.5-VL-7B [3]
+0.37s
+8.76B
+18.04GB
+w/ Geo. (Baseline)
+0.40s
+9.16B
+18.81GB
+GeoSR (Ours)
+0.41s
+9.23B
+18.95GB
+Hyperparameter settings.
+We validate the masking hyperparameter settings of \gamma in Eq. (10) and \beta in Eq. (6) on DSR-Bench [53].
+Table 6 shows that small \gamma and \beta leave appearance shortcuts largely intact and bring limited gains, while overly large \beta removes too much context and can hurt stability.
+We find that \gamma=0.8 and \beta=0.5 strike a good balance.
+Computational overhead.
+We report runtime, model size, and peak memory for dynamic reasoning on DSR-Bench [53] in Table 6, testing on a single H200 GPU.
+The extra parameters of GeoSR mainly come from the geometry projection and the gating module, so the parameter increase is minor relative to the geometry-aware baseline.
+GeoSR also introduces a negligible runtime increase, showing that the proposed design is efficient and does not require heavy computation to unleash geometry cues and boost the spatial reasoning performance.
+5 Conclusion
+In this paper, we study a failure mode in existing geometry-aware VLMs for spatial reasoning: under the common recipe of naive token fusion and standard fine-tuning, injected geometry tokens can be largely underutilized, bringing limited gains and even harming performance. This suggests that geometry priors, while informative, are not automatically treated as actionable evidence by the VLM backbone.
+To address this issue, we propose GeoSR, a new framework that makes geometry matter by encouraging effective and reasonable geometry usage. Geometry-Unleashing Masking weakens vision-driven shortcuts during training and forces the model to consult geometry tokens, while Geometry-Guided Fusion adaptively routes geometry evidence via a fine-grained gate so that geometry contributes more when it is informative and necessary. Extensive experiments on both static and dynamic spatial reasoning benchmarks validate the effectiveness of these designs, with consistent improvements over prior baselines, especially in dynamic settings.

@@ -1,0 +1,864 @@
+The Dual-Stream Transformer: Channelized Architecture for Interpretable Language Modeling
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Architecture
+2.1 Dual-Stream Decomposition
+Single-Stream (ablation baseline).
+Token-Factor (default).
+Frozen-Token-Stream (maximum interpretability).
+2.2 Channelized Mixing
+Identity.
+Independent.
+Kronecker.
+Dense.
+2.3 Attention Module
+2.4 Feed-Forward Network
+2.5 Channel-Aware Layer Normalization
+2.6 Optional Extensions
+Gated attention.
+Per-layer supervision.
+2.7 Configuration Notation
+3 Experiments
+3.1 Experimental Setup
+3.2 Mixing Strategy Ablation
+3.3 Stream Mode Comparison
+3.4 Head Scaling Analysis
+4 Analysis
+4.1 Stream Ablation Experiments
+4.2 Attention Amplification Analysis
+4.3 Kronecker Communication Structure
+Layer-wise Evolution.
+Hub Structure.
+Connection to Amplification Robustness.
+4.4 Attention Pattern Visualization
+4.5 Head Specialization Patterns
+5 Discussion
+5.1 Robustness Under Discretization
+5.2 Design Recommendations
+5.3 Limitations and Future Work
+5.4 Comparison to Alternative Approaches
+6 Related Work
+6.1 Mechanistic Interpretability
+6.2 Attention Analysis and Interpretation
+6.3 Disentangled Representations
+6.4 Modular and Sparse Architectures
+6.5 Probing and Attribution Methods
+6.6 Sparse Autoencoders and Feature Decomposition
+6.7 Architectural Design for Interpretability
+7 Conclusion
+References
+8 Complete Architecture Specification
+8.1 Model Hyperparameters
+8.2 Forward Pass Pseudocode
+8.3 Mixing Strategy Parameter Counts
+9 Training Details
+9.1 Optimization
+9.2 Training Configuration
+9.3 Per-Layer Supervision Settings
+10 Extended Ablations
+10.1 Full Mixing Strategy Grid
+11 Head Specialization Metric
+License: arXiv.org perpetual non-exclusive license
+arXiv:2603.07461v1 [cs.CL] 08 Mar 2026
+The Dual-Stream Transformer: Channelized Architecture for Interpretable Language Modeling
+Clayton Kerce
+Affiliation: Georgia Tech Research Institute
+Email: clayton.kerce@gtri.gatech.edu
+Alexis Fox
+Affiliation: Georgia Tech Research Institute
+Email: alexis.fox@duke.edu
+Abstract
+Standard transformers entangle all computation in a single residual stream, obscuring which components perform which functions. We introduce the Dual-Stream Transformer, which decomposes the residual stream into two functionally distinct components: a token stream updated by attention and a context stream updated by feed-forward networks. Information flow between attention heads is controlled through a hierarchy of mixing strategies, from fully independent (maximum interpretability) to dense (standard transformer behavior). This design exposes a tunable tradeoff between interpretability and performance.
+We measure this tradeoff on language modeling tasks at 29M parameters. Fully independent head mixing increases validation loss by 8% relative to dense baselines. The recommended Kronecker mixing strategy, which permits scalar communication between heads while preserving within-head structure, costs only 2.5%. All configurations maintain functional generation under attention amplification (scaling logits by factors up to 16 at inference time), with degradation ranging from 16% to 27%. This robustness suggests the architectures learn discrete algorithms that operate independently of soft probabilistic mixing. The architecture provides a foundation for interpretable language models where internal structure is exposed by design. 11
+1
+This work was partially supported by DARPA Contract HR001125C0302.
+1 Introduction
+Transformers process information through a single residual stream where attention and feed-forward outputs accumulate without distinction Elhage et al. (2021). This design enables strong performance but creates an interpretability barrier: when all components write to a shared representation, determining which component performs which function becomes intractable. Post-hoc analysis methods can identify correlations between components and behaviors Clark et al. (2019); Tenney et al. (2019), but models can route around targeted interventions by redistributing computation across other components McGrath et al. (2023). Understanding causal relationships requires architectural support.
+We propose that interpretability should be enforced through architectural constraints rather than excavated post-hoc Wang et al. (2023); Geiger et al. (2021). The Dual-Stream Transformer achieves this through two mechanisms that expose internal structure by design.
+Dual-stream decomposition. The residual stream is factored into additive components: 𝐱=𝐱t+𝐱e\mathbf{x}=\mathbf{x}_{t}+\mathbf{x}_{e}, where 𝐱t\mathbf{x}_{t} (the token stream) carries information derived from discrete token identities and is updated exclusively by attention, while 𝐱e\mathbf{x}_{e} (the context stream) accumulates continuous contextual transformations and is updated exclusively by feed-forward networks. This functional separation makes explicit which computations perform token-level operations versus contextual refinements.
+Channelized mixing. Information flow across attention heads is controlled through a hierarchy of mixing strategies. Independent mixing enforces block-diagonal projections where each head operates in isolation. Dense mixing allows unrestricted communication, matching standard transformers. The intermediate Kronecker strategy (Wheads⊗IW_{\text{heads}}\otimes I) permits scalar mixing between heads while preserving within-head structure, providing interpretable cross-head communication with only H2H^{2} parameters rather than (H⋅dh)2(H\cdot d_{h})^{2}.
+This design exposes a tunable interpretability-performance tradeoff. Practitioners can select the configuration that meets their requirements, from maximum interpretability (fully independent mixing, 8% performance cost) to minimal cost (Kronecker mixing, 2.5% performance cost) to standard transformer behavior (dense mixing, no cost).
+Our experiments on language modeling tasks at 29M parameters demonstrate three main findings. First, the interpretability tax is bounded and predictable across the mixing hierarchy. Second, all configurations maintain functional generation under attention amplification at inference time, where attention logits are scaled by factors up to 16 before softmax. Degradation ranges from 16% to 27%, with Kronecker mixing showing the most graceful degradation. This robustness provides evidence that the architectures learn discrete algorithms that operate independently of soft probabilistic smoothing. Third, stream ablation experiments confirm functional separation: removing the token stream causes severe degradation (36%), while removing the context stream has moderate impact (9.5%), validating the architectural decomposition.
+We contribute: (1) the dual-stream architecture with formal specification, (2) the channelized mixing framework with parameter-efficient strategies, (3) systematic ablations quantifying interpretability-performance tradeoffs across configurations, and (4) attention amplification as a diagnostic methodology revealing discrete computational structure. The architecture provides a foundation for interpretable language models where practitioners can tune the degree of structural constraint to their application requirements.
+2 Architecture
+Figure 1 illustrates the Dual-Stream Transformer. The residual stream is decomposed into token and context components, with channelized mixing controlling information flow between attention heads.
+Token Stream 𝐱t\mathbf{x}_{t}Context Stream 𝐱e\mathbf{x}_{e}𝐱t(ℓ−1)\mathbf{x}_{t}^{(\ell-1)}𝐱e(ℓ−1)\mathbf{x}_{e}^{(\ell-1)}++𝐱t+𝐱e\mathbf{x}_{t}+\mathbf{x}_{e}CLNAttentionV mixOut mix++Δ​𝐱t\Delta\mathbf{x}_{t}𝐱t′\mathbf{x}_{t}^{\prime}𝐱e\mathbf{x}_{e}++𝐱t′+𝐱e\mathbf{x}_{t}^{\prime}+\mathbf{x}_{e}CLNFFNUp mixDown mix++Δ​𝐱e\Delta\mathbf{x}_{e}𝐱t(ℓ)\mathbf{x}_{t}^{(\ell)}𝐱e(ℓ)\mathbf{x}_{e}^{(\ell)}Mixing: Identity ⊂\subset Independent ⊂\subset Kronecker ⊂\subset Dense
+Figure 1: Dual-Stream Transformer architecture. The residual stream is decomposed into a token stream 𝐱t\mathbf{x}_{t} (orange, left) updated exclusively by attention, and a context stream 𝐱e\mathbf{x}_{e} (blue, right) updated exclusively by FFN. Both streams are combined for computing queries, keys, and FFN inputs via Channel-aware Layer Normalization (CLN). Channelized mixing strategies (purple labels) control information flow between attention heads at each projection. The hierarchy from Identity to Dense provides tunable interpretability-performance tradeoffs.
+2.1 Dual-Stream Decomposition
+The residual stream is factored into two additive components:
+𝐱(ℓ)=𝐱t(ℓ)+𝐱e(ℓ)where𝐱t,𝐱e∈ℝB×T×D\mathbf{x}^{(\ell)}=\mathbf{x}_{t}^{(\ell)}+\mathbf{x}_{e}^{(\ell)}\quad\text{where}\quad\mathbf{x}_{t},\mathbf{x}_{e}\in\mathbb{R}^{B\times T\times D}
+(1)
+The token stream 𝐱t\mathbf{x}_{t} is initialized from token embeddings and updated exclusively by attention. The context stream 𝐱e\mathbf{x}_{e} is initialized to zero and updated exclusively by feed-forward networks. This separation makes explicit which computations derive from token identities versus contextual transformations.
+Three update modes control stream interaction:
+Single-Stream (ablation baseline).
+The separation of token and context stream is disabled (𝐱=𝐱e+𝐱t\mathbf{x}=\mathbf{x}_{e}+\mathbf{x}_{t} is used in all operations), reducing to standard transformer behavior. This provides a matched baseline for measuring interpretability costs.
+Token-Factor (default).
+Both streams are active with independent updates:
+𝐱t(ℓ+1)\displaystyle\mathbf{x}_{t}^{(\ell+1)}
+=𝐱t(ℓ)+Attn(ℓ)​(CLN​(𝐱(ℓ)),𝐱t(ℓ))\displaystyle=\mathbf{x}_{t}^{(\ell)}+\text{Attn}^{(\ell)}(\text{CLN}(\mathbf{x}^{(\ell)}),\mathbf{x}_{t}^{(\ell)})
+(2)
+𝐱e(ℓ+1)\displaystyle\mathbf{x}_{e}^{(\ell+1)}
+=𝐱e(ℓ)+FFN(ℓ)​(CLN​(𝐱(ℓ)))\displaystyle=\mathbf{x}_{e}^{(\ell)}+\text{FFN}^{(\ell)}(\text{CLN}(\mathbf{x}^{(\ell)}))
+(3)
+Both components observe the combined stream through channel-aware layer normalization (CLN, see Section 2.5) but write to separate targets.
+Frozen-Token-Stream (maximum interpretability).
+The token stream is frozen after initialization: 𝐱t(ℓ)=𝐱t(0)=Embed​(tokens)\mathbf{x}_{t}^{(\ell)}=\mathbf{x}_{t}^{(0)}=\text{Embed}(\text{tokens}) for all ℓ\ell. All learned transformations accumulate in 𝐱e\mathbf{x}_{e}. This provides maximum interpretability since attention patterns directly reveal which source tokens influence each position without mixing of learned representations.
+2.2 Channelized Mixing
+Both attention and FFN projections use configurable mixing strategies that control cross-head information flow. Let HH denote heads and dh=D/Hd_{h}=D/H the dimension per head.
+Identity.
+No transformation; input passes through unchanged. Zero parameters.
+Independent.
+Block-diagonal projection where each head operates in isolation:
+yb​t​h​o=∑ixb​t​h​i​Wh​i​oW∈ℝH×din×douty_{btho}=\sum_{i}x_{bthi}W_{hio}\quad W\in\mathbb{R}^{H\times d_{\text{in}}\times d_{\text{out}}}
+(4)
+Parameters: H⋅din⋅doutH\cdot d_{\text{in}}\cdot d_{\text{out}}. Information cannot flow between heads.
+Kronecker.
+Scalar mixing between heads with identity on dimensions, Wheads⊗IW_{\text{heads}}\otimes I:
+yb​t​k​i=∑hxb​t​h​i​Wk​hW∈ℝH×Hy_{btki}=\sum_{h}x_{bthi}W_{kh}\quad W\in\mathbb{R}^{H\times H}
+(5)
+Parameters: H2H^{2}. Heads exchange information through scalar weights while within-head structure is preserved. The H×HH\times H mixing matrix provides an interpretable head-to-head routing table that can be directly visualized (Section 4.3). This Kronecker factorization has been explored for parameter-efficient fine-tuning Sadeghi et al. (2025), spatiotemporal attention Cheong and others (2025), and tensor-structured transformers Omranpour et al. (2024), demonstrating benefits for both efficiency and interpretability.
+Dense.
+Standard linear projection with unrestricted mixing:
+𝐲=𝐱​WW∈ℝ(H⋅dh)×(H⋅dh)\mathbf{y}=\mathbf{x}W\quad W\in\mathbb{R}^{(H\cdot d_{h})\times(H\cdot d_{h})}
+(6)
+Parameters: (H⋅dh)2(H\cdot d_{h})^{2}. Matches standard transformer behavior.
+These strategies form a hierarchy of expressiveness: Identity ⊂\subset Independent ⊂\subset Kronecker ⊂\subset Dense, where each strategy can approximate any computation expressible by strategies to its left.
+2.3 Attention Module
+Queries and keys are computed from the combined stream via dense projection, enabling global attention patterns. Values come from the token stream via configurable mixing:
+Q,K\displaystyle Q,K
+=WQ⋅CLN​(𝐱t+𝐱e),WK⋅CLN​(𝐱t+𝐱e)\displaystyle=W_{Q}\cdot\text{CLN}(\mathbf{x}_{t}+\mathbf{x}_{e}),\quad W_{K}\cdot\text{CLN}(\mathbf{x}_{t}+\mathbf{x}_{e})
+(7)
+V\displaystyle V
+=MixingLinearv​(CLN​(𝐱t))\displaystyle=\text{MixingLinear}_{\textsc{v}}(\text{CLN}(\mathbf{x}_{t}))
+(8)
+A\displaystyle A
+=softmax​(Q​K⊤dh)\displaystyle=\text{softmax}\left(\frac{QK^{\top}}{\sqrt{d_{h}}}\right)
+(9)
+out
+=MixingLinearo​(A⋅V)\displaystyle=\text{MixingLinear}_{\textsc{o}}(A\cdot V)
+(10)
+Dense projections for QQ and KK compute attention patterns (scalar weights) rather than values that flow through the residual stream. The channelized constraint applies to VV and the output projection, where actual content flows.
+At inference time, we support attention amplification by scaling logits before softmax: Aα=softmax​(α⋅Q​K⊤/dh)A_{\alpha}=\text{softmax}(\alpha\cdot QK^{\top}/\sqrt{d_{h}}). This sharpens distributions from soft mixing (α=1\alpha=1) to near-deterministic selection (α=16\alpha=16), serving as a diagnostic for discrete computational structure.
+2.4 Feed-Forward Network
+The FFN observes the combined stream but writes exclusively to 𝐱e\mathbf{x}_{e}:
+hidden
+=GELU​(MixingLinearup​(CLN​(𝐱t+𝐱e)))\displaystyle=\text{GELU}(\text{MixingLinear}_{\textsc{up}}(\text{CLN}(\mathbf{x}_{t}+\mathbf{x}_{e})))
+(11)
+out
+=MixingLineardown​(hidden)\displaystyle=\text{MixingLinear}_{\textsc{down}}(\text{hidden})
+(12)
+Default configuration uses Independent mixing for both projections, enforcing that each head’s FFN channel operates in isolation. Combined with stream separation, FFN modifications are localized to specific heads and to the contextual stream.
+2.5 Channel-Aware Layer Normalization
+Standard LayerNorm computes statistics across all dimensions, mixing information between heads. ChannelLayerNorm normalizes each head’s dhd_{h} dimensions independently:
+CLN​(𝐱)h=γh⋅𝐱h−μhσh+βh\text{CLN}(\mathbf{x})_{h}=\gamma_{h}\cdot\frac{\mathbf{x}_{h}-\mu_{h}}{\sigma_{h}}+\beta_{h}
+(13)
+where μh,σh\mu_{h},\sigma_{h} are computed over the dhd_{h} dimensions for head hh, and γh,βh∈ℝdh\gamma_{h},\beta_{h}\in\mathbb{R}^{d_{h}} are per-head affine parameters. This preserves head isolation while providing training stability.
+2.6 Optional Extensions
+The architecture supports two optional mechanisms not used in the main experiments but available in the released implementation.
+Gated attention.
+Following Qiu et al. Qiu et al. (2025), each attention head can be modulated by a query-dependent gate applied after the Scaled Dot-Product Attention output:
+outh=gh⋅(A⋅V)hwheregh=σ⁡(Whgate⋅qh)\text{out}_{h}=g_{h}\cdot(A\cdot V)_{h}\quad\text{where}\quad g_{h}=\sigma(W^{\text{gate}}_{h}\cdot q_{h})
+(14)
+where gh∈[0,1]g_{h}\in[0,1] is computed independently per head from its query vector. Qiu et al. demonstrated that this mechanism mitigates attention sink behavior and improves training stability at scale. In our architecture, it provides an additional interpretability benefit: the gate values ghg_{h} explicitly reveal which heads are active for each position, making head selection patterns directly observable.
+Per-layer supervision.
+Each layer’s output can be projected to vocabulary space and supervised against the target:
+ℒ=ℒfinal+λ​∑ℓ=1L−1wℓ⋅ℒ(ℓ)\mathcal{L}=\mathcal{L}_{\text{final}}+\lambda\sum_{\ell=1}^{L-1}w_{\ell}\cdot\mathcal{L}^{(\ell)}
+(15)
+where ℒ(ℓ)\mathcal{L}^{(\ell)} is cross-entropy loss at layer ℓ\ell, computed by projecting the combined stream 𝐱(ℓ)\mathbf{x}^{(\ell)} through the shared language model head. Layer weights wℓw_{\ell} can follow uniform, linear, or exponential schedules. This encourages each layer to produce intermediate representations that are decodable to vocabulary space, potentially improving interpretability of layer-by-layer computation.
+2.7 Configuration Notation
+We denote mixing configurations as <attn_v>-<attn_o>/<ffn_up>-<ffn_down>, where each position specifies the mixing strategy for that projection. Key configurations tested:
+•
+dns-dns/dns-dns: Dense baseline (standard transformer)
+•
+kron-kron/dns-dns: Recommended (interpretable attention, bounded cost)
+•
+ind-ind/dns-dns: Independent attention, dense FFN
+•
+ind-ind/ind-ind: Fully independent (maximum interpretability)
+3 Experiments
+3.1 Experimental Setup
+We evaluate on a curated corpus of grade-school instructional materials spanning mathematics, science, and reading comprehension. The corpus contains structured pedagogical content with explicit reasoning chains, making it suitable for analyzing how models learn discrete algorithmic patterns. We construct vocabularies of 4K and 8K tokens using byte-pair encoding, where smaller vocabularies force the model to work with coarser-grained token representations.
+The base configuration uses 6 layers, 6 heads, and 516 dimensions (approximately 23M parameters). Models are trained on 2M samples using AdamW Loshchilov and Hutter (2017) with learning rate 5×10−45\times 10^{-4}, gradient clipping at 1.0, and cosine learning rate decay. Training was conducted on a single workstation with an NVIDIA RTX 4090 (24GB) using standard floating point representations.
+We conduct two experimental series with different training budgets. Mixing strategy ablations use 4K vocabulary trained for 3 epochs, allowing configurations to converge and reveal stable performance differences. Stream mode comparisons use 8K vocabulary trained for 1 epoch, focusing on architectural differences rather than optimization dynamics. The 8K vocabulary provides finer-grained token representations that better stress the dual-stream decomposition.
+3.2 Mixing Strategy Ablation
+Table 1 presents validation loss across mixing configurations using the Token-Factor update mode. Dense baseline represents standard transformer behavior. Kronecker-Dense uses Kronecker mixing for attention projections with dense FFN. Independent-Dense uses independent attention with dense FFN. Fully Independent applies independent mixing to all projections.
+Table 1: Mixing strategy ablation (4K vocabulary, 3 epochs, Token-Factor mode).
+Configuration
+Signature
+Val Loss
+Δ\Delta from Dense
+Dense Baseline
+dns-dns/dns-dns
+2.42
+—
+Kronecker-Dense
+kron-kron/dns-dns
+2.48
++2.5%
+Independent-Dense
+ind-ind/dns-dns
+2.50
++3.3%
+Fully Independent
+ind-ind/ind-ind
+2.62
++7.9%
+The interpretability tax is bounded and predictable. Fully independent mixing incurs an 8% validation loss increase. The recommended Kronecker configuration costs only 2.5%, providing interpretable cross-head communication through scalar weights while maintaining near-baseline performance. The gap between Independent-Dense (3.3%) and Fully Independent (7.9%) indicates that FFN mixing contributes more to performance than attention mixing, suggesting that contextual transformations benefit more from cross-head communication than token-level routing operations.
+3.3 Stream Mode Comparison
+Table 2 compares stream update modes using Kronecker-Dense mixing on 8K vocabulary. Single-Stream serves as an ablation baseline where the context stream is disabled. Token-Factor represents the default configuration where both streams are updated. Frozen-Token-Stream (FTS) provides maximum interpretability by preserving pure token embeddings in 𝐱t\mathbf{x}_{t}.
+Table 2: Stream mode comparison (8K vocabulary, 1 epoch, kron-kron/dns-dns mixing).
+Mode
+Description
+Val Loss
+Single-Stream
+Context stream disabled
+2.58
+Token-Factor
+Both streams updated
+2.67
+Frozen-Token-Stream
+Token stream frozen
+2.66
+Token-Factor and Frozen-Token-Stream modes achieve similar performance, both approximately 3% above Single-Stream. The negligible difference between Token-Factor (2.67) and FTS (2.66) indicates that freezing the token stream after initialization does not degrade performance relative to allowing attention to update it. This result suggests that the additional interpretability provided by FTS comes at no additional cost, making it the preferred configuration for applications requiring maximum transparency.
+3.4 Head Scaling Analysis
+We investigate how the number of attention heads affects specialization and performance while keeping total dimension fixed at D=512D=512. Models are trained with H∈{4,6,8,12,16}H\in\{4,6,8,12,16\} heads using Kronecker-Dense mixing. As head count increases, head dimension decreases (dh=D/Hd_{h}=D/H), creating a tradeoff between per-head capacity and the number of independent computational channels.
+We measure head specialization using the pairwise distinctiveness of attention patterns. For each head hh, we compute the average attention pattern 𝐚h\mathbf{a}_{h} across evaluation samples. Specialization is then measured as:
+Specialization=1H⁡(H−1)​∑i≠j(1−𝐚i⊤​𝐚j‖𝐚i‖​‖𝐚j‖)\text{Specialization}=\frac{1}{H(H-1)}\sum_{i\neq j}\left(1-\frac{\mathbf{a}_{i}^{\top}\mathbf{a}_{j}}{\|\mathbf{a}_{i}\|\|\mathbf{a}_{j}\|}\right)
+(16)
+where values near 0 indicate heads with similar attention patterns (low specialization) and values near 1 indicate orthogonal patterns (high specialization). We also measure average entropy of attention distributions, where lower entropy indicates more focused, discrete attention patterns.
+Table 3: Head scaling results with Kronecker-Dense mixing (4K vocabulary, 3 epochs).
+Heads (HH)
+Val Loss
+Specialization
+Avg Entropy
+4
+2.86
+0.42
+3.2
+6
+2.84
+0.51
+2.9
+8
+2.82
+0.64
+2.6
+12
+2.81
+0.78
+2.3
+16
+2.80
+0.85
+2.1
+Performance improves modestly with more heads (2.86 to 2.80, approximately 2% gain) while specialization increases substantially (0.42 to 0.85, approximately 2x gain). This demonstrates that interpretability and capacity can align when architectural constraints channel computation through independent heads, consistent with prior findings that specialized heads perform distinct functions Voita et al. (2019). Recent work has characterized this specialization through cognitive functional roles Ma et al. (2025) and quantified differentiation using refined local learning coefficients Wang and others (2024). The simultaneous decrease in entropy (3.2 to 2.1) indicates that attention patterns become more focused as specialization increases, suggesting that heads learn to perform more discrete operations when forced to operate independently.
+4 Analysis
+4.1 Stream Ablation Experiments
+To validate that the dual-stream decomposition creates functional separation, we ablate streams at inference time and measure the impact on validation loss. Models are trained normally with both streams active, then evaluated with one stream removed or corrupted. This tests whether the streams carry distinct information that cannot be recovered by the remaining stream.
+Table 4: Stream ablation effects (Kronecker-Dense mixing, Token-Factor mode).
+Ablation
+Val Loss
+Δ\Delta from Baseline
+Baseline (𝐱t+𝐱e\mathbf{x}_{t}+\mathbf{x}_{e})
+2.85
+—
+𝐱t→0\mathbf{x}_{t}\to 0
+3.89
++36%
+𝐱e→0\mathbf{x}_{e}\to 0
+3.12
++9.5%
+𝐱t→\mathbf{x}_{t}\to random vocab
+3.65
++28%
+Removing the token stream causes severe degradation (36% loss increase), confirming it carries essential information derived from token identities. Removing the context stream has moderate impact (9.5% increase), consistent with its role as contextual refinement rather than primary content. The asymmetry validates the architectural decomposition: 𝐱t\mathbf{x}_{t} is load-bearing while 𝐱e\mathbf{x}_{e} provides enhancement.
+Replacing 𝐱t\mathbf{x}_{t} with random vocabulary embeddings degrades performance more than zeroing it (28% versus 36%). This indicates the model relies on specific learned structure in the token stream rather than merely requiring non-zero values. Random embeddings preserve dimensionality and magnitude but lack the semantic organization learned during training, demonstrating that the token stream encodes meaningful structure beyond its presence as a signal carrier.
+4.2 Attention Amplification Analysis
+A key question for interpretability is whether models learn discrete algorithms or rely on distributed soft mixing Jain and Wallace (2019); Wiegreffe and Pinter (2019). Recent work on transformer programs demonstrates that models can learn interpretable discrete algorithms Friedman et al. (2023); Zhang et al. (2026), though whether this algorithmic structure extends to standard language modeling remains open. We probe this using attention amplification: scaling attention logits by a factor α\alpha before softmax during inference:
+Aα=softmax​(α⋅Q​K⊤dh)A_{\alpha}=\text{softmax}\left(\alpha\cdot\frac{QK^{\top}}{\sqrt{d_{h}}}\right)
+(17)
+Higher α\alpha values sharpen attention distributions. At α=1\alpha=1 (baseline), attention typically spreads across 2-3 tokens per position with substantial probability mass distributed softly. At α=16\alpha=16 (extreme sharpening), distributions approach near-deterministic pointer selection where one token receives the majority of attention weight. If a model relies fundamentally on weighted combination of multiple features, forcing such discreteness should cause catastrophic failure. If the model has learned algorithms that operate on discrete token selections, it should maintain functional behavior under amplification. This diagnostic connects to recent work on attention sharpening mechanisms including alternatives to softmax Veličković and others (2025), differential attention Ye et al. (2024), and selective attention Leviathan et al. (2025).
+Table 5 shows validation loss across amplification factors for multiple configurations. All models were trained at α=1\alpha=1 and evaluated at various α\alpha values without retraining.
+Table 5: Validation loss under attention amplification (FTS mode, 8K vocabulary).
+Configuration
+α=1\alpha=1
+α=2\alpha=2
+α=4\alpha=4
+α=8\alpha=8
+α=16\alpha=16
+Dense baseline
+1.80
+1.86
+1.98
+2.09
+2.16 (+20%)
+Kronecker-Dense
+1.84
+1.90
+2.00
+2.09
+2.14 (+16%)
+Independent-Dense
+1.87
+1.96
+2.12
+2.28
+2.38 (+27%)
+Gated (Dense)
+1.88
+1.98
+2.15
+2.30
+2.39 (+27%)
+All configurations maintain functional generation up to α=16\alpha=16 with bounded degradation ranging from 16% to 27%. No configuration exhibits catastrophic collapse. Kronecker-Dense mixing shows the most graceful degradation at 16%, compared to 20% for the dense baseline and 27% for fully independent mixing. This robustness suggests that the architectures learn computational patterns that operate independently of soft probabilistic smoothing at training time.
+To quantify the stability differences, we compute the area under the loss curve from α=1\alpha=1 to α=16\alpha=16 for each configuration. Kronecker-Dense achieves 97.2 loss-units compared to 99.8 for Dense baseline and 107.4 for Independent-Dense, representing 2.6% and 9.5% lower cumulative degradation respectively. The advantage of Kronecker mixing appears to stem from controlled cross-head communication: heads can coordinate through scalar weights to maintain stable computation as distributions sharpen, whereas fully independent heads cannot compensate for each other’s increased discretization noise.
+Figure 2 visualizes these degradation curves, showing that Kronecker mixing maintains near-linear growth in loss as α\alpha increases, while Independent mixing exhibits steeper acceleration at higher amplification factors.
+(a) Mixing strategy comparison
+(b) Gated attention comparison
+Figure 2: Validation loss versus attention amplification factor. (a) Kronecker-Dense mixing degrades more gracefully than Independent-Dense, with 9.5% lower cumulative degradation across α∈[1,16]\alpha\in[1,16]. (b) Gated attention variants show similar amplification robustness to their non-gated counterparts. All configurations maintain functional generation at α=16\alpha=16 with bounded degradation.
+4.3 Kronecker Communication Structure
+The H×HH\times H Kronecker mixing matrices provide explicit routing weights between attention heads. Unlike dense mixing where cross-head communication is implicit within high-dimensional projections, Kronecker mixing exposes head-to-head information flow as scalar weights that can be directly inspected. We visualize these learned routing patterns to understand how heads coordinate information exchange.
+Figure 3 shows the routing matrices for value (V) and output (O) projections across all six layers. Each cell (i,j)(i,j) represents the scalar weight controlling information flow from head jj to head ii. Positive weights (red) indicate excitatory routing where source head content is amplified; negative weights (blue) indicate inhibitory routing where source content is suppressed or inverted.
+(a) Value Projection Routing
+(b) Output Projection Routing
+Figure 3: Learned Kronecker routing matrices across layers. Each heatmap shows the 6×66\times 6 head-to-head routing weights for (a) value projection and (b) output projection. Cell (i,j)(i,j) indicates routing from head jj to head ii. Red indicates positive (excitatory) weights; blue indicates negative (inhibitory) weights. Routing strength increases in deeper layers, with maximum weights growing from ∼\sim1.0 in layer 0 to ∼\sim3.5 in layer 5.
+Layer-wise Evolution.
+The routing matrices reveal systematic evolution across the network depth. Early layers (0-1) show relatively uniform weights near unity, suggesting broad information sharing during initial feature extraction. Middle layers (2-3) develop more structured patterns with specific head pairs forming strong connections while others attenuate. Deep layers (4-5) exhibit the strongest routing weights (up to 3.5×\times amplification), indicating that heads in later layers rely heavily on coordinated information from specific partners.
+Hub Structure.
+Head 0 emerges as a routing hub in both V and O projections, serving as a central nexus for information aggregation. This hub receives strong inputs from multiple source heads and broadcasts widely to targets. The hub structure suggests hierarchical organization where certain heads specialize in integrating information from specialists, potentially enabling compositional computation where syntactic and semantic features combine through the hub.
+Connection to Amplification Robustness.
+The routing structure explains why Kronecker mixing degrades more gracefully under attention amplification (Table 5). When attention distributions sharpen, individual heads may make suboptimal discrete selections. The learned routing weights allow complementary heads to compensate: if head 3 makes a poor selection, heads 0 and 4 (which receive its output with specific learned weights) can route around the error through their own selections. Independent mixing lacks this compensation mechanism, explaining its 27% degradation versus Kronecker’s 16%.
+4.4 Attention Pattern Visualization
+Figure 4 shows attention heatmaps from a single evaluation sample across amplification factors, revealing the transition from distributed mixing to focused selection. At α=1\alpha=1 (baseline training condition), attention spreads across multiple tokens with relatively uniform weights. At α=4\alpha=4, patterns begin to concentrate on specific positions while retaining some distribution. At α=8\alpha=8, attention becomes highly focused with clear semantic structure. At α=16\alpha=16, distributions approach binary selection where one token dominates each query position.
+α=1\alpha=1
+α=4\alpha=4
+α=8\alpha=8
+α=16\alpha=16
+Figure 4: Attention patterns under progressive amplification (FTS configuration, Layer 3). Distributions sharpen from soft mixing at baseline to near-deterministic selection at α=16\alpha=16. The model maintains coherent predictions throughout this transition, indicating that the underlying computation can operate on discrete token selections.
+The preservation of semantic structure during sharpening is notable. At α=8\alpha=8, attention concentrates on syntactically and semantically relevant positions rather than collapsing to arbitrary nearest neighbors or position-based patterns. This suggests the attention patterns reflect learned dependencies in the data rather than artifacts of the softmax operation. At α=16\alpha=16, while distributions become near-binary, the selected tokens correspond to meaningful relationships in the input sequence.
+4.5 Head Specialization Patterns
+We compare head specialization between architectures by measuring each head’s performance on coreference resolution, a task that requires identifying which entity a pronoun or definite description refers to. For each layer-head combination, we compute the percentage of evaluation samples where the head attends most strongly to the correct antecedent token.
+Figure 5 compares specialization patterns between Independent-Dense (maximum architectural constraint) and Dense baseline configurations. Independent-Dense shows stronger differentiation between heads, with clear specialists emerging. For example, Layer 4 Head 3 achieves 48.3% coreference accuracy compared to a distributed 25-30% across heads in the Dense baseline. This indicates that architectural constraints encourage functional specialization, where different heads learn to perform distinct operations rather than redundantly computing similar functions. This observation aligns with recent characterizations of attention heads serving diverse cognitive roles Ma et al. (2025) and the measurement of head differentiation through local learning dynamics Wang and others (2024).
+Figure 5: Coreference resolution accuracy by head across architectures. Left: Independent-Dense configuration shows strong specialization with distinct functional roles per head. Right: Dense baseline distributes coreference computation across multiple heads with less differentiation. Architectural constraints promote interpretable specialization.
+The emergence of specialists in channelized architectures has implications for interpretability Olsson et al. (2022). When heads perform distinct functions, interventions can be targeted precisely Meng et al. (2022). When computation is distributed across redundant heads, isolating the causal role of any single component becomes difficult. The tradeoff is that distributed computation provides robustness through redundancy, while specialized computation provides interpretability through isolation. The Kronecker routing structure (Section 4.3) reveals how these specialists coordinate: coreference-specialized heads in later layers receive strong routing weights from syntactic heads in earlier layers, suggesting hierarchical information flow from structural analysis to reference resolution.
+5 Discussion
+5.1 Robustness Under Discretization
+The attention amplification experiments reveal that all configurations maintain functional generation when attention distributions are sharpened to near-deterministic selection. This robustness is notable because standard transformer intuitions suggest that models learn distributed representations where meaning emerges from weighted combinations of features. Forcing hard selection from such representations should cause catastrophic failure as the model loses access to the nuanced mixing ratios it relied on during training.
+The observed degradation of 16-27% represents a change in calibration rather than computational collapse. Models continue to generate semantically appropriate continuations and maintain syntactic coherence at α=16\alpha=16, suggesting the underlying selection mechanisms remain intact. The loss increase appears to stem from over-confidence in predictions rather than failure to identify relevant tokens. This pattern is consistent with models that learn pointer-based selection algorithms during training but apply soft probabilistic smoothing at inference time for uncertainty quantification. The preservation of functionality under discretization connects to recent work on latent reasoning in language models Hao et al. (2024); Liu et al. (2025); Ning et al. (2025), which demonstrates that transformers can perform multi-step reasoning through internal computation rather than explicit soft mixing.
+The superior amplification robustness of Kronecker mixing (16% degradation) compared to Independent mixing (27% degradation) provides insight into how architectural constraints shape learned computation. Kronecker mixing permits scalar communication between heads through the H×HH\times H mixing matrix, allowing heads to coordinate their selections as distributions sharpen. The routing structure analysis (Section 4.3, Figure 3) reveals that these learned weights form hub-and-spoke patterns where central heads aggregate information from specialists, enabling error compensation when individual heads make poor discrete selections. Independent mixing isolates heads completely, preventing this compensation mechanism. The 9.5% cumulative advantage for Kronecker suggests that interpretable architectures need not completely eliminate cross-head communication, but rather should constrain it to preserve inspectability. This aligns with recent work demonstrating parameter efficiency advantages of Kronecker factorizations Sadeghi et al. (2025).
+5.2 Design Recommendations
+The experimental results establish three configurations that balance interpretability and performance requirements differently. For applications requiring maximum transparency into model computation, Frozen-Token-Stream mode with Fully Independent mixing (ind-ind/ind-ind) provides complete isolation of head functions and pure token embeddings in the token stream. This configuration incurs an 8% validation loss cost but enables surgical analysis where each head’s contribution can be measured independently. Attention amplification at α=8\alpha=8 further reveals discrete algorithmic structure for inspection.
+For applications requiring interpretability with minimal performance sacrifice, Frozen-Token-Stream mode with Kronecker-Dense mixing (kron-kron/dns-dns) provides the recommended configuration. The 2.5% validation loss cost is offset by the H×HH\times H mixing matrices that make cross-head communication explicit and inspectable, as demonstrated in Figure 3. The scalar routing weights provide interpretable coordination between heads while maintaining near-baseline performance. This configuration serves most interpretability applications where modest performance costs are acceptable.
+For applications prioritizing performance but desiring architectural support for analysis, Token-Factor mode with Dense mixing (dns-dns/dns-dns) provides standard transformer behavior while maintaining the dual-stream infrastructure. The stream decomposition enables ablation studies and attention amplification analysis even without channelized mixing constraints. This configuration allows practitioners to develop models with conventional optimization characteristics while retaining architectural hooks for interpretability analysis.
+Head count should be selected based on the desired granularity of specialization. The head scaling experiments demonstrate that increasing heads from 4 to 16 improves specialization from 0.42 to 0.85 while modestly improving performance. For interpretability applications, we recommend at least 8 heads to enable meaningful functional differentiation. Head dimension should not fall below 32 to avoid capacity bottlenecks, though our experiments with dh=64d_{h}=64 for 8 heads showed no degradation relative to fewer heads with larger dimensions.
+5.3 Limitations and Future Work
+Our experiments use models at 29M parameters trained on a pedagogical corpus of grade-school instructional materials. The controlled nature of this data likely makes interpretable structure easier to learn than would occur with web-scale pretraining on diverse internet text. Whether the interpretability-performance tradeoffs scale favorably to billion-parameter models trained on noisy data requires investigation. The bounded costs we observe (2.5-8%) may increase at larger scales if distributed computation becomes more critical for handling diverse linguistic phenomena.
+The attention amplification analysis was conducted at inference time on models trained with standard α=1\alpha=1 softmax. Whether training with progressive amplification schedules could further encourage discrete algorithmic structure remains unexplored. Such training might reduce the baseline-to-amplified performance gap, making models more robust to inspection under sharpening.
+Our analysis focuses on language modeling loss and limited probing of head specialization. Comprehensive evaluation should include downstream tasks, human evaluation of generated text quality under various configurations, and detailed circuit analysis identifying which heads implement which specific operations. The head specialization analysis (Figure 5) demonstrates functional differentiation exists, but complete taxonomies of learned operations across heads would strengthen interpretability claims.
+The architecture provides infrastructure for interpretability but does not automatically make all model behavior transparent. Attention patterns under amplification reveal which tokens influence predictions, but understanding why those selections occur and what computations the FFN performs on selected tokens requires additional analysis Bricken et al. (2023). The dual-stream decomposition and channelized mixing create necessary conditions for interpretability by isolating computation into inspectable units, but sufficient understanding requires complementary analysis methods Belinkov (2022).
+5.4 Comparison to Alternative Approaches
+Several recent architectures pursue interpretability through different mechanisms. Mixture of Experts models Shazeer et al. (2017); Fedus et al. (2022) achieve modularity through explicit routing but require non-differentiable selection mechanisms and typically route entire tokens rather than feature dimensions. Our channelized mixing provides differentiable modular computation within each layer while maintaining gradient flow through all heads. DeBERTa He et al. (2021) separates position and content computation but allows immediate mixing in downstream layers, while our dual-stream architecture maintains persistent separation through all layers until final output integration.
+The circuits literature Elhage et al. (2021); Olsson et al. (2022) demonstrates that interpretable computational patterns emerge in standard transformers, showing that architectural constraints are not strictly necessary for interpretability. However, the difficulty of circuit discovery at scale and the tendency of models to develop redundant computational pathways suggests that architectures designed for interpretability may scale more effectively than post-hoc analysis of unconstrained models. Related work on modular training Liu et al. (2024) shows that locality constraints can encourage interpretable structure during learning. Our results show that modest architectural constraints can encourage specialized computational patterns while incurring bounded performance costs, potentially making interpretability more tractable at larger scales.
+6 Related Work
+6.1 Mechanistic Interpretability
+The circuits framework Elhage et al. (2021); Olah et al. (2020) established that transformer computations can be understood as compositions of interpretable circuits operating on a shared residual stream. This view frames the residual stream as a communication channel where attention heads read from and write to specific subspaces. Olsson et al. Olsson et al. (2022) identified induction heads as a canonical example of such circuits, demonstrating that specific attention patterns implement algorithmic copying behavior. Wang et al. Wang et al. (2023) extended this analysis to indirect object identification in GPT-2, revealing multi-step reasoning circuits spanning multiple layers.
+Our architecture builds on this foundation by constraining the residual stream structure to make circuit identification more tractable. Where standard transformers require careful analysis to disentangle overlapping computations Elhage et al. (2022), our channelized mixing enforces separation by design. The dual-stream decomposition further isolates token-derived computations from contextual transformations, reducing the search space for circuit discovery.
+6.2 Attention Analysis and Interpretation
+Whether attention weights provide faithful explanations of model behavior remains contested. Jain and Wallace Jain and Wallace (2019) demonstrated that attention distributions can be dramatically altered without changing predictions, questioning their explanatory value. Wiegreffe and Pinter Wiegreffe and Pinter (2019) countered that this depends on the definition of explanation, showing that attention patterns correlate with input importance under appropriate conditions.
+Empirical analyses reveal structured attention behavior in pretrained models. Clark et al. Clark et al. (2019) found that BERT attention heads specialize for syntactic relations including coreference, dependency parsing, and named entity recognition. Voita et al. Voita et al. (2019) showed that specialized heads perform most of the useful computation while others can be pruned with minimal impact. Kovaleva et al. Kovaleva et al. (2019) identified common attention patterns including diagonal, vertical, and block structures across BERT layers.
+Our architecture addresses the attention-as-explanation debate by making attention’s causal role more transparent. Stream separation ensures that attention output flows exclusively to the token stream, isolating its contribution from FFN effects. Channelized mixing prevents attention computations from being distributed across redundant pathways. The attention amplification analysis (Section 4.2) further probes whether models rely on soft weighted combinations or discrete token selection.
+6.3 Disentangled Representations
+DeBERTa He et al. (2021) introduced disentangled attention where content and position information are computed separately then combined additively. This improves performance on tasks requiring fine-grained positional reasoning but allows immediate mixing in downstream layers. Position encoding methods including ALiBi Press et al. (2022) and RoPE Su et al. (2021) provide alternative approaches to incorporating positional information Dufter et al. (2022).
+Our dual-stream architecture pursues a different form of disentanglement: separating token-derived information from contextual transformations rather than content from position. The token stream preserves information derived directly from input token identities, while the context stream accumulates learned transformations. This separation is maintained through all layers until final output integration, enabling surgical analysis of each stream’s contribution through ablation experiments.
+6.4 Modular and Sparse Architectures
+Mixture of Experts (MoE) architectures Shazeer et al. (2017); Fedus et al. (2022) achieve modularity through explicit routing, where each token is processed by a subset of expert networks. This provides computational efficiency and implicit specialization but requires non-differentiable selection mechanisms. Neural module networks Andreas et al. (2016) compose specialized modules based on input structure, enabling interpretable reasoning for visual question answering.
+Sparse attention patterns Child et al. (2019) reduce computational cost while potentially improving interpretability by limiting which positions can attend to each other. However, sparsity patterns are typically fixed or learned globally rather than adapted per-input.
+Our channelized mixing provides a different form of modularity: continuous, differentiable constraints on information flow between attention heads. The Kronecker mixing strategy permits scalar communication between heads while preserving within-head structure, achieving interpretable coordination without explicit routing decisions. This implicit modularity maintains gradient flow through all components while encouraging functional specialization.
+6.5 Probing and Attribution Methods
+Probing classifiers Tenney et al. (2019); Belinkov (2022) assess what information is encoded in neural representations by training auxiliary classifiers on intermediate activations. This reveals that transformer layers progressively encode syntactic and semantic information, with lower layers capturing surface features and higher layers capturing abstract relations. However, probing measures correlation rather than causation, and high probe accuracy may reflect information that models do not actually use for prediction.
+Attribution methods including integrated gradients Sundararajan et al. (2017) assign importance scores to input features based on their contribution to outputs. These provide instance-level explanations but require careful interpretation and may not reveal the computational mechanisms underlying predictions.
+Our approach complements these methods by providing architectural support for causal analysis. Stream ablation experiments directly measure each component’s contribution by removing or corrupting it at inference time. The persistent separation of streams enables this surgical analysis without the confounds introduced by entangled representations.
+6.6 Sparse Autoencoders and Feature Decomposition
+Recent work uses sparse autoencoders to decompose neural network activations into interpretable features Cunningham et al. (2023); Bricken et al. (2023). These methods train auxiliary models to reconstruct activations using sparse combinations of learned feature directions, revealing monosemantic units that correspond to interpretable concepts. Elhage et al. Elhage et al. (2022) showed that neural networks represent more features than dimensions through superposition, explaining why individual neurons often exhibit polysemantic behavior.
+Geva et al. Geva et al. (2021) demonstrated that feed-forward layers function as key-value memories, with individual neurons responding to specific input patterns and contributing predictable outputs. This view suggests FFN computation may be more structured than previously assumed.
+Our architecture does not directly address superposition or feature decomposition, but the channelized constraints may reduce the need for such post-hoc analysis by encouraging cleaner separation during training. The head specialization patterns we observe (Figure 5) suggest that architectural constraints can promote functional differentiation without auxiliary decomposition methods.
+6.7 Architectural Design for Interpretability
+Liu et al. Liu et al. (2024) proposed brain-inspired modular training (BIMT) using locality constraints to encourage interpretable structure. Their approach penalizes long-range connections in the computation graph, promoting modular organization that mirrors biological neural networks.
+Our work shares the goal of designing for interpretability rather than excavating it post-hoc, but pursues different mechanisms. Where BIMT constrains spatial connectivity, we constrain information flow topology through mixing strategies and stream separation. The channelized hierarchy (Identity ⊂\subset Independent ⊂\subset Kronecker ⊂\subset Dense) provides practitioners with explicit control over the interpretability-performance tradeoff, enabling application-specific configuration rather than fixed architectural choices.
+7 Conclusion
+We introduced the Dual-Stream Transformer, an architecture that enforces interpretable structure through dual-stream decomposition and channelized mixing. The residual stream is factored into token and context components with functional separation: attention updates the token stream while feed-forward networks update the context stream. Information flow between attention heads is controlled through a hierarchy of mixing strategies ranging from fully independent to dense, exposing a tunable interpretability-performance tradeoff.
+Experiments at 29M parameters on language modeling tasks demonstrate that interpretability costs are bounded and predictable. The recommended Kronecker mixing configuration costs 2.5% validation loss while making cross-head communication explicit through learned scalar weights. Fully independent mixing provides maximum interpretability at 8% cost. All configurations maintain functional generation under attention amplification up to 16x sharpening with degradation ranging from 16% to 27%, suggesting learned computation operates on discrete token selections even when trained with soft probabilistic distributions.
+The architecture provides practitioners with explicit configuration choices based on application requirements. Safety-critical systems requiring transparency can select frozen-token-stream mode with independent mixing, accepting the 8% performance cost for complete isolation of head functions. Production systems with modest interpretability requirements can use Kronecker mixing at 2.5% cost. Development and analysis workflows can leverage attention amplification as a diagnostic on any configuration to reveal computational structure.
+The dual-stream design demonstrates that interpretability can be an architectural property rather than an emergent phenomenon requiring post-hoc excavation. By constraining information flow topology and maintaining persistent functional separation, the architecture makes internal structure inspectable by design. Future work should investigate whether these architectural constraints scale favorably to billion-parameter models and whether training with progressive attention amplification can further encourage discrete algorithmic structure. Code and trained models are available at [URL to be added].
+References
+Andreas et al. (2016)
+J. Andreas, M. Rohrbach, T. Darrell, and D. Klein
+Neural module networks.
+In Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition,
+pp. 39–48.
+Cited by: §6.4.
+Belinkov (2022)
+Y. Belinkov
+Probing classifiers: promises, shortcomings, and advances.
+Computational Linguistics 48 (1), pp. 207–219.
+Cited by: §5.3,
+§6.5.
+Bricken et al. (2023)
+T. Bricken, A. Templeton, J. Batson, B. Chen, A. Jermyn, T. Conerly, N. Turner, C. Anil, C. Denison, A. Askell, et al.
+Towards monosemanticity: decomposing language models with dictionary learning.
+Transformer Circuits Thread.
+Cited by: §5.3,
+§6.6.
+Cheong et al. (2025)
+S. Cheong et al.
+Weaver: kronecker product approximations of spatiotemporal attention for traffic network forecasting.
+arXiv preprint arXiv:2511.08888.
+Cited by: §2.2.
+Child et al. (2019)
+R. Child, S. Gray, A. Radford, and I. Sutskever
+Generating long sequences with sparse transformers.
+In arXiv preprint arXiv:1904.10509,
+Cited by: §6.4.
+Clark et al. (2019)
+K. Clark, U. Khandelwal, O. Levy, and C. D. Manning
+What does bert look at? an analysis of bert’s attention.
+In Proceedings of the 2019 ACL Workshop BlackboxNLP,
+pp. 276–286.
+Cited by: §1,
+§6.2.
+Cunningham et al. (2023)
+H. Cunningham, A. Ewart, L. Riggs, R. Huben, and L. Sharkey
+Sparse autoencoders find highly interpretable features in language models.
+arXiv preprint arXiv:2309.08600.
+Cited by: §6.6.
+Dufter et al. (2022)
+P. Dufter, M. Schmitt, and H. Schütze
+Position information in transformers: an overview.
+Computational Linguistics 48 (3), pp. 733–763.
+Cited by: §6.3.
+Elhage et al. (2022)
+N. Elhage, T. Hume, C. Olsson, N. Schiefer, et al.
+Toy models of superposition.
+Transformer Circuits Thread.
+Cited by: §6.1,
+§6.6.
+Elhage et al. (2021)
+N. Elhage, N. Nanda, C. Olsson, T. Henighan, N. Joseph, B. Mann, A. Askell, Y. Bai, A. Chen, T. Conerly, et al.
+A mathematical framework for transformer circuits.
+Transformer Circuits Thread.
+External Links: Link
+Cited by: §1,
+§5.4,
+§6.1.
+Fedus et al. (2022)
+W. Fedus, B. Zoph, and N. Shazeer
+Switch transformers: scaling to trillion parameter models with simple and efficient sparsity.
+In Journal of Machine Learning Research,
+Vol. 22, pp. 1–39.
+Cited by: §5.4,
+§6.4.
+Friedman et al. (2023)
+D. Friedman, A. Wettig, and D. Chen
+Learning transformer programs.
+arXiv preprint arXiv:2306.01128.
+Note: NeurIPS 2023
+Cited by: §4.2.
+Geiger et al. (2021)
+A. Geiger, H. Lu, T. Icard, and C. Potts
+Causal abstractions of neural networks.
+In Advances in Neural Information Processing Systems,
+Vol. 34, pp. 9574–9586.
+Cited by: §1.
+Geva et al. (2021)
+M. Geva, R. Schuster, J. Berant, and O. Levy
+Transformer feed-forward layers are key-value memories.
+In Proceedings of the 2021 Conference on Empirical Methods in Natural Language Processing,
+pp. 5484–5495.
+Cited by: §6.6.
+Hao et al. (2024)
+S. Hao, S. Sukhbaatar, D. Su, X. Li, Z. Hu, J. Weston, and Y. Tian
+COCONUT: training large language models to reason in a continuous latent space.
+arXiv preprint arXiv:2412.06769.
+Cited by: §5.1.
+He et al. (2021)
+P. He, X. Liu, J. Gao, and W. Chen
+DeBERTa: decoding-enhanced bert with disentangled attention.
+In International Conference on Learning Representations,
+Cited by: §5.4,
+§6.3.
+Jain and Wallace (2019)
+S. Jain and B. C. Wallace
+Attention is not explanation.
+In Proceedings of NAACL-HLT,
+pp. 3543–3556.
+Cited by: §4.2,
+§6.2.
+Kovaleva et al. (2019)
+O. Kovaleva, A. Romanov, A. Rogers, and A. Rumshisky
+Revealing the dark secrets of BERT.
+arXiv preprint arXiv:1908.08593.
+Cited by: §6.2.
+Leviathan et al. (2025)
+Y. Leviathan, M. Kalman, and Y. Matias
+Selective attention improves transformer.
+arXiv preprint arXiv:2410.02703.
+Cited by: §4.2.
+Liu et al. (2025)
+B. K. Liu, Z. P. Chen, and D. P. Woodruff
+JEPA-reasoner: decoupling latent reasoning from token generation.
+arXiv preprint arXiv:2512.19171.
+Cited by: §5.1.
+Liu et al. (2024)
+Z. Liu, E. Gan, and M. Tegmark
+Seeing is believing: brain-inspired modular training for mechanistic interpretability.
+Entropy 26 (1), pp. 41.
+Cited by: §5.4,
+§6.7.
+Loshchilov and Hutter (2017)
+I. Loshchilov and F. Hutter
+Decoupled weight decay regularization.
+arXiv preprint arXiv:1711.05101.
+Cited by: §3.1,
+§9.1.
+Ma et al. (2025)
+X. Ma, J. A. Wang, Y. Jiang, S. M. Erfani, T. Liu, and J. Bailey
+Cognitive mirrors: exploring the diverse functional roles of attention heads in llm reasoning.
+arXiv preprint arXiv:2512.10978.
+Cited by: §3.4,
+§4.5.
+McGrath et al. (2023)
+T. McGrath, M. Rahtz, J. Kramar, V. Mikulik, and S. Legg
+The hydra effect: emergent self-repair in language model computations.
+arXiv preprint arXiv:2307.15771.
+Cited by: §1.
+Meng et al. (2022)
+K. Meng, D. Bau, A. Andonian, and Y. Belinkov
+Locating and editing factual associations in GPT.
+In Advances in Neural Information Processing Systems,
+Vol. 35, pp. 17359–17372.
+Cited by: §4.5.
+Ning et al. (2025)
+A. Ning, Y. Kuo, and G. Gomes
+Learning when to stop: adaptive latent reasoning via reinforcement learning.
+arXiv preprint arXiv:2511.21581.
+Cited by: §5.1.
+Olah et al. (2020)
+C. Olah, N. Cammarata, L. Schubert, G. Goh, M. Petrov, and S. Carter
+Zoom in: an introduction to circuits.
+Distill 5 (3), pp. e00024–001.
+Cited by: §6.1.
+Olsson et al. (2022)
+C. Olsson, N. Elhage, N. Nanda, N. Joseph, N. DasSarma, T. Henighan, B. Mann, A. Askell, Y. Bai, A. Chen, T. Conerly, D. Drain, D. Ganguli, Z. Hatfield-Dodds, D. Hernandez, S. Johnston, A. Jones, J. Kernion, L. Lovitt, K. Ndousse, D. Amodei, T. Brown, J. Clark, J. Kaplan, S. McCandlish, and C. Olah
+In-context learning and induction heads.
+arXiv preprint arXiv:2209.11895.
+Cited by: §4.5,
+§5.4,
+§6.1.
+Omranpour et al. (2024)
+S. Omranpour, G. Rabusseau, and R. Rabbany
+Higher order transformers: efficient attention mechanism for tensor structured data.
+arXiv preprint arXiv:2412.02919.
+Cited by: §2.2.
+Press et al. (2022)
+O. Press, N. A. Smith, and M. Lewis
+Train short, test long: attention with linear biases enables input length extrapolation.
+In International Conference on Learning Representations,
+Cited by: §6.3.
+Qiu et al. (2025)
+Z. Qiu, Z. Wang, B. Zheng, Z. Huang, K. Wen, S. Yang, R. Men, L. Yu, F. Huang, S. Huang, D. Liu, J. Zhou, and J. Lin
+Gated attention for large language models: non-linearity, sparsity, and attention-sink-free.
+In Advances in Neural Information Processing Systems,
+Note: Best Paper Award
+Cited by: §2.6.
+Sadeghi et al. (2025)
+M. Sadeghi, M. G. Nejad, M. J. Asl, and V. P. Nia
+MoKA: mixture of kronecker adapters.
+arXiv preprint arXiv:2508.03527.
+Cited by: §2.2,
+§5.1.
+Shazeer et al. (2017)
+N. Shazeer, A. Mirhoseini, K. Maziarz, A. Davis, Q. Le, G. Hinton, and J. Dean
+Outrageously large neural networks: the sparsely-gated mixture-of-experts layer.
+In International Conference on Learning Representations,
+Cited by: §5.4,
+§6.4.
+Su et al. (2021)
+J. Su, Y. Lu, S. Pan, A. Murtadha, B. Wen, and Y. Liu
+RoFormer: enhanced transformer with rotary position embedding.
+arXiv preprint arXiv:2104.09864.
+Cited by: §6.3.
+Sundararajan et al. (2017)
+M. Sundararajan, A. Taly, and Q. Yan
+Axiomatic attribution for deep networks.
+In Proceedings of the 34th International Conference on Machine Learning,
+pp. 3319–3328.
+Cited by: §6.5.
+Tenney et al. (2019)
+I. Tenney, D. Das, and E. Pavlick
+BERT rediscovers the classical nlp pipeline.
+In Proceedings of ACL,
+pp. 4593–4601.
+Cited by: §1,
+§6.5.
+Veličković et al. (2025)
+P. Veličković et al.
+Softmax is not enough (for sharp size generalisation).
+In International Conference on Machine Learning,
+Cited by: §4.2.
+Voita et al. (2019)
+E. Voita, D. Talbot, F. Moiseev, R. Sennrich, and I. Titov
+Analyzing multi-head self-attention: specialized heads do the heavy lifting, the rest can be pruned.
+In Proceedings of the 57th Annual Meeting of the Association for Computational Linguistics,
+pp. 5797–5808.
+Cited by: §3.4,
+§6.2.
+Wang et al. (2023)
+K. Wang, A. Variengien, A. Conmy, B. Shlegeris, and J. Steinhardt
+Interpretability in the wild: a circuit for indirect object identification in gpt-2 small.
+arXiv preprint arXiv:2211.00593.
+Cited by: §1,
+§6.1.
+Wang et al. (2024)
+S. Wang et al.
+Differentiation and specialization of attention heads via the refined local learning coefficient.
+arXiv preprint arXiv:2410.02984.
+Note: ICLR 2025
+Cited by: §3.4,
+§4.5.
+Wiegreffe and Pinter (2019)
+S. Wiegreffe and Y. Pinter
+Attention is not not explanation.
+In Proceedings of EMNLP-IJCNLP,
+pp. 11–20.
+Cited by: §4.2,
+§6.2.
+Ye et al. (2024)
+T. Ye, L. Dong, Y. Xia, Y. Sun, Y. Zhu, G. Huang, and F. Wei
+Differential transformer.
+arXiv preprint arXiv:2410.05258.
+Cited by: §4.2.
+Zhang et al. (2026)
+Y. Zhang, W. Bi, K. Zhang, D. Jin, J. Fu, and Z. Jin
+Weights to code: extracting interpretable algorithms from the discrete transformer.
+arXiv preprint arXiv:2601.05770.
+Cited by: §4.2.
+8 Complete Architecture Specification
+8.1 Model Hyperparameters
+Table 6 lists the hyperparameters for our base model configuration.
+Table 6: Base model hyperparameters.
+Hyperparameter
+Symbol
+Value
+Model dimension
+DD
+512
+Number of layers
+LL
+6
+Number of heads
+HH
+8
+Head dimension
+dhd_{h}
+64
+FFN hidden dimension
+dffd_{\text{ff}}
+2048
+Vocabulary size
+VV
+32,000
+Maximum sequence length
+TmaxT_{\max}
+512
+Total parameters
+—
+∼\sim29M
+8.2 Forward Pass Pseudocode
+Algorithm 1 presents the complete forward pass for Token-Factor mode with configurable mixing.
+Algorithm 1  Dual-Stream Transformer Forward Pass (Token-Factor mode)
+0:
+Input tokens 𝐭∈ℕB×T\mathbf{t}\in\mathbb{N}^{B\times T}
+0:
+Output logits 𝐲∈ℝB×T×V\mathbf{y}\in\mathbb{R}^{B\times T\times V}
+1:
+𝐱t(0)←Embedding​(𝐭)\mathbf{x}_{t}^{(0)}\leftarrow\text{Embedding}(\mathbf{t}) {Initialize token stream}
+2:
+𝐱e(0)←𝟎\mathbf{x}_{e}^{(0)}\leftarrow\mathbf{0} {Initialize contextual stream}
+3:
+for ℓ=0\ell=0 to L−1L-1 do
+4:
+𝐱(ℓ)←𝐱t(ℓ)+𝐱e(ℓ)\mathbf{x}^{(\ell)}\leftarrow\mathbf{x}_{t}^{(\ell)}+\mathbf{x}_{e}^{(\ell)} {Combined stream}
+5:
+{— Attention Block —}
+6:
+𝐱norm←CLN​(𝐱(ℓ))\mathbf{x}_{\text{norm}}\leftarrow\text{CLN}(\mathbf{x}^{(\ell)})
+7:
+𝐱t,norm←CLN​(𝐱t(ℓ))\mathbf{x}_{t,\text{norm}}\leftarrow\text{CLN}(\mathbf{x}_{t}^{(\ell)})
+8:
+Q,K←WQ​𝐱norm,WK​𝐱normQ,K\leftarrow W_{Q}\mathbf{x}_{\text{norm}},W_{K}\mathbf{x}_{\text{norm}} {Dense Q/K}
+9:
+V←MixingLinearV​(𝐱t,norm)V\leftarrow\text{MixingLinear}_{V}(\mathbf{x}_{t,\text{norm}}) {Configurable V mixing}
+10:
+A←softmax​(Q​K⊤/dh)A\leftarrow\text{softmax}(QK^{\top}/\sqrt{d_{h}}) {Attention weights}
+11:
+𝐚out←MixingLinearO​(A⋅V)\mathbf{a}_{\text{out}}\leftarrow\text{MixingLinear}_{O}(A\cdot V) {Configurable output mixing}
+12:
+𝐱t(ℓ+1)←𝐱t(ℓ)+𝐚out\mathbf{x}_{t}^{(\ell+1)}\leftarrow\mathbf{x}_{t}^{(\ell)}+\mathbf{a}_{\text{out}} {Update token stream}
+13:
+{— FFN Block —}
+14:
+𝐱(ℓ+1)←𝐱t(ℓ+1)+𝐱e(ℓ)\mathbf{x}^{(\ell+1)}\leftarrow\mathbf{x}_{t}^{(\ell+1)}+\mathbf{x}_{e}^{(\ell)} {Recompute combined}
+15:
+𝐱norm←CLN​(𝐱(ℓ+1))\mathbf{x}_{\text{norm}}\leftarrow\text{CLN}(\mathbf{x}^{(\ell+1)})
+16:
+𝐡←GELU​(MixingLinearup​(𝐱norm))\mathbf{h}\leftarrow\text{GELU}(\text{MixingLinear}_{\text{up}}(\mathbf{x}_{\text{norm}}))
+17:
+𝐟out←MixingLineardown​(𝐡)\mathbf{f}_{\text{out}}\leftarrow\text{MixingLinear}_{\text{down}}(\mathbf{h})
+18:
+𝐱e(ℓ+1)←𝐱e(ℓ)+𝐟out\mathbf{x}_{e}^{(\ell+1)}\leftarrow\mathbf{x}_{e}^{(\ell)}+\mathbf{f}_{\text{out}} {Update contextual stream}
+19:
+end for
+20:
+𝐱final←LayerNorm​(𝐱t(L)+𝐱e(L))\mathbf{x}_{\text{final}}\leftarrow\text{LayerNorm}(\mathbf{x}_{t}^{(L)}+\mathbf{x}_{e}^{(L)})
+21:
+𝐲←Wlm_head​𝐱final\mathbf{y}\leftarrow W_{\text{lm\_head}}\mathbf{x}_{\text{final}}
+22:
+return  𝐲\mathbf{y}
+8.3 Mixing Strategy Parameter Counts
+Table 7 compares parameter counts for each mixing strategy applied to a D×DD\times D projection with HH heads.
+Table 7: Parameter counts for mixing strategies (D=512D=512, H=8H=8).
+Strategy
+Parameters
+Example (D=512D=512, H=8H=8)
+Identity
+0
+0
+Independent
+H⋅dh2H\cdot d_{h}^{2}
+8×642=32,7688\times 64^{2}=32,768
+Kronecker
+H2H^{2}
+82=648^{2}=64
+Dense
+D2D^{2}
+5122=262,144512^{2}=262,144
+Note that Kronecker mixing is extremely parameter-efficient (H2=64H^{2}=64 parameters vs. D2=262,144D^{2}=262,144 for Dense), while providing interpretable cross-head communication.
+9 Training Details
+9.1 Optimization
+All models are trained with AdamW optimizer Loshchilov and Hutter [2017] with the following settings:
+•
+Learning rate: 3×10−43\times 10^{-4} with cosine annealing to 3×10−53\times 10^{-5}
+•
+Weight decay: 0.1
+•
+Betas: (0.9,0.95)(0.9,0.95)
+•
+Gradient clipping: 1.0
+•
+Warmup steps: 1000
+9.2 Training Configuration
+•
+Batch size: 32 sequences
+•
+Sequence length: 512 tokens
+•
+Training samples: 2M
+•
+Epochs: 2
+•
+Floating point: Standard precision
+•
+Hardware: Single NVIDIA RTX 4090 (24GB)
+9.3 Per-Layer Supervision Settings
+When per-layer supervision is enabled:
+•
+Base weight λ=0.1\lambda=0.1
+•
+Layer weight decay: linear (layer ℓ\ell receives weight ℓ/L\ell/L)
+•
+Applied only during training, not validation
+10 Extended Ablations
+10.1 Full Mixing Strategy Grid
+Table 8 presents validation loss for all tested mixing configurations.
+Table 8: Full mixing strategy ablation (4K vocab, FTS mode, 3 epochs).
+Attention Mixing
+FFN Mixing
+Val Loss
+Δ\Delta
+dns-dns
+dns-dns
+2.42
+—
+kron-kron
+dns-dns
+2.48
++2.5%
+ind-ind
+dns-dns
+2.50
++3.3%
+ind-ind
+ind-ind
+2.62
++7.9%
+11 Head Specialization Metric
+The Head Specialization Score (HSS) measures how distinctly heads attend to different patterns:
+HSS=1H⁡(H−1)​∑i≠j(1−𝐚i⊤​𝐚j‖𝐚i‖​‖𝐚j‖)\text{HSS}=\frac{1}{H(H-1)}\sum_{i\neq j}\left(1-\frac{\mathbf{a}_{i}^{\top}\mathbf{a}_{j}}{\|\mathbf{a}_{i}\|\|\mathbf{a}_{j}\|}\right)
+(18)
+where 𝐚h\mathbf{a}_{h} is the flattened attention pattern for head hh averaged over evaluation samples. HSS =0=0 indicates identical patterns across all heads; HSS =1=1 indicates orthogonal patterns.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

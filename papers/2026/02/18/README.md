@@ -2,11 +2,17 @@
 
 **规范：** V3
 **窗口：** 2026-02-17T09:00:00+08:00 ～ 2026-02-18T09:00:00+08:00
+**补充窗口：** 2026-02-17 ～ 2026-02-17
+**窗口说明：** 用户授权仅补查来源遗漏，保留原窗口、原候选日期/评分及有效证据与Books决定；新增材料只按前一完整北京时间自然日检查，不搬移旧材料归属。
 **状态：** 完成
 **Books：** 纳入本次
-**检查时间：** 2026-10-05T09:03:31+08:00
+**检查时间：** 2026-10-08T18:09:40+08:00
 
 ## 1. 结论
+
+本轮增量补查已完成有限来源/主题发现与14个新arXiv家族精确v1完整题摘判断，root整日独立DAY验收通过，普通可执行待办0。新增确定落窗候选0；11项具体机制/局部反侧潜力因必要公开日未核隔离、1项作者明确Feb15窗前；另外5个贡献/重复事件关闭（含2项arXiv），1个Opus4.6重要更正日期冲突隔离。新增外部材料保留共12项，不记“零发现”，也不称摘要审读为证据完成。新增Books写入0，旧38整合、31覆盖、3仅报告、6争议保留不变。完整原件已保存于[本日baseline](../_sources/daily-20260218/supplement-baseline-20261008.md)并只读对照git index逐字一致（初始截断receipt的纠错见准入记录），具体分流及原证见[补查准入记录](../_sources/daily-20260218/supplement-admission-20261008.md)。
+
+以下三段为原版有效结果，不代替本轮补查验收；原78行及连续证据正文保持冻结。
 
 本窗候选清单收口为78个唯一材料家族，必要日期、贡献与采用证据均经root逐项独核；Books处置为38整合、31已有覆盖、3仅报告、6中心争议终态保留。扫描、筛选、必要源审、Books与六部分独立验收均已闭合，普通可执行待办为0；78不等于原始命中数，也不表示所有论文主张均已成立。
 
@@ -37,7 +43,28 @@
 
 表外元数据仅用于身份/日期恢复：[DataCite](https://api.datacite.org/)精确DOI JSON；arXiv公告下界来自[官方availability规则](https://info.arxiv.org/help/availability.html)的本地原始副本。未扫描每周源；未触发的按需站点不擅自加入扫描。Sonnet card、作者论文/必要artifact是已发生的证据触发，不因未入候选而抹掉。
 
+本轮自然日补查与实际停止范围（上述原版表不作为本轮无遗漏保证）：原始响应为[supplement-daily-entries](../_sources/daily-20260218/supplement-daily-entries-20261008.json)、[后批入口正文0](../_sources/daily-20260218/supplement-entry-body0-20261008.json)、[正文1](../_sources/daily-20260218/supplement-entry-body1-20261008.json)、[正文2](../_sources/daily-20260218/supplement-entry-body2-20261008.json)与[查询/停止记录](../_sources/daily-20260218/supplement-admission-20261008.md)。
+
+- SRC-OPENAI：Research142行只见当前入口；限定Feb17模型系统补检未恢复可核历史目录，受阻，不称历史0篇。实际触发的官方API Deprecations仅定点读chatgpt-4o-latest段L1140–1146：首公告Nov18 2025、Feb17既定shutdown生效，本次无另行兼容/协议增量，具名关闭；[原段](../_sources/daily-20260218/supplement-openai-deprecation-20261008.json)不认证实际API runtime或用户迁移。
+- SRC-ANTHROPIC：Research56行当前首页与Feb17限定补检；旧Sonnet事件只去重，新增Opus4.6 HLE更正的card索引Feb17/news脚注Feb23冲突及PDF恢复失败，受阻，见§5。
+- SRC-GOOGLE-AI：DeepMind309行当前入口与Google/DeepMind Feb17有限主题检索；实际读MapTrace博客/旧稿核心与RosettaTrace完整原始题摘并关闭本次增量。历史目录仍受阻，不把两事件关闭解释成全历史已检。
+- SRC-META-AI：research空响应与限定日期/主题补检后停止；原始历史目录未恢复，受阻，不以空页作0命中。
+- SRC-QWEN：旧站36行最新Sep2025；qwen.ai/blog0行及目标日主题检索后停止，动态/历史目录受阻。
+- SRC-DEEPSEEK：主页33行仅当前V4.1等研究入口，限定日主题检索没有恢复当日目录；受阻。
+- SRC-MOONSHOT：Kimi博客109行最新Nov7/6 2025，限定MoonshotAI/Kimi Feb17主题检索后停；历史完整性受阻。
+- SRC-TENCENT-HUNYUAN：本轮动态入口失败，复读本日有效原始API page1（code0/total11/list11）日期字段；最近窗前Feb13、后Apr30，实际无下一页。可见11项已检查；display/public差异与删除历史隔离，非新鲜全史保证。
+- SRC-ZAI：官方research175行可见Feb11→Feb21边界，已检查该页范围并停止；未认证删除历史。
+- SRC-BYTEDANCE-SEED：Research86行当前精选入口不足历史覆盖，复读本日有效API type1升序offset0/20条跨Feb13→Feb25后停止、type2 offset0与20共12条/has_more=false。可见范围已检查；total23的11隐藏项继续受阻，不冒称全部23已读。
+- SRC-BAIDU-ERNIE：博客68行Feb6→Apr15跨窗边界，后页已低于2025Nov，本轮不继续翻；当前可见范围已检查，不保证删除历史。
+- SRC-XIAOMI-MIMO：主页338行Paper8条Feb3→Mar13、Blog15项无日期/More入口，有限目标日主题检索后停；Paper可见范围已检查，Blog必要历史日期目录受阻。
+- SRC-MINIMAX：英文blog76行13项，当前Forge Feb14/M2.5 Feb12→Mar18边界，有限Feb17主题补检后停；可见范围已检查，不重写原版日期/证据或认证历史完整性。
+- SRC-ARXIV：限定Feb17相关主题检索与本日旧库存标题backstop；宽223标题先缩为14个具体机制线索再读完整精确v1题摘，未逐分类扩池。223不是已完成题摘初筛/当天篇数/必审队列；cs.CV/LG单日catchup各一次cache miss后停止，不查90天/全月。11潜在项各做一次作者dated-artifact/原公告定点恢复仍缺必要公开日，受阻并隔离；14题摘不等14证据审阅完成。
+
+表外实际触发：[Google MapTrace博客](https://research.google/blog/teaching-ai-to-read-a-map/)、其精确旧稿与RosettaTrace题摘；E-DiT/REDSearcher作者project、ATTest/KernelBlaster/REMem/ASCL作者repo及Opus4.6 current card/news只服务身份/必要日期或具体决定核心，原响应保留。没有扫描Weekly来源，也没有按全年站点、全部附件或revision史扩张。搜索无命中只描述这些有限查询，不支撑无遗漏。
+
 ## 3. 候选与判断
+
+本轮没有新增确定当窗候选，必要公开日缺失的11潜在项与1重要更正冲突见§5，不先评分入表。E-DiT作者News明确Feb15已release paper，属于补充窗前，不移动旧日报。以下原78候选行（含原日期与评分）严格冻结，只作去重及有效结果复用。
 
 以下78家族逐项v1 Submitted严格晚于Fri2026-02-13T19Z且不晚于Mon02-16T19Z；[官方announcement schedule/身份规则](https://info.arxiv.org/help/availability.html)给最早公开下界Tue02-17T01Z，并说明正文随announcement公开、最终ID/DOI不能预先提供。[官方DOI FAQ](https://blog.arxiv.org/2022/02/17/new-arxiv-articles-are-now-automatically-assigned-dois/)说明新DOI预期公告后24小时内可得。因此同ID/URL及精确v1绑定的实际DataCite Registered秒bucket+1s作为上界；这是官方流程与注册元数据相交的首公开区间推定，不是登记即发布、精确09公告或24小时必然保证。各区间完全落窗，Created只保留原字段而不定义正文公开；Submitted/Updated/Created/Registered原值均在本日raw JSON，Updated不充当公开时间。后版title/abstract不移入v1。
 
@@ -126,6 +153,10 @@
 完整题摘与具体准入/排除依据保留于[本日必要证据](../_sources/daily-20260218/V3_EVIDENCE.md)引用的各批CALIBRATION；这些发现记录不是最终候选表或全量全文队列。
 
 ## 4. 证据与知识整合
+
+本轮补查只采用原件来判断潜在增量/必要日期与具体关闭理由，不采用11日期保留项的效果、理论或安全主张。完整题摘与ATTest/Floe/REMem等定点决定核心不是这些项的标准/深入Evidence Gate完成；待公开日成立才核方法、关键评价/直接反侧及owner差额。新增Books为NoChange（没有确定落窗新候选可采用），并非11项已被书稿覆盖。5个关闭事件的原证与具体理由见[补查准入记录](../_sources/daily-20260218/supplement-admission-20261008.md)；MapTrace旧稿增量只核critic/旧结果对应，不借新博客日期重纳旧事件。
+
+以下原78项有效证据正文连续冻结：
 
 以下采用均只精确v1，必要原文行/公式/配置与支持—未证明边界保存在[实际证据及停点](../_sources/daily-20260218/V3_EVIDENCE.md)，不是旧完成收据。标准/深入深度按具体命题；解释性反证、安全与Books实际差额均定点加深，不遍历无关附件。
 
@@ -443,6 +474,30 @@ exact-v1 §3–4/Table3/§5，local mask人口与全局背景分责，local先�
 
 ## 5. 缺口与下一步
 
+本轮普通可执行工作：无。扫描/题摘筛选、有限必要日期恢复、报告处置与root整日独立DAY已到合同允许安全终态；以下12个新增必要材料保留项均已隔离，不用于确定候选、正面证据、Books、完整coverage或性能/安全保证。它们不是普通未读全文待办，不降分、不转EX。同一项只请求一次，收到原始日期材料后才按评分与采用命题审读方法、关键评价/直接反侧及真实owner差额。
+
+以下11项缺的是绑定精确v1家族的首次paper公开日期；Submitted/页面印刷日期、Atom published、Created/Registered/Updated、编号/月目录或secondary Published不单独成立。一次精确作者dated artifact检索与已知repo/project定点恢复未取得必要公开字段。统一可接受材料为作者dated首刊artifact或官方original announcement，须证明落2026-02-17北京时间自然日；定点重开仅相应家族，不扩当日窗口、不追整月/修订史：
+
+- [Spectral Collapse 2602.13303v1](https://arxiv.org/abs/2602.13303v1)：频谱条件/结构null-space修正潜力，日期不明；原始完整题摘在new-abstracts1。
+- [AdaCorrection 2602.13357v1](https://arxiv.org/abs/2602.13357v1)：逐步cache有效性/offset修正潜力，日期不明；只用v1而非后版。
+- [ATTest 2602.13987v1](https://arxiv.org/abs/2602.13987v1)：CASE/block_limit选择修复与保留已验测试潜力，作者repo未有首刊dated字段；分支coverage不认证数值正确性。
+- [Sali-Cache 2602.14236v1](https://arxiv.org/abs/2602.14236v1)：pre-attention光流/显著性memory allocation潜力，日期不明；未采用100%代理或2.20x保证。
+- [KernelBlaster 2602.14293v1](https://arxiv.org/html/2602.14293v1)：profiling performance-state知识库跨task/hardware转移潜力，作者repo无必要日期；abs cache miss由精确HTML题摘恢复，不谎称读到abs。AB/intro数字冲突不采用。
+- [Floe 2602.14302v1](https://arxiv.org/abs/2602.14302v1)：token-wise cloud概率/edge context分工及超时强制本地当前token回退潜力，日期不明；共享prefix/概率API/隐私与严格实时保证未核，不采用。
+- [MoSLoRA 2602.14490v1](https://arxiv.org/abs/2602.14490v1)：input条件几何experts/manifold switching成本潜力，日期不明；2024同名subspaces repo身份不同，不能替代。
+- [REMem 2602.13530v1](https://arxiv.org/abs/2602.13530v1)：时间qualifier与时间operator/order/aggregation检索接口潜力，作者repo没有必要首刊日期，不采用人类memory类比。
+- [ASCL 2602.13562v1](https://arxiv.org/abs/2602.13562v1)：consult action及IFPO逆频率credit潜力，作者repo没有必要首刊日期，不采用安全/utility保证。
+- [Character-aware 2602.14100v1](https://arxiv.org/abs/2602.14100v1)：字符顺序/无序tag position0的有限控制比较反侧，缺原始公开日期；secondary Feb17只作恢复线索，不采用所有模型不似人泛化。
+- [REDSearcher 2602.14234v1](https://arxiv.org/abs/2602.14234v1)：graph topology/evidence dispersion双轴task控制潜力，作者project无dated News；不因SOTA或训练recipe组合准入。
+
+[Opus4.6 HLE with tools更正](https://www.anthropic.com/news/claude-opus-4-6)另1项：current card索引Feb17/news同事件脚注Feb23相冲突，必要PDF web400/urllib403/有限curl不完整EOF，实际正文未恢复。重开只需官方当日card artifact或官方明确区分两日期事件的原刊版本；[有限失败原记录](../_sources/daily-20260218/supplement-opus46-recovery-20261008.md)不替代card。不能用更强检测后的53.0主张本窗原评估已成立，也不重写旧Sonnet事件。
+
+窗外非本轮待办：[E-DiT作者repo](https://github.com/wangjiangshan0725/Elastic-DiT)News明确2026.2.15 Paper released，真实归属早于补充窗，既不搬移旧候选也不创建另一日报。5个本次贡献/事件关闭（MASFly/AAR/RosettaTrace/MapTrace/chatgpt-4o-latest既定shutdown）的具体原证理由见[准入记录](../_sources/daily-20260218/supplement-admission-20261008.md)，不为不影响处置的日期追加请求。OpenAI首公开公告与生效日期分开，目标原段未有新发布合同，不确认迁移/runtime。机构目录与Seed隐藏项继续按§2作为历史覆盖限制。
+
+新增Books NoChange：没有确定落窗的新家族/修订可采用，12保留项不进入Books；不把它们写成“已有覆盖”。新书稿正文/引用改动0、共享owner写锁未触发，旧Books结果冻结。材料恢复后才重开相应真实owner与邻接，提出逐字最小差额并经非writer POST。
+
+以下为原版有效终态与普通工作记录，按未变化身份/版本/采用命题复用；不改变新增保留项：
+
 普通可执行工作：无。78家族日期/贡献/必要证据/Books处置、所有写后检查及六部分整日独立验收均通过。公开区间按§3的官方流程与同身份Registered元数据推定，不把登记时间当实际发布时刻；未知首公开材料不借用这一上界补造下界。
 
 本窗外部/中心终态保留项已隔离，不用于正面证据、Books、完整coverage或无遗漏/性能/安全保证；以下各项保留精确定点重开条件：
@@ -459,6 +514,15 @@ exact-v1 §3–4/Table3/§5，local mask人口与全局背景分责，local先�
 第五批13804的drop-in/certified/fullcost constant bridge已发现中心争议；有条件Euclidean投影不等softmax保证，raw-q gap不是projection-residual gap，query位于conv时inactive为空/Def1不可认证，即使raw-gap>0，不能写成true gap=0。稀疏路径原表全点更慢，质量仅建议补测。13659的Lemma3字面初始化前提无可满足非零点，理论alignment oracle与实用loss-reward/greedy接口不同；只暂缓本文这一宣称的d-free实用ZO保证，不替作者修定理或宣其他全部理论错误。两项root必要反证均已通过，本次保留中心争议，不写正面Books；重开分别需要可核projection-gap证书与完整routing/quality评价，以及更正初始化假设/实用oracle对应证明。
 
 ## 6. 复核
+
+本轮增量复核者：root（非增量作者supplement_20260218）。
+本轮结论：通过。
+
+root实际逐项核14每日来源入口/正文/查询与停止、14个完整精确v1题摘及必要决定核心、5个具名关闭、11必要日期恢复与Opus日期冲突/PDF有限失败、E-DiT作者Feb15公开、六部分增量与NoChange；[增量独立记录](../_sources/daily-20260218/supplement-independent-20261008.md)已持久。ATTest初步EX已纠正，不将宽223标题转为完整初筛/全文队列，未扫Weekly或扩日期。原窗口、78候选行/日期/评分、连续§4以及82943bytes完整baseline对只读index均实际独核；新增Books写入0，不把11日期项当已有覆盖。允许安全终态不授历史完整覆盖、12保留项Evidence/Books或无遗漏保证。
+
+完成态V3、限定工作树diff-check、32份补查JSON解析、5份本日补查/报告Markdown的围栏与154个本地引用检查通过（冻结baseline引用按原README起点解释）。未另跑Markdown解析器，环境缺该依赖且未安装；这些可判定检查不代替root语义DAY。cached旧截断baseline/ATTest空EOF告警仍在index，工作树已恢复/修正，未触碰index，不宣称cached检查通过；本轮未执行stage、commit、push，既有及无关修改保留。
+
+以下原版复核结论仅复用未变化的78家族、原Source与Books证据：
 
 复核者：root（非本日报告作者feb18_v3）。
 结论：通过

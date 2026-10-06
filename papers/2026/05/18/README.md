@@ -4,13 +4,23 @@
 
 **窗口：** 2026-05-17T09:00:00+08:00 ～ 2026-05-18T09:00:00+08:00
 
+**窗口说明：** 按用户279份既有Daily来源遗漏增量补查授权，保留原窗口、64候选整行/日期评分与连续原§4；新增仅检查前一北京时间自然日，不搬移旧归属。
+
+**补充窗口：** 2026-05-17 ～ 2026-05-17
+
+**冻结候选日期：** [本地原档案](../_sources/daily-20260518/baseline-before-supplement-20261019.md)
+
 **状态：** 完成
 
 **Books：** 纳入本次
 
-**检查时间：** 2026-09-15T19:25:55+08:00
+**检查时间：** 2026-10-19T11:11:00+08:00
 
 ## 1. 结论
+
+本轮只补查2026-05-17北京时间自然日，新增确定候选0、必要证据审阅0、Books新写0；原64候选与历史有效证据保留，未以本轮重读或当前评分改写它们。每日14源均有实际入口/停止记录，但Google Research、Qwen新站、Kimi历史博客、MiMo Blog和arXiv实际历史公告/标题补检仍有精确外部保留项；Meta GIM的05-17/05-18官方冲突继续隔离，因此不宣称Coverage/Evidence全过或无遗漏。独立准入/Source安全终态与六部分DAY已通过，报告按保留边界完成；无普通研究或Books待办。完整原件与边界见[本日补查记录](../_sources/daily-20260518/SUP_SOURCES_20261019.md)。
+
+以下三段为原小时窗口的历史完成记录，范围不扩展至本轮补充窗，也不代替本轮验收：
 
 旧 submission-window ledger 的 324 个 identity 与 52 个候选仍不属于本日 owner。当前 537 个 identity 经严格有界返修后冻结为 `537 = 64 retained + 473 pre-denominator closure + 0 withdrawn`；本轮只定点重审终审指定的 18 个 FN/signal 与 3 个 FP/score，没有重扫其余 closure。
 
@@ -22,24 +32,26 @@ owner-time 由 arXiv 官方 announcement schedule、announcement-time ID allocat
 
 | 来源 | 检查范围与依据 | 结果 | 缺口 |
 | --- | --- | --- | --- |
-| SRC-OPENAI | 官方 Research/RSS 相邻事件；05-16 08:00+08 Malta 公告早于窗口起点，之后无窗内研究或系统事件 | 已检查 | 无 |
-| SRC-ANTHROPIC | 官方 Research 目录；时间字段由 05-14 跳至 05-22 | 已检查 | 无 |
-| SRC-GOOGLE-AI | DeepMind 与 Google Research publication index；相邻记录夹在 05-06/05-28 与 04-25/05-28 | 已检查 | 无 |
-| SRC-META-AI | Meta Publications；GIM 目录/详情只给 05-17/05-18 冲突日期，arXiv v1 明确晚至 05-19 01:09:50+08 | 已检查 | GIM 日级日期冲突已隔离，不作为本窗确定事件 |
-| SRC-QWEN | 官方 publication/blog index；无窗内条目 | 已检查 | 无 |
-| SRC-DEEPSEEK | 官方模型与研究发布索引；无窗内条目 | 已检查 | 无 |
-| SRC-MOONSHOT | Kimi Blog 与官方 GitHub；无窗内技术文章、首次公开仓库或 release，pushed_at 不作首次公开 | 已检查 | 无 |
-| SRC-TENCENT-HUNYUAN | 官方 Research 全部列表；相邻记录为 04-30 与 05-21 | 已检查 | 无 |
-| SRC-ZAI | 官方 Research 目录；相邻记录为 04-29 与 05-20 | 已检查 | 无 |
-| SRC-BYTEDANCE-SEED | 官方论文目录；Charon 为 05-16 00:00+08，早于窗口，之后无窗内官方事件 | 已检查 | 无 |
-| SRC-BAIDU-ERNIE | ERNIE 技术博客与 release index；无窗内条目 | 已检查 | 无 |
-| SRC-XIAOMI-MIMO | 官方 Paper/Blog；03-13 后跳至 06-29 | 已检查 | 无 |
-| SRC-MINIMAX | 官方 Research/Blog；相邻技术文章为 03-18 与 05-26/27 | 已检查 | 无 |
-| SRC-ARXIV | official announcement-batch replay：537 个 covered-category identity 全部落在 2605.15202–2605.16258；64 retained、473 pre-denominator closure、0 withdrawn；announcement=2026-05-18 08:00+08，旧 324/52 submission-window 集合不再拥有本日 | 已检查 | 无；官方批次证据见 official-owner-batch-evidence-v3.json，DataCite 不充当 cutoff 时刻 |
+| SRC-OPENAI | 补充窗：Research→index；官方RSS1299 items仅解析May10–22邻接，05-16 Malta→05-18 Dell；status性能事件全部3更新仅状态无机制，明确排除 | 已检查 | 无；不把状态恢复当技术贡献 |
+| SRC-ANTHROPIC | 补充窗：Research HTTP完整嵌入publishedOn；05-14T17:06Z→05-22T17/18Z，止跨窗相邻段 | 已检查 | 无；不用created/updated代替发表 |
+| SRC-GOOGLE-AI | 补充窗：DeepMind publications page1的30项跨May28→May6→Apr25；Google pubs 2026只有年份，Blog当前页及年份参数/主题日期搜索有限恢复后未获五月日级目录 | 受阻 | Google Research子入口历史日级召回；DeepMind片段有效，不外推全部覆盖 |
+| SRC-META-AI | 补充窗：Research→results page2/filtered，May19→GIM17→May12；GIM详情18；TransText精确页/作者页Apr14早稿，关闭列表错配May17线索 | 受阻 | GIM同家族官方日级日期冲突原样隔离 |
+| SRC-QWEN | 补充窗：旧qwenlm明确迁至qwen.ai；新research/blog web与HTTP动态shell、精确May17搜索未得具名新项，止该有限恢复 | 受阻 | 新站历史日期列表未恢复；旧2025目录不授2026覆盖 |
+| SRC-DEEPSEEK | 补充窗：Research→news；动态04-24→09-10，研究索引02-25→06-24，止跨过日窗 | 已检查 | 无；只支持此官方发布切片 |
+| SRC-MOONSHOT | 补充窗：平台blog旧完整目录；官方org created-desc一页42仓库到底仅身份导航，Kimi-K2.5 release页明确无release | 受阻 | blog停2025，历史技术博客段缺失；不拿created/pushed证明公开 |
+| SRC-TENCENT-HUNYUAN | 补充窗：Research动态壳/web超时→浏览器73秒超时→前端绑定公开API；renderType0/page1/size50，中文11/11与英文9/9全部，中文04-30→05-21 | 已检查 | 无05-17字段事件；publishedAt和displayPublishTime口径并列，不补造首次公开时刻 |
+| SRC-ZAI | 补充窗：Research中文page1，04-29 Scaling Pain→05-20 ZCube，止跨日窗 | 已检查 | 无 |
+| SRC-BYTEDANCE-SEED | 补充窗：论文page1末05-26→同绑定API offset20/count20首05-16 Charon；Blog同API type2首15条06-19→04-23，停止不追更早页 | 已检查 | 无；246论文/96博客宽目录不是逐条审阅队列 |
+| SRC-BAIDU-ERNIE | 补充窗：技术博客page1最新05-09→04-30→04-15，已跨窗止page1，不扫描2025 page2 | 已检查 | 无当前目录条目；不保证不可见删除历史 |
+| SRC-XIAOMI-MIMO | 补充窗：Paper全8项03-13→06-29；Blog主页15卡无日期/有More；有限/blog实际旧Flash单篇，不作归档 | 受阻 | Blog历史日期归档未恢复；不把Paper邻接扩成Blog零命中 |
+| SRC-MINIMAX | 补充窗：英文Research03-18→05-26/27；中文04-27→05-25；Agent techblog三条09/19、09/22、10/08，止日期邻接 | 已检查 | 无05-17事件；中英不同窗外日期均保留 |
+| SRC-ARXIV | 补充窗：官方日程05-17 BJT对应05-16 EDT12:00～05-17 EDT12:00通常无批；new/replacement/withdrawal/crosslist同日程。CL月表旧格式404/现代格式timeout，按日期+LLM/Transformer/Agent/world-model及status有界补检；CL/LG/DC/AI、CV/RO、AR/PL、OS/PF、IR/MA十二主题不扩全年 | 受阻 | 实际历史公告/延期与新命名标题补检未恢复；日程不等于绝无特殊公开事件，未用Submitted代替公开 |
 
-完整 identity、分页/路由与逐项理由见 [`screening-ledger-v3.json`](../_sources/daily-20260518/screening-ledger-v3.json)，严格批次证明见 [`official-owner-batch-evidence-v3.json`](../_sources/daily-20260518/official-owner-batch-evidence-v3.json)；旧/新集合调和见 [`owner-reconciliation-v3.json`](../_sources/daily-20260518/owner-reconciliation-v3.json)。`已检查` 只证明注册入口的有界窗口检查，不声称互联网绝无遗漏。
+本轮入口、查询、分页停止、原件和缺段的精确重开位置见[补查记录A2–A4](../_sources/daily-20260518/SUP_SOURCES_20261019.md#a2-到期每日来源与实际停止)。原小时窗的完整identity/批次依据继续保留于 [`screening-ledger-v3.json`](../_sources/daily-20260518/screening-ledger-v3.json)、[`official-owner-batch-evidence-v3.json`](../_sources/daily-20260518/official-owner-batch-evidence-v3.json)与[`owner-reconciliation-v3.json`](../_sources/daily-20260518/owner-reconciliation-v3.json)，不是本轮自然日覆盖凭据。`已检查`仅支持实际切片，不声称互联网无遗漏。
 
 ## 3. 候选与判断
+
+以下64项完整保留本地基线，旧日期/评分/Books决定不因本轮补查搬移或重写。补充自然日新增确定候选0；GIM日期资格保留项不计入候选，status明确贡献排除及TransText窗外依据见补查记录A3。
 
 | 材料 | 公开时间 | 项目贡献与评分 | 审阅结果 | Books决定 |
 | --- | --- | --- | --- | --- |
@@ -1436,6 +1448,12 @@ Decision: `No Change — Existing Coverage`; reviewer=fresh-context:apr-may-book
 
 ## 5. 缺口与下一步
 
+本轮普通研究/Books待办：无。独立reader实际Source/准入安全终态和六部分DAY已通过；V3、64原行/原窗/连续原§4冻结、本地引用及限定working/cached检查通过。以下外部保留不因保存完成态被归零或当作已证。
+
+本轮终态外部保留项：GIM官方05-17/18日期冲突；Google Research五月日级目录；Qwen新站历史列表；Kimi历史技术博客段；MiMo Blog历史日期归档；arXiv实际历史日公告/延期及主题标题补检。均不入确定候选、不入Books、不支持正面Coverage/Evidence或“无遗漏”。缺少什么、已尝试入口、替代材料及逐项重开位置集中见[补查记录A4](../_sources/daily-20260518/SUP_SOURCES_20261019.md#a4-精确保留项与重开条件)。只恢复受影响来源/具名事件，不重跑全月或旧64项。
+
+以下为原小时窗历史关闭记录，不代替本轮自然日验收：
+
 本轮材料 blocker：无。38 项 reuse 最终落为 32 项可重放历史 locator/version/claim、4 项 current exact-v1 定点复核和 2 项移出候选；六个非必要 current-abstract 状态探测超时已在作者返修记录中精确列出，但不阻断采用命题。`2605.15529` 原登记的 W20 locator 在当前仓库不存在，已明确标记 superseded/invalid，不伪造文件或 digest；fresh non-author reviewer 已直接复核官方 exact-v1 的 §4.1–4.3、§5、§6.1–6.3 与附录边界并接受原 adopted claim。
 
 1. root 已按 [`root-books-writeback-queue-v3.json`](../_sources/daily-20260518/root-books-writeback-queue-v3.json) 处理 31 个真实 Integrate：18 项既有正文与 13 项新增机制正文均通过 fresh non-author 写后语义复核；没有为 Existing Coverage 项重复追加。
@@ -1446,9 +1464,17 @@ Meta GIM 的既有日级冲突是本窗终态保留项：不用于正面证据�
 
 ## 6. 复核
 
-复核者：`fresh non-author final reviewer（未参与作者返修或 root Books 写回）`
+复核者：`/root/may18_supp_reader`（非作者）。
 
 结论：通过
+
+本轮独立reader实际复核全部到期入口处理、全部拟入选0、具名信号GIM/TransText/GPT5.5 status三项和按来源/主题分层邻接样本；未无差别复读全部目录/旧64附件。Source安全终态R5与六部分DAY R6通过，V3、64旧整行各一次、原窗/补充窗及连续原§4、README78+SUP33本地引用和限定working/cached检查均实际通过。新增Evidence/Books/PRE/POST无对象；六外部保留仍不授完整Coverage/Evidence或无遗漏。保存完成态只做最小FINAL读回，实际记录见[SUP_REVIEW](../_sources/daily-20260518/SUP_REVIEW_20261019.md)。
+
+以下复核是原小时窗的历史验收，不是本轮补查验收：
+
+历史复核者：`fresh non-author final reviewer（未参与作者返修或 root Books 写回）`
+
+历史结论：通过
 
 Daily V3、Evidence 与 Books Gate 均为 Complete。
 

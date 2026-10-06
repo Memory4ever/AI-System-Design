@@ -1,0 +1,2617 @@
+Fuel Gauge: Estimating Chain-of-Thought Length Ahead of Time in Large Multimodal Models
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Related Work
+3
+Background on Reasoning LMM
+4
+Fuel Gauge: First CoT Length Predictor
+4.1
+Hypothesis I: LMM CoT Length is Predictable
+4.2
+Hypothesis II: CoT for LMM is Fuel Powered
+4.3
+CoT Length Prediction Algorithm
+4.4
+Fuel Gauge Implementation
+5
+Fuel Gauge Applications
+5.1
+Application 1: Predictive KV Cache Allocator
+5.2
+Application 2: CoT Length Modulation
+6
+Experiments
+6.1
+Experimental Setup and Benchmarks
+6.2
+Fuel Level Prediction
+6.3
+CoT Length Prediction
+6.4
+Application 1: Predictive KV Cache Allocator
+6.5
+Application 2: CoT Length Modulation
+6.6
+Ablations and Overhead Analysis
+7
+Conclusion
+References
+A
+More Details on the Experimental Setup
+B
+Additional Experimental Results
+B.1
+Experimental Results on LMM Intern-S1
+B.2
+Example of Predictive KV Cache Allocator
+B.3
+Detailed Results for CoT Length Modulation in Figure
+C
+Ablation Study
+C.1
+Number of Parameters for
+f
+sig
+f_{\text{sig}}
+and
+f
+fuel
+f_{\text{fuel}}
+C.2
+Window Size for
+f
+sig
+f_{\text{sig}}
+C.3
+Loss Function in Equation
+D
+Overhead Analysis
+References
+License: CC BY 4.0
+arXiv:2603.10335v1 [cs.CV] 11 Mar 2026
+Fuel Gauge: Estimating Chain-of-Thought Length Ahead of Time in
+Large Multimodal Models
+Yuedong Yang  Xiwen Wei  Mustafa Munir  Radu Marculescu
+Affiliation:
+Chandra Family Department of Electrical and Computer Engineering
+Affiliation:
+The University of Texas at Austin
+Email:
+{albertyoung,xiwenwei,mmunir,radum}@utexas.edu
+Abstract
+Reasoning Large Multi-modality Models (LMMs) have become the de facto choice for many applications.
+However, these models rely on a Chain-of-Thought (CoT) process that is lengthy and unpredictable at runtime, often resulting in inefficient use of computational resources (due to memory fragmentation) and sub-optimal accuracy (due to under- and over-thinking).
+We observe empirically that the CoT process follows a very simple form, whose behavior is independent of the specific generated samples. This suggests that the CoT length can be estimated ahead of time based on a hidden parameter representing the amount of “fuel” available to support the reasoning process.
+Based on this insight, we propose
+Fuel Gauge, the first method which extracts this hidden signal and predicts CoT length ahead of time
+. We demonstrate the utility on the Fuel Gauge on two downstream tasks: predictive KV cache allocation, which addresses memory fragmentation in LMM serving systems, and CoT length modulation, which mitigates under-thinking and over-thinking.
+Extensive experiments on LMMs across text-only, image-text, and video-text question answering benchmarks demonstrate the effectiveness, generalizability, and practical value of our Fuel Gauge. For example, on the GPQA-Diamond benchmark, our Fuel Gauge achieves less than half the CoT length prediction error compared to the baseline; this translates into a 13.37
+×
+\times
+reduction in the memory allocation frequency.
+1
+Introduction
+Reasoning Large Multimodality Models (LMM)
+[
+1
+,
+2
+,
+3
+,
+4
+,
+5
+,
+6
+]
+achieve the state-of-art performance across multiple tasks on multiple modalities.
+The remarkable performance of reasoning LMMs originates from their inherent reasoning capability through Chain-of-Thought (CoT)
+[
+2
+,
+1
+]
+: when given an input prompt, the reasoning LMMs automatically divide the problem into a sequence of smaller steps and then conquer each sub-problem incrementally. This enables complex thinking behaviors such as backtracking where the model actively reviews its own reasoning, identifies and corrects potential mistakes. As a result, CoT empowers the LMMs with “human-like” reasoning capability, allowing them to perform multi-step reasoning and planning.
+However, the benefits of CoT come with significant costs both in computation efficiency and response quality. To support complex reasoning, the CoT sequences for LMMs are typically long. For example, as shown in Figure
+, a CoT can easily reach a length of 28k tokens, whereas the expected answer may contain only around 1k tokens. Moreover, due to the auto-regressive nature of LMM where each token’s prediction depends on the previously generated tokens, the final CoT length is unknown
+a priori
+. This uncertainty over a potentially long CoT generation can negatively impact both computational efficiency and reasoning quality.
+From a computational perspective, the unpredictable and lengthy CoT process forces LMM serving frameworks to repeatedly allocate small, contiguous memory blocks to store the key-value (KV) cache, which grow proportionally with the CoT length. Frequent small allocations lead to memory fragmentation
+[
+7
+,
+8
+,
+9
+,
+10
+]
+, scattering free memory areas across the address space. Consequently, even though sufficient free memory exists, new allocations may fail due to the lack of a big enough contiguous space.
+From a response quality perspective, since LMMs lack the broader context about the task at hand, they may incorrectly estimate the task’s difficulty. This mismatch can cause either over-thinking
+[
+11
+,
+12
+,
+13
+]
+or under-thinking
+[
+14
+,
+12
+]
+, as the length of CoT does not align well with the true complexity of the task. As a result, the reasoning and final response may be suboptimal. Since the CoT length is not known in advance, it is impossible to intervene or correct the LMM in advance.
+To address these limitations, we propose Fuel Gauge,
+the first framework to enable CoT length estimation at runtime
+.
+The key idea is inspired by the human brain where certain chemicals indicate the level of energy available for thinking
+[
+15
+]
+and influence the thinking process itself
+[
+16
+]
+.
+Analogously, we hypothesize that LMMs possess an internal “fuel level” signal that correlates with their reasoning process: the fuel level starts high when the model begins CoT reasoning and gradually decreases to zero as reasoning progresses.
+We identify and extract this hidden fuel level signal using a tiny neural network consisting only 82k parameters, and estimate the CoT length based on the rate of fuel consumption. Through extensive experiments across multiple models, benchmarks, and modalities, we empirically validate our hypothesis and demonstrate the effectiveness of the Fuel Gauge. Our key contributions are:
+•
+Mathematical Characterization of CoT Length:
+We observe that CoT length follows a Bernoulli process and demonstrate empirically that it can be predicted
+a priori
+.
+•
+First CoT Length Estimation Framework:
+We identify an internal signal in LMMs that indicates the CoT length before reasoning completes. Based on this signal, we develop the first CoT length predictor, Fuel Gauge, and successfully apply it to two downstream tasks,
+i.e.
+, predictive KV cache allocation and CoT length modulation; this demonstrates the practical value of Fuel Gauge.
+•
+Extensive Empirical Validation:
+Experiments across diverse models, benchmarks, and modalities validate our assumptions and demonstrate the effectiveness of the Fuel Gauge framework. Our approach yields substantially lower prediction error than baseline methods (
+e.g.
+, lower than half error on GPQA-Diamond), leading to marked improvements on multiple downstream tasks (
+e.g.
+, 13.37
+×
+\times
+improvement in memory allocation).
+The paper is organized as follows. Section
+2
+reviews relevant work. Section
+3
+introduces the background of LMMs. Section
+4
+then describes our method in detail. Next, we present two applications enabled our Fuel Gauge in Section
+5
+. Experimental results are presented in Section
+6
+and, finally, Section
+7
+summarizes our main contributions.
+2
+Related Work
+CoT in LMMs:
+CoT prompting
+[
+17
+]
+enables LMMs to perform step-by-step reasoning on complex tasks such as general reasoning
+[
+18
+,
+19
+]
+and mathematical problem solving
+[
+20
+]
+. By decomposing a problem into intermediate steps, CoT helps LMMs generate structured reasoning trajectories that improve interpretability and accuracy
+[
+21
+]
+.
+For instance, DeepSeek-R1
+[
+2
+]
+employs GRPO
+[
+22
+]
+; Qwen3
+[
+1
+]
+adopts a cold-start followed by reasoning reinforcement learning with GRPO
+[
+22
+]
+; and GPT-OSS
+[
+23
+]
+leverages CoT-based reinforcement learning to improve step-by-step reasoning performance.
+However, despite improved reasoning capability, the length of CoT reasoning remains largely uncontrolled, resulting in inefficiencies such as excessive or insufficient reasoning (over-thinking or under-thinking) and memory fragmentation
+[
+7
+]
+. Our work addresses precisely this gap by studying CoT length predictability and proposing the
+Fuel Gauge
+predictor to model and regulate the CoT length.
+Steering Vector and Classifier Guidance:
+Steering-based control has been explored as a lightweight mechanism to influence generation behavior in LLMs.
+[
+24
+]
+introduced steering vectors,
+i.e.
+directional activations injected into intermediate layers that can steer the model outputs towards desired attributes. This idea has since been adopted for controlled generation
+[
+25
+]
+and machine unlearning
+[
+26
+,
+27
+,
+28
+]
+.
+Analogous mechanisms exist in diffusion models.
+[
+29
+]
+proposed classifier guidance, which reweights the score function based on class-conditional likelihoods, effectively biasing the sampling trajectory toward desired semantic regions.
+Inspired by these ideas, in Section
+5.2
+we introduce the
+CoT length modulation
+, a new method that guides the CoT process using our Fuel Gauge. Before Fuel Gauge, predicting the CoT length reliably was impossible, making this the first approach to test-time scaling with classifier guidance.
+Figure 1
+:
+Example of the output of reasoning LMM, which consists of a long
+CoT section
+wrapped with special symbols “<think>” and “</think>”, and a short
+Conclusion
+section.
+3
+Background on Reasoning LMM
+Reasoning LMMs
+[
+1
+,
+2
+,
+3
+,
+4
+,
+5
+]
+are LMMs fine-tuned with reinforcement learning
+[
+22
+,
+30
+]
+, enabling them to perform deep reasoning automatically without any special prompting. As shown in Figure
+1
+, the output of the reasoning LMM includes a CoT section wrapped with special tokens “<think>” and “</think>” followed by Conclusion.
+We model the auto-regressive generation process in CoT as a discrete-time random process with two possible events at each step:
+T
+T
+(generation of a terminating token) and
+T
+¯
+\bar{T}
+(generation of a non-terminating token). A terminating token (
+e.g.
+, “</think>” in Qwen3
+[
+1
+]
+) ends the CoT, after which the model produces the final answer. Non-terminating tokens correspond to regular words.
+Thus, a CoT of length
+n
+n
+consists of
+(
+n
+−
+1
+)
+(n-1)
+non-terminating events
+T
+¯
+\bar{T}
+followed by one terminating event
+T
+T
+.
+Let
+X
+0
+X_{0}
+denote the input prompt and
+X
+0
+:
+(
+i
+−
+1
+)
+X_{0:(i-1)}
+the concatenation of
+X
+0
+X_{0}
+with generated CoT tokens up to step
+(
+i
+−
+1
+)
+(i-1)
+. The expected CoT length
+N
+N
+can then be expressed as the
+first arrival time of
+T
+T
+as shown in Equation (
+1
+):
+E
+[
+N
+|
+X
+0
+]
+=
+∑
+n
+=
+1
+∞
+[
+n
+⋅
+P
+(
+T
+|
+X
+0
+:
+(
+n
+−
+1
+)
+)
+∏
+i
+=
+1
+n
+P
+(
+T
+¯
+|
+X
+0
+:
+i
+−
+1
+)
+]
+E[N|X_{0}]=\sum_{n=1}^{\infty}[n\cdot P(T|X_{0:(n-1)})\prod_{i=1}^{n}P(\bar{T}|X_{0:i-1})]
+(1)
+Since each probability depends on the previously generated tokens,
+E
+⁡
+[
+N
+|
+X
+0
+]
+E[N|X_{0}]
+cannot be computed without sampling the actual CoT trajectories.
+Figure 2
+:
+Correlation between Chain-of-Thoughts (CoT) and LMM accuracy collected from Qwen3
+[
+1
+]
+, Qwen3VL
+[
+6
+]
+, Intern-S1
+[
+3
+]
+and GLM
+[
+31
+]
+across multiple text-only, image-text and video-text benchmarks. Using accuracy as a proxy for task difficulty, we observe a clear negative correlation between CoT length and task difficulty. This trend motivates our hypothesis that CoT length is predictable based solely on the question itself.
+4
+Fuel Gauge: First CoT Length Predictor
+Figure 3
+:
+CoT length estimation using the Fuel Gauge. Numbers in the figure are randomly chosen for illustration purpose. See Section
+4.4
+for implementation details. In Stage 1, the hidden signal
+S
+i
+S_{i}
+is extracted using
+f
+sig
+f_{\text{sig}}
+and the corresponding fuel level is estimated with
+f
+fuel
+f_{\text{fuel}}
+. In Stage 2, a linear model is fitted to all predicted fuel-level points, and the zero-crossing point of this line is taken as the final CoT length prediction. Based on this CoT length estimation, we further develop two novel downstream applications (see Section
+5
+).
+In general, the CoT length is hard to predict. However, we show that LMMs possess a unique property that simplifies Equation (
+1
+), thus enabling CoT length prediction. Based on this observation, we formulate two hypotheses (in Section
+4.1
+and Section
+4.2
+), which provide the foundation for our prediction capability. Section
+4.3
+then describes our CoT length prediction algorithm in detail. Finally, Section
+4.4
+presents the implementation of the Fuel Gauge.
+4.1
+Hypothesis I: LMM CoT Length is Predictable
+Observation:
+Figure
+2
+presents the correlation between CoT length and prediction accuracy collected from multiple LMMs over benchmarks on multiple domains. Considering LMM prediction accuracy as a proxy for task difficulty, we empirically observe a consistent relationship between CoT length and task difficulty across models. Specifically, there is a clear negative correlation between question difficulty (measured by accuracy) and CoT length.
+This finding suggests that CoT length may be predictable directly from the question, without requiring the full CoT sampling process.
+Accordingly, we formulate our first hypothesis below:
+Hypothesis I:
+The CoT length for reasoning LMM can be predicted before the CoT generation process using a parameter conditioned solely on the input prompt
+X
+0
+X_{0}
+.
+To explain, the CoT length is predictable because
+reasoning models implicitly adjust their reasoning depth based on questions difficulty
+(like humans). During RLHF, reasoning LMMs are optimized to maximize a reward model which favors long and verbose reasoning traces
+[
+32
+]
+, while being regularized by KL divergence that discourages deviation from a reference model that produces shorter and more direct responses
+[
+33
+]
+.
+The observed CoT length thus reflects a tradeoff between potential reward gains and the cost of KL regularization. More precisely, once an output is considered sufficiently good by the reward model, additional reasoning leads to little marginal reward but higher KL divergence. As a result, unnecessary verbosity is discouraged. Together, these mechanisms encourage reasoning LMMs to produce chains of thought that are short, yet sufficient for solving the task at hand
+[
+34
+]
+. Consequently, CoT length becomes conditioned and thus predictable for a given problem difficulty.
+4.2
+Hypothesis II: CoT for LMM is Fuel Powered
+The observation in Figure
+2
+motivates us to investigate whether reasoning LMMs contain an internal signal related to the Bernoulli process parameter
+p
+p
+. Inspired by human cognition, we draw an analogy to how the brain consumes energy during thinking. Neural activity is powered by ATP (adenosine triphosphate) hydrolysis, which releases energy and produces adenosine as a byproduct
+[
+35
+]
+. As adenosine accumulates and binds to neuronal receptors, it inhibits thinking by reducing alertness and focus
+[
+16
+]
+. Since adenosine levels reflect ATP consumption, they can be viewed as a proxy for the brain’s energy usage
+[
+15
+]
+,
+i.e.
+, a natural “fuel gauge” for cognitive effort.
+We hypothesize that reasoning LMMs possess a similar internal signal that indicates their “fuel” consumption during reasoning. This signal would start high when reasoning begins, then gradually decrease as thinking progresses, and approach zero when reasoning ends. We refer to this signal as the
+Fuel Gauge
+. Let
+h
+0
+:
+i
+h_{0:i}
+denote hidden states for
+X
+0
+X_{0}
+to
+X
+i
+X_{i}
+. Below, we summarize our second hypothesis:
+Hypothesis II:
+Assume the CoT consists of
+N
+N
+tokens (to be estimated). When generating the
+i
+i
+-th token, there exists a hidden signal
+S
+i
+S_{i}
+derived from the LMM’s hidden states
+h
+0
+:
+i
+h_{0:i}
+, which can be mapped to a scalar
+r
+i
+r_{i}
+satisfying
+r
+0
+=
+1
+,
+r
+N
+=
+0
+r_{0}=1,r_{N}=0
+and
+r
+i
+>
+r
+j
+r_{i}>r_{j}
+for any
+i
+>
+j
+i>j
+.
+4.3
+CoT Length Prediction Algorithm
+We define
+r
+i
+r_{i}
+as the CoT fuel level, with
+f
+sig
+f_{\text{sig}}
+mapping hidden states
+h
+0
+:
+i
+h_{0:i}
+to the hidden signal
+S
+i
+S_{i}
+, and
+f
+fuel
+f_{\text{fuel}}
+mapping hidden signal
+S
+i
+S_{i}
+to fuel level
+r
+i
+r_{i}
+.
+To estimate CoT length during generation step
+i
+i
+, we first extract
+S
+i
+S_{i}
+and compute the corresponding fuel level
+r
+i
+=
+f
+fuel
+​
+(
+S
+i
+)
+r_{i}=f_{\text{fuel}}(S_{i})
+. We then extrapolate from previous readings
+r
+0
+,
+r
+1
+,
+…
+,
+r
+i
+r_{0},r_{1},\dots,r_{i}
+to find the zero crossing point
+N
+~
+i
+\tilde{N}_{i}
+where the extrapolated value
+r
+~
+N
+~
+i
+=
+0
+\tilde{r}_{\tilde{N}_{i}}=0
+. This
+N
+~
+i
+\tilde{N}_{i}
+serves as the
+current estimate
+of the CoT length. (Tildes indicate values are obtained through extrapolation.)
+To simplify the extrapolation, we use Hypothesis II:
+The fuel level
+r
+i
+r_{i}
+decreases
+linearly
+with the generation step
+i
+i
+.
+With CoT length
+N
+N
+(to be estimated), we fit a linear model:
+r
+i
+≈
+k
+⋅
+[
+0
+⋯
+i
+]
+T
++
+1
+r_{i}\approx k\cdot[0\cdots i]^{T}+1
+(2)
+where the slope
+k
+k
+is determined from data. We then extrapolate to the point where the fuel level reaches zero (
+r
+~
+N
+~
+i
+=
+0
+\tilde{r}_{\tilde{N}_{i}}=0
+), yielding the CoT length prediction
+N
+~
+i
+=
+−
+1
+/
+k
+\tilde{N}_{i}=-1/k
+.
+4.4
+Fuel Gauge Implementation
+In this section, we describe the implementation of Fuel Gauge for CoT length prediction, which operates in two stages. As shown in Figure
+3
+, at each CoT generation step, Stage 1 extracts and denoises the CoT fuel level, while Stage 2 fits a linear model to estimate the final CoT length. Algorithm
+1
+summarizes our implementation.
+Stage 1: Fuel Level Estimation
+At each time step, Stage 1 first extracts the hidden signal
+S
+i
+S_{i}
+using
+f
+sig
+f_{\text{sig}}
+and then estimates the CoT fuel level using
+f
+fuel
+f_{\text{fuel}}
+.
+The hidden signal extractor
+f
+sig
+f_{\text{sig}}
+processes the most recent eight hidden states
+h
+i
+−
+7
+:
+i
+h_{i-7:i}
+from a single transformer layer, producing a signal vector
+S
+i
+S_{i}
+. The fuel estimator then maps
+S
+i
+S_{i}
+to fuel level
+r
+i
+r_{i}
+.
+Algorithm 1
+Fuel Gauge for CoT Length Prediction
+0:
+Hidden states
+h
+i
+−
+7
+:
+i
+h_{i-7:i}
+; previous fuel level
+r
+0
+:
+i
+−
+1
+r_{0:i-1}
+; hidden signal extractor
+f
+sig
+f_{\text{sig}}
+; fuel estimator
+f
+fuel
+f_{\text{fuel}}
+0:
+Estimated CoT length
+N
+~
+i
+\tilde{N}_{i}
+1:
+Stage 1: Fuel Level Estimation
+2:
+S
+i
+←
+f
+sig
+(
+h
+i
+−
+7
+:
+i
+)
+S_{i}\leftarrow f_{\text{sig}}(h_{i-7:i})
+{Extract hidden signal}
+3:
+r
+i
+←
+f
+fuel
+​
+(
+S
+i
+)
+r_{i}\leftarrow f_{\text{fuel}}(S_{i})
+{Estimate fuel level}
+4:
+Stage 2: CoT Length Estimation Update
+5:
+r
+0
+:
+i
+←
+Concatenate
+(
+r
+0
+:
+i
+−
+1
+,
+r
+i
+)
+r_{0:i}\leftarrow\text{Concatenate}(r_{0:i-1},r_{i})
+6:
+Fit linear model
+r
+0
+:
+i
+≈
+k
+⋅
+[
+0
+⋯
+i
+]
+T
++
+1
+r_{0:i}\approx k\cdot[0\cdots i]^{T}+1
+7:
+N
+~
+i
+←
+−
+1
+/
+k
+\tilde{N}_{i}\leftarrow-1/k
+{Zero-crossing estimate}
+8:
+Output:
+N
+~
+i
+\tilde{N}_{i}
+To minimize the computational overhead, both networks are intentionally kept simple,
+i.e.
+,
+f
+sig
+f_{\text{sig}}
+contains only an 1D depth-wise convolution layer followed by an 1D point-wise convolution layer
+[
+36
+]
+, and
+f
+fuel
+f_{\text{fuel}}
+is a two layer MLP. For example, in the Qwen3-4B
+[
+1
+]
+model (36 layers), we take the hidden states from only the last eight time steps (a
+8
+×
+2560
+8\times 2560
+matrix) at layer 18 and feed them into
+f
+sig
+f_{\text{sig}}
+followed by
+f
+fuel
+f_{\text{fuel}}
+. With only 128 channels in
+f
+sig
+f_{\text{sig}}
+and
+f
+fuel
+f_{\text{fuel}}
+, the added model size and inference latency are negligible compared to Qwen3-4B LMM (see Section
+6.6
+).
+Stage 2: CoT Length Estimation Update
+Using the denoised fuel levels
+r
+0
+:
+i
+r_{0:i}
+from previous steps, we fit a linear model
+r
+0
+:
+i
+≈
+k
+⋅
+[
+0
+⋯
+i
+]
+T
++
+1
+r_{0:i}\approx k\cdot[0\cdots i]^{T}+1
+. The zero-crossing point of this line gives the estimated CoT length,
+i.e.
+,
+N
+~
+=
+−
+1
+/
+k
+\tilde{N}=-1/k
+. The value
+N
+~
+i
+\tilde{N}_{i}
+serves as the prediction for the total CoT length.
+Neural Network Training
+We train
+f
+sig
+f_{\text{sig}}
+and
+f
+fuel
+f_{\text{fuel}}
+jointly using 200 CoT traces collected from general question answering benchmarks, more precisely the first 200 questions from MMLU
+[
+37
+]
+for text-only reasoning model and MMMU
+[
+38
+]
+for text–vision reasoning model. During CoT generation, we record the hidden states
+h
+i
+h_{i}
+from the chosen layer. During training, we randomly sample an 8-step CoT hidden state segment
+h
+i
+−
+8
+:
+i
+h_{i-8:i}
+and train the network to predict
+r
+i
+=
+f
+fuel
+(
+f
+sig
+(
+h
+i
+−
+7
+:
+i
+;
+θ
+sig
+)
+;
+θ
+fuel
+)
+r_{i}=f_{\text{fuel}}(f_{\text{sig}}(h_{i-7:i};\theta_{\text{sig}});\theta_{\text{fuel}})
+, where
+θ
+sig
+\theta_{\text{sig}}
+and
+θ
+fuel
+\theta_{\text{fuel}}
+are trainable parameters. The target value is the normalized token index
+(
+1
+−
+i
+N
+)
+(1-\frac{i}{N})
+and objective minimizes the smooth L1 loss
+[
+39
+]
+L
+S
+​
+L
+​
+1
+L_{SL1}
+as shown in Equation (
+3
+):
+min
+θ
+sig
+,
+θ
+fuel
+L
+S
+​
+L
+​
+1
+(
+f
+fuel
+(
+f
+sig
+(
+h
+i
+−
+7
+:
+i
+;
+θ
+sig
+)
+;
+θ
+fuel
+)
+,
+1
+−
+i
+N
+)
+\min_{\theta_{\text{sig}},\theta_{\text{fuel}}}L_{SL1}(f_{\text{fuel}}(f_{\text{sig}}(h_{i-7:i};\theta_{\text{sig}});\theta_{\text{fuel}}),1-\frac{i}{N})\\
+(3)
+5
+Fuel Gauge Applications
+In this section, we present two applications of our Fuel Gauge, demonstrating its effectiveness, validating our hypotheses, and highlighting its utility in real-world scenarios.
+5.1
+Application 1: Predictive KV Cache Allocator
+Dynamic KV cache allocation in LMMs often leads to fragmentation: frequent memory allocation and release create unusable gaps, preventing large contiguous tensor allocation and causing out-of-memory errors even when memory is available
+[
+7
+,
+8
+,
+9
+,
+10
+]
+. By predicting CoT length in advance, we can estimate the memory usage and allocate proactively, thus reducing allocation frequency and fragmentation.
+We can allocate memory based on the predicted CoT length at the start of generation. If the allocated memory is insufficient, we can reallocate more memory according to the updated prediction. This repeats until CoT generation completes. The primary evaluation metric is the number of memory allocations: fewer allocations indicate better efficiency and reduced fragmentation.
+5.2
+Application 2: CoT Length Modulation
+Inspired by classifier-guided generation
+[
+29
+]
+and steering vectors
+[
+24
+,
+25
+,
+26
+,
+27
+,
+28
+]
+, we use the Fuel Gauge to modulate the CoT length by adjusting hidden states
+h
+i
+h_{i}
+to achieve a desired fuel level
+r
+target
+r_{\text{target}}
+. Prior to our work, predicting reliably the CoT length is not feasible, making Fuel Gauge the first approach for test-time scaling with classifier guidance.
+We formalize this as an optimization problem below:
+min
+Δ
+​
+h
+i
+J
+=
+|
+f
+fuel
+(
+f
+sig
+(
+h
+i
+−
+7
+:
+i
+−
+1
+,
+h
+i
++
+Δ
+h
+i
+;
+θ
+sig
+)
+;
+θ
+fuel
+)
+−
+r
+target
+|
+\min_{\Delta h_{i}}J=|f_{\text{fuel}}(f_{\text{sig}}(h_{i-7:i-1},h_{i}+\Delta h_{i};\theta_{\text{sig}});\theta_{\text{fuel}})-r_{\text{target}}|
+(4)
+Since
+f
+fuel
+f_{\text{fuel}}
+and
+f
+sig
+f_{\text{sig}}
+are differentiable, a natural approach is gradient ascend/descent:
+Δ
+​
+h
+i
+=
+η
+​
+∂
+J
+∂
+h
+i
+\Delta h_{i}=\eta\frac{\partial J}{\partial h_{i}}
+where
+η
+\eta
+is a scalar. However, in practice, since gradient magnitudes vary across models, pinpointing a good set of
+η
+\eta
+applicable to all models is difficult. We address this by applying normalized gradient ascend/descend
+[
+40
+]
+, as shown in Equation (
+5
+):
+h
+i
+:=
+h
+i
++
+η
+⋅
+∂
+J
+∂
+h
+i
+/
+‖
+∂
+J
+∂
+h
+i
+‖
+2
+h_{i}:=h_{i}+\eta\cdot\frac{\partial J}{\partial h_{i}}/||\frac{\partial J}{\partial h_{i}}||_{2}
+(5)
+We call
+η
+\eta
+the
+CoT modulation factor
+, where positive
+η
+\eta
+values increase the fuel level (longer CoT), while negative
+η
+\eta
+values decrease the fuel level (shorter CoT).
+Section
+6.5
+demonstrates that changes in
+η
+\eta
+reliably influence both CoT length and response quality, validating our method as the first to achieve test-time scaling with classifier guidance and confirming our hypotheses in Sections
+4.1
+and
+4.2
+.
+6
+Experiments
+In this section, we evaluate our Fuel Gauge and its application. We first evaluate the fuel level prediction accuracy (Stage 1, Section
+4.4
+) in Section
+6.2
+, which forms basis of our method and its applications. Next, we test the CoT length prediction accuracy (Stage 2, Section
+4.4
+) in Section
+6.3
+. Finally, in Sections
+6.4
+and
+6.5
+, we evaluate our Fuel Gauge on two downstream tasks, namely memory allocation prediction and CoT modulation, demonstrating the effectiveness and practical potential of our method.
+Due to space limitations, additional content is provided in the Appendix: Section
+A
+describes the experimental setup in detail, Section
+B
+presents additional experimental results, Section
+C
+reports the ablation study of our Fuel Gauge, and Section
+D
+evaluates its computational overhead.
+Validation of Hypotheses:
+We validate the hypotheses proposed in Sections
+4.1
+and
+4.2
+through two complementary approaches. First, we perform direct validation by evaluating the effectiveness of the Fuel Gauge which relies on both hypotheses on fuel level prediction and CoT length prediction tasks.
+Second, we perform indirect validation via contradiction by evaluating the Fuel Gauge on the CoT length modulation task. The rationale is as follows: if CoT length is not predictable (Hypothesis I) or if the signal indicating fuel level does not exist (Hypothesis II), then the reading of Fuel Gauge would result from overfitting to noise superficially correlated with CoT length. Consequently, gradient-based alterations in Section
+5.2
+of the Fuel Gauge would only change the fuel level reading itself without producing meaningful changes in the CoT length. Therefore, if we observe consistent and meaningful changes in the CoT length during modulation, this supports the validity of our hypotheses.
+Method
+Same Modality, Task-to-Task Generalization, rMAE
+↓
+\downarrow
+Image-to-Video & Task-to-Task Generalization, rMAE
+↓
+\downarrow
+GPQA-Diamond
+MathVision-m
+LongVideoBench-15
+LongVideoBench-60
+Qwen3-4B
+Qwen3-8B
+Qwen3VL-2B
+Qwen3VL-4B
+Qwen3VL-2B
+Qwen3VL-4B
+Qwen3VL-2B
+Qwen3VL-4B
+Mean
+0.5721
+0.5003
+0.6798
+0.7982
+3.159
+3.706
+7.384
+4.887
+Median
+0.5967
+0.5212
+0.7621
+0.8931
+3.557
+4.122
+7.967
+5.410
+Direct
+0.4932
+0.5795
+0.4748
+0.4965
+9.833
+4.782
+10.397
+5.877
+Fuel Gauge
+0.3185
+0.2732
+0.2934
+0.3139
+0.4834
+0.4527
+0.5049
+0.4645
+Table 1
+:
+Results for CoT length prediction. Values are in rMAE, hence the lower the better. The best results are highlighted. Baseline methods are introduced in Section
+6.1
+. GPQA-Diamond and MathVison show the generalizability of Fuel Gauge from general tasks to specialized tasks, and LongVideoBench shows the both the cross-task and cross-modality (
+i.e.
+, text-image to text-video) generalizability.
+6.1
+Experimental Setup and Benchmarks
+All models and benchmarks are publicly available. All experiments are conducted on a single NVIDIA A6000 GPU. For text-only question answering, we evaluate Qwen3-4B and Qwen3-8B
+[
+1
+]
+on the GPQA-Diamond
+[
+41
+]
+, AIME24
+[
+42
+]
+, and AIME25
+[
+42
+]
+benchmarks.
+For image–text question answering, we test Qwen3VL-2B and Qwen3VL-4B
+[
+6
+]
+on MathVision-m
+[
+43
+]
+, a subset of MathVision containing 300 questions.
+For video–text question answering, we evaluate Qwen3VL-2B and Qwen3VL-4B on LongVideoBench-15 and LongVideoBench-60
+[
+44
+]
+, corresponding to subsets with 0–15 s and 15–60 s videos, respectively.
+For the text-only models (Qwen3-4B and Qwen3-8B), the Fuel Gauge is trained on CoT traces generated from the first 200 questions in the MMLU benchmark.
+For the text-vision models (Qwen3VL-2B and Qwen3VL-4B), the Fuel Gauge is trained on CoT traces from the first 200 questions in the MMMU benchmark.
+All evaluations are repeated five times with different random seeds. For AIME24 and AIME25, experiments are repeated ten times due to the small benchmark size.
+As this work is the first to introduce the fuel level and CoT length predictions, we choose several baseline methods for comparison.
+Baselines for Fuel Level Prediction:
+•
+Mean / Median
+: Assume all CoTs share the average or median length. The predicted fuel level is the current CoT position divided by this assumed length (
+N
+N
+).
+•
+End-of-CoT (EoC) Prob
+: Uses the probability of the special End-of-CoT token (
+e.g.
+, “</think>”, shown in Figure
+1
+) at each CoT step as the predicted fuel level.
+Baselines for CoT Length Prediction:
+•
+Mean / Median
+: Same assumption as above.
+•
+Direct
+: Predicts the CoT length directly using the same inputs and model as the Fuel Gauge (see Section
+4.4
+).
+Baseline for Predictive KV Cache Allocator:
+“
+HF
+” is the default KV Cache allocation strategy adopted by the HuggingFace
+[
+45
+]
+framework, which allocates a block of KV cache for 16 tokens when the model runs out of memory.
+Baseline for CoT Length Modulation:
+We use CoT without modulation as the baseline,
+i.e.
+,
+η
+=
+0
+\eta=0
+in Equation (
+5
+).
+Due to the large variance in ground-truth values, we use the
+relative mean absolute error
+(rMAE) as the evaluation metric for both fuel level and CoT length prediction.
+Given
+M
+M
+evaluation samples, where each sample
+i
+i
+has a CoT of length
+N
+i
+N_{i}
+, and at each step
+t
+t
+we have a prediction
+y
+i
+,
+t
+y_{i,t}
+, and ground truth
+y
+^
+i
+,
+t
+\hat{y}_{i,t}
+, rMAE is defined as:
+rMAE
+=
+∑
+i
+=
+1
+M
+∑
+t
+=
+1
+N
+i
+|
+y
+i
+,
+t
+−
+y
+^
+i
+,
+t
+|
+∑
+i
+=
+1
+M
+∑
+t
+=
+1
+N
+i
+|
+y
+^
+i
+,
+t
+|
+\text{rMAE}=\frac{\sum_{i=1}^{M}\sum_{t=1}^{N_{i}}|y_{i,t}-\hat{y}_{i,t}|}{\sum_{i=1}^{M}\sum_{t=1}^{N_{i}}|\hat{y}_{i,t}|}
+(6)
+Method
+GPQA-Diamond
+MathVision-m
+Qwen3-4B
+Qwen3-8B
+Qwen3VL-2B
+Qwen3VL-4B
+Mean
+0.2860
+0.2501
+0.3399
+0.3991
+Median
+0.3161
+0.2743
+0.4620
+0.5611
+EoC Prob
+0.4999
+0.4999
+0.4999
+0.4999
+Fuel Gauge
+0.1588
+0.1322
+0.1186
+0.1321
+Table 2
+:
+Evaluation of the accuracy of fuel level estimation. All number are relative mean absolute error, so smaller is better.
+6.2
+Fuel Level Prediction
+Table
+2
+presents the results of evaluating fuel level estimation (Section
+4.4
+). On both text-only and text-image benchmarks,
+i.e.
+, GPQA-Diamond and MathVision-m, our Fuel Gauge significantly outperforms baseline methods, reducing estimation error by half or more. This strong performance provides a solid foundation for all subsequent tasks.
+Figure 4
+:
+CoT length prediction result with Qwen3-8B model on GPQA-Diamond benchmark. The prediction of our Fuel Gauge evolves as CoT progresses while the baseline fails.
+In contrast, static estimations such as “Mean” and “Median” perform poorly, particularly on the MathVision benchmark, where the error reaches 0.5611. This is due to the high variance in CoT lengths. For instance, as shown in Figure
+, CoT lengths are widely scattered between 0 and the manually set maximum, so using the mean or median alone cannot adequately capture the distribution.
+The “EoC Prob” method performs even worse. Since the probability of the special token marking the end of a CoT is nearly zero most of the time except when the LMM decides to stop, the fuel level estimate rMAE error remains around 0.4999, regardless of the actual CoT lengths across benchmarks.
+Overall, these results validate our Fuel Gauge and provide direct support for Hypothesis II in Section
+4.2
+: there exists a signal indicating the fuel level in CoT.
+Method
+Same Domain, Task-to-Task Generalization, #Allocs
+↓
+\downarrow
+Image-to-Video & Task-to-Task Generalization, #Allocs
+↓
+\downarrow
+GPQA-Diamond
+MathVision-m
+LongVideoBench-15
+LongVideoBench-60
+Qwen3-4B
+Qwen3-8B
+Qwen3VL-2B
+Qwen3VL-4B
+Qwen3VL-2B
+Qwen3VL-4B
+Qwen3VL-2B
+Qwen3VL-4B
+HF
+[
+45
+]
+491.0
+533.0
+682.6
+544.0
+41.79
+42.82
+44.63
+43.62
+Fuel Gauge
+49.24
+39.87
+69.43
+59.10
+18.56
+23.10
+23.60
+27.81
+Reduction
+9.971
+×
+\times
+13.37
+×
+\times
+9.831
+×
+\times
+9.205
+×
+\times
+2.252
+×
+\times
+1.854
+×
+\times
+1.891
+×
+\times
+1.569
+×
+\times
+Table 3
+:
+Results for predictive memory allocation. “#Allocs” is short for the number of required memory allocations. Lower is better.
+6.3
+CoT Length Prediction
+Figure 5
+:
+CoT length and LMM accuracy for different CoT modulation factors
+η
+\eta
+. Results are obtained with Qwen3-4B model on GPQA-Diamond benchmark. Orange star denotes the baseline case where no CoT modulation is applied. Figure (a) shows that Fuel Gauge controls the CoT length linearly. Then Figure (b) shows that the change in CoT length linearly translates to a change in accuracy. Finally Figure (c) shows that based on the linearity in figures (a) and (b), we can achieve our target and control the accuracy linearly with
+η
+\eta
+.
+Figure 6
+:
+CoT length and LMM accuracy under different CoT modulation factors
+η
+\eta
+on more benchmarks and models. “OOD” denotes that results are obtained from image-to-video Out-Of-Domain generalization with our Fuel Gauge. “LVB” is short for “LongVideoBench”. By changing
+η
+\eta
+from -1 to 1, our Fuel Gauge consistently modulates both CoT length and accuracy linearly, thus demonstrating the wide-applicability of our Fuel Gauge. The green star shows the baseline without modulation. Red and orange markers indicate CoT modulation with positive or negative
+η
+\eta
+, corresponding to gradient ascent or descent (Equation
+5
+), yielding longer or shorter CoT.
+Table
+1
+presents the experimental results for CoT length prediction. Across all four benchmarks, our Fuel Gauge outperforms all baselines by a large margin. For instance, on GPQA-Diamond with the Qwen3-8B model, our method achieves less than half the error of the “Direct” baseline (see Section
+6.1
+), which uses the same neural network architecture and data source. Figure
+4
+illustrates CoT length prediction at runtime on GPQA-Diamond with Qwen3-8B. As the CoT progresses, the Fuel Gauge effectively incorporates new information, steadily updating predictions toward the ground truth. In contrast, the “Direct” baseline barely adjusts its estimates, even after processing thousands of tokens. This demonstrates not only the effectiveness of our Fuel Gauge, but also directly supports Hypothesis I in Section
+4.1
+: CoT length can be predicted in advance.
+Prediction Generalizability:
+Our Fuel Gauge exhibits strong generalizability. As described in Section
+6.1
+, it is trained on only 200 samples from MMLU and MMMU for text-only and multi-modal models, respectively. Consequently, the four benchmarks in Table
+1
+present varying levels of generalization challenge.
+Specifically, GPQA-Diamond and MathVision-m share the same input modality as MMLU and MMMU, respectively, but differ in task focus, emphasizing deeper knowledge and reasoning. LongVideoBench introduces both modality and task shifts, requiring generalization from image understanding to video reasoning. Despite these variations, our Fuel Gauge consistently provides accurate CoT length estimates.
+In contrast, all baseline methods struggle to generalize. For example, on LongVideoBench, the neural network used in the “Direct” baseline, trained on MMMU, fails to produce reasonable CoT lengths due to the large discrepancy between MMMU’s CoT lengths and the much shorter CoTs for LongVideoBench. By dividing CoT length prediction into two stages,
+i.e.
+, fuel level prediction and CoT length estimation update, our method achieves superior generalizability while using the same model as the baseline.
+6.4
+Application 1: Predictive KV Cache Allocator
+In this section, we evaluate the effectiveness of our Fuel Gauge in the downstream task of predictive KV cache allocation. Table
+3
+compares the memory allocation requirements of the baseline “HF” method with our Fuel Gauge–based allocator. Across all benchmarks, our method consistently requires significantly fewer memory allocations. For instance, on the MathVision-m benchmark with Qwen3VL-2B, our approach reduces memory allocation frequency by a factor of 9.8.
+By leveraging CoT length prediction via Fuel Gauge, we can predict the required KV cache size and allocate it in one shot. This reduces the burden on the memory system by lowering allocation frequency, which in turn minimizes memory fragmentation and improves memory utilization.
+6.5
+Application 2: CoT Length Modulation
+In this section, we evaluate the effectiveness of our Fuel Gauge in modulating the CoT process (Section
+5.2
+). Figures
+5
+and
+6
+present the experimental results for CoT length modulation, with Figure
+5
+showing detailed results for Qwen3-4B on GPQA-Diamond while Figure
+6
+covering broader model–benchmark configurations. From Figure
+5
+, we observe the following:
+•
+Figure
+5
+(a): The CoT modulation factor
+η
+\eta
+correlates linearly with the CoT Length.
+•
+Figure
+5
+(b): Changes in CoT length translate linearly to accuracy.
+•
+Figure
+5
+(c): Base on the linearity in previous two findings, accuracy can be linearly controlled by adjusting the CoT modulation factor
+η
+\eta
+.
+These findings demonstrate that our Fuel Gauge provides highly effective and stable control over the LMM CoT process: a single factor
+η
+\eta
+allows linear adjustment of CoT length, which in turn translates linearly to model accuracy. Figures
+6
+and Table
+4
+further show the broad applicability of the Fuel Gauge across different models and benchmarks, consistently enabling effective linear control of accuracy. This high degree of controllability allows users to efficiently intervene when an LMM is under-thinking or over-thinking.
+Moreover, these results provide additional validation for the hypotheses in Sections
+4.1
+and
+4.2
+. If either hypothesis were invalid, the Fuel Gauge would likely fail to achieve stable and consistent linear control over CoT length (see rationale at the beginning of Section
+6
+). The observed linearity therefore supports both hypotheses and confirms the effectiveness of our Fuel Gauge.
+6.6
+Ablations and Overhead Analysis
+Due to space limitations, we include the ablation study and the overhead analysis in the Appendix. Specifically, Appendix
+C
+presents experiments that justify our design choices by evaluating the Fuel Gauge under:
+•
+varying numbers of parameters for
+f
+sig
+f_{\text{sig}}
+and
+f
+fuel
+f_{\text{fuel}}
+,
+•
+different window sizes for
+f
+sig
+f_{\text{sig}}
+, and
+•
+alternative loss functions in Equation
+3
+.
+Appendix
+D
+further shows that the computational overhead introduced by the Fuel Gauge is negligible.
+Modality
+η
+\eta
+to Length
+Length to Acc
+η
+\eta
+to Acc
+Text
+→
+\rightarrow
+Text
+0.9936
+0.9754
+0.9722
+Image
+→
+\rightarrow
+Image
+0.9932
+0.9988
+0.9866
+Image
+→
+\rightarrow
+Video
+0.9908
+0.9835
+0.9537
+Table 4
+:
+Absolute Pearson correlation among the CoT modulation coefficient
+η
+\eta
+, CoT length and CoT accuracy (“Acc”). “Modality” lists the training and testing modality of our Fuel Gauge.
+7
+Conclusion
+In this paper, we have presented Fuel Gauge, the first framework to enable CoT length prediction for reasoning LMMs.
+To this end, we have addressed challenges arising from CoTs of unknown lengths, including low resource utilization due to memory fragmentation and sub-optimal performance caused by over-thinking or under-thinking.
+Observing that CoTs follow a Bernoulli process, we first hypothesize that CoT length is predictable
+a priori
+. Inspired by the human brain, where certain chemicals provide “fuel” for thinking, we further hypothesize the existence of a hidden “fuel level” signal that reflects the energy available for CoT and can be used to predict its length.
+Building on these hypotheses, we have designed the Fuel Gauge,
+i.e.
+, a compact neural network that can successfully extract this hidden fuel level signal. Using the Fuel Gauge, we can predict CoT length by extrapolating the time step at which the fuel level reaches zero.
+Finally, we have shown two practical applications of the Fuel Gauge: predictive KV cache allocation and CoT length modulation. Extensive evaluations across multiple models, benchmarks, and modalities validate our hypotheses and demonstrate the practical value of the Fuel Gauge.
+References
+[1]
+An Yang, Anfeng Li, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chang Gao, Chengen Huang, Chenxu Lv, et al.
+Qwen3 technical report.
+arXiv preprint arXiv:2505.09388
+, 2025.
+[2]
+Daya Guo, Dejian Yang, Haowei Zhang, Junxiao Song, Ruoyu Zhang, Runxin Xu, Qihao Zhu, Shirong Ma, Peiyi Wang, Xiao Bi, et al.
+Deepseek-r1: Incentivizing reasoning capability in llms via reinforcement learning.
+arXiv preprint arXiv:2501.12948
+, 2025.
+[3]
+Lei Bai, Zhongrui Cai, Yuhang Cao, Maosong Cao, Weihan Cao, Chiyu Chen, Haojiong Chen, Kai Chen, Pengcheng Chen, Ying Chen, et al.
+Intern-s1: A scientific multimodal foundation model.
+arXiv preprint arXiv:2508.15763
+, 2025.
+[4]
+Aaron Hurst, Adam Lerer, Adam P Goucher, Adam Perelman, Aditya Ramesh, Aidan Clark, AJ Ostrow, Akila Welihinda, Alan Hayes, Alec Radford, et al.
+Gpt-4o system card.
+arXiv preprint arXiv:2410.21276
+, 2024.
+[5]
+OpenAI.
+Gpt-5 system card.
+https://openai.com/index/gpt-5-system-card/
+, 2025.
+Accessed: YYYY-MM-DD.
+[6]
+Qwen Team.
+Qwen3‑vl: Sharper vision, deeper thought, broader action.
+https://github.com/QwenLM/Qwen3‑VL
+, 2025.
+Apache‑2.0 license.
+[7]
+Woosuk Kwon, Zhuohan Li, Siyuan Zhuang, Ying Sheng, Lianmin Zheng, Cody Hao Yu, Joseph Gonzalez, Hao Zhang, and Ion Stoica.
+Efficient memory management for large language model serving with pagedattention.
+In
+Proceedings of the 29th symposium on operating systems principles
+, pages 611–626, 2023.
+[8]
+Yuzhen Mao, Qitong Wang, Martin Ester, and Ke Li.
+Efficient and accurate kv-cache management for long-sequence llms.
+In
+ES-FoMo III: 3rd Workshop on Efficient Systems for Foundation Models
+.
+[9]
+Chen Zhang, Kuntai Du, Shu Liu, Woosuk Kwon, Xiangxi Mo, Yufeng Wang, Xiaoxuan Liu, Kaichao You, Zhuohan Li, Mingsheng Long, et al.
+Jenga: Effective memory management for serving llm with heterogeneity.
+In
+Proceedings of the ACM SIGOPS 31st Symposium on Operating Systems Principles
+, pages 446–461, 2025.
+[10]
+Jiale Xu, Rui Zhang, Cong Guo, Weiming Hu, Zihan Liu, Feiyang Wu, Yu Feng, Shixuan Sun, Changxu Shao, Yuhong Guo, et al.
+vtensor: Flexible virtual tensor management for efficient llm serving.
+arXiv preprint arXiv:2407.15309
+, 2024.
+[11]
+Xingyu Chen, Jiahao Xu, Tian Liang, Zhiwei He, Jianhui Pang, Dian Yu, Linfeng Song, Qiuzhi Liu, Mengfei Zhou, Zhuosheng Zhang, et al.
+Do not think that much for 2+ 3=? on the overthinking of o1-like llms.
+arXiv preprint arXiv:2412.21187
+, 2024.
+[12]
+Pranjal Aggarwal, Seungone Kim, Jack Lanchantin, Sean Welleck, Jason Weston, Ilia Kulikov, and Swarnadeep Saha.
+Optimalthinkingbench: Evaluating over and underthinking in llms.
+arXiv preprint arXiv:2508.13141
+, 2025.
+[13]
+Keqin Peng, Liang Ding, Yuanxin Ouyang, Meng Fang, and Dacheng Tao.
+Revisiting overthinking in long chain-of-thought from the perspective of self-doubt.
+arXiv preprint arXiv:2505.23480
+, 2025.
+[14]
+Yue Wang, Qiuzhi Liu, Jiahao Xu, Tian Liang, Xingyu Chen, Zhiwei He, Linfeng Song, Dian Yu, Juntao Li, Zhuosheng Zhang, et al.
+Thoughts are all over the place: On the underthinking of o1-like llms.
+arXiv preprint arXiv:2501.18585
+, 2025.
+[15]
+Sebastian C Holst and Hans-Peter Landolt.
+Sleep homeostasis, metabolism, and adenosine.
+Current Sleep Medicine Reports
+, 1(1):27–37, 2015.
+[16]
+Carolin Franziska Reichert, Tom Deboer, and Hans-Peter Landolt.
+Adenosine, caffeine, and sleep–wake regulation: state of the science and perspectives.
+Journal of sleep research
+, 31(4):e13597, 2022.
+[17]
+Jason Wei, Xuezhi Wang, Dale Schuurmans, Maarten Bosma, Fei Xia, Ed Chi, Quoc V Le, Denny Zhou, et al.
+Chain-of-thought prompting elicits reasoning in large language models.
+Advances in neural information processing systems
+, 35:24824–24837, 2022.
+[18]
+Yubo Wang, Xueguang Ma, Ge Zhang, Yuansheng Ni, Abhranil Chandra, Shiguang Guo, Weiming Ren, Aaran Arulraj, Xuan He, Ziyan Jiang, et al.
+Mmlu-pro: A more robust and challenging multi-task language understanding benchmark.
+Advances in Neural Information Processing Systems
+, 37:95266–95290, 2024.
+[19]
+Xinrun Du, Yifan Yao, Kaijing Ma, Bingli Wang, Tianyu Zheng, King Zhu, Minghao Liu, Yiming Liang, Xiaolong Jin, Zhenlin Wei, et al.
+Supergpqa: Scaling llm evaluation across 285 graduate disciplines.
+arXiv preprint arXiv:2502.14739
+, 2025.
+[20]
+Dan Hendrycks, Collin Burns, Saurav Kadavath, Akul Arora, Steven Basart, Eric Tang, Dawn Song, and Jacob Steinhardt.
+Measuring mathematical problem solving with the math dataset.
+In
+Thirty-fifth Conference on Neural Information Processing Systems Datasets and Benchmarks Track (Round 2)
+.
+[21]
+Zheng Chu, Jingchang Chen, Qianglong Chen, Weijiang Yu, Tao He, Haotian Wang, Weihua Peng, Ming Liu, Bing Qin, and Ting Liu.
+Navigate through enigmatic labyrinth a survey of chain of thought reasoning: Advances, frontiers and future.
+In
+Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers)
+, pages 1173–1203, 2024.
+[22]
+Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Xiao Bi, Haowei Zhang, Mingchuan Zhang, YK Li, Yang Wu, et al.
+Deepseekmath: Pushing the limits of mathematical reasoning in open language models.
+arXiv preprint arXiv:2402.03300
+, 2024.
+[23]
+Sandhini Agarwal, Lama Ahmad, Jason Ai, Sam Altman, Andy Applebaum, Edwin Arbus, Rahul K Arora, Yu Bai, Bowen Baker, Haiming Bao, et al.
+gpt-oss-120b & gpt-oss-20b model card.
+arXiv preprint arXiv:2508.10925
+, 2025.
+[24]
+Nishant Subramani, Nivedita Suresh, and Matthew E Peters.
+Extracting latent steering vectors from pretrained language models.
+arXiv preprint arXiv:2205.05124
+, 2022.
+[25]
+Sumanth Dathathri, Andrea Madotto, Janice Lan, Jane Hung, Eric Frank, Piero Molino, Jason Yosinski, and Rosanne Liu.
+Plug and play language models: A simple approach to controlled text generation.
+In
+International Conference on Learning Representations
+, 2020.
+[26]
+Nathaniel Li, Alexander Pan, Anjali Gopal, Summer Yue, Daniel Berrios, Alice Gatti, Justin D Li, Ann-Kathrin Dombrowski, Shashwat Goel, Long Phan, et al.
+The wmdp benchmark: Measuring and reducing malicious use with unlearning.
+arXiv preprint arXiv:2403.03218
+, 2024.
+[27]
+Dang Huu-Tien, Trung-Tin Pham, Hoang Thanh-Tung, and Naoya Inoue.
+On effects of steering latent representation for large language model unlearning.
+arXiv preprint arXiv:2408.06223
+, 2024.
+[28]
+William F Shen, Xinchi Qiu, Meghdad Kurmanji, Alex Iacob, Lorenzo Sani, Yihong Chen, Nicola Cancedda, and Nicholas D Lane.
+Lunar: Llm unlearning via neural activation redirection.
+arXiv preprint arXiv:2502.07218
+, 2025.
+[29]
+Prafulla Dhariwal and Alexander Nichol.
+Diffusion models beat gans on image synthesis.
+Advances in neural information processing systems
+, 34:8780–8794, 2021.
+[30]
+John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov.
+Proximal policy optimization algorithms.
+arXiv preprint arXiv:1707.06347
+, 2017.
+[31]
+Aohan Zeng, Xin Lv, Qinkai Zheng, Zhenyu Hou, Bin Chen, Chengxing Xie, Cunxiang Wang, Da Yin, Hao Zeng, Jiajie Zhang, et al.
+Glm-4.5: Agentic, reasoning, and coding (arc) foundation models.
+arXiv preprint arXiv:2508.06471
+, 2025.
+[32]
+Prasann Singhal, Tanya Goyal, Jiacheng Xu, and Greg Durrett.
+A long way to go: Investigating length correlations in rlhf.
+arXiv preprint arXiv:2310.03716
+, 2023.
+[33]
+Nathan Lambert.
+Reinforcement learning from human feedback.
+arXiv preprint arXiv:2504.12501
+, 2025.
+[34]
+Yuyang Wu, Yifei Wang, Ziyu Ye, Tianqi Du, Stefanie Jegelka, and Yisen Wang.
+When more is less: Understanding chain-of-thought length in llms.
+arXiv preprint arXiv:2502.07266
+, 2025.
+[35]
+Xiao-Hong Zhu, Hongyan Qiao, Fei Du, Qiang Xiong, Xiao Liu, Xiaoliang Zhang, Kamil Ugurbil, and Wei Chen.
+Quantitative imaging of energy expenditure in human brain.
+Neuroimage
+, 60(4):2107–2117, 2012.
+[36]
+François Chollet.
+Xception: Deep learning with depthwise separable convolutions.
+In
+Proceedings of the IEEE conference on computer vision and pattern recognition
+, pages 1251–1258, 2017.
+[37]
+Dan Hendrycks, Collin Burns, Steven Basart, Andy Zou, Mantas Mazeika, Dawn Song, and Jacob Steinhardt.
+Measuring massive multitask language understanding.
+arXiv preprint arXiv:2009.03300
+, 2020.
+[38]
+Xiang Yue, Yuansheng Ni, Kai Zhang, Tianyu Zheng, Ruoqi Liu, Ge Zhang, Samuel Stevens, Dongfu Jiang, Weiming Ren, Yuxuan Sun, et al.
+Mmmu: A massive multi-discipline multimodal understanding and reasoning benchmark for expert agi.
+In
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition
+, pages 9556–9567, 2024.
+[39]
+Ross Girshick.
+Fast r-cnn.
+In
+Proceedings of the IEEE international conference on computer vision
+, pages 1440–1448, 2015.
+[40]
+Shen-Yi Zhao, Yin-Peng Xie, and Wu-Jun Li.
+On the convergence and improvement of stochastic normalized gradient descent.
+Science China Information Sciences
+, 64(3):132103, 2021.
+[41]
+David Rein, Betty Li Hou, Asa Cooper Stickland, Jackson Petty, Richard Yuanzhe Pang, Julien Dirani, Julian Michael, and Samuel R Bowman.
+Gpqa: A graduate-level google-proof q&a benchmark.
+In
+First Conference on Language Modeling
+, 2024.
+[42]
+Mathematical Association of America.
+American Invitational Mathematics Examination (AIME) 2024.
+https://www.maa.org
+, 2024.
+Accessed: 2025-11-11.
+[43]
+Ke Wang, Junting Pan, Weikang Shi, Zimu Lu, Houxing Ren, Aojun Zhou, Mingjie Zhan, and Hongsheng Li.
+Measuring multimodal mathematical reasoning with math-vision dataset.
+Advances in Neural Information Processing Systems
+, 37:95095–95169, 2024.
+[44]
+Haoning Wu, Dongxu Li, Bei Chen, and Junnan Li.
+Longvideobench: A benchmark for long-context interleaved video-language understanding.
+Advances in Neural Information Processing Systems
+, 37:28828–28857, 2024.
+[45]
+Thomas Wolf, Lysandre Debut, Victor Sanh, Julien Chaumond, Clement Delangue, Anthony Moi, Pierric Cistac, Tim Rault, Rémi Louf, Morgan Funtowicz, Joe Davison, Sam Shleifer, Patrick von Platen, Clara Ma, Yacine Jernite, Julien Plu, Canwen Xu, Teven Le Scao, Sylvain Gugger, Mariama Drame, Quentin Lhoest, and Alexander M. Rush.
+Transformers: State-of-the-art natural language processing.
+In
+Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing: System Demonstrations
+, pages 38–45, Online, October 2020. Association for Computational Linguistics.
+Appendix
+Appendix A
+More Details on the Experimental Setup
+We perform all experiments on a dedicated server equipped with an AMD EPYC 9554 CPU and eight NVIDIA RTX A6000 GPUs, each with 48 GB of VRAM. Although the machine hosts multiple GPUs, all training and inference experiments for this paper are executed using a single GPU, ensuring reproducibility and eliminating cross-GPU variability. The system runs a standard Linux environment with CUDA-compatible drivers suitable for large-scale model training.
+Our implementation uses PyTorch 2.8.0
+[
+1
+]
+as the primary deep learning framework. For text-only experiments, we rely on HuggingFace Transformers v4.53.2
+[
+45
+]
+; this provides stable support for the language models evaluated in these tasks. For multimodal and other non–text-only settings, we use Transformers v4.57.0, as this version includes updated support for the vision-language models and additional architectural features required by our experiments.
+Training Procedure for
+f
+fuel
+f_{\text{fuel}}
+and
+f
+sig
+f_{\text{sig}}
+Section
+4.4
+provides a high-level overview of the training strategy for the fuel estimator
+f
+fuel
+f_{\text{fuel}}
+and the signal extractor
+f
+sig
+f_{\text{sig}}
+. Here, we elaborate on the full training configuration. Both modules are trained independently using the AdamW optimizer
+[
+2
+]
+with a base learning rate of
+10
+−
+3
+10^{-3}
+, and a weight decay coefficient of
+10
+−
+4
+10^{-4}
+. To ensure stable optimization during the early phase of training, we employ a cosine learning-rate schedule with 1000 warm-up steps
+[
+3
+]
+, allowing the model to gradually adapt before entering the main decay phase.
+We train each model for a single epoch, which is sufficient due to the dense supervision signal and the relatively low-dimensional nature of both predictors. During training, batches are shuffled to improve statistical efficiency, and gradient updates are applied without gradient accumulation on our single-GPU setup. After the training epoch completes, we evaluate the models on a held-out validation set and save the resulting checkpoints for all subsequent inference-time experiments.
+Appendix B
+Additional Experimental Results
+B.1
+Experimental Results on LMM Intern-S1
+Figure S7
+:
+CoT length and LMM accuracy for Intern-S1-mini-8B with different CoT modulation factors
+η
+\eta
+. Orange star denotes the baseline case where no CoT modulation is applied. Figure (a) shows that Fuel Gauge controls the CoT length linearly. Figure (b) shows that the change in CoT length quasi-linearly translates to a change in accuracy. Finally, Figure (c) shows that based on the linearity in figures (a) and (b), we can achieve our target and control the accuracy quasi-linearly with
+η
+\eta
+.
+Method
+MathVision-m
+LVB-15
+LVB-60
+Fuel Level Estimation, rMAE
+↓
+\downarrow
+Mean (Section
+6.1
+)
+0.8098
+1.4544
+1.417
+Fuel Gauge
+0.1311
+0.2583
+0.2831
+CoT Length Prediction, rMAE
+↓
+\downarrow
+Mean (Section
+6.1
+)
+0.8550
+0.8598
+1.130
+Fuel Gauge
+0.4194
+0.4902
+0.4525
+KV Cache Allocatior, #Allocations
+↓
+\downarrow
+HF
+[
+45
+]
+380.3
+71.07
+63.79
+Fuel Gauge
+15.43
+34.12
+33.06
+Reduction
+24.6
+×
+\times
+2.08
+×
+\times
+1.93
+×
+\times
+Table S5
+:
+Evaluation results for Intern-S1-mini-8B are reported on MathVision-m, LongVideoBench-15 (LVB-15), and LongVideoBench-60 (LVB-60). MathVision-m demonstrates the generalizability of Fuel Gauge from general tasks to specialized tasks, while LongVideoBench highlights its generalizability across both tasks and modalities (
+i.e.
+, from text-image to text-video). Across all three benchmarks, Fuel Gauge significantly outperforms the baseline methods.
+In this section, we expand our evaluation to Intern-S1-mini-8B
+[
+3
+]
+model. Table
+S5
+presents the experimental results on fuel level estimation (Section
+6.2
+), CoT length estimation (Section
+6.3
+) and the downstream task predictive KV cache allocator (Section
+6.4
+). Figure
+S7
+shows the results for CoT length modulation (Section
+6.5
+). Accross all three tasks shown in the Table
+S5
+, our Fuel Gauge achieves significantly better results than baseline methods. Moreover, as shown in Figure
+S7
+, our Fuel Gauge provides highly effective and stable control over the LMM CoT process: a single factor
+η
+\eta
+allows linear adjustment of CoT length, which in turn translates linearly to model accuracy. In summary, these additional results on the Intern-S1-mini-8B model further demonstarate the wide-applicability of our method.
+B.2
+Example of Predictive KV Cache Allocator
+Figure S8
+:
+Examples of predictive KV-cache allocation. The baseline allocator (HF, Section
+6.1
+) performs frequent small, on-demand allocations (diagonal line in plots). With our Fuel Gauge, memory needs are predicted and allocated in larger chunks (stair line in plots), reducing allocation frequency and mitigating fragmentation.
+Figure
+S8
+presents five examples of predictive KV-cache allocation (Section
+5.1
+). A standard KV-cache allocator cannot anticipate future memory needs and therefore allocates memory only when necessary, resulting in many small allocations—visualized as a diagonal line in Figure
+S8
+. In contrast, our Fuel Gauge allows the allocator to predict memory requirements in advance, enabling it to allocate a large block of memory in a single step, shown as the “stairs” pattern in Figure
+S8
+. As demonstrated in Table
+3
+and Figure
+S8
+, this approach greatly reduces the frequency of memory allocation and release, thereby mitigating memory fragmentation.
+B.3
+Detailed Results for CoT Length Modulation in Figure
+6
+Figures
+S11
+,
+S12
+,
+S13
+, and
+S14
+present more detailed results on CoT modulation (placed at the end of the Appendix due to the spacing issues). Across all combinations of LMMs and benchmarks, our Fuel Gauge method consistently enables effective, linear control over CoT length, which in turn leads to correspondingly linear changes in accuracy. This high level of controllability allows users to efficiently intervene when an LMM is either under- or over-thinking.
+These results also provide additional support for the hypotheses in Sections
+4.1
+and
+4.2
+. If either hypothesis were incorrect, the Fuel Gauge would likely fail to maintain stable and consistent linear control of CoT length (see the rationale at the beginning of Section
+6
+). The observed linear relationships therefore reinforce both hypotheses and confirm the effectiveness of our Fuel Gauge.
+Appendix C
+Ablation Study
+C.1
+Number of Parameters for
+f
+sig
+f_{\text{sig}}
+and
+f
+fuel
+f_{\text{fuel}}
+We change the number of parameters for
+f
+sig
+f_{\text{sig}}
+and
+f
+fuel
+f_{\text{fuel}}
+by varying the number of channels for the convolutional layers and MLP layers of the model.
+Figure S9
+:
+Fuel level estimation accuracy with different number of channels for
+f
+sig
+f_{\text{sig}}
+and
+f
+fuel
+f_{\text{fuel}}
+for Qwen3-4B on MMLU. Star denotes the adopted design choice for Fuel Gauge.
+As shown in Figure
+S9
+, our design choice of 32-channels in
+f
+fuel
+f_{\text{fuel}}
+and
+f
+sig
+f_{\text{sig}}
+yields the best fuel level estimation accuracy. A channel number other than 32 leads to either overfitting or under-fitting issue on the training samples. This supports our design choice for the Fuel Gauge.
+C.2
+Window Size for
+f
+sig
+f_{\text{sig}}
+Figure S10
+:
+Fuel level estimation accuracy with different sizes of window adopted in
+f
+sig
+f_{\text{sig}}
+for Qwen3-4B on MMLU. Star denotes the adopted design choice for the Fuel Gauge.
+Figure
+S10
+shows the evaluation result for changing the window size adopted in
+f
+sig
+f_{\text{sig}}
+. For example, as described in Section
+4.4
+, at time step
+i
+i
+, we use only the most recent 8 hidden states
+h
+i
+−
+7
+:
+i
+h_{i-7:i}
+recorded from LMM as the input to
+f
+sig
+f_{\text{sig}}
+, namely, with a window size of 8. As shown in Figure
+S10
+, changing the window size other than 8 leads to a worse performance. This is because using a larger window size may lead to the staleness in updating prediction while using a smaller window size provides insufficient information to
+f
+sig
+f_{\text{sig}}
+for hidden signal extraction, whereas our design choice of a window size 8 strikes the balance between agileness in updating the prediction and quality in prediction, thus supporting our design choice.
+C.3
+Loss Function in Equation
+3
+Loss Function
+Test rMAE
+↓
+\downarrow
+MSE
+0.1323
+MAE
+0.1311
+Smooth L1 (
+β
+=
+0.1
+\beta=0.1
+)
+0.1317
+Smooth L1 (
+β
+=
+0.01
+\beta=0.01
+)
+0.1300
+Smooth L1 (
+β
+=
+0.001
+\beta=0.001
+)
+0.1311
+Table S6
+:
+Fuel level estimation accuracy with different loss function in Equation
+3
+for Qwen3-4B on MMLU. Bold denotes the adopted design choice for the Fuel Gauge.
+Table
+S6
+shows the evaluation results for changing the loss functions adopted in the training process for
+f
+sig
+f_{\text{sig}}
+and
+f
+fuel
+f_{\text{fuel}}
+in Equation
+3
+. We consider three loss functions: mean-square error (MSE), mean absolute error (MAE) and smooth L1 loss (smooth L1), where the smooth L1 loss can be formulated as following:
+L
+S
+​
+L
+​
+1
+​
+(
+y
+i
+,
+t
+,
+y
+^
+i
+,
+t
+)
+=
+{
+0.5
+​
+(
+y
+i
+,
+t
+−
+y
+^
+i
+,
+t
+)
+2
+/
+β
+,
+|
+y
+i
+,
+t
+−
+y
+^
+i
+,
+t
+|
+<
+β
+|
+y
+i
+,
+t
+−
+y
+^
+i
+,
+t
+|
+−
+0.5
+​
+β
+,
+|
+y
+i
+,
+t
+−
+y
+^
+i
+,
+t
+|
+≥
+β
+L_{SL1}(y_{i,t},\hat{y}_{i,t})=\begin{cases}0.5(y_{i,t}-\hat{y}_{i,t})^{2}/\beta,&|y_{i,t}-\hat{y}_{i,t}|<\beta\\
+|y_{i,t}-\hat{y}_{i,t}|-0.5\beta,&|y_{i,t}-\hat{y}_{i,t}|\geq\beta\\
+\end{cases}
+(7)
+In Equation
+3
+, we adopt smooth L1 with
+β
+=
+0.01
+\beta=0.01
+as our loss function. As shown in Table
+S6
+, our design choice yields the best performance on the benchmark. This is because the smooth L1 with
+β
+=
+0.01
+\beta=0.01
+strikes the best balance between the MSE loss, which is sensitive to errors but not robust to outliers, and the MAE loss, which is robust to outliers but not sensitive to large errors.
+Appendix D
+Overhead Analysis
+Given its small size, the overhead of our Fuel Gauge is negligible. As shown in Table
+S7
+, the Fuel Gauge for the Qwen3-4B model contains only 82k parameters and processes 792.7 tokens per second with a batch size of 1. Increasing the batch size to 32 boosts the throughput to 11k tokens per second. In comparison, the Qwen3-4B model itself has 4 billion parameters with only 22.4 tokens per second throughput. Thus, the additional cost of the Fuel Gauge is indeed minimal.
+Model
+Throughput
+#Parameters
+Qwen3-4B
+22.4 Token / s
+4B
+Fuel Gauge [Batch Size=1]
+792.7 Token / s
+82.24k
+Fuel Gauge [Batch Size=32]
+11217.3 Token / s
+82.24k
+Table S7
+:
+Overhead of Fuel Gauge on NVIDIA A6000 GPU. Results show that the time and memory spent in Fuel Gauge is negligible.
+Figures for CoT Length Modulations in Section
+B
+are in Next Page.
+References
+[1]
+Paszke, Adam, Sam Gross, Francisco Massa, Adam Lerer, James Bradbury, Gregory Chanan, Trevor Killeen et al. ”Pytorch: An imperative style, high-performance deep learning library.” Advances in neural information processing systems 32 (2019).
+[2]
+Loshchilov, Ilya, and Frank Hutter. ”Decoupled weight decay regularization.” arXiv preprint arXiv:1711.05101 (2017).
+[3]
+Loshchilov, Ilya, and Frank Hutter. ”Sgdr: Stochastic gradient descent with warm restarts.” arXiv preprint arXiv:1608.03983 (2016).
+[4]
+Casella, George, and Roger Berger. Statistical inference. Chapman and Hall/CRC, 2024.
+Figure S11
+:
+CoT length and LMM accuracy for different CoT modulation factors
+η
+\eta
+. Results are obtained with Qwen3-4B model on multiple benchmarks. Orange star denotes the baseline case where no CoT modulation is applied. Figure (a) shows that Fuel Gauge controls the CoT length linearly. Figure (b) shows that the change in CoT length quasi-linearly translates to a change in accuracy. Finally Figure (c) shows that based on the quasi-linearity in figures (a) and (b), we can achieve our target and control the accuracy quasi-linearly with
+η
+\eta
+.
+Figure S12
+:
+CoT length and LMM accuracy for different CoT modulation factors
+η
+\eta
+. Results are obtained with Qwen3-8B model on multiple benchmarks. Orange star denotes the baseline case where no CoT modulation is applied. Figure (a) shows that Fuel Gauge controls the CoT length linearly. Figure (b) shows that the change in CoT length quasi-linearly translates to a change in accuracy. Finally Figure (c) shows that based on the quasi-linearity in figures (a) and (b), we can achieve our target and control the accuracy quasi-linearly with
+η
+\eta
+.
+Figure S13
+:
+CoT length and LMM accuracy for different CoT modulation factors
+η
+\eta
+. Results are obtained with Qwen3VL-2B model on multiple benchmarks. Orange star denotes the baseline case where no CoT modulation is applied. Figure (a) shows that Fuel Gauge controls the CoT length linearly. Figure (b) shows that the change in CoT length quasi-linearly translates to a change in accuracy. Finally Figure (c) shows that based on the quasi-linearity in figures (a) and (b), we can achieve our target and control the accuracy quasi-linearly with
+η
+\eta
+.
+Figure S14
+:
+CoT length and LMM accuracy for different CoT modulation factors
+η
+\eta
+. Results are obtained with Qwen3VL-4B model on multiple benchmarks. Orange star denotes the baseline case where no CoT modulation is applied. Figure (a) shows that Fuel Gauge controls the CoT length linearly. Figure (b) shows that the change in CoT length quasi-linearly translates to a change in accuracy. Finally Figure (c) shows that based on the quasi-linearity in figures (a) and (b), we can achieve our target and control the accuracy quasi-linearly with
+η
+\eta
+.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

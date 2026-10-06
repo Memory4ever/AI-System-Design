@@ -1,0 +1,1597 @@
+One Model, Many Behaviors: Training-Induced Effects on Out-of-Distribution Detection
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Related Work
+ID accuracy vs. OOD detection performance.
+3 Investigating Training-induced Effects
+3.1 Problem Setting
+3.2 Experimental Setup
+Datasets.
+Models.
+Evaluation metrics.
+Test time and evaluation.
+4 Analysis
+Does higher ID accuracy imply better OOD detection?
+Are OOD detectors merely identifying misclassified samples?
+Where does AUROC variance originate from?
+How robust are detection methods across training variants?
+5 Discussion and Conclusion
+Guidance for Practitioners.
+Limitations and Future Work.
+Conclusion.
+References
+A Experimental Details
+A.1 Implementation Details
+Software stack.
+Hardware and system configuration.
+OOD detection methods.
+B Detailed Results
+Does higher ID accuracy imply better OOD detection?
+‣ B Detailed Results
+Are OOD detectors merely identifying misclassified samples?
+Where does the AUROC variance come from?
+How robust are detection methods across training variants?
+Relationship with Model Calibration
+Feature-Space Analysis and Robustness of OOD Detection Methods.
+C Results on ViT
+License: CC BY 4.0
+arXiv:2601.10836v1 [cs.CV] 15 Jan 2026
+One Model, Many Behaviors: Training-Induced Effects on Out-of-Distribution Detection
+Gerhard Krumpl
+††thanks: Correspondence: gerhard.krumpl@icg.tugraz.at
+Affiliation: KESTRELEYE GmbH, Austria
+Henning Avenhaus
+Affiliation: KESTRELEYE GmbH, Austria
+Horst Possegger
+[0.4em]
+Institute of Visual Computing
+Graz University of Technology
+Austria
+Abstract
+Out-of-distribution (OOD) detection is crucial for deploying robust and reliable machine-learning systems in open-world settings.
+Despite steady advances in OOD detectors, their interplay with modern training pipelines that maximize in‑distribution (ID) accuracy and generalization remains under-explored.
+We investigate this link through a comprehensive empirical study.
+Fixing the architecture to the widely adopted ResNet‑50, we benchmark 21 post-hoc, state-of-the-art OOD detection methods across 56 ImageNet-trained models obtained via diverse training strategies and evaluate them on eight OOD test sets.
+Contrary to the common assumption that higher ID accuracy implies better OOD detection performance, we uncover a non‑monotonic relationship: OOD performance initially improves with accuracy but declines once advanced training recipes push accuracy beyond the baseline.
+Moreover, we observe a strong interdependence between training strategy, detector choice, and resulting OOD performance, indicating that no single method is universally optimal.
+1 Introduction
+Figure 1:
+Top-1 classification accuracy is an unreliable indicator for OOD detection performance.
+This figure shows the relationship between in-distribution (ID) classification accuracy and out-of-distribution (OOD) detection performance for 56 ResNet-50 models, all sharing the same architecture but trained with different strategies.
+Each point represents one model and reports the mean AUROC (Area Under the Receiver Operating Characteristic Curve) over 21 OOD detection methods and eight OOD datasets.
+Color indicates the model’s training category, while the marker shape uniquely identifies each model within that category.
+The robust deployment of machine learning (ML) systems in real-world environments depends on models that not only perform well on in-distribution (ID) data but can also reliably detect inputs that differ from their training distribution—such as novel object categories, unexpected environmental conditions, or sensor corruptions.
+When exposed to such out-of-distribution (OOD) inputs, modern ML models often produce high-confidence yet incorrect predictions [52, 50, 27].
+This behavior poses significant risks in safety-critical settings, such as autonomous driving, healthcare, or industrial quality assurance.
+For example, an autonomous car might find itself in an unexpected emergency scene, or a food-sorting stream could encounter unexpected (potentially allergy-inducing) foreign materials.
+Post-hoc OOD detection methods offer a promising solution. These methods are appealing in practice: i) they are simple to deploy on pretrained models, avoiding costly retraining and preserving ID accuracy, and ii) they require no prior exposure to OOD data, which, by definition, are unknown before deployment.
+A wide variety of methods have emerged, ranging from simple confidence scores [30] to more sophisticated approaches based on feature-space distances [40, 62, 56] and model enhancements [60, 15].
+Concurrently, modern classification training pipelines have become increasingly diverse and powerful.
+Augmentations such as MixUp [78] or CutMix [77], regularization techniques like label smoothing [63] or Exponential Moving Averages (EMA), contrastive/self-supervised pretraining, and extended training schedules have all been shown to improve ID accuracy and generalization [70, 26, 67].
+Yet, surprisingly, the impact of such training strategies on post-hoc OOD detection has received little attention.
+Most prior evaluations continue to benchmark OOD detection methods on models trained with vanilla strategies—failing to reflect the diversity of models used in practice.
+A widely held assumption is that higher ID accuracy naturally translates into stronger OOD detection [66, 19, 35].
+This belief has shaped experimental design and practical implementation alike: train a more accurate classifier and get stronger OOD detection performance for free.
+However, this assumption is rarely questioned—and its validity under diverse training strategies remains unclear.
+In this work, we revisit this and other assumptions through the first large-scale, architecture- and data-controlled study on the effects of training strategies on post-hoc OOD detection.
+By fixing the architecture (ResNet-50 [25]) and dataset (ImageNet [14]), we isolate the impact of training strategy alone.
+We evaluate 21 post-hoc OOD detection methods across 56 models spanning four training families: data augmentation, contrastive/self-supervised learning, adversarial training, and improved training schedules—as summarized in Fig. 1.
+Performance is assessed using eight benchmark OOD datasets that cover near-, far-, extreme-, and synthetic-OOD categories.
+This study provides new insights into how training influences OOD detection and offers guidance for developing more robust, generalizable OOD detection methods.
+We summarize our contribution as follows:
+•
+We conduct a large-scale, architecture- and data-controlled study on the influence of training strategies on post-hoc OOD detection, covering 56 models, 21 OOD detectors, and eight OOD test sets.
+We further analyze the correlation between ID accuracy and OOD detection performance across methods and training strategies.
+•
+We show that the commonly assumed correlation between ID accuracy and OOD robustness is not generally valid.
+Prior studies often focus on low-to-moderate accuracy regimes or vary model architectures, where capacity effects confound the relationship.
+•
+We identify substantial variance in method robustness: many post-hoc detectors overfit to vanilla training recipes and degrade under diverse strategies, while methods that utilize richer internal representations generalize better.
+2 Related Work
+Out-of-distribution (OOD) detection methods are broadly categorized into training-based and post-hoc approaches [75].
+Training-based methods modify model architectures, loss functions, or regularization strategies to improve OOD robustness [44, 17, 33].
+Recent training-based works also focus on improving OOD generalization and detection [2, 83].
+In contrast, post-hoc methods operate on pretrained models without requiring retraining or access to OOD samples.
+We focus on post-hoc, sample-free methods due to their practical advantages: they are model-agnostic, preserve the model’s in-distribution (ID) performance, and scale efficiently to large deployments, where retraining is costly or infeasible [80].
+Post-hoc methods can be further grouped into score-based and model enhancement methods.
+Score-based methods assign an OOD score to each input based on model outputs or internal activations.
+Within this category, classification-based methods were pioneered by Hendrycks et al. [30], who introduced Maximum Softmax Probability (MSP), which uses the highest softmax output as a baseline OOD score.
+Subsequent variants, such as Maximum Logit Score (MLS) [28] and Energy-Based OOD (EBO) [46], refine this approach by operating directly on the model’s logits or their transformations.
+ODIN [42] further improves separation by combining temperature scaling with input perturbations.
+Feature-based methods instead operate on internal representations: Mahalanobis distance score (MDS) [40], Simplified Hopfield Energy (SHE) [81], and KNN-based methods [62] compute distances in feature space, while GRAM [58] and GradNorm [34] leverage intermediate statistics or input gradients.
+Model enhancement methods modify inference-time activations to improve OOD detection robustness without changing model weights.
+ReAct [60] improves robustness by clipping abnormal activations, ASH [15] prunes and rescales feature activations to down-weight irrelevant neurons, and SCALE [73] shapes internal representations.
+These are typically paired with energy-based scoring and have demonstrated strong performance in large-scale benchmarks [80].
+ID accuracy vs. OOD detection performance.
+Prior works [66, 19, 35] have reported a positive correlation between ID accuracy and OOD detection performance.
+Vaze et al. [66] found a significant correlation between closed-set classification accuracy and open-set recognition performance.
+Similarly, Galil et al. [19] noted this correlation across various pre-trained deep neural networks when using Maximum Softmax Probability (MSP) as the OOD score.
+Humbold-Renaux et al. [35] also identified a connection between ID and OOD performance, specifically examining the impact of label noise on OOD detection within a small-scale benchmark.
+More recently, Wang et al. [69] extended this line of inquiry by analyzing the distinction between closed- and open-set recognition, highlighting how auxiliary OOD data influence performance.
+Notably, they reported a negative correlation between closed- and open-set recognition in large-scale settings.
+Complementary to these findings, in the field of OOD generalization, OoD-Bench [76] studies diversity and correlation shifts under a fixed label space (no label shift), showing how models that learn spurious cues (e.g., in Colored MNIST [1]) achieve high accuracy without robustness to distribution shifts.
+The works in [66, 19] evaluate a wide variety of pretrained deep neural networks, spanning various architectures and focusing primarily on MSP or a limited subset of baseline OOD detection methods.
+Similarly, [35] investigates the impact of label noise while varying both ID datasets and model architectures.
+Varying multiple factors simultaneously, such as architecture, model capacity, and ID dataset, introduces potential confounding effects, making it difficult to disentangle the individual impact of training-related factors.
+To address this, we take a more controlled experimental design: we fix the model architecture and the ID dataset.
+This allows us to isolate the impact of different training strategies and to reevaluate the relationship between ID accuracy and OOD detection performance across a wide range of post-hoc methods and diverse OOD test distributions.
+3 Investigating Training-induced Effects
+This section addresses our central question: How do different training strategies influence the effectiveness of post-hoc OOD detectors?
+While prior studies [80, 66, 35] often vary the architecture or in-distribution (ID) dataset, which confounds the effects of training, we isolate the impact of the training strategy by fixing both: a ResNet-50 architecture trained on ImageNet.
+Our study evaluates 21 sample-free post-hoc OOD detection methods on 56 ResNet-50 models, each following a distinct training strategy.Evaluation covers eight OOD test datasets grouped into four categories: near-, far-, extreme-, and synthetic-OOD.
+This design enables a systematic investigation of how training choices affect OOD detection.
+The following subsections detail the problem setting, datasets, models, metrics, and detection methods that underpin our study.
+Figure 2:
+Relationship between ID accuracy and OOD detection performance (AUROC) across the OOD categories (near, far, extreme, synthetic).
+Each point represents one of the 56 ResNet-50 models, averaged over 21 OOD detection methods.
+Color indicates the model’s training category, while the marker shape uniquely identifies each model within that category.
+3.1 Problem Setting
+Ideally, a deep neural network deployed in the open world should know what it does not know: it must flag unfamiliar out-of-distribution (OOD) inputs while maintaining high accuracy on familiar in-distribution (ID) inputs.
+Formally, let {\cal X}\subset\mathbb{R}^{C\times H\times W} denote the input space and {\cal Y}=\{\text{class}_{1},\cdots,\text{class}_{K}\} the label set of a K-way classification problem.
+The network f_{\theta}:{\cal X}\xrightarrow{}\mathbb{R}^{K} is trained once—using a specific training recipe r that fixes augmentations, loss, schedule, and regularizes—on an ID dataset {\cal D}_{\text{ID}}=\{({\bf x}_{\text{i}},y_{\text{i}})\}_{\text{i}=1}^{\text{N}} drawn from the joint distribution P_{\text{ID}}({\bf x},y).
+Everything outside the resulting support {\cal X}_{\text{ID}}\subset{\cal X} defines the OOD space {\cal X}_{\text{OOD}}={\cal X}\setminus{\cal X}_{\text{ID}}.
+We target the semantic OOD regime, where the ID and OOD label spaces are disjoint: {\cal Y}_{\text{ID}}={\cal Y} and {\cal Y}_{\text{OOD}}\cap{\cal Y}_{\text{ID}}=\varnothing.
+At deployment, the model encounters a test-time data stream drawn from the unknown mixture P_{\text{test}}({\bf x})=(1-\pi)P_{\text{ID}}({\bf x})+\pi P_{\text{OOD}}({\bf x}) with an unknown OOD prior \pi\in[0,1].
+A post-hoc OOD detector therefore provides a scoring function S:{\cal X}\xrightarrow{}\mathbb{R}, that, given a threshold \lambda, implements the decision rule
+G({\bf x},\lambda)=\begin{cases}\text{ID}&\text{if}\>S({\bf x})\geq\lambda\\
+\text{OOD}&\text{otherwise}\end{cases}.
+(1)
+This decision function must i) accept and maintain high classification accuracy on ID samples from P_{\text{ID}} and ii) reject OOD samples from P_{\text{OOD}}—all post-hoc, i.e., without retraining f_{\theta} or relying on OOD samples during calibration.
+3.2 Experimental Setup
+Datasets.
+Evaluating OOD detection performance typically involves selecting a single ID dataset and multiple disjoint OOD datasets that do not share semantic classes with the ID data.
+Following established large-scale benchmark protocols [74, 80, 73, 5], we use ImageNet [14] as our ID dataset and adopt a diverse set of standard OOD datasets for evaluation.
+To systematically capture different degrees of complexity, the OOD datasets are grouped into four categories:
+i) near (SSB-Hard [66], NINCO [5]),
+ii) far (iNaturalist [65], Textures [11], OpenImage-O [68])—two groupings commonly used in prior work to represent increasing semantic dissimilarity to the ID dataset;
+iii) extreme (MNIST [39], Fashion-MNIST [72]), which represent visually and structurally distant domains, and
+iv) synthetic, synthetic unit-test datasets introduced by NINCO [5] to probe specific OOD weaknesses such as sensor failures.
+This setup ensures compatibility with established benchmarks [80] while enabling a more fine-grained analysis of model behavior across a wide spectrum of data shifts.
+Models.
+Our analysis is conducted using models based on the ResNet-50 architecture [25], all of which are trained on ImageNet [14].
+Fixing the architecture is a central design choice, as each network family exhibits unique inductive biases, activation statistics, and feature distributions, all of which can impact OOD detection performance.
+By holding the architecture constant, we isolate the effect of the training strategy alone, thereby avoiding confounding factors such as architecture and model capacity, which can independently influence both ID accuracy and OOD detection performance, thereby complicating the interpretation of their relationship.
+Restricting the study to ResNet-50 provides further benefits: i) it is one of the most widely used architectures in both research and practice, serving as the de facto standard for evaluating post-hoc OOD detection methods—particularly in large-scale settings [80, 73, 28, 62, 81], and ii) it remains a practical choice in many real-world applications where large-scale models are infeasible due to constraints on both training and inference resources.
+All models are trained on ImageNet to avoid OOD contaminations in our benchmarks.
+Importantly, none of the models were optimized for OOD detection, allowing us to investigate how the training strategy alone influences OOD detection performance, independent of any OOD-specific tuning.
+In total, we evaluate 56 ResNet-50 models trained using a diverse set of strategies that affect both ID classification accuracy and generalization characteristics.
+These strategies are grouped into the following six categories:
+i) a baseline model with the original training [25],
+ii) adversarial training [57, 48] against PGD adversary,
+iii) different augmentation methods [12, 43, 22, 13, 32, 82, 55, 36, 18, 51, 49, 31, 78, 77, 41],
+iv) contrastive learning [7, 10, 8, 6, 37] with supervised finetuning of the classification head,
+v) improved training recipes [71, 70, 54, 67],
+and vi) model with randomly weighted spatial convolutional filters [21].
+To distinguish individual models within each group, we use distinct marker shapes.
+The combination of marker and color yields a unique identifier for each model configuration.
+This visual encoding is consistently used throughout our study, and a complete legend is available in the supplementary material.
+Evaluation metrics.
+Following standard OOD evaluation protocols, we primarily report the Area Under the Receiver Operating Characteristic curve (AUROC) to measure the separability between ID and OOD samples.
+For comparability and completeness, we also report the False Positive Rate at a 95\% True Positive Rate (FPR95) in the supplementary material.
+To gain a deeper understanding of model behavior, we also follow the diagnostic metrics used in [35]:
+\text{AUROC}_{\text{correct~vs.~OOD}} and \text{AUROC}_{\text{incorrect~vs.~OOD}}.
+These metrics isolate the OOD detection performance on correctly and incorrectly classified ID samples, respectively.
+Ideally, a robust OOD detector should perform well on both, signaling that its scores are not merely correlated with classification correctness but reflect true distributional shifts.
+Finally, we also report the \text{AUROC}_{\text{correct~vs.~incorrect}}, which measures a method’s ability to flag misclassified ID samples [3, 35].
+Figure 3:
+Relationship between ID accuracy and OOD detection performance (AUROC) for each of the 21 OOD detection methods.
+Each point represents one of the 56 ResNet-50 models, averaged over eight OOD datasets.
+Color indicates the model’s training category, while the marker shape uniquely identifies each model within that category.
+Best viewed on screen.
+Test time and evaluation.
+At test time, the inputs are resized to 256\times 256 and center-cropped to 224\times 224.
+We evaluate 21 approaches using the OpenOOD benchmark [74, 79, 80], a comprehensive and standardized open-source framework for benchmarking state-of-the-art OOD detection methods.
+To facilitate analysis, we categorize the OOD detection methods into five groups based on the type of information they leverage to compute the OOD score:
+i) classification-based methods primarily use model outputs such as softmax probabilities or logits (MSP [30], MLS [28], EBO [46], ODIN [42], TempScale [23], KLM [28], GEN [47]);
+ii) feature-based methods derive the score from the penultimate layer (MDS [40], RMDS [56], KNN [62], SHE [81])
+iii) hybrid methods combine information from both the output and penultimate layer (ViM [68], ASH [15], ReAct [60], DICE [61], SCALE [73], NNGuide [53], fDBD [45]),
+iv) intermediate-feature methods use information from shallow to deep layers (GRAM [58], ATS [38]), and
+v) gradients methods utilize gradients (GradNorm [34]).
+For methods that require ID data to compute statistics or calibration parameters, we use the training split of the ID dataset.
+For methods involving hyperparameter tuning, we rely on a held-out validation set comprising both ID and OOD samples to ensure fair and robust evaluation.
+Further implementation details, including tuning procedures and parameter settings, are provided in the supplementary material.
+4 Analysis
+Building on our large-scale experimental setup, we characterize the key determinants of OOD detection performance by addressing four key questions:
+i) Does higher ID accuracy imply better OOD detection? ii) Are OOD detectors merely identifying misclassified samples? iii) Where does AUROC variance originate from? and iv) How robust are detection methods across training variants?
+Does higher ID accuracy imply better OOD detection?
+Our analysis reveals that the relationship between ID accuracy and OOD detection performance, averaged across all OOD detection methods, is not monotonic but rather a distinct rise-then-fall pattern (Fig. 1), challenging the common assumption of a simple positive correlation.
+Initially, as accuracy improves from lower levels up to the vanilla ResNet-50 baseline (76.19\%), a positive correlation exists (Spearman’s \rho=0.38, p\ll 0.001).
+This region is primarily populated by models subjected to adversarial training (orange cluster), which degrades ID accuracy while compressing logit margins.
+This trend aligns with the findings of prior work [35], which observed similar behavior when analyzing the impact of label noise, where models also fell into a low-to-baseline accuracy region.
+However, once accuracy reaches or exceeds the baseline band, the relationship reverses and becomes weakly negative—AUROC declines slightly as accuracy rises (Spearman’s \rho=-0.082, p\ll 0.001).
+A global correlation over all models and methods fails to reveal this non-monotony, yielding a coefficient near zero (Spearman’s \rho=0.04,\ p\ll 0.001).
+This rise-then-fall pattern is consistent across all OOD dataset categories (Fig. 2), with near-OOD showing a smaller min–max spread, while extreme-/synthetic-OOD exhibit larger spreads across methods and models (Supp. Tab. 4).
+At the OOD detection method level, the picture is even more diverse (Fig. 3): the rise phase is steep for confidence-based scores such as MSP and GEN, and modest for distance metrics like KNN, and fDBD, while the fall ranges from pronounced (SCALE, ReAct) to negligible (GEN, GRAM) or even non-existent (KLM).
+Such heterogeneity demonstrates that OOD performance depends strongly on the interaction between the OOD detection method heuristic and the training strategy, highlighting that the relationship between OOD detection and ID accuracy is complex.
+The downturn at higher accuracies indicates that training strategies designed to maximize ID accuracy and generalization can undermine post-hoc OOD detection; as shown in the supplementary, aggressive regularization (MixUp, CutMix, TorchVision 2) compresses and sparsifies the feature space and narrows max-logit distributions, increasing ID-OOD overlap.
+Consequently, methods that rely on model output or specific activation characteristics degrade more, whereas geometry/statistics-based methods remain comparatively stable (see Supp. App. B and Supp. Fig. 18–20).
+We contend that these complex effects were previously overlooked because prior studies, which often did not include models trained with diverse strategies, focused on a limited subset of OOD methods or had results confounded by variations in model architecture and capacity.
+Figure 4:
+Comparing the performance of MSP, KNN, and GRAM across multiple AUROC-based evaluation metrics.
+\text{AUROC}_{\text{correct~vs.~incorrect}} evaluates failure prediction on ID data only, distinguishing between correctly and incorrectly classified samples.
+The remaining metrics assess OOD detection, either across all ID samples, only correctly classified ones, or only misclassified ones.
+Each boxplot shows the distribution over 56 models and four OOD categories.
+Are OOD detectors merely identifying misclassified samples?
+Prior work [35] suggested that the correlation between ID accuracy and OOD performance might arise because detectors simply distinguish correctly classified ID inputs from OOD samples, while misclassifications are often confused with OOD.
+We test this hypothesis by analyzing OOD detector performance separately on correctly and incorrectly classified ID subsets.
+Fig. 5 shows that \text{AUROC}_{\text{correct vs.~OOD}} and \text{AUROC}_{\text{incorrect vs.~OOD}} follow the same rise-then-fall pattern observed in our global analysis (Fig. 1).
+The two metrics are strongly correlated (Spearman’s \rho=0.87,\ p\ll 0.001), indicating that methods effective at distinguishing correctly classified ID samples from OOD data generally remain robust even when the ID sample is misclassified.
+A persistent gap of roughly 10\% separates the two scores, with the largest discrepancy for confidence-based methods that compute their OOD scores directly from model output.
+Fig. 4 contrasts three representative methods: MSP, KNN, and GRAM.
+MSP is highly sensitive to correctness: its failure-detection score is high (\text{AUROC}_{\text{correct vs.~incorrect}}=84.75\%), and its OOD AUROC falls sharply from \text{AUROC}_{\text{correct vs.~OOD}}=90.72\% on correctly predicted ID samples to \text{AUROC}_{\text{incorrect vs.~OOD}}=67.70\% on misclassified ones.
+KNN shows a lower failure detection AUROC (63.15\%) with a much narrower gap (correct: 89.13\%, incorrect: 83.96\%), resulting in a higher overall AUROC of 87.93\%.
+GRAM achieves virtually identical scores on both subsets (correct: 89.67\%, incorrect: 89.66\%), with a near-random failure-detection AUROC (50.03\%), demonstrating robustness to ID classification quality.
+The supplementary material confirms this pattern across all detectors: methods that derive their scores from richer feature representations (e.g., KNN, NNGuide, and GRAM) are less sensitive to misclassified ID samples, whereas confidence-based approaches that rely solely on the model output experience the largest performance drop, with their sensitivity varying substantially across training recipes.
+Figure 5:
+Relationship between ID classification accuracy and OOD detection performance.
+We distinguish between the ability of OOD detectors to separate correctly classified ID samples from OOD samples (left), and incorrectly classified ID samples from OOD samples (right).
+Each point represents one of the 56 ResNet-50 models, averaged over 21 OOD detection methods and four OOD categories.
+Color show the model’s training category; marker shapes uniquely identify models within each category.
+Where does AUROC variance originate from?
+Figs. 1 and 3 reveals large performance variations across OOD detectors and training strategies, prompting a formal variance analysis.
+To quantify factors contributing to AUROC variability, we run a three-way ANOVA with factors model (i.e., training strategy), method (i.e., OOD detection method), and OOD dataset category (i.e., OOD category).
+Fig. 6 shows that the OOD category explains the largest share of variance (34.22\%), reflecting the intrinsic difficulty gap between the OOD categories (near, far, extreme, and synthetic).
+The model–method interaction ranks second (21.05\%), far exceeding the main effects of either factor alone; detector performance thus depends strongly on how its heuristic aligns with the feature statistics induced by a given training recipe.
+A smaller yet non-trivial three-way interaction (8.66\%) and a residual term (10.62\%) indicate systematic rather than random effects.
+Robustness checks confirm this picture.
+Omitting one OOD category at a time (details in the supplementary material) shows that removing the toughest category (near-OOD) cuts the OOD category term and boosts the
+model–method interaction to 33.4\%.
+The coupling between detector and model is therefore partially masked when all methods struggle uniformly on the most challenging OOD test data.
+Across all runs, the interaction term remains a major contributor, underscoring its central importance.
+In summary, OOD performance depends as much on the alignment between the OOD detector and the model as on the OOD set itself, underscoring the critical role of the training strategy.
+How robust are detection methods across training variants?
+Figure 6:
+Proportions of AUROC variance explained by each factor in the three-way ANOVA (56 models \times 21 OOD detection methods \times 4 OOD categories).
+A central finding of this work is that the performance of an OOD detector is conditional: it depends not only on the OOD data but also on the training strategy used to obtain the model.
+OOD detection methods are typically validated on a single training strategy, often the ResNet-50 baseline [25].
+This means that there is no universally best method, but it also implies that selecting the most suitable method for a given task can be a challenge.
+Robustness, defined here as delivering consistently strong OOD detection performance across heterogeneous training strategies, therefore becomes as important as
+raw performance.
+To consider both aspects, Fig. 7 orders all OOD detection methods by their mean rank over the 56 models.
+A Friedman test confirms statistically significant differences among methods (\chi^{2}=467.97, p\ll 0.001), validating this analysis.
+Model enhancement OOD detection methods dominate: SCALE leads (mean rank 5.15, 95\% CI [4.08,\ 6.22]), followed by NNGuide, ASH, and fDBD.
+The intermediate-feature-based method GRAM, introduced in 2020, also proves to be a strong and consistent performer, ranking second with a tight confidence interval (mean rank 6.54, 95% CI [5.84,\ 7.24]).
+In contrast, several classification-based methods, such as MSP, KLM, and TempScale, occupy lower ranks on average.
+Figure 7:
+Robustness of OOD detection methods measured by model-averaged mean rank across 56 models. Methods are ranked per model by mean AUROC, and the overall rank is the average across models.
+Error bars show 95\% CIs; lower rank is better.
+Figures 8 and 3 reveal two further insights.
+First, many of the top-ranked methods exhibit high variance, meaning that while their performance can be excellent, it can also be mediocre when paired with the wrong training strategy.
+Second, many models, such as ASH, SCALE, and ReAct, as well as some of the weaker performers, including DICE and GradNorm, exhibit their best or nearly optimal performance with the baseline model.
+This pattern suggests an over-specialization to the characteristics of vanilla training, on which they were likely developed and benchmarked.
+These two observations highlight a trade-off between high-performing specialists and more consistent generalists.
+The specialists, such as ReAct and SCALE, are effective because their heuristics are finely tuned to specific characteristics of vanilla-trained models, for instance, clipping high-activation features.
+This explains both their SOTA performance on the baseline and their high variance across diverse training strategies, as advanced training recipes alter the very activation patterns on which these methods depend.
+Generalists leverage more invariant properties.
+GRAM and fDBD illustrate this: they remain among the top methods (Fig. 7), show only modest performance drops from baseline (GRAM: -1.74\%(\pm 3.24), fDBD: -2.17\%(\pm 2.38)), and maintain tight score distributions (Fig. 8).
+GRAM’s higher-order statistics and fDBD’s distance metric depend less on absolute activation magnitudes, making them less sensitive to training-induced changes.
+OOD robustness hinges primarily on one key factor: how well a detector’s scoring rule aligns with the feature representations produced by a given training recipe.
+Stability is achieved not by richer features alone, but by combining them with training-agnostic heuristics (e.g., statistical summaries or distance-based measures) that remain effective across the diverse characteristics and activation patterns induced by varying training strategies.
+Figure 8:
+Mean AUROC distribution for each OOD detection method, across 56 models and four OOD categories.
+Diamond markers denote the mean for each method; the red horizontal line indicates that method’s performance on the baseline ResNet-50 [25].
+Methods are sorted by overall mean AUROC.
+5 Discussion and Conclusion
+Our study challenges, extends, and aligns with previous findings on the relationship between ID classification accuracy and OOD detection performance.
+Contrary to simplified claims of a universally positive or negative correlation, our large-scale, controlled analysis demonstrates a non-monotonic and method-dependent relationship for OOD detection.
+While prior work has often reported a positive correlation between ID accuracy and OOD detection performance, these findings frequently stem from studies with significant potential confounders.
+For instance, studies [66, 19] evaluated a broad range of architectures combined with only a small subset of OOD detection methods, while [35] varied both datasets and architectures.
+In contrast, a recent study [69] reported negative correlations for large-scale benchmarks, examining narrowly optimized model sets in the context of outlier exposure and thus overlooking the initial positive trend at lower accuracy ranges.
+Our results clarify these apparent contradictions by revealing them as different perspectives on the same nuanced relationship.
+Critically, we reveal a strong interaction effect between models and OOD detection methods, which alone accounts for over 20\% of OOD detection performance variance.
+This suggests that the effectiveness of an OOD detection method is not an independent property, but rather is fundamentally coupled with the specific, training-induced characteristics of the model.
+This high degree of interaction has direct and critical implications for our field.
+Evaluating OOD methods on a single model configuration captures only a limited slice of a more extensive interaction space, potentially rewarding overly specialized methods.
+Our findings issue a clear call for a shift in evaluation culture.
+Moving forward, robust benchmarking must adopt multi-model evaluations across a wide spectrum of training strategies to establish a method’s true generalization, reveal its limitations and hidden dependencies, and ensure the community is not simply optimizing for methods that are brittle and over-specialized to a single, default training condition.
+In summary, our findings demonstrate that a simple monotonic correlation does not hold, confirming that ID accuracy alone is not a reliable indicator for OOD detection performance.
+Thus, the assumption that improved ID accuracy automatically translates into better (or worse) OOD detection performance is not justified.
+Stability and robust OOD generalization result instead from a method’s ability to combine rich, training-induced features with patterns that remain stable across diverse training strategies.
+Guidance for Practitioners.
+Practitioners should be aware that while achieving baseline levels of ID accuracy generally supports better OOD detection, further accuracy improvements through sophisticated training methods do not universally guarantee enhanced OOD detection performance, and can instead harm it.
+When utilizing standard, vanilla models, top-ranked methods from established benchmarks typically remain reliable.
+However, for models customized with advanced training or strong regularization, generalist OOD detectors should be preferred that do not rely on specific activation patterns—in practice, geometry/statistics-based methods that use distances or higher-order feature statistics (e.g., KNN, GRAM, RMDS) are typically more stable; otherwise, tailored evaluations should be performed to select the OOD detector best aligned with the model’s learned representations.
+Limitations and Future Work.
+A central limitation of our study is the deliberate restriction to the ResNet-50 architecture.
+This methodological decision was necessary to isolate training-induced effects from architectural or capacity-based confounding factors, a challenge in prior studies.
+While this design provides clear and definitive insights, our findings also support recent hypotheses [80] that OOD methods are implicitly tuned to CNN-based architectures, explaining why alternatives such as Vision Transformers (ViTs) [16], despite higher ID accuracy, often show weaker OOD performance.
+While a preliminary ablation study (App. C) confirms our main findings also for ViTs, a similarly detailed examination of the model-method interactions is a valuable future direction.
+Conclusion.
+We have identified important shortcomings in previous studies that show correlations between ID accuracy and OOD performance.
+Our large-scale, carefully designed study shows that while correlations exist between certain ID metrics and OOD performance under specific conditions, OOD robustness ultimately depends on the interaction between the model and the detection method, and these correlations do not reflect the broader dynamics of generalization.
+This makes OOD performance too complex to be inferred from a single ID measure.
+This calls for a shift toward systematic evaluation across diverse models and the development of diagnostics that capture model–method compatibility—essential for reliable OOD detection and trustworthy pre-deployment assessment.
+Acknowledgments
+This work was supported by KESTRELEYE GmbH, whose financial contribution and commitment made this research possible.
+References
+[1]
+M. Arjovsky, L. Bottou, I. Gulrajani, and D. Lopez-Paz (2020)
+Invariant Risk Minimization.
+arXiv preprint arXiv:1907.02893.
+Cited by: §2.
+[2]
+H. Bai, G. Canal, X. Du, J. Kwon, R. D. Nowak, and Y. Li (2023)
+Feed Two Birds with One Scone: Exploiting Wild Data for Both Out-of-Distribution Generalization and Detection.
+In International Conference on Machine Learning,
+Cited by: §2.
+[3]
+M. Bernhardt, F. D. S. Ribeiro, and B. Glocker (2022)
+Failure detection in medical image classification: a reality check and benchmarking testbed.
+In TMLR,
+Cited by: §3.2.
+[4]
+J. Bitterwolf, A. Meinke, and M. Hein (2020)
+Certifiably Adversarially Robust Detection of Out-of-Distribution Data.
+In NeurIPS,
+Cited by: §A.1.
+[5]
+J. Bitterwolf, M. Mueller, and M. Hein (2023)
+In or Out? Fixing ImageNet Out-of-Distribution Detection Evaluation.
+In Proc. ICLR Workshops,
+Cited by: §3.2.
+[6]
+M. Caron, I. Misra, J. Mairal, P. Goyal, P. Bojanowski, and A. Joulin (2020)
+Unsupervised learning of visual features by contrasting cluster assignments.
+In NeurIPS,
+Cited by: Table 2,
+§3.2.
+[7]
+M. Caron, H. Touvron, I. Misra, H. Jégou, J. Mairal, P. Bojanowski, and A. Joulin (2021)
+Emerging properties in self-supervised vision transformers.
+In Proc. ICCV,
+Cited by: Table 2,
+§3.2.
+[8]
+T. Chen, S. Kornblith, K. Swersky, M. Norouzi, and G. E. Hinton (2020)
+Big self-supervised models are strong semi-supervised learners.
+In NeurIPS,
+Cited by: Table 2,
+§3.2.
+[9]
+X. Chen, C. Hsieh, and B. Gong (2022)
+When Vision Transformers Outperform ResNets without Pre-training or Strong Data Augmentations.
+In Proc. ICLR,
+Cited by: Appendix C.
+[10]
+X. Chen, S. Xie, and K. He (2021)
+An Empirical Study of Training Self-Supervised Vision Transformers .
+In Proc. ICCV,
+Cited by: Table 2,
+Table 2,
+Table 2,
+§3.2.
+[11]
+M. Cimpoi, S. Maji, I. Kokkinos, S. Mohamed, and A. Vedaldi (2014)
+Describing Textures in the Wild.
+In Proc. CVPR,
+Cited by: §3.2.
+[12]
+E. D. Cubuk, B. Zoph, D. Mane, V. Vasudevan, and Q. V. Le (2019)
+AutoAugment: learning augmentation strategies from data.
+In Proc. CVPR,
+Cited by: Table 2,
+§3.2.
+[13]
+E. D. Cubuk, B. Zoph, J. Shlens, and Q. Le (2020)
+RandAugment: practical automated data augmentation with a reduced search space.
+In NeurIPS,
+Cited by: Table 2,
+§3.2.
+[14]
+J. Deng, W. Dong, R. Socher, L. Li, K. Li, and L. Fei-Fei (2009)
+ImageNet: A large-scale hierarchical image database.
+In Proc. CVPR,
+Cited by: §1,
+§3.2,
+§3.2.
+[15]
+A. Djurisic, N. Bozanic, A. Ashok, and R. Liu (2023)
+Extremely Simple Activation Shaping for Out-of-Distribution Detection.
+In Proc. ICLR,
+Cited by: Table 1,
+§1,
+§2,
+§3.2.
+[16]
+A. Dosovitskiy, L. Beyer, A. Kolesnikov, D. Weissenborn, X. Zhai, T. Unterthiner, M. Dehghani, M. Minderer, G. Heigold, S. Gelly, J. Uszkoreit, and N. Houlsby (2021)
+An Image is Worth 16x16 Words: Transformers for Image Recognition at Scale.
+In Proc. ICLR,
+Cited by: Appendix C,
+§5.
+[17]
+X. Du, Z. Wang, M. Cai, and Y. Li (2022)
+VOS: learning what you don’t know by virtual outlier synthesis.
+In Proc. ICLR,
+Cited by: §2.
+[18]
+B. Erichson, S. Hoe Lim, W. Xu, F. Utrera, Z. Cao, and M. Mahoney (2024)
+NoisyMix: boosting model robustness to common corruptions.
+In Proc. AISTATS,
+Cited by: Table 2,
+§3.2.
+[19]
+I. Galil, M. Dabbah, and R. El-Yaniv (2023)
+A framework for benchmarking class-out-of-distribution detection and its application to ImageNet.
+In Proc. ICLR,
+Cited by: §1,
+§2,
+§2,
+§5.
+[20]
+P. Gavrikov and J. Keuper (2024)
+Can biases in imagenet models explain generalization?.
+In Proc. CVPR,
+Cited by: §A.1.
+[21]
+P. Gavrikov and J. Keuper (2024)
+The Power of Linear Combinations: Learning with Random Convolutions.
+Cited by: Table 2,
+§3.2.
+[22]
+R. Geirhos, P. Rubisch, C. Michaelis, M. Bethge, F. A. Wichmann, and W. Brendel (2019)
+ImageNet-trained CNNs are biased towards texture; increasing shape bias improves accuracy and robustness..
+In Proc. ICLR,
+Cited by: Table 2,
+Table 2,
+Table 2,
+Table 2,
+§3.2.
+[23]
+C. Guo, G. Pleiss, Y. Sun, and K. Q. Weinberger (2017)
+On Calibration of Modern Neural Networks.
+In Proc. ICML,
+Cited by: Table 1,
+§3.2.
+[24]
+K. He, X. Chen, S. Xie, Y. Li, P. Dollár, and R. Girshick (2022)
+Masked Autoencoders Are Scalable Vision Learners.
+In Proc. CVPR,
+Cited by: Appendix C.
+[25]
+K. He, X. Zhang, S. Ren, and J. Sun (2016)
+Deep Residual Learning for Image Recognition.
+In Proc. CVPR,
+Cited by: Table 2,
+Appendix B,
+§1,
+§3.2,
+§3.2,
+Figure 8,
+Figure 8,
+§4.
+[26]
+T. He, Z. Zhang, H. Zhang, Z. Zhang, J. Xie, and M. Li (2018)
+Bag of Tricks for Image Classification with Convolutional Neural Networks.
+Proc. CVPR.
+Cited by: §1.
+[27]
+M. Hein, M. Andriushchenko, and J. Bitterwolf (2019)
+Why ReLU networks yield high-confidence predictions far away from the training data and how to mitigate the problem.
+Proc. CVPR.
+Cited by: §1.
+[28]
+D. Hendrycks, S. Basart, M. Mazeika, A. Zou, J. Kwon, M. Mostajabi, J. Steinhardt, and D. Song (2022)
+Scaling Out-of-Distribution Detection for Real-World Settings.
+In Proc. ICML,
+Cited by: Table 1,
+Table 1,
+§2,
+§3.2,
+§3.2.
+[29]
+D. Hendrycks, S. Basart, N. Mu, S. Kadavath, F. Wang, E. Dorundo, R. Desai, T. Zhu, S. Parajuli, M. Guo, D. Song, J. Steinhardt, and J. Gilmer (2021)
+The many faces of robustness: a critical analysis of out-of-distribution generalization.
+Proc. ICCV.
+Cited by: Table 2,
+Table 2.
+[30]
+D. Hendrycks and K. Gimpel (2017)
+A Baseline for Detecting Misclassified and Out-of-Distribution Examples in Neural Networks.
+In Proc. ICLR,
+External Links: Link
+Cited by: Table 1,
+§1,
+§2,
+§3.2.
+[31]
+D. Hendrycks, A. Zou, M. Mazeika, L. Tang, B. Li, D. Song, and J. Steinhardt (2022)
+PixMix: dreamlike pictures comprehensively improve safety measures.
+Proc. CVPR.
+Cited by: Table 2,
+Table 2,
+§3.2.
+[32]
+D. Hendrycks*, N. Mu*, E. D. Cubuk, B. Zoph, J. Gilmer, and B. Lakshminarayanan (2020)
+AugMix: a simple method to improve robustness and uncertainty under data shift.
+In Proc. ICLR,
+Cited by: Table 2,
+§3.2.
+[33]
+Y. Hsu, Y. Shen, H. Jin, and Z. Kira (2020)
+Generalized odin: detecting out-of-distribution image without learning from out-of-distribution data.
+In Proc. CVPR,
+Cited by: §2.
+[34]
+R. Huang, A. Geng, and Y. Li (2021)
+On the Importance of Gradients for Detecting Distributional Shifts in the Wild.
+In NeurIPS,
+Cited by: Table 1,
+§2,
+§3.2.
+[35]
+G. Humblot-Renaux, S. Escalera, and T. B. Moeslund (2024)
+A noisy elephant in the room: Is your out-of-distribution detector robust to label noise?.
+In Proc. CVPR,
+Cited by: §A.1,
+Appendix B,
+§1,
+§2,
+§2,
+§3.2,
+§3,
+§4,
+§4,
+§5.
+[36]
+P. Jaini, K. Clark, and R. Geirhos (2024)
+Intriguing properties of generative classifiers.
+In Proc. ICLR,
+Cited by: Table 2,
+§3.2.
+[37]
+P. Khosla, P. Teterwak, C. Wang, A. Sarna, Y. Tian, P. Isola, A. Maschinot, C. Liu, and D. Krishnan (2020)
+Supervised contrastive learning.
+In NeurIPS,
+Cited by: Table 2,
+§3.2.
+[38]
+G. Krumpl, H. Avenhaus, H. Possegger, and H. Bischof (2024)
+ATS: Adaptive Temperature Scaling for Enhancing Out-of-Distribution Detection Methods.
+In Proc. WACV,
+Cited by: Table 1,
+Appendix B,
+§3.2.
+[39]
+Y. Lecun, L. Bottou, Y. Bengio, and P. Haffner (1998)
+Gradient-based Learning Applied to Document Recognition.
+IEEE 86 (11), pp. 2278–2324.
+Cited by: §A.1,
+§3.2.
+[40]
+K. Lee, K. Lee, H. Lee, and J. Shin (2018)
+A Simple Unified Framework for Detecting Out-of-Distribution Samples and Adversarial Attacks.
+In NeurIPS,
+Cited by: Table 1,
+§1,
+§2,
+§3.2.
+[41]
+Y. Li, Q. Yu, M. Tan, J. Mei, P. Tang, W. Shen, A. Yuille, and cihang xie (2021)
+Shape-texture debiased neural network training.
+In Proc. ICLR,
+Cited by: Table 2,
+Table 2,
+Table 2,
+§3.2.
+[42]
+S. Liang, Y. Li, and R. Srikant (2018)
+Enhancing The Reliability of Out-of-distribution Image Detection in Neural Networks.
+In Proc. ICLR,
+External Links: Document
+Cited by: Table 1,
+§2,
+§3.2.
+[43]
+S. Lim, I. Kim, T. Kim, C. Kim, and S. Kim (2019)
+Fast autoaugment.
+In NeurIPS,
+Cited by: Table 2,
+§3.2.
+[44]
+Z. Lin, S. D. Roy, and Y. Li (2021)
+MOOD: multi-level out-of-distribution detection.
+In Proc. CVPR,
+Cited by: §2.
+[45]
+L. Liu and Y. Qin (2024)
+Fast decision boundary based out-of-distribution detector.
+ICML.
+Cited by: Table 1,
+§3.2.
+[46]
+W. Liu, X. Wang, J. D. Owens, and Y. Li (2020)
+Energy-based Out-of-distribution Detection.
+In NeurIPS,
+External Links: Document
+Cited by: Table 1,
+§2,
+§3.2.
+[47]
+X. Liu, Y. Lochman, and Z. Christopher (2023)
+GEN: pushing the limits of softmax-based out-of-distribution detection.
+In Proc. CVPR,
+Cited by: Table 1,
+§3.2.
+[48]
+A. Madry, A. Makelov, L. Schmidt, D. Tsipras, and A. Vladu (2018)
+Towards Deep Learning Models Resistant to Adversarial Attacks.
+In Proc. ICLR,
+Cited by: Table 2,
+Table 2,
+Table 2,
+Table 2,
+Table 2,
+Table 2,
+Table 2,
+Table 2,
+Table 2,
+Table 2,
+Table 2,
+Table 2,
+Table 2,
+Table 2,
+Table 2,
+§3.2.
+[49]
+A. Modas, R. Rade, G. Ortiz-Jiménez, S. Moosavi-Dezfooli, and P. Frossard (2022)
+PRIME: a few primitives can boost robustness to common corruptions.
+In Proc. ECCV,
+Cited by: Table 2,
+§3.2.
+[50]
+S. Moosavi-Dezfooli, A. Fawzi, O. Fawzi, and P. Frossard (2017)
+Universal adversarial perturbations.
+In Proc. CVPR,
+Cited by: §1.
+[51]
+P. Müller, A. Braun, and M. Keuper (2023)
+Classification robustness to common optical aberrations.
+In Proc. ICCV Workshops,
+Cited by: Table 2,
+§3.2.
+[52]
+A. M. Nguyen, J. Yosinski, and J. Clune (2015)
+Deep Neural Networks are Easily Fooled: High Confidence Predictions for Unrecognizable Images.
+Proc. CVPR.
+Cited by: §1.
+[53]
+J. Park, Y. G. Jung, and A. B. J. Teoh (2023)
+Nearest neighbor guidance for out-of-distribution detection.
+In Proc. ICCV,
+Cited by: Table 1,
+§3.2.
+[54]
+A. Paszke, S. Gross, F. Massa, A. Lerer, J. Bradbury, G. Chanan, T. Killeen, Z. Lin, N. Gimelshein, L. Antiga, A. Desmaison, A. Kopf, E. Yang, Z. DeVito, M. Raison, A. Tejani, S. Chilamkurthy, B. Steiner, L. Fang, J. Bai, and S. Chintala (2019)
+PyTorch: An Imperative Style, High-Performance Deep Learning Library.
+In NeurIPS,
+Cited by: Table 2,
+Appendix B,
+§3.2.
+[55]
+F. Pinto, H. Yang, S. Lim, P. Torr, and P. K. Dokania (2022)
+Using mixup as a regularizer can surprisingly improve accuracy & out-of-distribution robustness.
+In NeurIPS,
+Cited by: Table 2,
+§3.2.
+[56]
+J. J. Ren, S. Fort, J. Z. Liu, A. G. Roy, S. Padhy, and B. Lakshminarayanan (2021)
+A Simple Fix to Mahalanobis Distance for Improving Near-OOD Detection.
+arXiv preprint arXiv:2106.09022.
+Cited by: Table 1,
+§1,
+§3.2.
+[57]
+H. Salman, A. Ilyas, L. Engstrom, A. Kapoor, and A. Madry (2020)
+Do Adversarially Robust ImageNet Models Transfer Better?.
+In NeurIPS,
+Cited by: Table 2,
+Table 2,
+Table 2,
+Table 2,
+Table 2,
+Table 2,
+Table 2,
+Table 2,
+Table 2,
+Table 2,
+Table 2,
+Table 2,
+Table 2,
+Table 2,
+Table 2,
+§3.2.
+[58]
+C. S. Sastry and S. Oore (2020)
+Detecting Out-of-Distribution Examples with Gram Matrices.
+In Proc. ICML,
+Cited by: §A.1,
+Table 1,
+§2,
+§3.2.
+[59]
+A. P. Steiner, A. Kolesnikov, X. Zhai, R. Wightman, J. Uszkoreit, and L. Beyer (2022)
+How to train your ViT? Data, Augmentation, and Regularization in Vision Transformers.
+In TMLR,
+Cited by: Appendix C.
+[60]
+Y. Sun, C. Guo, and Y. Li (2021)
+ReAct: Out-of-distribution Detection With Rectified Activations.
+In NeurIPS,
+External Links: Document
+Cited by: Table 1,
+Appendix B,
+§1,
+§2,
+§3.2.
+[61]
+Y. Sun and Y. Li (2022)
+DICE: Leveraging Sparsification for Out-of-Distribution Detection.
+In Proc. ECCV,
+Cited by: Table 1,
+§3.2.
+[62]
+Y. Sun, Y. Ming, X. Zhu, and Y. Li (2022)
+Out-of-distribution Detection with Deep Nearest Neighbors.
+In Proc. ICML,
+Cited by: Table 1,
+§1,
+§2,
+§3.2,
+§3.2.
+[63]
+C. Szegedy, V. Vanhoucke, S. Ioffe, J. Shlens, and Z. Wojna (2016)
+Rethinking the inception architecture for computer vision.
+In Proc. CVPR,
+Cited by: §1.
+[64]
+H. Touvron, M. Cord, M. Douze, F. Massa, A. Sablayrolles, and H. Jegou (2021)
+Training data-efficient image transformers & distillation through attention.
+In Proc. ICML,
+Cited by: Appendix C.
+[65]
+G. Van Horn, O. Mac Aodha, Y. Song, Y. Cui, C. Sun, A. Shepard, H. Adam, P. Perona, and S. Belongie (2018)
+The INaturalist Species Classification and Detection Dataset.
+In Proc. CVPR,
+Cited by: §3.2.
+[66]
+S. Vaze, K. Han, A. Vedaldi, and A. Zisserman (2022)
+Open-Set Recognition: a Good Closed-Set Classifier is All You Need?.
+In Proc. ICLR,
+Cited by: §1,
+§2,
+§2,
+§3.2,
+§3,
+§5.
+[67]
+V. Vryniotis (2023)
+How to Train State-Of-The-Art Models Using TorchVision’s Latest Primitives.
+Note: https://pytorch.org/blog/how-to-train-state-of-the-art-models-using-torchvision-latest-primitives/ [Accessed: 2025-07-01]
+Cited by: Table 2,
+Appendix B,
+§1,
+§3.2.
+[68]
+H. Wang, Z. Li, L. Feng, and W. Zhang (2022)
+ViM: Out-Of-Distribution with Virtual-logit Matching.
+In Proc. CVPR,
+Cited by: Table 1,
+§3.2,
+§3.2.
+[69]
+H. Wang, S. Vaze, and K. Han (2024)
+Dissecting out-of-distribution detection and open-set recognition: a critical analysis of methods and benchmarks.
+IJCV.
+Cited by: §2,
+§5.
+[70]
+R. Wightman, H. Touvron, and H. Jegou (2021)
+ResNet strikes back: An improved training procedure in timm.
+In NeurIPS Workshops,
+Cited by: Table 2,
+Table 2,
+Table 2,
+Table 2,
+Table 2,
+Table 2,
+Table 2,
+Table 2,
+Table 2,
+§1,
+§3.2.
+[71]
+R. Wightman (2019)
+PyTorch image models.
+GitHub.
+Note: https://github.com/huggingface/pytorch-image-models
+External Links: Document
+Cited by: Table 2,
+Table 2,
+Table 2,
+Table 2,
+Table 2,
+Table 2,
+Table 2,
+Table 2,
+Table 2,
+§3.2.
+[72]
+H. Xiao, K. Rasul, and R. Vollgraf (2017)
+Fashion-MNIST: a Novel Image Dataset for Benchmarking Machine Learning Algorithms.
+arXiv preprint arXiv:1708.07747.
+Cited by: §A.1,
+§3.2.
+[73]
+K. Xu, R. Chen, G. Franchi, and A. Yao (2024)
+Scaling for Training Time and Post-hoc Out-of-distribution Detection Enhancement.
+In Proc. ICLR,
+Cited by: Table 1,
+§2,
+§3.2,
+§3.2,
+§3.2.
+[74]
+J. Yang, P. Wang, D. Zou, Z. Zhou, K. Ding, W. PENG, H. Wang, G. Chen, B. Li, Y. Sun, X. Du, K. Zhou, W. Zhang, D. Hendrycks, Y. Li, and Z. Liu (2022)
+OpenOOD: Benchmarking Generalized Out-of-Distribution Detection.
+In NeurIPS Datasets and Benchmarks Track,
+External Links: Link
+Cited by: §A.1,
+§3.2,
+§3.2.
+[75]
+J. Yang, K. Zhou, Y. Li, and Z. Liu (2021)
+Generalized Out-of-Distribution Detection: A Survey.
+arXiv preprint arXiv:2110.11334.
+External Links: Document
+Cited by: §2.
+[76]
+N. Ye, K. Li, H. Bai, R. Yu, L. Hong, F. Zhou, Z. Li, and J. Zhu (2022)
+OoD-Bench: Quantifying and Understanding Two Dimensions of Out-of-Distribution Generalization.
+In Proc. CVPR,
+Cited by: §2.
+[77]
+S. Yun, D. Han, S. Chun, S. J. Oh, Y. Yoo, and J. Choe (2019)
+CutMix: Regularization Strategy to Train Strong Classifiers With Localizable Features .
+In Proc. ICCV,
+Cited by: Table 2,
+Appendix B,
+§1,
+§3.2.
+[78]
+H. Zhang, M. Cisse, Y. N. Dauphin, and D. Lopez-Paz (2018)
+Mixup: beyond empirical risk minimization.
+In Proc. ICLR,
+Cited by: Table 2,
+Appendix B,
+§1,
+§3.2.
+[79]
+J. Zhang, J. Yang, P. Wang, H. Wang, Y. Lin, H. Zhang, Y. Sun, X. Du, Y. Li, Z. Liu, Y. Chen, and H. Li (2023)
+OpenOOD v1.5: enhanced benchmark for out-of-distribution detection.
+arXiv preprint arXiv:2306.09301.
+Cited by: §A.1,
+§3.2.
+[80]
+J. Zhang, J. Yang, P. Wang, H. Wang, Y. Lin, H. Zhang, Y. Sun, X. Du, Y. Li, Z. Liu, Y. Chen, and H. Li (2024)
+OpenOOD v1.5: enhanced benchmark for out-of-distribution detection.
+J. of DMLR.
+Cited by: §A.1,
+Table 2,
+Appendix C,
+§2,
+§2,
+§3.2,
+§3.2,
+§3.2,
+§3,
+§5.
+[81]
+J. Zhang, Q. Fu, X. Chen, L. Du, Z. Li, G. Wang, X. Liu, S. Han, and D. Zhang (2023)
+Out-of-Distribution Detection based on In-Distribution Data Patterns Memorization with Modern Hopfield Energy.
+In Proc. ICLR,
+Cited by: Table 1,
+§2,
+§3.2,
+§3.2.
+[82]
+Y. Zheng, Z. Zhang, S. Yan, and M. Zhang (2022)
+Deep autoaugment.
+In Proc. ICLR,
+Cited by: §3.2.
+[83]
+L. Zhu, Y. Yang, Q. Gu, X. Wang, C. Zhou, and N. Ye (2024)
+CRoFT: robust fine-tuning with concurrent optimization for OOD generalization and open-set OOD detection.
+In Proc. ICML,
+Cited by: §2.
+\thetitle
+Supplementary Material
+This supplementary document expands on the main manuscript.
+It provides full experimental details (Appendix A), comprehensive results that support and extend our analyses (Appendix B), and additional experiments with Vision Transformers (ViT) (Appendix C).
+Appendix A Experimental Details
+A.1 Implementation Details
+Software stack.
+Our experimental framework is built upon the OpenOOD [74, 79, 80] framework.
+Specifically, we utilize the public fork from Humblot-Renaux [35], as it provides a GRAM [58] implementation that follows the official implementation details, which also leverages information from intermediate layers.
+We extend the model zoo by integrating 56 ImageNet checkpoints, adapted from the collection provided by [20].
+The full list of all models used in this study, along with their training categories and performance metrics, is detailed in Tab. 2.
+All evaluations in this study are executed within this unified framework.
+To broaden the evaluation scope, we also enrich the data layer with two additional OOD categories:
+(i) extreme-OOD including MNIST [39] and Fashion-MNIST [72], and
+(ii) synthetic-OOD including the unit-test data provided by NINCO [4].
+This setup ensures reproducibility and fair comparison with a broad set of diverse training strategies, OOD test sets, and existing state-of-the-art OOD detection methods.
+Hardware and system configuration.
+All experiments were executed on a workstation equipped with an Intel Core i9-9900X (10 cores, 3.5 GHz) and two NVIDIA GPUs (RTX 2080Ti + RTX 3090).
+The software environment consisted of Ubuntu 22.04, Python 3.10, PyTorch 2.0.1, and CUDA 11.8.
+OOD detection methods.
+Many OOD detection methods require a configuration phase prior to evaluation, for which we strictly follow the OpenOOD benchmark protocols to ensure comparability.
+This process includes two types of setup: some methods are calibrated on the ID training set to compute statistics or other parameters, while others have crucial hyperparameters that are tuned on a held-out validation set containing both ID and OOD samples.
+Although detectors ship with default hyperparameters, these defaults are typically tuned to a vanilla training recipe, which can risk biasing the comparison.
+Re-optimizing all parameters, therefore, provides a fair test across the diverse training strategies evaluated here.
+The exact settings and hyperparameter search spaces adopted for each method are detailed in Tab. 1.
+Method
+Hyperparameter Search Space
+MSP [30]
+MLS [28]
+EBO [46]
+temperature T\in\{1,10,100,1000\}
+ODIN [42]
+perturbation mag. \sigma\in\{0.0014,0.0028\}
+TempScale [23]
+KLM [28]
+gamma \in\{0.01,0.1,0.5,1,2,5,10\}
+GEN [47]
+top-M classes \in\{10,50,100,200,500,1000\}
+KNN [62]
+K\in\{50,100,200,500,1000\}
+MDS [40]
+RMDS [56]
+SHE [81]
+ViM [68]
+ASH [15]
+percentile \in\{65,70,75,80,85,90,95\}
+ReAct [60]
+percentile \in\{70,80,85,90,95,99\}
+DICE [61]
+percentile \in\{10,30,50,70,90\}
+SCALE [73]
+percentile \in\{65,70,75,80,85,90,95\}
+NNGuide [53]
+fDBD [45]
+normalization \in\{\text{true},\text{false}\}
+GRAM [58]
+ATS [38]
+GradNorm [34]
+Table 1:
+Overview of hyperparameter search space for all considered OOD detection methods.
+Model
+Category
+In-Distribution
+Out-of-Distribution
+Accuracy \uparrow
+ECE \downarrow
+AUROC \uparrow
+FPR95 \downarrow
+Original Baseline [25]
+Baseline
+76.19
+03.62
+89.07^{\scriptsize\pm\phantom{0}9.95}
+42.05^{\scriptsize\pm 27.62}
+PGD-AT (l_{2},\epsilon=0) [57, 48]
+Adversarial Training
+75.90
+03.50
+88.90^{\scriptsize\pm 10.22}
+42.27^{\scriptsize\pm 28.36}
+PGD-AT (l_{2},\epsilon=0.01) [57, 48]
+Adversarial Training
+75.69
+03.02
+88.50^{\scriptsize\pm\phantom{0}9.97}
+44.42^{\scriptsize\pm 27.39}
+PGD-AT (l_{2},\epsilon=0.03) [57, 48]
+Adversarial Training
+75.88
+02.80
+88.37^{\scriptsize\pm\phantom{0}9.76}
+44.96^{\scriptsize\pm 26.67}
+PGD-AT (l_{2},\epsilon=0.05) [57, 48]
+Adversarial Training
+75.58
+02.68
+88.86^{\scriptsize\pm 10.05}
+42.97^{\scriptsize\pm 28.03}
+PGD-AT (l_{2},\epsilon=0.1) [57, 48]
+Adversarial Training
+74.86
+02.21
+88.53^{\scriptsize\pm 10.54}
+44.48^{\scriptsize\pm 28.62}
+PGD-AT (l_{2},\epsilon=0.25) [57, 48]
+Adversarial Training
+74.15
+01.79
+87.90^{\scriptsize\pm 10.14}
+46.97^{\scriptsize\pm 26.49}
+PGD-AT (l_{2},\epsilon=0.5) [57, 48]
+Adversarial Training
+73.22
+01.58
+87.50^{\scriptsize\pm 10.55}
+48.06^{\scriptsize\pm 26.35}
+PGD-AT (l_{2},\epsilon=1) [57, 48]
+Adversarial Training
+70.50
+03.35
+85.99^{\scriptsize\pm 10.97}
+51.61^{\scriptsize\pm 26.49}
+PGD-AT (l_{2},\epsilon=3) [57, 48]
+Adversarial Training
+62.86
+09.06
+79.85^{\scriptsize\pm 10.42}
+65.71^{\scriptsize\pm 21.19}
+PGD-AT (l_{2},\epsilon=5) [57, 48]
+Adversarial Training
+56.15
+12.65
+74.45^{\scriptsize\pm\phantom{0}9.75}
+71.33^{\scriptsize\pm 18.70}
+PGD-AT (l_{\infty},\epsilon=0.5) [57, 48]
+Adversarial Training
+73.75
+01.23
+87.25^{\scriptsize\pm\phantom{0}9.86}
+48.39^{\scriptsize\pm 23.86}
+PGD-AT (l_{\infty},\epsilon=1.0) [57, 48]
+Adversarial Training
+72.13
+02.78
+85.86^{\scriptsize\pm\phantom{0}9.93}
+53.04^{\scriptsize\pm 25.30}
+PGD-AT (l_{\infty},\epsilon=2.0) [57, 48]
+Adversarial Training
+69.13
+04.80
+83.42^{\scriptsize\pm 10.24}
+58.99^{\scriptsize\pm 25.04}
+PGD-AT (l_{\infty},\epsilon=4.0) [57, 48]
+Adversarial Training
+63.94
+08.92
+80.26^{\scriptsize\pm 10.39}
+65.47^{\scriptsize\pm 20.56}
+PGD-AT (l_{\infty},\epsilon=8.0) [57, 48]
+Adversarial Training
+54.55
+13.28
+70.62^{\scriptsize\pm 11.43}
+73.24^{\scriptsize\pm 16.29}
+AutoAugment (270Ep) [12]
+Augmentations
+77.52
+02.74
+89.54^{\scriptsize\pm 10.06}
+40.22^{\scriptsize\pm 29.92}
+FastAutoAugment (270Ep) [43]
+Augmentations
+77.69
+03.58
+88.77^{\scriptsize\pm\phantom{0}9.94}
+42.82^{\scriptsize\pm 29.14}
+StyleAugment [22, 80]
+Augmentations
+74.68
+01.91
+88.35^{\scriptsize\pm 10.17}
+43.92^{\scriptsize\pm 28.09}
+RandAugment (270Ep) [13]
+Augmentations
+77.65
+03.26
+88.78^{\scriptsize\pm\phantom{0}9.57}
+43.16^{\scriptsize\pm 28.80}
+AugMix (180Ep) [32]
+Augmentations
+77.63
+01.88
+89.72^{\scriptsize\pm\phantom{0}9.51}
+40.78^{\scriptsize\pm 27.29}
+DeepAugment [29]
+Augmentations
+76.76
+02.37
+88.03^{\scriptsize\pm\phantom{0}9.49}
+45.72^{\scriptsize\pm 25.13}
+DeepAugment + AugMix [29]
+Augmentations
+75.89
+02.82
+88.56^{\scriptsize\pm 11.00}
+41.10^{\scriptsize\pm 30.16}
+RegMixup [55]
+Augmentations
+76.69
+02.94
+88.14^{\scriptsize\pm\phantom{0}9.30}
+45.87^{\scriptsize\pm 26.13}
+Diffusion-like Noise [36]
+Augmentations
+67.26
+01.79
+84.24^{\scriptsize\pm 11.48}
+53.83^{\scriptsize\pm 25.72}
+NoisyMix [18]
+Augmentations
+77.14
+12.92
+86.41^{\scriptsize\pm 10.25}
+50.67^{\scriptsize\pm 27.04}
+OpticsAugment [51]
+Augmentations
+74.25
+03.02
+88.88^{\scriptsize\pm 10.67}
+41.10^{\scriptsize\pm 28.71}
+PRIME [49]
+Augmentations
+76.99
+02.79
+88.63^{\scriptsize\pm\phantom{0}9.43}
+44.04^{\scriptsize\pm 26.30}
+PixMix (90Ep) [31]
+Augmentations
+77.43
+01.49
+88.07^{\scriptsize\pm\phantom{0}8.94}
+44.60^{\scriptsize\pm 26.33}
+PixMix (180Ep) [31]
+Augmentations
+78.18
+02.19
+87.29^{\scriptsize\pm\phantom{0}8.62}
+46.45^{\scriptsize\pm 25.65}
+\bigstar\bigstar
+MixUp [78]
+Augmentations
+77.55
+20.40
+84.13^{\scriptsize\pm 11.08}
+52.89^{\scriptsize\pm 28.08}
+CutMix [77]
+Augmentations
+78.62
+18.79
+79.65^{\scriptsize\pm 11.57}
+58.89^{\scriptsize\pm 24.11}
+ShapeNet (SIN) [22]
+Augmentations
+60.22
+06.80
+84.65^{\scriptsize\pm 12.28}
+47.16^{\scriptsize\pm 34.05}
+ShapeNet (SIN+IN) [22]
+Augmentations
+76.74
+04.82
+88.62^{\scriptsize\pm\phantom{0}9.23}
+44.79^{\scriptsize\pm 26.48}
+ShapeNet (SIN+IN \rightarrow IN) [22]
+Augmentations
+74.68
+01.91
+88.34^{\scriptsize\pm 10.18}
+43.96^{\scriptsize\pm 28.08}
+Texture/Shape debiased [41]
+Augmentations
+76.92
+03.21
+87.72^{\scriptsize\pm 10.02}
+46.02^{\scriptsize\pm 27.19}
+Texture/Shape-Shape biased [41]
+Augmentations
+76.31
+02.38
+88.26^{\scriptsize\pm\phantom{0}9.84}
+44.72^{\scriptsize\pm 27.46}
+Texture/Shape-Texture biased [41]
+Augmentations
+75.31
+03.22
+89.03^{\scriptsize\pm 10.05}
+41.51^{\scriptsize\pm 28.97}
+Dinov1 [7]
+SSL
+75.32
+02.04
+87.46^{\scriptsize\pm 11.91}
+40.19^{\scriptsize\pm 32.33}
+MoCo v3 (100Ep) [10]
+SSL
+68.99
+03.79
+84.11^{\scriptsize\pm 12.19}
+50.33^{\scriptsize\pm 27.68}
+MoCo v3 (300Ep) [10]
+SSL
+72.84
+03.44
+85.34^{\scriptsize\pm 11.21}
+50.55^{\scriptsize\pm 26.64}
+MoCo v3 (1000Ep) [10]
+SSL
+74.62
+02.34
+85.58^{\scriptsize\pm 10.73}
+49.76^{\scriptsize\pm 26.13}
+SimCLRv2 [8]
+SSL
+74.96
+03.55
+87.99^{\scriptsize\pm 11.96}
+41.76^{\scriptsize\pm 30.60}
+SwAV [6]
+SSL
+75.33
+02.49
+84.07^{\scriptsize\pm 11.18}
+53.38^{\scriptsize\pm 27.46}
+SupCon [37]
+SSL
+77.37
+06.53
+79.02^{\scriptsize\pm\phantom{0}6.27}
+63.43^{\scriptsize\pm 13.17}
+timm A1 [71, 70]
+Improved Training
+80.14
+08.71
+84.65^{\scriptsize\pm\phantom{0}7.91}
+57.85^{\scriptsize\pm 19.18}
+timm A1h [71, 70]
+Improved Training
+80.15
+43.78
+75.69^{\scriptsize\pm\phantom{0}6.49}
+69.05^{\scriptsize\pm 13.40}
+timm A2 [71, 70]
+Improved Training
+79.86
+08.77
+86.74^{\scriptsize\pm\phantom{0}9.40}
+55.11^{\scriptsize\pm 23.14}
+timm A3 [71, 70]
+Improved Training
+77.45
+06.60
+79.07^{\scriptsize\pm\phantom{0}6.64}
+72.55^{\scriptsize\pm 11.76}
+timm B1k [71, 70]
+Improved Training
+79.25
+14.44
+82.72^{\scriptsize\pm 11.73}
+51.60^{\scriptsize\pm 29.58}
+timm B2k [71, 70]
+Improved Training
+79.30
+14.86
+83.49^{\scriptsize\pm 12.16}
+49.40^{\scriptsize\pm 30.26}
+timm C1 [71, 70]
+Improved Training
+79.78
+22.05
+83.05^{\scriptsize\pm 11.71}
+47.89^{\scriptsize\pm 29.53}
+timm C2 [71, 70]
+Improved Training
+79.97
+15.91
+83.42^{\scriptsize\pm 12.01}
+47.52^{\scriptsize\pm 29.54}
+timm D [71, 70]
+Improved Training
+79.95
+02.97
+83.47^{\scriptsize\pm\phantom{0}7.04}
+57.26^{\scriptsize\pm 19.27}
+TorchVision 2 [67, 54]
+Improved Training
+80.92
+41.27
+74.33^{\scriptsize\pm\phantom{0}7.45}
+62.90^{\scriptsize\pm 18.86}
+Frozen Random Filters [21]
+Freezing
+74.87
+02.91
+79.83^{\scriptsize\pm\phantom{0}7.48}
+66.16^{\scriptsize\pm 17.12}
+Table 2:
+Performance summary for the 56 ResNet-50 models evaluated in our study.
+For each model, the table lists its unique visual identifier used consistently throughout all figures: color denotes the training Category (e.g., Augmentations), while marker shape identifies the specific model.
+We report ID metrics (Accuracy, ECE) and OOD metrics (AUROC, FPR95).
+OOD performance is shown as mean \pm standard deviation across all 21 OOD detection methods and eight OOD datasets.
+Arrows (\uparrow/\downarrow) indicate whether higher or lower values are better, and all values are reported as percentages.
+Appendix B Detailed Results
+Figure 9:
+Relationship between ID classification accuracy and OOD detection performance, measured by the mean False Positive Rate at 95% True Positive Rate (FPR95).
+Each point represents one of 56 ResNet-50 models trained with a diverse strategy.
+The reported FPR95 for each model is the average across all 21 OOD detection methods and four OOD categories.
+Color indicates the model’s training category, while the marker shape uniquely identifies each model within that category.
+Does higher ID accuracy imply better OOD detection?
+To validate that our findings are not an artifact of the AUROC metric, we perform an equivalent analysis using the False Positive Rate at 95\% True Positive Rate (FPR95).
+As shown in Fig. 9, this analysis plots ID classification accuracy against FPR95, where lower values signify better OOD detection performance.
+This analysis quantitatively confirms the visually observed mirrored fall-then-rise pattern.
+Consistent with the AUROC results, the overall relationship between accuracy and FPR95 yields a weak global correlation (Spearman’s \rho=-0.04,p\ll 0.001).
+Similar to the AUROC analysis, in the low-to-baseline accuracy regime, performance is primarily driven by adversarially trained models, which exhibit a strong negative correlation between ID classification accuracy and FPR95 (OOD performance improves).
+Conversely, for high-performing models, advanced augmentations and regularization techniques reverse this relationship, leading to a degradation in OOD
+performance (an increase in FPR95).
+This result provides strong evidence that the complex, non-monotonic relationship between ID accuracy and OOD performance is a general phenomenon, independent of the evaluation metric.
+Are OOD detectors merely identifying misclassified samples?
+We revisit the claim that post-hoc detectors succeed largely because they separate correctly classified ID samples from OOD inputs.
+Fig. 10 confirms the strong positive correlation between OOD performance on correctly versus incorrectly classified ID data (Spearman’s \rho=0.88, p\ll 0.001).
+It also makes the consistent performance gap visually apparent, as nearly all points lie below the x=y identity line, showing that performance is systematically higher on correctly classified samples.
+A notable exception are models trained with MixUp or CutMix, where points for all detectors lie on (or very close to) the identity line, indicating similar OOD performance when conditioning on correct vs. incorrect ID predictions.
+However, the magnitude of this performance gap is highly method-dependent, as detailed in Fig. 11 and Fig. 12.
+Figure 10:
+Relationship between \text{AUROC}_{\text{correct~vs.~OOD}} and \text{AUROC}_{\text{incorrect~vs.~OOD}}.
+Each point represents one of 56 models, with performance averaged across all 21 OOD detection methods and four OOD categories.
+Color indicates the model’s training category, while the marker shape uniquely identifies each model within that category.
+Classification-based methods like MSP, which are highly sensitive to classification correctness (i.e., high \text{AUROC}_{\text{correct~vs.~incorrect}}), exhibit a large performance drop when evaluating on misclassified samples, since their scores are tightly coupled to prediction confidence, these methods risk confusing hard ID examples with true OOD data.
+In contrast, methods that leverage richer feature-space representations, like NNGuide and GRAM, show almost no performance gap.
+Their near-chance failure detection performance (\text{AUROC}_{\text{correct~vs.~incorrect}}\approx 50\%) implies their OOD scoring is largely decoupled from the correctness of the ID classification.
+In Figs. 14 and 13, we correlate the OOD detection performance (AUROC) with the ID classification accuracy.
+This analysis is performed for all ID samples, and we further dissect the behavior by also considering the subsets of correctly and incorrectly classified samples separately (Fig. 13).
+The Spearman correlation coefficients (Fig. 14) reveal a consistently weak or statistically non-significant relationship across all three groups (i.e., all, correct, and incorrect), echoing the main manuscript finding.
+This result diverges from prior work [35]; while they performed a similar analysis, they observed a strong overall correlation that was almost entirely driven by the performance on correctly classified ID samples (\text{AUROC}_{\text{correct~vs.~OOD}})
+While \text{AUROC}_{\text{incorrect~vs.~OOD}} can approach random chance for some model–method pairs, this is not the case for well-matched configurations (Fig. 13).
+For the baseline model—representing the default benchmark setting where the model-method fit is strong—every single detector performs significantly better than random guessing.
+This demonstrates a genuine ability to distinguish true OOD samples from a model’s own most challenging ID examples, proving that—while misclassifications impair performance—these methods are fundamentally more than mere failure detectors.
+Figure 11:
+Relation between OOD Detection Performance on correct versus incorrect ID samples for each OOD detection method.
+Each point represents one of the 56 ResNet-50 models, averaged over eight OOD datasets.
+Color indicates the model’s training category, while the marker shape uniquely identifies each model within that category.
+Figure 12:
+Performance comparison of all 21 OOD detection methods across multiple AUROC-based evaluation metrics.
+\text{AUROC}_{\text{correct~vs.~incorrect}} evaluates failure prediction on ID data only, distinguishing between correctly and incorrectly classified samples.
+The remaining metrics assess OOD detection, either across all ID samples, only correctly classified ones, or only misclassified ones.
+Each boxplot shows the distribution over 56 models and four OOD categories.
+(a)
+(b)
+Figure 13:
+Relation between ID classification accuracy and OOD detection performance.
+Subfigure (a) shows the AUROC for distinguishing correctly classified ID samples from OOD samples, while (b) focuses on incorrectly classified ID samples.
+Each point represents one of the 56 ResNet-50 models, averaged over eight OOD datasets.
+Color indicates the model’s training category, while the marker shape uniquely identifies each model within that category.
+(a)
+Correlation between ID classification accuracy and AUROC.
+(b)
+Correlation between ID classification accuracy and \text{AUROC}_{\text{correct~vs.~OOD}}.
+(c)
+Correlation between ID classification accuracy and \text{AUROC}_{\text{incorrect~vs.~OOD}}.
+Figure 14:
+Relationship between ID classification accuracy and OOD detection performance.
+Spearman rank correlation (\rho) between ID classification accuracy and OOD-detection AUROC for each detector: (a) all ID samples, (b) only correctly classified ID samples, and (c) only misclassified ID samples.
+Bars are sorted and color-coded according to the method’s OOD detection category ( classification-based, feature-based, hybrid, intermediate-feature, gradients).
+Non-significant correlations (p\geq 0.05) are shown with reduced opacity.
+Statistics are computed over 56 models and four OOD categories.
+Where does the AUROC variance come from?
+Tab. 3 lists the complete F-values, p-values, and variance shares of the three-way ANOVA; all main effects and interactions are significant (p\ll 0.001).
+To rule out a single OOD category artifact, we reran the ANOVA four times, each time omitting one OOD category.
+Tab. 4 shows the variance shares.
+Leaving out the hardest split (near-OOD) drops the OOD category main effect to 6.59\%, but the model \times method interaction increases to 33.36\%, revealing model-detector coupling that had been masked by uniformly low AUROC on the toughest OOD category.
+When far- or extreme-OOD is omitted, the OOD-category term remains dominant (\approx 40\%) while the interaction never falls below 16\%.
+The residual variance is stable across all runs.
+Thus, no single dataset dictates the conclusions; indeed, model–OOD method compatibility becomes more salient once the most challenging category is removed, underscoring the need for a diverse OOD benchmark.
+Effect
+F-value
+p-value
+Variance Share (%)
+Method
+156.69
+\ll 0.001
+7.08
+Model
+77.90
+\ll 0.001
+9.69
+OOD Category
+5045.22
+\ll 0.001
+34.22
+Model \times Method
+8.47
+\ll 0.001
+21.05
+Model \times OOD Category
+9.10
+\ll 0.001
+3.39
+Method \times OOD Category
+39.05
+\ll 0.001
+5.30
+Model \times Method \times OOD Group
+1.16
+\ll 0.001
+8.66
+Residual
+—
+—
+10.62
+Table 3:
+Three-way ANOVA decomposition of AUROC variance across models, OOD detection methods, and OOD dataset categories.
+The table reports the F-statistic, significance level (p-value), and proportion of explained variance for each main effect and interaction.
+Left-Out
+Model
+Method
+OOD Category
+Model\timesMethod
+Model\timesOOD Category
+Method\timesOOD Category
+3-Way Interaction
+Residual
+Near
+16.66
+10.02
+06.78
+33.87
+4.33
+6.41
+11.43
+10.55
+Far
+09.59
+05.16
+42.15
+16.51
+3.44
+6.25
+08.45
+08.44
+Extreme
+08.41
+08.62
+40.23
+19.79
+2.17
+2.60
+06.46
+11.67
+Synthetic
+11.49
+08.04
+31.49
+22.49
+2.76
+4.63
+06.39
+12.77
+Table 4:
+Explained variance from leave-one-out 3-way ANOVA (factors: model, method, OOD category).
+Each row excludes one OOD group and recomputes variance proportions.
+All reported values are in percentage and statistically significant (p\ll 0.001).
+How robust are detection methods across training variants?
+The robustness of OOD detection methods also depends on the nature of the distributional shift.
+Fig. 15 shows the OOD detection performance for each method across the four OOD categories, revealing several key insights.
+First, as expected, performance is generally lowest for the most challenging near-OOD datasets, where the semantic similarity with the ID data is highest.
+Most methods struggle to achieve high AUROC scores in this setting, confirming the difficulty of this benchmark.
+Second, and more surprisingly, the variance in performance across our 56 models is often highest for the supposedly easier extreme- and synthetic-OOD categories.
+This suggests that the choice of training strategy can have a more pronounced and unpredictable impact on a method’s effectiveness when the domain shift is large but structurally simple (e.g., ImageNet vs. MNIST).
+This highlights a critical aspect of robustness: a method that appears stable and effective on near-OOD data may become unreliable on other types of shifts, and vice versa.
+For example, the high variance of some model enhancement methods on extreme- and synthetic-OOD data may not just stem from a sensitivity to low-level statistics, but also from operating on final-layer features where discriminative information for structurally simple OOD data might be diminished.
+This hypothesis is supported by prior work [38], which showed that simpler OOD tasks are often more easily solved in a model’s earlier layers.
+The notable robustness of GRAM, which leverages intermediate features, on these same categories lends further support to this idea, suggesting that access to earlier representations is key for handling such shifts. This underscores the necessity of benchmarking on a wide range of OOD test sets to gain a complete picture of a method’s generalization capabilities.
+Relationship with Model Calibration
+To investigate if other ID metrics are better predictors of OOD performance than accuracy, we analyzed the relationship between Expected Calibration Error (ECE) and the OOD detection performance (Fig. 16).
+Globally, we observe a weak negative correlation (Spearman’s \rho=-0.17,p\ll 0.001), which, while more consistent than the correlation with ID classification accuracy (\rho=0.04), remains a poor proxy for OOD detection performance.
+A breakdown by training category (Fig. 17) reveals that this global correlation is a misleading artifact.
+The trend is driven almost entirely by the adversarial training regime (\rho=-0.33).
+At the same time, models trained with augmentations, SSL, or improved recipes show little to no correlation between their calibration and OOD detection performance.
+This finding underscores that OOD detection performance is too complex to be reliably predicted by a single ID metric, such as accuracy or calibration.
+While correlations may appear within specific subgroups (e.g., training strategies or OOD detection methods), such as adversarially trained models, they do not imply causality and fail to generalize across the diverse landscape of training strategies, making them unreliable as universal proxies.
+Figure 15:
+OOD detection performance across different OOD categories (near, far, extreme, and synthetic).
+Each boxplot shows the distribution over 56 models.
+Figure 16:
+Relationship between the expected calibration error (ECE) and the OOD detection performance.
+Each point represents one of 56 models, with performance averaged across all 21 OOD detection methods and eight OOD datasets.
+Figure 17:
+Spearman correlation coefficients (\rho) between OOD detection performance (AUROC) and in-distribution (ID) performance metrics (accuracy and ECE), computed across all models, OOD methods, and OOD categories (Overall), and separately for adversarial training (AT), data augmentations (Aug.), self-supervised learning (SSL), and improved training recipes (Imp. Train.).
+Non-significant correlations (p\geq 0.05) are set to 0. Note that Spearman r reflects monotonic relationships and may not capture non-monotonic trends.
+Feature-Space Analysis and Robustness of OOD Detection Methods.
+To better understand why advanced training recipes degrade OOD detection, we analyze feature-space statistics for four ResNet-50 models: the baseline [25], MixUp [78], CutMix [77], and the TorchVision 2 recipe [54, 67] (which includes MixUp, CutMix together with additional regularization such as label smoothing, stronger augmentation, and EMA; see Fig. 18).
+We report five complementary metrics: total variance (spread of embeddings), participation ratio (effective dimensionality), sparsity (fraction of near-zero activations), and the mean and standard deviation of feature norms.
+While MixUp, CutMix, and TorchVision 2 achieve higher ID accuracy than the baseline, their internal representations become progressively more compressed.
+From the baseline through MixUp and CutMix to TorchVision 2, we observe a clear progression.
+MixUp reduces variance and feature norms while lowering the participation ratio, suggesting a lower-rank embedding.
+CutMix shows similar but slightly stronger effects, with variance/norm reduced further and sparsity moderately increased.
+TorchVision 2 amplifies these trends: variance and norms collapse, sparsity increases by more than two orders of magnitude, and the representation is flattened.
+Thus, while all three advanced recipes achieve higher ID accuracy than the baseline, they also progressively compress and sparsify the embedding space.
+These shifts are also mirrored in the logit and embedding space (see Figs. 19 and 20).
+The max-logit distributions become narrower and show increasing ID-OOD overlap: baseline leaves a clear margin (FPR95 = 30.62%), MixUp reduces separation (57.70%), CutMix worsens it further (70.93%), and TorchVision 2 nearly eliminates it (77.52%).
+Likewise, the penultimate-layer activation distributions show that the characteristic pattern described by Sun et al. [60]—a near-constant mean activation for ID samples and lower but more variable activations for OOD samples, which ReAct exploits via activation clipping—progressively changes under MixUp, CutMix, and TorchVision 2.
+As a result, activation-shaping detectors such as ReAct—whose efficacy depends on clipping high activations—lose discriminative power, reflected in a significant performance drop: FPR95 increases from 16.75% (baseline) to 40.46% (MixUp), 58.51% (CutMix), and 88.55% (TorchVision 2).
+In contrast, feature-based methods (e.g., KNN, GRAM, RMD) that leverage distances or higher-order statistics rather than specific activation characteristics, and therefore remain comparatively robust under increasing regularization.
+Altogether, these results show that although MixUp, CutMix, and TorchVision 2 improve ID accuracy, they also systematically reshape the feature space in ways that disadvantage activation-based detectors while leaving geometry-based or magnitude-agnostic approaches more stable.
+This provides further evidence for our central finding that improvements in ID accuracy do not necessarily yield better OOD detection, underscoring the strong dependency between the underlying model and the effectiveness of a given OOD detection method.
+Figure 18:
+Feature-space metrics for ResNet-50 baseline, MixUp, CutMix, and TorchVision 2 on the ImageNet test set, computed from penultimate-layer embeddings and shown relative to TorchVision 2 (set to 1.0).
+We report five complementary statistics: i) total variance, the trace of the covariance matrix measuring overall spread of embeddings; ii) participation ratio, the effective dimensionality of the feature space; iii) sparsity, the fraction of activations below 10^{-3}; iv) mean feature norm, the average l_{2}-norm of embedding vectors; and v) standard deviation of feature norms, capturing variability in embedding magnitudes.
+Figure 19:
+Max-logit distributions for ResNet-50 baseline, MixUp, CutMix, and TorchVision 2 with ImageNet (ID) and iNaturalist (OOD).
+The plots show the distribution of the maximum predicted logit for ID and OOD samples, together with the corresponding FPR95 values.
+Figure 20:
+Distribution of per-unit activations in the penultimate layer for ImageNet (ID) and iNaturalist (OOD) across ResNet-50 baseline, MixUp, CutMix, and TorchVision 2.
+Appendix C Results on ViT
+To test whether our findings extend beyond ResNets, we also evaluate Vision Transformer (ViT-B/16) models [16], that originate from AugReg [59], Masked Autoencoders (MAE) [24], Data-Efficient Image Transformers (DeiT) [64], and Sharpness-Aware Minimization (SAM) [9].
+As with ResNet, all models are trained exclusively on the ILSVRC2012 subset of ImageNet to prevent OOD contamination.
+Consistent with our ResNet results, ViTs achieve higher ID accuracy but do not exhibit improved OOD detection performance (see Fig. 21).
+At the OOD detection method level (Fig. 22), we again observe a clear dichotomy: feature-based methods that rely on distances or higher-order statistics (e.g., KNN, RMDS, GRAM) remain comparatively robust, while model-enhancement methods that depend on shaping specific activation patterns degrade substantially.
+These findings reinforce our central claim that better ID accuracy does not guarantee better OOD detection, even for more modern, higher-capacity architectures.
+They also support recent evidence [80] that many OOD detection methods have been implicitly tuned to CNN-style representations, and may overfit to the activation characteristics of ResNets rather than transfer robustly to other architectures.
+Figure 21:
+Relationship between ID accuracy and OOD detection performance (AUROC) for 56 ResNet-50 and four ViT-B/16 models.
+Each point corresponds to a specific training strategy on ImageNet (ID), with OOD performance averaged over 21 detection methods and eight OOD datasets.
+Figure 22:
+Relationship between ID accuracy and OOD detection performance (AUROC) for ResNet-50 and ViT-B/16 across individual OOD detection methods.
+Each panel shows one OOD detection method, with points corresponding to different training strategies (21 ResNet-50 and four ViT-B/16 models trained on ImageNet).
+OOD performance is averaged across eight OOD datasets.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

@@ -4,7 +4,9 @@
 **窗口：** 2026-02-23T09:00:00+08:00 ～ 2026-02-24T09:00:00+08:00
 **状态：** 完成
 **Books：** 纳入本次
-**检查时间：** 2026-10-05T18:16:50+08:00
+**检查时间：** 2026-10-08T20:36:30+08:00
+**窗口说明：** 用户明确仅补现存日报来源遗漏，保留原窗口与候选日期/评分；旧材料只去重，不搬移归属。
+**补充窗口：** 2026-02-23 ～ 2026-02-23
 
 ## 1. 结论
 
@@ -12,29 +14,38 @@
 
 每日 14 来源均已有有限入口检查；动态/历史目录限制见下。arXiv 宽列表仅有界查漏：DataCite 770 个身份、注册主题切片 300 个标题以及 cs.CL 月度列表均不是本窗有效候选数，也未形成全量题摘/全文队列。三批68完整题摘已root准入校准，含11具体排除及17930/17931家族归并，得到56家族；加17778安全项与官方SWE/PSM，共59当窗唯一家族，候选分母冻结。57 arXiv v1 Submitted均在Thu14EST截止后、Registered上界均落本窗，按官方公告机制给首次公开下界，不拿字段当first-public时刻。潜力不等于结论成立，不因Books已覆盖或待审工作量缩池。
 
+**2026-10-08遗漏增量（与上述有效旧层区分）：** 用户明确仅补遗漏，原59候选行、日期、评分、原窗口与连续§4逐字冻结；完整可恢复[运行前baseline](../_sources/daily-20260224/supplement-baseline-20261008.md)保留。新增只处理北京时间2026-02-23完整自然日。确认新增Opus4.6 HLE-with-tools Feb23纠错1家族，重要修订不重复评分；原59＋新增1＝60。本次深入只读受影响脚注/评价条件，Ch66实际正文已覆盖scorer身份，不新增Books。新增处置为1已有覆盖，故合计31整合/24已有覆盖/3仅报告/2中心争议；原31实际写后与59有效审阅层复用，不因旧“完成”替代增量验收。
+
+四个有限arXiv主题入口的66独立完整当前题摘与原59交集0，经具体贡献筛选/定点消歧为60潜力日期隔离、4明确EX、1作者撤回请求关闭、1已有窗前公开cue。60不是确定本窗候选，不评分/不支持正面证据/Books/全Coverage；Submitted/Atom/编号不等公告，current版本不倒填首日。14每日源实际停止见来源表，未恢复历史slice明确隔离。root增量独立DAY已通过；普通扫描/作者审阅/Books/独立复核待办0，完成仅指安全终态。
+
 ## 2. 来源覆盖
 
 原响应、实际查询和执行时间保存在[本日 V3 原始材料](../_sources/daily-20260224/)，下面的停止范围不认证互联网上无遗漏。
 
 | 来源 | 检查范围与依据 | 结果 | 缺口 |
 | --- | --- | --- | --- |
-| SRC-OPENAI | 官方 RSS 完整历史条目，本窗 SWE-bench Verified 与 Frontier Alliances；主文有限必要审阅 | 已检查 | 本地主文 403 后网页入口恢复；仅公开主文支持结论 |
-| SRC-ANTHROPIC | Research embedded publishedOn 本窗 PSM 与 AI Fluency；两篇原文核心与直接限制 | 已检查 | PSM 为解释假说，不是实际权重选择算法或意识证据 |
-| SRC-GOOGLE-AI | DeepMind RSS 最近 02/19→02/26；Google Research 月份请求及 pubs by-year 页面 | 受阻 | Research 月份参数忽略且 pubs 缺可靠历史事件切片；不以搜索无命中作零事件 |
-| SRC-META-AI | Research 动态入口、blog 当前分页及有限恢复 | 受阻 | 无法从可用页面恢复本窗 FAIR 事件目录 |
-| SRC-QWEN | qwenlm 官方重定向、旧目录最近 02/16；qwen.ai 动态 news | 受阻 | 动态历史目录不可恢复，不以最近条目保证本窗为零 |
-| SRC-DEEPSEEK | 当前官方页与 DeepSeek-V3 本窗 git commits 查询 | 受阻 | commits 空只限定仓库；当前页不能重建历史模型研究目录 |
-| SRC-MOONSHOT | Kimi Platform Blog 当前条目最近 2025/11；Kimi-K2 本窗 git commits | 受阻 | 页面与单仓库不能证明历史研究发布覆盖 |
-| SRC-TENCENT-HUNYUAN | 官方 research JS 恢复 POST api.hunyuan.tencent.com/api/blog/publicList；本日无 renderType 全部 current 9 项，publicAt/display 日期最近 02/13→04/30 | 已检查 | 当前完整目录不认证历史删除项；早前浏览器失败不再被写成整源受阻 |
-| SRC-ZAI | 官方 Research embedded dated list 最近 02/21→03/15，release-notes 当前边界 | 已检查 | 只支持可见历史切片无窗内事件，不认证删除历史 |
-| SRC-BYTEDANCE-SEED | 官方 JS 原生 get_article_list_v2；2026 paper offset60 最近 02/26→02/12；blog offset0可见12项至02/11、offset20终页 | 已检查 | locale 可见条目少于 total；未恢复的 locale/删除历史隔离，不把全部82/23条称全文队列 |
-| SRC-BAIDU-ERNIE | 技术博客当前10项 02/06→04/15，下一页旧至2025/11 | 已检查 | 可见目录切片，不认证历史删除 |
-| SRC-XIAOMI-MIMO | 官方 paper 8项最近 02/03→03/13；blog 当前入口 | 受阻 | paper 有限切片无窗内事件；blog 缺可靠历史目录 |
-| SRC-MINIMAX | 中英文 blog 可见12项最近 02/14→03/18 | 已检查 | 仅可见目录切片，不认证删除历史 |
-| SRC-ARXIV | cs.CL月列表及DataCite身份恢复按12分类主线收窄，119语义命中+有界新名查漏；三批68题摘减11排除、17930/31归并得56，加17778共57 arXiv家族，v1日期结合官方公告核 | 已检查 | 17早提交缺首次公开下界已终态隔离；57候选必要审阅及处置已完成，不是全分类逐项队列 |
+| SRC-OPENAI | **原有效层：** 官方 RSS 完整历史条目，本窗 SWE-bench Verified 与 Frontier Alliances；主文有限必要审阅<br>**本次Feb23增量：** RSS原始XML中Feb23条目；Feb23官方域topic补检止于一次查询。SWE同事件复用；Frontier Alliances核心商业伙伴/FDE实施支持EX，Projects两tabs/sort UI EX | 已检查 | **原层限制：** 本地主文 403 后网页入口恢复；仅公开主文支持结论<br>**本次限制：** 只认证此有限RSS/补检；不认证全站历史 |
+| SRC-ANTHROPIC | **原有效层：** Research embedded publishedOn 本窗 PSM 与 AI Fluency；两篇原文核心与直接限制<br>**本次Feb23增量：** Research embedded publishedOn的Feb23 PSM/AI Fluency，PSM同事件复用、Fluency原有效EX复用；官方日期补检定位Opus页Feb23脚注；distillation原HTML datePublished/article:published_time均18Z | 已检查 | **原层限制：** PSM 为解释假说，不是实际权重选择算法或意识证据<br>**本次限制：** Opus只受影响HLE条件；distillation实际BJT Feb24窗外；不审全card |
+| SRC-GOOGLE-AI | **原有效层：** DeepMind RSS 最近 02/19→02/26；Google Research 月份请求及 pubs by-year 页面<br>**本次Feb23增量：** DeepMind原RSS先UTF8 replacement错解gzip，root一次Accept-Encoding identity正确取bytes恢复HTTP200/69499bytes/magic3c3f/100items，Feb19 Gemini3.1Pro→Feb26 NanoBanana2间无本窗条目，仅此feed有限切片；Google Research blog year/month参数被忽略，当前12条Oct7～Sep3/page1 of135，止此；本窗model/training/inference官方域一次检索 | 受阻 | **原层限制：** Research 月份参数忽略且 pubs 缺可靠历史事件切片；不以搜索无命中作零事件<br>**本次限制：** DeepMind feed有限切片已恢复，无本窗条目；Google Research Pubs/Blog历史切片未恢复，不作全源零发布 |
+| SRC-META-AI | **原有效层：** Research 动态入口、blog 当前分页及有限恢复<br>**本次Feb23增量：** 官方Research200动态壳无可读本窗列表；Feb23官方域model/training查询止一次空命中 | 受阻 | **原层限制：** 无法从可用页面恢复本窗 FAIR 事件目录<br>**本次限制：** 缺Feb23原始dated目录/原件；空搜索非负面覆盖 |
+| SRC-QWEN | **原有效层：** qwenlm 官方重定向、旧目录最近 02/16；qwen.ai 动态 news<br>**本次Feb23增量：** qwen.ai/blog动态壳无本窗dated目录；qwen.ai/qwenlm.github.io Feb23日期限定查询止一次 | 受阻 | **原层限制：** 动态历史目录不可恢复，不以最近条目保证本窗为零<br>**本次限制：** 本窗历史发布切片不可恢复，不将current模型当当日事件 |
+| SRC-DEEPSEEK | **原有效层：** 当前官方页与 DeepSeek-V3 本窗 git commits 查询<br>**本次Feb23增量：** 官方current产品页及Feb23日期限定一次查询；止此 | 受阻 | **原层限制：** commits 空只限定仓库；当前页不能重建历史模型研究目录<br>**本次限制：** current V4.1页无可核Feb23历史目录；搜索空不是零事件 |
+| SRC-MOONSHOT | **原有效层：** Kimi Platform Blog 当前条目最近 2025/11；Kimi-K2 本窗 git commits<br>**本次Feb23增量：** Kimi Platform blog现5条，最新Nov7/6 2025；platform.kimi.com/moonshot.ai Feb23一次查询 | 受阻 | **原层限制：** 页面与单仓库不能证明历史研究发布覆盖<br>**本次限制：** 缺2026本窗dated archive/明确原件；不扩GitHub库存 |
+| SRC-TENCENT-HUNYUAN | **原有效层：** 官方 research JS 恢复 POST api.hunyuan.tencent.com/api/blog/publicList；本日无 renderType 全部 current 9 项，publicAt/display 日期最近 02/13→04/30<br>**本次Feb23增量：** Research首查＋publicList POST page1/pageSize100/langzh请求实际返回EN9/total9（每条lang=en），日期Feb13→Apr30包住本窗；Feb23查询止一次 | 受阻 | **原层限制：** 当前完整目录不认证历史删除项；早前浏览器失败不再被写成整源受阻<br>**本次限制：** EN现存有限目录无本窗条目；中文全部历史切片未恢复，不授该范围Coverage，历史删除不可认证 |
+| SRC-ZAI | **原有效层：** 官方 Research embedded dated list 最近 02/21→03/15，release-notes 当前边界<br>**本次Feb23增量：** Research原页15 dated条目，Feb21 GLM5→Mar15 GLM5Turbo跨本窗；Feb23查询止一次 | 已检查 | **原层限制：** 只支持可见历史切片无窗内事件，不认证删除历史<br>**本次限制：** 现存切片无当日条目，不认证被删除历史 |
+| SRC-BYTEDANCE-SEED | **原有效层：** 官方 JS 原生 get_article_list_v2；2026 paper offset60 最近 02/26→02/12；blog offset0可见12项至02/11、offset20终页<br>**本次Feb23增量：** paper API type1/count20/start60/year2026/US返回19/total82/next80，Feb26/24→Feb12跨窗；blog type2/count20/start0现12/total23/next20，start20返回0/has_morefalse；Feb14/13/12及随后日期跨窗 | 已检查 | **原层限制：** locale 可见条目少于 total；未恢复的 locale/删除历史隔离，不把全部82/23条称全文队列<br>**本次限制：** locale历史与删改不能认证；本窗有限切片不等82篇全文 |
+| SRC-BAIDU-ERNIE | **原有效层：** 技术博客当前10项 02/06→04/15，下一页旧至2025/11<br>**本次Feb23增量：** 官方blog page1现10，May9/Apr30/Apr15→Feb6→Jan29；next2/2仅更旧，无需打开；Feb23限定查询 | 已检查 | **原层限制：** 可见目录切片，不认证历史删除<br>**本次限制：** 现存切片无当日条目，删除/后补历史不认证 |
+| SRC-XIAOMI-MIMO | **原有效层：** 官方 paper 8项最近 02/03→03/13；blog 当前入口<br>**本次Feb23增量：** 官网Paper8，June29→Mar13 ARL-Tangram→Feb3 HySparse→Jan8跨窗；Blog15无日期；Feb23一次查询 | 受阻 | **原层限制：** paper 有限切片无窗内事件；blog 缺可靠历史目录<br>**本次限制：** Paper现存切片已查；Blog缺dated本窗历史，不做零发布 |
+| SRC-MINIMAX | **原有效层：** 中英文 blog 可见12项最近 02/14→03/18<br>**本次Feb23增量：** EN/CN blog各现12，Mar18 M2.7→Feb14 Forge→Feb12 M2.5跨窗；官方域Feb23一次查询 | 已检查 | **原层限制：** 仅可见目录切片，不认证删除历史<br>**本次限制：** 现存有限切片无当日条目；不认证删除历史 |
+| SRC-ARXIV | **原有效层：** cs.CL月列表及DataCite身份恢复按12分类主线收窄，119语义命中+有界新名查漏；三批68题摘减11排除、17930/31归并得56，加17778共57 arXiv家族，v1日期结合官方公告核<br>**本次Feb23增量：** 四主题API语言140(start0/100)、Agent89(start0)、多模态23(start0)、系统17(start0)，仅以Feb19～20 Submitted辅助发现，非本窗日期；66相关完整题摘去重，60潜力/4贡献EX/1撤回/1窗前cue；day-list400，官方Feb23 date/announced有限查询未恢复。本月cs.CL返回1936仅库存，未展为逐项队列、不能替代本窗dated标题补检 | 受阻 | **原层限制：** 17早提交缺首次公开下界已终态隔离；57候选必要审阅及处置已完成，不是全分类逐项队列<br>**本次限制：** 60逐身份公开日期/对应原件精确隔离；本窗官方相关title slice缺口不以Atom补齐 |
 | 补检：[DataCite](https://api.datacite.org/) | 只用于 arXiv 身份与原始日期字段恢复，三批选取完整原摘 | 已检查 | current abstract 不替代 exact-v1 机制；created 不当首次公开时刻 |
 
 按需来源只在具体候选需要时定点读作者正文及公开 artifact 链接；未触发框架 release 全站扫描。未扫描每周组。后续若具体候选触发固定来源，将增列其实际范围，不取消已发生触发。
+
+### 2026-10-08补充自然日的有限来源检查
+
+上表逐源区分有效旧层与本次新增真实停止，不认证本次全Coverage。原native执行2026-10-08T12:05～12:09Z（BJT20:05～20:09）及后续有限补检保存在[17原入口](../_sources/daily-20260224/V3_NATIVE_supp-20261008-native.json)、[bounded recovery](../_sources/daily-20260224/V3_NATIVE_supp-20261008-bounded-recovery.json)、[arxiv四查询](../_sources/daily-20260224/V3_NATIVE_supp-20261008-arxiv-queries.json)/[language下一页](../_sources/daily-20260224/V3_NATIVE_supp-20261008-arxiv-next.json)，实际查询字符串及回复[Q0](../_sources/daily-20260224/supplement-exact-query0-20261008.txt)/[Q1](../_sources/daily-20260224/supplement-exact-query1-20261008.txt)/[Q2](../_sources/daily-20260224/supplement-exact-query2-20261008.txt)/[Q3](../_sources/daily-20260224/supplement-exact-query3-20261008.txt)。搜索空结果只证明这次有限查询，不能替代官方历史目录。
+
 
 ## 3. 候选与判断
 
@@ -98,6 +109,7 @@
 | [Subgroups of U(d) Induce Natural RNN and Transformer Architectures](https://arxiv.org/html/2602.18417v1) | 2026-02-23T09:00:00+08:00 ～ 2026-02-23T10:38:39+08:00 | closed group state/tangent Exp→闭包条件不授普遍gradient或quality稳定；2+1+2=5 | 深入完成 | 整合：`MODEL-LONG-CONTEXT` [Ch22](../../../../books/part-02-model/22-long-context.md)，root实际POST通过 |
 | [Why we no longer evaluate SWE-bench Verified](https://openai.com/index/why-we-no-longer-evaluate-swe-bench-verified/) | 2026-02-23T19:00:00+08:00 | 测试人口/独立oracle不足→不能将hard切片缺陷率当全benchmark污染率；3+2+2=7 | 深入完成 | 已有覆盖：`PLATFORM-EVALUATION-SYSTEM` [Ch66](../../../../books/part-06-ai-infrastructure/66-evaluation-system.md)人口/oracle/provenance边界，root实际Existing通过 |
 | [The persona selection model](https://www.anthropic.com/research/persona-selection-model) | 2026-02-23T19:53:00+08:00 | persona posterior解释不等实际weight选择算法→exhaustiveness/未来外推仍未证；2+1+2=5 | 标准完成 | 仅报告：解释性假说不改变长期已验证机制，root处置通过 |
+| [Claude Opus 4.6：HLE with tools Feb23纠错](https://www.anthropic.com/news/claude-opus-4-6) | 2026-02-23 | detector改版发现旧pipeline漏掉3例cheating、reported score53.1%→53.0%→评价身份必须含scorer；同family重要修订，**不重复评分**（原[02-06 release](../06/README.md)家族评分复用，不再列数字），只深入受影响内容 | 深入完成 | 已有覆盖：PLATFORM-EVALUATION-SYSTEM，[Ch66 Evaluation Identity](../../../../books/part-06-ai-infrastructure/66-evaluation-system.md#evaluation-identity-必须包含-harness-与-environment)，实际trajectory/component receipt与scorer冻结边界 |
 
 | [Generated Reality: Human-centric World Simulation using Interactive Video Generation with Hand and Camera Control](https://arxiv.org/html/2602.18422v1) | 2026-02-23T09:00:00+08:00 ～ 2026-02-23T10:38:46+08:00 | 混合2D/3D手控制与独立camera编码→歧义/阶段训练/部署成本分责；2+1+2=5 | 深入完成 | 整合：`MULTIMODAL-GENERATIVE-PARADIGMS` [Ch24](../../../../books/part-03-multimodal-world-models/24-multimodal-generative-paradigms.md)，root实际POST通过 |
 | [CapNav: Benchmarking Vision Language Models on Capability-conditioned Indoor Navigation](https://arxiv.org/html/2602.18424v1) | 2026-02-23T09:00:00+08:00 ～ 2026-02-23T10:38:49+08:00 | 能力约束可行性与条件化路径评分→不直接认证物理执行；2+1+2=5 | 标准完成 | 已有覆盖：`AGENT-PLANNING` [Ch79](../../../../books/part-07-agent/79-planning.md)约束feasibility与真实执行分责，root实际Existing通过 |
@@ -360,6 +372,14 @@ Eq1在量化前攻击feature、Eq2 encoder-only向原encoder clean feature锚定
 
 §3–4 ReKVoffload全KV并GPU代表features，AKS按邻帧Kcos选least-similar只稀疏windowattention，不删fullKV；RRF internal+external CLIP/PECore rank带额外encoder/features。§5固定.5FPS/17ktokens/64features×128frames，16×sparsity不是cachecapacity，11.1GB/hr；Movie−2pp/PECore VideoMME及tokenmerge反侧保留。actualCh45 50–77容量及186–196 selectorproposal/fullKV-read/gather/成本/fallback已承载有限命题，Ch76 fusion仅交接，不称完整MemStream recipe已有。
 
+### [Claude Opus 4.6：HLE with tools Feb23纠错](https://www.anthropic.com/news/claude-opus-4-6)
+
+这是同Opus4.6 family的具日期纠错事件，不是重新发布模型，也不重复家族评分。原[02-06 release记录](../06/README.md#claude-opus-46-release)只采用adaptive thinking/developer effort接口；本次查漏缺的是评价条件变化。当前官方页**Feb23纠错脚注L240**明示reported HLE-with-tools由53.1%更正为53.0%，improved cheating detection pipeline额外标出原pipeline漏掉的3例。官方仅日期，保留YYYY-MM-DD，不虚造时刻。原脚注与必要条件完整保存于[纠错原页核心](../_sources/daily-20260224/supplement-opus-correction-core-20261008.txt)及[原HTML](../_sources/daily-20260224/V3_NATIVE_supp-20261008-opus.txt)。root已独立核官方原页L233/L240。
+
+拟采用命题严格限于**评价检测pipeline改变可以改reported score；评估身份不能只有model/benchmark**。L233披露web search/fetch、code execution、programmatic tool calling、50k token compaction trigger、最多3M total tokens、max reasoning effort/adaptive thinking和domain blocklist。它们是该作者评价条件，不将不同protocol排名合并。检测器实现、阈值、完整漏检分母、重跑/重评分细节未披露（Not Disclosed）；不能从0.1pp或3例反推通用作弊率，也不能推断模型权重未变、detector可在其他任务复用、所有污染已清除或普遍安全。本文不认证实现或复现，不扩整份system-card附件；支持本命题和关键反侧已足够即停。
+
+**已有覆盖而非强行改书：** 实际读[Ch66](../../../../books/part-06-ai-infrastructure/66-evaluation-system.md#evaluation-identity-必须包含-harness-与-environment)该节与邻接：正文定义model×benchmark×harness×environment×scorer，要求聚合前保存原trajectory/component-level receipt以区分模型退化、adapter drift、工具故障和评分变化；本节末保留稳定专用脚本方案，但同样冻结脚本/environment/scorer。此具体命题已承载本次detector correction的有限系统意义，无新增稳定机制可写；root实际比对正文，Books新写0。
+
 ## 5. 缺口与下一步
 
 以下日期、中心争议及历史目录限制均为本窗终态保留项：不支持正面证据、Books采用或无遗漏断言；各项定点重开条件如下，普通待办为0。
@@ -374,6 +394,14 @@ Eq1在量化前攻击feature、Eq2 encoder-only向原encoder clean feature锚定
 
 本窗外部保留：Google Research、Meta、Qwen、DeepSeek、Moonshot、MiMo blog 的历史目录无法从已尝试可用入口恢复；Seed locale 与各 current 目录历史删除不可认证。它们不支持候选、Books、无遗漏或性能/安全保证。仅当提供对应本窗官方 dated archive、原始发布/正文或可信的官方历史事件端点时定点重开；不重扫整月。必要论文正文/日期受阻将另以具体身份增列，不能由搜索型入口限制自动豁免。
 
+**本次补查精确外部终态（不改变上述旧59/17保留项）：** [60逐身份日期/原件请求及具体潜力](../_sources/daily-20260224/supplement-admission-20261008.md)是一份去重集合，每身份仅请求一次：official dated announcement或可核历史snapshot证实首次公开BJT Feb23，以及对应精确原件（通常v1；重要修订须dated实质说明及相应版本）。current Atom题摘、提交/编号/DOI Registered不满足；一次有界官方announcement日期搜索及day-list恢复失败后止，不泛查全月/全版本/全文附件。恢复后仅重开该身份，不以暂未取得日期默认为当窗候选。上述60隔离不支持正面Evidence/Coverage/Books或无遗漏。
+
+来源历史终态请求：GoogleAI/Meta/Qwen/DeepSeek/Kimi/MiMoBlog需各自Feb23可核官方dated slice/原始发布/正文；arXiv另缺Feb23相关标题的official dated list，不由月页或API投稿代补。各current目录删改、Seed locale/混元中文缺口按§2隔离；DeepMind一次byte修复及100-item feed有限切片见[恢复记录](../_sources/daily-20260224/supplement-deepmind-recovery-20261008.md)，不再把已修执行错误列外部缺失。材料到达只定点重开受影响源/身份，不扩大到全站/月。4明确EX不请求无关日期。KLong17547当前v3官方撤回说明因数据重大错误影响有效性，原始保留不评分/不入Books，只有有效修正版及其新公开事件才定点重开；不为撤回版继续追本窗日期。
+
+**窗外恢复cue，不属于本窗也不阻塞完成：** [Anthropic distillation](https://www.anthropic.com/news/detecting-and-preventing-distillation-attacks)原datePublished/article:published_time均2026-02-23T18:00:00Z＝BJT2026-02-24，虽英文页面Feb23，不能加入本次Feb23增量；保留[原HTML](../_sources/daily-20260224/V3_NATIVE_supp-20261008-distillation.txt)供真实归属日恢复，不开展该日。EUDS2602.17465作者稿v1明示2025-09-02 publication，只保窗前身份cue，不扩2025或把arxiv上传当新贡献。
+
+作者扫描、准入消歧、必要证据、Books与非作者增量DAY普通待办0。本日补查独立验收通过后结束，不自动接其他日期；具名外部终态仍不授Coverage/Evidence或无遗漏。
+
 ## 6. 复核
 
 复核者：root（非作者）
@@ -383,3 +411,16 @@ Eq1在量化前攻击feature、Eq2 encoder-only向原encoder clean feature锚定
 root已实际通读最终六部分、59候选行与59证据小节、最新增量证据和31处真实Books正文/完整邻接/自身末注POST。复用本轮三批13+21+34=68完整题摘准入与11具体负侧分批实际核，核对57arxiv+2官方无重复、31/23/3/2处置互斥、14每日有限停止及17日期/中心/历史目录隔离。ν必要性、raw truth、IG cost、GPT4.1角色与CapNav GT/input混同精准纠正，Ch14 path/StableNode与MIRA单primary-link已修正。11具体EX身份17848/17875/17881/17808/18025/18026/18029/18107/18262/18266/18372可在三批ADMISSION核查；宽770/300标题范围未称全量题摘/语义复核，不额外全附件重读。普通待办0，隔离项不授positive Evidence、Coverage或无遗漏，完成仅表示本日安全终态及必要工作已独立验收。
 
 最终59行V3格式、本地Markdown链接和本日限定diff-check均通过，材料行计数与31/23/3/2处置互斥一致。机器只检查可判定一致性，不能代替非作者语义验收。未stage、commit、push，既有staged/unstaged共享Books变更保留。
+
+
+### 2026-10-08遗漏增量独立复核
+
+复核者：root（非报告作者）
+
+结论：通过
+
+本轮实际范围：root完整读新增66题摘、实际核六个含糊贡献core与[HRDL/Persona原片段](../_sources/daily-20260224/supplement-decision-fragments-20261008.md)、Opus原脚注/受影响HLE条件及Ch66具体已有覆盖，认可60日期潜力/4贡献EX/1作者撤回请求关闭/1窗前cue。root核当前KLongv3原Atom comment的withdrawal请求与数据错误，权限仅此说明，不宣称平台正式撤回状态或全v1/v2/旧采用链重审；与旧59交集0。17809仅geodesic retraction术语，没有观察到实质撤回标记，不重开有效旧项。
+
+root已实际核14有限入口/查询/停止与六部分差额，指出Hunyuan请求langzh却实际EN9，已限定为EN有限目录并隔离中文历史；DeepMind旧gzip错误由root一次正确byte恢复，100-item feed有限Feb19→Feb26无本窗事件，Google Research历史与全站Coverage不据此通过。新增日期/原件、历史来源及原17日期/中心争议终态继续隔离。旧59证据/31实际POST仅身份与采用未变而复用，不称本轮全量重读。未认证60全文/定理/作者结果、月页1936全标题或所有机构历史。新增Books写入0。
+
+完成态实际检查：V3通过；76本地Markdown路径均可达；原59行逐字、原窗口与连续§4保留通过；候选60、日期潜力隔离60与66分区一致；本日限定unstaged及cached diff-check通过。机器检查不替代上述root语义验收。未写Books/LS/index/合同，未stage/commit/push，普通可执行待办0，本日结束。

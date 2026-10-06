@@ -1,0 +1,853 @@
+TouchAnything: Diffusion-Guided 3D Reconstruction from Sparse Robot Touches
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Related Work
+2.1 3D Reconstruction from Sparse Observations
+2.2 Diffusion Models as Geometric Priors
+2.3 Tactile-based Shape Reconstruction
+3 Methodology
+3.1 Deriving Local Geometry from Tactile Sensing
+Geometry Estimation from Real-World Tactile Data
+Geometry Estimation from Simulated Tactile Data
+Tactile-Derived Geometry as Virtual Camera Observation
+3.2 Stage 1: Learning Coarse Geometry of the Object
+Tactile-based Geometric Supervision
+Diffusion-based Prior
+Training Schedule
+3.3 Stage 2: Learning Fine Geometry of the Object
+4 Experiments and Results
+4.1 Simulation Experiments
+Data Collection
+Baseline Methods
+Experimental Results
+4.2 Real-world Experiments with a Robot
+Hardware
+Data Collection
+Experimental Results
+4.3 Ablation Studies
+Ablation: Tactile-Only Reconstruction.
+Ablation: Text Description and Touch Count.
+5 Discussion and Conclusion
+References
+0.A Data Collection
+0.A.1 Simulation Data Collection
+Tactile image generation
+Tactile image to local geometry
+0.A.2 Real-world Data Collection
+0.B Extended Analysis of Fine Geometry Learning
+0.C Quantitative Evaluation for Real-world Reconstruction Results
+0.D Implementation Details
+0.D.1 3D Representation Implementation Details
+Stage 1: Coarse Geometry Optimization
+Stage 2: Fine Geometry Refinement
+0.D.2 Multi-Head U-Net Implementation Details
+Shared Encoder
+Multi-Task Decoders
+Implementation Details
+Tactile Perception Network Architecture
+License: arXiv.org perpetual non-exclusive license
+arXiv:2604.08945v1 [cs.CV] 10 Apr 2026
+TouchAnything: Diffusion-Guided 3D Reconstruction from Sparse Robot Touches
+Langzhe Gu
+Affiliation: Tsinghua University
+Affiliation: University of Illinois Urbana-Champaign
+E-mail $ˆ*$Equal contribution
+Hung-Jui Huang∗
+Affiliation: Carnegie Mellon University
+Mohamad Qadri∗
+Affiliation: Carnegie Mellon University
+Michael Kaess
+Affiliation: Carnegie Mellon University
+Wenzhen Yuan
+Affiliation: University of Illinois Urbana-Champaign
+E-mail $ˆ*$Equal contribution
+Abstract
+Accurate object geometry estimation is essential for many downstream tasks, including robotic manipulation and physical interaction. Although vision is the dominant modality for shape perception, it becomes unreliable under occlusions or challenging lighting conditions. In such scenarios, tactile sensing provides direct geometric information through physical contact. However, reconstructing global 3D geometry from sparse local touches alone is fundamentally underconstrained. We present TouchAnything, a framework that leverages a pretrained large-scale 2D vision diffusion model as a semantic and geometric prior for 3D reconstruction from sparse tactile measurements. Unlike prior work that trains category-specific reconstruction networks or learns diffusion models directly from tactile data, we transfer the geometric knowledge encoded in pretrained visual diffusion models to the tactile domain.
+Given sparse contact constraints and a coarse class-level description of the object, we formulate reconstruction as an optimization problem that enforces tactile consistency while guiding solutions toward shapes consistent with the diffusion prior. Our method reconstructs accurate geometries from only a few touches, outperforms existing baselines, and enables open-world 3D reconstruction of previously unseen object instances. Our project page is https://grange007.github.io/touchanything/.
+Keywords:
+Tactile Sensing 3D Reconstruction Generative Priors
+Figure 1: Overview of TouchAnything. Sparse tactile measurements and a class-level text description are combined with a pretrained 2D diffusion model serving as a geometric prior. Local tactile constraints and global diffusion geometric guidance jointly optimize a two-stage geometric representation.
+1 Introduction
+Tactile feedback is a fundamental sensory signal that enables humans to interact effectively with the physical world. Touch provides rich information about the geometry and rigidity of objects, from which the nature of possible interactions (e.g., grasps, handling) can be inferred. This becomes especially important under heavy occlusions or challenging lighting conditions, where visual perception may fail. In such situations, the ability to rely on touch alone becomes essential for estimating object geometry and enabling downstream manipulation tasks.
+However, geometry estimation from touch alone is inherently underconstrained due to the sparsity of contact measurements. What makes this possible in humans is the presence of strong prior knowledge about object shape and structure.
+For example, imagine that you are tasked with finding a pen inside a backpack without visual feedback. You already possess a semantic understanding of what a “pen” typically looks like (e.g. its approximate shape and structure). As you make contact with objects inside the bag, sparse tactile cues are combined with this prior knowledge to refine your belief about the object being touched. Touch does not operate in isolation; rather, it conditions and disambiguates an existing internal model of object geometry.
+This raises a natural question: can we equip robots with a similar capability? Specifically, given a robot arm equipped with tactile sensing, can we infer object geometry from sparse touches when guided by a coarse semantic prior and can this be achieved in an open-world setting? 11
+1
+By open-world, we mean reconstruction of previously unseen object instances without object-specific training.
+Recent work has demonstrated that diffusion models can serve as powerful priors for geometric reasoning. Diffusion-based approaches have been successfully applied to 3D reconstruction, text-to-3D generation, and multi-view consistent shape synthesis, enabling plausible 3D geometry inference even under limited observations or severely constrained settings. Importantly, these models are trained on large-scale visual datasets and have not been specialized to tactile signals. Nevertheless, they implicitly encode strong geometric information that may transfer across sensing modalities. To the best of our knowledge, this work is the first to adapt a general-purpose off-the-shelf pretrained 2D vision diffusion model as a geometric prior for 3D reconstruction from sparse tactile touches.
+In contrast to prior touch-based reconstruction methods, which train models on class-specific datasets spanning just a handful of object categories[8, 46, 52], we develop a system that leverages the geometric priors encoded in large-scale visual diffusion models trained on billions of internet images to guide 3D reconstruction given sparse tactile measurements. We argue that transferring large-scale visual priors to the tactile domain represents an important step toward open-world generalization, especially in regimes where tactile data is scarce and training specialized generative models is impractical.
+Our contributions are as follows:
+•
+We introduce TouchAnything, a framework for reconstructing global 3D object geometry from sparse tactile contacts and a coarse semantic prior, enabling open-world 3D reconstruction inference from limited physical interaction.
+•
+We demonstrate that large-scale pretrained 2D vision diffusion models can be repurposed as geometric priors for tactile reconstruction, transferring visual generative knowledge to the tactile domain without task-specific diffusion training.
+•
+We provide extensive validation in simulation and real-world robotic experiments, including a study of reconstruction accuracy under varying numbers of touches and prompt designs.
+2 Related Work
+2.1 3D Reconstruction from Sparse Observations
+Neural implicit and differentiable geometric representations such as neural radiance fields (NeRF) [21], signed distance fields (SDFs) [25], hybrid mesh-based approaches like DMTet [38], and more recently 3D Gaussian Splatting [15], have become dominant frameworks for 3D reconstruction. These methods introduce differentiable parameterizations of geometry and appearance, making them well-suited for end-to-end optimization. Beyond RGB-based reconstruction, their flexibility has enabled applications across diverse sensing modalities [27, 30, 32, 20, 33, 16, 53], including tactile sensing [8, 41]. However, regardless of the underlying representation or sensing modality, 3D reconstruction becomes severely underconstrained when observations provide only limited geometric coverage of the underlying surface [24, 44]. In few-view settings, implicit and differentiable models alone are insufficient to solve for global geometry without additional regularization. This challenge is further amplified in tactile reconstruction, where measurements come from small local contact patches rather than partial global image observations.
+2.2 Diffusion Models as Geometric Priors
+Recent advances in diffusion modeling have demonstrated that large-scale generative models implicitly encode rich knowledge about object geometry. DreamFusion [26] introduced the use of pretrained 2D text-to-image diffusion models to optimize 3D representations via score distillation sampling (SDS), enabling text-to-3D generation without direct 3D supervision. Subsequent works [19, 47, 31], improved fidelity and enhanced geometric detail in diffusion-guided 3D synthesis. Fantasia3D [6] and RichDreamer [31] explicitly incorporate geometric signals such as surface normals and depth to better disentangle shape and appearance during diffusion-guided 3D generation. These works demonstrate that diffusion models can effectively leverage explicit geometric cues to improve the quality of the generated geometry. In our setting, we similarly render normal maps from the evolving 3D geometry. However, unlike prior methods, we additionally enforce consistency with real local surface normal measurements obtained from image-based tactile sensors. We therefore combine global diffusion guidance with physical local constraints imposed by robot contact. Tactile DreamFusion [11] similarly incorporates tactile signals into text-to-3D synthesis, but its primary objective remains asset generation, whereas our goal is tactile-conditioned 3D reconstruction constrained by real tactile measurements.
+Beyond text-to-3D synthesis, sparse 3D reconstruction has been addressed by learning task-specific shape completion priors from curated 3D datasets [7, 49]. More recently, diffusion-based completion models [14, 37] train 3D diffusion priors to regularize underconstrained geometric inference and recover plausible structure from partial observations. Unlike these approaches, which require supervised training on 3D shape collections, we leverage a pretrained 2D diffusion model as a transferable geometric prior without task-specific diffusion training.
+Several recent works [48, 55, 23] also employ diffusion models as geometric priors for sparse-view 3D reconstruction from RGB images, where diffusion guidance regularizes geometry estimated from limited visual coverage. In contrast, our setting relies solely on sparse local tactile contacts, which provide highly localized surface measurements without global image-level constraints. Inferring global geometry from such physical interaction signals is a different and a more severely underconstrained problem.
+2.3 Tactile-based Shape Reconstruction
+Image-based tactile sensors provide useful geometric information (e.g. contact location and surface normals) which have been leveraged for object state estimation and tracking during interaction [12, 29, 28, 13] as well as 3D reconstruction.
+TouchSDF [8] predicts local surface geometry from vision-based tactile sensors and learns an SDF encoding the object shape. More recently, diffusion-based tactile reconstruction methods [46, 52] train conditional diffusion models for tactile-conditioned 3D reconstruction using object-level datasets such as ShapeNet and ABC. These approaches rely on supervised training with ground-truth 3D geometry from fixed object categories (e.g., guitars, bottles), which may limit generalization beyond seen categories and involve computationally intensive task-specific training of diffusion models. Other works [42, 41, 9, 43, 10] fuse tactile and visual measurements for 3D reconstruction benefiting from the global visual coverage provided by vision. However, they differ from our setting where touch provides the primary geometric signal. Overall, prior tactile reconstruction methods either depend on dense measurements, multi-modal sensing, or expensive training of task-specific generative priors. To the best of our knowledge, reconstructing global object geometry from sparse tactile contacts using pretrained off-the-shelf 2D diffusion models remains unexplored.
+3 Methodology
+Figure 2: TouchAnything reconstruction pipeline.
+We use a GelSight tactile sensor mounted on a robotic arm to collect raw tactile measurements, which are converted into local depth and surface normal maps (Sec. 3.1). These measurements provide sparse geometric supervision for learning a neural signed distance field (SDF) by enforcing local constraints through depth and normal losses. Normal maps rendered from the evolving 3D geometry are fed into a pretrained Stable Diffusion model, which provides global geometric guidance through score distillation sampling (SDS). By jointly enforcing tactile consistency combined with a pretrained 2D diffusion model and a class-level text description, the system reconstructs globally consistent 3D geometry from sparse contact measurements (Sec. 3.2).
+Our goal is to reconstruct the 3D geometry of an arbitrary object using only sparse tactile readings and a minimal class-level text description (e.g. “a camera”, “a bottle”). We assume that the contact locations of tactile readings are known from robot kinematics. The text description provides only a weak semantic prior at the category level, reflecting realistic scenarios where a robot knows the object class but not the specific geometry, such as searching for a key in the wallet.
+To solve this problem, we propose TouchAnything, a diffusion-guided method for 3D reconstruction from sparse tactile inputs. Instead of utilizing a model trained on limited object categories[8, 52], we leverage Stable Diffusion [35], a general-purpose generative model, to guide reconstruction, conditioned on the weak text description. This design makes our method much more general, enabling reconstruction of arbitrary objects without pre-training or class-specific data collection. In TouchAnything, tactile readings are first converted into local depth maps using established methods [45, 42], and represent it as virtual camera observations to ensure compatibility with the vision-centric reconstruction pipeline. We then adopt a coarse-to-fine reconstruction strategy inspired by Magic3D [19] and optimize the object geometry by jointly enforcing consistency with tactile-derived geometry and alignment with the class-level text description.
+3.1 Deriving Local Geometry from Tactile Sensing
+We use a GelSight sensor [50] to collect tactile data. GelSight is a vision-based tactile sensor composed of a soft elastomer sensing surface, an integrated illumination system, and a camera. Upon contact, the elastomer deforms, changing the reflected illumination pattern, which is captured by the camera and used to reconstruct the contact surface geometry via photometric stereo. A sample tactile image is shown in Fig. 2a. In our work, GelSight images are obtained from both real-world experiments and simulations. From these images, we estimate the local contact geometry and convert it into virtual camera observations for compatibility with the vision-centric reconstruction pipeline.
+Geometry Estimation from Real-World Tactile Data
+Given a tactile image 𝐓\mathbf{T} collected by a physical GelSight sensor, we adopt the learning-based method in [45] to estimate per-pixel surface gradients from the RGB values and coordinates of each pixel using a three-layer MLP. The predicted gradients are then integrated using a fast Poisson solver[50] to recover the surface depth map. The contact mask is obtained by thresholding the estimated depth map.
+Geometry Estimation from Simulated Tactile Data
+Given a photorealistic simulated GelSight image, we adopt the learning-based method in [42], using a multi-head U-Net [36] to jointly predict the depth map and contact mask. The network is trained on 20k simulated GelSight images generated from contacts with 78 YCB objects [4]. Compared to the real-world scenario, we use a more complex geometry estimation model for simulated tactile data because larger-scale training data are available in simulation.
+Tactile-Derived Geometry as Virtual Camera Observation
+For each tactile reading 𝐓i\mathbf{T}_{i}, we place a virtual camera 𝐂i\mathbf{C}_{i} 2.02.0 cm behind the contact patch and convert the tactile-estimated depth map and contact mask into virtual camera observations consisting of depth and normal maps with an associated contact mask. The reconstruction process then operates on these tactile-derived geometries in the form of virtual camera observations rather than the raw tactile readings, ensuring compatibility with the vision-centric reconstruction pipeline. The full data collection pipeline is shown in Fig. 2a.
+3.2 Stage 1: Learning Coarse Geometry of the Object
+We model the coarse object geometry using a SDF-based neural implicit representation fθ:ℝ3→ℝf_{\theta}:\mathbb{R}^{3}\rightarrow\mathbb{R}, implemented using a Neuralangelo-style [18] multi-resolution 3D hash-grid features followed by an MLP (Fig. 2b). The function fθf_{\theta} maps a 3D coordinate to its truncated signed distance to the object surface, and its zero level set defines the reconstructed shape. We optimize θ\theta by minimizing a joint objective that enforces geometric consistency with the tactile-derived geometry while encouraging semantic consistency through a diffusion-based prior on the class-level text description.
+Tactile-based Geometric Supervision
+Consider reconstructing an object that is touched KK times at different locations, producing tactile readings 𝐓1,…,𝐓K\mathbf{T}_{1},...,\mathbf{T}_{K}. As described in Sec. 3.1, we convert each tactile reading into a virtual camera observation consisting of depth maps, normal maps, and contact regions. We use these observations to impose sparse geometric constraints on the object surface represented by the SDF function fθf_{\theta}. However, to impose these constraints, we need to first represent the virtual camera observations in a ray-based form compatible with our reconstruction algorithm (Fig. 2d).
+Let ℛ\mathcal{R} denote the union of all rays cast from the KK virtual cameras {𝐂K}\{\mathbf{C}_{K}\}, where each ray originates from a virtual camera center and passes through a pixel within the contacted region. For each ray r∈ℛr\in\mathcal{R}, the tactile-derived depth and normal maps in the virtual camera frame provide the depth observation d⁡(r)d(r) and surface normal observation 𝐧⁡(r)\mathbf{n}(r) along that ray.
+To enforce geometric constraints from the tactile-derived ray observations d⁡(r)d(r) and 𝐧⁡(r)\mathbf{n}(r), we adopt the volumetric rendering formulation of Neuralangelo [18]. For each ray r∈ℛr\in\mathcal{R}, we use the SDF function fθf_{\theta} along the ray to compute the predicted depth dθ​(r)d_{\theta}(r) and surface normal 𝐧θ​(r)\mathbf{n}_{\theta}(r). These computed quantities are differentiable with respect to the SDF parameters θ\theta, allowing us to enforce geometric consistency by minimizing the discrepancy between the SDF-computed depth and normal values and the tactile-derived depth and normal values:
+ℒdepth=𝔼r∼ℛ​[|d⁡(r)−dθ​(r)|],ℒnormal=𝔼r∼ℛ​[‖𝐧⁡(r)−𝐧θ​(r)‖1]\mathcal{L}_{\text{depth}}=\mathbb{E}_{r\sim\mathcal{R}}\left[\left|d(r)-d_{\theta}(r)\right|\right],\qquad\quad\mathcal{L}_{\text{normal}}=\mathbb{E}_{r\sim\mathcal{R}}\left[\left\|\mathbf{n}(r)-\mathbf{n}_{\theta}(r)\right\|_{1}\right]
+(1)
+Beyond supervision on these computed quantities, we incorporate two additional supervision signals following [2]. The first supervises the signed distance values near the observed surface, and the second enforces freespace constraints along the ray up to the surface. To supervise the SDF, for each ray rr with a tactile-derived depth observation d⁡(r)d(r), we sample depths ss within a truncated band 𝒮rsdf=[d⁡(r)−δ,d⁡(r)+δ]\mathcal{S}^{\mathrm{sdf}}_{r}=[d(r)-\delta,\;d(r)+\delta] around the surface, where δ\delta denotes the truncation distance. Let 𝐱⁡(r,s)\mathbf{x}(r,s) denote the 3D point at depth ss along ray rr, the SDF loss is:
+ℒsdf=𝔼r∼ℛ​𝔼s∼𝒮rsdf​|fθ​(𝐱⁡(r,s))−(s−d⁡(r))|.\mathcal{L}_{\text{sdf}}=\mathbb{E}_{r\sim\mathcal{R}}\;\mathbb{E}_{s\sim\mathcal{S}^{\mathrm{sdf}}_{r}}\left|f_{\theta}(\mathbf{x}(r,s))-\left(s-d(r)\right)\right|.
+(2)
+To enforce freespace constraints, we additionally sample points in 𝒮rfs=[0,d⁡(r)−δ]\mathcal{S}^{\mathrm{fs}}_{r}=[0,\;d(r)-\delta], which extends from the virtual camera center to a distance δ\delta before the surface. Since this region should be physically occupied by the tactile sensor and should remain free of objects, we penalize the predicted signed distance to be smaller than the distance δ\delta:
+ℒfs=𝔼r∼ℛ​𝔼s∼𝒮rfs​[ReLU⁡(δ−fθ​(𝐱⁡(r,s)))2].\mathcal{L}_{\mathrm{fs}}=\mathbb{E}_{r\sim\mathcal{R}}\;\mathbb{E}_{s\sim\mathcal{S}^{\mathrm{fs}}_{r}}\left[\operatorname{ReLU}\!\left(\delta-f_{\theta}(\mathbf{x}(r,s))\right)^{2}\right].
+(3)
+We optimize a weighted combination of these four losses to enforce geometrical consistency with the tactile observations. In practice, the expected values of the losses are estimated by sampling a batch of rays r∈ℛr\in\mathcal{R} during each training iteration.
+Diffusion-based Prior
+To guide the reconstructed geometry to align with the class-level text description (e.g. “a camera”), we incorporate a diffusion prior. In particular, we use Stable Diffusion [35], a general-purpose generative model, and apply score distillation sampling (SDS) [26] to impose geometric and semantic guidance during optimization (Fig. 2c).
+At each optimization step, we uniformly sample a virtual camera pose from a sphere centered at the object and render a surface normal image 𝐍θ\mathbf{N}_{\theta} via volumetric rendering of the SDF fθf_{\theta}. Following Fantasia3D [6], we supervise the geometry using the normal map rather than an RGB image to focus on providing fine surface details. We denote 𝐳⁡(𝐍θ)\mathbf{z}(\mathbf{N}_{\theta}) as the latent feature obtained by passing the rendered normal map 𝐍θ\mathbf{N}_{\theta} through the Stable Diffusion VAE encoder. The SDS gradient with respect to the SDF parameters θ\theta is:
+∇θℒSDS=𝔼t,ϵ​[w⁡(t)​(ϵ^ϕ​(𝐳t​(𝐍θ),y,t)−ϵ)​∂𝐳⁡(𝐍θ)∂θ]\nabla_{\theta}\mathcal{L}_{\text{SDS}}=\mathbb{E}_{t,\epsilon}\left[w(t)\big(\hat{\epsilon}_{\phi}(\mathbf{z}_{t}(\mathbf{N}_{\theta});y,t)-\epsilon\big)\frac{\partial\mathbf{z}(\mathbf{N}_{\theta})}{\partial\theta}\right]
+(4)
+where ϵ^ϕ\hat{\epsilon}_{\phi} is the noise predicted by Stable Diffusion, yy is the text description, and ϵ\epsilon is the actual noise added to the latent 𝐳\mathbf{z} to produce the noisy version 𝐳t\mathbf{z}_{t}. Additionally, tt denotes the diffusion timestep, and w⁡(t)w(t) is a timestep-dependent weighting function. By backpropagating this SDS gradient, we refine the SDF parameters θ\theta, so the reconstructed geometry matches the text description yy.
+Training Schedule
+The final optimization objective combines the tactile-defined geometric losses (Eq. 1, Eq. 2, and Eq. 3), the diffusion-guided SDS loss (Eq. 4), and the Eikonal regularization term. We adopt a two-stage training strategy. In the warm-up stage (steps 0–1000), optimization is driven only by tactile supervision to establish a geometry consistent with the tactile readings. In the joint refinement stage (steps 1000-7000), we optimize the model with both tactile supervision and SDS guidance, where the diffusion model operates on 64×6464\times 64 rendered normal images with a batch size of 88.
+3.3 Stage 2: Learning Fine Geometry of the Object
+To refine geometric details beyond the coarse reconstruction, we further learn fine object geometry using DMTet, an explicit tetrahedral-grid SDF representation. In Sec. 3.2, the diffusion-based prior is constrained to apply to low-resolution rendered images of 64×6464\times 64, because the underlying geometry is represented by an MLP that predicts SDF values and requires expensive per-ray field queries for volumetric rendering. Rendering at higher resolutions is therefore computationally prohibitive, which limits the diffusion prior’s ability to recover fine geometric details. In contrast, DMTet adopts a fully explicit representation. It discretizes the signed distance field onto a tetrahedral grid with vertices 𝒱={vi}i=1Nv\mathcal{V}=\{v_{i}\}_{i=1}^{N_{v}} and parameterizes the geometry by per-vertex signed distance values {si}i=1Nv\{s_{i}\}_{i=1}^{N_{v}} and per-vertex offsets {Δ​vi}i=1Nv\{\Delta v_{i}\}_{i=1}^{N_{v}}, where NvN_{v} is the number of grid vertices. This representation eliminates the need for MLP evaluation and per-ray field queries. The object surface can be extracted using differentiable marching tetrahedra and rendered with differentiable rasterization, which is significantly more efficient than rendering with the Neuralangelo-style SDF representation used in Sec. 3.2. Consequently, DMTet enables rendering at a much higher resolution of 512×512512\times 512 with batch size 44.
+Let ϕ={{si},{Δ​vi}}\phi=\{\{s_{i}\},\{\Delta v_{i}\}\} denote the learnable parameters of DMTet. We initialize si{s_{i}} by querying the SDF of the optimized coarse geometry from Sec. 3.2 at each grid vertex. Similar to learning the coarse geometry, we optimize ϕ\phi by minimizing the weighted sum of the depth loss ℒdepth\mathcal{L}_{\text{depth}}, normal loss ℒnormal\mathcal{L}_{\text{normal}}, and the SDS loss ℒSDS\mathcal{L}_{\text{SDS}}. Different from stage 1, these losses are now computed through efficient differentiable rasterization instead of ray casting and MLP evaluation. In particular, the SDS loss is evaluated at a much higher rendering resolution, enabling the diffusion-based prior to recover finer geometric details. Beyond these losses, we additionally include the normal consistency loss [34] that penalizes angular deviations between adjacent vertex normals, encouraging locally smooth surface geometry:
+ℒnc=1|ℰ|​∑(i,j)∈ℰ(1−cos⁡(𝐧i,𝐧j)),\displaystyle\mathcal{L}_{\text{nc}}=\frac{1}{|\mathcal{E}|}\sum_{(i,j)\in\mathcal{E}}\left(1-\cos(\mathbf{n}_{i},\mathbf{n}_{j})\right),
+(5)
+where ℰ\mathcal{E} denotes the set of mesh edges, and 𝐧i\mathbf{n}_{i} and 𝐧j\mathbf{n}_{j} are the unit vertex normals at the endpoints of edge (i,j)(i,j).
+Figure 3: Visualization of the simulation results. From left to right, we show the ground truth object, the tactile measurements, the result from the warm-up stage where only tactile observations are used, followed by intermediate, stage 1, and stage 2 reconstructions. The warm-up stage provides a good initialization of the shape before incorporating the diffusion model. We also note that the stage 1 results are close to stage 2 because the simulated objects contain limited geometric detail.
+4 Experiments and Results
+We evaluate the reconstruction performance of TouchAnything in simulation and compare it with baseline methods. We additionally demonstrate its qualitative performance in real-world scenarios and conduct ablation studies to examine the impact of different modality inputs. All objects were trained on a single NVIDIA A100 GPU which takes ∼1\sim 1 hour for stage 1 and 40 minutes for stage 2.
+4.1 Simulation Experiments
+Data Collection
+We evaluate TouchAnything on 280280 objects from ShapeNetCore.V2 [5]. We use the same object subset as TouchSDF [8], provided by its authors, to enable direct comparison with it and subsequent work [46]. The objects span six categories: bowls, bottles, cameras, jars, guitars, and mugs. The class-level text prompt associated with each category is defined respectively as “a bowl”, “a bottle”, “a camera”, “a jar”, “a guitar”, and “a mug”. For each object, we generate 20 simulated tactile images as input to TouchAnything. This is achieved through a tactile simulation pipeline designed to closely approximate how a robot interacts with objects in real-world scenarios. We use Taxim [40], an example-based photorealistic tactile simulator, to produce GelSight images. For each object mesh, we uniformly sample contact locations (see Supplementary Material for details), align the contact orientation with the local surface normal, and press the object to a predefined depth. Open3D ray casting [54] is then used to compute the resulting contact depth map, which Taxim converts into a photorealistic GelSight image with a resolution of 320×240320\times 240 corresponding to a sensing area of 2.0​cm×1.5​cm2.0\text{cm}\times 1.5\text{cm}.
+Baseline Methods
+We compare our approach to two tactile-based 3D reconstruction methods. TouchSDF [8] reconstructs 3D geometry using TacTip tactile sensors and is a common baseline in tactile-based 3D reconstruction research. It represents object geometry using DeepSDF, a neural implicit representation pretrained on a specific dataset, which provides a dataset-specific shape prior during reconstruction. Touch2Shape [46] uses an active tactile exploration strategy and additionally trains a diffusion model on tactile data to provide a generative shape prior during reconstruction. In contrast, our approach uses a general-purpose model guided only by minimal text descriptions, enabling open-world reconstruction of arbitrary objects.
+Table 1: Quantitative Results on the simulation data. We show the Earth Mover’s Distance (EMD) metric for various methods on test objects with 20 robot touches.
+Category
+TouchSDF [8]
+Touch2Shape [46]
+Ours
+Bottle
+0.047±0.0240.047\pm 0.024
+0.0410.041
+0.035±0.020\mathbf{0.035}\pm 0.020
+Bowl
+0.048±0.0170.048\pm 0.017
+0.0490.049
+0.039±0.010\mathbf{0.039}\pm 0.010
+Camera
+0.092±0.0430.092\pm 0.043
+0.0560.056
+0.047±0.025\mathbf{0.047}\pm 0.025
+Guitar
+0.155±0.0870.155\pm 0.087
+0.0640.064
+0.060±0.025\mathbf{0.060}\pm 0.025
+Jar
+0.071±0.0380.071\pm 0.038
+0.0550.055
+0.053±0.023\mathbf{0.053}\pm 0.023
+Mug
+0.066±0.0180.066\pm 0.018
+0.0490.049
+0.044±0.008\mathbf{0.044}\pm 0.008
+Experimental Results
+We evaluate the reconstruction results using Earth Mover’s Distance (EMD), which is widely used in touch-based reconstruction and better reflects visual quality [8]. The result is reported in Tab. 1. TouchAnything achieves better reconstruction performance across all categories compared to both baselines, highlighting our method’s ability to leverage the rich geometric priors encoded in off-the-shelf 2D diffusion models. In Fig. 3, we show sample results from the warmup, stage 1 and stage 2. We note that the warmup stage provides a good initialization of the geometry before further refinement with the diffusion prior while the later incorporation of the diffusion model further improves the reconstruction quality.
+4.2 Real-world Experiments with a Robot
+Figure 4: Real-world reconstruction results with TouchAnything. For each object, we show the class-level text description, an image of the real object, and the 20 tactile measurements used for reconstruction. The rightmost column shows the results obtained from stage 2.
+Hardware
+The real-world experiments are conducted with a 6-DOF UR5e robot arm equipped with a Gelsight Mini tactile sensor. The sensor operates at a resolution of 320×240320\times 240, corresponding to a sensing area of 2.0​cm×1.5​cm2.0\text{cm}\times 1.5\text{cm}. For real-world evaluation, we selected 14 objects in total, including 6 objects selected from the YCB dataset, 3 3D-printed objects chosen from ShapeNetCore.V2 [5] and 5 household objects. The 3D-printed objects were designed to be mounted on a cuboid base. During the experiments, all objects were rigidly fixed to the table using a dedicated mount.
+Data Collection
+We collected the real-world data by operating the robot arm to make contact with the object. The contact poses were selected to best cover the surface of the object uniformly. A GelSight image is collected after every touch, and the pose of the sensor is calculated using the forward kinematics of the robot arm.
+Experimental Results
+Fig. 4 presents the tactile input and reconstruction results for all real-world objects. For each object, 20 touches are applied uniformly across the surface. Despite the sparse tactile observations, TouchAnything achieves good reconstruction of the object geometry. For complex objects such as the camera and drill, large portions of the object remain untouched. Nevertheless, our diffusion prior correctly completes these regions with detailed shapes consistent with the semantic description. More importantly, as shown in Fig. 4, our method successfully reconstructs all tested real-world objects.
+Figure 5: Stage 1 results on the left and stage 2 result on the right. Note the finer details recovered via the refinement step.
+This is possible because we use a general-purpose generative model rather than class-specific models. In contrast, prior methods [8, 52, 46] can typically reconstruct only objects from categories seen during training which highlights the stronger generalization capability of our approach. Fig. 5 shows the fine geometric details recovered during the stage 2 refinement step compared to the coarse geometry obtained in stage 1. Additional qualitative results are available in the supplementary material.
+Figure 6: Reconstructions using only tactile observations after removing the diffusion prior. The reconstructions degrade significantly.
+Figure 7: We study the effect of the number of tactile measurements and the text description used to guide the diffusion prior on reconstruction quality. Columns correspond to increasing numbers of touches, while rows correspond to different text descriptions (detailed, class-level, empty, and incorrect). Our method reconstructs plausible geometries with as few as 20 touches while more informative descriptions guide the reconstruction toward more realistic shapes.
+4.3 Ablation Studies
+Ablation: Tactile-Only Reconstruction.
+Fig. 6 shows 3D reconstructions of real objects obtained using tactile observations only, after removing the diffusion prior. The reconstruction quality degrades significantly compared to our full method, highlighting the importance of the diffusion model. This behavior is expected, as tactile sensing provides only local geometric measurements. With a limited number of touches, the reconstruction problem remains highly underconstrained without the global guidance provided by the diffusion prior.
+Ablation: Text Description and Touch Count.
+We study how the number of touches and the quality of text description affect the reconstruction performance of TouchAnything. To evaluate the effect of additional tactile supervision, we run TouchAnything using 2020, 4040, and all available touches. We also investigate the affect of semantic guidance by varying the text description provided to the model. Specifically, we consider four levels of semantic text guidance: an incorrect description (e.g., “an airplane”), no description (an empty string), a class-level description (e.g., “a camera”), and a highly detailed instance-specific description. Fig. 7 shows the reconstruction results of TouchAnything under different input combinations on four real-world objects: a camera, drill, cola bottle, and tomato soup can. With only 2020 tactile observations, we show that a class-level text description (e.g., “a camera”) is sufficient for TouchAnything to correctly complete the untouched regions, and a more detailed description does not necessarily improve reconstruction as precise geometric details are hard to specify through text. The influence of the diffusion prior is further illustrated when an incorrect description, such as “an airplane,” is used, which causes the model to hallucinate structures in the unseen regions that match the incorrect semantics. Even when using an empty string as the text description, we show that the diffusion model can still reasonably infer unseen geometry based on common-sense geometric reasoning, such as connecting aligned surface patches or completing partial cylindrical structures. For completeness, we include the quantitative results (EMD) of TouchAnything under different input combinations for four real-world objects with ground-truth meshes in the supplementary material.
+5 Discussion and Conclusion
+We present TouchAnything, a method for reconstructing 3D object geometry from sparse tactile measurements by leveraging an off-the-shelf pretrained 2D diffusion model as a semantic and geometric prior. Our approach combines local geometric constraints derived from tactile sensing with global guidance from a diffusion prior for 3D reconstruction. As a result, it addresses the fundamentally underconstrained nature of reconstructing shapes from sparse physical contacts. Unlike prior tactile reconstruction methods that rely on category-specific training or diffusion models trained directly on tactile datasets, TouchAnything transfers geometric knowledge encoded in large-scale visual diffusion models to the tactile domain. Our results demonstrate that this combination enables accurate and robust 3D reconstruction from only a small number of touches while generalizing to previously unseen objects in an open-world setting. Several promising directions remain for future work. One direction is to investigate the possibility of removing the reliance on text prompts entirely, enabling fully prompt-free reconstruction from tactile measurements. Additionally, our current system assumes that tactile measurements are collected passively. Future work could explore active touch strategies that guide the robot toward the most informative contact locations, enabling more efficient data collection and reconstruction.
+Acknowledgements
+The authors thank Ruohan Zhang and Jingyi Xiang for their help with robot setup and hardware design, thank Ruihan Gao for her discussions on tactile-inspired 3D generation, and thank Yuchen Mo for the support with computing resources. Mohamad Qadri was supported in part by ONR grant N00014-24-1-2272. This work used the Delta system at the National Center for Supercomputing Applications [award OAC 2005572] through allocation CIS240782 from the Advanced Cyberinfrastructure Coordination Ecosystem: Services & Support (ACCESS) program [3], which is supported by National Science Foundation grants #2138259, #2138286, #2138307, #2137603, and #2138296.
+References
+[1]
+J. Ansel, E. Yang, H. He, N. Gimelshein, A. Jain, M. Voznesensky, B. Bao, P. Bell, D. Berard, E. Burovski, G. Chauhan, A. Chourdia, W. Constable, A. Desmaison, Z. DeVito, E. Ellison, W. Feng, J. Gong, M. Gschwind, B. Hirsh, S. Huang, K. Kalambarkar, L. Kirsch, M. Lazos, M. Lezcano, Y. Liang, J. Liang, Y. Lu, C. Luk, B. Maher, Y. Pan, C. Puhrsch, M. Reso, M. Saroufim, M. Y. Siraichi, H. Suk, M. Suo, P. Tillet, E. Wang, X. Wang, W. Wen, S. Zhang, X. Zhao, K. Zhou, R. Zou, A. Mathews, G. Chanan, P. Wu, and S. Chintala (2024)
+PyTorch 2: Faster Machine Learning Through Dynamic Python Bytecode Transformation and Graph Compilation.
+In 29th ACM International Conference on Architectural Support for Programming Languages and Operating Systems, Volume 2 (ASPLOS ’24),
+External Links: Document,
+Link
+Cited by: §0.D.1.
+[2]
+D. Azinović, R. Martin-Brualla, D. B. Goldman, M. Nießner, and J. Thies (2022)
+Neural rgb-d surface reconstruction.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR),
+pp. 6290–6301.
+Cited by: §3.2.
+[3]
+T. J. Boerner, S. Deems, T. R. Furlani, S. L. Knuth, and J. Towns (2023)
+ACCESS: Advancing Innovation: NSF’s Advanced Cyberinfrastructure Coordination Ecosystem: Services & Support.
+In Practice and Experience in Advanced Research Computing (PEARC ’23),
+Portland, OR, USA, pp. 4.
+External Links: Document,
+Link
+Cited by: Acknowledgements.
+[4]
+B. Calli, A. Singh, J. Bruce, A. Walsman, K. Konolige, S. Srinivasa, P. Abbeel, and A. M. Dollar (2017)
+Yale-cmu-berkeley dataset for robotic manipulation research.
+The International Journal of Robotics Research 36 (3), pp. 261–268.
+External Links: Document,
+Link,
+https://doi.org/10.1177/0278364917700714
+Cited by: Appendix 0.C,
+§3.1.
+[5]
+A. X. Chang, T. Funkhouser, L. Guibas, P. Hanrahan, Q. Huang, Z. Li, S. Savarese, M. Savva, S. Song, H. Su, J. Xiao, L. Yi, and F. Yu (2015)
+ShapeNet: An Information-Rich 3D Model Repository.
+Technical report
+Technical Report arXiv:1512.03012 [cs.GR], Stanford University — Princeton University — Toyota Technological Institute at Chicago.
+Cited by: §0.A.1,
+Appendix 0.C,
+§4.1,
+§4.2.
+[6]
+R. Chen, Y. Chen, N. Jiao, and K. Jia (2023)
+Fantasia3d: disentangling geometry and appearance for high-quality text-to-3d content creation.
+In Proceedings of the IEEE/CVF international conference on computer vision,
+pp. 22246–22256.
+Cited by: §2.2,
+§3.2.
+[7]
+J. Chibane and G. Pons-Moll (2020)
+Implicit feature networks for texture completion from partial 3d data.
+In European Conference on Computer Vision,
+pp. 717–725.
+Cited by: §2.2.
+[8]
+M. Comi, Y. Lin, A. Church, A. Tonioni, L. Aitchison, and N. F. Lepora (2024)
+Touchsdf: a deepsdf approach for 3d shape reconstruction using vision-based tactile sensing.
+IEEE Robotics and Automation Letters 9 (6), pp. 5719–5726.
+Cited by: §0.A.1,
+§1,
+§2.1,
+§2.3,
+§3,
+§4.1,
+§4.1,
+§4.1,
+§4.2,
+Table 1.
+[9]
+M. Comi, A. Tonioni, J. Tremblay, M. Yang, V. Blukis, Y. Lin, N. F. Lepora, and L. Aitchison (2025)
+Snap-it, tap-it, splat-it: tactile-informed 3d gaussian splatting for reconstructing challenging surfaces.
+In 2025 International Conference on 3D Vision (3DV),
+pp. 1134–1143.
+Cited by: §2.3.
+[10]
+I. Fang, K. Shi, X. He, S. Tan, Y. Wang, H. Zhao, H. Huang, W. Yuan, C. Feng, and J. Zhang (2025)
+Fusionsense: bridging common sense, vision, and touch for robust sparse-view reconstruction.
+In 2025 IEEE International Conference on Robotics and Automation (ICRA),
+pp. 15798–15805.
+Cited by: §2.3.
+[11]
+R. Gao, K. Deng, G. Yang, W. Yuan, and J. Zhu (2024)
+Tactile dreamfusion: exploiting tactile sensing for 3d generation.
+Advances in Neural Information Processing Systems 37, pp. 29839–29863.
+Cited by: §2.2.
+[12]
+H. Huang, M. Kaess, and W. Yuan (2024)
+NormalFlow: fast, robust, and accurate contact-based object 6dof pose tracking with vision-based tactile sensors.
+IEEE Robotics and Automation Letters.
+Cited by: §2.3.
+[13]
+H. Huang, M. A. Mirzaee, M. Kaess, and W. Yuan (2025)
+Gelslam: a real-time, high-fidelity, and robust 3d tactile slam system.
+arXiv preprint arXiv:2508.15990.
+Cited by: §2.3.
+[14]
+Y. Kasten, O. Rahamim, and G. Chechik (2023)
+Point cloud completion with pretrained text-to-image diffusion models.
+Advances in Neural Information Processing Systems 36, pp. 12171–12191.
+Cited by: §2.2.
+[15]
+B. Kerbl, G. Kopanas, T. Leimkühler, G. Drettakis, et al. (2023)
+3d gaussian splatting for real-time radiance field rendering..
+ACM Trans. Graph. 42 (4), pp. 139–1.
+Cited by: §2.1.
+[16]
+P. Kung, S. Harisha, R. Vasudevan, A. Eid, and K. A. Skinner (2025)
+Radarsplat: radar gaussian splatting for high-fidelity data synthesis and 3d reconstruction of autonomous driving scenes.
+In Proceedings of the IEEE/CVF International Conference on Computer Vision,
+pp. 27596–27606.
+Cited by: §2.1.
+[17]
+S. Laine, J. Hellsten, T. Karras, Y. Seol, J. Lehtinen, and T. Aila (2020)
+Modular primitives for high-performance differentiable rendering.
+ACM Transactions on Graphics 39 (6).
+Cited by: Appendix 0.B,
+§0.D.1.
+[18]
+Z. Li, T. Müller, A. Evans, R. H. Taylor, M. Unberath, M. Liu, and C. Lin (2023)
+Neuralangelo: high-fidelity neural surface reconstruction.
+In IEEE Conference on Computer Vision and Pattern Recognition (CVPR),
+Cited by: §0.D.1,
+§3.2,
+§3.2.
+[19]
+C. Lin, J. Gao, L. Tang, T. Takikawa, X. Zeng, X. Huang, K. Kreis, S. Fidler, M. Liu, and T. Lin (2023)
+Magic3d: high-resolution text-to-3d content creation.
+In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition,
+pp. 300–309.
+Cited by: §2.2,
+§3.
+[20]
+T. Lin, M. Qadri, K. Zhang, A. Pediredla, C. A. Metzler, and M. Kaess (2025)
+Acoustic neural 3d reconstruction under pose drift.
+In 2025 IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS),
+pp. 12704–12711.
+Cited by: §2.1.
+[21]
+B. Mildenhall, P. P. Srinivasan, M. Tancik, J. T. Barron, R. Ramamoorthi, and R. Ng (2021)
+Nerf: representing scenes as neural radiance fields for view synthesis.
+Communications of the ACM 65 (1), pp. 99–106.
+Cited by: §2.1.
+[22]
+T. Müller, A. Evans, C. Schied, and A. Keller (2022)
+Instant neural graphics primitives with a multiresolution hash encoding.
+ACM Trans. Graph. 41 (4).
+External Links: ISSN 0730-0301,
+Link,
+Document
+Cited by: §0.D.1.
+[23]
+J. Ni, Y. Liu, R. Lu, Z. Zhou, S. Zhu, Y. Chen, and S. Huang (2025)
+Decompositional neural scene reconstruction with generative diffusion prior.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR),
+pp. 6022–6033.
+Cited by: §2.2.
+[24]
+M. Niemeyer, J. T. Barron, B. Mildenhall, M. S. Sajjadi, A. Geiger, and N. Radwan (2022)
+Regnerf: regularizing neural radiance fields for view synthesis from sparse inputs.
+In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition,
+pp. 5480–5490.
+Cited by: §2.1.
+[25]
+J. J. Park, P. Florence, J. Straub, R. Newcombe, and S. Lovegrove (2019)
+Deepsdf: learning continuous signed distance functions for shape representation.
+In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition,
+pp. 165–174.
+Cited by: §2.1.
+[26]
+B. Poole, A. Jain, J. T. Barron, and B. Mildenhall (2022)
+Dreamfusion: text-to-3d using 2d diffusion.
+arXiv preprint arXiv:2209.14988.
+Cited by: §2.2,
+§3.2.
+[27]
+M. Qadri, M. Kaess, and I. Gkioulekas (2023)
+Neural implicit surface reconstruction using imaging sonar.
+In 2023 IEEE International Conference on Robotics and Automation (ICRA),
+pp. 1040–1047.
+Cited by: §2.1.
+[28]
+M. Qadri, Z. Manchester, and M. Kaess (2024)
+Learning covariances for estimation with constrained bilevel optimization.
+In 2024 IEEE International Conference on Robotics and Automation (ICRA),
+pp. 15951–15957.
+Cited by: §2.3.
+[29]
+M. Qadri, P. Sodhi, J. G. Mangelson, F. Dellaert, and M. Kaess (2022)
+InCOpt: incremental constrained optimization using the bayes tree.
+In 2022 IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS),
+pp. 6381–6388.
+Cited by: §2.3.
+[30]
+M. Qadri, K. Zhang, A. Hinduja, M. Kaess, A. Pediredla, and C. A. Metzler (2024)
+Aoneus: a neural rendering framework for acoustic-optical sensor fusion.
+In ACM SIGGRAPH 2024 Conference Papers,
+pp. 1–12.
+Cited by: §0.D.1,
+§2.1.
+[31]
+L. Qiu, G. Chen, X. Gu, Q. Zuo, M. Xu, Y. Wu, W. Yuan, Z. Dong, L. Bo, and X. Han (2024)
+Richdreamer: a generalizable normal-depth diffusion model for detail richness in text-to-3d.
+In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition,
+pp. 9914–9925.
+Cited by: §2.2.
+[32]
+Z. Qu, O. Vengurlekar, M. Qadri, K. Zhang, M. Kaess, C. Metzler, S. Jayasuriya, and A. Pediredla (2024)
+Z-splat: z-axis gaussian splatting for camera-sonar fusion.
+IEEE transactions on pattern analysis and machine intelligence 47 (9), pp. 7255–7267.
+Cited by: §2.1.
+[33]
+M. Rafidashti, J. Lan, M. Fatemi, J. Fu, L. Hammarstrand, and L. Svensson (2025)
+Neuradar: neural radiance fields for automotive radar point clouds.
+In Proceedings of the Computer Vision and Pattern Recognition Conference,
+pp. 2488–2498.
+Cited by: §2.1.
+[34]
+N. Ravi, J. Reizenstein, D. Novotny, T. Gordon, W. Lo, J. Johnson, and G. Gkioxari (2020)
+Accelerating 3d deep learning with pytorch3d.
+arXiv:2007.08501.
+Cited by: §3.3.
+[35]
+R. Rombach, A. Blattmann, D. Lorenz, P. Esser, and B. Ommer (2022)
+High-resolution image synthesis with latent diffusion models.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR),
+pp. 10684–10695.
+Cited by: §0.D.1,
+§3.2,
+§3.
+[36]
+O. Ronneberger, P. Fischer, and T. Brox (2015)
+U-net: convolutional networks for biomedical image segmentation.
+In Medical Image Computing and Computer-Assisted Intervention – MICCAI 2015, N. Navab, J. Hornegger, W. M. Wells, and A. F. Frangi (Eds.),
+Cham, pp. 234–241.
+External Links: ISBN 978-3-319-24574-4
+Cited by: §0.A.1,
+§0.D.2,
+§3.1.
+[37]
+S. Schaefer, J. D. Galvis, X. Zuo, and S. Leutengger (2024)
+Sc-diff: 3d shape completion with latent diffusion models.
+arXiv preprint arXiv:2403.12470.
+Cited by: §2.2.
+[38]
+T. Shen, J. Gao, K. Yin, M. Liu, and S. Fidler (2021)
+Deep marching tetrahedra: a hybrid representation for high-resolution 3d shape synthesis.
+Advances in Neural Information Processing Systems 34, pp. 6087–6101.
+Cited by: §2.1.
+[39]
+T. Shen, J. Gao, K. Yin, M. Liu, and S. Fidler (2021)
+Deep marching tetrahedra: a hybrid representation for high-resolution 3d shape synthesis.
+In Advances in Neural Information Processing Systems (NeurIPS),
+Cited by: Appendix 0.B.
+[40]
+Z. Si and W. Yuan (2022)
+Taxim: an example-based simulation model for gelsight tactile sensors.
+IEEE Robotics and Automation Letters 7 (2), pp. 2361–2368.
+External Links: Document
+Cited by: §0.A.1,
+§4.1.
+[41]
+S. Suresh, H. Qi, T. Wu, T. Fan, L. Pineda, M. Lambeta, J. Malik, M. Kalakrishnan, R. Calandra, M. Kaess, et al. (2024)
+NeuralFeels with neural fields: visuotactile perception for in-hand manipulation.
+Science Robotics 9 (96), pp. eadl0628.
+Cited by: §2.1,
+§2.3.
+[42]
+S. Suresh, Z. Si, J. G. Mangelson, W. Yuan, and M. Kaess (2022)
+Shapemap 3-d: efficient shape mapping through dense touch and vision.
+In 2022 International Conference on Robotics and Automation (ICRA),
+pp. 7073–7080.
+Cited by: §2.3,
+§3.1,
+§3.
+[43]
+A. Swann, M. Strong, W. K. Do, G. S. Camps, M. Schwager, and M. Kennedy (2024)
+Touch-gs: visual-tactile supervised 3d gaussian splatting.
+In 2024 IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS),
+pp. 10511–10518.
+Cited by: §2.3.
+[44]
+G. Wang, Z. Chen, C. C. Loy, and Z. Liu (2023)
+Sparsenerf: distilling depth ranking for few-shot novel view synthesis.
+In Proceedings of the IEEE/CVF international conference on computer vision,
+pp. 9065–9076.
+Cited by: §2.1.
+[45]
+S. Wang, Y. She, B. Romero, and E. Adelson (2021)
+GelSight wedge: measuring high-resolution 3d contact geometry with a compact robot finger.
+In 2021 IEEE International Conference on Robotics and Automation (ICRA),
+Vol. , pp. 6468–6475.
+External Links: Document
+Cited by: §3.1,
+§3.
+[46]
+Y. Wang, Z. Zhang, J. Qiu, D. Sun, Z. Meng, X. Wei, and X. Yang (2025)
+Touch2Shape: touch-conditioned 3d diffusion for shape exploration and reconstruction.
+In Proceedings of the Computer Vision and Pattern Recognition Conference,
+pp. 5656–5665.
+Cited by: §1,
+§2.3,
+§4.1,
+§4.1,
+§4.2,
+Table 1.
+[47]
+Z. Wang, C. Lu, Y. Wang, F. Bao, C. Li, H. Su, and J. Zhu (2023)
+Prolificdreamer: high-fidelity and diverse text-to-3d generation with variational score distillation.
+Advances in neural information processing systems 36, pp. 8406–8441.
+Cited by: §2.2.
+[48]
+R. Wu, B. Mildenhall, P. Henzler, K. Park, R. Gao, D. Watson, P. P. Srinivasan, D. Verbin, J. T. Barron, B. Poole, et al. (2024)
+Reconfusion: 3d reconstruction with diffusion priors.
+In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition,
+pp. 21551–21561.
+Cited by: §2.2.
+[49]
+W. Yuan, T. Khot, D. Held, C. Mertz, and M. Hebert (2018)
+Pcn: point completion network.
+In 2018 international conference on 3D vision (3DV),
+pp. 728–737.
+Cited by: §2.2.
+[50]
+W. Yuan, S. Dong, and E. H. Adelson (2017)
+Gelsight: high-resolution robot tactile sensors for estimating geometry and force.
+Sensors 17 (12), pp. 2762.
+Cited by: §3.1,
+§3.1.
+[51]
+C. Yuksel (2015)
+Sample elimination for generating poisson disk sample sets.
+Comput. Graph. Forum 34 (2), pp. 25–32.
+External Links: ISSN 0167-7055,
+Link,
+Document
+Cited by: §0.A.1.
+[52]
+H. Zhang, X. Zhang, J. Huang, Z. Feng, and X. Xiao (2025)
+End-to-end diffusion-based 3d object reconstruction from robotic tactile sensing.
+IEEE Robotics and Automation Letters 11 (2), pp. 1434–1441.
+Cited by: §1,
+§2.3,
+§3,
+§4.2.
+[53]
+C. Zhao, S. Sun, R. Wang, Y. Guo, J. Wan, Z. Huang, X. Huang, Y. V. Chen, and L. Ren (2024)
+Tclc-gs: tightly coupled lidar-camera gaussian splatting for autonomous driving: supplementary materials.
+In European Conference on Computer Vision,
+pp. 91–106.
+Cited by: §2.1.
+[54]
+Q. Zhou, J. Park, and V. Koltun (2018)
+Open3D: A modern library for 3D data processing.
+arXiv:1801.09847.
+Cited by: §0.A.1,
+§4.1.
+[55]
+Z. Zou, W. Cheng, Y. Cao, S. Huang, Y. Shan, and S. Zhang (2024)
+Sparse3d: distilling multiview-consistent diffusion for object reconstruction from sparse views.
+In Proceedings of the AAAI conference on artificial intelligence,
+Vol. 38, pp. 7900–7908.
+Cited by: §2.2.
+Supplementary Material
+In this supplementary material, we provide additional details regarding our methodology, experiments and results.
+Appendix 0.A Data Collection
+0.A.1 Simulation Data Collection
+Tactile image generation
+Figure 8: A Multi-Head U-Net is implemented to derive local geometry from Gelsight Tactile Images.
+We propose a physically grounded simulation pipeline for tactile data generation that captures realistic contact mechanics by leveraging Taxim [40], an example-based Gelsight simulation model. The data acquisition process begins with the selection of potential contact points via Poisson Disk Sampling [51] over the object mesh; here, the surface is intentionally oversampled to ensure high-quality tactile image generation by providing a buffer against unsuitable geometries, such as overly flat regions or extreme depressions.
+Once these candidates are established, the sensor poses are initialized by translating a set distance from each pre-selected contact point along the radial vector originating from the coordinate center. From these initial positions, the system perceives the local surface normals within the sensor’s field of view. These sensors are subsequently aligned to the identified normals and driven into the surface at a predefined pressing depth to simulate physical contact. To synthesize the final output, a contact depth map is generated using Open3D ray casting [54], which is then transformed into a 320×240320\times 240 pixel Gelsight tactile image through the Taxim framework. Finally, the samples with insufficient contact area are discarded. The sensor poses for the validated tactile contacts are stored.
+For our simulation experiments conducted with ShapeNetCore.V2 [5] objects, we rescale them to 20% of their original size following TouchSDF [8]. This makes their sizes comparable with real-world sensor and objects.
+Tactile image to local geometry
+To reconstruct the local surface geometry from raw sensory data, we implemented a Multi-Head U-Net architecture [36]. This model serves as a perception module that maps a single RGB GelSight tactile image to three distinct geometric representations: a depth map, a normal map, and a contact mask, as illustrated in Figure 8.
+The network features a shared encoder to extract common tactile features, followed by three independent decoder heads tailored for each modality. We trained the model on a large-scale synthetic dataset comprising 20k tactile samples. These samples were generated using the Taxim simulation framework based on 78 YCB objects with varying mesh resolutions (16k and 64k). Each tactile sample set includes a ground truth depth map, a ground truth normal map, and a ground truth contact mask.
+The model is optimized end-to-end using a weighted multi-task loss function ℒt​o​t​a​l\mathcal{L}_{total}, which balances the convergence across different tasks:
+ℒt​o​t​a​l=λm​ℒm​a​s​k+λd​ℒd​e​p​t​h+λn​ℒn​o​r​m​a​l\mathcal{L}_{total}=\lambda_{m}\mathcal{L}_{mask}+\lambda_{d}\mathcal{L}_{depth}+\lambda_{n}\mathcal{L}_{normal}
+(6)
+where we employ Binary Cross-Entropy (BCE) for the contact mask loss ℒm​a​s​k\mathcal{L}_{mask}, L1L_{1} loss for the depth loss ℒd​e​p​t​h\mathcal{L}_{depth}, and Cosine Similarity for the normal loss ℒn​o​r​m​a​l\mathcal{L}_{normal}.
+For TouchAnything, we specifically leverage the predicted depth map and contact mask to synthesize virtual camera observations. The predicted normal maps, while currently redundant for our immediate geometry-derivation stage, are generated by our multi-head architecture to provide a more comprehensive geometric prediction and to facilitate alternative tactile sensing tasks in future research.
+Figure 9: Our real-world experiment hardware setup, including a UR5e robot arm, a Gelsight Mini tactile sensor and a fixed mount.
+0.A.2 Real-world Data Collection
+Our real-world data collection system includes a 6-DOF UR5e robot arm, a Gelsight Mini tactile sensor and a fixed mount on the table, as shown in Figure 9. To collect tactile data, we operate the robot arm manually and press the tactile sensor on the surface of the object. A GelSight image is recorded after every contact, and the sensor pose is calculated through the forward kinematics of the robotic arm.
+Appendix 0.B Extended Analysis of Fine Geometry Learning
+In this section, we provide additional visual evidence and implementation details for the geometry refinement stage. The pipeline for the explicit DMTet [39]-based refinement is illustrated in Figure 10. Utilizing DMTet representation and differentiable mesh renderer [17], we achieve extremely fast rendering at a very high resolution. This architectural shift is the key for the diffusion model to capture high-frequency geometric details and provide rich texture to the surface.
+Figure 10: Overview of the stage 2 fine geometry learning pipeline.
+To demonstrate the effectiveness of our refinement strategy, we present a qualitative comparison in Figure 11. We choose some representative objects with rich surface details themselves to show how their surface texture evolves after the stage 2 geometry refinement step. While the coarse stage successfully recovers the global topology and basic structure, it often suffers from plain surface texture and lacks fine-grained details because the rendered normal images passed to the diffusion prior are of low resolution. In contrast, after our refinement, the reconstructed results all exhibit fine surface details, such as the rugged texture on the surface of the avocado, the concentric ridges on the top of the can, and the parallel fluting on the lens of the camera. These results provide compelling evidence that our refinement stage effectively recovers high-frequency surface details, leading to more fine-grained object reconstructions.
+Figure 11: Qualitative comparison between the results before and after fine geometry learning. We choose some representative objects to show how their surface texture evolves after the stage 2 geometry refinement.
+Appendix 0.C Quantitative Evaluation for Real-world Reconstruction Results
+We present the quantitative metrics for the real-world reconstruction results of selected objects with ground truth meshes. These include the potted meat can, the tomato soup can, the tuna can and the mustard bottle from the YCB dataset [4] which have ground truth meshes provided by high-resolution scanner, and the printed camera model, the printed bottle model and the printed bowl model, whose ground truth meshes are from the ShapeNet-Core.V2 [5] dataset. They are evaluated using Earth Mover’s Distance (EMD). The result is reported in Figure 12.
+Figure 12: Quantitative evaluation for real-world results.
+For our ablation study, to further analyze the impact of tactile sample density and semantic guidance, we provide comprehensive Earth Mover’s Distance (EMD) metrics for four representative real-world objects: a 3D-printed bottle, a 3D-printed camera, a tomato soup can, and a potted meat can. As shown in Table 2, we evaluate the reconstruction error across varying numbers of robot touches and four levels of text prompts (p1p_{1}: incorrect, p2p_{2}: empty, p3p_{3}: class-level, and p4p_{4}: detailed). The details of text prompts used for each real-world object is listed in Table 3.
+Table 2: Detailed EMD results for the ablation study, including four representative real-world objects: a 3D-printed bottle, a 3D-printed camera, a tomato soup can, and a potted meat can.
+(a) 3D-Printed Bottle
+20
+40
+99
+p1p_{1}
+0.0105
+0.0067
+0.0075
+p2p_{2}
+0.0058
+0.0058
+0.0080
+p3p_{3}
+0.0057
+0.0052
+0.0066
+p4p_{4}
+0.0089
+0.0050
+0.0056
+(b) 3D-Printed Camera
+20
+40
+121
+p1p_{1}
+0.0180
+0.0190
+0.0221
+p2p_{2}
+0.0104
+0.0071
+0.0112
+p3p_{3}
+0.0098
+0.0095
+0.0109
+p4p_{4}
+0.0097
+0.0094
+0.0100
+(c) Tomato Soup Can
+20
+40
+53
+p1p_{1}
+0.0099
+0.0090
+0.0090
+p2p_{2}
+0.0089
+0.0088
+0.0100
+p3p_{3}
+0.0077
+0.0082
+0.0087
+p4p_{4}
+0.0079
+0.0069
+0.0079
+(d) Potted Meat Can
+20
+40
+91
+p1p_{1}
+0.0092
+0.0080
+0.0082
+p2p_{2}
+0.0086
+0.0086
+0.0081
+p3p_{3}
+0.0062
+0.0069
+0.0074
+p4p_{4}
+0.0064
+0.0071
+0.0080
+The results highlight two key insights regarding the synergy between tactile evidence and semantic priors. First, the quality of the text prompt plays an important role in reconstruction quality. Across most test cases, the class-level (p3p_{3}) and detailed (p4p_{4}) descriptions consistently outperform the incorrect (p1p_{1}) or empty (p2p_{2}) prompts. This demonstrates that a correct semantic prior is essential for the diffusion model to resolve the inherent ambiguity of sparse tactile points and to complete untouched regions with category-specific geometric information.
+Second, we observe that reconstructions using 20 or 40 touches occasionally yield lower EMD values than those using the full tactile dataset. We attribute this to the non-uniform quality of tactile measurements in dense sampling. During full-scale data collection, the sensor inevitably interacts with highly complex or sharp features, such as the thin metal ring edge on a can or the narrow edges of a camera lens hood. Due to the elastic deformation of the tactile sensor, depth estimation for these thin structures often suffers from a low-pass filtering effect, resulting in thickened artifacts that deviate from the ground truth mesh. In contrast, with fewer but cleaner samples used as local constraints, our pipeline leverages the powerful geometric priors guided by accurate prompts (p3,p4p_{3},p_{4}) to reconstruct plausible structures.
+Table 3: Details of text prompts (p1p_{1} to p4p_{4}) used for each real-world object in the ablation study.
+Object
+ID
+Text Prompt Content
+3D-Printed Bottle
+p1p_{1}
+an airplane
+p2p_{2}
+[Empty String]
+p3p_{3}
+a bottle
+p4p_{4}
+a classic Coca-cola contour bottle, featuring a narrow neck, curved body, and horizontal indentations around the midsection
+3D-Printed Camera
+p1p_{1}
+an airplane
+p2p_{2}
+[Empty String]
+p3p_{3}
+a camera
+p4p_{4}
+an SLR camera which has a rectangular body with a central pyramidal viewfinder and cylindrical top dials. Large protruding cylindrical lens featuring ridged rings and a flared hood. Recessed rectangular rear screen and circular eyepiece.
+Tomato Soup Can
+p1p_{1}
+an airplane
+p2p_{2}
+[Empty String]
+p3p_{3}
+a can
+p4p_{4}
+a standard cylindrical tin can featuring a smooth, vertical body. The top surface consists of a flat circular plane with a flat pull-ring tab and a slightly raised metallic rim
+Potted Meat Can
+p1p_{1}
+an airplane
+p2p_{2}
+[Empty String]
+p3p_{3}
+a can
+p4p_{4}
+a rectangular cuboid can with heavily rounded vertical edges. The top surface features a raised lip and a flat central plane. An integrated loop-shaped pull-tab attached rests flat on the top surface.
+Appendix 0.D Implementation Details
+0.D.1 3D Representation Implementation Details
+We implement TouchAnything using PyTorch [1] with 16-bit mixed precision. All models are optimized using the Adam optimizer. We set the learning rate to 1×10−21\times 10^{-2} for the hash grid and 1×10−31\times 10^{-3} for the SDF network and DMTet parameters. We employ the pretrained Stable Diffusion v2.1-base model [35] as the SDS backbone. The optimization is split into two distinct stages as follows.
+Stage 1: Coarse Geometry Optimization
+For the implicit geometry in Stage 1, we represent the SDF using a multi-resolution hash-grid encoder followed by a shallow MLP, following the implementation of Instant-NGP [22] and Neuralangelo [18]. The encoder uses a Progressive Hash Grid [18] with 16 levels, 2 features per level, and a maximum hash table size of 2202^{20}. The base resolution is set to 16 with a per-level growth scale of approximately 1.451.45. The levels are incrementally unlocked starting from level 8 and updates every 400 steps from step 1000. The SDF network is implemented as Vanilla MLPs with one hidden layer of 64 neurons and ReLU activations.
+We adopt the NeuS volume renderer [30] for stage 1. For tactile-derived supervision, we sample with 1638416384 rays in a batch, and sample 512 points along each ray to compute the geometric constraints. For diffusion-based guidance, we sample 88 random camera views in a batch and input the rendered normal maps to the diffusion model.
+In Stage 1, we make the normal loss weight λn​o​r​m​a​l\lambda_{normal} gradually increase to its target value (from 0.025 to 1.0 in simulation, and from 0.1 to 4.0 in real-world experiments) following a linear schedule over the first 6,000 steps. This progressive strategy prevents the normal supervision from disrupting the global shape optimization during the initial phase, allowing the model to prioritize coarse geometry establishment via depth constraints before shifting focus toward the refinement of fine-grained surface details in the later stages.
+Stage 2: Fine Geometry Refinement
+Stage 2 utilizes an explicit tetrahedral grid (DMTet) with a resolution of 256, initialized from the optimized Stage 1 SDF. For surface extraction we use marching tetrahedra where the extraction threshold is set to −0.03-0.03 for simulation objects and 0.00.0 for real-world objects.
+We use nvdiffrast [17] as the differentiable renderer for stage 2. For tactile-derived supervision, we sample min⁡(number of touches, 32)\min(\text{number of touches, 32}) sets of tactile-derived images to compute the geometric constraints. For diffusion-based guidance, we sample 44 random camera views in a batch and input the rendered normal maps to the diffusion model.
+0.D.2 Multi-Head U-Net Implementation Details
+The geometry estimation module for simulated tactile data is implemented as a Multi-Head U-Net [36] designed to map a GelSight tactile image T∈ℝ3×H×WT\in\mathbb{R}^{3\times H\times W} to three distinct geometric representations. The network follows an encoder-decoder paradigm with a shared feature extractor and task-specific branches.
+Shared Encoder
+The encoder consists of a series of blocks designed to extract hierarchical tactile features. It begins with an initial double convolution (DoubleConv) layer that maps the input to 64 channels. This is followed by four downsampling stages (Down), each utilizing a 2×22\times 2 max-pooling operation followed by a DoubleConv block. The channel dimensions increase progressively as {64,128,256,512,1024}\{64,128,256,512,1024\}, effectively capturing both local texture and global contact structure. Each DoubleConv block consists of two 3×33\times 3 convolutions, each followed by Batch Normalization and ReLU activation.
+Multi-Task Decoders
+To reconstruct local geometry, the shared latent features are passed into three independent decoder branches:
+•
+Depth Decoder: Predicts a single-channel depth map D^∈ℝ1×H×W\hat{D}\in\mathbb{R}^{1\times H\times W}.
+•
+Normal Decoder: Predicts a three-channel surface normal map N^∈ℝ3×H×W\hat{N}\in\mathbb{R}^{3\times H\times W}. A L2L_{2} normalization layer is applied to the output to ensure the predicted vectors remain on the unit sphere.
+•
+Mask Decoder: Predicts a single-channel contact mask M^∈ℝ1×H×W\hat{M}\in\mathbb{R}^{1\times H\times W} representing the probability of physical contact at each pixel.
+Each decoder branch mirror the encoder’s depth using four upsampling blocks (Up). We employ bilinear interpolation followed by a DoubleConv block to reduce the channel dimension while concatenating skip connections from the corresponding encoder stages. Finally, a 1×11\times 1 convolution (OutConv) is used to project the feature maps to the required output channels.
+Implementation Details
+The model is trained using the AdamW optimizer with a learning rate of 1×10−31\times 10^{-3} and a weight decay of 1×10−21\times 10^{-2}. We employ a cosine annealing learning rate scheduler. In our implementation, the weights for the losses mentioned in Euqation (6) are set to λd=0.1,λn=1.0\lambda_{d}=0.1,\lambda_{n}=1.0, and λm=5.0\lambda_{m}=5.0.
+Tactile Perception Network Architecture
+The detailed architectural parameters of the Multi-Head U-Net are summarized in Table 4. The encoder is shared across all tasks, while three independent decoder branches are utilized for depth, surface normal, and contact mask prediction.
+Table 4: Detailed architecture of the Multi-Task Tactile Perception U-Net. Ci​nC_{in} and Co​u​tC_{out} denote the number of input and output channels, respectively.
+Part
+Layer
+Type
+Ci​nC_{in}
+Co​u​tC_{out}
+Configuration
+Encoder
+inc
+DoubleConv
+3
+64
+Conv 3×33\times 3, Pad 1
+down1
+Down
+64
+128
+MaxPool 2×22\times 2 + DoubleConv
+down2
+Down
+128
+256
+MaxPool 2×22\times 2 + DoubleConv
+down3
+Down
+256
+512
+MaxPool 2×22\times 2 + DoubleConv
+down4
+Down
+512
+512
+MaxPool 2×22\times 2 + DoubleConv
+Decoders*
+up1
+Up
+1024
+256
+Bilinear Up + Cat + DoubleConv
+up2
+Up
+512
+128
+Bilinear Up + Cat + DoubleConv
+up3
+Up
+256
+64
+Bilinear Up + Cat + DoubleConv
+up4
+Up
+128
+64
+Bilinear Up + Cat + DoubleConv
+out
+OutConv
+64
+Nt​a​s​kN_{task}
+Conv 1×11\times 1
+*Decoders for Depth (Nt​a​s​k=1N_{task}=1), Normal (Nt​a​s​k=3N_{task}=3), and Mask (Nt​a​s​k=1N_{task}=1) share the same architecture but have independent weights.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

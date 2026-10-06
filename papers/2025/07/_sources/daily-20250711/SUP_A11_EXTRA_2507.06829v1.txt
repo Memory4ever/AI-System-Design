@@ -1,0 +1,842 @@
+
+1 Introduction
+
+
+Recent advances in large language models (LLMs), exemplified by models such as o1 (OpenAI, 2024), DeepSeek-R1 (DeepSeek-AI et al., 2025), and QwQ (Team, 2025), have significantly accelerated progress toward artificial general intelligence. A key driver of this progress is test-time scaling (Snell et al., 2025; Welleck et al., 2024), which improves performance by allowing the model to engage in more in-depth reasoning before producing a final answer, often reflected in the generation of more tokens with greater computational budget. Building on this insight, one line of research explores sequential scaling by introducing multi-round prompting for iterative refinement (Tian et al., 2025) or by explicitly steering the generation process through special tokens (e.g., “wait”) to encourage more deliberate reasoning. However, such sequential methods face an inherent constraint: in the absence of external supervision, the reasoning process is terminated based on fixed token budgets, often resulting in either unnecessary verbosity or premature halting (Chen et al., 2024; Wang et al., 2025b). In contrast, parallel scaling methods, such as best-of-N sampling (Cobbe et al., 2021; Kang et al., 2025) and majority voting (Wang et al., 2022), promote diverse exploration through independent sampling but typically lack coordination among parallel inference paths. In this work, we investigate the following research question: Can we design a flexible framework that effectively integrates the complementary advantages of both sequential and parallel scaling paradigms?
+
+
+The primary challenge in achieving this synergy lies in adaptively controlling the sequential scaling process for iterative refinement. This work addresses this challenge by drawing insight from parallel scaling. Intuitively, the uncertainty reflected by multiple independent samples can serve as a proxy for model performance (Chen et al., 2023; Liang et al., 2024; Zeng et al., 2025), as high semantic diversity among responses to the same prompt often indicates that the query exceeds the model’s current reasoning capability. In such cases, continuing the reasoning process until uncertainty drops below a predefined threshold tends to improve answer quality. Motivated by this intuition, we adopt semantic entropy (SE) (Malinin & Gales, 2021; Chen et al., 2025), which quantifies semantic diversity across multiple responses, as an intrinsic indicator of reasoning quality. We analyze the relationship between SE and answer quality, presenting experimental results on DeepSeek-R1-Distill-Qwen-7B (DeepSeek-AI et al., 2025) in Fig. 1. A clear pattern emerges on the AIME-2025 benchmark, where model accuracy shows a strong negative correlation with semantic entropy. As SE increases, model accuracy steadily declines from 97%97\% to 19%19\%. These findings demonstrate that semantic entropy provides an effective and practical signal for monitoring and controlling the reasoning process, enabling the synergy between parallel and sequential scaling.
+
+
+Based on the above insights, we propose SEAT11
+            1
+            
+            
+            
+          SEAT stands for a Semantic Entropy-Guided Adaptive Termination Framework for Multi-round Parallel Reasoning., a universal, training-free parallel-reasoning framework. As shown in Fig. 2, SEAT combines the advantages of parallel and sequential reasoning without extra fine-tuning. For parallel scaling, SEAT dynamically expands exploration by adjusting the degree of parallelization, preventing models from getting stuck on single reasoning paths. For sequential steps, it uses semantic entropy measurement to trigger early stopping, reducing wasted computation. To find an appropriate stopping threshold of specific NN, we randomly sample one thousand mathematical questions and then inference 1000×N1000\times N results. For NN results in each parallel branch, we calculate the SE and randomly select one solution to evaluate accuracy. Statistical analysis revealed a similar 80/2080/20 pattern (Wang et al., 2025a): 80% of correct answers had been selected from the lowest 20% of the SE distribution. Therefore, we defined the threshold using the SE value at the 20th percentile. To further enable adaptive, threshold-free operation for eliminating computational overhead from pre-sampling, we draw inspiration from the mathematical resemblance between this problem and the “Secretary Problem (Ferguson, 1989)” (a classic case in Optimal Stopping Theory (Shiryaev, 1980)). Motivated by this connection, we develop an adaptive termination mechanism that establishes a semantic entropy baseline from the model’s initial reasoning steps and immediately stops the process when subsequent entropy readings fall below this baseline, thus requiring no predefined thresholds.
+
+
+We conduct comprehensive evaluation across five challenging benchmarks (AIME-2024, AIME-2025, MATH-500 (Hendrycks et al., 2021), MINERVA (Lewkowycz et al., 2022), GPQA (Rein et al., 2023)) using 7B and 32B models. Experimental results show that our adaptive method substantially improves model performance across all the five benchmarks. Notably, even with random answer selection, using the settings of as few as N=2N=2 parallel responses, the 32B and 7B models attained remarkable accuracy gains of 14.1%14.1\% and 24.5%24.5\% on AIME-2025 respectively. Additionally, our framework demonstrates strong extensibility, i.e., seamlessly combining with max probability (i.e., the predicted probability of the response given by the LLM) and majority voting can further boost the performance. Surprisingly, we discovered that our adaptive approach effectively prevents semantic entropy collapse for smaller 7B models, a notorious phenomenon in which a sudden crash in SE occurs after certain sequential steps of parallelization. The reasoning process incurring semantic entropy collapse gets trapped in over-confidently repeating the same incorrect answers. Our adaptive termination method avoids this problem by concluding the reasoning process before entropy collapse happens, thereby enabling smaller 7B models to perform well with multi-round parallelization.
+
+
+Figure 2: The overview of our proposed SEAT.
+
+
+Our contribution can be summarized in threefold ways:
+
+• 
+
+Revealing Negative Correlation: We establish a steep negative correlation between semantic entropy (SE) and a model’s parallel reasoning performance, empirically showing that higher SE often accompanies lower accuracy (e.g., 97% → 19% accuracy drop on AIME2025 as SE increases). This suggests SE as a robust indicator for quality assessment in parallel reasoning.
+
+• 
+
+The SEAT Framework: We propose the SEAT framework, a semantic entropy (SE)-guided adaptive termination framework that synergizes parallel exploration and sequential refinement. Building on the observed 20/80 phenomenon,
+we first design a threshold-based termination strategy. Subsequently, inspired by optimal stopping theory, we develop a threshold-free mechanism that dynamically sets SE baselines during inference. Comprehensive evaluations across five benchmarks demonstrate significant performance gains of our proposed framework.
+
+• 
+
+Discovering SE Collapse: We observe a critical phenomenon where semantic entropy (SE) collapses catastrophically in small-scale models (e.g., with ≤7\leq 7 billion parameters) during parallel scaling with sequential steps. SEAT effectively avoid this collapse via early termination, sustaining stable performance.
+
+
+
+
+
+2 Methodology
+
+
+2.1 Method Overview
+
+
+Given a question, this paper employs multi-round parallel reasoning to generate a collection of candidate responses, and then selects the final answer from this set. Three primary components are involved in the above procedure: (1) the design of the multi-round parallel reasoning framework, (2) calculation of the SE metric during inference with termination mechanism, and (3) selection strategy for the final answer among candidate responses. These components will be described step by step.
+
+
+Multi-round Parallel (MRP) Inference Framework:
+
+
+As illustrated in Fig. 2, the proposed SEAT framework establishes an N×MN\times M reasoning structure for multi-round parallel reasoning, where NN represents the parallel dimension (i.e., number of reasoning paths per round) and MM is the sequential dimension (i.e., number of reasoning rounds). Notably, N×MN\times M serves as the pre-defined maximum reasoning budget allocated to the model. Due to our proposed adaptive termination mechanism during inference, the actual computational budget typically falls below this pre-defined maximum. Details on this mechanism will be described in Sec. 3. In contrast to prior test-time scaling approaches, SEAT synergistically integrates sequential refinement and parallel exploration. Specifically, each sequential round can access all NN reasoning outputs from the prior round, enabling the model to refine its reasoning by leveraging diverse responses for error correction. Furthermore, within each round, all parallel reasoning paths operate independently, which aims to increase the diversity and encourage exploration. Formally, the jj-th reasoning path in the ii-th round is defined as:
+
+
+
+
+M​R​Pji​(Pi)→{Thinkingji,Answerji},MRP^{i}_{j}(P_{i})\rightarrow\{\text{Thinking}^{i}_{j},\text{Answer}^{i}_{j}\},
+
+(1)
+
+where i∈{1,⋯,M}i\in\{1,\cdots,M\} and j∈{1,⋯,N}j\in\{1,\cdots,N\}. Here, PiP_{i} denotes the input prompt for the ii-th round, which is initialized as the user prompt (i.e., P1=⟨user prompt⟩P_{1}=\langle\text{user prompt}\rangle). For every round from the second onward, we extract the answer segments of all NN candidate responses produced by the parallel reasoning paths in the preceding round, and incorporate these NN answers into the prompt for the current round. The prompt template for PiP_{i} in the ii-th round (i∈{2,…,M}i\in\{2,\ldots,M\}) is as follows:
+
+
+
+Prompt Template for the ii-th Round (i≥2i\geq 2)
+
+
+Original question prompt:
+<User prompt >
+———–
+I will provide several assistant’s previous answers, please analyze and then re-answer.
+
+### 1. The assistant’s previous answer is: <Answer1i−1\text{Answer}^{i-1}_{1} >
+…
+
+### NN. The assistant’s previous answer is: <AnswerNi−1\text{Answer}^{i-1}_{N} >
+———–
+The above are the questions along with the assistant’s previous answers, please analyze and then re-answer.
+
+
+
+By constructing the prompt for the ii-th round using NN parallel answers generated in the previous round, this approach encourages the model to review and refine its previous outputs for improved responses.
+
+
+
+Semantic Entropy Calculation and Termination Mechanism:
+
+
+Given a question qq and NN answers {a1,…,aN}\{a_{1},\ldots,a_{N}\} extracted from the previous round’s NN responses, we compute the semantic entropy to quantify the model’s uncertainty about qq in light of these answers. Since the semantic entropy computation process is applied across different reasoning rounds, we omit the round-indicating superscripts for simplicity. The semantic entropy is defined as follows:
+
+
+
+
+SE(q)=−∑c((∑r∈cp(r∣{q;a1,…,aN}))log[∑r∈cp(r∣{q;a1,…,aN})]),\mathrm{SE}(q)=-\sum_{c}\left(\left(\sum_{r\in c}p\left(r\mid\{q;a_{1},\ldots,a_{N}\}\right)\right)\log\left[\sum_{r\in c}p\left(r\mid\{q;a_{1},\ldots,a_{N}\}\right)\right]\right),
+
+(2)
+
+where cc denotes a possible semantic meaning class and rr denotes a possible response. It’s intractable to enumerate every possible cc since LLMs can generate an unlimited number of diverse responses for a given question, potentially spanning numerous unknown semantic categories. To this end, we estimate equation 2 using Monte Carlo approximation (Kuhn et al., 2023; Farquhar et al., 2024):
+
+
+
+
+SE(q)≈−|𝒞|−1∑k=1|𝒞|logp(𝒞k∣{q;a1,…,aN}),\mathrm{SE}(q)\approx-{|\mathcal{C}|}^{-1}\sum^{|\mathcal{C}|}_{k=1}\log p\left(\mathcal{C}_{k}\mid\{q;a_{1},\ldots,a_{N}\}\right),
+
+(3)
+
+where 𝒞={𝒞1,𝒞2,⋯,𝒞K}\mathcal{C}=\{\mathcal{C}_{1},\mathcal{C}_{2},\cdots,\mathcal{C}_{K}\} denotes the semantic cluster. In practice, we sample NN responses {r1,…,rN}\{r_{1},\ldots,r_{N}\} and perform clustering based solely on the final answer segment of each rir_{i} to obtain the set of semantic classes 𝒞\mathcal{C}. The cluster probability in equation 3 is subsequently calculated as:
+
+
+
+
+p(𝒞k∣{q;ai,…,aN})=∑i=1N𝕀[ri∈𝒞k]p(ri∣{q;ai,…,aN}).p(\mathcal{C}_{k}\mid\{q;a_{i},\ldots,a_{N}\})=\sum_{i=1}^{N}\mathbb{I}[r_{i}\in\mathcal{C}_{k}]\,p(r_{i}\mid\{q;a_{i},\ldots,a_{N}\}).
+
+(4)
+
+It’s worth noting that, since the thinking part of rir_{i} can often span tens of thousands of tokens, we compute only the probability of the answer part in practical computation22
+                2
+                
+                
+                
+              This leads to inflated probability estimates, occasionally resulting in negative SE values. However, since these occurrences do not invalidate the observed negative correlation between SE and model performance, we do not apply corrections to the metric..
+
+
+Based on the obtained SE for the response generated in round ii, we design a mechanism to determine whether to terminate the reasoning process. Specifically, leveraging the clear inverse correlation observed between SE and performance where higher SE signals greater uncertainty and lower response quality, we dynamically control the reasoning process by monitoring SE after each iteration. The reasoning continues into the next round if the measured SE exceeds a set threshold, implying the output requires further refinement, and is terminated only once the SE meets a pre-defined stopping condition. The specific configuration of this stopping condition is detailed in Sec. 2.2 and Sec. 2.3.
+
+
+
+Answer Selection Strategy.
+
+
+Once the reasoning process has terminated, we need to select the final response from the candidate answers. Without recourse to external validators, we employ three conventional strategies: random selection, maximum probability selection, and majority voting; the effectiveness of these approaches will be thoroughly examined in our experiments. Additionally, a worthy question is how to define the candidate answer pool. In this paper, instead of collecting all responses across the previous round, we propose to exclusively utilize responses generated in the terminal reasoning round as the candidate set. This design is motivated by our observation that the preceding output is likely to be suboptimal due to the higher elevated uncertainty. Incorporating such under-refined responses would introduce detrimental noise, thereby degrading model performance.
+
+
+
+
+Figure 3: Semantic entropy distribution of correct and incorrect answers. The lowest 20% threshold is marked by red line and the proportion of correct answers within this region is labeled numerically in red.
+
+
+
+
+2.2 Adaptive Termination with Pre-defined Threshold
+
+
+This section details the procedure for establishing reasoning termination conditions. A widely adopted approach is to establish a pre-defined SE threshold, halting the inference procedure when monitored SE is lower than this calibrated value. To this end, we first conducted foundational experiments using DeepSeek-R1-Distill-Qwen-7B model on our proprietary dataset of 10001000 challenging mathematical problems. For each problem, we randomly selected one candidate solution from parallel inference outputs for evaluation. Then we analyzed the SE distribution of correct and incorrect answers, and the statistical analysis is visualized in Fig. 3. The statistical analysis reveals an 80/2080/20 pattern wherein about 80%80\% of the correct answers lie in the lowest quintile of the SE distribution. Specifically, for N=2N=2, approximately 74%74\% of correct answers fall within the specified range, increasing to 77%77\% at N=4N=4 and reaching 78%78\% for N=8N=8. Leveraging this pattern, given the model and a specific parallel degree, we can first sample parallel responses on substantial data. Then, we compute the empirical SE distribution and select the 20th-percentile value as the pre-defined threshold.
+
+
+
+
+
+DeepSeek-R1-Distill-Qwen-32B
+AIME-2024
+AIME-2025
+MATH-500
+MINERVA
+GPQA
+
+Random
+
+n=2
+baseline
+70.83
+53.33
+95.12
+57.36
+66.87
+
+Ours (Fixed)
+75.42
+56.25
+95.45
+58.50
+67.93
+
+Ours (Adaptive)
+78.75
+60.83
+96.05
+58.72
+68.06
+
+Ours (Min)
+82.35
+65.83
+96.20
+58.78
+68.12
+
+n=4
+baseline
+70.83
+53.45
+95.11
+57.14
+66.54
+
+Ours (Fixed)
+78.33
+64.17
+96.03
+59.28
+67.23
+
+Ours (Adaptive)
+80.41
+65.25
+96.38
+58.51
+67.42
+
+Ours (Min)
+83.33
+70.83
+96.65
+57.58
+67.80
+
+n=8
+baseline
+70.42
+52.92
+95.13
+57.85
+65.85
+
+Ours (Fixed)
+80.42
+65.83
+96.53
+59.56
+66.60
+
+Ours (Adaptive)
+85.67
+66.25
+96.85
+58.36
+68.57
+
+Ours (Min)
+85.83
+69.16
+96.98
+58.55
+68.88
+
+Max Probability
+
+n=2
+baseline
+72.92
+53.73
+95.22
+58.01
+66.74
+
+Ours (Fixed)
+74.17
+55.00
+95.43
+58.87
+67.74
+
+Ours (Adaptive)
+79.32
+60.83
+96.25
+59.13
+68.12
+
+Ours (Min)
+82.50
+65.83
+96.25
+59.45
+68.12
+
+n=4
+baseline
+72.50
+55.83
+95.54
+57.00
+66.54
+
+Ours (Fixed)
+75.83
+59.17
+95.98
+58.60
+66.67
+
+Ours (Adaptive)
+81.67
+67.08
+96.70
+59.88
+67.42
+
+Ours (Min)
+83.33
+71.25
+96.65
+57.67
+67.42
+
+n=8
+baseline
+70.83
+55.00
+95.33
+57.58
+65.66
+
+Ours (Fixed)
+79.17
+64.17
+95.78
+58.04
+66.35
+
+Ours (Adaptive)
+85.87
+67.08
+96.75
+58.86
+68.87
+
+Ours (Min)
+86.25
+71.25
+96.98
+59.05
+69.13
+
+Majority Voting
+
+n=2
+baseline
+72.92
+53.75
+95.12
+58.19
+67.68
+
+Ours (Fixed)
+74.17
+55.00
+95.45
+58.95
+67.87
+
+Ours (Adaptive)
+80.00
+61.67
+96.30
+59.35
+68.06
+
+Ours (Min)
+82.50
+65.83
+96.23
+59.45
+68.08
+
+n=4
+baseline
+80.83
+64.17
+95.84
+58.47
+67.84
+
+Ours (Fixed)
+81.43
+66.67
+96.80
+60.07
+68.24
+
+Ours (Adaptive)
+82.50
+68.33
+96.53
+59.01
+68.12
+
+Ours (Min)
+83.33
+70.83
+96.67
+57.76
+67.55
+
+n=8
+baseline
+83.75
+65.83
+96.55
+59.05
+68.32
+
+Ours (Fixed)
+85.83
+70.42
+96.98
+59.78
+69.44
+
+Ours (Adaptive)
+85.83
+69.17
+97.08
+59.36
+69.32
+
+Ours (Min)
+85.83
+70.83
+97.00
+58.69
+68.94
+
+
+Table 1: Multi-round parallel reasoning performance of DeepSeek-R1-Distill-Qwen-32B on different datasets.
+
+
+
+
+
+DeepSeek-R1-Distill-Qwen-7B
+AIME-2024
+AIME-2025
+MATH-500
+MINERVA
+GPQA
+
+Random
+
+n=2
+baseline
+60.41
+37.50
+93.95
+52.14
+53.09
+
+Ours (Fixed)
+65.00
+47.08
+94.93
+54.27
+55.05
+
+Ours (Adaptive)
+64.58
+46.67
+95.28
+53.54
+55.11
+
+Ours (Min)
+66.67
+51.25
+95.20
+54.83
+55.68
+
+n=4
+baseline
+58.33
+42.92
+94.03
+52.58
+51.58
+
+Ours (Fixed)
+68.75
+46.25
+95.03
+56.57
+55.18
+
+Ours (Adaptive)
+68.33
+48.17
+95.50
+55.97
+55.47
+
+Ours (Min)
+70.83
+48.75
+95.80
+54.64
+56.25
+
+n=8
+baseline
+56.25
+40.83
+93.78
+52.80
+53.09
+
+Ours (Fixed)
+68.75
+50.00
+95.45
+55.38
+57.95
+
+Ours (Adaptive)
+68.33
+50.00
+95.35
+55.71
+57.95
+
+Ours (Min)
+71.67
+51.25
+95.53
+55.00
+57.07
+
+Max Probability
+
+n=2
+baseline
+64.17
+41.67
+94.37
+53.08
+54.37
+
+Ours (Fixed)
+65.00
+46.67
+95.03
+53.77
+55.81
+
+Ours (Adaptive)
+65.42
+46.25
+95.35
+54.78
+55.18
+
+Ours (Min)
+65.83
+51.67
+95.28
+55.10
+55.43
+
+n=4
+baseline
+66.67
+44.58
+94.78
+54.61
+54.73
+
+Ours (Fixed)
+70.42
+48.75
+95.60
+55.28
+55.05
+
+Ours (Adaptive)
+70.00
+50.00
+95.88
+55.84
+56.00
+
+Ours (Min)
+71.67
+52.08
+95.70
+55.10
+56.44
+
+n=8
+baseline
+64.58
+45.42
+94.55
+54.87
+56.07
+
+Ours (Fixed)
+68.75
+50.42
+95.68
+55.42
+58.84
+
+Ours (Adaptive)
+68.75
+50.83
+95.95
+56.27
+58.84
+
+Ours (Min)
+70.42
+51.67
+95.60
+55.23
+57.95
+
+Majority Voting
+
+n=2
+baseline
+63.75
+41.25
+94.48
+53.45
+55.19
+
+Ours (Fixed)
+65.00
+46.25
+95.00
+54.04
+55.74
+
+Ours (Adaptive)
+65.42
+46.67
+95.38
+54.83
+55.68
+
+Ours (Min)
+65.42
+51.25
+95.25
+54.73
+55.49
+
+n=4
+baseline
+70.33
+48.58
+95.80
+55.02
+55.78
+
+Ours (Fixed)
+72.08
+49.58
+95.83
+55.79
+56.19
+
+Ours (Adaptive)
+71.67
+49.58
+95.93
+55.10
+56.44
+
+Ours (Min)
+70.83
+52.08
+95.83
+55.00
+56.19
+
+n=8
+baseline
+71.42
+52.83
+95.35
+56.02
+57.09
+
+Ours (Fixed)
+72.92
+52.92
+95.98
+56.42
+58.84
+
+Ours (Adaptive)
+72.38
+55.00
+95.88
+56.74
+58.95
+
+Ours (Min)
+70.83
+52.08
+95.60
+56.19
+57.51
+
+
+Table 2: Multi-round parallel reasoning performance of DeepSeek-R1-Distill-Qwen-7B on different datasets.
+
+
+
+2.3 Adaptive Threshold-free Mechanism
+
+
+Although the threshold-based approach described above provides a principled stopping criterion, it requires extensive pre-sampling and recalibration when model configurations or parallel settings change. We consequently develop a more adaptive threshold-free method to avoid this shortcoming. To this end, we reformulate our goal to identify the optimal reasoning round exhibiting minimal SE under a fixed inference budget. Surprisingly, we found that this goal is quite similar to the “Secretary Problem (Ferguson, 1989)”. The classical secretary problem constitutes a foundational problem in Optimal Stopping Theory (Shiryaev, 1980), addressing sequential selection under uncertainty. It aims to maximize the probability of selecting the best candidate from an unknown sequence of applicants when interviews must be conducted irreversibly without recall. The core strategy used in secretary problem establishes a qualification baseline by observing the first TT candidates during an initial exploration phase. Subsequent candidates are evaluated against this dynamically determined threshold, with immediate selection of the first applicant exceeding the baseline. This observation-then-selection framework aligns with our objective of identifying optimal termination round during multi-round reasoning. Drawing inspiration from this problem, we propose an adaptive threshold-free approach. Specifically, our method dynamically sets the adaptive threshold as the minimal SE observed during the initial TT rounds and terminates inference immediately when encountering any round with SE below this calibrated minimum. Given the computational expense of long CoT sampling, we set T=1T=1, defining the dynamic threshold exclusively from the first reasoning round. This reduces computational overhead while maintaining empirically competitive performance.
+
+
+
+
+3 Experiments
+
+
+3.1 Experimental Setup
+
+
+We evaluate the propsoed SEAT method on AIME-2024, AIME-2025, MATH-500(Hendrycks et al., 2021), MINERVA, and GPQA (Rein et al., 2023) benchamrk. These benchmarks cover multiple domains and difficulty levels, allowing for a thorough assessment of reasoning performance across varied scenarios.
+
+
+To ensure a fair and consistent comparison, we employed the publicly available DeepSeek-R1-Distill-Qwen-32B (shorted as R32B)33
+              3
+              
+              
+              
+            https://huggingface.co/deepseek-ai/DeepSeek-R1-Distill-Qwen-32B and DeepSeek-R1-Distill-Qwen-7B (shorted as R7B)44
+              4
+              
+              
+              
+            https://huggingface.co/deepseek-ai/DeepSeek-R1-Distill-Qwen-7B (DeepSeek-AI et al., 2025) as the inference baseline models. For reproducibility, we maintained unified inference settings throughout all evaluations. The maximum generation length is set to 32768 tokens, while temperature and top-p are applied to 0.7 and 0.95, respectively. Each query across all datasets will be conducted 8 independent multi-round parallel inferences and reports the average accuracy. Although our methodology incorporates an adaptive termination mechanism, we processed every query through the full N×MN\times M inference procedure (where we set M=8M=8 for max rounds) to enable detailed experimental analysis.
+
+
+To define an appropriate termination threshold, we systematically analyzed the SE distribution across randomly pre-sampled problem instances. We extracted 10000 challenging mathematical problems from our proprietary dataset and then conducted sampling based on varying model scales (7B and 32B) and N∈{2,4,8}N\in\{2,4,8\} parallelization degree. Subsequently, the distribution of SE was analyzed to determine an empirical threshold defined as the 20th percentile value of the distribution55
+              5
+              
+              
+              
+            To guarantee the rationality of the distribution, we excluded roughly 5% of outlier points within the long tail of the results.. To mitigate selection bias and ensure practical utility, these percentile-derived thresholds were rounded to the nearest integer. Consequently, for the 32B model architecture, the finalized thresholds were set at 27 (N=2N=2), 22 (N=4N=4), and 19 (N=8N=8). Corresponding thresholds for the 7B model were determined as 23 (N=2N=2), 20 (N=4N=4), and 17 (N=8N=8).
+
+
+
+3.2 Main Results
+
+
+We evaluate the effectiveness of different components as follows: ▶\blacktrianglerightFixed: we used the pre-defined threshold for inference termination. ▶\blacktrianglerightAdaptive: the adaptive threshold-free mechanism is applied. ▶\blacktrianglerightMin: the inference round with minimal SE among MM round is selected. The experimental results on R32B and R7B are shown in Table 1 and Table 2, respectively.
+
+
+It can be seen that, our approach achieves substantial performance gains of both R32B and R7B models across different datasets. Specifically, under the random pick selection and adaptive setting, the R32B model achieves remarkable improvements including 70.83 to 85.67 (+21.0%) on AIME-2024 and 53.33 to 66.25 (+24.2%) on AIME-2025, along with average gains of +2.5% across MATH-500, MINERVA, and GPQA. Similarly, the R7B model demonstrates consistent gains under identical settings, improving from 60.41 to 68.33 (+13.1%) on AIME-2024 and from 37.50 to 50.00 (+33.3%) on AIME-2025, while achieving +6.12% average improvement across MATH-500, MINERVA, and GPQA. These results collectively confirm the effectiveness of our framework. Notably, even at minimal parallelization (N=2), our method delivers remarkable gains with the R32B model improving from 53.33 to 60.83 (+14.1%) and the R7B model advancing from 37.50 to 46.67 (+24.5%) on AIME-2025. Furthermore, integrating max probability and majority voting strategies yields additional performance gains, with R32B model showing 0.6% (max probability) and 1.5% (majority voting) average improvements and R7B model achieving 1.1% and 4.0% gains, respectively. This demonstrates the scalability of our proposed framework.
+
+
+Meanwhile, our method approach using pre-defined thresholds significantly outperforms the baselines, demonstrating that pre-sampling probes of model SE distributions serve as a sound strategy. It is worth noting that although the thresholds were determined exclusively using mathematical datasets, it can also bring improvements on GPQA dataset, which demonstrates robust generalization capability of the proposed framework. Additionally, the adaptive threshold-free method usually surpasses fixed approaches. We hypothesize that this pattern indicates divergent SE distributions across different problem types for identical models. Establishing SE baseline from model’s earlier reasoning outputs can better capture these dynamics, thereby yielding heightened performance and improved generalization capability. Surprisingly, minimum selection (min) sometimes degrades performance in the R7B model at higher NN values. For instance at N=8N=8, the AIME-2025 score drops to 52.08 versus the baseline 52.83. We attribute this phenomenon to SE collapse during parallel inference in smaller models and provide comprehensive analysis in Sec. 3.4.
+
+
+
+
+
+
+
+(a) R32B under N=2N=2 parallelization.
+
+
+
+
+(b) R32B under N=8N=8 parallelization.
+
+
+
+
+(c) R7B under N=2N=2 parallelization.
+
+
+
+
+(d) R7B under N=8N=8 parallelization.
+
+Figure 4: Round distribution across models and datasets during different parallel settings with adaptive termination.
+
+
+
+3.3 Analysis of the Number of Inference Round
+
+
+In this section, we analyze the inference round at which the model terminates generation. Fig.4 shows the distribution of stopping rounds for varied model scales, parallel configurations, and datasets. Please note that termination occurs no earlier than round 2, as round 1 is reserved for evaluating the dynamic SE baseline. It can be observed from Fig.4 that over 70% of inferences terminate at the second round. This reveals that the model can successfully leverage the output from the first round to refine new responses and reduce uncertainty, as evidenced by the lower SE scores in round 2 versus round 1. Furthermore, our proposed adaptive termination mechanism finishes inference within 3 rounds in most scenarios, thereby avoiding the heavy computational cost (O⁡(N​×​M)O(N×M)) of running all sequential steps. Moreover, scaling model size or increasing parallelization degree (higher NN) will amplify second-round termination rates. This scaling behavior confirms that greater model capacity or expanded parallel search reinforces self-refinement capabilities, yielding higher-quality responses through earlier convergence.
+
+
+Figure 5: The evolution of SE and expect accuracy across different inference rounds of R7B
+model.
+
+
+
+3.4 Visualization of SE Collapse
+
+
+This section will investigate an observation encountered during our experiments where, in the R7B model under N=8N=8 configuration, the minimum selection yielded lower accuracy than the baseline. To investigate this phenomenon, we analyzed a representative case, tracking the evolution of SE and Expect accuracy, i.e., 𝔼(Acc.)\mathbb{E}(Acc.) across different inference rounds. As depicted in Fig. 5, while SE exhibits a pronounced decreasing trend, declining significantly from 63.04 at round-1 to a minimum of 0.14 by round-7, 𝔼(Acc.)\mathbb{E}(Acc.) first increases from 12.5 to 37.5 before plummeting to 0 at the later round. Meanwhile, the number of semantic clusters (i.e., |𝒞||\mathcal{C}|) tends to decline throughout the inference process. This reduction directly reflects a loss of reasoning diversity, leading the model to respond overconfidently even when the answer is wrong. Specifically, upon examining representative outputs at round-7, we notice a remarkable reduction in response length. The model often skips detailed reasoning steps, directly outputting concise answers (specific examples are provided in the Appendix A). We define this degradation as semantic entropy collapse, where the model exhibits precipitous SE deterioration in reasoning rounds, resulting in vanishing diversity and blindly outputting. We believe this phenomenon likely stems from the limited reasoning power of the model on a smaller scale (e.g. 7B), as performance for minimum SE rarely fell below baseline in the R32B model. Surprisingly, in this case, our proposed adaptive termination strategy stopped at round-2, achieving the highest expected accuracy, avoiding SE collapse, and effectively maintaining the small model’s performance.
+
+
+
+
+4 Related Work
+
+
+Test-time scaling allows large language models (LLMs) to engage in more deliberative reasoning before producing final answers. Existing approaches can be broadly categorized into three main strategies, as discussed below.
+
+
+Parallel Scaling.
+
+
+Parallel scaling enables LLMs to independently generate multiple outputs for a given prompt, with the computational budget determined by the number of samples. To determine the final output, one line of research adopts unsupervised selection methods, typically relying on majority voting, to identify the most consistent output among the generated samples. This approach has demonstrated effectiveness across various reasoning tasks (Wang et al., 2022; Chen et al., 2023). However, its performance tends to saturate beyond a few hundred samples, showing limited improvement with additional sampling (Brown et al., 2024). Another line of work incorporates external verifiers to evaluate and select from the sampled outputs, achieving promising results in mathematical problem solving (Cobbe et al., 2021; Uesato et al., 2022; Lightman et al., 2024) and program synthesis (Brown et al., 2024). Although parallel scaling facilitates diverse exploration by producing independent samples, it lacks coordination across different sampling trajectories, which limits its ability to support iterative refinement.
+
+
+
+Sequential Scaling.
+
+
+Sequential scaling enables LLMs to engage in a long chain-of-thought reasoning process before producing a final answer, incorporating cognitive behaviors such as verification, backtracking, and subgoal decomposition (Gandhi et al., 2025). This approach has driven notable progress in complex reasoning tasks, as evidenced by state-of-the-art models such as OpenAI O1 (Jaech et al., 2024) and DeepSeek R1 (DeepSeek-AI et al., 2025). To regulate the computational budget of sequential scaling, researchers often introduce control signals through special tokens (e.g., “wait” or “Final answer”) within the reasoning process (Muennighoff et al., 2025; Zhang et al., 2025). Beyond single-pass generation, Tian et al. (2025) propose a multi-round approach, in which answers from earlier rounds are fed back into the model for further reasoning to enable iterative refinement. By leveraging informative intermediate steps, sequential scaling encourages models to perform more deliberate and focused reasoning. However, LLMs frequently become trapped in incorrect reasoning trajectories and face challenges in recovering to reach correct answers (Zeng et al., 2025; Luo et al., 2025).
+
+
+
+Hybrid Scaling.
+
+
+Recent research has explored hybrid scaling strategies that aim to integrate the complementary strengths of parallel scaling (diverse exploration) and sequential scaling (conditioning on intermediate information). Pan et al. (2025) propose adaptive parallel reasoning, in which a parent thread decomposes the task into subgoals and dispatches them to multiple child threads. The child threads then return summaries of their reasoning processes, which the parent thread subsequently aggregates for further sequential reasoning. Luo et al. (2025) initiate reasoning with multiple independent chain-of-thought processes and introduce a routing mechanism that enables information exchange among these processes. The model benefits from parallel exploration, subsequently performing self-verification and iterative refinement based on the shared information. Distinct from previous approaches that explicitly intervene in the generation process, this work adopts a less intrusive and more flexible paradigm. Reasoning begins with several independent parallel trajectories, and the diverse intermediate results obtained in the first stage provide valuable guidance for refinement in subsequent rounds. Furthermore, an unsupervised indicator based on semantic entropy is introduced to adaptively determine the number of sequential reasoning steps, allowing the model to dynamically allocate computational resources based on task complexity.
+
+
+
+
+5 Conclusion
+
+
+This work proposes SEAT, a test-time scaling framework for large language models reasoning that leverages the semantic entropy of model responses to enable synergy between parallel exploration and sequential refinement. We demonstrate the critical role of semantic entropy in measuring the parallel reasoning performance of the model. Guided by the semantic entropy of multiple parallel responses in each round, SEAT dynamically adapts the depth of the sequential reasoning. Extensive evaluation across five challenging benchmarks corroborates that SEAT significantly enhances the LLMs’ reasoning performance. Furthermore, SEAT’s dynamic termination strategy effectively avoids semantic entropy collapses potentially incurred by compact LLMs during parallel scaling with sequential steps.
+

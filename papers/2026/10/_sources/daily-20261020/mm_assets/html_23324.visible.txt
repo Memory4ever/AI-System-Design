@@ -1,0 +1,1631 @@
+CatchUp: Depth-Aware Re-Admission of Visual Tokens for Efficient Large Vision-Language Models
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Related Work
+2.1 Irreversible Visual Token Reduction
+2.2 Recoverable Visual Token Routing
+Structural comparison.
+3 Motivating Observations
+3.1 Observation I: Query-Relevant Visual-Token Sets Change Across Decoder Depth
+Analysis protocol.
+Dataset-level evidence dynamics.
+3.2 Observation II: Re-Admitted Tokens Carry Stale Representations
+Stale representations retain useful routing information.
+Oracle intervention.
+4 Method
+4.1 Overview
+4.2 Reversible Visual Evidence Routing
+Query-conditioned visual-token selection.
+Reversible token execution.
+4.3 Local Transition Correction
+Transition-anchor candidates.
+Semantic–spatial anchor selection.
+Local transition transfer.
+5 Experiments
+5.1 Experimental Setup
+Baselines.
+Evaluation Benchmarks.
+Experimental Settings.
+5.2 Main Results
+Referring-Expression Grounding.
+General Multimodal Benchmarks.
+Qualitative Analysis.
+5.3 Efficiency Analysis
+Efficiency–Accuracy Trade-off.
+LTC Overhead.
+5.4 Ablation Studies
+Component Ablation.
+LTC Anchor Design.
+6 Conclusion
+References
+A Implementation Details
+A.1 Reversible Routing and Persistent Token States
+A.2 Need-Based Reference-State Management
+A.3 LTC Eligibility and Transition Anchors
+A.4 Semantic–Spatial Anchor Selection
+A.5 Transition Computation and State Update
+A.6 Fixed Implementation Configuration
+B CatchUp Inference Algorithm
+C Additional Experiments
+Average retention.
+C.1 Additional Details for Motivating Observations
+Observation I protocol.
+Stale–oracle routing agreement.
+Oracle-state intervention.
+C.2 Ablation Variant Definitions
+Component-ablation variants.
+Anchor-selection variants.
+C.3 Representation Alignment of Re-Admitted Tokens
+Matched Re-Admission Events.
+C.4 Effect of Re-Admission Gap
+C.5 Sensitivity to Routing-Layer Placement
+C.6 Additional Backbone
+License: arXiv.org perpetual non-exclusive license
+arXiv:2610.23324v1 [cs.CV] 16 Oct 2026
+CatchUp: Depth-Aware Re-Admission of Visual Tokens
+for Efficient Large Vision-Language Models
+Eunju Park
+Affiliation: Division of Artificial Intelligence & Software, Ewha Womans University
+Uiwon Hwang
+††thanks: Corresponding author.
+Affiliation: {pej0918, uiwon.hwang}@ewha.ac.kr
+Abstract
+Large Vision-Language Models (LVLMs) repeatedly process hundreds of visual tokens across decoder layers, incurring substantial computation and memory costs.
+Existing inference-time visual token pruning methods often irreversibly remove low-ranked tokens, although the set of visual tokens receiving high query-conditioned attention can change across decoder depth.
+Recoverable routing preserves skipped tokens for later reconsideration, but re-admits them with stale representations after bypassing intermediate transformations.
+We further find that replacing stale re-admitted states with their current-depth oracle states from a full-token reference trajectory substantially improves grounding performance.
+We therefore propose CatchUp, a training-free framework for depth-aware visual-token re-admission.
+CatchUp repeatedly re-evaluates query-conditioned visual relevance, processes only selected visual tokens through each decoder interval, and preserves deferred tokens for later re-admission.
+Upon re-admission, CatchUp approximates missed representation evolution using reference-to-current transition signals from semantically and spatially related visual tokens.
+Across three referring-expression grounding datasets and six multimodal benchmarks, CatchUp achieves the highest average relative retention in both benchmark groups at 64-, 128-, and 192-token budgets.
+At a 64-token budget with 88.9% fewer active visual tokens, CatchUp retains 92.17% of the full model’s performance on average across six multimodal benchmarks while reducing end-to-end latency by 8.0%.
+Code is available at https://github.com/pej0918/CatchUp
+1 Introduction
+Method
+Routing and token handling
+Repeated
+selection
+Original-token
+Recoverability
+Re-admission
+correction
+FastV [3]
+One-shot permanent pruning
+✗
+✗
+✗
+SparseVLM [25]
+Adaptive pruning and recycling
+✓
+✗
+✗
+PyramidDrop [17]
+Progressive stage-wise pruning
+✓
+✗
+✗
+Nüwa [9]
+Spatial aggregation and pruning
+✗
+✗
+✗
+ALVTS [4]
+Per-layer bypass and reintegration
+✓
+✓
+✗
+ReRoute [19]
+Stage-wise deferral and reintegration
+✓
+✓
+✗
+CatchUp
+Reversible routing with depth-aware re-admission
+✓
+✓
+✓
+Table 1:
+Structural comparison of representative decoder-side visual-token reduction methods.
+Repeated selection indicates that visual-token participation is reassessed at multiple decoder depths.
+Original-token recoverability indicates that an unselected token is preserved as an independent token and can later return to active computation.
+Re-admission correction indicates whether a method explicitly adjusts the representation of a token when it returns after skipping decoder transformations.
+Large Vision-Language Models (LVLMs) represent images as hundreds or thousands of visual tokens processed with text tokens throughout decoder layers.
+Although these tokens provide fine-grained evidence, repeatedly processing them incurs substantial attention, feed-forward, and memory costs.
+Visual-token reduction has therefore become a common strategy for improving inference efficiency, either by compressing representations before decoding or reducing visual tokens within the decoder [20, 3, 25, 17, 9].
+Most decoder-side methods remove or compress visual tokens based on attention, query relevance, redundancy, or spatial structure [3, 25, 17, 9].
+Despite differences in scoring criteria and reduction schedules, these methods restrict the set of visual tokens available to later decoder layers.
+Once a visual token is removed or absorbed into a compressed representation, it cannot independently return even if it becomes relevant at a later decoder depth.
+Recoverable routing relaxes this limitation by preserving unselected visual tokens through layer-wise bypass or stage-wise deferral [4, 19].
+However, when a deferred token is re-admitted, it retains a hidden state from before the skipped decoder transformations, while tokens that remain active have been updated through the intermediate layers.
+As a result, the re-admitted token can be misaligned with the current decoder depth.
+Effective recoverable routing should therefore account for how both visual relevance and representations depend on decoder depth. We observe that the visual-token sets favored by query-conditioned attention change substantially across decoder depth, with tokens excluded at earlier layers receiving high relevance scores later.
+We further find that replacing stale re-admitted states with their current-depth oracle states from a full-token reference trajectory substantially improves grounding performance.
+Building on these observations, we propose CatchUp, a training-free framework that enables depth-aware visual-token re-admission for efficient LVLM inference.
+At selected decoder layers, CatchUp re-evaluates query-conditioned relevance, preserves unselected visual tokens for later re-admission, and processes only the selected visual tokens until the next routing decision.
+When a deferred token is selected again, CatchUp approximates the representation evolution it missed during deferral using reference-to-current transition signals from semantically and spatially related visual tokens.
+In this way, CatchUp allows re-admitted visual tokens to “catch up” with the current decoder depth without requiring every visual token to traverse all intermediate layers.
+Experiments across referring-expression grounding and general multimodal benchmarks consistently show that CatchUp achieves a better accuracy-efficiency trade-off than both irreversible pruning and uncorrected recoverable routing.
+At matched routing budgets, CatchUp achieves the highest grounding performance among the evaluated efficient methods. Under matched prefill computation, CatchUp uses the fewest visual tokens and the smallest decoder KV-cache, while reducing end-to-end latency by 8.0% relative to dense inference.
+Our main contributions are:
+•
+We identify two complementary limitations in efficient visual-token routing.
+Irreversible reduction can discard tokens that receive high query-conditioned relevance scores at later decoder depths, while re-admitted tokens can carry stale representations after skipping intermediate decoder layers.
+•
+We introduce CatchUp, a training-free framework for depth-aware visual-token re-admission that preserves deferred visual tokens for later reconsideration and approximates the representation evolution missed during deferral using reference-to-current transition signals from semantically and spatially related visual tokens.
+•
+We show that CatchUp achieves the highest average retention in both benchmark groups, while using the smallest decoder KV-cache under matched prefill computation and reducing end-to-end latency by 8.0% relative to dense inference.
+2 Related Work
+2.1 Irreversible Visual Token Reduction
+Visual-token reduction methods operate either before decoding or within the language decoder.
+Pre-decoder methods select or merge redundant vision-encoder
+outputs [20], while decoder-side methods use
+attention or query relevance [3, 25],
+adaptive budgets [21, 22, 18],
+progressive reduction [17], diversity and
+duplication [1, 16], or spatial and
+grounding constraints [6, 5, 9].
+Despite different selection criteria and reduction schedules, these methods share an irreversible token-handling pattern.
+Once an original token is pruned or merged, it is no longer available as an individual token in subsequent decoder layers.
+2.2 Recoverable Visual Token Routing
+Recoverable routing replaces permanent removal with conditional computation.
+Recent recoverable methods such as ALVTS [4] and ReRoute [19] preserve unselected visual tokens through layer-wise bypass or stage-wise deferral, allowing them to return to active computation at later decoder layers.
+Both are related to token-wise conditional computation in Mixture-of-Depths [15], but specifically target visual tokens within pretrained LVLM decoders.
+These methods allow previously excluded evidence to be reconsidered at later decoder layers, but do not update deferred tokens for the decoder transformations they skip.
+As a result, a re-admitted token may carry a hidden state that is misaligned with the current decoder depth.
+Structural comparison.
+Table 1 compares representative decoder-side methods across repeated selection, original-token recoverability, and re-admission correction.
+Irreversible methods make pruned or merged original tokens unavailable for subsequent computation, while ALVTS and ReRoute preserve original tokens for later re-admission without correcting for skipped decoder transformations.
+CatchUp combines recoverable repeated routing with re-admission correction that approximates the representation evolution missed during deferral.
+3 Motivating Observations
+To understand the requirements for effective recoverable visual-token routing, we examine two empirical questions.
+(i) Can visual tokens excluded by an early selection become highly ranked by the same query-conditioned relevance criterion at later decoder depths?
+(ii) Does representation staleness affect re-admitted tokens at the current decoder depth?
+3.1 Observation I: Query-Relevant Visual-Token Sets Change Across Decoder Depth
+Figure 1:
+Example of late-emerging visual evidence for the query right zebra.
+The inset shows the referred target region (red) and the analyzed visual token (blue).
+The curve shows the token’s query-conditioned relevance percentile across decoder layers; the dashed line denotes the top-64 threshold, and stars indicate layers where the token belongs to the top-64 set.
+The token first enters the top-64 set at layer 25.
+Analysis protocol.
+To examine whether the visual tokens considered most relevant to the query remain stable across decoder depth, we analyze LLaVA-1.5-7B [12] on 500 RefCOCO samples [23] under full-token inference using all 576 visual tokens.
+At each decoder layer, we use the post-softmax attention from the last text token to each visual token, averaged over attention heads, as a proxy for query-conditioned relevance.
+For sample nn, let ℰnℓ\mathcal{E}_{n}^{\ell} denote the top-KK visual-token set at layer ℓ\ell, where K=64K=64.
+We use decoder layer 2, corresponding to the first routing layer in our
+routing configuration, as the reference depth.
+Figure 1 illustrates a token within the referred target region whose query-conditioned relevance changes substantially across decoder depth.
+Although the token remains outside the top-64 set at earlier layers, it first enters the top-64 set at layer 25.
+Dataset-level evidence dynamics.
+To determine whether this behavior extends beyond an individual example, we quantify how the top-KK visual token set changes across decoder depth.
+We define relevance volatility as the fraction of top-KK tokens that change between adjacent decoder layers:
+Voln⁡(ℓ)=1−|ℰnℓ∩ℰnℓ−1|K.\operatorname{Vol}_{n}(\ell)=1-\frac{\left|\mathcal{E}_{n}^{\ell}\cap\mathcal{E}_{n}^{\ell-1}\right|}{K}.
+(1)
+Volatility captures local changes in query-relevant evidence, but does not measure how much evidence that becomes relevant later would be missed by an early irreversible selection.
+We therefore define the late-emerging evidence ratio (LER) relative to the reference layer ℓref=2\ell_{\mathrm{ref}}=2:
+LERn⁡(ℓ)=|ℰnℓ∖ℰnℓref|K.\operatorname{LER}_{n}(\ell)=\frac{\left|\mathcal{E}_{n}^{\ell}\setminus\mathcal{E}_{n}^{\ell_{\mathrm{ref}}}\right|}{K}.
+(2)
+LER measures the fraction of the layer-ℓ\ell top-KK set that was absent from the layer-2 reference set.
+Under an irreversible layer-2 top-KK selection, these tokens would be unavailable for later reconsideration.
+Figure 2:
+Dataset-level evidence dynamics averaged over 500 RefCOCO samples.
+(a) Relevance volatility between adjacent decoder layers; the dashed line denotes the mean volatility across decoder layers.
+(b) Late-emerging evidence ratio (LER) relative to the layer-2 reference set.
+As shown in Figure 2(a), the mean volatility is 28.85%, indicating that more than one quarter of the top-64 set changes between adjacent layers on average.
+LER exceeds 50% by layer 7 and reaches 99.42% at layer 31 (Figure 2(b)).
+These results do not imply that later-layer relevance estimates are inherently more accurate; rather, they show that the evidence identified by the same criterion changes substantially with decoder depth.
+This motivates preserving excluded tokens for later reconsideration.
+The remaining question is whether their stale representations remain suitable when they return.
+3.2 Observation II: Re-Admitted Tokens Carry Stale Representations
+A deferred token skips the self-attention and feed-forward transformations of intermediate decoder layers and therefore returns with an earlier-layer hidden state.
+This can leave the re-admitted token misaligned with the current decoder depth, unlike continuously active tokens that undergo the intervening transformations.
+We therefore examine two aspects of representation staleness: whether stale states remain informative for re-admission decisions, and whether they are suitable for downstream computation once re-admitted.
+Stale representations retain useful routing information.
+Budget
+Routing
+Top-KK Overlap (%) ↑\uparrow
+Re-adm. Recall@K (%) ↑\uparrow
+64
+Random
+10.50±0.0810.50{\pm}0.08
+10.59±0.2010.59{\pm}0.20
+Stale
+59.28
+38.67
+128
+Random
+19.82±0.0719.82{\pm}0.07
+19.70±0.0919.70{\pm}0.09
+Stale
+62.04
+43.56
+192
+Random
+33.72±0.0833.72{\pm}0.08
+33.37±0.1833.37{\pm}0.18
+Stale
+71.31
+46.33
+Table 2:
+Agreement of stale-state routing with current-depth oracle routing.
+Random denotes uniform selection under the same token budget; mean and standard deviation are reported over five seeds.
+We first test whether cached stale states remain informative for re-admission.
+At each routing layer, stale and oracle routing use the same current-layer text query and key projection, differing only in the visual-token
+representation: the cached stale state or the same token’s current-depth
+state from a full-token reference trajectory.
+The oracle scores are used only for diagnostic comparison and do not alter the stale-state routing trajectory.
+Let 𝒱stales\mathcal{V}_{\mathrm{stale}}^{s} and
+𝒱oracles\mathcal{V}_{\mathrm{oracle}}^{s} denote the resulting top-KK selections.
+We measure Top-KK overlap as |𝒱stales∩𝒱oracles|/K|\mathcal{V}_{\mathrm{stale}}^{s}\cap\mathcal{V}_{\mathrm{oracle}}^{s}|/K, and re-admission Recall@K as the fraction of oracle-selected deferred tokens also selected by stale routing.
+As shown in Table 2, stale routing is more aligned with current-depth oracle routing than random selection across all budgets, with 59–71% Top-KK overlap and 39–46% re-admission Recall@K.
+Thus, stale representations provide useful but imperfect signals for
+reconsideration.
+We next examine whether these stale states are also suitable for downstream computation after re-admission.
+Oracle intervention.
+To examine the effect of representation staleness, we fix the routing trajectory and visual-token budget and modify only the hidden states of newly re-admitted tokens.
+At each intervention point, all other token states are left unchanged.
+For each newly re-admitted token jj at routing layer ℓs\ell_{s}, we compare retaining its stored stale state with replacing it by its current-depth oracle state hj,full​[ℓs]h_{j,\mathrm{full}}[\ell_{s}] obtained from a separate full-token reference trajectory.
+Figure 3:
+Diagnostic intervention on re-admitted token states under a fixed routing trajectory and visual-token budget.
+Top: average RefCOCO Acc@0.5 over val, TestA, and TestB for stale and current-depth oracle re-admitted states.
+Bottom: qualitative grounding results for the query right truck; red denotes the ground-truth region, while orange and blue denote the predictions under (a) stale and (b) current-depth oracle states, respectively.
+As shown in Figure 3, replacing stale
+re-admitted states with their current-depth oracle states improves average RefCOCO Acc@0.5 from 18.96 to 23.18 under the same routing trajectory and visual-token budget.
+The qualitative example further shows that the stale condition localizes an incorrect region, whereas the current-depth oracle produces a prediction closer to the ground-truth target.
+These results show that the representation carried by a re-admitted token affects downstream grounding even when token selection is held fixed.
+Combined with Section 3.1, this analysis reveals two complementary requirements for recoverable routing: deferred visual evidence should remain available for later reconsideration, and its representation should account for the transformations skipped before re-admission.
+Since obtaining the full-token current-depth state would negate the computational benefit of deferral, efficient routing requires an approximation of this missed representation evolution.
+4 Method
+Figure 4:
+Overview of CatchUp.
+At each routing layer, CatchUp re-evaluates the complete visual-token set, processes only selected visual tokens through the subsequent decoder interval, and preserves deferred tokens for later re-admission.
+LTC corrects newly re-admitted tokens by transferring reference-to-current representation changes from semantically and spatially related anchors.
+4.1 Overview
+Motivated by the observations in Sections 3.1 and 3.2, we introduce CatchUp, a training-free framework that combines reversible visual-token routing with Local Transition Correction (LTC).
+CatchUp repeatedly re-evaluates query-conditioned visual relevance over the complete visual-token set and processes only selected visual tokens between routing layers.
+When a deferred token is selected again, LTC approximates the representation evolution missed during deferral using reference-to-current transition signals from related visual tokens.
+Let 𝒱\mathcal{V} denote the visual-token index set and LL the total number of decoder layers, indexed by {0,…,L−1}\{0,\ldots,L-1\}.
+CatchUp performs visual-token routing at a subset of these layers,
+𝒮={ℓ1,ℓ2,…,ℓS}⊆{0,…,L−1},ℓ1<ℓ2<⋯<ℓS,\mathcal{S}=\{\ell_{1},\ell_{2},\ldots,\ell_{S}\}\subseteq\{0,\ldots,L-1\},\quad\ell_{1}<\ell_{2}<\cdots<\ell_{S},
+where S=|𝒮|S=|\mathcal{S}| is the number of routing layers, ℓs\ell_{s} denotes the ss-th routing layer, and 𝒱s⊆𝒱\mathcal{V}_{s}\subseteq\mathcal{V} denotes the visual tokens selected at ℓs\ell_{s}.
+We denote by hi​[ℓ]h_{i}[\ell] the representation of token ii available at decoder depth ℓ\ell.
+Routing at ℓs\ell_{s} is performed at the layer input, before executing decoder layer ℓs\ell_{s}, and only the selected visual tokens subsequently participate in its attention and feed-forward computation.
+All visual tokens remain active through the decoder layers preceding the first routing layer ℓ1\ell_{1}.
+At each routing layer ℓs\ell_{s}, CatchUp first selects 𝒱s\mathcal{V}_{s} from the complete visual-token set at the layer input, allowing previously deferred tokens to return to active computation.
+LTC is then applied only to newly re-admitted tokens before the selected tokens execute decoder layer ℓs\ell_{s}. Thus, it does not affect the routing decision at the same layer.
+Figure 4 summarizes the overall procedure.
+4.2 Reversible Visual Evidence Routing
+Query-conditioned visual-token selection.
+At routing layer ℓs\ell_{s}, CatchUp re-evaluates the complete visual-token candidate set using the current-layer text query and each visual token’s latest available representation.
+For an active token, this representation is available at the input to the
+current routing layer, whereas a deferred token retains its latest cached
+hidden state.
+Deferred tokens are not propagated through the skipped decoder layers for routing; instead, their cached states are projected using the key projection of the current routing layer and scored against the current-layer text query.
+Let 𝐀~s(m)\widetilde{\mathbf{A}}_{s}^{(m)} denote the resulting post-softmax routing attention of head mm, and let t⋆t_{\star} denote the last text-token position.
+The relevance score of visual token i∈𝒱i\in\mathcal{V} is
+ris=1Nh​∑m=1Nh𝐀~s(m)​[t⋆,i],r_{i}^{s}=\frac{1}{N_{h}}\sum_{m=1}^{N_{h}}\widetilde{\mathbf{A}}_{s}^{(m)}[t_{\star},i],
+(3)
+where NhN_{h} denotes the number of attention heads.
+Given the visual-token budget KsK_{s} at routing layer ℓs\ell_{s}, we select
+𝒱s=TopKi∈𝒱⁡(ris;Ks).\mathcal{V}_{s}=\operatorname{TopK}_{i\in\mathcal{V}}\left(r_{i}^{s};K_{s}\right).
+(4)
+Because selection is performed over the complete original visual-token set 𝒱\mathcal{V}, a token excluded at one routing layer remains eligible for reconsideration at later routing layers.
+Although deferred tokens are scored using stale cached states, Section 3.2 shows that these states retain useful
+query-relevance information for re-admission.
+Reversible token execution.
+After selection at routing layer ℓs\ell_{s}, all text tokens and the visual tokens in 𝒱s\mathcal{V}_{s} are processed through the subsequent decoder interval.
+For s<Ss<S, this interval consists of decoder layers ℓs,…,ℓs+1−1\ell_{s},\ldots,\ell_{s+1}-1, with the next routing decision performed at the input to layer ℓs+1\ell_{s+1}.
+After the final routing layer ℓS\ell_{S}, the selected tokens are processed through layers ℓS,…,L−1\ell_{S},\ldots,L-1.
+Visual tokens outside 𝒱s\mathcal{V}_{s} are deferred.
+Their cached hidden states are carried forward unchanged, while the tokens are excluded from decoder computation until the next routing decision.
+For each deferred token, CatchUp tracks the decoder depth associated with
+its latest cached representation. To support LTC, CatchUp retains the
+current visual-state snapshot together with only those historical snapshots still referenced by deferred tokens, and releases historical snapshots once they are no longer needed.
+Further implementation details are provided in the supplementary material.
+Before the first routing decision, all visual tokens are active, and we define 𝒱0=𝒱\mathcal{V}_{0}=\mathcal{V}.
+The set of tokens newly re-admitted at routing layer ℓs\ell_{s} is
+ℛs=𝒱s∖𝒱s−1.\mathcal{R}_{s}=\mathcal{V}_{s}\setminus\mathcal{V}_{s-1}.
+(5)
+Tokens in ℛs\mathcal{R}_{s} reintroduce visual evidence that did not participate in computation while they were deferred.
+However, their cached representations have not undergone the same decoder transformations as tokens that remained active.
+CatchUp therefore applies LTC to the newly re-admitted tokens in ℛs\mathcal{R}_{s} before they resume active computation.
+4.3 Local Transition Correction
+LTC aims to approximate the representation evolution missed by a re-admitted token without explicitly processing that token through the decoder layers it skipped.
+Consider a token p∈ℛsp\in\mathcal{R}_{s} with stale cached state hp​[ℓp]h_{p}[\ell_{p}], where ℓp<ℓs\ell_{p}<\ell_{s} denotes the reference depth associated with its latest cached representation.
+The current-depth oracle in Section 3.2 would instead provide the same token’s state from a full-token reference trajectory at decoder depth ℓs\ell_{s}.
+Because obtaining this oracle state would require full-token computation
+through the skipped decoder layers, LTC approximates the missing
+representation transition from ℓp\ell_{p} to ℓs\ell_{s} using reference-to-current transition signals from related visual tokens.
+Intuitively, LTC identifies visual tokens related to the re-admitted token at its reference depth and uses their reference-to-current displacements to estimate the token’s missed representation evolution.
+For notational simplicity, we suppress the routing-step index ss for
+token-specific quantities defined at the current routing layer ℓs\ell_{s}.
+Transition-anchor candidates.
+At routing layer ℓs\ell_{s}, we define the candidate anchor set as
+ℱs=𝒱s∩𝒱s−1.\mathcal{F}_{s}=\mathcal{V}_{s}\cap\mathcal{V}_{s-1}.
+(6)
+Since ℱs∩ℛs=∅\mathcal{F}_{s}\cap\mathcal{R}_{s}=\varnothing, a newly re-admitted token is never used as an anchor at the same routing layer. A re-admitted token can, however, become eligible as an anchor at a subsequent routing layer if it remains selected.
+A token q∈ℱsq\in\mathcal{F}_{s} is selected at both the previous and current routing layers and has therefore been updated through the immediately preceding decoder interval.
+Its state hq​[ℓs]h_{q}[\ell_{s}] represents the token at the current routing layer.
+Let h¯q​[ℓ]\bar{h}_{q}[\ell] denote the retained reference state of token qq from the visual-state snapshot at layer ℓ\ell.
+For a re-admitted token pp whose latest cached representation is associated with reference depth ℓp\ell_{p}, the pair (h¯q​[ℓp],hq​[ℓs])(\bar{h}_{q}[\ell_{p}],h_{q}[\ell_{s}]) provides a reference-to-current transition signal that can be transferred to pp.
+Semantic–spatial anchor selection.
+Not all candidate anchors provide equally useful transition signals for a
+re-admitted token.
+Because a re-admitted token has no current-layer representation, we measure representation similarity using the retained visual-state snapshot at its reference depth ℓp\ell_{p}, which provides a common reference for the deferred token and candidate anchors.
+For each candidate anchor q∈ℱsq\in\mathcal{F}_{s}, we compute
+ap​q=cos⁡(hp​[ℓp],h¯q​[ℓp])−λ​dsp​(p,q),a_{pq}=\cos\left(h_{p}[\ell_{p}],\bar{h}_{q}[\ell_{p}]\right)-\lambda d_{\mathrm{sp}}(p,q),
+(7)
+where cos⁡(⋅,⋅)\operatorname{cos}(\cdot,\cdot) denotes cosine similarity, dsp​(p,q)d_{\mathrm{sp}}(p,q) denotes the Euclidean distance between their patch-grid coordinates after normalizing each spatial axis to [0,1][0,1], and λ\lambda controls the contribution of spatial distance to anchor
+selection. If ℱs=∅\mathcal{F}_{s}=\varnothing, LTC is skipped and the cached representation hp​[ℓp]h_{p}[\ell_{p}] is used unchanged.
+Otherwise, we retain up to the MM highest-scoring anchors,
+𝒩p=TopMq∈ℱs⁡(ap​q),\mathcal{N}_{p}=\operatorname{TopM}_{q\in\mathcal{F}_{s}}\left(a_{pq}\right),
+(8)
+and compute their normalized anchor weights as
+wp​q=exp⁡(ap​q/τ)∑q′∈𝒩pexp⁡(ap​q′/τ),q∈𝒩p,w_{pq}=\frac{\exp\left(a_{pq}/\tau\right)}{\sum_{q^{\prime}\in\mathcal{N}_{p}}\exp\left(a_{pq^{\prime}}/\tau\right)},\qquad q\in\mathcal{N}_{p},
+(9)
+where τ\tau is a temperature parameter.
+Local transition transfer.
+For each selected anchor q∈𝒩pq\in\mathcal{N}_{p}, its reference-to-current representation displacement is
+δp​q=hq​[ℓs]−h¯q​[ℓp].\delta_{pq}=h_{q}[\ell_{s}]-\bar{h}_{q}[\ell_{p}].
+(10)
+LTC estimates the missing transition of re-admitted token pp by aggregating these local displacements:
+Δ​hp=∑q∈𝒩pwp​q​δp​q.\Delta h_{p}=\sum_{q\in\mathcal{N}_{p}}w_{pq}\delta_{pq}.
+(11)
+Rather than replacing the re-admitted token with an anchor representation, LTC transfers only the estimated representation change and adds it to the token’s own stale representation:
+h^p=hp​[ℓp]+γ​Δ​hp,\widehat{h}_{p}=h_{p}[\ell_{p}]+\gamma\Delta h_{p},
+(12)
+where γ\gamma controls the correction strength.
+This residual formulation retains the token’s own stale representation as the base state while approximating the evolution missed during deferral.
+The corrected state h^p\widehat{h}_{p} then serves as the representation of token pp when it resumes active computation.
+Unlike the current-depth oracle in Section 3.2, LTC does not require access to full-token current-depth states during inference.
+Instead, it estimates this evolution using retained reference states and local transition signals available during efficient inference.
+CatchUp therefore preserves the computational benefit of reversible token routing while reducing the representation mismatch caused by skipped decoder transformations.
+Figure 5:
+Reversible visual-token routing for the referring expression player.
+FastV shows the final retained tokens after irreversible pruning, while CatchUp shows the selected visual-token sets at routing layers L2 and L7.
+The red box marks the ground-truth target. In CatchUp, whitened regions denote deferred tokens, and blue outlines indicate tokens newly re-admitted at L7.
+5 Experiments
+5.1 Experimental Setup
+Baselines.
+We compare CatchUp with FastV [3], SparseVLM [25], PyramidDrop [17], Nüwa [9], and the recoverable routing method ReRoute [19], all under a common LLaVA-1.5-7B backbone [12]. We additionally report the dense 576-token model as Full and compare efficient methods under matched routing budgets whenever applicable.
+Evaluation Benchmarks.
+For fine-grained referring-expression grounding, we evaluate on
+RefCOCO and RefCOCO+ [23], and RefCOCOg [14].
+For all grounding benchmarks, we report Acc@0.5, using val/TestA/TestB for RefCOCO and RefCOCO+ and val/test for RefCOCOg.
+When a single RefCOCO score is reported, it denotes the average over val, TestA, and TestB.
+We further evaluate general multimodal capability on POPE [11],
+VQAv2 [7], VizWiz [8],
+GQA [10], MM-Vet [24],
+and MMBench [13], using the standard evaluation metric for each benchmark.
+Experimental Settings.
+Unless otherwise specified, all main experiments use LLaVA-1.5-7B [12] with 576 initial visual tokens and constant routing budgets K∈{64,128,192}K\in\{64,128,192\}.
+We also evaluate CatchUp on Qwen2.5-VL-7B-Instruct [2], and further results and analyses are in the supplementary material.
+CatchUp performs reversible routing at decoder layers 2, 7, 15, and 23.
+For LTC, we set M=8M=8, λ=0.15\lambda=0.15, γ=0.8\gamma=0.8, τ=0.07\tau=0.07.
+All hyperparameters are fixed across datasets and token budgets, with all pretrained model parameters frozen.
+5.2 Main Results
+Table 3:
+Main results on referring-expression grounding and six multimodal benchmarks.
+Avg. Retention denotes the mean of the per-benchmark or per-split performance ratios relative to the full LLaVA-1.5-7B model.
+Bold denotes the best result among the evaluated efficient methods at each routing budget.
+Method
+Visual Grounding
+MLLM Benchmarks
+RefCOCO
+RefCOCO+
+RefCOCOg
+Avg.
+POPE
+VQAv2
+VizWiz
+GQA
+MM-Vet
+MMBench
+Avg.
+val
+A
+B
+val
+A
+B
+val
+test
+Retention
+Retention
+Dense Reference, 576 Tokens (100%)
+LLaVA-1.5-7B
+54.15
+59.27
+47.97
+46.53
+53.93
+39.05
+46.89
+47.67
+100.00%
+85.90
+75.84
+54.30
+60.47
+28.67
+62.37
+100.00%
+Routing Budget K=192K=192 (↓\downarrow67%)
+FastV (ECCV’24)
+25.38
+27.91
+21.94
+21.09
+23.68
+18.04
+21.55
+20.52
+45.52%
+79.66
+69.90
+54.72
+55.04
+25.09
+58.68
+93.05%
+SparseVLM (ICML’25)
+36.22
+41.63
+30.97
+30.54
+35.30
+23.95
+30.89
+30.11
+65.39%
+83.27
+74.15
+53.96
+58.02
+23.94
+60.83
+95.18%
+PyramidDrop (CVPR’25)
+39.68
+44.85
+33.23
+33.57
+39.36
+26.00
+33.03
+32.63
+71.10%
+84.39
+74.74
+54.71
+59.37
+27.11
+61.43
+98.13%
+Nüwa (ICLR’26)
+18.23
+23.44
+14.29
+14.81
+19.65
+11.37
+14.85
+14.43
+32.79%
+84.06
+73.50
+55.31
+57.66
+27.16
+56.01
+96.09%
+ReRoute (arXiv’26)
+45.28
+49.81
+39.27
+38.13
+44.22
+31.01
+39.43
+39.21
+82.40%
+84.11
+74.87
+54.56
+58.94
+26.28
+61.77
+97.55%
+CatchUp (Ours)
+47.23
+51.55
+41.90
+40.44
+45.63
+33.83
+40.24
+40.63
+86.34%
+84.31
+75.19
+55.47
+59.68
+28.39
+61.80
+99.37%
+Routing Budget K=128K=128 (↓\downarrow78%)
+FastV (ECCV’24)
+10.85
+12.71
+9.13
+8.63
+10.29
+7.85
+9.27
+9.13
+19.65%
+72.96
+63.94
+54.61
+50.48
+21.83
+53.78
+85.94%
+SparseVLM (ICML’25)
+28.24
+32.97
+21.45
+22.90
+27.98
+18.18
+22.85
+22.62
+49.54%
+80.64
+71.42
+53.95
+56.07
+21.33
+60.31
+91.87%
+PyramidDrop (CVPR’25)
+30.90
+36.29
+24.04
+25.26
+30.54
+18.43
+24.42
+24.16
+53.66%
+81.98
+72.81
+53.98
+56.91
+23.17
+59.97
+93.66%
+Nüwa (ICLR’26)
+7.02
+8.43
+6.56
+6.27
+6.95
+5.40
+6.24
+6.44
+13.48%
+81.45
+72.21
+53.61
+56.15
+24.27
+54.73
+92.34%
+ReRoute (arXiv’26)
+34.07
+39.67
+27.46
+27.55
+33.48
+22.13
+29.73
+29.70
+61.35%
+80.94
+73.05
+54.52
+57.28
+25.18
+59.45
+94.80%
+CatchUp (Ours)
+36.97
+42.37
+31.80
+29.77
+36.34
+24.30
+31.27
+31.21
+66.48%
+81.70
+73.78
+54.45
+57.61
+25.91
+60.31
+95.84%
+Routing Budget K=64K=64 (↓\downarrow89%)
+FastV (ECCV’24)
+2.50
+0.16
+0.53
+0.33
+0.07
+0.51
+0.10
+0.08
+1.06%
+51.07
+43.25
+51.02
+40.00
+12.75
+22.42
+59.50%
+SparseVLM (ICML’25)
+4.00
+4.26
+2.98
+3.24
+3.51
+2.35
+3.03
+3.08
+6.65%
+66.31
+58.63
+52.82
+48.58
+18.76
+45.88
+78.52%
+PyramidDrop (CVPR’25)
+12.95
+14.71
+10.09
+10.18
+12.35
+8.24
+10.38
+10.22
+22.40%
+74.81
+66.63
+52.51
+52.68
+18.90
+55.07
+85.50%
+Nüwa (ICLR’26)
+4.27
+3.96
+4.28
+4.24
+3.53
+4.56
+4.15
+4.41
+8.62%
+74.09
+69.19
+52.46
+53.98
+18.39
+51.37
+84.98%
+ReRoute (arXiv’26)
+18.73
+23.74
+14.41
+15.48
+20.01
+11.29
+16.44
+16.00
+34.07%
+74.92
+69.61
+53.96
+54.68
+20.96
+57.56
+89.03%
+CatchUp (Ours)
+21.54
+25.24
+17.00
+17.02
+20.73
+13.15
+17.66
+17.45
+37.60%
+76.62
+70.56
+54.38
+55.16
+24.95
+57.62
+92.17%
+Referring-Expression Grounding.
+As shown in Table 3, CatchUp outperforms all evaluated
+efficient methods across all eight grounding splits at every routing budget.
+Its average grounding retention exceeds ReRoute by 3.94, 5.13, and 3.53
+points at K=192K=192, 128, and 64, respectively.
+Despite both methods allowing token re-admission, these consistent gains
+suggest that re-admission alone is insufficient when returning tokens retain stale representations.
+General Multimodal Benchmarks.
+CatchUp remains robust under aggressive visual-token reduction.
+At K=64K=64, it achieves the best result among the evaluated efficient methods on all six benchmarks, retaining 92.17% of the full model’s performance on average.
+In contrast, grounding retention at the same budget is only 37.60%, indicating that fine-grained localization is substantially more sensitive to visual-token reduction than general multimodal capability.
+Qualitative Analysis.
+As shown in Figure 5, unlike irreversible pruning, CatchUp preserves target-region tokens deferred at L2 for later reconsideration, allowing some of them to be re-admitted at L7.
+5.3 Efficiency Analysis
+Figure 6:
+Accuracy–efficiency trade-off on LLaVA-1.5-7B.
+Efficient methods are matched within 1% in prefill TFLOPs; the dense
+576-token model requires 8.673 TFLOPs.
+(a) Accuracy versus decoder KV-cache memory.
+(b) Accuracy versus end-to-end latency.
+Dashed lines trace the non-dominated frontier, and shaded regions denote dominated configurations.
+Efficiency–Accuracy Trade-off.
+As shown in Figure 6, despite the most aggressive average visual-token reduction (89% versus 81–85% for the compared methods) under matched prefill computation, CatchUp achieves the highest grounding accuracy with the lowest decoder KV-cache memory while maintaining competitive end-to-end latency.
+This is enabled by separating recoverability from active decoder computation: deferred tokens remain available for future routing but do not participate in intermediate decoder layers or contribute to the decoder KV cache while deferred.
+Table 4:
+Overhead of LTC at the 64-token routing budget.
+Snapshot memory denotes the peak auxiliary memory used for retained LTC reference states.
+Variant
+TFLOPs ↓\downarrow
+E2E (ms) ↓\downarrow
+Snapshot (MB) ↓\downarrow
+RefCOCO ↑\uparrow
+w/o LTC
+2.131
+1589.28
+0.00
+18.96
+CatchUp
+2.194
+1611.17
+22.50
+21.26
+Δ\Delta
++2.96%
++1.38%
++22.50
++2.3 pt
+LTC Overhead.
+LTC improves average RefCOCO Acc@0.5 by 2.3 points with 2.96%
+additional prefill computation, a 1.38% increase in end-to-end latency,
+and 22.50 MB of auxiliary snapshot memory.
+The routing budget and decoder KV cache remain unchanged, as the additional memory comes from the reference states required by LTC.
+5.4 Ablation Studies
+Table 5:
+Component ablation at a 64-token routing budget.
+We compare monotonic routing with reversible routing under three re-admission treatments: stale states, absolute-state mixing, and transition-residual correction.
+Variant definitions are provided in the supplementary material.
+Variant
+Treatment
+RefCOCO ↑\uparrow
+POPE ↑\uparrow
+VQAv2 ↑\uparrow
+Monotonic Compact Routing
+–
+15.78
+75.81
+67.75
+CatchUp w/o LTC
+Stale
+18.96
+74.92
+69.61
+CatchUp + Absolute
+Absolute-state mixing
+19.31
+75.20
+69.50
+CatchUp
+Transition residual
+21.26
+76.62
+70.56
+Component Ablation.
+Table 5 separates the effects of reversible re-admission and representation correction.
+Re-admission improves RefCOCO and VQAv2 over monotonic routing, but stale re-admission does not improve all tasks.
+Absolute-state mixing provides little additional benefit, whereas LTC performs best across all three metrics, suggesting that re-admission is most effective when paired with transition correction.
+Table 6:
+Ablation on LTC anchor selection at a 64-token routing budget.
+All variants use the same transition-residual correction.
+Anchor Selection
+RefCOCO ↑\uparrow
+POPE ↑\uparrow
+VQAv2 ↑\uparrow
+MM-Vet ↑\uparrow
+Random anchors
+19.57
+76.23
+70.25
+23.58
+Spatial distance
+21.39
+76.43
+70.32
+22.75
+Semantic similarity
+20.97
+76.59
+70.53
+22.84
+Semantic + Spatial
+21.26
+76.62
+70.56
+24.95
+LTC Anchor Design.
+Table 6 shows complementary roles for the two anchor cues: spatial proximity is particularly beneficial for grounding, whereas semantic similarity performs better on POPE and VQAv2.
+Combining both cues yields the best performance on POPE, VQAv2, and MM-Vet while remaining competitive on grounding, providing the best overall balance across task types.
+6 Conclusion
+We introduced CatchUp, a training-free framework combining reversible visual-token routing with Local Transition Correction (LTC) to preserve deferred evidence and approximate missed representation evolution.
+CatchUp achieves the best performance among the evaluated efficient methods across all eight grounding splits at 64-, 128-, and 192-token budgets.
+Across six multimodal benchmarks, it retains 92.17% of the full model’s performance at a 64-token routing budget.
+These results highlight that effective recoverable routing requires both preserving deferred evidence and correcting stale representations upon re-admission.
+Acknowledgement
+This work was supported by the National Research Foundation of Korea (NRF) grant funded by the Korea government (MSIT) (RS-2025-00561169), Global – Learning & Academic research institution for Master’s · PhD students, and Postdocs (G-LAMP) Program of the National Research Foundation of Korea (NRF) grant funded by the Ministry of Education (No. RS-2025-25442252), Institute of Information & communications Technology Planning & Evaluation (IITP) under the Leading Generative AI Human Resources Development (IITP-2027-RS-2026-25546026) grant funded by the Korea government (MSIT), and Korea Internet & Security Agency(KISA) grant funded by the Korea government(PIPC) (No.2780000041, Development of PET-based Generation and Validation Technology for Unstructured Time-Series Synthetic Data).
+References
+[1]
+S. R. Alvar, G. Singh, M. Akbari, and Y. Zhang (2025)
+DivPrune: diversity-based visual token pruning for large multimodal models.
+In IEEE Conf. Comput. Vis. Pattern Recog.,
+pp. 9392–9401.
+Cited by: §2.1.
+[2]
+S. Bai, K. Chen, X. Liu, J. Wang, W. Ge, S. Song, K. Dang, P. Wang, S. Wang, J. Tang, H. Zhong, Y. Zhu, M. Yang, Z. Li, J. Wan, P. Wang, W. Ding, Z. Fu, Y. Xu, J. Ye, X. Zhang, T. Xie, Z. Cheng, H. Zhang, Z. Yang, H. Xu, and J. Lin (2025)
+Qwen2.5-VL technical report.
+arXiv preprint arXiv:2502.13923.
+External Links: 2502.13923
+Cited by: §C.6,
+§5.1.
+[3]
+L. Chen, H. Zhao, T. Liu, S. Bai, J. Lin, C. Zhou, and B. Chang (2024)
+An image is worth 1/2 tokens after layer 2: plug-and-play inference acceleration for large vision-language models.
+In Eur. Conf. Comput. Vis.,
+pp. 19–35.
+Cited by: Table 1,
+§1,
+§1,
+§2.1,
+§5.1.
+[4]
+Y. Chen, K. Zhang, Z. Zong, Y. Lu, W. Tan, Y. Ren, and J. Hu (2026)
+One layer’s trash is another layer’s treasure: adaptive layer-wise visual token selection in LVLMs.
+arXiv preprint arXiv:2606.14277.
+External Links: 2606.14277
+Cited by: Table 1,
+§1,
+§2.2.
+[5]
+T. Chien, C. Lin, S. Tsai, R. Lai, H. Chen, and M. Sun (2025)
+Grounding-aware token pruning: recovering from drastic performance drops in visual grounding caused by pruning.
+arXiv preprint arXiv:2506.21873.
+External Links: 2506.21873
+Cited by: §2.1.
+[6]
+M. Endo, X. Wang, and S. Yeung-Levy (2025)
+Feather the throttle: revisiting visual token pruning for vision-language model acceleration.
+In Int. Conf. Comput. Vis.,
+pp. 22826–22835.
+Cited by: §2.1.
+[7]
+Y. Goyal, T. Khot, D. Summers-Stay, D. Batra, and D. Parikh (2017)
+Making the v in VQA matter: elevating the role of image understanding in visual question answering.
+In Proceedings of the IEEE Conference on
+Computer Vision and Pattern Recognition,
+pp. 6904–6913.
+Cited by: §5.1.
+[8]
+D. Gurari, Q. Li, A. J. Stangl, A. Guo, C. Lin, K. Grauman, J. Luo, and J. P. Bigham (2018)
+VizWiz grand challenge: answering visual questions from blind people.
+In Proceedings of the IEEE Conference on
+Computer Vision and Pattern Recognition,
+pp. 3608–3617.
+Cited by: §5.1.
+[9]
+Y. Huang, F. Ma, Y. Shao, J. Guo, Z. Yu, L. Cui, and Q. Tian (2026)
+Nüwa: mending the spatial integrity torn by VLM token pruning.
+In Int. Conf. Learn. Represent.,
+Cited by: Table 1,
+§1,
+§1,
+§2.1,
+§5.1.
+[10]
+D. A. Hudson and C. D. Manning (2019)
+GQA: a new dataset for real-world visual reasoning and compositional question answering.
+In Proceedings of the IEEE/CVF Conference on
+Computer Vision and Pattern Recognition,
+pp. 6700–6709.
+Cited by: §5.1.
+[11]
+Y. Li, Y. Du, K. Zhou, J. Wang, X. Zhao, and J. Wen (2023)
+Evaluating object hallucination in large vision-language models.
+In Proceedings of the 2023 Conference on
+Empirical Methods in Natural Language Processing,
+Singapore, pp. 292–305.
+Cited by: §5.1.
+[12]
+H. Liu, C. Li, Y. Li, and Y. J. Lee (2024)
+Improved baselines with visual instruction tuning.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition,
+pp. 26296–26306.
+Cited by: §3.1,
+§5.1,
+§5.1.
+[13]
+Y. Liu, H. Duan, Y. Zhang, B. Li, S. Zhang, W. Zhao, Y. Yuan, J. Wang, C. He, Z. Liu, K. Chen, and D. Lin (2024)
+MMBench: is your multi-modal model an all-around player?.
+In European Conference on Computer Vision,
+pp. 216–233.
+Cited by: §5.1.
+[14]
+J. Mao, J. Huang, A. Toshev, O. Camburu, A. L. Yuille, and K. Murphy (2016)
+Generation and comprehension of unambiguous object descriptions.
+In Proceedings of the IEEE Conference on
+Computer Vision and Pattern Recognition,
+pp. 11–20.
+Cited by: §5.1.
+[15]
+D. Raposo, S. Ritter, B. Richards, T. Lillicrap, P. C. Humphreys, and A. Santoro (2024)
+Mixture-of-depths: dynamically allocating compute in transformer-based language models.
+arXiv preprint arXiv:2404.02258.
+External Links: 2404.02258
+Cited by: §2.2.
+[16]
+Z. Wen, Y. Gao, S. Wang, J. Zhang, Q. Zhang, W. Li, C. He, and L. Zhang (2025)
+Stop looking for “important tokens” in multimodal language models: duplication matters more.
+In Proceedings of the 2025 Conference on
+Empirical Methods in Natural Language Processing,
+Suzhou, China, pp. 9961–9980.
+External Links: Document
+Cited by: §2.1.
+[17]
+L. Xing, Q. Huang, X. Dong, J. Lu, P. Zhang, Y. Zang, Y. Cao, C. He, J. Wang, F. Wu, et al. (2025)
+Conical visual concentration for efficient large vision-language models.
+In 2025 IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR),
+pp. 14593–14603.
+Cited by: Table 1,
+§1,
+§1,
+§2.1,
+§5.1.
+[18]
+C. Yang, Y. Sui, J. Xiao, L. Huang, Y. Gong, C. Li, J. Yan, Y. Bai, P. Sadayappan, X. Hu, and B. Yuan (2025)
+TopV: compatible token pruning with inference time optimization for fast and low-memory multimodal vision language model.
+In IEEE Conf. Comput. Vis. Pattern Recog.,
+pp. 19803–19813.
+Cited by: §2.1.
+[19]
+C. Yang, S. Lo, and Y. Liu (2026)
+Reroute, don’t remove: recoverable visual token routing for vision-language models.
+arXiv preprint arXiv:2606.12412.
+External Links: 2606.12412
+Cited by: Table 1,
+§1,
+§2.2,
+§5.1.
+[20]
+S. Yang, Y. Chen, Z. Tian, C. Wang, J. Li, B. Yu, and J. Jia (2025)
+VisionZip: longer is better but not necessary in vision language models.
+In IEEE Conf. Comput. Vis. Pattern Recog.,
+pp. 19792–19802.
+Cited by: §1,
+§2.1.
+[21]
+W. Ye, Q. Wu, W. Lin, and Y. Zhou (2025)
+Fit and prune: fast and training-free visual token pruning for multi-modal large language models.
+In AAAI,
+Vol. 39, pp. 22128–22136.
+External Links: Document
+Cited by: §2.1.
+[22]
+X. Ye, Y. Gan, Y. Ge, X. Zhang, and Y. Tang (2025)
+ATP-LLaVA: adaptive token pruning for large vision language models.
+In IEEE Conf. Comput. Vis. Pattern Recog.,
+pp. 24972–24982.
+Cited by: §2.1.
+[23]
+L. Yu, P. Poirson, S. Yang, A. C. Berg, and T. L. Berg (2016)
+Modeling context in referring expressions.
+In European Conference on Computer Vision,
+pp. 69–85.
+Cited by: §3.1,
+§5.1.
+[24]
+W. Yu, Z. Yang, L. Li, J. Wang, K. Lin, Z. Liu, X. Wang, and L. Wang (2024)
+MM-vet: evaluating large multimodal models for integrated capabilities.
+In Proceedings of the 41st International Conference
+on Machine Learning,
+Proceedings of Machine Learning Research, Vol. 235, pp. 57730–57754.
+Cited by: §5.1.
+[25]
+Y. Zhang, C. Fan, J. Ma, W. Zheng, T. Huang, K. Cheng, D. A. Gudovskiy, T. Okuno, Y. Nakata, K. Keutzer, and S. Zhang (2025)
+SparseVLM: visual token sparsification for efficient vision-language model inference.
+In Int. Conf. Mach. Learn.,
+pp. 74840–74857.
+Cited by: Table 1,
+§1,
+§1,
+§2.1,
+§5.1.
+Appendix A Implementation Details
+This section provides additional implementation details of CatchUp that are omitted from the main paper for brevity.
+All operations are performed during inference without updating any
+pretrained model parameters.
+A.1 Reversible Routing and Persistent Token States
+CatchUp maintains one persistent logical entry for each original visual token throughout inference.
+Each entry stores the token’s original index, patch-grid position,
+latest hidden representation, and the decoder depth associated with that representation.
+Routing therefore changes whether a visual token participates in decoder computation without permanently discarding its identity, spatial correspondence, or latest available representation.
+At routing layer ℓs\ell_{s}, CatchUp reconstructs the complete candidate set of original visual tokens and computes the query-conditioned relevance scores defined in the main paper.
+The selected set is
+𝒱s=TopKi∈𝒱⁡(ris;Ks),\mathcal{V}_{s}=\operatorname{TopK}_{i\in\mathcal{V}}(r_{i}^{s};K_{s}),
+(13)
+where 𝒱\mathcal{V} denotes the complete set of original visual tokens. For active visual tokens, routing scores are computed from their current hidden representations. For deferred tokens, CatchUp recomputes their routing keys from the cached hidden representations using the key projection of the current routing layer rather than reusing stale keys. Routing is performed at the input to decoder layer ℓs\ell_{s}, before that layer is executed.
+Tokens outside 𝒱s\mathcal{V}_{s} are deferred rather than removed.
+After selection and any required LTC, only the text tokens and visual tokens in 𝒱s\mathcal{V}_{s} are gathered into a compact sequence.
+For s<Ss<S, this sequence is processed through decoder layers ℓs,…,ℓs+1−1\ell_{s},\ldots,\ell_{s+1}-1, after which routing is performed again at the input to layer ℓs+1\ell_{s+1}.
+After the final routing decision, the selected tokens are processed through layers ℓS,…,L−1\ell_{S},\ldots,L-1.
+Selected visual tokens preserve their original relative order when forming this compact sequence.
+After the interval, their updated hidden states are scattered back to
+their corresponding persistent token entries, and their associated
+reference depths are updated accordingly.
+Deferred tokens bypass the decoder interval.
+Their cached hidden representations and associated reference depths
+remain unchanged.
+At the next routing layer, these persistent entries are again included in the complete candidate set, allowing previously deferred tokens to be re-scored and potentially selected again.
+Before the first routing decision, all visual tokens are active, and
+we define 𝒱0=𝒱\mathcal{V}_{0}=\mathcal{V}.
+The set of newly re-admitted tokens at routing layer ℓs\ell_{s} is
+ℛs=𝒱s∖𝒱s−1.\mathcal{R}_{s}=\mathcal{V}_{s}\setminus\mathcal{V}_{s-1}.
+(14)
+Accordingly, ℛ1=∅\mathcal{R}_{1}=\varnothing, since no visual token has
+been deferred before the first routing decision.
+A.2 Need-Based Reference-State Management
+For each visual token ii, CatchUp tracks the reference depth ℓi\ell_{i}
+associated with its latest cached representation.
+When a token remains deferred across multiple routing intervals, both its cached representation and ℓi\ell_{i} remain unchanged.
+Therefore, when token pp is re-admitted at routing layer ℓs\ell_{s}, its cached state corresponds to an earlier decoder depth,
+ℓp<ℓs.\ell_{p}<\ell_{s}.
+(15)
+LTC requires reference anchor representations at the reference depth ℓp\ell_{p} of the re-admitted token.
+To provide these states without retaining the full decoder history,
+CatchUp uses need-based retention of decoder-layer reference snapshots.
+Each reference snapshot stores visual representations indexed by their
+original visual-token positions.
+Following the notation in the main paper, h¯q​[ℓ]\bar{h}_{q}[\ell] denotes the
+stored reference representation of token qq at decoder depth ℓ\ell.
+Reference snapshots reflect the visual states associated with their
+corresponding decoder depths. At a routing layer, newly re-admitted tokens are stored after LTC has been applied, so their corrected states become the corresponding reference states.
+A historical snapshot is retained only while it is required by at least one currently deferred visual token.
+Specifically, if the latest cached representation of any deferred token
+is associated with reference depth ℓ\ell, the corresponding snapshot
+remains live.
+Once no deferred token refers to that layer, the corresponding snapshot is released.
+The current visual-state snapshot is retained as a potential reference for visual tokens that become deferred at the current routing decision.
+It is released once no deferred token requires that layer as its reference.
+Consequently, snapshot retention is determined dynamically by the
+reference layers of currently deferred tokens rather than by a fixed history window.
+This policy avoids storing visual states for every decoder layer and also avoids retaining obsolete reference snapshots after they are no longer needed.
+The retained reference states are used only by LTC and do not introduce additional visual tokens into the decoder computation or KV cache.
+As a defensive fallback, if a required reference snapshot is unavailable, LTC is skipped for the affected token and its cached representation is used without modification.
+A.3 LTC Eligibility and Transition Anchors
+LTC is applied only to newly re-admitted visual tokens
+p∈ℛsp\in\mathcal{R}_{s}.
+For such a token, we define the re-admission gap as
+gp=ℓs−ℓp,g_{p}=\ell_{s}-\ell_{p},
+(16)
+where ℓp\ell_{p} denotes the last active decoder depth that produced its latest cached representation.
+The transition-anchor candidate set is
+ℱs=𝒱s∩𝒱s−1.\mathcal{F}_{s}=\mathcal{V}_{s}\cap\mathcal{V}_{s-1}.
+(17)
+Since ℱs∩ℛs=∅\mathcal{F}_{s}\cap\mathcal{R}_{s}=\varnothing, a newly re-admitted token is not eligible to serve as an anchor at the same routing layer. A token re-admitted at an earlier routing layer can, however, become an anchor at a subsequent routing layer if it remains selected.
+Accordingly, a token in ℱs\mathcal{F}_{s} is selected at both consecutive routing layers and has been updated through the immediately preceding decoder interval.
+When fewer than MM candidate anchors are available, all available candidates are used.
+If the required reference snapshot is unavailable, LTC is not applied and the cached representation of pp remains unchanged.
+A.4 Semantic–Spatial Anchor Selection
+For LLaVA-1.5, the 576 visual tokens correspond to a
+24×2424\times 24 patch grid.
+Let (yi,xi)(y_{i},x_{i}) denote the grid coordinate of visual token ii, where
+yi,xi∈{0,…,23}.y_{i},x_{i}\in\{0,\ldots,23\}.
+(18)
+We normalize the two spatial axes independently to [0,1][0,1]:
+𝐩i=(yi23,xi23).\mathbf{p}_{i}=\left(\frac{y_{i}}{23},\frac{x_{i}}{23}\right).
+(19)
+The spatial distance between re-admitted token pp and candidate anchor qq is the Euclidean distance between their normalized patch-grid coordinates:
+dsp​(p,q)=‖𝐩p−𝐩q‖2.d_{\mathrm{sp}}(p,q)=\left\|\mathbf{p}_{p}-\mathbf{p}_{q}\right\|_{2}.
+(20)
+The maximum horizontal or vertical displacement is therefore 11, and the maximum diagonal distance is 2\sqrt{2}.
+Semantic similarity is evaluated using the retained visual-state snapshot
+associated with the reference depth of the re-admitted token.
+Specifically, the cached representation hp​[ℓp]h_{p}[\ell_{p}] is compared with the stored candidate representation h¯q​[ℓp]\bar{h}_{q}[\ell_{p}].
+This provides a common reference for comparing the deferred token and candidate anchors without directly comparing a stale state with a current-depth state.
+Candidate anchors are ranked according to the semantic–spatial score defined in the main paper,
+ap​q=cos⁡(hp​[ℓp],h¯q​[ℓp])−λ​dsp​(p,q),a_{pq}=\cos\left(h_{p}[\ell_{p}],\bar{h}_{q}[\ell_{p}]\right)-\lambda d_{\mathrm{sp}}(p,q),
+(21)
+and at most MM highest-ranked candidates are retained.
+Their scores are converted into normalized aggregation weights using the temperature τ\tau defined in the main paper.
+A.5 Transition Computation and State Update
+For each selected anchor q∈𝒩pq\in\mathcal{N}_{p}, CatchUp computes its
+reference-to-current representation transition,
+δp​q=hq​[ℓs]−h¯q​[ℓp].\delta_{pq}=h_{q}[\ell_{s}]-\bar{h}_{q}[\ell_{p}].
+(22)
+The transition estimated for re-admitted token pp is then
+Δ​hp=∑q∈𝒩pwp​q​(hq​[ℓs]−h¯q​[ℓp]),\Delta h_{p}=\sum_{q\in\mathcal{N}_{p}}w_{pq}\left(h_{q}[\ell_{s}]-\bar{h}_{q}[\ell_{p}]\right),
+(23)
+where wp​qw_{pq} denotes the normalized semantic–spatial anchor weight.
+LTC applies this estimated transition to the token’s own cached
+representation:
+h^p=hp​[ℓp]+γ​Δ​hp.\widehat{h}_{p}=h_{p}[\ell_{p}]+\gamma\Delta h_{p}.
+(24)
+This implementation transfers the local change in representation rather than directly mixing absolute current-depth anchor states.
+The token’s own cached representation therefore remains the base state, while the anchor transitions approximate the representation evolution missed during deferral.
+The corrected state h^p\widehat{h}_{p} directly replaces the stale cached representation and is used when token pp resumes active computation through the subsequent decoder interval.
+A.6 Fixed Implementation Configuration
+All CatchUp hyperparameters are fixed before evaluation and shared across datasets and visual-token budgets.
+We do not perform benchmark-specific or sample-specific tuning.
+The default configuration is summarized in
+Table 7.
+Parameter
+Setting
+Routing layers
+{2,7,15,23}\{2,7,15,23\}
+Number of anchors MM
+8
+Spatial weight λ\lambda
+0.15
+Temperature τ\tau
+0.07
+Transition scale γ\gamma
+0.80
+Snapshot retention
+Need-based
+Table 7:
+Fixed implementation configuration used for CatchUp.
+The same routing and LTC parameters are used across datasets and visual-token budgets.
+Appendix B CatchUp Inference Algorithm
+The overall inference procedure of CatchUp is summarized in
+Algorithm 1. Detailed state management and anchor construction are
+described in Appendix A.
+Algorithm 1  CatchUp Inference
+1:
+Visual tokens 𝒱\mathcal{V} and text tokens 𝒯\mathcal{T} at the first routing layer ℓ1\ell_{1}, routing layers {ℓs}s=1S\{\ell_{s}\}_{s=1}^{S}, token budgets {Ks}s=1S\{K_{s}\}_{s=1}^{S}
+2:
+Initialize persistent states for all i∈𝒱i\in\mathcal{V}
+3:
+𝒱0←𝒱\mathcal{V}_{0}\leftarrow\mathcal{V}
+4:
+for s=1,…,Ss=1,\ldots,S do
+5:
+Compute relevance scores {ris}i∈𝒱\{r_{i}^{s}\}_{i\in\mathcal{V}}
+from the complete visual-token candidate set
+6:
+𝒱s←TopKi∈𝒱⁡(ris;Ks)\mathcal{V}_{s}\leftarrow\operatorname{TopK}_{i\in\mathcal{V}}(r_{i}^{s};K_{s})
+7:
+ℛs←𝒱s∖𝒱s−1\mathcal{R}_{s}\leftarrow\mathcal{V}_{s}\setminus\mathcal{V}_{s-1}
+8:
+for all p∈ℛsp\in\mathcal{R}_{s} do
+9:
+Construct transition anchors 𝒩p\mathcal{N}_{p} and weights
+{wp​q}q∈𝒩p\{w_{pq}\}_{q\in\mathcal{N}_{p}}
+10:
+if 𝒩p≠∅\mathcal{N}_{p}\neq\varnothing then
+11:
+Δ​hp←∑q∈𝒩pwp​q​(hq​[ℓs]−h¯q​[ℓp])\displaystyle\Delta h_{p}\leftarrow\sum_{q\in\mathcal{N}_{p}}w_{pq}\bigl(h_{q}[\ell_{s}]-\bar{h}_{q}[\ell_{p}]\bigr)
+12:
+h^p←hp​[ℓp]+γ​Δ​hp\widehat{h}_{p}\leftarrow h_{p}[\ell_{p}]+\gamma\Delta h_{p}
+13:
+else
+14:
+h^p←hp​[ℓp]\widehat{h}_{p}\leftarrow h_{p}[\ell_{p}]
+15:
+end if
+16:
+Replace the persistent state of pp with h^p\widehat{h}_{p}
+17:
+end for
+18:
+Update reference snapshots required by deferred tokens
+19:
+Process 𝒯∪𝒱s\mathcal{T}\cup\mathcal{V}_{s}
+through the subsequent decoder interval
+20:
+Update persistent states of selected visual tokens
+21:
+end for
+22:
+return model output
+Appendix C Additional Experiments
+This section provides additional experimental details and analyses supporting the main paper.
+Experimental settings specific to each motivating observation are described below. Unless otherwise specified, the subsequent ablation and representation analyses use LLaVA-1.5-7B with the 64-token routing budget and the same CatchUp configuration as in the main paper.
+Average retention.
+For the main results, Avg. Retention is computed as
+Avg.Retention=1N​∑i=1NsisiFull×100,\mathrm{Avg.~Retention}=\frac{1}{N}\sum_{i=1}^{N}\frac{s_{i}}{s_{i}^{\mathrm{Full}}}\times 100,
+(25)
+where sis_{i} and siFulls_{i}^{\mathrm{Full}} denote the performance of the evaluated method and the dense model, respectively.
+We use N=8N=8 for visual grounding and N=6N=6 for the multimodal benchmarks.
+C.1 Additional Details for Motivating Observations
+We provide additional protocol and metric details for the motivating
+observations in the main paper.
+Observation I protocol.
+The evidence-dynamics analysis uses 500 RefCOCO samples with
+LLaVA-1.5-7B under full-token inference with all 576 visual tokens.
+At each decoder layer, query-conditioned relevance is measured using the
+post-softmax attention from the last text token to each visual token,
+averaged over attention heads.
+We use K=64K=64 and decoder layer 2, corresponding to the first routing layer in our routing configuration, as the reference depth.
+Relevance volatility and the late-emerging evidence ratio (LER) are
+computed as defined in the main paper.
+For reference, two independently sampled top-64 subsets from 576 visual
+tokens have an expected LER of 1−64/576=88.89%1-64/576=88.89\%.
+Stale–oracle routing agreement.
+For the routing diagnostic in Observation II, stale and current-depth oracle routing use the same current-layer text query and the same key projection of the current routing layer.
+They differ only in the visual representation used to construct each key.
+Let ℓis\ell_{i}^{s} denote the reference depth associated with visual token
+ii’s latest available representation before routing at ℓs\ell_{s}.
+The two routing scores are
+ri,stales=Attn⁡(qℓs,Kℓs​(hi​[ℓis])),r_{i,\mathrm{stale}}^{s}=\operatorname{Attn}\left(q^{\ell_{s}},K_{\ell_{s}}(h_{i}[\ell_{i}^{s}])\right),
+(26)
+and
+ri,oracles=Attn⁡(qℓs,Kℓs​(hi,full​[ℓs])).r_{i,\mathrm{oracle}}^{s}=\operatorname{Attn}\left(q^{\ell_{s}},K_{\ell_{s}}(h_{i,\mathrm{full}}[\ell_{s}])\right).
+(27)
+Here, hi​[ℓis]h_{i}[\ell_{i}^{s}] is the token’s latest available representation, while hi,full​[ℓs]h_{i,\mathrm{full}}[\ell_{s}] is the representation of the same token at the current decoder depth from a separate full-token reference trajectory.
+The oracle scores are used only for diagnostic comparison and never alter the actual stale-state routing trajectory.
+For sample nn, let 𝒱stale,ns\mathcal{V}_{\mathrm{stale},n}^{s} and 𝒱oracle,ns\mathcal{V}_{\mathrm{oracle},n}^{s} denote the resulting top-KsK_{s} selections at routing stage ss.
+Overall Top-KK Overlap is micro-averaged across all evaluated
+sample–routing-stage events:
+Overlap​@​K=∑n,s|𝒱stale,ns∩𝒱oracle,ns|∑n,sKs.\operatorname{Overlap@K}=\frac{\sum_{n,s}\left|\mathcal{V}_{\mathrm{stale},n}^{s}\cap\mathcal{V}_{\mathrm{oracle},n}^{s}\right|}{\sum_{n,s}K_{s}}.
+(28)
+Let
+𝒟ns=𝒱∖𝒱stale,ns−1\mathcal{D}_{n}^{s}=\mathcal{V}\setminus\mathcal{V}_{\mathrm{stale},n}^{s-1}
+(29)
+denote the tokens deferred by the actual stale-routing trajectory
+immediately before routing stage ss.
+The stale and oracle re-admission sets are
+ℛstale,ns=𝒱stale,ns∩𝒟ns,ℛoracle,ns=𝒱oracle,ns∩𝒟ns.\mathcal{R}_{\mathrm{stale},n}^{s}=\mathcal{V}_{\mathrm{stale},n}^{s}\cap\mathcal{D}_{n}^{s},\qquad\mathcal{R}_{\mathrm{oracle},n}^{s}=\mathcal{V}_{\mathrm{oracle},n}^{s}\cap\mathcal{D}_{n}^{s}.
+(30)
+Re-admission Recall@K measures the fraction of oracle-selected deferred
+tokens that are also selected by stale routing and is likewise
+micro-averaged across sample–routing-stage events:
+ReAdmRecall​@​K=∑n,s|ℛstale,ns∩ℛoracle,ns|∑n,s|ℛoracle,ns|.\operatorname{ReAdmRecall@K}=\frac{\sum_{n,s}\left|\mathcal{R}_{\mathrm{stale},n}^{s}\cap\mathcal{R}_{\mathrm{oracle},n}^{s}\right|}{\sum_{n,s}\left|\mathcal{R}_{\mathrm{oracle},n}^{s}\right|}.
+(31)
+The first routing stage is excluded from both agreement metrics because no visual token has yet been deferred.
+For the random reference, we uniformly sample the same number of visual
+tokens as the corresponding stale-routing selection and compute the same
+agreement metrics.
+Mean and standard deviation are reported over five random seeds.
+Oracle-state intervention.
+To isolate the effect of representation staleness after re-admission, we
+replay a fixed routing trajectory and hold the selected and deferred token sets and the visual-token budget unchanged at every routing layer.
+Only newly re-admitted token states are modified.
+For each j∈ℛsj\in\mathcal{R}_{s}, the stale condition retains its cached state, whereas the current-depth oracle condition replaces it with
+hj,full​[ℓs]h_{j,\mathrm{full}}[\ell_{s}] from a separate full-token reference
+trajectory at the same decoder depth.
+All other token states are left unchanged at each intervention point.
+The full-token reference trajectory is used only for this diagnostic
+analysis and is not required by CatchUp inference.
+C.2 Ablation Variant Definitions
+We provide additional details for the component and anchor-selection
+ablations reported in the main paper.
+Unless stated otherwise, all variants use the same routing layers,
+visual-token budget, and hyperparameters as CatchUp, and differ only in
+the component being ablated.
+Component-ablation variants.
+Monotonic Compact Routing uses compact visual-token execution but
+does not permit re-admission: once a visual token is excluded, it remains
+unavailable at subsequent routing layers.
+CatchUp w/o LTC enables reversible routing over the complete
+visual-token set, but applies no correction when a deferred token is
+re-admitted. The token therefore resumes computation directly from its
+cached stale representation.
+Absolute-State Mixing uses the same reversible routing and semantic–spatial anchor construction as CatchUp, but replaces transition transfer with direct mixing of current-depth anchor states.
+For a re-admitted token pp, we first aggregate the current representations of its selected anchors,
+hpanchor=∑q∈𝒩pwp​q​hq​[ℓs],h_{p}^{\mathrm{anchor}}=\sum_{q\in\mathcal{N}_{p}}w_{pq}h_{q}[\ell_{s}],
+(32)
+and update the re-admitted representation as
+h^p=(1−β)​hp​[ℓp]+β​hpanchor,\widehat{h}_{p}=(1-\beta)h_{p}[\ell_{p}]+\beta h_{p}^{\mathrm{anchor}},
+(33)
+where β=0.2\beta=0.2.
+Thus, Absolute-State Mixing directly incorporates the anchors’ current representations, whereas LTC transfers only their reference-to-current representation changes, as described in Section A.5.
+This comparison isolates whether the useful correction signal lies in the absolute anchor states or in the representation transitions they undergo.
+Anchor-selection variants.
+The anchor-selection ablation keeps the LTC transition-residual update fixed
+and changes only how anchors are selected from the valid candidate set
+ℱs\mathcal{F}_{s} defined in Section A.3.
+Random uniformly samples up to MM valid candidate anchors and assigns them uniform aggregation weights.
+Spatial ranks candidate anchors using only normalized patch-grid
+proximity,
+ap​qsp=−dsp​(p,q).a_{pq}^{\mathrm{sp}}=-d_{\mathrm{sp}}(p,q).
+(34)
+Semantic ranks candidate anchors using only representation similarity
+at the re-admitted token’s reference depth,
+ap​qsem=cos⁡(hp​[ℓp],h¯q​[ℓp]).a_{pq}^{\mathrm{sem}}=\cos\left(h_{p}[\ell_{p}],\bar{h}_{q}[\ell_{p}]\right).
+(35)
+Semantic + Spatial, used by CatchUp, combines the two cues,
+ap​qsem+sp=cos⁡(hp​[ℓp],h¯q​[ℓp])−λ​dsp​(p,q).a_{pq}^{\mathrm{sem+sp}}=\cos\left(h_{p}[\ell_{p}],\bar{h}_{q}[\ell_{p}]\right)-\lambda d_{\mathrm{sp}}(p,q).
+(36)
+For the score-based variants, the top-MM candidates are retained and
+their aggregation weights are obtained using the same softmax weighting
+procedure as in the main method.
+C.3 Representation Alignment of Re-Admitted Tokens
+We first examine whether LTC moves a stale re-admitted representation toward the representation that the same token would have obtained had it been processed continuously to the current decoder depth.
+For analysis only, we obtain this oracle representation from a separate
+full-token reference trajectory.
+This full-token reference trajectory is never used during CatchUp inference.
+For a re-admission event of token pp at routing layer ℓs\ell_{s}, let hp,full​[ℓs]h_{p,\mathrm{full}}[\ell_{s}] denote the same token’s representation at the corresponding decoder depth in the full-token reference trajectory.
+Given a re-admitted representation h^p​[ℓs]\hat{h}_{p}[\ell_{s}], we measure
+directional alignment using cosine similarity,
+CosSim=cos⁡(h^p​[ℓs],hp,full​[ℓs]),\operatorname{CosSim}=\cos\left(\hat{h}_{p}[\ell_{s}],h_{p,\mathrm{full}}[\ell_{s}]\right),
+(37)
+and overall representation discrepancy using normalized ℓ2\ell_{2} distance,
+NormL2=‖h^p​[ℓs]−hp,full​[ℓs]‖2‖hp,full​[ℓs]‖2+ϵ,\operatorname{NormL2}=\frac{\left\|\hat{h}_{p}[\ell_{s}]-h_{p,\mathrm{full}}[\ell_{s}]\right\|_{2}}{\left\|h_{p,\mathrm{full}}[\ell_{s}]\right\|_{2}+\epsilon},
+(38)
+where ϵ\epsilon is a small constant for numerical stability.
+Higher cosine similarity and lower normalized ℓ2\ell_{2} distance indicate
+better alignment with the current-depth oracle state.
+We compare three variants:
+Stale, which re-admits the cached representation without
+correction;
+Absolute-State Mixing, which directly mixes current-depth anchor
+states into the re-admitted representation;
+and LTC, which transfers the local representation transition
+defined in the main paper.
+Table 8:
+Representation alignment of re-admitted visual tokens on 500 common RefCOCO validation samples.
+The number of re-admission events can differ across variants because representation correction can affect subsequent routing trajectories.
+Higher cosine similarity and lower normalized ℓ2\ell_{2} distance are better.
+Variant
+Events
+Cos. ↑\uparrow
+Norm. ℓ2\ell_{2} ↓\downarrow
+Stale
+37,533
+0.6299
+0.8557
+Absolute-State Mixing
+36,573
+0.6241
+0.9513
+LTC
+36,959
+0.7373
+0.6893
+As shown in Table 8, stale re-admitted representations exhibit a substantial mismatch with their same-token current-depth counterparts.
+Absolute-State Mixing yields lower aggregate cosine similarity and higher normalized ℓ2\ell_{2} distance than the stale variant, whereas LTC achieves substantially better alignment on both metrics.
+Specifically, LTC increases cosine similarity from 0.6299 to 0.7373 and reduces normalized ℓ2\ell_{2} distance from 0.8557 to 0.6893.
+These results support transition transfer as a more appropriate mechanism for approximating skipped representation evolution than directly mixing absolute current-depth states.
+Matched Re-Admission Events.
+Because the three variants can induce different subsequent routing trajectories, the aggregate statistics above are not computed over exactly the same set of re-admission events.
+We therefore additionally compare LTC and Absolute-State Mixing only on matched events corresponding to the same sample, routing layer, and visual token.
+Among 35,512 such events, LTC achieves higher cosine similarity than Absolute-State Mixing in 99.38% of cases and lower normalized ℓ2\ell_{2} distance in 93.10% of cases.
+This matched-event comparison further confirms that the improvement of LTC is not explained merely by differences in the resulting routing trajectories.
+C.4 Effect of Re-Admission Gap
+We next analyze representation alignment as a function of the amount of decoder computation skipped by a deferred token.
+For a token re-admitted at routing layer ℓs\ell_{s} whose latest cached
+representation is associated with reference depth ℓp\ell_{p}, we define its
+re-admission gap as
+gp=ℓs−ℓp.g_{p}=\ell_{s}-\ell_{p}.
+(39)
+Larger gaps correspond to tokens that bypass a greater amount of intermediate decoder computation.
+For example, a token whose latest cached representation is associated
+with depth 6, deferred at routing layer 7, and re-admitted at layer 15
+has gp=15−6=9g_{p}=15-6=9.
+Table 9:
+Representation alignment across different re-admission gaps.
+Absolute denotes Absolute-State Mixing.
+Larger gaps correspond to more skipped decoder computation.
+LTC improves directional alignment across all gap ranges.
+Cosine Similarity ↑\uparrow
+Normalized ℓ2\ell_{2} ↓\downarrow
+Gap
+Stale
+Absolute
+LTC
+Stale
+Absolute
+LTC
+5–8
+0.8066
+0.8342
+0.9132
+0.6914
+0.6044
+0.4219
+9–12
+0.4926
+0.4237
+0.5949
+0.9363
+1.3429
+0.8757
+13+
+0.3947
+0.3326
+0.4944
+1.0834
+1.4216
+1.0640
+Table 9 shows that representation staleness becomes more severe as the skipped depth increases.
+For example, the cosine similarity of the uncorrected stale state decreases from 0.8066 for gaps of 5–8 layers to 0.3947 for gaps of 13 or more layers.
+LTC consistently improves cosine similarity across all three gap ranges, reaching 0.9132, 0.5949, and 0.4944, respectively.
+The same general trend is observed with normalized ℓ2\ell_{2} distance.
+LTC substantially reduces the discrepancy for short and medium gaps and continues to provide an improvement for gaps of 13 or more layers.
+The smaller normalized-ℓ2\ell_{2} improvement at the largest gaps is consistent with LTC being a local approximation of skipped nonlinear decoder transformations rather than an exact reconstruction.
+C.5 Sensitivity to Routing-Layer Placement
+We additionally examine whether CatchUp is sensitive to the exact placement of routing layers.
+We compare the default routing schedule with alternative schedules while keeping the 64-token routing setting and all other CatchUp hyperparameters unchanged.
+Table 10:
+Sensitivity to routing-layer placement under the 64-token routing setting.
+All variants use the same CatchUp configuration and differ only in the routing-layer schedule.
+RefCOCO reports average Acc@0.5 over val, TestA, and TestB.
+Routing Schedule
+Routing Layers
+RefCOCO ↑\uparrow
+POPE ↑\uparrow
+VQAv2 ↑\uparrow
+Early-concentrated
+{2,5,11,19}\{2,5,11,19\}
+18.26
+77.54
+70.66
+Uniform
+{2,10,18,26}\{2,10,18,26\}
+18.45
+77.01
+71.38
+Default
+{𝟐,𝟕,𝟏𝟓,𝟐𝟑}\mathbf{\{2,7,15,23\}}
+21.26
+76.62
+70.56
+Later-shifted
+{3,9,17,25}\{3,9,17,25\}
+17.08
+76.24
+70.83
+As shown in Table 10, the default schedule achieves the best RefCOCO performance, while POPE and VQAv2 remain relatively stable across routing-layer placements.
+This suggests that fine-grained grounding is more sensitive to the exact routing placement than general multimodal performance.
+We therefore use {2,7,15,23}\{2,7,15,23\} as the default routing configuration throughout the main experiments.
+Table 11:
+Results on the additional Qwen2.5-VL-7B-Instruct backbone across three average visual-token budgets.
+RefCOCO reports average Acc@0.5 over val, TestA, and TestB.
+Method
+RefCOCO ↑\uparrow
+POPE ↑\uparrow
+VQAv2 ↑\uparrow
+Qwen2.5-VL-7B-Instruct
+85.91
+87.30
+78.90
+Avg. Visual Tokens = 192
+FastV (ECCV’24)
+46.25
+84.63
+71.30
+PyramidDrop (CVPR’25)
+55.86
+84.69
+74.70
+ReRoute (arXiv’26)
+58.24
+85.66
+77.50
+CatchUp (Ours)
+62.41
+86.02
+77.50
+Avg. Visual Tokens = 128
+FastV (ECCV’24)
+19.62
+79.11
+66.30
+PyramidDrop (CVPR’25)
+26.60
+80.16
+67.70
+ReRoute (arXiv’26)
+33.68
+82.81
+73.90
+CatchUp (Ours)
+33.71
+82.74
+73.97
+Avg. Visual Tokens = 64
+FastV (ECCV’24)
+1.76
+49.27
+38.90
+PyramidDrop (CVPR’25)
+10.23
+69.63
+57.30
+ReRoute (arXiv’26)
+17.29
+77.33
+65.60
+CatchUp (Ours)
+18.13
+77.97
+65.57
+C.6 Additional Backbone
+We further evaluate CatchUp on Qwen2.5-VL-7B-Instruct [2] to examine whether its effectiveness transfers beyond the LLaVA-1.5 backbone.
+We use the same routing layers {2,7,15,23}\{2,7,15,23\} and LTC hyperparameters as in the main LLaVA-1.5 experiments.
+We compare against representative efficient methods across average visual-token budgets of 64, 128, and 192.
+As shown in Table 11, CatchUp achieves the best RefCOCO accuracy at all three visual-token budgets and the best or tied-best result in seven of the nine budget–benchmark comparisons.
+The two remaining differences from ReRoute are only 0.07 points on POPE at 128 tokens and 0.03 points on VQAv2 at 64 tokens.
+These results show that the effectiveness of CatchUp transfers consistently to a different LVLM backbone.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

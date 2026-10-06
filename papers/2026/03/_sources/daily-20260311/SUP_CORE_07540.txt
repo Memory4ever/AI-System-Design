@@ -1,0 +1,1272 @@
+How Long Can Unified Multimodal Models Generate Images Reliably? Taming Long-Horizon Interleaved Image Generation via Context Curation
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Related Work
+2.1 Unified Multimodal Models
+2.2 Interleaved Generation
+3 Quality Collapse in Long Interleaved Sequences
+3.1 Problem setting and phenomenon
+3.2 Observation 1: Image count matters more than token count
+3.3 Observation 2: Modality-Asymmetric Failure under Long History
+Text history dilutes; image history pollutes.
+The unique risk of dense visual history.
+4 Mechanism: Attention Hijacking via Visual Pollution
+4.1 Visual Competition and Attention Budget Collapse
+Attention Entropy Grows with Context.
+Competing History Erodes Key References.
+4.2 Active Pollution from Tail-Risk Hijacking
+Phenomenon: image history induces heavy-tailed matches and top-heavy attention.
+Softmax amplifies tail risk into hijacking, turning dilution into corruption.
+4.3 Step- and layer-wise specialization
+5 UniLongGen: Self-Guided Context Curation to Prevent Visual Attention Hijacking
+5.1 Attention-Based Relevance Scoring
+5.2 Model-Aligned Dual Probing
+Text Selection (Grounding).
+Image Selection (Synthesis).
+5.3 KV Eviction During Generation
+6 Experiments
+6.1 Experimental setup
+Additional results in the appendix.
+6.2 Main results and design-space ablations
+(A) Baselines: why dense KV fails, and why recency windows are brittle.
+(B) Probe design: one probe is not enough; depth matters.
+(C) What to keep: event-level selection matches the bottleneck and removes tail risk.
+(D) Discard handling: eviction beats summarization.
+(E) Choosing the VAE probing layer ℓsyn\ell_{\text{syn}}.
+Takeaway.
+6.3 Qualitative results
+6.4 Efficiency Comparison
+6.5 Qualitative late-horizon comparison.
+6.6 Model-aligned beats oracle semantic retention
+Why oracle relevance can hurt.
+7 Conclusion
+References
+A Additional Analysis
+A.1 Depth-wise modality flow and Text–VAE competition in history
+A.2 Step-wise reallocation: history vs. current attention
+A.3 Analysis of UniLongGen Selection Results
+Text Turn Selection.
+Image Turn Selection.
+A.4 Relation to Long-Context Methods
+A.5 Limitations
+B Benchmark and Evaluation Details
+B.1 Long-Horizon Narrative Benchmark
+Dataset Construction.
+Interleaved Structure.
+Task Formulation.
+Subject Recurrence Strategy.
+B.2 Evaluation Metrics
+Per-image quality and prompt adherence.
+Long-horizon consistency.
+C Implementation Details
+C.1 Model and Architecture
+C.2 Classifier-Free Guidance Configuration
+Dual-branch CFG with text- and image-specific pre-contexts.
+Construction of 𝒞text\mathcal{C}_{\text{text}} (cfg_text).
+Construction of 𝒞img\mathcal{C}_{\text{img}} (cfg_img).
+Guidance parameters and schedule.
+C.3 Attention Misallocation under Redundant Image History
+Scene and history design.
+Attention measurement.
+D Generalization Across Unified Models
+Adapting the probe to the AR attention signature.
+Results and interpretation.
+E Additional Results
+Position-wise curves.
+F Additional Ablations
+F.1 Token-level vs. image-level selection.
+F.2 Pre-Softmax vs. Post-Softmax
+License: arXiv.org perpetual non-exclusive license
+arXiv:2603.07540v1 [cs.CV] 08 Mar 2026
+How Long Can Unified Multimodal Models Generate Images Reliably?
+Taming Long-Horizon Interleaved Image Generation via Context Curation
+Haoyu Chen
+Affiliation: The Hong Kong University of Science and Technology (Guangzhou)
+Qing Liu
+Affiliation: Adobe Research
+Yuqian Zhou
+Affiliation: Adobe Research
+He Zhang
+Affiliation: Adobe Research
+Zhaowen Wang
+Affiliation: Adobe Research
+Mengwei Ren
+Affiliation: Adobe Research
+Jingjing Ren
+Affiliation: The Hong Kong University of Science and Technology (Guangzhou)
+Xiang Wang
+Affiliation: Huazhong University of Science and Technology
+Zhe Lin
+Affiliation: Adobe Research
+Lei Zhu
+Affiliation: The Hong Kong University of Science and Technology (Guangzhou)
+Affiliation: The Hong Kong University of Science and Technology
+Correspondence to: leizhu@hkust-gz.edu.cn
+Abstract
+Unified multimodal models hold the promise of generating extensive, interleaved narratives, weaving text and imagery into coherent long-form stories.
+However, current systems suffer from a critical reliability gap: as sequences grow, generation quality rapidly collapses.
+In this work, we investigate the mechanism behind this failure and argue that it is distinct from standard long-context challenges.
+We reveal that in generation, accumulated visual history acts as a source of active pollution, a decay governed specifically by the number of image events rather than raw token count. We identify a structural vulnerability where dense visual tokens overwhelm the attention mechanism, creating ”noise” that distorts future synthesis.
+Guided by these mechanistic insights, we propose UniLongGen, a training-free inference strategy that prioritizes safe conditioning over total recall. Instead of retaining all history, UniLongGen dynamically curates the model’s memory, identifying and discarding interfering visual signals based on the model’s own internal relevance rankings. Extensive experiments demonstrate that this ”active forgetting” approach is essential for stability: UniLongGen significantly outperforms baselines in long-horizon fidelity and consistency, while simultaneously reducing memory footprint and inference time.
+Keywords: Unified multimodal models, long-horizon generation, context management, attention
+Figure 1: UniLongGen enables long-horizon interleaved image generation in a single unified sequence.
+It generates over 40 images while maintaining high visual quality and cross-image consistency.
+Figure 2: Generation quality degrades as sequence length increases (1024×5761024{\times}576).
+Left: Normalized scores for four metrics (Consistency, Quality, HPS v3, PickScore) across a 40-image sequence, averaged over multiple runs (shaded bands indicate variance). All metrics remain relatively stable during the first ∼\sim20 images, then undergo a sharp collapse.
+Right: Representative samples at different positions. Early shots exhibit high visual fidelity and coherent scene composition, whereas later shots deteriorate into severe artifacts, structural distortions, and ultimately unrecognizable outputs.
+1 Introduction
+Unified multimodal models (UMMs) are rapidly moving from “describe an image” systems to general-purpose generators that plan, reason, and render in a single autoregressive stream. In this unified setting, a model may write a paragraph, generate an image, continue the narrative, generate the next image, and iterate for dozens of interleaved turns—enabling applications such as character-consistent illustrated stories, long-form storyboarding, and iterative visual design. Yet practitioners repeatedly observe a critical reliability gap: long-horizon interleaved generation collapses. As sequences grow, image quality deteriorates, structure breaks down, and core attributes such as identity and style drift—despite strong performance in short contexts.
+Why does this collapse occur? A conventional hypothesis suggests this is merely a manifestation of the ”long-context problem,” attributable to token overflow or memory constraints. However, we argue that the bottleneck in unified generation is driven by a profound modality asymmetry within the historical context. We observe that in text-dominant sequences, history behaves like an evidence pool: while distant information may fade, preserving more content generally supports better grounding via passive retrieval. In contrast, in vision-heavy interleaved generation, history serves as a dynamic conditioning signal that actively steers the synthesis trajectory. Through a systematic diagnosis, we uncover a structural vulnerability inherent to the unified autoregressive paradigm: Attention Competition under Dense Visual History. Unlike sparse text, long-horizon interleaved generation accumulates many previously generated images, each introducing a large set of visual tokens. As these blocks grow, they yield a ”heavy-tailed” noise distribution in attention: numerous (often irrelevant) historical visual keys become active competitors, and occasional spurious high-similarity outliers can be exponentially amplified by Softmax to hijack attention, injecting harmful signals that destabilize the current synthesis step.
+Our diagnostic analysis yields two primary insights. First, we find that generation quality degrades not as a function of raw token count, but of the number of discrete image events. A model may seamlessly accommodate 100k textual tokens but collapse after fewer than 20 images, suggesting an ”Effective Multimodal Context Length” governed by how many distinct visual events the Softmax mechanism can resolve before saturation. Second, we identify that visual history is uniquely detrimental because it can actively corrupt, not merely dilute, the conditioning signal. While long text history typically causes passive dilution (leading to vague or weakly grounded outputs), dense visual history induces active pollution: spurious high-similarity matches within historical visual keys capture disproportionate attention mass. This injects incorrect high-frequency details into the current synthesis step, producing structural artifacts and identity/style corruption.
+These findings suggest that long-horizon interleaved generation should prioritize safe conditioning over “remembering everything.” To maintain fidelity, the model must actively curate its history by suppressing or removing competing historical visual signals that can hijack attention and destabilize synthesis.
+Guided by these mechanistic insights, we propose UniLongGen (UNIfied multimodal Context Optimization for interleaved image geneRatioN), a training-free, inference-time context curation policy for long interleaved generation. UniLongGen avoids external retrievers or hand-crafted semantic heuristics, which can be misaligned with the model’s generative needs. Instead, it probes the model’s own internal relevance signals via a one-shot attention probing pass with dense history, then derives relevance from two complementary depths that reflect layer specialization: (i) an early, text-dependent layer to score historical text blocks for grounding, and (ii) a late, VAE-dominant layer to score historical image blocks for synthesis. We then apply a simple layer-split KV visibility policy throughout generation: early layers attend to the text-filtered history, while late layers attend to the image-filtered history. We implement curation by dropping non-selected tokens directly from the KV cache (rather than compressing them), since compression often preserves spurious “competitors,” and can even amplify them, whereas direct dropping more effectively removes the dense visual pollution driving the bottleneck. This reduces softmax competition without introducing distribution-shifting synthetic features.
+Our contributions are threefold:
+•
+Systematic measurement of long-horizon degradation. We provide reproducible long interleaved generation settings and position-wise degradation curves, introducing effective multimodal context length and the event bottleneck as diagnostic targets.
+•
+Mechanistic attention diagnosis for unified generation. We identify interacting mechanisms (dilution, sink tokens, reference erosion) and establish the modality-specific asymmetry between passive dilution (text-heavy history) and active visual pollution (dense visual history), yielding actionable design principles for robust long-horizon synthesis.
+•
+A training-free context curation policy. We propose UniLongGen, a plug-and-play inference-time strategy that leverages model-internal attention signals via one-shot probing and enforces a fixed, layer-split KV visibility policy, improving long-horizon fidelity and identity/style consistency while reducing KV-cache footprint.
+2 Related Work
+2.1 Unified Multimodal Models
+Unified Multimodal Models (UMMs) unify multimodal understanding and generation in a single architecture, broadly following two generative paradigms.
+Pure autoregressive (AR) models tokenize all modalities into one sequence for next-token prediction: Chameleon (Team, 2024) pioneers early-fusion with a unified vocabulary, while Emu3 (Wang et al., 2024) shows next-token prediction alone can be strong. Follow-ups mainly vary visual tokenization, from pixel-level codes (Li et al., 2025) to high-resolution semantic tokens (Lin et al., 2025; Wang et al., 2025a; Jiao et al., 2025; Qu et al., 2025) and learnable query-based representations (Pan et al., 2025; Chen et al., 2025a).
+Hybrid AR-diffusion models pair an AR LLM with a diffusion/flow decoder: Transfusion (Zhou et al., 2024) jointly trains next-token prediction and diffusion; Show-o (Xie et al., 2024; Xie et al., ) unifies both via omni-attention; JanusFlow (Ma et al., 2025) combines autoregression with rectified flow. LMFusion (Shi et al., 2024) adapts pre-trained LLMs for multimodal generation, and VINO (Chen et al., 2026) extends to interleaved omnimodal contexts; other notable models include Hunyuan-Image 3.0 (Cao et al., 2025), NextFlow (Zhang et al., 2026), OmniGen2 (Wu et al., 2025), and Uni-X (Hao et al., 2025).
+To mitigate modality heterogeneity, MoE-style designs such as BAGEL (Deng et al., 2025), Mogao (Liao et al., 2025), and HBridge (Wang et al., 2025b) use specialized experts across modalities.
+2.2 Interleaved Generation
+Interleaved image-text generation requires models to produce coherent sequences of arbitrarily alternating modalities. Emu2 (Sun et al., 2024) and SEED-X (Ge et al., 2024) demonstrated strong in-context learning on this task by training on large-scale interleaved corpora such as OBELICS (Laurençon et al., 2023) and CoMM (Chen et al., 2025b). MiniGPT-5 (Zheng et al., 2023) introduced generative vokens to bridge LLM outputs with visual generation, while DreamLLM (Dong et al., 2023) and Kosmos-G (Pan et al., 2023) focused on synergistic comprehension-creation learning. Orthus (Kou et al., 2024) employs modality-specific heads for efficient interleaved decoding, and NExT-GPT (Wu et al., 2024) generalizes to any-to-any multimodal generation including audio and video.
+3 Quality Collapse in Long Interleaved Sequences
+3.1 Problem setting and phenomenon
+We study long-horizon interleaved generation in unified autoregressive multimodal models: a single contiguous sequence where text segments and discrete image-token blocks are generated alternately, causing the context to grow with each appended image and making later generations condition on an increasingly large, heterogeneous history.
+To comprehensively evaluate both long-term memory and dynamic instruction following, we construct diverse narrative scaffolds. These scaffolds are deliberately designed to test global consistency by featuring recurring subjects and persistent styles, while ensuring local diversity through continuous scene transitions, complex actions, and viewpoint shifts. Under this rigorous setting, we generate N=40N{=}40 images (interleaved with TT text segments) and evaluate, over multiple random seeds, (i) per-image quality and (ii) cross-image consistency as a function of image index i∈{1,…,N}i\in\{1,\dots,N\}.
+We use BAGEL as the base unified multimodal model. BAGEL follows a hybrid autoregressive–diffusion paradigm, combining an autoregressive LLM with a diffusion-based image generator, and represents vision in the same sequence as text to enable interleaved text and image generation. Importantly, it uses both ViT features (semantic) and VAE latents (generation) as visual representations, which aligns with our analysis that separates semantic grounding from synthesis dynamics.
+Figure 2 shows a clear degradation trend as the image index increases: quality metrics drop steadily early on and exhibit a sharp collapse after approximately 20 images. Within a few additional steps, the majority of samples become degenerate and no longer resemble valid images, marking a breakdown of the model’s effective generative regime.
+3.2 Observation 1: Image count matters more than token count
+We first investigate whether this degradation is driven by the sheer number of tokens (a computational or memory capacity limit) or by the number of distinct semantic events (a semantic capacity limit). We compare long-horizon runs across three image resolutions, which create vastly different token growth rates.
+Crucially, as shown in Figure 3, we find that quality collapses within the same semantic window of approximately 20–25 images across all settings, regardless of the total token count. This is most evident when controlling for memory budget: at a fixed depth of ∼\sim150k tokens, a 17-image sequence (1024×10241024{\times}1024) maintains high fidelity, whereas a 30-image sequence (1024×5761024{\times}576) has completely degraded. This implies an effective multimodal context length governed by the number of distinct images or events that attention can reliably use for conditioning, rather than raw sequence length.
+It rules out simple explanations based on computational limits. The model can handle 150k tokens when they represent fewer images, but fails at the same token count when they represent more images. The degradation is therefore not a simple matter of “running out of memory,” but a structural consequence of accumulating visual history. We term this the Event Bottleneck: the effective context length is limited by the number of visual events, not the number of tokens.
+This finding shifts the optimization goal from fitting more tokens (via compression or architecture) to managing event-level competition (via curation). To understand why visual history is so problematic, we next compare it against text-only history of equivalent length.
+Figure 3: Bottleneck: Generation quality depends on image count, not token length.
+We visualize generation quality (HPS v3, color scale) for long-horizon sequences with different tokens-per-image rates (1024×10241024{\times}1024, 1024×5761024{\times}576, 768×432768{\times}432).
+Despite wide disparities in cumulative token count (y-axis), all settings exhibit quality collapse within the same image-index window (20–25 images, shaded region).
+Horizontal comparisons (dashed gray lines) confirm that matching the token budget does not predict success; instead, the number of semantic events (image index) is the dominant bottleneck.
+Figure 4: Token-matched text vs. image history induces distinct attention regimes and failure modes.
+We compare (A) a 120K-token text-only history and (B) a token-matched image-heavy history (22 images).
+Top row (diagnostics): similarity-score distributions from current-image queries to historical tokens show that text history produces a consistently concentrated score spectrum, while image-heavy history exhibits much higher variance and a heavier tail (outliers).
+A concentration plot (cumulative attention vs. top-% tokens) further indicates that attention under image history is more top-heavy (higher Gini).
+Bottom row (outcomes): token-matched text history mainly leads to passive dilution (blurred, under-conditioned generations), whereas token-matched image history causes active pollution (artifacts, speckle, and structural distortions).
+3.3 Observation 2: Modality-Asymmetric Failure under Long History
+The Event Bottleneck points to visual history as the main driver of long-horizon collapse. A natural follow-up is whether this collapse is simply another instance of long-context failure—i.e., the same phenomenon seen in long-context understanding—or whether unified generation exhibits a qualitatively different failure mode.
+Text history dilutes; image history pollutes.
+We design a controlled comparison matching total context length while varying history type: (A) a 120K-token text-only history versus (B) a token-matched image-heavy history containing 22 images. If degradation were primarily a function of raw context length, these two settings should produce similar failure modes.
+Figure 4 shows a clear qualitative gap. With long text-only history, failures are mostly passive: generations become generic or under-conditioned (e.g., blurry details, weaker adherence to the prompt), consistent with retrieval inefficiency where relevant evidence is missed or under-weighted. In contrast, with token-matched image-heavy history, failures are active and structural: artifacts, distortions, and identity/style drift appear, suggesting that spurious visual competitors inject incorrect signals into the conditioning used for synthesis.
+The unique risk of dense visual history.
+This asymmetry highlights a fundamental distinction in how different modalities affect the generation process. With text-dominant history, failures resemble standard long-context retrieval issues: irrelevant text primarily harms performance by diluting attention, leading to a passive failure of under-conditioning. In contrast, dense visual history introduces a structural vulnerability. Because historical visual tokens share the same representational space as the target image, they actively steer the pixel-level synthesis trajectory. Consequently, irrelevant visual features are not just passively missed; they are mixed into the conditioning representation and compounded across steps. This confirms that long-horizon collapse is not a “context length” issue, but a modality-specific vulnerability where dense visual keys trigger active pollution.
+This finding squarely motivates the next section’s deep dive into the underlying mechanisms, where we investigate precisely how visual history creates spurious attention competition to hijack the generation process.
+4 Mechanism: Attention Hijacking via Visual Pollution
+The previous section established what goes wrong: visual history causes active pollution, not mere dilution.
+This section explains why this happens in unified generation. We first frame long-horizon failure as a zero-sum allocation problem under the softmax attention budget, and provide evidence via macro-level entropy growth and micro-level key-reference erosion (Section 4.1). We then introduce the core mechanism of tail-risk hijacking under dense visual keys, showing how heavy-tailed outliers amplified by softmax turn dilution into corruption (Section 4.2). Finally, we highlight an important nuance for solution design: attention dynamics are specialized across synthesis steps and transformer depth, motivating depth-aware policies rather than a single uniform relevance mask (Section 4.3).
+Figure 5: Attention becomes diluted and unfocused as context grows.
+Attention entropy rises with context length, indicating the model becomes increasingly “confused” about where to attend.
+Figure 6: Attention is inherently top-heavy across depth.
+We measure concentration as the cumulative attention coverage captured by the top-k%k\% tokens in each layer (shaded bands).
+Figure 7: Attention misallocation under redundant image history.
+Left: Irrelevant history still attracts attention. We aggregate attention over historical image groups (by token type/modality) while generating a target character; only a few groups (e.g., Image1,6,11,16) contain character-relevant references.
+Yet many irrelevant images receive non-trivial attention, diluting the budget for true references.
+Right: Redundancy rapidly attenuates key-reference attention. In a controlled “one-key-reference + NN distractors” setup, the key-reference attention share drops steeply as distractors are appended (e.g., ∼\sim50% →\rightarrow ∼\sim4%, a ∼\sim95% relative loss).
+Figure 8: Depth-wise modality specialization in attention.
+Layer-wise attention ratios show a clear shift in where the model allocates its budget: earlier layers attend more to Text/ViT tokens (grounding and multimodal routing), while later layers increasingly prioritize VAE tokens that drive image synthesis. Special/control tokens remain a persistent share of attention across depth.
+4.1 Visual Competition and Attention Budget Collapse
+To explain the degradation observed in Sections 3.2 and 3.3, we view long-horizon failures as an allocation problem under a zero-sum softmax budget: as the context accumulates more image events, attention must be distributed across an expanding set of competitors, making it increasingly difficult to reliably resolve the few conditioning cues that actually matter for synthesis.
+Attention Entropy Grows with Context.
+We first quantify how focused the model’s attention is during image generation using the entropy of the attention distribution over context tokens.
+High entropy indicates a more diffuse distribution, whereas low entropy indicates a concentrated focus.
+We observe a systematic increase in attention entropy as the context grows (Figure 5), especially when additional image tokens are present.
+This macro signal suggests rising uncertainty: with more competing tokens, attention becomes less consistently anchored to a small, stable set of cues.
+Competing History Erodes Key References.
+To directly measure whether the model can still retrieve the right conditioning signal, we track the key-reference attention mass:
+the attention allocated to tokens of a known relevant historical image, normalized by total historical-image attention.
+As distractors accumulate, the key-reference share drops sharply (Figure 7), while visual quality degrades with position (Figure 2).
+Together, these curves show that the relevant signal remains in-context, yet becomes progressively harder to resolve; degradation is thus primarily an allocation failure, not an information failure.
+4.2 Active Pollution from Tail-Risk Hijacking
+Phenomenon: image history induces heavy-tailed matches and top-heavy attention.
+Compared to token-matched text history, image-heavy history exhibits a markedly heavier-tailed similarity-score distribution (Figure 4, right): a single image contributes thousands of patch-level keys, so even semantically irrelevant images have a non-trivial chance of producing high dot-product outliers with the current query (incidental alignments).
+Unified attention is also inherently top-heavy (Figure 6), with the top-10%10\% tokens often capturing over half of the budget; consequently, a small number of extreme visual matches can dominate attention.
+This explains why degradation is governed by events rather than raw token count (Section 3.2): each appended image introduces a fresh pool of dense keys, increasing the probability of encountering an outlier that captures the budget.
+Softmax amplifies tail risk into hijacking, turning dilution into corruption.
+Because Softmax acts as an exponential amplifier, a spurious similarity outlier does not merely add background noise—it can hijack a massive share of the attention budget. By locking onto these irrelevant high-frequency patches, the model overrides its intended conditioning (e.g., true subject references or prompt cues). Consequently, it directly injects incorrect textures and structural artifacts into the current synthesis step, turning what would normally be passive context dilution into active visual corruption.
+This modality-asymmetric failure mode is therefore not a generic
+long-context retrieval issue, but a tail-risk phenomenon induced by
+dense visual keys and amplified by Softmax.
+Implication 1: Event-level curation is required to eliminate tail risk.
+Tail-risk hijacking implies that long-context techniques designed to fit more tokens (e.g., token compression or generic sparse attention) are insufficient for unified generation: they may retain the very high-variance outliers that trigger pollution.
+Stability requires removing the source of competition, motivating event-level curation (discarding entire image blocks based on relevance) to truncate the heavy tail and prevent hijacking.
+Figure 9: Layer-wise functional clustering.
+Ward hierarchical clustering on six attention features reveals five functional regimes.
+C1 (Layer 0) is text-dominant, C2–C3 balance text/vision, and C4–C5 (late layers) are VAE-dominant with higher entropy; Bottom: bubble size indicates feature magnitude, and contiguous assignments show a structured shift from grounding to synthesis.
+Figure 10:
+Overview of UniLongGen.
+Given a long interleaved history, we perform a one-shot probing pass with dense KV and derive two relevance masks from model-internal attention:
+(i) at an early, text-dependent layer (Layer 1), we score historical text blocks using current VAE queries with a length-normalized Pre-Softmax similarity score;
+(ii) at a late, generation-dominant layer (default: ℓsyn=15\ell_{\text{syn}}{=}15), we score historical VAE image blocks.
+We then keep the masks fixed and apply a layer-split KV visibility throughout generation: early layers use the text mask, while late layers use the image mask, dropping non-selected tokens.
+4.3 Step- and layer-wise specialization
+Unified generators built on diffusion / rectified-flow refine the same image tokens over multiple steps.
+Across steps, we observe a systematic reallocation of attention between historical context and current-generation tokens (Figure 21).
+Transformer depth is specialized in unified generation.
+Early layers allocate more attention to text and multimodal routing, while late layers become increasingly VAE-dominant and directly shape the synthesis trajectory (Figure 8).
+Layer clustering on attention features further reveals contiguous functional blocks, separating a text-dependent early regime from a generation-dominant late regime (Figure 9).
+Figure 8 breaks down attention by modality (Text/ViT/VAE) and by token type (regular vs. special).
+Across layers, a non-trivial fraction of attention mass is consistently allocated to special tokens (e.g., <bos>, modality separators, and interleaving delimiters) within each modality, rather than to regular content tokens alone.
+These structural tokens provide stable markers for segmentation and modality/state transitions in unified generation, and thus attract attention as the network composes multimodal information.
+Implication 2: layer-split relevance estimation.
+The functional shift from text-dominant grounding (early layers) to VAE-dominant synthesis (late layers) implies that a single relevance mask is insufficient. This motivates UniLongGen’s dual-probe design: we use text-based relevance for early layers to ensure instruction following, and VAE-based relevance for late layers to maintain consistency.
+5 UniLongGen: Self-Guided Context Curation to Prevent Visual Attention Hijacking
+Long-horizon interleaved generation fails because accumulated visual history can actively pollute synthesis by hijacking attention (Section 4).
+UniLongGen targets this setting and is applied only during image-synthesis steps: instead of fitting or compressing the full history, we enforce relevance-filtered sparsity by retaining a small set of historical reference images and evicting the rest from the KV cache to reduce softmax competition.
+Overview.
+For each new image, UniLongGen executes a three-step pipeline (Figure 10):
+(i) One-Pass Context Profiling: Perform a single forward pass with the full history (dense KV) to probe model-internal attention.
+(ii) Dual-Depth Scoring: Derive relevance scores for historical text blocks and VAE image blocks from two specialized network depths.
+(iii) Layer-Split Generation: Generate the image using a fixed, layer-split KV-visibility policy that keeps only the selected history.
+This decouples relevance estimation from generation and enables a stable context policy across all subsequent diffusion/flow steps.
+5.1 Attention-Based Relevance Scoring
+To robustly identify relevant history, we propose a pre-softmax aggregation strategy that reduces the noise from spurious high-frequency matches in individual heads.
+We interpret the relevance of a historical block BB (representing either a text segment TT or a VAE image VV) as the expected similarity between its keys and the average representation of the current image’s queries.
+We write the interleaved history as mm turns indexed by i∈{1,…,m}i\in\{1,\dots,m\}.
+Each turn ii contains a text block TiT_{i} and a VAE image block ViV_{i}, where each block denotes the set of token indices belonging to that segment in the serialized sequence (including boundary special tokens).
+Let VcurV^{\mathrm{cur}} denote the set of VAE tokens for the current image being synthesized.
+Let 𝐪v(ℓ)\mathbf{q}_{v}^{(\ell)} and 𝐤u(ℓ)\mathbf{k}_{u}^{(\ell)} denote the multi-head representations (shape H×dH{\times}d) for a current query token vv and a historical key token uu at layer ℓ\ell.
+We use 𝐪v,h(ℓ)∈ℝd\mathbf{q}_{v,h}^{(\ell)}\in\mathbb{R}^{d} and 𝐤u,h(ℓ)∈ℝd\mathbf{k}_{u,h}^{(\ell)}\in\mathbb{R}^{d} to denote the hh-th head slice.
+We first condense the current image’s generation intent into a single mean query vector 𝐪¯(ℓ)\bar{\mathbf{q}}^{(\ell)} by averaging over all spatial VAE tokens:
+𝐪¯(ℓ)≜1|Vcur|​∑v∈Vcur𝐪v(ℓ).\bar{\mathbf{q}}^{(\ell)}\triangleq\frac{1}{|V^{\mathrm{cur}}|}\sum_{v\in V^{\mathrm{cur}}}\mathbf{q}_{v}^{(\ell)}.
+(1)
+We then define the relevance score S⁡(B,ℓ)S(B;\ell) for any historical block BB (text or VAE) as the average head-wise dot product between the block’s keys and the mean query:
+S⁡(B,ℓ)=1|B|​∑u∈B(1H​d​∑h=1H𝐪¯h(ℓ)⊤​𝐤u,h(ℓ))⏟Head-averaged similarity.S(B;\ell)=\frac{1}{|B|}\sum_{u\in B}\underbrace{\left(\frac{1}{H\sqrt{d}}\sum_{h=1}^{H}\bar{\mathbf{q}}_{h}^{(\ell)\top}\mathbf{k}_{u,h}^{(\ell)}\right)}_{\text{Head-averaged similarity}}.
+(2)
+5.2 Model-Aligned Dual Probing
+Leveraging the layer specialization observed in Section 4.3, we apply this scoring function at two distinct depths to curate history:
+Text Selection (Grounding).
+At an early layer ℓgrd\ell_{\text{grd}} (default ℓgrd=1\ell_{\text{grd}}{=}1), we select the top-KgrdK_{\text{grd}} turns based on the relevance of their text blocks: 𝒦grd=TopK⁡({S⁡(Ti,ℓgrd)}i=1m,Kgrd)\mathcal{K}_{\text{grd}}=\mathrm{TopK}\big(\{S(T_{i};\ell_{\text{grd}})\}_{i=1}^{m},K_{\text{grd}}\big).
+Image Selection (Synthesis).
+At a late layer ℓsyn\ell_{\text{syn}} (default ℓsyn=15\ell_{\text{syn}}{=}15), we select the top-KimgK_{\text{img}} turns based on their VAE blocks to preserve visual consistency: 𝒦syn=TopK⁡({S⁡(Vi,ℓsyn)}i=1m,Kimg)\mathcal{K}_{\text{syn}}=\mathrm{TopK}\big(\{S(V_{i};\ell_{\text{syn}})\}_{i=1}^{m},K_{\text{img}}\big).
+We find that a small budget of Kimg≈4K_{\text{img}}\approx 4 offers the optimal trade-off between providing sufficient visual reference and minimizing attention pollution.
+5.3 KV Eviction During Generation
+Once the sets of relevant turns 𝒦grd\mathcal{K}_{\text{grd}} and 𝒦syn\mathcal{K}_{\text{syn}} are identified via the one-shot probe, UniLongGen enforces a fixed, layer-split visibility policy throughout the subsequent generation steps.
+We strictly evict non-selected tokens from the KV cache rather than compressing them, ensuring that spurious visual outliers are completely removed from the softmax competition.
+Let ℋ(ℓ)\mathcal{H}^{(\ell)} denote the visible history at layer ℓ\ell. The policy is:
+ℋ(ℓ)={𝒯text​({1}∪𝒦grd),ℓ<ℓsyn,𝒯img​({1}∪𝒦syn),ℓ≥ℓsyn,\mathcal{H}^{(\ell)}=\begin{cases}\mathcal{T}_{\text{text}}(\{1\}\cup\mathcal{K}_{\text{grd}}),&\ell<\ell_{\text{syn}},\\[2.0pt]
+\mathcal{T}_{\text{img}}(\{1\}\cup\mathcal{K}_{\text{syn}}),&\ell\geq\ell_{\text{syn}},\end{cases}
+(3)
+where 𝒯text​(⋅)\mathcal{T}_{\text{text}}(\cdot) keeps the token indices of the selected text blocks, and 𝒯img​(⋅)\mathcal{T}_{\text{img}}(\cdot) keeps the token indices of the selected VAE image blocks.
+The selected turns are always turn 11 plus the Top-KK turns (𝒦grd\mathcal{K}_{\text{grd}} or 𝒦syn\mathcal{K}_{\text{syn}}).
+This split aligns with the model’s functional hierarchy: early layers ground the generation in relevant text descriptions, while late layers attend to relevant visual references for synthesis.
+Table 1: Systematic ablations for long interleaved text–image generation.
+Columns are grouped into Selection design, Downsampling, and Metrics.
+HPS v2 / PickScore / Qual. measure visual quality; DINOv2 / ID Cons. / Style Cons. measure consistency. Qual., ID Cons., and Style Cons. are GPT-4o based evaluations.
+Within each block, we vary only one axis while keeping the rest fixed for controlled comparison.
+Our best configuration uses one-shot dual probing (Text at Layer 1, VAE at a late layer) with a fixed, layer-split KV visibility to retain a small number of reference images (K≈4K\approx 4–66) with direct dropping of discarded tokens (no compression).
+Variant
+Selection design
+Downsampling
+Quality↑\uparrow
+Consistency↑\uparrow
+Signal
+Unit
+Budget
+Discard
+Rate
+Interp
+HPS v3
+PickScore
+Qual.
+ID
+Style
+DINOv2
+A. Baselines (no sparsification / naive heuristics)
+Base: Dense KV
+–
+–
+–
+–
+–
+–
+3.1677
+0.1943
+5.83
+5.49
+3.99
+0.3164
+Sliding window (first + last NN imgs)
+–
+Image
+N=4N{=}4
+Drop
+–
+–
+4.4886
+0.1969
+6.47
+5.73
+4.56
+0.3337
+Sliding window (first + last NN imgs)
+–
+Image
+N=8N{=}8
+Drop
+–
+–
+3.9126
+0.1957
+6.31
+5.41
+4.50
+0.3267
+Sliding window (first + last NN imgs)
+–
+Image
+N=12N{=}12
+Drop
+–
+–
+4.0844
+0.1960
+6.34
+5.82
+4.76
+0.3235
+B. Probe Design (fix Unit=Image, Budget=K=4, Discard=Drop)
+B1: Text
+Text
+Image
+K=4K{=}4
+Drop
+–
+–
+7.5401
+0.2031
+7.56
+7.01
+5.64
+0.4075
+B2: ViT
+ViT
+Image
+K=4K{=}4
+Drop
+–
+–
+5.5275
+0.1989
+6.90
+5.96
+4.85
+0.3451
+B3: VAE
+VAE
+Image
+K=4K{=}4
+Drop
+–
+–
+3.1640
+0.1940
+6.00
+4.48
+3.61
+0.2718
+B4: layer-split: Text→\toVAE
+Hybrid
+Image
+K=4K{=}4
+Drop
+–
+–
+7.5701
+0.2025
+7.58
+7.09
+6.13
+0.4272
+C. What to Keep (Unit & Budget) (fix Signal = best from B; here: Hybrid)
+C1: Image-level retention
+Hybrid
+Image
+K=4K{=}4
+Drop
+–
+–
+7.5701
+0.2025
+7.58
+7.09
+6.13
+0.4272
+C2: Image-level retention
+Hybrid
+Image
+K=8K{=}8
+Drop
+–
+–
+7.3491
+0.2022
+7.45
+6.95
+5.97
+0.4204
+C3: Image-level retention
+Hybrid
+Image
+K=12K{=}12
+Drop
+–
+–
+6.9994
+0.2013
+7.36
+6.72
+6.04
+0.3853
+C4: Token-level retention
+Hybrid
+Token
+K=4K{=}4
+Drop
+–
+–
+4.6454
+0.1974
+6.67
+5.68
+4.45
+0.3598
+C5: Token-level retention
+Hybrid
+Token
+K=8K{=}8
+Drop
+–
+–
+4.3463
+0.1967
+6.65
+5.70
+4.52
+0.3431
+C6: Token-level retention
+Hybrid
+Token
+K=12K{=}12
+Drop
+–
+–
+4.4805
+0.1967
+6.61
+5.86
+4.67
+0.3537
+C7: Grouped token retention
+Hybrid
+Tok×\times8
+K=4K{=}4
+Drop
+–
+–
+4.5345
+0.1970
+6.60
+5.79
+4.25
+0.3619
+C8: Grouped token retention
+Hybrid
+Tok×\times32
+K=4K{=}4
+Drop
+–
+–
+4.6553
+0.1971
+6.63
+5.69
+4.38
+0.3558
+C9: Grouped token retention
+Hybrid
+Tok×\times128
+K=4K{=}4
+Drop
+–
+–
+4.6371
+0.1974
+6.63
+5.67
+4.33
+0.3512
+D. Discard Handling (fix Signal, Unit=Image, Budget=K=4; vary compression design)
+D1: Drop discarded tokens
+Hybrid
+Image
+K=4K{=}4
+Drop
+–
+–
+7.5701
+0.2025
+7.58
+7.09
+6.13
+0.4272
+D2: Downsample (AvgPool)
+Hybrid
+Image
+K=4K{=}4
+Compress
+×4\times 4
+AvgPool
+6.9601
+0.2018
+7.36
+6.92
+5.32
+0.3997
+D3: Downsample (MaxPool)
+Hybrid
+Image
+K=4K{=}4
+Compress
+×4\times 4
+MaxPool
+-0.527
+0.1895
+4.71
+3.85
+3.24
+0.2078
+D5: Downsample (interp)
+Hybrid
+Image
+K=4K{=}4
+Compress
+×4\times 4
+LERP
+7.1506
+0.2019
+7.47
+7.01
+5.79
+0.3973
+D6: Downsample (interp)
+Hybrid
+Image
+K=4K{=}4
+Compress
+×8\times 8
+LERP
+7.3643
+0.2022
+7.54
+6.94
+5.55
+0.4124
+D7: Downsample (interp)
+Hybrid
+Image
+K=4K{=}4
+Compress
+×16\times 16
+LERP
+7.4855
+0.2025
+7.57
+7.03
+5.88
+0.4118
+E. Final Configuration
+⋆\star Ours (UniLongGen)
+Text@L1 + VAE@Lℓsyn\ell_{\text{syn}}
+Image
+K=4K{=}4
+Drop
+–
+–
+7.5701
+0.2025
+7.58
+7.09
+6.13
+0.4272
+6 Experiments
+6.1 Experimental setup
+We evaluate long-horizon interleaved image–text generation using a controlled benchmark of 50 story templates.
+Each template defines a fixed narrative and a sequence of image-generation slots.
+Text segments are provided verbatim, and the model is responsible only for image generation, isolating image-generation behavior under long multimodal context.
+Stories contain recurring subjects appearing at multiple positions with varying scenes and viewpoints, enabling evaluation of long-range consistency.
+We evaluate performance along two axes: image quality and cross-image consistency.
+Image quality is measured using HPS v3, PickScore, and GPT-5.2.
+Subject consistency is assessed using DINOv2 and GPT-5.2, and style consistency is evaluated using GPT-5.2.
+Detailed metric definitions and evaluation protocols are provided in the appendix.
+Additional results in the appendix.
+We defer several complementary experiments and analyses to the appendix for readability.
+Generalization to a pure autoregressive unified model (Lumina-mGPT) is reported in Appendix D.
+Further analyses connecting our method to long-context techniques and attention dynamics are in Appendix A.
+Additional ablations and qualitative comparisons are in Appendix F.
+6.2 Main results and design-space ablations
+Table 1 summarizes our main results and systematic ablations for 40-image long-horizon interleaved generation.
+For clarity, we structure the discussion to mirror the table blocks: (A) baselines, (B) probe design, (C) what to keep (unit & budget), (D) drop vs. compression, and (E) final configuration.
+Figure 11:
+Qualitative comparison of long-horizon stability across context-management baselines.
+We show snapshots from the same 40-image interleaved generation at late positions (columns: 27, 29, 32, 36, 39) at 768×432768{\times}432 resolution.
+Rows compare the base model with dense KV (Bagel), UniLongGen, anchored sliding-window baselines (keep first anchor plus last NN image blocks), token-level selection, a human semantic oracle, and text-to-text retrieval.
+Dense KV and several heuristics degrade into artifacts or drift at later positions, while UniLongGen better preserves coherent synthesis in this representative example.
+(A) Baselines: why dense KV fails, and why recency windows are brittle.
+Dense KV collapses in the long-horizon regime (HPS v3 =3.17=3.17, DINOv2 =0.316=0.316), consistent with our diagnosis that more history can be actively harmful: attention entropy grows (Figure 5) and key-reference mass is eroded by accumulated distractors (Figure 7).
+A naive recency window partially helps by reducing the number of image events visible to attention, but remains brittle: it is misaligned with long-range story constraints and tends to drop early identity/style anchors or non-recent but high-value references.
+(B) Probe design: one probe is not enough; depth matters.
+Fixing Unit=Image and K=4K{=}4, the choice of relevance signal dominates performance.
+Text @ Layer1 yields a large jump (B1: HPS v3 =7.54=7.54), indicating that stabilizing grounding reduces under-conditioning and prevents drift.
+However, signals must be matched to depth specialization.
+ViT @ Layer1 is weaker (B2), and VAE @ Layer1 fails (B3), consistent with shallow-layer VAE interactions being dominated by high-variance patch statistics (tail-risk outliers; Section 4.2).
+Our Text→\toVAE layer-split (B4) best balances quality and long-horizon consistency (HPS v3 =7.57=7.57, ID =7.09=7.09, Style =6.13=6.13): it explicitly follows the grounding-to-synthesis transition across layers (Section 4.3) and the zero-sum Text–VAE competition across depth (Figures 8 and 20).
+(C) What to keep: event-level selection matches the bottleneck and removes tail risk.
+Image-level retention (C1–C3) consistently outperforms token/grouped-token retention (C4–C9).
+This directly supports the Event Bottleneck (Section 3.2): stability is governed by how many image events (dense key pools) remain in competition, not by preserving an arbitrary subset of tokens.
+Token-level pruning leaves behind fragments of dense visual keys (and structural routing tokens), which can still produce outliers and destabilize softmax allocation.
+We provide a qualitative example comparing token-level versus image-level selection under matched KV budgets in Figure 25.
+We also observe a small-budget optimum: increasing KK beyond 4 reintroduces competitors and slightly degrades quality/consistency, aligning with the “competition” view of failure.
+(D) Discard handling: eviction beats summarization.
+Given the same selected references, directly dropping the rest is most reliable.
+Compression (pooling/interpolation) can preserve spurious competitors and introduces distribution shift; the catastrophic max-pooling result is consistent with amplifying high-frequency artifacts that then hijack attention (Section 4.2).
+Overall, these results support our core mechanism: for unified generation, removing competing visual events is safer than summarizing them.
+(E) Choosing the VAE probing layer ℓsyn\ell_{\text{syn}}.
+UniLongGen relies on a late-layer VAE probe to select historical image turns for synthesis (Section 5).
+Our diagnosis suggests that this probe should be taken from the generation-dominant regime (Section 4.3): too early and the relevance signal is noisy (tail-risk patch matches), too late and the model may overfit to step-specific details.
+We vary ℓsyn∈{10,15,20}\ell_{\text{syn}}\in\{10,15,20\} while fixing the selection policy (Hybrid Text→\toVAE), budget (K=4K{=}4), and discard rule (Drop).
+Table 2 shows that performance is robust across these late layers, with a clear optimum around ℓsyn=15\ell_{\text{syn}}{=}15,
+supporting our interpretation that long-horizon stability benefits from a synthesis-aligned relevance signal drawn from late layers, without requiring per-layer tuning.
+Takeaway.
+Across the systematic ablations, three principles consistently emerge: (i) select history using model-internal, depth-aligned signals; (ii) prune at the event/image level with a small reference budget; (iii) evict discarded tokens instead of compressing them.
+UniLongGen instantiates these principles via one-shot dual probing (Text@L1 and VAE@Lℓsyn\ell_{\text{syn}}) and a fixed Text→\toVAE layer split, yielding the best overall quality–consistency trade-off.
+Table 2: Ablation on VAE probing layer ℓsyn\ell_{\text{syn}}.
+We vary the layer at which the VAE attention score is computed (ℓsyn∈{10,15,20}\ell_{\text{syn}}\in\{10,15,20\}) with Layer 15 yields the best trade-off across all metrics.
+Variant
+HPS v3↑\uparrow
+PickScore↑\uparrow
+Qual.↑\uparrow
+Style Cons.↑\uparrow
+DINOv2↑\uparrow
+Baselines
+Dense KV (Bagel)
+3.1677
+0.1943
+5.83
+3.99
+0.3164
+Sliding window
+4.4886
+0.1969
+6.47
+4.56
+0.3337
+Ours (K=4K{=}4) with varying ℓsyn\ell_{\text{syn}}
+Ours, ℓsyn=10\ell_{\text{syn}}{=}10
+7.4349
+0.2019
+7.53
+6.12
+0.4251
+Ours, ℓsyn=15\ell_{\text{syn}}{=}15
+7.5701
+0.2025
+7.58
+6.13
+0.4272
+Ours, ℓsyn=20\ell_{\text{syn}}{=}20
+7.4920
+0.2023
+7.52
+6.03
+0.4239
+6.3 Qualitative results
+We provide qualitative comparisons on long interleaved generation (Figures 11, 13, 14, 15, 16, 17, 18 and 19).
+Figure 11 highlights a representative late-horizon segment (positions 27–39) where dense-KV generation exhibits severe degradation, while UniLongGen remains visually coherent.
+Figure 12:
+Runtime scaling vs. historical context (no CFG).
+Total flow-matching time (seconds; summed over steps) to generate one image at two resolutions (top: 512×512512{\times}512, bottom: 1024×10241024{\times}1024) as a function of historical-context tokens (k).
+Dense KV slows down with longer history, while UniLongGen remains nearly flat due to KV eviction, achieving up to ∼\sim11×\times speedup at long contexts.
+6.4 Efficiency Comparison
+We report the average visible KV length (KV%) and end-to-end wall-clock time per image (summed over all flow-matching steps), with classifier-free guidance disabled (Figure 12).
+Dense KV time grows roughly linearly with historical tokens, since each step attends over the full history.
+UniLongGen instead evicts non-selected history and keeps only a small, fixed set of reference turns visible, making runtime largely insensitive to raw history length: at 512×512512{\times}512 with 100k tokens, Dense KV takes 97.2s vs. 8.5s; at 1024×10241024{\times}1024 with 350k tokens, 363s vs. 31.6s—up to ∼\sim11×\times speedup.
+6.5 Qualitative late-horizon comparison.
+Figure 11 provides a side-by-side qualitative comparison across representative context-management baselines at late positions in the same 40-image sequence.
+It illustrates common failure modes under long histories (e.g., artifact explosion, semantic drift, or collapsing into repetitive textures) and shows that UniLongGen can maintain coherent synthesis later into the sequence in this example, consistent with the quantitative gaps reported in our ablations.
+6.6 Model-aligned beats oracle semantic retention
+An intuitive baseline is to keep the “most relevant” history by an external (human/oracle) criterion—e.g., retaining the historical images that contain the target character or attributes specified by the prompt.
+Surprisingly, we find that such oracle semantic retention can underperform our attention-based selection (Table 3).
+We further test a text-only matching baseline that ranks historical turns by the similarity between the current image’s text block and each historical text block, then keeps the images from the top-KK ranked turns; this performs poorly, reinforcing that semantic/text relevance alone is insufficient for stable long-horizon synthesis.
+This highlights a key asymmetry in long-horizon generation: what is semantically relevant to humans is not always what the model needs for stable synthesis.
+Why oracle relevance can hurt.
+(1) Relevance mismatch. “Relevant” for generation is not purely semantic: the model may depend on recent context for pose/layout/lighting continuity, or on specific reference views that best match its current latent trajectory.
+(2) Distribution shift from hard masking. Any pruning changes the softmax normalization and can re-route attention mass.
+Forcing a human-defined subset can create an unnatural context mixture, amplifying spurious dependencies and destabilizing identity/style even if the retained images appear correct.
+In contrast, attention-based selection is model-aligned: it preserves the subset of historical image blocks the model itself prefers under its internal representations, yielding better long-horizon fidelity.
+Implication 3: Model-Alignment Over Semantic Intuition.
+Model-aligned selection can outperform semantic oracles, highlighting a gap between semantic relevance and generative utility. Therefore, we derive curation from the model’s internal relevance signals rather than external heuristics.
+Table 3: Semantic oracle vs. attention-based selection.
+“Semantic oracle” keeps the same budget (KK) of historical images judged most relevant by human annotation;
+“Text-block matching” ranks historical turns by the similarity between the current image’s text block and each historical text block, then keeps the images from the top-KK turns.
+Our method selects images using model-internal attention signals.
+Variant
+HPS v3↑\uparrow
+Qual.↑\uparrow
+Style↑\uparrow
+DINOv2↑\uparrow
+Dense KV (no pruning)
+3.1677
+5.83
+3.99
+0.3164
+Semantic oracle (top-KK by human relevance)
+5.1158
+6.77
+5.1
+0.4205
+Text-block matching (current →\rightarrow history, top-KK)
+1.7063
+5.35
+3.06
+0.3094
+UniLongGen (attention-based top-KK)
+7.5701
+7.58
+6.13
+0.4272
+7 Conclusion
+Unified multimodal models promise long-form interleaved generation, yet current systems hit a reliability cliff as image events accumulate.
+We show this is not a generic long-context limitation: dense visual history creates event-level competition and heavy-tailed outliers that pollute attention and corrupt subsequent synthesis.
+We contribute (i) systematic evidence for an Event Bottleneck, where breakdown tracks image events more than tokens; (ii) a mechanistic diagnosis of tail-risk hijacking and depth-wise specialization; and (iii) UniLongGen, a training-free, model-aligned context curation policy that uses one-shot probing and a Text→\toVAE layer split to evict competing history.
+Across long-horizon benchmarks, UniLongGen improves quality and identity/style consistency while reducing KV footprint.
+Figure 13: Additional qualitative results on long-horizon interleaved generation (1/7).
+Figure 14: Additional qualitative results on long-horizon interleaved generation (2/7).
+Figure 15: Additional qualitative results on long-horizon interleaved generation (3/7).
+Figure 16: Additional qualitative results on long-horizon interleaved generation (4/7).
+Figure 17: Additional qualitative results on long-horizon interleaved generation (5/7).
+Figure 18: Additional qualitative results on long-horizon interleaved generation (6/7).
+Figure 19: Additional qualitative results on long-horizon interleaved generation (7/7).
+References
+Cao et al. (2025)
+Cao, S., Chen, H., Chen, P., Cheng, Y., Cui, Y., Deng, X., Dong, Y., Gong, K.,
+Gu, T., Gu, X., et al.
+Hunyuanimage 3.0 technical report.
+arXiv preprint arXiv:2509.23951, 2025.
+Chen et al. (2025a)
+Chen, J., Xu, Z., Pan, X., Hu, Y., Qin, C., Goldstein, T., Huang, L., Zhou, T.,
+Xie, S., Savarese, S., et al.
+Blip3-o: A family of fully open unified multimodal
+models-architecture, training and dataset.
+arXiv preprint arXiv:2505.09568, 2025a.
+Chen et al. (2026)
+Chen, J., He, T., Fu, Z., Wan, P., Gai, K., and Ye, W.
+Vino: A unified visual generator with interleaved omnimodal context.
+arXiv preprint arXiv:2601.02358, 2026.
+Chen et al. (2025b)
+Chen, W., Li, L., Yang, Y., Wen, B., Yang, F., Gao, T., Wu, Y., and Chen, L.
+Comm: A coherent interleaved image-text dataset for multimodal
+understanding and generation.
+In Proceedings of the Computer Vision and Pattern Recognition
+Conference, pp.  8073–8082, 2025b.
+Deng et al. (2025)
+Deng, C., Zhu, D., Li, K., Gou, C., Li, F., Wang, Z., Zhong, S., Yu, W., Nie,
+X., Song, Z., et al.
+Emerging properties in unified multimodal pretraining.
+arXiv preprint arXiv:2505.14683, 2025.
+Dong et al. (2023)
+Dong, R., Han, C., Peng, Y., Qi, Z., Ge, Z., Yang, J., Zhao, L., Sun, J., Zhou,
+H., Wei, H., et al.
+Dreamllm: Synergistic multimodal comprehension and creation.
+arXiv preprint arXiv:2309.11499, 2023.
+Ge et al. (2024)
+Ge, Y., Zhao, S., Zhu, J., Ge, Y., Yi, K., Song, L., Li, C., Ding, X., and
+Shan, Y.
+Seed-x: Multimodal models with unified multi-granularity
+comprehension and generation.
+arXiv preprint arXiv:2404.14396, 2024.
+Hao et al. (2025)
+Hao, J., Liu, H., Xiao, X., Huang, Q., and Yu, J.
+Uni-x: Mitigating modality conflict with a two-end-separated
+architecture for unified multimodal models.
+arXiv preprint arXiv:2509.24365, 2025.
+Jiao et al. (2025)
+Jiao, Y., Qiu, H., Jie, Z., Chen, S., Chen, J., Ma, L., and Jiang, Y.-G.
+Unitoken: Harmonizing multimodal understanding and generation through
+unified visual encoding.
+In Proceedings of the Computer Vision and Pattern Recognition
+Conference, pp.  3600–3610, 2025.
+Kou et al. (2024)
+Kou, S., Jin, J., Liu, Z., Liu, C., Ma, Y., Jia, J., Chen, Q., Jiang, P., and
+Deng, Z.
+Orthus: Autoregressive interleaved image-text generation with
+modality-specific heads.
+arXiv preprint arXiv:2412.00127, 2024.
+Laurençon et al. (2023)
+Laurençon, H., Saulnier, L., Tronchon, L., Bekman, S., Singh, A.,
+Lozhkov, A., Wang, T., Karamcheti, S., Rush, A., Kiela, D., et al.
+Obelics: An open web-scale filtered dataset of interleaved image-text
+documents.
+Advances in Neural Information Processing Systems,
+36:71683–71702, 2023.
+Li et al. (2025)
+Li, H., Peng, X., Wang, Y., Peng, Z., Chen, X., Weng, R., Wang, J., Cai, X.,
+Dai, W., and Xiong, H.
+Onecat: Decoder-only auto-regressive model for unified understanding
+and generation.
+arXiv preprint arXiv:2509.03498, 2025.
+Liao et al. (2025)
+Liao, C., Liu, L., Wang, X., Luo, Z., Zhang, X., Zhao, W., Wu, J., Li, L.,
+Tian, Z., and Huang, W.
+Mogao: An omni foundation model for interleaved multi-modal
+generation.
+arXiv preprint arXiv:2505.05472, 2025.
+Lin et al. (2025)
+Lin, B., Li, Z., Cheng, X., Niu, Y., Ye, Y., He, X., Yuan, S., Yu, W., Wang,
+S., Ge, Y., et al.
+Uniworld: High-resolution semantic encoders for unified visual
+understanding and generation.
+arXiv preprint arXiv:2506.03147, 2025.
+Liu et al. (2024)
+Liu, D., Zhao, S., Zhuo, L., Lin, W., Qiao, Y., Li, H., and Gao, P.
+Lumina-mgpt: Illuminate flexible photorealistic text-to-image
+generation with multimodal generative pretraining, 2024.
+URL https://arxiv.org/abs/2408.02657.
+Ma et al. (2025)
+Ma, Y., Liu, X., Chen, X., Liu, W., Wu, C., Wu, Z., Pan, Z., Xie, Z., Zhang,
+H., Yu, X., et al.
+Janusflow: Harmonizing autoregression and rectified flow for unified
+multimodal understanding and generation.
+In Proceedings of the Computer Vision and Pattern Recognition
+Conference, pp.  7739–7751, 2025.
+Pan et al. (2023)
+Pan, X., Dong, L., Huang, S., Peng, Z., Chen, W., and Wei, F.
+Kosmos-g: Generating images in context with multimodal large language
+models.
+arXiv preprint arXiv:2310.02992, 2023.
+Pan et al. (2025)
+Pan, X., Shukla, S. N., Singh, A., Zhao, Z., Mishra, S. K., Wang, J., Xu, Z.,
+Chen, J., Li, K., Juefei-Xu, F., et al.
+Transfer between modalities with metaqueries.
+arXiv preprint arXiv:2504.06256, 2025.
+Qu et al. (2025)
+Qu, L., Zhang, H., Liu, Y., Wang, X., Jiang, Y., Gao, Y., Ye, H., Du, D. K.,
+Yuan, Z., and Wu, X.
+Tokenflow: Unified image tokenizer for multimodal understanding and
+generation.
+In Proceedings of the Computer Vision and Pattern Recognition
+Conference, pp.  2545–2555, 2025.
+Shi et al. (2024)
+Shi, W., Han, X., Zhou, C., Liang, W., Lin, X. V., Zettlemoyer, L., and Yu, L.
+Lmfusion: Adapting pretrained language models for multimodal
+generation.
+arXiv preprint arXiv:2412.15188, 2024.
+Sun et al. (2024)
+Sun, Q., Cui, Y., Zhang, X., Zhang, F., Yu, Q., Wang, Y., Rao, Y., Liu, J.,
+Huang, T., and Wang, X.
+Generative multimodal models are in-context learners.
+In Proceedings of the IEEE/CVF Conference on Computer Vision
+and Pattern Recognition, pp.  14398–14409, 2024.
+Team (2024)
+Team, C.
+Chameleon: Mixed-modal early-fusion foundation models.
+arXiv preprint arXiv:2405.09818, 2024.
+Wang et al. (2025a)
+Wang, G.-H., Zhao, S., Zhang, X., Cao, L., Zhan, P., Duan, L., Lu, S., Fu, M.,
+Chen, X., Zhao, J., et al.
+Ovis-u1 technical report.
+arXiv preprint arXiv:2506.23044, 2025a.
+Wang et al. (2024)
+Wang, X., Zhang, X., Luo, Z., Sun, Q., Cui, Y., Wang, J., Zhang, F., Wang, Y.,
+Li, Z., Yu, Q., et al.
+Emu3: Next-token prediction is all you need.
+arXiv preprint arXiv:2409.18869, 2024.
+Wang et al. (2025b)
+Wang, X., Zhang, Z., Zhang, H., Lin, Z., Zhou, Y., Liu, Q., Zhang, S., Li, Y.,
+Liu, S., Zheng, H., et al.
+Hbridge: H-shape bridging of heterogeneous experts for unified
+multimodal understanding and generation.
+arXiv preprint arXiv:2511.20520, 2025b.
+Wu et al. (2025)
+Wu, C., Zheng, P., Yan, R., Xiao, S., Luo, X., Wang, Y., Li, W., Jiang, X.,
+Liu, Y., Zhou, J., et al.
+Omnigen2: Exploration to advanced multimodal generation.
+arXiv preprint arXiv:2506.18871, 2025.
+Wu et al. (2024)
+Wu, S., Fei, H., Qu, L., Ji, W., and Chua, T.-S.
+Next-gpt: Any-to-any multimodal llm.
+In Forty-first International Conference on Machine Learning,
+2024.
+(28)
+Xie, J., Mao, W., Bai, Z., Zhang, D. J., Wang, W., Lin, K. Q., Gu, Y., Chen,
+Z., Yang, Z., and Shou, M. Z.
+Show-o: One single transformer to unify multimodal understanding and
+generation.
+In The Thirteenth International Conference on Learning
+Representations.
+Xie et al. (2024)
+Xie, J., Mao, W., Bai, Z., Zhang, D. J., Wang, W., Lin, K. Q., Gu, Y., Chen,
+Z., Yang, Z., and Shou, M. Z.
+Show-o: One single transformer to unify multimodal understanding and
+generation.
+arXiv preprint arXiv:2408.12528, 2024.
+Zhang et al. (2026)
+Zhang, H., Qu, L., Liu, Y., Chen, H., Song, Y., Dong, Y., Sun, S., Li, X.,
+Wang, X., Jiang, Y., et al.
+Nextflow: Unified sequential modeling activates multimodal
+understanding and generation.
+arXiv preprint arXiv:2601.02204, 2026.
+Zheng et al. (2023)
+Zheng, K., He, X., and Wang, X. E.
+Minigpt-5: Interleaved vision-and-language generation via generative
+vokens.
+arXiv preprint arXiv:2310.02239, 2023.
+Zhou et al. (2024)
+Zhou, C., Yu, L., Babu, A., Tirumala, K., Yasunaga, M., Shamis, L., Kahn, J.,
+Ma, X., Zettlemoyer, L., and Levy, O.
+Transfusion: Predict the next token and diffuse images with one
+multi-modal model.
+arXiv preprint arXiv:2408.11039, 2024.
+Appendix A Additional Analysis
+A.1 Depth-wise modality flow and Text–VAE competition in history
+Figure 20 provides two complementary views of how unified generators allocate attention across modalities and depth.
+The left panel shows a depth-wise shift in modality attention: early layers allocate a larger fraction of attention to text (and ViT) tokens, while later layers become increasingly VAE-dominant, consistent with a transition from multimodal grounding/routing to synthesis-centric computation.
+The right panel focuses specifically on historical KV attention and reveals a strong negative correlation between the text-attention ratio and the VAE-attention ratio across layers (colored by layer index).
+This pattern suggests a near zero-sum competition within the softmax budget: allocating more attention to language grounding necessarily reduces the budget available for image-token conditioning, and vice versa.
+In the long-horizon regime, where history can contain dense VAE blocks from many prior images, this competition motivates depth-aware policies (e.g., a coarse Text→\toVAE layer split) that align visibility with the layer’s functional role, rather than forcing a single uniform conditioning mixture across all depths.
+A.2 Step-wise reallocation: history vs. current attention
+Unified generators based on diffusion / flow refine the same image latents over multiple denoising steps, and the role of context can vary across this trajectory.
+Figure 21 visualizes how attention is allocated between historical-context tokens (history KV) and current-generation tokens as denoising proceeds.
+The top panel shows a clear step-wise shift: as denoising advances, a larger fraction of attention mass is placed on the current tokens while the share allocated to history decreases.
+The bottom heatmap further suggests that this reallocation is not uniform across depth: early layers tend to devote a larger share of attention to history, whereas later layers allocate relatively more attention to current-generation tokens.
+Figure 20: Modality attention flow and Text–VAE competition across depth.
+Left: Modality attention ratios (Text/ViT/VAE) over Transformer depth, showing a shift from early-layer multimodal processing toward VAE-dominant late-layer image synthesis.
+Right: Text attention ratio versus VAE attention ratio in the historical KV across layers (colored by layer index), exhibiting a strong negative correlation (r≈−0.93r\approx-0.93) that indicates zero-sum competition between language grounding and image-token conditioning.
+Figure 21: Attention shifts across flow-matching steps.
+We plot the attention mass allocated to historical-context tokens and current-generation tokens across flow-matching steps.
+This step-dependent reallocation motivates a uniform context-selection policy across steps: step-varying visibility can cause inconsistent intermediate conditioning and destabilize generation.
+A.3 Analysis of UniLongGen Selection Results
+We analyze the turns selected by UniLongGen’s one-shot probing mechanism to better interpret what the model considers “relevant” for stable long-horizon generation.
+We observe an asymmetry across modalities and depth: the early text-selection probe does not necessarily prioritize the text turns that a human would judge as the most semantically relevant to the target subject, whereas the late VAE-based image-selection probe more often surfaces visual references that align with the current synthesis target.
+Text Turn Selection.
+For text curation, the probe at Layer 1 (VAE→\toText) tends to favor turns that improve grounding and controllability of the upcoming image. Importantly, these are not always the same turns a human would select by semantic relevance alone, suggesting that early-layer “relevance” reflects which text provides strong, model-usable conditioning signals under a long multimodal context, rather than a pure semantic match.
+Image Turn Selection.
+In contrast, for image curation, the VAE-based probe at ℓsyn\ell_{\text{syn}} (VAE→\toVAE) tends to select historical images that are directly useful for visual consistency: it often surfaces identity-consistent subject references, as well as visually compatible scenes/viewpoints/compositions (and, when relevant, stylistically compatible references). Overall, this qualitative asymmetry is consistent with depth-wise specialization in unified generators: early layers primarily support language grounding and multimodal routing, while late VAE-dominant layers are more directly tied to synthesis dynamics, making VAE-space relevance a better proxy for selecting history that helps preserve subject identity during generation.
+A.4 Relation to Long-Context Methods
+UniLongGen differs fundamentally from general long-context acceleration.
+While token compression (e.g., pooling) aims to fit more information under a memory budget, UniLongGen aims to curate information for generation quality.
+Our premise is that in unified generation, retaining irrelevant dense visual history is not merely wasteful but actively harmful (via attention sinks and pollution).
+Thus, we prioritize relevance-filtered sparsity over total recall.
+A.5 Limitations
+UniLongGen relies on the assumption that the one-shot attention probe accurately reflects generative needs. In cases of extremely ambiguous prompts or weak initial grounding, the relevance signal may be noisy. Additionally, the budgets (Kgrd,KimgK_{\text{grd}},K_{\text{img}}) are hyperparameters; while stable in our experiments, optimal values may vary across model architectures.
+Appendix B Benchmark and Evaluation Details
+B.1 Long-Horizon Narrative Benchmark
+To rigorously evaluate the capabilities of our model in long-horizon interleaved generation, particularly focusing on narrative coherence and identity preservation, we established a specialized evaluation protocol.
+Dataset Construction.
+Standard image generation benchmarks often focus on single-turn text-to-image synthesis, which fails to capture the complexities of maintaining context over extended sequences. To bridge this gap, we constructed a Long-Horizon Narrative Benchmark consisting of 50 curated narrative sequences. Each sequence is meticulously designed with a pre-defined textual backbone, comprising a coherent plot progression and specific descriptions for visual content.
+In our main setting, each narrative contains 40 image-generation slots (i.e., N=40N{=}40 in the interleaved sequence), yielding 2,000 images to be generated per full benchmark run, making it a non-trivial long-horizon stress test.
+Interleaved Structure.
+The data is structured as an interleaved sequence:
+𝒮={T1,I1,T2,I2,…,TN,IN},\mathcal{S}=\{T_{1},I_{1},T_{2},I_{2},\ldots,T_{N},I_{N}\},
+(4)
+where TiT_{i} and IiI_{i} denote the ii-th textual and image components, respectively.
+Task Formulation.
+We adopt a fixed-text protocol where the textual components {Ti}\{T_{i}\} serve as the condition. The model’s objective is to generate the image IiI_{i} given the cumulative context:
+𝒞i={T1,I1,…,Ti}.\mathcal{C}_{i}=\{T_{1},I_{1},\ldots,T_{i}\}.
+(5)
+This setup isolates the model’s visual generation capabilities from text generation variance, allowing for a focused assessment of visual consistency and context adherence.
+Subject Recurrence Strategy.
+To stress-test subject identity consistency, each narrative incorporates specific subjects that recur at various intervals. Crucially, these subjects are depicted across diverse contexts, varying in plot scenarios, background environments, character actions, and camera perspectives. This variance ensures that high consistency scores reflect robust identity learning rather than simple pixel-level memorization.
+B.2 Evaluation Metrics
+We adopt a multi-axis evaluation protocol that combines (i) preference-model metrics for image quality and prompt adherence, (ii) embedding-based similarity for identity preservation, and (iii) Large Multimodal Model (LMM) judgments (we use GPT-5.2) for complementary, human-readable assessments of quality and long-horizon coherence.
+Per-image quality and prompt adherence.
+We evaluate each generated image with the following automatic metrics:
+•
+HPS v3. We report Human Preference Score v3 (HPSv3), a learned human-preference model trained on large-scale, diverse preference annotations. Given an image (optionally paired with its prompt), HPSv3 outputs a scalar score that is designed to correlate with human judgments of overall visual quality and preference (including aesthetics and perceived fidelity). Higher is better.
+•
+PickScore. We report PickScore, a CLIP-based preference model trained on the Pick-a-Pic dataset of real-user pairwise preferences for text-to-image generations. PickScore takes a text prompt and an image as input and produces a scalar that reflects how likely humans would prefer the image under that prompt. In practice, it serves as a proxy for prompt adherence and perceived quality under the given text. Higher is better.
+•
+LMM judge (visual quality). We additionally use a frontier multimodal LMM (GPT-5.2) as a reference-free judge to score each image on multiple criteria, including (a) visual fidelity and artifact level, (b) detail richness and composition, and (c) adherence to the textual description. To reduce variance, we use a fixed rubric, deterministic decoding (temperature =0=0), and aggregate scores across multiple prompts/seeds when applicable. The full prompt is presented in Figure 28.
+Long-horizon consistency.
+A central goal of our study is to maintain coherence over long interleaved sequences. We evaluate consistency along two complementary axes:
+•
+Subject identity consistency. We measure whether a recurring subject (character/object) preserves its identity across the sequence.
+–
+Embedding-based (DINOv2). We use DINOv2, a self-supervised vision transformer that produces general-purpose image embeddings, to quantify identity similarity. Specifically, we compute cosine similarity between the embedding of the subject crop (or region-of-interest) and a reference anchor image of the same subject, with higher similarity indicating better identity preservation.
+–
+LMM-based. We use an LMM judge (GPT-5.2) to perform reference-based comparisons (or calibrated scoring) between the current image and the anchor. The judge is instructed to focus on stable identity cues (e.g., facial/morphological traits, distinctive markings) while discounting nuisance variations such as pose, viewpoint, illumination, and background changes. The full prompt is presented in Figure 26.
+•
+Style consistency. To assess whether the sequence maintains a coherent artistic style, we use an LMM judge (GPT-5.2) to rate cross-image stylistic coherence (e.g., color palette, rendering/brushwork, shading, and overall visual tone) across the entire sequence or across adjacent image pairs, using a standardized rubric and deterministic decoding. The full prompt is presented in Figure 27.
+Appendix C Implementation Details
+C.1 Model and Architecture
+We adopt Bagel as our unified multimodal backbone. Bagel is built upon a large language model (LLM) and augments it with two visual pathways: (i) a visual understanding branch that encodes images into patch tokens using a ViT, and (ii) a visual generation branch that represents images in a VAE latent space.
+C.2 Classifier-Free Guidance Configuration
+Dual-branch CFG with text- and image-specific pre-contexts.
+Our inference maintains three KV-cache contexts: (i) a full context 𝒞\mathcal{C} used for conditional generation, (ii) a text-CFG pre-context 𝒞text\mathcal{C}_{\text{text}} (missing the most recent generated text segment), and (iii) an image-CFG pre-context 𝒞img\mathcal{C}_{\text{img}} (excluding any image-conditioned tokens).
+Construction of 𝒞text\mathcal{C}_{\text{text}} (cfg_text).
+During prompt ingestion, before appending a text input to the full context, we snapshot the current full context as 𝒞text←𝒞\mathcal{C}_{\text{text}}\leftarrow\mathcal{C}. During interleaved generation cycles, after each cycle produces a new text segment, the full context is updated with this text, while 𝒞text\mathcal{C}_{\text{text}} is intentionally kept one-step behind (i.e., it does not include the latest generated text at the moment we call the image generator). After an image is generated and appended to the full context, we refresh 𝒞text←𝒞\mathcal{C}_{\text{text}}\leftarrow\mathcal{C} for the next cycle. Consequently, cfg_text measures the model prediction without the current-cycle text instruction, enabling text guidance to act on the incremental effect of the latest text.
+Figure 22: Illustration of relevant vs. irrelevant visual history.
+We construct sequences containing both relevant and irrelevant historical images to study attention misallocation.
+Top row (Relevant History): Historical images depicting the same subject (an elderly clockmaker) across different shots and contexts (Shot 1, 6, 11, 16), which should receive high attention for identity-consistent generation.
+Bottom row (Irrelevant History): Unrelated historical images (tools, gears, teapot, cat) that share no semantic connection with the generation target but may still attract spurious attention due to low-level visual similarity.
+Right (Generation Target): The model’s generation output. When irrelevant history is present, attention can be misallocated to visually salient but semantically irrelevant tokens, leading to degraded identity consistency or visual artifacts.
+Construction of 𝒞img\mathcal{C}_{\text{img}} (cfg_img).
+We build 𝒞img\mathcal{C}_{\text{img}} by updating it only with textual inputs from input_lists. Notably, we never append any image tokens (neither input images nor generated images) to 𝒞img\mathcal{C}_{\text{img}}, and we do not update it with cycle-wise generated texts. Therefore, cfg_img provides a stable “text-only” baseline that removes all image conditioning, and image guidance is computed relative to this baseline.
+Guidance parameters and schedule.
+We use two guidance scales: cfg_text_scale (default 4.04.0) and cfg_img_scale (default 1.51.5). Guidance is only enabled within a diffusion-time interval cfg_interval (default [0.4,1.0][0.4,1.0]); outside this interval both scales are set to 1.01.0 (no CFG). Sampling uses num_timesteps (default 5050) with a timestep warping parameter timestep_shift (default 3.03.0).
+C.3 Attention Misallocation under Redundant Image History
+This section provides experimental details and qualitative examples for the attention misallocation analysis presented in Figure 7.
+Scene and history design.
+We construct controlled long-horizon interleaved contexts where a recurring subject appears multiple times across diverse shots (e.g., wide/medium/close-up views and different actions), forming a small set of relevant historical images that should be informative for identity-consistent synthesis.
+To stress-test attention allocation, we additionally insert irrelevant historical images that are semantically unrelated to the target subject.
+Figure 22 illustrates one such setup: the top row shows four relevant subject images (Shot 1/6/11/16), while the bottom row shows unrelated distractors (e.g., tools, gears, a teapot scene, and a cat).
+The generation target (right) depicts the same subject, so an ideal mechanism would concentrate attention on the relevant subject history while suppressing distractors.
+Attention measurement.
+During the synthesis step for the target image, we aggregate attention from current-image VAE tokens (queries) to historical visual tokens (keys/values) and summarize it at the image-event level by grouping historical tokens by image block.
+We report (i) the attention mass assigned to each historical image block and (ii) the key-reference attention mass used in the main text: the attention allocated to a known relevant reference image, normalized by the total attention over historical-image tokens.
+This protocol highlights two complementary failure modes under redundant visual history: (a) non-trivial attention assigned to semantically irrelevant images (misallocation), and (b) progressive erosion of attention to true references as additional distractor images are appended (competition-induced decay).
+Figure 23: Lumina-mGPT attention signature during long-horizon interleaved image decoding (pure autoregressive model).
+Left: layer- and step-wise difference between attention to historical image tokens and historical text tokens (Hist Image −- Hist Text; red indicates more attention to image history, blue indicates more attention to text history).
+Middle: distribution of attention mass across content types over generation steps, including the current prompt, history text, history images, and current-image self-attention.
+Right: history-context versus current-context attention proportion over generation steps.
+Overall, early layers tend to emphasize historical image content while deeper layers shift toward text, and the total attention share devoted to history is relatively small compared to current-context/self-attention.
+Appendix D Generalization Across Unified Models
+UniLongGen is model-aligned by design: it curates history using the model’s own attention-derived relevance signals rather than an external semantic retriever.
+As a result, the core principle is architecture-agnostic, but the most effective instantiation can depend on how a given model allocates attention across layers and modalities.
+Our main experiments use Bagel, a hybrid AR++diffusion unified model. To test whether the approach remains useful under a substantially different generation paradigm, we additionally study a pure autoregressive unified model, Lumina-mGPT (Liu et al., 2024) (built on Chameleon (Team, 2024)), where images are generated token-by-token in the same stream.
+Adapting the probe to the AR attention signature.
+Empirically, we find that Lumina-mGPT exhibits a different attention signature from Bagel during image generation (Figure 23).
+In particular, the layer-wise trend can be reversed relative to the AR++diffusion case: early layers may emphasize historical image content, while deeper layers shift toward text (left panel).
+Moreover, the absolute attention share devoted to the history context can be relatively small compared to current-context/self-attention (middle/right panels), suggesting that long-horizon behavior in pure AR decoding may be less dominated by sustained history competition than in multi-step synthesis.
+To respect this model-specific allocation, we keep the same model-aligned curation pipeline but adjust the probing details: we query history using the image-start special token (a stable anchor that precedes each image block) and perform image-history selection using Layer 1 attention over historical image blocks, where the model most consistently consults visual history.
+Results and interpretation.
+As summarized in Table 4, this adapted UniLongGen variant improves long-horizon interleaved generation on Lumina-mGPT, but the gain over a simple sliding-window baseline is marginal.
+We view this gap as informative rather than contradictory, and it suggests several practical insights about when model-aligned curation matters most.
+(1) First, the failure mode differs across generation paradigms. In hybrid AR++diffusion models, each image is synthesized through repeated refinement steps where dense visual history can repeatedly enter the conditioning pathway; this creates sustained softmax competition and makes “which events remain visible” particularly consequential. In contrast, in pure AR image decoding, generation proceeds token-by-token and the model’s attention may be more dominated by current-context/self-attention (Figure 23), so recency truncation can already remove many competitors at low risk, making sliding windows a stronger baseline.
+(2) Second, the relative gain depends on the model’s capacity and training coverage for interleaved generation. Lumina-mGPT’s multi-image generation capability is substantially weaker than Bagel’s: it produces virtually no cross-image identity or style consistency even in short sequences, indicating that the model has not internalized the ability to leverage historical visual context for coherent synthesis. Because of this near-absence of baseline consistency, we omit identity and style consistency metrics for Lumina-mGPT altogether—the scores are too low to be meaningfully discriminative. In this regime, long-horizon degradation is dominated by the model’s intrinsic capability gap rather than an attention-allocation bottleneck, leaving any history-selection policy with minimal headroom beyond what simple truncation already provides.
+(3) Third, the Lumina-mGPT case highlights a general recipe for cross-model transfer: UniLongGen’s mechanism is not tied to a fixed layer split or a fixed query token, but to aligning selection with the model’s own attention signature. In practice, one can diagnose this signature by measuring layer-wise modality ratios during image generation, then choose probing layers and query anchors that correspond to where the model actually consults (or should consult) historical images versus text.
+Overall, these results suggest that the largest benefits of model-aligned event-level curation arise when (i) dense visual history actively competes for attention throughout synthesis and (ii) the model is capable of leveraging historical references to maintain long-range consistency.
+Table 4: Generalization to a pure autoregressive unified model (Lumina-mGPT).
+Model
+Method
+HPS v3↑\uparrow
+Qual.↑\uparrow
+Lumina-mGPT (Chameleon-based)
+Dense KV
+2.7954
+0.1904
+Sliding Window
+7.2965
+0.2014
++ UniLongGen
+7.3020
+0.2015
+Figure 24:
+Position-wise performance curves for long-horizon interleaved generation.
+Top: HPS v3 (quality) and DINO consistency (identity) as a function of image index in a 40-image sequence, comparing the base model (Bagel), anchored sliding-window baselines (keep first + last NN images), UniLongGen, and UniLongGen with compression.
+Bottom: HPS v3 ablations for (left) hyperparameters (number of retained image blocks and VAE probing layer), (middle) compression strategies (LERP with different downsampling rates), and (right) token-level selection variants, showing that UniLongGen best preserves long-horizon stability.
+Appendix E Additional Results
+We provide additional qualitative examples of long-horizon interleaved text–image generation in Figures 13, 14, 15, 16, 19, 17 and 18.
+Each example is a continuous narrative with 40 image slots generated autoregressively in an interleaved sequence, illustrating long-range fidelity and identity/style consistency over many image events.
+Position-wise curves.
+Figure 24 provides position-wise performance curves on the 40-image long-horizon benchmark, complementing the aggregate metrics in the main ablation tables.
+The top row plots HPS v3 (quality) and DINO consistency (identity) versus image index, contrasting the base model (dense KV), anchored sliding-window baselines (keep the first anchor plus the last NN images), and UniLongGen variants.
+The bottom row further visualizes how key design choices affect long-horizon stability, including hyperparameter choices (retention budget and probing layer), discard handling via compression, and token-level selection variants.
+Overall, these curves qualitatively mirror the conclusions drawn from the summary metrics (e.g., Tables 1 and 2): long-horizon degradation is position-dependent, and UniLongGen’s event-level curation most consistently delays or mitigates collapse across the sequence.
+Appendix F Additional Ablations
+Figure 25:
+Token-level vs. image-level history selection under matched KV budgets.
+We compare two ways to reduce the visible KV cache when conditioning on long visual history.
+Top (token level): keep a fixed fraction of historical VAE tokens (e.g., 20%/40%/60% KV), which can weaken the effective reference signal and lead to degraded subject fidelity in this example.
+Bottom (image level): keep a small number of whole reference images at comparable KV budgets (e.g., 6/10/12 images), which better preserves identity-consistent conditioning.
+This qualitative comparison supports event/image-level curation over token-level pruning for stable long-horizon synthesis.
+F.1 Token-level vs. image-level selection.
+Figure 25 provides a qualitative illustration of the selection-granularity effect discussed in Section 6.
+Under comparable KV budgets, token-level pruning of historical VAE tokens can remove or fragment critical visual cues (while leaving enough dense keys to still participate in softmax competition), resulting in weaker identity-preserving conditioning.
+In contrast, retaining a small set of whole reference images concentrates the budget on a few coherent events, which is often more effective for maintaining subject consistency in long interleaved generation.
+Table 5: Ablation: using Post-Softmax attention vs. Pre-Softmax Q​KQK scores for relevance evaluation.
+We compare two ways to compute the relevance signal used to select historical reference images: (i) aggregating Post-Softmax attention weights, and (ii) using Pre-Softmax head-averaged Q​KQK similarity scores.
+We find that using the Pre-Softmax score yields substantially better long-horizon generation quality and identity consistency.
+Variant
+HPS v3↑\uparrow
+PickScore↑\uparrow
+Style Cons.↑\uparrow
+DINOv2-ID↑\uparrow
+Baseline
+3.1677
+0.1943
+3.99
+0.3164
+Post-Softmax
+5.2779
+0.1978
+5.44
+0.3617
+Pre-Softmax (Ours)
+7.5701
+0.2025
+6.13
+0.4272
+F.2 Pre-Softmax vs. Post-Softmax
+We additionally ablate how to compute the relevance signal for selecting historical reference images: using (i) Post-Softmax attention weights, or (ii) Pre-Softmax Q​KQK similarity scores (no softmax).
+Concretely, Post-Softmax first computes per-head attention (including softmax normalization) and then aggregates across heads, whereas Pre-Softmax first aggregates current-image VAE queries (per head) and then computes head-averaged Q​KQK similarity as the relevance score.
+Why Post-Softmax tends to be biased toward recency.
+After softmax, attention is typically top-heavy and dominated by a few highest-scoring keys; in long histories, the most recent turns often contain tokens that are easiest to match (and are less degraded by intervening context), so they frequently receive the largest attention mass.
+As a result, Post-Softmax relevance estimation can collapse to a near-recency heuristic, repeatedly selecting the most recent few image blocks.
+As shown in Table 5, using Pre-Softmax Q​KQK scores yields substantially better long-horizon quality and identity/style consistency and mitigates this recency bias.
+Prompt C.1 (Subject Consistency)
+Task Description
+You are an expert at evaluating character identity consistency in AI-generated images. Your task is to compare the TARGET IMAGE with the REFERENCE IMAGE and evaluate how well the SAME CHARACTER’s identity is preserved.
+Evaluation Criteria
+•
+Focus ONLY on Character Identity: Facial features (shape, eyes, nose, mouth), Hair (color, style), Accessories, Body type, and Skin tone.
+•
+MUST IGNORE: Lighting, Color grading, Camera angle, Shot type, Pose/Expression, Background, Clothing (unless uniform), Image quality.
+Scoring Guidelines
+Score the identity consistency on a scale of 1.0 to 10.0. Be discriminative!
+•
+1.0–2.0: Completely different person, unrecognizable.
+•
+2.1–4.0: Major identity changes, barely recognizable as same character.
+•
+4.1–5.5: Noticeable identity inconsistencies, some features changed.
+•
+5.6–7.0: Mostly consistent, minor variations in some features.
+•
+7.1–8.5: Highly consistent, same person clearly recognizable.
+•
+8.6–10.0: Perfect identity preservation, identical character appearance.
+Output Format
+Respond ONLY with valid JSON:
+{"analysis": "Brief analysis focusing on identity consistency (under 40 words), "score": X.X"}
+Figure 26: The prompt used for GPT-5.2 based subject consistency evaluation.
+Prompt C.2 (Style Consistency)
+Task Description
+You are an expert art critic and visual style analyst. Your task is to evaluate the ARTISTIC STYLE CONSISTENCY across a series of AI-generated images. Analyze the provided images and evaluate how consistent their artistic style is across all frames.
+Evaluation Criteria
+•
+Focus ONLY on Artistic Style: Rendering style (realistic, stylized, etc.), Color palette usage, Brushwork/Texture, Shading technique, Line work, and Overall aesthetic.
+•
+MUST IGNORE: Subject matter, Lighting conditions, Color temperature, Camera angle, Characters/Objects, Scene/Environment, Time of day, Image quality (artifacts, blur), and Generation defects.
+Note: Style consistency is about whether images look like they came from the same artist/model, NOT whether each image is well-generated.
+Scoring Guidelines
+Score the style consistency on a scale of 1.0 to 10.0. Be discriminative!
+•
+1.0–2.0: Completely inconsistent styles, looks like different artists/models.
+•
+2.1–4.0: Major style inconsistencies, some images clearly different.
+•
+4.1–5.5: Moderate inconsistency, noticeable style variations.
+•
+5.6–7.0: Mostly consistent, minor style variations.
+•
+7.1–8.5: Highly consistent style, cohesive visual language.
+•
+8.6–10.0: Perfect style consistency, appears from same artist/model.
+Output Format
+IMPORTANT: First analyze the style elements, THEN determine the score. Respond ONLY with valid JSON:
+{"analysis": "xxx (60-80 words)",
+"score": X.X
+}
+Figure 27: The prompt used for GPT-5.2 based artistic style consistency evaluation.
+Prompt C.3 (Visual Quality)
+Task Description
+You are an expert evaluator specializing in AI-generated image quality assessment. Your task is to evaluate the visual quality of the generated image.
+Evaluation Criteria
+Focus on the following aspects:
+•
+Sharpness and clarity: Is the image crisp and well-defined?
+•
+Detail richness: Are fine details rendered with precision?
+•
+Color harmony: Are colors balanced, natural, and aesthetically pleasing?
+•
+Composition: Is the layout visually balanced and well-structured?
+•
+Artifact detection: Are there typical AI generation flaws (deformations, anatomical errors, unnatural textures, blending issues, repetitive patterns)?
+•
+Overall aesthetic quality: Does it look professional and visually appealing?
+Scoring Guidelines (Provide discriminative scores)
+•
+1.0–2.0: Severe artifacts, blurry, distorted, unrecognizable
+•
+2.1–4.0: Obvious defects, multiple generation errors visible
+•
+4.1–6.0: Average quality, noticeable issues present
+•
+6.1–7.5: Good quality, minor imperfections
+•
+7.6–9.0: Excellent quality, refined details, visually appealing
+•
+9.1–10.0: Professional-grade quality, virtually flawless
+Output Format
+Respond ONLY with valid JSON, no additional text:
+{"analysis": "Brief analysis (under 50 words)", "score": X.X}
+Figure 28: The prompt used for GPT-5.2 based visual quality evaluation.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

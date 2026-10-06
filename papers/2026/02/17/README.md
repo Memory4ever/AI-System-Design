@@ -4,9 +4,13 @@
 **窗口：** 2026-02-16T09:00:00+08:00 ～ 2026-02-17T09:00:00+08:00
 **状态：** 完成
 **Books：** 纳入本次
-**检查时间：** 2026-10-05T10:33:47+08:00
+**检查时间：** 2026-10-08T17:31:36+08:00
+**窗口说明：** 用户授权仅补查已有Daily来源遗漏；原77候选的日期、评分、有效Source/Books及原09:00窗口冻结，不重审或搬移。原检查时间为2026-10-05T10:33:47+08:00。
+**补充窗口：** 2026-02-16 ～ 2026-02-16
 
 ## 1. 结论
+
+2026-10-08补查差额：四个有界主题API共150次出现；与原139身份定点去重后，新增发现78个唯一身份的完整题摘，非78篇当窗论文。现为37潜在贡献日期保留、39范围/贡献前关闭、1官方撤回关闭、RynnBrain1窗外事件；确定新增候选0，Books新写0。另10个首包旧日/领域身份按具名关系去重复用或关闭，不重复计算78。题摘与当前版本不作exact-v1证据，也不把Submitted/登记/月库存抬成公开日。root已实际完成全部增量六部分独立DAY，普通待办0；完成仅指有限补查已到安全终态，37日期项与来源限制不获正面Coverage/Evidence/Books或无遗漏。以下原77的有效判断保留，不以其原完成声明代替本轮验收。
 
 本日保留的增量集中在训练proxy的条件likelihood/人口责任、连续生成的求解与消费接口、低比特artifact/通信执行边界、Agent检索与历史状态。新机制保留旧路径和回退，作者局部实验不授普遍质量、端到端SLO、安全或隐私证书。多个中心保证被必要原式/反例收窄；不降分删反证，也不以“仅报告”掩盖中心争议。
 
@@ -22,26 +26,36 @@
 
 | 来源 | 检查范围与依据 | 结果 | 缺口 |
 | --- | --- | --- | --- |
-| SRC-OPENAI | Research→Index首页止于Sep3后的Load more；官方RSS 1245条从2026/10/02到2015/12/11，只提取原生GMT pubDate的02/15～18边界，0条。见[V3_OPENAI_RSS_BOUNDARY](../_sources/daily-20260217/V3_OPENAI_RSS_BOUNDARY.txt) | 已检查 | RSS不保证收录全部research/card，不授全站无遗漏 |
-| SRC-ANTHROPIC | Research当前10条到Sep4；See more仍同页。窗日限定搜索定位India Country Brief与Bengaluru/summit公告；具名核心贡献关闭。见V3_NATIVE_A、V3_NATIVE_STOP_ENTRIES、V3_FOCUS_2 | 受阻 | Research历史段未恢复，具名条目不证明所有本窗论文覆盖 |
-| SRC-GOOGLE-AI | DeepMind Publications页1列到2025/11，03/10→02/15→02/12跨窗；02/15组合优化摘要关闭。Google Research pubs当前按year/主题目录仅年精度。见V3_NATIVE_STOP_ENTRIES、V3_DEEPMIND_BOUNDARY_CORE、V3_NATIVE_FINAL_BOUNDED | 受阻 | DeepMind是精选目录，Google缺本窗日级公开批次 |
-| SRC-META-AI | 官方Research Web0行，独立GET正文0字节；限定窗日官方域搜索未得可核dated段 | 受阻 | 空响应不是零命中；需本窗原始目录 |
-| SRC-QWEN | 旧/现站入口、具名Blog；精确README commit6118ea6、3个当窗commit及PR #1。见V3_DATE_FOCUS_0/1、V3_TOPIC_PUBLIC_1、V3_QWEN_BLOG_SEARCH_RAW | 受阻 | repo事件贡献关闭；Blog02/15无TZ且含later correction，GET空shell/browser两次失败，详细机制日期隔离 |
-| SRC-DEEPSEEK | 官方现站research links V4.1/V4/V3.2/V3.1/R1/V3与更多，窗日模型系统搜索，停于现站入口，见V3_NATIVE_B | 受阻 | 缺本窗历史日期目录；不逐个读旧release |
-| SRC-MOONSHOT | Platform Blog日期目录最新2025/11/07；官方GitHub目录是当前态，见V3_NATIVE_B、V3_NATIVE_FINAL_BOUNDED | 受阻 | 旧Blog不覆盖2026，repo updated不证本窗事件 |
-| SRC-TENCENT-HUNYUAN | Web空提取后实际浏览器Research“全部”页1，到2026/02/13 Gradient diagnosis与02/03 Learning from context，已跨窗即停，不读旧卡正文 | 已检查 | 实际列表无本窗卡；不保证官网未列事件 |
-| SRC-ZAI | 官方Research“全部”时间排序02/21 GLM5技术报告→02/11 GLM5→02/02 OCR跨窗即停，见V3_NATIVE_B | 已检查 | 目录无本窗项；不读旧正文 |
-| SRC-BYTEDANCE-SEED | Publications首页1/13仅最新；原站JS确认真实get_article_list_v2和US locale，2026排序offset60定点20卡，02/24→02/12跨窗（next80不继续）。另读Dola-Seed-2.0-Preview on Arena核心。见[V3_SEED_WINDOW_DIRECTORY](../_sources/daily-20260217/V3_SEED_WINDOW_DIRECTORY.txt)、V3_DATE_FOCUS_2 | 已检查 | 论文目录无本窗卡；Arena核心无机制差额，不为关闭补精确日期；上架不反推论文首公开 |
-| SRC-BAIDU-ERNIE | 官方中文Blog页1/2，04/15→02/06 ERNIE5→01/29跨窗即停，不翻第2旧页，见V3_NATIVE_B | 已检查 | 目录无本窗项 |
-| SRC-XIAOMI-MIMO | 官网Paper06/29→03/13→02/03→01/08跨窗；Blog15卡无日期/More未恢复，见V3_NATIVE_FINAL_BOUNDED | 受阻 | Paper目录已查，Blog历史本窗段不可核；Robotics-0另以arXiv家族原始日期确认落窗、必要源/实际Ch26窄整合已独核POST，不双计机构目录项 |
-| SRC-MINIMAX | 英文6卡只到May；中文可见目录03/18→02/12 Forge/M2.5→01/28跨窗即停，见[V3_MINIMAX_DIRECTORY_BOUNDARY](../_sources/daily-20260217/V3_MINIMAX_DIRECTORY_BOUNDARY.txt) | 已检查 | 目录无本窗项；不把02/12无TZ抬到本窗 |
-| SRC-ARXIV | 442库存查漏、139主题完整题摘；本窗原始daily列表与Atom有限恢复失败。初筛95个arXiv artifact身份用晚Submitted+官方周末公告下界+本身份公告后Registered注册上界限定；最终77首次正文候选另经贡献/更早稿纠偏，见V3_PRIMARY_DATE_FIELDS、V3_ARXIV_AVAILABILITY_CORRECTION与逐项V3_SCREENING | 受阻 | 原始公开列表仍缺；8早Submitted具名隔离，不借Updated/邻ID抬首公开；Registered+1s只作晚Submitted项的公告后注册上界，不作精确公告时刻 |
-| SRC-OPENREVIEW | 仅12544 COLM2025同题作者原稿与12499 ICLR同题题摘原稿的具名首次public日期恢复；必要datedforum有限入口403后停 | 受阻 | 两项日期终态，不以Feb2026 arXiv registration签首次正文 |
+| SRC-OPENAI | 原有效记录：Research→Index首页止于Sep3后的Load more；官方RSS 1245条从2026/10/02到2015/12/11，只提取原生GMT pubDate的02/15～18边界，0条。见[V3_OPENAI_RSS_BOUNDARY](../_sources/daily-20260217/V3_OPENAI_RSS_BOUNDARY.txt)。补充Feb16：Research转Index当前首页；实取官方RSS1255条（2015-12-11～2026-10-07），按原GMT pubDate转北京日检查02/15～17边界，0条；[RSS原字段](../_sources/daily-20260217/supplement-openai-rss-20261008.json) | 已检查 | 原限制：RSS不保证收录全部research/card，不授全站无遗漏。补充限制：仅RSS范围；不保证全部research/card收录 |
+| SRC-ANTHROPIC | 原有效记录：Research当前10条到Sep4；See more仍同页。窗日限定搜索定位India Country Brief与Bengaluru/summit公告；具名核心贡献关闭。见V3_NATIVE_A、V3_NATIVE_STOP_ENTRIES、V3_FOCUS_2。补充Feb16：当前Research10卡止于Sep4及Feb16限定主题检索；Bengaluru/summit宣传与India Brief仅复用原已核具体关闭，不扩其正文 | 受阻 | 原限制：Research历史段未恢复，具名条目不证明所有本窗论文覆盖。补充限制：历史research日段未恢复，不由已关闭条目推全源零命中 |
+| SRC-GOOGLE-AI | 原有效记录：DeepMind Publications页1列到2025/11，03/10→02/15→02/12跨窗；02/15组合优化摘要关闭。Google Research pubs当前按year/主题目录仅年精度。见V3_NATIVE_STOP_ENTRIES、V3_DEEPMIND_BOUNDARY_CORE、V3_NATIVE_FINAL_BOUNDED。补充Feb16：DeepMind Publications首页03/10→02/15→02/12跨Feb16即停；Google Research仅year/主题层；组合优化具名已关闭结果复用 | 受阻 | 原限制：DeepMind是精选目录，Google缺本窗日级公开批次。补充限制：精选目录非完整日批次，Google Research缺本窗原始公开段 |
+| SRC-META-AI | 原有效记录：官方Research Web0行，独立GET正文0字节；限定窗日官方域搜索未得可核dated段。补充Feb16：官方Research提取0行及Feb16官方域模型主题检索停止 | 受阻 | 原限制：空响应不是零命中；需本窗原始目录。补充限制：空响应/搜索阴性非历史零命中；缺原日期目录 |
+| SRC-QWEN | 原有效记录：旧/现站入口、具名Blog；精确README commit6118ea6、3个当窗commit及PR #1。见V3_DATE_FOCUS_0/1、V3_TOPIC_PUBLIC_1、V3_QWEN_BLOG_SEARCH_RAW。补充Feb16：当前Blogs空提取、Feb16主题搜索；只定点Qwen3.5官方Blog与原repo具名记录 | 受阻 | 原限制：repo事件贡献关闭；Blog02/15无TZ且含later correction，GET空shell/browser两次失败，详细机制日期隔离。补充限制：Blog02/15无TZ且含后续更正，原必要日期保留不重算；未恢复当时正文日期 |
+| SRC-DEEPSEEK | 原有效记录：官方现站research links V4.1/V4/V3.2/V3.1/R1/V3与更多，窗日模型系统搜索，停于现站入口，见V3_NATIVE_B。补充Feb16：当前模型research链接与Feb16模型系统搜索；停于现站，无历年release遍历 | 受阻 | 原限制：缺本窗历史日期目录；不逐个读旧release。补充限制：缺本窗dated历史列表/具名新事件 |
+| SRC-MOONSHOT | 原有效记录：Platform Blog日期目录最新2025/11/07；官方GitHub目录是当前态，见V3_NATIVE_B、V3_NATIVE_FINAL_BOUNDED。补充Feb16：Platform Blog最新2025/11/07、官方域Feb16长上下文/Agent搜索，停当前目录 | 受阻 | 原限制：旧Blog不覆盖2026，repo updated不证本窗事件。补充限制：目录未覆盖2026历史日段，repo updated非公开日期 |
+| SRC-TENCENT-HUNYUAN | 原有效记录：Web空提取后实际浏览器Research“全部”页1，到2026/02/13 Gradient diagnosis与02/03 Learning from context，已跨窗即停，不读旧卡正文。补充Feb16：Web空提取后实际浏览器Research“全部”页1：04/23→02/13→02/03跨Feb16即停；[浏览器停点](../_sources/daily-20260217/supplement-browser-hunyuan-20261008.md) | 已检查 | 原限制：实际列表无本窗卡；不保证官网未列事件。补充限制：仅官网实际已列卡，不授未列事件全覆盖 |
+| SRC-ZAI | 原有效记录：官方Research“全部”时间排序02/21 GLM5技术报告→02/11 GLM5→02/02 OCR跨窗即停，见V3_NATIVE_B。补充Feb16：本轮Research空提取/有限恢复未得新日期段；定点复用原有效全部目录02/21→02/11→02/02跨Feb16的同身份原件V3_NATIVE_B，不重读旧正文 | 已检查 | 原限制：目录无本窗项；不读旧正文。补充限制：只授该已保留日期目录范围，不以本轮空提取签新零命中 |
+| SRC-BYTEDANCE-SEED | 原有效记录：Publications首页1/13仅最新；原站JS确认真实get_article_list_v2和US locale，2026排序offset60定点20卡，02/24→02/12跨窗（next80不继续）。另读Dola-Seed-2.0-Preview on Arena核心。见[V3_SEED_WINDOW_DIRECTORY](../_sources/daily-20260217/V3_SEED_WINDOW_DIRECTORY.txt)、V3_DATE_FOCUS_2。补充Feb16：本轮public_papers仅当前壳；定点复用原有效2026 US locale offset60共20卡02/24→02/12跨Feb16、next80不继续的[V3原目录](../_sources/daily-20260217/V3_SEED_WINDOW_DIRECTORY.txt) | 已检查 | 原限制：论文目录无本窗卡；Arena核心无机制差额，不为关闭补精确日期；上架不反推论文首公开。补充限制：仅该有效论文目录；Blog历史日段未恢复，不扩为全站Coverage |
+| SRC-BAIDU-ERNIE | 原有效记录：官方中文Blog页1/2，04/15→02/06 ERNIE5→01/29跨窗即停，不翻第2旧页，见V3_NATIVE_B。补充Feb16：官方中文Blog页1，May/Apr→02/06→01/29跨Feb16停止，无第2页旧卡正文扩扫 | 已检查 | 原限制：目录无本窗项。补充限制：仅实际Blog目录范围 |
+| SRC-XIAOMI-MIMO | 原有效记录：官网Paper06/29→03/13→02/03→01/08跨窗；Blog15卡无日期/More未恢复，见V3_NATIVE_FINAL_BOUNDED。补充Feb16：Paper06/29→03/13→02/03→01/08跨Feb16；Blog15卡无日期且More未恢复，止于该页 | 受阻 | 原限制：Paper目录已查，Blog历史本窗段不可核；Robotics-0另以arXiv家族原始日期确认落窗、必要源/实际Ch26窄整合已独核POST，不双计机构目录项。补充限制：Paper已检查，Blog必要历史日期段缺失 |
+| SRC-MINIMAX | 原有效记录：英文6卡只到May；中文可见目录03/18→02/12 Forge/M2.5→01/28跨窗即停，见[V3_MINIMAX_DIRECTORY_BOUNDARY](../_sources/daily-20260217/V3_MINIMAX_DIRECTORY_BOUNDARY.txt)。补充Feb16：本轮中文入口重定向后空卡，英文有限搜索仅Feb14 Forge/Feb12 M2.5；复用原中文03/18→02/12→01/28跨Feb16的[V3有效目录](../_sources/daily-20260217/V3_MINIMAX_DIRECTORY_BOUNDARY.txt) | 已检查 | 原限制：目录无本窗项；不把02/12无TZ抬到本窗。补充限制：仅保留原有效目录范围；本轮空卡/有限搜索不授额外全站阴性 |
+| SRC-ARXIV | 原有效记录：442库存查漏、139主题完整题摘；本窗原始daily列表与Atom有限恢复失败。初筛95个arXiv artifact身份用晚Submitted+官方周末公告下界+本身份公告后Registered注册上界限定；最终77首次正文候选另经贡献/更早稿纠偏，见V3_PRIMARY_DATE_FIELDS、V3_ARXIV_AVAILABILITY_CORRECTION与逐项V3_SCREENING。补充Feb16：四主题150出现去重及相关官方标题定点浏览；六目标日路径失败，旧YYMM月路径404修正为YYYY-MM后只恢复月目录；对78新身份读完整AB，对潜在身份一次核current abs原日期/撤回字段、8作者项目替代日期（含CLASE一次定点补核）；[原日期字段](../_sources/daily-20260217/supplement-date-fields-20261008.json) | 受阻 | 原限制：原始公开列表仍缺；8早Submitted具名隔离，不借Updated/邻ID抬首公开；Registered+1s只作晚Submitted项的公告后注册上界，不作精确公告时刻。补充限制：37潜在身份无必要public日；月份、Submitted和现稿数字不授Feb16候选。原77及原8早Submitted等不重审 |
+| SRC-OPENREVIEW | 原有效记录：仅12544 COLM2025同题作者原稿与12499 ICLR同题题摘原稿的具名首次public日期恢复；必要datedforum有限入口403后停。补充Feb16：仅MPD2602.12679作者项目给同题ICLR2026论坛GRElsj9W2t，定点公开日期恢复返回verification challenge；[原响应](../_sources/daily-20260217/supplement-mpd-forum-date-20261008.txt) | 受阻 | 原限制：两项日期终态，不以Feb2026 arXiv registration签首次正文。补充限制：必要同稿首次public字段未得，不以会议年/收录日期抬归属 |
 | 表外：[AAAI出版页39945](https://ojs.aaai.org/index.php/AAAI/article/view/39945) | 仅QuEPT同title/6authors，Published2026-03-14；会期Jan20–27不证明当时正文公开 | 已检查 | 仅发表状态，不外推旧会期首次公开 |
 | 补检：[Crossref对应IEEE记录](https://api.crossref.org/works/10.1109/BigData66926.2025.11402394) | 仅12618同title/5authors出版方metadata，published/issued2025-12-08；原JSON见V3_PRIOR_PUBLICATION_12618_RAW | 已检查 | 更早事件退出本窗firstpublic，真实归属恢复线索；不重扫会场 |
 
 
+### 本轮补充窗口来源检查
+
+每日14源按Feb16日期与ROADMAP主题作有限查询/原目录恢复；不扫描每周组、不做catchup。四主题API首次Submitted Feb12～16首50被晚提交挤满后，只收窄受影响入口为Submitted Feb13日、max100/start0，72/72、2/2、47/47、29/29出现到totalResults即停；该过滤仅负责发现。完整URL/执行时间与停止见[本轮准入与原件路由](../_sources/daily-20260217/supplement-admission-20261008.md)，不是Submitted公开日期证明。
+
+上表每个清单ID均并列原有效记录与本轮补充检查；原日期、原源材料和有效审阅未变。补查不要求同一ID重复维护一张表。
+
+原始有限检索与原页面输出见本日_sources的supplement-search0～3、native0～3；这些搜索仅用于线索，未命中不作零命中。七作者项目及CLASE补核只检查必要日期正文，ToolShield/CUDABench/SPILLage/VisualRAG/NAST无当期首公开日、FlowHOI访问错误、MPD论坛验证受阻；[项目原件](../_sources/daily-20260217/supplement-project-date-20261008.txt)及[定点正文](../_sources/daily-20260217/supplement-project-date-detail-20261008.txt)保留，未扩扫repo历史或全部附件。CLASE经独立完整题摘校准从法律域EX改为评价构念/对比校准的窄潜在贡献；[一次原日期字段](../_sources/daily-20260217/supplement-clase-date-20261008.json)只有Submitted，[作者repo](../_sources/daily-20260217/supplement-clase-project-date-20261008.txt)的LREC2026 May citation不给首次公开日，不采用当前指标。
+
 ## 3. 候选与判断
+
+补充窗口当前确定新增0；37潜在贡献仅在§5日期缺口，不提前列候选/评分。2602.13376作者撤回，不入选；RynnBrain原技术报告02/17与code/weights02/09事件均窗外。原77行原值及有效处置如下，未因新补查重算。
 
 以下77唯一家族均采用本窗精确v1；题摘current数字不移植到v1。评分是各实际新增命题，整合/中心冲突需定点深入，但不代表全附件审阅。每项日期区间原值和有限公开依据均可从上述逐ID文件复查。
 
@@ -591,7 +605,19 @@
 
 判断：intent/functional segmentation评价缺口与curriculum反侧。仅报告：intent/functional评价受限，curriculum防忘并非普遍或新评价放行机制。完整必要控制与未采用范围见上述笔记中2602.13195，不再扩无关附录。
 
+补查证据/Books差额：未确认任何新当窗候选，未以题摘替代必要Source审阅；本轮无Books新写，未改共享Books/LEARNING_STATE/index。37潜在日期身份不获正面采用；[2602.13376官方撤回](https://arxiv.org/abs/2602.13376)只保留原始关闭记录。上述原77连续证据正文及其52实际整合/4具体已有覆盖均完整保留。
+
 ## 5. 缺口与下一步
+
+补查可执行扫描/准入/必要证据/Books及独立复核普通待办：无。全部37潜在题摘、具名官方撤回及分层排除已由root独立校准，增量六部分DAY通过；CLASE初筛域排除已撤销并补一次必要日期核。扫描/作者贡献初筛及必要一次日期替代恢复已到有限停止点，不借全文投入绕过日期门；以下外部保留不用于正面采用或全覆盖断言。
+
+补充窗终态日期保留37身份：2602.13529、13524、13517、13498、13483、13466、13452、13379、13370、13367、15902、12546、12533、12506、13530、13521、13516、13477、18493、13363、12510、13515、13476、13444、12686、12679、12616、12498、12639；2603.05520、02238、02237、09989、02236、02232、00077；2604.06185。各完整标题/摘要与一句具体增量在[78身份完整题摘准入记录](../_sources/daily-20260217/supplement-admission-20261008.md)及所链四题摘原件。必要同身份官方public日/当期公告批次或当时dated作者正文未恢复；current abs只有Submitted/版本记录，8项目入口没有必要正文首公开日，MPD同稿论坛受验证拦截。不能以早Submitted、月份、后来新ID或登记号反推日期；不评分、不入Books、不支撑Coverage/Evidence或无遗漏。恢复需该身份原始公开列表/公告，或可核同稿与日期的作者当时正文（MPD还需同稿论坛首次public字段）；材料到达只重开被证实落入Feb16者的日期与必要精确版本证据，不扩重审原77或整类。
+
+新增来源保留：§2补充表所列Meta/Qwen/DeepSeek/Moonshot/Anthropic/Google/MiMo及arXiv历史日段无法恢复，Seed Blog也未恢复；需对应本窗dated原目录/官方批次或具名新材料。仅恢复受影响来源/身份，有限查询阴性和复用精选目录不授全覆盖。
+
+新增窗外线索：RynnBrain2602.14979作者repo明确Technical Report 2026.02.17、code/weights2026.02.09，为两个不同事件；当时首稿仍需相应日独立必要审阅，不借当前1.1改原稿，也不自行换日。[作者原件](../_sources/daily-20260217/supplement-specific-originals-20261008.txt)保留。此线索不属于Feb16，不阻塞本窗，未声称其他日报已完成它。
+
+以下原普通待办0/原验收只指原77处理；原终态保留、中心争议及精确重开条件冻结，不签本轮增量完成。
 
 可执行扫描/准入/必要证据/Books及独立复核待办：无。日级独立整体验收已通过；以下是本窗终态保留项，不用于正面Evidence、Books、覆盖完成或无遗漏，不再重复失败恢复。
 
@@ -621,6 +647,10 @@
 窗外恢复线索：[12618](https://arxiv.org/abs/2602.12618)同title/5authors的IEEE publisher metadata published/issued2025-12-08，故首公开不归本窗。原JSON保留，真实归属为该日期或更早的待恢复线索，不冒充已审旧日、不阻塞本日报，也不自行换日。旧本日原证保留，但旧完成标签不是当前验收。
 
 ## 6. 复核
+
+补查复核者：root（非本轮作者）。补查结论：通过。[本轮独立记录](../_sources/daily-20260217/supplement-independent-20261008.md)实际完整AB校准全部37潜在项（不授public日/current数字/必要Source）、官方withdrawn13376及普通EX8/39分层样本（13084/13361/12540/12708/2603.02233/13372/2603.09987/12877），其余31普通EX未逐项独核。CLASE12639的法律域初筛EX已按具体style/semantic构念与对比校准接口改为潜在并一次补核必要日期。VisualRAG exact仅候选集且full vectors仍有驻留费用，robustCP仅learned-generation到控制不确定性接口，不扩一般控制研究。root进一步实际检查六部分差额、14源主题查询/停止及有效目录复用边界、原日期字段/8作者项目/MPD论坛挑战、Rynn窗外事件与37日期隔离，核实原77逐行同值、原窗口及原§4完整连续正文未变。确定新增0/Books新写0，普通待办0；不授全源Coverage、这些日期项的Evidence或无遗漏。原77有效独核仅复用未变化部分，见下文。
+
+本轮机器检查：完成态V3接口一致性、135本地引用无缺失、77原候选行逐字同值、原09:00窗口及原§4完整连续前缀、代码围栏成对、8个本轮JSON及压缩主题API可解析；本日README/_sources限定unstaged与cached diff-check通过。检查范围仅本轮文件，不授全工作树、实验/生产或语义验收；未stage/commit/push，未改共享Books/LEARNING_STATE/index。
 
 复核者：root（非作者，分批准入/必要原源/actual owner/写后及日级整体复核）。
 

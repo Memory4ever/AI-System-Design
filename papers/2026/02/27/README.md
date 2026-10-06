@@ -2,13 +2,19 @@
 
 **规范：** V3
 **窗口：** 2026-02-26T09:00:00+08:00 ～ 2026-02-27T09:00:00+08:00
+**窗口说明：** 用户2026-10-08授权仅补来源遗漏；既有候选行、评分、日期归属、原窗口及连续§4逐字保留，旧有效Source/Books只去重复用，不搬移日期。
+**补充窗口：** 2026-02-26 ～ 2026-02-26
 **状态：** 完成
 **Books：** 纳入本次
-**检查时间：** 2026-10-06T12:30:00+08:00
+**检查时间：** 2026-10-08T21:12:25+08:00
 
 ## 1. 结论
 
 本日固定窗口内冻结108个唯一候选家族（107论文＋Nano原release）：62实际Books整合、38具体已有覆盖、1仅报告、7中心争议安全隔离；必要证据、Books落实与独立复核均达到本窗安全终态，普通待办0。主题发现共有218个具名论文身份：107候选、91贡献排除、20日期保留项，宽目录不当作本日新论文或额外审阅队列。最终复核纠正21941未证落窗、21297误隔离，以及21760中心争议仍残留Books的三处问题；必要原证保留，错误采用链已撤。来源历史段和日期保留项不授正面覆盖、无遗漏或性能/安全保证。
+
+本轮补充Feb26自然日：确定新增Opus3退休后访问政策1项（1+1+2=4，已关闭/仅报告），总109家族＝原108＋新增1；Books累计62整合、38已有覆盖、2仅报告、7中心争议，本轮Books新写0。17新完整题摘经非作者root全量准入校准：10具名日期潜力终态隔离、7贡献前关闭；IOAgent另按2025先前公开事件关闭，不否认其Fig6局部潜力。完整六部分已由非作者root独立验收通过，普通可执行工作0；日期与机构历史缺段不授正面Coverage/Evidence或无遗漏。原108及全部旧有效结论继续原范围复用，运行前完整版本见[baseline](../_sources/daily-20260227/supplement-baseline-20261008.md)。
+
+总边界：原108日期推导、旧完成及旧来源陈述仅按用户冻结授权复用，不作为本轮新增首公开证明；尤其§2原Registered/availability组合不授新日期证据。新增仅按补充Feb26自然日及本轮可核原源处理。
 
 ## 2. 来源覆盖
 
@@ -16,28 +22,30 @@
 
 实际入口与响应见[本日来源目录](../_sources/daily-20260227/)。以下仅证明记录中的有限检查，不宣称全站历史召回。每周组未扫描，按需组没有另起会议/版本批次扫描。
 
+下表每源合并保留原窗口有效检查与补充Feb26自然日差额；实际请求/停止见[实际请求/停止材料](../_sources/daily-20260227/supplement-20261008.md)。旧完成不代替本轮验收，失败响应不授0。
+
 | 来源 | 检查范围与依据 | 结果 | 缺口 |
 | --- | --- | --- | --- |
-| SRC-OPENAI | `news/rss.xml`窗内Figma、PNNL、mental-health三事件；前两项按RSS核心说明有限排除；独立复核定点重开[mental-health原文](https://openai.com/index/update-on-mental-health-related-work/)并读核心说明，仍仅已有parental controls和未来trusted contact/extended-conversation评价公告；Feb27 05:30Z Amazon窗外停止 | 已检查 | 前两项不授不可取得正文机制；mental-health原文未披露新增可核机制，不将未来评价记为完成 |
-| SRC-ANTHROPIC | Research原HTML内174 publishedOn字段，实际Feb25 20:02Z deprecation→Mar5边界，无窗内字段；可见页面仅10近期项不单独作依据。`V3_ANTHROPIC.raw`、sitemap仅定位 | 已检查 | 有限官方嵌入目录，不保证历史删除项或全机构发布；窗前deprecation不重审 |
-| SRC-GOOGLE-AI | Research `blog/2026/02/`7条（Feb3～17）实际读完；DeepMind publications页1 Feb15→Mar10实际停止；Nano官方原release 16Z与changelog有限事实 | 已检查 | DeepMind原gzip损坏响应不作为证据，`*_RESTORE`恢复可读；Nano Mar19更新前具体spec未恢复，原release事实外不采用 |
-| SRC-META-AI | Research原响应为空／动态stub；官方publication page3辅助恢复Feb26 PAHF/Feb27 VSONAR两身份。PAHF OAI header Feb19上界证已窗前；VSONAR arXiv Mar1/Registered晚，OR旧稿有公开迹象但API403/challenge | 受阻 | 必要原目录历史段及VSONAR首次公开／重要修订精确版本日期不可确认；目录收录日不当首次公开，保留项不支持当窗候选或零命中 |
-| SRC-QWEN | 官方`api/v2/article/retrieval?type=qwen_ai&language=en-US`40条extra.date实际Feb3/10/16邻界，无窗内；不继承旧Daily覆盖 | 已检查 | 仅该原始目录有界结果，不是整个机构无遗漏 |
-| SRC-DEEPSEEK | 当前研究导航只定位；官方API updates实际Dec1 2025→Apr24 2026，无窗内API事件，有限搜索原源无新增身份 | 受阻 | 研究导航历史论文／技术发布目录未恢复；API changelog不能替研究覆盖，隔离本窗历史研究段请求，不声称机构零命中 |
-| SRC-MOONSHOT | Kimi平台Blog实际止于2025Nov7，共所列24旧事件；本窗有界官方检索无新增身份，不用GitHub Created/Updated证公开 | 受阻 | 2026Feb26～27历史研究／发布目录缺段，旧首页不能证明覆盖；需带公开时间的官方历史列表或定点公告 |
-| SRC-TENCENT-HUNYUAN | 首查Research→官方POST publicList，pageSize1000/total9实际Feb3 CLBench、Feb13 HunyuanClip到Apr邻界 | 已检查 | 仅目录9条有限结果；无窗内条目，不全文科学应用 |
-| SRC-ZAI | 首查官方Research时间排序15条实际Feb21 GLM5 report→Mar15；release-notes Feb12→Apr7对应核目录；较早与窗外止 | 已检查 | 只采用目录/发布日期；不把后来报告、API更新当本日初公开 |
-| SRC-BYTEDANCE-SEED | 论文API type1/year2026 offset60的19条Feb27→Jan27、80尾2 Jan20/22，再空tail；type2 blog12条Feb14→更早实际止 | 已检查 | CUDAAgent目录PubDate Feb27 00BJT vsApr23回填、project仅Feb27日期无TZ、arXiv晚提交，精确首次公告未恢复；安全日期保留，不入候选或Books |
-| SRC-BAIDU-ERNIE | 官方Blog页1十条实际Feb6→Apr15邻界，尾Nov2025已越过窗；仅读所需目录及日期 | 已检查 | 有限该博客目录；无需把页2更早条目变逐项队列，未授全机构召回 |
-| SRC-XIAOMI-MIMO | Paper8条实际Feb3 HySparse→Mar13；Blog定点页只Dec16 2025 MiMoV2Flash，主页15项Blog导航多为后续／无日期，官方窗内检索无新身份 | 受阻 | 本窗完整dated Blog历史段未恢复；当前Paper可有限止，undated导航不认证零发布，需官方历史dated目录或具体公告 |
-| SRC-MINIMAX | EN12条／CN13条Research实际Feb12/14→Mar18邻界，Jan27/28尾止；Agent TechBlog仅May13一条，未把当前模板当历史 | 已检查 | 仅所列研究/技术入口有限结果，EN/CN日期不同但均窗前，不改本日候选；不授全站无遗漏 |
-| SRC-ARXIV | 3主题查询306/138/134命中关联191身份＋具体主题4；完整v1题摘195，再具名查漏23新身份（22091重复只日期修正），不是宽479逐项队列；`V3_ADMISSION.tsv`92IN/84EX/19DATE及named13IN/7EX/2准入/1DATE | 已检查 | 官方availability下界＋同ID Registered上界使107候选落窗；20早Submitted潜力项仅缺sameID精确公告，有限日期隔离、不全文/评分/Books；覆盖是约定主题有限停止，不是全分类召回 |
+| SRC-OPENAI | 原检查：`news/rss.xml`窗内Figma、PNNL、mental-health三事件；前两项按RSS核心说明有限排除；独立复核定点重开[mental-health原文](https://openai.com/index/update-on-mental-health-related-work/)并读核心说明，仍仅已有parental controls和未来trusted contact/extended-conversation评价公告；Feb27 05:30Z Amazon窗外停止；补充Feb26：新RSS Feb26 06Z Figma/10Z PNNL旧事件去重；Feb27 00Z mental-health及05:30Z新四公告窗外止，不移动旧候选 | 已检查 | 原限制：前两项不授不可取得正文机制；mental-health原文未披露新增可核机制，不将未来评价记为完成；补充限制：RSS有限历史段；Figma/PNNL有限核心理由复用，不授不可得正文机制 |
+| SRC-ANTHROPIC | 原检查：Research原HTML内174 publishedOn字段，实际Feb25 20:02Z deprecation→Mar5边界，无窗内字段；可见页面仅10近期项不单独作依据。`V3_ANTHROPIC.raw`、sitemap仅定位；补充Feb26：Research原HTML166唯一publishedOn，Feb23→Feb25 20:02Z Opus→Mar5；读Opus核心和直接反侧/当前modified | 已检查 | 原限制：有限官方嵌入目录，不保证历史删除项或全机构发布；窗前deprecation不重审；补充限制：新Opus仅当前官方对历史政策描述，不声称原Feb26 payload恢复或删除项召回 |
+| SRC-GOOGLE-AI | 原检查：Research `blog/2026/02/`7条（Feb3～17）实际读完；DeepMind publications页1 Feb15→Mar10实际停止；Nano官方原release 16Z与changelog有限事实；补充Feb26：Research Feb目录7条Feb17→3尾；DeepMind Pubs页1实际30项Mar10→Feb15过界；root补RSS100项/69499byte，NanoFeb26 16:01:50Z为BJT27窗外，其余Feb19及更早，止 | 已检查 | 原限制：DeepMind原gzip损坏响应不作为证据，`*_RESTORE`恢复可读；Nano Mar19更新前具体spec未恢复，原release事实外不采用；补充限制：只证明所列目录/feed，不保证删除历史；原Nano spec缺口继续 |
+| SRC-META-AI | 原检查：Research原响应为空／动态stub；官方publication page3辅助恢复Feb26 PAHF/Feb27 VSONAR两身份。PAHF OAI header Feb19上界证已窗前；VSONAR arXiv Mar1/Registered晚，OR旧稿有公开迹象但API403/challenge；补充Feb26：Research200仅57字壳；必要publication页3 Apr14→Feb27 VSONAR→Feb26 PAHF→Feb13止；PAHF已官方OAI Feb19公开上界窗前 | 受阻 | 原限制：必要原目录历史段及VSONAR首次公开／重要修订精确版本日期不可确认；目录收录日不当首次公开，保留项不支持当窗候选或零命中；补充限制：原Research历史段缺；VSONAR公开事件/版本日期缺，目录日不当首公开 |
+| SRC-QWEN | 原检查：官方`api/v2/article/retrieval?type=qwen_ai&language=en-US`40条extra.date实际Feb3/10/16邻界，无窗内；不继承旧Daily覆盖；补充Feb26：新官方API40条extra.date Feb3/10/16邻界，无next字段 | 已检查 | 原限制：仅该原始目录有界结果，不是整个机构无遗漏；补充限制：有限API目录，无新增确定事件，不授全机构召回 |
+| SRC-DEEPSEEK | 原检查：当前研究导航只定位；官方API updates实际Dec1 2025→Apr24 2026，无窗内API事件，有限搜索原源无新增身份；补充Feb26：新研究导航533字；API updates Dec1 2025→Apr24，无Feb26；官方同日窄搜索未恢复研究目录 | 受阻 | 原限制：研究导航历史论文／技术发布目录未恢复；API changelog不能替研究覆盖，隔离本窗历史研究段请求，不声称机构零命中；补充限制：dated历史研究发布段仍缺，API changelog不能代替 |
+| SRC-MOONSHOT | 原检查：Kimi平台Blog实际止于2025Nov7，共所列24旧事件；本窗有界官方检索无新增身份，不用GitHub Created/Updated证公开；补充Feb26：Kimi Blog24旧项Nov7 2025→May29 2024尾，同日窄官方检索仅辅助 | 受阻 | 原限制：2026Feb26～27历史研究／发布目录缺段，旧首页不能证明覆盖；需带公开时间的官方历史列表或定点公告；补充限制：Feb26 dated历史研究/发布段缺，旧首页不授0 |
+| SRC-TENCENT-HUNYUAN | 原检查：首查Research→官方POST publicList，pageSize1000/total9实际Feb3 CLBench、Feb13 HunyuanClip到Apr邻界；补充Feb26：Research动态壳；POST publicList page1/pageSize1000实际total9全lang=en，Feb13→Apr23邻界、Feb3尾 | 受阻 | 原限制：仅目录9条有限结果；无窗内条目，不全文科学应用；补充限制：EN9有限止；中文dated历史段没有由EN证明，需中文列表/同日公告 |
+| SRC-ZAI | 原检查：首查官方Research时间排序15条实际Feb21 GLM5 report→Mar15；release-notes Feb12→Apr7对应核目录；较早与窗外止；补充Feb26：Research15项Mar15→Feb21→更早止；旧有效release-notes去重复用 | 已检查 | 原限制：只采用目录/发布日期；不把后来报告、API更新当本日初公开；补充限制：有限目录无新增，不把后续release当本日 |
+| SRC-BYTEDANCE-SEED | 原检查：论文API type1/year2026 offset60的19条Feb27→Jan27、80尾2 Jan20/22，再空tail；type2 blog12条Feb14→更早实际止；补充Feb26：type1/year2026 page_token60返回19条Feb27→Feb25→Jan27，next80尾2/has_more=false；type2 start0返回12/next20，20实际空/has_more=false止 | 已检查 | 原限制：CUDAAgent目录PubDate Feb27 00BJT vsApr23回填、project仅Feb27日期无TZ、arXiv晚提交，精确首次公告未恢复；安全日期保留，不入候选或Books；补充限制：CUDAAgent官方PublishDate Feb27，本次Feb26窗外；旧时间/版本请求保持不迁日 |
+| SRC-BAIDU-ERNIE | 原检查：官方Blog页1十条实际Feb6→Apr15邻界，尾Nov2025已越过窗；仅读所需目录及日期；补充Feb26：新Blog页1十条May9→Feb6→Nov21 2025已过界，未扩更早页2 | 已检查 | 原限制：有限该博客目录；无需把页2更早条目变逐项队列，未授全机构召回；补充限制：有限此博客目录，不授全机构无遗漏 |
+| SRC-XIAOMI-MIMO | 原检查：Paper8条实际Feb3 HySparse→Mar13；Blog定点页只Dec16 2025 MiMoV2Flash，主页15项Blog导航多为后续／无日期，官方窗内检索无新身份；补充Feb26：Paper8 Mar13→Feb3；Blog15无date导航，定点/blog仍Dec16 2025旧稿 | 受阻 | 原限制：本窗完整dated Blog历史段未恢复；当前Paper可有限止，undated导航不认证零发布，需官方历史dated目录或具体公告；补充限制：Feb26 dated Blog历史段缺，Paper不能代替Blog覆盖 |
+| SRC-MINIMAX | 原检查：EN12条／CN13条Research实际Feb12/14→Mar18邻界，Jan27/28尾止；Agent TechBlog仅May13一条，未把当前模板当历史；补充Feb26：新EN12/CN13 Mar18→Feb12/14→Jan27/28止；Agent TechBlog当前Sep22/Sep19两项，旧May13材料复用 | 受阻 | 原限制：仅所列研究/技术入口有限结果，EN/CN日期不同但均窗前，不改本日候选；不授全站无遗漏；补充限制：主研究目录有限止；TechBlog目标日历史段缺，不以变动模板授0 |
+| SRC-ARXIV | 原检查：3主题查询306/138/134命中关联191身份＋具体主题4；完整v1题摘195，再具名查漏23新身份（22091重复只日期修正），不是宽479逐项队列；`V3_ADMISSION.tsv`92IN/84EX/19DATE及named13IN/7EX/2准入/1DATE；补充Feb26：四announced_date_first同日Advanced返回End date错误，不当0；修复DataCite三主题306/99/232共451唯一，仅注册日发现；12分类相关Atom total532，start0/200/400实际200/200/132止，提交日只发现；立即收窄相关差额，17精确v1完整题摘、21552/21858各一次core | 受阻 | 原限制：官方availability下界＋同ID Registered上界使107候选落窗；20早Submitted潜力项仅缺sameID精确公告，有限日期隔离、不全文/评分/Books；覆盖是约定主题有限停止，不是全分类召回；补充限制：10具名潜力必要公开日一次OAI仍不可得；7贡献EX不再追日期。宽目录仅相关标题查漏，不全月/全类AB或后周队列，不授全Coverage |
 
 ## 3. 候选与判断
 
 最终日期纠偏：21941仅有Registered上界，已移至日期保留项并撤销对应Books采用；21297的Submitted晚于前一公告截止，按同一availability规则完整落窗，定点恢复其必要审阅与Books判断，不扩大窗口或重扫其他日期。
 
-下表维护108个唯一家族：62整合、38已有覆盖、1仅报告、7中心争议。全部准入、必要原证、具体owner与实际Books写后已独立复核；日期字段原值与上下界依据见[日期材料](../_sources/daily-20260227/V3_DATE_PACKET.md)。中心争议仅安全隔离，不记为正面Evidence通过。
+下表前108行为原唯一家族：62整合、38已有覆盖、1仅报告、7中心争议。原全部准入、必要原证、具体owner与实际Books写后已独立复核；日期字段原值与上下界依据见[日期材料](../_sources/daily-20260227/V3_DATE_PACKET.md)。中心争议仅安全隔离，不记为正面Evidence通过。本轮在原108行之后仅追加Opus1行，总109；原行逐字不变，不把10日期潜力纳分母。
 
 | 材料 | 公开时间 | 项目贡献与评分 | 审阅结果 | Books决定 |
 | --- | --- | --- | --- | --- |
@@ -149,6 +157,7 @@
 | [Off-The-Shelf Image-to-Image Models Are All You Need To Defeat Image Protection Schemes](https://arxiv.org/abs/2602.22197v1) | 2026-02-26T09:00:00+08:00 ～ 2026-02-26T11:16:18+08:00 | off-the-shelfimg2img可移除多种保护扰动，而非只需专门adaptiveattacker；防御评价威胁模型必须包含一般生成修复路径，安全必要深入。；2+2+2=6；[证据](../_sources/daily-20260227/V3_NEXTM6_EVIDENCE.md) | 深入完成 | 已有覆盖：`PLATFORM-SECURITY` [具体正文](../../../../books/part-06-ai-infrastructure/72-security.md)；一般变换/quality/原decoder/threat-model分责已覆盖；保8prompt搜索、PRC/VINE不同协议与selected失败人口，不授全保护失败。 |
 | [Solaris: Building a Multiplayer Video World Model in Minecraft](https://arxiv.org/abs/2602.22208v1) | 2026-02-26T09:00:00+08:00 ～ 2026-02-26T11:16:34+08:00 | 同步multiagentactions/viewsworldmodel+self-forcingcheckpointing改变multiplayerconsistency状态；2+2+2=6；[证据](../_sources/daily-20260227/V3_NEXTG8_EVIDENCE.md) | 深入完成 | 整合：MULTIMODAL-WORLD-MODELS [具体正文](../../../../books/part-03-multimodal-world-models/25-multimodal-world-models.md) |
 | [Nano Banana 2 原始release](https://blog.google/innovation-and-ai/technology/developers-tools/build-with-nano-banana-2/) | 2026-02-27T00:00:00+08:00 | 高量生成/速度目标release事实；1+1+2=4，旧版spec未恢复不采用 | 已关闭 | 仅报告：只保原始事件与目标，非未恢复机制 |
+| [Updates on Claude Opus 3](https://www.anthropic.com/research/deprecation-updates-opus-3) | 2026-02-26 | 退休不等访问全停；付费访问/API按申请延续、按模型数增加维护压力及人工代发边界；1+1+2=4 | 已关闭 | 仅报告：厂商历史访问政策/人工发布事实，未披露通用权重保全或风险治理机制，不改变长期Books |
 
 ## 4. 证据与知识整合
 
@@ -589,9 +598,36 @@ off-the-shelfimg2img可移除多种保护扰动，而非只需专门adaptiveatta
 
 官方JSON-LD原始published=2026-02-26T16:00:00Z，modified为Mar19；原release身份与高量/速度目标、changelog有限事实已由root独核，仅报告。当前更新正文不能冒充发布时机制规格；512/Thinking等旧版spec未恢复，不写Books、不采用性能/功能保证。请求与重开仅限原发布版本，见§5；[官方响应与时间依据](../_sources/daily-20260227/V3_FETCH_NANO.json)、`V3_NANO_DEV.raw`及`V3_NANO_CHANGELOG.txt`。
 
+### [Updates on Claude Opus 3](https://www.anthropic.com/research/deprecation-updates-opus-3)
+
+精确材料为本轮取得的当前官方正文：[响应](../_sources/daily-20260227/supplement-opus_deprecation-20261008.raw)、[可读核心](../_sources/daily-20260227/supplement-opus_deprecation-20261008.txt)。Research publishedOn及JSON-LD datePublished同为2026-02-25T20:02:00.000Z，归BJT Feb26；dateModified=2026-09-09T21:14:42.000Z，不冒称Feb26原payload。实际读Continued access/Respecting model preferences/Where we go next完整核心：Jan5退休后付费claude.ai继续可用、API可申请；厂商称维护成本约随模型数线性增，不承诺未来每模型均如此。至少三个月每周essay由人工审核/代发，不编辑且高veto门槛，不等模型自主发布权限；retirement interview可受context偏置，moral status不确定，不证明意识或福利。当前轻量官方撤回/纠错/安全信号未见；没有性能/代码复现主张。作为厂商历史政策说明低分关闭，仅报告：未披露可迁移的权重保全或风险治理协议，Books新写0。root已独核身份/元数据/完整核心与采用边界，日级验收通过见§6。
+
 ## 5. 缺口与下一步
 
 普通可执行工作为0；候选必要审阅、62处实际Books整合、38具体已有覆盖、1仅报告及7中心争议隔离均已独立验收。本窗仅有下列外部/争议终态保留项，不用于正面证据、Books、无遗漏或保证；材料恢复时只按各项明确条件定点重开。
+
+上句为原窗口已验收范围；本轮扫描/筛选/必要审阅/Books判断及六部分非作者DAY验收均已处理，普通可执行工作0。补充新增1仅报告（累计2）；以下10日期潜力及新确认机构历史缺段终态隔离，不授候选/Evidence/Coverage/Books或保证。
+
+### 补充自然日必要日期缺口（10项）
+
+每项均实际完整题摘，且仅一次官方OAI GetRecord恢复仍只有Submitted/version date/header datestamp，不是同ID具体公开日。可接受替代是同ID精确v1官方公告/历史公开列表，或可识别同版正文的作者/项目原始dated公开公告；只需日期不要求时刻。取得后只重开该身份日期，确证本次Feb26自然日事件后才重开必要证据，不全文绕date、不扩整月/后周。全部原字段/实际请求见[10项逐身份材料](../_sources/daily-20260227/supplement-20261008.md#3-10项具体贡献潜力与必要日期请求)。
+
+| 身份 | 为什么值得核日期/当前不能采用 | 定点重开 |
+| --- | --- | --- |
+| [Revisiting Text Ranking in Deep Research，21456v1](https://arxiv.org/abs/2602.21456v1) | agent搜索语法/ranker训练query错配，固定corpus可改retrieval选择；公开日未证 | 仅21456v1公告恢复后核rewrite归因/固定corpus边界 |
+| [GPOcc，21552v1](https://arxiv.org/abs/2602.21552v1) | surface不足→ray-volume及可增量sparse scene表示；一次§3.2–3.4 core仅校准准入，非action dynamics/校准概率；公开日未证 | 仅21552v1公开日期后核depth prior/体积不可观测假设 |
+| [MIGRASCOPE，21553v1](https://arxiv.org/abs/2602.21553v1) | MI质量/冗余/协同把retriever选择改为互补性；公开日未证 | 仅21553v1公告后核MI对象和ensemble独立评价 |
+| [Power and Limitations of Aggregation，21556v1](https://arxiv.org/abs/2602.21556v1) | stylized principal-agent区分support扩张/binding-set收缩的elicitable条件；公开日未证 | 仅21556v1公告后核理论假设，不外推一般协作 |
+| [MultiAnimate，21581v1](https://arxiv.org/abs/2602.21581v1) | 单人直接扩多人identity/occlusion失效，mask assigner/adapter两人训练泛化；公开日未证 | 仅21581v1公告后核人数人口和identity反侧 |
+| [RLHF Reward Shift and Clipped KL，21765v1](https://arxiv.org/abs/2602.21765v1) | reward shift/prompt rollout采样与sampled-KL clipping误差分责；公开日未证 | 仅21765v1公告后核OU近似/泛化假设与阈值范围 |
+| [StoryMovie，21829v1](https://arxiv.org/abs/2602.21829v1) | ground实体仍错关系，对白LCS监督可修正grounding充分性；公开日未证 | 仅21829v1公告后核judge人口/预算混杂，不照录89.9% |
+| [ProactiveMobile，21858v1](https://arxiv.org/abs/2602.21858v1) | §4.2/Table4 SR功能等价judge、FTR另评noaction，fallback不改SR；Think局部SR/FTR取舍非设备安全；公开日未证 | 接受v1首次公告，或指认Feb26重要v2公开事件及修订差额的原说明；仅该事件重开 |
+| [Hidden Topics，21939v1](https://arxiv.org/abs/2602.21939v1) | indirect/direct及placebo冲突可能揭framing盲点，不等真实hidden beliefs；公开日未证 | 仅21939v1公告后核量词/模型采样与替代解释 |
+| [Dream-SLAM，21967v1](https://arxiv.org/abs/2602.21967v1) | dreamed未观测结构/真实观测融合影响planning，可有幻觉纠正边界；公开日未证 | 仅21967v1公告后核观测约束/行动反馈 |
+
+7项贡献EX（21302/21535/21750/21827/21849/22041/22100）经完整题摘及root校准不再请求日期，[具体分层理由](../_sources/daily-20260227/supplement-20261008.md#4-分层明确关闭与旧判断定点澄清)保留；没有因小模型/理论/负面拒绝。IOAgent22017虽Fig6四片段tree merge有局部潜力，但作者2025 Publications/官方IPDPS2025程序和Comments指认此前公开，关闭本次首公开事件，不按arXiv ID重算家族或扩2025。没有同窗重要修订信号。
+
+新增来源请求：[混元Research](https://hunyuan.tencent.com/research)中文Feb26 dated历史列表/原公告（EN9不能证明中文）；[MiniMax Agent TechBlog](https://agent.minimax.io/docs/techblog)Feb26 dated历史列表/原公告（当前Sep两项不能证明历史0）。各一次必要恢复仍缺，仅材料取得后补该源目标日相关段；Meta/DeepSeek/Moonshot/MiMo原历史段请求仍有效，本轮不重复授0。
 
 
 下列为已有限隔离的具体材料缺口，不是普通执行队列，也不构成额外候选分母：20项日期身份及未证落窗的具名历史事件不入108；Nano已入分母的原release仅报告，缺失spec只是受影响事实隔离。它们不用于新增正面证据、Books、无遗漏或性能/安全保证。
@@ -645,6 +681,12 @@ off-the-shelfimg2img可移除多种保护扰动，而非只需专门adaptiveatta
 - [22146](https://arxiv.org/html/2602.22146v1)：中心参数化last-iterate保证争议：原假设容许θ=0 score/Jacobian/Fisher全零、精确NPG不动而类内更优policy存在；不采用Cor3.10保证。重开需排除退化的额外expressivity/update条件或收窄定理。 精确必要原证见对应§4链接。
 
 ## 6. 复核
+
+本轮补充复核者：`root`（未参与本日报/Books写入）。
+
+本轮结论：通过。实际读全部六部分差额、十四源实际入口/停止与失败恢复；全部17完整题摘含10日期潜力及7EX，两含糊项各一次core、IOAgent旧公开依据/局部反侧、Opus当前官方元数据/完整核心与仅报告边界均独核。七EX覆盖控制/工业BC、一般调度/责任理论、领域重建/蛋白验证、通用图像watermark各理由层，全7已读，无未读EX子集；宽发现只相关标题查漏，不把未读范围外库存称全量AB/原证审查。准入纠正三项误保留，两个含糊项保受限潜力；10同ID日期隔离、混元中文/MiniMax TechBlog及原历史缺段请求、无Books新写、109家族及旧有效工作复用通过。普通可执行工作0，保留项不授Coverage/Evidence/Books或无遗漏。
+
+作者完成态最终机械检查：原108逐行/原窗口/连续§4完整前缀冻结通过，总109；331本地引用无缺，V3及本日报/本日_sources限定cached/unstaged diff-check通过。保护巨大既有dirty，无stage/commit/push；未改共享Books/索引/State。原复核记录以下逐字保留，仅属冻结旧范围，不重审有效Source/PRE/POST。
 
 复核者：`feb27_final_gate`（未参与报告或Books写入的独立智能体）；root另承担原作者之外的分批原证/写后核验。
 

@@ -123,6 +123,8 @@ R requests:     X [R, d] * W [d, 4d]
 
 `R` 增大通常提高 arithmetic intensity 和 token throughput，但会增加 KV 占用、每轮 work 和排队。更高吞吐并不自动意味着更低 TPOT。
 
+请求 batching 之外，single-query Attention 自身也可能缺少足够并行 tiles：batch 与 KV-head 数很小时，按历史长度禁止 sequence split 的阈值可能使设备闲置，即使该历史并不长。一条[Hopper 上的局部 FA3 decode 分支](https://arxiv.org/html/2604.00028v1)在 query length=1、四个 key-block、低 tile 供给的受测形状上放宽 split，较短或已饱和形状保持原路径；它增加并行工作，同时增加分块统计与合并成本，不减少完整 Attention 的数学工作。metadata 预计算后才有清楚的 kernel 收益，将它放回完整路径后改善很小，因此历史长度、batch、KV heads、tile 预算、metadata 与合并必须共同作为 guard 和成本身份。纯 BF16 kernel 对照不授任意 short-context、完整 TPOT 或服务 SLO；实际请求无净收益、shape 越界或数值验收失败时保留原 kernel 配置。<!-- source-family:SF-2026-ARXIV-2604-00028 -->
+
 ## MoE 怎样改变 Decode 的执行形态
 
 第 21 章说明 MoE 只激活部分 experts，第 40 章说明训练时 Expert Parallel 需要
@@ -338,6 +340,8 @@ Decode 把模型推理变成持续的状态推进问题。每个请求内部必�
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-23074:end -->
 
 ## Review notes
+
+- `SF-2026-ARXIV-2604-00028` — [v1](https://arxiv.org/html/2604.00028v1) §2～5/Table1，2+1+2=5，具体decode shape guard深入；LQ=1、C++nblk4/LK512、batch1/HKV1or2低tile split3，≤384与饱和保原。H100 BF16 CUDAgraph交错A/B，precomputed metadata约1.21/1.24×，全路径约1～1.05×，非通用short-context或TPOT/SLO。未核代码、合并或复现。
 
 本轮补齐 autoregressive factorization、logical shapes、TPOT 时间边界和 batch 小例子，并明确“Decode memory-bound”是由 workload 与 arithmetic intensity 决定的工程判断。
 

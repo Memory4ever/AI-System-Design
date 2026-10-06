@@ -1,6 +1,10 @@
-# 2025-09-23 独立研究停点（James，进行中）
+# 2025-09-23 研究停点（作者侧，进行中）
 
 窗口：2025-09-22T09:00:00+08:00 ～ 2025-09-23T09:00:00+08:00。启动/恢复按AGENTS及当前研究、Report合同、来源清单Daily/arXiv组执行。仅本日重新请求和材料，不继承其他日期候选。
+
+## 本轮恢复裁决（覆盖下方旧FIRST待办表述）
+
+作者sept22_25_author实际重读本日规则/原核心与owner，复用root五项局部独立准入：Guard/VL/Edit/LiveTranslate=6/6/3/5、Travel关闭。四家族必要作者审阅4/4完成，六必要risk core6/6见 [RISK_CORE_SUBSET.md](RISK_CORE_SUBSET.md)。四家族完整采用范围、反侧、版本权限与Books位置已同步本日README§3–5；Guard具体已有覆盖/三个release接口仍按原证据限定。root已实际窄写Ch23时间/provenance706/708两段及1161自身末注，日报作者作为非Books写入者实际顺读正文/完整邻接686–731、末注1150–1176，回核原Model Updates168–204，[VL_BOOKS_POST.md](VL_BOOKS_POST.md)通过。没有自授Evidence或DAY。下方历史请求/原筛选/外部缺口不失效，但“待FIRST/候选0/未ready/待VL写入”不再是当前停点。
 
 ## 实际源请求与停止
 

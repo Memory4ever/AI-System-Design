@@ -154,6 +154,9 @@ GPU
 
 一个模型从 OOM 变成能运行，只证明 capacity 问题被移动；GPU utilization、step time 和 storage wear 仍可能不可接受。
 
+Optimizer state已超出host时，可以把本地NVMe与远端PFS视为同一虚拟层的不同I/O路径，而不强迫所有subgroup经过同一盘。[受限offload实现](https://arxiv.org/html/2509.02480v1)按观测读写带宽分配subgroups，在节点内限制每条tier路径的并发worker，并交替处理分组顺序以复用上一轮hostcache；梯度留在host后到update时再转精度，则把部分慢层传输换成CPU转换与host容量。这个编排只在分组更新彼此独立、相同gradient与全局optimizer条件已满足时可交换，不能把Adam局部更新推广到跨组范数/overflow或任意optimizer；低精度accumulation与异步buffer完成状态仍要另验。带宽均值也不是所有job共享PFS的保证，tier分配、梯度dtype、缓存owner/版本、prefetch/flush完成与资源竞争应进入runtimeplan。额外CPU/host/pinnedbuffer、网络与PFS写入/磨损、废弃工作及长程质量回归都付费，短iteration提速不等收敛更快或同质量更省；路径竞争、数值或恢复不合格时，保留原单tier异步offload、较小工作集/梯度累积与已验同步更新，不由“能放下”或高I/O带宽批准训练状态正确。
+<!-- source-family:SF-2025-ARXIV-2509-02480 -->
+
 ### 单卡层流训练需要联合规划 Placement、Recompute 与 I/O Overlap
 
 当模型依赖 host memory 或 NVMe 才能训练时，固定 checkpoint / offload 规则会把 PCIe 与存储传输暴露在 critical path。联合选择 activation placement、recomputation、checkpoint 和 communication overlap，可以形成可执行的冻结 plan；代价是求解开销、硬件依赖和运行时漂移。计划必须绑定模型、显存、带宽、optimizer 精度和质量合同，环境变化后重新求解，而不是沿用旧 schedule。这个分支扩展了 offload working-set contract，不意味着必须使用某个特定训练框架。
@@ -345,3 +348,5 @@ Primary-source / official documentation 校验入口：
 - DeepSpeed ZeRO-Offload tutorial: https://www.deepspeed.ai/tutorials/zero-offload/
 - Samyam Rajbhandari et al., "ZeRO: Memory Optimizations Toward Training Trillion Parameter Models", 2019: https://arxiv.org/abs/1910.02054
 - Guanhua Wang et al., "ZeRO++: Extremely Efficient Collective Communication for Giant Model Training", 2023: https://arxiv.org/abs/2306.10209
+
+- `SF-2025-ARXIV-2509-02480` — Noether，Daily2025-09-04补Sep3；[exact-v1](https://arxiv.org/html/2509.02480v1) §3–5/Eq1/Alg1/Table1–2必要，2+2+2=6，仅optimizer-subgroup虚拟tier/并发/cache/转换分责。保reorder独立条件、精度/异步owner、额外PFS与8iteration/weakscale/质量未知、全费/单tier退路；不采准确分配器、任意optimizer无损、故障checkpoint或普遍成本倍率。未核图像/源码/长训练或复现。Ohm§88必要Source/评分/具体gap/逐字PRE通过，root已协调本指定一自然段/独立marker/本人末注；已按批准稿真实保存，Ohm§99一次真实非writer完整新增/完整直接两侧/本人注POST通过，按root既协调本指定窄位即时生效释放；不预整日DAY。

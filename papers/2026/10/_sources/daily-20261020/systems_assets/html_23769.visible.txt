@@ -1,0 +1,689 @@
+Not All Actions Contribute Equally: Learning Precise Progress Estimation from Imprecise Demonstrations
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+I   Introduction
+II   Related Works
+II-A    Progress estimation in robotics
+II-B    Learning precise manipulation
+III   Methodology
+III-A    Problem Analysis
+III-B    Progress Estimator Construction
+III-B 1  Nearest Neighbor State Retrieval
+III-B 2  Shortest Path Planning via Dijkstra
+III-C    Policy Learning
+Learning Online
+Learning Offline
+IV   Experiments
+IV-A    Experiment Setup
+Real Robot
+Simulation
+Baselines
+IV-B    Can PRIME capture sub-optimal behaviors in human-collected dataset?
+IV-C    Can PRIME-based policy learn from sub-optimal trajectories in high-precision tasks?
+IV-D    Can PRIME enhance progress modeling and thereby facilitate online RL training?
+IV-E    Effects of Design Choices and Hyper-parameters
+Ablation on Graph Construction and Progress Distance
+Effect of Hyper-parameter Reward Clipping Bound     r  max   r_{\max}    and Temperature    τ  \tau
+Effect of Hyper-parameter Neighbor Distance Threshold    ϵ  \epsilon
+Convergence Efficiency and Computational Efficiency
+V   Conclusion
+References
+-A    Real-World Setup
+-B    Implementation Details
+-C    Progress Estimation Visualization
+License: CC BY 4.0
+arXiv:2610.23769v1 [cs.RO] 16 Oct 2026
+Not All Actions Contribute Equally: Learning Precise Progress Estimation from Imprecise Demonstrations
+Huanqian Wang
+Boshi Tang
+Botong Xiao
+Jie Zhang
+Yang Yue
+Danhua Tao
+Shiji Song
+Gao Huang
+Abstract
+Progress estimators play an essential role in providing dense reward signals for reinforcement learning in robotic manipulation, but accurately assessing task progress can be much challenging.
+Existing methods heavily rely on expert data and naively assume that all actions within a demonstration contribute to task success.
+This assumption often breaks down in real-world scenarios, especially in high-precision manipulation, where subtle geometric errors can lead to task failure.
+Therefore, these methods can erroneously interpret human mistakes as meaningful progress, further corrupting progress learning.
+We argue that a key limitation is the lack of a global prior regarding task evaluation criteria, which is crucial for distinguishing meaningful progress from human mistakes.
+To this end, we propose PRIME, a novel progress estimator capable of learning precise progress estimation from imprecise demonstrations by aggregating experience across trajectories.
+PRIME constructs a weighted graph over observed states, connecting states across trajectories based on spatial proximity and visual consistency. Edge weights encode spatial distances as transition costs, and shortest-path search approximates the geodesic distance to success. Changes in this distance naturally distinguish advancement, stagnation, and setbacks without assuming monotonic progress over time.
+Extensive experiments in both simulation and real world on precise manipulation tasks show that PRIME is consistently effective across diverse tasks, and robust to data with varying degrees of suboptimality.
+Notably, the advantage of PRIME gets more pronounced in higher-precision scenarios, yielding up to a     5  ×   5\times    improvement in policy success rate over the SFT baselines on charger insertion.
+†    †
+∗ Equal contribution.  † Corresponding author.  1 BNRist, Tsinghua University. Code:  https://github.com/lucywang720/PRIME .
+I   Introduction
+Real-world Reinforcement Learning (RL) has emerged as an indispensable paradigm for advancing robotic manipulation from simple, repetitive actions to highly complex, precise skills  [ 1 ,  2 ,  3 ,  4 ] .
+However, mastering these high-precision tasks demands feedback that goes beyond binary success signals to identify and rectify the inevitable imperfections within human-collected demonstrations and policy rollouts  [ 1 ,  2 ,  5 ] .
+To bridge this gap, progress estimators have garnered extensive attention in the research community  [ 6 ,  7 ,  8 ,  9 ,  10 ] .
+Despite recent progress, faithfully capturing subtle advancement, stagnation, and setbacks remains challenging for progress estimators, particularly in high-precision manipulation  [ 11 ,  12 ] .
+Fig. 1 :   Overview of suboptimal behaviors and their impact on policy training.
+(Top)  Demonstrations for precision manipulation inevitably contain suboptimal behaviors, even after trajectory-level filtering. In peg-insertion, for example, removing successful yet low-quality trajectories improves the task success rate only from 50% to 66.7%, whereas our step-level filtering achieves a success rate of 100%.
+(Bottom)  During data collection, human operators unavoidably introduce suboptimal behaviors such as drifting (unintended lateral deviation), overshooting (motion beyond the target), and idling (unnecessary pauses or inactivity). While prior works assume that all actions contribute equally to the final success, they fail to capture the real-time progress in the face of these behaviors.
+Fig. 2 :   Quantitative success rate comparison and qualitative illustration of progress estimation.   (Left)  Success rates of different methods across three real-world tasks: peg-in-hole, peg-in-hole (Hard) and charger insertion.  (Right)  Qualitative illustration of progress estimation on Peg-Hard task. PRIME reflects partial advancements during an undershoot, maintains a constant estimation during idling, and appropriately penalizes the progress when a drift occurs.  (Bottom)  Correspondence between suboptimal behaviors and progress estimation of PRIME. Our method accurately identifies different types of suboptimal behavior, and assigns progress estimation accordingly.
+The inefficiency of existing methods in high-precision tasks stems from their inability to distinguish genuine task progress from suboptimal behaviors such as drifting, overshooting, and idling (Fig.   1  , Bottom). These methods rely on a simple yet flawed assumption that all actions within a trajectory contribute equally to eventual task success  [ 8 ,  9 ] . Consequently, they depend heavily on expert data and discard a substantial proportion of collected demonstrations that fail to meet the required precision threshold.
+However, discarding low-quality demonstrations is costly and overlooks that, in high-precision settings, even high-quality demonstrations may contain steps that do not advance the task. Although trajectory-level filtering improves the policy success rate by 16.7 percentage points in our SFT experiments (Fig.   1  , top), suboptimal behaviors within the retained demonstrations can still confound progress estimates. This motivates finer-grained, step-level progress estimation.
+Our key observation is that accurate progress estimation can be achieved only if the underlying progress structure captures holistic task priors. Such priors cannot be obtained from a single trajectory.
+For example, when learning to operate an entirely new machine, the human operators cannot determine whether the current operation is optimal and can only attempt to faithfully follow the demonstration.
+However, after observing multiple demonstrations, the operator can distinguish between suboptimal and optimal actions and thus estimate the progress of the current operation.
+Thus, we incorporate this holistic information into our progress labels by leveraging the collective experience across multiple demonstrations, rather than relying solely on the temporal position within an individual trajectory.
+Building on this observation, we propose PRIME ( PR ecise progress estimation from  IM precise d E monstrations), a progress estimation method extracting collective experience from the collected suboptimal demonstrations to assess step-level quality. We adopt a graph search framework to approximate geodesic distances over the feasible manifold.
+Each node represents an observed state comprising the robot configuration and multi-view visual observations.
+Edges are established based on configuration proximity and visual consistency, while edge weights quantify geometric changes in robot configuration, which allows for transitions to alternative trajectories with only a fine-grained distance penalty. Shortest-path search on the resulting graph estimates the geodesic distance to success. Changes in this distance naturally distinguish advancement, stagnation, and setbacks without assuming monotonic progress over time.
+We validate the effectiveness of PRIME through extensive experiments in both real-world and simulation scenarios, which demonstrate that a policy trained with PRIME significantly improves the success rate across diverse tasks and is robust to data with varying degrees of suboptimality.
+In real world experiments, PRIME achieves consistently superior success rates especially on higher-precision tasks, outperforming the standard SFT baseline by up to     2.2  ×  −  5  ×   2.2\times-5\times    across 3 high-precision tasks: peg-in-hole (73.3% v.s. 33.3%), peg-in-hole Hard (70.0% v.s. 20.0%), and charger insertion (50.0% v.s. 10.0%).
+We further construct a diagnostic benchmark covering stage understanding, local precision, and progress continuity. PRIME achieves 92.5% accuracy in local-precision discrimination, substantially outperforming the best baseline at 70.0%.
+In the simulation environment, we evaluate PRIME (see Sec.   IV-A  ) via online reinforcement learning. Specifically,
+our method achieves relative improvements of 10.9% in InD success rates (0.674 v.s. 0.608) and 13.5% in OOD success rates (0.353 v.s. 0.311), demonstrating its effectiveness in guiding policy learning.
+II   Related Works
+Fig. 3 :   An overview of PRIME.   (a): Graph construction.  Each demonstration timestep is represented by a graph node which comprises multi-view observations and the corresponding robot configuration.
+(b): Edge establishment.  Cross-trajectory edges are established through multi-view visual consistency and configuration proximity, with weights reflecting pose and gripper-state differences.
+(c): Shortest-path distance as progress for RL.  The graph    𝒢  \mathcal{G}    defines the remaining distance to task completion as the weighted shortest-path distance from the current node to the goal. This distance serves as a measure of task progress.
+II-A    Progress estimation in robotics
+Obtaining an effective reward function is fundamental in robotic reinforcement learning to guide policy optimization and efficient exploration. This is especially crucial for high-precision tasks, where sparse feedback often leads to optimization collapse due to long credit-assignment horizons  [ 1 ] .
+To derive dense rewards from demonstrations, existing methods commonly construct progress estimation from the temporal structure of trajectories.
+Early approaches adopt linear temporal progress, such as normalized remaining-step estimation or linear interpolation over execution time  [ 13 ,  9 ,  8 ,  6 ,  14 ] .
+More recent approaches introduce structured, non-uniform progress estimation  [ 15 ,  16 ] . SARM  [ 7 ]  introduces subtask-level progress allocation with linear interpolation within each subtask, while ProcVLM  [ 17 ]  further refines it by redistributing intra-subtask progress according to visual changes.
+ARM  [ 16 ]  learns from human-annotated progress directions, which incurs substantial time and labor costs.
+Although these designs relax the uniform-rate assumption of linear interpolation, their progress targets are still largely derived from temporal ordering in demonstrations, enforcing progress to increase monotonically along the trajectory. Such temporal monotonicity does not necessarily reflect effective progress in high-precision manipulation. Demonstrations may contain hesitation, overshooting, or redundant adjustments where later observations can be temporally closer to task completion yet physically farther from a successful state.
+II-B    Learning precise manipulation
+Reinforcement learning in high-precision tasks has enabled remarkable breakthroughs, such as screw installation  [ 1 ] , shoelace tying  [ 2 ] , in-hand manipulation  [ 18 ,  19 ] , band tying  [ 20 ] , belt assembly  [ 21 ] , and deformable object handling  [ 22 ] .
+While these works improve precise manipulation, reliable dense progress supervision from offline demonstrations remains unaddressed.
+Beyond these methods, researchers are also exploring efficient strategies for learning high-precision tasks.
+Compared to these works that achieve high-precision manipulation with reweighted behavior cloning  [ 20 ,  2 ]  or pure reinforcement learning  [ 2 ,  18 ,  19 ,  21 ,  1 ] , PRIME distinguishes itself by focusing on accurate progress estimation learning, which further drives high-efficiency reinforcement learning.
+III   Methodology
+Overview.  In this paper, we estimate task progress by aggregating collective experience across demonstrations through a weighted experience graph.
+In Sec.   III-A  , we first analyze the problem and formulate its solution as a graph structure. In Sec.   III-B1   and Sec.   III-B2  , we further detail its construction and shortest-path computation. Sec.   III-C   describes how the resulting progress estimates are used for policy learning. An overview is shown in Fig.   3  .
+III-A    Problem Analysis
+Naturally, progress estimation can be formulated as a measure on representations of current world states, namely,      l  task   ​   (   r  ⁡   (   s  t   )    ,   r  ⁡   (   s   t  ′    )    )    l_{\text{task}}(r(s_{t}),r(s_{t^{\prime}}))   , where     l  task   l_{\text{task}}    is a task-specific metric, and     r  ⁡   (   s  t   )    r(s_{t})    is a representation of the current state.
+In this formulation, the state representing function     r  ⁡   (  ⋅  )    r(\cdot)    should be equipped with high distinguishing power, semantic awareness, and robustness to noise. To this end, we adopt DINOv3  [ 23 ] , a powerful self-supervised visual representation model that meets all the requirements  [ 24 ,  25 ] . It distinguishes visually similar yet semantically distant world states, such as peg rotation, dropping, insertion, etc. Note that     s  t   s_{t}    can take a variety of forms, and here we formulate it as      s  t   =   (   o  t   ,   𝐩  t   )    s_{t}=(o_{t},\mathbf{p}_{t})   , where     o  t   o_{t}    is the multi-view visual observation and     𝐩  t   \mathbf{p}_{t}    is the robot configuration. The robot configuration     𝐩  t   \mathbf{p}_{t}    is composed of the 3D positions of the TCP and the two gripper fingertips, which is denoted as      𝐩  t   =   [    𝐩  t  tcp   ,   𝐠  t  gripper    ]    \mathbf{p}_{t}=[\mathbf{p}_{t}^{\mathrm{tcp}},\mathbf{g}_{t}^{\mathrm{gripper}}]   . Although our work readily admits other forms of state representations such as      s  t   =   (   o     <  t    ,   𝐩     <  t    ,   𝐯     <  t    )    s_{t}=(o_{<t},\mathbf{p}_{<t},\mathbf{v}_{<t})    as dictated by memory mechanisms  [ 26 ] , they are not the main focus of this paper and we leave them as future work.
+Designing     l  task   l_{\text{task}}    can be more subtle. While most existing works adopt a simple Euclidean distance in the representation space, e.g.       l  task   ​   (   r  ⁡   (   s  t   )    ,   r  ⁡   (   s   t  ′    )    )    =    ‖    r  ⁡   (   s  t   )    −   r  ⁡   (   s   t  ′    )     ‖   2    l_{\text{task}}(r(s_{t}),r(s_{t^{\prime}}))=\|r(s_{t})-r(s_{t^{\prime}})\|_{2}    and      r  ⁡   (   s  t   )    =  t   r(s_{t})=t     [ 13 ,  9 ,  8 ]  or      r  ⁡   (   s  t   )    =   E  ​  n  ​  c  ​   (   o  t   )     r(s_{t})=Enc(o_{t})     [ 17 ] , we find the approach unsuitable for high-precision tasks as the latent paths indicated by Euclidean distances in the representation space of    r  r    are often infeasible in the physical world.
+In such cases, geodesic distances along the feasible execution manifold are comparatively more appropriate. However, the feasible execution manifold is often unknown and difficult to model.
+In this work, we propose to approximate the geodesic distance by Euclidean distance in neighborhood of representations.
+Moreover, without a global prior regarding feasibility manifold, we propose to leverage the physical transitions collected in the dataset, and in this case, the minimum graph distance between states can be seen as a good approximation of the geodesic distance along the feasible execution manifold.
+III-B    Progress Estimator Construction
+III-B 1  Nearest Neighbor State Retrieval
+To exploit collective experience across demonstrations, we construct graph connections from both observed transitions and state-compatible cross-trajectory transitions.
+Specifically, within each demonstration, we preserve the temporal structure of the trajectory by connecting consecutive states;
+across demonstrations, we connect states only when they are close in robot configuration and consistent in visual task state, i.e., the following conditions must be satisfied:
+𝒩   (  s  )   =   {   s  ′   |   |   𝐩  s   −   𝐩   s  ′    |   ≺   ϵ  p   ,   D  vis    (  s  ,   s  ′   )   <   ϵ  vis   }   .   \mathcal{N}(s)=\left\{s^{\prime}\;\middle|\;\lvert\mathbf{p}_{s}-\mathbf{p}_{s^{\prime}}\rvert\prec\bm{\epsilon}_{\mathrm{p}},\quad D_{\mathrm{vis}}(s,s^{\prime})<\epsilon_{\mathrm{vis}}\right\}.
+(1)
+We measure visual similarity by extracting DINOv3  [ 23 ]  features     𝐅  s  v   \mathbf{F}_{s}^{v}    and     𝐅   s  ′   v   \mathbf{F}_{s^{\prime}}^{v}    in each camera view    v  v   , with       D  vis   ​   (  s  ,   s  ′   )    =   1  −   cos  ⁡   (   𝐅  s  v   ,   𝐅   s  ′   v   )      D_{\mathrm{vis}}(s,s^{\prime})=1-\cos(\mathbf{F}_{s}^{v},\mathbf{F}_{s^{\prime}}^{v})   . Benefiting from the distinguishing power and strong pose-aware priors of DINOv3, physically irreversible transitions tend to result in higher latent distances, guaranteeing the physical transferability between cross-trajectory edges.
+We evaluate the similarity-based cross-trajectory edge forming mechanism in a real-world experiment. Specifically, we collect 20 new trajectories, compute the cross-trajectory edges between each new trajectory and the existing dataset (on average, more than 200 new edges per trajectory). For each trajectory, we replay the robotic arm to execute one-step transition between the new neighbor nodes formed by such cross-trajectory edges with environment unchanged. We find that over 99.4% of these cross-trajectory edges are physically feasible, meaning that the connected states are mutually reachable through one-step transitions. False positives are observed only when the grasped object rotates by less than 3°.
+III-B 2  Shortest Path Planning via Dijkstra
+We define the edge weight as       w  ⁡   (   s  i   ,   s  j   )    =     ‖    𝐩  i  tcp   −   𝐩  j  tcp    ‖   2   +   α  ​    ‖    𝐠  i  gripper   −   𝐠  j  gripper    ‖   2      .   w(s_{i},s_{j})=\left\|\mathbf{p}_{i}^{\mathrm{tcp}}-\mathbf{p}_{j}^{\mathrm{tcp}}\right\|_{2}+\alpha\left\|\mathbf{g}_{i}^{\mathrm{gripper}}-\mathbf{g}_{j}^{\mathrm{gripper}}\right\|_{2}.    This retains fine configuration differences that matter for high-precision execution. After constructing a graph     𝒢  =   (  V  ,  E  )    \mathcal{G}=(V,E)    from the visually gated neighborhood relation in Eq. (  1  ), we apply Dijkstra’s algorithm to compute the shortest path cost from state     s  t   s_{t}    to the set of successful terminal states     s  g   s_{g}   , where     s  g   s_{g}    comprises terminal states identified by dataset success annotations or simulation-provided success signals:
+d  ⁡   (   s  t   )    =   min  ⁡     ∑    (   s  i   ,   s  j   )   ∈  π       π  ∈   Π  ⁡   (   s  t   ,   s  g   )        ⁡   w  ⁡   (   s  i   ,   s  j   )       .   d(s_{t})=\min_{\pi\in\Pi(s_{t},s_{g})}\sum_{(s_{i},s_{j})\in\pi}w(s_{i},s_{j}).
+(2)
+We denote the weighted distance along the shortest path from the current state     s  t   s_{t}    to the goal state     s  g   s_{g}    as     d  ⁡   (   s  t   )    d(s_{t})   . Benefiting from these designs, PRIME captures the variations in minimum feasible cost caused by suboptimal behaviors at a finer granularity, thereby benefiting real-world RL.
+III-C    Policy Learning
+We use     d  ⁡   (   s  t   )    d(s_{t})    as the metric for task progress. For an action chunk of length    H  H   , we quantify its contribution to task progress by the reduction in remaining distance,      r  t   =    d  ⁡   (   s  t   )    −   d  ⁡   (   s   t  +  H    )      r_{t}=d(s_{t})-d(s_{t+H})   , where      r  t   >  0   r_{t}>0    indicates advancement toward task completion and      r  t   <  0   r_{t}<0    indicates a setback.
+Learning Online
+Upon constructing progress labels for the entire dataset, we train a distance estimator       d  ^   ϕ   ​   (   s  t   ,  z  )    \hat{d}_{\phi}(s_{t},z)    for online RL using MSE loss, where    z  z    denotes the language instruction.
+During online RL, the reward is defined as:
+r  ^   t  on   =     \displaystyle\hat{r}^{\mathrm{on}}_{t}={}
+d  ^   ϕ   ​   (   s  t   ,  z  )    −     d  ^   ϕ   ​   (   s   t  +  H    ,  z  )     \displaystyle\hat{d}_{\phi}(s_{t},z)-\hat{d}_{\phi}(s_{t+H},z)
+(3)
++    λ  succ   ​  𝟏  ​   [    success at   ​  t   +  H   ]     .   \displaystyle+\lambda_{\mathrm{succ}}\mathbf{1}[\text{success at }t+H].
+Following  [ 6 ] , we incorporate a success bonus into the final reward to encourage goal completion.
+Learning Offline
+Given a dataset annotated with progress estimation, we train the policy      π  θ   ​   (  a  |   o  ,  z   )    \pi_{\theta}(a|o,z)    using progress-prioritized sampling. Following the classic paradigm in RL  [ 27 ] , we construct a weighted sampler where the sampling probability     Prob  ​   (   r  t   )    \text{Prob}(r_{t})    is determined by its filtered reward scaling      Prob  ​   (   r  t   )    ∝   softmax  ​   (    min  ⁡   (   r  t   ,   r  max   )    τ   )     \text{Prob}(r_{t})\propto\text{softmax}\left(\frac{\min(r_{t},r_{\max})}{\tau}\right)    . The training loss can be formulated as:
+L  θ   =  −   𝔼   (  s     t   ,  z  ,  a      t  :   t  +  H     ,  r     t   )  ∼  Prob  (  r     t   )     [  log   π  θ    (   a   t  :   t  +  H     |   s  t   ,  z  )    ]  ,     L_{\theta}=-\mathbb{E}_{(s_{t},z,a_{t:t+H},r_{t})\sim\text{Prob}(r_{t})}\biggl[\log\pi_{\theta}(a_{t:t+H}|s_{t},z)\biggl],
+(4)
+where     r  max   r_{\max}    clips rare high-reward outliers and     τ  >  0   \tau>0    controls the sampling concentration.
+IV   Experiments
+TABLE I :   Main results from the real experiments.  We evaluate the performance of PRIME across four robotic manipulation tasks of varying complexity: Drawer Opening, Peg-in-Hole (Standard and Hard), and Charger Insertion. These evaluations are conducted under diverse data quality conditions, encompassing noisy data that is unqualified for pure imitation learning, as well as expert data that is qualified for training but inevitably contains human mistakes. Experimental results demonstrate that PRIME consistently outperforms standard baselines across various levels of data quality. Besides, the gains on expert data suggest that local progress information remains useful even when overall demonstration quality is high.
+Task
+Demo
+Success Rate
+Behavior
+Cloning
+Linear Temporal Progress
+Non-uniform Progress
+π  0.5   \pi_{0.5}   -SFT
+Linear
+RECAP
+ViVa
+RoboMeter
+SARM
+GSR-based
+ProcVLM
+Ours
+Drawer
+Noisy
+86.7%
+80.0%
+90.0%
+90.0%
+93.3%
+90.0%
+46.7%
+90.0%
+96.7%
+Expert
+100.0%
+90.0%
+100.0%
+100.0%
+100.0%
+100.0%
+86.7%
+100.0%
+100.0%
+Peg
+Noisy
+33.3%
+16.7%
+40.0%
+43.3%
+50.0%
+53.3%
+26.7%
+46.7%
+73.3%
+Expert
+86.7%
+76.7%
+93.3%
+86.7%
+90.0%
+73.3%
+73.3%
+86.7%
+100.0%
+Peg-Hard
+Noisy
+20.0%
+10.0%
+30.0%
+36.7%
+36.7%
+23.3%
+13.3%
+43.3%
+70.0%
+Expert
+66.7%
+33.3%
+56.7%
+53.3%
+90.0%
+46.7%
+40.0%
+66.7%
+100.0%
+Charger
+Noisy
+10.0%
+0.0%
+30.0%
+33.3%
+30.0%
+26.7%
+20.0%
+33.3%
+50.0%
+Expert
+46.7%
+26.7%
+36.7%
+33.3%
+23.3%
+23.3%
+16.7%
+26.7%
+66.7%
+In this section, we conduct experiments to evaluate the accuracy of PRIME’s progress estimates and their effectiveness for offline policy learning and online reinforcement learning. We further examine the contributions of the distance metric and the sensitivity to graph and sampling parameters. Our aim is to address the following research questions:
+Q1
+Can PRIME faithfully capture progress of high-precision tasks from human-collected trajectories interleaved with sub-optimal behaviors?
+Q2
+Can PRIME-based policy learn from sub-optimal trajectories in high-precision tasks?
+Q3
+Can PRIME provide more accurate supervision for progress estimation, thereby yielding more precise reward signals for RL training?
+Q4
+How do design choices and hyper-parameters affect PRIME?
+IV-A    Experiment Setup
+Real Robot
+We evaluate PRIME on four real-world manipulation tasks using a Piper-X robot arm: drawer opening followed by object placement, peg-in-hole, peg-in-hole (Hard), and charger insertion (Fig.   7  ). We collect 20, 30, 50, and 50 demonstration episodes for these tasks, respectively. These demonstrations are used to construct the progress estimator and subsequently train the policy. Each trained policy is evaluated over 30 randomized trials per task.
+Simulation
+Our simulation environment, termed ExpandedManiSkill, builds upon the standard configuration of RL4VLA  [ 28 ] . Specifically, to verify the scalability of PRIME under substantial spatial variations and across a wide array of object geometries, we extend the initial positional workspace from       15  ​  cm   ×  15   ​  cm   15\text{cm}\times 15\text{cm}    to       15  ​  cm   ×  40   ​  cm   15\text{cm}\times 40\text{cm}    with more evaluation objects.
+Baselines
+We compare our approach against pure SFT and several advanced progress estimation baselines. In the real-world setting, we employ     π  0.5   \pi_{0.5}     [ 29 ]  as our base model. We further evaluate PRIME against RECAP  [ 13 ] , SARM  [ 7 ] , RoboMeter  [ 8 ] , ViVa  [ 9 ] , GSR  [ 20 ]  and ProcVLM  [ 17 ] . In the simulated RL setting, we conduct comparative analyses against 0/1 sparse rewards and time-progress rewards. For fair comparison, the progress estimators mentioned above are trained using Qwen3-VL  [ 30 ]  in real-world scenarios, and their estimated progress is subsequently used in the same progress-prioritized policy training pipeline. In simulation, Qwen2.5-VL  [ 31 ]  is utilized as the progress-model backbone. During training, the model takes the robot configuration and observations as input.
+IV-B    Can PRIME capture sub-optimal behaviors in human-collected dataset?
+We evaluate PRIME on Peg-in-hole (Hard) through qualitative progress visualization and a quantitative diagnostic benchmark. As illustrated in Fig.   4  , the predicted curves show that PRIME captures setbacks during drifting and maintains stable estimates during idling.
+To further quantify estimation quality, a professional data collector collected an additional 60 trajectories exhibiting clearly suboptimal behavior and 40 expert trajectories. From these demonstrations, the collector selected 120 stage-comparison pairs with clear differences in task stage, along with 30 expert trajectories for assessing temporal smoothness, quantified by the normalized root mean square (RMS) of the second-order differences in predicted progress. The collector also carefully selected 120 local-precision comparison pairs exhibiting subtle yet task-critical geometric differences during insertion (e.g., observations taken just above the opening and those taken after suboptimal actions have caused horizontal drift).
+We aim to evaluate whether a progress estimator can correctly capture task-stage transitions, reflect suboptimal behaviors through changes in estimated progress, and provide smooth progress signals for high-quality trajectories. These properties are important for producing informative and stable reward signals for downstream RL training.
+As stated in Table   II  , PRIME achieves 92.5% accuracy in local-precision discrimination, exceeding the best baseline by 22.5 percentage points while maintaining smooth progress predictions.
+TABLE II :   Results on the diagnostic benchmark.
+Method
+Stage-level
+Ordering    ↑  \uparrow
+Local
+Precision    ↑  \uparrow
+Progress
+Continuity      (   s   −  2    )   ↓     (s^{-2})\downarrow
+Linear
+73.3%
+70.0%
+8.14
+SARM
+67.5%
+67.5%
+3.47
+RoboMeter
+70.8%
+61.7%
+4.72
+ViVa
+79.2%
+40.8%
+1.74
+ProcVLM
+87.5%
+67.5%
+5.50
+RECAP
+98.3%
+68.3%
+2.69
+GSR
+79.2%
+65.8%
+16.01
+PRIME
+100.0%
+92.5%
+1.78
+Fig. 4 :   Evaluation on various robotic trajectories.  We compare our method against baselines across three scenarios. (1) Successful Execution: For a clean trajectory with minor pauses, PRIME provides a smooth, monotonic progress estimate. (2) Suboptimal Execution: When a human collector makes a mistake and lifts the cylinder upward to adjust, PRIME captures this setback with a local decrease in progress (orange band). (3) Failure Detection: When the cylinder is misplaced, PRIME reflects a sharp drop in progress (red band) as the trajectory drifts toward failure. For visualization, we normalize our distance predictions as     1  −    d  ⁡   (   s  t   )     d  ⁡   (   s  0   )      1-\frac{d(s_{t})}{d(s_{0})}   . More visualization results are provided in Appendix   -C  .
+IV-C    Can PRIME-based policy learn from sub-optimal trajectories in high-precision tasks?
+We consider an offline setting with two types of datasets: noisy data containing suboptimal trajectories (e.g., multiple insertion attempts), and expert data comprising high-quality demonstrations with inevitable human errors for four tasks: drawer opening followed by object placement, peg-in-hole, peg-in-hole (Hard), and charger insertion. The results in Table   I   illustrate that PRIME consistently and remarkably outperforms the advanced progress estimation methods.
+IV-D    Can PRIME enhance progress modeling and thereby facilitate online RL training?
+In this subsection, we evaluate PRIME on the ExpandedManiSkill (See Sec   IV-A  ). To mimic the inherent errors made by human operators in real-world data collection, we introduce perturbations into the dataset  [ 6 ]  to replicate suboptimal behaviors in real world. This perturbed dataset is subsequently utilized to train the progress estimator. Following prior works  [ 6 ] , we trained the RL agent for 2M steps and report the average evaluation results over the final 1M steps, with evaluations every 25k steps.
+TABLE III :   Main results from the simulation.  We report the average success rates across 3 seeds (0, 1 and 2).
+Reward
+Model Type
+Success Rate
+In-distribution
+Out-of-distribution
+Sparse reward
+54.0  ±  2.3   54.0{\scriptstyle\pm 2.3}
+27.1  ±  1.4   27.1{\scriptstyle\pm 1.4}
+Time Progress
+60.8  ±  6.1   60.8{\scriptstyle\pm 6.1}
+31.1  ±  1.5   31.1{\scriptstyle\pm 1.5}
+Ours
+67.4  ±  5.6   \mathbf{67.4}{\scriptstyle\pm 5.6}
+35.3  ±  3.1   \mathbf{35.3}{\scriptstyle\pm 3.1}
+IV-E    Effects of Design Choices and Hyper-parameters
+In this subsection, we conduct ablation to investigate the critical design elements in PRIME on Peg-Hard and Drawer.
+Ablation on Graph Construction and Progress Distance
+We ablate the key components of PRIME to examine the roles of graph connectivity and distance computation.
+As illustrated in Table   IV  , PRIME substantially outperforms all three variants.
+PRIME w/o geometric edge costs retains the same graph connectivity but assigns unit edge costs, ignoring geometric transition magnitudes, thereby measuring only the minimum number of steps to the goal. PRIME w/o configuration-proximity constraint removes the configuration-proximity constraint when establishing cross-trajectory edges, relying solely on visual similarity while keeping the remaining graph formulation unchanged. This may connect visually similar states despite substantial differences in robot configuration, potentially introducing inappropriate cross-trajectory shortcuts. The Euclidean distance to goal discards the graph structure, potentially conflating equally distant states even at different task stages.
+These results demonstrate the complementary importance of configuration-aware connectivity, fine-grained transition costs, and graph-constrained path structure.
+TABLE IV :   Ablation of graph connectivity and distance computation in PRIME.
+Method
+Peg-Hard
+Drawer
+PRIME w/o geometric edge costs
+33.3%
+90.0%
+PRIME w/o configuration-proximity constraint
+26.7%
+53.3%
+Euclidean distance to goal (no graph)
+56.7%
+33.3%
+PRIME
+70.0%
+96.7%
+Effect of Hyper-parameter Reward Clipping Bound     r  max   r_{\max}    and Temperature    τ  \tau
+To identify the joint effects of the core hyper-parameters governing our filtered sampling distribution, we evaluate the policy performance by varying the reward clipping bound     r  max   r_{\max}    and softmax temperature    τ  \tau    in Fig.   5  . The results show that our method consistently outperforms both SFT and Linear across all evaluated settings.
+Fig. 5 :   Effect of temperature    τ  \tau    (left) and reward clipping bound     r  max   r_{\max}    (right).
+Effect of Hyper-parameter Neighbor Distance Threshold    ϵ  \epsilon
+The selection of the threshold depends on the differences in robot configurations between temporally adjacent frames. For instance,     P  70   P_{70}    implies that the filtering of the neighbor set is based on the 70th percentile of the configuration differences between these temporal neighbors.
+As illustrated in Table   V  , within a certain range of thresholds, PRIME consistently outperforms the baseline.
+However, being too conservative restricts cross-trajectory connections and drops the success rate to     30  %   30\%   , while being overly aggressive introduces invalid bridges, with a success rate of     53.3  %   53.3\%   .
+TABLE V :   Success rate under different percentile choices for neighbor distance thresholds     ϵ   x  ​  y    \epsilon_{xy}    and     ϵ  z   \epsilon_{z}
+ϵ
+⁢
+x
+y
+ϵ
+z
+P  30   P_{30}
+P  50   P_{50}
+P  70   P_{70}
+P  50   P_{50}
+30.0  %   30.0\%
+43.3  %   43.3\%
+66.7  %   66.7\%
+P  90   P_{90}
+36.7  %   36.7\%
+70.0  %   70.0\%
+66.7  %   66.7\%
+P  100   P_{100}
+53.3  %   53.3\%
+60.0  %   60.0\%
+53.3  %   53.3\%
+Convergence Efficiency and Computational Efficiency
+We evaluate the convergence and computational efficiency of our graph construction. As shown in Fig.   6  , the shortest-path deviation     Δ  ​  d   \Delta d    for Episode 0 rapidly decreases and stabilizes near zero after only four episodes.
+Fig.   6   (right) further shows that, with 300,000 frames, graph construction takes 19.08s, while visual encoding takes 2,893.0s. This indicates that incorporating the graph representation adds only a small computational cost while maintaining efficient scalability to long sequences.
+#Frames
+Visual
+Encode (s)
+Graph
+Construction (s)
+25,000
+249.1
+0.40
+50,000
+492.4
+1.13
+75,000
+741.6
+1.91
+150,000
+1,521.5
+5.88
+300,000
+2,893.0
+19.08
+Fig. 6 :   Convergence and computational efficiency.
+(Left) The shortest-path deviation     Δ  ​  d   \Delta d    stabilizes after 4 episodes.
+(Right) Computation time of visual encoding and graph construction with increasing numbers of graph nodes. All runtime measurements are obtained on an NVIDIA RTX3090 GPU.
+V   Conclusion
+In this paper, we introduce an improved paradigm for task progress estimation and policy learning in robotic manipulation, particularly for high-precision tasks. By combining human-collected trajectories into a graph-based framework, PRIME provides an estimate of the geodesic distance and treats it as a metric for progress estimation and as a reward for reinforcement learning. Based on such reward-labeling paradigm, our extensive evaluations on ExpandedManiSkill and in real-world deployments, comprising peg-in-hole, high-precision peg-in-hole, and charger insertion, demonstrate significant improvements in success rates (up to 5   ×  \times    for charger insertion and 3.5   ×  \times    for high-precision peg-in-hole). Furthermore, PRIME introduces modest computational overhead for graph construction and improves performance under the evaluated out-of-distribution conditions.
+References
+[1]
+C. Xu, J. T. Springenberg, M. Equi, A. Amin, A. Esmail, S. Levine, and L. Ke   (2026)
+RL token: bootstrapping online rl with vision-language-action models .
+arXiv preprint arXiv:2604.23073 .
+Cited by:   §I  ,
+§II-A  ,
+§II-B  .
+[2]
+Y. Li, X. Ma, J. Xu, Y. Cui, Z. Cui, Z. Han, L. Huang, T. Kong, Y. Liu, H. Niu,  et al.    (2025)
+Gr-rl: going dexterous and precise for long-horizon robotic manipulation .
+arXiv preprint arXiv:2512.01801 .
+Cited by:   §I  ,
+§II-B  .
+[3]
+D. Huang, T. Zhang, Y. Li, L. Zhao, J. Li, Z. Fang, C. Xia, and X. He   (2025)
+Dexterous grasping with real-world robotic reinforcement learning .
+arXiv preprint arXiv:2503.04014 .
+Cited by:   §I  .
+[4]
+Z. Chen, Y. Han, Y. Shao, H. Liu, C. Xu, X. Chen, Y. Mu, and W. Lian   (2026)
+BORA: bridging offline reinforcement learning and online residual adaptation for real-world dexterous vla models .
+External Links:   2605.30226 ,
+Link
+Cited by:   §I  .
+[5]
+X. Chen, C. Zhou, Y. Liu, and J. Yang   (2025)
+RM-rl: role-model reinforcement learning for precise robot manipulation .
+arXiv preprint arXiv:2510.15189 .
+Cited by:   §I  .
+[6]
+J. Zhang, Y. Luo, A. Anwar, S. A. Sontakke, J. J. Lim, J. Thomason, E. Biyik, and J. Zhang   (2025)
+ReWiND: language-guided rewards teach robot policies without new demonstrations .
+In  Conference on Robot Learning ,
+pp. 460–488 .
+Cited by:   §I  ,
+§II-A  ,
+§III-C  ,
+§IV-D  .
+[7]
+Q. Chen, J. Yu, M. Schwager, P. Abbeel, Y. Shentu, and P. Wu   (2025)
+SARM: stage-aware reward modeling for long horizon robot manipulation .
+External Links:   2509.25358 ,
+Link
+Cited by:   §I  ,
+§II-A  ,
+§IV-A  .
+[8]
+A. Liang, Y. Korkmaz, J. Zhang, M. Hwang, A. Anwar, S. Kaushik, A. Shah, A. S. Huang, L. Zettlemoyer, D. Fox, Y. Xiang, A. Li, A. Bobu, A. Gupta, S. Tu, E. Biyik, and J. Zhang   (2026)
+Robometer: scaling general-purpose robotic reward models via trajectory comparisons .
+External Links:   2603.02115 ,
+Link
+Cited by:   §I  ,
+§I  ,
+§II-A  ,
+§III-A  ,
+§IV-A  .
+[9]
+J. Lv, H. Li, J. Li, Y. Nie, F. Kong, Y. Wang, X. Wang, Z. Zhu, C. Ni, Q. Deng, H. Li, J. Lv, and G. Huang   (2026)
+ViVa: a video-generative value model for robot reinforcement learning .
+External Links:   2604.08168 ,
+Link
+Cited by:   §I  ,
+§I  ,
+§II-A  ,
+§III-A  ,
+§IV-A  .
+[10]
+Y. J. Ma, S. Sodhani, D. Jayaraman, O. Bastani, V. Kumar, and A. Zhang
+VIP: towards universal visual reward and representation via value-implicit pre-training .
+In  The Eleventh International Conference on Learning Representations ,
+Cited by:   §I  .
+[11]
+A. Nair, B. McGrew, M. Andrychowicz, W. Zaremba, and P. Abbeel   (2018)
+Overcoming exploration in reinforcement learning with demonstrations .
+In  2018 IEEE International Conference on Robotics and Automation (ICRA) ,
+pp. 6292–6299 .
+Cited by:   §I  .
+[12]
+K. Wu, N. Liu, Z. Zhao, D. Qiu, J. Li, Z. Che, Z. Xu, and J. Tang   (2025)
+Learning from imperfect demonstrations with self-supervision for robotic manipulation .
+In  2025 IEEE International Conference on Robotics and Automation (ICRA) ,
+pp. 16899–16906 .
+Cited by:   §I  .
+[13]
+P. Intelligence, A. Amin, R. Aniceto, A. Balakrishna, K. Black, K. Conley, G. Connors, J. Darpinian, K. Dhabalia, J. DiCarlo, D. Driess, M. Equi, A. Esmail, Y. Fang, C. Finn, C. Glossop, T. Godden, I. Goryachev, L. Groom, H. Hancock, K. Hausman, G. Hussein, B. Ichter, S. Jakubczak, R. Jen, T. Jones, B. Katz, L. Ke, C. Kuchi, M. Lamb, D. LeBlanc, S. Levine, A. Li-Bell, Y. Lu, V. Mano, M. Mothukuri, S. Nair, K. Pertsch, A. Z. Ren, C. Sharma, L. X. Shi, L. Smith, J. T. Springenberg, K. Stachowicz, W. Stoeckle, A. Swerdlow, J. Tanner, M. Torne, Q. Vuong, A. Walling, H. Wang, B. Williams, S. Yoo, L. Yu, U. Zhilinsky, and Z. Zhou   (2025)
+π  0.6  ∗   \pi^{*}_{0.6}   : A vla that learns from experience .
+External Links:   2511.14759 ,
+Link
+Cited by:   §II-A  ,
+§III-A  ,
+§IV-A  .
+[14]
+S. Zhai, Q. Zhang, T. Zhang, F. Huang, H. Zhang, M. Zhou, S. Zhang, L. Liu, S. Lin, and J. Pang   (2025)
+A vision-language-action-critic model for robotic real-world reinforcement learning .
+External Links:   2509.15937 ,
+Link
+Cited by:   §II-A  .
+[15]
+R. Tian, Y. Wu, and A. Bajcsy   (2026)
+Position: good embodied reward models need bad behavior data .
+External Links:   2606.01036 ,
+Link
+Cited by:   §II-A  .
+[16]
+Y. Mao, Z. Yu, W. Mao, Y. Li, Q. Hu, Z. Lan, M. Zhu, and H. Chen   (2026)
+ARM: advantage reward modeling for long-horizon manipulation .
+External Links:   2604.03037 ,
+Link
+Cited by:   §II-A  .
+[17]
+Y. Feng, H. Shi, H. Li, X. Guo, Y. Wang, C. Zhang, J. Zhang, X. Zhang, J. Tang, and J. Zhang   (2026)
+ProcVLM: learning procedure-grounded progress rewards for robotic manipulation .
+External Links:   2605.08774 ,
+Link
+Cited by:   §II-A  ,
+§III-A  ,
+§IV-A  .
+[18]
+O. M. Andrychowicz, B. Baker, M. Chociej, R. Jozefowicz, B. McGrew, J. Pachocki, A. Petron, M. Plappert, G. Powell, A. Ray,  et al.    (2020)
+Learning dexterous in-hand manipulation .
+The International Journal of Robotics Research   39  ( 1 ),  pp. 3–20 .
+Cited by:   §II-B  .
+[19]
+T. Chen, J. Xu, and P. Agrawal   (2022)
+A system for general in-hand object re-orientation .
+In  Conference on robot learning ,
+pp. 297–307 .
+Cited by:   §II-B  .
+[20]
+Z. Yin and P. Abbeel   (2024)
+Offline imitation learning through graph search and retrieval .
+arXiv preprint arXiv:2407.15403 .
+Cited by:   §II-B  ,
+§IV-A  .
+[21]
+J. Luo, C. Xu, J. Wu, and S. Levine   (2025)
+Precise and dexterous robotic manipulation via human-in-the-loop reinforcement learning .
+Science Robotics   10  ( 105 ),  pp. eads5033 .
+Cited by:   §II-B  .
+[22]
+C. Chi, B. Burchfiel, E. Cousineau, S. Feng, and S. Song   (2024)
+Iterative residual policy: for goal-conditioned dynamic manipulation of deformable objects .
+The International Journal of Robotics Research   43  ( 4 ),  pp. 389–404 .
+Cited by:   §II-B  .
+[23]
+O. Siméoni, H. V. Vo, M. Seitzer, F. Baldassarre, M. Oquab, C. Jose, V. Khalidov, M. Szafraniec, S. Yi, M. Ramamonjisoa, F. Massa, D. Haziza, L. Wehrstedt, J. Wang, T. Darcet, T. Moutakanni, L. Sentana, C. Roberts, A. Vedaldi, J. Tolan, J. Brandt, C. Couprie, J. Mairal, H. Jégou, P. Labatut, and P. Bojanowski   (2025)
+DINOv3 .
+External Links:   2508.10104 ,
+Link
+Cited by:   §III-A  ,
+§III-B1  .
+[24]
+G. Zhou, H. Pan, Y. LeCun, and L. Pinto   (2025)
+DINO-wm: world models on pre-trained visual features enable zero-shot planning .
+External Links:   2411.04983 ,
+Link
+Cited by:   §III-A  .
+[25]
+J. Edstedt, D. Nordström, Y. Zhang, G. Bökman, J. Astermark, V. Larsson, A. Heyden, F. Kahl, M. Wadenbäck, and M. Felsberg   (2026)
+RoMa v2: harder better faster denser feature matching .
+External Links:   2511.15706 ,
+Link
+Cited by:   §III-A  .
+[26]
+H. Shi, B. Xie, Y. Liu, L. Sun, F. Liu, T. Wang, E. Zhou, H. Fan, X. Zhang, and G. Huang   (2026)
+MemoryVLA: perceptual-cognitive memory in vision-language-action models for robotic manipulation .
+External Links:   2508.19236 ,
+Link
+Cited by:   §III-A  .
+[27]
+D. Horgan, J. Quan, D. Budden, G. Barth-Maron, M. Hessel, H. van Hasselt, and D. Silver   (2018)
+Distributed prioritized experience replay .
+In  International Conference on Learning Representations ,
+Cited by:   §III-C  .
+[28]
+J. Liu, F. Gao, B. Wei, X. Chen, Q. Liao, Y. Wu, C. Yu, and Y. Wang   (2026)
+What can rl bring to vla generalization? an empirical study .
+Advances in Neural Information Processing Systems   38 ,  pp. 97121–97151 .
+Cited by:   §IV-A  .
+[29]
+P. Intelligence, K. Black, N. Brown, J. Darpinian, K. Dhabalia, D. Driess, A. Esmail, M. Equi, C. Finn, N. Fusai, M. Y. Galliker, D. Ghosh, L. Groom, K. Hausman, B. Ichter, S. Jakubczak, T. Jones, L. Ke, D. LeBlanc, S. Levine, A. Li-Bell, M. Mothukuri, S. Nair, K. Pertsch, A. Z. Ren, L. X. Shi, L. Smith, J. T. Springenberg, K. Stachowicz, J. Tanner, Q. Vuong, H. Walke, A. Walling, H. Wang, L. Yu, and U. Zhilinsky   (2025)
+π  0.5   \pi_{0.5}   : A vision-language-action model with open-world generalization .
+External Links:   2504.16054 ,
+Link
+Cited by:   §IV-A  .
+[30]
+S. Bai, Y. Cai, R. Chen, K. Chen, X. Chen, Z. Cheng, L. Deng, W. Ding, C. Gao, C. Ge, W. Ge, Z. Guo, Q. Huang, J. Huang, F. Huang, B. Hui, S. Jiang, Z. Li, M. Li, M. Li, K. Li, Z. Lin, J. Lin, X. Liu, J. Liu, C. Liu, Y. Liu, D. Liu, S. Liu, D. Lu, R. Luo, C. Lv, R. Men, L. Meng, X. Ren, X. Ren, S. Song, Y. Sun, J. Tang, J. Tu, J. Wan, P. Wang, P. Wang, Q. Wang, Y. Wang, T. Xie, Y. Xu, H. Xu, J. Xu, Z. Yang, M. Yang, J. Yang, A. Yang, B. Yu, F. Zhang, H. Zhang, X. Zhang, B. Zheng, H. Zhong, J. Zhou, F. Zhou, J. Zhou, Y. Zhu, and K. Zhu   (2025)
+Qwen3-vl technical report .
+External Links:   2511.21631 ,
+Link
+Cited by:   §IV-A  .
+[31]
+S. Bai, K. Chen, X. Liu, J. Wang, W. Ge, S. Song, K. Dang, P. Wang, S. Wang, J. Tang, H. Zhong, Y. Zhu, M. Yang, Z. Li, J. Wan, P. Wang, W. Ding, Z. Fu, Y. Xu, J. Ye, X. Zhang, T. Xie, Z. Cheng, H. Zhang, Z. Yang, H. Xu, and J. Lin   (2025)
+Qwen2.5-vl technical report .
+External Links:   2502.13923 ,
+Link
+Cited by:   §IV-A  .
+-A    Real-World Setup
+Fig. 7 :   An overview of our real-world experimental setup.
+-B    Implementation Details
+We provide a comprehensive overview of the hyperparameter configurations in our experiments.
+TABLE VI :   Training Details of PRIME.
+Hyper-parameters
+Action Prediction Horizon
+50
+Action Horizon
+50
+Observation Horizon
+1
+Gradient Steps
+80000
+Batch Size
+16
+r  max   r_{\max}
+0.1
+ϵ   v  ​  i  ​  s    \epsilon_{vis}
+0.1
+τ  \tau
+0.05
+α  \alpha
+0.1
+ϵ   x  ​  y    \epsilon_{xy}
+P  90   P_{90}
+λ   s  ​  u  ​  c  ​  c    \lambda_{succ}
+1
+ϵ  z   \epsilon_{z}
+P  50   P_{50}
+learning rate
+1  ​  e   −  5   1e-5
+-C    Progress Estimation Visualization
+In this subsection, we present more visualization examples of our progress estimation predictions.
+Fig. 8 :   Expert demonstrations with pauses in peg-in-hole (Hard) task.
+Fig. 9 :   Suboptimal behaviors in charger insertion task.
+Fig. 10 :   Suboptimal behaviors in charger insertion task.
+Fig. 11 :   Demonstrations from an untrained human, exhibiting severe boundary violations.
+Fig. 12 :   The cylinder is placed in an incorrect location.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue"  (
+)  button, located in the page header.
+Tip:  You can select the relevant text first, to include it in your report.
+Our team has already identified  the following issues . We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a  list of packages that need conversion , and welcome  developer contributions .
+We gratefully acknowledge support from
+our  major funders ,
+member institutions   ,    ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status  (opens in new tab)
+Major funding support from

@@ -1,0 +1,753 @@
+SaiVLA-0: Cerebrum–Pons–Cerebellum Tripartite Architecture for Compute-Aware Vision-Language-Action
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Related Work
+VLA and Robot Foundation Models.
+Freezing, Adapters and Representation Alignment.
+Action Representations and Decoders.
+Multi-layer Feature Fusion.
+Hierarchical & Tripartite Control.
+Structured Prompts & ROI.
+Indirect evidence from prior art.
+3 Method
+Overall Architecture (Tripartite).
+Design hypotheses (testable predictions).
+Cerebrum (Frozen VLM).
+Pons Adapter.
+Cerebellum. ParaCAT (Parallel Categorical Action Transformer; K×DK\times D queries).
+Dual-Frequency Scheduling (fixed ratio).
+Feature Caching and Two-Stage Training.
+ROI / Multi-View Integration.
+Complexity and Latency.
+Amortized compute with chunk reuse.
+Tensor shapes and cached contents.
+4 Data and Training
+Data Sources and Splits.
+Action Labeling (Categorical Deltas).
+Precision-Control Tasks.
+Structured Prompts for the Frozen Cerebrum.
+Feature Caching (Stage A, offline).
+Training (Stage B and optional C).
+Execution Policy and Scheduling (Fixed Ratio).
+Optimization and Regularization.
+Hyperparameters and Defaults.
+Reproducibility and Logging.
+5 Experiments
+Benchmarks and Tasks.
+Evaluation Protocol.
+Training Budget.
+Metrics.
+Main Comparisons.
+Ablations.
+Preliminary LIBERO Results.
+6 Limitations & Ethics
+Limitations.
+Ethics and Safety.
+Threats to validity.
+7 Conclusion & Future Work
+Future Work.
+References
+Structured Prompt Templates.
+Cache Schema (Cerebrum Stage A).
+Evaluation Protocols.
+Timing Protocol (Inference & Training).
+Pons details and factorization criteria.
+Cerebellum-only RL protocol (prospective).
+Main default hyperparameters (this work).
+Historical prototype settings (not used in main results).
+License: arXiv.org perpetual non-exclusive license
+arXiv:2603.08124v1 [cs.RO] 09 Mar 2026
+SaiVLA-0: Cerebrum–Pons–Cerebellum Tripartite Architecture for Compute-Aware Vision-Language-Action
+Xiang Shi
+Affiliation: Synthoid.ai
+Wenlong Huang
+Affiliation: Synthoid.ai
+Menglin Zou
+Affiliation: Synthoid.ai
+Xinhai Sun
+Affiliation: contact: scholar@synthoid.ai
+Affiliation: Synthoid.ai
+March 2026
+Abstract
+We revisit Vision-Language-Action through a neuroscience-inspired triad. Biologically, the Cerebrum provides stable high-level multimodal priors and remains frozen; the Pons Adapter integrates these cortical features with real-time proprioceptive inputs and compiles intent into execution-ready tokens; and the Cerebellum (ParaCAT) performs fast, parallel categorical decoding for online control, with hysteresis/EMA/temperature/entropy for stability. A fixed-ratio schedule and two-stage feature caching make the system compute-aware and reproducible. Inspired by active, foveated vision, our wrist ROIs are geometrically tied to the end-effector via calibrated projection, providing a movement-stabilized, high-resolution view that is sensitive to fine-grained pose changes and complements the global context of the main view. The design is modular: upgrading the Cerebrum only retrains the Pons; changing robots only trains the Cerebellum; cerebellum-only RL can further refine control without touching high-level semantics. As a concept-and-protocol paper with preliminary evidence, we outline a timing protocol under matched conditions (GPU/resolution/batch) to verify anticipated efficiency gains. We also report preliminary LIBERO evidence showing that split feature caching reduces training time (7.5h→\to4.5h) and improves average success (86.5%→\to92.5%) under official N1.5 head-only training, and that SaiVLA0 reaches 99.0% mean success.
+Keywords: Vision-Language-Action, Tripartite, Frozen VLM, Transformer Head, Categorical Control, Feature Caching, Asynchronous Scheduling, Reproducibility.
+1 Introduction
+Modern VLA models often entangle semantic understanding and high-frequency control in a single system, leading to high latency and instability, especially under limited-data regimes where end-to-end fine-tuning of large VLMs is impractical and risks overfitting [1, 2, 3, 4] [5, 6]. Relying solely on last-layer representations also struggles to simultaneously capture global semantics and local geometric and contact details, and inconsistent prompts/calibration impede reproducibility.
+We revisit VLA through a neuroscience-inspired triad that separates understanding from fast control while keeping compute usage explicit and controllable [7, 8, 9]. The Cerebrum provides stable, high-level multimodal priors and stays frozen during downstream learning. The Pons Adapter mirrors the pons by integrating cortical representations with real-time perceptual and proprioceptive inputs, compiling intent into execution-ready tokens. The Cerebellum (ParaCAT) then performs fast, parallel categorical decoding to adjust action policies online under tight latency. This sensorimotor analogy also motivates our two-stage training (Stage A caches frozen Cerebrum features; Stage B trains the Pons–Cerebellum pathway end-to-end). Similar dual-system ideas have appeared in industrial humanoid stacks such as Figure AI’s Helix [10].
+Concretely, a frozen large VLM (Cerebrum) runs at low frequency and exposes multi-layer hidden states. The Pons Adapter projects them into a small set of context tokens. The Cerebellum—a ViT + text encoder + ParaCAT—runs at high frequency, fusing (i) the current image (main 1028×→25621028{\times}800\!\to\!256^{2} with two wrist ROIs 2562256^{2}), (ii) the instruction, (iii) robot state, and (iv) Cerebrum tokens to produce per-dimension categorical deltas {−1,0,+1}\{-1,0,+1\}. We adopt a fixed-ratio schedule (Cerebrum every N=5N{=}5 chunks) with micro-horizon reuse (K=20K{=}20 steps/forward), plus hysteresis/EMA/temperature/entropy for stability under latency. An overview is shown in Figure 1.
+We adopt feature caching and a two-stage training pipeline: (A) offline Cerebrum inference and caching of multi-layer tokens + prompt meta; (B) training the Cerebellum and the Pons Adapter on cached features and current frames; optionally (C)(optional) lightly tuning adapters. This yields faster iteration and better reproducibility [11, 12, 1].
+Neuroscience-inspired ROI. Human vision is foveated: the fovea is continuously directed toward task-relevant targets and provides high-acuity detail, while peripheral vision supplies global context. Our ROI design mirrors this: wrist ROIs are geometrically bound to the end-effector via calibrated projection (akin to retinotopic mapping), offering a movement-stabilized, high-resolution view that captures fine-grained pose and contact changes. This perspective is complementary to recent work on visual foundation models for embodied AI, which study “artificial visual cortex” representations reusable across tasks and embodiments [13]. ROI tokens are fused with main-view tokens via cross-attention, resembling attentional gating across foveal/peripheral pathways; when ROI confidence drops (e.g., occlusion), we fall back to the main view and adopt a more conservative decoding policy (higher temperature/stronger hysteresis), analogous to risk-aware visuomotor behavior under uncertainty.
+The split is compute-aware: latency is reported by component (Cerebrum once-call vs Cerebellum per-forward), we expose throughput knobs NN and KK, and we standardize compute-normalized success SRcn\mathrm{SR}_{\mathrm{cn}}. By “compute-aware”, we mean that latency, FLOPs, and success are always reported jointly, including SRcn\mathrm{SR}_{\mathrm{cn}} for fair comparison. The modularity further enables cerebellum-only RL in simulation without touching the Cerebrum or the Pons Adapter.
+Contributions.
+1) Foveated, geometry-tied ROI: end-effector poses are projected into the main view via calibration, yielding wrist ROIs that remain stable in the tool frame and capture fine-grained pose and contact changes; ROI is fused with the main view and falls back gracefully under low confidence.
+2) Precision-control tasks: we introduce quantitative goals (e.g., "move the object left by 10 cm") to enforce measurable spatial understanding and fine-grained control.
+3) Efficient separated training: Stage-A offline Cerebrum caching + Stage-B Cerebellum and adapter training; we report preliminary training-time gains on LIBERO and provide a public timing protocol for verification under matched conditions.
+4) ParaCAT (Parallel Categorical Action Transformer) head: parallel softmax categorical decoding produces KK steps in one forward; we provide a timing protocol under matched GPU/resolution/batch to verify anticipated efficiency gains, and leave full coverage to future work.
+5) Modular upgradability and transfer: upgrading the Cerebrum only requires retraining a lightweight adapter; changing robots while reusing the same Cerebrum only requires training the Cerebellum, improving generality and maintainability.
+We further adopt a fixed-ratio schedule (N=5N{=}5) and micro-horizon reuse (K=20K{=}20), and report compute-normalized metrics (SRcn\mathrm{SR}_{\mathrm{cn}}) with explicit latency breakdowns.
+Evaluation plan and concept positioning. We outline evaluation on LIBERO-Spatial/Object/Goal/Long (10 tasks each, 500 episodes per subset) and three real/precision suites (folding clothes: 5 tasks/200 episodes; put X into pot: 10/400; move by fixed distance: 10/200). We will report success, jitter/jerk, ffwdf_{\text{fwd}}, fefff_{\text{eff}}, SRcn\mathrm{SR}_{\mathrm{cn}}, and latency splits. This is a concept-and-protocol paper with preliminary evidence: we articulate design hypotheses, report stage-wise results (Section 5), and publish a reproducible evaluation protocol (evaluation scripts, cache schema, success criteria) to facilitate independent verification, rather than claiming conclusive superiority. We include stage-wise LIBERO evidence (Section 5): split feature caching improves success and reduces training time under official N1.5 head-only training, backbone swapping (Eagle2.5 vs Qwen3VL-2B) shows consistent trends under controlled settings, and SaiVLA0 reaches 99.0% mean success on LIBERO. LIBERO is used as a phase-wise validation; the core target remains real-robot SaiVLA0 with more tasks and larger data, following the original design in this paper.
+Figure 1: Overview: Frozen Cerebrum emits context tokens sparsely; the Cerebellum fuses image+text+state+brain tokens at high frequency and outputs categorical deltas.
+2 Related Work
+We situate our work among the following strands.
+VLA and Robot Foundation Models.
+Representative systems include GR00T variants (e.g., GR00T-N 1.5), OpenVLA, OpenVLA-OFT, π0\pi^{0}, and RDT-1B [11, 12, 1, 14, 2, 3], as well as language-conditioned manipulation systems such as CLIPort and MOO-style open-world object manipulation policies [15, 16]. These efforts scale data and model sizes and often favor end-to-end finetuning of large backbones for generalization. While effective, such pipelines can be compute-intensive and brittle in limited-data regimes, and they conflate high-level understanding with low-latency control within a single stack.
+These systems relate to web-scale generalist robot policies such as RT-1/RT-2 and Open X-Embodiment [17, 18, 19].
+Unlike end-to-end stacks, we make the pons explicit as a learnable compiler that reparameterizes the action–semantic manifold before cerebellar execution.
+Freezing, Adapters and Representation Alignment.
+Freezing backbones with lightweight adapters (LoRA/Adapters) and representation alignment (e.g., CCA/Procrustes) [20, 21, 22, 23] balances quality and efficiency. Recent work on language- and video-driven pretraining further supports this frozen-backbone paradigm, e.g., R3M and Voltron, which learn reusable visual representations for robot manipulation from human videos and language [24, 25]. We go further by fully freezing the Cerebrum (frozen VLM) and training only a Pons Adapter that fuses multi-layer features into a compact context-token set 𝐂\mathbf{C}. To ensure reproducibility and iterative speed, we adopt a two-stage pipeline with versioned feature caches. Unlike prior freezing works that still fine-tune large heads, our Pons + Cerebellum are lightweight, enabling two-stage caching and compute-normalized reporting aligned with our contributions.
+Action Representations and Decoders.
+Continuous regression, diffusion/flowmatching heads, and parallel/categorical decoders (e.g., OFT) [4, 2, 3, 14, 26, 27] offer different trade-offs among latency, stability, and calibration. We adopt ParaCAT, a Parallel Categorical Action Transformer head that outputs per-dimension {−1,0,+1}\{-1,0,+1\} deltas with softmax decoding and stabilizes execution via hysteresis/EMA/temperature/entropy controls. This favors low latency and calibrated switching, while we acknowledge an ultimate precision ceiling (addressed as future hybrid heads). Our ParaCAT performs parallel softmax decoding to produce K steps in one forward, directly supporting low-latency, compute-aware control.
+Multi-layer Feature Fusion.
+Layer-wise extraction and cross-layer attention supply complementary semantics and geometry. We select early/mid/late Cerebrum layers, fuse and compress them into a small set of context tokens 𝐂\mathbf{C} consumed by the Cerebellum.
+Hierarchical & Tripartite Control.
+Hierarchical planning plus low-level control [7, 8] motivates separating low-frequency semantics from high-frequency actuation. Our tripartite architecture makes this separation compute-aware: a fixed-ratio schedule (Cerebrum every N=5N{=}5 chunks) with micro-horizon reuse (K=20K{=}20 steps/forward) exposes explicit throughput–reactivity trade-offs, reported via latency splits and compute-normalized success SRcn\mathrm{SR}_{\mathrm{cn}}. Similar separation between cortical planning and fast cerebellar execution has been studied in neuroscience [9, 28] and appears in industrial humanoid controllers such as Figure AI’s Helix [10].
+Structured Prompts & ROI.
+Structured/JSON prompts stabilize Cerebrum outputs; ROI/multi-view perception enhances local contact cues. We use JSON prompts (fields: goal/constraints/objects/failure_cases/environment; 50% field shuffle during training) and dual wrist ROIs (2562256^{2} each) fused by the Cerebellum. Distinct from fixed wrist cameras, our geometric ROI is tied to the tool frame via calibrated projection, improving pose-change sensitivity and aligning directly with our contributions.
+Table 1: Comparison axes (high-level): data demand, latency, reproducibility cost, hierarchical/tripartite, async scheduling support. Baselines are instantiated using GR00T [11, 12], OpenVLA [1], OpenVLA-OFT [14], and diffusion-style policies [4, 2, 3].
+Method
+Data
+Latency
+Reprod. Cost
+Hier./Dual
+Async
+GR00T-like [11]
+High
+High
+High
+×\times
+×\times
+OpenVLA [1]
+High
+Med
+Med
+×\times
+×\times
+OFT [14]
+Med
+Med
+Med
+×\times
+×\times
+Diffusion [4]
+High
+High
+High
+×\times
+×\times
+SaiVLA-0 (ours; target)
+Low (target)
+Low (target)
+Low (target)
+✓\checkmark
+✓\checkmark
+Indirect evidence from prior art.
+Findings in hierarchical control, freezing/adapters, multi-layer fusion, and categorical/discrete control collectively suggest gains in stability and latency under constrained data/compute. Our work consolidates these signals into a unified tripartite architecture with fixed-ratio scheduling and two-stage caching; Sections 3–5 specify the architecture and evaluation protocol under matched training steps and consistent evaluation settings.
+3 Method
+We describe the tripartite architecture and its components. Notation aligns with the overview in the main text; we restate for completeness.
+Overall Architecture (Tripartite).
+The frozen VLM (Cerebrum) runs sparsely and exposes multi-layer hidden states. A trainable Pons Adapter fuses them into fixed-length context tokens 𝐂∈ℝNc×d\mathbf{C}\in\mathbb{R}^{N_{\!c}\times d}. The high-frequency Cerebellum fuses image tokens 𝐕\mathbf{V}, text tokens 𝐖\mathbf{W}, and a state token 𝐬\mathbf{s}; its action head introduces K×DK\times D learnable action queries {𝐪k,j}k=1..K,j=1..D\{\mathbf{q}_{k,j}\}_{k=1..K,\,j=1..D}. These queries are model parameters (learnable embeddings), not exogenous inputs. The Transformer processes the following internal token sequence
+𝐗=[𝐂;𝐕;𝐖;𝐬;{𝐪k,j}k=1..K,j=1..D].\mathbf{X}=[\mathbf{C};\mathbf{V};\mathbf{W};\mathbf{s};\{\mathbf{q}_{k,j}\}_{k=1..K,\,j=1..D}].
+The cerebellum produces per-dimension categorical logits ℝ3\mathbb{R}^{3} (for −1/0/+1-1/0/+1) and uses hysteresis/EMA/temperature/entropy constraints for stability under latency. In our dual-arm hardware, D=16D{=}16 (two 7-DoF arms plus two gripper open/close DoFs) [7, 9, 10].
+Design hypotheses (testable predictions).
+H1 (Tripartite latency–stability): Separating a low-frequency frozen Cerebrum from a high-frequency Cerebellum reduces jitter and end-to-end latency at comparable success under limited-data regimes.
+H2 (Multi-layer context): Using early/mid/late Cerebrum tokens improves contact-sensitive behaviors over last-layer-only context.
+H3 (Categorical control): Per-dimension {−1,0,+1}\{-1,0,+1\} deltas with hysteresis/EMA/temperature/entropy improve calibration and reduce oscillation versus continuous heads at similar compute.
+H4 (Two-stage caching): Offline Cerebrum caching reduces wall-clock and seed variance versus end-to-end tuning at similar accuracy.
+H5 (Scheduling): A simple fixed Cerebrum cadence (one call per NN cerebellum chunks) amortizes compute while preserving success under the same budget.
+H6 (Foveated ROI): Geometry-tied wrist ROIs plus the main view improve contact-sensitive behavior and stability metrics (e.g., jitter and jerk) over main-view-only perception at comparable compute.
+H7 (Compute-normalized reporting): Compute-normalized success SRcn\mathrm{SR}_{\mathrm{cn}}, together with latency and effective action-rate metrics, yields more meaningful comparisons across heads and schedules than raw success alone under fixed wall-clock budgets.
+Cerebrum (Frozen VLM).
+Backbone and Prompt. We freeze a large VLM (Qwen-VL-8B in our main setup; 4B/32B are used in scaling studies), including the tokenizer and prompt template. We use a structured/JSON prompt (fields: goal, constraints, objects, failure cases, environment) and randomize field order during training to improve robustness.
+Multi-layer Outputs (Frozen).
+We expose early/mid/late hidden states {HB(l)}l∈{l1,lm,lL}\{H_{B}^{(l)}\}_{l\in\{l_{1},l_{m},l_{L}\}} from the frozen VLM and keep all backbone/tokenizer/prompt parameters fixed.
+Projection/fusion/pooling are implemented by a trainable Pons Adapter (Brain-to-Cerebellum Adapter) on the cerebellum side (see below), so that the Cerebrum module remains entirely frozen.
+Design note: early/mid/late layers capture edges/shapes, object/part clues, and semantics/tasks respectively.
+Pons Adapter.
+Pons Adapter (semantic-to-dynamics compiler; trainable, online).
+Given multi-layer outputs {HB(l)}\{H_{B}^{(l)}\}, the Pons Adapter projects, fuses, and summarizes them into 𝐂∈ℝNc×d\mathbf{C}\in\mathbb{R}^{N_{\!c}\times d} that serve as context tokens to the action head. Concretely, the Pons Adapter (i) performs high-dimensional sparse recoding of structured Cerebrum intent into execution-ready tokens, (ii) factorizes action structure into geometry, dynamics priors, and control objectives to form composable motor primitives, and (iii) aligns feedback and intent to ease cerebellar forward-model updates for closed-loop stability. We use layer-wise projections and fusion (GLU and cross-layer attention), followed by attention token pooling with learnable queries:
+Q\displaystyle Q
+∈ℝNc×d,\displaystyle\in\mathbb{R}^{N_{\!c}\times d},
+Ka\displaystyle K_{a}
+=G​Wk,\displaystyle=GW_{k},
+Va\displaystyle V_{a}
+=G​Wv,\displaystyle=GW_{v},
+A\displaystyle A
+=softmax⁡(Q​Ka⊤d)∈ℝNc×T,\displaystyle=\mathrm{softmax}\!\left(\frac{QK_{a}^{\top}}{\sqrt{d}}\right)\in\mathbb{R}^{N_{\!c}\times T},
+𝐂\displaystyle\mathbf{C}
+=LN⁡(A​Va).\displaystyle=\mathrm{LN}(AV_{a}).
+The Pons Adapter is trained jointly with the cerebellum (online adapter); only the Cerebrum is frozen. In our two-stage setup, Stage A caches the frozen Cerebrum multi-layer outputs {HB(l)}\{H_{B}^{(l)}\}, and Stage B trains the Pons Adapter and the action head end-to-end on cached Cerebrum features and current frames.
+Inputs. A ViT encodes the current RGB main view (captured at 1028×8001028{\times}800 and resized to 256×256256{\times}256) and two wrist ROIs (each 256×256256{\times}256) into 𝐕\mathbf{V}; a (frozen or lightly adapted) text encoder maps the instruction to 𝐖\mathbf{W}; low-dimensional robot state becomes 𝐬\mathbf{s}. We tag modalities (brain/image/text/state/action) via learnable embeddings and adopt relative positional encodings for variable token lengths.
+Cerebellum. ParaCAT (Parallel Categorical Action Transformer; K×DK\times D queries).
+An encoder-only Transformer processes 𝐗\mathbf{X}. ParaCAT performs parallel softmax categorical decoding: for each time–dimension query (k,j)(k,j), we extract the final hidden 𝐳k,j∈ℝd\mathbf{z}_{k,j}\in\mathbb{R}^{d} and map it to categorical logits via a shared lightweight head:
+𝐨k,j\displaystyle\mathbf{o}_{k,j}
+=Wout​𝐳k,j+𝐛out∈ℝ3,\displaystyle=W_{\text{out}}\mathbf{z}_{k,j}+\mathbf{b}_{\text{out}}\in\mathbb{R}^{3},
+𝐩k,j\displaystyle\mathbf{p}_{k,j}
+=softmax⁡(𝐨k,j/τ),\displaystyle=\mathrm{softmax}(\mathbf{o}_{k,j}/\tau),
+for k=1..K,j=1..D.\displaystyle\text{for }k=1..K,\ j=1..D.
+Choosing a ternary grid {−1,0,+1}\{-1,0,+1\} keeps the label space extremely simple, which empirically stabilizes optimization and makes the head easy to train under limited data and tight latency budgets. It also matches the discriminative nature of the frozen VLM backbone: the Cerebellum only decides whether each control dimension should move negatively, stay, or move positively, while the actual metric scale is set by a fixed step size 𝜹\boldsymbol{\delta}. From a neuroscience perspective, these categorical deltas are analogous to discrete spike events: after temporal integration and population-like aggregation via EMA and hysteresis, they give rise to smooth, continuous control signals at the joint and muscle level.
+We train with class-weighted cross-entropy, label smoothing, and optional temporal smoothness:
+ℒ\displaystyle\mathcal{L}
+=∑k=1K∑j=1Dwj⋅CE⁡(𝐩k,j,LabelSmooth⁡(yk,j,ϵ))\displaystyle=\sum_{k=1}^{K}\sum_{j=1}^{D}w_{j}\cdot\mathrm{CE}\big(\mathbf{p}_{k,j},\mathrm{LabelSmooth}(y_{k,j},\epsilon)\big)
++λH∑k,jℋ(𝐩k,j)+λT∑k=2K∑jKL(𝐩k,j∥sg(𝐩k−1,j)).\displaystyle+\lambda_{H}\sum_{k,j}\mathcal{H}(\mathbf{p}_{k,j})+\lambda_{T}\sum_{k=2}^{K}\sum_{j}\mathrm{KL}\big(\mathbf{p}_{k,j}\,\|\,\mathrm{sg}(\mathbf{p}_{k-1,j})\big).
+For execution, hysteresis thresholds and EMA reduce jitter:
+Δ^t,j={+1if ​pt,j(+1)−pt,j(0)>θ↑−1if ​pt,j(−1)−pt,j(0)>θ↓Δ^t−1,jotherwise\hat{\Delta}_{t,j}=\begin{cases}+1&\text{if }p_{t,j}^{(+1)}-p_{t,j}^{(0)}>\theta_{\uparrow}\\
+-1&\text{if }p_{t,j}^{(-1)}-p_{t,j}^{(0)}>\theta_{\downarrow}\\
+\hat{\Delta}_{t-1,j}&\text{otherwise}\end{cases}
+ut=α​ut−1+(1−α)​(Δ^t⊙𝜹).u_{t}=\alpha u_{t-1}+(1-\alpha)\big(\hat{\Delta}_{t}\odot\boldsymbol{\delta}\big).
+Execution policy (default: micro-horizon reuse without triggers).
+Given the (K×D)(K\times D) predictions from one forward pass, we execute steps sequentially k=1,2,…,Kk{=}1,2,\dots,K without re-forwarding, and then perform a new forward pass for the next chunk. This execute-and-reuse policy amortizes inference and yields a higher effective action rate while keeping implementation simple; we do not use uncertainty/deviation-based early re-planning in this work. In practice, ParaCAT delivers single-forward multi-step decisions and enables substantial inference speedups versus diffusion/flowmatching heads [14, 26, 4, 2, 3, 27].
+Dual-Frequency Scheduling (fixed ratio).
+We use a simple fixed-rate schedule: the Cerebrum is invoked once every NN cerebellum chunks (default N=5N{=}5). Let ffwdf_{\text{fwd}} be the cerebellum forward rate and KK the chunk size; the effective action rate is feff≈K⋅ffwdf_{\text{eff}}\!\approx\!K\cdot f_{\text{fwd}}, while the Cerebrum amortizes over NN chunks.
+This policy is simple and effective in practice; we omit pseudocode for brevity.
+Feature Caching and Two-Stage Training.
+Stage A (Frozen Cerebrum caching). Run the frozen VLM offline to extract and store multi-layer outputs {HB(l)}\{H_{B}^{(l)}\} together with prompt meta, calibration, and trajectories in npz/mmap (with version hashes, shapes, timestamps, checksums, dependencies).
+Stage B (Online adapter + cerebellum training). Train the Pons Adapter and the ViT+Transformer action head jointly on cached {HB(l)}\{H_{B}^{(l)}\} and current frames; the Cerebrum remains frozen.
+Stage C (optional). Lightly tune small bridging layers if needed. We provide a cache validation checklist (Appendix). Viewed through the sensorimotor lens, this split corresponds to caching cortical outputs (Stage A) and adapting the pons–cerebellum pathway online (Stage B) [20, 21, 1, 11].
+ROI / Multi-View Integration.
+We project end-effectors into image coordinates via calibrated intrinsics and crop two wrist ROIs (left/right). Unlike a fixed wrist camera, these ROIs are geometrically tied to the end-effector, remaining stable relative to the tool frame and thus more sensitive to small pose and contact changes beyond mere distance cues. We fuse ROI and main-view tokens via cross-attention; under low ROI confidence/occlusion, we fall back to the main view and adopt a more conservative decoding policy (higher temperature and stronger hysteresis/EMA). An illustration of the projection pipeline is shown in Figure 2.
+Figure 2: ROI projection pipeline. End-effector poses are projected into image coordinates via calibrated intrinsics/extrinsics to produce geometry-tied wrist crops; ROIs complement the main view with movement-stabilized, high-resolution contact cues.
+Neuroscience inspiration.
+Human vision is foveated: the fovea is continuously directed toward task-relevant targets (hands or tools) and provides high-acuity detail, while peripheral vision supplies coarse global context. Our ROI functions as a foveal view that is dynamically aligned to the end-effector (via retinotopic-like projection), whereas the main view acts as peripheral context. Cross-attention mirrors attentional gating across visual pathways; confidence-aware fallback resembles risk-aware visuomotor behavior under uncertainty [9, 28].
+Complexity and Latency.
+We separate Cerebrum once-call cost and Cerebellum per-step cost. Let ff be the control loop frequency and NN the Cerebrum recurrence interval. We define a compute budget per time unit
+𝒞=1N​FLOPsbrain_once+f⋅FLOPscere_per_step,\mathcal{C}=\frac{1}{N}\mathrm{FLOPs}_{\text{brain\_once}}+f\cdot\mathrm{FLOPs}_{\text{cere\_per\_step}},
+and report compute-normalized success SRcn=SuccessRate/𝒞\mathrm{SR}_{\mathrm{cn}}=\mathrm{SuccessRate}/\mathcal{C}. We also report cold Cerebrum latency, per-step Cerebellum latency (incl. ROI), and achieved closed-loop frequency. Default hyperparameters are summarized in Appendix (Main defaults) and Table 2.
+Amortized compute with chunk reuse.
+Under the execute-and-reuse policy (no early re-planning), one Cerebellum forward covers KK control steps. If ffwdf_{\text{fwd}} denotes forward-pass rate, the effective action rate approaches
+feff≈K⋅ffwd.f_{\text{eff}}\approx K\cdot f_{\text{fwd}}.
+The per-time compute budget becomes
+𝒞≈1N​FLOPsbrain_once+ffwd⋅FLOPscere_per_fwd,\mathcal{C}\approx\frac{1}{N}\mathrm{FLOPs}_{\text{brain\_once}}+f_{\text{fwd}}\cdot\mathrm{FLOPs}_{\text{cere\_per\_fwd}},
+where FLOPscere_per_fwd\mathrm{FLOPs}_{\text{cere\_per\_fwd}} accounts for processing the (K×D)(K\times D) queries in one pass. We report both ffwdf_{\text{fwd}} and fefff_{\text{eff}} for clarity.
+Tensor shapes and cached contents.
+Unless stated otherwise, we use the following notation and typical sizes (examples only; exact hyperparameters in Appendix).
+•
+Frozen Cerebrum multi-layer outputs: HB(l)∈ℝTB(l)×d(l)H_{B}^{(l)}\in\mathbb{R}^{T_{B}^{(l)}\times d^{(l)}}, for l∈{l1,lm,lL}l\in\{l_{1},l_{m},l_{L}\}. Cached in Stage A.
+•
+Layer-wise projections (adapter): H~(l)=HB(l)​Wl+bl∈ℝTB(l)×d\tilde{H}^{(l)}=H_{B}^{(l)}W_{l}+b_{l}\in\mathbb{R}^{T_{B}^{(l)}\times d}. Fusion yields G∈ℝT×dG\in\mathbb{R}^{T\times d} with T=∑lTB(l)T=\sum_{l}T_{B}^{(l)}.
+•
+Attention pooling (adapter):
+Q∈ℝNc×d,Ka=GWk,Va=GWv,A=softmax⁡(Q​Ka⊤/d)∈ℝNc×T,𝐂=LN⁡(A​Va)∈ℝNc×d.\begin{aligned} &Q\in\mathbb{R}^{N_{\!c}\times d},\quad K_{a}=GW_{k},\quad V_{a}=GW_{v},\\
+&A=\mathrm{softmax}\!\big(QK_{a}^{\top}/\sqrt{d}\big)\in\mathbb{R}^{N_{\!c}\times T},\\
+&\mathbf{C}=\mathrm{LN}(AV_{a})\in\mathbb{R}^{N_{\!c}\times d}.\end{aligned}
+•
+ViT tokens: 𝐕∈ℝTV×d\mathbf{V}\in\mathbb{R}^{T_{V}\times d} (e.g., 256/16⇒TV=162=256256/16\Rightarrow T_{V}=16^{2}=256 for the main view; each ROI view contributes the same token count). Text tokens: 𝐖∈ℝTW×d\mathbf{W}\in\mathbb{R}^{T_{W}\times d}. State token: 𝐬∈ℝ1×d\mathbf{s}\in\mathbb{R}^{1\times d}.
+•
+Action queries (parameters, not cached): K×DK\times D learnable embeddings {𝐪k,j}\{\mathbf{q}_{k,j}\}, each produces 𝐳k,j∈ℝd\mathbf{z}_{k,j}\in\mathbb{R}^{d}.
+•
+Output logits: 𝐨k,j∈ℝ3\mathbf{o}_{k,j}\in\mathbb{R}^{3} reshaped to (batch,K,D,3)(\text{batch},K,D,3); labels share the same (K,D)(K,D) grid.
+•
+Typical defaults: Nc=24N_{\!c}=24, d=1024d{=}1024, K=20K{=}20, D=16D{=}16; we report exact settings per experiment.
+4 Data and Training
+We describe datasets, labeling, prompts, caching, and training details aligned with our tripartite design. Defaults are provided and tuned per experiment; we report exact settings alongside results.
+Data Sources and Splits.
+We combine (i) public robot demonstrations (e.g., LIBERO subsets [29]), (ii) a small set of real desktop manipulation tasks (pick-place, tool-use), and (iii) optional simulation for long-tail coverage. This design follows recent trends in large-scale data-driven robotics, where diverse multi-task, multi-domain datasets and data-reuse frameworks such as BridgeData, DROID, and reward-sketching based offline RL have been shown to improve generalization and data efficiency [30, 31, 32]. Unlike recent web-scale efforts that rely on massive cross-embodiment corpora [19, 33, 34], we deliberately target a more modest data regime that better matches limited-compute labs. Splits are stratified by task; identities and near-duplicates are de-duplicated across train/val/test. Privacy-sensitive segments are filtered. We fix seeds, log environment versions, and ensure deterministic dataloader order. Hardware setup: a dual-arm system with two 7-DoF arms; each arm mounts a dexterous hand used as a gripper with one open/close DoF. Demonstrations are collected via VR teleoperation; the VR pose stream is mapped to joint-space trajectories with rate and safety limits logged alongside data.
+Action Labeling (Categorical Deltas).
+From time-stamped poses/commands, we compute per-dimension deltas and quantize signs {−1,0,+1}\{-1,0,+1\} with deadbands:
+Δ​p​ (mm) ,Δ​θ​ (deg)⇒yt,j∈{−1,0,+1}.\Delta p\text{ (mm) },\ \Delta\theta\text{ (deg)}\Rightarrow y_{t,j}\in\{-1,0,+1\}.
+Our control dimension is D=16D{=}16 (two 7-DoF arms + two gripper open/close DoFs). We use step grids δp=5​mm\delta_{p}{=}5\,\mathrm{mm} and δθ=1∘\delta_{\theta}{=}1^{\circ} with a zero band calibrated from small-motion noise. Outliers (speed spikes, slips) are down-weighted via per-frame weights wtw_{t} from robust statistics; gripper open/close channels adopt symmetric thresholds matched to the angular grid. For micro-horizon reuse, labels are aligned to the (K×D)(K\times D) grid; we optionally apply mild temporal smoothing before quantization to reduce flicker.
+Precision-Control Tasks.
+Beyond semantic goals, we introduce quantitative objectives (e.g., “move the object left by 10 cm”) to encourage measurable spatial understanding and fine-grained control. We define position/orientation error metrics and success thresholds accordingly, and report error distributions alongside success/jitter/jerk.
+Structured Prompts for the Frozen Cerebrum.
+We use three prompt templates (concise, extended, JSON). Unless otherwise noted, training and inference both use the JSON template with fields goal, constraints, objects, failure_cases, environment. During training, we randomize field order with 50% probability and apply light text normalization (lowercasing, whitespace trimming) and instruction augmentation (synonym substitution) without changing semantics, to improve robustness and reduce template shift.
+Feature Caching (Stage A, offline).
+With the Cerebrum fully frozen, we run it offline to extract early/mid/late hidden states {HB(l)}l∈{l1,lm,lL}\{H_{B}^{(l)}\}_{l\in\{l_{1},l_{m},l_{L}\}}. We persist per-trajectory archives (npz/mmap, float16 by default) containing:
+(i) version_hash, tokenizer_id, prompt_id, calib_id;
+(ii) the multi-layer tensors with shapes and dtypes;
+(iii) prompt metadata and raw instruction;
+(iv) camera intrinsics and ROI projections;
+(v) trajectory timestamps and categorical labels;
+(vi) checksums and dependency manifests.
+We provide a cache validation script (shape/dtype/hash/timestamp checks) and a small viewer for random samples.
+Training (Stage B and optional C).
+Stage B jointly trains the Pons Adapter and the Cerebellum on cached {HB(l)}\{H_{B}^{(l)}\} plus current frames. Batches are balanced by task difficulty; we use class-weighted cross-entropy with label smoothing and entropy regularization. Image augmentations include random resize-crop, color jitter, Gaussian noise, and motion blur; ROI is projected from calibration and cropped as two views (left/right end-effector) when available, with confidence-aware fallback to the main view. Text encoder is frozen or lightly adapted via a small adapter.
+Stage C (optional) lightly tunes bridging layers (e.g., adapter projections) under a reduced learning rate; the Cerebrum remains frozen throughout.
+The modular split naturally enables cerebellum-only RL in simulation—fine-tune ParaCAT while freezing the Cerebrum and the Pons Adapter, targeting smoothness and precision improvements without touching high-level semantics.
+Execution Policy and Scheduling (Fixed Ratio).
+We adopt execute-and-reuse micro-horizons: one forward produces KK steps that are executed sequentially without re-forwarding; no early re-planning is used. Unless otherwise stated, we set K=20K{=}20. The Cerebrum is invoked once every NN cerebellum chunks (default N=5N{=}5). Let ffwdf_{\text{fwd}} be the cerebellum forward rate; the effective action rate is feff≈K⋅ffwdf_{\text{eff}}\!\approx\!K\cdot f_{\text{fwd}}. This fixed-ratio schedule matches the Method section and amortizes Cerebrum cost.
+Optimization and Regularization.
+Unless stated otherwise, we use AdamW (lr 1×10−41\times 10^{-4}, weight decay 0.050.05), cosine decay with 2k warmup steps, gradient clipping (1.0), label smoothing ϵ=0.05\epsilon{=}0.05, class weights from inverse-frequency clipped to [0.5,2.0][0.5,2.0], entropy regularization λH∈[1​e-​3,5​e-​3]\lambda_{H}\in[1\text{e-}3,5\text{e-}3], temporal KL λT∈[1​e-​3,5​e-​3]\lambda_{T}\in[1\text{e-}3,5\text{e-}3]. Batch size and training steps are set per experiment (e.g., the preliminary LIBERO setting in Section 5 uses 20k steps with batch 80×880\times 8 GPUs). Temperature τ\tau is annealed (e.g., 1.5→0.71.5\to 0.7); hysteresis thresholds (θ↑,θ↓)(\theta_{\uparrow},\theta_{\downarrow}) default to (0.2,0.2)(0.2,0.2); EMA coefficient α=0.8\alpha{=}0.8. We log per-dimension confusion and jitter statistics.
+Hyperparameters and Defaults.
+We summarize key knobs that are varied in ablations (defaults in parentheses):
+•
+Cerebrum context: layers {l1,lm,lL}\{l_{1},l_{m},l_{L}\}, context tokens NcN_{\!c} (24).
+•
+Cerebellum: Transformer depth LL (6), d=1024d{=}1024, heads (8), K=20K{=}20, D=16D{=}16.
+•
+Scheduling: Cerebrum interval NN (5), no early triggers.
+•
+Vision: main view 1028×→256×2561028{\times}800\!\to\!256{\times}256, patch size 16; two ROI crops 256×256256{\times}256 (if available).
+•
+Text: frozen vs light adapter (default: frozen).
+•
+Control grid: δp=5​mm\delta_{p}{=}5\,\mathrm{mm}, δθ=1∘\delta_{\theta}{=}1^{\circ}, deadband from noise calibration.
+•
+Stability: τ\tau anneal (1.5→0.7), θ↑/↓\theta_{\uparrow/\downarrow} (0.2), EMA α\alpha (0.8).
+Table 2: Key hyperparameters (defaults; tuned in ablations).
+Component
+Setting (default)
+Cerebrum Layers
+{l1,lm,lL}\{l_{1},l_{m},l_{L}\}, Nc=24N_{\!c}{=}24
+ViT
+Main 1028×→25621028{\times}800\!\to\!256^{2}, patch 16; two ROI 2562256^{2}
+Text Encoder
+Frozen (adapter optional)
+Cerebellum
+L=6,d=1024,#​h​e​a​d​s=8,K=20,D=16L{=}6,d{=}1024,\#heads{=}8,K{=}20,D{=}16
+Scheduling
+Fixed N=5N{=}5 (no early re-plan)
+Control Grid
+δp=5​mm,δθ=1∘\delta_{p}{=}5\,\mathrm{mm},\ \delta_{\theta}{=}1^{\circ}
+Stability
+τ:→0.7,θ↑/↓=0.2,α=0.8\tau\!:\!1.5\!\to\!0.7,\ \theta_{\uparrow/\downarrow}{=}0.2,\ \alpha{=}0.8
+Optimization
+AdamW, lr 1​e-​41\text{e-}4, wd 0.05, warmup 2k, clip 1.0
+Reproducibility and Logging.
+We fix seeds, enable deterministic ops when feasible, and log: version_hash, data split manifests, cache checksums, hyperparameters, VR teleoperation metadata (rate, safety limits), and wall-clock latency. We report compute-normalized success SRcn\mathrm{SR}_{\mathrm{cn}}, cold Cerebrum latency, per-step Cerebellum latency (incl. ROI), and achieved closed-loop frequency fefff_{\text{eff}}.
+5 Experiments
+We evaluate the tripartite architecture and report preliminary evidence on LIBERO under the official evaluation environment.
+Benchmarks and Tasks.
+LIBERO subsets [29]: LIBERO-Spatial, LIBERO-Object, LIBERO-Goal, and LIBERO-Long. Our evaluation focuses on a controlled, mid-scale regime to study compute-aware trade-offs, complementary to large-scale data-driven setups such as BridgeData and DROID or reward-sketching based frameworks [30, 31, 32].
+Real bimanual tasks (planned): folding clothes and put X into pot.
+Precision task (planned): move an object by a fixed distance.
+LIBERO subsets use 10 tasks each and 500 episodes per subset. Real/precision tasks episode plans: folding clothes (5 tasks, 200 episodes), put X into pot (10 tasks, 400 episodes), and move by fixed distance (10 tasks, 200 episodes).
+Evaluation Protocol.
+We follow the official LIBERO evaluation protocol and run the full test suites. For each trained checkpoint, we run evaluation 5 times (randomized evaluation runs) and report the averaged success rate. Success criteria and maximum horizon are fixed per task (details in Appendix). Unless otherwise stated, we use D=16D{=}16.
+Training Budget.
+For the preliminary LIBERO results reported here, we train for 20k steps with batch size 8080 on each of 8 GPUs. Unless stated otherwise, the LIBERO experiments do not enable ROI due to environment integration constraints.
+Metrics.
+We report: success rate; jitter rate (per-dimension sign flips per step); jerk; closed-loop frequencies ffwdf_{\text{fwd}} and fefff_{\text{eff}}; latency (Cerebrum once-call vs Cerebellum per-forward); intervention rate; training wall-clock/throughput (note: Stage-A is reported separately and amortized); and compute-normalized success SRcn\mathrm{SR}_{\mathrm{cn}}. For head efficiency, we compare ParaCAT against diffusion/flowmatching under identical GPU/resolution/batch.
+Main Comparisons.
+(1) Single-system baseline (monolithic VLA) vs Tripartite (ours, fixed NN, K=20K{=}20). Monolithic VLAs follow designs similar to GR00T and OpenVLA families [11, 1].
+(2) Action head: continuous regression / diffusion vs ParaCAT (Parallel Categorical Action Transformer) head; we provide a timing protocol in the Appendix under matched conditions (GPU/resolution/batch) to verify anticipated efficiency gains for ParaCAT, comparing against diffusion/flow-based VLAs [4, 2, 3] and OFT-style parallel decoding [14].
+(3) Scale study: Cerebrum size (4B/8B/32B) and Cerebellum size (vary L,d,L,d, heads) under matched steps.
+Ablations.
+A1: last-only vs 1/2/3-layer fusion; Nc∈{8,16,24,32}N_{\!c}\in\{8,16,24,32\}.
+A2: with/without Cerebellum image/text pathways; two-ROI on/off; main resolution (256 vs 224).
+A3: stability controls (temperature anneal, entropy cap, hysteresis, EMA); K∈{5,10,20}K\in\{5,10,20\}.
+A4: two-stage caching vs end-to-end training (report wall-clock and seed variance).
+A5: fixed-interval scheduling only; vary N∈{3,5,10}N\in\{3,5,10\} to chart compute–success trade-offs.
+Pons & RL (prospective). Pons factorization: structured vs non-structured recoding; early/mid/late layer selection for 𝐂\mathbf{C}. Cerebellum-only RL in simulation: freeze the Cerebrum and the Pons Adapter, fine-tune ParaCAT with rewards targeting smoothness, precision, and latency.
+Table 3: Benchmarks, tasks, and episodes.
+Benchmark/Task
+Tasks
+Episodes
+LIBERO-Spatial
+10
+500
+LIBERO-Object
+10
+500
+LIBERO-Goal
+10
+500
+LIBERO-Long
+10
+500
+Folding clothes
+5
+200
+Put X into pot
+10
+400
+Move by fixed distance
+10
+200
+Table 4: Training budget and default setup (main results).
+Item
+Setting
+Eval runs
+5 per checkpoint (averaged)
+Steps
+20k, batch 80×880\times 8 GPUs
+Cerebrum
+N1.5 backbone (default); layer is mid-layer (e.g., 12 for Eagle2.5)
+Head
+N1.5 FlowMatching head (kept fixed unless stated)
+Scheduling
+N=1N{=}1 for LIBERO comparisons; K=16K{=}16 for SaiVLA0
+Vision
+official LIBERO setup (ROI not enabled in LIBERO)
+Preliminary LIBERO Results.
+We report success rates (%) on the official LIBERO evaluation environment (full subsets), averaged over 5 evaluation runs per checkpoint. These results are intended as stage-wise evidence; ROI is used in real-robot experiments but is not enabled in LIBERO in this draft.
+Table 5: Split (feature caching) vs official N1.5 head-only training on LIBERO. Split caches the mid-layer hidden states per frame (Stage A, offline; ∼\sim1h one-time for LIBERO) and trains the downstream head without backbone forward (Stage B). Training time is reported under the same hardware setup. Goal shows a small drop while Long improves substantially.
+Method
+Spatial
+Object
+Goal
+Long
+Mean
+Train (h)
+GR00T-N1.5 (official)
+92.0
+92.0
+86.0
+76.0
+86.5
+7.5
+GR00T-N1.5 (split)
+97.8
+99.6
+79.6
+92.8
+92.5
+4.5
+Table 6: Backbone comparison under the same split training and the same N1.5 FlowMatching head. Eagle2.5 uses layer 12 and Qwen3VL-2B uses layer 14 (both mid-layers).
+Backbone
+Spatial
+Object
+Goal
+Long
+Mean
+Eagle2.5VLM (FM0)
+97.8
+99.6
+79.6
+92.8
+92.5
+Qwen3VL-2B (FM0)
+95.8
+94.8
+82.0
+87.6
+90.1
+Table 7: LIBERO success rates (%) for SaiVLA0 and several VLA models. SaiVLA0 uses Tripartite + ParaCAT (ParaCAT), with N=1N{=}1, K=16K{=}16, and no ROI in LIBERO. Note: All data in the table are sourced from original papers, official project homepages, or academic papers.
+Method
+Spatial
+Object
+Goal
+Long
+Mean
+SaiVLA0 (ours)
+99.8
+100.0
+98.2
+97.8
+99.0
+π0\pi_{0} [2]
+96.8
+98.8
+95.8
+85.2
+94.2
+OpenVLA-OFT [14]
+97.6
+98.4
+97.9
+94.5
+97.1
+GR00T-N1.6 [12]
+97.7
+98.5
+97.5
+94.4
+97.0
+π0​.5\pi_{0}.5
+98.8
+98.2
+98.0
+92.4
+96.9
+GR00T-N1.5 (official)
+92.0
+92.0
+86.0
+76.0
+86.5
+Figure 3: Real-robot simple grasping: grasping a white bottle. The top-right inset visualizes the geometry-tied ROI view used on real robot; LIBERO experiments in this draft do not enable ROI.
+6 Limitations & Ethics
+We list limitations, ethical considerations, and threats to validity aligned with our tripartite setup.
+Limitations.
+(i) Frozen Cerebrum domain shift. The 8B VLM is fully frozen; strong visual/task shift or prompt mismatch can reduce the utility of 𝐂\mathbf{C} tokens.
+(ii) No early re-planning under fixed scheduling. We adopt fixed-interval Cerebrum calls (N=5N{=}5) and micro-horizon reuse (K=20K{=}20); the lack of uncertainty-based re-planning may hurt adaptivity under rapid changes.
+(iii) Categorical precision ceiling. Per-dimension {−1,0,+1}\{-1,0,+1\} deltas can bottleneck sub-millimeter/degree docking; a hybrid head (classification + residual regression) may be required.
+(iv) Class imbalance and calibration. The 0-class often dominates; despite class weights and label smoothing, careful temperature/hysteresis calibration remains important.
+(v) Dual-arm coordination. Bimanual coupling (7+7 DoF plus 2 grippers, D=16D{=}16) increases contact/constraint complexity; small label noise can cause asymmetric oscillations.
+(vi) ROI/calibration sensitivity. Wrist ROIs (two 2562256^{2} crops) depend on accurate intrinsics/extrinsics and time sync; drift or occlusion degrades ROI quality (we fallback to the main view but may lose fine contact cues).
+(vii) Cache consistency. Two-stage training relies on frozen Cerebrum caches; any change to tokenizer/prompt/calibration/layer picks invalidates caches (we enforce version hashes and validators, yet accidental staleness is a risk).
+(viii) Compute–latency trade-offs. Larger Nc,L,dN_{\!c},L,d or smaller NN can improve success but increase latency/compute; KK affects fefff_{\text{eff}} vs reactivity. Our compute-normalized score (SRcn\mathrm{SR}_{\mathrm{cn}}) mitigates but does not eliminate these trade-offs.
+(ix) Evaluation averaging. We average results over 5 evaluation runs per checkpoint and do not report mean/std explicitly; while averaging reduces noise, it may hide dispersion and under-report instability.
+(x) Split training is not strictly engineering-equivalent in practice. While split feature caching (offline hidden-state caching + downstream head training) is intended as an engineering optimization under frozen-backbone, head-only training, we observe non-trivial success differences on LIBERO (including a small drop on Goal). The reason is currently unclear and may relate to implementation, numerical details, or data/IO pipelines; a more exhaustive audit is left for future work.
+Ethics and Safety.
+(1) Bimanual safety. We enforce torque/joint/velocity limits, workspace guarding, collision checks, e-stop, and human-in-the-loop supervision during development/real trials. Dual grippers introduce pinch hazards; we follow standardized risk assessments before execution.
+(2) Data privacy and consent. VR teleoperation logs may contain operator-related signals; we collect with informed consent, avoid face/audio capture, and strip any PII. Public datasets (e.g., LIBERO) are used under their licenses; real-task data follows site policies.
+(3) Release policy. We plan to release configs, prompt templates, cache schemas, and validators. Precomputed caches may be released after redaction and license checks; raw videos/logs with potential PII will not be released.
+(4) Misuse prevention. This system targets research on low-latency control under small data. It is not a safety-certified controller; deployment in uncontrolled environments is out of scope. We document intended use and known risks.
+(5) Environmental impact. We report compute and latency metrics to promote compute-aware comparisons; scaling studies (4B/32B) are run under matched steps.
+Threats to validity.
+(a) Benchmark coverage. Results depend on LIBERO-Spatial/Object/Goal/Long (each 10 tasks, 500 episodes) and three real/precision suites (folding clothes: 5/200; put X into pot: 10/400; move by fixed distance: 10/200). Findings may not generalize to other robots/sensors.
+(b) Calibration and ROI. Small calibration drift or timestamp skew can bias attention to ROIs; our fallback mitigates but does not remove bias.
+(c) Metric definitions. Jitter/jerk definitions and success criteria can influence conclusions; we pre-define protocols and release scripts.
+(d) Budget matching. We match training steps across methods; different schedulers/heads may benefit from different budgets. We therefore also report SRcn\mathrm{SR}_{\mathrm{cn}}, ffwdf_{\text{fwd}}, fefff_{\text{eff}}, and latencies, yet residual bias may remain.
+(e) Prompt/template effects. Structured JSON prompts reduce variance but template choice still impacts 𝐂\mathbf{C}; we randomize field order and document templates.
+(f) Hyperparameter sensitivity. Performance can vary with Nc,L,d,heads,K,NN_{\!c},L,d,\text{heads},K,N; we provide grids and ablations, but full coverage is infeasible.
+7 Conclusion & Future Work
+We introduced SaiVLA-0, a tripartite VLA framework that freezes a large VLM (Cerebrum) for low-frequency semantic planning and equips a multi-modal Cerebellum with categorical control for high-frequency execution. Our design uses fixed-ratio scheduling (default Cerebrum cadence N=5N{=}5) and micro-horizon reuse (default K=20K{=}20), a trainable Pons Adapter, two-stage feature caching for reproducibility, and dual-view ROI to improve contact cues. In our stage-wise evaluation (Section 5), we report preliminary evidence on LIBERO and average over 5 evaluation runs per checkpoint. This separation of concerns reduces engineering overhead during iteration for limited-data regimes and makes the latency–stability–compute trade-offs explicit.
+Future Work.
+(i) Adaptive scheduling and re-planning. Move beyond fixed NN to uncertainty/failure-triggered or learned policies (RL/active learning), with calibrated confidence and early re-plan under distribution shift [7, 35].
+(ii) Hybrid action heads and adaptive grids. Combine categorical deltas with residual regression for sub-mm/deg precision; explore adaptive step sizes, dynamic KK, and mixed discrete–continuous decoding [4, 2, 27].
+(iii) ROI robustness and online calibration. Multi-view fusion, self-checks for intrinsics/extrinsics/time sync, and automatic ROI fallback/repair to mitigate drift/occlusion.
+(iv) Scaling and compression. Systematic scaling laws across Cerebrum sizes (4B/8B/32B) and Cerebellum capacity (Nc,L,d,N_{\!c},L,d, heads) under compute-normalized metrics; edge deployment via pruning/quantization/distillation.
+(v) Data and supervision. Expand VR teleoperation to semi/self-supervised pipelines, improve label denoising for bimanual coordination, and leverage simulation for task coverage with sim2real regularization.
+(vi) Safety and guarantees. Integrate constraint-aware decoding and certified safety monitors for bimanual manipulation; document deployment guidelines beyond lab settings.
+(vii) Generalization. Evaluate on broader robot platforms and task suites (incl. long-horizon bimanual), with cross-domain prompts and structured template search.
+(viii) Open tooling. Harden cache schema, validators, and config recipes for plug-and-play reproducibility and fair compute-aware comparison.
+References
+[1]
+Moo Jin Kim, Karl Pertsch, Siddharth Karamcheti, Ted Xiao, Ashwin Balakrishna,
+Suraj Nair, Rafael Rafailov, Ethan Foster, Grace Lam, Pannag Sanketi, Quan
+Vuong, Thomas Kollar, Benjamin Burchfiel, Russ Tedrake, Dorsa Sadigh, Sergey
+Levine, Percy Liang, and Chelsea Finn.
+Openvla: An open-source vision-language-action model.
+arXiv preprint arXiv:2406.09246, 2024.
+URL https://arxiv.org/abs/2406.09246.
+[2]
+Kevin Black, Noah Brown, Danny Driess, Adnan Esmail, Michael Equi, Chelsea
+Finn, Niccolo Fusai, Lachy Groom, Karol Hausman, Brian Ichter, Szymon
+Jakubczak, Tim Jones, Liyiming Ke, Sergey Levine, Adrian Li-Bell, Mohith
+Mothukuri, Suraj Nair, Karl Pertsch, Lucy Xiaoyang Shi, James Tanner, Quan
+Vuong, Anna Walling, Haohuan Wang, and Ury Zhilinsky.
+p​i0\\
+pi_{0}: A vision-language-action flow model for general robot
+control.
+arXiv preprint arXiv:2410.24164, 2024.
+URL https://arxiv.org/abs/2410.24164.
+[3]
+Songming Liu, Lingxuan Wu, Bangguo Li, Hengkai Tan, Huayu Chen, Zhengyi Wang,
+Ke Xu, Hang Su, and Jun Zhu.
+Rdt-1b: a diffusion foundation model for bimanual manipulation.
+arXiv preprint arXiv:2410.07864, 2025.
+URL https://arxiv.org/abs/2410.07864.
+[4]
+Cheng Chi et al.
+Diffusion policy: Visuomotor policy learning via action diffusion.
+arXiv preprint arXiv:2303.04137, 2023.
+[5]
+Michael Ahn et al.
+Do as i can, not as i say: Grounding language in robotic affordances.
+In Proceedings of the 6th Conference on Robot Learning (CoRL),
+2023.
+arXiv:2204.01691.
+[6]
+Danny Driess et al.
+Palm-e: An embodied multimodal language model.
+arXiv preprint arXiv:2303.03378, 2023.
+[7]
+Andrew G. Barto and Sridhar Mahadevan.
+Recent advances in hierarchical reinforcement learning.
+Discrete Event Dynamic Systems, 13(4):341–379, 2003.
+[8]
+Matthew M. Botvinick, Yael Niv, and Andrew G. Barto.
+Hierarchically organized behavior and its neural foundations: A
+reinforcement-learning perspective.
+Cognition, 113(3):262–280, 2009.
+[9]
+Alessandro De Benedictis, Maria Camilla Rossi-Espagnet, Luca de Palma, Andrea
+Carai, and Carlo Efisio Marras.
+Networking of the human cerebellum: From anatomo-functional
+development to neurosurgical implications.
+Frontiers in Neurology, 13:806298, 2022.
+doi: 10.3389/fneur.2022.806298.
+[10]
+Figure AI.
+Helix: A vision-language-action model for generalist humanoid
+control.
+https://www.figure.ai/news/helix, 2024.
+Accessed 2025-11-28.
+[11]
+NVIDIA GEAR Team.
+Gr00t n1: An open foundation model for generalist humanoid robots.
+arXiv preprint arXiv:2503.14734, 2025a.
+URL https://arxiv.org/abs/2503.14734.
+[12]
+NVIDIA GEAR Team.
+Gr00t n1.5 project page.
+https://research.nvidia.com/labs/gear/gr00t-n1_5/,
+2025b.
+Accessed 2025-11-28.
+[13]
+Arjun Majumdar et al.
+Where are we in the search for an artificial visual cortex for
+embodied intelligence?
+In Advances in Neural Information Processing Systems
+(NeurIPS), 2023.
+[14]
+Moo Jin Kim, Chelsea Finn, and Percy Liang.
+Fine-tuning vision-language-action models: Optimizing speed and
+success.
+arXiv preprint arXiv:2502.19645, 2025.
+URL https://arxiv.org/abs/2502.19645.
+Accepted to RSS 2025.
+[15]
+Mohit Shridhar, Lucas Manuelli, and Dieter Fox.
+Cliport: What and where pathways for robotic manipulation.
+In Proceedings of the Conference on Robot Learning (CoRL),
+2022.
+arXiv:2109.12098.
+[16]
+Austin Stone et al.
+Open-world object manipulation using pre-trained vision-language
+models.
+arXiv preprint arXiv:2303.00905, 2023.
+[17]
+Anthony Brohan et al.
+Rt-1: Robotics transformer for real-world control at scale.
+arXiv preprint arXiv:2212.06817, 2022.
+[18]
+Anthony Brohan et al.
+Rt-2: Vision-language-action models transfer web knowledge to robotic
+control.
+arXiv preprint arXiv:2307.15818, 2023.
+[19]
+Open X-Embodiment Collaboration.
+Open x-embodiment: Robotic learning datasets and RT-X models.
+arXiv preprint arXiv:2310.08864, 2023.
+[20]
+Edward J. Hu, Yelong Shen, Phillip Wallis, Zeyuan Allen-Zhu, Yuanzhi Li, Shean
+Wang, Lu Wang, and Weizhu Chen.
+Lora: Low-rank adaptation of large language models.
+In International Conference on Learning Representations
+(ICLR), 2022.
+[21]
+Neil Houlsby, Andrei Giurgiu, Stanislaw Jastrzebski, et al.
+Parameter-efficient transfer learning for NLP.
+In International Conference on Machine Learning (ICML), 2019.
+[22]
+Harold Hotelling.
+Relations between two sets of variates.
+Biometrika, 28(3-4):321–377, 1936.
+[23]
+John C. Gower.
+Generalized procrustes analysis.
+Psychometrika, 40(1):33–51, 1975.
+[24]
+Suraj Nair et al.
+R3m: A universal visual representation for robot manipulation.
+In Proceedings of the 6th Conference on Robot Learning (CoRL),
+Proceedings of Machine Learning Research, 2023.
+[25]
+Siddharth Karamcheti et al.
+Language-driven representation learning for robotics.
+In Robotics: Science and Systems (RSS), 2023.
+[26]
+Tony Zhao, Yan Duan, et al.
+Learning fine-grained bimanual manipulation with low-cost hardware.
+arXiv preprint arXiv:2304.13705, 2023.
+Introduces the ACT policy.
+[27]
+Karl Pertsch, Kyle Stachowicz, Brian Ichter, Danny Driess, Suraj Nair, Quan
+Vuong, Oier Mees, Chelsea Finn, and Sergey Levine.
+Fast: Efficient action tokenization for vision-language-action
+models.
+arXiv preprint arXiv:2501.09747, 2025.
+URL https://arxiv.org/abs/2501.09747.
+[28]
+Daniël M. van Es et al.
+Topographic maps of visual space in the human cerebellum.
+Current Biology, 2019.
+[29]
+Alex Liu et al.
+Libero: Benchmarking knowledge transfer for lifelong robot learning.
+arXiv preprint arXiv:2306.03310, 2023.
+[30]
+Frederik Ebert et al.
+Bridge data: Boosting generalization of robotic skills with
+cross-domain datasets.
+arXiv preprint arXiv:2109.13396, 2021.
+[31]
+Alexander Khazatsky et al.
+Droid: A large-scale in-the-wild robot manipulation dataset.
+arXiv preprint arXiv:2403.12945, 2024.
+[32]
+Serkan Cabi et al.
+Scaling data-driven robotics with reward sketching and batch
+reinforcement learning.
+In Robotics: Science and Systems (RSS), 2020.
+arXiv:1909.12200.
+[33]
+Soroush Nasiriany et al.
+Robocasa: A home-centric benchmark for robotic manipulation.
+arXiv preprint arXiv:2403.XXXXX, 2024.
+Exact identifier to be verified.
+[34]
+Kristen Grauman et al.
+Ego4d: Around the world in 3,000 hours of egocentric video.
+International Journal of Computer Vision, 2022.
+[35]
+Richard S. Sutton and Andrew G. Barto.
+Reinforcement Learning: An Introduction.
+MIT Press, 2nd edition, 2018.
+Appendix
+Structured Prompt Templates.
+We provide three templates: concise, extended, and JSON. Unless otherwise stated, training and inference use the JSON template. During training, JSON field order is randomized with probability 0.5 to improve robustness; inference matches training templates to reduce shift.
+Concise template (one-line; used in ablations or quick setups): what the robot do to :{task}.
+JSON fields (when structured prompts are used): goal, constraints, objects, failure_cases, environment.
+Cache Schema (Cerebrum Stage A).
+Stored as npz/mmap with fields: version_hash, dataset_id, task_id, big_brain_id, tokenizer_id, prompt_id, prompt_hash, layers, NcN_{\!c}, dd, C (path), traj (path), K_chunk, camera_calib (K,R,t), roi_meta, timestamp, checksum. Validation checks version equality, shape consistency, hash matches, and NaN absence.
+Evaluation Protocols.
+We define success rate, jitter rate (sign flips per step), jerk, intervention rate, and report latency split for Cerebrum vs Cerebellum. Compute-normalized success is SRcn=SuccessRate/𝒞\mathrm{SR}_{\mathrm{cn}}=\mathrm{SuccessRate}/\mathcal{C}, where 𝒞=1N​FLOPsbrain_once+f⋅FLOPscere_per_step\mathcal{C}=\frac{1}{N}\mathrm{FLOPs}_{\text{brain\_once}}+f\cdot\mathrm{FLOPs}_{\text{cere\_per\_step}} with ff the control frequency and NN the Cerebrum interval.
+Timing Protocol (Inference & Training).
+Inference: we fix GPU, resolution, and batch; measure single-step control latency for ParaCAT (single forward) and diffusion/flowmatching heads (multi-step sampling), repeating runs and reporting median. Training: we time Stage B steps/sec under matched steps/batch; Stage A cache generation is reported separately and amortized for fair iteration-throughput comparison. As a concept-and-protocol paper with preliminary evidence, we provide this timing protocol to verify anticipated efficiency gains under matched conditions.
+Pons details and factorization criteria.
+We instantiate the Pons Adapter as a semantic-to-dynamics compiler that (i) sparsifies and recodes structured Cerebrum intent into execution-ready tokens, (ii) factorizes action structure into geometry, dynamics priors, and control objectives to form composable motor primitives, and (iii) aligns feedback and intent to ease cerebellar forward-model updates. We document token shapes and layer picks, and provide an ablation grid on factorization choices.
+Cerebellum-only RL protocol (prospective).
+We freeze the Cerebrum and the Pons Adapter, and fine-tune ParaCAT in simulation with rewards combining success, smoothness (jerk/jitter regularizers), precision error terms, and mild latency penalties. Safety constraints (velocity/acceleration bounds) are enforced. This protocol tests whether RL can further refine low-latency control without touching high-level semantics.
+Main default hyperparameters (this work).
+Layers {l1,lm,lL}\{l_{1},l_{m},l_{L}\}; Nc=24N_{\!c}{=}24; d=1024d{=}1024. Vision: ViT-S/16, main 256×256256{\times}256 (from 1028×8001028{\times}800), two ROI 256×256256{\times}256. Text encoder frozen (adapter optional). Cerebellum: L=6L{=}6, d=1024d{=}1024, heads=8=8, K=20K{=}20; D=16D{=}16. Control grid: δp=5​mm\delta_{p}{=}5\,\mathrm{mm}, δθ=1∘\delta_{\theta}{=}1^{\circ}. Stability: θ↑/↓=0.2\theta_{\uparrow/\downarrow}{=}0.2, EMA α=0.8\alpha{=}0.8, temperature annealing τ:1.5→0.7\tau:1.5\to 0.7, entropy cap ℋmax=0.9\mathcal{H}_{\max}{=}0.9. Scheduling: fixed N=5N{=}5. These match Table 2 and Section 5.
+Historical prototype settings (not used in main results).
+Early single-arm prototypes explored smaller grids and resolutions (e.g., main 224, ROI 128; K=3K{=}3; D=7D{=}7; δp​o​s≈1​cm\delta_{pos}{\approx}1\,\mathrm{cm}, δr​o​t≈2∘\delta_{rot}{\approx}2^{\circ}). We omit those numbers from main comparisons; ablations are reported under the unified main defaults above.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

@@ -1,0 +1,1111 @@
+Integrated Electro-OpticAttention Nonlinearities for Transformers
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+I Introduction
+I.1 Self-Attention
+I.2 Softmax Bottleneck on GPUs
+I.3 Related Work
+Software Acceleration
+Hardware Acceleration
+I.4 MZMs for Electro-Optic Activation
+II Method
+II.1 Electro-Optic Softmax: Optmax
+II.2 Electro-Optic Sigmoid: Optmoid
+III Results
+III.1 Image Classification
+III.2 Causal Language Modelling
+IV Discussion
+V Device Fabrication
+References
+Acknowledgements
+S1 Optmax and Optmoid GHz measurements
+S1.1 Setup and Measurement
+S1.2 Experimental Noise
+S2 Calibration
+S2.1 Optmax Calibration
+S2.2 Optmoid Calibration
+S3 Noise in Training
+S4 Latency
+S5 Power Consumption
+S6 Simulation Details
+License: CC BY 4.0
+arXiv:2604.09512v1 [cs.LG] 10 Apr 2026
+Integrated Electro-Optic
+Attention Nonlinearities for Transformers
+Preprint: APS/123-QED
+Luis Mickeler1,
+Kai Lion2,
+Alfonso Nardi3,
+Jost Kellner1,
+Pierre Didier1,
+Bhavin J. Shastri4,
+Niao He2,
+Rachel Grange1
+††thanks: Corresponding author: lmickeler@ethz.ch
+Affiliation: 1Optical Nanomaterial Group, Department of Physics, ETH Zurich, Zurich, Switzerland
+Affiliation: 2Optimization & Decision Intelligence Group, Department of Computer Science, ETH Zurich, Zurich, Switzerland
+Affiliation: 3Department of Physics, Politecnico di Milano, Milan, Italy
+Affiliation: 4Centre for Nanophotonics, Department of Physics, Engineering Physics & Astronomy, Queen’s University, Kingston, Canada
+August 24, 2026
+Abstract
+Transformers have emerged as the dominant neural-network architecture, achieving state-of-the-art performance in language processing and computer vision. At the core of these models lies the attention mechanism, which requires a nonlinear, non-negative mapping using the Softmax function. However, although Softmax operations account for less than 1%1\% of the total operation count, they can disproportionately bottleneck overall inference latency. Here, we use thin-film lithium niobate (TFLN) Mach-Zehnder modulators (MZMs) as analog nonlinear computational elements to drastically reduce the latency of nonlinear computations. We implement electro-optic alternatives to digital Softmax and Sigmoid, and evaluate their performance in Vision Transformers and Large Language Models. Our system maintains highly competitive accuracy, even under aggressive 4-bit input-output quantization of the analog units. We further characterize system noise at encoding speeds up to 10 GBaud and assess model robustness under various noise conditions. Our findings suggest that TFLN modulators can serve as nonlinear function units within hybrid co-packaged hardware, enabling high-speed and energy-efficient nonlinear computation.
+I Introduction
+Neural networks based on the Transformer architecture have established state-of-the-art performance in natural language processing and computer vision [1, 2, 3]. Central to this architecture is the self-attention mechanism, which enables models to accurately capture pairwise relationships between all word-fragments within an input sequence of length nn. A major limitation of this design is the computational cost associated with obtaining the 𝒪⁡(n2)\mathcal{O}(n^{2}) interaction scores of self-attention [4, 5]. These scores are computed via a nonlinear activation function ff. In modern graphics processing units (GPUs), computing such nonlinearities often relies on piecewise polynomial approximations [6] within Special Function Units (SFUs), which possess significantly lower throughput than the primary arithmetic units dedicated to linear operations [7, 8]. As a result, nonlinear operations, while accounting for less than 1%1\% of the total operations [9, 10], can disproportionately bottleneck the inference latency [11]. To address this imbalance, we propose the use of analog nonlinearities based on fast electro-optic effects, which would eliminate the need for memory-bound nonlinear computation. In this work, we demonstrate the effectiveness of such nonlinearities in self-attention of Transformers trained on computer vision and natural language processing tasks. We focus on standard Softmax attention and a novel Sigmoid attention variant [4, 12].
+I.1 Self-Attention
+Transformers are comprised of stacked Transformer blocks, depicted in Fig. 1a. Each Transformer block consists of attention- and feed-forward blocks integrated via residual connections and layer normalizations [1]. A single attention block Fig. 1b computes
+Attention​(Q,K,V)=f⁡(Q​K⊤dk)​V,\text{Attention}(Q,K,V)=f\left(\frac{QK^{\top}}{\sqrt{d_{k}}}\right)V,
+where the query (QQ), key (KK), and value (VV) matrices are linearly projected versions of the input and dkd_{k} denotes the dimensionality of the key vectors. The nonlinear activation function f:ℝn→ℝnf:\mathbb{R}^{n}\rightarrow\mathbb{R}^{n} is typically implemented as the Softmax activation. Denoting a row of Q​K⊤QK^{\top} as x∈ℝnx\in\mathbb{R}^{n}, the Softmax activation computes:
+Softmax​(x)j=exj∑i=1nexi.{\text{Softmax}}(x)_{j}=\frac{e^{x_{j}}}{\sum_{i=1}^{n}e^{x_{i}}}.
+(1)
+In this configuration, the Softmax performs a row-wise normalization across Q​K⊤QK^{\top} to produce the attention weights.
+Figure 1: (a) Attention block as proposed [1]. (b) Operations within an attention head. Matmul refers to matrix multiplication. Mask refers to the application of a triangular mask to prevent attending to future tokens in the sequence. (c) GPU runtime of GPT-2 for different sequence lengths broken down by operation. To enable a clear attribution of runtime within scaled dot product attention, we use the PyTorch MATH backend[13]. (d) A GPU core comprised of high-throughput linear units (tensor cores) and slower nonlinear units, which compute Softmax. (e) A GPU with co-packaged optics. (f) The Mach-Zehnder modulators in co-packaged optics with a non-linear sinusoidal optical response to the supplied voltage.
+A recently proposed element-wise alternative is the Sigmoid attention framework [4, 12]. In this case, the Softmax is simply replaced by
+Sigmoid​(x)j=11+e−(xj+b),{\text{Sigmoid}}(x)_{j}=\frac{1}{1+e^{-(x_{j}+b)}},
+where bb is a hyperparameter tuned according to the sequence length nn.
+I.2 Softmax Bottleneck on GPUs
+Computing one forward pass of an LLM involves a combination of linear and nonlinear operations. The total compute budget is typically measured in floating-point operations (FLOPs) and heavily dominated by linear operations such as matrix-multiplications. At sequence length n=8192n=8192, matrix-multiplications account for 99.43 %99.43\text{\,}\% of total FLOPs within the GPT-2 model, while the Softmax operations account for only 0.56 %0.56\text{\,}\mathrm{\%} [14, 10, 9]. This small fraction of Softmax FLOPs, however, can occupy a significant chunk of runtime due to the low arithmetic intensity and non-linear nature of the operation. To obtain an estimate for the runtime impact of the Softmax, we measure the execution time of a GPT-2 forward pass on an NVIDIA H100 GPU [15] and break it down by operation. We present the results in Fig. 1c where the Softmax alone accounts for 22 %22\text{\,}\mathrm{\%} of total execution time for sequence length of n=8192n=8192. We remark that here, to attain a clean runtime-breakdown of the Transformer’s components, we leverage scaled dot-product attention (Fig. 1a) using the PyTorch MATH backend [13, 16]. In practice, the individual operations within attention are often fused into a single GPU function (kernel), which can alleviate this bottleneck significantly by avoiding repeated read and write operations to memory [17]. Nevertheless, even with this optimization, the problem of a comparatively slow Softmax remains, as the throughput for the exponential function on a modern NVIDIA H100 GPU is about 256×256\times lower than that of linear matrix multiplications [7]. At the time of writing, state-of-the-art software acceleration techniques go so far as to approximate exponential functions using piecewise polynomial expansions [8], enabling their execution on faster linear compute units. When assuming a key/query projection dimension of dk=128d_{k}=128 per attention head, this disproportionality implies that the time required to evaluate the exponential function is roughly 50%50\% of that of the matrix multiplications within the attention block [7]. Through the adoption of lower precision numerical formats, this percentage is only going to increase further.
+The computation of the exponential requires the use of Special Function Units (SFUs) within GPUs (Fig. 1d). The low throughput of the exponential arises from two factors. First, relative to the number of tensor cores available for matrix-multiplications, the number of SFUs is rather low. Second, and more importantly, the exponentials are approximated using piecewise polynomial approximations and look-up tables [6].
+I.3 Related Work
+A growing body of literature acknowledges that performance bottlenecks in LLM workloads are increasingly shifting towards nonlinear operations [18, 19, 20, 21]. We separate the literature addressing this issue into software- and hardware-based approaches.
+Software Acceleration
+Software-based acceleration techniques achieve speed-ups through either an implementation of optimized functions or the use of approximations for the computation of the exponential. The FlashAttention series [17, 22, 7, 8] accelerates attention by reducing the number of memory accesses via tiling and fusing the attention computation into a single GPU function. The most recent iteration FlashAttention4 specifically targets the throughput disparity between linear Tensor Cores and SFUs [8]. It incorporates an optimized implementation of Schraudolph’s method [23], to compute nonlinear functions—specifically the exponential—using only linear integer arithmetic. Sigmoid Attention further improves runtime over FlashAttention2 by avoiding the normalization step required by Softmax [4]. Other works in this area make use of approximations to the exponential to achieve reductions in runtime. For instance, neural networks have been employed as approximators to nonlinear operations, and Padé approximations have been used to approximate the exponential [24, 25].
+Hardware Acceleration
+In contrast, hardware-based acceleration techniques explore the use of digital and analog accelerators, tailored to the demands of nonlinear attention functions. A first digital Softmax co-design was first reported by Stevens et al. [11], with the system consisting of a custom exponential unit and a second unit approximating the reciprocal with a linear function. A custom digital electronic exponential unit, which approximates the exponential based on Schraudolph’s method, is also studied in [18]. Electronic-analog Transformer computing paradigms have equally been reported with a custom hard-Sigmoid attention nonlinearity [26]. A free-space photonic approach based on diffractive optics is reported in [27]. An integrated silicon photonics architecture to accelerate Softmax attention via photonic approximations of the exponential and reciprocal operations is studied in [28]. Beyond compact passive components, the design relies on semiconductor optical amplifiers and a wavelength-routed photonic lookup table, which fundamentally constrain scalability and total footprint. Moreover, the architecture requires multiple cascaded electro-optic and opto-electronic conversion steps, introducing additional latency and system complexity that limit the scalability towards large Softmax input vector lengths nn. Most recently, a cascaded micro-ring resonator design was proposed to approximate the Softmax exponential [29]. While the system could enable a relatively compact footprint, inherent tight fabrication tolerances and high sensitivity to ambient temperature fluctuations remain a key functional bottleneck for the large-scale deployment of micro-ring resonator systems in optical computing. Crucially, both reported integrated approaches are intended as Softmax replacements for all-optical neural networks, which remain constrained by the scalability limitations inherent to current integrated photonic neural-network solutions [30, 31].
+We propose to instead exploit the intrinsic nonlinear transfer function of a Mach–Zehnder modulator (MZM) to approximate both Softmax and Sigmoid operations. Rather than pursuing an all-optical nonlinearity, we propose to use an electro-optic approach that leverages the high-speed nonlinear MZMs in conjunction with linear electronic digital computation Fig. 1e-f. While co-packaged optics has the potential to leverage MZMs for high-bandwidth linear electro-optic communication [32], our approach repurposes the same off-the-shelf photonic devices as nonlinear computational elements, eliminating the need for optical amplification, photonic lookup tables, and deeply cascaded electro–optic conversions.
+I.4 MZMs for Electro-Optic Activation
+In the following, we investigate the use of MZMs as nonlinear computational elements, as opposed to the classical use-case as a binary modulator, intentionally restricted to its near-linear operating regime for signal encoding. We fabricate MZMs on the thin-film lithium-niobate (TFLN) platform [33, 34], selected for its large electro-optic coefficient, which enables high modulation bandwidths with a flat frequency response. Within an MZM, an applied voltage VV induces a differential phase shift between two interferometer arms; subsequent optical recombination translates this phase shift into an output power PoutP_{\text{out}} governed by
+PoutPin∝1+sin⁡(VVπ​π+ϕ).\frac{P_{\text{out}}}{P_{\text{in}}}\propto 1+\sin\left(\frac{V}{V_{\pi}}\pi+\phi\right).
+Here, PinP_{\text{in}} denotes the input optical power and ϕ\phi a static phase offset arising from biasing or fabrication imperfections. VπV_{\pi} is device-specific half-wave voltage corresponding to a π\pi phase shift between the interferometer arms.
+II Method
+II.1 Electro-Optic Softmax: Optmax
+Figure 2: Architecture and experimental validation of the Optmax attention mechanism. (a) Schematic of the standard digital Softmax function, highlighting numerator and denominator. (b) A measured electro-optic response of an MZM; the rising sinusoidal slope mimics the exponential numerator, while the falling slope approximates the reciprocal for normalization. (c) The Optmax architecture. (d) The simulation flow. (e) A comparison between the simulated Optmax response and experimental TFLN MZM measurements at 10 GBaud for a sequence length n=2048. (f) A zoom-in of the high-speed optical signal showing the tracking of the simulated response. (g) The transfer function mapping digital input values to sampled optical amplitudes. (h) The statistical distribution of the relative error for Optmax across symbol rates of 100 MBaud, 1 GBaud and 10 GBaud.
+The standard Softmax function, as depicted in Fig. 2a, consists of three primary computational stages: exponentiation, summation, and division (normalization). Our proposed Optmax architecture replaces the exponential function with the rising slope of the MZM sinusoidal, and the reciprocal with the falling slope (Fig. 2b).
+The complete architecture is shown in Fig. 2c. Input digital values xix_{i} are first clipped to the set range [xmin,xmax][x_{\min},x_{\max}] and converted to analog voltages via a high-speed digital-to-analog converter (DAC). These voltages drive the first MZM, modulating a continuous-wave (CW) laser source. By biasing the MZM to operate along the rising edge, the resulting optical power PiP_{i} approximates the exponential numerator terms. To compute the denominator z=∑jexjz=\sum_{j}e^{x_{j}}, the time-multiplexed optical intensities are encoded twice. The first train is directed via a tunable coupler to a low-bandwidth photodiode (PD), which integrates the total optical power over the sequence length. The resulting voltage VzV_{z} drives a second MZM, which modulates the second train—a replica of the optical numerator signals—by the reciprocal of the sum. Since this second MZM is constrained to operate in its falling slope, its modulation mimics the multiplication by the reciprocal 1/z1/z. The final signals are detected by a high-speed photodiode and digitized by an analog-to-digital converter (ADC). The full computational flow is depicted in Fig. 2d.
+Within Transformer trainings, we replace Softmax with Optmax operations. For training, standard gradient-based methods are employed, which necessitate the use of backpropagation and, as such, require a differentiable representation of the nonlinearity. Instead of using the raw MZM measurements, we thus employ the fits visible in Fig. 2b.
+Fig. 2e displays a full time series of the normalized Optmax response for a randomly sampled input sequence of length n=2048n=2048 at 5 bit5\text{\,}\mathrm{b}\mathrm{i}\mathrm{t} resolution. The figure draws a comparison between the simulation used in our Transformer training and experimental measurements. For the latter, we measure a TFLN MZM’s rising slope driven at symbol rates of 10 GBaud10\text{\,}\mathrm{G}\mathrm{B}\mathrm{a}\mathrm{u}\mathrm{d}, 1 GBaud1\text{\,}\mathrm{G}\mathrm{B}\mathrm{a}\mathrm{u}\mathrm{d}, and 100 MBaud100\text{\,}\mathrm{M}\mathrm{B}\mathrm{a}\mathrm{u}\mathrm{d} respectively (see Appendix S1 for experimental details). As shown in the zoomed-in segment in Fig. 2f, the 10 GBaud10\text{\,}\mathrm{G}\mathrm{B}\mathrm{a}\mathrm{u}\mathrm{d} analog signal closely follows the simulated response. To quantify the simulation-to-experimental deviations as general amplitude noise, Fig. 2g plots the digital input values xx against the corresponding sampled optical amplitudes, obtained by integrating each sample in the 10 GBaud10\text{\,}\mathrm{G}\mathrm{B}\mathrm{a}\mathrm{u}\mathrm{d} time series over 20 ps20\text{\,}\mathrm{ps}. Finally, the statistical distribution of this noise is summarized in Fig. 2h, which presents a histogram of the sampled data’s relative error across three operating symbol rates: 10 GBaud10\text{\,}\mathrm{G}\mathrm{B}\mathrm{a}\mathrm{u}\mathrm{d}, 1 GBaud1\text{\,}\mathrm{G}\mathrm{B}\mathrm{a}\mathrm{u}\mathrm{d}, and 100 MBaud100\text{\,}\mathrm{M}\mathrm{B}\mathrm{a}\mathrm{u}\mathrm{d}. To account for such analog noise, we evaluate the robustness of our trained Transformers during inference across a range of signal-to-noise ratios (SNR) in the subsequent section.
+A fundamental distinction between Optmax and the standard Softmax function arises from the physical constraints of the MZM’s sinusoidal response: a modulator’s transmission is bounded by unity. The lower bound is additionally limited by the signal-to-noise ratio of the analog computing system. We note that this sets a constraint on how well both the unbounded exponential and reciprocal of the Softmax can be approximated. Nevertheless, the results of Section III indicate that Optmax proves effective both in vision and language tasks. We discuss the overall system limitations in Section IV. The limitations inherent to unbounded exponential and reciprocal functions can not be overcome within Optmax; we can, however, avoid the limitation by using a different nonlinear function, which is proposed in the next section.
+II.2 Electro-Optic Sigmoid: Optmoid
+Figure 3: Architecture and experimental validation of the Optmoid attention mechanism. (a) Schematic of the standard
+elementwise Sigmoid function (b) A measured electro-optic transfer function of an MZM; the full VπV_{\pi} swing is utilized to approximate the Sigmoidal transition from minimum to maximum optical power. (c) The Optmoid architecture, utilizing a single-path MZM configuration. (d) The simulation flow. (e) A comparison between the simulated Optmoid response and experimental TFLN MZM measurements at 10 GBaud for a sequence length n=2048n=2048. (f) A zoom-in of the high-speed optical signal highlighting the fidelity of the Sigmoidal activation. (g) The transfer function mapping digital input values to sampled optical amplitudes. (h) The statistical distribution of the relative error for Optmoid across symbol rates of 100 MBaud, 1 GBaud, and 10 GBaud.
+In contrast to Softmax, the scalar Sigmoid function provides a sum-insensitive, element-wise response. Sigmoid attention, as proposed in [4], offers the advantage of replacing the row-wise Softmax with an element-wise nonlinearity. While the Sigmoid equally necessitates exponential and a reciprocal computation, its output is naturally bound to [0,1]. In the case of the fundamental sinusoidal nonlinearity available within this work, it thus comes at a more faithful fit. Our proposed Optmoid approximates the full Sigmoid visible in Fig. 3a with the entire min-to-max swing of an MZM response function (Fig. 3b). Therefore, the core device in this case is embodied in a single MZM.
+The complete architecture is shown Fig. 3c. Input digital values xix_{i} are first clipped to the set range [xmin,xmax][x_{\min},x_{\max}] and converted to analog voltages via a high-speed DAC. These voltages drive the MZM within its min-to-max swing. The output intensities are detected by a high-speed photodiode and digitized by an ADC. The full computational flow is depicted in Fig. 3d. A fundamental distinction remains in the boundary behavior: whereas the mathematical Sigmoid only asymptotically approaches its limits, Optmoid reaches definitive saturation at 0 and 1 at the precise boundaries of the clipped input range. We attribute the difference in Sigmoid and Optmoid reported in Section III to the truncation of these asymptotic residuals.
+Fig. 3e displays the full time series of the normalized Optmoid response for an input sequence of length n=2048n=2048 at 5 bit5\text{\,}\mathrm{b}\mathrm{i}\mathrm{t} resolution, comparing the simulation model used in our training with experimental measurements. In this configuration, we map the input bit-depth across the entire VπV_{\pi} rising swing of the MZM to approximate the full Sigmoid response. The experimental measurements were again performed at symbol rates of 10 GBaud10\text{\,}\mathrm{G}\mathrm{B}\mathrm{a}\mathrm{u}\mathrm{d}, 1 GBaud1\text{\,}\mathrm{G}\mathrm{B}\mathrm{a}\mathrm{u}\mathrm{d}, and 100 MBaud100\text{\,}\mathrm{M}\mathrm{B}\mathrm{a}\mathrm{u}\mathrm{d} respectively (see Appendix S1). A zoomed-in segment of this time series is shown in Fig. 3f, showing a close match between the simulated and measured response. To quantify deviations as general amplitude noise, Fig. 3g plots the digital input values xx against the corresponding sampled optical amplitudes, obtained by sampling the raw measured time series at the 10 GBaud10\text{\,}\mathrm{G}\mathrm{B}\mathrm{a}\mathrm{u}\mathrm{d} rate with a 20 ps20\text{\,}\mathrm{ps} integration-time. Finally, the statistical distribution of this noise is summarized in Fig. 3h, which presents a histogram of the sampled data’s relative error across three operating symbol rates.
+III Results
+In our simulations, we evaluate electro-optical nonlinearities across benchmark tasks in computer vision and natural language processing. In all instances, we utilize standard Transformer architectures composed of multi-head attention followed by feedforward layers. We implement our electro-optical nonlinearities as a drop-in replacement for the standard activation functions within the attention module (cf. Fig. 1). Beyond the standard Softmax-based attention, our analysis includes element-wise Sigmoid activations. While Softmax requires no external parameterization, the clipping ranges for Optmax and the biases for Sigmoid and Optmoid are calibrated prior to each training run (see Appendix S2).
+To accurately replicate the underlying physical process, we model the finite bit-depth of the DAC and ADC stages individually. Values are quantized into 2bit2^{\text{bit}} uniform bins; this process is applied element-wise, while internal computations remain in full precision to capture the continuous dynamics of the analog system. To ensure a fair comparison, we apply identical quantization to the Softmax and Sigmoid benchmarks. Lastly, we evaluate the system’s robustness by subjecting the trained models to varying levels of additive stochastic noise at the nonlinearity output during inference.
+III.1 Image Classification
+As a first proof of concept, we evaluate image classification performance on the MNIST, CIFAR-10, and SVHN [35, 36, 37] datasets using a Vision Transformer (ViT) [3] architecture. The ViT processes images by partitioning them into patches, which are subsequently flattened and mapped to an embedding space. After the addition of positional embeddings, the resulting sequence is processed by a stack of Transformer blocks (cf. Fig. 1a).
+Hyperparameters for the electro-optical nonlinearities were tuned on the CIFAR-10 validation set (see Appendix S6). To ensure statistical robustness, we report the accuracy on a held-out test set, averaged across three independent runs with randomized initializations and batch orderings. As illustrated in Fig. 4b, our proposed nonlinearities (Optmoid and Optmax) remain competitive with their digital counterparts, Sigmoid and Softmax, across most benchmarks. We do, however, observe a marginal performance degradation for Optmoid relative to Sigmoid on the SVHN dataset. Fig. 4c depicts the corresponding validation and training loss curves, demonstrating that the training converged stably without overfitting. Within Fig. 4d, we analyze the sensitivity of test accuracy to decreasing quantization bit-depth. At 4-bit quantization, Optmax achieves a mean test accuracy of 74.6 %74.6\text{\,}\mathrm{\%}, compared to 76.3 %76.3\text{\,}\mathrm{\%} for the Softmax benchmark. Optmoid exhibits a more pronounced sensitivity to bit-depth, falling to 69.9 %69.9\text{\,}\mathrm{\%} at 4 bits, whereas Sigmoid maintains 75.9 %75.9\text{\,}\mathrm{\%}. We attribute this steeper degradation to the specific bias of b=−4.16b=-4.16 (see Appendix S6), which, under restricted bit-depth, causes an excessive number of activations to be mapped to zero, effectively sparsifying the representation at the cost of relevant information. We lastly investigate the robustness under additive noise. Fig. 4e depicts the test accuracy for four ViTs (using Optmax and Optmoid with each full precision and 4-bit quantization) under different noise levels. We note that here, we train the system without noise, and only during testing, we inject the noise on each Optmax/Optmoid element sis_{i} before the output quantization step:
+si=si+𝒩⁡(0,σ2)s_{i}=s_{i}+\mathcal{N}(0,\sigma^{2})
+(2)
+Our results show that under full precision both Optmax and Optmoid maintain functionality even under strong noise conditions of σ=0.1\sigma=0.1, which was the maximum noise level we measured at 10 GBaud10\text{\,}\mathrm{G}\mathrm{B}\mathrm{a}\mathrm{u}\mathrm{d} in Fig. 2h. However, after introducing a 4-bit quantization, test accuracy already drops below 23%23\% for low noise values of σ=0.02\sigma=0.02. We attribute this to attention output — previously mapped to 0 — rising in value, above the zero-quantization threshold 1/24=0.06251/2^{4}=0.0625. The model degradation can be mitigated by also training using the same noise values. For a more detailed analysis, we refer to Appendix S3.
+Figure 4: Vision Transformer (ViT) performance using electro-optic nonlinearities. (a) A vision transformer classifies images using stacked transformer blocks. We drop-in replace different attention nonlinearities.
+(b) Final test accuracy comparison for ViT models on MNIST, CIFAR-10, and SVHN datasets. The proposed Optmax and Optmoid demonstrate competitive performance relative to standard Softmax and Sigmoid benchmarks.
+(c) Training and validation loss curves for the CIFAR-10 dataset, illustrating stable convergence across all tested activation functions.
+(d) Quantization sensitivity analysis showing test accuracy as a function of bit-depth (full precision down to 4-bit).
+(e) Noise robustness showing final test accuracy under additive Gaussian noise 𝒩⁡(0,σ2)\mathcal{N}(0,\sigma^{2}) (no noise during training).
+III.2 Causal Language Modelling
+We test the proposed electro-optical nonlinearities on causal language modeling (CLM) with GPT-2 [14] on the text dataset FineWeb-Edu [38]. In this setting, the model processes sequences of tokens, which are typically short word fragments, through stacked transformer blocks to predict the next token in the sequence (cf. Fig. 5a). Given the preceding tokens x1:tx_{1:t}, the Transformer, parameterized by θ\theta, models the conditional distribution of the next token pθ(xt+1|x1:t)p_{\theta}(x_{t+1}|x_{1:t}). To judge model quality, we evaluate the negative log-likelihood on unseen sequences of length nn, which is given by −1n−1∑i=1n−1logpθ(xi+1|x1:i)-\frac{1}{n-1}\sum_{i=1}^{n-1}\log p_{\theta}(x_{i+1}|x_{1:i}) and quantifies how well the model predicts the correct next token; lower values indicate better predictions.
+Our results demonstrate that the proposed electro-optical nonlinearities remain highly competitive with standard digital alternatives, inducing only marginally higher test loss. As illustrated in Fig. 5b, while Softmax obtains a test loss of 4.074.07, Optmax is competitive with a loss of 4.084.08. Similarly, Sigmoid obtains a test loss of 4.184.18, whereas Optmoid achieves 4.224.22. The corresponding validation and training loss curves are depicted in Fig. 5c, demonstrating stable convergence across all variants.
+Within Fig. 5d, we analyze the sensitivity of the test loss to decreasing quantization bit-depth. Regarding quantizability, Optmax tracks Softmax closely across low-precision formats, even yielding a lower test loss at 44 bits (5.855.85 versus 5.975.97), while remaining essentially matched at 88 bits (5.785.78 versus 5.775.77). Similarly, Optmoid proves as robust as Sigmoid under quantization, with a marginally lower loss at 44 bits and a more pronounced advantage at 88 bits (5.895.89 versus 5.975.97). While Softmax and Sigmoid remain slightly favorable in F​P​32FP32 relative to Optmax and Optmoid, respectively, the parity observed under quantization underscores the potential of these electro-optic nonlinearities for high-speed, low-bit hardware deployment.
+In Fig. 5e, we again report Optmax and Optmoid performance with additional additive noise in inference in full precision and 4-bit quantization. Our findings show that both under full precision and 4-bit GPT-2 degrades significantly beyond additive noise values of σ>0.01\sigma>0.01. This functional threshold, is significantly lower than the additive noise observed in experiment at 10 GBaud10\text{\,}\mathrm{G}\mathrm{B}\mathrm{a}\mathrm{u}\mathrm{d} (σ=0.098\sigma=0.098 for Optmax and σ=0.088\sigma=0.088 for Optmoid). Further research is required to determine whether this model degradation can be mitigated by transitioning to multiplicative noise models or by incorporating noise-aware training protocols. Under full precision, Optmoid test loss peaks at σ=0.02\sigma=0.02 before decreasing to converge at 9.559.55. We emphasize that this does not represent a functional model at σ=0.1\sigma=0.1; rather, such high loss values are indicative of a poorly performing or untrained GPT-2.
+To conclude this section, these findings demonstrate that even when constrained by the bounded nonlinear response of the MZM and the constraints of 4-bit quantization, electro-optic nonlinearities maintain a high degree of functional fidelity. Remarkably, both Optmax and Optmoid achieve performance near-parity with their digital counterparts, indicating that such bounded analog nonlinearities do not pose a barrier to high-level Transformer performance. However, the observed sensitivity to noise highlights a clear path forward: to fully bridge the gap between simulation and deployment, limiting additive noise and incorporating noise-aware training could be key to ensuring that these architectures remain robust in the face of real-world analog fluctuations.
+Figure 5: GPT-2 FineWeb-Edu results using electro-optic nonlinearities. (a) A large-language model predicts the next word-fragment in a sequence using stacked transformer blocks. We drop-in replace different attention nonlinearities.
+(b) Final test loss comparison for GPT-2 on FineWeb-Edu using 5k training steps. The proposed Optmax and Optmoid demonstrate competitive performance relative to standard Softmax and Sigmoid benchmarks.
+(c) Training and validation loss curves for the Optmax and Optmoid, illustrating stable convergence.
+(d) Quantization sensitivity analysis showing test accuracy as a function of bit-depth (full precision down to 4-bit) using 1.5k training steps.
+(e) Noise robustness showing final test loss under additive Gaussian noise 𝒩⁡(0,σ2)\mathcal{N}(0,\sigma^{2}) (no noise during training) using 2.5k training steps.
+IV Discussion
+In this work, we demonstrate that integrated electro-optic interferometers could offer a potent solution to the computational bottlenecks caused by attention nonlinearities in Transformer models. In contemporary digital hardware, the exponential functions required for standard Softmax rely on Special Function Units, which are inherently slower than standard arithmetic logic units. This creates a severe throughput disparity in GPUs between linear and non-linear operations; consequently, Softmax can occupy a disproportionate fraction of total inference time. In contrast to software-level optimizations [8] that rely on digital approximations, an analog electro-optic approach eliminates the need for digital non-linearities by executing these operations as inherent physical transformations.
+Our results using ViT and GPT-2 architectures validate the practicability of two drop-in replacements for Softmax, coined Optmax and Optmoid. Optmax utilizes the rising and falling slopes of an MZM to approximate the numerator and denominator of the Softmax function. However, because MZM transmission is inherently periodic and capped at unity, the achievable dynamic range—the ratio between the resolvable minimum and maximum—is physically constrained. This limitation is compounded by the system’s noise floor, leading to a compressed output range and a departure from the strict unit-sum constraint of Softmax.
+This represents a fundamental bottleneck in analog computing that extends beyond periodic functions: any analog scheme is bounded by its governing signal-to-noise ratio and cannot resolve the arbitrarily high dynamic ranges achievable in floating-point digital logic. Despite these constraints, Optmax remains highly effective in both vision and language tasks. We attribute this to the underlying mechanisms of the attention operation itself. The empirical success of Softmax attention relies primarily on two key properties: the non-negativity of the attention matrix and a non-linear re-weighting scheme that concentrates its distribution [5]. Despite not capturing the full dynamic range of exponential terms, our MZM-based approximations preserve these two essential properties.
+A significant finding is that in GPT-2, Optmax and Optmoid exhibit greater comparative resilience to 4-bit quantization than standard Softmax. In digital regimes, Softmax is typically the component most susceptible to accuracy loss during quantization [39] due to the sensitivity of the summation process [40]. Our architecture sidesteps this by isolating quantization to the input (DAC) and output (ADC) stages. While the data interface is low-precision, the internal non-linear transformations and summations occur entirely in the analog domain. Within this analog backbone, computation proceeds with theoretically arbitrary physical precision (limited by noise rather than bit-width), bypassing the rounding errors that plague digital 4-bit fixed-point math. This allows the Transformer model to maintain high performance even when integrated with high-speed, low-precision converters.
+Our analysis of physical noise robustness highlights that additive noise remains the primary driver of performance degradation. When the noise floor interacts with the quantization threshold, it inadvertently activates suppressed weights, corrupting the attention distribution. In contrast, we report the system is significantly more resilient when training with noise or when the noise source is purely multiplicative (see Appendix S3). These results suggest an inherent robustness to the multiplicative effects, like gain fluctuations, typical of photonic circuits. Our findings suggest that going forward, hardware efforts should focus on minimizing additive noise, while incorporating noise-aware training regimes could therefore further bridge the gap between simulation and practical analog deployment.
+We evaluated the latency and compute efficiency of Optmax and Optmoid against reported custom electronic and photonic Softmax accelerators, based on contemporary hardware benchmarks [41]. We account for the entire signal chain: DACs, ADCs, RF-amplifiers, thermal-biasing, and photodetectors rated at 10 GBaud10\text{\,}\mathrm{G}\mathrm{B}\mathrm{a}\mathrm{u}\mathrm{d} (see Appendices S4 and S5). Our analysis indicates that Optmax bears the potential to significantly reduce the latency of attention nonlinearities. Compared to other reported custom hardware, Optmax could reduce the latency by over an order of magnitude, with Optmoid projected to achieve nearly two orders of magnitude improvement. While some micro-ring resonator designs, such as SOFTONIC [28], report lower energy consumption per sequence, they face significant scaling challenges for larger sequence lengths. Our approach prioritizes a drastic reduction in latency while maintaining competitive power efficiency, recognizing that Softmax energy costs are often negligible compared to the total system compute power.
+Table 1: Performance Comparison: Latency and Energy consumption for a sequence length n=64n=64. Optmax and Optmoid values are calculated at 10 GBaud10\text{\,}\mathrm{G}\mathrm{B}\mathrm{a}\mathrm{u}\mathrm{d}.
+Architecture
+Latency (s)
+per Sequence
+Energy (J)
+per Sequence
+Type
+Technology
+Ref
+nMOS SMA
+5.5e-04
+1.9e-08
+Electronic
+Analog
+[42]
+Softermax
+7.7e-04
+1.3e-08
+Electronic
+Digital
+[11]
+Softonic
+1.7e-05
+4.5e-11
+Optic
+Analog
+[28]
+VEXP
+2.2e-07
+5.0e-08
+Electronic
+Digital
+[18]
+Optmax
+1.3e-08
+1.0e-08
+Electro-Optic
+Analog
+This Work
+Optmoid
+6.5e-09
+4.7e-09
+Electro-Optic
+Analog
+This Work
+Beyond the MZM, our results and simulation framework pave a trajectory for other natural analog nonlinearities. The steep Lorentzian response of a single micro-ring resonator, the exponential decay of electro-absorption modulators, or the subthreshold characteristics of CMOS transistors could all offer similar gains. Periodically-polled TFLN waveguides operated in a pump-depletion regime could even serve as an all-optical Sigmoid-like nonlinearity in fully optical Transformer realizations.
+V Device Fabrication
+The measured TFLN MZMs are fabricated on a commercially available 300 nm300\text{\,}\mathrm{nm} thick, 5%5\% magnesium oxide-doped lithium niobate thin film on a 2 µ​m2\text{\,}\mathrm{\SIUnitSymbolMicro m} thick silicon dioxide insulation-layer on a silicon handle.
+The optical layer is defined by electron beam lithography using hydrogen silsesquioxane resist and etched into the thin-film using an optimised argon etching process [34, 33]. A cleaning step is then performed with KOH to remove the etching by-products and with buffered HF to remove the remaining mask. The RF electrodes are defined by direct laser writing lithography and standard lift-off process and electron beam evaporation of 850 nm850\text{\,}\mathrm{nm} of Au with a 5 nm5\text{\,}\mathrm{n}\mathrm{m} thick Cr adhesion layer.
+References
+[1]
+A. Vaswani, N. Shazeer, N. Parmar, J. Uszkoreit, L. Jones, A. N. Gomez, Ł. u. Kaiser, and I. Polosukhin (2017)
+Attention is All you Need.
+In Proc. Neural Information Processing Systems (NeurIPS),
+Cited by: Figure 1,
+§I.1,
+§I.
+[2]
+D. e. a. Guo (2025)
+DeepSeek-R1 incentivizes reasoning in LLMs through reinforcement learning.
+Nature 645 (8081), pp. 633–638.
+External Links: Document
+Cited by: §I.
+[3]
+A. Dosovitskiy, L. Beyer, A. Kolesnikov, D. Weissenborn, X. Zhai, T. Unterthiner, M. Dehghani, M. Minderer, G. Heigold, S. Gelly, J. Uszkoreit, and N. Houlsby (2021)
+An image is worth 16x16 words: transformers for image recognition at scale.
+In Proc. Int. Conf. on Learning Representations (ICLR),
+Cited by: §I,
+§III.1.
+[4]
+J. Ramapuram, F. Danieli, E. Dhekane, F. Weers, D. Busbridge, P. Ablin, T. Likhomanenko, J. Digani, Z. Gu, A. Shidani, and R. Webb (2025)
+Theory, analysis, and best practices for sigmoid self-attention.
+In International Conference on Learning Representations (ICLR),
+Cited by: Appendix S6,
+Appendix S6,
+§I.1,
+§I.3,
+§I,
+§II.2.
+[5]
+Z. Qin, W. Sun, H. Deng, D. Li, Y. Wei, B. Lv, J. Yan, L. Kong, and Y. Zhong (2022)
+CosFormer: rethinking softmax in attention.
+In Proc. Int. Conf. on Learning Representations (ICLR),
+Cited by: §I,
+§IV.
+[6]
+J. E. Rodriguez Condia, J. Guerrero-Balaguera, E. J. Patiño Núñez, R. Limas, and M. Sonza Reorda (2024)
+Investigating and Reducing the Architectural Impact of Transient Faults in Special Function Units for GPUs.
+Journal of Electronic Testing 40 (2), pp. 215–228.
+External Links: Document
+Cited by: §I.2,
+§I.
+[7]
+J. Shah, G. Bikshandi, Y. Zhang, V. Thakkar, P. Ramani, and T. Dao (2024)
+FlashAttention-3: fast and accurate attention with asynchrony and low-precision.
+In Proc. Neural Information Processing Systems (NeurIPS),
+Cited by: §I.2,
+§I.3,
+§I.
+[8]
+T. Zadouri, M. Hoehnerbach, J. Shah, T. Liu, V. Thakkar, and T. Dao (2026)
+FlashAttention-4: algorithm and kernel pipelining co-design for asymmetric hardware scaling.
+Note: arXiv preprint
+External Links: Link
+Cited by: §I.2,
+§I.3,
+§I,
+§IV.
+[9]
+J. Kaplan, S. McCandlish, T. Henighan, T. B. Brown, B. Chess, R. Child, S. Gray, A. Radford, J. Wu, and D. Amodei (2020)
+Scaling laws for neural language models.
+Note: arXiv preprint
+External Links: 2001.08361,
+Link
+Cited by: §I.2,
+§I.
+[10]
+J. Hoffmann, S. Borgeaud, A. Mensch, E. Buchatskaya, T. Cai, E. Rutherford, D. Casas, L. A. Hendricks, J. Welbl, A. Clark, et al. (2022)
+Training compute-optimal large language models.
+In Proc. Neural Information Processing Systems (NeurIPS),
+Cited by: §I.2,
+§I.
+[11]
+J. R. Stevens, R. Venkatesan, S. Dai, B. Khailany, and A. Raghunathan (2022)
+Softermax: hardware/software co-design of an efficient softmax for transformers.
+In Proceedings of the 58th Annual ACM/IEEE Design Automation Conference,
+Cited by: §I.3,
+§I,
+Table 1.
+[12]
+F. Yan, H. Nguyen, P. Akbarian, N. Ho, and A. Rinaldo (2025)
+Sigmoid self-attention has lower sample complexity than softmax self-attention: a mixture-of-experts perspective.
+Note: arXiv preprint
+External Links: 2502.00281,
+Link
+Cited by: §I.1,
+§I.
+[13]
+(2026)
+SDPBackend — PyTorch 2.11 documentation.
+External Links: Link
+Cited by: Figure 1,
+§I.2.
+[14]
+A. Radford, J. Wu, R. Child, D. Luan, D. Amodei, and I. Sutskever (2019)
+Language models are unsupervised multitask learners.
+External Links: Link
+Cited by: Appendix S6,
+§I.2,
+§III.2.
+[15]
+NVIDIA (2022)
+H100 tensor core gpu.
+External Links: Link
+Cited by: §I.2.
+[16]
+A. Paszke, S. Gross, F. Massa, A. Lerer, J. Bradbury, G. Chanan, T. Killeen, Z. Lin, and N. Gimelshein (2019)
+PyTorch: An Imperative Style, High-Performance Deep Learning Library.
+In Proc. Neural Information Processing Systems (NeurIPS),
+Cited by: §I.2.
+[17]
+T. Dao, D. Y. Fu, S. Ermon, A. Rudra, and C. Ré (2022)
+FlashAttention: fast and memory-efficient exact attention with IO-awareness.
+In Proc. Neural Information Processing Systems (NeurIPS),
+Cited by: §I.2,
+§I.3.
+[18]
+R. Wang, G. Islamoglu, A. Belano, and et al. (2025)
+VEXP: A Low-Cost RISC-V ISA Extension for Accelerated Softmax Computation in Transformers.
+In 2025 IEEE 32nd Symposium on Computer Arithmetic (ARITH),
+Cited by: §I.3,
+§I.3,
+Table 1.
+[19]
+R. Karami, S. Kao, and H. Kwon (2025)
+Understanding the Performance Horizon of the Latest ML Workloads with NonGEMM Workloads.
+In 2025 IEEE International Symposium on Performance Analysis of Systems and Software (ISPASS),
+Cited by: §I.3.
+[20]
+W. Wang, S. Zhou, W. Sun, P. Sun, and Y. Liu (2023)
+SOLE: Hardware-Software Co-design of Softmax and LayerNorm for Efficient Transformer Inference.
+In 2023 IEEE/ACM International Conference on Computer Aided Design (ICCAD),
+Cited by: §I.3.
+[21]
+T. Xia and S. Q. Zhang (2024)
+Hyft: A Reconfigurable Softmax Accelerator with Hybrid Numeric Format for both Training and Inference.
+In Proceedings of the 29th ACM/IEEE International Symposium on Low Power Electronics and Design,
+Cited by: §I.3.
+[22]
+T. Dao (2024)
+FlashAttention-2: faster attention with better parallelism and work partitioning.
+In Proc. Int. Conf. on Learning Representations (ICLR),
+Cited by: §I.3.
+[23]
+N. N. Schraudolph (1999)
+A Fast, Compact Approximation of the Exponential Function.
+Neural Computation.
+Cited by: §I.3.
+[24]
+J. Yu, J. Park, S. Park, M. Kim, S. Lee, D. H. Lee, and J. Choi (2022)
+NN-LUT: neural approximation of non-linear operations for efficient transformer inference.
+In Proceedings of the 59th ACM/IEEE Design Automation Conference,
+Cited by: §I.3.
+[25]
+M. E. Sadeghi, A. Fayyazi, S. Azizi, and M. Pedram (2024)
+PEANO-ViT: Power-Efficient Approximations of Non-Linearities in Vision Transformers.
+In Proceedings of the 29th ACM/IEEE International Symposium on Low Power Electronics and Design,
+Cited by: §I.3.
+[26]
+N. Leroux, P. Manea, C. Sudarshan, J. Finkbeiner, S. Siegel, J. P. Strachan, and E. Neftci (2025)
+Analog in-memory computing attention mechanism for fast and energy-efficient large language models.
+Nature Computational Science 5 (9), pp. 813–824 (en).
+External Links: Document
+Cited by: §I.3.
+[27]
+Z. Zhan, H. Wang, Q. Liu, and X. Fu (2024)
+Optoelectronic nonlinear Softmax operator based on diffractive neural networks.
+Optics Express 32 (15), pp. 26458.
+External Links: Document
+Cited by: §I.3.
+[28]
+P. Dash, A. Jiang, and D. Dang (2025)
+SOFTONIC: A Photonic Design Approach to Softmax Activation for High-Speed Fully Analog AI Acceleration.
+In Proceedings of the Great Lakes Symposium on VLSI 2025,
+Cited by: §I.3,
+Table 1,
+§IV.
+[29]
+H. Park and Y. Park (2026)
+Photonic exponential approximation via cascaded tfln microring resonators toward softmax.
+Note: arXiv preprint
+External Links: Link
+Cited by: §I.3.
+[30]
+F. Brückerhoff-Plückelmann, J. Dijkstra, J. Büchel, B. Batkai, F. Ebert, L. Mickeler, U. Egger, A. Sebastian, W. Pernice, and G. S. Syed (2025)
+A case study on the performance metrics of integrated photonic computing.
+Note: arXiv preprint
+External Links: 2511.00186,
+Link
+Cited by: §I.3.
+[31]
+D. B. et. al (2025)
+Roadmap on neuromorphic photonics.
+Note: arXiv preprint
+External Links: 2501.07917,
+Link
+Cited by: §I.3.
+[32]
+Z. Wang, X. Wang, J. Song, X. Wang, A. Wang, S. Yuan, X. Hu, F. Hu, H. Cai, and W. Chu (2025)
+240 gbps high-efficiency optical interconnection with tfln transmitter and ge-pd receiver.
+Opt. Lett. 50 (21), pp. 6469–6472.
+External Links: Document
+Cited by: §I.3.
+[33]
+A. Sabatti, J. Kellner, F. Kaufmann, R. J. Chapman, G. Finco, T. Kuttner, A. Maeder, and R. Grange (2024)
+Extremely high extinction ratio electro-optic modulator via frequency upconversion to visible wavelengths.
+Optics Letters 49 (14), pp. 3870–3873.
+External Links: Link,
+Document
+Cited by: §I.4,
+§V.
+[34]
+F. Kaufmann, G. Finco, A. Maeder, and R. Grange (2023)
+Redeposition-free inductively-coupled plasma etching of lithium niobate for integrated photonics.
+Nanophotonics 12 (8), pp. 1601–1611.
+External Links: Document
+Cited by: §I.4,
+§V.
+[35]
+Y. LeCun, C. Cortes, and C. J.C. Burges (2010)
+MNIST handwritten digit database.
+External Links: Link
+Cited by: §III.1.
+[36]
+A. Krizhevsky (2009)
+Learning multiple layers of features from tiny images.
+Technical Report
+University of Toronto.
+External Links: Link
+Cited by: Appendix S6,
+§III.1.
+[37]
+Y. Netzer, T. Wang, A. Coates, A. Bissacco, B. Wu, and A. Y. Ng (2011)
+Reading digits in natural images with unsupervised feature learning.
+In NIPS Workshop on Deep Learning and Unsupervised Feature Learning,
+Cited by: §III.1.
+[38]
+A. Lozhkov, L. Ben Allal, L. von Werra, and T. Wolf (2024)
+FineWeb-edu: the finest collection of educational content.
+Hugging Face.
+External Links: Link,
+Document
+Cited by: Appendix S6,
+§III.2.
+[39]
+S. Kim, A. Gholami, Z. Yao, M. W. Mahoney, and K. Keutzer (2021)
+I-bert: integer-only bert quantization.
+Proc. Int. Conf. on Machine Learning (ICML).
+Cited by: §IV.
+[40]
+N. P. Pandey, M. Fournarakis, C. Patel, and M. Nagel (2023)
+Softmax Bias Correction for Quantized Generative Models.
+In 2023 IEEE/CVF International Conference on Computer Vision Workshops (ICCVW),
+Cited by: §IV.
+[41]
+N. Al-Kayed, C. St-Arnault, H. Morison, A. Aadhi, C. Huang, A. N. Tait, D. V. Plant, and B. J. Shastri (2025)
+Programmable 200 GOPS Hopfield-inspired photonic Ising machine.
+Nature 648 (8094), pp. 576–584 (en).
+External Links: Document
+Cited by: Appendix S5,
+Appendix S5,
+Appendix S5,
+Appendix S5,
+§IV.
+[42]
+J. Sillman (2023)
+Analog implementation of the softmax function.
+Note: arXiv preprint
+External Links: 2305.13649,
+Link
+Cited by: Table 1.
+[43]
+SciPy (2026)
+Firwin — SciPy v1.17.0 Manual.
+External Links: Link
+Cited by: §S1.1.
+[44]
+TOPTICA Photonics (2026)
+CTL 1550.
+External Links: Link
+Cited by: Appendix S5.
+[45]
+Keysight Technologies (2026)
+E36106A DC power supply, 100V, 0.4A, 40W [Obsolete].
+External Links: Link
+Cited by: Appendix S5.
+[46]
+Z. Jiang (2022)
+High data rate dmt serdes design.
+Ph.D. Thesis, Carleton University, Ottawa, Ontario.
+External Links: Document
+Cited by: Appendix S5.
+[47]
+S. Daneshgar, H. Li, T. Kim, and G. Balamurugan (2022)
+A 128 gb/s, 11.2 mw single-ended pam4 linear tia with 2.7 μ\muarms input noise in 22 nm finfet cmos.
+IEEE Journal of Solid-State Circuits 57 (5), pp. 1397–1408.
+External Links: Document
+Cited by: Appendix S5.
+Author contributions
+Competing interest
+The authors declare no competing financial or nonfinancial interests.
+Acknowledgements.
+This work was supported by the Swiss National Science Foundation SNSF Consolidator Grant APIC (TMCG-2_213713), by Sinergia LION (CRII5-216600), and by the European Union’s Horizon Europe research and innovation programme under the Marie Skłodowska-Curie Actions HORIZON-MSCA-2024-PF-01-01 grant agreement No. 101203711 (A.N.). We thank Alessandra Sabatti for the fabrication of samples. We acknowledge support for the fabrication from the cleanroom facilities BRNC and FIRST of ETH Zurich and IBM Ruschlikon.
+Data availability statement
+Data supporting the findings of this study are available within the article and Supplementary Material. Raw data and analysis code are available from the corresponding author upon reasonable request.
+Figure S1: Experimental setup and signal waveforms.
+(a) Schematic of the MZM characterization setup, including the RF driving chain and optical detection path.
+(b) Time-domain traces of a 10 GBaud10\text{\,}\mathrm{G}\mathrm{B}\mathrm{a}\mathrm{u}\mathrm{d} sequence at the DAC output, RF amplifier output, and photodiode output. Noise is maximized at the MZM quadrature point where voltage-to-power transconductance is highest.
+Appendix S1 Optmax and Optmoid GHz measurements
+S1.1 Setup and Measurement
+We perform high-speed measurements of a Mach-Zehnder modulator (MZM) response to compare the experiment with the simulations used within Transformer training. Fig. S1a illustrates the experimental setup. Both Optmax and Optmoid are designed to perform a nonlinear transform on a sequence of values xix_{i} with i∈[1,n]i\in[1,n]. To test this, a 5-bit uniformly-sampled sequence of length n=2048n=2048 was loaded into the memory of a 100 GS/s100\text{\,}\mathrm{G}\mathrm{S}\mathrm{/}\mathrm{s} Micram DAC10002 board. The resulting RF signal, generated using the differential DACs in a single-ended configuration, was first AC-coupled via an SHF BT45R 45 GHz45\text{\,}\mathrm{G}\mathrm{H}\mathrm{z} bias-tee to remove the DC component and subsequently amplified by an AT Microwave AT-LNA-0043-3504Y 35 dB35\text{\,}\mathrm{d}\mathrm{B} 43.5 GHz43.5\text{\,}\mathrm{G}\mathrm{H}\mathrm{z} low-noise amplifier. On the optical path, we used a Toptica CTL 1500 at 1550 nm1550\text{\,}\mathrm{n}\mathrm{m} and 30 mW30\text{\,}\mathrm{m}\mathrm{W} of fiber output power. An erbium-doped fiber amplifier (EDFA) was employed at the MZM output to compensate for high coupling losses from the fiber to the integrated chip. The output was captured by a Thorlabs DXM50AF high-speed photodiode. The resulting time-domain waveforms were recorded using a Tektronix DPO 77002SX real-time oscilloscope at a sampling rate of 200 GS/s200\text{\,}\mathrm{G}\mathrm{S}\mathrm{/}\mathrm{s}.
+To characterize the Optmoid response, the RF drive signal was attenuated to a peak-to-peak voltage of Vp​p=Vπ=5.73 VV_{pp}=V_{\pi}=$5.73\text{\,}\mathrm{V}$, and the MZM was biased at the quadrature point using the integrated thermal phase shifter. For the Optmax response, the drive amplitude was set to Vp​p=Vπ/2=2.89 VV_{pp}=V_{\pi}/2=$2.89\text{\,}\mathrm{V}$, with the thermal bias positioned at the midpoint between the transmission minimum and the quadrature point. As such, VminV_{\mathrm{min}} would correspond to the point of minimum transmission and VmaxV_{\mathrm{max}} to the quadrature point.
+Signal encoding was performed at three distinct rates. For 10 GBaud10\text{\,}\mathrm{G}\mathrm{B}\mathrm{a}\mathrm{u}\mathrm{d} and 1 GBaud1\text{\,}\mathrm{G}\mathrm{B}\mathrm{a}\mathrm{u}\mathrm{d} transmission, the DAC was operated at 80 GS/s80\text{\,}\mathrm{G}\mathrm{S}\mathrm{/}\mathrm{s} using 8 SPS8\text{\,}\mathrm{S}\mathrm{P}\mathrm{S} and 80 SPS80\text{\,}\mathrm{S}\mathrm{P}\mathrm{S}, respectively. For the 100 MBaud100\text{\,}\mathrm{M}\mathrm{B}\mathrm{a}\mathrm{u}\mathrm{d} signal, the DAC sampling rate was reduced to 8 GS/s8\text{\,}\mathrm{G}\mathrm{S}\mathrm{/}\mathrm{s} with 80 SPS80\text{\,}\mathrm{S}\mathrm{P}\mathrm{S}. The DAC sampling rate could not be kept constant because excessively large samples per symbol value would exceed the available DAC memory.
+Digital post-processing was applied to the 200 GS/s200\text{\,}\mathrm{G}\mathrm{S}\mathrm{/}\mathrm{s} captured time-domain waveforms. The 10 GBaud10\text{\,}\mathrm{G}\mathrm{B}\mathrm{a}\mathrm{u}\mathrm{d}, 1 GBaud1\text{\,}\mathrm{G}\mathrm{B}\mathrm{a}\mathrm{u}\mathrm{d}, and 100 MBaud100\text{\,}\mathrm{M}\mathrm{B}\mathrm{a}\mathrm{u}\mathrm{d} signals were filtered using a finite impulse response (FIR) low-pass filter (scipy.signal.firwin [43]) with cut-off frequencies of 12 GHz12\text{\,}\mathrm{G}\mathrm{H}\mathrm{z}, 1.2 GHz1.2\text{\,}\mathrm{G}\mathrm{H}\mathrm{z}, and 120 MHz120\text{\,}\mathrm{M}\mathrm{H}\mathrm{z}, respectively. Following, the signals were decimated to 20 SPS20\text{\,}\mathrm{S}\mathrm{P}\mathrm{S}. To emulate the behavior of a high-bandwidth triggered receiver, the measured traces were integrated at each symbol center with an integration window corresponding to 20%20\% of the symbol period (0.2×1/Baudrate0.2\times 1/\text{Baudrate}).
+S1.2 Experimental Noise
+Fig. S1b displays the response of a uniformly-sampled 10 GBaud10\text{\,}\mathrm{G}\mathrm{B}\mathrm{a}\mathrm{u}\mathrm{d} 4-bit sequences at VπV_{\pi} at three stages: (1) DAC output, (2) RF amplifier output, and (3) photodiode output. We observe additive noise introduced by the RF amplifier, which is most pronounced at the MZM quadrature point where the voltage-to-power transconductance is maximized. Following photodetection, the noise level increases further, indicating combined contributions from amplified spontaneous-emission beat noise originating from the EDFA, as well as the thermal noise floor of the photodiode. Further research is required to distinctly characterize the noise sources.
+Appendix S2 Calibration
+S2.1 Optmax Calibration
+The Optmax unit approximates the standard Softmax function, Softmax​(𝐱)j=exj/∑i=1nexi\text{Softmax}(\mathbf{x})_{j}=e^{x_{j}}/\sum_{i=1}^{n}e^{x_{i}}, by decomposing the operation into an analog exponentiation stage and a subsequent normalization stage:
+Optmax​(𝐱)i≈fexp​(xi)⋅N⁡(z),\text{Optmax}(\mathbf{x})_{i}\approx f_{\exp}(x_{i})\cdot N(z),
+(3)
+where fexpf_{\exp} denotes the exponential approximation and N⁡(z)N(z) represents the normalization factor applied to the accumulated sum z=∑jfexp​(xj)z=\sum_{j}f_{\exp}(x_{j}). The physical fidelity of this approximation is governed by two primary hyperparameter domains that define the training simulations:
+1.
+The input encoding range [xmin,xmax][x_{\min},x_{\max}], which maps onto the rising slope of the first MZM’s transfer function.
+2.
+The normalization range [zmin,zmax][z_{\min},z_{\max}], which maps the accumulated optical power onto the falling slope of the second MZM.
+To translate from the digital simulation domain w∈[wmin,wmax]w\in[w_{\min},w_{\max}] to the physical voltage input V∈[Vmin,Vmax]V\in[V_{\min},V_{\max}] driving the MZM, we define a fixed, range-preserving affine transformation:
+V⁡(w)=γ​w+δ,V(w)=\gamma w+\delta,
+(4)
+where the scaling factor γ\gamma and the bias δ\delta are given by:
+γ\displaystyle\gamma
+=Vmax−Vminwmax−wmin,\displaystyle=\frac{V_{\max}-V_{\min}}{w_{\max}-w_{\min}},
+(5)
+δ\displaystyle\delta
+=Vmin−γ⋅wmin.\displaystyle=V_{\min}-\gamma\cdot w_{\min}.
+(6)
+We determine the physical transmission function T⁡(V)T(V) of the MZM via a least-squares fit of the measured experimental data over the voltage window V∈[Vmin,Vmax]V\in[V_{\min},V_{\max}], modeled as:
+T⁡(V)=a⁡(1+sin⁡(b​V+c)).T(V)=a(1+\sin(bV+c)).
+(7)
+Exponential Approximation fexpf_{\exp}
+To approximate the exponential numerator of the Softmax, the digital input w=xw=x is mapped strictly to the rising slope of the MZM’s sinusoidal transfer function. The physical voltage boundaries are selected such that Vmin(exp)V_{\min}^{(\mathrm{exp})} corresponds to the point of minimum transmission and Vmax(exp)V_{\max}^{(\mathrm{exp})} corresponds to the point of maximum positive gradient in the measured data. The resulting fit is illustrated in Fig. S2a. The corresponding approximation fexp​(x)f_{\exp}(x), operating within a clipped input range of [xmin,xmax]=[0,4][x_{\min},x_{\max}]=[0,4], is depicted in Fig. S2b.
+Normalization Factor N⁡(z)N(z)
+The normalization factor N⁡(z)N(z) accounts for the falling slope of the second MZM, an aggregate system gain α\alpha, and the finite extinction ratio β∈[0,1]\beta\in[0,1] of the second MZM:
+N⁡(z)=α⋅[β+(1−β)​frec​(z)].N(z)=\alpha\cdot\left[\beta+(1-\beta)f_{\text{rec}}(z)\right].
+(8)
+Here, frecf_{\text{rec}} represents the normalized transmission along the falling slope within the defined domain z∈[zmin,zmax]z\in[z_{\min},z_{\max}]. The voltage boundaries are selected such that Vmin(rec)V_{\min}^{(\mathrm{rec})} aligns with the maximum negative gradient and Vmax(rec)V_{\max}^{(\mathrm{rec})} aligns with the minimum transmission point. We optimize N⁡(z)N(z) in α\alpha and β\beta to minimize the discrepancy between the physical response and the ideal reciprocal function 1/z1/z. Fig. S2d shows the calibrated N⁡(z)N(z) for the range [zmin,zmax]=[6,14][z_{\min},z_{\max}]=[6,14].
+Quantization and Noise Modeling
+We model the finite bit-depth of the digital-to-analog converters (DAC) and analog-to-digital converters (ADC) using two quantization functions: qin​(⋅)q_{\text{in}}(\cdot) for the DAC stage and qout​(⋅)q_{\text{out}}(\cdot) for the ADC stage.
+Furthermore, we account for the stochastic nature of the analog system by introducing either an additive or multiplicative Gaussian noise term before the output quantization step. For multiplicative noise, the complete differentiable forward model for Optmax used during training is:
+Optmax​(x)i=qout​(CLOSE\displaystyle\text{Optmax}(x)_{i}=q_{\text{out}}\Big(
+OPENN⁡(z)⋅fexp​(qin​(xi))×𝒩⁡(1,σ2)),\displaystyle N(z)\cdot f_{\exp}\left(q_{\text{in}}(x_{i})\right)\times\mathcal{N}(1,\sigma^{2})\Big)\;,
+(9)
+and for additive noise similarly,
+Optmax​(x)i=qout​(CLOSE\displaystyle\text{Optmax}(x)_{i}=q_{\text{out}}\Big(
+OPENN⁡(z)⋅fexp​(qin​(xi))+𝒩⁡(μ,σ2)).\displaystyle N(z)\cdot f_{\exp}\left(q_{\text{in}}(x_{i})\right)+\mathcal{N}(\mu,\sigma^{2})\Big)\;.
+(10)
+where μ=max⁡(N⁡(z)⋅fexp​(qin​(xi)))\mu=\mathrm{max}(N(z)\cdot f_{\exp}\left(q_{\text{in}}(x_{i})\right)).
+During training, we either set ϵ=0\epsilon=0 and evaluate noise robustness only during inference, or we also train with ϵ>0\epsilon>0.
+S2.2 Optmoid Calibration
+Sigmoid Approximation
+The Optmoid unit approximates the element-wise Sigmoid function Sigmoid​(𝐱)j=1/(1+e−(xj+b))\text{Sigmoid}(\mathbf{x})_{j}=1/(1+e^{-(x_{j}+b)}) by exploiting the full min-to-max swing of the MZM sinusoidal response:
+Sigmoid​(xj+b)≈fsig​(xj+b),\text{Sigmoid}(x_{j}+b)\approx f_{\text{sig}}(x_{j}+b),
+(11)
+where bb is a sequence-length-dependent bias hyperparameter. The voltage boundaries of the mapping are selected such that Vmin(exp)V_{\min}^{(\mathrm{exp})} and Vmax(exp)V_{\max}^{(\mathrm{exp})} correspond to the points of minimum and maximum optical transmission, respectively. We calibrate the input scaling within the bounds [xmin,xmax][x_{\min},x_{\max}] to optimally match the ideal Sigmoid distribution for a given bias via a least-squares fit. Fig. S2e depicts the resulting transfer function fsig​(x)f_{\text{sig}}(x) with b=−3.93b=-3.93.
+Quantization and Noise Modeling
+To simulate the physical constraints of the integrated system, we again model the finite bit-depth of the DAC and ADC interfaces using two quantization functions, qin​(⋅)q_{\text{in}}(\cdot) and qout​(⋅)q_{\text{out}}(\cdot), and account for experimental noise by introducing a Gaussian noise term before the final digitization stage.
+The complete differentiable forward model for multiplicative noise is given by:
+Optmoid​(x)i=qout​(CLOSE\displaystyle\text{Optmoid}(x)_{i}=q_{\text{out}}\Big(
+OPENfsig​(qin​(xi))+𝒩⁡(1,σ2)),\displaystyle f_{\text{sig}}\left(q_{\text{in}}(x_{i})\right)+\mathcal{N}(1,\sigma^{2})\Big)\;,
+(12)
+and for additive noise respectively
+Optmoid​(x)i=qout​(CLOSE\displaystyle\text{Optmoid}(x)_{i}=q_{\text{out}}\Big(
+OPENfsig​(qin​(xi))+𝒩⁡(μ,σ2)),\displaystyle f_{\text{sig}}\left(q_{\text{in}}(x_{i})\right)+\mathcal{N}(\mu,\sigma^{2})\Big)\;,
+(13)
+where μ=max⁡(fsig​(qin​(xi))CLOSE\mu=\mathrm{max}(f_{\text{sig}}(q_{\text{in}}(x_{i})).
+During training, we set ϵ=0\epsilon=0 and evaluate its influence during inference.
+Figure S2: Calibration of Optmax and Optmoid electro-optic units.
+(a–b) Least-squares fit of MZM transmission T⁡(V)T(V) and the resulting exponential approximation fexp​(x)f_{\exp}(x) mapped to the rising slope for x∈[0,4]x\in[0,4].
+(c–d) Characterization of the normalization stage MZM and the optimized factor N⁡(z)N(z) for z∈[6,14]z\in[6,14]. The fit minimizes error against 1/z1/z by tuning gain α\alpha and extinction ratio β\beta.
+(e) Optmoid transfer function fsig​(x)f_{\text{sig}}(x) using the full min-to-max MZM swing with bias b=−3.93b=-3.93.
+Solid lines represent hardware-aware forward models (including quantization qin,qoutq_{\text{in}},q_{\text{out}}), while dashed lines indicate ideal mathematical targets.
+Appendix S3 Noise in Training
+Fig. S3a and b again depict the difference between additive and multiplicative noise, when using Optmax or Optmoid simulations in Transformer training. When training the vision transformer (ViT) as reported in the main manuscript Section III.1, we observe noticeable differences wether we account for additive or multiplicative noise.
+Fig. S3c shows the final test accuracy after for both Optmax and Optmoid in full precision and with 4-bit quantization. The plot reports noise values from σ=0\sigma=0 to σ=0.1\sigma=0.1, but accounts for noise only in testing, not in training. Under full-precision, the test-accuracy degrades from 75.34%75.34\% to 75.23%75.23\% for Optmax and from 74.06%74.06\% to 67.72%67.72\% for Optmoid. Under 4-bit quantization, however, Optmax sharply degrades to as low as 21.28%21.28\% for Optmax and 14.51%14.51\% for Optmoid at a noise level of only σ=0.02\sigma=0.02. We note that in our high-speed 10 GBaud10\text{\,}\mathrm{G}\mathrm{B}\mathrm{a}\mathrm{u}\mathrm{d} experiments (Appendix S1) we measure much higher additive noise at values of σ=0.098\sigma=0.098 and σ=0.098\sigma=0.098 for Optmax and Optmoid, respectively. These results indicate that training without noise and under 4-bit quantization is not robust for noise levels beyond σ>0.02\sigma>0.02.
+Fig. S3d again shows the test accuracy under additive noise, but in this case also accounting for noise whilst training the ViT. We report a much stabler scenario - indicating that training with noise could be highly beneficial. Under 4-bit quantization and at σ=0.1\sigma=0.1, Optmax even improves from 75.59%75.59\% to 77.77%77.77\% and Optmoid from 70.07%70.07\% to 71.81%71.81\%. Investigating how and why this noisy and quantized attention mechanism improves in this scenario will necessitate further research.
+Fig. S3g and h illustrate additive noise at the example of Optmoid. Panel g shows the output under additive noise σ=0.1\sigma=0.1 and no noise with full precision. In this setting, Optmoid can output values si<0s_{i}<0 and si>0s_{i}>0, which is not the designed intention of a strictly positive attention nonlinearity. However, this does not relate to a realistic physical scenario, where input and output quantization using a DAC and ADC cannot be circumvented in a hybrid digital-analog setup. Fig. S3h shows the output using exactly the same noise key. Now, Optmoid values are again within the desired range [0,1][0,1], since the output is quantized. Crucially, some outputs for low xx are still non-zero. In the no-noise (σ=0\sigma=0) scenario the same xx values would be mapped to zero (shown in a light blue backdrop). We attribute most of the measured model degradation to this phenomenon: attention values which, under no noise, would be mapped to zero can suddenly, under noise, participate in the overall attention output. This phenomenon is not present during purely multiplicative noise, which is elaborated in the following.
+Fig. S3e and f show the final test accuracy when testing or training with multiplicative noise. In both scenarios, the model maintains robust functionality. Under 4-bit quantization Optmax degrades from 75.42%75.42\% to 74.94%74.94\% and Optmoid 69.77%69.77\% to 69.82%69.82\% when accounting for noise in testing. For noise in training and testing, Optmax degrades from 75.61%75.61\% to 75.44%75.44\% and Optmoid 70.07%70.07\% to 69.44%69.44\%. These results indicate that also in the multiplicative scenario, training with noise is beneficial. It does not, however, bear the same effect as under additive noise.
+Fig. S3i and j illustrate multiplicative noise. Panel g shows the output under additive noise σ=0.1\sigma=0.1 and no noise with full precision. In this setting Optmoid does not output values si<0s_{i}<0, which is a stark contrast to the additive scenario. The same is the case for the 4-bit quantized setup, shown in Fig. S3h. More importantly, xx values which are mapped to zero under no noise (light blue backdrop) are also mapped to zero under multiplicative noise. We attribute most of the measured model degradation to this phenomenon: attention values that have previously been trained to output zero, will not participate in the attention output, even if the noise amplitude is increased.
+Figure S3: Noise effects in Optmax and Optmoid for ViT training (a) Additive noise model. (b) Multiplicative noise model. (c) Test accuracy versus additive noise applied only during inference, showing strong degradation under 4-bit quantization. (d) Test accuracy with additive noise during both training and inference, demonstrating improved robustness and performance. (e) Test accuracy under multiplicative noise applied only during inference, showing minor degradation. (f) Test accuracy under multiplicative noise during both training and inference, indicating stable performance. (g) Additive noise in Optmoid without output quantization, producing out-of-range values. (h) Additive noise in Optmoid with output quantization, illustrating threshold lifting effects. (i) Multiplicative noise in Optmoid in full precision, preserving non-negativity. (j) Multiplicative noise in Optmoid with quantization, maintaining zeroed values.
+Appendix S4 Latency
+We define the latency as the time required to compute the nonlinear operation over a sequence of length nn, where nn represents the sequence length corresponding to the context size of the Transformer.
+The system consists of a cascade of stages: digital-to-analog conversion, optical modulation and propagation, photodetection with transimpedance amplification, and analog-to-digital conversion.
+Let TDACT_{\mathrm{DAC}}, TpropT_{\mathrm{prop}}, TTIAT_{\mathrm{TIA}}, and TADCT_{\mathrm{ADC}} denote the single-sample latencies of the DAC, propagation of the optical carrier, TIA, and ADC, respectively.
+The optical modulation of a sequence of length nn at baud rate fBf_{B} requires a duration
+Tmod=nfB.T_{\mathrm{mod}}=\frac{n}{f_{B}}.
+(14)
+We continue analyzing the individual single-sample latencies for each stage of the system.
+Optical Propagation
+The propagation delay through a TFLN MZM of length LMZML_{\mathrm{MZM}} is
+Tprop=neff​LMZMc.T_{\mathrm{prop}}=\frac{n_{\mathrm{eff}}L_{\mathrm{MZM}}}{c}.
+(15)
+For LMZM=7.3​mmL_{\mathrm{MZM}}=7.3\,\mathrm{mm} and neff=1.2n_{\mathrm{eff}}=1.2, this yields
+Tprop≈29​ps.T_{\mathrm{prop}}\approx 29\,\mathrm{ps}\;.
+(16)
+Analog Accumulation
+The settling time of the photodetection stage is determined by the TIA bandwidth f3​d​Bf_{3\mathrm{dB}}:
+TTIA≈52​π​f3​d​B,T_{\mathrm{TIA}}\approx\frac{5}{2\pi f_{3\mathrm{dB}}},
+(17)
+where this conservative choice corresponds to a residual error of approximately 0.67%0.67\%.
+The first TIA of the Optmax imposes relatively relaxed bandwidth requirements, as it only needs to accumulate the signal over the full sequence length.
+The second TIA, placed before the ADC, requires a bandwidth of at least fBf_{B} to ensure accurate signal acquisition.
+To remain conservative, we assume that both TIAs operate with the same minimum bandwidth, f3​d​B≈fB=40​GHzf_{3\mathrm{dB}}\approx f_{B}=40\,\mathrm{GHz}, yielding:
+TTIA≈20​ps.T_{\mathrm{TIA}}\approx 20\,\mathrm{ps}.
+(18)
+Mixed-Signal Conversion
+The lower-bound for the latency of the DAC and ADC stages is given by the inverse of the sampling rate.
+For our system, we consider a sampling rate of 4​fB4f_{B} for both the ADC and DAC, corresponding to 4 samples per symbol, with fB=10​GBaudf_{B}=10\,\mathrm{GBaud}.
+Thus, we have
+TDAC=TADC=14​fB=25​ps.T_{\mathrm{DAC}}=T_{\mathrm{ADC}}=\frac{1}{4f_{B}}=25\,\mathrm{ps}.
+(19)
+Total Latency
+We consider a pipelined operation, where each stage processes samples concurrently: while the kk-th sample is being converted by the ADC, the (k+1)(k+1)-th sample is being amplified by the TIA, the (k+2)(k+2)-th sample is propagating through the optical domain, and subsequent samples are being encoded into the optical carrier by the DAC.
+The overall throughput is therefore determined by the symbol rate fBf_{B}, while the total latency is given by the sum of (i) the time required to process the nn samples at rate fBf_{B}, and (ii) a constant offset corresponding to the cumulative delay of the pipeline stages.
+The Optmax is composed of two trains; the latency of the first train is given by
+T1=nfB+(TDAC+Tprop+TTIA),T_{1}=\frac{n}{f_{B}}+(T_{\mathrm{DAC}}+T_{\mathrm{prop}}+T_{\mathrm{TIA}})\;,
+(20)
+while the latency of the second train is
+T2=nfB+(TDAC+Tprop+TTIA+TADC).T_{2}=\frac{n}{f_{B}}+(T_{\mathrm{DAC}}+T_{\mathrm{prop}}+T_{\mathrm{TIA}}+T_{\mathrm{ADC}})\;.
+(21)
+Thus, considering a sequence length n=2048n=2048, the total latency of the Optmax architecture is given by
+TOptmax=2​nfB+2​TDAC+2​Tprop+2​TTIA+TADC≈410 ns,T_{\mathrm{Optmax}}=2\frac{n}{f_{B}}+2T_{\mathrm{DAC}}+2T_{\mathrm{prop}}+2T_{\mathrm{TIA}}+T_{\mathrm{ADC}}\approx$410\text{\,}\mathrm{n}\mathrm{s}$\;,
+(22)
+while, for the Optmoid architecture, we obtain
+TOptmoid=nfB+TDAC+Tprop+TTIA+TADC≈205 ns.T_{\mathrm{Optmoid}}=\frac{n}{f_{B}}+T_{\mathrm{DAC}}+T_{\mathrm{prop}}+T_{\mathrm{TIA}}+T_{\mathrm{ADC}}\approx$205\text{\,}\mathrm{n}\mathrm{s}$\;.
+(23)
+Finally, we report the calculated latency per input of length nn for Optmoid and Sigmoid and different baudrates in Fig. S4a.
+Figure S4: Latency and compute efficiency scaling of Optmax and Optmoid (a) Estimated latency per Softmax operation as a function of the sequence length NN for three baud rates (fB=1f_{B}=1, 1010, and 100​GBaud100\,\mathrm{GBaud}). The analysis follows the pipelined latency model described in Supplementary Sec. S4, including digital-to-analog conversion, optical propagation through the TFLN MZMs, photodetection with transimpedance amplification, and analog-to-digital conversion. For all operating points, Optmoid exhibits lower latency than Optmax because it requires only a single modulation stage. (b) Estimated energy per Softmax operation as a function of the sequence length NN for three baud rates (fB=1f_{B}=1, 1010, and 100​GBaud100\,\mathrm{GBaud}). The energy is computed from the total electrical power consumption of each architecture, including the laser source, TFLN MZMs, DAC, RF driver, photodetection stage, and ADC, multiplied by the corresponding operation latency. Optmoid yields a lower energy per operation than Optmax across the full parameter range owing to its single-stage architecture.
+Appendix S5 Power Consumption
+System Overview
+As described in the main text, the Optmax architecture consists of an MZM followed by a slow photodetector and a transimpedance amplifier (TIA) for analog accumulation, whose output drives a second MZM. The resulting signal is then detected by a fast photodiode, amplified by a second TIA, and finally converted to the digital domain by an ADC.
+By contrast, the Optmoid architecture uses a single MZM followed by a photodetector and TIA, with the output then directly digitized by an ADC.
+Accordingly, the analysis is organized into the following subsystems:
+(i) the continuous-wave laser source,
+(ii) thin-film lithium niobate (TFLN) Mach–Zehnder modulators (MZMs), including the driving electronics,
+(iii) the photodetection stage (photodiodes and TIAs), and
+(iv) the analog-to-digital conversion stage (ADC).
+The total system power consumption is obtained by summing the contributions of these individual subsystems.
+Laser Source
+The electrical power consumption of a laser diode is given by
+PL=VL​(PoptγL+Ith),P_{\mathrm{L}}=V_{\mathrm{L}}\left(\frac{P_{\mathrm{opt}}}{\gamma_{\mathrm{L}}}+I_{\mathrm{th}}\right),
+(24)
+where VLV_{\mathrm{L}} is the bias voltage, γL\gamma_{\mathrm{L}} the slope efficiency, IthI_{\mathrm{th}} the threshold current, and PoptP_{\mathrm{opt}} the emitted optical power.
+These parameters depend on the specific laser source. Using representative values for the laser employed in this work (Toptica CTL 1550 laser, VL=1.6​VV_{\mathrm{L}}=1.6\,\mathrm{V}, γL=0.24​mW/mA\gamma_{\mathrm{L}}=0.24\,\mathrm{mW/mA}, Ith=60​mAI_{\mathrm{th}}=60\,\mathrm{mA}, Popt=50​mWP_{\mathrm{opt}}=50\,\mathrm{mW} [44]), we obtain
+PL≈0.43​W.P_{\mathrm{L}}\approx 0.43\,\mathrm{W}.
+(25)
+Electro-Optic Modulation (TFLN MZMs)
+The power consumption of the MZMs is determined by the RF power dissipated in the 50​Ω50\,\mathrm{\Omega} termination and by the DC power required to drive the thermal phase shifters used to maintain quadrature operation.
+Additional power consumption arises from the electrical drive circuitry, consisting of a DAC and RF driver amplifier.
+Note that the second MZM of the Optmax architecture is driven by a low-frequency signal from the TIA output, so it does not require the RF driver amplifier.
+MZM.
+The power dissipated in the MZM termination, and the thermal phase shifter is
+PMZM=VRMS2R+PDC,P_{\mathrm{MZM}}=\frac{V_{\text{RMS}}^{2}}{R}+P_{\mathrm{DC}}\;,
+(26)
+where VRMSV_{\text{RMS}} is the root-mean-square voltage required for modulation, R=50​ΩR=50\,\mathrm{\Omega} is the termination resistance, and PDCP_{\mathrm{DC}} is the power required for the thermal phase shifter.
+The voltage range required for the Optmax architecture is Vmax≈2.87​VV_{\mathrm{max}}\approx 2.87\,\mathrm{V}, while for the Optmoid architecture it is Vmax=5.73​VV_{\mathrm{max}}=5.73\,\mathrm{V}.
+Assuming uniformly distributed values of input voltages in the interval [−Vmax/2,Vmax/2][-V_{\mathrm{max}}/2,V_{\mathrm{max}}/2], the RMS voltage is given by VRMS=Vmax/(2​3)V_{\text{RMS}}=V_{\mathrm{max}}/(2\sqrt{3}).
+The power consumed by the thermal phase shifters is estimated from the electrical power delivered by the DC source.
+We operated the source (Keysight E36106A [45]) at different bias points for Optmax and Optmoid.
+For Optmoid, we biased the MZM at the quadrature point, whereas for Optmax the operating point was set between the minimum-transmission point and the quadrature point.
+The corresponding electrical power consumption was PDC,Optmax=2.2​V×6.28​mA=13.8​mWP_{\text{DC,Optmax}}=2.2\,\text{V}\times 6.28\,\text{mA}=13.8\,\text{mW} for Optmax and PDC,Optmoid=3​V×8.55​mA=25.6​mWP_{\text{DC,Optmoid}}=3\,\text{V}\times 8.55\,\text{mA}=25.6\,\text{mW} for Optmoid.
+The total power consumed in the MZMs is therefore
+PMZMOptmax=13.7​mW+13.8​mW=27.5​mW,\displaystyle P_{\text{MZM}}^{\text{Optmax}}=13.7\text{mW}+13.8\,\text{mW}=27.5\,\text{mW}\;,
+(27)
+PMZMOptmoid=54.7​mW+25.6​mW=80.3​mW.\displaystyle P_{\text{MZM}}^{\text{Optmoid}}=54.7\text{mW}+25.6\,\text{mW}=80.3\,\text{mW}\;.
+(28)
+DAC.
+To estimate the DAC power consumption, we follow the approach reported in Ref. [41], which assumes that DAC power scales linearly with the sampling rate [46].
+In that work, the authors report a power consumption of PDAC′=132.25​mWP_{\mathrm{DAC}}^{\prime}=132.25\,\mathrm{mW} at a sampling rate of 97​GSa/s97\,\mathrm{GSa/s}.
+For our system, we consider a sampling rate of 4​fB4f_{B}, corresponding to 4 samples per symbol, with fB=10​GBaudf_{B}=10\,\mathrm{GBaud}.
+We thus obtain
+PDAC=PDAC′​4​fB97​GSa/s≈54.5​mW.P_{\mathrm{DAC}}=P_{\mathrm{DAC}}^{\prime}\frac{4f_{B}}{97\,\mathrm{GSa/s}}\approx 54.5\,\mathrm{mW}\;.
+(29)
+Driver amplifier.
+Following Ref. [41], we estimate an integrated RF driver power of
+Pdrive=100​mW.P_{\mathrm{drive}}=100\,\mathrm{mW}.
+(30)
+Photodetection and Analog Front-End
+The photodetection stage consists of a reverse-biased photodiode and a transimpedance amplifier (TIA).
+The photodiode contributes on the order of PPD≈1​mWP_{\mathrm{PD}}\approx 1\,\mathrm{mW} [41].
+Following the same approach used for the latency calculation, we assume that both TIAs operate with identical bandwidths fBf_{B}, and we therefore assign each a power consumption of PTIA≈11.2​mWP_{\mathrm{TIA}}\approx 11.2\,\mathrm{mW} [47].
+Analog-to-Digital Conversion
+For the ADC, we follow the same scaling argument used for the DAC, obtaining
+PADC=PA​D​C′​4​fB97​GSa/s=130.25​mW×4097≈53.7​mWP_{\text{ADC}}=P_{ADC}^{\prime}\frac{4f_{B}}{97\ \text{GSa/s}}=130.25\ \text{mW}\times\frac{40}{97}\approx 53.7\ \text{mW}
+where PA​D​C′=130.25​mWP_{ADC}^{\prime}=130.25\ \text{mW} is the power reported in Ref. [41] at 97​GSa/s97\ \text{GSa/s}, while 4​fB4f_{B} denotes the ADC sampling rate assuming 4 samples per symbol, with fB=10​Gbaudf_{B}=10\ \text{Gbaud} the modulator symbol rate.
+Total Power Consumption
+For the Optmax system, the total power consumption is given by
+PtotOptmax=\displaystyle P_{\mathrm{tot}}^{\mathrm{Optmax}}=
+(31)
+PL+2​PMZMOptmax+2​PDAC\displaystyle P_{\mathrm{L}}+2P_{\mathrm{MZM}}^{\text{Optmax}}+2P_{\mathrm{DAC}}
++Pdrive+2​PPD+2​PTIA+PADC,\displaystyle+P_{\text{drive}}+2P_{\mathrm{PD}}+2P_{\mathrm{TIA}}+P_{\mathrm{ADC}}\;,
+yielding
+PtotOptmax≈772​mW.P_{\mathrm{tot}}^{\mathrm{Optmax}}\approx 772\,\mathrm{mW}.
+(32)
+For the Optmoid system, we have the total power consumption equal to
+PtotOptmoid=\displaystyle P_{\mathrm{tot}}^{\mathrm{Optmoid}}=
+(33)
+PL+PMZMOptmoid+PDAC\displaystyle P_{\mathrm{L}}+P_{\mathrm{MZM}}^{\text{Optmoid}}+P_{\mathrm{DAC}}
++Pdrive+PPD+PTIA+PADC,\displaystyle+P_{\text{drive}}+P_{\mathrm{PD}}+P_{\mathrm{TIA}}+P_{\mathrm{ADC}}\;,
+yielding
+PtotOptmoid≈731​mW.P_{\mathrm{tot}}^{\mathrm{Optmoid}}\approx 731\,\mathrm{mW}.
+(34)
+Compute Efficiency
+For n=2048n=2048 and TT is the total latency computed in the previous section, we can compute the number of operations per second as n/Tn/T, and the energy consumption per operation as E=Ptot/(n/T)E=P_{\mathrm{tot}}/(n/T).
+Optmax:
+The number of Optmax operations per second is
+nT=2048410 ns≈5×109​Optmax/s\frac{n}{T}=\frac{2048}{$410\text{\,}\mathrm{n}\mathrm{s}$}\approx 5\times 10^{9}\ \text{Optmax/s}
+(35)
+while the energy consumption per Optmax operation is
+E=PtotOptmaxn/T≈154​pJ/Sequence.E=\frac{P_{\mathrm{tot}}^{\text{Optmax}}}{n/T}\approx 154\,\mathrm{pJ/Sequence}.
+(36)
+Optmoid:
+The number of Optmoid operations per second is
+nT=2048205 ns≈1010​s−1,\frac{n}{T}=\frac{2048}{$205\text{\,}\mathrm{n}\mathrm{s}$}\approx 10^{10}\ \mathrm{s^{-1}},
+(37)
+and the energy consumption per Optmoid operation is
+E≈73.1​pJ/Sequence.E\approx 73.1\,\mathrm{pJ/Sequence}.
+(38)
+These results demonstrate that electro-optic nonlinearities enable sub-nanosecond latency and sub-nJ energy per operation, competitive with state-of-the-art digital implementations.
+Finally, we report the energy per input of length nn for Optmoid and Sigmoid and different baudrates in Fig. S4b.
+Appendix S6 Simulation Details
+Image Classification
+We train a ViT in the standard configuration listed in Table 2 using fp32 precision on the four nonlinearities (Softmax, Sigmoid, Optmax, and Optmoid), swapping only the attention nonlinearity while keeping all other model- and training hyperparameters fixed.
+Table 2: ViT model configuration.
+Parameter
+Value
+Embedding dimension
+256
+Hidden dimension
+512
+Number of heads
+8
+Number of layers
+6
+Patch size
+4
+Number of channels
+3
+Number of patches
+64
+Number of classes
+10
+Dropout probability
+0.2
+As detailed in Appendices S2 and S3, the Optmax activation requires calibration via tuning of the xx and zz clipping ranges, while Optmoid and Sigmoid require tuning of the bias bb. All hyperparameters were tuned on the CIFAR-10 validation split [36] by training for 200 epochs with a batch size of 128 at full precision (no quantization).
+The results of the Softmax learning rate sweep are provided in Table 3; based on these, a learning rate of 5×10−45\times 10^{-4} was selected for all subsequent experiments. We tune the Optmax input clipping range [xmin,xmax][x_{\min},x_{\max}] using a vanilla reciprocal 1/z1/z. As shown in Table 4, the maximum evaluation accuracy was achieved at [xmin,xmax]=[0,10][x_{\min},x_{\max}]=[0,10]. We subsequently tuned the reciprocal clipping range [zmin,zmax][z_{\min},z_{\max}], with results in Table 5 indicating peak performance at [zmin,zmax]=[1.5,6.5][z_{\min},z_{\max}]=[1.5,6.5].
+The bias bb for both Sigmoid and Optmoid was tuned around the negative logarithmic sequence length [4] of b=−ln⁡(64)=−4.16b=-\ln(64)=-4.16. Results in Table 6 show the highest evaluation accuracy at b=−11.16b=-11.16 for Sigmoid and b=−7.16b=-7.16 for Optmoid.
+These derived values were applied to all datasets reported in Fig. 4c. However, under harsh 4-bit quantization, Optmoid and Sigmoid failed to converge with these tuned biases, as the resulting outputs were consistently quantized to 0. Consequently, for the experiments in Fig. 4e–f, we reverted to the standard bias of b=−ln⁡(64)=−4.16b=-\ln(64)=-4.16. While re-tuning all hyperparameters for every specific quantization level and dataset would be ideal, we omit this process here due to computational constraints.
+Table 3: Softmax ViT validation accuracy (%) on CIFAR-10 for different learning rates.
+Learning rate
+3e-4
+5e-4
+7e-4
+9e-4
+Validation accuracy (%)
+78.10
+79.02
+78.10
+75.02
+Table 4: Optmax ViT validation accuracy (%) for different xminx_{\min} and xmaxx_{\max} settings using vanilla 1/z1/z normalizations.
+xminx_{\min}
+xmaxx_{\max}
+Val. acc. (%)
+-14
+14
+77.72
+-12
+12
+77.18
+-10
+10
+77.46
+-6
+6
+76.52
+-4
+4
+76.16
+-2
+2
+75.88
+0
+2
+77.78
+0
+4
+78.20
+0
+6
+78.12
+0
+8
+79.12
+0
+10
+79.30
+0
+12
+78.26
+0
+14
+78.76
+0
+16
+78.60
+0
+18
+78.26
+Table 5: Optmax ViT validation accuracy (%) for different zminz_{\min} and zmaxz_{\max} settings using [xmin,xmax]=[0,10][x_{\min},x_{\max}]=[0,10].
+zminz_{\min}
+zmaxz_{\max}
+Val. acc. (%)
+0.5
+5.5
+79.78
+0.5
+6.5
+79.90
+0.5
+7.5
+79.66
+0.5
+8.5
+79.96
+0.5
+9.5
+79.60
+0.5
+10.5
+79.36
+1.5
+5.5
+79.66
+1.5
+6.5
+80.42
+1.5
+7.5
+79.86
+1.5
+8.5
+80.16
+1.5
+9.5
+79.94
+1.5
+10.5
+79.60
+2.5
+5.5
+80.18
+2.5
+6.5
+79.46
+2.5
+7.5
+80.14
+2.5
+8.5
+79.94
+2.5
+9.5
+79.62
+2.5
+10.5
+78.98
+3.5
+5.5
+78.66
+3.5
+6.5
+79.72
+3.5
+7.5
+78.58
+3.5
+8.5
+79.66
+3.5
+9.5
+79.50
+3.5
+10.5
+79.62
+Table 6: Sigmoid and Optmoid ViT validation accuracy (%) for bias bb.
+Bias bb
+Sigmoid
+Val. acc. (%)
+Optmoid
+Val. acc. (%)
+-17.16
+79.22
+79.54
+-16.16
+79.24
+79.54
+-15.16
+80.08
+79.54
+-14.16
+80.00
+79.06
+-13.16
+80.18
+79.06
+-12.16
+80.04
+79.28
+-11.16
+80.52
+79.26
+-10.16
+79.06
+79.14
+-9.16
+78.82
+77.40
+-8.16
+79.32
+78.86
+-7.16
+78.78
+80.94
+-6.16
+78.30
+78.74
+-5.16
+76.92
+77.88
+-4.16
+67.72
+75.56
+-3.16
+66.70
+67.78
+-2.16
+67.24
+67.48
+-1.16
+67.82
+67.64
+-0.16
+66.04
+65.96
+Causal Language Modeling
+We train GPT-2 (124M parameters) [14] from scratch on the FineWeb-Edu dataset [38] using a standard configuration with a context length of 1024 tokens. Optimization is performed via AdamW with a weight decay of 0.1, a learning rate of 6×10−46\times 10^{-4}, and a warmup-stable-decay schedule consisting of a 5% linear warmup and a 28.5% linear decay. Training is conducted in bf16 mixed precision—distinct from the specific input/output quantization of the attention nonlinearities—with an effective batch size of 512 sequences, yielding approximately 0.5M tokens per optimization step. For the primary comparison in Fig. 5c, we train four attention nonlinearities (Softmax, Sigmoid, Optmax, and Optmoid) for 5,000 steps (≈\approx2.6B tokens) by swapping only the nonlinearity while keeping all other model and training hyperparameters fixed.
+The dataset is partitioned deterministically into train (94%), validation (5%), and test (1%) splits. Validation and test loss are evaluated every 125 steps on 50 batches, while final test metrics are reported based on an evaluation of 200 batches. Hyperparameters are selected based on validation performance. For Optmax, the input clipping range [xmin,xmax][x_{\min},x_{\max}] is tuned using a vanilla reciprocal 1/z1/z; as shown in Table 4, minimum evaluation loss occurs at [xmin,xmax]=[0,10][x_{\min},x_{\max}]=[0,10]. We subsequently tune the reciprocal clipping range [zmin,zmax][z_{\min},z_{\max}], which achieves maximum evaluation accuracy at [zmin,zmax]=[1,17][z_{\min},z_{\max}]=[1,17] as indicated in Table 5. We do not tune for an even larger range, since the fitting process described in Appendix S2 of mapping the lowering sinosodial swing to the perfect reciprocal breaks down for too large ranges.
+The bias bb for Sigmoid and Optmoid is tuned around the negative logarithmic sequence length [4] of b=−ln⁡(1024)=−6.93b=-\ln(1024)=-6.93. As reported in Table 9, the optimal evaluation results are at b=−7.93b=-7.93 for Sigmoid and b=−5.93b=-5.93 for Optmoid. In a separate quantization ablation, we train each nonlinearity for 1,500 steps with symmetric quantization of the attention input and output to 4, 8, and 16 bits, alongside a full-precision baseline. For this ablation, validation loss is evaluated every 125 steps on 50 batches, with final test evaluation performed on the held-out 1% split.
+Table 7: Optmax GPT-2 validation loss for different xminx_{\min} and xmaxx_{\max} settings using vanilla 1/z1/z normalizations.
+xminx_{\min}
+xmaxx_{\max}
+Val. loss
+-14
+14
+5.985
+-12
+12
+5.933
+-10
+10
+5.928
+-6
+6
+5.860
+-4
+4
+5.832
+-2
+2
+5.800
+0
+2
+5.636
+0
+4
+5.529
+0
+6
+5.544
+0
+8
+5.559
+0
+10
+5.550
+Table 8: Optmax GPT-2 validation loss for different zminz_{\min} and zmaxz_{\max} settings using [xmin,xmax]=[0,4][x_{\min},x_{\max}]=[0,4].
+zminz_{\min}
+zmaxz_{\max}
+Val. loss
+11.0
+13.0
+5.553
+10.0
+14.0
+5.555
+9.0
+15.0
+5.559
+8.0
+16.0
+5.536
+7.0
+17.0
+5.531
+6.0
+18.0
+5.518
+5.0
+19.0
+5.515
+4.0
+20.0
+5.519
+8.0
+10.0
+4.736
+8.0
+10.0
+4.736
+7.0
+11.0
+4.728
+6.0
+12.0
+4.689
+5.0
+13.0
+4.694
+4.0
+14.0
+4.683
+3.0
+15.0
+4.655
+2.0
+16.0
+4.654
+1.0
+17.0
+4.597
+Table 9: Sigmoid and Optmoid GPT-2 validation loss for bias bb.
+Bias bb
+Sigmoid
+Val. loss
+Optmoid
+Val. loss
+-8.93
+5.645
+5.967
+-7.93
+5.575
+5.967
+-6.93
+5.580
+5.967
+-5.93
+5.759
+5.967
+-4.93
+5.921
+5.759
+-3.93
+5.903
+5.713
+-2.93
+5.854
+6.008
+-1.93
+5.875
+5.968
+-0.93
+5.901
+5.949
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

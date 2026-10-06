@@ -1,0 +1,1898 @@
+Task-Aware LLM Routing with Multi-Level Task-Profile-Guided Data Synthesis for Cold-Start Scenarios
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 RELATED WORKS
+LLM Routing.
+Data Synthesis using LLMs.
+3 METHODOLOGY
+3.1 Problem formulation
+3.2 Task-profile-guided Data Synthesis
+Task Type Generator.
+Task Type Quality Evaluator.
+Question-Answer Pair Generator.
+3.3 Task-type–aware Routing Framework
+3.3.1 Theoretical Analysis
+3.3.2 Model Implementation
+Task recognition module.
+Metric prediction module.
+4 Experiments
+4.1 Experimental Setting
+Datasets and Candidate LLMs.
+Data Prepossessing.
+Metrics.
+Baseline Methods.
+Implementation Details.
+4.2 Main Experimental Results
+4.3 Ablation Study
+Effect of task profiles across taxonomy levels.
+Effect of shot number in cold-start setting.
+Effect of task regularization in cold-start setting.
+Effect of 𝒯\mathcal{T} across taxonomy levels.
+5 Conclusions
+References
+A Experimental Setting
+A.1 Datasets
+A.2 Baseliens
+A.3 Implementation Details
+LLM Usage.
+Cost Analysis for Data Synthesis
+LLM as a Judge for Performance Estimating.
+Details of Task Profile guided Data Synthesis.
+Detailed of Task-type Guided Routing Framework.
+B Supplementary Theoretical Analysis
+C Supplementary Experiments
+C.1 More Ablation Studies
+Experiments on closed-source candidate LLMs.
+Ablation on LLMs for data synthesis.
+Effect of using Manual label in TRouter.
+Ablation study of Assumptions (1).
+Effect of learning rate.
+Effect of Multi-task-type-label
+Experiments on an additional closed-source candidate LLM pool.
+Analysis of potential data leakage.
+C.2 Supplementary Dateset
+C.3 Analysis of metric distribution on 𝒟syn\mathcal{D}_{\text{syn}}.
+Cross-domain patterns
+Same domain, different subcategories
+Fixed domain and subcategory analysis
+Same subcategory, varying difficulty
+Cost–performance implications and methodological relevance
+C.4 Interpretability Analysis
+D Quantitative Analysis of the Quality of Generated QA Pairs
+Accuracy
+Diversity
+E Comparison between Synthesized and Manually Labeled Dataset
+F Cost Breakdown Analysis
+License: CC BY 4.0
+arXiv:2604.09377v1 [cs.CL] 10 Apr 2026
+Task-Aware LLM Routing with Multi-Level Task-Profile-Guided Data Synthesis for Cold-Start Scenarios
+Hui Liu
+Affiliation: City University of Hong Kong
+Bin Zou
+Affiliation: University of Hong Kong
+Kecheng Chen
+Affiliation: City University of Hong Kong
+Jie Liu
+Affiliation: City University of Hong Kong
+Wenya Wang
+Affiliation: Nanyang Technological University
+Haoliang Li
+Affiliation: City University of Hong Kong
+Abstract
+Large language models (LLMs) exhibit substantial variability in performance and computational cost across tasks and queries, motivating routing systems that select models to meet user-specific cost–performance trade-offs. However, existing routers generalize poorly in cold-start scenarios where in-domain training data is unavailable. We address this limitation with a multi-level task-profile–guided data synthesis framework that constructs a hierarchical task taxonomy and produces diverse question–answer pairs to approximate the test-time query distribution. Building on this, we introduce TRouter, a task-type–aware router approach that models query-conditioned cost and performance via latent task-type variables, with prior regularization derived from the synthesized task taxonomy. This design enhances TRouter’s routing utility under both cold-start and in-domain settings. Across multiple benchmarks, we show that our synthesis framework alleviates cold-start issues and that TRouter delivers effective LLM routing. The code is publicly available at this link11
+1
+https://github.com/less-and-less-bugs/ColdStartLLMRouter.
+1 Introduction
+Large language models (LLMs) have been widely adopted by consumers and enterprises (Appel et al., 2025), yet their performance and cost vary substantially across tasks and queries due to parameter size and reasoning length differences (Hu et al., 2024). Moreover, users also have different preferences for performance and cost (Chen et al., 2023). For example, a startup deploying a customer chatbot may prioritize cost-effectiveness, whereas a research lab analyzing complex literature may favor high-performance models despite higher costs. This diversity motivates the LLM routing problem of assigning optimal models from a candidate pool to each query while aligning with user preferences (Feng et al., 2025; Lu et al., 2023).
+Figure 1: Comparison between the traditional data preparation pipeline and our proposed LLM-based data synthesis approach for the LLM router training.
+As shown in Fig 1, most existing approaches assume access to training datasets (in-domain setting) with query-answer (QA) pairs and evaluate all candidate LLMs to obtain performance and cost metrics. They then train lightweight routers, either classifiers or regressors (Devlin et al., 2019) to select models. Classification-based approaches (Ong et al., 2024; Zhuang et al., 2024; Nguyen et al., 2024; Chen et al., 2024) label optimal LLMs according to user preferences and output the selected model during testing, while regression-based methods (Zhang et al., 2025b; Somerstep et al., 2025; Mohammadshahi et al., 2024; Šakota et al., 2024) predict performance and cost and select models via utility maximization, enabling flexible specifications such as batch routing (Mei et al., 2025).
+However, real-world deployments frequently face cold-start scenarios without resources to collect labeled training data (Wang et al., 2025; Liu et al., 2025), especially for individual users and early-stage products. Moreover, pre-trained routers often generalize poorly at deployment, likely due to domain shifts between training and test-time user inputs (Zhang et al., 2025a). As shown in Table 3, both classification and regression-based methods (e.g., RouterDC and MetricRouter) exhibit limited robustness under cross-domain settings compared to a simple rule-based alternative (Adaptive LLM) that selects more powerful models as user cost tolerance increases. Additionally, while routing queries directly with separate LLMs may seem feasible, accurately characterizing each candidate model’s capabilities remains difficult (Chang et al., 2024; Yehudai et al., 2025), making this approach unsuitable for cold-start scenarios.
+To address the cold-start problem in LLM routing, we propose a multi-level task-profile-guided data synthesis framework that generates diverse question-answer pairs approximating the test-time query distribution. Drawing upon recent advances in LLM evaluation and deployment practices (Chang et al., 2024; Shao et al., 2024), we observe that both computational cost and model performance are intrinsically linked to task category and difficulty, further validated in Appendix C.3. Our framework employs a Task Type Generator that, when seeded with domain-relevant information, iteratively constructs a hierarchical task taxonomy spanning domain, subcategory, and difficulty dimensions. This hierarchical mechanism enables fine-grained control and enhanced sampling efficiency, while a Task Type Quality Evaluator ensures taxonomic cohesion and diversity throughout the generation process. By conceptualizing each difficulty-specific category as a distinct task profile, our Question-Answer Pair Generator produces non-redundant QA pairs for each profile, which candidate LLMs subsequently evaluate to generate routing training data for cold-start scenarios.
+Departing from conventional approaches that directly model cost and performance from raw query features, we introduce TRouter, a task-type-aware LLM routing system that augments regression-based routing through the incorporation of latent task-type variables and employs a prior distribution over the synthesized task taxonomy as a regularization. TRouter effectively captures latent task semantic structures that transcend surface-level query characteristics, achieving superior routing performance and enhanced robustness across cold-start and in-domain configurations. Extensive experiments across multiple LLM pools and evaluation protocols show that our synthesis framework mitigates cold-start limitations, while TRouter exploits task-specific information to yield substantial improvements in routing utility. The contribution of this work is as follows:
+•
+To the best of our knowledge, we are the first to identify the cold-start problem in LLM routing and introduce a multi-level task-profile–guided data synthesis framework that approximates the test-time query distribution.
+•
+We propose TRouter, a task-type–aware router that integrates latent task-type variables and a prior over the synthesized task taxonomy into the regression-based paradigm, improving routing utility.
+•
+We validate the effectiveness of the synthesis framework and TRouter across multiple LLM pools and evaluation protocols in both cold-start and in-domain settings
+2 RELATED WORKS
+LLM Routing.
+LLM routing aims to optimize the allocation of candidate LLMs for input queries under user-defined preferences. While early work focuses on performance maximization (Jiang et al., 2023; Shnitzer et al., 2023), recent approaches emphasize performance-cost trade-offs as model capabilities improve and call costs rise (Zhang et al., 2023; Ding et al., 2024). Using two main paradigms, these methods evaluate candidate LLMs on training queries and train a small model, like BERT, as a router. Classification-based approaches (Chen et al., 2024; Srivatsa et al., 2024) annotate optimal LLMs for training queries and learn to predict the best model. For example, GraphRouter (Feng et al., 2025) formulates routing as edge classification over heterogeneous graphs modeling query-model relationships. Regression-based methods (Somerstep et al., 2025; Mei et al., 2025) predict performance and cost metrics for query-model pairs and then optimize user-defined utility functions at inference. Our work adopts the regression paradigm because it can enable batch routing with model quotas (Cheng et al., 2024) and support fine-grained preference control, whereas classification methods typically operate per-query. Additionally, alternative approaches directly fine-tune LLMs for model selection, potentially achieving higher accuracy but increasing inference costs and latency (Zhang et al., 2025a; Zhang et al., 2025b; Aggarwal et al., 2023). At the same time, cascade-based methods assign fixed LLM sequences to the whole test set, limiting their performance in query-level routing (Chen et al., 2023; Dai et al., 2024).
+Data Synthesis using LLMs.
+LLM-based data synthesis has substantially reduced annotation costs, enabling scalable construction of large-scale training datasets. Recent work (Tan et al., 2024) identifies three core principles for effective synthesis: diversity, achieved via conditional prompting and multi-step generation to broaden topical and stylistic coverage; quality, maintained through filtering, label refinement, and cross-consistency checks to limit hallucinations and noise; and domain specificity, incorporating external knowledge and task-tailored prompts to inject expertise. However, empirical studies (Yang et al., 2025; Shumailov et al., 2024) demonstrate that synthesis pipelines are highly customized, with different applications requiring distinct approaches. To our knowledge, no existing work has explored data synthesis methods to approximate test-time query distributions for LLM routing training.
+3 METHODOLOGY
+Figure 2: (a) Overview of our proposed task-profile-guided data synthesis framework. The task type generator and quality evaluator collaboratively construct a hierarchical task taxonomy, while the question-answer pair generator produces diverse QA pairs based on task profiles from difficulty-level task types. (b) Overview of our proposed task-type–aware LLM routing method, introducing a latent task-type variable into cost and performance prediction.
+To mitigate cold-start challenges in practical LLM routing, we propose a multi-level task-profile–guided data synthesis framework that generates diverse question–answer pairs to approximate realistic query distributions in Sec. 3.2. Leveraging the synthesized task taxonomy, we further introduce TRouter, a task-type–aware router that treats task type as a latent variable to predict performance and cost in Sec. 3.3. Fig. 2 provides an overview of our proposed data synthesis strategy and TRouter.
+3.1 Problem formulation
+Let ℳ={m1,…,mM}\mathcal{M}=\{m_{1},\ldots,m_{M}\} denote a set of MM candidate LLMs. Following Feng et al. (2025), for a user query qq, LLM routing aims to select a model m∗∈ℳm^{*}\in\mathcal{M} to maximize a utility function as below:
+m∗\displaystyle m^{*}
+=arg⁡maxm∈ℳ⁡U⁡(m,q)=μr⋅𝐫⁡(m,q)−μc⋅𝐜⁡(m,q)\displaystyle=\arg\max_{m\in\mathcal{M}}U(m,q)=\mu_{r}\cdot\mathbf{r}(m,q)-\mu_{c}\cdot\mathbf{c}(m,q)
+(1)
+s.t.μr+μc=1,μr,μc≥0\displaystyle\text{s.t.}\quad\mu_{r}+\mu_{c}=1,\quad\mu_{r},\mu_{c}\geq 0
+where 𝐫⁡(⋅)\mathbf{r}(\cdot) and 𝐜⁡(⋅)\mathbf{c}(\cdot) are learnable performance and cost functions, and μr,μc\mu_{r},\mu_{c} represent user preferences over the performance–cost trade-off.
+Performance evaluation may vary depending on task types (e.g., accuracy and F1), while cost is determined by input/output token numbers and model-specific per-token pricing. In a given test scenario with test set 𝒟test\mathcal{D}_{\text{test}}, prior work often assumes access to an in-domain labeled training set and evaluates all models in ℳ\mathcal{M} to collect tuples {qi,ci,j,ri,j,mj}\{q_{i},c_{i,j},r_{i,j},m_{j}\}, where ci,jc_{i,j} and ri,jr_{i,j} are the observed cost and performance of model mjm_{j} on query qiq_{i}. These tuples constitute the final router training data 𝒟train\mathcal{D}_{\text{train}}.
+3.2 Task-profile-guided Data Synthesis
+As obtaining sufficient manually annotated data is challenging in the cold-start setting, we propose a multi-level task-profile-guided data synthesis framework, comprising task type generator, task type quality evaluator, and question-answer pair generator.
+Each component is detailed as follows.
+Task Type Generator.
+We adopt a three-level task taxonomy from general to fine-grained, comprising domain, subcategory, and difficulty. A short name, a definition, and an illustrative example are generated to specify each task type. Beginning with manually authored domain descriptions, this generator recursively expands the taxonomy by producing multiple distinct, non-overlapping child types per step. Parent-type definitions are used as conditional prompts to promote diversity and relevance. To avoid excessive granularity, we enforce maximum node counts via prompt constraints.
+Task Type Quality Evaluator.
+After the task type generator proposes a set of candidate child task types for a given parent type, the task type quality evaluator conducts a self-critique (Shao et al., 2024) against predefined criteria, such as minimal redundancy, specificity, and completeness. The evaluator first shuffles the current set and ingests it as input, then decides whether revisions are warranted. If so, it iteratively refines the set. This process repeats until the evaluator determines that no further modifications are necessary across multiple consecutive assessment rounds. At that point, the candidate set is finalized as the child task type set for the corresponding parent type.
+Question-Answer Pair Generator.
+After constructing the hierarchical task taxonomy, we use the short name and description of each difficulty-level task type, together with the descriptions of its parent task types, to form a task profile. For each profile, our objective is to generate NdN_{d} QA pairs. The QA pair generator produces QA pairs in batches and applies a sentence-transformer model to compute the semantic similarity between newly generated pairs and the existing collection. Any QA pair whose maximum similarity to an existing pair exceeds 0.9 is discarded to filter out near-duplicate ones. This batched generation and filtering process is repeated iteratively until NdN_{d} diverse QA pairs are obtained for each task profile.
+Overall, our proposed data synthesis framework requires only domain descriptions as input to guide LLMs in constructing a synthetic QA dataset, thus obviating manual data collection and annotation. Similar to 𝒟train\mathcal{D}_{\text{train}}, all candidate LLMs in ℳ\mathcal{M} are evaluated on the QA dataset to collect routing training data, denoted as 𝒟syn\mathcal{D}_{\text{syn}} in a cold-start setting.
+3.3 Task-type–aware Routing Framework
+3.3.1 Theoretical Analysis
+Let h∈ℋ={r,c}h\in\mathcal{H}=\{r,c\} denote an evaluation metric, where rr and cc represent performance and cost, respectively. In contrast to prior routing methods that directly model the conditional distributions of cost and performance for query-model pairs, i.e., p⁡(h∣q,m)p(h\mid q,m), TRouter introduces an unobserved latent task variable t∈𝒯t\in\mathcal{T}, where 𝒯\mathcal{T} represents the task-type space. The conditional distribution is then decomposed as:
+p⁡(h∣q,m)=∑h∈𝒯p⁡(h∣q,m,t)​p​(t∣q,m).p(h\mid q,m)=\sum_{h\in\mathcal{T}}p(h\mid q,m,t)p(t\mid q,m).
+(2)
+By leveraging tt as the intermediate representation across different metrics, TRouter disentangles the impact of task semantics from other input features.
+To simplify the probability distribution, we adopt two conditional independence assumptions: (i) performance is independent of the query given the task type and model, and (ii) task type is independent of the model given the query, which are denoted as:
+p⁡(h∣t,q,m)=p⁡(h∣t,m),p⁡(t∣q,m)=p⁡(t∣q).p(h\mid t,q,m)=p(h\mid t,m),\quad p(t\mid q,m)=p(t\mid q).
+(3)
+Under these assumptions, the conditional distribution p⁡(h∣q,m)p(h\mid q,m) can be reformulated as:
+p⁡(h∣q,m)=∑t∈𝒯p⁡(h∣t,m)​p​(t∣q).p(h\mid q,m)=\sum_{t\in\mathcal{T}}p(h\mid t,m)p(t\mid q).
+(4)
+Intuitively, the query qq induces a posterior p⁡(t∣q)p(t\mid q) over task types, and each task type tt then specifies a task-model-pair dependent metric conditional distribution p⁡(h∣t,m)p(h\mid t,m).
+To train the metric predictor pθ​(h∣q,m)p_{\theta}(h\mid q,m), given a training corpus 𝒟\mathcal{D} (e.g., 𝒟syn\mathcal{D}_{\text{syn}} and 𝒟train\mathcal{D}_{\text{train}}), we maximize the log-likelihood through:
+ℒ\displaystyle\mathcal{L}
+=∑(q,h,m)∈𝒟log⁡pθ​(h∣q,m)\displaystyle=\sum_{(q,h,m)\in\mathcal{D}}\log p_{\theta}(h\mid q,m)
+(5)
+=∑(q,h,m)∈𝒟log∑t∈𝒯pθ(h∣t,m)p(t∣q),\displaystyle=\sum_{(q,h,m)\in\mathcal{D}}\log\sum_{t\in\mathcal{T}}p_{\theta}(h\mid t,m)p(t\mid q),
+where p⁡(t∣q)p(t\mid q) is the prior over task types and θ\theta denotes learnable parameters. However, directly maximizing such a likelihood is difficult due to marginalization over the latent tt and because tt is unobserved at deployment. We therefore introduce a variational posterior qϕ​(t∣q)q_{\phi}(t\mid q) to approximate p⁡(t∣q)p(t\mid q) and optimize the evidence lower bound (ELBO) (Kingma and Welling, 2013) as follows
+log⁡pθ​(h∣q,m)≥𝔼qϕ​(t∣q)​[log⁡pθ​(h∣t,m)]−KL(qϕ(t∣q)∥p(t∣q)),\log p_{\theta}(h\mid q,m)\geq\mathbb{E}_{q_{\phi}(t\mid q)}\left[\log p_{\theta}(h\mid t,m)\right]\\
+-\text{KL}\left(q_{\phi}(t\mid q)\,\|\,p(t\mid q)\right),
+(6)
+where ϕ\phi denotes learnable parameters. The first term is a reconstruction term that encourages task representations predictive of metric hh for model mm; the second term regularizes the variational posterior toward the prior, improving calibration and mitigating overfitting. A complete derivation of Eq (6) is detailed in Appendix B.
+3.3.2 Model Implementation
+We instantiate our probabilistic framework with a task recognition module (qϕ​(t∣q)q_{\phi}(t\mid q)) and multiple metric prediction modules (pθ​(h∣t,m)p_{\theta}(h\mid t,m)).
+We define the full set of task types at the difficulty level of the task taxonomy introduced in Sec. 3.2 as 𝒯\mathcal{T} with |𝒯|=K|\mathcal{T}|=K. For a given query qq, while it may belong to multiple task types in 𝒯\mathcal{T}, we assign a single ground-truth label by selecting the task type corresponding to the query’s annotated difficulty level. This label is represented as a one-hot vector y∈ℝKy\in\mathbb{R}^{K} and serves as prior (p⁡(t∣q)p(t\mid q)) for the recognition module. Both the query qq and the textual definition of task types in 𝒯\mathcal{T} are encoded using a pretrained sentence encoder. The resulting representations are then passed through two-layer multilayer perceptrons (MLPs) to produce a query embedding eqe_{q} and task-type embeddings {eti}\{e_{t}^{i}\} where i∈[1,K]i\in[1,K].
+Task recognition module.
+For the query qq, we concatenate its embedding and all task embeddings {eti}\{e_{t}^{i}\} and pass them into an MLP, followed by a softmax function with a temperature parameter τ\tau to obtain the predicted task type distribution l∈ℝKl\in\mathbb{R}^{K} as qϕ​(t∣q)q_{\phi}(t\mid q). Then we train this module using cross-entropy loss over the training set 𝒟\mathcal{D} as follows:
+ℒCE=−∑q∈𝒟ylogqϕ(t∣q),\mathcal{L}_{\text{CE}}=-\sum_{q\in\mathcal{D}}y\log q_{\phi}(t\mid q),
+(7)
+enforcing the optimization of KL-term in Eq. (6).
+Metric prediction module.
+For each pair of metric hh and model m∈ℳm\in\mathcal{M}, we predict the metric by computing the weighted combination of task-specific predictions using the predicted task distribution ll from the recognition module as follows:
+h^​(q,M)=∑i∈[1,K]li⋅σ⁡(MLPh,m​(eti)),\hat{h}(q,M)=\sum_{i\in[1,K]}l_{i}\cdot\sigma\left(\text{MLP}_{h,m}(e_{t}^{i})\right),
+(8)
+where σ\sigma denotes the sigmoid function, ensuring normalized outputs, and lil_{i} represents the possibility that qq belongs to ii-th task type. We train this module with MSE loss between predicted and observed metric h⁡(q,M)h(q,M) as follows:
+ℒMSEh,m=∑q∈𝒟(h^​(q,m)−h⁡(q,m))2,\mathcal{L}_{\text{MSE}}^{h,m}=\sum_{q\in\mathcal{D}}\left(\hat{h}(q,m)-h(q,m)\right)^{2},
+(9)
+which serves as reconstruction term in Eq. (6).
+Then, we combine both losses to form the final training objective over the training set 𝒟\mathcal{D} as follows:
+ℒ=ℒCE+1|ℳ|​|ℋ|​∑m∈ℳ∑h∈ℋℒMSEh,m.\mathcal{L}=\mathcal{L}_{\text{CE}}+\frac{1}{|\mathcal{M}||\mathcal{H}|}\sum_{m\in\mathcal{M}}\sum_{h\in\mathcal{H}}\mathcal{L}_{\text{MSE}}^{h,m}.
+(10)
+During inference, for each query, we compute predicted metrics for each model via marginalization over the task space 𝒯\mathcal{T} and select the model that maximizes the utility function U⁡(m,q)U(m,q) in Eq. (1).
+4 Experiments
+4.1 Experimental Setting
+Table 1: Overview of Datasets.
+Dataset
+Task Type
+Metric
+Cases
+Alpaca (Taori et al., 2023)
+Hybrid QA
+F1
+2000
+GSM8K (Cobbe et al., 2021)
+Reasoning
+Accuracy
+2000
+SQuAD (Rajpurkar et al., 2016)
+Reading Comprehension
+F1
+2000
+Multi-News (Fabbri et al., 2019)
+Summary
+F1
+2000
+Table 2: Overview of open-source and commercial LLMs, their sizes, and costs per million tokens.
+Model
+Size
+Input (¥/M)
+Output (¥/M)
+Open-source
+Qwen3-235B-A22B
+235B
+2.00
+8.00
+Qwen3-32B
+32B
+2.00
+8.00
+Qwen3-14B
+14B
+1.00
+4.00
+Qwen3-8B
+8B
+0.50
+2.00
+Qwen3-1.7B
+1.7B
+0.30
+1.20
+Qwen3-0.6B
+0.6B
+0.30
+1.20
+Commercial
+Gemini-2.5-Flash
+–
+2.14
+17.86
+Gemini-2.5-Flash-Lite
+–
+0.71
+2.86
+Gemini-2.0-Flash
+–
+0.71
+2.86
+Gemini-2.0-Flash-Lite-Preview
+–
+0.54
+2.14
+Doubao-Seed-1.6-Flash
+–
+0.15
+1.50
+Datasets and Candidate LLMs.
+Following recent work (Feng et al., 2025), we select data from four distinct tasks, with their statistics in Table 1. We further validate the versatility of our approach on four additional tasks in Appendix C.2. Instead of using outdated LLMs, to better reflect realistic deployment demands, we employ more advanced Qwen 3 models of varying sizes in our primary experiments and conduct supplementary experiments using a group of proprietary models in Table 2.
+Data Prepossessing.
+We aggregate all sampled data from the four tasks. For each query, we utilize the candidate LLMs in Table 2 to generate corresponding responses. While prior work often assumes that the evaluation protocol for the test scenario is available, we argue that such assumptions do not always hold in real-world settings. Therefore, to evaluate response quality, in addition to employing traditional metrics in Table 2, we apply an LLM-as-a-judge framework (Gu et al., 2024), where a designated LLM evaluates responses based on predefined rules, serving as a proxy for ground-truth performance. Moreover, the cost of each model is computed by summing the number of input and output tokens, weighted by the corresponding price. Upon constructing the multi-task interaction dataset, we divide it into training, validation, and test subsets using a 7:1:2 ratio.
+For the synthetic data generated via the task-profile guided data synthesis method (Sec. 3.2), we estimate performance using the LLM-as-a-judge and calculate cost following the same procedure.
+Metrics.
+Since users may prioritize performance and cost differently, we define three user preference scenarios, including Cost First, Balanced, and Performance First. Specifically, we assign weights (μr,μc)(\mu_{r},\mu_{c}) of (0.2,0.8)(0.2,0.8), (0.5,0.5)(0.5,0.5), and (0.8,0.2)(0.8,0.2) to these scenarios, respectively. We avoid setting (1,0)(1,0) for Performance First to prevent degenerate routing, always selecting the largest LLM. To enable utility-based optimization, following (Feng et al., 2025), we normalize performance and cost metrics to remove scale discrepancies.
+Baseline Methods.
+To evaluate the effectiveness of our proposed TRouter, we compare it against two categories of baseline methods. The first category, Cold-Start Baselines, includes approaches that do not rely on in-domain training data 𝒟train\mathcal{D}_{\text{train}}: (1) Smallest LLM, always selecting the smallest available model to minimize inference cost; (2) Largest LLM, selecting the largest model to maximize performance; (3) Adaptive LLM, dynamically selecting more expensive model based on the user’s tolerance for costs; and (4) Prompt LLM, utilizing an external LLM to select a candidate model based on a prompt that encodes the input query, candidate model pool, and user objectives. In this setting, TRouter is trained exclusively on synthetic data 𝒟syn\mathcal{D}_{\text{syn}} designed to simulate realistic task scenarios.
+The second category, In-Domain Baselines, includes methods that assume access to 𝒟train\mathcal{D}_{\text{train}}: (5) RouterDC (Chen et al., 2024), a dual-contrastive learning-based selector; (6) GraphRouter (Feng et al., 2025), which models routing as edge prediction on a heterogeneous graph of tasks, queries, and models; (7) MetricRouter (Mei et al., 2025), a regression-based method that predicts performance and cost using sentence embeddings; (8) FrugalGPT (Chen et al., 2023), which estimates generation quality under cost constraints; (9) C2MAB-V (Dai et al., 2024), a contextual bandit approach for adaptive model selection; and (10) Oracle, a theoretical upper bound that selects the model with the highest utility using ground-truth cost and performance. In the in-domain setting, TRouter is also trained on 𝒟train\mathcal{D}_{\text{train}} after annotating task type using LLMs. Additionally, we adapt RouterDC and MetricRouter to the cold-start setting using cross-dataset training for the cold-start comparisons.
+Implementation Details.
+We instantiate the data synthesis pipeline with gpt-4.1 and validate versatility by substituting gemini-2.5-flash. Performance is estimated via an LLM-as-a-judge using gpt-4.1-nano for cost efficiency (Table 4). Starting from six seed domains, we expand to ten (Table 17); per domain, we generate up to ten subcategories and five difficulty levels (Tables 18, 19). The task type quality evaluator terminates after three consecutive no-change rounds (Table 20). The QA pair generator produces 40 QA pairs per task profile (batch size 8). The resulting datasets comprise, for gpt-4.1: 10 domains, 103 subcategories, 447 difficulty nodes, and 17,880 QA pairs; and for gemini-2.5-flash: 10 domains, 98 subcategories, 380 difficulty nodes, and 15,200 QA pairs.
+For the proposed TRouter, we operate at the difficulty level for 𝒯\mathcal{T}, encoding queries and task-type descriptions with all-MiniLM-L6-v2 22
+2
+https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2 and mapping them into 256-dimensional vectors. Models are trained with learning rate 1e-4. We use 30 training and 10 validation QA pairs per task type in the cold-start setting. Due to page limitations, full Experimental Settings are provided in Appendix A.
+4.2 Main Experimental Results
+Table 3: Results across three user preference settings in both cold-start and in-domain scenarios. For in-domain training, candidate LLM performance is obtained using traditional metrics. Bold and underline indicate the best and second-best results under each user preference, respectively. We use ⋆{\star} to denote routers trained on any three test tasks and evaluated on the remaining tasks (cross-domain). The symbols ▲{\blacktriangle} and ∙{\bullet} indicate that our data synthesis framework is derived using gpt-4.1 and gemini-2.5-flash, respectively.
+Cost-first
+Balance
+Performance-first
+Scenario
+Method
+Cost
+Performance
+Utility
+Cost
+Performance
+Utility
+Cost
+Performance
+Utility
+Utility Sum
+Cold-start
+Smallest LLM
+0.02300.0230
+0.20040.2004
+0.02170.0217
+0.02300.0230
+0.20040.2004
+0.08870.0887
+0.02300.0230
+0.20040.2004
+0.15570.1557
+0.26610.2661
+Largest LLM
+0.30980.3098
+0.43830.4383
+−0.1601-0.1601
+0.30980.3098
+0.43830.4383
+0.06430.0643
+0.30980.3098
+0.43830.4383
+0.28870.2887
+0.19280.1928
+Adaptive LLM
+0.02300.0230
+0.20040.2004
+0.02170.0217
+0.06410.0641
+0.42600.4260
+0.18090.1809
+0.30980.3098
+0.43830.4383
+0.28870.2887
+0.49130.4913
+Prompt LLM
+0.04270.0427
+0.21310.2131
+0.00850.0085
+0.11280.1128
+0.39960.3996
+0.14340.1434
+0.30980.3098
+0.43830.4383
+0.28870.2887
+0.44060.4406
+RouterDC⋆
+0.03910.0391
+0.25480.2548
+0.01970.0197
+0.05990.0599
+0.35800.3580
+0.14900.1490
+0.06500.0650
+0.38990.3899
+0.29890.2989
+0.46760.4676
+MetricRouter⋆
+0.03250.0325
+0.19160.1916
+0.01230.0123
+0.04460.0446
+0.20270.2027
+0.07030.0703
+0.10120.1012
+0.21180.2118
+0.14920.1492
+0.23190.2319
+Ours▲
+0.06210.0621
+0.42570.4257
+0.0355
+0.06410.0641
+0.42620.4262
+0.1811
+0.17210.1721
+0.43150.4315
+0.3108
+0.5274
+Ours∙
+0.03270.0327
+0.30680.3068
+0.0352
+0.05260.0526
+0.41440.4144
+0.1809
+0.07010.0701
+0.42010.4201
+0.3221
+0.5382
+In-domain
+RouterDC
+0.05780.0578
+0.43670.4367
+0.04110.0411
+0.05930.0593
+0.42900.4290
+0.18490.1849
+0.06600.0660
+0.44250.4425
+0.34080.3408
+0.56670.5667
+GraphRouter
+0.04800.0480
+0.30590.3059
+0.02280.0228
+0.07830.0783
+0.39760.3976
+0.15970.1597
+0.06280.0628
+0.41130.4113
+0.31650.3165
+0.49890.4989
+FrugalGPT
+0.02300.0230
+0.20040.2004
+0.02170.0217
+0.08900.0890
+0.41410.4141
+0.16250.1625
+0.35350.3535
+0.42670.4267
+0.27060.2706
+0.45480.4548
+C2MAB-V
+0.06400.0640
+0.42130.4213
+0.03230.0323
+0.06350.0635
+0.41270.4127
+0.17460.1746
+0.07580.0758
+0.41460.4146
+0.31660.3166
+0.52340.5234
+MetricRouter
+0.04790.0479
+0.41250.4125
+0.04420.0442
+0.05590.0559
+0.43820.4382
+0.19110.1911
+0.09570.0957
+0.44740.4474
+0.3388
+0.57410.5741
+Ours▲
+0.03930.0393
+0.41650.4165
+0.0518
+0.04770.0477
+0.44240.4424
+0.1974
+0.07510.0751
+0.44790.4479
+0.3433
+0.5925
+Ours∙
+0.04000.0400
+0.41270.4127
+0.0509
+0.04810.0481
+0.43530.4353
+0.1936
+0.08760.0876
+0.43890.4389
+0.33360.3336
+0.5836
+Oracle
+0.03540.0354
+0.49430.4943
+0.07050.0705
+0.04170.0417
+0.50810.5081
+0.23320.2332
+0.05130.0513
+0.51270.5127
+0.39990.3999
+0.70370.7037
+Table 4: Results across three user preference settings in both cold-start and in-domain scenarios. For in-domain training, candidate LLM performance is obtained using LLM-as-a-judge. Bold and underline indicate the best and second-best results under each user preference, respectively. We use ⋆{\star} to denote routers trained on any three test tasks and evaluated on the remaining tasks (cross-domain).
+Cost-first
+Balance
+Performance-first
+Scenario
+Method
+Cost
+Performance
+Utility
+Cost
+Performance
+Utility
+Cost
+Performance
+Utility
+Utility Sum
+Cold-start
+Smallest LLM
+0.02260.0226
+0.33420.3342
+0.04880.0488
+0.02260.0226
+0.33420.3342
+0.15580.1558
+0.02260.0226
+0.33420.3342
+0.26290.2629
+0.46750.4675
+Largest LLM
+0.30820.3082
+0.51580.5158
+−0.1434-0.1434
+0.30820.3082
+0.51580.5158
+0.10380.1038
+0.30820.3082
+0.51580.5158
+0.3510
+0.31130.3113
+Adaptive LLM
+0.02260.0226
+0.33420.3342
+0.04880.0488
+0.06370.0637
+0.50240.5024
+0.2194
+0.30820.3082
+0.51580.5158
+0.3510
+0.6191
+Prompt LLM
+0.03940.0394
+0.40530.4053
+0.04950.0495
+0.10880.1088
+0.48530.4853
+0.18830.1883
+0.30820.3082
+0.51580.5158
+0.3510
+0.58880.5888
+RouterDC⋆
+0.07130.0713
+0.55730.5573
+0.0544
+0.09140.0914
+0.52310.5231
+0.21590.2159
+0.11480.1148
+0.52970.5297
+0.20740.2074
+0.47770.4777
+MetricRouter⋆
+0.06200.0620
+0.49670.4967
+0.04980.0498
+0.12400.1240
+0.53970.5397
+0.20780.2078
+0.18330.1833
+0.54930.5493
+0.18300.1830
+0.44060.4406
+Ours
+0.06170.0617
+0.49920.4992
+0.0505
+0.06370.0637
+0.50300.5030
+0.2196
+0.07400.0740
+0.49970.4997
+0.3850
+0.6551
+In-domain
+RouterDC
+0.03690.0369
+0.43870.4387
+0.0582
+0.05720.0572
+0.45770.4577
+0.20020.2002
+0.06380.0638
+0.44970.4497
+0.34700.3470
+0.60540.6054
+GraphRouter
+0.02400.0240
+0.33950.3395
+0.04870.0487
+0.03160.0316
+0.36160.3616
+0.16500.1650
+0.03370.0337
+0.36980.3698
+0.28910.2891
+0.50280.5028
+FrugalGPT
+0.02300.0230
+0.33020.3302
+0.04760.0476
+0.08990.0899
+0.39140.3914
+0.15080.1508
+0.14640.1464
+0.48720.4872
+0.36050.3605
+0.55890.5589
+C2MAB-V
+0.06360.0636
+0.50030.5003
+0.04920.0492
+0.06370.0637
+0.50240.5024
+0.2194
+0.12900.1290
+0.50540.5054
+0.3785
+0.64710.6471
+MetricRouter
+0.03760.0376
+0.45260.4526
+0.0604
+0.06470.0647
+0.50240.5024
+0.21890.2189
+0.11060.1106
+0.49880.4988
+0.37690.3769
+0.6512
+Ours
+0.04210.0421
+0.47050.4705
+0.0604
+0.05490.0549
+0.49820.4982
+0.2223
+0.10800.1080
+0.51520.5152
+0.3906
+0.6733
+Oracle
+0.03880.0388
+0.63900.6390
+0.09680.0968
+0.06330.0633
+0.69840.6984
+0.31750.3175
+0.06900.0690
+0.70130.7013
+0.54720.5472
+0.96150.9615
+We evaluate our proposed task-profile guided data strategy and TRouter in the cold-start setting, where training data 𝒟train\mathcal{D}_{\text{train}} from the test scenario is unavailable, and the in-domain setting, where such data can be collected. We report results under two evaluation protocols, including traditional metrics and LLM-as-a-judge in Table 3 and Table 4. The results lead to three main conclusions.
+First, the task-profile guided data strategy effectively mitigates the inability of LLM routers to adapt under cold-start settings. For example, TRouter trained on the synthetic dataset 𝒟syn\mathcal{D}_{\text{syn}} achieves substantial gains over the best baselines that do not rely on 𝒟train\mathcal{D}_{\text{train}} (i.e., Adaptive LLM) across different evaluation protocols. When using LLM-as-a-judge in Table 4, TRouter, trained solely on 𝒟syn\mathcal{D}_{\text{syn}}, surpasses most in-domain baselines. However, methods relying on cross-domain training (RouterDC and MetricRouter) suffer from severe performance degradation due to the domain shift in the distribution of queries and corresponding metrics across different tasks, with the regression-based MetricRouter being particularly vulnerable. These findings indicate that LLM-driven data synthesis, conditioned only on domain descriptions, can generate effective supervision signals for routing, thus enabling cold-start routing in resource-constrained scenarios.
+Second, our proposed TRouter demonstrates advantages in both cold-start and in-domain settings. For instance, in the in-domain scenario, TRouter consistently outperforms existing learning-based routing frameworks across diverse user preferences, whereas competing baselines (e.g., C2MAB-V) often exhibit large performance variance. This robustness possibly stems from TRouter’s task-type guided regularization, which injects structured task semantics beyond query semantics.
+Third, although synthetic data is a strong choice for cold-start, TRouter still benefits from training on data drawn from the same distribution as the test scenario. As shown in Table 3, the TRouter in the in-domain setting improves the utility sum by more than 0.05 relative to the cold-start counterpart, while this utility gap narrows considerably under LLM-as-a-judge in Table 4. We suggest that this is due to differing performance distribution of candidate LLMs induced by different evaluation protocols, as corroborated by Fig. 5 in the appendix. Consequently, for practical deployment, we recommend that end-users and router providers adopt aligned evaluation protocols, e.g., using LLM-as-a-judge consistently when deploying routers.
+4.3 Ablation Study
+Figure 3: Effect of using task types of different taxonomy level to construct task-profile on sampling efficiency on Mathematics and Creative Writing domains.
+Figure 4: Effect of shot number in the cold-start setting for TRouter and MetricRouter.
+Table 5: Effect of 𝒯\mathcal{T} across three taxonomy levels. Bold denotes the first best values under each user preferences.
+Method
+Cost
+Balance
+Performance
+Utility Sum
+Cold Start
+Ours w/ domain regulation
+0.0343
+0.1809
+0.3250
+0.5402
+Ours w/ subcategory regulation
+0.0350
+0.1740
+0.3204
+0.5294
+Ours
+0.0355
+0.1811
+0.3108
+0.5274
+In-domain
+Ours w/ domain regulation
+0.0505
+0.1887
+0.3249
+0.5641
+Ours w/ subcategory regulation
+0.0510
+0.1920
+0.3379
+0.5809
+Ours
+0.0518
+0.1974
+0.3433
+0.5925
+Effect of task profiles across taxonomy levels.
+We adopt a hierarchical task taxonomy, including domain, subcategory, and difficulty, in our data synthesis framework. In the question–answer pair generator, we instantiate a task profile using the difficulty-level task type as a conditional prompt to guide QA pair generation. To assess the impact of different taxonomy levels on sampling efficiency, we compare this approach with constructing task profiles at the domain and subcategory levels in Fig. 3. The results show that under a fixed number of sampling iterations, difficulty-conditioned profiles produce an almost linear increase in validated QA pairs, whereas domain and subcategory-conditioned profiles exhibit slowing gains due to accumulating redundancy across two representative domains. These results indicate that difficulty-level conditioning yields more diverse samples and better approximates the test-time query distribution in the cold-start routing setting.
+Effect of shot number in cold-start setting.
+We train TRouter on the synthetic dataset 𝒟syn\mathcal{D}_{\text{syn}} with varying shots per task in Fig. 4. Although our main experiments use 30 shots, performance with five or fewer shots is already near-optimal across diverse user preferences in LLM routing. This demonstrates that TRouter is sample-efficient and can be deployed cheaply in the cold-start setting.
+Effect of task regularization in cold-start setting.
+Removing the task regularization in Eq. (6), TRouter degrade to MetricRouter. As shown in Fig. 4, when trained on the same 𝒟syn\mathcal{D}_{\text{syn}}, TRouter consistently outperforms MetricRouter across all shot numbers. This advantage stems from incorporating a task-type prior, which enables TRouter to handle numerous task types and better cope with complex scenarios. We also observe that MetricRouter’s performance is unstable, which decreases with more shots initially but increases thereafter, while TRouter remains robust in increasing shot number, further validating its effectiveness.
+Effect of 𝒯\mathcal{T} across taxonomy levels.
+We instantiate TRouter with task types 𝒯\mathcal{T} drawn from the difficulty level of our taxonomy in the main experiments. In Table 5, we compare alternatives that use domain and subcategory-level types. The results show that in in-domain setting, difficulty-based 𝒯\mathcal{T} yields the best performance, while domain-based 𝒯\mathcal{T} in cold-start settings, likely because finer-grained difficulty types introduce interference when task-type priors are not yet calibrated. Moreover, after in-domain adaptation, the difficulty-level 𝒯\mathcal{T} benefits from its larger, more granular type space, which provides richer priors beyond query semantics, enabling more accurate routing.
+5 Conclusions
+We address the cold-start challenge in LLM routing by introducing a multi-level task-profile–guided data synthesis framework and TRouter, a task-type–aware LLM router. Our synthesis approach constructs diverse, taxonomy-aligned QA data that approximates test-time query distribution without requiring in-domain datasets. TRouter augments regression-based routing with latent task-type variables and a prior over the synthesized taxonomy, capturing structure beyond surface semantics. Across experiments on multiple LLM pools and evaluation protocols, we demonstrate our synthesis framework enables effective cold-start training, and TRouter consistently improves routing utility in both cold-start and in-domain settings.
+Limitations
+We discussed three imitations of our work. First, the task-profile–guided synthesis requires minimal human input to specify candidate domains (or a short application description from which the LLM can derive domains). This introduces unavoidable human intervention. In practical deployments (e.g., customer support), however, providers typically know the high-level context and can seed domains manually or automatically generate them using LLM. Compared with existing routers that generally require in-domain labeled data, our approach is better suited to cold-start settings. Moreover, allowing limited human input provides desirable control and flexibility, such as pruning low-quality child task types and injecting human priors to refine our three-level taxonomy to an application-specific taxonomy. Second, our synthesized QA pairs are not exhaustively validated. Prior work on data synthesis for training LLMs often relies on strict rule-based filtering to avoid performance collapse. In contrast, our setting models cost–performance relationships at the task-type level, i.e., across distributions of queries rather than individual QA pairs, making TRouter more robust to noise in any single QA pair and reducing the need for heavy-handed data quality control. The empirical results in Fig. 4 also support this hypothesis. Third, using LLM-as-a-Judge may introduce model bias. In our main experiments, we mitigate this by selecting gpt-4.1-nano-2025-04-14 as the judge model while evaluating candidate models from the Qwen and Gemma families, reducing the risk of self-preference bias. Notably, LLM-as-a-Judge aligns more closely with human preferences than traditional metrics. For instance, in tasks like GSM8K, conventional metrics may misjudge performance due to formatting issues, whereas LLM-based evaluation better captures semantic correctness. As discussed in Sec 4.2 (third point), consistency between the evaluation setup and the test scenario is crucial. In practice, we recommend aligning the evaluation protocol with the target use case and incorporating additional cross-checking mechanisms for robustness.
+Acknowledgments
+We thank the UGC FITE (6460001), DOMG (9229193), and NTU Start-Up Grant
+(#023284-00001), Singapore.
+References
+Aggarwal et al. (2023)
+P. Aggarwal, A. Madaan, A. Anand, S. P. Potharaju, S. Mishra, P. Zhou, A. Gupta, D. Rajagopal, K. Kappaganthu, Y. Yang, et al.
+Automix: automatically mixing language models.
+arXiv preprint arXiv:2310.12963.
+Cited by: §2.
+Appel et al. (2025)
+R. Appel, P. McCrory, A. Tamkin, M. Stern, M. McCain, and T. Neylon
+Anthropic economic index report: uneven geographic and enterprise ai adoption.
+External Links: Link
+Cited by: §1.
+Austin et al. (2021)
+J. Austin, A. Odena, M. Nye, M. Bosma, H. Michalewski, D. Dohan, E. Jiang, C. Cai, M. Terry, Q. Le, et al.
+Program synthesis with large language models.
+arXiv preprint arXiv:2108.07732.
+Cited by: §C.2,
+Table 6.
+Chang et al. (2024)
+Y. Chang, X. Wang, J. Wang, Y. Wu, L. Yang, K. Zhu, H. Chen, X. Yi, C. Wang, Y. Wang, et al.
+A survey on evaluation of large language models.
+ACM transactions on intelligent systems and technology 15 (3), pp. 1–45.
+Cited by: §1,
+§1.
+Chen et al. (2023)
+L. Chen, M. Zaharia, and J. Zou
+Frugalgpt: how to use large language models while reducing cost and improving performance.
+arXiv preprint arXiv:2305.05176.
+Cited by: 3rd item,
+§1,
+§2,
+§4.1.
+Chen et al. (2024)
+S. Chen, W. Jiang, B. Lin, J. Kwok, and Y. Zhang
+Routerdc: query-based router by dual contrastive learning for assembling large language models.
+Advances in Neural Information Processing Systems 37, pp. 66305–66328.
+Cited by: 1st item,
+§1,
+§2,
+§4.1.
+Cheng et al. (2024)
+K. Cheng, W. Hu, Z. Wang, P. Du, J. Li, and S. Zhang
+Enabling efficient batch serving for lmaas via generation length prediction.
+In 2024 IEEE International Conference on Web Services (ICWS),
+pp. 853–864.
+Cited by: §2.
+Cobbe et al. (2021)
+K. Cobbe, V. Kosaraju, M. Bavarian, M. Chen, H. Jun, L. Kaiser, M. Plappert, J. Tworek, J. Hilton, R. Nakano, et al.
+Training verifiers to solve math word problems.
+arXiv preprint arXiv:2110.14168.
+Cited by: 2nd item,
+Table 1.
+Dai et al. (2024)
+X. Dai, J. Li, X. Liu, A. Yu, and J. Lui
+Cost-effective online multi-llm selection with versatile reward models.
+arXiv preprint arXiv:2405.16587.
+Cited by: 4th item,
+§2,
+§4.1.
+Devlin et al. (2019)
+J. Devlin, M. Chang, K. Lee, and K. Toutanova
+Bert: pre-training of deep bidirectional transformers for language understanding.
+In Proceedings of the 2019 conference of the North American chapter of the association for computational linguistics: human language technologies, volume 1 (long and short papers),
+pp. 4171–4186.
+Cited by: §1.
+Ding et al. (2024)
+D. Ding, A. Mallick, C. Wang, R. Sim, S. Mukherjee, V. Ruhle, L. V. Lakshmanan, and A. H. Awadallah
+Hybrid llm: cost-efficient and quality-aware query routing.
+arXiv preprint arXiv:2404.14618.
+Cited by: §A.2,
+§2.
+Fabbri et al. (2019)
+A. R. Fabbri, I. Li, T. She, S. Li, and D. R. Radev
+Multi-news: a large-scale multi-document summarization dataset and abstractive hierarchical model.
+arXiv preprint arXiv:1906.01749.
+Cited by: 4th item,
+Table 1.
+Feng et al. (2025)
+T. Feng, Y. Shen, and J. You
+GraphRouter: a graph-based router for llm selections.
+In The Thirteenth International Conference on Learning Representations,
+Cited by: 2nd item,
+§A.1,
+§1,
+§2,
+§3.1,
+§4.1,
+§4.1,
+§4.1.
+Gu et al. (2024)
+J. Gu, X. Jiang, Z. Shi, H. Tan, X. Zhai, C. Xu, W. Li, Y. Shen, S. Ma, H. Liu, et al.
+A survey on llm-as-a-judge.
+arXiv preprint arXiv:2411.15594.
+Cited by: §A.3,
+§4.1.
+Guha et al. (2023)
+N. Guha, J. Nyarko, D. Ho, C. Ré, A. Chilton, A. Chohlas-Wood, A. Peters, B. Waldon, D. Rockmore, D. Zambrano, et al.
+Legalbench: a collaboratively built benchmark for measuring legal reasoning in large language models.
+Advances in neural information processing systems 36, pp. 44123–44279.
+Cited by: §C.2,
+Table 6.
+Hu et al. (2024)
+Q. J. Hu, J. Bieker, X. Li, N. Jiang, B. Keigwin, G. Ranganath, K. Keutzer, and S. K. Upadhyay
+Routerbench: a benchmark for multi-llm routing system.
+arXiv preprint arXiv:2403.12031.
+Cited by: §1.
+Jiang et al. (2023)
+D. Jiang, X. Ren, and B. Y. Lin
+Llm-blender: ensembling large language models with pairwise ranking and generative fusion.
+arXiv preprint arXiv:2306.02561.
+Cited by: §2.
+Kingma and Welling (2013)
+D. P. Kingma and M. Welling
+Auto-encoding variational bayes.
+arXiv preprint arXiv:1312.6114.
+Cited by: §3.3.1.
+Kocmi et al. (2023)
+T. Kocmi, E. Avramidis, R. Bawden, O. Bojar, A. Dvorkovich, C. Federmann, M. Fishel, M. Freitag, T. Gowda, R. Grundkiewicz, B. Haddow, P. Koehn, B. Marie, C. Monz, M. Morishita, K. Murray, M. Nagata, T. Nakazawa, M. Popel, M. Popović, M. Shmatova, and J. Suzuki
+Findings of the 2023 conference on machine translation (WMT23): LLMs are here but not quite there yet.
+In Proceedings of the Eighth Conference on Machine Translation, P. Koehn, B. Haddow, T. Kocmi, and C. Monz (Eds.),
+Singapore, pp. 1–42.
+External Links: Link,
+Document
+Cited by: Table 6.
+Liu et al. (2025)
+H. Liu, W. Wang, K. Chen, J. Liu, Y. Liu, T. Qin, P. He, X. Jiang, and H. Li
+Enhancing zero-shot image recognition in vision-language models through human-like concept guidance.
+arXiv preprint arXiv:2503.15886.
+Cited by: §1.
+Lu et al. (2023)
+K. Lu, H. Yuan, R. Lin, J. Lin, Z. Yuan, C. Zhou, and J. Zhou
+Routing to the expert: efficient reward-guided ensemble of large language models.
+arXiv preprint arXiv:2311.08692.
+Cited by: §1.
+Mei et al. (2025)
+K. Mei, W. Xu, S. Lin, and Y. Zhang
+OmniRouter: budget and performance controllable multi-llm routing.
+arXiv preprint arXiv:2502.20576.
+Cited by: 5th item,
+§A.2,
+§1,
+§2,
+§4.1.
+Mohammadshahi et al. (2024)
+A. Mohammadshahi, A. R. Shaikh, and M. Yazdani
+Routoo: learning to route to large language models effectively.
+arXiv preprint arXiv:2401.13979.
+Cited by: §1.
+Nguyen et al. (2024)
+Q. H. Nguyen, T. Dao, D. C. Hoang, J. Decugis, S. Manchanda, N. V. Chawla, and K. D. Doan
+Metallm: a high-performant and cost-efficient dynamic framework for wrapping llms.
+arXiv preprint arXiv:2407.10834.
+Cited by: §1.
+Ong et al. (2024)
+I. Ong, A. Almahairi, V. Wu, W. Chiang, T. Wu, J. E. Gonzalez, M. W. Kadous, and I. Stoica
+Routellm: learning to route llms with preference data.
+arXiv preprint arXiv:2406.18665.
+Cited by: §1.
+Pal et al. (2022)
+A. Pal, L. K. Umapathi, and M. Sankarasubbu
+MedMCQA: a large-scale multi-subject multi-choice dataset for medical domain question answering.
+In Proceedings of the Conference on Health, Inference, and Learning, G. Flores, G. H. Chen, T. Pollard, J. C. Ho, and T. Naumann (Eds.),
+Proceedings of Machine Learning Research, Vol. 174, pp. 248–260.
+External Links: Link
+Cited by: §C.2,
+Table 6.
+Rajpurkar et al. (2016)
+P. Rajpurkar, J. Zhang, K. Lopyrev, and P. Liang
+Squad: 100,000+ questions for machine comprehension of text.
+arXiv preprint arXiv:1606.05250.
+Cited by: 3rd item,
+Table 1.
+Šakota et al. (2024)
+M. Šakota, M. Peyrard, and R. West
+Fly-swat or cannon? cost-effective language model choice via meta-modeling.
+In Proceedings of the 17th ACM International Conference on Web Search and Data Mining,
+pp. 606–615.
+Cited by: §1.
+Sanh et al. (2019)
+V. Sanh, L. Debut, J. Chaumond, and T. Wolf
+DistilBERT, a distilled version of bert: smaller, faster, cheaper and lighter.
+arXiv preprint arXiv:1910.01108.
+Cited by: 3rd item.
+Shao et al. (2024)
+Z. Shao, P. Wang, Q. Zhu, R. Xu, J. Song, X. Bi, H. Zhang, M. Zhang, Y. Li, Y. Wu, et al.
+Deepseekmath: pushing the limits of mathematical reasoning in open language models.
+arXiv preprint arXiv:2402.03300.
+Cited by: §1,
+§3.2.
+Shnitzer et al. (2023)
+T. Shnitzer, A. Ou, M. Silva, K. Soule, Y. Sun, J. Solomon, N. Thompson, and M. Yurochkin
+Large language model routing with benchmark datasets.
+arXiv preprint arXiv:2309.15789.
+Cited by: §2.
+Shumailov et al. (2024)
+I. Shumailov, Z. Shumaylov, Y. Zhao, N. Papernot, R. Anderson, and Y. Gal
+AI models collapse when trained on recursively generated data.
+Nature 631 (8022), pp. 755–759.
+Cited by: Appendix D,
+§2.
+Somerstep et al. (2025)
+S. Somerstep, F. M. Polo, A. F. M. de Oliveira, P. Mangal, M. Silva, O. Bhardwaj, M. Yurochkin, and S. Maity
+Carrot: a cost aware rate optimal router.
+arXiv preprint arXiv:2502.03261.
+Cited by: §A.2,
+§1,
+§2.
+Srivatsa et al. (2024)
+K. Srivatsa, K. K. Maurya, and E. Kochmar
+Harnessing the power of multiple minds: lessons learned from llm routing.
+arXiv preprint arXiv:2405.00467.
+Cited by: §2.
+Tan et al. (2024)
+Z. Tan, D. Li, S. Wang, A. Beigi, B. Jiang, A. Bhattacharjee, M. Karami, J. Li, L. Cheng, and H. Liu
+Large language models for data annotation and synthesis: a survey.
+arXiv preprint arXiv:2402.13446.
+Cited by: §2.
+Taori et al. (2023)
+R. Taori, I. Gulrajani, T. Zhang, Y. Dubois, X. Li, C. Guestrin, P. Liang, and T. B. Hashimoto
+Alpaca: a strong, replicable instruction-following model; 2023.
+URL https://crfm. stanford. edu/2023/03/13/alpaca. html.
+Cited by: 1st item,
+Table 1.
+Wang et al. (2025)
+S. Wang, W. Fan, Y. Feng, S. Lin, X. Ma, S. Wang, and D. Yin
+Knowledge graph retrieval-augmented generation for llm-based recommendation.
+arXiv preprint arXiv:2501.02226.
+Cited by: §1.
+Yang et al. (2025)
+Y. Yang, Y. Nan, J. Ye, S. Dou, X. Wang, S. Li, H. Lv, M. Wu, T. Gui, Q. Zhang, et al.
+Measuring data diversity for instruction tuning: a systematic analysis and a reliable metric.
+arXiv preprint arXiv:2502.17184.
+Cited by: Appendix D,
+§2.
+Yehudai et al. (2025)
+A. Yehudai, L. Eden, A. Li, G. Uziel, Y. Zhao, R. Bar-Haim, A. Cohan, and M. Shmueli-Scheuer
+Survey on evaluation of llm-based agents.
+arXiv preprint arXiv:2503.16416.
+Cited by: §1.
+Zhang et al. (2025a)
+H. Zhang, T. Feng, and J. You
+Router-r1: teaching llms multi-round routing and aggregation via reinforcement learning.
+arXiv preprint arXiv:2506.09033.
+Cited by: §1,
+§2.
+Zhang et al. (2023)
+J. Zhang, R. Krishna, A. H. Awadallah, and C. Wang
+Ecoassistant: using llm assistant more affordably and accurately.
+arXiv preprint arXiv:2310.03046.
+Cited by: §2.
+Zhang et al. (2025b)
+Y. Zhang, D. Zhan, and H. Ye
+Capability instruction tuning: a new paradigm for dynamic llm routing.
+arXiv preprint arXiv:2502.17282.
+Cited by: §1,
+§2.
+Zhuang et al. (2024)
+R. Zhuang, T. Wu, Z. Wen, A. Li, J. Jiao, and K. Ramchandran
+EmbedLLM: learning compact representations of large language models.
+arXiv preprint arXiv:2410.02223.
+Cited by: §1.
+Appendix A Experimental Setting
+A.1 Datasets
+Following recent work (Feng et al., 2025), we select data from four distinct tasks, with their statistics summarized in Table 1. The details of these four datasets are outlined as follows:
+•
+Alpaca (Taori et al., 2023): A 52k-sample hybrid question-answering dataset used for fine-tuning the Alpaca model. It is automatically constructed by prompting a language model to generate training instances based on a small set of human-written instructions.
+•
+GSM8K (Cobbe et al., 2021): A benchmark for evaluating multi-step mathematical reasoning, consisting of 8.5k linguistically diverse grade-school math word problems.
+•
+SQuAD (Rajpurkar et al., 2016): A widely used reading comprehension benchmark comprising over 100k question–answer pairs derived from more than 500 Wikipedia articles.
+•
+Multi-News (Fabbri et al., 2019): A multi-document summarization dataset containing 56k article–summary pairs. The articles are sourced from Newser.com, and the summaries are professionally written by editors.
+A.2 Baseliens
+To assess the effectiveness of our data synthesis strategy in the cold-start setting, as well as the performance of our proposed TRouter, we conduct extensive comparisons against two categories of baseline methods under distinct experimental scenarios.
+•
+Smallest LLM: Always selects the smallest available LLM, prioritizing cost efficiency over performance.
+•
+Largest LLM: Always selects the largest available LLM, prioritizing performance regardless of cost.
+•
+Adaptive LLM: Selects among the largest, medium, and smallest LLMs based on the user preference scenario. Specifically, it selects the largest LLM for the Performance First scenario, a medium-sized LLM for the Balanced scenario, and the smallest LLM for the Cost First scenario.
+•
+Prompt LLM: Incorporates the query, candidate models, and objectives (e.g., prioritizing effectiveness) directly into the prompt, and feeds it into an external LLM (i.e., gpt-4.1-2025-04-14 ) to select the most suitable LLM from a pool of candidates.
+In this setting, TRouter is trained exclusively on synthetic data 𝒟syn\mathcal{D}_{\text{syn}}, generated to simulate realistic training data of the test scenario.
+When training data for the test task 𝒟train\mathcal{D}_{\text{train}} is available (i.e., the in-domain setting), TRouter is evaluated against six strong baselines:
+•
+RouterDC (Chen et al., 2024): introduces a query-based routing method trained with dual contrastive learning losses, where an encoder and LLM embeddings are jointly optimized to effectively distinguish between capable models, even when multiple LLMs perform well on a given query.
+•
+GraphRouter (Feng et al., 2025): models the LLM selection process as an edge prediction task on a heterogeneous graph of tasks, queries, and LLMs, leveraging a heterogeneous GNN to capture contextual interactions and generalize to new LLMs without retraining.
+•
+FrugalGPT (Chen et al., 2023): utilizes a pre-trained language model to predict the score of the
+generation result of all LLMs given a query, and then selects the LLM with the highest score within
+a given cost. We use DistilBert (Sanh et al., 2019) as the router’s backbone model.
+•
+C2MAB-V (Dai et al., 2024): uses a bandit-based model for LLM selection, which regards each
+LLM as an arm that implements an exploration mechanism to find a better solution.
+•
+MetricRouter (Mei et al., 2025): integrate multiple multilayer perceptron (MLP) layers with sentence transformer embeddings (specifically, the all-MiniLM-L6-v2 model33
+3
+https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2) to develop regression models that estimate both the computational cost and performance of various large language models (LLMs) in response to a given input query.
+•
+Oracle: A theoretical upper-bound baseline that assumes access to the ground-truth performance and cost for each query, and always selects the model yielding the highest utility.
+In this setting, TRouter is trained on 𝒟train\mathcal{D}_{\text{train}}, which is realistic training data of the target test scenario. Additionally, each query in 𝒟train\mathcal{D}_{\text{train}} is annotated with the task type at difficulty level.
+To further evaluate the generalization ability of existing LLM routers under distribution shift, we assess RouterDC and MetricRouter in a cross-dataset cold-start setting. Specifically, we train on any three of the datasets listed in Table 2 and evaluate on the remaining one. We report the average performance, cost, and utility across all four datasets.
+It is essential to note that RouterDC and GraphRouter are classification-based approaches that directly predict the optimal LLM. In contrast, MetricRouter employs a regression-based strategy to estimate both performance and cost, subsequently maximizing utility. In this context, our TRouter can be viewed as a regularized variant of MetricRouter, where the regularization term introduced in Eq. (6) is designed to enhance generalization, particularly under cold-start conditions.
+We exclude OmniRouter (Mei et al., 2025) and Carrot (Somerstep et al., 2025) from our comparison, as both adopt the same regression-based paradigm as MetricRouter, predicting performance and cost, then selecting models via utility maximization. However, OmniRouter is tailored for the AIOS setting, which schedules large models to maximize utility over a batch of queries, diverging from our focus on query-level routing. HybridLLM (Ding et al., 2024) is similarly excluded, as it is designed for two-model scenarios and is not directly applicable to our multi-model framework.
+A.3 Implementation Details
+LLM Usage.
+For the candidate LLMs used for routing, we primarily select the Qwen 3 series in our main experiments. In addition, we conduct supplementary experiments on several closed-source models, including the Gemini series and the Doubao-Seed models. For Qwen 3 models, we access them via the DashScope API provided by Alibaba Cloud44
+4
+https://bailian.console.aliyun.com/. For the other models, we utilize third-party API providers to obtain model outputs.
+For our task-profle guided data synthesis framework, we primarily utilize the gpt-4.1-2025-04-14 model to instantiate key components, including the Task Type Generator, Task Type Quality Evaluator, and Question-Answer Pair Generator. To validate the generalizability of our approach, we further conduct experiments using the gemini-2.5-flash model as a substitute engine for all components of our synthesis framework.
+Cost Analysis for Data Synthesis
+The pricing for gpt-4.1-2025-04-14 is $2 per million input tokens and $8 per million output tokens, whereas gemini-2.5-flash costs $0.30 and $2.50 per million input and output tokens, respectively. During QA generation, gpt-4.1-2025-04-14 processed approximately 0.91M input tokens and generated 1.56M output tokens, resulting in a cost of $14.34. In contrast, gemini-2.5-flash consumed 0.78M input tokens and produced 3.92M output tokens, with a total cost of $10.03. The combined cost of data synthesis was approximately $24.37.
+LLM as a Judge for Performance Estimating.
+Beyond traditional metrics (e.g., token- or subword-level F1 for summarization), we estimate performance using an LLM-as-a-judge (Gu et al., 2024) given the question, the ground-truth answer, and the answer produced by the candidate LLM. This choice is motivated by two considerations. First, prior work typically assumes that the evaluation protocol of the test scenario is known in advance and then derives router training data by applying that protocol to estimate performance. In realistic deployments, especially in the cold-start setting, this assumption may not hold, and a fixed evaluation protocol may be unavailable or misaligned with downstream needs. Second, traditional surface-form metrics exhibit well-documented limitations. For example, F1 implicitly equates lexical overlap with semantic equivalence, whereas summary quality depends on higher-level properties such as content selection, factual consistency, discourse structure, and readability. Our LLM-as-a-judge prompt is provided in Table 14, and we use the gpt-4.1-nano-2025-04-14 model as the judging LLM to reduce costs.
+Details of Task Profile guided Data Synthesis.
+To construct a task profile-guided synthetic dataset, we leverage gpt-4.1-2025-04-14 as an LLM engine to instantiate the three key components, including the task type generator, the task type quality evaluator, and the question-answer pair generator. Additional experiments are conducted using gemini-2.5-flash to validate the versatility of our framework.
+Since our evaluation spans a wide range of tasks, we begin by aggregating six representative domains from established LLM benchmark55
+5
+https://lmarena.ai/leaderboard/text, involving mathematics, creative writing, commonsense knowledge, programming, long-context understanding, and reading comprehension. These domains serve as seed categories that are expanded to ten broader domains via using the prompt in Table 17 to derive the LLM engine, reducing manual intervention in domain specification.
+For each domain, Task Type Generator produces up to ten subcategory nodes, and each subcategory is further expanded into no more than five difficulty levels, forming a three-level task taxonomy. The corresponding prompts for the subcategory level and difficulty level are shown in the Table. 18 and Table. 19.
+Task Type Quality Evaluator iteratively refines the candidate child task-type set and terminates when no modifications are warranted across three consecutive iterations, and the current set is adopted. The prompts used for task-set quality assessment and refinement are presented in Table 20.
+Question-Answer Pair Generator, we configure it to produce questions in batches of eight, generating a total of 40 QA pairs per task profile. We set the semantic similarity threshold to 0.9 in order to remove literally identical or near-duplicate examples. As shown in Appendix D, our diversity analysis confirms that the generated data spans a broad range of topics, primarily due to our multi-level, task-type-guided generation framework. Thus, simple semantic filtering suffices for our objective. Users seeking further refinement may employ more advanced LLM-based filtering methods, though at a significantly higher computational cost. To estimate performance with minimal annotation cost for router training, we employ gpt-4.1-nano as a lightweight annotator.
+The resulting synthetic dataset 𝒟sys\mathcal{D}_{\text{sys}} includes: (i) for gpt-4.1-2025-04-14, 10 domains, 103 subcategory nodes, 447 difficulty nodes, and 17,880 QA pairs; (ii) for gemini-2.5-flash, the same number of domains but with 98 subcategory nodes, 380 difficulty nodes and 15200 QA pairs.
+Detailed of Task-type Guided Routing Framework.
+In our proposed task-type aware router framework (TRouter), we use the task types at the difficulty level to instantiate 𝒯\mathcal{T}. We utilize all-MiniLM-L6-v2 as the text encoder and map the query and description embedding to a 256-dimensional latent space. We set τ\tau as 0.07. In the cold-start setting, we sample 30 QA pairs per task type for training and 10 for validation. All models are trained using the Adam optimizer with a learning rate of 1e-4, consistent across main experiments. For each model-metric pair, we utilize a two-layer MLP as the regressor to predict the performance and cost.
+Appendix B Supplementary Theoretical Analysis
+In this section, we provide the proof of Eq. (6). We start from the marginal likelihood of the observed triplet (q,h,m)(q,h,m) as follows:
+logpθ(h∣q,m)=log∑t∈𝒯pθ(h,t∣q,m).\log p_{\theta}(h\mid q,m)=\log\!\sum_{t\in\mathcal{T}}p_{\theta}(h,t\mid q,m).
+(11)
+After introduce the variational distribution qϕ​(t∣q)q_{\phi}(t\mid q) and we rewrite log⁡pθ​(h∣q,m)\log p_{\theta}(h\mid q,m) to:
+log⁡pθ​(h∣q,m)\displaystyle\log p_{\theta}(h\mid q,m)
+=log∑tqϕ(t∣q)pθ(h,t∣q,m)qϕ​(t∣q)\displaystyle=\log\!\sum_{t}q_{\phi}(t\mid q)\,\frac{p_{\theta}(h,t\mid q,m)}{q_{\phi}(t\mid q)}
+=log⁡𝔼qϕ​(t∣q)​[pθ(h,t∣q,m)qϕ​(t∣q)].\displaystyle=\log\mathbb{E}_{q_{\phi}(t\mid q)}\!\left[\frac{p_{\theta}(h,t\mid q,m)}{q_{\phi}(t\mid q)}\right]\!.
+By applying Jensen’s inequality and because log\log is concave, we obtain
+logpθ(h∣q,m)≥𝔼qϕ​(t∣q)[logpθ(h,t∣q,m)−logqϕ(t∣q)].\log p_{\theta}(h\mid q,m)\;\geq\;\mathbb{E}_{q_{\phi}(t\mid q)}\Bigl[\log p_{\theta}(h,t\mid q,m)-\log q_{\phi}(t\mid q)\Bigr].
+(12)
+Using the conditional independence assumption
+pθ(h,t∣q,m)=pθ(h∣t,m)p(t∣q)p_{\theta}(h,t\mid q,m)=p_{\theta}(h\mid t,m)\,p(t\mid q),
+Eq. (12) becomes
+log⁡pθ​(h∣q,m)≥\displaystyle\log p_{\theta}(h\mid q,m)\geq
+𝔼qϕ​(t∣q)​[log⁡pθ​(h∣t,m)]\displaystyle\mathbb{E}_{q_{\phi}(t\mid q)}\!\left[\log p_{\theta}(h\mid t,m)\right]
+−𝔼qϕ​(t∣q)​[log⁡qϕ​(t∣q)p⁡(t∣q)].\displaystyle-\mathbb{E}_{q_{\phi}(t\mid q)}\!\left[\log\frac{q_{\phi}(t\mid q)}{p(t\mid q)}\right]\!.
+The second expectation is the Kullback–Leibler divergence. Hence, we further obtain:
+log⁡pθ​(h∣q,m)≥𝔼qϕ​(t∣q)​[log⁡pθ​(h∣t,m)]−KL(qϕ(t∣q)∥p(t∣q))\boxed{\begin{aligned} \log p_{\theta}(h\mid q,m)&\;\geq\;\mathbb{E}_{q_{\phi}(t\mid q)}\!\left[\log p_{\theta}(h\mid t,m)\right]\\
+&-\mathrm{KL}\!\left(q_{\phi}(t\mid q)\,\|\,p(t\mid q)\right)\end{aligned}}
+(13)
+Finally, we prove Eq. (6).
+Appendix C Supplementary Experiments
+Table 6: Overview of Supplementary Datasets.
+Dataset
+Task Type
+Metric
+Cases
+WMT (Kocmi et al., 2023)
+Translation
+BLEU
+1000
+MBPP (Austin et al., 2021)
+Programming
+Pass@1
+964
+LegalBench (Guha et al., 2023)
+Legal Domain
+F1
+1000
+MedMcQA (Pal et al., 2022)
+Medical QA
+F1
+1000
+Table 7: Ablation study of different designs of TRouter.
+Method
+Cost
+Balance
+Performance
+Utility Sum
+Cold Start
+AgenticRouter
+0.0393
+0.1771
+0.3161
+0.5325
+Ours w/o Assumptions (1)
+0.0357
+0.1602
+0.3200
+0.5159
+Ours
+0.0355
+0.1811
+0.3108
+0.5274
+In-domain
+Ours w/o Assumptions (1)
+0.0517
+0.1964
+0.3445
+0.5926
+Ours
+0.0518
+0.1974
+0.3433
+0.5925
+Table 8: Results across three user preference settings in both cold-start and in-domain scenarios. For in-domain training, candidate LLM performance is obtained using traditional metrics. Bold indicate the best results under each user preference, respectively. We use commercial closed-source models in Table 2.
+Cost Preference
+Balance Preference
+Performance Preference
+Utility Sum
+Scenario
+Method
+Cost
+Performance
+Utility
+Cost
+Performance
+Utility
+Cost
+Performance
+Utility
+Cold-start
+Smallest LLM
+0.01820.0182
+0.39870.3987
+0.06520.0652
+0.01820.0182
+0.39870.3987
+0.19030.1903
+0.01820.0182
+0.39870.3987
+0.31530.3153
+0.57080.5708
+Largest LLM
+0.44730.4473
+0.42900.4290
+−0.2721-0.2721
+0.44730.4473
+0.42900.4290
+−0.0092-0.0092
+0.44730.4473
+0.42900.4290
+0.25370.2537
+−0.0275-0.0275
+Adaptive LLM
+0.01820.0182
+0.39870.3987
+0.06520.0652
+0.01570.0157
+0.42240.4224
+0.20340.2034
+0.44730.4473
+0.42900.4290
+0.25370.2537
+0.52230.5223
+Prompt LLM
+0.01820.0182
+0.39870.3987
+0.06520.0652
+0.01940.0194
+0.40990.4099
+0.19530.1953
+0.44730.4473
+0.42900.4290
+0.25370.2537
+0.51420.5142
+Ours
+0.01650.0165
+0.41820.4182
+0.0704
+0.01690.0169
+0.41130.4113
+0.1972
+0.01830.0183
+0.40440.4044
+0.3199
+0.5875
+In-domain
+RouterDC
+0.01540.0154
+0.42580.4258
+0.07290.0729
+0.01860.0186
+0.42910.4291
+0.20520.2052
+0.01690.0169
+0.43010.4301
+0.34070.3407
+0.61880.6188
+GraphRouter
+0.02300.0230
+0.41970.4197
+0.06550.0655
+0.02710.0271
+0.40860.4086
+0.19080.1908
+0.01840.0184
+0.41740.4174
+0.33020.3302
+0.58650.5865
+FrugalGPT
+0.02590.0259
+0.43600.4360
+0.06650.0665
+0.05090.0509
+0.42890.4289
+0.18900.1890
+0.05280.0528
+0.42860.4286
+0.33230.3323
+0.58780.5878
+C2MAB-V
+0.01630.0163
+0.41240.4124
+0.06940.0694
+0.01590.0159
+0.41530.4153
+0.19970.1997
+0.14640.1464
+0.44710.4471
+0.32840.3284
+0.59750.5975
+MetricRouter
+0.01370.0137
+0.42330.4233
+0.07370.0737
+0.01670.0167
+0.42450.4245
+0.20390.2039
+0.02310.0231
+0.43720.4372
+0.34510.3451
+0.62270.6227
+Ours
+0.01270.0127
+0.43110.4311
+0.0760
+0.01400.0140
+0.43540.4354
+0.2107
+0.01460.0146
+0.43620.4362
+0.3460
+0.6327
+Oracle
+0.01170.0117
+0.48910.4891
+0.08840.0884
+0.01610.0161
+0.49750.4975
+0.24070.2407
+0.01970.0197
+0.49940.4994
+0.39560.3956
+0.72470.7247
+Table 9: Results across three user preference settings in both cold-start and in-domain scenarios on four supplementary datasets. For in-domain training, candidate LLM performance is obtained using traditional metrics.
+Cost Preference
+Balance Preference
+Performance Preference
+Utility Sum
+Scenario
+Method
+Cost
+Performance
+Utility
+Cost
+Performance
+Utility
+Cost
+Performance
+Utility
+Cold-start
+Smallest LLM
+0.01170.0117
+0.29770.2977
+0.00520.0052
+0.01170.0117
+0.29770.2977
+0.14300.1430
+0.01170.0117
+0.29770.2977
+0.23580.2358
+0.42900.4290
+Largest LLM
+0.12690.1269
+0.38570.3857
+−0.0244-0.0244
+0.12690.1269
+0.38570.3857
+0.12940.1294
+0.12690.1269
+0.38570.3857
+0.28320.2832
+0.38820.3882
+Adaptive LLM
+0.01170.0117
+0.29770.2977
+0.00520.0052
+0.03840.0384
+0.34960.3496
+0.15560.1556
+0.12690.1269
+0.38570.3857
+0.28320.2832
+0.48900.4890
+Ours
+0.01250.0125
+0.32110.3211
+0.05430.0543
+0.03600.0360
+0.34900.3490
+0.15630.1563
+0.04670.0467
+0.36420.3642
+0.28200.2820
+0.49260.4926
+In-domain
+RouterDC
+0.02580.0258
+0.34260.3426
+0.04790.0479
+0.02380.0238
+0.34300.3430
+0.15960.1596
+0.03740.0374
+0.35190.3519
+0.27400.2740
+0.48150.4815
+MetricRouter
+0.01470.0147
+0.33240.3324
+0.05470.0547
+0.05630.0563
+0.37340.3734
+0.15860.1586
+0.04570.0457
+0.37160.3716
+0.28810.2881
+0.50140.5014
+Ours
+0.01290.0129
+0.32420.3242
+0.05450.0545
+0.04160.0416
+0.37570.3757
+0.16710.1671
+0.05040.0504
+0.37660.3766
+0.29120.2912
+0.51280.5128
+ORACL
+0.01510.0151
+0.40800.4080
+0.06950.0695
+0.01990.0199
+0.41720.4172
+0.19870.1987
+0.02890.0289
+0.42230.4223
+0.33210.3321
+0.60020.6002
+Figure 5: The normalized cost and performance distributions for six Qwen-series models on Alpaca and Multi-News datasets, evaluated using traditional metrics.
+Figure 6: Ablation on learning rate for TRouter in the cold-start setting. For each learning rate setting, results are averaged over five independent runs.
+Figure 7: Visualization of cost and performance distributions for six Qwen-series models across representative subcategories of varying difficulty in the Commonsense Knowledge domain, derived from the synthesized dataset 𝒟syn\mathcal{D}_{\text{syn}}.
+Figure 8: Visualization of cost and performance distributions for six Qwen-series models across representative subcategories of varying difficulty in the Creative Writing domain, derived from the synthesized dataset 𝒟syn\mathcal{D}_{\text{syn}}.
+Figure 9: Visualization of cost and performance distributions for six Qwen-series models across representative subcategories of varying difficulty in the Mathematics domain, derived from the synthesized dataset 𝒟syn\mathcal{D}_{\text{syn}}.
+C.1 More Ablation Studies
+Experiments on closed-source candidate LLMs.
+Beyond the main experiment where we use the open-source Qwen 3 series as candidate LLMs, we also include supplementary results on closed-source models in Table 8. The results show that TRouter achieves state-of-the-art performance in both cold-start and in-domain settings on this pool. Furthermore, when trained on the synthesized dataset 𝒟syn\mathcal{D}_{\text{syn}}, TRouter substantially outperforms Adaptive LLM, providing additional evidence that our task-profile–guided data synthesis is effective for cold-start routing.
+Ablation on LLMs for data synthesis.
+As shown in Table 3, instantiating our task-type synthesis framework with different LLMs (e.g., GPT-4.1, Gemini-2.5-Flash) yields consistent gains and both the task-profile–guided data synthesis and the task-type–aware routing (TRouter) framework outperform baselines across settings. These results indicate these frameworks’ versatility with respect to the underlying synthesizer model.
+Effect of using Manual label in TRouter.
+TRouter infers task types via a recognition module. In the cold-start setting, we replace these task type predictions with ground-truth task labels at test time, denoted AgenticRouter in Table 7. AgenticRouter yields further gains over TRouter, but requires expensive LLM-based task classification at inference. In contrast, TRouter dose not require this cost, offering a more efficient solution.
+Ablation study of Assumptions (1).
+We relax Assumption (1) in Sec. 3.3.1, which posits performance is independent of the query given task type and model. Without this assumption. Hence, p⁡(r∣q,m)p(r\mid q,m) can be re-formulated as follows:
+p⁡(r∣q,m)=∑t∈𝒯p⁡(r∣t,m,q)​p​(t∣q).p(r\mid q,m)=\sum_{t\in\mathcal{T}}p(r\mid t,m,q)p(t\mid q).
+(14)
+Results in Table 7 show that the original TRouter (with Assumption 1) consistently outperforms the variant without this assumption and is more robust across different user-preference settings, especially under the cold-start setting.
+Additionally, when releasing both assumption in Eq. (3), the resulting model is MetricRouter. However, as shown in Table 8, Table 4 and Table 3, MetricRouter performs worse than TRouter. Therefore, we suggest that accurately modeling the relationship between each individual query and its associated cost and performance is non-trivial, given the diversity of user queries and the dynamic nature of LLM outputs, especially for a lightweight router model with only a few hundred million parameters. Overfitting to query-specific information (as in MetricRouter) can lead to spurious correlations. While fine-tuning a large language model to capture such query-specific nuances may be feasible, it would drastically increase both latency and computational cost. As such, we conclude that task-type-guided prediction offers a more robust and efficient solution for routing in both cold-start and in-domain settings.
+Effect of learning rate.
+We vary the learning rate of TRouter from 1e-3 to 5e-5 in the cold-start setting and report the average results over five runs in Fig. 6. The results indicate that the routing utility peaks around a learning rate of 1e-4 and remains consistent as the learning rate is further decreased. Finally, we choose 1e-4 as the default learning rate in our main experiments.
+Effect of Multi-task-type-label
+We conduct an additional experiment using GPT-4.1-2025-04-14 to annotate multi-label task type distributions for each question, in contrast to the single-task-type supervision used in the main setup. The task recognition module is then trained by minimizing the KL divergence between the predicted distribution and the ground-truth multi-label distribution. Specifically, binary label vectors (e.g., [0, 1, 1, 0, …]) were converted into valid probability distributions using the SoftMax function. Results in Table 11 show no significant performance difference between multi- and single-task-type supervision, likely because our original approach already incorporates probabilistic task assignment through marginalization over all task types via a learned distribution (Eq (4) and Eq (7) in the main paper), effectively capturing task ambiguity and uncertainty.
+Table 10: Results across three user preference settings in both cold-start and in-domain scenarios on an additional closed-source candidate LLM pool. For in-domain training, candidate LLM performance is obtained using traditional metrics. Bold indicates the best result for each user preference. The candidate pool consists of gpt-5, gpt-5-mini, gpt-5-nano, and Doubao-Seed-1.6-Flash.
+Cost Preference
+Balance Preference
+Performance Preference
+Utility Sum
+Scenario
+Method
+Cost
+Performance
+Utility
+Cost
+Performance
+Utility
+Cost
+Performance
+Utility
+Cold-start
+Smallest LLM
+0.00520.0052
+0.39870.3987
+0.0756
+0.00520.0052
+0.39870.3987
+0.19670.1967
+0.00520.0052
+0.39870.3987
+0.31790.3179
+0.59020.5902
+Largest LLM
+0.43540.4354
+0.45730.4573
+−0.2689-0.2689
+0.43540.4354
+0.45730.4573
+0.01090.0109
+0.43540.4354
+0.45730.4573
+0.27880.2788
+0.03280.0328
+Adaptive LLM
+0.00520.0052
+0.39870.3987
+0.0756
+0.02230.0223
+0.39920.3992
+0.18830.1883
+0.43540.4354
+0.45730.4573
+0.27880.2788
+0.54260.5426
+Ours
+0.01160.0116
+0.42410.4241
+0.07550.0755
+0.01340.0134
+0.42800.4280
+0.2073
+0.05770.0577
+0.43500.4350
+0.3365
+0.6193
+In-domain
+RouterDC
+0.00990.0099
+0.42390.4239
+0.0787
+0.03740.0374
+0.44480.4448
+0.20300.2030
+0.03740.0374
+0.44590.4459
+0.34920.3492
+0.63090.6309
+MetricRoute
+0.01000.0100
+0.42820.4282
+0.07760.0776
+0.01350.0135
+0.43070.4307
+0.20860.2086
+0.05860.0586
+0.44980.4498
+0.34820.3482
+0.63440.6344
+Ours
+0.01820.0182
+0.44510.4451
+0.07450.0745
+0.00800.0080
+0.43280.4328
+0.2124
+0.02800.0280
+0.45770.4577
+0.3606
+0.6474
+Oracle
+0.00850.0085
+0.47800.4780
+0.08880.0888
+0.01990.0199
+0.49960.4996
+0.23990.2399
+0.03230.0323
+0.50640.5064
+0.39870.3987
+0.72740.7274
+Experiments on an additional closed-source candidate LLM pool.
+Beyond the main experiments, we further evaluate TRouter on another closed-source candidate LLM pool to address the concern about model diversity. Specifically, in addition to the model groups used in the main paper, we construct a new pool comprising gpt-5, gpt-5-mini, gpt-5-nano, and Doubao-Seed-1.6-Flash, which span diverse capabilities and cost profiles. We conduct experiments on four datasets from Table 2. The results are reported in Table 10. Similar to the findings in the main paper, TRouter achieves the best overall performance in both cold-start and in-domain settings on this candidate pool. In particular, under cold-start routing, TRouter consistently improves the overall utility compared with Adaptive LLM across different user preferences. In the in-domain setting, TRouter also achieves the highest utility sum, further demonstrating that our framework generalizes well across heterogeneous closed-source model families rather than relying on a specific model series.
+Analysis of potential data leakage.
+To assess the possibility of data leakage, we conduct two analyses on the test splits of GSM8K and SQuAD, using the training split of our synthesized data (30 examples per difficulty level) for comparison. First, we measure literal similarity by computing the cosine similarity between each test example and each synthetic example using embeddings from all-MiniLM-L6-v2. For every test sample, we retrieve the top-20 most similar synthetic examples and count cases with similarity equal to 1.0 (exact match) or at least 0.95 (high similarity). We find no exact or high-similarity matches on GSM8K, and only one such case on SQuAD. Second, under a stricter criterion, we further examine semantic equivalence, where two questions differ in wording but express the same intent. Specifically, we ask GPT-4.1 to judge whether each benchmark query is semantically equivalent to any of its top-20 retrieved synthetic examples from the first analysis. Under this criterion, no semantically equivalent case is found on GSM8K and only two cases are identified on SQuAD. These results suggest that direct overlap between the synthesized training data and benchmark test sets is extremely limited. Moreover, TRouter already achieves near-optimal routing performance with only 5–10 training examples per difficulty level, substantially below the full 30-shot setting used in Table 4, and it consistently outperforms the baselines in the cold-start setting shown in Tables 3 and 4. Both observations further mitigate the possibility that our results are driven by data leakage. We also note that the similarity-based filtering in our pipeline is only used to remove redundancy within the synthesized data itself, rather than to filter against the test splits.
+C.2 Supplementary Dateset
+Beyond the four benchmark datasets in the main body, we further evaluate TRouter on MBPP (Austin et al., 2021), MWT’23, MedMCQA (Pal et al., 2022), and LegalBench (Guha et al., 2023), covering four additional domains. We apply the same task-profile–guided data synthesis pipeline and use pass@1 for MBPP, BLEU for MWT, and F1 for MedMCQA and LegalBench. All datasets are split into train/validation/test sets using a 5:1:4 ratio. As shown in Table 9, TRouter again achieves consistently superior performance in both cold-start and in-domain settings, validating the effectiveness of our method.
+C.3 Analysis of metric distribution on 𝒟syn\mathcal{D}_{\text{syn}}.
+To examine the cost and performance distribution of models of varying scales on our generated dataset 𝒟syn\mathcal{D}_{\text{syn}}, we visualize these metrics for six Qwen-series models across representative subcategories of varying difficulty within the Commonsense Knowledge, Creative Writing, and Mathematics domains, derived from the synthesized dataset 𝒟syn\mathcal{D}_{\text{syn}} in Figures 7, 8, and 9. The results demonstrate that cost increases monotonically with both model scale and task difficulty, while performance improves with scale but exhibits diminishing returns and declines as difficulty increases, most notably in Mathematics. The 7B and 14B models constitute the price-performance frontier for most subcategories, whereas 32B and larger models provide distinctive value primarily on high-difficulty mathematics and advanced reasoning tasks. These observations support the motivation for our proposed task-type-aware router (TRouter) and task-profile-guided data synthesis, which faithfully reproduces complex, real-world cost trends with minimal expense compared to training routers on manually collected in-domain data. Additional analyses are presented below:
+Cross-domain patterns
+Across all domains, cost increases steadily with scale while variance expands for larger models. Mathematics exhibits the steepest high-end cost growth, consistent with longer reasoning chains, while Creative Writing demonstrates the lowest costs at equivalent scales, with Commonsense falling between these extremes. Performance improves with scale across all domains, yet gains diminish beyond 32B parameters. Mathematics shows the highest scale sensitivity, with small models performing markedly worse while 14B and 32B models close the performance gap and can exceed larger models on easier subsets. Creative Writing reaches an early performance ceiling at higher difficulty levels, while Commonsense demonstrates steady, moderate improvements.
+Same domain, different subcategories
+In the Commonsense domain, Category Membership & Classification reaches saturation early with modest cost growth and stable improvements. Causal Reasoning & Consequences requires greater computational resources, with clear advantages for larger models on Hard and Expert difficulty levels and extended cost distributions. Comparative & Quantitative Reasoning falls between these patterns, exhibiting difficulty-driven performance drops more pronounced than those observed in classification tasks.
+In Creative Writing, Character Creation and Genre or Style Evaluation show minimal performance gaps at Easy and Medium difficulty levels, diverging only at Hard and Expert levels while maintaining relatively low costs. Dialogue Generation demonstrates greater scale sensitivity, benefiting from larger models at higher difficulty levels while incurring moderately higher costs due to extended output lengths.
+In Mathematics, Arithmetic benefits most directly from scaling, with 14B+ models maintaining strong median performance on Hard difficulty and exhibiting pronounced long-tailed cost distributions. Algebra displays greater variance and requires medium-to-large models for Hard and Expert difficulties. Calculus presents the steepest difficulty gradient, where even large models experience performance degradation and increased costs at Expert level.
+Fixed domain and subcategory analysis
+When holding both domain and subcategory fixed, cost increases monotonically with model scale, with larger models displaying heavier-tailed distributions reflecting rare but computationally expensive samples. Performance improves with model scale, but the cost-performance ratio exhibits diminishing returns. The 1.7B models provide limited gains and demonstrate high sensitivity to difficulty variations. The 7B to 14B range represents the price-performance frontier with the largest marginal benefits. Models at 32B parameters and above continue to improve but with smaller gains, except for notable advantages on high-difficulty mathematics and complex reasoning tasks
+Same subcategory, varying difficulty
+Within a given subcategory, cost increases monotonically from Easy to Expert difficulty levels, with the most pronounced increases observed in Mathematics and the most modest in Creative Writing. Performance exhibits a monotonic decline as difficulty increases, with the steepest degradation occurring in Mathematics, where only larger models maintain positive performance margins on Expert-level tasks. Commonsense tasks show moderate performance decline while continuing to benefit from scaling at higher difficulty levels. Creative Writing demonstrates minimal performance gaps through Hard difficulty, with a more pronounced decline appearing only at Expert level.
+Cost–performance implications and methodological relevance
+The analysis reveals that 7B and 14B models deliver optimal unit-cost performance across most subcategories and difficulty levels, while 32B and larger models should be reserved for applications emphasizing high-difficulty Mathematics or advanced causal and quantitative reasoning tasks. These findings provide direct empirical justification for a task-type-aware routing strategy. Such a router would optimally allocate Easy or Medium-difficulty stylistic writing and classification tasks to 1.7B, 7B, or 14B models, escalating to 32B or larger models only when the task profile indicates reasoning-intensive workloads such as Mathematics-Calculus, Commonsense-Causal reasoning, or Dialogue Generation at Hard or Expert difficulty levels. This adaptive routing strategy reduces heavy-tail computational costs while preserving performance in domains where scaling demonstrates clear benefits (e.g., sometime due to the randomness, we need run LLM for serval times for a given query to obtain satisfactory results).
+Furthermore, the observed consistency between cost distributions, difficulty levels, and reasoning complexity substantiates the effectiveness of our task-profile-guided data synthesis approach. This methodology reproduces realistic cost escalation patterns and performance frontiers, enabling the development of benchmarking frameworks and routing policies that transfer effectively to complex real-world deployments while maintaining strong interpretability.
+In summary, these empirical observations support the theoretical motivation underlying our proposed task-type-aware router (TRouter) and task-profile-guided data synthesis methodology, which faithfully reproduces complex real-world cost trends with minimal computational overhead compared to training routers on manually collected in-domain data.
+C.4 Interpretability Analysis
+After being trained on DtrainD_{\text{train}}, TRoute achieved a top-1 task type prediction accuracy of around 30% on the test set, with a task space size of |𝒯|=447|\mathcal{T}|=447 while the top-3 accuracy reaches 50% and top-5 accuracy reaches 70%. These results indicate that the latent task-type modeling is able to capture meaningful and discriminative task semantics. Moreover, experimental analysis reveals that most prediction errors originated from the Alpaca dataset, where the top-1 accuracy dropped to just 0.03.
+Owing to the interpretability of TRouter, we further investigated the failure cases on the Alpaca dataset by visualizing the top-5 predictions alongside the ground truth in Table 13. The results show that a single test query may correspond to multiple task types. For example, the first case could belong to several types within Information Retrieval. However, since our model uses a weighted combination of task types instead of an argmax selection as defined in Eq. (4), this ambiguity could be mitigated, still leading effective routing decision.
+A key advantage of TRouter over black-box embedding-based routers is its interpretable taxonomy structure, which directly facilitates scalability and maintenance through 1) Node Offloading. Users/more advanced LLMs can easily inspect the generated taxonomy. If certain sub-categories are irrelevant to their specific deployment environment, they can simply remove those nodes. 2) Bias Correction. For example, users/more advanced LLMs can observe the routing distribution across the taxonomy. If they detect distributional shift (e.g., a specific node consistently routing to an overly expensive model due to wrong performance prediction), they can manually refine this specific node’s cost/performance parameters. 3) Incremental Updates: When new tasks emerge, the hierarchical nature of our method allows for incremental expansion. Users can generate a new branch for the new task and merge it into the existing tree, rather than re-synthesizing the entire taxonomy from scratch. Overall, TRouter has the potential to evolve further in future applications. However, such discussions are beyond the scope of this work, which focuses specifically on the cold-start scenario. We leave these directions for future exploration.
+Table 11: Comparison between single-task-type and multi-task-type training for task recognition.
+Cost First
+Balance
+Performance
+Utility Sum
+Task-type for training
+Cost
+Perf
+Utility
+Cost
+Perf
+Utility
+Cost
+Perf
+Utility
+Multi-task-type
+0.04140.0414
+0.42490.4249
+0.05190.0519
+0.04090.0409
+0.43080.4308
+0.19500.1950
+0.06780.0678
+0.44010.4401
+0.33850.3385
+0.58530.5853
+Single-task-type (Ours)
+0.03930.0393
+0.41650.4165
+0.05180.0518
+0.04770.0477
+0.44240.4424
+0.19740.1974
+0.07510.0751
+0.44790.4479
+0.34330.3433
+0.59250.5925
+Table 12: Comparison between TRouter trained on LLM-generated data and on manually labeled data.
+Cost First
+Balance
+Performance
+Utility Sum
+Method
+Cost
+Perf
+Utility
+Cost
+Perf
+Utility
+Cost
+Perf
+Utility
+Ours
+0.03450.0345
+0.30980.3098
+0.03430.0343
+0.06400.0640
+0.42610.4261
+0.18100.1810
+0.06840.0684
+0.42240.4224
+0.32430.3243
+0.53970.5397
+Manual Labeled
+0.03320.0332
+0.31150.3115
+0.03570.0357
+0.06010.0601
+0.42980.4298
+0.18490.1849
+0.07100.0710
+0.42010.4201
+0.32190.3219
+0.54250.5425
+Appendix D Quantitative Analysis of the Quality of Generated QA Pairs
+In the cold-start setting, we propose a multi-level task-profile-guided data synthesis framework that requires only domain descriptions to guide LLMs in generating synthetic QA datasets. This approach eliminates the need for manual data collection and annotation. Although prior work shows that low-diversity data offers limited benefit (Yang et al., 2025), and poor-quality synthetic data can harm models or lead to collapse (Shumailov et al., 2024), LLM routing is more robust against these limitations of data synthesis because its objective is to capture cost–performance tradeoffs across models and heterogeneous queries, rather than to execute tasks precisely, the strict quality constraints on training data can be moderately relaxed. Given the large volume of generated data (e.g., 17,880 QA pairs from GPT-4.1-2025-04-14) and the difficulty of some questions, especially in domains like mathematics and commonsense reasoning, which are challenging even for annotators with STEM master’s or PhD degrees, it is infeasible to conduct a fully manual quantitative analysis of data quality and diversity. Therefore, to assess the quality of the generated QA pairs, we evaluate the answer accuracy and QA diversity through the following experiments.
+Accuracy
+We focus on three domains, involving Mathematics, Creative Writing, and Commonsense Knowledge. Since answer accuracy is typically correlated with task difficulty, we categorize each subcategory node into three difficulty levels, including easy, medium, and hard. If a node contains more than three difficulty levels, we map all non-extreme levels to medium. For each domain, we sample 160 easy, 160×\timesN medium, and 160 hard questions (where N is the number of difficulty node excepting easy and hard nodes). For commonsense knowledge, due to the breadth of topics and inefficiency of manual retrieval, we use Perplexity for retrieval, followed by human verification. The results show answer accuracy is consistently high across difficulty levels, nearly 100% for easy questions, 97.16% for medium, and 94.5% for hard. Additionally, the accuracy at hard level varies by domain, with hard questions in Mathematics achieving 92.5% and those in Commonsense Knowledge reaching 97.5%. These findings suggest that many of the QA pairs may source from the training data of large models and can be effectively retrieved via generation. This may explain the high accuracy across diverse domains and even at difficulty levels.
+Diversity
+We evaluate diversity at both the subcategory (103 nodes) and difficulty (447 nodes) levels, finding no semantically redundant nodes. While some conceptual similarities exist (e.g.,Long-Form Summarization from Long-context Understanding and Main Idea & Summarization from Reading Comprehension domain), they arise from different emphases across domains or contexts. For instance, the former focuses on long-context compression, while the latter targets reading comprehension.We also examine intra-node diversity by analyzing 30 difficulty nodes from the Progr amming and Commonsense Knowledge domains. Since we remove semantically similar QA pairs during generation, no near-duplicate questions remain . Moreover, each difficulty node covers a diverse range of topics. For example, one programming node covers 12 core topics, including Python multiple inheritance, asynchronous testing, and documentation for complex/generic classes. However, if we consider semantically equivalent questions with different phrasing as redundant, the redundancy rate varies significantly by domain. In the programming domain, semantic redundancy is minimal, whereas in commonsense domains it is approximately 10%.
+Appendix E Comparison between Synthesized and Manually Labeled Dataset
+As outlined in Sec. 3.2, our data synthesis pipeline comprises three components, including the Task Type Generator, Task Type Quality Evaluator, and Question-Answer Pair Generator. Despite multiple attempts, three PhD-level researchers could not produce a diverse and high-quality set of task types, even within their areas of expertise (e.g., programming, creative writing). In contrast, LLMs generate a broad and diverse range of task types efficiently. This is likely because annotating task types requires comprehensive knowledge of domain-specific concepts and the ability to distinguish between varying difficulty levels. Accordingly, we adopt task types generated by LLMs.Moreover, manual construction of a large volume of QA pairs is also impractical. Annotators often lack the expertise to cover specialized topics such as external APIs, mocking, multiple inheritance, or mixed async/sync programming in programming domain. Therefore, we use LLMs to generate candidate QA pairs and then manually verify these data. From these, we select five QA pairs per difficulty node, resulting in a curated dataset of 2,235 QA pairs. For cold-start evaluation, we split the data into 6:4 for training and validation.
+As shown in Table 12, performance differences between synthetic and manually labeled datasets are minimal. We argue that is this outcome is expected, as training on data drawn from the same distribution and evaluated under consistent protocols (i.e., using LLM-as-a-judge for both training and test sets) yields more reliable results, as evidenced in Table 4.
+Appendix F Cost Breakdown Analysis
+For synthetic data generation, we employ our multi-level task-profile-guided synthesis framework powered by GPT-4.1-2025-04-14. As detailed in Appendix A.3, generating 17,880 QA pairs incurs a total cost of approximately $14.34. In contrast, manual annotation is both economically and practically infeasible. Even PhD-level researchers encountered difficulties in producing diverse task taxonomies and lacked expertise in specialized domains (e.g., complex coding scenarios involving external API mocking).
+To estimate manual annotation costs, we assume: 15 minutes per hard QA pair, 3 minutes per medium, and 1 minute per easy question. Unlabeled items are classified as medium difficulty. The dataset includes 103×\times40 easy, 241×\times40 medium, and 103×\times40 hard questions. At a labor rate of $30 per 8-hour day, the total estimated cost exceeds $6,000.
+In-domain data collection is also impractical in a cold-start setting, as real user queries are unavailable and recruiting test users would incur costs potentially in the tens of thousands of dollars. Consequently, LLM-based automatic data synthesis is a more viable approach for training task routers under cold-start conditions.
+Example 1:
+query: Create a list of 4 tips to become a better public speaker.
+True Task Type: ’domain’: ’Dialogue & Communication’, ’subcategory’: ’Interactive Tutoring & Socratic Dialogue’, ’difficulty’: ’Medium’
+Definition: Providing brief, step-based guidance or explanation for standard single-step problems with clear solutions.
+Top-5 Predictions:
+1. Easy (Scientific Reasoning - Scientific Explanation) Possibility: 36.72% Definition: Explaining well-known, fundamental scientific concepts or phenomena using basic language and without requiring prior specialized knowledge.
+2. Easy (Reading Comprehension - Fact & Detail Retrieval) Possibility: 19.85% Definition: Identify and extract a single, explicitly stated fact or detail from a sentence, with a direct, unambiguous answer (typically a word or short phrase).
+3. Easy (Information Retrieval - Fact Lookup) Possibility: 10.54%
+Definition: Retrieval of a single, widely-known fact stated explicitly in authoritative sources.
+4. Easy (Information Retrieval - Definition/Explanation Retrieval) Possibility: 3.71%
+Definition: Retrieving straightforward definitions or explanations of widely recognized terms or concepts with minimal ambiguity.
+5. Moderate (Information Retrieval - Fact Lookup) Possibility: 3.58%
+Definition: Retrieval of a less common fact or fact requiring disambiguation (e.g., multiple entities, timeframes, or similar-sounding terms).
+Example 2:
+query: Choose the correct pairing for the given words.Drawing, music.
+True Task Type: ’domain’: ’Scientific Reasoning’, ’subcategory’: ’Concept Comparison’, ’difficulty’: ’Moderate’
+Definition: Comparison of related or similar scientific concepts that may have subtle distinctions or overlapping features, requiring more detailed analysis.
+Top-5 Predictions:
+1. Easy (Scientific Reasoning - Scientific Explanation) Possibility: 44.46%
+Definition:Retrieval of a single, widely-known fact stated explicitly in authoritative sources.
+2. Easy (Reading Comprehension - Fact & Detail Retrieval) Possibility: 26.48% Definition: Listing well-known, static items from a single, unambiguous category with no need for filtering or reasoning.
+3. Easy (Scientific Reasoning - Scientific Explanation) Possibility: 14.69% Definition: Explaining well-known, fundamental scientific concepts or phenomena using basic language and without requiring prior specialized knowledge.
+4. Medium (Information Retrieval - List Generation) Possibility: 4.08%
+Definition: Listing items from a category with simple, explicit criteria or filters, requiring only basic fact retrieval and minimal reasoning.
+5. Moderate (Information Retrieval - Fact Lookup) Possibility: 2.75%
+Definition: Assessing the physical possibility of straightforward, everyday actions or events that rely on well-known physical laws and typical human abilities.
+Table 13: Failure Cases of the task recognition module of TRouter.
+Prompt of LLM-as-Judge
+You are an expert evaluator. Your task is to score the quality and correctness of a model-generated answer to a given question, using a reference answer as the gold standard.
+You will be given:
+- QUESTION
+- REFERENCE ANSWER (correct)
+- MODEL ANSWER (to evaluate)
+Your goal is to assign a score between **0.0 and 1.0**, where:
+- 1.0 = Fully correct and semantically equivalent to the reference.
+- 0.5 = Partially correct or incomplete
+- 0.0 = Completely incorrect, irrelevant, or nonsensical
+Respond with **only the numeric score**, nothing else.
+---
+QUESTION:
+{question}
+REFERENCE ANSWER:
+{reference_answer}
+MODEL ANSWER:
+{response}.
+Your score:
+Table 14: Prompt of LLM-as-Judge. The {question}, {reference_answer}, and {response} will be instantiated by the question, answer, and response from candidate LLMs.
+TaskTypeGenSystemPrompt = """
+You are a knowledge graph construction expert. Your task is to help build a hierarchical classification system for an intelligent model router called AgenticiRouter.
+AgenticiRouter selects the most appropriate Large Language Model (LLM) based on a user’s query and preferences (e.g., performance, cost-efficiency, latency). To support this, we are building a multi-level taxonomy of query types.
+Each query is classified into a three-level node path:
+Domain — broad task area
+Subcategory — specific task type
+Difficulty Level — complexity level within that task type
+"""
+Table 15: System Prompt of Task type Generation.
+DomainNodeRule = """
+- Domains must be general yet semantically distinct.
+- Avoid overlapping or ambiguous categories.
+- Think of areas commonly found in LLM benchmarks (e.g., MMLU, AGIEval, CMMLU) and real-world applications.
+- These will serve as the top-level nodes of the taxonomy.
+- Only up to {max_new_domain_nodes} new domains can be proposed.
+"""
+SubcategoryNodeRule = """
+- Avoid overlap between subcategories.
+- Each subcategory should represent a common type of user query that can be grouped under this domain.
+- Subcategories should be general enough to cover many user queries but specific enough to guide model selection.
+- Only up to {max_subcategory_nodes} new Subcategory Nodes can be proposed for each domain node.
+"""
+DifficultyLevelNodeRule = """
+- Levels must be ordered from easiest to hardest.
+- Levels should reflect increasing reasoning complexity, token usage, or LLM capability required.
+- Levels should be mutually exclusive — no query should belong to more than one level.
+- Levels should be collectively exhaustive — all queries in this subcategory must be covered.
+- Avoid generic differences like “longer text” unless it reflects actual difficulty in reasoning or generation.
+- Only up to {max_difficulty_level_nodes} Difficulty Level Nodes can be proposed for each Subcategory Node.
+"""
+Table 16: Rules of nodes generation at three different levels, which will be instantiated to corresponding node generation prompts. {max_new_domain_nodes}, {max_subcategory_nodes}, and {max_difficulty_level_nodes} will be set as 4, 10, 5 in our work.
+DomainNodePrompt = TaskTypeGenSystemPrompt + """
+**Step 1: Generate Domain Nodes**
+Generate a list of distinct, non-overlapping **Domain** categories that represent broad types of user tasks.
+We have already defined the following six initial Domains:
+- Mathematics
+- Creative Writing
+- Commonsense Knowledge
+- Programming
+- Long-context Understanding
+- Reading Comprehension
+Please propose **{max_new_domain_nodes} new high-level Domains** that:
+**Rules:**
+{DomainNodeRule}
+**Output Format:**
+For each proposed Domain:
+- Name the Domain
+- Provide a one-sentence definition
+- Include a real-world example query
+**Example:**
+<node begin>
+Domain: Mathematics
+Definition: Covers quantitative problem-solving tasks involving numbers, equations, logic, or formal systems, including arithmetic, algebra, calculus, and more.
+Example: What is the derivative of sin(x)?
+Domain: Creative Writing
+Definition: Involves imaginative or artistic language generation tasks such as writing poems, stories, scripts, or creative descriptions.
+Example: Write a short story about a robot who learns to paint.
+</node end>
+**Output:**
+"""
+Table 17: Prompt of domain domain expansion. {max_new_domain_nodes} will be set as 4 in our work. {DomainNodeRule} will be replaced using rules as shown in the Table. 16.
+SubcategoryNodePrompt = TaskTypeGenSystemPrompt + """
+**Step 2: Generate Subcategories for a Given Domain**
+The current Domain is: {domain_name}
+Domain Definition: {domain_definition}
+Domain Example: {domain_example}
+Please generate a list of fine-grained Subcategories Nodes that represent specific types of tasks or problem types within this domain.
+Please propose **up to {max_subcategory_nodes} new Subcategory Nodes** for each domain node that:
+**Rules:**
+{SubcategoryNodeRule}
+**Output Format:**
+For each proposed Domain:
+- Name the Subcategory
+- Provide a one-sentence definition
+- Include a real-world example query
+Example:
+Assume the Domain is:
+Domain_name: Mathematics
+Domain Definition: Covers quantitative problem-solving tasks involving numbers, equations, logic, or formal systems, including arithmetic, algebra, calculus, and more.
+Domain Example: What is the derivative of sin(x)?
+Then the Subcategory Nodes are:
+<node begin>
+Subcategory: Arithmetic
+Definition: Covers basic arithmetic operations and problem-solving involving numbers, including addition, subtraction, multiplication, and division.
+Example: What is the sum of 123 and 456?
+Subcategory: Algebra
+Definition: Involves solving equations and expressions using variables and algebraic manipulation.
+Example: Solve for x in the equation 2x + 3 = 11.
+...
+</node end>
+**Output:**:
+"""
+Table 18: Prompt of subcategory node generation. {max_subcategory_nodes} will be set as 10 in our work. {SubcategoryNodeRule} will be replaced using rules as shown in the Table. 16. {domain_name}, {domain_definition}, and
+{domain_example} will be replaced by the corresponding domain information.
+DifficultyNodePrompt = TaskTypeGenSystemPrompt + """
+Step 3: Define Difficulty Levels for a Given Subcategory
+You are now working on level 3: **Difficulty Level**. This level captures how task complexity varies **within a specific Subcategory**.
+Please utilize a fixed global scale (e.g., Easy / Medium / Hard for three-level difficulty) as the short name of each level.
+However, the Definition of each level should be customized based on the nature of the specific Subcategory.
+**Input Subcategory Information:**
+- Domain: {domain_name}
+- Subcategory: {subcategory_name}
+- Subcategory Definition: {subcategory_definition}
+- Subcategory Example Query: {subcategory_example}
+Please propose **up to {max_difficulty_level_nodes} Difficulty Level Nodes** that:
+**Rules:**
+{DifficultyLevelNodeRule}
+**Output Format:**
+For each proposed level:
+- Name the Level
+- Provide a one-sentence definition
+- Include a real-world example query
+**Example**(Subcategory: Code Debugging):
+Assume the Subcategory is Code Debugging.
+Definition: Identifying and fixing errors in code snippets written in common programming languages.
+Then the Subcategory Nodes are:
+<node begin>
+Level: Basic
+Definition: Single-line or syntax-only bugs in short, self-contained functions.
+Example: Fix the indentation error in this 5-line Python function.
+Level: Intermediate
+Definition: Logic bugs in medium-length code that require control flow analysis.
+Example: Fix the loop condition that causes an infinite loop in this JavaScript function.
+Level: Advanced
+Definition: Bugs across multiple functions, handling of edge cases, or requiring domain-specific knowledge.
+Example: Fix the bug in this Flask app that breaks when uploading empty files.
+Level: Expert
+Definition: Deep reasoning over large codebases, concurrency, or memory management.
+Example: Fix the deadlock issue in this multi-threaded C++ program handling file writes.
+</node end>
+**Output:**
+"""
+Table 19: Prompt of difficulty node generation. {max_difficulty_level_nodes} will be set as 5 in our work. {DifficultyLevelNodeRule} will be replaced using rules as shown in the Table. 16. {domain_name}, {subcategory_name},{subcategory_definition} and
+{subcategory_example} will be replaced by the corresponding domain and subcategory information.
+NodeRevisePrompt = TaskTypeGenSystemPrompt + """
+You are given a **candidate {node_name} set** for review. Your job is to:
+1. Evaluate whether this candidate {node_name} set needs improvement by checking how well it adheres to the provided generation rules..
+2. If improvement is needed, generate a revised and higher-quality version of the {node_name} set that better satisfies the rules and supports downstream LLM routing decisions.
+Current Candidate {node_name} Set:
+{candidate_node_set}
+**Node Generation Rules:**
+{node_gen_rules}
+**Output Format:**
+<justification>
+Explain whether the current {node_name} set is flawed or could be improved. Mention overlap, vagueness, gaps, etc.
+</justification>
+<revision node begin>
+{node_name_short}: node name
+Definition: One-sentence definition
+Example: Example query or task
+{node_name_short}: node name
+Definition: One-sentence definition
+Example: Example query or task
+</revision node end>
+**Output:**"""
+NodeSetChoicePrompt = TaskTypeGenSystemPrompt + """
+Your Task: You are given **two candidate {node_name} sets**, labeled **Set A** and **Set B**. Your job is to:
+1. Compare both sets based on how well they follow the generation rules.
+2. Select the better set — the one that provides more clarity, distinctiveness, usefulness, and alignment with routing goals.
+3. Justify your choice in detail.
+**Node Generation Rules:**
+{node_gen_rules}
+**Candidate Sets:**
+Set A:
+{candidate_node_set_a}
+Set B:
+{candidate_node_set_b}
+**Output Format:**
+<justification>
+Explain why one set is better than the other. Reference the rules. Mention clarity, distinctiveness, coverage, usefulness, etc.
+</justification>
+<preferred set>
+Set A / Set B
+</preferred set>
+**Output:**
+"""
+Table 20: Prompt of difficulty task type quality evaluator. {node_name} represents the level of task type trees, including domain, subcategory, and difficulty. {node_gen_rules} will be replaced using rules corresponding to {node_name} level, as shown in the Table. 16. {candidate_node_set_a} and {candidate_node_set_b} will be replaced by the original and revised node set.
+QAGenPrompts = """
+You are a helpful assistant that generates high-quality question-answer pairs.
+You must respond with a specific format using markers to structure your output.
+IMPORTANT: Your response must follow this exact format:
+<qa_pairs begin>
+Q: What is 2+2?
+A: 2+2 equals 4
+Q: What is the capital of France?
+A: The capital of France is Paris
+Q: How does photosynthesis work?
+A: Photosynthesis is the process by which plants convert sunlight into energy.
+</qa_pairs end>
+Rules:
+- Start with <qa_pairs begin> and end with </qa_pairs end>
+- Each QA pair should be separated by a blank line
+- Use "Q:" for questions and "A:" for answers
+- Ensure questions are clear, relevant, and the answers are accurate and comprehensive""" +
+{TaskProfile} + """Please generate {question_num} different question-answer pairs according to all the above specifications.
+The questions should be clear, relevant, and the answers should be comprehensive and accurate.
+Focus on creating diverse questions that cover different aspects of the topic."""
+DomainNodeProfile = """
+Task Domain: {domain_name}
+Domain Definition:
+{domain_definition}"""
+SubcategoryNodeProfile = """
+Task Domain: {domain_name}
+Domain Definition: {domain_definition}
+Task Subcategory: {subcategory_name}
+Subcategory Definition: {subcategory_definition}"""
+DifficultyNodeProfile = """
+Task Domain: {domain_name}
+Domain Definition: {domain_definition}
+Task Subcategory: {subcategory_name}
+Subcategory Definition: {subcategory_definition}
+Task Difficulty: {difficulty_name}
+Difficulty Definition: {difficulty_definition}"""
+Table 21: Prompt of question generator using task profile of different levels. {question_num} will be set as 8 in our work. Other variable with { and } will be replaced with the information of different task types and their parent nodes.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

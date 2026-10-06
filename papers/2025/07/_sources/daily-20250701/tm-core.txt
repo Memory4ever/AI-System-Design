@@ -1,0 +1,909 @@
+Transition Matching: Scalable and Flexible Generative Modeling
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Transition Matching
+2.1 General framework
+2.2 Transition Matching made practical
+3 Related work
+4 Experiments
+4.1 Main results: Text-to-image generation
+4.2 Evaluations
+5 Conclusions
+References
+A Experiments
+A.1 Implementation details
+DiT architecture
+LLM architecture
+Flow head architecture
+Optimization
+Classifier free guidance
+A.2 Main results: Text-to-image generation
+Additional Kernels and Baselines
+Flow head NFE
+TM steps vs Flow head NFE for DTM
+A.3 Sampling efficiency
+A.4 Dependent vs. independent linear process
+A.5 DTM Kernel expressiveness
+A.6 Scheduler ablation for independent linear process
+A.7 Additional generated images comparison
+A.8 Generation process visualization
+A.9 Classifier free guidance sensitivity
+B Training and sampling algorithms
+C Convergence of DTM to flow matching
+C.1 The DTM case
+License: CC BY 4.0
+arXiv:2506.23589v1 [cs.LG] 30 Jun 2025
+Transition Matching: Scalable and Flexible Generative Modeling
+Neta Shaul
+Affiliation: Weizmann Institute of
+Science
+Affiliation: Work done during internship at FAIR at Meta
+Joint first author
+Uriel Singer
+Affiliation: FAIR at Meta
+Joint first author
+Itai Gat
+Affiliation: FAIR at Meta
+Yaron Lipman
+Affiliation: FAIR at Meta
+Abstract
+Diffusion and flow matching models have significantly advanced media generation, yet their design space is well-explored, somewhat limiting further improvements. Concurrently, autoregressive (AR) models, particularly those generating continuous tokens, have emerged as a promising direction for unifying text and media generation. This paper introduces Transition Matching (TM), a novel discrete-time, continuous-state generative paradigm that unifies and advances both diffusion/flow models and continuous AR generation. TM decomposes complex generation tasks into simpler Markov transitions, allowing for expressive non-deterministic probability transition kernels and arbitrary non-continuous supervision processes, thereby unlocking new flexible design avenues. We explore these choices through three TM variants: (i) Difference Transition Matching (DTM), which generalizes flow matching to discrete-time by directly learning transition probabilities, yielding state-of-the-art image quality and text adherence as well as improved sampling efficiency. (ii) Autoregressive Transition Matching (ARTM) and (iii) Full History Transition Matching (FHTM) are partially and fully causal models, respectively, that generalize continuous AR methods. They achieve continuous causal AR generation quality comparable to non-causal approaches and potentially enable seamless integration with existing AR text generation techniques. Notably, FHTM is the first fully causal model to match or surpass the performance of flow-based methods on text-to-image task in continuous domains.
+We demonstrate these contributions through a rigorous large-scale comparison of TM variants and relevant baselines, maintaining a fixed architecture, training data, and hyperparameters.
+††correspondence: First Author at neta.shaul@weizmann.ac.il, urielsinger@meta.com
+1 Introduction
+Recent progress in diffusion models and flow matching has significantly advanced media generation (images, video, audio), achieving state-of-the-art results (Patrick et al., 2021; Labs, 2024; Polyak et al., ; Chen et al., 2024). However, the design space of these methods has been extensively investigated (Song et al., 2021; Karras et al., 2022; Nichol and Dhariwal, 2021; Shaul et al., 2023; Dhariwal and Nichol, 2021), potentially limiting further significant improvements with current modeling approaches.
+An alternative direction focuses on autoregressive (AR) models to unify text and media generation. Earlier approaches generated media as sequences of discrete tokens either in raster order (Ramesh et al., 2021; Yu et al., 2022; Dhariwal et al., 2020); or in random order (Chang et al., 2022). Further advancement was shown by switching to continuous token generation (Li et al., 2024; Tschannen et al., 2024), while also improving performance at scale (Fan et al., 2024).
+This paper introduces Transition Matching (TM), a general discrete-time continuous-state generation paradigm that unifies diffusion/flow models and continuous AR generation. TM aims to advance both paradigms and create new state-of-the-art generative models. Similar to diffusion/flow models, TM breaks down complex generation tasks into a series of simpler Markov transitions. However, unlike diffusion/flow, TM allows for expressive non-deterministic probability transition kernels and arbitrary non-continuous supervision processes, offering new and flexible design choices.
+We explore these design choices and present three TM variants:
+(i) Difference Transition Matching (DTM): A generalization of flow matching to discrete time, DTM directly learns the transition probabilities of consecutive states in the linear (Cond-OT) process instead of just its expectation. This straightforward approach yields a state-of-the-art generation model with improved image quality and text adherence, as well as significantly faster sampling.
+(ii) Autoregressive Transition Matching (ARTM) and (iii) Full History Transition Matching (FHTM): These partially and fully causal models (respectively) generalize continuous AR models by incorporating a multi-step generation process guided by discontinuous supervising processes. ARTM and FHTM achieve continuous causal AR generation quality comparable to non-causal methods. Importantly, their causal nature allows for seamless integration with existing AR text generation methods. FHTM is the first fully causal model to match or surpass the performance of flow-based methods in continuous domains.
+In summary, our contributions are:
+1.
+Formulating transition matching: simplified and generalized discrete-time generative models based on matching transition kernels.
+2.
+Identifying and exploring key design choices, specifically the supervision process, kernel parameterization, and modeling paradigm.
+3.
+Introducing DTM, which improves upon state-of-the-art flow matching in image quality, prompt alignment, and sampling speed.
+4.
+Introducing ARTM and FHTM: partially and fully causal AR models (resp.) that match non-AR generation quality and state-of-the-art prompt alignment.
+5.
+Presenting a fair, large-scale comparison of the different TM variants and relevant baselines using a fixed architecture, data, and training hyper-parameters.
+FM
+MAR
+FHTM (Ours)
+DTM (Ours)
+“A portrait of a metal statue of a pharaoh wearing steampunk glasses and a leather jacket over a white t-shirt that has a drawing of a space shuttle on it.”
+“A solitary figure shrouded in mists peers up from the cobble stone street at the imposing and dark gothic buildings surrounding it. an old-fashioned lamp shines nearby. oil painting.”
+Figure 1: Transition Matching methods (FHTM and DTM) compared to baselines (FM and MAR) under a fixed architecture, dataset and training hyper-parameters.
+2 Transition Matching
+We start by describing the framework of Transition Matching (TM), which can be seen as a simplified and general discrete time formulation for diffusion/flow models. Then, we focus on several, unexplored TM design choices and instantiations that goes beyond diffusion/flow models. In particular: we consider more powerful transition kernels and/or discontinuous noise-to-data processes. In the experiments section we show these choices lead to state-of-the-art image generation methods.
+2.1 General framework
+Notation
+We use capital letters X,Y,Z,A,BX,Y,Z,A,B to denote random variables (RVs) and lower-case letter x,y,z,a,bx,y,z,a,b to denote their particular states. One exception is time tt where we abuse notation a bit and use it to denote both particular times and a RV. All our variables and states reside in euclidean spaces x∈ℝdx\in\mathbb{R}^{d}. The probability density function (PDF) of a random variable YY is denoted pY​(x)p_{Y}(x). For RVs XtX_{t} (and only for them) we use the simpler PDF notation pt​(xt)p_{t}(x_{t}). We use the standard notations for joints pX,Y​(x,y)p_{X,Y}(x,y) and conditional densities pX|Y​(x|y)p_{X|Y}(x|y) densities. We denote [T]={0,1,…,T}[T]=\left\{0,1,\ldots,T\right\}.
+Problem definition
+Given a training set of i.i.d. samples from an unknown target distribution pTp_{T}, and some easy to sample source distribution p0p_{0}. Our goal is to learn a Markov Process, defined by a probability transition kernel pt+1|tθ​(xt+1|xt)p_{t+1|t}^{\theta}(x_{t+1}|x_{t}), where t∈[T−1]t\in[T-1] taking us from X0∼p0X_{0}\sim p_{0} to XT∼pTX_{T}\sim p_{T}. That is, we define a series of random variables (Xt)t∈[T](X_{t})_{t\in[T]} such that X0∼p0X_{0}\sim p_{0} and
+Xt+1∼pt+1|tθ(⋅|Xt) for all t∈[T−1] then XT∼pT.X_{t+1}\sim p^{\theta}_{t+1|t}(\cdot|X_{t})\text{ for all }t\in[T-1]\text{ then }X_{T}\sim p_{T}.
+(1)
+XTX_{T}X0,…,XT−1X_{0},\ldots,X_{T-1}
+Figure 2: Supervising process.
+Supervising process
+Training such a Markov process is done with the help of a supervising process, which is a stochastic process (X0,X1,…,XT)(X_{0},X_{1},\ldots,X_{T}) defined given data samples XTX_{T} using a conditional process q0,…,T−1|Tq_{0,\ldots,T-1|T}, i.e.,
+q0,…,T​(x0,…,xT)=q0,…,T−1|T​(x0,…,xT−1|xT)​pT​(xT),q_{0,\ldots,T}(x_{0},\ldots,x_{T})=q_{0,\ldots,T-1|T}(x_{0},\ldots,x_{T-1}|x_{T})p_{T}(x_{T}),
+(2)
+and q0,…,Tq_{0,\ldots,T} denotes the joint probability of the supervising process (Xt)t∈T(X_{t})_{t\in T}. The only constraint on the conditional process is that its marginal at time t=0t=0 is the easy to sample distribution p0p_{0}, i.e.,
+q0=p0.\displaystyle q_{0}=p_{0}.
+(3)
+Note that this definition is very general and allows, for example, arbitrary non-continuous processes, and indeed we utilize such a process below. Transition matching engages with the supervising process (Xt)t∈T(X_{t})_{t\in T} by sampling pairs of consecutive states (Xt,Xt+1)∼qt,t+1(X_{t},X_{t+1})\sim q_{t,t+1}, t∈[T−1]t\in[T-1].
+Loss The model pt+1|tθp^{\theta}_{t+1|t} is trained to transition between consecutive states Xt→Xt+1X_{t}\rightarrow X_{t+1} in the sense of equation 1 by regressing qt+1|tq_{t+1|t} defined from the supervising process qq. This motivates the loss utilizing a distance/divergence DD between distributions
+ℒ⁡(θ)\displaystyle{\mathcal{L}}(\theta)
+=𝔼t,XtD(qt+1|t(⋅|Xt),pt+1|tθ(⋅|Xt)),\displaystyle=\mathbb{E}_{t,X_{t}}D\big(q_{t+1|t}(\cdot|X_{t}),p^{\theta}_{t+1|t}(\cdot|X_{t})\big),
+(4)
+where tt is sampled uniformly from [T−1][T-1]. However, this loss requires evaluating qt+1|tq_{t+1|t} which is usually hard to compute. Therefore, to make the training tractable we require that the distance DD has an empirical form, i.e., can be expressed as an expectation of an empirical one-sample loss D^\hat{D} over target samples. We define the loss
+ℒ⁡(θ)\displaystyle{\mathcal{L}}(\theta)
+=𝔼t,Xt𝔼Xt+1D^(Xt+1,pθt+1|t(⋅|Xt))⏞D​ in empirical form=𝔼t,Xt,Xt+1D^(Xt+1,pt+1|tθ(⋅|Xt)),\displaystyle=\mathbb{E}_{t,X_{t}}\overbrace{\mathbb{E}_{X_{t+1}}\hat{D}(X_{t+1},p^{\theta}_{t+1|t}(\cdot|X_{t}))}^{D\text{ in empirical form}}=\mathbb{E}_{t,X_{t},X_{t+1}}\hat{D}\big(X_{t+1},p^{\theta}_{t+1|t}(\cdot|X_{t})\big),
+(5)
+where (Xt,Xt+1)(X_{t},X_{t+1}) are sampled from the joint qt,t+1q_{t,t+1} with the help of equation 2, namely, first sample data XT∼pTX_{T}\sim p_{T} and then (Xt,Xt+1)∼qt,t+1|T(⋅|XT)(X_{t},X_{t+1})\sim q_{t,t+1|T}(\cdot|X_{T}). Notably, equation 5 can be used to learn arbitrary transition kernels, in contrast to e.g., Gaussian kernels used in discrete time diffusion models or deterministic kernels used in flow matching. The particular choice of the cost DD depends on the modeling paradigm chosen for the transition kernel pt+1|tθp^{\theta}_{t+1|t}, and discussed later.
+Algorithm 1  Transition Matching Training
+1:
+pTp_{T} ⊳\triangleright Data
+2:
+qt,Y|Tq_{t,Y|T} ⊳\triangleright Process
+3:
+TT ⊳\triangleright Number of TM steps
+4:
+while not converged do
+5:
+Sample t∼𝒰⁡([T−1])t\sim\mathcal{U}([T\!-\!1]), XT∼pTX_{T}\sim p_{T}
+6:
+Sample (Xt,Y)∼qt,Y|T(⋅|XT)(X_{t},Y)\sim q_{t,Y|T}(\cdot|X_{T})
+7:
+ℒ(θ)←D^(Y,pY|tθ(⋅|Xt))\mathcal{L}(\theta)\leftarrow\hat{D}(Y,p^{\theta}_{Y|t}(\cdot|X_{t}))
+8:
+θ←θ−γ​∇θℒ\theta\leftarrow\theta-\gamma\nabla_{\theta}\mathcal{L} ⊳\triangleright Optimization step
+9:
+end while
+10:
+return θ\theta
+Algorithm 2  Transition Matching Sampling
+1:
+p0p_{0} ⊳\triangleright Source distribution
+2:
+pY|tθp^{\theta}_{Y|t} ⊳\triangleright Trained model
+3:
+qt+1|t,Yq_{t+1|t,Y} ⊳\triangleright Parametrization
+4:
+TT ⊳\triangleright Number of TM steps
+5:
+Sample X0∼p0X_{0}\sim p_{0}
+6:
+for t=0t=0 to T−1T-1 do
+7:
+Sample Y∼pY|tθ(⋅|Xt)Y\sim p^{\theta}_{Y|t}(\cdot|X_{t})
+8:
+Sample Xt+1∼qt+1|t,Y(⋅|Xt,Y)X_{t+1}\sim q_{t+1|t,Y}(\cdot|X_{t},Y)
+9:
+end for
+10:
+return XTX_{T}
+Kernel parameterizations The first and natural option to parameterize pt+1|tθp_{t+1|t}^{\theta} is to regress qt+1|tq_{t+1|t} directly as is done in equation 5. This turns out to be a good modeling choice in certain cases. However, in some cases one can use other parameterizations that turn out to be beneficial, as is also done for flow and diffusion models. To do that in the general case, we use the law of total probability applied to the conditional probabilities qt+1|tq_{t+1|t} with some latent RV YY:
+qt+1|t​(xt+1|xt)=∫qt+1|t,Y​(xt+1|xt,y)​qY|t​(y|xt)​𝑑y,q_{t+1|t}(x_{t+1}|x_{t})=\int q_{t+1|t,Y}(x_{t+1}|x_{t},y)q_{Y|t}(y|x_{t})\mathrm{d}y,
+(6)
+where qY|tq_{Y|t} is the posterior distribution of YY given Xt=xtX_{t}=x_{t} and qt+1|t,Yq_{t+1|t,Y} is easy to sample (often a deterministic function of XtX_{t} and YY). Then the posterior of YY is set as the new target of the learning process instead of the transition kernel. That is, instead of the loss in equation 5 we consider
+ℒ(θ)=𝔼t,Xt,YD^(Y,pY|tθ(⋅|Xt)).\displaystyle{\mathcal{L}}(\theta)=\mathbb{E}_{t,X_{t},Y}\hat{D}\big(Y,p^{\theta}_{Y|t}(\cdot|X_{t})\big).
+(7)
+Similarly, during training, sampling from the joint (Xt,Y)∼qt,Y(X_{t},Y)\sim q_{t,Y}, is accomplished by first sampling data XTX_{T} and then (Xt,Y)∼qt,Y|T(⋅|Xt)(X_{t},Y)\sim q_{t,Y|T}(\cdot|X_{t}).
+Once the posterior pY|tθp^{\theta}_{Y|t} is trained, sampling from the transition pt+1|tθp^{\theta}_{t+1|t} during inference is done with the help of equation 6.
+To summarize, in cases we want to use non-trivial kernel parameterization, i.e., Y≠Xt+1Y\neq X_{t+1}, we sample from qt+1|t,Yq_{t+1|t,Y} (in sampling) and qt,Y|Tq_{t,Y|T} (in training). See Algorithms 1 and 2 the training and sampling pseudocodes.
+Kernel modeling Once a desirable YY is identified, the remaining part is to choose a generative model for the kernel pY|tθp_{Y|t}^{\theta}. Importantly, one of the key advantages in TM comes from choosing expressive kernels that result in more elaborate transition kernels than used previously.
+A kernel modeling is set by a choice of a probability model for pY|tθp^{\theta}_{Y|t} and a loss to learn it. We denote the probability model choice by B|AB|A, where AA denotes the condition and BB the target. For example, Y|XtY|X_{t} will denote a model that predicts a sample of YY given a sample of XtX_{t}. We will also use more elaborate probability models, such as autoregressive models. To this end, consider the state YY reshaped into individual tokens Y=(Y1,…,Yn)Y=(Y^{1},\ldots,Y^{n}), and then Yi|(Y<i,Xt)Y^{i}|\left(Y^{<i},X_{t}\right) means that our model samples the token YiY^{i} given previous tokens of YY, Y<i=(Y1,…,Yi−1)Y^{<i}=(Y^{1},\ldots,Y^{i-1}), and XtX_{t}.
+All our models are learned with flow matching (FM) loss. For completeness, we provide the key components of flow matching formulated generically to learn to sample from B|AB|A. Individual states of AA and BB are denoted aa and bb, respectively. Flow matching models pB|Aθp^{\theta}_{B|A} via a velocity field usθ​(b|a)u_{s}^{\theta}(b|a) that is used to sample from pB|Aθ(⋅|a)p^{\theta}_{B|A}(\cdot|a) by solving the Ordinary Differential Equation (ODE)
+d​Bsd​s=usθ​(Bs|a)\frac{\mathrm{d}B_{s}}{\mathrm{d}s}=u_{s}^{\theta}(B_{s}|a)
+(8)
+initializing with a sample B0∼𝒩⁡(0,I)B_{0}\sim{\mathcal{N}}(0,I) (the standard normal distribution) and solving until t=1t=1. In turn, B1B_{1} is the desired sample, i.e., B1∼pB|Aθ(⋅|a)B_{1}\sim p^{\theta}_{B|A}(\cdot|a). The loss DD, used to train FM, has an empirical form and minimizes the difference between qB|Aq_{B|A} and pB|Aθp^{\theta}_{B|A},
+D^(B,pB|Aθ(⋅|a))=𝔼s,B0‖usθ(Bs|a)−(B−B0)‖2,\hat{D}\big(B,p^{\theta}_{B|A}(\cdot|a)\big)=\mathbb{E}_{s,B_{0}}\left\|u_{s}^{\theta}(B_{s}|a)-(B-B_{0})\right\|^{2},
+(9)
+where ss is sampled uniformly in [0,1][0,1], B0∼𝒩⁡(0,I)B_{0}\sim{\mathcal{N}}(0,I), B∼qB|A(⋅|a)B\sim q_{B|A}(\cdot|a), and Bs=(1−s)​B0+s​BB_{s}=(1-s)B_{0}+sB.
+We summarize the key design choices in Transition Matching:
+TM design:
+Supervising process
+Parametrization
+Modeling
+qq
+YY
+B|AB|A
+2.2 Transition Matching made practical
+The key contribution of this paper is identifying previously unexplored design choices in the TM framework that results in effective generative models. We focus on two TM variants: Difference Transition Matching (DTM), and Autoregressive Transition Matching (ARTM/FHTM).
+Difference Transition Matching Our first instance of TM makes the following choices:
+DTM:
+Supervising process
+Parametrization
+Modeling
+XtX_{t} linear
+Y=XT−X0Y=X_{T}-X_{0}
+B=Y|A=(t,Xt)B=Y\,|\,A=(t,X_{t})
+As the supervising process qq we use the standard linear process (a.k.a., Conditional Optimal Transport), defined by
+Xt=(1−tT)​X0+tT​XT,t∈[T],X_{t}=\left(1-\frac{t}{T}\right)X_{0}+\frac{t}{T}X_{T},\qquad t\in[T],
+(10)
+where X0∼p0=𝒩⁡(0,I)X_{0}\sim p_{0}={\mathcal{N}}(0,I) and XT∼pTX_{T}\sim p_{T}. This is the same process used in (Lipman et al., 2022; Liu et al., 2022). For the kernel parameterization YY we will use the difference latent (see Figure 3, left),
+Y=XT−X0.Y=X_{T}-X_{0}.
+(11)
+Figure 3: Difference prediction given XtX_{t} (left) and flow matching velocity ut​(Xt)u_{t}(X_{t}) (right).
+During training, sampling qt,Y|T(⋅|XT)q_{t,Y|T}(\cdot|X_{T}) (i.e., given XTX_{T}) is done by sampling X0X_{0}, and using 10 and 11 to compute Xt,YX_{t},Y. Using the definition in 10 and rearranging gives
+Xt+1=Xt+1T​Y,X_{t+1}=X_{t}+\frac{1}{T}Y,
+(12)
+and this equation can be used to sample from qt+1|t,Y(⋅|Xt,Y)q_{t+1|t,Y}(\cdot|X_{t},Y) during inference. See Figure 4 for an illustration of a sampled path from this supervising process. We learn to sample from the posterior pY|tθ≈qY|tp^{\theta}_{Y|t}\approx q_{Y|t} using flow matching with A=(t,Xt)A=(t,X_{t}) and B=YB=Y. This means we learn a velocity field usθ​(y|t,xt)u_{s}^{\theta}(y|t,x_{t}) and train it with Algorithm 1 and the CFM loss in equation 9. Note that in this case one can also learn a continuous time t∈[0,T]t\in[0,T] which allows more flexible sampling.
+Figure 4: DTM path, eq. 12.
+The last remaining component is choosing the architecture for usθu_{s}^{\theta}. Let x=(x1,…,xn)x=(x^{1},\ldots,x^{n}) be a reshaped state to nn tokens. For example, each xix^{i} can represent a patch in an image xx. Next, note that in each transition step we need to sample Y∼pY|tθ(⋅|Xt)Y\sim p^{\theta}_{Y|t}(\cdot|X_{t}) by approximating the solution of the ODE in equation 8. Therefore, to keep the sampling process efficient, we follow (Li et al., 2024) and use a small head gθg^{\theta} that generates all tokens in a batch and is fed with latents from a large backbone fθf^{\theta}. Our velocity model is defined as
+usθ​(y|t,xt)=[gs,tθ​(y1,ht1),…,gs,tθ​(yn,htn)],u_{s}^{\theta}(y|t,x_{t})=\left[g_{s,t}^{\theta}(y^{1},h_{t}^{1}),\ldots,g_{s,t}^{\theta}(y^{n},h_{t}^{n})\right],
+(13)
+where htih_{t}^{i} is the ii-th output token of the backbone, i.e., [ht1,ht2,…,htn]=ftθ​(xt)[h_{t}^{1},h_{t}^{2},\ldots,h_{t}^{n}]=f_{t}^{\theta}(x_{t}). See Figure 5 (DTM) for an illustration of this architecture. One limitation of this architecture worth mentioning is that in each transition step, each token yiy^{i} is generated independently, which limits the power of this kernel. We discuss this in the experiments section but nevertheless demonstrate that DTM with this architecture still leads to state-of-the-art image generation model.
+Connection to flow matching
+Although flow matching (Lipman et al., 2022; Liu et al., 2022; Albergo and Vanden-Eijnden, 2022) is a deterministic process while DTM samples from a stochastic transition kernel in each step, a connection between the two is revealed by noting that the expectation of a DTM step coincides with Flow Matching Euler step, i.e.,
+𝔼⁡[Y|Xt=x]=𝔼⁡[XT−X0|Xt=x]=ut​(x),\displaystyle\mathbb{E}\left[Y|X_{t}=x\right]=\mathbb{E}\left[X_{T}-X_{0}|X_{t}=x\right]=u_{t}(x),
+(14)
+which is exactly the marginal velocity in flow matching, see Figure 3. In fact, as T→∞T\rightarrow\infty (or equivalently, steps are getting smaller), DTM is becoming more and more deterministic, converging to FM with Euler step, providing a novel and unexpected elementary proof (i.e., without the continuity equation) for FM marginal velocity. In Appendix C we prove
+Theorem 1.
+(informal)
+As the number of steps increases, T→∞T\rightarrow\infty, DTM converges to Euler step FM,
+Xt+k≈xt+kT​𝔼​[XT−X0|Xt=xt],X_{t+k}\approx x_{t}+\frac{k}{T}\mathbb{E}\left[X_{T}-X_{0}|X_{t}=x_{t}\right],
+as k/T→0k/T\rightarrow 0, where XℓX_{\ell}, ∀ℓ>t\forall\ell>t is defined by Algorithm 2 with a optimally trained pY|tθp^{\theta}_{Y|t}.
+We attribute the empirical success of DTM over flow matching to its more elaborate kernel.
+DTM
+ARTM
+FHTM
+Figure 5: Architectures of the methods suggested in the paper. Backbone (orange) is the main network (transformer); head (green) is a small network (2% backbone parameters); blue tokens use full attention, gray tokens are causal; usiu_{s}^{i} is the output velocity.
+Autoregressive Transition Matching Our second instance of TM is geared towards incorporating state-of-the-art media generation in autoregressive models, and utilizes the following choices:
+ARTM:
+Supervising process
+Parametrization
+Modeling
+XtX_{t} independent linear
+Y=Xt+1Y=X_{t+1}
+B=Yi|A=(t,Xt,Xt+1<i)B=Y^{i}\,|\,A=(t,X_{t},X_{t+1}^{<i})
+Figure 6: Linear process (left) and independent linear process (right) showing possible Xt+1X_{t+1} given a sample XtX_{t}. The independent process has much wider support for Xt+1X_{t+1} given XtX_{t}.
+In this case we use a novel supervising process we call independent linear process, defined by
+Xt=(1−tT)​X0,t+tT​XT,t∈[T],X_{t}=\left(1-\frac{t}{T}\right)X_{0,t}+\frac{t}{T}X_{T},\ t\in[T],
+(15)
+where X0,t∼𝒩⁡(0,I)X_{0,t}\sim{\mathcal{N}}(0,I), t∈[T]t\in[T] are all i.i.d. samples. Sampling qt,t+1|T(⋅|XT)q_{t,t+1|T}(\cdot|X_{T}) is done by sampling X0,tX_{0,t} and X0,t+1X_{0,t+1} and using 15. Although the independent linear process has the same marginals qtq_{t} as the linear process in equation 10, it enjoys better regularity of the conditional qt+1|t(⋅|xt)q_{t+1|t}(\cdot|x_{t}), see Figure 6 for an illustration, and as demonstrated later in experiments is key for building state-of-the-art Autoregressive image generation models.
+For the transition kernel we use an Autoregressive
+(AR) model with the choice of Y=Xt+1Y=X_{t+1}. As before, we let a state written as series of tokens x=(x1,…,xn)x=(x^{1},\ldots,x^{n}) and write the target kernel qt+1|tq_{t+1|t} using the probability chain rule (as usual in AR modeling),
+qt+1|t​(Xt+1|Xt)=∏i=1nqt+1|ti​(Xt+1i|Xt,Xt+1<i),\displaystyle q_{t+1|t}(X_{t+1}|X_{t})=\prod_{i=1}^{n}q_{t+1|t}^{i}(X_{t+1}^{i}|X_{t},X_{t+1}^{<i}),
+where Xt+1<1X_{t+1}^{<1} is the empty state. We will learn to sample from qt+1|tiq^{i}_{t+1|t} using FM with A=(t,Xt,Xt+1<i)A=(t,X_{t},X_{t+1}^{<i}) and B=Xt+1iB=X_{t+1}^{i}. That is, we learn a velocity field usθ​(yi|t,xt,xt+1<i)u_{s}^{\theta}(y^{i}|t,x_{t},x_{t+1}^{<i}) trained with the CFM loss in equation 9. This method builds upon the initial idea (Li et al., 2024) that uses such AR modeling to map in a single transition step from X0X_{0} to XTX_{T} using diffusion, and in that sense ARTM is a generalization of that method.
+Lastly the architecture for usθu_{s}^{\theta} is based on a similar construction to DTM with a few, rather minor changes. Using the same notation for the head gθg^{\theta} and backbone fθf^{\theta} models we define
+usθ​(yi|t,xt,xt+1<i)=gs,tθ​(yi,ht+1i),u_{s}^{\theta}(y^{i}|t,x_{t},x_{t+1}^{<i})=g_{s,t}^{\theta}(y^{i},h_{t+1}^{i}),
+(16)
+with ht+1i=ftθ​(xt,xt+1<i)h_{t+1}^{i}=f_{t}^{\theta}(x_{t},x_{t+1}^{<i}). Figure 5 (ARTM) shows an illustration of this architecture.
+Full-History ARTM We consider a variant of ARTM that allows full "teacher-forcing" training and consequently provides a good candidate to be incorporated into multimodal AR model.
+FHTM:
+Supervising process
+Parametrization
+Modeling
+X≤tX_{\leq t} independent linear
+Y=Xt+1Y=X_{t+1}
+B=Yi|A=(X0,…,Xt,Xt+1<i)B=Y^{i}\,|\,A=(X_{0},\ldots,X_{t},X_{t+1}^{<i})
+The idea is to use the full history of states, namely considering the kernel
+qt+1|0,…,t​(Xt+1|X0,…,Xt)=∏i=1nqt+1|0,…,ti​(Xt+1i|X0,…,Xt,Xt+1<i),\displaystyle q_{t+1|0,\ldots,t}(X_{t+1}|X_{0},\ldots,X_{t})=\prod_{i=1}^{n}q_{t+1|0,\ldots,t}^{i}(X_{t+1}^{i}|X_{0},\ldots,X_{t},X_{t+1}^{<i}),
+(17)
+and train an FM sampler from qt+1|0,…,tiq^{i}_{t+1|0,\ldots,t} with the choices A=(X0,…,Xt,Xt+1<i)A=(X_{0},\ldots,X_{t},X_{t+1}^{<i}) (no need to add time tt due to the full state sequence) and B=Xt+1iB=X_{t+1}^{i}. The architecture of the velocity usu_{s} is defined by
+usθ​(yi|x0,…,xt,xt+1<i)=gsθ​(yi,ht+1i),u_{s}^{\theta}(y^{i}|x_{0},\ldots,x_{t},x_{t+1}^{<i})=g_{s}^{\theta}(y^{i},h_{t+1}^{i}),
+(18)
+with ht+1i=fθ​(x0,…,xt,xt+1<i)h_{t+1}^{i}=f^{\theta}(x_{0},\ldots,x_{t},x_{t+1}^{<i}) and we take ff to be fully causal. See Figure 5 (FHTM).
+3 Related work
+Diffusion and flows We draw the connection to previous works from the perspective of transition matching. Diffusion models (Sohl-Dickstein et al., 2015; Ho et al., 2020; Song et al., 2022; Kingma et al., 2023) can be seen as an instance of TM by choosing DD in the loss (5) to be the KL divergence, derived in diffusion literature as the variational lower bound (Kingma et al., 2013). The popular ϵ{\epsilon}-prediction (Ho et al., 2020) in transition matching formulation is achieved by the design choices
+ϵ{\epsilon}-prediction:
+Supervising process
+Parametrization
+Modeling
+Xt=σt​X0+αt​XTX_{t}=\sigma_{t}X_{0}+\alpha_{t}X_{T}
+Y=X0Y=X_{0}
+Y|Xt∼𝒩⁡(Y|ϵtθ​(Xt),wt2​I)Y|X_{t}\sim{\mathcal{N}}\left(Y|\ {\epsilon}_{t}^{\theta}(X_{t}),w_{t}^{2}I\right)
+where (σt,αt)(\sigma_{t},\alpha_{t}) is the scheduler, and non-zero wtw_{t} reproduces the sampling algorithm in (Ho et al., 2020), while taking the limit wt→0w_{t}\rightarrow 0 yields the sampling of (Song et al., 2022). Similarly, xx-prediction (Kingma et al., 2023) is achieved by the parametrization Y=XTY=X_{T}. In contrast to these work, our TM instantiations use more expressive kernel modeling. Relation to flow matching(Lipman et al., 2022; Liu et al., 2022; Albergo and Vanden-Eijnden, 2022) is discussed in Section 2.2. Generator matching (Holderrieth et al., 2025) generalizes diffusion and flow models to general continuous time Markov process modeled with arbitrary generators, while we focus on discrete time Markov processes.
+Another line of works adopted supervision processes that transition between different resolutions; (Jin et al., 2025) used flow matching with a particular coupling between different resolution as the kernel modeling; (Yuan et al., 2024) implemented a similar scheme but allowed the FM to be dependent on the previous states (frames) in an AR manner.
+Autoregressive image generation Early progress in text-to-image generation was achieved using autoregressive models over discrete latent spaces (Ramesh et al., 2021; Ding et al., 2021; Yu et al., 2022), with recent advances (Tian et al., 2024; Sun et al., 2024; Han et al., 2024) claiming to surpass flow-based approaches. A complementary line of work explores autoregressive modeling directly in continuous space (Li et al., 2024; Tschannen et al., 2024), demonstrating some advantages over discrete methods. In (Fan et al., 2024) this direction is scaled further, achieving SOTA results. In our experiments we compare these models in controlled setting and show that our autoregressive transition matching variants improves upon these models and achieves SOTA text-to-image performance with a fully causal architecture.
+FM
+MAR
+FHTM (Ours)
+DTM (Ours)
+FM
+MAR
+FHTM (Ours)
+DTM (Ours)
+“A richly textured oil painting of a young badger delicately sniffing a yellow rose next to a tree trunk. A small waterfall can be seen in the background.”
+“a robot holding a sign with "Let’s PAINT!" written on it”
+“The Statue of Liberty with the face of an owl”
+“a blue airplane taxiing on a runway with the sun behind it”
+“a racoon holding a shiny red apple over its head”
+“A green sign that says "Very Deep Learning" and is at the edge of the Grand Canyon.”
+Figure 7: Samples comparison of our DTM, FHTM vs. FM, and MAR; Images were generated on similar DiT models trained for 1M iterations.
+4 Experiments
+We evaluate the performance of our Transition Matching (TM) variants—Difference TM (DTM), with T=32T=32 TM steps, Autoregressive TM (ARTM-2,3) with T=2,3T=2,3 (resp.), and Full History TM (FHTM-2,3) with T=2,3T=2,3 (resp.) — on the text-to-image generation task. In Appendix B we provide training and sampling pseudocodes of the three variants in Algorithms 3-8, and python code for training in Figures 25,26, and 27.
+Our baselines include flow matching (FM) (Esser et al., 2024), continuous-token autoregressive (AR) and masked AR (MAR) (Li et al., 2024), and discrete-token AR (Yu et al., 2022) and MAR (Chang et al., 2022). For continuous-token MAR we include two baselines: the original truncated Gaussian scheduler version (Li et al., 2024), and the cosine scheduler used by Fluid (MAR-Fluid) (Fan et al., 2024).
+Datasets and metrics Training dataset is a collection of 350M licensed Shutterstock image-caption pairs. Images are of 256×256×3256\times 256\times 3 resolution and captions span 1–128 tokens embedded with the CLIP tokenizer (Radford et al., 2021). Consistent with prior work (Rombach et al., 2022), for continuous state space, the images are embedded using the SDXL-VAE (Podell et al., 2023) into a 32×32×432\times 32\times 4 latent space, and subsequently all model training are done within this latent space. For discrete state space, images are tokenized with Chameleon-VQVAE (Chameleon-Team, 2025).
+Evaluation datasets are PartiPrompts (Yu et al., 2022) and MS-COCO (Lin et al., 2015) text/image benchmarks. And the reported metrics are: CLIPScore (Hessel et al., 2022), that emphasize prompt alignment; Aesthetics (Schuhmann et al., 2022) and DeQA Score (You et al., 2025) that focus on image quality; PickScore (Kirstain et al., 2023), ImageReward (Xu et al., 2023a), and UnifiedReward (Wang et al., 2025) which are human preference-based and consider both image quality and text adherence. Additionally, we report results on the GenEval (Ghosh et al., 2023) benchmark.
+Architecture and optimization All experiments are performed with the same 1.7B parameters DiT backbone (fθf^{\theta}) (Peebles and Xie, 2023), excluding a single case in which we compare to a standard LLM architecture (Vaswani et al., 2023; Meta, 2024). Methods that require a small flow head (gθg^{\theta}), replace the final linear layer with a 40M parameters MLP (Li et al., 2024). Text conditioning is embedded through a Flan-UL2 encoder (Tay et al., 2022) and injected via cross attention layers, or as prefix in the single case of the LLM architecture. Finally, the models are trained for 500K iterations with a 2048 batch size. Precise details are in Appendix A.1. We aim to facilitate a fair and useful comparison between methods in large scale by fixing the training data, using the same size architectures with identical backbone (excluding the LLM architecture that use standard transformer backbone), and same optimization hyper-parameters. To this end, we restrict our comparison to baselines which we re-implemented.
+4.1 Main results: Text-to-image generation
+Our main evaluation results are reported in Tables 1 and 7 (in Appendix) on the DiT architecture. We find that DTM outperforms all baselines, and yields the best results across all metrics except the CLIPScore, where on the PartiPrompts benchmark it is a runner-up to MAR and our ARTM-3 and FHTM-3. On the MS-COCO benchmark, the discrete-state space models achieve the highest CLIPScore but lag behind on all other metrics, as well as on the GenEval benchmark. DTM shows a considerable gain in text adherence over the baseline FM and sets a new SOTA on the text-to-image task. Next, our AR kernels with 3 TM steps: ARTM-3 and FHTM-3, demonstrate a significant improvement compared to the AR baseline, see comparison of samples in Figure 15 in the Appendix. When compared to MAR, ARTM-3 and FHTM-3 have comparable CLIPScore, but improve considerably on all other image quality metrics, where this is also noticeable qualitatively in Figure 7 and Figures 11-14 in the Appendix. GenEval results are reported in Table 2 and show overall DTM is leading with FHTM-3/ARTM-3 and MAR closesly follows. To our knowledge, FHTM is the first fully causal model to match FM performance on text-to-image task in continuous domain, with improved text alignment.
+Table 1:
+Evaluation of TM vs. baselines on PartiPrompts. † Inference with activation caching. NFE∗ counts only backbone model evaluation (fθf^{\theta}). LLM and DiT have comparable number of parameters.
+Attention
+Kernel
+Arch
+NFE∗
+CLIPScore ↑\uparrow
+PickScore ↑\uparrow
+ImageReward ↑\uparrow
+UnifiedReward ↑\uparrow
+Aesthetic ↑\uparrow
+DeQA Score ↑\uparrow
+Baseline
+Full
+MAR-discrete
+DiT
+256256
+26.763226.7632
+20.690020.6900
+0.13970.1397
+4.31334.3133
+5.15025.1502
+2.48462.4846
+MAR
+DiT
+256256
+26.9826.98
+20.7320.73
+0.3250.325
+4.2594.259
+4.9544.954
+2.3612.361
+MAR-Fluid
+DiT
+256256
+25.976325.9763
+20.514820.5148
+0.06840.0684
+3.81723.8172
+4.74224.7422
+2.35932.3593
+FM
+DiT
+256256
+25.9725.97
+21.0421.04
+0.2330.233
+4.7844.784
+5.2915.291
+2.5462.546
+TM
+DTM
+DiT
+3232
+26.8426.84
+21.1821.18
+0.5320.532
+5.1235.123
+5.4215.421
+2.6462.646
+Baseline
+Causal
+AR-discrete†
+DiT
+256256
+26.678626.6786
+20.357220.3572
+−0.0068-0.0068
+3.73713.7371
+4.81474.8147
+2.38262.3826
+AR†
+DiT
+256256
+24.8524.85
+20.1120.11
+−0.428-0.428
+3.4053.405
+4.5014.501
+2.2652.265
+TM
+ARTM−𝟐†\bm{-2}^{\dagger}
+DiT
+2×2562\times 256
+26.8426.84
+20.7620.76
+0.2890.289
+4.4934.493
+5.0315.031
+2.3742.374
+FHTM−𝟐†\bm{-2}^{\dagger}
+DiT
+2×2562\times 256
+26.8426.84
+20.8320.83
+0.3000.300
+4.5924.592
+5.1325.132
+2.4402.440
+ARTM−𝟑†\bm{-3}^{\dagger}
+DiT
+3×2563\times 256
+27.0227.02
+20.8720.87
+0.3750.375
+4.7694.769
+5.2115.211
+2.5282.528
+FHTM−𝟑†\bm{-3}^{\dagger}
+DiT
+3×2563\times 256
+27.0027.00
+20.8520.85
+0.3090.309
+4.7684.768
+5.1495.149
+2.4382.438
+FHTM−𝟑†\bm{-3}^{\dagger}
+LLM
+3×2563\times 256
+26.9526.95
+20.9620.96
+0.4260.426
+5.0235.023
+5.2985.298
+2.5422.542
+Table 2:
+Evaluation of TM versus baselines on GenEval; same settings as Table 1.
+Attention
+Kernel
+Arch
+NFE∗
+Overall ↑\uparrow
+Single-object ↑\uparrow
+Two-objects ↑\uparrow
+Counting ↑\uparrow
+Colors ↑\uparrow
+Position ↑\uparrow
+Color Attribute ↑\uparrow
+Baseline
+Full
+MAR-discrete
+DiT
+256256
+0.44380.4438
+0.86250.8625
+0.43430.4343
+0.36700.3670
+0.65950.6595
+0.130.13
+0.290.29
+MAR
+DiT
+256256
+0.520.52
+0.980.98
+0.56
+0.430.43
+0.730.73
+0.110.11
+0.380.38
+MAR-Fluid
+DiT
+256256
+0.44380.4438
+0.90.9
+0.33330.3333
+0.36700.3670
+0.75530.7553
+0.120.12
+0.280.28
+FM
+DiT
+256256
+0.470.47
+0.910.91
+0.520.52
+0.270.27
+0.710.71
+0.120.12
+0.340.34
+TM
+DTM
+DiT
+3232
+0.540.54
+0.930.93
+0.580.58
+0.350.35
+0.790.79
+0.200.20
+0.460.46
+Baseline
+Causal
+AR-discrete†
+DiT
+256256
+0.407 600.407\,60
+0.96250.9625
+0.40400.4040
+0.32910.3291
+0.59570.5957
+0.070.07
+0.190.19
+AR†
+DiT
+256256
+0.340.34
+0.860.86
+0.260.26
+0.150.15
+0.630.63
+0.060.06
+0.150.15
+TM
+ARTM−𝟐†\bm{-2}^{\dagger}
+DiT
+2×2562\times 256
+0.490.49
+0.950.95
+0.510.51
+0.390.39
+0.790.79
+0.110.11
+0.270.27
+FHTM−𝟐†\bm{-2}^{\dagger}
+DiT
+2×2562\times 256
+0.480.48
+0.960.96
+0.480.48
+0.250.25
+0.780.78
+0.090.09
+0.370.37
+ARTM−𝟑†\bm{-3}^{\dagger}
+DiT
+3×2563\times 256
+0.510.51
+0.950.95
+0.540.54
+0.410.41
+0.790.79
+0.160.16
+0.280.28
+FHTM−𝟑†\bm{-3}^{\dagger}
+DiT
+3×2563\times 256
+0.520.52
+0.980.98
+0.540.54
+0.440.44
+0.740.74
+0.160.16
+0.340.34
+FHTM−𝟑†\bm{-3}^{\dagger}
+LLM
+3×2563\times 256
+0.490.49
+0.940.94
+0.550.55
+0.370.37
+0.690.69
+0.170.17
+0.290.29
+Image generation with causal model Beyond improving prompt alignment and image quality in text-to-image task, a central goal of recent research (Zhou et al., 2024; Yu et al., 2023) is to develop multimodal models also capable of reasoning about images. This direction aligns naturally with our approach, as the fully causal FHTM variant enables seamless integration with large-language models (LLM) standard architecture, training, and inference algorithms. As a first step toward this goal, we demonstrate in Table 1 and 7 that FHTM, implemented with an LLM architecture replacing 2D with 1D positional encoding and input the text condition only at the first layer, can match and even surpass the performance of approximately the same size DiT architecture. Furthermore, it matches or improve upon all baselines across all metrics. Further implementation details are in Appendix A.1.
+4.2 Evaluations
+Table 3: FM and DTM sampling times.
+Kernel
+time (sec)
+CLIPScore
+PickScore
+FM
+10.8
+26.0
+21.0
+DTM
+1.6
+26.8
+21.1
+Sampling efficiency One important benefit in the DTM variant is its sampling efficiency compared to flow matching. In Table 8 we report CLIPScore and PickScore for DTM and FM for different numbers of backbone and head steps while in Table 9 we log the corresponding forward times. Notably, the number of backbone forwards in DTM sampling can be reduced considerably without sacrificing generation quality. Table 3 presents the superior sampling efficiency of DTM over FM: DTM achieves state-of-the-art results with only 16 backbone forwards, leading to an almost 7-fold speedup compared to FM, which requires 128 backbone forwards for optimal quality in this case.
+In contrast to DTM, ARTM/FHTM do not offer any speed-up, in fact they require backbone forwards equal to the number of transition steps times the number of image tokens, as specified in Tables 1,2,7; Figure 7 reports CLIPScore and PickScore for different number of head forwards which demonstrates that this number can be reduced up to 4 with some limited reduction in performance for ARTM/FHTM sampling.
+Dependent vs. independent linear process To highlight the impact of the supervising process, we compare the linear process (10), where X0X_{0} is sampled once for all t∈[T]t\in[T], with the independent linear process (15), where X0,tX_{0,t} is sampled for each t∈[T]t\in[T] independently, on our autoregressive kernels: ARTM-3 and FHTM-3. The models are trained for 100K iterations and CLIPScore and PickScore are evaluated every 10K iterations. As shown in Figure 9, the independent linear process is far superior to the linear process on these kernels, see further discussion in Appendix A.4.
+DTM Kernel expressiveness The DTM kernel (see equation 13) generates each token yiy^{i} of dimension 2×2×42\times 2\times 4, corresponding to an image patch, independently in each transition step. This architecture choice is done mainly for performance reasons to allow efficient transitions. In Figure 10 we compare performance using a higher dimension yiy^{i}, corresponding to a 2×8×42\times 8\times 4 patches. As can be seen in these graphs, performance improves for this larger patch kernel for low number of transition steps (1-4 steps) and surprisingly stays almost constant for very low number of head step, up to even a single step. The fact that performance does not improve for larger number of transition steps can be partially explained with Theorem 1 that shows that larger number of steps result in a simpler transition kernel (which in the limit coincides with flow matching).
+5 Conclusions
+We introduce Transition Matching (TM), a novel generative paradigm that unifies and generalizes diffusion, flow and continuous autoregressive models. We investigate three instances of TM: DTM, which surpasses state-of-the-art flow matching in image quality and text alignment; and the causal ARTM and fully causal FHTM that achieve generation quality comparable to non-causal methods. The improved performance of ARTM/FHTM comes at the price of a higher sampling cost (e.g., see the NFE counts in Table 1). DTM, in contrast, requires less backbone forwards and leads to significant speed-up over flow matching sampling, see e.g., Table 3. Future research directions include improving the training and/or sampling via different time schedulers and distillation, as well as incorporating FHTM in a multimodal system. Our work does not introduce additional societal risks beyond those related to existing image generative models.
+References
+Albergo and Vanden-Eijnden (2022)
+Michael S Albergo and Eric Vanden-Eijnden.
+Building normalizing flows with stochastic interpolants.
+arXiv preprint arXiv:2209.15571, 2022.
+Chameleon-Team (2025)
+Chameleon-Team.
+Chameleon: Mixed-modal early-fusion foundation models, 2025.
+https://arxiv.org/abs/2405.09818.
+Chang et al. (2022)
+Huiwen Chang, Han Zhang, Lu Jiang, Ce Liu, and gledhhnddinerbdcilnulnfjWilliam T. Freeman.
+Maskgit: Masked generative image transformer, 2022.
+https://arxiv.org/abs/2202.04200.
+Chen et al. (2024)
+Yushen Chen, Zhikang Niu, Ziyang Ma, Keqi Deng, Chunhui Wang, Jian Zhao, Kai Yu, and Xie Chen.
+F5-tts: A fairytaler that fakes fluent and faithful speech with flow matching.
+arXiv preprint arXiv:2410.06885, 2024.
+Dehghani et al. (2023)
+Mostafa Dehghani, Basil Mustafa, Josip Djolonga, Jonathan Heek, Matthias Minderer, Mathilde Caron, Andreas Steiner, Joan Puigcerver, Robert Geirhos, Ibrahim Alabdulmohsin, Avital Oliver, Piotr Padlewski, Alexey Gritsenko, Mario Lučić, and Neil Houlsby.
+Patch n’ pack: Navit, a vision transformer for any aspect ratio and resolution, 2023.
+https://arxiv.org/abs/2307.06304.
+Dhariwal and Nichol (2021)
+Prafulla Dhariwal and Alex Nichol.
+Diffusion models beat gans on image synthesis, 2021.
+https://arxiv.org/abs/2105.05233.
+Dhariwal et al. (2020)
+Prafulla Dhariwal, Heewoo Jun, Christine Payne, Jong Wook Kim, Alec Radford, and Ilya Sutskever.
+Jukebox: A generative model for music, 2020.
+https://arxiv.org/abs/2005.00341.
+Ding et al. (2021)
+Ming Ding, Zhuoyi Yang, Wenyi Hong, Wendi Zheng, Chang Zhou, Da Yin, Junyang Lin, Xu Zou, Zhou Shao, Hongxia Yang, and Jie Tang.
+Cogview: Mastering text-to-image generation via transformers, 2021.
+https://arxiv.org/abs/2105.13290.
+Esser et al. (2024)
+Patrick Esser, Sumith Kulal, Andreas Blattmann, Rahim Entezari, Jonas Müller, Harry Saini, Yam Levi, Dominik Lorenz, Axel Sauer, Frederic Boesel, Dustin Podell, Tim Dockhorn, Zion English, Kyle Lacey, Alex Goodwin, Yannik Marek, and Robin Rombach.
+Scaling rectified flow transformers for high-resolution image synthesis, 2024.
+https://arxiv.org/abs/2403.03206.
+Fan et al. (2024)
+Lijie Fan, Tianhong Li, Siyang Qin, Yuanzhen Li, Chen Sun, Michael Rubinstein, Deqing Sun, Kaiming He, and Yonglong Tian.
+Fluid: Scaling autoregressive text-to-image generative models with continuous tokens, 2024.
+https://arxiv.org/abs/2410.13863.
+Ghosh et al. (2023)
+Dhruba Ghosh, Hanna Hajishirzi, and Ludwig Schmidt.
+Geneval: An object-focused framework for evaluating text-to-image alignment, 2023.
+https://arxiv.org/abs/2310.11513.
+Han et al. (2024)
+Jian Han, Jinlai Liu, Yi Jiang, Bin Yan, Yuqi Zhang, Zehuan Yuan, Bingyue Peng, and Xiaobing Liu.
+Infinity: Scaling bitwise autoregressive modeling for high-resolution image synthesis, 2024.
+https://arxiv.org/abs/2412.04431.
+Hessel et al. (2022)
+Jack Hessel, Ari Holtzman, Maxwell Forbes, Ronan Le Bras, and Yejin Choi.
+Clipscore: A reference-free evaluation metric for image captioning, 2022.
+https://arxiv.org/abs/2104.08718.
+Ho et al. (2020)
+Jonathan Ho, Ajay Jain, and Pieter Abbeel.
+Denoising diffusion probabilistic models, 2020.
+https://arxiv.org/abs/2006.11239.
+Holderrieth et al. (2025)
+Peter Holderrieth, Marton Havasi, Jason Yim, Neta Shaul, Itai Gat, Tommi Jaakkola, Brian Karrer, Ricky T. Q. Chen, and Yaron Lipman.
+Generator matching: Generative modeling with arbitrary markov processes, 2025.
+https://arxiv.org/abs/2410.20587.
+Jin et al. (2025)
+Yang Jin, Zhicheng Sun, Ningyuan Li, Kun Xu, Kun Xu, Hao Jiang, Nan Zhuang, Quzhe Huang, Yang Song, Yadong Mu, and Zhouchen Lin.
+Pyramidal flow matching for efficient video generative modeling, 2025.
+https://arxiv.org/abs/2410.05954.
+Karras et al. (2022)
+Tero Karras, Miika Aittala, Timo Aila, and Samuli Laine.
+Elucidating the design space of diffusion-based generative models.
+Advances in neural information processing systems, 35:26565–26577, 2022.
+Kingma et al. (2013)
+Diederik P Kingma, Max Welling, et al.
+Auto-encoding variational bayes, 2013.
+Kingma et al. (2023)
+Diederik P. Kingma, Tim Salimans, Ben Poole, and Jonathan Ho.
+Variational diffusion models, 2023.
+https://arxiv.org/abs/2107.00630.
+Kirstain et al. (2023)
+Yuval Kirstain, Adam Polyak, Uriel Singer, Shahbuland Matiana, Joe Penna, and Omer Levy.
+Pick-a-pic: An open dataset of user preferences for text-to-image generation, 2023.
+https://arxiv.org/abs/2305.01569.
+Labs (2024)
+Black Forest Labs.
+Flux.
+https://github.com/black-forest-labs/flux, 2024.
+Li et al. (2024)
+Tianhong Li, Yonglong Tian, He Li, Mingyang Deng, and Kaiming He.
+Autoregressive image generation without vector quantization.
+Advances in Neural Information Processing Systems, 37:56424–56445, 2024.
+Lin et al. (2015)
+Tsung-Yi Lin, Michael Maire, Serge Belongie, Lubomir Bourdev, Ross Girshick, James Hays, Pietro Perona, Deva Ramanan, C. Lawrence Zitnick, and Piotr Dollár.
+Microsoft coco: Common objects in context, 2015.
+https://arxiv.org/abs/1405.0312.
+Lipman et al. (2022)
+Yaron Lipman, Ricky TQ Chen, Heli Ben-Hamu, Maximilian Nickel, and Matt Le.
+Flow matching for generative modeling.
+arXiv preprint arXiv:2210.02747, 2022.
+Liu et al. (2022)
+Xingchao Liu, Chengyue Gong, and Qiang Liu.
+Flow straight and fast: Learning to generate and transfer data with rectified flow.
+arXiv preprint arXiv:2209.03003, 2022.
+Meta (2024)
+Llama 3 Team Meta.
+The llama 3 herd of models, 2024.
+https://arxiv.org/abs/2407.21783.
+Nichol and Dhariwal (2021)
+Alex Nichol and Prafulla Dhariwal.
+Improved denoising diffusion probabilistic models, 2021.
+https://arxiv.org/abs/2102.09672.
+Patrick et al. (2021)
+Patrick, Robin Rombach, and Björn Ommer.
+Taming transformers for high-resolution image synthesis, 2021.
+https://arxiv.org/abs/2012.09841.
+Peebles and Xie (2023)
+William Peebles and Saining Xie.
+Scalable diffusion models with transformers, 2023.
+https://arxiv.org/abs/2212.09748.
+Podell et al. (2023)
+Dustin Podell, Zion English, Kyle Lacey, Andreas Blattmann, Tim Dockhorn, Jonas Müller, Joe Penna, and Robin Rombach.
+Sdxl: Improving latent diffusion models for high-resolution image synthesis, 2023.
+https://arxiv.org/abs/2307.01952.
+(31)
+A Polyak, A Zohar, A Brown, A Tjandra, A Sinha, A Lee, A Vyas, B Shi, CY Ma, CY Chuang, et al.
+Movie gen: A cast of media foundation models, 2025.
+URL https://arxiv. org/abs/2410.13720, page 51.
+Radford et al. (2021)
+Alec Radford, Jong Wook Kim, Chris Hallacy, Aditya Ramesh, Gabriel Goh, Sandhini Agarwal, Girish Sastry, Amanda Askell, Pamela Mishkin, Jack Clark, Gretchen Krueger, and Ilya Sutskever.
+Learning transferable visual models from natural language supervision, 2021.
+https://arxiv.org/abs/2103.00020.
+Raffel et al. (2023)
+Colin Raffel, Noam Shazeer, Adam Roberts, Katherine Lee, Sharan Narang, Michael Matena, Yanqi Zhou, Wei Li, and Peter J. Liu.
+Exploring the limits of transfer learning with a unified text-to-text transformer, 2023.
+https://arxiv.org/abs/1910.10683.
+Ramesh et al. (2021)
+Aditya Ramesh, Mikhail Pavlov, Gabriel Goh, Scott Gray, Chelsea Voss, Alec Radford, Mark Chen, and Ilya Sutskever.
+Zero-shot text-to-image generation, 2021.
+https://arxiv.org/abs/2102.12092.
+Rombach et al. (2022)
+Robin Rombach, Andreas Blattmann, Dominik Lorenz, Patrick Esser, and Björn Ommer.
+High-resolution image synthesis with latent diffusion models, 2022.
+https://arxiv.org/abs/2112.10752.
+Schuhmann et al. (2022)
+Christoph Schuhmann, Romain Beaumont, Richard Vencu, Cade Gordon, Ross Wightman, Mehdi Cherti, Theo Coombes, Aarush Katta, Clayton Mullis, Mitchell Wortsman, Patrick Schramowski, Srivatsa Kundurthy, Katherine Crowson, Ludwig Schmidt, Robert Kaczmarczyk, and Jenia Jitsev.
+Laion-5b: An open large-scale dataset for training next generation image-text models, 2022.
+https://arxiv.org/abs/2210.08402.
+Shaul et al. (2023)
+Neta Shaul, Ricky T. Q. Chen, Maximilian Nickel, Matt Le, and Yaron Lipman.
+On kinetic optimal probability paths for generative models, 2023.
+https://arxiv.org/abs/2306.06626.
+Sohl-Dickstein et al. (2015)
+Jascha Sohl-Dickstein, Eric A. Weiss, Niru Maheswaranathan, and Surya Ganguli.
+Deep unsupervised learning using nonequilibrium thermodynamics, 2015.
+https://arxiv.org/abs/1503.03585.
+Song et al. (2022)
+Jiaming Song, Chenlin Meng, and Stefano Ermon.
+Denoising diffusion implicit models, 2022.
+https://arxiv.org/abs/2010.02502.
+Song et al. (2021)
+Yang Song, Jascha Sohl-Dickstein, Diederik P. Kingma, Abhishek Kumar, Stefano Ermon, and Ben Poole.
+Score-based generative modeling through stochastic differential equations, 2021.
+https://arxiv.org/abs/2011.13456.
+Sun et al. (2024)
+Peize Sun, Yi Jiang, Shoufa Chen, Shilong Zhang, Bingyue Peng, Ping Luo, and Zehuan Yuan.
+Autoregressive model beats diffusion: Llama for scalable image generation, 2024.
+https://arxiv.org/abs/2406.06525.
+Tay et al. (2022)
+Yi Tay, Mostafa Dehghani, Vinh Q Tran, Xavier Garcia, Jason Wei, Xuezhi Wang, Hyung Won Chung, Siamak Shakeri, Dara Bahri, Tal Schuster, et al.
+Ul2: Unifying language learning paradigms.
+arXiv preprint arXiv:2205.05131, 2022.
+Tian et al. (2024)
+Keyu Tian, Yi Jiang, Zehuan Yuan, Bingyue Peng, and Liwei Wang.
+Visual autoregressive modeling: Scalable image generation via next-scale prediction, 2024.
+https://arxiv.org/abs/2404.02905.
+Tschannen et al. (2024)
+Michael Tschannen, Cian Eastwood, and Fabian Mentzer.
+Givt: Generative infinite-vocabulary transformers, 2024.
+https://arxiv.org/abs/2312.02116.
+Vaswani et al. (2023)
+Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N. Gomez, Lukasz Kaiser, and Illia Polosukhin.
+Attention is all you need, 2023.
+https://arxiv.org/abs/1706.03762.
+Wang et al. (2025)
+Yibin Wang, Yuhang Zang, Hao Li, Cheng Jin, and Jiaqi Wang.
+Unified reward model for multimodal understanding and generation, 2025.
+https://arxiv.org/abs/2503.05236.
+Xu et al. (2023a)
+Jiazheng Xu, Xiao Liu, Yuchen Wu, Yuxuan Tong, Qinkai Li, Ming Ding, Jie Tang, and Yuxiao Dong.
+Imagereward: Learning and evaluating human preferences for text-to-image generation, 2023a.
+https://arxiv.org/abs/2304.05977.
+Xu et al. (2023b)
+Yilun Xu, Mingyang Deng, Xiang Cheng, Yonglong Tian, Ziming Liu, and Tommi Jaakkola.
+Restart sampling for improving generative processes.
+Advances in Neural Information Processing Systems, 36:76806–76838, 2023b.
+You et al. (2025)
+Zhiyuan You, Xin Cai, Jinjin Gu, Tianfan Xue, and Chao Dong.
+Teaching large language models to regress accurate image quality scores using score distribution, 2025.
+https://arxiv.org/abs/2501.11561.
+Yu et al. (2022)
+Jiahui Yu, Yuanzhong Xu, Jing Yu Koh, Thang Luong, Gunjan Baid, Zirui Wang, Vijay Vasudevan, Alexander Ku, Yinfei Yang, Burcu Karagol Ayan, Ben Hutchinson, Wei Han, Zarana Parekh, Xin Li, Han Zhang, Jason Baldridge, and Yonghui Wu.
+Scaling autoregressive models for content-rich text-to-image generation, 2022.
+https://arxiv.org/abs/2206.10789.
+Yu et al. (2023)
+Lili Yu, Bowen Shi, Ramakanth Pasunuru, Benjamin Muller, Olga Golovneva, Tianlu Wang, Arun Babu, Binh Tang, Brian Karrer, Shelly Sheynin, et al.
+Scaling autoregressive multi-modal models: Pretraining and instruction tuning.
+arXiv preprint arXiv:2309.02591, 2023.
+Yuan et al. (2024)
+Zhihang Yuan, Yuzhang Shang, Hanling Zhang, Tongcheng Fang, Rui Xie, Bingxin Xu, Yan Yan, Shengen Yan, Guohao Dai, and Yu Wang.
+E-car: Efficient continuous autoregressive image generation via multistage modeling, 2024.
+https://arxiv.org/abs/2412.14170.
+Zhou et al. (2024)
+Chunting Zhou, Lili Yu, Arun Babu, Kushal Tirumala, Michihiro Yasunaga, Leonid Shamis, Jacob Kahn, Xuezhe Ma, Luke Zettlemoyer, and Omer Levy.
+Transfusion: Predict the next token and diffuse images with one multi-modal model, 2024.
+https://arxiv.org/abs/2408.11039.
+Contents
+1 Introduction
+2 Transition Matching
+2.1 General framework
+2.2 Transition Matching made practical
+3 Related work
+4 Experiments
+4.1 Main results: Text-to-image generation
+4.2 Evaluations
+5 Conclusions
+References
+A Experiments
+A.1 Implementation details
+A.2 Main results: Text-to-image generation
+A.3 Sampling efficiency
+A.4 Dependent vs. independent linear process
+A.5 DTM Kernel expressiveness
+A.6 Scheduler ablation for independent linear process
+A.7 Additional generated images comparison
+A.8 Generation process visualization
+A.9 Classifier free guidance sensitivity
+B Training and sampling algorithms
+C Convergence of DTM to flow matching
+C.1 The DTM case
+Appendix A Experiments
+A.1 Implementation details
+DiT architecture
+The DiT architecture (Peebles and Xie, 2023) uses 24 blocks of a self-attention layer followed by cross attention layer with the text embedding (Raffel et al., 2023), with a 2048 hidden dimension, 16 attention heads, and utilize a 3D positional embedding (Dehghani et al., 2023). Embedded image (Podell et al., 2023) size is 32×32×432\times 32\times 4 and input to the DiT trough a patchify layer with patch size of 2×2×42\times 2\times 4. The total number of parameters is 1.7B.
+LLM architecture
+The LLM architecture (Meta, 2024) is similar to the DiT with the following differences: (i) time injection is removed, (ii) cross attention layer is removed and text embedding is input as a prefix (iii) it uses a simple 1D instead of 3D positional embedding. To compensate for reduction in number of parameters, we increase the number of self-attention layers to 34, reaching 1.7B total number of parameters (comparable to the DiT).
+Flow head architecture
+Following (Li et al., 2024) we use an MLP with 6 layers and a hidden dimension of 1024. to convert from the backbone hidden dimension (2048) to the MLP hidden dimension (1024) we use a simple linear layer. Finally, we replace the time input with AdaLN(Peebles and Xie, 2023) time injection.
+Optimization
+The models are trained for 500K iterations, with a 2048 total batch size, 1∗e−41*e^{-4} constant learning rate and 2K iterations warmup.
+Classifier free guidance
+To support classifier free guidance (CFG), during training, with probability of 0.150.15, we drop the text prompt and replace it with empty prompt. Following (Li et al., 2024), during sampling, we apply CFG to the velocity of the flow head (gθg^{\theta}) with a guidance scale of 6.56.5.
+A.2 Main results: Text-to-image generation
+Additional Kernels and Baselines
+Similar to the extension of the AR kernel to ARTM, We extend the MAR-Fluid kernel to 2 and 3 transition steps, resulting with the MARTM−𝟐\bm{-2} and MARTM−𝟑\bm{-3} kernels.
+Furthermore, we investigate the performance of the Restart sampling algorithm (Xu et al., 2023b) on the FM kernel, were noise is added during the sampling process. We follow the authors’ suggestion and perform 1 restart from t=0.6t=0.6 to t=0.4t=0.4, 3 restarts from t=0.8t=0.8 to t=0.6t=0.6, and an additional 3 restarts from t=1t=1 to t=0.8t=0.8. The sampling is performed on a base of 1000 steps, resulting with a total of 2400 NFE. As an additional baseline, we sample the FM kernel with 2400 NFE.
+Results can be found in Tables 4,5,6.
+Table 4:
+Evaluation of MARTM and the Restart sampling algorithm baselines on PartiPrompts.
+Attention
+Kernel
+Arch
+NFE∗
+CLIPScore ↑\uparrow
+PickScore ↑\uparrow
+ImageReward ↑\uparrow
+UnifiedReward ↑\uparrow
+Aesthetic ↑\uparrow
+DeQAScore ↑\uparrow
+Baseline
+Full
+MAR-Fluid
+DiT
+256256
+25.976325.9763
+20.514820.5148
+0.06840.0684
+3.81723.8172
+4.74224.7422
+2.35932.3593
+MARTM−𝟐\bm{-2}
+DiT
+256256
+26.675726.6757
+20.934220.9342
+0.35500.3550
+4.69104.6910
+5.13165.1316
+2.42442.4244
+MARTM−𝟑\bm{-3}
+DiT
+256256
+26.362226.3622
+20.851720.8517
+0.25460.2546
+4.48464.4846
+5.11275.1127
+2.49322.4932
+FM
+DiT
+256256
+25.9725.97
+21.0421.04
+0.2330.233
+4.7844.784
+5.2915.291
+2.5462.546
+FM
+DiT
+24002400
+25.965725.9657
+21.052421.0524
+0.23730.2373
+4.80774.8077
+5.29465.2946
+2.54912.5491
+FM-Restart
+DiT
+24002400
+26.115226.1152
+21.113421.1134
+0.34090.3409
+4.83494.8349
+5.30885.3088
+2.53062.5306
+Table 5:
+Evaluation of MARTM and the

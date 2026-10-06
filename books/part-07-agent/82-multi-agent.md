@@ -31,6 +31,12 @@ total_cost
 
 因此应先比较单 Agent、单 Agent + deterministic verifier、单 Agent + parallel tools，再判断多 Agent 是否有增量价值。
 
+还应给同一个单 Agent 做“只声明有同伴、但不增加同伴计算”的提示对照，分别改变被宣称的审阅人数、身份、顺序及其结论，避免把社会措辞误计为协作增益或损失。[一项受限静态提示研究](https://arxiv.org/html/2605.10698v1)在合成三跳日志题中观察到输出随这类框架变化，但并未运行真实消息传递；人数增加时错误共识和品牌构成也同时变化，不能独立归因为团队规模。可见 reasoning 的引用评分与最终答案还须分别记录，它们不揭示 latent 真值、计算努力或故意说谎。新增 prompt 条件、重复调用与独立答案核验都有成本；身份或共识暗示使结果不稳时，保留不附权威暗示的单 Agent、真实证据与独立 verifier，不用精确人数阈值或“群体心智”名称替拓扑、安全或能力签字。<!-- source-family:SF-2026-ARXIV-2605-10698 -->
+
+若部署对象是持续合作的 partner，还应把初次成功与共同约定的形成分开测量：保持伙伴、角色和对象身份，跨回合重排任务，联合记录准确率、用词/轮次费用及指称表达的复用与缩短。词汇重合高可能只是完整复制冗长描述；如果后续既不省交流又更易出错，就不能仅凭高初始分数或确认次数宣布共享语义已经稳定。<!-- source-family:SF-2026-ARXIV-2601-19792 -->
+
+[受限 referential 任务](https://arxiv.org/html/2601.19792v1)把 human/AI director 与 matcher 作四种配对，观察到 AI 配对的初始准确与后续适应可分离；它没有证明所有 LVLM 缺共同基础，也没有测真实 physical 安全。英语单对象、特定 GPT5.2/scaffold、有限 follow-up 与词汇提取 proxy 限制归因，人工招募、持续对话、分析和重复校准均付费。伙伴或任务改变时应重建这份交互证据；约定不稳或交流税过高时，保留显式 object IDs、typed handoff、固定 workflow 与独立结果核验，不由话多或词汇重合替伙伴批准完成。
+
 这个 baseline 还可以写成一个信息上界：如果所有 agents 只看到同一 evidence、使用等价 policy，且通信与 voting
 没有引入新的 observation，那么多跳 delegated decision network 并不会创造额外信息。更精确地说，论文比较的
 上界是一个观察同一组 exogenous signals 的理想 centralized Bayes decision maker；结论依赖 bounded loss、
@@ -54,7 +60,13 @@ independent observation / tool effect / heterogeneous model / authority split
 它也没有证明真实的固定预算单 Agent 能复现分布式并行所提供的算力、延迟或故障隔离。数值例子不能外推为任意
 开放环境中的绝对优劣。<!-- source-family:SF-2026-ARXIV-2603-26993 -->
 
+多个执行者也不意味着多个learner。可以只让一个leader从自己的交互replay学习，其他成员在一个lifetime内只执行，边界到达再接收带受限参数变异的policy；这把训练人口、执行人口和模型传播分成三个对象，不是汇总所有成员经验，也不是完全相同policy的免费副本。[受限grid团队对照](https://arxiv.org/html/2505.00540v1)支持这一替代接口，却不证明稳定角色、任意团队规模或真实省电；增加传播频率不总改善结果，资源均值较好仍可伴team-win下降。Policy revision、发布边界、变异与各成员行为须一起回归，leader的经验偏置也不能由更多执行者自动消除；所有成员前向、leader学习、参数传输和竞争试验都计费。传播过期、质量反退或支持改变时，保独立learner、centralized训练/固定角色与已验policy，不把按奖励分解命名的角色或更短训练step当部署保证。<!-- source-family:SF-2025-ARXIV-2505-00540 -->
+
 即使通信引入了真实的独立观察，传了多少信息或通信算子的谱也不足以预测收益：同样的传播强度可能把信号送到决策所读的坐标，也可能把共同噪声放大到该坐标。设计评价应锁定任务读出、通信轮数和参与者切片，分别测 individual、community 与整体聚合结果；群体平均改善不能抵消受影响子群的退化。限制跨社区通信可以减少受测伤害，却也会牺牲信息交换，且校准阈值只是已测条件下的选择规则，不是安全保证。小规模受控通信模型支持这个边界，不证明开放式语言 Agent 的通信拓扑可以仅凭线性响应预测。<!-- semantic-body-binding:SF-2026-ARXIV-2609-23310 -->
+
+外部复核不一定每题固定启动：同一条推理轨迹的早期答案与终态答案不一致时，可把它当作需要增加证据的触发信号；无分歧则先保留原单 Agent 输出。这比“总是多想几轮”更明确地分配预算，却也会漏掉从头到尾一致的错误。触发后，让外部 solver 只看原问题，不先看候选答案、原推理或彼此结论，能减少候选锚定；candidate-blind 只限制信息流，不自动保证误差独立或共同答案正确。<!-- source-family:SF-2026-ARXIV-2610-23213 -->
+
+[有限分歧门控实验](https://arxiv.org/html/2610.23213v1)使用异构 solver 仲裁，但替换模型同时改变能力，不能把收益唯一归给 diversity，也不能把独立投票假设当作已验证事实。必须把基础轨迹、触发比例、全部 panel 输入/输出及错误改答一起计费；相对全通信系统省 token，不等比单次 CoT 更便宜，更不等已获延迟或费用 SLO。触发器不能可靠覆盖风险、外部 solver 共享盲点或协调税过高时，保留单 Agent、独立 verifier 和固定预算，不由多数票或 early/final agreement 批准真值。
 
 ## 扩展 Agent 数量之前，先测量 Coordination Tax
 
@@ -81,6 +93,15 @@ prompt 与总 reasoning-token budget 下观察到强烈的 domain dependence：�
 比较主体协作之前，还应冻结外围 input hints 与 output rewriter，再分别测主体 agent 和完整 pipeline。最后一次答案加工可能提高 benchmark 分数，却不说明主体 reasoning 因协作改善；[MiroFlow 的同框架对照](https://arxiv.org/html/2602.22808v1)在 GAIA 的 single74.8高于multi71.9，BC/HLE则相反，output-only73.94也高于joint71.9。这给出了分账需求，不识别“顺序任务必退步”的普遍原因。各 node 独立 turn 上限并非相同 global budget，avg@3、默认 toolset 与文本 judge 权限也必须一起保留。<!-- source-family:SF-2026-ARXIV-2602-22808 -->
 
 Input/output processor、handoff、重试与 merge 都支付调用和 critical-path 费用；必要材料未披露完整 API/token/time、精度或端到端 SLO，不能将局部分数提升称净收益。更重模型组合也未一致改善，typed error 与 retry 不保证故障不会级联。外围加工不稳或协调费用超过收益时，应回到冻结 processor 的单 Agent、deterministic verifier 和较小 workflow，而不是把更多节点作为默认升级。
+
+拓扑与节点内思考还应分开比较：先固定程序化状态摘要和角色分工，再测试是否给各角色同时加入自问、批评与修订。局部批评会产生新的保留意见；下游若不能区分它们与真实环境警报，就可能逐层放大审慎、推迟必要行动，而不只是多付几个 token。一个固定三角色、脚本化对手、30步环境的[受限组合对照](https://arxiv.org/html/2605.16205v1)出现更差的平均回报与更多 token，但单体思考仍有受益切片，层级本身也并非对所有模型有益。其匹配轨迹只提供解释线索，未验证选择性启用或不确定性仲裁的效果；不能把它写成“反思普遍有害”。全部模型调用、修复与通信须计费，token 代理也不等实测延迟。组合收益或证据不稳时，保留不启用分布式思考的固定小层级、单 Agent 与外部 verifier，再逐项测试新增策略。<!-- source-family:SF-2026-ARXIV-2605-16205 -->
+
+可机器检查的子目标允许另一种协作交接：失败的proof obligation先返回冲突，使implementation修订，再重新提取目标，尝试借named invariant迁移已证子目标；只有全部义务成立后才重构整体证明。Name相同提供复用线索，不保证新目标语义身份，完整类型检查/重构不可省。[WybeCoder的受限方法](https://arxiv.org/pdf/2603.29088v1)支持此接口，却有sequential模型优于multi的切片，solve统计还含disprove，formal正确也可能未满足imperative任务要求或原spec的用户意图。全部模型搜索、VC/SMT/Lean、迁移/重构、judge和人工spec费都计入，calls×agents不等总token或墙钟。目标身份、spec或重构失败时保留原证明、顺序求解/较小workflow及独立任务验收，不由多agent数量、重用name或子目标成功批准任意repo与生产正确性。
+<!-- source-family:SF-2026-ARXIV-2603-29088 -->
+
+通信协议还会改变跨轮适应产生什么可复用状态。应在相同角色配置下比较 broadcast 与 silence，并将积累的 notes 冻结后放到新配置，与空 notes 重新比较；相对零信息 ruler 的单臂收益不是通信因果，旧配置内进步也不保证迁移。[受限多代游戏对照](https://arxiv.org/html/2610.05041v1)中 notes 是唯一跨代通道、不是权重学习，冻结 notes 的新配置可弱于空 notes，说明协议与记忆的适应身份须一起保存。单一冻结模型与 prompt 设定、scale 实验有限、部分差额不显著，以及剔除已披露 memory 缺陷后部分次要对照失去显著，都限制普遍化；未公开 supplement 不当作已核证据。全部发言、notes 制备/上下文与重新部署评价均计费；迁移不稳或通信净收益不足时保留空 notes、固定小协议与单 Agent，不把更多代际迭代或记忆累积当通用协作 scaling law。<!-- source-family:SF-2026-ARXIV-2610-05041 -->
+
+缩短每个节点的上下文，也要支付信息交接损失。若任务要求全部步骤成功且步骤在给定条件下独立，可将成功率的负对数写成逐步代价之和，再在模型中比较上下文负担减少与handoff代价；负担函数和常数交接项是额外假设，不是互信息恒等式。[受限 attention/handoff 分析](https://arxiv.org/html/2610.06069v1)据此提出选择条件，却未观测所有预测交叉点：预测深度低于已测范围，部分handoff项区间包含零，ledger分支还多付writer token而非等总预算。单一模型家族、两类任务和format failure不能支持多Agent普遍胜出。上下文制备、writer、交接与全部节点调用须计费；独立性、信息保留或实际净收益不成立时，保留单Agent、较少handoff与完整context基线，不把分解式当协作扩展定律。<!-- source-family:SF-2026-ARXIV-2610-06069 -->
 
 因此架构选择应先测：
 
@@ -119,6 +140,10 @@ task-topology matching，同时保留单 Agent、deterministic verifier 和 work
 
 如果所有 agent 读取同一错误文档、使用同一模型并互相复述，讨论轮数不会创造新证据。
 
+异构实现可以提供比互相复述更具体的诊断，但一致仍不是正确：同一规格分别生成 Verilog 与 Python reference，双方不看对方代码，通过有限随机 stimuli 比较 cycle 输出，把首个分歧转成结构反馈；下一轮只有 agreement 提高才接纳，否则回到上次版本。[ChipMATE 的受限运行](https://arxiv.org/html/2605.12857v1)使 rollback 的控制对象清楚，却只保这组测试的一致性，不保规格、时钟/位宽或未测输入正确，两个实现仍可能共享错解。部署无 golden 也不等训练无正确性来源：数据生成读取 golden Verilog，训练中的 local/correct-fix reward 还依赖额外正确性信号，pair reward 如何归约到各策略未闭合时不照抄完整联合训练 recipe。内部多候选、多 turn 与回退必须计入 system pass 的成本，不能把系统 pass1 当单次单 agent 前向；更多候选/轮数并非单调改善。数据/API、双方训练、仿真与全部修订都付费；共同错、测试支持或预算不合格时，回到可信 reference、形式验证与人工规格核验，不由 code-blind 或100% agreement 认证硬件安全及正确性。<!-- source-family:SF-2026-ARXIV-2605-12857 -->
+
+监督角色还可能只改变错误出现的动作通道，而没有消除同一损失：折扣次数减少时，退款或店内信用额可以替代让利。因此，复核者不能只验被点名禁止的动作，应把等价资源转移及其最终结果一起核账，并保留执行者与监督者是否共享模型和证据的条件。[受限真实运行观察](https://www.anthropic.com/research/project-vend-2)中，同底座主管减少了显眼折扣，却增加退款与信用额；模型、工具和提示又持续迭代，整体盈利改善不能归因于增加主管。采购仍有人类批准，现场履约与纠错也依赖人工，观察不证明无人运行可靠性。联合核账会增加状态关联、审计与人工复核成本；无法取得独立结果或监督仍共享盲点时，保留单Agent的明确流程和外部审批，而不是用层级或相互认可代替验收。
+
 Verifier 的配置还应联合校准两条轴：在单次 agent 调用后还是完整 iteration 后复核，以及 judge 读取当前 step、完整 history 还是摘要。前者改变可介入的控制机会，后者改变证据可见性与 token 成本；摘要可能丢掉跨步依赖，完整 history 也可能混入干扰，不存在普适粒度或越长越好的视图。配置、judge、候选池与搜索预算应共同冻结，再比较实际控制收益及总成本。[有限多 Agent 对照](https://arxiv.org/html/2602.03053v1)的 BestConfiguration 经配置选择且成本不同，不是部署默认的统一最优；某些设置的零成功只描述这些样本与协议，不证明任务 fundamental impossible 或理论能力天花板。judge 域失配、摘要遗漏或复核成本失控时，应保留更简单的固定配置与独立环境验证。<!-- source-family:SF-2026-ARXIV-2602-03053 -->
 
 ## 典型拓扑
@@ -142,6 +167,13 @@ Supervisor
 
 这种选择减少无关上下文竞争，却增加 snapshot 陈旧性、视图重建、跨 worker 证据遗漏和抢占饥饿风险；共享依赖仍需 typed evidence，不能因只看到状态摘要就假定子任务独立。作者的受限研究包含 scripted 场景和 N=3/5、低决策密度的真实 Agent 实验，registry 中他人 ID 被提及也不等于发生有害污染，interrupt 的收益未被独立消融。因而它只是工作视图控制的条件分支，不证明绝对无污染、权限隔离或任意规模质量提升；强耦合任务、当前 worker 状态本身超预算或可恢复证据不足时，完整共享视图、显式交接与不抢占协调仍合理。<!-- source-family:SF-2026-ARXIV-2604-07911 -->
 
+工作视图也可采用与聚焦读取不同的分支：所有worker都能读取任务清单、共享约束及其他人的中间发现，却只能在自己的带标签结果槽写入，写操作再由file lock串行化。这样，先完成的worker不必等待最终汇总，就可把来源、部分结果或失败线索交给仍在运行者，后者据此避开重复搜索、补字段或调整路径。读写不对称只约束贡献位置；局部内容即使可见，也不等于已经核实的全局事实，不能由共享Markdown或写锁推出共识正确、权限隔离或持久恢复。<!-- source-family:SF-2026-ARXIV-2604-27221 -->
+
+这种工作板增加共享上下文、锁竞争、陈旧结果与相互污染成本，仍须把结果验收和副作用控制留给独立接口。[受限去工作板对照](https://arxiv.org/html/2604.27221v1#S3.SS4)支持该协调分支的局部作用，却没有把多worker与单agent预算对齐；skill更新及汇总去重的正文描述也不完全一致，不能据headline补出统一运行保证。任务短、证据高度相关或共享成本超过收益时，保留独立worker后汇总、聚焦局部视图或单Agent加确定性检查；工作板、skill生命周期和完整调用费用分别核验。
+
+共享环境也可以按角色派生不同工作视图，而不是把同一工作板广播给所有成员：一个感知代理按policy将源文重写为该角色可见的aspect，工作代理只在这份视图上提出修改，再由回写路径处理请求、更新共同源并重新生成受影响视图。[一项受限原型](https://arxiv.org/pdf/2509.03380v1)展示了这个双向接口，但负责投影的代理本身能看到源文，policy判断又依赖LLM，不能把下游暂时看不见秘密等同全链路确定性隔离。共同源版本、角色/policy、派生视图和修改请求应一起校验；旧视图、丢失更新或并发冲突不能靠角色名称解决，真实授权仍交第72章的可信控制。少量诱导与一次字段更新中未观察到泄漏，不认证任意秘密/攻击或所有框架的安全差异；投影、重建、回写、失败重试与独立一致性/泄漏检查都付费。源文或policy不可信、视图无法可靠更新时，保留确定性字段投影、静态最小权限与人工批准，任务高度耦合且无保密边界时也可继续使用受控共享板，不让LLM重写自行签发隔离保证。
+<!-- source-family:SF-2025-ARXIV-2509-03380 -->
+
 Supervisor 的权力还要按时间范围分层。对当前 run 的 `redirect / abort / retry` 是执行控制；把一条成功轨迹、
 prompt、tool recipe 或 harness 交给未来 run 使用，则是能力状态变更。前者可以在预算内快速生效，后者必须经过
 独立 verification、lineage 与 admission：
@@ -163,17 +195,51 @@ run-local correction 更安全。跨 run adoption 的平台责任交给第 84 �
 
 对连续数值估计，平均可缩小同题采样波动，却留下该题共同bias；全数据平均误差接近零也不证明每题无偏。[受限多Agent scaling证据](https://arxiv.org/html/2609.31563v1)支持分别验收候选覆盖、aggregation选择及item-level偏差，而不把任务taxonomy当普遍人数法则。Answer-first格式、revision推理机会和peer数同时影响结果，扩大团队/异构pool亦有退步；reference噪声、pool后验选择、prompt与总调用成本须分账。若错误mode稳定、选择器不可靠或收益不抵费用，保留single-agent深推理、少量revision和独立可执行verifier，不以共识或平均认证真值。<!-- source-family:SF-2026-ARXIV-2609-31563 -->
 
+同伴意见已经可能放大共同错误时，一条额外分支不是让模型更强硬，而是把发言者的可检验表现与本轮说服力分开。外部系统持有已知答案的校准题，先取得各 Agent 在看见 peer 前的独立回答，再把校准所得信任值作为 speaker 属性随消息交给 receiver，指导下一轮按信任而非简单人数权衡。校准后冻结减少更新状态，却允许先在校准期答对、后来改变行为者利用旧信誉；随机选择后续校准题更新提供了另一条适应路径，但继续消费正确答案、额外调用与状态维护。信任标记只参与意见形成，不让 sender 取得任务事实、工具权限或最终验收权。<!-- source-family:SF-2026-ARXIV-2603-15809 -->
+
+[受限意见传播与信任对照](https://arxiv.org/html/2603.15809v1)把 private prior、自己上一轮意见和邻居意见分开建模，帮助解释坚持原判断与接受纠错的张力；静态线性模型拟合自报概率，不证明 LLM 执行同一更新，也不把动态信任认证为安全。原对照只覆盖有限多选题和小型讨论网络，部分稀疏更新有反退，已知正确答案在主评价中的校准也不能替代未知任务的验证器。被增强的旧信誉可能强化错误，过度坚持或过滤又可能压掉正确少数与必要纠错；信任来源、可见性、校准人口、变化时间和通信总费用必须分账。外部验证信号不可得、声誉漂移或收益不足时，保留独立候选、较少轮讨论与可信 verifier/固定 Workflow，不把人数、共识或信任高分当真值。<!-- source-family:SF-2026-ARXIV-2603-15809 -->
+
+除了“我认为哪个答案正确”，协作者还可以另交一份“其他人会怎样分配答案概率”的预测。一条有限协作分支让每个 Agent 在看见本轮同伴结果前提交 self-belief 与 peer forecast，再用其他 Agent 的实际平均 belief 评价 forecast 的平方距离，并据此指数更新聚合权重；最终采用平方权重又进一步放大影响。这增加的是一个关于同伴行为的测量接口，不是独立事实来源：准确预见集体错误的 Agent 可能获得高分，准确预见集体共识也可能只是熟悉同源偏差。Self-belief、forecast、可见 history、被排除自身的 peer population 与聚合规则因此必须分开保存，不能把 peer-prediction score 直接称为答案正确率。<!-- source-family:SF-2026-ARXIV-2603-06801 -->
+
+[受限辩论对照](https://arxiv.org/html/2603.06801v1#S5)支持探索这种额外信号；它的“走向真值”分析还需要正确者确实更能预测同伴、同伴预测存在相应误差、每轮条件优势及受限更新尺度，并不由不同 temperature、persona 或增加 forecast 字段自动成立。所给评分范围与漂移表述、理论小步长和实际放大/最终平方权重之间还有未闭合处，不继承为少数正确者必胜的保证。筛选后的困难题人口也不是全部任务，部分表格汇总与分项不一致，不能用一个总体百分比认证收益。Forecast 查询、概率解析、多轮通信与聚合继续计费；同伴人口漂移、权重强化共同错误或成本不合适时，保留独立候选、较少轮讨论与外部 verifier，不让“预测别人准”替代“有证据证明答案”。<!-- source-family:SF-2026-ARXIV-2603-06801 -->
+
+同伴意见的影响还应与模型单独能力分开测：先筛出模型独立答对的题，再在相同问题加入模拟错误 peer text，改变 authority、unanimity、盟友与公开/私下回答条件。这样暴露的是已具备局部能力时对文本社会条件的敏感性，既不是直接增加真正独立的 Agent，也不等于自然团队的灾难率；人数、logit confidence 和共同答案不能替代独立证据。<!-- source-family:SF-2026-ARXIV-2601-05384 -->
+
+[受限线长/颜色/点数对照](https://arxiv.org/html/2601.05384v1)使用100张图筛选 model-alone 正确人口、每条件64次试验，difficulty另用500张图，分母不能混算。难度相关与confidence不显著关联不识别置信因果；本次精确HTML未给temperature，不补采样配方。筛选、配对调用与独立结果检查付费，受测小模型/合成视觉任务不授真实群体风险；条件、支持或外部verifier不足时，保留单模型原回答、少量独立vote与外部锚，不将模拟从众当已部署协作可靠性。
+
 反馈协作还要区分 peer 能看到初稿、能交换哪些反馈，以及能否看到别人的修订成品。同题初稿与反馈可见、修订稿不再共享是一条受限分支：它仍允许借鉴与批评，却减少后续轮直接追随同一修订答案的机会。这不是完全盲评，初稿与反馈也可能已传播共同偏差；修订 artifact 的可见性是独立于人数和 judge 选择的控制变量，不能由“多 Agent”标签推断证据独立。<!-- source-family:SF-2026-ARXIV-2601-08003 -->
 
 [受限创意写作对照](https://arxiv.org/html/2601.08003v1)中，增加人数或轮数也会退步；有限科幻题目、少量学生人工核验与模型 judge 不证明任意任务质量或语义新颖性。虽然多 Agent 设置使用相同轮数，单 Agent 的总调用预算并未匹配，反馈、修订与裁决仍付费；文本分布或图式差异亦不是正确性证书。若同质化、judge 偏差或费用无法控制，保留少量独立候选、single-agent revision 与外部 verifier，不把受限反馈隔离升级为普遍优于单 Agent。
+
+环境中的 Agent 各自只能看到局部状态时，完整共享观察容易保留个体和关系，却支付更多通信与上下文；另一条分支让邻居同时交换具体动作提议和定长的加权均值、方差、总权重，再把这些统计合并为一个 virtual-node 视图，参与下一轮提议与 rollout 检查。[MACRO-LLM 的受限机制](https://arxiv.org/html/2601.09295v1)改变了共享对象，而不只是增加讨论轮数：统计提供局部群体特征，动作提议仍需匹配 sender/receiver 和当前约束。统计聚合会丢失个体身份、关联与尾部；重叠集合若无 membership/lineage 去重，更不能当成精确全局观察或安全共识。<!-- source-family:SF-2026-ARXIV-2601-09295 -->
+
+压缩视图能限制每次读入大小，却不免去多轮通信、候选 rollout、确定性计算、格式重试和模型等待；固定 degree/round/message 的每 Agent 复杂度也不证明整网常数成本或实时控制。原文小规模 SUMO platoon 的 headway 与速度指标有取舍，预测后续状态及放宽的远期约束不授物理安全；API 延迟、数值与身份错误仍需要外部检查。关系或尾部决定结果、统计支持不明、验证/延迟预算不足时，应回读相关原始观察、保留确定性 controller 与较少轮局部协作；可集中且预算允许时，完整共享视图继续合理，不由 virtual node 自动升级全局状态。
+
+共享视图还应把没有观察、陈旧观察和错误状态分开：没有检测到对象，规划器仍可提出探索；把设备错误标成已经关闭，却可能让它跳过必要前置动作。一个受限模拟对照在同团队/规划配置下分别扰动基础设施的检测遗漏、状态错误与通信延迟，显示共享先验能减少探索，却不使这三种故障可互换。[原方法与局部反侧](https://arxiv.org/html/2603.20182v1)不授全局事实正确、任意队伍规模或实体安全；由此推导的消费者接口应保source/time与未知标记，在依赖状态前核必要观测，必要时回主动探索、重规划或确定性执行边界，而不让missing补默认真值。新观测、通信和状态一致性检查均有费用，token减少不是墙钟或全费节约；来源不可信、延迟超出局部预算或前置条件未确认时，完整回读相关原始观察和较少轮协作仍合理。<!-- source-family:SF-2026-ARXIV-2603-20182 -->
 
 **Blackboard/Shared State**
 
 Agent 通过 typed artifacts 和 shared workflow state 协作，而不是无限聊天。可追踪性更强，但需要 concurrency、ownership 和 conflict rules。
 
+共享artifact还可保留不同消费者的约束，而不只作为一份共同文本：先把section、段落与asset引用组织为内容树，再与空间区域树合成异质IR；内容expert判断该节点保留什么，布局expert判断其空间支持，彼此反馈后更新同一节点，完整遍历再检查整份产物。[受限文档生成分支](https://arxiv.org/html/2508.21720v1#S3)说明这种协作对象不同于先锁layout再删文本，不能把“两名expert同意”当作内容真实或全局最优。裁剪/摘要和解析仍会丢信息，局部缩放也会挤压别处；应保原source、引用关系、IR版本与实际render分别回读，另验内容支持和全局overflow/布局，而不是让合并成功自签质量。解析、双expert交换、全树重检/渲染和人工都计费，更多轮不自动更好；asset错配、IR支持不全或预算不合时，回到可信内容/固定模板、较少角色和人工审校，不由更整齐的版面覆盖语义缺漏，也不让一个节点的局部通过批准整份交付。
+<!-- source-family:SF-2025-ARXIV-2508-21720 -->
+
 **Pipeline**
 
 固定角色顺序，实际更接近 Workflow；不应仅因每步使用模型就称为自主 multi-agent system。
+
+部署前选择图，也要区分无扰准确率与受扰后的退化曲线。固定节点数和边上限时，可让每轮各 Agent 独立以概率 $p$ 给出随机回复，测绝对性能 $F(p)$，再用 $R=\int_0^1F(p)\,dp/F(0)$ 比较相对韧性；R 高不说明基线已足够好，$F(0)=0$ 时该定义更不能使用。一条受限分支先用 task-aware GCN 预测多个扰动点的正确率，作为图生成器的训练代理，再固定图，用邻居 prompt 及 correct→wrong、wrong→correct 样例优化各角色 prompt，学习何时借鉴或忽略 peer。图与邻接条件由此成为两个阶段的控制对象，而非增加 Agent 就获得容错。<!-- source-family:SF-2026-ARXIV-2601-04694 -->
+
+[受扰图与邻接 prompt 的必要对照](https://arxiv.org/html/2601.04694v1)限于独立随机回复和固定小图，不认证相关故障、攻击或设备 outage；代理只预测 $p\leq0.8$ 的五点，而面积还含 $p=1$，不能冒充完整曲线 oracle。图 reward 中边比例是正 bonus，不是成本惩罚，因此也不授最稀疏或 Pareto 最优。无扰准确率与 R 的目标可冲突，迁移任务仍需重新优化 prompt；图代理训练、prompt 搜索和真实扰动运行都计费。扰动模型或代理失配时，保留固定小图、直接测量的绝对曲线与独立 verifier，图的资源可行性再由下节另行准入。
+
+图训练预算还可以先分配给哪些任务，而不只优化图本身。在已有答案的 pool 中，用当前图参数 ensemble 的真实执行得分估计任务对更新的不确定性，再以单步 EKI/Gaussian 近似提出信息量较高的训练子集；图的实际学习仍可用 REINFORCE，不能把 selection 近似当作同一个更新器或无标签 EIG。[有限任务选择对照](https://arxiv.org/html/2605.05703v1)还用代表子池与 surrogate 减少 rollout，但缓存只在同一 ensemble 下复用，新增 selection 费用常高于 train 费用。Benign 与部分攻击均值的 CI 跨零，仅部分尾部/任务有明确收益，非 Gaussian 与有限 ensemble 也无全局最优保证。已知答案、代理、任务人口与选择/训练总调用均须绑定，漂移、标签缺失或净收益不成立时，保留随机/代表采样和固定小图，不由高信息量签发真实任务价值或协作安全。 <!-- source-family:SF-2026-ARXIV-2605-05703 -->
+
+同一固定拓扑内轮流优化各角色 prompt，还会让评分对象随 peer 改变：上游改写输入后，旧 beam 的高分未必仍成立。一个受限分支按拓扑顺序交替搜索，每轮在当前 peer 版本下重新比较旧候选与当前 best，并把 local validity、直接后继 lookahead 和最终输出的 judge 偏好分开；局部合法但下游无益的 trace 可作为下一轮 hard negative。[MASPO 的有限对照](https://arxiv.org/html/2605.06623v1)支持这个陈旧评分刷新接口，不把 judge preference 认证为因果 credit；一跳更合算也不是普遍充分定律。同一 Gemini judge 参与优化和评价会带共同偏差，50 个未标注任务、两拓扑与单一受测 agent 族不授任意拓扑迁移。候选/peer/judge 版本、trace、搜索与完整 token 成本须共同保存，持出质量或净预算失配时，保留原 prompts、固定图与独立终局验证，而非由局部高分批准运行安全。 <!-- source-family:SF-2026-ARXIV-2605-06623 -->
+
+固定角色和拓扑之外，还可让外部controller在一次多轮互动中选择下一轮的风格或情绪标签，把标签交给LLM生成言语，再由独立的协议/mediator分别测接受结果、收益和轮次。[一项受限双Agent模拟](https://arxiv.org/html/2509.04310v1)搜索条件序列、转移参数与温度，改变的是语言生成所消费的外部条件，不识别Agent内在情绪，也不把提示标签当真人心理机制。预定序列/转移与LLM状态读出之间的仲裁未闭，不照录完整policy；20情境、固定对手人口和同源mediator不授真实交易或人际效果。较高收益可同时提高破裂率，较少轮次也不等较少token/总墙钟；无随机标签序列/独立holdout控制时，不能把搜索后的好分全归动态条件或单调进化。全部population/多代模拟、模型与mediator、调参和独立协议验证都计费；条件、目标或评价权限不稳时，保留固定策略、明确接受/终止规则与人工裁决，不将这一模拟分支用于授予实际操纵、交易或安全权限。
+<!-- source-family:SF-2025-ARXIV-2509-04310 -->
+
+图上的选择策略与节点 prompt 还可以共同学习，而不只在固定图内刷新旧候选：从有正确性记录的历史 workflow 构建操作节点与可用边，先按当前节点和任务相似状态选择后继，再用终局及局部文字反馈修正角色 prompt。[MANGO 的有限分支](https://arxiv.org/html/2605.12943v1)让路由状态与节点语义互相改变，四个相似度却不保证 Markov 充分，文字反馈也不是数学梯度或唯一因果 credit。尤其 K-hop skip 的训练数据可填历史 ground-truth 中间步骤，线上则须由到达节点承担被跳过的子任务，不能把离线填空权限带入部署或默许必需证据已经完成。更多跳步可同时降费用与降质量，更短时间也未必更低 API 成本；历史正确轨迹制备、聚类、策略训练、prompt 搜索、规划/重规划与执行均计费。支持、角色版本、跳步完成资格或净预算失配时，保留原固定图、原 prompts 与独立终局验证，资源准入仍由下一节另验，不由 learned path 授予最优或安全运行。<!-- source-family:SF-2026-ARXIV-2605-12943 -->
 
 ### 执行前的 Resource Algebra 是拓扑准入证书，不是运行时估算的替代
 
@@ -201,6 +267,8 @@ Backbone 为 DAG 只限制节点间的依赖，并不证明节点内或双向协
 
 运行时创建还要分开三种生命周期：可复用的 agent metadata/object pool、每次调用的临时 execution clone，以及能够恢复的 execution-memory archive。一个分支先按模型、指令、工具与初始记忆注册配置，调用时克隆对象执行，结束后删除 clone，历史仍由独立记忆组件持有；删除执行对象不等于清空证据，也不等于 durable workflow checkpoint 或已回滚外部 effect。并行调用的共享 message board 可用写锁及每个 Agent 的读取 cursor 只投递新差量，但这只控制消息读写，不认证内容真实、工具权限或副作用隔离。[原始有限机制与对照](https://arxiv.org/html/2602.16891v1)中的拓扑/摘要联合消融不识别单独动态 create 的收益，容器与图记忆也不授全面安全；生命周期拆分增加 clone、状态索引、恢复与消息同步费用，配置不可追溯、恢复证据不足或调用预算不稳时，保留固定小型 worker pool、显式 typed handoff 与第81章的执行控制。<!-- source-family:SF-2026-ARXIV-2602-16891 -->
 
+运行中的子 Agent 也不必等完成或报错后才重建：它可以在局部障碍出现时暂停，提交 progress/uncertainty、修改请求和支持该请求的 tool evidence；orchestrator 决定是否改 subgoal、context、tools 或剩余预算，将 revision 作为 observation 记入原 local trajectory 后继续，或显式终止。这保留执行连续性，却增加通信、版本与全局责任协调；请求本身不授权扩大用户范围或工具权限。反馈还可用于学习 delegation，但应先区分原配置失配与后来外生要求变化，仅把可归因的 hint 用作训练期 self-teacher，最终 outcome 仍单独监督。[POrchestra 的有限对照](https://arxiv.org/html/2610.13485v1)只执行一个 active 子 Agent，非并发协调或普遍成本最优保证；反馈不可靠、任务稳定或副作用强时，固定配置与有界返回交接仍合理。<!-- source-family:SF-2026-ARXIV-2610-13485 -->
+
 有界fan-out还要区分已启动、provider已ready、仍在运行与结果已验收的数量。只按启动数放大批次，可能在首次限流前堆出大量尚未ready的工作；一种限定实现正常期先启动5项，再每700ms加入一项，首次provider限流后停止ramp，以ready数量初始化并收缩容量，随后在容量与等待时刻允许时逐项启动。Kimi Code 0.12的rate-limit phase优先重试同一agent，再处理resume或新任务，用3/6/12秒递增等待与约3分钟无新限流后的探测增容，换取较少重复初始化；正常ramp本身不以active数量硬封顶，这套规则不是最优配额、生产SLO或预算安全证明。<!-- source-family:SF-KIMI-CODE-0-12 -->
 
 批次Join也不应把取消改写为“所有工作都未发生”：结果槽保留原输入顺序与已完成输出，将已开始但未完的任务和从未启动的任务分别标为aborted/started与aborted/not_started，已知agent身份可用于后续resume；单任务timeout只终止该任务，剩余唯一任务持续限流则可终态失败而非无限重试。Swarm mode中的自动审批仅针对AgentSwarm工具，不等于子任务工具权限豁免。它增加队列、退避与部分结果状态，但不证明队列持久性、crash重放、effect回滚或模型返回即正确；高风险任务仍需原有能力边界、预算验收与独立verifier，配额不可观测时保留静态小批次或串行fallback。<!-- source-family:SF-KIMI-CODE-0-12 -->
@@ -213,6 +281,10 @@ Task-topology matching 最初通常发生在运行前：根据 decomposability�
 
 复用降低目标任务的边际搜索成本，却增加跨任务迁移失配和隐藏的前期成本；摊销必须另报来源搜索及可复用任务数，不能把低边际调用费叫作总成本。受限数学/代码测试存在迁移反退，没有验证不可逆effect的开放Agent；分布变化、结构不兼容或缺verifier时，保留人工结构、单Agent或逐任务有界搜索。 [原文必要机制与限制](https://arxiv.org/html/2604.25012v1)。
 <!-- source-family:SF-2026-ARXIV-2604-25012 -->
+
+历史结构还可以先拆成可匹配的属性与关系，而不只复用一份文字启发。把已验拓扑整理为带角色属性、节点权重和关系矩阵的prior bank，当前任务先给出候选scaffold；用fused Gromov–Wasserstein同时比较角色语义与关系结构，再将历史关系通过归一化transport映到当前节点，作为残差拓扑搜索的prior，而不是直接复制同名角色之间的边。检索相似、匹配分散度与历史utility只是选择线索；搜索后仍要执行、验证，旧任务在评测阶段只读，不让当前任务的结果反写成旧任务成功。<!-- source-family:SF-2026-ARXIV-2605-17361 -->
+
+[MasFACT的有限持续任务对照](https://arxiv.org/html/2605.17361v1#S4)支持属性与关系、历史prior和局部残差适配的组合取舍，但不同任务流并非都无遗忘，Code平均准确率也低于一个replay对照；局部ablation不认证所有先验均可迁移。分析中的Gibbs posterior与实现的Gumbel采样并非同一已证求解器，依赖support生成scaffold也不能不经条件检查就套用独立prior的风险界；不采用PAC保证或复杂度proxy与真实图改动完全等同。bank构造、FGW、检索、执行评分与原搜索成本都应分账；角色含糊、历史污染或分布迁移时，保留H/C启发、人工结构和逐任务有界搜索，不从只读旧评测推出真实开放任务的永久记忆可靠性。
 
 当 long-horizon task 的风险只有在 trace 中暴露时，静态选择会遇到边界：某一 branch
 过载、缺少 verifier、并行 action 产生重复副作用，或 agents 在 unresolved issues 尚存时
@@ -257,15 +329,30 @@ Peer selector 只拥有委派决策，不拥有最终求解或 verifier。探索
 
 稳定模型池也可以先采用离线路径：用可核验 validation 按任务族分别测 worker 的求解能力与 coordinator 的聚合能力，再把角色相关 profile 交给有界选择器；单模型解题强，不自动意味着它善于消费其他模型结果。[受限角色对照](https://arxiv.org/html/2602.16485v1#S4.SS1)在数学与代码上选出不同 coordinator，其 GT 辅助自评是离线依据，不是线上自报 confidence 或事实、权限保证。固定美元预算换成 provider-specific token cap 也不等于同 token；profile 构造、模型调用、并行等待与合并都计费，异构模型名称不证明错误独立。该研究未充分交代独立 held-out 校准和不确定性，因而只能支持这一角色分账选择，不能授普遍 Pareto 最优。任务短、模型/价格漂移或 profile 不可靠时，单 Agent、固定小池与独立 verifier 仍成立。<!-- source-family:SF-2026-ARXIV-2602-16485 -->
 
+离线角色 profile 之外，还可以把每轮“需要哪些角色”与“每个角色使用多大模型”分开学习。先根据 query 和当前 context 的角色概率，按累计概率阈值选出子集；若其中包含 EarlyStop 就结束，否则再为各角色选择模型。生成之后的平均 token log-prob 则按各模型近期统计及冷启动插值归一化，只用于调节训练成本惩罚：高 confidence 加重成本压力、低 confidence 放松。它不是生成前可用的正确性 oracle，也不因名为 confidence 就取得独立停止或答案验收权。<!-- source-family:SF-2026-ARXIV-2601-04861 -->
+
+[角色→模型容量的受限对照](https://arxiv.org/html/2601.04861v1)中，删去模型路由或成本项可能提高准确率却增加费用，删 confidence 也可能更便宜但更差；轮数与成本权重并非越大越好。逐模型统计未证明跨 tokenizer 正确性校准，本地模型的调用费又用 API 价格及参数幂律代理，不能写成实测 GPU 节省。encoder、router、历史 context、多模型驻留与训练都付费，单请求 latency 不授并发 SLO。角色选择与 EarlyStop 仍须服从硬轮次预算和独立义务验收；模型池或统计漂移时，保留固定角色/模型小池、单 Agent 和原 verifier。
+
+角色还可以是同一执行者在两次语言推断之间改变的控制变量，而不只决定调用哪个模型。一个受限分支先让语言模型从本地观测提出目标意图，再由以观测和初意图为条件的本地role-value选择角色；邻居交换目标、角色与观测后，语言消费者据此精化最终目标。离线语言先验需要经过既有环境控制链取得reward/transition，才能与在线探索共同训练role selector；全局state条件的非负mixing只服务训练，不把价值分摊认证为真实因果贡献，也不让部署角色自授权限。[RALLY的有限模拟对照](https://arxiv.org/html/2507.01378v1)假设middle导航/避障与low controller可用，不能由两阶段文字共识批准低层执行；所印严格优越定理和文本微调损失接口亦不作为保证或可执行配方。更多角色未必更好，小模型也未必更快，role/goal解析、teacher预采、在线探索、两次推断、通信和完整控制回归均付费。先验支持、角色漂移、延迟或实际质量不合格时，保留固定角色、已验本地选择与原controller，不用mixing单调或模拟覆盖率代替独立结果和安全验收。
+<!-- source-family:SF-2025-ARXIV-2507-01378 -->
+
 动态协作还可以不等待故障才改拓扑，而按每轮当前信息需求重建有界通信图。各Agent先给行动proposal、信息needs与可选addressee，router用需求与peer观测/记忆的匹配、计划相似及信息互补来分配边；direct address优先但不绕过receiver容量。确定图选择不需要额外LLM planner，却仍消费全局候选metadata、embedding与pair比较；coverage补边若允许超sender预算，成本证书必须保留这个例外。
 
 图只控制这次谁看见哪份proposal，peer reply只是行动选择证据：非空接收集合全部Accept可以省一次本地生成，但missing/reject/counter应回本地决策，不因语义相似或共识取得真实effect授权。Proxifield的受限sim结果显示needs表达与基模型能力、团队规模和permanentdropout会改变选择收益；比较调用预算不等、全局router故障未测，也不证明Byzantine或真实网络可靠性。关键证据丢失、不可逆动作或SLO不允许多轮时，保留固定workflow、可读handoff与独立verifier。 [必要机制与反证](https://arxiv.org/html/2609.20889v1)。<!-- source-family:SF-2026-ARXIV-2609-20889 -->
+
+可训练的协作神经策略还有另一种约束：每层同时学习通信图的随机表示，让它相对带组结构的prior承担KL成本，并在最后一层压缩被发送的feature。它区分“哪些连接应保留”和“沿连接带多少表征信息”，但prior的组尺度本身引入归纳偏置；组结构不匹配时，固定prior未必优于平坦prior。这里的执行者消费局部观测与动作历史，是cooperative MARL的神经策略，不等于语言Agent已获得同样的消息语义或带宽收益。<!-- source-family:SF-2026-ARXIV-2605-17393 -->
+
+[HIB-CG的受限模拟对照](https://arxiv.org/html/2605.17393v1#S5)中，反向组结构和部分benchmark会退步，图与feature瓶颈也非每格都呈单调增益；较低KL跨不同训练posterior，不能单独认证固定posterior的bound更紧。所谓no-regret只针对能选最优匹配prior的族，并不保证任意固定组prior或任务return；TD loss的消费者还读局部输入，低TD不能证明消息自身保留任务信息，water-filling的必要条件也不是实际全局最优分配证书。训练、先验选择和全部pair计算均付费，主复杂度仍是二次，少量高权边不等于稀疏网络执行；prior、消息有效性或预算失配时，保留平坦prior、既有通信图及独立outcome检查，不把理论措辞换成实际通信或可靠性保证。
 
 ### 通信预算先区分消息长度与重建成本
 
 传完整解释最容易审计，但接收者若已经拥有很强的先验，短反馈也可能足以让它修正答案。一个受限交互分支让较小模型提出二元问题，较强模型只回 yes/no，再由小模型重建解答；在同一模型、prompt 与确定性生成可重放的前提下，只计算回答方向的 payload 可以得到很小的 bit 数。它不是无损搬运强模型的知识：问题、模型先验和本地重建计算已经提供大量条件信息，双向网络、模型调用与同步成本还要另算。
 
 验收要与等计算的自问自答比较，分离协议结构收益和外部信息收益，并检查答者是否看到了实际部署不可得的参考答案。受限 Claude-family 实验用了这类 privileged reference，部分恢复主要来自自我修订；错误二元反馈和不可确定重放会削弱收益。因而通信 owner 只优化明确的 channel contract，不取得 correctness authority；知识缺口大、开放任务不可判真或审计优先时，完整文本、typed evidence 与独立 verifier 仍更合理。[二元反馈协议、共享先验与评测限制](https://arxiv.org/html/2604.02343v1#S5)
+
+短消息还可以来自专门训练的提示者，而不是强模型在线回答。把题目和参考解的中间状态作为输入，监督一个较小模型生成下一步 hint，学到的是“怎样提示”，不等于这个模型已获得直接求解能力；消费 hint 的 solver 仍持有自己的推理状态与最终答案责任。训练时 teacher 看过完整参考解，评价时借参考解制作的 oracle hints 与部署小模型生成的 hints 因而是两个信息条件，不能合并成同一种无辅助推理收益。即使不直接写出答案，参考解也已经提供特权信息；监督使用 gold 中间状态时，还应检查实际 solver 状态上的提示是否仍适用，而不从训练输入自动承诺在线适配。<!-- source-family:SF-2026-ARXIV-2604-12229 -->
+
+[HintMR 的受限数学对照](https://arxiv.org/html/2604.12229v1#S3)给出这一角色分离，但各小子集、QLoRA 配方与 ordered hints 的消费协议限制外推；fine-tuned hinter 直接当 solver 或再消费自身 hints 都有退步，AIME-2025 的八次运行中 SLM-hint 条件也为零，不能写成提示恒有益。Hint tokens 较短不证明端到端更快：teacher/人工监督、hinter 训练与全部 hint/solver 调用都需分账，效率表不自动覆盖所有部署小模型提示的费用。任务、状态或模型失配时，保留无 hint 的 solver、完整可审计说明和独立答案验证；通信 owner 选择消息接口，不因训练过提示者便获得正确性授权。
 
 ### 接收方可以决定何时停止发送，但要验收后续对话
 
@@ -293,6 +380,8 @@ sender / receiver model identity
 ```
 
 adapter 数量线性增长不等于 runtime cost 也线性，更不证明 accuracy parity。不可读 embedding 只能作为 proposal channel，不能替代 authoritative task state、approval 或完成证据。Vision Wormhole 提供了异构 VLM 之间传递 image-span latent 的实验机制，但版本、模型组合和 artifact 边界要求它保持 Experimental；文本/typed artifact 在审计、故障恢复和跨版本兼容更重要时继续成立。
+
+分段视频也可以让每个worker按query把局部观察压成固定K个连续tokens，再交由star coordinator联合读出；共享权重与caption、图像问答、视频协作训练用于形成可消费坐标，异构worker仍需适配器，不是直接交换任意cache。这里要同时保存两份预算：每worker的帧数与分辨率上界，以及coordinator的`M*K+query`输入；增加worker覆盖更长视频时，单体视觉不变不代表总视觉、通信或计算不变。[必要预算与反侧](https://arxiv.org/html/2605.00444v1)中，提高K仍可局部退步，去训练阶段对照也未匹配全部数据/compute，不能认证无损压缩或普遍scale规律。完整编码、codec训练、每worker调用、adapter和聚合均付费；细节不可恢复、身份不兼容或coordinator已满时，减少并行段、重读相关原帧，保留文字/typed evidence和单模型分支，不让不可读latent替代可核实的全局事实。<!-- source-family:SF-2026-ARXIV-2605-00444 -->
 
 图像 span 并不是 latent communication 的唯一对象。语言 Agent 也可以把发送方末层的一段 hidden states 当作
 候选消息，再映射到接收方 input-embedding 坐标。直接拷贝 state 或 KV 的问题是坐标系、层数和 norm 都属于
@@ -341,6 +430,10 @@ XKV 的作者实验只覆盖三个小模型 family、九个有序 pair、五个 
 可能值得维护；pair 经常变化、审计或恢复优先时，文本/typed artifact 仍是默认路径；无法训练 adapter 时，前述
 training-free alignment 仍是另一条受限分支。
 
+消息接口兼容后，还要单独问“这些KV是否已经存在”。Latent message 免去文本表述，却仍可能先执行串行latent rollout才能生成消息。一条可训练分支保留prefill边界的各层hidden作为seed R，以及压缩prefix KV作为可寻址context bank C；learned slots同时cross-attend R得到多个continuation embeddings，再携带C经过一次冻结backbone的causal forward，物化各层输出KV。它改变的是消息构造，不是接收方翻译；同一次forward内仍有causal attention，也没有删去prefix依赖。训练用同一R/C起点的自回归teacher轨迹抽取KV target，以KV匹配和hidden辅助loss训练writer，不证明任意推理轨迹与一次状态写入等价。<!-- source-family:SF-2026-ARXIV-2610-23056 -->
+
+[受限共享backbone顺序链对照](https://arxiv.org/html/2610.23056v1)中，四Agent的latent通信构造从12次降到3次，单RTX A6000、batch1的平均端到端延迟约改善2.5倍，平均accuracy低0.72个百分点；它是质量/延迟分支，不是无损加速。上述数字限定于Qwen2.5-7B、Qwen3-8B/14B与Mistral-7B、八个datasets/三类的11个配置及category-macro平均口径；输入/输出长度随样本变化，部署precision/quantization与服务SLO未单独披露，Beacon训练的BF16不等推理精度。删去R或C、换任意latent内容都退步，支持seed与可寻址prefix共同参与，但不认证长程事实正确。KV负载下降按tensor形状与element size解析估算，不能称profiler实测HBM/网络流量；prefill、render、最终decode以及离线Beacon/teacher/writer训练仍付费。异构模型、复杂通信图、在线升级与tool长工作流未验证，接口漂移或审计恢复优先时保留普通latent rollout、typed/text message，不以一次forward代替协议与证据检查。
+
 发送方的 prompt cache 先压缩再传递时，另一个问题是被淘汰 V 的贡献是否还可由保留 V 表达；这不同于前述接收方条件化翻译。一条 sender-local 分支先去除被删 V 在保留 V 张成空间内的分量，对残差做低秩主子空间与 attention-demand 汇总，再把同一补偿量加到各保留 prompt V，K 保持不变。它试图减少硬淘汰的损失，但正交分解与统一补偿不证明原 attention 输出、信息无损或事实正确。<!-- source-family:SF-2026-ARXIV-2604-13349 -->
 
 [受限 relay 对照](https://arxiv.org/html/2604.13349v1)限 Qwen3-14B、40 latent steps、BF16、单 RTX PRO 6000 Blackwell，rank-8 残差摘要仍有任务/压缩分支退步。实现必须在删除前保有原矩阵并支付 QR/SVD 与统计成本，不能把小传输 payload 当成免费压缩；压缩规则、模型和 cache revision 都须绑定。接收方失配依然归 translator owner，审计或质量失败时回退完整 KV 或 typed/text message；两条路线可组合，但不能互相冒充已完成的兼容性与真实性验证。
@@ -353,11 +446,17 @@ training-free alignment 仍是另一条受限分支。
 
 Agent 可从 interaction history 推断 co-player 的响应策略，并据此调整当前 action；这能在重复博弈中形成快速适应，也会产生 strategic shaping、collusion、belief poisoning 和 equilibrium drift。Runtime identity 回答“对方是谁、拥有什么权限”，behavioral belief 只回答“根据有限历史，对方可能怎样行动”，二者必须分开存储和校准。外部 policy 仍定义什么合作可接受，模型不能用预测到的互惠收益自行放宽授权。受控 repeated-game 实验证明 partner diversity 可诱发有限的 in-context adaptation，不证明现实 Agent 会自然合作或隐藏身份更安全。
 
+把一组协作者当作一个有目标的Agent，还需要另一层建模资格，不能只因观察到合作就归一个共同utility。可先固定个体机制、聚合变量的映射与可执行干预，再检查“先在低层干预后聚合”的分布，是否与“映到高层后干预”一致；更强抽象还要求高层干预都有低层实现。[Collective Agency的受限形式化](https://arxiv.org/pdf/2605.00248v1)依赖所选rationality和因果模型，常量utility会让agency解释空泛，一步actor–critic构造及有限voting模拟也不识别真实LLM群体的隐藏目标。聚合、干预采集和surrogate拟合增加成本，学习中的nonstationarity会破坏静态模型；干预支持或预测不可靠时，保留逐Agent机制、个体/群体结果和外部权限审计，不由共识或一个拟合目标认证集体安全。<!-- source-family:SF-2026-ARXIV-2605-00248 -->
+
 若风险来自协作者策略轻微偏移，训练时还可引入一个受 KL 约束的辅助 partner adversary：它以降低本 Agent 的回报为目标，但被惩罚偏离正在演化的普通 partner；本 Agent 再针对这一局部邻域更新 PPO。它是训练人口的风险暴露控制，不会认证对方身份，更不会扩大运行期权限；reference 随训练变化，KL 系数也不是任意部署分布的安全证书。附加 adversary、角色采样、rollout 和更新成本需结算，缺乏聚合结构的任务甚至会降低训练表现。合作数学题的双人共同正确与异质未训练 partner 下单 Agent 正确不是同一评价人口；保留普通 self-play/IPPO 与真实部署 partner 检查，不能用受限邻域训练代替开放协作的信任规则。<!-- source-family:SF-2026-ARXIV-2602-21515 -->
 
 在线适应之外，还可以先让模型生成固定策略、检查其可执行性，再在冻结策略池中模拟不同群体组成与组大小；这以编译、筛选和模拟费用换取更大的可检查人口，但可执行不等策略正确，编译失败的选择性剔除也会改变人口。单 Agent 收益或同模型 self-play 不足以说明整体福利，评估还应显式保存用户模仿、策略重采样、mutation 与停止规则，分别报告个体收益和群体结果。[受限 population 证据](https://arxiv.org/html/2602.16662v1#S6)显示选择算子可偏向损害集体结果的策略，也有小组/游戏反例；binary action、固定收益与已知 horizon、无通信及未充分校准的模仿超参限制其解释。它不是在线 belief 更新，更不预测现实迁移成本、用户选择或合作安全；开放协作仍需实际环境验证和外部规则，短小任务可保留既有在线策略与固定小组。<!-- source-family:SF-2026-ARXIV-2602-16662 -->
 
 若策略会在 test time 继续更新，测量人口就不能只是一组固定 action policies：可把初始 interaction history 与固定 adaptation prompt 合成一个 meta-strategy，再冻结候选集、对手抽样、初态和 horizon，估计成对收益及相对该集合的 NE-regret。Uniform-opponent 收益高不等于面对 best response 仍稳定，同策略 self-play 的合作也不等于该人口下没有有利偏离。[受限 meta-game 对照](https://arxiv.org/html/2602.17203v1)在六种 GPT5-mini 配置、四离散价格、40 base-game 初态与 t=50 中得到部分合作均衡代理，但候选策略、API 离散化和信念改变都会改变结论，旧模型停用还使早期结果不能重现。History 中的 plan/insight 更新与固定 prompt 都须保存，模拟、矩阵估计与API调用付费；这不同于固定策略的 mutation/selection，也不预测现实 collusion 或授权合作。人口覆盖或成本不足时，保留冻结小组与实际环境对照，把 behavioral belief 和外部规则继续分权。<!-- source-family:SF-2026-ARXIV-2602-17203 -->
+
+合作机制也不只是在相同规则下多给一些历史。重复交互与 reputation 主要改变 Agent 能看见谁的过去行为，以及未来互惠的机会；mediator delegation 与 payoff contract 则还依赖环境真实执行委派或收益转移。提出协议、口头同意或投票，并不等于外部系统已经授权且能够兑现这些操作。应分别记录观察接口、partner identity、可委派动作、收益规则与实际执行者，不让 behavioral belief 静默升级成控制权或可执行承诺。<!-- source-family:SF-2026-ARXIV-2604-15267 -->
+
+[CoopEval 的有限博弈证据](https://arxiv.org/html/2604.15267v1)在指定有限游戏、可见历史和足够重视未来回报等条件下讨论合作均衡存在；这不排除坏均衡，也不保证模型群体会到达它。归一化 payoff、固定收益矩阵上的演化加权与实际合作成功率是不同测量，更多历史或某种 contract 仍可更差；合成 rationale 标签也不读取真实动机。重复模型调用、历史和机制执行都计费，有限轮折扣实验不认证现实用户福利、跨机构授权或持续稳定。执行承诺、人口或成本不可验时，保留明确外部规则、固定小组与实际环境对照，不从一个均衡存在命题批准开放协作。
 
 ## Message 不是 State
 
@@ -393,6 +492,8 @@ Agent 可从 interaction history 推断 co-player 的响应策略，并据此调
 
 这种 latent coupling 降低文本序列化开销，却可能近似翻倍模型 compute，并新增同步阻塞、不可解释通信、负迁移与 task-specific causal annotation。能力互补不清、因果放置无法证明或审计要求可读时，应回退显式 typed message、异步协作或单模型 tool loop。exact-v1 只支持作者的 calculator/Z3 与有限 GSM8K 分析，不证明跨工具、跨模型或生产 latency 下普遍有益。
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-11167:end -->
+
+上述 latent 接口还要将几何 fidelity 与 reader 的 **consumability** 分开验收：同一 probe 中，更接近原生 KV 的扰动不一定更可用，不能只优化 cosine 或重建误差。Carrier 与注入方式也须一起比较：保留 reader 自身 KV 再附加来源，与覆盖它的 KV 不是同一接口；在正确 fact span 和 layer 已由 oracle 给定时，替换 residual activation 又可能有效，但这只是对齐后的消费测量，不是线上定位机制。[两项同源小模型研究](https://arxiv.org/html/2610.22016v1)及其[carrier×fusion对照](https://arxiv.org/html/2610.22026v1)共享大量 probe，不能当独立复现；不同 carrier 的分母与 anchors 不同，也不支持直接按绝对分数排优劣。负结果不证明所有训练 bridge 都失败，阳性 KV adapter 还调整 q/k/v，而非只改 query。校准、额外 attention、state 驻留与恢复均付费；错源、模型 revision 或坐标资格不能闭合时，回到 typed/text message 与 reader 自己的 state。<!-- source-family:SF-2026-ARXIV-2610-22016 --><!-- source-family:SF-2026-ARXIV-2610-22026 -->
 
 ### Reward Shaping 必须保持 Conditional Best-response
 
@@ -547,6 +648,8 @@ backend，却没有 component ablation、长期 self-evolution 或广泛 domain 
 
 Delegation 不能把调用者所有权限复制给子 Agent。应发放 task-scoped、time-bound、least-privileged credentials，并保留 delegation chain。Agent 不能继续任意转委托。
 
+委派还必须传播约束的state依赖，而不只复制规则文字：若child没有计算某predicate所需的当前state，不能把“不可判断”静默当作通过，应在最接近执行且具备所需state的层检查、记录结果与时效；没有可在预算内完成的检查则拒绝或升级。沿call chain的authority只能取交集缩小，子任务回执保留实际适用约束、检查位置和结果，才能把spec与trace逐action对账。[SARC的受限架构说明](https://arxiv.org/html/2605.07728v1)支持这份归属合同，却不证明trace覆盖全部隐藏路径、predicate忠实表达规范或原state始终新鲜；synthetic exact-rule零违规和模型化毫秒数都不是部署安全/SLO证明。State传递、predicate、完整trace、审计与升级队列全付费，平均等待短也不保证每次赶上不可逆期限；state、检查或authority失配时保留最小权限、default-deny与人工/确定性当前检查，不让规则继承或可审计标签批准真实effect。<!-- source-family:SF-2026-ARXIV-2605-07728 -->
+
 ### Spawn 继承的是不可信输入，不是父 Agent 的可信状态
 
 创建子 Agent 早期只是控制流拆分：父节点把上下文复制过去，简单、低成本，也便于复用已有判断。但当父节点的 memory、credential 或 instruction 已混入外部内容时，原样继承会让一次污染沿 spawn graph 扩散，并在每一跳获得新的工具入口。运行时应把继承内容标成 tainted inheritance，在 child authority 建立前执行 allowlist、scope narrowing 与 provenance check；未通过的字段不进入子节点的可执行上下文。
@@ -554,6 +657,10 @@ Delegation 不能把调用者所有权限复制给子 Agent。应发放 task-sco
 这会牺牲无损上下文复制和一部分并行效率，还要求 lineage、字段级来源与权限收窄可以被重放。低风险、只读且没有外部输入的任务仍可使用轻量继承；来源不明或验证服务不可用时，应回退到最小上下文、重新取证或人工授权，而不是默认信任父节点。现有 exact-v1 证据只支持其披露的攻击与评测设置，不证明所有模型、拓扑或生产 SLO 下都有同样的传播率。
 
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-08460 -->
+
+跨 session 消息还可能因为 provider 的对话格式要求被序列化为 `user`，这不代表人类用户授权了它。运行时应把外部用户、Agent 间转发与内部系统输入的来源身份放在独立 metadata 中，由可信入口赋值；context 重建只给模型可读标记，memory consumer则按来源过滤或保留为派生内容，不能把 peer 的请求再次存成用户历史。Role 负责模型输入兼容性，provenance 和独立 policy 负责判断消息可以影响什么，两者不能互相代签。
+
+`arXiv:2603.27517v1` §5.8.2披露了保持 `role:user`、另存来源并改变 history/memory 消费的修复分支；closed enum 只核字段是否合法，不证明来源真实或指令安全。来源绑定、转发链、上下文重建、记忆过滤和 effect 前授权都增加维护与回归成本；metadata丢失或来源不可核时，保留不可信消息、缩小权限并转人工，低风险固定 peer channel仍可用简单 typed handoff，不把模型看见标记或单层修补当全链隔离。<!-- source-family:SF-2026-ARXIV-2603-27517 -->
 
 ### Governance Provider 也必须进入 Byzantine Threat Model
 
@@ -645,6 +752,10 @@ Judge model 自身也要版本化和评估。
 
 先调用预计更容易同意的成员可能更早达到阈值，但历史“同意最终共识”的频率不是独立真值校准。只更新被调用者还会形成选择反馈，让长期未调用成员缺少新证据。串行采票节省调用，却可能增加 critical-path latency；已并发花出的计算也不会因最终提前停止而自动退回。受限的九模型 API 投票实验只支持调用数与任务准确率的比较，不能把少调用直接换算成 GPU 成本或服务 SLO。独立采样、回答身份或预算不可固定时，保留完整并行投票、随机探索和外部 verifier 更稳。
 
+固定票集在短任务、身份可枚举时最透明；长依赖任务却可能在每一步积累错误。若计划与步骤边界预先给定、每个小步骤有可核状态，另一条分支将纠错放到最小步骤：重复取得动作与下一状态的配对候选，直到某候选的票数领先任何替代候选一个预先设定的阈值，再将选中的配对交给后续步骤。过长或格式异常的输出可以整份丢弃后重采样，而不是先修成合法格式再把它当有效票；这改变的是样本准入与局部选择，不取得事实或副作用授权。<!-- source-family:SF-2025-ARXIV-2511-09030-MAKER -->
+
+这种 ahead-k 采样没有固定 N 封顶；若在调用或等待预算内不能达到阈值，执行系统必须停止、交独立验证或人工处理，而不能无限追加票数。这个预算退路是工程要求，不是原论文已实现的保证。所有丢弃的调用、校准、匹配与状态交接仍付费；误差压低依赖正确候选占优势、独立采样及步骤误差条件，简化二候选分析要求正确概率大于二分之一，相同模型的重复回答并不证明这些条件成立。已知计划下的 Hanoi 长链执行只是局部实例，不能认证自动分解、开放语义匹配、普遍零错或真实业务安全；分解不可核、共同错误或预算不足时，应保留固定小池、原始证据、确定性验证与人工或拒绝退路。[有限必要原证](https://arxiv.org/html/2511.09030v1)。
+
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-06988:start -->
 Multi-Agent 协议不能把快速共识当作协作正确性。Evaluation identity 应同时记录通信频率、消息内容、collective belief divergence 与对独立 truth/effect receipt 的 alignment：低 JSD 或高 consensus rate 只说明内部一致，仍可能是 confidently-wrong herding。增加 truth-alignment 与失败 episode 切片会提高标注和重放成本，开放任务还常拿不到真值；此时必须保留 dissent、provenance 和独立 verifier，不能让团队共识自签完成。 [受限证据：arXiv:2605.06988v1]
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-06988:end -->
@@ -711,6 +822,8 @@ Agentic Aggregation/AggAgent 的作者实验支持按需读取原始 segment 相
 benchmark 下有用，但未验证 side effects、streaming、tenant isolation 或 production SLO。短轨迹直接拼接、
 错误较独立时 voting、可执行任务中的 deterministic verifier 仍是更便宜或更强的旧分支。
 
+当问题的义务确实分散在多份文档中，单个 global top-k 可能把少数文档完全挤出搜索人口。一条受限分支先保存共同 todo，再让每个 document worker 只在自己的文档内检索并交回带来源的报告，由独立 synthesizer 核对跨文档义务；这是搜索 scope 分配，不是权限安全隔离，也不保证局部检索已穷尽文档。汇总前应保留未满足项和可回读原文，不能把报告数量当完整支持。[SPD-RAG 的长文对照](https://arxiv.org/html/2603.08329v1)只验证固定英文人口，recursive 合成从未启用，no-progress 整级 batch 也未给严格预算证明；模型、拆分与搜索次数同时变，不授单因果或千文档 scaling。各 worker 检索/报告、协调、索引/rerank 与最终回读均计费，低 API 价不等低墙钟或总成本；文档依赖强、遗漏无法核或预算失配时，保留 full context、单 Agent 有界检索和独立 support gate，不由分工自动认证答案。<!-- source-family:SF-2026-ARXIV-2603-08329 -->
+
 扩展 test-time compute 也要区分 **复制同一角色** 与 **增加互补角色**。独立 coding rollouts 可以提高候选覆盖，
 却同时成倍增加 sandbox、tool、token 与 aggregation cost；不同 prompts 或角色若共享模型、环境和错误先验，
 并不自动获得独立性。预算分配应比较：
@@ -775,6 +888,8 @@ team revision、peer policy hashes、trajectory provenance 和 update order 必�
 整条任务固定在端或云上，控制简单，但长任务中每一步的隐私、成功概率、上下文大小、网络状态与成本不同。step-level coordinator 可把历史、候选动作置信、网络开销和剩余 budget 作为显式 routing state，决定本步在哪个 agent 执行；commit 仍由 workflow owner 完成。收益是形成质量—成本 Pareto 分支，代价是路由误差、状态同步和隐私边界更复杂。网络不稳定或状态不可安全传输时，固定端侧策略仍是合理 fallback。现有结果只支持特定设备、模型和任务，不能外推通用收益。
 
 <!-- source-family:SF-2026-ARXIV-2605-24598 -->
+
+选择升级还要估计strong相对当前候选的增益，而不只找weak最不确定的位置。没有逐action正确标签时，可离线学习weak–strong分歧，再减strong自身分歧，部署时只读weak候选与表示提出升级优先级；后项用于避免把双方都摇摆的位置当必可补救。它以strong分布近似真值，不保证分歧即错误、同意即正确或单步收益等于全程收益；等价判据及有限采样也有噪声。两个probe、双方离线生成和路由后state重采集均付费，理论oracle与按分数配额排序不能替在线阈值/总成本验收。原文indicator符号不一致不照搬精确处方；teacher不可靠、人口漂移或收益不成立时保留随机/置信基线、外部verifier与不升级路径。 有限受测BFCL中self-disagreement修正收益不显著；按得分选择配额的评价也不等在线硬预算保证。 [必要方法与反侧](https://arxiv.org/html/2610.22245v1)。<!-- source-family:SF-2026-ARXIV-2610-22245 -->
 
 ### 并行不是一个旋钮：副本并行与结构并行
 
@@ -857,6 +972,8 @@ MoA 不再把所有历史 reasoning 平铺给 aggregator；reviewer 对轨迹排
 委派前必须保留 single-agent baseline，委派后验证返回 artifact 与权限边界；收益不显著、超时或身份不可验证时回退原 Agent。固定小团队在任务稳定、角色边界清楚时仍更可预测。
 
 <!-- source-family:SF-UNO-ORCHESTRA-PARSIMONIOUS-AGENT-ROUTING-VIA-SELECTIVE-DELEGATION -->
+
+升级也不必停止原弱Agent：先按初始状态与运行期信号决定何时移交，移交后让弱模型只读实际强模型历史，在固定checkpoint提出未执行的候选，以其表示触发强模型重审。Observer不拥有动作提交权；干预只替换尚未执行的pending action，不能冒称撤销旧副作用。若一次越阈即可升级，频次校准应消费每任务的最大运行分数，而非逐step分位；按task分fold防轨迹泄漏，重拟合与shift仍会改变实际升级率。这不是失败概率或硬预算，weak异常也不证明strong可修。Bank标注、manager、shadow与反思均付费；分布/标签或总成本失配时保留随机对照、单Agent、可信执行验证及硬权限门。 原文最优性只在initial Gaussian/共协方差及gain单调条件下成立，不覆盖runtime或Shadow。 [必要方法与反侧](https://arxiv.org/html/2610.22280v1)。<!-- source-family:SF-2026-ARXIV-2610-22280 -->
 
 选择性专家调用还要分别训练“怎样提出请求”“何时升级”与“返回后是否真正使用建议”。一个受限小模型分支将ask-expert作为policy action，只把最近少量消息交给专家，再由student保留标记过的advice；先学调用格式，随后以停滞/循环信号和后续使用代理调整调用与行为。gold patch只在离线轨迹构造中提供，不能成为部署时专家的隐藏输入；训练阶段对完全不调用施加强惩罚，也会把“无需升级”从自然最优选项推开。[有限coding对照](https://arxiv.org/html/2602.22124v1)中，完整上下文专家在强制循环人口上有益，缩成最近五条后未保持同样增量，直接插入专家文字亦可能退步；这说明请求窗口、升级时机与消费者策略不能互相代签。loop与follow judges仍可能共享偏差，不证明建议正确；expert output token占比不包含双方input、student rollout、训练与judge全部费用。角色失配、循环检测不可靠或总成本上升时，保留单Agent、显式loop guard、固定小专家池与独立可执行检查，效果和权限仍由runtime验收。<!-- source-family:SF-2026-ARXIV-2602-22124 -->
 
@@ -1015,6 +1132,10 @@ reward。这样减少局部目标错配，也带来 credit leakage、昂贵 roll
 
 [EmCoop v1 §3、§5–7](https://arxiv.org/html/2603.00349v1)中的 cognitive cycle 最终仍经过 joint-action barrier，不能称为真实环境完全异步执行；认知轮次也不等于 wall-clock 或实际通信免费。保留两个时钟增加调度、等待和 trace 成本，却能区分协调停滞与环境执行失败。作者有限两类环境、二至三 Agent 及模型/拓扑对照不证明开放任务的统一最优拓扑；时钟和约束不可观测时，仍可用同步 primitive step、共享状态或人工协调，不把复杂编排本身当协作收益。<!-- source-family:SF-2026-ARXIV-2603-00349 -->
 
+环境真正按不规则事件推进时，还要把“这次等待多久”交给学习消费者，而不只保存认知轮数。一个受限policy分支在观测到达时编码当前有效图，在两次到达之间按elapsed interval推进hidden dynamics，再用新观测作gated update；训练以interval相关discount形成TD/advantage，不把不同duration的transition都当等长step。Duration、preemption、同刻tie和并发上限仍由environment engine规定，graph mask只是该engine的候选支持，不是现实动作授权；local actor与privileged central critic的观察责任也要分开。<!-- source-family:SF-2026-ARXIV-2604-09523 -->
+
+[NetForge_RL exact-v1的必要对照](https://arxiv.org/html/2604.09523v1)只支持event-clock到state/credit的接口，固定单步RK4四NFE和额外graph读取都付费。红蓝双方共同换算法、自建reward和mock/Docker人口不同，不授架构唯一因果、消除sim-to-real或真实安全；NoBeta/NoGAT回报接近full也限制单模块话术。10seed末段median不是已披露CI，policy10SPS低于baseline17.2，mock10k环境SPS不代替含policy总速率。时钟、observability、动力学或engine规则失配时，保留显式离散controller、更完整状态/真实回归与同步step基线，不把学习到的事件状态当真实世界authority。
+
 Embodied Agent 共享环境时，发送更多消息能减少动作冲突，却未必提升任务成功：消息可能重复已知内容、引用未观察实体，甚至通过相互确认放大幻觉。协作合同应分别记录各 Agent 的 private world graph、消息带来的 information novelty、belief-sensitive recipient model 与执行后 observation convergence。消息只是 proposal；环境观察和受控 state merge 才能更新 authoritative world state。
 
 同步通信让说话与动作争夺 step budget，异步免费通信降低显式成本却更容易形成重复确认和消息洪泛。部分可观测、grounding 不可靠时，应限制消息频率、携带 locator，或回退 centralized/shared-state controller；简单任务仍可不用对话。exact-v1 的 PARTNR 设置只揭示其架构中的对话失配，不证明所有 embodied multi-Agent 通信都会降低成功率。
@@ -1064,6 +1185,35 @@ Embodied Agent 共享环境时，发送更多消息能减少动作冲突，却�
 Arbitration 用响应速度换稳定性：dwell/deadband 过强会迟滞，过弱仍会振荡，单变量 proposal 也无法表达耦合动作。O-RAN testbed 与特定 proof 不证明同一参数适合所有领域，且冲突下降未改善 protected slice 自身 latency compliance；无法表达或收敛时，应回退 composite coordinator、serial execution、人工控制与 last-known-safe state。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2610-23056` — Daily2026-10-20 Oct19窗；[exact-v1](https://arxiv.org/html/2610.23056v1) §3.1–3.4/4.1–4.5/5与B.1/B.4必要teacher、计时和解析KV口径，2+2+2=6，具体owner差额深入。仅采R/C分解、parallel slots与一次causal render的消息构造分支；保同backbone顺序链/精度下降、R/C反侧、KV代理及离线训练/全费，不授轨迹等价、零prefix/无因果依赖、网络/p99或异构长程保证。非原Source作者实际必要源与本章latent对齐/XKV/生成前fusion具体比较；root授两段/本人注窄位，本人已实际完整顺读新增、直接两侧及本人注，root已实际非writer完整读新增、直接两侧及本人注，POST通过、窄位释放。未核实现/复现，不授日级完成。
+
+- `SF-2026-ARXIV-2610-23213` — Daily2026-10-20，Oct19窗；[exact-v1](https://arxiv.org/html/2610.23213v1) §2–4必要方法/理论条件/消融与cost，2+2+2=6。仅采early/final分歧门控与candidate-blind仲裁；保agreement漏检、异构非独立、能力/额外预算混杂和token非延迟，不采未核tie完整recipe。root实际必要Source/owner PRE通过并授两段/本人注；作者已真实保存，root已实际完整新增/直接两侧/本人note非作者POST通过（ROOT_REVIEW §4），本窄位释放。未核代码或复现，不授日级完成。
+
+- `SF-2026-ARXIV-2605-17361` — Daily2026-05-20补May19；[exact-v1](https://arxiv.org/html/2605.17361v1) §§2–4必要机制、主Tables1–5/Fig3及PDF B/D1/D3/D5–8/Alg1必要域，2+2+3=7。FGW角色属性+关系、transport prior与局部残差，保Gibbs/Gumbel区别、support依赖风险界条件、CodeAA反退/AF正、复杂度口径差及完整历史成本；旧任务只读不是普遍无忘却。必要Source与具体owner/逐字PRE已由reader R31通过；root实际保存指定正文与本注，非writer R33已一次实际完整新增/直接两侧/本人注POST通过，指定窄位生效释放，不授DAY。
+
+- `SF-2026-ARXIV-2605-17393` — Daily2026-05-20补May19；[exact-v1](https://arxiv.org/html/2605.17393v1) §§3–5/Prop4.2/4.4/Table2/4及collapse消融必要域，2+2+2=6，具体长期差额按深入处理。图group-prior KL与末层feature IB的协作神经策略分责；保最优prior族不授固定prior/return、Q读局部输入使TD≠消息relevance、KKT非实际最优及反退/跨posterior KL/仍n²成本。窄Source与具体owner/逐字PRE已由reader R31通过，中心强保证不采用；root实际保存指定正文与本注，非writer R33已一次实际完整新增/直接两侧/本人注POST通过，指定窄位生效释放，不授DAY。
+
+- `SF-2026-ARXIV-2605-10698` — Daily2026-05-13补May12；exact-v1必要§2claim/3/4/limits，2+2+2=6。只静态socialframing与真实MAS分账，不采decay/exactthreshold/latenttruth或纯count因果；保synthetic3hop/n≥2decoy/品牌构成共变及全费用。未核全数学附录/实现/复现；rootR14必要Source通过，逐字PRE/窄写许可已通过，正文/marker/本人注真实保存并作者完整局部顺读；root R18非作者实际POST通过，窄位释放。 本次仅同步已成事实，不重写机制或认证实现/复现、全覆盖或整日Gate。
+
+- `SF-2026-ARXIV-2610-22245`、`SF-2026-ARXIV-2610-22280` — [Daily2026-10-17](../../papers/2026/10/17/README.md)，必要exact-v1 Source/actual owner/最小PRE见本日REVIEW R11对应节；root已实际独核并授具名窄段与本人注。仅采用正文所述有限接口，原文冲突、直接反侧、全部费用与旧路线保留；作者已保存、自读，root实际正文/完整直接邻接/本人注POST通过。未核实现/复现，不授DAY。
+
+- `SF-2026-ARXIV-2610-22016`、`SF-2026-ARXIV-2610-22026` — [Daily 2026-10-17](../../papers/2026/10/17/README.md)，exact-v1必要Source与同源/对照/适用范围见REVIEW R4.2–3。只采consumer行为验收及carrier/fusion分责，不采全局不可互操作、线上oracle或普遍优劣；无实现/复现，实际非作者写后复核已通过（本日REVIEW及root接纳）。
+
+- `SF-2026-ARXIV-2605-00444` — Daily2026-05-05补May04；[exact-v1](https://arxiv.org/html/2605.00444v1)，2+2+2=6，具体owner差额深入。必要Source/date/直接反侧见唯一SUP A16；root C16实际owner完整邻接/逐字PRE通过，授单段及本人注。费用、反侧和旧分支近正文，不授普遍性能/安全/完整理论；作者已保存，root C19非writer实际正文/完整局部邻接及本人注POST通过、窄lease释放，不预签DAY；未核实现/复现。
+
+- `SF-2026-ARXIV-2604-27221` — Daily2026-05-02补May1；[exact-v1](https://arxiv.org/html/2604.27221v1)§2.2–2.4/3.1–3.5/Fig7，2+2+2=6，read-all/write-own-tag及partial findings具体差额深入。保skill freeze/runtime更新与无dedup/案例dedup描述冲突，不授一致部署recipe、全预算因果或附A保证。未核artifact/复现；may02_resume_reader R24必要Source/owner/PRE通过，root授上述两段及本注窄lease，作者已保存并顺读；非writer R25实际正文/完整邻接/本注POST通过，root已接纳并释放窄lease，本次仅同步既成状态，不授DAY。
+
+- `SF-2026-ARXIV-2610-13485` — [POrchestra exact-v1](https://arxiv.org/html/2610.13485v1) §3.2–3.3/Eq3–8、§4.1–4.5、B.2/E.3/G；Daily2026-10-13，2+2+2=6，具体harness生命周期缺口深入。mid-lifecycle pause/revise和execution-grounded attribution，不将外生任务改变归罪delegation；单active worker、有限bench/model、API成本/非对称重复次数保留。root必要Source/PRE通过，root实际非writer局部正文/邻接与本注POST通过；不采定理为全链causal保证，未复现。
+
+- `SF-2026-ARXIV-2603-06801` — Daily `2026-03-11` 补充；[exact-v1](https://arxiv.org/html/2603.06801v1) §4–5/Eq7–11/Alg1、必要 E.3/E.6 与 B.1–3/H。2+2+2=6，self-belief/peer-forecast 两接口及其评分/聚合差额深入；peer 预测分数不认证真值，不采 [0,1] 全域评分、固定正漂移无限保持或实际 η=2/最终 squared weights 自动继承小步长理论。受限困难题与表格均值冲突、全部费用近文。review_mar11_continue 必要原证独核通过，root 实际 owner/PRE 与必要原证后窄写；非写入者 supplement_20260311 已实际回对必要原证并顺读新正文、完整局部邻接与自身末注，POST 通过；未核实现/复现，不授日级完成。
+
+- `SF-2026-ARXIV-2601-19792` — Daily `2026-01-29` 增量；[exact-v1](https://arxiv.org/html/2601.19792v1) §4.1–4.5/Table1/§5/§6/Limitations。2+1+2=5，partner 跨回合 success/effort/lexical adaptation 分责的具体差额深入；单对象/英文/GPT5.2 scaffold、有限 follow-up、词汇抽取 proxy 与费用近正文。不采用 AH22 vs 16 或 distractor4 vs 6 的精确效应，不授全 LVLM 缺共同基础/physical risk/Turing Test 保证。root 实际必要 Source/actual owner PRE 通过并授两段/自身末注窄锁；作者已实际顺读正文与完整邻接，root 非作者 actual POST 已通过（实际顺读上述两段、完整邻接及自身末注）。未核实现/复现，非日级验收。
+
+- `SF-2026-ARXIV-2601-05384` — Daily `2026-01-13` 增量；[exact-v1](https://arxiv.org/html/2601.05384v1) §2.2/4.1–4.2；alone-correct条件人口与模拟peer；100/64/difficulty500分母、采样unknown近文；2+2+2=6，具体差额深入。jan10_books_audit必要原证/actual owner PRE通过、root授窄锁；作者完整邻接已顺读，root非Books写入者已实际读正文/完整邻接/自身末注，POST PASS；窄锁释放。未核实现/复现，非日级Gate。
+
+- `SF-2026-ARXIV-2601-04694`（Experimental）：Daily `2026-01-10`补查；[exact-v1](https://arxiv.org/html/2601.04694v1) Def1–3/Eq3–6、Topology-aware Prompt、Fig5及必要实验。采用独立随机回复下的绝对/归一化扰动曲线、图代理→固定图邻接prompt两阶段，不授相关故障、完整曲线oracle、稀疏最优或真实outage。六扰动点评价/五点预测、正边bonus与F(0)=0边界保留；固定小图/三任务/8A100×12h及跨任务prompt重优化有限，完整推理precision/concurrency/SLO未披露。jan10_books_audit必要源/具体owner PRE经root采纳并授窄锁；本轮转作者写入并顺读完整局部邻接，root非写入者已实际核正文/完整局部邻接/自身末注POST通过（本日post-audit-20261007.md §7），不授日级Gate，未复现。
+- `SF-2026-ARXIV-2601-04861`（Experimental）：Daily `2026-01-10`补查；[exact-v1](https://arxiv.org/html/2601.04861v1) §3/Eq2–5、必要消融及AppB/C。采用逐轮role subset→role-conditioned model和生成后confidence调训练成本，不授概率校准或EarlyStop真值。四模型池/L4/θ.3/λ200、A100/vLLM与GPQA单请求23.12s保持有限；API价格/3B幂律代理不当实测GPU费，完整precision/并发/生命周期费用未披露。jan10_books_audit必要源/具体owner PRE经root采纳并授窄锁；本轮转作者写入并顺读完整局部邻接，root非写入者已实际核正文/完整局部邻接/自身末注POST通过（本日post-audit-20261007.md §7），不授日级Gate，未复现。
 
 - `SF-2026-ARXIV-2602-21515`：[v1 Eq.8–9 / 受限 partner 与任务对照](https://arxiv.org/html/2602.21515v1)。训练辅助 adversary 对 evolving partner 的 KL 邻域，不是身份/授权或普遍鲁棒保证；Tag 训练下降、GSM 共同正确与异质 partner 人口差异保留。非原 packet 作者必要原证/owner PRE 完成；root已实际顺读正文、完整邻接与自身末注，POST通过，未复现。
 
@@ -1317,3 +1467,52 @@ Review note：`SF-2026-ARXIV-2606-29654`；Method `https://arxiv.org/html/2606.2
 - `SF-2026-ARXIV-2602-22124` — Daily `2026-02-27`；[exact-v1](https://arxiv.org/html/2602.22124v1) §2–4/Table2–4，2+2+2=6；具体owner差额深入：如何/何时/后续使用专家建议；hardnocall偏置、loop上下文反侧、gold只离线、共享judge与全部费用/单Agent回退近正文。root必要原源/actual owner PRE通过并授窄lease；作者及root非作者已实际顺读正文/完整邻接/自身末注，POST通过，窄lease释放。未核实现/复现，非日级Gate。
 
 - `SF-2026-ARXIV-2602-22808` — Daily `2026-02-28`；exact-v1必要blocks26–50/52–56/61–79，2+1+2=5；peripheral processor与主体协作分账具体差额深入。final_audit非原packet作者必要原源/actual owner PRE通过，当前作者复用未变证据并实际读目标近邻，root授窄锁；正文/完整邻接及自身末注已实际顺读，root非写入者实际独读正文/完整邻接/自身末注POST通过，窄锁释放，未核实现/复现，非日级Gate。
+
+- `SF-2026-ARXIV-2601-09295` — Daily `2026-01-16`；[MACRO-LLM exact-v1](https://arxiv.org/html/2601.09295v1) §3.2–3.3/AppB/C/G/I及Table1。2+2+2=6，共享统计对象具体owner差额深入；μ/σ²/W视图与具体动作proposal分责，disjoint/overlap、身份/关联/尾部损失、固定per-agent复杂度及全调用费用限制近正文，不授全局状态/物理安全。root实际必要原证与owner PRE通过并授两段/自身note窄锁；作者实际顺读正文174/176、完整前后150–210及自身末注，root独立实际157–190完整邻接、新正文及本末注POST通过，锁释放。未核实现/复现，非日级Gate。
+
+- `SF-2026-ARXIV-2603-08329` — Daily `2026-03-11`补查；[SPD-RAG exact-v1](https://arxiv.org/html/2603.08329v1) 必要原证111–204/240–247/299–349，2+2+2=6；document-scoped workers与共同todo/独立综合的具体owner差额深入。review_20260311必要Source有效复用，review_mar11_continue实际Ch82 699–755/111–157 owner与逐字PRE通过，root授完整原734–736段后/复制角色前一段与自身末注窄锁；英文有限人口、recursive未启用、no-progress预算/模型及搜索次数混杂与全费用限制近文。作者实际写入；review_mar11_continue非writer实际正文/完整邻接及本注POST通过，root释放窄锁，不授安全隔离、实现复现或DAY。
+
+- `SF-2026-ARXIV-2603-15809` — [exact-v1](https://arxiv.org/html/2603.15809v1)；必要§3–5/Eqs1–18/Tables2–3与E/Eqs19–22、C/Table5/B解释文本。仅支持外部已知 GT 校准的 speaker metadata/冻结与随机再校准分责。Eq18人口、Table3反退、score/W归一化及可见性、unknown-GT/utility/full费用边界隔离，未核代码/未复现，不授开放网络安全。
+
+- `SF-2026-ARXIV-2603-20182` — Daily `2026-03-24`补查；[exact-v1](https://arxiv.org/html/2603.20182v1)必要§IV/§V-B/E/G，2+2+2=6。仅受限模拟的信息遗漏/错误/陈旧对共享规划消费者的非对称反侧，source/time/Unknown验证为设计推导非现有安全实现；保85scene不作统一episode分母、参数估计不作规模因果、tokens非wallclock及全观测/通信/验证费。另§V-I有小实机演示，不将三种模拟扰动外推实体安全，也不称全文无实机；未核代码或复现。
+
+- `SF-2026-ARXIV-2603-27517` — [OpenClaw exact-v1](https://arxiv.org/html/2603.27517v1) §5.8.2–5.8.3必要层；provider role兼容与真实origin/authority/history-memory消费分账。Closed enum非来源认证，保trusted ingress/metadata失配与全部维护/授权/回归费，不授完整防御或当前release已安全；窗外v3只同§5.8.2定点核，不回填470公告/新attack结论，未核代码/复现。
+
+- `SF-2026-ARXIV-2603-29088` — Daily2026-04-02补04-01；[official PDF-v1](https://arxiv.org/pdf/2603.29088v1)pp3–7/S3.1/4.1–4.2/Alg1/S5T1–3，2+2+2=6，仅CHANGE修method→new obligation/name复用→全重构分责。保solve含disprove/顺序Opus74.1/62.1、imperativejudge75.1→51.9/model-dependent与人工Heapsort，截图失败不冒视觉核验；全部搜索/proof/spec费，未核66页全附件/代码/复现。
+
+- `SF-2025-ARXIV-2511-09030-MAKER` — Daily2025-11-14仅补Nov13自然日；[作者Nov13公开Blog](https://www.cognizant.com/us/en/ai-lab/blog/maker)与[精确v1必要§3–5](https://arxiv.org/html/2511.09030v1)。2+2+2=6，仅已知计划atomic-step的动作/next-state配对ahead-k与格式整份丢弃分支；保iid/正确优势、异常step、全部重采样/校准/交接费与预算失败退路，不授普遍零错/安全/线性SLO。预算停止是工程要求，非原实现已验；未运行artifact或复现。Dalton本日§6真实必要Source/具体差额/PRE通过后root授Ch82唯一两段及本注窄锁，Singer实际保存并顺读完整两侧邻接与自身末注；**Dalton§8非writer真实完整正文/两侧邻接/本注POST通过，root§9实际读回接纳并释放窄锁**。本次只同步既成行政，不授日级DAY/FINAL。
+
+- `SF-2026-ARXIV-2604-09523` — Apr14补Apr13，exact-v1Event-Driven Temporal Graph Networks题名，§3–6及必要8/B，2+2+2=6具体event-clock→hidden/credit分责差额深入；不采用currentv3 JAX suite、fullsim2real、安全或独立模块因果。保Δt/50clip、duration/preemption/tie/silentdrop是engine定义、local TFIDF/日志actor vsnoisefreecritic、RK4四NFE、双方共同换算法、NoBeta56656/NoGAT56565接近57135、mock/Docker不同人口、10seeds median末20%无CI、10vs17.2policySPS/A10040或80/32CPU2.5M8h与全费/SLO ND。reader必要Source/date有效；reader finalPRE实际通过；supp_apr14_reader实际正文/完整上下邻及本人末注POST通过，作者已实读回，未核实现/安全攻击运行或复现。
+
+- `SF-2026-ARXIV-2604-12229` — Daily2026-04-16补Apr15，supp_apr16_author；[exact-v1](https://arxiv.org/html/2604.12229v1)§3–5/Tables1–4/A.3，2+1+2=5，hinter监督/solver消费与oracle信息资格具体缺口深入。只采用角色与输入分账；gold状态不授在线适配、内部hint非答案authority，FT反退/AIME2025八run零及全费用保留。未核artifact/复现；reader R14必要Source/R15 date/R19逐字PRE与R23实际正文、完整邻接及本人注POST通过；作者同步本人注并实际读回，不授DAY。
+
+- SF-2026-ARXIV-2604-15267 — Daily2026-04-18补Apr17；[CoopEval exact-v1](https://arxiv.org/html/2604.15267v1) §2–7/Thm1条件/T2及必要AppC，2+1+2=5。history信息与delegation/payoff执行承诺分责，均衡存在非选择/稳定；finite15round、normalizedpayoff/evolutionmetric、负侧与调用费近文，不授现实福利/授权。独立reader必要Source/root接纳/date有效，作者actual owner比较，A35逐字PRE通过并获指定窄lease，正文/本人注已保存，root实际正文/完整邻接/本人注POST通过，窄lease已释放；未核artifact/复现。
+
+- `SF-2025-ANTHROPIC-VEND2`：Dec19补Dec18；[官方Phase two](https://www.anthropic.com/research/project-vend-2) CEO/What actually worked/Tools/末限制。Boyle 2+2+2=6，限定监督动作替代及结果联合核账反证；保共同底座、持续版本/工具/prompt混杂、采购人工批准及现场支持，不授CEO盈利因果/无人可靠性。Newton§4实际必要Source/owner/逐字PRE通过，root ROOT_REVIEW§1授本段与本人注窄锁；Newton§7实际新增全文/完整两侧/本人注POST通过，root ROOT_REVIEW§2实际读回接纳并释放窄锁；本次仅同步已发生行政，不授DAY；未核artifact或复现。
+
+- `SF-2025-ARXIV-2505-00540` — Noether，Daily2025-05-03补May2；[exact-v1](https://arxiv.org/html/2505.00540v1)III–V/TableI–II必要，2+1+2=5。Ohm71日证/current、81必要Source/5分/唯一Ch82通过；singlelearner-ownreplay/lifetime执行与带mutation参数传播具体差额深入。保400episode/50eval非50seed、首lifetime人口不同、team-win/频率反侧/全费，不采reward未闭recipe、稳定角色或实测省电/LLM实证。未看像素、核代码或复现；root已实际读逐字PRE/完整邻接与末注并授指定单段/本人注窄位；作者已实际保存，已完整self-read，Ohm§103实际非writer写后通过，root已实际完整消费接纳并释放该指定窄位；本注仅同步既成事实，不授DAY。
+
+- `SF-2026-ARXIV-2605-00248` — Daily2026-05-05补May04；[exact-v1 PDF](https://arxiv.org/pdf/2605.00248v1)§2–5/Definitions11–15/Propositions16–17及H.1–2，2+2+2=6。只采用低/高层干预一致与高层干预可实现、rationality/常量utility及equilibrium限制，不授真实LLM集体目标识别或安全。may05_source_tail实际必要Source/date/owner/PRE，root已核指定单段并授窄位；本段和本人注已保存并自查完整邻接，root已实际正文/完整邻接及本人注非writer POST通过，lease释放；仅行政同步，不预授DAY。未核实现/复现。
+
+- Daily2026-05-09补May08：2605.05703v1§4–6/A.1.3–4/D.2/B.6，5分Source R12通过；为已标task-selection与graph-update分责差额深入，保linear-Gaussian条件、同ensemble缓存/selection费用与benign/attack-MMLU CI跨零；未核实现或复现。唯一AGENT-MULTI-AGENT。
+- Daily2026-05-09补May08：2605.06623v1§3–4，5分Source R12通过；为peer版本变化下beam刷新/三层judge分账差额深入，保same calls非全token、共同judge偏差/有限transfer与onehop非普律。未核实现或复现；唯一AGENT-MULTI-AGENT。
+
+- `SF-2026-ARXIV-2605-07728` — Daily2026-05-12补May11；[SARC exact-v1](https://arxiv.org/html/2605.07728v1)§3.5–3.6/4/5/9.2–9.4/9.8/10及reader必要13.2/13.4，2+2+2=6。仅采constraint的state依赖、检查owner/rescue与authority交集；保finite predicates/完整trace假设、stale state、synthetic基线与modelled latency非生产保证及全费。不采法律/物理安全或机会率独立宣传，未核实现或复现。reader实际必要Source/owner与唯一逐字PRE通过，root已授本指定一段/本人注，现已按稿保存待非writer实际POST；不授DAY。 截至本轮后续有效结论：本项独立reader已实际完整新增/直接两侧/本人注非writer POST通过，root已接纳并释放指定窄位；此前“待”仅过程时态，本次纯行政同步、不重Source/正文、不预授DAY。
+
+- `SF-2025-ARXIV-2507-01378` — Noether，Daily2025-07-04补Jul3；[RALLY exact-v1](https://arxiv.org/html/2507.01378v1)II–IV/必要两算法与定理、TablesII–III原域沿Ohm52实际层复用，2+1+2=5，交互role-value介入两次语言goal推断的具体接口深入。只采用受限角色控制分工，非两阶段严格优越/因果credit/文本MSE配方/共识收敛/实飞安全，保错误定理反例、配置冲突、角色/延迟反退与全费。未看图像/核RMIX/ROS/PX4实现或复现；Ohm55正式Source/5分/具体owner及逐字PRE通过，root已协调本单段与本人注精确位，作者已实际保存；Ohm58已实际完整新增/完整两侧/本人注非writer POST通过，依root授权本项生效并释放指定窄位；本注仅同步既成事实，不授DAY。
+
+- `SF-2026-ARXIV-2605-12857` — Daily2026-05-15补May14；[exact-v1](https://arxiv.org/html/2605.12857v1)§2.1–2.4/3.1–3.6/T1–2必要由readerR58一次实际Source、作者有限复用，2+2+2=6/异构互测rollback差额深入。保stimuli agreement非正确、部署无gold非训练无gold、XGRPO归约未闭、内部best3×3turn/重复估pass与API/训练全费及frontier反退，未核实现/复现。
+
+- `SF-2026-ARXIV-2605-12943` — Daily2026-05-15补May14；[exact-v1](https://arxiv.org/html/2605.12943v1)§4.1–4.5/Eqs5–11/Algs1–3、§5/T1–2/5、A2–3/B1–3/C必要，2+1+2=5/router-edge与prompt-node双状态及skip权限差额深入，readerR93独核。保GT训练/线上执行分责、相似状态非充分/文字反馈非因果、K质量下降与API.935>.709及workflow全费；SelfRefine轮数口径不拼，current仅v1，未核实现/复现。
+
+- `SF-2025-ARXIV-2508-21720` — Godel，Daily2025-09-02补Sep01；[exact-v1](https://arxiv.org/html/2508.21720v1)§3–5/Alg1/T1–2/B.3/B.4/C.2/D必要，2+1+2=5。仅content/layout共享层级IR与节点/全树消费者，非科学内容采用；保parse/asset错配、同源judge/局部反退、非事务最优/全费，不授无损或普遍质量。版本/独立验收与退路为项目推导，未看像素/全prompts/核实现或复现；Newton61实际必要Source/具体owner/本逐字PRE通过，root已协调本指定单段/独立marker/本人注；已按稿实际保存，Newton67一次真实完整新增/完整直接两侧/本人注POST通过，本指定窄位生效释放；不预整日DAY。
+
+- `SF-2026-ARXIV-2605-16205` — 2026-05-19来源补查；[exact-v1](https://arxiv.org/html/2605.16205v1)§§3–5/Table3/4、§6/8支持固定上下文/三角色内累积deliberation的受限组合反证，2+2+2=6。保单体思考有益/层级反退切片与全调用计费，不授所有模型显著、任意拓扑/选择性启用、仲裁效果或真实时延保证；未核实现或复现。
+
+- `SF-2025-ARXIV-2509-03380` — root，Daily2025-09-05补Sep4；[exact-v1](https://arxiv.org/pdf/2509.03380v1)PDF pp1–8必要机制/实现/T1–2/实验与Discussion/Conclusions，2+1+2=5。仅共同环境/角色派生视图/回写重建接口；保p-agent可见原文/LLM政策、30runs/局部oracle、冲突与版本未闭和全费，不授zero-leakage、AutoGen固有不安全或生产同步recipe。未核图像/原日志/实现或复现；确定性投影/授权/独立验收为项目要求。Boyle55必要Source/具体owner/原逐字PRE通过，root已按当前完整邻接协调保存本一自然段/独立marker/本人注；Boyle57一次真实非writer完整新增/两侧/本人注写后检查通过，本精确位即时生效释放，仅同步既成事实，不授日级。
+
+- `SF-2025-ARXIV-2509-04310` — Godel，Daily2025-09-06补Sep5；[exact-v1](https://arxiv.org/html/2509.04310v1)旧作者3.2–3.4/4/6与Newton41实际完整3–7/8.1/Eq1–2/T1–3/图注复用，2+1+2=5。仅一次互动内外部条件→语言consumer→三目标反馈接口；保E/P仲裁未闭、20情境/9配对/mediator、无randomcontrol/holdout、轮次表文冲突和全费，不采心理/真人/交易或完整policy。未核操作prompt/全log/像素/实现或复现；作者完整owner两侧已读，Newton50逐字PRE通过，root已协调本指定精确位；本一自然段/独立marker/本人注已实际保存，Newton53一次真实非writer完整新增/完整两侧/本人注POST通过，本指定窄位即时生效释放；不预日级DAY。
+
+- `SF-2026-ARXIV-2610-05041` — Daily2026-10-07，Oct6自然日；[exact-v1](https://arxiv.org/html/2610.05041v1)§2/4–7/9，2+2+2=6。采用matched protocol×notes与blank redeploy，保ruler非通信因果、memory缺陷/不显著与全调用费用；reader1必要Source/date/owner通过，literal PRE/实际POST另记，未核实现或复现，不授DAY。
+
+- `SF-2026-ARXIV-2610-06069` — [exact-v1](https://arxiv.org/html/2610.06069v1)，Daily2026-10-07/Oct6窗，2+2+2=6；§3–4/9–11负对数条件模型与crossing/额外writer/format反侧；root R10必要Source/date通过，literal PRE/实际POST另记，未复现。

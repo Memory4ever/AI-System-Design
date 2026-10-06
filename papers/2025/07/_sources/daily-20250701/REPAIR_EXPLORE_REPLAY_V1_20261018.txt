@@ -1,0 +1,692 @@
+EFRame: Deeper Reasoning via Exploration-Filtering-Replay Reinforcement Learning Framework
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Related Work
+3 Overview of GRPO
+3.1 Gradient Loss
+3.2 Limitations of GRPO
+4 Methodology
+4.1 Regular Rollout
+4.2 Additional Rollout
+4.3 Online filter
+4.4 Replay buffer
+4.5 Discussion
+5 Experiments
+5.1 Experimental setup
+5.2 Main results
+6 Ablation Studies
+6.1 Additional Rollout
+6.2 Online Filtering
+6.3 Replay Buffer
+7 Conclusion and Discussion
+References
+A Relative Advantage Bias of GRPO
+B Key Hyperparameters
+License: arXiv.org perpetual non-exclusive license
+arXiv:2506.22200v1 [cs.LG] 27 Jun 2025
+\svgsetup
+inkscapearea=page
+EFRame: Deeper Reasoning via Exploration-Filtering-Replay Reinforcement Learning Framework
+Chen Wang
+Affiliation:  Zhongguancun Academy
+Affiliation:  College of Software, Nankai University
+Lai Wei
+Affiliation:  Zhongguancun Academy
+Affiliation:  School of Computer Science, Shanghai Jiao Tong University
+Yanzhi Zhang
+Affiliation:  Zhongguancun Academy
+Affiliation:  Academy of Mathematics and Systems Science, Chinese Academy of Sciences
+Chenyang Shao
+Affiliation:  Zhongguancun Academy
+Affiliation: Department of Electronic Engineering, Tsinghua University
+Zedong Dan
+Affiliation:  Zhongguancun Academy
+Affiliation:  School of Computer Science and Engineering, Sun Yat-sen Univeristy
+Weiran Huang
+Affiliation:  School of Computer Science, Shanghai Jiao Tong University
+Yue Wang
+Yuzhi Zhang
+††thanks: Corresponding author
+Affiliation:  Zhongguancun Academy
+Affiliation:  College of Software, Nankai University
+Abstract
+Recent advances in reinforcement learning (RL) have significantly enhanced the reasoning capabilities of large language models (LLMs). Group Relative Policy Optimization (GRPO), an efficient variant of PPO that lowers RL’s computational cost, still faces limited exploration, low sample efficiency and instability, constraining its performance on complex reasoning tasks. To address these limitations, we introduce EFRame, an Exploration-Filtering-Replay framework that systematically augments GRPO along three critical dimensions. EFRame performs additional rollouts to explore high-quality trajectories, applies online filtering to eliminate low-quality samples that introduce noise and variance, and leverages experience replay to repeatedly exploit rare but informative samples. EFRame establishes a complete and stable learning cycle, guiding the model through a structured transition from exploration to convergence. Our experiments across a variety of reasoning benchmarks demonstrate that EFRame not only improves the robustness and efficiency of training, but also enables access to deeper reasoning capabilities that remain unattainable under vanilla GRPO. Furthermore, EFRame enables a more fine-grained categorization of training samples, allowing for a deeper analysis of how different types of samples contribute to the learning process in RL. Our code is avail
+able at https://github.com/597358816/EFRame.
+1 Introduction
+Reinforcement learning (RL) has played a pivotal role in the post-training of large language models (LLMs) GLM et al. (2024); Touvron et al. (2023). In the early stages, approaches such as Proximal Policy Optimization (PPO) and Direct Preference Optimization (DPO) were widely adopted under the Reinforcement Learning from Human Feedback (RLHF), effectively aligning model outputs with human preferences through preference-based rewards Schulman et al. (2017); Rafailov et al. (2023); Zhong et al. (2024); Wang et al. (2024b). More recently, the focus has shifted towards Reinforcement Learning with Verifiable Rewards (RLVR), which seeks to provide more consistent and scalable supervision by leveraging structured, verifiable reward signals Mroueh (2025). Within this paradigm, DeepSeek-R1 introduced Group Relative Policy Optimization (GRPO), a lightweight and efficient variant of PPO that compute relative rewards within rollout groups to eliminate the need for the critic model Shao et al. (2024); Liu et al. (2024); Guo et al. (2025). GRPO has demonstrated remarkable improvements in training efficiency and has shown promising potential in enhancing the reasoning capabilities of LLMs.
+RLVR relies on extracting reward signals from the model’s own pass@kk outputs to improve its pass@1 performance. However, this design inherently couples final performance to the choice of kk, as the reward signal vanishes when all sampled responses are either correct or incorrect, making it impossible for the model to extract useful knowledge from such data. This constrains RLVR’s learning capacity to the base model’s pass@kk, limiting further exploration and improvement Yue et al. (2025). Although increasing the sampling number kk per prompt may seem like a straightforward solution, it typically yields only marginal improvements while significantly reducing sample efficiency Lin et al. (2025). This results in GRPO exhibiting limited exploration and low sample efficiency, and indirectly leads to training instability in the later stages due to the disappearance of reward signals Yu et al. (2025); Li et al. (2025).
+To address the aforementioned issues, we propose EFRame: an Exploration-Filtering-Replay RL Framework. For challenging prompts that cannot be effectively handled by regular rollouts, EFRame introduces an additional rollout phase to enable targeted exploration. During this process, the model generates a small number of high-quality positive samples along with a large number of low-quality negative samples. To reduce training variance and improve efficiency, we apply an online filtering mechanism to discard low-quality samples. Meanwhile, high-advantage samples are stored in a replay buffer and reused during training to amplify their impact and enhance model stability.
+Previous studies have shown that both positive and negative samples contribute to RLVR training Zhu et al. (2025). With the support of the EFRame, we categorize training samples to better understand their roles in learning:
+•
+Regular samples refer to both correct and incorrect responses from prompts of moderate difficulty. They form the foundation of the reward signal, helping to improve model performance while ensuring training stability.
+•
+High-quality samples consist of correct responses obtained through exploration on difficult prompts. They are crucial for activating deeper model knowledge and enhancing the performance ceiling, but their effective use requires experience replay to avoid instability caused by their low sampling probability.
+•
+Low-quality samples refer to the numerous incorrect responses generated from challenging prompts. These samples offer minimal learning value and may even harm the training process by accelerating convergence to suboptimal solutions.
+EFRame provides a systematic solution to the inherent trade-offs among training stability, efficiency, and exploration capacity in reinforcement learning. By enabling the model to effectively identify and leverage deeper latent knowledge, EFRame enhances the expressiveness and learning potential of large language models. Through the coordinated integration of targeted exploration, online sample filtering, and experience replay, the framework not only addresses the limitations of GRPO in handling complex reasoning tasks but also establishes a more principled and controllable training paradigm. Moreover, by introducing a categorization of training samples based on their difficulty and informativeness, EFRame offers a new analysis on the roles of different sample within the RLVR framework. Empirical evaluations confirm the efficacy of EFRame: on the challenging Geometry3K benchmark, it outperforms GRPO by 36.5%, and it achieves consistent gains across a wide range of multimodal and mathematical reasoning benchmarks, demonstrating strong generalizability and robustness.
+2 Related Work
+The early application of RL in LLMs and MLLMs OpenAI (2023); Team et al. (2024); Zhu et al. (2023); Wei et al. (2023); Liu et al. (2023) was primarily reflected in RLHF, where algorithms such as PPO were employed to align language model outputs with human preferences and Direct Preference Optimization (DPO) Rafailov et al. (2024) bypass the need for reward modeling and instead optimize the model policy directly from preference data. Recently, RL has advanced toward integrating rule-based reward mechanisms with sophisticated optimization techniques, as exemplified by models such as DeepSeek-R1 Guo et al. (2025) and Kimi-1.5 Team et al. (2025). As a lightweight variant of PPO, GRPO Shao et al. (2024) significantly improves training efficiency, but at the cost of increased instability.
+A series of subsequent studies have introduced optimizations from GRPO. These include gradient loss refinements, as demonstrated in DAPO Yu et al. (2025) and Dr.GRPO Liu et al. (2025); online filtering methods like Meng et al. (2025); advantage enhancement techniques, exemplified by VL-Rethinker Wang et al. (2025a) and Luffy Yan et al. (2025); clip acceleration methods such as CPPO Lin et al. (2025); curriculum learning strategies explored in Chen et al. (2025b); Chen et al. (2025c); and unsupervised RL such as Wei et al. (2025a); Zhao et al. (2025); Agarwal et al. (2025).
+While existing methods typically focus on individual components, we systematically review the fundamental limitations of GRPO and propose a comprehensive framework with an integrated solution that addresses three critical aspects: exploration capacity, training stability, and sample efficiency.
+This helps create a more robust and effective GRPO-based training paradigm.
+3 Overview of GRPO
+3.1 Gradient Loss
+GRPO has been employed to enhance the reasoning capabilities of large language models, particularly in mathematical problem solving. Compared to PPO, GRPO improves computational efficiency by eliminating the need for a separate critic model. Instead, it estimates the advantage directly using group-normalized rewards. Given a question qq and a corresponding verifiable answer aa, GRPO generates a set of responses O={oi}i=1GO=\{o_{i}\}_{i=1}^{G} using the policy model πθo​l​d\pi_{\theta_{old}}, then optimizes the policy model by maximizing the following objective:
+𝒥G​R​P​O​(θ)=𝔼(q,a)∼𝒟,O={oi}i=1G∼πθo​l​d(⋅|q)1G∑i=1G1|oi|∑t=1|oi|{min[ri,t(θ)A^i,t,clip(ri,t(θ),1−ϵ,1+ϵ)A^i,t]−βDK​L[πθ||πr​e​f]},\begin{split}\mathcal{J}_{GRPO}(\theta)&=\mathbb{E}_{(q,a)\sim\mathcal{D},\ O=\{o_{i}\}_{i=1}^{G}\sim\pi_{\theta_{old}(\cdot|q)}}\\
+&\frac{1}{G}\sum_{i=1}^{G}\frac{1}{|o_{i}|}\sum_{t=1}^{|o_{i}|}\left\{\min\left[r_{i,t}(\theta)\hat{A}_{i,t},\ \clip(r_{i,t}(\theta),1-\epsilon,1+\epsilon)\hat{A}_{i,t}\right]-\beta D_{KL}[\pi_{\theta}||\pi_{ref}]\right\},\end{split}
+(1)
+where ri,t​(θ)=πθ​(oi,t|q,oi<t)πθo​l​d​(oi,t|q,oi<t)r_{i,t}(\theta)=\frac{\pi_{\theta}(o_{i,t}|q,o_{i}<t)}{\pi_{\theta_{old}}(o_{i,t}|q,o_{i}<t)} and A^i,t=Ri−mean⁡({Ri}i=1G)std⁡({Ri}i=1G)\hat{A}_{i,t}=\frac{R_{i}-\mean(\{R_{i}\}_{i=1}^{G})}{\std(\{R_{i}\}_{i=1}^{G})}.
+3.2 Limitations of GRPO
+Although GRPO has demonstrated strong performance in various settings, it encounters several practical challenges when applied to complex reasoning tasks. In the following discussion, we highlight three main issues: limited exploration capacity, training collapse, and low sample efficiency. These limitations reveal the need for more robust and adaptive RL strategies.
+Limited Exploration Capacity. GRPO lacks effective mechanisms to promote exploration, leading to persistently low entropy levels in the early stages of training and an increased risk of convergence to local optima. Moreover, it does not differentiate between prompts of varying difficulty, which limits its ability to stimulate deeper reasoning capabilities. As a consequence, only superficial knowledge is activated, while deeper knowledge remains underutilized.
+((a))
+((b))
+((c))
+Figure 1: Increasing the sampling number to G=20G=20 provides a performance improvement over
+G=5G=5, but it incurs a fourfold increase in per-step runtime, leading to very low sample efficiency in practice.
+Low Sample Efficiency. GRPO computes sample advantage based on relative advantage. When the number of rollouts is small, it suffers from a severe issue of advantage vanishing, leading to a lack of effective training signals. However, as the number of samples increases, the relative advantage becomes diluted, making it harder for high-quality samples to exert sufficient influence. This results in low sample efficiency: although the computational overhead grows nearly linearly with the number of samples, the corresponding performance improvement is significantly diminished, as shown in Fig. 1.
+Instability. During the later stages of training, the GRPO algorithm may exhibit signs of instability or collapse, characterized by a sharp decline in reward and sudden spikes in both gradient and policy entropy, as illustrated in Fig. 2. In extreme cases, this can escalate into gradient explosion. Such instability presents a serious challenge to reliable long-horizon optimization, particularly in complex reasoning tasks where consistent gradient signals are critical for convergence. One contributing factor is the increased variance caused by the disappearance of relative advantages in the later stages of training. Supplementing with additional samples with non-zero advantages can help alleviate this issue.
+((a))
+((b))
+((c))
+Figure 2: When training Qwen2.5-VL-7B-Instruct on the Geo3k dataset using the GRPO algorithm, a collapse occurred.
+4 Methodology
+To address the issues in the previous section, we propose the Exploration-Filtering-Replay (EFR) framework, which consists of three main components: additional rollout, online filtering and replay buffer, as illustrated in Figure 3.
+Figure 3: The overall workflow of EFR builds upon the vanilla GRPO framework by introducing three key components: additional rollout, online filtering, and replay buffer.
+4.1 Regular Rollout
+For each batch of prompts, we begin with a regular-rollout phase, following the original GRPO training process. This initial rollout serves two key purposes:
+•
+Obtain reward signals from regular (i.e., solvable) problems.
+•
+Identify more challenging prompts that fail to yield positive samples, which will be handled in subsequent stages.
+Valuable samples are temporarily stored in the buffer for gradient updates.
+4.2 Additional Rollout
+GRPO computes loss over G1G_{1} sampled outputs, making G1G_{1} pivotal. Smaller G1G_{1} limits learning capacity; while larger G1G_{1} adds linear cost with limited benefit.
+For most questions, at least one positive sample can typically be found within a small number of rollouts. However, for more challenging problems, a larger number of samples and a higher temperature are often necessary to promote exploration and obtain meaningful reward signals.
+To address this, we introduce an additional rollout mechanism: we perform an extra sampling round (e.g. G2G_{2}=20, temperature = 1.2) for challanging prompts.
+Definition 4.1.
+In GRPO-based algorithms with binary rewards (Premise, omitted in the following), difficult prompts are defined as those for which all sampled responses within the initial G1G_{1} rollouts (G1G_{1} is a smaller integer, such as 5) fail to obtain a positive reward, where 𝒟¯⊆𝒟\bar{\mathcal{D}}\subseteq\mathcal{D} and:
+𝒟¯={(q,a):|{{oi}∼πθo​l​d(⋅|q):is_equivalent(a,oi)}i=1G1|=0},\bar{\mathcal{D}}=\left\{(q,a)~:~|\left\{\{o_{i}\}\sim\pi_{\theta_{old}(\cdot|q)}~:~\text{is\_equivalent}(a,o_{i})\right\}_{i=1}^{G_{1}}|=0\right\},
+The additional rollout is designed to activate deeper reasoning capabilities and increase the frequency of emergent “aha moments.”
+4.3 Online filter
+While additional rollout enhances the model’s ability to explore complex prompts, it also introduces computational overhead and potential training noise. In addition to filtering overlong samples, we design two additional filtering strategies to further enhance the stability and efficiency of the training process.
+Regular Filter: In the first-round rollout, when the prompt is of regular difficulty—we adopt a conservative filtering strategy that retains all regular samples ORO_{R} to balance efficiency and performance.
+Definition 4.2.
+Regular samples ORO_{R} refer to any samples with a non-zero advantage on the prompt set 𝒟\mathcal{D}:
+OR={{oi}∼πθo​l​d(⋅|q):(q,a)∼𝒟,A^i,t=Ri−mean⁡({Ri}i=1G1)std⁡({Ri}i=1G1)≠0};O_{R}=\left\{\{o_{i}\}\sim\pi_{\theta_{old}}(\cdot|q):(q,a)\sim\mathcal{D},\ \hat{A}_{i,t}=\frac{R_{i}-\mean(\{R_{i}\}_{i=1}^{G_{1}})}{\std(\{R_{i}\}_{i=1}^{G_{1}})}\neq 0\right\};
+At this stage, due to the moderate difficulty of prompts, all regular samples—both positive and negative—provide informative learning signals that contribute meaningfully to training.
+Exploration Filter:
+When the prompt becomes challenging, we encourage the model to explore extensively in order to discover correct answers.
+Excluding samples with zero advantage, the remains can be categorized into the following two types.
+Definition 4.3.
+High-quality samples OHO_{H} are positive samples for difficult prompts 𝒟¯\bar{\mathcal{D}}:
+OH={{oi}∼πθo​l​d(⋅|q):(q,a)∼𝒟¯,A^i,t=Ri−mean⁡({Ri}i=1G2)std⁡({Ri}i=1G2)>0};O_{H}=\left\{\{o_{i}\}\sim\pi_{\theta_{old}(\cdot|q)}:(q,a)\sim\bar{\mathcal{D}},\hat{A}_{i,t}=\frac{R_{i}-\mean(\{R_{i}\}_{i=1}^{G_{2}})}{\std(\{R_{i}\}_{i=1}^{G_{2}})}>0\right\};
+low-quality samples are negative samples for difficult prompts 𝒟¯\bar{\mathcal{D}}:
+OL={{oi}∼πθo​l​d(⋅|q):(q,a)∼𝒟¯,A^i,t=Ri−mean⁡({Ri}i=1G2)std⁡({Ri}i=1G2)<0}.O_{L}=\left\{\{o_{i}\}\sim\pi_{\theta_{old}(\cdot|q)}:(q,a)\sim\bar{\mathcal{D}},\hat{A}_{i,t}=\frac{R_{i}-\mean(\{R_{i}\}_{i=1}^{G_{2}})}{\std(\{R_{i}\}_{i=1}^{G_{2}})}<0\right\}.
+Theorem 4.4.
+For oh∈OHo_{h}\in O_{H} and ol∈OLo_{l}\in O_{L}, ∑A^h,0+∑A^l,0=0\sum\hat{A}_{h,0}+\sum\hat{A}_{l,0}=0.
+According to Definition 4.3 and Theorem 4.4, low-quality samples are significantly more numerous than high-quality ones, whereas the advantage values of high-quality samples are substantially higher.
+In such an exploration-driven setting, penalizing incorrect trajectories is not only inefficient but may also introduce noisy and unstable gradients. If gradients are computed from all samples, most of which are low quality, the informative signal from high-quality samples may be drowned out by chaotic updates from low-quality ones. To address this issue, we apply a more aggressive filtering strategy during the additional rollout—discarding all negative samples and retaining only positive samples for training. In practice, since this exploration phase targets only challenging prompts, the vast majority of generated samples (over 95%) are filtered out under this strategy.
+To summarize, the policy gradient under our framework can be expressed as:
+𝒥⁡(θ)\displaystyle\mathcal{J}(\theta)
+=𝔼[1∑oi∈OR∪OH|oi|∑oi∈OR∪OH∑t=1|oi|(min{ri,t(θ)A^i,t,clip(ri,t(θ), 1−ϵlow, 1+ϵhigh)A^i,t}\displaystyle=\mathbb{E}\Biggl[\frac{1}{\displaystyle\sum_{o_{i}\in O_{R}\cup O_{H}}\lvert o_{i}\rvert}\sum_{o_{i}\in O_{R}\cup O_{H}}\sum_{t=1}^{\lvert o_{i}\rvert}\Bigl(\min\bigl\{\,r_{i,t}(\theta)\,\hat{A}_{i,t},\;\mathrm{clip}\bigl(r_{i,t}(\theta),\,1-\epsilon_{\mathrm{low}},\,1+\epsilon_{\mathrm{high}}\bigr)\,\hat{A}_{i,t}\bigr\}
+(2)
+−βDKL[πθ∥πref])].\displaystyle}{\displaystyle-\,\beta\,D_{\mathrm{KL}}\bigl[\pi_{\theta}\,\|\,\pi_{\mathrm{ref}}\bigr]\Bigr)\Biggr].
+To prevent token-length bias, we compute the policy loss using the token-mean aggregation strategy.
+4.4 Replay buffer
+While GRPO is fundamentally an online RL algorithm, we find that experience replay with high-quality offline samples remains highly effective. In particular, trajectories discovered during the second-round rollout—often of higher quality due to deeper exploration and carry rich reward signals.
+By selectively storing high-quality samples in the replay buffer, we amplify their influence during training, particularly when their gradients are frequently clipped due to low sampling probabilities. Furthermore, by enabling the model to repeatedly leverage these rare yet informative samples, experience replay plays a pivotal role in enhancing stability of entropy.
+Theorem 4.5 (Entropy Change under NPG Update).
+If the actor policy πθ\pi_{\theta} is a tabular softmax policy updated via natural policy gradient (Kakade, 2001) with step size η\eta. Then the change in policy entropy under state between two steps approximately satisfies:
+H(πθk+1)−H(πθk)≈−η⋅𝔼s∼dμkCova∼πkθ(⋅∣s)[logπθk(a∣s),Aπk(s,a)],\displaystyle{H}(\pi_{\theta}^{k+1})-\displaystyle{H}(\pi_{\theta}^{k})\approx-\eta\cdot\mathbb{E}_{s\sim d_{\mu}^{k}}\text{Cov}_{a\sim\pi^{k}_{\theta}(\cdot\mid s)}\!\bigl[\log\!\pi^{k}_{\theta}(a\mid s),\,A^{\pi^{k}}(s,a)\bigr],
+This theorem was first introduced by Liu (2025), aand was organized and extended by cui2025entropymechanismreinforcementlearning. Proof can be seen in Liu (2025) and cui2025entropymechanismreinforcementlearning. H\displaystyle{H} indicates the policy entropy of policy model, and Cov denotes covariance, πθk\pi^{k}_{\theta} is the policy at step kk, and Aπk​(s,a)A^{\pi^{k}}(s,a) is the advantage function of action aa under state ss. This result indicates that when high-advantage actions have low probability, they induce negative covariance, which increases entropy and reduce stability.
+The high-quality samples identified through additional rollouts are typically responses to difficult prompts and thus are with relatively low probability. Using them only once yields limited and short-lived gradient effects, leading to an increase in model entropy. By incorporating these samples into the replay buffer, their probability of reoccurrence is effectively increased during training, enabling the model to transition from entropy increase to eventual convergence. In fact, the replay buffer here serves to reduce policy entropy; detailed discussions can be found in the following discussion section.
+4.5 Discussion
+The above subsections yield several practical insights regarding the interplay between Exploration-Filtering-Replay:
+Additional rollout: By prompting LLM to generate multiple responses to challenging queries (x∈𝒟¯x\in\bar{\mathcal{D}}) under a high temperature setting, the resulting positive samples are obtained with extremely low probability log⁡πθ​(y∣x)\log\pi_{\theta}(y\mid x) and high advantage A^​(x,y)\hat{A}(x,y). According Theorem 4.5, this high-advantage, low-probability scenario rapidly increases the policy entropy HH, thereby preventing collapse of the entropy and maintaining effective exploration. At the same time, an excessive presence of low-quality samples can cause a nosedive of entropy, which is difficult to control. To address this, we filter out such samples and instead adopt a more controllable strategy to regulate entropy stability.
+Replay Buffer: By storing high-quality positive samples within the replay buffer, the model can repeatedly utilize their gradient information for subsequent updates. As the model has already been updated on these (problem, answer) pairs (x,y)(x,y), the recalculated log⁡πθ​(y∣x)\log\pi_{\theta}(y\mid x) becomes larger upon rehearing these pairs. According to the theorem, this shift leads to a reduction in policy entropy, preventing excessive growth in entropy.
+Applying any techniques in isolation may result in unhealthy dynamics of policy entropy. Subsequent ablation studies further corroborate these findings.
+5 Experiments
+To validate the effectiveness of our methods, we demonstrate our experiment setup and the results in the following sections.
+Table 1: Comparative results across multiple multimodal reasoning benchmarks indicate that our method achieves excellent performance.
+Models
+Size
+MathVision
+MathVerse
+MathVista
+We-Math
+Average
+Close-Source Models
+GPT-4o Hurst et al. (2024)
+-
+33.95
+48.83
+59.50
+65.00
+51.82
+Claude-3.5-Sonnet Anthropic (2024)
+-
+46.48
+57.64
+68.20
+73.05
+61.34
+Open-Source Multi-Modal Large Reasoning Models
+QvQ-Preview Bai et al. (2025)
+72B
+35.56
+52.81
+69.20
+65.29
+55.72
+Skywork R1V Peng et al. (2025)
+38B
+39.31
+40.91
+67.50
+60.06
+51.95
+Open-Source 7B Multi-Modal Models
+MM-Eureka Meng et al. (2025)
+7B
+28.36
+49.52
+70.40
+66.03
+53.58
+OpenVLThinker Deng et al. (2025)
+7B
+25.30
+42.79
+64.10
+63.91
+49.03
+ThinkLite-VL Wang et al. (2025b)
+7B
+27.71
+47.41
+69.00
+67.99
+53.03
+VLAA-Thinker Chen et al. (2025a)
+7B
+26.61
+47.49
+66.20
+66.49
+51.70
+Qwen2.5-VL-7B-Instruct with RL
+Qwen2.5-VL Bai et al. (2025)
+7B
+24.87
+43.83
+66.30
+62.87
+49.47
+Qwen2.5-VL+GRPO
+7B
+29.11
+47.51
+72.60
+67.53
+54.19
+Qwen2.5-VL+DAPO
+7B
+27.92
+48.48
+72.30
+69.08
+54.45
+Ours
+7B
+28.82 (+3.95)
+48.81 (+4.98)
+73.40 (+7.10)
+69.48 (+6.61)
+55.13 (+5.66)
+5.1 Experimental setup
+Training Datasets. Our experiments are conducted on two datasets to evaluate the effectiveness of the algorithm in both in-domain and out-of-domain settings: (1) Geometry3K focused on geometric problems Lu et al. (2021a), (2) a 6k out-of-domain dataset randomly sampled from the dataset proposed in  Wei et al. (2025b); Wei et al. (2025a), which randomly sampled from established open-source resources, including Geometry3K Lu et al. (2021a), GeoQA Chen et al. (2021), GeoQA-Plus Cao & Xiao (2022), Geos Seo et al. (2015), AI2D Kembhavi et al. (2016), TQA Kim et al. (2018), FigureQA Kahou et al. (2017), TabMWP Lu et al. (2022b), ChartQA Masry et al. (2022), IconQA Lu et al. (2021b), Clevr-Math Lindström & Abraham (2022), M3CoT Chen et al. (2024), and ScienceQA Lu et al. (2022a).
+Evaluation Benchmarks. Our experiments consist of two parts. First, we evaluate the overall performance of the algorithms on four open multimodal math benchmarks: MathVision Wang et al. (2024a), MathVista Lu et al. (2023), MathVerse Zhang et al. (2024), and We-Math Qiao et al. (2024). These benchmarks cover diverse problem types such as geometry, charts, and tables, spanning multiple subjects and levels of visual reasoning difficulty. Second, we conduct a detailed analysis for algorithms on the Geometry3K dataset to examine the algorithmic behaviors.
+Baselines.
+We compare our models with a range of advanced multimodal large language models. These include GPT-4o Hurst et al. (2024) and Claude-3.5-Sonnet Anthropic (2024), which are state-of-the-art closed-source MLLMs. QvQ-Preview-72B[2]
+and Skywork R1V-32B  Peng et al. (2025) are multimodal large reasoning models specifically designed for R1-like chain-of-thought capabilities. At the 7B scale, we compare with MM-Eureka-7B Meng et al. (2025), OpenVLThinker-7B Deng et al. (2025), ThinkLite-VL-7B Wang et al. (2025b), and VLAA-Thinker-Qwen2.5VL-7B Chen et al. (2025a). All of these 7B models are based on Qwen2.5-VL and are enhanced for mathematical reasoning via fine-tuning, reinforcement learning, or iterative self-improvement techniques. In addition, we compare the performance of GRPO and DAPO on the Qwen2.5-VL-7B-Instruct model to assess the impact of different strategies under consistent model and training settings.
+Implementation details.
+Our work is based on EasyR1 and VeRL framework Yaowei et al. (2025); Sheng et al. (2025). We initialize all policy models with Qwen2.5-VL-7B-Instruct and conduct experiments on 8 A800 GPUs (40GB). Unless otherwise specified, we follow the default EasyR1 settings: maximum response length of 2048, global batch size 128, rollout batch size 512, rollout G1G_{1}=5, temperature 1.0, and learning rate 10−610^{-6}. GRPO and our method adopt ϵl​o​w=ϵh​i​g​h=0.2\epsilon_{low}=\epsilon_{high}=0.2 and a binary reward to avoid relative advantage bias (see detail in Appendix A), while DAPO includes ϵh​i​g​h=0.3\epsilon_{high}=0.3 and an additional length-aware linear penalty (up to 0.5) for responses exceeding 1536 tokens. For our method, we perform additional rollouts with G2=20G_{2}=20, temperature = 1.2; responses with absolute advantage larger than 1 are stored in a replay buffer of size 5120, with experience replay triggered every 5 steps.
+Table 2: The performance comparison on the Geometry3K dataset shows that our method achieves a significant improvement over existing approaches.
+Models
+Qwen2.5-VL-Instruct
+Ours
+GRPO
+DAPO
+Accuracy
+38.44
+55.24(+16.80)
+50.75 (+12.31)
+49.09 (+10.65)
+Time/step(s)
+-
+442(×\times1.35)
+327(×\times1.00)
+182(×\times0.57)
+5.2 Main results
+((a))
+((b))
+((c))
+Figure 4: On the Geometry3K dataset, our method not only achieves excellent performance but also demonstrates superior exploration capability and training stability.
+Performance. In our experiments, we employ the Exploration-Filtering-Replay framework, yielding notable improvements on both out-of-domain and in-domain datasets. As shown in Table 1, the proposed method delivers consistently strong results across four multimodal reasoning benchmarks, with an average gain of +5.66 over the base model (Qwen2.5-VL-7B-Instruct), outperforming GRPO by 19.9%. On the in-domain Geometry3K dataset, the improvement is even more pronounced: Table 2 reports a +16.80 gain, representing a 36.5% relative advantage over GRPO.
+Exploration. As shown in Fig. 4, our framework maintains the policy entropy around 1, striking a balance between sufficient exploration and exploitation. In the later training stages, when the vanilla GRPO tends to suffer from vanishing advantages, our method further increases entropy to encourage continued exploration of informative reward signals.
+Stability. Our framework leverages additional rollouts to enrich reward signals, while an online filtering mechanism mitigates training variance by excluding low-quality samples. Extensive experiments reveal that the proposed method circumvents collapse issues—occasionally encountered in GRPO and DAPO. Furthermore, the steadily increasing response length during training reflects the model’s progressively improved reasoning ability.
+6 Ablation Studies
+To assess the contribution of each component in our framework, we conduct an ablation study to examine whether all three modules—additional rollout, online filtering, and replay buffer—are all essential for achieving the observed improvements in stability and overall performance.
+6.1 Additional Rollout
+Disabling the additional rollout module exposes the model to a fundamental trade-off inherent in GRPO-based training. When the number of samples G1G_{1} is small, the reward signal is constrained by the base model’s pass@G1G_{1}, limiting the model’s ability to solve challenging problems and suppressing the emergence of “aha moments.”
+Claim 1.
+High-quality samples have the potential to activate deeper reasoning abilities within the model.
+As shown in Fig. 5, the model’s reward on the training set plateaus at a relatively low level, restricting further gains in test accuracy. In the early stages of training, the entropy remains low, indicating limited exploration. However, once the model hits this performance bottleneck, entropy begins to rise—yet this delayed exploration yields minimal returns, suggesting that the model struggles to escape local optima. The additional rollout module is specifically designed to break this situation, enabling targeted deep exploration.
+((a))
+((b))
+((c))
+Figure 5: The ablation study conducted on the Geometry3K dataset not only validates the effectiveness of our proposed method but also reveals the distinct roles played by samples of varying quality during the training process.
+6.2 Online Filtering
+Removing the online filtering module results in significant instability and inefficiency during training. Without filtering, the model treats all samples—regardless of their advantage—as equally important, allowing zero-advantage samples to increase gradient variance and low-quality negative trajectories to distorb the learning signal. This problem is further exacerbated during the additional rollout phase, where abundant incorrect samples significantly amplifies gradient variance, making it difficult for the model to retain meaningful patterns from rare high-quality responses. As a result, training becomes slower, more chaotic, and more prone to divergence.
+Claim 2.
+Low-quality samples from challenging prompts often mislead optimization, causing the model to converge prematurely to suboptimal solutions and impeding further learning.
+As shown in Fig. 5, during the early stages of training, the inclusion of a large number of negative samples significantly boosts the model’s performance on the training set, but yields little improvement on the test set. This indicates that most low-quality samples lead the model to converge more quickly to a local optimum, offering little benefit to its generalization ability.
+Moreover, the forward and backward computation of these negative samples incurs substantial overhead, reducing the sample efficiency of the overall training process.
+Online filtering plays a crucial role in maintaining gradient clarity and training stability by selectively preserving informative samples and discarding neutral or low-impact ones.
+6.3 Replay Buffer
+When the replay buffer is disabled, we observe a drastic drop in performance, even falling below that of the vanilla GRPO baseline, as shown in Fig. 5. This counterintuitive result reveals that the abundant high-quality samples generated during the additional rollout phase can actually become detrimental without a proper replay mechanism.
+Claim 3.
+While high-quality samples may induce high-entropy exploration, incorporating experience replay enables the model to retain and consolidate useful gradients, thus restoring training stability.
+As high-quality samples typically have low generation probabilities, rewarding them shifts the model’s response distribution toward low-probability but correct outputs, disrupting the convergence trajectory and consequently increasing entropy. Due to their high advantage values and low sampling probabilities, high-quality samples are more likely to have their gradients clipped during training. In the absence of a replay buffer, such valuable samples contribute only short-lived and unstable gradients that are quickly overwritten. Instead of reinforcing beneficial behavior, this transient gradient signal increases policy uncertainty, pushing the model into a state of chaotic, high-entropy exploration, ultimately harming both learning stability and performance. To address this issue, we leverage experience replay to ensure that high-quality samples continuously provide effective gradients, enabling the model to converge along the new trajectory.
+7 Conclusion and Discussion
+In this work, we investigate the impact of sample quality on RL for large language models, with a particular focus on addressing challenging prompts. Our findings show that low-quality incorrect samples—those with low absolute advantage—tend to trap the model in local optima and offer little or even negative contribution to training. In contrast, high-quality samples with large advantages play a critical role in guiding the model through a meaningful transition from entropy-driven exploration to entropy-reducing convergence. This process is essential for eliciting deeper reasoning capabilities within the model.
+To this end, we propose an Exploration-Filtering-Replay framework that emphasizes the discovery, selection, and sustained utilization of high-quality samples. Our method introduces additional rollouts to enhance reward density, employs online filtering to suppress noisy samples, and integrates experience replay to amplify the impact of high-quality samples across training iterations. This strategy not only helps transform isolated “aha moments” into a sustained “aha state,” but also shifts reinforcement learning from a “reinforcement lottery” toward a more structured and reliable process of reinforcement learning.
+References
+Agarwal et al. (2025)
+Shivam Agarwal, Zimin Zhang, Lifan Yuan, Jiawei Han, and Hao Peng.
+The unreasonable effectiveness of entropy minimization in llm
+reasoning.
+arXiv preprint arXiv:2505.15134, 2025.
+Anthropic (2024)
+Anthropic.
+The claude 3 model family: Opus, sonnet, haiku.
+https://www-cdn.anthropic.com/de8ba9b01c9ab7cbabf5c33b80b7bbc618857627/Model_Card_Claude_3.pdf,
+2024.
+Preprint.
+Bai et al. (2025)
+Shuai Bai, Keqin Chen, Xuejing Liu, Jialin Wang, Wenbin Ge, Sibo Song, Kai
+Dang, Peng Wang, Shijie Wang, Jun Tang, et al.
+Qwen2. 5-vl technical report.
+arXiv preprint arXiv:2502.13923, 2025.
+Cao & Xiao (2022)
+Jie Cao and Jing Xiao.
+An augmented benchmark dataset for geometric question answering
+through dual parallel text encoding.
+In Proceedings of the 29th international conference on
+computational linguistics, pp.  1511–1520, 2022.
+Chen et al. (2025a)
+Hardy Chen, Haoqin Tu, Fali Wang, Hui Liu, Xianfeng Tang, Xinya Du, Yuyin Zhou,
+and Cihang Xie.
+Sft or rl? an early investigation into training r1-like reasoning
+large vision-language models.
+arXiv preprint arXiv:2504.11468, 2025a.
+Chen et al. (2021)
+Jiaqi Chen, Jianheng Tang, Jinghui Qin, Xiaodan Liang, Lingbo Liu, Eric Xing,
+and Liang Lin.
+Geoqa: A geometric question answering benchmark towards multimodal
+numerical reasoning.
+In Findings of the Association for Computational Linguistics:
+ACL-IJCNLP 2021, pp.  513–523, 2021.
+Chen et al. (2025b)
+Mingrui Chen, Haogeng Liu, Hao Liang, Huaibo Huang, Wentao Zhang, and Ran He.
+Unlocking the potential of difficulty prior in rl-based multimodal
+reasoning.
+arXiv preprint arXiv:2505.13261, 2025b.
+Chen et al. (2024)
+Qiguang Chen, Libo Qin, Jin Zhang, Zhi Chen, Xiao Xu, and Wanxiang Che.
+M3cot: A novel benchmark for multi-domain multi-step multi-modal
+chain-of-thought.
+arXiv preprint arXiv:2405.16473, 2024.
+Chen et al. (2025c)
+Xiaoyin Chen, Jiarui Lu, Minsu Kim, Dinghuai Zhang, Jian Tang, Alexandre
+Piché, Nicolas Gontier, Yoshua Bengio, and Ehsan Kamalloo.
+Self-evolving curriculum for llm reasoning.
+arXiv preprint arXiv:2505.14970, 2025c.
+Deng et al. (2025)
+Yihe Deng, Hritik Bansal, Fan Yin, Nanyun Peng, Wei Wang, and Kai-Wei Chang.
+Openvlthinker: An early exploration to complex vision-language
+reasoning via iterative self-improvement.
+arXiv preprint arXiv:2503.17352, 2025.
+GLM et al. (2024)
+Team GLM, Aohan Zeng, Bin Xu, Bowen Wang, Chenhui Zhang, Da Yin, Dan Zhang,
+Diego Rojas, Guanyu Feng, Hanlin Zhao, et al.
+Chatglm: A family of large language models from glm-130b to glm-4 all
+tools.
+arXiv preprint arXiv:2406.12793, 2024.
+Guo et al. (2025)
+Daya Guo, Dejian Yang, Haowei Zhang, Junxiao Song, Ruoyu Zhang, Runxin Xu,
+Qihao Zhu, Shirong Ma, Peiyi Wang, Xiao Bi, et al.
+Deepseek-r1: Incentivizing reasoning capability in llms via
+reinforcement learning.
+arXiv preprint arXiv:2501.12948, 2025.
+Hurst et al. (2024)
+Aaron Hurst, Adam Lerer, Adam P Goucher, Adam Perelman, Aditya Ramesh, Aidan
+Clark, AJ Ostrow, Akila Welihinda, Alan Hayes, Alec Radford, et al.
+Gpt-4o system card.
+arXiv preprint arXiv:2410.21276, 2024.
+Kahou et al. (2017)
+Samira Ebrahimi Kahou, Vincent Michalski, Adam Atkinson, Ákos
+Kádár, Adam Trischler, and Yoshua Bengio.
+Figureqa: An annotated figure dataset for visual reasoning.
+arXiv preprint arXiv:1710.07300, 2017.
+Kakade (2001)
+Sham M Kakade.
+A natural policy gradient.
+Advances in neural information processing systems, 2001.
+Kembhavi et al. (2016)
+Aniruddha Kembhavi, Mike Salvato, Eric Kolve, Minjoon Seo, Hannaneh Hajishirzi,
+and Ali Farhadi.
+A diagram is worth a dozen images.
+In Computer Vision–ECCV 2016: 14th European Conference,
+Amsterdam, The Netherlands, October 11–14, 2016, Proceedings, Part IV 14,
+pp.  235–251. Springer, 2016.
+Kim et al. (2018)
+Daesik Kim, Seonhoon Kim, and Nojun Kwak.
+Textbook question answering with multi-modal context graph
+understanding and self-supervised open-set comprehension.
+arXiv preprint arXiv:1811.00232, 2018.
+Li et al. (2025)
+Gang Li, Ming Lin, Tomer Galanti, Zhengzhong Tu, and Tianbao Yang.
+Disco: Reinforcing large reasoning models with discriminative
+constrained optimization.
+arXiv preprint arXiv:2505.12366, 2025.
+Lin et al. (2025)
+Zhihang Lin, Mingbao Lin, Yuan Xie, and Rongrong Ji.
+Cppo: Accelerating the training of group relative policy
+optimization-based reasoning models.
+arXiv preprint arXiv:2503.22342, 2025.
+Lindström & Abraham (2022)
+Adam Dahlgren Lindström and Savitha Sam Abraham.
+Clevr-math: A dataset for compositional language, visual and
+mathematical reasoning.
+arXiv preprint arXiv:2208.05358, 2022.
+Liu et al. (2024)
+Aixin Liu, Bei Feng, Bing Xue, Bingxuan Wang, Bochao Wu, Chengda Lu, Chenggang
+Zhao, Chengqi Deng, Chenyu Zhang, Chong Ruan, et al.
+Deepseek-v3 technical report.
+arXiv preprint arXiv:2412.19437, 2024.
+Liu et al. (2023)
+Haotian Liu, Chunyuan Li, Qingyang Wu, and Yong Jae Lee.
+Visual instruction tuning.
+arXiv preprint arXiv:2304.08485, 2023.
+Liu (2025)
+Jiacai Liu.
+How does rl policy entropy converge during iteration?
+https://zhuanlan.zhihu.com/p/28476703733, 2025.
+URL https://zhuanlan.zhihu.com/p/28476703733.
+Liu et al. (2025)
+Zichen Liu, Changyu Chen, Wenjun Li, Penghui Qi, Tianyu Pang, Chao Du, Wee Sun
+Lee, and Min Lin.
+Understanding r1-zero-like training: A critical perspective.
+arXiv preprint arXiv:2503.20783, 2025.
+Lu et al. (2021a)
+Pan Lu, Ran Gong, Shibiao Jiang, Liang Qiu, Siyuan Huang, Xiaodan Liang, and
+Song-Chun Zhu.
+Inter-gps: Interpretable geometry problem solving with formal
+language and symbolic reasoning.
+arXiv preprint arXiv:2105.04165, 2021a.
+Lu et al. (2021b)
+Pan Lu, Liang Qiu, Jiaqi Chen, Tony Xia, Yizhou Zhao, Wei Zhang, Zhou Yu,
+Xiaodan Liang, and Song-Chun Zhu.
+Iconqa: A new benchmark for abstract diagram understanding and visual
+language reasoning.
+arXiv preprint arXiv:2110.13214, 2021b.
+Lu et al. (2022a)
+Pan Lu, Swaroop Mishra, Tanglin Xia, Liang Qiu, Kai-Wei Chang, Song-Chun Zhu,
+Oyvind Tafjord, Peter Clark, and Ashwin Kalyan.
+Learn to explain: Multimodal reasoning via thought chains for science
+question answering.
+Advances in Neural Information Processing Systems,
+35:2507–2521, 2022a.
+Lu et al. (2022b)
+Pan Lu, Liang Qiu, Kai-Wei Chang, Ying Nian Wu, Song-Chun Zhu, Tanmay
+Rajpurohit, Peter Clark, and Ashwin Kalyan.
+Dynamic prompt learning via policy gradient for semi-structured
+mathematical reasoning.
+arXiv preprint arXiv:2209.14610, 2022b.
+Lu et al. (2023)
+Pan Lu, Hritik Bansal, Tony Xia, Jiacheng Liu, Chunyuan Li, Hannaneh
+Hajishirzi, Hao Cheng, Kai-Wei Chang, Michel Galley, and Jianfeng Gao.
+Mathvista: Evaluating mathematical reasoning of foundation models in
+visual contexts.
+arXiv preprint arXiv:2310.02255, 2023.
+Masry et al. (2022)
+Ahmed Masry, Do Xuan Long, Jia Qing Tan, Shafiq Joty, and Enamul Hoque.
+Chartqa: A benchmark for question answering about charts with visual
+and logical reasoning.
+arXiv preprint arXiv:2203.10244, 2022.
+Meng et al. (2025)
+Fanqing Meng, Lingxiao Du, Zongkai Liu, Zhixiang Zhou, Quanfeng Lu, Daocheng
+Fu, Botian Shi, Wenhai Wang, Junjun He, Kaipeng Zhang, Ping Luo, Yu Qiao,
+Qiaosheng Zhang, and Wenqi Shao.
+Mm-eureka: Exploring visual aha moment with rule-based large-scale
+reinforcement learning, 2025.
+URL https://github.com/ModalMinds/MM-EUREKA.
+Mroueh (2025)
+Youssef Mroueh.
+Reinforcement learning with verifiable rewards: Grpo’s effective
+loss, dynamics, and success amplification.
+arXiv preprint arXiv:2503.06639, 2025.
+OpenAI (2023)
+OpenAI.
+Gpt-4 technical report.
+arXiv preprint arXiv:2303.08774, 2023.
+Peng et al. (2025)
+Yi Peng, Xiaokun Wang, Yichen Wei, Jiangbo Pei, Weijie Qiu, Ai Jian, Yunzhuo
+Hao, Jiachun Pan, Tianyidan Xie, Li Ge, et al.
+Skywork r1v: Pioneering multimodal reasoning with chain-of-thought.
+arXiv preprint arXiv:2504.05599, 2025.
+Qiao et al. (2024)
+Runqi Qiao, Qiuna Tan, Guanting Dong, Minhui Wu, Chong Sun, Xiaoshuai Song,
+Zhuoma GongQue, Shanglin Lei, Zhe Wei, Miaoxuan Zhang, et al.
+We-math: Does your large multimodal model achieve human-like
+mathematical reasoning?
+arXiv preprint arXiv:2407.01284, 2024.
+Rafailov et al. (2023)
+Rafael Rafailov, Archit Sharma, Eric Mitchell, Christopher D Manning, Stefano
+Ermon, and Chelsea Finn.
+Direct preference optimization: Your language model is secretly a
+reward model.
+Advances in Neural Information Processing Systems,
+36:53728–53741, 2023.
+Rafailov et al. (2024)
+Rafael Rafailov, Archit Sharma, Eric Mitchell, Christopher D Manning, Stefano
+Ermon, and Chelsea Finn.
+Direct preference optimization: Your language model is secretly a
+reward model.
+Advances in Neural Information Processing Systems, 36, 2024.
+Schulman et al. (2017)
+John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov.
+Proximal policy optimization algorithms.
+arXiv preprint arXiv:1707.06347, 2017.
+Seo et al. (2015)
+Minjoon Seo, Hannaneh Hajishirzi, Ali Farhadi, Oren Etzioni, and Clint Malcolm.
+Solving geometry problems: Combining text and diagram interpretation.
+In Proceedings of the 2015 conference on empirical methods in
+natural language processing, pp.  1466–1476, 2015.
+Shao et al. (2024)
+Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Xiao Bi, Haowei
+Zhang, Mingchuan Zhang, YK Li, Y Wu, et al.
+Deepseekmath: Pushing the limits of mathematical reasoning in open
+language models.
+arXiv preprint arXiv:2402.03300, 2024.
+Sheng et al. (2025)
+Guangming Sheng, Chi Zhang, Zilingfeng Ye, Xibin Wu, Wang Zhang, Ru Zhang,
+Yanghua Peng, Haibin Lin, and Chuan Wu.
+Hybridflow: A flexible and efficient rlhf framework.
+In Proceedings of the Twentieth European Conference on Computer
+Systems, pp.  1279–1297, 2025.
+Team et al. (2024)
+Gemini Team, Petko Georgiev, Ving Ian Lei, Ryan Burnell, Libin Bai, Anmol
+Gulati, Garrett Tanzer, Damien Vincent, Zhufeng Pan, Shibo Wang, et al.
+Gemini 1.5: Unlocking multimodal understanding across millions of
+tokens of context.
+arXiv preprint arXiv:2403.05530, 2024.
+Team et al. (2025)
+Kimi Team, Angang Du, Bofei Gao, Bowei Xing, Changjiu Jiang, Cheng Chen, Cheng
+Li, Chenjun Xiao, Chenzhuang Du, Chonghua Liao, et al.
+Kimi k1. 5: Scaling reinforcement learning with llms.
+arXiv preprint arXiv:2501.12599, 2025.
+Touvron et al. (2023)
+Hugo Touvron, Louis Martin, Kevin Stone, Peter Albert, Amjad Almahairi, Yasmine
+Babaei, Nikolay Bashlykov, Soumya Batra, Prajjwal Bhargava, Shruti Bhosale,
+et al.
+Llama 2: Open foundation and fine-tuned chat models.
+arXiv preprint arXiv:2307.09288, 2023.
+Wang et al. (2025a)
+Haozhe Wang, Chao Qu, Zuming Huang, Wei Chu, Fangzhen Lin, and Wenhu Chen.
+Vl-rethinker: Incentivizing self-reflection of vision-language models
+with reinforcement learning.
+arXiv preprint arXiv:2504.08837, 2025a.
+Wang et al. (2024a)
+Ke Wang, Junting Pan, Weikang Shi, Zimu Lu, Mingjie Zhan, and Hongsheng Li.
+Measuring multimodal mathematical reasoning with math-vision dataset.
+arXiv preprint arXiv:2402.14804, 2024a.
+Wang et al. (2025b)
+Xiyao Wang, Zhengyuan Yang, Chao Feng, Hongjin Lu, Linjie Li, Chung-Ching Lin,
+Kevin Lin, Furong Huang, and Lijuan Wang.
+Sota with less: Mcts-guided sample selection for data-efficient
+visual reasoning self-improvement.
+arXiv preprint arXiv:2504.07934, 2025b.
+Wang et al. (2024b)
+Zhichao Wang, Bin Bi, Shiva Kumar Pentyala, Kiran Ramnath, Sougata Chaudhuri,
+Shubham Mehrotra, Xiang-Bo Mao, Sitaram Asur, et al.
+A comprehensive survey of llm alignment techniques: Rlhf, rlaif, ppo,
+dpo and more.
+arXiv preprint arXiv:2407.16216, 2024b.
+Wei et al. (2023)
+Lai Wei, Zihao Jiang, Weiran Huang, and Lichao Sun.
+Instructiongpt-4: A 200-instruction paradigm for fine-tuning
+minigpt-4.
+arXiv preprint arXiv:2308.12067, 2023.
+Wei et al. (2025a)
+Lai Wei, Yuting Li, Chen Wang, Yue Wang, Linghe Kong, Weiran Huang, and Lichao
+Sun.
+Unsupervised post-training for multi-modal llm reasoning via grpo.
+arXiv preprint arXiv:2505.22453, 2025a.
+Wei et al. (2025b)
+Lai Wei, Yuting Li, Kaipeng Zheng, Chen Wang, Yue Wang, Linghe Kong, Lichao
+Sun, and Weiran Huang.
+Advancing multimodal reasoning via reinforcement learning with cold
+start.
+arXiv preprint arXiv:2505.22334, 2025b.
+Yan et al. (2025)
+Jianhao Yan, Yafu Li, Zican Hu, Zhi Wang, Ganqu Cui, Xiaoye Qu, Yu Cheng, and
+Yue Zhang.
+Learning to reason under off-policy guidance.
+arXiv preprint arXiv:2504.14945, 2025.
+Yaowei et al. (2025)
+Zheng Yaowei, Lu Junting, Wang Shenzhi, Feng Zhangchi, Kuang Dongdong, and
+Xiong Yuwen.
+Easyr1: An efficient, scalable, multi-modality rl training framework.
+https://github.com/hiyouga/EasyR1, 2025.
+Yu et al. (2025)
+Qiying Yu, Zheng Zhang, Ruofei Zhu, Yufeng Yuan, Xiaochen Zuo, Yu Yue, Tiantian
+Fan, Gaohong Liu, Lingjun Liu, Xin Liu, et al.
+Dapo: An open-source llm reinforcement learning system at scale.
+arXiv preprint arXiv:2503.14476, 2025.
+Yue et al. (2025)
+Yang Yue, Zhiqi Chen, Rui Lu, Andrew Zhao, Zhaokai Wang, Shiji Song, and Gao
+Huang.
+Does reinforcement learning really incentivize reasoning capacity in
+llms beyond the base model?
+arXiv preprint arXiv:2504.13837, 2025.
+Zhang et al. (2024)
+Renrui Zhang, Dongzhi Jiang, Yichi Zhang, Haokun Lin, Ziyu Guo, Pengshuo Qiu,
+Aojun Zhou, Pan Lu, Kai-Wei Chang, Yu Qiao, et al.
+Mathverse: Does your multi-modal llm truly see the diagrams in visual
+math problems?
+In European Conference on Computer Vision, pp.  169–186.
+Springer, 2024.
+Zhao et al. (2025)
+Xuandong Zhao, Zhewei Kang, Aosong Feng, Sergey Levine, and Dawn Song.
+Learning to reason without external rewards.
+arXiv preprint arXiv:2505.19590, 2025.
+Zhong et al. (2024)
+Han Zhong, Zikang Shan, Guhao Feng, Wei Xiong, Xinle Cheng, Li Zhao, Di He,
+Jiang Bian, and Liwei Wang.
+Dpo meets ppo: Reinforced token optimization for rlhf.
+arXiv preprint arXiv:2404.18922, 2024.
+Zhu et al. (2023)
+Deyao Zhu, Jun Chen, Xiaoqian Shen, Xiang Li, and Mohamed Elhoseiny.
+Minigpt-4: Enhancing vision-language understanding with advanced
+large language models.
+arXiv preprint arXiv:2304.10592, 2023.
+Zhu et al. (2025)
+Xinyu Zhu, Mengzhou Xia, Zhepei Wei, Wei-Lin Chen, Danqi Chen, and Yu Meng.
+The surprising effectiveness of negative reinforcement in llm
+reasoning.
+arXiv preprint arXiv:2506.01347, 2025.
+Appendix
+Figure 6: During training with GRPO, when the primary reward signal (accuracy) vanishes, other auxiliary rewards become dominant, which introduces bias.
+Appendix A Relative Advantage Bias of GRPO
+In GRPO, computing relative advantages within a group can introduce bias, especially when the reward becomes multi-dimensional. For example, as shown in Fig. 6, if the reward comprises both accuracy and auxiliary signals such as length, format, or entropy, a significant issue arises when the accuracy signal vanishes within a group—i.e., when all responses are either correct or incorrect. In such cases, auxiliary rewards (e.g., length) dominate the advantage computation. This may result in incorrect responses being rewarded simply for being shorter, or correct responses being penalized for being longer. Such misleading gradients introduce irreversible noise into training and lead to reward hacking. Therefore, in the training involved in this paper, we use binary rewards whenever possible.
+Appendix B Key Hyperparameters
+The quantity of high-quality samples varies significantly with dataset difficulty, which makes our algorithm sensitive to three key hyperparameters: clip higher, replay buffer size, and replay frequency. This is because the gradients from high-quality samples must be just perfect—between underfitting, proper fitting, and overfitting—to be effective. Notably, on relatively simple datasets such as Math, where high-quality samples are inherently scarce, the improvements of our framework over the original GRPO are less pronounced.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

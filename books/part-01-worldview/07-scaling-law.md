@@ -130,6 +130,8 @@ sparse IsoFLOP grid
 外推稳定性。事件时证据证明的是特定拟合方法在 synthetic 与公开 IsoFLOP 数据上的偏差，不直接证明任何新的
 通用 token/parameter 常数。<!-- source-family:SF-2026-ARXIV-2603-22339 -->
 
+联合拟合还要求实验能区分被解释的轴。固定 tokens-per-parameter、令 `D=kN` 沿一条射线扩大模型，适合比较这个配比下的局部趋势；但在 `L=E+A N^(-α)+B D^(-β)` 中，若 `α≈β`，两项在该射线上近乎成比例，数据主要约束组合系数，而非分别识别容量与数据的贡献。[受限理论与小模型对照](https://arxiv.org/html/2605.08541v1)因此把 TPP 跨度、Jacobian 条件与离开训练射线的留出点纳入实验设计；多次拟合或更多同射线点不能自动补回缺失的方向。其全矩阵渐近结论另需主导参数对、噪声与局部线性化假设，实验中的多射线配比也不等于单一 TPP；小模型、专门语料上的弱效和高 TPP 的宽区间不支持通用充分阈值或等算力收益。新增配比训练、拟合重启与外推验证都有成本；覆盖不足时保留组合系数或局部曲线，暂不依据不稳定的分项系数配置大规模预算。<!-- source-family:SF-2026-ARXIV-2605-08541 -->
+
 ## 为什么会出现相对平滑的规律
 
 目前没有一个简单理论完整解释所有神经网络 scaling 现象，但可以建立几个不越界的直觉。
@@ -160,6 +162,9 @@ production quality, latency, and cost
 ```
 
 这些指标可以相关，但不能互相替代。
+
+即使暂时只研究loss到某一任务分数的关系，也要先固定“loss在哪份分布上测量”。同一批checkpoint换用另一份验证语料，其perplexity坐标和不同预训练语料所形成曲线的相对位置都可能变化；这不是模型在固定任务上的真实表现被重新训练或自动改善。[受限的下游scaling复核](https://arxiv.org/html/2507.00885v1)还显示，共用验证集并不足以消除架构、任务格式、示例数、答案选项和观测范围造成的差异。因此横坐标语料及版本、checkpoint人口、下游scorer和支持尺度应共同冻结，再检验残差、非单调区间与留出尺度，不能仅由同loss或一段近直线认证跨配方的能力等价。这增加重新评价、数据版本审校和外推实验费用；支持不足或比较失配时，保留原配方的局部loss规划与独立任务实测，不把一组曲线的分类比例推广为所有任务的成功率，也不因局部反例丢弃仍在已验范围有效的scaling方法。
+<!-- source-family:SF-2025-ARXIV-2507-00885 -->
 
 若预算问题转为“这份预训练 compute 下，经过不同后训练的模型目前能达到什么任务水平”，受控 loss scaling 不再直接给答案。一个条件分支对已测模型生态拟合高分位能力曲线，把同一 compute 附近不同 family、recipe 与评价时间的模型视为观察人口，而不是取单个最高分当作物理上限。[必要分位边界与校准](https://arxiv.org/html/2602.15327v1)采用 q=.98；其曲线的单调形状是拟合约束，不是已证明的普遍规律。应同时检查带符号 compute-bin 残差与覆盖率，以及时间滚动时共同 compute 区间的校准：只有这些已测人口和重叠区间可支持预算线索，不支持跨 compute 外推，也不把数学或 instruction-following 的 recipe 漂移当作单纯参数不足。<!-- source-family:SF-2026-ARXIV-2602-15327 -->
 
@@ -279,6 +284,8 @@ Scaling Law 把“更多资源通常更好”变成了可实验、可拟合、�
 
 ## Review notes
 
+- `SF-2026-ARXIV-2605-08541` — Daily2026-05-13补May12；exact-v1 partial raw中完整主文§3–5实际已读；3+2+3=8。只取固定ray近指数导致系数难辨及离ray验证，不授全矩阵无条件定理/通用必要充分TPP阈值；保CO12fan、不同预算、fitseed非trainingrepeat、专域弱效、高TPP跨50%CI与全费。未读全附录/核代码/复现，root R2必要Source、R6逐字PRE通过，指定正文/marker/本人注已按窄写权保存；root R7非作者完整正文/直接两侧/本人注actualPOST通过，窄位释放。 本次仅同步已成事实，不重写机制或认证实现/复现、全覆盖或整日Gate。
+
 - `SF-2026-ARXIV-2601-01332` — Daily `2026-01-07`；[exact-v1](https://arxiv.org/html/2601.01332v1) §2–4/Limitations及 Appendix A成本口径。2+2+2=6，具体成本知识缺口必要深入；采用 checkpoint/refresh horizon 与实际 TTC 选择预算联合规划，不采用主文/Appendix A 不同 Ninfer 分母、常数6、92%投影或由成本约束推出 accuracy。留出选择偏差、pass@k/oracle 与部署选择器不同；root必要原源/owner写前通过，root实际一段、前后衔接与末注非作者POST通过，未复现。
 
 - `SF-2026-ARXIV-2605-07546`（Status: Theoretical / Experimental）：[exact-v1](https://arxiv.org/html/2605.07546v1) 支持在论文条件下区分信息保持变换与分辨率下降对 scaling 的影响；有限模型、任务与 resolution 估计不能外推为跨 domain 通用规律。
@@ -298,3 +305,5 @@ Scaling Law 把“更多资源通常更好”变成了可实验、可拟合、�
 <!-- daily-books-trace:SF-2026-ARXIV-2607-24887:end -->
 
 - `SF-2026-ARXIV-2602-15327` — Daily `2026-02-19`；[exact-v1](https://arxiv.org/html/2602.15327v1) §2–4/AppendixB/F。2+2+2=6，具体测量分配差额受影响深入；只采已测后训练人口q.98、signed compute-bin/rolling overlap校准及metadata局部Jacobian的成本近似测量分配，不授physical ceiling、compute外推、真正最优或全任务低预算。人口/recipe漂移、parameter-count成本proxy和旧受控loss路线近正文；root必要源/actualowner PRE及实际两段/完整邻接与末注非作者POST通过，窄锁释放，未核实现/复现。
+
+- `SF-2025-ARXIV-2507-00885` — Boyle，Daily2025-07-03补Jul2；[exact-v1](https://arxiv.org/html/2507.00885v1)§2–7/Limitations/AppB–E必要，2+1+2=5，Ch7验证分布坐标小gap深入。仅采固定corpus/checkpoint/harness/支持范围的外推分责，不采39%普遍率、单一内部因果或buggySIQA正面结果；未逐点核图、原checkpoint/code或复现。root79已实际必要Source/当前owner/逐字PRE通过并授本单段/独立marker/本人注窄位；作者已按批准稿真实保存并实际完整顺读新增、完整直接两侧及本人注，限定检查通过；root81已一次真实非writer完整新增、完整两侧及本人注POST通过，实际整合生效并释放本指定窄位；本注仅同步既成事实，不授DAY。

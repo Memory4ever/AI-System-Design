@@ -1,0 +1,488 @@
+https://arxiv.org/html/2603.26008v1
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Related Work
+3 Methods
+3.1 Visual Language Alignment
+3.2 Performance Parity Metric
+3.3 Fairness-Aware Finetuning
+4 Experiments
+4.1 Datasets
+4.2 Implementation Details
+4.3 Evaluation Protocol
+4.4 Results
+4.5 Ablation
+5 Conclusion
+A Cross-Sectional Analysis
+B Individual Performance and Counter-Factual Fairness Gaps
+C Hyper-parameters
+Sensitivity
+Hyper-parameter Search
+D Handling Missing Labels
+E Variance in Equity Scaled Metric
+F Prevalence Trends
+G Subgroup Size–Performance Correlation
+H Fairness Gaps and Overall Performance
+I Implementation Details
+I.1 Preprocessing for HAM10000
+I.2 Preprocessing on PadChest
+I.3 Implementation of Baselines
+J Additional Ablations
+K Additional Qualitative Samples
+References
+License: CC BY 4.0
+arXiv:2603.26008v1 [cs.CV] 27 Mar 2026
+FairLLaVA: Fairness-Aware Parameter-Efficient Fine-Tuning for Large Vision-Language Assistants
+Mahesh Bhosale
+Affiliation: University at Buffalo
+Abdul Wasi
+††thanks: Abdul Wasi and Shantam Srivastava contributed equally as joint second authors.
+Affiliation: University at Buffalo
+Shantam Srivastava 11footnotemark:
+1
+Affiliation: University at Buffalo
+Shifa Latif
+Affiliation: University of Kashmir
+Tianyu Luan
+Affiliation: Accenture
+Mingchen Gao
+Affiliation: University at Buffalo
+David Doermann
+Affiliation: University at Buffalo
+Xuan Gong
+Affiliation: Harvard Medical School
+Abstract
+While powerful in image-conditioned generation, multimodal large language models (MLLMs) can display uneven performance across demographic groups, highlighting fairness risks. In safety-critical clinical settings, such disparities risk producing unequal diagnostic narratives and eroding trust in AI-assisted decision-making. While fairness has been studied extensively in vision-only and language-only models, its impact on MLLMs remains largely underexplored.
+To address these biases, we introduce FairLLaVA, a parameter-efficient fine-tuning method that mitigates group disparities in visual instruction tuning without compromising overall performance.
+By minimizing the mutual information between target attributes, FairLLaVA regularizes the model’s representations to be demographic-invariant.
+The method can be incorporated as a lightweight plug-in, maintaining efficiency with low-rank adapter fine-tuning, and provides an architecture-agnostic approach to fair visual instruction following.
+Extensive experiments on large-scale chest radiology report generation and dermoscopy visual question answering benchmarks show that FairLLaVA consistently reduces inter-group disparities while improving both equity-scaled clinical performance and natural language generation quality across diverse medical imaging modalities. Code can be accessed at https://github.com/bhosalems/FairLLaVA.
+1 Introduction
+Large language models (LLMs) have emerged as general-purpose engines for reasoning and text generation across many domains, driving a wave of foundation model capabilities at unprecedented scale [4, 39, 1]. Multi-modal large language models (MLLMs) build on these advances by pairing a language backbone with non-text encoders (e.g., images), enabling image-grounded understanding and generation[2, 51, 40, 9, 7, 28, 17]. Despite these advances, a growing body of work documents disparities and fairness issues in these models [49, 8, 25].
+In natural-language domains, societal biases can enter when training datasets are not carefully curated or filtered [48]. For example, models often reproduce gender stereotypes in professions, such as more strongly associating “nurse” with women and “engineer” with men [41, 48, 42]. However, in safety-critical medical settings, sensitive attributes are rarely explicitly mentioned in clinical reports. In particular, fairness considerations in radiology report generation (RRG)-an automated task that translates medical images into expert-quality textual interpretations [53, 56, 7]-differ fundamentally from pronoun- or sentiment-based notions in the general language domain. Radiology reports seldom contain explicit demographic markers (e.g., “he/she”), yet models can still exploit latent sensitive information embedded in medical images and acquisition pipelines [16, 30]. This renders standard word-level (polarizing-term) probes [14, 3, 29, 48] based on demographic tokens largely inapplicable.
+Figure 1: FairLLaVA reduces performance disparities. LLaVA hidden states contain demographic shortcuts (non-zero Mutual Information (MI) between hidden states and demographic attributes) that lead to lower performance for “Female”. FairLLaVA minimizes this MI promoting demographic-invariant representation learning, therefore reducing the performance gap.
+Standard fairness techniques, such as frequency-based resampling [18] and reweighting [26, 13], aim to mitigate biased performance gaps by treating disparities as mere count imbalances. However, in MLLMs, the gaps are driven by intersectional, cross-attribute dependencies that this assumption overlooks. Ranking-based methods [8] require repeated inference to score and sort the entire training set, incurring substantial computational overhead.
+Adversarial-classifier methods [41] add a separate pretrained discriminator, which, in our experiments, shows that it triggers catastrophic forgetting of clinical knowledge, evidenced by degraded overall performance (detailed in supplementary).
+Standard fairness evaluation in discriminative tasks cannot be directly applied to MLLMs either. Typically, fairness can be quantified directly on calibrated scores or binary decisions (e.g., TPR/FPR gaps, demographic parity difference, equalized odds, calibration error), which makes disparity attribution and mitigation comparatively simpler [22, 31, 47, 15, 37, 45, 33]. By contrast, open-ended text generation allows many valid phrasings of the same finding, and clinically important omissions can be just as harmful as incorrect mentions. Fairness, therefore, must be evaluated over the entire generated text, using semantic-level metrics and representations, rather than a single calibrated score or label.
+Fairness challenges in Medical MLLMs across demographic groups have been documented, with systematic evaluations revealing performance gaps by age and additional disparities by sex and race [49]. Notably, these disparities cannot be explained by sample counts alone: on MIMIC-CXR [24, 23], several MLLMs perform worse for patients labeled as “White” despite this being the largest cohort (detailed in the supplementary material).
+These gaps can stem from compounding factors: (i) medical images leak sensitive attributes, models can predict self-reported race from radiology images with high AUC, even under corruptions, indicating systematically encoded demographic signal [16]; (ii) acquisition factors (e.g., projection, device/site mix) correlate with demographics and mediate both predictability and downstream performance [30]; and (iii) imbalance and prevalence shifts across groups can amplify error gaps [49].
+Despite the above-mentioned concerns regarding gaps in fairness disparities across demographic groups [49, 25], fairness and bias mitigation in MLLMs remain underexplored, threatening their trustworthy adoption in healthcare.
+To this point, we propose FairLLaVA, a fairness-aware, parameter-efficient finetuning strategy applied during visual instruction tuning. As shown in Fig. 1, FairLLaVA adds a lightweight, architecture-agnostic mutual information regularizer that reduces dependence between multi-modal hidden states and sensitive attributes (age, sex, race), steering the model toward diagnostic cues instead of demographic shortcuts. FairLLaVA strikes a balance by reducing fairness gaps while preserving overall performance unlike traditional reweighting or resampling, which often improve one subgroup at the expense of others. Concretely, we jointly optimize standard instruction following with demographic-invariant representation learning via mutual information minimization, making the method plug-and-play with parameter-efficient finetuning (Figs. 2 and 1).
+Our contributions are summarized as follows-
+•
+We propose FairLLaVA, a debiasing fine-tuning strategy that uses a mutual-information regularizer to remove demographic shortcuts from an MLLM’s hidden representations. Designed for models with enormous parameter counts and prohibitive fine-tuning costs, FairLLaVA is architecture-agnostic and operates with minimal intervention to the base model, incurring only modest computational overhead.
+•
+We extend the Equity Scaled Metric (ES-M) to generative models, allowing seamless integration with any language-based evaluation metric, enabling a balanced assessment of both overall performance and disparities across key demographic groups.
+•
+Extensive experiments on two large-scale chest radiology report–generation datasets and one dermoscopy QA dataset show that our method outperforms existing medical MLLMs (LLaVA-Rad, MedGemma, Chexagent), general-purpose MLLMs (LLaVA, Qwen, DeepSeek), and prior fairness-oriented baselines in equity scaled metrics.
+2 Related Work
+Classical fairness methods can be divided into frequency-based and feature-based.
+Frequency-based debiasing methods [26, 13, 18] attribute fairness gaps to class imbalance and mitigate them via loss re-weighting or oversampling; however, this premise does not need to hold in many settings.
+Feature-based approaches seek to mitigate biases encoded within the model’s internal representations. [41] addressing the fairness issue uses a pretrained adversarial classifiers to de-bias the pretrained backbone; however, it can lead to catastrophic forgetting if hyper-parameters are not tuned carefully. [31] regularizes image-text similarity distributions to align subgroup and overall scores. Both methods incur extra intervention via additional pretraining or higher computational cost. FairLLaVA, by contrast, handles MLLMs’ large parameter counts and expensive fine-tuning while balancing fairness gaps and overall performance.
+Fairness in LLMs typically focuses on the frequency of explicit demographic phrases in generated text [14, 3, 48, 29]. [14] proposes content-conditional model that for the same content (e.g. “nurse”), forces embeddings of sensitive samples (e.g., “he/she”) to be equidistant from a neutral form, promoting attribute-invariant representations. [3] proposes an adversarial prompt-based debiasing method that adds learnable tokens to sensitive text queries and trains an adversary over image-text similarity matrices, to preserve utility so that score distributions across demographic attributes for the same query become indistinguishable. [48] proposes MI-based technic via importance sampling over the output distribution of LLM to reduce biases from output. However, they need extra LLM model to stabilize the debiasing signal on volatile output distribution. [29] mitigates demographic bias via limited, content-aware interventions that minimize information flow from sensitive attributes by editing only bias-inducing tokens to preserve fluency. However, all [14, 29, 3, 48] define fairness at word/ lexical level which cannot be directly applied to problem setting in this work.
+[38] mitigates bias by creating teacher-ranked preference pairs from prompts with demographic swaps and finetuning, unlike our MI-based representation debiasing without demographic terms in the queries and does not need curating preference data. [8] proposes to train on the ranked responses from auxiliary RRG model to reduce the disparities, however, it incurs high computational cost to create multiple ranking pairs on the whole training data. On the contrary, FairLLaVA only adds low computational overhead and does not need additional data augmentation.
+3 Methods
+3.1 Visual Language Alignment
+Multi-modal LLMs [28, 7] extend text-only backbones [11] by encoding an image as visual tokens and combining them with text instruction tokens. A single LM backbone then produces next-token probabilities, enabling auto-regressive generation of responses grounded in the image and the given instruction.
+Figure 2: FairLLaVA Overview. Stage 1: We finetune multi-modal projector \psi to align the image embeddings with Language Model (LM) by optimizing standard LM CE loss \mathcal{L}_{LM}. Image encoder and LM are frozen. Stage 2: We learn attribute-invariant representations by finetuning LoRA adapters \theta on the LM’s Transformer decoder blocks while freezing the LM backbone and image encoder, pooled hidden states h are fed to a mutual-information (MI) estimator with a variational demographic-attribute classifier (DAC) denoted as {\phi} that predicts demography attribute from h. No pretrained classifier is required: the DAC is trained simultaneously with cross-entropy \mathcal{L}_{\text{DAC}} (Eq. (8)), and during this step, gradients update only \phi. We then minimize MI between demographic attribute and h given by \mathcal{L}_{\text{DIM}} (Eq. (9)), computed between pooled states h and attributes \mathbf{a}, {\phi} is frozen, and only \theta and \psi are updated. This way DAC exposes where leakage in h for predicting \mathbf{a} is coming from, \mathcal{L}_{DIM} suppresses this leakage making learned features demography shortcut invariant.
+Formally, consider a dataset with N triplets,
+\mathcal{D}=\{({x}_{i},{a}_{i},{r}_{i})\}_{i=1}^{N}, where
+x is an image,
+a\in\mathcal{A} is a corresponding demographic attribute (e.g., gender, age, race), and {r}_{i}=(r_{i,1},\ldots,r_{i,T_{i}}) is relevant text describing image x. For sample i, vision encoder E_{\text{img}} produces features v=E_{\text{img}}(\mathbf{x}) which a projector {\psi} maps into the Language Model (LM) space \tilde{v}=\psi(v).
+Let u denote instruction tokens and define the step-t context
+S_{t}=\operatorname{concat}(\tilde{v},u,r_{<t}), the language model \theta maps S_{t} to logits \ell_{t}=\theta(S_{t}) with next token distribution,
+p_{\theta}(\cdot\mid x,u,r_{<t})=\operatorname{softmax}(\ell_{t}). Henceforth, we use the notation x to represent encoded image tokens in place of \tilde{v} for simplicity. The final text sequence factorizes over T steps and is given by,
+p_{(\theta,\psi)}(\mathbf{r}\mid x,u)=\prod_{t=1}^{T}p_{(\theta,\psi)}(r_{t}\mid x,u,\mathbf{r}_{<t}).
+(1)
+Next token prediction loss is supervised with a standard cross-entropy objective:
+\mathcal{L}_{LM}(\theta,\psi)=-\sum_{i=1}^{N}\sum_{t=1}^{T_{i}}\log p_{(\theta,\psi)}\!\big(r_{i,t}\,\big|\,x_{i},u,r_{i,<t}\big).
+(2)
+As shown in Fig. 2, to align the pretrained image encoder embeddings with the LM, we finetune the multi-modal projector \psi with supervision from \mathcal{L}_{LM} in Eq. (2). Since text instruction u is fixed over all samples in the dataset and does not encode any demographic bias, we omit it in later sections for brevity.
+3.2 Performance Parity Metric
+Unlike standard LLM fairness, which focuses on the presence and framing of demographic terms in outputs [14, 3, 29, 48], we target performance parity across groups in tasks whose outputs do not include the demographic labels explicitly [49].
+Inspired by existing fairness metrics
+[22, 31, 47, 15, 37, 45, 33] and relevant adaptations [49, 8],
+we redefine the performance parity metric for the text generation task. For a metric M and attribute a\in\mathcal{A} with group set \mathcal{Z}_{a} (e.g. \mathcal{Z}_{gender}=\{male,female\}), define the per-group score:
+M_{\mathbf{a}}\;=\;\mathbb{E}_{(x,r)\sim\mathcal{D}\,|\,\mathbf{a}}\!\left[\,M\!\big(\hat{r},r\big)\,\right],\ \ \mathbf{a}\in\mathcal{Z}_{a}.
+(3)
+The fairness gap is
+\Delta M_{a}\;=\;\max_{\mathbf{a}\in\mathcal{Z}_{a}}M_{\mathbf{a}}\;-\;\min_{\mathbf{a}\in\mathcal{Z}_{a}}M_{\mathbf{a}}.
+(4)
+The goal of the bias mitigation methods is to lower the \Delta M_{a}, narrowing the gaps across groups of demographic attribute a on metric M. However, uniformly lower performance across groups could still yield a small \Delta M_{a}, which would misleadingly suggest fairness. Thus, overall performance must also be taken into account. Consistent with previous works [31, 48, 22], we observe a tradeoff between reducing fairness and overall performance (detailed in supplementary). Therefore, we extend existing equity-scaled metrics[43, 31] for the image-guided language generation tasks.
+\;ES\text{-}M_{a}\;=\;\dfrac{M_{\mathrm{all}}}{\,1+\Delta M_{a}\,}\;
+(5)
+where, M_{all} is the mean metric over all the groups of demographic attribute a.
+3.3 Fairness-Aware Finetuning
+We hypothesize that model bias can arise from latent domain gaps across demographic groups, which may lead the model to exploit spurious correlations or shortcut patterns rather than learning true causal features. To mitigate this issue, we introduce a debiasing strategy that minimizes mutual information between learned representations and sensitive demographic attributes (e.g., gender, race, and age), thereby promoting demographic-invariant feature learning and reducing potential group disparities.
+Mutual Information. The mutual information between the demographic attribute \mathbf{a} and model hidden state \{h_{\theta}^{l}\} of {\theta} over the l-th layer is denoted as
+\mathcal{I}\!\big(\mathbf{a},\,h_{\theta}^{l}(x)\,\big|\,(x,\mathbf{a})\!\sim\!\mathcal{D}\big)=\mathbb{E}_{(x,\mathbf{a})\sim\mathcal{D}}\left[\log\frac{P_{\mathcal{D}}\!\big(\mathbf{a},\,h_{\theta}^{l}(x)\big)}{P_{\mathcal{D}}\!\big(\mathbf{a}\big)\,P_{\mathcal{D}}\!\big(h_{\theta}^{l}(x)\big)}\right]
+(6)
+where, P_{\mathcal{D}}\!\big(\mathbf{a},h_{\theta}^{l}(x)\big) is the joint distribution over \mathbf{a} and h_{\theta}^{l}(x), and
+P_{\mathcal{D}}\!\big(\mathbf{a}\big) and P_{\mathcal{D}}\!\big(h_{\theta}^{l}\big) are their marginals. h_{\theta}^{l} and \mathcal{I}\!\big(\mathbf{a},\,h_{\theta}^{l}(x)\,\big|\,(x,\mathbf{a})\!\sim\!\mathcal{D}\big) is denoted as h^{l} and \mathcal{I}\!\big(\mathbf{a},\,h^{l}(x)\big) respectively for brevity in next sections.
+Demographic attribute classification. Exact evaluation of \mathcal{I}\!\big(\mathbf{a},\,h^{l}(x)\big) is intractable as the joint and marginal distributions P_{\mathcal{D}}\!\big(\mathbf{a},h^{l}(x)\big) and P_{\mathcal{D}}\!\big(h^{l}(x)\big) are over high-dimensional, continuous hidden states that change with model parameter {\theta}, additionally, we might not know the true data distribution. Hence, we minimize an upper-bound surrogate [10] \mathcal{I}^{u}\!\big(\mathbf{a},\,h^{l}\big) computed via a lightweight variational demographic attribute classifier (DAC) denoted by \phi mapping hidden state to demographic attribute:
+\begin{split}\mathcal{I}^{u}\!\big(\mathbf{a},\,h^{l}(x)\big)=\;\mathbb{E}_{(\mathbf{a},x)\sim\mathcal{D}}\!\left[\log\phi\!\big(\mathbf{a}\,\big|\,h^{l}(x)\big)\right]\\
+-\ \mathbb{E}_{(\mathbf{a},x),\,x^{\prime}\stackrel{{\scriptstyle\text{i.i.d.}}}{{\sim}}\mathcal{D}}\!\left[\log\phi\!\big(\mathbf{a}\,\big|\,h^{l}(x^{\prime})\big)\right].\end{split}
+(7)
+where, x^{\prime} is a negative sample independently drawn from mini-batch \mathcal{B}\subset\mathcal{D} of size B to train DAC to distinguish different demographic attributes \mathbf{a}:
+\mathcal{L}_{DAC}(\phi)=-\,\mathbb{E}_{(\textbf{a},x)\sim\mathcal{D}}\!\left[\log{\phi}\!\big(\mathbf{a}\mid h(x)\big)\right].
+(8)
+\mathcal{L}_{DAC} pushes \phi to learn representations helpful in identifying the demographic attribute a.
+Demographic information minimization. For efficiency of mutual information regularization, we pool over a set of tapped layers \mathcal{K} to get a single summarized hidden representation: h(x)=\frac{1}{|\mathcal{K}|}\sum_{l\in\mathcal{K}}h_{l}(x). Demographic information minimization (DIM) loss \mathcal{L}_{DIM} is computed as,
+\begin{split}\mathcal{L}_{DIM}(\theta,\psi)\;=\;\frac{1}{B}\sum_{i=1}^{B}\log{\phi}\!\big(\mathbf{a}_{i}\mid h(x_{i})\big)\\
+\;-\;\frac{1}{B(B-1)}\sum_{i=1}^{B}\sum_{\begin{subarray}{c}j=1\\
+j\neq i\end{subarray}}^{B}\log{\phi}\!\big(\mathbf{a}_{i}\mid h(x_{j})\big).\end{split}
+(9)
+where the first term averages positive pairs \{(\mathbf{a}_{i},x_{i})\}
+and the second term averages negative pairs
+\{(\mathbf{a}_{i},x_{j})\} with i\neq j, which implements the
+independence between x and x^{\prime} in Eq.(7). This way, \mathcal{L}_{DIM} updates LM backbone and MM-projector to ensure demographic-invariant representation learning, thereby reducing the shortcuts and bias against demographic attributes.
+Intuitively, the mutual-information penalty treats a predictable link between the hidden state h(x) and the demographic label \mathbf{a} as leakage, pushing the representation to discard it. DAC is needed to expose where demographic information leaks into h(x) via a probe {\phi} that reliably detects those cues, making the MI bound informative. Freezing {\phi} and then minimizing \mathcal{I}^{u}(\mathbf{a},h(x)) pushes h(x) to drop these signals, reducing shortcuts and shrinking the fairness gap \Delta M_{a}.
+Parameter-efficient finetuning. The final fairness loss constitutes \mathcal{L}_{DAC} and \mathcal{L}_{DIM}, and language model regression loss \mathcal{L}_{LM} from Eq. 2 is also applied to follow the instructions and adapt the LM for the given task. The final total loss of this stage takes the form,
+\mathcal{L}_{total}=\lambda_{1}\mathcal{L}_{DAC}+\lambda_{2}\mathcal{L}_{DIM}+\lambda_{3}\mathcal{L}_{LM}
+(10)
+with \lambda_{1}, \lambda_{2} and \lambda_{3} controlling the fairness/utility trade-off.
+Algorithm 1 Parameter Efficient Finetuning For Fairness Via Mutual Information Minimization
+Input: Dataset \mathcal{D} with (x,\mathbf{a},r) where \mathbf{a} contains labels for all attributes a\in\mathcal{A}; fixed instruction u; image encoder E_{img}; projector params \psi; LM LoRA params \theta; tapped layers \mathcal{K} of LM; per-attribute head \phi_{a}; loss weights \lambda_{1},\lambda_{2},\lambda_{3}
+for minibatch \{(x_{i},\mathbf{a}_{i},r_{i})\}_{i=1}^{B}\sim\mathcal{D} do
+// Obtain hidden states
+\{h^{l}=\theta^{l}(\psi(E_{img}(x_{i})),u)\}_{l=1}^{|\mathcal{K}|}
+// Layer summaries
+h_{i}=\mathrm{Pool}\!\big(h^{l}(x_{i})\big)
+// Language Model loss
+\mathcal{L}_{LM}(\theta,\psi)=-\sum_{i,t}\log p_{(\theta,\psi)}(r_{i,t}\mid x_{i},u,r_{i,<t})
+// let \mathbf{a}_{i}^{(a)} be the label for attribute a and {\phi_{a}} its head
+for a\in\mathcal{A} do
+// Demographic attribute classification
+\mathcal{L}_{DAC}^{(a)}(\phi)=-\frac{1}{B}\sum_{i}\log\phi_{a}\!\big(\mathbf{a}_{i}^{(a)}\mid\texttt{stopgrad}(h_{i})\big)
+// Demographic mutual information minimization
+\mathcal{L}_{DIM}^{(a)}(\theta,\psi)=\frac{1}{B}\sum_{i}\log\phi_{a}\!\big(\mathbf{a}_{i}^{(a)}\mid h_{i}\big)\;-\;\frac{1}{B(B-1)}\sum_{i,j,\;i\neq j}\log\phi_{a}\!\big(\mathbf{a}_{i}^{(a)}\mid h_{j}\big)
+// Aggregate over attributes
+\mathcal{L}_{DIM}\;=\;\sum_{a\in\mathcal{A}}\mathcal{L}_{DIM}^{(a)} \mathcal{L}_{DAC}\;=\;\sum_{a\in\mathcal{A}}\mathcal{L}_{DAC}^{(a)}
+// fairness-aware total loss
+\mathcal{L}_{total}=\lambda_{1}\mathcal{L}_{LM}+\lambda_{2}\,\mathcal{L}_{DIM}+\lambda_{3}\,\mathcal{L}_{DAC}
+// Update
+\theta\leftarrow\theta-\eta\,\nabla_{\theta}\mathcal{L}_{DIM}, \theta\leftarrow\theta-\eta\,\nabla_{\theta}\mathcal{L}_{LM},
+\psi\leftarrow\psi-\eta\,\nabla_{\psi}\mathcal{L}_{DIM}, \psi\leftarrow\psi-\eta\,\nabla_{\psi}\mathcal{L}_{LM},
+\phi\leftarrow\phi-\eta\,\nabla_{\phi}\mathcal{L}_{DAC}.
+Algorithm 1 illustrates training stage in detail. We employ parameter-efficient finetuning by adding Low-Rank Adapters (LoRA) [19] to the transformer blocks of the language model \theta. Both the LM backbone and image encoder are frozen during finetuning. Projector \psi, LoRA adapters on \theta and DAC \phi are trained.
+Within each iteration, we first optimize \mathcal{L}_{DAC} and apply stop gradient on h(x), and then freeze \phi and only update LoRA \theta and projector \psi using \mathcal{L}_{DIM} and \mathcal{L}_{LM} (Algorithm 1).
+4 Experiments
+Method
+Race \uparrow
+Age Group \uparrow
+Gender \uparrow
+ES-BLEU-1
+ES-BLEU-4
+ES-RadGraph-F1
+ES-GREEN
+ES-BLEU-1
+ES-BLEU-4
+ES-RadGraph-F1
+ES-GREEN
+ES-BLEU-1
+ES-BLEU-4
+ES-RadGraph-F1
+ES-GREEN
+LLaVA [28]
+2.90
+1.12
+1.63
+2.47
+2.61
+0.81
+0.95
+1.36
+8.42
+0.87
+5.19
+6.73
+LLaVA-Rad [7]
+5.29
+2.14
+4.14
+3.97
+8.28
+3.51
+1.42
+2.00
+28.06
+12.53
+9.24
+10.88
+MedGemma-4B [40]
+2.36
+0.95
+1.85
+5.05
+3.17
+1.16
+1.51
+3.03
+14.18
+1.55
+7.27
+7.51
+MedGemma-27B [40]
+2.01
+1.72
+2.82
+3.92
+3.98
+1.17
+1.55
+3.35
+17.80
+1.82
+6.64
+8.92
+Qwen2.5-7B [51]
+7.52
+1.47
+2.78
+5.59
+6.16
+1.37
+1.58
+3.27
+16.92
+1.73
+8.28
+12.27
+DeepSeek-VL2 [17]
+4.09
+1.47
+2.18
+3.27
+3.00
+1.23
+1.66
+2.51
+11.35
+1.66
+6.20
+9.37
+CheXagent [9]
+4.70
+1.05
+1.73
+1.49
+2.21
+0.73
+0.89
+1.37
+9.11
+1.04
+4.17
+3.46
+Reweighting-All [26]
+1.81
+1.73
+3.31
+3.75
+7.36
+3.20
+2.17
+1.53
+11.72
+6.92
+9.88
+23.42
+Resampling-All [18]
+8.71
+2.32
+2.95
+2.13
+12.54
+3.40
+3.01
+2.03
+30.38
+11.13
+15.97
+16.11
+Adv. MLP Classifier-All [41]
+3.92
+1.08
+2.35
+2.34
+6.74
+1.11
+4.03
+0.76
+14.89
+1.57
+6.80
+7.15
+FairLLaVA-All
+13.36
+8.65
+6.34
+3.11
+21.89
+6.93
+4.06
+2.78
+24.89
+9.60
+19.40
+12.27
+Table 1: Equity-Scaled metrics on MIMIC-CXR computed as M_{\text{all}}/(1+\Delta M) for Race, Age, and Gender. (All) indicates all three demographic attributes are used for debiasing. Our joint debiasing (FairLLaVA–All) yields the state-of-the-art improvements, obtaining 7 of the 12 best ES-scores across the comprehensive semantic clinical evaluations including BLEU, RadGraph-F1, and GREEN. Best scores are in bold and second best underlined.
+4.1 Datasets
+We evaluate FairLLaVA across multiple modalities, including grayscale chest X-ray report generation datasets with broad demographic diversity and an RGB skin-lesion dataset, demonstrating that the method generalizes beyond a single imaging modality. Dataset distributions and pre-processing details are given in the supplementary.
+We use the MIMIC-CXR dataset [24, 23] from [7], which restructures free-text radiology reports into Indication, Findings, and Impression sections using GPT-4 [1]. It contains about 400,000 training images and 2,500 test images from 213,365 and 3,041 studies, respectively. We use the demographic attributes Age, Race, and Gender.
+The original PadChest dataset [5] contains chest X-rays with radiology reports in Spanish. We use the ChatGPT-translated English version from [50] and preprocess the translated reports with OpenBioLLM-70B [35] to extract Findings for fine-tuning. The dataset contains about 87,000 training images and 8,000 test images. We analyze fairness gaps across the demographic attributes Age and Gender.
+We use the HAM10000 dataset [46], a dermatoscopic RGB skin-lesion benchmark containing 10,015 images across seven diagnostic categories. The dataset provides demographic metadata including ”Age” and ”Gender”. Following SelfSynthX [44], we use the GPT-4-generated diagnostic descriptions released with their setup. We split the dataset into 8000 train and rest as test respectively.
+4.2 Implementation Details
+We use Vicuna-7b-v1.5 [11] as our base language model and BioMedCLIP [55] as the image encoder which is trained on large-scale multimodal biomedical data (>15M image-text pairs). For all datasets, we finetune our models for one epoch. All the models are trained on 8 NVIDIA RTX A6000 GPUs. It takes about 17 hours for training on MIMIC-CXR [23] and 4 hours on the PadChest [5] dataset. Adding the mutual information estimator (a small variational MLP) is lightweight; its cost scales with the number of classes per attribute. Even on MIMIC-CXR, which has many (14) attribute categories, this overhead remains modest (\sim57K parameters). Check supplementary for training stability experiments with different DAC loss contributions.
+Method
+Race \uparrow
+Age Group \uparrow
+Gender \uparrow
+ES-BLEU-1
+ES-BLEU-4
+ES-RadGraph-F1
+ES-GREEN
+ES-BLEU-1
+ES-BLEU-4
+ES-RadGraph-F1
+ES-GREEN
+ES-BLEU-1
+ES-BLEU-4
+ES-RadGraph-F1
+ES-GREEN
+Reweighting-Race [26]
+3.38
+1.89
+4.13
+3.27
+13.15
+4.08
+2.99
+2.09
+15.38
+8.28
+22.05
+11.78
+Resampling-Race [18]
+12.53
+3.81
+5.00
+3.40
+14.09
+4.08
+2.81
+2.15
+20.62
+8.97
+20.33
+14.26
+FairLLaVA-Race
+5.40
+2.91
+7.32
+4.43
+14.85
+5.58
+3.24
+2.10
+25.40
+11.15
+27.33
+15.05
+Reweighting-Age [26]
+10.65
+3.49
+3.24
+2.84
+15.22
+5.26
+3.93
+2.50
+19.73
+11.65
+18.33
+14.14
+Resampling-Age [18]
+7.43
+2.80
+6.26
+3.29
+12.52
+3.92
+3.31
+2.18
+22.28
+7.68
+14.09
+10.91
+FairLLaVA-Age
+10.29
+15.51
+4.97
+4.33
+17.80
+5.48
+3.64
+2.59
+17.88
+7.98
+15.05
+10.42
+Reweighting-Gender [26]
+6.58
+5.60
+3.24
+6.02
+9.62
+3.16
+2.71
+2.03
+25.78
+13.19
+24.21
+15.92
+Resampling-Gender [18]
+4.45
+1.80
+3.12
+4.01
+5.58
+2.35
+2.04
+2.06
+8.29
+0.04
+14.46
+11.47
+FairLLaVA-Gender
+7.22
+2.70
+8.46
+5.93
+13.03
+4.95
+3.06
+2.19
+25.43
+9.79
+23.09
+11.53
+Table 2: Equity-Scaled metrics on MIMIC-CXR when individual demographic attributes are de-biased. Our targeted variants achieve the top ES scores on their respective attributes and show beneficial spillover to others.
+4.3 Evaluation Protocol
+Baselines:
+For comprehensive evaluation and benchmarking, we include diverse baselines spanning \sim4–27B parameters: Qwen-2.5-7B [51], DeepSeek-VL2-7B [17], LLaVA [28], LLaVA-Rad-7B [28], MedGemma-4B [40], MedGemma-27B [40], and CheXagent-8B [9], to assess fairness-gap reduction across compact, mid-size, and large models. We also benchmark [8], which, to the best of our knowledge, is the only approach explicitly designed to reduce the fairness gaps in MLLMs. Additionally, we include classical remedies for dataset bias arising from distributional skewness: resampling [18] and reweighting [13, 26]. Resampling balances the training data with respect to the sensitive attribute by over-sampling underrepresented classes and under-sampling overrepresented classes, resulting in a dataset that is uniform across the demographic attribute label. Reweighting multiplies the sample training losses by their corresponding weights, which are inversely proportional to the frequ

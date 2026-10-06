@@ -1,0 +1,820 @@
+
+1 Introduction
+
+
+The rapid advancement of conversational search systems revolutionizes how information is accessed by enabling the multi-turn interaction between the user and the system Zamani et al. (2023).
+With the recent advances of large language models (LLMs), commercial conversational AI search engines, such as Perplexity.ai and SearchGPT11
+            1
+            
+            
+            
+          Perplexity.ai: https://www.perplexity.ai/, SearchGPT: https://searchgpt.com/, have been deployed with increasing attraction.
+
+
+Existing conversational search systems are usually composed of two different models: a retriever and a generator Gao et al. (2022); Mo et al. (2024b), which are trained and inferred separately. The retriever aims to identify the relevant passages by understanding conversational queries, while the generator crafts the final response for the information-seeking goal. The deployment of separate models in the whole pipeline induces the problems in two folds: i) The separation restricts the system from leveraging the model’s intrinsic knowledge simultaneously, which raises the risk of lacking correlation with the performance of both tasks, leading to inconsistent results, i.e., the effectiveness of retrieval might not always benefit response generation Salemi and Zamani (2024); and ii) Deploying and maintaining two distinct models adds extra hardware requirements and increases maintenance expenses Zhang et al. (2024).
+An intuitive solution is to develop a unified model that acts as a retriever and generator in conversational scenarios. This model is expected to mutually improve retrieval and generation performance through seamless integration with end-to-end optimization.
+
+
+Recent existing studies have demonstrated the feasibility of developing LLM-based unified models in conversational question answering, involving open-domain retrieval22
+            2
+            
+            
+            
+          In this paper, the retrieval denotes retrieving information from a large external collection as an open-domain setting, rather than only identifying specific pieces from the initial search results with limited top-k candidates similar to ranking. and response generation.
+However, these systems can only address two aspects of understanding conversational context, managing retrieval independently, or generating responses, as illustrated in Table 1.
+Among them, RepLLaMA Ma et al. (2024) and E5 Wang et al. (2024) successfully implement generative LLMs for retrieval tasks and ChatRetriever Mao et al. (2024a) further adapt it to conversational scenarios. However, the fine-tuning for retrieval objectives leads to the collapse of generation ability in these systems.
+The RankRAG Yu et al. (2024) and ChatQA Liu et al. (2024) enable the system to exploit a more accurate input context for the generator to produce better responses to user queries.
+However, they should rely on an additional retriever to address retrieval needs.
+To develop a unified model capable of handling both retrieval and generation tasks, GRIT Muennighoff et al. (2024) attempts to train an LLM with distinguished instructions but it is not designed for conversational applications.
+
+
+
+
+
+
+System
+Conv.
+Ret.
+Gen.
+
+
+
+RepLLaMA Ma et al. (2024)
+✗
+✓
+✗
+
+E5 Wang et al. (2024)
+✗
+✓
+✗
+
+ChatRetriever Mao et al. (2024a)
+✓
+✓
+✗
+
+RankRAG Yu et al. (2024)
+✓
+✗
+✓
+
+ChatQA Liu et al. (2024)
+✓
+✗
+✓
+
+GRIT Muennighoff et al. (2024)
+✗
+✓
+✓
+
+Our UniConv
+✓
+✓
+✓
+
+
+
+Table 1: The functionality comparison between ours and existing systems, including whether support to conversational scenario (Conv.), first-stage retrieval (Ret.), and response generation (Gen.).
+
+
+To address the limitations of previous studies, we propose UniConv, a unified LLM-based model to investigate the feasibility of handling both retrieval and response generation in conversation.
+To achieve this, we inherit the training data selected by ChatRetriever Mao et al. (2024a) to adapt LLM to serve as a powerful conversational dense retriever. To improve the response generation ability while fine-tuning dense retrieval, we design a context identification instruction mechanism as part of the learning objective. This mechanism is designed to seamlessly integrate retrieved information into the response generation process.
+Additionally, we identify a discrepancy in previous training data: the same data format is applied to different learning objectives, which does not align well with the distinct output requirements of retrieval and generation tasks.
+To mitigate this issue, we include additional well-formatted conversational search data for model fine-tuning.
+We conduct extensive evaluations on five widely used datasets, where UniConv demonstrates strong generalization capabilities for representing complex conversational sessions in dense retrieval, along with robust generation abilities for crafting responses.
+Moreover, UniConv achieves better seamless consistency between retrieval and its augmentation for response generation in terms of effectiveness and reliability compared to non-unified models.
+
+
+Our contributions can be summarized as follows:
+
+
+(1) We investigate the feasibility of developing a unified LLM for conversational search and propose our UniConv model for better unification.
+
+
+(2) We design two mechanisms to improve the seamless consistency between conversational retrieval and its augmented response generation while addressing the issue of data discrepancy.
+
+
+(3) We conduct extensive experiments to evaluate UniConv on information-seeking conversations across various settings, comparing it against several strong baselines. Its superior performance in both conversational dense retrieval and response generation highlights its remarkable effectiveness.
+
+
+
+2 Related Work
+
+
+Conversational Retrieval.
+Conversational retrieval aims to identify the relevant passages to satisfy users’ information needs through multi-turn interaction (Meng et al., 2025; Mo et al., 2025). The main challenge lies in enabling the system to understand the real user search intents expressed in context-dependent queries.
+The literature outlines two main approaches to achieve the retrieval goal: i) conversational query rewriting Voskarides et al. (2020); Wu et al. (2022); Mo et al. (2023a); Mo et al. (2023b); Mao et al. (2023a); Mao et al. (2023b); Ye et al. (2023); Jang et al. (2023); Mo et al. (2024a); Mo et al. (2024f); Lai et al. (2024) that decomposes the conversational retrieval into a rewrite-then-retrieval pipeline and ii) conversational dense retrieval Qu et al. (2020); Yu et al. (2021); Lin et al. (2021); Kim and Kim (2022); Mao et al. (2022); Mao et al. (2023c); Jin et al. (2023); Mo et al. (2024c); Mo et al. (2024d); Mo et al. (2024e); Lupart et al. (2025) that directly encode the whole conversational session to perform end-to-end dense retrieval. 
+
+
+
+Conversational Response Generation.
+Conversational response generation aims to synthesize information from the top-retrieved passages into a single response Meng et al. (2020a); Meng et al. (2020b); Meng et al. (2021); Ren et al. (2021); Cheng et al. (2024); Li et al. (2024a). Different from single-turn retrieval-augmented generation (RAG) Lewis et al. (2020); Asai et al. (2023); Mao et al. (2024b); Zhang et al. (2025), which only needs to consider the given stand-alone query with its associated retrieved results for response generation, a conversational response generator Ye et al. (2024) requires modeling conversational turn dependency and understanding the context-depend query and search results. 
+
+
+
+LLM-based Retrieval. To explore the potential of LLMs in retrieval tasks, some existing studies Wang et al. (2024); Ma et al. (2024) attempt to follow the observed scaling law Kaplan et al. (2020) in search model Ni et al. (2022) by replacing the backbone model from the small ones (e.g., BERT-base Devlin et al. (2019) and T5-base Raffel et al. (2020)) into the generative LLMs (e.g., Mistral Jiang et al. (2023) and LLaMa Touvron et al. (2023)). They keep the training paradigm similar to DPR Karpukhin et al. (2020) using relevance judgments as supervision signals while changing the representation of queries and passages different from the ones in encoder-based models. 
+
+
+
+Unified LLMs for Retrieval and Generation.
+The motivation to develop unified LLMs for retrieval and generation is to attempt to mutually leverage the intrinsic knowledge from both sides to improve the model’s general multi-task ability and reduce cost.
+To this end,  Muennighoff et al. (2024) propose GRIT, to train LLMs to handle both generative and retrieval tasks by distinguishing between them through instructions, and  Li et al. (2024b) design a unified framework based on generative retrieval and open-domain question answering.
+Then, Yu et al. (2024) propose RankRAG, which unifies the re-ranking and generation through simultaneously instructing the LLMs on context ranking and answer generation.
+However, they cannot address multi-turn scenarios due to a lack of conversational adaptation.
+In a conversational setting, Mao et al. (2024a) and Liu et al. (2024) fine-tune LLMs specifically for conversational retrieval and response generation tasks, respectively, but these adaptations do not preserve the model’s ability to perform both functions concurrently.
+Recently, a parallel study, OneGen Zhang et al. (2024), propose unifying the traditionally separate training approaches for generation and retrieval by incorporating retrieval tokens generated in an autoregressive manner. However, it cannot follow conversational context and independently handle retrieval tasks. 
+
+
+
+Our Goal  is to develop a unified LLM-based model capable of handling both retrieval and generation in conversation, a scenario that has not been extensively explored in the existing literature.
+
+
+
+3 Methodology
+
+
+3.1 Task Formulation
+
+
+The task is to establish a unified model which can handle both conversational retrieval and response generation. Formally, given a conversational session that contains n−1n-1 historical turns ℋn={qi,ri}i=1n−1\mathcal{H}_{n}=\{q_{i},r_{i}\}_{i=1}^{n-1} and current query qnq_{n}, the unified model ℳ\mathcal{M} is expected to act as a retriever to identify the relevant passages 𝒫n\mathcal{P}_{n} from a large collection 𝒞\mathcal{C} and also act as a generator to produce a response rnr_{n} on top of external knowledge 𝒫n\mathcal{P}_{n} to satisfy the information needs in qnq_{n}.
+Thus, the unified model ℳ\mathcal{M} is required to handle the multi-turn session query to retrieve the relevant passages as 𝒫n=ℳ⁡(qn,ℋn)\mathcal{P}_{n}=\mathcal{M}(q_{n},\mathcal{H}_{n}), and generate the response as rn=ℳ⁡(qn,ℋn,𝒫n)r_{n}=\mathcal{M}(q_{n},\mathcal{H}_{n},\mathcal{P}_{n}). In our setting, the unified model ℳ\mathcal{M} is a generative LLM with decoder-only architecture.
+
+
+Figure 1: Overview of our UniConv. Three learning objectives are designed with various input and supervision signals for retrieval and generation in conversation.
+
+
+
+3.2 Generative Language Models for Conversational Search
+
+
+The overview of our proposed UniConv is illustrated in Figure 1, which consists of three parts, including various learning objectives toward conversational retrieval (Sec. 3.2.1), conversational response generation (Sec. 3.2.2), and context identification instruction (Sec. 3.3). We describe each component as follows.
+
+
+3.2.1 Conversational Dense Retrieval
+
+
+The common practice for dense retrieval fine-tuning is the paradigm of DPR Karpukhin et al. (2020), which leverages a bi-directional encoder-only model to encode the queries and passages separately on top of a bi-encoder architecture. Then, the first sequence token [CLS] is employed as the text representation for similarity calculation.
+When the backbone model ℳ\mathcal{M} turns into generative ones with uni-directional decoder-only architecture, e.g., LLaMA, the adaption is to form the representation 𝒱seq\mathcal{V}_{\text{seq}} using an appended end-of-sequence token </s> to both the queries and passages Ma et al. (2024) as
+𝒱seq=ℳ​(⋅)​[−1]\mathcal{V}_{\text{seq}}=\mathcal{M}(\cdot)[-1].
+
+
+To adapt the conversational scenario, the input query for each turn nn is reformulated as qn′=qn∘ℋnq_{n}^{\prime}=q_{n}\circ\mathcal{H}_{n} by concatenating the context of the previous turn. Then it is vectorized with candidate passages pnp_{n} by the model ℳ\mathcal{M} and calculate their similarity 𝒮⁡(qn′,pn)=<𝒱qn′,𝒱p>\mathcal{S}\left(q^{\prime}_{n},p_{n}\right)=<\mathcal{V}_{q^{\prime}_{n}},\mathcal{V}_{p}> via dot product.
+With the established representation, contrastive learning with InfoNCE loss is used for end-to-end conversational dense retrievers optimization as
+
+
+
+
+ℒR=−log⁡e𝒮⁡(qn′,pn+)e𝒮⁡(qn′,pn+)+∑𝒫n−∈{𝒫N}e𝒮⁡(qn′,𝒫n−)\mathcal{L}_{\text{R}}=-\log\frac{e^{\mathcal{S}\left(q^{\prime}_{n},p^{+}_{n}\right)}}{e^{\mathcal{S}\left(q^{\prime}_{n},p^{+}_{n}\right)}+\sum_{\mathcal{P}^{-}_{n}\in\{\mathcal{P}_{N}\}}e^{\mathcal{S}\left(q^{\prime}_{n},\mathcal{P}^{-}_{n}\right)}}
+
+
+
+
+
+3.2.2 Conversational Response Generation
+
+
+For information-seeking response generation in the conversation, the generator shares the same comprised query input qn′q_{n}^{\prime} as the retriever and is required to maintain the generation ability while learning for retrieval. To enhance the robustness of the generator, we inherit the idea of Seq2Seq Sutskever (2014), enabling the model to only be conditional on the representation of the input query 𝒱qn′\mathcal{V}_{q^{\prime}_{n}} rather than attention on all previous input and generated tokens. This is achieved by applying the session-masked technique in Mao et al. (2024a) and the training objective to generate the ground-truth for turn nn is shown below, where |rn|=T|r_{n}|=T.
+
+
+
+
+ℒG=−1T∑i=1Tlogp(rni|rn1,…,rni−1,𝒱qn′)\mathcal{L}_{\text{G}}=-\frac{1}{T}\sum_{i=1}^{T}\log p(r_{n}^{i}|r_{n}^{1},...,r_{n}^{i-1},\mathcal{V}_{q^{\prime}_{n}})
+
+
+
+
+
+
+3.3 Context Identification Instruction
+
+
+During the inference phase with the retrieval-augmented setting, the model input is usually the query together with the retrieved evidence serving as the main part of the instruction, where the model is expected to generate the response grounding on the useful piece of the retrieved evidence.
+Since the relevant passage and ground-truth response used as supervision signals are separately conducted during the training phase within the unified model, potential inconsistency risk might occur Yu et al. (2024).
+To this end, we design a context identification instruction to help the model implicitly identify the useful passage during the fine-tuning, which is consistent with the input instruction format of inference. This is achieved by combining the query with the positive passage in the same sequence and using different responses as contrastive samples as
+
+
+
+
+ℒCII=−log⁡e𝒮⁡(qn′∘pn+,rn+)e𝒮⁡(qn′∘pn+,rn+)+∑rn−∈{r}e𝒮⁡(qn′∘pn+,rn−)\mathcal{L}_{\text{CII}}=-\log\frac{e^{\mathcal{S}\left(q^{\prime}_{n}\circ p^{+}_{n},r_{n}^{+}\right)}}{e^{\mathcal{S}\left(q^{\prime}_{n}\circ p^{+}_{n},r_{n}^{+}\right)}+\sum\limits_{{r}^{-}_{n}\in\{{r}\}}e^{\mathcal{S}\left(q^{\prime}_{n}\circ p^{+}_{n},r_{n}^{-}\right)}}
+
+
+
+
+
+3.4 Data Discrepancy Mitigation
+
+
+To equip the LLMs with conversational dense retrieval capability, Mao et al. (2024a) leverage the ad-hoc search data with relevant query-passage pairs and instructional conversation with multi-turn query-response pairs to enable the model to obtain retrieval and conversational context understanding ability.
+In practice, their implementation utilizes each turn’s response rn+r_{n}^{+} in the conversation dataset as the relevant passage pn+p_{n}^{+} and each ad-hoc query’s corresponding relevant passage pn+p_{n}^{+} as the ground-truth rn+r_{n}^{+} for retrieval and generation fine-tuning, respectively.
+However, a unified model should have different outputs for conversational retrieval (e.g., rank-list) and generation (e.g., synthesized response), whose requirement is not exactly matched with the fine-tuned data form in existing studies and thus might lead to sub-optimal results.
+A more practical way is to ensure each data sample includes both the relevant passage pn+p_{n}^{+} and the corresponding ground-truth response rn+r_{n}^{+} as supervision signals for the given query turn qnq_{n}. Then, the model can learn the consistency from the various targets between retrieval and generation. Thus, we include the conversational search data Adlakha et al. (2022) to meet this requirement to mitigate the data discrepancy issue. Another alternative is to construct synthetic data Liu et al. (2024) with well-formed signals, which is not the focus of our paper.
+
+
+
+3.5 Training and Inference
+
+
+For the training phase, we integrate the conversational dense retrieval, retrieval-augmented response generation, and the context identification instruction tuning to form the training objective ℒ\mathcal{L} of our unified model as Eq. 1,
+where α\alpha is a hyper-parameter to control the fine-tuning effect. For the inference phase, we use the same fine-tuned model to perform retrieval to produce a top-kk rank list and generation to produce a response within zero-shot and RAG settings under conversational scenarios.
+
+
+
+
+ℒ=ℒR+ℒG+α​ℒCII\mathcal{L}=\mathcal{L}_{\text{R}}+\mathcal{L}_{\text{G}}+\alpha\mathcal{L}_{\text{CII}}
+
+(1)
+
+
+
+
+
+4 Experiments
+
+
+4.1 Experimental Setup
+
+
+Evaluation Datasets and Metric.
+We conduct the main evaluation on four widely-used conversational search datasets, including TopiOCQA Adlakha et al. (2022), QReCC Anantha et al. (2021), OR-QuAC Qu et al. (2020), and INSCIT Wu et al. (2023).
+Each of them contains the gold standard for passage retrieval and response generation.
+Besides, FaithDial Dziri et al. (2022), an information-seeking dialogue benchmark, and TopiOCQA are used for evaluating the reliability of the generated content via the given evidence/rationale.
+The statistics and details of the datasets are provided in Appendix A.1.
+We use NDCG@3, Recall@10, and F1 to evaluate the retrieval and generation performance to conduct a fair comparison with baselines. 
+
+
+
+Training data.
+We use the ad-hoc search dataset MSMARCO Bajaj et al. (2016), the The Question About the World subset of the instructional conversation dataset UltraChat Ding et al. (2023), and the whole conversational search dataset TopiOCQA for fine-tuning the unified model. 
+
+
+
+Baselines.
+We compare our methods with various conversational retrieval and response generation baselines.
+For the retrieval phase, we compete with the most effective conversational dense retrieval (CDR) systems based on small language models (SLMs), including ConvDR Yu et al. (2021), Conv-ANCE Mao et al. (2023c), and QRACDR Mo et al. (2024c) and most recently LLM-based approaches, including RepLLaMA Ma et al. (2024), E5 Wang et al. (2024), (Conv-)GRIT Muennighoff et al. (2024), and ChatRetriever Mao et al. (2024a).
+The GRIT is the only system that can handle both retrieval and generation tasks, and its variant Conv-GRIT is fine-tuned for conversation on the same setting as ours. Besides, the compared baselines also contain the methods based on conversational query rewriting (CQR) on top of LLMs, including the ones without fine-tuning (LLM-Aided Ye et al. (2023), LLM4CS Mao et al. (2023a), and CHIQ Mo et al. (2024a)) and with fine-tuning (RETPO Yoon et al. (2024)).
+
+
+In the response generation phase, we conduct the comparison under zero-shot and RAG settings.
+For the zero-shot manner, we include GRIT and its variants Conv-GRIT and three powerful LLMs: Mistral, Claude AnthropicAI (2023), and ChatGPT OpenAI ().
+For the RAG setting, to make the results comparable, we employ Mistral-2-7B-chat as the generator with two typical conversational dense retrievers Conv-ANCE and Chatretriever, and keep the Conv-GRIT on the same workflow as our UniConv, i.e., using the same model for both tasks. More details about the baseline methods are described in Appendix A.2. 
+
+
+
+Implementation Details.
+We initialize UniConv with Mistral-2-7B-chat, which can
+be also applied on top of any generative models. We train it on eight 40G A100 GPUs using LoRA Hu et al. (2022) with a maximum input sequence length of 1024 for query and 384 for passages and responses.
+The training process involves one epoch with a learning rate of 1e-4, a gradient accumulation of 4 steps, a batch size of 32, and in-batch negatives per sample. The α\alpha for loss balance is set to 0.5.
+During the inference stage, we deploy Faiss (Johnson et al., 2019) for the dense retrieval, set the maximum length as 128, and use top-10 retrieved passages for the response generation.
+For baseline comparisons, we adhere to the implementation settings specified in their original papers. The LLM-based CQR and the SLM-based CDR methods are based on ANCE dense retriever Xiong et al. (2020).
+
+
+Figure 2: The performance of different systems to fine-tune language models for conversational retrieval and response generation with various settings.
+
+
+
+4.2 Feasibility of Unifying Conversational Retrieval and Generation
+
+
+
+
+
+
+Category
+System
+TopiOCQA
+QReCC
+OR-QuAC
+INSCIT
+
+NDCG@3
+R@10
+NDCG@3
+R@10
+NDCG@3
+R@10
+NDCG@3
+R@10
+
+CQR
+LLM-based Conversational Query Rewriter (7B) + Ad-hoc Dense Retriever (110M)
+
+LLM-Aided
+-
+-
+41.3
+65.6
+-
+-
+-
+-
+
+LLM4CS
+26.7
+43.3
+42.1
+66.4
+-
+-
+-
+-
+
+RETPO (w./ FT)
+28.9
+49.6
+41.1
+66.7
+-
+-
+-
+-
+
+CHIQ
+32.2
+53.0
+44.6
+70.8
+-
+-
+-
+-
+
+CDR
+SLM-based Encoder-only Dense Retriever (110M)
+
+ConvDR
+26.4
+43.5
+35.7
+58.2
+-
+-
+-
+-
+
+Conv-ANCE
+28.5
+52.6
+45.6
+71.5
+35.5
+55.6
+24.5
+38.2
+
+QRACDR
+36.5
+57.1
+49.1
+74.8
+40.8
+60.4
+30.0
+43.6
+
+LLM-based Decoder-only Dense Retriever (7B)
+
+RepLLaMA
+15.0
+27.2
+31.8
+20.4
+-
+-
+-
+-
+
+E5
+16.9
+28.7
+32.9
+21.1
+-
+-
+-
+-
+
+GRIT
+17.3
+30.9
+33.5
+23.6
+-
+-
+-
+-
+
+Conv-GRIT
+36.0
+54.2
+48.3
+69.7
+-
+-
+-
+-
+
+ChatRetriever
+40.1
+63.7
+52.5
+75.8
+41.9
+58.9
+35.1
+50.8
+
+
+UniConv (Ours)
+42.6†
+67.4†
+47.6
+68.9
+43.5†
+63.0†
+36.2†
+54.2†
+
+
+
+Table 2: Performance of different systems for conversational retrieval on four datasets. †\dagger denotes significant improvements with t-test at p<0.05p<0.05 over each of the compared CDR systems. Bold indicates the best results.
+
+
+We first examine the feasibility of unifying conversational retrieval and generation to verify whether jointly fine-tuning can maintain the model’s generation ability while grasping retrieval capacity.
+The results for conversational retrieval and response generation on two datasets are shown in Figure 2, which includes four different systems: i) fine-tuning SLM for retrieval and using the original LLM as the generator; ii) fine-tuning LLM for retrieval only and iii) for response generation only; iv) fine-tuning LLM for both tasks.
+
+
+By comparing systems ii), iii), and iv), we observe that only fine-tuning a single part on the backbone LLM for retrieval or response generation hurts another ability. However, jointly fine-tuning the model with the objective functions for both tasks can obtain a unified model. Besides, the LLM-based retriever performs better than the SLM-based one, indicating the potential for conversational search performance with an LLM.
+
+
+Then we investigate the RAG setting by incorporating the corresponding retrieved passages for the response generation, except applying the search results from system ii) to system iii), since these two systems cannot handle both tasks.
+We can see the improvement from RAG is higher in system iv) with a unified model compared with system iii) with a separated one. These results confirm the feasibility of developing a unified model for conversational search.
+In the following sections, we conduct experiments to investigate our approaches.
+
+
+
+4.3 Results of Conversational Retrieval
+
+
+Table 2 shows the conversational retrieval results on four datasets and the comparison with existing systems, where we have the following observations:
+
+
+(1) Our proposed UniConv outperforms the baseline methods on most of the datasets, including the previous unified model (Conv-GRIT), the state-of-the-art conversational dense retriever (QRACDR and ChatRetriever), and conversational query rewriter (LLM4CS and CHIQ), which demonstrates that the superior dense retrieval ability of our developed system by arousing the LLM capacity with specific fine-tuning.
+
+
+(2) The state-of-the-art CDR systems, either SLM-based (QRACDR) or LLM-based (ChatRetriever and UniConv) consistently perform better than the LLM-based CQR systems, which indicates the end-to-end optimization can achieve better performance compared with the rewrite-then-retrieval paradigm Elgohary et al. (2019).
+
+
+(3) The LLM-based retrievers (RepLLaMA, E5) do not always behave much more powerfully than SLM-based ones for conversational retrieval, although they are considered with strong foundational multi-turn context understanding capacity.
+This might be attributed to the possible reason that they are fine-tuned solely on templated instructions, which fail to handle complex and diverse conversational information-seeking scenarios via fully leveraging the generalization capabilities of LLMs. Thus, it is still necessary and important to conduct conversational dense retrieval fine-tuning when employing LLM as a backbone model.
+
+
+
+4.4 Results of Conversational Response Generation
+
+
+Table 3 shows the results of conversational response generation on four datasets with two different settings and the comparison among existing systems.
+In the zero-shot scenario, our UniConv does not perform as well as the current state-of-the-art LLM. This suggests that joint fine-tuning to enhance retrieval capabilities may negatively impact direct response generation performance based on parametric knowledge, due to modifications to the model parameters.
+In the RAG setting, where responses are generated based on retrieved passages, we observe that our UniConv outperforms the compared systems with separate retrievers and generators. This indicates that the unified framework may better leverage intrinsic consistency and shared knowledge, mutually enhancing the performance of both retrieval and generation.
+
+
+
+
+
+
+System
+TopiOCQA
+QReCC
+OR-QuAC
+INSCIT
+
+w/o retrieval (Zero-shot)
+
+Mistral
+26.6
+24.3
+17.4
+23.1
+
+Claude
+27.2
+25.0
+17.5
+27.0
+
+ChatGPT
+28.5
+25.5
+17.8
+24.4
+
+GRIT
+27.5
+25.2
+17.0
+23.6
+
+Conv-GRIT
+26.0
+23.7
+14.5
+23.0
+
+UniConv
+26.7
+21.2
+12.6
+23.8
+
+w/. retrieval (RAG)
+
+Conv-ANCE + Mis.
+27.2
+25.9
+17.0
+24.8
+
+ChatRetriever + Mis.
+28.3
+26.3
+17.3
+30.3
+
+Conv-GRIT
+28.8
+26.0
+-
+-
+
+UniConv
+29.6
+26.2
+17.8
+33.2
+
+
+
+Table 3: Performance of different systems for conversational response generation. For RAG, we use Mistral-7B-chat as the generator to make the results comparable, except for the Conv-GRIT with the same workflow as our UniConv. Bold indicates the best results.
+
+
+
+
+
+
+Ablation
+TopiOCQA
+QReCC
+OR-QuAC
+INSCIT
+
+
+
+Our UniConv
+42.6
+46.6
+43.5
+36.2
+
+   w/o CII
+45.5
+49.7
+47.6
+40.0
+
+   w/o DDM
+41.5
+45.4
+41.1
+35.2
+
+
+
+Table 4: Results of ablation studies for conversational retrieval on four datasets with NDCG@3 score.
+
+
+
+
+
+
+System
+TopiOCQA
+QReCC
+OR-QuAC
+INSCIT
+
+w/o retrieval (Zero-shot)
+
+Our UniConv
+26.7
+21.2
+12.6
+23.8
+
+   w/o CII
+25.2
+20.6
+12.4
+23.0
+
+   w/o DDM
+24.8
+20.8
+12.3
+23.7
+
+w/. retrieval (RAG)
+
+Our UniConv
+29.6
+26.2
+17.8
+33.2
+
+   w/o CII
+29.4
+26.0
+17.3
+31.4
+
+   w/o DDM
+29.1
+24.7
+16.8
+25.3
+
+For Reference (Optimal retrieved results)
+
+   w/. gold
+41.1
+26.9
+23.3
+34.6
+
+
+
+Table 5: Results of ablation studies for conversational response generation in two settings with F1 scores.
+
+
+
+
+
+
+System
+TopiOCQA
+FaithDial
+
+F1 (r’,r)
+Bert (r’,r)
+F1 (r’, E)
+Bert (r’, E)
+F1 (r’,r)
+Bert (r’,r)
+F1 (r’, E)
+Bert (r’, E)
+
+
+
+Separated
+23.8 (↑\uparrow 2.9)
+86.0 (↓\downarrow 0.3)
+25.5 (↑\uparrow 2.6)
+87.0 (↓\downarrow 1.1)
+11.4 (↑\uparrow 0.7)
+85.0 (↑\uparrow 10.4)
+10.9 (↑\uparrow 3.9)
+84.3 (↑\uparrow 9.5)
+
+Unified
+26.7 (↑\uparrow 2.9)
+86.5 (↑\uparrow 0.5)
+25.1 (↑\uparrow 6.9)
+87.4 (↑\uparrow 0.7)
+11.6 (↑\uparrow 0.9)
+85.5 (↑\uparrow 9.8)
+12.1 (↑\uparrow 4.2)
+87.4 (↑\uparrow 7.8)
+
+
+
+Table 6: The performance comparison on two datasets between the system with separated models for retrieval and generation and the unified ones. The evaluation is conducted between the generated response r′r^{\prime} with the ground-truth response rr and the evidence EE. Arrows denote the change in the results by incorporating RAG.
+
+
+Figure 3: The performance of unified (Uni.) and separated (Sep.) models on dense retrieval (NDCG@3) and response generation (F1) with different conversation turns on four different datasets.
+
+
+
+4.5 Ablation Studies
+
+
+We conduct ablation studies for conversational retrieval and response generation to study the effects of our proposed two mechanisms, a context identification instruction (CII) mechanism to improve consistency when leveraging the retrieved information for response generation within the same model and a data discrepancy mitigation (DDM) mechanism to induce well-formatted training data with desirable supervision signals. The results are reported in Table 4 and Table 5, respectively. 
+
+
+
+Conversational Retrieval. Table 4 shows an interesting phenomenon that incorporating the CII mechanism would hurt the retrieval performance of our UniConv, while it is helpful for the response generation as shown in Table 5.
+This might be because the changed input query form as qn′∘pn+q_{n}^{\prime}\circ p_{n}^{+} inevitably influences the contextualized embedding obtained via the learning objective of retrieval ℒR\mathcal{L}_{R}, leading to the possible confusion within the model due to the training is conducted simultaneously. A potential solution is to perform fine-tuning for conversational retrieval ℒR\mathcal{L}_{R} and context identification instruction (CII) ℒCII\mathcal{L}_{\text{CII}} separately into a two-stage process, which can be explored in future studies.
+Furthermore, removing the data discrepancy mitigation (DDM) mechanism leads to performance degradation, indicating that utilizing well-structured conversational search data with distinct ground-truths for the retrieval and generation stages during joint fine-tuning can enhance previously sub-optimal results. 
+
+
+
+Conversational Response Generation.
+Table 5 shows that removing any mechanism leads to performance degradation for both zero-shot and RAG settings.
+These observations validate the effectiveness of the added components in enhancing model performance by addressing inconsistencies between retrieval and generation within the unified model.
+The improvements vary across datasets, suggesting that the effectiveness of the added mechanisms may depend on the structure and distribution of the data.
+Additionally, an obvious gap remains compared to using gold evidence for generation, indicating the potential for further improvement in better integrating retrieved information with the generation process.
+
+
+
+4.6 Impact of Generated Response Reliability
+
+
+In this section, we investigate whether the unified model can produce a more accurate and reliable response than the system with the separated models.
+We use the variants of UniConv without adding the ℒCII\mathcal{L}_{\text{CII}} term in Eq. 1 as the generator and employ ChatRetriever as the retriever for the RAG setting within the separated system while deploying the full UniConv as the unified system.
+We evaluate both systems on the TopiOCQA and FaithDial datasets, measuring similarity using F1 and BERT scores to assess the accuracy of the generated response r′r^{\prime}
+compared to the ground-truth response rr. Faithfulness is evaluated by comparing the generated responses against the evidence or rationale EE provided by the datasets. Since FaithDial does not include a retrieval collection, we utilize the same database as TopiOCQA for this purpose.
+
+
+The results presented in Table 6, show that the unified system consistently enhances the accuracy of generated responses across both datasets in two settings. For faithfulness, the RAG setting further improves the unified system’s performance, whereas a performance drop is observed for the separated system in TopiOCQA.
+These observations suggest that developing the system as a unified model can improve reliability to a certain extent.
+
+
+
+
+
+
+System
+TopiOCQA
+QReCC
+OR-QuAC
+INSCIT
+
+w/. historical top-3 search results
+
+Separated
+30.3
+25.3
+17.2
+32.0
+
+Unified
+31.1
+26.6
+18.3
+33.5
+
+
+
+Table 7: The response generation performance comparison by investigating the history-aware ability of different types of systems with F1 scores.
+
+
+
+4.7 Impact of Conversational Context
+
+
+We examine the impact of conversational context (multi-turn conversations) on retrieval and response generation tasks for systems with unified and separated models. The evaluation is based on per-turn performance, with the implementation for both systems consistent with the setup described in Sec. 4.6.
+As shown in Figure 3, the unified model consistently outperforms the separated model on both tasks as the conversation progresses, except for the retrieval task on QReCC. This observation highlights the unified model’s more robust ability to understand conversations and maintain better consistency between retrieved results and its augmented generation, even in longer conversations.
+
+
+
+4.8 Impact of History-Aware Ability
+
+
+We analyze the history-aware ability of the developed model by incorporating the top-3 search results from each historical turn for the current turn’s response generation, since the existing studies Pan et al. (2024); Ye et al. (2024) demonstrate that useful information should be contained in history. To ensure a fair comparison, we use the same search results from our UniConv for both systems, varying only the generators as the previous sections.
+The results shown in Table 7 indicate the better performance of the unified model, which suggests the implicit de-noising capacity could be enhanced via the jointly fine-tuning.
+This observation also implies that more advantages are still to be discovered within the unified framework.
+
+
+
+
+5 Conclusion and Future Work
+
+
+In this paper, we present UniConv, a unified LLM-based model capable of handling both dense retrieval and response generation in complex conversational scenarios. We propose two mechanisms to seamlessly integrate retrieved information into response generation and address data discrepancy issues during joint fine-tuning. Experimental results on five conversational search datasets demonstrate the superior performance and enhanced reliability of UniConv.
+For future studies, developing a unified system for a broader range of complex conversational search scenarios is valuable, including product search, item recommendation, proactive retrieval, etc.
+Besides, it is important to continue improving the consistency between retrieval and generation and conduct specific training based on large-scale synthetic data.
+
+
+
+Limitations
+
+
+Despite our comprehensive studies, some potential limitations can be addressed in the future:
+
+
+Efficiency.
+The used backbone model with 7B size LLM is larger than the previous SLM-based CDR systems, which raises efficiency concerns.
+Nevertheless, on the one hand, the LLM-based retriever with superior search performance reduces the requirement for extensive passage re-ranking.
+In real-world applications, this could help reduce the initial higher costs by ultimately decreasing the overall time required for ranking.
+On the other hand, the multi-task ability of UniConv makes the cost worthwhile compared with the retrieval-only systems in existing studies. This is also a promising research direction that integrates more embedding-based tasks into the instruction-based generation framework in conversation.
+Besides, exploring the possibility of distilling UniConv into a more efficient, smaller model is desirable. 
+
+
+
+Broader Experimental Configuration.
+We only leverage the fixed hyper-parameters for model setup and ratio to mix training data. Though we obtain strong performance, the exploration within broader experimental configurations could lead to better performance. Besides, adapting our methods to other types or sizes of backbone models and using full-model fine-tuning rather than LoRA might bring additional observations and results. 
+
+
+
+Robust Evaluation for Generation.
+How to evaluate the generated content is still an open question for the research community. Our evaluation is conducted on a single metric following the previous studies Mao et al. (2024a); Liu et al. (2024) for a fair comparison, which might not reflect the quality of different aspects of the generated response. Leveraging more comprehensive evaluation metrics or incorporating another LLM as an evaluator might help us to observe more insights about improving the consistency between retrieval and generation.
+

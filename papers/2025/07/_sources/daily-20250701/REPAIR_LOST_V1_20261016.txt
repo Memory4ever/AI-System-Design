@@ -1,0 +1,644 @@
+Lost at the Beginning of Reasoning
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Related work
+3 Lost at the beginning of reasoning
+3.1 Semantic similarity between different reasoning steps and the final conclusion
+3.2 Correlation between the first reasoning step and the final prediction
+3.3 Minor perturbation to the correct first step leads to significant loss
+4 Early pruning with hint from first step
+4.1 Problem definition
+4.2 Methodology
+4.3 Experiments
+5 LaBoR: self-correction benchmark
+5.1 Benchmark construction
+5.2 Evaluation
+6 Conclusion
+References
+A Limitations
+B Boarder impacts
+C LaBoR data
+D Semantic similarity between first reasoning step and final answer
+E Examples for minor perturbation
+F LaBoR benchmark examples
+G Prompt example for evaluation
+H Correlation between first reasoning step and final prediction in Qwen3
+I Closed-source model performance on the LaBoR benchmark
+License: CC BY 4.0
+arXiv:2506.22058v1 [cs.CL] 27 Jun 2025
+Lost at the Beginning of Reasoning
+Baohao Liao
+††thanks: Equal contribution. Correspondence to: Baohao Liao <b.liao@uva.nl>.
+Affiliation: University of Amsterdam
+Affiliation: eBay Inc.
+Xinyi Chen
+Sara Rajaee
+Affiliation: University of Amsterdam
+Yuhui Xu
+Affiliation: Salesforce AI Research
+Christian Herold
+Affiliation: eBay Inc.
+Anders Søgaard
+Affiliation: Copenhagen University
+Maarten de Rijke
+Affiliation: eBay Inc.
+Christof Monz
+Affiliation: University of Amsterdam
+Abstract
+Recent advancements in large language models (LLMs) have significantly advanced complex reasoning capabilities, particularly through extended chain-of-thought (CoT) reasoning that incorporates mechanisms such as backtracking, self-reflection, and self-correction. Despite these developments, the self-correction abilities of LLMs during long CoT reasoning remain underexplored. And recent findings on overthinking suggest that such models often engage in unnecessarily redundant reasoning. In this work, we empirically show that the first reasoning step exerts a disproportionately large influence on the final prediction—errors introduced at this stage can substantially degrade subsequent reasoning quality. This phenomenon is consistently observed across two state-of-the-art open-source reasoning model families: DeepSeek-R1 and Qwen3. To address this, we propose an efficient sampling strategy that leverages a reward model to identify and retain high-quality first reasoning steps while discarding suboptimal ones, achieving up to a 70% reduction in inference cost without sacrificing accuracy. Finally, we introduce a new benchmark specifically constructed with deliberately flawed first reasoning steps to systematically evaluate models’ self-correction capabilities, offering a foundation for future research on robust reasoning in LLMs.
+万事开头难。 (The first step is always difficult.)
+— Chinese Proverb
+1 Introduction
+Large language models (LLMs) have demonstrated remarkable performance across a variety of reasoning tasks, ranging from mathematical problem solving to multi-hop question answering [1, 2, 3]. More recently, the advent of reasoning-oriented LLMs capable of performing long chain-of-thought (long-CoT) reasoning at test time has led to substantial advancements in these domains [4, 5, 6, 7, 8, 9, 10, 11]. A widely held hypothesis attributes this progress to the models’ ability to backtrack, self-reflect, and self-correct, effectively leveraging contextual feedback to iteratively refine their responses.
+Recent studies have suggested that LLMs engaged in long-CoT reasoning may exhibit a tendency to overthink—that is, to produce unnecessarily extended reasoning processes to solve problems [12, 13, 14, 15, 16]. This observation raises questions about the model’s capacity for backtracking, self-reflection, and self-correction. It suggests that LLMs may lack awareness of the information they have already processed, leading to redundant or inefficient reasoning. Moreover, Liu et al. [17] demonstrates that LLMs are prone to the "lost-in-the-middle" phenomenon, wherein information located in the middle of a long context is often overlooked. While their analysis is conducted in the context of information retrieval, it remains an open question whether similar positional biases affect long CoT as well.
+In this work, we introduce a novel and previously underexplored perspective on long-CoT reasoning: many reasoning failures in long-CoT LLMs stem not from errors made mid-chain, but rather from flaws at the beginning of reasoning. Our experiments demonstrate that the first reasoning step has the most significant influence on the final prediction. When this first step is incorrect, the model is considerably more likely to arrive at an incorrect final answer (40% accuracy drop), highlighting the limited self-correction capabilities of current long-CoT LLMs.
+Motivated by this finding, we propose an efficient early pruning algorithm that exploits the predictive power of the first reasoning step. Specifically, by evaluating the quality of the first step, we identify and discard less promising reasoning paths early, continuing generation only for the more promising ones. This approach significantly reduces inference cost. Across four long-CoT LLMs and four challenging mathematical and scientific reasoning benchmarks, our method maintains prediction accuracy while reducing inference budget by up to 70%.
+Finally, we introduce LaBoR, a self-correction benchmark constructed by an automatic pipeline, aiming at quantifying LLMs’ ability to recover from initial reasoning errors. Each LaBoR instance contains a question paired with a faulty first reasoning step, requiring the model to detect and correct the initial error to produce the correct final answer. To our knowledge, LaBoR is the first benchmark specifically designed to assess self-correction in long-CoT settings. Despite its simplicity, LaBoR effectively captures the extent to which LLMs struggle to recover from early mistakes. Through extensive evaluation of eight state-of-the-art open-source long-CoT LLMs, we observe a substantial vulnerability: performance drops by up to 11.4% when the initial step contains an error.
+Contributions. Our main contributions are as follows:
+(1) We empirically establish a strong positive correlation between the first reasoning step and the final prediction (§3);
+(2) We propose an efficient early pruning algorithm that halts generation for less promising initial steps, thereby improving inference efficiency (§4);
+(3) We introduce LaBoR, a simple and automatic benchmark construction pipeline to facilitate future research on the self-correction capabilities of long-CoT LLMs (§5).
+2 Related work
+Lost in the middle. Liu et al. [17] introduced the "lost in the middle" effect, demonstrating that LLMs tend to overlook information in the middle of long contexts, performing better when relevant content appears at the beginning or end. This positional bias is evident across tasks like arithmetic reasoning [18, 19], multiple-choice QA [20, 21], text evaluation [22, 23], passage ranking [24], and instructional prompt positioning [25, 26]. Additionally, primacy and recency biases, where attention skews toward initial and final tokens irrespective of semantic relevance, have also been reported [27, 28]. While previous studies primarily examined positional biases in external context processing, we investigate whether similar biases affect internal reasoning trajectories in long CoT models.
+Self-correction. Self-correction in LLMs refers to their capability to revise reasoning to enhance final answers [29, 30]. Recent models trained via reinforcement learning exhibit emergent self-reflection abilities, revisiting and adjusting prior reasoning steps [8]. Existing research typically evaluates self-correction by instructing models explicitly [31, 32, 33, 34, 35] or via external feedback [36, 37]. In contrast, we explore self-correction as an intrinsic reasoning capability, investigating models’ ability to independently detect and recover from flawed initial reasoning steps without external signals.
+3 Lost at the beginning of reasoning
+Motivated by the finding of Liu et al. [17], which demonstrates that query-relevant information is more impactful when positioned at either the beginning or end of an LLM’s context window, we first investigate whether a similar positional effect exists in long-CoT reasoning (§3.1). Our analysis reveals that the first reasoning step has the greatest impact to the final conclusion. To validate this observation, we further perform two ablation studies, confirming the critical role of the first step in determining the model’s final prediction (§3.2 and §3.3).
+Notation. Let pp represent the input prompt, consisting of both a system instruction and a user query. A reasoning model ℳ\mathcal{M} produces a sequence of CoT reasoning steps t=[t1,t2,…,tT]t=[t_{1},t_{2},...,t_{T}], followed by a final conclusion cTc_{T}, such that the complete model output is given by t⊕cT=ℳ⁡(p)t\oplus c_{T}=\mathcal{M}(p), where ⊕\oplus means concatenation. In models such as DeepSeek-R1 [8] and Qwen3 [9], the input-output format adheres to the following:
+p<think>t1,t2,…,tT</think>cTp\ \mathrm{{<}think{>}}\ t_{1},t_{2},\ldots,t_{T}\ \mathrm{{<}/think{>}}\ c_{T}
+The final prediction qTq_{T} is then derived by applying an extraction function gg to the conclusion, i.e., qT=g⁡(cT)q_{T}=g(c_{T}), where gg may, for example, extract values enclosed within \boxed{}.
+The conclusion cTc_{T} can be interpreted as a summary of the essential reasoning steps leading to the final prediction. This raises an interesting question: Is there a positional bias in how reasoning steps contribute to the conclusion? In other words, do certain steps have a disproportionately greater influence on cTc_{T} than others?
+3.1 Semantic similarity between different reasoning steps and the final conclusion
+To understand how different reasoning steps contribute to the final conclusion, we measure the semantic similarity between each reasoning step {ti}i=1T\{t_{i}\}_{i=1}^{T} and the final conclusion cTc_{T}.
+Experimental setup.
+We evaluate a total of 60 questions from AIME24 and AIME25 [38], sampling 64 CoT traces per question using DeepSeek-R1-Distill-Qwen-7B (abbreviated as DS-R1-Qwen-7B in the remainder of this paper) [8] and Qwen3-8B [9]. Generation is performed with temperature=1.0, top_p=0.9, min_p=0.05 and max_tokens=32768.11
+1
+All subsequent experiments use the same decoding hyperparameters.
+Figure 1: Cosine similarity between the embeddings of the i-th reasoning step tit_{i} and the final conclusion cTc_{T}, using the maximum number of reasoning steps for interpolation. See Figure D.1 for results based on the average number of reasoning steps used for interpolation.
+Following the setup in Wang et al. [39], we define a reasoning step as the text span beginning with the token “Alternatively”—that is, the first token in step {ti}i=2T\{t_{i}\}_{i=2}^{T} is ‘‘Alternatively’’.22
+2
+We empirically found ”Alternatively” to be an effective delimiter for segmenting reasoning steps, as it commonly appears in CoT traces and often marks a shift in reasoning. In contrast, “Wait” is overly frequent and ambiguous, while “Let me verify” is too rare. To measure semantic alignment between the reasoning steps and final conclusion, we compute the cosine similarity between their embeddings using all-MiniLM-L6-v2 from the SentenceTransformers library [40, 41]. Since different CoT traces contain varying numbers of reasoning steps, we interpolate the similarity scores of different traces to a fixed length (maximum number of reasoning steps or average number of reasoning steps over all traces) for a better visualization.
+Result. From Figure 1, we notice that the first reasoning step exhibits the highest semantic similarity to the final conclusion. This similarity gradually declines across subsequent steps. These observations suggest that the first step, t1t_{1}, plays a pivotal role in establishing the semantic trajectory of the reasoning process and is most closely aligned with the eventual outcome. The continued decrease in similarity implies that the model explores intermediate reasoning paths that diverge from the final conclusion before ultimately re-converging.
+Given the strong alignment between early reasoning steps—particularly the first—and the final conclusion, we hypothesize that the first step may significantly influence whether the reasoning model can arrive at a correct prediction.
+Figure 2: Accuracy and number of tokens on DS-R1-Qwen-7B. Left: The relationship between the accuracy of the final prediction (qTq_{T}) and the correctness of the prediction solely based on the first reasoning step (q1q_{1}) across different difficulty levels. If q1q_{1} is incorrect, qTq_{T} is more likely incorrect. Right: The number of tokens used for the final prediction after the first reasoning step t1t_{1}, i.e., the number of tokens used for [t2,t3,…,tT][t_{2},t_{3},...,t_{T}]. Although q1q_{1} is correct, the model still consumes a large amount of tokens for the following reasoning steps–overthinking.
+3.2 Correlation between the first reasoning step and the final prediction
+Given that the first reasoning step closely resembles the final conclusion, we investigate whether the essential reasoning required for the final prediction is already encapsulated in the first step. To this end, we analyze the prediction when conditioned solely on the first reasoning step. Specifically, we compute c1=ℳ(p<think>t1</think>)c_{1}=\mathcal{M}(p\mathrm{{<}think{>}}t_{1}\mathrm{{<}/think{>}}), and derive the corresponding prediction q1=g⁡(c1)q_{1}=g(c_{1}), which we compare against the ground truth aa. Based on this comparison, we categorize each first reasoning step as either first correct (if q1=aq_{1}=a) or first incorrect (otherwise).
+Experimental setup. From the questions and their CoT traces obtained in §3.1, we exclude questions for which all 64 CoT traces result in either correct or incorrect predictions, as these are considered either too easy or too difficult, respectively, yielding 38 questions for DS-R1-Qwen-7B and 37 for Qwen3-8B. For each remaining question and its corresponding first reasoning step t1t_{1}, we obtain the initial prediction q1q_{1} as previously described. To better visualize the final outcomes, we categorize the questions into three groups based on the pass@1 accuracy of the final prediction qTq_{T},33
+3
+That is, the average accuracy across 64 CoT traces. corresponding to the intervals (0, 33%], (33%, 67%], and (67%, 100%). A higher pass@1 indicates a simpler question. This grouping allows us to assess whether our observations hold consistently across varying levels of question difficulty.
+Result. As shown in Figure 2 (Left), the commonly assumed self-correction capability of reasoning models appears to be overstated. When the first reasoning step is incorrect, the model’s final prediction is also likely to be incorrect. On average, final prediction accuracy drops by 40% when the first reasoning step is incorrect, with the most substantial decrease (43%) occurring for difficult questions (0–33% range) and a notable decline (33%) even for easier questions (67–100% range). In addition, we also compute the Pearson correlation between the correctness of the first prediction p1p_{1} and the final prediction pTp_{T} over all questions. The coefficient r=0.60r=0.60 and p-value p=0.0p=0.0 denote a moderately strong positive correlation. All these results underscore the pivotal role of the first reasoning step in steering the model toward a correct final answer, particularly in more complex instances where recovery from early mistakes is more challenging.
+Figure 2 (Right) further illustrates the model’s tendency toward overthinking. Even when the first reasoning step is sufficient to arrive at the correct answer, the model continues to generate a substantial number of additional reasoning tokens—the same scale in length to those generated following an incorrect first step. Both findings are also observed for Qwen3-8B in Figure H.1, reinforcing this pattern across models.
+3.3 Minor perturbation to the correct first step leads to significant loss
+Building on our findings in Section §3.2, which demonstrate a positive correlation between the model’s first and final predictions, we further investigate the significance of the first reasoning step by introducing minor perturbations. Specifically, we slightly alter an initially correct reasoning step and provide it as input to the model to assess whether it can recover from such errors.
+Experimental setup. Unlike Section §3.2, where we analyze the correctness of the first reasoning step t1t_{1}, here we treat the final correct conclusion cTc_{T}—which satisfies qT=g⁡(cT)=aq_{T}=g(c_{T})=a—as the new first reasoning step, denoted t1′t^{\prime}_{1}. This choice ensures that the step contains all necessary reasoning for arriving at the correct answer, which cannot be guaranteed for t1t_{1}. As illustrated in Figure 2 (Left), an initially correct reasoning step can still lead to an incorrect final prediction. To construct t1′t^{\prime}_{1}, we apply the following perturbations to cTc_{T} (see Appendix E for an example): (1) we remove not only the explicit answer formatting (e.g., \boxed{a}) but also any surrounding sentences that may directly disclose or repeat the final answer; (2) the resulting text from (1) is treated as the correct version of t1′t^{\prime}_{1} (serving as our baseline); (3) we generate an incorrect version by replacing the correct answer aa in the remaining reasoning with a±1a\pm 1 or a±10a\pm 10.44
+4
+The answer of AIME question is integer in the range of [0,999)[0,999).
+Table 1: Perturbation experiments. Accuracy refers to the correctness of the final prediction; #Tokens indicates average number of generated tokens per question. A minor perturbation leads to a significant accuracy drop.
+Model
+Correct first step
+Incorrect first step
+Acc. (%)
+#Tokens
+Acc. (%)
+#Tokens
+DS-R1-Qwen-7B
+94.8
+945.5
+28.5
+1119.9
+Qwen3-8B
+71.4
+7930.0
+37.0
+8087.1
+These perturbations are minimal, as they preserve the core reasoning structure while only altering the final prediction in the incorrect variant. We then combine the prompt pp with the modified first reasoning step t1′t^{\prime}_{1} and input it to the model as ℳ⁡(p<think>t1′​Alternatively)\mathcal{M}(p\mathrm{{<}think{>}}t^{\prime}_{1}\mathrm{Alternatively}) to assess subsequent reasoning behavior.
+Result. As shown in Table 1, we make two key observations: (1) Even when the first reasoning step is correct, the model does not achieve 100% accuracy, suggesting that it may experience uncertainty or revise its initial judgment, as indicated by the use of terms like “Alternatively”; (2) There is a substantial drop in accuracy when the first reasoning step is incorrect, highlighting that even minor errors early in the reasoning process can significantly affect the final prediction. These findings further indicate that the LLM’s ability to self-correct has been overestimated.
+In this section, we observe that the reasoning model is particularly vulnerable at the initial stage of the reasoning process; an error in the first step can propagate and substantially degrade the final prediction. Can we develop a method to identify and retain more promising first reasoning steps while discarding suboptimal ones to enhance the overall generation efficiency?
+4 Early pruning with hint from first step
+In this section, we propose an efficient and straightforward sampling method to identify a promising first reasoning step. By doing so, we can terminate the generation process early when a suboptimal first step is detected, thereby reducing unnecessary computational overhead.
+4.1 Problem definition
+In contrast to the notation introduced in Section §3, we incorporate a random seed ϵ\epsilon to introduce stochasticity into the sampling process. Specifically, a sampled trace is computed as t⊕cT=ℳ⁡(p,ϵ)t\oplus c_{T}=\mathcal{M}(p,\epsilon). By varying the random seed ϵn\epsilon^{n}, we obtain diverse generations, denoted as tn⊕cTn=ℳ⁡(p,ϵn)t^{n}\oplus c^{n}_{T}=\mathcal{M}(p,\epsilon^{n}), where tn=[t1n,t2n,…,tTn]t^{n}=[t^{n}_{1},t^{n}_{2},\ldots,t^{n}_{T}].55
+5
+In prior experiments, we sampled 64 CoT traces per question using 64 distinct random seeds {ϵn}n=164\{\epsilon^{n}\}_{n=1}^{64}.
+A widely adopted technique for reasoning tasks is majority voting or self-consistency generation [42]. To promote exploration of the reasoning space, models are typically sampled at high temperatures, resulting in diverse outputs. Majority voting then serves to aggregate these outputs by selecting the most frequent final prediction. Formally, majority voting over KK samples is defined as:
+qmaj@​K=mode​({qTn}n=1K)whereqTn=g⁡(cTn)q_{\text{maj@}K}=\text{mode}(\{q^{n}_{T}\}_{n=1}^{K})\quad\text{where}\quad q^{n}_{T}=g(c^{n}_{T})
+However, for models generating long CoT traces, majority voting becomes computationally expensive, as it requires sampling NN complete reasoning paths independently. In this section, we propose a more efficient approach that samples only MM full traces, where M<NM<N, while maintaining comparable majority voting performance to the one with NN samplings.
+4.2 Methodology
+In Section §3, we demonstrated a strong positive correlation between the first reasoning step and the final prediction. This observation motivates a method that identifies the top MM most promising first reasoning steps out of a total of NN, and continues generation only for these selected MM candidates, while discarding the remaining (N−M)(N-M).
+Let a reasoning model generate NN candidate first reasoning step {t11,t12,…,t1N}\{t_{1}^{1},t_{1}^{2},\dots,t_{1}^{N}\} from a prompt pp with different random seeds {ϵn}n=1N\{\epsilon^{n}\}_{n=1}^{N}. Each t1nt_{1}^{n} is the first reasoning step of a full reasoning trajectory. We define a scoring function r:t1n→ℝr:t_{1}^{n}\rightarrow\mathbb{R} that estimates the promise of a first step, e.g., rating from a reward model. We then select the top MM first steps based on their scores:
+ℛtop=TopM​({r⁡(t1n)}n=1N)\mathcal{R}_{\text{top}}=\text{TopM}(\{r(t_{1}^{n})\}_{n=1}^{N})
+Only the selected MM first steps {t1n∣n∈ℛtop}\{t_{1}^{n}\mid n\in\mathcal{R}_{\text{top}}\} are used for further multi-step generation. The remaining (N−M)(N-M) are discarded. Since the first step typically requires only a small number of tokens to generate, this selection approach efficiently reduces computation by avoiding full sampling for the less promising (N−M)(N-M) candidates.
+Figure 3: Majority voting with different number of samplings on DS-R1-Qwen-1.5B (1st row), 8B (2nd row), Qwen3-8B (3rd row) and Skywork-OR1-7B-Preview (4th row). The vertical dashed line denotes the smallest MM whose accuracy is equal to or larger than the accuracy of N=64N=64.
+4.3 Experiments
+Setup. All inference experiments are conducted on NVIDIA A100-80GB GPU, using the vLLM framework [43]. We evaluate four advanced reasoning models—DeepSeek-R1-Distill-Qwen-1.5B, DeepSeek-R1-Distill-Qwen-32B [8], Qwen3-8B [9], and Skywork-OR1-7B-Preview  [11]—across four challenging reasoning benchmarks: AIME24, AIME25 [38], HMMT Feb 2025 [44], and the GPQA Diamond subset [45], consisting of 30, 30, 30, and 198 questions respectively.
+We consider values of NN and MM from the set {1,2,4,8,16,32,64}\{1,2,4,8,16,32,64\}. For early pruning, we fix N=64N=64 and select the top MM most promising first-step candidates using reward scores predicted by a process reward model (PRM), Qwen2.5-Math-PRM-7B [46]. When M=64M=64, the accuracy is exactly the same as the one for N=64N=64, since all candidates are chosen. For PRM, a “step” is defined as a segment of text ending with “\n\n”, and each step receives an individual reward score. The trajectory t1nt^{n}_{1} contains multiple such steps, and we use the score of its final step as the overall reward, r⁡(t1n)r(t^{n}_{1}). Notably, using a PRM to score t1nt^{n}_{1} is really cheap, because t1nt^{n}_{1} is short, and its computation is similar to generate one token with input p⊕t1np\oplus t^{n}_{1}.
+Unlike the definition used in Section §3, where t1nt^{n}_{1} terminates upon generating the keyword “Alternatively”, we redefine t1nt^{n}_{1} in this section to have a fixed token length, len​(t1n)\text{len}(t^{n}_{1}). The previous definition made it difficult to control the computational budget for generating first steps, as the trigger phrase might not appear or could occur late in the sequence. By fixing the token length, we achieve precise control over the generation budget when sampling NN candidate first steps. By default, len​(t1n)=512\text{len}(t^{n}_{1})=512.
+Result. As illustrated in Figure 3, selecting the top 16 first reasoning steps from a pool of 64 candidates and continuing generation from these yields performance that matches or even surpasses that of conventional sampling with N=64N=64. This pattern holds consistently across various reasoning models and benchmarks. Notably, for certain benchmarks and models—such as HMMT on DeepSeek-R1-Distill-Qwen-1.5B, as well as AIME24, AIME25, and GPQA on DeepSeek-R1-Distill-Qwen-32B—setting M≤8M\leq 8 is sufficient to achieve performance comparable to using all 64 samples.
+Table 2: Early pruning accuracy and efficiency. We select M=16M=16 first steps with the highest reward scores out of N=64N=64 candidate first steps. The number of tokens used for the 48 discarded first steps is also included for the early pruning method. Early pruning maintains the accuracy, even improves sometimes, while only requiring <30%<30\% original inference budget.
+Model
+Method
+Maj@K accuracy (%) ↑\uparrow
+#Tokens per question (k) ↓\downarrow
+AIME24
+AIME25
+HMMT
+GPQA
+Avg.
+AIME24
+AIME25
+HMMT
+GPQA
+Avg.
+DS-R1-1.5B
+N=64N=64
+60.0
+40.0
+23.3
+41.4
+41.2
+781
+773
+838
+614
+×\times1.00
+M=16M=16
+60.0
+40.0
+26.7
+39.4
+41.5
+220
+218
+234
+178
+×\times0.28
+DS-R1-32B
+N=64N=64
+86.7
+73.3
+56.7
+64.1
+70.2
+616
+679
+752
+490
+×\times1.00
+M=16M=16
+86.7
+73.3
+56.7
+63.6
+70.1
+179
+194
+213
+147
+×\times0.29
+Qwen3-8B
+N=64N=64
+83.3
+70.0
+56.7
+61.1
+67.8
+766
+838
+917
+461
+×\times1.00
+M=16M=16
+83.3
+70.0
+60.0
+62.1
+68.9
+216
+234
+254
+140
+×\times0.28
+SW-OR1-7B
+N=64N=64
+80.0
+60.0
+40.0
+50.5
+57.6
+670
+713
+790
+539
+×\times1.00
+M=16M=16
+80.0
+60.0
+40.0
+52.5
+57.9
+192
+203
+222
+159
+×\times0.29
+Figure 4: Ablation studies on DS-R1-Qwen-32B, with average accuracy across AIME24, AIME25 and HMMT. Left: Comparison of reward signals derived from different reward models. The choice of reward model has minimal impact on overall performance. Right: Effect of varying the length of the first reasoning step. Using a very short first step, like 256 tokens, leads to suboptimal performance, likely because it provides insufficient reasoning context to effectively evaluate the quality of the step.
+Table 2 presents the detailed token counts associated with different methods. With M=16M=16, early pruning consistently preserves the accuracy across various models and benchmarks. Remarkably, for Qwen3-8B, early pruning even improves the average accuracy by 1.1%. Despite this performance gain, it utilizes only <30%<30\% of the inference budget required by standard sampling for majority voting with N=64N=64, highlighting the substantial efficiency benefits of our approach.
+Ablation. We further conduct additional ablation studies to validate our default settings. In Figure 4 (Left), we evaluate two additional reward models: a larger PRM, Qwen2.5-Math-PRM-72B, and an outcome reward model, Qwen2.5-Math-RM-72B [47]. The results indicate that the choice of reward model has minimal impact on performance. Notably, the smaller 7B PRM achieves comparable results, highlighting the efficiency of our approach. In Figure 4 (Right), we examine the impact of varying the length of the first reasoning step. We observe that the shortest first step (i.e., len​(t1n)=256\text{len}(t^{n}_{1})=256) leads to degraded performance. We hypothesize that shorter t1nt^{n}_{1} sequences lack sufficient reasoning content, making them less informative for reliable reward model evaluation. Nevertheless, setting len​(t1n)≥512\text{len}(t^{n}_{1})\geq 512 tokens yields consistently better performance than vanilla sampling.
+Discussion. With the emergence of long CoT models such as DeepSeek-R1, PRMs have received less attention for two main reasons: (1) PRM training is less scalable due to the high cost of acquiring step-wise annotated data, limiting their applicability to specific domains; and (2) most open-source PRMs are constrained by short context windows (e.g., 4K tokens), which are incompatible with the extended reasoning capabilities of long CoT models (e.g., 32K tokens). In this work, we demonstrate a promising approach that leverages short-context PRMs (or RMs) to guide long CoT models toward more efficient generation.
+5 LaBoR: self-correction benchmark
+Figure 5: Performance on LaBoR. Left: Accuracy of the final prediction (qTq_{T}) depending on whether the first reasoning step is included as input. The performance difference is marked in red. Right: The number of tokens used for the final prediction.
+In Section 3, we observe that reasoning models exhibit a pronounced vulnerability to initial errors, highlighting their limited capacity for self-correction. Despite the importance of this limitation, there currently exists no benchmark specifically designed to quantitatively assess the self-correction ability of long-CoT LLMs. To address this gap, we propose LaBoR (Lost at the Beginning of Reasoning), an automatically constructed benchmark aimed at facilitating systematic evaluation and advancing research in this area.
+5.1 Benchmark construction
+We construct our self-correction benchmark, LaBoR, with the following automatic pipeline:
+I. Question collection. We compile a total of 100 questions sourced from AIME24, AIME25, and HMMT, along with 10 reference questions from AIMO2 [48]. We exclude GPQA due to its multiple-choice format, which allows models to potentially guess correct answers. Additionally, we prioritize recent questions to reduce the risk of data leakage from training corpora.
+II. First step generation. For each question, we use DS-R1-Qwen-7B to generate up to 8 candidate first reasoning steps {t1n}n=18\{t^{n}_{1}\}_{n=1}^{8}, terminating generation when the trigger phrase “Alternatively” is produced. This phrase indicates a shift in reasoning, which we use to identify plausible initial errors. We discard reasoning steps that do not contain this phrase, as they likely represent coherent and correct thought processes. This results in a pool of 667 candidate first steps.
+III. First step filtering. We then prompt DS-R1-Qwen-7B to predict an answer q1nq_{1}^{n} conditioned on the question and each individual first step, as ℳ(p<think>t1n</think>)\mathcal{M}(p<\text{think}>t_{1}^{n}</\text{think}>). If q1nq_{1}^{n} is correct, we infer that the reasoning step likely contains necessary reasoning for a correct prediction, and exclude it. After this filtering step, 495 first reasoning steps remain.
+IV. Cross-model verification. To further refine the dataset, we feed each remaining first step into both DS-R1-Qwen-7B and DS-R1-Qwen-14B using ℳ⁡(p<think>t1n​ Alternatively)\mathcal{M}(p<\text{think}>t_{1}^{n}\text{ Alternatively}) and collect the final prediction qTq_{T}. If either model produces a correct answer, we remove the corresponding first step, as this suggests the incorrect reasoning is too easily recoverable. This step yields 301 surviving reasoning steps.
+V. Per-question sampling. To reduce the cost of model evaluation, we randomly retain one first reasoning step per question. This results in a final set of 53 questions, each paired with a corresponding incorrect first reasoning step.
+Descriptive statistics. Among the 53 questions in LaBoR, 8 are sourced from AIME24, 17 from AIME25, 4 from AIMO2, and 24 from HMMT. The number of tokens in the first reasoning steps ranges from 344 to 3928, with an average of 1355 tokens. Two data points are illustrated in Appendix F, along with the corresponding human-annotated error labels.66
+6
+The errors are only annotated for these two samples.
+We construct LaBoR automatically for two key reasons. First, the questions involved are sourced from mathematics competitions and typically require substantial domain expertise to solve. Manually annotating the first incorrect reasoning step would necessitate hiring mathematics experts, making the process both costly and unsustainable. Second, given the rapid advancements in LLMs, we anticipate that our benchmark will become solvable in the near future, while new, challenging questions will continue to emerge. An automated construction pipeline enables us to efficiently regenerate updated versions of LaBoR as needed.
+5.2 Evaluation
+LaBoR is designed as a self-correction benchmark, which requires the reasoning model to interpret the first incorrect reasoning step as if it were generated by the model itself. To evaluate this behavior, we prepend the first erroneous step to the model’s reasoning process using the format ℳ⁡(p<think>t1)\mathcal{M}(p<\text{think}>t_{1}), prompting the model to continue reasoning from that point. Importantly, if this first step is instead included alongside the question in the user prompt pp before the thinking tag, the model may misinterpret it as a distractor or part of the input query—an unintended behavior. Unfortunately, the desired format is only supported by self-deployed models. The APIs of closed-source models generally require both the question and the first step to be provided together in the user message, making it impossible to put the first reasoning step inside the thinking tags. As a result, our evaluations primarily focus on open-source reasoning models, specifically from the DeepSeek-R1 [8], Qwen3 [9], Skywork [11], and Light-R1 [10] families.
+Figure 5 presents the performance of various models on the LaBoR benchmark. We observe the following key findings: (1) The filtered questions in LaBoR are highly challenging, with the best-performing model, Qwen3-235B-A22B, achieving only 47.2% accuracy. This suggests that LaBoR can also serve as a pure math reasoning benchmark. (2) Most models experience a substantial drop in accuracy when an incorrect first reasoning step is provided, compared to the question-only setting—typically ranging from a 3.7% to 11.4% accuracy decline. The only exception is Qwen3-235B-A22B, which remains unaffected by the incorrect first reasoning step. (3) Both Skywork-OR1-32B and Light-R1-32B-DS are finetuned from DeepSeek-R1-Distill-Qwen-32B. While they significantly outperform the base model in the question-only setting, they suffer from greater degradation when presented with an incorrect first step (9.4% and 9.5% vs. 3.7% drop). (4) The number of tokens used in the question-only setting is consistently lower than in the setting that includes both the question and the incorrect first step, indicating that recovering from an error requires more extensive reasoning and thus higher token consumption.
+Additionally, we report evaluation results on several closed models, including OpenAI o4-mini [5], Gemini-2.5-Flash-Preview [7], and Claude-3.7-Sonnet [6], in Appendix I. Due to format limitations—specifically, the inability to insert the first reasoning step within the appropriate thinking tags—these results deviate from the main observations. We strongly recommend using our prescribed input format to accurately assess a model’s ability to self-correct.
+6 Conclusion
+In this paper, we empirically demonstrate that the first reasoning step plays a critical role in determining the final outcome of a model’s reasoning process. Errors introduced early can significantly degrade overall performance. Motivated by this observation, we propose an efficient sampling strategy that identifies and retains high-quality first reasoning steps, reducing the inference computation up to 70% across three model families. To better understand models’ resilience to early errors, we introduce a benchmark featuring intentionally flawed first steps, enabling systematic assessment of self-correction capabilities of reasoning models. We hope this benchmark supports future research toward more robust and reliable reasoning in LLMs.
+References
+[1]
+Joel Hestness, Sharan Narang, Newsha Ardalani, Gregory Diamos, Heewoo Jun, Hassan Kianinejad, Md Mostofa Ali Patwary, Yang Yang, and Yanqi Zhou.
+Deep learning scaling is predictable, empirically.
+arXiv preprint arXiv:1712.00409, 2017.
+[2]
+Jared Kaplan, Sam McCandlish, Tom Henighan, Tom B Brown, Benjamin Chess, Rewon Child, Scott Gray, Alec Radford, Jeffrey Wu, and Dario Amodei.
+Scaling laws for neural language models.
+arXiv preprint arXiv:2001.08361, 2020.
+[3]
+Jordan Hoffmann, Sebastian Borgeaud, Arthur Mensch, Elena Buchatskaya, Trevor Cai, Eliza Rutherford, Diego de Las Casas, Lisa Anne Hendricks, Johannes Welbl, Aidan Clark, et al.
+Training compute-optimal large language models.
+arXiv preprint arXiv:2203.15556, 2022.
+[4]
+Tom Brown, Benjamin Mann, Nick Ryder, Melanie Subbiah, Jared D Kaplan, Prafulla Dhariwal, Arvind Neelakantan, Pranav Shyam, Girish Sastry, Amanda Askell, et al.
+Language models are few-shot learners.
+Advances in neural information processing systems, 33:1877–1901, 2020.
+[5]
+Aaron Hurst, Adam Lerer, Adam P Goucher, Adam Perelman, Aditya Ramesh, Aidan Clark, AJ Ostrow, Akila Welihinda, Alan Hayes, Alec Radford, et al.
+Gpt-4o system card.
+arXiv preprint arXiv:2410.21276, 2024.
+[6]
+AI Anthropic.
+Claude 3.5 sonnet model card addendum.
+Claude-3.5 Model Card, 3, 2024.
+[7]
+Gemini Team, Petko Georgiev, Ving Ian Lei, Ryan Burnell, Libin Bai, Anmol Gulati, Garrett Tanzer, Damien Vincent, Zhufeng Pan, Shibo Wang, et al.
+Gemini 1.5: Unlocking multimodal understanding across millions of tokens of context.
+arXiv preprint arXiv:2403.05530, 2024.
+[8]
+Daya Guo, Dejian Yang, Haowei Zhang, Junxiao Song, Ruoyu Zhang, Runxin Xu, Qihao Zhu, Shirong Ma, Peiyi Wang, Xiao Bi, et al.
+Deepseek-r1: Incentivizing reasoning capability in llms via reinforcement learning.
+arXiv preprint arXiv:2501.12948, 2025.
+[9]
+Qwen Team.
+Qwen3, April 2025.
+URL https://qwenlm.github.io/blog/qwen3/.
+[10]
+Liang Wen, Yunke Cai, Fenrui Xiao, Xin He, Qi An, Zhenyu Duan, Yimin Du, Junchen Liu, Lifu Tang, Xiaowei Lv, Haosheng Zou, Yongchao Deng, Shousheng Jia, and Xiangzheng Zhang.
+Light-r1: Curriculum sft, dpo and rl for long cot from scratch and beyond.
+arXiv preprint arXiv:2503.10460, 2025.
+[11]
+Jujie He, Jiacai Liu, Chris Yuhao Liu, Rui Yan, Chaojie Wang, Peng Cheng, Xiaoyu Zhang, Fuxiang Zhang, Jiacheng Xu, Wei Shen, Siyuan Li, Liang Zeng, Tianwen Wei, Cheng Cheng, Yang Liu, and Yahui Zhou.
+Skywork open reasoner series.
+https://capricious-hydrogen-41c.notion.site/Skywork-Open-Reaonser-Series-1d0bc9ae823a80459b46c149e4f51680, 2025.
+Notion Blog.
+[12]
+Cheng-Han Chiang and Hung-yi Lee.
+Over-reasoning and redundant calculation of large language models.
+In Yvette Graham and Matthew Purver, editors, Proceedings of the 18th Conference of the European Chapter of the Association for Computational Linguistics (Volume 2: Short Papers), pages 161–169, St. Julian’s, Malta, March 2024. Association for Computational Linguistics.
+URL https://aclanthology.org/2024.eacl-short.15/.
+[13]
+Yusen Zhang, Sarkar Snigdha Sarathi Das, and Rui Zhang.
+Verbosity n​e​qneq veracity: Demystify verbosity compensation behavior of large language models.
+arXiv preprint arXiv:2411.07858, 2024a.
+[14]
+Zezhong Wang, Xingshan Zeng, Weiwen Liu, Yufei Wang, Liangyou Li, Yasheng Wang, Lifeng Shang, Xin Jiang, Qun Liu, and Kam-Fai Wong.
+Chain-of-probe: Examining the necessity and accuracy of CoT step-by-step.
+In Findings of the Association for Computational Linguistics: NAACL 2025, pages 2586–2606. Association for Computational Linguistics, 2025a.
+ISBN 979-8-89176-195-7.
+URL https://aclanthology.org/2025.findings-naacl.140/.
+[15]
+Baohao Liao, Yuhui Xu, Hanze Dong, Junnan Li, Christof Monz, Silvio Savarese, Doyen Sahoo, and Caiming Xiong.
+Reward-guided speculative decoding for efficient llm reasoning.
+arXiv preprint arXiv:2501.19324, 2025a.
+[16]
+Baohao Liao, Hanze Dong, Yuhui Xu, Doyen Sahoo, Christof Monz, Junnan Li, and Caiming Xiong.
+Fractured chain-of-thought reasoning.
+arXiv preprint arXiv:2505.12992, 2025b.
+[17]
+Nelson F. Liu, Kevin Lin, John Hewitt, Ashwin Paranjape, Michele Bevilacqua, Fabio Petroni, and Percy Liang.
+Lost in the middle: How language models use long contexts.
+Transactions of the Association for Computational Linguistics, 12:157–173, 2024a.
+doi: 10.1162/tacl_a_00638.
+URL https://aclanthology.org/2024.tacl-1.9/.
+[18]
+Ruoqi Shen, Sébastien Bubeck, Ronen Eldan, Yin Tat Lee, Yuanzhi Li, and Yi Zhang.
+Positional description matters for transformers arithmetic.
+arXiv preprint arXiv:2311.14737, 2023.
+[19]
+Baohao Liao and Christof Monz.
+3-in-1: 2d rotary adaptation for efficient finetuning, efficient batching and composability.
+arXiv preprint arXiv:2409.00119, 2024.
+[20]
+Chujie Zheng, Hao Zhou, Fandong Meng, Jie Zhou, and Minlie Huang.
+Large language models are not robust multiple choice selectors.
+In The Twelfth International Conference on Learning Representations, 2024a.
+[21]
+Pouya Pezeshkpour and Estevam Hruschka.
+Large language models sensitivity to the order of options in multiple-choice questions.
+arXiv preprint arXiv:2308.11483, 2023.
+[22]
+Peiyi Wang, Lei Li, Liang Chen, Zefan Cai, Dawei Zhu, Binghuai Lin, Yunbo Cao, Lingpeng Kong, Qi Liu, Tianyu Liu, and Zhifang Sui.
+Large language models are not fair evaluators.
+In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), pages 9440–9450. Association for Computational Linguistics, 2024.
+URL https://aclanthology.org/2024.acl-long.511/.
+[23]
+Lin Shi, Chiyu Ma, Wenhua Liang, Weicheng Ma, and Soroush Vosoughi.
+Judging the judges: A systematic investigation of position bias in pairwise comparative assessments by llms.
+arXiv preprint arXiv:2406.07791, 2024.
+[24]
+Zhenyu Zhang, Runjin Chen, Shiwei Liu, Zhewei Yao, Olatunji Ruwase, Beidi Chen, Xiaoxia Wu, and Zhangyang Wang.
+Found in the middle: How language models use long contexts better via plug-and-play positional encoding.
+In The Thirty-eighth Annual Conference on Neural Information Processing Systems, 2024b.
+[25]
+Yijin Liu, Xianfeng Zeng, Chenze Shao, Fandong Meng, and Jie Zhou.
+Instruction position matters in sequence generation with large language models.
+In Lun-Wei Ku, Andre Martins, and Vivek Srikumar, editors, Findings of the Association for Computational Linguistics: ACL 2024, pages 11652–11663, Bangkok, Thailand, August 2024b. Association for Computational Linguistics.
+doi: 10.18653/v1/2024.findings-acl.693.
+URL https://aclanthology.org/2024.findings-acl.693/.
+[26]
+Xinyi Chen, Baohao Liao, Jirui Qi, Panagiotis Eustratiadis, Christof Monz, Arianna Bisazza, and Maarten de Rijke.
+The SIFo benchmark: Investigating the sequential instruction following ability of large language models.
+In Findings of the Association for Computational Linguistics: EMNLP 2024, pages 1691–1706. Association for Computational Linguistics, 2024a.
+URL https://aclanthology.org/2024.findings-emnlp.92/.
+[27]
+Guangxuan Xiao, Yuandong Tian, Beidi Chen, Song Han, and Mike Lewis.
+Efficient streaming language models with attention sinks.
+In The Twelfth International Conference on Learning Representations, 2024.
+URL https://openreview.net/forum?id=NG7sS51zVF.
+[28]
+Guanghui Qin, Yukun Feng, and Benjamin Van Durme.
+The NLP task effectiveness of long-range transformers.
+In Andreas Vlachos and Isabelle Augenstein, editors, Proceedings of the 17th Conference of the European Chapter of the Association for Computational Linguistics, pages 3774–3790. Association for Computational Linguistics, 2023.
+doi: 10.18653/v1/2023.eacl-main.273.
+URL https://aclanthology.org/2023.eacl-main.273/.
+[29]
+Liangming Pan, Michael Saxon, Wenda Xu, Deepak Nathani, Xinyi Wang, and William Yang Wang.
+Automatically correcting large language models: Surveying the landscape of diverse self-correction strategies.
+arXiv preprint arXiv:2308.03188, 2023.
+[30]
+Aviral Kumar, Vincent Zhuang, Rishabh Agarwal, Yi Su, John D Co-Reyes, Avi Singh, Kate Baumli, Shariq Iqbal, Colton Bishop, Rebecca Roelofs, et al.
+Training language models to self-correct via reinforcement learning.
+arXiv preprint arXiv:2409.12917, 2024.
+[31]
+Jie Huang, Xinyun Chen, Swaroop Mishra, Huaixiu Steven Zheng, Adams Wei Yu, Xinying Song, and Denny Zhou.
+Large language models cannot self-correct reasoning yet.
+In The Twelfth International Conference on Learning Representations, 2024.
+URL https://openreview.net/forum?id=IkmD3fKBPQ.
+[32]
+Yuxiao Qu, Tianjun Zhang, Naman Garg, and Aviral Kumar.
+Recursive introspection: Teaching language model agents how to self-improve.
+Advances in Neural Information Processing Systems, 37:55249–55285, 2024.
+[33]
+Gladys Tyen, Hassan Mansoor, Victor Cărbune, Yuanzhu Peter Chen, and Tony Mak.
+Llms cannot find reasoning errors, but can correct them given the error location.
+In Findings of the Association for Computational Linguistics ACL 2024, pages 13894–13908, 2024.
+[34]
+Huaixiu Steven Zheng, Swaroop Mishra, Hugh Zhang, Xinyun Chen, Minmin Chen, Azade Nova, Le Hou, Heng-Tze Cheng, Quoc V Le, Ed H Chi, et al.
+Natural plan: Benchmarking llms on natural language planning.
+arXiv preprint arXiv:2406.04520, 2024b.
+[35]
+Thomas Palmeira Ferraz, Kartik Mehta, Yu-Hsiang Lin, Haw-Shiuan Chang, Shereen Oraby, Sijia Liu, Vivek Subramanian, Tagyoung Chung, Mohit Bansal, and Nanyun Peng.
+Llm self-correction with decrim: Decompose, critique, and refine for enhanced following of instructions with multiple constraints.
+In Findings of the Association for Computational Linguistics: EMNLP 2024, pages 7773–7812, 2024.
+[36]
+Tianyu Zheng, Ge Zhang, Tianhao Shen, Xueling Liu, Bill Yuchen Lin, Jie Fu, Wenhu Chen, and Xiang Yue.
+Opencodeinterpreter: Integrating code generation with execution and refinement.
+In Findings of the Association for Computational Linguistics ACL 2024, pages 12834–12859, 2024c.
+[37]
+Xinyun Chen, Maxwell Lin, Nathanael Schärli, and Denny Zhou.
+Teaching large language models to self-debug.
+In The Twelfth International Conference on Learning Representations, 2024b.
+URL https://openreview.net/forum?id=KuPixIqPiq.
+[38]
+MAA Committees.
+AIME Problems and Solutions.
+https://artofproblemsolving.com/wiki/index.php/AIME_Problems_and_Solutions, 2025.
+[39]
+Yue Wang, Qiuzhi Liu, Jiahao Xu, Tian Liang, Xingyu Chen, Zhiwei He, Linfeng Song, Dian Yu, Juntao Li, Zhuosheng Zhang, et al.
+Thoughts are all over the place: On the underthinking of o1-like llms.
+arXiv preprint arXiv:2501.18585, 2025b.
+[40]
+Nils Reimers and Iryna Gurevych.
+Sentence-bert: Sentence embeddings using siamese bert-networks.
+In Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing. Association for Computational Linguistics, 2019.
+URL https://arxiv.org/abs/1908.10084.
+[41]
+Wenhui Wang, Furu Wei, Li Dong, Hangbo Bao, Nan Yang, and Ming Zhou.
+Minilm: Deep self-attention distillation for task-agnostic compression of pre-trained transformers.
+Advances in Neural Information Processing Systems, 2020.
+URL https://arxiv.org/abs/2002.10957.
+[42]
+Xuezhi Wang, Jason Wei, Dale Schuurmans, Quoc Le, Ed Chi, Sharan Narang, Aakanksha Chowdhery, and Denny Zhou.
+Self-consistency improves chain of thought reasoning in language models.
+arXiv preprint arXiv:2203.11171, 2022.
+[43]
+Woosuk Kwon, Zhuohan Li, Siyuan Zhuang, Ying Sheng, Lianmin Zheng, Cody Hao Yu, Joseph E. Gonzalez, Hao Zhang, and Ion Stoica.
+Efficient memory management for large language model serving with pagedattention.
+In Proceedings of the ACM SIGOPS 29th Symposium on Operating Systems Principles, 2023.
+[44]
+Mislav Balunović, Jasper Dekoninck, Ivo Petrov, Nikola Jovanović, and Martin Vechev.
+Matharena: Evaluating llms on uncontaminated math competitions, February 2025.
+URL https://matharena.ai/.
+[45]
+David Rein, Betty Li Hou, Asa Cooper Stickland, Jackson Petty, Richard Yuanzhe Pang, Julien Dirani, Julian Michael, and Samuel R Bowman.
+Gpqa: A graduate-level google-proof q&a benchmark.
+In First Conference on Language Modeling, 2024.
+[46]
+Zhenru Zhang, Chujie Zheng, Yangzhen Wu, Beichen Zhang, Runji Lin, Bowen Yu, Dayiheng Liu, Jingren Zhou, and Junyang Lin.
+The lessons of developing process reward models in mathematical reasoning.
+arXiv preprint arXiv:2501.07301, 2025.
+[47]
+An Yang, Beichen Zhang, Binyuan Hui, Bofei Gao, Bowen Yu, Chengpeng Li, Dayiheng Liu, Jianhong Tu, Jingren Zhou, Junyang Lin, Keming Lu, Mingfeng Xue, Runji Lin, Tianyu Liu, Xingzhang Ren, and Zhenru Zhang.
+Qwen2.5-math technical report: Toward mathematical expert model via self-improvement.
+arXiv preprint arXiv:2409.12122, 2024.
+[48]
+Simon Frieder, Sam Bealing, Arsenii Nikolaiev, Geoff C. Smith, Kevin Buzzard, Timothy Gowers, Peter J. Liu, Po-Shen Loh, Lester Mackey, Leonardo de Moura, Dan Roberts, D. Sculley, Terence Tao, David Balduzzi, Simon Coyle, Alex Gerko, Ryan Holbrook, Addison Howard, and XTX Markets.
+Ai mathematical olympiad - progress prize 2.
+https://kaggle.com/competitions/ai-mathematical-olympiad-progress-prize-2, 2024.
+Kaggle.
+[49]
+Josh Achiam, Steven Adler, Sandhini Agarwal, Lama Ahmad, Ilge Akkaya, Florencia Leoni Aleman, Diogo Almeida, Janko Altenschmidt, Sam Altman, Shyamal Anadkat, et al.
+Gpt-4 technical report.
+arXiv preprint arXiv:2303.08774, 2023.
+[50]
+Gemini Team, Rohan Anil, Sebastian Borgeaud, Jean-Baptiste Alayrac, Jiahui Yu, Radu Soricut, Johan Schalkwyk, Andrew M Dai, Anja Hauth, Katie Millican, et al.
+Gemini: a family of highly capable multimodal models.
+arXiv preprint arXiv:2312.11805, 2023.
+Appendix A Limitations
+Our work, while illuminating the critical role of the first reasoning step in the chain-of-thought processes of LLMs, possesses several limitations. First, our empirical evaluations primarily focus on mathematical and scientific reasoning tasks. Thus, the findings regarding the significance of first reasoning steps and the effectiveness of our pruning strategy may not directly generalize to broader domains such as code writing, commonsense reasoning, or creative writing tasks. Despite this limitation, our method possesses inherent flexibility and can potentially generalize or adapt to new scenarios with suitable modifications or training adjustments. Second, our proposed early pruning method relies on a process reward model (PRM) trained specifically on mathematical reasoning datasets, limiting its applicability to contexts where high-quality reward models are unavailable or challenging to develop. Lastly, the LaBoR benchmark specifically targets mathematical reasoning tasks and consists of a relatively small number of samples, potentially limiting the generalizability of our findings. However, the automated pipeline we propose makes it feasible to extend the benchmark to new domains or larger datasets.
+Appendix B Boarder impacts
+This work identifies a critical vulnerability in LLMs: the disproportionate influence of the first reasoning step on the final output during long CoT reasoning. Our findings reveal that even minor early mistakes can drastically degrade model performance, and that current models have limited capacity for self-correction. To address this, we introduce a dual contribution: (1) a lightweight early pruning method that discards unpromising initial reasoning paths, reducing inference cost while preserving accuracy; and (2) LaBoR, a benchmark specifically designed to evaluate models’ self-correction abilities in the presence of flawed first steps.
+Our method directly improves the efficiency and robustness of LLMs, two crucial goals for scaling their deployment. The proposed early pruning mechanism can reduce inference cost by up to 70% without performance degradation, contributing to the sustainability of LLM use.
+Additionally, the LaBoR benchmark enables more rigorous evaluation of a model’s reasoning capabilities, especially its ability to self-correct—a key desideratum for safe deployment in high-stakes domains such as education, law, and scientific discovery. By spotlighting the limitations of current models, this work encourages the development of reasoning architectures that are more trustworthy and interpretable.
+There are also risks. Efficiency improvements may lower the barrier to misuse—enabling broader deployment of LLMs in contexts where safety mechanisms are underdeveloped (e.g., disinformation generation or rapid, low-cost model abuse). The benchmark, while designed for rigorous evaluation, could potentially be reverse-engineered as an adversarial testbed to construct prompts that reliably induce reasoning failures.
+More broadly, this work underscores a weakness in LLM reasoning—namely, overreliance on initial cues—which may deepen existing user trust in model outputs without fully addressing reliability. If misinterpreted, this may create a false sense of security in self-correction capabilities and lead to blind adoption in sensitive workflows.
+Appendix C LaBoR data
+Please refer to the supplementary material for the data file.
+Appendix D Semantic similarity between first reasoning step and final answer
+We also report the cosine similarity between the embedding of the ii-th reasoning step tit_{i} and the final conclusion cTc_{T}, interpolated using the average number of reasoning steps (Figure D.1, Left). To mitigate the influence of varying text lengths across reasoning steps, we additionally segment the thinking context into fixed-length chunks, where each chunk has the same length as the first reasoning step. As shown in Figure D.1, the high semantic similarity between the first reasoning step and the final answer remains consistent.
+Figure D.1:
+Cosine similarity between the embedding of the ii-th reasoning step tit_{i} and the final conclusion cTc_{T}, interpolated using the average number of reasoning steps (Left). Cosine similarity between the embedding of the ii-th span sis_{i} and cTc_{T}, interpolated using the maximum number of split chunks (Middle) or the average number of reasoning steps (Right).
+Appendix E Examples for minor perturbation
+Original final conclusion
+To solve the problem, we are given triangle A​B​CABC with side lengths A​B=5AB=5, B​C=9BC=9, and A​C=10AC=10.
+[…]
+Step 4: Compute A​PAP. Since PP lies on line segment A​DAD, and DD lies outside the circle, the point PP lies between AA and DD. Therefore:
+A​P=D​A−D​P=32522−2025286.AP=DA-DP=\frac{325}{22}-\frac{2025}{286}.
+Find a common denominator:
+32522=4225286⇒A​P=4225−2025286=2200286=10013.\frac{325}{22}=\frac{4225}{286}\Rightarrow AP=\frac{4225-2025}{286}=\frac{2200}{286}=\frac{100}{13}.
+Final Step: Compute m+nm+n.
+The reduced form of A​PAP is 10013\frac{100}{13}, so:
+m=100,n=13⇒m+n=\boxed{113}.m=100,\hskip 9.24994ptn=13\Rightarrow m+n={\color[rgb]{1,0.5,0}\text{{\textbackslash boxed\lx@text@lbrace 113\lx@text@rbrace}}}.
+Final Answer: \boxed{113}
+New correct first reason
+To solve the problem, we are given triangle A​B​CABC with side lengths A​B=5AB=5, B​C=9BC=9, and A​C=10AC=10.
+[…]
+Step 4: Compute A​PAP. Since PP lies on line segment A​DAD, and DD lies outside the circle, the point PP lies between AA and DD. Therefore:
+A​P=D​A−D​P=32522−2025286.AP=DA-DP=\frac{325}{22}-\frac{2025}{286}.
+Find a common denominator:
+32522=4225286⇒A​P=4225−2025286=2200286=10013.\frac{325}{22}=\frac{4225}{286}\Rightarrow AP=\frac{4225-2025}{286}=\frac{2200}{286}=\frac{100}{13}.
+Final Step: Compute m+nm+n.
+The reduced form of A​PAP is 10013\frac{100}{13}, so:
+m=100,n=13⇒m+n=113.m=100,\hskip 9.24994ptn=13\Rightarrow m+n={\color[rgb]{1,0.5,0}\text{{113}}}.
+New incorrect first reason
+To solve the problem, we are given triangle A​B​CABC with side lengths A​B=5AB=5, B​C=9BC=9, and A​C=10AC=10.
+[…]
+Step 4: Compute A​PAP. Since PP lies on line segment A​DAD, and DD lies outside the circle, the point PP lies between AA and DD. Therefore:
+A​P=D​A−D​P=32522−2025286.AP=DA-DP=\frac{325}{22}-\frac{2025}{286}.
+Find a common denominator:
+32522=4225286⇒A​P=4225−2025286=2200286=10013.\frac{325}{22}=\frac{4225}{286}\Rightarrow AP=\frac{4225-2025}{286}=\frac{2200}{286}=\frac{100}{13}.
+Final Step: Compute m+nm+n.
+The reduced form of A​PAP is 10013\frac{100}{13}, so:
+m=100,n=13⇒m+n=103.m=100,\hskip 9.24994ptn=13\Rightarrow m+n={\color[rgb]{1,0.5,0}\text{{103}}}.
+Figure E.1: Illustration of a targeted perturbation to create correct and incorrect first reasoning steps, as discussed in Section 3.3. The modified context is highlighted in orange.
+Appendix F LaBoR benchmark examples
+The self-reflection benchmark includes the following fields: a question, a flawed first reason, the ground truth answer, and the source of the original question. The flawed reasoning spans a range of difficulties—from single, easily correctable mistakes (Figure F.1) to reasoning traces with multiple errors or misleading logic that require deeper revision (Figure F.2).
+Example 1 of LaBoR benchmark
+Question: Let A​B​C​DABCD be an isosceles trapezoid such that C​D>A​B=4CD>AB=4. Let EE be a point on line C​DCD such that D​E=2DE=2 and DD lies between EE and CC. Let MM be the midpoint of A​E¯\overline{AE}. Given that points A,B,C,DA,B,C,D, and MM lie on a circle with radius 55, compute M​DMD.
+First reason: Alright, let’s tackle this problem step by step. It’s about an isosceles trapezoid and some points on a circle. Hmm, okay, so let me first parse the information given.
+We have an isosceles trapezoid A​B​C​DABCD where C​D>A​B=4CD>AB=4. So, A​BAB is one of the bases and it’s 4 units long. Since it’s an isosceles trapezoid, the other base C​DCD must be longer, which is given. The legs A​DAD and B​CBC are equal in length because it’s isosceles.
+Now, point EE is on line C​DCD such that D​E=2DE=2, and DD lies between EE and CC. So, if I imagine the trapezoid, C​DCD is the longer base. Starting from DD, we go 2 units beyond to point EE. Therefore, E​D=2ED=2 and E​C=C​D−E​D=C​D−2EC=CD-ED=CD-2. But I don’t know C​D​CCDC yet, so maybe I can figure that out later.
+Point MM is the midpoint of A​E¯\overline{AE}. So, we connect points AA and EE, and MM is halfway along that segment.
+Given that points A,B,C,DA,B,C,D, and MM lie on a circle with radius 5. So, these five points are concyclic (lie on the same circle), and the circle has a radius of 5. We need to compute M​DMD, the distance from MM to DD.
+Okay, so since A​B​C​DABCD is an isosceles trapezoid, let me recall that in such trapezoids, the legs are equal, and the base angles are equal. Also, the diagonals are equal in length. So, A​C=B​DAC=BD.
+I think it might help to assign coordinates to the points to make the problem more concrete. Let me try to set up a coordinate system.
+Let me place the trapezoid so that the bases A​BAB and C​DCD are horizontal. Let me let the center of the circle be at the origin, but wait, actually, maybe it’s better to place A​BAB at a certain position to make calculations easier.
+Mistakes in first reasoning step: The mistake is the incorrect subtraction of segment lengths. It should be corrected to “E​C=C​D+E​D=C​D+2EC=CD+ED=CD+2” since point DD lies between EE and CC, and the distances should be added, not subtracted.
+Ground truth answer: 6\sqrt{6}.
+Source:HMMT.
+Figure F.1: Example 1 of LaBoR benchmark.
+Example 2 of LaBoR benchmark
+Question: Four unit squares form a 2×22\times 2 grid. Each of the 12 unit line segments forming the sides of the squares is colored either red or blue in such a way that each unit square has 2 red sides and 2 blue sides. One example is shown below (red is solid, blue is dashed). Find the number of such colorings.
+[asy]
+size(4cm);
+defaultpen(linewidth(1.2));
+draw((0, 0) – (2, 0) – (2, 1));
+draw((0, 1) – (1, 1) – (1, 2) – (2,2));
+draw((0, 0) – (0, 1), dotted);
+draw((1, 0) – (1, 1) – (2, 1) – (2, 2), dotted);
+draw((0, 1) – (0, 2) – (1, 2), dotted);
+[/asy]
+First reason: Alright, so I have this problem about coloring the sides of a 2x2 grid of squares. Each square has four sides, and each of these sides is colored either red or blue. The condition is that each individual square must have exactly two red sides and two blue sides. The question is asking for the number of such colorings.
+First, let me visualize the grid. It’s a 2x2 grid, so there are four squares arranged in a larger square. Each square has four sides, and each side is shared with another square except for the outermost sides. But in the problem, it says there are 12 unit line segments forming the sides of the squares. Wait, let me check that: a 2x2 grid has 3 horizontal lines and 3 vertical lines, each of length 2 units. So, each horizontal line is divided into two segments, right? So, the total number of horizontal segments is 3 rows times 2 segments per row, which is 6, and similarly, the vertical segments are also 3 columns times 2 segments per column, which is another 6. So, 6 + 6 = 12 segments in total. Okay, that makes sense.
+Each of these 12 segments can be colored either red or blue. However, the constraint is that each of the four squares must have exactly two red sides and two blue sides. So, even though each segment can be colored independently, we have these local constraints for each square.
+I think a good way to approach this problem is by considering each square and the possible colorings for its sides, then seeing how they can fit together without violating the constraints. However, since the coloring of one square’s side affects the adjacent squares, this could get complicated.
+Maybe I can model this as a graph
+where each segment is a node, and the squares impose constraints on the nodes (i.e., exactly two red and two blue edges around each square). But I’m not too familiar with graph theory, so maybe that’s not the best approach.
+Mistakes in first reasoning step: Mistake 1 incorrectly assumes that in a 2×22\times 2 grid, each corner square has two shared and two unshared sides, without properly accounting for edge distribution. Mistake 2 introduces unnecessary abstraction by treating segments as “nodes,” which obscures the natural structure: the segments themselves are the edges whose colours we choose, and each square simply places a rule on its four incident edges. Working directly with those four constraints is far cleaner than introducing an extra level of abstraction.
+Ground truth answer: 82.
+Source: AIME25.
+Figure F.2: Example 2 of LaBoR benchmark.
+Appendix G Prompt example for evaluation
+The template for using the DeepSeek-R1 model is provided below. We apply the same structure to other open-source thinking models, with slight adjustments for model-specific input and output formats.
+Prompt example for DeepSeek-R1:
+<|begin_of_sentence|>Please reason step by step, and put your final answer within \boxed{}.
+<|User|>[Question]<|Assistant|><think>
+Appendix H Correlation between first reasoning step and final prediction in Qwen3
+Figure H.1: Accuracy and number of tokens on Qwen3-8B. Left: The relationship between the accuracy of the final prediction (qTq_{T}) and the correctness of the prediction solely based on the first reasoning step (q1q_{1}) across different difficulty levels. If q1q_{1} is incorrect, qTq_{T} is more likely incorrect. Right: The number of tokens used for the final prediction after the first reasoning step t1t_{1}, i.e., the number of tokens used for [t2,t3,…,tT][t_{2},t_{3},...,t_{T}]. Although q1q_{1} is correct, the model still consumes a large amount of tokens for the following reasoning steps–overthinking.
+Appendix I Closed-source model performance on the LaBoR benchmark
+To better understand models’ performance on self-correction in long-chain-of-thought (CoT) reasoning, we evaluate several closed-source models—OpenAI o4-mini [49], Gemini-2.5-Flash-Preview [50], and Claude-3.7-Sonnet on the LaBoR benchmark.
+Experimental Setup. Since these closed-source models do not support inserting intermediate reasoning steps directly, we use prompting to simulate the model’s thinking based on the given first reasoning step. The prompts used in our experiments are as follows:
+Question-only setting:
+Please solve the following math problem step by step. Output only your full thinking process, and then summarize the final answer in \boxed{}.
+Question: [Question]
+Question-and-first-reason setting:
+Please solve the following math problem step by step. Continue exactly from where you left off, treating the previous reasoning as your own. Build your continued thinking based on it. Output only your full thinking process, and then summarize the final answer in \boxed{}.
+Question: [Question]
+Reasoning: [First reason]
+The maximum output token length is set to 32,00032{,}000. We report both model accuracy and the number of generated tokens for each configuration. The results are reported in Figure I.1,
+Figure I.1: Closed-source model performance on the LaBoR benchmark. Left: Accuracy of the final prediction (qTq_{T}) depending on whether the first reasoning step is included as input. Right: The number of tokens used for the final prediction.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

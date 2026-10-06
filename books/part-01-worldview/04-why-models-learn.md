@@ -58,6 +58,9 @@ Will the solution work beyond the training samples?
 
 从预训练参数开始优化，还多了一个局部条件：不是因为起点已经会很多任务，就可以把训练损失持续下降当作泛化收益。一个受限理论分支在预训练点附近线性化网络，用该点的 Neural Tangent Kernel（NTK）描述参数微小变化能产生哪些函数变化，再以目标数据上的经验核谱和噪声决定早停的 bias–variance 取舍。[Transformer 微调的早停分析](https://arxiv.org/html/2602.13942v1)允许微调从非随机的预训练点开始，但仍要求预训练始于 Gaussian 随机初始化、参数留在可控邻域、宽度充分大、稳定核满秩，以及目标差额属于对应 RKHS 等条件；这不是任意现代模型都会停留在 lazy regime 的证明。谱估计、Jacobian 计算与验证集均有成本，理论停点还依赖不可直接获得的目标差额范数和噪声，实际实验因此用 hold-out 选择停点。GPT-Neo-1.3B 上的有限任务与三次随机运行只提供局部支持，不能以一个经验谱斜率替代跨任务质量验收；核明显漂移、条件不成立或谱估计不稳定时，仍回到独立验证集和实际训练轨迹，而非照搬理论训练步数。<!-- source-family:SF-2026-ARXIV-2602-13942 -->
 
+初始化的收益还须按目标消费者分验，快速拟合坐标信号不等更好的inverse prior。[受限INR对照](https://arxiv.org/html/2603.29034v1)在同一sine/Strainer结构中以noise预训练共享层，新任务重置head并继续更新全部相关参数：它可提高信号拟合，却比原初始化或structured pretraining更差地去噪。这是优化适应与恢复bias方向相反的局部证据，不由NTK/landscape图识别唯一因果。十signal预训练、全部fine-tune/诊断及停点选择都付费；报告的early-stop PSNR与迭代点需要干净reference评价，不是部署未知干净答案的停点，video切片也非全胜。目标、noise或早停支持失配时保留原初始化/structured prior与独立holdout，分开拟合和真实恢复质量，不从低重建loss或少步数批准更好泛化、免费初始化或LLM迁移。
+<!-- source-family:SF-2026-ARXIV-2603-29034 -->
+
 ## Loss 把任务目标变成局部信号
 
 模型输出本身不能告诉优化器“哪里错了”。我们需要一个损失函数：
@@ -90,6 +93,17 @@ theta_star = argmin_theta R_hat(theta)
 
 例如，一个回答在 token-level loss 上更可能，并不自动意味着它事实正确、安全或符合业务策略。那些目标需要通过数据构造、后训练、约束和 Evaluation 进入系统。
 
+代理与任务的距离，还可能来自梯度主要作用在什么位置：像素大多正确的分割，仍可因很窄的断口破坏整条结构。除了均匀计算局部误差，可以先由标签骨架或当前预测的连通关系选择监督支持，再在这些位置计算可微损失；硬阈值、连通分析与随后反向传播是两步，不必把选择器也当成已求导的网络。[受限连续结构对照](https://arxiv.org/html/2509.03154v1)展示这种分支，但固定支持上的梯度不等真实拓扑目标的全导数，更不保证结构、长度或每项任务质量都改善。原BCE/Dice、选择规则、空支持与边界处理须共同验收，标签缺漏和分辨率也会改变应学什么；不能由更低像素loss批准下游几何。骨架/连通计算、额外训练、调权与独立下游检验均付费，渐近更省也未必墙钟更快；结构先验、监督或总费用不适合时，保留普通局部损失、较弱辅助项与可信标签，而非为优化一个代理牺牲真实消费者。
+<!-- source-family:SF-2025-ARXIV-2509-03154 -->
+
+损失代理本身也可以先学习，而不只由工程师写定公式。一条受限分类分支先合成类别标签与概率向量，以正确类别概率越低、样本越难的先验构造样本对，让一个小网络学习相应的 loss 排序，再冻结这份 loss 去训练真实分类器。这只移除了所述 **loss 形状预训练阶段**对真实样本的依赖；合成概率的采样分布与难度定义仍是人为先验，分类器训练和可能的目标验证选择仍须分别记账，不能把 synthetic loss prior 改写成整个系统无需真实数据。其 CIFAR-10/ResNet 实验提供有限可行性，而非跨任务或大模型的普遍改善。
+
+排序正确还不等于概率目标正确。作为本书的反例，令 `p` 为预测类别分布、`q` 为真实类别分布，`L(p,y)=1-p_y` 完全符合上述难度排序，但期望风险为 `1-q·p`，最优预测通常集中到 `q` 最大的类别，并非恢复整个 `q`。因此 ranking 监督和非负输出本身不能推出 strictly proper loss 或概率校准；这不是声称作者实际学到了该反例。[必要方法与反侧](https://arxiv.org/html/2605.03722v1)也出现 synthetic ranking 良好而部分下游结果低于交叉熵的情形，且没有完整交代独立 synthetic holdout 与目标验证选择协议。合成样本、loss 搜索/求值、额外网络和分类器重训都有成本；先验、梯度或 held-out 质量失配时，保留交叉熵等已有目标与独立验证，不用较好排序代替真实泛化验收。<!-- source-family:SF-2026-ARXIV-2605-03722 -->
+
+相同的最优预测目标，也不要求采用相同的学习过程。一次分类可直接优化最终类别的负log概率；另一条受限分支让同一模型多次更新类别分布，以本步与上一步正确类别log-score之差作奖励。折扣累积后，这等价于在随机几何停止步上优化log-score，因此中间预测也承担学习义务，而不是只等最终一步输出。它没有取消监督标签，标签仍提供训练reward；在可实现与可积等条件下，目标仍指向真实条件类别概率，不是RL天然比交叉熵更接近真理。
+
+目标相同，置信度动力却可能不同：若各步共享同一读头、thought状态固定有界，而且早步在每个非零读头方向上都存在正的误分类margin，过大logit尺度会被这些早步惩罚；这只是在强条件下约束共享读头，不证明端到端变化的表示或任何RL模型自动校准。推理时还可用value估计未来log-score改善，以负值建议停止，但它不是当前答案正确率或安全授权。[受限图像分类对照](https://arxiv.org/html/2604.22110v1)用更长RL训练预算、额外recurrent计算和边界敏感的Dirichlet policy换较低ECE，不能认证等成本收益或LLM迁移；目标、value或校准条件失配时，保留单次监督分类、后校准和固定计算上限。
+
 ## 梯度下降：怎样从错误走向参数更新
 
 如果参数很多，枚举所有 `theta` 不可行。梯度提供了当前位置上损失变化最快的方向：
@@ -108,6 +122,12 @@ theta_(t+1) = theta_t - eta_t * g_t
 
 负梯度是局部下降方向，不是全局最优导航。学习率过小，训练进展缓慢；过大，更新可能越过有效区域甚至数值发散。实际优化器会加入 momentum、自适应缩放、weight decay 等机制，但核心仍是利用局部导数决定参数如何改变。
 
+观察训练方向时，还要把当前loss的梯度、多个任务梯度的聚合和优化器最终step分别保存。Momentum、自适应缩放与weight decay会过滤方向；混合任务又可能彼此抵消，因此从最终更新的低秩结构反推“特征在哪里形成”，可能漏掉仍在各任务梯度中的信号。一个[受限模块算术诊断](https://arxiv.org/html/2604.25143v1)比较rolling SVD的这些输入，并在干预时区分先投影gradient再更新moments、与优化器先看完整gradient再投影step；这两条路径不是同一因果实验。随机rank-3约束也能达到相近加速，所以高方向耦合只是诊断，不证明那条子空间是学习必经之路。按任务求梯度、存窗口及成对投影增加计算与状态，toy任务/少量seed不提供LLM训练配方；诊断失配时保留原优化器、原始gradient/step与held-out质量，不按一个谱值删除更新方向。<!-- source-family:SF-2026-ARXIV-2604-25143 -->
+
+同一个函数还可以有不同参数坐标，而“按梯度走一步”必须指定坐标中的度量。若一层写成 `W=D W′ E`，其中 `D/E` 是给定的正对角尺度，在 canonical 参数 `W′` 上做普通梯度更新，映回原坐标可得到 `W−ηD²GE²`，`G` 为原坐标梯度；这是一条由尺度决定的预条件分支，不表示原链式法则或普通反向传播算错了。它改变优化路径，不凭空扩大函数族，也不保证更好的泛化。<!-- source-family:SF-2026-ARXIV-2601-10873 -->
+
+[尺度分支的必要边界](https://arxiv.org/html/2601.10873v1)包括正齐次激活允许怎样的 gauge、残差如何锁定相连尺度，以及 bias、卷积和 optimizer state 如何随坐标处理；LayerNorm、softmax 等操作不能继承任意全网络尺度等价。维护尺度与状态增加实现和数值负担，原文也没有足以支持“替代现代 normalization”的完整实验。条件不成立或轨迹变差时，保留普通梯度、既有 normalization 与实际 loss/gradient/step 对照，不由单位一致性给 optimizer 性能签发保证。
+
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-21933:start -->
 把小步长训练近似成可逆连续流或 Langevin 过程，有助于建立直觉，却会省略有限离散更新的时间不对称。受限理论表明，backward error、time-renormalized correction、time-asymmetry 与正则化 entropy production 在 leading order 可形成一致的不可逆性刻画，并产生选择学习轨迹的 symmetry-breaking force。它修正的是动力学解释，不是一个自动选择 schedule 的新 optimizer。
 
@@ -124,9 +144,17 @@ theta_(t+1) = theta_t - eta_t * g_t
 
 局部二次模型会给出一个由最大曲率和 learning rate 决定的经典稳定边界；它在 Hessian 近似固定、更新只停留在同一局部区域时很有用。深网训练却可能在 sharpness 越过这条静态阈值后继续降低 loss，因为离散 gradient map 会进入带振荡的局部分岔：normal direction 围绕低损失区域摆动，tangent direction 仍可能缓慢前进。这里改变的是训练动力学的解释，不是负梯度突然获得全局导航能力。
 
+这条边界还需要分清“梯度怎样改变”和“loss 怎样改变”。对固定步长、full-batch GD 的一步 d=w_next−w，沿该线段均匀平均的 Hessian 控制下一步梯度，而按三角权重平均的 Hessian 控制这一步 loss 变化；只看端点的最大特征值，不能把两者当成同一个观测量。若整条轨迹的 loss 上下有界，且累计平方步长持续发散，望远镜求和才迫使按平方步长加权的方向曲率均值趋向 2/η；有限能量的正常收敛轨迹不受这条结论约束，也不由它推出全局吸引或每步最大曲率锁定。
+
+[必要一步恒等式与条件边界](https://arxiv.org/html/2604.20446v1)将 EoS 变成可核的轨迹诊断，却没有把 SGD、momentum 或大模型训练自动纳入定理。计算路径曲率仍需 Hessian-vector 或等价探测成本；局部振荡、持续 forcing 与 loss 控制条件失效时，应回到实际 loss、gradient 和 step norm 的联合监控，而不是按 2/η 自动提高 learning rate。
+
 Optimizer 拥有 step size 与 momentum，loss geometry 决定局部 map，sharpness/Lyapunov 指标只是一种诊断 sensor，不能自动授予放大学习率的权限。曲率估计昂贵、局部分岔假设也可能不成立；出现 loss、gradient 或 step norm 失控时仍应回退保守 schedule、clipping 和联合监控。更完整的调度与稳定性合同由第 28 章接手。
 
 <!-- semantic-body-binding:SF-2026-ARXIV-2606.15551 -->
+
+“局部更平”之外，还可以诊断新增一个样本会让当前解附近的损失函数场改变多少。一个受限方法在给定扰动人口上比较相邻数据规模的经验损失变化，区分直接 Monte Carlo 估计与局部二次代理；梯度、Hessian 和扰动协方差共同决定读数。它测量的是 loss-field 对数据加入的敏感性，不是重新优化后模型参数、测试误差或实际训练过程已经稳定；样本数、中心位置、扰动尺度与协方差必须随诊断一起记录。<!-- source-family:SF-2026-ARXIV-2604-14870 -->
+
+[曲率对齐 probing 的必要边界](https://arxiv.org/html/2604.14870v1)包括局部二次近似及导数、损失的统一有界条件，不能把 Gaussian 扰动直接当作全域保证；优先取最大曲率方向也需要相应变化方向的排序与共同坐标等条件，不是普遍最优子空间。受测小模型在较小扰动下可用，增大扰动会反退。解析代理的末阶段可以极快，却仍须支付梯度、Hessian 子空间和代理构建；约18,000倍只比较该末阶段，不能替代完整诊断总耗时。假设或读数不稳时，回到直接扰动、实际 loss/gradient/step 监测与较小邻域，不由这个 sensor 批准更大学习率或更好泛化。
 
 数据集通常太大，无法每一步计算完整平均损失。训练因而使用 mini-batch `B_t` 对梯度做估计：
 
@@ -137,6 +165,12 @@ g_t = (1 / |B_t|) * sum_(i in B_t) grad_theta L(f_theta(x_i), y_i)
 `|B_t|` 是 batch 中的样本数。这个估计带有噪声，但计算成本更低，也能持续提供更新方向。batch 变大时，梯度估计通常更稳定，却需要更多显存和并行设备，并可能改变优化动力学；batch 变小时，噪声更大但更新更频繁。
 
 所以 batch size 不是单纯的吞吐参数。它同时连接统计估计、优化行为、显存容量和分布式通信。
+
+小batch的噪声也不一定留下固定的收敛误差下限，关键是它是否随目标gap一同消失。这里以`f`表示优化目标、`f*`表示相应局部最小值，`μ>0`是PL常数、`L`是梯度变化的上界，`D`是条件无偏的梯度估计噪声、`σ≥0`界定其随gap消失的强度，`γ`是步长。对局部二阶连续、L-smooth且满足`||grad f||²≥2μ(f−f*)`的目标，若还满足`E[||D||²|history]≤σ(f−f*)`，固定步长`0<γ<2/(L+σ/2)`可在进入足够小邻域之后，以高概率收敛到同loss值的某个局部极小点；[这份局部结果](https://arxiv.org/html/2605.14663v1)以任意略大于`m(γ)=max_{λ∈{μ,L}}[(1−γλ)²+γ²σλ/2]`的渐近界控制平方距离和lossgap，不要求该邻域强凸或极小点唯一。这里没有保证优化器能找到该邻域，也不是每步收缩、有限预算或泛化保证；不消失的采样噪声、momentum和Adam不能直接继承结论。验证曲率、噪声与轨迹支持仍有成本，条件未证时保留实际loss/gradient/step监控与保守schedule，不因overparameterized标签就停用衰减、clipping或独立质量验收。<!-- source-family:SF-2026-ARXIV-2605-14663 -->
+
+噪声影响的也可能是训练早期何时停止跨盆地移动，而非最终平衡分布怎样偏好平坦解。一条受限分析让快变量先适应、慢变量控制盆地间通道；改变学习率或 batch 噪声，会同时改变短暂阶段的选择偏差与通道关闭时间。固定慢变量时的 steady-state 选择，因而不能替代真实轨迹上的 transient 冻结选择。<!-- source-family:SF-2026-ARXIV-2601-10962 -->
+
+[必要理论与对照](https://arxiv.org/html/2601.10962v1)依赖快慢时间尺度分离、局部 Hessian 与噪声协方差关系和小步长近似；MNIST1000 样本、两层 MLP、20 次运行且排除发散的结果只提供局部支持。前10个 Hessian 特征值的 flatness 不是坐标不变的泛化证书，直线 loss barrier 也不能否定所有弯曲连接。时间尺度、盆地与曲率诊断本身有费用；条件不可核时，保留多 seed 的真实轨迹、保守 schedule 与 held-out 质量，不由这条解释为 LLM/Adam 自动选择生产 batch 或学习率。
 
 ## Backpropagation：把输出误差分配给每一层
 
@@ -163,6 +197,10 @@ Backpropagation 不是另一种学习目标，而是高效计算这些梯度的�
 这解释了深层表示为什么可以共同调整：早期层不需要人为指定“应该检测什么”，只要它产生的中间特征能通过后续计算降低最终 loss，梯度就会推动它被保留或强化。表示学习由此出现，但“具体学到了什么”仍取决于数据、架构和目标，第 5 章再展开。
 
 深度也会带来困难。很多局部导数连续相乘，可能造成 vanishing gradient 或 exploding gradient；激活保存会占用大量显存；网络越大，反向传播的计算和通信成本越高。Residual connection、normalization、初始化和优化器设计，都是为了让梯度信号在深网络中更可用，而不是改变学习的基本定义。
+
+反向传播给出当前计算图上目标对所选变量的导数；也可以在固定模型、目标和读出层上，先支付真实反向计算，学习从中间hidden到输入梯度方向的代理，再在后续输入上只前向提出方向。这不是参数训练梯度的精确替代，也不是从模型无需梯度地取得了新信息：联合Gaussian及跨输入恒定的均值/协方差只保证仿射的条件平均，不能保证每个样本的导数；有限模型拟合归一化方向又是另一层近似。[受限梯度预测对照](https://arxiv.org/html/2605.14868v1)中，多步误差可累积，部分分布的纯代理近乎失效；离散候选仍须用原模型真实forward目标选更新，而不把方向相似度当最终效果。标签反向、轨迹增强、层选择、拟合/存储及全部候选和行为评价均计费，扰动生成阶段更快不等全链吞吐。模型、目标、层位或输入人口变化时重新校准，效果不足则回真实梯度/原方法，不让一个快速方向预测器获得优化收敛、行为正确或安全许可。<!-- source-family:SF-2026-ARXIV-2605-14868 -->
+
+学习规则也不必总通过完整链式法则分配误差。在一类固定稀疏recurrent spiking网络中，每条可塑连接只维护pre/post事件的eligibility trace；输出WTA误差信号经固定随机反馈进入低维modulatory状态，再门控局部三因子更新，readout另用局部delta规则。它保留受监督反馈，却不计算完整时间展开梯度，也不证明正在下降同一个全局可微loss。[必要机制与有限对照](https://arxiv.org/html/2605.00402v1)支持小型识别任务的可行性，按边trace、模拟时间、反馈/阈值状态和readout连接仍计费，低带宽不等实际硬件能效或大模型可扩展性。任务需要精确credit、反馈失配或效果不稳时，保留Backprop/BPTT与经验证的替代规则，不由局部更新名称推出梯度等价、通用学习机制或生物真实性。<!-- source-family:SF-2026-ARXIV-2605-00402 -->
 
 ## 为什么非线性不可缺少
 
@@ -239,6 +277,8 @@ abs(x) = ReLU(x) + ReLU(-x)
 ```
 
 已经无法由一条全局直线表示。更深的网络继续组合这些 partitions，使简单局部变换形成复杂、层级化的函数。
+
+函数变复杂，不表示每个原始参数都带来一个独立的函数自由度：ReLU hidden neuron 的输入权重与 bias 同乘正数、输出权重除以该数，可以保持函数不变；层内置换也不改变函数。[受限可辨识性定理](https://arxiv.org/html/2605.03601v1#S4)对带 bias、末层 affine、输入与每个 hidden width 均至少为2的全连接 ReLU 架构，构造了一个非空 open 参数集，其全函数对应的参数除这些置换与正缩放外没有额外歧义，并据此得到架构的最大功能维数为原始参数数减 hidden neuron 数。这里的“存在稳定的开集”不是随机初始化或训练后参数几乎处处可辨，更不是有限样本足以恢复参数；width1情形仍留为未决，也不能迁移成 Transformer 的定理。它使参数计数与函数自由度的差别可以精确讨论，却不提供训练算法、泛化或压缩收益；构造与条件核验仍有代价，条件不明时保留原参数化与实际优化/held-out 评价，不以这个最大维数替代 checkpoint 的有效秩或部署成本。<!-- source-family:SF-2026-ARXIV-2605-03601 -->
 
 可以把核心直觉写成：
 
@@ -415,6 +455,17 @@ Part IV 会详细展开这些系统机制。本章要建立的连接是：梯度
 
 ## Review notes
 
+- `SF-2026-ARXIV-2605-03601` — Daily2026-05-07补May06；[exact-v1](https://arxiv.org/html/2605.03601v1)Thm4.10–4.11/Remark4.12，2+1+3=6。仅width≥2架构的open identifiable set与最大功能维数扣除hidden正缩放；不采a.e.、width1、参数恢复/Transformer保证或§5.23宽负命题。未复现。
+
+- `SF-2026-ARXIV-2605-03722` — Daily2026-05-07补May06；[EDL exact-v1](https://arxiv.org/html/2605.03722v1)§III–V/TablesI–III必要层，2+1+2=5。仅采用synthetic loss-prior预训练与真实分类器/验证数据依赖分账、ranking不授properness；线性loss反例为本书推导，非作者实验。保CIFAR有限/下游反退、holdout与选择披露不足、全费用及交叉熵退路；未核实现或复现。
+
+- `SF-2026-ARXIV-2605-00402` — Daily2026-05-05补May04；[exact-v1](https://arxiv.org/html/2605.00402v1)，2+1+2=5，具体gap深入。必要Source/date/反侧见唯一SUP H17/R42；root C26实际owner完整局部/逐字PRE通过授单段及本人注。限制、全费与旧分支近正文，不授完整理论/recipe、普遍性能安全；作者已保存，root C27非writer实际正文/完整局部及本人注POST通过，窄lease释放，不预签DAY；未核实现/复现。
+
+- `SF-2026-ARXIV-2604-22110` — Daily2026-04-28补Apr27；2+1+2=5，exact-v1§3～5/7及A.1/A.2.3；strong-nonseparable fixed-thought条件、2000vs300epochs/L40/Dirichlet边界/value非truth均保留。fresh reader必要Source/date/具体owner/逐字PRE及非writer实际POST通过，root接纳并释放两段+本人注窄lease；作者仅行政同步本注并读回，不授DAY。未核实现或复现。
+
+- `SF-2026-ARXIV-2601-10873` — Daily `2026-01-20`增量；[UC exact-v1](https://arxiv.org/html/2601.10873v1) §2–6、AppC7–9必要边界。2+1+2=5，参数坐标/optimizer metric 差额深入；采用给定尺度的预条件分支，不采 transpose 错误、物理意义或 normalization 替代断言。root实际必要原证/owner PRE通过并授窄锁；作者实际正文/完整邻接/本注已顺读，root实际顺读103–125/本注，POST通过，窄锁释放。未核artifact/复现，非日级验收。
+- `SF-2026-ARXIV-2601-10962` — Daily `2026-01-20`增量；[SGD transient exact-v1](https://arxiv.org/html/2601.10962v1) §II/III、Eq8–26与AppA2必要反侧。2+1+2=5，transient freezing 与固定慢变量 steady-state 选择分责深入；保留时间尺度/噪声-Hessian、MNIST/20runs/发散排除、flatness坐标依赖与线性路径局限，不授普遍泛化或生产schedule。root实际必要原证/owner PRE通过并授窄锁；作者实际正文/完整邻接/本注已顺读，root实际顺读131–160/本注，POST通过，窄锁释放。未核artifact/复现，非日级验收。
+
 本章只建立学习与优化的基础，不承担完整泛化理论，也不提前进入 Transformer 细节。后续 Review 应检查所有数学符号是否先定义，再检查每个工程概念是否仍能回到 batch、precision、state 或 communication，而不是变成分布式训练框架清单。
 
 优先核验入口：
@@ -430,3 +481,17 @@ Part IV 会详细展开这些系统机制。本章要建立的连接是：梯度
 - Yann LeCun, Yoshua Bengio, Geoffrey Hinton, "Deep learning", Nature, 2015: https://www.nature.com/articles/nature14539
 
 - `SF-2026-ARXIV-2602-13942` — Daily `2026-02-18`；[exact-v1](https://arxiv.org/html/2602.13942v1) §3.5–4.2、§7必要范围。2+1+2=5，非随机微调点的局部 NTK/早停条件差额深入；保留 Gaussian 预训练起点、邻域/宽度、RKHS、未知停点参数与 hold-out 成本，不采用通用 lazy regime 或谱即兼容性证书。未核代码/复现；root 必要源与 actual owner PRE通过，实际正文/完整邻接及本末注经root非作者POST通过，窄锁释放，不授日级。
+
+- `SF-2026-ARXIV-2603-29034` — Daily2026-04-02补04-01；[exact-v1](https://arxiv.org/html/2603.29034v1)S3T1–3/F2–10/S4/5/7.1必要，2+1+2=5，仅noise-init fitting与inverse denoising消费者反向取舍。保六sine层/ω30/w256/十signal5000、encoder+newhead均更新、拟合Uniform85.7/79.9但denoise23对SIREN28.3/Spectrum27.6、video不全胜/cleanPSNR停点非deployment；全制备/训练费，不采临床结论，未核代码/复现。
+
+- SF-2026-ARXIV-2604-14870 — Daily2026-04-18补Apr17；[curvature probing exact-v1](https://arxiv.org/html/2604.14870v1) §3–7/Eq5–15/Thm2、A2/Lemma5，2+1+2=5。新增样本lossfield非fittedmodel/generalization，局部quadratic/导数界、topD排序限制与三阶段成本近文；不采全域/普遍最优或18000倍总加速。独立reader必要Source/root接纳与date有效，作者actual owner比较，A31逐字PRE与root实际正文/完整邻接/本人注POST通过，指定窄lease释放；作者仅行政同步，不授DAY；未复现。
+
+- `SF-2026-ARXIV-2604-20446` — Daily2026-04-24补Apr23自然日；[exact-v1](https://arxiv.org/html/2604.20446v1)§2–5/Eq36–51必要层，2+1+2=5，uniform/triangular路径曲率与无限累计平方步长条件的具体缺口深入。保有限能量反例、GD适用范围与测量全费，不授全局吸引、endpoint最大特征值锁定或SGD通用定理；未核代码/复现。fresh实际owner与邻接/root逐字PRE通过并授两段与本注窄lease，作者已写入并顺读完整邻接；root非writer实际正文/完整前后/本人注actualPOST通过，窄lease释放，本注仅行政同步，不授DAY。
+
+- `SF-2026-ARXIV-2604-25143` — Daily2026-04-30补Apr29自然日；[exact-v1](https://arxiv.org/html/2604.25143v1)必要Source及具体owner/逐字PRE见本日唯一SUP R30-2/3。作者实际完整局部邻接已读，独立reader必要源/PRE通过，root授本单段与本人注窄lease；作者已保存；非writer supp_apr30_review_fresh实际新正文、完整两侧及本人注POST通过，root已接纳并释放指定窄lease。受限命题、反侧、全部费用与旧路线近正文；未核实现或复现实验，不授DAY。
+
+- `SF-2026-ARXIV-2605-14663` — Daily2026-05-16补May15；[exact-v1](https://arxiv.org/html/2605.14663v1)Defs1.1–1.2/Thm1.3/Prop1.5、§2、Lemma3.1条件与5.1/5.2必要域，2+1+2=5。仅localC2/PL/vanishing conditional-noise下普通常步长SGD进入后高概率/渐近率；不授找到邻域、每步/有限预算/泛化或Adam保证。数学结果无硬件性能主张；未核全证明、实现或复现。
+
+- `SF-2026-ARXIV-2605-14868` — Daily2026-05-16补May15；[exact-v1](https://arxiv.org/html/2605.14868v1)§3/Alg1–2/Lemmas1–2/Prop1、§5.1–5.3/T1–2/§6及A1–2必要配置，2+1+2=5。仅固定模型/目标/层的输入梯度方向代理；conditional mean非逐样本真实梯度，拟合、候选真值筛选与行为评价全费，纯代理失效及重校准边界近文。未核全证明、实现或复现。
+
+- `SF-2025-ARXIV-2509-03154` — root，Daily2025-09-05补Sep4；[exact-v1](https://arxiv.org/html/2509.03154v1)§1–4/Alg1–3/T1–2必要，2+1+2=5。仅loss支持选择/固定支持反传分责；保Alg1直接梯度、Alg3极性/命名未闭、Dice/recall/连通指标反退、分辨率/标签/validation选择与全费，不授生物/医学、拓扑全可微或结构保证。未核图像、数据/实现或复现；Boyle37必要Source/当前owner/原逐字PRE通过，按当前完整邻接保存本单段/独立marker/本人注，Boyle39真实非writer完整新增/两侧/本人注POST通过，指定窄位生效释放，仅同步既成事实，不授整日完成。

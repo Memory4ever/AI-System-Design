@@ -4,15 +4,27 @@
 
 **窗口：** 2026-05-03T09:00:00+08:00 ～ 2026-05-04T09:00:00+08:00
 
+**窗口说明：** 用户明确要求保留已有候选、评分、日期和原窗口，只补遗漏；新增材料仅检查前一完整北京时间自然日。
+
+**补充窗口：** 2026-05-03 ～ 2026-05-03
+
+**冻结候选日期：** [运行前逐字原档案](../_sources/daily-20260504/baseline-before-supplement-20261016.md)
+
 **状态：** 完成
 
-**阶段：** Coverage、Evidence 与 Books 已闭环；独立复核通过
+**阶段：** 补充窗口独立DAY已通过；外部材料与历史来源缺口继续隔离，旧窗口记录仅作历史
 
 **Books：** 纳入本次
 
-**检查时间：** 2026-09-14T17:40:00+08:00
+**检查时间：** 2026-10-16T17:07:06+08:00
 
 ## 1. 结论
+
+本轮仅补2026-05-03北京时间自然日，十四个每日来源均已按限定主题进行真实有界检查，**新增可确认落窗候选0、Books新增写入0**；旧39候选、日期、评分与连续原§4保留，不重新归日或重做已有审阅。arXiv官方当期日程与时区换算支持本自然日无常规公告批次，不是搜索空响应推导零事件。具名Kimi SDK #178经API确认北京时间May04 00:12:40首次创建，属于窗外恢复线索，不挪入本窗。
+
+部分机构目标日历史列表、无日期Blog及一条第三方MTP修复线索未取得可采用原件，均在§5精准隔离；它们不支持完整Coverage/Evidence、Books、无遗漏或性能/安全保证。本轮有限补查及非作者六部分DAY R1已通过，无普通可执行材料/Books待办，不由旧“通过”继承本轮结论。详见[本日唯一补查记录](../_sources/daily-20260504/SUP_SOURCES_20261016.md)。
+
+**以下两段仅为原小时窗口历史结论；其中387、39/348以及旧完成声明不描述本次自然日补查，也不是新候选分母：**
 
 本窗真实覆盖十四个每日来源。arXiv 周日夜公告批次由后续 owner-replay 还原出 387 个去重 identity；本次没有沿用旧 37 项分母，而是逐项重读 title+abstract 并按当前“大模型或 AI Infrastructure 的长期机制/状态/控制/证据合同”门槛重筛。四项旧候选降级、六项漏检恢复，最终冻结 **39 个候选、348 个候选前关闭、0 个撤回**，retain rate 为 10.1%。
 
@@ -20,26 +32,28 @@
 
 ## 2. 来源覆盖
 
-本轮只检查每日来源；Weekly 来源没有被重复扫描。“已检查”只覆盖列出的入口、窗口和停止点，不代表机构内部绝无未公开研究。
+下表只描述补充窗口2026-05-03。原小时窗来源记录完整保存在[运行前原档案](../_sources/daily-20260504/baseline-before-supplement-20261016.md)，有效旧研究证据不变。仅检查每日组，未扩Weekly扫描；缺段不记零命中。实际查询、返回、分页/停止位及原始响应见[唯一记录A2](../_sources/daily-20260504/SUP_SOURCES_20261016.md#a2有限发现范围与原始响应)。
 
 | 来源 | 检查范围与依据 | 结果 | 缺口 |
 | --- | --- | --- | --- |
-| SRC-OPENAI | [Research](https://openai.com/research/)公开目录；检查本窗及相邻带日期条目，前序可核实研究发布早于窗口 | 已检查 | 限公开目录；无日期页面不作日级归属 |
-| SRC-ANTHROPIC | [Research](https://www.anthropic.com/research)；相邻公开条目位于窗口外 | 已检查 | 限公开目录 |
-| SRC-GOOGLE-AI | [Google DeepMind](https://deepmind.google/research/)与[Google Research Publications](https://research.google/pubs/)；有界检查窗口与相邻日期 | 已检查 | 部分记录只给月份，不能据此作日级全站无遗漏断言 |
-| SRC-META-AI | [Meta AI Research](https://ai.meta.com/research/)公开结果页；检查 2026 年 5 月可见日期与分页停止点 | 已检查 | 动态渲染和分页只支持可见目录结论 |
-| SRC-QWEN | [Qwen 官方博客](https://qwenlm.github.io/blog/)与公开研究入口；窗口内未定位发布 | 已检查 | 只覆盖公开目录 |
-| SRC-DEEPSEEK | [DeepSeek 官网](https://www.deepseek.com/)与官方公开研究入口 | 受阻 | 缺可分页历史日级研究目录；不用于“全站为零”断言，出现官方日级索引时定点重开 |
-| SRC-MOONSHOT | [Kimi Platform Blog](https://platform.kimi.com/blog)与 MoonshotAI 公开入口；目录未见本窗条目 | 已检查 | 不以普通 commit 扩充候选 |
-| SRC-TENCENT-HUNYUAN | [Hunyuan Research“全部”列表](https://hunyuan.tencent.com/research)；相邻可核实条目为 04-30 与 05-21 | 已检查 | 页面客户端渲染；只用可见列表卡住窗口 |
-| SRC-ZAI | [智谱 Research](https://www.zhipuai.cn/zh/research)；相邻可核实条目为 04-29 与 05-20 | 已检查 | 限官方研究目录 |
-| SRC-BYTEDANCE-SEED | [Seed Research](https://seed.bytedance.com/en/research)与[Publications](https://seed.bytedance.com/en/public_papers)；检查窗口与相邻日期 | 已检查 | AI for Science 暂缓，不把无日级时间卡片归入本窗 |
-| SRC-BAIDU-ERNIE | [ERNIE 技术博客](https://ernie.baidu.com/blog/zh/)；相邻可核实条目为 04-30 与 05-09 | 已检查 | 限官方目录 |
-| SRC-XIAOMI-MIMO | [MiMo Paper / Blog](https://mimo.xiaomi.com/)；窗口内没有带日期 Paper | 已检查 | Blog 卡片缺稳定日级时间，不用于事件归属 |
-| SRC-MINIMAX | [MiniMax Research / Blog](https://www.minimax.io/blog)与 News 列表；相邻公开条目位于窗口外 | 已检查 | Agent Tech Blog 缺稳定日级时间 |
-| SRC-ARXIV | [owner receipt](../_sources/arxiv-owner-replay-20260903/20260504/arxiv-owner-receipt.json)；387 个去重 identity 的 title+abstract 均复核，exact-v1 按候选深度审阅 | 已检查 | DOI created 是 owner-day proxy，不是精确 09:00 时刻；本批由周日夜公告归入本窗 |
+| SRC-OPENAI | Research当前页至Explore all research；精确May3检索后排除论坛，May2026官方/index补检仅窗外线索；B1/B5/B10 | 受阻 | 当前精选目录不能恢复目标日历史研究分页；不以搜索无结果证明0，待目标日官方列表/具名正文定点重开 |
+| SRC-ANTHROPIC | Research十条当前publication至Sep25及See more停止位；May3/May2026查询仅May8/22等窗外线索；B1/B5/B10 | 受阻 | 未恢复May03历史publication段；目标日官方列表/具名原文到达才重开 |
+| SRC-GOOGLE-AI | DeepMind Blog page3从May至March，相关模型/研究标题有界查漏；Research Blog May月归档四条May28/27/19/1；独立Pub当前页；B1/B10/B13/B14 | 受阻 | May Blog有限切片已读，不覆盖独立Pub日级历史；DeepMind部分卡片仅月级，不能当目标日0，待日级列表/具体原文日期 |
+| SRC-META-AI | Research提取0行；May3 Research/Blog精确查询；B2/B5/B11 | 受阻 | 动态目标日历史分页未取得，空响应不作0；待可读官方分页/目标日快照 |
+| SRC-QWEN | 旧官网明确迁移qwen.ai；跟新/blog提取0行；旧页仅2025卡片，May03/May3检索；B2/B6/B11 | 受阻 | 2026新Blog目标日段未恢复；待可读日级索引或具名正文 |
+| SRC-DEEPSEEK | 官网当前V4.1入口和精确日期检索；API updates有限恢复后400 Timeout；B2/B6/B12/B13 | 受阻 | 历史日级研究索引未恢复，原已知限制保留；官方目标日索引/事件到达重开 |
+| SRC-MOONSHOT | Platform Blog全页最新2025-11、官方GitHub组织页及May3具名Issue/PR；#178 API明确May04；#2154/2151/44贡献前关闭；B2/B6/B9 | 受阻 | 2026 Blog/组织目标日研究发布历史缺段；不全扫commit。待目标日官方研究列表或具名正文 |
+| SRC-TENCENT-HUNYUAN | 首查Research0行；May03日期搜索；按要求尝试浏览器，子agent IAB不支持visibility、无Chrome，实际IAB建页超时后停止；B3/B8与SUP A2 | 受阻 | 未取得“全部”可视历史列表，不沿旧相邻日期签本轮覆盖；待可读官方列表/目标日快照 |
+| SRC-ZAI | Research“全部”15个可见日期卡片，至“查看更多”停止；目标夹Apr29/May20；release入口及精确日期辅助检查；B3/B6 | 已检查 | 只覆盖官方Research目录切片，不证明其他未列渠道0 |
+| SRC-BYTEDANCE-SEED | Research featured Apr26/May16夹目标；Publications page1/13，1–20/246到May26停止；精确May03搜索；B3/B8 | 受阻 | 目标日所在后续历史页未恢复；246不作为全文队列，待可读该段官方分页或具名正文 |
+| SRC-BAIDU-ERNIE | Blog第1/2页May09至2025Nov21，Apr30/May09夹目标；停止于下一页2/2，未扩旧年；B4 | 已检查 | 限公开Blog目录，未宣称机构全渠道无遗漏 |
+| SRC-XIAOMI-MIMO | Paper八条June29/March13夹目标，读至2025May12；Blog15卡至More无日期；May03精确检索仅第三方实跑/汇总；B4/B8/B12 | 受阻 | Paper目录切片已读，Blog日级历史未恢复；第三方MTP汇总不支持已核修复/性能，待目标日官方原文或patch |
+| SRC-MINIMAX | 英/中Blog及Agent Tech Blog实开；中文Apr27/May25夹目标，点击Agent Team中文原页仍Apr27，英文同标题May27不制造本窗事件；B4/B8/B11/B12/B14 | 受阻 | 英/中目录切片已查；Agent Tech当前有Sep19/Sep22/Oct08日期，未恢复May03历史段，待目标日该频道原文/列表 |
+| SRC-ARXIV | 当前及2025-01-06当期官方availability全文、America/New_York时区换算：May03北京整日无常规批次；cs.CL May首25标题有界查漏、cs.LG请求cache miss与精确日期搜索仅辅助；SUP A3 | 已检查 | 无常规批次不等于全球无早稿/公司正文；无具名本窗异常线索，不扩提交库存/90天catchup或全月metadata |
 
 ## 3. 候选与判断
+
+本轮新增0。以下39个旧候选整行、原日期及评分保持，使用明确链接的原档案作冻结依据，不把旧May04批次挪到补充May03自然日。
 
 | 材料 | 公开时间 | 项目贡献与评分 | 审阅结果 | Books决定 |
 | --- | --- | --- | --- | --- |
@@ -357,11 +371,23 @@ Evaluation contract：Natural-plan and SciBench evaluation。作者结果只证�
 
 ## 5. 缺口与下一步
 
-本窗没有尚可执行的扫描、审阅或 Books 写回。独立复核已检查十四源边界、`387 = 39 + 348 + 0` 守恒、六项恢复证据、四项降级理由以及四处 Books 实际正文。
+**尚可执行：** 无普通材料或Books待办；来源检查、新增筛选及非作者六部分DAY已通过。原39有效层复用，不重新审阅；下列保留项到达新原件时才定点重开。
 
-**终态保留项：** DeepSeek 历史公开入口缺可分页日级研究目录；该限制不支持正面证据、Books 或无遗漏断言。**定点重开条件：** 若官方出现可唯一定位到本窗的日级索引或 primary event，仅重开该来源与对应 Source Family。当前没有需要用户提供的 exact-version 论文正文；所有 arXiv 候选的 v1 HTML 可访问，页面未显示撤回标记。
+**本窗终态保留项：** §2各受阻行分别指明的目标日历史段/无日期Blog；Hunyuan动态浏览器恢复失败不代表历史零事件。全部不用于正面证据或Books，不支持无遗漏断言、完整Coverage/Evidence或性能/安全保证。重开条件是取得对应目标日的官方列表/公告/快照、具名原文的精确版本与公开日期；到达后只重开该来源和材料，不重跑月份。
+
+**具名原件线索：** [第三方May03 MTP汇总](https://github.com/local-inference-lab/rtx6kpro/blob/master/daily-summaries/2026-05/2026-05-04.md)提及TP tensor重排修复与设备数字，但没有本轮已核的原patch/公告、first-public或reproducer，不作修复/性能结论，也不借此扩扫周级release。若作者给出May03原patch/公告与必要reproducer，只定点恢复执行正确性/兼容性准入及证据。
+
+**窗外、不阻塞本窗：** [Kimi SDK #178](https://github.com/MoonshotAI/kimi-agent-sdk/issues/178)的[官方API原件](../_sources/daily-20260504/SUP_KIMI_SDK178_API_20261016.raw.json)记录created_at=2026-05-03T16:12:40Z，即北京时间2026-05-04 00:12:40。用户报告CLI新event导致Go SDK consumer退出、recv channel堵塞及最终响应无法消费，尚无maintainer确认/实验复现。仅为其真实归属日报May05保留线索，不计本窗候选/评分/Books，不把Agent wire死锁当MCP标准行为。
 
 ## 6. 复核
+
+复核者：`/root/supp_may04_reader`（本轮补充窗口非作者）
+
+结论：通过
+
+实际六部分DAY见唯一SUP R1，核十四源有限边界与停止点、arXiv无常规批次的有限结论、178 API真实窗外、2154/2151/44代表排除，以及原39/原窗口/连续§4保护；MiniMax历史段表述及ZAI可见卡片计数已按原件窄修。外部保留项安全隔离，不等于其Coverage或Evidence通过；新增Books写入0，无POST需要，不授无遗漏或实验复现。
+
+**以下为原小时窗口的既有复核，保留但不代替本轮验收：**
 
 复核者：`/root`（非作者 fresh-context 复核）
 

@@ -1,0 +1,5263 @@
+Guiding Diffusion Models with Semantically Degraded Conditions
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Related Work
+3
+Background
+4
+Understanding CDG: A Geometric Perspective
+5
+Method
+6
+Experiments
+6.1
+Experimental Setup
+6.2
+Comparison with Baselines
+6.3
+Ablation Study
+6.3.1
+Core Component Analysis
+6.3.2
+Optimal Hyperparameter Analysis
+6.3.3
+CFG* Validation Experiment
+6.3.4
+Computational Efficiency Analysis
+6.4
+Modularity and Applications
+7
+Conclusion
+References
+A
+Token Importance Analysis
+A.1
+Single-Head Importance via Weighted PageRank
+A.2
+Multi-Head Score Fusion
+A.3
+Cross attention
+B
+Implementation Details
+B.1
+Algorithm: CDG Sampling
+CalculateImportance
+ProcessToken
+Main Sampling Loop
+B.2
+Core Implementation
+C
+Experimental Details and Supplementary Results
+C.1
+Evaluation Metrics Implementation
+C.1.1
+Fréchet Inception Distance (FID).
+C.1.2
+CLIP Score.
+C.1.3
+Aesthetic Score.
+C.1.4
+VQA Score.
+C.2
+Dataset
+C.2.1
+COCO 2017 Validation Set
+C.2.2
+GenAI Bench
+C.2.3
+Rationale for Selection
+C.3
+Optimal Hyperparameters for Different Models
+C.4
+Hyperparameters analysis
+C.5
+Visual Examples of Varying Degradation Ratios
+C.6
+Additional Details for CFG
+∗
+Analysis
+C.6.1
+Detailed Experimental Setup.
+C.6.2
+Additional Qualitative Results.
+C.7
+Full Benchmark Results on GenAI-Bench
+C.7.1
+Advanced Reasoning Skills
+C.7.2
+Basic Skills
+C.8
+Encoder Ablation and WPR Analysis
+C.8.1
+Encoder-Specific Ablation
+C.8.2
+WPR vs. Random Ranking
+C.9
+More Visual Results
+C.9.1
+Combination with Orthogonal Methods.
+C.9.2
+Application to Text-Guided Image Editing.
+C.9.3
+Application to Controllable Generation.
+C.9.4
+More Visual Results on SD3, SD3.5, and FLUX.1
+License: arXiv.org perpetual non-exclusive license
+arXiv:2603.10780v1 [cs.CV] 11 Mar 2026
+Guiding Diffusion Models with Semantically Degraded Conditions
+Shilong Han
+*
+Yuming Zhang
+*
+Hongxia Wang
+†
+Affiliation:
+College of Science, National University of Defense Technology
+Affiliation:
+hanshilong20@nudt.edu.cn, zhangyuming@nudt.edu.cn, wanghongxia@nudt.edu.cn
+Abstract
+Classifier-Free Guidance (CFG) is a cornerstone of modern text-to-image models, yet its reliance on a semantically vacuous null prompt (
+∅
+\varnothing
+) generates a guidance signal prone to geometric entanglement. This is a key factor limiting its precision, leading to well-documented failures in complex compositional tasks. We propose Condition-Degradation Guidance (CDG), a novel paradigm that replaces the null prompt with a strategically degraded condition,
+𝒄
+deg
+\boldsymbol{c}_{\text{deg}}
+. This reframes guidance from a coarse “good vs. null” contrast to a more refined “good vs. almost good” discrimination, thereby compelling the model to capture fine-grained semantic distinctions. We find that tokens in transformer text encoders split into two functional roles: content tokens encoding object semantics, and context-aggregating tokens capturing global context. By selectively degrading only the former, CDG constructs
+𝒄
+deg
+\boldsymbol{c}_{\text{deg}}
+without external models or training. Validated across diverse architectures including Stable Diffusion 3, FLUX, and Qwen-Image, CDG markedly improves compositional accuracy and text-image alignment. As a lightweight, plug-and-play module, it achieves this with negligible computational overhead. Our work challenges the reliance on static, information-sparse negative samples and establishes a new principle for diffusion guidance: the construction of adaptive, semantically-aware negative samples is critical to achieving precise semantic control. Code is available at
+https://github.com/Ming-321/Classifier-Degradation-Guidance
+.
+†
+†
+footnotetext:
+∗
+These authors contributed equally.
+†
+Corresponding author.
+1
+Introduction
+Figure 1
+:
+Qualitative comparison between Classifier-Free Guidance (CFG) and our Condition-Degradation Guidance (CDG) across three state-of-the-art models (SD3, SD3.5, and Flux).
+These examples demonstrate CDG’s superior capability in handling complex compositional prompts where CFG often fails. CDG consistently outperforms CFG in accurate text rendering, precise spatial relationships and attribute binding, as well as complex object interactions.
+Diffusion Models (DMs) have become a dominant force in generative modeling
+[
+14
+,
+37
+,
+38
+]
+, with latent diffusion
+[
+29
+]
+and transformers
+[
+26
+]
+continually advancing text-to-image synthesis. Pivotal to this progress is Classifier-Free Guidance (CFG)
+[
+15
+]
+, which steers generation by extrapolating unconditional predictions toward conditional ones, and has become a cornerstone of modern text-to-image systems
+[
+12
+,
+7
+,
+44
+,
+6
+,
+8
+,
+34
+,
+20
+,
+17
+,
+45
+,
+25
+]
+.
+While pivotal, CFG exhibits failure modes in compositional tasks—text rendering, complex attribute binding, and spatial relationships (
+Fig.
+1
+). We argue this stems from the semantic poverty of
+∅
+\emptyset
+: the large gap between
+𝒄
+\boldsymbol{c}
+and
+∅
+\emptyset
+yields an entangled guidance signal that mixes content generation with style and structure
+[
+31
+,
+21
+]
+. In contrast, a semantically close
+𝒄
+deg
+\boldsymbol{c}_{\text{deg}}
+enables common-mode rejection—suppressing shared components to isolate pure semantic corrections, as validated in
+Sec.
+4
+.
+Existing methods to address CFG’s limitations fall into two camps.
+Process Rectification
+methods
+[
+31
+,
+21
+,
+36
+,
+33
+]
+retain
+𝒄
+\boldsymbol{c}
+vs.
+∅
+\emptyset
+but apply post-hoc corrections—treating symptoms, not causes. Meanwhile,
+Negative Reframing
+methods
+[
+19
+,
+3
+,
+28
+,
+1
+,
+32
+,
+30
+,
+2
+,
+9
+]
+explore alternatives to
+∅
+\emptyset
+—using weak models, random perturbations, attention manipulations, or VLM-generated negatives—yet none exploit the inherent semantic structure within the prompt’s own token embeddings. A critical question remains:
+how to construct a negative condition that adaptively degrades the core semantics of the positive prompt in a principled manner?
+We address this challenge through a key structural observation: in transformer-based text encoders, token embeddings naturally divide into
+content tokens
+(encoding object-specific semantics) and
+context-aggregating tokens
+(encoding global compositional context). By selectively removing content tokens while preserving context-aggregating tokens, a strategy we call
+stratified degradation
+, we construct a degraded condition
+𝒄
+deg
+\boldsymbol{c}_{\text{deg}}
+that retains the prompt’s global semantic scaffold while losing fine-grained details, reframing guidance from “good vs. null” to “good vs.
+almost good
+”. We instantiate this principle in Condition-Degradation Guidance (CDG), a lightweight, plug-and-play module (
+Fig.
+1
+).
+Stratified degradation rests on the role of context-aggregating tokens: padding and special tokens that originally lack intrinsic semantics but acquire rich global context through attention. This is not a quirk of specific architectures but a fundamental property of transformer encoders; we confirm generality across diverse architectures (
+Sec.
+6.2
+).
+We validate CDG on Stable Diffusion 3, SD3.5, FLUX.1-dev, and Qwen-Image, demonstrating consistent improvements over baselines on FID, CLIP Score, VQA Score, and GenAI-Bench compositional reasoning with minimal overhead.
+In summary, our contributions are:
+•
+We reveal a functional dichotomy in transformer text encoders between
+content tokens
+and
+context-aggregating tokens
+, and propose
+stratified degradation
+as a principled strategy for constructing semantically degraded negative conditions.
+•
+Based on this finding, we introduce Condition-Degradation Guidance (CDG), a lightweight, training-free, plug-and-play module requiring no external models or additional training.
+•
+Extensive experiments across diverse models (SD3, SD3.5, FLUX.1-dev, Qwen-Image) validate CDG, providing geometric evidence for superior signal orthogonality and demonstrating consistent metric improvements with negligible overhead.
+2
+Related Work
+Our work is situated within a broad research effort to enhance text-to-image generation. We contextualize CFG refinements
+[
+15
+]
+, then focus on paradigms moving beyond the null prompt.
+Refinement of the CFG Framework.
+Many methods focus on refining how the standard
+𝒄
+\boldsymbol{c}
+vs
+∅
+\emptyset
+guidance is applied, via geometric corrections (APG
+[
+31
+]
+) or SVD (TCFG
+[
+21
+]
+). While impactful, this research retains the foundational reliance on the semantically poor null condition.
+Beyond the Null Prompt.
+Another paradigm moves beyond
+∅
+\emptyset
+entirely, reframing guidance as a contrast between a “good” prediction and a “degraded” one. These methods can be distinguished by the source of degradation:
+•
+Model Level.
+One approach uses a separate, typically weaker model to provide the negative signal, such as in Autoguidance
+[
+19
+]
+and Weak-to-Strong Diffusion
+[
+3
+]
+—effective but requires external model tuning.
+•
+Internal Mechanism Level.
+Another direction perturbs the model’s internal representations during the forward pass, including perturbing attention matrices (PAG
+[
+1
+]
+) or smoothing energy curvature (SEG
+[
+16
+]
+). These methods manipulate the model’s computational flow to generate an implicit negative signal. As they operate on a different principle from input-level modifications, they are largely orthogonal to our approach and can potentially be combined.
+•
+Input Level.
+The most direct strategy is to degrade the conditioning signal
+𝒄
+\boldsymbol{c}
+itself. Methods in this category include using random prompts (ICG
+[
+32
+]
+), adding unstructured Gaussian noise (CADS
+[
+30
+]
+), spatially varying negatives (SFG
+[
+2
+]
+), and VLM-generated negatives (DNP
+[
+9
+]
+). However, these approaches either remain semantically blind or require expensive external models, without exploiting the inherent semantic structure within the prompt’s own token embeddings.
+Our Approach.
+To address this gap, our Condition-Degradation Guidance (CDG) exploits the inherent functional dichotomy in transformer text encoders between content tokens and context-aggregating tokens. Through
+stratified degradation
+—selectively removing content tokens while preserving context-aggregating tokens—CDG constructs a semantically degraded condition that retains global compositional context. This creates a precise “good” vs. “almost good” contrast, directly improving guidance quality without external models or blind perturbations.
+3
+Background
+Denoising Diffusion.
+Denoising diffusion generates samples from a data distribution
+p
+data
+p_{\text{data}}
+by reversing a process that gradually corrupts the data with Gaussian noise.
+This process yields smoothed densities
+p
+⁡
+(
+𝒙
+,
+σ
+)
+=
+p
+data
+​
+(
+𝒙
+)
+∗
+𝒩
+⁡
+(
+𝟎
+,
+σ
+2
+​
+𝐈
+)
+p(\boldsymbol{x};\sigma)=p_{\text{data}}(\boldsymbol{x})*\mathcal{N}(\mathbf{0},\sigma^{2}\mathbf{I})
+, indexed by the noise level
+σ
+\sigma
+.
+The generation process is then defined by a probability flow ODE
+[
+18
+,
+35
+,
+38
+]
+that evolves samples from pure noise back towards the data distribution:
+d
+​
+𝒙
+σ
+=
+−
+σ
+​
+∇
+𝒙
+σ
+​
+log
+⁡
+p
+⁡
+(
+𝒙
+σ
+,
+σ
+)
+​
+d
+​
+σ
+.
+d\boldsymbol{x}_{\sigma}=-\sigma\nabla_{\boldsymbol{x}_{\sigma}}\log p(\boldsymbol{x}_{\sigma};\sigma)d\sigma.
+(1)
+The core of this process is the score function,
+∇
+𝒙
+σ
+​
+log
+​
+p
+​
+(
+𝒙
+σ
+,
+σ
+)
+\nabla_{\boldsymbol{x}_{\sigma}}\log p(\boldsymbol{x}_{\sigma};\sigma)
+, which directs the update.
+The score is approximated by a neural network
+D
+θ
+​
+(
+𝒙
+σ
+,
+σ
+)
+D_{\theta}(\boldsymbol{x}_{\sigma};\sigma)
+parameterized by weights
+θ
+\theta
+.
+While this network can be parameterized in various ways (e.g., to predict noise), we follow the formulation where it is trained as a denoiser to predict the clean sample
+𝒙
+0
+\boldsymbol{x}_{0}
+from a noised input
+𝒙
+σ
+\boldsymbol{x}_{\sigma}
+:
+θ
+∗
+=
+arg
+⁡
+min
+θ
+​
+𝔼
+𝒙
+0
+,
+σ
+,
+ϵ
+​
+[
+‖
+D
+θ
+​
+(
+𝒙
+0
++
+σ
+​
+ϵ
+,
+σ
+)
+−
+𝒙
+0
+‖
+2
+]
+.
+\theta^{*}=\arg\min_{\theta}\mathbb{E}_{\boldsymbol{x}_{0},{\sigma},\boldsymbol{\epsilon}}\left[\left\|D_{\theta}(\boldsymbol{x}_{0}+\sigma\boldsymbol{\epsilon};\sigma)-\boldsymbol{x}_{0}\right\|^{2}\right].
+(2)
+The expectation is taken over
+𝒙
+0
+∼
+p
+data
+\boldsymbol{x}_{0}\sim p_{\text{data}}
+,
+ϵ
+∼
+𝒩
+⁡
+(
+𝟎
+,
+𝐈
+)
+\boldsymbol{\epsilon}\sim\mathcal{N}(\mathbf{0,I})
+, and
+σ
+∼
+p
+train
+\sigma\sim p_{\text{train}}
+, where
+p
+train
+p_{\text{train}}
+governs the noise level distribution during training.
+Given
+D
+θ
+D_{\theta}
+, we can estimate of the score function
+∇
+𝒙
+σ
+​
+log
+​
+p
+​
+(
+𝒙
+σ
+,
+σ
+)
+≈
+(
+D
+θ
+​
+(
+𝒙
+σ
+,
+σ
+)
+−
+𝒙
+σ
+)
+/
+σ
+2
+\nabla_{\boldsymbol{x}_{\sigma}}\log p(\boldsymbol{x}_{\sigma};\sigma)\approx(D_{\theta}(\boldsymbol{x}_{\sigma};\sigma)-\boldsymbol{x}_{\sigma})/\sigma^{2}
+.
+For conditional generation, the network is trained with an additional conditioning input
+𝒄
+\boldsymbol{c}
+(e.g., a text embedding), becoming
+D
+θ
+​
+(
+𝒙
+σ
+,
+σ
+,
+𝒄
+)
+D_{\theta}(\boldsymbol{x}_{\sigma};\sigma,\boldsymbol{c})
+, which provides an estimate of the conditional score
+∇
+𝒙
+σ
+​
+log
+​
+p
+​
+(
+𝒙
+σ
+|
+𝒄
+;
+σ
+)
+\nabla_{\boldsymbol{x}_{\sigma}}\log p(\boldsymbol{x}_{\sigma}|\boldsymbol{c};\sigma)
+.
+Classifier-Free Guidance.
+Due to approximation errors
+inherent in finite-capacity networks, generated images often fail to match the fidelity of the training data.
+A widely adopted technique to counteract this is Classifier-Free Guidance (CFG)
+[
+15
+]
+, which enhances sample quality by extrapolating from an unconditional prediction towards a conditional one:
+D
+θ
+CFG
+​
+(
+𝒙
+σ
+,
+σ
+,
+𝒄
+)
+\displaystyle D_{\theta}^{\text{CFG}}(\boldsymbol{x}_{\sigma};\sigma,\boldsymbol{c})
+=
+D
+θ
+​
+(
+𝒙
+σ
+,
+σ
+,
+𝒄
+)
+\displaystyle=D_{\theta}(\boldsymbol{x}_{\sigma};\sigma,\boldsymbol{c})
+(3)
++
+(
+w
+−
+1
+)
+​
+(
+D
+θ
+​
+(
+𝒙
+σ
+,
+σ
+,
+𝒄
+)
+−
+D
+θ
+​
+(
+𝒙
+σ
+,
+σ
+,
+∅
+)
+)
+,
+\displaystyle+(w-1)(D_{\theta}(\boldsymbol{x}_{\sigma};\sigma,\boldsymbol{c})-D_{\theta}(\boldsymbol{x}_{\sigma};\sigma,\emptyset)),
+where
+w
+>
+1
+w>1
+is the guidance scale.
+Recalling the equivalence between the denoiser and the score function, we can rewrite the above equation as:
+∇
+𝒙
+σ
+​
+log
+​
+p
+w
+​
+(
+𝒙
+σ
+|
+𝒄
+;
+σ
+)
+\displaystyle\nabla_{\boldsymbol{x}_{\sigma}}\log p_{w}(\boldsymbol{x}_{\sigma}|\boldsymbol{c};\sigma)
+=
+∇
+𝒙
+σ
+​
+log
+​
+p
+​
+(
+𝒙
+σ
+|
+𝒄
+;
+σ
+)
+\displaystyle=\nabla_{\boldsymbol{x}_{\sigma}}\log p(\boldsymbol{x}_{\sigma}|\boldsymbol{c};\sigma)
+(4)
++
+(
+w
+−
+1
+)
+​
+∇
+𝒙
+σ
+​
+log
+⁡
+p
+⁡
+(
+𝒙
+σ
+|
+𝒄
+;
+σ
+)
+p
+⁡
+(
+𝒙
+σ
+|
+∅
+;
+σ
+)
+.
+\displaystyle\quad+(w-1)\nabla_{\boldsymbol{x}_{\sigma}}\log\frac{p(\boldsymbol{x}_{\sigma}|\boldsymbol{c};\sigma)}{p(\boldsymbol{x}_{\sigma}|\emptyset;\sigma)}.
+4
+Understanding CDG: A Geometric Perspective
+We propose Condition-Degradation Guidance (CDG), which replaces the semantically distant null condition
+∅
+\emptyset
+in CFG with a semantically degraded condition
+𝒄
+deg
+\boldsymbol{c}_{\text{deg}}
+that is close to the original prompt
+𝒄
+\boldsymbol{c}
+:
+D
+θ
+CDG
+​
+(
+𝒙
+σ
+,
+σ
+,
+𝒄
+)
+\displaystyle D_{\theta}^{\text{CDG}}(\boldsymbol{x}_{\sigma};\sigma,\boldsymbol{c})
+=
+D
+θ
+​
+(
+𝒙
+σ
+,
+σ
+,
+𝒄
+)
+\displaystyle=D_{\theta}(\boldsymbol{x}_{\sigma};\sigma,\boldsymbol{c})
+(5)
++
+(
+w
+−
+1
+)
+​
+(
+D
+θ
+​
+(
+𝒙
+σ
+,
+σ
+,
+𝒄
+)
+−
+D
+θ
+​
+(
+𝒙
+σ
+,
+σ
+,
+𝒄
+deg
+)
+)
+.
+\displaystyle+(w-1)(D_{\theta}(\boldsymbol{x}_{\sigma};\sigma,\boldsymbol{c})-D_{\theta}(\boldsymbol{x}_{\sigma};\sigma,\boldsymbol{c}_{\text{deg}})).
+This reframes guidance from a coarse “good vs. null” contrast to a refined “good vs. almost good” discrimination. But why does this substitution improve guidance quality?
+We hypothesize that semantically distant contrasts (
+𝒄
+\boldsymbol{c}
+vs.
+∅
+\emptyset
+) may produce guidance signals that interfere with the primary denoising direction, while semantic differencing (
+𝒄
+\boldsymbol{c}
+vs.
+𝒄
+deg
+\boldsymbol{c}_{\text{deg}}
+) achieves better decoupling. To test this hypothesis, we analyze the geometric properties of the guidance signals.
+Analytical Framework.
+Our analysis builds on the manifold hypothesis
+[
+4
+,
+11
+]
+, which posits that high-dimensional natural image data resides on low-dimensional manifolds. The diffusion process can be viewed as an evolution across a series of progressively smoother manifolds
+ℳ
+t
+\mathcal{M}_{t}
+. Recent theoretical and empirical work
+[
+39
+,
+21
+]
+has demonstrated that the score function
+∇
+log
+⁡
+p
+t
+​
+(
+z
+t
+)
+\nabla\log p_{t}(z_{t})
+aligns with the manifold’s normal space
+𝒩
+z
+t
+​
+(
+ℳ
+t
+)
+\mathcal{N}_{z_{t}}(\mathcal{M}_{t})
+, which governs the primary denoising direction, throughout the reverse process. Following
+[
+21
+]
+, we apply SVD to conditional predictions
+{
+𝜺
+𝒄
+}
+\{\boldsymbol{\varepsilon}_{\boldsymbol{c}}\}
+across diverse prompts from MS-COCO 2017
+[
+23
+]
+to approximate the principal denoising subspace
+𝒮
+𝒄
+​
+(
+t
+)
+\mathcal{S}_{\boldsymbol{c}}(t)
+at each timestep
+t
+t
+.
+To quantify the geometric relationship between guidance signals and
+𝒮
+𝒄
+​
+(
+t
+)
+\mathcal{S}_{\boldsymbol{c}}(t)
+, we introduce two metrics, where
+𝒮
+g
+\mathcal{S}_{g}
+denotes the subspace spanned by the guidance signal
+Δ
+​
+𝜺
+\Delta\boldsymbol{\varepsilon}
+:
+•
+Geometric Decoupling
+measures orthogonality between
+𝒮
+g
+\mathcal{S}_{g}
+and
+𝒮
+𝒄
+\mathcal{S}_{\boldsymbol{c}}
+:
+Decoupling
+​
+(
+𝒮
+g
+,
+𝒮
+𝒄
+)
+=
+1
+k
+​
+∑
+i
+=
+1
+k
+sin
+2
+⁡
+(
+θ
+i
+)
+,
+\text{Decoupling}(\mathcal{S}_{g},\mathcal{S}_{\boldsymbol{c}})=\frac{1}{k}\sum_{i=1}^{k}\sin^{2}(\theta_{i}),
+(6)
+where
+θ
+i
+\theta_{i}
+is the
+i
+i
+-th principal angle between the two subspaces and
+k
+k
+is the subspace dimension; values approaching 1 indicate near-perfect orthogonality.
+•
+Interference Energy Ratio
+measures the fraction of guidance energy projected onto
+𝒮
+𝒄
+​
+(
+t
+)
+\mathcal{S}_{\boldsymbol{c}}(t)
+:
+Interference
+​
+(
+Δ
+​
+𝜺
+)
+=
+‖
+P
+𝒮
+𝒄
+​
+(
+t
+)
+​
+Δ
+​
+𝜺
+‖
+F
+2
+‖
+Δ
+​
+𝜺
+‖
+F
+2
+,
+\text{Interference}(\Delta\boldsymbol{\varepsilon})=\frac{\|P_{\mathcal{S}_{\boldsymbol{c}}(t)}\Delta\boldsymbol{\varepsilon}\|_{F}^{2}}{\|\Delta\boldsymbol{\varepsilon}\|_{F}^{2}},
+(7)
+where
+P
+𝒮
+𝒄
+​
+(
+t
+)
+P_{\mathcal{S}_{\boldsymbol{c}}(t)}
+denotes the orthogonal projection onto
+𝒮
+𝒄
+​
+(
+t
+)
+\mathcal{S}_{\boldsymbol{c}}(t)
+; lower values indicate less interference with denoising.
+We evaluate these metrics on CFG and CDG across multiple diffusion timesteps, and the results in
+Fig.
+2
+reveal a striking divergence.
+Figure 2
+:
+CDG synthesizes a geometrically superior guidance signal compared to CFG.
+(Top) Geometric Decoupling: CDG maintains near-perfect orthogonality throughout generation, while CFG suffers from significant early-stage entanglement.
+(Bottom) Interference Energy Ratio: CDG exhibits minimal interference, in stark contrast to CFG’s substantial energy waste in misaligned directions.
+Together, these analyses demonstrate that CDG’s guidance signal is structurally cleaner and more efficient from its inception, explaining its enhanced compositional control.
+As
+Fig.
+2
+shows, CDG maintains near-perfect orthogonality with minimal interference throughout generation, directly supporting our hypothesis. This aligns with Sadat et al.
+[
+31
+]
+, who observed that perpendicular guidance components improve quality while parallel ones introduce artifacts.
+Why does CDG achieve this?
+We attribute it to a common-mode rejection effect. As semantic neighbors,
+𝒄
+\boldsymbol{c}
+and
+𝒄
+deg
+\boldsymbol{c}_{\text{deg}}
+share similar normal components; their difference
+Δ
+​
+𝜺
+CDG
+∝
+∇
+z
+t
+​
+log
+​
+p
+t
+​
+(
+z
+t
+∣
+𝒄
+)
+p
+t
+​
+(
+z
+t
+∣
+𝒄
+deg
+)
+\Delta\boldsymbol{\varepsilon}_{\text{CDG}}\propto\nabla_{z_{t}}\log\frac{p_{t}(z_{t}\mid\boldsymbol{c})}{p_{t}(z_{t}\mid\boldsymbol{c}_{\text{deg}})}
+cancels these, leaving primarily semantic distinctions. In contrast, CFG’s semantically distant contrast (
+𝒄
+\boldsymbol{c}
+vs.
+∅
+\emptyset
+) cannot achieve this cancellation, leading to entangled signals that conflate correction with denoising.
+We hypothesize that the effectiveness of this “common-mode rejection” may stem from ensuring that
+𝒄
+deg
+\boldsymbol{c}_{\text{deg}}
+preserves the “global context” shared with
+𝒄
+\boldsymbol{c}
+(the common mode) while removing “specific semantics” (the correction signal). As we demonstrate in
+Sec.
+5
+(see
+Fig.
+4
+), such a decoupling is achievable through our stratified degradation strategy. In
+Sec.
+6.3.2
+and
+Sec.
+6.3.3
+, we will observe asymmetric patterns in experimental results that are consistent with this geometric interpretation.
+5
+Method
+Figure 3
+:
+An illustration of our proposed pipeline for constructing the semantically degraded condition,
+c
+deg
+\boldsymbol{c}_{\text{deg}}
+.
+The process begins with attention graph extraction (a–c), where the self-attention map (b) from a transformer block (a) is modeled as a graph (c). Next, the Weighted PageRank (WPR) algorithm is applied to compute an importance score for each token (d). Following our Stratified Degradation strategy, these scores are used to generate a binary mask
+𝒎
+\boldsymbol{m}
+(e). Finally, the mask facilitates the construction of
+𝒄
+deg
+\boldsymbol{c}_{\text{deg}}
+via masked interpolation (f) between the original condition
+𝒄
+\boldsymbol{c}
+and the null condition
+∅
+\emptyset
+.
+To construct
+𝒄
+deg
+\boldsymbol{c}_{\text{deg}}
+as introduced in
+Sec.
+4
+, we analyze the model’s internal information flow to identify and strategically degrade the most semantically important tokens in the original prompt
+𝒄
+\boldsymbol{c}
+. Our complete pipeline is illustrated in
+Fig.
+3
+.
+Figure 4
+:
+WPR reveals a clear importance dichotomy between content and context-aggregating tokens:
+content tokens carry fine-grained semantics while context-aggregating tokens carry coarse-grained semantics, as exemplified by the prompt “A man is cooking, MineCraft Style.” (a) The stem plot shows that high importance scores (red for CLIP, cyan for T5) are almost exclusively concentrated on semantic content tokens. (b) The ranked list confirms that the top tokens (“minecraft”, “cooking”, “man”) are almost all content-related. This dichotomy motivates our Stratified Degradation strategy, which first degrades content tokens and then context-aggregating tokens for controllable semantic degradation.
+To validate the content/context-aggregating dichotomy that motivates stratified degradation, we employ Weighted PageRank (WPR) as an analytical tool for quantifying token importance. Unlike standard approaches that aggregate cross-attention scores—which can paradoxically assign higher importance to context-aggregating tokens (see Appendix A)—we model the token relationships as a graph, as shown in
+Fig.
+3
+(a–c). Specifically, at a designated block
+λ
+block
+\lambda_{\text{block}}
+(detailed below), we extract the self-attention map
+A
+∈
+ℝ
+N
+×
+N
+A\in\mathbb{R}^{N\times N}
+, where
+N
+N
+is the sequence length. The tokens serve as the graph’s nodes, while the attention weights in
+A
+A
+provide the edge weights. We then apply the Weighted PageRank (WPR) algorithm
+[
+42
+,
+40
+]
+to this attention-weighted graph to compute a final importance score vector
+𝒔
+∈
+ℝ
+N
+\boldsymbol{s}\in\mathbb{R}^{N}
+(
+Fig.
+3
+(d)). The core iterative update of WPR is defined as:
+𝒔
+(
+k
++
+1
+)
+=
+A
+T
+​
+𝒔
+(
+k
+)
+‖
+A
+T
+​
+𝒔
+(
+k
+)
+‖
+1
+,
+\boldsymbol{s}^{(k+1)}=\frac{A^{T}\boldsymbol{s}^{(k)}}{\|A^{T}\boldsymbol{s}^{(k)}\|_{1}},
+(8)
+where
+𝒔
+(
+k
+)
+\boldsymbol{s}^{(k)}
+is the importance score vector at the
+k
+k
+-th iteration, and the process is repeated until convergence. Details are provided in Appendix A.
+As shown in
+Fig.
+4
+, WPR reveals a clear importance dichotomy: content tokens exhibit substantially higher importance scores than context-aggregating tokens. This separation is intuitive: content tokens (e.g., “minecraft”, “cooking”) from meaningful text carry specific, fine-grained semantics; context-aggregating tokens lack explicit content before encoding. Despite this, they absorb contextual information through the encoder, carrying coarse-grained global semantics (as verified in
+Sec.
+6.3.3
+). The dichotomy revealed by WPR informs our design of the Stratified Degradation strategy: rather than degrading blindly, such as setting global degradation ratios, we exploit this structure to design a degradation path that prioritizes content tokens over context-aggregating tokens.
+As shown in
+Fig.
+3
+(e), we partition the set of token indices
+𝒯
+\mathcal{T}
+into a content set
+𝒯
+content
+\mathcal{T}_{\text{content}}
+and a context-aggregating set
+𝒯
+CtxAgg
+\mathcal{T}_{\text{CtxAgg}}
+. We then introduce two key hyperparameters,
+r
+content
+∈
+[
+0
+,
+1
+]
+r_{\text{content}}\in[0,1]
+and
+r
+CtxAgg
+∈
+[
+0
+,
+1
+]
+r_{\text{CtxAgg}}\in[0,1]
+, which represent the desired replacement ratios for the content and context-aggregating tokens, respectively. We parameterize these two ratios through a single unified Degradation Ratio
+R
+deg
+∈
+[
+0
+,
+2
+]
+R_{\text{deg}}\in[0,2]
+, which maps to the per-type ratios via:
+r
+content
+=
+min
+⁡
+(
+R
+deg
+,
+1.0
+)
+,
+r
+CtxAgg
+=
+max
+⁡
+(
+R
+deg
+−
+1.0
+,
+0
+)
+.
+r_{\text{content}}=\min(R_{\text{deg}},1.0),\quad r_{\text{CtxAgg}}=\max(R_{\text{deg}}-1.0,0).
+(9)
+This formulation ensures that semantically important content tokens are degraded before context-aggregating tokens. Based on these ratios, the number of top-ranked tokens to replace from each subset is determined:
+k
+content
+=
+⌊
+r
+content
+⋅
+|
+𝒯
+content
+|
+⌋
+k_{\text{content}}=\lfloor r_{\text{content}}\cdot|\mathcal{T}_{\text{content}}|\rfloor
+and
+k
+CtxAgg
+=
+⌊
+r
+CtxAgg
+⋅
+|
+𝒯
+CtxAgg
+|
+⌋
+k_{\text{CtxAgg}}=\lfloor r_{\text{CtxAgg}}\cdot|\mathcal{T}_{\text{CtxAgg}}|\rfloor
+. The final binary replacement mask
+𝒎
+∈
+{
+0
+,
+1
+}
+N
+\boldsymbol{m}\in\{0,1\}^{N}
+is then defined for each token
+i
+i
+as:
+m
+i
+=
+{
+0
+if
+​
+i
+∈
+𝒯
+content
+​
+and
+rank
+i
+≤
+k
+content
+,
+0
+if
+​
+i
+∈
+𝒯
+CtxAgg
+​
+and
+rank
+i
+≤
+k
+CtxAgg
+,
+1
+otherwise
+,
+m_{i}=\begin{cases}0&\text{if }i\in\mathcal{T}_{\text{content}}\text{ and }\text{rank}_{i}\leq k_{\text{content}},\\
+0&\text{if }i\in\mathcal{T}_{\text{CtxAgg}}\text{ and }\text{rank}_{i}\leq k_{\text{CtxAgg}},\\
+1&\text{otherwise},\end{cases}
+(10)
+where
+rank
+i
+\text{rank}_{i}
+is the rank of token
+i
+i
+within its respective subset, determined by sorting the corresponding importance scores
+s
+i
+s_{i}
+in descending order. A smaller rank value (e.g., 1) thus signifies higher importance.
+Through this design,
+R
+deg
+=
+1.0
+R_{\text{deg}}=1.0
+represents a natural “semantic boundary” that separates two degradation regimes:
+•
+R
+deg
+∈
+[
+0
+,
+1.0
+]
+R_{\text{deg}}\in[0,1.0]
+: removes content tokens (fine-grained semantics),
+•
+R
+deg
+∈
+(
+1.0
+,
+2.0
+]
+R_{\text{deg}}\in(1.0,2.0]
+: removes context-aggregating tokens (coarse-grained semantics).
+This dichotomy-driven formulation provides an interpretable control space. As we show in
+Sec.
+6.3.2
+(
+Fig.
+5
+) and
+Sec.
+6.3.3
+(
+Fig.
+6
+),
+R
+deg
+=
+1.0
+R_{\text{deg}}=1.0
+serves as a robust default across models—balancing multiple metrics while offering computational efficiency (no WPR computation needed at this boundary). Users can adjust around
+R
+deg
+=
+1.0
+R_{\text{deg}}=1.0
+to fine-tune style-alignment trade-offs.
+Using the final mask
+𝒎
+\boldsymbol{m}
+, we construct the degraded condition
+𝒄
+deg
+\boldsymbol{c}_{\text{deg}}
+by performing a masked interpolation between the original condition
+𝒄
+\boldsymbol{c}
+and the null condition
+∅
+\emptyset
+, as shown in
+Fig.
+3
+(f):
+𝒄
+deg
+=
+𝒎
+⊙
+𝒄
++
+(
+1
+−
+𝒎
+)
+⊙
+∅
+,
+\boldsymbol{c}_{\text{deg}}=\boldsymbol{m}\odot\boldsymbol{c}+(1-\boldsymbol{m})\odot\emptyset,
+(11)
+where
+⊙
+\odot
+denotes the element-wise Hadamard product. To make this degradation adaptive, we introduce an intervention block index,
+λ
+block
+\lambda_{\text{block}}
+, to specify from which transformer block the attention map is extracted. At each step, reaching
+λ
+block
+\lambda_{\text{block}}
+triggers mask construction via
+Eq.
+10
+, applying
+𝒄
+deg
+\boldsymbol{c}_{\text{deg}}
+(
+Eq.
+11
+) for all subsequent blocks within that step.
+For computational efficiency, we compute the mask
+𝒎
+\boldsymbol{m}
+only once at the first denoising step and reuse it throughout generation (
+Tab.
+4
+), introducing minimal overhead with negligible performance impact.
+6
+Experiments
+6.1
+Experimental Setup
+Base Model.
+Our experiments are built upon four text-to-image diffusion models: Stable Diffusion 3 Medium (SD3)
+[
+10
+]
+, Stable Diffusion 3.5 (SD3.5)
+[
+10
+]
+, FLUX.1-dev (FLUX.1)
+[
+5
+]
+, and Qwen-Image
+[
+41
+]
+. All models are based on Transformer architectures at their core.
+Dataset.
+We use 5,000 captions from the MS-COCO 2017 validation set
+[
+23
+]
+for comprehensive assessment.
+Evaluation Metrics.
+To evaluate the performance of text-to-image models, we adopt four key metrics: FID
+[
+13
+]
+, Aesthetic Score
+[
+43
+]
+, CLIP Score
+[
+27
+]
+, and VQA Score
+[
+24
+]
+. These metrics primarily assess performance from two aspects: image quality and text-image alignment.
+Additionally, we report results on GenAI-Bench
+[
+22
+]
+, a compositional reasoning benchmark covering diverse basic and advanced skills, to evaluate complex compositional capabilities.
+More details of models, datasets, hyperparameters, and metrics are provided in Appendix C.1–C.3.
+6.2
+Comparison with Baselines
+Table 1
+:
+Quantitative comparison on the MS-COCO 2017 validation set. Results are shown for SD3, SD3.5, FLUX.1, and Qwen-Image. Best results in
+bold
+, second-best
+underlined
+. (
+↓
+\downarrow
+) indicates lower is better, (
+↑
+\uparrow
+) higher is better.
+Method
+FID
+↓
+\downarrow
+CLIP
+Score
+↑
+\uparrow
+Aesthetic
+Score
+↑
+\uparrow
+VQA
+Score
+↑
+\uparrow
+SD3
+CFG
+35.69
+31.73
+5.66
+91.44
+CADS
+36.16
+31.72
+5.65
+91.44
+ICG
+39.09
+31.41
+5.79
+90.89
+SEG
+41.90
+30.28
+5.56
+84.15
+PAG
+50.60
+30.15
+5.52
+81.27
+SFG
+38.92
+31.72
+5.52
+90.52
+DNP
+34.68
+31.30
+5.51
+89.65
+CDG
+34.05
+32.00
+5.70
+92.40
+SD3.5
+CFG
+34.56
+31.85
+6.21
+91.94
+CADS
+34.58
+31.86
+6.21
+91.83
+ICG
+35.41
+31.70
+6.32
+91.80
+SEG
+38.90
+30.71
+6.16
+88.49
+PAG
+39.70
+30.60
+6.25
+87.96
+CDG
+33.07
+31.96
+6.26
+92.61
+FLUX.1
+CFG
+38.55
+31.20
+6.06
+90.31
+CADS
+38.73
+31.21
+6.01
+90.05
+ICG
+37.44
+31.15
+6.11
+90.21
+CDG
+37.11
+31.21
+6.15
+90.62
+Qwen
+CFG
+42.45
+32.11
+2.57
+93.66
+CDG
+39.02
+32.31
+2.54
+93.93
+We compare CDG against baselines including CFG
+[
+15
+]
+, CADS
+[
+30
+]
+, ICG
+[
+32
+]
+, PAG
+[
+1
+]
+, SEG
+[
+16
+]
+, SFG
+[
+2
+]
+, and DNP
+[
+9
+]
+under identical evaluation settings.
+Quantitative Results.
+As shown in
+Tab.
+1
+, CDG consistently improves over CFG on all four backbones, achieving best or near-best results in most categories.
+Cross-Model Analysis.
+Tab.
+1
+reveals CDG’s improvements are more pronounced on SD3/SD3.5 than on FLUX.1, consistent with their training paradigms: FLUX.1 employs
+Guidance Distillation
+[
+5
+]
+, reducing dependence on inference-time guidance. To further validate generalization, we include Qwen-Image, which uses special tokens (
+<|im_end|>
+) instead of padding as context aggregators. CDG consistently improves over CFG on this architecture (
+Tabs.
+1
+and
+2
+), confirming that stratified degradation generalizes beyond padding-token architectures to any model with content/context-aggregating token structure.
+Qualitative Results.
+Fig.
+1
+presents representative comparisons across three models, illustrating typical failure modes of CFG on compositional prompts. CFG struggles with text rendering (producing misspelled words), spatial-attribute binding (confusing positions or attributes), and complex interactions (generating semantically ambiguous compositions). In contrast, CDG consistently achieves accurate rendering, precise spatial-semantic alignment, and correct action semantics—improvements consistent with quantitative gains on compositional benchmarks (
+Tab.
+2
+). Additional results are in Appendix C.9.
+Benchmark Results.
+We evaluate CDG on GenAI-Bench.
+Tab.
+2
+shows CDG consistently outperforms all baselines on SD3.5, with particularly strong gains on
+Differentiation
+(+3.64) and
+Comparison
+(+2.36)—tasks requiring subtle semantic contrasts where CDG’s “good vs. almost good” paradigm excels. CDG also significantly outperforms structure-level methods (PAG, SEG) that lack semantic awareness. Full results are in Appendix C.7.
+Table 2
+:
+GenAI-Bench compositional reasoning results: Spatial Relation (Spatial), Comparison (Comp), Differentiation (Differ), and Universal (Univ).
+Method
+Spatial
+↑
+\uparrow
+Comp
+↑
+\uparrow
+Differ
+↑
+\uparrow
+Univ
+↑
+\uparrow
+SD3
+CFG
+78.66
+74.08
+77.22
+70.74
+CADS
+78.55
+74.05
+76.98
+70.11
+ICG
+78.09
+73.10
+75.89
+69.39
+SEG
+72.26
+69.51
+70.46
+65.52
+PAG
+69.65
+66.40
+67.09
+64.80
+CDG
+79.84
+74.86
+78.26
+71.53
+SD3.5
+CFG
+79.66
+73.70
+75.10
+72.21
+CADS
+79.58
+73.54
+75.08
+71.94
+ICG
+78.90
+74.13
+75.63
+70.23
+SEG
+76.34
+71.43
+72.80
+67.73
+PAG
+75.64
+71.02
+72.38
+66.17
+CDG
+80.69
+76.06
+78.74
+73.13
+FLUX.1
+CFG
+77.47
+72.97
+75.39
+71.13
+CADS
+77.42
+72.58
+74.87
+70.81
+ICG
+77.07
+72.83
+74.50
+71.47
+CDG
+77.56
+73.47
+76.17
+71.55
+Qwen
+CFG
+83.26
+80.19
+83.41
+77.36
+CDG
+83.79
+80.24
+83.54
+77.56
+6.3
+Ablation Study
+Our ablation study examines four aspects: (1) component necessity (
+Sec.
+6.3.1
+), (2) hyperparameter configuration (
+Sec.
+6.3.2
+), (3) mechanism validation (
+Sec.
+6.3.3
+), and (4) computational efficiency (
+Sec.
+6.3.4
+). In
+Sec.
+6.3.1
+, we use a fixed degradation budget (
+R
+deg
+=
+1.1
+R_{\text{deg}}=1.1
+) to isolate the contribution of each component;
+Sec.
+6.2
+reports results at the default
+R
+deg
+=
+1.0
+R_{\text{deg}}=1.0
+identified in
+Sec.
+6.3.2
+.
+6.3.1
+Core Component Analysis
+We demonstrate that WPR-based ranking effectively captures semantic structure. Details of experimental setup are in Appendix C.3.
+Tab.
+3
+reveals that Stratified Degradation is the primary driver of CDG’s effectiveness. Both stratified variants (rows 1–2) dramatically outperform all non-stratified variants (rows 3–5), with VQA improvements of +5.9–12.2 points and FID reductions of 0.9–16.8 points, confirming that treating content and context-aggregating tokens as separate degradation pools is crucial for precise semantic control.
+Rows 1 and 2 show comparable performance between WPR-based and random ranking within the stratified framework (FID: 33.89 vs. 34.17), confirming that WPR serves as an analysis tool providing determinism and theoretical grounding for the
+R
+deg
+=
+1.0
+R_{\text{deg}}=1.0
+boundary, rather than a necessary component.
+Within non-stratified variants, WPR-based ranking (row 3) significantly outperforms reverse ranking (row 4, FID 50.73) and random ranking (row 5, FID 47.02), validating that WPR correctly identifies semantically important tokens when ranking is applied.
+Table 3
+:
+Ablation study on CDG core components at fixed degradation budget (
+R
+deg
+=
+1.1
+R_{\text{deg}}=1.1
+). ‘✓’ and ‘✗’ denote active and inactive components. Asterisk (
+∗
+) indicates reverse ranking (least important tokens).
+Components
+Metrics
+Importance
+Stratified
+FID
+↓
+\downarrow
+CLIP
+Score
+↑
+\uparrow
+Aesthetic
+Score
+↑
+\uparrow
+VQA
+Score
+↑
+\uparrow
+✓
+✓
+33.89
+31.98
+5.68
+92.21
+✗
+✓
+34.17
+32.02
+5.68
+92.27
+✓
+✗
+35.06
+30.93
+5.48
+86.31
+✓
+∗
+✗
+50.73
+29.86
+5.22
+80.10
+✗
+✗
+47.02
+30.39
+5.21
+83.55
+6.3.2
+Optimal Hyperparameter Analysis
+Having established that WPR effectively captures semantic structure (
+Sec.
+6.3.1
+), we now analyze hyperparameter selection. This section demonstrates our hyperparameter selection process on the SD3 model, which guided the configurations reported in
+Tab.
+1
+.
+We analyze two key hyperparameters: the intervention block
+λ
+block
+\lambda_{\text{block}}
+and the unified Degradation Ratio
+R
+deg
+∈
+[
+0
+,
+2
+]
+R_{\text{deg}}\in[0,2]
+introduced in
+Sec.
+5
+, which maps to per-type degradation ratios (
+r
+content
+,
+r
+CtxAgg
+r_{\text{content}},r_{\text{CtxAgg}}
+) via
+Eq.
+9
+.
+Figure 5
+:
+Hyperparameter analysis:
+joint effect of intervention block (
+λ
+block
+\lambda_{\text{block}}
+) and Degradation Ratio (
+R
+deg
+R_{\text{deg}}
+) on SD3.
+As shown in
+Fig.
+5
+, metrics exhibit an asymmetric response around
+R
+deg
+=
+1.0
+R_{\text{deg}}=1.0
+, consistent with the content/context-aggregating dichotomy. The steep slope in
+[
+0
+,
+1.0
+]
+[0,1.0]
+(removing content tokens) transitions to a gentler slope in
+[
+1.0
+,
+2.0
+]
+[1.0,2.0]
+(removing context-aggregating tokens), with the latter region exhibiting relative stability for fine-grained style control. Experiments confirm
+λ
+block
+=
+1
+\lambda_{\text{block}}=1
+provides the most robust performance.
+We adopt
+R
+deg
+=
+1.0
+R_{\text{deg}}=1.0
+as the default due to: (1) multi-metric balance, (2) cross-model applicability (detailed in Appendix C.4), and (3) computational efficiency (all content tokens are degraded at this boundary, bypassing WPR entirely).
+To further illustrate the impact of degradation ratio adjustments, Appendix C.5 demonstrates qualitative results of adjusting degradation ratio near optimal parameters.
+6.3.3
+CFG* Validation Experiment
+To validate the semantic properties of our constructed
+𝒄
+deg
+\boldsymbol{c}_{\text{deg}}
+, we design a CFG* experiment where we replace the positive prompt
+𝒄
+\boldsymbol{c}
+in
+Eq.
+3
+with
+𝒄
+deg
+\boldsymbol{c}_{\text{deg}}
+, effectively using the degraded condition to guide generation. This allows us to directly probe what semantic information remains in
+𝒄
+deg
+\boldsymbol{c}_{\text{deg}}
+at different degradation levels. Detailed formulation and additional qualitative results are provided in Appendix C.6.
+Qualitative Analysis.
+As shown in
+Fig.
+6
+(a), under a fixed prompt, the generated results progressively lose semantic information as
+R
+deg
+R_{\text{deg}}
+increases from 0.00 to 2.00. In the range [0, 1], specific details such as “sleeping” and “sofa” are lost, while in [1, 2], the main subject “cat” disappears.
+Quantitative Analysis.
+As shown in
+Fig.
+6
+(b), the CLIP Score exhibits monotonic decline with a noticeable slope change near
+R
+deg
+≈
+1.0
+R_{\text{deg}}\approx 1.0
+. This inflection point aligns with the content/context-aggregating boundary revealed by WPR (
+Fig.
+4
+) and corresponds with the qualitative analysis, supporting our hypothesis that these two token types encode different semantic granularities. Content token removal (
+R
+deg
+∈
+[
+0
+,
+1.0
+]
+R_{\text{deg}}\in[0,1.0]
+) causes steep decline due to loss of specific semantics, while context-aggregating token removal (
+R
+deg
+>
+1.0
+R_{\text{deg}}>1.0
+) shows gentler decline as only global context degrades. Together with the asymmetric pattern in
+Fig.
+5
+, these observations provide converging evidence for the dichotomy-driven design.
+Figure 6
+:
+(a) Semantic degradation sequence under CFG* as
+R
+deg
+R_{\text{deg}}
+increases from 0.00 to 2.00. (b) Quantitative analysis.
+6.3.4
+Computational Efficiency Analysis
+CDG’s efficiency is critical. As shown in
+Tab.
+4
+, a naive per-step recomputation incurs substantial overhead (+47.2%) with negligible performance difference compared to one-time computation. In contrast, our one-time computation strategy introduces only minimal overhead (+3.6%). Note that we use
+R
+deg
+=
+1.1
+R_{\text{deg}}=1.1
+for this analysis to evaluate WPR’s computational cost; at
+R
+deg
+=
+1.0
+R_{\text{deg}}=1.0
+, WPR computation is bypassed entirely (all content tokens are degraded), making overhead assessment infeasible. Crucially, at our default
+R
+deg
+=
+1.0
+R_{\text{deg}}=1.0
+setting, the strategy becomes a simple “replace all content tokens” operation, achieving near-zero overhead.
+Table 4
+:
+Efficiency comparison of CDG implementation variants (one-time vs. per-step WPR computation) on SD3 with
+R
+deg
+=
+1.1
+R_{\text{deg}}=1.1
+,
+λ
+block
+=
+1
+\lambda_{\text{block}}=1
+.
+Method
+Time (s)
+Aesthetic
+VQA
+CFG (Baseline)
+5.456
+5.66
+91.44
+CDG (Per-Step)
+8.031 (+47.2%)
+5.68
+92.33
+CDG
+5.655 (+3.6%)
+5.68
+92.21
+6.4
+Modularity and Applications
+CDG is a plug-and-play module that operates directly on text embeddings, making it naturally compatible with existing methods and downstream tasks. We demonstrate its extensibility across three scenarios: (1) combination with orthogonal methods like PAG
+[
+1
+]
+, (2) image-to-image translation, and (3) ControlNet-based controllable generation, with comprehensive results in Appendix C.9.
+Appendix B illustrates the CDG pipeline and key code, demonstrating the high extensibility of our method.
+7
+Conclusion
+CFG’s reliance on the semantically vacuous null prompt
+∅
+\emptyset
+produces geometrically entangled guidance signals, limiting compositional accuracy. Our Condition-Degradation Guidance (CDG) addresses this by constructing a semantically degraded condition
+𝒄
+deg
+\boldsymbol{c}_{\text{deg}}
+through attention-based analysis, reframing guidance as “good vs. almost good” discrimination. This design enables common-mode rejection, synthesizing guidance signals with superior orthogonality to the denoising manifold. Validated on state-of-the-art models, CDG consistently improves compositional reasoning and text-image alignment with negligible overhead. This work establishes a principle: adaptive, semantically-aware negative synthesis is essential for precise semantic control in conditional diffusion models.
+Acknowledgements
+We sincerely thank four anonymous reviewers for their valuable and constructive feedback, which has greatly improved our work. This work was supported by the following grants: the National Natural Science Foundation of China (Grant No. 12471401, 12401419).
+References
+[1]
+D. Ahn, H. Cho, J. Min, W. Jang, J. Kim, S. Kim, H. H. Park, K. H. Jin, and S. Kim
+(2024)
+Self-rectifying diffusion sampling with perturbed-attention guidance
+.
+In
+Computer Vision - ECCV 2024 - 18th European Conference, Milan, Italy,
+September 29-October 4, 2024, Proceedings, Part LXXIII
+,
+Lecture Notes in Computer Science
+, Vol.
+15131
+,
+pp. 1–17
+.
+External Links:
+Document
+,
+Link
+Cited by:
+§1
+,
+2nd item
+,
+§6.2
+,
+§6.4
+.
+[2]
+K. Azarian, D. Das, Q. Hou, and F. Porikli
+(2024)
+Segmentation-free guidance for text-to-image diffusion models
+.
+In
+2024 IEEE/CVF Conference on Computer Vision and Pattern Recognition Workshops (CVPRW)
+,
+pp. 7520–7529
+.
+External Links:
+Document
+Cited by:
+§1
+,
+3rd item
+,
+§6.2
+.
+[3]
+L. Bai, M. Sugiyama, and Z. Xie
+(2026)
+Weak-to-strong diffusion with reflection
+.
+In
+The Fourteenth International Conference on Learning Representations
+,
+External Links:
+Link
+Cited by:
+§1
+,
+1st item
+.
+[4]
+Y. Bengio, A. C. Courville, and P. Vincent
+(2013)
+Representation learning: A review and new perspectives
+.
+IEEE Trans. Pattern Anal. Mach. Intell.
+35
+(
+8
+),
+pp. 1798–1828
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§4
+.
+[5]
+Black Forest Labs
+(2024)
+FLUX
+.
+Note:
+https://github.com/black-forest-labs/flux
+Accessed: 2025-11-11
+Cited by:
+§6.1
+,
+§6.2
+.
+[6]
+T. Brooks, A. Holynski, and A. A. Efros
+(2023)
+InstructPix2Pix: learning to follow image editing instructions
+.
+In
+IEEE/CVF Conference on Computer Vision and Pattern Recognition,
+CVPR 2023, Vancouver, BC, Canada, June 17-24, 2023
+,
+pp. 18392–18402
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§1
+.
+[7]
+G. Couairon, J. Verbeek, H. Schwenk, and M. Cord
+(2023)
+DiffEdit: diffusion-based semantic image editing with mask guidance
+.
+In
+The Eleventh International Conference on Learning Representations,
+ICLR 2023, Kigali, Rwanda, May 1-5, 2023
+,
+External Links:
+Link
+Cited by:
+§1
+.
+[8]
+X. Dai, J. Hou, C. Ma, S. Tsai, J. Wang, R. Wang, P. Zhang, S. Vandenhende, X. Wang, A. Dubey, M. Yu, A. Kadian, F. Radenovic, D. Mahajan, K. Li, Y. Zhao, V. Petrovic, M. K. Singh, S. Motwani, Y. Wen, Y. Song, R. Sumbaly, V. Ramanathan, Z. He, P. Vajda, and D. Parikh
+(2023)
+Emu: enhancing image generation models using photogenic needles in a haystack
+.
+External Links:
+2309.15807
+,
+Link
+Cited by:
+§1
+.
+[9]
+A. Desai and N. Vasconcelos
+(2024)
+Improving image synthesis with diffusion-negative sampling
+.
+In
+Computer Vision - ECCV 2024 - 18th European Conference, Milan, Italy,
+September 29-October 4, 2024, Proceedings, Part LIII
+,
+Lecture Notes in Computer Science
+, Vol.
+15111
+,
+pp. 199–214
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§1
+,
+3rd item
+,
+§6.2
+.
+[10]
+P. Esser, S. Kulal, A. Blattmann, R. Entezari, J. Müller, H. Saini, Y. Levi, D. Lorenz, A. Sauer, F. Boesel, D. Podell, T. Dockhorn, Z. English, and R. Rombach
+(2024)
+Scaling rectified flow transformers for high-resolution image synthesis
+.
+In
+Forty-first International Conference on Machine Learning, ICML 2024,
+Vienna, Austria, July 21-27, 2024
+,
+Proceedings of Machine Learning Research
+, Vol.
+235
+,
+pp. 12606–12633
+.
+External Links:
+Link
+Cited by:
+§6.1
+.
+[11]
+C. Fefferman, S. Mitter, and H. Narayanan
+(2016)
+Testing the manifold hypothesis
+.
+Journal of the American Mathematical Society
+29
+(
+4
+),
+pp. 983–1049
+.
+External Links:
+ISSN 1088-6834
+,
+Link
+,
+Document
+Cited by:
+§4
+.
+[12]
+A. Hertz, R. Mokady, J. Tenenbaum, K. Aberman, Y. Pritch, and D. Cohen-Or
+(2023)
+Prompt-to-prompt image editing with cross-attention control
+.
+In
+The Eleventh International Conference on Learning Representations,
+ICLR 2023, Kigali, Rwanda, May 1-5, 2023
+,
+External Links:
+Link
+Cited by:
+§1
+.
+[13]
+M. Heusel, H. Ramsauer, T. Unterthiner, B. Nessler, and S. Hochreiter
+(2017)
+GANs trained by a two time-scale update rule converge to a local nash equilibrium
+.
+In
+Advances in Neural Information Processing Systems 30: Annual Conference
+on Neural Information Processing Systems 2017, December 4-9, 2017,
+Long Beach, CA, USA
+,
+pp. 6626–6637
+.
+External Links:
+Link
+Cited by:
+§6.1
+.
+[14]
+J. Ho, A. Jain, and P. Abbeel
+(2020)
+Denoising diffusion probabilistic models
+.
+In
+Advances in Neural Information Processing Systems 33: Annual Conference
+on Neural Information Processing Systems 2020, NeurIPS 2020, December
+6-12, 2020, virtual
+,
+External Links:
+Link
+Cited by:
+§1
+.
+[15]
+J. Ho and T. Salimans
+(2022)
+Classifier-free diffusion guidance
+.
+External Links:
+2207.12598
+,
+Link
+Cited by:
+§1
+,
+§2
+,
+§3
+,
+§6.2
+.
+[16]
+S. Hong
+(2024)
+Smoothed energy guidance: guiding diffusion models with reduced energy curvature of attention
+.
+In
+Advances in Neural Information Processing Systems 38: Annual Conference
+on Neural Information Processing Systems 2024, NeurIPS 2024, Vancouver,
+BC, Canada, December 10 - 15, 2024
+,
+External Links:
+Link
+Cited by:
+2nd item
+,
+§6.2
+.
+[17]
+L. Huang, D. Chen, Y. Liu, Y. Shen, D. Zhao, and J. Zhou
+(2023)
+Composer: creative and controllable image synthesis with composable conditions
+.
+In
+Proceedings of the 40th International Conference on Machine Learning
+,
+Proceedings of Machine Learning Research
+, Vol.
+202
+,
+pp. 13753–13773
+.
+External Links:
+Link
+Cited by:
+§1
+.
+[18]
+T. Karras, M. Aittala, T. Aila, and S. Laine
+(2022)
+Elucidating the design space of diffusion-based generative models
+.
+In
+Advances in Neural Information Processing Systems
+,
+S. Koyejo, S. Mohamed, A. Agarwal, D. Belgrave, K. Cho, and A. Oh (Eds.)
+,
+Vol.
+35
+,
+pp. 26565–26577
+.
+External Links:
+Link
+Cited by:
+§3
+.
+[19]
+T. Karras, M. Aittala, T. Kynkäänniemi, J. Lehtinen, T. Aila, and S. Laine
+(2024)
+Guiding a diffusion model with a bad version of itself
+.
+In
+Advances in Neural Information Processing Systems 38: Annual Conference
+on Neural Information Processing Systems 2024, NeurIPS 2024, Vancouver,
+BC, Canada, December 10 - 15, 2024
+,
+External Links:
+Link
+Cited by:
+§1
+,
+1st item
+.
+[20]
+B. Kawar, S. Zada, O. Lang, O. Tov, H. Chang, T. Dekel, I. Mosseri, and M. Irani
+(2023)
+Imagic: text-based real image editing with diffusion models
+.
+In
+IEEE/CVF Conference on Computer Vision and Pattern Recognition,
+CVPR 2023, Vancouver, BC, Canada, June 17-24, 2023
+,
+pp. 6007–6017
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§1
+.
+[21]
+M. Kwon, S. seong Kim, J. Jeong, Y. T. Hsiao, and Y. Uh
+(2025)
+TCFG: tangential damping classifier-free guidance
+.
+In
+IEEE/CVF Conference on Computer Vision and Pattern Recognition,
+CVPR 2025, Nashville, TN, USA, June 11-15, 2025
+,
+pp. 2620–2629
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§1
+,
+§1
+,
+§2
+,
+§4
+.
+[22]
+B. Li, Z. Lin, D. Pathak, J. Li, Y. Fei, K. Wu, T. Ling, X. Xia, P. Zhang, G. Neubig, and D. Ramanan
+(2024)
+GenAI-bench: evaluating and improving compositional text-to-visual generation
+.
+External Links:
+2406.13743
+,
+Link
+Cited by:
+§6.1
+.
+[23]
+T. Lin, M. Maire, S. J. Belongie, J. Hays, P. Perona, D. Ramanan, P. Dollár, and C. L. Zitnick
+(2014)
+Microsoft COCO: common objects in context
+.
+In
+Computer Vision - ECCV 2014 - 13th European Conference, Zurich,
+Switzerland, September 6-12, 2014, Proceedings, Part V
+,
+Lecture Notes in Computer Science
+, Vol.
+8693
+,
+pp. 740–755
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§4
+,
+§6.1
+.
+[24]
+Z. Lin, D. Pathak, B. Li, J. Li, X. Xia, G. Neubig, P. Zhang, and D. Ramanan
+(2024)
+Evaluating text-to-visual generation with image-to-text generation
+.
+In
+Computer Vision - ECCV 2024 - 18th European Conference, Milan, Italy,
+September 29-October 4, 2024, Proceedings, Part IX
+,
+Lecture Notes in Computer Science
+, Vol.
+15067
+,
+pp. 366–384
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§6.1
+.
+[25]
+C. Mou, X. Wang, L. Xie, Y. Wu, J. Zhang, Z. Qi, and Y. Shan
+(2024)
+T2I-adapter: learning adapters to dig out more controllable ability for text-to-image diffusion models
+.
+In
+Thirty-Eighth AAAI Conference on Artificial Intelligence, AAAI
+2024, Thirty-Sixth Conference on Innovative Applications of Artificial
+Intelligence, IAAI 2024, Fourteenth Symposium on Educational Advances
+in Artificial Intelligence, EAAI 2014, February 20-27, 2024, Vancouver,
+Canada
+,
+pp. 4296–4304
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§1
+.
+[26]
+W. Peebles and S. Xie
+(2023)
+Scalable diffusion models with transformers
+.
+In
+IEEE/CVF International Conference on Computer Vision, ICCV 2023,
+Paris, France, October 1-6, 2023
+,
+pp. 4172–4182
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§1
+.
+[27]
+A. Radford, J. W. Kim, C. Hallacy, A. Ramesh, G. Goh, S. Agarwal, G. Sastry, A. Askell, P. Mishkin, J. Clark, G. Krueger, and I. Sutskever
+(2021)
+Learning transferable visual models from natural language supervision
+.
+In
+Proceedings of the 38th International Conference on Machine Learning,
+ICML 2021, 18-24 July 2021, Virtual Event
+,
+Proceedings of Machine Learning Research
+, Vol.
+139
+,
+pp. 8748–8763
+.
+External Links:
+Link
+Cited by:
+§6.1
+.
+[28]
+J. Rajabi, S. Mehraban, S. Sadat, and B. Taati
+(2025)
+Token perturbation guidance for diffusion models
+.
+In
+The Thirty-ninth Annual Conference on Neural Information Processing Systems
+,
+External Links:
+Link
+Cited by:
+§1
+.
+[29]
+R. Rombach, A. Blattmann, D. Lorenz, P. Esser, and B. Ommer
+(2022)
+High-resolution image synthesis with latent diffusion models
+.
+In
+IEEE/CVF Conference on Computer Vision and Pattern Recognition,
+CVPR 2022, New Orleans, LA, USA, June 18-24, 2022
+,
+pp. 10674–10685
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§1
+.
+[30]
+S. Sadat, J. Buhmann, D. Bradley, O. Hilliges, and R. M. Weber
+(2024)
+CADS: unleashing the diversity of diffusion models through condition-annealed sampling
+.
+In
+The Twelfth International Conference on Learning Representations,
+ICLR 2024, Vienna, Austria, May 7-11, 2024
+,
+External Links:
+Link
+Cited by:
+§1
+,
+3rd item
+,
+§6.2
+.
+[31]
+S. Sadat, O. Hilliges, and R. M. Weber
+(2025)
+Eliminating oversaturation and artifacts of high guidance scales in diffusion models
+.
+In
+The Thirteenth International Conference on Learning Representations,
+ICLR 2025, Singapore, April 24-28, 2025
+,
+External Links:
+Link
+Cited by:
+§1
+,
+§1
+,
+§2
+,
+§4
+.
+[32]
+S. Sadat, M. Kansy, O. Hilliges, and R. M. Weber
+(2025)
+No training, no problem: rethinking classifier-free guidance for diffusion models
+.
+In
+The Thirteenth International Conference on Learning Representations,
+ICLR 2025, Singapore, April 24-28, 2025
+,
+External Links:
+Link
+Cited by:
+§1
+,
+3rd item
+,
+§6.2
+.
+[33]
+S. Sadat, T. Vontobel, F. Salehi, and R. M. Weber
+(2025)
+Guidance in the frequency domain enables high-fidelity sampling at low cfg scales
+.
+External Links:
+2506.19713
+,
+Link
+Cited by:
+§1
+.
+[34]
+S. Sheynin, A. Polyak, U. Singer, Y. Kirstain, A. Zohar, O. Ashual, D. Parikh, and Y. Taigman
+(2024)
+Emu edit: precise image editing via recognition and generation tasks
+.
+In
+IEEE/CVF Conference on Computer Vision and Pattern Recognition,
+CVPR 2024, Seattle, WA, USA, June 16-22, 2024
+,
+pp. 8871–8879
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§1
+.
+[35]
+J. Song, C. Meng, and S. Ermon
+(2021)
+Denoising diffusion implicit models
+.
+In
+9th International Conference on Learning Representations, ICLR 2021,
+Virtual Event, Austria, May 3-7, 2021
+,
+External Links:
+Link
+Cited by:
+§3
+.
+[36]
+K. Song and H. Lai
+(2025)
+Rethinking oversaturation in classifier-free guidance via low frequency
+.
+External Links:
+2506.21452
+,
+Link
+Cited by:
+§1
+.
+[37]
+Y. Song and S. Ermon
+(2019)
+Generative modeling by estimating gradients of the data distribution
+.
+In
+Advances in Neural Information Processing Systems 32: Annual Conference
+on Neural Information Processing Systems 2019, NeurIPS 2019, December
+8-14, 2019, Vancouver, BC, Canada
+,
+pp. 11895–11907
+.
+External Links:
+Link
+Cited by:
+§1
+.
+[38]
+Y. Song, J. Sohl-Dickstein, D. P. Kingma, A. Kumar, S. Ermon, and B. Poole
+(2021)
+Score-based generative modeling through stochastic differential equations
+.
+In
+9th International Conference on Learning Representations, ICLR 2021,
+Virtual Event, Austria, May 3-7, 2021
+,
+External Links:
+Link
+Cited by:
+§1
+,
+§3
+.
+[39]
+J. Stanczuk, G. Batzolis, T. Deveney, and C. Schönlieb
+(2024)
+Diffusion models encode the intrinsic dimension of data manifolds
+.
+In
+Forty-first International Conference on Machine Learning, ICML 2024,
+Vienna, Austria, July 21-27, 2024
+,
+Proceedings of Machine Learning Research
+, Vol.
+235
+,
+pp. 46412–46440
+.
+External Links:
+Link
+Cited by:
+§4
+.
+[40]
+H. Wang, B. Dedhia, and N. K. Jha
+(2024)
+Zero-tprune: zero-shot token pruning through leveraging of the attention graph in pre-trained transformers
+.
+In
+IEEE/CVF Conference on Computer Vision and Pattern Recognition,
+CVPR 2024, Seattle, WA, USA, June 16-22, 2024
+,
+pp. 16070–16079
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§5
+.
+[41]
+C. Wu, J. Li, J. Zhou, J. Lin, K. Gao, K. Yan, S. Yin, S. Bai, X. Xu, Y. Chen, Y. Chen, Z. Tang, Z. Zhang, Z. Wang, A. Yang, B. Yu, C. Cheng, D. Liu, D. Li, H. Zhang, H. Meng, H. Wei, J. Ni, K. Chen, K. Cao, L. Peng, L. Qu, M. Wu, P. Wang, S. Yu, T. Wen, W. Feng, X. Xu, Y. Wang, Y. Zhang, Y. Zhu, Y. Wu, Y. Cai, and Z. Liu
+(2025)
+Qwen-image technical report
+.
+External Links:
+2508.02324
+,
+Link
+Cited by:
+§6.1
+.
+[42]
+W. Xing and A. A. Ghorbani
+(2004)
+Weighted pagerank algorithm
+.
+In
+2nd Annual Conference on Communication Networks and Services Research
+(CNSR 2004), 19-21 May 2004, Fredericton, N.B., Canada
+,
+pp. 305–314
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§5
+.
+[43]
+X. Zhai, B. Mustafa, A. Kolesnikov, and L. Beyer
+(2023)
+Sigmoid loss for language image pre-training
+.
+In
+2023 IEEE/CVF International Conference on Computer Vision (ICCV)
+,
+pp. 11941–11952
+.
+External Links:
+Document
+Cited by:
+§6.1
+.
+[44]
+L. Zhang, A. Rao, and M. Agrawala
+(2023)
+Adding conditional control to text-to-image diffusion models
+.
+In
+IEEE/CVF International Conference on Computer Vision, ICCV 2023,
+Paris, France, October 1-6, 2023
+,
+pp. 3813–3824
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§1
+.
+[45]
+S. Zhao, D. Chen, Y. Chen, J. Bao, S. Hao, L. Yuan, and K. K. Wong
+(2023)
+Uni-controlnet: all-in-one control to text-to-image diffusion models
+.
+In
+Advances in Neural Information Processing Systems 36: Annual Conference
+on Neural Information Processing Systems 2023, NeurIPS 2023, New Orleans,
+LA, USA, December 10 - 16, 2023
+,
+External Links:
+Link
+Cited by:
+§1
+.
+Supplementary Material
+Appendix A
+Token Importance Analysis
+The method for calculating token importance described in this section is adapted from the Zero-TPrune model proposed by Wang et al. It is important to note that Zero-TPrune was originally designed for the
+visual domain
+, where it analyzes the attention graph to calculate the importance of
+image
+patches (also treated as tokens) for pruning Vision Transformers. In this study, we migrate and apply this methodology from the visual domain to the
+textual domain
+, aiming to quantify the semantic importance of each text token within a natural language context.
+The method consists of two main components:
+1.
+Weighted PageRank (WPR) Algorithm
+: Used to calculate token importance scores within a single attention head.
+2.
+Multi-Head Score Fusion Strategy
+: Combines a Variance-based Head Filter (VHF) and Emphasizing Informative Region (EIR) aggregation to fuse scores from multiple heads.
+A.1
+Single-Head Importance via Weighted PageRank
+The WPR algorithm treats the attention matrix
+A
+A
+from a single attention head as the adjacency matrix of a weighted directed graph. It iteratively calculates the importance score of each node (i.e., token) in the graph. The importance of a token is determined by the weighted importance of other tokens that point to it. The calculation process is shown in Algorithm
+1
+.
+Algorithm 1
+PageRank for Token Importance Scoring
+0:
+Attention matrix
+A
+A
+, token length
+n
+n
+0:
+Convergence threshold
+ϵ
+\epsilon
+, maximum iterations
+T
+T
+0:
+Token importance scores
+s
+s
+1:
+A
+=
+row_norm
+​
+(
+A
+)
+A=\text{row\_norm}(A)
+2:
+Initialize uniform importance scores
+s
+(
+0
+)
+=
+1
+n
+​
+𝟏
+n
+s^{(0)}=\frac{1}{n}\mathbf{1}_{n}
+3:
+for
+iteration
+t
+=
+1
+t=1
+to
+T
+T
+do
+4:
+s
+p
+​
+r
+​
+e
+​
+v
+=
+s
+(
+t
+−
+1
+)
+s^{prev}=s^{(t-1)}
+5:
+s
+(
+t
+)
+=
+A
+T
+​
+s
+p
+​
+r
+​
+e
+​
+v
+s^{(t)}=A^{T}s^{prev}
+6:
+s
+(
+t
+)
+=
+s
+(
+t
+)
+/
+‖
+s
+(
+t
+)
+‖
+1
+s^{(t)}=s^{(t)}/\|s^{(t)}\|_{1}
+7:
+if
+‖
+s
+(
+t
+)
+−
+s
+p
+​
+r
+​
+e
+​
+v
+‖
+1
+<
+ϵ
+\|s^{(t)}-s^{prev}\|_{1}<\epsilon
+then
+8:
+break
+9:
+end
+if
+10:
+end
+for
+11:
+return
+s
+(
+t
+)
+s^{(t)}
+A.2
+Multi-Head Score Fusion
+For a multi-head attention mechanism, after obtaining an independent score distribution from each head via the WPR algorithm, these scores must be fused into a final score. A simple averaging of scores is not optimal, as different heads may focus on different semantic patterns. The method employs a fusion strategy that combines a Variance-based Head Filter (VHF) and Emphasizing Informative Region (EIR) aggregation.
+1.
+Variance-based Head Filter (VHF):
+This technique is used to identify and filter out ”bad” heads that provide uninformative or misleading score distributions. The procedure involves calculating the variance,
+Var
+h
+\mathrm{Var}_{h}
+, of the importance score distribution for each head. Only heads whose variance falls within a predefined threshold range [
+v
+min
+,
+v
+max
+v_{\min},v_{\max}
+] are retained; the rest are discarded from subsequent calculations.
+2.
+Emphasizing Informative Region (EIR):
+For the valid heads filtered by VHF, this method uses a ”root-mean of sum of squares” approach for score aggregation. Compared to a direct average, the squaring operation amplifies high scores from any single head. This ensures that a token’s high importance is not diluted in the final score, even if it is deemed critical by only a few ”specialist” heads.
+Final Score Calculation
+Combining the VHF and EIR strategies, the final importance score
+s
+(
+l
+)
+​
+(
+x
+i
+)
+s^{(l)}(x_{i})
+for the
+i
+i
+-th token in the
+l
+l
+-th layer is calculated as follows:
+s
+(
+l
+)
+​
+(
+x
+i
+)
+=
+∑
+h
+=
+1
+N
+h
+s
+(
+h
+,
+l
+)
+​
+(
+x
+i
+)
+2
+⋅
+η
+⁡
+(
+v
+min
+≤
+Var
+h
+≤
+v
+max
+)
+∑
+h
+=
+1
+N
+h
+η
+⁡
+(
+v
+min
+≤
+Var
+h
+≤
+v
+max
+)
+s^{(l)}\left(x_{i}\right)=\sqrt{\frac{\sum_{h=1}^{N_{h}}s^{(h,l)}\left(x_{i}\right)^{2}\cdot\eta\left(v_{\min}\leq\mathrm{Var}_{h}\leq v_{\max}\right)}{\sum_{h=1}^{N_{h}}\eta\left(v_{\min}\leq\mathrm{Var}_{h}\leq v_{\max}\right)}}
+Where:
+•
+s
+(
+h
+,
+l
+)
+​
+(
+x
+i
+)
+s^{(h,l)}(x_{i})
+is the importance score of token
+x
+i
+x_{i}
+from head
+h
+h
+in layer
+l
+l
+.
+•
+Var
+h
+\mathrm{Var}_{h}
+is the variance of the score distribution for head
+h
+h
+.
+•
+η
+⁡
+(
+⋅
+)
+\eta(\cdot)
+is an indicator function that implements the VHF. The function returns 1 if the condition
+v
+min
+≤
+Var
+h
+≤
+v
+max
+v_{\min}\leq\mathrm{Var}_{h}\leq v_{\max}
+is met, and 0 otherwise.
+•
+N
+h
+N_{h}
+is the total number of heads in the current layer.
+A.3
+Cross attention
+A natural baseline for computing token importance is to leverage the cross-attention mechanism between text and image tokens. In diffusion models, the cross-attention matrix
+C
+∈
+ℝ
+N
+img
+×
+N
+text
+C\in\mathbb{R}^{N_{\text{img}}\times N_{\text{text}}}
+is computed where image tokens serve as queries and text tokens serve as keys. For each text token
+i
+i
+, its attention weights across all image positions form the
+i
+i
+-th column of
+C
+C
+. These weights are typically reshaped to the spatial dimensions of the latent to produce saliency maps.
+Following this intuition, one might compute the importance score of text token
+i
+i
+by simply summing its corresponding column:
+s
+i
+cross
+=
+∑
+j
+=
+1
+N
+img
+C
+j
+,
+i
+s_{i}^{\text{cross}}=\sum_{j=1}^{N_{\text{img}}}C_{j,i}
+(12)
+However, this approach yields counterintuitive results. Consider the prompt “A man is cooking, Minecraft Style.” As shown in Figure
+7
+, the cross-attention-based importance scores assign the highest values predominantly to padding tokens, rather than to semantically meaningful tokens like “man”, “cooking”, or “Minecraft”. This paradoxical behavior contradicts our intuition and renders cross-attention unsuitable for token importance estimation.
+Figure 7
+:
+Token importance scores computed via cross-attention summation for the prompt “A man is cooking, Minecraft Style.” The method incorrectly assigns highest importance to padding tokens rather than semantic content tokens.
+This failure motivates our graph-based approach using self-attention and Weighted PageRank, which properly captures token relationships and avoids the padding token bias inherent in cross-attention aggregation.
+Appendix B
+Implementation Details
+This section provides the complete algorithmic and implementation details of our Condition-Degradation Guidance (CDG). We present: (1) the full sampling algorithm that integrates CDG into the diffusion denoising loop, and (2) the core PyTorch implementation for token degradation.
+B.1
+Algorithm: CDG Sampling
+Algorithm
+2
+details the complete CDG sampling procedure, which augments the standard diffusion sampling loop with our semantic degradation mechanism. The algorithm consists of three key components:
+CalculateImportance
+(lines 2–7) computes token importance scores using the Weighted PageRank (WPR) algorithm on the self-attention graph. It extracts the attention affinity matrix
+𝑨
+\boldsymbol{A}
+from transformer block
+λ
+block
+\lambda_{\text{block}}
+, applies WPR and multi-head fusion, and returns sorted token indices
+𝒊
+sorted
+\boldsymbol{i}_{\text{sorted}}
+in descending order of importance. For efficiency, this is computed only once at
+t
+=
+T
+t=T
+and cached for all subsequent steps.
+ProcessToken
+(lines 9–11) constructs the degraded condition
+𝒄
+deg
+\boldsymbol{c}_{\text{deg}}
+at each timestep. Using the cached importance ranking and degradation ratios
+r
+deg
+=
+{
+r
+content
+,
+r
+CtxAgg
+}
+r_{\text{deg}}=\{r_{\text{content}},r_{\text{CtxAgg}}\}
+, it builds a binary mask
+𝒎
+\boldsymbol{m}
+that marks less important tokens for replacement, then performs masked interpolation:
+𝒄
+deg
+←
+𝒎
+⊙
+𝒄
++
+(
+1
+−
+𝒎
+)
+⊙
+𝒄
+∅
+\boldsymbol{c}_{\text{deg}}\leftarrow\boldsymbol{m}\odot\boldsymbol{c}+(1-\boldsymbol{m})\odot\boldsymbol{c}_{\emptyset}
+.
+Main Sampling Loop
+(lines 13–22) performs guided denoising for
+T
+T
+steps. At each timestep
+t
+t
+, it computes two noise predictions—
+ϵ
+cond
+\boldsymbol{\epsilon}_{\text{cond}}
+with full condition
+𝒄
+\boldsymbol{c}
+and
+ϵ
+deg
+\boldsymbol{\epsilon}_{\text{deg}}
+with degraded condition
+𝒄
+deg
+\boldsymbol{c}_{\text{deg}}
+—then combines them via the CDG formula:
+ϵ
+^
+←
+ϵ
+cond
++
+(
+w
+−
+1
+)
+⋅
+(
+ϵ
+cond
+−
+ϵ
+deg
+)
+\hat{\boldsymbol{\epsilon}}\leftarrow\boldsymbol{\epsilon}_{\text{cond}}+(w-1)\cdot(\boldsymbol{\epsilon}_{\text{cond}}-\boldsymbol{\epsilon}_{\text{deg}})
+, where
+w
+w
+is the guidance scale.
+Algorithm 2
+Sampling with Condition-Degradation Guidance (CDG)
+0:
+Initial noise
+𝒙
+T
+∼
+𝒩
+⁡
+(
+0
+,
+𝑰
+)
+\boldsymbol{x}_{T}\sim\mathcal{N}(0,\boldsymbol{I})
+, text embedding
+𝒄
+\boldsymbol{c}
+, empty embedding
+𝒄
+∅
+\boldsymbol{c}_{\emptyset}
+, guidance scale
+w
+w
+, denoising steps
+T
+T
+, denoiser
+D
+θ
+D_{\theta}
+, transformer block index
+λ
+block
+\lambda_{\text{block}}
+, degradation ratio
+r
+deg
+=
+{
+r
+content
+,
+r
+CtxAgg
+}
+r_{\text{deg}}=\{r_{\text{content}},r_{\text{CtxAgg}}\}
+.
+0:
+Generated image
+𝒙
+0
+\boldsymbol{x}_{0}
+.
+1:
+CalculateImportance
+(
+𝒄
+,
+D
+θ
+,
+λ
+block
+\boldsymbol{c},D_{\theta},\lambda_{\text{block}}
+):
+2:
+𝑸
+,
+𝑲
+←
+ExtractQK
+​
+(
+D
+θ
+,
+λ
+block
+,
+𝒄
+)
+\boldsymbol{Q},\boldsymbol{K}\leftarrow\textsc{ExtractQK}(D_{\theta},\lambda_{\text{block}},\boldsymbol{c})
+3:
+𝑨
+←
+𝑸
+​
+𝑲
+T
+\boldsymbol{A}\leftarrow\boldsymbol{Q}\boldsymbol{K}^{T}
+4:
+𝒔
+heads
+←
+WPR
+​
+(
+𝑨
+)
+\boldsymbol{s}_{\text{heads}}\leftarrow\textsc{WPR}(\boldsymbol{A})
+5:
+𝒔
+←
+ScoreFusion
+​
+(
+𝒔
+heads
+)
+\boldsymbol{s}\leftarrow\textsc{ScoreFusion}(\boldsymbol{s}_{\text{heads}})
+6:
+𝒊
+sorted
+←
+ArgSort
+​
+(
+𝒔
+)
+\boldsymbol{i}_{\text{sorted}}\leftarrow\textsc{ArgSort}(\boldsymbol{s})
+7:
+return
+𝒊
+sorted
+\boldsymbol{i}_{\text{sorted}}
+8:
+ProcessToken
+(
+𝒄
+,
+𝒄
+∅
+,
+𝒊
+sorted
+,
+r
+deg
+\boldsymbol{c},\boldsymbol{c}_{\emptyset},\boldsymbol{i}_{\text{sorted}},r_{\text{deg}}
+):
+9:
+𝒎
+←
+BuildMask
+⁡
+(
+𝒊
+sorted
+,
+r
+deg
+)
+\boldsymbol{m}\leftarrow\mathrm{BuildMask}(\boldsymbol{i}_{\text{sorted}},r_{\text{deg}})
+10:
+𝒄
+deg
+←
+𝒎
+⊙
+𝒄
++
+(
+1
+−
+𝒎
+)
+⊙
+𝒄
+∅
+\boldsymbol{c}_{\text{deg}}\leftarrow\boldsymbol{m}\odot\boldsymbol{c}+(1-\boldsymbol{m})\odot\boldsymbol{c}_{\emptyset}
+11:
+return
+𝒄
+deg
+\boldsymbol{c}_{\text{deg}}
+12:
+// Main sampling process
+13:
+for
+t
+=
+T
+,
+T
+−
+1
+,
+…
+,
+1
+t=T,T-1,\ldots,1
+do
+14:
+if
+t
+=
+T
+t=T
+then
+15:
+𝒊
+sorted
+←
+CalculateImportance
+​
+(
+𝒄
+,
+D
+θ
+,
+λ
+block
+)
+\boldsymbol{i}_{\text{sorted}}\leftarrow\textsc{CalculateImportance}(\boldsymbol{c},D_{\theta},\lambda_{\text{block}})
+16:
+end
+if
+17:
+𝒄
+deg
+←
+ProcessToken
+​
+(
+𝒄
+,
+𝒄
+∅
+,
+𝒊
+sorted
+,
+r
+deg
+)
+\boldsymbol{c}_{\text{deg}}\leftarrow\textsc{ProcessToken}(\boldsymbol{c},\boldsymbol{c}_{\emptyset},\boldsymbol{i}_{\text{sorted}},r_{\text{deg}})
+18:
+ϵ
+cond
+←
+D
+θ
+​
+(
+𝒙
+t
+,
+t
+,
+𝒄
+)
+\boldsymbol{\epsilon}_{\text{cond}}\leftarrow D_{\theta}(\boldsymbol{x}_{t},t,\boldsymbol{c})
+19:
+ϵ
+deg
+←
+D
+θ
+​
+(
+𝒙
+t
+,
+t
+,
+𝒄
+deg
+)
+\boldsymbol{\epsilon}_{\text{deg}}\leftarrow D_{\theta}(\boldsymbol{x}_{t},t,\boldsymbol{c}_{\text{deg}})
+20:
+ϵ
+^
+←
+ϵ
+cond
++
+(
+w
+−
+1
+)
+⋅
+(
+ϵ
+cond
+−
+ϵ
+deg
+)
+\hat{\boldsymbol{\epsilon}}\leftarrow\boldsymbol{\epsilon}_{\text{cond}}+(w-1)\cdot(\boldsymbol{\epsilon}_{\text{cond}}-\boldsymbol{\epsilon}_{\text{deg}})
+21:
+𝒙
+t
+−
+1
+←
+SchedulerStep
+​
+(
+𝒙
+t
+,
+ϵ
+^
+,
+t
+)
+\boldsymbol{x}_{t-1}\leftarrow\textsc{SchedulerStep}(\boldsymbol{x}_{t},\hat{\boldsymbol{\epsilon}},t)
+22:
+end
+for
+23:
+return
+𝒙
+0
+\boldsymbol{x}_{0}
+B.2
+Core Implementation
+The code listing below presents the PyTorch implementation of the token degradation logic (corresponding to the
+ProcessToken
+function in Algorithm
+2
+). The implementation includes three key optimizations: (1) early exit when no degradation is needed (lines 107–108), (2) importance caching controlled by
+all_use_first_step_importance
+flag (lines 111–119), and (3) efficient masked interpolation via broadcasting (lines 128–130). This compact implementation demonstrates how CDG integrates seamlessly into existing diffusion pipelines with minimal code overhead.
+⬇
+def
+_
+_
+call__
+(
+self
+,
+positive_encoder_hidden_states
+,
+negative_encoder_hidden_states
+):
+""
+"Process
+encoder
+hidden
+states
+based
+on
+importance
+and
+degrade
+ratios"
+""
+degrade_ratio
+=
+self
+.
+process_params
+[
+"degrade
+_
+ratio"
+]
+#
+Optimization:
+Skip
+importance
+calculation
+if
+not
+needed
+if
+degrade_ratio
+in
+[{
+"content"
+:
+1,
+"CtxAgg"
+:
+0}]:
+sorted_indices
+=
+[
+i
+for
+i
+in
+range
+(
+len
+(
+positive_encoder_hidden_states
+))]
+#
+Use
+cached
+importance
+from
+first
+step
+(if
+enabled)
+elif
+(
+self
+.
+process_params
+.
+get
+(
+"all
+_
+use
+_
+first
+_
+step
+_
+importance"
+)
+and
+self
+.
+first_step_importance
+is
+not
+None
+):
+sorted_indices
+=
+self
+.
+first_step_importance
+#
+Calculate
+importance
+(first
+step
+or
+every
+step
+depending
+on
+config)
+else
+:
+sorted_indices
+,
+scores
+=
+self
+.
+importance_calculator
+(
+positive_encoder_hidden_states
+,
+negative_encoder_hidden_states
+)
+if
+self
+.
+process_params
+.
+get
+(
+"all
+_
+use
+_
+first
+_
+step
+_
+importance"
+):
+self
+.
+first_step_importance
+=
+sorted_indices
+#
+Cache
+for
+later
+#
+Generate
+keep
+mask
+based
+on
+importance
+and
+ratios
+degrade_mask
+,
+degraded_indices
+=
+self
+.
+get_degrade_mask
+(
+sorted_indices
+,
+ratio
+=
+degrade_ratio
+)
+#
+Interpolate:
+degraded
+=
+(1
+-
+degrade
+_
+mask)
+*
+positive
++
+degrade
+_
+mask
+*
+negative
+degrade_mask
+=
+degrade_mask
+.
+unsqueeze
+(0).
+unsqueeze
+(-1)
+#
+Expand
+dimensions
+result
+=
+((1
+-
+degrade_mask
+)
+*
+positive_encoder_hidden_states
++
+degrade_mask
+*
+negative_encoder_hidden_states
+)
+return
+result
+Appendix C
+Experimental Details and Supplementary Results
+This section provides comprehensive details for all experimental components referenced in the main paper, including evaluation metrics implementation, optimal hyperparameters for different models, and additional experimental results.
+C.1
+Evaluation Metrics Implementation
+This section provides detailed implementation specifications for all evaluation metrics used in our experiments to ensure full reproducibility.
+C.1.1
+Fréchet Inception Distance (FID).
+FID is a standard metric for assessing the quality of generated images by measuring the distributional distance to real images. To eliminate ambiguity, we specify that all our FID calculations are performed using the official implementation within the
+torchmetrics
+library. Following standard practice, we extract the 2048-dimensional features from the final pooling layer of the pre-trained Inception-v3 network.
+C.1.2
+CLIP Score.
+The CLIP Score evaluates the semantic consistency between a generated image and its corresponding text prompt. Different CLIP model variants can yield varying scores. To ensure fair and reproducible comparisons, we consistently use the
+openai/clip-vit-base-patch32
+model as the backbone for all CLIP Score calculations.
+C.1.3
+Aesthetic Score.
+The Aesthetic Score is a metric designed to computationally estimate the visual appeal of an image, simulating human perception of beauty. The score is generated by a dedicated predictor model, which typically consists of a regressor built upon a powerful, pre-trained vision foundation model like a CLIP image encoder. This predictor is trained on a large-scale dataset where images are paired with aesthetic ratings collected from human volunteers. This process allows the model to learn the visual features that correlate with positive human aesthetic judgment. In our work, we employ the model provided within the
+aesthetic_predictor_v2_5
+library. A higher score from this model indicates a higher predicted visual appeal.
+C.1.4
+VQA Score.
+The VQA (Visual Question Answering) Score assesses the factual alignment between a prompt and a generated image by framing the evaluation as a comprehension task. The process involves three steps: First, the descriptive prompt is programmatically converted into a closed-form (yes/no) question. Second, a pre-trained VQA model is presented with both the generated image and this question. Finally, the VQA Score is determined by the model’s output probability for the affirmative answer, ”Yes”. A high score signifies high confidence from the VQA model that the image accurately depicts the content specified in the original prompt. For this evaluation, our implementation is based on the
+t2v_metrics
+framework, and we utilize the
+clip-flant5-xxl
+model as the VQA engine. The question template is fixed as “Does this figure show ‘[prompt]’? Please answer yes or no.”
+C.2
+Dataset
+In this study, we employed two core benchmark datasets for model evaluation: the COCO 2017 validation set and GenAI Bench.
+C.2.1
+COCO 2017 Validation Set
+This is an authoritative dataset widely used in the field of computer vision. It contains 5,000 images, each associated with five textual descriptions, totaling 25,000 captions. For consistency in our experiments, we uniformly selected the first caption for each image as the prompt for the generation task.
+C.2.2
+GenAI Bench
+This is a novel dataset focused on evaluating the compositional reasoning capabilities of models. Its core consists of 1,600 high-quality text prompts sourced from the real-world workflows of professional designers. The dataset is specifically designed to test the performance of AI models in understanding and executing text-to-vision tasks that involve complex logic and compositional relationships, such as multiple objects, fine-grained attributes, spatial relations, and advanced reasoning.
+C.2.3
+Rationale for Selection
+The rationale for selecting these two datasets is that they collectively form a
+complementary and comprehensive evaluation framework
+.
+On one hand, the descriptive prompts from COCO 2017, which primarily depict common objects and general scenes, are ideal for measuring a model’s
+foundational capabilities and generalizability
+in generating
+common objects and conventional scenes
+.
+On the other hand, GenAI Bench presents a more rigorous challenge; its complex, compositional prompts allow for an in-depth probe of a model’s
+upper limits in advanced semantic understanding, logical reasoning, and precise detail control
+.
+By combining these datasets, our study can not only assess the model’s baseline performance on conventional tasks but also conduct a more nuanced analysis of its strengths and weaknesses in handling complex, fine-grained instructions, thereby enabling a more holistic and multi-faceted evaluation of its overall capabilities.
+C.3
+Optimal Hyperparameters for Different Models
+Model
+Approach
+w
+w
+T
+T
+s
+s
+seed
+σ
+\sigma
+λ
+block
+\lambda_{\text{block}}
+r
+content
+|
+r
+CtxAgg
+r_{\text{content}}|r_{\text{CtxAgg}}
+SD3
+CFG
+7
+28
+-
+-
+-
+-
+-
+CADS
+7
+28
+0.07
+-
+-
+-
+-
+ICG
+7
+28
+-
+42
+-
+-
+-
+PAG
+3
+28
+-
+-
+-
+13
+-
+SEG
+3
+28
+-
+-
+5
+13
+-
+CDG
+7
+28
+-
+-
+-
+1
+1.0
+|
+|
+0.0
+SD3.5
+CFG
+3.5
+28
+-
+-
+-
+-
+-
+CADS
+3.5
+28
+0.07
+-
+-
+-
+-
+ICG
+3.5
+28
+-
+42
+-
+-
+-
+PAG
+3
+28
+-
+-
+-
+13
+-
+SEG
+3
+28
+-
+-
+5
+13
+-
+CDG
+3.5
+28
+-
+-
+-
+2
+1.0
+|
+|
+0.0
+FLUX.1
+CFG
+1.5
+28
+-
+-
+-
+-
+-
+CADS
+1.5
+28
+0.07
+-
+-
+-
+-
+ICG
+1.5
+28
+-
+42
+-
+-
+-
+CDG
+1.5
+28
+-
+-
+-
+1
+1.0
+|
+|
+0.0
+Table 5:
+Optimal hyperparameters for different models. (“-” denotes not used)
+This section details the parameters used for the CFG, CADS, ICG, and CDG methods across different models, as summarized in Table
+5
+. The guidance scale (
+w
+w
+) and the number of steps (
+T
+T
+) were set based on default values or official examples. The parameter
+s
+s
+for CADS, which controls the intensity of guidance noise, was adopted from the value used for DiT models as specified in its paper’s appendix. The seed for ICG (set to 42) initializes a random number generator used to select a random token ID for each prompt in the COCO dataset, ensuring reproducibility. For our CDG method,
+λ
+block
+\lambda_{\text{block}}
+denotes the layer index where degradation is applied, while
+r
+content
+r_{\text{content}}
+and
+r
+CtxAgg
+r_{\text{CtxAgg}}
+represent the degradation ratios for content and context-aggregating tokens, respectively.
+It is important to note that for the FLUX.1-dev model, the guidance scale
+w
+w
+corresponds to the
+true_cfg_scale
+parameter in its codebase, and we used an empty string for the negative prompt to implement the CFG method. Furthermore, while FLUX.1-dev is capable of generating high-quality, high-resolution images, its inference time is considerable. Due to computational constraints, we reduced the generation resolution for the FLUX model from 1024
+×
+\times
+1024 to 512
+×
+\times
+512 and decreased the number of inference steps from 50 to 28.
+Additionally, it is important to clarify the interpretation of the guidance scale parameter
+w
+w
+in Table
+5
+. For traditional guidance methods (CFG, CADS, ICG, CDG),
+w
+w
+directly represents the guidance strength. However, for PAG and SEG methods, which support a combined
+cfg+pag
+mode, the reported
+w
+w
+value corresponds to the PAG/SEG guidance scale, while the CFG scale is set to 1.0 (i.e., CFG is effectively disabled). This configuration allows PAG and SEG to operate independently without interference from CFG, which is the recommended setting in their respective implementations.
+C.4
+Hyperparameters analysis
+While Section 6.3.2 of the main text presents a comprehensive hyperparameter analysis on SD3, establishing
+R
+deg
+=
+1.0
+R_{\text{deg}}=1.0
+as the optimal default, this section provides complementary ablation studies on SD3.5 and FLUX.1 to validate the cross-model generality of this choice. Our goal is to demonstrate that
+R
+deg
+=
+1.0
+R_{\text{deg}}=1.0
+serves as a robust initialization across diverse architectures, not merely a model-specific optimum.
+Experimental Setup.
+For each model, we first conducted a preliminary search over intervention block indices (
+λ
+block
+\lambda_{\text{block}}
+) to identify the most promising configuration. Based on these initial experiments, we selected
+λ
+block
+=
+2
+\lambda_{\text{block}}=2
+for SD3.5 and
+λ
+block
+=
+1
+\lambda_{\text{block}}=1
+for FLUX.1. We then performed ratio ablation at these fixed indices, systematically varying
+R
+deg
+R_{\text{deg}}
+to observe metric responses.
+Due to computational constraints, these supplementary ablations were conducted on a subset of 500 images from the MS-COCO validation set, rather than the full 5,000 images used in the main SD3 analysis. This design choice is justified by two considerations: (1) the primary conclusion regarding
+R
+deg
+=
+1.0
+R_{\text{deg}}=1.0
+was already established through the comprehensive SD3 analysis on 5,000 images, and (2) the 500-image subset provides sufficient statistical power to observe trend patterns and validate consistency across models. The convergence of results across different sample sizes further supports the robustness of our findings.
+Figure 8
+:
+Hyperparameter ablation on SD3.5 and FLUX.1:
+Performance metrics (CLIP Score and VQA Score) as a function of Degradation Ratio
+R
+deg
+R_{\text{deg}}
+. Top row: CLIP Score; bottom row: VQA Score. Left column: SD3.5 results; right column: FLUX.1 results. For SD3.5, both metrics achieve their best performance around
+R
+deg
+=
+1.0
+R_{\text{deg}}=1.0
+-
+1.3
+1.3
+, exhibiting a stable plateau that is consistent with the SD3 analysis in the main text. For FLUX.1, metrics exhibit relative stability across the tested range, with
+R
+deg
+=
+1.0
+R_{\text{deg}}=1.0
+providing a reliable initialization point.
+Results and Analysis.
+Figure
+8
+presents the ablation results for both models across CLIP Score and VQA Score metrics. For SD3.5 (left column), the patterns closely mirror those observed for SD3 in the main text: both metrics achieve their best performance in the region around
+R
+deg
+=
+1.0
+R_{\text{deg}}=1.0
+, with CLIP Score reaching its maximum near
+R
+deg
+=
+1.1
+R_{\text{deg}}=1.1
+and VQA Score achieving optimal values around
+R
+deg
+=
+1.0
+R_{\text{deg}}=1.0
+-
+1.3
+1.3
+. Notably, the performance plateau in the
+[
+1.0
+,
+1.3
+]
+[1.0,1.3]
+range demonstrates robustness to small variations in context-aggregating token degradation. The asymmetric response pattern—steeper sensitivity in
+[
+0
+,
+1.0
+]
+[0,1.0]
+(content token removal) transitioning to gentler slopes in
+[
+1.0
+,
+2.0
+]
+[1.0,2.0]
+(context-aggregating token removal)—confirms the content/context-aggregating dichotomy holds across SD3 variants.
+For FLUX.1 (right column), the curves exhibit notably flatter profiles with reduced sensitivity to
+R
+deg
+R_{\text{deg}}
+variations. This behavior aligns with FLUX.1’s training paradigm: as discussed in Section 6.2, FLUX.1 employs
+Guidance Distillation
+, making it inherently less dependent on inference-time guidance mechanisms. Consequently, the model shows more stable performance across different degradation ratios. Despite this relative flatness,
+R
+deg
+=
+1.0
+R_{\text{deg}}=1.0
+remains a sensible initialization choice, as it falls within the stable, high-performing region for both metrics and maintains consistency with the SD3/SD3.5 configuration.
+Conclusion.
+These cross-model ablations validate the generality of
+R
+deg
+=
+1.0
+R_{\text{deg}}=1.0
+as a default initialization. While SD3.5 demonstrates the same optimal behavior as SD3, FLUX.1’s relative insensitivity to ratio variations further supports the robustness of this choice: even when the model is less guidance-dependent,
+R
+deg
+=
+1.0
+R_{\text{deg}}=1.0
+provides reliable performance without requiring extensive per-model tuning. This cross-architectural consistency, combined with the computational efficiency benefits at
+R
+deg
+=
+1.0
+R_{\text{deg}}=1.0
+(as discussed in Section 6.3.4), establishes
+R
+deg
+=
+1.0
+R_{\text{deg}}=1.0
+as a principled default for CDG across diverse diffusion model architectures.
+C.5
+Visual Examples of Varying Degradation Ratios
+Figure
+9
+visually demonstrates the impact of the unified degradation ratio
+R
+deg
+R_{\text{deg}}
+on the generated results.
+It can be observed that when fine-tuning around the default configuration of
+R
+deg
+=
+1.0
+R_{\text{deg}}=1.0
+, the model consistently generates images that adhere to the core elements of the prompt, yet they exhibit diverse variations in visual features such as composition and perspective.
+This indicates that
+R
+deg
+R_{\text{deg}}
+not only ensures the alignment of key content but also serves as an effective control for users to flexibly adjust according to specific aesthetic preferences, allowing them to explore different generative styles.
+Figure 9
+:
+Visual comparison of results generated by varying the degradation ratio
+R
+deg
+R_{\text{deg}}
+.
+C.6
+Additional Details for CFG
+∗
+Analysis
+This section provides detailed experimental setup and additional qualitative results for the CFG
+∗
+analysis presented in Section 6.3.3 of the main text.
+C.6.1
+Detailed Experimental Setup.
+As discussed in the main text, CFG
+∗
+replaces the positive prompt
+𝒄
+\boldsymbol{c}
+in standard CFG (Eq. (3)) with the degraded condition
+𝒄
+deg
+\boldsymbol{c}_{\text{deg}}
+. For completeness, we provide the explicit formulation and implementation details below.
+Standard CFG formulation:
+D
+^
+θ
+​
+(
+𝒙
+t
+,
+t
+)
+=
+D
+θ
+​
+(
+𝒙
+t
+,
+t
+,
+𝒄
+)
++
+(
+w
+−
+1
+)
+​
+(
+D
+θ
+​
+(
+𝒙
+t
+,
+t
+,
+𝒄
+)
+−
+D
+θ
+​
+(
+𝒙
+t
+,
+t
+,
+∅
+)
+)
+\hat{D}_{\theta}(\boldsymbol{x}_{t},t)=D_{\theta}(\boldsymbol{x}_{t},t,\boldsymbol{c})+(w-1)(D_{\theta}(\boldsymbol{x}_{t},t,\boldsymbol{c})-D_{\theta}(\boldsymbol{x}_{t},t,\boldsymbol{\varnothing}))
+CFG
+∗
+formulation (for semantic probing):
+D
+^
+θ
+​
+(
+𝒙
+t
+,
+t
+)
+=
+D
+θ
+​
+(
+𝒙
+t
+,
+t
+,
+𝒄
+deg
+)
++
+(
+w
+−
+1
+)
+​
+(
+D
+θ
+​
+(
+𝒙
+t
+,
+t
+,
+𝒄
+deg
+)
+−
+D
+θ
+​
+(
+𝒙
+t
+,
+t
+,
+∅
+)
+)
+\hat{D}_{\theta}(\boldsymbol{x}_{t},t)=D_{\theta}(\boldsymbol{x}_{t},t,\boldsymbol{c}_{\text{deg}})+(w-1)(D_{\theta}(\boldsymbol{x}_{t},t,\boldsymbol{c}_{\text{deg}})-D_{\theta}(\boldsymbol{x}_{t},t,\boldsymbol{\varnothing}))
+where
+𝒄
+deg
+\boldsymbol{c}_{\text{deg}}
+is constructed according to Eq. (11) in the main text with varying degradation ratios
+R
+deg
+R_{\text{deg}}
+.
+C.6.2
+Additional Qualitative Results.
+To provide additional visual evidence for the semantic properties of degraded conditions, Figure
+10
+shows generation results guided purely by context-aggregating token information (i.e.,
+r
+content
+=
+1
+,
+r
+CtxAgg
+=
+0
+r_{\text{content}}=1,r_{\text{CtxAgg}}=0
+). We compare unconditional generation (left) with context-aggregating-token-only guidance (right) across four diverse prompts. These results illustrate that context-aggregating tokens, after contextual encoding by the text encoder, carry global semantic information related to the original prompt.
+Figure 10
+:
+Comparison between unconditional generation (left) and context-aggregating-token-only guidance (right) for four prompts. The right column uses CFG
+∗
+with
+𝒄
+deg
+\boldsymbol{c}_{\text{deg}}
+constructed by
+r
+content
+=
+1
+,
+r
+CtxAgg
+=
+0
+r_{\text{content}}=1,r_{\text{CtxAgg}}=0
+.
+C.7
+Full Benchmark Results on GenAI-Bench
+This section provides comprehensive quantitative results of our CDG method compared to baselines (CFG, CADS, ICG, SEG, and PAG) on the GenAI-Bench dataset, covering both advanced reasoning skills and basic skills. All metrics are reported with 2 decimal places. For each skill dimension, the best-performing method is marked in
+bold
+, while the second-best is
+underlined
+.
+C.7.1
+Advanced Reasoning Skills
+Table
+6
+presents detailed evaluation results for advanced reasoning skills across three state-of-the-art text-to-image diffusion models: SD3, SD3.5, and FLUX.1. These skills encompass five key reasoning capabilities: Counting, Comparison, Differentiation, Negation, and Universal reasoning. Our CDG method demonstrates consistent improvements over baseline methods across most skill dimensions.
+Model
+Method
+Counting
+Comparison
+Differentiation
+Negation
+Universal
+Avg
+SD3
+CFG
+76.00
+74.08
+77.22
+46.58
+70.74
+68.92
+CADS
+75.59
+74.05
+76.98
+46.74
+70.11
+68.70
+ICG
+75.37
+73.10
+75.89
+47.46
+69.39
+68.24
+SEG
+70.87
+69.43
+70.87
+47.90
+64.96
+64.81
+PAG
+67.76
+66.40
+67.09
+47.84
+64.80
+62.78
+CDG (Ours)
+76.50
+74.86
+78.26
+46.24
+71.53
+69.48
+SD3.5
+CFG
+76.45
+73.70
+75.10
+46.36
+72.21
+68.76
+CADS
+76.27
+73.54
+75.08
+46.63
+71.94
+68.69
+ICG
+76.41
+74.13
+75.63
+46.85
+70.23
+68.65
+SEG
+71.98
+71.43
+72.80
+46.53
+67.73
+66.09
+PAG
+72.79
+71.02
+72.38
+48.68
+66.17
+66.21
+CDG (Ours)
+77.92
+76.06
+78.74
+46.65
+73.13
+70.50
+FLUX.1
+CFG
+75.18
+72.97
+75.39
+45.51
+71.13
+68.04
+CADS
+74.84
+72.58
+74.87
+45.42
+70.81
+67.70
+ICG
+74.57
+72.83
+74.50
+44.65
+71.47
+67.60
+CDG (Ours)
+74.98
+73.47
+76.17
+44.97
+71.55
+68.23
+Table 6:
+Comprehensive GenAI-Bench evaluation results for advanced reasoning skills. For each skill dimension within each model, the
+best
+method is shown in bold and the
+second-best
+is underlined. CDG achieves the best performance in most dimensions, demonstrating its superior reasoning capabilities.
+C.7.2
+Basic Skills
+Table
+7
+presents detailed evaluation results for basic compositional skills across SD3, SD3.5, and FLUX.1. These fundamental skills include: Action Relation (capturing action-object interactions), Attribute (object properties), Scene (environmental context), Spatial Relation (object positioning), and Part Relation (part-whole relationships). Our method shows consistent performance gains across all models.
+Model
+Method
+Action Relation
+Attribute
+Scene
+Spatial Relation
+Part Relation
+Avg
+SD3
+CFG
+79.06
+77.23
+76.67
+78.66
+76.35
+77.59
+CADS
+78.84
+77.05
+76.51
+78.55
+76.36
+77.46
+ICG
+77.95
+76.42
+75.77
+78.09
+74.96
+76.64
+SEG
+72.57
+71.98
+71.28
+73.50
+70.99
+72.06
+PAG
+68.58
+68.35
+66.95
+69.65
+68.75
+68.46
+CDG (Ours)
+79.29
+77.56
+77.18
+79.84
+76.19
+78.01
+SD3.5
+CFG
+79.48
+78.00
+77.45
+79.66
+76.31
+78.18
+CADS
+79.39
+77.91
+77.25
+79.58
+76.30
+78.09
+ICG
+79.08
+77.83
+76.87
+78.90
+76.28
+77.79
+SEG
+76.02
+74.42
+74.09
+76.34
+73.21
+74.82
+PAG
+75.53
+74.10
+73.47
+75.64
+73.04
+74.35
+CDG (Ours)
+81.18
+79.19
+78.18
+80.69
+78.08
+79.46
+FLUX.1
+CFG
+77.33
+76.03
+76.09
+77.47
+74.78
+76.34
+CADS
+77.05
+75.71
+75.92
+77.42
+74.33
+76.09
+ICG
+77.10
+75.52
+75.87
+77.07
+74.65
+76.04
+CDG (Ours)
+77.70
+76.27
+76.37
+77.56
+74.93
+76.57
+Table 7:
+Comprehensive GenAI-Bench evaluation results for basic compositional skills. For each skill dimension within each model, the
+best
+method is shown in bold and the
+second-best
+is underlined. CDG consistently outperforms baseline methods across different models and skill types.
+C.8
+Encoder Ablation and WPR Analysis
+This section provides two supplementary ablations referenced in the main text: encoder-specific degradation analysis and WPR vs. random ranking comparison.
+C.8.1
+Encoder-Specific Ablation
+In SD3, CLIP-L and CLIP-G are concatenated along the feature dimension (fused and inseparable), then concatenated with T5 along the sequence length dimension. Our method operates on this combined embedding, degrading CLIP and T5 portions independently. Table
+8
+shows that degrading only CLIP tokens (CDG-C) yields the best FID and CLIP Score, while degrading only T5 tokens (CDG-T) provides competitive results. The full CDG (both encoders) achieves the best balance across all metrics, confirming that joint degradation is optimal.
+Table 8
+:
+Encoder-specific ablation on SD3. -C/-T: CLIP/T5 only degradation.
+Method
+FID
+↓
+\downarrow
+CLIP
+↑
+\uparrow
+Aes
+↑
+\uparrow
+VQA
+↑
+\uparrow
+CFG
+35.69
+31.73
+5.66
+91.44
+CDG-C (CLIP only)
+32.68
+32.01
+5.65
+92.32
+CDG-T (T5 only)
+34.81
+31.94
+5.67
+92.11
+CDG (Both)
+34.05
+32.00
+5.70
+92.40
+C.8.2
+WPR vs. Random Ranking
+At the default
+R
+deg
+=
+1.0
+R_{\text{deg}}=1.0
+, all content tokens are degraded regardless of ranking, making WPR unnecessary. For
+R
+deg
+≠
+1.0
+R_{\text{deg}}\neq 1.0
+, where only a subset of tokens is degraded, we compare WPR-based ranking against random ranking. Table
+9
+shows results at
+R
+deg
+=
+0.9
+R_{\text{deg}}=0.9
+and
+R
+deg
+=
+1.1
+R_{\text{deg}}=1.1
+.
+Table 9:
+WPR vs. Random ranking ablation on SD3.
+R
+deg
+R_{\text{deg}}
+FID
+↓
+\downarrow
+CLIP
+↑
+\uparrow
+Aes
+↑
+\uparrow
+VQA
+↑
+\uparrow
+WPR
+Rand
+∗
+WPR
+Rand
+∗
+WPR
+Rand
+∗
+WPR
+Rand
+∗
+1.1
+33.80
+34.17
+31.98
+32.02
+±
+\pm
+0.52
+5.68
+5.68
+±
+\pm
+0.16
+92.27
+92.27
+±
+\pm
+0.88
+0.9
+35.08
+33.73
+31.72
+31.90
+±
+\pm
+0.95
+5.67
+5.67
+±
+\pm
+0.28
+91.05
+91.65
+±
+\pm
+1.57
+∗
+Means computed on COCO-5K. Std (
+±
+\pm
+): variance across 20 seeds on a 400-prompt subset (FID std omitted).
+Mean performance is comparable, but WPR provides two key benefits: (1)
+Stability
+: random ranking introduces variance (e.g., VQA
+±
+\pm
+1.57 at
+R
+deg
+=
+0.9
+R_{\text{deg}}=0.9
+), while WPR ensures deterministic behavior. (2)
+Theoretical grounding
+: the content/context-aggregating dichotomy revealed by WPR validates
+R
+deg
+=
+1.0
+R_{\text{deg}}=1.0
+as a principled semantic boundary, providing the analytical foundation for stratified degradation.
+C.9
+More Visual Results
+This section presents additional visual results demonstrating the effectiveness and versatility of our CDG method. We first showcase CDG’s compatibility with orthogonal techniques, followed by comprehensive qualitative comparisons across different models.
+C.9.1
+Combination with Orthogonal Methods.
+The synergy of CDG with orthogonal methods like PAG is shown in Figure
+11
+. In the sculpture example, PAG alone fails to correctly render the word “Freedom” on the base, producing a garbled text “FRE(nn)”. With CDG, the semantic constraint ensures accurate text generation, displaying the complete and correct “FREEDOM” inscription. Similarly, for the food photography prompt, PAG alone struggles to capture the style specification, producing an image with distracting background clutter. The addition of CDG provides the necessary semantic precision, removing this clutter and results in a cleaner, more professional composition.
+Figure 11
+:
+Synergy with PAG: CDG provides the core semantic foundation, while PAG refines local details.
+C.9.2
+Application to Text-Guided Image Editing.
+CDG’s semantic precision is particularly beneficial for text-guided image editing tasks.
+As shown in Figure
+12
+, in the convertible car example, the baseline struggles with the color attribute, generating a red or pink car instead of the specified “blue”. CDG corrects this semantic error, producing the accurate retro blue convertible as described in the prompt. Similarly, in the golden retriever scene, while the baseline method preserves the overall image layout, it fails to interpret a key numerical constraint in the prompt (“three children”).
+In contrast, CDG successfully enforces this semantic detail, rendering the correct number of subjects without disrupting the composition.
+Figure 12
+:
+CDG for Text-Guided Editing: Correcting semantic errors where the baseline fails.
+C.9.3
+Application to Controllable Generation.
+As shown in Figure
+13
+, in the furniture scene, ControlNet alone fails to follow both the structural layout and color attributes. The baseline incorrectly places the coffee mug on top of the books, whereas the canny figure shows it should be positioned to the right of the books. Additionally, the colors are wrong (“blue book, green book, red coffee mug” are not rendered correctly). With CDG, the model correctly positions all objects according to the structural constraint and renders them with their specified colors. Similarly, in the racing car example, while ControlNet successfully enforces structural constraints (from a canny figure), it struggles with complex combinatorial semantics (e.g., “green front, black rear” and “77”).
+By providing a more precise semantic signal, CDG enables the model to faithfully render these details, demonstrating a powerful synergy between structural and semantic control.
+Figure 13
+:
+CDG for Controllable Generation: Providing semantic precision to render complex details under structural constraints.
+C.9.4
+More Visual Results on SD3, SD3.5, and FLUX.1
+Figure 14
+:
+More visual results on the SD 3 model.
+Figure 15
+:
+More visual results on the SD 3.5 model.
+Figure 16
+:
+More visual results on the Flux model.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

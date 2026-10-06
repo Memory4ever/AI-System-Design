@@ -86,6 +86,8 @@ bubble ~= 3 / 35 ~= 8.6%
 
 更多 micro-batches 可以摊薄 fill/drain，但 local micro-batch 过小会降低 GEMM efficiency，并增加 boundary messages 和 scheduler overhead。
 
+异构 stage 还应把一次 fill 与稳态节拍拆开。只在纯 forward、固定服务时间、无限 buffer 且没有其他资源争用的模型里，`m` 个 micro-batches 的 makespan 才是 `Στ_j + (m−1)max τ_j`；把各 stage 都替成最慢时间，会高估一次 fill，而不改变该模型的稳态斜率。若链路只是无限并行的固定 delay，传输可另作 fill 加项；另开 NCCL stream 并不满足这个假设，真实带宽、backpressure、反向和变化的序列成本仍须进入实测。[受限递推分析](https://arxiv.org/html/2610.21815v1)验证的是这些模型，gateway 请求日志不是实际 PP stage trace。推导、profile 与容量检查都有成本；假设不满足时保留原 schedule 模型和真实流水测量，不能用这个式子签发训练或 serving SLO。<!-- source-family:SF-2026-ARXIV-2610-21815 -->
+
 ## GPipe：先 Forward，再 Backward
 
 GPipe 风格 schedule 可抽象为：
@@ -99,6 +101,8 @@ B(mbm), ..., B(mb2), B(mb1)
 优点是 schedule 和同步 semantics 直观；缺点是许多 forward activations 要等待较久才进入 backward。若不 recompute，activation peak 随 outstanding micro-batches 增长。
 
 Activation checkpointing 可以只保存 stage input 等边界并在 backward 前重算内部 activations，用额外 compute 换 memory。
+
+当长序列的主要计算落在无参数的 Attention 核，继续整层切 stage 会让这部分仍主导填充与排空；另一条同步分支把 pre-Attention、Attention 和 post-Attention 分开，在不同 stages 上交错执行不同 micro-batches 的 Attention，参数投影与残差依赖仍须按原顺序完成。为减少传输 Q/K/V，可以连同输入移动 QKV 投影参数，但这把通信改成输入、参数与输出的联合账单，并不等于无状态或零开销。配合两路 FILO 时，保留 Attention 所需状态、重算较便宜的前后算子，再分块执行 MLP 以减轻碎片；存活状态仍随 micro-batch 数增长，调度整除条件、同一步梯度提交与真实峰值缓冲都要核验。[受限长序列训练对照](https://arxiv.org/html/2507.00394v1)中，短序列或较慢互联不能完全覆盖新增通信，重算也会降低吞吐；合成定长、随 stage 扩大的 global batch 与少量计时迭代不证明全程收敛或任意规模收益。只有依赖、质量和总通信/重算成本通过真实 workload 验收才采用该分支，否则保留整层 GPipe/1F1B 与原 checkpointing。<!-- source-family:SF-2025-ARXIV-2507-00394 -->
 
 ## 1F1B：缩短 Activation Lifetime
 
@@ -271,6 +275,8 @@ boundary bytes
 
 这是校准窗口内的离线分支，不是在线适应保证。HAPMoE 的受限异构 MoE 对照支持联合计划与非均匀分区，却用 warmup、memory/router instrumentation 和搜索换较少 steady-state 等待；pruning 也可能错过模型外候选。路由持续改变、网络争用或设备失效会使原 profile 过期，短 search time 不能消去重新校准成本，作者没有验证动态重配置。收益不足或状态无法一致 materialize 时，保留同构子组、固定 EP 与成熟 1F1B，在实际 step time、峰值 memory 和任务/收敛合同上重新验收，而不是用低预测误差证明生产最优。[必要机制与反证](https://arxiv.org/html/2609.39350v1)。<!-- source-family:SF-2026-ARXIV-2609-39350 -->
 
+层数的离散粒度仍可能无法平衡多条完整 pipeline 副本，此时可让副本使用不同 local batch，再联合调整 stage；micro-batch 数成为比切层更细的负载旋钮。不同 TP/DP 切分的梯度必须按真实参数坐标分块、重组与融合，不能按物理 buffer 形状直接 AllReduce；不同样本数的权重、总 batch 和 accumulation 提交是另须验证的统计合同。[受限异构训练研究](https://arxiv.org/html/2610.22035v1)使用三阶段 heuristic 而非全局最优，核心描述未闭合所有不等 batch 的归一与 overshoot，短程 training loss 接近也不证明 exact SGD 或 heldout 等价。Profiling、搜索、重组通信和重算都付费；收益或统计身份未验收时，同构子组、统一 batch 与既有 1F1B 仍更稳妥。<!-- source-family:SF-2026-ARXIV-2610-22035 -->
+
 ## 一个不平衡小例子
 
 假设 4 stages 的单 micro-batch compute time：
@@ -334,6 +340,9 @@ Stage 仍在线也不等于计算正确：不可信 worker 可以返回形状合
 ### Schedule Abstraction 要先证明依赖合法，再比较 Bubble
 
 手工枚举 1F1B/interleaving 在拓扑固定时清楚；stage、micro-batch 与资源约束组合增多后，可用统一 schedule representation 生成候选，并以依赖公式、表格或 simulator 检查合法性，再比较 bubble、memory 和 communication。收益是扩大设计空间，代价是 abstraction/simulator fidelity；生产发布仍须真实 workload 验证，简单拓扑保留手写 schedule。<!-- source-family:SF-2026-ARXIV-2605-24006 --> exact-v1 §III–IV 支持 schedule abstraction，§V simulator 结果不证明真实集群收益。
+
+当流水线跨越高延迟或共享带宽的链路时，合法的计算顺序还不足以决定何时能继续执行：多个待发activation/gradient会竞争同一传输窗口，接收尚未就绪也会把等待传回发送端。可把计算块、消息的链路占用与到达延迟一起放进依赖调度，再将所得顺序降成匹配的非阻塞send/recv计划；输入梯度与权重梯度分离时，DP同步还须等待对应累积人口的权重梯度完成，ZeRO参数恢复则必须早于消费它的forward。[一条受限跨数据中心分支](https://arxiv.org/html/2507.00217v1)用约束求解或分块贪心选择计划，再提前发布匹配receive以减轻rendezvous等待，但模型中的带宽窗口与profile只给候选，不证明真实链路没有排队、控制握手或故障。其同质集群延迟注入、最小迭代时间和放宽batch/activation预算的结果，也不能签发异构WAN、完整训练收敛或生产最优；更多在途任务以buffer和存活状态换重叠，重计算未必划算。Profiling、求解、通信编排、额外buffer及重校准均计费；网络/内存估计过期或消息依赖无法验证时，保留固定1F1B/原通信次序、保守预算与完整step检查点恢复，而不以较少bubble越过参数版本和实际完成边界。
+<!-- source-family:SF-2025-ARXIV-2507-00217 -->
 
 Diffusion backbone 的 skip connection 会让“按连续层平均切分”产生跨 stage 回传：计算量看似均匀，通信和 activation lifetime 却被隐藏依赖放大。Planner 应先把 skip-connected layers 的 colocate constraint 纳入依赖图，再联合求解 partition 与 schedule，最后用真实 profile 校准 tuner。依赖合法性由 graph owner 判断，性能模型只负责排序候选，不能为了降低 bubble 改写计算图语义。
 
@@ -419,6 +428,9 @@ GPipe、1F1B 与 interleaving 是不同静态 schedule 选择；readiness-driven
 
 ## Review notes
 
+- `SF-2026-ARXIV-2610-21815` — Daily2026-10-17窗10-16；[v1](https://arxiv.org/html/2610.21815v1) §2–5/7.1–2/9–10，2+1+2=5。仅采固定服务纯forward fill/steady分离；不采一般overlap插值、生产日志验证PP或训练通用保证。必要Source/PRE：ORG_B S39，经root独核后保存；实际非作者写后复核通过（ORG_B S47）。未复现。
+- `SF-2026-ARXIV-2610-22035` — 同窗；[v1](https://arxiv.org/html/2610.22035v1) §3–4/6–8及必要反侧，2+2+2=6。仅采不等localbatch/真实gradient坐标分责；保heuristic、GBS/样本权重未闭与全费。必要Source/PRE：ORG_B S38，经root独核后保存；实际非作者写后复核通过（ORG_B S47），未核实现/复现。
+
 - `SF-2026-ARXIV-2603-03592`：[exact-v1](https://arxiv.org/html/2603.03592v1) §2–3、§5 Tables 1–3；Daily 2026-03-06。只采用可信边界 verifier、EMA/cascade 与统计 sensor 的失效面，不采用收敛定理或完整抗攻击保证。作者源/owner/邻接与实际写后检查完成；root 必要源、实际正文及邻接独立写后复核通过，未复现实验。
 
 本轮 Review 保留 layer partition 与 bubble 主线，补齐 global batch、`p=4` 小例子、GPipe/1F1B/interleaving、boundary tensor、stage imbalance、tied weights 和 checkpoint mapping。多维并行组合留给第 40 章。
@@ -441,3 +453,7 @@ Primary-source 校验入口：
 - `SF-2026-ARXIV-2512-24157` — Daily `2026-01-02`；[TeleChat3-MoE exact-v1](https://arxiv.org/html/2512.24157v1) §4.2 L251–254。6分attention-aware EoD样本调度gap深入，仅采用同packed length异document-cost及样本分配，区别layer placement/dense mask；无该项独立量化消融，不采用整体MFU/PP收益归因或生产SLO。未运行代码；root必要原源/owner及实际正文、邻接与末注非作者写后复核通过。
 
 - `SF-2026-ARXIV-2601-09026` — Daily `2026-01-16`；[exact-v1](https://arxiv.org/html/2601.09026v1) §3.1–3.2/4.1–4.2与AppB/C。6分近似层求解替代分支gap深入，采用MGRIT/coarse串行与parallel relaxation、inexact state/gradient及iteration/exactserial退路；N-ODE h/buffer改变模型，fine/coarse dropout一致，不授drop-in等价或通用sameaccuracy/speed。有限depth/device与GPU-scaled batch反侧在正文附近。root必要源/owner写前通过，root实际两段、前后与末注POST通过，锁释放；未运行artifact或复现。
+
+- `SF-2025-ARXIV-2507-00394` — Daily2025-07-03补Jul2；[exact-v1](https://arxiv.org/html/2507.00394v1) §2–5必要机制/T1–3与§6具体对照限制，2+2+2=6；无参数attention与QKV参数/残差分责、FILO活跃人口与重算/通信反退gap深入。仅采用受限partition/schedule分支，不授全程收敛、任意规模或通用加速；未核图像全点、代码或复现。Boyle实际Source/当前owner及保存后完整两侧/本人注已读；root§12必要Source/PRE通过并授本位，§13已实际完整新增、GPipe/1F1B两侧、本人注及目标diff非writer POST通过，本项整合生效、窄位释放；仅同步既成事实，不授整日完成。
+
+- `SF-2025-ARXIV-2507-00217` — Boyle，Daily2025-07-03补Jul2；[exact-v1](https://arxiv.org/html/2507.00217v1)§2–8、AppB/D.1/F必要，2+2+2=6/具体owner差额深入。只采用链路资源/到达依赖与实际收发编排分层；保同质GH200注入、64次取min、profile/控制握手假设、batch/activation/recompute和完整成本，不授真实WAN/SLO、所有表最优或端到端收敛。USENIX同题四作者只出版角色，未核全部图像/实现/复现；root§38已实际必要Source/6分/具体gap/逐字PRE通过并授本窄位；Boyle已按批准稿实际保存并完整self-read，root§40已实际完整新增/完整直接两侧/本人注及限定diff-check非writer POST通过，本指定窄位生效释放；仅同步既成事实，不授DAY。

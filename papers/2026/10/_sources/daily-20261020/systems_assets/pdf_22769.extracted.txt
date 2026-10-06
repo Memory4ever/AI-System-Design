@@ -1,0 +1,1021 @@
+=== PAGE 1 ===
+One Communicator, Three Vendors:
+Extending the MoA Predictive Theory to a Real NVIDIA+AMD+CPU
+MPI Ensemble
+Lenore M. Mullin ∗1 and Ga´ etan Hains†2
+1College of Nanotechnology, Science and Engineering, University at Albany, SUNY, Albany,
+NY, USA
+2LACL, Universit´ e Paris-Est Cr´ eteil, Cr´ eteil, France
+October 2026
+Abstract
+The companion MPI-extension paper validated the first real, communication-bearingρ machine(d)
+ensemble: one NVIDIA A100 partition and one AMD-class CPU partition of a single NCSA Delta
+node, under one genuine Open MPI job, reassembled by a realMPI Gatherv. That result is still
+single-vendor on the accelerator side — one GPU architecture, one NUMA-local CPU. This paper
+merges that result with the heterogeneous multi-machine paper’s multi-vendor, no-communication
+partition (NVIDIA, AMD, and Intel devices, split across institutions with no shared interconnect)
+into one theoretical and experimental design: a single Slurmheterogeneous jobspanning Delta’s
+gpuA100x4andgpuMI100x8partitions, placing NVIDIA A100, AMD MI100, and CPU ranks under
+one real MPI communicator for the first time, with Intel’s Data Center GPU Max 1550 (TACC
+Stampede3) retained as the no-communication companion case its own institution’s lack of shared
+interconnect still requires. We give the theoretical extension in full — the generalizedw i ∝1/t i
+weight split for three concurrent realizations, the admissibility of a Slurm het-job specification as a
+Cd-class directive, and the hardware-placement mechanism itself — report the first real results —
+a matching-shape AMD MI100t d; one working nine-rank communicator (4 A100, 4 CPU, 1 MI100)
+across both het-job components, with its measured per-rank times and Gatherv cost; and an in-
+dependent fp64 correctness check — and state plainly what the run exposed: thew i ∝1/t i split
+assumes time scales linearly with rows, and that assumption fails for the MI100 rank (6 rows took
+597 ms against a linear prediction of 1.6 ms), so the slowest device sets the ensemble’s time by a
+factor of about 90. We then give a launch-geometry model and record its predictions before measur-
+ing them. The A100 test succeeds: its time is flat from 128 to 3456 query rows and steps at exactly
+3520 and 6976 rows, as predicted. The MI100 shows a floor of about 600 ms; floor-decomposition
+runs place it in the key loop, and changing the kernel’s launch settings (64 workers per team, keys
+split over 16 teams) cut it to 14.6 ms and the energy per call at 6 rows by 32×, though the MI100
+remains about 95×slower than an A100 at 8192 rows. For the original configuration the measured
+curves show that the CPU ranks (6.2 ms per-call floor) and the MI100 rank (about 600 ms) should
+receive no rows at this problem size, while the four A100 ranks finish in about 2.2 ms; the tuned
+MI100 would still receive none. we then ran that split as an ensemble and measured 2.21 ms (slow-
+est compute plus Gatherv: 4.7–5.0 ms in two runs and 9.1 ms in a third, against 9.2–9.7 ms for the
+1/tsplit). A controlled set of reruns also shows that the companion paper’s A100 result (8.1×the
+linear prediction) and its≈22 ms Gatherv were launch artifacts: undermpirunwith Open MPI’s
+default transport all four GPU ranks shared one A100 (Section 7). Finally we derive from the
+∗lmullin@albany.edu
+†gaetan.hains@u-pec.fr
+1
+arXiv:2610.22769v1  [cs.DC]  16 Oct 2026
+=== PAGE 2 ===
+A True Multi-Vendor MPI Ensemble for MoA Attention 2
+shapes alone the message sizes of a key/value-split (communication-bearing) partition, run it, and
+compare: the ring Allreduce of the 8.5 MB packed message took 11.3, 16.0 and 15.3 ms in three runs
+against a predicted 11–12 ms, the small Allreduce missed its prediction in every run, and at this
+size the split is communication-bound. Repeating the jobs showed that compute times reproduce to
+about 1% but communication times vary by up to a factor of four between runs. Each idea the new
+material depends on — the core primitives, the DNF-to-ONF pipeline, and the dimension-lifting
+step that turns a single-device derivation into a multi-device ensemble — is given a figure and a
+short, self-contained explanation first, and the new sections close with worked examples.
+1 MoA in Five Primitives
+MoA builds every array computation from a small, fixed set of primitive operators. Five recur con-
+stantly throughout this paper series:
+•ψ(psi) — indexing: picks out an element or sub-array by its index tuple.
+•ι(iota) — index generation: produces the index set of an array from its shape.
+•ρ(rho) — shape: the sequence of an array’s dimension sizes. The object that carries every cost
+prediction in this paper,ρ machine(d), is theshape of a machine, in direct analogy to the shape of
+an array.
+•rav (ravel) — flattening: linearizes a multi-dimensional array into one dimension, in a specified
+order. This is the operator that reassembles independently-computed device outputs with no
+arithmetic combination, only concatenation — the mechanism behind every no-communication
+ensemble in this series.
+•γ(gamma) — a generalized indexing/reshaping operator used in tiling and blocking derivations.
+In Brief
+A computation’sDNF(Denotational Normal Form) says what the answer must be, with no
+mention of tiles, threads, or memory hierarchy. ItsONF(Operational Normal Form) is where
+device-specific decisions get made — which tile size, how many threads, which precision. MoA’s
+guarantee is that any admissible ONF realizing a given DNF produces the same answer, prov-
+ably, not just empirically. This paper adds athirdvendor’s ONF (AMD MI100, OpenMP
+target-offload) to a DNF this series has already realized twice (NVIDIA A100 via Triton; a
+15-core CPU via OpenMP) — same DNF, same guarantee, a new device-specific ONF.
+Dimension liftingis the step that turns a single-device ONF into an ensemble: the query/batch
+dimension of an attention computation is split acrossdreal machines, each with its own real, measured
+shapeρ machine(d), weighted byw i ∝1/t i — faster devices get proportionally more rows — and the
+outputs are reassembled by rav (no communication) or by a real collective such asMPI Gatherv
+(communication-bearing, the subject of this paper).
+2 Where the Two Prior Lines Converge
+This paper sits at the intersection of two previously separate results in this series, and does not restate
+either in full.
+=== PAGE 3 ===
+A True Multi-Vendor MPI Ensemble for MoA Attention 3
+Figure 1: The core MoA primitives and how they compose: shape (ρ) and index generation (ι) feed
+indexing (ψ); every tiling and dimension-lifting derivation in this paper builds on these same five
+operators, whether the target is a single core, a single GPU, or a three-vendor MPI ensemble.
+•Theheterogeneous multi-machine paper[1] validated a weighted, no-communication par-
+tition acrossthree vendors(NVIDIA, AMD, Intel) andmultiple institutions: its first real result
+split one attention problem between an Intel Max 1550 (TACC Stampede3) and an AMD MI100
+(NCSA Delta), two institutions with no shared interconnect, finishing within 7.5% of each other
+by the weighted-partition design. That result is multi-vendor but never shares a real MPI com-
+municator — each device’s job is submitted and timed independently, reassembly is by rav alone.
+•TheMPI-extension paper[3] validated the opposite complement: a real, single NCSA Delta
+node, every CPU and GPU underonegenuine Open MPI job, reassembled by a realMPI Gatherv,
+with a measuredt comm and two new admissible fields (G d,L d). That result is communication-
+bearing but single-vendor on the accelerator side — 4×NVIDIA A100 and nothing else.
+This paper’s contributionis the natural next step neither prior paper took: a single real MPI
+communicator spanningmore than one accelerator vendor. We bring AMD’s MI100 into the same
+communicator as the A100+CPU ensemble already validated, via a Slurmheterogeneous jobspanning
+two different Delta partitions, and keep Intel’s Max 1550 in the no-communication role [1] already
+gave it, since Stampede3 and Delta share no interconnect at all — no mechanism this paper proposes
+changes that physical fact.
+3 The Het-Job Mechanism: A Real, Admissible Directive
+A singlempirunjob cannot ordinarily span two different Slurm partitions (gpuA100x4andgpuMI100x8
+are different node types under one controller). Slurm’sheterogeneous jobmechanism (sbatch
+with multiple--hetjobcomponents, called via#SBATCH hetjobpackage directives orsbatch : :
+packjob syntax) is built for exactly this case: one job allocation with two components, each requesting
+=== PAGE 4 ===
+A True Multi-Vendor MPI Ensemble for MoA Attention 4
+Figure 2: One DNF specification, realized as a different ONF per target — CPU, NVIDIA GPU
+(Triton), AMD GPU (OpenMP target-offload), Intel GPU (OpenMP target-offload) — each tuned to
+that device’s own measured shape, all provably computing the same answer. This paper is the first to
+put three of these four realizations under one real MPI communicator at once.
+its own partition, node count, and GPU type, launched together so Open MPI’s PMI wire-up sees one
+combined set of ranks across both.
+Mechanism
+Why this is admissible, not a heuristic.Under [2]’s two-part criterion — a directive
+must select a real hardware quantity with no discretionary reordering, and be deterministic
+rather than compiler/runtime-overridable — a het-job component specification qualifies cleanly:
+each component’s--partition,--nodes, and--gpus-per-nodeare literal, honored resource
+requests, not a scheduler heuristic the runtime is free to reinterpret. This extendsCd’s admissible
+class (Section 12) to the job-orchestration layer, not just the compiler/runtime-directive layer
+the prior two papers covered.
+Real Finding
+How the ranks can actually be launched across the components on Delta.Several
+runs of the het-job script and four short probe jobs established the following on the real system.
+•Allocation works.Slurm accepts the two-component job and starts both components
+together (an A100 node andgpud01);SLURM JOB NODELIST HET GROUP 0/1resolve to the
+two hosts, and the MI100 host is reachable bypingfrom the A100 node.
+•A singlempirunwith a combined rankfile cannot span the components.
+SLURM JOB NODELISTlists only component 0, so Open MPI rejected the MI100
+=== PAGE 5 ===
+A True Multi-Vendor MPI Ensemble for MoA Attention 5
+Figure 3: Dimension lifting: an array’s query dimension is partitioned by weightw i ∝1/t i acrossd
+real machines; each machine’s ownρ machine(d) determines its ONF and its share of the work. The
+companion MPI-extension paper validated this ford=2 realizations (A100, CPU) under one real
+communicator; this paper extends it tod=3.
+host as “not allocated” (exit status 213) before any rank started.
+•srunmultiple-program launch can.A singlesrun --mpi=pmix v5 -n 8 ... : -n 1
+...step places global ranks 0–7 on component 0 and rank 8 on component 1, the layout
+the weighted driver expects. Per-rank core pinning, previously done by the rankfile, moves
+into a small per-task wrapper (taskset).
+•PMIx client mismatch, resolved.The firstsrunlaunch failed insideMPI Init
+withPMIX ERR FILE OPEN FAILURE(shared-memory data store of the PMIx library
+bundled with the HPC-X Open MPI module). SettingPMIX MCA gds=hashand
+PMIX MCA psec=nativeremoved that failure.
+•Cancellations tied to the UCX transport.Foursrun --mpi=pmix v5launches that let
+Open MPI select UCX were terminated as a whole job, roughly five seconds after the
+ranks started and before any rank printed (sacct: “CANCELLED by 0”): two full het-
+job attempts, a nine-rank probe across both components, and an 8-rank step confined to a
+single A100 node, so the cause is not the span across components. (Anmpirunon one node
+with UCX available, and ansrun --mpi=pmi2launch that started independent single-rank
+processes, were not cancelled.) Every launch with UCX excluded (OMPI MCA pml=ob1,
+OMPI MCA btl=self,vader,tcp, and the UCC collective component, which sits on UCX,
+disabled) ran to completion, on one node and across both components, undersrunand
+undermpirunoverssh. We have not identified why a UCX start-up leads to a root-issued
+cancellation; an NCSA ticket is open. The effect is that inter-partition traffic here runs
+over TCP.
+Status.Confirmed: one communicator of nine ranks spans both components, with the MI100
+rank ongpud01. The results are in the next section.
+=== PAGE 6 ===
+A True Multi-Vendor MPI Ensemble for MoA Attention 6
+A100×4
+NVIDIA, ranks 0-3
+CPU×4
+ranks 4-7
+MI100×k
+AMD, ranks 8-(7+k)
+het-job component 0: gpuA100x4 het-job component 1: gpuMI100x8
+Max 1550
+Intel, Stampede3
+one real
+MPICOMMWORLD
+no shared interconnect
+The design this paper validates theoretically and proposes experimentally: one real Open MPI communicator
+spans a Slurm het-job’s two components (NVIDIA A100 + CPU, AMD MI100), solid line; Intel’s Max 1550
+remains the no-communication companion case, dashed line, since Stampede3 shares no interconnect with
+Delta.
+4 Extending the Weight Formula to Three Realizations
+The companion MPI-extension paper’s weight split generalizes directly. Fordconcurrent realizations,
+each with its own real, measured full-problem timet i at matching shape:
+wi = 1/ti
+Pd
+j=1 1/tj
+,rows i =⌊w i ·N⌋,
+with any rounding remainder absorbed by a fixed, deterministic tie-break (the companion paper’s
+own convention: the fastest rank absorbs it) so every rank computes the identical split with no
+communication. This formula is already validated ford=2 realization types (A100, CPU) [3]; nothing
+in its derivation assumesd=2 specifically. What is new here is not the formula but a fourth necessary
+input: a real, measured AMD MI100t d at thesamematching shape (N=8192,D=64,B·H=2) the
+A100 (6.874 ms) and CPU (221.031 ms) numbers were measured at [3].
+Real Finding
+A real MI100t d at the matching shape.The standalone test
+(delta mi100 matching shape standalone test.slurm) ranN=8192,D=64,B·H=2,
+fp32, full length (QUERY OFFSET=0,QUERY CHUNK=N) on a node verified asgfx908before
+compilation (the script aborts otherwise, so a host-only fallback cannot masquerade as a GPU
+time), with the real derivedC d pinsNUM WORKERS=10,VECTOR LENGTH=64,BLOCK N=16[2].
+Two independent runs gave 2136.100 ms and 2132.421 ms (a 0.17% spread); we use their mean,
+tMI100 = 2134.261 ms. Both runs matched the CPU reference (max|err|= 5.1260×10 −6), and
+rocm-smishowed device utilization rising from 0% to 100% through the timed loop (package
+power from about 38 W idle to as high as about 170 W), confirming execution on the MI100.
+The device energy counter reported a zero delta under that confirmed load, the same behavior
+[2] documented for this device; no MI100 energy figure is claimed here.
+At the pinnedC d, the MI100 realization is about 9.7×slower than the 15-core CPU realization, so
+the weight formula assigns the single MI100 rank only 6 of 8192 rows (0.07%). The weights thus ask the
+MI100 rank to do very little; the measured run in Section 5 shows that even that little is too much. This
+is the time of the realizationas currently pinned, not a claim about the device’s best reachable time:
+the closing-the-gap paper [2] found that the occupancy cap has to be re-derived for each admissible
+width realization, and the pins used here were carried over from that paper’s experiment rather than
+re-derived for this shape. The kernel already carries the compile-timeQUERY OFFSET/QUERY CHUNK
+row-slicing interface the CPU kernel used in [3], so each MI100 rank owns a distinct row range the
+same deterministic way as every other rank in this series.
+=== PAGE 7 ===
+A True Multi-Vendor MPI Ensemble for MoA Attention 7
+Realization Implementation Prec.t d (ms) vs. A100 Rows/rank
+NVIDIA A100 Triton fp32 6.874 1× 1984 (rank 0:
+1990)
+CPU, 15 cores OpenMP fp64 221.031 32× 61
+AMD MI100 OpenMP target-offload fp32 2134.261 310× 6
+Table 1: Matching-shape full-problem times and the resultingw i ∝1/t i row split for 4 A100, 4 CPU
+and 1 MI100 rank (4·1984 + 4·61 + 6 = 8186 rows, the remainder of 6 absorbed by rank 0).
+5 The First Three-Vendor Run
+Real Finding
+One communicator, three vendors, and a linear-scaling assumption that fails.Nine
+ranks (4 A100 via Triton fp32, 4 CPU NUMA-domain ranks via OpenMP fp64, 1 MI100 via
+OpenMP target-offload fp32) formed one MPI communicator across Delta’sgpuA100x4and
+gpuMI100x8partitions and computed theN=8192,D=64,B·H=2 attention problem with
+the row split of Table 1, launched by onesrunmultiple-program step with UCX excluded
+(Section 3). The stitched output has the expected shape (2,8192,64), no NaNs and no empty
+rows, and matches an independent fp64 reference to max|err|= 5.2×10 −7 over all nine row
+blocks.
+Rank type Rows/rank Measured
+(ms)
+Linear pred.
+(ms)
+Ratiomax|err|
+A100×4 1984 (1990) 2.21–2.33 1.67 1.3–1.4× 5.2×10 −7
+CPU×4 61 6.63–6.83 1.65 4.0–4.2× 6.5×10 −16
+MI100×1 6 597.0 1.56 382× 3.3×10 −7
+Table 2: Measured per-rank compute (median of 5 timed repeats after 3 warm-ups, all nine ranks
+running concurrently) against the linear-scaling prediction (rows i/N)t i. One job, one set of measure-
+ments; no run-to-run spread is available yet.
+=== PAGE 8 ===
+A True Multi-Vendor MPI Ensemble for MoA Attention 8
+rank 0 A100, 1990 rows 2.3 ms
+rank 1 A100, 1984 rows 2.2 ms
+rank 2 A100, 1984 rows 2.2 ms
+rank 3 A100, 1984 rows 2.2 ms
+rank 4 CPU, 61 rows 6.7 ms
+rank 5 CPU, 61 rows 6.6 ms
+rank 6 CPU, 61 rows 6.7 ms
+rank 7 CPU, 61 rows 6.8 ms
+rank 8 MI100, 6 rows 597 ms
+1 10 100 1000
+ms (log scale)
+linear-scaling prediction
+Measured compute time per rank, log scale (bars), against each rank’s linear-scaling prediction (dark tick).
+The eight A100 and CPU ranks sit within a factor of about 4 of their prediction; the one MI100 rank, given 6
+rows, sits a factor of 382 above it.
+What the numbers say.The weight formula treatst i as a per-row cost: a device given rows i =
+wiNrows should finish in aboutw iti. That holds to within a small factor for the A100 and CPU
+ranks. It does not hold for the MI100: its full-problem time of 2134 ms was measured with all 8192
+query rows in flight, and a 6-row slice still takes 597 ms, so the cost behaves like a large fixed term plus
+a small per-row term, not like a rate. The CPU ranks show a smaller fixed term (about 6.2 ms). The
+companion paper [3] reported the same breakdown for its A100 ranks (8.1×, 13.5 ms) and attributed
+it to per-invocation overhead. We withdraw that attribution for the A100: the figure measured here
+(1.3–1.4×, 2.2 ms, passing fp64 check) reproduces in a separate scan and in an A100-only ensemble
+(2.21 ms), and Section 7 shows that the 13.5 ms came from four ranks sharing one GPU. The CPU
+floor remains real and open; the MI100 floor is a property of its kernel’s launch settings (Section 8).
+Taking the slowest rank’s compute plus the measured Gatherv gives an ensemble iteration of about
+597 + 4.0≈601 ms; had every rank followed its linear prediction, the same expression gives about
+1.7 + 4.0≈5.7 ms. Without the MI100 rank the slowest compute is the CPU ranks’ 6.8 ms. We
+do not report the driver’s wall-clock total (6.80 s) as an ensemble time: it is dominated by the A100
+ranks’ one-time Triton compilation during warm-up. Why a 6-row slice is so slow on the MI100 is not
+established; Section 8 tests a launch-geometry explanation read from the kernels against row scans on
+every device.
+Communication.The Gatherv, timed after a barrier so it excludes waiting for slower ranks, took
+at most 4.03 ms across the nine ranks, with Open MPI’sob1point-to-point layer over TCP between
+the two partitions (UCX excluded). A separate 8 MiB ping-pong between rank 0 and the MI100 rank
+in a probe job gave a round trip of about 8.4 ms, roughly 2 GB/s one way; this is a single rough
+measurement; Section 9 measures it properly. We do not yet compare thist comm with the two-vendor
+≈22 ms of [3]: the transport differs (TCP here), and the timing definition must first be confirmed
+identical.
+=== PAGE 9 ===
+A True Multi-Vendor MPI Ensemble for MoA Attention 9
+Mechanism
+MoA in one worked example: how nine outputs become one array.Each rank com-
+putes a block of rows, which isψ(indexing) applied to the output with the index setιof its
+rows. For the MI100 rank,ι(6) offset by 8186 selects rows 8186, . . . ,8191. Because every block
+is a contiguous run of the row-major rav (ravel) of the output, joining the blocks in rank order
+isthe ravel of the full array — no arithmetic, only placement. The Gatherv does exactly this:
+rank 8 contributes 6·2·64 = 768 values starting at element 8186·2·64 = 1,047,808. This is
+the same no-communication reassembly rav provides in every earlier paper of this series, now
+carried by a real collective across three vendors.
+rank 0: A100 rank 1 rank 2 rank 3
+rav of the output, rows0–8191(to scale)
+r4: 61 r5: 61 r6: 61 r7: 61 r8: 6
+the last 250 rows, enlarged (not to scale)
+The output array as the Gatherv assembles it. Blue: the four A100 ranks (about 24% of the rows each); teal:
+the four CPU ranks (61 rows each); orange: the single MI100 rank (6 rows, 0.07% of the array, too thin to see
+at scale). The assembly is rav concatenation in rank order.
+6 The Shape of a Machine and the Shape of the Work
+MoA’s first move is to ask for theshapeof an array: the sequence of its dimension sizes,ρA. The
+attention output here has shapeρOut =⟨2,8192,64⟩: two problems (B·H), 8192 query rows, 64
+columns. This paper’s claim is that a machine has a shape too, writtenρ machine(d), and that cost is
+decided by how the shape of the work meets the shape of the machine. We have used that phrase
+throughout; here are the shapes themselves, as read from the hardware, the launch scripts and the
+kernels (Figure 4).
+A100:⟨108⟩SMs
+1984 rows⇒62 programs
+62 of 108 SMs busy: one wave
+CPU:⟨4,16⟩
+grey: GPU-rank core
+teal: 15-core OpenMP team
+61 rows per team
+MI100:⟨120⟩CUs
+6 rows⇒2 teams
+2 of 120 CUs busy,
+yet about 600 ms
+=== PAGE 10 ===
+A True Multi-Vendor MPI Ensemble for MoA Attention 10
+Machine Shapeρ machine (outermost
+first)
+Unit the kernel
+launches
+Source
+NVIDIA A100
+(one of 4 per
+node)
+⟨108⟩streaming multiproces-
+sors
+Triton program: a 64-row
+×64-key tile; grid shape
+⟨2,⌈r/64⌉⟩
+kernel file; 108 SMs
+CPU, one
+node
+⟨4,16⟩: four NUMA do-
+mains of 16 cores; each do-
+main is 1 GPU-rank core +
+a 15-core OpenMP team
+OpenMP thread team of
+15; rows divided among
+threads
+rank–core map in
+the run logs
+AMD MI100
+(one used)
+⟨120⟩compute units OpenMP team of 10
+workers: a 32-row tile;
+grid shape⟨2,⌈r/32⌉⟩,
+each team walking all 512
+key tiles
+kernel source; 120
+CUs (vendor fig-
+ure)
+Table 3: Machine shapes. The grid shape of a GPU launch is itself a shape:⟨B·H,⌈r/tile⌉⟩, and the
+number of programs (teams) is the product of its entries.
+Figure 4. The shape of each machine, drawn as its units, with the units the work occupies filled. Occupancy is
+not what makes the MI100 slow: two of its 120 compute units are busy and the call still takes about 600 ms,
+so the floor comes from something other than how many units the work fills.
+Worked example: where the A100 steps come from, from the shapes alone
+The work has shape⟨2, r,64⟩. The A100 kernel cuts therrows into tiles of 64, so the grid
+of tiles has shape⟨2,⌈r/64⌉⟩, and the index set of that grid isι⟨2,⌈r/64⌉⟩. The number of
+programs is the product of the entries of the grid shape. The machine runs at most 108 at a
+time (one per SM), so the number of waves is⌈programs/108⌉.
+rgrid shape programs waves measured (ms)
+1984 ⟨2,31⟩ 62 1 2.21
+3456 ⟨2,54⟩ 108 1 2.17
+3520 ⟨2,55⟩ 110 2 4.03
+6912 ⟨2,108⟩ 216 2 4.27
+6976 ⟨2,109⟩ 218 3 6.02
+One more row of 64 pushes 3456 rows (108 programs, exactly the machine’s width) to 3520
+rows (110 programs), and the time doubles; the same happens between 6912 and 6976. The two
+steps were predicted before the scan from nothing but these two shapes (the grid and⟨108⟩).
+The measured heights are about 12% below the prediction, which is the part the shapes alone
+do not give us.
+The same reading applies to the MI100 grid⟨2,⌈r/32⌉⟩, with one difference that the shapes also
+predict: each of its teams walks all 512 key tiles in order, so the work per team does not shrink with
+the number of rows. That is why the MI100’s time cannot be written as rows times a rate, and why
+the floor experiment below looks inside the loop.
+=== PAGE 11 ===
+A True Multi-Vendor MPI Ensemble for MoA Attention 11
+7 A Correction: Four Ranks on One GPU
+The companion paper’s final run (job 22603661) reported A100 local compute of 13.5 ms and a
+Gatherv of 22.3 ms. Here the same ranks, rows and kernel took 2.2–2.3 ms and 2.5–4.0 ms. We reran
+the companion script on one A100 node under four conditions, with a sampler logging each GPU’s
+clock and the processes running on it. The kernel hash (e4499eb0...), torch 2.8.0, Triton 3.4.0 and
+mpi4py 4.1.2 were identical across the reruns; the original job’s own kernel hash was not recorded.
+Run GPUs in use A100 (ms) CPU (ms) Gatherv (ms)
+Original (22603661),mpirun, default not sampled 13.54 6.3 22.3
+A (22764787), same script 1(4 PIDs) 10.51 6.8 10.9
+B (22764788), ob1/tcp,vader 4 2.33 6.8–6.9 2.5–2.9
+C (22765023), default, bound 4 2.97 6.7 13.9
+srun, ob1/tcp, stage 2 (22765070) 4 2.33 6.7 2.5
+Table 4: The same eight-rank job under four launch conditions. A: the sampler saw one GPU UUID
+and four process IDs. B excludes UCX, UCC and the CUDA shared-memory component; C leaves the
+default transport but setsCUDA VISIBLE DEVICESper rank before Python starts. Rank 0 of B ran at
+2.97 ms (probably a lower clock). One job each, except thesrunrow, repeated twice: A100 2.33, 2.35,
+2.35 ms; CPU 6.74, 6.70, 6.70 ms; Gatherv 2.50, 2.82, 2.98 ms. The other rows have no between-run
+spread.
+Original
+13.54
+22.32
+A: one GPU
+10.51
+10.93
+B: ob1
+2.34
+2.91
+C: bound
+2.97
+13.88
+srun ob1
+2.33
+2.50
+0 5 10 15 20
+ms
+A100 compute
+Gatherv
+A100 compute (blue) and Gatherv (orange) for the same eight-rank job under five launch conditions. One
+GPU (A) slows the compute; the default transport (original, A, C) slows the Gatherv.
+Two separate effects.(1)GPU sharing.In A the sampler shows one GPU UUID and four PIDs:
+the four A100 ranks time-sliced one device, giving about 4×2.2 ms plus switching (10.5 ms). With
+=== PAGE 12 ===
+A True Multi-Vendor MPI Ensemble for MoA Attention 12
+the GPUs separated, by excluding the default transport (B) or by binding explicitly (C), each rank
+gets its own A100. A plausible mechanism,not established here, is that CUDA is initialized inside
+MPI Init, before the driver script setsCUDA VISIBLE DEVICES, so every rank lands on GPU 0; we
+have not identified which Open MPI component does it. (2)Transport.The default transport makes
+Gatherv slower even with four GPUs (C: 13.9 ms against 2.5–2.9 ms under ob1/tcp). The original
+22.3 ms is higher than either, and we cannot split it between the two effects because that job had no
+sampler. The CPU ranks are unaffected (6.3–6.9 ms in every row), so the CPU floor stands.
+Clocks.Samples of the A100s show 1410 MHz in some jobs and 1095 MHz in others, and and
+the one job (C) whose GPUs were sampled at 1095 MHz took 2.97 ms, 1.29×the 2.3 ms of the jobs
+sampled at 1410 MHz. That suggests compute time follows roughly 1/clock, but the evidence is weak:
+the samplers are one second apart and in the repeat jobs the 1095 MHz samples fall in the seconds
+after the work ended, while the compute times (2.20–2.22 and 2.32–2.35 ms) stayed the same as at
+1410 MHz. We therefore treat the clock effect as a hypothesis. Rank 0 of B (2.97 ms) and all four
+ranks of C remain unexplained by anything else we measured.
+What this changes.The A100’s non-linearity is the tile-quantization staircase of Section 8, and
+not a per-invocation overhead. The key/value-split run (Section 10) had no sampler the first time. Its
+two repeats did: both show four distinct GPU UUIDs with four process IDs, so the binding there is
+verified (srun, ob1/tcp).
+8 Why Time Is Not Linear in Rows: Launch Geometry, Tested
+The weight formula treats a device as a rate. A GPU kernel is not a rate: it launches a fixed number
+ofprograms(Triton) orteams(OpenMP offload), one per tile of the output, and the device runs them
+in waves. The number of tiles is a function of the shapes, which is exactly the kind of quantity MoA
+already derives, so the fixed cost can bepredictedinstead of fitted.
+Device Launch geometry (read
+from the kernel)
+Full problem (8192
+rows)
+This run’s slice
+A100 (Triton) B·H· ⌈r/64⌉programs,
+fixed 64×64 tile; 108 SMs
+256 programs 1984 rows: 62 pro-
+grams
+MI100
+(OpenMP)
+B·⌈r/32⌉teams of 10 work-
+ers, each walking all 512
+column tiles in order
+512 teams 6 rows: 2·1 = 2 teams
+Table 5: Launch geometry read from the two GPU kernels. The number of waves a device needs is
+⌈programs/capacity⌉, so time is a staircase in the tile count, not a line in the row count.
+The A100 test.Before the scan, the model (one program resident per SM, 108 SMs) made a
+sharp prediction: the A100 time should be flat from 61 to 3456 rows (B·H·54 = 108 programs), step
+at 3520 rows, and step again at 6976 rows, where a linear rule predicts a smooth ramp. The scan then
+measured one A100 alone, 20 repetitions per row count (kernel hashe4499eb0..., torch 2.8.0+cu128,
+Triton 3.4.0). The time is flat at 2.18–2.33 ms from 128 to 3456 rows, steps to 4.03–4.28 ms from 3520
+rows, and to 6.02–6.09 ms from 6976 rows: one, two and three waves, with both steps exactly where
+predicted. The heights were predicted less well: the prediction used 6.874 ms for the full problem
+and so expected 4.6 and 6.9 ms, about 12% above the 4.1–4.3 and 6.09 ms measured. A straight
+line through the same points hasR 2 = 0.78. One result was not predicted: in the first scan 61 rows
+took 2.88 ms, about 25% above the 128-row plateau. It reproduced on two other nodes (2.87 and
+2.90 ms), where the 128-row point was also high (2.76, 2.67 ms) and, in one repeat, the 256-row point
+=== PAGE 13 ===
+A True Multi-Vendor MPI Ensemble for MoA Attention 13
+too (2.68 ms). Every elevated point is among the first few of a scan, after the GPU had idled at about
+210 MHz. A dedicated test then confirmed awarm-up transient. Started cold, 61, 128 and 256 rows
+took 2.88, 2.67 and 2.67 ms and then settled; repeating the same three sizes right afterwards gave
+2.27, 2.15 and 2.14 ms. After 3 seconds of the full-size problem first, the first 61, 128 and 256 rows
+took 2.25, 2.14 and 2.14 ms, with no slow point. A second cold start reproduced the first (2.88, 2.74,
+then 2.15). So the 61-row “anomaly” is not a property of 61 rows, and the first points of a scan carry
+a warm-up bias of up to about 30%; the number of slow points varies from run to run. The clock log,
+now lined up with the timings, agrees with a clock ramp. The GPU sat at 210 MHz until the process
+started, rose to 1095 MHz before the first timed point, and reached its 1410 MHz maximum only
+during the 512-row point (whose first repetition was 2.71 ms against a 2.19 ms median). The three
+slow cold points therefore ran at 1095 MHz. They were 1.27, 1.25 and 1.25 times slower than the same
+sizes warm, against a clock ratio of 1.29, slightly less, as expected if part of the kernel does not scale
+with the core clock. In the pre-warmed run the clock was at 1410 MHz from before the first point
+and no point was slow; in the second cold start the 128-row point (the one that overlapped the rise to
+1410 MHz) was the intermediate one. This is one device and three starts, and a sampler every 0.22 s,
+so it supports the clock ramp without isolating other first-launch effects. A small residual remains: 61
+rows (2.27 ms warm) is still about 6% above 128 rows (2.14 ms). The plateau, the two steps and the
+heights above 3456 rows reproduce to within 0.4%, and the CPU curve to within 1.1% (from 6.2 ms
+at 61 rows to 217 ms at 8192).
+Query rows A100 alone A100 beside 8 CPU alone CPU beside 8 MI100
+128 2.29 2.77 6.22 6.75 727.9
+1024 2.20 2.21 30.9 36.6 718.2
+2048 2.21 2.22 55.9 66.6 725.7
+3456 2.18 2.19 93.1 108.3 —
+3520 4.03 4.05 93.0 108.8 —
+4096 4.10 4.08 111.7 129.2 1431.4
+6912 4.28 4.28 180.2 212.0 —
+6976 6.02 6.03 186.4 215.8 —
+8192 6.09 6.09 217.4 253.4 2128.6
+Table 6: Median time per call in milliseconds from the row scans (20 repetitions per point for the
+A100 and CPU, 5–14 for the MI100). “Beside 8” means all nine Phase 3 ranks running at once; the
+MI100 was scanned on its own node. Shaded rows bracket the two predicted A100 steps. One job per
+device, so no between-run spread.
+=== PAGE 14 ===
+A True Multi-Vendor MPI Ensemble for MoA Attention 14
+rows
+ms
+0 2048 4096 6144 8192
+2
+4
+6
+linear rule
+(w i ∝1/t i )
+tile model: step positions predicted
+before measuring (heights drawn from the data)
+measured, one A100 alone (orange)
+A100 time against query rows: the straight line the weight formula assumes (grey dashed), the staircase the
+launch geometry predicts (blue), and the 13 measured points (orange). The two steps fall where the model
+said; the extra height at 61 rows turned out to be a warm-up transient (Section 8).
+The CPU is the other shape.One 15-thread CPU rank is nearly linear in rows (4.3 ms
++ 25.9µs per row,R 2 = 0.9996) above a floor of 6.2 ms that holds from 61 to 128 rows. With all
+nine ranks running, the CPU ranks are about 17–19% slower (66.6 against 55.7 ms at 1984 rows, 253
+against 217 ms at 8192 rows), and their spread at 8192 rows is wide (227–301 ms); the A100 ranks are
+unaffected (2.22 against 2.21 ms). The cause of the CPU slowdown is not identified.
+The MI100.The model predictedt(6)≈t(32) (a linear rule predicts a 5×difference). The scan
+measured 599, 605 and 610 ms at 6, 32 and 64 rows; the 6-row interquartile range (594–609 ms) covers
+all three, so the prediction holds, and 64 rows (4 teams) shows no sign of the extra teams. The 6-row
+time also reproduces between jobs (597.0, 598.9, 602.7 and 600.2 ms over four runs, within 1%). Two
+later repeats of the whole scan (ongpud01, after the GPU request was fixed to ask for an MI100; see
+below) agree at every row count to within 1.5%: 603.7 and 602.1 ms at 32 rows, 724.0 and 723.6 ms
+at 128, 726.3 and 724.1 ms at 2048, 1430 and 1419 ms at 4096, and 2129 and 2127 ms at 8192. The
+floor, the plateau and the 3×at 8192 rows are therefore properties of this device and kernel, not of
+one run. Beyond that the model does not explain the curve. At 128 rows the time steps up by 118 ms
+to 728 ms, and then stays at 718–729 ms through 2048 rows (from 2 to 128 teams). It doubles at
+4096 rows (1431 ms) and reaches 2129 ms at 8192 rows, which is three times the plateau although
+rows quadrupled from 2048. A launch-geometry model that counts teams cannot produce a floor of
+600 ms that does not move while the team count grows 64-fold, nor a 3×for a 4×row increase. A
+floor-decomposition run (gpud01, verifiedgfx908, 6 rows) then tested the explanation we had written
+down beforehand, that the floor is a latency chain through the key-tile loop. It ran onlyTof the 512
+key tiles (Table 7). Time is linear inT,t≈1.5 + 1.18Tms (R 2 = 0.9997, largest residual 8 ms), so
+the floor is neither launch nor data transfer: with no key tile at all the call takes 2.2 ms, and nearly
+all of the 611 ms is the key loop, at about 1.2 ms per 16-key tile (74µs per key). But the prediction
+that a larger tile would shorten a latency chain failed. With the full 8192 keys, a key tile of 16, 32
+and 64 took 611, 592 and 820 ms. The time follows the number of keys processed, not the number of
+tiles, and it does not depend on the number of rows (6 rows and 2048 rows differ by only 20%). So
+within a team the work on each key behaves as if it were nearly serial, at a cost of about 10 5 clock
+cycles per key for 4096 multiply-adds.
+Two follow-up runs (job 22817300, same device, 6 rows, all outputs checked against the reference)
+changed what the floor means. First, we split the 8192 keys overK s teams, each returning a partial
+=== PAGE 15 ===
+A True Multi-Vendor MPI Ensemble for MoA Attention 15
+softmax triple (running maximum, sum and unnormalized output) that a second kernel merges, the
+same object the key/value split of Section 10 passes between ranks. WithK s = 1,4,16,64 the time
+fell from 606 to 185, 48.7 and 15.2 ms (Table 8), 40×at 64 chunks. We had predicted 155, 40 and
+12 ms from 2.2 + 609/Ks; the measured values are 20–27% higher and followt≈3.8 + 726/K s ms for
+Ks ≥4. The slope 726 ms is the old plateau (718–733 ms), and the 606 ms ofK s = 1 is the old floor,
+so the step from floor to plateau at 128 rows looks like a per-team slowdown that appears once about
+eight or more teams run (it holds up to 128 teams); that reading fits all four points but is not isolated.
+Second, the kernel’s own settings matter. Raising the workers per team from 10 to 64 cut the time
+from 611 to 194 ms (3.1×) and 256 workers gave 207 ms, no better; with only 10 workers a team uses
+a small part of a 64-lane wavefront. A narrower vector made it slower, not faster: 16, 32 and 64 lanes
+took 1834, 1025 and 611 ms, so the explanation that the 64-lane vector was being split into scalar
+code is not supported. The floor is therefore not a property of the MI100 alone but of this kernel’s
+launch settings (10 workers, one team per row tile and batch element), and the earlier statement that
+the MI100 should receive no rows applies to that configuration. How workers and key chunks combine,
+and what the tuned device does across the whole row scan, is shown below. Generated code and a
+profiler have still not been examined. The straight-line fit (600 ms + 183µs per row,R 2 = 0.96) looks
+acceptable and is misleading, because it hides the plateau and the steps.
+Key tiles run,T(tile 16)0 1 4 16 64 256 512
+Median time (ms) 2.2 3.4 7.2 21.6 77.8 296 611
+All 8192 keys, tile size16 32 64
+Median time (ms) 611 592 820
+Table 7: MI100 floor decomposition at 6 rows (job 22777306,gfx908, 10 repetitions each). Time is
+linear in the keys processed, about 1.2 ms per 16 keys, with a 2.2 ms intercept; a larger tile does not
+help.
+Key chunksK s 1 4 16 64
+Predicted before running (ms) 611 155 40 12
+Measured, 6 rows (ms) 606 185 48.7 15.2
+Speedup overK s = 1 1 3.3×12.4×39.9×
+Workers per team, 10 / 64 /
+256
+611 / 194 / 207 ms
+Vector lanes, 16 / 32 / 641834 / 1025 / 611 ms
+Table 8: MI100 key-split and setting sweep at 6 rows (job 22817300,gfx908, 10 repetitions each).
+Splitting the keys over teams removes most of the floor; the measured times follow 3.8 + 726/K s ms
+and sit above the prediction.
+Tuned configuration.A grid of workers per team (32, 64, 128) by key chunks (1, 4, 16, 64) at 6
+rows (Table 9) shows that the two gains compose until a floor of about 4 ms: 32, 64 and 128 workers
+are indistinguishable, and the times follow roughly 4 + 183/Ks ms. We predicted 194, 60, 16 and 5 ms
+forK s = 1,4,16,64; the first three hold or are beaten, andK s = 64 (7.0 ms) misses by 40%, where the
+merge kernel, the launch and the whole-array maps (about 2.2 ms with no work at all) set the floor.
+A narrower vector is slower at 64 workers too (310 and 546 ms for 32 and 16 lanes against 199 ms for
+64), as predicted. Full scans (Figure 5) of two tuned configurations give a different picture from the
+=== PAGE 16 ===
+A True Multi-Vendor MPI Ensemble for MoA Attention 16
+6 rows, msK s = 1 4 16 64
+Predicted (64 workers) 194 60 16 5
+Measured, 32 workers 198 50 14.6 7.2
+Measured, 64 workers 199 50 14.6 7.0
+Measured, 128 workers 200 50 14.5 7.0
+Table 9: Workers by key chunks at 6 rows (job 22817822,gfx908, 10 repetitions each). Workers
+beyond 32 change nothing; key chunks give 4×, 14×and 28×over one chunk, and below about 7 ms
+a floor of roughly 4 ms appears.
+first run. With 64 workers and one key chunk the curve is flat at 192–207 ms from 6 to 1024 rows and
+the step at 128 rows has gone, so that step belonged to the 10-worker configuration; it reaches 234,
+460 and 725 ms at 2048, 4096 and 8192 rows (we had predicted a plateau near 240 ms and 700 ms at
+8192: both hold). With 64 workers and 16 key chunks the time is 14.6 ms at 6 rows, 17.7 ms at 128
+rows and 574 ms at 8192 rows. We had predicted this configuration would match the one-chunk curve
+within 20% at 2048 rows and above; it does not, being 36% faster at 2048 and 4096 rows (150 and
+294 ms against 234 and 460 ms) and 21% faster at 8192, which is a miss, probably because 16 times
+as many teams keep the 120 compute units busier, but we did not isolate that. All outputs match the
+reference to 5×10 −8 or better.
+What the tuned MI100 means for the ensemble is computed, not run. At 8192 rows the A100 takes
+about 6 ms, so the MI100 is still about 95×slower there, and at 6 rows it is 14.6 against 2.2 ms for an
+A100 and 6.2 ms for a CPU rank. On the measured curves the min-max split still gives the MI100 no
+rows (slowest rank 2.2 ms), because even the best configuration cannot finish any slice inside 2.2 ms.
+The 1/tweight rule, which gave the MI100 6 rows and a≈600 ms iteration, would now give it about
+170 rows and an iteration near 22 ms by a self-consistent version of the rule (not the exact table of
+Section 4), so the penalty of using the wrong rule falls from about 270×to 10×. The conclusion that
+a 1/tsplit is wrong for this device stands; the size of the penalty, and the claim that the MI100 should
+be idle, depended on the kernel configuration. The ensemble has not been rerun with the tuned kernel.
+rows
+6
+599
+32
+605
+64
+610
+128
+728
+256
+729
+512
+729
+1024
+718
+2048
+726
+4096
+1431
+8192
+2129
+grey tick: linear rule (weight formula)
+bars: measured ms per call
+MI100 time per call against query rows (bars, ms) and the linear rule from the full-problem time (grey ticks,
+almost invisible below 1024 rows). A floor near 600 ms, a plateau near 725 ms, then 2×and 3×rather than
+4×.
+What the measured curves do to the split.The weight formulaw i ∝1/t i rests on eacht i
+being a rate. Replacing it with the measured curves, and choosing the row counts that minimize the
+=== PAGE 17 ===
+A True Multi-Vendor MPI Ensemble for MoA Attention 17
+query rows
+ms per call (log scale)
+6 32 128 512 2048 8192
+1
+10
+100
+1000
+as first run: 10 workers, 1 key chunk
+64 workers, 1 key chunk
+64 workers, 16 key chunks
+one A100 (staircase, for scale)
+Figure 5: MI100 time against query rows for three kernel configurations (job 22817822, same device
+as the first scan), with the A100 staircase for scale. The first-run curve (grey) has the 600 ms floor
+and the plateau; 64 workers per team (orange) lowers the whole curve about 3×and removes the step
+at 128 rows; 16 key chunks per row tile (blue) removes the floor, giving 14.6 ms at 6 rows. Above a
+few thousand rows all three still grow roughly in proportion to rows, and the A100 remains about 95×
+faster at 8192 rows.
+slowest rank (a min-max split), gives a very different answer. Because the A100 is flat to 3456 rows,
+any share up to 3456 rows per A100 costs the same.
+The honest reading is that, at this problem size, the CPU and MI100 ranks contribute no speed:
+three times faster than the 1/tsplit is available by leaving them out, and the A100-only ensemble
+confirmed it: slowest compute 6.74→2.21 ms (3.05×in the first run; 6.70→2.22 and 6.70→2.22 ms
+in two repeats), compute plus Gatherv 9.24→4.66, 9.50→5.00 and 9.68→9.14 ms: about 1.9×
+twice, and 1.06×once, because one A100-only Gatherv took 6.9 ms against 2.4–2.8 ms in the others.
+They begin to matter only when the other ranks’ time grows to the order of their floors, which is a
+statement about problem size that the weight formula cannot make and the staircase can. This is why
+the time-to-rows relation has to be derived from shapes: the shapes fix the tile count, and the tile
+count fixes where the steps fall.
+9 Measuringt comm: the Communication Sweep
+One het job (A100 nodegpua034, MI100 nodegpud01, the same nine ranks; the table below), repeated
+twice (the second repeat on A100 nodegpua051; see the repeat paragraph), timed point-to-point ping-
+pong within a node and across the two partitions, Allreduce, and Gather over message sizes from 8 B
+to 64 MiB, three times: with Open MPI free to choose among the interfaces both nodes share (auto)
+and pinned to each (hsn0,hsn0.561). Transport wasob1over TCP, UCX excluded. Both nodes also
+list acxi0device, which as far as we know is the Slingshot NIC; the TCP numbers below therefore
+use only a small part of what the fabric can do.
+Between runs.Two repeats changed the picture. The 8 MiB cross-node ping-pong took 3.5, 3.3,
+8.0 ms (auto), 4.2, 6.8, 6.6 ms (hsn0) and 4.6, 6.4, 5.0 ms (hsn0.561) over the three jobs; at 64 MiB
+it took 24, 53, 31 ms (auto), 34, 103, 44 ms (hsn0) and 34, 68, 36 ms (hsn0.561), a factor of up to
+4.3 between runs of the same configuration. The 8 MiB Allreduce took 11.1–15.4 ms (auto), 11.4–
+22.9 ms (hsn0) and 12.0–12.4 ms (hsn0.561). Within a node and for the Gather the times are steady
+=== PAGE 18 ===
+A True Multi-Vendor MPI Ensemble for MoA Attention 18
+Split Rows Slowest rank
+Phase 3 as run (w i ∝1/t i, nine
+ranks)
+A100 1984, CPU 61, MI100 6 ≈601 ms with
+Gatherv (measured)
+wi ∝1/t i on the measured A100
+and CPU curves
+A100 1999, CPU 48 6.60 ms (computed)
+Same family, run as an ensemble
+(A100 1986–1990, CPU 61;srun,
+ob1)
+8 ranks 6.74 ms compute,
+9.24 ms with Gath-
+erv (measured)
+Min-max on the same curves A100 2048 each, CPU 0 2.19 ms (computed)
+Min-max, run as an ensemble 4 A100 ranks 2.21 ms compute,
+4.66 ms with Gath-
+erv (measured)
+Table 10: Splits of the 8192 rows. Rows marked computed come from separately measured curves;
+rows marked measured are single ensemble jobs (22765070), first-run values (two repeats are quoted
+in the text); the 6.74 and 9.24 ms row uses the same 8-rank split as the companion paper, on the
+same kind of node. The CPU and MI100 ranks receive no rows because their smallest measured time
+(6.2 ms and about 600 ms) already exceeds what the A100s need.
+Operation, size auto hsn0 hsn0.561
+Ping-pong across nodes, 8 B
+(one way)
+0.032 0.025 0.023
+Ping-pong across nodes, 8 MiB 3.49 4.16 4.62
+Ping-pong across nodes, 64 MiB 24.4 33.8 34.4
+Ping-pong within a node, 8 MiB 1.54 1.59 1.76
+Allreduce, 1 MiB, 9 ranks 2.11 2.22 2.00
+Allreduce, 8 MiB, 9 ranks 11.1 11.4 12.4
+Gather, 8 MiB total, 9 ranks 1.44 1.18 1.36
+Table 11: Median time in milliseconds, first job only. Large-message bandwidth across nodes is
+2.75 GB/s (auto) and 1.95–1.99 GB/s (pinned); within a node about 6–6.7 GB/s.
+(1.3–1.7 ms for an 8 MiB ping-pong; 1.2–1.6 ms for the Gather). The first job’s finding that letting
+Open MPI choose gives about 40% more cross-node bandwidth than either interface alone is therefore
+withdrawn: the differences between interfaces are smaller than the differences between runs. The
+cross-node numbers also depend on which other jobs share the fabric, which we did not control or
+measure. For the first job’s numbers, the Allreduce reaches only 0.56–0.72 GB/s effective bandwidth
+(message bytes over time), about 3.8×below the ping-pong figure; the ring factor 2(P−1)/P= 1.78
+explains less than half of that, and the rest is unexplained. The linear fitst=α+ bytes/βare
+rough: latency is not linear in bytes (64 KiB moves at 0.56 GB/s, 1 MiB at 2.4 GB/s), and two
+pinned-interface fits returned negativeα, so small-message times should be taken from the measured
+points, not from the fit. The sweep’s 8.4 MB Gather took 1.2–1.4 ms, against the 4.03 ms Gatherv
+of Section 5; the two are not directly comparable (equal blocks and a different root and payload here,
+uneven blocks there). The sweep and Section 5 both usedob1over TCP. Under Open MPI’s default
+transport the same Gatherv took 10.9–22.3 ms (Section 7), so anyt comm must be quoted together with
+the transport. There is one job, so no between-run spread, and the difference betweenautoand the
+pinned settings could still be a run-to-run effect.
+=== PAGE 19 ===
+A True Multi-Vendor MPI Ensemble for MoA Attention 19
+10 Splitting the Contraction Index: Communication Derived from
+Shape
+So far MPI has carried only the final gather of results; the attention itself needed no communication,
+because rows were split and every softmax stayed inside one rank. The theory has not yet been tested
+on a computation whose own DNF forces communication. Splitting thekey/valueaxis does, and MoA
+lets us derive what must be communicated from the shapes alone.
+The derivation.Q, K, Vhave shape (B·H, N, D). Cut the key/value axis into slices, one per
+rank. Each rank then holds only part of every softmax: for each of theNquery rows it computes a
+partial triple
+mr = max
+j∈slicer
+sj, l r =
+X
+j∈r
+esj −mr , O r =
+X
+j∈r
+esj −mr vj,
+with shapes (B·H, N), (B·H, N), (B·H, N, D). These combine by thesamerescaling step the online-
+softmax ONF of Paper 1 already uses between tiles inside one kernel, now applied between ranks:
+M= max
+r
+mr, L=
+X
+r
+lr emr−M , O=
+X
+r
+Or emr−M ,out =O/L.
+This is dimension lifting at work: the algebra that merges tiles on one device merges devices in one
+communicator. Computationally it is one Allreduce(MAX) ofmand one Allreduce(SUM) of the
+packed (l, O).
+Worked example: two ranks, four keys
+Scores for one query are (1,2) on rank 0 and (3,0) on rank 1. Rank 0 holdsm 0 = 2 and
+l0 =e −1 + 1 = 1.3679; rank 1 holdsm 1 = 3 andl 1 = 1 +e −3 = 1.0498. ThenM= 3 and
+L= 1.3679e 2−3 + 1.0498e0 = 0.5032 + 1.0498 = 1.5530. Summing the four scores’ exponentials
+against the common maximum directly givese −2 +e −1 + 1 +e −3 = 1.5530: the same number,
+with only (m, l) and a rescale crossing the rank boundary, never the scores themselves.
+key/value axis,N=8192 keys, splitw i ∝1/t i (to scale)
+rank 8: 0 keysrank 0
+(m, l, O) 0
+rank 1
+(m, l, O) 1
+rank 2
+(m, l, O) 2
+rank 3
+(m, l, O) 3 (m, l, O) 4..7
+61 keys each
+(−∞,0,0)
+Allreduce(MAX) ofm: 2·8192·8 = 131,072 B⇒rescale bye m r −M ⇒
+Allreduce(SUM) of (l, O): 2·8192·65·8 = 8,519,680 B⇒out =O/L
+The key/value-split ensemble. Blue: the four A100 ranks (about 24% of the keys each); teal: the four CPU
+ranks (61 keys each); orange, dashed: the MI100 rank, which holds no keys (it has no partial-attention kernel
+yet) and only joins the two reductions, so it measures the cross-partition reduction cost and not MI100
+compute.
+=== PAGE 20 ===
+A True Multi-Vendor MPI Ensemble for MoA Attention 20
+Predictions recorded before measuring.(i) The two message sizes above are fixed by the
+shapes and do not depend on how the keys are split. (ii) Output matches the fp64 reference to fp32
+round-off (≈10 −6). (iii) A ring allreduce moves 2(P−1)/P≈1.78 times the message through each
+rank forP=9, so the reduction of the 8.5 MB packed message should cost at least 1.8×what the
+row-split Gatherv of the same 8.4 MB output cost at equal bandwidth. (iv) Witht comm ≈α+bytes/β
+and (α, β) taken from the separate communication sweep (per network interface, UCX excluded),
+the measured reduction times should land on that line; the driver prints both. Only the Allreduce
+algorithm (G d: recursive doubling versus ring) is varied, set explicitly so it is a directive and not a
+runtime heuristic. From the sweep we then predicted (v) about 11–12 ms for the SUM and 0.3–0.9 ms
+for the MAX with the default algorithm.
+Results.The job ran once for each algorithm on the same nine ranks (key counts of the figure
+above). Both outputs match the fp64 reference: max|err|= 1.39×10 −7, better than the≈10 −6
+predicted in (ii). Relative errors reach about 12% in some blocks of both outputs. The checker divides
+by|ref|+ 10 −12, so a large relative error is expected where the reference is near zero (the companion
+paper’s check shows 6.5% for the same reason); we have not located the entries, so this is the likely
+explanation, not a verified one. The absolute errors are the figures to use.
+Milliseconds (slowest rank),
+range of 3 jobs
+Alg. 3 (recursive doubling) Alg. 4 (ring) Predicted
+Slowest local partial (untuned
+code)
+20.5–21.5 19.8–21.7 —
+Allreduce(MAX), 131,072 B 0.98–1.14 1.41–1.58 0.3–0.9
+Allreduce(SUM), 8,519,680 B 20.85–27.48 11.31–15.98 11–12
+Iteration (partial + both reduc-
+tions)
+43.2–50.1 32.5–39.1 —
+Effective bandwidth, SUM
+(GB/s)
+0.31–0.41 0.53–0.75 —
+Table 12: Key/value-split ensemble: one job per algorithm in each of three submissions (the first, and
+two repeats on other nodes whose GPU sampler shows four separate A100s); ranges are over the three.
+The figure below uses the first. The local partials are untuned: torch matrix products on the A100
+ranks (including the copy back to the host), NumPy on the CPU ranks; the MI100 holds no keys.
+They are not comparable with the row-split kernels of Table 2.
+alg. 3
+alg. 4
+43.2 ms
+32.5 ms
+ms
+0 10 20 30 40
+slowest local partial Allreduce MAX Allreduce SUM
+Where one iteration of the key/value split spends its time, for each Allreduce algorithm. First job. The
+reductions are about 12.7 ms of the ring’s 32.5 ms; recursive doubling nearly doubles the SUM. In the repeats
+the ring’s reductions took 17.6 and 16.8 ms of 39.1 and 38.2 ms.
+Against the predictions.(i) Message sizes: by construction the buffers are 131,072 and
+8,519,680 B, as predicted. (ii) Correctness: passed, better than predicted. (iii) The ring reduc-
+tion of the packed message took 11.3–16.0 ms against 4.03 ms for the row-split Gatherv (2.8–4.0×)
+=== PAGE 21 ===
+A True Multi-Vendor MPI Ensemble for MoA Attention 21
+and 1.2–1.6 ms for the sweep’s Gather (7–13×), so the≥1.8×bound holds, loosely. (iv)/(v) The
+SUM prediction held once and missed twice: the ring took 11.31 ms in the first job (inside 11–12 ms)
+and 15.98 and 15.26 ms in the repeats, 30–45% above the range. The sweep’s own 8 MiB Allreduce
+also varied between runs (11–15 ms with the default interface choice), so the prediction was only
+ever as good as one run of the sweep. The MAX prediction misses in every run (0.98–1.14 ms and
+1.41–1.58 ms against 0.3–0.9 ms), plausibly because the sweep’s small-message points were noisy. The
+algorithm matters: recursive doubling took 1.85×as long as the ring for the 8.5 MB message. A
+back-of-envelope count (full-buffer exchanges against 1.78 buffer volumes) suggests about 2×, but this
+is a rough check, not a model.
+What it means.AtN=8192 the packed partial (l, O) is as large as the output itself, and
+the reduction moves 1.78 times that through every rank, where the row split gathers the output
+once. With about 13–18 ms of communication against an A100 partial of 3–5 ms, the key/value split
+is communication-bound here, and the shapes could have told us so before running. Splitting the
+contraction index pays when the keys do not fit on one device or the compute per key is much larger,
+not at this size. The measurement also givest comm its first prediction that matched once (the SUM,
+in one of three runs) and its first miss that reproduced (the MAX). What it teaches is thatt comm here
+is a distribution, not a number: a prediction from shapes and a measuredα,βneeds a spread, and
+we have only three samples.
+11 Variance, Energy, and theεFamily
+The closing-the-gap paper [2] planned a family ofεvariables to absorb variance from compiler- and
+runtime-chosen optimizations, to be introduced only after every deterministic directive is isolated.
+This run suggests the discipline for doing it:separate structure from variance. The ratios of Table 2
+(1.3×, 4×, 382×) are notε; if Section 8 is right they are deterministic consequences of launch geometry
+and should be predicted from shapes. Only what is left after the geometric model, plus the spread
+across repeated runs, isε:
+ε(c)
+d = tmeas −t model
+tmodel
+,
+one per realizationdand mechanism classc(vector and unroll choices left to the compiler, dispatch
+and scheduling, library algorithm selection, clock and power state). We can now write a firstεfor the
+A100, where the shapes give a model. Taket model =k×2.19 ms forkwaves, withk=⌈programs/108⌉
+from Section 6 (the one-wave time is the unit, so one wave hasε= 0 by construction and says nothing).
+The measured two-wave times of 4.03–4.27 ms giveε wave
+A100 =−8.0% to−2.5% against the predicted
+4.38 ms, and the three-wave times of 6.02–6.09 ms give−8.4% to−7.3% against 6.57 ms. The sign is
+consistent (a later wave costs slightly less than the first), and the size is of the order of the run-to-run
+spread plus the unexplained 12% in the step heights; with one device, one kernel and two step counts
+this is a first estimate, not a distribution. We have noεfor the MI100, because its floor has been
+located (the key loop) but not explained, and the CPU line (a fixed 4.25 ms plus 25.9µs per row,
+R2 = 0.9996) is a fit, not a model from shapes. Variance inputs: within a run, the A100’s 20 repetitions
+span under 3% at nearly every row count (one outlier at 128 rows: 2.29 median, 2.76 maximum), the
+MI100’s 6-row calls span 587–653 ms (interquartile 594–609 ms), and the concurrent CPU ranks span
+227–301 ms at 8192 rows. Between runs (three submissions each, different nodes), the A100 scan
+agrees to 0.4% at every row count above 256, the CPU scan to 1.1%, and the MI100 scan to 1.5%
+(6-row time 597.0, 598.9, 602.7, 600.2 ms); the large between-run differences are all in communication
+(Section 9), and the 13.5 ms of [3] was a launch artifact (Section 7). So for computationεis small
+and stable; for communication it is not yet bounded.
+MI100 energy.The device’s own energy counter returned a zero delta under confirmed load in
+=== PAGE 22 ===
+A True Multi-Vendor MPI Ensemble for MoA Attention 22
+every run so far [2], so aP d-based energy prediction for the MI100 has no measured ground truth. The
+scan job therefore samples package power throughrocm-smi(about one sample per second) around
+timed windows of at least eight seconds, and estimates energy per call as the mean sampled power
+times the time per call. This is an estimate and is labeled as one. From 141 power samples (39–177 W)
+it gives about 58 J per call at 6 rows, 109 J at 2048 rows and 308 J at 8192 rows, so energy per row
+falls from about 9.7 J at 6 rows to 0.038 J at 8192 rows as the fixed cost is amortized. The two scan
+repeats ran the same power sampler. Their estimates agree with the first run for 6 to 2048 rows (56.7
+and 57.5 J at 6 rows; 107.0 and 106.4 J at 2048 rows, within 3% of the first run’s 58 and 109 J), but
+not at the largest size: 324.7 and 294.3 J at 8192 rows against 308 J first, a spread of about 10%
+across the three runs, and 206 and 194 J at 4096 rows. Each point rests on 10–15 one-second samples,
+so the sampling is coarse; the large-size spread is the sampler’s, and we cannot say how much of it
+is the device’s. The estimate is stable where power is nearly constant and loose where it is not. A
+later job (22817822) with the tuned kernels gives, with the same sampler, 20.0 J per call at 6 rows
+with 64 workers and one key chunk (57 J before) and 1.8 J with 16 key chunks, a 32×drop; at 8192
+rows 126 and 101 J against about 309 J. At 6 rows the 16-chunk figure rests on 7 power samples.
+The drop comes mostly from the shorter time, since the average power is similar (100–123 W at 6
+rows) or higher. The number gives the power model a figure to be wrong about; it is not a hardware
+measurement.
+12 ExtendingC d’s Admissible Class
+[2]’s admissibility criterion — select a real hardware quantity with no discretionary reordering, be
+deterministic rather than runtime-overridable — was stated generally enough that this paper needs
+no new criterion, only a new instance of it. Table 13 summarizes what each paper in this series has
+added to the admissible class.
+Paper Admissible mechanism added Layer
+Closing-the-gap [2] cache placement, deterministic vec-
+tor/tile width, occupancy caps
+compiler/runtime directive
+MPI-extension [3] explicit
+coll tuned gather algorithm
+(Gd), NUMA-aligned rankfile place-
+ment (Ld)
+MPI runtime directive
+This paper Slurm het-job component specifica-
+tion (partition, node count, GPU
+type per component)
+job-orchestration directive
+Table 13: The admissible class grows by layer, not by relaxing the criterion itself.
+13 Next Steps
+1.Done:the standalone matching-shape MI100 timing test (Section 4):t MI100 = 2134.261 ms,
+correctness passed, device use confirmed.
+2.Done:one nine-rank communicator (4 A100, 4 CPU, 1 MI100) across both het-job components,
+its measured per-rank times, Gatherv cost (4.03 ms), and the independent fp64-reference check
+(Section 5). Repeated in the A100-only and A100+CPU jobs, the kv-split, the A100/CPU scan
+=== PAGE 23 ===
+A True Multi-Vendor MPI Ensemble for MoA Attention 23
+and the comm sweep (two repeats each); compute times reproduce to about 1%, communication
+times do not. The MI100 scan was repeated twice and agrees to within 1.5%.
+3.Done:the row scans on all three device types (Section 8). The A100 steps fall at 3520 and 6976
+rows as predicted, and its warm-up transient agrees with the clock log. The MI100’s≈600 ms
+floor, plateau and 3×at 8192 rows belong to its first kernel configuration (10 workers, one team
+per row tile); a tuned configuration lowers the floor to 14.6 ms. The CPU is nearly linear above
+a 6.2 ms floor.
+4.Done:the communication sweep (Section 9) and the key/value-split ensemble (Section 10):
+correct, SUM within the predicted range in one of three runs, MAX missed in all, communication-
+bound at this size (GPU binding verified in the repeats).
+5.Done, mechanism open:the A100 8.1×in [3]’s final run (13.5 ms) against 1.3×here. Reruns
+show four ranks on one GPU under the default transport (Section 7). Still open: which Open MPI
+component (UCX, smcuda, UCC, hcoll) initializes CUDA before the binding, and the original
+job’s own GPU use (it had no sampler).
+6.Done:the computed min-max split was run as an ensemble (A100 ranks only) and agrees with
+the computed value (Table 10).
+7.Done, with a lesson:the first two MI100 scan repeats refused to run, because nodegpud01
+holds eight MI100s and one MI210 (gfx90a) and our untyped GPU request was given the MI210;
+the script’s architecture guard stopped them. Requesting--gres=gpu:mi100:1fixed it, and the
+repeats passed the guard and reproduced the first scan (Section 8). The standalone and nine-
+rank runs used the untyped request and did not log the architecture; their MI100 times (2134
+and 597 ms) match the verified scans to within 0.3%, which is strong circumstantial evidence,
+not proof, that they ran on an MI100.
+8.Done:the MI100 floor decomposition, a key-split (partial-attention) kernel, the workers-by-
+chunks grid, two tuned row scans and the MI100 energy repeats (Sections 8 and 11). The floor
+is the key loop under the first launch settings; the tuned kernel is still 95×slower than an A100
+at 8192 rows.
+9.Carried to the next paper (Stampede3 and the Intel Max 1550):rerun the Phase 3
+ensemble and the weight table with the tuned MI100 kernel; use the key-split kernel as the
+MI100 rank in the key/value-split ensemble; find out why the first configuration’s 726 ms plateau
+appeared and profile the kernel; put a spread on the comm sweep with more than three runs
+and a record of fabric load; and add the Intel Max 1550 as a fourth vendor.
+10. Do not comparet comm with [3]’s≈22 ms: it was measured under the default transport with
+four ranks on one GPU. Re-measure under both transports with a sampler running; ask NCSA
+why UCX triggers the job cancellations and whether thecxi0fabric can be used (TCP reaches
+2–2.8 GB/s).
+11. Formalize the candidateρ machine(d) fields the runs forced into view: the launch-geometry cost
+(per-device floors of≈2.2 ms per A100 wave, 6.2 ms for the CPU and 14.6–600 ms for the
+MI100, depending on its kernel configuration) and the inter-node transport (α,βper interface
+and operation, Table 11); estimate the firstεvalues once the model predicts heights as well as
+positions.
+=== PAGE 24 ===
+A True Multi-Vendor MPI Ensemble for MoA Attention 24
+12. Tune the partials of the other ranks so the comparison between the key/value split and the
+row split is fair, and scale the MI100 rank count beyondk=1; keep Intel’s Max 1550 in the
+no-communication model until it is run under its own allocation.
+Acknowledgments
+This work used NCSA Delta (GPU and CPU partitions), TACC Stampede3, PSC Bridges-2 (GPU
+and Ocean Storage), SDSC Expanse (GPU and CPU partitions), and Purdue Anvil (GPU) through
+allocation(s) CIS261342 and CIS261396 from the Advanced Cyberinfrastructure Coordination Ecosys-
+tem: Services & Support (ACCESS) program, which is supported by U.S. National Science Foundation
+grants #2138259, #2138286, #2138307, #2137603, and #2138296.
+References
+[1] L. M. Mullin and G. Hains. One Derivation, Any Machine: A No-Communication Weighted Par-
+tition Scheme for Heterogeneous Multi-Vendor Ensembles. Under review, target venue MLSys.
+2026.
+[2] L. M. Mullin and G. Hains. Closing the Prediction Gap: Admissible Compiler and Runtime Di-
+rectives forρ machine(d). 2026.
+[3] L. M. Mullin and G. Hains. From No-Communication to MPI: Extending theρ machine(d) Predictive
+Theory with a Real CPU+GPU Ensemble Experiment on Attention. 2026.

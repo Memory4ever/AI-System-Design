@@ -4,7 +4,9 @@
 **窗口：** 2026-02-22T09:00:00+08:00 ～ 2026-02-23T09:00:00+08:00
 **状态：** 完成
 **Books：** 纳入本次
-**检查时间：** 2026-10-05T11:46:34+08:00
+**检查时间：** 2026-10-08T20:15:00+08:00
+**窗口说明：** 用户授权仅补遗漏，冻结原候选、日期、评分及有效审阅；保留原09:00窗口，不搬移旧归属。
+**补充窗口：** 2026-02-22 ～ 2026-02-22
 
 ## 1. 结论
 
@@ -12,11 +14,13 @@
 
 官方 arXiv 周日 20:00 美国东部时间的公告映射到北京时间 **02-23 09:00**，恰为本窗不含的终点；本窗没有标准 new/cross/replacement 公告批次。OpenAI RSS 和 Anthropic 原始 `publishedOn` 恢复的最近前后事件也均在窗外。索引日期、后来的研究目录入库和当前版本不可把这些材料移动到本日。
 
-本轮重新核验来源，不继承旧 V2.1 报告“仅 arXiv required”“所有 Gate 通过”的声明。没有把机构全年论文、抓取响应或 GitHub 空 commit 列表当作当天新论文或全部题摘已审。非作者日级复核通过，普通待办 0；外部保留项不混同于普通待办，亦不授正面覆盖通过。
+原报告曾重新核验来源，不继承旧 V2.1 报告“仅 arXiv required”“所有 Gate 通过”的声明。没有把机构全年论文、抓取响应或 GitHub 空 commit 列表当作当天新论文或全部题摘已审。原窗口非作者日级复核通过、普通待办0的有效结论保留；外部保留项不混同于普通待办，亦不授正面覆盖通过。
+
+2026-10-08增量补查：原候选0逐字冻结，补充自然日确定新增0、标准/深入审阅0、Books写入0。有限主线查询和相关标题补检后实际读32具名完整题摘；独立准入校准将27项保留为首公开日期未证的外部终态项、5项贡献前关闭，题摘不等于证据审阅。十四来源实际停止与一次日期恢复见[本轮补查](../_sources/daily-20260223/supplement-20261008.md)。本轮非作者六部分DAY通过，普通待办0；旧完成声明不替代本轮差额复核，不授来源完整性或无遗漏保证。
 
 ## 2. 来源覆盖
 
-本次主题为模型架构与表示、预训练/后训练、训练推理运行时、多模态生成/World Model/VLA、Agent 执行与评价。仅每日来源及出现的具体线索；每周和会议来源未常规扫描。原始请求、响应和停止位置见 [本日来源记录](../_sources/daily-20260223/V3_SCREENING.md)，以及 [首次请求](../_sources/daily-20260223/V3_NATIVE_FETCH.json)、[定点恢复](../_sources/daily-20260223/V3_NATIVE_RECOVERY.json)、[最后恢复](../_sources/daily-20260223/V3_NATIVE_FINAL_RECOVERY.json)与[补充请求](../_sources/daily-20260223/V3_NATIVE_EXTRA.json)。
+本次主题为模型架构与表示、预训练/后训练、训练推理运行时、多模态生成/World Model/VLA、Agent执行与评价。仅每日来源及出现的具体线索；每周和会议来源未常规扫描。原审阅Source层证据保存在[旧来源记录](../_sources/daily-20260223/V3_SCREENING.md)和[完整冻结基线](../_sources/daily-20260223/supplement-baseline-20261008.md)。下表合并原有效边界与本轮Feb22自然日实际停止；本轮[原始请求](../_sources/daily-20260223/supplement-native-20261008.json)、[有限恢复](../_sources/daily-20260223/supplement-native-recovery-20261008.json)及[主题查询](../_sources/daily-20260223/supplement-topic-requests-20261008.json)的响应均保留，不以HTTP成功授覆盖。
 
 | 来源 | 检查范围与依据 | 结果 | 缺口 |
 | --- | --- | --- | --- |
@@ -35,12 +39,18 @@
 | SRC-MINIMAX | [英文 Blog](https://www.minimax.io/blog)、[中文 Blog](https://www.minimaxi.com/blog)实际到Forge英02/14/中02/12、M2.5 02/12；[Agent Tech Blog](https://agent.minimax.io/docs/techblog)只有05/13分组，不能反推为02/22事件。MiniMax-M2.5窗口 commit `[]`。 | 已检查 | 无当窗新事件线索；Forge中英日期差均窗外，不为解决本窗不存在的归属扩读 |
 | SRC-ARXIV | [官方公告安排](https://info.arxiv.org/help/availability.html#announcement-schedule)明确包括new/replacement/withdrawal/cross；周末无标准公告，下一次Sunday20ET=本窗终点。另以同前缀DataCite `created:[02/22 01:00Z TO 02/23 00:59:59Z]`单页恢复线索，total0/end；无可触发的具体题名，不扫描后窗分类批次。 | 已检查 | DataCite不是首公开权限；此结论只针对标准公告批次，不保证没有非标准原源公开 |
 
+本轮十四来源均已实际重新请求并读必要日期切片，具体有界停止见[补查§2](../_sources/daily-20260223/supplement-20261008.md#2-查询范围与停止)：OpenAI完整RSS、Anthropic完整publishedOn数组仍无Feb22；Google Blog6仍Feb17→Mar4、Pubs年精度/DeepMind当前页面不授历史日覆盖；Meta Blog2仍夹杂2025；Qwen新站壳/旧站迁移、DeepSeek当前主页、Moonshot停2025-11-07、MiMo客户端壳仍受阻，G1～G7不改作正面覆盖。Hunyuan一次IAB超时后正确POST恢复英文9条、total9，仍不是中文“全部”，不再复用其他日报目录为本轮证据。Z.ai15卡片Feb21→Mar15；Seed asc论文20/20已越Feb22（Feb13→Feb25），Blog9/9含窗外pinned且Feb14→Apr1，停token0/next20；ERNIE首页Feb06→Apr15；MiniMax英/中ForgeFeb14/12、M2.5Feb12→Mar18。这些目录显示日期只用于发现，不授任何论文首公开。
+
+arXiv本轮官方安排确认Feb22北京自然日没有标准new/cross/replacement/withdrawal批次。四初始公告查询返回表单且公告仅年月精度，未记零命中；改Submitted Feb21–22仅作有限发现。首个systems宽查询82条只浏览首50相关标题后收窄，不翻其第二页、不逐项关闭；正确OR主线题摘查询实际停止MODEL50/85、SYSTEM19/19、MULTIMODAL41/41、AGENT15/15，仅具名相关/含糊32进入完整题摘。月份目录恢复只有月级authors/titles，没有日头；其空解析不表示身份不存在。27潜力的一次exact-v1原件/有限作者日期恢复仍缺首公开日，SRC-ARXIV此非标准公开切片仍受阻，不授无遗漏。
+
 ## 3. 候选与判断
 
 | 材料 | 公开时间 | 项目贡献与评分 | 审阅结果 | Books决定 |
 | --- | --- | --- | --- | --- |
 
 无确定落窗贡献候选。不对窗外标题、客户端目录、空搜索或无法恢复的历史切片评分；没有用版本名、映射 owner 或机构声望制造候选。§5的限制不是候选，也不是证据已完成项。
+
+增量确定候选同为0。27具名潜力及5贡献前关闭均在[补查§3～4](../_sources/daily-20260223/supplement-20261008.md#4-27具名潜力的安全终态与一次日期请求)与[32完整题摘](../_sources/daily-20260223/supplement-selected-abstracts-20261008.md)保留。日期未证不得先评分列为本日候选；部分局部实验/反证确有准入潜力，不能用访问状态或Books已覆盖缩池。
 
 ## 4. 证据与知识整合
 
@@ -55,7 +65,7 @@
 
 ## 5. 缺口与下一步
 
-可执行工作：无。非作者已复核实际有界入口、空拟入选集、日期与代表排除；没有尚未审完的候选、可执行全文队列或 Books 写入。
+普通待办：0。本轮非作者六部分DAY通过，没有尚未审完的确定候选、可执行扫描/全文队列或Books写入。旧非作者复核有效但不替代本轮差额验收；27日期及G1～G7保留项不是普通pending。
 
 以下为本窗终态保留项（外部限制），已经尝试原入口与有限定点恢复，不支持正面证据、Coverage、Books或无遗漏断言。以后只恢复对应源在本窗的材料：
 
@@ -71,11 +81,17 @@
 
 窗外恢复线索不属于本窗：OpenAI SWE-bench Verified为02/23 19:00+08，归02/24默认Daily；Anthropic AI-fluency-index/persona-selection-model为02/23 19:52/19:53+08，亦归02/24。本日只记路由，不对后窗候选、正文或Books作判断。
 
+本轮新增外部终态日期保留27项：Prior-Aware metric、CoRAG、PhysCond-WMA、RoboCurate、MIRROR、HillInfer、DualScale、MANATEE、Habilis、DUET-VLM、Exact Attention Sensitivity、Rank-Aware bounds、Beyond Stationarity、PCA-VAE、ACAL、Agent caching、WANSpec、DREAM、Symmetry reduction、Layered orchestration、SeaCache、Matrix SMD、Canonical path、Why ReLU、Blackwell、COIN、MoBiQuant。精确ID/v1链接、具体潜力、已取原字段和每身份一次请求见[具名保留表](../_sources/daily-20260223/supplement-20261008.md#4-27具名潜力的安全终态与一次日期请求)与[原件日期恢复](../_sources/daily-20260223/supplement-date-originals-20261008.json)。缺少对应精确正文的首次公开日期原源；Submitted/citation_online_date、编号、月份列表、搜索Date均非公告。RoboCurate作者页有Feb21 datePublished但未给正文首公开链；MoBiQuant作者页仅2026。必要恢复已有限停止，均不评分、不展全文/全修订、不进入Books、不支撑Coverage/Evidence/性能/安全保证；取得官方日公告或明确作者首公开原件后，只重开对应身份日期层。5明确贡献前关闭项不另建日期请求。
+
 ## 6. 复核
 
 复核者：root（非报告作者）。
 结论：通过
 
+2026-10-08增量复核：root（非本轮报告作者）实际完整读取六部分、全部32具名题摘和必要月份HTML信号，核验十四入口请求与停止，正确OR查询实际50/85、19/19、41/41、15/15及有界标题查漏；错误表单/空解析不授零命中。27潜力的准入和终态日期隔离全部覆盖，5关闭项全部按实际题摘核验（不是只抽样，更不声称宽列表/全站逐项验证）。incTNP由待日期潜力改判为贡献前关闭，依据是借用现有LLM机制给TNP流式回归、Bayesianness未修正通用LM机制，不因小模型直接排除；原摘要/改判理由保留。19008因果主张仅待核，PhysCond-WMA安全信号和Prior-Aware泄漏测量反证潜力均保留，未因局部实验漏收。root核验原0候选、原窗口与连续§4保留，新增确认0、Books0，27项不授Source/Evidence完成；G1～G7精确隔离，普通待办0。此DAY只验本日增量与有效旧层复用，不复跑旧候选或其他日期。
+
+以下保留原窗口的有效非作者复核依据，不把它作为本轮完成标签：
+
 实际检查范围：完整六部分及本日来源停点；十四个每日入口请求与响应相关段；arXiv官方安排和半开终点、DataCite恢复权限；OpenAI XML精确时间、Anthropic三项相邻publishedOn；Google Blog6相邻卡片、Seed全部20/9条日期及pinned/next、Z.ai15卡片与release边界、Hunyuan本次9条及前次中文11条相关时间字段；ERNIE/MiMo/Moonshot日期、Qwen客户端壳、Google Publications年精度以及七个repo实际空commit响应。空拟入选集合全部覆盖，证据/Books队列为空成立。代表旁证按来源记录7行的实际日期与核心说明范围核对，包含Meta DINO应用和MiniMax Forge中英窗外日期；不是7项本窗候选或全站逐篇验证。G1～G7明确隔离，不授正面覆盖或无遗漏。本日没有Books实际写回。
 
-机器校验：`python3 scripts/validate_research.py --report papers/2026/02/23/README.md`完成态V3通过；本日README与_sources限定cached/unstaged `git diff --check`通过。机器结果不替代上述非作者语义复核。本轮不修改共享索引、LEARNING_STATE、其他日报或Weekly，不stage、commit、push；既有修改保护。
+原报告机器校验（有效结果保留）：`python3 scripts/validate_research.py --report papers/2026/02/23/README.md`完成态V3通过；本日README与_sources限定cached/unstaged `git diff --check`通过。机器结果不替代上述非作者语义复核。本轮不修改共享索引、LEARNING_STATE、其他日报或Weekly，不stage、commit、push；既有修改保护。2026-10-08本轮完成态V3、README12及补查Markdown17本地引用（冻结基线按原路径解析）和限定cached/unstaged diff-check通过；原候选0/旧窗口/连续§4实值逐字验证通过。

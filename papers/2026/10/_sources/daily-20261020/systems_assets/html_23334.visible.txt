@@ -1,0 +1,2114 @@
+LAW: Unifying Language, Action, and World Modeling for Agentic Physical Intelligence
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+1  Introduction
+2  Related Work
+2.1  Vision-Language-Action Models for Robot Control
+2.2  World Action Models and Video-Based Policy
+3  Method
+3.1  LAW Framework Overview
+3.2  Hybrid-Expert VLM for Progress-Aware Control
+3.3  Joint Video–Action Modeling with MoTE
+3.4  Dual-Stream Hierarchical Memory
+3.5  Subtask-Local Value Learning
+4  Experiments
+4.1  Training Details
+4.2  Main Results
+4.3  Component Ablations
+5  Analysis
+5.1  WAM Backbone Extensibility
+5.2  Effect of VLM Choice
+5.3  MoE Placement and Shared Experts
+5.4  Subtask Granularity
+5.5  Subtask-Local Value Learning Ablation
+5.6  Memory Component Ablation
+6  Conclusion
+References
+A  Per-Task RoboTwin Results
+B  Real-World Experimental Details
+B.1  Robot Platform and Observations
+B.2  Demonstration Collection and Data Representation
+B.3  Task Definitions
+B.4  Evaluation Metrics
+C  Motion-Based Progress Labels
+D  Observation and Action Conventions
+E  Semantic Subtask Decomposition
+E.1  Real-World Subtask Sequences
+E.2  Segmented Trajectory Examples
+License: CC BY-NC-SA 4.0
+arXiv:2610.23334v1 [cs.RO] 16 Oct 2026
+LAW: Unifying Language, Action, and World Modeling for Agentic Physical Intelligence
+Jiajun Cao  1,2,∗  , Kai Tang  1,2,∗  , Bohua Zhang  1,2,∗  , Zezhong Qian  1,2,∗  , Ying Li  1,2,∗  , Xiaozhu Ju  2,∗  , Xiaobao Wei  1,2  , Jiaming Liu  1  , Yang Ding  1,2  , Sixiang Chen  1,2  , Yiding Sun  1,2  , Siyuan Qian  1,2  , Tinghao Wang  1,2  , Jixian Wu  1,2  , Yichen Guo  1,2  , Yi Zhang  2  , Shilong Zou  2  , Yong Dai  2  , Jian Tang  2,‡  ,Shanghang Zhang  1,‡
+1   State Key Laboratory of Multimedia Information Processing,
+School of Computer Science,
+Peking University
+2  Beijing Innovation Center of Humanoid Robotics
+∗   Equal Contribution,   ‡  Equal Corresponding Author
+Abstract
+World-action models jointly predict actions and future world states, but long-horizon manipulation further requires language reasoning to plan subtask objectives, assess execution progress, and guide action selection. We present LAW, a closed-loop VLM–WAM framework that unifies language reasoning, action generation, and world modeling through semantic subtask progress. Within the LAW agent, a hybrid-expert vision-language model plans the remaining subtasks, estimates the values of and fuses actions proposed by a world-action model, and asynchronously assesses execution status to support continued execution and subtask transitions. Within the world-action model, Mixture-of-Transformer Experts integrates modality-specific and shared computation for joint video–action modeling. Dual-stream hierarchical visual memory maintains temporal context for both models, while subtask-local value learning aligns action evaluation with semantic objectives and preserves supervision from successful prefixes of failed trajectories. LAW achieves 94.21% average success across 50 RoboTwin tasks. Replacing the WAM backbone with OpenWAM-   α  \alpha    further raises the average success rate to 95.56%, establishing a new open-source state of the art on RoboTwin. Despite having only 2B parameters, our VLM also outperforms variants using Embodied-R1.5 and GPT-5.5 High. On three long-horizon real-robot tasks, LAW achieves 65% average success, compared with 28.33% for     π  0.5   \pi_{0.5}    and 25% for Fast-WAM.
+Webpage:     https://hey-cjj.github.io/LAW-project/
+Code:     https://github.com/hey-cjj/LAW
+Figure 1 :   Overview of the LAW agent.
+1  Introduction
+Long-horizon manipulation is a sequence of semantic subtasks, not merely a longer sequence of motor commands. After reaching for an object, a robot must decide whether the grasp actually succeeded; after a successful grasp, it must recognize that the task has entered a new stage; before executing the next motion, it must choose among several physically plausible actions according to the current objective  [ 23 ,  22 ] . Errors in any of these decisions compound over time. Consequently, local action quality alone does not determine task success. A capable agent must maintain a persistent account of task progress, connect that account to action generation, and revise its decisions when execution departs from expectation  [ 35 ,  44 ] .
+Vision-language-action policies connect semantic representations to control  [ 60 ,  26 ,  8 ] , while world-action models learn action-conditioned scene evolution and executable behavior  [ 59 ,  57 ,  27 ,  51 ] . These models substantially improve action generation, but long-horizon deployment exposes a complementary systems problem: reasoning and control must remain aligned as the task evolves. A language plan generated once at the beginning cannot determine whether its intermediate steps were completed  [ 22 ] , and an action generator conditioned only on the current observation may not know which visual changes matter to the larger goal  [ 41 ] . Placing a planner before a policy therefore leaves three interfaces underspecified: how execution progress updates the plan, how candidate actions are judged against the current semantic objective, and how relevant history is retained without overwhelming either model.
+Our premise is that semantic subtask progress should serve as the temporal interface between language reasoning and world-action modeling. Subtasks provide more than a decomposition of the instruction: they define when the agent should advance its plan, which outcomes a candidate action should optimize, and which observations should remain salient in memory. This view reveals that computations occur at different rates. State assessment should run continuously without blocking control, candidate evaluation should occur whenever the WAM proposes a new action chunk, and planning should operate at the semantic task scale rather than at every control step. The challenge is coordinating reasoning and control, rather than invoking a larger reasoner at every step.
+We instantiate this principle in LAW, a closed-loop VLM–WAM framework that unifies language reasoning, action generation, and world modeling through semantic subtask progress, as summarized in Fig.   1  . The LAW agent uses a hybrid-expert VLM with role-selected planner, state, and value experts on a shared frozen backbone. The planner predicts the remaining semantic subtasks; conditioned on the current subtask, the WAM generates diverse action chunks; the value expert ranks and fuses them; and execution status is assessed asynchronously to determine subtask completion. Once the current subtask is completed, the planner predicts the next subtask and the agent switches to it; otherwise, the agent continues executing the current subtask. The LAW agent coordinates planning, action selection, and execution monitoring at different frequencies, using feedback to continue or switch subtasks.
+To strengthen joint world and action modeling, we introduce Mixture-of-Transformer Experts (MoTE) into the WAM, yielding MoTE-WAM. MoT projects video and action features into a common attention space to exchange cross-modal information, but their subsequent transformations remain modality-specific. MoTE introduces shared experts to further transform these cross-modal representations, alongside video-private and action-private experts that preserve modality-specific computation. The shared experts learn common temporal and physical structure across predicted scene dynamics and robot actions, strengthening video–action joint modeling beyond information exchange through attention alone. Long-horizon execution also requires memory aligned with subtask transitions. Separate hierarchical memory streams for the VLM and WAM retain recent observations and full-resolution states at subtask boundaries, while compressing older history to preserve relevant context across subtasks. To better exploit failed trajectories when training the value expert, we introduce subtask-local value learning, which terminates returns at semantic boundaries. This preserves positive supervision from successfully completed subtasks within failed episodes, rather than assigning zero value to all their actions.
+We evaluate LAW on 50 RoboTwin  [ 13 ]  tasks, the RoboDojo  [ 12 ]  capability benchmark, and three long-horizon real-robot tasks containing up to nine semantic subtasks. LAW achieves 94.21% average success on RoboTwin, 2.38 percentage points above Fast-WAM, without robot-data pretraining. Replacing the WAM backbone with OpenWAM-   α  \alpha    further raises the average success rate to 95.56%, establishing a new open-source state of the art on RoboTwin. Despite having only 2B parameters, our VLM outperforms variants using Embodied-R1.5 and GPT-5.5 High within the same LAW framework. On RoboDojo, LAW achieves leading performance across capability dimensions among methods without additional robot-domain or embodied-interaction pretraining. On the three long-horizon real-robot tasks, LAW achieves 65% average success, compared with 28.33% for     π  0.5   \pi_{0.5}    and 25% for Fast-WAM. We also conduct extensive ablation studies to validate the effectiveness of each component. Our contributions are:
+•
+We introduce LAW, a closed-loop VLM–WAM framework that unifies language reasoning, action generation, and world modeling through semantic subtask progress. The LAW agent coordinates planning, asynchronous completion assessment, and value-guided action fusion for long-horizon execution.
+•
+We introduce MoTE, dual-stream hierarchical memory, and subtask-local value learning to support progress-aware control: MoTE strengthens joint video–action modeling through shared and modality-specific experts; dual-stream hierarchical memory preserves task-relevant history and subtask-boundary observations; and subtask-local value learning retains positive supervision from completed stages of failed trajectories.
+•
+We demonstrate LAW’s effectiveness on RoboTwin, RoboDojo, and long-horizon real-world manipulation through extensive experiments and ablation studies. Integrating OpenWAM-   α  \alpha    achieves 95.56% average success on RoboTwin, establishing a new open-source state of the art and demonstrating LAW’s extensibility to stronger pretrained WAMs.
+2  Related Work
+2.1  Vision-Language-Action Models for Robot Control
+Pretrained vision-language models (VLMs) provide semantic representations that vision-language-action (VLA) policies connect to executable control  [ 14 ,  60 ,  28 ,  26 ,  8 ] , supported by heterogeneous robot datasets and generalist pretraining  [ 39 ,  17 ] . RT-2 and OpenVLA represent actions as tokens, whereas     π  0   \pi_{0}    couples a VLM with a flow-matching expert for continuous action generation  [ 60 ,  26 ,  8 ] . Beyond action parameterization, CoT-VLA predicts intermediate visual subgoals  [ 54 ] , while VEGA aligns visual-encoder outputs with geometry-aware features before vision-language fusion  [ 45 ] . These approaches strengthen semantic transfer and spatial grounding, motivating complementary mechanisms for coordinating instructions, execution progress, and action selection over extended tasks.
+Language-guided systems connect reasoning to execution through affordance-based skill selection, environmental feedback, action hierarchies, and spatial value maps  [ 23 ,  22 ,  4 ,  21 ] . SayCan grounds language plans in learned affordances, whereas VoxPoser translates language-specified objectives and constraints into spatial maps for trajectory optimization  [ 23 ,  21 ] . In navigation, NavCoT structures decisions through future imagination and observation matching  [ 33 ] , while Memoir retrieves environmental and behavioral experience using imagined states  [ 47 ] . Although navigation differs from continuous manipulation, these studies illustrate how intermediate reasoning and selective memory access support sequential decisions. For long-horizon robot policies, the corresponding challenge is to retain task-relevant history and execution feedback when semantic stages extend beyond individual action chunks  [ 41 ,  44 ] .
+2.2  World Action Models and Video-Based Policy
+World models support control through action-conditioned visual prediction or latent dynamics  [ 15 ,  19 ,  58 ,  1 ,  3 ] , while video generators also enable synthetic robot training trajectories  [ 24 ] . Visual Foresight optimizes actions through predicted observations, whereas Dreamer learns behavior through latent imagination, providing two complementary uses of predictive dynamics  [ 15 ,  19 ] . Recent world-action models (WAMs) connect future visual modeling with executable action generation through joint diffusion or future-latent alignment  [ 59 ,  57 ,  30 ,  32 ,  27 ,  51 ,  53 ] . Their designs differ in how predictive information is used during deployment: LingBot-VA combines causal video–action modeling with observation feedback and asynchronous execution  [ 27 ] , whereas Fast-WAM retains video co-training but omits test-time future prediction  [ 51 ] . WAM4D further introduces geometric supervision through spatial register tokens and modality-specific causal attention  [ 29 ] . These developments distinguish predictive supervision benefits from the cost of generating future observations online.
+Reliable world-model-based control also requires faithful action consequences and informative evaluation signals. WorldEcho diagnoses failures to follow off-expert actions, and WorldSync improves action-conditioned generation through broader coverage and explicit action-effect alignment  [ 11 ] . Cosmos Policy jointly generates actions, future states, and values for planning  [ 25 ] ; MV-WAM integrates progress-value estimation with value-guided rollback  [ 10 ] ; and SafeDojo optimizes VLA policies using imagined trajectories with separate task-reward and safety-cost estimates  [ 42 ] . LAW builds on these ingredients by coordinating semantic planning, asynchronous state assessment, and value-guided WAM candidate selection, supported by hierarchical visual memory. Its modality-specific and shared experts strengthen video–action interaction, while separate hierarchical memory streams preserve temporal context for language-level reasoning and continuous robot action generation. Unlike the trajectory-level returns used by MV-WAM  [ 10 ] , LAW terminates value targets at semantic subtask boundaries, preserving supervision from completed prefixes of unsuccessful episodes. This links local action evaluation to progress-aware action selection and planning grounded in semantic subtasks.
+3  Method
+3.1  LAW Framework Overview
+Figure 2 :   LAW agent’s architecture and loop.The hybrid-expert VLM uses planner, state, and value experts on a shared frozen backbone, while the MoTE-WAM is co-trained with video and action objectives and generates candidate action chunks at inference. Semantic subtask progress connects execution monitoring, subtask advancement, candidate ranking and fusion, action execution, and environment feedback in a closed loop.
+Figure   2   provides an overview of the LAW agent’s architecture and loop. The LAW agent factorizes long-horizon control into a progress-aware semantic control loop and a short-horizon action loop. At control step    t  t   , the remaining plan uses local indices, with its first element     c  t   c_{t}    defining the current subtask, while two memory streams,     ℳ  t  V   \mathcal{M}_{t}^{\mathrm{V}}    and     ℳ  t  W   \mathcal{M}_{t}^{\mathrm{W}}   , provide task-relevant history to the VLM and WAM, respectively. The current subtask connects the two loops: it specifies the objective for action generation and value estimation, while execution feedback determines whether that objective should be continued or advanced.
+We write      o  t   =   (   I  t   ,   p  t   )    o_{t}=(I_{t},p_{t})    for the available multiview RGB images and proprioceptive state. The WAM uses RGB, EEF state, and visual memory; the VLM uses RGB and visual memory, with joint-state values additionally supplied to the state expert. Each module selects its required components of     o  t   o_{t}   , and visual-memory encoders operate on     I  t   I_{t}   . Input and action conventions are detailed in Appendix   D  .
+Given a global instruction    g  g   , current observation     o  t   o_{t}   , and VLM memory     ℳ  t  V   \mathcal{M}_{t}^{\mathrm{V}}   , the planner predicts the remaining semantic subtask sequence
+𝒮  t   =    VLM  plan   ​   (  g  ,   o  t   ,   ℳ  t  V   )    =   (   s   t  ,  1    ,   s   t  ,  2    ,  …  ,   s   t  ,   L  t     )    ,   \mathcal{S}_{t}=\mathrm{VLM}_{\mathrm{plan}}(g,o_{t},\mathcal{M}_{t}^{\mathrm{V}})=(s_{t,1},s_{t,2},\ldots,s_{t,L_{t}}),
+(1)
+where     L  t   L_{t}    is the number of remaining subtasks and      c  t   =   s   t  ,  1     c_{t}=s_{t,1}   . Each newly predicted plan is indexed locally from one. An independent, monotonically increasing subtask-instance identifier     u  t   u_{t}    associates asynchronous predictions with the current execution instance. The planner is invoked at episode initialization and at semantic decision events rather than every control step. Conditioned on     c  t   c_{t}   , the current observation, and WAM memory, the WAM samples    N  N    candidate action chunks:
+{   A  t   (  n  )    }    n  =  1   N   =    WAM  act   ​   (   o  t   ,   c  t   ,   ℳ  t  W   ,   ϵ  n   )     .   \big\{A_{t}^{(n)}\big\}_{n=1}^{N}=\mathrm{WAM}_{\mathrm{act}}(o_{t},c_{t},\mathcal{M}_{t}^{\mathrm{W}};\epsilon_{n}).
+(2)
+Each candidate      A  t   (  n  )    =   {   a   t  :    t  +  H   −  1     (  n  )    }    A_{t}^{(n)}=\{a_{t:t+H-1}^{(n)}\}    contains an action sequence of horizon     H  =  32   H=32   , and     ϵ  n   \epsilon_{n}    is an independent noise initialization that induces proposal diversity. Following Fast-WAM  [ 51 ] , the video branch provides a joint video–action training signal but is not sampled to produce explicit future images at inference. With VLM context
+x  t   =   (  g  ,   o  t   ,   c  t   ,   ℳ  t  V   )    ,   x_{t}=(g,o_{t},c_{t},\mathcal{M}_{t}^{\mathrm{V}}),
+(3)
+the value expert scores candidate action chunks and fuses the top-   K  K    proposals for execution:
+q  t   (  n  )    =    Q  θ   ​   (   x  t   ,   A  t   (  n  )    )     ,     A  ^   t   =    Fuse   K  ,  T    ⁡   (    {   A  t   (  n  )    ,   q  t   (  n  )    }    n  =  1   N   )      ,   q_{t}^{(n)}=Q_{\theta}(x_{t},A_{t}^{(n)}),\qquad\widehat{A}_{t}=\operatorname{Fuse}_{K,T}\!\left(\{A_{t}^{(n)},q_{t}^{(n)}\}_{n=1}^{N}\right),
+(4)
+Here,     Q  θ   Q_{\theta}    denotes the subtask-local value function implemented by the value expert, which estimates the expected return of a candidate under the current subtask. We use     K  =  8   K=8   , and    T  T    is the fusion temperature. The robot executes a prefix of      A  ^   t   \widehat{A}_{t}    before the WAM generates new proposals from the next observation. Section   3.5   specifies the subtask-local target and the fusion operator.
+In parallel with action execution, the state expert estimates whether the current subtask has completed:
+d  ^   t   =    VLM  state   ​   (  g  ,   o  t   ,   c  t   ,   ℳ  t  V   )     .   \hat{d}_{t}=\mathrm{VLM}_{\mathrm{state}}(g,o_{t},c_{t},\mathcal{M}_{t}^{\mathrm{V}}).
+(5)
+The index    t  t    in the completion prediction refers to the acquisition time of its input observation, not the inference completion time. Each prediction carries this timestamp and the corresponding subtask identifier. The completion prediction is binarized at    0.5  0.5   . In the current implementation, subtask completion determines the semantic control event
+e  t   =   {      Advance  ,         d  ^   t   ≥  0.5   ,        Continue  ,      otherwise  .        e_{t}=\begin{cases}\text{{Advance}},&\hat{d}_{t}\geq 0.5,\\
+\text{{Continue}},&\text{otherwise}.\end{cases}
+(6)
+A  Continue  event preserves     c  t   c_{t}   ,     u  t   u_{t}   , and the current plan. An  Advance  event stores the observation at the control-loop transition as a subtask-boundary state and terminates the episode if the final subtask has completed. Otherwise, the planner predicts the remaining subtasks again using the updated observation and memory, and the LAW agent switches to the next predicted subtask. The new remaining sequence is indexed locally from one, its first element becomes     c   t  +  1    c_{t+1}   , and the execution-instance identifier advances to      u   t  +  1    =    u  t   +  1    u_{t+1}=u_{t}+1   . Completion of the sole remaining subtask terminates the episode. Thus, semantic subtask completion changes the conditioning objective, memory state, and planning schedule of subsequent action generation. This feedback implements the temporal interface introduced above. The following subsections detail the VLM experts, MoTE, memory, and subtask-local value learning.
+Algorithm   1   summarizes the complete inference loop. Newly acquired observations trigger asynchronous completion assessment using the latest observation, without queuing historical frames. The control loop reads available results without blocking action execution. A result is valid only if its subtask-instance identifier matches     u  t   u_{t}    and its observation timestamp is newer than that of the last consumed result; results superseded by newer available predictions are discarded. If no valid result is available, execution continues under the current subtask and plan. Upon accepting completion, the agent stores     o   t  +  1    o_{t+1}    at the control-loop transition as the boundary observation. This observation marks the actual subtask switch rather than the earlier observation on which completion was assessed.
+Algorithm 1    Progress-aware inference of the LAW agent
+1:
+Instruction    g  g   , initial observation     o  0   o_{0}   , candidate count    N  N   , top-   K  K    size    K  K   , temperature    T  T
+2:
+Initialize     t  ←  0   t\leftarrow 0   ,      ℳ  0  V   ←  ∅   \mathcal{M}_{0}^{\mathrm{V}}\leftarrow\emptyset   , and      ℳ  0  W   ←  ∅   \mathcal{M}_{0}^{\mathrm{W}}\leftarrow\emptyset
+3:
+𝒮  0   ←    VLM  plan   ​   (  g  ,   o  0   ,   ℳ  0  V   )     \mathcal{S}_{0}\leftarrow\mathrm{VLM}_{\mathrm{plan}}(g,o_{0},\mathcal{M}_{0}^{\mathrm{V}})    ,      c  0   ←   s   0  ,  1     c_{0}\leftarrow s_{0,1}   , and      u  0   ←  0   u_{0}\leftarrow 0
+4:
+while  the task is not terminated  do
+5:
+{   A  t   (  n  )    }    n  =  1   N   ←    WAM  act   ​   (   o  t   ,   c  t   ,   ℳ  t  W   ,   ϵ  n   )     \{A_{t}^{(n)}\}_{n=1}^{N}\leftarrow\mathrm{WAM}_{\mathrm{act}}(o_{t},c_{t},\mathcal{M}_{t}^{\mathrm{W}};\epsilon_{n})
+6:
+x  t   ←   (  g  ,   o  t   ,   c  t   ,   ℳ  t  V   )    x_{t}\leftarrow(g,o_{t},c_{t},\mathcal{M}_{t}^{\mathrm{V}})
+7:
+for       n  =  1   ,  …  ,  N   n=1,\ldots,N     do
+8:
+q  t   (  n  )    ←    Q  θ   ​   (   x  t   ,   A  t   (  n  )    )     q_{t}^{(n)}\leftarrow Q_{\theta}(x_{t},A_{t}^{(n)})
+9:
+end   for
+10:
+A  ^   t   ←    Fuse   K  ,  T    ⁡   (    {   A  t   (  n  )    ,   q  t   (  n  )    }    n  =  1   N   )     \widehat{A}_{t}\leftarrow\operatorname{Fuse}_{K,T}(\{A_{t}^{(n)},q_{t}^{(n)}\}_{n=1}^{N})
+11:
+Execute a prefix of      A  ^   t   \widehat{A}_{t}   ; assess each new observation asynchronously using its timestamp and     u  t   u_{t}
+12:
+Receive     o   t  +  1    o_{t+1}    and update     ℳ   t  +  1   V   \mathcal{M}_{t+1}^{\mathrm{V}}    and     ℳ   t  +  1   W   \mathcal{M}_{t+1}^{\mathrm{W}}
+13:
+c   t  +  1    ←   c  t    c_{t+1}\leftarrow c_{t}   ,      u   t  +  1    ←   u  t    u_{t+1}\leftarrow u_{t}   , and      𝒮   t  +  1    ←   𝒮  t    \mathcal{S}_{t+1}\leftarrow\mathcal{S}_{t}
+14:
+Non-blockingly read the newest unconsumed result     (   d  ^   ,  τ  ,  u  )   (\hat{d},\tau,u)    for     u  t   u_{t}   ; discard superseded results
+15:
+if  a result newer than the last consumed timestamp with     u  =   u  t    u=u_{t}    is available and      d  ^   ≥  0.5   \hat{d}\geq 0.5     then
+16:
+Store     o   t  +  1    o_{t+1}    at the control-loop transition as a subtask-boundary observation
+17:
+if       |   𝒮  t   |   =  1   |\mathcal{S}_{t}|=1     then
+18:
+terminate successfully
+19:
+else
+20:
+u   t  +  1    ←    u  t   +  1    u_{t+1}\leftarrow u_{t}+1
+21:
+𝒮   t  +  1    ←    VLM  plan   ​   (  g  ,   o   t  +  1    ,   ℳ   t  +  1   V   )     \mathcal{S}_{t+1}\leftarrow\mathrm{VLM}_{\mathrm{plan}}(g,o_{t+1},\mathcal{M}_{t+1}^{\mathrm{V}})
+22:
+Set     c   t  +  1    c_{t+1}    to the first subtask of     𝒮   t  +  1    \mathcal{S}_{t+1}
+23:
+end   if
+24:
+else
+25:
+c   t  +  1    ←   c  t    c_{t+1}\leftarrow c_{t}    and      u   t  +  1    ←   u  t    u_{t+1}\leftarrow u_{t}
+26:
+end   if
+27:
+Mark any valid result read in this iteration as consumed
+28:
+t  ←   t  +  1    t\leftarrow t+1
+29:
+end   while
+3.2  Hybrid-Expert VLM for Progress-Aware Control
+Hybrid-Expert VLM
+To support planning, execution monitoring, and action evaluation within a single VLM, we introduce a hybrid-expert architecture with task-specific LoRA adapters  [ 20 ] . The planner, state, and value experts share a frozen VLM backbone, allowing them to reuse common visual-language representations while avoiding the cost of maintaining a separate full model for each control function. Each expert activates its own adapter and task-specific head, enabling specialization under distinct supervision objectives while isolating parameter updates and reducing interference across functions. Expert adapters are selected by control function rather than token-level routing.
+The planner is trained with semantic subtask supervision. We construct ordered subtask annotations and temporal boundaries from the demonstrations, as illustrated in Fig.   3  . Additional task decompositions and segmented examples are provided in Appendix   E  . Given the global instruction, visual observation, and execution memory, the planner is trained to generate the remaining subtask sequence autoregressively:
+ℒ  plan   =  −   ∑   i  =  1    |  𝒮  |    log   p  θ    (   s  i   ∣  g  ,   o  t   ,   ℳ  t  V   ,   s     <  i    )   .   \mathcal{L}_{\mathrm{plan}}=-\sum_{i=1}^{|\mathcal{S}|}\log p_{\theta}\!\left(s_{i}\mid g,o_{t},\mathcal{M}_{t}^{\mathrm{V}},s_{<i}\right).
+(7)
+The state expert is trained with subtask completion supervision and an auxiliary failure-prediction objective to improve completion assessment. Completion labels are derived from motion-based progress within annotated subtask intervals; the label construction is detailed in Appendix   C  . Failure trajectories are additionally reviewed to identify the first visually unambiguous manipulation error, together with its semantic stage and visual evidence. During training, dedicated completion and failure query tokens provide complementary supervision: the auxiliary failure head encourages the shared representation to distinguish unsuccessful execution from completed subtasks. The training objective is
+ℒ  state   =     λ  d   ​  BCE  ​   (    d  ^   t   ,   d  t   )    +    λ  f   ​  BCE  ​   (    f  ^   t   ,   f  t   )      .   \mathcal{L}_{\mathrm{state}}=\lambda_{d}\,\mathrm{BCE}(\hat{d}_{t},d_{t})+\lambda_{f}\,\mathrm{BCE}(\hat{f}_{t},f_{t}).
+(8)
+where     d  t   d_{t}    and     f  t   f_{t}    are binary completion and failure labels, and      d  ^   t   \hat{d}_{t}    and      f  ^   t   \hat{f}_{t}    are the corresponding training predictions. The auxiliary failure loss improves the features used by the completion head. For value prediction, candidate action chunks     A  t   A_{t}    are encoded as tokens and processed jointly with the context     x  t   x_{t}    by the shared VLM. A learned query token aggregates these features for a 101-bin categorical value head, yielding
+Q  θ   ​   (   x  t   ,   A  t   )    =    ∑   b  =  1   101     z  b   ​   p  θ   ​   (  b  ∣    x  t   ,   A  t    )      ,   Q_{\theta}(x_{t},A_{t})=\sum_{b=1}^{101}z_{b}\,p_{\theta}(b\mid x_{t},A_{t}),
+(9)
+where     p  θ   p_{\theta}    is the softmax output and     z  b   z_{b}    are fixed bin centers. The value expert uses a LoRA adapter  [ 20 ]  initialized from the state expert; only this adapter, the action encoder, query embedding, and value head are trained, while the shared backbone, existing experts, and WAM remain frozen.
+Figure 3 :   Visualization of semantic subtask annotations, temporal boundaries, and failure cases in RoboTwin.
+Mixed-Frequency Coordination
+The three experts and the WAM operate at different frequencies, as illustrated in Fig.   4  . The planner is invoked at episode initialization and near subtask boundaries to produce or update the remaining plan. After the WAM generates candidate action chunks, the value expert synchronously scores and fuses them into the action chunk executed by the robot. In contrast, the state expert runs asynchronously during action execution. Each query-based state-expert forward pass takes approximately    60  60    ms and runs concurrently with action execution, enabling non-blocking completion assessment on the latest observations. The resulting pipelined parallelism between action execution and state assessment improves inference throughput by     15  %   15\%   . A valid prediction with completion probability at least    0.5  0.5    triggers a subtask switch at a control-loop boundary; validity is determined by the timestamp and subtask identifier as described in Algorithm   1  .
+Figure 4 :   Mixed-frequency coordination for progress-aware control in LAW. The planner operates at semantic subtask boundaries, while WAM generation and value-based selection synchronously determine each action chunk. The state expert asynchronously estimates subtask completion during action execution and triggers the next planning decision when the current subtask is completed.
+3.3  Joint Video–Action Modeling with MoTE
+The WAM must jointly model the evolution of visual observations and the robot actions that cause these changes. In the original Mixture-of-Transformers (MoT)  [ 31 ] , video and action branches exchange information through mixed attention: their queries, keys, and values are concatenated for joint attention, after which the outputs are returned to the two modality-specific branches  [ 27 ,  51 ] . Mixed attention exchanges information, but modality-specific transformations limit shared video–action modeling.
+Figure 5 :   MoTE architecture for joint video–action modeling. The video and action DiT branches exchange information through MoT mixed self-attention. After mixed attention, modality-specific top-1 routers select private experts or a shared expert available to both streams. The routed expert output is scaled by    α  \alpha    and added residually before the remaining Transformer transformations.
+We introduce Mixture-of-Transformer Experts (MoTE) to strengthen this interaction, as illustrated in Fig.   5  . MoTE applies a residual mixture-of-experts layer to the mixed-attention representation. The router produces sparse expert weights for the current modality:
+𝐰  =    TopKSoftmax   ⁡   (    W  r   ​   LN  ⁡   (  𝐇  )     )     ,   \mathbf{w}=\operatorname{TopKSoftmax}\!\left(W_{r}\operatorname{LN}(\mathbf{H})\right),
+(10)
+where    𝐇  \mathbf{H}    is the mixed-attention representation and     W  r   W_{r}    is a modality-specific router. The routed residual update is
+𝐇  ~   =   𝐇  +   α  ​    ∑   e  ∈  ℰ      w  e   ​   E  e   ​   (   LN  ⁡   (  𝐇  )    )        ,   \widetilde{\mathbf{H}}=\mathbf{H}+\alpha\sum_{e\in\mathcal{E}}w_{e}E_{e}\!\left(\operatorname{LN}(\mathbf{H})\right),
+(11)
+where    ℰ  \mathcal{E}    denotes the selected experts,     w  e   w_{e}    is the routing weight, and     E  e   E_{e}    is an expert network. The modality-specific experts preserve the distinct statistics of video and action tokens, while the shared experts capture their common temporal and physical dynamics. Because the MoTE layer is applied immediately after mixed attention, each token is routed to either a modality-private expert or the shared expert before entering the next Transformer block. The shared expert is available to both modalities; top-1 routing does not apply private and shared experts simultaneously to the same token.
+In the default configuration, each modality has two private experts and both modalities share one additional expert. The router uses top-1 selection and the residual scale is set to    0.1  0.1   . The training objective combines video prediction, action prediction, and router regularization:
+ℒ  WAM   =     λ  v   ​   ℒ  video    +    λ  a   ​   ℒ  action    +    λ  bal   ​   ℒ  balance    +    λ  z   ​   ℒ  z      .   \mathcal{L}_{\mathrm{WAM}}=\lambda_{v}\mathcal{L}_{\mathrm{video}}+\lambda_{a}\mathcal{L}_{\mathrm{action}}+\lambda_{\mathrm{bal}}\mathcal{L}_{\mathrm{balance}}+\lambda_{z}\mathcal{L}_{z}.
+(12)
+Here,     ℒ  balance   \mathcal{L}_{\mathrm{balance}}    encourages balanced expert usage and     ℒ  z   \mathcal{L}_{z}    regularizes the router logits. We set      λ  v   =   λ  a   =  1   \lambda_{v}=\lambda_{a}=1    and      λ  bal   =   λ  z   =   10   −  4     \lambda_{\mathrm{bal}}=\lambda_{z}=10^{-4}    in the default WAM configuration. MoTE supplements mixed attention with modality-specific and shared nonlinear transformations to jointly model scene evolution and actions.
+3.4  Dual-Stream Hierarchical Memory
+Figure 6 :   Hierarchical visual memory and attention pattern in the WAM. Short-term and subtask-boundary observations are retained at full resolution, while older observations are spatially compressed.
+Long-horizon manipulation requires historical context to assess task progress and maintain consistent action generation  [ 41 ,  44 ] . Retaining every past observation is computationally expensive, while compressing the entire history into a single representation can discard recent motion details and critical subtask transitions. LAW maintains separate VLM and WAM memory streams over shared observations.
+At time    t  t   , we retain the previous five observations at a stride of four, giving the recent window     {    o   t  −  20    ,   o   t  −  16    ,   o   t  −  12    ,   o   t  −  8    ,   o   t  −  4     }   \{o_{t-20},\allowbreak o_{t-16},\allowbreak o_{t-12},\allowbreak o_{t-8},\allowbreak o_{t-4}\}   ; unavailable elements are omitted near the beginning of an episode, and the current observation     o  t   o_{t}    is provided separately. We also retain the initial observation and observations recorded at control-loop subtask transitions when they fall outside this recent window. Earlier frames are sampled every four steps within the current subtask and every 16 steps within completed subtasks. All selected timestamps share the phase     t  mod  4   t\bmod 4   , and a subtask-boundary frame is stored only once. Let      𝒞  t   =   (   c  1   ,  …  ,   c  m   )    \mathcal{C}_{t}=(c_{1},\ldots,c_{m})    denote the resulting long-term timestamps and      ℬ  t   =   (   β  1   ,  …  ,   β  p   )    \mathcal{B}_{t}=(\beta_{1},\ldots,\beta_{p})    the retained boundary timestamps, both in temporal order. Figure   6   illustrates how the WAM integrates short-term, subtask-boundary, and long-term visual memory with the current observation and action sequence.
+The two streams encode these observations in their native token spaces. Let      𝐯  τ   =   V  ⁡   (   o  τ   )     \mathbf{v}_{\tau}=V(o_{\tau})    be the VLM visual tokens and      𝐰  τ   =   W  ⁡   (   o  τ   )     \mathbf{w}_{\tau}=W(o_{\tau})    the WAM VAE tokens. Both the VLM and WAM compress long-term memory using spatial average pooling, yielding one summary token per older observation, denoted by      𝐯  ¯   τ   \bar{\mathbf{v}}_{\tau}    and      𝐰  ¯   τ   \bar{\mathbf{w}}_{\tau}   , respectively. Boundary and recent observations retain their full spatial token sequences.
+Let     𝐱  τ  X   \mathbf{x}_{\tau}^{X}    and      𝐱  ¯   τ  X   \bar{\mathbf{x}}_{\tau}^{X}    denote the full and compressed tokens of stream    X  X   , respectively, where      (   𝐱  V   ,    𝐱  ¯   V   )   =   (  𝐯  ,   𝐯  ¯   )    (\mathbf{x}^{\mathrm{V}},\bar{\mathbf{x}}^{\mathrm{V}})=(\mathbf{v},\bar{\mathbf{v}})    and      (   𝐱  W   ,    𝐱  ¯   W   )   =   (  𝐰  ,   𝐰  ¯   )    (\mathbf{x}^{\mathrm{W}},\bar{\mathbf{x}}^{\mathrm{W}})=(\mathbf{w},\bar{\mathbf{w}})   . Using the same timestamps, both memory streams can then be written as
+ℳ     t      X   =  [   \displaystyle\mathcal{M}_{t}^{X}=\Big[
+{   𝐱  ¯       c  i       X   }      i  =  1       m   ;  {  𝐱      β  i       X   }      i  =  1       p   ;  {  𝐱      t  −   4  ​  j        X   }      j  =  1       5   ]  ,  X  ∈  {  V  ,  W  }  .   \displaystyle\{\bar{\mathbf{x}}_{c_{i}}^{X}\}_{i=1}^{m};\{\mathbf{x}_{\beta_{i}}^{X}\}_{i=1}^{p};\{\mathbf{x}_{t-4j}^{X}\}_{j=1}^{5}\Big],X\in\{\mathrm{V},\mathrm{W}\}.
+(13)
+The three groups correspond to compressed long-term history, full-resolution subtask boundaries, and full-resolution recent observations. Thus,     ℳ  t  V   \mathcal{M}_{t}^{\mathrm{V}}    supports planning, state estimation, and candidate evaluation, while     ℳ  t  W   \mathcal{M}_{t}^{\mathrm{W}}    conditions video prediction and action generation.
+3.5  Subtask-Local Value Learning
+Subtask-local value supervision.
+Episode-level outcomes discard useful supervision when a trajectory completes several subtasks before failing. We instead assign reward    1  1    to the terminal action of each successfully completed subtask and    0  0    elsewhere. Completed prefixes therefore retain positive supervision, while the final failed subtask receives no positive reward and unobserved subtasks are excluded. For a chunk with     h  t   h_{t}    valid actions, the TD target is
+y  t   =     ∑   i  =  0     h  t   −  1      γ  i   ​   r   t  +  i      +    b  t   ​   γ   h  t    ​   Q   θ  ¯    ​   (   x   t  +   h  t     ,   A   t  +   h  t    data   )      ,   y_{t}=\sum_{i=0}^{h_{t}-1}\gamma^{i}r_{t+i}+b_{t}\gamma^{h_{t}}Q_{\bar{\theta}}(x_{t+h_{t}},A^{\mathrm{data}}_{t+h_{t}}),
+(14)
+where     A   t  +   h  t    data   A^{\mathrm{data}}_{t+h_{t}}    is the next recorded chunk and     θ  ¯   \bar{\theta}    denotes exponential-moving-average target parameters. Each chunk is truncated at the first subtask boundary, and     h  t   h_{t}    counts only its valid actions; actions beyond that boundary are masked out of the target. We set      b  t   =  1   b_{t}=1    only when the next recorded chunk exists within the same subtask and no terminal action is included; otherwise,      b  t   =  0   b_{t}=0   . Thus, terminal chunks and chunks without a valid within-subtask successor do not bootstrap.
+Building on categorical value learning  [ 16 ] , we clip     y  t   y_{t}    to the value support, obtaining      y  ~   t   \widetilde{y}_{t}   , and construct soft labels using a normalized Gaussian kernel evaluated at the bin centers. The value expert is trained with categorical cross-entropy:
+ρ   t  ,  b    \displaystyle\rho_{t,b}
+∝    exp   ⁡   [   −      (    z  b   −    y  ~   t    )   2    2  ​   σ  2       ]     ,   \displaystyle\propto\exp\!\left[-\frac{(z_{b}-\widetilde{y}_{t})^{2}}{2\sigma^{2}}\right],
+(15)
+ℒ  value   \displaystyle\mathcal{L}_{\mathrm{value}}
+=   −    𝔼  𝒟   ​   [     ∑   b  =  1   101      ρ   t  ,  b    ​   log  ⁡   p  θ    ​   (  b  ∣    x  t   ,   A  t    )     ]      ,   \displaystyle=-\mathbb{E}_{\mathcal{D}}\!\left[\sum_{b=1}^{101}\rho_{t,b}\log p_{\theta}(b\mid x_{t},A_{t})\right],
+where     ρ  t   \rho_{t}    is normalized over bins and detached.
+Value-guided action selection.
+At execution time, the WAM generates candidate chunks      {   A  t   (  n  )    }    n  =  1   N   \{A_{t}^{(n)}\}_{n=1}^{N}   . The value expert retains the top-   K  K    index set     ℰ  t   \mathcal{E}_{t}    and assigns temperature-controlled weights
+w  n   =     exp   ⁡   (     Q  θ   ​   (   x  t   ,   A  t   (  n  )    )    /  T   )      ∑   k  ∈   ℰ  t       exp   ⁡   (     Q  θ   ​   (   x  t   ,   A  t   (  k  )    )    /  T   )       ,   n  ∈   ℰ  t     ,   w_{n}=\frac{\exp\!\left(Q_{\theta}(x_{t},A_{t}^{(n)})/T\right)}{\sum_{k\in\mathcal{E}_{t}}\exp\!\left(Q_{\theta}(x_{t},A_{t}^{(k)})/T\right)},\qquad n\in\mathcal{E}_{t},
+(16)
+where     T  >  0   T>0    is the temperature. Each weight is shared across the candidate’s time steps. Positions and gripper commands are averaged linearly. For each arm and time step, normalized candidate quaternions     q  n   q_{n}    are combined using the weighted Markley mean  [ 37 ] :
+M  =    ∑   n  ∈   ℰ  t       w  n   ​   q  n   ​   q  n  ⊤      ,    q  ^   ∈     arg  ​  max      ‖  q  ‖   2   =  1    ​   q  ⊤   ​  M  ​  q     .   M=\sum_{n\in\mathcal{E}_{t}}w_{n}q_{n}q_{n}^{\top},\qquad\widehat{q}\in\underset{\|q\|_{2}=1}{\operatorname{arg\,max}}\;q^{\top}Mq.
+(17)
+The aggregate is a unit eigenvector of    M  M    associated with its largest eigenvalue, invariant as a rotation to candidate sign flips      q  n   ↦   −   q  n     q_{n}\mapsto-q_{n}   . The robot executes the aggregated chunk prefix, then repeats with new observations.
+4  Experiments
+4.1  Training Details
+Training datasets.
+We use task-specific training data from RoboTwin  [ 13 ] , RoboDojo  [ 12 ] , and real-world manipulation. RoboTwin covers 50 bimanual manipulation tasks; its public Aloha-AgileX release provides 50 clean and 500 domain-randomized demonstrations per task. The official RoboDojo training release contains 3,500 trajectories across 35 task directories, with 100 trajectories per directory collected through automated synthesis or VR-based teleoperation. We augment the simulation trajectories with semantic subtask annotations and temporal boundaries for planning and completion assessment.
+For real-world training, we collect 300 teleoperated trajectories per task on the AgileX Cobot Magic platform, totaling 900 trajectories, with one scene camera and two wrist cameras. Puzzle comprises three subtasks, each inserting one colored piece into its matching recess. Domino comprises five subtasks: standing four dominoes individually and then toppling the row. Organize comprises nine subtasks: opening the corresponding drawer, placing a colored block inside, and closing the drawer, repeated for three blocks. Each trajectory includes multiview observations, robot states, actions, language instructions, and semantic subtask boundaries. Successful and failed trajectories provide complementary supervision for value learning. Additional annotation and collection details are given in Appendices   E   and   B.2  .
+Overall training pipeline.
+LAW is trained in two stages. In the first stage, we train the planner and state experts sequentially on semantic subtask annotations, while training the WAM independently on paired video and robot-action sequences. In the second stage, we freeze these components and train the value expert on successful demonstrations and annotated failure trajectories using the subtask-local objective in Section   3.5  . All parameters are frozen for evaluation. This procedure prevents value learning from destabilizing the generator, planner, or state expert.
+Table 1 :   Training hyperparameters of LAW.
+Stage
+Steps
+LR
+Batch
+Acc.
+GPUs
+Planner expert
+3,000
+×   10   −  5     1\!\times\!10^{-5}
+6
+1
+16
+State expert
+50,000
+×   10   −  5     1\!\times\!10^{-5}
+6
+1
+16
+WAM
+30,000
+×   10   −  4     1\!\times\!10^{-4}
+6
+2
+32
+Value expert
+50,000
+×   10   −  5     1\!\times\!10^{-5}
+8
+1
+16
+Hybrid-Expert VLM.
+We use Qwen3-VL-2B-Instruct  [ 2 ]  as the shared VLM backbone and keep its language and vision parameters frozen. The planner and state adapters use rank     r  =  64   r=64   , while the value adapter uses rank     r  =  128   r=128   , adding approximately 100M parameters in total. The planner and state adapters use LoRA scale 128 and dropout 0.05. After training the planner, we freeze its adapter and train the state adapter together with its completion and auxiliary failure heads.
+The value adapter is initialized from the state adapter, while the action encoder, value query, and categorical head are newly initialized. Each input contains a 32-step, 16-dimensional end-effector action chunk sampled at    0.06  0.06    seconds per step. The value expert is trained exclusively on recorded action chunks from successful demonstrations and constructed failure trajectories, without using WAM-sampled candidates. Failure trajectories comprise 25% of the training samples. Value training uses AdamW with zero weight decay, 1,000 warm-up steps followed by linear decay, and gradient clipping at 1.0. The categorical critic uses 101 bins over     [    −  0.01   ,  1.01   ]   [-0.01,1.01]   , discount factor     γ  =  0.99   \gamma=0.99   , HL-Gauss width     σ  =  0.0075   \sigma=0.0075   , and an exponential-moving-average target with update rate     τ  =  0.005   \tau=0.005   .
+Failure data construction.
+We construct failure trajectories in simulation by replaying successful demonstrations and injecting task-specific perturbations at selected manipulation stages. Each task is assigned one to three applicable failure modes, including missed grasps, premature releases, incorrect placements, missed contacts, and incomplete or misaligned task-specific operations. For each task–failure-type pair, we target 35 clean trajectories and 100 domain-randomized trajectories. We then filter out semantically invalid, visually ambiguous, and low-quality samples.
+World-action model.
+The WAM is initialized from Wan2.2-TI2V-5B  [ 43 ] , with the action branch initialized from the pretrained ActionDiT weights  [ 51 ] . We optimize the video and action DiTs, including the MoTE layers, while keeping the remaining pretrained components frozen. Training uses three camera views at     384  ×  384   384\times 384    resolution, an action horizon of 32, and subtask-conditioned text embeddings. We use AdamW with      β  1   =  0.9   \beta_{1}=0.9   ,      β  2   =  0.95   \beta_{2}=0.95   , weight decay     10   −  2    10^{-2}   , and gradient clipping at 1.0. The learning rate is linearly warmed up for the first 5% of training and then follows a cosine schedule.
+Testing.
+The WAM samples 32 candidate chunks using three denoising steps, without explicitly generating future images. The value expert retains the top eight candidates with temperature     T  =  1   T=1   , and the robot executes their fused prefix before resampling from updated observations.
+Table   1   lists the optimization settings; “Batch” is the per-GPU batch size and “Acc.” denotes gradient accumulation.
+4.2  Main Results
+We evaluate LAW on 50 RoboTwin tasks under clean and randomized settings, comparing it with representative mainstream robot policies. As shown in Table   2  , LAW achieves success rates of 94.22% and 94.20%, respectively, yielding an average of 94.21% and outperforming the selected baselines in both settings. Without robot-data pretraining, LAW improves over Fast-WAM (91.83%) by 2.38 percentage points and exceeds LingBot-VA 2.0 (93.6%), the best pretrained baseline in this comparison.
+Table 2 :   Comparison with mainstream robot policies on RoboTwin.
+Method
+Clean (%)
+Rand. (%)
+Avg. (%)
+X-VLA  [ 56 ]   ∗
+72.9
+72.8
+72.9
+π  0.5   \pi_{0.5}     [ 7 ]   ∗
+82.7
+76.8
+79.8
+Qwen-RobotManip  [ 50 ]   ∗
+93.4
+92.5
+93.0
+Motus  [ 5 ]   ∗
+88.7
+87.0
+87.9
+Fast-WAM  [ 51 ]
+91.88
+91.78
+91.83
+LingBot-VA  [ 27 ]   ∗
+92.9
+91.5
+92.2
+LingBot-VA 2.0  [ 53 ]   ∗
+93.8
+93.4
+93.6
+LAW + Fast-WAM
+94.22
+94.20
+94.21
+∗    denotes robot-data pretraining.
+Table 3 :   Comparison across RoboDojo capability dimensions.Results are averaged over three seeds.
+Score / Success (%)
+Method
+Embodied PT.
+Generalization
+Precision
+Long-Horizon
+Memory
+Open
+Average
+GigaWorld-Policy  [ 49 ]
+Yes
+5.34 / 2.89
+6.15 / 1.83
+15.51 / 8.92
+3.46 / 2.22
+0.54 / 0.50
+6.20 / 3.27
+LDA-1B  [ 36 ]
+Yes
+0.71 / 0.17
+3.21 / 0.50
+1.92 / 0.08
+2.08 / 1.78
+0.00 / 0.00
+1.58 / 0.51
+RDT-1B  [ 34 ]
+Yes
+0.56 / 0.33
+0.38 / 0.00
+1.13 / 0.00
+0.49 / 0.33
+0.00 / 0.00
+0.51 / 0.13
+H-RDT  [ 6 ]
+Yes
+0.49 / 0.22
+0.41 / 0.00
+2.23 / 0.17
+0.12 / 0.11
+0.08 / 0.08
+0.67 / 0.12
+X-WAM  [ 18 ]
+Yes
+7.39  / 3.33
+6.72  / 1.83
+17.47  / 9.08
+6.32  / 4.67
+0.57  / 0.25
+7.69  / 3.83
+HDR-WAM  [ 40 ]
+No
+4.98 / 3.17
+5.90 / 2.25
+9.85 / 4.75
+6.65 / 4.67
+0.50 / 0.50
+5.47 / 3.00
+AHA-WAM  [ 9 ]
+No
+5.79 / 3.28
+5.86 / 2.42
+8.61 / 2.67
+2.97 / 2.78
+0.88 / 0.83
+4.82 / 2.39
+Fast-WAM  [ 51 ]
+No
+2.34 / 1.11
+1.96 / 0.00
+9.14 / 5.17
+3.55 / 3.44
+0.42 / 0.42
+3.48 / 2.03
+ACT  [ 55 ]
+No
+0.69 / 0.56
+0.85 / 0.00
+1.73 / 0.92
+1.65 / 0.13
+0.00 / 0.00
+0.98 / 0.32
+LAW (Ours)
+No
+5.93 / 3.39
+6.27 / 2.58
+11.16 / 6.67
+7.46 / 5.44
+1.53 / 1.00
+6.47 / 3.82
+Table   3   reports LAW’s performance on RoboDojo across Generalization, Precision, Long-Horizon, Memory, and Open. LAW achieves leading scores and success rates across all five dimensions among the listed methods without additional robot-domain or embodied-interaction pretraining, averaging 6.47 / 3.82%. On Long-Horizon, LAW reaches 11.16 / 6.67%, exceeding pretrained LDA-1B, RDT-1B, and H-RDT. On Memory, it achieves 7.46 / 5.44%, exceeding the pretrained X-WAM (6.32 / 4.67%). These results support the effectiveness of semantic subtask coordination and hierarchical memory for sustained execution and history-dependent decisions.
+We further evaluate LAW on three real-world manipulation tasks with distinct sequential requirements:  Puzzle , which involves inserting three pieces into a board;  Domino , which requires standing four dominoes in a row and then toppling them; and  Organize , which requires placing three colored blocks into their matching drawers and closing each drawer. These tasks comprise three, five, and nine semantic subtasks, respectively. We compare LAW with the VLA baseline     π  0.5   \pi_{0.5}    and the WAM baseline Fast-WAM using complete-task success rate and a task score that assigns equal credit to completed subtasks and normalizes progress to 0–100. Each method is evaluated over 20 trials per task. As shown in Fig.   7  , LAW outperforms both baselines on every task under both metrics. Averaged across the three tasks, LAW achieves a success rate of 65% and a task score of 84.06, compared with 28.33% and 55.50 for     π  0.5   \pi_{0.5}   , and 25% and 51.87 for Fast-WAM. On Organize, the task with the longest subtask sequence, LAW achieves 65% success and a score of 85.54, exceeding the higher-performing of the two baselines, Fast-WAM, by 25 percentage points and 15.57 points, respectively. These results demonstrate improved complete-task execution and subtask completion across real-world manipulation sequences of varying length.
+Figure 7 :   Real-world manipulation results. Representative executions illustrate the semantic subtasks of Puzzle (three), Domino (five), and Organize (nine). (a) Complete-task success rate. (b) Task score, computed from the fraction of completed subtasks and scaled to 0–100. LAW is compared with     π  0.5   \pi_{0.5}    and Fast-WAM.
+4.3  Component Ablations
+We progressively add the hybrid-expert architecture, supervision with failure trajectories as negative samples, and hierarchical memory to isolate their effects on VLM planning and state estimation. We evaluate the planner on held-out randomized scenes unseen during training and assess its ability to predict the remaining subtask sequence at different stages of execution from visual observations and history. Planning is measured by normalized edit distance (NED), BLEU, and normalized exact match (EM) of the predicted subtask sequence.
+Table 4 :   Ablation of VLM experts, failure data, and hierarchical memory.
+Settings
+Planning (%)
+State Estimation (%)
+Hybrid Expert
+Failure Data
+Memory
+NED   ↓  \downarrow
+BLEU   ↑  \uparrow
+EM   ↑  \uparrow
+Accuracy   ↑  \uparrow
+Recall   ↑  \uparrow
+Weighted F1   ↑  \uparrow
+Text-only baseline
+16.80
+83.30
+70.10
+–
+–
+–
+×  \times
+×  \times
+×  \times
+1.35
+98.12
+96.36
+85.78
+67.27
+86.77
+√  \surd
+×  \times
+×  \times
+0.34
+99.58
+99.27
+98.10
+95.48
+98.12
+√  \surd
+√  \surd
+×  \times
+0.34
+99.58
+99.27
+98.48
+95.63
+98.49
+√  \bm{\surd}
+√  \bm{\surd}
+√  \bm{\surd}
+0.12
+99.77
+99.64
+99.02
+97.13
+99.02
+Table   4   shows that separating control functions with hybrid experts substantially improves both planning and state estimation. Adding failure trajectories as negative samples further reduces completion errors, while hierarchical memory achieves the strongest overall performance. Figure   8   provides a more detailed view of this progression. The false-positive rate decreases from 11.4% to 0.7%, and the false-negative rate decreases from 32.7% to 2.9%. Completion accuracy increases from 85.78% to 99.02%, recall from 67.27% to 97.13%, and weighted F1 from 86.77% to 99.02%, reducing premature switches and missed completions. The text-only planning baseline receives only the global instruction and completed subtasks, without images, and is evaluated only on planning metrics. It achieves an exact match rate of 70.10%, compared with 99.64% for the full planner. This gap indicates that the planner uses current observations for remaining-subtask prediction rather than merely memorizing task templates.
+Figure 8 :   Cumulative ablation of subtask-completion prediction from left to right. Each row-normalized matrix adds one component to the preceding setting; cells report true negatives (TN), false positives (FP), false negatives (FN), and true positives (TP), with sample counts in parentheses.
+Table 5 :   Ablation of LAW components on RoboTwin.
+MoTE
+Subtask
+Memory
+Value
+Clean
+(%)
+Rand.
+(%)
+Avg.
+(%)
+×  \times
+×  \times
+×  \times
+×  \times
+91.88
+91.78
+91.83
+√  \surd
+×  \times
+×  \times
+×  \times
+93.02
+92.31
+92.67
+×  \times
+√  \surd
+×  \times
+×  \times
+92.84
+92.52
+92.68
+√  \surd
+√  \surd
+×  \times
+×  \times
+93.66
+92.66
+93.16
+√  \surd
+√  \surd
+√  \surd
+×  \times
+93.78
+93.82
+93.80
+√  \bm{\surd}
+√  \bm{\surd}
+√  \bm{\surd}
+√  \bm{\surd}
+94.22
+94.20
+94.21
+We ablate the components that improve end-to-end task success. Table   5   includes two independent “only” variants and a cumulative sequence. The MoTE-only and subtask-only rows add a single component to Fast-WAM, whereas each subsequent row retains all components enabled above it. MoTE and subtask conditioning provide comparable gains when introduced independently. Combining them raises the average success rate to 93.16%, hierarchical memory further improves it to 93.80%, and value-guided action selection achieves the best result of 94.21%. These gains support complementary benefits from joint video–action modeling, semantic structure, memory, and value guidance.
+5  Analysis
+5.1  WAM Backbone Extensibility
+LAW interacts with the action generator through a common WAM interface, allowing its planning, state estimation, value selection, and memory components to be combined with different WAM backbones. The same value expert is reused across Fast-WAM and OpenWAM-   α  \alpha    without backbone-specific adaptation. Despite the difference between recorded training actions and WAM-sampled inference candidates, it improves action selection without additional training on candidates generated by the deployment WAM. Table   6   evaluates this extensibility on RoboTwin using the default Fast-WAM backbone and OpenWAM-   α  \alpha     [ 46 ] . The OpenWAM variant uses the same LAW configuration as the Fast-WAM variant, with only the WAM backbone replaced. LAW improves the average success rate of Fast-WAM from 91.83% to 94.21%, and that of OpenWAM-   α  \alpha    from 93.60% to 95.56%. LAW + OpenWAM-   α  \alpha    establishes a new open-source state of the art on RoboTwin with 95.56% average success. These results demonstrate LAW’s extensibility across WAM backbones: its progress-aware control mechanisms improve both action generators, while integration with a stronger pretrained WAM further raises the framework’s achievable performance.
+Table 6 :   Comparison of WAM backbones on RoboTwin.
+Method
+Clean (%)
+Rand. (%)
+Avg. (%)
+Flex-   π  \pi     [ 48 ]
+94.30
+94.80
+94.60
+MotuBrain  [ 38 ]   †
+95.80
+96.08
+95.94
+Fast-WAM
+91.88
+91.78
+91.83
+LAW + Fast-WAM
+94.22
+94.20
+94.21
+OpenWAM-   α  \alpha
+93.74
+93.46
+93.60
+LAW + OpenWAM-   α  \alpha
+95.60
+95.52
+95.56
+†  \dagger    : closed-source methods
+5.2  Effect of VLM Choice
+We compare VLMs for remaining-subtask planning and completion assessment while keeping the WAM backbone and other execution settings fixed. Value-guided action fusion is disabled in all three settings. Table   7   compares the default 2B hybrid-expert VLM with variants using Embodied-R1.5  [ 52 ]  and GPT-5.5 High. The default VLM achieves 93.80% average success on RoboTwin, compared with 88.8% and 88.7%, respectively, corresponding to gains of 5.00 and 5.10 percentage points. It also performs better in both evaluation settings.
+With value-guided action fusion disabled, our 2B hybrid-expert VLM achieves higher task success than Embodied-R1.5 and GPT-5.5 High in both evaluation settings. These results highlight the effectiveness of specialized planning and completion assessment for closed-loop manipulation. The ablation in Table   4   further shows that separating planning and completion assessment into specialized experts improves both capabilities.
+Table 7 :   Effect of VLM choice on RoboTwin.
+VLM
+Clean (%)
+Rand. (%)
+Avg. (%)
+Embodied R1.5
+88.6
+89.0
+88.8
+GPT-5.5 High
+89.7
+87.7
+88.7
+LAW VLM (Ours)
+93.78
+93.82
+93.80
+5.3  MoE Placement and Shared Experts
+We investigate whether MoTE’s gains reflect model capacity or expert placement in joint video–action modeling. Table   8   compares MoE layers inserted at conventional attention and FFN locations with MoTE applied after MoT mixed attention. Attn-MoE, FFN-MoE, and MoTE are matched in total and active parameter counts. In MoTE without shared experts, each modality receives one additional private expert in place of the shared expert, resulting in a larger total parameter count but the same active parameter count as MoTE. The no-MoE baseline is excluded from parameter matching. Attn-MoE and FFN-MoE add expert capacity but remain close to the no-MoE baseline, indicating limited benefits from additional parameters alone.
+Table 8 :   Effect of MoE placement and shared experts on RoboTwin.
+Setting
+Clean (%)
+Rand. (%)
+Avg. (%)
+W/o MoE
+91.88
+91.78
+91.83
+Attn-MoE
+91.77
+91.92
+91.85
+FFN-MoE
+92.03
+91.85
+91.94
+MoTE w/o shared
+91.98
+92.07
+91.93
+MoTE
+93.02
+92.31
+92.67
+Figure 9 :   Action-loss curves for different MoE configurations.
+The placement of MoTE is critical because it transforms the representation immediately after video and action tokens exchange information through mixed attention. Experts placed in generic attention or FFN positions mainly increase per-branch capacity, whereas MoTE operates on representations that already contain cross-modal information. Figure   9   illustrates the observed loss trends: after the common early descent, full MoTE maintains the lowest action loss throughout the later stage. Attn-MoE and FFN-MoE remain close to the no-MoE baseline, while removing the shared expert also yields a higher action loss than full MoTE. This behavior is consistent with the success-rate comparison in Table   8  . The comparison with MoTE without a shared expert further supports this interpretation. Adding the shared expert improves the average success rate from 91.93% to 92.67%. The modality-specific experts preserve the distinct statistics of video and action tokens, while the shared expert captures transformations common to both modalities. Lower loss and higher success rates support joint video–action modeling beyond added capacity.
+5.4  Subtask Granularity
+We compare task-level control, low-level subtasks, and semantic subtasks to examine how subtask granularity affects long-horizon manipulation. The model without subtasks directly conditions control on the overall instruction. Low-level subtasks introduce finer stage partitions, whereas semantic-level subtasks align each stage with a semantic objective shared by the planner, state expert, and memory system. Table   9   compares ten tasks.
+Table 9 :   Subtask-granularity ablation on ten RoboTwin tasks.
+Task
+W/o Subtask
+Low-Level Subtasks
+Semantic-Level Subtasks
+Clean (%)
+Rand. (%)
+Avg. (%)
+Clean (%)
+Rand. (%)
+Avg. (%)
+Clean (%)
+Rand. (%)
+Avg. (%)
+Place Can Basket
+71
+69
+70.0
+54
+60
+57.0
+85
+88
+86.5
+Handover Block
+95
+81
+88.0
+69
+82
+75.5
+100
+96
+98.0
+Rotate QRcode
+93
+89
+91.0
+87
+91
+89.0
+93
+97
+95.0
+Open Laptop
+98
+100
+99.0
+99
+95
+97.0
+100
+99
+99.5
+Stack Blocks Two
+100
+100
+100.0
+91
+98
+94.5
+100
+100
+100.0
+Place Burger Fries
+96
+99
+97.5
+99
+96
+97.5
+97
+98
+97.5
+Put Bottles Dustbin
+95
+90
+92.5
+92
+94
+93.0
+91
+94
+92.5
+Place Container Plate
+96
+100
+98.0
+100
+97
+98.5
+98
+98
+98.0
+Place Object Basket
+89
+88
+88.5
+89
+90
+89.5
+93
+92
+92.5
+Move Pillbottle Pad
+100
+99
+99.5
+100
+99
+99.5
+98
+99
+98.5
+10-task Average
+93.3
+91.5
+92.4
+88.0
+90.2
+89.1
+95.5
+96.1
+95.8
+Semantic-level subtasks achieve the highest ten-task average, improving from 92.4% without subtasks and 89.1% with low-level subtasks to 95.8%. The largest gains appear on tasks such as Handover Block, Place Can Basket, and Place Object Basket, where progress depends on recognizing distinct manipulation stages. Finer partitions can fragment a coherent semantic objective into short transitions, making completion decisions and historical context less stable. Semantic stages instead provide consistent units for planning, asynchronous state assessment, and hierarchical memory. The semantic decomposition does not improve every saturated task, but its aggregate advantage indicates that the abstraction level of the subtask, rather than decomposition alone, is important for long-horizon control.
+5.5  Subtask-Local Value Learning Ablation
+We compare action selection without value guidance, value experts trained with episode-level supervision, and value experts trained with subtask-local supervision on five selected multi-subtask RoboTwin tasks. Table   10   reports the resulting success rates under clean and randomized settings.
+Table 10 :   Value-supervision ablation on five multi-subtask RoboTwin tasks.
+Task
+W/o Value Guidance
+Episode-Level Supervision
+Subtask-Level Supervision
+Clean (%)
+Rand. (%)
+Avg. (%)
+Clean (%)
+Rand. (%)
+Avg. (%)
+Clean (%)
+Rand. (%)
+Avg. (%)
+Blocks Ranking Size
+68
+72
+70.0
+72
+71
+71.5
+79
+75
+77.0
+Put Object Cabinet
+89
+87
+88.0
+90
+85
+87.5
+91
+89
+90.0
+Place Burger Fries
+98
+97
+97.5
+97
+99
+98.0
+99
+99
+99.0
+Stack Bowls Three
+86
+88
+87.0
+85
+81
+83.0
+89
+87
+88.0
+Place Cans Plasticbox
+100
+97
+98.5
+100
+99
+99.5
+100
+100
+100.0
+5-task Average
+88.20
+88.20
+88.20
+88.80
+87.00
+87.90
+91.60
+90.00
+90.80
+On these five tasks, subtask-local supervision achieves 90.80% average success, compared with 88.20% without value guidance and 87.90% with episode-level supervision, improving by 2.60 and 2.90 percentage points, respectively. Its aggregate gains hold in both clean and randomized settings. Compared with episode-level supervision, it improves Blocks Ranking Size from 71.5% to 77.0%, Put Object Cabinet from 87.5% to 90.0%, and Stack Bowls Three from 83.0% to 88.0%. These results support assigning credit at semantic subtask boundaries: completed stages of failed trajectories retain positive supervision, allowing the value expert to evaluate candidate actions against the current objective rather than relying solely on the final episode outcome.
+5.6  Memory Component Ablation
+We cumulatively ablate the three components of hierarchical memory on the RoboDojo Memory dimension. Short-term memory retains the recent observation window, long-term memory adds compressed older observations, and subtask-boundary memory further preserves full-resolution observations at semantic transitions.
+Table 11 :   Hierarchical-memory ablation on RoboDojo.
+Setting
+Score
+Success (%)
+W/o memory
+4.06
+3.44
++ Short-term memory
+5.57
+4.00
++ Long-term memory
+6.48
+4.89
++ Subtask-boundary memory
+7.46
+5.44
+Table   11   shows consistent gains from adding each memory component. Short-term memory raises the score from 4.06 to 5.57 and the success rate from 3.44% to 4.00%, indicating the value of recent observations for history-dependent decisions. Adding compressed long-term memory further improves these metrics to 6.48 and 4.89%, suggesting that older context complements the recent observation window. Preserving full-resolution subtask-boundary observations further improves the score and success rate to 7.46 and 5.44%. These cumulative improvements support retaining both recent visual details and broader historical context, while highlighting the additional benefit of preserving observations at semantic transitions.
+6  Conclusion
+This paper presented LAW, a closed-loop VLM–WAM framework that unifies language reasoning, action generation, and world modeling through semantic subtask progress. The LAW agent coordinates specialized planning, completion assessment, and value-guided action fusion at complementary frequencies, connecting execution feedback to continued control and subtask transitions. MoTE strengthens joint video–action modeling through shared and modality-specific experts, while dual-stream hierarchical memory preserves recent context and semantic boundary observations. Subtask-local value learning further retains useful supervision from completed stages of failed trajectories. Integrating OpenWAM-   α  \alpha    raises RoboTwin success to 95.56%, establishing a new open-source state of the art and demonstrating LAW’s extensibility to stronger pretrained WAMs for further performance gains. These results highlight semantic subtask progress as an effective interface for agentic physical intelligence. Future work will investigate transfer across robot embodiments and adaptive subtask decomposition for longer and more diverse tasks.
+References
+[1]
+M. Assran, A. Bardes, D. Fan, Q. Garrido, R. Howes, M. Komeili, M. Muckley, A. Rizvi, C. Roberts, K. Sinha, A. Zholus, S. Arnaud, A. Gejji, A. Martin, F. R. Hogan, D. Dugas, P. Bojanowski, V. Khalidov, P. Labatut, F. Massa, M. Szafraniec, K. Krishnakumar, Y. Li, X. Ma, S. Chandar, F. Meier, Y. LeCun, M. Rabbat, and N. Ballas   (2025)
+V-JEPA 2: Self-supervised video models enable understanding, prediction and planning .
+Note:  arXiv:2506.09985
+External Links:   Link
+Cited by:   §2.2  .
+[2]
+S. Bai, Y. Cai, R. Chen, K. Chen, X. Chen, Z. Cheng, L. Deng, W. Ding, C. Gao, C. Ge,  et al.    (2025)
+Qwen3-VL technical report .
+Note:  arXiv:2511.21631
+External Links:   Link
+Cited by:   §4.1  .
+[3]
+A. Bar, G. Zhou, D. Tran, T. Darrell, and Y. LeCun   (2025)
+Navigation world models .
+In  2025 IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) ,
+pp. 15791–15801 .
+External Links:   Document ,
+Link
+Cited by:   §2.2  .
+[4]
+S. Belkhale, T. Ding, T. Xiao, P. Sermanet, Q. Vuong, J. Tompson, Y. Chebotar, D. Dwibedi, and D. Sadigh   (2024)
+RT-H: Action hierarchies using language .
+In  Proceedings of Robotics: Science and Systems ,
+Delft, Netherlands .
+External Links:   Document ,
+Link
+Cited by:   §2.1  .
+[5]
+H. Bi, H. Tan, S. Xie, Z. Wang, S. Huang, H. Liu, R. Zhao, Y. Feng, C. Xiang, Y. Rong, H. Zhao, H. Liu, Z. Su, L. Ma, H. Su, and J. Zhu   (2026)
+Motus: A unified latent action world model .
+In  Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) ,
+pp. 35101–35113 .
+External Links:   Link
+Cited by:   Table 2  .
+[6]
+H. Bi, L. Wu, T. Lin, H. Tan, Z. Su, H. Su, and J. Zhu   (2026)
+H-RDT: Human manipulation enhanced bimanual robotic manipulation .
+In  Proceedings of the AAAI Conference on Artificial Intelligence ,
+Vol.  40 ,  pp. 18135–18143 .
+External Links:   Document ,
+Link
+Cited by:   Table 3  .
+[7]
+K. Black, N. Brown, J. Darpinian, K. Dhabalia, D. Driess, A. Esmail, M. R. Equi, C. Finn, N. Fusai, M. Y. Galliker, D. Ghosh, L. Groom, K. Hausman, B. Ichter, S. Jakubczak, T. Jones, L. Ke, D. LeBlanc, S. Levine, A. Li-Bell, M. Mothukuri, S. Nair, K. Pertsch, A. Z. Ren, L. X. Shi, L. Smith, J. T. Springenberg, K. Stachowicz, J. Tanner, Q. Vuong, H. Walke, A. Walling, H. Wang, L. Yu, and U. Zhilinsky   (2025)
+π  0.5   \pi_{0.5}   : A vision-language-action model with open-world generalization .
+In  Proceedings of The 9th Conference on Robot Learning ,
+Proceedings of Machine Learning Research , Vol.  305 ,  pp. 17–40 .
+External Links:   Link
+Cited by:   Table 2  .
+[8]
+K. Black, N. Brown, D. Driess, A. Esmail, M. R. Equi, C. Finn, N. Fusai, L. Groom, K. Hausman, B. Ichter, S. Jakubczak, T. Jones, L. Ke, S. Levine, A. Li-Bell, M. Mothukuri, S. Nair, K. Pertsch, L. X. Shi, L. Smith, J. Tanner, Q. Vuong, A. Walling, H. Wang, and U. Zhilinsky   (2025)
+π  0   \pi_{0}   : A vision-language-action flow model for general robot control .
+In  Proceedings of Robotics: Science and Systems ,
+Los Angeles, CA, USA .
+External Links:   Document ,
+Link
+Cited by:   §1  ,
+§2.1  .
+[9]
+J. Cai, L. Ling, S. Chu, Z. Liu, J. Kang, Z. Liang, W. Xu, Y. Mao, W. Zhang, X. Yang, R. Ying, R. Zheng, and Y. Mu   (2026)
+AHA-WAM: Asynchronous horizon-adaptive world-action modeling with observation-guided context routing .
+Note:  arXiv:2606.09811
+External Links:   Link
+Cited by:   Table 3  .
+[10]
+J. Chen, P. Jia, Q. Wuwu, J. Liu, M. Du, C. Fan, X. Chi, H. Chen, C. Bai, Z. Qian, H. Wang, J. Cao, W. Mi, X. Ju, J. Tang, and S. Zhang   (2026)
+MV-WAM: Manifold-aware world action model with value augmentation .
+Note:  arXiv:2606.21088
+External Links:   Link
+Cited by:   §2.2  .
+[11]
+S. Chen, J. Liu, J. Wu, Y. Guo, T. Wang, S. Qian, H. Chen, J. Cao, J. Tang, and S. Zhang   (2026)
+Do robotic world models really follow actions? Diagnosing and aligning action-conditioned generation for policy learning .
+Note:  arXiv:2608.24885
+External Links:   Link
+Cited by:   §2.2  .
+[12]
+T. Chen, Y. Chen, Z. Li, J. Tang, K. Su, H. Lu, W. Wan, B. Chen, S. Liu, H. Yan,  et al.    (2026)
+RoboDojo: A unified sim-and-real benchmark for comprehensive evaluation of generalist robot manipulation policies .
+Note:  arXiv:2607.04434
+External Links:   Link
+Cited by:   §1  ,
+§4.1  .
+[13]
+T. Chen, Z. Chen, B. Chen, Z. Cai, Y. Liu, Z. Li, Q. Liang, X. Lin, Y. Ge, Z. Gu,  et al.    (2025)
+RoboTwin 2.0: A scalable data generator and benchmark with strong domain randomization for robust bimanual robotic manipulation .
+Note:  arXiv:2506.18088
+External Links:   Link
+Cited by:   §1  ,
+§4.1  .
+[14]
+D. Driess, F. Xia, M. S. M. Sajjadi, C. Lynch, A. Chowdhery, B. Ichter, A. Wahid, J. Tompson, Q. Vuong, T. Yu, W. Huang, Y. Chebotar, P. Sermanet, D. Duckworth, S. Levine, V. Vanhoucke, K. Hausman, M. Toussaint, K. Greff, A. Zeng, I. Mordatch, and P. Florence   (2023)
+PaLM-E: An embodied multimodal language model .
+In  Proceedings of the 40th International Conference on Machine Learning ,
+Proceedings of Machine Learning Research , Vol.  202 ,  pp. 8469–8488 .
+External Links:   Link
+Cited by:   §2.1  .
+[15]
+F. Ebert, C. Finn, S. Dasari, A. Xie, A. Lee, and S. Levine   (2018)
+Visual foresight: Model-based deep reinforcement learning for vision-based robotic control .
+Note:  arXiv:1812.00568
+External Links:   Link
+Cited by:   §2.2  .
+[16]
+J. Farebrother, J. Orbay, Q. Vuong, A. Ali Taiga, Y. Chebotar, T. Xiao, A. Irpan, S. Levine, P. S. Castro, A. Faust,  et al.    (2024)
+Stop regressing: Training value functions via classification for scalable deep RL .
+In  Proceedings of the 41st International Conference on Machine Learning ,
+Proceedings of Machine Learning Research , Vol.  235 ,  pp. 13049–13071 .
+External Links:   Link
+Cited by:   §3.5  .
+[17]
+D. Ghosh, H. R. Walke, K. Pertsch, K. Black, O. Mees, S. Dasari, J. Hejna, T. Kreiman, C. Xu, J. Luo, Y. L. Tan, L. Y. Chen, Q. Vuong, T. Xiao, P. R. Sanketi, D. Sadigh, C. Finn, and S. Levine   (2024)
+Octo: An open-source generalist robot policy .
+In  Proceedings of Robotics: Science and Systems ,
+Delft, Netherlands .
+External Links:   Document ,
+Link
+Cited by:   §2.1  .
+[18]
+J. Guo, Q. Li, P. Li, Z. Chen, N. Sun, Y. Su, H. Wang, Y. Zhang, X. Li, and H. Liu   (2026)
+Unified 4D world action modeling from video priors with asynchronous denoising .
+Note:  arXiv:2604.26694
+External Links:   Link
+Cited by:   Table 3  .
+[19]
+D. Hafner, T. Lillicrap, J. Ba, and M. Norouzi   (2020)
+Dream to control: Learning behaviors by latent imagination .
+In  International Conference on Learning Representations ,
+External Links:   Link
+Cited by:   §2.2  .
+[20]
+E. J. Hu, Y. Shen, P. Wallis, Z. Allen-Zhu, Y. Li, S. Wang, L. Wang, and W. Chen   (2022)
+LoRA: Low-rank adaptation of large language models .
+In  International Conference on Learning Representations ,
+External Links:   Link
+Cited by:   §3.2  ,
+§3.2  .
+[21]
+W. Huang, C. Wang, R. Zhang, Y. Li, J. Wu, and L. Fei-Fei   (2023)
+VoxPoser: Composable 3D value maps for robotic manipulation with language models .
+In  Proceedings of The 7th Conference on Robot Learning ,
+Proceedings of Machine Learning Research , Vol.  229 ,  pp. 540–562 .
+External Links:   Link
+Cited by:   §2.1  .
+[22]
+W. Huang, F. Xia, T. Xiao, H. Chan, J. Liang, P. Florence, A. Zeng, J. Tompson, I. Mordatch, Y. Chebotar, P. Sermanet, T. Jackson, N. Brown, L. Luu, S. Levine, K. Hausman, and B. Ichter   (2023)
+Inner monologue: Embodied reasoning through planning with language models .
+In  Proceedings of The 6th Conference on Robot Learning ,
+Proceedings of Machine Learning Research , Vol.  205 ,  pp. 1769–1782 .
+External Links:   Link
+Cited by:   §1  ,
+§1  ,
+§2.1  .
+[23]
+B. Ichter, A. Brohan, Y. Chebotar, C. Finn, K. Hausman, A. Herzog, D. Ho, J. Ibarz, A. Irpan, E. Jang, R. Julian, D. Kalashnikov, S. Levine, Y. Lu, C. Parada, K. Rao, P. Sermanet, A. T. Toshev, V. Vanhoucke, F. Xia, T. Xiao, P. Xu, M. Yan, N. Brown, M. Ahn, O. Cortes, N. Sievers, C. Tan, S. Xu, D. Reyes, J. Rettinghouse, J. Quiambao, P. Pastor, L. Luu, K. Lee, Y. Kuang, S. Jesmonth, N. J. Joshi, K. Jeffrey, R. J. Ruano, J. Hsu, K. Gopalakrishnan, B. David, A. Zeng, and C. K. Fu   (2023)
+Do as I can, not as I say: Grounding language in robotic affordances .
+In  Proceedings of The 6th Conference on Robot Learning ,
+Proceedings of Machine Learning Research , Vol.  205 ,  pp. 287–318 .
+External Links:   Link
+Cited by:   §1  ,
+§2.1  .
+[24]
+J. Jang, S. Ye, Z. Lin, J. Xiang, J. Bjorck, Y. Fang, F. Hu, S. Huang, K. Kundalia, Y. Lin, L. Magne, A. Mandlekar, A. Narayan, Y. L. Tan, G. Wang, J. Wang, Q. Wang, Y. Xu, X. Zeng, K. Zheng, R. Zheng, M. Liu, L. Zettlemoyer, D. Fox, J. Kautz, S. Reed, Y. Zhu, and L. Fan   (2025)
+DreamGen: Unlocking generalization in robot learning through video world models .
+In  Proceedings of The 9th Conference on Robot Learning ,
+Proceedings of Machine Learning Research , Vol.  305 ,  pp. 5170–5194 .
+External Links:   Link
+Cited by:   §2.2  .
+[25]
+M. J. Kim, Y. Gao, T. Lin, Y. Lin, Y. Ge, G. Lam, P. Liang, S. Song, M. Liu, C. Finn, and J. Gu   (2026)
+Cosmos Policy: Fine-tuning video models for visuomotor control and planning .
+In  International Conference on Learning Representations ,
+Vol.  2026 ,  pp. 71531–71552 .
+External Links:   Link
+Cited by:   §2.2  .
+[26]
+M. J. Kim, K. Pertsch, S. Karamcheti, T. Xiao, A. Balakrishna, S. Nair, R. Rafailov, E. P. Foster, P. R. Sanketi, Q. Vuong, T. Kollar, B. Burchfiel, R. Tedrake, D. Sadigh, S. Levine, P. Liang, and C. Finn   (2025)
+OpenVLA: An open-source vision-language-action model .
+In  Proceedings of The 8th Conference on Robot Learning ,
+Proceedings of Machine Learning Research , Vol.  270 ,  pp. 2679–2713 .
+External Links:   Link
+Cited by:   §1  ,
+§2.1  .
+[27]
+L. Li  et al.    (2026)
+Causal world modeling for robot control .
+Note:  arXiv:2601.21998
+External Links:   Link
+Cited by:   §1  ,
+§2.2  ,
+§3.3  ,
+Table 2  .
+[28]
+X. Li, M. Liu, H. Zhang, C. Yu, J. Xu, H. Wu, C. Cheang, Y. Jing, W. Zhang, H. Liu, H. Li, and T. Kong   (2024)
+Vision-language foundation models as effective robot imitators .
+In  International Conference on Learning Representations ,
+External Links:   Link
+Cited by:   §2.1  .
+[29]
+Y. Li, X. Wei, J. Cao, H. Wang, X. Chi, C. Bai, Q. Sun, J. Li, X. Zhang, P. Jia, J. Tang, S. Han, and S. Zhang   (2026)
+WAM4D: Fast 4D world action model via spatial register tokens .
+Note:  arXiv:2606.14048
+External Links:   Link
+Cited by:   §2.2  .
+[30]
+J. Liang, P. Tokmakov, R. Liu, S. Sudhakar, P. Shah, R. Ambrus, and C. Vondrick   (2025)
+Video generators are robot policies .
+Note:  arXiv:2508.00795
+External Links:   Link
+Cited by:   §2.2  .
+[31]
+W. Liang, L. Yu, L. Luo, S. Iyer, N. Dong, C. Zhou, G. Ghosh, M. Lewis, W. Yih, L. Zettlemoyer, and X. V. Lin   (2025)
+Mixture-of-Transformers: a sparse and scalable architecture for multi-modal foundation models .
+Transactions on Machine Learning Research .
+External Links:   Link ,
+ISSN 2835-8856
+Cited by:   §3.3  .
+[32]
+Y. Liao, P. Zhou, S. Huang, D. Yang, S. Chen, Y. Jiang, Y. Hu, J. Cai, S. Liu, J. Luo, L. Chen, S. Yan, M. Yao, and G. Ren   (2025)
+Genie Envisioner: A unified world foundation platform for robotic manipulation .
+Note:  arXiv:2508.05635
+External Links:   Link
+Cited by:   §2.2  .
+[33]
+B. Lin, Y. Nie, Z. Wei, J. Chen, S. Ma, J. Han, H. Xu, X. Chang, and X. Liang   (2025)
+NavCoT: Boosting LLM-based vision-and-language navigation via learning disentangled reasoning .
+IEEE Transactions on Pattern Analysis and Machine Intelligence   47  ( 7 ),  pp. 5945–5957 .
+External Links:   Document ,
+Link
+Cited by:   §2.1  .
+[34]
+S. Liu, L. Wu, B. Li, H. Tan, H. Chen, Z. Wang, K. Xu, H. Su, and J. Zhu   (2025)
+RDT-1B: A diffusion foundation model for bimanual manipulation .
+In  International Conference on Learning Representations ,
+External Links:   Link
+Cited by:   Table 3  .
+[35]
+Z. Liu, A. Bahety, and S. Song   (2023)
+REFLECT: Summarizing robot experiences for failure explanation and correction .
+In  Proceedings of The 7th Conference on Robot Learning ,
+Proceedings of Machine Learning Research , Vol.  229 ,  pp. 3468–3484 .
+External Links:   Link
+Cited by:   §1  .
+[36]
+J. Lyu, K. Liu, X. Zhang, H. Liao, Y. Feng, W. Zhu, T. Shen, J. Chen, J. Zhang, Y. Dong, W. Cui, S. Qi, S. Wang, Y. Zheng, M. Yan, X. Shi, H. Li, D. Zhao, M. Liu, Z. Zhang, L. Yi, Y. Wang, and H. Wang   (2026)
+LDA-1B: Scaling latent dynamics action model via universal embodied data ingestion .
+In  Proceedings of Robotics: Science and Systems ,
+Sydney, Australia .
+External Links:   Document ,
+Link
+Cited by:   Table 3  .
+[37]
+F. L. Markley, Y. Cheng, J. L. Crassidis, and Y. Oshman   (2007)
+Averaging quaternions .
+Journal of Guidance, Control, and Dynamics   30  ( 4 ),  pp. 1193–1197 .
+External Links:   Document ,
+Link
+Cited by:   §3.5  .
+[38]
+Motubrain Team, C. Xiang, F. Bao, H. Liu, H. Tan, H. Bi, J. Li, J. Liu, J. Pang, K. Jing, L. Liu, M. Cai, R. Cui, R. Zhao, R. Wang, S. Huang, Y. Feng, Y. Rong, Z. Wang, and J. Zhu   (2026)
+Motubrain: An advanced world action model for robot control .
+Note:  arXiv:2604.27792
+External Links:   Link
+Cited by:   Table 6  .
+[39]
+A. O’Neill, A. Rehman, A. Maddukuri, A. Gupta, A. Padalkar, A. Lee, A. Pooley, A. Gupta, A. Mandlekar, A. Jain, A. Tung, A. Bewley,  et al.    (2024)
+Open X-Embodiment: Robotic learning datasets and RT-X models .
+In  2024 IEEE International Conference on Robotics and Automation (ICRA) ,
+pp. 6892–6903 .
+External Links:   Document ,
+Link
+Cited by:   §2.1  .
+[40]
+Z. Qian, X. Chi, C. Mak, T. Zhou, R. Yuan, Y. Rui, H. Sun, Z. Wu, Y. Li, S. Qian, S. Han, and S. Zhang   (2026)
+Hierarchical denoising for multi-step visual reasoning .
+Note:  arXiv:2607.15278
+External Links:   Link
+Cited by:   Table 3  .
+[41]
+H. Shi, B. Xie, Y. Liu, L. Sun, F. Liu, T. Wang, E. Zhou, H. Fan, X. Zhang, and G. Huang   (2026)
+MemoryVLA: Perceptual-cognitive memory in vision-language-action models for robotic manipulation .
+In  International Conference on Learning Representations ,
+Vol.  2026 ,  pp. 18567–18602 .
+External Links:   Link
+Cited by:   §1  ,
+§2.1  ,
+§3.4  .
+[42]
+K. Tang, P. Jia, Z. Chu, J. Wu, R. Ma, J. Cao, F. Zhao, S. Chen, Y. Guo, X. Chi, C. Fan, K. Zhang, J. Xu, F. Yang, W. Mi, X. Ju, J. Tang, and S. Zhang   (2026)
+SafeDojo: Safe reinforcement learning for VLA via interactive world model .
+Note:  arXiv:2606.20698
+External Links:   Link
+Cited by:   §2.2  .
+[43]
+Team Wan   (2025)
+Wan2.2-TI2V-5B .
+Note:  Official model card and checkpoint, released July 28, 2025Hugging Face
+External Links:   Link
+Cited by:   §4.1  .
+[44]
+M. Torne, K. Pertsch, H. Walke, K. Vedder, S. Nair, B. Ichter, A. Z. Ren, H. Wang, J. Tang, K. Stachowicz,  et al.    (2026)
+MEM: Multi-scale embodied memory for vision language action models .
+Note:  arXiv:2603.03596
+External Links:   Link
+Cited by:   §1  ,
+§2.1  ,
+§3.4  .
+[45]
+H. Wang, X. Wei, J. He, C. Bai, C. Fan, J. Cao, J. Chen, Y. Li, S. Rong, M. Lu, X. Ju, J. Tang, and S. Zhang   (2026)
+VEGA: Visual encoder grounding alignment for spatially-aware vision-language-action models .
+Note:  arXiv:2605.10485
+External Links:   Link
+Cited by:   §2.1  .
+[46]
+Y. Wang, S. Huang, M. Li, C. Zhang, J. Liang, W. Jin, Y. Chen, X. Chi, D. Zhou, Q. Yu,  et al.    (2026)
+OpenWAM: An open, modular exploration towards systematic world-action model pretraining .
+Note:  arXiv:2609.07398
+External Links:   Link
+Cited by:   §5.1  .
+[47]
+Y. Xu, Y. Pan, and Z. Liu   (2026)
+Dream to recall: Imagination-guided experience retrieval for memory-persistent vision-and-language navigation .
+IEEE Transactions on Pattern Analysis and Machine Intelligence   48  ( 8 ),  pp. 9035–9049 .
+External Links:   Document ,
+Link
+Cited by:   §2.1  .
+[48]
+G. Yan, J. Liu, Y. Fan, L. Cai, M. Liao, J. Zhang, and D. Fox   (2026)
+Flex-   π  \pi   : A multi-stream world-action model with compute flexibility .
+Note:  arXiv:2608.10860
+External Links:   Link
+Cited by:   Table 6  .
+[49]
+A. Ye, B. Wang, C. Ni, G. Huang, G. Zhao, H. Li, H. Li, J. Li, J. Lv, J. Liu, M. Cao, P. Li, Q. Deng, W. Mei, X. Wang, X. Chen, X. Zhou, Y. Wang, Y. Chang, Y. Li, Y. Zhou, Y. Ye, Z. Liu, and Z. Zhu   (2026)
+GigaWorld-Policy: An efficient action-centered world–action model .
+Note:  arXiv:2603.17240
+External Links:   Link
+Cited by:   Table 3  .
+[50]
+H. Yuan, Z. Liang, A. Chen, Y. Wang, H. Li, P. Lin, Y. Huang, Z. Lei, T. Zhang, J. Zhang, J. Zhang, J. Fan, G. Zhou, Q. Peng, C. Lv, X. Chen, A. Yang, F. Huang, J. Lin, D. Liu, J. Zhou, C. Wu, and X. Chen   (2026)
+Qwen-RobotManip technical report: Alignment unlocks scale for robotic manipulation foundation models .
+Note:  arXiv:2606.17846
+External Links:   Link
+Cited by:   Table 2  .
+[51]
+T. Yuan, Z. Dong, Y. Liu, and H. Zhao   (2026)
+Fast-WAM: Do world action models need test-time future imagination? .
+Note:  arXiv:2603.16666
+External Links:   Link
+Cited by:   §1  ,
+§2.2  ,
+§3.1  ,
+§3.3  ,
+§4.1  ,
+Table 2  ,
+Table 3  .
+[52]
+Y. Yuan, Y. Huang, X. Yao, Y. Li, S. Zhang, L. Han, P. Li, J. Sun, W. Jia, Z. Zhang,  et al.    (2026)
+Embodied-R1.5: Evolving physical intelligence via embodied foundation models .
+Note:  arXiv:2606.11324
+External Links:   Link
+Cited by:   §5.2  .
+[53]
+Q. Zhang  et al.    (2026)
+Native video-action pretraining for generalizable robot control .
+Note:  arXiv:2607.08639
+External Links:   Link
+Cited by:   §2.2  ,
+Table 2  .
+[54]
+Q. Zhao, Y. Lu, M. J. Kim, Z. Fu, Z. Zhang, Y. Wu, Z. Li, Q. Ma, S. Han, C. Finn, A. Handa, T. Lin, G. Wetzstein, M. Liu, and D. Xiang   (2025)
+CoT-VLA: Visual chain-of-thought reasoning for vision-language-action models .
+In  Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) ,
+pp. 1702–1713 .
+External Links:   Link
+Cited by:   §2.1  .
+[55]
+T. Z. Zhao, V. Kumar, S. Levine, and C. Finn   (2023)
+Learning fine-grained bimanual manipulation with low-cost hardware .
+In  Proceedings of Robotics: Science and Systems ,
+Daegu, Republic of Korea .
+External Links:   Document ,
+Link
+Cited by:   Table 3  .
+[56]
+J. Zheng, J. Li, Z. Wang, D. Liu, X. Kang, Y. Feng, Y. Zheng, J. Zou, Y. Chen, J. Zeng, T. Wang, Y. Zhang, J. Liu, and X. Zhan   (2026)
+X-VLA: Soft-prompted transformer as scalable cross-embodiment vision-language-action model .
+In  International Conference on Learning Representations ,
+External Links:   Link
+Cited by:   Table 2  .
+[57]
+R. Zheng, J. Wang, S. Reed, J. Bjorck, Y. Fang, F. Hu, J. Jang, K. Kundalia, Z. Lin, L. Magne, A. Narayan, Y. L. Tan, G. Wang, Q. Wang, J. Xiang, Y. Xu, S. Ye, J. Kautz, F. Huang, Y. Zhu, and L. Fan   (2025)
+FLARE: Robot learning with implicit world modeling .
+In  Proceedings of The 9th Conference on Robot Learning ,
+Proceedings of Machine Learning Research , Vol.  305 ,  pp. 3952–3971 .
+External Links:   Link
+Cited by:   §1  ,
+§2.2  .
+[58]
+G. Zhou, H. Pan, Y. LeCun, and L. Pinto   (2025)
+DINO-WM: World models on pre-trained visual features enable zero-shot planning .
+In  Proceedings of the 42nd International Conference on Machine Learning ,
+Proceedings of Machine Learning Research , Vol.  267 ,  pp. 79115–79135 .
+External Links:   Link
+Cited by:   §2.2  .
+[59]
+C. Zhu, R. Yu, S. Feng, B. Burchfiel, P. Shah, and A. Gupta   (2025)
+Unified world models: Coupling video and action diffusion for pretraining on large robotic datasets .
+In  Proceedings of Robotics: Science and Systems ,
+External Links:   Document ,
+Link
+Cited by:   §1  ,
+§2.2  .
+[60]
+B. Zitkovich, T. Yu, S. Xu, P. Xu, T. Xiao, F. Xia,  et al.    (2023)
+RT-2: Vision-language-action models transfer web knowledge to robotic control .
+In  Proceedings of The 7th Conference on Robot Learning ,
+Proceedings of Machine Learning Research , Vol.  229 ,  pp. 2165–2183 .
+External Links:   Link
+Cited by:   §1  ,
+§2.1  .
+Appendix A  Per-Task RoboTwin Results
+Table   12   reports success rates on all 50 RoboTwin tasks for LAW with Fast-WAM and OpenWAM-   α  \alpha    backbones, together with the compared baselines. Baseline entries reproduce reported per-task results. Means are computed with equal weight per task and, for the overall score, per evaluation setting. LAW + Fast-WAM achieves 94.22% and 94.20% on the clean and randomized settings. LAW + OpenWAM-   α  \alpha    achieves 95.60% and 95.52%, respectively, yielding an overall average of 95.56%. The OpenWAM variant uses 100 episodes per task and setting, as in Table   6  .
+Table 12 :   Per-task results on the 50-task RoboTwin benchmark.
+Task
+LAW + OpenWAM-   α  \alpha
+LAW + Fast-WAM
+Fast-WAM
+LingBot-VA
+𝝅  0.5   \bm{\pi}_{0.5}
+Clean (%)
+Rand. (%)
+Clean (%)
+Rand. (%)
+Clean (%)
+Rand. (%)
+Clean (%)
+Rand. (%)
+Clean (%)
+Rand. (%)
+Adjust Bottle
+100
+100
+100
+100
+100
+100
+90
+94
+100
+99
+Beat Block Hammer
+97
+100
+96
+99
+99
+97
+96
+98
+96
+93
+Blocks Ranking RGB
+100
+99
+95
+93
+100
+100
+99
+98
+92
+85
+Blocks Ranking Size
+91
+91
+79
+75
+94
+98
+94
+96
+49
+26
+Click Alarmclock
+99
+99
+100
+99
+100
+100
+99
+100
+98
+89
+Click Bell
+100
+100
+100
+100
+100
+100
+100
+100
+99
+66
+Dump Bin Bigbin
+95
+91
+94
+97
+97
+96
+89
+96
+92
+97
+Grab Roller
+100
+100
+100
+100
+100
+100
+100
+100
+100
+100
+Handover Block
+100
+97
+100
+97
+95
+81
+99
+78
+66
+57
+Handover Mic
+99
+94
+97
+94
+99
+100
+94
+96
+98
+97
+Hanging Mug
+77
+78
+44
+55
+58
+62
+40
+28
+18
+17
+Lift Pot
+100
+100
+100
+100
+100
+100
+100
+99
+96
+85
+Move Can Pot
+100
+99
+100
+98
+90
+88
+94
+97
+51
+55
+Move Pillbottle Pad
+99
+99
+100
+100
+100
+99
+99
+99
+84
+61
+Move Playingcard Away
+100
+100
+100
+100
+100
+100
+100
+99
+96
+84
+Move Stapler Pad
+98
+96
+86
+85
+77
+64
+91
+79
+56
+42
+Open Laptop
+99
+98
+100
+99
+98
+100
+92
+94
+90
+96
+Open Microwave
+97
+96
+96
+95
+62
+45
+82
+86
+34
+77
+Pick Diverse Bottles
+93
+93
+90
+90
+80
+85
+89
+82
+81
+71
+Pick Dual Bottles
+100
+100
+100
+100
+100
+96
+100
+99
+93
+63
+Place A2B Left
+94
+98
+99
+96
+95
+93
+97
+93
+87
+82
+Place A2B Right
+99
+100
+98
+97
+93
+99
+97
+95
+87
+84
+Place Bread Basket
+96
+96
+99
+95
+91
+93
+97
+95
+77
+64
+Place Bread Skillet
+95
+94
+94
+95
+90
+93
+95
+90
+85
+66
+Place Burger Fries
+95
+97
+99
+99
+96
+99
+97
+95
+94
+87
+Place Can Basket
+93
+86
+79
+84
+71
+69
+81
+84
+62
+62
+Place Cans Plasticbox
+100
+99
+100
+100
+99
+96
+100
+99
+94
+84
+Place Container Plate
+96
+99
+96
+98
+96
+100
+99
+97
+99
+95
+Place Dual Shoes
+99
+98
+95
+96
+94
+88
+94
+89
+75
+75
+Place Empty Cup
+100
+100
+100
+100
+100
+100
+100
+100
+100
+99
+Place Fan
+99
+95
+96
+95
+96
+96
+99
+93
+87
+85
+Place Mouse Pad
+100
+99
+95
+96
+83
+89
+93
+96
+60
+39
+Place Object Basket
+88
+92
+93
+91
+89
+88
+91
+88
+80
+76
+Place Object Scale
+99
+98
+90
+96
+90
+97
+96
+95
+86
+80
+Place Object Stand
+100
+100
+98
+100
+90
+94
+99
+96
+91
+85
+Place Phone Stand
+97
+96
+99
+96
+97
+99
+97
+97
+81
+81
+Place Shoe
+99
+100
+100
+100
+96
+99
+98
+98
+92
+93
+Press Stapler
+93
+94
+94
+96
+90
+97
+85
+82
+87
+83
+Put Bottles Dustbin
+93
+97
+92
+96
+95
+90
+87
+91
+84
+79
+Put Object Cabinet
+87
+85
+91
+89
+94
+89
+85
+87
+80
+79
+Rotate QRcode
+94
+95
+97
+93
+93
+89
+96
+91
+89
+87
+Scan Object
+97
+92
+96
+87
+89
+92
+96
+91
+72
+65
+Shake Bottle
+100
+100
+100
+100
+100
+100
+100
+97
+99
+97
+Shake Bottle Horizontally
+100
+100
+100
+100
+100
+100
+100
+99
+99
+99
+Stack Blocks Three
+97
+97
+98
+97
+95
+97
+99
+98
+91
+76
+Stack Blocks Two
+100
+100
+100
+100
+100
+100
+100
+98
+97
+100
+Stack Bowls Three
+80
+80
+89
+87
+80
+81
+86
+83
+77
+71
+Stack Bowls Two
+96
+97
+92
+96
+92
+98
+94
+98
+95
+96
+Stamp Seal
+100
+100
+100
+99
+90
+94
+96
+97
+79
+55
+Turn Switch
+50
+62
+55
+60
+61
+59
+44
+45
+62
+54
+Average
+95.60
+95.52
+94.22
+94.20
+91.88
+91.78
+92.90
+91.50
+82.74
+76.76
+Appendix B  Real-World Experimental Details
+B.1  Robot Platform and Observations
+Experiments are conducted on an AgileX (Songling) Cobot Magic platform equipped with two six-degree-of-freedom PiPER arms and parallel-jaw grippers. Figure   10   illustrates the hardware platform. Manipulation takes place in a fixed tabletop workspace. Visual observations comprise three RGB views: a scene camera covering the shared workspace and a wrist-mounted camera on each arm. The scene view provides task-level context, while the wrist views resolve local interactions between the grippers, objects, and target receptacles. Robot placement and camera mounting geometry are held fixed during data collection to maintain a consistent observation configuration.
+Figure 10 :   AgileX Cobot Magic platform. Two follower arms perform bimanual manipulation, while two leader arms support demonstration collection. The observation configuration comprises one scene camera and two wrist cameras. Hardware reference image from  AgileX Robotics .
+B.2  Demonstration Collection and Data Representation
+Human demonstrations are collected through teleoperation. Across episodes, object positions and in-plane orientations are varied within the reachable workspace, subject to the geometric constraints of each task. This variation changes the required grasps and placements while preserving the task objective. Each trajectory associates multiview visual observations with bimanual robot states, action sequences, a language instruction, and an episode outcome. Subtask descriptions and boundaries supervise action learning, planning, and state estimation.
+The collection protocol retains successful, partially completed, and failed executions. Failures are annotated by the stage at which they occur and their principal cause, preserving information about completed task prefixes. Recording validity is assessed separately from task success: episodes with missing visual or robot data, unusable temporal alignment, or severe occlusion of the manipulation are excluded. Collection uses no fixed success-to-failure ratio.
+Trajectories are organized in LeRobot format with episode-level metadata and aligned camera streams. Recorded videos are stored at 30 frames per second. LAW uses the end-effector action representation described in the main paper: a three-dimensional position, a unit quaternion, and a scalar gripper command for each arm, giving a 16-dimensional bimanual action vector. Semantic boundaries align visual observations, actions, and subtask labels along the trajectory timeline.
+B.3  Task Definitions
+The evaluation comprises three tasks with complementary requirements for sequential manipulation, spatial alignment, and state-dependent interaction.
+Domino.
+The robot arranges four dominoes into an upright row and initiates their toppling. Successful execution requires stable placement and sufficient spatial alignment for the intended toppling sequence. The five stages comprise four placements and a final toppling action.
+Puzzle.
+The robot inserts three colored pieces into their corresponding recesses in a puzzle board. Each piece constitutes one semantic stage. The task requires matching and aligning each piece before insertion; success requires seating all three pieces.
+Organize.
+The robot sorts three colored blocks into the corresponding drawers of a three-level cabinet. For each block, the robot opens the target drawer, places the block inside, and closes the drawer, resulting in nine semantic stages. Success requires correct block–drawer assignments and closure of all drawers. The task combines object manipulation with repeated changes to drawer states.
+B.4  Evaluation Metrics
+We distinguish complete-task success from partial progress. For a task with    N  N    evaluation episodes and    K  K    semantic stages, let      y  i   ∈   {   0  ,  1   }    y_{i}\in\{0,1\}    indicate whether episode    i  i    satisfies the complete task objective, and let      c   i  ,  k    ∈   {   0  ,  1   }    c_{i,k}\in\{0,1\}    indicate completion of stage    k  k   . We report
+SR  =    100  N   ​    ∑   i  =  1   N    y  i      ,   Score  =    100   N  ​  K    ​    ∑   i  =  1   N     ∑   k  =  1   K    c   i  ,  k         .   \mathrm{SR}=\frac{100}{N}\sum_{i=1}^{N}y_{i},\qquad\mathrm{Score}=\frac{100}{NK}\sum_{i=1}^{N}\sum_{k=1}^{K}c_{i,k}.
+(18)
+Thus, the progress score assigns equal weight to the semantic stages within each task, with     K  =  5   K=5   ,    3  3   , and    9  9    for Domino, Puzzle, and Organize, respectively. A partially completed execution can receive a nonzero progress score while remaining unsuccessful under the complete-task criterion. This distinction captures intermediate progress in long-horizon execution without conflating it with achievement of the final objective.
+Appendix C  Motion-Based Progress Labels
+We derive offline progress labels within each annotated subtask interval     [  a  ,  b  ]   [a,b]    from cumulative robot-state motion. For the arms involved in the subtask, let     𝐩   ℓ  ,  k    \mathbf{p}_{\ell,k}   ,     𝐪   ℓ  ,  k    \mathbf{q}_{\ell,k}   , and     g   ℓ  ,  k    g_{\ell,k}    denote end-effector position, unit quaternion, and gripper state at frame    k  k   . The frame-to-frame motion increments are
+δ  k  pos   \displaystyle\delta_{k}^{\mathrm{pos}}
+=     ∑  ℓ      ‖    𝐩   ℓ  ,  k    −   𝐩   ℓ  ,   k  −  1      ‖   2     ,   \displaystyle=\sum_{\ell}\|\mathbf{p}_{\ell,k}-\mathbf{p}_{\ell,k-1}\|_{2},
+(19)
+δ  k  rot   \displaystyle\delta_{k}^{\mathrm{rot}}
+=     ∑  ℓ     2  ​    arccos   ⁡   (   clip  ⁡   (   |    𝐪   ℓ  ,  k   ⊤   ​   𝐪   ℓ  ,   k  −  1      |   ,  0  ,  1  )    )       ,   \displaystyle=\sum_{\ell}2\arccos\!\left(\operatorname{clip}(|\mathbf{q}_{\ell,k}^{\top}\mathbf{q}_{\ell,k-1}|,0,1)\right),
+δ  k  grip   \displaystyle\delta_{k}^{\mathrm{grip}}
+=     ∑  ℓ     |    g   ℓ  ,  k    −   g   ℓ  ,   k  −  1      |     .   \displaystyle=\sum_{\ell}|g_{\ell,k}-g_{\ell,k-1}|.
+Quaternion normalization and the absolute inner product make the rotation increment invariant to quaternion sign. For component     z  ∈   {   pos  ,  rot  ,  grip   }    z\in\{\mathrm{pos},\mathrm{rot},\mathrm{grip}\}   , define
+C  k  z   =    ∑   i  =   a  +  1    k    δ  i  z     ,    P  k  z   =    clip   ⁡   (    C  k  z   /   C  b  z    ,  0  ,  1  )      .   C_{k}^{z}=\sum_{i=a+1}^{k}\delta_{i}^{z},\qquad P_{k}^{z}=\operatorname{clip}\!\left(C_{k}^{z}/C_{b}^{z},0,1\right).
+(20)
+Each component is normalized by its own total motion within the subtask, avoiding direct addition of quantities with different units. Components are included only when their total motion is at least    0.01  0.01    for position,     2  ∘   2^{\circ}    for rotation, and    0.05  0.05    for gripper state. Position uses the recorded position units (meters for end-effector trajectories), rotation is computed in radians, and gripper motion uses the recorded gripper-state scale. These thresholds exclude near-static components whose normalization would amplify negligible motion. With    𝒜  \mathcal{A}    denoting the included components, progress is
+P  k   =    1   |  𝒜  |    ​    ∑   z  ∈  𝒜     P  k  z      .   P_{k}=\frac{1}{|\mathcal{A}|}\sum_{z\in\mathcal{A}}P_{k}^{z}.
+(21)
+The included components receive equal weights     1  /   |  𝒜  |    1/|\mathcal{A}|   ; no learned or modality-specific weights are used. If robot states are unavailable or no component passes the motion threshold, progress falls back to clipped temporal interpolation      (   k  −  a   )   /   max  ⁡   (  1  ,   b  −  a   )     (k-a)/\max(1,b-a)   .
+For 14-dimensional joint-state trajectories, the implementation instead uses the Euclidean change of the first three joints of each involved arm and the summed absolute change of its remaining three joints, together with the gripper change. These are joint-motion proxies rather than Cartesian translation and geodesic rotation; the same component-wise normalization and numerical inclusion thresholds apply.
+Completion labels are assigned to the contiguous suffix of the annotated interval with      P  k   ≥  0.995   P_{k}\geq 0.995   , scanning backward from    b  b   . If no frame meets the threshold, the annotated endpoint    b  b    is retained. The threshold corresponds to the final     0.5  %   0.5\%    of normalized progress and provides a narrow endpoint tolerance rather than requiring exact equality to one. It is an implementation choice, not a task-independent physical success criterion. Motion progress locates the completion region within an annotated subtask; semantic meaning is supplied by the subtask annotation rather than by motion magnitude alone.
+Appendix D  Observation and Action Conventions
+In the implementation, RGB inputs comprise one scene view and two wrist views, with separate historical visual-memory streams for the VLM and WAM. The WAM receives a 16-dimensional EEF state; the VLM state expert receives textual values for six joint positions and one gripper state per arm (14 dimensions), while the planner uses visual and task context. Actions are absolute 16-dimensional EEF targets ordered as left     (  x  ,  y  ,  z  ,   q  w   ,   q  x   ,   q  y   ,   q  z   ,  g  )   (x,y,z,q_{w},q_{x},q_{y},q_{z},g)    followed by right. Absolute poses use scene-world coordinates with the controller-specific end-effector frame convention; no relative-action conversion is applied. Gripper targets use the normalized environment scale, with zero closed and one open. WAM states and actions use per-dimension global z-score statistics from the configured training datasets, cached in  dataset_stats.json ; normalization uses      (   x  −  μ   )   /   (   σ  +   10   −  8     )    (x-\mu)/(\sigma+10^{-8})   , clipped to     [    −  5   ,  5   ]   [-5,5]   , rather than separate statistics for each action-horizon step. The same cached statistics are loaded for evaluation. Predicted actions are inverse-normalized before execution, and quaternion targets are renormalized to unit length. VLM joint-state values are supplied in their recorded scale.
+Appendix E  Semantic Subtask Decomposition
+Tables   13   and   14   expand the examples in Fig.   3   with complete task inventories. Each subtask specifies a semantic objective and its associated trajectory interval. Grasping, transport, and release can form one placement stage, whereas handovers and explicit confirmation actions can define separate stages. Repeated motions serving the same objective may remain within one subtask; object identities and spatial relations refer to the corresponding task instance.
+Table 13 :   Semantic subtask sequences for 50 RoboTwin tasks.
+Task
+Ordered semantic subtasks
+Adjust Bottle
+(1)  Pick up the target bottle and hold it upright.
+Beat Block Hammer
+(1)  Hit the block with the hammer.
+Blocks Ranking RGB
+(1)  Place the red block at the left position;  (2)  Place the green block at the middle position;  (3)  Place the blue block at the right position.
+Blocks Ranking Size
+(1)  Place the small block at the right position;  (2)  Place the medium block at the middle position;  (3)  Place the large block at the left position.
+Click Alarmclock
+(1)  Press the alarm clock button.
+Click Bell
+(1)  Press the top of the bell.
+Dump Bin Bigbin
+(1)  Pour the trash bin contents into the big bin.
+Grab Roller
+(1)  Lift the roller.
+Handover Block
+(1)  Pick up the red block;  (2)  Transfer the red block to the other hand;  (3)  Place the red block on the blue pad.
+Handover Mic
+(1)  Pick up the microphone;  (2)  Transfer the microphone to the other hand.
+Hanging Mug
+(1)  Place the mug at the center of the table;  (2)  Place the mug on the rack.
+Lift Pot
+(1)  Lift the pot off the table.
+Move Can Pot
+(1)  Place the can next to the pot.
+Move Pillbottle Pad
+(1)  Place the pill bottle on the pad.
+Move Playingcard Away
+(1)  Move the playing-card box outward.
+Move Stapler Pad
+(1)  Place the stapler on the target mat.
+Open Laptop
+(1)  Open the laptop lid.
+Open Microwave
+(1)  Open the microwave door to more than 70 degrees.
+Pick Diverse Bottles
+(1)  Pick up the two target bottles.
+Pick Dual Bottles
+(1)  Pick up the two target bottles.
+Place A2B Left
+(1)  Place the target object to the left of the reference object.
+Place A2B Right
+(1)  Place the target object to the right of the reference object.
+Place Bread Basket
+(1)  Place the bread in the breadbasket.
+Place Bread Skillet
+(1)  Place the bread in the skillet.
+Place Burger Fries
+(1)  Place the hamburger on the tray;  (2)  Place the french fries on the tray.
+Place Can Basket
+(1)  Place the can in the basket;  (2)  Lift the basket 5 cm above its initial height.
+Place Cans Plasticbox
+(1)  Place the left can in the plastic box;  (2)  Place the right can in the plastic box.
+Place Container Plate
+(1)  Place the container on the plate.
+Place Dual Shoes
+(1)  Place the left shoe in the shoe box;  (2)  Place the right shoe in the shoe box.
+Place Empty Cup
+(1)  Place the empty cup on the coaster.
+Place Fan
+(1)  Place the fan on the target mat facing the robot.
+Place Mouse Pad
+(1)  Place the mouse on the target mat.
+Place Object Basket
+(1)  Place the object in the basket;  (2)  Lift the basket.
+Place Object Scale
+(1)  Place the target object on the electronic scale.
+Place Object Stand
+(1)  Place the target object on the display stand.
+Place Phone Stand
+(1)  Place the phone on the phone stand.
+Place Shoe
+(1)  Place the shoe on the mat.
+Press Stapler
+(1)  Press the stapler.
+Put Bottles Dustbin
+(1)  Put one bottle in the dustbin;  (2)  Put another bottle in the dustbin;  (3)  Put the remaining bottle in the dustbin.
+Put Object Cabinet
+(1)  Grasp and lift the object;  (2)  Pull the cabinet drawer open;  (3)  Place the object near the center inside the cabinet drawer and fully release it.
+Rotate QRcode
+(1)  Pick up the payment sign;  (2)  Rotate the payment sign until the QR code faces the robot.
+Scan Object
+(1)  Pick up the scanner and the object;  (2)  Scan the object with the scanner.
+Shake Bottle
+(1)  Pick up the bottle;  (2)  Shake the bottle.
+Shake Bottle Horizontally
+(1)  Pick up the bottle;  (2)  Shake the bottle horizontally.
+Stack Blocks Three
+(1)  Place the red block at the center of the table as the base;  (2)  Stack the green block on the red block;  (3)  Stack the blue block on the green block.
+Stack Blocks Two
+(1)  Place the red block at the center of the table as the base;  (2)  Stack the green block on the red block.
+Stack Bowls Three
+(1)  Place one bowl as the base;  (2)  Stack another bowl inside the base bowl;  (3)  Stack the remaining bowl inside the stacked bowls.
+Stack Bowls Two
+(1)  Place one bowl as the base;  (2)  Stack the remaining bowl inside the base bowl.
+Stamp Seal
+(1)  Stamp the target area with the seal.
+Turn Switch
+(1)  Activate the switch.
+Table 14 :   Semantic subtask sequences for 35 RoboDojo tasks.
+Task
+Ordered semantic subtasks
+Arrange Largest Number
+(1)  Arrange the digits from left to right to form the largest number.
+Build Tower
+(1)  Place the two base blocks of the first tower layer;  (2)  Place the first-layer beam across the base blocks;  (3)  Place the two base blocks of the second tower layer;  (4)  Place the second-layer beam across the second-layer base;  (5)  Place the cuboid block on the tower;  (6)  Place the pyramid on top to complete the tower.
+Classify Objects
+(1)  Sort objects into the white basket;  (2)  Sort objects into the blue basket;  (3)  Sort objects into the red basket.
+Cover Blocks
+(1)  Cover the leftmost block;  (2)  Cover the middle block;  (3)  Cover the rightmost block;  (4)  Uncover the red block;  (5)  Uncover the green block;  (6)  Uncover the blue block.
+Deposit Coin
+(1)  Pick up the coin;  (2)  Hand the coin to the other hand;  (3)  Insert the coin into the coin bank.
+DLC
+(1)  Arrange the letters to spell “RoboDojo” in a row.
+Fasten Screws
+(1)  Insert the first screw and tighten it with five turns;  (2)  Insert the second screw and tighten it with five turns;  (3)  Insert the third screw and tighten it with five turns.
+Fill Egg Holder
+(1)  Place all eggs into the egg holder;  (2)  Close the egg-holder lid.
+Fill Pen Holder
+(1)  Pick up the pen holder;  (2)  Place all pens into the pen holder;  (3)  Put the pen holder back down on the table.
+Fold Clothes
+(1)  Fold the left sleeve;  (2)  Fold the right sleeve;  (3)  Fold the hem.
+Hang Mugs
+(1)  Hang all mugs on the mug rack.
+Imitate Sorting Sequence
+(1)  Observe and remember the demonstrated placement sequence;  (2)  Place all objects following the demonstrated sequence.
+Insert Key
+(1)  Pick up the key;  (2)  Hand the key to the other hand;  (3)  Insert the key into the keyhole and turn it.
+Insert Tubes
+(1)  Insert all tubes into the rack.
+Make Kong
+(1)  Wait for the opponent to discard a matching tile;  (2)  Declare a kong with the matching tiles;  (3)  Draw a replacement tile.
+Make Toast
+(1)  Place both bread slices into the toaster;  (2)  Press the toaster lever down.
+Match And Pick From Conveyor
+(1)  Observe and remember the first object on the conveyor;  (2)  Pick the matching object when it reappears.
+Organize Table
+(1)  Place the alarm clock on the drawer;  (2)  Place the figurine on the stand;  (3)  Place the mouse on the mouse pad;  (4)  Push the keyboard into the frame.
+Pack Objects Into Box
+(1)  Pack the objects into the box with their front sides facing left.
+Play Xylophone
+(1)  Pick up the mallet;  (2)  Strike all xylophone keys from left to right.
+Play Stacking Toy
+(1)  Place all pieces of the first stacking toy onto their peg;  (2)  Place all pieces of the second stacking toy onto their peg;  (3)  Place all pieces of the third stacking toy onto their peg;  (4)  Place all pieces of the fourth stacking toy onto their peg.
+Play Tic Tac Toe
+(1)  Place all robot marks on the tic-tac-toe board.
+Plug In Charger
+(1)  Pick up the charger;  (2)  Hand the charger to the other hand;  (3)  Plug the charger into the power strip.
+Pour Balls Into Vase
+(1)  Pour all balls from the cup into the vase.
+Pour Liquid Into Cup
+(1)  Pour the liquid from the bottle into the cup.
+Press By Number
+(1)  Press the first red button the required number of times;  (2)  Press the blue button to confirm;  (3)  Press the second red button the required number of times;  (4)  Press the blue button to confirm.
+Push T
+(1)  Push the T-shaped block into alignment with the gray T-shaped pad.
+Put Bottles Into Dustbin
+(1)  Put all bottles into the dustbin.
+Sort Nesting Dolls By Size
+(1)  Place all nesting dolls in size order from left to right, smallest to largest.
+Stack Blocks
+(1)  Place the first block as the tower base;  (2)  Stack the second block on the base;  (3)  Stack the final block to complete the tower.
+Stack Bowls
+(1)  Stack the three bowls together.
+Store Laptop And Headphones
+(1)  Hang the headphones on the headphone stand;  (2)  Close the laptop;  (3)  Place the laptop into the vertical laptop stand.
+Swap T
+(1)  Pick up the first T-shaped block;  (2)  Pick up the second T-shaped block;  (3)  Place the first T-shaped block at the second T’s original position;  (4)  Place the second T-shaped block at the first T’s original position.
+Swap Blocks
+(1)  Move the first block to the empty mat;  (2)  Press the button after moving the first block;  (3)  Move the second block to the first block’s original position;  (4)  Press the button after moving the second block;  (5)  Move the first block to the second block’s original position;  (6)  Press the button to complete the swap.
+Sweep Blocks
+(1)  Pick up the broom;  (2)  Hand the broom to the right hand;  (3)  Sweep the blocks into the dustpan.
+E.1  Real-World Subtask Sequences
+Table   15   specifies the five, three, and nine stages for Domino, Puzzle, and Organize, respectively, consistent with the task definitions and progress metric in Appendix   B  .
+Table 15 :   Semantic subtask sequences for real-world tasks.
+Task
+Ordered semantic subtasks
+Domino
+(1–4)  Place the first, second, third, and fourth dominoes upright in sequence;  (5)  initiate the toppling sequence.
+Puzzle
+(1)  Insert the first piece into its matching recess;  (2)  insert the second piece;  (3)  insert the third piece.
+Organize
+(1)  Open the drawer for block 1;  (2)  place block 1 inside;  (3)  close the drawer;  (4)  open the drawer for block 2;  (5)  place block 2 inside;  (6)  close the drawer;  (7)  open the drawer for block 3;  (8)  place block 3 inside;  (9)  close the drawer.
+E.2  Segmented Trajectory Examples
+Figures   11  –  14   provide additional examples from the simulation datasets. Each row corresponds to a task, and the labeled groups delineate semantic subtasks in execution order from left to right. One or two representative observations depict each stage. The grouping follows changes in the semantic objective rather than uniform temporal sampling.
+Figure 11 :   Semantic subtask segmentation on RoboTwin. From top to bottom: Handover Block, Put Bottles Dustbin, Stack Bowls Three, and Blocks Ranking RGB. The examples distinguish acquisition, inter-arm transfer, and placement, as well as successive placements involving different objects.
+Figure 12 :   Additional RoboTwin examples. From top to bottom: Blocks Ranking Size, Handover Mic, Place Dual Shoes, and Shake Bottle. The stage boundaries separate size-dependent placements, an inter-arm transfer, left- and right-shoe placements, and bottle acquisition from shaking.
+Figure 13 :   Semantic subtask segmentation on RoboDojo. From top to bottom: Cover Blocks, Swap Blocks, Classify Objects, and Stack Blocks. Covering and uncovering are represented as distinct stages; in Swap Blocks, each confirmation stage corresponds to a button press following a transfer. Sorting is grouped by the destination basket.
+Figure 14 :   Additional RoboDojo examples. From top to bottom: Sweep Blocks, Organize Table, Play Stacking Toy, and Fasten Screws. The decompositions preserve tool acquisition and transfer, object-specific placement objectives, and repeated fastening operations. In Fasten Screws, insertion and five tightening turns form one subtask per screw.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue"  (
+)  button, located in the page header.
+Tip:  You can select the relevant text first, to include it in your report.
+Our team has already identified  the following issues . We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a  list of packages that need conversion , and welcome  developer contributions .
+We gratefully acknowledge support from
+our  major funders ,
+member institutions   ,    ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status  (opens in new tab)
+Major funding support from

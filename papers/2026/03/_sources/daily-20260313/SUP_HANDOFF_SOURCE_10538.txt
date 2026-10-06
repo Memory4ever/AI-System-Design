@@ -1,0 +1,2310 @@
+DSFlash: Comprehensive Panoptic Scene Graph Generation in Realtime
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Related Work
+2.1
+Panoptic Scene Graph Generation
+2.2
+Realtime Scene Graph Generation
+2.3
+DSFormer
+2.4
+Fast Vision Backbones
+2.5
+Evaluation Issues
+3
+Method
+3.1
+Merged Backbones
+3.2
+Raw-resolution Segmentation Masks
+3.3
+Bidirectional Predictions
+3.4
+Mask-Based Dynamic Patch Pruning
+3.5
+Token Merging
+3.6
+Additional Improvements
+4
+Results
+4.1
+Metrics
+4.2
+Main Results
+4.3
+Backbone Ablation
+4.4
+DSFlash Improvements
+4.5
+Pruning and Merging Methods
+5
+Conclusion
+6
+Caveats When Evaluating PSGG Methods
+7
+DSFormer Mask Embedding
+8
+Efficient Mask Embedding
+9
+Implementation Details
+10
+PredCls Results
+11
+Additional Backbone Ablation
+12
+Train with pruned patches/token merging
+13
+Qualitative Results
+References
+License: arXiv.org perpetual non-exclusive license
+arXiv:2603.10538v1 [cs.CV] 11 Mar 2026
+DSFlash: Comprehensive Panoptic Scene Graph Generation in Realtime
+Julian Lorenz
+Vladyslav Kovganko
+Elias Kohout
+Affiliation:
+Mrunmai Phatak
+Daniel Kienzle
+Rainer Lienhart
+Affiliation:
+University of Augsburg
+Email:
+julian.lorenz@uni-a.de
+Abstract
+Scene Graph Generation (SGG) aims to extract a detailed graph structure from an image, a representation that holds significant promise as a robust intermediate step for complex downstream tasks like reasoning for embodied agents.
+However, practical deployment in real-world applications - especially on resource constrained edge devices - requires speed and resource efficiency, challenges that have received limited attention in existing research.
+To bridge this gap, we introduce DSFlash, a low-latency model for panoptic scene graph generation designed to overcome these limitations. DSFlash can process a video stream at 56 frames per second on a standard RTX 3090 GPU, without compromising performance against existing state-of-the-art methods. Crucially, unlike prior approaches that often restrict themselves to salient relationships, DSFlash computes comprehensive scene graphs, offering richer contextual information while maintaining its superior latency. Furthermore, DSFlash is light on resources, requiring less than 24 hours to train on a single, nine-year-old GTX 1080 GPU.
+This accessibility makes DSFlash particularly well-suited for researchers and practitioners operating with limited computational resources, empowering them to adapt and fine-tune SGG models for specialized applications.
+1
+Introduction
+Figure 1
+:
+Performance comparison between our approach and previous work in terms of performance (
+mR@50
+) and latency (ms) on the PSG dataset
+[
+4
+]
+.
+Visual scene understanding has long been a core challenge in computer vision.
+One increasingly valuable approach involves scene graph generation (SGG)
+[
+first-sg
+]
+, which provides a rich, structured representation of an image.
+A scene graph is a set of nodes (representing instances in the scene) and edges (representing the relationships between them).
+This structure allows models to move beyond simple object detection towards comprehending complex interactions and context within a visual scene.
+When talking about relations, we refer to a triplet of (subject, predicate, object) that describes a directed relationship,
+e.g
+.
+(
+“person”
+,
+“sitting on”
+,
+“chair”
+).
+Scene graphs have proven to be highly beneficial for numerous downstream tasks, including visual question answering
+[
+intro-vga1
+,
+intro-vqa2
+,
+intro-vqa3
+]
+, sports analysis
+[
+relwork-sgsport1
+,
+relwork-sgsport2
+,
+relwork-sgsport3
+]
+, assisting surgery
+[
+relwork_surgery
+,
+relwork_surgery2
+]
+, image captioning
+[
+intro-caption1
+,
+intro-caption2
+,
+intro-caption3
+]
+, and embodied reasoning tasks
+[
+intro-reasoning1
+,
+intro-reasoning1
+,
+intro-reasoning3
+]
+.
+Crucially, they serve as an explainable intermediate step, offering clear, human-readable insights into a model’s decision-making process, contributing a significant advantage over opaque end-to-end models.
+SGG methods offer a lightweight and interpretable alternative to complex vision-language models (VLMs) in domains where structured scene understanding is prioritized over broad multimodal reasoning. However, despite their utility, the vast majority of research in this field has focused on improving the quality of extracted scene graphs, often at the expense of computational efficiency. Consequently, almost no research has been dedicated to low-latency scene graph generation models suitable for real-time or resource-constrained applications, with a few recent exceptions
+[
+3
+]
+.
+This gap is critical, as many real-world applications, especially autonomous systems with limited communication, demand efficient, scalable solutions that can operate under strict latency constraints. To the best of our knowledge, there is no active research on low-latency models that are specifically targeted for panoptic scene graph generation (PSGG).
+In this paper, we address this gap by presenting a novel, low-latency PSGG model, called DSFlash.
+Our work aims to demonstrate that highly efficient PSGG is still achievable while maintaining competitive performance.
+In fact, we go one step further and predict comprehensive scene graphs,
+i.e
+.
+for each image, DSFlash localizes all instances and classifies all potential relations between all instances.
+Even then, DSFlash runs faster than existing SGG methods that only classify a subset of relations.
+Evaluation scenario.
+To benchmark SGG models for real-world applications, we evaluate model latency with a batch size of 1, simulating a constant feed of frames from a video stream.
+For our time measurements, we analyze latency as the time taken for a forward pass through a model.
+Since we are also interested in resource-constrained applications, we evaluate DSFlash not only using highly optimized hardware but also using older GPUs.
+Our contributions can be summarized as:
+1.
+We introduce DSFlash, a low-latency panoptic scene graph generation method with SOTA performance.
+2.
+We propose a bidirectional relation predictor that halves the number of forward passes through the model head.
+3.
+We present a mask-based dynamic patch pruning technique to reduce the number of processed tokens with minimal overhead.
+4.
+We perform a thorough comparison with other PSGG models regarding performance and latency.
+5.
+We show an extensive ablation study of the influence of DSFlash’s various components on latency and performance.
+We will publish our code and extensive collection of model checkpoints upon paper acceptance.
+2
+Related Work
+In this section, we discuss related work regarding other SGG methods and relevant components that are employed in DSFlash.
+2.1
+Panoptic Scene Graph Generation
+Contrary to traditional scene graph generation, panoptic scene graph generation (PSGG)
+[
+4
+]
+uses segmentation masks instead of bounding boxes to localize instances in a scene.
+Integrating segmentation masks into the training process gives a model additional context and understanding of various relations as opposed to bounding boxes.
+The most commonly used dataset for PSGG is the PSG dataset
+[
+4
+]
+which was created from the overlap of the Visual Genome
+[
+visual-genome
+]
+and COCO
+[
+coco
+]
+datasets, resulting in 49k images with panoptic segmentation masks and scene graph annotations.
+Contrary to Visual Genome, PSG reduces the large predicate vocabulary of Visual Genome to 56 carefully selected classes.
+The PSGG task has been tackled with various approaches, including methods that were originally built for Visual Genome like NeuralMotifs
+[
+motifs
+]
+or VCTree
+[
+vctree
+]
+but also specialized methods like HiLo
+[
+hilo
+]
+or DSFormer
+[
+2
+]
+.
+Similarly to classical SGG, PSGG methods can be categorized into two-stage and one-stage methods.
+Two-stage methods first predict instance locations and categories and use that information to perform the actual relation classification.
+One-stage methods do not separate these steps and directly predict a set of subject-predict-object triplets.
+Although recent research frequently argues for one-stage methods
+[
+integrapsg
+,
+hilo
+,
+4
+]
+because of their supposedly superior performance and efficiency, there have been recent publications opposing this claim
+[
+3
+,
+2
+]
+.
+We choose to follow a two-stage approach for DSFlash since it possesses beneficial properties that align with our target setting.
+By reusing a pretrained segmentation backbone, DSFlash can be trained much quicker and with less resource requirements.
+On the other hand, if enough computational resources are available, the segmentation stage can be fine-tuned to specific datasets, even using potential pretraining recipies from adjacent domains.
+2.2
+Realtime Scene Graph Generation
+Research on low-latency models for scene graph generation has remained largely overlooked, with only a few studies reporting their latency metrics.
+However,
+Neau et al.
+[
+3
+]
+have begun to investigate common bottlenecks in recent SGG architectures.
+They evaluate multiple existing two-stage architectures
+[
+vctree
+,
+motifs
+,
+TDE
+]
+and optimize them for speed, achieving groundbreaking latency with good SGG performance using their new architecture, named REACT
+[
+3
+]
+.
+The most impactful contribution to the low latency is the replacement of the Faster-RCNN
+[
+1
+]
+backbones with YOLOv8
+[
+yolo8
+]
+.
+Additionally the authors propose to filter the number of box proposals before classifying relations between them, reducing the number of required relation predictions.
+Although certainly a fundamental first step towards real-time efficient SGG models, the PSGG setting is only covered very briefly.
+In this work, we present a PSGG model that fully utilizes all available modalities and outperforms REACT
+[
+3
+]
+by a large margin in latency and PSGG performance.
+2.3
+DSFormer
+To design DSFlash, we borrow some concepts from DSFormer
+[
+2
+]
+but replace many parts for increased performance and speed.
+The core idea behind DSFormer is to strictly decouple instance segmentation and relation prediction not only into two separate stages of the network but two entirely separate networks.
+This enables DSFormer to immediately use any modern segmentation model in a plug-and-play fashion without having to retrain the scene graph model.
+Although certainly appealing, having to use two networks with separate backbones involves an immense resource inefficiency which we address with DSFlash.
+To produce a panoptic scene graph, DSFormer first executes a segmentation model to retrieve segmentation masks.
+Next, for each possible combination of two segmentation masks, the second stage is prompted with the image, a subject segmentation mask, and an object segmentation mask.
+The model then classifies the relation between subject and object.
+To encode the location of subject and object, DSFormer adds a mask embedding to each patch:
+t
+​
+o
+​
+k
+​
+e
+​
+n
+=
+p
+​
+a
+​
+t
+​
+c
+​
+h
++
+r
+s
+⋅
+t
+s
++
+r
+o
+⋅
+t
+o
++
+(
+1
+−
+r
+s
+−
+r
+o
+)
+⋅
+t
+b
+​
+g
+,
+token=patch+r_{s}\cdot t_{s}+r_{o}\cdot t_{o}+(1-r_{s}-r_{o})\cdot t_{bg},
+(1)
+where
+r
+s
+r_{s}
+and
+r
+o
+r_{o}
+are the proportions of the patch area that is covered by the subject and object mask.
+t
+s
+,
+t
+o
+,
+t
+b
+​
+g
+t_{s},t_{o},t_{bg}
+are learnable tokens.
+Next, the enriched patches are processed by a set of transformer blocks.
+Finally, the relation head projects the tokens to the desired relation output.
+While DSFormer achieves SOTA results on PSG, efficiency has been completely neglected by the authors.
+With DSFlash we borrow some core concepts to achieve similar PSGG scores while achieving significantly reduced inference time.
+2.4
+Fast Vision Backbones
+As with most neural network architectures that target fast inference, an optimized backbone is key.
+A common choice is a network from the YOLO family
+[
+yolo1
+]
+, with recent iterations
+[
+yolo10
+,
+yolo11
+,
+yolo12
+]
+achieving around 40 mAP on bounding box detection in less than 2 ms on a T4 GPU.
+Although initially regarded as less efficient than convolutional neural networks, transformer based architectures, especially ViT-based methods have eventually shown superior computational efficiency
+[
+survey-fastvit
+]
+powered by highly optimized algorithms like flash attention
+[
+flashattn
+,
+flashattn2
+]
+.
+Especially during inference, ViTs benefit from data locality and use of optimized matrix operations.
+The recently published RF-DETR
+[
+rf-detr
+]
+model applies these insights. It is based on a transformer architecture, namely LW-DETR
+[
+lw-detr
+]
+and Deformable DETR
+[
+def-detr
+]
+and achieves 48 mAP on bounding box detection in 2.3 ms on T4 GPU.
+Another resource efficient vision backbone is the Encoder-only Mask Transformer (EoMT)
+[
+eomt
+]
+.
+It achieves detection performance on a par with SOTA models while improving latency.
+By using only a Vision Transformer
+[
+vit
+]
+(ViT) encoder, EoMT eliminates the need for sequential components like feature adapters, pixel decoders, and separate transformer decoders (
+e.g
+.
+Mask2Former
+[
+mask2former
+]
+).
+It integrates segmentation directly into the encoder’s attention mechanism, enabling parallel processing of image patch and segmentation query tokens in a single forward pass.
+This approach achieves up to
+4
+×
+4\times
+faster inference than Mask2Former, especially with large models (
+e.g
+.
+ViT-L), while maintaining competitive accuracy.
+EoMT’s efficiency is further enhanced by large-scale self-supervised pretraining (
+e.g
+.
+DINO
+[
+dinov1
+,
+dinov2
+,
+dinov3
+]
+or EVA-02
+[
+eva02
+]
+), which provide the robust visual representations needed for segmentation without auxiliary components.
+Its minimalist design makes it ideal for low-latency, real-time applications and easy to integrate into an existing codebase.
+We therefore choose EoMT as the backbone for DSFlash.
+2.5
+Evaluation Issues
+For a comparison with prior work on PSGG, we use the PSG dataset
+[
+4
+]
+to report performance results.
+Like most scene graph datasets, PSG contains no negative ground truth annotations that indicate when a certain relation is predicted incorrectly.
+Therefore, we have to fall back to ranking metrics like Recall@k (
+R@k
+) to evaluate model performance.
+There are some exceptions that address negative ground truth, however these datasets are either only designed for evaluation
+[
+haystack
+]
+or based on simulated data only
+[
+copasg
+]
+.
+A well understood problem of using
+R@k
+for SGG is the long tail distribution of the used dataset
+[
+relwork_invarlearn
+,
+relwork_multiproto
+,
+relwork_semproto
+,
+hilo
+,
+ietrans
+,
+relwork_cktrcm
+]
+.
+A model that gets only the top 5% of all predicate classes right would already achieve a
+R@k
+of 52%.
+For a more balanced metric, we report Mean Recall@k (
+mR@k
+) instead, which first computes the
+R@k
+per predicate class using all images and averages the individual scores for the final metric.
+When evaluating PSGG (and SGG) methods, special care is required when interpreting the model output from various models.
+Recent work
+[
+2
+,
+3
+]
+has investigated irregularities in the evaluation protocol of prior SOTA methods.
+Models generated multiple relation predictions for the same associated ground truth subject-object pair.
+Consequently, SOTA models artificially increased the number of attempts per ground truth, which is not allowed per
+mR@50
+definition.
+3
+Method
+Figure 2
+:
+Overview of the DSFlash architecture for inference.
+Part A is executed once per image.
+Part B is executed for each combination of two segmentation masks.
+We use EoMT
+[
+eomt
+]
+as the segmentation backbone which is kept frozen throughout the whole training.
+We use the mask embedding module from DSFormer
+[
+2
+]
+.
+The relation predictor head is described in
+Sec.
+3.3
+.
+The red numbers indicate which components are covered in which section.
+We use DSFormer
+[
+2
+]
+as the baseline for our efficient architecture and provide an overview over the relevant parts in the supplementary.
+We choose this model as our baseline because of its SOTA performance and simple design, allowing us to quickly iterate new optimizations into the code.
+Starting from DSFormer, we re-create several parts of the model and end up with a new architecture that is capable to run PSGG at very high speeds while producing more accurate relation predictions.
+An overview of the final DSFlash architecture is shown in
+Fig.
+2
+.
+To process a single image, DSFlash first uses a pretrained EoMT
+[
+eomt
+]
+backbone to extract feature patches and predict a comprehensive set of segmentation masks.
+For every combination of two segmentation masks (
+e.g
+.
+a person and a donkey), a mask embedding
+[
+2
+]
+is added to the feature patches from the backbone, encoding the location of subject and object.
+The enriched patches are then fed through a set of tranformer blocks (model neck) and finally processed by a relation head, predicting the associated relations for the two masks in both directions simultaneously,
+e.g
+.
+“person behind donkey”
+and
+“donkey right of person”
+.
+Note that during training, DSFlash receives ground truth segmentation masks instead of inferred segmentation masks.
+This provides better supervision through better segmentation masks and reduces training time by skipping the segmentation head.
+3.1
+Merged Backbones
+Starting off the architecture of DSFormer, we initially inherit its strictly decoupled approach, meaning that segmentation is delegated to a separate upstream model.
+Since DSFormer requires the inferred segmentation masks as input, an additional forward pass through a segmentation model is required per frame.
+Still, DSFormer contains its own ResNet-based backbone which results in costly forward passes through two backbones.
+To tackle this inefficiency, we decide to directly extract the feature tensors from the segmentation model, which already runs to produce the segmentation masks.
+In addition, we replace the slow MaskDINO
+[
+maskdino
+]
+segmentation model with EoMT
+[
+eomt
+]
+which produces panoptic segmentation masks of similar quality at a much lower latency.
+To get a spatial feature tensor from the backbone, we extract tokens after blocks 2, 5, 8, and 11 for the S and B variants and blocks 5, 11, 17, 23 for the L variant.
+Since EoMT uses DINO
+[
+dinov2
+,
+dinov3
+]
+, we make sure to only extract patch tokens and exclude the class and register tokens.
+After block 9 (large: 20), EoMT introduces additional query tokens which we also exclude.
+Concatenating the extracted tokens along the embedding dimension gives us a feature tensor with the shape
+768
+×
+40
+×
+40
+768\times 40\times 40
+for a
+640
+×
+640
+640\times 640
+input image.
+Fig.
+2
+illustrates the approach.
+We keep the EoMT-based backbone
+frozen at all times
+.
+This speeds up training and enables us to fully outsource panoptic segmentation training which can be performed much more efficiently and on larger datasets without the scene graph generation context.
+3.2
+Raw-resolution Segmentation Masks
+To optimize computational efficiency in the later stages of the architecture, we adopt a ViT-style patch embedding
+[
+vit
+]
+, splitting the
+40
+×
+40
+40\times 40
+feature tensor into
+13
+×
+13
+13\times 13
+patch tokens, each with an embedding dimension of 384.
+Building on DSFormer, DSFlash integrates the extracted segmentation masks directly into these patch tokens. Specifically, a weighted embedding is added to each patch, where the weight is determined by the fraction of the patch’s area that is covered by the corresponding segmentation mask (as formalized in
+Eq.
+1
+).
+A more in-depth description can be found in the supplementary and the original paper
+[
+2
+]
+.
+(a)
+Upsampled mask logits
+(b)
+No upsampling
+Figure 3
+:
+Qualitative comparison of the segmentation masks produced by EoMT with and without upsampling the logits.
+Following DSFormer, we would use the segmentation mask logits from EoMT (
+160
+×
+160
+160\times 160
+), upsample them to the image size and then compute the patch area overlap fractions.
+However, since only a resolution of
+13
+×
+13
+13\times 13
+is required to compute the embedding, there is no need to upsample to the image size, and we can skip the costly bilinear interpolation step.
+Fig.
+3
+visualizes the difference between the different resolutions.
+3.3
+Bidirectional Predictions
+To detect potential relations between two instances in the scene represented by their respective segmentation masks
+S
+0
+S_{0}
+and
+S
+1
+S_{1}
+, the original DSFormer has to perform two forward passes through the model neck: one to classify the relation with
+S
+0
+S_{0}
+as the subject and
+S
+1
+S_{1}
+as the object and another one for the opposite.
+To reduce the computational cost during inference, we design DSFlash such that it encodes both directions in one single forward pass.
+This allows us to half the number of predictions required to build a comprehensive scene graph, while keeping the number of parameters in the model almost the same, as we will show in the following.
+A schematic can be found in
+Fig.
+2
+(relation predictor head) and
+Fig.
+4
+.
+Let’s assume that the backbone has extracted two segmentation masks
+S
+0
+S_{0}
+and
+S
+1
+S_{1}
+for a given image with feature tensor
+ℱ
+\mathcal{F}
+.
+The task is now to classify two potential relations.
+We call the one where
+S
+0
+S_{0}
+is the subject and
+S
+1
+S_{1}
+is the object the
+forward
+prediction
+z
+→
+∈
+ℝ
+C
+z^{\rightarrow}\in\mathbb{R}^{C}
+and the reversed one the
+backward
+prediction
+z
+←
+∈
+ℝ
+C
+z^{\leftarrow}\in\mathbb{R}^{C}
+, with
+C
+C
+being the number of predicate classes.
+Accordingly,
+y
+→
+,
+y
+←
+∈
+{
+0
+,
+1
+}
+C
+y^{\rightarrow},y^{\leftarrow}\in\{0,1\}^{C}
+are the associated target ground truth values.
+Both DSFormer and DSFlash first encode the masks into the image feature tensor
+ℱ
+\mathcal{F}
+using a specialized mask embedding module
+[
+2
+]
+, resulting in an enriched feature tensor
+x
+=
+e
+​
+m
+​
+b
+​
+e
+​
+d
+​
+(
+ℱ
+,
+S
+0
+,
+S
+1
+)
+∈
+ℝ
+D
+x=embed(\mathcal{F},S_{0},S_{1})\in\mathbb{R}^{D}
+, with embedding dimension
+D
+D
+.
+DSFormer, then processes
+x
+x
+in its prediction head to produce
+z
+→
+z^{\rightarrow}
+.
+For
+z
+←
+z^{\leftarrow}
+, DSFormer computes a second forward pass with
+x
+′
+=
+e
+​
+m
+​
+b
+​
+e
+​
+d
+​
+(
+ℱ
+,
+S
+1
+,
+S
+0
+)
+x^{\prime}=embed(\mathcal{F},S_{1},S_{0})
+since
+e
+​
+m
+​
+b
+​
+e
+​
+d
+embed
+is not symmetrical.
+DSFlash on the other hand uses
+x
+x
+for both directions and produces
+z
+→
+z^{\rightarrow}
+and
+z
+←
+z^{\leftarrow}
+in a single forward pass.
+Before processing
+x
+x
+with a relation predictor head, we split
+x
+x
+into two intermediate tensors
+t
+→
+t^{\rightarrow}
+and
+t
+←
+t^{\leftarrow}
+using a gate mechanism, described in
+Eqs.
+2
+,
+3
+and
+4
+which is loosely inspired by Gated Recurrent Units
+[
+gru
+]
+.
+Finally a shared MLP predicts the relations (
+Eqs.
+5
+and
+6
+).
+g
+\displaystyle g
+=
+σ
+⁡
+(
+g
+​
+a
+​
+t
+​
+e
+m
+​
+l
+​
+p
+​
+(
+x
+)
+)
+∈
+ℝ
+D
+\displaystyle=\sigma\left(gate_{mlp}(x)\right)\in\mathbb{R}^{D}
+(2)
+t
+→
+\displaystyle t^{\rightarrow}
+=
+g
+⊙
+x
+∈
+ℝ
+D
+\displaystyle=g\odot x\in\mathbb{R}^{D}
+(3)
+t
+←
+\displaystyle t^{\leftarrow}
+=
+(
+1
+−
+g
+)
+⊙
+x
+∈
+ℝ
+D
+\displaystyle=(1-g)\odot x\in\mathbb{R}^{D}
+(4)
+z
+→
+\displaystyle z^{\rightarrow}
+=
+r
+​
+e
+​
+l
+​
+h
+​
+e
+​
+a
+​
+d
+m
+​
+l
+​
+p
+​
+(
+t
+→
+)
+∈
+ℝ
+C
+\displaystyle=relhead_{mlp}(t^{\rightarrow})\in\mathbb{R}^{C}
+(5)
+z
+←
+\displaystyle z^{\leftarrow}
+=
+r
+​
+e
+​
+l
+​
+h
+​
+e
+​
+a
+​
+d
+m
+​
+l
+​
+p
+​
+(
+t
+←
+)
+∈
+ℝ
+C
+\displaystyle=relhead_{mlp}(t^{\leftarrow})\in\mathbb{R}^{C}
+(6)
+To learn the relation predictions, we follow DSFormer and use a binary cross entropy loss function between
+(
+z
+→
+,
+y
+→
+)
+(z^{\rightarrow},y^{\rightarrow})
+and
+(
+z
+←
+,
+y
+←
+)
+(z^{\leftarrow},y^{\leftarrow})
+.
+Figure 4
+:
+Schematic of DSFlash’s gating mechanism and the enforced feature consistency loss during training.
+Given two segmentation masks and an image, DSFlash computes a class token
+x
+x
+using various modules, summarized here as
+Φ
+\Phi
+.
+To train the consistency loss, DSFlash performs two forward passes through the model head with flipped segmentation masks.
+In our initial experiments we sorted
+S
+0
+S_{0}
+and
+S
+1
+S_{1}
+by their ordering in the ground truth.
+The model quickly discovered that a positive annotation is 3 times more likely to occur in
+y
+→
+y^{\rightarrow}
+than in
+y
+←
+y^{\leftarrow}
+in the PSG dataset, making the model rely on a fact that cannot be determined in a real-world application.
+To prevent this, we introduce the shared relation predictor from
+Eq.
+5
+and add an additional feature consistency loss, shown in
+Eq.
+7
+.
+During training, we perform two forward passes through DSFlash’s model head for each
+(
+S
+0
+,
+S
+1
+)
+(S_{0},S_{1})
+pair with swapped ordering of the segmentation mask when embedding them into
+ℱ
+\mathcal{F}
+.
+This gives us a second enriched feature tensor
+x
+′
+=
+e
+​
+m
+​
+b
+​
+e
+​
+d
+​
+(
+ℱ
+,
+S
+1
+,
+S
+0
+)
+≠
+x
+x^{\prime}=embed(\mathcal{F},S_{1},S_{0})\neq x
+.
+From here, we compute
+t
+′
+⁣
+→
+,
+t
+′
+⁣
+←
+,
+z
+′
+⁣
+→
+,
+z
+′
+⁣
+←
+t^{\prime\rightarrow},t^{\prime\leftarrow},z^{\prime\rightarrow},z^{\prime\leftarrow}
+analogously to
+Eqs.
+3
+,
+4
+,
+5
+and
+6
+.
+Ideally, DSFlash would predict
+z
+→
+=
+z
+′
+⁣
+←
+z^{\rightarrow}=z^{\prime\leftarrow}
+and
+z
+←
+=
+z
+′
+⁣
+→
+z^{\leftarrow}=z^{\prime\rightarrow}
+because
+S
+0
+S_{0}
+and
+S
+1
+S_{1}
+are flipped.
+To assist the model to learn this similarity, we use an additional consistency loss on the intermediate tensors:
+Consistency
+=
+1
+D
+​
+∑
+i
+=
+1
+D
+(
+t
+i
+→
+−
+t
+i
+′
+⁣
+←
+)
+2
++
+(
+t
+i
+←
+−
+t
+i
+′
+⁣
+→
+)
+2
+\displaystyle\text{Consistency}=\frac{1}{D}\sum_{i=1}^{D}(t^{\rightarrow}_{i}-t^{\prime\leftarrow}_{i})^{2}+(t^{\leftarrow}_{i}-t^{\prime\rightarrow}_{i})^{2}
+(7)
+During inference, DSFlash can rely on its learned ability to treat each directions equally and only a single forward pass is required.
+3.4
+Mask-Based Dynamic Patch Pruning
+The time spent in the model neck is influenced by the number of processed patch tokens.
+To reduce the computational cost, we introduce a dynamic patch pruning strategy that is tailored towards DSFlash.
+Before the extracted patch tokens from the backbone enter the model neck, an additional subject-object mask embedding is added to each patch token.
+This mask embedding is directly determined by the overlap ratio of a mask with the respective patch area.
+Consequently, a patch that is neither overlapping with the subject nor with the object, receives no additional embedding.
+Although they provide some context of the overall scene, these patches contain almost no helpful information to determine the final relation predicates.
+For an additional speedup, we therefore identify the patches that have no overlap with subject or object and drop them before processing them with the model neck.
+Since the overlaps are computed anyway, the patches to prune can be identified with virtually no computational overhead.
+Since the final predictions only rely on information of the classification token, DSFlash can handle variable token numbers.
+3.5
+Token Merging
+We apply token merging
+[
+tome
+]
+to reduce the computational cost when calculating attention in the transformer layers.
+Specifically, we use ToMe-SD
+[
+seg++
+,
+tomesd
+]
+because it unmerges the tokens again which better retains the segmentation capabilities of the backbone.
+Before every attention layer in DSFlash’s backbone, we use ToMe-SD to merge similar tokens.
+Directly after the attention layer, ToMe-SD unmerges the tokens to the initial number.
+3.6
+Additional Improvements
+To further reduce latency and increase scene graph performance of DSFlash, we perform several improvements.
+Efficient subject/object mask encoder.
+We observe that DSFormer’s mask encoder contains inefficient code that involves several copies of the extracted segmentation masks followed by multiple tensor operations that can be exactly represented by an efficient average pooling layer.
+This is described in more detail in the supplementary.
+DeiT III-style augmentation.
+We choose to follow the data augmentation strategy from DeiT III
+[
+deit3
+]
+. We apply random horizontal flips and color jitter, then randomly select one of three transformations: grayscale conversion, solarization, or Gaussian blur.
+4
+Results
+We start with introducing the evaluation metrics and continue with a comparison with other PSGG methods on the PSG dataset.
+We then analyze various components of DSFlash for the impact on the final performance and speed.
+4.1
+Metrics
+Latency.
+In
+Sec.
+4
+, we refer to latency as the average time it takes a PSGG model to process a single image.
+This evaluates a model’s capability to be applied in a real-world environment where image frames have to be processed sequentially from a continuous video stream.
+To ensure a fair comparison, we only measure the time of a model’s forward pass without any data preprocessing steps.
+All latency values are measured using a batch size of 1 to simulate the single image scenario.
+We wait for a warmup phase of 200 forward passes before starting the time measurements and report the average latency in the tables and figures.
+RPS.
+Since neural networks are highly optimized for modern GPUs, various speed improvements are only noticable if the GPU is working at maximum capcity.
+Therefore, we also evaluate a model’s speed when processing larger batches of data instead of just single-image latency.
+We report Relations per Frame (
+RPS
+) as the average number of subject-object pairs that can be processed by the evaluated model per second.
+mR@50.
+To measure scene graph performance, we report
+mR@50
+[
+vctree
+,
+kern
+]
+which handles the predicate class imbalances in scene graph datasets much better than other metrics like
+R@k
+.
+As highlighted in
+Sec.
+2.5
+, we make sure that multiple mask predictions per ground truth and multiple relation predictions per ground truth are prevented.
+We evaluate all models using the Scene Graph Detection (SGDet) protocol, sometimes also refered to as SGGen.
+With this protocol, a PSGG model only receives an image as input and must predict correct segmentation masks, instance labels and subject-predict-object triplets.
+Additional results with the PredCls protocol are in the supplementary.
+4.2
+Main Results
+Table 1
+:
+Performance comparison on the PSG dataset
+[
+4
+]
+.
+All models are evaluated using a batch size of 1 on an RTX 3090 GPU and the SGDet protocol.
+Models marked with a star (*) use low-resolution segmentation masks, discussed in
+Sec.
+3.2
+Method
+mR@50
+↑
+\uparrow
+Latency
+↓
+\downarrow
+# Params
+MotifNet-R50
+9.56
+100 ms
+109M
+MotifNet-MD
+16.32
+504 ms
+332M
+VCTree-R50
+10.14
+116 ms
+105M
+VCTree-MD
+17.58
+520 ms
+327M
+HiLo-R50
+16.34
+277 ms
+59M
+HiLo-L
+19.08
+427 ms
+230M
+REACT
+19.00
+19 ms
+43M
+DSFormer
+30.70
+458 ms
+330M
+DSFlash-L
+30.90
+50 ms
+340M
+DSFlash-B*
+28.50
+23 ms
+116M
+DSFlash-S*
+25.05
+18 ms
+40M
+A visual comparison of various PSGG methods can be seen in
+Fig.
+1
+, with more detailed results presented in
+Tab.
+1
+.
+DSFlash outperforms all other methods on
+mR@50
+, even DSFormer by a small margin of 30.9 vs 30.7.
+At the same time, the largest DSFlash variant which uses an EoMT-L backbone is still faster than all other models with the exception of REACT.
+Although DSFlash-L has the most parameters in our evaluation, its simple architecture allows it to run efficiently on optimized hardware.
+On the other side, DSFlash-S* uses an EoMT-S backbone combined with low-resolution segmentation masks, discussed in
+Sec.
+3.1
+, enabling it to run with a latency of 18 ms on a NVIDIA GeForce RTX 3090 GPU, equivalent to a frame rate of 56 frames per second.
+With only 40M parameters, it is also the smalles model in our comparison, while still achieving superior
+mR@50
+scores compared to all other methods, except DSFormer.
+We attribute DSFlash’s efficiency to the use of a modern backbone with good hardware support, as well as our simple segmentation head that only uses optimized tensor operations.
+4.3
+Backbone Ablation
+As shown in previous literature on two-stage methods, the first segmentation stage has a high impact on the final scene graph performance
+[
+2
+]
+.
+We evaluate three training runs with equal settings except for the size of the backbone.
+As shown in
+Fig.
+5
+, a larger backbone, is directly correlated to the overall performance.
+Given the extracted segmentation masks and associated predicted class labels, we report
+mR@inf
+[
+sgbench
+]
+as the upper limit to
+mR@k
+for a hypothetical perfect PSGG which has only access to the segmentation masks from the first stage.
+Fig.
+5
+shows a striking correlation between
+mR@50
+and
+mR@inf
+.
+In the supplementary, we also show that
+mR@50
+is directly correlated to the panoptic quality of the segmentation model.
+As more improved segmentation models are developed in the future, it is very likely that DSFlash can directly leverage their capability for improved scene graph performance.
+Figure 5
+:
+Impact of the segmentation model’s capability on the final performance.
+mR@inf
+[
+sgbench
+]
+is the best possible
+mR@k
+that a hypothetical perfect PSGG model could achieve, given the extracted segmentation masks from the segmentation model.
+4.4
+DSFlash Improvements
+An overview of the most impactful optimizations for DSFlash can be found in
+Tab.
+2
+.
+Since we copied many parts from DSFormer, we use it as the baseline model.
+As expected, the most effective optimization is the use of a single efficient segmentation model instead of two separate slow models, reducing the latency to 41 ms – a 10th of the initial time.
+At the same time,
+mR@50
+drops considerably, mostly because DSFlash now works with faster but lower quality segmentation masks form EoMT-3B instead of MaskDINO.
+DSFlash’s efficient mask embedding module (
+Sec.
+3.6
+) reduces latency to 37 ms without affecting
+mR@50
+.
+Our new implementation involves much less data copies, mainly resulting in decreased VRAM usage.
+Another speed boost is achieved by performing bidirectional predictions (
+Sec.
+3.3
+), halving the amount of required forward passes through the model neck, which is reflected in the number of processed relations per second on batched data (
+RPS
+).
+Since most images from the PSG dataset contain only few objects, the number of forward passes is rarely a bottleneck when measuring single-image latency on a GPU.
+In addition, our bidirectional training gives the model additional supervision about both relation directions, resulting in an improved
+mR@50
+.
+Table 2
+:
+Impact of the optimizations on the overall latency, measured on a NVIDIA GeForce RTX 3090 GPU and a batch size of 1.
+We also report
+RPS
+as the processed relations per second when processing batched data.
+The rows are read from top to bottom with each row adding an incremental optimization to the evaluated model.
+The last row is an exception and is an improvement from the row marked with
+1
+.
+Method
+mR@50
+↑
+\uparrow
+Latency (ms)
+↓
+\downarrow
+RPS
+↑
+\uparrow
+Baseline
+30.7
+445
+435
+Unified Backbone
+25.0
+41 (-91%)
+5,745
+Eff. Mask Embed
+25.0
+37 (-10%)
+7,132
+Gated Bidir. Pred.
+1
+28.8
+29 (-22%)
+11,491
+No Seg. Upscaling
+28.5
+23 (-21%)
+12,928
+EoMT-3S
+25.1
+18 (-22%)
+17,897
+1
+EoMT-3L
+30.9
+50 (+72%)
+5,996
+A very effective technique to reduce latency is to use low-resolution segmentation masks from the segmentation model.
+This skips a costly bilinear interpolation while providing the same granularity of information to the model neck, as discussed in
+Sec.
+3.1
+.
+However, with lower resolution segmentation masks, the final scene graph will also have lower quality and therefore fail to localize some subject and objects from the ground truth.
+The impact of low-resolution segmentation masks is also dependent on the capability of the backbone, as illustrated in
+Fig.
+6
+.
+Compared to DSFlash models with EoMT-B and EoMT-L backbones, the smaller EoMT-S suffers most from lowered segmentation quality.
+An interesting observation is the fact that a model using EoMT-B with low-resolution segmentation masks runs faster and performs better than a model using EoMT-S with high-resolution segmentation masks.
+We attribute this to EoMT-S’s considerably weaker segmentation capabilities, which directly propagate through the model.
+It is worth noting that in some scenarios, the EoMT-S-based model might still be preferred since DSFlash with EoMT-S requires only a third of the parameters that DSFlash with EoMT-B needs.
+Figure 6
+:
+Comparison of the effect of low-resolution segmentation masks on the final performance and latency when using different segmentation backbones.
+Table 3
+:
+Impact of Token Merging (
+ToMe
+) and mask-based dynamic patch pruning (
+Prune
+,
+Sec.
+3.4
+) on DSFlash’s latency with batch size 1, measured on a H100, RTX 3090, and GTX 1080 GPU.
+Prune
+ToMe
+H100
+3090
+1080
+mR@50
+×
+\times
+0%
+19 ms
+29 ms
+230 ms
+28.80
+✓
+0%
+20 ms
+29 ms
+205 ms
+26.67
+✓
+30%
+20 ms
+30 ms
+173 ms
+26.51
+×
+\times
+40%
+21 ms
+29 ms
+180 ms
+25.82
+×
+\times
+50%
+20 ms
+29 ms
+167 ms
+24.87
+×
+\times
+60%
+21 ms
+29 ms
+155 ms
+21.93
+4.5
+Pruning and Merging Methods
+We evaluate the impact of dynamic patch pruning (
+Sec.
+3.4
+) and token merging (
+Sec.
+3.5
+) on latency and scene graph performance in
+Tab.
+3
+.
+These techniques complement each other well since they optimize different parts of the DSFlash model.
+While dynamic patch pruning reduces the number of patch tokens that enter the model neck, we apply token merging to the attention layers of the segmentation backbone.
+We evaluate latency using three GPUs: H100, RTX 3090, and GTX 1080.
+We observe that using the more capable H100 and RTX 3090 GPUs results in no notable latency improvement with a batch size of 1.
+But when evaluating on batched input,
+RPS
+still increases.
+The exact numbers can be found in the supplementary.
+This is most likely because the GPUs are highly optimized for parallel processing and can process all available tokens simultaneously even before pruning.
+Lower-end GPUs can process less tokens simultaneously.
+Therefore, reducing the parallel workload via pruning has even a measurable impact on reduced latency with batch size 1.
+When using dynamic patch pruning (
+Sec.
+3.4
+), we notice only a slight performance decrease in
+mR@50
+of 2.13.
+Even though we have not trained it with pruned patches, DSFlash still manages to handle the altered input to the model neck.
+For additional results where we have trained DSFlash with dynamic patch pruning, please refer to the supplementary.
+The most notable latency improvement can be observed for a 1080 GPU, where latency drops from 230 ms to 205 ms.
+A very promising optimization that reduces latency without deteriorating scene graph performance too much is the combination of token merging and dynamic patch pruning.
+Since both optimization methods affect different parts of the architecture, their latency improvements add up.
+On a GTX 1080, latency drops from 230 ms to 173 ms while
+mR@50
+is very similar to our experiment with only patch pruning applied.
+Additionally, using a token merging ratio of 30% combined with patch pruning, gives a similar latency to 50% token merging without patch pruning, while achieving much better
+mR@50
+.
+5
+Conclusion
+In this work, we have introduced DSFlash, a panoptic scene graph generation model that is capable to run with a latency of down to 18 ms on an RTX 3090 GPU while still producing high quality scene graphs.
+We have introduced several architectural optimizations and analyze their effect on scene graph quality and latency.
+While some techniques like mask-based dynamic patch pruning make direct use of DSFlash’s architectural design to reduce latency with minimal overhead, we also introduce several methods that can be easily applied to future methods.
+For example, bidirectional relations enable a scene graph model to predict a scene graph while halving the amount of required forward passes, which directly relates to model throughput on batched inputs.
+We also experiment with token merging which can be applied to virtually any transformer-based model.
+Our experiments show that token merging can be effectively used on resource constrained GPUs.
+With the increasing popularity of VLMs in recent research, many systems have grown complex and heavy, often denying the ability to run them on-premise which involves privacy concerns in some areas.
+While many applications require the complex reasoning and fundamental scene understanding capabilities, other areas might also be approachable using scene graphs as an efficient intermediate step.
+Combined with DSFlash’s near instantaneous high quality scene graphs, we hope that future research further explores ressource efficient systems that can be used as an alternative to the influx of overly complex models.
+Supplementary Material
+6
+Caveats When Evaluating PSGG Methods
+Recent work
+[
+2
+]
+has discussed a critical flaw in the evaluation protocol of recent PSGG methods.
+In our paper, we follow their introduced SingleMPO protocol which ensures a correct and fair comparison across models.
+Figure 7
+:
+Illustration of the impact of multiple masks for the same ground truth mask.
+The model in figure
+B
+predicts multiple very similar masks together with separate relation predictions.
+However, this gives the model multiple attempts to predict the ground truth relation, essentially ignoring the definition for
+mR@k
+.
+Adapted from
+[
+2
+]
+.
+Some recent methods that report SOTA performance on PSGG, output multiple masks for the same object, as illustrated in
+Fig.
+7
+.
+During evaluation, these methods treat the multiple masks as individual instances and therefore don’t merge them.
+Consequently, multiple relation triplets are predicted for the same ground truth subject-object pair.
+Per definition of the
+mR@k
+metric, there is only one prediction per subject-object pair allowed.
+The faulty implementations do recognize this and ensure that there is only one relation prediction per predicted subject-object pair.
+However, since the models essentially predict the same subject-object pair multiple times with slightly different masks, their implementation treats them as separate subject-object pairs which are not filtered.
+Consequently, the model gets multiple attempts to correctly predict the ground truth relation.
+For DSFlash, we ensure that multiple masks per subject/object are prevented.
+This ensures that we don’t circumvent the definition of the
+mR@k
+metric.
+7
+DSFormer Mask Embedding
+Two-stage SGG/PSGG methods require information about the location of subject and object boxes/masks.
+A very common approach is to use RoI align
+[
+1
+]
+to extract spatial features from the associated region in the feature tensor.
+DSFormer replaces this approach with an approach somewhat similar to positional embedding.
+For each subject-object pair, the model computes an embedding mask that is added to the spatial tokens.
+This embedding mask is derived from the overlap ratios of the patches.
+Figure 8
+:
+Illustration of the mask embedding.
+Subject, object, and background tokens are learnable tokens that are added to the patch embedding with a weighted sum.
+The weights are determined from the proportion of the patch area that is covered by the respective segmentation mask.
+Adapted from
+[
+2
+]
+.
+8
+Efficient Mask Embedding
+DSFormer’s mask embedder implementation uses a convoluted sequence of PyTorch operations including stack, split, flatten, and mean to compute the patch overlap ratios.
+As
+Fig.
+9
+illustrates, this sequence can be simplified by using a simple average pooling layer.
+Figure 9
+:
+DSFormer’s inefficient ratio computation can be represented by a simple average pooling layer.
+As discussed in
+Sec.
+7
+, we need to compute the overlap ratios for every subject-object pair.
+To this end, DSFormer first copies the segmentation mask for each pair and then compute the ratios for each pair, as illustrated in
+Algorithm
+1
+.
+For DSFlash, we first compute the ratios for all segmentation masks and then copy the ratios for each pair instead, depicted in
+Algorithm
+2
+.
+Algorithm 1
+DSFormer’s mask embedding implementation
+image shape (
+H
+,
+W
+H,W
+), target shape (
+H
+′
+,
+W
+′
+H^{\prime},W^{\prime}
+), number of masks
+N
+N
+, binary masks
+S
+∈
+{
+0
+,
+1
+}
+N
+×
+H
+×
+W
+S\in\{0,1\}^{N\times H\times W}
+, pairs
+P
+⊂
+{
+1
+,
+…
+​
+N
+}
+2
+P\subset\{1,\dots N\}^{2}
+E
+←
+∅
+⊂
+ℝ
+H
+′
+×
+W
+′
+E\leftarrow\emptyset\subset\mathbb{R}^{H^{\prime}\times W^{\prime}}
+for
+p
+∈
+P
+p\in P
+do
+⊳
+\triangleright
+Performed in parallel
+s
+0
+←
+S
+p
+0
+s_{0}\leftarrow S_{p_{0}}
+⊳
+\triangleright
+Allocates additional memory
+s
+1
+←
+S
+p
+1
+s_{1}\leftarrow S_{p_{1}}
+r
+0
+←
+p
+​
+o
+​
+o
+​
+l
+​
+(
+s
+0
+)
+∈
+ℝ
+H
+′
+×
+W
+′
+r_{0}\leftarrow pool(s_{0})\in\mathbb{R}^{H^{\prime}\times W^{\prime}}
+r
+1
+←
+p
+​
+o
+​
+o
+​
+l
+​
+(
+s
+1
+)
+∈
+ℝ
+H
+′
+×
+W
+′
+r_{1}\leftarrow pool(s_{1})\in\mathbb{R}^{H^{\prime}\times W^{\prime}}
+E
+←
+E
+∪
+{
+m
+a
+k
+e
+_
+e
+m
+b
+e
+d
+d
+i
+n
+g
+(
+r
+0
+,
+r
+1
+)
+E\leftarrow E\cup\{make\_embedding(r_{0},r_{1})
+}
+end
+for
+return
+E
+E
+Algorithm 2
+Our mask embedding implementation
+image shape (
+H
+,
+W
+H,W
+), target shape (
+H
+′
+,
+W
+′
+H^{\prime},W^{\prime}
+), number of masks
+N
+N
+, binary masks
+S
+∈
+{
+0
+,
+1
+}
+N
+×
+H
+×
+W
+S\in\{0,1\}^{N\times H\times W}
+, pairs
+P
+⊂
+{
+1
+,
+…
+​
+N
+}
+2
+P\subset\{1,\dots N\}^{2}
+E
+←
+∅
+⊂
+ℝ
+H
+′
+×
+W
+′
+E\leftarrow\emptyset\subset\mathbb{R}^{H^{\prime}\times W^{\prime}}
+R
+←
+p
+​
+o
+​
+o
+​
+l
+​
+(
+S
+)
+∈
+ℝ
+H
+′
+×
+W
+′
+R\leftarrow pool(S)\in\mathbb{R}^{H^{\prime}\times W^{\prime}}
+for
+p
+∈
+P
+p\in P
+do
+⊳
+\triangleright
+Performed in parallel
+r
+0
+←
+R
+p
+0
+∈
+ℝ
+H
+′
+×
+W
+′
+r_{0}\leftarrow R_{p_{0}}\in\mathbb{R}^{H^{\prime}\times W^{\prime}}
+r
+1
+←
+R
+p
+1
+∈
+ℝ
+H
+′
+×
+W
+′
+r_{1}\leftarrow R_{p_{1}}\in\mathbb{R}^{H^{\prime}\times W^{\prime}}
+E
+←
+E
+∪
+{
+m
+a
+k
+e
+_
+e
+m
+b
+e
+d
+d
+i
+n
+g
+(
+r
+0
+,
+r
+1
+)
+E\leftarrow E\cup\{make\_embedding(r_{0},r_{1})
+}
+end
+for
+return
+E
+E
+Since ratios are reused across different pairs, this saves us many calls to the pooling layer while also having to copy less data since the ratio tensors are smaller (
+W
+′
+<
+W
+W^{\prime}<W
+and
+H
+′
+<
+H
+H^{\prime}<H
+) than the segmentation mask tensors.
+While DSFormer copies segmentation masks and computes ratios
+2
+​
+|
+P
+|
+2|P|
+times, DSFlash computes
+N
+N
+ratios and only copies the ratios
+2
+​
+|
+P
+|
+2|P|
+times.
+9
+Implementation Details
+We use the AdamW optimizer with a learning rate of
+10
+−
+5
+10^{-5}
+, weight decay of 0.02, and a cosine annealing scheduler with linear warmup.
+During training, we clip the gradient norm to a maximum of 1.
+To achieve best results, we train for 20 epochs.
+For five ground truth relation, we sample one negative relation from the dataset,
+i.e
+.
+mask-mask pairs that have no annotation in the ground truth.
+In addition to the patch tokens and the classification token, DSFlash also uses the same location token from DSFormer.
+We
+don’t
+use DSFormer’s semantic token and
+don’t
+include a frequency bias.
+10
+PredCls Results
+Tab.
+4
+contains
+mR@50
+scores obtained with the Predicate Classification Protocol (
+PredCls
+).
+While the base (B) and large (L) variants perform very similar on
+PredCls
+, their performance on
+SGDet
+differs considerably.
+Since the L variant contains a more capable segmentation model, it misses less relations in the
+SGDet
+setting.
+For
+PredCls
+, the ground truth segmentation masks are provided and the difference in the quality of the segmentation model is irrelevant.
+Table 4
+:
+Scene graph performance, evaluated as
+mR@50
+on the PSG dataset
+[
+4
+]
+using Predicate Classification (
+PredCls
+) and Scene Graph Detection (
+SGDet
+, aka
+SGGen
+).
+Method
+PredCls
+SGDet
+DSFlash-S
+39.27
+26.62
+DSFlash-B
+41.30
+28.80
+DSFlash-L
+41.69
+30.90
+11
+Additional Backbone Ablation
+In addition to
+Sec.
+4.3
+, we provide additional backbone ablation results.
+Fig.
+10
+shows how DSFlash’s scene graph performance correlates with the panoptic quality (
+PQ
+) of the segmentation model.
+Using EoMT2 models (
+i.e
+.
+pretrained with DINOv2) as the backbone for DSFlash results in slightly worse results than EoMT3 models.
+We also observe a very strong correlation of 0.99 between
+mR@inf
+and
+PQ
+.
+Figure 10
+:
+Correlation of scene graph performance (
+mR@50
+) and backbone capabilities (measured in
+mR@inf
+and panoptic quality).
+Figure 11
+:
+Comparison of the effect of low-resolution segmentation masks on the final performance and latency when using different segmentation backbones.
+12
+Train with pruned patches/token merging
+Tab.
+5
+shows RPS measurements on different hardware.
+Considering the drop in
+mR@50
+, there are only minor throughput gains on an H100 and RTX 3090.
+On a GTX 1080, RPS improves by about 25% compared to the baseline experiment when combining patch pruning and token merging.
+Table 5
+:
+Impact of Token Merging (
+ToMe
+) and mask-based dynamic patch pruning (
+Prune
+,
+Sec.
+3.4
+) on DSFlash’s RPS, measured on a H100, RTX 3090, and GTX 1080 GPU.
+Prune
+ToMe
+H100
+3090
+1080
+mR@50
+×
+\times
+0%
+28,663
+11,491
+671
+28.80
+✓
+0%
+26,734
+11,933
+727
+26.67
+✓
+30%
+25,817
+11,667
+852
+26.51
+×
+\times
+40%
+26,298
+11,154
+823
+25.82
+×
+\times
+50%
+26,475
+11,266
+845
+24.87
+×
+\times
+60%
+27,062
+11,559
+810
+21.93
+Our results in
+Sec.
+4.5
+investigate how patch pruning negatively impacts
+mR@50
+performance of DSFlash.
+However, when patch pruning is also enabled during training, DSFlash retains its scene graph generation capabilities even with pruned patches as shown in
+Fig.
+12
+, although at a lower overall performance.
+Figure 12
+:
+Comparison of a model trained with pruned patches and one without when pruning patches during evaluation.
+13
+Qualitative Results
+Fig.
+13
+shows some qualitative results.
+If a label on an arrow has only one line, DSFlash correctly predicted the ground truth predicate.
+If there are two lines, the bottom line shows DSFlash’s prediction while the top line shows the ground truth predicate.
+The number in parantheses shows at what (0-based) rank DSFlash positions the ground truth predicate.
+For example,
+GT: beside (2)
+means that DSFlash’s third guess would be
+“crossing”
+.
+Fig.
+14
+shows some failure cases when using DSFlash.
+In some cases, DSFlash confuses subjects and objects when predicting the relation.
+We encourage future work to address this issue and improve DSFlash for these scenarios, for example using contrastive losses
+[
+5
+]
+.
+Figure 13
+:
+Qualitative results using DSFlash.
+Figure 14
+:
+Failure cases when using DSFlash.
+Shown are predictions that are in the top 50 predictions for the respective image.
+The color in the boxes indicates to which subject the prediction is related to.
+References
+[1]
+Ross Girshick.
+Fast r-cnn.
+In
+2015 IEEE International Conference on Computer Vision (ICCV)
+, pages 1440–1448, 2015.
+[2]
+Julian Lorenz, Alexander Pest, Daniel Kienzle, Katja Ludwig, and Rainer Lienhart.
+A fair ranking and new model for panoptic scene graph generation.
+In
+Computer Vision – ECCV 2024
+, pages 148–164, Cham, 2025. Springer Nature Switzerland.
+[3]
+Maëlic Neau, Paulo E. Santos, Anne-Gwenn Bosser, Cédric Buche, and Akihiro Sugimoto.
+React: Real-time efficiency and accuracy compromise for tradeoffs in scene graph generation, 2025.
+[4]
+Jingkang Yang, Yi Zhe Ang, Zujin Guo, Kaiyang Zhou, Wayne Zhang, and Ziwei Liu.
+Panoptic scene graph generation.
+In
+ECCV
+, 2022.
+[5]
+Ji Zhang, Kevin J. Shih, Ahmed Elgammal, Andrew Tao, and Bryan Catanzaro.
+Graphical contrastive losses for scene graph parsing.
+In
+CVPR
+, 2019.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

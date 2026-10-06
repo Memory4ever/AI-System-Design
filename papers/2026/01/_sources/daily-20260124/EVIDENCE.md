@@ -308,6 +308,7 @@ v1 §3.1–3.3/Appendix训练配置：SigLIP2So400M、Qwen2.5-1.5B、256 visual 
 
 v1 §3/§4.1/§4.3–4.4/AppA.2：frozenSpatialVLA3B/Nora3B/UniVLA9B；prompt→visual relevance构important region、action→visual attention对外域过阈值剪枝；UniVLA因causal顺序改cosine而非相同attention语义。每checkpoint单组层/topk/τ/Gaussian跨任务固定。SIMPLER Spatial29.2→37.5/Uni68.7→74.0，random_all/random_unimportant/noGaussian有反侧；单3090用于Spatial/Nora，UniA100，未端到端latency/precision/多seedCI，不当低成本部署证明。MannWhitney p<.001只是按episode成败分组关联，不证明一般视觉attention致败；α最优/entropy推断不采用，不展开无关证明。2+2+3=7深入必要核心完成，root待核；Books只比较冻结模型对任务无关视觉输入干扰的条件。
 
+<a id="affective-gateproj"></a>
 ## [Affective gate_proj](https://arxiv.org/html/2601.15906v1)
 
 当前必要源核：root已实际定点通过采用范围/隔离边界；非全篇证明、代码或复现。

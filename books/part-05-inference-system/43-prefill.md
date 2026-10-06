@@ -107,6 +107,10 @@ Q/K
 代价是 compute budget 不再固定，还必须校准 threshold，并保留 local window、attention sinks 等 safety floor。
 这三条路线是不同的 budget policy，不是新方法线性替代旧方法。
 
+选中集合相同也未必意味着相同读取成本：不同 query 可能需要重叠 pages，逐行执行重复搬运 KV，而共享 union/tile 又要保存原 query ID、causal 边界和各自 membership mask。保持 support 不变的分支只重组消费顺序，并用有界在线 grouping、容量上限与 identity fallback 控制准备成本；共享 buffer 必须等全部消费者完成才复用。另一分支还按 indexer 分数裁剪 query-specific tail，这已改变 attention support，须单独验收质量，不能将两者都称为等价 kernel 优化。<!-- source-family:SF-2026-ARXIV-2610-11134 --><!-- source-family:SF-2026-ARXIV-2610-11201 -->
+
+[NPU 的共享加裁剪证据](https://arxiv.org/html/2610.11134v1)与 [GPU 的 support-preserving 证据](https://arxiv.org/html/2610.11201v1)是不同实现，不能合并性能数字。前者仍有任务退步及低共享率/SP 短分片的准备成本；后者整体 kernel 优势不等 query regroup 的增量，在线准备与更强 native backend 可取消收益，受测服务 8K context 甚至反退。Support 不变亦不消除 FP8 数值误差，logical page visits 不等实际 HBM bytes。短上下文、共享少或准备难摊销时，原 kernel/dense 路径更合理；随后才考虑跨层执行变化。
+
 Hybrid-attention 模型还暴露一个更深的边界：若 selector 只让 full-attention layer 少算，却让后续
 linear/sliding attention、projection 与 FFN 继续处理全部 token，稀疏收益会停留在单个 kernel。另一条
 实验性分支把 full-attention block 产生的 token mask 作为 block-local execution state，令未选 token 的旧
@@ -176,6 +180,8 @@ domain drift、layer criticality change 与 silent wrong-index failure；无法�
 invalidation 规则不能混用。
 
 另一个选择不共享后续层的 indices，而是决定在多深的位置永久缩小本次 Prefill 的 token support。可观察前面若干层 attention 的相对方差，以校准门槛选择执行裁剪的层位：单遍路径先完整执行前层，再让剩余层只处理所保留的 token；两遍路径则先取得 selector 结果，再从第零层重启压缩输入。前层已支付的完整计算、额外观察/score workspace 与重启预算必须分别计入，不能把更晚的 selection depth 当作更多 index reuse，也不能只用剩余 token 数推总 TTFT。方差稳定只是选择代理，不证明删去的 token 没有证据价值；不同门槛、输入人口与层位仍有质量反侧，Full-before 与两遍压缩对照也不是同一执行图。校准漂移、早删证据或总成本不合适时，保留逐层独立选择、原共享计划或完整 Prefill，而不是让一次永久裁剪继承缓存失效规则。<!-- source-family:SF-2026-ARXIV-2601-07667 -->
+
+若要让永久裁剪具有可解释的误差预算，选择提案与验收观察还须分开：预先固定候选、阈值和监测层，用独立的 query-position 样本审计每个 head 的丢弃 attention mass，并同时控制所有可选层，才不会把“挑到一层看起来稳定”当作固定检验通过。这个界只管指定观察分布下的期望丢弃概率质量，不管最坏位置、事实真值或未来 Decode；浅层集中而深层重新读取被删证据的反例，阻止它升级为无条件输出保证。[条件理论](https://arxiv.org/html/2610.09757v1)还需要后层 support-transfer 与算子界，足够 margin 也只保证同一 greedy 首 token，不保证整段生成。Observer、统计提取、gather 与物理页/传输都计费，逻辑删 token 不等按同一比例释放 bytes；论文没有实测加速或非劣质量。界太松、独立性破坏或后层条件无法验证时保留完整 Prefill，不用更积极的 entropy 排名代替验收。<!-- source-family:SF-2026-ARXIV-2610-09757 -->
 
 视觉 token 的永久裁剪还可以用 head 间表示的谱分散度提出保留集合，而不是用 attention mass 或相对方差打分。一条条件分支先从校准样本的逐层 matrix entropy 找到下降层位，再把该层每个 token 的 head features 中心化、逐行归一，按 trace-normalized Gram 的谱熵保留高分 token；非零行条件下，较小的 head×head 双 Gram 与 feature×feature Gram 具有相同非零谱，减少的是这个 scorer 的 eigendecomposition 维度。[EntropyPrune 的必要方法与同层对照](https://arxiv.org/html/2602.17196v1)并不由 entropy 下降证明被删 token 没有语义价值，零中心行的数值 guard 也未披露，不能代造完整无损实现。所谓64×是128/32维矩阵立方复杂度比，不是完整请求加速；在 A6000/LLaVA 的受测 MME 设置，prefill/latency 约1.6×/1.4×仍伴随分数下降，同层192-token 对照也只约束有限任务。前层完整执行、中心化/归一/构造Gram、谱计算和剩余 decode 均进入成本，层位、feature state、保留数与数值条件须共同绑定；语义、数值或总预算失配时扩大保留范围、回到既有 selector 或完整 prefill，不把谱等价签成任务正确性。<!-- source-family:SF-2026-ARXIV-2602-17196 -->
 
@@ -435,6 +441,8 @@ Chunked Prefill 不改变模型语义，而是重新安排 work 的时间粒度�
 重复 prefill 增加计算与尾延迟，attention signal 也不等于正确坐标。所测 GUI 模型与任务不能外推所有 VLM；second pass 没有稳定改善定位或超出预算时，应回退单次 prefill、外部 detector 或显式 region proposal。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2610-09757` — Daily `2026-10-09`；[exact-v1](https://arxiv.org/html/2610.09757v1) §2～6/8～9必要理论与反例，2+2+2=6。root作者必要Source/实际owner/PRE由supplement_20260311非作者独核通过；仅独立observer同时层验收、后层条件与首token保证的边界，不认证实现、实测收益或整段生成。原ASL与视觉谱裁剪分支保留，root只写已核单段；supplement_20260311非writer实际164～198完整邻接、新180及本注回对有效原证，POST通过。
 
 - `SF-2026-ARXIV-2602-20515` — Daily `2026-02-26`；[FAST-Prefill exact-v1](https://arxiv.org/html/2602.20515v1) IV-B/C、TableI–III与V必要方法/反侧。原2+2+2=6，finite job图与remaining-use驻留具体差额深入；只selection后KV-major schedule，非未来请求oracle/全float语义证明。W8A8相对BF16质量退步、CPU indexing混杂、cache/95%URAM与构建/packing全费近正文；未核代码或复现，不授通用GPU/batch/SLO。root actual必要源/owner PRE及正文398/400、完整388–410/自身439末注非作者POST通过，锁释放；不授日级Gate。
 

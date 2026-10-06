@@ -4,9 +4,14 @@
 **窗口：** 2026-04-05T09:00:00+08:00 ～ 2026-04-06T09:00:00+08:00
 **状态：** 完成
 **Books：** 纳入本次
-**检查时间：** 2026-09-26T14:09:00+08:00
+**检查时间：** 2026-10-13T23:35:05+08:00
+**窗口说明：** 用户授权保留既有候选日期、评分与原09点窗口，仅补来源遗漏；不移动旧归属或改连续原§4。
+**补充窗口：** 2026-04-05 ～ 2026-04-05
+**冻结候选日期：** [补查前原档案](../_sources/daily-20260406/baseline-before-supplement-20261013.md)
 
 ## 1. 结论
+
+本次来源遗漏补充只处理04-05北京时间完整自然日：14个每日来源及Cactus触发的单篇OpenReview按当前合同完成有界入口检查与限制划分，暂无已确认落窗的新候选，**原47＋新增0，Books新写0（No Change）**。81个arXiv提交元数据身份不是本日81篇新论文，也未全量贡献筛选；潜在相关样本的首次公开资格及若干历史目录/无日期Blog按§5隔离，不参与正面证据、Books或零遗漏判断。本次普通扫描/候选/Books项0，非作者root的实际六部分DAY已通过，完成字段由本次作者同步；原窗以下有效结论和连续§4保留，补查验收依据独立记录，不借旧完成标签。
 
 本日窗口包含周日美东20:00对应的北京时间04-06 08:00常规公告时刻。单独的预定时刻不证明历史公开；本轮结合永久ID于公告时分配、相邻连续批界/OAI日级链、保留项自己的版本元数据与首/中/末落在00:00～01:00Z的交叉依据，支持标明推断性质的08:00～09:00区间，不要求逐篇公告日志，也不把任一Updated直接改名为首发。独立复核已纠正此前过强的日志门槛，见[日期审计](../_sources/daily-20260406/V3_DATE_RECONCILIATION.md)。旧449个身份仍只是原始库存，旧50候选及泛化关闭不继承；[旧存档](../_sources/arxiv-owner-replay-20260903/legacy-reports-before-created-owner-reconciliation/2026-04-06.md)和[逐项检查点](../_sources/daily-20260406/V3_REVIEW_CHECKPOINT.md)保留可复核证据。具体早发/身份例外仍单独隔离，不由批次推断支持零遗漏。
 
@@ -14,26 +19,31 @@
 
 ## 2. 来源覆盖
 
+原窗口已有来源与独核证据保留在[补查前原档案](../_sources/daily-20260406/baseline-before-supplement-20261013.md)及本日原始记录；以下是**04-05完整自然日的本次实际补查**，不拿原窗口完成标签替代补查。复用了本次刚抓的[同一官方索引原件](../_sources/daily-20260405/)，本作者重新读相关日期/标题/分页，仅投影04-05；完整URL、原字段、停点和采用边界见[本日记录](../_sources/daily-20260406/SUP_SOURCES_20261013.md)。
+
 | 来源 | 检查范围与依据 | 结果 | 缺口 |
 | --- | --- | --- | --- |
-| `SRC-OPENAI` | [官方 Research](https://openai.com/research/)与[News RSS](https://openai.com/news/rss.xml)；RSS 邻近 04-02T10:30Z → 04-06T10:00Z，后者在窗口之后。 | 受阻 | News 不等于 Research；旧 Research 历史精确日列表不能完整回溯，需官方历史目录或当窗原始公告；不作零命中断言。 |
-| `SRC-ANTHROPIC` | [Research](https://www.anthropic.com/research) HTML `publishedOn` 邻近 04-02T10:56Z → 04-07T09:35Z。 | 已检查 | 限官网当前可回溯列表，不代替未列作者论文。 |
-| `SRC-GOOGLE-AI` | [Google Research 2026-04 Blog](https://research.google/blog/2026/04/)由 04-03 跳至 04-08/09；[DeepMind Publications](https://deepmind.google/research/publications/)所见相邻 03-22 与 04-25。 | 受阻 | [Google Research Publications](https://research.google/pubs/)未取得完整日级停点；博客不能代替论文目录。 |
-| `SRC-META-AI` | [Research](https://ai.meta.com/research/)历史文本不可完整读取，[Publications](https://ai.meta.com/results/?content_types%5B0%5D=publication)请求超时；[Blog](https://ai.meta.com/blog/)只作相邻日期线索。 | 受阻 | 需官方历史分页或当窗原始报告；不作 Research 零命中断言。 |
-| `SRC-QWEN` | [官网动态接口](https://qwen.ai/api/v2/article/retrieval?type=qwen_ai&language=en-US) 40 条，`extra.date` 在 04-02T04:00+08 后至 04-15 无本窗项；[静态研究目录](https://qwen.ai/api/page_config?code=research.research-list) 60 条更早项目；[QwenLM](https://github.com/QwenLM)组织新仓库窗口有界检查。 | 已检查 | 限官方列表与重要新 artifact；不按普通提交扩扫。 |
-| `SRC-DEEPSEEK` | [官方动态/研究](https://www.deepseek.com/news/)当前目录由 2025-12 跳至 04-24；本窗未见列项。 | 已检查 | 限官网可见目录。 |
-| `SRC-MOONSHOT` | [Kimi Blog](https://platform.kimi.com/blog)最近可见 2025-11；[kimi-cli Releases](https://github.com/MoonshotAI/kimi-cli/releases)相邻 04-02T14:40:52Z → 04-10；组织新仓库本窗未见事件。 | 已检查 | 限官网、正式 release 与组织新仓库，不审普通提交。 |
-| `SRC-TENCENT-HUNYUAN` | [Research 全部列表](https://hunyuan.tencent.com/research)官方 `POST /api/blog/publicList`，`pageNum=1,pageSize=100,renderType=0` 返回 9/9，04-23 → 02-13 无本窗文章；[Tencent-Hunyuan](https://github.com/Tencent-Hunyuan)组织新建 `HY-Embodied` 仓库在窗内，但其官方 README 将模型发布写为 04-09，窗内没有可核研究正文/正式 release。 | 已检查 | 仓库创建不冒充模型首发；若恢复确切 04-06 artifact，再定点重开。 |
-| `SRC-ZAI` | [Research](https://www.zhipuai.cn/zh/research) 04-01 → 04-07、[Release Notes](https://docs.z.ai/release-notes/new-released) 02-12 → 04-07；组织新仓库本窗未见事件。 | 已检查 | 官网 CMS 创建时间不用作公开时间。 |
-| `SRC-BYTEDANCE-SEED` | [论文列表](https://seed.bytedance.com/en/public_papers)官方 `get_article_list_v2` `article_type=1,count=20,page_token=40`（`x-tt-locale: US`）跨 04-08 → 03-31；博客 `article_type=2,page_token=0` 跨 04-09 → 04-01；组织新仓库本窗未见。 | 已检查 | 限目录公开时间和重要 artifact，排除暂缓的 AI for Science。 |
-| `SRC-BAIDU-ERNIE` | [技术博客](https://ernie.baidu.com/blog/zh/) 02-06 → 04-15；[ERNIE Releases](https://github.com/PaddlePaddle/ERNIE/releases)无本窗正式版本。 | 已检查 | 限博客与正式 release。 |
-| `SRC-XIAOMI-MIMO` | [MiMo Paper](https://mimo.xiaomi.com/)可见 03-13 → 06-29；[XiaomiMiMo](https://github.com/XiaomiMiMo)组织新仓库本窗未见。 | 已检查 | 无日期卡片不证明本窗事件。 |
-| `SRC-MINIMAX` | [英文博客](https://www.minimax.io/blog)、[中文博客](https://www.minimaxi.com/blog)相邻 03-18 → 04-27；[Agent Tech Blog](https://agent.minimax.io/docs/techblog)无本窗文章；组织新仓库未见。 | 已检查 | 限公开目录与重要 artifact。 |
-| `SRC-ARXIV` | [公告规则](https://info.arxiv.org/help/availability.html)、[449个旧原始身份](../_sources/arxiv-owner-replay-20260903/20260406/arxiv-owner-receipt.json)、02333–03231连续批界/OAI及保留项自身版本字段；题摘贡献、必要正文和关闭侧已定点重判。 | 已检查 | [独立日期审计](../_sources/daily-20260406/V3_DATE_RECONCILIATION.md)支持带推断性质的本窗区间，不把任一元数据字段直接等同first-public；02947身份/日期例外仍隔离，日级独立复核通过。 |
+| `SRC-OPENAI` | [Research](https://openai.com/research/)直取403；本次恢复[Research Index](https://openai.com/research/index/)首屏9卡最早09-10/Load more，未到04月。[News RSS](https://openai.com/news/rss.xml)实际04-02T10:30Z→04-06T10:00Z无补窗项。 | 受阻 | RSS/当前首屏不能替代历史Research日级目录；需官方历史目录/存档或04-05首次公开原文，终态隔离，不支持零命中。 |
+| `SRC-ANTHROPIC` | [Research](https://www.anthropic.com/research)原件嵌入publicationList的`publishedOn`实际04-02T10:56Z→04-07T09:35Z；该日期切片无04-05。 | 已检查 | 限官网可回溯切片，`_updatedAt`不作公开日，不证明未列作者稿不存在。 |
+| `SRC-GOOGLE-AI` | 本次恢复[04月Blog](https://research.google/blog/2026/04/)04-03→04-08/09；[DeepMind selection](https://deepmind.google/research/publications/)第1页30/265，03-22→04-22/23/25。[Google pubs](https://research.google/pubs/)停1–15/11614，年/venue排序不能核日。 | 受阻 | Blog及selection切片不替代日级全部论文/首公开；需相关原始历史事件，不扩全年目录，未列部分终态隔离。 |
+| `SRC-META-AI` | [Research](https://ai.meta.com/research/)直取失败、本次网页0行；[Publications](https://ai.meta.com/results/?content_types%5B0%5D=publication)仍未恢复历史列表。 | 受阻 | 需官方历史分页/本窗原始报告；当前不可得，不作无命中断言。 |
+| `SRC-QWEN` | [动态接口](https://qwen.ai/api/v2/article/retrieval?type=qwen_ai&language=en-US)40项实际逐读title/`extra.date`，04-02T04:00+08→04-15T10:00+08；数组非时间排序，本日无列项。 | 已检查 | 限该40项日期切片，不当全机构artifact库存。 |
+| `SRC-DEEPSEEK` | [News](https://www.deepseek.com/news/)与主页原件，2025-12-01 V3.2→04-24 V4 preview；可见相关日期无04-05。 | 已检查 | 限News切片；主页当前产品不证明历史release完整性。 |
+| `SRC-MOONSHOT` | [Kimi Blog](https://platform.kimi.com/blog)单页26个有日期条目，2025-11-07至2024-05-29，无04-05列项；未遍组织仓库。 | 受阻 | Blog切片检查完毕，未列研究/正式artifact的历史首公开资格不能恢复；需本窗官方原文/release，只重开相关项。 |
+| `SRC-TENCENT-HUNYUAN` | 官方[Research全部入口](https://hunyuan.tencent.com/research)的`POST /api/blog/publicList` pageNum1/pageSize100/renderType0，9/9，逐读display/public/published字段；展示02-13→04-23。Hy3-preview展示04-23而publicAt07月。 | 受阻 | 可见展示日期无04-05，当前字段差异的原因未知，不能冒充first-public；历史未列/原始公开资格未知，需本窗原始文章/存档，9/9不证明机构全部研究。 |
+| `SRC-ZAI` | [Research](https://www.zhipuai.cn/zh/research)卡片日期04-01→04-07；[release notes](https://docs.z.ai/release-notes/new-released)02-12→04-07，两个切片无04-05。 | 已检查 | 仅展示公开日/正式发布；CMS createAt或媒体创建不用作事件日。 |
+| `SRC-BYTEDANCE-SEED` | [论文目录](https://seed.bytedance.com/en/public_papers)type1/count20/page_token40/US，18/243、next60/has_more；全页最高科学PublishDate=1775664000000，相关扩散=1775577600000，其后03-31科学项及03-25/24相关条目。Blog type2/page0 15/95，04-08T16:00Z→03-31T16:00Z。 | 已检查 | 只核模型系统相关日期slice；原UTC/BJT字段见本日记录，无04-05交集。18项非全目录覆盖、科学最高日期非相关slice边界；首次公开/切片外未知不授零遗漏。 |
+| `SRC-BAIDU-ERNIE` | [Blog](https://ernie.baidu.com/blog/zh/)第1页10项，footer 02-06→04-15，末2025-11-21，下一页2/2已越窗；无04-05列项。 | 已检查 | 限技术Blog，不代替所有repo/release。 |
+| `SRC-XIAOMI-MIMO` | [Paper/Blog](https://mimo.xiaomi.com/)Paper8项有日期，03-13 ARL-Tangram→06-29 MOPD；Blog15项含隐藏blog-more，卡片均无日期。 | 受阻 | Paper日期切片已核；Blog日期资格隔离，不能说Blog无04-05。需具体本窗原始报告/存档再单项重开，不遍历全文取日期。 |
+| `SRC-MINIMAX` | [英文Blog](https://www.minimax.io/blog)03-18→05-26，[中文Blog](https://www.minimaxi.com/blog)03-18→04-27；[Agent techblog](https://agent.minimax.io/docs/techblog)官方Markdown仅09-19/22、10-08三项，所见切片无04-05。 | 已检查 | 英中日期不混用；当前目录不证明历史未列项从未公开，不遍组织repo。 |
+| `SRC-ARXIV` | [官方schedule](https://info.arxiv.org/help/availability.html)周日20ET常规公告对应BJT04-06，不在补窗。四主题`submittedDate:[202604041600 TO 202604051559]`，start0/max100，34/7/13/46，去重81提交身份；六个有限题摘/三份exact-v1 abs校准。cs.CL4月宽列表1–2000/2532仅线索、未读完。 | 受阻 | 不把Submitted/`published`当公开；正常batch规则不证明特殊/机构先公开零。具体资格未知终态隔离，不评分、不进Books；旧lastUpdatedDate试查不作有效覆盖，见本日记录。 |
+| `SRC-OPENREVIEW` | Cactus的ICLR2026 camera-ready触发单篇身份/日期核查；[官方forum lpUIkCAy9p](https://openreview.net/forum?id=lpUIkCAy9p)网页challenge，官方API精确标题limit1命中同forum、readers=everyone、`odate=1759896705795`（2025-10-08T04:11Z）。[官方字段说明](https://docs.openreview.net/getting-started/frequently-asked-questions/how-do-i-locate-the-date-a-submission-is-made-public)定义odate为venue记录的公开日、pdate为录用。 | 已检查 | 同题作者/摘要官方venue公开日记2025-10-08，配合正式ICLR2026身份支持早期归属；odate可由venue设定，不是不可改真实日志。camera-ready标签不证明重要修订；不扩会议、版本对比或全文。 |
 
-这 14 行只表示实际到期来源与窗口的当前状态；三个不可回溯官网目录已与可核来源分开隔离，不能放进“零命中”算术。arXiv 分类以 LLM/Infra/Multimodal/Agent 主题检索和相关标题浏览为边界，不把原始跨分类总量视为逐篇全文队列。
+14个每日源及Cactus触发的单篇OpenReview按各自真实边界处理；已检查的有限切片和隔离的历史资格不是全源召回或“无遗漏”保证。不扫描每周来源或会议全目录。
 
 ## 3. 候选与判断
+
+本次补窗新增0；原表实际47条家族整行/日期/评分保持冻结。原段“当前46”是历史中间口径，最终47及处置以§1/原表为准，不重评或移动旧归属。81提交线索与原47候选及原02947隔离身份按ID/精确版本去重无交集；未把未知公开资格当贡献排除，必要定点出口见本日记录。
 
 当前46项由原43项及独立定点恢复的`.02869/.02734/.03131`组成。日期采用官方规则、连续批界、相邻OAI和保留项版本元数据的组合推断；公开时间栏明确标“推断”，不是逐篇披露时刻。root对原43项及两个既有隔离身份的缓存版本字段逐项核对，均在00:00～01:00Z，但独立更早公开/身份冲突的两项仍不能据此纳入；新增三项分别为00:31:46/00:23:26/00:47:19Z，同样只作为组合证据。46项方法与具体Books处置已经完成，最后日级独立验收未通过前不提前标完成。
 
@@ -289,6 +299,11 @@ Exact-v1 §3、§5–6 保留原会话 episode，给 BM25 文本追加同义词�
 
 ## 5. 缺口与下一步
 
+- **本次补窗普通工作：** 有界Source/候选/Books普通项0，新写0、无共享Books锁；root实际六部分DAY通过。以下只有已隔离的外部保留与精确出口，不授其正面覆盖或证据；完成字段实际检查见本日原记录。
+- **补窗终态保留边界：** OpenAI/Google/Meta历史日级目录、Moonshot未列研究artifact、Hunyuan历史首公开、MiMo无日期Blog及arXiv特殊/先公开/重要修订资格不能完整恢复，实际入口/停点见[本日原记录](../_sources/daily-20260406/SUP_SOURCES_20261013.md)。其中1.x-Distill04018、SafeCtrl03941、committee03809、denial-provenance04035仅为有具体潜在增量的日期线索，不评分/不入Books，不把其Submitted写成首次公开；其余宽线索不新建逐篇全文队列。需官方公开列表/存档或具体原始事件证明04-05公开后，仅重开相关identity的日期、贡献和必要版本层；正常schedule与未命中搜索不证明它们不存在。未授隔离项Coverage/Evidence或性能/安全保证。
+- **有限日期出口：** Cactus04987同题作者/摘要的官方venue公开日记2025-10-08，配合正式ICLR2026身份支持早期公开归属；不将可修改odate当不可改真实日志。04-05 arXiv提交/首次收录不能重设家族首次公开，故退出本补窗日期保留项；不记为已审重复材料，不评分/不作Books。当前camera-ready无具体重要机制修订信号，不为版本比较扩任务；本次仅核身份/日期。
+- **原窗处置保留：** 下列原审阅/身份与公式争议仍按原有效层隔离；本次不重开无变化证据或覆盖原先判断。
+
 - **本窗普通工作：** 已无未处理的可执行扫描、候选审阅或Books写入。`.02869/.02734/.02344`实际正文已写后独立核对，`.03131`具体已有覆盖已核；`.02556`4分关闭及`.02837/.02367`关闭理由已校正，不重复审阅。以下仅为精确终态保留项，到达新材料时单项重开。
 - **日期例外与恢复条件：** [日期审计](../_sources/daily-20260406/V3_DATE_RECONCILIATION.md)经一致性复核撤销了“必须取得逐篇实际公告日志”的过强门槛；组合证据支持本日保留项的推断区间，不再请求整批全文或日志。仅`.02947`身份/记录冲突仍精确隔离，需官方首公告/同题原始公开记录或身份说明后单项重开；不自动移动整批或由已检查推导零遗漏。
 - **外部保留项：** OpenAI Research、Meta Research/Publications、Google Research Publications 的历史精确日目录尚不能完整回溯；所见 News/Blog 不替代它们。恢复条件分别为官方历史目录、可核站点存档或具有本窗首次公开证据的原始报告；只重开受影响来源/候选。它们不支持全源零命中与任何 Books 正面采用。
@@ -296,6 +311,15 @@ Exact-v1 §3、§5–6 保留原会话 episode，给 BM25 文本追加同义词�
 - **公式/实现争议：** `2604.02986v1` 的阈值取值与重权公式未解释一致性，权重还可能为负。已完成必要审阅但不采用为 Ch33 的优化配方；只有作者澄清实际阈值/实现，或独立复现解决该矛盾后才重开，不能把它记为普通待审或已验证的仅报告机制。
 
 ## 6. 复核
+
+### 本次来源补充（实际独核）
+
+复核者：root（非本次补充报告作者）
+结论：通过
+
+root实际复核全部补查来源/触发、六份题摘的有限准入/日期出口、原47候选及27656字符连续原§4冻结、原47＋新增0/Books新写0、终态隔离与本日限定diff，详见[独立DAY](../_sources/daily-20260406/SUP_SOURCES_20261013.md#root-本次六部分独立复核)。Cactus按官方venue早期记录退出补窗，不把可修改odate当不可改日志；其余75元数据身份未逐项筛选，抽检不称全量贡献验收。没有新Books正文，无新增PRE/POST；机器校验、链接、冻结和限定diff检查只证明对应结构层，完成字段读回另记录在同日本地原记录。
+
+### 原窗口既有独核（有效层保留，不能替代本次补查）
 
 复核者：apr03（非日报作者；来源/准入的前轮独立检查复用，新增Books逐项写后对读）
 结论：通过

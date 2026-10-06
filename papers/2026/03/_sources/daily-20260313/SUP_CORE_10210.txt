@@ -1,0 +1,3887 @@
+Delta-K: Boosting Multi-Instance Generation via Cross-Attention Augmentation
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Related Work
+Diffusion Models.
+Multi-Instance Generation.
+3
+Motivation: Concept Omission in Latent Space
+3.1
+Preliminary
+3.2
+Dynamics of Failure
+Early Determinism: The Semantic Planning Phase.
+Spatial Instability: Representation vs. Activation.
+4
+Methodology
+4.1
+Delta-K
+Identifying Missing Concepts.
+Delta-K augmentation.
+4.2
+Dynamic scheduling
+5
+Experiment
+5.1
+Experimental Setup
+Implementation Details.
+Evaluation Benchmarks.
+5.2
+Main Results
+Main Results.
+Efficiency and General Quality.
+5.3
+Ablation Study
+Scheduling Strategy.
+Effect of the VLM Module.
+Number of Augmented Steps.
+5.4
+Case Study: Unpacking Spatiotemporal Dynamics
+Qualitative Rectification Across Architectures.
+Spatial Grounding: From Diffuse Noise to Structural Anchor.
+6
+Limitations and Future Work
+7
+Conclusion
+References
+A
+Experiment details
+Implementation.
+Attention Entropy Analysis.
+B
+Theoretical Analysis of Delta-K
+B.1
+Semantic Orthogonality and Non-Interference
+B.2
+Attention Focusing and Spatial Stabilization
+C
+Extended Analysis on SDXL Architecture
+Intensity Divergence.
+Early Detectability.
+Signal Stability.
+D
+Prompt for VLM
+E
+More Related Work
+Advanced Layout and Regional Control.
+LLM and VLM-Assisted Composition.
+Deep Feature Modulation and Personalization.
+F
+More Examples of Delta-K
+License: arXiv.org perpetual non-exclusive license
+arXiv:2603.10210v1 [cs.CV] 10 Mar 2026
+\setheadertext
+Delta-K: Boosting Multi-Instance Generation via Cross-Attention Augmentation
+Zitong Wang
+Affiliation:
+School of Software Engineering, Sun Yat-sen University
+Zijun Shen
+Affiliation:
+Nanjing University
+Haohao Xu
+Affiliation:
+College of Management and Economics, Tianjin University
+Zhengjie Luo
+Affiliation:
+School of Software Engineering, Sun Yat-sen University
+Weibin Wu
+Affiliation:
+School of Software Engineering, Sun Yat-sen University
+Abstract
+While Diffusion Models excel in text-to-image synthesis, they often suffer from concept omission when synthesizing complex multi-instance scenes. Existing training-free methods attempt to resolve this by rescaling attention maps, which merely exacerbates unstructured noise without establishing coherent semantic representations. To address this, we propose Delta-K, a backbone-agnostic and plug-and-play inference framework that tackles omission by operating directly in the shared cross-attention Key space. Specifically, with Vision-language model, we extract a differential key
+Δ
+​
+K
+\Delta K
+that encodes the semantic signature of missing concepts. This signal is then injected during the early semantic planning stage of the diffusion process. Governed by a dynamically optimized scheduling mechanism, Delta-K grounds diffuse noise into stable structural anchors while preserving existing concepts. Extensive experiments demonstrate the generality of our approach: Delta-K consistently improves compositional alignment across both modern DiT models and classical U-Net architectures, without requiring spatial masks, additional training, or architectural modifications.
+Figure 1
+:
+Overview of Delta-K.
+A VLM first separates present and missing concepts from a baseline generation. By contrasting the original and masked prompts, we obtain a differential key vector
+Δ
+​
+K
+\Delta K
+, which is dynamically injected into cross-attention keys during sampling to reinforce missing concepts while preserving existing content.
+1
+Introduction
+The recent success of large-scale text-to-image diffusion models has dramatically advanced open-domain visual synthesis. By scaling both data and model capacity, modern Latent Diffusion Models (LDMs)—spanning both convolutional U-Net architectures
+[
+Podell et al., 2024
+]
+and the recently dominant Diffusion Transformers (DiTs)
+[
+Peebles and Xie, 2023
+]
+—have achieved achievable perceptual quality and flexibility. Despite that, achieving faithful multi-instance generation remains a persistent bottleneck. When confronted with compositional prompts specifying multiple objects and attributes, even state-of-the-art models frequently suffer from concept omission and incorrect attribute binding
+[
+Huang et al., 2023
+]
+.
+To mitigate these failures, recent work explores training-free inference-time interventions as a practical alternative to expensive fine-tuning. Most methods identify neglected textual tokens and increase their influence by modulating cross-attention responses during inference
+[
+Hertz et al., 2023
+;
+Chefer et al., 2023
+;
+Liu et al., 2024
+]
+. While intuitive, these approaches treat concept omission as an activation imbalance and rely on heuristic rescaling of attention maps. Without a coherent structural representation, amplifying diffuse attention responses often increases background noise rather than grounding the missing semantics. Another line of work introduces explicit spatial constraints, such as bounding boxes or layout conditions, to guide object placement in multi-instance generation. Although these approaches improve controllability in structured settings, they require additional spatial annotations or predefined layouts, which limits their applicability in open-domain generation. More importantly, such constraints regulate spatial arrangement externally without addressing the semantic retrieval process within cross-attention
+[
+Li et al., 2023a
+;
+Xie et al., 2023
+;
+Feng et al., 2022
+]
+. As a result, they often sacrifice compositional flexibility and fail to resolve the mismatch between textual concepts and the internal representations of diffusion models.
+We argue that concept omission is not simply an activation deficiency, but a failure in the semantic matching stage (
+Q
+​
+K
+T
+QK^{T}
+) of the cross-attention mechanism. When visual queries (
+Q
+Q
+) cannot retrieve stable semantic anchors from textual keys (
+K
+K
+) the resulting attention maps become diffuse and poorly grounded. Moreover, we observe that the structural fate of concepts is largely determined during the earliest stages of the denoising process.
+Driven by these insights, we adopt a concept-centric, representation-level perspective and propose
+Delta-K
+, a backbone-agnostic, training-free inference framework that addresses concept omission directly in the shared cross-attention Key space. Rather than reweighting attention maps, Delta-K injects the missing semantic signatures into the model’s internal representations during the early semantic planning phase.
+Specifically, we first perform a low-step exploratory generation to obtain a coarse baseline image. A Vision-Language Model (VLM) then analyzes the preview and partitions the prompt into “present” and “missing” concepts. We construct a masked prompt by replacing the missing concepts with
+[MASK]
+tokens. By contrasting the input between the original and masked prompts, we isolate a differential key vector
+Δ
+​
+K
+\Delta K
+, which encapsulates the semantic signature of the omitted concepts. During the full generation process, we inject
+Δ
+​
+K
+\Delta K
+into the key stream. Owing to the semantic orthogonality of
+Δ
+​
+K
+\Delta K
+, this intervention supplements missing concepts while preserving those that are already correctly rendered.
+To regulate this intervention, Delta-K introduces a dynamic scheduling strategy. Instead of relying on rigid timestep schedules, we perform a lightweight online optimization of the augmentation coefficient
+α
+t
+\alpha_{t}
+at each denoising step. By setting a target attention distribution derived from the successfully generated concepts in the baseline, we optimize
+α
+t
+\alpha_{t}
+to guide the attention allocation of the missing concepts toward this stable target. This allows missing concepts to gradually evolve from diffuse noise into localized structural anchors.
+In summary, our main contributions are as follows:
+•
+We provide a novel perspective on multi-instance generation failures, demonstrating that concept omission is a representation-level semantic matching failure rather than an activation deficit, which occurs during the early semantic planning phase of diffusion sampling.
+•
+We propose
+Delta-K
+, a principled, training-free intervention framework that structurally resolves concept omission by directly injecting a VLM-guided differential semantic signature (
+Δ
+​
+K
+\Delta K
+) into the cross-attention key space, proving universally applicable to both DiT and U-Net architectures.
+•
+We introduce a dynamic scheduling mechanism that optimizes the injection strength (
+α
+t
+\alpha_{t}
+) online, ensuring stable conceptual grounding while preserving existing instances through the natural orthogonality of the key space.
+•
+Extensive evaluations on challenging benchmarks demonstrate that Delta-K significantly improves text-image alignment across diverse architectural paradigms over existing state-of-the-art baselines without incurring training costs or architectural modifications.
+Figure 2
+:
+Spatiotemporal dynamics of attention in SD3.5.
+(a)
+Missing concepts suffer from chronic intensity suppression but follow valid temporal trends.
+(b)
+The high early AUC identifies a semantic planning phase for intervention before image structure solidifies.
+(c)
+High instability (CV) characterizes missing tokens as unstable noise.
+2
+Related Work
+Diffusion Models.
+Diffusion models
+[
+Ho et al., 2020
+;
+Song et al., 2021
+]
+have fundamentally advanced text-to-image synthesis
+[
+Nichol et al., 2022
+;
+Ramesh et al., 2022
+]
+. Early dominant frameworks relied on U-Net architectures, notably the Stable Diffusion series up to SDXL
+[
+Rombach et al., 2022
+;
+Podell et al., 2024
+]
+. Recently, inspired by Vision Transformers
+[
+Dosovitskiy, 2020
+]
+, Diffusion Transformers (DiTs)
+[
+Peebles and Xie, 2023
+]
+have emerged as the new standard, with modern backbones like SD3.5
+[
+Esser et al., 2024
+]
+and FLUX
+[
+Labs, 2024
+]
+demonstrating superior scalability. Despite these architectural leaps, accurately grounding multiple instances remains a persistent bottleneck
+[
+Jiang et al., 2024
+]
+, frequently leading to severe concept omission in complex scenes
+[
+Zhou et al., 2025
+]
+. Delta-K directly addresses this vulnerability across both U-Net and DiT paradigms without requiring structural modifications.
+Multi-Instance Generation.
+To mitigate multi-instance generation failures, numerous methods impose structural or semantic guidance. Structure-aware approaches introduce external adapters
+[
+Li et al., 2023a
+;
+Chen et al., 2024
+;
+Kim et al., 2023
+]
+or layout priors
+[
+Xie et al., 2023
+;
+Phung et al., 2024
+;
+Wang et al., 2024a
+]
+for composable synthesis. Concurrently, other works inject semantic feedback
+[
+Xu et al., 2023
+;
+Wu et al., 2024a
+;
+Ma et al., 2024
+]
+or text-guided reasoning
+[
+Yang et al., 2024
+;
+Sun et al., 2025
+]
+during sampling to refine alignment
+[
+Ren et al., 2024
+;
+Wen et al., 2023
+]
+. However, fine-grained semantic binding remains fundamentally challenging
+[
+Huang et al., 2023
+;
+Yao et al., 2025
+]
+. Methods requiring auxiliary training or reinforcement
+[
+Fan et al., 2023
+;
+Black et al., 2024
+;
+Fang et al., 2023
+]
+incur substantial computational overhead. Conversely, while training-free attention interventions
+[
+Chefer et al., 2023
+;
+Rassin et al., 2023
+;
+Meral et al., 2024
+]
+offer flexibility, they typically rely on post-hoc, heuristic scaling of attention maps
+[
+Wang et al., 2024b
+;
+Agarwal et al., 2023
+;
+Li et al., 2023b
+]
+. This superficial reweighting provides insufficient representational control as prompt complexity increases. Delta-K structurally overcomes this by operating directly in the cross-attention Key space, dynamically injecting omitted semantics at the feature level rather than merely rescaling output attention scores.
+3
+Motivation: Concept Omission in Latent Space
+3.1
+Preliminary
+Modern state-of-the-art generation models, spanning both U-Net architectures (e.g., SDXL
+[
+Podell et al., 2024
+]
+) and Diffusion Transformers (e.g., SD3.5
+[
+Esser et al., 2024
+]
+), fundamentally operate as Latent Diffusion Models (LDMs). Given a latent representation
+z
+0
+z_{0}
+encoded from an image, the model learns to reverse a forward noise process by optimizing the denoising objective:
+ℒ
+=
+𝔼
+z
+0
+,
+t
+,
+ε
+​
+[
+‖
+ε
+−
+ε
+θ
+​
+(
+z
+t
+,
+t
+,
+c
+)
+‖
+2
+2
+]
+\mathcal{L}=\mathbb{E}_{z_{0},t,\varepsilon}\left[\|\varepsilon-\varepsilon_{\theta}(z_{t},t,c)\|_{2}^{2}\right]
+(1)
+where
+ε
+θ
+\varepsilon_{\theta}
+is the network conditioned on textual information
+c
+c
+.
+Across both architectural paradigms, this textual conditioning
+c
+c
+is dominantly injected into the visual stream via the cross-attention mechanism. For spatial queries
+Q
+Q
+derived from the visual latent, and keys
+K
+K
+and values
+V
+V
+projected from the text embeddings, the attention map
+A
+A
+is formulated as:
+A
+=
+Softmax
+​
+(
+Q
+​
+K
+T
+d
+k
+)
+,
+Output
+=
+A
+​
+V
+A=\text{Softmax}\left(\frac{QK^{T}}{\sqrt{d_{k}}}\right),\quad\text{Output}=AV
+(2)
+Crucially, in this formulation, the inner product
+Q
+​
+K
+T
+QK^{T}
+represents the
+semantic matching
+phase.
+Q
+Q
+dictates the spatial regions seeking information, while
+K
+K
+encodes the specific semantic identity of the text tokens. Most existing training-free interventions treat concept omission as a mere activation deficiency, attempting to forcefully rescale the output attention map
+A
+A
+or the value
+V
+V
+. We argue that this post-hoc scaling is suboptimal because if the semantic identity within
+K
+K
+fails to establish a matching target for
+Q
+Q
+, the resulting attention map is fundamentally flawed.
+3.2
+Dynamics of Failure
+To understand why semantic matching (
+Q
+​
+K
+T
+QK^{T}
+) fails for certain concepts, we systematically analyze the spatiotemporal dynamics of cross-attention maps during multi-instance generation.
+Early Determinism: The Semantic Planning Phase.
+We observe that concept omission is not a gradual decay, but rather a failure established early in the denoising process. As shown in Figure
+2
+(a), concepts that are ultimately omitted (“Missing”) exhibit persistently low attention magnitudes right from the initial timesteps. To quantify this early predictability, we compute the AUC-ROC for detecting omission based on early attention activations. As illustrated in Figure
+2
+(b), discriminative power peaks abruptly, reaching an AUC of
+≈
+0.78
+\approx 0.78
+at Step 2 (for SD3.5). This reveals a critical
+semantic planning phase
+: the presence or absence of a concept is largely determined during the earliest steps. Therefore, interventions must be applied proactively before the spatial layout solidifies.
+Spatial Instability: Representation vs. Activation.
+Why do missing concepts fail to activate during this critical phase? To answer this, we shift our focus from attention magnitude to spatial distribution. We quantify spatial focus using the Coefficient of Variation (
+C
+​
+V
+CV
+), the ratio of spatial standard deviation to the mean. Figure
+2
+(c) reveals a stark contrast: successfully generated (“Present”) concepts maintain low
+C
+​
+V
+CV
+values, acting as concentrated, stable regions. In contrast, “Missing” concepts exhibit persistently high
+C
+​
+V
+CV
+values, appearing across the latent space as scattered, unstructured noise.
+This spatial instability forms our core insight. It demonstrates that omitted tokens do not merely lack activation energy; they lack a coherent structural representation. Simply scaling up a scattered noise map (as prior attention-reweighting methods do) only amplifies noise, frequently degrading image quality. Instead, to resolve concept omission, we must intervene directly in the Key space (
+K
+K
+) during the early semantic planning phase. By actively injecting the differential semantic signature (
+Δ
+​
+K
+\Delta K
+) of the omitted concept, we force the query
+Q
+Q
+to retrieve a stable semantic target, effectively focusing the scattered noise into a localized and coherent region.
+Algorithm 1
+Delta-K Framework
+0:
+prompt
+P
+P
+, diffusion model
+𝒢
+\mathcal{G}
+, VLM
+ℱ
+v
+​
+l
+​
+m
+\mathcal{F}_{vlm}
+, steps
+T
+T
+1:
+I
+base
+←
+𝒢
+⁡
+(
+P
+)
+I_{\text{base}}\leftarrow\mathcal{G}(P)
+# baseline image
+2:
+(
+C
+present
+,
+C
+missing
+)
+←
+ℱ
+v
+​
+l
+​
+m
+​
+(
+P
+,
+I
+base
+)
+(C_{\text{present}},C_{\text{missing}})\leftarrow\mathcal{F}_{vlm}(P,I_{\text{base}})
+# missing concepts
+3:
+P
+mask
+←
+Mask
+​
+(
+P
+,
+C
+missing
+)
+P_{\text{mask}}\leftarrow\text{Mask}(P,C_{\text{missing}})
+# mask missing
+4:
+Δ
+​
+K
+←
+K
+input
+​
+(
+P
+)
+−
+K
+input
+​
+(
+P
+mask
+)
+\Delta K\leftarrow K_{\text{input}}(P)-K_{\text{input}}(P_{\text{mask}})
+# differential key
+5:
+{
+A
+target
+(
+t
+,
+l
+)
+}
+←
+TargetAttn
+​
+(
+𝒢
+,
+P
+,
+C
+present
+)
+\{A^{(t,l)}_{\text{target}}\}\leftarrow\text{TargetAttn}(\mathcal{G},P,C_{\text{present}})
+# from baseline
+6:
+for
+t
+=
+T
+t=T
+to
+1
+1
+do
+7:
+α
+t
+←
+Adam
+​
+(
+α
+,
+∑
+l
+‖
+Agg
+​
+(
+A
+missing
+(
+t
+,
+l
+)
+​
+(
+α
+)
+)
+−
+A
+target
+(
+t
+,
+l
+)
+‖
+2
+2
+)
+\alpha_{t}\leftarrow\text{Adam}\!\left(\alpha;\;\sum_{l}\left\|\text{Agg}(A^{(t,l)}_{\text{missing}}(\alpha))-A^{(t,l)}_{\text{target}}\right\|_{2}^{2}\right)
+# online optimization
+8:
+for
+each layer
+l
+l
+do
+9:
+K
+(
+t
+,
+l
+)
+←
+K
+(
+t
+,
+l
+)
++
+α
+t
+​
+Δ
+​
+K
+(
+t
+,
+l
+)
+K^{(t,l)}\leftarrow K^{(t,l)}+\alpha_{t}\Delta K^{(t,l)}
+# augmentation
+10:
+Compute cross-attn with updated
+K
+(
+t
+,
+l
+)
+K^{(t,l)}
+11:
+end
+for
+12:
+Run one denoising step of
+𝒢
+\mathcal{G}
+to get
+z
+t
+−
+1
+z_{t-1}
+13:
+end
+for
+14:
+return
+final image
+I
+I
+4
+Methodology
+Table 1
+:
+Experiments on T2I-CompBench results. Higher is better (
+↑
+\uparrow
+).
+Method
+Attribute Binding
+Object Relationship
+Complex
+↑
+\uparrow
+Color
+↑
+\uparrow
+Shape
+↑
+\uparrow
+Texture
+↑
+\uparrow
+Spatial
+↑
+\uparrow
+Non-Spatial
+↑
+\uparrow
+StructureDiffusion
+[
+Feng et al., 2022
+]
+0.4980
+0.4208
+0.4880
+0.1384
+0.3113
+0.3355
+Composable Diffusion
+[
+Liu et al., 2022
+]
+0.4063
+0.3299
+0.3645
+0.0800
+0.2980
+0.2898
+TokenCompose
+[
+Wang et al., 2024b
+]
+0.5055
+0.4852
+0.5881
+0.1815
+0.3173
+0.2937
+Playground-v2
+[
+Li et al., 2024b
+]
+0.6208
+0.5087
+0.6125
+0.2372
+0.3098
+0.3613
+SDXL
+[
+Podell et al., 2024
+]
+0.5849
+0.4667
+0.5279
+0.2111
+0.3109
+0.3230
++A&E
+[
+Chefer et al., 2023
+]
+0.6400
+0.4517
+0.5963
+0.2212
+0.3142
+0.3401
++SynGen
+[
+Rassin et al., 2023
+]
+0.6112
+0.4831
+0.5312
+0.2310
+0.3249
+0.3192
++Delta-K (Ours)
+0.6371
+0.5119
+0.6218
+0.2466
+0.3175
+0.3532
+(+0.0522)
+(+0.0452)
+(+0.1169)
+(+0.0355)
+(+0.0066)
+(+0.0302)
+SD3.5-M
+[
+Esser et al., 2024
+]
+0.7939
+0.5563
+0.7381
+0.3053
+0.3146
+0.3050
++A&E
+0.7959
+0.5612
+0.7262
+0.3310
+0.3221
+0.3122
++SynGen
+0.7982
+0.5662
+0.7183
+0.3221
+0.3129
+0.3135
++InitNO
+0.8002
+0.5591
+0.7499
+0.3211
+0.3240
+0.3215
++Delta-K (Ours)
+0.8125
+0.5984
+0.7816
+0.3487
+0.3331
+0.3410
+(+0.0186)
+(+0.0421)
+(+0.0435)
+(+0.0434)
+(+0.0185)
+(+0.0360)
+4.1
+Delta-K
+We propose Delta-K, a training-free method to resolve concept omission in Unet and DiT models by directly intervening in the cross-attention mechanism. The core idea is to compute a differential key vector,
+Δ
+​
+K
+\Delta K
+, which isolates the semantic information of missing concepts identified from the text by a VLM. At each inference step, we inject
+Δ
+​
+K
+\Delta K
+into the input of the to_k module according to a dynamic strength schedule, forcing the model to attend to these previously neglected concepts during image generation.
+Identifying Missing Concepts.
+Given a text prompt
+P
+P
+, we first generate an image
+I
+b
+​
+a
+​
+s
+​
+e
+I_{base}
+through a standard diffusion process. We then employ a Vision-Language Model
+ℱ
+v
+​
+l
+​
+m
+\mathcal{F}_{vlm}
+to return two sets of concepts:
+(
+C
+present
+,
+C
+missing
+)
+=
+ℱ
+v
+​
+l
+​
+m
+​
+(
+P
+,
+I
+b
+​
+a
+​
+s
+​
+e
+)
+(C_{\text{present}},C_{\text{missing}})=\mathcal{F}_{vlm}(P,I_{base})
+(3)
+Where
+C
+present
+C_{\text{present}}
+is the set of concepts successfully generated in the image, while
+C
+missing
+C_{\text{missing}}
+is the set of incorrectly generated or missing concepts, which are the targets for our subsequent enhancement.
+Delta-K augmentation.
+First, we construct the masked prompt
+P
+mask
+P_{\text{mask}}
+by replacing
+C
+missing
+C_{\text{missing}}
+with
+[MASK]
+, and capture the inputs to the
+to_k
+module for both
+P
+mask
+P_{\text{mask}}
+and the original prompt
+P
+P
+during inference to obtain
+K
+input
+​
+(
+P
+mask
+)
+K_{\text{input}}(P_{\text{mask}})
+and
+K
+input
+​
+(
+P
+)
+K_{\text{input}}(P)
+. Their difference
+Δ
+​
+K
+\Delta K
+illustrates the semantic representation of the missing concepts:
+Δ
+​
+K
+≜
+K
+input
+​
+(
+P
+)
+−
+K
+input
+​
+(
+P
+mask
+)
+\Delta K\triangleq K_{\text{input}}(P)-K_{\text{input}}(P_{\text{mask}})
+(4)
+During the inferencing, for each layer and step
+t
+t
+, we inject this pre-computed
+Δ
+​
+K
+\Delta K
+into the current step’s key vector and compute the attention as follows:
+K
+′
+=
+K
++
+α
+t
+⋅
+Δ
+K
+,
+Attn
+=
+′
+Softmax
+(
+Q
+⋅
+K
+′
+T
+d
+k
+)
+V
+K^{\prime}=K+\alpha_{t}\cdot\Delta K,\quad\mathrm{Attn}{{}^{\prime}}=\mathrm{Softmax}\left(\frac{Q\cdot{K^{\prime}}^{T}}{\sqrt{d_{k}}}\right)V
+(5)
+The augmentation strength is controlled by a dynamic scheduling function
+α
+t
+\alpha_{t}
+. By directly augmenting the key vectors, our method boosts the attention weights of missing concepts to ensure their generation in the final image.
+4.2
+Dynamic scheduling
+Motivated by these observations, we introduce a dynamic scheduling method that adaptively adjusts the augmentation strength
+α
+t
+\alpha_{t}
+at each denoising step
+t
+t
+. The objective is to guide the attention received by the missing concepts
+C
+m
+​
+i
+​
+s
+​
+s
+​
+i
+​
+n
+​
+g
+C_{missing}
+to match the attention pattern of successfully generated concepts.
+We define
+A
+target
+A_{\text{target}}
+the average attention received by the successfully generated concepts
+C
+present
+C_{\text{present}}
+in baseline generation. At denoising step
+t
+t
+and layer
+l
+l
+, given the baseline attention map
+A
+base
+(
+t
+,
+l
+)
+A^{(t,l)}_{\text{base}}
+and the token index set
+I
+present
+I_{\text{present}}
+, the target attention is computed as
+A
+target
+(
+t
+,
+l
+)
+​
+(
+α
+t
+)
+=
+1
+|
+I
+present
+|
+​
+∑
+i
+∈
+I
+present
+A
+(
+t
+,
+l
+)
+​
+(
+α
+t
+)
+base
+,
+i
+A^{(t,l)}_{\text{target}}(\alpha_{t})=\frac{1}{|I_{\text{present}}|}\sum_{i\in I_{\text{present}}}A^{(t,l)}(\alpha_{t})_{\text{base},i}
+(6)
+Similarly, the target attention distribution
+A
+t
+​
+a
+​
+r
+​
+g
+​
+e
+​
+t
+(
+t
+,
+l
+)
+A_{target}^{(t,l)}
+is obtained from the baseline generation, representing the attention pattern of successfully generated concepts.
+To encourage the attention distribution of missing concepts to match the target distribution, we minimize the following objective:
+ℒ
+(
+t
+,
+l
+)
+​
+(
+α
+t
+)
+=
+‖
+A
+missing
+′
+(
+t
+,
+l
+)
+​
+(
+α
+t
+)
+−
+A
+target
+(
+t
+,
+l
+)
+‖
+2
+2
+\mathcal{L}^{(t,l)}(\alpha_{t})=\left\|{A_{\text{missing}}^{\prime}}^{(t,l)}(\alpha_{t})-A_{\text{target}}^{(t,l)}\right\|_{2}^{2}
+(7)
+This objective encourages the model to gradually align the attention allocation of missing concepts with that of successful ones.
+Since the loss function is differentiable with respect to the augmentation strength
+α
+t
+\alpha_{t}
+, we perform an online optimization at each denoising step
+t
+t
+. The optimal coefficient is obtained by minimizing the aggregated gradient magnitude across layers:
+α
+t
+∗
+=
+λ
+⋅
+arg
+⁡
+min
+α
+t
+​
+‖
+∑
+l
+∂
+ℒ
+(
+t
+,
+l
+)
+​
+(
+α
+t
+)
+∂
+α
+t
+‖
+2
+2
+\alpha_{t}^{*}=\lambda\cdot\arg\min_{\alpha_{t}}\left\|\sum_{l}\frac{\partial\mathcal{L}^{(t,l)}(\alpha_{t})}{\partial\alpha_{t}}\right\|_{2}^{2}
+(8)
+In practice, we solve this optimization using the Adam optimizer
+[
+Kingma and Ba, 2014
+]
+. This dynamic optimization allows the augmentation strength to adapt to the generation process, stabilizing the attention signal of missing concepts and transforming noisy attention patterns into coherent semantic representations. We augment the key and compute cross-attention in a standard form:
+Attn
+(
+t
+,
+l
+)
+​
+(
+α
+t
+∗
+)
+=
+Softmax
+⁡
+(
+Q
+(
+t
+,
+l
+)
+​
+(
+K
+(
+t
+,
+l
+)
++
+α
+t
+∗
+​
+Δ
+​
+K
+(
+t
+,
+l
+)
+)
+⊤
+d
+k
+)
+​
+V
+(
+t
+,
+l
+)
+\mathrm{Attn}^{(t,l)}(\alpha_{t}^{*})=\mathrm{Softmax}\!\left(\frac{Q^{(t,l)}\left(K^{(t,l)}+\alpha_{t}^{*}\Delta K^{(t,l)}\right)^{\top}}{\sqrt{d_{k}}}\right)V^{(t,l)}
+(9)
+The overall Delta-K algorithm can be summarized as shown in Algorithm
+1
+.
+Table 2
+:
+Experiments on Geneval. Higher is better (
+↑
+\uparrow
+).
+Model
+Overall
+↑
+\uparrow
+Single
+Two
+Counting
+Colors
+Position
+Color
+object
+object
+attribution
+Seedream 3.0
+[
+Gao et al., 2025
+]
+0.99
+0.96
+0.91
+0.93
+0.47
+0.80
+0.84
+Earlier Generative Models
+minDALL-E
+[
+Dayma et al., 2021
+]
+0.23
+0.73
+0.11
+0.12
+0.37
+0.02
+0.01
+Stable Diffusion v2.1
+0.50
+0.98
+0.51
+0.44
+0.85
+0.07
+0.17
+Stable Diffusion XL
+0.55
+0.98
+0.74
+0.39
+0.85
+0.15
+0.23
++Delta-K (Ours)
+0.58
+0.98
+0.79
+0.42
+0.88
+0.15
+0.29
+(+0.03)
+(+0.00)
+(+0.05)
+(+0.03)
+(+0.03)
+(+0.00)
+(+0.06)
+Table 3
+:
+Diff Aug Method.
+Model
+Complex
+↑
+\uparrow
+Spatial
+↑
+\uparrow
+Baseline
+0.3230
+0.2111
+Prompt-only
+0.3303
+0.2186
+Constant
+0.3326
+0.2322
+Linear
+0.3402
+0.2365
+Delta-K
+0.3532
+0.2466
+Table 4
+:
+Experiment on Conceptmix.
+Model
+k
+=
+5
+↑
+k{=}5\uparrow
+k
+=
+6
+↑
+k{=}6\uparrow
+k
+=
+7
+↑
+k{=}7\uparrow
+DALL-E
+[
+Betker et al., 2023
+]
+0.17
+0.11
+0.08
+SDXL
+0.05
+0.01
+0.00
++Delta-K (Ours)
+0.06
+0.01
+0.01
+(+0.01)
+(+0.00)
+(+0.01)
+FLUX-dev
+0.07
+0.03
+0.03
++Delta-K (Ours)
+0.09
+0.04
+0.03
+(+0.02)
+(+0.01)
+(+0.00)
+Figure 3
+:
+Examples of Delta-K.
+By using SDXL
+[
+Podell et al., 2024
+]
+, SD-2.1, Nano banana and DALL-E 3
+[
+Betker et al., 2023
+]
+as baseline methods for comparison, we can easily observe that our approach achieves significant improvements in addressing the instance missing problem.
+5
+Experiment
+5.1
+Experimental Setup
+Implementation Details.
+We implement our method across multiple state-of-the-art diffusion backbones, including Stable Diffusion XL
+[
+Podell et al., 2024
+]
+, Stable Diffusion 3.5-medium
+[
+Esser et al., 2024
+]
+, and Flux-dev
+[
+Labs, 2024
+]
+. We compare Delta-K with 1) training-free method containing Attend-and-Excitep(A&E)
+[
+Chefer et al., 2023
+]
+, SynGen
+[
+Rassin et al., 2023
+]
+, InitNO
+[
+Guo et al., 2024
+]
+; 2) earlier generative models containing Playground v2
+[
+Li et al., 2024a
+]
+, PixArt
+α
+\alpha
+[
+Chen et al., 2023
+]
+and SD v2.1
+[
+Rombach et al., 2022
+]
+; 3) Sota Models containing DALL-E
+[
+Betker et al., 2023
+]
+and Seedream 3.0
+[
+Gao et al., 2025
+]
+.
+We choose Qwen3-VL
+[
+Bai et al., 2025
+]
+as VLM, set the maximum augmentation strength to
+α
+t
+max
+=
+0.04
+\alpha_{t}^{\max}=0.04
+, and the augmentation is applied only during the first 10 denoising steps. This setup ensures the robustness of our approach across different architectural paradigms. More details are provided in Appendix.
+Evaluation Benchmarks.
+We evaluate our method on three benchmarks: T2I-CompBench
+[
+Huang et al., 2023
+]
+, GenEval
+[
+Ghosh et al., 2023
+]
+, and ConceptMix
+[
+Wu et al., 2024b
+]
+. T2I-CompBench
+[
+Huang et al., 2023
+]
+comprises 6,000 prompts covering attribute binding, object relationships, and complex compositions. GenEval
+[
+Ghosh et al., 2023
+]
+assesses compositional accuracy, testing capabilities such as object counting and spatial relationships. For ConceptMix
+[
+Wu et al., 2024b
+]
+,we focus on the harder subsets where
+k
+∈
+{
+5
+,
+6
+,
+7
+}
+k\in\{5,6,7\}
+to test our method on complex multi-instance generation. These benchmarks provide a comprehensive assessment of our method’s ability to handle multi-object compositions.
+Table 5
+:
+Efficiency and general image quality comparison. Higher is better except inference time.
+LAION-AES
+↑
+\uparrow
+CLIPScore
+↑
+\uparrow
+CLIP-IQA+
+↑
+\uparrow
+MUSIQ
+↑
+\uparrow
+Infer(s/img)
+↓
+\downarrow
+Model
+Base
++Ours
+Base
++Ours
+Base
++Ours
+Base
++Ours
+Base
++Ours
+SDXL
+5.63
+5.62
+0.79
+0.77
+0.69
+0.70
+70.67
+70.12
+11.71
+14.92
+FLUX
+5.51
+5.48
+0.78
+0.77
+0.73
+0.73
+70.62
+70.19
+32.43
+42.11
+SD3.5
+5.33
+5.28
+0.81
+0.79
+0.67
+0.65
+69.82
+69.53
+14.49
+16.52
+Table 6
+:
+Diff aug steps.
+Steps
+Complex
+↑
+\uparrow
+Spatial
+↑
+\uparrow
+5 steps
+0.3448
+0.2387
+10 steps
+0.3532
+0.2466
+30 steps
+0.3491
+0.2428
+50 steps
+0.3465
+0.2404
+Table 7
+:
+Diff VLMs.
+Model
+Complex
+↑
+\uparrow
+Spatial
+↑
+\uparrow
+GPT-4o
+[
+Hurst et al., 2024
+]
+0.3404
+0.2352
+Kimi-VL-A3B-thinking
+[
+Team et al., 2025
+]
+0.3402
+0.2352
+Qwen3-VL-8B-thinking
+[
+Bai et al., 2025
+]
+0.3402
+0.2352
+Qwen-VL-Max
+[
+Bai et al., 2023
+]
+0.3400
+0.2355
+5.2
+Main Results
+Main Results.
+We conduct a comprehensive quantitative evaluation of Delta-K against multiple baselines on T2I-CompBench, GenEval, and ConceptMix. As shown in Table
+1
+,
+2
+and
+4
+, the results show that Delta-K significantly improves multi-instance generation without any additional training, achieving competitive performance across all metrics and outperforming existing training-free approaches.
+Across all benchmarks, Delta-K consistently improves compositional generation. These gains align with our diagnosis in Sec.
+3.2
+: concept omission is decided early, and missing concepts exhibit diffuse attention. By injecting the differential key signature within the semantic planning phase, Delta-K changes what the query retrieves, which improves multi-entity layout formation and reduces downstream attribute/instance confusion. Quantitatively, on T2I-CompBench with SDXL, Delta-K improves the Complex score from 0.3230 to 0.3532 (+0.0302) and Spatial from 0.2111 to 0.2466 (+0.0355). On SD3.5-M, the Spatial metric increases from 0.3053 to 0.3487 (+0.0434), with consistent gains across attribute dimensions such as Shape (+0.0421) and Texture (+0.0435). Similar trends appear on GenEval, where the overall score improves from 0.55 to 0.58 and Two-object accuracy increases from 0.74 to 0.79. These improvements are particularly pronounced in spatial and compositional metrics, suggesting that the method primarily repairs failures caused by early competition in key space, while the smaller gains under higher mixing ratios indicate residual capacity limits when too many concepts must be anchored simultaneously.
+Efficiency and General Quality.
+We also ensure the performance improvement does not come at the cost of inference efficiency or general image quality. We measure inference speed (avg img/s in T2I-Compbench) and evaluate aesthetic quality using LAION-AES
+[
+Schuhmann et al., 2022
+]
+, CLIPScore
+[
+Hessel et al., 2021
+]
+, CLIP-IQA+
+[
+Wang et al., 2023
+]
+, and MUSIQ
+[
+Ke et al., 2021
+]
+. As shown in Table
+5
+, our method achieves comparable speed and aesthetic scores to the baseline models. This indicates that our methods for multi-instance generation introduce negligible computational and do not degrade visual fidelity.
+Figure 4
+:
+Qualitative rectification and cross-attention dynamics.
+Top: Delta-K successfully recovers omitted instances across both SDXL and SD3.5. Bottom: Cross-attention heatmaps for the SDXL example. In the baseline, the attention map for the missing token (“white dog”) is scattered and noisy. Delta-K successfully focuses this attention into a highly localized region. Importantly, the attention for the present token (“black dog”) remains nearly unchanged, which demonstrates that Delta-K achieves targeted augmentation without interfering with present tokens.
+5.3
+Ablation Study
+We conduct ablation studies on SDXL to analyze the contribution of each component in Delta-K. All variants are evaluated under the same generation setting.
+Scheduling Strategy.
+We study the impact of different augmentation strength scheduling methods. The full method adaptively optimizes the augmentation strength
+α
+t
+\alpha_{t}
+at each denoising step via online optimization. We compare it with three simplified alternatives:
+•
+Prompt-only. It only appends
+C
+m
+​
+i
+​
+s
+​
+s
+​
+i
+​
+n
+​
+g
+C_{missing}
+into the original prompt.
+•
+Constant-Strength (Constant). We apply fixed augmentation strength
+α
+=
+0.01
+\alpha=0.01
+throughout the diffusion process.
+•
+Linear-Strength (Linear). It adopts a linearly decaying schedule from
+α
+max
+=
+0.04
+\alpha_{\max}=0.04
+and gradually decreasing to zero, i.e.,
+α
+t
+=
+α
+max
+​
+max
+⁡
+(
+0
+,
+1
+−
+t
+/
+T
+)
+\alpha_{t}=\alpha_{\max}\max(0,1-t/T)
+.
+As shown in Table
+4
+, the prompt-only baseline provides only marginal improvement, indicating that simply reiterating the missing concepts in the prompt does not effectively resolve the omission problem. Both constant and linear strength schedules yield better results, suggesting that explicitly reinforcing the semantic signal of missing concepts is beneficial. However, fixed or heuristic schedules cannot adapt to the varying attention dynamics across denoising steps. In contrast, our adaptive scheduling strategy consistently achieves the best performance. By dynamically adjusting the augmentation strength according to the current attention distribution, the method strengthens missing concepts when their representations are weak while avoiding excessive intervention once stable semantic anchors are formed. This adaptive behavior stabilizes cross-attention responses and leads to more reliable multi-instance generation.
+Effect of the VLM Module.
+We test several VLMs for concept detection. Table
+7
+shows that Delta-K is robust to the choice of VLM, indicating that its effectiveness mainly stems from the architectural design rather than the reasoning capability of a specific VLM. Specifically, we evaluate four representative VLMs with different architectures and parameter scales, including GPT-4o, Kimi-VL-A3B-thinking, Qwen3-VL-8B-thinking, and Qwen-VL-Max. For a fair comparison, all models are used only for concept detection while keeping the remaining components of Delta-K unchanged. As shown in Table
+7
+, all VLMs yield nearly identical performance on both the Complex and Spatial metrics, with differences within a negligible margin. This result suggests that Delta-K does not rely on the reasoning strength of a particular VLM
+Number of Augmented Steps.
+We apply the augmentation in the first 5, 10, 30 and in all 50 steps. As shown in Table
+7
+, first-10-step augmentation performs the best. Extending augmentation to later steps provides little additional benefit and may even disturb already formed spatial structures. This observation aligns with our earlier analysis, where concept omission becomes predictable during the early semantic planning stage (as indicated by the high AUC signal).
+(a)
+Evolution of Attention Weight
+(b)
+C
+​
+V
+CV
+and
+α
+t
+\alpha_{t}
+Trajectory
+Figure 5
+:
+Quantitative analysis of temporal dynamics and adaptive scheduling.
+(a)
+Evolution of Attention Weight: Delta-K increases the mean attention activation of the missing token, resolving the suppression observed in the baseline.
+(b)
+C
+​
+V
+CV
+and
+α
+t
+\alpha_{t}
+Trajectory: The dynamic scheduler concentrates the intervention strength
+α
+t
+\alpha_{t}
+during the early generation steps. This early injection significantly reduces spatial instability
+C
+​
+V
+CV
+compared to the baseline. By lowering the
+C
+​
+V
+CV
+while the image layout forms, Delta-K successfully focuses the scattered attention into a stable region.
+5.4
+Case Study: Unpacking Spatiotemporal Dynamics
+To understand how Delta-K resolves concept omission, we analyze its spatiotemporal dynamics using two challenging prompts:
+P
+1
+P_{1}
+for SDXL (
+“A man in a brown jacket standing in a modern kitchen next to a black dog and a white dog.”
+) and
+P
+2
+P_{2}
+for SD3.5 (
+“A cozy living room with warm lights, home to a rabbit, a cat, and a dog.”
+). In both cases, the baseline fails to generate a specific instance (the “white dog” and the “cat”), which our VLM preview correctly identifies.
+Qualitative Rectification Across Architectures.
+As depicted in Figure
+4
+, the baseline models drop the specified instances. Delta-K successfully synthesizes these missing concepts in both SDXL and SD3.5. Crucially, the recovered concepts integrate naturally without disrupting the global layout or the attributes of pre-existing entities (e.g., the black dog). This confirms the backbone-agnostic robustness of our key-space intervention.
+Spatial Grounding: From Diffuse Noise to Structural Anchor.
+We visualize the cross-attention heatmaps for
+P
+1
+P_{1}
+. For the missing concept (“white dog”), the baseline attention is scattered and unanchored. Under Delta-K, this diffuse noise rapidly focuses into a highly localized structural anchor. Meanwhile, the attention map for the present concept (“black dog”) remains perfectly unperturbed. This demonstrates that our differential key injection strictly targets the omitted semantics, naturally preserving existing concepts via key-space orthogonality without requiring explicit spatial masks.
+We quantitatively track the generation process for
+P
+2
+P_{2}
+in Figure
+5
+to validate our dynamic scheduling. First, Figure
+5
+(a) shows that Delta-K significantly elevates the mean attention activation of the missing token, resolving its early suppression. More importantly, Figure
+5
+(b) plots spatial instability (
+C
+​
+V
+CV
+) against our dynamically optimized augmentation strength (
+α
+t
+\alpha_{t}
+). While the baseline
+C
+​
+V
+CV
+remains stubbornly high (failing to localize), Delta-K concentrates
+α
+t
+\alpha_{t}
+during the early steps, forcing the
+C
+​
+V
+CV
+to drop sharply. This proves that our adaptive scheduler does not merely scale up activations, but precisely guides the latent trajectory to establish a stable semantic representation exactly when the image layout forms.
+6
+Limitations and Future Work
+Our work opens several promising directions for future research. A more fine-grained analysis of information flow within layers could provide deeper insights into how different layers contribute to concept formation during denoising. Besides, it would be valuable to design a more efficient trainable framework that builds upon our augmentation mechanism. Such a framework could learn to predict more effective augmentation signals or adapt intervention strategies across different prompts and model architectures, potentially improving both robustness and efficiency. Additionally, understanding how semantic signals propagate across attention heads and timesteps may further enable more precise and adaptive control over concept generation in diffusion models.
+7
+Conclusion
+In this work, we revisit the problem of instance omission in text-to-image diffusion models and show that it originates from early-stage semantic mismatches rather than simple attention deficiency. Therefore, we propose Delta-K, a training-free method that intervenes directly in the Key space of cross-attention to reinforce missing concepts during generation. By extracting a differential semantic key vector and dynamically injecting it in the early denoising steps, Delta-K encourages missing concepts to receive stable attention and be correctly generated. Extensive experiments across multiple backbones and benchmarks demonstrate that our method consistently improves multi-instance generation while preserving inference efficiency and image quality. These results highlight the effectiveness of early semantic alignment in cross-attention for mitigating concept omission in diffusion models.
+References
+Agarwal
+et al.
+(2023)
+A. Agarwal, S. Karanam, K. Joseph, A. Saxena, K. Goswami, and B. V. Srinivasan
+A-star: test-time attention segregation and retention for text-to-image synthesis
+.
+In
+International Conference on Computer Vision
+,
+pp. 2283–2293
+.
+Cited by:
+§2
+.
+Bai
+et al.
+(2023)
+J. Bai, S. Bai, S. Yang, S. Wang, S. Tan, P. Wang, J. Lin, C. Zhou, and J. Zhou
+Qwen-vl: a versatile vision-language model for understanding, localization, text reading, and beyond
+.
+arXiv preprint arXiv:2308.12966
+.
+Cited by:
+Table 7
+.
+Bai
+et al.
+(2025)
+S. Bai, Y. Cai, R. Chen, K. Chen, X. Chen, Z. Cheng, L. Deng, W. Ding, C. Gao, C. Ge,
+et al.
+Qwen3-vl technical report
+.
+arXiv preprint arXiv:2511.21631
+.
+Cited by:
+§5.1
+,
+Table 7
+.
+Betker
+et al.
+(2023)
+J. Betker, G. Goh, L. Jing, T. Brooks, J. Wang, L. Li, L. Ouyang, J. Zhuang, J. Lee, Y. Guo,
+et al.
+Improving image generation with better captions
+.
+Computer Science. https://cdn. openai. com/papers/dall-e-3. pdf
+2
+(
+3
+),
+pp. 8
+.
+Cited by:
+Figure 3
+,
+Figure 3
+,
+Table 4
+,
+§5.1
+.
+Black
+et al.
+(2024)
+K. Black, M. Janner, Y. Du, I. Kostrikov, and S. Levine
+Training diffusion models with reinforcement learning
+.
+In
+International Conference on Learning Representations
+,
+Cited by:
+§2
+.
+Cai
+et al.
+(2025)
+M. Cai, X. Cun, X. Li, W. Liu, Z. Zhang, Y. Zhang, Y. Shan, and X. Yue
+Ditctrl: exploring attention control in multi-modal diffusion transformer for tuning-free multi-prompt longer video generation
+.
+In
+Proceedings of the Computer Vision and Pattern Recognition Conference
+,
+pp. 7763–7772
+.
+Cited by:
+Appendix E
+.
+Chefer
+et al.
+(2023)
+H. Chefer, Y. Alaluf, Y. Vinker, L. Wolf, and D. Cohen-Or
+Attend-and-excite: attention-based semantic guidance for text-to-image diffusion models
+.
+ACM transactions on Graphics (TOG)
+42
+(
+4
+),
+pp. 1–10
+.
+Cited by:
+§1
+,
+§2
+,
+Table 1
+,
+§5.1
+.
+Chen
+et al.
+(2023)
+J. Chen, J. Yu, C. Ge, L. Yao, E. Xie, Y. Wu, Z. Wang, J. Kwok, P. Luo, H. Lu,
+et al.
+Pixart-
+α
+\alpha
+: fast training of diffusion transformer for photorealistic text-to-image synthesis
+.
+arXiv preprint arXiv:2310.00426
+.
+Cited by:
+§5.1
+.
+Chen
+et al.
+(2024)
+M. Chen, I. Laina, and A. Vedaldi
+Training-free layout control with cross-attention guidance
+.
+In
+IEEE/CVF Winter Conference on Applications of Computer Vision
+,
+pp. 5343–5353
+.
+Cited by:
+§2
+.
+Choi and Han (2026)
+G. Choi and J. Han
+Stepwise attention control for training-free image editing
+.
+IEEE Access
+14
+,
+pp. 8789–8799
+.
+Cited by:
+Appendix E
+.
+Dayma
+et al.
+(2021)
+B. Dayma, S. Patil, P. Cuenca, K. Saifullah, T. Abraham, P. Le Khac, L. Melas, and R. Ghosh
+DALL-e mini
+.
+External Links:
+Document
+,
+Link
+Cited by:
+Table 2
+.
+Dosovitskiy (2020)
+A. Dosovitskiy
+An image is worth 16x16 words: transformers for image recognition at scale
+.
+arXiv preprint arXiv:2010.11929
+.
+Cited by:
+§2
+.
+Esser
+et al.
+(2024)
+P. Esser, S. Kulal, A. Blattmann, R. Entezari, J. Müller, H. Saini, Y. Levi, D. Lorenz, A. Sauer, F. Boesel,
+et al.
+Scaling rectified flow transformers for high-resolution image synthesis
+.
+In
+Forty-first international conference on machine learning
+,
+Cited by:
+§2
+,
+§3.1
+,
+Table 1
+,
+§5.1
+.
+Fan
+et al.
+(2023)
+Y. Fan, O. Watkins, Y. Du, H. Liu, M. Ryu, C. Boutilier, P. Abbeel, M. Ghavamzadeh, K. Lee, and K. Lee
+Reinforcement learning for fine-tuning text-to-image diffusion models
+.
+In
+Conference on Neural Information Processing Systems
+,
+Cited by:
+§2
+.
+Fang
+et al.
+(2023)
+G. Fang, Z. Jiang, J. Han, G. Lu, H. Xu, and X. Liang
+Boosting text-to-image diffusion models with fine-grained semantic rewards
+.
+arXiv preprint arXiv:2305.19599
+5
+.
+Cited by:
+§2
+.
+Feng
+et al.
+(2022)
+W. Feng, X. He, T. Fu, V. Jampani, A. Akula, P. Narayana, S. Basu, X. E. Wang, and W. Y. Wang
+Training-free structured diffusion guidance for compositional text-to-image synthesis
+.
+arXiv preprint arXiv:2212.05032
+.
+Cited by:
+§1
+,
+Table 1
+.
+Gao
+et al.
+(2025)
+Y. Gao, L. Gong, Q. Guo, X. Hou, Z. Lai, F. Li, L. Li, X. Lian, C. Liao, L. Liu,
+et al.
+Seedream 3.0 technical report
+.
+arXiv preprint arXiv:2504.11346
+.
+Cited by:
+Table 2
+,
+§5.1
+.
+Ghosh
+et al.
+(2023)
+D. Ghosh, H. Hajishirzi, and L. Schmidt
+Geneval: an object-focused framework for evaluating text-to-image alignment
+.
+Advances in Neural Information Processing Systems
+36
+,
+pp. 52132–52152
+.
+Cited by:
+§5.1
+.
+Golan
+et al.
+(2025)
+S. Golan, Y. Nitzan, Z. Wu, and O. Patashnik
+VLM-guided adaptive negative prompting for creative generation
+.
+arXiv preprint arXiv:2510.10715
+.
+Cited by:
+Appendix E
+.
+Guo
+et al.
+(2024)
+X. Guo, J. Liu, M. Cui, J. Li, H. Yang, and D. Huang
+Initno: boosting text-to-image diffusion models via initial noise optimization
+.
+In
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition
+,
+pp. 9380–9389
+.
+Cited by:
+§5.1
+.
+Hertz
+et al.
+(2023)
+A. Hertz, R. Mokady, J. Tenenbaum, K. Aberman, Y. Pritch, and D. Cohen-or
+Prompt-to-prompt image editing with cross-attention control
+.
+In
+International Conference on Learning Representations
+,
+Cited by:
+§1
+.
+Hessel
+et al.
+(2021)
+J. Hessel, A. Holtzman, M. Forbes, R. Le Bras, and Y. Choi
+Clipscore: a reference-free evaluation metric for image captioning
+.
+In
+Proceedings of the 2021 conference on empirical methods in natural language processing
+,
+pp. 7514–7528
+.
+Cited by:
+§5.2
+.
+Ho
+et al.
+(2020)
+J. Ho, A. Jain, and P. Abbeel
+Denoising diffusion probabilistic models
+.
+In
+Conference on Neural Information Processing Systems
+,
+Vol.
+33
+,
+pp. 6840–6851
+.
+Cited by:
+§2
+.
+Huang
+et al.
+(2023)
+K. Huang, K. Sun, E. Xie, Z. Li, and X. Liu
+T2i-compbench: a comprehensive benchmark for open-world compositional text-to-image generation
+.
+Advances in Neural Information Processing Systems
+36
+,
+pp. 78723–78747
+.
+Cited by:
+§1
+,
+§2
+,
+§5.1
+.
+Huang
+et al.
+(2025)
+Z. Huang, Y. Guo, X. An, Y. Yang, Y. Li, Z. Zou, D. Liang, X. Liu, Y. Cao, and L. Sheng
+Midi: multi-instance diffusion for single image to 3d scene generation
+.
+In
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition
+,
+pp. 23646–23657
+.
+Cited by:
+Appendix E
+.
+Hurst
+et al.
+(2024)
+A. Hurst, A. Lerer, A. P. Goucher, A. Perelman, A. Ramesh, A. Clark, A. Ostrow, A. Welihinda, A. Hayes, A. Radford,
+et al.
+GPT-4o system card
+.
+arXiv preprint arXiv:2410.21276
+.
+Cited by:
+Table 7
+.
+Jiang
+et al.
+(2024)
+D. Jiang, G. Song, X. Wu, R. Zhang, D. Shen, Z. Zong, Y. Liu, and H. Li
+Comat: aligning text-to-image diffusion model with image-to-text concept matching
+.
+In
+Conference on Neural Information Processing Systems
+,
+Vol.
+37
+,
+pp. 76177–76209
+.
+Cited by:
+§2
+.
+Jin
+et al.
+(2026)
+X. Jin, Y. Zhong, and Y. Tian
+TP-blend: textual-prompt attention pairing for precise object-style blending in diffusion models
+.
+arXiv preprint arXiv:2601.08011
+.
+Cited by:
+Appendix E
+.
+Ke
+et al.
+(2021)
+J. Ke, Q. Wang, Y. Wang, P. Milanfar, and F. Yang
+Musiq: multi-scale image quality transformer
+.
+In
+Proceedings of the IEEE/CVF international conference on computer vision
+,
+pp. 5148–5157
+.
+Cited by:
+§5.2
+.
+Khan
+et al.
+(2025)
+Z. Khan, S. Chen, and C. Schmid
+ComposeAnything: composite object priors for text-to-image generation
+.
+arXiv preprint arXiv:2505.24086
+.
+Cited by:
+Appendix E
+.
+Kim
+et al.
+(2023)
+Y. Kim, J. Lee, J. Kim, J. Ha, and J. Zhu
+Dense text-to-image generation with attention modulation
+.
+In
+International Conference on Computer Vision
+,
+pp. 7701–7711
+.
+Cited by:
+§2
+.
+Kingma and Ba (2014)
+D. P. Kingma and J. Ba
+Adam: a method for stochastic optimization
+.
+arXiv preprint arXiv:1412.6980
+.
+Cited by:
+§4.2
+.
+Labs (2024)
+B. F. Labs
+FLUX
+.
+Note:
+https://github.com/black-forest-labs/flux
+Cited by:
+§2
+,
+§5.1
+.
+Li
+et al.
+(2024a)
+D. Li, A. Kamko, E. Akhgari, A. Sabet, L. Xu, and S. Doshi
+Playground v2. 5: three insights towards enhancing aesthetic quality in text-to-image generation
+.
+arXiv preprint arXiv:2402.17245
+.
+Cited by:
+§5.1
+.
+Li
+et al.
+(2024b)
+D. Li, A. Kamko, E. Akhgari, A. Sabet, L. Xu, and S. Doshi
+Playground v2. 5: three insights towards enhancing aesthetic quality in text-to-image generation
+.
+arXiv preprint arXiv:2402.17245
+.
+Cited by:
+Table 1
+.
+Li
+et al.
+(2025)
+M. Li, X. Hou, Z. Liu, D. Yang, Z. Qian, J. Chen, J. Wei, Y. Jiang, Q. Xu, and L. Zhang
+Mccd: multi-agent collaboration-based compositional diffusion for complex text-to-image generation
+.
+In
+Proceedings of the Computer Vision and Pattern Recognition Conference
+,
+pp. 13263–13272
+.
+Cited by:
+Appendix E
+.
+Li
+et al.
+(2023a)
+Y. Li, H. Liu, Q. Wu, F. Mu, J. Yang, J. Gao, C. Li, and Y. J. Lee
+Gligen: open-set grounded text-to-image generation
+.
+In
+IEEE/CVF Conference on Computer Vision and Pattern Recognition
+,
+pp. 22511–22521
+.
+Cited by:
+§1
+,
+§2
+.
+Li
+et al.
+(2023b)
+Y. Li, M. Keuper, D. Zhang, and A. Khoreva
+Divide & bind your attention for improved generative semantic nursing
+.
+arXiv preprint arXiv:2307.10864
+.
+Cited by:
+§2
+.
+Liu
+et al.
+(2022)
+N. Liu, S. Li, Y. Du, A. Torralba, and J. B. Tenenbaum
+Compositional visual generation with composable diffusion models
+.
+In
+European conference on computer vision
+,
+pp. 423–439
+.
+Cited by:
+Table 1
+.
+Liu
+et al.
+(2024)
+S. Liu, B. Wang, Y. Ma, T. Yang, X. Cao, Q. Chen, H. Li, D. Dong, and P. Jiang
+Training-free subject-enhanced attention guidance for compositional text-to-image generation
+.
+arXiv preprint arXiv:2405.06948
+.
+Cited by:
+§1
+.
+Lv
+et al.
+(2025)
+Z. Lv, J. Chen, Q. Tian, K. Yin, S. Zhang, and F. Wu
+Multimodal llm-guided semantic correction in text-to-image diffusion
+.
+arXiv preprint arXiv:2505.20053
+.
+Cited by:
+Appendix E
+.
+Ma
+et al.
+(2024)
+B. Ma, Z. Zong, G. Song, H. Li, and Y. Liu
+Exploring the role of large language models in prompt encoding for diffusion models
+.
+In
+Conference on Neural Information Processing Systems
+,
+Cited by:
+§2
+.
+Meral
+et al.
+(2024)
+T. H. S. Meral, E. Simsar, F. Tombari, and P. Yanardag
+Conform: contrast is all you need for high-fidelity text-to-image diffusion models
+.
+In
+IEEE/CVF Conference on Computer Vision and Pattern Recognition
+,
+pp. 9005–9014
+.
+Cited by:
+§2
+.
+Mishra
+et al.
+(2025)
+U. A. Mishra, D. He, Y. Chen, and D. Xu
+Compositional diffusion with guided search for long-horizon planning
+.
+arXiv preprint arXiv:2601.00126
+.
+Cited by:
+Appendix E
+.
+Nichol
+et al.
+(2022)
+A. Q. Nichol, P. Dhariwal, A. Ramesh, P. Shyam, P. Mishkin, B. Mcgrew, I. Sutskever, and M. Chen
+Glide: towards photorealistic image generation and editing with text-guided diffusion models
+.
+In
+International Conference on Machine Learning
+,
+pp. 16784–16804
+.
+Cited by:
+§2
+.
+Parihar
+et al.
+(2025)
+R. Parihar, V. Agrawal, S. VS, and V. B. Radhakrishnan
+Compass control: multi object orientation control for text-to-image generation
+.
+In
+Proceedings of the Computer Vision and Pattern Recognition Conference
+,
+pp. 2791–2801
+.
+Cited by:
+Appendix E
+.
+Park
+et al.
+(2024)
+D. Park, S. Kim, T. Moon, M. Kim, K. Lee, and J. Cho
+Rare-to-frequent: unlocking compositional generation power of diffusion models on rare concepts with llm guidance
+.
+arXiv preprint arXiv:2410.22376
+.
+Cited by:
+Appendix E
+.
+Peebles and Xie (2023)
+W. Peebles and S. Xie
+Scalable diffusion models with transformers
+.
+In
+International Conference on Computer Vision
+,
+pp. 4195–4205
+.
+Cited by:
+§1
+,
+§2
+.
+Peng
+et al.
+(2025)
+M. Peng, Y. Xie, X. Guo, R. Yao, H. Yang, and J. Ma
+Ld-scene: llm-guided diffusion for controllable generation of adversarial safety-critical driving scenarios
+.
+arXiv preprint arXiv:2505.11247
+.
+Cited by:
+Appendix E
+.
+Phung
+et al.
+(2024)
+Q. Phung, S. Ge, and J. Huang
+Grounded text-to-image synthesis with attention refocusing
+.
+In
+IEEE/CVF Conference on Computer Vision and Pattern Recognition
+,
+pp. 7932–7942
+.
+Cited by:
+§2
+.
+Podell
+et al.
+(2024)
+D. Podell, Z. English, K. Lacey, A. Blattmann, T. Dockhorn, J. Müller, J. Penna, and R. Rombach
+Sdxl: improving latent diffusion models for high-resolution image synthesis
+.
+In
+International Conference on Learning Representations
+,
+Cited by:
+§1
+,
+§2
+,
+§3.1
+,
+Figure 3
+,
+Figure 3
+,
+Table 1
+,
+§5.1
+.
+Ramesh
+et al.
+(2022)
+A. Ramesh, P. Dhariwal, A. Nichol, C. Chu, and M. Chen
+Hierarchical text-conditional image generation with clip latents
+.
+arXiv preprint arXiv:2204.06125
+1
+(
+2
+),
+pp. 3
+.
+Cited by:
+§2
+.
+Rassin
+et al.
+(2023)
+R. Rassin, E. Hirsch, D. Glickman, S. Ravfogel, Y. Goldberg, and G. Chechik
+Linguistic binding in diffusion models: enhancing attribute correspondence through attention map alignment
+.
+Advances in Neural Information Processing Systems
+36
+,
+pp. 3536–3559
+.
+Cited by:
+§2
+,
+Table 1
+,
+§5.1
+.
+Ren
+et al.
+(2024)
+T. Ren, S. Liu, A. Zeng, J. Lin, K. Li, H. Cao, J. Chen, X. Huang, Y. Chen, F. Yan,
+et al.
+Grounded sam: assembling open-world models for diverse visual tasks
+.
+arXiv preprint arXiv:2401.14159
+.
+Cited by:
+§2
+.
+Rombach
+et al.
+(2022)
+R. Rombach, A. Blattmann, D. Lorenz, P. Esser, and B. Ommer
+High-resolution image synthesis with latent diffusion models
+.
+In
+IEEE/CVF Conference on Computer Vision and Pattern Recognition
+,
+pp. 10684–10695
+.
+Cited by:
+§2
+,
+§5.1
+.
+Schuhmann
+et al.
+(2022)
+C. Schuhmann, R. Beaumont, R. Vencu, C. Gordon, R. Wightman, M. Cherti, T. Coombes, A. Katta, C. Mullis, M. Wortsman,
+et al.
+Laion-5b: an open large-scale dataset for training next generation image-text models
+.
+Advances in neural information processing systems
+35
+,
+pp. 25278–25294
+.
+Cited by:
+§5.2
+.
+Song
+et al.
+(2021)
+J. Song, C. Meng, and S. Ermon
+Denoising diffusion implicit models
+.
+In
+International Conference on Learning Representations
+,
+Cited by:
+§2
+.
+Sun
+et al.
+(2025)
+J. Sun, D. Fu, Y. Hu, S. Wang, R. Rassin, D. Juan, D. Alon, C. Herrmann, S. Van Steenkiste, R. Krishna,
+et al.
+Dreamsync: aligning text-to-image generation with image understanding feedback
+.
+In
+North American Chapter of the Association for Computational Linguistics
+,
+pp. 5920–5945
+.
+Cited by:
+§2
+.
+Team
+et al.
+(2025)
+K. Team, A. Du, B. Yin, B. Xing, B. Qu, B. Wang, C. Chen, C. Zhang, C. Du, C. Wei, C. Wang, D. Zhang, D. Du, D. Wang, E. Yuan, E. Lu, F. Li, F. Sung, G. Wei, G. Lai, H. Zhu, H. Ding, H. Hu, H. Yang, H. Zhang, H. Wu, H. Yao, H. Lu, H. Wang, H. Gao, H. Zheng, J. Li, J. Su, J. Wang, J. Deng, J. Qiu, J. Xie, J. Wang, J. Liu, J. Yan, K. Ouyang, L. Chen, L. Sui, L. Yu, M. Dong, M. Dong, N. Xu, P. Cheng, Q. Gu, R. Zhou, S. Liu, S. Cao, T. Yu, T. Song, T. Bai, W. Song, W. He, W. Huang, W. Xu, X. Yuan, X. Yao, X. Wu, X. Zu, X. Zhou, X. Wang, Y. Charles, Y. Zhong, Y. Li, Y. Hu, Y. Chen, Y. Wang, Y. Liu, Y. Miao, Y. Qin, Y. Chen, Y. Bao, Y. Wang, Y. Kang, Y. Liu, Y. Du, Y. Wu, Y. Wang, Y. Yan, Z. Zhou, Z. Li, Z. Jiang, Z. Zhang, Z. Yang, Z. Huang, Z. Huang, Z. Zhao, and Z. Chen
+Kimi-VL technical report
+.
+External Links:
+2504.07491
+,
+Link
+Cited by:
+Table 7
+.
+Wang
+et al.
+(2023)
+J. Wang, K. C. Chan, and C. C. Loy
+Exploring clip for assessing the look and feel of images
+.
+In
+Proceedings of the AAAI conference on artificial intelligence
+,
+Vol.
+37
+,
+pp. 2555–2563
+.
+Cited by:
+§5.2
+.
+Wang
+et al.
+(2024a)
+Z. Wang, E. Xie, A. Li, Z. Wang, X. Liu, and Z. Li
+Divide and conquer: language models can plan and self-correct for compositional text-to-image generation
+.
+arXiv preprint arXiv:2401.15688
+.
+Cited by:
+§2
+.
+Wang
+et al.
+(2024b)
+Z. Wang, Z. Sha, Z. Ding, Y. Wang, and Z. Tu
+Tokencompose: grounding diffusion with token-level supervision
+.
+In
+IEEE Proceedings
+,
+Cited by:
+§2
+,
+Table 1
+.
+Wen
+et al.
+(2023)
+S. Wen, G. Fang, R. Zhang, P. Gao, H. Dong, and D. Metaxas
+Improving compositional text-to-image generation with large vision-language models
+.
+arXiv preprint arXiv:2310.06311
+.
+Cited by:
+§2
+.
+Wu
+et al.
+(2024a)
+X. Wu, Y. Hao, M. Zhang, K. Sun, Z. Huang, G. Song, Y. Liu, and H. Li
+Deep reward supervisions for tuning text-to-image diffusion models
+.
+In
+European Conference on Computer Vision
+,
+pp. 108–124
+.
+Cited by:
+§2
+.
+Wu
+et al.
+(2024b)
+X. Wu, D. Yu, Y. Huang, O. Russakovsky, and S. Arora
+Conceptmix: a compositional image generation benchmark with controllable difficulty
+.
+Advances in Neural Information Processing Systems
+37
+,
+pp. 86004–86047
+.
+Cited by:
+§5.1
+.
+Xie
+et al.
+(2023)
+J. Xie, Y. Li, Y. Huang, H. Liu, W. Zhang, Y. Zheng, and M. Z. Shou
+Boxdiff: text-to-image synthesis with training-free box-constrained diffusion
+.
+In
+International Conference on Computer Vision
+,
+pp. 7452–7461
+.
+Cited by:
+§1
+,
+§2
+.
+Xu
+et al.
+(2023)
+J. Xu, X. Liu, Y. Wu, Y. Tong, Q. Li, M. Ding, J. Tang, and Y. Dong
+Imagereward: learning and evaluating human preferences for text-to-image generation
+.
+In
+Conference on Neural Information Processing Systems
+,
+Vol.
+36
+,
+pp. 15903–15935
+.
+Cited by:
+§2
+.
+Yang
+et al.
+(2024)
+L. Yang, Z. Yu, C. Meng, M. Xu, S. Ermon, and B. Cui
+Mastering text-to-image diffusion: recaptioning, planning, and generating with multimodal llms
+.
+In
+International Conference on Machine Learning
+,
+Cited by:
+§2
+.
+Yao
+et al.
+(2025)
+Z. Yao, F. Feng, R. Li, and X. Wang
+Concept conductor: orchestrating multiple personalized concepts in text-to-image synthesis
+.
+In
+AAAI Conference on Artificial Intelligence
+,
+Vol.
+39
+,
+pp. 9427–9435
+.
+Cited by:
+§2
+.
+Zhang
+et al.
+(2026)
+R. Zhang, H. Wang, C. Liu, G. Wang, Z. Ma, and W. Zhang
+FreeText: training-free text rendering in diffusion transformers via attention localization and spectral glyph injection
+.
+arXiv preprint arXiv:2601.00535
+.
+Cited by:
+Appendix E
+.
+Zhang
+et al.
+(2025)
+R. Zhang, Y. Tian, and W. Liu
+ConceptCraft: attention-based multi-concept decoupling for text-to-image personalization
+.
+In
+2025 IEEE 31th International Conference on Parallel and Distributed Systems (ICPADS)
+,
+pp. 1–4
+.
+Cited by:
+Appendix E
+.
+Zhou
+et al.
+(2025)
+D. Zhou, M. Li, Z. Yang, and Y. Yang
+Dreamrenderer: taming multi-instance attribute control in large-scale text-to-image models
+.
+arXiv preprint arXiv:2503.12885
+.
+Cited by:
+§2
+.
+Zhou
+et al.
+(2024a)
+D. Zhou, Y. Li, F. Ma, X. Zhang, and Y. Yang
+Migc: multi-instance generation controller for text-to-image synthesis
+.
+In
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition
+,
+pp. 6818–6828
+.
+Cited by:
+Appendix E
+.
+Zhou
+et al.
+(2024b)
+D. Zhou, J. Xie, Z. Yang, and Y. Yang
+3dis: depth-driven decoupled instance synthesis for text-to-image generation
+.
+arXiv preprint arXiv:2410.12669
+.
+Cited by:
+Appendix E
+.
+Appendix A
+Experiment details
+Implementation.
+All experiments are implemented in PyTorch and conducted on NVIDIA RTX4090 and A100 GPUs with FP16 precision. We evaluate three representative diffusion backbones: U-Net based Stable Diffusion XL 1.0, DiT-based Stable Diffusion 3.5-M, and Flux-dev. For visual–linguistic alignment, we employ a VLM with temperature set to 0 and strict JSON parsing to extract missing or under-represented concepts from the prompt. The extracted concepts are mapped to token indices using the CLIPTokenizer. Masked text embeddings are then constructed by replacing the corresponding tokens with
+<
+|
+e
+​
+n
+​
+d
+​
+o
+​
+f
+​
+t
+​
+e
+​
+x
+​
+t
+|
+>
+<|endoftext|>
+placeholders, which are used to compute the Delta Key values in the cross-attention key augmentation process.
+The complete experimental configuration is summarized in Table
+8
+. We also show our prompt for vlm in
+D
+.
+Table 8
+:
+Experiment details with hardware, VLM config, denoising model configuration, and Delta-K schedule.
+Category
+SDXL
+SD3.5
+Flux
+Hardware
+Framework
+PyTorch
+PyTorch
+PyTorch
+GPU
+RTX4090 / A100
+A100
+A100
+Precision
+FP16
+FP16
+FP16
+VLM
+Temperature
+0
+0
+0
+Output format
+JSON parsing
+JSON parsing
+JSON parsing
+Denoising Model
+Tokenizer
+CLIP
+CLIP & T5
+T5
+Special placeholder
+<|endoftext|>
+<pad>
+&
+<|endoftext|>
+<pad>
+Total denoising steps
+40
+28
+28
+Delta-K Schedule
+α
+t
+max
+\alpha_{t}^{\max}
+0.03
+3
+3
+Learning rate
+η
+\eta
+0.001
+0.002
+0.002
+Iterations per step
+100
+100
+100
+Augmentation stage
+down_blocks_1
+transformer_blocks
+transformer_blocks
+Attention Entropy Analysis.
+To determine the most suitable stage for augmentation, we analyze the stage-level attention entropy during the denoising process using prompt samples such as “
+a living room with a sofa, a man, a brown table and a desk
+”.
+Figure 6
+:
+Attention entropy over denoising steps.
+We first study the evolution of attention dispersion across denoising steps. Intuitively, lower entropy indicates that attention is concentrated on a smaller set of key tokens, while higher entropy suggests a more diffuse allocation pattern. This helps reveal which stage is more responsible for establishing global semantic layout and which stage mainly refines local details.
+Here
+attn
+n
+​
+(
+q
+,
+k
+)
+\mathrm{attn}_{n}(q,k)
+denotes the attention weight between the
+q
+q
+-th query and
+k
+k
+-th key in the
+n
+n
+-th head, and
+mass
+n
+\mathrm{mass}_{n}
+represents the aggregated attention mass of each key token summed across all queries. This metric captures the dispersion–concentration dynamics of cross-attention over the denoising process. As shown in Fig.
+6
+, the Down stage exhibits noticeably lower entropy during early steps, indicating concentrated attention patterns responsible for establishing coarse semantic structure, whereas the Up stage maintains higher entropy and is more associated with detail refinement.
+The entropy is defined as:
+H
+s
+(
+t
+)
+=
+𝔼
+n
+[
+−
+∑
+P
+n
+log
+P
+n
+]
+,
+H_{s}(t)=\mathbb{E}_{n}\left[-\sum P_{n}\log P_{n}\right],
+(10)
+where
+P
+n
+=
+mass
+n
+∑
+k
+mass
+n
+​
+[
+k
+]
+,
+mass
+n
+=
+∑
+q
+attn
+n
+​
+(
+q
+,
+k
+)
+.
+P_{n}=\frac{\mathrm{mass}_{n}}{\sum_{k}\mathrm{mass}_{n}[k]},\qquad\mathrm{mass}_{n}=\sum_{q}\mathrm{attn}_{n}(q,k).
+(11)
+Based on this observation, we apply the augmentation to
+down_block.1
+of the U-Net architecture (
+32
+×
+32
+32\times 32
+resolution) and restrict the intervention to the first 10 denoising steps. To ensure fair comparisons, all scheduling strategies operate within the same active window. The linear baseline schedules decay linearly from their peak strength, while the proposed Delta-K schedule dynamically adjusts the augmentation coefficients through test-time optimization.
+Appendix B
+Theoretical Analysis of Delta-K
+In this section, we provide formal mathematical justifications for the empirical behaviors observed in the main text. Specifically, we analyze why Delta-K does not significantly interfere with successfully generated concepts in
+B.1
+and how it promotes the spatial concentration of diffuse attention maps in
+B.2
+.
+Assumption 1
+(Local Intervention)
+.
+Throughout our analysis, we isolate the effect of Delta-K within a single cross-attention block. We assume that for a given forward pass, the visual query vectors
+Q
+Q
+are fixed, and we analyze the immediate perturbation caused by injecting
+Δ
+​
+K
+\Delta K
+. We omit the compounding non-linear effects of Layer Normalization and Feed-Forward Networks across consecutive layers, as our objective is to characterize the local perturbation behavior in the
+Q
+​
+K
+T
+QK^{T}
+semantic matching space.
+Figure 7
+:
+Spatiotemporal analysis of cross-attention dynamics in SDXL. (a) Intensity Divergence: Mean attention scores for “Present” vs. “Missing” concepts. (b) Early Detectability: AUC score for detecting omission; the curve remains relatively stable across steps with a peak AUC of 0.64. (c) Signal Stability: Coefficient of Variation (CV) showing that missing concepts correspond to unstable, high-variance attention patterns.
+B.1
+Semantic Orthogonality and Non-Interference
+A key advantage of Delta-K is that it enhances omitted concepts while preserving already established semantic bindings. This behavior can be understood through the concentration properties of high-dimensional representations.
+Theorem 1
+(Semantic Orthogonality Bound)
+.
+Let the cross-attention dimension be
+d
+k
+d_{k}
+. Let
+Q
+present
+∈
+ℝ
+d
+k
+Q_{\text{present}}\in\mathbb{R}^{d_{k}}
+denote the query vector associated with a successfully generated concept, and
+Δ
+​
+K
+∈
+ℝ
+d
+k
+\Delta K\in\mathbb{R}^{d_{k}}
+denote the differential key vector extracted through the VLM-guided masking procedure. Assume that embedding vectors follow a sub-Gaussian distribution with variance proxy
+σ
+2
+\sigma^{2}
+. Under an augmentation strength
+α
+t
+\alpha_{t}
+, the probability that the induced perturbation
+δ
+\delta
+on the pre-softmax attention logit exceeds a threshold
+ϵ
+>
+0
+\epsilon>0
+satisfies:
+ℙ
+⁡
+(
+|
+δ
+|
+≥
+ϵ
+)
+≤
+2
+​
+exp
+⁡
+(
+−
+c
+​
+ϵ
+2
+​
+d
+k
+α
+t
+2
+​
+‖
+Q
+present
+‖
+2
+2
+​
+‖
+Δ
+​
+K
+‖
+2
+2
+)
+,
+\mathbb{P}\left(|\delta|\geq\epsilon\right)\leq 2\exp\left(-\frac{c\epsilon^{2}d_{k}}{\alpha_{t}^{2}\|Q_{\text{present}}\|_{2}^{2}\|\Delta K\|_{2}^{2}}\right),
+(12)
+where
+c
+>
+0
+c>0
+is a constant determined by the sub-Gaussian norm of the embeddings.
+Proof.
+In the baseline generation process, the attention logit associated with a present concept is
+S
+base
+=
+1
+d
+k
+​
+⟨
+Q
+present
+,
+K
+present
+⟩
+.
+S_{\text{base}}=\frac{1}{\sqrt{d_{k}}}\langle Q_{\text{present}},K_{\text{present}}\rangle.
+(13)
+Under Delta-K augmentation, the key vector becomes
+K
+′
+=
+K
++
+α
+t
+​
+Δ
+​
+K
+.
+K^{\prime}=K+\alpha_{t}\Delta K.
+(14)
+The updated logit therefore becomes
+S
+new
+=
+⟨
+Q
+present
+,
+K
++
+α
+t
+​
+Δ
+​
+K
+⟩
+d
+k
+=
+S
+base
++
+α
+t
+d
+k
+​
+⟨
+Q
+present
+,
+Δ
+​
+K
+⟩
+⏟
+δ
+.
+S_{\text{new}}=\frac{\langle Q_{\text{present}},K+\alpha_{t}\Delta K\rangle}{\sqrt{d_{k}}}=S_{\text{base}}+\underbrace{\frac{\alpha_{t}}{\sqrt{d_{k}}}\langle Q_{\text{present}},\Delta K\rangle}_{\delta}.
+(15)
+The perturbation
+δ
+\delta
+depends on the inner product between
+Q
+present
+Q_{\text{present}}
+and
+Δ
+​
+K
+\Delta K
+. Since
+Δ
+​
+K
+\Delta K
+captures the residual semantic component introduced by the missing concept relative to the masked prompt, its direction is typically weakly correlated with query vectors associated with already established concepts.
+Under the sub-Gaussian embedding assumption, the inner product
+⟨
+Q
+present
+,
+Δ
+​
+K
+⟩
+\langle Q_{\text{present}},\Delta K\rangle
+can be treated as a sum of sub-Gaussian random variables. Applying a standard concentration inequality for inner products of sub-Gaussian vectors yields
+ℙ
+⁡
+(
+α
+t
+d
+k
+​
+|
+⟨
+Q
+present
+,
+Δ
+​
+K
+⟩
+|
+≥
+ϵ
+)
+≤
+exp
+⁡
+(
+−
+2
+​
+c
+​
+ϵ
+2
+​
+d
+k
+α
+t
+2
+​
+‖
+Q
+present
+‖
+2
+2
+​
+‖
+Δ
+​
+K
+‖
+2
+2
+)
+.
+\mathbb{P}\left(\frac{\alpha_{t}}{\sqrt{d_{k}}}|\langle Q_{\text{present}},\Delta K\rangle|\geq\epsilon\right)\leq\exp\left(\frac{-2c\epsilon^{2}d_{k}}{\alpha_{t}^{2}\|Q_{\text{present}}\|_{2}^{2}\|\Delta K\|_{2}^{2}}\right).
+(16)
+Hence the perturbation magnitude decays exponentially with the embedding dimension
+d
+k
+d_{k}
+, implying that the influence on already established concepts is negligible with high probability.
+∎
+Remark.
+Theorem
+1
+indicates that the perturbation introduced by
+Δ
+​
+K
+\Delta K
+rapidly diminishes as the representation dimension increases. Combined with the bounded augmentation strength imposed by the dynamic scheduler (e.g.,
+α
+t
+m
+​
+a
+​
+x
+=
+0.03
+\alpha_{t}^{max}=0.03
+), this ensures that Delta-K primarily influences queries aligned with the missing concept while leaving existing concepts largely unaffected.
+B.2
+Attention Focusing and Spatial Stabilization
+In Section 3.2, we observed that missing concepts typically exhibit diffuse and unstable attention patterns. We now analyze how Delta-K reshapes this distribution by redistributing attention mass toward semantically aligned regions.
+Theorem 2
+(Attention Mass Concentration)
+.
+Let
+A
+∈
+ℝ
+N
+A\in\mathbb{R}^{N}
+denote the normalized attention distribution of a missing concept across
+N
+N
+spatial tokens. Let
+ℐ
+target
+\mathcal{I}_{\text{target}}
+denote spatial locations corresponding to the correct concept region. Under Assumption
+1
+, suppose that injecting
+α
+t
+​
+Δ
+​
+K
+\alpha_{t}\Delta K
+produces a positive logit shift
+Δ
+​
+s
+>
+0
+\Delta s>0
+for tokens in
+ℐ
+t
+​
+a
+​
+r
+​
+g
+​
+e
+​
+t
+\mathcal{I}_{target}
+while leaving background logits approximately unchanged. Then the updated attention distribution
+A
+′
+A^{\prime}
+satisfies:
+P
+target
+′
+>
+P
+target
+,
+P^{\prime}_{\text{target}}>P_{\text{target}},
+(17)
+where
+P
+target
+=
+∑
+i
+∈
+ℐ
+target
+A
+i
+.
+P_{\text{target}}=\sum_{i\in\mathcal{I}_{\text{target}}}A_{i}.
+Proof.
+The original attention probability for token
+i
+i
+is:
+A
+i
+=
+exp
+⁡
+(
+s
+i
+)
+∑
+k
+exp
+⁡
+(
+s
+k
+)
+.
+A_{i}=\frac{\exp(s_{i})}{\sum_{k}\exp(s_{k})}.
+(18)
+After Delta-K injection, logits within the target region become:
+s
+i
+′
+=
+s
+i
++
+Δ
+​
+s
+i
+,
+s_{i}^{\prime}=s_{i}+\Delta s_{i},
+(19)
+where:
+Δ
+​
+s
+i
+=
+α
+t
+d
+k
+​
+⟨
+Q
+i
+,
+Δ
+​
+K
+⟩
+.
+\Delta s_{i}=\frac{\alpha_{t}}{\sqrt{d_{k}}}\langle Q_{i},\Delta K\rangle.
+(20)
+For tokens in
+ℐ
+target
+\mathcal{I}_{\text{target}}
+, semantic alignment implies
+Δ
+​
+s
+>
+0
+\Delta s>0
+. Background tokens receive negligible perturbation due to the orthogonality property established in Theorem
+1
+.
+Let:
+P
+target
+=
+∑
+i
+∈
+ℐ
+target
+A
+i
+.
+P_{\text{target}}=\sum_{i\in\mathcal{I}_{\text{target}}}A_{i}.
+(21)
+After the logit shift, the new probability mass assigned to the target region becomes:
+A
+i
+′
+=
+A
+i
+​
+exp
+⁡
+(
+Δ
+​
+s
+i
+)
+A
+i
+​
+exp
+⁡
+(
+Δ
+​
+s
+i
+)
++
+(
+1
+−
+A
+i
+)
+.
+A^{\prime}_{i}=\frac{A_{i}\exp(\Delta s_{i})}{A_{i}\exp(\Delta s_{i})+(1-A_{i})}.
+(22)
+Since
+∀
+i
+∈
+ℐ
+target
+,
+exp
+⁡
+(
+Δ
+​
+s
+i
+)
+>
+1
+\forall i\in\mathcal{I}_{\text{target}},\ \exp(\Delta s_{i})>1
+, it follows that:
+P
+target
+′
+=
+∑
+i
+∈
+ℐ
+target
+A
+i
+′
+>
+P
+target
+.
+P^{\prime}_{\text{target}}=\sum_{i\in\mathcal{I}_{\text{target}}}A^{\prime}_{i}>P_{\text{target}}.
+(23)
+Consequently, attention mass is redistributed from diffuse background regions toward semantically aligned spatial locations. This reallocation increases the concentration of attention around the correct concept region and suppresses background noise.
+∎
+Remark.
+Theorem
+2
+shows that Delta-K increases the attention mass assigned to semantically aligned regions through a positive logit shift. Empirically, this redistribution often corresponds to more stable and spatially localized attention maps, which explains the reduction of instability indicators such as the Coefficient of Variation observed in our experiments.
+Figure 8
+:
+More examples.
+Appendix C
+Extended Analysis on SDXL Architecture
+To verify the generalizability of our motivation across different architectural paradigms, we extend our analysis to SDXL, a representative U-Net based Latent Diffusion Model. Figure
+7
+illustrates the spatiotemporal dynamics of cross-attention during multi-instance generation, corresponding to the analysis of SD3.5 presented in the main text.
+Intensity Divergence.
+As shown in Figure
+7
+(a), the divergence in attention intensity between successfully generated (“Present”) and omitted (“Missing”) concepts remains evident. Consistent with our observations in SD3.5, “Present” concepts maintain higher mean attention scores throughout the diffusion process, whereas “Missing” concepts persistently exhibit lower intensity. This confirms that the failure to aggregate sufficient attention magnitude is a shared characteristic of concept omission in both U-Net and DiT architectures.
+Early Detectability.
+Figure
+7
+(b) quantifies the detectability of omission failures using the AUC metric. Unlike the sharp peak observed in SD3.5, the AUC curve for SDXL demonstrates relative stability across the diffusion steps. Although the peak AUC value of approximately 0.64 is not necessarily attained at the very initial steps, the variation in AUC scores throughout the process is minimal. This suggests that while the peak discriminative signal is moderate compared to SD3.5, the reliability of detection in SDXL is sustained over a broader range of steps rather than being confined to a fleeting early phase.
+Signal Stability.
+The analysis of spatial stability, measured by the Coefficient of Variation (CV), mirrors the findings in SD3.5. As depicted in Figure
+7
+(c), “Present” concepts are characterized by low CV values, indicating spatially concentrated and stable attention regions. In contrast, “Missing” concepts show persistently high CV values, reflecting scattered, noise-like attention distributions. This distinction highlights that regardless of the backbone architecture, concept omission is fundamentally linked to the inability to form a stable spatial representation in the latent space.
+Appendix D
+Prompt for VLM
+Prompts for Visual Fidelity Verification
+#
+INPUT: Text Prompt, Generated Image
+You are a high-precision vision QA tool. Your task is to verify the visual fidelity of an image against a specific text prompt by focusing on concrete entities and their immediate modifiers.
+PROMPT:
+{
+prompt
+}
+Evaluation Steps:
+1)
+Entity-Attribute Extraction:
+Deconstruct the prompt into specific nouns or short
+modifier-noun
+phrases (e.g., vintage clock, golden retriever, marble floor). Ignore broad actions or complex clauses.
+2)
+Visual Strictness Check:
+For each extracted phrase, verify whether the visual evidence exactly matches every word in that phrase. If the prompt specifies a transparent glass bottle but the image shows an opaque plastic bottle, the phrase should be marked as missing.
+3)
+Reasoning:
+Evaluate whether the specific physical attributes (color, texture, material, quantity, or relative position) described in the prompt are visibly evident in the image.
+Task:
+1)
+present_tokens:
+List up to top
+k
+noun-based phrases or entities from the PROMPT where all modifiers are correctly and clearly depicted.
+2)
+missing_tokens:
+List up to top
+k
+noun-based phrases or entities from the PROMPT that are absent, have incorrect modifiers (e.g., wrong color or material), or are visually ambiguous.
+Strict Rules:
+-
+Extract only nouns or short adjective/attribute + noun structures.
+-
+Use the exact wording from the PROMPT. No paraphrasing.
+-
+Be strict with modifiers. If a “blue silk tie” appears as a “blue wool tie”, it must be listed under missing_tokens.
+-
+Return a strict JSON object only. No markdown or additional explanations.
+Output Format:
+{"present_tokens": [],
+"missing_tokens": []
+}
+Appendix E
+More Related Work
+Advanced Layout and Regional Control.
+While explicit spatial adapters impose structural priors, recent advancements delve deeper into decomposing the multi-instance generation into localized sub-tasks
+[
+Zhou et al., 2024a
+;
+Li et al., 2025
+]
+or decoupling spatial planning from DiT-based detail rendering
+[
+Zhou et al., 2024b
+]
+. Further refinements align region-specific embeddings with orientation constraints
+[
+Parihar et al., 2025
+]
+, high-frequency attention modulations, or dense typographic layouts
+[
+Zhang et al., 2026
+]
+, structurally enhancing the precision of multi-object positioning and attribute binding without demanding holistic retraining. Moreover, these spatial routing mechanisms have been fundamentally extended into 3D domains, enabling coherent multi-object scene generation via multi-instance diffusion
+[
+Huang et al., 2025
+]
+.
+LLM and VLM-Assisted Composition.
+Beyond standard text encoders, incorporating Large Language Models (LLMs) as external cognitive planners significantly mitigates the omission of rare concepts
+[
+Park et al., 2024
+]
+, initializes structured composite priors
+[
+Khan et al., 2025
+]
+, and facilitates complex scene graph reasoning during inference
+[
+Mishra et al., 2025
+;
+Peng et al., 2025
+]
+. Simultaneously, Vision-Language Models (VLMs) are increasingly integrated into the denoising trajectory as real-time semantic evaluators
+[
+Lv et al., 2025
+]
+. This enables dynamic closed-loop optimizations—such as adaptive negative prompting
+[
+Golan et al., 2025
+]
+and iterative reward feedback learning—to ensure strict prompt-image alignment in dense visual scenes.
+Deep Feature Modulation and Personalization.
+Expanding upon superficial attention reweighting, emerging training-free paradigms actively intervene in deeper orthogonal feature representations, such as the Value space, for disentangled object-style blending
+[
+Jin et al., 2026
+]
+and step-wise semantic injection
+[
+Choi and Han, 2026
+;
+Cai et al., 2025
+]
+. Particularly in multi-subject personalization tasks, establishing explicit semantic correspondence or employing layout-guided feature resamplers efficiently prevents catastrophic identity fusion. Recent efforts further eliminate the need for explicit spatial masks by leveraging self-supervised dual representation alignments or attention-based concept disentanglement
+[
+Zhang et al., 2025
+]
+. These robust multi-instance identity preservation techniques are also being translated into spatiotemporal domains via intent-aware modulation and temporal-wise separable attention.
+Appendix F
+More Examples of Delta-K
+We provide more examples of Delta-K comparing to baseline model and sota closed-source models in
+8
+.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

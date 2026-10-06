@@ -1,0 +1,1099 @@
+DistFlow: A Fully Distributed RL Framework for Scalable and Efficient LLM Post-Training
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract.
+1
+Introduction
+2
+Background and Motivation
+2.1
+Reinforcement Learning for LLMs
+2.2
+Scalability Challenges in RL
+2.3
+Distributed System Architectures for RL
+2.4
+Limitations of existing RL systems
+2.5
+Design Considerations
+3
+DistFlow
+Overview
+4
+DAG Planner
+4.1
+Input DAG Definition
+4.2
+DAG Decomposition
+5
+DAG Worker
+6
+Data Coordinator
+6.1
+Distributed Dataloader
+6.2
+Distributed Databuffer
+7
+Evaluation
+7.1
+Experiments Setup
+7.2
+End-to-End Evaluation
+7.3
+Scalability Evaluation
+7.4
+Long-Context Evaluation
+7.5
+Convergence
+8
+Related Works
+9
+Conclusion
+References
+License: arXiv.org perpetual non-exclusive license
+arXiv:2507.13833v1 [cs.DC] 18 Jul 2025
+DistFlow
+: A Fully Distributed RL Framework for Scalable and Efficient LLM Post-Training
+Zhixin Wang
+email:
+wangzx@sii.edu.cn
+Affiliation:
+Shanghai Innovation Institute
+,
+Zhejiang University
+,
+Tianyi Zhou
+email:
+tyzhou@sii.edu.cn
+Affiliation:
+Shanghai Innovation Institute
+,
+Fudan University
+,
+Liming Liu
+email:
+liuliming@sii.edu.cn
+Affiliation:
+Shanghai Innovation Institute
+,
+Ao Li
+email:
+liao@sii.edu.cn
+Affiliation:
+Shanghai Innovation Institute
+,
+Jiarui Hu
+email:
+hujiarui@sii.edu.cn
+Affiliation:
+Shanghai Innovation Institute
+,
+Dian Yang
+email:
+yangdian@sii.edu.cn
+Affiliation:
+Shanghai Innovation Institute
+,
+Jinlong Hou
+email:
+houjinlong@sii.edu.cn
+Affiliation:
+Shanghai Innovation Institute
+,
+Siyuan Feng
+email:
+syfeng@sii.edu.cn
+Affiliation:
+Shanghai Innovation Institute
+,
+Yuan Cheng
+email:
+cheng_yuan@fudan.edu.cn
+Affiliation:
+Shanghai Innovation Institute
+,
+A
+​
+I
+3
+AI^{3}
+, Fudan University
+,
+Shanghai Academy of AI for Science
+and
+Yuan Qi
+email:
+qiyuan@fudan.edu.cn
+Affiliation:
+Shanghai Innovation Institute
+,
+A
+​
+I
+3
+AI^{3}
+, Fudan University
+,
+Shanghai Academy of AI for Science
+Abstract.
+Reinforcement learning (RL) has become the pivotal post-training technique for large language model. Effectively scaling reinforcement learning is now the key to unlocking advanced reasoning capabilities and ensuring safe, goal-aligned behavior in the most powerful LLMs. Mainstream frameworks usually employ a hybrid-controller architecture where a single-controller dispatches the overall execution logic and manages overall data transfer and the multi-controller executes distributed computation. For large-scale reinforcement learning, minor load imbalances can introduce significant bottlenecks, ultimately constraining the scalability of the system.
+To address this limitation, we introduce
+DistFlow
+, a novel, fully distributed RL framework designed to break scaling barrier. We adopt a multi-controller paradigm that dispatches data transfer and execution tasks to all workers, which eliminates the centralized node. This allows each worker to operate independently, leading to near-linear scalability up to thousands of GPUs and dramatic efficiency gains. Furthermore, our architecture decouples resource configuration from execution logic, allowing each worker to have a unique execution flow, offering significant flexibility for rapid and cost-effective algorithmic experimentation. Extensive experiments show that
+DistFlow
+achieves excellent linear scalability and up to a 7x end-to-end throughput improvement over state-of-the-art (SOTA) frameworks.
+1.
+Introduction
+The large language model (LLM) and vision language model (VLM) development paradigm starts with pretraining on massive datasets to build a foundation model, followed by supervised fine-tuning (SFT)
+(
+1
+)
+to teach it instruction following. While this process creates a knowledgeable and task-capable model, it inherently falls short in ensuring reliable alignment with human values and robustly performing complex reasoning. Hence, the paradigm incorporates a third stage: Reinforcement Learning
+(
+2
+)
+, the key technique responsible for the advanced capabilities of modern AI like Deepseek-R1
+(
+3
+)
+, GPT-4o
+(
+4
+)
+, Gemini 2.5 Pro
+(
+5
+)
+, Claude 4
+(
+6
+)
+and Grok 4
+(
+7
+)
+. Unlike earlier stages that rely on static data, RL is a dynamic and goal-directed optimization process. It quantifies human preferences by training a reward model, which serves as a guiding signal to shape the model’s output. This process reinforces advanced reasoning capabilities and enforces alignment with human values.
+Reinforcement learning algorithms, such as Proximal Policy Optimization (PPO)
+(
+8
+)
+and Group Relative Policy Optimization (GRPO)
+(
+9
+)
+, have emerged as mainstream approaches in LLM post-training due to their stability and efficiency. A typical RL training iteration consists of three main stages. First, the actor model generates responses to input prompts. Next, these responses are evaluated to compute an optimization signal. This signal often combines a preference-based reward, an advantage estimate to guide the learning direction, and a regularization penalty to ensure training stability. Finally, the actor model is updated using this comprehensive signal to improve its alignment and capabilities.
+Figure 1.
+Popular RL algorithms, specifically (a) Proximal Policy Optimization and (b) Group Relative Policy Optimization, can be modeled as a DAG. Each node in the graph represents a distinct computational operation, such as Actor Generation or Actor Train, while the edges signify the data dependencies that dictate the execution order.
+The overall RL workflow can be modeled as a directed acyclic graph (DAG), where nodes represent computation operations and edges represent data dependencies, as shown in Figure
+1
+. In large-scale systems, varied parallelization strategies across distinct processing stages introduces significant complexity in coordinating data and control flows. Traditional RL systems, such as OpenRLHF
+(
+10
+)
+, employed a disaggregated architecture, partitioning the system into distinct services for inference and training. This architecture enables flexible resource specialization through stage-specific optimization. However, its strict synchronization requirements forcing each stage to wait for the previous one to complete. This sequential execution results in significant resource idleness and low GPU utilization. Moreover, this separation introduces substantial data transfer overhead between the services. These limitations severely decrease the throughput of the system.
+Researchers adopted colocated architectures to address the efficiency issues of disaggregated architectures. In this paradigm, the generation and training stages are executed on the same set of computational resources, with the system alternating between these two phases. This approach eliminates resource idleness and reduces data communication overhead. Building on this, frameworks like  verl
+(
+11
+)
+have introduced hybrid controller paradigm that merge the flexibility of single-controller with the efficiency of multi-controller, thereby improving system throughput. However, such architectures introduce new challenges. Although hybrid controller evenly dispatches the computation operation to multi-controller, the dataflow is managed by single-controller, including initial dataset loading and the collection and dispatch of vast intermediate data. The centralized mode forces all data to flow through a single node, creating significant I/O and communication overhead that becomes a severe bottleneck. Consequently, when scaling the system to thousands of GPUs, this single-controller approach is overwhelmed by the massive volume of data, leading to instability and crashes.
+To address those major limitations, we introduce
+DistFlow
+, a fully distributed RL training framework with high throughput efficiency and flexible execution pipeline. By adopting a multi-controller paradigm,
+DistFlow
+eliminates the central node common in traditional frameworks. It distributes data loading, computation, and collection responsibilities evenly across all workers, removing single-node bottlenecks. This decentralized data and computation flow enables the framework to achieve linear scalability up to a thousand-GPU scale and remarkable runtime efficiency.
+Another key feature of
+DistFlow
+is its modular pipeline, defined by a user-input DAG. This design completely decouples the algorithm’s logic from physical resource management. Researchers can define their entire RL workflow in a DAG, focusing solely on algorithmic design. The framework then automatically maps this logical graph to the underlying hardware. This maximizes resource utilization and empowers researchers to develop and validate novel algorithms efficiently and cost-effectively.
+To validate the effectiveness of our framework, we conduct a comprehensive experimental evaluation. The results show that
+DistFlow
+exhibits exceptional performance and linear scalability across various cluster configurations, ranging from a single node to a thousand-GPU scale. Compared to current SOTA synchronous frameworks,
+DistFlow
+achieves up to a 7x speedup in end-to-end training throughput across different scenarios.
+The main contributions of this work can be summarized as follows:
+•
+We analyze the core performance bottlenecks of existing RL frameworks, identifying the centralized dataflow controller as a critical constraint on both scalability and efficiency.
+•
+We design and implement
+DistFlow
+, a novel RL framework featuring a fully distributed architecture to eliminate the single-node bottleneck. By employing a multi-controller paradigm and decentralized data management, it achieves superior scalability. Its flexible, DAG-defined pipeline also decouples algorithmic logic from physical implementation, enabling rapid experimentation.
+•
+We conduct extensive evaluations of
+DistFlow
+against SOTA systems. Our results demonstrate near-linear scalability up to a thousand-GPU scale and show up to a 7x end-to-end throughput improvement across various algorithms, model sizes, and data-intensive workloads.
+2.
+Background and Motivation
+2.1.
+Reinforcement Learning for LLMs
+Models and Workflow.
+Recent advancements in artificial intelligence have demonstrated that RL provides a powerful framework for enhancing language models beyond their pretrained capabilities
+(
+1
+,
+2
+)
+, enabling them to better align with human preferences and solve increasingly complex tasks. In the single-step optimization iteration of models trained via large-scale RL, four core models operate in concert
+(
+12
+,
+13
+)
+: the Actor Model, which serves as the target model for generating responses; the Reward Model, responsible for providing preference-based rewards for specific tasks
+(
+14
+)
+; the Reference Model, which functions as a benchmark for measuring knowledge accuracy; and the Critic Model, which evaluates value. The training process follows a meticulously designed three-step iterative workflow: Generation, Evaluation, and Training. During the Generation phase, the Actor model receives a batch of prompts as input and auto-regressively generates corresponding text responses for each one. Once response generation is complete, the process advances to the Evaluation phase, where the Reward Model, Reference Model, and Critic Model each provide scores for the current responses. The final Training phase constitutes the core of the RL training process, wherein these three scores are integrated to calculate the advantage function, and through backpropagation, only the parameters of the Actor and Critic are updated, while the Reward and Reference remain frozen throughout the process
+(
+15
+)
+.
+Algorithms.
+Policy Optimization serves as the critical mechanism in reinforcement learning that updates a model’s decision-making strategy to maximize expected rewards by systematically improving the policy based on feedback signals, as shown in Figure
+1
+. PPO enhances stability during training by implementing a clipped objective function that prevents destructive policy updates while maintaining sample efficiency
+(
+16
+)
+. GRPO reduces computational costs by eliminating the need for a separate critic model and instead estimates baselines from group scores, making large-scale language model reinforcement learning more efficient
+(
+3
+)
+.
+Paradigm Shift.
+Rather than just predicting the next token, RL transforms language models into agents that can optimize toward specific objectives defined by reward functions
+(
+17
+,
+18
+,
+19
+)
+. Through this approach, RL frameworks enable models to improve through interaction and feedback, rather than being limited by their initial training data
+(
+20
+,
+21
+)
+. Previously, it was widely believed that pre-training scaling capabilities established the ceiling for model training and inference, but recent research has challenged this view, especially the performance breakthrough of Grok 4
+(
+7
+,
+22
+,
+23
+,
+24
+)
+. Indeed, while pretraining improvements are showing diminishing returns, RL offers a new avenue for significant advancements in model capabilities
+(
+25
+,
+26
+,
+27
+)
+.
+2.2.
+Scalability Challenges in RL
+Scaling Laws in RL.
+Scaling brings about emergent model capabilities in advanced AI systems. Additionally, we can observe that after scaling up computing resources, Grok 4 demonstrated emergent abilities in Humanity’s Last Exam tasks, pointing to a promising path for future research. The scaling of computational resources significantly impacts a model’s ability to handle complex tasks, while simultaneously placing higher demands on efficient parallelization strategies to fully leverage these resources
+(
+28
+)
+.
+Parallelism Strategies.
+Common parallel strategies include Data Parallel (DP), Tensor Parallel (TP), Pipeline Parallel (PP), etc. DP generally uses parameter sharding methods like Zero Redundancy Optimizer (ZeRO)
+(
+29
+)
+to parallelize model training across multiple devices, and will provide sample-level parallelism by processing different data batches on different devices while synchronizing gradients. TP, as implemented in Megatron-LM
+(
+30
+)
+, decomposes matrix multiplications and distributes them across multiple GPUs, providing operation-level parallelism that effectively addresses memory constraints in large transformer models. PP simply divides the neural network into sequential stages across devices, enabling efficient pipelining of micro-batches through different model layers while reducing peak memory requirements.
+Bottleneck of RL scaling
+While scaling computational resources and data generally improves model performance, largescale RL training faces unique bottlenecks that prevent linear scaling. Unlike supervised learning where more data almost always helps, RL systems can actually experience performance degradation with increased batch sizes, as the correlation between consecutive updates becomes weaker, making learning less stable
+(
+28
+)
+.
+Simply adding more computational resources doesn’t guarantee proportional performance improvements in RL systems. As RL training progresses, models tend to increasingly overoptimize against reward models, leading to diminishing returns
+(
+16
+)
+.
+This overoptimization creates a fundamental ceiling on performance gains regardless of additional computing power.For instance, the data skewness problem in generation stages causes significant GPU underutilization as only a few long-tailed samples keep expensive computational resources waiting
+(
+31
+)
+.
+2.3.
+Distributed System Architectures for RL
+Controller Paradigms.
+Distributed machine learning systems, particularly those designed for reinforcement learning, employ different controller paradigms to manage computation across hardware resources. These paradigms fundamentally shape how algorithms are implemented, scaled, and optimized in practice
+(
+28
+)
+.
+Single-Controller.
+The Single-Controller paradigm employs a centralized controller to manage the overall execution flow of the distributed program. With centralized control logic, users can build core functionalities of the dataflow as a single process, while the controller automatically generates distributed workers to carry out the computation. This approach provides a global view of hardware and dataflow graphs, allowing flexible and optimized resource mapping and execution order coordination among dataflow tasks. However, coordination messages are passed from the controller to all workers, incurring significant dispatch overhead when executing expansive dataflow graphs on large clusters
+(
+28
+)
+.
+Multi-Controller.
+In contrast, the Multi-Controller paradigm distributes control logic by giving each device (or worker) its own controller. This approach is commonly used in RL frameworks
+(
+28
+)
+, similar to recent RL training systems
+(
+15
+)
+, where multiple long-running distributed programs operate with each component coordinating execution order through hard-coded data synchronization. While this reduces the central coordination bottleneck, it often results in complex implementation and maintenance challenges, particularly when scaling to large model architectures or cluster sizes.
+Figure 2.
+The single-controller bottleneck. All data operations, from initial loading to the circulation of intermediate data between stages, are flowed through the centralized controller, leading to severe communication overhead and scalability limitations.
+2.4.
+Limitations of existing RL systems
+Demanding.
+To address the efficiency issues of earlier designs, researchers have adopted architectures that rely on a single-controller for high-level orchestration, with some frameworks like verl introducing a hybrid paradigm that merges this with the efficiency of multi-controllers for computation. While this approach can improve system throughput in limited-scale scenarios, its reliance on a single-controller for managing the entire dataflow introduces a fundamental and critical limitation: an inability to scale.
+In the current era of AI research, where training frontier models on thousands of GPUs is becoming a core requirement, the ability to scale efficiently is quite important. Systems built on a single-controller dataflow, whether fully centralized or hybrid, are inherently incapable of meeting this demand. This architectural choice, where a centralized node orchestrates all data-related tasks, becomes a severe bottleneck as computational resources increase. This design is overwhelmed by the massive volume of data at large scales, leading to instability and failures that fundamentally constrain research and development. This critical scalability issue, along with an inflexible pipeline design, reveals that such architectures are unsuited for the demands of modern, large-scale AI research.
+Single-Controller Bottleneck.
+As shown in Figure
+2
+, the bottleneck of the single-controller node is particularly serious. This design adopts a single-controller paradigm, where a centralized controller orchestrates the entire dataflow. Its responsibilities encompass all data-related tasks, from the initial loading of the dataset to the large-scale intermediate data across different computational stages. This centralized design forces all intermediate data to flow through controller node, introducing costly "one-to-all" and "all-to-one" communication operations. These operations introduce substantial I/O and communication costs, severely impacting system efficiency, especially for data-intensive tasks such as multi-modal or long-text generation. This architecture not only demonstrates inefficiency but fundamentally constrains system scalability. In large-scale distributed training, the peak volume of data can easily overwhelm the controller node’s memory, leading to out-of-memory (OOM) errors and thereby limiting the system’s peak data processing capacity. Consequently, the single-controller acts as a dual bottleneck, constraining both the efficiency and the scalability of the entire system.
+Rigid Algorithmic Pipeline.
+Furthermore, the rigid algorithmic pipeline constitutes another limitation. The data flow and control flow in RL systems are inherently complex, and the computational workflow in such frameworks is engineered as a highly integrated, fixed logic that lacks sufficient flexibility. This predefined architectural design forces users to directly engage with the source code for any modifications to the pipeline. This approach not only presents an engineering challenge but also prolongs the iteration cycle for innovative experiments, severely limiting the framework’s potential for scientific exploration.
+2.5.
+Design Considerations
+These fundamental limitations in scalability and flexibility demonstrate that existing frameworks, which rely on a centralized dataflow controller, are unsuitable for the growing demands of large-scale AI research. In contrast, a multi-controller architecture is inherently well-suited for this challenge, as it enables a fully distributed system where both data and computation can be managed without a central bottleneck. Therefore, the core motivation of this work is to design a novel framework built upon this principle. We propose a fully distributed architecture designed to address the limitations of traditional systems. Its core features include a decentralized, multi-controller architecture that eliminates the central node, which delivers high throughput and linear scalability. Additionally,
+DistFlow
+utilizes a modular pipeline defined by a user-input DAG, which decouples the algorithm’s logic from physical resource management.
+3.
+DistFlow
+Overview
+Figure 3.
+Overview of
+DistFlow
+.
+Therefore, we introduce
+DistFlow
+, a fully distributed RL framework designed for scalability on large-scale clusters. As illustrated in Figure
+3
+,
+DistFlow
+employs a multi-controller paradigm that uniformly dispatches all computational and data flow across each GPU.
+DistFlow
+consists of three main components: a DAG Planner (§
+4
+), DAG Workers (§
+5
+), and a Data Coordinator (§
+6
+). The DAG Planner receives a custom DAG file from user and splits the overall DAG into a number of individual DAG tasks, equal to the number of DAG Workers, with each task containing no parallel nodes. The DAG Worker is the core logic executor, with each worker bound to a single GPU; it receives and executes a single DAG Task from the DAG Planner. Each DAG Worker has a Distributed Dataloader to load the corresponding data before task execution. The Data Coordinator manages all data coordination among the DAG Workers. At the end of each stage, it collects data into a series of Distributed Databuffers, which is then dispatched at the start of the following stage.
+The workflow of
+DistFlow
+is as follows. Before training, users are required to provide three essential configurations: Model Config, Training Config, and Algorithm Config. When utilizing custom execution pipelines, an additional DAG Config must be specified; however, this configuration becomes optional when employing built-in algorithms such as GRPO or PPO. The Model Config specifies the architecture and the corresponding parallelism strategy for each model in the dataflow. The Training Config and Algorithm Config supply the necessary training settings and hyperparameters, respectively.
+Upon receiving these config, the DAG Planner processes the global DAG and decomposes it into the smallest executable units, referred to as DAG Tasks. DAG tasks can be replicated across different DAG Workers. These DAG tasks are then dispatched to a set of DAG Workers, where each DAG Worker is bound to a single GPU, forming the fundamental computational unit. Each DAG Worker initializes by loading its assigned model and data, then setting up the required training and inference engines with the configured parallelization strategy. After initialization, all DAG Workers begin to execute their assigned DAG tasks in parallel. During execution, data need to be redistributed among DAG Workers because the changes in parallelism strategies between different stages. This is managed by the Data Coordinator, which automatically senses the parallelism configuration of each stage. It orchestrates the collection and dispatch of data through a series of Distributed Databuffers, ensuring seamless data flow across the system. The system allocates one databuffer per node.
+We implemented our system based on PyTorch
+(
+32
+)
+. For resource management of GPU and CPU resources, we use Ray
+(
+33
+)
+which is an open source framework to build and scale ML and Python applications easily. Our system’s architecture integrates specialized engines for different operations. We use PyTorch Fully Sharded Data Parallel (FSDP)
+(
+32
+)
+as the training engine to execute both inference and training operations. For generation operations, we utilize inference engines such as vLLM
+(
+34
+)
+and SGLang
+(
+35
+)
+, which are designed for efficient auto-regressive generation. To manage these components, and inspired by the hierarchical API design of verl , our system uses the 3DParallelWorker base class.
+4.
+DAG Planner
+To address the complexity of implementing diverse RL workflows, our framework is centered on a DAG-defined execution model. The core design principle is to decouple the logical representation of the algorithmic workflow from its physical computation resource. This separation of concerns is achieved through two main components: a declarative DAG interface for users and a backend DAG Planner that translates the logical graph into an executable task chain.
+Figure 4.
+Decomposing a user-defined DAG into a sequential execution pipeline. DAG Planner transforms parallel nodes like Inference I and Inference II into a sequential chain.
+4.1.
+Input DAG Definition
+The framework empowers users to define a complete RL workflow through a configuration file. This file specifies a DAG where each node represents a primitive computational step. The node abstraction is defined by four key attributes: a unique Node ID for identification; a Role (e.g., ACTOR, CRITIC, REWARD, REFERENCE) to specify its functional purpose; a Type (e.g., MODEL_INFERENCE, MODEL_TRAIN, COMPUTE) to clarify the nature of the computation; and Dependencies to establish the execution order and data flow between nodes. By using this high-level abstraction, users can focus on algorithmic logic rather than the low-level complexities of distributed scheduling.
+4.2.
+DAG Decomposition
+A primary challenge in executing a user-defined DAG is ensuring its safe and efficient adaptation to a resource-constrained, colocated architecture where multiple large models share the same resource pool.
+Our framework addresses this challenge through the DAG Planner. Its fundamental responsibility is to translate the logical graph into a concrete, linearized execution pipeline that avoids resource contention and potential OOM errors. To achieve this, the planner automatically serializes the workflow by analyzing the logical depth of each node. If multiple nodes exist at the same depth, which would imply parallel execution, the planner systematically introduces dependencies to enforce a sequential order. For instance, as illustrated in Figure
+4
+, if an input DAG contains two parallel nodes, Inference I and Inference II, the planner transforms the graph by making one a prerequisite for the other.
+This design decouples the high-level algorithmic logic from the low-level execution plan, allowing researchers to define complex workflows without manually managing serialization. This automated process guarantees that only one node is active at any given time.
+5.
+DAG Worker
+Figure 5.
+Mapping of node definitions to their corresponding execution functions. The DAG Worker dynamically binds a specific computational function to the node based on node_role and node_type.
+The central challenge after defining a logical workflow is its translation into a concrete and extensible execution model. Our system addresses this by introducing the DAG Worker, a core component designed to execute a serialized task chain on a single GPU while providing maximum flexibility for algorithmic experimentation.
+The DAG Worker is the framework’s fundamental execution unit. Its design is governed by two key abstractions: a structured lifecycle and a dynamic function dispatch mechanism. The lifecycle is composed of an Initialization phase, where the worker prepares its computational environment, and an iterative Execution phase, where it processes the task chain. The dynamic function dispatch mechanism decouples a node’s logical definition (Role and Type) from its implementation, allowing for a modular and pluggable architecture.
+This abstracted design is realized through a concrete operational flow. In the Initialization phase, the worker instantiates its environment based on the abstract DAG. It uses a Distributed Dataloader to acquire data, loads the specified models, and initializes backend engines like vLLM, SGLang, PyTorch FSDP, or Megatron. It then materializes the task chain into a concrete execution queue, binding the appropriate function to each node, as illustrated in Figure
+5
+.
+During the subsequent Execution phase, the worker enters a loop for each RL iteration. It requests a data batch and sequentially executes each node in the chain. A databuffer serves as an intermediary state manager, providing necessary inputs to each function and storing its outputs. Upon completing the chain, metrics are aggregated at the global rank 0 via an efficient all-to-one communication. The primary benefit of this model is its inherent extensibility. The decoupling of the workflow’s structure (defined in the DAG) from its operational logic (resolved by the function mapping) allows researchers to rapidly innovate. For instance, introducing a new reward calculation method or a different policy loss function does not require altering the core dataflow. A researcher can simply implement the new logic in a custom function and map it to a node in the DAG, seamlessly integrating it into the execution pipeline without modifying the surrounding framework.
+6.
+Data Coordinator
+In large-scale distributed RL, data management presents a two-fold challenge. First, a centralized approach to initial data loading fundamentally conflicts with a scalable distributed architecture. Forcing a single node to load and then distribute a massive dataset creates an inherent bottleneck, limiting both scalability and efficiency. Second, the dynamic nature of RL workflows, where computational stages like Generation and Training may employ different parallel strategies, necessitates an efficient and correct mechanism for redistributing intermediate data across workers to prevent system stalls or silent training errors.
+To address these challenges, our framework introduces a unified Data Coordinator. This coordinator is a high-level abstraction for the entire data lifecycle, composed of two specialized, distributed components: the Distributed Dataloader and the Distributed Databuffer. The Dataloader is responsible for the static, one-time loading of the initial dataset, ensuring data is correctly partitioned at the source. The Databuffer, in contrast, manages the dynamic, transient flow of intermediate data between computational stages, ensuring correct data circulation. Together, these components guarantee load balancing from initial data loading through the entire data flow among DAG Workers.
+Figure 6.
+Workflow of Distributed Dataloader. Consistent with
+DistFlow
+fully distributed architecture, the data loading process is decentralized, eliminating single-node bottleneck. The Distributed Dataloader ensures that each data-parallel group of workers is responsible for loading only its specific partition of the dataset. As illustrated with a DP size of two, the total dataset is split into two shards. The worker group with DP rank 0 loads the first shard (samples 0-255), while the group with DP rank 1 loads the second (samples 256-511).
+6.1.
+Distributed Dataloader
+In large-scale scenarios, a centralized approach where one node loads the entire dataset is fundamentally inefficient and unscalable. Therefore, to maintain architectural consistency and performance, our framework implements a Distributed Dataloader. The number of Distributed Dataloaders equals the number of DAG Workers, i.e., the number of GPUs. Each dataloader only loads the data required by its corresponding DAG Worker during the rollout stage, avoiding any redundant data. This approach inherently avoids single-node memory bottlenecks and achieves higher data loading efficiency through parallelism.
+During the initialization phase, the Distributed Dataloader obtains the parallelism strategy information of its associated DAG Worker. It partitions the dataset into corresponding regions based on the DP size and loads the appropriate data according to the DP group rank. Figure
+6
+illustrates the execution logic of a Distributed Dataloader, taking a dataset with 512 samples as an example, where the rollout stage employs a parallelism strategy with DP of 2 and TP of 2. As shown in Figure
+6
+, the Distributed Dataloader partitions the dataset into two regions based on the DP size: samples 0-255 are set as the first region, and samples 256-511 as the second. During loading, the two DAG Workers with a DP group rank of 0 will load data from the first region, while those with a DP group rank of 1 will load from the second. The data loading is executed in parallel, which brings an improvement in loading efficiency.
+Figure 7.
+The data redistribution mechanism when DP size changes. The databuffer re-partitions data across stages with different DP sizes. Each source databuffer slices the data from source worker, distributes these partitions to all databuffers, and then each databuffer concatenates the received slices to form a new batch for the subsequent stage.
+The Distributed Databuffer re-partitions data across stages with different data parallelism (DP) sizes. Each source databuffer slices its local data, distributes the slices to all other databuffers in an all-to-all pattern, and each destination databuffer then concatenates the received data to form a correctly-sized batch for the next stage.
+6.2.
+Distributed Databuffer
+The Distributed Databuffer, a core component for data flow, is responsible for data redistribution between RL stages. One instance is allocated per node and shared by local workers. Its primary function is to act as a parallelism-aware intermediary, ensuring both the correctness and efficiency of data flow during stage transitions where the DP sizes of consecutive stages may differ.
+The operational logic begins after a computation stage concludes. To avoid data redundancy from multiple model replicas, only the DAG Worker with a TP rank of 0 places its generated data into its local databuffer. The databuffer then anticipates the requirements of the next stage and handles two distinct scenarios based on whether the DP size changes:
+The operational logic of databuffer adapts based on the parallelism requirements of the subsequent stage. When the DP size remains unchanged, the databuffer executes a fast-path operation by placing the received data directly into the node’s shared memory. This allows workers in the next stage to retrieve it directly for computation with minimal overhead, resulting in higher efficiency. In contrast, if the DP size differs, the databuffer initiates a more complex multi-step redistribution process. It first slices its locally-held data into a number of partitions equal to the number of databuffers in the cluster and distributes them via an all-to-all communication pattern, as shown in Figure
+7
+. Following this, each databuffer concatenates the multiple partitions it receives from its peers and stores the newly consolidated data block. Finally, when the DAG Workers for the next stage request their data, the databuffer distributes the appropriate slices to its intra-node workers according to their new DP rank.
+Figure 8.
+Workflow of Distributed Databuffer. The databuffer handles data redistribution between stages with different DP sizes. It collects output from the source stage workers and re-partitions the data to match the parallelism strategy of the destination stage, ensuring a correct and efficient data flow.
+For instance, as depicted in Figure
+8
+, assume a Generation stage (DP=2, TP=2) transitions to a Training stage (DP=4) with a global batch size of 64. In the Generation stage, the workers with TP rank 0 will place their 32 samples into their corresponding databuffer. The databuffer, aware that the subsequent stage has a DP size of 4, will then perform the redistribution process and subsequently allocate 16 samples to each of the four DAG Workers for training. This automated handling ensures correct data flow and load balancing for any stage transition.
+7.
+Evaluation
+7.1.
+Experiments Setup
+We conduct a series of experiments to evaluate
+DistFlow
+’s efficiency and scalability across four key scenarios. First, we assess overall performance on language models from 7B to 72B using PPO and GRPO algorithms, scaling up to 128 GPUs. Second, we test the linear scalability of
+DistFlow
+with VLMs on up to 1024 GPUs using the GRPO algorithm; this is performed only on
+DistFlow
+as the baseline system encounters OOM errors under the same global batch size. Third, we compare
+DistFlow
+’s performance against the baseline using the maximum batch sizes supported by the baseline in a multi-modal setting. Fourth, we evaluate performance in long-context scenarios with context lengths from 8K to 64K tokens to highlight
+DistFlow
+’s dataflow optimizations. Finally, a convergence test is run for 20 epochs to ensure that
+DistFlow
+’s performance improvements do not compromise model accuracy.
+Testbed.
+We deploy
+DistFlow
+on a cluster with 128 nodes, where each node is equipped with 8 NVIDIA Hopper GPUs interconnected with NVLink. The nodes are connected by an RDMA network over RoCE v2. Our evaluation is conducted under the software settings with PyTorch 2.6.0, CUDA 12.6, vLLM 0.8.5.post1, and NCCL 2.21.5.
+Models and Algorithms.
+We evaluate system performance using the PPO and GRPO algorithms. For the PPO experiments, a function reward is utilized in place of a reward model, with the critic model matching the actor’s size. We use the Qwen-2.5-Instruct series for language models and the Qwen-2.5-VL-Instruct series for VLMs, with model sizes of 7B, 32B, and 72B.
+Datasets.
+For language model setting, we use DeepScaleR-Preview-Dataset
+(
+36
+)
+, which contains about 40,000 unique math problems, while for VLM experiments, we choose MM-Eureka-Dataset
+(
+37
+)
+. All experiments are under the default maximum prompt length 2048, and the maximum response length 4096, with padding applied to shorter responses.
+Baseline.
+We benchmark
+DistFlow
+against  verl
+(
+11
+)
+v0.4.0, a state-of-the-art RL training system. Other frameworks
+(
+10
+,
+29
+,
+38
+)
+are not selected for comparison due to their lower throughput relative to  verl. Both
+DistFlow
+and  verl use vLLM as an inference engine and PyTorch FSDP as the training backend. The primary performance metric is throughput, measured in tokens per second, and is calculated from the total tokens in a global batch divided by the time for one iteration. Results are averaged over several iterations following a warm-up period to ensure accuracy.
+Figure 9.
+Throughput comparison of
+DistFlow
+and  verl using the PPO algorithm. The results show that
+DistFlow
+is consistently faster than the baseline for all model sizes (7B, 32B, 72B) and GPU counts (up to 128).
+DistFlow
+achieves a speedup of 1.09x to 1.64x, and this speedup increases as more GPUs are added. Notably, the baseline runs OOM when training the 72B model on 32 GPUs, while
+DistFlow
+completes the task successfully. This trend underscores the enhanced overall efficacy of
+DistFlow
+’s fully distributed architecture, which successfully mitigates the single-node dataflow bottleneck that constrains the scalability and stability of the baseline system. The global batch size is 1024 per node for the 7B and 32B models, and 512 per node for the 72B model.
+Figure 10.
+Throughput comparison of
+DistFlow
+and  verl using the GRPO algorithm. With the GRPO algorithm, which uses more data,
+DistFlow
+’s speed advantage is even greater, reaching up to 2.62x faster than the baseline. This result highlights how well
+DistFlow
+’s distributed data system works, especially when the baseline’s single-controller approach creates a major slowdown. The global batch size is 1024 per node for the 7B models, 512 per node for the 32B model and 256 per node for the 72B model.
+7.2.
+End-to-End Evaluation
+In our end-to-end evaluation, shown in Figure
+9
+and Figure
+10
+,
+DistFlow
+consistently outperforms the baseline across all tested configurations. This superior performance is directly because of our fully distributed dataflow architecture, which eliminates the single-controller bottleneck that plagues the baseline system. By distributing data management tasks across all GPUs,
+DistFlow
+avoids the communication and I/O constraints that cripple centralized designs, especially at scale. Our framework’s advantage is most pronounced in data-intensive scenarios. For PPO algorithm (Figure
+9
+), we achieve 1.09x - 1.64x speedup comparing to the baseline. Remarkable, with the GRPO algorithm (Figure
+10
+), which involves a larger data volume,
+DistFlow
+achieves a speedup of up to 2.62x. This highlights how our architecture excels where the baseline’s centralized data handling fails.
+This performance gap widens as computational resources increase. As we scale to more GPUs, the baseline’s single-node bottleneck becomes more severe, lowering its throughput. In contrast,
+DistFlow
+’s performance scales effectively, with its speedup over the baseline increasing with the GPU count. The baseline’s architectural limits are made clear when it produces an OOM error with the 72B model on 32 GPUs, a task
+DistFlow
+handles without issue. Additionally, smaller models, which have a higher communication-to-compute ratio, benefit most. By optimizing the dataflow that constitutes a larger portion of their runtime,
+DistFlow
+delivers a 2.26x speedup for the 7B model on 128 GPUs, demonstrating the profound efficiency gains of our distributed approach.
+Figure 11.
+Scalability evaluation of
+DistFlow
+with VLM models. This experiment demonstrates
+DistFlow
+’s near-linear scalability on large clusters, scaling up to 1024 GPUs. This is attributed to its fully distributed architecture, which uniformly balances both computational and dataflow workloads. For the 32B model, performance at 512 GPUs retains 80.5% of the throughput at 64 GPUs. The global batch size is 1024 per node for the 7B models, 512 per node for the 32B model and 256 per node for the 72B model.
+Figure 12.
+Performance comparison using baseline-constrained maximum batch sizes. This experiment presents a direct performance comparison in a multi-modal setting using the GRPO algorithm. A standard comparison is infeasible due to the baseline’s OOM errors. Therefore, for each cluster scale, this experiment first identifies the maximum global batch size the baseline can support and then benchmarks both systems under that specific constraint. The specific global batch sizes are shown in Table
+1
+. The results demonstrate the advantage of
+DistFlow
+’s fully distributed approach, which achieves a speedup of up to 7x over the baseline.
+7.3.
+Scalability Evaluation
+The experimental results from our scalability evaluation directly highlight the benefits of our framework’s fully distributed design. Figure
+11
+demonstrates near-linear scaling, a critical capability for efficient large-scale training from 32 GPUs up to 1024 GPUs. Such consistent performance suggests that the system effectively distributes all workloads, including data communication, thus avoiding the bottlenecks that typically hinder performance as a cluster grows. This robust scalability is further emphasized when compared to the baseline, which cannot complete the same linearity tests due to OOM errors. These failures indicate architectural limitations in handling dataflow at scale. Even in configurations where the baseline can run, its performance does not scale as effectively, which leads to a widening performance gap as more resources are added. This shows that our approach successfully overcomes the challenges that prevent other systems from achieving true performance linearity.
+Table 1.
+Maximum global batch size supported by the baseline at different GPU scales.
+Model
+# GPUs
+Global Batch Size
+7B
+32
+1024
+64
+512
+128
+256
+256
+64
+32B
+64
+512
+128
+256
+256
+64
+512
+32
+72B
+128
+256
+256
+64
+512
+32
+1024
+16
+Figure 13.
+Long-context performance evaluation. The results show that
+DistFlow
+’s performance advantage increases with longer context lengths. For the 7B model, the speedup over the baseline grows from 1.48x at an 8k context length to 2.03x at 64k. This is because
+DistFlow
+’s distributed architecture efficiently manages the larger data volumes associated with long-context tasks. The baseline again encounters an out-of-memory error with the 72B model at a 32k context length.
+The practical benefits of
+DistFlow
+’s architecture are clearly demonstrated in our scalability experiments, conducted using the GRPO algorithm with VLMs on the MM-Eureka-Dataset. As shown in Figure
+11
+, the global batch size is scaled proportionally with the number of nodes. For the 32B model, as we scale from 64 to 512 GPUs, the average throughput per GPU remains remarkably consistent, retaining 80.5% of its initial performance at the 512-GPU mark. This demonstrates near-linear scaling, a direct result of our distributed dataflow design. While we also scale the 72B model up to 1024 GPUs, we observe some performance degradation when scaling beyond 256 GPUs. This bottleneck stems from the FSDP training backend, not a limitation of the
+DistFlow
+system itself. We plan to address this by replacing the backend with Megatron
+(
+30
+)
+to achieve better scaling in future work.
+Besides, we still want to do a direct linearity comparison with the baseline, as the baseline system consistently failed with OOM errors under these conditions. To provide a direct comparison, we instead identify the maximum global batch size the baseline can support at each cluster scale and benchmark both systems under those conditions, with the specific global batch sizes detailed in Table
+1
+. The results, presented in Figure
+12
+, which shows that
+DistFlow
+is significantly faster than the baseline, especially in VLM settings and on large-scale clusters, achieving a speedup of up to 7x. This huge performance gap underscores the critical advantage of
+DistFlow
+’s fully distributed approach.
+7.4.
+Long-Context Evaluation
+Long-context capability is a critical frontier for LLMs, particularly for the development of advanced agent systems that must process extensive histories or documents. These scenarios create highly data-intensive workloads where the sheer volume of token data can overwhelm a system’s communication fabric. Our evaluation (Figure
+13
+) in these long-context settings demonstrates that
+DistFlow
+’s fully distributed dataflow provides a significant and scalable advantage. By allowing each node to manage its portion of the data, our framework avoids the severe communication overhead that troubles centralized systems, where all data must be funneled through a single, congested point.
+The results, presented in Figure
+13
+, confirm this advantage empirically. For the 7B model,
+DistFlow
+’s throughput speedup over the baseline progressively grows from 1.48x at an 8k context length to an impressive 2.03x at 64k. This clear trend is highly significant; it shows that as the data volume and complexity of the task increase with longer contexts, the efficiency gains from our distributed design become even more pronounced. This directly implies that for future, more demanding applications,
+DistFlow
+’s architectural superiority is an even greater asset.
+Furthermore, the baseline system encounters a critical OOM error with the 72B model at a 32k context length, a demanding task that
+DistFlow
+handles without issue. This is not merely a performance dip but a fundamental breakdown, which underscores the scalability limitations of a centralized data management approach. This failure highlights a practical ceiling on the complexity that such systems can manage. In contrast,
+DistFlow
+’s ability to complete the task demonstrates its superior robustness and its capacity to push the boundaries of what is possible in data-intensive, long-context scenarios.
+7.5.
+Convergence
+To ensure performance improvements do not compromise model accuracy, we conduct an experiment comparing verl and
+DistFlow
+. The experiment trains a 32B model using the GRPO algorithm on 32 GPUs with the DeepScaleR-Preview-Dataset for 20 epochs, for a total of 700 steps, results shown in Figure
+14
+. With identical hyperparameters, the reward and entropy curves for
+DistFlow
+and the baseline followed the same trajectory. Under this experimental configuration,
+DistFlow
+achieved the same results as the baseline while reducing the total execution time by 21%. This demonstrates that the efficiency and scalability gains from
+DistFlow
+come at no cost to training accuracy.
+Figure 14.
+Reward and Entropy curves comparison between verl and
+DistFlow
+. The experiment trained a 32B model for 20 epochs on the DeepScaleR-Preview-Dataset with the GRPO algorithm. With the same hyperparameters, the training curves of both approaches show the same trend, which indicates that the improvements in training efficiency and scalability in
+DistFlow
+do not affect training accuracy.
+8.
+Related Works
+RL Training Frameworks.
+The system architecture of large language model reinforcement learning training frameworks has undergone significant evolution. Early frameworks, such as DeepSpeed-Chat
+(
+39
+)
+, OpenRLHF
+(
+10
+)
+, and NeMo-Aligner
+(
+38
+)
+, explored different architectural approaches. While DeepSpeed-Chat pioneered the colocated architecture that deploys all computation stages on the same set of GPUs with time-sharing scheduling, OpenRLHF and NeMo-Aligner adopted a disaggregated architecture, where different models (e.g., Actor, Critic) are deployed on separate GPUs. The disaggregated design, though straightforward to implement, suffers from severe pipeline bubbles and resource under-utilization due to serial dependencies between stages. To enhance resource efficiency, subsequent research further refined the colocated architecture, including  verl
+(
+11
+)
+. Building on this, researchers have proposed deep optimization techniques: RLHFuse
+(
+40
+)
+introduces subtask fusion to further reduce pipeline bubbles, while other works focus on optimizing the efficiency of model weight switching across different stages
+(
+11
+)
+. Nonetheless, the inherent resource coupling bottleneck of the colocated design has spurred recent frameworks such as StreamRL
+(
+41
+)
+and AReaL
+(
+42
+)
+to revisit the disaggregated architecture, exploiting techniques like stream generation and asynchronous pipelines to unlock its potential for large-scale and heterogeneous environments. Unlike these existing frameworks that rely on either centralized control or tightly coupled components, our proposed decentralized design fundamentally addresses the scalability limitations by employing a fully distributed control mechanism where each computational node operates autonomously without a central coordinator. This approach not only eliminates single node bottleneck but also enables dynamic resource allocation and seamless scaling across heterogeneous hardware, achieving superior throughput and resilience compared to both colocated and previous disaggregated architectures.
+Agent Frameworks for LLM Reasoning.
+Recent advancements in large language models have increasingly relied on reinforcement learning frameworks that integrate both training and inference processes to develop sophisticated reasoning capabilities
+(
+43
+,
+44
+,
+45
+)
+. Unlike traditional frameworks that focus solely on supervised fine-tuning
+(
+46
+,
+47
+)
+, modern RL frameworks like Deepseek-R1, GPT-4o, and Gemini 2.5 Pro employ comprehensive architectures that quantify human preferences through reward models and use these signals to optimize model outputs. These frameworks implement algorithms such as PPO and GRPO that require tight integration between generation (inference) and optimization (training) stages. The training process typically consists of actor model generation, response evaluation, and policy updating. This paradigm shift transforms LLMs from mere next-token predictors into reasoning agents that optimize toward specific objectives through interaction and feedback. Our work extends this integrated approach with a distributed coordination mechanism that enhances both the training efficiency and reasoning capabilities across complex tasks, providing significant improvements compared to existing centralized frameworks
+(
+29
+,
+48
+)
+.
+Dataflow Architecture.
+The multi-model, multi-stage process of large-scale RL training essentially presents a complex dataflow challenge, whose efficient execution depends on advanced orchestration and resource management technologies. The distributed framework Ray
+(
+33
+)
+, with its flexible dynamic task graph and actor model, has become a core component in orchestrating workflows for frameworks like OpenRLHF
+(
+10
+)
+and other modern RL systems
+(
+11
+)
+. To enable effective resource coordination, contemporary frameworks often introduce abstractions such as resource pools
+(
+11
+)
+to virtualize and manage GPU resources, thereby supporting flexible model placement strategies. To further optimize the efficiency of data execution within the workflow, modern dataflow systems such as Naiad
+(
+49
+)
+offer asynchronous execution paradigms. StreamRL
+(
+41
+)
+applies these ideas in the context of large-scale RL training, achieving deep inter-stage overlap through streaming and asynchronous pipeline mechanisms, which effectively reduces waiting overheads. Our framework extends these concepts with a fully distributed controller architecture that decouples computational tasks from central coordination. By implementing flexible resource pools and actor-based task distribution, it maintains high throughput even under heterogeneous workload conditions.
+9.
+Conclusion
+This paper introduces
+DistFlow
+, a novel framework designed to address the inherent scalability and flexibility challenges in large-scale RL training. To tackle the common single-controller dataflow bottleneck in existing approaches, we propose a fully distributed architecture. At its core,
+DistFlow
+employs a multi-controller paradigm that uniformly dispatches tasks such as data loading, computation, and intermediate data transfer across all worker nodes, thereby completely eliminating the central bottleneck and achieving near-linear scalability. Furthermore, to grant researchers greater flexibility,
+DistFlow
+introduces a modular pipeline driven by a user-defined DAG. This design decouples algorithmic logic from physical resource management, significantly accelerating the experimentation and iteration cycle for novel algorithms. Experiments demonstrate that
+DistFlow
+achieves up to a 7x end-to-end throughput improvement compared to SOTA frameworks. We believe this work paves the way for large-scale RL research by offering a more efficient, flexible, and truly scalable solution.
+References
+[1]
+Long Ouyang, Jeffrey Wu, Xu Jiang, Diogo Almeida, Carroll Wainwright, Pamela Mishkin, Chong Zhang, Sandhini Agarwal, Katarina Slama, Alex Ray, et al.
+Training language models to follow instructions with human feedback.
+Advances in neural information processing systems
+, 35:27730–27744, 2022.
+[2]
+Paul F Christiano, Jan Leike, Tom Brown, Miljan Martic, Shane Legg, and Dario Amodei.
+Deep reinforcement learning from human preferences.
+Advances in neural information processing systems
+, 30, 2017.
+[3]
+Daya Guo, Dejian Yang, Haowei Zhang, Junxiao Song, Ruoyu Zhang, Runxin Xu, Qihao Zhu, Shirong Ma, Peiyi Wang, Xiao Bi, et al.
+Deepseek-r1: Incentivizing reasoning capability in llms via reinforcement learning.
+arXiv preprint arXiv:2501.12948
+, 2025.
+[4]
+OpenAI.
+Gpt-4o.
+https://openai.com/index/hello-gpt-4o/
+, 2024.
+[5]
+Google.
+Gemini 2.5 pro.
+https://deepmind.google/technologies/gemini/
+, 2025.
+[6]
+Anthropic.
+Introducing claude 4.
+https://www.anthropic.com/news/claude-4
+, 2025.
+[7]
+xAI.
+Grok 4.
+https://x.ai/news/grok-4
+, 2025.
+[8]
+John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov.
+Proximal policy optimization algorithms.
+arXiv preprint arXiv:1707.06347
+, 2017.
+[9]
+Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Xiao Bi, Haowei Zhang, Mingchuan Zhang, YK Li, Y Wu, et al.
+Deepseekmath: Pushing the limits of mathematical reasoning in open language models.
+arXiv preprint arXiv:2402.03300
+, 2024.
+[10]
+Jian Hu, Xibin Wu, Weixun Wang, Dehao Zhang, and Yu Cao.
+OpenRLHF: An easy-to-use, scalable and high-performance rlhf framework.
+arXiv preprint arXiv:2405.11143
+, 2024.
+[11]
+Guoyin Sheng, Changye Zhang, Zekun Ye, Xiaolin Wu, Wenjing Zhang, Runnan Zhang, Yao Peng, Hao Lin, and Chang Wu.
+Hybridflow: A flexible and efficient rlhf framework.
+In
+Proceedings of the Twentieth European Conference on Computer Systems (EuroSys ’25)
+, 2025.
+[12]
+Yuntao Bai, Andy Jones, Kamal Ndousse, Amanda Askell, Anna Chen, Nova DasSarma, Dawn Drain, Stanislav Fort, Deep Ganguli, Tom Henighan, et al.
+Training a helpful and harmless assistant with reinforcement learning from human feedback.
+arXiv preprint arXiv:2204.05862
+, 2022.
+[13]
+Hugo Touvron, Louis Martin, Kevin Stone, Peter Albert, Amjad Almahairi, Yasmine Babaei, Nikolay Bashlykov, Soumya Batra, Prajjwal Bhargava, Shruti Bhosale, et al.
+Llama 2: Open foundation and fine-tuned chat models.
+arXiv preprint arXiv:2307.09288
+, 2023.
+[14]
+Nisan Stiennon, Long Ouyang, Jeffrey Wu, Daniel Ziegler, Ryan Lowe, Chelsea Voss, Alec Radford, Dario Amodei, and Paul F Christiano.
+Learning to summarize with human feedback.
+Advances in neural information processing systems
+, 33:3008–3021, 2020.
+[15]
+Weixun Wang, Shaopan Xiong, Gengru Chen, Wei Gao, Sheng Guo, Yancheng He, Ju Huang, Jiaheng Liu, Zhendong Li, Xiaoyang Li, et al.
+Reinforcement learning optimization for large-scale learning: An efficient and user-friendly scaling library.
+arXiv preprint arXiv:2506.06122
+, 2025.
+[16]
+Leo Gao, John Schulman, and Jacob Hilton.
+Scaling laws for reward model overoptimization.
+In
+International Conference on Machine Learning
+, pages 10835–10866. PMLR, 2023.
+[17]
+Jan Leike, David Krueger, Tom Everitt, Miljan Martic, Vishal Maini, and Shane Legg.
+Scalable agent alignment via reward modeling: a research direction.
+arXiv preprint arXiv:1811.07871
+, 2018.
+[18]
+Amelia Glaese, Nat McAleese, Maja Trębacz, John Aslanides, Vlad Firoiu, Timo Ewalds, Maribeth Rauh, Laura Weidinger, Martin Chadwick, Phoebe Thacker, et al.
+Improving alignment of dialogue agents via targeted human judgements.
+arXiv preprint arXiv:2209.14375
+, 2022.
+[19]
+Manzil Zaheer, Guru Guruganesh, Kumar Avinava Dubey, Joshua Ainslie, Chris Alberti, Santiago Ontanon, Philip Pham, Anirudh Ravula, Qifan Wang, Li Yang, et al.
+Big bird: Transformers for longer sequences.
+Advances in neural information processing systems
+, 33:17283–17297, 2020.
+[20]
+Daniel M Ziegler, Nisan Stiennon, Jeffrey Wu, Tom B Brown, Alec Radford, Dario Amodei, Paul Christiano, and Geoffrey Irving.
+Fine-tuning language models from human preferences.
+arXiv preprint arXiv:1909.08593
+, 2019.
+[21]
+Reiichiro Nakano, Jacob Hilton, Suchir Balaji, Jeff Wu, Long Ouyang, Christina Kim, Christopher Hesse, Shantanu Jain, Vineet Kosaraju, William Saunders, et al.
+Webgpt: Browser-assisted question-answering with human feedback.
+arXiv preprint arXiv:2112.09332
+, 2021.
+[22]
+Colin Raffel, Noam Shazeer, Adam Roberts, Katherine Lee, Sharan Narang, Michael Matena, Yanqi Zhou, Wei Li, and Peter J Liu.
+Exploring the limits of transfer learning with a unified text-to-text transformer.
+Journal of machine learning research
+, 21(140):1–67, 2020.
+[23]
+Kevin Clark, Minh-Thang Luong, Quoc V Le, and Christopher D Manning.
+Electra: Pre-training text encoders as discriminators rather than generators.
+arXiv preprint arXiv:2003.10555
+, 2020.
+[24]
+Alec Radford, Jeffrey Wu, Rewon Child, David Luan, Dario Amodei, Ilya Sutskever, et al.
+Language models are unsupervised multitask learners.
+OpenAI blog
+, 1(8):9, 2019.
+[25]
+Angeliki Lazaridou, Anna Potapenko, and Olivier Tieleman.
+Multi-agent communication meets natural language: Synergies between functional and structural language learning.
+arXiv preprint arXiv:2005.07064
+, 2020.
+[26]
+Patrick Lewis, Ethan Perez, Aleksandra Piktus, Fabio Petroni, Vladimir Karpukhin, Naman Goyal, Heinrich Küttler, Mike Lewis, Wen-tau Yih, Tim Rocktäschel, et al.
+Retrieval-augmented generation for knowledge-intensive nlp tasks.
+Advances in neural information processing systems
+, 33:9459–9474, 2020.
+[27]
+Tuomas Haarnoja, Vitchyr Pong, Aurick Zhou, Murtaza Dalal, Pieter Abbeel, and Sergey Levine.
+Composable deep reinforcement learning for robotic manipulation.
+In
+2018 IEEE international conference on robotics and automation (ICRA)
+, pages 6244–6251. IEEE, 2018.
+[28]
+Lasse Espeholt, Raphaël Marinier, Piotr Stanczyk, Ke Wang, and Marcin Michalski.
+Seed rl: Scalable and efficient deep-rl with accelerated central inference.
+arXiv preprint arXiv:1910.06591
+, 2019.
+[29]
+Jeff Rasley, Samyam Rajbhandari, Olatunji Ruwase, and Yuxiong He.
+Deepspeed: System optimizations enable training deep learning models with over 100 billion parameters.
+In
+Proceedings of the 26th ACM SIGKDD international conference on knowledge discovery & data mining
+, pages 3505–3506, 2020.
+[30]
+Mohammad Shoeybi, Mostofa Patwary, Raul Puri, Patrick LeGresley, Jared Casper, and Bryan Catanzaro.
+Megatron-lm: Training multi-billion parameter language models using model parallelism.
+arXiv preprint arXiv:1909.08053
+, 2019.
+[31]
+Yinmin Zhong, Zili Zhang, Bingyang Wu, Shengyu Liu, Yukun Chen, Changyi Wan, Hanpeng Hu, Lei Xia, Ranchen Ming, Yibo Zhu, et al.
+Optimizing rlhf training for large language models with stage fusion.
+arXiv preprint arXiv:2409.13221
+, 2024.
+[32]
+Adam Paszke, Sam Gross, Francisco Massa, Adam Lerer, James Bradbury, Gregory Chanan, Trevor Killeen, Zeming Lin, Natalia Gimelshein, Luca Antiga, et al.
+Pytorch: An imperative style, high-performance deep learning library.
+Advances in neural information processing systems
+, 32, 2019.
+[33]
+Philipp Moritz, Robert Nishihara, Stephanie Wang, Alexey Tumanov, Richard Liaw, Eric Liang, Michael I. Jordan, and Ion Stoica.
+Ray: A distributed framework for emerging AI applications.
+In
+13th USENIX Symposium on Operating Systems Design and Implementation (OSDI 18)
+, 2018.
+[34]
+Woojeong Kwon, Zhihao Li, Shizhuo Zhuang, Yuze Sheng, Liuyi Zheng, Changhoon Yu, Yiyang Chen, and Ion Stoica.
+Efficient memory management for large language model serving with pagedattention.
+In
+Proceedings of the 29th Symposium on Operating Systems Principles
+, 2023.
+[35]
+Lianmin Zheng, Liangsheng Yin, Zhiqiang Xie, Chuyue Livia Sun, Jeff Huang, Cody Hao Yu, Shiyi Cao, Christos Kozyrakis, Ion Stoica, Joseph E Gonzalez, et al.
+Sglang: Efficient execution of structured language model programs.
+Advances in neural information processing systems
+, 37:62557–62583, 2024.
+[36]
+Michael Luo, Sijun Tan, Justin Wong, Xiaoxiang Shi, William Tang, Manan Roongta, Colin Cai, Jeffrey Luo, Tianjun Zhang, Erran Li, Raluca Ada Popa, and Ion Stoica.
+Deepscaler: Surpassing o1-preview with a 1.5b model by scaling rl.
+https://pretty-radio-b75.notion.site/DeepScaleR-Surpassing-O1-Preview-with-a-1-5B-Model-by-Scaling-RL-19681902c1468005bed8ca303013a4e2
+, 2025.
+Notion Blog.
+[37]
+Fanqing Meng, Lingxiao Du, Zongkai Liu, Zhixiang Zhou, Quanfeng Lu, Daocheng Fu, Tiancheng Han, Botian Shi, Wenhai Wang, Junjun He, Kaipeng Zhang, Ping Luo, Yu Qiao, Qiaosheng Zhang, and Wenqi Shao.
+Mm-eureka: Exploring the frontiers of multimodal reasoning with rule-based reinforcement learning.
+arXiv preprint arXiv:2503.07365
+, 2025.
+[38]
+NVIDIA Corporation.
+NeMo-Aligner: Scalable toolkit for efficient model alignment, 2024.
+Retrieved from
+https://github.com/NVIDIA/NeMo-Aligner
+.
+[39]
+Zhengang Yao, Ramin Y. Aminabadi, Olatunji Ruwase, Samyam Rajbhandari, Xiaoxia Wu, Ahmed A. Awan, et al.
+Deepspeed-chat: Easy, fast and affordable rlhf training of chatgpt-like models at all scales.
+arXiv preprint arXiv:2308.01320
+, 2023.
+[40]
+Yinmin Zhong, Zili Zhang, Bingyang Wu, Shengyu Liu, Yukun Chen, Changyi Wan, Hanpeng Hu, Lei Xia, Ranchen Ming, Yibo Zhu, and Xin Jin.
+Rlhfuse: Efficient rlhf training for large language models with inter-and intra-stage fusion.
+USENIX NSDI
+, 2025.
+[41]
+Yinmin Zhong, Zili Zhang, Xinyu Song, Hanpeng Hu, Chao Jin, Bingyang Wu, Nianyu Chen, Yukun Chen, Yingbin Zhou, Changyi Wan, Huaping Zhou, Ziheng Jiang, Yibo Zhu, and Dingjiang Jiang.
+Streamrl: Scalable, heterogeneous, and elastic rl for llms with disaggregated stream generation.
+arXiv:2504.15930v1 [cs.LG]
+, 2025.
+[42]
+Wei Fu, Jiaxuan Gao, Xujie Shen, Chen Zhu, Zhiyu Mei, Chuyi He, Shusheng Xu, Guo Wei, Jun Mei, Jiashu Wang, Tongkai Yang, Binhang Yuan, and Yi Wu.
+Areal: A large-scale asynchronous reinforcement learning system for language reasoning, 2025.
+[43]
+Yujia Li, David Choi, Junyoung Chung, Nate Kushman, Julian Schrittwieser, Rémi Leblond, Tom Eccles, James Keeling, Felix Gimeno, Agustin Dal Lago, et al.
+Competition-level code generation with alphacode.
+Science
+, 378(6624):1092–1097, 2022.
+[44]
+Aakanksha Chowdhery, Sharan Narang, Jacob Devlin, Maarten Bosma, Gaurav Mishra, Adam Roberts, Paul Barham, Hyung Won Chung, Charles Sutton, Sebastian Gehrmann, et al.
+Palm: Scaling language modeling with pathways.
+Journal of Machine Learning Research
+, 24(240):1–113, 2023.
+[45]
+BigScience Workshop, Teven Le Scao, Angela Fan, Christopher Akiki, Ellie Pavlick, Suzana Ilić, Daniel Hesslow, Roman Castagné, Alexandra Sasha Luccioni, François Yvon, et al.
+Bloom: A 176b-parameter open-access multilingual language model.
+arXiv preprint arXiv:2211.05100
+, 2022.
+[46]
+Hyung Won Chung, Le Hou, Shayne Longpre, Barret Zoph, Yi Tay, William Fedus, Yunxuan Li, Xuezhi Wang, Mostafa Dehghani, Siddhartha Brahma, et al.
+Scaling instruction-finetuned language models.
+Journal of Machine Learning Research
+, 25(70):1–53, 2024.
+[47]
+Yongcheng Zeng, Xuanfa Jin, Guoqing Liu, Quan He, Dong Li, Jianye Hao, Haifeng Zhang, and Jun Wang.
+Aries: Stimulating self-refinement of large language models with and for iterative preference optimization.
+In
+Workshop on Reasoning and Planning for Large Language Models
+, 2025.
+[48]
+Lianmin Zheng, Zhuohan Li, Hao Zhang, Yonghao Zhuang, Zhifeng Chen, Yanping Huang, Yida Wang, Yuanzhong Xu, Danyang Zhuo, Eric P Xing, et al.
+Alpa: Automating inter- and intra-operator parallelism for distributed deep learning.
+In
+16th USENIX Symposium on Operating Systems Design and Implementation (OSDI 22)
+, pages 559–578, 2022.
+[49]
+Derek G. Murray, Frank McSherry, Rebecca Isaacs, Michael Isard, Paul Barham, and Mihai Abadi.
+Naiad: a timely dataflow system.
+In
+Proceedings of the Twenty-Fourth ACM Symposium on Operating Systems Principles
+, 2013.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

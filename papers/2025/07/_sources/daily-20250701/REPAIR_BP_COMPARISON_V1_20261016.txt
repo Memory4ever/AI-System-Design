@@ -1,0 +1,2102 @@
+The Cost of Avoiding Backpropagation
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Background
+3 Theoretical Analysis
+4 Empirical Evaluation
+4.1 Experimental Settings
+4.2 Comparison on Accuracy
+4.3 Comparison on Wallclock Convergence Time
+4.4 Comparison on Memory Consumption
+4.5 Comparison on Computation Cost
+5 Conclusion
+References
+A Related Work
+A.1 Forward-mode AD
+A.2 Zero-order Optimization
+A.3 Optimizations on Backpropagation
+B Datasets
+AGNews.
+BoolQ.
+MultiRC.
+GSM8K.
+MMLU.
+VQAv2.
+TextVQA.
+C Baselines and Hyperparameters
+BP-Vanilla.
+BP-Checkpointing.
+BP-Accumulate.
+ZO-Vanilla.
+ZO-Accumulate.
+ZO-Multiple.
+ZO-Adaptive.
+ZO-SVRG.
+ZO-Sparse.
+MeZO.
+FmAD-Vanilla.
+FmAD-Accumulate.
+FmAD-Multiple.
+FmAD-Adaptive.
+FmAD-SVRG.
+FmAD-Sparse.
+D Limitations and Future Work
+E Broader Impact
+F Additional Results
+F.1 Experimental Variance and Loss Curves
+F.2 Experiments with Medium-sized Models
+F.3 Changing Variance of Random Perturbation Sampling
+F.4 Reducing Trainable Parameter Count
+F.5 Failure Mode Analysis
+F.5.1 Challenges with Optimizer Choice
+F.5.2 Challenges with SVRG
+G Signal Propagation for Gradient Computation
+H Computational Complexity
+H.1 Basics
+Forward Pass.
+H.2 Backpropagation
+H.3 Zero-Order Optimization
+H.4 Forward-Mode AD
+I Proofs of Convergence Bounds
+I.1 Basics
+I.2 Assumptions
+I.3 Lemmas
+I.4 Theorems
+Term1:
+Term2:
+Back to Equation , plugging in Term1 and Term2:
+Term1:
+Term2:
+Back to Equation , plugging in Term1 and Term2:
+License: CC BY-NC-ND 4.0
+arXiv:2506.21833v1 [cs.LG] 27 Jun 2025
+The Cost of Avoiding Backpropagation
+Kunjal Panchal
+Affiliation: University of Massachusetts
+Affiliation: Amherst, MA 01002
+Email: kpanchal@umass.edu
+Sunav Choudhary
+Affiliation: Adobe Research
+Affiliation: San Jose, CA 95110
+Email: schoudha@adobe.com
+Yuriy Brun
+Affiliation: University of Massachusetts
+Affiliation: Amherst, MA 01002
+Email: brun@cs.umass.edu
+Hui Guan
+Affiliation: University of Massachusetts
+Affiliation: Amherst, MA 01002
+Email: huiguan@umass.edu
+Abstract
+Forward-mode automatic differentiation (FmAD) and zero-order (ZO) optimization have been proposed as memory-efficient alternatives to backpropagation (BP) for gradient computation, especially in low-resource settings.
+However, their practical benefits remain unclear due to two key gaps:
+a lack of comparison against memory-efficient BP variants, such as activation checkpointing, and a lack of a unified theoretical analysis.
+This work presents a comprehensive theoretical and empirical comparison of BP, FmAD, and ZO methods.
+Our theoretical analysis shows that while FmAD, and ZO can reduce memory usage, they incur significant costs in accuracy, convergence speed, and computation compared to BP with checkpointing.
+These drawbacks worsen with larger models or constrained perturbation budgets.
+Empirical experiments on large language and vision-language models show that BP with checkpointing outperforms FmAD and ZO variants, including those enhanced with variance reduction, achieving up to 31.1% higher accuracy, 34.8% faster convergence, and 3.8 ×\times fewer computations at comparable memory usage.
+Our results highlight fundamental limitations of FmAD and ZO, and reaffirm BP with checkpointing as the most effective strategy for model training under memory-constrained settings.
+Our code is available at  https://github.com/Astuary/The_Cost_of_Avoiding_Backpropagation.
+1 Introduction
+Backpropagation (BP) [1] is the standard algorithm for gradient computation in deep learning due to its convergence efficiency and widespread support in automatic differentiation frameworks such as PyTorch [2] and JAX [3].
+However, BP incurs high memory overhead in training large models, as it must store intermediate activations for the backward pass.
+To address this limitation, recent research has explored alternative gradient estimation methods such as forward-mode automatic differentiation (FmAD) [4, 5, 6] and zero-order (ZO) optimization [7, 8], which approximate gradients – using directional derivatives or two forward pass evaluations – based on randomly perturbed weights.
+These methods are often promoted as memory-efficient or hardware-friendly alternatives to BP, especially in resource-constrained or non-differentiable settings.
+Despite growing interest, prior work on FmAD and ZO suffers from two critical limitations that leave their practical value inadequately understood.
+First, existing comparisons often overlook activation checkpointing [9], a widely supported and effective BP variant that substantially reduces memory usage by recomputing rather than storing intermediate activations.
+Without including BP with checkpointing as a baseline, claims of memory efficiency from FmAD and ZO are incomplete and potentially misleading.
+Second, there is a lack of unified theoretical grounding of these alternatives.
+Key aspects, such as convergence behavior, computational complexity, and memory trade-offs, remain poorly characterized.
+Without a unified theoretical comparison, it remains unclear under what conditions, if any, these methods offer advantages over standard or BP with checkpointing.
+This paper addresses both limitations through comprehensive theoretical and empirical studies of the BP, FmAD, and ZO approaches. We analyze their convergence behavior, memory consumption, and computational cost as functions of model dimensionality dd and the number of perturbations per iteration nn.
+Our theoretical analysis reveals that, while FmAD and ZO can reduce memory under certain regimes (e.g., when perturbations are evaluated sequentially), they fundamentally suffer from poor scalability.
+Specifically, both methods incur higher per-iteration computational cost, 𝒪⁡(n​d)\mathcal{O}(nd), and their convergence rates degrade with increasing dimensionality or decreasing perturbation budget due to stricter learning rate constraints.
+By contrast, BP with activation checkpointing, achieves optimal first-order convergence with lower computational cost and comparable memory usage.
+Figure 1:
+The three-way trade-off between accuracy, convergence time, and memory consumption during training of Llama 3.1 (8B) on the AGNews dataset.
+The circle radii are proportional to the memory consumption.
+BP-Checkpointing achieves highest accuracy with lowest convergence time using comparable memory to FmAD and ZO variants.
+§4 describes these methods in detail.
+To complement our theoretical findings, we conduct extensive empirical evaluations on large language and vision-language models across tasks including text classification, text generation, and visual question answering.
+We compare BP with checkpointing against a wide range of FmAD and ZO variants (including
+SVRG [10],
+multiple perturbations per iteration [11]),
+and our own enhanced versions with variance reduction: gradient accumulation and adaptive perturbation sampling.
+As illustrated in Figure 1, BP with checkpointing consistently achieves higher accuracy and faster convergence, while using memory on par with FmAD and ZO variants.
+These findings lead to a critical insight: despite recent enthusiasm for forward-mode and zero-order methods [6, 8, 10, 12], they remain fundamentally constrained by their inability to efficiently scale to large models.
+Rather than serving as alternatives to backpropagation, they operate as inefficient approximations that trade off accuracy or convergence speed for marginal memory reductions.
+Our analysis reaffirms BP with checkpointing as the most effective and scalable strategy for training modern deep neural networks under memory-constrained settings.
+This paper’s main contributions are:
+•
+A unified theoretical analysis and comparison of the convergence rates, memory cost, and compute complexity of BP, FmAD, and ZO.
+We show that FmAD and ZO require smaller learning rates when
+dd is large or
+nn is small, leading to slower convergence and higher per-iteration compute cost.
+•
+A comprehensive empirical study on large-scale models across diverse tasks, showing that BP with checkpointing achieves 4.5–31.1% higher accuracy, 21.4–34.8% faster convergence, and 3.2–3.8×\times lower computation cost than FmAD and ZO variants, while maintaining comparable memory usage.
+•
+The design and benchmarking of two new variance reduction methods for FmAD and ZO.
+These methods improve accuracy by 7.5–14.0%, but still fall short of BP’s overall efficiency, and introduce overheads in either convergence time or memory.
+•
+An analysis of FmAD’s and ZO’s failure modes (Appendix F.5), identifying how high-dimensional perturbations and noisy Jacobian-vector products contribute to instability and poor convergence.
+2 Background
+This section reviews three gradient computation techniques central to our study:
+(a) reverse-mode automatic differentiation (RmAD, of which backpropagation is a special case),
+(b) forward-mode automatic differentiation (FmAD), and
+(c) zero-order (ZO) finite-difference methods.
+For an in-depth survey of these approaches, we refer readers to [4].
+Appendix A reviews related work in detail.
+Details on signal propagation mechanism of these methods are in Appendix G.
+The three methods described below operate on a function ff, which in deep learning corresponds to a neural network and can be non-convex.
+This function ff is composed of nested functions fif_{i}, i∈[p]i\in[p], where pp is the number of layers given a neural network. Each nested function produces intermediate activations yi=fi​(wi,yi−1)y_{i}=f_{i}(w_{i},y_{i-1}), given weights wiw_{i} and previous activations yi−1y_{i-1}, where y0=xy_{0}=x is the input.
+The weights are represented by the vector 𝒘=w1,w2,…,wp\boldsymbol{w}={w_{1},w_{2},\dots,w_{p}}, where each w[1,…,p]∈ℝ[m1,…,mp]w_{[1,\dots,p]}\in\mathbb{R}^{[m_{1},\dots,m_{p}]}.
+The total number of trainable parameter is d=∑i=1pmid=\sum_{i=1}^{p}m_{i}.
+The intermediate activations are 𝒚=y1,…,yp\boldsymbol{y}={y_{1},\dots,y_{p}}.
+The final output is y=yp=f⁡(𝒘,x)∈ℝqy=y_{p}=f(\boldsymbol{w},x)\in\mathbb{R}^{q}, where typically q≪mi,∀i∈[p]q\ll m_{i},\forall i\in[p].
+The loss function ℒ⁡(y,y^)∈ℝ\mathcal{L}(y,\hat{y})\in\mathbb{R} measures the difference between the predicted output yy and the true target values y^\hat{y}.
+Reverse-mode Auto Differentiation (RmAD).
+RmAD computes gradients by propagating sensitivities
+(which is the rate at which the output of a function changes with respect to a given intermediate value)
+backward through the neural network.
+RmAD relies on vector-Jacobian product (vjp), where the Jacobian represents partial derivatives of an intermediate activation yiy_{i} with respect to weights wi−1w_{i-1}, denoted ∂yi∂wi−1\frac{\partial y_{i}}{\partial w_{i-1}}, and the vector is the activation gradient ∂f∂yi\frac{\partial f}{\partial y_{i}}.
+RmAD starts by setting ∂f∂yp\frac{\partial f}{\partial y_{p}} to 1, and propagating ∂f∂wi−1=∂f∂yi​∂yi∂wi−1\frac{\partial f}{\partial w_{i-1}}={\frac{\partial f}{\partial y_{i}}}\frac{\partial y_{i}}{\partial w_{i-1}} and ∂f∂yi−1=∂f∂yi​∂yi∂yi−1\frac{\partial f}{\partial y_{i-1}}=\frac{\partial f}{\partial y_{i}}\frac{\partial y_{i}}{\partial y_{i-1}}, for i∈[2,p]i\in[2,p], backwards.
+The final result is the weight gradient ∂f∂𝒘\frac{\partial f}{\partial\boldsymbol{w}}, formed from a series of vjp computations.
+Backpropagation [1] (BP) is a specific case of RmAD tailored for neural networks.
+While RmAD’s backward pass begins by ∂f∂yp\frac{\partial f}{\partial y_{p}} set to 1, BP initializes from the gradient of the loss function: ∂ℒ∂yp\frac{\partial\mathcal{L}}{\partial y_{p}}, which provides a semantically meaningful signal for optimization.
+The backward phase is preceded by a forward pass that computes the activations and the loss ℒ\mathcal{L}.
+Forward-mode Auto Differentiation (FmAD).
+FmAD propagates directional derivatives through the neural network to compute Jacobian-vector products (jvp).
+FmAD analyzes how a small perturbation 𝒗\boldsymbol{v} in the weights 𝒘\boldsymbol{w} affects the outputs.
+Starting from δ​y1=∂y1∂w1​v1\delta y_{1}=\frac{\partial y_{1}}{\partial w_{1}}v_{1}, FmAD propagates changes forward as:
+δ​yi=∂yi∂wi​vi+∂yi∂yi−1​δ​yi−1,for ​i∈[2,p]\displaystyle\delta y_{i}=\frac{\partial y_{i}}{\partial w_{i}}v_{i}+\frac{\partial y_{i}}{\partial y_{i-1}}\delta y_{i-1},\;\;\text{for }i\in[2,p]
+(1)
+until the final scalar perturbation in the loss δ​ℒ\delta\mathcal{L} is computed.
+Here, the Jacobian term ∂yi∂wi\frac{\partial y_{i}}{\partial w_{i}} reflects sensitivity to weight changes, and the perturbation vector is vi∈𝒗v_{i}\in\boldsymbol{v}, where 𝒗\boldsymbol{v} is typically sampled from 𝒩⁡(0,Id)\mathcal{N}(0,I_{d}).
+The scalar δ​ℒ\delta\mathcal{L} is referred to as the jvp. Weight gradients (also called forward gradients) are computed as ∂ℒ∂wi=jvp⋅vi\frac{\partial\mathcal{L}}{\partial w_{i}}=\texttt{jvp}\cdot v_{i}.
+In contrast to BP, which propagates ∂ℒ∂yi\frac{\partial\mathcal{L}}{\partial y_{i}} backward (ii from pp to 11), FmAD propagates ∂yi∂wj\frac{\partial y_{i}}{\partial w_{j}} forward (ii from 11 to pp, for all jj).
+Zero-order (ZO) Finite Differences.
+ZO optimization estimates gradients using only function ff evaluations, with no first-order derivative information required.
+These methods, including finite differences [7, 8], perturb the weights and approximate gradients through changes in the loss values of the perturbed function evaluations.
+Given a perturbation direction 𝒗∼𝒩⁡(0,Id)\boldsymbol{v}\sim\mathcal{N}(0,I_{d}), the gradient with respect to wiw_{i} is approximated via:
+∂ℒ∂wi≈ℒ⁡(f⁡(𝒘+ϵ​𝒗,x),y^)−ℒ⁡(f⁡(𝒘−ϵ​𝒗,x),y^)2​ϵ⋅vi,\displaystyle\frac{\partial\mathcal{L}}{\partial w_{i}}\approx\frac{\mathcal{L}(f(\boldsymbol{w}+\epsilon\boldsymbol{v},x),\hat{y})-\mathcal{L}(f(\boldsymbol{w}-\epsilon\boldsymbol{v},x),\hat{y})}{2\epsilon}\cdot v_{i},
+(2)
+where ϵ\epsilon is a small step size.
+This symmetric difference estimator requires two sequential forward passes per perturbation direction.
+3 Theoretical Analysis
+We begin by analyzing the fundamental convergence, memory consumption, and computational characteristics of backpropagation (BP), forward-mode automatic differentiation (FmAD), and zero-order (ZO) optimization.
+While these methods have been studied in prior works [8, 12, 13, 14], a unified theoretical framework comparing their convergence behavior, memory consumption, and computation costs is still lacking.
+In this section, we place all three approaches within a common mathematical setting and derive bounds on their per-iteration computational complexity and convergence rates.
+Our analysis reveals that, although FmAD and ZO may offer memory savings, they suffer from critical limitations in high-dimensional regimes or when the number of perturbations is restricted, leading to slower convergence and higher overall computation cost.
+In contrast, BP, especially when combined with activation checkpointing, exhibits more favorable scaling in both computation and convergence while maintaining competitive memory efficiency.
+Below, we first present the convergence bounds on a non-convex function ff, for the three gradient computation approaches studied in this work — BP, FmAD and ZO.
+These bounds highlight how convergence behavior is affected by key parameters, including the trainable parameter dimensionality dd and the number of perturbations per iteration nn.
+All notations used here follow the definitions in §2, and Appendix I contains the complete proofs.
+Appendix H presents the detailed analysis of compute costs.
+Here we highlight our main takeaways from the analysis.
+Table 1 summarizes the key theoretical results.
+Table 1:
+Big 𝒪\mathcal{O} bounds of gradient computation methods on
+(a) Convergence error,
+(b) Memory consumption, and
+(c) Compute cost (per-iteration).
+Let
+cc denote the memory required to store activations for a single layer,
+chc_{h} the maximum per-layer activation memory,
+DD the total number of layers, and
+dd the number of trainable parameters.
+While BP with checkpointing retains the fast convergence of BP with additional memory savings; both FmAD and ZO methods suffer from worse convergence and higher compute costs, with parallel variants further increasing memory consumption.
+Method
+Convergence Error
+Memory
+Compute
+BP
+𝒪⁡(1/T)\mathcal{O}(1/T) with η≤1L\eta\leq\frac{1}{L}
+𝒪⁡(c​D)\mathcal{O}(cD)
+𝒪⁡(d)\mathcal{O}(d)
+BP (with checkpointing)
+𝒪⁡(c​D)\mathcal{O}(c\sqrt{D})
+𝒪⁡(d​log⁡D)\mathcal{O}(d\log D)
+FmAD (Parallel)
+𝒪⁡(1T​[1−L​η2​(1+d+1n)])\mathcal{O}\left(\frac{1}{T\left[1-\frac{L\eta}{2}\left(1+\frac{d+1}{n}\right)\right]}\right) with η<2L⁡(1+d+1n)\eta<\frac{2}{L\left(1+\frac{d+1}{n}\right)}
+𝒪⁡(n​ch)\mathcal{O}(nc_{h})
+𝒪⁡(n​d)\mathcal{O}(nd)
+FmAD (Sequential)
+𝒪⁡(ch)\mathcal{O}(c_{h})
+𝒪⁡(n​d)\mathcal{O}(nd)
+ZO (Parallel)
+𝒪⁡(1T​[1−L​η2​(1+d+1n)])+L​d​η22​n​𝒪​(ϵ2)\mathcal{O}\left(\frac{1}{T\left[1-\frac{L\eta}{2}\left(1+\frac{d+1}{n}\right)\right]}\right)+\frac{Ld\eta^{2}}{2n}\mathcal{O}(\epsilon^{2})
+with η<2L⁡(1+d+1n)\eta<\frac{2}{L\left(1+\frac{d+1}{n}\right)}
+𝒪⁡(n​ch)\mathcal{O}(nc_{h})
+𝒪⁡(n​d)\mathcal{O}(nd)
+ZO (Sequential)
+𝒪⁡(ch)\mathcal{O}(c_{h})
+𝒪⁡(n​d)\mathcal{O}(nd)
+Theorem 3.1 (Error Bound for Backpropagation [15, 16]).
+Let f:ℝd→ℝf:\mathbb{R}^{d}\rightarrow\mathbb{R} be an LL-smooth function.
+Under gradient descent with step size 0<η≤1L0<\eta\leq\frac{1}{L}, the following holds:
+mint∈[T]⁡‖∇f​(𝒘t)‖2≤2​LT​(f⁡(𝒘1)−f⁡(𝒘T)),\displaystyle\min_{t\in[T]}||\nabla f(\boldsymbol{w}_{t})||^{2}\leq\frac{2L}{T}\left(f(\boldsymbol{w}_{1})-f(\boldsymbol{w}_{T})\right),
+(3)
+where TT is the number of optimization steps.
+This classic result guarantees an 𝒪⁡(1/T)\mathcal{O}(1/T) convergence rate in gradient norm, which is optimal for first-order methods.
+Theorem 3.2 (Error Bound for Zero-Order Optimization).
+Let f:ℝd→ℝf:\mathbb{R}^{d}\rightarrow\mathbb{R} be an LL-smooth function.
+Let the gradient estimator at step tt be computed using nn independent perturbations 𝐯i∼𝒩⁡(0,Id)\boldsymbol{v}_{i}\sim\mathcal{N}(0,I_{d}) and step size η\eta as follows:
+g^​(𝒘t)=1n​∑i=1n(f⁡(𝒘t+ϵ​𝒗i)−f⁡(𝒘t−ϵ​𝒗i)2​ϵ​𝒗i).\displaystyle\hat{g}(\boldsymbol{w}_{t})=\frac{1}{n}\sum_{i=1}^{n}\left(\frac{f(\boldsymbol{w}_{t}+\epsilon\boldsymbol{v}_{i})-f(\boldsymbol{w}_{t}-\epsilon\boldsymbol{v}_{i})}{2\epsilon}\boldsymbol{v}_{i}\right).
+(4)
+Then, the expected convergence error is bounded by
+mint∈[T]⁡‖∇f​(𝒘t)‖2\displaystyle\min_{t\in[T]}||\nabla f(\boldsymbol{w}_{t})||^{2}
+≤f⁡(𝒘1)−f⁡(𝒘T)η​T​[1−L​η2​(1+d+1n)]+L​d​η22​n​𝒪​(ϵ2),\displaystyle\leq\frac{f(\boldsymbol{w}_{1})-f(\boldsymbol{w}_{T})}{\eta T\left[1-\frac{L\eta}{2}\left(1+\frac{d+1}{n}\right)\right]}+\frac{Ld\eta^{2}}{2n}\mathcal{O}(\epsilon^{2}),
+(5)
+provided that η<2L⁡(1+d+1n)\eta<\frac{2}{L(1+\frac{d+1}{n})}.
+This bound shows that performance degrades with increasing dimensionality dd or decreasing number of perturbations nn, resulting in slower convergence and higher error.
+Theorem 3.3 (Error Bound for Forward-Mode AD).
+Let f:ℝd→ℝf:\mathbb{R}^{d}\rightarrow\mathbb{R} be an LL-smooth function.
+Let the forward-mode AD gradient estimator at step tt use nn perturbations 𝐯i∼𝒩⁡(0,Id)\boldsymbol{v}_{i}\sim\mathcal{N}(0,I_{d})) and define:
+g^(𝒘t)=1n∑i=1n((𝒗i⊤∇f(𝒘t))𝒗i).\displaystyle\hat{g}(\boldsymbol{w}_{t})=\frac{1}{n}\sum_{i=1}^{n}\left(\left(\boldsymbol{v}_{i}^{\top}\nabla f(\boldsymbol{w}_{t})\right)\boldsymbol{v}_{i}\right).
+(6)
+Then, the expected convergence error is bounded by
+mint∈[T]⁡‖∇f​(𝒘t)‖2\displaystyle\min_{t\in[T]}||\nabla f(\boldsymbol{w}_{t})||^{2}
+≤f⁡(𝒘1)−f⁡(𝒘T)η​T​[1−L​η2​(1+d+1n)].\displaystyle\leq\frac{f(\boldsymbol{w}_{1})-f(\boldsymbol{w}_{T})}{\eta T\left[1-\frac{L\eta}{2}\left(1+\frac{d+1}{n}\right)\right]}.
+(7)
+with convergence requiring η<2L⁡(1+d+1n)\eta<\frac{2}{L(1+\frac{d+1}{n})}.
+Similar to ZO, the convergence rate deteriorates as
+dd increases or
+nn decreases, yielding slower convergence.
+We summarize key theoretical insights comparing BP, FmAD, and ZO across three axes: convergence error, convergence time, and memory-compute efficiency.
+Finding 1: FmAD and ZO incur higher error than BP due to approximation and discretization effects.
+In contrast to BP, which computes exact gradients (modulo floating-point precision), FmAD and ZO rely on approximations that introduce estimation bias and noise.
+ZO methods, in particular, suffer from discretization errors stemming from finite-difference estimation.
+The convergence bound includes an additive term
+L​d​η22​n​𝒪​(ϵ2)\frac{Ld\eta^{2}}{2n}\mathcal{O}(\epsilon^{2})
+which captures variance and truncation effects introduced by perturbations.
+FmAD avoids this additional error term but retains the same sensitivity to dd and nn, indicating its convergence is still hampered in large models or under low perturbation budgets due to the effects of random perturbations.
+§4.2 empirically demonstrates that ZO suffers greater accuracy degradation than FmAD due to discretization error, and that both ZO and FmAD achieve lower accuracy than BP because of additional learning rate constraints, which are detailed in Appendix C.
+Finding 2: Convergence speed of FmAD and ZO degrades with higher dimensionality or fewer perturbations.
+While BP achieves an optimal convergence rate of
+𝒪⁡(1/T)\mathcal{O}(1/T) under standard smoothness and learning rate assumptions, both FmAD and ZO introduce additional fundamental constraints. In particular, they require a more conservative step size of η<2L⁡(1+d+1n)\eta<\frac{2}{L(1+\frac{d+1}{n})}
+which becomes increasingly restrictive as the parameter dimensionality dd increases or the number of perturbations
+nn decreases. This directly slows convergence, especially in high-dimensional models or when perturbation sampling is limited due to additional compute or memory cost, highlighting a core scalability bottleneck in both methods.
+§4.3 supports this finding by showing that FmAD and ZO converge more slowly and reach lower accuracy compared to BP.
+Finding 3: Both FmAD and ZO have higher compute cost per iteration as the number of perturbations increase, and must trade memory for convergence speed.
+Table 1 compares the theoretical memory and compute complexity of the three methods.
+BP computes gradients in 𝒪⁡(d)\mathcal{O}(d) time per iteration.
+FmAD and ZO, by contrast, if performing nn gradient estimations per iteration, yield a per-iteration complexity of 𝒪⁡(n​d)\mathcal{O}(nd).
+When using checkpointing, BP incurs a modest recomputation overhead of log⁡D\log D, where DD is the network depth.
+In terms of memory, BP requires 𝒪⁡(c​D)\mathcal{O}(cD) where cc is the cost of one layer’s activation.
+BP with checkpointing reduces this memory cost by discarding some of the activations, incurring 𝒪⁡(c​D)\mathcal{O}(c\sqrt{D}).
+FmAD/ZO in parallel mode, where multiple perturbations are evaluated in parallel, require 𝒪⁡(n​ch)\mathcal{O}(nc_{h}) memory, where chc_{h} is the memory cost of the largest activation, as each perturbed forward pass consumes chc_{h}.
+FmAD/ZO in sequential mode reduces memory to 𝒪⁡(ch)\mathcal{O}(c_{h}) but incur higher wallclock runtime.
+Thus, faster convergence with FmAD and ZO requires higher memory usage (via more parallel perturbations), while memory-efficient sequential variants suffer longer training times.
+§4.4 corroborates these memory bounds and shows a breakdown of the memory consumption.
+§4.5 empirically validates the computation cost.
+A note on non-differentiable and black-box settings.
+While it’s claimed that ZO has utility in settings with non-differentiable objectives [17, 18] or limited model access [19, 20], its applicability to large-scale model training is fundamentally constrained.
+In true black-box scenarios, it is often infeasible to perturb weights or query the loss values, making ZO methods impractical.
+In contrast, first-order methods such as BP and FmAD require access to model internals and automatic differentiation support – challenges that are largely engineering in nature and increasingly well-supported by modern frameworks.
+As such, the growing trend [12, 14] of applying ZO to train LLMs is misguided:
+the computational cost and degraded convergence significantly outweigh the memory gains.
+4 Empirical Evaluation
+In this section, we corroborate our theoretical findings with empirical experiments that systematically compare the variants of backpropagation (BP), forward-mode automatic differentiation (FmAD), and zero-order (ZO) optimization.
+We evaluate these methods across multiple axes, including
+(a) accuracy,
+(b) wallclock convergence time,
+(c) memory consumption, and
+(d) computation cost.
+For each of these dimensions, we also examine how different variance reduction strategies affect performance.
+4.1 Experimental Settings
+Datasets.
+We evaluate gradient computation methods across a diverse set of 5 text-based tasks and 2 vision-based tasks.
+The 5 text-based tasks are
+(a) Gsm8K (text generation on math problems/next-word prediction) [21],
+(b) MMLU (multiple-choice question-answering covering various domains of knowledge) [22],
+(c) AGNews (4-class news article text classification task) [23],
+(d) BoolQ (boolean question-answering) [24], and
+(e) MultiRC (closed-book question-answering) [25].
+The 2 vision-based tasks are both based on visual question-answering:
+(a) VQAv2 [26], and
+(b) TextVQA [27].
+Appendix B describes the datasets in detail, including the train/test splits.
+Models.
+Our evaluation uses 5 models with a varying number of total parameters (listed in parentheses).
+For text-based tasks, on the billion-parameters scale, we use Llama 3.1 (8B) [28]
+and OPT (1.3B, 6.7B, 13B) [29].
+Additionally, we include medium-sized language models
+Bert (110M, 340M) [30]
+and RoBERTa (125M, 355M) [31] to analyze performance variations across model sizes.
+For vision-based tasks, we use
+Qwen 2 VL (7B) [32]. To finetune these models, we use QLoRA [33], where low-rank adapters are trainable while the rest of the weights are frozen and quantized to 4 bits.
+By default, we set the LoRA rank r=1r=1 and scale α=1\alpha=1 to minimize the number of trainable parameters for FmAD and ZO.
+Appendix F.4 reports results on higher LoRA ranks.
+Methods for Comparison.
+We categorize the 16 gradient computation methods our evaluation compares into three groups:
+(a) Backpropagation Methods:
+BP-Vanilla [1] (the standard implementation that stores all intermediate activations),
+BP-Checkpointing [9] (reduces peak memory consumption by storing only a subset of activations and recomputing the rest during the backward pass),
+and BP-Accumulate (uses gradient accumulation).
+(b) Zero-order Methods:
+ZO-Vanilla [13] (use a single perturbation to estimate gradients as in Equation 2),
+MeZO [8] (incorporates a prompt-finetuning approach to convert classification tasks into next-word prediction with a constrained vocabulary),
+ZO-Accumulate (applies gradient accumulation to reduce noise in gradient estimates),
+ZO-Multiple [11] (averages gradient estimates from multiple perturbations per iteration to improve estimate stability),
+ZO-Adaptive (adaptively selects perturbation directions based on prior gradients),
+ZO-SVRG [10] (applies stochastic variance reduction to correct noisy gradients),
+and ZO-Sparse [14] (only updates top-1% parameters each iteration).
+(c) Forward-mode AD Methods:
+FmAD-Vanilla [5],
+FmAD-Accumulate,
+FmAD-Multiple,
+FmAD-Adaptive,
+FmAD-SVRG, and
+FmAD-Sparse.
+The -Vanilla suffix denotes the original implementation according to Equation 6, while the other variants mirror the corresponding ZO method in (b), adapting similar strategies for the forward-mode setting.
+Appendix C describes these methods and their hyperparameters in detail.
+Metrics.
+We evaluate the efficiency of the gradient computation methods using four metrics.
+(a) Accuracy at test-time assesses the efficacy of the learned models.
+(b) Wallclock convergence time (in minutes) measures the time each approach takes to achieve stable-state accuracy.
+(c) Peak memory consumption (in GBs) quantifies the maximum memory consumed during training.
+(d) Computation cost for each iteration and until convergence, in Tera Floating-Point Operations per Second (TFLOPs).
+Additionally, in our failure mode analysis, for ZO and FmAD approaches, Appendix F.5 reports statistics, such as the mean of effective gradient norms and jvp values across iterations, capturing the instability of estimated gradients and its impact on optimization dynamics.
+Libraries and Hardware.
+Our codebase is built using PyTorch [2]. Quantization uses AutoGPTQ [34].
+We conducted all experiments involving billion-scale models across ZO and FmAD variants on a single Nvidia L40 GPU (48GB RAM).
+For experiments on OPT (13B) model, we used one Nvidia A100 (80GB RAM).
+For BERT and RoBERTa models, we used an Nvidia 2080ti (11GB RAM).
+We repeated each experiment three times with random seeds set to 0, 1, and 2 to ensure consistency and robustness.
+4.2 Comparison on Accuracy
+Accuracy is the primary metric of interest since any gradient computation method that reduces memory consumption or computational cost is of little practical value if it cannot match the predictive performance of BP.
+Table 2 presents accuracy results and Appendix F.1 shows
+variance across 3 executions.
+Table 2:
+Accuracies (higher is better) of BP, FmAD, and ZO variants across models and datasets.
+Subscripts show accuracy gaps from BP-Vanilla/Chkpt (Chkpt = Checkpointing).
+While BP remains the most accurate, FmAD and ZO variants like -Accumulate and -Multiple offer notable gains over their -Vanilla forms but still lag behind BP, especially on generation tasks like GSM8K.
+Variance across runs is reported in Appendix F.1.
+Darker shade  = range of high accuracies,
+lighter shade  = range of moderate accuracies,
+unshaded = range of low accuracies.
+Llama 3.1 (8B)
+Qwen 2 VL (7B)
+AGNews
+BoolQ
+MultiRC
+GSM8K
+MMLU
+VQAv2
+TextVQA
+No Finetuning
+23.53
+51.64
+52.77
+27.25
+51.14
+73.16
+71.06
+BP-Vanilla/Chkpt
+94.15
+88.25
+85.15
+54.25
+60.26
+87.05
+98.48
+BP-Accumulate
+93.75(-0.40)
+87.89(-0.36)
+83.29(-1.86)
+33.13(-21.12)
+53.84(-6.42)
+86.32(-0.73)
+97.07(-1.41)
+ZO-Vanilla
+73.55(-20.60)
+57.12(-31.13)
+57.19(-27.96)
+36.31(-17.94)
+54.66(-5.60)
+77.61(-9.44)
+72.87(-25.61)
+ZO-Accumulate
+85.77(-8.38)
+60.93(-27.32)
+60.31(-24.84)
+27.97(-26.28)
+55.18(-5.08)
+79.67(-7.38)
+73.06(-25.42)
+ZO-Multiple
+86.71(-7.44)
+60.03(-28.22)
+61.03(-24.12)
+35.78(-18.47)
+56.82(-3.44)
+81.45(-5.60)
+74.72(-23.76)
+ZO-Adaptive
+81.46(-12.69)
+57.40(-30.85)
+59.03(-26.12)
+30.19(-24.06)
+52.62(-7.64)
+79.53(-7.52)
+79.14(-19.34)
+ZO-SVRG
+84.68(-9.47)
+62.55(-25.70)
+61.23(-23.92)
+32.07(-22.18)
+55.94(-4.32)
+79.14(-7.91)
+72.93(-25.55)
+ZO-Sparse
+64.52(-29.63)
+53.17(-35.08)
+55.33(-29.82)
+29.13(-25.12)
+51.35(-8.91)
+78.57(-8.48)
+73.75(-24.73)
+MeZO
+80.46(-13.69)
+58.16(-30.09)
+60.37(-24.78)
+—
+—
+—
+—
+FmAD-Vanilla
+80.48(-13.67)
+60.70(-27.55)
+61.38(-23.77)
+37.68(-16.57)
+55.76(-4.50)
+82.29(-4.76)
+78.25(-20.23)
+FmAD-Accumulate
+87.96(-6.19)
+70.30(-17.95)
+71.15(-14.00)
+30.76(-23.49)
+57.14(-3.12)
+83.67(-3.38)
+80.91(-17.57)
+FmAD-Multiple
+86.16(-7.99)
+64.42(-23.83)
+65.41(-19.74)
+40.48(-13.77)
+57.65(-2.61)
+82.89(-4.16)
+79.12(-19.36)
+FmAD-Adaptive
+78.45(-15.70)
+56.36(-31.89)
+58.18(-26.97)
+38.05(-16.20)
+56.31(-3.95)
+82.94(-4.11)
+78.16(-20.32)
+FmAD-SVRG
+82.45(-11.70)
+64.56(-23.69)
+64.11(-21.04)
+35.36(-18.89)
+56.10(-4.16)
+83.03(-4.02)
+79.49(-18.99)
+FmAD-Sparse
+70.38(-23.77)
+56.89(-29.36)
+53.08(-32.07)
+30.29(-23.96)
+53.44(-6.82)
+80.33(-6.72)
+77.01(-21.47)
+Backpropagation achieves significantly higher accuracy than FmAD-Vanilla and ZO-Vanilla. Backpropagation, both in its standard form (BP-Vanilla) and with checkpointing (BP-Chkpt), consistently achieves the highest accuracy across all tasks.
+Among the alternatives, the -Vanilla forms of FmAD and ZO are most directly comparable to BP.
+Due to the inherent randomness in their perturbation-based gradients (see §3 Finding 1), both FmAD-Vanilla and ZO-Vanilla lag behind BP by 4.5–27.5% and 5.6–31.1% across datasets, respectively.
+Further, across all the datasets, FmAD-Vanilla outperforms ZO-Vanilla, with gains of
+1.1–6.9%.
+This consistent margin illustrates FmAD’s fundamental advantage: access to analytic first-order Jacobian-vector products (jvp), over ZO’s reliance on noisy finite-difference estimates.
+Variance reduction approaches improve the accuracy of FmAD and ZO methods yet fall short of closing the gap with BP methods.
+Both FmAD and ZO benefit from their -Accumulate and -Multiple variants, which reduce gradient noise by trading off higher compute or memory.
+(a)
+Averaging gradients over multiple perturbations per iteration
+(b) Accumulating and averaging gradients across iterations
+Figure 2:
+Experiments with varying perturbation counts (-Multiple) and accumulation steps (-Accumulate) show that both strategies reduce gradient noise and improve convergence stability for FmAD and ZO.
+However, -Multiple increases memory and compute costs, while -Accumulate slows down convergence.
+Furthermore, as shown in (right), BP-Checkpointing achieves the highest, most stable accuracy fastest. FmAD performs moderately but is unstable or slow, and ZO (with step size 1) suffers early collapse and fails to match BP’s accuracy.
+FmAD-Accumulate improves over FmAD-Vanilla by 1.4–9.8% across datasets, except on GSM8K (-6.9%), likely due to its need for smaller batch sizes.
+Similarly, ZO-Accumulate boosts accuracy by 0.2–12.2%, with an 8.3% drop on GSM8K.
+FmAD-Multiple improves by 0.6–5.7%, and ZO-Multiple by 0.2–13.2%, with only a 0.5% drop on GSM8K.
+To understand the effects of these two variance reduction techniques further, we vary the number of perturbations and accumulation steps.
+Figure 2(a) shows that increasing perturbation count (n=10,50n\!\!=\!\!10,50) yields 5.7–7.7% (FmAD) and 13.2–14.0% (ZO) accuracy gains on AGNews, which is consistent with the findings of Theorems 3.2 and 3.3.
+Similarly, Figure 2(b) shows that increasing accumulation steps (100, 200) yields 7.5–7.6% (FmAD) and 12.2–14.0% (ZO) gains.
+These improvements come at the cost of increased convergence time (sequential implementation of -Multiple), memory (parallel implementation of -Multiple), or slower updates (-Accumulate). These trade-offs are discussed in §4.3 and 4.4.
+Other variance reduction approaches offer limited or inconsistent accuracy improvements for FmAD and ZO.
+-Adaptive often underperforms, with FmAD-Adaptive trailing -Vanilla on BoolQ (-4.3%) and MultiRC (-3.2%), likely due to biased updates from gradient-informed perturbation sampling.
+-Sparse performs worst overall, lagging -Vanilla by 1.2–10.1% (FmAD) and 1.9–9.0% (ZO), as random perturbations of early steps mislead saliency-based parameter selection.
+-SVRG improves classification accuracy by 4.0–11.1%, but failing on GSM8K (-4.2%) due to homogenized updates that weaken variance correction (see Appendix F.5.2).
+MeZO offers modest gains (1.0–6.9%) on classification but lacks applicability to generative and vision-language tasks.
+Accuracy gaps widen as trainable parameters or model size increases. To further evaluate the impact of trainable parameter count on FmAD and ZO, we conducted additional experiments on medium-sized models (110M–350M parametered BERT and RoBERTa) and large-sized models (OPT 1.3B, 6.7B, with various LoRA ranks, and 13B),
+as detailed in Appendices F.2 and F.4. Both FmAD and ZO still exhibit slower convergence and degraded performance compared to BP, with the gap widening as model size increases (especially in the case of BERT and RoBERTa).
+Experiments on changing the perturbation variance are presented in Appendix F.3.
+4.3 Comparison on Wallclock Convergence Time
+Convergence time determines how quickly a trained model becomes feasible for practical use.
+We contextualize our analysis using Figure 2, which illustrates the time-to-accuracy curve of the -Vanilla methods.
+Figure 4 in Appendix F.1 includes results on the remaining datasets.
+Among all methods, BP-Checkpointing achieves the best balance of convergence speed and accuracy.
+Figure 2(b) compares test accuracy against wallclock time for training.
+BP-Checkpointing consistently reaches the highest accuracy (∼\sim94%), while FmAD and ZO fall short due to slower convergence or instability.
+Although checkpointing introduces a modest runtime overhead (∼\sim1.2×\times slower per iteration than BP-Vanilla), it remains faster than FmAD (by ∼\sim1.2×\times per iteration) with an accuracy improvement of 4.5–27.6%.
+In terms of time-to-accuracy, BP-Checkpointing is 21.4–34.8% faster.
+The slower convergence of FmAD stems from its computational inefficiency.
+Unlike BP, which performs one matrix multiplication per layer by reusing downstream gradients, FmAD requires two matrix multiplications per layer for jvp evaluation, accounting for both previous and current layer perturbations (Equation 1).
+Figure 3:
+Breakdown of memory consumption of training (left) Llama 3.1 (8B) and (right) OPT (13B) models on AGNews.
+Although BP-Checkpointing is 1.6–1.9×\times takes more memory than ZO, it takes far fewer iterations to achieve 4.5–31.1% higher accuracy (as shown in Figure 2(b)).
+While ZO exhibits the fastest per-iteration runtime (∼\sim1.5×\times faster than BP-Checkpointing), this advantage is offset by approximation errors in gradient estimates.
+As discussed in §3, this leads to early accuracy collapse and poor performance, with ZO reaching 5.6–31.1% lower accuracy than BP-based methods.
+Variance reduction improves convergence, but often slows down convergence time.
+As shown in Figure 2(a), -Multiple variants (e.g., with n=10n=10, 5050) yield smoother training and higher accuracy than their n=1n=1 counterparts.
+However, these gains come with a proportional increase in convergence time for sequential implementations as the runtime scales linearly with the number of perturbations.
+-Accumulate variants (Figure 2(b)) improve accuracy without increasing per-iteration cost, as they amortize single-step estimates over multiple updates. However, the delay in parameter updates slows down overall convergence: with an accumulation window of 200, training is 14.8×\times and 10.9×\times slower for FmAD and ZO, respectively, than when trained without accumulation.
+4.4 Comparison on Memory Consumption
+Memory efficiency reveals a crucial third axis, where FmAD and ZO appear deceptively strong.
+Memory savings from FmAD and ZO come at the cost of accuracy and convergence speed.
+Figure 3 shows that both FmAD and ZO reduce memory usage relative to BP-Vanilla, which runs out of memory (OOM) due to storing all activations.
+By contrast, FmAD and ZO store only the previous layer’s activation, yielding a lower memory footprint.
+However, as seen in Figure 2(b), these savings lead to significantly longer training times and degraded model performance.
+Meanwhile, BP-Checkpointing uses 0.6–1.3GB less memory than FmAD, while delivering substantially faster convergence and 4.5–31.1% higher accuracy.
+Further, FmAD consumes 3.28–4.29×\times more activation memory than ZO.
+This overhead stems from the need to simultaneously store previous layer’s intermediate activations for both the primary forward pass and the additional jvp computation.
+Variance reduction strategies introduce memory-accuracy trade-offs.
+The -Multiple variants improve gradient quality by evaluating multiple perturbations per step, but parallel implementations require linearly more memory.
+For instance, if one forward pass needs 1.26GB (ZO) or 5.41GB (FmAD) for activations, using nn perturbations inflates this to 1.26nnGB or 5.41nnGB, respectively.
+On the other hand, -Accumulate amortizes these computations over time and introduces no memory overhead, though at the cost of slower convergence.
+4.5 Comparison on Computation Cost
+Computation cost in terms of FLOPS directly impacts energy consumption and determines whether training large models is feasible under given resources.
+Table 3 reports both per-iteration cost and total cost until convergence. (The theoretical bounds are summarized in Table 1).
+Table 3:
+Computation cost per iteration and until convergence (lower is better) for Llama 3.1 (8B) on AGNews dataset.
+BP-Checkpointing remains by far the most compute-efficient;
+whereas the perturbation-based methods (ZO and FmAD),
+even their -Accumulate variants, incur order-of-magnitude more TFLOPs to reach convergence.
+Method
+TFLOPs
+per Iter. (↓\downarrow)
+TFLOPs until
+Convergence (↓\downarrow)
+# Iter. until
+Convergence
+BP-Checkpointing
+434.4
+65.2 ×104\times 10^{4}
+1.5×103\times 10^{3}
+ZO-Vanilla
+288.7
+251.2 ×104\times 10^{4}
+8.7 ×103\times 10^{3}
+ZO-Multiple
+2886.8
+2425.0 ×104\times 10^{4}
+8.4 ×103\times 10^{3}
+ZO-Accumulate
+288.7
+2165.1 ×104\times 10^{4}
+75.0 ×103\times 10^{3}
+FmAD-Vanilla
+432.0
+207.4 ×104\times 10^{4}
+4.8 ×103\times 10^{3}
+FmAD-Multiple
+4320.3
+4147.5 ×104\times 10^{4}
+9.6 ×103\times 10^{3}
+FmAD-Accumulate
+432.0
+3693.8 ×104\times 10^{4}
+85.5 ×103\times 10^{3}
+FmAD and ZO methods reduce per-iteration compute costs but incur significantly higher total compute due to slow convergence.
+ZO-Vanilla incurs a relatively low per-iteration cost of 288.7 TFLOPs, approximately 0.7×\times the cost of BP-Checkpointing, because it only requires two forward passes per gradient estimate.
+However, this advantage is misleading:
+due to slow convergence, its total computation cost until convergence is 3.8×\times higher than that of BP-Checkpointing.
+FmAD-Vanilla shows a per-iteration cost nearly identical to BP-Checkpointing, but its convergence is hindered by gradient estimates with high variance, leading to 3.2×\times higher total compute costs.
+Multiple perturbations per iteration improves accuracy but linearly increases cost.
+In ZO-Multiple, using 10 perturbations per iteration leads to a 9.7×\times increase in compute, showcasing the linear relationship between the number of perturbations and cost.
+In contrast, ZO-Accumulate, which accumulates gradients across iterations without increasing perturbation count, maintains similar cost to ZO-Vanilla but still suffers from slow convergence.
+Similarly, for FmAD, when we increase the number of perturbations by 10×\times to reduce gradient variance and improve accuracy, the cost increases by 20×\times that of BP, as each jvp involves two matrix multiplications.
+5 Conclusion
+While forward-mode AD (FmAD) and zero-order (ZO) optimization have been proposed as memory-efficient alternatives to backpropagation (BP), prior work lacked comparison with checkpointed BP and unified theoretical bounds.
+Our analysis closes these gaps, revealing that FmAD and ZO incur higher computational cost, slower convergence, and greater sensitivity to dimensionality and perturbation budgets.
+Even with enhancements like variance reduction, they remain less efficient and robust than BP with activation checkpointing.
+Empirical results on large models confirm that checkpointed BP consistently outperforms FmAD and ZO across accuracy, convergence speed, and compute cost – at comparable memory usage.
+These findings reaffirm checkpointed BP as the most practical strategy for memory-constrained training and clarify the limitations of FmAD and ZO.
+References
+[1]
+David E Rumelhart, Geoffrey E Hinton, and Ronald J Williams.
+Learning representations by back-propagating errors.
+Nature, 1986.
+[2]
+Adam Paszke, Sam Gross, Francisco Massa, Adam Lerer, James Bradbury, Gregory Chanan, Trevor Killeen, Zeming Lin, Natalia Gimelshein, Luca Antiga, Alban Desmaison, Andreas Köpf, Edward Yang, Zach DeVito, Martin Raison, Alykhan Tejani, Sasank Chilamkurthy, Benoit Steiner, Lu Fang, Junjie Bai, and Soumith Chintala.
+Pytorch: An imperative style, high-performance deep learning library.
+In Proceedings of the 33rd International Conference on Neural Information Processing Systems, 2019.
+[3]
+James Bradbury, Roy Frostig, Peter Hawkins, Matthew James Johnson, Chris Leary, Dougal Maclaurin, George Necula, Adam Paszke, Jake VanderPlas, Skye Wanderman-Milne, and Qiao Zhang.
+JAX: composable transformations of Python+NumPy programs, 2018.
+URL http://github.com/jax-ml/jax.
+[4]
+Atılım Günes Baydin, Barak A. Pearlmutter, Alexey Andreyevich Radul, and Jeffrey Mark Siskind.
+Automatic differentiation in machine learning: A survey.
+The Journal of Machine Learning Research, 2017.
+[5]
+Atılım Güneş Baydin, Barak A. Pearlmutter, Don Syme, Frank Wood, and Philip Torr.
+Gradients without backpropagation.
+arXiv 2202.08587, 2022.
+[6]
+Kunjal Panchal, Nisarg Parikh, Sunav Choudhary, Lijun Zhang, Yuriy Brun, and Hui Guan.
+Thinking forward: Memory-efficient federated finetuning of language models.
+In The Thirty-eighth Annual Conference on Neural Information Processing Systems, 2024.
+[7]
+C. H. Richardson.
+An introduction to the calculus of finite differences.
+The Mathematical Gazette, 1955.
+[8]
+Sadhika Malladi, Tianyu Gao, Eshaan Nichani, Alex Damian, Jason D. Lee, Danqi Chen, and Sanjeev Arora.
+Fine-tuning language models with just forward passes.
+In Thirty-seventh Conference on Neural Information Processing Systems, 2023.
+[9]
+Tianqi Chen, Bing Xu, Chiyuan Zhang, and Carlos Guestrin.
+Training deep nets with sublinear memory cost.
+arXiv preprint arXiv:1604.06174, 2016.
+[10]
+Sijia Liu, Bhavya Kailkhura, Pin-Yu Chen, Paishun Ting, Shiyu Chang, and Lisa Amini.
+Zeroth-order stochastic variance reduction for nonconvex optimization.
+In Proceedings of the 32nd International Conference on Neural Information Processing Systems, NIPS’18, 2018.
+[11]
+Haozhe Feng, Tianyu Pang, Chao Du, Wei Chen, Shuicheng Yan, and Min Lin.
+Baffle: A baseline of backpropagation-free federated learning.
+In European Conference on Computer Vision. Springer, 2024.
+[12]
+Tanmay Gautam, Youngsuk Park, Hao Zhou, Parameswaran Raman, and Wooseok Ha.
+Variance-reduced zeroth-order methods for fine-tuning language models.
+In Proceedings of the 41st International Conference on Machine Learning, ICML’24. JMLR, 2024.
+[13]
+Xiangyi Chen, Sijia Liu, Kaidi Xu, Xingguo Li, Xue Lin, Mingyi Hong, and David Cox.
+Zo-adamm: Zeroth-order adaptive momentum method for black-box optimization.
+Advances in neural information processing systems, 2019.
+[14]
+Wentao Guo, Jikai Long, Yimeng Zeng, Zirui Liu, Xinyu Yang, Yide Ran, Jacob R. Gardner, Osbert Bastani, Christopher De Sa, Xiaodong Yu, Beidi Chen, and Zhaozhuo Xu.
+Zeroth-order fine-tuning of LLMs with transferable static sparsity.
+In The Thirteenth International Conference on Learning Representations, 2025.
+[15]
+Léon Bottou, Frank E Curtis, and Jorge Nocedal.
+Optimization methods for large-scale machine learning.
+SIAM review, 2018.
+[16]
+Guillaume Garrigos and Robert M. Gower.
+Handbook of convergence theorems for (stochastic) gradient methods, 2024.
+URL https://arxiv.org/abs/2301.11235.
+[17]
+Yuyang Qiu, Uday Shanbhag, and Farzad Yousefian.
+Zeroth-order methods for nondifferentiable, nonconvex, and hierarchical federated optimization.
+Advances in Neural Information Processing Systems, 36, 2023.
+[18]
+Marco Rando, Cesare Molinari, Lorenzo Rosasco, and Silvia Villa.
+An optimal structured zeroth-order algorithm for non-smooth optimization.
+Advances in Neural Information Processing Systems, 36:36738–36767, 2023.
+[19]
+Konstantinos Nikolakakis, Farzin Haddadpour, Dionysis Kalogerias, and Amin Karbasi.
+Black-box generalization: Stability of zeroth-order learning.
+Advances in neural information processing systems, 35:31525–31541, 2022.
+[20]
+Aleksandr Lobanov, Nail Bashirov, and Alexander Gasnikov.
+The “black-box” optimization problem: Zero-order accelerated stochastic method via kernel approximation.
+Journal of Optimization Theory and Applications, pages 1–36, 2024.
+[21]
+Karl Cobbe, Vineet Kosaraju, Mohammad Bavarian, Mark Chen, Heewoo Jun, Lukasz Kaiser, Matthias Plappert, Jerry Tworek, Jacob Hilton, Reiichiro Nakano, Christopher Hesse, and John Schulman.
+Training verifiers to solve math word problems.
+arXiv preprint arXiv:2110.14168, 2021.
+[22]
+Dan Hendrycks, Collin Burns, Steven Basart, Andy Zou, Mantas Mazeika, Dawn Song, and Jacob Steinhardt.
+Measuring massive multitask language understanding.
+Proceedings of the International Conference on Learning Representations (ICLR), 2021.
+[23]
+Xiang Zhang, Junbo Zhao, and Yann LeCun.
+Character-level convolutional networks for text classification.
+In Advances in Neural Information Processing Systems, 2015.
+[24]
+Christopher Clark, Kenton Lee, Ming-Wei Chang, Tom Kwiatkowski, Michael Collins, and Kristina Toutanova.
+Boolq: Exploring the surprising difficulty of natural yes/no questions.
+In NAACL, 2019.
+[25]
+Daniel Khashabi, Snigdha Chaturvedi, Michael Roth, Shyam Upadhyay, and Dan Roth.
+Looking beyond the surface: A challenge set for reading comprehension over multiple sentences.
+In Proceedings of the 2018 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies, Volume 1 (Long Papers). Association for Computational Linguistics, 2018.
+[26]
+Yash Goyal, Tejas Khot, Aishwarya Agrawal, Douglas Summers-Stay, Dhruv Batra, and Devi Parikh.
+Making the v in vqa matter: Elevating the role of image understanding in visual question answering.
+Int. J. Comput. Vision, 2019.
+[27]
+Amanpreet Singh, Vivek Natarjan, Meet Shah, Yu Jiang, Xinlei Chen, Dhruv Batra, Devi Parikh, and Marcus Rohrbach.
+Towards vqa models that can read.
+In Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition, 2019.
+[28]
+Aaron Grattafiori, Abhimanyu Dubey, Abhinav Jauhri, Abhinav Pandey, Abhishek Kadian, Ahmad Al-Dahle, Aiesha Letman, Akhil Mathur, Alan Schelten, Alex Vaughan, et al.
+The llama 3 herd of models.
+arXiv preprint arXiv:2407.21783, 2024.
+[29]
+Susan Zhang, Stephen Roller, Naman Goyal, Mikel Artetxe, Moya Chen, Shuohui Chen, Christopher Dewan, Mona Diab, Xian Li, Xi Victoria Lin, et al.
+Opt: Open pre-trained transformer language models.
+arXiv preprint arXiv:2205.01068, 2022.
+[30]
+Jacob Devlin, Ming-Wei Chang, Kenton Lee, and Kristina Toutanova.
+BERT: Pre-training of deep bidirectional transformers for language understanding.
+In Proceedings of the 2019 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies, Volume 1 (Long and Short Papers). Association for Computational Linguistics, 2019.
+[31]
+Yinhan Liu, Myle Ott, Naman Goyal, Jingfei Du, Mandar Joshi, Danqi Chen, Omer Levy, Mike Lewis, Luke Zettlemoyer, and Veselin Stoyanov.
+Ro{bert}a: A robustly optimized {bert} pretraining approach, 2020.
+[32]
+Qwen, :, An Yang, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chengyuan Li, Dayiheng Liu, Fei Huang, Haoran Wei, Huan Lin, Jian Yang, Jianhong Tu, Jianwei Zhang, Jianxin Yang, Jiaxi Yang, Jingren Zhou, Junyang Lin, Kai Dang, Keming Lu, Keqin Bao, Kexin Yang, Le Yu, Mei Li, Mingfeng Xue, Pei Zhang, Qin Zhu, Rui Men, Runji Lin, Tianhao Li, Tianyi Tang, Tingyu Xia, Xingzhang Ren, Xuancheng Ren, Yang Fan, Yang Su, Yichang Zhang, Yu Wan, Yuqiong Liu, Zeyu Cui, Zhenru Zhang, and Zihan Qiu.
+Qwen2.5 technical report, 2025.
+[33]
+Tim Dettmers, Artidoro Pagnoni, Ari Holtzman, and Luke Zettlemoyer.
+Qlora: Efficient finetuning of quantized llms.
+arXiv preprint arXiv:2305.14314, 2023.
+[34]
+Elias Frantar, Saleh Ashkboos, Torsten Hoefler, and Dan Alistarh.
+Gptq: Accurate post-training quantization for generative pre-trained transformers.
+arXiv preprint arXiv:2210.17323, 2022.
+[35]
+Federico Belotti and Davide Angioni.
+Implementation of FGD, 2023.
+URL https://github.com/orobix/fwdgrad?tab=readme-ov-file#perfomance-comparison.
+[36]
+Louis Fournier, Stéphane Rivaud, Eugene Belilovsky, Michael Eickenberg, and Edouard Oyallon.
+Can forward gradient match backpropagation?
+In Proceedings of the 40th International Conference on Machine Learning, 2023.
+[37]
+Adam D. Cobb, Atılım Güneş Baydin, Barak A. Pearlmutter, and Susmit Jha.
+Second-order forward-mode automatic differentiation for optimization.
+arXiv preprint arXiv:2408.10419, 2024.
+[38]
+Jesse Bettencourt, Matthew J. Johnson, and David Duvenaud.
+Taylor-mode automatic differentiation for higher-order derivatives in JAX.
+In Program Transformations for ML Workshop at NeurIPS 2019, 2019.
+[39]
+Khemraj Shukla and Yeonjong Shin.
+Randomized forward mode of automatic differentiation for optimization algorithms.
+arXiv preprint arXiv:2310.14168, 2023.
+[40]
+M Rostami and Solmaz S Kia.
+Forward gradient-based frank-wolfe optimization for memory efficient deep neural network training.
+arXiv preprint arXiv:2403.12511, 2024.
+[41]
+Katharina Flügel, Daniel Coquelin, Marie Weiel, Achim Streit, and Markus Götz.
+Beyond backpropagation: Optimization with multi-tangent forward gradients.
+arXiv preprint arXiv:2410.17764, 2024.
+[42]
+Aochuan Chen, Yimeng Zhang, Jinghan Jia, James Diffenderfer, Konstantinos Parasyris, Jiancheng Liu, Yihua Zhang, Zheng Zhang, Bhavya Kailkhura, and Sijia Liu.
+Deepzero: Scaling up zeroth-order optimization for deep model training.
+In The Twelfth International Conference on Learning Representations, 2024.
+[43]
+Hongxu Chen, Jinchi Chen, and Ke Wei.
+A zeroth-order variance-reduced method for decentralized stochastic non-convex optimization.
+arXiv preprint arXiv:2310.18883, 2023.
+[44]
+Rie Johnson and Tong Zhang.
+Accelerating stochastic gradient descent using predictive variance reduction.
+In C.J. Burges, L. Bottou, M. Welling, Z. Ghahramani, and K.Q. Weinberger, editors, Advances in Neural Information Processing Systems, 2013.
+[45]
+Zhuanghua Liu, Cheng Chen, Luo Luo, and Bryan Kian Hsiang Low.
+Zeroth-order methods for constrained nonconvex nonsmooth stochastic optimization.
+In Forty-first International Conference on Machine Learning, 2024.
+[46]
+Guy Kornowski and Ohad Shamir.
+An algorithm with optimal dimension-dependence for zero-order nonsmooth nonconvex stochastic optimization.
+Journal of Machine Learning Research, 2024.
+[47]
+Krishnakumar Balasubramanian and Saeed Ghadimi.
+Zeroth-order (non)-convex stochastic optimization via conditional gradient and gradient updates.
+In S. Bengio, H. Wallach, H. Larochelle, K. Grauman, N. Cesa-Bianchi, and R. Garnett, editors, Advances in Neural Information Processing Systems, 2018.
+[48]
+Yining Wang, Simon Du, Sivaraman Balakrishnan, and Aarti Singh.
+Stochastic zeroth-order optimization in high dimensions.
+In Proceedings of the Twenty-First International Conference on Artificial Intelligence and Statistics, Proceedings of Machine Learning Research. PMLR, 2018.
+[49]
+Yihua Zhang, Pingzhi Li, Junyuan Hong, Jiaxiang Li, Yimeng Zhang, Wenqing Zheng, Pin-Yu Chen, Jason D. Lee, Wotao Yin, Mingyi Hong, Zhangyang Wang, Sijia Liu, and Tianlong Chen.
+Revisiting zeroth-order optimization for memory-efficient llm fine-tuning: a benchmark.
+In Proceedings of the 41st International Conference on Machine Learning, ICML’24, 2024.
+[50]
+Aidan N Gomez, Mengye Ren, Raquel Urtasun, and Roger B Grosse.
+The reversible residual network: Backpropagation without storing activations.
+In I. Guyon, U. Von Luxburg, S. Bengio, H. Wallach, R. Fergus, S. Vishwanathan, and R. Garnett, editors, Advances in Neural Information Processing Systems, 2017.
+[51]
+Audrunas Gruslys, Rémi Munos, Ivo Danihelka, Marc Lanctot, and Alex Graves.
+Memory-efficient backpropagation through time.
+Advances in neural information processing systems, 2016.
+[52]
+Olivier Beaumont, Lionel Eyraud-Dubois, and Alena Shilova.
+Efficient combination of rematerialization and offloading for training dnns.
+In M. Ranzato, A. Beygelzimer, Y. Dauphin, P.S. Liang, and J. Wortman Vaughan, editors, Advances in Neural Information Processing Systems, 2021.
+[53]
+Lewis Tunstall.
+Agnews on huggingface.
+https://huggingface.co/datasets/SetFit/ag_news/tree/main, 2022.
+[Online; accessed 23-April-2025].
+[54]
+Albert Villanova del Moral.
+Boolq on huggingface.
+https://huggingface.co/datasets/google/boolq, 2022a.
+[Online; accessed 23-April-2025].
+[55]
+Albert Villanova del Moral.
+Multirc on huggingface.
+https://huggingface.co/datasets/aps/super_glue, 2022b.
+[Online; accessed 23-April-2025].
+[56]
+Albert Villanova del Moral.
+Gsm8k on huggingface.
+https://huggingface.co/datasets/openai/gsm8k, 2022c.
+[Online; accessed 23-April-2025].
+[57]
+Long Phan.
+Mmlu on huggingface.
+https://huggingface.co/datasets/cais/mmlu, 2024.
+[Online; accessed 23-April-2025].
+[58]
+Tsung-Yi Lin, Michael Maire, Serge Belongie, James Hays, Pietro Perona, Deva Ramanan, Piotr Dollár, and C. Lawrence Zitnick.
+Microsoft coco: Common objects in context.
+In David Fleet, Tomas Pajdla, Bernt Schiele, and Tinne Tuytelaars, editors, Computer Vision – ECCV 2014. Springer International Publishing, 2014.
+[59]
+Yash Goyal.
+Vqav2.
+https://visualqa.org/, 2017.
+[Online; accessed 23-April-2025].
+[60]
+Aman Preet.
+Textvqa on huggingface.
+https://huggingface.co/datasets/facebook/textvqa, 2022.
+[Online; accessed 23-April-2025].
+[61]
+Mengwei Xu, Dongqi Cai, Yaozong Wu, Xiang Li, and Shangguang Wang.
+Fwdllm: Efficient federated finetuning of large language models with perturbed inferences.
+In 2024 USENIX Annual Technical Conference (USENIX ATC 24), 2024.
+[62]
+Tianyu Gao, Adam Fisch, and Danqi Chen.
+Making pre-trained language models better few-shot learners.
+In Proceedings of the 59th Annual Meeting of the Association for Computational Linguistics and the 11th International Joint Conference on Natural Language Processing (Volume 1: Long Papers). Association for Computational Linguistics, 2021.
+Appendix A Related Work
+Here we review recent works on forward-mode AD and zero-order optimization methods; along with a discussion on various methods to refine the memory and time efficiency of backpropagation.
+A.1 Forward-mode AD
+The application of forward-mode automatic differentiation (FmAD) for training deep neural networks was first introduced in Forward-Gradient Descent (Fgd) [5], building on an earlier survey on automatic differentiation [4].
+Fgd demonstrated FmAD on a small-scale three-layer fully connected model and a four-layer convolutional network, claiming that FmAD can outperform backpropagation (BP) in speed and loss reduction per unit time.
+However, these claims remain unverifiable, as the implementation was never made publicly available, and subsequent independent evaluations [35] have found these results difficult to reproduce.
+Beyond this initial demonstration, more recent efforts have attempted to improve FmAD’s efficiency.
+Can Forward Gradients Match Backpropagation? [36] seeks to enhance FmAD by generating more structured perturbations rather than relying on random sampling.
+This approach introduces local losses computed via small auxiliary networks to inform perturbation choices.
+However, training these auxiliary networks significantly increases memory consumption and computational overhead, undermining FmAD’s intended efficiency advantage.
+Other studies have focused on extending FmAD beyond first-order gradients.
+Second-order FmAD [37] provides a formal framework for computing second-order gradients with FmAD, demonstrating improved optimization performance.
+However, this comes at a substantial computational cost, and experiments remain limited to small-scale benchmarks (e.g., a CNN with only 431K parameters), leaving open the question of whether second-order FmAD can scale competitively against BP.
+Similarly, Taylor-mode Auto Differentiation [38] generalizes FmAD to compute higher-order gradients, yet the memory and time-to-convergence trade-offs compared to BP remain unexplored.
+Several other works have proposed variations of FmAD without fundamentally addressing its inefficiencies.
+Randomized Forward Gradient-based GD [39] provides a convergence analysis of FmAD using random perturbations but offers no new insights into its computational efficiency.
+Projected-FG [40] applies FmAD to memory-efficient Frank-Wolfe optimization but evaluates only small models, making its conclusions inapplicable to large-scale deep learning.
+Beyond Backpropagation [41] investigates the use of multiple perturbations per iteration to improve forward-gradient computation but fails to identify why FmAD remains inferior to BP in practice.
+A more recent large-scale application of FmAD appears in Spry [6], which employs FmAD for fine-tuning large models (ranging from 100K to 13B parameters) in a federated learning setting.
+By restricting each client to a small subset of weights, Spry circumvents FmAD’s poor performance in high-dimensional perturbations.
+However, even in this setting, FmAD exhibits slower convergence and higher variance than BP, further reinforcing its fundamental limitations.
+While prior works have demonstrated narrow successes of FmAD in specialized scenarios, none have systematically analyzed its fundamental computational constraints.
+Besides, the comparison of FmAD against a strong baseline of BP-Checkpointing remains uncharted.
+Unlike these related studies, our work provides a principled theoretical and empirical investigation into the scalability bottlenecks of FmAD, explicitly comparing its memory and time complexity against BP-Checkpointing.
+We also uncover failure modes of FmAD in deep networks, offering new insights into why it cannot consistently surpass BP in terms of both time-to-convergence and efficiency.
+A.2 Zero-order Optimization
+Zero-order (ZO) optimization has received significant attention, particularly in settings where first-order gradient information is unavailable or impractical to compute.
+Unlike FmAD, which has seen limited large-scale adoption, ZO methods have been actively explored in deep learning due to their applicability in scenarios such as adversarial attacks, black-box optimization, and gradient-free fine-tuning.
+Similar to FmAD, we also note that none of the works discussed below have made a comparison of their ZO-based variant against BP-Checkpointing, an aspect which is fleshed out in this work.
+MeZO [8] and its extension MeZO-SVRG [12] introduced memory-efficient ZO optimization strategies that regenerate random perturbations instead of storing them, effectively reducing memory overhead.
+These methods have demonstrated practical advantages in fine-tuning large language models (LLMs) for classification tasks without requiring explicit backpropagation.
+While they address memory constraints, they do not provide insights into the fundamental efficiency trade-offs between ZO and BP in terms of time-to-convergence, memory consumption, and attained accuracy; which are the key concerns of our work.
+Expanding on these efforts, DeepZero [42] proposed a ZO deep learning framework capable of training deep neural networks from scratch.
+By leveraging coordinate-wise gradient estimation (CGE) over randomized vector-wise estimation, DeepZero achieves improved accuracy and computational efficiency.
+Additionally, the introduction of sparsity-induced training, feature reuse, and forward parallelization brings ZO training closer to first-order methods, achieving state-of-the-art results on ResNet-20 trained on CIFAR-10.
+However, despite these advancements, ZO remains fundamentally limited by high variance and inefficient gradient estimation, resulting in slower convergence compared to BP, which is an issue we empirically validate in our benchmarks.
+Other works, such as DZOVR [43] and ZO-SVRG [10], have attempted to improve ZO efficiency by incorporating Stochastic Variance Reduced Gradients (SVRG) [44].
+Similarly, research on ZO methods for non-convex and non-smooth optimization [45, 46, 47] has provided valuable theoretical insights.
+However, none of these studies systematically compare ZO to BP in terms of memory consumption, execution time, and scalability, leaving open the question of whether ZO can ever be a viable alternative.
+Our work explicitly addresses this gap by benchmarking these methods against BP and highlighting their structural inefficiencies.
+Further, ZO-AdaMM [13] integrates an adaptive optimizer (AdaMM) into ZO, demonstrating improved stability.
+However, even with adaptive optimization, ZO struggles to match the convergence speed of BP, as shown in their experiments on a small-scale CNN.
+Additionally, work on ZO optimization in high-dimensional settings [48] has focused primarily on convergence properties rather than the computational and memory efficiency bottlenecks that limit ZO’s practical scalability.
+Revisiting ZO [49] benchmarks the performance of large language models trained using BP, FmAD, and ZO optimization.
+Our work differs in several key ways:
+(a) We include comparisons against a backpropagation with checkpointing baseline, offering new insights into the memory-efficiency trade-offs among gradient computation methods.
+(b) Unlike Revisiting ZO, our study evaluates both time-to-convergence and overall computational cost, which are critical for understanding practical scalability.
+(c) We also provide an in-depth failure mode analysis, focusing on the behavior of Jacobian-vector products and their influence on model updates, an aspect unexplored in their work.
+A.3 Optimizations on Backpropagation
+Backpropagation (BP) remains the dominant method for training deep neural networks due to its computational efficiency and well-optimized implementations.
+However, standard BP incurs high memory costs, as it requires storing intermediate activations for the entire computational graph during the forward pass.
+This limitation has motivated extensive research into memory-efficient variants of BP that aim to reduce memory consumption without significantly compromising training speed.
+Checkpointing-based methods, such as Reversible Residual Networks [50] and Activation Checkpointing [9], trade memory for recomputation by strategically discarding and later recomputing activations.
+These techniques have proven effective in reducing memory overhead, but they introduce additional computational costs.
+More recent approaches, such as Efficient Rematerialization [51] and Dynamic Programming-based Activation Offloading [52], attempt to optimize checkpointing strategies to minimize recomputation overhead.
+Despite these advances, BP with checkpointing still follows the same fundamental backpropagation framework and benefits from computation reuse – an efficiency advantage that FmAD and ZO methods lack.
+Appendix B Datasets
+In this section, we provide detailed descriptions of the datasets used in our experiments.
+For each dataset, we outline its origin, licensing, the version we have used, and task-specific characteristics, including the number of samples, sequence lengths and relevant domain or classification details.
+AGNews.
+The AG News dataset [23] is derived from a corpus of 496,835 labeled news articles collected from over 2,000 web-based news sources published between 2004 and 2005.
+For this work, we use a widely adopted, cleaned, and balanced subset comprising 120,000 training samples and 7,600 test samples, evenly distributed across four categories:
+World,
+Sports,
+Business,
+and Science/Technology.
+We divide the test data into half to create validation and test splits.
+The dataset is primarily used for topic classification, which is also the focus of our study.
+The maximum sequence length for our experiments is set to 350 tokens during training.
+It is released under the Creative Commons CC0 1.0 Universal license, placing it in the public domain.
+We obtained the dataset via the Hugging Face Datasets library [53].
+BoolQ.
+The Boolean Questions (BoolQ) dataset [24] is a reading comprehension benchmark consisting of naturally occurring yes/no questions.
+Each instance includes a question, a passage (typically a paragraph from Wikipedia), and a binary answer (“yes” or “no”) derived from the passage content.
+Unlike synthetic question-generation benchmarks, BoolQ features real user queries collected from Google search logs, making the task more reflective of real-world comprehension.
+The dataset contains approximately 9,427 question-passage training pairs, and 3,270 validation pairs.
+We divide the validation data into half to create the validation and test data splits for this work.
+The maximum sequence length for our experiments is set to 1200 tokens during training.
+BoolQ is released under the Creative Commons Share-Alike 3.0, which allows for flexible use, modification, and redistribution with appropriate attribution.
+Once again, Hugging Face Datasets was used to access BoolQ [54].
+MultiRC.
+The Multi-Sentence Reading Comprehension (MultiRC) [25] dataset is a benchmark corpus designed to evaluate machine reading comprehension over short paragraphs.
+Each example consists of a paragraph followed by one or more questions, with corresponding candidate answers that must be inferred from the text.
+In our setup, we frame the task as a binary classification problem, determining whether a given question-answer pair is correct or incorrect based on the paragraph content.
+The dataset contains approximately 6,000 multi-sentence questions drawn from over 800 distinct paragraphs.
+The maximum sequence length for our experiments is set to 1500 tokens during training.
+MultiRC is released under the MIT License, permitting broad use and redistribution with attribution.
+We accessed the dataset through Hugging Face [55].
+GSM8K.
+The Grade School Math 8K (GSM8K) dataset [21] is a high-quality benchmark for evaluating arithmetic reasoning and problem-solving abilities of language models.
+Each example consists of a single math word problem followed by a detailed, step-by-step answer.
+Designed to emphasize multi-step reasoning, the problems are written in natural language and reflect concepts typically found in grade school (middle school) curricula.
+The dataset contains 7,470 training examples and 1,319 test examples, all manually curated for clarity and correctness.
+The maximum sequence length for our experiments is set to 800 tokens during training.
+In this work, we use GSM8K as a text-to-text supervised learning task, where the input is the problem statement and the target is the final answer (without the reasoning steps).
+The dataset is publicly available under the MIT License, allowing broad reuse and modification with attribution.
+The dataset is available on Hugging Face [56].
+MMLU.
+The Massive Multitask Language Understanding (MMLU) [22] dataset is a comprehensive benchmark designed to assess general knowledge and reasoning ability across a wide range of academic and professional subjects.
+It covers 57 diverse topics, including mathematics, history, law, medicine, and the sciences, with questions derived from standardized exams and expert-written materials.
+Each example is a multiple-choice question with four answer options, requiring both factual knowledge and reasoning skills.
+All four answer options are included in the prompt.
+The dataset consists of 99.8k training samples, 1.5k validation samples, and 14k test samples.
+The maximum sequence length for our experiments is set to 1500 tokens during training.
+MMLU is publicly available under the MIT License, allowing free use, modification, and distribution with appropriate credit.
+Its breadth and difficulty make it a challenging benchmark for evaluating finetuned language models.
+In line with rest of the datasets, we have used the Hugging Face Datasets version of MMLU [57].
+VQAv2.
+The Visual Question Answering v2.0 (VQAv2) [26] dataset is a large-scale benchmark designed to evaluate a model’s ability to understand and reason over both visual and textual inputs.
+Each example consists of an image (sourced primarily from the MS COCO dataset [58]) paired with a natural language question, and the task is to generate an accurate, typically short (often single-word), answer based on the visual content of the image.
+VQAv2 addresses the language bias issues present in its predecessor (VQAv1) by ensuring that each question is associated with multiple images, such that the correct answer varies depending on the visual context. This structure encourages models to genuinely integrate image understanding rather than relying solely on question priors.
+The dataset contains 443,757 training questions, 214,354 validation questions, and 447,793 test questions, associated with over 200,000 images.
+Each question has 10 human-provided answers, allowing for nuanced evaluation metrics such as accuracy based on answer consensus [59].
+The maximum sequence length for our experiments is set to 100 tokens during training.
+VQAv2 is distributed under the 2-Clause BSD License, allowing for use and adaptation with attribution.
+We access the dataset through the VisualQA website [59].
+TextVQA.
+The TextVQA (Text-based Visual Question Answering) dataset [27] is a vision-language benchmark specifically designed to evaluate a model’s ability to read and reason about text within images.
+Unlike standard VQA tasks that focus on general object and scene understanding, TextVQA centers on questions where the answer relies on text present in the image itself; such as signs, labels, documents, product packaging, and storefronts.
+Each example in the dataset includes an image, a natural language question, and a free-form textual answer.
+To correctly answer a question, models must integrate visual understanding with OCR (Optical Character Recognition) capabilities.
+TextVQA challenges systems to perform multimodal reasoning that spans spatial, linguistic, and visual modalities.
+The dataset consists of approximately 28,408 questions associated with 14,987 images, split into: 21,953 training questions; 3,166 validation questions; and 3,289 test questions.
+Each question is annotated with 10 answers from human annotators to support consensus-based evaluation metrics.
+The maximum sequence length for our experiments is set to 100 tokens during training.
+TextVQA is publicly available under the CC BY 4.0 (Creative Commons Attribution 4.0 International License), allowing flexible use, sharing, and adaptation with attribution.
+The dataset is available for access on Hugging Face [60].
+Appendix C Baselines and Hyperparameters
+BP-Vanilla.
+This baseline [1] uses a standard implementation of the training loop with backpropagation as the gradient computation method, without any modifications or enhancements.
+Due to out-of-memory (OOM) issues encountered with larger batch sizes, most experiments involving BP-Vanilla are conducted using smaller batches.
+The hyperparameters are given in Table 4.
+Table 4: Hyperparameters related to BP-Vanilla for all datasets.
+AGNews
+BoolQ
+MultiRC
+GSM8K
+MMLU
+VQAv2
+TextVQA
+Batch Size
+8
+4
+8
+4
+6
+6
+8
+Learning Rate
+1e-3
+1e-3
+1e-3
+1e-5
+1e-4
+1e-4
+1e-4
+Optimizer
+AdamW
+AdamW
+AdamW
+AdamW
+SGD Nesterov
+Momentum 0.9
+SGD
+AdamW
+BP-Checkpointing.
+BP-Checkpointing [9] is identical to BP-Vanilla with one key difference:
+it employs activation checkpointing (also known as gradient checkpointing) to reduce memory consumption, allowing for larger batch sizes without incurring out-of-memory (OOM) errors.
+To ensure a fair comparison, the batch sizes used for BP-Checkpointing match those used for the ZO and FmAD variants.
+The hyperparameters are given in Table 5.
+Table 5: Hyperparameters related to BP-Checkpointing and BP-Accumulate for all datasets.
+AGNews
+BoolQ
+MultiRC
+GSM8K
+MMLU
+VQAv2
+TextVQA
+Batch Size
+40
+40
+40
+6
+8
+8
+8
+Learning Rate
+1e-3
+1e-3
+1e-3
+1e-5
+1e-4
+1e-4
+1e-4
+Optimizer
+AdamW
+AdamW
+AdamW
+AdamW
+SGD Nesterov
+Momentum 0.9
+SGD
+AdamW
+BP-Accumulate.
+BP-Accumulate follows the same training procedure as BP-Checkpointing, but incorporates gradient accumulation to simulate larger effective batch sizes without exceeding memory constraints.
+Instead of updating model weights after every mini-batch, gradients are accumulated over multiple smaller batches and the update is performed after a fixed number of steps.
+At the end of the accumulation period, the summed gradients are averaged by dividing them by the number of accumulation steps.
+The hyperparameters are same as those of BP-Checkpointing (see Table 5), with accumulation step count being 100 as default.
+ZO-Vanilla.
+ZO-Vanilla [13] implements a standard zero-order optimization approach, which estimates gradients using only function evaluations according to Equation 2, without requiring access to the model’s internal, first-order gradients.
+Specifically, it perturbs the model parameters along randomly sampled directions and uses finite differences to approximate the gradient.
+We have used the memory-efficient perturbation trick of MeZO for all the ZO- variants, which includes storing the random seed and regenerating perturbations for forward pass evaluations, instead of persisting entire perturbations in the memory.
+For fair comparison, we use the same batch sizes as in BP-Checkpointing and FmAD baselines.
+The hyperparameters are given in Table 6.
+Table 6: Hyperparameters related to ZO-Vanilla for all datasets.
+AGNews
+BoolQ
+MultiRC
+GSM8K
+MMLU
+VQAv2
+TextVQA
+Batch Size
+40
+40
+40
+6
+8
+8
+8
+Learning Rate
+1e-4
+1e-4
+1e-3
+1e-5
+1e-5
+1e-4
+1e-4
+Optimizer
+AdamW
+AdamW
+SGD
+SGD
+Nesterov
+Mmtm 0.9
+SGD
+Nesterov
+Mmtm 0.9
+AdamW
+SGD
+Perturbation
+Step Size
+1e-3
+1e-2
+1e-2
+1e-3
+1e-4
+1e-3
+1e-3
+ZO-Accumulate.
+ZO-Accumulate extends the ZO-Vanilla baseline by incorporating gradient accumulation to simulate larger effective batch sizes without exceeding memory constraints.
+Instead of estimating and applying a parameter update after each mini-batch, gradient approximations (based on finite differences) are accumulated over multiple steps and averaged before updating the model.
+This approach results in improved stability due to averaging out the noisy gradient estimates.
+The hyperparameters are same as with ZO-Vanilla, given in Table 6, with default accumulation window of 100.
+ZO-Multiple.
+ZO-Multiple (also shown in [6, 11, 61]) builds on the ZO-Vanilla method by using multiple random perturbation directions per iteration, to improve the accuracy of the gradient estimate.
+Instead of relying on a single direction, this variant samples several perturbations and averages the resulting finite-difference approximations, leading to a lower-variance and more stable update.
+However, this approach increases the number of function evaluations per step.
+The hyperparameters are same as with ZO-Vanilla, given in Table 6, with default perturbation count per iteration of 10.
+ZO-Adaptive.
+ZO-Adaptive enhances zero-order optimization by incorporating an adaptive perturbation strategy that aligns gradient estimates more closely with the true gradient direction over time.
+The optimization proceeds in two phases.
+In the calibration phase (typically the first iteration), multiple perturbation directions are sampled, and the one with the highest positive projected gradient is selected.
+This direction is assumed to have the smallest angle with the true gradient.
+This calibrated perturbation is then used to compute an initial gradient estimate.
+In the adaptive phase (subsequent iterations), new perturbations are sampled based on the previously estimated gradient, and a rolling average is maintained between the new perturbation and the historical gradient direction.
+This mechanism biases the search toward more promising directions while still allowing for exploratory variation.
+The hyperparameters are same as those of ZO-Vanilla, with the inclusion of sampling 4 perturbations during the calibration phase.
+ZO-SVRG.
+ZO-SVRG [10] applies the principles of Stochastic Variance Reduced Gradient (SVRG) [44] to the zero-order optimization setting, aiming to improve convergence speed and stability by reducing the variance inherent in gradient estimates.
+The method alternates between two types of updates:
+full gradient estimation at a reference point (called a snapshot) and subsequent inner-loop updates that correct noisy estimates using control variates.
+In the zero-order context, both the snapshot gradient and the inner-loop updates are computed using finite-difference approximations along random perturbations.
+The variance reduction comes from reusing the snapshot gradient to correct each inner-step estimate.
+Besides the hyperparameters shown in Table 6, we use interval of 5 epochs to compute full gradients.
+ZO-Sparse.
+ZO-Sparse [14] introduces sparsity into zero-order optimization by restricting gradient estimation and updates to only the top 1% of model parameters, selected based on their magnitude at each iteration.
+Unlike structured approaches such as LoRA, this method dynamically identifies and perturbs the most significant weights, those likely to contribute most to loss reduction. Hence, ZO-Sparse focuses the optimization on a small, adaptive subset of parameters.
+This sparsity constraint reduces the dimensionality of the optimization problem, leading to fewer function evaluations.
+The hyperparameters are exactly the same as those of Table 6.
+MeZO.
+MeZO [8] builds on ZO-Vanilla, but with a key modification tailored for classification tasks using language models.
+Instead of relying on a separate classifier head, MeZO employs the language modeling (LM) head and masks out logits corresponding to vocabulary tokens that are not class labels.
+This approach is presented in the prompt-based fine-tuning strategy introduced by[62].
+MeZO integrates this prompting technique with zero-order optimization, enabling effective gradient-free fine-tuning of large language models, although it is limited to the classification tasks.
+We use the same hyperparameters as ZO-Vanilla (see Table 6).
+FmAD-Vanilla.
+FmAD-Vanilla implements the standard forward-mode automatic differentiation [4, 5] approach for computing gradients, more details are in §2.
+In this baseline, we use a straightforward implementation of forward-mode AD without any memory-saving strategies or structural optimizations.
+The hyperparameters used for FmAD-Vanilla are summarized in Table 7.
+Additionally, the variance of the Gaussian distribution used for perturbation sampling is fixed at 1 across all datasets.
+Table 7: Hyperparameters related to FmAD-Vanilla for all datasets.
+AGNews
+BoolQ
+MultiRC
+GSM8K
+MMLU
+VQAv2
+TextVQA
+Batch Size
+40
+40
+40
+6
+8
+8
+8
+Learning Rate
+1e-3
+1e-4
+1e-4
+1e-5
+1e-5
+1e-4
+1e-4
+Optimizer
+AdamW
+SGD
+AdamW
+SGD
+Nesterov
+Mmtm 0.9
+SGD
+Nesterov
+Mmtm 0.9
+SGD
+SGD
+FmAD-Accumulate.
+FmAD-Accumulate extends the standard forward-mode automatic differentiation by incorporating gradient accumulation to simulate larger batch sizes without increasing memory consumption.
+The same accumulation strategy is used in corresponding BP-Accumulate and ZO baselines to maintain fairness in comparison.
+The hyperparameters are given in Table 7, with the addition of accumulation window of 100.
+FmAD-Multiple.
+FmAD-Multiple enhances the basic forward-mode AD approach by using multiple perturbation directions per update to improve the stability and accuracy of gradient estimates.
+The setup closely mirrors that of ZO-Multiple, with hyperparameters listed in Table 7.
+The only addition is the use of 10 perturbation count per iteration.
+FmAD-Adaptive.
+FmAD-Adaptive mirrors the two-phase procedure described in ZO-Adaptive, including the calibration phase for selecting an initial perturbation direction and the adaptive phase that updates this direction using a rolling average of past gradients.
+For full details, we refer the reader to the ZO-Adaptive description.
+All hyperparameters remain consistent with Table 7, with calibration phase including 4 perturbations just like ZO-Adaptive.
+FmAD-SVRG.
+FmAD-SVRG adopts the same stochastic variance-reduced gradient (SVRG) framework used in ZO-SVRG, but applies it within the forward-mode AD setting.
+It alternates between full-gradient computation on a reference batch and variance-reduced updates on mini-batches, thereby reducing the noise in gradient estimates while maintaining computational efficiency.
+For details on the SVRG formulation, we refer the reader to the description of ZO-SVRG.
+Hyperparameters are in Table 7, with full gradients getting computed every 5 epochs (similar to ZO-SVRG).
+FmAD-Sparse.
+FmAD-Sparse adopts the same sparsity strategy described in ZO-Sparse, where only the top 1% of parameters (by magnitude) are selected for gradient updates during each iteration.
+As with the ZO-Sparse variant, this method avoids techniques like LoRA and instead relies on direct selection of high-magnitude weights.
+For complete details on the sparsity mechanism, we refer the reader to the ZO-Sparse description.
+All hyperparameters are in Table 7.
+Appendix D Limitations and Future Work
+While the aim of our work was to provide a comprehensive comparison of backpropagation (BP), forward-mode automatic differentiation (FmAD), and zero-order (ZO) optimization strategies, several limitations remain, which can serve as venues for a further exploration.
+First, our experiments focus on deep models, and we did not systematically evaluate backpropagation with checkpointing (BP-Checkpointing) on wider but shallower models.
+In principle, checkpointing may offer less benefit for such architectures.
+However, since wider and shallower models are relatively uncommon in practice, we chose not to extend our evaluations in that direction.
+Further, our checkpointing implementation operates at only one granularity (where which activations to checkpoint is not controlled by us) due to current Hugging Face library support, which limits finer control over which activations are saved or recomputed.
+Finer-grained checkpointing could reduce memory usage further and potentially narrow the memory efficiency gap between BP-Checkpointing and ZO methods.
+However, this would come at the cost of increased runtime, introducing a different trade-off.
+Finally, while we focused on tuning and training LoRA layers, an important future direction would be to extend our comparison framework to full model finetuning.
+Such an extension would allow for a more complete characterization of the trade-offs between memory, time-to-convergence, and accuracy across different gradient computation strategies.
+Appendix E Broader Impact
+Training deep learning models already carries a high environmental cost due to significant energy consumption.
+Our study shows that forward-mode AD and zero-order optimization, despite saving memory in some cases, require much longer training times and compute compared to backpropagation with checkpointing.
+This inefficiency leads to greater carbon emissions overall.
+Therefore, we show that optimizing for true computational efficiency (time-to-convergence and compute; along with memory consumption) is crucial for reducing the environmental footprint of large-scale training.
+We also acknowledge that misinterpreting our results could lead to the premature dismissal of forward-mode AD or zero-order methods altogether.
+While they are not scalable replacements for backpropagation in large-scale training, they may still be uniquely suited for small models, non-differentiable tasks, or privacy-preserving settings where explicit gradients are inaccessible.
+Careful contextual understanding is necessary when applying our conclusions.
+Appendix F Additional Results
+F.1 Experimental Variance and Loss Curves
+Table 8 shows variance in reported accuracy numbers of Table 2.
+For each experiment, we performed three independent runs on seeds 0, 1, and 2.
+For each run, we computed the steady-state accuracy (averaged over the final evaluation steps).
+We then reported the mean (in Table 2) and variance (in Table 8) computed across these three steady-state accuracies.
+Table 8: Experimental variance (±\pm) of test accuracy across three runs with seeds 0, 1, and 2.
+Llama 3.1 (8B)
+Qwen 2 VL (7B)
+AGNews
+BoolQ
+MultiRC
+GSM8K
+MMLU
+VQAv2
+TextVQA
+BP-Vanilla
+0.46
+0.54
+0.59
+0.41
+0.63
+1.49
+0.78
+BP-Checkpointing
+0.45
+0.56
+0.62
+0.39
+0.61
+1.52
+0.77
+BP-Accumulate
+0.67
+0.78
+0.84
+0.79
+0.69
+1.71
+0.98
+ZO-Vanilla
+0.98
+0.76
+0.8
+0.55
+0.95
+1.22
+0.89
+ZO-Accumulate
+0.84
+0.72
+0.76
+0.53
+0.84
+1.16
+0.85
+ZO-Multiple
+0.79
+0.64
+0.67
+0.53
+0.86
+1.13
+0.86
+ZO-Adaptive
+1.02
+0.95
+1.13
+0.84
+0.83
+0.95
+0.78
+ZO-SVRG
+0.94
+1.03
+0.92
+0.82
+0.46
+1.02
+1.13
+ZO-Sparse
+0.53
+0.67
+0.62
+0.34
+1.03
+0.89
+0.9
+MeZO
+0.86
+0.73
+0.73
+-
+-
+-
+-
+FmAD-Vanilla
+0.81
+0.72
+0.64
+0.73
+0.86
+1.34
+0.92
+FmAD-Accumulate
+0.69
+0.73
+0.80
+0.62
+0.78
+0.91
+0.95
+FmAD-Multiple
+0.85
+0.77
+0.89
+1.04
+0.96
+0.74
+0.83
+FmAD-Adaptive
+1.63
+1.25
+1.34
+0.95
+1.52
+1.11
+1.31
+FmAD-SVRG
+1.42
+0.96
+0.89
+1.02
+1.44
+1.05
+1.29
+FmAD-Sparse
+0.93
+0.75
+1.10
+0.54
+0.67
+1.24
+0.93
+Furthermore, Figure 4 illustrates the training loss curves with respect to the training time, highlighting the convergence behavior.
+We have only showed the best-performing baselines to maintain clarity.
+(a) AGNews.
+(b) BoolQ.
+(c) MultiRC.
+(d) GSM8K.
+(e) MMLU.
+(f) TextVQA.
+(g) VQAv2.
+Figure 4:
+Training loss vs training time (in minutes) for (top) training Llama 3.1 (8B) on three text classification datasets (AGNews, BoolQ, and MultiRC), and (middle) two text generation datasets (GSM8K and MMLU).
+(bottom) VQAv2 and TextVQA are used to train Qwen 2 VL (7B) on visual question-answering task.
+F.2 Experiments with Medium-sized Models
+The goal of these experiments was to investigate whether forward-mode automatic differentiation (FmAD) and zero-order (ZO) optimization could perform competitively when applied to medium-sized models, specifically BERT Base (110M), BERT Large (340M), RoBERTa Base (125M), and RoBERTa Large (350M).
+While FmAD and ZO have shown some promise on very small-scale problems in prior work [13, 37, 40], it remained an open question whether the convergence speed could scale reasonably with model sizes.
+Figure 5 highlights a clear and consistent trend:
+backpropagation (with checkpointing) achieves superior convergence speed and final test accuracy, even for medium-sized models, compared to FmAD and ZO methods.
+Even for BERT Base (110M weights), FmAD and ZO lag significantly behind backpropagation in terms of convergence rate.
+While FmAD and ZO eventually approach a comparable final accuracy (with a gap of 0.74–1.66%) for BERT Base, they require substantially more training time to do so.
+(a) BERT Base (110M)
+(b) BERT Large (340M)
+(c) RoBERTa Base (125M)
+(d) RoBERTa Large (350M)
+Figure 5: Accuracy versus training time comparison across Backpropagation (with checkpointing), Zero-order (ZO), and Forward-mode AD (FmAD) on BERT (Base and Large) and RoBERTa (Base and Large).
+Even at a smaller scale of trainable parameter count, ZO and FmAD either fail to reach to the accuracy of backpropagation (in case of RoBERTa), or takes longer to reach to the desired accuracy (in case of BERT).
+As we scale to larger models, BERT Large and RoBERTa variants, the performance of FmAD and ZO deteriorates further.
+Both methods experience slower convergence, greater instability, and often plateau at lower final accuracies (with a drop of 1.19–6.71% for BERT Large, 6.76–7.62% for RoBERTa Base, 9.33–12.98% for RoBERTa Large) despite extensive training.
+ZO, in particular, struggles to reach acceptable performance, while FmAD shows increasingly volatile learning curves.
+In summary, our experiments confirm that FmAD and ZO are fundamentally limited in their ability to compete with backpropagation in realistic settings.
+Their inefficiency becomes increasingly pronounced as we evaluate accuracy, along side memory consumption and time-to-convergence.
+F.3 Changing Variance of Random Perturbation Sampling
+We examine the effect of variance σ2\sigma^{2} of random perturbations which are sampled from Gaussian distribution 𝒩⁡(0,σ2)\mathcal{N}(0,\sigma^{2}) on the accuracy performance of FmAD and ZO.
+Figure 6 presents test accuracy over time for different values of σ2\sigma^{2}, ranging from 1​e​+​01e\text{+}0 to 1​e​-​21e\text{-}2 for FmAD and from 1​e​-​21e\text{-}2 to 1​e​-​41e\text{-}4 for ZO.
+Figure 6: Changing variance σ2\sigma^{2} of random sampling of perturbations.
+Directly reducing randomness variance does not lead to reduced noise in the gradients.
+The results reveal a strong sensitivity to the choice of variance:
+small variances reduce the diversity of perturbations, while large variances introduce excessive noise in high-dimensions, destabilizing training.
+Both FmAD and ZO achieve their best performance at intermediate values, σ2=1​e+​0\sigma^{2}=1\text{e+}0 for FmAD and σ2=1​e-​3\sigma^{2}=1\text{e-}3 for ZO, which balance signal strength and noise.
+For ZO, reducing the variance from 1​e-​31\text{e-}3 to 1​e-​41\text{e-}4 results in a sharp accuracy drop of 13.75%.
+In contrast, FmAD shows a more gradual decline of 0.94% and 2.27% as σ2\sigma^{2} decreases from 1​e+​01\text{e+}0 to 1​e-​11\text{e-}1 and 1​e-​21\text{e-}2, respectively.
+The lower optimal variance for ZO arises from its gradient estimator, which includes an explicit division by the perturbation variance to scale the update magnitude (Equation 2).
+These findings suggest that simply reducing variance of the distribution from which perturbations are sampled does not result in better gradient estimates, nor does it improve convergence.
+F.4 Reducing Trainable Parameter Count
+Table 9: Accuracy of BP, ZO, and FmAD under model size scaling:
+Only BP-Checkpointing (abbreviated as BP-Chkpt) maintains high accuracy as model size increases.
+OPT Variants
+Variant Size
+Accuracy (↑\uparrow)
+BP-Chkpt
+1.3B
+94.08
+6.7B
+94.35
+13B
+94.51
+ZO-Vanilla
+1.3B
+73.16
+6.7B
+65.75
+13B
+71.00
+FmAD-Vanilla
+1.3B
+88.28
+6.7B
+87.50
+13B
+77.07
+Table 10: Accuracy as the LoRA rank increases for OPT 6.7B:
+BP-Checkpointing remains robust, while FmAD becomes unstable and ZO shows minimal gains.
+OPT 6.7B
+LoRA Rank
+Accuracy (↑\uparrow)
+BP-Chkpt
+1
+94.35
+16
+88.44
+32
+85.54
+ZO-Vanilla
+1
+65.75
+16
+68.07
+32
+68.97
+FmAD-Vanilla
+1
+87.5
+16
+jvp = NaN
+32
+jvp = NaN
+We investigate how increasing the number of trainable parameters affects performance under BP, ZO and FmAD.
+Tables 10 and 10 present results across varying model sizes and LoRA ranks, respectively.
+Further comparison of convergence time is available in Figure 7.
+In Table 10, we evaluate BP-Checkpointing, ZO-Vanilla, and FmAD-Vanilla on OPT model variants of size 1.3B, 6.7B, and 13B.
+As the model size increases, BP-Checkpointing consistently maintains high accuracy of ∼\sim94%.
+In contrast, ZO and FmAD exhibit noticeable drops in accuracy at larger model scales.
+Notably, FmAD achieves 88.28% accuracy on the 1.3B model but declines to 77.07% on the 13B model, showing degradation from scaling the count of trainable parameters.
+This result are consistent with our theoretical findings of convergence error bounded by the trainable parameter count (§3).
+Table 10 explores accuracy as a function of LoRA rank for OPT 6.7B.
+While BP-Checkpointing degrades gracefully as rank increases (likely due to overfitting), FmAD becomes unstable and fails to converge beyond rank 1, yielding NaN outputs for higher ranks.
+FmAD’s instability at higher LoRA ranks is due to inherent instability of perturbation-based gradient estimations, which we discuss in Appendix F.5.
+ZO, while stable, shows limited improvement with increased rank, reaching only 68.97% accuracy at rank 32.
+Figure 7: Comparison of convergence time among BP-Checkpointing, FmAD-Vanilla, and ZO-Vanilla with OPT(13B) on AGNews dataset.
+F.5 Failure Mode Analysis
+In order to understand why variance reduction methods or adaptive optimizers sometimes fail to make FmAD and ZO converge, or converge at a suboptimal accuracy; we present failure mode analysis with different optimizers and SVRG.
+F.5.1 Challenges with Optimizer Choice
+Here we discuss a distinct failure mode of FmAD which has been frequently observed in our preliminary experiments:
+the computed Jacobian-vector products (jvp) abruptly spike in magnitude.
+These sudden surges lead to disproportionately large gradient updates, destabilizing training and hindering convergence.
+A similar failure mode has been observed in zero-order (ZO) methods, where the projected gradients, mathematically equivalent to FmAD’s jvp values, exhibit comparable instability.
+Figure 8: Effect of AdamW and SGD optimizers on jvp values in FmAD on GSM8K dataset.
+(a) AdamW optimizer.
+(b) SGD optimizer.
+Figure 9: Mean of effective gradients of Backpropagation and Forward-mode AD with AdamW and SGD optimizers on GSM8K dataset.
+Figure 9 illustrates the impact of optimizer choice, specifically AdamW (adaptive) versus SGD (non-adaptive), on jvp values in FmAD.
+Under SGD, jvp values remain bounded within a stable range of [−50,50][-50,50] for the case of GSM8K dataset.
+However, with AdamW, these values exhibit a gradual increase followed by sharp spikes for certain datasets including GSM8K.
+In some cases, the spikes reach 8–10×\times higher magnitudes than the stable baseline observed with SGD.
+Figures 9(a) and 9(b) further illustrate the implications of these spikes.
+Under AdamW, the effective gradient magnitudes produced by FmAD exhibit substantially higher variance than those from backpropagation, indicating instability and less reliable gradient directions.
+These inflated updates also increase weight magnitudes, which in turn amplify subsequent jvp evaluations, since these depend on both the current weights and their perturbations.
+This positive feedback loop can lead to divergence and, eventually, NaN values in jvp computations, as observed in several FmAD runs in Table 10.
+Even when divergence does not occur, the resulting gradient updates can be excessively noisy or of high magnitude, leading to suboptimal convergence.
+In contrast, under SGD, the effective gradients computed by FmAD closely mirror those from backpropagation across most iterations, with stable behavior and no evidence of runaway magnitudes.
+We posit that this cascading rise in magnitude for the case of AdamW is due to its adaptive nature, where a rolling average of historical and current gradients is computed each iteration, leading to amplification of higher magnitude gradients.
+In contrast, the impact of jvp spikes is diminished with non-adaptive SGD since the previous iteration’s gradients would have limited effect (to only one iteration’s gradient updates).
+This stark contrast highlights a critical interaction between optimizer choice and the numerical stability of FmAD.
+While AdamW is widely favored for its adaptive learning rates and regularization capabilities, its use with FmAD (and by extension ZO) can introduce harmful gradient artifacts which are driven by uncontrolled jvp amplification.
+These results underscore the specific vulnerabilities in gradient estimation methods and point to a need for further study into stabilizing FmAD and ZO for more reliable deployment in large-scale training regimes.
+F.5.2 Challenges with SVRG
+In this section, we discuss a failure mode of SVRG observed in the context of text generation tasks.
+While SVRG improves performance for both ZO-Vanilla and FwAD-Vanilla baselines by 4.04–11.13 and 1.97–3.86, respectively, in many settings, it leads to performance degradation in certain sequence modeling tasks like GSM8K.
+(a) The current iteration’s jvp, jvp computed based on the snapshot weights, and the difference between these two values.
+(b) Magnitude of the mean effective full gradients (computed at specific epoch intervals) and the current iteration’s mini-batch gradient.
+Figure 10: Impact of incorporating SVRG into FmAD on (a) jvp values and the mean of effective full-batch and (b) mini-batch gradients, evaluated on the GSM8K dataset.
+Figure 10 illustrates the behavior of jvp values and the corresponding gradients when SVRG is applied to FmAD on the GSM8K dataset.
+In Figure 10(a), we observe that the difference between the jvp computed on the current model weights and the one computed on the snapshot weights is minimal.
+Consequently, the control variate, the difference between mini-batch gradients at current and snapshot weights, has little impact relative to the magnitude of the full gradient.
+This hypothesis is supported by Figure 10(b), which shows that the mean of the effective full gradients remains consistently large, while the mini-batch gradient magnitudes are significantly smaller.
+Because the full gradients are updated only at periodic intervals (every 5 epochs in our case), their inflated magnitude dominates the update direction across multiple steps.
+This inflation stems from the accumulation of large jvp values during the summation of per-batch gradients, occasionally resulting in outlier gradients with extremely high norms.
+As a result, the SVRG mechanism fails to provide meaningful variance reduction and instead perpetuates overly large updates, ultimately degrading model performance.
+A similar performance degradation was observed in ZO-SVRG [10], albeit on a smaller model with approximately 852K parameters.
+However, that work does not address the scalability challenges of SVRG-based methods in the context of zeroth-order optimization.
+Appendix G Signal Propagation for Gradient Computation
+A key difference between BP and FmAD/ZO methods lies in how they propagate the loss signal to compute weight updates.
+BP computes the derivative of the loss ℒ\mathcal{L} with respect to each weight wiw_{i}, effectively mapping changes in the loss to precise updates in the parameter space.
+The gradients of the intermediate activations, computed during the backward pass, are also derived from δ​ℒ\delta\mathcal{L}, allowing the loss signal to guide every stage of the update.
+This direct path from the loss to the parameters makes BP a loss-to-weights approach, where the signal flows backward through the network in a structured and deterministic way.
+In contrast, both FmAD and ZO adopt a weights-to-loss perspective:
+they estimate how perturbations in the weights, δ​𝒘=𝒗\delta\boldsymbol{w}=\boldsymbol{v}; affect the loss, δ​ℒ\delta\mathcal{L}.
+The forward-mode Jacobian-vector product (jvp) and the ZO projected gradient scalar both incorporate the resulting change in the loss, but they do so indirectly.
+Specifically, they multiply δ​ℒ\delta\mathcal{L} by the perturbation direction 𝒗\boldsymbol{v} to approximate weight gradients (as detailed in Equations 4 and 6).
+However, in these approaches, the intermediate changes δ​yp\delta y_{p} (which influence δ​ℒ\delta\mathcal{L}) are driven by the initial perturbations δ​wp∼𝒩⁡(0,Id)\delta w_{p}\sim\mathcal{N}(0,I_{d}); not by the loss.
+As a result, the variance introduced at the input level through the perturbations propagates forward through the network, ultimately contaminating the gradient signal.
+This lack of an explicit loss-driven mechanism for shaping activation gradients leads to noisier gradient updates.
+Consequently, FmAD and ZO require stricter step size constraints (see Theorems 3.2 and 3.3) and exhibit degraded convergence behavior.
+Moreover, both FmAD and ZO optimization methods incur additional noise and estimation error compared to backpropagation.
+This noise is not just a side effect, it is an inherent consequence of using random perturbations to estimate gradients.
+In both FmAD and ZO, the injection of perturbations δ​𝒘∼𝒩⁡(0,Id)\delta\boldsymbol{w}\sim\mathcal{N}(0,I_{d}) is core to the algorithmic process, and the resulting activation (δ​yi\delta y_{i}) and loss variations (δ​ℒ\delta\mathcal{L}) carry this randomness forward.
+Therefore, the gradient estimates vary depending on the sampled perturbation, making noise a deterministic outcome of the method itself.
+In essence, while BP precisely channels loss information to guide weight updates, FmAD and ZO rely on stochastic approximations that make their updates fundamentally noisy and less targeted.
+Appendix H Computational Complexity
+In this section, we analyze the computational complexity of different methods used to compute gradients in a neural network setting.
+We begin with a one-layer neural network, providing a detailed breakdown of the computational cost for the forward pass, backpropagation, zero-order optimization, and forward-mode automatic differentiation.
+Understanding these complexities is essential for evaluating the efficiency of gradient computation methods, especially in resource-constrained environments.
+Empirical computational cost of the gradient computation methods is shown in §4.5.
+H.1 Basics
+In this section, we analyze the computational complexity of a one-layer neural network ff with weight matrix w∈ℝd×mw\in\mathbb{R}^{d\times m}.
+The network takes an input x∈ℝdx\in\mathbb{R}^{d} and produces an output y∈ℝmy\in\mathbb{R}^{m}.
+While we focus on a single-layer setting for clarity, the analysis naturally extends to a deep neural network with LL layers, each with weight matrix wℓw_{\ell} for ℓ∈[L]\ell\in[L].
+Forward Pass.
+Since all three gradient computation methods share the same forward pass, we first establish its computational complexity.
+The forward pass consists of a matrix multiplication y=x​wy=xw, where xx has dimensions 1×d1\times d and ww has dimensions d×md\times m.
+This results in a computational complexity of 𝒪⁡(d​m)\mathcal{O}(dm).
+H.2 Backpropagation
+Backpropagation requires computing the gradient of the loss ℒ\mathcal{L} with respect to the weights, given by
+∂ℒ∂w=∂ℒ∂y⋅∂y∂w.\frac{\partial\mathcal{L}}{\partial w}=\frac{\partial\mathcal{L}}{\partial y}\cdot\frac{\partial y}{\partial w}.
+The first term, ∂ℒ∂y\frac{\partial\mathcal{L}}{\partial y}, involves differentiating the loss with respect to the output, which has a computational complexity of 𝒪⁡(m)\mathcal{O}(m).
+The second term, ∂y∂w\frac{\partial y}{\partial w}, follows from the linear transformation y=x​wy=xw, contributing a complexity of 𝒪⁡(d​m)\mathcal{O}(dm).
+The final gradient computation involves the multiplication of a 1×m1\times m matrix with an m×dm\times d matrix, resulting in an additional complexity of 𝒪⁡(d​m)\mathcal{O}(dm).
+Although activation functions introduce constant factors, 3 for the last layer and 5 for intermediate layers, these constants do not affect the asymptotic complexity. Hence, the overall computational complexity of backpropagation remains 𝒪⁡(d​m)\mathcal{O}(dm).
+H.3 Zero-Order Optimization
+The zero-order optimization method with central finite differences involves perturbing the weights twice, evaluating at (𝒘+ϵ​𝒗)​ and ​(𝒘−ϵ​𝒗),(\boldsymbol{w}+\epsilon\boldsymbol{v})\text{ and }(\boldsymbol{w}-\epsilon\boldsymbol{v}),
+where 𝒗∈ℝd×m\boldsymbol{v}\in\mathbb{R}^{d\times m} is a randomly sampled perturbation and ϵ∈ℝ\epsilon\in\mathbb{R} is a small step size.
+The element-wise multiplication ϵ​𝒗\epsilon\boldsymbol{v} incurs a computational cost of 𝒪⁡(d​m)\mathcal{O}(dm), as does the addition and subtraction with ww.
+Since each perturbation requires evaluating the function at the perturbed points, the function evaluations f⁡(𝒘±ϵ​𝒗)f(\boldsymbol{w}\pm\epsilon\boldsymbol{v}) also contribute a complexity of 𝒪⁡(d​m)\mathcal{O}(dm).
+With nn such perturbations per iteration, the total computational cost sums to 𝒪⁡(n​d​m)\mathcal{O}(ndm), where nn is the number of perturbations used in each iteration.
+Compared to the forward pass on the original weights ww, zero-order adds a constant of 4, which gets absorbed in 𝒪⁡(n​d​m)\mathcal{O}(ndm).
+H.4 Forward-Mode AD
+The jvp (Jacobian-vector product) computation incurs a complexity of 𝒪⁡(d​m)\mathcal{O}(dm), as it partially computes ∂ℒ∂w\frac{\partial\mathcal{L}}{\partial w}.
+The resulting jvp is then multiplied with the perturbation vector 𝒗\boldsymbol{v} to obtain the weight gradient for 𝒘\boldsymbol{w}.
+Since 𝒗\boldsymbol{v} has dimensions d×md\times m, this multiplication also has a computational complexity of 𝒪⁡(d​m)\mathcal{O}(dm).
+Repeating this process nn times for nn perturbations per iteration leads to a total computational cost of 𝒪⁡(n​d​m)\mathcal{O}(ndm).
+Appendix I Proofs of Convergence Bounds
+This section includes the details on upper error bounds of all three gradient computation methods:
+Backpropagation,
+Zero-order optimization,
+and Forward-mode Auto Differentiation.
+I.1 Basics
+All examples of gradient computation methods are based on a function ff, which, in the context of machine learning, corresponds to a neural network.
+This function ff is composed of nested functions fif_{i}, i∈[p]i\in[p]; where each function corresponds to an intermediate output (or activation) yi=fi​(wi,yi−1)y_{i}=f_{i}(w_{i},y_{i-1}), generated from the input weights wiw_{i} and previous activation yi−1y_{i-1}.
+y0y_{0} is set to xx, which can be data points in ML.
+We assume that xx is fixed, for the ease of exposition.
+The input weights are represented by the vector 𝒘=w1,w2,…,wp\boldsymbol{w}={w_{1},w_{2},\dots,w_{p}}, where each w[1,…,p]∈ℝ[m1,…,mp]w_{[1,\dots,p]}\in\mathbb{R}^{[m_{1},\dots,m_{p}]}.
+The intermediate outputs, or activations, are denoted by 𝒚=y1,…,yp\boldsymbol{y}={y_{1},\dots,y_{p}}.
+The final output is y=yp=f⁡(𝒘,x)∈ℝny=y_{p}=f(\boldsymbol{w},x)\in\mathbb{R}^{n}, where typically n<<min<<m_{i} for all i∈[p]i\in[p].
+The loss function ℒ⁡(y,y^)∈ℝ\mathcal{L}(y,\hat{y})\in\mathbb{R} is then computed to measure the difference between the predicted output yy and the true target values y^\hat{y}.
+With gradient descent, one update to the weights 𝒘\boldsymbol{w} looks like this,
+𝒘t+1←𝒘t−η∇f(𝒘t),\displaystyle\boldsymbol{w}_{t+1}\leftarrow\boldsymbol{w}_{t}-\eta\nabla f(\boldsymbol{w}_{t}),
+(8)
+where tt is the iteration count, and η\eta is the learning rate.
+The objective is to minimize f⁡(𝒘)f(\boldsymbol{w}): min𝒘∈ℝd⁡f⁡(𝒘)\min_{\boldsymbol{w}\in\mathbb{R}^{d}}f(\boldsymbol{w}).
+Definition I.1 (Optimality Gap).
+The optimality gap at iteration tt is defined as the difference between the function value at the current iterate 𝒘t\boldsymbol{w}_{t} and the function value at an optimal solution 𝒘∗\boldsymbol{w}^{*}:
+Δt=f⁡(𝒘t)−f⁡(𝒘∗)\displaystyle\Delta_{t}=f(\boldsymbol{w}_{t})-f(\boldsymbol{w}^{*})
+(9)
+The optimality gap quantifies how far the current function value is from the optimal value.
+In convergence analysis, the goal is to show that this gap decreases over iterations.
+I.2 Assumptions
+Assumption I.2 (Smoothness).
+Let f:ℝd→ℝf:\mathbb{R}^{d}\rightarrow\mathbb{R} be LL-smooth, meaning that its gradient is Lipschitz continuous with constant L>0L>0.
+That is, for all 𝒘,𝒘′∈ℝd\boldsymbol{w},\boldsymbol{w}^{\prime}\in\mathbb{R}^{d}, the function ff satisfies,
+‖∇f​(𝒘′)−∇f​(𝒘)‖≤L​‖𝒘′−𝒘‖.\displaystyle||\nabla f(\boldsymbol{w}^{\prime})-\nabla f(\boldsymbol{w})||\leq L||\boldsymbol{w}^{\prime}-\boldsymbol{w}||.
+(10)
+I.3 Lemmas
+Lemma I.3 (Bias of Gradient Estimate of the Central Finite Difference).
+Let g⁡(𝐯)g(\boldsymbol{v}) be the gradient estimate obtained using the central finite difference method with a perturbation vector 𝐯∼𝒩⁡(0,Id)\boldsymbol{v}\sim\mathcal{N}(0,I_{d}). Then, the expectation of the estimator satisfies
+𝔼𝒗​[g⁡(𝒗)]=∇f​(𝒘),\displaystyle\mathbb{E}_{\boldsymbol{v}}[g(\boldsymbol{v})]=\nabla f(\boldsymbol{w}),
+(11)
+implying that the central finite difference gradient estimator is unbiased up to first-order error terms.
+Furthermore, the second moment of the estimator satisfies
+𝔼𝒗​[‖g⁡(𝒗)‖2]=‖∇f​(𝒘)‖2​(d+2)+𝒪⁡(ϵ2)​d.\displaystyle\mathbb{E}_{\boldsymbol{v}}\left[\|g(\boldsymbol{v})\|^{2}\right]=\|\nabla f(\boldsymbol{w})\|^{2}(d+2)+\mathcal{O}(\epsilon^{2})d.
+(12)
+Proof.
+We start with one evaluation of the central finite difference, for a perturbation 𝒗∈ℝd\boldsymbol{v}\in\mathbb{R}^{d}. The full derivation is given in Theorem I.8,
+g(𝒗)=((𝒗⊤∇f(𝒘))𝒗+𝒪(ϵ)𝒗).\displaystyle g(\boldsymbol{v})=\left((\boldsymbol{v}^{\top}\nabla f(\boldsymbol{w}))\boldsymbol{v}+\mathcal{O}(\epsilon)\boldsymbol{v}\right).
+(13)
+In order to measure the bias of the above gradient estimate, we take expectation with respect to the randomness of 𝒗\boldsymbol{v},
+𝔼𝒗​[g​(𝒗)]\displaystyle\mathbb{E}_{\boldsymbol{v}}\left[g(\boldsymbol{v})\right]
+=𝔼𝒗[(𝒗⊤∇f(𝒘))𝒗+𝒪(ϵ)𝒗]\displaystyle=\mathbb{E}_{\boldsymbol{v}}\left[(\boldsymbol{v}^{\top}\nabla f(\boldsymbol{w}))\boldsymbol{v}+\mathcal{O}(\epsilon)\boldsymbol{v}\right]
+(14)
+=∇f​(𝒘)​𝔼𝒗​[𝒗⊤​𝒗]+𝒪⁡(ϵ)​𝔼𝒗​[𝒗]\displaystyle=\nabla f(\boldsymbol{w})\mathbb{E}_{\boldsymbol{v}}\left[\boldsymbol{v}^{\top}\boldsymbol{v}\right]+\mathcal{O}(\epsilon)\mathbb{E}_{\boldsymbol{v}}\left[\boldsymbol{v}\right]
+(15)
+=∇f(𝒘)Id+𝒪(ϵ)⋅0(since 𝒗∼𝒩⁡(0,Id))\displaystyle=\nabla f(\boldsymbol{w})I_{d}+\mathcal{O}(\epsilon)\cdot 0\quad\text{(since $\boldsymbol{v}\sim\mathcal{N}(0,I_{d})$)}
+(16)
+∴𝔼𝒗​[g​(𝒗)]\displaystyle\therefore\mathbb{E}_{\boldsymbol{v}}\left[g(\boldsymbol{v})\right]
+=∇f​(𝒘).\displaystyle=\nabla f(\boldsymbol{w}).
+(17)
+This shows that the estimator is unbiased.
+Now, we analyze the second moment of the estimator:
+𝔼𝒗​[‖g⁡(𝒗)‖2]\displaystyle\mathbb{E}_{\boldsymbol{v}}\left[\|g(\boldsymbol{v})\|^{2}\right]
+=𝔼𝒗[‖(𝒗⊤∇f(𝒘))𝒗+𝒪(ϵ)𝒗‖2]\displaystyle=\mathbb{E}_{\boldsymbol{v}}\left[\left\|(\boldsymbol{v}^{\top}\nabla f(\boldsymbol{w}))\boldsymbol{v}+\mathcal{O}(\epsilon)\boldsymbol{v}\right\|^{2}\right]
+(18)
+=𝔼𝒗[(𝒗⊤∇f(𝒘))2∥𝒗∥2]+𝒪(ϵ2)𝔼𝒗[∥𝒗∥2].\displaystyle=\mathbb{E}_{\boldsymbol{v}}\left[(\boldsymbol{v}^{\top}\nabla f(\boldsymbol{w}))^{2}\|\boldsymbol{v}\|^{2}\right]+\mathcal{O}(\epsilon^{2})\mathbb{E}_{\boldsymbol{v}}\left[\|\boldsymbol{v}\|^{2}\right].
+(19)
+Using the known expectation property of Gaussian vectors:
+𝔼⁡[𝒗​𝒗⊤​‖𝒗‖2]=(d+2)​Id,\displaystyle\mathbb{E}\left[\boldsymbol{v}\boldsymbol{v}^{\top}\|\boldsymbol{v}\|^{2}\right]=(d+2)I_{d},
+(20)
+we obtain:
+𝔼𝒗​[‖g⁡(𝒗)‖2]\displaystyle\mathbb{E}_{\boldsymbol{v}}\left[\|g(\boldsymbol{v})\|^{2}\right]
+=𝔼𝒗[Tr((𝒗𝒗⊤)∇f(𝒘)∇f(𝒘)⊤𝒗𝒗⊤)]+𝒪(ϵ2)d\displaystyle=\mathbb{E}_{\boldsymbol{v}}\left[\text{Tr}((\boldsymbol{v}\boldsymbol{v}^{\top})\nabla f(\boldsymbol{w})\nabla f(\boldsymbol{w})^{\top}\boldsymbol{v}\boldsymbol{v}^{\top})\right]+\mathcal{O}(\epsilon^{2})d
+(21)
+=Tr(∇f(𝒘)∇f(𝒘)⊤)(d+2)+𝒪(ϵ2)d\displaystyle=\text{Tr}(\nabla f(\boldsymbol{w})\nabla f(\boldsymbol{w})^{\top})(d+2)+\mathcal{O}(\epsilon^{2})d
+(22)
+=‖∇f​(𝒘)‖2​(d+2)+𝒪⁡(ϵ2)​d.\displaystyle=\|\nabla f(\boldsymbol{w})\|^{2}(d+2)+\mathcal{O}(\epsilon^{2})d.
+(23)
+∎
+Lemma I.4 (Variance of Gradient Estimate of the Central Finite Difference).
+Let g^​(𝐯)\hat{g}(\boldsymbol{v}) be the central finite difference gradient estimator using nn perturbations 𝐯1,…,𝐯n∼𝒩⁡(0,Id)\boldsymbol{v}_{1},\dots,\boldsymbol{v}_{n}\sim\mathcal{N}(0,I_{d}), given by
+g^​(𝒘)=1n​∑i=1ng⁡(𝒗i),whereg⁡(𝒗i)=f⁡(𝒘+ϵ​𝒗i)−f⁡(𝒘−ϵ​𝒗i)2​ϵ​𝒗i.\displaystyle\hat{g}(\boldsymbol{w})=\frac{1}{n}\sum_{i=1}^{n}g(\boldsymbol{v}_{i}),\quad\text{where}\quad g(\boldsymbol{v}_{i})=\frac{f(\boldsymbol{w}+\epsilon\boldsymbol{v}_{i})-f(\boldsymbol{w}-\epsilon\boldsymbol{v}_{i})}{2\epsilon}\boldsymbol{v}_{i}.
+(24)
+Assuming the finite-difference step ϵ\epsilon, the variance of the estimator satisfies:
+Var​[g^​(𝒘)]=1n​(‖∇f​(𝒘)‖2​(d+1)+𝒪⁡(ϵ2)​d).\displaystyle\text{Var}[\hat{g}(\boldsymbol{w})]=\frac{1}{n}\left(\|\nabla f(\boldsymbol{w})\|^{2}(d+1)+\mathcal{O}(\epsilon^{2})d\right).
+(25)
+This result shows that the variance of the gradient estimator scales as 𝒪⁡((d+1)/n)\mathcal{O}((d+1)/n), which quantifies how the dimension dd and the number of samples nn influence the estimator’s variance.
+Proof.
+We can derive the variance of the estimator
+g^​(𝒘)=1n​∑i=1ng⁡(𝒗i)​, with ​g​(𝒗i)=f⁡(𝒘+ϵ​𝒗i)−f⁡(𝒘−ϵ​𝒗i)2​ϵ​𝒗i\displaystyle\hat{g}(\boldsymbol{w})=\frac{1}{n}\sum_{i=1}^{n}g(\boldsymbol{v}_{i})\text{, with }g(\boldsymbol{v}_{i})=\frac{f(\boldsymbol{w}+\epsilon\boldsymbol{v}_{i})-f(\boldsymbol{w}-\epsilon\boldsymbol{v}_{i})}{2\epsilon}\boldsymbol{v}_{i}
+by computing
+Var​[g^​(𝒘)]=𝔼𝒗​[‖g^​(𝒘)‖2]−‖𝔼𝒗​[g^​(𝒘)]‖2.\displaystyle\text{Var}[\hat{g}(\boldsymbol{w})]=\mathbb{E}_{\boldsymbol{v}}[||\hat{g}(\boldsymbol{w})||^{2}]-||\mathbb{E}_{\boldsymbol{v}}[\hat{g}(\boldsymbol{w})]||^{2}.
+(26)
+For clarity, in the following we assume that the finite-difference step is chosen so that the bias is negligible (i.e. the estimator is unbiased according to Lemma I.3, so that 𝔼𝒗​[g⁡(𝒗i)]=∇f​(𝒘)\mathbb{E}_{\boldsymbol{v}}[g(\boldsymbol{v}_{i})]=\nabla f(\boldsymbol{w}) and 𝔼𝒗​[g^​(𝒘)]=∇f​(𝒘)\mathbb{E}_{\boldsymbol{v}}[\hat{g}(\boldsymbol{w})]=\nabla f(\boldsymbol{w}). (We can add the higher-order remainder later.)
+We write the second moment (squared norm) of g^\hat{g} as
+𝔼𝒗​[‖g^​(𝒘)‖2]\displaystyle\mathbb{E}_{\boldsymbol{v}}[||\hat{g}(\boldsymbol{w})||^{2}]
+=𝔼𝒗​[||1n​∑i=1ng⁡(𝒗i)||2]=1n2​𝔼𝒗​[∑i=1n∑j=1ng​(𝒗i)⊤​g​(𝒗j)].\displaystyle=\mathbb{E}_{\boldsymbol{v}}\left[\left|\left|\frac{1}{n}\sum_{i=1}^{n}g(\boldsymbol{v}_{i})\right|\right|^{2}\right]=\frac{1}{n^{2}}\mathbb{E}_{\boldsymbol{v}}\left[\sum_{i=1}^{n}\sum_{j=1}^{n}g(\boldsymbol{v}_{i})^{\top}g(\boldsymbol{v}_{j})\right].
+(27)
+We split the sum into diagonal and off-diagonal parts:
+𝔼𝒗​[‖g^​(𝒘)‖2]\displaystyle\mathbb{E}_{\boldsymbol{v}}[||\hat{g}(\boldsymbol{w})||^{2}]
+=1n2​(∑i=1n𝔼𝒗​[‖g⁡(𝒗i)‖2]+∑i≠j𝔼⁡[g​(𝒗i)⊤​g​(𝒗j)]).\displaystyle=\frac{1}{n^{2}}\left(\sum_{i=1}^{n}\mathbb{E}_{\boldsymbol{v}}[||g(\boldsymbol{v}_{i})||^{2}]+\sum_{i\neq j}\mathbb{E}[g(\boldsymbol{v}_{i})^{\top}g(\boldsymbol{v}_{j})]\right).
+(28)
+Since the gig_{i} are independent,
+𝔼𝒗​[g​(𝒗i)⊤​g​(𝒗j)]\displaystyle\mathbb{E}_{\boldsymbol{v}}[g(\boldsymbol{v}_{i})^{\top}g(\boldsymbol{v}_{j})]
+=𝔼𝒗[g(𝒗i)]⊤𝔼𝒗[g(𝒗j)]=∇f(𝒘)⊤∇f(𝒘)=||∇f(𝒘)||2\displaystyle=\mathbb{E}_{\boldsymbol{v}}[g(\boldsymbol{v}_{i})]^{\top}\mathbb{E}_{\boldsymbol{v}}[g(\boldsymbol{v}_{j})]=\nabla f(\boldsymbol{w})^{\top}\nabla f(\boldsymbol{w})=||\nabla f(\boldsymbol{w})||^{2}
+for ​i≠j.\displaystyle\text{for }i\neq j.
+(29)
+Thus,
+𝔼𝒗​[‖g^​(𝒘)‖2]\displaystyle\mathbb{E}_{\boldsymbol{v}}[||\hat{g}(\boldsymbol{w})||^{2}]
+=1n2​(n​𝔼𝒗​[‖g⁡(𝒗)‖2]+n⁡(n−1)​‖∇f​(𝒘)‖2).\displaystyle=\frac{1}{n^{2}}(n\mathbb{E}_{\boldsymbol{v}}[||g(\boldsymbol{v})||^{2}]+n(n-1)||\nabla f(\boldsymbol{w})||^{2}).
+(30)
+Plugging the above result, along with the result derived from Lemma I.3 on ‖𝔼𝒗​[g^​(𝒘)]‖2=‖∇f​(𝒘)‖2||\mathbb{E}_{\boldsymbol{v}}[\hat{g}(\boldsymbol{w})]||^{2}=||\nabla f(\boldsymbol{w})||^{2}, in Equation 26,
+Var​[g^​(𝒘)]\displaystyle\text{Var}[\hat{g}(\boldsymbol{w})]
+=1n2​(n​𝔼𝒗​[‖g⁡(𝒗)‖2]+n⁡(n−1)​‖∇f​(𝒘)‖2)−‖∇f​(𝒘)‖2\displaystyle=\frac{1}{n^{2}}\left(n\mathbb{E}_{\boldsymbol{v}}[||g(\boldsymbol{v})||^{2}]+n(n-1)||\nabla f(\boldsymbol{w})||^{2}\right)-||\nabla f(\boldsymbol{w})||^{2}
+(31)
+=1n​(𝔼𝒗​[‖g⁡(𝒗)‖2]−‖∇f​(𝒘)‖2).\displaystyle=\frac{1}{n}\left(\mathbb{E}_{\boldsymbol{v}}[||g(\boldsymbol{v})||^{2}]-||\nabla f(\boldsymbol{w})||^{2}\right).
+(32)
+The second moment of the estimator was derived in Lemma I.3, in Equation 23.
+We use that result in the above equation as follows,
+Var​[g^​(𝒘)]\displaystyle\text{Var}[\hat{g}(\boldsymbol{w})]
+=1n​(‖∇f​(𝒘)‖2​(d+2)+𝒪⁡(ϵ2)​d−‖∇f​(𝒘)‖2)\displaystyle=\frac{1}{n}\left(\|\nabla f(\boldsymbol{w})\|^{2}(d+2)+\mathcal{O}(\epsilon^{2})d-\|\nabla f(\boldsymbol{w})\|^{2}\right)
+(33)
+=1n​(‖∇f​(𝒘)‖2​(d+1)+𝒪⁡(ϵ2)​d)\displaystyle=\frac{1}{n}\left(\|\nabla f(\boldsymbol{w})\|^{2}(d+1)+\mathcal{O}(\epsilon^{2})d\right)
+(34)
+This leads us to a variance bound that scales as d+1n\frac{d+1}{n} times ‖∇f​(θ)‖2||\nabla f(\theta)||^{2} (plus a 𝒪⁡(ϵ2)\mathcal{O}(\epsilon^{2}) contribution), which exhibits the dependence of variance of the estimator g^​(𝒘)\hat{g}(\boldsymbol{w}) on the dimension dd and the number of samples nn.
+∎
+The key difference between the above two lemmas and the next two lemmas is that the central finite difference estimator introduces a small O⁡(ϵ)O(\epsilon) bias due to numerical approximation, whereas the forward-mode AD estimator is exactly unbiased.
+Additionally, the second moment of the central finite difference estimator includes an extra O⁡(ϵ2)​dO(\epsilon^{2})d term, which is absent in forward-mode AD, making the latter more precise.
+Lemma I.5 (Bias of Gradient Estimate of Forward-mode Auto Differentiation).
+Let g⁡(𝐯)g(\boldsymbol{v}) be the gradient estimate obtained using the central finite difference method with a perturbation vector 𝐯∼𝒩⁡(0,Id)\boldsymbol{v}\sim\mathcal{N}(0,I_{d}).
+Then, the expectation of the estimator satisfies
+𝔼𝒗​[g⁡(𝒗)]=∇f​(𝒘),\displaystyle\mathbb{E}_{\boldsymbol{v}}[g(\boldsymbol{v})]=\nabla f(\boldsymbol{w}),
+(35)
+implying that the central finite difference gradient estimator is unbiased.
+Furthermore, the second moment of the estimator satisfies
+𝔼𝒗​[‖g⁡(𝒗)‖2]=‖∇f​(𝒘)‖2​(d+2).\displaystyle\mathbb{E}_{\boldsymbol{v}}\left[\|g(\boldsymbol{v})\|^{2}\right]=\|\nabla f(\boldsymbol{w})\|^{2}(d+2).
+(36)
+Proof.
+We start with one evaluation of forward-mode auto differentiation, for a perturbation 𝒗∈ℝd\boldsymbol{v}\in\mathbb{R}^{d}.
+The full derivation is given in Theorem I.9,
+g(𝒗)=(𝒗⊤∇f(𝒘))𝒗.\displaystyle g(\boldsymbol{v})=\left(\boldsymbol{v}^{\top}\nabla f(\boldsymbol{w})\right)\boldsymbol{v}.
+(37)
+In order to measure the bias of the above gradient estimate, we take expectation with respect to the randomness of 𝒗\boldsymbol{v},
+𝔼𝒗​[g​(𝒗)]\displaystyle\mathbb{E}_{\boldsymbol{v}}\left[g(\boldsymbol{v})\right]
+=𝔼𝒗[(𝒗⊤∇f(𝒘))𝒗]\displaystyle=\mathbb{E}_{\boldsymbol{v}}\left[(\boldsymbol{v}^{\top}\nabla f(\boldsymbol{w}))\boldsymbol{v}\right]
+(38)
+=∇f​(𝒘)​𝔼𝒗​[𝒗⊤​𝒗]=∇f​(𝒘)​Id\displaystyle=\nabla f(\boldsymbol{w})\mathbb{E}_{\boldsymbol{v}}\left[\boldsymbol{v}^{\top}\boldsymbol{v}\right]=\nabla f(\boldsymbol{w})I_{d}
+(39)
+∴𝔼𝒗​[g​(𝒗)]\displaystyle\therefore\mathbb{E}_{\boldsymbol{v}}\left[g(\boldsymbol{v})\right]
+=∇f​(𝒘).\displaystyle=\nabla f(\boldsymbol{w}).
+(40)
+This shows that the estimator is unbiased.
+Now, we analyze the second moment of the estimator:
+𝔼𝒗​[‖g⁡(𝒗)‖2]\displaystyle\mathbb{E}_{\boldsymbol{v}}\left[\|g(\boldsymbol{v})\|^{2}\right]
+=𝔼𝒗[‖(𝒗⊤∇f(𝒘))𝒗‖2]=𝔼𝒗[(𝒗⊤∇f(𝒘))2∥𝒗∥2].\displaystyle=\mathbb{E}_{\boldsymbol{v}}\left[\left\|(\boldsymbol{v}^{\top}\nabla f(\boldsymbol{w}))\boldsymbol{v}\right\|^{2}\right]=\mathbb{E}_{\boldsymbol{v}}\left[(\boldsymbol{v}^{\top}\nabla f(\boldsymbol{w}))^{2}\|\boldsymbol{v}\|^{2}\right].
+(41)
+Using the known expectation property of Gaussian vectors:
+𝔼⁡[𝒗​𝒗⊤​‖𝒗‖2]=(d+2)​Id,\displaystyle\mathbb{E}\left[\boldsymbol{v}\boldsymbol{v}^{\top}\|\boldsymbol{v}\|^{2}\right]=(d+2)I_{d},
+(42)
+We obtain:
+𝔼𝒗​[‖g⁡(𝒗)‖2]\displaystyle\mathbb{E}_{\boldsymbol{v}}\left[\|g(\boldsymbol{v})\|^{2}\right]
+=𝔼𝒗[Tr((𝒗𝒗⊤)∇f(𝒘)∇f(𝒘)⊤𝒗𝒗⊤)]\displaystyle=\mathbb{E}_{\boldsymbol{v}}\left[\text{Tr}((\boldsymbol{v}\boldsymbol{v}^{\top})\nabla f(\boldsymbol{w})\nabla f(\boldsymbol{w})^{\top}\boldsymbol{v}\boldsymbol{v}^{\top})\right]
+(43)
+=Tr(∇f(𝒘)∇f(𝒘)⊤)(d+2)=∥∇f(𝒘)∥2(d+2).\displaystyle=\text{Tr}(\nabla f(\boldsymbol{w})\nabla f(\boldsymbol{w})^{\top})(d+2)=\|\nabla f(\boldsymbol{w})\|^{2}(d+2).
+(44)
+∎
+Lemma I.6 (Variance of Gradient Estimate of Forward-mode Auto Differentiation).
+Let g^​(𝐯)\hat{g}(\boldsymbol{v}) be the central finite difference gradient estimator using nn perturbations 𝐯1,…,𝐯n∼𝒩⁡(0,Id)\boldsymbol{v}_{1},\dots,\boldsymbol{v}_{n}\sim\mathcal{N}(0,I_{d}), given by
+g^(𝒘)=1n∑i=1ng(𝒗i),whereg(𝒗i)=(𝒗i⊤∇f(𝒘))𝒗i.\displaystyle\hat{g}(\boldsymbol{w})=\frac{1}{n}\sum_{i=1}^{n}g(\boldsymbol{v}_{i}),\quad\text{where}\quad g(\boldsymbol{v}_{i})=(\boldsymbol{v}_{i}^{\top}\nabla f(\boldsymbol{w}))\boldsymbol{v}_{i}.
+(45)
+Assuming the finite-difference step ϵ\epsilon, the variance of the estimator satisfies:
+Var​[g^​(𝒘)]=1n​(‖∇f​(𝒘)‖2​(d+1)).\displaystyle\text{Var}[\hat{g}(\boldsymbol{w})]=\frac{1}{n}\left(\|\nabla f(\boldsymbol{w})\|^{2}(d+1)\right).
+(46)
+This result shows that the variance of the gradient estimator scales as 𝒪⁡((d+1)/n)\mathcal{O}((d+1)/n), which quantifies how the dimension dd and the number of samples nn influence the estimator’s variance.
+Proof.
+We can derive the variance of the estimator
+g^(𝒘)=1n∑i=1ng(𝒗i), with g(𝒗i)=(𝒗i⊤∇f(𝒘))𝒗i\displaystyle\hat{g}(\boldsymbol{w})=\frac{1}{n}\sum_{i=1}^{n}g(\boldsymbol{v}_{i})\text{, with }g(\boldsymbol{v}_{i})=(\boldsymbol{v}_{i}^{\top}\nabla f(\boldsymbol{w}))\boldsymbol{v}_{i}
+by computing
+Var​[g^​(𝒘)]=𝔼𝒗​[‖g^​(𝒘)‖2]−‖𝔼𝒗​[g^​(𝒘)]‖2.\displaystyle\text{Var}[\hat{g}(\boldsymbol{w})]=\mathbb{E}_{\boldsymbol{v}}[||\hat{g}(\boldsymbol{w})||^{2}]-||\mathbb{E}_{\boldsymbol{v}}[\hat{g}(\boldsymbol{w})]||^{2}.
+(47)
+The estimator is unbiased according to Lemma I.5, so that 𝔼𝒗​[g⁡(𝒗i)]=∇f​(𝒘)\mathbb{E}_{\boldsymbol{v}}[g(\boldsymbol{v}_{i})]=\nabla f(\boldsymbol{w}) and 𝔼𝒗​[g^​(𝒘)]=∇f​(𝒘)\mathbb{E}_{\boldsymbol{v}}[\hat{g}(\boldsymbol{w})]=\nabla f(\boldsymbol{w}).
+We write the second moment (squared norm) of g^\hat{g} as
+𝔼𝒗​[‖g^​(𝒘)‖2]\displaystyle\mathbb{E}_{\boldsymbol{v}}[||\hat{g}(\boldsymbol{w})||^{2}]
+=𝔼𝒗​[||1n​∑i=1ng⁡(𝒗i)||2]=1n2​𝔼𝒗​[∑i=1n∑j=1ng​(𝒗i)⊤​g​(𝒗j)].\displaystyle=\mathbb{E}_{\boldsymbol{v}}\left[\left|\left|\frac{1}{n}\sum_{i=1}^{n}g(\boldsymbol{v}_{i})\right|\right|^{2}\right]=\frac{1}{n^{2}}\mathbb{E}_{\boldsymbol{v}}\left[\sum_{i=1}^{n}\sum_{j=1}^{n}g(\boldsymbol{v}_{i})^{\top}g(\boldsymbol{v}_{j})\right].
+(48)
+We split the sum into diagonal and off-diagonal parts:
+𝔼𝒗​[‖g^​(𝒘)‖2]\displaystyle\mathbb{E}_{\boldsymbol{v}}[||\hat{g}(\boldsymbol{w})||^{2}]
+=1n2​(∑i=1n𝔼𝒗​[‖g⁡(𝒗i)‖2]+∑i≠j𝔼⁡[g​(𝒗i)⊤​g​(𝒗j)]).\displaystyle=\frac{1}{n^{2}}\left(\sum_{i=1}^{n}\mathbb{E}_{\boldsymbol{v}}[||g(\boldsymbol{v}_{i})||^{2}]+\sum_{i\neq j}\mathbb{E}[g(\boldsymbol{v}_{i})^{\top}g(\boldsymbol{v}_{j})]\right).
+(49)
+Since the gig_{i} are independent,
+𝔼𝒗​[g​(𝒗i)⊤​g​(𝒗j)]\displaystyle\mathbb{E}_{\boldsymbol{v}}[g(\boldsymbol{v}_{i})^{\top}g(\boldsymbol{v}_{j})]
+=𝔼𝒗[g(𝒗i)]⊤𝔼𝒗[g(𝒗j)]=∇f(𝒘)⊤∇f(𝒘)=||∇f(𝒘)||2\displaystyle=\mathbb{E}_{\boldsymbol{v}}[g(\boldsymbol{v}_{i})]^{\top}\mathbb{E}_{\boldsymbol{v}}[g(\boldsymbol{v}_{j})]=\nabla f(\boldsymbol{w})^{\top}\nabla f(\boldsymbol{w})=||\nabla f(\boldsymbol{w})||^{2}
+for ​i≠j.\displaystyle\text{for }i\neq j.
+(50)
+Thus,
+𝔼𝒗​[‖g^​(𝒘)‖2]\displaystyle\mathbb{E}_{\boldsymbol{v}}[||\hat{g}(\boldsymbol{w})||^{2}]
+=1n2​(n​𝔼𝒗​[‖g⁡(𝒗)‖2]+n⁡(n−1)​‖∇f​(𝒘)‖2).\displaystyle=\frac{1}{n^{2}}(n\mathbb{E}_{\boldsymbol{v}}[||g(\boldsymbol{v})||^{2}]+n(n-1)||\nabla f(\boldsymbol{w})||^{2}).
+(51)
+Plugging the above result, along with the result derived from Lemma I.3 on ‖𝔼𝒗​[g^​(𝒘)]‖2=‖∇f​(𝒘)‖2||\mathbb{E}_{\boldsymbol{v}}[\hat{g}(\boldsymbol{w})]||^{2}=||\nabla f(\boldsymbol{w})||^{2}, in Equation 47,
+Var​[g^​(𝒘)]\displaystyle\text{Var}[\hat{g}(\boldsymbol{w})]
+=1n2​(n​𝔼𝒗​[‖g⁡(𝒗)‖2]+n⁡(n−1)​‖∇f​(𝒘)‖2)−‖∇f​(𝒘)‖2\displaystyle=\frac{1}{n^{2}}\left(n\mathbb{E}_{\boldsymbol{v}}[||g(\boldsymbol{v})||^{2}]+n(n-1)||\nabla f(\boldsymbol{w})||^{2}\right)-||\nabla f(\boldsymbol{w})||^{2}
+(52)
+=1n​(𝔼𝒗​[‖g⁡(𝒗)‖2]−‖∇f​(𝒘)‖2).\displaystyle=\frac{1}{n}\left(\mathbb{E}_{\boldsymbol{v}}[||g(\boldsymbol{v})||^{2}]-||\nabla f(\boldsymbol{w})||^{2}\right).
+(53)
+The second moment of the estimator was derived in Lemma I.5, in Equation 44.
+We use that result in the above equation as follows,
+Var​[g^​(𝒘)]\displaystyle\text{Var}[\hat{g}(\boldsymbol{w})]
+=1n​(‖∇f​(𝒘)‖2​(d+2)−‖∇f​(𝒘)‖2)\displaystyle=\frac{1}{n}\left(\|\nabla f(\boldsymbol{w})\|^{2}(d+2)-\|\nabla f(\boldsymbol{w})\|^{2}\right)
+(54)
+=1n​(‖∇f​(𝒘)‖2​(d+1))\displaystyle=\frac{1}{n}\left(\|\nabla f(\boldsymbol{w})\|^{2}(d+1)\right)
+(55)
+This leads us to a variance bound that scales as d+1n\frac{d+1}{n} times ‖∇f​(θ)‖2||\nabla f(\theta)||^{2}, which exhibits the dependence of variance of the estimator g^​(𝒘)\hat{g}(\boldsymbol{w}) on the dimension dd and the number of samples nn.
+∎
+I.4 Theorems
+The given analysis for all gradient computation methods is for a non-convex objective ff.
+We begin by reiterating the descent lemma applied to gradients computed by backpropagation.
+Theorem I.7 (Error Bound of Backpropagation).
+Let f:ℝd→ℝf:\mathbb{R}^{d}\rightarrow\mathbb{R} be a differentiable, LL-smooth
+function.
+Consider the gradient descent update rule:
+𝒘t+1=𝒘t−η∇f(𝒘t),\boldsymbol{w}_{t+1}=\boldsymbol{w}_{t}-\eta\nabla f(\boldsymbol{w}_{t}),
+where η\eta is the step size (learning rate).
+Suppose 0<η≤1L0<\eta\leq\frac{1}{L}.
+Then, after TT iterations, the minimum gradient norm satisfies the following bound:
+mint∈[T]⁡‖∇f​(𝒘t)‖2≤2​LT​(f⁡(𝒘1)−f⁡(𝒘T)),\min_{t\in[T]}||\nabla f(\boldsymbol{w}_{t})||^{2}\leq\frac{2L}{T}\left(f(\boldsymbol{w}_{1})-f(\boldsymbol{w}_{T})\right),
+This bound shows that gradient descent achieves an 𝒪⁡(1T)\mathcal{O}(\frac{1}{T}) convergence rate in terms of gradient norm, which is the optimal rate for first-order methods in smooth
+optimization.
+Proof.
+Using Assumption I.2,
+we apply the smoothness condition, which gives the following quadratic upper bound:
+f(𝒘t+1)≤f(𝒘t)+∇f(𝒘t)⊤(𝒘t+1−𝒘t)+L2||𝒘t+1−𝒘t||2\displaystyle f(\boldsymbol{w}_{t+1})\leq f(\boldsymbol{w}_{t})+\nabla f(\boldsymbol{w}_{t})^{\top}(\boldsymbol{w}_{t+1}-\boldsymbol{w}_{t})+\frac{L}{2}||\boldsymbol{w}_{t+1}-\boldsymbol{w}_{t}||^{2}
+(56)
+Substituting the gradient descent update rule Equation 8, we obtain,
+∴f⁡(𝒘t+1)≤f⁡(𝒘t)−η​‖∇f​(𝒘t)‖2+L2​η2​‖∇f​(𝒘t)‖2\displaystyle\therefore f(\boldsymbol{w}_{t+1})\leq f(\boldsymbol{w}_{t})-\eta||\nabla f(\boldsymbol{w}_{t})||^{2}+\frac{L}{2}\eta^{2}||\nabla f(\boldsymbol{w}_{t})||^{2}
+(57)
+Rearranging the above terms,
+∴f⁡(𝒘t+1)−f⁡(𝒘t)≤−η​‖∇f​(𝒘t)‖2+L​η22​‖∇f​(𝒘t)‖2=−(η−L​η22)​‖∇f​(𝒘t)‖2\displaystyle\therefore f(\boldsymbol{w}_{t+1})-f(\boldsymbol{w}_{t})\leq-\eta||\nabla f(\boldsymbol{w}_{t})||^{2}+\frac{L\eta^{2}}{2}||\nabla f(\boldsymbol{w}_{t})||^{2}=-\left(\eta-\frac{L\eta^{2}}{2}\right)||\nabla f(\boldsymbol{w}_{t})||^{2}
+(58)
+To ensure progress in minimizing f⁡(𝒘)f(\boldsymbol{w}), we need the term (1−L​η2)(1-\frac{L\eta}{2}) to be positive.
+Hence we assume η≤1L\eta\leq\frac{1}{L}, along with 0<η0<\eta,
+∴f⁡(𝒘t+1)−f⁡(𝒘t)≤−12​L​‖∇f​(𝒘t)‖2\displaystyle\therefore f(\boldsymbol{w}_{t+1})-f(\boldsymbol{w}_{t})\leq-\frac{1}{2L}||\nabla f(\boldsymbol{w}_{t})||^{2}
+(59)
+Summing over t=1t=1 to t=Tt=T,
+∑t=1T(f(𝒘t+1)−f(𝒘t))≤−12​L∑t=1T||∇f(𝒘t)||2\displaystyle\sum_{t=1}^{T}\left(f(\boldsymbol{w}_{t+1})-f(\boldsymbol{w}_{t})\right)\leq-\frac{1}{2L}\sum_{t=1}^{T}||\nabla f(\boldsymbol{w}_{t})||^{2}
+(60)
+The left-hand side forms a telescoping sum, resulting in
+f(𝒘T+1)−f(𝒘1)≤−12​L∑t=1T||∇f(𝒘t)||2\displaystyle f(\boldsymbol{w}_{T+1})-f(\boldsymbol{w}_{1})\leq-\frac{1}{2L}\sum_{t=1}^{T}||\nabla f(\boldsymbol{w}_{t})||^{2}
+(61)
+1T​∑t=1T‖∇f​(𝒘t)‖2≤2​LT​(f⁡(𝒘1)−f⁡(𝒘T+1))\displaystyle\frac{1}{T}\sum_{t=1}^{T}||\nabla f(\boldsymbol{w}_{t})||^{2}\leq\frac{2L}{T}\left(f(\boldsymbol{w}_{1})-f(\boldsymbol{w}_{T+1})\right)
+(62)
+Using the definition of optimality gap from Equation I.1,
+mint∈[T]⁡‖∇f​(𝒘t)‖2≤2​LT​(f⁡(𝒘t)−f⁡(𝒘T))\displaystyle\min_{t\in[T]}||\nabla f(\boldsymbol{w}_{t})||^{2}\leq\frac{2L}{T}\left(f(\boldsymbol{w}_{t})-f(\boldsymbol{w}_{T})\right)
+(63)
+Thus, the optimality gap reduces at a rate of 𝒪⁡(1T)\mathcal{O}(\frac{1}{T}), given η≤1L\eta\leq\frac{1}{L}.
+∎
+Next, we will give a similar treatment to the gradients derived from zero-order finite differences,
+Theorem I.8 (Error Bound of Zero-Order Optimization).
+Consider a
+function f:ℝd→ℝf:\mathbb{R}^{d}\rightarrow\mathbb{R} that is LL-smooth.
+Let the central finite-difference gradient estimator with nn perturbations per iteration, where each perturbation vector 𝐯i\boldsymbol{v}_{i} is sampled independently from 𝒩⁡(0,Id)\mathcal{N}(0,I_{d}) and step size η\eta be
+g^​(𝒘t)=1n​∑i=1n(f⁡(𝒘t+ϵ​𝒗i)−f⁡(𝒘t−ϵ​𝒗i)2​ϵ​𝒗i).\hat{g}(\boldsymbol{w}_{t})=\frac{1}{n}\sum_{i=1}^{n}\left(\frac{f(\boldsymbol{w}_{t}+\epsilon\boldsymbol{v}_{i})-f(\boldsymbol{w}_{t}-\epsilon\boldsymbol{v}_{i})}{2\epsilon}\boldsymbol{v}_{i}\right).
+Then, the expected average squared gradient norm is bounded by
+1T​∑t=1T‖∇f​(𝒘t)‖2\displaystyle\frac{1}{T}\sum_{t=1}^{T}||\nabla f(\boldsymbol{w}_{t})||^{2}
+≤f⁡(𝒘1)−f⁡(𝒘T)η​T​[1−L​η2​(1+d+1n)]+L​d​η22​n​𝒪​(ϵ2),\displaystyle\leq\frac{f(\boldsymbol{w}_{1})-f(\boldsymbol{w}_{T})}{\eta T\left[1-\frac{L\eta}{2}\left(1+\frac{d+1}{n}\right)\right]}+\frac{Ld\eta^{2}}{2n}\mathcal{O}(\epsilon^{2}),
+(64)
+To ensure convergence, the step size must satisfy
+η<2L⁡(1+d+1n).\displaystyle\eta<\frac{2}{L\left(1+\frac{d+1}{n}\right)}.
+(65)
+This result highlights how the convergence rate depends on the dimension dd, the number of perturbations nn, and the perturbation magnitude ϵ\epsilon.
+Specifically, a larger dd or a smaller nn increases the bound, implying slower convergence.
+Proof.
+The central finite-difference gradient estimator for nn perturbations per iteration is
+g^​(𝒘t)=1n​∑i=1n(f⁡(𝒘t+ϵ​𝒗i)−f⁡(𝒘t−ϵ​𝒗i)2​ϵ​𝒗i)\displaystyle\hat{g}(\boldsymbol{w}_{t})=\frac{1}{n}\sum_{i=1}^{n}\left(\frac{f(\boldsymbol{w}_{t}+\epsilon\boldsymbol{v}_{i})-f(\boldsymbol{w}_{t}-\epsilon\boldsymbol{v}_{i})}{2\epsilon}\boldsymbol{v}_{i}\right)
+(66)
+where each 𝒗i∈ℝd\boldsymbol{v}_{i}\in\mathbb{R}^{d} is a perturbation drawn from a Gaussian distribution 𝒩⁡(0,1)\mathcal{N}(0,1).
+Assuming that ff is sufficiently smooth so that the following Taylor expansions are valid,
+f⁡(𝒘+ϵ​𝒗)\displaystyle f(\boldsymbol{w}+\epsilon\boldsymbol{v})
+=f(𝒘)+ϵ𝒗⊤∇f(𝒘)+O(ϵ2), and\displaystyle=f(\boldsymbol{w})+\epsilon\boldsymbol{v}^{\top}\nabla f(\boldsymbol{w})+O(\epsilon^{2})\text{, and}
+(67)
+f⁡(𝒘−ϵ​𝒗)\displaystyle f(\boldsymbol{w}-\epsilon\boldsymbol{v})
+=f(𝒘)−ϵ𝒗⊤∇f(𝒘)+O(ϵ2)\displaystyle=f(\boldsymbol{w})-\epsilon\boldsymbol{v}^{\top}\nabla f(\boldsymbol{w})+O(\epsilon^{2})
+(68)
+Subtracting the above two expansions yields:
+f⁡(𝒘+ϵ​𝒗)−f⁡(𝒘−ϵ​𝒗)\displaystyle f(\boldsymbol{w}+\epsilon\boldsymbol{v})-f(\boldsymbol{w}-\epsilon\boldsymbol{v})
+=2ϵ𝒗⊤∇f(𝒘)+𝒪(ϵ2)\displaystyle=2\epsilon\boldsymbol{v}^{\top}\nabla f(\boldsymbol{w})+\mathcal{O}(\epsilon^{2})
+(69)
+Plugging the above result in Equation 66,
+g^​(𝒘t)=1n​∑i=1n((𝒗i⊤∇f(𝒘))𝒗i+𝒪(ϵ)𝒗i)⏟g⁡(𝒗i)\displaystyle\hat{g}(\boldsymbol{w}_{t})=\frac{1}{n}\sum_{i=1}^{n}\underbrace{\left((\boldsymbol{v}_{i}^{\top}\nabla f(\boldsymbol{w}))\boldsymbol{v}_{i}+\mathcal{O}(\epsilon)\boldsymbol{v}_{i}\right)}_{g(\boldsymbol{v}_{i})}
+(70)
+Now we will use the derived g^​(𝒘t)\hat{g}(\boldsymbol{w}_{t}) in the descent lemma:
+Similar to Theorem I.7, using the Assumption
+I.2, we apply the smoothness on ff:
+f(𝒘t+1)≤f(𝒘t)+∇f(𝒘t)⊤(𝒘t+1−𝒘t)+L2||𝒘t+1−𝒘t||2\displaystyle f(\boldsymbol{w}_{t+1})\leq f(\boldsymbol{w}_{t})+\nabla f(\boldsymbol{w}_{t})^{\top}(\boldsymbol{w}_{t+1}-\boldsymbol{w}_{t})+\frac{L}{2}||\boldsymbol{w}_{t+1}-\boldsymbol{w}_{t}||^{2}
+(71)
+For the gradient descent update with central finite differences, we set the model update rule as
+𝒘t+1=𝒘t−η​g^​(𝒘t).\displaystyle\boldsymbol{w}_{t+1}=\boldsymbol{w}_{t}-\eta\hat{g}(\boldsymbol{w}_{t}).
+(72)
+Plugging the model update rule into the smoothness inequality,
+f(𝒘t+1)≤f(𝒘t)−η∇f(𝒘t)⊤g^(𝒘t)+L​η22||g^(𝒘t)||2\displaystyle f(\boldsymbol{w}_{t+1})\leq f(\boldsymbol{w}_{t})-\eta\nabla f(\boldsymbol{w}_{t})^{\top}\hat{g}(\boldsymbol{w}_{t})+\frac{L\eta^{2}}{2}||\hat{g}(\boldsymbol{w}_{t})||^{2}
+(73)
+Taking expectation conditioned on 𝒗∼𝒩⁡(0,Id)\boldsymbol{v}\sim\mathcal{N}(0,I_{d}),
+f(𝒘t+1)≤f(𝒘t)−η∇f(𝒘t)⊤𝔼𝒗​[g^​(𝒘t)]⏟Term1+L​η22𝔼𝒗​[‖g^​(𝒘t)‖2]⏟Term2\displaystyle f(\boldsymbol{w}_{t+1})\leq f(\boldsymbol{w}_{t})-\eta\nabla f(\boldsymbol{w}_{t})^{\top}\underbrace{\mathbb{E}_{\boldsymbol{v}}[\hat{g}(\boldsymbol{w}_{t})]}_{\text{Term}_{1}}+\frac{L\eta^{2}}{2}\underbrace{\mathbb{E}_{\boldsymbol{v}}[||\hat{g}(\boldsymbol{w}_{t})||^{2}]}_{\text{Term}_{2}}
+(74)
+Solving Term1 and Term2 separately,
+Term1:
+From Lemma I.3, we get 𝔼​[g​(𝒗)]=∇f​(𝒘)\mathbb{E}[g(\boldsymbol{v})]=\nabla f(\boldsymbol{w}), which also gets us
+𝔼⁡[g^​(𝒘)]=1n​∑i=1n𝔼⁡[g⁡(𝒗)]=∇f​(𝒘)\mathbb{E}[\hat{g}(\boldsymbol{w})]=\frac{1}{n}\sum_{i=1}^{n}\mathbb{E}[g(\boldsymbol{v})]=\nabla f(\boldsymbol{w})
+Term2:
+The error of g^​(𝒘)\hat{g}(\boldsymbol{w}) is measured by δ\delta,
+‖g^​(𝒘)‖2\displaystyle||\hat{g}(\boldsymbol{w})||^{2}
+=||∇f(𝒘)+δ||2=||∇f(𝒘)||2+2∇f(𝒘)⊤δ+||δ||2\displaystyle=||\nabla f(\boldsymbol{w})+\delta||^{2}=||\nabla f(\boldsymbol{w})||^{2}+2\nabla f(\boldsymbol{w})^{\top}\delta+||\delta||^{2}
+(75)
+Taking expectation and noting that 𝔼⁡[δ]=0\mathbb{E}[\delta]=0 and 𝔼⁡[‖δ‖2]=Var​[g^​(𝒘)]\mathbb{E}[||\delta||^{2}]=\text{Var}[\hat{g}(\boldsymbol{w})],
+𝔼𝒗​[‖g^​(𝒘)‖2]=‖∇f​(𝒘)‖2+Var​[g^​(𝒘)]\displaystyle\mathbb{E}_{\boldsymbol{v}}[||\hat{g}(\boldsymbol{w})||^{2}]=||\nabla f(\boldsymbol{w})||^{2}+\text{Var}[\hat{g}(\boldsymbol{w})]
+(76)
+Using Lemma I.4 to get the bound of Var​[g^​(𝒘)]\text{Var}[\hat{g}(\boldsymbol{w})],
+𝔼𝒗​[‖g^​(𝒘)‖2]=‖∇f​(𝒘)‖2+d+1n​‖∇f​(𝒘)‖2+dn​𝒪​(ϵ2)\displaystyle\mathbb{E}_{\boldsymbol{v}}[||\hat{g}(\boldsymbol{w})||^{2}]=||\nabla f(\boldsymbol{w})||^{2}+\frac{d+1}{n}||\nabla f(\boldsymbol{w})||^{2}+\frac{d}{n}\mathcal{O}(\epsilon^{2})
+(77)
+Back to Equation 74, plugging in Term1 and Term2:
+f⁡(𝒘t+1)\displaystyle f(\boldsymbol{w}_{t+1})
+≤f(𝒘t)−η∇f(𝒘t)⊤∇f(𝒘t)+L​η22((1+d+1n)||∇f(𝒘)||2+dn𝒪(ϵ2))\displaystyle\leq f(\boldsymbol{w}_{t})-\eta\nabla f(\boldsymbol{w}_{t})^{\top}\nabla f(\boldsymbol{w}_{t})+\frac{L\eta^{2}}{2}\left(\left(1+\frac{d+1}{n}\right)||\nabla f(\boldsymbol{w})||^{2}+\frac{d}{n}\mathcal{O}(\epsilon^{2})\right)
+(78)
+=f⁡(𝒘t)−η​‖∇f​(𝒘t)‖2+L​η22​(1+d+1n)​‖∇f​(𝒘)‖2+L​d​η22​n​𝒪​(ϵ2)\displaystyle=f(\boldsymbol{w}_{t})-\eta||\nabla f(\boldsymbol{w}_{t})||^{2}+\frac{L\eta^{2}}{2}\left(1+\frac{d+1}{n}\right)||\nabla f(\boldsymbol{w})||^{2}+\frac{Ld\eta^{2}}{2n}\mathcal{O}(\epsilon^{2})
+(79)
+Grouping the terms involving ‖∇f​(𝒘)‖2||\nabla f(\boldsymbol{w})||^{2},
+f⁡(𝒘t+1)\displaystyle f(\boldsymbol{w}_{t+1})
+≤f⁡(𝒘t)−η⁡[1−L​η2​(1+d+1n)]​‖∇f​(𝒘t)‖2+L​d​η22​n​𝒪​(ϵ2)\displaystyle\leq f(\boldsymbol{w}_{t})-\eta\left[1-\frac{L\eta}{2}\left(1+\frac{d+1}{n}\right)\right]||\nabla f(\boldsymbol{w}_{t})||^{2}+\frac{Ld\eta^{2}}{2n}\mathcal{O}(\epsilon^{2})
+(80)
+This inequality shows that, provided the step size η\eta is small enough so that,
+1−L​η2​(1+d+1n)>01-\frac{L\eta}{2}\left(1+\frac{d+1}{n}\right)>0
+Summing the inequality over epochs t=1t=1 to TT:
+f⁡(𝒘T)−f⁡(𝒘1)\displaystyle f(\boldsymbol{w}_{T})-f(\boldsymbol{w}_{1})
+≤−η[1−L​η2(1+d+1n)]∑t=1T||∇f(𝒘t)||2+L​d​η2​T2​n𝒪(ϵ2)\displaystyle\leq-\eta\left[1-\frac{L\eta}{2}\left(1+\frac{d+1}{n}\right)\right]\sum_{t=1}^{T}||\nabla f(\boldsymbol{w}_{t})||^{2}+\frac{Ld\eta^{2}T}{2n}\mathcal{O}(\epsilon^{2})
+(81)
+Rearranging the terms
+give us,
+∑t=1T‖∇f​(𝒘t)‖2\displaystyle\sum_{t=1}^{T}||\nabla f(\boldsymbol{w}_{t})||^{2}
+≤f⁡(𝒘1)−f⁡(𝒘T)η​[1−L​η2​(1+d+1n)]+L​d​η2​T2​n​𝒪​(ϵ2)\displaystyle\leq\frac{f(\boldsymbol{w}_{1})-f(\boldsymbol{w}_{T})}{\eta\left[1-\frac{L\eta}{2}\left(1+\frac{d+1}{n}\right)\right]}+\frac{Ld\eta^{2}T}{2n}\mathcal{O}(\epsilon^{2})
+(82)
+Dividing by TT gives the bound on the average squared gradient norm:
+1T​∑t=1T‖∇f​(𝒘t)‖2\displaystyle\frac{1}{T}\sum_{t=1}^{T}||\nabla f(\boldsymbol{w}_{t})||^{2}
+≤f⁡(𝒘1)−f⁡(𝒘T)η​T​[1−L​η2​(1+d+1n)]+L​d​η22​n​𝒪​(ϵ2)\displaystyle\leq\frac{f(\boldsymbol{w}_{1})-f(\boldsymbol{w}_{T})}{\eta T\left[1-\frac{L\eta}{2}\left(1+\frac{d+1}{n}\right)\right]}+\frac{Ld\eta^{2}}{2n}\mathcal{O}(\epsilon^{2})
+(83)
+To ensure that
+1−L​η2​(1+d+1n)>01-\frac{L\eta}{2}\left(1+\frac{d+1}{n}\right)>0, the step size η\eta must be chosen so that
+η<2L⁡(1+d+1n).\displaystyle\eta<\frac{2}{L\left(1+\frac{d+1}{n}\right)}.
+(84)
+As the dimension dd increases (or as the number of samples nn decreases), the factor
+L​η2​(1+d+1n)\frac{L\eta}{2}\left(1+\frac{d+1}{n}\right)
+increases. This makes
+1−L​η2​(1+d+1n)1-\frac{L\eta}{2}\left(1+\frac{d+1}{n}\right)
+smaller, which in turn makes the entire bound larger.
+In other words, a larger dd (or a smaller nn) results in a worse (higher) error bound.
+This interplay of dd and nn also puts limitations on the order of η\eta, keeping the learning rate quite small for stable learning.
+∎
+Moving on, we will get the convergence bound of the gradients derived from forward-mode auto differentiation.
+The key difference between the two theorems is that the error bound for zero-order optimization includes an additional 𝒪⁡(ϵ2)\mathcal{O}(\epsilon^{2}) term due to the finite-difference approximation, whereas the bound for forward-mode AD is exact and free from such errors.
+This makes forward-mode AD theoretically more efficient, as it avoids the additional error introduced by numerical differentiation while maintaining the same dependency on dimension dd and number of perturbations nn.
+Theorem I.9 (Error Bound of Forward-mode Auto Differentiation).
+Consider a
+function f:ℝd→ℝf:\mathbb{R}^{d}\rightarrow\mathbb{R} that is LL-smooth.
+Let the forward-mode AD gradient estimator with nn perturbations per iteration, where each perturbation vector 𝐯i\boldsymbol{v}_{i} is sampled independently from 𝒩⁡(0,Id)\mathcal{N}(0,I_{d}) and step size η\eta be
+g^(𝒘t)=1n∑i=1n((𝒗i⊤∇f(𝒘t))𝒗i).\hat{g}(\boldsymbol{w}_{t})=\frac{1}{n}\sum_{i=1}^{n}\left(\left(\boldsymbol{v}_{i}^{\top}\nabla f(\boldsymbol{w}_{t})\right)\boldsymbol{v}_{i}\right).
+Then, the expected average squared gradient norm is bounded by
+1T​∑t=1T‖∇f​(𝒘t)‖2\displaystyle\frac{1}{T}\sum_{t=1}^{T}||\nabla f(\boldsymbol{w}_{t})||^{2}
+≤f⁡(𝒘1)−f⁡(𝒘T)η​T​[1−L​η2​(1+d+1n)],\displaystyle\leq\frac{f(\boldsymbol{w}_{1})-f(\boldsymbol{w}_{T})}{\eta T\left[1-\frac{L\eta}{2}\left(1+\frac{d+1}{n}\right)\right]},
+(85)
+To ensure convergence, the step size must satisfy
+η<2L⁡(1+d+1n).\displaystyle\eta<\frac{2}{L\left(1+\frac{d+1}{n}\right)}.
+(86)
+This result highlights how the convergence rate depends on the dimension dd, the number of perturbations nn, and the perturbation magnitude ϵ\epsilon.
+Specifically, a larger dd or a smaller nn increases the bound, implying slower convergence.
+Proof.
+The forward-mode AD gradient estimator for nn perturbations per iteration is
+g^(𝒘t)=1n∑i=1n((∇𝒗i⊤f(𝒘t))𝒗i)\displaystyle\hat{g}(\boldsymbol{w}_{t})=\frac{1}{n}\sum_{i=1}^{n}\left((\nabla\boldsymbol{v}_{i}^{\top}f(\boldsymbol{w}_{t}))\boldsymbol{v}_{i}\right)
+(87)
+where each 𝒗i∈ℝd\boldsymbol{v}_{i}\in\mathbb{R}^{d} is a perturbation drawn from a Gaussian distribution 𝒩⁡(0,1)\mathcal{N}(0,1).
+We will use g^​(𝒘t)\hat{g}(\boldsymbol{w}_{t}) in the descent lemma.
+Similar to Theorem I.8, using the Assumption I.2, we apply the smoothness on ff:
+f(𝒘t+1)≤f(𝒘t)+∇f(𝒘t)⊤(𝒘t+1−𝒘t)+L2||𝒘t+1−𝒘t||2\displaystyle f(\boldsymbol{w}_{t+1})\leq f(\boldsymbol{w}_{t})+\nabla f(\boldsymbol{w}_{t})^{\top}(\boldsymbol{w}_{t+1}-\boldsymbol{w}_{t})+\frac{L}{2}||\boldsymbol{w}_{t+1}-\boldsymbol{w}_{t}||^{2}
+(88)
+For the gradient descent update with forward-mode AD, we set the model update rule as
+𝒘t+1=𝒘t−η​g^​(𝒘t).\displaystyle\boldsymbol{w}_{t+1}=\boldsymbol{w}_{t}-\eta\hat{g}(\boldsymbol{w}_{t}).
+(89)
+Plugging the model update rule into the smoothness inequality,
+f(𝒘t+1)≤f(𝒘t)−η∇f(𝒘t)⊤g^(𝒘t)+L​η22||g^(𝒘t)||2\displaystyle f(\boldsymbol{w}_{t+1})\leq f(\boldsymbol{w}_{t})-\eta\nabla f(\boldsymbol{w}_{t})^{\top}\hat{g}(\boldsymbol{w}_{t})+\frac{L\eta^{2}}{2}||\hat{g}(\boldsymbol{w}_{t})||^{2}
+(90)
+Taking expectation conditioned on 𝒗∼𝒩⁡(0,Id)\boldsymbol{v}\sim\mathcal{N}(0,I_{d}),
+f(𝒘t+1)≤f(𝒘t)−η∇f(𝒘t)⊤𝔼𝒗​[g^​(𝒘t)]⏟Term1+L​η22𝔼𝒗​[‖g^​(𝒘t)‖2]⏟Term2\displaystyle f(\boldsymbol{w}_{t+1})\leq f(\boldsymbol{w}_{t})-\eta\nabla f(\boldsymbol{w}_{t})^{\top}\underbrace{\mathbb{E}_{\boldsymbol{v}}[\hat{g}(\boldsymbol{w}_{t})]}_{\text{Term}_{1}}+\frac{L\eta^{2}}{2}\underbrace{\mathbb{E}_{\boldsymbol{v}}[||\hat{g}(\boldsymbol{w}_{t})||^{2}]}_{\text{Term}_{2}}
+(91)
+Solving Term1 and Term2 separately,
+Term1:
+From Lemma I.5, we get 𝔼​[g​(𝒗)]=∇f​(𝒘)\mathbb{E}[g(\boldsymbol{v})]=\nabla f(\boldsymbol{w}), which also gets us
+𝔼⁡[g^​(𝒘)]=1n​∑i=1n𝔼⁡[g⁡(𝒗)]=∇f​(𝒘)\mathbb{E}[\hat{g}(\boldsymbol{w})]=\frac{1}{n}\sum_{i=1}^{n}\mathbb{E}[g(\boldsymbol{v})]=\nabla f(\boldsymbol{w})
+Term2:
+The error of g^​(𝒘)\hat{g}(\boldsymbol{w}) is measured by δ\delta,
+‖g^​(𝒘)‖2\displaystyle||\hat{g}(\boldsymbol{w})||^{2}
+=||∇f(𝒘)+δ||2=||∇f(𝒘)||2+2∇f(𝒘)⊤δ+||δ||2\displaystyle=||\nabla f(\boldsymbol{w})+\delta||^{2}=||\nabla f(\boldsymbol{w})||^{2}+2\nabla f(\boldsymbol{w})^{\top}\delta+||\delta||^{2}
+(92)
+Taking expectation and noting that 𝔼⁡[δ]=0\mathbb{E}[\delta]=0 and 𝔼⁡[‖δ‖2]=Var​[g^​(𝒘)]\mathbb{E}[||\delta||^{2}]=\text{Var}[\hat{g}(\boldsymbol{w})],
+𝔼𝒗​[‖g^​(𝒘)‖2]=‖∇f​(𝒘)‖2+Var​[g^​(𝒘)]\displaystyle\mathbb{E}_{\boldsymbol{v}}[||\hat{g}(\boldsymbol{w})||^{2}]=||\nabla f(\boldsymbol{w})||^{2}+\text{Var}[\hat{g}(\boldsymbol{w})]
+(93)
+Using Lemma I.6 to get the bound of Var​[g^​(𝒘)]\text{Var}[\hat{g}(\boldsymbol{w})],
+𝔼𝒗​[‖g^​(𝒘)‖2]=‖∇f​(𝒘)‖2+d+1n​‖∇f​(𝒘)‖2\displaystyle\mathbb{E}_{\boldsymbol{v}}[||\hat{g}(\boldsymbol{w})||^{2}]=||\nabla f(\boldsymbol{w})||^{2}+\frac{d+1}{n}||\nabla f(\boldsymbol{w})||^{2}
+(94)
+Back to Equation 91, plugging in Term1 and Term2:
+f⁡(𝒘t+1)\displaystyle f(\boldsymbol{w}_{t+1})
+≤f(𝒘t)−η∇f(𝒘t)⊤∇f(𝒘t)+L​η22(1+d+1n)||∇f(𝒘)||2\displaystyle\leq f(\boldsymbol{w}_{t})-\eta\nabla f(\boldsymbol{w}_{t})^{\top}\nabla f(\boldsymbol{w}_{t})+\frac{L\eta^{2}}{2}\left(1+\frac{d+1}{n}\right)||\nabla f(\boldsymbol{w})||^{2}
+(95)
+=f⁡(𝒘t)−η​‖∇f​(𝒘t)‖2+L​η22​(1+d+1n)​‖∇f​(𝒘)‖2\displaystyle=f(\boldsymbol{w}_{t})-\eta||\nabla f(\boldsymbol{w}_{t})||^{2}+\frac{L\eta^{2}}{2}\left(1+\frac{d+1}{n}\right)||\nabla f(\boldsymbol{w})||^{2}
+(96)
+Grouping the terms involving ‖∇f​(𝒘)‖2||\nabla f(\boldsymbol{w})||^{2},
+f⁡(𝒘t+1)\displaystyle f(\boldsymbol{w}_{t+1})
+≤f⁡(𝒘t)−η⁡[1−L​η2​(1+d+1n)]​‖∇f​(𝒘t)‖2\displaystyle\leq f(\boldsymbol{w}_{t})-\eta\left[1-\frac{L\eta}{2}\left(1+\frac{d+1}{n}\right)\right]||\nabla f(\boldsymbol{w}_{t})||^{2}
+(97)
+This inequality shows that, provided the step size η\eta is small enough so that,
+1−L​η2​(1+d+1n)>01-\frac{L\eta}{2}\left(1+\frac{d+1}{n}\right)>0
+Summing the inequality over epochs t=1t=1 to TT:
+f⁡(𝒘T)−f⁡(𝒘1)\displaystyle f(\boldsymbol{w}_{T})-f(\boldsymbol{w}_{1})
+≤−η[1−L​η2(1+d+1n)]∑t=1T||∇f(𝒘t)||2\displaystyle\leq-\eta\left[1-\frac{L\eta}{2}\left(1+\frac{d+1}{n}\right)\right]\sum_{t=1}^{T}||\nabla f(\boldsymbol{w}_{t})||^{2}
+(98)
+Rearranging the terms
+give us,
+∑t=1T‖∇f​(𝒘t)‖2\displaystyle\sum_{t=1}^{T}||\nabla f(\boldsymbol{w}_{t})||^{2}
+≤f⁡(𝒘1)−f⁡(𝒘T)η​[1−L​η2​(1+d+1n)]\displaystyle\leq\frac{f(\boldsymbol{w}_{1})-f(\boldsymbol{w}_{T})}{\eta\left[1-\frac{L\eta}{2}\left(1+\frac{d+1}{n}\right)\right]}
+(99)
+Dividing by TT gives the bound on the average squared gradient norm:
+1T​∑t=1T‖∇f​(𝒘t)‖2\displaystyle\frac{1}{T}\sum_{t=1}^{T}||\nabla f(\boldsymbol{w}_{t})||^{2}
+≤f⁡(𝒘1)−f⁡(𝒘T)η​T​[1−L​η2​(1+d+1n)]\displaystyle\leq\frac{f(\boldsymbol{w}_{1})-f(\boldsymbol{w}_{T})}{\eta T\left[1-\frac{L\eta}{2}\left(1+\frac{d+1}{n}\right)\right]}
+(100)
+To ensure that
+1−L​η2​(1+d+1n)>01-\frac{L\eta}{2}\left(1+\frac{d+1}{n}\right)>0, the step size η\eta must be chosen so that
+η<2L⁡(1+d+1n).\displaystyle\eta<\frac{2}{L\left(1+\frac{d+1}{n}\right)}.
+(101)
+As the dimension dd increases (or as the number of samples nn decreases), the factor
+L​η2​(1+d+1n)\frac{L\eta}{2}\left(1+\frac{d+1}{n}\right)
+increases. This makes
+1−L​η2​(1+d+1n)1-\frac{L\eta}{2}\left(1+\frac{d+1}{n}\right)
+smaller, which in turn makes the entire bound larger.
+In other words – similar to zero-order method – a larger dd (or a smaller nn) results in a worse (higher) error bound.
+This interplay of dd and nn also puts limitations on the order of η\eta, keeping the learning rate quite small for stable learning.
+∎
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

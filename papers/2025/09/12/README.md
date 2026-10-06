@@ -2,47 +2,50 @@
 
 **规范：** V3
 **窗口：** 2025-09-11T09:00:00+08:00 ～ 2025-09-12T09:00:00+08:00
-**状态：** 进行中
+**窗口说明：** 用户授权仅补遗漏，原窗口/候选/日期/评分/有效审阅及连续原§4冻结；不迁日、不catchup。
+**补充窗口：** 2025-09-11 ～ 2025-09-11
+**状态：** 完成
 **Books：** 纳入本次
-**检查时间：** 2026-10-06T13:41:05+08:00
+**检查时间：** 2026-10-12T01:11:16+08:00
 
 ## 1. 结论
 
-当前正式候选0个唯一家族，不表示本日零事件。24份精确arXiv v1完整题摘实际取得并读完，23项机制/局部反证潜力尚缺落窗公开证据，1项LightAgent普通关闭建议待校准。VaultGemma正文核心有sequence级DP与compute/utility取舍潜力，但原可见Sep12没有时区/时刻，不能授12日窗口。两项题摘含糊已补方法：能耗归因受度量/serving backend混杂，TORSO解码时强制token和EOS截获不是单纯模板组合；均保留潜力，不因小规模或“没改变通用原则”排除。
+新增正式候选Qwen3-Next 1个唯一家族，2 + 2 + 1 = 5分，标准审阅完成、仅报告、Books新增0；Cicero已实际独核日期、准入、必要证据与具体书稿差额。官方3:1 hybrid、norm/router稳定化、稀疏容量/native MTP是具体版本组合，不证明普适最优比例或单机制提速因果。静态YaRN短文本退化、吞吐依赖实现与MTP可用性限制保留。
 
-PLAS初始发布提案在实际精确旧版和模型更新反侧后改判：本日Blog没有观察到新方法、评价或artifact，旧文档已承载同一selector/数表。保留原提案与修正链，不因访问费时或Books已有覆盖缩池。Books正文增量0；作者研究可交接，root首批/改判及最终DAY未通过。
+本轮四有界主题119命中去重95，55旧身份复用，新40 exact-v1完整题摘/current轻核全部实际完成，13必要局部收敛为16P日期潜力/23C/1当前撤回信号隔离。7旧版本差异current轻核另发现09199v2撤回，无采用链；不倒填旧v1。首次public-date仍缺，P不评分、不进Books、不称Evidence完成。普通待办0，Cicero实际六部分DAY§7与完成态FINAL§8通过；本日安全终态完成，不将日期保留项授Evidence通过。
 
-后续API实际200，153/153主题记录标题读完，新增87完整题摘（52当前v1/35后续版本），与原24合并111唯一家族题摘=83作者潜力日期保留/28建议关闭；另46查询条目仅明确领域应用标题范围关闭。原518月邻段不是该分母/全文队列。新增异步感知/生成、动态KV预算与MoE控制反证等具体理由见[恢复筛选](../_sources/daily-20250912/RECOVERY_SCREEN.md)。不把后续版本题摘、API published/submitted当2025首次公开或证据完成。
+原层111题摘=84日期潜力/27关闭及46明确领域title、原0正式/0Books、日期/评分和连续§4冻结，运行前[baseline](../_sources/daily-20250912/SUP_BASELINE_README_20261012.md)保留。原24 exact-v1与恢复87 current（52v1/35后续版本）不混；原518月邻段不扩为队列。旧PLAS重述关闭、08867能耗归因混杂、09448 TORSO强制token反侧及root有效独核复用，不把摘要当方法审阅。新补Sep11完整自然日，不catchup、不追公开小时；来源有限历史缺段和100日期潜力（旧84+新16）精确隔离，不授全Coverage/Evidence或无遗漏。
 
 ## 2. 来源覆盖
 
-实际扫描2026-10-06，本日独立原件及失败保存在[原始目录](../_sources/daily-20250912/)，初始`transport.json`与窄恢复`narrow-recovery-1315.json`保留请求/时间/界限。不把有限列表停止称所有历史无遗漏。
+本轮实际2026-10-12执行，原层2026-10-06记录冻复用；[本轮有界来源与停止](../_sources/daily-20250912/SUP_SOURCES_20261012.md)、[筛选](../_sources/daily-20250912/SUP_SCREEN_20261012.md)保留原件/request/SHA与读层。表中覆盖仅约定主题和有限入口，不是全机构历史。没有扫描Weekly。
 
 | 来源 | 检查范围与依据 | 结果 | 缺口 |
 | --- | --- | --- | --- |
-| SRC-OPENAI | `news/rss.xml`760851 bytes，原pubDate本窗Sep11 14:00GMT两法人/MOU公告，完整description已读 | 已检查 | 两公告无新模型/系统机制，不称零事件或全部站点覆盖 |
-| SRC-ANTHROPIC | Research Next.js字符串实际解码172 publication，publishedOn原值；Sep5→Sep15跨本窗 | 已检查 | 仅本次publication数组，不遍历全文库存或删除记录 |
-| SRC-GOOGLE-AI | DeepMind实际Blog page5 Nov2025→Jul2025，三相关原文分别Sep25/22/17；Research `/blog/2025/09/`1→2/2共13条Sep30→Sep9。cascades与Vault原核心已读；`/blog/rss.xml`404后`/blog/rss/`200，100条Oct2026→Oct29 2025 | 受阻 | 月份列表有界处理；Vault可见Sep12缺公开时区/时刻，成功RSS不含9月。不能采用为12日确定候选；AI for Science按ROADMAP暂缓 |
-| SRC-META-AI | Blog实际1→3，主序Oct24→Aug27/14，旧pin分开；publications5→6，Sep15→Sep8→Sep2→Aug，原件保存 | 已检查 | 非严格排序与旧pin不支持全历史保证 |
-| SRC-QWEN | 官方新站research配置API真实返回原date/tokenLinks，Qwen3-Next=`2025-09-10T20:00:00.000Z`，正文及元数据本日取得 | 已检查 | 原ISO归属11日04BJT，窗外不列12候选；不拿旧首页或当前retrieval40条当历史覆盖 |
-| SRC-DEEPSEEK | 官网与官方updates实际Sep29/Sep22→Aug21 | 已检查 | 限该公开更新切片，不扩repo普通PR |
-| SRC-MOONSHOT | 平台Blog实际Sep16→Sep5→Aug22跨本窗 | 已检查 | 仅公开Blog切片，无本窗具体artifact触发，不扫全repo |
-| SRC-TENCENT-HUNYUAN | 首查Research shell；正确官方API POST pageNum1/pageSize100/renderType0，返回9=total9 | 受阻 | 9条全2026最早Feb3，不支持2025历史；需本窗历史全部列表或具体原文 |
-| SRC-ZAI | Research原件、release notes Sep30→Aug11；本日真实page2→3均1397453 bytes/同18条，Aug26 2026→Dec7 2025并无更多 | 受阻 | 重复页不跨9月，Research历史尚缺；发布说明切片可用但不授0论文 |
-| SRC-BYTEDANCE-SEED | 2025 type2/page0/count20/desc，15返回/total49/has_more；非pin Oct23→Aug21→Jul跨窗停止page0；type1 US/CN均total94无sub_article_list | 受阻 | Blog有限停止可用，paper API列表不完整，不记0；需可读本窗论文目录 |
-| SRC-BAIDU-ERNIE | Blog1→2/2 Sep12 PLAS→Aug14 FastDeploy；PLAS正文/两精确旧doc/两模型history实际读，见SCREEN | 已检查 | 12日博客原datePublished为00:00Z，未见实际新版本贡献；不是首次方法证明 |
-| SRC-XIAOMI-MIMO | Paper8项Sep19Audio→Jun4VL；Blog15条；实际首页6159/8557 chunk More仅切换初始8/余7，无额外fetch | 受阻 | More不是未执行分页；当前15项不能恢复2025Sep日期/历史目录，需历史原文或dated list |
-| SRC-MINIMAX | EN12/CN13，Oct27→Jan15；英文page2派生正文重复；Agent techblog当前单项及实际llms.txt7576 bytes仅2026条目 | 受阻 | 有限切片已读；历史分页/Agent2025列表未恢复，不授全历史0事件 |
-| SRC-ARXIV | 原429/catchup400/day-list400保留；后续12分类+模型同义主题submitted窗口API实际200/374412 bytes，start0/max200升序153/153标题读完，新增87完整当前题摘；原24精确v1复用。既有month CL2000/2214及11类首段、ID08841–10499邻段518只作查漏，不重复整类扫描 | 受阻 | 检索已恢复，不再429终态；83潜力仍缺first-public完整落窗支持，35新题摘为后续版本。month/API/DataCite不授日期，有限主题非全学科覆盖 |
+| SRC-OPENAI | fresh RSS Sep10–12切片，Sep11两公告完整description | 已检查 | 法人/PBC与MOU无新模型机制C，不称全站零事件 |
+| SRC-ANTHROPIC | fresh Research发布数组，独核174；Sep5→Sep15跨窗 | 已检查 | 限发布数组，不扫库存/删除史，原172不冒充新数量 |
+| SRC-GOOGLE-AI | Research2025/09 1→2/2共13；DM Blog5 Nov→July/6 July→April；Sep25/22/17具名日期旧有效复用 | 已检查 | Sep11cascades同2024贡献C，Nucleo AIfS C；Vault可见Sep12在新窗外，不追时刻、不改旧hold；有限切片非全papers |
+| SRC-META-AI | fresh pubs5→6主序Sep15→Sep8→Sep2→Aug；Blog2→3 Oct→Aug27/14 | 已检查 | 旧pin/乱序分开，非严格历史排序保证 |
+| SRC-QWEN | fresh配置60items，具名QwenNext Sep10T20Z=Sep11BJT，必要官方tokens核心/Note | 已检查 | 新1确定候选；限配置及该原文，不把旧当前首页当全历史 |
+| SRC-DEEPSEEK | fresh主页/updates日期Sep29/Sep22→Aug21 | 已检查 | 更新切片跨窗，无本日具体repo触发，不扫PR |
+| SRC-MOONSHOT | fresh平台Blog Sep16→Sep5→Aug22 | 已检查 | 限Blog切片，无具名本日artifact触发 |
+| SRC-TENCENT-HUNYUAN | 首查shell→官方POST page1/pageSize1000/renderType0，EN9/total9、ZH11/total11，最早Feb3 2026 | 受阻 | API末尾不能恢复2025历史；需本窗dated list/具名原文，不授0/覆盖 |
+| SRC-ZAI | fresh第一页list15+featured（unique16），page2 unique18/没有更多，最早Dec7 2025；release止Sep30 | 受阻 | Research2025Sep缺段，release有限不授当日0；不重复派生page扩大 |
+| SRC-BYTEDANCE-SEED | fresh2025 type1/type2 page0各18，total94/45、next20/has_more；非pin分别Oct21→Sep21→Sep1、Oct22→Aug20，pin另核 | 已检查 | paper接口本轮恢复，按非pin跨窗止0，不授94/45全读；pinSeedream4归BJT Sep9非本窗，不继承别日材料 |
+| SRC-BAIDU-ERNIE | fresh Blog1→2/2，Sep12PLAS→Aug14→Jun30；旧PLAS精确反证冻复用 | 已检查 | 新Sep11该切片无事件，旧doc/release identity不自授firstpublic |
+| SRC-XIAOMI-MIMO | fresh Paper8/Blog15；observed runtime与正确async6159/8557，More仅slice/useState翻显，无fetch | 受阻 | 有限dated papers Sep19→Jun4，Blog无date不能恢复Sep11；错路径404不伪装正确runtime受阻 |
+| SRC-MINIMAX | fresh EN12/CN13 cards，Oct27→Jan15；EN派生page2同12；Agent3项2026+llms8613bytes | 受阻 | 有限cards/当前Agent，历史分页及2025目录未恢复，不授全历史0 |
+| SRC-ARXIV | 四主题44/17/25/33，start0/max200,total=returned；119title/95identity/55旧复用、新40完整v1题摘/current、13必要core；7旧differentversion current轻核 | 受阻 | 两官方Sep11 CL/LG日列表400；submitted/API不授public，100日期潜力精确隔离；09195/09199当前v2撤回不用，不倒填v1，不catchup/monthwide |
 
-没有扫描每周来源。GitHub/HF精确版本检查由PLAS本日发布身份触发，属于必要证据，不扩为全仓扫描。
+Qwen官方tokenLinks为必要单篇原证；精确arXiv core由实际准入歧义/反侧触发，旧PLAS GitHub/HF有效层保留，未因无正式旧候选取消已发生trigger，也不扩全仓。
 
 ## 3. 候选与判断
 
 | 材料 | 公开时间 | 项目贡献与评分 | 审阅结果 | Books决定 |
 | --- | --- | --- | --- | --- |
+| [Qwen3-Next: Towards Ultimate Training & Inference Efficiency](https://docs.qwenlm.ai/research/qwen3-next/index.json) | 2025-09-11 | linear recall与full attention成本互补→3:1 hybrid、norm/router稳定化及稀疏容量/native MTP版本组合→训练/推理实现选择；2 + 2 + 1 = 5 | 标准完成 | 仅报告：recipe未给新增长期条件，GDN/output gate、MoE成本、MTP verification具体正文实读比较，不称版本已有覆盖；Books0 |
 
-尚无通过贡献及日期两项确认的本窗唯一家族，故不赋分。83 arXiv作者潜力、28建议关闭与Vault日期保留不是0贡献，实际身份/准入理由见[原24筛选](../_sources/daily-20250912/SCREEN.md)及[恢复87筛选](../_sources/daily-20250912/RECOVERY_SCREEN.md)。PLAS改判依据保留[初始与新版交接](../_sources/daily-20250912/HANDOFF.md)。
+旧0正式/0评分冻结，不搬动Qwen在旧9am窗外判断。新P仅date未知不是候选表0贡献；40逐项具体准入及13必要core见[筛选](../_sources/daily-20250912/SUP_SCREEN_20261012.md)/[core表](../_sources/daily-20250912/SUP_NCORE_SCREEN_20261012.md)。旧84/27及46title见[原24](../_sources/daily-20250912/SCREEN.md)/[恢复87](../_sources/daily-20250912/RECOVERY_SCREEN.md)；PLAS改判链见[原交接](../_sources/daily-20250912/HANDOFF.md)。同family不同事件不重复计数。
 
 ## 4. 证据与知识整合
 
@@ -52,18 +55,29 @@ Vault实际官方核心只支持1024-token packed sequence级DP，不等于用�
 
 现无可采用的确定当窗候选，不进入Books。`MODEL-LONG-CONTEXT`实际selector论点只作为PLAS差额路由，不凭主题相似授已有覆盖；未来日期及证据通过后再交精确owner/邻接/建议自然段，由root集中写入。未运行、复现或验证生产实现。
 
+以上连续三段为冻结原层；第三段“现无可采用的确定当窗候选”仅描述原层0候选，不否定下列补充自然日新增Qwen1。
+
+### [Qwen3-Next: Towards Ultimate Training & Inference Efficiency](https://docs.qwenlm.ai/research/qwen3-next/index.json)
+
+官方research item原ISO Sep10T20Z归属Sep11 BJT。实际读Introduction/四项Key Features、Pre/Posttraining、部署Note、Ultra-Long Texts核心：3:1 Gated DeltaNet/gated attention，512/10 routed+1 shared，Zero-Centered RMSNorm/norm decay/router初始化与native multi-step MTP只是版本组合，不证明比例普适最优或单因素提速。15T与旧36T数据/模型差异未隔离，9.3%训练compute/10x throughput缺完整可比runtime条件。官方明确吞吐依赖实现、Transformers不一般可用MTP、256K启动可能需减长度、static YaRN会损伤短文本；不授AR verifier/cache正确性、1M无损或生产保证。[必要审阅与具体Books差额](../_sources/daily-20250912/SUP_QWEN_NEXT_EVIDENCE_20261012.md)实际比Ch22固定状态/输出门控互补、Ch21 activation不等runtime及路由公平、Ch48 native MTP仍需full verification。没有新受控长期条件，具体版本仅报告，不称书中已有Qwen配置。Cicero独核§3实际通过，未写Books、未运行代码/复现实验。
+
 ## 5. 缺口与下一步
 
-作者本次可执行窄研究已交接；root首批/改判校准与最终独立DAY仍是可执行待办，保持进行中。
+普通待办0；Cicero实际六部分DAY§7与完成态FINAL§8通过，没有待写Books或普通方法未读。以下为本窗终态保留项及有限范围，不用于正面证据、Books、0事件或无遗漏断言；不是Coverage/Evidence通过，替代材料到达仅定点重开。不以作者同步替代独立裁决。
 
-- arXiv 83作者潜力身份见两份筛选；缺官方公告/正文首次公开完全落窗区间。当前API已恢复153/153，旧429不是终态阻断；catchup/day-list失败、month仅月级。35新题摘为后续版本，不用于2025正面证据、Books、0事件或无遗漏。原公告/作者首次正文记录恢复后，只重开对应v1日期、必要命题及root准入，不遍历518全文。原四安全及新增PromptGuard/视频泄漏/检测/seed盗取/MoE控制须核真实威胁模型/保证边界。
-- [VaultGemma](https://research.google/blog/vaultgemma-the-worlds-most-capable-differentially-private-llm/)可见Sep12，没有原时区/时刻。需要官方发布元数据或原公开artifact支持完全落窗区间；RSS实际100项无9月，当前不授12日采用，也不伪造午夜。
-- Hunyuan2025历史、Z.ai Research历史、Seed type1完整paper、MiMo dated历史Blog、MiniMax历史分页/Agent：原请求与实际停点见§2；可读原目录/原文回归后仅重开本窗相关主题。当前全部隔离，不用作Coverage通过、零事件或无遗漏。
-
-窗外：Qwen3-Next原ISO归属11；PLAS更早doc/模型更新是身份反证线索，不为9月8/9日创建日报或宣称旧日报已有效审阅。
+- arXiv新16P身份及理由见[筛选](../_sources/daily-20250912/SUP_SCREEN_20261012.md)，加旧84P冻结。缺各exact-v1首次public-date，官方Sep11 CL/LG列表各400，不catchup/monthwide；API submitted/published、后续摘要和当前版本不能代替。可接受原公告/作者首次正文公开日期；恢复后先确定归属，再审必要方法/采用命题，不把旧518扩全文。当前09195/09199v2撤回隔离，无采用链，不倒填v1。
+- Hunyuan2025历史、ZAI Research Sep2025缺段、MiMo dated历史Blog、MiniMax历史分页/Agent2025：有限原始入口及恢复尝试见§2/[来源停止](../_sources/daily-20250912/SUP_SOURCES_20261012.md)。需本窗dated历史目录或具名原文，当前有限2026/其他日期结果不证明本日0。Seed本轮paper接口已恢复可读，不沿用旧API空失败；pagination/pin有限切片不授全total。
+- 旧VaultGemma Sep12日期/原跨时段hold冻结；新Sep11自然日窗外不拟采用，不再因未知时分秒制造新请求。旧PLAS更早doc/模型更新只作身份反证，不另建别日日报。
+- Qwen未披露的受控消融、RL算法及runtime预算不支持宣传外推，采用已收窄为版本事实，非必须等待的外部Evidence；没有确认长期Books gap或共享写请求。实际Books判断已完成/新写0，不把未知方法伪作已有覆盖。
 
 ## 6. 复核
 
-复核者：root（待独立检查）；结论：未通过（首批准入/PLAS改判及最终DAY尚未执行）。请求实际核查询与有限停止、83作者潜力及28建议关闭的必要全项/分层范围、安全信号、日期隔离和无Books采用；校准不得以主题/规模替代贡献。作者不自授通过。
+复核者：Cicero（本轮非作者）；root（旧非作者有效层）
 
-机器检查待执行，只验证结构/引用/一致性，不替代语义复核。
+结论：通过
+
+本轮单篇Qwen FIRST/date/Evidence/具体Books及新40 AB/current/13必要core准入已经Cicero实际检查通过，见[本日独核](../_sources/daily-20250912/SUP_INDEPENDENT_20261011.md)§2–8。16P保持局部/负面入口，23C按具体实际增量关闭，安全夸大与当前撤回反侧保留；没有独立全量重读未变化附件。§6来源实际停止与旧7版本轻核、§7全部六部分DAY、§8完成态FINAL均实际通过；最后行政回填不改变研究裁决，由Cicero窄回读后通知root计验收。
+
+旧root有效层复用原/恢复各六机制题摘、九安全/控制题摘、四普通退出样本及09082v1方法恢复P，08867/TORSO局部、PLAS两精确旧doc/模型history/算术；其余旧普通退出不冒称独立全量验收。新日列表400日期/有限历史缺段隔离，不授安全/性能/全Coverage保证。静态检查只验结构/引用/冻结/范围，不代替语义验收。
+
+完成态行政检查实际通过：V3、原窗口/原空候选/连续§4冻结、108原件/request SHA与bytes（104×200、2×400、2×404）、8份Markdown共29本地引用/0anchor。含baseline副本5引用按原README目录解析；live为7份/24引用。限定README与本日_sources的unstaged/cached diff检查通过，cached为空；未stage/commit/push，未改共享Books/State/index/scripts。Cicero§8实际回核上述行政差额，不由机器自授语义通过。

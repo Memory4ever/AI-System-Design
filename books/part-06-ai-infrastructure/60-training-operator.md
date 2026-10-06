@@ -46,6 +46,24 @@ TrainingRuntime / ClusterTrainingRuntime
 
 `TrainJob` 表达这次运行的差异，Runtime 表达平台验证过的执行蓝图。这样平台可以升级 runtime、注入观测和安全策略，同时减少用户复制底层 YAML。
 
+### 数据交接先解析版本，再准备执行输入
+
+在小型、固定数据集上，让训练脚本读取一个本地目录最简单；加工、Notebook 与训练由不同任务执行后，传入一个可覆盖的 URI 就无法证明各次重试消费的是同一份数据。提交面应携带已解析的数据版本或 manifest 引用，而不是 Notebook 进程中的 DataFrame 或“最新表”的名字。样本、split 与变换的语义由[第27章 Data lineage](../part-04-training-system/27-data.md#data-lineage-是训练可复现性的前提)拥有；本章负责把这些引用绑定到 run/attempt、runtime、读取路径与访问身份，再把实际消费身份交给[Model Registry](./59-model-registry.md#registry-的逻辑模型)，不在 controller 内重做数据清洗或质量裁决。
+
+加工完成与训练输入可用是两道门。Pipeline 可以引用加工步骤的输出并等待其完成，runtime 再通过 initializer、挂载或受支持的读取 connector 把该版本交给 trainer：
+
+```text
+processing output revision / manifest
+→ TrainJob input reference + runtime revision
+→ input preparation and access checks
+→ trainer reads the declared dataset / shard set
+→ checkpoint records consumed input and execution attempt
+```
+
+[SageMaker 的步骤依赖](https://docs.aws.amazon.com/sagemaker/latest/dg/build-and-manage-steps.html)以 Processing 输出的 S3 引用连接 TrainingInput；[Kubeflow 的 initializer](https://sdk.kubeflow.org/en/latest/train/initializers.html)将数据/模型准备作为独立的训练前步骤，Runtime 模板再表达相应角色与依赖。这些是交接机制的实现例子，不证明一个 URI 已不可变、所有 backend 都执行相同初始化，或全部 rank 已看到同一字节集合。若上游使用 Spark 加工，SparkApplication 的 driver/executor 生命周期也应与 TrainJob 的训练 world 分开；两类任务可以共享 pipeline 身份，却不能只因都运行在 Kubernetes 上就共享失败与完成语义。
+
+更强交接需要记录加工输出身份、schema/split revision、准备结果与实际读取范围，并把凭据引用和数据版本分开；下载成功不代表数据质量通过，准备容器退出也不替代各节点路径/权限的验证。重试应复用同一已提交版本，重新加工得到新输出则形成新的输入身份，不能继续标成原 attempt 的等价恢复。它增加物化、校验、存储和启动成本；输入已预先挂载且可验证时可省去下载，受支持的 streaming 路径也不要求全量进入内存，但仍须保存读取与恢复契约。准备失败时留在明确失败/等待状态，不让部分输入触发训练；这些逻辑门与后文 gang admission 是不同契约，并不规定所有实现的物理调度顺序。
+
 ## Reconciliation 状态机
 
 ```text
@@ -201,6 +219,8 @@ TrainJob identity
 Training Operator 标准化的是训练 workload 的声明、构建、观察和恢复边界。它不重新发明分布式训练，也不负责决定 cluster fairness。下一章使用同样的 reconciliation 思路进入长期在线服务：KServe 如何声明模型 runtime 与 service lifecycle。
 
 ## Review notes
+
+- 历史 ChatGPT 归档首批审计（2026-10-13）：采用加工输出→输入引用→准备/访问门→训练实际消费的交接边界。官方核验：[SageMaker Pipelines steps](https://docs.aws.amazon.com/sagemaker/latest/dg/build-and-manage-steps.html)、[Kubeflow SDK Initializers](https://sdk.kubeflow.org/en/latest/train/initializers.html)、[Trainer Job Template](https://trainer.kubeflow.org/en/latest/operator-guides/job-template.html)、[SparkApplication guide](https://spark.kubeflow.org/en/latest/user-guide/writing-sparkapplication.html)。版本固化、读取校验与失败隔离为工程采用要求，不冒称官方默认完整保证；initializer 后端限制及具体模板字段按目标版本核验。未运行 SDK、部署集群或验证 Paimon/Doris connector；不建议存储迁移或给出性能数字。
 
 本章按 Trainer V2 当前 API 建立版本边界，并与 Part IV 的并行机制、checkpoint 语义和后续 GPU scheduler 分责。没有把 framework-specific flags 或安装命令写成核心内容。
 

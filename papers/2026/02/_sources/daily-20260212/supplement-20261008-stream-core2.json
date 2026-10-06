@@ -1,0 +1,167 @@
+Squeezing More from the Stream : Learning Representation Online for Streaming Reinforcement Learning (https://arxiv.org/html/2602.09396v1)
+citeturn31718view0 [wordlim: 200] Crawled: today; Content type: text/html; Source: open({"ref_id":"https://arxiv.org/html/2602.09396v1","lineno":172}); Total lines: 629
+L139: This prediction can also happen in the observation space rather than the latent space, but this has been show to be less effective as the learned representation must also be able to be used to reconstruct irrelevant details of the image (cite93†Zhang et al., 2020 ; cite61†Schwarzer et al., 2021 ). The encoder is shared between the representation learning and the Q-value parts of the overall network, effectively sharing weights to improve the Q-network’s representations. A loss function (e.g.
+L140: Mean Squared Error (MSE) or cosine similarity) is then applied between the predicted next latent state and the actual next latent state $\mathcal{L}_{SPR}=\text{loss}(D_{\psi}(f_{\theta}(s_{t}),a_{t}),f_{\theta}(s_{t+1}))$ so that by learning to predict the dynamics of the environment, the shared encoder learns a good representation of the states. cite61†Schwarzer et al.
+L141: (2021) build upon this idea and sequentially predict the next $K$ latent states and use a cosine similarity loss rather than a reconstruction-oriented MSE loss.
+L142: ## 4 Method
+L143: In order to evaluate the effectiveness of the auxiliary representation learning objective in the streaming setting we consider the Stream Q($\lambda$) agent from (cite58†Elsayed et al., 2024 ), the QRC($\lambda$) agent from (cite59†Elelimy et al., 2025 ), and a modified streaming DQN as our baselines. What we call streaming DQN is a version of Stream Q($\lambda$) which keeps the same stability enhancements, but where we replace the ObGD optimizer by SGD and add a target value-network.
+L144: This baseline represents a logical first attempt at a streaming agent and also helps study the interaction of ObGD with SPR. Following cite59†Elelimy et al. (2025) , we use SGD as our optimizer for QRC($\lambda$) with an $\epsilon$-greedy exploration schedule. More details on QRC($\lambda$) are in Appendix cite45†D .
+L145: As is done in Stream Q($\lambda$)’s original setting we used parameter-free layer normalization (no scaling or bias parameter is learned) on all the pre-activations and used normalized observations and rewards. We give a more complete overview of our experimental setup, hyperparameter values and implementation choices in Appendix cite29†A .
+L146: ### 4.1 Streaming Self-Predictive Representations
+L147: 
+L148: To improve sample efficiency and representation learning in the streaming setting, we augment the agent with a Self-Predictive Representation (SPR) auxiliary task. Figure cite60†1 (BOTTOM) offers a simplified depiction of cite61†Schwarzer et al. (2021) ’s SPR framework.
+L149: Formally, we employ an online encoder $f_{\theta}$ to map the current observation $o_{t}$ to a latent state $z_{t}$, and a momentum-averaged target encoder $f_{\theta^{\prime}}$ to generate stable targets from future observations. A transition model $D_{\psi}$ iteratively predicts future latent states $\hat{z}_{t+k}$ conditioned on the sequence of actions $a_{t:t+K-1}$, starting from $\hat{z}_{t}=z_{t}$.
+L150: These latent predictions are mapped through a projection head $P_{\phi}$ and prediction head $q_{\omega}$ to produce $\hat{y}_{t+k}=q_{\omega}(P_{\phi}(\hat{z}_{t+k})$. Note that these layers are distinct from the Q-Learning head, however $P_{\phi}$ can optionally share parameters with the head (see Appendix cite36†A.7 ). Finally $\hat{y}_{t+k}$ is compared against the stop-gradient target projections $\tilde{y}_{t+k}=P_{\phi^{\prime}}(f_{{\theta^{\prime}}}(o_{t+k}))$.
+L151: The total SPR loss is computed as the negative cosine similarity between these predicted and target representations, summed over the horizon $K$:
+L152:  | $$\mathcal{L}^{SPR}(\theta,\psi,\phi,\omega)=-\sum_{k=1}^{K}\left(\frac{\hat{y}_{t+k}}{\|\hat{y}_{t+k}\|_{2}}\cdot\frac{\texttt{SG}[\tilde{y}_{t+k}]}{\|\texttt{SG}[\tilde{y}_{t+k}]\|_{2}}\right)$$  |
+L153: 
+L154: where the target parameters ${\theta^{\prime}}$ and $\phi^{\prime}$ are updated via an exponential moving average (EMA) of $\theta$ and $\phi$ with the coefficient $\tau$. See Appendix cite36†A.7 for details.
+L155: We use this framework directly in the streaming setting, except the updates are performed with SGD. We keep image augmentations and $K$ = 5 as the next latent state prediction window in SPR as it has been shown to offer improved learning capabilities in harder environments (see Table cite94†3 and Sec. 5, cite61†Schwarzer et al. (2021) ).
+L156: Although this entails storing a fixed number $K$ of states, it fits our setting for practical streaming RL, with negligible impact on memory compared to a typical replay buffer.
+L157: ### 4.2 Decorrelating Updates via Orthogonalization
+L158: In the streaming setting, the absence of a replay buffer results in highly temporally correlated transitions that can cause parameters to over-fit on recent trajectories. To address this, we follow cite76†Han et al. (2025) by utilizing orthogonal gradients during training to decorrelate updates. This helps because stochastic optimization methods such as SGD work on the assumption that a random mini-batch of data can approximate an unbiased estimate of the global gradient.
+L159: This assumption breaks in the streaming setting and thus needs additional regularization. As detailed in Appendix cite44†C , this method projects the current gradient $\nabla_{\eta}\mathcal{L}^{SPR}_{t}$ onto the plane orthogonal to a momentum-based history of previous updates.
+L160: We apply this projection per-component by flattening the parameter tree of each module $\eta\in\{\theta,\psi,\phi,\omega\}$ (representing the encoder, transition model, projection head, and prediction head respectively) to compute a single scalar projection coefficient for the entire module.
+L161: Crucially, this process interacts independently with the RL objective; the projection uses a dedicated momentum history $m_{t}^{\eta}=\beta_{orth}m_{t-1}^{\eta}+(1-\beta_{orth})\nabla_{\eta}\mathcal{L}^{SPR}_{t}$ and is applied only to SPR gradients. These processed gradients are then combined additively with the trace-based RL updates ($\Delta\eta^{RL}_{t}$), ensuring the decorrelation logic does not alter the accumulated eligibility traces. The final update rule for any parameter $\eta$ becomes:
+L162:  | $$\eta_{t+1}=\eta_{t}+\Delta\eta^{RL}_{t}-\alpha\lambda_{SPR}\tilde{g}_{t}^{\eta}$$  |  | (1)
+L163: where $\tilde{g}_{t}^{\eta}=\nabla_{\eta}\mathcal{L}^{SPR}_{t}-\text{proj}_{m_{t}^{\eta}}(\nabla_{\eta}\mathcal{L}^{SPR}_{t})$ is the projected gradient, and $\Delta\eta^{RL}_{t}$ is zero for non-shared parameters $\psi,\phi,$ and $\omega$. This orthogonalization acts as a lightweight proxy for experience replay decorrelation, ensuring that representation learning remains stable and high-rank despite the non-i.i.d. nature of the data stream.
+L164: ### 4.3 Reconciling ObGD and SGD Gradient Conflict
+L165: Figure 4: The cosine similarity between the gradients back-propagated from the Q network and the SPR networks, averaged over 5 Atari environments. In case of QRC($\lambda$) these come from the SGD optimizer, however Stream Q($\lambda$) uses ObGD for the Q network and SGD for SPR networks. This leads to conflicting gradient updates indicated by the negative cosine similarity, possibly explaining the poor SPR performance with Stream Q($\lambda$).
+L166: In contrast, for QRC($\lambda$), the gradients are almost orthogonal.
+L167: The encoder serves as a shared resource satisfying two objectives: Reinforcement Learning (RL) and representation learning. While QRC($\lambda$) and streaming DQN optimize both using SGD, Stream Q($\lambda$) utilizes ObGD for the RL objective and SGD for SPR. Combining these distinct updates is non-trivial. First, we investigated merging them via linear combination:
+L168:  |  | $\displaystyle\theta_{\text{shared}}\leftarrow{}\theta_{\text{shared}}+\mu_{\text{shared}}\alpha_{\text{ObGD}}\delta_{t}\mathbf{z}_{t}$  |  | (2)
+L169:  |  | $\displaystyle-(1-\mu_{\text{shared}})\alpha_{\text{SPR}}\lambda_{\text{SPR}}\textsc{SGD}\bigl(\nabla\mathcal{L}_{\text{SPR}}(\theta_{\text{shared}})\bigr)$  |
+L170: where $\mu_{\text{shared}}$ (default $0.5$) is a mixing coefficient, $\lambda_{SPR}$ is the SPR loss coefficient (default $\lambda_{SPR}=2$), and $\alpha_{\text{ObGD}}$, $\alpha_{\text{SPR}}$ are the respective learning rates.
+L171: In the streaming setting, these updates often conflict. The cosine similarity between the RL update $\alpha_{\text{ObGD}}\delta_{t}\mathbf{z}_{t}$ and the SPR update $-\alpha_{\text{SPR}}\lambda_{\text{SPR}}\nabla_{\theta}\mathcal{L}^{\text{SPR}}_{t}$ frequently drops below zero (Fig. cite95†4 ), indicating the tasks push parameters in opposing directions, potentially destabilizing training. Conversely, for QRC($\lambda$), this gradient conflict is negligible.
+L172: To prevent the auxiliary task from interfering with primary policy learning, we employ orthogonal gradient projection (similar to Sec. cite18†4.2 ). Before updating the encoder, we project the SPR update $u^{SPR}$ onto the subspace orthogonal to the RL update $u^{RL}$ derived from ObGD. The orthogonalized SPR update $\tilde{u}^{SPR}$ is computed as: $\tilde{u}^{SPR}=u^{SPR}-\text{proj}_{u^{RL}}(u^{SPR})$
+L173: This ensures representation learning only modifies weights in directions orthogonal to the primary policy update. As shown in our experiments, this reconciliation is important for enabling SPR within the Stream Q($\lambda$) framework. We provide a detailed algorithmic description of this and the previous section in Algorithm cite96†1 , Appendix cite39†A.10 .
+L174: ## 5 Experiments
+L175: Table 1: The aggregate return metrics with standard deviations, computed over all environments on Atari, MinAtar and Octax. Each experiment was run for five random seeds. We highlight the highest value per metric, however a large variance exits due to the range of returns across individual environments. For a more detailed comparison, please see Tables cite97†7 , cite98†8 , cite99†9 and cite100†10 in Appendix cite40†B .
+L176: We see that adding SPR (and modifications) increases aggregate performance for all base algorithms: streaming DQN (dqn), QRC($\lambda$) (qrc) (cite59†Elelimy et al., 2025 ), and Stream Q($\lambda$) (strq) (cite58†Elsayed et al., 2024 ). Please see Sec. cite18†4.2 (orth) and Sec. cite19†4.3 (orth^{2}) for details on these modifications.
+L177: Algorithm  | Mean Return  | Median Return  | IQM Return
+L178: Atari (Human Normalized) - 40M frames
+L179: ---
+L180: qrc  | 0.04 $\pm$ 0.28  | 0.02 $\pm$ 0.28  | 0.03 $\pm$ 0.03
+L181: qrc+spr  | 1.13 $\pm$ 1.19  | 0.46 $\pm$ 1.18  | 0.61 $\pm$ 0.39
+L182: qrc+spr+orth  | 1.25 $\pm$ 1.55  | 0.50 $\pm$ 1.55  | 0.62 $\pm$ 0.43
+L183: strq  | 0.48 $\pm$ 0.64  | 0.15 $\pm$ 0.64  | 0.23 $\pm$ 0.14
+L184: strq+spr  | 0.28 $\pm$ 0.35  | 0.11 $\pm$ 0.35  | 0.13 $\pm$ 0.09
+L185: strq+spr+orth  | 0.24 $\pm$ 0.29  | 0.08 $\pm$ 0.29  | 0.12 $\pm$ 0.09
+L186: strq+spr+orth^{2}  | 0.61 $\pm$ 0.67  | 0.32 $\pm$ 0.67  | 0.37 $\pm$ 0.24
+L187: dqn  | 0.29 $\pm$ 0.52  | 0.10 $\pm$ 0.52  | 0.12 $\pm$ 0.08
+L188: dqn+spr  | 0.35 $\pm$ 0.53  | 0.19 $\pm$ 0.53  | 0.22 $\pm$ 0.11
+L189: Atari (Human Normalized) - 100M frames
+L190: ---
+L191: qrc  | 0.05 $\pm$ 0.28  | 0.02 $\pm$ 0.28  | 0.03 $\pm$ 0.03
+L192: qrc+spr+orth  | 1.61 $\pm$ 2.05  | 0.63 $\pm$ 2.05  | 0.80 $\pm$ 0.47
+L193: strq  | 0.79 $\pm$ 0.88  | 0.40 $\pm$ 0.88  | 0.44 $\pm$ 0.25
+L194: strq+spr+orth^{2}  | 0.91 $\pm$ 0.93  | 0.47 $\pm$ 0.93  | 0.56 $\pm$ 0.34
+L195: dqn  | 0.59 $\pm$ 0.76  | 0.24 $\pm$ 0.76  | 0.32 $\pm$ 0.23
+L196: dqn+spr  | 0.75 $\pm$ 0.79  | 0.47 $\pm$ 0.79  | 0.51 $\pm$ 0.28
+L197: MinAtar - 5M frames
+L198: ---
+L199: qrc  | 42.50 $\pm$ 30.47  | 29.01 $\pm$ 30.47  | 33.94 $\pm$ 7.18
+L200: qrc+spr  | 46.66 $\pm$ 32.32  | 35.75 $\pm$ 32.32  | 37.58 $\pm$ 7.59
+L201: qrc+spr+orth  | 52.70 $\pm$ 36.27  | 39.91 $\pm$ 36.27  | 43.13 $\pm$ 6.56
+L202: strq  | 27.42 $\pm$ 24.81  | 15.29 $\pm$ 24.81  | 19.42 $\pm$ 9.03
+L203: strq+spr  | 13.76 $\pm$ 12.09  | 6.91 $\pm$ 12.09  | 11.81 $\pm$ 9.66
+L204: strq+spr+orth  | 12.86 $\pm$ 11.69  | 6.87 $\pm$ 11.69  | 10.84 $\pm$ 9.25
+L205: strq+spr+orth^{2}  | 31.25 $\pm$ 28.81  | 15.83 $\pm$ 28.81  | 19.95 $\pm$ 8.78
+L206: dqn  | 15.99 $\pm$ 15.46  | 6.85 $\pm$ 15.46  | 11.96 $\pm$ 7.80
+L207: dqn+spr  | 38.06 $\pm$ 24.98  | 28.36 $\pm$ 24.98  | 32.60 $\pm$ 7.80
+L208: Octax - 20M frames
+L209: ---
+L210: qrc  | 38.78 $\pm$ 60.56  | 7.14 $\pm$ 60.56  | 12.52 $\pm$ 11.48
+L211: qrc+spr  | 48.65 $\pm$ 78.10  | 7.72 $\pm$ 78.10  | 19.05 $\pm$ 21.98
+L212: qrc+spr+orth  | 52.75 $\pm$ 78.96  | 8.36 $\pm$ 78.96  | 23.16 $\pm$ 28.37
+L213: strq  | 16.43 $\pm$ 23.35  | 2.82 $\pm$ 23.35  | 5.98 $\pm$ 7.01
+L214: strq+spr  | 16.70 $\pm$ 33.73  | 0.45 $\pm$ 33.73  | 1.06 $\pm$ 1.23
+L215: strq+spr+orth  | 5.57 $\pm$ 13.34  | 0.43 $\pm$ 13.34  | 0.74 $\pm$ 0.83
+L216: strq+spr+orth^{2}  | 26.68 $\pm$ 36.96  | 3.29 $\pm$ 36.96  | 13.35 $\pm$ 18.86
+L217: dqn  | 47.41 $\pm$ 80.00  | 5.11 $\pm$ 80.00  | 14.65 $\pm$ 17.99
+L218: dqn+spr  | 52.46 $\pm$ 81.35  | 6.40 $\pm$ 81.35  | 22.58 $\pm$ 29.75
+L219: We evaluate our method across three distinct benchmark suites: the Atari 26 subset used by cite61†Schwarzer et al. (2021) for evaluating generalization in visually complex environments, and the MinAtar (cite63†Young and Tian, 2019 ) and the Octax (cite64†Radji et al., 2026 ) suites for lightweight validation.
+L220: In addition to mean and median, we also report the Inter-Quartile Mean (IQM) of our aggregate results with a confidence interval of 95% (cite101†Agarwal et al., 2021 ), computed over all environment and seed runs for each algorithm.
+L221: We aim to answer three main questions: (1) Does adding SPR improve the sample efficiency and final performance of streaming agents? (2) Does our orthogonalization strategy successfully reconcile SPR with the ObGD optimizer? (3) Does the auxiliary loss actually result in better representation quality as hypothesized?
+L222: ### 5.1 Performance on Standard Environments
+L223: We compare three base algorithms, Streaming DQN (dqn), QRC($\lambda$) (qrc), and Stream Q($\lambda$) (strq), against their SPR-augmented counterparts. We use the same set of parameters as cite61†Schwarzer et al. (2021) with additional justification in Table cite94†3 . We integrate this framework into our three streaming baselines, as detailed in Sec. cite17†4.1 . Everywhere in the results, spr, orth, and orth^{2} indicate the application of SPR, orthogonal SPR gradient projection (Sec.
+L224: cite18†4.2 ), and orthogonal SPR gradient projection with respect to ObGD gradients after orth (Sec. cite19†4.3 ) respectively.
+L225: Table cite88†1 presents the main results of our work. We see that QRC($\lambda$) with SPR and streaming DQN with SPR consistently outperforms the base algorithm over all environment suites and metrics, with the addition of orth providing even higher returns. The learning curves in Figure cite102†3 corroborate this, showing the higher sampling efficiency of SPR-augmented agents through faster learning in the early stages of training.
+L226: However, as hypothesized in Section cite19†4.3 , naively adding SPR to Stream Q($\lambda$) leads to performance degradation due to gradient conflicts (see Fig. cite95†4 and Table cite88†1 ). However, applying our orth^{2} strategy successfully recovers performance, surpassing the baseline Stream Q($\lambda$) on all metrics at 100M frames on Atari.
+L227: We note that QRC($\lambda$) performs relatively worse on Atari compared to MinAtar and Octax, even though we use the same set of hyperparameters for all experiments (Appendix cite30†A.1 ). A breakdown of per-environment results are present in Tables cite97†7 , cite98†8 , cite99†9 and cite100†10 in Appendix cite40†B . A key constraint of the streaming setting is resource efficiency. Despite the addition of the dynamics model and projection heads, our method still remains computationally feasible (see Appendix cite38†A.9 ).
+L228: ### 5.2 Latent Space Analysis
+L229: 
+L230: Table 2: The effective ranks of the latents computed using the encoders trained with and without SPR loss at 40M frames, averaged over all Atari 26 environments. Note that we used orth^{2} for Stream Q($\lambda$) and orth for QRC($\lambda$) for the SPR numbers.
+L231: Algorithm  | Without SPR  | With SPR (ours)
+L232: --- | --- | ---
+L233: QRC($\lambda$)  | 42.7 $\pm$ 33.7  | 1256.9 $\pm$ 296.5
+L234: Stream Q($\lambda$)  | 466.4 $\pm$ 120.4  | 912.5 $\pm$ 209.5
+L235: Streaming DQN  | 518.7 $\pm$ 259.4  | 526.7 $\pm$ 243.4
+L236: To understand why SPR improves performance, we analyze the structure of the learned representations. Table cite103†2 shows the effective rank (cite104†Roy and Vetterli, 2007 ) of the encoder $f_{\theta}$’s latent space representation $z_{t}$ on a batch of five thousand observations. Effective rank quantifies the intrinsic dimensionality or ”complexity” of the representations the encoder learns.
+L237: A higher effective rank indicates that the encoder is utilizing more of its capacity and capturing a richer diversity of features. We see that across the base algorithms, having the SPR loss leads to a higher effective rank.
+L238: Furthermore, the t-SNE visualization of the same observation trajectory (Fig. cite105†2 , and Fig. cite87†9 in Appendix cite49†H ) reveals a striking qualitative difference. The baseline encoder produces a scattered latent map with little structure. The SPR-augmented encoder, however, produces several continuous trajectories where temporally adjacent states are mapped to spatially adjacent points in the latent space (visualized by the color gradient).
+L239: ### 5.3 Ablations
+L240: 
+L241: Table 3: Ablations on the Atari 26 environments at 40M frames and five random seeds (Human Normalized). We evaluate the effect on performance of the SPR prediction depth $K$, the SPR update weight $\lambda_{\text{SPR}}$, and the EMA weight $\tau$ for the SPR target networks. We also look at different sizes of replay buffers for streaming DQN. Finally, we assess the quality of the CURL framework for representation learning with QRC($\lambda$).
+L242: Algorithm  | Mean Return  | Median Return  | IQM Return
+L243: --- | --- | --- | ---
+L244: Effect of prediction depth $K$
+L245: ---
+L246: qrc+spr K=5  | 1.13 $\pm$ 1.19  | 0.46 $\pm$ 1.18  | 0.61 $\pm$ 0.39
+L247: qrc+spr K=3  | 0.96 $\pm$ 1.07  | 0.49 $\pm$ 1.07  | 0.49 $\pm$ 0.26
+L248: qrc+spr+K=1  | 0.82 $\pm$ 0.93  | 0.31 $\pm$ 0.93  | 0.46 $\pm$ 0.33
+L249: Effect of SPR weight $\lambda_{\text{SPR}}$
+L250: ---
+L251: qrc+spr $\lambda$=2.0  | 1.13 $\pm$ 1.19  | 0.46 $\pm$ 1.18  | 0.61 $\pm$ 0.39
+L252: qrc+spr $\lambda$=1.0  | 1.09 $\pm$ 1.25  | 0.43 $\pm$ 1.25  | 0.60 $\pm$ 0.45
+L253: qrc+spr $\lambda$=0.5  | 1.18 $\pm$ 1.41  | 0.45 $\pm$ 1.41  | 0.55 $\pm$ 0.37
+L254: Effect of Augmentation and EMA $\tau$ ($\tau_{1}=0$ and $\tau_{2}=0.99$)
+L255: ---
+L256: qrc+spr + Aug, $\tau_{1}$  | 1.13 $\pm$ 1.19  | 0.46 $\pm$ 1.18  | 0.61 $\pm$ 0.39
+L257: --- | --- | --- | ---
+L258: qrc+spr, $\tau_{2}$  | 1.06 $\pm$ 1.19  | 0.46 $\pm$ 1.19  | 0.60 $\pm$ 0.39
+L259: --- | --- | --- | ---
+L260: Effect of Replay Buffer
+L261: ---
+L262: dqn+spr  | 0.35 $\pm$ 0.53  | 0.19 $\pm$ 0.53  | 0.22 $\pm$ 0.11
+L263: dqn rb=5  | 0.30 $\pm$ 0.51  | 0.11 $\pm$ 0.50  | 0.13 $\pm$ 0.07
+L264: dqn rb=1  | 0.29 $\pm$ 0.52  | 0.10 $\pm$ 0.52  | 0.12 $\pm$ 0.08
+L265: Effect of Representation Learning Frameworks
+L266: ---
+L267: qrc+spr  | 1.13 $\pm$ 1.19  | 0.46 $\pm$ 1.18  | 0.61 $\pm$ 0.39
+L268: qrc+CURL  | -0.03 $\pm$ 0.05  | -0.01 $\pm$ 0.00  | -0.01 $\pm$ 0.01
+L269: To justify our choice of hyperparameters, namely $K$=5, $\lambda_{\text{SPR}}$=2, and image augmentations with EMA $\tau$=0, we conduct experiments with several values of these parameters (Table cite94†3 ). We observe the same trends as those presented in cite61†Schwarzer et al. (2021) .
+L270: The case with $\tau$=0 is particularly interesting since it means that the target networks $f_{\theta^{\prime}}$ and $P_{\phi^{\prime}}$ are direct copies of the online networks $f_{\theta}$ and $P_{\phi}$ respectively, and thus image augmentations are required as a form of regularization.
+L271: For streaming DQN, we also conduct an experiment with different replay buffer (rb) sizes, rb=1 being the default. A replay buffer of size 5 does result in marginally better returns, however it still falls short of SPR, which also stores 5 states ($K$=5). This indicates that the gains associated with SPR are not due to the stored parameters alone.
+L272: We also conducted an experiment using the CURL framework (cite71†Laskin et al., 2020 ), which employs a contrastive loss as an auxiliary representation objective and used a replay buffer of size 5 for a fair comparison with SPR (see Appendix cite47†F ). However, contrastive methods based on negative examples famously require very large batch sizes, and as such are exceedingly stream-unfriendly. Our results confirm this as our CURL-based QRC($\lambda$) agent fails to learn anything.
+L273: ## 6 Discussion
+L274: Our results highlight a fundamental inefficiency in current streaming RL methods: the discarding of transitions after a single update leaves structural information unexploited. By integrating Self-Predictive Representations (SPR), we force the encoder to extract the dynamics of the environment from the data stream before it is lost. This approach trades a degree of computational speed for significantly improved sample efficiency.
+L275: While the auxiliary task introduces additional networks and a small state buffer, the gain in representation quality justifies the overhead.
+L276: Our results also suggest that explicit representation learning can bridge a significant portion of the gap caused by the absence of replay memory. By replaying transitions virtually through the predictive model, the agent captures long-term dependencies that a pure TD-error signal misses.
+L277: #### The Necessity of Orthogonalization
+L278: The failure of naive SPR integration with Stream Q($\lambda$) and its subsequent rescue by our orth^{2} update underscores a critical insight for streaming learning. When an optimizer like ObGD aggressively adapts step sizes to stabilize the RL loss, auxiliary gradients must be carefully managed to avoid destructive interference.
+L279: Orthogonalization acts as a geometric safeguard, allowing the encoder to learn representations without disrupting the delicate stability of the policy update in the streaming setting.
+L280: #### Limitations and Future Directions
+L281: At present, we do not make use of the latent dynamics model learned by our streaming version of SPR. An interesting follow-up would be to apply deep model-based Reinforcement Learning methods to the streaming context. Investigating whether new learning signals derived from planning or world-modeling can improve the overall stability and sample efficiency of the training process remains a promising avenue for future research.
+L282: Another promising direction is to evaluate SPR on continuous control policies in a streaming setting.
+L283: An interesting study would be to analyze whether learning the transition dynamics reduces agents’ ability to quickly adapt to environmental changes compared to base streaming agents. We also designed our method to be efficient enough for CPU training, however, the addition of the SPR objective introduces a non-trivial computational cost, increasing the wall-clock time per step.
+L284: Future work could explore sparse application of the auxiliary loss (e.g., updating the SPR module only every k steps) to balance runtime and representation quality.
+L285: A notable challenge lies in reconciling SPR with the ObGD optimizer in Stream Q($\lambda$), where a performance gap persists compared to SGD-based baselines despite our orthogonalization fix, future work could investigate theoretical formulations of ObGD that naturally accommodate auxiliary objectives.
+L286: ## 7 Conclusion
+L287: We integrated Self-Predictive Representations into the streaming RL pipeline through an orthogonal gradient update scheme that stabilizes representation learning against highly temporally correlated streaming data. We further resolve gradient conflicts arising from the simultaneous application of ObGD for the Reinforcement Learning objective and SGD for the SPR auxiliary loss, ensuring that representation learning does not interfere with the policy updates induced by ObGD.
+L288: This approach systematically outperforms current streaming baselines across the Atari, MinAtar, and Octax benchmarks and learns high-rank latent spaces without the aid and memory overhead of large replay buffers. Our results establish that dense auxiliary supervision, rather than just improved value estimation, is a highly effective strategy for deploying sample-efficient RL agents on constrained hardware where every observation must be fully exploited before it is discarded.
+L289: ## Acknowledgements
+L290: 
+L291: Sarath Chandar is supported by the Canada CIFAR AI Chairs program, the Canada Research Chair in Lifelong Machine Learning, and the NSERC Discovery Grant.
+L292: 
+L293: This research was enabled in part by compute resources provided by Mila (cite106†mila.quebec†mila.quebec ) and the Digital Research Alliance of Canada (cite107†alliancecan.ca†www.alliancecan.ca ).
+L294: ## Impact Statement
+L295: 
+L296: This paper presents work aimed at advancing the field of Machine Learning, specifically in the domain of streaming and on-device Reinforcement Learning (RL). We believe our contributions have several societal implications worth highlighting.
+L297: First, the shift towards on-device learning offers significant privacy advantages. By processing transitions sequentially and discarding them immediately, our approach minimizes data retention and eliminates the need to transmit raw observations to remote servers.
+L298: Second, regarding energy consumption, our focus on lightweight, memory-efficient algorithms (avoiding large batches and extensive memory storage) aligns with the goal of reducing carbon emissions. By reducing the computational and memory footprint required for effective RL, we facilitate deployment on low-power edge devices.
+L299: ## References
+L300:   * Agarwal et al. (2021) R. Agarwal, M. Schwarzer, P. S. Castro, A. Courville, and M. G. Bellemare Deep Reinforcement Learning at the Edge of the Statistical Precipice. Advances in Neural Information Processing Systems. Note: original-date: 2021-08-20T00:41:06Z External Links: cite108†Link†github.com Cited by: cite109†§5 .
+L301:   * Andrychowicz et al. (2021) M. Andrychowicz, A. Raichuk, P. Stańczyk, M. Orsini, S. Girgin, R. Marinier, L. Hussenot, M. Geist, O. Pietquin, M. Michalski, S. Gelly, and O. Bachem What matters for on-policy deep actor-critic methods? a large-scale study. In International Conference on Learning Representations, Cited by: cite110†Appendix E .
+L302:   * Armijo (1966) L. Armijo Minimization of functions having Lipschitz continuous first partial derivatives.. Pacific Journal of Mathematics 16 (1), pp. 1–3. Note: Publisher: Pacific Journal of Mathematics, A Non-profit Corporation External Links: ISSN 0030-8730 Cited by: cite111†Appendix E , cite112†§3 .
+

@@ -121,6 +121,8 @@ owner and rollout status
 
 修改一个词也可能改变行为，因此需要 offline regression、canary、rollback 与 observability。Prompt evaluation 必须覆盖 task success、format、safety、tool choice、latency 和 token cost，而非只比较少量漂亮回答。
 
+自动把 policy specification 编成 Prompt 与测试时，测试 oracle 也进入待验 artifact：可见失败能驱动改写，却可能让生成器只满足当前断言；hidden cases 与行为 mutation 应在候选冻结后另行检查。Mutation 必须确实改变目标行为，未激活或被排除的项不能混入 mutation score，编译失败的 run 也不能从成功率与预算中消失。[有限编译实验](https://arxiv.org/html/2603.08806v1#S5)中的测试通过与高分只覆盖所选 specification、mock tool 和成功编译人口，不授部署安全。发现 hidden failure 后可把它提升为 regression，但下一轮须更新独立 held-out，保存 spec/test/prompt/model/tool revision 与失败账。生成、验证、mutation 和重复调用均付费；测试相互冲突、oracle 不可信或预算耗尽时保留人工审阅、原 Prompt 与 canary/rollback，不由测试生成器同时宣布规则正确和外部 effect 可提交。<!-- source-family:SF-2026-ARXIV-2603-08806 -->
+
 <!-- semantic-body-binding:SF-2026-ARXIV-2606-13449:start -->
 Repository instruction 文件进一步把 Prompt 变成工程控制面：它可能按目录层级被发现、继承、覆盖或根本没有进入某次 Agent 调用。因而不能用“仓库里存在规则”和最终 PR 是否成功之间的相关性直接证明规则有效。诊断至少要依次区分规则是否存在、runtime 是否读取、是否进入有效 Context、模型是否遵守，以及遵守后是否改变 terminal outcome；任一前置环节失败，都不应归因成模型拒绝服从。
 
@@ -139,9 +141,18 @@ Repository instruction 文件进一步把 Prompt 变成工程控制面：它可�
 
 一条受限分支先用足够重复采样估计这两类 variance，再选真实候选差异较大的小任务子集优化 prompt generator，并在未参与选择的任务上验收。额外采样、穷举子集和选择偏差都要计入预算；单题可过拟合，低噪声而容易的样本也会使 signal/noise 比值不稳定。[作者数学实验](https://arxiv.org/html/2604.08801v1)中小子集优于全量训练，但更同质的 instruction-following 任务仍以全量更好，跨模型迁移也只在受测 Qwen 家族内成立。任务偏好一致、数据少或二元反馈假设不成立时，人工 Prompt、全量 regression 与固定候选比较继续合理；选择器拥有的是实验预算，不是外部真值和安全权限。<!-- source-family:SF-2026-ARXIV-2604-08801 -->
 
+数值输出的错误还可能来自整批分布收缩，而不只某条指令写错；可以先让模型同时比较多例预测与label，按系统性误差提出少量prompt修订，以独立dev选定版本，再把同一输入的多个数值rollout交给另训的小aggregator。一条[受限回归分支](https://arxiv.org/html/2508.21762v1#S3)将排序后的预测及简单统计量作为聚合输入，同时约束点误差与分布一致性；这改变两个不同对象，不能把head校准收益全归prompt或真实reasoning，也不由多次采样签发正确性概率。Label若只是人类感知偏好，输出也不取得事实真值；较低平方误差可能伴方差收缩，较高一致系数同样不保证逐题准确。Prompt搜索、dev选择、聚合器与其训练/目标应分别版本化，并在独立人口核最终误差、分布和失败切片；全部反思/训练/多rollout都计费，三次可并行也非一次调用。分布、label或净费用失配时，保留人工固定prompt、单次预测/简单平均及真实任务校验，不因更连续的数字批准作为可信reward、业务决策或普遍更优模型。
+<!-- source-family:SF-2025-ARXIV-2508-21762 -->
+
 固定一条改写规则在请求同质、预算紧或缺少可信反馈时最简单；不同问题的指代、句式与约束却可能需要不同处理，统一展开或简化还可能丢失关键语义。可把保持原意的几种改写作为有限arm，用本次query的语言特征选择arm，再根据可核验答案反馈更新选择器；更新的是外部选择policy，不是模型参数，更不是发现了幻觉的唯一内部机制。Original query、feature/rubric、arm prompt、selector state与reward身份都应随版本保存。<!-- source-family:SF-2026-ARXIV-2602-20332 -->
 
 [有限QA实验](https://arxiv.org/html/2602.20332v1#S4)的收益来自“原题能答对、语义扰动后部分答错”的筛选人口，reference answer参与judge与词面reward；不能外推到无标签自然请求，也不能把canonical原题不改写更优解释成已证明训练污染。特征标注、改写、回答、judge和探索均有成本，proxy偏置或语义保持失败时回退原请求与固定基线；反馈不可独立核验时只冻结离线选出的policy，不能靠自己的答案继续认证自己的改写。
+
+规则集也可从带标签的局部对照学习，而不是仅汇总人工追加的约束。先按input语义分cluster，再用output分布相对全局的差异调整局部样本，避免每个cluster只有一种结果；A/B对照提出IF/THEN规则，按相近THEN合并IF并保留例外，后续错误样本与规则关联的anchor共同约束最小改写。这里cluster定义候选的训练支持，规则ID只是模型报告的参与线索，不是因果归因；anchor通过也不认证所有旧语义保持，最终部署仍需独立regression。<!-- source-family:SF-2026-ARXIV-2604-09418 -->
+
+[AIR的五任务对照](https://arxiv.org/html/2604.09418v1)支持有限显式规则适配，但不授通用赢家：source-specific QA中42.08不优于原prompt、低于KNN81.67，结构化提取亦有反退。聚类、全部base/reflection调用、合并/修订、dev选择与独立test共同计费，各角色token账不能代替总美元或latency；持续增量更新尚未实验。噪标、冲突合并、anchor覆盖或质量回归时，保留人工短prompt、原规则/例子检索或参数适配，不让可读规则和自报ID自行批准删除guard、安全或上线。
+
+搜索产物也可以是一份供实例选择的目录，而不总交付同一条全局 prompt：先以离线实例反馈制备若干 anchors，再用 instance–context 的相对评分训练选择器，按其潜在方向挑已有 seed、由模型反思改写并重新实测，逐步扩展离散 context catalog；线上只让冻结 router 对目录评分、取一条给 solver。[受限目录共演化](https://arxiv.org/html/2605.15721v1)分开了候选制备、反馈与当前选择，不是连续 embedding 直接解码文本，也不取得线上最优 context 的真值。稀疏观测中如何确定所有候选失败、未观测值与新增反馈身份仍须闭合；理论的条件概率界/全局方法上限不足以批准最优目录或单调收益。相同目录的选择器对照支持局部作用，但更多 anchors 可退步，更密采样的 test 收益可饱和，dev 与 test 的偏好也不同。全部 LLM 改写/GT评价、router 训练与网格、线上 encoder 和全目录打分均计费，不用较少 online tokens 抹掉制备预算。目录、实例分布或支持质量失配时，保留原 query、短人工 prompt 或已验固定/检索选择，重新按独立任务结果回归，不让相对分数替 solver 批准正确性或执行权限。<!-- source-family:SF-2026-ARXIV-2605-15721 -->
 
 ### 追加规则容易，可逆地删除规则很难
 
@@ -205,6 +216,10 @@ threshold/judge noise、multiplier oscillation、Prompt overfitting 和 constrai
 稳定时更简单；Pareto set 在需要人工选择 operating point 时仍有价值。Constraint-aware search 只在 metric owner、
 threshold、holdout 与 rollback 都明确时成立，下一阶段压力是处理相互冲突约束、反馈漂移和线上不可逆动作，而不是
 让 rewriter 获得更多 authority。
+
+搜索对象也可从一份prompt变成有依赖的skill bundle：任务solver先产生失败trace和pass/cost，另一个消费者提出删除、替换、重排或重写的child，并更新下一轮使用的optimizer提示。每个child仍需重新执行原任务；可按pass与调用cost保存非支配archive，再以parent-relative质量guard拒绝明显回退。这分别拥有候选生成、局部继承约束和最终operating-point选择；relative guard不是固定绝对发布门，optimizer提示也不得在同一反馈上自行提高verifier权限。<!-- source-family:SF-2026-ARXIV-2604-09297 -->
+
+[SkillMOO的有限三任务对照](https://arxiv.org/html/2604.09297v1)支持这一bundle-search分支，runtime只是末级tie-break，不是另一个独立优化目标。最大原bundle、单模型、population1/五代及同扩展test反馈不证明held-out任务泛化；删除/替换频率只是观察，不能独归某类编辑因果。原bundle与空skill在不同质量/费用点仍可合理，共同计入全部solver、optimizer、test扩展与搜索花费，不能用HV相对小分母提升替净收益或break-even。新任务、verifier或依赖身份变化、质量退步或搜索摊销不成立时，保留已核bundle/人工改写与独立holdout，不从Pareto archive批准部署。
 
 ### 条件化机制分支与共存边界
 
@@ -295,3 +310,13 @@ Primary-source 入口：
 - `SF-2026-ARXIV-2601-09141` — Daily `2026-01-16`；[exact-v1](https://arxiv.org/html/2601.09141v1) §3–6/Limitations 与 A 必要配置。5分针对身份语义相关性/核心与风格分责gap深入；不采唯一生成因果、公平安全保证或隐式身份全覆盖，误删/误留、质量反侧与调用成本相邻。root必要原源/owner写前通过，root实际两段/邻接及末注非作者POST通过，锁释放；未运行artifact或复现。
 
 - `SF-2026-ARXIV-2602-20332` — Daily `2026-02-26`；[exact-v1](https://arxiv.org/html/2602.20332v1) §3/4/5/A.1–3/Table7。2+1+2=5具体gap深入；仅feature→rewritearm选择与reference feedback边界，筛选人口/canonical非因果污染/额外调用/不授无标签在线自证近正文。root必要源/actual owner PRE通过并授两段+自身末注窄锁；作者actual正文/完整邻接/末注顺读，root非作者actual正文137–165/自身末注297 POST通过，锁释放。未核artifact/复现，非日级验收。
+
+- `SF-2026-ARXIV-2603-08806` — Daily `2026-03-12`补充Mar11自然日；[TDAD exact-v1](https://arxiv.org/html/2603.08806v1) §3–6/§8、§4.1–4.3/Table4/Appendix1必要操作定义。2+2+2=6，生成test oracle、hidden更新/激活mutation及成功编译人口分责的具体差额；18/24成功与失败账、未激活/排除人口和mock/singlemodel边界留证，生成/验证/mutation全费、冲突/预算失败与原Prompt退路近正文。必要Source/date/actual owner/逐字PRE经reviewer通过，root授指定单段及本人注窄锁；作者实际完整邻接及本人注顺读，root非writer实际正文/完整邻接及本人末注actualPOST通过，窄锁释放，不授DAY。未核artifact/复现。
+
+- `SF-2026-ARXIV-2604-09297` — Apr14补Apr13，exact-v1§2–5/T1–4，2+1+2=5具体bundle支持域差额深入；仅failuretrace-driven bundle edits/optimizer prompt共同状态、pass-cost archive与parent−.05 guard分责，不授三objective/heldout泛化/净省费。保GLM5/三最大bundle/GPT5.4扩40test/pop1/5gen/10run及search2.2676/1.8611/1.7641、no-skill成本反侧与编辑非唯一因果；reader必要Source/date有效，reader finalPRE实际通过；supp_apr14_reader实际正文/完整上下邻及本人末注POST通过，作者已实读回，未核实现/复现。
+
+- `SF-2026-ARXIV-2604-09418` — Apr14补Apr13，exact-v1§3.1–3.3/§4–6，2+1+2=5具体labelled-contrast→rule修订支持域差额深入；K5 inputcluster/output分布balance、THEN/IF/exception与mistake/anchor分责，不采ruleID因果/anchor语义certificate或未测online更新。保test64/30/78/60/60异metric、dev8/5/12/60/60、GPT4.1mini/GPT5reflection/QA5.1judge、AIR95.31<GEPA96.88/QA42.08<81.67/IE35.90<36.54、PUPA8steps5无改善b3、完整tokens与美元/runtime/hardware/seedsCI ND。reader必要Source/date有效；reader finalPRE实际通过；supp_apr14_reader实际正文/完整上下邻及本人末注POST通过，作者已实读回，未核实现/复现。
+
+- `SF-2025-ARXIV-2508-21762` — Godel，Daily2025-09-02补Sep01；[exact-v1](https://arxiv.org/html/2508.21762v1)2.1–2.4/3/4.3–4.4/T1/6/C必要，2+1+2=5。仅batch-error prompt与独立数值aggregator两consumer；保标签构造/感知非truth、NMSE/CCC/逐题分责、局部反退/不同budget与全费，不采内部因果/完整rewardrecipe/通用65%。独立验收/退路为项目推导，未看全prompts/像素/核实现或复现；Newton63实际必要Source/具体owner/本逐字PRE通过，root已协调本指定单段/独立marker/本人注；已按稿实际保存，Newton67一次真实完整新增/完整直接两侧/本人注POST通过，本指定窄位生效释放；不预整日DAY。
+
+- `SF-2026-ARXIV-2605-15721` — Daily2026-05-19补May18；exact-v1 §2–4/T1–2/A Al1–2/B/C/E/F必要域reader R134唯一原证、作者实际完整消费，2+2+2=6。只离线catalog/线上router接口；保ξn/ε界错误简写、upperbound非global天花板、allfail观测契约/recipe未闭、K反退与density收益饱和及全部GT/API/router费，不授最优/显著支配、实现或复现。

@@ -1,0 +1,344 @@
+https://arxiv.org/html/2603.26137v1
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+Contributions.
+2 Related Work
+3 Benchmark Methodology
+3.1 Prompt Construction via LLM
+3.2 Time-Snapshot and Matched A/B Design
+3.3 Prompt Generation from Historical Pull Requests
+3.4 Worked Example of Benchmark Construction
+4 Experimental Setup
+4.1 Metric Definition
+5 Results
+5.1 DragonFly
+5.2 React
+5.3 Task-Level Distributional Analysis
+5.4 Cross-Repository Comparison
+6 Discussion
+7 Threats to Validity and Limitations
+8 Conclusion
+References
+License: arXiv.org perpetual non-exclusive license
+arXiv:2603.26137v1 [cs.SE] 27 Mar 2026
+A Time-Consistent Benchmark for Repository-Level Software Engineering Evaluation
+Xianpeng (Simon) Sun
+Haonan Sun
+Tian Yu
+Sheng Ma
+Qincheng Zhang
+Lifei Rao
+Chen Tian
+††thanks: This work was conducted independently in the author’s personal capacity. The views expressed in this paper are those of the author and do not necessarily reflect the views of Microsoft.
+Email: sisun@microsoft.com
+Abstract
+Evaluation of repository-aware software engineering systems is often confounded by synthetic task design, prompt leakage, and temporal contamination between repository knowledge and future code changes. We present a time-consistent benchmark methodology that snapshots a repository at time T_{0}, constructs repository-derived code knowledge using only artifacts available before T_{0}, and evaluates on engineering tasks derived from pull requests merged in the future interval (T_{0},T_{1}]. Each historical pull request is transformed into a natural-language task through an LLM-assisted prompt-generation pipeline, and the benchmark is formalized as a matched A/B comparison in which the same software engineering agent is evaluated with and without repository-derived code knowledge while all other variables are held constant. We also report a baseline characterization study on two open-source repositories, DragonFly and React, using three Claude-family models and four prompt granularities. Across both repositories, file-level F1 increases monotonically from minimal to guided prompts, reaching 0.8081 on DragonFly and 0.8078 on React for the strongest tested model. These results show that prompt construction is a first-order benchmark variable rather than a packaging detail. The benchmark protocol is therefore designed to separate realism, leakage control, and knowledge-augmentation effects in a way that supports stable and repeatable comparisons across systems.
+1 Introduction
+Repository-aware coding agents increasingly rely on external knowledge layers: retrieval systems, code graphs, semantic indices, repository memories, and workflow traces built over a codebase. Yet evaluation practice still tends to collapse multiple factors into a single score. A benchmark may unintentionally reward prompt verbosity, future-information leakage, or hidden implementation hints rather than genuine repository understanding.
+This problem is especially acute for repository-knowledge-augmented systems, whose purpose is not merely to answer a task prompt, but to build and exploit structured knowledge about a repository. A valid benchmark for such systems must satisfy three constraints simultaneously. First, tasks should reflect authentic software engineering work rather than synthetic exercises. Second, the system should only have access to information that would have been available at the time the task arose. Third, the contribution of repository-derived code knowledge should be isolated from confounders such as changes in prompt detail, model configuration, or execution environment. Existing repository-level benchmarks have already made important progress on realism, task diversity, execution-based validation, benchmark freshness, and contamination resistance; our focus is narrower and more causal. We seek to estimate the marginal effect of repository-derived code knowledge itself under fixed repository snapshot, fixed task, fixed model, fixed execution environment, and fixed evaluation metric.
+We address these requirements with a time-consistent benchmark protocol based on historical pull requests. A repository is snapshotted at time T_{0}; repository knowledge is constructed only from artifacts available at that snapshot; and evaluation tasks are derived from pull requests merged later in (T_{0},T_{1}]. The protocol is designed for matched A/B evaluation: the same SWE agent is run on the same repository snapshot and the same task set under two conditions, once without repository-derived code knowledge and once with it.
+In addition to formalizing the benchmark, we report a baseline-only characterization study. This study does not yet claim gains from repository-knowledge augmentation. Instead, it quantifies how much benchmark scores move due only to prompt granularity and model capability. That calibration is important because any future knowledge-augmented-vs-baseline delta must be interpreted against this background variance.
+Contributions.
+1.
+We define a time-consistent benchmark methodology for repository-aware software engineering systems using historical pull requests and strict pre/post-snapshot separation.
+2.
+We formalize a matched A/B evaluation design that isolates the causal contribution of repository-derived code knowledge from model, prompt, environment, and task effects.
+3.
+We integrate a prompt-generation design space into benchmark construction and show empirically that prompt granularity strongly affects measured performance.
+4.
+We provide a baseline characterization study on DragonFly and React across three models and four prompt granularities, establishing a calibration point for future knowledge-augmented evaluations.
+2 Related Work
+Real-world software engineering benchmarks. SWE-bench established a widely adopted benchmark in which models resolve real GitHub issues from historical repositories under repository snapshots and execution-based verification [1]. RepoBench expanded evaluation to repository-level retrieval, completion, and pipeline tasks, highlighting the importance of cross-file context in realistic code assistance [2]. More recent benchmark efforts have broadened language coverage and task diversity, including repository-level execution-based evaluation in SWE-PolyBench and feature-implementation tasks in FEA-Bench [6, 7]. These benchmarks are highly relevant, but they are primarily designed to evaluate overall task performance rather than to isolate the incremental effect of an external repository-knowledge layer under strict pre/post-snapshot separation.
+Dynamic and contamination-aware benchmark construction. A second line of work focuses on scalable benchmark generation, historically faithful environment setup, and contamination resistance. Automated benchmark generation pipelines have shown that historically accurate setup and large-scale collection are feasible, but operationally delicate [3]. SWE-MERA emphasizes dynamic refresh, automated task collection, and regular benchmark updates, while SWE-rebench explicitly frames benchmark freshness as a response to contamination risk and uses a continuous pipeline to build decontaminated evaluation sets [4, 5]. Our proposal is aligned with this direction, but it targets a different question: not merely how to build fresher benchmarks, but how to estimate the causal contribution of repository-derived code knowledge under matched historical conditions.
+Prompt sensitivity and benchmark validity. Benchmark scores are often strongly affected by prompt framing, task exposure, and hidden implementation hints. In repository-grounded settings, prompt design is especially consequential because a task prompt can either preserve the need for repository exploration or leak the solution structure. We therefore treat prompt generation as part of benchmark methodology rather than benchmark packaging.
+3 Benchmark Methodology
+A challenge in evaluating repository-aware software engineering systems is to design a benchmark that is both realistic and leakage-resistant. Benchmarks based on synthetic tasks or manually written problem statements often fail to capture the structure of real engineering work. At the same time, naively evaluating on historical repository changes can introduce information leakage if the system has access to code that was added after the task was created.
+To address this problem, we design a time-consistent benchmark methodology based on historical pull requests. The key idea is to construct repository-derived code knowledge from a repository snapshot taken at time T_{0}, and then evaluate the system on engineering tasks derived from pull requests merged in the future interval (T_{0},T_{1}]. This ensures that the offline knowledge-construction pipeline can only use information that would have been available at the time of the snapshot, while the evaluation tasks correspond to real software engineering work that occurred afterward.
+Figure 1: Time-consistent benchmark pipeline. A repository is snapshotted at T_{0} to construct repository knowledge using only pre-T_{0} information. Pull requests merged during (T_{0},T_{1}] are converted into natural-language tasks. The same SWE agent is then evaluated in matched conditions with and without repository-derived code knowledge, and outputs are compared against the historical ground-truth pull requests.
+Figure 1 illustrates the benchmark construction and evaluation flow. Starting from a repository timeline, we first take a snapshot at T_{0} and build repository-derived code knowledge using only repository state available up to that point. We then collect all pull requests merged during (T_{0},T_{1}] and convert them into natural-language task prompts using an LLM-assisted pipeline. The resulting task set is evaluated under two matched conditions: a baseline SWE agent without repository-derived code knowledge and the same SWE agent augmented with repository-derived code knowledge. Generated solutions are then compared against the corresponding ground-truth pull requests.
+This methodology serves two purposes. First, it provides a realistic evaluation setting in which benchmark tasks are grounded in authentic repository evolution. Second, it isolates the contribution of repository-derived code knowledge by ensuring that the only difference between the two evaluation conditions is whether the agent has access to repository-derived code knowledge.
+3.1 Prompt Construction via LLM
+To ensure consistency and reproducibility in benchmark task generation,
+we define a structured prompt construction mechanism that transforms
+historical pull requests into task descriptions at different levels
+of abstraction.
+Given a pull request p_{i}, we define a prompt generation function:
+t_{i}=g(p_{i},\ell)
+where \ell\in\{\text{minimal},\text{concise},\text{contextual},\text{guided}\}
+controls the level of detail.
+Minimal.
+The prompt contains only a high-level description derived from the PR title.
+Concise.
+The prompt includes the affected component or module, without revealing implementation details.
+Contextual.
+The prompt incorporates additional context such as functionality, usage scenario, or failure mode.
+Guided.
+The prompt provides structured guidance on the nature of the fix,
+while avoiding direct exposure of the ground-truth implementation.
+This design enables controlled evaluation of how task specification
+granularity affects software engineering performance, while ensuring
+that prompts do not leak solution-critical information.
+3.2 Time-Snapshot and Matched A/B Design
+To isolate the effect of repository-derived code knowledge on software engineering performance, we adopt a matched A/B evaluation design over historical pull requests. For each repository, we first select a historical snapshot at time T_{0}. Let R_{T_{0}} denote the repository state at that snapshot. An offline knowledge-construction pipeline builds repository-derived code knowledge exclusively from information available in R_{T_{0}}, including source files, commit history, and repository documentation. No information introduced after T_{0} is allowed to participate in knowledge construction. In particular, post-T_{0} pull-request descriptions, diffs, review comments, newly introduced files, and downstream test outcomes are outside the admissible knowledge boundary. This explicit pre/post split is intended to separate historically available repository evidence from future task outcomes.
+We then collect the set of pull requests merged during the interval (T_{0},T_{1}]:
+P=\{p_{i}\mid p_{i}\text{ is merged in }(T_{0},T_{1}]\}.
+(1)
+Each pull request p_{i}\in P is transformed into a natural-language software engineering task through a prompt generation function g(\cdot), producing the benchmark task set
+D=\{t_{i}=g(p_{i})\mid p_{i}\in P\}.
+(2)
+Each task t_{i} therefore corresponds to a real historical code change that occurred after the repository snapshot.
+For every task t_{i}\in D, we evaluate the same SWE agent under two matched conditions.
+•
+Baseline condition. The agent operates directly on the repository snapshot R_{T_{0}} without access to repository-derived code knowledge.
+•
+Knowledge-augmented condition. The agent operates on the same repository snapshot R_{T_{0}}, but is augmented with repository-derived code knowledge constructed from that snapshot.
+Let A_{\text{base}}(t_{i}) denote the solution produced by the baseline agent for task t_{i}, and let A_{\text{aug}}(t_{i}) denote the solution produced by the knowledge-augmented agent for the same task. All other factors are held constant across the two conditions, including the underlying SWE agent and language model, the repository snapshot R_{T_{0}}, the task prompt t_{i}, the execution environment, and the evaluation metric. As a result, the only experimental variable is whether the agent has access to repository-derived code knowledge. This paired design isolates the marginal contribution of repository-derived code knowledge to repository-grounded task solving.
+For a system S\in\{\text{base},\text{aug}\}, the overall benchmark score is computed as
+\mathrm{Score}(S)=\frac{1}{|D|}\sum_{t_{i}\in D}\mathrm{metric}(A_{S}(t_{i}),y_{i}),
+(3)
+where y_{i} denotes the ground-truth outcome associated with the historical pull request for task t_{i}. This is not an online product experiment; it is a controlled benchmark-style matched comparison whose purpose is to estimate the causal impact of repository-derived code knowledge on software engineering performance.
+3.3 Prompt Generation from Historical Pull Requests
+A non-trivial challenge in constructing PR-based benchmarks lies in converting historical pull requests into realistic task prompts. Pull requests typically contain multiple sources of information, including the title, description, code diffs, and discussion comments. If these inputs are converted too aggressively into natural-language prompts, the generated tasks may leak implementation details that would not normally be available in realistic developer requests. On the other hand, if too little information is retained, the resulting tasks may become under-specified and no longer represent meaningful software engineering requests.
+During early experiments, we found that the granularity of prompt generation has a substantial impact on benchmark outcomes. In particular, prompt formulations that contain overly specific implementation details can significantly improve baseline performance, thereby reducing the apparent gain from repository-derived code knowledge. Conversely, prompts that are too short often omit essential contextual cues, causing both baseline and knowledge-augmented agents to fail.
+To study this effect systematically, we implemented four prompt-generation strategies:
+•
+Minimal (very concise). A compressed restatement of the high-level change, often close to the pull request title alone.
+•
+Concise. A brief task description that preserves the problem type while providing only limited repository grounding.
+•
+Contextual. The primary benchmark setting: it preserves the general problem description and affected component, but avoids exposing exact function names, control flow, or explicit repair instructions.
+•
+Guided. A richer prompt that incorporates stronger task framing and partial implementation hints extracted from the pull request.
+Minimal prompts are concise but often under-specify the task. Guided prompts improve absolute performance for both the baseline and knowledge-augmented conditions, but they can also reduce the relative gain attributable to repository-derived code knowledge by revealing likely components, functions, or fix directions. Contextual prompts typically provide the best realism–solvability trade-off, and unless otherwise noted, they are the most defensible primary setting for future knowledge-augmented comparisons.
+3.4 Worked Example of Benchmark Construction
+Consider a repository snapshot T_{0} that contains a dataset-loading component. A later pull request introduces a null check in metadata parsing to prevent a crash when metadata is missing. The pull request can be converted into the benchmark task: Fix a bug in dataset metadata parsing within the DatasetLoader module.
+Under the baseline condition, the agent searches the repository for relevant files based on the prompt. Because the prompt does not explicitly mention the affected function, the agent may explore multiple candidate files. Under the knowledge-augmented condition, the agent receives repository-derived code knowledge indicating that DatasetLoader is responsible for dataset configuration parsing and that the relevant metadata pathway is concentrated in a small set of files. The task is considered successful if the generated solution matches the historical change under the chosen evaluation metric.
+4 Experimental Setup
+We evaluate the baseline arm of the benchmark protocol on two open-source repositories: DragonFly and React. For each repository, a historical snapshot is taken prior to the evaluation window, and historical pull requests merged after the snapshot are converted into benchmark tasks following the methodology of Section 3.
+Table 1: Benchmark dataset and evaluation configuration. The protocol itself supports matched knowledge-augmented-vs-baseline comparison; the present section reports only the baseline arm.
+Category
+Setting
+Repositories
+DragonFly and React
+Task source
+Historical PRs merged in (T_{0},T_{1}]
+Snapshot policy
+Knowledge may only be constructed from repository state available at T_{0}
+Models
+Claude-Sonnet-4, Claude-Sonnet-4.5, Claude-Ops-4.6
+Prompt strategy
+Minimal, Concise, Contextual, Guided
+Current reported arm
+Baseline only (no repository-knowledge augmentation in this characterization study)
+Evaluation metrics
+File-level precision, recall, and F1
+Unit of comparison
+Predicted relevant file set vs. PR-modified file set
+4.1 Metric Definition
+The current experiments evaluate file-level localization quality. For each task, the AI agent produces a set of predicted files that it considers relevant for implementing the requested change. These predictions are compared against the set of files that were modified in the corresponding historical pull request. Let TP denote files suggested by the agent that were indeed modified, FP denote files suggested by the agent but not modified in the ground-truth change, and FN denote files modified in the ground truth but not suggested by the agent.
+We report the standard information-retrieval metrics
+\displaystyle\mathrm{Precision}
+\displaystyle=\frac{\mathrm{TP}}{\mathrm{TP}+\mathrm{FP}},
+(4)
+\displaystyle\mathrm{Recall}
+\displaystyle=\frac{\mathrm{TP}}{\mathrm{TP}+\mathrm{FN}},
+(5)
+\displaystyle F_{1}
+\displaystyle=\frac{2\cdot\mathrm{Precision}\cdot\mathrm{Recall}}{\mathrm{Precision}+\mathrm{Recall}}.
+(6)
+Together, these metrics evaluate both the accuracy and completeness of repository-level file prediction. In future matched A/B studies, the same definitions can be used to compare a knowledge-augmented condition directly against the baseline condition.
+5 Results
+5.1 DragonFly
+Table 2 reports full baseline results on DragonFly. Figure 2 summarizes F1 by model and prompt granularity, and Figure 3 shows recall, precision, and F1 trajectories across prompt settings.
+Table 2: DragonFly baseline results. All values are file-level scores.
+Model
+Prompt
+Recall
+Precision
+F1
+Sonnet-4
+Minimal
+0.2202
+0.2569
+0.2026
+Concise
+0.4365
+0.4492
+0.3916
+Contextual
+0.6176
+0.6148
+0.5592
+Guided
+0.7314
+0.7158
+0.6828
+Sonnet-4.5
+Minimal
+0.2225
+0.3736
+0.2487
+Concise
+0.3980
+0.5131
+0.4124
+Contextual
+0.5999
+0.6414
+0.5656
+Guided
+0.7068
+0.7900
+0.7163
+Ops-4.6
+Minimal
+0.2977
+0.3686
+0.2952
+Concise
+0.5741
+0.6278
+0.5464
+Contextual
+0.7194
+0.7964
+0.7241
+Guided
+0.8071
+0.8562
+0.8081
+Figure 2: DragonFly F1 by prompt granularity and model.
+Figure 3: DragonFly metric trajectories across prompt granularities.
+Three patterns stand out. First, prompt granularity strongly affects measured performance. On DragonFly, moving from Minimal to Guided increases F1 from 0.2026 to 0.6828 for Sonnet-4, from 0.2487 to 0.7163 for Sonnet-4.5, and from 0.2952 to 0.8081 for Ops-4.6. Second, stronger models consistently improve all three metrics at matched prompt granularity. Third, the largest jump often occurs between Concise and Contextual prompts, suggesting that repository-grounded module information plays a major role in file localization.
+5.2 React
+Table 3 reports the corresponding baseline results on React. Figures 4 and 5 visualize the same trend.
+Table 3: React baseline results. All values are file-level scores.
+Model
+Prompt
+Recall
+Precision
+F1
+Sonnet-4
+Minimal
+0.1921
+0.2407
+0.1898
+Concise
+0.3989
+0.4303
+0.3710
+Contextual
+0.5095
+0.4930
+0.4594
+Guided
+0.7202
+0.6399
+0.6283
+Sonnet-4.5
+Minimal
+0.1886
+0.2506
+0.1946
+Concise
+0.3598
+0.4928
+0.3751
+Contextual
+0.5106
+0.5909
+0.5062
+Guided
+0.7444
+0.7657
+0.7229
+Ops-4.6
+Minimal
+0.2305
+0.2899
+0.2335
+Concise
+0.5142
+0.6000
+0.5098
+Contextual
+0.6319
+0.6536
+0.6057
+Guided
+0.8503
+0.8205
+0.8078
+Figure 4: React F1 by prompt granularity and model.
+Figure 5: React metric trajectories across prompt granularities.
+The React results replicate the DragonFly trend. Under Minimal prompting, file-level F1 remains low for all three models (0.1898–0.2335). Under Guided prompting, F1 reaches 0.6283 for Sonnet-4, 0.7229 for Sonnet-4.5, and 0.8078 for Ops-4.6. This cross-repository consistency is important because it suggests the prompt-sensitivity effect is not an artifact of one repository alone.
+5.3 Task-Level Distributional Analysis
+While the aggregate means in Table 3 establish the overall trend, they do not reveal whether improvements are broadly distributed across tasks or concentrated in a subset of easy cases. To address this, we analyze task-level outcomes from the React baseline runs.
+Each model–prompt condition includes 90 historical PR tasks, enabling us to examine exact-success and exact-failure rates, as well as the full distribution of outcomes, rather than relying solely on averages.
+Table 4: React task-level baseline summary aggregated across the three models.
+Prompt
+Mean F1
+Prec.=0
+Rec.=1
+Rec.=0
+Minimal
+0.242
+60.2%
+14.4%
+60.2%
+Concise
+0.479
+28.7%
+31.1%
+28.7%
+Contextual
+0.574
+18.5%
+41.5%
+18.5%
+Guided
+0.770
+3.5%
+59.8%
+3.5%
+Table 4 sharpens the interpretation of the mean curves. The dominant effect of prompt strengthening is not merely a modest upward drift in average F1; it is a large redistribution away from exact failure states. Averaged across models, the zero-precision rate falls from 60.2% under Minimal prompts to 18.5% under Contextual prompts and only 3.5% under Guided prompts, while the perfect-recall rate rises from 14.4% to 41.5% and then 59.8%. In other words, prompt granularity changes the probability that the agent can localize relevant files at all, rather than only improving overlap once localization succeeds.
+Figure 6: React baseline, task-level extreme outcomes. Each cell reports the fraction of historical PR tasks that land in an exact success or exact failure state. The largest movement is from Minimal/Concise to Contextual/Guided: better prompts sharply reduce both complete misses (Recall=0) and spurious localization failures (Precision=0), while increasing exact localization (Recall=1, F1=1).
+Figure 6 shows that this pattern holds for every model, not just in the average. For example, the strongest model (Ops-4.6) reduces the zero-precision rate from 56.1% under Minimal prompting to 15.6% under Contextual prompting and 1.1% under Guided prompting, while its perfect-recall rate rises from 16.7% to 47.2% and then 66.1%. The same qualitative transition appears for Sonnet-4 and Sonnet-4.5. This is exactly the kind of evidence that mean-only reporting would hide.
+Figure 7: React baseline, task-level F1 distributions. The distribution does not simply shift upward smoothly; rather, prompt strengthening moves substantial probability mass out of the zero-performance bin and into the high-F1 and exact-match bins.
+Figure 7 provides the complementary distributional view. The key phenomenon is a shape change, not just a mean change. Minimal prompts produce a highly brittle regime dominated by zero-performance outcomes. Concise prompts recover some middle-performing cases, but Contextual prompts are where the benchmark begins to resemble a realistic evaluation setting: many catastrophic failures disappear, yet the task still requires repository exploration. Guided prompts continue to improve absolute performance, but they also shift a substantial amount of mass into near-perfect and perfect bins, which is precisely why they are less suitable as the default prompt setting for measuring the marginal value of repository-derived code knowledge. From a benchmark-design perspective, these figures support the claim that Contextual prompting is the most defensible primary operating point: it removes a large fraction of under-specification failures without saturating the benchmark as aggressively as Guided prompting.
+Figure 8: DragonFly baseline, task-level extreme outcomes. Each cell reports the fraction of historical PR tasks that land in an exact success or exact failure state. As in React, stronger prompts sharply reduce both complete misses (Recall=0) and spurious localization failures (Precision=0), while increasing exact localization (Recall=1, F1=1). Gray cells indicate combinations for which task-level detail exports are unavailable in the current archive.
+Figure 8 shows the same qualitative transition on DragonFly. Although two Concise-condition detail exports are unavailable in the current archive, the observed cells already show the same directional behavior as React: stronger prompts reduce exact failure states and increase exact localization. This strengthens the claim that the benchmark is capturing a stable capability phenomenon rather than a repository-specific artifact.
+Figure 9: DragonFly baseline, task-level F1 distributions. As on React, prompt strengthening moves substantial probability mass out of the zero-performance bin and into high-F1 and exact-match bins.
+Figure 9 provides the DragonFly distributional view. The same structural pattern appears: Minimal prompting is dominated by exact failures, Contextual prompting removes much of this brittle behavior without saturating the task, and Guided prompting shifts additional mass into near-perfect and perfect bins. This cross-repository agreement is one of the strongest pieces of evidence that the benchmark is measuring something stable.
+5.4 Cross-Repository Comparison
+(a) Cross-repository F1 heatmap.
+(b) Absolute F1 improvement from Minimal to Guided prompting.
+Figure 10: Cross-repository comparison. Stronger prompts improve localization across both repositories, and the absolute gain from Minimal to Guided prompting is large for every model.
+Across both repositories, the same ordering holds almost everywhere: stronger prompts improve localization, and stronger models improve performance at each prompt level. The strongest observed scores are very similar across repositories under Guided prompting (0.8081 on DragonFly and 0.8078 on React for Ops-4.6), while weaker prompt settings expose larger repository differences. This suggests that richer task framing can partially compensate for repository difficulty, but only at the cost of reducing the need for repository exploration.
+These results lead to two methodological conclusions. First, prompt granularity must be treated as a first-class benchmark variable. A benchmark that does not standardize how pull requests are translated into prompts will yield scores that are difficult to compare across systems. Second, contextual prompting is the most defensible default setting for future knowledge-augmented evaluation: it is strong enough to make tasks solvable, but still leaves room for repository-derived code knowledge to matter.
+6 Discussion
+The present experiments should be interpreted as a calibration study for the benchmark protocol rather than a full augmentation-efficacy study. Because only the baseline arm is currently reported, the results do not yet quantify the marginal gain of repository-derived code knowledge. What they do show is that benchmark outcomes can change dramatically even before repository-knowledge augmentation is introduced. Any future A/B claim must therefore be larger than, or at least clearly separable from, the variance induced by prompt construction alone.
+7 Threats to Validity and Limitations
+The paper introduces the evaluation protocol and reports baseline sensitivity analyses, but it does not yet report the paired knowledge-augmented-vs-baseline deltas that would complete the causal argument.
+Uncertainty reporting is still incomplete. The current draft now includes task-level structural evidence, but it would be stronger with confidence intervals, explicit two-proportion tests for extreme-outcome rates, and formal distributional tests reported in a summary table.
+Prompt-generation details remain under-specified. Although the four prompt granularities are defined conceptually (Minimal, Concise, Contextual, Guided), the paper would be stronger with exact prompt templates, the LLM conversion instructions, and explicit leakage-control filters.
+Metric scope is currently narrow. The present experiments measure file-level localization rather than final patch correctness. File prediction is useful and often diagnostic, but it is not equivalent to solving the software engineering task end to end. A complete knowledge-augmented evaluation should therefore also report patch success, test-suite pass rate, or execution-based correctness when feasible.
+Repository coverage is still limited. Two repositories are enough to show early cross-repository stability, but not enough to claim broad generalization.
+8 Conclusion
+We presented a time-consistent benchmark protocol for repository-knowledge-augmented systems. The protocol constructs repository knowledge at historical snapshot time T_{0}, derives evaluation tasks from pull requests merged in (T_{0},T_{1}], and compares systems under a matched A/B design that isolates repository-derived code knowledge from all other factors. We also reported a baseline characterization study across DragonFly, React, three model configurations, and four prompt granularities, showing that prompt design exerts a large and reproducible influence on repository-level file prediction. These patterns are consistent across both React and DragonFly. Despite being evaluated on two repositories, the benchmark demonstrates strong cross-repository consistency, with aligned outcome structures and model ordering. This suggests that the observed effects arise from stable properties of the evaluation protocol rather than dataset-specific artifacts.
+The main implication is methodological. For repository-aware software engineering benchmarks, temporal consistency and prompt control are not auxiliary details; they are core validity requirements. More specifically, realism, freshness, and execution-based evaluation are not by themselves sufficient when the scientific question concerns the net effect of a repository-knowledge layer; matched causal control is also required. The next step is to complete the matched knowledge-augmented-vs-baseline evaluation with task-level deltas, uncertainty estimates, exact prompt templates, and broader repository coverage.

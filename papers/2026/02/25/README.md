@@ -4,9 +4,15 @@
 **窗口：** 2026-02-24T09:00:00+08:00 ～ 2026-02-25T09:00:00+08:00
 **状态：** 完成
 **Books：** 纳入本次
-**检查时间：** 2026-10-05T12:55:45+00:00
+**检查时间：** 2026-10-08T13:02:20+00:00
+**窗口说明：** 用户授权仅补来源遗漏，冻结原34候选、评分/原日期归属、原窗口及有效Source/Books与§4连续正文；新增不搬移旧材料。
+**补充窗口：** 2026-02-24 ～ 2026-02-24
 
 ## 1. 结论
+
+本轮增量：原34家族实值冻结，新增确认RSP v3一家族，合计35；RSP为公司安全/发布义务的实际版本变化，必要精确v3受影响内容已审，5分、仅报告、无新Books写入。23份新增相关论文完整题摘分为11必要日期终态保留、8条arXiv事件窗外/标准公告下界窗外、4贡献排除；Qwen三中型型号按一个release事件关闭贡献，OpenAI人事任命范围关闭。11潜力不评分、不提前授当窗候选，Submitted/API published/普通Updated/注册日均不作首公开。来源有限范围、具名判断与必要原证见[本轮补查](../_sources/daily-20260225/supplement-20261008.md)。本轮新增差额已由非作者root实际通过准入/必要Source和六部分DAY验收，普通待办0；14入口仅有限处理、11日期仍外部保留，不授Coverage全通过或无遗漏。以下原34审阅与写后成果有效复用，原完成声明不代替本轮验收。
+
+以下至§2前为冻结原34的旧复核/旧日期口径，仅有效复用、不作本轮新增材料的公开日证明；其中“普通待办0/非作者已通过”只指旧34，不代替本轮六部分验收。
 
 本日按当前合同独立重建，不继承旧 V2.1 Complete、旧 Weekly、914/914全量关闭或旧18候选结论。34个确认落窗的唯一材料家族完成精确版本必要审阅与Books判断：12项窄整合、6项具体已有覆盖、9项仅报告、7项中心主张争议终态隔离；12项实际正文/完整邻接/自身末注均经非作者root写后检查通过。没有结构候选、未核实现或实验复现；作者性能不外推生产保证。
 
@@ -37,7 +43,13 @@
 
 OpenAI窗内[February 2026 malicious use report](https://openai.com/index/disrupting-malicious-ai-uses/)实际核心p1–6经独核，明确排除贡献：多模型/平台workflow与分发配合是观测case，没有新增可检验执行/检测机制；refusal后离站依据status/limited OSINT不是受控阻断效果，engagement不授AI内容影响因果。保安全说明，不把37页案件变逐项队列，原始理由见来源记录。
 
+本轮补充来源差额（2026-02-24完整自然日；不沿用上表旧完成状态授新Coverage）：OpenAI实际RSS1255条仅Feb24 CPO任命，范围EX；Anthropic Research近窗两Feb23/一Feb25均窗外，定点官方News新增Feb24 RSP v3。Google Research二月七Blog已跨Feb24，定点复用root成功恢复的DeepMind官方100-item RSS原XML（69499字节），实际解析BJT Feb24切片，Feb19T16:06:14Z→Feb26T16:01:50Z邻界无Feb24 feeditem；仅此feed有限切片已检查，Publications/删除历史仍不授完整覆盖；Meta current Research不能恢复本窗历史、受阻；Qwen实际V2四十篇及官方Feb24中型changelog/card核心已检查，贡献EX；DeepSeek current官网、Kimi现保留25篇旧Blog各无本窗dated批次，受阻。混元旧有效九条目录复用，本次同源API404及官方动态Research浏览器超时不能授零命中，缺dated批次继续受阻；ZAI保留15篇近窗Feb21/11题名已跨下界，但createAt只目录字段。Seed实际paper page_token60十九条Feb27→Jan27、Blog page0近窗Feb14/13/12；两Feb25回填项旧hold不迁日。ERNIE十篇Feb6→Jan29和MiniMax双语12/13篇Feb14/12→Jan27已跨下界；MiMo Paper八篇跨Feb3、无日期Blog仍受阻。这些保留目录不是机构全集，具体历史恢复请求继续隔离。
+
+arXiv补充：官方按日及一次Advanced announced-date恢复均400，不授零。CL/LG模型/Transformer/MoE、DC/AR/PL/OS/PF GPU/kernel/inference/training、CV/RO多模态/生成/world/VLA、AI/IR/MA模型/RAG/Agent/memory四主题仅发现查询Submitted Feb22–24，max100分页分别0/100/200→205、0→28、0/100→130、0/100/200→230，593出现先去重；cs月skip6000/show2000仅相关标题命名补检。非593逐题摘队列，非当天论文数；具名23完整exact-v1题摘及精确v1页核身份/轻量版本说明，未展开旧914或无关附件。11必要公开日期请求与8窗外入口关闭见§5及本轮补查，不由API published/updated或Submitted授公开归属。本轮只对14入口作有限处理、11日期仍外部保留，不授Coverage全通过或无遗漏。
+
 ## 3. 候选与判断
+
+以下日期解释为冻结原34的旧复核/旧日期口径，仅复用、不作本轮新增公开日证明；本轮不以Submitted与Registered组合授首次公开日期，也不重定旧行归属。新增RSP行使用官方News公开日。
 
 本表仅34确认落窗且通过具体贡献筛选的家族，均审exact-v1。公开范围不是提交时刻：原Submitted:v1晚于2026-02-20T19:00:00Z，结合[官方公告机制](https://info.arxiv.org/help/availability.html)给不早于Feb24 BJT09的下界；同ID Registered给窗内上界。为把原秒精度上界容纳于合同要求的半开区间，表末端为Registered原秒的下一秒，不虚构公开时刻。Created/Updated与旧inventory announcement均未用于授日期。原Submitted/Registered可核于同身份[原DataCite响应](../_sources/datacite-arxiv-202602-created/doi-prefix-2602-18-page-01.json.gz)及来源记录。日期不明的其他潜力项只在§5，不先授候选。
 
@@ -79,6 +91,7 @@ OpenAI窗内[February 2026 malicious use report](https://openai.com/index/disrup
 | [Synthesizing Multimodal Geometry Datasets from Scratch and Enabling Visual Alignment via Plotting Code](https://arxiv.org/html/2602.18745v1) | 2026-02-24T09:00:00+08:00 ～ 2026-02-24T11:47:01+08:00 | renderable scene IR把syntax与结构语义分账；2+1+2=5 | 深入完成 | 整合：MULTIMODAL-REPRESENTATION [MULTIMODAL-REPRESENTATION](../../../../Books/part-03-multimodal-world-models/23-multimodal-representation.md) |
 | [Bridging Modality Disconnect in Self-Reflection via Closed-Loop Visually Grounded Verification](https://arxiv.org/html/2602.18746v1) | 2026-02-24T09:00:00+08:00 ～ 2026-02-24T11:47:02+08:00 | region marker回读proposal不等内部视觉真值；2+1+2=5 | 标准完成 | 已有覆盖：MULTIMODAL-REPRESENTATION [MULTIMODAL-REPRESENTATION](../../../../Books/part-03-multimodal-world-models/23-multimodal-representation.md) |
 | [Federated Reasoning Distillation Framework with Model Learnability-Aware Data Allocation](https://arxiv.org/html/2602.18749v1) | 2026-02-24T09:00:00+08:00 ～ 2026-02-24T11:47:07+08:00 | loss-based allocation不认证learnability/收敛/净成本；2+1+2=5 | 标准完成 | 仅报告：有限案例/条件结果，不新增长期机制 |
+| [Anthropic RSP v3](https://www.anthropic.com/news/responsible-scaling-policy-v3) | 2026-02-24 | 未来能力安全义务分拆公司计划/行业建议，delay和外审变为精确条件；2+1+2=5 | 深入完成 | 仅报告：公司policy义务/条件变更，非已实现可迁移控制机制或安全证明 |
 
 ## 4. 证据与知识整合
 
@@ -220,7 +233,17 @@ Method/对照/688–713：real正pair与时序/cross负pair训练probe，受限�
 
 IV/V192及配置：不同selected set/count reward混人口，residual predictor非UCB；theorem随机selector条件不覆盖实际自适应artifact。5500 MC/3client/≤5round、FedMKT通信更低及总费用保留；成熟DPO+bandit proxy case仅报告。 处置：仅报告。 必要原源/对照、采用边界及具体owner位置见[本日证据笔记](../_sources/daily-20260225/V3_EVIDENCE.md)。
 
+### [Anthropic RSP v3](https://www.anthropic.com/news/responsible-scaling-policy-v3)
+
+采用[精确v3](https://www-cdn.anthropic.com/e670587677525f28df69b59e5fb4c22cc5461a17.pdf) p3–16受影响内容，官方news明确Feb24公开，不以effective date单独定归属。旧无条件绝对risk承诺分拆公司计划/行业建议；现有ASL3措施仍维持，AppendixA只在确认独自领先或竞争者有强安全论证时明确delay，general upleveling不必delay。维护/发布Roadmap是义务，目标非hard commitment；RiskReport每3–6个月而非每次release，公开更强模型另讨论变化、内部in-scope确认后30天内补讨论。§3.4 CEO/RSO批准且marginal-risk主导时Board/LTBT批准；§3.6强制外审是highly-capable **且** significantly-redacted，送Board/LTBT后一周内共享、要求收到后30日评论，不是一律部署前外审。约年度procedural compliance review不证明substantive safety。5分因安全/发布契约改变定点深入；只报告该公司版本事实，不当已实现安全保证。实际Ch73 Readiness Gates的阶段分责/人工风险例外、Ch66证据与组织decision分工保留；没有可新写长期owner的实现或普遍因果，不新增Books。完整必要页及反侧见[本轮补查](../_sources/daily-20260225/supplement-20261008.md)。
+
 ## 5. 缺口与下一步
+
+本轮普通待办：0。新增差额已获非作者root独立DAY通过；以下11必要公开日期请求均为外部终态隔离，不支持候选、Books或无遗漏，来源历史批次受阻继续保留。完成态机器及实值检查结果见§6。
+
+逐身份必要公开日期请求：[OpenPort20196](https://arxiv.org/abs/2602.20196v1)（StateWitness/TOCTOU）、[CalibRL20197](https://arxiv.org/abs/2602.20197v1)（hybrid轨迹/rarity校准）、[OptimusVLA20200](https://arxiv.org/abs/2602.20200v1)（prior/history两memory）、[MLIR20204](https://arxiv.org/abs/2602.20204v1)（Vec/MT/DB边界）、[GoldenLayers20207](https://arxiv.org/abs/2602.20207v1)（proxy-layer编辑）、[CodeHacker20213](https://arxiv.org/abs/2602.20213v1)（validator/checker先校准）、[RightToHistory20214](https://arxiv.org/abs/2602.20214v1)（effect/log可核invariant）、[MultiModalPFN20223](https://arxiv.org/abs/2602.20223v1)（异模tokenbridge/attention失衡）、[HieraMAS20229](https://arxiv.org/abs/2602.20229v1)（node/topology credit）、[UniLACT20231](https://arxiv.org/abs/2602.20231v1)（depth latent-action）、[SPL21257](https://arxiv.org/abs/2602.21257v1)（声明式context预算/跨块语义）。各精确v1完整题摘有具体潜力，缺同版本首次正文Feb24公开的官方dated公告/作者dated原页或可信快照；当前原页仅Submitted、普通修订，API published为提交，按日/announced-date一次恢复400，必要日期仍跨窗边界。故不采用、不评分、不投入正文；各身份只请求一次，替代为上述同版本dated原件，到达只定点重开该身份日期/准入/必要Source及owner，详见[逐项潜力与重开表](../_sources/daily-20260225/supplement-20261008.md)。
+
+八条入口窗外：ReviveMoE21140、SSM-TP21144、UPipe21196已在BJT Feb25提交，arXiv事件不可能在Feb24。MomentumGuidance20360、FAST-Prefill20515、Lagom20656、TOM20662、COMiT20731晚于MondayFeb23 19UTC截止，只能限定官方标准arXiv公告最早Feb25 BJT，不虚造确切公开日，不排除未来具名作者前置发布；目前未观察到这类前置线索，不无限追查。必要v1题摘/原Submitted及潜力见本轮补查；若dated前置正文到达才重开，不启动另日或Weekly。
 
 普通可执行工作：无。本窗终态保留项：以下外部日期/目录限制和中心争议不支持当窗正面候选、Books、Coverage无遗漏或性能/安全保证；材料到达后只定点重开。
 
@@ -232,6 +255,10 @@ IV/V192及配置：不同selected set/count reward混人口，residual predictor
 窗外线索不属于本窗待办；晚发现不按发现日挪论文归属，不自动启动另日或Weekly。
 
 ## 6. 复核
+
+本轮补查复核者：root（非本轮作者）；本轮结论：通过。实际范围：23份完整exact-v1题摘全部读完，11潜力/八窗口入口/四贡献EX核验；RSP精确v3 p3–16和p8三列实际读，News原日期和本次打开核验，Ch73实际Readiness与治理段比较；14入口、查询分页与HTTP失败限权以及全部六部分差额实际DAY通过。保留RSP 5分、受影响义务深入、仅报告，不改Books。旧34日期声明修后仅冻结复用，不授本轮新公开日证明；14源有限停止及11日期外部保留不等Coverage全通过。下述旧34 Source/Books/PRE/POST有效复用，不将其旧通过标签作为本轮完成。
+
+本轮写后检查：完成态V3实际通过（只确认格式与可判定一致性）；本地引用78处、缺失0；baseline比较旧34候选实值行/原窗口完全一致、原§4全部连续正文仍完整保留，现候选35。限定本日README和_sources的cached/unstaged diff-check均通过，限定diff实际检查；首次V3发现新增§4标题“补充”前缀与表题不一致，仅统一标题后复跑通过。无共享Books/State/索引改写，无stage/commit/push；已有dirty修改保留。
 
 复核者：root（非本报告作者）
 结论：通过

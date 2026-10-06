@@ -1,0 +1,2036 @@
+NestedVLA: Learning to Consolidate and Generate Skills for Vision-Language-Action Models
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1  Introduction
+2  Related Work
+Vision-Language-Action models.
+Parameter-efficient visual adaptation.
+Hypernetworks.
+Reusable task updates.
+Model merging.
+3  NestedVLA
+3.1  Problem Formulation
+3.2  Overview
+3.3  Skill Acquisition
+Independent fine-tuning.
+Drop-and-rescale compression.
+Operator definition.
+3.4  Skill Consolidation
+3.4.1  Patch-based Parameter Tokenization
+3.4.2  Hypernetwork Architecture
+Per-task patch embeddings.
+Task encoder.
+Concatenate and broadcast.
+Shared FC trunk and LoRA path.
+Multi-head output.
+External rescale.
+3.4.3  Training Objective
+3.5  Skill Generation at Inference
+4  Experiments
+4.1  Setup
+Backbone and skills.
+Benchmarks and metrics.
+Skill compression and hypernetwork.
+Training.
+Baselines.
+4.2  Main Results
+Static merging.
+Dynamic merging.
+Storage analysis.
+4.3  Ablations
+Architectural ingredients.
+Compression operator.
+Loss-side choices.
+4.4  Where Does the Remaining Gap Come From?
+5  Conclusion
+References
+A  Implementation Details
+A.1  Backbone and Skill Collection
+A.2  Hypernetwork Architecture
+A.3  Training Details
+A.4  Evaluation Protocol
+B  Baselines Details
+Per-task FlowSDE (reference upper bound).
+Static merging.
+Dynamic merging.
+C  Storage Accounting
+Static merging.
+Dynamic merging.
+NestedVLA.
+D  Skill Compression Study
+D.1  Operator Comparison at Matched Storage
+D.2  Keep-Ratio Sweep
+E  Supplementary Weight-space Diagnostics
+F  VLM Static Merging Sanity Test
+F.1  Setup
+F.2  Results
+Full-model extension (v2).
+G  Loss-Side Ablation
+Removing the out-of-mask penalty is the most effective lever.
+Loss space and magnitude weighting are non-monotone.
+H  Limitations
+I  Broader Impact
+License: CC BY 4.0
+arXiv:2610.23271v1 [cs.RO] 16 Oct 2026
+NestedVLA: Learning to Consolidate and Generate Skills for Vision-Language-Action Models
+Guodong Du
+Wanyu Lin
+†    †  thanks:  Corresponding author.
+Affiliation:  Department of Computing, The Hong Kong Polytechnic University
+Email:    duguodong7@gmail.com
+wan-yu.lin@polyu.edu.hk
+Abstract
+Vision–Language–Action (VLA) models promise generalist robotic
+agents, yet consolidating skills learned across heterogeneous tasks and
+environments remains difficult: training data is fragmented across
+platforms, joint multi-task training suffers from interference, and model
+merging tends to introduce parameter conflicts or require architectural
+changes. We instead advocate a paradigm in which skills are first learned
+independently and then consolidated post hoc. To this end, we propose
+NestedVLA , which replaces parameter aggregation with
+parameter generation : a nested hypernetwork, conditioned on the
+target task, synthesizes task-adaptive action-expert parameters that compose
+with a frozen base VLA. Task-specific compressed VLM residuals are retained
+separately. This formulation enables flexible task-conditioned skill reuse
+while mitigating interference. Across three RL benchmarks (MetaWorld,
+ManiSkill, CALVIN), NestedVLA outperforms the strongest model-merging
+baseline by    41  41    pp on average, matches per-task fine-tuning within
+1  1    pp on ManiSkill, and substantially closes the gap on CALVIN, pointing
+toward a storage-efficient route to skill consolidation. Code is available
+at  https://github.com/WanyuGroup/NeurIPS2026-NestedVLA .
+1  Introduction
+Vision-language-action (VLA) models combine visual and language understanding
+with embodied control  [ 2 ,  71 ,  26 ,  1 ,  40 ] . Independently
+fine-tuning a common backbone produces policies specialized for different
+robotic benchmarks, but storing one full checkpoint per benchmark duplicates
+most parameters. Joint multi-task training can avoid this duplication when
+data from all benchmarks can be pooled. We instead study post-hoc
+consolidation of policies independently fine-tuned from the same backbone.
+We seek to consolidate their task-specific parameter updates into a compact
+representation without pooling the original training data.
+Figure 1:   Motivation and overview of NestedVLA.
+(a) Model merging combines independently fine-tuned VLA weights into a
+shared model, where incompatible updates can impair the source tasks.
+(b) NestedVLA retains a compressed task-specific VLM update and uses an
+embedded task-conditioned hypernetwork to generate the action-expert update.
+Both updates are applied to a shared base to materialize the selected VLA.
+A natural post-hoc approach is to merge the parameter updates of the
+fine-tuned policies into a single checkpoint. In VLA models, however,
+independently learned updates can interfere strongly when combined: in our
+experiments, simple averaging loses most of the performance of the separate
+policies. Our weight-space analysis finds weak alignment across major
+parameter groups, an incompatibility that is particularly consequential in
+the action expert because it directly governs control
+(Appendix   E  ). This observation is consistent with
+MergeVLA  [ 16 ] , which likewise identifies dependencies
+distributed across action-expert layers as a major obstacle to cross-skill
+merging. These findings motivate a consolidation strategy that preserves
+policy-specific parameter structure rather than collapsing all updates into
+one set of weights.
+We propose  NestedVLA , a framework that shifts the paradigm from
+parameter aggregation to parameter generation. A hypernetwork embedded in
+the VLA generates sparse action-expert updates conditioned on the target
+task, while compressed task-specific VLM residuals are retained separately.
+The selected updates compose with a shared base to instantiate a
+task-specific VLA without changing its forward architecture or introducing
+routing supervision. We evaluate NestedVLA on MetaWorld  [ 35 ] ,
+ManiSkill  [ 45 ] , and CALVIN  [ 36 ]  using the open-source
+π  0.5   \pi_{0.5}     [ 40 ]  backbone. NestedVLA outperforms the strongest
+model-merging baseline by    41  41    pp on average, matches per-task fine-tuning
+within    1  1    pp on ManiSkill, and substantially closes the gap on CALVIN.
+2  Related Work
+Vision-Language-Action models.
+Recent VLAs cast robotic control as instruction-following on top of
+pretrained vision-language backbones  [ 2 ,  71 ,  26 ,  24 ,  1 ,  40 ] . OpenVLA  [ 26 ]  discretizes actions into rare
+vocabulary tokens for autoregressive prediction;     π  0   \pi_{0}     [ 1 ]
+pairs the VLM with a separate  action expert  trained via flow
+matching for continuous action chunks;     π  0.5   \pi_{0.5}     [ 40 ]
+extends this design to interleave sub-task narration and low-level
+control. Lighter variants such as VLA-Adapter  [ 51 ]
+preserve multi-task competence at sub-billion-parameter scales. VLAct
+uses representation-centric continued pre-training to preserve VLM priors
+and promote shared action semantics across
+embodiments  [ 63 ] . Across this family, multi-task ability
+is learned from pooled data, requiring co-located datasets and predefined
+skills. We target the regime where these assumptions break: skills are
+acquired  independently  and consolidated  after the fact .
+Parameter-efficient visual adaptation.
+Prompt- and adapter-based methods offer lightweight alternatives to full
+fine-tuning of vision backbones. Recent work makes prompts instance-aware,
+injects structured visual semantics, or searches for layer-specific prompt
+fusion rules  [ 57 ,  58 ,  59 ] .
+Structured low-rank adaptation further filters task-irrelevant directions
+and coordinates updates across layers  [ 61 ] , while visual
+alignment methods address over-reliance on language priors in multimodal
+models  [ 60 ] .   Meng et al. [38]   propose AHRA, a
+hierarchical shared–private expert framework that aligns semantic levels
+while preserving modality-specific evidence. Such methods adapt or organize
+multimodal representations; NestedVLA instead starts from independently trained
+VLA policies and consolidates their parameter updates post hoc.
+Hypernetworks.
+Using one network to predict the parameters of another dates back to
+HyperNetworks  [ 20 ] , with later applications to
+continual learning  [ 46 ]  and multi-task
+NLP  [ 25 ] . Recent parameter generators use latent
+diffusion to synthesize neural-network weights  [ 48 ] , scale
+this process to full models with recurrent generation  [ 49 ] ,
+map task prompts directly to LoRA weights  [ 31 ] , or produce
+instance-conditioned weight updates as functional memory  [ 56 ] .
+NestedVLA inherits this task-conditioned generation premise, but targets a
+sparse top-   K  K    delta on a frozen billion-scale VLA backbone via patch-based
+tokenization, and consolidates independently fine-tuned RL policies rather
+than learning skills from scratch.
+Reusable task updates.
+Related work on language models compresses full-model task updates into
+modular SkillPacks for heterogeneous knowledge fusion and multi-domain
+specialization  [ 13 ,  30 ] . HoE instead extracts
+LoRA-form experts from task vectors and routes them for multi-objective
+alignment  [ 29 ] . These studies concern text-only language models
+and retain or select task modules. NestedVLA studies closed-loop VLA policies
+and generates the action-expert update with an embedded hypernetwork.
+Model merging.
+Model merging combines independently trained checkpoints into a single
+deployable model. Recent surveys organize model fusion across parameter,
+representation, and behavior levels  [ 3 ,  69 ,  70 ] .  Static merging  produces one fixed delta via
+weighted averaging  [ 55 ,  34 ,  22 ,  11 ] ,
+conflict-handling  [ 62 ,  65 ,  5 ,  10 ,  14 ] , or low-rank
+sub-spaces  [ 17 ,  44 ,  33 ,  32 ,  12 ] , with adapter
+counterparts  [ 66 ,  68 ] .  Dynamic
+merging  retains per-task masks, scalars, residuals, or
+frequency-domain corrections at inference  [ 47 ,  21 ,  67 ,  27 ,  7 ] . Recent adaptive methods build reusable
+component-level expert libraries for input-aware recombination  [ 42 ]
+or evolve experts with manifold-aware, training-free routing for continual
+merging  [ 43 ] . Across both regimes the operative verb is
+select : every output value is an interpolation, mask, or
+projection of values already present in      {    θ  m   −   θ  0    }   m   \{\theta_{m}-\theta_{0}\}_{m}   .
+Complementary studies make expert training merge-aware  [ 19 ] ,
+calibrate or quantize post-merge models  [ 18 ,  50 ] ,
+and analyze scaling laws or expert-read budgets for weight-space
+merging  [ 53 ,  52 ] .
+NestedVLA  generates  the per-skill delta from a single shared
+hypernetwork instead. Embodied applications of merging remain largely
+unexplored; ReVLA  [ 6 ]  mitigates single-skill domain
+forgetting rather than multi-skill consolidation.
+3  NestedVLA
+3.1  Problem Formulation
+We consider    M  M    task-specific datasets
+𝔇  =    {   𝒟  m   }    m  =  1   M    \mathfrak{D}=\{\mathcal{D}_{m}\}_{m=1}^{M}   , each corresponding to a
+manipulation task in a benchmark-specific setting. Fine-tuning
+a pretrained VLA backbone     Θ  0   \Theta_{0}    on each     𝒟  m   \mathcal{D}_{m}    yields
+task-specific parameters      {   Θ  m   }    m  =  1   M   \{\Theta_{m}\}_{m=1}^{M}    and the corresponding
+task vector   [ 22 ]
+τ  m   =    Θ  m   −   Θ  0     ,   \tau_{m}\;=\;\Theta_{m}-\Theta_{0},
+(1)
+which captures all parameter changes induced by task    m  m   . We treat each
+τ  m   \tau_{m}    as the parametric encoding of a  skill , a reusable
+manipulation capability acquired in isolation. The goal of skill
+consolidation is to construct a unified model that leverages the entire
+skill set      {   τ  m   }    m  =  1   M   \{\tau_{m}\}_{m=1}^{M}    across diverse downstream scenarios
+without storing full per-task checkpoints or using expert routing.
+A common approach is to merge     {   τ  m   }   \{\tau_{m}\}    into a single static
+delta  [ 22 ,  62 ,  55 ,  34 ,  5 ] .
+However, parameter aggregation in the VLA setting suffers from severe
+inter-task conflicts (Sec.   1  ), as different tasks impose
+contradictory updates on the same parameters. We instead propose to
+generate  parameters. Write
+Θ  m   =   (   Θ  m  V   ,   Θ  m  A   )    \Theta_{m}=(\Theta_{m}^{V},\Theta_{m}^{A})    for the VLM and action-expert
+parameters. In the evaluated v1 system, a generator     𝒢  ϕ   \mathcal{G}_{\phi}   ,
+conditioned on task identifier    m  m   , produces the action-expert delta,
+while a compressed VLM delta     z  m  V   z_{m}^{V}    is retained for the same task:
+τ  ^   m  A   =    𝒢  ϕ   ​   (  m  )     ,     Θ  ^   m  A   =    Θ  0  A   +    τ  ^   m  A     ,     Θ  ^   m  V   =    Θ  0  V   +   z  m  V      .   \hat{\tau}_{m}^{A}=\mathcal{G}_{\phi}(m),\qquad\hat{\Theta}_{m}^{A}=\Theta_{0}^{A}+\hat{\tau}_{m}^{A},\qquad\hat{\Theta}_{m}^{V}=\Theta_{0}^{V}+z_{m}^{V}.
+(2)
+Both updates compose with the frozen base at inference. This shifts the
+action-side problem from  parameter aggregation  to
+parameter generation , avoiding full per-task checkpoints and a
+single conflicting merge.
+3.2  Overview
+Figure 2:   NestedVLA pipeline.  (1)  Skill acquisition :
+each task is fine-tuned independently from the same base     Θ  0   \Theta_{0}
+and the resulting task vector     τ  m   \tau_{m}    is compressed into a sparse
+skill      z  m   =    α  ⋅   τ  m    ⊙   M  m     z_{m}=\alpha\cdot\tau_{m}\odot M_{m}    via drop-and-rescale.
+(2)  Skill consolidation : a single nested hypernetwork
+𝒢  ϕ   \mathcal{G}_{\phi}    is trained against the action-expert portions of
+{   z  m   }   \{z_{m}\}    with a multi-task masked MSE loss.
+(3)  Skill generation : at inference, querying     𝒢  ϕ   \mathcal{G}_{\phi}
+with task id    m  m    generates the action-expert update; the corresponding
+compressed VLM update is retrieved and both compose with the frozen base.
+NestedVLA realizes the generator     𝒢  ϕ   \mathcal{G}_{\phi}    as a hypernetwork
+nested  inside the VLA pipeline: it shares the backbone’s
+parameter layout as its output space, is trained against targets
+derived from the backbone’s task vectors, and is queried jointly with
+the backbone at inference. The framework operates in three stages
+(Fig.   2  ):
+1.
+Skill Acquisition  (§  3.3  ):
+fine-tune     Θ  0   \Theta_{0}    on each     𝒟  m   \mathcal{D}_{m}   , then compress the
+resulting task vector     τ  m   \tau_{m}    into a sparse skill     z  m   z_{m}    via
+drop-and-rescale.
+2.
+Skill Consolidation  (§  3.4  ):
+train one nested hypernetwork     𝒢  ϕ   \mathcal{G}_{\phi}    to absorb all    M  M
+action-expert targets      {   z  m  A   }    m  =  1   M   \{z_{m}^{A}\}_{m=1}^{M}    into shared parameters
+ϕ  \phi    with task embeddings.
+3.
+Skill Generation  (§  3.5  ):
+at inference, query     𝒢  ϕ   \mathcal{G}_{\phi}    with the target task identity
+to generate the action-expert delta, retrieve the compressed VLM
+delta, and compose both updates with the frozen base.
+3.3  Skill Acquisition
+The acquisition stage produces, for each task, a sparse skill
+representation     z  m   z_{m}    that the hypernetwork can later be trained against.
+It comprises two steps: independent fine-tuning to obtain     τ  m   \tau_{m}   , and
+drop-and-rescale compression to turn     τ  m   \tau_{m}    into the compact     z  m   z_{m}   .
+Independent fine-tuning.
+For each     𝒟  m   \mathcal{D}_{m}   , we fine-tune     Θ  0   \Theta_{0}    to obtain     Θ  m   \Theta_{m}
+and the task vector      τ  m   =    Θ  m   −   Θ  0     \tau_{m}=\Theta_{m}-\Theta_{0}   . We make no assumption
+on the training signal:     Θ  m   \Theta_{m}    may be obtained via supervised
+fine-tuning, reinforcement learning, or any combination thereof, as
+long as all     {   Θ  m   }   \{\Theta_{m}\}    are derived from the same     Θ  0   \Theta_{0}   . This
+decoupling matches the data-silo realities of robotics, where
+specialized skills are often trained independently in their native
+pipelines.
+Drop-and-rescale compression.
+A naive option is to use the dense     τ  m   \tau_{m}    as the hypernetwork target,
+but this is prohibitive in both memory and learnability for VLA
+backbones with billions of parameters. We observe that VLA fine-tuning
+deltas exhibit a  sparse-magnitude-dominated  structure: a small
+fraction of elements concentrate the bulk of the delta’s     ℓ  2   \ell_{2}
+energy, while the rest behave like low-amplitude noise; in contrast,
+LLM SFT deltas are typically denser and benefit from
+quantization-plus-low-rank schemes such as D-QRELO  [ 28 ] . We
+compared low-bit quantization, low-rank decomposition, and
+drop-and-rescale on VLA deltas and found drop-and-rescale dominates
+the fidelity-versus-compression trade-off
+(§  D  ); we adopt it throughout NestedVLA.
+Operator definition.
+Let      τ  m   (  p  )    ∈   ℝ   d  p     \tau_{m}^{(p)}\in\mathbb{R}^{d_{p}}    denote the slice of     τ  m   \tau_{m}
+for parameter tensor    p  p   . For a module budget     K  ∈   (  0  ,  1  ]    K\in(0,1]   , we compute
+a per-module top-   K  K    binary mask     M  m   (  p  )    M_{m}^{(p)}    that retains the elements
+with the largest magnitude within the module    p  p    belongs to. The skill
+representation is
+z  m   (  p  )    =    α  ⋅   τ  m   (  p  )     ⊙   M  m   (  p  )      ,   z_{m}^{(p)}\;=\;\alpha\cdot\tau_{m}^{(p)}\odot M_{m}^{(p)},
+(3)
+where    α  \alpha    is a global rescale factor that compensates for the
+energy lost during sparsification. Module-level (rather than
+per-tensor) top-   K  K    allocates the budget adaptively across layers,
+which improves downstream fidelity (§  D  ). The
+mask is deterministic given     τ  m   \tau_{m}   : it is precomputed once and
+applied multiplicatively to the loss at training (Eq.   4  )
+and to the head output at inference (Eq.   5  ). The
+hypernetwork only learns the dense values on      M  m   =  1   M_{m}{=}1    positions.
+3.4  Skill Consolidation
+Given the action-expert targets      {   z  m  A   }    m  =  1   M   \{z_{m}^{A}\}_{m=1}^{M}   , the consolidation
+stage trains a single hypernetwork     𝒢  ϕ   \mathcal{G}_{\phi}    that absorbs the
+entire skill set into one set of shared parameters    ϕ  \phi   . We describe
+the parameter tokenization that exposes the backbone layout to the
+hypernetwork (§  3.4.1  ), the architecture of
+𝒢  ϕ   \mathcal{G}_{\phi}    (§  3.4.2  ), and the training
+objective (§  3.4.3  ).
+3.4.1  Patch-based Parameter Tokenization
+A direct regression       𝒢  ϕ   ​   (  m  )    →   z  m    \mathcal{G}_{\phi}(m)\to z_{m}    over a billion-element
+output is infeasible. We tokenize the parameter space into a 2D grid
+of  patches . Each weight tensor in the backbone is split into
+fixed-size      H  patch   ×   W  patch    H_{\text{patch}}\times W_{\text{patch}}    tiles (large tensors
+span multiple patches; small tensors are zero-padded into one). Every
+patch is uniquely addressed by four indices: parameter type ( ptype ,
+e.g. self-attention    Q  Q   /   K  K   /   V  V   /   O  O   , FFN gate/up/down, layer norm),
+layer  (transformer block index), and  patch_h ,
+patch_w  (tile coordinates within the source tensor). This
+factorization exposes a structured spatial layout to the generator
+while keeping the per-token output dimension bounded. Concrete patch
+counts and tile sizes are reported in §  4.1  .
+3.4.2  Hypernetwork Architecture
+Figure 3:   Architecture of the nested hypernetwork
+𝒢  ϕ   \mathcal{G}_{\phi}   .  Patches are addressed by
+(  ptype  ,  layer  ,  patch_h  ,  patch_w  )   (\texttt{ptype},\texttt{layer},\texttt{patch\_h},\texttt{patch\_w})
+and mapped to four per-task patch embeddings ( patch path ). The
+task id    m  m    is mapped to a task embedding and processed by a
+lightweight  task encoder  (2D convolutions plus average pooling)
+into a single task feature     f  task   f_{\text{task}}   .     f  task   f_{\text{task}}    is
+broadcast across all patches and concatenated with the patch
+embeddings, then passed through a  shared FC trunk  augmented
+with a per-task low-rank LoRA path ( LoRA path ). The trunk
+output is decoded by a  multi-head output  module that allocates
+one fully-connected projection per task ( multi-head path )
+into a flat patch prediction. The precomputed action-expert mask
+M  m  A   M_{m}^{A}    and global rescale    α  \alpha    produce
+τ  ^   m  A   =     α  ⋅   𝒢  ϕ    ​   (  m  )    ⊙   M  m  A     \hat{\tau}_{m}^{A}=\alpha\cdot\mathcal{G}_{\phi}(m)\odot M_{m}^{A}   ; the
+compressed VLM update is retained separately.
+𝒢  ϕ   \mathcal{G}_{\phi}    has five trainable components, illustrated in
+Fig.   3  : per-task  patch embeddings , a  task
+encoder , a  concat-and-broadcast  step, a  shared FC trunk
+with a per-task LoRA path, and a  multi-head output  module. In our
+ablations (§  4.3  ), the three task-conditioned
+components (patch embeddings, LoRA, multi-head output) are called
+the  patch path ,  LoRA path , and  multi-head path .
+Per-task patch embeddings.
+Each of the four patch indices ( ptype ,  layer ,
+patch_h ,  patch_w ) is mapped through a learnable
+embedding table indexed by both the patch index and the task id. The
+four resulting vectors are concatenated to form a per-patch feature.
+Per-task indexing (as opposed to a single shared table) lets the
+hypernetwork use different effective patch addresses for different
+tasks, which gives a small but consistent gain in our ablations.
+Task encoder.
+The task identifier    m  m    is mapped to a learnable task embedding
+task_emb  ​   (  m  )    \text{task\_emb}(m)   , reshaped onto a small spatial grid, and
+processed by a lightweight 2D convolutional encoder followed by global
+average pooling, yielding a single task feature      f  task   ∈   ℝ   D  t     f_{\text{task}}\in\mathbb{R}^{D_{t}}   . This vector is the only carrier of task identity
+entering the rest of the network. The 2D-conv design is empirical; we
+did not observe meaningful gains from increasing its depth or width.
+Concatenate and broadcast.
+f  task   f_{\text{task}}    is broadcast across all patches and concatenated with
+the four patch embeddings to form a per-patch input
+[    f  task   ;  ptype  ;  layer  ;  patch_h  ;  patch_w   ]   [f_{\text{task}};\,\texttt{ptype};\,\texttt{layer};\,\texttt{patch\_h};\,\texttt{patch\_w}]   .
+This is the only point where task and patch information meet;
+everything before it is either purely task-side or purely patch-side,
+and everything after it is patch-wise.
+Shared FC trunk and LoRA path.
+A shared fully-connected layer of hidden dimension    h  h    with
+non-linearity provides task-invariant feature transport across
+patches. A per-task low-rank LoRA path of rank    r  r    runs in parallel
+to allow each task to slightly perturb the trunk’s representation
+without a separate trunk per task. We ablate both the shared FC and
+the LoRA path in §  4.3  .
+Multi-head output.
+The trunk output is decoded by a multi-head module: each task is
+served by a dedicated fully-connected projection that maps the trunk
+representation to a flat patch prediction, which is then unflattened
+into an      H  patch   ×   W  patch    H_{\text{patch}}\times W_{\text{patch}}    tile. Replacing the
+shared output (with optional low-rank task adapter) by per-task heads
+substantially mitigates multi-task interference at the cost of
+additional parameters in the output module
+(§  4.3  ).
+External rescale.
+The factor    α  \alpha    in Eq.   3   is precomputed from
+{   τ  m   }   \{\tau_{m}\}    and stored externally rather than predicted by the
+hypernetwork. This avoids polluting the regression objective with a
+small number of high-leverage scalars whose gradient signal is
+otherwise dominated by the dense main-value targets.
+3.4.3  Training Objective
+We train     𝒢  ϕ   \mathcal{G}_{\phi}    with a multi-task masked regression loss
+ℒ  ⁡   (  ϕ  )    =      ∑   m  =  1   M    w  m    ⋅   1   |   M  m  A   |     ​    ‖    (     𝒢  ϕ   ​   (  m  )    −   z  m  A    )   ⊙   M  m  A    ‖   2  2     ,   \mathcal{L}(\phi)\;=\;\sum_{m=1}^{M}w_{m}\cdot\frac{1}{|M_{m}^{A}|}\bigl\|\bigl(\mathcal{G}_{\phi}(m)-z_{m}^{A}\bigr)\odot M_{m}^{A}\bigr\|_{2}^{2},
+(4)
+where     |   M  m  A   |   |M_{m}^{A}|    counts the kept action-expert positions and     {   w  m   }   \{w_{m}\}    are
+task-balancing weights that compensate for the heterogeneous
+learnability of different benchmarks (§  4.1  ). Loss is
+computed only on      M  m   =  1   M_{m}{=}1    positions; the base VLA     Θ  0   \Theta_{0}    is
+frozen throughout training, and the only trainable parameters are
+ϕ  \phi    (patch embeddings, task encoder, shared FC, LoRA, multi-head
+output).
+3.5  Skill Generation at Inference
+At test time, given a target task    m  m   , we query the hypernetwork once,
+apply the precomputed action-expert mask and rescale, retrieve the
+compressed VLM update, and add both to the frozen base:
+Θ  ^   m  A   \displaystyle\hat{\Theta}_{m}^{A}
+=    Θ  0  A   +    α  ​   𝒢  ϕ   ​   (  m  )    ⊙   M  m  A      ,   \displaystyle=\Theta_{0}^{A}+\alpha\,\mathcal{G}_{\phi}(m)\odot M_{m}^{A},
+(5)
+Θ  ^   m  V   \displaystyle\hat{\Theta}_{m}^{V}
+=    Θ  0  V   +   z  m  V     .   \displaystyle=\Theta_{0}^{V}+z_{m}^{V}.
+(6)
+The resulting      Θ  ^   m   \hat{\Theta}_{m}    is a complete VLA model that can be
+deployed without any architectural modification, expert routing, or
+runtime mixture computation. A single trained     𝒢  ϕ   \mathcal{G}_{\phi}
+replaces the action-expert portions of    M  M    task-specific checkpoints
+with one shared generator, while retaining compressed VLM updates and
+small task-specific metadata.
+4  Experiments
+We evaluate NestedVLA on three closed-loop manipulation benchmarks and
+ask three questions: (i) can a single nested hypernetwork consolidate a
+heterogeneous skill set without storing a full checkpoint per skill
+(§  4.2  )? (ii) which design choices matter
+(§  4.3  )? (iii) where does the remaining gap to per-task
+fine-tuning come from (§  4.4  )?
+4.1  Setup
+Backbone and skills.
+We instantiate     Θ  0   \Theta_{0}    as     π  0.5   \pi_{0.5}     [ 40 ]  and collect three
+skills by independently fine-tuning with FlowSDE  [ 4 ]  on
+MetaWorld  [ 35 ] , ManiSkill  [ 45 ] , and
+CALVIN  [ 36 ] , yielding task vectors      {   τ  m   }    m  =  1   3   \{\tau_{m}\}_{m=1}^{3}   .
+The backbone factorizes into a VLM half (   ∼  \sim      3.21  3.21    B params) and
+an action expert (   ∼  \sim      0.40  0.40    B params); we confine the hypernetwork
+to the action expert and keep per-task VLM storage, motivated by a
+sanity test
+in which TIES- and WUDI-merged VLMs (with GT action experts) drop
+≥  60   \geq 60    pp on MetaWorld and collapse CALVIN to     0  %   0\%    chain completion.
+Benchmarks and metrics.
+MetaWorld  (   32  32    tasks,    256  256    trajectories) and
+ManiSkill  (   25  25    tasks,    320  320    trajectories) report
+success_once : a trajectory counts as successful if it reaches
+the goal at any point during rollout.  CALVIN ABC-D  (   96  96
+rollouts) is a long-horizon split where each rollout is a chain of
+five  language-conditioned sub-tasks; we report
+success_at_end , the fraction of rollouts that complete the
+entire chain. For diagnostic purposes we also evaluate the  ideal
+top-   K  K    reconstruction      Θ  0   +    τ  m   ⊙   M  m     \Theta_{0}+\tau_{m}\odot M_{m}   , i.e. the GT task
+vector masked at the same sparsity    K  K    but without learning
+𝒢  ϕ   \mathcal{G}_{\phi}   . This upper-bounds any method that uses the same
+K  K    and mask. All evaluations are run with the official
+RLinf  [ 64 ]  pipeline and averaged over    3  3    seeds (typical
+std.     ±   2.7  %    \pm 2.7\%   ).
+Skill compression and hypernetwork.
+Each     τ  m   \tau_{m}    is compressed via drop-and-rescale at per-module top-    K  =   10  %    K{=}10\%
+with global rescale     α  =  1.1   \alpha{=}1.1   . The hypernetwork     𝒢  ϕ   \mathcal{G}_{\phi}
+covers 18 transformer blocks and 9 weight types (   162  162    tensors), tiled
+into     256  ×  256   256{\times}256    patches (    T  =  6,480   T{=}6{,}480    patches per task). The
+shared FC has hidden width     h  =  2048   h{=}2048    with rank-   1024  1024    per-task LoRA,
+and the Multi-head Output allocates one     h  →  65,536   h{\to}65{,}536    projection per
+task (   ∼  \sim   430 M trainable parameters).
+Training.
+We train    6,000  6{,}000    steps with batch size    3  3   , base LR     3  ×   10   −  4     3{\times}10^{-4}   ,
+LoRA multiplier    3.0  3.0   ,    600  600   -step warmup and    1,500  1{,}500   -step cosine tail,
+and task weights     (  1.0  ,  0.4  ,  1.0  )   (1.0,0.4,1.0)    for (MW, MA, CA) to compensate for
+the disproportionately large     ‖   τ  MA   ‖   \|\tau_{\text{MA}}\|   . All runs fit on a
+single A6000 GPU (   ∼  \sim   10 h).
+Baselines.
+Static merging : Averaging, TIES  [ 62 ] , WUDI  [ 5 ] ,
+TSV-Merging  [ 17 ] .  Dynamic merging : TALL-Mask  [ 47 ] ,
+EMR-Merging  [ 21 ] , Twin-Merging  [ 32 ] , and
+Free-Merging  [ 67 ] , all of which retain per-task masks (and in
+some cases scaling factors or low-rank residuals) at inference.
+Per-task FlowSDE : independent fine-tuning, the performance
+ceiling.
+4.2  Main Results
+Table 1:   Main result.  Multi-task hypernet on three RL benchmarks. We report
+success_once  (%) for MetaWorld and ManiSkill, and
+success_at_end  (%) for CALVIN, averaged over    3  3    evaluation
+seeds (typical std.     ±   2.7  %    \pm 2.7\%   ).  Params  is the total
+checkpoint storage relative to a single fine-tuned model
+(    1.0  ×  ≈  3.61   1.0\times\approx 3.61    B for     π  0.5   \pi_{0.5}   ). NestedVLA outperforms every
+static and dynamic merging baseline by    41  41    pp on average at the lowest
+storage cost among methods that condition on task identity. Best per
+column in  bold .
+Method
+Params
+MetaWorld
+ManiSkill
+CALVIN
+Avg.
+Reference upper bounds
+Per-task FlowSDE (no merge)
+3.0   ×  \times
+72.3
+88.1
+81.3
+80.5
+Static merging
+Averaging
+1.0   ×  \times
+3.1
+41.3
+0.0
+14.8
+TIES  [ 62 ]
+1.0   ×  \times
+2.0
+37.2
+0.0
+13.1
+WUDI  [ 5 ]
+1.0   ×  \times
+2.7
+32.8
+0.0
+11.8
+TSV-Merging  [ 17 ]
+1.00   ×  \times
+3.9
+36.3
+0.0
+13.4
+Dynamic merging
+TALL-Mask  [ 47 ]
+2.09   ×  \times
+8.1
+53.8
+6.0
+22.6
+EMR-Merging  [ 21 ]
+2.89   ×  \times
+8.2
+54.4
+6.3
+23.0
+Twin-Merging  [ 32 ]
+2.25   ×  \times
+10.4
+56.9
+8.7
+25.3
+Free-Merging  [ 67 ]
+2.16   ×  \times
+9.4
+58.3
+9.1
+25.6
+NestedVLA (ours)
+NestedVLA
+1.5   ×  \times
+37.9
+87.2
+75.0
+66.7
+Table   1   reports our headline result. NestedVLA
+attains an average success rate of     66.7  %   66.7\%   , outperforming every static
+and dynamic merging baseline by    41  41   –   54  54    pp on average. On
+ManiSkill , the multi-task hypernetwork reaches     87.2  %   87.2\%   , within
+0.9  0.9    pp of the per-task FlowSDE ceiling (    88.1  %   88.1\%   ). On  CALVIN ,
+NestedVLA reaches     75.0  %   75.0\%     success_at_end , demonstrating that
+a single shared    ϕ  \phi    can encode the skill at the precision required
+for chain-completion-grade evaluation. The remaining gap to the
+per-task FlowSDE reference (    −  13.8   -13.8    pp on average) concentrates almost
+entirely on  MetaWorld , which we analyze in
+§  4.4  .
+Static merging.
+None of the static merging baselines is competitive on cross-benchmark
+VLA fusion. Plain parameter averaging reaches     14.8  %   14.8\%    average success;
+TIES  [ 62 ] , WUDI  [ 5 ] , and TSV-Merging  [ 17 ]  each
+underperform  averaging despite incorporating sign-conflict
+resolution, weighted updates, or singular-vector compression. All four
+methods drive CALVIN to     0  %   0\%    chain completion, consistent with our
+hypothesis (§  1  ) that VLA representations are more
+sensitive to parameter perturbations than the SFT deltas these methods
+were primarily evaluated on.
+Dynamic merging.
+Retaining per-task information at inference time helps, but only
+modestly. TALL-Mask  [ 47 ]  achieves     22.6  %   22.6\%    average success
+with per-task binary masks at     2.09  ×   2.09\times    storage.
+EMR-Merging  [ 21 ]  adds per-task sign modulators and scalars and
+reaches     23.0  %   23.0\%    at     2.89  ×   2.89\times    storage, the highest budget of any
+baseline. Twin-Merging  [ 32 ]  attaches per-task low-rank
+residuals at     2.25  ×   2.25\times    and reaches     25.3  %   25.3\%   .
+Free-Merging  [ 67 ] , the strongest dynamic baseline,
+applies frequency-domain filtering on per-task deltas and reaches
+25.6  %   25.6\%    at     2.16  ×   2.16\times   . Despite their parameter budgets ranging from
+2.09  ×   2.09\times    to     2.89  ×   2.89\times   , the four methods cluster within a
+3  3    pp band, suggesting the bottleneck is not storage but the
+underlying paradigm of  selecting  from a fixed set of base
+values.
+Storage analysis.
+NestedVLA’s     1.5  ×   1.5\times    overall budget decomposes asymmetrically across
+the two halves of the backbone. On top of the     1.0  ×   1.0\times    shared base,
+the VLM half (   ∼  \sim      3.21  3.21    B parameters,    ∼  \sim       89  %   89\%    of the backbone)
+is stored per-task as a top-    K  =   10  %    K{=}10\%    compressed delta (a    1  1   -bit
+mask plus the kept values), contributing    ∼  \sim       0.35  ×   0.35\times    across the
+three tasks. The action expert (   ∼  \sim      0.40  0.40    B parameters,
+∼  \sim       11  %   11\%   ) is  generated  by the hypernetwork at inference and
+stores only a precomputed mask per task (   ∼  \sim       0.01  ×   0.01\times   ); the
+hypernetwork itself (   ∼  \sim      0.43  0.43    B parameters) adds
+∼  \sim       0.12  ×   0.12\times   . The detailed per-component derivation is given in
+App.   C  . The trainable capacity is therefore
+concentrated on the action side, the harder consolidation target
+where per-task deltas are denser and more conflicting, precisely
+where it is needed. This contrasts sharply with the dynamic baselines:
+EMR-Merging stores per-task masks  and  per-task scaling factors
+uniformly across the entire backbone at     2.89  ×   2.89\times    to reach only
+23.0  %   23.0\%   , while Twin-Merging and Free-Merging both pay
+∼  \sim       2.2  ×   2.2\times    for per-task residuals or frequency-domain
+corrections without distinguishing where additional capacity is
+useful. NestedVLA’s storage advantage at the evaluated three-skill setting
+comes from concentrating generation capacity on the action expert. Total
+storage still grows with the number of skills because compressed VLM
+residuals, masks, and task-specific generator components must be retained,
+but each skill adds substantially less than a full VLA checkpoint.
+4.3  Ablations
+Table 2:  Architecture ablations of     𝒢  ϕ   \mathcal{G}_{\phi}    at    2,000  2{,}000    steps.
+𝒢  ϕ   \mathcal{G}_{\phi}    targets the action expert only; #params refers to
+the hypernetwork itself, not to the underlying     π  0.5   \pi_{0.5}    backbone.
+We ablate each of the three trainable paths – the per-task output
+projection ( Multi-head path ), the per-task patch embeddings
+( patch path ), and the shared-FC LoRA ( LoRA path ) –
+and report the final in-mask standardized loss per task (lower is
+better; averaged over    3  3    seeds, std.     ±  0.05   \pm 0.05   ).
+Variant
+#params
+MW    ↓  \downarrow
+MA    ↓  \downarrow
+CA    ↓  \downarrow
+w/o Multi-head path
+161 M
+1.33
+1.71
+1.36
+w/o patch path
+430 M
+1.02
+1.14
+1.05
+w/o LoRA path
+417 M
+0.91
+0.92
+0.89
+narrow (    h  =  1024   h{=}1024   )
+221 M
+1.43
+1.56
+1.55
+Default
+430 M
+1.08
+1.17
+1.14
+Architectural ingredients.
+Table   2   ablates the three trainable paths of
+𝒢  ϕ   \mathcal{G}_{\phi}    at    2,000  2{,}000    steps, reporting in-mask standardized
+loss.
+Multi-head Output  is the largest single contributor: removing
+this path ( w/o Multi-head path ) and falling back to a shared
+fc_main  plus per-task LoRA caps every benchmark and degrades
+the loss by    0.2  0.2   –   0.5  0.5   , indicating that the per-task targets     {   z  m   }   \{z_{m}\}
+contain genuinely incompatible value distributions that a low-rank
+shared head cannot reconcile.  Per-task patch embeddings , in
+contrast, give small marginal gains ( w/o patch path  differs
+from default by       <  0.1   <0.1    on every task); their primary value is enabling
+sharper task discrimination at convergence rather than reducing average
+loss. Surprisingly, the  shared FC LoRA  is dispensable: removing
+it ( w/o LoRA path ) yields the lowest loss on all three
+benchmarks at     97  %   97\%    of default parameter cost. Once the output is fully
+task-specific via Multi-head Output, additional task-specific
+perturbation in the FC harms early optimization without improving the
+final fit.
+Compression operator.
+We compared three operators at matched parameter budgets in a
+per-task fidelity study (     Θ  0   +    τ  ^   m    \Theta_{0}+\hat{\tau}_{m}    evaluated on
+benchmark    m  m   ). One-bit quantization with
+a per-tensor scalar (adapted from D-QRELO  [ 28 ] ) yields
+reconstruction errors of    0.60  0.60   –   0.96  0.96    and degrades task success by
+−  71   -71    to     −  81   -81    pp, because VLA RL deltas have an approximately
+zero-mean, near-isotropic element distribution that a single scalar
+cannot capture. Augmenting drop-and-rescale with a rank-   r  r    SVD
+residual yields at most     +  0.005   +0.005    absolute fidelity improvement while
+inflating the token budget by an order of magnitude. Drop-and-rescale
+at     K  =   10  %    K{=}10\%    achieves reconstruction errors of    0.30  0.30    on the VLM half
+and    0.19  0.19    on the action half (substantially below the one-bit
+baseline at lower storage than residual SVD), and is the only operator
+of the three that requires no calibration data.
+Loss-side choices.
+We further ablated three knobs of the training objective on top of our
+default. Disabling the out-of-mask penalty (     w  out   =  0   w_{\text{out}}=0   ) is the
+single most effective lever, adding     +  2.4   +2.4    pp average success;
+positions outside     M  m   M_{m}    are masked at inference, so penalizing them at
+train time forces     𝒢  ϕ   \mathcal{G}_{\phi}    to allocate capacity to a function
+it does not need. Magnitude weighting (     |   τ  m   |   p   |\tau_{m}|^{p}   ) and absolute loss
+space each  harm  performance individually but combine
+constructively with      w  out   =  0   w_{\text{out}}=0   , suggesting they act as implicit
+regularizers that compensate for the otherwise unbounded growth of the
+out-of-mask region. The standardized +      w  out   =  0   w_{\text{out}}=0    recipe is our
+default; full ablation results are reported in
+Appendix   G  .
+4.4  Where Does the Remaining Gap Come From?
+Table 3:  Per-task ceiling analysis.  Ideal : the upper bound at sparsity
+K  K   , computed by adding      τ  m   ⊙   M  m    \tau_{m}\odot M_{m}    directly to     Θ  0   \Theta_{0}    without
+learning     𝒢  ϕ   \mathcal{G}_{\phi}   . The MetaWorld gap is bounded by the ideal
+itself, indicating a sparsity-budget effect rather than a
+hypernetwork-capacity problem.
+Task
+NestedVLA
+Per-task FlowSDE
+Ideal (    K  =   10  %    K{=}10\%   )
+Ideal (    K  =   20  %    K{=}20\%   )
+MetaWorld
+37.9
+72.3
+48.4
+60.2
+ManiSkill
+87.2
+88.1
+87.5
+87.5
+CALVIN
+75.0
+81.3
+78.1
+85.4
+Table   3   localizes the remaining gap to
+MetaWorld. On ManiSkill and CALVIN, NestedVLA reaches     99  %   99\%    and     96  %   96\%
+of the     K  =   10  %    K{=}10\%    ideal respectively, indicating that the hypernetwork
+extracts near-ceiling value from the sparsity budget it was given.
+MetaWorld, in contrast, attains only     37.9  %   37.9\%    against an     72.3  %   72.3\%
+FlowSDE reference. However, the     K  =   10  %    K{=}10\%    ideal itself is only     48.4  %   48.4\%
+on MetaWorld, against which NestedVLA’s retention is also     78  %   78\%   , on
+par with the other two benchmarks.
+The MetaWorld gap is therefore primarily a sparsity-budget problem at
+skill acquisition, not a hypernetwork-capacity problem at
+consolidation. Raising    K  K    to    0.20  0.20    lifts the MetaWorld ideal to
+60.2  %   60.2\%    at little cost elsewhere
+(Tab.   3  ), making per-task adaptive    K  K    a
+natural remedy.
+5  Conclusion
+We studied skill consolidation in VLA models when training data is
+fragmented across benchmark-specific tasks. Standard model-merging methods degrade catastrophically
+on cross-benchmark VLA fusion: the strongest baseline reaches only
+25.6  %   25.6\%    average success across MetaWorld, ManiSkill, and CALVIN. We
+introduced NestedVLA, which replaces action-expert parameter
+selection  with parameter  generation  via a nested
+hypernetwork, reaching
+66.7  %   66.7\%    average success at     1.5  ×   1.5\times    storage (    +  41.1   +41.1    pp over
+the strongest dynamic baseline), and matching per-task fine-tuning
+within    1  1    pp on ManiSkill while reaching the     K  =   10  %    K{=}10\%
+sparsity-budget ceiling on CALVIN. The MetaWorld gap is bounded by
+the top-   K  K    ideal itself, with adaptive sparsity the natural next
+direction.
+Acknowledgments and Disclosure of Funding
+Funding statement.
+This work was supported by the Projects of RIAIoT (Project ID P0065264),
+UDomain Web Hosting Company Limited (Collaboration) (Project ID P0064507),
+and the Innovation and Technology Fund–Guangdong-Hong Kong Technology
+Cooperation Funding Scheme (ITF-TCFS) (Project ID P0049179).
+Competing interests.
+The authors declare that they have no competing interests.
+References
+[1]
+K. Black, N. Brown, D. Driess, A. Esmail, M. Equi, C. Finn, N. Fusai, L. Groom,
+et al.
+π  0   \pi_{0}   : A vision-language-action flow model for general robot
+control.
+arXiv preprint arXiv:2410.24164 , 2024.
+doi:  10.48550/ARXIV.2410.24164 .
+[2]
+A. Brohan, N. Brown, J. Carbajal, Y. Chebotar, J. Dabis, C. Finn,
+K. Gopalakrishnan, K. Hausman, et al.
+RT-1: Robotics transformer for real-world control at scale.
+In  Robotics: Science and Systems (RSS) , 2023.
+doi:  10.15607/RSS.2023.XIX.025 .
+[3]
+S. Cai, Y. Gu, Z. Wang, Y. Wang, Y. Yan, W. Wang, Y. Liu, G. Zhu, S. Huang,
+M. Li, and H. Yang.
+From parameters to behaviors: A survey of model fusion for large
+language models.
+In  Findings of the Association for Computational Linguistics:
+EMNLP 2026 , 2026.
+URL  https://arxiv.org/abs/2609.19553 .
+[4]
+K. Chen, Z. Liu, T. Zhang, Z. Guo, S. Xu, H. Lin, H. Zang, X. Li, et al.
+π  RL   \pi_{\mathrm{RL}}   : Online rl fine-tuning for flow-based
+vision-language-action models.
+arXiv preprint arXiv:2510.25889 , 2025.
+[5]
+R. Cheng, F. Xiong, Y. Wei, W. Zhu, and C. Yuan.
+Whoever started the interference should end it: Guiding data-free
+model merging via task vectors.
+arXiv preprint arXiv:2503.08099 , 2025.
+[6]
+S. Dey, J.-N. Zaech, N. Nikolov, L. Van Gool, and D. P. Paudel.
+ReVLA: Reverting visual domain limitation of robotic foundation
+models.
+In  ICRA , pages 8679–8686. IEEE, 2025.
+doi:  10.1109/ICRA55743.2025.11128823 .
+[7]
+G. Du and W. Lin.
+Dynamic model merging made slim.
+In  Advances in Neural Information Processing Systems , 2026.
+URL  https://arxiv.org/abs/2605.18904 .
+[8]
+G. Du, H. Deng, J. Su, and Y. Huang.
+End-to-end rain streak removal with RAW images.
+arXiv preprint arXiv:2312.13304 , 2023.
+[9]
+G. Du, R. Jiang, S. Yang, H. Li, W. Chen, K. Li, S. K. Goh, and H.-K. Tang.
+Impacts of darwinian evolution on pre-trained deep neural networks.
+In  2024 IEEE International Conference on Systems, Man, and
+Cybernetics (SMC) , 2024a.
+[10]
+G. Du, J. Lee, J. Li, R. Jiang, Y. Guo, S. Yu, H. Liu, S. K. Goh, et al.
+Parameter competition balancing for model merging.
+NeurIPS , 37, 2024b.
+[11]
+G. Du, J. Li, H. Liu, R. Jiang, S. Yu, Y. Guo, S. K. Goh, and H.-K. Tang.
+Knowledge fusion by evolving weights of language models.
+In  Findings of the Association for Computational Linguistics:
+ACL 2024 , pages 11727–11742. Association for Computational Linguistics,
+2024c.
+doi:  10.18653/v1/2024.findings-acl.698 .
+URL  https://aclanthology.org/2024.findings-acl.698/ .
+[12]
+G. Du, Z. Fang, J. Li, J. Li, R. Jiang, S. Yu, Y. Guo, Y. Chen, S. K. Goh,
+H.-K. Tang, D. He, H. Liu, and M. Zhang.
+Neural parameter search for slimmer fine-tuned models and better
+transfer.
+In  Proceedings of the 63rd Annual Meeting of the Association
+for Computational Linguistics (Volume 1: Long Papers) , pages 32668–32687.
+Association for Computational Linguistics, 2025.
+doi:  10.18653/v1/2025.acl-long.1570 .
+URL  https://aclanthology.org/2025.acl-long.1570/ .
+[13]
+G. Du, Z. Li, X. Zhou, J. Li, Z. Shi, W. Lin, H.-K. Tang, X. Li, F. Liu,
+W. Wang, M. Zhang, and J. Li.
+Knowledge fusion of large language models via modular SkillPacks.
+In  International Conference on Learning Representations , 2026.
+URL  https://arxiv.org/abs/2505.18502 .
+[14]
+Z. Fang, G. Du, S. Yu, Y. Guo, Y. Zhang, Y. Cao, J. Li, H.-K. Tang, and S. K.
+Goh.
+To see a world in a spark of neuron: Disentangling multi-task
+interference for training-free model merging.
+In  Proceedings of the 2025 Conference on Empirical Methods in
+Natural Language Processing , pages 15720–15740. Association for
+Computational Linguistics, 2025.
+URL  https://aclanthology.org/2025.emnlp-main.793/ .
+[15]
+J. Frankle, G. K. Dziugaite, D. M. Roy, and M. Carbin.
+Linear mode connectivity and the lottery ticket hypothesis.
+In  ICML , volume 119 of  Proceedings of Machine Learning
+Research , pages 3259–3269. PMLR, 2020.
+[16]
+Y. Fu, Z. Zhang, Y. Zhang, Z. Wang, Z. Huang, and Y. Luo.
+MergeVLA: Cross-skill model merging toward a generalist
+vision-language-action agent.
+arXiv preprint arXiv:2511.18810 , 2025.
+[17]
+A. A. Gargiulo, D. Crisostomi, M. S. Bucarelli, S. Scardapane, F. Silvestri,
+and E. Rodolà.
+Task singular vectors: Reducing task interference in model merging.
+In  CVPR , pages 18695–18705, 2025.
+[18]
+Y. Gu, S. Cai, Z. Wang, W. Wang, Y. Wang, P. Wang, S. Huang, S. Lu, J. Wu, and
+H. Yang.
+FeatCal: Feature calibration for post-merging models.
+In  Advances in Neural Information Processing Systems ,
+2026a.
+URL  https://arxiv.org/abs/2605.13030 .
+[19]
+Y. Gu, Y. Wang, Z. Li, S. Cai, Y. Liu, J. Li, Z. Wang, and H. Yang.
+SMAT: Simple and efficient merge-aware training,
+2026b.
+URL  https://arxiv.org/abs/2609.33437 .
+[20]
+D. Ha, A. M. Dai, and Q. V. Le.
+HyperNetworks.
+In  International Conference on Learning Representations
+(ICLR) , 2017.
+[21]
+C. Huang, P. Ye, T. Chen, T. He, X. Yue, and W. Ouyang.
+EMR-Merging: Tuning-free high-performance model merging.
+NeurIPS , 37:122741–122769, 2024.
+[22]
+G. Ilharco, M. T. Ribeiro, M. Wortsman, L. Schmidt, H. Hajishirzi, and
+A. Farhadi.
+Editing models with task arithmetic.
+In  ICLR . OpenReview.net, 2023.
+URL  https://openreview.net/forum?id=6t0Kwf8-jrj .
+[23]
+J. Jin, H. Liu, Y. Bai, Y. Lou, Z. Wang, T. Yuan, J. Chen, Y. Zhu, F. Zeng,
+X. Zhu, T. Feng, and Y. Xu.
+Unveiling fine-grained visual traces: Evaluating multimodal
+interleaved reasoning chains in multimodal STEM tasks, 2026.
+URL  https://arxiv.org/abs/2604.19697 .
+[24]
+S. Karamcheti, S. Nair, A. Balakrishna, P. Liang, T. Kollar, and D. Sadigh.
+Prismatic VLMs: Investigating the design space of
+visually-conditioned language models.
+In  ICML . OpenReview.net, 2024.
+URL  https://openreview.net/forum?id=6FXtu8clyp .
+[25]
+R. Karimi Mahabadi, S. Ruder, M. Dehghani, and J. Henderson.
+Parameter-efficient multi-task fine-tuning for transformers via
+shared hypernetworks.
+In  Association for Computational Linguistics (ACL) , 2021.
+[26]
+M. J. Kim, K. Pertsch, S. Karamcheti, T. Xiao, A. Balakrishna, S. Nair,
+R. Rafailov, E. P. Foster, et al.
+OpenVLA: An open-source vision-language-action model.
+In  Conference on Robot Learning (CoRL) , volume 270 of
+Proceedings of Machine Learning Research , pages 2679–2713. PMLR,
+2024.
+URL  https://proceedings.mlr.press/v270/kim25c.html .
+[27]
+J. Li, G. Du, J. Li, S. K. Goh, W. Wang, Y. Wang, F. Liu, H.-K. Tang,
+S. Alharbi, D. He, and M. Zhang.
+Multi-modality expansion and retention for LLMs through parameter
+merging and decoupling.
+In  Proceedings of the 63rd Annual Meeting of the Association
+for Computational Linguistics (Volume 1: Long Papers) , pages 30866–30887.
+Association for Computational Linguistics, 2025.
+doi:  10.18653/v1/2025.acl-long.1491 .
+URL  https://aclanthology.org/2025.acl-long.1491/ .
+[28]
+J. Li, S. Song, G. Du, N. Wong, X. Liu, Y. Li, M. Zhang, J. Li, and X. Li.
+D-QRELO: Training- and data-free delta compression for large
+language models via quantization and residual low-rank approximation.
+arXiv preprint arXiv:2604.16940 , 2026a.
+[29]
+Z. Li, G. Du, W. Guo, Y. Zhou, X. Li, W. Wang, F. Liu, Y. Wang, D. Ye,
+M. Zhang, and J. Li.
+Multi-objective large language model alignment with hierarchical
+experts.
+In  International Conference on Learning Representations ,
+2026b.
+URL  https://arxiv.org/abs/2505.20925 .
+[30]
+Z. Li, G. Du, Z. Shi, W. Guo, W. Yao, Y. Zhou, J. Zhang, and J. Li.
+Skill weaving: Efficient LLM improvement via modular Skillpacks.
+In  Annual Meeting of the Association for Computational
+Linguistics , 2026c.
+URL  https://arxiv.org/abs/2605.22205 .
+[31]
+Z. Liang, D. Tang, Y. Zhou, X. Zhao, M. Shi, W. Zhao, Z. Li, P. Wang,
+K. Schürholt, D. Borth, M. M. Bronstein, Y. You, Z. Wang, and K. Wang.
+Drag-and-drop LLMs: Zero-shot prompt-to-weights.
+In  Advances in Neural Information Processing Systems ,
+volume 38, 2025.
+doi:  10.52202/085713-5126 .
+[32]
+Z. Lu, C. Fan, W. Wei, X. Qu, D. Chen, and Y. Cheng.
+Twin-Merging: Dynamic integration of modular expertise in model
+merging.
+NeurIPS , 37:78905–78935, 2024.
+[33]
+D. Marczak, S. Magistri, S. Cygert, B. Twardowski, A. D. Bagdanov, and
+J. van de Weijer.
+No task left behind: Isotropic model merging with common and
+task-specific subspaces.
+arXiv preprint arXiv:2502.04959 , 2025.
+[34]
+M. Matena and C. Raffel.
+Merging models with fisher-weighted averaging.
+In  NeurIPS , 2022.
+[35]
+R. McLean, E. Chatzaroulas, L. McCutcheon, F. Röder, T. Yu, Z. He,
+K. Zentner, R. Julian, et al.
+Meta-World+: An improved, standardized, RL benchmark.
+In  NeurIPS Datasets and Benchmarks Track , 2025.
+[36]
+O. Mees, L. Hermann, E. Rosete-Beas, and W. Burgard.
+CALVIN: A benchmark for language-conditioned policy learning for
+long-horizon robot manipulation tasks.
+IEEE Robotics and Automation Letters , 7(3):7327–7334, 2022.
+doi:  10.1109/LRA.2022.3180108 .
+[37]
+C. Meng, P. Feng, R. Fu, H. L. Lee, X. Du, Z. Kang, Z. Zhang, W. Zhou,
+C. Ouyang, and Z. Gan.
+Group cognition learning: Making everything better through governed
+two-stage agents collaboration.
+arXiv preprint arXiv:2605.00370 , 2026a.
+[38]
+C. Meng, P. Feng, J. J. Pang, C.-T. Liao, R. Fu, Z. Kang, Z. Gan, and
+C. Ouyang.
+Adaptive hierarchical representation alliance for multimodal
+learning.
+arXiv preprint arXiv:2608.22863 , 2026b.
+[39]
+C. Meng, J. Luo, P. Feng, Z. Yan, C. Hu, Z. Gan, and C. Ouyang.
+Mitigating shared-private branch imbalance via dual-branch
+rebalancing for multimodal sentiment analysis.
+arXiv preprint arXiv:2604.25179 , 2026c.
+[40]
+Physical Intelligence, K. Black, N. Brown, J. Darpinian, K. Dhabalia,
+D. Driess, A. Esmail, M. Equi, et al.
+π  0.5   \pi_{0.5}   : A vision-language-action model with open-world
+generalization.
+arXiv preprint arXiv:2504.16054 , 2025.
+doi:  10.48550/ARXIV.2504.16054 .
+[41]
+M. Qi, R. Fu, P. Feng, X. Li, Y. Cai, Y. Guo, S. Zhang, S. J. Fong, L. Ma, and
+B. Li.
+CACR: Reinforcing temporal answer grounding in instructional video
+via candidate-aware causal reasoning.
+arXiv preprint arXiv:2606.08436 , 2026.
+[42]
+H. Qiu, X. Wu, L. Feng, and K. C. Tan.
+Fine-grained model merging via modular expert recombination.
+arXiv preprint arXiv:2602.06552 , 2026a.
+URL  https://arxiv.org/abs/2602.06552 .
+[43]
+H. Qiu, X. Wu, and K. C. Tan.
+Towards adaptive continual model merging via manifold-aware expert
+evolution.
+arXiv preprint arXiv:2604.22464 , 2026b.
+URL  https://arxiv.org/abs/2604.22464 .
+[44]
+G. Stoica, P. Ramesh, B. Ecsedi, L. Choshen, and J. Hoffman.
+Model merging with SVD to tie the knots.
+In  ICLR . OpenReview.net, 2025.
+URL  https://openreview.net/forum?id=67X93aZHII .
+[45]
+S. Tao, F. Xiang, A. Shukla, Y. Qin, X. Hinrichsen, X. Yuan, C. Bao, X. Lin,
+et al.
+ManiSkill3: Gpu parallelized robotics simulation and rendering for
+generalizable embodied AI.
+arXiv preprint arXiv:2410.00425 , 2024.
+doi:  10.48550/ARXIV.2410.00425 .
+[46]
+J. von Oswald, C. Henning, B. F. Grewe, and J. Sacramento.
+Continual learning with hypernetworks.
+In  International Conference on Learning Representations
+(ICLR) , 2020.
+[47]
+K. Wang, N. Dimitriadis, G. Ortiz-Jiménez, F. Fleuret, and P. Frossard.
+Localizing task information for improved model merging and
+compression.
+In  ICML . OpenReview.net, 2024a.
+URL  https://openreview.net/forum?id=DWT9uiGjxT .
+[48]
+K. Wang, D. Tang, B. Zeng, Y. Yin, Z. Xu, Y. Zhou, Z. Zang, T. Darrell, Z. Liu,
+and Y. You.
+Neural network diffusion.
+arXiv preprint arXiv:2402.13144 , 2024b.
+[49]
+K. Wang, D. Tang, W. Zhao, K. Schürholt, Z. Wang, and Y. You.
+Scaling up parameter generation: A recurrent diffusion approach.
+In  Advances in Neural Information Processing Systems ,
+volume 38, 2025a.
+doi:  10.52202/085713-3111 .
+[50]
+W. Wang, Y. Gu, S. Cai, Y. Wang, P. Wang, J. Wu, and H. Yang.
+E-PMQ: Expert-guided post-merge quantization with merged-weight
+anchoring, 2026a.
+URL  https://arxiv.org/abs/2605.16882 .
+[51]
+Y. Wang, P. Ding, L. Li, C. Cui, Z. Ge, X. Tong, W. Song, H. Zhao, et al.
+VLA-Adapter: An effective paradigm for tiny-scale
+vision-language-action model.
+arXiv preprint arXiv:2509.09372 , 2025b.
+doi:  10.48550/ARXIV.2509.09372 .
+[52]
+Y. Wang, Y. Gu, S. Lu, Y. Yang, Z. Yan, C. Xie, J. Wu, and H. Yang.
+Access sets matter: Budgeting expert reads for scalable weight-space
+model merging, 2026b.
+URL  https://arxiv.org/abs/2605.29489 .
+ICML 2026 Workshop on Weight-Space Symmetries.
+[53]
+Y. Wang, Y. Gu, Y. Zhang, Q. Zhou, Z. Yan, C. Xie, X. Wang, J. Yuan, and
+H. Yang.
+Model merging scaling laws in large language models.
+In  Proceedings of the 43rd International Conference on Machine
+Learning , volume 306 of  Proceedings of Machine Learning Research ,
+pages 126402–126437. PMLR, 2026c.
+URL  https://proceedings.mlr.press/v306/wang26bl.html .
+[54]
+Y. Wang, Y. Li, J. Liu, F.-L. Zhang, X. Zheng, and N. A. Dodgson.
+RL-ScanIQA: Reinforcement-learned scanpaths for blind     360  ∘   360^{\circ}
+image quality assessment.
+In  Proceedings of the IEEE/CVF Conference on Computer Vision
+and Pattern Recognition (CVPR) , pages 37401–37412, 2026d.
+[55]
+M. Wortsman, G. Ilharco, S. Y. Gadre, R. Roelofs, R. Gontijo-Lopes, A. S.
+Morcos, H. Namkoong, A. Farhadi, et al.
+Model soups: Averaging weights of multiple fine-tuned models improves
+accuracy without increasing inference time.
+In  ICML , pages 23965–23998. PMLR, 2022.
+[56]
+M. Wu, X. Zhao, Z. Wang, R. Feng, Z. Wang, and K. Wang.
+HY-WU (part i): An extensible functional neural memory framework
+and an instantiation in text-guided image editing.
+arXiv preprint arXiv:2603.07236 , 2026.
+[57]
+X. Xiao, Y. Zhang, X. Li, T. Wang, X. Wang, Y. Wei, J. Hamm, and M. Xu.
+Visual instance-aware prompt tuning.
+In  Proceedings of the 33rd ACM International Conference on
+Multimedia , pages 2880–2889, 2025.
+doi:  10.1145/3746027.3754858 .
+URL  https://doi.org/10.1145/3746027.3754858 .
+[58]
+X. Xiao, X. Li, C. Han, T. Wang, L. Zhao, Y. Zhang, G. Hu, R. Jiang, X. Li,
+X. Wang, and M. Xu.
+Adapting vision foundation models with cascaded semantics.
+Transactions on Machine Learning Research , 2026a.
+ISSN 2835-8856.
+URL  https://openreview.net/forum?id=SSsobNZJPO .
+[59]
+X. Xiao, X. Li, Y. Zhang, C. Han, T. Liu, T. Wang, R. Jiang, J. Hamm, X. Wang,
+and M. Xu.
+Layer-specific prompt fusion discovery via differentiable search in
+vision foundation models.
+In  Computer Vision – ECCV 2026 , volume 17077 of  Lecture
+Notes in Computer Science , pages 391–409. Springer, 2026b.
+doi:  10.1007/978-3-032-37041-9_21 .
+URL  https://doi.org/10.1007/978-3-032-37041-9_21 .
+[60]
+X. Xiao, C. Liu, C.-T. Liao, Y. Zhang, Q. Lan, Y. Wei, L. Zhao, J. Wang, J. Gu,
+M. Ye, T. Wang, and H. Xu.
+Staying VIGILant: Mitigating visual laziness via counterfactual
+visual alignment in MLLMs.
+In  Computer Vision – ECCV 2026 , volume 17014 of  Lecture
+Notes in Computer Science , pages 287–305. Springer, 2026c.
+doi:  10.1007/978-3-032-37232-1_16 .
+URL  https://doi.org/10.1007/978-3-032-37232-1_16 .
+[61]
+X. Xiao, C. Ma, Y. Zhang, C. Liu, Z. Wang, Y. Li, L. Zhao, G. Hu, T. Wang, and
+H. Xu.
+Not all directions matter: Towards structured and task-aware low-rank
+model adaptation.
+In  Proceedings of the 64th Annual Meeting of the Association
+for Computational Linguistics (Volume 1: Long Papers) , pages 2132–2154.
+Association for Computational Linguistics, 2026d.
+doi:  10.18653/v1/2026.acl-long.97 .
+URL  https://aclanthology.org/2026.acl-long.97/ .
+[62]
+P. Yadav, D. Tam, L. Choshen, C. A. Raffel, and M. Bansal.
+TIES-Merging: Resolving interference when merging models.
+In  NeurIPS , 2023.
+[63]
+S. Yang, C. Wang, Y. Chen, Z. Wang, L. Tang, H. Gui, J. Ye, C. Lu, X. Wu,
+M. Zhu, P. Chen, S. Liu, Z. Tian, H. Zhao, B. Yu, and J. Jia.
+Beyond data scaling: Representation-centric continued pre-training
+for vision-language-action models.
+In  Advances in Neural Information Processing Systems , 2026.
+URL  https://arxiv.org/abs/2608.27550 .
+[64]
+C. Yu, Y. Wang, Z. Guo, H. Lin, S. Xu, H. Zang, Q. Zhang, Y. Wu, et al.
+RLinf: Flexible and efficient large-scale reinforcement learning
+via macro-to-micro flow transformation.
+arXiv preprint arXiv:2509.15965 , 2025.
+[65]
+L. Yu, B. Yu, H. Yu, F. Huang, and Y. Li.
+Language models are super mario: Absorbing abilities from homologous
+models as a free lunch.
+In  ICML . OpenReview.net, 2024.
+URL  https://openreview.net/forum?id=fq0NaiU8Ex .
+[66]
+J. Zhang, S. Chen, J. Liu, and J. He.
+Composing parameter-efficient modules with arithmetic operations.
+arXiv preprint arXiv:2306.14870 , 2023.
+[67]
+S. Zheng and H. Wang.
+Free-merging: Fourier transform for model merging with lightweight
+experts.
+arXiv preprint arXiv:2411.16815 , 2024.
+[68]
+S. Zheng, H. Wang, C. Huang, X. Wang, T. Chen, J. Fan, S. Hu, and P. Ye.
+Decouple and orthogonalize: A data-free framework for LoRA merging.
+arXiv preprint arXiv:2505.15875 , 2025.
+[69]
+Q. Zhou, Y. Zhang, Y. Gu, Y. Wang, Z. Sang, Z. Yan, Z. Li, S. Zhang, F. Wu, and
+H. Yang.
+Democratizing AI through model fusion: A comprehensive review and
+future directions.
+Nexus , 2025.
+[70]
+Q. Zhou, Y. Zhang, Y. Gu, Y. Wang, Z. Yan, Z. Li, C. Y. Chung, and H. Yang.
+Model fusion for scalable and sustainable artificial intelligence: A
+review and outlook.
+Journal of Modern Power Systems and Clean Energy , 14(1):37–49, 2026.
+[71]
+B. Zitkovich, T. Yu, S. Xu, P. Xu, T. Xiao, F. Xia, J. Wu, P. Wohlhart, et al.
+RT-2: Vision-language-action models transfer web knowledge to
+robotic control.
+In  Conference on Robot Learning (CoRL) , volume 229 of
+Proceedings of Machine Learning Research , pages 2165–2183. PMLR,
+2023.
+URL  https://proceedings.mlr.press/v229/zitkovich23a.html .
+Appendix Overview
+This appendix provides supplementary material that supports the main
+paper. We organize it into four sections.
+Appendix   A    reports the full
+implementation details of NestedVLA, including hypernetwork
+architecture, training hyperparameters, and evaluation protocol, for
+reproducibility.
+Appendix   B    describes every baseline used
+in Table   1  , listing their merge mechanism and
+the configuration we used.
+Appendix   C    makes the parameter budgets
+reported in Table   1   explicit, deriving the
+Params  \mathrm{Params}    column entry-by-entry.
+Appendix   D    expands the discussion of
+skill compression in §  4.3  , comparing one-bit
+quantization, low-rank decomposition, and drop-and-rescale on VLA
+deltas, and reporting a full keep-ratio sweep that motivates our
+default     K  =   10  %    K{=}10\%   .
+Appendix   F    presents the static VLM
+merging sanity test that justifies our design choice of confining
+𝒢  ϕ   \mathcal{G}_{\phi}    to the action expert and keeping per-task VLM
+storage.
+Appendix   G    reports the full loss-side
+ablation summarized in §  4.3  , including the
+non-monotone interaction between out-of-mask penalty, loss space, and
+magnitude weighting.
+Appendix   H    lists the limitations of the
+current study.
+Appendix   I    states the broader-impact
+considerations referenced in the NeurIPS checklist.
+For broader multimodal context, related studies examine governed agent
+collaboration, reinforcement-learned panoramic scanpaths for quality
+assessment, shared–private branch rebalancing, temporal answer grounding,
+and fine-grained reasoning
+evaluation  [ 37 ,  54 ,  39 ,  41 ,  23 ] .
+Earlier visual studies by the authors investigate evolutionary refinement
+of pretrained networks and RAW-image restoration  [ 9 ,  8 ] .
+Appendix A  Implementation Details
+This section reports the exact hyperparameters, compute budget, and
+evaluation protocol used in our experiments. All quantities not stated
+explicitly in the main paper are listed here.
+A.1  Backbone and Skill Collection
+We use     π  0.5   \pi_{0.5}     [ 40 ]  as the shared base     Θ  0   \Theta_{0}   , which
+factorizes into a    ∼  \sim      3.21  3.21    B-parameter VLM half (a PaliGemma
+backbone with vision tower, language model, and projectors) and a
+∼  \sim      0.40  0.40    B-parameter action expert (transformer decoder for
+continuous action chunks via flow matching). The total backbone is
+∼  \sim      3.61  3.61    B parameters.
+Each per-task skill is obtained by independently fine-tuning     Θ  0   \Theta_{0}
+with FlowSDE  [ 4 ]  on the corresponding benchmark dataset.
+The three skills span heterogeneous task suites (MetaWorld:    32  32
+language-conditioned manipulation tasks; ManiSkill:    25  25    object
+manipulation tasks across diverse rigid bodies; CALVIN: long-horizon
+language-conditioned tabletop tasks). We do not modify the FlowSDE
+training pipeline; the resulting per-task checkpoints constitute our
+{   Θ  m   }    m  =  1   3   \{\Theta_{m}\}_{m=1}^{3}   .
+A.2  Hypernetwork Architecture
+Table 4:  Hypernetwork architecture and training hyperparameters.
+Component
+Value
+Backbone
+Base model
+π  0.5   \pi_{0.5}     (   ∼  \sim      3.61  3.61    B params)
+VLM half
+∼  \sim      3.21  3.21     B params (frozen, per-task stored)
+Action expert
+∼  \sim      0.40  0.40     B params (target of     𝒢  ϕ   \mathcal{G}_{\phi}   )
+Trainable tensors
+162  162     (18 blocks    ×  \times    9 weight types)
+Patch tokenization
+Patch tile size
+256  ×  256   256\times 256
+Total patches per task
+T  =  6,480   T=6{,}480
+Embeddings
+ptype  embedding dim
+256  256
+layer  embedding dim
+128  128
+patch_h  /  patch_w  embed dim
+64  64     each
+Task embedding dim
+512  512     (reshaped to     16  ×  16   16\times 16    grid)
+Task encoder
+Layers
+3  ×   3\times     Conv2D (kernel    5  5   , channels    64  64      →  \to      256  256      →  \to      512  512   )
+Pooling
+global average
+Output dim (    D  t   D_{t}   )
+512  512
+Trunk and output
+Shared FC hidden width    h  h
+2048  2048
+Per-task LoRA rank    r  r
+1024  1024
+Multi-head output
+1  1     FC head per task (    h  →  65,536   h\to 65{,}536   )
+Total trainable params
+∼  \sim      430  430     M
+Skill compression
+Keep ratio    K  K
+0.10  0.10     (per-module top-   K  K   )
+Global rescale    α  \alpha
+1.1  1.1
+Optimization
+Optimizer
+AdamW
+Base learning rate
+3  ×   10   −  4     3\times 10^{-4}
+LoRA group LR multiplier
+3.0  3.0
+Weight decay
+0.1  0.1     (non-LoRA),    0  0    (LoRA)
+Batch size
+3  3     (one example per task per step)
+Total steps
+6,000  6{,}000
+Warmup steps
+600  600
+Cosine tail steps
+1,500  1{,}500
+Task weights     {   w  m   }   \{w_{m}\}
+(  1.0  ,  0.4  ,  1.0  )   (1.0,0.4,1.0)     for (MW, MA, CA)
+Precision
+bfloat16
+Compute
+Hardware
+1  ×   1\times     NVIDIA A6000 (   48  48    GB)
+Peak GPU memory
+42.6  42.6     GB
+Wall-clock training
+∼  \sim      10  10     hours per run
+Table   4   lists the full hypernetwork
+specification. The hypernetwork covers all    162  162    trainable weight
+tensors of the action expert (18 transformer blocks    ×  \times    9 weight
+types: self-attention    Q  Q   /   K  K   /   V  V   /   O  O   , FFN gate/up/down, and two layer
+norms). Tensors are tiled into     256  ×  256   256{\times}256    patches, with
+zero-padding for tensors smaller than     256  ×  256   256{\times}256    and grid splits
+for tensors larger than this size. The total patch count per task is
+T  =  6,480   T=6{,}480   .
+A.3  Training Details
+The hypernetwork is trained with AdamW (base learning rate
+3  ×   10   −  4     3{\times}10^{-4}   , LoRA group multiplier    3.0  3.0   , weight decay    0.1  0.1
+on non-LoRA parameters and    0  0    on LoRA), batch size    3  3    with one
+example per task per step,    6,000  6{,}000    total steps,    600  600   -step linear
+warmup, and a    1,500  1{,}500   -step cosine decay tail. Task-balancing weights
+are     (  1.0  ,  0.4  ,  1.0  )   (1.0,0.4,1.0)    for (MetaWorld, ManiSkill, CALVIN); the lower
+weight on ManiSkill compensates for the disproportionately large
+‖   τ  ManiSkill   ‖   \|\tau_{\text{ManiSkill}}\|   , which would otherwise dominate
+multi-task gradients (see §  G  ).
+All experiments fit on a single NVIDIA A6000 GPU (48 GB memory).
+Wall-clock training time is    ∼  \sim      10  10    hours per run; peak GPU memory
+is    42.6  42.6    GB during training. We enable
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True  to
+reduce fragmentation under bf16. Inference cost is dominated by the
+forward pass through     π  0.5   \pi_{0.5}   ; the additional hypernetwork query
+adds negligible overhead and is performed once per skill switch.
+A.4  Evaluation Protocol
+MetaWorld:     256  256    trajectories across    32  32    tasks; we report
+success_once , the fraction of trajectories that reach the
+goal at any timestep.  ManiSkill:     320  320    trajectories across
+25  25    tasks; same metric.  CALVIN ABC-D:     96  96    rollouts on the
+long-horizon split, each a sequence of five language-conditioned
+sub-tasks; we report  success_at_end , the fraction of
+rollouts that complete the entire chain. All evaluations are run with
+the official RLinf  [ 64 ]  pipeline. All numbers in the
+main paper are averaged over    3  3    evaluation seeds with fixed
+initial-state sampling; the typical seed-to-seed standard deviation
+is     ±   2.7  %    \pm 2.7\%   .
+Appendix B  Baselines Details
+This section describes each baseline used in
+Table   1  : four  static  merging methods
+(producing a single fixed delta), four  dynamic  merging methods
+(retaining per-task auxiliary information at inference), and a
+per-task fine-tuning reference. All baselines start from the same
+set of task vectors      {   τ  m   =   Θ  m   −   Θ  0   }    m  =  1   3   \{\tau_{m}=\Theta_{m}-\Theta_{0}\}_{m=1}^{3}    obtained
+by independently fine-tuning      Θ  0   =   π  0.5    \Theta_{0}=\pi_{0.5}    with FlowSDE on
+MetaWorld, ManiSkill, and CALVIN.
+Per-task FlowSDE (reference upper bound).
+Each task is fine-tuned independently from     Θ  0   \Theta_{0}    with
+FlowSDE  [ 4 ] , the SDE-form flow-matching objective of
+π  0.5   \pi_{0.5}   , yielding three full checkpoints
+{   Θ  m   }    m  =  1   3   \{\Theta_{m}\}_{m=1}^{3}    at     3.0  ×   3.0\times    storage. This is the
+performance ceiling for any approach that does not change the
+underlying RL pipeline.
+Static merging.
+•
+Averaging   [ 55 ,  15 ]  merges the three task
+vectors by element-wise averaging,
+τ  ¯   =    1  M   ​    ∑  m    τ  m      \bar{\tau}=\tfrac{1}{M}\sum_{m}\tau_{m}   , and adds the result to the
+base,      Θ  0   +   τ  ¯    \Theta_{0}+\bar{\tau}   . The simplest possible baseline, with
+no conflict resolution.
+•
+TIES-Merging   [ 62 ]  resolves cross-task
+conflicts in three steps:  trim  (zero-out low-magnitude
+entries of each     τ  m   \tau_{m}   ),  elect-sign  (assign each parameter
+the sign of the task with the largest contribution), and
+disjoint-merge  (average surviving entries across tasks).
+We use trim ratio     k  =  0.8   k{=}0.8    and scaling    0.5  0.5   , which perform best on
+our     π  0.5   \pi_{0.5}    task vectors.
+•
+WUDI-Merging   [ 5 ]  formulates merging as an
+optimization problem that minimizes residual interference between
+the merged delta and the per-task deltas, iteratively refining the
+merged vector via a whitening-style update. We use the v1 variant
+with    300  300    iterations following the authors’ defaults.
+•
+TSV-Merging   [ 17 ]  (Task-Singular-Vector
+Merging) defines a measure of task interference based on the
+interaction of singular vectors of different tasks and merges in
+their joint top subspace. The output is a single fused delta at
+1.00  ×   1.00\times    storage; we retain the rank that captures
+∼  \sim       95  %   95\%    of the per-task spectral energy.
+Dynamic merging.
+Dynamic methods retain per-task auxiliary information (binary masks,
+scalars, low-rank residuals, or frequency-domain corrections) and
+combine it with a shared static merge at inference.
+•
+TALL-Mask   [ 47 ]  stores a per-task binary
+mask      M  m   ∈    {  0  ,  1  }   P    M_{m}\in\{0,1\}^{P}    that selects which positions of the
+averaged delta are used for task    m  m   , and inferences with
+Θ  0   +    τ  ¯   ⊙   M  m     \Theta_{0}+\bar{\tau}\odot M_{m}   . Masks are obtained by thresholding
+|   τ  m   |   |\tau_{m}|    at the per-task top-    K  =   50  %    K{=}50\%    default of the original
+paper.
+•
+EMR-Merging   [ 21 ]  extends TALL-Mask by adding a
+per-task sign modulator and scaling factor that align both the
+direction and magnitude of the masked delta with each source
+model:      Θ  0   +     s  m   ⋅   τ  ¯    ⊙   M  m     \Theta_{0}+s_{m}\cdot\bar{\tau}\odot M_{m}   , where     M  m   M_{m}    now
+combines the binary mask and per-element sign and     s  m   s_{m}    is the
+per-task rescaler. The modulators and scalars are stored
+alongside the masks; we follow the original paper without
+additional top-   K  K    thresholding.
+•
+Twin-Merging   [ 32 ]  stores a shared mean delta
+plus a per-task low-rank residual      A  m   ​   B  m  ⊤    A_{m}B_{m}^{\top}    (rank     r  =  16   r{=}16    in
+our setup) capturing what the mean cannot represent. Inference
+uses      Θ  0   +   τ  ¯   +    A  m   ​   B  m  ⊤     \Theta_{0}+\bar{\tau}+A_{m}B_{m}^{\top}   .
+•
+Free-Merging   [ 67 ]  applies a
+frequency-domain low-pass filter (DCT) on each per-task delta
+before merging, removing high-frequency components that are mostly
+task-specific noise. The filtered deltas are stored with per-task
+binary masks. We use the default DCT cut-off from the original
+paper.
+Table 5:  Hyperparameters used for every baseline in
+Table   1  . “Storage atom” summarises the
+per-task auxiliary state introduced beyond the merged base.
+Method
+Hyperparameter(s) we use
+Storage atom (per task)
+Static merging
+Averaging
+none
+—
+TIES
+trim ratio     k  =  0.8   k{=}0.8   , scaling    0.5  0.5
+—
+WUDI (v1)
+300  300     optimization iterations
+—
+TSV-Merging
+spectral retention       ∼   95  %    \sim\!95\%
+shared SVD factors
+Dynamic merging
+TALL-Mask
+per-task top-    K  =   50  %    K{=}50\%    mask
+binary mask
+EMR-Merging
+per-task top-    K  =   100  %    K{=}100\%    mask + scalar     s  m   s_{m}
+binary mask + scalar
+Twin-Merging
+per-task residual rank     r  =  16   r{=}16
+low-rank residual
+Free-Merging
+default DCT cut-off; per-task top-    K  =    ∼   39  %    K{=}\sim\!39\%    mask
+binary mask
+Reference
+Per-task FlowSDE
+full FlowSDE checkpoint per task (no merging)
+full delta
+Appendix C  Storage Accounting
+This section makes the    Params  \mathrm{Params}    column of
+Table   1   explicit. All ratios are stated
+relative to one fine-tuned     π  0.5   \pi_{0.5}    checkpoint
+(     P  base   =  3.61   P_{\text{base}}{=}3.61    B parameters in    32  32   -bit floats), with
+P  VLM   =  3.21   P_{\text{VLM}}{=}3.21    B and      P  act   =  0.40   P_{\text{act}}{=}0.40    B for the two
+halves. Two storage atoms are used throughout:
+•
+a  binary mask  costs    1  1    bit per parameter, i.e.     1  /  32   1/32    of one    32  32   -bit float at the same denomination;
+•
+a  top-   K  K    kept-value  block costs     K  ⋅  P   K\cdot P    floats.
+Per-task scaling factors and per-task low-rank residuals are
+included where relevant. Table   6   reports the
+component-wise decomposition for every method.
+Static merging.
+Averaging, TIES, WUDI, and TSV-Merging all replace the base with a
+single merged delta and contribute     1.00  ×   1.00\times    total storage.
+Dynamic merging.
+Dynamic methods retain a static merged delta on top of the base
+(    +  1.00   1.00\!+\!1.00    across the first two columns of
+Tab.   6  ) plus per-task auxiliary state at
+inference.  TALL-Mask  adds per-task binary masks of the
+average delta (      M  ⋅  1   /  32   ≈  0.09   M\!\cdot\!1/32\approx 0.09   ), totalling
+2.09  ×   2.09\times   .  EMR-Merging  additionally stores per-task sign
+modulators and scalars, totalling     2.89  ×   2.89\times   .  Twin-Merging
+attaches per-task low-rank residuals (rank     r  =  16   r{=}16   ,
+M  ⋅   r  ⁡   (    d  in   +   d  out    )     /   P  base    ≈  0.25   M\!\cdot\!r(d_{\text{in}}+d_{\text{out}})/P_{\text{base}}\approx 0.25   ),
+totalling     2.25  ×   2.25\times   .  Free-Merging  stores per-task
+frequency-domain modulators (      ≈  0.16   \approx 0.16   ), totalling
+2.16  ×   2.16\times   .
+NestedVLA.
+Storage decomposes asymmetrically across the two halves of the
+backbone. The VLM half is kept per-task as a top-   K  K    compressed
+delta with      K  VLM   =   10  %    K_{\text{VLM}}{=}10\%    (mask plus kept values); the
+action half is generated by     𝒢  ϕ   \mathcal{G}_{\phi}    at inference and only
+its precomputed mask     M  m   M_{m}    is stored:
+storage  NestedVLA   =    1  +   M  ⋅   (    K  VLM   +    1  32     )   ⋅     P  VLM    P  base      +   M  ⋅    1  32    ⋅     P  act    P  base      +     P   𝒢  ϕ     P  base       .   \text{storage}_{\text{NestedVLA}}\;=\;1\;+\;M\cdot\big(K_{\text{VLM}}+\tfrac{1}{32}\big)\cdot\tfrac{P_{\text{VLM}}}{P_{\text{base}}}\;+\;M\cdot\tfrac{1}{32}\cdot\tfrac{P_{\text{act}}}{P_{\text{base}}}\;+\;\tfrac{P_{\mathcal{G}_{\phi}}}{P_{\text{base}}}.
+(7)
+With      K  VLM   =  0.10   K_{\text{VLM}}{=}0.10   ,
+P  VLM   /   P  base    =  0.89   P_{\text{VLM}}/P_{\text{base}}{=}0.89   ,
+P  act   /   P  base    =  0.11   P_{\text{act}}/P_{\text{base}}{=}0.11   , and
+P   𝒢  ϕ    =  0.43   P_{\mathcal{G}_{\phi}}{=}0.43    B, the per-task masks across both
+halves contribute       M  ⋅  1   /  32   ≈  0.09   M\cdot 1/32\approx 0.09    (Mask column of
+Tab.   6  ); the per-task VLM kept values together
+with the shared hypernetwork contribute
+M  ⋅   K  VLM   ⋅   P  VLM    /   P  base    +    P   𝒢  ϕ    /   P  base     ≈   0.27  +  0.12   =  0.39   M\cdot K_{\text{VLM}}\cdot P_{\text{VLM}}/P_{\text{base}}+P_{\mathcal{G}_{\phi}}/P_{\text{base}}\approx 0.27+0.12=0.39
+(    𝒢  ϕ   \mathcal{G}_{\phi}    column), summing to
+1  +   0.09  +   0.39  ≈   1.48  ×  ,   1\;+\;0.09\;+\;0.39\;\approx\;1.48\times,
+which we report as     1.5  ×   1.5\times    in Table   1  .
+NestedVLA remains the lowest-storage method among all approaches that
+condition on task identity,    ∼  \sim       0.7  ×   0.7\times    smaller than the
+strongest dynamic baseline (Free-Merging) and    ∼  \sim       1.5  ×   1.5\times
+smaller than per-task FlowSDE.
+Table 6:  Bit-level storage decomposition for every method in
+Table   1  , in units of one fine-tuned
+π  0.5   \pi_{0.5}    checkpoint (     P  base   =  3.61   P_{\text{base}}{=}3.61    B parameters);
+M  =  3   M{=}3    tasks. Columns: (i) shared backbone or shared merged delta;
+(ii) shared low-rank or mean-delta residual; (iii) per-task masks
+(summed over    M  M   ); (iv) per-task experts, scalars, or low-rank
+residuals (summed over    M  M   ); (v) hypernetwork. “–” indicates the
+component is not used. Numbers may not sum exactly to the headline
+due to rounding.
+Method
+Static
+Shared
+Mask
+Experts / Skills
+𝒢  ϕ   \mathcal{G}_{\phi}
+Total
+Per-task FlowSDE
+–
+–
+–
+3.00  3.00
+–
+3.00  ×   3.00\times
+Static merging
+Averaging
+1.00  1.00
+–
+–
+–
+–
+1.00  ×   1.00\times
+TIES
+1.00  1.00
+–
+–
+–
+–
+1.00  ×   1.00\times
+WUDI
+1.00  1.00
+–
+–
+–
+–
+1.00  ×   1.00\times
+TSV-Merging
+1.00  1.00
+–
+–
+–
+–
+1.00  ×   1.00\times
+Dynamic merging
+TALL-Mask
+1.00  1.00
+1.00  1.00
+0.09  0.09
+–
+–
+2.09  ×   2.09\times
+EMR-Merging
+1.00  1.00
+1.00  1.00
+0.09  0.09
+0.8  0.8
+–
+2.89  ×   2.89\times
+Twin-Merging
+1.00  1.00
+1.00  1.00
+–
+0.25  0.25
+–
+2.25  ×   2.25\times
+Free-Merging
+1.00  1.00
+1.00  1.00
+–
+0.16  0.16
+–
+2.16  ×   2.16\times
+NestedVLA  (ours)
+1.00  1.00
+–
+0.09  0.09
+∼  0   \sim\!0
+∼  0.39   \sim\!0.39
+∼  1.48  ×   \sim\!1.48\times
+Appendix D  Skill Compression Study
+This section expands the brief discussion of compression operators in
+§  4.3  . We compared three operator families on VLA
+fine-tuning deltas: low-bit quantization, low-rank decomposition via
+SVD, and drop-and-rescale (top-   K  K    magnitude masking with global
+rescale). All experiments use per-task fidelity evaluation: the
+compressed delta      τ  ^   m   \hat{\tau}_{m}    is added to     Θ  0   \Theta_{0}    and evaluated
+on the corresponding benchmark    m  m   , isolating compression loss from
+consolidation loss.
+D.1  Operator Comparison at Matched Storage
+Table 7:  Compression operator comparison on VLA fine-tuning deltas, per-task
+fidelity evaluation.  Storage : effective storage relative to
+the dense     τ  m   \tau_{m}   .  Rec. err. : relative Frobenius error
+‖     τ  ^   m   −   τ  m    ‖   F   /    ‖   τ  m   ‖   F    \|\hat{\tau}_{m}-\tau_{m}\|_{F}/\|\tau_{m}\|_{F}    on VLM and action halves.
+Penalty : drop in  success_once  (MW/MA) or
+success_at_end  (CA) vs. FlowSDE. Drop-and-rescale gives
+the best trade-off with no tuning.
+Operator
+Storage
+Rec. err. (VLM / action)
+Penalty (avg)
+1-bit quantization
+∼  \sim       6  %   6\%
+0.60  0.60    –   0.96  0.96
+−  71   -71     to     −  81   -81    pp
+Drop-and-rescale + SVD residual
+∼  \sim       15  %   15\%
+0.295  0.295     /    0.187  0.187
+−  3   -3     to     −  5   -5    pp
+Drop-and-rescale (ours)
+10  %   10\%
+0.300  0.300     /    0.190  0.190
+−  3   -3     to     −  5   -5    pp
+Table   7   compares the three operators at matched
+effective-storage budgets.  One-bit quantization  (adapted
+from D-QRELO  [ 28 ]  by storing each parameter as a    1  1   -bit
+sign with a per-tensor scalar) collapses on VLA deltas: relative
+reconstruction error reaches    0.60  0.60   –   0.96  0.96    across the three tasks,
+and downstream task success drops by     −  71   -71    to     −  81   -81    pp relative to
+per-task FlowSDE. The failure mode is structural: VLA RL deltas have
+an approximately zero-mean, near-isotropic per-element distribution
+(driven by exploration noise and multi-step credit assignment), so a
+single per-tensor scalar cannot capture within-tensor variance. We
+verified this pattern holds for both VLM and action halves and for
+all three benchmarks.
+Drop-and-rescale  (    K  =   10  %    K{=}10\%   ,     α  =  1.1   \alpha{=}1.1   , no SVD residual)
+achieves substantially lower reconstruction errors (   0.30  0.30    on the
+VLM half and    0.19  0.19    on the action half) and retains
+≥   96  %    \geq 96\%    of per-task FlowSDE on ManiSkill and CALVIN. It is the
+only operator of the three that requires no calibration data.
+Drop-and-rescale plus SVD residual  extends drop-and-rescale
+with a per-parameter rank-   r  r    SVD residual, in the spirit of
+“main + residual” designs adapted from D-QRELO. Even at a
+10  %   10\%    residual storage budget, the additional fidelity improvement
+is at most     +  0.005   +0.005    in absolute reconstruction error
+(Table   7  , last column), while the token budget
+inflates by an order of magnitude (rank-   r  r    residuals require
+r  ⋅   (   m  +  n   )    r\cdot(m+n)    extra tokens per parameter). We conclude that VLA
+deltas have no usable low-rank structure beyond the top-   K  K    tail and
+adopt drop-and-rescale alone throughout NestedVLA.
+D.2  Keep-Ratio Sweep
+Table 8:  Keep-ratio sweep at fixed rescale     α  =  1.0   \alpha=1.0   , per-task fidelity
+evaluation. Numbers are  success_once  (%) for MetaWorld and
+ManiSkill;  success_at_end  (%) for CALVIN. The optimal    K  K
+is task-dependent: ManiSkill peaks at     K  =  0.15   K{=}0.15   , CALVIN at     K  =  0.20   K{=}0.20   ;
+MetaWorld is monotonically improving but never reaches its FlowSDE
+reference. Per-task FlowSDE references: MW    72.3  72.3   , MA    88.1  88.1   , CA    81.3  81.3   .
+Task
+K  =  0.05   K{=}0.05
+K  =  0.10   K{=}0.10
+K  =  0.15   K{=}0.15
+K  =  0.20   K{=}0.20
+FlowSDE
+MetaWorld
+21.1
+48.4
+57.4
+60.2
+72.3
+ManiSkill
+86.3
+87.5
+91.6
+87.5
+88.1
+CALVIN
+63.5
+78.1
+78.1
+85.4
+81.3
+Table   8   reports the full keep-ratio sweep
+K  ∈   {   0.05  ,  0.10  ,  0.15  ,  0.20   }    K\in\{0.05,0.10,0.15,0.20\}    at fixed rescale     α  =  1.0   \alpha=1.0    on
+all three benchmarks. Three observations stand out.
+First, the optimal keep-ratio is task-dependent: ManiSkill peaks at
+K  =  0.15   K{=}0.15    (    91.6  %   91.6\%     success_once ,     +  3.4   +3.4    pp over
+FlowSDE), while CALVIN peaks at     K  =  0.20   K{=}0.20    (    85.4  %   85.4\%
+success_at_end ,     +  4.2   +4.2    pp over FlowSDE). MetaWorld is
+monotonically improving from     K  =  0.05   K{=}0.05    to     K  =  0.20   K{=}0.20    but never
+reaches FlowSDE’s     72.3  %   72.3\%    even at     K  =  0.20   K{=}0.20    (    60.2  %   60.2\%   ).
+Second, ManiSkill is non-monotonic in    K  K   :     K  =  0.15   K{=}0.15    outperforms
+both     K  =  0.10   K{=}0.10    and     K  =  0.20   K{=}0.20   . We interpret this as a signal-to-noise
+sweet spot: below    0.15  0.15   , important parameters are dropped; above
+0.15  0.15   , low-magnitude noise is reintroduced. The same sweet-spot
+behavior is consistent with the rescale sweep (not shown).
+Third, on a per-module basis, the embedding layer is
+always  fully dropped at every keep-ratio we tested, while
+small action-interface layers (action input/output projections) are
+retained at    44  44   –    64  %   64\%   . This structural pattern is consistent
+across all three benchmarks and motivates module-level top-   K  K
+selection rather than per-tensor selection. The non-uniform sparsity
+budget across the network is what drop-and-rescale captures
+implicitly and what explicit per-tensor compression cannot.
+Appendix E  Supplementary Weight-space Diagnostics
+We measure source-model deltas relative to the pretrained checkpoint. For
+each parameter group, Table   9   reports the cosine similarity
+of concatenated deltas and sign agreement on valid coordinates. The
+three-way interference quantity is
+IF  =   1  −     ‖    ∑  m    δ  m    ‖   2   /    ∑  m     ‖   δ  m   ‖   2       \mathrm{IF}=1-\|\sum_{m}\delta_{m}\|_{2}/\sum_{m}\|\delta_{m}\|_{2}   .
+Action-expert and VLM-body deltas have low pairwise alignment. These
+statistics describe the source checkpoints; they do not alone establish a
+causal explanation of rollout failure or the superiority of one objective.
+Table 9:  Weight-space diagnostics relative to the pretrained reference.
+Pair columns are concatenated-delta cosine similarities; sign agreement
+spans three pairs. IF denotes interference.
+Group
+MA–MW
+CA–MW
+CA–MA
+Sign agreement
+IF
+Action expert
+0.062
+0.069
+0.106
+0.518–0.533
+0.379
+VLM body
+0.011
+0.081
+0.015
+0.504–0.511
+0.399
+Action interfaces
+0.114
+0.082
+0.073
+0.533–0.546
+0.373
+Appendix F  VLM Static Merging Sanity Test
+The main paper confines the hypernetwork to the action expert and
+keeps per-task VLM storage. This section provides the empirical
+evidence supporting that design choice. We ran a sanity test in which
+only the VLM half is consolidated across tasks (via TIES or WUDI),
+while the action expert remains the GT per-task FlowSDE checkpoint.
+This isolates the cost of VLM consolidation and answers whether the
+VLM is consolidatable in principle.
+F.1  Setup
+For each of the three benchmarks, we constructed a sanity checkpoint
+by replacing only the VLM portion of the per-task FlowSDE
+checkpoint with a 3-task-merged VLM. The action expert is the
+unmodified GT per-task FlowSDE expert. Two merge strategies were
+tested:
+•
+TIES VLM:  TIES-Merging  [ 62 ]  applied with
+trim-rate     k  =  0.8   k{=}0.8    and scaling    0.5  0.5   , applied to the VLM half only.
+•
+WUDI VLM:  WUDI  [ 5 ]  run for    300  300
+optimization iterations on the VLM half.
+We did  not  apply mask or rescale corrections, in order to
+isolate the cost of static VLM consolidation alone. One technical
+exception:     π  0.5   \pi_{0.5}    uses tied embedding for
+language_model.embed_tokens , which is not stored in the
+merged VLM checkpoint; we fall back to per-task FlowSDE for this
+single tensor (representing     0.17  %   0.17\%    of VLM parameters). Each sanity
+checkpoint is evaluated only on its corresponding benchmark; no
+cross-task transfer is measured.
+F.2  Results
+Table 10:  VLM static merging sanity test. Only the VLM half is consolidated
+across the three tasks; the action expert is the GT per-task FlowSDE
+expert. Penalty is the drop in  success_once  (MetaWorld and
+ManiSkill) or  success_at_end  (CALVIN) relative to the
+same-batch FlowSDE reference. Both methods incur penalties exceeding
+25  25    pp on at least two of three benchmarks, with CALVIN collapsing
+to     0  %   0\%    chain completion.
+VLM merge method
+MetaWorld
+ManiSkill
+CALVIN
+FT reference (no merge)
+66.8  66.8
+90.0  90.0
+86.5  86.5
+TIES VLM (    k  =  0.8   k{=}0.8   ,     s  =  0.5   s{=}0.5   )
+1.9  1.9     (    −  64.9   -64.9   )
+64.7  64.7     (    −  25.3   -25.3   )
+0.0  0.0     (    −  86.5   -86.5   )
+WUDI VLM (300 iter)
+4.7  4.7     (    −  62.1   -62.1   )
+80.3  80.3     (    −  9.7   -9.7   )
+0.0  0.0     (    −  86.5   -86.5   )
+Table   10   reports the penalty in success rate
+relative to the same-batch FlowSDE reference. The penalties are
+severe across both methods and all three benchmarks. CALVIN is
+particularly diagnostic:  success_at_end  drops to     0  %   0\%    for
+both methods, meaning no rollout completes the entire five-step
+chain. The MetaWorld penalty exceeds     −  60   -60    pp for both methods,
+indicating that even strong consolidation strategies destroy the
+language-instruction routing required to identify the active sub-task
+within the 50-task suite. Only WUDI on ManiSkill stays within
+10  10    pp of the FlowSDE reference, a single positive cell out of
+six, far below any usable threshold.
+We conclude that static VLM consolidation, even in this favorable
+setting (action expert is GT), is not viable as a standalone design.
+The diagnostic also clarifies what kind of information the VLM
+encodes: cross-task language-instruction grounding, which is highly
+sensitive to parameter perturbation in a way that action-side
+representations are not. NestedVLA therefore confines its
+hypernetwork to the action expert and keeps per-task VLM storage; an
+extension to also generate VLM deltas via a hypernetwork is left to
+future work.
+Full-model extension (v2).
+We use v2 to denote a possible extension in which the addressed parameter
+blocks cover both the VLM and the action expert, so the hypernetwork
+generates both updates for the selected task. This removes the stored VLM
+values but substantially enlarges the output space and may require additional
+generator capacity and metadata. We do not evaluate this extension here;
+all reported results and storage measurements correspond to v1.
+Appendix G  Loss-Side Ablation
+This appendix expands the brief discussion in §  4.3
+of the three knobs of the training objective in
+Eq.   4  : the loss space (per-tensor standardized vs. absolute), an in-mask magnitude weighting      |   τ  m   |   p   |\tau_{m}|^{p}    that
+emphasizes large-magnitude positions, and the out-of-mask penalty
+weight     w  out   w_{\text{out}}    that pulls     𝒢  ϕ   \mathcal{G}_{\phi}    toward zero on
+M  m   =  0   M_{m}{=}0    positions. Table   11   reports five
+configurations evaluated under the    6,000  6{,}000   -step schedule of our
+default architecture.
+Table 11:  Loss-side ablations on top of the architecture in
+Table   2  . We vary the loss space
+( std : per-tensor standardized;  abs : raw absolute),
+the in-mask magnitude exponent    p  p    (each loss term is multiplied by
+|   τ  m   |   p   |\tau_{m}|^{p}   ), and the out-of-mask penalty weight     w  out   w_{\text{out}}   . All
+runs share the same    6,000  6{,}000   -step schedule. Single-seed evaluation;
+the headline NestedVLA number in Table   1   is the
+3  3   -seed average of the same configuration.
+Variant
+space
+p  p
+w  out   w_{\text{out}}
+MW
+MA
+CA
+Avg.
+default
+std
+0
+0.05
+29.7
+90.9
+66.7
+62.4
+w/o  out-penalty (     w  out   =  0   w_{\text{out}}{=}0   )
+std
+0
+0
+37.9
+88.8
+67.7
+64.8
+abs space
+abs
+0
+0.05
+23.0
+87.8
+67.7
+59.5
+mag-weighting (    p  =  1   p{=}1   )
+std
+1
+0.05
+27.7
+86.9
+56.2
+57.0
+abs    +  +    mag     p  =  1   p{=}1
+abs
+1
+0.05
+31.2
+88.1
+70.8
+63.4
+Removing the out-of-mask penalty is the most effective lever.
+Setting      w  out   =  0   w_{\text{out}}=0    improves average success by     +  2.4   +2.4    pp,
+the largest single-knob effect we measure. The mechanism is mechanical:
+positions outside     M  m   M_{m}    are masked away at inference and contribute
+nothing to the deployed delta, so penalizing them at train time
+forces     𝒢  ϕ   \mathcal{G}_{\phi}    to allocate capacity to a function it does
+not need. Empirically, the out-of-mask region’s loss drifts to
+∼  \sim      20  20    in standardized units when      w  out   =  0   w_{\text{out}}=0   , but this
+drift is absorbed by the inference-time mask and does not affect
+deployed performance.
+Loss space and magnitude weighting are non-monotone.
+The other two knobs each  harm  performance when applied alone:
+absolute loss space costs     −  2.9   -2.9    pp and magnitude weighting at
+p  =  1   p{=}1    costs     −  5.4   -5.4    pp relative to the default. Yet
+abs    +  +    mag p=1  recovers most of the loss (    −  0.6   -0.6    pp). We
+interpret this as evidence that absolute and magnitude weighting
+function as implicit regularizers compensating for the unbounded
+growth of the out-of-mask region; when the standardized loss already
+provides scale normalization, neither operator is needed in
+isolation. The standardized    +  +         w  out   =  0   w_{\text{out}}=0    recipe cleanly
+beats every other configuration we tested and is our final default.
+Appendix H  Limitations
+The current evaluation has four limitations that we mark as future
+work.  (i) Skill-set scale.  All experiments consolidate
+M  =  3   M{=}3    skills; we have not measured how training time, hypernetwork
+capacity, or output quality scale as    M  M    grows by an order of
+magnitude.  (ii) Adding new skills.  A new skill currently
+requires extending the per-task patch-embedding table, the per-task
+multi-head output, and re-training the hypernetwork; we have not
+demonstrated incremental or low-cost addition of an unseen skill.
+(iii) VLM consolidation.  The VLM half is kept per-task as a
+top-   K  K    compressed delta, contributing    ∼  \sim       0.35  ×   0.35\times    of the
+1.5  ×   1.5\times    budget; extending the hypernetwork to also generate VLM
+deltas would lower this floor but is left to future work
+(App.   F   shows that naïve static VLM merging is
+not viable).  (iv) Real-robot evaluation.  All numbers are
+from simulated benchmarks (MetaWorld, ManiSkill, CALVIN); transfer to
+physical hardware is not evaluated.
+Appendix I  Broader Impact
+NestedVLA reduces the per-skill storage and serving cost of multi-task
+robotic policies by replacing per-task fine-tuned checkpoints with a
+single shared parameter generator. Like other efficient deployment
+methods, lowering this cost can amplify both beneficial uses
+(low-resource personalisation, on-device multi-skill manipulation,
+faster transfer between robot platforms) and risks already present
+in the underlying VLA stack, such as dual-use of robotic policies in
+unintended physical environments. Our hypernetwork operates entirely
+on parameter deltas of an existing publicly released backbone
+(    π  0.5   \pi_{0.5}   ); we introduce no new training data or labels, and the
+deployed behaviour inherits the biases and failure modes of the
+source FlowSDE checkpoints. All our experiments are simulated; no
+physical robot is operated in this study. We see no direct path from
+the parameter-generation framework to a novel misuse scenario beyond
+those already discussed in the broader VLA literature.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue"  (
+)  button, located in the page header.
+Tip:  You can select the relevant text first, to include it in your report.
+Our team has already identified  the following issues . We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a  list of packages that need conversion , and welcome  developer contributions .
+We gratefully acknowledge support from
+our  major funders ,
+member institutions   ,    ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status  (opens in new tab)
+Major funding support from

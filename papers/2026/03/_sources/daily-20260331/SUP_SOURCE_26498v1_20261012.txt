@@ -1,0 +1,365 @@
+https://arxiv.org/html/2603.26498v1
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract.
+1 Introduction
+2 Motivation
+2.1 Multimodal LLM Architecture
+2.2 Characterization in Isolation
+2.3 Multimodal Workload Analysis
+2.4 Performance Under Memory Pressure
+Takeaways.
+3 System
+3.1 Overview and Objectives
+3.2 Workload Profiler
+3.3 Impact Estimator
+3.4 Request Classifier
+3.5 Queue Manager
+3.6 Priority Regulator
+3.7 Implementation
+4 Evaluation
+4.1 Experimental Setup
+4.2 End-To-end Performance
+4.3 Sensitivity Study
+4.3.1 Impact of Different Workloads
+4.3.2 Impact of Available KV Cache Memory
+4.3.3 Impact of SLO Scale
+4.4 Discussion and Future Work
+5 Related Work
+6 Summary
+Acknowledgements
+References
+License: arXiv.org perpetual non-exclusive license
+arXiv:2603.26498v1 [cs.DC] 27 Mar 2026
+Rocks, Pebbles and Sand: Modality-aware Scheduling for Multimodal Large Language Model Inference
+Konstantinos Papaioannou
+Affiliation: IMDEA Software Institute, Universidad Politécnica de Madrid
+email: konstantinos.papaioannou@imdea.org
+and
+Thaleia Dimitra Doudali
+Affiliation: IMDEA Software Institute
+email: thaleia.doudali@imdea.org
+Abstract.
+Multimodal Large Language Models (MLLMs) power platforms like ChatGPT, Gemini, and Copilot, enabling richer interactions with text, images, and videos. These heterogeneous workloads introduce additional inference stages, such as vision preprocessing and encoding, that inflate latency and memory demand. Existing LLM serving systems, optimized for text-only workloads, fail under multimodality: large requests (e.g., videos) monopolize resources, causing severe head-of-line blocking and performance degradation. Our key insight is that multimodal requests differ by orders of magnitude in resource demands, which we capture through a simple abstraction: videos behave like rocks, images like pebbles, and text like sand. We design RPS-Serve, a modality-aware scheduler that lets sand flow quickly through pebbles and rocks, ensuring interactive responsiveness while avoiding starvation. RPS-Serve classifies requests, prioritizes them dynamically, and applies aging to avoid starvation. Evaluation across state-of-the-art MLLMs shows that RPS-Serve reduces, on average, time-to-first-token (TTFT) by 54% overall, and by 78.5% for latency-critical requests, compared to current systems. RPS-Serve delivers LLM-like responsiveness for MLLMs, with modality-aware scheduling and by making the most efficient use of the available resources.
+1. Introduction
+Large Language Models (LLMs) have revolutionized natural language processing by enabling tasks such as text generation, summarization, and reasoning at scale, becoming the backbone of applications from conversational agents to code assistants. However, as user interactions increasingly involve richer content, such as images, videos, and audio, the paradigm is shifting. Today, widely used platforms such as ChatGPT (OpenAI, 2025b) and integrated models like Gemini (Google, 2024) and Copilot (Microsoft, 2025) already employ Multimodal Large Language Models (MLLMs) to serve users. MLLMs process diverse modalities alongside text, unlocking capabilities such as image reasoning, video summarization, and audio captioning, while preserving the interactive nature of traditional LLMs. Examples of MLLMs include GPT-4 (OpenAI, 2024), Chameleon (Aghajanyan et al., 2024), and open-source models like LLaVA (Liu et al., 2024a). In addition, emerging “any-to-any” models such as Next-GPT (Wu et al., 2024d) go beyond text outputs, enabling responses in multiple modalities (e.g., generating images or videos), further expanding the scope of multimodal AI.
+Figure 1. Multimodal LLM (MLLM) Inference Stages.
+Unlike traditional LLMs, which process only text, MLLMs introduce additional inference stages for non-text modalities. As shown in Figure 1, multimodal inputs undergo vision preprocessing and encoding before reaching the LLM backend. These extra steps increase the latency and memory footprint of inference. Our characterization reveals significant differences between modalities. Text requests, while highly variable in length (ShareGPT, 2024; Taori et al., 2023; Zheng et al., 2023a; Xiang et al., 2025; Bai et al., 2024), remain lightweight compared to visual inputs. Image and video requests occupy one to three orders of magnitude more memory than text, making them substantially more resource demanding. More specifically, videos dominate GPU resources, followed by images, while text remains minimal. Inference latency mirrors this behavior; text completes in milliseconds, images in under a second, and videos often take several seconds. These differences make multimodal workloads fundamentally distinct from homogeneous text workloads (Xiang et al., 2025; Qiu et al., 2025).
+Current LLM serving systems (vLLM Team, 2025b; Wu et al., 2024a; Agrawal et al., 2025; Patel et al., 2024; Zheng et al., 2024) are optimized for text-only workloads and rely on first-come-first-served (FCFS) scheduling, which is simple and incurs minimal overhead (Yu et al., 2022; vLLM Team, 2025b; Agrawal et al., 2025).
+However, our motivational analysis shows that under multimodal workloads, FCFS fails: large image and video requests monopolize GPU resources during prefill, causing severe head-of-line blocking. Latency-critical text requests suffer delays of tens of seconds, which is unacceptable for interactive applications (Patel et al., 2024; Wu et al., 2024b; Zhong et al., 2024; Sun et al., 2024; Stojkovic et al., 2024; Hong et al., 2025; Zhang et al., 2025; Qin et al., 2025).
+Optimizations like chunked prefill (vLLM, 2024; Agrawal et al., 2023; Agrawal et al., 2025) reduce head-of-line blocking for long text prompts, but fail under images or videos whose size is order of magnitude higher. Multimodality causes severe performance degradation and introduces widespread SLO violations, which are further amplified under memory pressure. Our motivational experiments reveal a fundamental limitation: solutions designed for homogeneous text-only workloads cannot handle the heterogeneity of multimodal inference.
+In response, very recent systems tackle multimodal inference by either disaggregating the inference stages (Qiu et al., 2025) or revisiting the attention mechanism of MLLMs to reduce computation (Lin et al., 2025) and cache only relevant tokens (Ning et al., 2024). While effective, these approaches assume either abundance of resources (Qiu et al., 2025) or rely on model-specific modifications of attention (Ning et al., 2024; Lin et al., 2025). Instead, we ask: Can we improve multimodal inference at the system-level, directly addressing the heterogeneous resource demands through improved scheduling?
+To answer this question, we present RPS-Serve, a modality-aware scheduling framework for multimodal LLM inference. RPS-Serve is based on the insight that multimodal requests differ by orders of magnitude in both time and memory, mapping to a simple abstraction: video requests behave like rocks, dominating GPU resources; image requests are pebbles, moderately heavy; and text-only requests are sand, lightweight yet latency-sensitive. This abstraction is possible only in multimodal workloads, where such substantial differences in resource demands emerge. RPS-Serve lets sand flow quickly through pebbles and rocks, ensuring interactive responsiveness while avoiding starvation. Concretely, RPS-Serve classifies requests using resource-aware features and places them into three queues. At each scheduling iteration, a priority regulator fine tunes the static priority (sand first, then pebbles, then rocks) with an aging mechanism to mitigate starvation. Evaluation across state-of-the-art MLLMs shows that RPS-Serve reduces, on average, time-to-first-token (TTFT) by 54% overall, and by 78.5% for latency-critical requests, compared to current systems.
+The specific paper contributions are:
+\bullet
+A detailed characterization of multimodal LLM inference workloads (Section 2).
+\bullet
+The design of RPS-Serve, an open-source modality-aware scheduling framework for multimodal inference (Section 3).
+\bullet
+A comprehensive evaluation of RPS-Serve on state-of-the-art multimodal models and workloads (Section 4).
+2. Motivation
+To understand the unique challenges of serving multimodal LLMs, we characterize representative open-source models (Table 1) and multimodal workloads, focusing on how they differ from traditional text-only LLM inference in resource demands and performance.
+First, we provide background information on the architecture and inference stages of a typical multimodal LLM (Section 2.1).
+Next, we characterize in isolation the performance and memory footprint of requests that include text, image, and video inputs (Section 2.2).
+Finally, we evaluate the performance of current state-of-the-art serving systems under multimodal workloads (Section 2.3) and memory pressure (Section 2.4).
+2.1. Multimodal LLM Architecture
+Figure 1 shows the internal components of a multimodal LLM.
+During inference, the model processes the input data modality (e.g., image, video, etc.) along with the accompanying text question.
+For example, a user may upload an image of a city street along with the text prompt “Describe the architectural style of the buildings in this photo.”
+The multimodal data is first preprocessed into intermediate representations (e.g., pixels for images, frames for videos, etc.) and then encoded into embeddings, that capture the semantics of these modalities in a unified format.
+The text is first split in smaller parts (tokens) and then each token is mapped into an embedding according to the predefined vocabulary.
+Internally, the multimodal LLM incorporates a traditional LLM that processes these embeddings into two distinct inference phases: the prefill (or prompt) phase and the decode phase, which spans multiple iterations (Yu et al., 2022).
+In the prefill phase, the input prompt is processed all together in one iteration or in large chunks if chunked-prefill is enabled (Agrawal et al., 2023; Agrawal et al., 2025).
+Then, during the decode phase the LLM generates the output text one token at a time in an auto-regressive manner, with each token relying on the previously generated ones.
+While this phase is not as compute intensive as prefill, it is memory-intensive due to the use of the KV Cache, which caches the initial prompt and the generated tokens so far, to avoid recomputation.
+The KV Cache can grow significantly in size and reach the GPU memory limits (Gao et al., 2025; Jin et al., 2024; Liu et al., 2024c).
+2.2. Characterization in Isolation
+(a) Memory Footprint
+(b) TTFT Latency
+Figure 2. Characterization of different families of MLLMs.
+We characterize the memory footprint and inference performance across different families of multimodal LLMs, focusing on how these metrics vary by model family and request type.
+We randomly select a thousand requests from each dataset described in Section 4.1 and execute them sequentially under no contention.
+Figure 2 shows the cumulative distribution of the KV Cache memory footprint (measured as number of tokens cached) and the time-to-first-token (TTFT) for representative models.
+The label text refers to traditional text-only requests, while image and video correspond to multimodal requests that include one image or one video per request.
+The x-axis is logarithmic.
+Memory Footprint.
+Figure 2(a) shows that the memory footprint, measured as the number of tokens stored in the KV Cache, differs by several orders of magnitude across modalities.
+Text-only requests are consistently light yet highly diverse, ranging from 10 to 10^{4} tokens across all models.
+In contrast, image requests typically fall between 10^{2} and 10^{3} tokens, while video requests can exceed 10^{5} tokens, especially for Qwen-7B.
+The near-vertical line for image requests reflects the fixed tokenization strategy used by vision encoders: most models convert images into a grid of patches with standardized dimensions, producing almost constant token counts across requests.
+Similarly, video frames are uniformly sampled based on the video’s duration.
+The overall trend is clear; videos dominate memory usage, followed by images, while text-only requests are the most lightweight and diverse.
+Interestingly, small overlaps exist within the same model family, for example between images and videos for LLaVa-7B.
+Latency (TTFT).
+Figure 2(b) shows that TTFT latency also differs by several orders of magnitude across modalities.
+Text-only requests are the fastest, typically around 0.01 seconds and always under 1 second across all models.
+Image requests exhibit slightly higher latency, generally completing in less than 1 second, while video requests are the most time-consuming, ranging between 1 and 10 seconds.
+These distinct patterns reveal a clear hierarchy: videos dominate latency, followed by images, while text-only requests remain extremely fast.
+Similar to memory, we observe small overlaps in latency across long text prompts, image requests, and short videos.
+Insight 1:
+Requests that include visual modalities (image or video) differ by orders of magnitude in space (memory) and time (latency): videos are the most demanding and images moderate, making traditional text-only requests appear extremely lightweight. These characteristics are consistent across multimodal models.
+2.3. Multimodal Workload Analysis
+(a) Normalized Latency
+(b) TTFT Latency
+(c) SLO Violations
+(d) SLO Violation Severity
+Figure 3. Multimodal Workload Performance.
+After characterizing each modality in isolation, we now examine their combined impact under realistic workloads.
+Using the methodology described in Section 4.1, we evaluate traditional text-only (TO) workloads and emerging multimodal mixes: ML introduces a small fraction of image and video requests, while MH significantly increases their share.
+This setup lets us study how growing multimodal intensity impacts inference performance under vLLM’s default FCFS scheduler that uses the chunked prefill optimization (vLLM, 2024).
+Figure 3 reports normalized latency (seconds/token), TTFT, SLO violations and severity across workloads, showing also the individual performance of requests that contain only text, image or video inputs, to highlight the isolated impact on each modality.
+Figure 3 illustrates how multimodal workloads transform inference performance.
+Traditional text-only (TO) workloads achieve normalized latency and TTFT in the millisecond range, with virtually no SLO violations, demonstrating that current inference systems are highly optimized for today’s dominant LLM workloads.
+As we introduce visual modalities, overall performance deteriorates sharply: a light mix (ML) already increases latency and introduces violations, while a heavy mix (MH) causes dramatic slowdowns and SLO violations exceeding 60%.
+Text requests suffer the most: despite being lightweight and latency-critical, they experience order-of-magnitude increases in normalized latency and dominate violation counts, with severity (delay beyond SLO) reaching over 15 seconds, a delay unacceptable for interactive applications, such as chatbots (Liu et al., 2024b; Zhong et al., 2024; Xiang et al., 2025).
+This degradation occurs because resource-heavy image and video requests monopolize GPU memory and compute during prefill, creating severe head-of-line blocking that stalls smaller text requests.
+These effects stem directly from the temporal and spatial dominance of visual modalities observed in Section 2.2, where videos and images require orders of magnitude more memory and time than text. Despite the chunked prefill optimization, the prefill time and memory overheads of images and videos are so substantial, that force lightweight text requests to wait far beyond their latency targets.
+Insight 2:
+Multimodal workloads suffer from severe head-of-line blocking, causing sharp performance degradation and widespread SLO violations.
+Latency-critical text requests are impacted the most, often missing deadlines by large and unacceptable margins.
+Traditional scheduling policies like FCFS, and optimizations like chunked prefill, which are highly effective for homogeneous text-only workloads, fail completely under multimodality.
+2.4. Performance Under Memory Pressure
+(a) Normalized Latency
+(b) TTFT Latency
+(c) SLO Violations
+(d) SLO Violation Severity
+Figure 4. Performance Under Memory Pressure.
+Next, we evaluate how memory constraints impact multimodal inference, a scenario that arises when hosting larger models or under heavy load that stresses KV-cache capacity.
+To study this effect, we progressively halve the memory available for the KV cache and measure inference performance across text, image, and video requests under the heavy mix (MH) workload.
+Figure 4 reports normalized latency (seconds/token), TTFT, SLO violations and severity for each request type as memory decreases.
+Reducing the memory available for the KV cache has a dramatic impact on multimodal inference.
+Normalized latency and TTFT rise sharply as memory shrinks, and SLO violations surge, reaching up to 90% at the lowest memory setting, indicating complete system saturation.
+Text and image requests suffer the most: their SLO violation rates climb to 70–90%, with severity exceeding 40 seconds, which is unacceptable for interactive applications such as chatbots (OpenAI, 2025a).
+Under tight memory budgets, large video requests can monopolize the KV cache, leaving little space for others and causing severe head-of-line blocking.
+Insight 3:
+Limited memory availability makes multimodal inference significantly harder.
+When the KV-cache capacity is constrained, resource-heavy requests like videos monopolize memory, leading to severe head-of-line blocking.
+This amplifies the limitations of existing solutions designed for traditional LLMs and homogeneous workloads.
+Takeaways.
+Our motivational observations reveal a fundamental limitation of existing inference systems tailored for LLMs: policies optimized for homogeneous text-only workloads fail under multimodality, leading to severe head-of-line blocking, resource monopolization, and widespread SLO violations.
+Memory pressure further amplifies these effects, making traditional scheduling approaches inadequate for modern multimodal workloads.
+3. System
+3.1. Overview and Objectives
+To overcome the limitations identified in Section 2, we propose a modality-aware scheduling framework that explicitly accounts for the heterogeneous resource demands of multimodal requests.
+We introduce RPS-Serve, a serving system named RPS-Serve (Rocks, Pebbles, and Sand Serving), which operationalizes these insights through a simple yet powerful abstraction.
+In multimodal workloads, resource and time requirements differ by orders of magnitude across modalities: video requests behave like rocks, dominating both time and memory; image requests are pebbles, moderately heavy; and text-only requests are sand, lightweight yet latency-sensitive. RPS-Serve leverages this categorization to prioritize responsiveness for sand while mitigating starvation for pebbles and rocks.
+The concept of rocks, pebbles, and sand originates from time-management practices (Covey et al., 1994; BetterUp, 2024; NineTy.io, 2025; AppleSeeds, 2024), which advocate prioritizing large tasks first.
+Our key insight is to invert this principle for multimodal inference: instead of scheduling the largest requests first, we prioritize the smallest and most latency-sensitive ones (text-only) which typically have very short SLOs (Agrawal et al., 2025; Stojkovic et al., 2024). Larger requests, such as images and videos, which dominate both time and memory, are scheduled later in a controlled manner. By adapting this established prioritization concept to multimodal inference, RPS-Serve lets the sand flow quickly through pebbles and rocks.The design of RPS-Serve is guided by two objectives:
+[O1]
+Latency-Critical Scheduling: Prioritize requests that are latency-sensitive (sand) to minimize inference latency and deliver interactive responsiveness under multimodal contention.
+[O2]
+Starvation-aware Scheduling: Prevent starvation of resource-heavy requests (pebbles and rocks) without compromising sand-first responsiveness, delivering balanced inference across all modalities.
+To achieve these objectives, RPS-Serve begins by estimating the temporal and spatial impact of each incoming request using metadata and profiling-based models. Based on these estimates, requests are classified into three categories (rocks, pebbles, and sand) and placed into separate queues, enabling distinct management for each class. RPS-Serve starts with a static priority order across queues: sand first, followed by pebbles, then rocks, while maintaining first-come-first-served (FCFS) within each queue. To prevent starvation, RPS-Serve incorporates an aging mechanism that gradually increases the priority of waiting requests, ensuring that resource-heavy requests (pebbles, rocks) eventually make progress while preserving sand-first responsiveness. At each scheduling iteration, RPS-Serve evaluates the state of all queues and dynamically adjusts priorities to select the next batch of requests. This decision may involve admitting new requests, reshaping batches, or preempting ongoing requests when necessary, since the prefill time of a new request can dominate batch latency (Agrawal et al., 2023; Agrawal et al., 2025; Wu et al., 2024a). By continuously revisiting priorities, RPS-Serve enables fast execution for latency-sensitive sand requests without sacrificing overall progress across modalities.
+Figure 5 illustrates the system components that implement this procedure:
+\bullet
+Workload Profiler: Builds offline performance profiles for multimodal models across text, image, and video of varying sizes (Section 3.2).
+\bullet
+Impact Estimator: Estimates the temporal and spatial impact of an incoming request, specifically, its prefill latency and GPU memory footprint (Section 3.3).
+\bullet
+Request Classifier: Classifies requests into rocks, pebbles, or sand based on the combined latency and memory estimates provided by the Impact Estimator (Section 3.4).
+\bullet
+Queue Manager: Maintains three independent queues for rocks, pebbles, and sand, tracks queue-level metrics, and later enforces the ordering determined by the Priority Regulator (Section 3.5).
+\bullet
+Priority Regulator: At each iteration, evaluates all queues and updates priorities to select the next batch. It uses impact estimates and request classifications to guide decisions and communicates the final batch order back to the Queue Manager. (Section 3.6).
+Together, these components instantiate the modality-aware scheduling principles of RPS-Serve, ensuring that every scheduling decision is directly informed by the underlying rocks, pebbles, and sand abstraction.
+Figure 5. RPS-Serve System Components.
+3.2. Workload Profiler
+The Workload Profiler is an offline component that builds performance profiles for each model–modality pair, providing the foundation for accurate latency estimation and memory projection during scheduling.
+Profiling captures modality-specific characteristics that strongly influence inference memory footprint and latency, as observed in Figures 2(a) and 2(b).
+To construct a profile, the system executes a representative workload for the target modality against the chosen MLLM, processing one request at a time to eliminate interference.
+More specifically, it runs inference against the target MLLM for increasing size of text prompt lengths, images and videos using publicly available datasets, as the ones used throughout our experiments.
+For each request, the profiler records the following key metrics: preprocessing time, encoder time, and prefill time, along with the number of tokens that the MLLM generates for the corresponding inputs (text prompts, images and videos).
+Profiling runs once per model during registration, with duration depending on the dataset size and model complexity; in our experiments (Figures 2(a), 2(b)), it took 20 minutes, on average, per modality–model pair.
+All collected data is stored as it will be later used by the Impact Estimator and the Request Classifier.
+3.3. Impact Estimator
+The Impact Estimator predicts the temporal and spatial footprint of each request to guide scheduling, focusing on two metrics: prefill latency and memory footprint, which strongly differentiate rocks, pebbles, and sand (Figures 2(b) and 2(a)).
+Figure 6 decomposes the time-to-first-token (TTFT) latency into its main components, preprocessing, encoder, and prefill (LLM time), for different modalities (text, image, video) across multiple MLLM families and sizes.
+The coloring of the bars matches the internal components of an MLLM shown in Figure 1.
+We observe that for text requests preprocessing and encoding is negligible. In contrast, for images and videos the time breakdown depends on the model family and size.
+For example, Pixtral spends most time in prefill, while Qwen and Gemma allocate more to preprocessing and encoding.
+Larger models further amplify prefill latency.
+This variation in the TTFT breakdown motivates model- and modality-specific prefill estimators.
+For text requests, prefill scales predictably with prompt length, so we use a lightweight linear regression model, consistent with prior works (Hong et al., 2025; Jain et al., 2025; Zhang et al., 2025; Huang et al., 2025). For image and video requests, where latency is higher and variance greater, we employ quantile regression targeting the 90th percentile to avoid underestimation and protect SLO compliance.
+Figure 7 validates this approach: prediction errors remain within a few milliseconds even for visual-heavy requests whose TTFT spans seconds, confirming that simple, modality-specific models are accurate.
+During system initialization, these models are trained offline using profiling data from the Workload Profiler with negligible overhead and cached for reuse.
+At runtime, the Impact Estimator predicts prefill latency and KV Cache memory footprint (as number of tokens) for each request.
+It then forwards these estimates to the Request Classifier and Priority Regulator to facilitate scheduling decisions.
+Figure 6. TTFT Breakdown.
+Figure 7. Prefill Estimator Accuracy.
+3.4. Request Classifier
+The Request Classifier is the core of RPS-Serve, as it operationalizes our rocks–pebbles–and–sand abstraction and enables modality-aware scheduling.
+For this abstraction to realize, we need to identify which requests are rocks, pebbles, and sand; in other words, we must classify incoming requests into these three categories.
+We first attempt a “naive” classification that assigns requests based on modality: text \rightarrow sand, image \rightarrow pebbles, video \rightarrow rocks. This approach is neither accurate nor general, as it assumes all text requests are small and all images or videos are large. In practice, long text prompts can match the resource demands of images, and short videos can resemble images, as shown in Figures 2(b)- 2(a). Moreover, it ignores differences across model families, limiting adaptability to new modalities (e.g., audio) and evolving workload characteristics.
+To overcome these limitations, we design a smart classifier that relies on resource-aware features rather than coarse modality labels. Specifically, it uses prefill latency and KV-cache footprint estimated by the Impact Estimator as input features. Leveraging profiling data from the Workload Profiler, we train a lightweight clustering model for each MLLM to partition requests into three categories (sand, pebbles, and rocks) based on their resource profile. At runtime, the classifier constructs the feature vector for each incoming request and assigns it to the most appropriate category, ensuring that classification reflects both temporal and spatial impact.
+Performance effects of classification. To highlight the importance of accurate classification, we compare inference performance under two scheduling policies: (i) vLLM’s default FCFS with chunked prefill and (ii) a static priority-based policy that serves sand first, then pebbles, then rocks, while maintaining FCFS within each category. We evaluate this policy under a naive classifier (based solely on modality) and our smart classifier (based on resource-aware features). Figure 8 reports inference performance under the heavy mix (MH) workload.
+Compared to vLLM’s FCFS baseline, introducing classification and priority-based scheduling reduces overall normalized latency by roughly 50% and SLO violations by about 45%. For sand and pebbles, the improvement is even more pronounced: normalized latency drops by nearly 60% for sand and 50% for pebbles. Interestingly, naive classification has the opposite effect on rocks, severely penalizing them by mapping all video requests to the lowest priority. As a result, rocks experience the highest latency and SLO violation severity under naive classification. In contrast, the smart classifier dramatically improves their performance, reducing their normalized latency by more than 50%. Overall, these results highlight that resource-aware classification not only accelerates small requests but also ensures timely progress for large ones, enabling balanced performance across all modalities.
+Key Insight:
+Accurate classification is the foundation for priority-based modality-aware scheduling, leveraging the fact that requests differ by orders of magnitude in time and memory compared to traditional LLMs.
+(a) Normalized Latency
+(b) TTFT Latency
+(c) SLO Violations
+(d) SLO Violation Severity
+Figure 8. Ablation study. Performance comparison of the vLLM baseline, the Naive Classifier, the Smart Classifier, a Naive Aging policy, and RPS-Serve that extends the Smart Classifier with the Priority Regulator.
+3.5. Queue Manager
+The Queue Manager maintains three separate queues for rocks, pebbles, and sand, tracking metrics such as average length, waiting time, and prefill latency to monitor system load.
+After classification, requests are placed in their respective queues, and the Queue Manager interacts with the Priority Regulator to enforce the final priority order.
+This design enables distinct prioritization for latency-sensitive sand versus resource-heavy pebbles and rocks, while supporting flexible preemption and batch selection for the next iteration.
+By decoupling classification from scheduling, the Queue Manager provides a scalable foundation for dynamic policies that balance responsiveness with fairness across requests.
+3.6. Priority Regulator
+While the smart classifier significantly improves inference across modalities, using static priorities across sand, pebbles, and rocks still leaves sand requests with notable SLO violations because they compete with heavier requests for GPU resources. To push responsiveness further, RPS-Serve extends the Static Priority (sand \rightarrow pebbles \rightarrow rocks) with an Age term that grows as requests wait longer. Each request’s priority is computed as:
+\text{Priority}_{c}=\text{StaticPriority}_{c}+(1-e^{-k_{c}\cdot(\text{waiting\_time}^{p_{c}})})
+where c\in\{\text{Sand},\text{Pebbles},\text{Rocks}\}. The terms start higher for sand, moderate for pebbles, and lowest for rocks. As shown in Figure 9(a), sand requests gain priority rapidly, ensuring fast responsiveness. Pebbles increase more gradually, reaching high priority after moderate waiting times, while rocks grow very slowly and remain low for long periods. This progression matches the scale of their relative inference times observed in Figure 2. This design enables to accelerate sand while preventing starvation for heavier requests.
+RPS-Serve converts priority into a scheduling score using \text{Score}_{c}=-\log(\text{Priority}_{c}), so higher priority means lower score and earlier scheduling, as also done in vLLM (vLLM Team, 2025a). Figure 9(b) illustrates a time snapshot of an experiment, showing how scheduling scores evolve over their lifetime. The score of sand requests drops the fastest, enabling immediate scheduling; pebbles decrease moderately; and rocks remain high for the longest time, delaying their execution but without causing starvation.
+Performance effects of priority regulation.
+Figure 8 illustrates that the full version of RPS-Serve, which augments static priority-based and modality-aware scheduling with the Priority Regulator, achieves the lowest normalized latency, SLO violation rate, and violation severity overall. Most importantly, dynamic priority adjustment further accelerates the responsiveness of sand, reducing by half their SLO violations, while introducing only a slight performance degradation for pebbles and rocks. This confirms the strong performance gains delivered by dynamic priority regulation.
+Ablation study. For completeness, we include a naive aging baseline that prioritizes requests solely by age (the older the request, the higher its priority) ignoring the sand–pebbles–rocks hierarchy. As shown in Figure 8, while this approach improves performance compared to vLLM, it lacks the benefits of classification and fails to address modality-specific resource heterogeneity.
+(a) Priority
+(b) Scheduling Score
+Figure 9. Priority Regulator.
+3.7. Implementation
+RPS-Serve is built on top of vLLM (vLLM Team, 2025b) version 0.8.4 with the V1 engine and the chunked prefill optimization (vLLM, 2024). We extend the metrics collection to accurately measure multimodal workloads. We extend the scheduler to support dynamic priorities and multiple queues, and integrate the new components in a modular, plug-and-play manner. RPS-Serve is extensively documented and will be open-sourced to encourage community adoption and future extensions.
+4. Evaluation
+We evaluate RPS-Serve to demonstrate its ability to meet the system objectives introduced in Section 3:
+(O1) latency-critical scheduling for sand requests and
+(O2) starvation-aware scheduling for pebbles and rocks. Our evaluation spans the following dimensions: end-to-end performance comparison against other baselines (Section 4.2) and a deeper sensitivity study of RPS-Serve (Section 4.3). Together, these experiments provide a comprehensive assessment of RPS-Serve’s effectiveness in accelerating multimodal LLM inference.
+4.1. Experimental Setup
+Environment.
+We experiment on a server with native hardware that includes one NVIDIA A100 GPU with 40GB memory, two AMD EPYC 7313 16-Core processors (32 threads) and 256GB of host DRAM memory.
+Models.
+Table 1 shows the state-of-the-art multimodal models used in our evaluation, grouped by family and size, listing their parameter count alongside the internal vision encoder and LLM backend. LLaVA refers to LLaVA-OneVision (Liu et al., 2024a), Gemma to Google’s Gemma 3 (Team et al., 2025), Qwen to Qwen2.5-VL (Bai et al., 2025) from Alibaba Cloud, and Pixtral (Agrawal et al., 2024) from Mistral AI.
+The LLaVa-7B model is used in experiments reported in Section 2, 3 and 4.3.
+For the Gemma and Pixtral families, we process videos as sequences of images, each representing a frame, since these models do not natively support video inputs.
+Datasets.
+We use three widely adopted datasets to capture diverse multimodal use cases. ShareGPT (ShareGPT, 2024) contains regular text-based chat conversations, LLaVA-Instruct (Liu et al., 2024a) focuses on image reasoning (e.g., a user asking “Describe the architectural style of the buildings in this photo”), and LLaVA-Video (Zhang et al., 2024) targets video description (e.g., “Summarize the events happening in this video clip”).
+Workloads.
+We use multimodal workloads provided by recent characterizations of multimodal inference traffic in production systems (Xiang et al., 2025; Qiu et al., 2025).
+Each request contains one input from its respective dataset: a text prompt, a single image, or a single video.
+Request arrivals follow a Poisson distribution, consistent with common practice in LLM workload modeling (Qiu et al., 2025; Xiang et al., 2025; vLLM Team, 2025b; Yu et al., 2022).
+We evaluate three workload mixes: TO (text-only), ML (light multimodal mix introducing a small fraction of image and video requests), and MH (heavy multimodal mix with a significantly higher share of image and video requests).
+This design allows us to isolate the impact of increasing multimodal intensity on performance while maintaining control over arrival patterns and modality composition.
+Abbreviation
+Vision Encoder
+LLM Backend
+LLaVA-500M
+SigLIP (400M)
+Qwen2 (500M)
+LLaVA-7B
+SigLIP (400M)
+Qwen2 (7B)
+Gemma-4B
+SigLIP (400M)
+Gemma3 (4B)
+Gemma-12B
+SigLIP (400M)
+Gemma3 (12B)
+Qwen-3B
+Custom ViT (500M)
+Qwen2.5 (3B)
+Qwen-7B
+Custom ViT (500M)
+Qwen2.5 (7B)
+Pixtral-12B
+Pixtral-ViT (400M)
+Mistral NeMo (12B)
+Table 1. Multimodal models (MLLMs) used for evaluation.
+(a) Normalized Latency
+(b) TTFT Latency
+Figure 10. Performance comparison of RPS-Serve against the baselines across multiple multimodal models, showing normalized latency and TTFT for Sand (S), Pebbles (P), Rocks (R), and Overall (O) requests.
+Baselines.
+We evaluate end-to-end inference performance against the following baselines:
+\bullet
+vLLM: The state-of-the-art LLM inference serving system uses the chunked-prefill (vLLM, 2024; Agrawal et al., 2023; Agrawal et al., 2025) optimization; the current best practice for mitigating long prefill delays and head-of-line blocking. Chunked-prefill splits large prompts into smaller chunks, enabling overlap between prefill and decode phases and improving responsiveness for latency-critical workloads.
+\bullet
+EDF: The Earliest Deadline First (EDF) policy is a state-of-the-art priority-based scheduling approach in LLM serving systems that aims to minimize end-to-end latency (Hong et al., 2025; Zhang et al., 2025). EDF assumes knowledge of each request’s deadline or relies on prediction models to estimate output size and inference decoding time (Jin et al., 2023; Stojkovic et al., 2024; Fu et al., 2024; Jain et al., 2025).
+\bullet
+RPS-Serve: Our proposed modality-aware scheduling solution built on top of vLLM, which also leverages chunked-prefill for mitigating long prefill delays. However, unlike EDF, RPS-Serve does not rely on deadlines or output-length predictions; instead, it prioritizes requests based on resource profiles (latency and memory) and aging.
+Configuration.
+Across experiments, if not otherwise specified, the model is the LlaVa-7B, the workload is the heavy mix MH and the request rate is 2 requests per second.The SLO is set to 5\times the end-to-end (E2E) latency of a request’s inference under no contention as proposed in (Stojkovic et al., 2024; Xiang et al., 2025), whose impact is further examined later on.
+The terms in the Priority Regulator (Section 3.6) are set as follows: the \text{StaticPriority}_{c} is 0.1 for sand, 0.05 for pebbles, and 0 for rocks, the p_{c} coefficient is 3.5 for sand, 2.5 for pebbles, and 1.1 for rocks and k_{c} is 0.05 for sand, 0.003 for pebbles and 0.00075 for rocks.
+4.2. End-To-end Performance
+(a) Number of preemptions
+(b) Time spent in preemption
+Figure 11. Preemptions across Sand (S), Pebbles (P), Rocks (R), and Overall (O) requests for all baselines.
+Figure 10 compares the average performance of RPS-Serve against vLLM with chunk-prefill and earliest-deadline-first (EDF) across state-of-the-art multimodal models under the MH workload.
+Focusing first on sand requests, RPS-Serve consistently achieves the lowest normalized latency or matches EDF, while vLLM performs the worst across all models.
+The reduction is most pronounced for Gemma-4B and Pixtral-12B.
+Similarly, for TTFT, RPS-Serve always delivers latency below 1 second across all models, meeting the responsiveness targets of commercial platforms for interactive applications such as chatbots (OpenAI, 2025a; Zhong et al., 2024; Stojkovic et al., 2024).
+In contrast, vLLM fails to meet this target for all models apart from Gemma-4B, while EDF performs especially poorly for Pixtral-12B. These results confirm that RPS-Serve achieves Objective O1 by prioritizing sand requests and ensuring responsiveness for latency-critical requests.
+For pebbles, RPS-Serve also provides consistently lower latency compared to vLLM, and lower or comparable latency with EDF.
+Rocks, as expected, are penalized more heavily; they are sometimes slower than the other baselines, because RPS-Serve deliberately sacrifices their performance to accelerate sand.
+This trade-off is intentional and shows that RPS-Serve achieves Objective O2: ensuring balanced progress without starving large requests while delivering interactive responsiveness for sand.
+To shed more light on how RPS-Serve achieves its design objectives, Figure 11 shows the number of preemptions and the aggregate time requests spent being preempted across baselines.
+vLLM with chunk-prefill introduces preemptions mostly to sand requests who get interrupted by pebbles and rocks that saturate memory. EDF aggressively preempts requests to prioritize expiring ones purely based on deadlines, interrupting sand and rocks almost equal amount of times, with rocks spending more time preempted since they are not latency-critical.
+In contrast, RPS-Serve eliminates entirely preemptions for sand, to ensure responsiveness, and reduces overall preemption latency.
+(a) Norm. Lat.
+(b) TTFT Avg
+(c) TTFT P90
+Figure 12. Performance comparison of RPS-Serve against the baselines under increasing load (requests per second).
+Next, we compare RPS-Serve against vLLM and EDF under increasing load, an important stress test since real-world serving systems must scale gracefully under contention. Figure 12 reports the overall normalized latency, average TTFT, and P90 TTFT as the request rate grows. vLLM scales poorly under multimodal contention. Its FCFS scheduling and chunked prefill optimizations cannot handle the large resource footprint of images and videos, causing sharp latency increase for intense load. EDF performs better by reordering requests based on deadlines, but under high load its tail latency (P90 TTFT) approaches that of vLLM, revealing its limitations in multimodal scenarios. In contrast, RPS-Serve sustains low latency even at peak request rates, keeping TTFT to a few seconds and sharply reducing tail latency.
+Takeaways. These results highlight that vLLM’s chunk-prefill cannot handle the orders-of-magnitude larger prefills introduced by multimodality. EDF, while deadline-aware, is not modality-aware and misses opportunities to further accelerate sand and ensure responsiveness. In contrast, RPS-Serve delivers latency-critical performance comparable to traditional LLM serving, effectively hiding multimodality, while ensuring multimodal requests are not starved.
+4.3. Sensitivity Study
+Having established that RPS-Serve consistently outperforms state-of-the-art baselines in end-to-end performance, we next perform a deeper analysis under varying conditions.
+(a) Normalized Latency
+(b) TTFT Latency
+(c) SLO Violations
+(d) SLO Violation Severity
+Figure 13. Performance of RPS-Serve under text-only (TO), multimodal mix light (ML) and high (MH) workloads.
+4.3.1. Impact of Different Workloads
+Figure 13 shows the performance of RPS-Serve under diverse workloads.
+Under light (ML) and heavy (MH) multimodal mixes, our system delivers strong responsiveness for latency-critical sand requests, achieving average TTFT latency of up to 0.15 seconds and keeping SLO violations below 15%, with violation severity limited to only a few seconds.
+These numbers align with the responsiveness targets of commercial platforms for interactive applications, such as chatbots (Zhong et al., 2024; Stojkovic et al., 2024). Pebbles also perform well, with TTFT less than 1.5 second, while rocks remain the slowest, as expected given their resource intensity and the system’s design objectives.
+Most importantly, RPS-Serve excels under traditional text-only (TO) workloads, achieving an average TTFT of 0.05 and less than 0.5% of SLO violations.
+This confirms that RPS-Serve is not only a solution for multimodal inference but also a robust choice for serving conventional LLM workloads.
+(a) Normalized Latency
+(b) TTFT Latency
+(c) SLO Violations
+(d) SLO Violation Severity
+Figure 14. Performance of RPS-Serve under memory pressure.
+4.3.2. Impact of Available KV Cache Memory
+Figure 14 reports the performance of RPS-Serve under progressively reduced KV-cache memory sizes.
+Across all configurations, RPS-Serve sustains low latency and minimal SLO violations for sand requests, keeping average TTFT below 1 second even when memory is reduced to 25% of its original size.
+Pebbles exhibit moderate degradation, while rocks suffer the most under tight memory budgets.
+In extreme cases, a single rock can monopolize the remaining cache, severely impacting overall performance.
+Overall, these results confirm that RPS-Serve preserves responsiveness for latency-critical sand requests, delivering performance comparable to traditional LLM serving, even under severe memory constraints.
+4.3.3. Impact of SLO Scale
+Figure 15 shows the performance of RPS-Serve under varying SLO scales, where higher values indicate more relaxed SLOs. We report three metrics: violation rate, violation severity, and goodput, that is the maximum request rate the system can sustain while meeting the specified SLO (Zhong et al., 2024; Wang et al., 2025). As the SLO becomes more relaxed, violation rates and severity decrease across all modalities, while goodput increases as more requests complete within the target latency. The relative ordering remains consistent: sand achieves the highest goodput due to its abundance and fast execution, pebbles improve gradually, and rocks remain the most constrained because of their resource intensity. Overall, for widely adopted SLOs (Zhong et al., 2024; Stojkovic et al., 2024; Liu et al., 2024b), RPS-Serve delivers interactive responsiveness for sand and balanced progress for pebbles and rocks, confirming its ability to adapt gracefully to different service-level requirements.
+4.4. Discussion and Future Work
+While RPS-Serve significantly improves multimodal inference performance, it currently supports only text, image, and video modalities. Our sand–pebbles–rocks abstraction is general enough to include other modalities (e.g., audio, 3D data), but doing so may require retraining classifiers and revisiting priority regulation. Future work includes supporting output generation in multiple modalities (e.g., image or video responses) and extending RPS-Serve to any-to-any multimodal models, not just MLLMs. Finally, RPS-Serve currently operates in a single-node setting; scaling to multi-GPU or multi-node clusters may introduce new performance behaviors related to model partitioning and inter-node networking.
+(a) SLO Violations
+(b) SLO Severity
+(c) Goodput
+Figure 15. Performance of RPS-Serve under different SLO scales.
+5. Related Work
+This section summarizes current works on related (multimodal) LLM serving system optimizations.
+Multimodal inference.
+Recent works have tried to accelerate multimodal LLM inference by revisiting the attention mechanism of MLLMs to reduce computation (Lin et al., 2025) or by caching only relevant tokens (Ning et al., 2024; Liu et al., 2024e).
+These approaches are orthogonal to our work, as they are model-specific and they can potentially reduce model accuracy.
+Next, ServeGen (Xiang et al., 2025) just characterizes large-scale LLM serving workloads and introduces a workload generator, but focuses mainly on language and image-text models, treating video as image bursts.
+ModServe (Qiu et al., 2025) proposes the disaggregation of the inference stages (e.g., preprocessing, encoding) to isolate bottlenecks and improve scalability, assuming abundance of resources.
+In contrast, our work maximizes resource efficiency within a single node and achieves performance through modality-aware scheduling.
+Handling head-of-line blocking.
+Several works address head-of-line blocking, that is typically caused by long prefills in traditional LLM workloads.
+Techniques such as chunked-prefill (Agrawal et al., 2023; Agrawal et al., 2025; vLLM, 2024) and pipelined execution (Yu et al., 2022; Wu et al., 2024a; Li et al., 2023) aim to overlap prefill and decode phases, while KV-cache compression (Liu et al., 2024c; Liu et al., 2024d) and offloading strategies (Sheng et al., 2023; Gao et al., 2024) reduce memory pressure.
+These methods improve responsiveness for long-text scenarios but do not generalize to multimodal inference, where preprocessing and encoding of visual inputs dominate time-to-first-token latency.
+Other scheduling optimizations.
+Recent works have tried to improve LLM inference by predicting the output length or the workload impact of requests using predictor and cost models (Jain et al., 2025; Jin et al., 2023; Hong et al., 2025; Qiu et al., 2024; Fu et al., 2024; Zheng et al., 2023b; Stojkovic et al., 2024).
+Other approaches have tried to use an SLO-based approach to accelerate interactive requests and reduce latency (Zhong et al., 2024; Qin et al., 2025; Liu et al., 2024b; Hong et al., 2025; Zhang et al., 2025; Wu et al., 2024c; Huang et al., 2025).
+Dynamic batching and fairness-oriented policies have been proposed for LLM serving (Sun et al., 2024; Stojkovic et al., 2024; Sheng et al., 2024).
+All of the above techniques and methods target homogeneous text workloads and ignore the extreme heterogeneity of multimodal requests.
+Our approach complements these works by introducing modality-aware prioritization.
+6. Summary
+This paper introduces RPS-Serve, a modality-aware scheduling framework for efficient multimodal inference.
+RPS-Serve leverages the unique characteristics of multimodal workloads through t

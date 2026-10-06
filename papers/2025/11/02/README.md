@@ -2,45 +2,49 @@
 
 **规范：** V3
 **窗口：** 2025-11-01T09:00:00+08:00 ～ 2025-11-02T09:00:00+08:00
+**补充窗口：** 2025-11-01 ～ 2025-11-01
+**窗口说明：** 用户授权已有Daily只补遗漏；原窗口、候选、日期、评分及有效审阅冻结，新增按前一完整自然日核公开日期，不用提交日或月份填首次公开日。
 **状态：** 完成
 **Books：** 纳入本次
-**检查时间：** 2026-10-04T15:53:55+08:00
+**检查时间：** 2026-10-07T19:54:51+08:00
 
 ## 1. 结论
 
-当前确认当窗贡献候选0，已获root实际日级验收；不等于所有机构或全网没有公开事件。实际原始入口、目标邻接日期及有限恢复见§2；没有把全年目录命中数当成当天论文数。root独立复核反馈已否决PlotCraft过窄的贡献拟关闭，认可另两个明确范围样本和Kimi/MiniMax窗外处理可继续。指定四节定点重开及直接反侧已获实际复核，支持具体评价盲区及有限refinement反侧；必要首公开仍未确认，具名隔离，不冒充确定当窗候选。Books No Change、实际写入0，不授PlotCraft正面Books采用或已有覆盖。
+原轮确定候选0及root有效PlotCraft定点证据/复核保留；原报告完整档案已另存。本轮十四每日源均实际查询到具体有界范围，不复制Nov01或其他日候选/响应。仍0新增确定候选；Bernoulli于2026-10-07T19:40:31+08:00实际窄写后及最终DAY通过，19:41:57落盘检查已记录。本轮完成依据这一独立裁决，不沿用旧完成声明。
 
-本窗没有常规arXiv公告，但常规schedule不替代单篇实际首公开证据，不证明没有作者提前公开或非标准事件。历史动态目录和PlotCraft日期未恢复部分已隔离，不支持Coverage/Evidence通过、Books或无遗漏断言。root已核[定点证据与owner差额](../_sources/daily-20251102/PLOTCRAFT_POINT_REVIEW.md)及六部分，普通待办0；外部材料到达只重开对应层。
+本轮arXiv四组Advanced实际176次/175唯一月份发现身份，另cs.DC首25/338标题补检；完整读26个新身份题摘（23查询定点+3补检），经Bernoulli首批校准及作者R1～R3写回为20潜力/准入未决、4贡献关闭、2官方撤回。20项分为17查询潜力与3给定DC恢复线索，身份数不增。它们不是26当日候选或Evidence完成；月公告字段不定位Nov01，当前修订不能倒填2025-v1。更多Next及未展开月份条目不变强制全文队列。
+
+首批FAIL R1～R3保留为返修前历史，具名差额已实际写回并获Bernoulli最终PASS，普通待办0。World Model重开并保留定义及memory-path-loss盲区，CRAGRU隔离中心全链遗忘争议，Seed纠正置顶锚点。独立已读四篇必要v1核心只支持准入/争议校准，不授标准/深入Evidence完成。未新增评分，无新Books写入或采用提案；日期及中心争议不用于正面证据、Books、无遗漏或性能/安全保证。旧PlotCraft有效证据复用，不授日期或正面采用。正文首包/READY阶段的核验描述由§6最终裁决接续，不作为当前待办。具名结果见[补查记录](../_sources/daily-20251102/supplement-20261007.md)。
 
 ## 2. 来源覆盖
 
-所有web原始结果与实际请求均保存在本日目录；执行时间2026-10-04，详见请求receipt。只查每日14来源，未扫描Weekly。搜索范围限11/01～02及ROADMAP模型、训练、推理、多模态与Agent主题；搜索没有匹配不是原源零事件证明。
+本轮实际执行2026-10-07T18:16:50～18:46:53+08:00；逐请求URL/时刻/HTTP/字节/停止与原件在[新请求目录](../_sources/daily-20251102/supplement-20261007/)，详细权限在[来源与停止记录](../_sources/daily-20251102/supplement-20261007.md#实际来源与停止)。原轮实际检查见[原报告档案](../_sources/daily-20251102/original-report-before-supplement-20261007.md)，不冒充本轮扫描。本表不授互联网无遗漏或全机构历史召回。
 
 | 来源 | 检查范围与依据 | 结果 | 缺口 |
 | --- | --- | --- | --- |
-| SRC-OPENAI | 官方Research入口及[RSS](https://openai.com/news/rss.xml)完整单响应HTTP200；实际解析目标两侧：10/30 Aardvark等、11/03 06:00GMT AWS合作、11/03 22:30GMT IndQA；目标窗无RSS条目。原始1245 item仅作为目录，不送题摘/全文队列。 | 已检查 | RSS不能证明已删除历史条目无遗漏；无具名当窗材料待恢复。 |
-| SRC-ANTHROPIC | Research页面当前首屏只到2026；进一步读取HTML内Next结构化publicationList，邻接`Signs of introspection...` publishedOn=`2025-10-29T01:20:00.000Z`、`Commitments on model deprecation...`=`2025-11-04T16:00:49.850Z`；只核本窗相关切片与停止两侧。 | 已检查 | 不将首次CMS创建/更新字段当公开；无确定当窗条目。 |
-| SRC-GOOGLE-AI | DeepMind Research、blog/page/5；相关两标题原页实际日期SIMA2=11/13、Teaching AI to see...=11/11，均明确窗外。Google Research pubs只返回年份筛选，不具日级日期；限定窗口主题补搜未恢复必要历史切片。 | 受阻 | G02-01：Google Research日级历史切片；DeepMind已读页面边界不授另一子源Coverage。 |
-| SRC-META-AI | Research入口提取0行；官方blog/?page=2只返回当前2026页；有限11/01～02模型/research补搜只有旧材料，未把搜索误标当窗。 | 受阻 | G02-02：Meta/FAIR目标日研究目录，终态隔离。 |
-| SRC-QWEN | 旧blog首屏停止09/23 Qwen3Guard并指向qwen.ai/research；迁移页HTTP200无历史文本，实际读取页面及3个已引用JS chunks，未恢复可核历史列表。有限目标日搜索无原文。 | 受阻 | G02-03：迁移后2025-11-01/02相关研究切片，终态隔离。 |
-| SRC-DEEPSEEK | 官网及官方GitHub组织当前入口，有限目标日模型架构/训练/推理主题定点搜索；没有可核日级发布列表。未扫描全部仓库/普通PR。 | 受阻 | G02-04：目标日历史研究/重要修订目录；当前首页不是当窗零事件证据。 |
-| SRC-MOONSHOT | 官方Kimi Blog完整单页，11/07、11/06两项与09/16夹住目标日；没有本窗新条目。 | 已检查 | 当前blog切片之外不保证无历史删除；未读11/06候选正文。 |
-| SRC-TENCENT-HUNYUAN | 首查Research无文本；隐藏browser一次30秒超时后POST publicList `{pageNum:1,pageSize:20,renderType:0}`，HTTP200/code0/totalNum9/list9，当前en博客最早时间字段2026年；官方GitHub组织当前页及目标日有限搜索。 | 受阻 | G02-05：旧Research“全部”2025-11切片未恢复；接口身份有效但不是本日Coverage。 |
-| SRC-ZAI | 官方Research原HTML首屏，再实际`?page=2`；页面返回nextPage3/hasMore=false，已到目录末段但最早显示2025/12/07。目标日有限官方补搜没有恢复原文。 | 受阻 | G02-06：已确认当前分页结束，不意味着11月无研究；目标历史切片终态隔离。 |
-| SRC-BYTEDANCE-SEED | 官方public_papers入口后，GET get_article_list_v2，x-tt-locale:US，type1/type2、publish_year2025/count20/order_desc=true，实际p0/p20。type1原total94/p0有18条/p20有20条；type2 total45/p0有18条/p20有18条。读目标两侧日期/标题：type1 December到October，type2 November27到October23，p20均更早。停止next40，不遍历无关全年余页。 | 已检查 | 切片排序/置顶/删改限制保留；未将原目录PublishDate当单篇论文首公开时刻；没有确定本窗材料。 |
-| SRC-BAIDU-ERNIE | 中文blog实际1/2、2/2页面全部日期标题，11/21、11/11、11/07之后直接10/16；停止2/2无next。版本名1022/1103不当公开日期。 | 已检查 | 未将后来的LMArena报道移入模型名字对应日期；无当窗条目。 |
-| SRC-XIAOMI-MIMO | 官网页Paper8条，最近本窗之前October21 Router alignment、之后January8，按相关日期标题切片；Blog首屏15条无历史日级日期，官方GitHub组织及有限目标日搜索。 | 受阻 | G02-07：旧Blog More历史切片未恢复；Paper切片已检查但不替代Blog。 |
-| SRC-MINIMAX | 英/中文官方Blog都读至2025/10/27 M2，最近之后12/23 M2.1；中文另可见01/15 MiniMax01。检查本窗相关发布切片与目标日有限搜索。 | 已检查 | 目录当前呈现范围之外不授无遗漏；无本窗新修订原文线索。 |
-| SRC-ARXIV | 实际官方availability及cs.CL November月表头部相关标题有界浏览，定点打开2511.00010v1完整题摘/版本；LLM/Transformer/GPU/multimodal/agent、world model/VLA/kernel/RAG的11/01～02有限补检。02窗对应ET Friday21至Saturday21，无常规公告；没有创建整类摘要队列或以submission date筛选归属。 | 已检查 | G02-08：非标准提前公开未有具名正面证据；常规schedule不补造单篇时刻，不能排除所有提前公开。 |
+| SRC-OPENAI | RSS实际200/1251 item解析，BJT10/30→11/03 AWS→11/04 IndQA跨补窗，11/01返回0项；单响应到末 | 已检查 | 返回feed不证明删除/全部修订史，不把0项称全网零发布 |
+| SRC-ANTHROPIC | Research实际200/RSC publicationList posts171，publishedOn 10/29→BJT11/05（UTC11/04）；本窗0返回项 | 已检查 | 当前完整返回目录有限权限，非CMS created/updated日期或删除历史证明 |
+| SRC-GOOGLE-AI | Nov Blog直接fetch失败但官方web可读10项Nov21→Nov04至末；DeepMind Publications真实p1/p2各30卡，p2首Oct30；pubs默认页已读 | 受阻 | selection/年字段非首次公开日，不排队全年库存，不再把默认或真实两页全记不可达 |
+| SRC-META-AI | 官方Research本轮web提取0行 | 受阻 | 目标历史段未恢复，不授0研究事件；只请求具名原发布/目标段 |
+| SRC-QWEN | 本轮官方page_config实际60项date/title/id到当前目录末，无分页；Sep24 Max→BJTNov13 DeepResearch，无Nov01项 | 已检查 | 原API未恢复的普通工作已做，不授删除/重要修订完整性 |
+| SRC-DEEPSEEK | 官方首页及updates实际200；Dec01→Sep29跨补窗，延至2024旧段，无继续分页 | 已检查 | 更新说明不是全部Research；只授所读发布切片 |
+| SRC-MOONSHOT | Kimi Blog本轮26项，Nov07/06→Sep16，到May29_2024末，无Next | 已检查 | 当前返回Blog有限权限，不扫全部仓库普通PR/删除史 |
+| SRC-TENCENT-HUNYUAN | Research动态壳实际200，CUA无可用浏览器；独立POST publicList page1/size1000/renderType0，code0/total9/list9，最早2026-Feb03 | 受阻 | API可用与2025历史段分开，不称已浏览成功或本窗0研究 |
+| SRC-ZAI | Research首/page2实际200，nextPage3/hasMore=false/没有更多，最早Dec07_2025 | 受阻 | 11月历史段缺失，当前目录末不授旧库存完整 |
+| SRC-BYTEDANCE-SEED | US locale/type1及2/year2025/count20/token0各18项，total94/45、next20；papers返回Dec01与Oct22邻接，其中Dec01 GR-RL ID875为IsPinned=true/PinTab=[10,3]；Blog Nov27→Oct23，止首段，未请求token20 | 已检查 | 未验证PinTab页面呈现，不称非置顶跨窗锚点；置顶/排序/删除限制，不借旧p20充本轮分页或把目录日期当每篇首公开 |
+| SRC-BAIDU-ERNIE | 中文Blog实际首/末2页，Nov11/07→Oct16，尾Jun30，2/2停止 | 已检查 | 版本名非公开日期，当前返回有限、不授全部仓库覆盖 |
+| SRC-XIAOMI-MIMO | 首页Paper8/Blog15；本轮路线及home 8557/6159组件实际核More为8+7本地展开、无分页；八个无日期卡原页实际200，最早已显示Flash Dec16_2025，其余Mar/Apr2026；具名Blog元数据Dec19_2025、May/Jun/Sep2026。V2.6系列壳的实际iframe /mimo-v2-6/article.html也已200，官方日期Sep22_2026 | 已检查 | More及系列原页日期普通恢复均已做，当前返回切片非删除/修订史证明；不以版本名猜日期、不扩整站 |
+| SRC-MINIMAX | 英文Blog200/Dec23_2025→Oct27_2025邻接，Agent TechBlog md实际200/redirect minimax.cn，唯一May13_2026项到末 | 已检查 | 精简当前目录不证明旧库删除/所有修订 |
+| SRC-ARXIV | Advanced模型50/120、多模态50/312、Agent50/66均有Next停首段；系统26/26无Next。176次/175唯一；cs.DC首25/338标题，26新完整题摘、两撤回官方abs定点核 | 受阻 | 公告仅November2025，非Nov01具体日；初试空响应不授零命中；有界发现/未展开范围及独立校准分开，不用catchup |
 
-未发现本窗会议发布、协议/重要版本或候选依赖触发；按需源本日未触发，不加载Weekly。
+未扫描每周来源；没有具名会议发布/协议事件引起常规按需扩扫。辅助搜索只用于入口/身份/日期，不替代机制证据。
 
 ## 3. 候选与判断
 
 | 材料 | 公开时间 | 项目贡献与评分 | 审阅结果 | Books决定 |
 | --- | --- | --- | --- | --- |
 
-当前没有确认落窗且通过贡献筛选的材料家族。PlotCraft不再是贡献关闭，而是具体潜在贡献已恢复、必要日期具名隔离；不评分、不先列为确定候选。日级安全终态已由root实际验收，0候选表不证明全网无贡献或隔离目录完整。
+原确定候选0冻结，本轮暂无日期和贡献均确认的新增当窗家族。新20项潜力/准入未决放第5节，不预评分；4贡献关闭及2官方撤回复用Bernoulli校准，World Model的C→P已写回待窄核。原PlotCraft潜在贡献不改回关闭，不列确定候选或冒称有效已审重复。
 
 ## 4. 证据与知识整合
 
@@ -52,30 +56,52 @@ arXiv日期处理：官方说提交经过moderation后才公开，月ID按公告
 
 主要记录：[机构入口](../_sources/daily-20251102/RAW_NATIVE_01.json)、[中英文目录](../_sources/daily-20251102/RAW_NATIVE_02.json)、[日期](../_sources/daily-20251102/RAW_NATIVE_DATES.json)、[arXiv边界](../_sources/daily-20251102/RAW_ARXIV_BOUNDARY.json)。`openai-rss.xml`、`anthropic-research.html`、`zai-research-p2.html`和Seed/Hunyuan原JSON保留，报告中的判断不依赖只存搜索摘要的性能数字。
 
+**本轮旧证据复用。** 上述exact-v1指定机制/直接表格、评价配置/反侧和具体owner对读为原轮有效证据，不需无差别重读。实际本轮当前PlotCraft abs为v2、2026-01-15提交，没有已见撤回/纠错说明；版本号本身不证明重要修订，也不授权将v2题摘代v1或声称v2已深审。原公开日保留不变，尚不支持Nov01新窗准入。
+
+**新增题摘与核心权限。** 26项完整题摘处置在[作者记录](../_sources/daily-20251102/supplement-20261007.md#26-项题摘处置独立校准交接)，全部26身份已由[Bernoulli首批复核](../_sources/daily-20251102/review-supplement-20261007.md)实际校准。PAD、DRIP、Ariadne、SELF-REDRAFT等反侧及其余未变潜力/4关闭/2撤回复用；四篇必要v1核心由Bernoulli18:57～19:02定点读，不再笼统称26项正文全未读。MOVAI §III/IV～VI已见时间标注graph、多尺度refinement及消融表，未核归因/预算；Pelican §2.2已见rollout难度/饱和切换、弱项/关联/生成SFT数据，pass@k语义与GRPO简式未授理论有效。只支持受限准入，不采用SOTA、成本、无遗忘或性能数字，不给root写书授权。
+
+**R1 World Model survey（2511.02097）C→P。** [v1](https://arxiv.org/html/2511.02097v1)Table I、§II-C/D、VI、VIII-B的功能/输入输出与动作预测、动作后果资格存在定义边界争议：宽分类不能证明所有LLM/VLA都具有动作条件动力学/因果能力。作者本次仅定点补核§V-D3/V-G、VI Memory及VIII-B Evaluation Protocols，具体memory-path-loss盲区为：历史信息经稀疏抽帧/存储/检索进入状态预测或动作选择，记忆选择丢失或读取失效可能影响长程预测；视觉proxy/任务均分不能单独证明该路径保真，也未建立训练loss对记忆依赖错误的约束。后一句是作者的待核设计/评价问题，不是原文已验证的失败实验或新loss定理。潜力拟路由MULTIMODAL-WORLD-MODELS（Ch25），不称已有覆盖/采用；需原版本具体记忆路径、loss/评价定义及路径干预对照才重开相关命题，不泛读所有引用。
+
+**R2 CRAGRU（2511.05494）中心争议隔离。** Bernoulli已读[v1](https://arxiv.org/html/2511.05494v1)§III-B/IV及V开头；三过滤策略已可读，不再挂“策略全部未明”。原backbone的Top-K候选及辅助信息仍进入生成，而§IV-D从检索排除推出输出仅依赖filtered data/条件独立。复核者提出的依赖反侧是：删除数据可能经底模参数→候选集合→LLM输出侧路继续影响结果，直接检索过滤不保证全链遗忘或重训练等价；不是作者实验已证泄露。P维持、不降分改C、不采用合规/完全遗忘保证。恢复需原版本底模训练、候选/辅助路径的非影响条件，或修正删除合同与对应可核验证；不以重读整篇/代码复现作为保存争议的前置要求。
+
+**撤回排除已处理。** Reg-DPO 2511.01450官方当前v3 history为Nov10_2025 03:10:25Z withdrawn，需进一步修订/实验核验；MWM-MARL 2511.01310当前v2为Nov11_2025 01:34:30Z withdrawn，代码偏离Algorithm1使全部实验/结论失效。两份当前abs本轮真实200，原件及版本史保存，不将残留摘要或未来重投承诺恢复采用，不评分/入Books，不把撤回当PDF访问失败。
+
 ## 5. 缺口与下一步
 
-**可执行工作：** 无，普通待办0。root已实际核指定机制/表及直接反侧、日期隔离、owner现有论证和六部分/14源有限范围，通过日级安全终态；不扩大PlotCraft附件或重复首批有效范围校准。
+**普通可执行工作：** 无，普通待办0。作者R1～R3实际写回、Bernoulli窄写后与最终DAY均已完成；本次仅据具名结果同步完成元数据。已完成的26身份校准、四篇必要v1核心、十四源范围/停止及两撤回不重复排队，旧PlotCraft不重开未变证据。没有新评分、Books实际写入或POST待办；下列终态保留项不转正面证据。State计数由root处理，本作者到此停止，不启动Nov03。
 
-**本窗终态保留项：** 以下不支持正面证据、Books或无遗漏断言；定点重开条件逐项列明，不授隔离项Coverage/Evidence通过。
+**日期/身份终态保留，不先准入：** [补查记录](../_sources/daily-20251102/supplement-20261007.md#26-项题摘处置独立校准交接)具名17查询潜力项的当前题摘/月份，不证明Nov01首次公开。需准确ID/事件对应的官方日公告或可核原始首次公开记录，落窗后才重开该家族必要exact-v1/实质修订差额。当前2026摘要、DataCite/编号/Submitted或一般schedule均不能替代。不因日期缺失抹掉安全/负面或理论潜力，不列175月份身份为强制审阅队列。
 
-- G02-01 [Google Research](https://research.google/pubs/)：需要本日相关模型/训练/推理/多模态研究历史日级列表或具名官方发布页；年字段不足分配窗口。取得有日期和可核停止点切片后只恢复SRC-GOOGLE-AI对应子源。
-- G02-02 [Meta/FAIR](https://ai.meta.com/research/)：当前Research空提取和blog2026页不能复原目标日；可接受官方历史列表、具体作者原始发布及实际日期；只恢复本日相关项，不扫全年。
-- G02-03 [Qwen迁移Research](https://qwen.ai/research)：旧页截至09/23，迁移HTML/相关JS未获得本日历史切片；可接受可核原API分页结果或官方原始研究发布；只重开该源目标切片。
-- G02-04 [DeepSeek](https://www.deepseek.com/)：需要目标日官方研究/版本公告或明确完整历史片段；当前组织updated字段不是公开时间。取得具体材料时定点核贡献与日期。
-- G02-05 [Hunyuan Research](https://hunyuan.tencent.com/research)：需要旧“全部”研究目录目标切片；新publicList9条最早2026，不支持本日覆盖。原API/官方快照或具名官方论文首次公开页可替代；只重开受影响材料。
-- G02-06 [Z.ai Research](https://www.zhipuai.cn/zh/research)：当前实际末页最早12/07；需要11/01～02历史论文目录或具名原始发布；不把hasMore=false认作历史无遗漏。
-- G02-07 [MiMo Blog](https://mimo.xiaomi.com/)：需要More中的2025目标日切片及原日期；当前有日期Paper8条不替代无日期Blog。官方具名原文或可核历史列表到达后定点恢复。
-- G02-08 [arXiv](https://info.arxiv.org/help/availability.html)：常规公告检查不覆盖未知作者提前公开；如出现具体本窗官方公告/作者首公开证据，再核唯一身份/版本/日期，不能用跨截止上界准入，也不按抽象缺口展开全日全文队列。
-- P02-PlotCraft-Date [2511.00010v1](https://arxiv.org/abs/2511.00010v1)：官方题名查询实际字段为originally announced November 2025，非日级；DataCite注册/Updated、作者仓库创建/六commit和10/29 README均不证明论文正文首公开。实际announcement日期范围查询连11月正对照都未匹配，不能把其零结果当窗外证据。有限原入口恢复已停止；需要实际公告或论文正文首次公开上下界完全落窗后，只重开该篇日期和准入。潜在贡献未被关闭，此保留不用于Books或正面Coverage/Evidence。
+**窗外归属恢复线索（不属于本窗，不阻塞完成）：** 另3个给定DC身份EPARA 2511.00603提交BJTNov02、AReaL-Hex 2511.00796/FREESH 2511.00807提交UTCNov02，不能作为Nov01确定arXiv事件。若有更早原始作者公开，只接受准确身份/版本的原文公开日证据；只恢复真实受影响归属，不推定提交日即首公开，不启动其他日报。
 
-**窗外线索：** Kimi11/06、MiniMax10/27、DeepMind11/11与11/13、OpenAI11/03两项仅用于目录邻接/停点；没有继承为其他日候选或声称已经审阅。其真实归属需各日fresh独立执行，不阻塞本窗有限终态处置。
+**本窗终态保留项与采用禁止：** 上述日期/身份、下列历史目录/日期与§4两项中心争议均不用于正面证据、不进入Books、不支撑零发布/无遗漏或性能/安全保证；未恢复项不授Coverage/Evidence。当前Books零写入、无遗漏的必要Books待办，不等于互联网无遗漏或20潜力Evidence通过。具体材料到达只重开对应身份/命题，未审不是访问失败。
+- P02-PlotCraft-Date：2511.00010官方原announcement只有November2025；原DataCite/仓库日期和失败日级查询不证明具体日。需官方日公告或正文首次公开的可核日期/上下界；只重开日期及依赖准入，原有效四节证据复用，不泛读全部附件。
+- Google Research首次公开字段：默认页、Nov Blog及DeepMind真实两页已读，不再记入口普遍不可达。需具名本窗首次公开原事件/准确版本日期；年/正式发表字段不替代，不排队全年度项。
+- Meta目标历史Research、Hunyuan2025目录、Z.ai11月研究段：分别0文本、当前九项2026、当前末Dec07的具体限制；可接受对应官方历史段或具名原发布及日期，只恢复相关部分，不求全机构历年证明。
+- World Model 2511.02097与CRAGRU 2511.05494中心争议：分别按§4记忆路径/loss/评价对照与全链非影响/修正删除合同条件定点重开；需落窗公开日才能进入本窗评分/采用。争议本身不因有可读正文而消失，不扩大为所有World Model/RAG无效。
+
+**已恢复的原普通缺口：** Qwen官方60项API本轮实际已读；DeepSeek更新切片已查；MiMo More组件已核本地展开，八个无日期卡原页与V2.6系列iframe日期已核。不能继续把这些未操作的旧描述作为当前待办；其权限仅为实际有限返回，不授删除/重要修订史。
+
+**未审范围：** 175查询身份中其余152仅标题/metadata浏览，未读完整题摘、不称贡献关闭；cs.DC只首25标题，未读余313。新26项不是全篇/附件/实验审阅完成：仅四篇Bernoulli必要core及作者R1具名片段定点核读，未复现代码/实验；PlotCraft当前v2未作新Evidence。三组Next没有续翻，不授全月召回。上述范围不是本日强制全文队列，也不是泛称外部故障。
 
 ## 6. 复核
 
-复核者：root（非作者实际首批校准、定点证据及日级验收）
+复核者：Bernoulli（本轮分工独立非作者；本轮作者Darwin/Codex本会话）
 
 结论：通过
 
-root独立复核反馈先实际读PlotCraft完整v1题摘/Introduction，指出漏收负侧评价信号；修正后于2026-10-04T15:53:55+08:00实际完成[DAY_REVIEW.md](../_sources/daily-20251102/DAY_REVIEW.md)。核exact-v1指定机制、Tables2–3、§5.1～5.4及直接反侧，确认旧误关闭撤销成立；独立核日期JSON、原RSS XML及Anthropic Next JSON，逐项顺读六部分和14来源有限停止/恢复条件。两个science/合作title样本及Kimi/MiniMax旧发布非当窗的有效首批校准复用。未重新联网全扫14站、全部目录/排除/附件或代码实验，不授全量召回保证。PlotCraft日期仍隔离，不授正面Books采用、已有覆盖或写入；实际改书0，没有POST待办。
+（Bernoulli最终DAY PASS，含明确隔离的外部终态保留项；不是全源Coverage/Evidence、20潜力证实或互联网无遗漏。）
 
-机器校验：完成态V3校验通过；本报告与本目录4份Markdown共5文件、15个本地引用，链接/尾随空白0错误；限定拥有路径diff-check通过。机器不替代root实际语义验收。未stage、commit、push；未改Books、共享state、monthindex或合同。
+旧root于2026-10-04T15:53:55+08:00的[DAY_REVIEW](../_sources/daily-20251102/DAY_REVIEW.md)继续有效：否决PlotCraft过窄关闭、核exact-v1指定机制/表与直接反侧、配置/日期原JSON及六节/原14源有限范围；不授PlotCraft首公开、正面Books采用或新增自然日全部来源。其样本/未检查范围保持，不重新联网全扫原材料。
+
+本轮[Bernoulli复核原件](../_sources/daily-20251102/review-supplement-20261007.md)保留首批FAIL：18:54～19:04独立核全部26题摘身份（含原19保留、5拟关闭与2撤回）、必要安全/设计反侧、四篇v1核心、十四来源及分页停止；未审152题摘/313DC库存、四篇全部附件/实现及复现实验。未变校准复用；作者已将World Model C→P、CRAGRU中心争议和Seed置顶字段写回，成为20P/4C/2撤回（17查询P+3给定DC），仍0确定候选/无评分/Books零写入。
+
+同一原件§7于2026-10-07T19:40:31+08:00实际核R1～R3及六节终态保留/采用禁止/重开条件、机器检查，具名最终DAY PASS；19:41:57落盘实核12本地引用、尾空白/围栏/限定diff及作者文件未被复核者覆盖。World Model新增memory-path-loss只接受为作者待核推断，不授新实验事实；CRAGRU三策略与全链依赖争议、Seed置顶字段及分页权限均写后通过。不重抓十四源、重读26题摘/四篇core/旧PlotCraft或扩月份库存。所有普通差额及独立复核已处理，本次按独立结果同步完成态，不由作者另署语义PASS。
+
+本轮只写Nov02 README及同日_sources，保留原报告完整档案和旧原件；不写State/Books/index/合同/Oct02，不执行Git写操作。机器结果另记，不代替独立语义校准。
+
+本轮机器检查：2026-10-07T18:49:23+08:00，实际V3通过1份；本报告/本轮作者补查记录本地链接与尾空白0错误，14来源行、六节、冻结0候选/原窗口/补充窗口检查通过。原件重算176次/175唯一、23题摘身份+3个查询池外DC身份、所有查询身份November年月字段与46份新receipt JSON解析通过；限定只读diff无诊断。原报告完整档案已保留，旧必要Evidence复用不冒称本轮审阅；机器不替代独立校准或DAY。
+
+修后实际检查：2026-10-07T19:33:03+08:00，V3退出0/1份；作者两文件18本地引用均存在、尾空白0、围栏闭合，六节/十四来源行、冻结原窗/补窗/0确定候选通过；26表行/26唯一身份与Bernoulli首包一致，20P/4C/2及17+3分账已写回。176个保护对象（含独立复核、旧review、原报告档案及原件）与本次返修前摘要一致；限定只读diff-check无诊断。没有新14源扫描、题摘分母或Books/Git写入；只证明结构/变更保护，不代替Bernoulli最终DAY。
+
+完成态实际检查：2026-10-07T19:54:51+08:00，V3通过1份，作者两文件19本地引用存在、尾空白0、围栏闭合；六节/十四源、独立行“结论：通过”、26身份与冻结0候选检查通过。§2～4与本次同步前逐字一致，176个保护对象未变；限定只读diff-check无诊断。仅同步README与同日作者supplement，State/Books/合同/index/Git未写，不启动Nov03；机器检查不扩大Bernoulli实际DAY权限。

@@ -1,0 +1,752 @@
+DyQ-VLA: Temporal-Dynamic-Aware Quantization for Embodied Vision-Language-Action Models
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+I Introduction
+II Preliminary
+II-A VLA Models
+II-A1 Model Architecture
+II-A2 Autoregressive Inference
+II-B Model Quantization
+II-B1 Quantization for VLA Models
+II-B2 Challenge for VLA Model Quantization
+III Observation and Motivation
+III-A Temporal Dynamics of VLA’s Quantization Sensitivity
+III-B Correlation Between Kinematic Metrics and Sensitivity
+IV DyQ-VLA Framework
+IV-A Sensitivity-Aware Precision Switching Strategy
+IV-A1 Static W-Quant and Dynamic A-Quant Paradigm
+IV-A2 Kinematic-Driven Sensitivity Fusion
+IV-A3 Hysteresis-Based Precision Switching
+IV-B Kinematic-Guided Bit Allocation Module
+IV-B1 Accuracy-Preserving Error Bounding
+IV-B2 Offline Threshold Calibration
+IV-B3 Online Hardware Dispatch
+V DyQ-VLA Framework Implementation
+V-A Hardware Mapping and Mixed-Precision Backend
+V-B End-to-End Asynchronous Computation Flow
+VI Experiments
+VI-A Setup
+VI-A1 Hardware and Environments
+VI-A2 Models
+VI-A3 Baselines
+VI-A4 Evaluation Metrics
+VI-B Evaluation Results
+VI-B1 Simulation Results
+VI-B2 Real-World Results
+VI-C Ablation Study
+VI-D Discussion
+VI-D1 Hyper-Parameters Analysis
+VI-D2 Overhead Breakdown
+VII Conclusion
+References
+License: CC BY 4.0
+arXiv:2603.07904v1 [cs.LG] 09 Mar 2026
+DyQ-VLA: Temporal-Dynamic-Aware Quantization for Embodied Vision-Language-Action Models
+*Zihao Zheng
+Affiliation:  School of Computer Science, Peking University, Beijing, China.
+*Hangyu Cao
+Affiliation:  School of Software Engineering, South China University of Technology, Guangzhou, China.
+Sicheng Tian
+Affiliation:  School of Artificial Intelligence, Beijing Normal University, Beijing, China.
+Jiayu Chen
+Affiliation:  School of Computer Science, Peking University, Beijing, China.
+Maoliang Li
+Affiliation:  School of Computer Science, Peking University, Beijing, China.
+Xinhao Sun
+Affiliation:  School of Electronics Engineering and Computer Science, Peking University, Beijing China.
+Hailong Zou
+Affiliation:  School of Computer Science, Peking University, Beijing, China.
+Zhaobo Zhang
+Affiliation:  School of Computer Science, Peking University, Beijing, China.
+Xuanzhe Liu
+Affiliation:  School of Computer Science, Peking University, Beijing, China.
+Donggang Cao
+Affiliation:  School of Computer Science, Peking University, Beijing, China.
+Hong Mei
+Affiliation:  School of Computer Science, Peking University, Beijing, China.
+†Xiang Chen
+††thanks: * Equal Contribution.††thanks: † Corresponding Author: Xiang Chen.$¡$xiang.chen@pku.edu.cn$>$
+Affiliation:  School of Computer Science, Peking University, Beijing, China.
+Abstract
+Vision-Language-Action (VLA) models are dominant in embodied intelligence but are constrained by inference overheads.
+While model quantization alleviates these bottlenecks for edge deployment, static quantization approaches remain suboptimal for VLAs due to two critical challenges: (1) Temporal-dynamic sensitivity, where fixed precision wastes resources by ignoring stage-varying error tolerances; and (2) Real-time allocation, where identifying real-time sensitivity to guide bit allocation remains unsolved.
+To address these challenges, we propose DyQ-VLA, a dynamic quantization framework for VLAs.
+Specifically, a sensitivity-aware switching strategy leverages real-time kinematic proxies to trigger the bit-width switch, while a kinematic-guided module dynamically allocates the optimal bit-width.
+Experiments show that DyQ-VLA requires only 30.9% of the original memory footprint while maintaining 99.5% of its original performance, achieving 1.49×\times simulation and up to 1.43×\times real-world speedups.
+I Introduction
+Vision-Language-Action (VLA) models have emerged as the dominant paradigm in embodied intelligence [12, 21], achieving exceptional versatility by translating visual perceptions and textual instructions into precise robotic actions [5, 25, 11].
+Such versatility inherently entails substantial computation and memory overheads, which constrain their real-time deployment on resource-constrained edge devices [12, 21].
+To alleviate these overheads, recent research has adapted Large Language Models (LLMs) optimization techniques for VLA architecture, including:
+compression-based optimizations, exemplified by token pruning [10, 6, 1] to mitigate token-level redundancy;
+runtime optimizations, including speculative decoding [15] for parallel generation, caching [18, 20] to reuse cached states, and layer skipping [22, 23, 14] to bypass computations;
+architectural innovations [13, 16, 9] that redesign model structures to realize real-time inference.
+Complementing these methods, model quantization as a well-established and effective approach reduces memory footprints and accelerates inference by employing efficient low-bit integer computation.
+Notably, some representative techniques such as GPTQ [3], AWQ [7], APTQ [4], and SmoothQuant [17] achieve significant compression while maintaining near-lossless accuracy across diverse tasks.
+Inspired by the success of quantization in LLMs, recent research has adapted these techniques to VLAs.
+QVLA [19] evaluates the impact of per-channel quantization on final action accuracy, allocating bit-widths at the channel level accordingly.
+Moreover, to push these compression limits, SQAP-VLA [2] synergistically co-optimizes quantization and pruning to accelerate VLA inference.
+However, unlike LLMs, VLAs act as embodied agents in the physical world, presenting two critical quantization challenges:
+(1) Temporal-dynamic quantization sensitivity:
+VLA sensitivity fluctuates drastically over time; a negligible quantization error (e.g., a 1mm deviation) is harmless during coarse-grained movements, but often becomes fatal in precision manipulation.
+Governed by peak sensitivity, static quantization must maintain high precision throughout, wasting substantial computational resources to prevent task failure.
+(2) Real-time bit allocation: While VLA quantization sensitivity fluctuates across execution steps, exploiting these temporal dynamics remains an open challenge.
+Specifically, existing methods lack a reliable lightweight proxy for instantaneous sensitivity, which prevents optimal dynamic bit allocation without prohibitive runtime overhead.
+To address these challenges, we first profile the quantization sensitivity of VLA models, revealing their temporal-dynamic nature.
+We find that identical quantization noise affects task outcomes differently depending on the execution stage, with coarse-grained movements showing much higher error tolerance.
+Furthermore, we demonstrate a strong correlation between this temporal-dynamic sensitivity and kinematic metrics.
+Consequently, by monitoring the real-time kinematic states of the robotic arm during inference, we can accurately estimate the instantaneous sensitivity magnitude.
+Fig. 1: (a) Challenges for VLA Model Quantization. (b) Overview of the
+proposed DyQ-VLA Framework
+Motivated by these insights, we propose DyQ-VLA, a dynamic quantization framework for VLA.
+DyQ-VLA integrates two synergistic components:
+(1) a sensitivity-aware switching strategy that monitors real-time kinematic proxies to dictate the precise timing for bit-width transitions;
+and (2) a kinematic-guided bit allocation module that infers instantaneous sensitivity from kinematic metrics to dynamically determine the optimal bit-width.
+Both simulated and real-world evaluations confirm that DyQ-VLA achieves superior performance and efficiency.
+Notably, its orthogonal, plug-and-play design augments static methods, facilitating VLA edge deployment.
+Overall, our contributions are threefold:
+∙\bullet
+We reveal the temporal-dynamic nature of VLA quantization sensitivity and empirically establish kinematic metrics as reliable, real-time proxies for sensitivity identification.
+∙\bullet
+We propose DyQ-VLA, a dynamic quantization framework for VLA, integrating a sensitivity-aware precision switching strategy and a kinematic-guided bit allocation module.
+∙\bullet
+We validate DyQ-VLA’s efficient, near-lossless performance in simulated and real-world experiments, establishing a novel paradigm for real-time edge deployment.
+Specifically, DyQ-VLA retains 99.5% of baseline performance using merely 30.9% memory, accelerating simulation and real-world tasks by 1.49×\times and up to 1.43×\times, respectively.
+II Preliminary
+II-A VLA Models
+II-A1 Model Architecture
+VLA models [5, 25, 11] implement an embodied policy πθ\pi_{\theta} through three components:
+a vision encoder for visual embeddings,
+an LLM Backbone for multimodal fusion and reasoning,
+and an action detokenizer that reconstructs predicted tokens into control commands.
+II-A2 Autoregressive Inference
+A VLA policy πθ\pi_{\theta} models action execution as a generative sequence of LL discrete tokens At={a1,…,aL}A_{t}=\{a_{1},\dots,a_{L}\}.
+Specifically, the kk-th token aka_{k} is conditioned on the visual observation ItI_{t}, language instruction PP, current state xtx_{t},
+and previously generated tokens a1:k−1a_{1:k-1}.
+This autoregressive process is formulated as Eq. (1).
+πθ(At∣It,xt,P)=∏k=1LPθ(ak∣a1:k−1,It,xt,P)\pi_{\theta}(A_{t}\mid I_{t},x_{t},P)=\prod_{k=1}^{L}P_{\theta}(a_{k}\mid a_{1:k-1},I_{t},x_{t},P)
+(1)
+II-B Model Quantization
+II-B1 Quantization for VLA Models
+To optimize efficiency, uniform quantization [3, 7, 17] maps a high-precision tensor XX to a bb-bit integer Q⁡(X)Q(X), formulated as Eq. (2).
+Q⁡(X)=clamp​(⌊Xs⌋+z,0,2b−1)Q(X)=\text{clamp}\left(\left\lfloor\frac{X}{s}\right\rfloor+z,0,2^{b}-1\right)
+(2)
+where ss and zz denote the scale and zero-point.
+This process yields a reconstructed approximation X^=s⋅(Q⁡(X)−z)\hat{X}=s\cdot(Q(X)-z) and introduces a local error e=X−X^e=X-\hat{X}.
+II-B2 Challenge for VLA Model Quantization
+In closed-loop VLA control, ee drives the recursive state deviation Δ​xt\Delta x_{t} like (3), where 𝐉π\mathbf{J}_{\pi} and 𝐉𝒯\mathbf{J}_{\mathcal{T}} denote highly dynamic policy sensitivity and environmental gain across execution steps.
+To prevent dynamic amplification of the error 𝐉𝒯​(𝐉π⋅e)\mathbf{J}_{\mathcal{T}}(\mathbf{J}_{\pi}\cdot e) during critical manipulation phases, static quantization must globally minimize ee.
+This mismatch between static precision and dynamic noise tolerance introduces severe computational redundancy during coarse motions.
+Meanwhile, the recursive term 𝐉𝒯​Δ​xt−1\mathbf{J}_{\mathcal{T}}\Delta x_{t-1} continually compounds these local errors into fatal trajectory drift.
+Thus, static paradigms fundamentally fail to balance efficiency and long-horizon stability.
+Δ​xt≈𝐉𝒯​Δ​xt−1+𝐉𝒯​(𝐉π⋅e)\Delta x_{t}\approx\mathbf{J}_{\mathcal{T}}\Delta x_{t-1}+\mathbf{J}_{\mathcal{T}}(\mathbf{J}_{\pi}\cdot e)
+(3)
+III Observation and Motivation
+This section explores the temporal-dynamic sensitivity of quantization and its correlation with kinematic metrics.
+Establishing this correlation provides the fundamental basis for our dynamic quantization framework design.
+III-A Temporal Dynamics of VLA’s Quantization Sensitivity
+Motivation ①:
+Conventional static quantization methods are bottlenecked by the peak sensitivity of the model across an entire task.
+This worst-case assumption forces uniform high precision, wasting substantial computational resources.
+To address this limitation, we highlight that the quantization sensitivity of VLA models is inherently dynamic.
+During robotic manipulation, the precision needs vary significantly across different execution steps.
+For instance, fine-grained manipulation demands strict accuracy for precise object handling (e.g., grasping or insertion), whereas coarse-grained free-space movements maintain significant error resilience.
+To systematically investigate this dynamic characteristic and quantify the temporal-dynamic sensitivity, we conduct a step-wise perturbation analysis.
+This analysis evaluates how uniform quantization noise impacts task success across different execution steps.
+Specifically, to evaluate the OpenVLA model [5] on the LIBERO benchmark [8], we first collect a comprehensive set of successful full-precision (BF16) execution trajectories to serve as our baseline.
+Using these trajectories, we conduct a step-wise perturbation analysis by injecting a single 4-bit (W4A4) quantized action at each time step tt.
+Following this injection, the full-precision baseline policy resumes control for the remainder of the episode.
+To obtain a reliable task success rate, we repeat this perturbation across multiple episodes for every time step.
+We then plot the aggregated task success rate against the local action error, defined as et=‖pint4−pbf16‖2e_{t}=\|p_{\mathrm{int4}}-p_{\mathrm{bf16}}\|_{2}.
+As shown in Fig. 2, the system retains strong error resilience during coarse movements.
+Counter-intuitively, even when the local quantization error ete_{t} reaches its peak, the overall success rate remains consistently high.
+This clear decoupling of local action error from final task success confirms the inherently temporal-dynamic nature of quantization sensitivity.
+To quantitatively capture this dynamic behavior, we define the sensitivity metric as st=DT/ets_{t}=D_{T}/e_{t}, where DTD_{T} is the terminal spatial deviation caused by the local perturbation at step tt.
+We use this ratio because it quantifies how a local error at step tt affects the final outcome, directly reflecting the model’s sensitivity at that specific moment.
+Consequently, these errors ultimately manifest as macroscopic deviations at trajectory completion, providing a reliable quantitative characterization of VLA model sensitivity to quantization noise.
+Fig. 2 (b) plots the temporal variation of sts_{t}, revealing its highly dynamic characteristics throughout the task execution.
+Coarse movements are naturally robust to local noise, keeping sts_{t} consistently low.
+In contrast, fine-grained manipulations are highly sensitive to these errors, triggering sudden sts_{t} spikes that ultimately disrupt the entire task.
+While sts_{t} provides a rigorous ground-truth measurement, calculating it strictly requires terminal deviations available only after trajectory completion.
+This fundamental reliance on post-hoc analysis makes sts_{t} unsuitable for real-time precision switching, creating a need for an instantaneous proxy.
+Insights ①:
+Our step-wise analysis uncovers a fundamental property: the quantization sensitivity of VLA models is inherently temporal-dynamic.
+As effectively captured by sts_{t}, this sensitivity remains minimal during coarse movements but inevitably spikes during fine manipulation.
+Fig. 2: (a) Non-linear relationship between local action error and success rate.
+(b) Temporal-dynamic profiling of the sensitivity metric
+III-B Correlation Between Kinematic Metrics and Sensitivity
+Motivation ②:
+While the temporal-dynamic nature of quantization sensitivity is evident, the strictly post-hoc calculation of sts_{t} prohibits its direct application in real-time dynamic bit allocation.
+Bridging this gap requires an instantaneous proxy capable of tracking these sensitivity fluctuations.
+Given that VLA models operate as embodied agents, we posit that kinematic metrics can act as a reliable proxy due to their tight coupling with the physical execution phase [24].
+To verify this hypothesis, we investigate whether real-time kinematic metrics can effectively capture the fluctuations in instantaneous sensitivity.
+To capture both translational movements and rotational adjustments, we extract two complementary kinematic metrics: Motion Fineness (ℳt\mathcal{M}_{t}) and Angular Jerk (𝒥t\mathcal{J}_{t}).
+Motion Fineness inversely scales the translational magnitude at step tt, defined as ℳt=1−‖𝐚txyz‖2/μmax\mathcal{M}_{t}=1-\|\mathbf{a}_{t}^{\mathrm{xyz}}\|_{2}/\mu_{\text{max}}, where μmax\mu_{\text{max}} denotes the 95th95^{\text{th}} percentile of historical magnitudes.
+Meanwhile, Angular Jerk directly measures the normalized rotational fluctuations between consecutive steps, defined as 𝒥t=‖𝐚trot−𝐚t−1rot‖2/νmax\mathcal{J}_{t}=\|\mathbf{a}_{t}^{\mathrm{rot}}-\mathbf{a}_{t-1}^{\mathrm{rot}}\|_{2}/\nu_{\text{max}}, where νmax\nu_{\text{max}} denotes the 95th95^{\text{th}} percentile of historical angular jerks.
+Fig. 3: (a) Smooth macro-alignment of Motion Fineness with sensitivity.(b) High Variance spike-alignment of Angular Jerk with sensitivity.
+We then plot the normalized temporal trajectories of these proxies against the log-scaled sensitivity metric sts_{t} (Fig. 3).
+The visual trajectories of both kinematic metrics closely track the sensitivity curve, demonstrating clear alignment in overall trends.
+Quantitatively, both kinematic metrics exhibit a strong temporal correlation with the ground-truth sensitivity, achieving correlation coefficients of r=0.90r=0.90 for ℳt\mathcal{M}_{t} and r=0.87r=0.87 for 𝒥t\mathcal{J}_{t}.
+Intuitively, fine-grained manipulation steps demand high execution accuracy, amplifying the system’s sensitivity.
+These strong correlations highlight the feasibility of using kinematic metrics as a real-time sensitivity indicator.
+Although both metrics exhibit satisfactory concordance with sensitivity, they each demonstrate distinct but complementary properties.
+As shown in Fig. 3 (a), Motion Fineness (ℳt\mathcal{M}_{t}) excels at tracking the macro-trend of temporal-dynamic sensitivity.
+By capturing continuous spatial movements, ℳt\mathcal{M}_{t} yields a smooth profile of the physical execution.
+However, this macroscopic smoothing inherently obscures transient fluctuations, thereby missing short-term spikes in sensitivity.
+In contrast, Fig. 3 (b) demonstrates that Angular Jerk (𝒥t\mathcal{J}_{t}) reacts acutely to microscopic temporal variations.
+It successfully captures the sudden sensitivity spikes that occur during fine-grained manipulation.
+However, the high responsiveness of this metric naturally introduces significant variance, rendering the trajectory excessively jittery and noisy.
+Results confirm that kinematic metrics act as effective proxies for temporal-dynamic sensitivity, laying the groundwork for dynamic precision switching.
+However, using either metric independently presents inherent limitations.
+Therefore, establishing a real-time proxy requires fusing these complementary kinematic signals, which inspires our design.
+Insights ②:
+Kinematic metrics exhibit a strong correlation with the temporal-dynamic quantization sensitivity of VLA models.
+These metrics manifest inherently complementary properties.
+Specifically, ℳt\mathcal{M}_{t} reliably captures stable macroscopic trends, while 𝒥t\mathcal{J}_{t} identifies microscopic variations.
+IV DyQ-VLA Framework
+This section details the proposed step-wise dynamic quantization framework, DyQ-VLA, which contains two components: (1) a sensitivity-aware precision switching strategy and (2) a kinematic-guided bit allocation module.
+IV-A Sensitivity-Aware Precision Switching Strategy
+IV-A1 Static W-Quant and Dynamic A-Quant Paradigm
+To deploy VLA models on resource-limited edge devices, we adopt a static-weight, dynamic-activation (W4AXX) quantization paradigm.
+Since dynamically swapping weights incurs severe bandwidth bottlenecks during the autoregressive decoding phase, we freeze the weights at 4-bit (INT4).
+This design choice facilitates the deployment of 7B-class VLA models on commodity memory while preserving the downstream task performance.
+Conversely, the step-wise activation dynamically alternates between a full-precision fallback (BF16) and a quantized state (X∈{2,4,8}X\in\{2,4,8\}).
+Highly sensitive manipulation kinematics trigger a BF16 bypass to guarantee accuracy during critical physical interactions, whereas stable execution phases are dynamically quantized to lower bit-widths.
+This approach accelerates the execution of arithmetic logic units while avoiding weight swapping overhead, thus minimizing memory access latency.
+IV-A2 Kinematic-Driven Sensitivity Fusion
+To comprehensively guide the dynamic activation, we extract Motion Fineness (ℳt\mathcal{M}_{t}) and Angular Jerk (𝒥t\mathcal{J}_{t}) as two complementary kinematic metrics, processing them through asymmetric temporal windows to respectively capture macroscopic trends and microscopic spikes (Fig. 4).
+Specifically, a broad macro-window WmacroW_{\mathrm{macro}} averages the instantaneous Motion Fineness ℳi\mathcal{M}_{i} to track the stable macroscopic trend: ℳ~t=1Wmacro​∑i=t−Wmacro+1tℳi\tilde{\mathcal{M}}_{t}=\frac{1}{W_{\mathrm{macro}}}\sum_{i=t-W_{\mathrm{macro}}+1}^{t}\mathcal{M}_{i}.
+In physical terms, lower values of this metric physically correspond to coarse-grained transits.
+Conversely, a tight micro-window WmicroW_{\mathrm{micro}} (<Wmacro<W_{\mathrm{macro}}) averages the Angular Jerk 𝒥i\mathcal{J}_{i} to capture transient microscopic spikes: 𝒥~t=1Wmicro​∑i=t−Wmicro+1t𝒥i\tilde{\mathcal{J}}_{t}=\frac{1}{W_{\mathrm{micro}}}\sum_{i=t-W_{\mathrm{micro}}+1}^{t}\mathcal{J}_{i}.
+In physical terms, sudden surges in this micro-metric correspond to abrupt rotational adjustments.
+Because both ℳt\mathcal{M}_{t} and 𝒥t\mathcal{J}_{t} are inherently normalized against their historical percentiles (as defined in Sec. III), they natively possess cross-task scale consistency.
+Thus, the unified sensitivity state, which harmonizes stable macroscopic trends with transient microscopic spikes, can be cleanly formulated via a convex combination without additional dynamic scaling: 𝒮t=max⁡(0,λ​ℳ~t+(1−λ)​𝒥~t)\mathcal{S}_{t}=\max(0,\lambda\tilde{\mathcal{M}}_{t}+(1-\lambda)\tilde{\mathcal{J}}_{t}).
+IV-A3 Hysteresis-Based Precision Switching
+Directly toggling between the full-precision state and various quantized states causes frequent context switching and severely degrades the overall system throughput.
+To mitigate these computational overheads and prevent rapid oscillations between precision states at the boundaries of sensitivity thresholds, we apply an asymmetric hysteresis operator to the unified target precision b^t∈{2,4,8,16}\hat{b}_{t}\in\{2,4,8,16\}.
+We define a critical accuracy threshold θfp\theta_{\mathrm{fp}}.
+If 𝒮t>θfp\mathcal{S}_{t}>\theta_{\mathrm{fp}}, the system enforces a full-precision bypass by directly setting b^t=16\hat{b}_{t}=16.
+Otherwise (𝒮t≤θfp\mathcal{S}_{t}\leq\theta_{\mathrm{fp}}), the system invokes the bit allocation module (Sec. IV-B) to determine the optimal quantization bit-width, assigning b^t\hat{b}_{t} from the discrete subset {2,4,8}\{2,4,8\}.
+Formally, a delay window KK governs the dispatched bit-width bt∗b^{*}_{t}:
+bt∗={b^t,if ​b^t≥bt−1∗b^t,if ​maxi∈[t−K+1,t]⁡(b^i)≤b^tbt−1∗,otherwiseb^{*}_{t}=\begin{cases}\hat{b}_{t},&\text{if }\hat{b}_{t}\geq b^{*}_{t-1}\\
+\hat{b}_{t},&\text{if }\max_{i\in[t-K+1,t]}(\hat{b}_{i})\leq\hat{b}_{t}\\
+b^{*}_{t-1},&\text{otherwise}\end{cases}
+(4)
+This asymmetric design prioritizes accuracy by forcing immediate precision upgrades (for example, reverting to the BF16 format) whenever the target bit-width exceeds the active precision bt−1∗b^{*}_{t-1}.
+This mechanism instantly recovers the representational capacity of the model when complex action begins.
+Conversely, the delay window KK serves as a temporal low-pass filter that maintains the previous high precision bt−1∗b^{*}_{t-1} to absorb transient sensory noise until a stable downgrade is confirmed, ultimately preventing catastrophic task failures.
+To eliminate the runtime memory overhead associated with deploying this continuous window, we introduce a low-cost stateful approximation that provides a sufficient condition for the stable and optimal selection of the bit-width.
+IV-B Kinematic-Guided Bit Allocation Module
+IV-B1 Accuracy-Preserving Error Bounding
+Whenever the switching strategy initiates the quantized phase (𝒮t≤θfp\mathcal{S}_{t}\leq\theta_{\mathrm{fp}}), for efficient execution, the edge hardware is restricted to a discrete activation bit-width space ℬ={2,4,8}\mathcal{B}=\{2,4,8\}.
+These power-of-two formats strictly align with native hardware instructions, avoiding the software emulation overhead typically associated with arbitrary precisions.
+To map the sub-critical sensitivity 𝒮t\mathcal{S}_{t} to the optimal hardware precision (Fig. 4 (b)), the dynamic allocation module identifies the minimal bit-width b^t∈ℬ\hat{b}_{t}\in\mathcal{B} that satisfies a task-specific terminal accuracy-constrained deviation DaccD_{\mathrm{acc}}.
+The maximum allowable single-step action error shrinks as the manipulation sensitivity increases: ϵa​(𝒮t)=Dacc/(𝒮t+η)\epsilon_{a}(\mathcal{S}_{t})=D_{\mathrm{acc}}/(\mathcal{S}_{t}+\eta).
+This scaling occurs because minor deviations during critical phases can easily compound into an irreversible execution failure.
+This rigorous constraint structurally bounds the accumulated quantization error within the predefined accuracy region:
+b^t=arg⁡minb∈ℬ⁡bs.t.𝔼⁡[‖𝐚^t(b)−𝐚t∗‖2]≤ϵa​(𝒮t)\hat{b}_{t}=\arg\min_{b\in\mathcal{B}}\ b\quad\text{s.t.}\quad\mathbb{E}\left[\left\|\hat{\mathbf{a}}^{(b)}_{t}-\mathbf{a}^{*}_{t}\right\|_{2}\right]\leq\epsilon_{a}(\mathcal{S}_{t})
+(5)
+where 𝐚t∗\mathbf{a}^{*}_{t} and 𝐚^t(b)\hat{\mathbf{a}}^{(b)}_{t} denote the full-precision oracle (BF16) command and the quantized action command, respectively.
+Fig. 4: Overview of the DyQ-VLA framework. (a) The sensitivity-aware precision switching strategy. (b) The kinematic-guided bit allocation module.
+IV-B2 Offline Threshold Calibration
+Predicting the exact action deviations caused by the quantization of VLA models is computationally intractable during inference due to compounding non-linearities across consecutive execution steps.
+To satisfy the accuracy bound without introducing online computational burdens, we derive a discrete mapping function Φ:𝒮t↦ℬ\Phi:\mathcal{S}_{t}\mapsto\mathcal{B} via offline calibration.
+By executing the full-precision model on a representative calibration subset of successful trajectories, we quantify the actual local action deviation et(b)=‖𝐚^t(b)−𝐚t∗‖2e^{(b)}_{t}=\|\hat{\mathbf{a}}^{(b)}_{t}-\mathbf{a}^{*}_{t}\|_{2}.
+We systematically identify critical intersections where the lower-bit quantization error consistently exceeds the accuracy bound ϵa​(𝒮t)\epsilon_{a}(\mathcal{S}_{t}).
+These intersections define the precise interval boundaries within the quantized domain, denoted as Θ={θ2|4,θ4|8}\Theta=\{\theta_{2|4},\theta_{4|8}\}.
+IV-B3 Online Hardware Dispatch
+At runtime, this error-bounding objective effectively reduces to a static piecewise mapping exclusively for the quantized subdomain [0,θfp][0,\theta_{\mathrm{fp}}], significantly minimizing computational complexity by operating as a constant-time lookup table:
+Φ⁡(𝒮t)={2,𝒮t∈[0,θ2|4]4,𝒮t∈(θ2|4,θ4|8]8,𝒮t∈(θ4|8,θfp]\Phi(\mathcal{S}_{t})=\begin{cases}2,&\mathcal{S}_{t}\in[0,\theta_{2|4}]\\
+4,&\mathcal{S}_{t}\in(\theta_{2|4},\theta_{4|8}]\\
+8,&\mathcal{S}_{t}\in(\theta_{4|8},\theta_{\mathrm{fp}}]\end{cases}
+(6)
+By mapping continuous kinematics directly to disjoint discrete regions, the function Φ\Phi enables arbitrary, non-sequential precision jumps.
+This non-sequential flexibility is crucial for embodied tasks where the physical context can change drastically in a single step.
+For instance, transitioning from fine-grained manipulation to coarse-grained movement sharply reduces the corresponding sensitivity, enabling the system to drop from the BF16 state to 2-bit execution, thereby bypassing intermediate downgrades.
+For efficient deployment, a lightweight saturating counter (Alg. 1) approximates the sliding window.
+The previous high precision bt−1∗b^{*}_{t-1} is strictly preserved during upward jitter, as any target precision upgrade or new sensory spike (b^t≥bt−1∗∨b¯t>b¯t−1\hat{b}_{t}\geq b^{*}_{t-1}\lor\bar{b}_{t}>\bar{b}_{t-1}) mandates a counter reset.
+Consequently, the dynamic bit-width allocation becomes a reliable low-cost operation, accelerating the inference runtime without introducing significant memory footprint or scheduling overhead.
+Algorithm 1  Stateful Hardware Dispatcher of DyQ-VLA
+Input: Kinematic means ℳ~t,𝒥~t\tilde{\mathcal{M}}_{t},\tilde{\mathcal{J}}_{t}; params Θ,θfp,λ,K\Theta,\theta_{\mathrm{fp}},\lambda,K.
+State: Counter ct−1∈[0,K)c_{t-1}\in[0,K); active precision bt−1∗b^{*}_{t-1}; max candidate b¯t−1\bar{b}_{t-1}.
+1:
+𝒮t←max⁡(0,λ​ℳ~t+(1−λ)​𝒥~t)\mathcal{S}_{t}\leftarrow\max\big(0,\lambda\tilde{\mathcal{M}}_{t}+(1-\lambda)\tilde{\mathcal{J}}_{t}\big)
+2:
+b^t←16⋅𝕀⁡(𝒮t>θfp)+Φ⁡(𝒮t,Θ)⋅𝕀⁡(𝒮t≤θfp)\hat{b}_{t}\leftarrow 16\cdot\mathbb{I}(\mathcal{S}_{t}>\theta_{\mathrm{fp}})+\Phi(\mathcal{S}_{t};\Theta)\cdot\mathbb{I}(\mathcal{S}_{t}\leq\theta_{\mathrm{fp}})
+3:
+if b^t≥bt−1∗\hat{b}_{t}\geq b^{*}_{t-1} then
+4:
+(bt∗,ct,b¯t)←(b^t,0,b^t)(b^{*}_{t},c_{t},\bar{b}_{t})\leftarrow(\hat{b}_{t},0,\hat{b}_{t})
+5:
+else
+6:
+b¯t←max⁡(b^t,b¯t−1⋅𝕀⁡(ct−1>0))\bar{b}_{t}\leftarrow\max(\hat{b}_{t},\bar{b}_{t-1}\cdot\mathbb{I}(c_{t-1}>0))
+7:
+ct←ct−1⋅𝕀⁡(b¯t=b¯t−1)+1c_{t}\leftarrow c_{t-1}\cdot\mathbb{I}(\bar{b}_{t}=\bar{b}_{t-1})+1
+8:
+(bt∗,ct)←(b¯t⋅𝕀⁡(ct=K)+bt−1∗⋅𝕀⁡(ct<K),ctmodK)(b^{*}_{t},c_{t})\leftarrow\big(\bar{b}_{t}\cdot\mathbb{I}(c_{t}=K)+b^{*}_{t-1}\cdot\mathbb{I}(c_{t}<K),\;c_{t}\bmod K\big)
+9:
+end if
+10:
+return bt∗b^{*}_{t}
+V DyQ-VLA Framework Implementation
+This section details the implementation of the DyQ-VLA framework, focusing on the hardware-native operator mapping and the asynchronous computation flow.
+V-A Hardware Mapping and Mixed-Precision Backend
+Implementing dynamic multi-precision quantization (ℬ∈{2,4,8}\mathcal{B}\in\{2,4,8\}) requires specific system optimizations to mitigate memory bandwidth bottlenecks during the autoregressive action token generation of VLA models.
+To achieve efficient quantitative computing, we first design and optimize quantization operators.
+A key feature of the quantization operators is the use of INT4-pinned weights across all precision settings.
+By maintaining the weights as densely packed INT4 tensors in the GPU’s Global Memory (GMEM), the system could maximize the bandwidth utilization.
+To eliminate the global memory access overhead of dynamic activation quantization, operations including scaling, quantization to bit-width ℬ\mathcal{B}, and GMEM packing are fused into the MMA kernel.
+This integration effectively eliminates the need for additional load/offload passes.
+During the forward passes of general matrix multiply (GEMM) operations, the packed activations for ℬ∈{4,8}\mathcal{B}\in\{4,8\} utilize native INT4 and INT8 Tensor Cores via specialized kernels.
+For ℬ=8\mathcal{B}=8, the weights stored in the INT4 format are decompressed on the fly into the INT8 format within registers to match the W8A8 computational pipeline.
+This approach utilizes high-precision activation modeling while retaining the memory efficiency of 4-bit storage.
+For ℬ=2\mathcal{B}=2, the backend packs activations in the GMEM to halve the read bottlenecks, subsequently unpacking them into the INT4 format for W4A4 computation using optimized bitwise operations.
+This tight coupling of memory-bound fetching with zero-overhead decompression ensures that precision reduction translates directly into end-to-end speed gains.
+V-B End-to-End Asynchronous Computation Flow
+To prevent dynamic precision switching from introducing scheduling overhead, the lightweight dispatcher is structurally decoupled from the model via an asynchronous CPU-GPU pipeline.
+The target bit-width bt∗b^{*}_{t} is determined per step or action chunk instead of per token, avoiding severe kernel launch delays during the decoding process.
+At each control step tt, the host and the device operate concurrently to maximize throughput.
+While the GPU handles the computationally intensive visual prefill phase, the CPU asynchronously processes the proprioceptive data to compute the kinematic metrics (ℳ~t,𝒥~t\tilde{\mathcal{M}}_{t},\tilde{\mathcal{J}}_{t}).
+These metrics are subsequently fed into the dispatcher to evaluate the sensitivity 𝒮t\mathcal{S}_{t} and select the optimal bit-width bt∗∈{2,4,8,16}b^{*}_{t}\in\{2,4,8,16\}, where 16 denotes fallback.
+Because the dispatcher relies on simple scalar arithmetic, the execution time remains negligible at the microsecond scale.
+To achieve zero-latency synchronization, the selected bit-width bt∗b^{*}_{t} is directly written to the Zero-Copy mapped memory, completely bypassing blocking host-to-device transfers.
+Upon transitioning to the autoregressive decoding phase, the GPU reads this flag to route the execution to the corresponding pre-compiled CUTLASS kernel.
+Overlapping the kinematic evaluation on the CPU with the visual prefill on the GPU effectively hides the entire scheduling overhead of the quantization process.
+Consequently, this architecture enables deep hardware acceleration while maintaining the strict control frequency essential for reliable robotic deployment.
+Fig. 5: System Implementation of DyQ-VLA Framework
+VI Experiments
+VI-A Setup
+Fig. 6: A Case of DyQ-VLA Framework Completing Real-World Tasks (Task Name: Pick up the Banana and Put It into the Khaki Bowl)
+VI-A1 Hardware and Environments
+We evaluate DyQ-VLA across diverse manipulation tasks within the LIBERO [8] simulation benchmark and physical real-world environments.
+All system-level evaluations are conducted on an NVIDIA A100 GPU paired with an Intel Xeon Silver 4410T CPU.
+VI-A2 Models
+We use OpenVLA [5] as the base model.
+Because its LLM backbone generates actions token-by-token without independent modules, this homogeneous architecture avoids downstream interference.
+This provides a clean setup to evaluate the proposed dynamic quantization framework.
+VI-A3 Baselines
+To isolate the efficacy of dynamic bit allocation, we compare DyQ-VLA against mainstream and domain-specific baselines.
+For standard static fixed-precision quantization, we compare against SmoothQuant [17].
+We also evaluate against QVLA [19], a state-of-the-art quantization method tailored for VLAs.
+The unquantized BF16 model serves as the performance upper bound.
+We also perform an internal ablation by omitting the kinematic-guided module.
+VI-A4 Evaluation Metrics
+We evaluate both task performance and deployment efficiency.
+Task completion is measured by Success Rate (%), while inference efficiency is assessed using Peak Memory (GB) and End-to-End Latency (ms).
+Aligned with our GPU hardware mapping and asynchronous computation flow, latency strictly measures the complete execution time from initial input to final action output to reflect real-time responsiveness for robot control.
+VI-B Evaluation Results
+VI-B1 Simulation Results
+We evaluate DyQ-VLA across four LIBERO task suites (40 tasks, 200 trials each). As reported in Tab. I, DyQ-VLA achieves a 1.47×∼1.51×1.47\times\sim 1.51\times speedup and reduces peak memory by 10.5 GB compared to the full-precision model. While naive SmoothQuant offers higher speedups at the cost of severe success rate (SR) degradation, DyQ-VLA maintains a competitive 76.1% average SR. Notably, it yields a 0.1% absolute SR improvement over the QVLA baseline despite a marginal memory overhead, preserving 99.5% of the full-precision performance.
+The advantages of our dynamic framework are evident in its task-specific behaviors.
+To prevent trajectory drift during precision-critical Angular Jerk spikes, DyQ-VLA dynamically reverts to the BF16 state.
+In the LIBERO-Spatial suite, this targeted fallback achieves lossless precision routing, preserving an 84.7% success rate with a conservative 1.51×1.51\times speedup.
+Conversely, the LIBERO-Long suite contains extensive macroscopic translations with low Motion Fineness.
+During these stable phases, the dispatcher assigns low-bit activation states (e.g., X=2X=2) to alleviate memory bandwidth bottlenecks.
+Consequently, DyQ-VLA achieves a substantial 1.49×1.49\times speedup and a 53.4% success rate.
+This effectively demonstrates the capability of dynamic precision switching to balance latency and execution accuracy.
+TABLE I: Simulation Results of DyQ-VLA
+Env.
+Method
+Type
+Prec.
+SR (%)
+Spd.
+Mem. (GB)
+Goal
+FP Model
+Stat.
+BF16
+79.2
+1.00×\times
+15.2
+SmoothQuant
+Stat.
+W4A4
+69.6
+1.54×\times
+4.7
+QVLA
+Stat.
+W4A4
+78.8
+1.49×\times
+4.3
+DyQ-VLA (Ours)
+Dyn.
+W4AX
+78.5
+1.48×\times
+4.7
+Object
+FP Model
+Stat.
+BF16
+88.4
+1.00×\times
+15.2
+SmoothQuant
+Stat.
+W4A4
+73.2
+1.49×\times
+4.7
+QVLA
+Stat.
+W4A4
+87.6
+1.44×\times
+4.3
+DyQ-VLA (Ours)
+Dyn.
+W4AX
+87.8
+1.47×\times
+4.7
+Spatial
+FP Model
+Stat.
+BF16
+84.7
+1.00×\times
+15.2
+SmoothQuant
+Stat.
+W4A4
+69.2
+1.59×\times
+4.7
+QVLA
+Stat.
+W4A4
+84.4
+1.53×\times
+4.3
+DyQ-VLA (Ours)
+Dyn.
+W4AX
+84.7
+1.51×\times
+4.7
+Long
+FP Model
+Stat.
+BF16
+53.7
+1.00×\times
+15.2
+SmoothQuant
+Stat.
+W4A4
+40.9
+1.47×\times
+4.7
+QVLA
+Stat.
+W4A4
+53.0
+1.42×\times
+4.3
+DyQ-VLA (Ours)
+Dyn.
+W4AX
+53.4
+1.49×\times
+4.7
+VI-B2 Real-World Results
+To validate generalizability, we construct a tabletop manipulation setup using a 6-DoF robotic arm equipped with a 1-DoF parallel gripper and a primary-view RGB camera.
+We design physical tasks across three complexity levels: atomic grasping of simple objects, spatial displacement to move objects into designated containers, and composite sequential tasks requiring long-horizon multi-step planning.
+To bridge the sim-to-real gap, we collect 400 human demonstration episodes per task category using a physical teach pendant operating at a 10 Hz control frequency.
+We fine-tune the model using Quantized Low-Rank Adaptation to preserve the static-weight paradigm.
+Specifically, we inject low-rank adapters with a rank of 32 and a dropout rate of 0.05 into the attention projections of the backbone, keeping the pre-trained 4-bit base weights frozen.
+During inference, a client-server architecture enables the server to autoregressively decode actions while the client executes the joint commands.
+Across the three task categories (with unquantized baseline success rates of 86.7%, 76.7%, and 70.0%), our method achieves a 1.32×⁣∼\times\sim1.43×\times end-to-end latency speedup.
+As shown in Tab. II, DyQ-VLA remains robust in the physical world.
+For atomic and spatial tasks, the approach accelerates inference with a performance degradation of only 0.0%∼\sim3.4% compared to the unquantized model.
+In composite sequential tasks, the sensitivity-aware switching preserves manipulation accuracy during physical interactions, completing tasks with a 66.7% success rate.
+TABLE II: Real-World Results of DyQ-VLA
+Task Category
+FP Model (SR)
+DyQ-VLA (SR)
+Speedup
+Atomic Grasping
+86.7%
+86.7%
+1.43×\times
+Spatial Displacement
+76.7%
+73.3%
+1.32×\times
+Composite Sequential
+70.0%
+66.7%
+1.38×\times
+VI-C Ablation Study
+We perform an ablation study on the LIBERO-Spatial suite to evaluate the contribution of each component in DyQ-VLA (Tab. III).
+Relying solely on the static 4-bit (W4A4) quantization degrades the success rate by 15.5% due to accumulated errors in fine-grained manipulation phases.
+Introducing the kinematic-guided bit allocation strategy restores the success rate to 85.0% by dynamically requesting higher bit-widths during high sensitivity steps.
+However, this dynamic switching mechanism introduces a latency overhead of 16.8 ms due to high-precision arithmetic and context switching.
+To mitigate this, the mixed-precision backend assigns W4A2 states during stable phases to reclaim 8.2 ms of latency caused by memory bandwidth bottlenecks.
+Furthermore, by decoupling the dispatcher via the asynchronous computation flow, DyQ-VLA hides an additional 4.1 ms of scheduling overhead.
+This integration pushes the overall system speedup to 1.51×1.51\times and achieves a favorable Pareto frontier between inference latency and task success rate.
+TABLE III: Ablation Studies of DyQ-VLA on LIBERO-Spatial Benchmark
+Components
+SR (%)
+Lat. (ms)
+Mem. (GB)
+Static W4A4
+69.2
+84.9
+4.7
++ Kinematic Dispatch
+85.0 ↑\uparrow15.8
+101.7 ↑\uparrow16.8
+4.8 ↑\uparrow0.1
++ Mixed-Precision
+84.8 ↓\downarrow0.2
+93.5 ↓\downarrow8.2
+4.7 ↓\downarrow0.1
++ Async Engine (Full)
+84.7 ↓\downarrow0.1
+89.4 ↓\downarrow4.1
+4.7 -
+VI-D Discussion
+VI-D1 Hyper-Parameters Analysis
+System efficiency and accuracy depend on the sliding window sizes (WmacroW_{\mathrm{macro}} and WmicroW_{\mathrm{micro}}) and the accuracy threshold θfp\theta_{\mathrm{fp}}.
+To smooth high-frequency noise while capturing kinematic trends, we employ a dual-window approach with Wmacro=10W_{\mathrm{macro}}=10 and Wmicro=5W_{\mathrm{micro}}=5.
+This distinction allows the system to harmonize stable macroscopic trends with transient microscopic spikes.
+Fig. 7: Discussion of Hyper-Parameter θfp\theta_{\mathrm{fp}} in DyQ-VLA
+As shown in Fig. 7, we evaluate the impact of varying θfp\theta_{\mathrm{fp}} on the success rate and speedup.
+A higher threshold relaxes the accuracy constraint, allocating lower bit-widths more frequently.
+While this maximizes the acceleration ratio up to 1.59×\times, it compromises manipulation accuracy and leads to a 15.4% decline in the success rate during complex tasks.
+Conversely, an overly low threshold triggers the full-precision fallback too frequently, diminishing the latency gains of quantization.
+Based on this trade-off, we identify θfp=0.5\theta_{\mathrm{fp}}=0.5 as the optimal inflection point for balanced performance.
+VI-D2 Overhead Breakdown
+A design principle of DyQ-VLA is minimizing the operational overhead inherent in dynamic neural networks.
+Tab. IV breaks down the system overhead into temporal and spatial dimensions.
+Dynamic switching traditionally incurs delays due to real-time metric computation and operator scheduling bottlenecks, such as frequent kernel launches.
+Unlike methods requiring expensive online feature evaluation, our lightweight scalar arithmetic on the CPU takes less than 0.5 ms.
+By executing this concurrently with the visual prefill phase on the GPU, the asynchronous pipeline hides the temporal scheduling cost.
+For spatial overhead, maintaining stateful history buffers for kinematics operates on one-dimensional data arrays.
+This implementation occupies less than 64 KB of memory, preserving the 10.5 GB memory reduction achieved by the static-weight paradigm compared to the BF16 baseline.
+TABLE IV: Overhead of the proposed DyQ-VLA Framework.
+System Component
+Temporal Cost
+Spatial Cost
+Kinematic Metric Eval.
+<0.5<0.5 ms
+∼\sim1.2 KB
+Dynamic Dispatcher
+0 ms (Async)
+∼\sim0.1 KB
+History Buffer Maint.
+−-
+<64<64 KB
+Total System Impact
+Hidden
+<0.1<0.1 MB
+VII Conclusion
+In this paper, we propose DyQ-VLA, a dynamic quantization framework for real-time Vision-Language-Action (VLA) edge deployment.
+By leveraging a sensitivity-aware switching strategy based on kinematic metrics, DyQ-VLA effectively monitors temporal-dynamic quantization sensitivity.
+Furthermore, we propose a kinematic-guided bit allocation module to assign optimal bit-widths for manipulation accuracy.
+Experiments validate DyQ-VLA’s efficient performance, achieving speedups of 1.49×1.49\times in simulation and up to 1.43×1.43\times in the real world.
+Notably, it requires only 30.9% of the memory footprint while maintaining 99.5% performance, establishing a novel paradigm for real-time edge deployment.
+References
+[1]
+J. Cao, Q. Zhang, P. Jia, X. Zhao, B. Lan, X. Zhang, Z. Li, X. Wei, S. Chen, L. Li, et al. (2025)
+Fastdrivevla: efficient end-to-end driving via plug-and-play reconstruction-based token pruning.
+arXiv preprint arXiv:2507.23318.
+Cited by: §I.
+[2]
+H. Fang, Y. Liu, Y. Du, L. Du, and H. Yang (2025)
+Sqap-vla: a synergistic quantization-aware pruning framework for high-performance vision-language-action models.
+arXiv preprint arXiv:2509.09090.
+Cited by: §I.
+[3]
+E. Frantar, S. Ashkboos, T. Hoefler, and D. Alistarh (2022)
+GPTQ: accurate post-training compression for generative pretrained transformers.
+arXiv preprint arXiv:2210.17323.
+Cited by: §I,
+§II-B1.
+[4]
+Z. Guan, H. Huang, Y. Su, H. Huang, N. Wong, and H. Yu (2024)
+APTQ: attention-aware post-training mixed-precision quantization for large language models.
+In Proceedings of the 61st ACM/IEEE Design Automation Conference,
+pp. 1–6.
+Cited by: §I.
+[5]
+M. J. Kim, K. Pertsch, S. Karamcheti, T. Xiao, A. Balakrishna, S. Nair, R. Rafailov, E. Foster, G. Lam, P. Sanketi, et al. (2024)
+Openvla: an open-source vision-language-action model.
+arXiv preprint arXiv:2406.09246.
+Cited by: §I,
+§II-A1,
+§III-A,
+§VI-A2.
+[6]
+Y. Li, Y. Meng, Z. Sun, K. Ji, C. Tang, J. Fan, X. Ma, S. Xia, Z. Wang, and W. Zhu (2026)
+SP-VLA: a joint model scheduling and token pruning approach for VLA model acceleration.
+In The Fourteenth International Conference on Learning Representations,
+External Links: Link
+Cited by: §I.
+[7]
+J. Lin, J. Tang, H. Tang, S. Yang, W. Chen, W. Wang, G. Xiao, X. Dang, C. Gan, and S. Han (2024)
+AWQ: activation-aware weight quantization for llm compression and acceleration.
+In MLSys,
+Cited by: §I,
+§II-B1.
+[8]
+B. Liu, Y. Zhu, C. Gao, Y. Feng, Q. Liu, Y. Zhu, and P. Stone (2023)
+LIBERO: benchmarking knowledge transfer for lifelong robot learning.
+arXiv preprint arXiv:2306.03310.
+Cited by: §III-A,
+§VI-A1.
+[9]
+J. Liu, M. Liu, Z. Wang, P. An, X. Li, K. Zhou, S. Yang, R. Zhang, Y. Guo, and S. Zhang (2024)
+Robomamba: efficient vision-language-action model for robotic reasoning and manipulation.
+Advances in Neural Information Processing Systems 37, pp. 40085–40110.
+Cited by: §I.
+[10]
+X. Pei, Y. Chen, S. Xu, Y. Wang, Y. Shi, and C. Xu (2026)
+Action-aware dynamic pruning for efficient vision-language-action manipulation.
+In The Fourteenth International Conference on Learning Representations,
+External Links: Link
+Cited by: §I.
+[11]
+Physical Intelligence, K. Black, N. Brown, J. Darpinian, K. Dhabalia, D. Driess, A. Esmail, M. Equi, C. Finn, N. Fusai, et al. (2025)
+π0.5\pi_{0.5}: A vision-language-action model with open-world generalization.
+arXiv preprint arXiv:2504.16054.
+Cited by: §I,
+§II-A1.
+[12]
+R. Sapkota, Y. Cao, K. I. Roumeliotis, and M. Karkee (2025)
+Vision-language-action models: concepts, progress, applications and challenges.
+arXiv preprint arXiv:2505.04769.
+Cited by: §I.
+[13]
+M. Shukor, D. Aubakirova, F. Capuano, P. Kooijmans, S. Palma, A. Zouitine, M. Aractingi, C. Pascal, M. Russi, A. Marafioti, et al. (2025)
+Smolvla: a vision-language-action model for affordable and efficient robotics.
+arXiv preprint arXiv:2506.01844.
+Cited by: §I.
+[14]
+W. Song, J. Chen, P. Ding, Y. Huang, H. Zhao, D. Wang, and H. Li (2025)
+CEED-vla: consistency vision-language-action model with early-exit decoding.
+arXiv preprint arXiv:2506.13725.
+Cited by: §I.
+[15]
+S. Wang, R. Yu, Z. Yuan, C. Yu, F. Gao, Y. Wang, and D. F. Wong (2025)
+Spec-vla: speculative decoding for vision-language-action models with relaxed acceptance.
+In Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing,
+pp. 26916–26928.
+Cited by: §I.
+[16]
+J. Wen, Y. Zhu, J. Li, M. Zhu, Z. Tang, K. Wu, Z. Xu, N. Liu, R. Cheng, C. Shen, et al. (2025)
+Tinyvla: towards fast, data-efficient vision-language-action models for robotic manipulation.
+IEEE Robotics and Automation Letters.
+Cited by: §I.
+[17]
+G. Xiao, J. Lin, M. Seznec, H. Wu, J. Demouth, and S. Han (2023)
+SmoothQuant: accurate and efficient post-training quantization for large language models.
+In Proceedings of the 40th International Conference on Machine Learning,
+Cited by: §I,
+§II-B1,
+§VI-A3.
+[18]
+S. Xu, Y. Wang, C. Xia, D. Zhu, T. Huang, and C. Xu (2025)
+VLA-cache: efficient vision-language-action manipulation via adaptive token caching.
+In The Thirty-ninth Annual Conference on Neural Information Processing Systems,
+External Links: Link
+Cited by: §I.
+[19]
+Y. Xu, Y. Yang, Z. Fan, Y. Liu, Y. Li, B. Li, and Z. Zhang (2026)
+QVLA: not all channels are equal in vision-language-action model’s quantization.
+External Links: 2602.03782,
+Link
+Cited by: §I,
+§VI-A3.
+[20]
+Y. Yang, Y. Wang, Z. Wen, L. Zhongwei, C. Zou, Z. Zhang, C. Wen, and L. Zhang (2025)
+EfficientVLA: training-free acceleration and compression for vision-language-action models.
+arXiv preprint arXiv:2506.10100.
+Cited by: §I.
+[21]
+Z. Yu, B. Wang, P. Zeng, H. Zhang, J. Zhang, L. Gao, J. Song, N. Sebe, and H. T. Shen (2025)
+A survey on efficient vision-language-action models.
+arXiv preprint arXiv:2510.24795.
+Cited by: §I.
+[22]
+Y. Yue, Y. Wang, B. Kang, Y. Han, S. Wang, S. Song, J. Feng, and G. Huang (2024)
+Deer-vla: dynamic inference of multimodal large language models for efficient robot execution.
+Advances in Neural Information Processing Systems 37, pp. 56619–56643.
+Cited by: §I.
+[23]
+R. Zhang, M. Dong, Y. Zhang, L. Heng, X. Chi, G. Dai, L. Du, Y. Du, and S. Zhang (2025)
+Mole-vla: dynamic layer-skipping vision language action model via mixture-of-layers for efficient robot manipulation.
+arXiv preprint arXiv:2503.20384.
+Cited by: §I.
+[24]
+Z. Zheng, Z. Mao, M. Li, J. Chen, X. Sun, Z. Zhang, D. Cao, H. Mei, and X. Chen (2026)
+KERV: kinematic-rectified speculative decoding for embodied vla models.
+External Links: 2603.01581,
+Link
+Cited by: §III-B.
+[25]
+B. Zitkovich, T. Yu, S. Xu, P. Xu, T. Xiao, F. Xia, J. Wu, P. Wohlhart, S. Welker, A. Wahid, et al. (2023)
+Rt-2: vision-language-action models transfer web knowledge to robotic control.
+In Conference on Robot Learning,
+pp. 2165–2183.
+Cited by: §I,
+§II-A1.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

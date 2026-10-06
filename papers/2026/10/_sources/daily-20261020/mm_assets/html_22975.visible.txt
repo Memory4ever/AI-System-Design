@@ -1,0 +1,878 @@
+Sink-Sparse Hybrid Attention for Efficient Inference in T2I/T2V Diffusion Transformers
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract.
+1 Introduction
+2 Related Work
+2.1 Efficient Inference for Diffusion Models
+2.2 Sparse Attention in Diffusion Transformers
+2.3 Importance-Aware and Structured Sparsity in Transformers
+3 Motivation
+3.1 Self-Attention Is a Major Runtime Bottleneck
+3.2 Stable High-Mass Attention Regions Across Inputs and Steps
+Implication.
+4 Method
+4.1 Notation and Overview
+4.2 Static Sink Mask Acquisition
+Exact block-mass score.
+4.3 Sink-Sparse Hybrid Inference
+Static sparse sink branch.
+Pooled-KV compensation branch.
+Adaptive fusion.
+4.4 Complexity and Deployment
+5 Experiments
+5.1 Experimental Setup
+T2V setup.
+T2I setup.
+Latency metric and hardware.
+Calibration and implementation details.
+Unified operator stack and baselines.
+5.2 Main Results
+5.3 Efficiency–Quality Trade-off
+5.4 Calibration Size
+5.5 Effect of Hybrid Compensation
+6 Conclusion
+Limitations.
+References
+License: arXiv.org perpetual non-exclusive license
+arXiv:2610.22975v1 [cs.CV] 16 Oct 2026
+Sink-Sparse Hybrid Attention for Efficient Inference in T2I/T2V Diffusion Transformers
+Conference: ; ;
+Bingxin Xing
+Note: Equal contribution.
+Affiliation: Xi’an Jiaotong University, Xi’an, China
+,
+Yu Zhang
+Affiliation: Xiamen University, Xiamen, China
+,
+Jiatong Ding
+Affiliation: Shanghai Jiao Tong University, Shanghai, China
+,
+Lei Lu
+Affiliation: Xi’an Jiaotong University, Xi’an, China
+and
+Ping Wang
+Note: Corresponding author.
+Affiliation: Xi’an Jiaotong University, Xi’an, China
+© none
+Abstract.
+Diffusion Transformers (DiTs) have become a common backbone for high-quality text-to-image and text-to-video generation, but repeated dense self-attention remains a major inference bottleneck as token sequences grow and the same operator is invoked across many denoising steps. Our study suggests that dense attention in pretrained DiTs contains reusable layer/head-specific high-mass structure that can be identified from a small offline calibration set and reused across future generations. This leads to Sink-Sparse Hybrid Attention, a train-free attention replacement that reuses static sink masks and supplements them with a lightweight pooled-KV branch, while leaving model weights and sampling schedules unchanged. On Wan2.1-T2V-1.3B, the method attains 1.54×\times end-to-end speedup while maintaining generation quality. On Z-Image-Turbo, it attains 1.57×\times end-to-end speedup with competitive GenEval2 performance. These results indicate that reusable importance-aware sparse support can provide an effective train-free acceleration path for both T2V and T2I DiTs.
+Keywords: diffusion transformers, sparse attention, train-free acceleration, text-to-image, text-to-video
+1. Introduction
+Diffusion Transformers (DiTs) have become an important backbone for high-quality visual generation in both text-to-image (T2I) and text-to-video (T2V) systems (Peebles and Xie, 2023; Bao et al., 2023; Polyak et al., 2024; Wan Team, 2025; Z-Image Team et al., 2025). As these systems move toward higher resolutions, longer outputs, and repeated sampling in practical workflows, inference efficiency becomes a first-order deployment concern. The relevant cost is not only the latency of a single sample: users often regenerate multiple candidates under different prompts, seeds, or motion descriptions, and online services must support many such requests concurrently. Cumulative latency and hardware budget therefore become dominant practical constraints. This pressure is especially pronounced in modern visual generation because quality improvements often come from exactly the factors that increase compute demand: more denoising steps, larger latent grids, longer videos, and richer global token interaction.
+A major source of this cost is self-attention. In video DiTs, self-attention must model all interactions over long spatio-temporal token sequences, and this computation is repeated across layers, heads, and denoising steps (Vaswani et al., 2017; Zhang et al., 2025b; Xia et al., 2025). In high-resolution image DiTs, the temporal axis disappears, but the large spatial token grid still makes repeated global interaction expensive. Although optimized dense kernels can substantially reduce implementation overhead, they do not change the underlying quadratic interaction pattern (Dao et al., 2022). Consequently, attention remains a major runtime bottleneck even when the rest of the inference stack is already carefully optimized. Because diffusion sampling evaluates nearby latent states over many denoising iterations, the same expensive operator is invoked again and again; any inefficiency is therefore multiplied along the full trajectory. As later shown in Sec. 3.1, self-attention alone accounts for a large fraction of end-to-end sampling time in the evaluated setting.
+This bottleneck has motivated extensive research on efficient diffusion inference. Some methods reduce redundant computation across denoising steps through feature caching or cross-step reuse, such as DeepCache, TGATE, FasterCache, ToCa, and AB-Cache (Ma et al., 2024; Liu et al., 2024; Lv et al., 2024; Zou et al., 2025; Yu et al., 2025). Another line targets the attention operator itself. For video DiTs, train-free methods such as SVG, SVG2, STA, and AdaSpa exploit spatial-temporal sparsity, local windows, or adaptive sparse search to accelerate pretrained backbones (Xi et al., 2025; Yang et al., 2025; Zhang et al., 2025b; Xia et al., 2025). In parallel, more generic sparse operators such as XAttention and SpargeAttn provide reusable block selection and sparse execution mechanisms that can also be instantiated in visual generation models (Xu et al., 2025; Zhang et al., 2025d). Training-based methods such as VSA and Video-BLADE instead learn sparse behavior through optimization or distillation (Zhang et al., 2025a; Gu et al., 2025). Together, these studies show that dense attention is not the only viable operating point. Yet for deployment, the most attractive solution is one whose sparse structure can be prepared once, reused across diverse generation requests, and integrated into existing inference stacks without retraining, fine-tuning, or architecture-specific redesign.
+However, train-free sparse inference still faces a persistent difficulty. When the pretrained backbone is frozen, the outcome depends not only on how much computation is removed, but also on which interactions are preserved. Existing sparse rules often rely on locality priors, online search, or generic scoring functions. These choices can be effective, yet they do not directly answer a more reusable question: can a small subset of important interactions be identified once offline and then amortized across future generations? Local windows are simple and hardware-friendly, but long-range semantic or temporal dependencies do not always respect a fixed neighborhood. More adaptive selection rules can recover missing interactions, but they also introduce online overhead and repeated pattern discovery. In other words, train-free sparse inference often has to choose between cheap but rigid sparse layouts and flexible but repeatedly re-computed sparse layouts.
+Prior work already suggests that attention in diffusion transformers is structured rather than arbitrary. Locality-based methods reveal strong spatial-temporal regularity, while adaptive methods exploit cross-step or input-dependent sparsity (Xi et al., 2025; Yang et al., 2025; Zhang et al., 2025b; Xia et al., 2025). Our question is more specific: can a small offline calibration set identify layer/head-specific block interactions that remain useful across prompts, noise seeds, and denoising steps, so that a static mask can be reused with low online overhead? If the answer is yes, train-free sparse attention need not choose only between rigid hand-designed layouts and repeated online pattern discovery.
+This question also aligns with importance-aware findings in long-context transformers. Attention-sink, heavy-hitter, KV-selection, and structured sparse-prefill studies show that a relatively small subset of tokens or regions can repeatedly dominate attention and stabilize compressed inference (Xiao et al., 2024; Zhang et al., 2023; Xiao et al., 2025; Li et al., 2024; Jiang et al., 2024; Lai et al., 2025; Zhang et al., 2026). Although diffusion attention differs substantially from causal LLM decoding, these results support the broader intuition that preserving recurrent high-importance structure can be more effective than treating all interactions as equally necessary. For diffusion transformers, the relevant reusable unit is not a causal token sink but a layer/head-specific block-level support pattern in bidirectional attention.
+Our key observation is that a small calibration set can expose reusable block-level supports that repeatedly capture a large fraction of dense attention mass across prompts, noise seeds, and denoising steps. We refer to these retained regions as sink blocks. Unlike attention-sink tokens in causal LLMs, sink blocks here are layer/head-specific block supports in bidirectional attention. This observation makes static sparsification attractive, but it also exposes its limitation: the dominant reusable support captures most, not all, of the useful context. Discarding the remaining support entirely can remove weak but globally distributed interactions, as well as input-dependent context that is less stable than the main sink structure. This is why we use a hybrid attention design rather than a sink-only sparse operator.
+We instantiate this idea in Sink-Sparse Hybrid Attention, a structure-aware, train-free replacement for dense self-attention in pretrained DiTs. For each layer and head, a static sink mask is calibrated once offline and then reused during inference. A sink-preserving sparse branch handles the recurrent high-mass interactions that can be amortized across runs, while a pooled-KV compensation branch provides a low-cost approximation to the residual global context using full-resolution queries and pooled keys/values. The two branches are fused with a normalization-aware rule so that the sparse sink branch remains dominant when its retained support is sufficient, while the compensation branch contributes when omitted context becomes important. The resulting workflow is simple and deployment-friendly, requiring no retraining, fine-tuning, or sampling-schedule changes.
+Our contributions are summarized as follows:
+•
+We show that a small calibration set can identify reusable block-level static masks that remain well aligned with dense attention across prompts, noise seeds, and denoising steps.
+•
+We develop Sink-Sparse Hybrid Attention, a train-free attention replacement that combines per-layer, per-head static sink masks with a pooled-KV compensation branch and normalization-aware fusion, and we clarify why the hybrid branch is useful for recovering coarse omitted context at low cost.
+•
+We validate the framework on both T2V and T2I diffusion transformers, showing favorable quality–efficiency trade-offs across the two generation settings and demonstrating that hybrid compensation improves the practicality of reusable train-free sparsity.
+2. Related Work
+2.1. Efficient Inference for Diffusion Models
+A broad literature studies how to reduce the cost of diffusion sampling. One important direction, especially in train-free settings, exploits redundancy across denoising steps through feature caching, attention reuse, or selective recomputation. Representative examples include DeepCache, TGATE, FasterCache, ToCa, and AB-Cache (Ma et al., 2024; Liu et al., 2024; Lv et al., 2024; Zou et al., 2025; Yu et al., 2025). These methods are effective because diffusion sampling repeatedly evaluates nearby latent states, so part of the computation can often be reused rather than recomputed from scratch.
+Another direction improves diffusion efficiency through attention approximation, architectural redesign, or task-specific acceleration. DiTFastAttn targets faster attention in pretrained diffusion backbones, whereas DiG redesigns the generator itself, and recent editing-oriented methods accelerate related diffusion workflows (Yuan et al., 2024; Pu et al., 2024; Zhu et al., 2025; Becker et al., 2025). Together, these studies show that attention is not merely a low-level kernel concern but a major algorithmic target for practical diffusion inference acceleration.
+2.2. Sparse Attention in Diffusion Transformers
+Sparse attention is especially attractive for DiTs because transformer-based generators inherit the high cost of dense token interaction while evaluating the same operator many times during sampling. In the T2V setting, train-free methods such as SVG, SVG2, STA, and AdaSpa exploit spatial-temporal locality, sparse support, or adaptive search to accelerate pretrained video DiTs (Xi et al., 2025; Yang et al., 2025; Zhang et al., 2025b; Xia et al., 2025). These methods demonstrate that video-DiT attention is far from unstructured and that substantial end-to-end savings are possible without changing model weights.
+In parallel, more operator-oriented approaches such as SpargeAttn and XAttention emphasize reusable sparse selection rules and efficient sparse execution primitives that can transfer across workloads (Zhang et al., 2025d; Xu et al., 2025). A separate line of work, including VSA and Video-BLADE, incorporates sparsity through training, adaptation, or distillation (Zhang et al., 2025a; Gu et al., 2025). Compared with these methods, our goal is deliberately narrow and practical: we focus on the train-free setting and ask whether a small offline calibration stage can identify a reusable sparse support that is cheap to deploy later.
+2.3. Importance-Aware and Structured Sparsity in Transformers
+Our work is also related to a broader importance-aware view of transformer sparsity. In long-context language models, attention-sink, heavy-hitter, KV-selection, and structured sparse-prefill methods show that a relatively small subset of tokens or regions can repeatedly dominate attention and support efficient approximate inference (Xiao et al., 2024; Zhang et al., 2023; Xiao et al., 2025; Li et al., 2024; Jiang et al., 2024; Lai et al., 2025; Zhang et al., 2025c; Wang et al., 2025; Zhang et al., 2026). Although these methods were developed primarily for causal language modeling or prefilling rather than bidirectional diffusion attention, they provide an important conceptual cue: preserving recurrently important structure can be more effective than treating all interactions as equally necessary.
+Our method adopts this perspective in a different regime. Instead of causal token sinks or online heavy-hitter selection, we study layer/head-specific block-level support in pretrained DiTs and reuse it across denoising steps and future runs. In this sense, Sink-Sparse Hybrid Attention occupies a middle ground between fully hand-designed sparse layouts and fully online pattern discovery: the sparse structure is empirical and model-specific, but most of its cost is paid once during offline calibration.
+3. Motivation
+This section asks two questions: (1) whether self-attention is a major runtime bottleneck, and (2) whether dense attention exhibits reusable structure that can support a static sparse pattern.
+Beyond raw speed, we are interested in whether attention structure is stable enough to justify paying the pattern-discovery cost only once. A useful train-free sparse operator should therefore satisfy two practical criteria: it should target a component that occupies a substantial portion of end-to-end latency, and the retained support should remain informative across prompts, seeds, and denoising phases. The following evidence is organized around exactly these two requirements and motivates why a reusable static mask is a reasonable design target.
+3.1. Self-Attention Is a Major Runtime Bottleneck
+We first verify that self-attention is a meaningful target for acceleration. Under the evaluated long-sequence setting, self-attention consistently accounts for about 44%–51% of sampling time across denoising schedules, as shown in Fig. 1. This confirms that reducing attention cost can translate into end-to-end savings rather than only micro-kernel improvements.
+The profiling result also clarifies why a train-free attention replacement is worth studying. The same high-cost attention operator is invoked repeatedly along the denoising trajectory, so even a moderate per-step reduction can accumulate into substantial wall-clock savings. At the same time, the success of prior sparse-attention methods suggests that dense attention contains structured redundancy: some interactions appear much more important than others and therefore should be preserved more carefully.
+Figure 1. Profiling sampling latency in the evaluated T2V setting. We decompose the sampling time TsampleT_{\mathrm{sample}} (excluding model initialization and video writing) into self-attention time TattnT_{\mathrm{attn}} and the remaining components TotherT_{\mathrm{other}} across different denoising schedules. Self-attention consistently occupies a large fraction of the total runtime.Bar chart profiling sampling latency across denoising schedules, separating self-attention time from the remaining runtime and showing that attention occupies a large fraction of inference cost.
+Wan2.1-T2V-1.3B
+Z-Image-Turbo
+Representative dense self-attention heatmaps from Wan2.1-T2V-1.3B and Z-Image-Turbo, each showing three different prompts with visually similar stripe-like structures.
+Figure 2. Attention pattern similarity across different prompts. We visualize representative dense self-attention maps from Wan2.1-T2V-1.3B and Z-Image-Turbo, each under three different prompts. Despite changes in prompt content, the dominant stripe-like structures remain visually similar.
+3.2. Stable High-Mass Attention Regions Across Inputs and Steps
+We next ask whether dense attention exhibits a reusable structure that could support a static sparse pattern. When the same layer and head are visualized under different prompt–seed pairs, prominent stripe-like bands and recurrent long-range links remain visible even though local intensities change, as shown in Fig. 2. This indicates that the attention pattern contains a persistent structural component in addition to instance-specific variation. Our goal is not to claim that the dense maps are identical across runs, but rather that a stable block-level scaffold persists strongly enough to guide a reusable sparse operator.
+To quantify this behavior at the model level, we measure how much dense attention probability mass falls inside the token-level expansion M~(l,h)\widetilde{M}^{(l,h)} of a layer/head-specific static sink mask. For a held-out prompt–seed case uu, denoising step tt, layer ll, and head hh, let Pu(l,h,t)=softmax⁡(Su(l,h,t))P_{u}^{(l,h,t)}=\operatorname{softmax}(S_{u}^{(l,h,t)}) denote the dense attention probability matrix. We define the corresponding coverage as
+(1)
+Covu,l,h,t=∑i,j[Pu(l,h,t)]i​j​M~i​j(l,h)∑i,j[Pu(l,h,t)]i​j.\mathrm{Cov}_{u,l,h,t}=\frac{\sum_{i,j}[P_{u}^{(l,h,t)}]_{ij}\,\widetilde{M}^{(l,h)}_{ij}}{\sum_{i,j}[P_{u}^{(l,h,t)}]_{ij}}.
+We report this quantity in Fig. 3 for a representative shared-step static sink mask whose mean retained block density is about 38.8%38.8\% (equivalently, about 61.2%61.2\% sparsity). For each denoising step, we summarize the statistic over held-out cases and all layer–head pairs by the mean and the 25th–75th percentile band. A budget-matched random mask is shown only as a reference.
+Figure 3 shows that the static sink mask retains a high fraction of dense attention mass throughout the default 50-step denoising trajectory. Coverage is already high at early steps, shows some fluctuation in the initial phase, and then remains high throughout the rest of denoising. The reference baseline remains much lower, but the more important point is that the same reusable mask stays well aligned with dense attention over a wide range of inputs and steps.
+Coverage-versus-step plot for a representative shared-step static sink mask, showing the fraction of dense attention probability mass preserved throughout the default 50-step denoising schedule, together with a budget-matched random baseline and shaded 25th--75th percentile ranges across layer--head pairs.
+Figure 3. Coverage of dense attention mass captured by the static sink mask across denoising steps. We evaluate a representative shared-step static sink mask with mean retained block density 38.8%38.8\% (i.e., 61.2%61.2\% sparsity). For each denoising step, the sink-mask curve shows the mean coverage across layer–head pairs on held-out cases, and the shaded band shows the 25th–75th percentile range. A budget-matched random mask is shown as a reference.Coverage-versus-step plot for a representative shared-step static sink mask, showing the fraction of dense attention probability mass preserved throughout the default 50-step denoising schedule, together with a budget-matched random baseline and shaded 25th–75th percentile ranges across layer–head pairs.
+Implication.
+These observations make a static train-free design plausible. If recurrent high-mass regions persist across runs, they can be preserved by a reusable sink mask. At the same time, coverage is clearly below one, so a pure sink-only approximation would still discard some weaker but useful context. This motivates a hybrid design: the sink branch preserves the stable scaffold, while a lightweight complementary branch restores coarse global information omitted by the static mask.
+4. Method
+Figure 4. Workflow of Sink-Sparse Hybrid Attention.
+Offline calibration collects dense self-attention observations from a small calibration set, converts token-level attention into exact block-mass scores, averages them across observations, and applies a row-wise coverage threshold τ\tau to obtain one static sink mask for each layer and head.
+Online inference reuses these masks at every denoising step: a static sparse sink branch preserves recurrently important interactions, a pooled-KV compensation branch supplies coarse omitted context using full-resolution queries and pooled keys/values, and the two branches are fused into the final attention output.Two-stage workflow of Sink-Sparse Hybrid Attention. The offline stage measures dense token attention, aggregates it into exact block-level mass, averages it across calibration observations, and constructs one static sink mask per layer and head through row-wise coverage selection. The online stage reuses the same static sink masks at every denoising step, combines a static sparse sink branch with a pooled-KV compensation branch, and fuses their outputs into the final attention result.
+4.1. Notation and Overview
+For layer ll and head hh, dense self-attention is
+(2)
+O(l,h)=softmax⁡(Q(l,h)​(K(l,h))⊤dh)​V(l,h).O^{(l,h)}=\operatorname{softmax}\!\left(\frac{Q^{(l,h)}(K^{(l,h)})^{\top}}{\sqrt{d_{h}}}\right)V^{(l,h)}.
+Let the flattened token sequence contain NN tokens. We partition it into BB consecutive blocks of size bb (assuming NN is divisible by bb for simplicity), and estimate one static sink mask
+M(l,h)∈{0,1}B×BM^{(l,h)}\in\{0,1\}^{B\times B} for each layer and head.
+In this paper, we use the original token order; no rearrangement is applied before mask construction.
+The same static sink mask is reused at every denoising step.
+For different backbones, the masks are calibrated independently.
+The full pipeline has two stages.
+First, we build static sink masks from a small dense calibration set.
+Second, we reuse these masks during inference in either a sink-only sparse branch or a hybrid branch with pooled-KV compensation.
+Algorithm 1  Offline Static Sink Mask Calibration
+1:
+calibration set 𝒞\mathcal{C}, block size bb, coverage threshold τ\tau
+2:
+static sink masks {M(l,h)}\{M^{(l,h)}\}
+3:
+# initialize block-mass accumulators
+4:
+for all layers ll and heads hh do
+5:
+S(l,h)←𝟎B×BS^{(l,h)}\leftarrow\mathbf{0}_{B\times B}
+6:
+end for
+7:
+# collect exact dense block-mass statistics
+8:
+for all observations u∈𝒞u\in\mathcal{C} do
+9:
+for all layers ll and heads hh do
+10:
+Au(l,h)←softmax⁡(Qu(l,h)​(Ku(l,h))⊤/dh)A_{u}^{(l,h)}\leftarrow\operatorname{softmax}\!\big(Q_{u}^{(l,h)}(K_{u}^{(l,h)})^{\top}/\sqrt{d_{h}}\big)
+11:
+split the token sequence into consecutive blocks {ℬr}r=1B\{\mathcal{B}_{r}\}_{r=1}^{B} of size bb
+12:
+mu(l,h)←𝟎B×Bm_{u}^{(l,h)}\leftarrow\mathbf{0}_{B\times B}
+13:
+for r=1r=1 to BB do
+14:
+for c=1c=1 to BB do
+15:
+[mu(l,h)]r,c←1|ℬr|​∑i∈ℬr∑j∈ℬc[Au(l,h)]i​j[m_{u}^{(l,h)}]_{r,c}\leftarrow\frac{1}{|\mathcal{B}_{r}|}\sum_{i\in\mathcal{B}_{r}}\sum_{j\in\mathcal{B}_{c}}[A_{u}^{(l,h)}]_{ij}
+16:
+end for
+17:
+end for
+18:
+S(l,h)←S(l,h)+mu(l,h)S^{(l,h)}\leftarrow S^{(l,h)}+m_{u}^{(l,h)}
+19:
+end for
+20:
+end for
+21:
+# build one static sink mask for each layer and head
+22:
+for all layers ll and heads hh do
+23:
+m¯(l,h)←S(l,h)/|𝒞|\bar{m}^{(l,h)}\leftarrow S^{(l,h)}/|\mathcal{C}|
+24:
+M(l,h)←𝟎B×BM^{(l,h)}\leftarrow\mathbf{0}_{B\times B}
+25:
+for r=1r=1 to BB do
+26:
+πr←argsort(m¯r,:(l,h),↓)\pi_{r}\leftarrow\operatorname{argsort}\!\big(\bar{m}_{r,:}^{(l,h)},\downarrow\big)
+27:
+choose the shortest prefix πr[1:kr]\pi_{r}[1{:}k_{r}] with ∑t=1krm¯r,πr​[t](l,h)≥τ​∑cm¯r,c(l,h)\sum_{t=1}^{k_{r}}\bar{m}_{r,\pi_{r}[t]}^{(l,h)}\geq\tau\sum_{c}\bar{m}_{r,c}^{(l,h)}
+28:
+set Mr,πr[1:kr](l,h)←1M_{r,\pi_{r}[1{:}k_{r}]}^{(l,h)}\leftarrow 1
+29:
+end for
+30:
+end for
+31:
+return {M(l,h)}\{M^{(l,h)}\}
+4.2. Static Sink Mask Acquisition
+Let 𝒞\mathcal{C} denote the set of calibration observations collected from several prompt–seed pairs and denoising steps.
+No retraining or fine-tuning is involved.
+The offline stage is designed to discover block pairs that repeatedly carry large dense attention mass across these observations.
+Exact block-mass score.
+For a calibration observation u∈𝒞u\in\mathcal{C}, let ℬr\mathcal{B}_{r} and ℬc\mathcal{B}_{c} denote the token sets of query block rr and key block cc.
+We first compute dense token-level attention probabilities and then aggregate them into block space:
+(3)
+i​j\displaystyle{}_{ij}
+=softmaxj⁡(Qi,u(l,h)​(Kj,u(l,h))⊤dh),\displaystyle=\operatorname{softmax}_{j}\!\left(\frac{Q_{i,u}^{(l,h)}(K_{j,u}^{(l,h)})^{\top}}{\sqrt{d_{h}}}\right),
+mr,c,u(l,h)\displaystyle m_{r,c,u}^{(l,h)}
+=1|ℬr|​∑i∈ℬr∑j∈ℬc[Au(l,h)]i​j.\displaystyle=\frac{1}{|\mathcal{B}_{r}|}\sum_{i\in\mathcal{B}_{r}}\sum_{j\in\mathcal{B}_{c}}[A_{u}^{(l,h)}]_{ij}.
+This score is the exact block-level attention mass induced by dense attention. Because ∑cmr,c,u(l,h)=1\sum_{c}m_{r,c,u}^{(l,h)}=1 for every query-block row rr, the coverage threshold τ\tau has a direct interpretation: each row keeps the smallest set of key blocks whose averaged dense mass reaches at least τ\tau.
+After averaging over the calibration set, we obtain
+(4)
+m¯r,c(l,h)=1|𝒞|​∑u∈𝒞mr,c,u(l,h).\bar{m}_{r,c}^{(l,h)}=\frac{1}{|\mathcal{C}|}\sum_{u\in\mathcal{C}}m_{r,c,u}^{(l,h)}.
+Algorithm 1 summarizes the offline calibration stage.
+Its output is one static sink mask for each layer and head, which can be reused across denoising steps and future runs.
+4.3. Sink-Sparse Hybrid Inference
+At inference time, the same static sink mask is reused at every denoising step.
+The online module contains a static sparse sink branch and an optional pooled-KV compensation branch.
+Using only the sink branch gives Ours-Sink; enabling both branches gives Ours-Hybrid.
+Static sparse sink branch.
+The sink branch applies block-sparse self-attention only on the block pairs retained by M(l,h)M^{(l,h)}.
+This branch preserves the recurrent high-mass interactions identified offline and provides the main computational savings.
+Pooled-KV compensation branch.
+The hybrid variant adds a coarse complementary path.
+The static sink mask is calibrated to preserve the recurrently dominant attention mass, but the omitted support is not completely negligible: some useful context is weaker, more distributed, or more input-dependent than the main sink structure.
+Instead of recovering this missing support with another expensive dense branch, we use a low-cost approximation.
+Queries remain at full resolution, while keys and values are compressed by non-overlapping mean pooling with gap gcompg_{\text{comp}}.
+This branch therefore serves as a coarse completion path that restores global context beyond the retained sink support.
+Its usefulness is practical: sink-only sparsification preserves the dominant attention skeleton but can miss weak, distributed context.
+The pooled branch summarizes this omitted global context at low cost and therefore stabilizes aggressive sparse settings.
+Adaptive fusion.
+Because the two branches operate on different support sizes, their outputs should not be combined with a naive fixed average.
+We therefore compute one row-wise fusion weight from the log-sum-exp normalizers of the two branches:
+(5)
+αi(l,h)=exp⁡(ℓsink,i(l,h))exp⁡(ℓsink,i(l,h))+exp⁡(ℓcomp,i(l,h)+log⁡gcomp),\alpha_{i}^{(l,h)}=\frac{\exp(\ell_{\text{sink},i}^{(l,h)})}{\exp(\ell_{\text{sink},i}^{(l,h)})+\exp(\ell_{\text{comp},i}^{(l,h)}+\log g_{\text{comp}})},
+(6)
+Oi(l,h)=αi(l,h)​Osink,i(l,h)+(1−αi(l,h))​Ocomp,i(l,h).O_{i}^{(l,h)}=\alpha_{i}^{(l,h)}O_{\text{sink},i}^{(l,h)}+\left(1-\alpha_{i}^{(l,h)}\right)O_{\text{comp},i}^{(l,h)}.
+The log⁡gcomp\log g_{\text{comp}} term is a practical support-size correction for the pooled branch.
+This row-wise weighting is useful because the benefit of compensation varies across query rows.
+Some rows are already well explained by the sink support, whereas others benefit more from the pooled global summary.
+Algorithm 2  Online Sink-Sparse Hybrid Attention
+1:
+queries QQ, keys KK, values VV, static sink mask MM, pooling gap gcompg_{\text{comp}}
+2:
+attention output OO
+3:
+# static sparse sink branch
+4:
+(Osink,ℓsink)←SparseAttn⁡(Q,K,V,M)(O_{\text{sink}},\ell_{\text{sink}})\leftarrow\operatorname{SparseAttn}(Q,K,V;M)
+5:
+# pooled-KV compensation branch
+6:
+(Kpool,Vpool)←PoolKV⁡(K,V,gcomp)(K_{\text{pool}},V_{\text{pool}})\leftarrow\operatorname{PoolKV}(K,V;g_{\text{comp}})
+7:
+(Ocomp,ℓcomp)←DenseAttn⁡(Q,Kpool,Vpool)(O_{\text{comp}},\ell_{\text{comp}})\leftarrow\operatorname{DenseAttn}(Q,K_{\text{pool}},V_{\text{pool}})
+8:
+# normalization-aware adaptive fusion
+9:
+for each query row ii do
+10:
+αi←exp⁡(ℓsink,i)exp⁡(ℓsink,i)+exp⁡(ℓcomp,i+log⁡gcomp)\alpha_{i}\leftarrow\frac{\exp(\ell_{\text{sink},i})}{\exp(\ell_{\text{sink},i})+\exp(\ell_{\text{comp},i}+\log g_{\text{comp}})}
+11:
+Oi←αi​Osink,i+(1−αi)​Ocomp,iO_{i}\leftarrow\alpha_{i}O_{\text{sink},i}+(1-\alpha_{i})O_{\text{comp},i}
+12:
+end for
+13:
+return OO
+4.4. Complexity and Deployment
+Let ρ(l,h)\rho^{(l,h)} denote the token-level density induced by the static sink mask. Relative to dense per-head attention with dominant cost 𝒪⁡(N2)\mathcal{O}(N^{2}), the hybrid operator can be summarized as
+(7)
+𝒞hyb(l,h)\displaystyle\mathcal{C}_{\text{hyb}}^{(l,h)}
+=𝒪⁡(ρ(l,h)​N2+N2gcomp)\displaystyle=\mathcal{O}\!\left(\rho^{(l,h)}N^{2}+\frac{N^{2}}{g_{\text{comp}}}\right)
+=𝒪⁡((ρ(l,h)+gcomp−1)​N2).\displaystyle=\mathcal{O}\!\left(\left(\rho^{(l,h)}+g_{\text{comp}}^{-1}\right)N^{2}\right).
+where the first term comes from the static sparse sink branch and the second term comes from the pooled-KV compensation branch, which keeps the query length at NN while reducing the key/value length to about N/gcompN/g_{\text{comp}}. For reporting, we define the main-branch effective sparsity as 1−ρmain1-\rho_{\text{main}}, where ρmain\rho_{\text{main}} denotes the runtime block-interaction density of the main sparse branch, i.e., the fraction of block interactions retained by its runtime block mask. The resulting design remains fully train-free and deployment-friendly: static sink masks are calibrated once for each backbone from a small dense run and then reused across future generations without retraining, fine-tuning, or modifying the denoising schedule.
+Table 1. Main T2V comparison on Wan2.1-T2V-1.3B under a unified evaluation setup. Dense is the end-to-end reference under the same operator stack. Speedup is reported relative to this dense reference (164.80s). We report two representative operating points of Ours-Hybrid: a speed-oriented setting at τ=0.70\tau=0.70 and a quality-oriented setting at τ=0.85\tau=0.85. VBench Avg (8 dims) is computed from the underlying full-precision per-dimension scores before rounding, so it may not exactly equal the mean of the displayed three-decimal values.
+Method
+Time(s)↓\downarrow
+Speedup↑\uparrow
+SubCons.↑\uparrow
+MotSm.↑\uparrow
+DynDeg.↑\uparrow
+BgCons.↑\uparrow
+Scene↑\uparrow
+Aesth.↑\uparrow
+ImgQual↑\uparrow
+OverCons.↑\uparrow
+VBench Avg (8 dims)↑\uparrow
+Dense
+164.80
+1.00×\times
+0.894
+0.972
+0.861
+0.941
+0.145
+0.588
+0.614
+0.235
+0.656
+SVG1 (Xi et al., 2025)
+115.49
+1.43×\times
+0.941
+0.970
+0.819
+0.950
+0.126
+0.565
+0.652
+0.224
+0.656
+SpargeAttn (Zhang et al., 2025d)
+139.68
+1.18×\times
+0.930
+0.954
+0.833
+0.961
+0.154
+0.608
+0.676
+0.208
+0.665
+Ours-Hybrid (τ=0.70\tau=0.70)
+94.57
+1.74×\times
+0.864
+0.967
+0.858
+0.927
+0.137
+0.568
+0.619
+0.233
+0.647
+Ours-Hybrid (τ=0.85\tau=0.85)
+106.73
+1.54×\times
+0.871
+0.976
+0.931
+0.933
+0.148
+0.566
+0.615
+0.233
+0.659
+5. Experiments
+We evaluate Sink-Sparse Hybrid Attention on both text-to-video and text-to-image generation. We use Wan2.1-T2V-1.3B (Wan Team, 2025) as the T2V backbone and Z-Image-Turbo (Z-Image Team et al., 2025) as the T2I backbone. Unless otherwise stated, each backbone uses its own model-specific static sink masks calibrated from a disjoint offline set.
+5.1. Experimental Setup
+T2V setup.
+For text-to-video, we evaluate on Wan2.1-T2V-1.3B under a unified generation setting with resolution 832×\times480, 81 frames, and 50 denoising steps. For quality, we evaluate eight VBench-1.0 dimensions (Huang et al., 2024) and report their mean as VBench Avg (8 dims)↑\uparrow.
+T2I setup.
+For text-to-image, we evaluate on Z-Image-Turbo (Z-Image Team et al., 2025) at 2048×\times2048 resolution with 8 denoising steps. We adopt the GenEval2 (Kamath et al., 2025) VQA evaluation protocol and report Soft-TIFA GM↑\uparrow as the primary metric together with Soft-TIFA AM↑\uparrow as an auxiliary metric.
+Latency metric and hardware.
+For efficiency, we report end-to-end Time(s)↓\downarrow and Speedup↑\uparrow. Unless otherwise stated, latency excludes model initialization and output writing. Time is measured on a single NVIDIA A800-SXM4-80GB GPU.
+Calibration and implementation details.
+Following Sec. 4, Ours-Sink denotes the sink-preserving sparse branch alone, while Ours-Hybrid denotes the full method with the pooled-KV compensation branch and adaptive fusion. Unless otherwise stated, both variants use static sink masks identified from calibration runs over 4 prompts and 2 noise seeds, with attention statistics aggregated across denoising steps. The calibration set is disjoint from the downstream evaluation set. We use a fixed consecutive block partition for mask acquisition, and set gcomp=30g_{\text{comp}}=30 for Ours-Hybrid. For Z-Image-Turbo, we keep the same overall pipeline and calibrate a separate mask set for the image backbone.
+Table 2. Main T2I comparison on Z-Image-Turbo. Evaluated at 2048×20482048\times 2048 resolution with 8 denoising steps. We report Soft-TIFA AM, Soft-TIFA GM, end-to-end Time(s), and Speedup relative to the dense baseline.
+Method
+Soft-TIFA AM↑\uparrow
+Soft-TIFA GM↑\uparrow
+Time(s)↓\downarrow
+Speedup↑\uparrow
+Dense
+67.80
+16.38
+23.39
+1.00×\times
+SpargeAttn (Zhang et al., 2025d)
+66.88
+15.07
+15.92
+1.47×\times
+Ours-Hybrid (τ=0.85\tau=0.85)
+66.48
+15.21
+14.88
+1.57×\times
+Unified operator stack and baselines.
+To ensure a fair, implementation-consistent, and runtime-comparable comparison throughout evaluation, for Dense, exact full self-attention is implemented with FlashAttention (Dao et al., 2022). For the T2V comparison, Dense, SVG1 (Xi et al., 2025), SpargeAttn (Zhang et al., 2025d), and our method also share the same optimized implementations for other common attention components, namely QK-norm and RoPE, adopted directly from the SVG1 codebase for consistency. For T2V, we compare against Dense, SVG1 (Xi et al., 2025), and SpargeAttn (Zhang et al., 2025d). For T2I, we compare against Dense and SpargeAttn.
+Wan2.1-T2V-1.3B
+Dense
+Ours-Hybrid (τ=0.85\tau=0.85)
+SpargeAttn
+SVG1
+Z-Image-Turbo
+DenseOurs-Hybrid (τ=0.85\tau=0.85)SpargeAttn
+Figure 5. Representative qualitative comparison on Wan2.1-T2V-1.3B and Z-Image-Turbo. For Wan2.1-T2V-1.3B, we show three synchronized frames (frames 16, 40, and 64 out of 81) for the prompt “Campfire at night in a snowy forest with starry sky in the background.” using the same noise seed across methods. For Z-Image-Turbo, we show image results for the prompt “Winter station at golden hour.” in the order Dense, Ours-Hybrid (τ=0.85\tau=0.85), and SpargeAttn.Single-column qualitative comparison on both backbones. The upper part shows Wan2.1-T2V-1.3B outputs for the prompt 'Campfire at night in a snowy forest with starry sky in the background.' with four rows: Dense, Ours-Hybrid with tau equals 0.85, SpargeAttn, and SVG1; each row contains three synchronized frames sampled at frames 16, 40, and 64 out of 81. The lower part shows Z-Image-Turbo outputs for the prompt 'Winter station at golden hour.' in the order Dense, Ours-Hybrid with tau equals 0.85, and SpargeAttn.
+5.2. Main Results
+Table 1 reports the main T2V comparison. Ours-Hybrid exposes two useful operating points. At τ=0.70\tau=0.70, it is the fastest setting in the table, reducing end-to-end time from 164.80s to 94.57s (1.74×\times) with 0.647 VBench Avg (8 dims). At τ=0.85\tau=0.85, it reaches 1.54×\times speedup while improving VBench Avg (8 dims) to 0.659. This quality-oriented setting is slightly better than SVG1 in overall average (0.659 vs. 0.656) while remaining faster (106.73s vs. 115.49s). Compared with SpargeAttn, it gives up a small amount of average quality (0.659 vs. 0.665) in exchange for a much larger runtime reduction (1.54×\times vs. 1.18×\times). This indicates that hybrid compensation is useful because it retains most of the speed benefit of static sparsity while making the quality-oriented point much more competitive.
+Figure 5 provides representative qualitative examples on both backbones. Relative to the sparse baselines, Ours-Hybrid remains visually closer to the dense reference in overall structure and appearance, which is consistent with the quantitative trade-offs in Tables 1 and 2.
+Table 2 reports the T2I comparison. Ours-Hybrid at τ=0.85\tau=0.85 reduces end-to-end runtime from 23.39s to 14.88s, yielding 1.57×\times speedup. Under the GenEval2 VQA protocol, it attains 15.21 Soft-TIFA GM and 66.48 Soft-TIFA AM. Compared with SpargeAttn, it is faster (1.57×\times vs. 1.47×\times) and slightly better on the primary Soft-TIFA GM metric (15.21 vs. 15.07), while remaining close on Soft-TIFA AM (66.48 vs. 66.88). The T2I result also suggests that the hybrid branch is a general global-context complement rather than a video-specific heuristic. These results indicate that the same train-free framework transfers to the two tested backbones.
+5.3. Efficiency–Quality Trade-off
+Figure 6 summarizes the efficiency trend and the corresponding quality–efficiency frontier in the T2V setting. The left panel shows that lower coverage thresholds produce sparser main branches and lower runtime for both Ours-Sink and Ours-Hybrid. For example, Ours-Sink at τ=0.60\tau=0.60 reaches 79.09% main-branch effective sparsity and reduces end-to-end time to 81.82s (2.01×\times), while the pooled-KV compensation branch adds a modest latency overhead and recovers a substantial part of the quality gap. At comparable sparsity budgets, Ours-Hybrid consistently shifts the operating frontier upward relative to Ours-Sink, which further confirms that the hybrid attention is useful rather than redundant: the extra branch converts a small amount of additional computation into a noticeably better quality–efficiency trade-off.
+The right panel shows the corresponding quality–efficiency frontier for Ours-Hybrid. Increasing τ\tau improves quality up to a peak at τ=0.85\tau=0.85, whereas τ=0.70\tau=0.70 provides the stronger speed-oriented operating point. The frontier also shows a clear knee between τ=0.70\tau=0.70 and τ=0.85\tau=0.85: below this range, further sparsification yields additional speed but a more visible quality drop; above it, the masks become denser yet the incremental quality gain is smaller.
+A two-panel figure summarizing the efficiency and trade-off behavior of the proposed method in the T2V setting. The left panel plots end-to-end runtime against main-branch effective sparsity for Ours-Sink and Ours-Hybrid, together with Dense, SVG1, and SpargeAttn as reference points. The right panel plots VBench Avg against end-to-end runtime and highlights tau equals 0.70 and tau equals 0.85 as representative operating points.
+Figure 6. Efficiency profile and quality–efficiency frontier in the T2V setting. Left: End-to-end runtime versus main-branch effective sparsity for Ours-Sink and Ours-Hybrid, with Dense, SVG1, and SpargeAttn shown as reference points. Right: Quality–efficiency frontier measured by VBench Avg (8 dims) versus end-to-end runtime. Lower coverage thresholds yield stronger acceleration, while higher thresholds improve quality; τ=0.70\tau=0.70 and τ=0.85\tau=0.85 are highlighted as representative speed-oriented and quality-oriented operating points, respectively.A two-panel figure summarizing the efficiency and trade-off behavior of the proposed method in the T2V setting. The left panel plots end-to-end runtime against main-branch effective sparsity for Ours-Sink and Ours-Hybrid, together with Dense, SVG1, and SpargeAttn as reference points. The right panel plots VBench Avg against end-to-end runtime and highlights tau equals 0.70 and tau equals 0.85 as representative operating points.
+5.4. Calibration Size
+Because the static sink masks are identified offline, an important practical question is how much calibration data is needed. We study this effect on Wan2.1-T2V-1.3B for Ours-Hybrid at the representative speed-oriented setting τ=0.70\tau=0.70, while keeping all inference hyperparameters fixed. A calibration trajectory denotes one prompt–seed pair whose attention statistics are aggregated over the full 50-step denoising process. We evaluate four calibration budgets, namely 2×\times2, 4×\times2, 4×\times4, and 8×\times4 prompt–seed configurations. All calibration prompts are disjoint from the downstream evaluation set.
+To keep the presentation compact, we report only end-to-end Time(s)↓\downarrow, VBench Avg (8 dims)↑\uparrow, and the one-time Offline calibration cost↓\downarrow. The offline cost is estimated from the shared-stack dense runtime (164.80s per prompt–seed trajectory), excluding model initialization and video writing, and is reported in minutes as an approximate deployment-oriented reference.
+Table 3. Effect of calibration set size for Ours-Hybrid at τ=0.70\tau=0.70 on Wan2.1-T2V-1.3B. Calibration budget is specified by the number of prompts and seeds used for offline mask acquisition, where each prompt–seed pair contributes one full denoising trajectory. Offline calibration cost is a rough one-time estimate computed from the shared-stack dense latency (164.80s per trajectory), reported in minutes. Larger calibration budgets improve quality modestly, and the gains largely saturate by 4×\times4.
+Calibration Budget
+Time(s)↓\downarrow
+Offline Calib. Cost↓\downarrow
+VBench Avg (8 dims)↑\uparrow
+2×22\times 2
+92.84
+11.0 min
+0.645
+4×24\times 2
+94.57
+22.0 min
+0.647
+4×44\times 4
+93.71
+43.9 min
+0.650
+8×48\times 4
+94.18
+87.9 min
+0.649
+Table 3 shows that enlarging the calibration budget brings modest but nonzero quality gains. The most visible gain appears when increasing the budget from 2×\times2 to the default 4×\times2 setting, where VBench Avg (8 dims) improves from 0.645 to 0.647 with only a small runtime difference (92.84s to 94.57s). Increasing the calibration size to 4×\times4 further improves VBench Avg (8 dims) to 0.650. The largest budget, 8×\times4, yields 0.649, which is effectively on par with 4×\times4 rather than clearly better. This indicates that the quality gains largely saturate once the calibration set becomes moderately large.
+Two additional observations are worth noting. First, runtime stays nearly unchanged across calibration budgets, which means that calibration mainly affects which block interactions are retained rather than how many interactions are executed at test time. Second, the saturation around 4×\times4 suggests that the dominant layer/head-specific sink structure becomes stable after a moderate offline budget, making 4×\times2 or 4×\times4 a practical trade-off between one-time calibration cost and downstream quality.
+5.5. Effect of Hybrid Compensation
+Table 4 shows that, on Wan2.1-T2V-1.3B, the pooled-KV compensation branch consistently improves VBench Avg (8 dims) over the corresponding Ours-Sink setting across all tested thresholds. The gain is largest in the more aggressive regime, reaching +0.071 at τ=0.60\tau=0.60, +0.063 at τ=0.65\tau=0.65, and +0.066 at τ=0.70\tau=0.70. As τ\tau increases and the static sink mask becomes denser, the quality gap narrows, but the hybrid branch still remains beneficial.
+The trend is informative. The compensation branch contributes most when the main sparse branch is aggressive and therefore more likely to miss weaker or more distributed context. Once τ\tau becomes large and the sink branch already preserves most dominant support, the omitted context shrinks and the additional gain becomes marginal. This behavior is desirable for deployment: the extra branch pays for itself primarily in the operating regime where static sparsification alone would otherwise lose the most quality.
+Table 4. Effect of the pooled-KV compensation branch across coverage thresholds on Wan2.1-T2V-1.3B. Ours-Sink uses only the static sink mask, while Ours-Hybrid additionally enables the pooled-KV compensation branch with adaptive fusion. Δ\DeltaAvg denotes the gain of Ours-Hybrid over Ours-Sink.
+τ\tau
+Sink Time↓\downarrow
+Sink Avg↑\uparrow
+Hybrid Time↓\downarrow
+Hybrid Avg↑\uparrow
+Δ\DeltaAvg↑\uparrow
+0.60
+81.82
+0.553
+88.88
+0.624
++0.071
+0.65
+84.60
+0.563
+91.69
+0.626
++0.063
+0.70
+87.22
+0.581
+94.57
+0.647
++0.066
+0.75
+89.98
+0.607
+97.12
+0.649
++0.042
+0.80
+94.04
+0.623
+101.37
+0.652
++0.029
+0.85
+99.64
+0.653
+106.73
+0.659
++0.006
+0.90
+106.88
+0.647
+113.89
+0.655
++0.008
+6. Conclusion
+We presented Sink-Sparse Hybrid Attention, a train-free framework that identifies reusable layer/head-specific sink structure from a small offline calibration set, preserves it with a static sparse branch, and complements it with a lightweight pooled-KV branch. Experiments on T2V and T2I backbones demonstrate favorable quality–efficiency trade-offs, achieving 1.54×\times end-to-end speedup on Wan2.1-T2V-1.3B and 1.57×\times on Z-Image-Turbo. The results clarify why the hybrid approach is practically useful: it restores coarse omitted context at modest cost, making aggressive train-free sparsification more robust than a sink-only design. These results suggest that reusable importance-aware sparse support is a practical acceleration path for pretrained DiTs.
+Limitations.
+The current evaluation covers a limited set of backbones, and the method requires backbone-specific offline calibration. Additionally, fixed static masks may adapt less well to distribution shifts or unusual prompts whose salient interactions differ from the calibration set. The current study also does not examine whether masks transfer reliably across backbones. Under aggressive sparsity, rare or strongly input-dependent dependencies may still be lost.
+References
+Bao et al. (2023)
+Fan Bao, Shen Nie,
+Kaiwen Xue, Yue Cao,
+Chongxuan Li, Hang Su, and
+Jun Zhu. 2023.
+All Are Worth Words: A ViT Backbone for Diffusion
+Models. In Proceedings of the IEEE/CVF Conference
+on Computer Vision and Pattern Recognition (CVPR).
+https://openaccess.thecvf.com/content/CVPR2023/papers/Bao_All_Are_Worth_Words_A_ViT_Backbone_for_Diffusion_Models_CVPR_2023_paper.pdf
+arXiv:2209.12152.
+Becker et al. (2025)
+Philipp Becker, Abhinav
+Mehrotra, Ruchika Chavhan, Malcolm
+Chadwick, Luca Morreale, Mehdi Noroozi,
+Alberto Gil C. P. Ramos, and Sourav
+Bhattacharya. 2025.
+EDiT: Efficient Diffusion Transformers with
+Linear Compressed Attention. In Proceedings of the
+IEEE/CVF International Conference on Computer Vision (ICCV).
+https://openaccess.thecvf.com/content/ICCV2025/papers/Becker_EDiT_Efficient_Diffusion_Transformers_with_Linear_Compressed_Attention_ICCV_2025_paper.pdf
+Dao et al. (2022)
+Tri Dao, Daniel Y. Fu,
+Stefano Ermon, Atri Rudra, and
+Christopher Ré. 2022.
+FlashAttention: Fast and Memory-Efficient Exact
+Attention with IO-Awareness. In Advances in
+Neural Information Processing Systems (NeurIPS).
+doi:10.5555/3600270.3601459
+arXiv:2205.14135.
+Gu et al. (2025)
+Youping Gu, Xiaolong Li,
+Yuhao Hu, and Bohan Zhuang.
+2025.
+Video-BLADE: Block-Sparse Attention Meets Step
+Distillation for Efficient Video Generation.
+arXiv preprint arXiv:2508.10774
+(2025).
+https://arxiv.org/abs/2508.10774
+Huang et al. (2024)
+Ziqi Huang et al.
+2024.
+VBench: Comprehensive Benchmark Suite for Video
+Generative Models. In Proceedings of the IEEE/CVF
+Conference on Computer Vision and Pattern Recognition (CVPR).
+https://openaccess.thecvf.com/content/CVPR2024/html/Huang_VBench_Comprehensive_Benchmark_Suite_for_Video_Generative_Models_CVPR_2024_paper.html
+Highlight.
+Jiang et al. (2024)
+Huiqiang Jiang et al.
+2024.
+MInference 1.0: Accelerating Pre-filling for
+Long-Context LLMs via Dynamic Sparse Attention. In
+Advances in Neural Information Processing Systems
+(NeurIPS).
+https://proceedings.neurips.cc/paper_files/paper/2024/hash/5dfbe6f5671e82c76841ba687a8a9ecb-Abstract-Conference.html
+Kamath et al. (2025)
+Amita Kamath, Kai-Wei
+Chang, Ranjay Krishna, Luke Zettlemoyer,
+Yushi Hu, and Marjan Ghazvininejad.
+2025.
+GenEval 2: Addressing Benchmark Drift in
+Text-to-Image Evaluation.
+arXiv preprint arXiv:2512.16853
+(2025).
+arXiv:2512.16853 [cs.CV]
+doi:10.48550/arXiv.2512.16853
+Lai et al. (2025)
+Xunhao Lai, Jianqiao Lu,
+Yao Luo, Yiyuan Ma, and
+Xun Zhou. 2025.
+FlexPrefill: A Context-Aware Sparse Attention
+Mechanism for Efficient Long-Sequence Inference. In
+International Conference on Learning
+Representations (ICLR).
+https://openreview.net/forum?id=OfjIlbelrT
+Oral.
+Li et al. (2024)
+Yuhong Li, Yingbing
+Huang, Bowen Yang, Bharat Venkitesh,
+Acyr Locatelli, Hanchen Ye,
+Tianle Cai, Patrick Lewis, and
+Deming Chen. 2024.
+SnapKV: LLM Knows What You are Looking for
+Before Generation. In Advances in Neural
+Information Processing Systems (NeurIPS).
+https://neurips.cc/virtual/2024/poster/93531
+Liu et al. (2024)
+Haozhe Liu, Wentian
+Zhang, Jinheng Xie, Francesco Faccio,
+Mengmeng Xu, Tao Xiang,
+Mike Zheng Shou, Juan-Manuel
+Pérez-Rúa, and Jürgen Schmidhuber.
+2024.
+Faster Diffusion via Temporal Attention
+Decomposition.
+arXiv preprint arXiv:2404.02747
+(2024).
+https://arxiv.org/abs/2404.02747
+TGATE.
+Lv et al. (2024)
+Zhengyao Lv, Chenyang Si,
+Junhao Song, Zhenyu Yang,
+Yu Qiao, Ziwei Liu, and
+Kwan-Yee K. Wong. 2024.
+FasterCache: Training-Free Video Diffusion Model
+Acceleration with High Quality.
+arXiv preprint arXiv:2410.19355
+(2024).
+https://arxiv.org/abs/2410.19355
+Ma et al. (2024)
+Xinyin Ma, Gongfan Fang,
+and Xinchao Wang. 2024.
+DeepCache: Accelerating Diffusion Models for Free.
+In Proceedings of the IEEE/CVF Conference on
+Computer Vision and Pattern Recognition (CVPR).
+15762–15772.
+Peebles and Xie (2023)
+William Peebles and
+Saining Xie. 2023.
+Scalable Diffusion Models with Transformers. In
+Proceedings of the IEEE/CVF International
+Conference on Computer Vision (ICCV).
+https://openaccess.thecvf.com/content/ICCV2023/html/Peebles_Scalable_Diffusion_Models_with_Transformers_ICCV_2023_paper.html
+arXiv:2212.09748.
+Polyak et al. (2024)
+Adam Polyak, Amit Zohar,
+Andrew Brown, Andros Tjandra,
+Animesh Sinha, Ann Lee, et al.
+2024.
+Movie Gen: A Cast of Media Foundation Models.
+arXiv preprint arXiv:2410.13720
+(2024).
+https://arxiv.org/abs/2410.13720
+Pu et al. (2024)
+Yifan Pu, Zhuofan Xia,
+Jiayi Guo, Dongchen Han,
+Qixiu Li, Duo Li, Yuhui
+Yuan, Ji Li, Yizeng Han,
+Shiji Song, Gao Huang, and
+Xiu Li. 2024.
+Efficient Diffusion Transformer with Step-wise
+Dynamic Attention Mediators. In Proceedings of the
+European Conference on Computer Vision (ECCV).
+https://arxiv.org/abs/2408.05710
+Vaswani et al. (2017)
+Ashish Vaswani, Noam
+Shazeer, Niki Parmar, Jakob Uszkoreit,
+Llion Jones, Aidan N. Gomez,
+Łukasz Kaiser, and Illia
+Polosukhin. 2017.
+Attention Is All You Need. In
+Advances in Neural Information Processing Systems
+(NeurIPS).
+https://arxiv.org/abs/1706.03762
+Wan Team (2025)
+Wan Team.
+2025.
+Wan: Open and Advanced Large-Scale Video
+Generative Models.
+arXiv preprint arXiv:2503.20314
+(2025).
+https://arxiv.org/abs/2503.20314
+Wang et al. (2025)
+Xinghao Wang, Pengyu
+Wang, Dong Zhang, Chenkun Tan,
+Shaojun Zhou, Zhaoxiang Liu,
+Shiguo Lian, Fangxu Liu,
+Kai Song, and Xipeng Qiu.
+2025.
+Sparser Block-Sparse Attention via Token
+Permutation.
+arXiv preprint arXiv:2510.21270
+(2025).
+https://arxiv.org/abs/2510.21270
+Xi et al. (2025)
+Haocheng Xi, Shuo Yang,
+Yilong Zhao, Chenfeng Xu,
+Muyang Li, Xiuyu Li,
+Yujun Lin, Han Cai,
+Jintao Zhang, Dacheng Li,
+Jianfei Chen, Ion Stoica,
+Kurt Keutzer, and Song Han.
+2025.
+Sparse VideoGen: Accelerating Video Diffusion
+Transformers with Spatial-Temporal Sparsity. In
+Proceedings of the International Conference on
+Machine Learning (ICML).
+https://arxiv.org/abs/2502.01776
+Xia et al. (2025)
+Yifei Xia, Suhan Ling,
+Fangcheng Fu, Yujie Wang,
+Huixia Li, Xuefeng Xiao, and
+Bin Cui. 2025.
+Training-free and Adaptive Sparse Attention for
+Efficient Long Video Generation. In Proceedings of
+the IEEE/CVF International Conference on Computer Vision (ICCV).
+https://openaccess.thecvf.com/content/ICCV2025/html/Xia_Training-free_and_Adaptive_Sparse_Attention_for_Efficient_Long_Video_Generation_ICCV_2025_paper.html
+Xiao et al. (2025)
+Guangxuan Xiao, Jiaming
+Tang, Jingwei Zuo, Junxian Guo,
+Shang Yang, Haotian Tang,
+Yao Fu, and Song Han.
+2025.
+DuoAttention: Efficient Long-Context LLM
+Inference with Retrieval and Streaming Heads. In
+International Conference on Learning
+Representations (ICLR).
+https://openreview.net/forum?id=cFu7ze7xUm
+Xiao et al. (2024)
+Guangxuan Xiao, Yuandong
+Tian, Beidi Chen, Song Han, and
+Mike Lewis. 2024.
+Efficient Streaming Language Models with Attention
+Sinks. In International Conference on Learning
+Representations (ICLR).
+https://openreview.net/forum?id=NG7sS51zVF
+Xu et al. (2025)
+Ruyi Xu, Guangxuan Xiao,
+Haofeng Huang, Junxian Guo, and
+Song Han. 2025.
+XAttention: Block Sparse Attention with
+Antidiagonal Scoring. In Proceedings of the
+International Conference on Machine Learning (ICML).
+https://proceedings.mlr.press/v267/xu25ag.html
+Yang et al. (2025)
+Shuo Yang, Haocheng Xi,
+Yilong Zhao, Muyang Li,
+Jintao Zhang, Han Cai,
+Yujun Lin, Xiuyu Li,
+Chenfeng Xu, Kelly Peng,
+Jianfei Chen, Song Han,
+Kurt Keutzer, and Ion Stoica.
+2025.
+Sparse VideoGen2: Accelerate Video Generation
+with Sparse Attention via Semantic-Aware Permutation. In
+Advances in Neural Information Processing Systems
+(NeurIPS).
+https://openreview.net/forum?id=WPU17d1l7R
+Spotlight.
+Yu et al. (2025)
+Zichao Yu, Zhen Zou,
+Guojiang Shao, Chengwei Zhang,
+Shengze Xu, Jie Huang,
+Feng Zhao, Xiaodong Cun, and
+Wenyi Zhang. 2025.
+AB-Cache: Training-Free Acceleration of Diffusion
+Models via Adams-Bashforth Cached Feature Reuse.
+arXiv preprint arXiv:2504.10540
+(2025).
+https://arxiv.org/abs/2504.10540
+Yuan et al. (2024)
+Zhihang Yuan et al.
+2024.
+DiTFastAttn: Attention Compression for Diffusion
+Transformer Models. In Advances in Neural
+Information Processing Systems (NeurIPS).
+https://arxiv.org/abs/2406.08552
+Z-Image Team et al. (2025)
+Z-Image Team, Huanqia
+Cai, Sihan Cao, Ruoyi Du,
+Peng Gao, Steven Hoi,
+Zhaohui Hou, Shijie Huang,
+Dengyang Jiang, Xin Jin,
+Liangchen Li, Zhen Li,
+Zhong-Yu Li, David Liu,
+Dongyang Liu, Junhan Shi,
+Qilong Wu, Feng Yu, Chi
+Zhang, Shifeng Zhang, and Shilin
+Zhou. 2025.
+Z-Image: An Efficient Image Generation Foundation
+Model with Single-Stream Diffusion Transformer.
+arXiv preprint arXiv:2511.22699
+(2025).
+arXiv:2511.22699 [cs.CV]
+doi:10.48550/arXiv.2511.22699
+Zhang et al. (2025d)
+Jintao Zhang, Chendong
+Xiang, Haofeng Huang, Jia Wei,
+Haocheng Xi, Jun Zhu, and
+Jianfei Chen. 2025d.
+SpargeAttention: Accurate and Training-free
+Sparse Attention Accelerating Any Model Inference. In
+Proceedings of the International Conference on
+Machine Learning (ICML).
+https://proceedings.mlr.press/v267/zhang25ch.html
+Zhang et al. (2025a)
+Peiyuan Zhang, Yongqi
+Chen, Haofeng Huang, Will Lin,
+Zhengzhong Liu, Ion Stoica,
+Eric P. Xing, and Hao Zhang.
+2025a.
+Faster Video Diffusion with Trainable Sparse
+Attention. In Advances in Neural Information
+Processing Systems (NeurIPS).
+https://neurips.cc/virtual/2025/poster/117649
+VSA.
+Zhang et al. (2025b)
+Peiyuan Zhang, Yongqi
+Chen, Runlong Su, Hangliang Ding,
+Ion Stoica, Zhengzhong Liu, and
+Hao Zhang. 2025b.
+Fast Video Generation with Sliding Tile Attention.
+In Proceedings of the International Conference on
+Machine Learning (ICML).
+https://proceedings.mlr.press/v267/zhang25m.html
+Zhang et al. (2025c)
+Yu Zhang, Dong Guo,
+Fang Wu, Guoliang Zhu,
+Dian Ding, and Yiming Zhang.
+2025c.
+AnchorAttention: Difference-Aware Sparse
+Attention with Stripe Granularity. In Proceedings
+of the Conference on Empirical Methods in Natural Language Processing
+(EMNLP).
+https://aclanthology.org/2025.emnlp-main.430/
+Zhang et al. (2026)
+Yu Zhang, Songwei Liu,
+Chenqian Yan, Sheng Lin,
+Beichen Ning, Fangmin Chen, and
+Xing Wang. 2026.
+S2O: Early Stopping for Sparse Attention via
+Online Permutation.
+arXiv preprint arXiv:2602.22575
+(2026).
+https://arxiv.org/abs/2602.22575
+Zhang et al. (2023)
+Zhenyu Zhang, Ying Sheng,
+Tianyi Zhou, Tianlong Chen,
+Lianmin Zheng, Ruisi Cai,
+Zhao Song, Yuandong Tian,
+Christopher Ré, Clark Barrett,
+Zhangyang Wang, and Beidi Chen.
+2023.
+H2O: Heavy-Hitter Oracle for Efficient
+Generative Inference of Large Language Models. In
+Advances in Neural Information Processing Systems
+(NeurIPS).
+https://proceedings.neurips.cc/paper_files/paper/2023/file/6ceefa7b15572587b78ecfcebb2827f8-Paper-Conference.pdf
+arXiv:2306.14048.
+Zhu et al. (2025)
+Lin Zhu et al.
+2025.
+DiG: Scalable and Efficient Diffusion Models with
+Gated Linear Attention. In Proceedings of the
+IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR).
+https://openaccess.thecvf.com/content/CVPR2025/papers/Zhu_DiG_Scalable_and_Efficient_Diffusion_Models_with_Gated_Linear_Attention_CVPR_2025_paper.pdf
+Zou et al. (2025)
+Chang Zou, Xuyang Liu,
+Ting Liu, Siteng Huang, and
+Linfeng Zhang. 2025.
+Accelerating Diffusion Transformers with Token-wise
+Feature Caching. In International Conference on
+Learning Representations (ICLR).
+https://openreview.net/forum?id=QbZTP1wba7
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

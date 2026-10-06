@@ -1,0 +1,2096 @@
+Cybo-Waiter: A Physical Agentic Framework for Humanoid Whole-Body Locomotion–Manipulation
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+I
+Introduction
+II
+Related Work
+II-A
+Language-conditioned Robot Agents
+II-B
+Grounding and Geometric Verification for Execution
+II-C
+Humanoid Agents and Whole-Body Loco-Manipulation
+III
+Methods
+III-A
+Structured VLM Task Decomposition
+III-B
+Conditional Segmentation and Geometric Coordinate Estimation
+Task-conditioned multi-object segmentation.
+Lifting masks to 3D geometric states.
+Candidate selection and object-centric representation
+III-C
+Supervisor: Task Monitoring with RGB-D and SAM3
+Role and inputs
+Predicate representation
+Evaluation, temporal stability, and subtask status.
+Diagnostics and corrective feedback
+VLM-assisted semantic verification
+III-D
+Feedback-Driven Replanning for Robust Task Execution
+Replanning triggers
+Structured feedback
+Recovery actions
+Retry budget and plan update
+III-E
+Integrated Execution Framework for Robust Humanoid Task Execution
+Execution interface
+Locomotion as a gait-conditioned RL skill library
+Manipulation with decoupled upper-body control.
+Cross-skill coordination and transitions.
+IV
+EXPERIMENTS
+IV-A
+Real-World Setup
+IV-B
+Results on Being-0-aligned Multi-step Tasks
+IV-C
+Results on Long-Horizon Tasks
+V
+Conclusion and Limitations
+References
+License: arXiv.org perpetual non-exclusive license
+arXiv:2603.10675v1 [cs.RO] 11 Mar 2026
+Cybo-Waiter: A Physical Agentic Framework for Humanoid Whole-Body Locomotion–Manipulation
+Peng Ren
+1,2,*
+,
+Haoyang Ge
+3,2,*
+,
+Chuan Qi
+4,2
+,
+Cong Huang
+2,5
+,
+Hong Li
+6
+,
+Jiang Zhao
+1
+,
+Pei Chi
+1,
+†
+\dagger
+,
+Kai Chen
+2,5,6,
+†
+\dagger
+†
+†
+thanks:
+Equal contribution.
+Affiliation:
+1
+Beihang University, Beijing, China
+2
+Zhongguancun Academy, Beijing, China
+3
+Tianjin University, Tianjin, China
+4
+University of Science and Technology of China, Hefei, China
+5
+Zhongguancun Institute of Artificial Intelligence, Beijing, China
+6
+DeepCybo, Beijing, China
+*
+Equal contribution.
+†
+\dagger
+Corresponding authors: Pei Chi (peichi@buaa.edu.cn), Kai Chen (kaichen@zgci.ac.cn).
+Abstract
+Robots are increasingly expected to execute open ended natural language requests in human environments, which demands reliable long horizon execution under partial observability. This is especially challenging for humanoids because locomotion and manipulation are tightly coupled through stance, reachability, and balance. We present a humanoid agent framework that turns VLM plans into verifiable task programs and closes the loop with multi object 3D geometric supervision. A VLM planner compiles each instruction into a typed JSON sequence of subtasks with explicit predicate based preconditions and success conditions. Using SAM3 and RGB-D, we ground all task relevant entities in 3D, estimate object centroids and extents, and evaluate predicates over stable frames to obtain condition level diagnostics. The supervisor uses these diagnostics to verify subtask completion and to provide condition-level feedback for progression and replanning. We execute each subtask by coordinating humanoid locomotion and whole-body manipulation, selecting feasible motion primitives under reachability and balance constraints. Experiments on tabletop manipulation and long horizon humanoid loco manipulation tasks show improved robustness from multi object grounding, temporal stability, and recovery driven replanning.
+Index Terms:
+Humanoid Robot, Locomotion, Reinforcement
+Learning, Whole-body Control, Vision-Language-model
+I
+Introduction
+Robots are increasingly expected to execute open-ended natural-language requests in real human environments, such as
+“tidy up the desk” or “bring me a drink”
+[
+1
+,
+2
+,
+3
+,
+4
+]
+.
+Such tasks are long-horizon and spatially extended: the robot must navigate and manipulate under clutter and occlusion while ensuring safe whole-body motion near people and furniture
+[
+5
+]
+.
+Accordingly, many works cast instruction following as a
+robot agent
+problem that compiles language into executable steps and revises them online.
+During execution, the agent must continually decide what to do next, ground language to scene entities, and verify step completion under noisy observations,
+motivating designs that couple high-level reasoning with grounded perception and reliable execution.
+Under this problem setting, many language-conditioned robot systems instantiate a modular pipeline with three stages: task planning, semantic grounding, and execution evaluation.
+Planning methods decompose instructions into skill sequences and may leverage feedback, e.g., feasibility-aware selection
+[
+6
+]
+, code-generated feedback loops
+[
+7
+]
+, and language-based self-feedback for replanning
+[
+8
+]
+;
+grounding methods map language to spatial or geometric representations for 3D-aware action generation and constraint reasoning
+[
+9
+]
+.
+Because long-horizon success is ultimately determined by interaction outcomes over time, platforms and benchmarks emphasize evaluation in closed-loop execution beyond offline VQA
+[
+10
+,
+11
+]
+.
+Nevertheless, achieving robust long-horizon execution in the real world remains brittle.
+Free-form model outputs can be underspecified for downstream controllers, implicit success detection is susceptible to transient perception noise, and failures are hard to attribute and recover from.
+These challenges motivate explicit verification and replanning, such as logic-based plan checking
+[
+12
+]
+and scene-perception-driven proactive replanning
+[
+13
+,
+14
+]
+.
+However, most existing frameworks are validated on mobile manipulators or wheeled platforms and do not fully account for the tighter coupling and safety constraints of humanoid whole-body execution.
+This limitation becomes even more critical for humanoid agents, where whole-body constraints tightly couple locomotion and manipulation through stance, reachability, and balance
+[
+15
+,
+16
+,
+17
+,
+18
+]
+.
+Consequently, small distance and pose errors can cascade into failures during subsequent locomotion and manipulation.
+Recent humanoid systems can pursue two directions:
+(i) hierarchical agent stacks that improve online efficiency via learned intermediate decision layers and modular skills
+[
+19
+]
+,
+as well as VLM-based monitoring for skill sequencing on real humanoids
+[
+20
+]
+; and
+(ii) learning-heavy vision-language-action policies trained at scale for large-space whole-body loco-manipulation, studied in either real-robot or large-scale simulation settings
+[
+21
+,
+22
+]
+.
+While highly promising, these approaches typically emphasize efficiency or broad generalization.
+In contrast, a key requirement for a dependable humanoid agent remains under-explored:
+a
+verifiable and diagnosable
+execution loop that grounds all task-relevant entities in actionable 3D geometry, evaluates explicit success conditions with temporal stability under noisy perception, and
+triggers targeted recovery when conditions are violated, helping to avoid premature termination and unsafe motions.
+To address this, we propose a training-light humanoid agent framework that turns open-ended VLM plans into
+verifiable task programs
+and closes the loop with
+multi-object 3D geometric supervision
+.
+Given an instruction, a VLM-based planner compiles it into a sequence of structured subtasks in a typed JSON schema,
+where each subtask specifies task-conditioned entity descriptions
+and explicit preconditions/success conditions as predicate assertions with temporal stability.
+We then ground
+all task-relevant entities
+, including the manipulation target, the destination region, and any objects referenced by predicates, in 3D using SAM3 segmentation and RGB-D observations, recovering object-centric geometric states and pairwise relations
+[
+23
+]
+.
+A geometry-grounded supervisor evaluates predicates over stable frames, produces condition-level diagnostics, and triggers targeted recovery, such as re-grounding, re-approach adjustment, or replanning.
+Finally, these supervision signals are integrated with whole-body execution by gating locomotion and MPC-based upper-body manipulation
+through task-conditioned feasibility and safety constraints, enabling robust long-horizon humanoid loco-manipulation.
+In this paper, our main contributions are:
+•
+A structured and verifiable task interface that compiles VLM outputs into typed subtasks with explicit predicate-based preconditions and success conditions.
+•
+Task-conditioned
+multi-object
+3D grounding using SAM3+RGB-D to recover object-centric geometric states and relations for verification.
+•
+A geometry-grounded supervisor with temporal stability and condition-level diagnostics that enables targeted recovery and feedback-driven replanning.
+•
+An integrated humanoid execution layer that bridges geometric supervision to whole-body control for long-horizon loco-manipulation.
+II
+Related Work
+II-A
+Language-conditioned Robot Agents
+Recent language-conditioned robot agents leverage LLM/VLMs to decompose open-ended instructions into modular skill sequences and execute them with varying degrees of online feedback, e.g., feasibility-aware skill selection
+[
+6
+]
+, program/code-based policies with embedded feedback loops
+[
+7
+]
+, zero-shot language planning
+[
+24
+]
+, and self-reflective replanning via language feedback
+[
+8
+]
+, with benchmarks further emphasizing that reliable evaluation should go beyond offline VQA and include closed-loop execution
+[
+10
+,
+25
+]
+.
+II-B
+Grounding and Geometric Verification for Execution
+Complementary to high-level planning, prior work grounds language into spatial or object-centric representations for action generation and verification, including 3D-aware grounding and affordance reasoning
+[
+9
+,
+26
+,
+27
+]
+as well as explicit verification and replanning mechanisms such as logic-based plan checking
+[
+12
+]
+and scene-graph/perception-driven proactive replanning
+[
+13
+,
+14
+]
+, but these approaches often provide limited condition-level diagnostics tied to multi-object 3D geometry.
+II-C
+Humanoid Agents and Whole-Body Loco-Manipulation
+Humanoid agents pose additional challenges due to whole-body coupling between locomotion, balance, and manipulation, and recent systems pursue either hierarchical stacks that improve online efficiency via connector-style intermediate decision layers and modular skills
+[
+19
+,
+28
+,
+29
+]
+or VLM-based monitoring for skill sequencing on real humanoids
+[
+20
+]
+, or learning-heavy vision-language-action policies trained at scale for large-space whole-body loco-manipulation
+[
+21
+,
+22
+,
+30
+]
+.
+III
+Methods
+We address long-horizon humanoid loco-manipulation from a natural language instruction
+I
+I
+using RGB-D observations and robot state in a closed loop.
+Our system, as shown in Fig.
+1
+, comprises structured VLM task decomposition, task conditioned multi object Tracking, predicate based supervision and targeted recovery, feedback driven replanning, and integrated whole body execution for locomotion and MPC-based manipulation.
+Fig. 1
+:
+System overview of the humanoid agent.
+III-A
+Structured VLM Task Decomposition
+We decouple semantic planning from perception and execution through a structured subtask interface.
+Given a high level command
+I
+I
+and observation
+o
+t
+o_{t}
+, a VLM-based planner generates a task plan
+𝒫
+=
+⟨
+t
+​
+a
+​
+s
+​
+k
+​
+_
+​
+i
+​
+d
+,
+I
+,
+{
+τ
+i
+}
+i
+=
+1
+N
+⟩
+\mathcal{P}=\langle task\_id,I,\{\tau_{i}\}_{i=1}^{N}\rangle
+.
+We compile form VLM outputs into a typed JSON.
+τ
+i
+=
+\displaystyle\tau_{i}=
+⟨
+subtask_id
+,
+type
+,
+target
+,
+destination
+,
+\displaystyle\langle\texttt{subtask\_id},~\texttt{type},~\texttt{target},~\texttt{destination},
+(1)
+manipulation
+,
+locomotion
+,
+preconditions
+,
+\displaystyle\texttt{manipulation},~\texttt{locomotion},~\texttt{preconditions},
+success_conditions
+,
+failure_handlers
+,
+\displaystyle\texttt{success\_conditions},~\texttt{failure\_handlers},
+timeout_sec
+,
+max_retry
+⟩
+.
+\displaystyle\texttt{timeout\_sec},~\texttt{max\_retry}\rangle.
+Here, type identifies the subtask family.
+The field
+target
+specifies the object to be grounded through a symbolic handle (
+ref
+) and a language descriptor (
+phrase
+), optionally augmented with
+category
+,
+attributes
+, and
+relations
+.
+We use
+destination
+to describe the intended goal region or reference object in natural language.
+The
+manipulation
+block instantiates an action primitive together with actuation settings such as arm selection and whether to enable upper-body MPC.
+Finally,
+preconditions
+and
+success_conditions
+are represented as predicate assertions with temporal stability specified by
+stable_frames
+, which enables deterministic monitoring and closed-loop replanning. An example is provided in Appendix
+V
+.
+We detail how task-conditioned specifications are grounded into segmentation and 3D geometry, and how predicates are evaluated over stable frames in next subsection.
+III-B
+Conditional Segmentation and Geometric Coordinate Estimation
+This module grounds the task-conditioned plan from Sec.
+III-A
+into
+multi-object
+3D geometric estimates.
+Given an RGB-D observation
+o
+t
+o_{t}
+and the active subtask
+τ
+i
+\tau_{i}
+, we identify a set of task-relevant entities
+ℰ
+i
+=
+\displaystyle\mathcal{E}_{i}=
+{
+target
+}
+∪
+{
+destination
+}
+∪
+{
+relation references
+}
+\displaystyle\{\texttt{target}\}\cup\{\texttt{destination}\}\cup\{\texttt{relation\;references}\}
+(2)
+∪
+{
+predicate references
+}
+,
+\displaystyle\cup\{\texttt{predicate\;references}\},
+where
+relation references
+are objects mentioned in
+target.relations
+, and
+predicate references
+are objects appearing in
+preconditions
+/
+success_conditions
+arguments, e.g., the
+support
+object in
+SUPPORTED_BY
+.
+This ensures that both the manipulation target and goal/reference entities are segmented and localized.
+Task-conditioned multi-object segmentation.
+For each entity
+e
+∈
+ℰ
+i
+e\in\mathcal{E}_{i}
+, we query SAM3 to obtain a set of candidate masks
+ℳ
+e
+=
+{
+m
+e
+,
+k
+}
+\mathcal{M}_{e}=\{m_{e,k}\}
+[
+23
+]
+.
+The query is conditioned on the plan fields:
+target.phrase
+prompts segmentation of the manipulated object,
+destination.phrase
+prompts segmentation of the goal container/region, and referenced entities are prompted by their associated phrases or predicate roles.
+Optional attributes and relations refine the query to resolve ambiguity.
+When multiple instances are detected, we maintain temporal consistency for each entity by favoring candidates that remain stable across time.
+For entities without an explicit
+ref
+in the plan, we create an internal identifier and maintain a mapping in the workspace state.
+Lifting masks to 3D geometric states.
+For each candidate mask
+m
+e
+,
+k
+m_{e,k}
+, we back-project masked depth pixels into a point cloud
+P
+e
+,
+k
+P_{e,k}
+using calibrated RGB-D intrinsics,
+and estimate a compact geometric state:
+(i) centroid
+c
+e
+,
+k
+c_{e,k}
+in the world frame,
+(ii) spatial extent
+b
+e
+,
+k
+b_{e,k}
+,
+and (iii) confidence
+q
+e
+,
+k
+q_{e,k}
+combining segmentation confidence with depth validity and point support.
+For subtasks requiring orientation cues, we additionally estimate an orientation descriptor from
+P
+e
+,
+k
+P_{e,k}
+,
+such as a dominant surface normal or a principal axis via PCA.
+To improve robustness under sensor noise and partial observations, we apply temporal filtering and reject outliers with inconsistent depth,
+insufficient inlier support, or abrupt geometric changes.
+Candidate selection and object-centric representation
+For each entity
+e
+∈
+ℰ
+i
+e\in\mathcal{E}_{i}
+, we select the best instance by jointly scoring semantic consistency, relational consistency,
+geometric feasibility, and temporal stability:
+S
+e
+​
+(
+k
+)
+=
+\displaystyle S_{e}(k)=
+w
+s
+​
+S
+sem
+​
+(
+e
+,
+k
+)
++
+w
+r
+​
+S
+rel
+​
+(
+e
+,
+k
+)
++
+w
+g
+​
+S
+geo
+​
+(
+e
+,
+k
+)
+\displaystyle w_{s}S_{\text{sem}}(e,k)+w_{r}S_{\text{rel}}(e,k)+w_{g}S_{\text{geo}}(e,k)
+(3)
++
+w
+t
+​
+S
+temp
+​
+(
+e
+,
+k
+)
+,
+\displaystyle+w_{t}S_{\text{temp}}(e,k),
+k
+e
+⋆
+\displaystyle k_{e}^{\star}
+=
+arg
+⁡
+max
+k
+​
+S
+e
+​
+(
+k
+)
+.
+\displaystyle=\arg\max_{k}S_{e}(k).
+The selected target instance is packaged as the handle
+h
+i
+=
+⟨
+ref
+,
+m
+target
+,
+k
+target
+⋆
+,
+c
+target
+,
+k
+target
+⋆
+,
+b
+target
+,
+k
+target
+⋆
+,
+q
+target
+,
+k
+target
+⋆
+⟩
+h_{i}=\langle\texttt{ref},~m_{\texttt{target},k^{\star}_{\texttt{target}}},~c_{\texttt{target},k^{\star}_{\texttt{target}}},~b_{\texttt{target},k^{\star}_{\texttt{target}}},~q_{\texttt{target},k^{\star}_{\texttt{target}}}\rangle
+,
+while all entities, including
+destination
+and predicate references, are stored in an object-centric workspace state
+𝒲
+t
+\mathcal{W}_{t}
+.
+From
+𝒲
+t
+\mathcal{W}_{t}
+, we derive pairwise geometric relations such as object–container distance, object–support height difference,
+end-effector–object distance, and relative alignment, which are consumed by the supervisor to evaluate plan predicates and trigger recovery or replanning when needed.
+III-C
+Supervisor: Task Monitoring with RGB-D and SAM3
+Role and inputs
+The supervisor verifies task progress and completion in a closed loop.
+At each time step
+t
+t
+, it consumes the active subtask
+τ
+i
+\tau_{i}
+from the plan (Sec.
+III-A
+),
+the target handle
+h
+i
+=
+⟨
+ref
+,
+m
+,
+c
+,
+b
+,
+q
+⟩
+h_{i}=\langle\texttt{ref},m,c,b,q\rangle
+, and the object-centric workspace state
+𝒲
+t
+\mathcal{W}_{t}
+constructed in Sec.
+III-B
+.
+It outputs a discrete subtask status (
+in_progress
+,
+done
+,
+blocked
+,
+failed
+)
+together with an
+uncertain
+flag, condition-wise flags, and continuous diagnostic metrics to support recovery and replanning.
+Predicate representation
+For each active subtask
+τ
+i
+\tau_{i}
+, the plan specifies a set of preconditions
+𝒫
+i
+\mathcal{P}_{i}
+and success conditions
+𝒢
+i
+\mathcal{G}_{i}
+.
+Each condition is a parameterized predicate
+p
+=
+⟨
+k
+,
+a
+,
+op
+,
+v
+,
+n
+⟩
+p=\langle k,a,\mathrm{op},v,n\rangle
+,
+where
+k
+k
+is a predicate key such as
+VISIBLE
+,
+SUPPORTED
+_BY,
+SUPPORTED_BYINSIDE
+,
+a
+a
+denotes grounded arguments instantiated from the plan,
+op
+\mathrm{op}
+is a comparator,
+v
+v
+is a target value, and
+n
+n
+is the required stability length
+given by
+stable_frames
+.
+Let
+𝒲
+t
+\mathcal{W}_{t}
+be the object-centric geometric workspace state at time
+t
+t
+,
+which contains per-object estimates, including mask, centroid, extent, confidence, and optional orientation descriptors, as well as derived pairwise relations.
+We evaluate predicates via a monitoring function
+ϕ
+⁡
+(
+k
+,
+a
+,
+𝒲
+t
+)
+∈
+ℝ
+\phi(k,a;\mathcal{W}_{t})\in\mathbb{R}
+that returns a scalar geometric measure parameterized by
+a
+a
+.
+We treat safety/feasibility checks as invariant preconditions that must remain satisfied throughout execution.
+Evaluation, temporal stability, and subtask status.
+For a predicate
+p
+=
+⟨
+k
+,
+a
+,
+op
+,
+v
+,
+n
+⟩
+p=\langle k,a,\mathrm{op},v,n\rangle
+, we compute a scalar measure
+ϕ
+⁡
+(
+k
+,
+a
+,
+𝒲
+t
+)
+∈
+ℝ
+\phi(k,a;\mathcal{W}_{t})\in\mathbb{R}
+from the geometric workspace state
+𝒲
+t
+\mathcal{W}_{t}
+,
+and convert it into an instantaneous boolean value:
+eval
+⁡
+(
+p
+,
+t
+)
+=
+(
+ϕ
+⁡
+(
+k
+,
+a
+,
+𝒲
+t
+)
+​
+op
+​
+v
+)
+∈
+{
+0
+,
+1
+}
+,
+\mathrm{eval}(p,t)=\mathbf{1}\!\left(\phi(k,a;\mathcal{W}_{t})\ \mathrm{op}\ v\right)\in\{0,1\},
+(4)
+where
+𝟏
+​
+(
+⋅
+)
+\mathbf{1}(\cdot)
+is an indicator function that equals 1 if its argument is true and 0 otherwise.
+To suppress transient noise, we require the predicate to hold for
+n
+n
+consecutive frames:
+sat
+⁡
+(
+p
+,
+t
+)
+=
+∏
+u
+=
+t
+−
+n
++
+1
+t
+eval
+⁡
+(
+p
+,
+u
+)
+,
+\mathrm{sat}(p,t)=\prod_{u=t-n+1}^{t}\mathrm{eval}(p,u),
+(5)
+which equals 1 iff
+eval
+⁡
+(
+p
+,
+u
+)
+=
+1
+\mathrm{eval}(p,u)=1
+for all
+u
+∈
+[
+t
+−
+n
++
+1
+,
+t
+]
+u\in[t-n+1,t]
+.
+We define readiness and completion as conjunctions over predicate sets:
+Ready
+⁡
+(
+τ
+i
+,
+t
+)
+\displaystyle\mathrm{Ready}(\tau_{i},t)
+=
+⋀
+p
+∈
+𝒫
+i
+sat
+⁡
+(
+p
+,
+t
+)
+,
+\displaystyle=\bigwedge_{p\in\mathcal{P}_{i}}\mathrm{sat}(p,t),
+(6)
+Done
+⁡
+(
+τ
+i
+,
+t
+)
+\displaystyle\mathrm{Done}(\tau_{i},t)
+=
+⋀
+g
+∈
+𝒢
+i
+sat
+⁡
+(
+g
+,
+t
+)
+,
+\displaystyle=\bigwedge_{g\in\mathcal{G}_{i}}\mathrm{sat}(g,t),
+where
+∧
+\wedge
+denotes logical AND.
+If
+Ready
+⁡
+(
+τ
+i
+,
+t
+)
+=
+0
+\mathrm{Ready}(\tau_{i},t)=0
+, the supervisor marks the subtask as
+blocked
+and reports the failing predicates.
+If
+Done
+⁡
+(
+τ
+i
+,
+t
+)
+=
+0
+\mathrm{Done}(\tau_{i},t)=0
+for longer than
+timeout_sec
+, or if safety/feasibility predicates are violated,
+the supervisor marks
+failed
+and triggers recovery or replanning; otherwise it remains
+in_progress
+.
+Diagnostics and corrective feedback
+Beyond discrete subtask status, the supervisor returns a diagnostic vector
+𝐝
+t
+\mathbf{d}_{t}
+computed from
+𝒲
+t
+\mathcal{W}_{t}
+,
+including continuous measures such as object–support height gap, relative distance, alignment angle, and confidence/stability scores.
+These metrics localize which constraints/predicates fail and quantify the magnitude of error, enabling targeted corrections.
+When estimates are unreliable, the supervisor requests re-observation or re-grounding before proceeding.
+The diagnostic vector is forwarded to downstream modules as structured signals for corrective motion and replanning.
+VLM-assisted semantic verification
+In addition to geometric predicates, we optionally invoke a VLM as a semantic verifier when the supervisor raises the
+uncertain
+flag,
+or when completion depends on non-geometric cues.
+Given the active subtask
+τ
+i
+\tau_{i}
+and a compact visual context (RGB image, optional masks, and key geometric diagnostics),
+the VLM outputs a boolean judgment and a short rationale about whether the subtask is completed.
+We use this signal as
+auxiliary
+feedback rather than a primary success criterion:
+geometric verification takes precedence whenever predicates are reliably evaluable from
+𝒲
+t
+\mathcal{W}_{t}
+,
+and VLM verification is consulted only when geometric evidence is missing, ambiguous, or low-confidence.
+If the two signals disagree, the system triggers re-observation or re-grounding before declaring success.
+III-D
+Feedback-Driven Replanning for Robust Task Execution
+Replanning triggers
+Replanning is triggered by structured feedback from the supervisor.
+Concretely, we initiate replanning when (i) a subtask becomes
+blocked
+due to unsatisfied preconditions,
+(ii) a subtask is marked
+failed
+,
+or (iii) the supervisor raises an
+uncertain
+flag due to low-confidence or inconsistent geometric estimates.
+Structured feedback
+At runtime, the supervisor returns (1) the discrete subtask status, (2) the set of failing predicate instances and their grounded arguments,
+and (3) continuous diagnostics
+𝐝
+t
+\mathbf{d}_{t}
+.
+Conditioned on the subtask phase, we define the failing predicate set as
+𝒫
+t
+fail
+=
+{
+{
+p
+∈
+𝒫
+i
+|
+sat
+⁡
+(
+p
+,
+t
+)
+=
+0
+}
+,
+status
+=
+blocked
+,
+{
+g
+∈
+𝒢
+i
+|
+sat
+⁡
+(
+g
+,
+t
+)
+=
+0
+}
+,
+status
+=
+failed
+,
+\mathcal{P}^{\text{fail}}_{t}=\begin{cases}\{p\in\mathcal{P}_{i}~|~\mathrm{sat}(p,t)=0\},&\texttt{status}=\texttt{blocked},\\
+\{g\in\mathcal{G}_{i}~|~\mathrm{sat}(g,t)=0\},&\texttt{status}=\texttt{failed},\end{cases}
+and form a compact feedback record
+ℱ
+t
+=
+⟨
+τ
+i
+,
+status
+,
+𝒫
+t
+fail
+,
+𝐝
+t
+⟩
+\mathcal{F}_{t}=\langle\tau_{i},\ \texttt{status},\ \mathcal{P}^{\text{fail}}_{t},\ \mathbf{d}_{t}\rangle
+,
+which is consumed by the planner to decide whether to re-observe, re-ground, retry with modified parameters, or replan the remaining subtasks.
+For
+in_progress
+, we primarily use
+𝐝
+t
+\mathbf{d}_{t}
+to diagnose progress and select corrective actions.
+Recovery actions
+We employ a small set of reusable recovery operators conditioned on the failure type:
+(i)
+Re-observation
+: adjust viewpoint or pause to acquire a more reliable RGB-D frame,
+(ii)
+Re-grounding
+: re-run conditional segmentation and 3D estimation with updated prompts/relations,
+(iii)
+Skill/parameter adaptation
+: switch the manipulation primitive or refine target tolerances based on
+𝐝
+t
+\mathbf{d}_{t}
+, micro-adjust end-effector pose when alignment error is small,
+and (iv)
+Task-level revision
+: modify the remaining plan by inserting corrective subtasks.
+These operators can be specified in
+failure_handlers
+and executed before calling the VLM planner for full replanning.
+Retry budget and plan update
+Each subtask carries an execution budget via
+timeout_sec
+and
+max_retry
+.
+If the retry budget is not exhausted, we re-execute
+τ
+i
+\tau_{i}
+after applying a recovery operator;
+otherwise, we request the planner to generate an updated plan
+𝒫
+′
+\mathcal{P}^{\prime}
+conditioned on
+ℱ
+t
+\mathcal{F}_{t}
+,
+while preserving completed subtasks and updating symbolic references for consistent grounding.
+III-E
+Integrated Execution Framework for Robust Humanoid Task Execution
+Execution interface
+The execution layer instantiates plan-level subtasks
+τ
+i
+\tau_{i}
+into low-level humanoid controllers.
+It takes as input the active subtask schema together with the grounded target handle
+h
+i
+h_{i}
+,
+and dispatches either locomotion or manipulation skills depending on
+type
+.
+Crucially, the layer follows the plan fields
+locomotion
+and
+manipulation
+as an explicit control interface, and returns execution status and telemetry to the supervisor for monitoring and replanning.
+Locomotion as a gait-conditioned RL skill library
+For
+LOCOMOTION
+subtasks, we use a single reinforcement-learned locomotion policy as a stand-alone skill.
+The policy is
+gait-conditioned
+: at runtime the agent selects a discrete gait identifier
+gait_id
+, and the policy produces
+lower-body commands for robust balance and stepping while tracking desired base velocity and yaw-rate commands.
+We train this policy with a multi-clip locomotion dataset consisting of 12 motion clips, covering forward/backward walking, lateral stepping,
+running, and in-place turning.
+To expose a compact action interface to the planner/supervisor, we map the 12 clip-level gaits into 7 locomotion primitives:
+forward walk
+(
+gait_id
+∈
+{
+0
+,
+1
+}
+\texttt{gait\_id}\in\{0,1\}
+),
+backward walk
+(
+gait_id
+∈
+{
+2
+,
+3
+}
+\texttt{gait\_id}\in\{2,3\}
+),
+carry-and-walk
+(
+gait_id
+∈
+{
+4
+,
+5
+}
+\texttt{gait\_id}\in\{4,5\}
+),
+run
+(
+gait_id
+∈
+{
+6
+,
+7
+}
+\texttt{gait\_id}\in\{6,7\}
+),
+side-walk
+(
+gait_id
+∈
+{
+8
+,
+9
+}
+\texttt{gait\_id}\in\{8,9\}
+),
+turn-left
+(
+gait_id
+=
+10
+\texttt{gait\_id}=10
+),
+and
+turn-right
+(
+gait_id
+=
+11
+\texttt{gait\_id}=11
+).
+For primitives with multiple available clips, we either select a canonical clip or sample within the clip group, which improves coverage and reduces overfitting to a single clip.
+This gait-conditioned design provides a unified locomotion skill library for long-horizon execution and recovery, enabling task-dependent repositioning without hand-coded motion scripts.
+The policy is trained in simulation to track commanded base velocities and yaw rates while maintaining balance and contact stability.
+We condition the policy on
+gait_id
+and train on a mixture of motion clips with domain randomization to improve robustness.
+Manipulation with decoupled upper-body control.
+For
+MANIPULATION
+subtasks, the execution layer performs arm motion while maintaining lower-body stability.
+The arm and action are specified by the plan, and the target handle
+h
+i
+h_{i}
+provides the geometric reference for motion generation.
+When
+use_upper_body_mpc
+is enabled, we solve an upper-body MPC problem to produce constraint-aware end-effector trajectories.
+Meanwhile, the lower body is controlled independently to preserve balance and support stance, allowing manipulation to proceed
+without destabilizing the humanoid.
+Cross-skill coordination and transitions.
+Long-horizon tasks typically require alternating between repositioning and manipulation.
+We implement a lightweight coordinator that switches between the RL locomotion skill and the upper-body manipulation controller
+based on subtask type and supervisor feedback.
+In particular, if geometric preconditions are not satisfied, the coordinator triggers a locomotion subskill to reposition
+until the supervisor marks the subtask
+ready
+; if manipulation tracking errors increase or safety predicates are violated,
+the coordinator pauses arm motion and requests recovery actions.
+This decoupled design enables robust locomotion-manipulation execution while preserving a clean agent-facing interface
+defined by the JSON plan.
+IV
+EXPERIMENTS
+(a)
+Initial scene with the bottle and tray.
+(b)
+Reaching and grasping the bottle.
+(c)
+Lifting and transporting the bottle toward the tray.
+(d)
+Placing the bottle into the tray.
+Fig. 2
+:
+Partial “Tidy-the-desk” subtasks: bottle pick-and-place into a tray.
+(a)
+Searching for the user.
+(b)
+Approaching the user.
+(c)
+Handing over the drink.
+(d)
+The user receives the drink.
+Fig. 3
+:
+Partial “Bring-me-a-drink” subtasks: the humanoid searches for the user, approaches them, hands over the drink, and completes the delivery.
+IV-A
+Real-World Setup
+We conduct real-world experiments on a Unitree G1 humanoid robot equipped with a Dex3-1 dexterous hand for manipulation and a head-mounted RGB-D camera for egocentric perception.
+Our system is deployed in a two-computer setup.
+A desktop workstation with an RTX 5080 GPU runs the perception and decision modules, including SAM3-based multi-object segmentation, the VLM-based planning module, and the geometry-grounded supervisor.
+The robot’s onboard Unitree computer runs the low-level controllers, including the arm control stack and the RL locomotion policy.
+Our experiments are performed in an indoor office environment that includes typical furniture and everyday objects.
+The scene is cluttered to induce partial observability, occlusions, and viewpoint changes, providing a challenging testbed for loco-manipulation.
+We evaluate the agent on a suite of long-horizon humanoid loco-manipulation tasks.
+To enable direct comparison with Being-0, we include the same tasks
+[
+19
+]
+:
+Fetch-bottle
+,
+Deliver-box
+,
+Grasp-bottle
+,
+Place-box
+, and
+Place-coffee
+.
+Beyond these, we introduce additional long-horizon tasks not reported in Being-0 to stress open-ended instruction following and multi-object tabletop reasoning:
+(i)
+Tidy-desk
+, which requires repeatedly picking and placing multiple objects until the desk is cleared.
+(ii)
+Tabletop-sorting
+, which requires categorizing objects into different containers.
+(iii)
+I’m in a bad mood, bring me a drink
+, which requires fetching a drink and handing it over to the user.
+IV-B
+Results on Being-0-aligned Multi-step Tasks
+We report success rates on the Being-0-aligned multi-step task suite in Table
+I
+.
+We follow the task definitions and success criteria from Being-0 as closely as possible, and report our results over 10 trials per task.
+Across multi-step routines, our agent achieves reliable completion by combining structured task programs with multi-object 3D grounding and predicate-based supervision.
+TABLE I:
+Comparing the proposed method with being-0, the results show the number of successful manipulations in 10 trials.
+Task
+Being-0
+Cybo-Waiter
+Fetch-bottle
+9/10
+9/10
+Deliver-basket
+8/10
+8/10
+Grasp-bottle
+8/10
+10/10
+Place-basket
+6/10
+9/10
+Place-coffee
+6/10
+8/10
+IV-C
+Results on Long-Horizon Tasks
+Table
+II
+reports success counts over 10 trials for each task.
+Our full system consistently outperforms the ablation
+W/O Supervisor
+, improving success from 5/10 to 7/10 on
+Tidy-desk
+, from 6/10 to 8/10 on
+Tabletop-sorting
+, and from 7/10 to 9/10 on
+Bring-me-a-drink
+(see Figs.
+2
+and
+3
+for qualitative examples).
+These gains highlight the importance of the supervisor in long-horizon execution: by evaluating predicate-based preconditions and success conditions over stable frames, the supervisor reduces premature transitions caused by transient perception noise, detects off-nominal states, and triggers targeted recovery instead of restarting the entire task.
+Overall, the results suggest that geometry-grounded monitoring and feedback are critical for maintaining reliable task progression when tasks require repeated object-level actions and extended navigation.
+TABLE II:
+Success counts over 10 trials on additional long-horizon tasks. We compare the full system (Cybo-Waiter) with an ablation that disables the supervisor (W/O Supervisor).
+Task
+W/O Supervisor
+Cybo-Waiter
+Tidy-desk
+5/10
+7/10
+Tabletop-sorting
+6/10
+8/10
+Bring-me-a-drink
+7/10
+9/10
+V
+Conclusion and Limitations
+We have presented a VLM-driven hierarchical agent framework for humanoid locomotion-manipulation task execution. By combining task-conditioned grounding, segmentation-grounded geometric monitoring, structured feedback-driven replanning, and a humanoid integrated execution layer, the proposed system has enabled more reliable long-horizon execution and recovery. Experiments on representative tasks have demonstrated the effectiveness of the framework and have highlighted the value of explicit monitoring and structured recovery in humanoid agent systems.
+Example.
+A minimal plan snippet following our schema is:
+⬇
+{
+"
+task_id
+":"6
+e0d3831
+",
+"
+command
+":"
+Help
+me
+tidy
+up
+the
+desk
+.",
+"
+subtasks
+":[
+{"
+subtask_id
+":1,
+"
+type
+":"
+MANIPULATION
+",
+"
+name
+":"
+subtask_1
+",
+"
+target
+":{"
+ref
+":"
+obj_1
+",
+"
+category
+":"
+unknown
+",
+"
+attributes
+":[],
+"
+relations
+":[],
+"
+phrase
+":"
+cup
+"},
+"
+destination
+":{"
+phrase
+":"
+container
+"},
+"
+manipulation
+":{"
+arm
+":"
+RIGHT
+",
+"
+action
+":"
+PLACE
+",
+"
+use_upper_body_mpc
+":
+true
+},
+"
+locomotion
+":{},
+"
+preconditions
+":[{"
+key
+":"
+VISIBLE
+",
+"
+args
+":{"
+object
+":"
+obj_1
+"},
+"
+op
+":"==",
+"
+value
+":
+true
+,
+"
+stable_frames
+":3}],
+"
+success_conditions
+":[{"
+key
+":"
+SUPPORTED_BY
+",
+"
+args
+":{"
+object
+":"
+obj_1
+",
+"
+support
+":"
+table_1
+"},
+"
+op
+":"==",
+"
+value
+":
+true
+,
+"
+stable_frames
+":10}],
+"
+failure_handlers
+":[],
+"
+timeout_sec
+":30,
+"
+max_retry
+":2}
+]
+}
+References
+[1]
+K. Black, N. Brown, D. Driess, A. Esmail, M. Equi, C. Finn, N. Fusai, L. Groom, K. Hausman, B. Ichter,
+et al.
+(2024)
+π
+0
+\pi_{0}
+: A vision-language-action flow model for general robot control
+.
+arXiv preprint arXiv:2410.24164
+.
+Cited by:
+§I
+.
+[2]
+P. Intelligence, K. Black, N. Brown, J. Darpinian, K. Dhabalia, D. Driess, A. Esmail, M. Equi, C. Finn, N. Fusai,
+et al.
+(2025)
+π
+0.5
+\pi_{0.5}
+: A vision-language-action model with open-world generalization
+.
+arXiv preprint arXiv:2504.16054
+.
+Cited by:
+§I
+.
+[3]
+A. Brohan, N. Brown, J. Carbajal, Y. Chebotar, J. Dabis, C. Finn, K. Gopalakrishnan, K. Hausman, A. Herzog, J. Hsu,
+et al.
+(2022)
+Rt-1: robotics transformer for real-world control at scale
+.
+arXiv preprint arXiv:2212.06817
+.
+Cited by:
+§I
+.
+[4]
+X. Zhao, M. Li, C. Weber, M. B. Hafez, and S. Wermter
+(2023)
+Chat with the environment: interactive multimodal perception using large language models
+.
+In
+2023 IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS)
+,
+pp. 3590–3596
+.
+Cited by:
+§I
+.
+[5]
+B. Zitkovich, T. Yu, S. Xu, P. Xu, T. Xiao, F. Xia, J. Wu, P. Wohlhart, S. Welker, A. Wahid,
+et al.
+(2023)
+Rt-2: vision-language-action models transfer web knowledge to robotic control
+.
+In
+Conference on Robot Learning
+,
+pp. 2165–2183
+.
+Cited by:
+§I
+.
+[6]
+A. Brohan, Y. Chebotar, C. Finn, K. Hausman, A. Herzog, D. Ho, J. Ibarz, A. Irpan, E. Jang, R. Julian,
+et al.
+(2023)
+Do as i can, not as i say: grounding language in robotic affordances
+.
+In
+Conference on robot learning
+,
+pp. 287–318
+.
+Cited by:
+§I
+,
+§II-A
+.
+[7]
+J. Liang, W. Huang, F. Xia, P. Xu, K. Hausman, B. Ichter, P. Florence, and A. Zeng
+(2023)
+Code as policies: language model programs for embodied control
+.
+In
+2023 IEEE International conference on robotics and automation (ICRA)
+,
+pp. 9493–9500
+.
+Cited by:
+§I
+,
+§II-A
+.
+[8]
+W. Huang, F. Xia, T. Xiao, H. Chan, J. Liang, P. Florence, A. Zeng, J. Tompson, I. Mordatch, Y. Chebotar,
+et al.
+(2022)
+Inner monologue: embodied reasoning through planning with language models
+.
+arXiv preprint arXiv:2207.05608
+.
+Cited by:
+§I
+,
+§II-A
+.
+[9]
+W. Huang, C. Wang, R. Zhang, Y. Li, J. Wu, and L. Fei-Fei
+(2023)
+Voxposer: composable 3d value maps for robotic manipulation with language models
+.
+arXiv preprint arXiv:2307.05973
+.
+Cited by:
+§I
+,
+§II-B
+.
+[10]
+P. Guo, Z. Mai, Z. Xu, K. Zhang, H. Zhang, Z. Miao, A. Ajoudani, Z. Kingston, Q. Qiu, and Y. She
+(2026)
+AgenticLab: a real-world robot agent platform that can see, think, and act
+.
+arXiv preprint arXiv:2602.01662
+.
+Cited by:
+§I
+,
+§II-A
+.
+[11]
+S. Antol, A. Agrawal, J. Lu, M. Mitchell, D. Batra, C. L. Zitnick, and D. Parikh
+(2015)
+Vqa: visual question answering
+.
+In
+Proceedings of the IEEE international conference on computer vision
+,
+pp. 2425–2433
+.
+Cited by:
+§I
+.
+[12]
+D. S. Grigorev, A. K. Kovalev, and A. I. Panov
+(2025)
+Verifyllm: llm-based pre-execution task plan verification for robots
+.
+In
+2025 IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS)
+,
+pp. 18489–18496
+.
+Cited by:
+§I
+,
+§II-B
+.
+[13]
+C. R. Yu, D. Chae, D. Seo, S. Lee, H. Im, and J. Kim
+(2025)
+Scene graph-guided proactive replanning for failure-resilient embodied agent
+.
+arXiv preprint arXiv:2508.11286
+.
+Cited by:
+§I
+,
+§II-B
+.
+[14]
+A. Mei, G. Zhu, H. Zhang, and Z. Gan
+(2024)
+Replanvlm: replanning robotic tasks with visual language models
+.
+IEEE Robotics and Automation Letters
+9
+(
+11
+),
+pp. 10201–10208
+.
+Cited by:
+§I
+,
+§II-B
+.
+[15]
+Q. Liao, T. E. Truong, X. Huang, Y. Gao, G. Tevet, K. Sreenath, and C. K. Liu
+(2025)
+Beyondmimic: from motion tracking to versatile humanoid control via guided diffusion
+.
+arXiv preprint arXiv:2508.08241
+.
+Cited by:
+§I
+.
+[16]
+X. B. Peng, P. Abbeel, S. Levine, and M. Van de Panne
+(2018)
+Deepmimic: example-guided deep reinforcement learning of physics-based character skills
+.
+ACM Transactions On Graphics (TOG)
+37
+(
+4
+),
+pp. 1–14
+.
+Cited by:
+§I
+.
+[17]
+X. Lin, Y. Huang, T. Fu, X. Xiong, and C. Wang
+(2025)
+IWalker: imperative visual planning for walking humanoid robot
+.
+In
+2025 IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS)
+,
+pp. 2865–2872
+.
+Cited by:
+§I
+.
+[18]
+Y. Ze, Z. Chen, W. Wang, T. Chen, X. He, Y. Yuan, X. B. Peng, and J. Wu
+(2025)
+Generalizable humanoid manipulation with 3d diffusion policies
+.
+In
+2025 IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS)
+,
+pp. 2873–2880
+.
+Cited by:
+§I
+.
+[19]
+H. Yuan, Y. Bai, Y. Fu, B. Zhou, Y. Feng, X. Xu, Y. Zhan, B. F. Karlsson, and Z. Lu
+(2025)
+Being-0: a humanoid robotic agent with vision-language models and modular skills
+.
+arXiv preprint arXiv:2503.12533
+.
+Cited by:
+§I
+,
+§II-C
+,
+§IV-A
+.
+[20]
+A. Schakkal, B. Zandonati, Z. Yang, and N. Azizan
+(2025)
+Hierarchical vision-language planning for multi-step humanoid manipulation
+.
+arXiv preprint arXiv:2506.22827
+.
+Cited by:
+§I
+,
+§II-C
+.
+[21]
+H. Jiang, J. Chen, Q. Bu, L. Chen, M. Shi, Y. Zhang, D. Li, C. Suo, C. Wang, Z. Peng,
+et al.
+(2025)
+Wholebodyvla: towards unified latent vla for whole-body loco-manipulation control
+.
+arXiv preprint arXiv:2512.11047
+.
+Cited by:
+§I
+,
+§II-C
+.
+[22]
+H. Zhang, J. Sun, M. Caprio, J. Tang, S. Zhang, Q. Zhang, and W. Pan
+(2025)
+HumanoidVerse: a versatile humanoid for vision-language guided multi-object rearrangement
+.
+arXiv preprint arXiv:2508.16943
+.
+Cited by:
+§I
+,
+§II-C
+.
+[23]
+N. Carion, L. Gustafson, Y. Hu, S. Debnath, R. Hu, D. Suris, C. Ryali, K. V. Alwala, H. Khedr, A. Huang,
+et al.
+(2025)
+Sam 3: segment anything with concepts
+.
+arXiv preprint arXiv:2511.16719
+.
+Cited by:
+§I
+,
+§III-B
+.
+[24]
+W. Huang, P. Abbeel, D. Pathak, and I. Mordatch
+(2022)
+Language models as zero-shot planners: extracting actionable knowledge for embodied agents
+.
+In
+International conference on machine learning
+,
+pp. 9118–9147
+.
+Cited by:
+§II-A
+.
+[25]
+S. Yao, J. Zhao, D. Yu, N. Du, I. Shafran, K. R. Narasimhan, and Y. Cao
+(2022)
+React: synergizing reasoning and acting in language models
+.
+In
+The eleventh international conference on learning representations
+,
+Cited by:
+§II-A
+.
+[26]
+M. Shridhar, L. Manuelli, and D. Fox
+(2022)
+Cliport: what and where pathways for robotic manipulation
+.
+In
+Conference on robot learning
+,
+pp. 894–906
+.
+Cited by:
+§II-B
+.
+[27]
+M. Shridhar and L. Manuelli
+(2023)
+Perceiver-actor: a multi-task transformer for robotic manipulation
+.
+In
+Conference on Robot Learning
+,
+pp. 785–799
+.
+Cited by:
+§II-B
+.
+[28]
+H. Xue, X. Huang, D. Niu, Q. Liao, T. Kragerud, J. T. Gravdahl, X. B. Peng, G. Shi, T. Darrell, K. Sreenath,
+et al.
+(2025)
+Leverb: humanoid whole-body control with latent vision-language instruction
+.
+arXiv preprint arXiv:2506.13751
+.
+Cited by:
+§II-C
+.
+[29]
+J. Wang, A. Laurenzi, and N. Tsagarakis
+(2024)
+Autonomous behavior planning for humanoid loco-manipulation through grounded language model
+.
+In
+2024 IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS)
+,
+pp. 10856–10863
+.
+Cited by:
+§II-C
+.
+[30]
+I. Radosavovic, T. Xiao, B. Zhang, T. Darrell, J. Malik, and K. Sreenath
+(2024)
+Real-world humanoid locomotion with reinforcement learning
+.
+Science Robotics
+9
+(
+89
+),
+pp. eadi9579
+.
+Cited by:
+§II-C
+.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

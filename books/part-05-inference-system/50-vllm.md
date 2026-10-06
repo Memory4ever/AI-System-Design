@@ -273,6 +273,10 @@ host orchestration，却新增 in-flight schedule epoch、cross-stage backpressu
 其公开 benchmark 未完整披露 hardware 与 workload contract，因此正文只保留 distributed request-state
 commit 机制。
 
+异步 PP 的逻辑提交还需要物理输入隔离：静态 CUDA Graph 绑定固定地址，CPU 提前准备下一批时，不能覆盖 GPU 仍在读取的 buffer。一个受限分支为每个 batch size 捕获绑定两份输入 buffer 的图，交替准备与执行；跨轮复用 sampling metadata 时，还必须保持 request row、batch 成员与列位置相容，不能只凭大小相同沿用旧 penalty。传输也可先完整交换一次 hidden-state schema，再由共同 scheduling output 推出本轮 batch shape，预分配并接收 tensor；省掉的是稳定 keys、dtype、device 与结构下的重复元数据，不是去掉 stage 数据依赖。[SiPipe 的 v1 插件研究](https://arxiv.org/html/2506.22033v1)支持这种执行分支，不代表当前 vLLM V1 已默认实现或通过任意重排、取消与恢复验证。Host sampling、logits 搬运、多进程 IPC、metadata 副本、双 buffer 与 graph 捕获均计入完整成本，平均 decode TPOT 不替代 TTFT 或 tail SLO；批次复用条件、buffer 消费完成或 schema 无法确认时，应保留同步 input preparation、重新建立完整 metadata 与现有 request-state commit 路径，而不是以 CPU 空闲批准无冲突重叠。<!-- source-family:SF-2025-ARXIV-2506-22033 -->
+
+异构生成stage也不能仅按最后一个token stage判断请求完成：AR、codec与diffusion各保自己的调度和state，外层orchestrator只拥有admission、stage推进、sticky replica、abort及client progress，重payload由connector搬运。下游可先接placeholder，再随upstream chunk经data-plane计算，而不为每chunk重复control-forward；client-emitting结果与下游输入分开，只有声明的final-output stage集合全部drain才结束请求。长期session再增加独立身份、retention与fence，不把latent buffer混进engine KV。[vLLM-Omni的有限对照](https://arxiv.org/html/2610.09307v1)支持这条异构runtime分工，不认证全部pipeline默认或取消/会话安全；MRv2仍有启动guard和高并发失败，更多音频replica亦会使高负载RTF退步。Warm-cache语音、不同硬件/recipe与one-session health不可当完整质量或tail SLO，input/output、所有engines、connector、session驻留与全部冷/热成本须分别计价。状态、chunk或质量失配时回full-payload handoff、较窄已验收pipeline和独立输出/控制gate，不由统一runtime签发物理effect或普遍加速。<!-- source-family:SF-2026-ARXIV-2610-09307 -->
+
 ### 从重建进程到恢复执行状态
 
 容器镜像、权重缓存和预热副本分别减少软件安装、model load 与容量到达等待；当 kernel warmup、graph compile、
@@ -411,6 +415,8 @@ Primary-source 校验入口：
 - OasisKV（sparse off-HBM working-set prefetch；Status: Experimental）:
   https://arxiv.org/abs/2608.08097
 
+- `SF-2026-ARXIV-2610-09307`，vLLM-Omni，Experimental：supplement_20260311实际exact-v1 §2.1–2.6与§5.1–3/5.6必要原证审阅，评分2+2+2=6；root必要Source及Ch50实际完整PP/restore邻接逐字PRE通过，确认差额后深入异构stage控制/数据/会话与final-output集合分责。MRv2失败、replica反退、冷缓存/单fixture和全链成本近文，不授全部pipeline/取消/会话安全或普遍加速。root非写入者已actual顺读253–316完整邻接/新增276及本人416注，回对必要源，POST通过；不预授本日完成。https://arxiv.org/html/2610.09307v1
+
 ### Daily Books delta trace（2026-06—08）
 
 <!-- daily-books-trace:SF-2026-ARXIV-2606-17090:start -->
@@ -418,3 +424,5 @@ Primary-source 校验入口：
 
   **已吸收的语义增量：** Apple ANE runtime 的执行身份必须绑定 macOS/ANE compiler版本与实际dispatch target；direct graph/program路径才能区分“允许调度到ANE”与“确认在ANE执行”。
 <!-- daily-books-trace:SF-2026-ARXIV-2606-17090:end -->
+
+- `SF-2025-ARXIV-2506-22033` — Daily `2025-07-01`补Jun30自然日；[SiPipe exact-v1](https://arxiv.org/html/2506.22033v1) §2.2/3–6/7.1–7.5。2+2+2=6，WAR/versioned input与稳定schema→schedule shape具体差额局部深入；保row/batch复用条件、host/graph/logits/IPC全费用及同步prepare/完整metadata退路，不授当前V1默认实现、代码核验、任意并发正确性、复现或生产SLO。Boyle实际写入并自读；root本日ROOT_REPAIR_REVIEW§8必要Source/分数/actual owner及随后逐字PRE窄位许可通过，§13实际非writer POST通过、接纳整合并释放指定窄位。

@@ -1,0 +1,4617 @@
+Lifelong Imitation Learning with Multimodal Latent Replay and Incremental Adjustment
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Related Work
+3
+Methodology
+3.1
+Problem Formulation
+3.2
+Our Approach
+3.3
+Implementation Details
+Details for Base Policy.
+4
+Experimental Analysis
+Benchmark Suite and Datasets.
+4.1
+Results
+4.1.1
+Comparison with SOTA Methods
+4.1.2
+Ablation Study
+5
+Conclusion
+References
+A
+Extended Implementation Details
+A.1
+Our Framework
+A.2
+State of the Art
+B
+Additional Ablation Studies
+B.1
+Influence of the Angular Scaling Parameter
+α
+\alpha
+in IFA
+B.2
+Adapters versus Full Fine-tuning.
+B.3
+Influence of Using FiLM Layers.
+C
+Extended Analysis
+C.1
+Selection of a stable task reference
+C.2
+Extended details for MLR and IFA.
+MLR.
+IFA.
+Angle-based distance.
+Adaptive
+δ
+\delta
+.
+D
+Computational efficiency
+License: CC BY-NC-ND 4.0
+arXiv:2603.10929v1 [cs.CV] 11 Mar 2026
+Lifelong Imitation Learning with
+Multimodal Latent Replay and Incremental Adjustment
+Fanqi Yu
+Affiliation:
+AI for Good (AIGO), Istituto Italiano di Tecnologia, Genoa, Italy
+Affiliation:
+DITEN, University of Genoa, Genoa, Italy
+Matteo Tiezzi
+Tommaso Apicella
+Cigdem Beyan
+Affiliation:
+AI for Good (AIGO), Istituto Italiano di Tecnologia, Genoa, Italy
+Affiliation:
+Department of Computer Science, University of Verona, Verona, Italy
+Vittorio Murino
+Affiliation:
+AI for Good (AIGO), Istituto Italiano di Tecnologia, Genoa, Italy
+Affiliation:
+Department of Computer Science, University of Verona, Verona, Italy
+Affiliation:
+PAVIS, Istituto Italiano di Tecnologia, Genoa, Italy
+†
+These authors contributed equally as second authors.
+Abstract
+We introduce a lifelong imitation learning framework that enables continual policy refinement across sequential tasks under realistic memory and data constraints. Our approach departs from conventional experience replay by operating entirely in a multimodal latent space, where compact representations of visual, linguistic, and robot’s state information are stored and reused to support future learning. To further stabilize adaptation, we introduce an incremental feature adjustment mechanism that regularizes the evolution of task embeddings through an angular margin constraint, preserving inter-task distinctiveness.
+Our method establishes a new state of the art in the LIBERO benchmarks, achieving 10–17 point gains in AUC and up to 65% less forgetting compared to previous leading methods. Ablation studies confirm the effectiveness of each component, showing consistent gains over alternative strategies. The code is available at:
+https://github.com/yfqi/lifelong_mlr_ifa
+.
+1
+Introduction
+Imitation Learning (IL) enables agents, such as robots, to learn behaviors by observing and mimicking human demonstrations
+[
+12
+,
+24
+,
+8
+,
+27
+,
+7
+]
+. However, real-world environments are dynamic, with new objects, goals, and contexts constantly emerging. For example, a household robot may encounter unfamiliar kitchen tools, rearranged furniture, or previously unseen tasks. To operate effectively, agents must continuously learn and adapt throughout their lifetime. Standard IL typically assumes a fixed set of tasks and does not account for new tasks or variations in the environment
+[
+30
+,
+31
+]
+. Lifelong Imitation Learning (LIL) addresses this limitation by enabling agents to continuously acquire new skills while retaining previously learned behaviors, even as the set of tasks evolves
+[
+32
+,
+25
+,
+14
+,
+29
+]
+. LIL focuses on preventing catastrophic forgetting
+[
+9
+]
+, allowing knowledge from earlier tasks to be reused for new ones, and supports learning from an unbounded or dynamically growing sequence of tasks, rather than a fixed predefined set
+[
+26
+,
+2
+,
+4
+,
+23
+]
+.
+Figure 1
+:
+Illustration of Incremental Feature Adjustment (IFA). The figure displays a 2D projection of the global latent representations
+𝐠
+\mathbf{g}
+during policy rollout for two related tasks,
+T
+j
+T_{j}
+(previously learned) and
+T
+k
+T_{k}
+(newly learned). The stars (
+⋆
+\mathbf{\color[rgb]{1,0,0}\star}
+for
+T
+j
+T_{j}
+and
+⋆
+\mathbf{\color[rgb]{0,1,0}\star}
+for
+T
+k
+T_{k}
+) represent the stable language reference embeddings
+𝐡
+(
+r
+)
+\mathbf{h}^{(r)}
+, while the circles (
+∙
+\mathbf{\color[rgb]{1,0,0}\bullet}
+for
+T
+j
+T_{j}
+and
+∙
+\mathbf{\color[rgb]{0,1,0}\bullet}
+for
+T
+k
+T_{k}
+) are the global embeddings
+𝐠
+\mathbf{g}
+. (Left) Without IFA, the new task’s embeddings (
+∙
+\mathbf{\color[rgb]{0,1,0}\bullet}
+) exhibit representation drift by clustering close to the old task’s embeddings (
+∙
+\mathbf{\color[rgb]{1,0,0}\bullet}
+). (Right) With IFA, the loss
+ℒ
+IFA
+\mathcal{L}_{\text{IFA}}
+enforces a constraint on the distances: the distance to the own reference (
+D
+own
+D_{\text{own}}
+) plus a margin
+δ
+\delta
+must be less than or equal to the distance to the other task’s reference (
+D
+other
+D_{\text{other}}
+). This mechanism forces the
+𝐠
+⁡
+(
+T
+k
+)
+\mathbf{g}(T_{k})
+(
+∙
+\mathbf{\color[rgb]{0,1,0}\bullet}
+) cluster away from
+𝐡
+(
+r
+)
+​
+(
+T
+j
+)
+\mathbf{h}^{(r)}(T_{j})
+(
+⋆
+\mathbf{\color[rgb]{1,0,0}\star}
+) and closer to
+𝐡
+(
+r
+)
+​
+(
+T
+k
+)
+\mathbf{h}^{(r)}(T_{k})
+(
+⋆
+\mathbf{\color[rgb]{0,1,0}\star}
+) , achieving inter-task disentanglement.
+However, many practical methods rely on additional assumptions to prevent forgetting. For instance, some approaches assume that the task identifier is available during both training and evaluation, allowing task-specific networks or adapters to isolate knowledge for each task
+[
+15
+]
+. In this way, these methods retain performance on previously learned tasks while sequentially acquiring new ones. In contrast, fully task-agnostic LIL methods do not require task identifiers at test-time (referred to as
+task-ID agnostic
+throughout this paper) and typically rely on strategies such as experience replay (also called rehearsal-based)
+[
+14
+,
+26
+,
+4
+]
+, or multi-task distillation
+[
+23
+]
+.
+Recent LIL methods have increasingly leveraged large pretrained models, such as Vision-Language Models (e.g., CLIP
+[
+20
+]
+) and Large Language Models (e.g., GPT
+[
+1
+]
+). However, directly using these models in their pretrained form on natural images or text is often insufficient for complex imitation learning tasks. To address this, several approaches, e.g.,
+[
+26
+,
+10
+,
+15
+]
+adopt a two-stage paradigm: a pretraining stage (also called the base task stage) followed by a lifelong learning stage. This strategy leverages the rich representations learned during pretraining while enabling continuous adaptation to new tasks.
+During the lifelong learning stage, some prior methods still employ parameter-efficient fine-tuning (PEFT) (e.g.,
+[
+3
+,
+28
+,
+13
+]
+) to adapt encoders to novel tasks
+[
+15
+,
+10
+]
+.
+In this study, we introduce a rehearsal-based method that applies a Multimodal Latent Replay (MLR), which stores joint compact latent representations that encapsulate vision, language, state (e.g., robot’s orientation, position) modalities with control commands. When a new task is encountered, its latent representations may overlap those of previously learned tasks
+[
+6
+]
+, leading to interference in the shared embedding space. To address this, we propose Incremental Feature Adjustment (IFA), a representation-level regularization strategy that maintains reference embeddings for past tasks, such as language-based task embeddings or centroids of aggregated feature representations (See Fig.
+1
+). IFA is a loss on angular distances to encourage the current task’s representation to remain distinct from previous tasks while maintaining alignment with its own reference. The loss margin is adaptively scaled based on inter-task similarity, reducing sensitivity to dataset-specific feature variations and eliminating the need for manual tuning. By progressively repelling the current task from old-task anchors, IFA preserves inter-task separability and mitigates interference during lifelong learning.
+Our approach uses a frozen CLIP encoder
+[
+20
+]
+, demonstrating that effective LIL can be achieved without fine-tuning the backbone during the lifelong learning stage, unlike
+[
+15
+,
+10
+]
+, which rely on PEFT (e.g., vision adapters). Different from rehearsal-based LIL methods, e.g.,
+[
+14
+,
+26
+]
+, which store raw data (e.g., scenes and trajectories), we employ compact MLR, which is memory-efficient. By combining MLR with IFA, our method achieves robust lifelong learning in a task-ID agnostic manner, offering a simpler alternative to distillation
+[
+23
+]
+or generative approaches
+[
+4
+]
+.
+Experimental analysis on three different datasets demonstrates that the proposed MLR and IFA modules provide noticeable improvements over existing state-of-the-art (SOTA). Ablation studies show that each component contributes meaningfully, outperforming alternative designs or variations built on different assumptions.
+The contributions of this work can be summarized as:
+•
+A multimodal latent replay framework for learning new tasks using a model with pre-trained unimodal encoders (visual, language, and state). By storing latent features instead of raw data, our method reduces the memory footprint of previously learned tasks and mitigates forgetting.
+•
+An Incremental Feature Adjustment module that separates the latent representations of old and new tasks. Specifically, we modulate the margin between representations based on the angular distance between old and new task embeddings, adapting the strength of the loss according to the semantic similarity between tasks.
+2
+Related Work
+Lifelong Imitation Learning (LIL) aims to enable robotic agents to acquire new skills over time without forgetting previously learned ones, a challenge commonly referred to as catastrophic forgetting. To address this problem, some studies have employed rehearsal-based techniques (also known as experience replay)
+[
+26
+,
+14
+,
+4
+]
+, which replay stored past data to help the model maintain performance on earlier tasks.
+For instance,
+[
+14
+]
+, building upon ER
+[
+2
+]
+, maintains a selection of past trajectories and interleaves them with new ones from the current task during training.
+In comparison, CRIL
+[
+4
+]
+employs generative adversarial networks (GANs) to synthesize the first frame of each trajectory and uses an action-conditioned video prediction model to generate subsequent frames based on the current states and actions. LOTUS
+[
+5
+]
+allows robots to incrementally acquire new skills by identifying recurring patterns within unsegmented demonstrations. These skills are extracted via an open-vocabulary vision model and orchestrated by a meta-controller, enabling the agent to solve complex, long-horizon manipulation tasks. Despite their effectiveness, rehearsal-based approaches are often sensitive to the replay ratio and the similarity between new and previously learned tasks, resulting in variable levels of forgetting.
+Another line of work focuses on progressive model expansion, where additional parameters or modules are introduced as new tasks arrive, enabling the architecture to grow adaptively and incorporate new knowledge. BUDS
+[
+33
+]
+proposes a method for discovering reusable skills in robotic manipulation without relying on pre-segmented demonstrations. Using a bottom-up strategy, it autonomously identifies and organizes skills from long-horizon, unsegmented demonstrations, allowing robots to handle complex manipulation tasks effectively.
+In contrast, TAIL
+[
+15
+]
+applies several Parameter-Efficient Fine-Tuning (PEFT) methods, such as LoRA, to CLIP encoders, creating a specific adapter for each new task. A key limitation of this approach is that it requires the task identifier at test time, which may not always be available in practical scenarios.
+Another adapter-based method, ISCIL
+[
+10
+]
+, addresses this limitation by promoting knowledge sharing through the incremental learning of reusable skills across multiple demonstrations. These skills are stored in a prototype-based memory, enabling sample-efficient task adaptation and better generalization in non-stationary LIL environments.
+Overall, progressive approaches generally rely on explicit stage or task identification during evaluation and often face challenges in generalizing to unseen tasks.
+Differently, M2Distill
+[
+23
+]
+is a distillation-based LIL method that preserves a consistent latent space across vision, language, and action modalities as new tasks are learned. It regulates distribution shifts between consecutive learning steps via multimodal distillation and Gaussian Mixture Model (GMM) policy alignment, ensuring that previously acquired skills are retained while new ones are integrated efficiently.
+Our approach can be categorized as rehearsal-based, but it differs from the above-mentioned methods by replaying multimodal latent representations, which are the compositions of vision, language, the state of the robot, and action modalities. Considering that high similarity between new and previously learned tasks can degrade the performance of standard rehearsal-based methods, we introduce a incremental feature adjustment mechanism based on angular distance. Compared to other approaches, our pipeline is much simpler: it does not rely on knowledge distillation, does not use any PEFT methods, and instead operates on completely frozen backbones. Moreover, unlike methods such as LOTUS
+[
+26
+]
+, our approach does not require an open-vocabulary vision encoder to achieve superior performance.
+3
+Methodology
+Figure 2
+:
+Our method is a general multimodal architecture composed of modality-specific encoders (language, vision, and state), a modulation network, a temporal decoder, and a policy head.
+During the pretraining phase, all architecture modules are trained. In the lifelong learning phase, only the temporal decoder and policy head are updated using both the new task data and the samples stochastically stored in the replay buffer. The buffer stores the multimodal features, output of the modulation layer. The model is jointly supervised by both the Behavior Cloning and the Incremental Feature Adjustment loss, processing the current task and previously stored tasks.
+3.1
+Problem Formulation
+We frame the LIL problem as consisting of two sequential phases: a
+multi-task pre-training stage
+and a
+lifelong learning stage
+, following prior work
+[
+26
+,
+10
+,
+15
+]
+. In this subsection, we provide an overview of this problem formulation, while the next subsection details our approach.
+Multi-Task Pre-Training.
+Let
+𝒯
+′
+=
+{
+T
+j
+′
+}
+j
+=
+1
+J
+\mathcal{T}^{\prime}=\{T^{\prime}_{j}\}_{j=1}^{J}
+denote a set of pre-training tasks.
+Each task
+T
+j
+′
+T^{\prime}_{j}
+is associated with a set of
+N
+j
+N_{j}
+expert demonstrations (e.g., trajectories collected from human operators or expert policies that successfully perform the task)
+𝒟
+j
+=
+{
+τ
+j
+,
+i
+}
+i
+=
+1
+N
+j
+\mathcal{D}_{j}=\{\tau_{j,i}\}_{i=1}^{N_{j}}
+, where each trajectory
+τ
+j
+,
+i
+=
+{
+(
+o
+t
+,
+a
+t
+)
+}
+t
+=
+1
+L
+j
+\tau_{j,i}=\{(o_{t},a_{t})\}_{t=1}^{L_{j}}
+consists of a sequence of
+L
+j
+L_{j}
+timesteps of observation-action pairs collected from expert rollouts.
+Here, the observation
+o
+t
+o_{t}
+typically includes sensory observations such as different views of images, proprioceptive signals and language description of the task to be performed, while
+a
+t
+a_{t}
+represents the expert’s control command (ground truth action).
+The policy
+π
+θ
+​
+(
+a
+^
+t
+∣
+o
+≤
+t
+)
+\pi_{\theta}(\hat{a}_{t}\mid o_{\leq t})
+, parameterized by
+θ
+\theta
+,
+predicts the action
+a
+^
+t
+\hat{a}_{t}
+conditioned on the most recent
+L
+j
+L_{j}
+observations, denoted with
+o
+≤
+t
+≜
+(
+o
+t
+−
+L
+j
++
+1
+,
+⋯
+,
+o
+t
+)
+o_{\leq t}\triangleq(o_{t-L_{j}+1},\cdots,o_{t})
+,
+and is trained to imitate expert actions using a behavioral cloning (BC) objective
+[
+19
+]
+:
+min
+⁡
+∑
+j
+=
+1
+J
+θ
+⁡
+𝔼
+(
+o
+≤
+t
+,
+a
+t
+)
+∼
+𝒟
+j
+​
+[
+ℒ
+BC
+​
+(
+π
+θ
+​
+(
+a
+^
+t
+∣
+o
+≤
+t
+)
+,
+a
+t
+)
+]
+,
+\min_{\theta}\sum_{j=1}^{J}\mathbb{E}_{(o_{\leq t},a_{t})\sim\mathcal{D}_{j}}\left[\mathcal{L}_{\text{BC}}\big(\pi_{\theta}(\hat{a}_{t}\mid o_{\leq t}),\,a_{t}\big)\right],
+(1)
+where
+ℒ
+BC
+\mathcal{L}_{\text{BC}}
+denotes a supervised imitation loss
+(e.g., negative log-likelihood or mean-squared error).
+This pre-training phase is performed jointly over all tasks in an
+offline
+multi-task setting,
+serving to establish shared representations and behavioral priors before lifelong learning begins.
+Lifelong Learning.
+After the pre-training stage, the agent encounters a sequence of unseen tasks
+𝒯
+=
+{
+T
+1
+,
+T
+2
+,
+…
+,
+T
+K
+}
+\mathcal{T}=\{T_{1},T_{2},\ldots,T_{K}\}
+,
+where each task
+T
+k
+T_{k}
+arrives sequentially, with
+𝒯
+∩
+𝒯
+′
+=
+∅
+\mathcal{T}\cap\mathcal{T}^{\prime}=\emptyset
+. At task
+k
+{k}
+, the agent has access to a set of expert demonstrations
+𝒟
+k
+=
+{
+τ
+k
+,
+i
+}
+i
+=
+1
+N
+k
+\mathcal{D}_{k}=\{\tau_{k,i}\}_{i=1}^{N_{k}}
+from the current task,
+and a limited replay buffer
+ℬ
+\mathcal{B}
+.
+The goal is to adapt the policy
+π
+θ
+\pi_{\theta}
+on the union of current and replayed samples
+while avoiding catastrophic forgetting.
+Formally, the learning objective at task
+k
+k
+is defined as:
+min
+θ
+⁡
+𝔼
+(
+o
+≤
+t
+,
+a
+t
+)
+∼
+(
+𝒟
+k
+∪
+ℬ
+)
+​
+[
+ℒ
+BC
+​
+(
+π
+θ
+​
+(
+a
+^
+t
+∣
+o
+≤
+t
+)
+,
+a
+t
+)
+]
+.
+\min_{\theta}\mathbb{E}_{(o_{\leq t},a_{t})\sim(\mathcal{D}_{k}\cup\mathcal{B})}\left[\mathcal{L}_{\text{BC}}\big(\pi_{\theta}(\hat{a}_{t}\mid o_{\leq t}),\,a_{t}\big)\right].
+(2)
+3.2
+Our Approach
+We propose a LIL framework that introduces two complementary components for the lifelong learning stage: (1) Multimodal Latent Replay (MLR), which replays compact multimodal latent representations instead of raw trajectories, and (2) Incremental Feature Adjustment (IFA), which regularizes cross-task representations to maintain stability during continual adaptation. Below, we will first briefly describe the overall information flow in the neural architecture, including our pretraining, and then describe the main components we propose for the lifelong learning stage.
+Base Policy Architecture.
+The policy
+π
+θ
+\pi_{\theta}
+processes multimodal observations
+o
+t
+=
+{
+o
+t
+(
+v
+)
+,
+o
+(
+l
+)
+,
+o
+t
+(
+s
+)
+}
+o_{t}=\{o_{t}^{(v)},o^{(l)},o_{t}^{(s)}\}
+,
+corresponding to the modalities of visual, language , and state.
+Each modality is encoded into a latent feature
+𝐡
+t
+(
+m
+)
+∈
+ℝ
+E
+\mathbf{h}_{t}^{(m)}\in\mathbb{R}^{E}
+, with
+m
+∈
+{
+v
+,
+l
+,
+s
+}
+m\in\{v,l,s\}
+and where
+E
+E
+denotes the embedding size, via modality-specific encoders,
+modulated by a proper network and concatenated over the past
+L
+L
+time steps to form a multimodal sequence
+𝐇
+∈
+ℝ
+M
+×
+L
+×
+E
+\mathbf{H}\in\mathbb{R}^{M\times L\times E}
+, where
+M
+M
+denotes number of modalities and
+L
+L
+the temporal length of the rollout, respectively. A temporal decoder
+maps
+𝐇
+\mathbf{H}
+into a
+global latent representation
+g
+t
+∈
+ℝ
+E
+g_{t}\in\mathbb{R}^{E}
+, which is then decoded by the policy head to predict the next action
+a
+^
+t
+\hat{a}_{t}
+. During pre-training, all modules are trainable.
+Fig.
+2
+illustrates the proposed architecture together with the training pipeline. The corresponding implementation details are described in the following text and in Sec.
+3.3
+.
+Multimodal Latent Replay (MLR).
+During the lifelong learning phase, only the temporal decoder and policy head are trainable; all other networks remain frozen as learned during pre-training.
+We leverage a replay-based method, MLR, that instead of storing past trajectories with the associated ground truth action
+(
+o
+≤
+t
+,
+a
+t
+)
+(o_{\leq t},a_{t})
+as in experience replay
+[
+14
+]
+, maintains a compact buffer
+ℬ
+\mathcal{B}
+of multimodal latent representations:
+ℬ
+=
+{
+(
+𝐇
+n
+,
+a
+n
+)
+}
+n
+=
+1
+N
+B
+,
+\mathcal{B}=\{(\mathbf{H}_{n},a_{n})\}_{n=1}^{N_{B}},
+(3)
+where
+𝐇
+n
+\mathbf{H}_{n}
+is the concatenated latent produced by the frozen encoders, and
+N
+B
+N_{B}
+denotes the total buffer capacity.
+When learning a new task, replayed latents from
+ℬ
+\mathcal{B}
+are combined with the current data
+𝒟
+k
+\mathcal{D}_{k}
+to form the imitation objective.
+MLR effectively stabilizes training and mitigates catastrophic forgetting
+without accessing raw sensory inputs (e.g., high-dimensional images that occupy large storage space, whereas latent trajectories are much smaller).
+Incremental Feature Adjustment.
+To counter representation drift across tasks,
+we introduce
+Incremental Feature Adjustment (IFA)
+,
+which regularizes the relationship between latent representations of old and new tasks.
+Let
+g
+t
+​
+(
+T
+i
+)
+g_{t}(T_{i})
+denote the global latent representation obtained from a demonstration of task
+T
+i
+T_{i}
+,
+and let
+h
+(
+r
+)
+​
+(
+T
+i
+)
+h^{(r)}(T_{i})
+denote a reference embedding for the same task.
+When learning a new task
+T
+k
+T_{k}
+, we penalize configurations where
+g
+t
+​
+(
+T
+k
+)
+g_{t}(T_{k})
+is closer to old task references than to its own reference:
+ℒ
+IFA
+=
+1
+|
+𝒫
+|
+∑
+(
+j
+,
+k
+)
+∈
+𝒫
+j
+<
+k
+max
+(
+0
+,
+\displaystyle\mathcal{L}_{\text{IFA}}=\frac{1}{|\mathcal{P}|}\sum_{\begin{subarray}{c}(j,k)\in\mathcal{P}\\
+j<k\end{subarray}}\max\Big(0,
+d
+⁡
+(
+g
+t
+​
+(
+T
+k
+)
+,
+h
+(
+r
+)
+​
+(
+T
+k
+)
+)
+\displaystyle d\big(g_{t}(T_{k}),h^{(r)}(T_{k})\big)
+(4)
+OPEN
+−
+d
+⁡
+(
+g
+t
+​
+(
+T
+k
+)
+,
+h
+(
+r
+)
+​
+(
+T
+j
+)
+)
++
+δ
+)
+,
+\displaystyle}{\displaystyle-d\big(g_{t}(T_{k}),h^{(r)}(T_{j})\big)+\delta\Big)\>,
+where
+d
+⁡
+(
+⋅
+,
+⋅
+)
+d(\cdot,\cdot)
+is a distance measure between two representations,
+𝒫
+\mathcal{P}
+denotes the set of task pairs that are selected for adjustment, the loss is averaged over all pairs in
+𝒫
+\mathcal{P}
+, and
+δ
+\delta
+controls the inter-task margin.
+The rationale of this adjustment is to encourage the representation of each new task to remain closer to its own reference embedding than to those of previously learned tasks. Accordingly, IFA introduces repulsive forces between the current task’s global latent representation and previous task references, while maintaining attractive forces toward its own reference. This mechanism promotes inter-task disentanglement and preserves within-task coherence, effectively mitigating representational interference.
+If
+δ
+\delta
+is fixed, it cannot adapt to each reference pair. The IFA loss may still take high values even when the current global latent representation is already sufficiently closer to the current task reference than to the previous task reference (see Supp. for details).
+To allow
+δ
+\delta
+to adapt to the relative positions of references, we express the margin in terms of the distance between task references:
+δ
+=
+α
+​
+d
+​
+(
+h
+(
+r
+)
+​
+(
+T
+k
+)
+,
+h
+(
+r
+)
+​
+(
+T
+j
+)
+)
+,
+\begin{aligned} \delta&=\alpha\,d\!\left(h^{(r)}(T_{k}),\,h^{(r)}(T_{j})\right)\end{aligned}\>,
+(5)
+where
+α
+\alpha
+controls the margin. To magnify differences between close task references, instead of using the cosine distance, we propose to use the angular formulation of the distance:
+d
+⁡
+(
+a
+,
+b
+)
+=
+arccos
+⁡
+(
+a
+⊤
+​
+b
+‖
+a
+‖
+2
+​
+‖
+b
+‖
+2
+)
+d(a,b)=\arccos\!\left(\frac{a^{\top}b}{\|a\|_{2}\|b\|_{2}}\right)
+(6)
+In this way, our method can adapt to the distance between the task references.
+Overall, during the lifelong stage, our training objective is:
+ℒ
+=
+ℒ
+BC
++
+λ
+IFA
+​
+ℒ
+IFA
+.
+\mathcal{L}=\mathcal{L}_{\text{BC}}+\lambda_{\text{IFA}}\,\mathcal{L}_{\text{IFA}}\>.
+(7)
+3.3
+Implementation Details
+Details for Base Policy.
+Our policy (see Fig.
+2
+) consists of: vision, language, and state encoders;
+a FiLM layer that modulates visual and state features via language features;
+a temporal decoder; and a policy head.
+The inputs include
+agent-view
+and
+eye-in-hand view
+images (see definitions of such modalities in Sec.
+4
+)
+Specifically, we employ the image and text encoders from CLIP encoders
+[
+20
+]
+as the vision and language encoders, respectively.
+A two-layer MLP serves as the state encoder,
+and a GPT-2 decoder
+[
+21
+]
+is used as the temporal decoder.
+The vision and state embeddings are modulated by FiLM layers
+[
+18
+]
+to obtain task-conditioned representations.
+The rehearsal buffer
+ℬ
+\mathcal{B}
+is populated by randomly sampling trajectories from the current task rollouts
+𝒯
+k
+\mathcal{T}_{k}
+, while maintaining a balanced allocation across all previously encountered tasks.
+Task Pair Selection for IFA.
+Task pairs are drawn from the set
+𝒫
+\mathcal{P}
+based on their similarity in both the language and agent-view modalities (see modalities definitions in Sec.
+4
+).
+For each task, we extract the latent features
+h
+(
+l
+)
+h^{(l)}
+(language) and
+h
+(
+a
+)
+h^{(a)}
+(agent-view) from the current task data as well as from the previously stored samples in the buffer.
+For any two tasks
+T
+i
+T_{i}
+and
+T
+j
+T_{j}
+, the modality-specific similarity is computed as the mean cosine similarity across all pairs of timesteps:
+Sim
+e
+​
+(
+T
+i
+,
+T
+j
+)
+=
+1
+N
+i
+​
+N
+j
+​
+∑
+t
+1
+=
+1
+N
+i
+∑
+t
+2
+=
+1
+N
+j
+h
+t
+1
+(
+e
+)
+​
+(
+T
+i
+)
+⊤
+​
+h
+t
+2
+(
+e
+)
+​
+(
+T
+j
+)
+‖
+h
+t
+1
+(
+e
+)
+​
+(
+T
+i
+)
+‖
+2
+​
+‖
+h
+t
+2
+(
+e
+)
+​
+(
+T
+j
+)
+‖
+2
+.
+\text{Sim}_{e}(T_{i},T_{j})=\frac{1}{N_{i}N_{j}}\sum_{t_{1}=1}^{N_{i}}\sum_{t_{2}=1}^{N_{j}}\frac{h^{(e)}_{t_{1}}(T_{i})^{\top}h^{(e)}_{t_{2}}(T_{j})}{\|h^{(e)}_{t_{1}}(T_{i})\|_{2}\,\|h^{(e)}_{t_{2}}(T_{j})\|_{2}}.\vskip-1.99997pt
+(8)
+where
+e
+∈
+{
+agent-view
+,
+language
+}
+e\in\{\text{agent-view},\text{language}\}
+.
+We compute
+Sim
+a
+\text{Sim}_{a}
+and
+Sim
+l
+\text{Sim}_{l}
+for all task pairs, rank them by similarity, and apply IFA only to pairs that (1) simultaneously fall within the top 50% of most similar pairs in both modalities and (2) include one newly introduced and one previously learned task.
+Reference Choice.
+We take the language embedding
+h
+(
+l
+)
+h^{(l)}
+of each task as its reference
+h
+(
+r
+)
+​
+(
+T
+i
+)
+h^{(r)}(T_{i})
+for IFA, being the task language description informative for the task at hand, and with a stable and fixed representation. We empirically justify our choice in the experimental section.
+4
+Experimental Analysis
+Benchmark Suite and Datasets.
+We conduct all experiments using the LIBERO lifelong robotic manipulation benchmark
+[
+14
+]
+.
+This benchmark provides a diverse set of manipulation tasks that closely resemble human daily activities, such as turning on a stove, moving books, or opening drawers.
+Each task is specified by a natural language instruction, for example:
+“
+Open the top drawer of the cabinet and put the bowl in it.
+”
+We follow the setup of prior SOTA, e.g.,
+[
+26
+,
+23
+]
+, and adopt three task suites from the LIBERO benchmark:
+LIBERO-OBJECT
+(10 tasks),
+LIBERO-GOAL
+(10 tasks), and
+LIBERO-50
+(50 kitchen tasks selected from LIBERO-100).
+These suites respectively evaluate the robot’s ability to perform diverse actions, and handle complex long-horizon task compositions. All datasets incorporate visual, linguistic, and proprioceptive information, comprising
+agent-view
+and
+eye-in-hand
+cameras, textual task instructions, executed actions, and internal robot states, supporting multimodal policy learning. Specifically,
+agent-view
+provides a visual perspective of the scene, offering spatial and contextual information about the environment, objects, and overall scene layout.
+Eye-in-hand
+captures fine-grained visual information from a camera mounted on the robot’s end-effector.
+Language
+encodes textual task instructions, guiding the policy by providing semantic goals and context.
+Action
+refers to the current control commands executed by the robot. Finally,
+state
+encodes the robot’s proprioceptive information, including joint positions, velocities, and gripper status.
+During the pretraining stage, six tasks are used for both LIBERO-OBJECT and LIBERO-GOAL (
+|
+𝒯
+′
+|
+=
+6
+|\mathcal{T}^{\prime}|=6
+), and 25 tasks are used for LIBERO-50 (
+|
+𝒯
+′
+|
+=
+25
+|\mathcal{T}^{\prime}|=25
+),
+with each pretraining task containing 50 demonstrations.
+In the lifelong learning stage, LIBERO-OBJECT and LIBERO-GOAL consist of four stages, with one new task introduced at each stage,
+while LIBERO-50 comprises five stages, with five new tasks added per stage to maintain computational feasibility. Each new task in the lifelong stage includes 10 demonstrations.
+Table 1
+:
+Comparison of results on the LIBERO benchmarks (mean
+±
+\pm
+standard deviation). “NA” indicates not available. Best results are shown in bold.
+Method
+LIBERO-OBJECT
+LIBERO-GOAL
+LIBERO-50
+FWT
+↑
+\uparrow
+NBT
+↓
+\downarrow
+AUC
+↑
+\uparrow
+FWT
+↑
+\uparrow
+NBT
+↓
+\downarrow
+AUC
+↑
+\uparrow
+FWT
+↑
+\uparrow
+NBT
+↓
+\downarrow
+AUC
+↑
+\uparrow
+Sequential
+[
+14
+]
+62.0
+±
+\pm
+1.0
+63.0
+±
+\pm
+2.0
+30.0
+±
+\pm
+1.0
+55.0
+±
+\pm
+1.0
+70.0
+±
+\pm
+1.0
+23.0
+±
+\pm
+1.0
+32.0
+±
+\pm
+1.0
+90.0
+±
+\pm
+2.0
+14.0
+±
+\pm
+2.0
+ER
+[
+14
+,
+2
+]
+56.0
+±
+\pm
+1.0
+24.0
+±
+\pm
+1.0
+49.0
+±
+\pm
+1.0
+53.0
+±
+\pm
+1.0
+36.0
+±
+\pm
+1.0
+47.0
+±
+\pm
+2.0
+35.0
+±
+\pm
+3.0
+49.0
+±
+\pm
+1.0
+36.0
+±
+\pm
+3.0
+BUDS
+[
+33
+,
+26
+]
+52.0
+±
+\pm
+2.0
+21.0
+±
+\pm
+1.0
+47.0
+±
+\pm
+1.0
+50.0
+±
+\pm
+1.0
+39.0
+±
+\pm
+1.0
+42.0
+±
+\pm
+1.0
+29
+±
+\pm
+3.0
+50.0
+±
+\pm
+4.0
+33.0
+±
+\pm
+3.0
+LOTUS
+[
+26
+]
+74.0
+±
+\pm
+3.0
+11.0
+±
+\pm
+1.0
+65.0
+±
+\pm
+3.0
+61.0
+±
+\pm
+3.0
+30.0
+±
+\pm
+1.0
+56.0
+±
+\pm
+1.0
+39
+±
+\pm
+2.0
+43.0
+±
+\pm
+1.0
+45.0
+±
+\pm
+2.0
+ISCIL
+[
+10
+]
+71.7
+±
+\pm
+1.9
+11.9
+±
+\pm
+5.1
+66.3
+±
+\pm
+3.7
+70.4
+±
+\pm
+3.6
+19.4
+±
+\pm
+4.1
+60.5
+±
+\pm
+2.5
+47.8
+±
+\pm
+1.3
+15.0
+±
+\pm
+4.8
+37.7
+±
+\pm
+2.1
+M2Distill
+[
+23
+]
+75.0
+±
+\pm
+3.0
+8.0
+±
+\pm
+5.0
+69.0
+±
+\pm
+4.0
+71.0
+±
+\pm
+1.0
+20.0
+±
+\pm
+3.0
+57.0
+±
+\pm
+2.0
+NA
+NA
+NA
+TAIL
+[
+15
+]
+41.5
+±
+\pm
+2.9
+22.5
+±
+\pm
+2.1
+38.2
+±
+\pm
+2.5
+41.0
+±
+\pm
+1.2
+22.7
+±
+\pm
+1.1
+37.4
+±
+\pm
+1.3
+31.8
+±
+\pm
+3.0
+19.3
+±
+\pm
+9.4
+20.1
+±
+\pm
+3.3
+MLR (Ours)
+83.3
+±
+\pm
+2.6
+12.3
+±
+\pm
+2.4
+77.6
+±
+\pm
+3.0
+78.8
+±
+\pm
+2.2
+10.0
+±
+\pm
+7.5
+74.6
+±
+\pm
+2.7
+58.0
+±
+\pm
+4.0
+20.6
+±
+\pm
+9.0
+54.7
+±
+\pm
+2.4
+MLR + IFA (Ours)
+84.6
+±
+\pm
+1.9
+11.4
+±
+\pm
+5.6
+79.4
+±
+\pm
+1.5
+80.0
+±
+\pm
+2.5
+6.9
+±
+\pm
+0.9
+77.2
+±
+\pm
+1.8
+60.8
+±
+\pm
+2.8
+8.6
+±
+\pm
+6.2
+56.1
+±
+\pm
+1.8
+Evaluation Metrics.
+We evaluate policy performance using three standard metrics commonly employed in lifelong learning
+[
+26
+,
+22
+,
+14
+]
+:
+Forward Transfer (FWT), Negative Backward Transfer (NBT), and Area Under the Curve (AUC). All three metrics are computed in terms of success rates
+[
+14
+]
+. While these metrics are widely used, their computation can slightly vary across studies; therefore, for consistency and fair comparison, we adopt the same definitions and calculation procedures as the studies we compare our method with, e.g., LOTUS
+[
+26
+]
+.
+Let
+M
+M
+denote the total number of tasks in the lifelong learning sequence, and
+r
+i
+,
+j
+r_{i,j}
+denote the agent’s success rate on task
+j
+j
+after it has learned the first
+i
+i
+tasks. FWT measures how well the agent adapts to new tasks and is defined as
+FWT
+=
+1
+M
+​
+∑
+m
+=
+1
+M
+r
+m
+,
+m
+\mathrm{FWT}=\tfrac{1}{M}\sum_{m=1}^{M}r_{m,m}
+; higher FWT indicates faster adaptation.
+NBT measures forgetting on previous tasks, with lower values indicating less forgetting:
+NBT
+m
+=
+1
+M
+−
+m
+​
+∑
+q
+=
+m
++
+1
+M
+(
+r
+m
+,
+m
+−
+r
+q
+,
+m
+)
+\mathrm{NBT}_{m}=\tfrac{1}{M-m}\sum_{q=m+1}^{M}(r_{m,m}-r_{q,m})
+, and
+NBT
+=
+1
+M
+−
+1
+​
+∑
+m
+=
+1
+M
+−
+1
+NBT
+m
+\mathrm{NBT}=\tfrac{1}{M-1}\sum_{m=1}^{M-1}\mathrm{NBT}_{m}
+.
+AUC reflects average performance across all tasks, computed as
+AUC
+=
+1
+M
+​
+∑
+m
+=
+1
+M
+AUC
+m
+\mathrm{AUC}=\tfrac{1}{M}\sum_{m=1}^{M}\mathrm{AUC}_{m}
+, where
+AUC
+m
+=
+1
+M
+−
+m
++
+1
+​
+(
+r
+m
+,
+m
++
+∑
+q
+=
+m
++
+1
+M
+r
+q
+,
+m
+)
+\mathrm{AUC}_{m}=\tfrac{1}{M-m+1}\bigl(r_{m,m}+\sum_{q=m+1}^{M}r_{q,m}\bigr)
+; higher AUC indicates better overall success.
+Setup.
+Our experiments are repeated across three random seeds, with 20 trials per seed–each trial starting from a different configuration of the environment, i.e. different initial state of the gripper.
+They are conducted on a single NVIDIA A100 GPU, with the pretraining stage and lifelong learning stage both using a batch size of 10 and trained for 100 epochs. We employed the AdamW optimizer
+[
+16
+]
+with a learning rate initialized to
+10
+−
+4
+10^{-4}
+and a linear scheduler.
+The weighting coefficient
+λ
+IFA
+\lambda_{\text{IFA}}
+is fixed to 0.1.
+The best angular scaling factor
+α
+\alpha
+are 0.3, 0.7, and 0.1 for LIBERO-OBJECT, LIBERO-GOAL, and LIBERO-50, respectively (see Supp. Mat.).
+We store the multimodal features in the buffer during MRL, with a total size equivalent to five demonstrations per task, following SOTA
+[
+26
+]
+.
+4.1
+Results
+4.1.1
+Comparison with SOTA Methods
+To assess the capability of our method to learn new tasks while mitigating forgetting of previous ones, we compare its performance against state-of-the-art methods (see Tab.
+1
+).
+We include several different methods for comparison: Sequential, which fine-tunes each new task in order, using the ResNet–Transformer architecture proposed in
+[
+14
+]
+;
+Experience Replay (ER)
+[
+14
+,
+2
+]
+, which stores raw trajectories in a buffer;
+BUDS, a hierarchical policy-based method
+[
+33
+]
+, which was adapted in
+[
+26
+]
+to support LIL,
+LOTUS
+[
+26
+]
+, ISCIL
+[
+10
+]
+and M2Distill
+[
+23
+]
+;
+We also adapt TAIL
+[
+15
+]
+to the LIL setting, following the protocol of LOTUS
+[
+26
+]
+(see Supp. Mat. for details).
+The proposed MLR already yields substantial improvements over existing SOTA, such as LOTUS
+[
+26
+]
+, ISCIL
+[
+10
+]
+, and M2Distill
+[
+23
+]
+. In particular, MLR achieves higher FWT and AUC while maintaining competitive NBT values, confirming that our replay strategy alone effectively promotes knowledge retention and forward transfer.
+When combined with IFA, the performance further improves on every metric. MLR + IFA achieves the highest FWT and AUC and among the lowest NBT values across all benchmarks. For example, on LIBERO-GOAL it improves AUC from 60.5 (ISCIL) to 77.2 while reducing NBT from 19.4 to 6.9, indicating a clear reduction in catastrophic forgetting. On the more challenging LIBERO-50 benchmark, MLR + IFA attains a large margin over all baselines, demonstrating superior scalability to longer and more diverse task sequences.
+These results confirm that MLR provides an efficient and stable mechanism for continual imitation learning, while the IFA module further refines the replayed representations to enhance both stability and transfer. The combination delivers the best balance between knowledge reuse and plasticity, establishing a new SOTA on all LIBERO benchmarks.
+4.1.2
+Ablation Study
+We conducted a series of experiments to investigate several key aspects of the proposed method. In Tab.
+1
+, we compare our method using latent replay alone (MLR) and with the IFA component included (MLR + IFA). As seen, incorporating IFA improves performance across all datasets and metrics.
+Below, we perform several ablations to examine the impact of different design factors, such as modality pairing, buffer configuration, and loss formulation, on the overall performance. Further results and analyses are included in the Supp. Mat.
+Table 2
+:
+Influence of different modality similarity on the proposed method’s performance. “AV”, “Lan”, “EIH”, “Act”, and “Sta” denote Agent-view, Language, Eye-in-hand, Action, and State modalities, respectively.
+Modality
+LIBERO-OBJECT
+LIBERO-GOAL
+FWT
+↑
+\uparrow
+NBT
+↓
+\downarrow
+AUC
+↑
+\uparrow
+FWT
+↑
+\uparrow
+NBT
+↓
+\downarrow
+AUC
+↑
+\uparrow
+AV
+83.8
+±
+\pm
+2.2
+11.1
+±
+\pm
+10.4
+78.9
+±
+\pm
+2.6
+77.7
+±
+\pm
+2.6
+7.8
+±
+\pm
+2.7
+73.9
+±
+\pm
+2.6
+Lan
+83.3
+±
+\pm
+0.7
+13.5
+±
+\pm
+3.1
+77.3
+±
+\pm
+1.9
+77.1
+±
+\pm
+1.9
+12.3
+±
+\pm
+0.8
+71.8
+±
+\pm
+2.0
+EIH
+84.4
+±
+\pm
+0.9
+16.1
+±
+\pm
+3.1
+77.1
+±
+\pm
+1.1
+75.0
+±
+\pm
+3.3
+5.6
+±
+\pm
+3.9
+72.7
+±
+\pm
+4.2
+Act
+84.6
+±
+\pm
+2.6
+20.7
+±
+\pm
+3.6
+75.1
+±
+\pm
+1.4
+73.8
+±
+\pm
+2.5
+2.5
+±
+\pm
+4.2
+73.2
+±
+\pm
+1.1
+Sta
+82.5
+±
+\pm
+3.3
+11.2
+±
+\pm
+10.6
+77.5
+±
+\pm
+2.6
+78.3
+±
+\pm
+5.1
+8.2
+±
+\pm
+2.4
+74.9
+±
+\pm
+5.9
+Lan + Act
+82.5
+±
+\pm
+3.3
+11.2
+±
+\pm
+10.6
+77.5
+±
+\pm
+2.6
+75.0
+±
+\pm
+3.3
+5.6
+±
+\pm
+3.9
+72.7
+±
+\pm
+4.2
+Lan + EIH
+83.3
+±
+\pm
+1.4
+16.5
+±
+\pm
+9.0
+75.6
+±
+\pm
+5.3
+75.0
+±
+\pm
+3.3
+5.6
+±
+\pm
+3.9
+72.7
+±
+\pm
+4.2
+Lan + Sta
+84.6
+±
+\pm
+2.6
+17.4
+±
+\pm
+6.4
+76.7
+±
+\pm
+0.6
+75.0
+±
+\pm
+3.3
+5.6
+±
+\pm
+3.9
+72.7
+±
+\pm
+4.2
+Lan + AV
+84.6
+±
+\pm
+1.9
+11.4
+±
+\pm
+5.6
+79.4
+±
+\pm
+1.5
+80.0
+±
+\pm
+2.5
+6.9
+±
+\pm
+0.9
+77.2
+±
+\pm
+1.8
+Table 3
+:
+Ablation on task pair selection proportion used when calculating IFA.
+Buffer
+FWT
+↑
+\uparrow
+NBT
+↓
+\downarrow
+AUC
+↑
+\uparrow
+LIBERO-OBJECT
+33.3%
+83.3
+±
+\pm
+2.6
+12.3
+±
+\pm
+2.4
+77.6
+±
+\pm
+3.0
+50%
+84.6
+±
+\pm
+1.9
+11.4
+±
+\pm
+5.6
+79.4
+±
+\pm
+1.5
+66.6%
+83.3
+±
+\pm
+1.4
+16.4
+±
+\pm
+9.0
+75.8
+±
+\pm
+5.3
+LIBERO-GOAL
+33.3%
+80.0
+±
+\pm
+2.5
+6.9
+±
+\pm
+0.9
+77.2
+±
+\pm
+1.8
+50%
+80.0
+±
+\pm
+2.5
+6.9
+±
+\pm
+0.9
+77.2
+±
+\pm
+1.8
+66.6%
+82.0
+±
+\pm
+0.9
+15.4
+±
+\pm
+16.7
+75.6
+±
+\pm
+8.7
+Influence of Different Modality Similarity on IFA.
+Based on the task pair selection for IFA described in Sec.
+3.3
+, we analyze how using an alternative modality
+e
+e
+to compute
+Sim
+e
+​
+(
+T
+i
+,
+T
+j
+)
+\text{Sim}_{e}(T_{i},T_{j})
+affects the effectiveness of IFA and, consequently, the overall performance of the proposed method.
+In addition to evaluating each modality individually, we also consider combinations with language, since language serves as the reference in our design.
+As shown in Tab.
+2
+, the language and agent-view pairing (that is the one our approach leverages) achieves the best overall performance, improving both AUC and FWT while maintaining low forgetting (NBT).
+Table 4
+:
+Effectiveness of choosing different references. “Lan” stands for language. See the text for a description of the “mean global” reference.
+Reference
+FWT
+↑
+\uparrow
+NBT
+↓
+\downarrow
+AUC
+↑
+\uparrow
+LIBERO-OBJECT
+Mean global
+79.6
+±
+\pm
+7.21
+8.3
+±
+\pm
+12.2
+75.7
+±
+\pm
+1.1
+Lan+agent view
+84.6
+±
+\pm
+1.9
+11.4
+±
+\pm
+5.6
+79.4
+±
+\pm
+1.5
+LIBERO-GOAL
+Mean global
+77.1
+±
+\pm
+3.1
+15.7
+±
+\pm
+6.1
+70.5
+±
+\pm
+6.0
+Lan+agent view
+80.0
+±
+\pm
+2.5
+6.9
+±
+\pm
+0.9
+77.2
+±
+\pm
+1.8
+Table 5
+:
+Impact of varying the probability of storing features in the buffer, affecting buffer size.
+Probability
+Storage
+FWT
+↑
+\uparrow
+NBT
+↓
+\downarrow
+AUC
+↑
+\uparrow
+LIBERO-OBJECT
+0.50
+188MB
+84.6
+±
+\pm
+1.9
+11.4
+±
+\pm
+5.6
+79.4
+±
+\pm
+1.5
+0.20
+75.3MB
+80.5
+±
+\pm
+7.5
+12.5
+±
+\pm
+7.1
+77.7
+±
+\pm
+10.0
+0.10
+37.6MB
+79.9
+±
+\pm
+12.6
+13.4
+±
+\pm
+6.1
+76.6
+±
+\pm
+14.1
+LIBERO-GOAL
+0.50
+121.2MB
+80.0
+±
+\pm
+2.5
+6.9
+±
+\pm
+0.9
+77.2
+±
+\pm
+1.8
+0.20
+60.6MB
+78.3
+±
+\pm
+1.9
+10.6
+±
+\pm
+8.0
+77.4
+±
+\pm
+4.6
+0.10
+30.3MB
+78.7
+±
+\pm
+1.3
+25.2
+±
+\pm
+10.4
+66.2
+±
+\pm
+6.8
+Effect of Task Pair Selection Proportion.
+After identifying the language and agent-view modalities as the criteria for IFA as shown in Tab.
+2
+, we further investigate how varying the proportion of selected task pairs influences the performance.
+The experimental setup is consistent with the previous section,
+with the only difference being that the independent variable is the selection proportion of task pairs.
+As shown in Tab.
+3
+, selecting the top 50% of task pairs consistently achieves the highest FWT and AUC while maintaining low NBT, indicating the most stable and effective overall performance.
+Effectiveness of Choosing Different References.
+Different from using the latent feature of language as the reference, i.e.,
+h
+(
+r
+)
+​
+(
+T
+k
+)
+=
+h
+(
+l
+)
+​
+(
+T
+k
+)
+h^{(r)}(T_{k})=h^{(l)}(T_{k})
+, we also consider the centroid of each task’s global latent representations. For previous tasks, we computed the mean of all the global latent representations for each task.
+During the lifelong learning of the next stage, this means representation serves as the reference for the corresponding previous task. For the new task, we use the mean of its global latent representations accumulated from the start of the current epoch as its reference. All other settings remain unchanged.
+As shown in Tab.
+4
+, using the latent feature of language as the reference consistently achieves better performance than the averaged global representation.
+Impact of Varying Data Storage Ratios.
+We investigate the impact of varying the buffer size on lifelong learning performance, by setting the probability of storing features in the buffer. In particular, we use either 0.10, 0.20, or 0.50 probability of storing a feature for each new task demonstration. As shown in Tab.
+5
+, retaining fewer representations generally leads to performance degradation, while storing a larger fraction consistently yields more stable results across tasks.
+Figure 3
+:
+Comparison between cosine distance and angle-based IFA loss calculation.
+Angle-Based versus Cosine Distance-Based Loss.
+We further compare the angle-based loss described in Sec.
+3.2
+with the cosine distance loss.
+As shown in Fig.
+3
+, the angle-based loss calculation consistently outperforms the cosine distance-based calculation across all metrics. Notably, even the cosine distance–based calculation surpasses all SOTA methods and improves upon the MLR-only setting (see Tab.
+1
+). However, its standard deviation is notably higher.
+(a)
+w/o IFA.
+(b)
+w/ IFA.
+Figure 4
+:
+UMAP visualization of the global latent representation
+g
+⁡
+(
+T
+k
+)
+g(T_{k})
+obtained when not enforcing the IFA loss (left) or when enforcing it (right). Each color represents the global latent representations of one task.
+Table 6
+:
+Average cosine similarity between task 8 embeddings and references from other tasks after lifelong training. “w/o” and “w” denote training without and with IFA, respectively (see main text for details).
+LIBERO-OBJECT
+LIBERO-GOAL
+T6
+T7
+T8
+T6
+T7
+T8
+w/o
+0.1265
+0.1374
+0.3590
+0.2191
+0.2319
+0.3652
+w
+0.1197
+0.1218
+0.3482
+0.1977
+0.2345
+0.3877
+IFA effects in the latent space.
+To better highlight the advantages brought by the proposed angle-based IFA in the learning dynamics, we compare the global latent representation distributions obtained both training without applying IFA (denoted with “w/o”) or applying it (denoted with “w”), with all other settings identical, using UMAP
+[
+17
+]
+visualization, shown in Fig.
+4
+.
+Notice that all experimental settings are identical except for the presence of IFA. Without the contribution coming from the IFA loss (Fig.
+4
+-left), embeddings of different tasks are intertwined, showing low inter-task separation and moderate intra-task cohesion, which can lead to catastrophic forgetting as new task features may overwrite old ones.
+When the IFA component is enforced (Fig.
+4
+-right), embeddings form compact, distinct clusters around their task-specific references, reflecting higher inter-task separation and improved intra-task cohesion.
+This aligns with the IFA loss, which penalizes embeddings closer to other tasks’ references than their own, enforcing repulsion between tasks and attraction to their own reference. The bottom plot, together with the quantitative results presented in this paper, confirms that IFA successfully produces task-aware embeddings, reducing interference and stabilizing lifelong learning by organizing the feature space into distinct, task-specific clusters. Notably, Fig.
+4
+also shows some task embeddings are already
+separated without IFA. In this situation, IFA targets such high-similarity
+cases using an adaptive, angle-based margin, which preserves small distinctions that cosine similarity compresses. Therefore, very similar tasks might still remain highly similar or overlapping.
+To further examine IFA’s effect on task-level feature separation, we report in Tab.
+6
+the average cosine similarity between task 8 and references from other tasks after lifelong training. Higher cosine similarity indicates closer alignment in the reference space, which can lead to interference between tasks. On LIBERO-OBJECT, where IFA is only applied between tasks 8 and 7 (i.e., no IFA used for any other task pairs), the similarity between task 8 and task 7 decreases from 0.1374 to 0.1218. Similarly, on LIBERO-GOAL, where IFA is only applied between tasks 8 and 6, the similarity between task 8 and task 6 decreases from 0.2191 to 0.1977. Such consistent reductions indicate that IFA successfully increases inter-task separability as intended.
+5
+Conclusion
+We presented a lifelong imitation learning framework that enables agents to continuously acquire new skills while mitigating catastrophic forgetting. By having our Multimodal Latent Replay and Incremental Feature Adjustment, our method efficiently stores and reuses compact multimodal representations, leveraging frozen pretrained encoders to achieve robust performance even when tasks share similar latent features. Our approach sets a new SOTA on LIBERO benchmarks, improving task transfer and reducing forgetting across diverse multimodal tasks. Looking forward, exploring more complex or longer task sequences, cross-domain and real-world robotic scenarios, and integration with reinforcement learning offers exciting opportunities to further extend the adaptability and generality of our framework, addressing challenges that are broadly difficult in lifelong learning research.
+References
+[1]
+J. Achiam, S. Adler, S. Agarwal, L. Ahmad, I. Akkaya, F. L. Aleman, D. Almeida, J. Altenschmidt, S. Altman, S. Anadkat,
+et al.
+(2023)
+Gpt-4 technical report
+.
+arXiv preprint arXiv:2303.08774
+.
+Cited by:
+§1
+.
+[2]
+A. Chaudhry, M. Rohrbach, M. Elhoseiny, T. Ajanthan, P. K. Dokania, P. H. Torr, and M. Ranzato
+(2019)
+On tiny episodic memories in continual learning
+.
+arXiv preprint arXiv:1902.10486
+.
+Cited by:
+§A.2
+,
+§1
+,
+§2
+,
+§4.1.1
+,
+Table 1
+.
+[3]
+N. Ding, Y. Qin, G. Yang, F. Wei, Z. Yang, Y. Su, S. Hu, Y. Chen, C. Chan, W. Chen,
+et al.
+(2023)
+Parameter-efficient fine-tuning of large-scale pre-trained language models
+.
+Nature machine intelligence
+5
+(
+3
+),
+pp. 220–235
+.
+Cited by:
+§1
+.
+[4]
+C. Gao, H. Gao, S. Guo, T. Zhang, and F. Chen
+(2021)
+CRIL: continual robot imitation learning via generative and prediction model
+.
+In
+2021 IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS)
+,
+pp. 6747–5754
+.
+Cited by:
+§1
+,
+§1
+,
+§1
+,
+§2
+.
+[5]
+E. J. Hu, Y. Shen, P. Wallis, Z. Allen-Zhu, Y. Li, S. Wang, L. Wang, W. Chen,
+et al.
+(2022)
+Lora: low-rank adaptation of large language models.
+.
+ICLR
+1
+(
+2
+),
+pp. 3
+.
+Cited by:
+§B.2
+,
+§2
+.
+[6]
+L. Huang, X. Cao, H. Lu, and X. Liu
+(2024)
+Class-incremental learning with clip: adaptive representation adjustment and parameter fusion
+.
+In
+European Conference on Computer Vision
+,
+pp. 214–231
+.
+Cited by:
+§1
+.
+[7]
+A. Hussein, M. M. Gaber, E. Elyan, and C. Jayne
+(2017)
+Imitation learning: a survey of learning methods
+.
+ACM Computing Surveys (CSUR)
+50
+(
+2
+),
+pp. 1–35
+.
+Cited by:
+§1
+.
+[8]
+E. Jang, A. Irpan, M. Khansari, D. Kappler, F. Ebert, C. Lynch, S. Levine, and C. Finn
+(2022)
+Bc-z: zero-shot task generalization with robotic imitation learning
+.
+In
+Conference on Robot Learning
+,
+pp. 991–1002
+.
+Cited by:
+§1
+.
+[9]
+R. Kemker, M. McClure, A. Abitino, T. Hayes, and C. Kanan
+(2018)
+Measuring catastrophic forgetting in neural networks
+.
+In
+Proceedings of the AAAI conference on artificial intelligence
+,
+Vol.
+32
+.
+Cited by:
+§1
+.
+[10]
+D. Lee, M. Yoo, W. K. Kim, W. Choi, and H. Woo
+(2024)
+Incremental learning of retrievable skills for efficient continual task adaptation
+.
+Advances in Neural Information Processing Systems
+37
+,
+pp. 17286–17312
+.
+Cited by:
+§A.2
+,
+§1
+,
+§1
+,
+§2
+,
+§3.1
+,
+§4.1.1
+,
+§4.1.1
+,
+Table 1
+.
+[11]
+Y. Lei, S. Mao, S. Zhou, H. Zhang, X. Li, and P. Luo
+(2025)
+Dynamic mixture of progressive parameter-efficient expert library for lifelong robot learning
+.
+arXiv preprint arXiv:2506.05985
+.
+Cited by:
+§A.2
+.
+[12]
+Y. Li, Z. Gong, H. Li, X. Huang, H. Kang, G. Bai, and X. Ma
+(2025)
+Robotic visual instruction
+.
+In
+Proceedings of the Computer Vision and Pattern Recognition Conference
+,
+pp. 12155–12165
+.
+Cited by:
+§1
+.
+[13]
+V. Lialin, V. Deshpande, and A. Rumshisky
+(2023)
+Scaling down to scale up: a guide to parameter-efficient fine-tuning
+.
+arXiv preprint arXiv:2303.15647
+.
+Cited by:
+§1
+.
+[14]
+B. Liu, Y. Zhu, C. Gao, Y. Feng, Q. Liu, Y. Zhu, and P. Stone
+(2023)
+Libero: benchmarking knowledge transfer for lifelong robot learning
+.
+Advances in Neural Information Processing Systems
+36
+,
+pp. 44776–44791
+.
+Cited by:
+§A.1
+,
+§A.2
+,
+§1
+,
+§1
+,
+§1
+,
+§2
+,
+§3.2
+,
+§4
+,
+§4
+,
+§4.1.1
+,
+Table 1
+,
+Table 1
+.
+[15]
+Z. Liu, J. Zhang, K. Asadi, Y. Liu, D. Zhao, S. Sabach, and R. Fakoor
+(2023)
+Tail: task-specific adapters for imitation learning with large pretrained models
+.
+arXiv preprint arXiv:2310.05905
+.
+Cited by:
+§A.1
+,
+§A.2
+,
+§A.2
+,
+§1
+,
+§1
+,
+§1
+,
+§2
+,
+§3.1
+,
+§4.1.1
+,
+Table 1
+.
+[16]
+I. Loshchilov and F. Hutter
+(2017)
+Decoupled weight decay regularization
+.
+arXiv preprint arXiv:1711.05101
+.
+Cited by:
+§4
+.
+[17]
+L. McInnes, J. Healy, and J. Melville
+(2018)
+Umap: uniform manifold approximation and projection for dimension reduction
+.
+arXiv preprint arXiv:1802.03426
+.
+Cited by:
+§4.1.2
+.
+[18]
+E. Perez, F. Strub, H. De Vries, V. Dumoulin, and A. Courville
+(2018)
+Film: visual reasoning with a general conditioning layer
+.
+In
+Proceedings of the AAAI conference on artificial intelligence
+,
+Vol.
+32
+.
+Cited by:
+§A.1
+,
+§B.3
+,
+§3.3
+.
+[19]
+D. A. Pomerleau
+(1988)
+Alvinn: an autonomous land vehicle in a neural network
+.
+Advances in neural information processing systems
+1
+.
+Cited by:
+§3.1
+.
+[20]
+A. Radford, J. W. Kim, C. Hallacy, A. Ramesh, G. Goh, S. Agarwal, G. Sastry, A. Askell, P. Mishkin, J. Clark,
+et al.
+(2021)
+Learning transferable visual models from natural language supervision
+.
+In
+International conference on machine learning
+,
+pp. 8748–8763
+.
+Cited by:
+§A.1
+,
+§1
+,
+§1
+,
+§3.3
+.
+[21]
+A. Radford, J. Wu, R. Child, D. Luan, D. Amodei, I. Sutskever,
+et al.
+(2019)
+Language models are unsupervised multitask learners
+.
+OpenAI blog
+1
+(
+8
+),
+pp. 9
+.
+Cited by:
+§A.1
+,
+§3.3
+.
+[22]
+N. D. Rodríguez, V. Lomonaco, D. Filliat, and D. Maltoni
+(2018)
+Don’t forget, there is more than forgetting: new metrics for continual learning
+.
+CoRR
+.
+Cited by:
+§4
+.
+[23]
+K. Roy, A. Dissanayakc, B. Tidd, and P. Moghadam
+(2025)
+M2distill: multi-modal distillation for lifelong imitation learning
+.
+In
+2025 IEEE International Conference on Robotics and Automation (ICRA)
+,
+pp. 1429–1435
+.
+Cited by:
+§A.1
+,
+§1
+,
+§1
+,
+§1
+,
+§2
+,
+§4
+,
+§4.1.1
+,
+§4.1.1
+,
+Table 1
+.
+[24]
+S. Stepputtis, J. Campbell, M. Phielipp, S. Lee, C. Baral, and H. Ben Amor
+(2020)
+Language-conditioned imitation learning for robot manipulation tasks
+.
+Advances in Neural Information Processing Systems
+33
+,
+pp. 13139–13150
+.
+Cited by:
+§1
+.
+[25]
+T. Tsuji, Y. Kato, G. Solak, H. Zhang, T. Petrič, F. Nori, and A. Ajoudani
+(2025)
+A survey on imitation learning for contact-rich tasks in robotics
+.
+arXiv preprint arXiv:2506.13498
+.
+Cited by:
+§1
+.
+[26]
+W. Wan, Y. Zhu, R. Shah, and Y. Zhu
+(2024)
+Lotus: continual imitation learning for robot manipulation through unsupervised skill discovery
+.
+In
+2024 IEEE International Conference on Robotics and Automation (ICRA)
+,
+pp. 537–544
+.
+Cited by:
+§A.1
+,
+§A.2
+,
+§A.2
+,
+§1
+,
+§1
+,
+§1
+,
+§1
+,
+§2
+,
+§2
+,
+§3.1
+,
+§4
+,
+§4
+,
+§4
+,
+§4.1.1
+,
+§4.1.1
+,
+Table 1
+,
+Table 1
+.
+[27]
+A. Xie, L. Lee, T. Xiao, and C. Finn
+(2024)
+Decomposing the generalization gap in imitation learning for visual robotic manipulation
+.
+In
+2024 IEEE International Conference on Robotics and Automation (ICRA)
+,
+pp. 3153–3160
+.
+Cited by:
+§1
+.
+[28]
+Y. Xin, S. Luo, H. Zhou, J. Du, X. Liu, Y. Fan, Q. Li, and Y. Du
+(2024)
+Parameter-efficient fine-tuning for pre-trained vision models: a survey
+.
+arXiv e-prints
+,
+pp. arXiv–2402
+.
+Cited by:
+§1
+.
+[29]
+Y. Yao, S. Liu, H. Song, D. Qu, Q. Chen, Y. Ding, B. Zhao, Z. Wang, X. Li, and D. Wang
+(2025)
+Think small, act big: primitive prompt learning for lifelong robot manipulation
+.
+In
+Proceedings of the Computer Vision and Pattern Recognition Conference
+,
+pp. 22573–22583
+.
+Cited by:
+§1
+.
+[30]
+M. Zare, P. M. Kebria, A. Khosravi, and S. Nahavandi
+(2024)
+A survey of imitation learning: algorithms, recent developments, and challenges
+.
+IEEE Transactions on Cybernetics
+.
+Cited by:
+§1
+.
+[31]
+B. Zheng, S. Verma, J. Zhou, I. W. Tsang, and F. Chen
+(2022)
+Imitation learning: progress, taxonomies and challenges
+.
+IEEE Transactions on Neural Networks and Learning Systems
+35
+(
+5
+),
+pp. 6322–6337
+.
+Cited by:
+§1
+.
+[32]
+J. Zheng, S. Qiu, C. Shi, and Q. Ma
+(2025)
+Towards lifelong learning of large language models: a survey
+.
+ACM Computing Surveys
+57
+(
+8
+),
+pp. 1–35
+.
+Cited by:
+§1
+.
+[33]
+Y. Zhu, P. Stone, and Y. Zhu
+(2022)
+Bottom-up skill discovery from unsegmented demonstrations for long-horizon robot manipulation
+.
+IEEE Robotics and Automation Letters
+7
+(
+2
+),
+pp. 4126–4133
+.
+Cited by:
+§A.2
+,
+§2
+,
+§4.1.1
+,
+Table 1
+.
+Supplementary Material
+This supplementary material includes extended implementation details of our method, as well as descriptions of the state-of-the-art methods used for comparison in Sec.
+A
+. Next, we present additional ablation studies that reflect and justify the design choices of our components and their parameter configurations in Sec.
+B
+. Sec.
+C
+offers further analyses on IFA and the choice of the task reference embedding, including an explanation of why angle-based computation can be more effective and how the adaptive parameter is designed. Finally, we report the computational efficiency of our method in Sec.
+D
+.
+Appendix A
+Extended Implementation Details
+A.1
+Our Framework
+During multi-task pre-training, each task
+𝒯
+′
+\mathcal{T}^{\prime}
+includes
+N
+j
+=
+50
+N_{j}=50
+expert demonstrations.
+In the lifelong learning stage, each new task
+𝒯
+k
+\mathcal{T}_{k}
+provides
+N
+k
+=
+10
+N_{k}=10
+demonstrations, following the setup used in prior state-of-the-art (SOTA) methods
+[
+26
+,
+23
+]
+.
+Each rollout in the LIBERO suites consists of 70–300 time steps.
+Our architecture follows the general design introduced in prior work
+[
+15
+]
+, where each action is predicted from the previous
+L
+=
+8
+L=8
+observations. Specifically, we employ CLIP-base
+[
+20
+]
+as both the vision encoder and the language encoder, each implemented as a 12-layer Transformer. A 6-layer GPT-2 decoder
+[
+21
+]
+serves as the temporal decoder, processing the visual and state tokens from the last eight steps and outputting the parameters of a 5-component Gaussian Mixture Model (GMM) over continuous actions. The use of a GMM policy head is a common practice in the LIBERO benchmarks
+[
+14
+]
+. Task instructions are injected via FiLM-based
+[
+18
+]
+conditioning of the visual and state representations within the modulation network. During pre-training, we train only LoRA adapters (with rank-8) in the CLIP backbones, together with the temporal decoder and the GMM policy head. In the lifelong learning stage, only the temporal decoder and policy head are updated for each new task, as depicted in Figure
+2
+in the main paper.
+A.2
+State of the Art
+For the methods reported in Tab. 1 of the main paper, Sequential
+[
+14
+]
+, Experience Replay (ER)
+[
+14
+,
+2
+]
+, BUDS
+[
+33
+,
+26
+]
+, and LOTUS
+[
+26
+]
+all use the same architectural setup and training configuration as LOTUS. Specifically, LOTUS employs a skill-discovery module to predict subgoal actions, which are then composed into a full action sequence to accomplish the task, and the numerical results for these methods are taken directly from the original LOTUS paper
+[
+26
+]
+.
+As for ISCIL
+[
+10
+]
+, each skill is associated with its own adapter, and during evaluation the method retrieves the adapter corresponding to the skill most similar to the current input.
+For ISCIL, we use the implementation from
+[
+11
+]
+, which has been adapted for the LIBERO setting. In this way, the same training setup as other methods is followed, ensuring fair comparisons.
+We exploited an in-house implementation of TAIL
+[
+15
+]
+(note that the official code for TAIL
+[
+15
+]
+is not available). We verified that our implementation has the same number of parameters as reported in the TAIL paper, and therefore use it for all comparisons with confidence. As the official implementation is unavailable, we ensured architectural and training consistency with the original paper to maintain fair comparisons. We will make the corresponding code publicly available upon acceptance of our paper to foster future research in this direction.
+TAIL
+[
+15
+]
+is a task-ID–based method that trains a separate adapter for each task to adapt the shared backbone to the corresponding data distribution. At test time, TAIL requires the task ID to select the correct adapter. To make TAIL compatible with the task-ID–agnostic LIL setting considered in the main paper, we first train it following the original procedure, without any modification.
+During evaluation, since multiple task-specific adapters are available at a given stage of the lifelong phase, we compute the success rate of each task as the average performance across all adapters available up to that point. This averaging simulates task-ID agnostic inference, where the correct adapter cannot be selected, and follows the same evaluation strategy adopted in LOTUS
+[
+26
+]
+when adapting task-incremental methods to LIL. All reported metrics use this averaged success rate, ensuring a fair comparison with LIL approaches that employ a single shared policy.
+Appendix B
+Additional Ablation Studies
+B.1
+Influence of the Angular Scaling Parameter
+α
+\alpha
+in IFA
+We conducted an ablation study to evaluate the impact of different values of the angular scaling factor
+α
+\alpha
+in the adaptive IFA formulation (Tab.
+7
+). The best-performing values of
+α
+\alpha
+are 0.3, 0.7, and 0.1 for LIBERO-OBJECT, LIBERO-GOAL, and LIBERO-50, respectively.
+The adaptive margin
+δ
+\delta
+is defined as proportional to the angular distance between the reference embeddings of the current task and the most similar previous task:
+δ
+=
+α
+​
+arccos
+⁡
+(
+a
+⊤
+​
+b
+|
+a
+|
+2
+|
+​
+b
+|
+2
+)
+\delta=\alpha\arccos\big(\frac{a^{\top}b}{|a|_{2}|b|_{2}}\big)
+. Intuitively, this ensures that tasks with larger semantic differences are more strongly separated in the latent space, while similar tasks remain closer, preserving within-task coherence.
+For LIBERO-50, the largest and most diverse benchmark, smaller
+α
+\alpha
+(0.1) gives the best overall performance, likely reflecting the denser arrangement of task reference embeddings—larger margins could over-penalize nearby tasks. However, performance at
+α
+\alpha
+= 0.7 remains comparable, indicating that the adaptive IFA is relatively robust to the choice of
+α
+\alpha
+even in large, densely packed task suites. This suggests that
+α
+\alpha
+can be tuned to balance inter-task separation and latent stability without critically affecting performance.
+Table 7
+:
+Ablation on different angular scaling factor
+α
+\alpha
+in the adaptive IFA.
+Dataset
+α
+\alpha
+FWT
+↑
+\uparrow
+NBT
+↓
+\downarrow
+AUC
+↑
+\uparrow
+LIBERO-OBJECT
+0.10
+81.8
+±
+\pm
+3.2
+12.4
+±
+\pm
+3.6
+77.3
+±
+\pm
+1.4
+0.30
+84.6
+±
+\pm
+1.9
+11.4
+±
+\pm
+5.6
+79.4
+±
+\pm
+1.5
+0.50
+82.1
+±
+\pm
+0.7
+18.3
+±
+\pm
+10.3
+73.2
+±
+\pm
+4.1
+0.70
+81.7
+±
+\pm
+0.7
+8.4
+±
+\pm
+3.3
+77.3
+±
+\pm
+2.4
+LIBERO-GOAL
+0.10
+80.8
+±
+\pm
+4.0
+12.0
+±
+\pm
+11.3
+75.4
+±
+\pm
+8.8
+0.30
+81.3
+±
+\pm
+3.3
+15.2
+±
+\pm
+7.3
+74.7
+±
+\pm
+6.7
+0.50
+79.2
+±
+\pm
+1.9
+12.8
+±
+\pm
+2.8
+73.1
+±
+\pm
+2.3
+0.70
+80.0
+±
+\pm
+2.5
+6.9
+±
+\pm
+0.9
+77.2
+±
+\pm
+1.8
+LIBERO-50
+0.10
+60.8
+±
+\pm
+2.8
+8.6
+±
+\pm
+6.2
+56.1
+±
+\pm
+1.8
+0.30
+53.6
+±
+\pm
+4.0
+7.6
+±
+\pm
+10.0
+52.0
+±
+\pm
+1.4
+0.50
+58.5
+±
+\pm
+3.6
+8.9
+±
+\pm
+4.9
+53.2
+±
+\pm
+3.4
+0.70
+60.5
+±
+\pm
+2.2
+10.6
+±
+\pm
+1.1
+54.2
+±
+\pm
+2.3
+Table 8
+:
+Comparison between LoRA adapters with different ranks (R) and full fine-tuning (FFT).
+LIBERO-OBJECT
+LIBERO-GOAL
+FWT
+↑
+\uparrow
+NBT
+↓
+\downarrow
+AUC
+↑
+\uparrow
+FWT
+↑
+\uparrow
+NBT
+↓
+\downarrow
+AUC
+↑
+\uparrow
+R=8
+57.5
+±
+\pm
+0.2
+7.9
+±
+\pm
+1.0
+52.8
+±
+\pm
+5.9
+59.3
+±
+\pm
+0.9
+11.5
+±
+\pm
+3.3
+54.1
+±
+\pm
+0.7
+R=16
+48.9
+±
+\pm
+7.1
+-5.6
+±
+\pm
+0.4
+50.4
+±
+\pm
+6.9
+56.3
+±
+\pm
+5.3
+4.4
+±
+\pm
+18.9
+53.6
+±
+\pm
+2.4
+R=32
+53.8
+±
+\pm
+0.2
+-0.2
+±
+\pm
+6.7
+54.2
+±
+\pm
+2.3
+63.8
+±
+\pm
+7.1
+7.5
+±
+\pm
+13.0
+60.0
+±
+\pm
+1.5
+FFT
+84.6
+±
+\pm
+1.9
+11.4
+±
+\pm
+5.6
+79.4
+±
+\pm
+1.5
+80.0
+±
+\pm
+2.5
+6.9
+±
+\pm
+0.9
+77.2
+±
+\pm
+1.8
+B.2
+Adapters versus Full Fine-tuning.
+During the lifelong learning stage, our default configuration fine-tunes all parameters of the temporal decoder. For comparison, we also evaluate a parameter-efficient variant based on Low-Rank Adaptation (LoRA)
+[
+5
+]
+, where the temporal decoder is frozen and LoRA modules are inserted into the attention projection layers (query/key/value and output projections) and the MLP feed-forward layers. We experiment with different LoRA ranks, and the results are summarized in Tab.
+8
+.
+These results reveal a substantial performance gap: full fine-tuning significantly outperforms the LoRA-based adaptation across all datasets and metrics. This indicates that, in our setting, the temporal decoder requires sufficient capacity to capture complex temporal dynamics and integrate information coming from the MLR and IFA losses, which parameter-efficient approaches alone cannot provide. Furthermore, LoRA introduces additional hyperparameters that require grid search, making it less practical for large-scale lifelong learning scenarios.
+Table 9
+:
+Effect of using FiLM layers during lifelong learning.
+LIBERO-OBJECT
+LIBERO-GOAL
+FWT
+↑
+\uparrow
+NBT
+↓
+\downarrow
+AUC
+↑
+\uparrow
+FWT
+↑
+\uparrow
+NBT
+↓
+\downarrow
+AUC
+↑
+\uparrow
+w/o FiLM
+43.8
+±
+\pm
+3.5
+8.8
+±
+\pm
+7.7
+41.6
+±
+\pm
+0.2
+57.6
+±
+\pm
+17.7
+0.83
+±
+\pm
+7.5
+56.3
+±
+\pm
+2.1
+w FiLM
+84.6
+±
+\pm
+1.9
+11.4
+±
+\pm
+5.6
+79.4
+±
+\pm
+1.5
+80.0
+±
+\pm
+2.5
+6.9
+±
+\pm
+0.9
+77.2
+±
+\pm
+1.8
+B.3
+Influence of Using FiLM Layers.
+In our model, the outputs of the vision and state encoders are modulated by FiLM layers
+[
+18
+]
+to obtain task-conditioned representations. To empirically justify their contribution, we ablate the model by removing FiLM layers during the lifelong learning stage (see Tab.
+9
+).
+As seen, incorporating FiLM layers significantly improves FWT and AUC compared to the variant without FiLM. Although the no-FiLM variant shows slightly lower NBT, this is due to its overall weaker learning performance rather than genuine resistance to forgetting. These results indicate that explicit feature-wise modulation is crucial for effective adaptation: by dynamically scaling and shifting intermediate activations, FiLM allows the network to adjust its internal representations efficiently to the conditioning signal, improving forward transfer and overall learning effectiveness.
+Table 10
+:
+Task-reference comparison on
+LIBERO-OBJECT
+and
+LIBERO-GOAL
+.
+See text for the explanation of “Mean Global” and
+“Global”.
+“Language”, “AgentView”, “Eye-in-hand”, and “State” use the corresponding modality-specific latent feature as the task reference. The smallest cosine distance is highlighted in
+bold
+, and the second smallest is
+underlined
+.
+LIBERO-OBJECT
+LIBERO-GOAL
+Task Reference
+Task 6
+Task 7
+Task 8
+Task 9
+Task 6
+Task 7
+Task 8
+Task 9
+Mean global
+0.565
+0.555
+0.549
+0.454
+0.485
+0.354
+0.501
+0.437
+Global
+0.811
+0.802
+0.797
+0.703
+0.735
+0.583
+0.752
+0.684
+Language
+0.668
+0.701
+0.656
+0.677
+0.591
+0.610
+0.629
+0.680
+AgentView
+0.947
+0.951
+0.973
+0.994
+0.976
+0.957
+0.980
+1.051
+Eye-in-hand
+1.008
+0.974
+1.005
+1.005
+1.018
+1.037
+0.987
+1.042
+State
+1.068
+1.012
+1.024
+1.006
+1.033
+1.072
+1.005
+1.036
+Figure 5
+:
+UMAP visualization of the global latent representations
+g
+⁡
+(
+T
+k
+)
+g(T_{k})
+obtained when not enforcing the IFA loss, each color represents the global latent representations of one task.
+Appendix C
+Extended Analysis
+C.1
+Selection of a stable task reference
+As described in the main paper, our proposed Incremental Feature Adjustment (IFA) is a regularization technique designed to counter representation drift across tasks during Lifelong Learning (LIL).
+IFA achieves this by ensuring that the global latent representation (
+g
+t
+​
+(
+T
+k
+)
+g_{t}(T_{k})
+), which is the output of the temporal decoder for the current task
+T
+k
+T_{k}
+, remains closer to its own task reference (
+h
+(
+r
+)
+​
+(
+T
+k
+)
+h^{(r)}(T_{k})
+) than to the references of previously learned tasks (
+h
+(
+r
+)
+​
+(
+T
+j
+)
+h^{(r)}(T_{j})
+). This introduces repulsive forces between the current task’s global latent representation and previous task references, promoting inter-task disentanglement and preserving within-task coherence.
+The efficacy of IFA relies critically on selecting a stable and representative task reference (
+h
+(
+r
+)
+h^{(r)}
+) for each task. The motivation for this selection can be seen from the visualization in
+Fig.
+5
+: we observe that the global latent representations of a given task naturally cluster together in the embedding space. This clustering indicates that each task can be summarized by a single, representative point that reflects the overall location of its features.
+To justify our choice of the language latent feature as the task reference (
+h
+(
+r
+)
+h^{(r)}
+), we compared it against other viable candidates. We computed the average cosine distance between these candidates and the global latent representations of their corresponding tasks (on LIBERO-OBJECT and LIBERO-GOAL, Tasks 6–9), evaluating both their representativeness and their stability during incremental learning.
+The task reference candidates evaluated were the mean latent feature derived from different modalities (first column of Tab.
+10
+): Mean global, the mean of all global latent representations for a task; Global, a measure derived by averaging the distances obtained when treating each individual global latent representation as a separate, unstable candidate reference;
+Modality-Specific Latent Features, the mean latent feature of a specific modality, such as language, agent view, eye-in-hand, or state (see Section
+4
+). For example, when using the agent-view modality, we take the mean agent-view latent features of the task as the task reference and compute its average cosine distance to all global latent representations of that task (see Tab.
+10
+). This data confirmed that using the mean of all global latent representations (the Global Latent Feature candidate) yields the smallest cosine distance, proving it is the most statistically representative point.
+Despite being the most representative, the mean global reference is fundamentally unstable. During the ongoing process of Lifelong Incremental Learning (LIL), the dynamic changes in model parameters cause the latent representations, and consequently their mean, to change over time. This drifting reference hinders the ability of IFA to consistently regulate representation drift.
+Crucially, the language latent feature produced the second-smallest distances. Furthermore, the language-based task reference (which is identical to its mean since the language modality provides a single, fixed embedding per task description) remains stable throughout training. It even outperformed the unstable "Global" baseline. Given that a stable anchor is essential for IFA to effectively prevent representation drift across tasks, we adopt the language latent feature as our definitive task reference (
+h
+(
+r
+)
+h^{(r)}
+), prioritizing its stability for reliable regularization over the slightly higher representativeness of the unstable mean global feature.
+(a)
+cos
+⁡
+(
+θ
+)
+\cos(\theta)
+on
+[
+0
+,
+π
+]
+[0,\pi]
+.
+(b)
+arccos
+⁡
+(
+x
+)
+\arccos(x)
+on
+[
+−
+1
+,
+1
+]
+[-1,1]
+.
+Figure 6
+:
+Illustration of the cosine function and its inverse.
+C.2
+Extended details for MLR and IFA.
+MLR.
+In the lifelong learning stage, we utilize the proposed Multimodal Latent Replay (MLR). Instead of storing raw sensory data, a compact buffer
+ℬ
+\mathcal{B}
+maintains the multimodal latent representations (
+𝐇
+\mathbf{H}
+), which are concatenated from the frozen encoders, alongside the associated action (
+a
+a
+) for training. In subsequent tasks, the stored
+𝐇
+\mathbf{H}
+from previous tasks is fed into the temporal decoder for replay.
+IFA.
+To prevent interference (catastrophic forgetting) between the current task (
+T
+k
+T_{k}
+) and the previously learned tasks (
+T
+j
+T_{j}
+), we introduce the IFA. IFA’s core mechanism encourages the global latent representation of the current task (
+g
+t
+​
+(
+T
+k
+)
+g_{t}(T_{k})
+) to remain closer to its own stable reference (
+h
+(
+r
+)
+​
+(
+T
+k
+)
+h^{(r)}(T_{k})
+) than to the references of previously learned tasks (
+h
+(
+r
+)
+​
+(
+T
+j
+)
+h^{(r)}(T_{j})
+).The IFA loss is explicitly defined to penalize violations of this distance constraint:
+ℒ
+IFA
+=
+1
+|
+𝒫
+|
+∑
+(
+j
+,
+k
+)
+∈
+𝒫
+j
+<
+k
+max
+(
+0
+,
+\displaystyle\mathcal{L}_{\text{IFA}}=\frac{1}{|\mathcal{P}|}\sum_{\begin{subarray}{c}(j,k)\in\mathcal{P}\\
+j<k\end{subarray}}\max\Big(0,
+d
+⁡
+(
+g
+t
+​
+(
+T
+k
+)
+,
+h
+(
+r
+)
+​
+(
+T
+k
+)
+)
+\displaystyle d\big(g_{t}(T_{k}),h^{(r)}(T_{k})\big)
+(9)
+OPEN
+−
+d
+⁡
+(
+g
+t
+​
+(
+T
+k
+)
+,
+h
+(
+r
+)
+​
+(
+T
+j
+)
+)
++
+δ
+)
+,
+\displaystyle}{\displaystyle-d\big(g_{t}(T_{k}),h^{(r)}(T_{j})\big)+\delta\Big)\>,
+The margin
+δ
+\delta
+adapts to the relative positions of the task references themselves:
+δ
+=
+α
+​
+d
+​
+(
+h
+(
+r
+)
+​
+(
+T
+k
+)
+,
+h
+(
+r
+)
+​
+(
+T
+j
+)
+)
+,
+\begin{aligned} \delta&=\alpha\,d\!\left(h^{(r)}(T_{k}),\,h^{(r)}(T_{j})\right)\end{aligned}\>,
+(10)
+Angle-based distance.
+The IFA loss is explicitly driven by the difference in distance between the global latent representation
+g
+t
+​
+(
+T
+k
+)
+g_{t}(T_{k})
+and the task references: the positive reference
+h
+(
+r
+)
+​
+(
+T
+k
+)
+h^{(r)}(T_{k})
+(for the current task
+T
+k
+T_{k}
+) and the negative references
+h
+(
+r
+)
+​
+(
+T
+j
+)
+h^{(r)}(T_{j})
+(for the previous tasks
+T
+j
+T_{j}
+). Therefore, we compared how the standard cosine similarity and its angular counterpart (distance
+d
+⁡
+(
+⋅
+,
+⋅
+)
+=
+arccos
+⁡
+(
+⋅
+)
+d(\cdot,\cdot)=\arccos(\cdot)
+) behave when used inside this crucial distance difference.
+Fig.
+6
+illustrates this comparison.
+The left panel plots
+cos
+⁡
+(
+θ
+)
+\cos(\theta)
+as a function of the angle
+θ
+∈
+[
+0
+,
+π
+]
+\theta\in[0,\pi]
+between two unit vectors, while the right panel shows
+arccos
+⁡
+(
+x
+)
+\arccos(x)
+as a function of
+x
+∈
+[
+−
+1
+,
+1
+]
+x\in[-1,1]
+.
+Cosine (left) quickly saturates in the high-similarity regime: when two representations are already very close, even noticeable angular changes produce almost no change in
+cos
+⁡
+θ
+\cos\theta
+, making the resulting distance difference extremely small and hard to distinguish.
+In contrast, the angular distance
+arccos
+⁡
+(
+x
+)
+\arccos(x)
+(right) expands this high-similarity region; small changes in
+x
+x
+near
+1
+1
+translate into clearly separable angular differences, providing more stable resolution across similarity levels and allowing IFA to better capture small deviations between task-level representations. Outside this range,
+arccos
+⁡
+(
+x
+)
+\arccos(x)
+behaves similarly to cosine similarity—differences between representations remain distinguishable.
+Adaptive
+δ
+\delta
+.
+The choice of
+δ
+\delta
+as a fixed hyperparameter would incur in a risk of choosing an overly large margin. Specifically, if
+δ
+\delta
+is set larger than the distance between the two task references, i.e.,
+δ
+>
+d
+⁡
+(
+h
+(
+r
+)
+​
+(
+T
+k
+)
+,
+h
+(
+r
+)
+​
+(
+T
+j
+)
+)
+\delta>d\big(h^{(r)}(T_{k}),h^{(r)}(T_{j})\big)
+, the IFA loss will always enforce a penalty.
+This is guaranteed by the triangle inequality property of spherical geometry, which states that the difference between the distances to the two references is bounded by the distance between the references themselves:
+d
+⁡
+(
+g
+t
+​
+(
+T
+k
+)
+,
+h
+(
+r
+)
+​
+(
+T
+k
+)
+)
+\displaystyle d\big(g_{t}(T_{k}),h^{(r)}(T_{k})\big)
+−
+d
+⁡
+(
+g
+t
+​
+(
+T
+k
+)
+,
+h
+(
+r
+)
+​
+(
+T
+j
+)
+)
+\displaystyle-d\big(g_{t}(T_{k}),h^{(r)}(T_{j})\big)
+≤
+d
+⁡
+(
+h
+(
+r
+)
+​
+(
+T
+k
+)
+,
+h
+(
+r
+)
+​
+(
+T
+j
+)
+)
+,
+\displaystyle\leq d\big(h^{(r)}(T_{k}),h^{(r)}(T_{j})\big),
+If
+δ
+\delta
+exceeds this maximum possible difference, the loss term inside the
+max
+⁡
+(
+⋅
+)
+\max(\cdot)
+will always be positive. This would enforce an unnecessary repulsive force, even when the current global latent representation
+g
+t
+​
+(
+T
+k
+)
+g_{t}(T_{k})
+is already sufficiently closer to its own reference
+h
+(
+r
+)
+​
+(
+T
+k
+)
+h^{(r)}(T_{k})
+, potentially destabilizing learning.
+To avoid this unnecessary penalty and allow the margin to adapt to the distance between references, we define
+δ
+\delta
+dynamically:
+δ
+=
+α
+​
+d
+​
+(
+h
+(
+r
+)
+​
+(
+T
+k
+)
+,
+h
+(
+r
+)
+​
+(
+T
+j
+)
+)
+,
+α
+∈
+(
+0
+,
+1
+)
+.
+\delta=\alpha\,d\big(h^{(r)}(T_{k}),h^{(r)}(T_{j})\big),\quad\alpha\in(0,1).
+This guarantees that the margin is always bounded by the inter-reference distance, and scales proportionally to how far apart the tasks are in the angular space.
+Appendix D
+Computational efficiency
+Table 11
+:
+Runtime and FLOPs comparison. See text for the explanation of Forward Time,
+S-FLOPs, and T-FLOPs. All experiments are conducted on
+LIBERO-GOAL
+.
+P
+P
+means the probability of storing features in the buffer, which is ablated in Tab.
+5
+. RR stands for raw replay, which stores past samples and replays them during training. Note that BASE stands for running our method without MLR or IFA. It is included solely to quantify the computational cost of the base architecture.
+Method
+P
+P
+Forward Time (ms)
+S-FLOPs
+T-FLOPs
+BASE
+-
+75.5
+±
+\pm
+2.43
+3.63
+×
+10
+11
+3.63\times 10^{11}
+4.36
+×
+10
+17
+4.36\times 10^{17}
+BASE + RR
+0.5
+75.8
+±
+\pm
+2.80
+3.63
+×
+10
+11
+3.63\times 10^{11}
+12.96
+×
+10
+17
+12.96\times 10^{17}
+BASE + MLR
+0.5
+75.5
+±
+\pm
+2.43
+3.63
+×
+10
+11
+3.63\times 10^{11}
+7.62
+×
+10
+17
+7.62\times 10^{17}
+BASE + MLR + IFA
+0.5
+75.8
+±
+\pm
+2.80
+3.63
+×
+10
+11
+3.63\times 10^{11}
+7.62
+×
+10
+17
+7.62\times 10^{17}
+BASE + MLR + IFA
+0.2
+75.8
+±
+\pm
+2.43
+3.63
+×
+10
+11
+3.63\times 10^{11}
+5.66
+×
+10
+17
+5.66\times 10^{17}
+BASE + MLR + IFA
+0.1
+75.8
+±
+\pm
+2.43
+3.63
+×
+10
+11
+3.63\times 10^{11}
+5.01
+×
+10
+17
+5.01\times 10^{17}
+We report the computational efficiency using several primary metrics related to policy execution in Tab.
+11
+. Forward Time refers to the time required to produce one action (i.e., a single forward pass). We computed forward time using a NVIDIA A100 GPU, by first running a warming up stage of 10 inferences (to avoid transient effects from initialization and caching), and then computing the average and standard deviation on 100 subsequent inferences.
+The S-FLOPs correspond to the total number of Floating-Point Operations (FLOPs) required for a single forward pass of the policy to produce one action. This metric reflects model inference cost and is independent of data or training procedure. For completeness, we also report T-FLOPs, the total training FLOPs, computed as per-forward FLOPs multiplied by the total number of forward pass, backward pass, and gradient update during training (i.e., FLOPs × epochs × training sampless × 3).
+As shown in the result table, both MLR and IFA have a minimal overhead on
+per-inference efficiency, indicating that their additional computations introduce
+negligible runtime cost. In terms of total training FLOPs, adding MLR (P = 0.5) increases
+the computational cost by roughly
+0.75
+×
+0.75\times
+on
+LIBERO-GOAL
+due to replay, and the less the buffer is, the less the T-FLOPs. But this increase remains reasonable and acceptable given the resulting
+performance gains compared to the performance in Tab.
+5
+.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

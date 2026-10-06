@@ -1,0 +1,1434 @@
+When Plans Change, Remember: Replanning-Guided Visual Memory for Vision-Language-Action Models
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1  Introduction
+2  Related Work
+Memory for long-horizon, partially observable policies.
+Keyframe and event selection for visual memory.
+Action chunking, replanning, and plan consistency.
+3  RePlanMem-VLA
+3.1  Overview
+3.2  Memory-augmented action policy
+3.3  Plan revision as an event signal
+3.4  Causal, task-conditioned event detection
+3.5  Redundancy-aware frame selection
+3.6  Event-gated memory update and second forward pass
+3.7  Supervised fine-tuning objective
+4  Experimental evaluation
+4.1  RQ1: Disagreement signals in single-task policies
+4.2  RQ2: Event detection with pretrained VLA policies
+4.3  RQ3: Surprise-gated visual-memory updates
+4.3.1  Direct surprise-gated writing
+4.3.2  Redundancy-aware memory selection
+4.3.3  Robot-masked redundancy filtering
+4.3.4  Transfer to real-robot replay
+5  Limitations and Future Work
+6  Conclusion
+References
+‣  When Plans Change, Remember: Replanning-Guided Visual Memory for Vision-Language-Action Models
+A  Additional Analysis for RQ1
+A.1  Experimental setup and reference events
+Tasks and training.
+Observations and policy architectures.
+Execution and evaluation.
+Reference keyframes.
+A.2  Task-specific results
+A.3  Disagreement signals on failed trajectories
+Execution and evaluation.
+A.4  Correlation structure and metric redundancy
+B  Additional Analysis for RQ2
+B.1  Experimental setup and evaluation
+Tasks and policy fine-tuning.
+Detector training and evaluation.
+B.2  Within-episode detection profiles
+C  Complete Registry of Disagreement Metrics
+Auxiliary definitions.
+Plan-energy and distributional measures.
+Action-component measures.
+Temporal measures.
+License: CC BY 4.0
+arXiv:2610.22556v1 [cs.RO] 15 Oct 2026
+When Plans Change, Remember: Replanning-Guided Visual Memory for Vision-Language-Action Models
+Victoria Smelova
+Affiliation:   MIRAI
+Daniil Kazachkov
+Affiliation:   MIRAI
+Georgiy Kazantsev
+Affiliation:   Independent Researcher
+Iuliia Tsvetkova
+Affiliation:  Central University
+Egor Cherepanov
+Affiliation:   MIRAI
+Affiliation:   AXXX
+Affiliation:   CogAI Lab RePlanMem Website
+Nikita Kachaev
+Affiliation:   AXXX
+Affiliation:   CogAI Lab RePlanMem Website
+Artem Latyshev
+Affiliation:   MIRAI
+Affiliation:   AXXX
+Affiliation:   CogAI Lab RePlanMem Website
+Aleksandr I. Panov
+Affiliation:   MIRAI
+Affiliation:   CogAI Lab RePlanMem Website
+Alexey K. Kovalev
+Affiliation:   MIRAI
+Abstract
+Long-horizon, multi-stage Vision-Language-Action (VLA) policies often require
+visual information that is no longer present in the current observation.
+Retaining the complete observation history is computationally expensive and
+highly redundant, motivating selective visual memory. We introduce
+RePlanMem-VLA  ( Replanning-Guided Keyframe Memory for VLA ), which turns a policy’s own plan revisions into an online memory-write signal. Under receding-horizon execution, consecutive action chunks predict some of the same future actions. RePlanMem-VLA treats unusually large disagreement between these temporally aligned predictions as evidence of a task-relevant event. We first compare 35 disagreement measures across single-task autoregressive decoder-only and Flow-Matching Transformers trained from scratch, then validate the selected signals on pretrained OpenVLA-OFT and     π  0.5   \pi_{0.5}    policies over MIKASA-Robo-VLA tasks. The resulting detectors achieve ROC-AUC of
+0.981–0.997. We then use the selected signals in RePlanMem-VLA to trigger updates to a bounded visual memory, with a robot-masked write filter suppressing redundant frames. In the evaluated memory-retention experiments, RePlanMem-VLA preserves task-relevant observations until the later decision point in     100  %   100\%    of episodes. Real-robot replay data further show that event selection and redundancy suppression extend beyond simulation. These results establish plan revision as a policy-internal signal for controlling what a VLA remembers.
+Website:  https://vika787.github.io/RePlanMem/ .
+1    1  footnotetext:  These authors contributed equally to this work.
+Figure 1 :   RePlanMem-VLA.
+Task-relevant cues may disappear from the current observation
+before they are needed. When consecutive replans disagree on
+their overlapping actions, the important observation is stored
+in memory and remains available after the cue is no longer visible.
+Figure 2 :   Real-robot delayed-cue setup.
+The robot observes the target object’s color. The cue then leaves
+the observation, and the robot must later select the matching
+object among distractors using stored visual information.
+Figure 3 :
+Surprise-gated memory updates on the  RememberColor  task.
+The surprise score     S  q   S_{q}    and task-calibrated percentile     p  q   p_{q}    identify
+candidate update times near transitions between the cue, empty, and action
+phases.
+1  Introduction
+Long-horizon manipulation often requires Vision-Language-Action (VLA) policies to use visual information
+that has left the current observation, including object properties  ( Chen et al., 2026a ;  Shi et al., 2026 ) ,
+earlier environment states  ( Chen et al., 2026a ;  Shi et al., 2026 ) , and task
+progress  ( Buamanee et al., 2026 ;  Feng et al., 2026 ) .
+Retaining the full history preserves these cues but increases context length and
+computation while adding visual redundancy  ( Jang et al., 2025 ;  Qiu et al., 2026 ;  Wang et al., 2026 ) .
+We therefore seek a small set of informative observations.
+We call these observations  keyframes : they preserve cues needed
+later  ( Shi et al., 2026 ;  Lei et al., 2026 )  or mark task-phase
+transitions  ( Buamanee et al., 2026 ;  Yi et al., 2026 ) . Prior work
+selects them with vision-language models  ( Lei et al., 2026 ) , waypoint
+heuristics  ( Shi et al., 2023 ) ,
+learned retrieval  ( Sridhar et al., 2026 ) , progress estimates  ( Liu et al., 2026 ) ,
+or event detectors  ( Zeng et al., 2026b ) . We investigate whether the policy’s own plan revisions can provide an online signal for selecting these observations.
+Under receding-horizon execution, consecutive action chunks predict some of the same future actions, while the new plan incorporates
+the latest observation (Fig.   1  ). Comparing these temporally aligned predictions reveals how the policy revises its intended behavior after receiving new visual information.
+Our central hypothesis is that task-relevant observations induce unusually large revisions in predictions for the same future
+actions.  This motivates using plan disagreement as a policy-internal signal to identify candidate keyframes for visual memory.
+We introduce  RePlanMem-VLA
+( Replanning-Guided Keyframe Memory for VLA ), which derives its selection
+signal from revisions between overlapping action predictions already produced
+during normal replanning. Selected keyframes become part of the policy’s visual context,
+keeping past observations available for subsequent action prediction, while a robot-masked write filter suppresses redundant frames, reducing repeated overwrites. At deployment, the trigger requires neither keyframe annotations nor privileged simulator state.
+Our experiments are conducted on MIKASA-Robo-VLA  ( Cherepanov et al., 2026b ) , an extension of MIKASA-Robo  ( Cherepanov et al., 2026a )
+for evaluating memory-intensive manipulation with VLA policies. We first screen 35 disagreement metrics using autoregressive decoder-only and
+Flow-Matching Transformers  ( Lipman et al., 2023 )
+trained from scratch. We then evaluate detectors based on the selected signals with
+pretrained OpenVLA-OFT  ( Kim et al., 2025 )  and
+π  0.5   \pi_{0.5}     ( Physical Intelligence et al., 2025 )  policies, obtaining ROC-AUC of
+0.981–0.997.
+In the evaluated memory-retention experiments, RePlanMem-VLA
+preserves task-relevant observations until the later decision
+point in     100  %   100\%    of episodes, while robot-masked filtering
+reduces redundant overwrites.
+Real-robot replay data further support its event-selection and
+redundancy-suppression behavior beyond simulation
+(Fig.   2  ).
+Our main contributions are as follows:
+1.
+We introduce  RePlanMem-VLA , which identifies keyframes from
+policy-internal revisions of predictions for the same future actions across
+consecutive replanning steps (Section   3.3  ).
+2.
+We  identify disagreement measures that best align with keyframe events  through systematic analysis across decoder-only and Flow-Matching Transformer policies, and verify their transfer to pretrained OpenVLA-OFT and     π  0.5   \pi_{0.5}    policies
+(Sections   4.1   and   4.2  ).
+3.
+We develop a  bounded visual-memory mechanism  where plan disagreement determines when to write and redundancy-aware filtering, including robot-masked clustering, determines what to retain, substantially reducing redundant updates while preserving task-relevant observations (Sections   3   and   4.3  ).
+Figure 4 :   RePlanMem-VLA overview.
+At replanning step    q  q   , the VLA first predicts a chunk
+C  q  −   C_{q}^{-}    from the current observation, instruction, and existing
+memory. The temporally aligned overlap with the preceding plan
+is converted into a task-calibrated
+surprise percentile     p  q   p_{q}   .
+If      p  q   >  τ   p_{q}>\tau   , a selected observation is
+written to FIFO memory and the policy performs a second forward pass with the updated memory, yielding      C  q  final   =   C  q  +    C_{q}^{\mathrm{final}}=C_{q}^{+}   ,
+otherwise      C  q  final   =   C  q  −    C_{q}^{\mathrm{final}}=C_{q}^{-}   .
+2  Related Work
+Memory for long-horizon, partially observable policies.
+Long-horizon manipulation often requires access to information from earlier in
+the episode. Recent VLA work addresses this through
+recurrent or belief-state
+latents  ( Cherepanov et al., 2026c ;  Li et al., 2026a ) ,
+explicit memory representations
+( Shi et al., 2026 ;  Guo et al., 2026 ) , long-context or
+compressed multi-frame conditioning
+( Jang et al., 2025 ) , and retrieval- or structure-based memory
+( Sridhar et al., 2026 ;  Haresh et al., 2026 ;  Chung et al., 2026 ;  Li et al., 2026b ) .
+Memory-dependent manipulation is also studied in dedicated benchmarks
+( Cherepanov et al., 2026b ;  Chen et al., 2026a ;  Lei et al., 2026 ) . These works study how historical information is represented or retrieved, whereas our focus is on when an observation should be admitted to a bounded memory.
+Keyframe and event selection for visual memory.
+Existing approaches identify important observations using motion or
+bottleneck-pose heuristics  ( James et al., 2022 ) ,
+learned frame scoring  ( Mark et al., 2026 ;  Chen et al., 2026c ) ,
+progress, value, or critic signals
+( Liu et al., 2026 ;  Yi et al., 2026 ;  Buamanee et al., 2026 ) ,
+trajectory annotation  ( Feng et al., 2026 ) , or dedicated event detectors
+( Zeng et al., 2026b )  — each
+relying on a separate selector or external signal. We instead derive the selection signal directly from changes in the acting policy’s own predicted action plans.
+Action chunking, replanning, and plan consistency.
+Action-chunking policies predict short action sequences and under receding-horizon
+execution successive chunks overlap on predictions for the same future actions
+( Zhao et al., 2023 ;  Chi et al., 2023 ;  Kim et al., 2025 ;  Physical Intelligence et al., 2025 ) . Prior work mainly uses this overlap to improve consistency
+( Zhao et al., 2023 ;  Liu et al., 2025 )
+or studies the trade-off between open-loop execution and replanning
+( Lazzati et al., 2026 ;  Zeng et al., 2026a ;  Chen et al., 2026b ;  Jing et al., 2026 ) .
+We instead use disagreement between overlapping predictions as a signal that the
+new observation has changed the policy’s intended behavior.
+Memory representation, keyframe selection, and plan consistency are typically
+studied separately, whereas we connect them by using plan disagreement as a
+policy-internal signal for memory updates.
+3  RePlanMem-VLA
+3.1  Overview
+In long-horizon manipulation, task-relevant visual information often leaves the cameras before it is needed. A policy that sees only the current frame cannot recover that cue, so we concatenate the live views with a bounded visual memory of    B  B    slots.
+Slots are empty at the start of an episode and are never carried across episode boundaries.
+The policy predicts a chunk of    K  K    actions from one observation and executes only the first     H  <  K   H<K    before replanning, so consecutive chunks overlap on     K  −  H   K{-}H    future steps: the same intended actions, predicted before and after the new frame.
+Prior work treats disagreement on that overlap as noise to suppress.
+We read a large revision as evidence that the new observation was task-relevant and use it to trigger a memory-update proposal. The direct update rule stores the immediately preceding frame, whereas the redundancy-aware variant retains only visual states that are not already represented in memory.
+Figures   1   and   4   and Algorithm   1   summarize the procedure.
+At every query the policy first predicts a pre-write chunk from the memory available before a potential write, then overlap disagreement is converted, without gradients, into a task-calibrated surprise score and an event triggers frame selection and a memory update only when a visually novel state is found. The final action prediction is conditioned on the resulting memory state, and only this prediction receives the original supervised fine-tuning (SFT) objective. Event detection never sees expert actions, so memory writes are driven only by the policy’s own plan revisions.
+3.2  Memory-augmented action policy
+In partially observable manipulation, identical current observations
+can require different actions depending on earlier cues or task
+progress  ( Cherepanov et al., 2026a ;  Chen et al., 2026a ) , as illustrated by the delayed-cue setup in Fig.   2  .
+A policy conditioned only on the current observation cannot distinguish such histories.
+Historical context can resolve this ambiguity, motivating multi-frame
+conditioning and memory-augmented
+policies  ( Jang et al., 2025 ;  Shi et al., 2026 ) . To bound the amount of historical visual input, we retain at most    B  B    observations. The resulting online selection problem is which observations
+to preserve for future control. We call these observations keyframes, focusing on transient cues needed later and observations marking changes in task phase.
+Let    q  q    index policy queries,     o  q   o_{q}    denote the current multi-view observation, and    ℓ  \ell    denote the language instruction. Action chunking predicts multiple future controls from a single
+observation, supporting temporally coordinated behavior and efficient
+execution  ( Zhao et al., 2023 ;  Chi et al., 2023 ;  Kim et al., 2025 ) .
+The policy predicts a chunk of    K  K    actions      C  q   =   (   a   q  ,  0    ,  …  ,   a   q  ,   K  −  1     )    C_{q}=(a_{q,0},\ldots,a_{q,K-1})    but executes only the first     H  <  K   H<K    of them before replanning. We refer to    K  K    and    H  H    as the  chunk horizon  and  execution stride . Here,      a   q  ,  j    ∈   ℝ  d    a_{q,j}\in\mathbb{R}^{d}    denotes the action predicted
+at query    q  q    for the    j  j   -th step of the chunk.
+The visual memory before query    q  q    is an ordered collection of at most    B  B    keyframes      M  q   =   (   M  q  1   ,  …  ,   M  q   m  q    )    M_{q}=(M_{q}^{1},\ldots,M_{q}^{m_{q}})   ,      m  q   ≤  B   m_{q}\leq B   , whose slots are appended to the policy’s visual context alongside the current camera views: with a top and a wrist camera the visual input is      X  q   =   [    I  q  top   ,   I  q  wrist   ,   M  q  1   ,  …  ,   M  q   m  q     ]    X_{q}=[\,I_{q}^{\mathrm{top}},I_{q}^{\mathrm{wrist}},M_{q}^{1},\ldots,M_{q}^{m_{q}}\,]   .
+All slots are empty at the beginning of an episode, and memory state is never carried across episode boundaries.
+At query    q  q   , a first forward pass uses the memory state that existed before the current event decision and yields the  pre-write plan
+C  q  −   =    π  θ   ​   (   o  q   ,   M  q   ,  ℓ  )     C_{q}^{-}=\pi_{\theta}(o_{q},M_{q},\ell)   , which provides both a candidate control output and the policy-internal signal used to decide whether memory should be updated. We denote the chunk used for execution after the memory-update decision by     C  q  final   C_{q}^{\mathrm{final}}   .
+3.3  Plan revision as an event signal
+Two consecutive action chunks make predictions for some of the same future time steps.
+Because    H  H    actions of the preceding chunk have already been executed, the aligned overlap has length     K  −  H   K-H   .
+We therefore compare
+U  q   =   C   q  −  1   final    [  H  :  K  ]   ,   V  q   =   C  q  −    [  0  :  K  −  H  ]   .   U_{q}=C_{q-1}^{\mathrm{final}}[H:K],\qquad V_{q}=C_{q}^{-}[0:K-H].
+(1)
+Both sequences estimate the same future actions, but     V  q   V_{q}    is conditioned on the newly observed scene, so a large discrepancy indicates that new visual evidence has caused the policy to revise its intended behavior.
+We summarize this revision with    D  D    complementary detector signals
+𝒚  q   =    [    y  q  1   ,  …  ,   y  q  D    ]   ⊤    \bm{y}_{q}=[y_{q}^{1},\ldots,y_{q}^{D}]^{\top}   . These signals include aligned
+action error, directional disagreement, temporally localized deviations,
+translation, rotation, and gripper changes. The deployed detector also
+includes the distance between consecutive detached top-view VLA features as one of these signals.
+In our configuration     D  =  10   D=10   .
+To distinguish persistent model uncertainty from abrupt changes, we augment
+these values with their temporal differences
+Δ  ​   𝒚  q    =    𝒚  q   −   𝒚   q  −  1      \Delta\bm{y}_{q}=\bm{y}_{q}-\bm{y}_{q-1}    and with causal deviations from an
+exponential moving average (EMA),
+𝒎  ~   q   =    β  ​    𝒎  ~    q  −  1     +    (   1  −  β   )   ​   𝒚  q      ,    𝒅   q  ,  EMA    =    𝒚  q   −    𝒎  ~    q  −  1       .   \widetilde{\bm{m}}_{q}=\beta\widetilde{\bm{m}}_{q-1}+(1-\beta)\bm{y}_{q},\qquad\bm{d}_{q,\mathrm{EMA}}=\bm{y}_{q}-\widetilde{\bm{m}}_{q-1}.
+The complete detector input is
+𝒙  q   =    [    𝒚  q  ⊤   ,   Δ  ​   𝒚  q  ⊤    ,   𝒅   q  ,  EMA   ⊤    ]   ⊤   ∈   ℝ   3  ​  D     ,   \bm{x}_{q}=\left[\bm{y}_{q}^{\top},\Delta\bm{y}_{q}^{\top},\bm{d}_{q,\mathrm{EMA}}^{\top}\right]^{\top}\in\mathbb{R}^{3D},
+(2)
+which is     ℝ  30   \mathbb{R}^{30}    in our configuration. All quantities entering
+Eqs. (  1  ) and (  2  ) are computed
+from stop-gradient copies of action chunks and visual features.
+Consequently, the event detector cannot shape the policy by differentiating
+through its decision rule.
+3.4  Causal, task-conditioned event detection
+The components of     𝒙  q   \bm{x}_{q}    have different units and dynamic ranges, so we
+standardize each of them using statistics available strictly before the current
+query,      z  q  i   =    (    x  q  i   −   μ   q  −  1    i  ,   (  k  )      )   /   (    σ   q  −  1    i  ,   (  k  )     +  ε   )     z_{q}^{i}=(x_{q}^{i}-\mu_{q-1}^{i,(k)})/(\sigma_{q-1}^{i,(k)}+\varepsilon)   .
+The current sample is scored before it is incorporated into the running
+statistics. All detector statistics — the moments, the matrix below, and the
+reference cumulative distribution function (CDF) of Eq. (  4  ) — are maintained separately for each
+task    k  k   , so that no cross-task scale difference enters the score. Let
+𝚺   q  −  1    (  k  )    \bm{\Sigma}_{q-1}^{(k)}    be the causal second-moment matrix of the normalized
+features. Because the preceding normalization is component-wise, its diagonal
+is unity up to the lag of the running moments, so     𝚺   q  −  1    (  k  )    \bm{\Sigma}_{q-1}^{(k)}
+acts as a correlation matrix. The joint deviation of the features is measured
+by the regularized Mahalanobis surprise:
+S  q   =     𝒛  q  ⊤   ​    (    𝚺   q  −  1    (  k  )    +   λ  ​  𝑰    )    −  1    ​   𝒛  q      ,   S_{q}=\sqrt{\bm{z}_{q}^{\top}\left(\bm{\Sigma}_{q-1}^{(k)}+\lambda\bm{I}\right)^{-1}\bm{z}_{q}},
+(3)
+where     λ  >  0   \lambda>0    stabilizes the inversion. We set it to a fixed fraction of the mean eigenvalue of     𝚺   q  −  1    (  k  )    \bm{\Sigma}_{q-1}^{(k)}   , which makes the regularizer scale-free across tasks. Unlike an unweighted Euclidean norm, Eq. (  3  ) accounts for correlations among different revision signals.
+Natural plan variability differs across tasks in multi-task SFT, which is why the calibration above is per-task while the decision threshold is shared. Writing       F  k   ​   (  s  )    =   Pr  ⁡   (   S  ≤  s   ∣  k  )     F_{k}(s)=\Pr(S\leq s\mid k)    for the empirical CDF of past surprise scores for task    k  k   , the event percentile and binary decision are
+p  q   =   F  k    (   S  q   )   ,   e  q   =   [   p  q   >  τ  ]   .   p_{q}=F_{k}(S_{q}),\qquad e_{q}=\mathbf{1}\!\left[p_{q}>\tau\right].
+(4)
+Figure 5 :   Examples of robot masking in simulation and real-robot observations.
+Each example shows the original observation, the estimated robot mask,
+and the masked image used for redundancy comparison.
+The policy receives the original RGB frame rather than the masked image.
+Thus     τ  =  0.99   \tau=0.99   , for example, assigns the same interpretation — an event more surprising than     99  %   99\%    of the task-specific reference distribution — across heterogeneous tasks. At the beginning of SFT, memory writes are disabled for a short warm-up period (the first    5  5   –    10  %   10\%    of training), while the policy is optimized normally and detector statistics are collected. After warm-up, the CDFs and causal moments can be updated with rolling histories to track the changing policy. Once training is complete, these statistics are frozen and kept fixed at inference time to preserve a stable detector calibration. The first query in each episode has no preceding chunk and cannot produce a plan-overlap event.
+3.5  Redundancy-aware frame selection
+An event determines  when  memory should be reconsidered, but not
+necessarily which frame should be stored. At an event, we jointly consider
+the current FIFO contents and a short causal window     W  q   W_{q}    of observations
+preceding the current query. We use the three observations preceding the
+event query (    W  =  3   W=3   ) and apply deterministic complete-link clustering with
+threshold     δ  =  0.01   \delta=0.01   . From each novel cluster, the most recent candidate
+is selected as its representative. The current observation is excluded so that
+selection cannot use information obtained after the detected plan revision.
+We group visually similar frames using complete-link clustering and treat a
+candidate cluster as novel only if it contains no frame already represented
+in memory. From each novel cluster, we retain its most recent candidate and
+append the selected representatives to the bounded FIFO in chronological
+order. Thus, one detector event may result in zero, one, or multiple writes.
+Visual masks, when available, are used only to suppress irrelevant appearance
+changes during comparison, while the original RGB frames are stored and supplied
+to the policy. The direct update rule is the special case in which the
+selector returns only the immediately preceding frame without redundancy
+filtering.
+Algorithm 1   Surprise keyframe memory at query    q  q   .
+Input :  Observation     o  q   o_{q}   , instruction    ℓ  \ell   , task id    k  k   , memory
+M  q   M_{q}    with    B  B    slots, previous chunk     C   q  −  1   final   C_{q-1}^{\mathrm{final}}   , chunk
+horizon    K  K   , execution stride    H  H   , percentile threshold    τ  \tau   , causal
+statistics      (  𝝁  ,  𝝈  ,  𝚺  ,   F  k   )    q  −  1    (\bm{\mu},\bm{\sigma},\bm{\Sigma},F_{k})_{q-1}   , candidate-window size
+W  =  3   W=3   , clustering threshold     δ  =  0.01   \delta=0.01   .
+Output :  Final action chunk     C  q  final   C_{q}^{\mathrm{final}}   ,
+updated memory     M   q  +  1    M_{q+1}   .
+//   1. pre-write forward pass
+C  q  −   ←    π  θ   ​   (   o  q   ,   M  q   ,  ℓ  )     C_{q}^{-}\leftarrow\pi_{\theta}(o_{q},M_{q},\ell)
+if      q  q    is the episode’s first query   then
+M  q  +   ←   M  q    M_{q}^{+}\leftarrow M_{q}
+C  q  final   ←   C  q  −    C_{q}^{\mathrm{final}}\leftarrow C_{q}^{-}
+end if
+else
+//   2. plan-revision features (stop-gradient)
+U  q   ←   C   q  −  1   final    [  H  :  K  ]    U_{q}\leftarrow C_{q-1}^{\mathrm{final}}[H{:}K]   ,
+V  q   ←   C  q  −    [  0  :  K  −  H  ]    V_{q}\leftarrow C_{q}^{-}[0{:}K{-}H]
+𝒙  q   ←   [    𝒚  q   ,   Δ  ​   𝒚  q    ,   𝒅   q  ,  EMA     ]    \bm{x}_{q}\leftarrow[\bm{y}_{q},\Delta\bm{y}_{q},\bm{d}_{q,\mathrm{EMA}}]
+by Eq. (  2  )
+//   3. causal scoring, then statistics update
+𝒛  q   ←    (    𝒙  q   −   𝝁   q  −  1     )   ⊘   (    𝝈   q  −  1    +  ε   )     \bm{z}_{q}\leftarrow(\bm{x}_{q}-\bm{\mu}_{q-1})\oslash(\bm{\sigma}_{q-1}+\varepsilon)
+S  q   ←     S_{q}\leftarrow    Mahalanobis    (   𝒛  q   )   (\bm{z}_{q})
+by Eq. (  3  )
+p  q   ←    F  k   ​   (   S  q   )     p_{q}\leftarrow F_{k}(S_{q})   ;
+e  q   ←  𝟏   [   p  q   >  τ  ]    e_{q}\leftarrow\mathbf{1}[p_{q}>\tau]
+update     (  𝝁  ,  𝝈  ,  𝚺  ,   F  k   )   (\bm{\mu},\bm{\sigma},\bm{\Sigma},F_{k})
+with     𝒙  q   \bm{x}_{q}
+//   4. event-gated frame selection and memory update
+R  q   ←  ∅   R_{q}\leftarrow\varnothing
+if        e  q   =  1   e_{q}=1    and warm-up has ended   then
+Q  q   ←   {   I   q  −  W   top   ,  …  ,   I   q  −  1   top   }    Q_{q}\leftarrow\{I_{q-W}^{\mathrm{top}},\ldots,I_{q-1}^{\mathrm{top}}\}
+Z  q   ←    M  q   ∪   Q  q     Z_{q}\leftarrow M_{q}\cup Q_{q}
+cluster     Z  q   Z_{q}    using deterministic complete-link clustering
+with threshold    δ  \delta
+foreach   cluster containing no frame from     M  q   M_{q}      do
+append the most recent candidate to     R  q   R_{q}
+end foreach
+sort     R  q   R_{q}    chronologically
+end if
+if        R  q   ≠  ∅   R_{q}\neq\varnothing      then
+M  q  +   ←   FIFOAppend  ⁡   (   M  q   ,   R  q   )     M_{q}^{+}\leftarrow\operatorname{FIFOAppend}(M_{q},R_{q})
+C  q  final   ←    π  θ   ​   (   o  q   ,   M  q  +   ,  ℓ  )     C_{q}^{\mathrm{final}}\leftarrow\pi_{\theta}(o_{q},M_{q}^{+},\ell)
+else
+M  q  +   ←   M  q    M_{q}^{+}\leftarrow M_{q}   ;
+C  q  final   ←   C  q  −    C_{q}^{\mathrm{final}}\leftarrow C_{q}^{-}
+end if
+end if
+//   5. execution and (training only) supervision
+Execute      C  q  final    [  0  :  H  ]    C_{q}^{\mathrm{final}}[0{:}H]   ;
+M   q  +  1    ←   M  q  +    M_{q+1}\leftarrow M_{q}^{+}
+Accumulate
+ℒ  act   ​   (   C  q  final   ,   A  q  GT   )    \mathcal{L}_{\mathrm{act}}(C_{q}^{\mathrm{final}},A_{q}^{\mathrm{GT}})   ;
+no gradient flows through     𝒙  q   \bm{x}_{q}   ,
+the statistics, or     e  q   e_{q}
+3.6  Event-gated memory update and second forward pass
+When an event is detected at query    q  q   , the frame-selection rule returns a
+possibly empty sequence     R  q   R_{q}    of candidate keyframes. The direct rule returns
+the immediately preceding top-view observation, whereas the redundancy-aware
+rule may return zero, one, or multiple frames. A fixed-capacity FIFO operator
+produces
+M  q  +   =   FIFOAppend  ⁡   (   M  q   ,   R  q   )     ,   M_{q}^{+}=\operatorname{FIFOAppend}(M_{q},R_{q}),
+inserting the selected frames in chronological order and discarding the
+oldest items when all    B  B    slots are occupied. If      R  q   =  ∅   R_{q}=\varnothing   ,
+memory remains unchanged even though the detector emitted an event.
+At inference time, an actual memory update is followed by a second evaluation
+of the same policy on the current observation and instruction,
+C  q  final   =    π  θ   ​   (   o  q   ,   M  q  +   ,  ℓ  )     .   C_{q}^{\mathrm{final}}=\pi_{\theta}(o_{q},M_{q}^{+},\ell).
+If no frame is written, no additional inference pass is required and
+C  q  final   =   C  q  −    C_{q}^{\mathrm{final}}=C_{q}^{-}   . During distributed SFT, the inference-only
+pre-write pass is followed by one differentiable final pass for the complete
+micro-batch, so rows without a memory update simply use the unchanged memory
+state. This keeps the distributed computation graph synchronized when event
+counts differ across ranks.
+3.7  Supervised fine-tuning objective
+Let     A  q  GT   A_{q}^{\mathrm{GT}}    be the expert action chunk associated with query    q  q   . We retain the backbone’s standard action objective and apply it only to
+the selected final chunk,       ℒ  SFT   ​   (  θ  )    =    ∑  q     ℒ  act   ​   (   C  q  final   ,   A  q  GT   )      \mathcal{L}_{\mathrm{SFT}}(\theta)=\sum_{q}\mathcal{L}_{\mathrm{act}}(C_{q}^{\mathrm{final}},A_{q}^{\mathrm{GT}})   . Gradients flow through the policy invocation that produced     C  q  final   C_{q}^{\mathrm{final}}   , but not through the detector, its running statistics, or the discrete memory-write decision.
+Expert actions supervise control only: they are not used to identify events or select keyframes.
+The same causal detector and memory-update procedure can therefore be used at inference time without keyframe annotations or privileged simulator state.
+4  Experimental evaluation
+Our experiments address three Research Questions (RQs):
+RQ1.
+Does revision of overlapping action chunks contain
+a task-relevant signal, and which disagreement measures extract it most
+reliably?
+RQ2.
+Does this signal transfer to pretrained VLA policies
+across different backbones and replanning frequencies, and can it support
+accurate online event detection?
+RQ3.
+Can the resulting surprise signal be used to drive
+selective visual-memory updates during VLA fine-tuning?
+4.1  RQ1: Disagreement signals in single-task policies
+We first examine whether disagreement between overlapping action predictions contains task-relevant information using single-task autoregressive and Flow-Matching Transformers trained from scratch. This analysis allows us to efficiently screen a
+large set of disagreement metrics at substantially lower computational cost before transferring the most informative signals to pretrained VLA
+policies. We evaluate 35 disagreement metrics
+(Appendix   C  ) across eight MIKASA-Robo-VLA tasks (Appendix   A.1  ) and examine
+whether their behavior remains consistent across different task structures and amounts of available historical information. For each architecture, we compare
+two regimes: full-context, where the policy has
+access to the full observation history up to the current query, and current-only, where the prediction is conditioned only on the current observation.
+Visual analysis of disagreement profiles shows that scores often
+remain near a relatively stable baseline, with peaks occurring near
+keyframes. This pattern motivates a simple threshold-based rule:
+a frame is predicted as a keyframe when its disagreement score
+exceeds a threshold.
+We use Frame ROC-AUC as the primary screening criterion,
+evaluating how well these predictions match reference keyframe labels across detection thresholds. A more detailed analysis, including correlation analysis, and task-specific results, is provided in
+Appendix   A  .
+Experiments show that disagreement measures remain informative both with and without observation history, although their effectiveness varies across tasks and settings.
+On tasks with clear phase transitions, such as
+RememberColor3-VLA-v0  and  ShellGameColorLampTouch-VLA-v0 , for autoregressive policies, Causal Z-score reaches Frame ROC-AUC
+of     0.798  /  0.746   0.798/0.746    under full-context/current-only conditioning, with EMA deviation showing a similar pattern (    0.790  /  0.712   0.790/0.712   ).
+For Flow-Matching policies, distributional measures achieve higher scores: Wasserstein-1 reaches    0.9388  0.9388    and Energy distance
+0.9427  0.9427   . Translation, rotation, and gripper disagreement also perform well,
+with scores ranging from    0.851  0.851    to    0.911  0.911   . Causal Z-score remains stable
+(    0.696  /  0.690   0.696/0.690   ), showing that the causal temporal signal persists across both action-generation paradigms.
+The broader analysis establishes disagreement between consecutive action chunks as a useful signal of keyframes, with several types of plan revision measures contributing useful information
+across tasks. These signals remain informative across action-generation architectures and
+context regimes and remain visible on failed trajectories (Appendix   A.3  ). Correlation analysis further reveals substantial redundancy within
+metric families (Appendix   A.4  ), indicating
+that closely related measures often provide similar information about plan-revision structure. These findings motivate selecting a compact set of complementary
+disagreement features for the subsequent VLA experiments.
+4.2  RQ2: Event detection with pretrained VLA policies
+Table 1 :   Detector features used in RQ2.
+Overlap L2
+Mean L2 distance between aligned action predictions.
+BiD lower bound
+Weighted sum of L2 distances.
+Causal Z-score
+First-action revision relative to its causal baseline.
+CUSUM
+Accumulated one-sided temporal change.
+EMA deviation
+Deviation of the first-action change from its causal
+exponential moving average.
+Translation cosine distance
+Mean cosine distance.
+Translation disagreement
+Difference between translation predictions
+in controller-physical space.
+Rotation disagreement
+Geodesic distance between predicted rotations in      S  ​  O  ​   (  3  )    SO(3)    .
+Gripper disagreement
+Normalized difference between gripper predictions.
+VLM top-view L2
+L2 distance between top-view visual features
+from consecutive observations.
+We next evaluate whether a compact combination of metrics remains effective
+for online event detection in pretrained VLA policies across different
+backbones and replanning frequencies. Building on RQ1, we select nine representative metrics spanning the distributional, cumulative, and causal temporal signals and augment them with a VLA-specific visual feature that captures
+changes in the policy’s visual representation between consecutive
+observations. The resulting ten features
+(Table   1  ) serve as input to learned
+keyframe detectors.
+We evaluate pretrained OpenVLA-OFT  ( Kim et al., 2025 )  and     π  0.5   \pi_{0.5}     ( Physical Intelligence et al., 2025 )  policies on 19 MIKASA-Robo-VLA tasks, under two execution regimes: replanning after every action
+(RH1,     H  =  1   H=1   ) and executing four actions before replanning
+(EXEC4,     H  =  4   H=4   ). Both policies predict chunks of     K  =  8   K=8    actions.
+For each pair of consecutive plans, we compute the selected
+metrics over their temporally aligned overlap.
+Together with the visual-change feature, these measurements
+provide the input for three types of keyframe detectors:
+XGBoost  ( Chen and Guestrin, 2016 ) ,
+CatBoost  ( Prokhorenkova et al., 2018 ) , and a causal
+LSTM  ( Hochreiter and Schmidhuber, 1997 ) .
+The detectors are trained using simulator phase transitions
+as reference keyframe labels.
+Table 2 :   Keyframe detection under RH1 and EXEC4.
+Policy
+Regime
+Classifier
+PR-AUC
+ROC-AUC
+OpenVLA-OFT
+RH1
+XGBoost
+0.932
+0.982
+OpenVLA-OFT
+RH1
+CatBoost
+0.929
+0.981
+OpenVLA-OFT
+RH1
+LSTM
+0.962
+0.989
+OpenVLA-OFT
+EXEC4
+XGBoost
+0.996
+0.997
+OpenVLA-OFT
+EXEC4
+CatBoost
+0.995
+0.996
+OpenVLA-OFT
+EXEC4
+LSTM
+0.984
+0.990
+π  0.5   \pi_{0.5}
+RH1
+XGBoost
+0.928
+0.984
+π  0.5   \pi_{0.5}
+RH1
+CatBoost
+0.924
+0.984
+π  0.5   \pi_{0.5}
+RH1
+LSTM
+0.933
+0.985
+π  0.5   \pi_{0.5}
+EXEC4
+XGBoost
+0.982
+0.988
+π  0.5   \pi_{0.5}
+EXEC4
+CatBoost
+0.981
+0.987
+π  0.5   \pi_{0.5}
+EXEC4
+LSTM
+0.983
+0.988
+For detection evaluation we use ROC-AUC and PR-AUC.
+As in RQ1, ROC-AUC measures how well detector scores separate
+keyframes from other observations across thresholds.
+PR-AUC evaluates the trade-off between precision and recall,
+reflecting whether the detectors identify keyframes while
+limiting false detections. Table   2   shows that both metrics remain high
+across policies, execution regimes, and detector types:
+ROC-AUC ranges from    0.981  0.981    to    0.997  0.997   , and PR-AUC from
+0.924  0.924    to    0.996  0.996   .
+The causal LSTM, which also incorporates information from
+preceding queries, achieves the highest PR-AUC under RH1
+for both OpenVLA-OFT (   0.962  0.962   ) and     π  0.5   \pi_{0.5}    (   0.933  0.933   ).
+Detection remains strong under EXEC4, where XGBoost achieves
+the highest PR-AUC for OpenVLA-OFT (   0.996  0.996   ), while the
+LSTM performs best for     π  0.5   \pi_{0.5}    (   0.983  0.983   ).
+We additionally evaluate     event  ​  _  ​  recall  ​  @  ​  1   \mathrm{event\_recall@1}   ,
+which measures whether each reference event has at least
+one detection within a     ±  1   \pm 1   -step window around its
+phase boundary. All three detectors achieve
+event  ​  _  ​  recall  ​  @  ​  1   =  1.0   \mathrm{event\_recall@1}=1.0   , showing that every reference
+event is detected within this window.
+Together, these results support using the selected features
+for online keyframe detection and motivate their use for
+visual-memory updates in RePlanMem-VLA. The experimental protocol and extended results are provided
+in Appendix   B  .
+4.3  RQ3: Surprise-gated visual-memory updates
+We finally investigate whether plan disagreement can guide visual-memory updates in tasks that require information from earlier observations.
+Specifically, taking the  RememberColor  task as an example, we examine whether the selected observations are written and remain
+available in memory until they are needed for action selection.
+4.3.1  Direct surprise-gated writing
+We first evaluate the simplest memory-update rule, in which each
+detected event directly writes the immediately preceding top-view
+observation to the FIFO.
+We examine the resulting memory-write behavior using
+π  0.5   \pi_{0.5}    and OpenVLA-OFT on  RememberColor3-VLA-v0 , testing different detector thresholds for writing keyframes to memory.
+At the 95th-percentile threshold, the cue observation is written
+in fewer than     20  %   20\%    of the evaluated     π  0.5   \pi_{0.5}    episodes
+and in none of the evaluated OpenVLA-OFT episodes, whereas
+the runs with an 80th-percentile threshold achieve cue-writing
+rates of     48  %   48\%    and     85  %   85\%   , respectively.
+Disagreement peaks also often span several replanning steps,
+leading to repeated writes of observations associated with the
+same keyframe event (Fig.   3  ).
+These observations motivate using a lower detection threshold
+and selecting visually distinct frames rather than writing
+an observation at every query above the threshold.
+4.3.2  Redundancy-aware memory selection
+We next replace direct writes with the redundancy-aware selector from
+Section   3.5  . At each detected event, we examine a short window of preceding
+observations and group visually similar frames together with the observations already stored in memory.
+We then select the most recent frame from each group not represented in memory. This allows the selector to identify candidate keyframes associated with the detected plan revision while avoiding repeated writes of visually similar observations.
+With the addition of clustering, cue-writing and retention rates for OpenVLA-OFT improve to     100  %   100\%    in the evaluated 50 episodes. However, observations of the same environment state can still be assigned to different clusters because of changes in robot pose,
+leading to frequent memory overwrites. With a bounded FIFO memory, these redundant writes can evict task-relevant information observed during the early stages
+of the episode. This motivates masking the robot during visual comparison to suppress redundant updates caused by manipulator motion.
+4.3.3  Robot-masked redundancy filtering
+We next add robot masking to the frame-selection procedure and evaluate its effect on memory updates.
+The masks shown in Figure   5   are applied only during visual comparison, while the original RGB observations are stored in memory and supplied to the VLA.
+For OpenVLA-OFT, across 50 evaluated episodes, robot masking
+nearly halves the number of memory writes from 336 to 169
+and reduces FIFO evictions by almost a factor of ten,
+from 186 to 19.
+At the same time, the task-relevant keyframe is written and retained until the action phase in all     50  /  50   50/50    episodes.
+We thus obtain a mechanism that uses plan disagreement to successfully detect keyframes and retain them in visual memory.
+4.3.4  Transfer to real-robot replay
+Finally, we evaluate the same event-detection and redundancy-filtering
+pipeline through offline replay
+of recorded real-robot trajectories, testing the event detector,
+visual clustering, and robot-masked similarity outside simulation.
+Figure   6   illustrates how the detector responds
+to keyframes associated with phase transitions in the
+RememberColor  task, while robot masking suppresses redundant memory overwrites during the action phase.
+Figure 6 :
+Real-robot replay of the surprise-based event detector and
+redundancy-aware memory-selection pipeline.  White highlights indicate memory updates, while red crosses mark
+detector activations for which the redundancy filter prevents
+overwriting existing memory frames.
+5  Limitations and Future Work
+Our experiments show that disagreement between overlapping action
+chunks can accurately identify task-relevant keyframes. However, we do
+not claim that such disagreement is specific to semantic events.
+Substantial plan revisions may also arise for other reasons, including
+policy prediction errors. The proposed signal should therefore be
+interpreted as an indicator of potentially important change rather than
+as an unambiguous semantic event detector.
+Another limitation concerns the temporal structure of the evaluated
+tasks. The task phases in our experiments have relatively clear
+boundaries. With an execution stride of     H  =  4   H=4   , short
+phases may occur entirely between two replanning queries and therefore
+be missed, whereas gradual transitions may distribute the corresponding
+plan revision over several queries and produce no pronounced peak.
+How disagreement behaves under less distinct phase transitions remains
+to be investigated.
+Our current implementation stores selected observations as full images
+in a small visual memory and uses visual clustering to suppress
+redundant entries. A promising direction is therefore to develop more compact
+representations of stored observations, together with comparison and
+aggregation mechanisms that preserve task-relevant information while
+making historical context easier for the policy to use.
+Finally, the current surprise estimate is defined relative to
+task-conditioned statistics accumulated from previous replanning
+queries, and the write threshold is selected empirically. Consequently,
+the present formulation requires calibration data for each task and has
+not yet been shown to transfer directly to previously unseen tasks
+without accumulating new reference statistics and selecting an
+appropriate threshold.
+6  Conclusion
+We investigated whether revisions of overlapping action chunks can
+serve as an internal signal of observation importance in long-horizon
+robot control. Across single-task autoregressive and Flow-Matching
+policies, we find that disagreement between consecutive plans contains
+a consistent signal of semantic task transitions, with complementary
+distributional, cumulative, and causal temporal measures capturing
+different aspects of plan revision. We further show that this signal
+transfers to pretrained OpenVLA-OFT and     π  0.5   \pi_{0.5}    policies across
+different replanning frequencies and remains predictive even when
+control performance varies substantially.
+Building on these observations, we use disagreement-derived surprise to
+drive selective visual-memory updates in a memory-augmented VLA policy.
+The resulting framework connects three stages that are usually treated
+separately: replanning, event detection, and memory formation. Rather
+than introducing an external keyframe selector, the policy reuses a signal that naturally arises from its own action predictions to decide
+when the observation history should be updated.
+Overall, our results suggest that changes in a policy’s intended future behavior provide a useful source of temporal proposals for sparse memory updates in partially observable, multi-stage manipulation.
+References
+Buamanee  et al.  (2026)
+T. Buamanee, M. Kobayashi, and Y. Uranishi
+Bi-HIL: bilateral control-based multimodal hierarchical imitation learning via subtask-level progress rate and keyframe memory for long-horizon contact-rich robotic manipulation .
+In  IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS) ,
+External Links:   Link
+Cited by:   §1  ,
+§1  ,
+§2  .
+Chen and Guestrin (2016)
+T. Chen and C. Guestrin
+XGBoost: a scalable tree boosting system .
+In  Proceedings of the 22nd ACM SIGKDD International
+Conference on Knowledge Discovery and Data Mining ,
+pp. 785–794 .
+External Links:   Document
+Cited by:   §4.2  .
+Chen  et al.  (2026a)
+T. Chen, Y. Wang, M. Li, Y. Qin, H. Shi, Z. Li, Y. Hu, Y. Zhang, K. Wang, Y. Chen, H. Wang, J. Wang, T. Yang, R. Xu, R. Wu, Y. Mu, Y. Yang, H. Dong, and P. Luo
+RMBench: memory-dependent robotic manipulation benchmark with insights into policy design .
+arXiv preprint arXiv:2603.01229 .
+External Links:   Link
+Cited by:   §1  ,
+§2  ,
+§3.2  .
+Chen  et al.  (2026b)
+W. Chen, K. Zhang, C. Lin, Z. Zhang, Y. She, Y. Liu, R. A. Yeh, S. Mou, and Y. Gu
+DREAM-Chunk: reactive action chunking with latent world model .
+arXiv preprint arXiv:2606.18589 .
+External Links:   Link
+Cited by:   §2  .
+Chen  et al.  (2026c)
+Y. Chen, W. Tan, L. Zhu, F. Li, J. Li, G. Yang, and H. T. Shen
+Non-markovian long-horizon robot manipulation via keyframe chaining .
+arXiv preprint arXiv:2603.01465 .
+External Links:   Link
+Cited by:   §2  .
+Cherepanov  et al.  (2026a)
+E. Cherepanov, N. Kachaev, A. Kovalev, and A. I. Panov
+Memory, benchmark & robots: a benchmark for solving complex tasks with reinforcement learning .
+In  The Fourteenth International Conference on Learning Representations ,
+External Links:   Link
+Cited by:   §1  ,
+§3.2  .
+Cherepanov  et al.  (2026b)
+E. Cherepanov, N. Kachaev, A. I. Panov, and A. K. Kovalev
+MIKASA-robo-vla: benchmarking memory in vla models for long-horizon manipulation .
+External Links:   2610.00604 ,
+Link
+Cited by:   §A.1  ,
+§B.1  ,
+§1  ,
+§2  .
+Cherepanov  et al.  (2026c)
+E. Cherepanov, N. Kachaev, D. Zelezetsky, A. Bulatov, A. Pshenitsyn, Y. Kuratov, A. Skrynnik, A. I. Panov, and A. K. Kovalev
+µvla: on recurrent memory for partially observable manipulation in VLA models .
+arXiv preprint arXiv:2606.12497 .
+External Links:   Link
+Cited by:   §2  .
+Chi  et al.  (2023)
+C. Chi, S. Feng, Y. Du, Z. Xu, E. Cousineau, B. Burchfiel, and S. Song
+Diffusion policy: visuomotor policy learning via action diffusion .
+In  Robotics: Science and Systems ,
+Cited by:   §2  ,
+§3.2  .
+Chung  et al.  (2026)
+N. Chung, T. Hanyu, T. Nguyen, H. Le, F. Bumgarner, D. M. H. Nguyen, K. Vo, K. Yamazaki, C. Rainwater, T. Kieu, A. Nguyen, and N. Le
+Rethinking progression of memory state in robotic manipulation: an object-centric perspective .
+In  Proceedings of the AAAI Conference on Artificial Intelligence ,
+Vol.  40 ,  pp. 3407–3415 .
+External Links:   Document
+Cited by:   §2  .
+Feng  et al.  (2026)
+Y. Feng, H. Shi, H. Li, X. Guo, Y. Wang, C. Zhang, J. Zhang, X. Zhang, J. Tang, and J. Zhang
+ProcVLM: learning procedure-grounded progress rewards for robotic manipulation .
+arXiv preprint arXiv:2605.08774 .
+External Links:   Link
+Cited by:   §1  ,
+§2  .
+Guo  et al.  (2026)
+X. Guo, C. Jiang, H. B. Kim, Y. Han, Y. Sun, Y. Xiao, and J. Yang
+Chameleon: control-indexed prospective memory for visuomotor manipulation .
+arXiv preprint arXiv:2603.24576 .
+External Links:   Link
+Cited by:   §2  .
+Haresh  et al.  (2026)
+S. Haresh, D. Dijkman, A. Bhattacharyya, and R. Memisevic
+Notes-to-self: scratchpad augmented vlas for memory dependent manipulation tasks .
+In  IEEE International Conference on Robotics and Automation (ICRA) ,
+External Links:   Link
+Cited by:   §2  .
+Hochreiter and Schmidhuber (1997)
+S. Hochreiter and J. Schmidhuber
+Long short-term memory .
+Neural Computation   9  ( 8 ),  pp. 1735–1780 .
+External Links:   Document
+Cited by:   §4.2  .
+James  et al.  (2022)
+S. James, K. Wada, T. Laidlow, and A. J. Davison
+Coarse-to-fine Q-attention: efficient learning for visual robotic manipulation via discretisation .
+In  Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) ,
+pp. 13739–13748 .
+Cited by:   §2  .
+Jang  et al.  (2025)
+H. Jang, S. Yu, H. Kwon, H. Jeon, Y. Seo, and J. Shin
+ContextVLA: vision-language-action model with amortized multi-frame context .
+arXiv preprint arXiv:2510.04246 .
+External Links:   Link
+Cited by:   §1  ,
+§2  ,
+§3.2  .
+Jing  et al.  (2026)
+D. Jing, G. Wang, J. Liu, W. Tang, Z. Sun, Y. Yao, Z. Wei, Y. Liu, Z. Lu, and M. Ding
+Mixture of horizons in action chunking .
+In  Proceedings of the 43rd International Conference on Machine Learning ,
+Proceedings of Machine Learning Research , Vol.  306 .
+Cited by:   §2  .
+Kim  et al.  (2025)
+M. J. Kim, C. Finn, and P. Liang
+Fine-tuning vision-language-action models: optimizing speed and success .
+arXiv preprint arXiv:2502.19645 .
+External Links:   Link
+Cited by:   §1  ,
+§2  ,
+§3.2  ,
+§4.2  .
+Lazzati  et al.  (2026)
+F. Lazzati, K. Stachowicz, W. Chen, A. M. Metelli, A. Wagenmaker, and S. Levine
+Why does action chunking improve behavioral cloning performance in robotic control? .
+arXiv preprint arXiv:2608.02547 .
+External Links:   Link
+Cited by:   §2  .
+Lei  et al.  (2026)
+H. Lei, W. Song, H. Zhang, J. Pei, J. Chen, H. Yan, H. Zhao, P. Ding, Z. Zhang, L. Huang, D. Wang, Y. Wang, and H. Li
+RoboMemArena: a comprehensive and challenging robotic memory benchmark .
+arXiv preprint arXiv:2605.10921 .
+External Links:   Link
+Cited by:   §1  ,
+§2  .
+Li  et al.  (2026a)
+H. Li, F. Shen, D. Chen, L. Yang, X. Wang, J. Shi, Z. Bing, Z. Liu, and A. Knoll
+ReMem-vla: empowering vision-language-action model with memory via dual-level recurrent queries .
+arXiv preprint arXiv:2603.12942 .
+External Links:   Link
+Cited by:   §2  .
+Li  et al.  (2026b)
+P. Li, W. Guo, H. Zhang, T. Cai, X. He, Y. Guo, and H. Xiong
+Spatial memory for out-of-vision manipulation in vision-language-action .
+arXiv preprint arXiv:2605.22283 .
+External Links:   Link
+Cited by:   §2  .
+Lipman  et al.  (2023)
+Y. Lipman, R. T. Q. Chen, H. Ben-Hamu, M. Nickel, and M. Le
+Flow matching for generative modeling .
+In  International Conference on Learning Representations ,
+Cited by:   §1  .
+Liu  et al.  (2026)
+Y. Liu, J. Zhu, Y. Mo, G. Li, X. Cao, J. Jin, Y. Shen, Z. Li, T. Yu, W. Yuan, F. Ding, and I. Lourentzou
+PALM: progress-aware policy learning via affordance reasoning for long-horizon robotic manipulation .
+In  Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) ,
+pp. 28096–28110 .
+Cited by:   §1  ,
+§2  .
+Liu  et al.  (2025)
+Y. Liu, J. Ibn Hamid, A. Xie, Y. Lee, M. Du, and C. Finn
+Bidirectional decoding: improving action chunking via guided test-time sampling .
+In  International Conference on Learning Representations ,
+Cited by:   §2  .
+Mark  et al.  (2026)
+M. S. Mark, M. Attarian, C. Fu, D. Dwibedi, J. Liang, D. Shah, and A. Kumar
+Long-context robot imitation learning by focusing on key history frames .
+In  Proceedings of Robotics: Science and Systems ,
+Sydney, Australia .
+External Links:   Document
+Cited by:   §2  .
+Physical Intelligence  et al.  (2025)
+Physical Intelligence, K. Black, N. Brown, J. Darpinian, K. Dhabalia, D. Driess, A. Esmail, M. Equi, C. Finn, N. Fusai, M. Y. Galliker, D. Ghosh, L. Groom, K. Hausman, B. Ichter, S. Jakubczak, T. Jones, L. Ke, D. LeBlanc, S. Levine, A. Li-Bell, M. Mothukuri, S. Nair, K. Pertsch, A. Z. Ren, L. X. Shi, L. Smith, J. T. Springenberg, K. Stachowicz, J. Tanner, Q. Vuong, H. Walke, A. Walling, H. Wang, L. Yu, and U. Zhilinsky
+π  0.5   \pi_{0.5}   : A vision-language-action model with open-world generalization .
+arXiv preprint arXiv:2504.16054 .
+External Links:   Link
+Cited by:   §1  ,
+§2  ,
+§4.2  .
+Prokhorenkova  et al.  (2018)
+L. Prokhorenkova, G. Gusev, A. Vorobev, A. V. Dorogush, and A. Gulin
+CatBoost: unbiased boosting with categorical features .
+In  Advances in Neural Information Processing Systems ,
+Vol.  31 .
+External Links:   Link
+Cited by:   §4.2  .
+Qiu  et al.  (2026)
+W. Qiu, H. Lei, T. Huang, and R. Ying
+Efficient long-horizon vision-language-action models via static-dynamic disentanglement .
+arXiv preprint arXiv:2602.03983 .
+External Links:   Link
+Cited by:   §1  .
+Shi  et al.  (2026)
+H. Shi, B. Xie, Y. Liu, L. Sun, F. Liu, T. Wang, E. Zhou, H. Fan, X. Zhang, and G. Huang
+MemoryVLA: perceptual-cognitive memory in vision-language-action models for robotic manipulation .
+In  The Fourteenth International Conference on Learning Representations ,
+External Links:   Link
+Cited by:   §1  ,
+§1  ,
+§2  ,
+§3.2  .
+Shi  et al.  (2023)
+L. X. Shi, A. Sharma, T. Z. Zhao, and C. Finn
+Waypoint-based imitation learning for robotic manipulation .
+In  Proceedings of the 7th Conference on Robot Learning ,
+Proceedings of Machine Learning Research , Vol.  229 ,  pp. 2195–2209 .
+External Links:   Link
+Cited by:   §1  .
+Sridhar  et al.  (2026)
+A. Sridhar, J. Pan, S. Sharma, and C. Finn
+MemER: scaling up memory for robot control via experience retrieval .
+In  The Fourteenth International Conference on Learning Representations ,
+External Links:   Link
+Cited by:   §1  ,
+§2  .
+Wang  et al.  (2026)
+Z. Wang, M. Shi, C. Ni, J. Yang, M. Li, Z. Su, T. Lin, and H. Li
+NativeMEM: native memory compression for long-horizon robotic manipulation .
+arXiv preprint arXiv:2607.06678 .
+Cited by:   §1  .
+Yi  et al.  (2026)
+P. Yi, Y. Ma, W. Xu, Y. Hao, S. Gan, W. Li, and S. Zhong
+Critic in the loop: a tri-system vla framework for robust long-horizon manipulation .
+arXiv preprint arXiv:2603.05185 .
+External Links:   Link
+Cited by:   §1  ,
+§2  .
+Zeng  et al.  (2026a)
+M. Zeng, A. Agarwal, A. Bati, B. Lee, S. Ancha, and R. Tedrake
+Revisiting open-loop execution in robotics: toward reactive, higher-performing policies .
+arXiv preprint arXiv:2608.15938 .
+External Links:   Link
+Cited by:   §2  .
+Zeng  et al.  (2026b)
+Y. Zeng, M. Ye, Y. Chen, Y. Shentu, P. Wu, Z. Yan, and Z. Li
+KEMO: event-driven keyframe memory for long-horizon robot manipulation with vla policies .
+arXiv preprint arXiv:2606.23589 .
+External Links:   Link
+Cited by:   §1  ,
+§2  .
+Zhao  et al.  (2023)
+T. Z. Zhao, V. Kumar, S. Levine, and C. Finn
+Learning fine-grained bimanual manipulation with low-cost hardware .
+In  Robotics: Science and Systems ,
+Cited by:   §2  ,
+§3.2  .
+Appendix A  Additional Analysis for RQ1
+This appendix details the experimental setup, evaluation protocol,
+and supporting analyses for Section   4.1  .
+A.1  Experimental setup and reference events
+Tasks and training.
+The single-task screening uses eight MIKASA-Robo-VLA
+tasks  ( Cherepanov et al., 2026b ) :
+RememberColor3-VLA-v0 ,
+ShellGameColorLampTouch-VLA-v0 ,
+ShellGameShuffleColorLampTouch-VLA-v0 ,
+ShellGameShuffleTouch-VLA-v0 ,
+FindImposterShape3-VLA-v0 ,
+InterceptSlow-VLA-v0 ,
+RotateLenientPos-VLA-v0 ,
+and  TakeItBack-VLA-v0 .
+Each policy is trained from scratch on 250 demonstrations
+of a single task.
+A separate policy is trained for each combination of task,
+architecture, and context regime for 150 epochs,
+using training seed 42.
+Table 3 :   Architecture and training settings
+for the single-task policies in RQ1.
+Setting
+Configuration
+Shared settings
+Visual encoder
+NatureCNN, 512-D
+Proprioception encoder
+MLP      7  →  128  →  128   7\rightarrow 128\rightarrow 128
+Context Transformer
+4 layers, 8 attention heads
+Hidden / FFN dimension
+256 / 1024
+Dropout
+0.1
+Optimizer
+AdamW
+Learning rate
+3  ×   10   −  4     3\times 10^{-4}    , cosine decay to      10   −  6    10^{-6}
+Weight decay
+10   −  4    10^{-4}
+Batch size
+4 episodes
+Gradient clipping
+1.0
+Architecture-specific settings
+Training objective
+Masked action MSE (autoregressive)
+Masked velocity MSE (flow matching)
+Flow action head
+2 Transformer layers
+Flow integration
+Heun, 10 steps
+Observations and policy architectures.
+Each observation contains top-view and wrist-camera RGB
+images at     128  ×  128   128\times 128    resolution and a seven-dimensional
+proprioceptive state describing the end-effector pose and
+gripper position.
+The images are scaled to     [  0  ,  1  ]   [0,1]   , concatenated along the
+channel dimension, and encoded by NatureCNN.
+Proprioception and action targets are standardized using
+training-set statistics.
+For  RotateLenientPos-VLA-v0 , the policy additionally
+receives the numerical target angle from the task instruction.
+Both architectures use the same visual and proprioceptive
+encoder configurations and context Transformer settings.
+Their shared settings and architecture-specific components
+are summarized in Table   3  .
+Execution and evaluation.
+Both architectures predict action chunks of length     K  =  8   K=8
+and execute one action before replanning (    H  =  1   H=1   ).
+During Flow-Matching evaluation, a fixed Gaussian noise
+tensor is reused across queries within each rollout to
+prevent stochastic resampling from introducing artificial
+plan disagreement.
+For each task and context regime, each policy is evaluated
+on 50 closed-loop episodes.
+Reference keyframes.
+Task-specific simulator events provide the reference
+keyframe labels.
+For a phase transition between observations     b  −  1   b-1    and
+b  b   , we define the reference event window as
+ℐ  e   =   [    b  −  1   ,  b   ]    .   \mathcal{I}_{e}=[b-1,b].
+Both the final observation of the preceding phase and the
+first observation of the following phase are labelled
+as keyframes.
+All remaining observations are labelled as non-keyframes.
+The task-specific reference events are listed in
+Table   5  .
+A.2  Task-specific results
+Table   4   reports the best-performing
+disagreement metric and its Frame ROC-AUC for each task,
+architecture, and context regime.
+Table 4 :
+Best-performing disagreement metrics across the eight
+RQ1 tasks.
+Autoregressive
+Flow Matching
+Task
+Full-context
+Current-only
+Full-context
+Current-only
+RememberColor3
+First NMSE
+0.8480
+Energy distance
+0.8813
+Energy distance
+0.9427
+Huber
+0.9173
+ShellGameColor
+LampTouch
+Causal Z-score
+0.7980
+Gripper disagreement
+0.8335
+Gripper disagreement
+0.9049
+Gripper disagreement
+0.8819
+ShellGameShuffle
+ColorLampTouch
+EMA deviation
+0.5770
+EMA deviation
+0.6170
+EMA deviation
+0.6014
+EMA deviation
+0.6174
+ShellGameShuffle
+Touch
+Causal Z-score
+0.7063
+Relative TV gap
+0.5678
+Causal Z-score
+0.8051
+EMA deviation
+0.7057
+FindImposterShape3
+EMA deviation
+0.7332
+Energy distance
+0.8496
+EMA deviation
+0.7916
+Wasserstein-1
+0.8558
+InterceptSlow
+Translation cosine
+0.7396
+Translation cosine
+0.7301
+Delta-action EMA
+0.7283
+Translation cosine
+0.7561
+RotateLenientPos
+Translation cosine
+0.7303
+Translation cosine
+0.6908
+CUSUM
+0.7650
+CUSUM
+0.7949
+TakeItBack
+Delta-action EMA
+0.5839
+EMA deviation
+0.5858
+Wasserstein-1
+0.6414
+Wasserstein-1
+0.6637
+A.3  Disagreement signals on failed trajectories
+Table 5 :
+Task-specific reference events used in RQ1.
+Task
+Reference events
+RememberColor3
+Cue disappearance and onset of manipulation.
+ShellGameColor
+LampTouch
+Transition from cue presentation to manipulation.
+ShellGameShuffle
+ColorLampTouch
+Transitions from cue presentation to shuffling
+and from shuffling to manipulation.
+ShellGameShuffle
+Touch
+Transitions from cue presentation to shuffling
+and from shuffling to manipulation.
+FindImposter
+Shape3
+Transitions from cue presentation to the empty phase
+and from the empty phase to manipulation.
+InterceptSlow
+Transition from approach to deflection,
+onset of goal-directed deflection,
+and the success-achieving action.
+RotateLenient
+Pos
+Transition from approach to rotation.
+TakeItBack
+Transition from outbound motion to return motion.
+Execution and evaluation.
+We examine whether disagreement remains informative when the policy fails to complete the task.
+Frame ROC-AUC is computed separately for successful and
+failed trajectories within each task and summarized
+by the median across tasks.
+For autoregressive policies, median Causal Z-score
+ROC-AUC on failed trajectories is     0.700  /  0.691   0.700/0.691
+under full-context/current-only conditioning,
+compared with     0.589  /  0.538   0.589/0.538    on successful trajectories.
+For Flow-Matching policies, Wasserstein-1 reaches
+0.732  /  0.741   0.732/0.741    on failed trajectories,
+compared with     0.670  /  0.640   0.670/0.640    on successful trajectories.
+The direction of the difference depends on the measure,
+with Flow-Matching EMA deviation performing better
+on successful trajectories.
+Overall, task failure does not lead to a systematic
+decrease in disagreement-based keyframe discrimination.
+A.4  Correlation structure and metric redundancy
+We assess whether different disagreement measures provide
+similar information by computing pairwise Spearman correlations
+between their within-episode score sequences.
+Correlations are summarized within each task and aggregated
+with equal weight across the eight tasks.
+Figure   7   shows the resulting matrices
+for both architectures and context regimes.
+Figure 7 :
+Correlation structure of the disagreement measures.
+Pairwise within-episode Spearman correlations are aggregated
+across eight tasks with equal task weights.
+The top row shows autoregressive policies and the bottom row
+shows Flow-Matching policies.
+Columns correspond to full-context and current-only conditioning.
+The matrices reveal substantial redundancy among magnitude-based
+measures, including several point-wise, cumulative, and
+distributional metrics.
+Causal Z-score and EMA deviation are less strongly correlated
+with many of these measures, suggesting that their temporal
+normalization captures a different aspect of plan revision.
+The overall correlation structure remains similar across
+context regimes.
+Spearman correlations between the corresponding off-diagonal
+entries of the full-context and current-only matrices are
+0.9647  0.9647    for autoregressive policies and    0.9742  0.9742    for
+Flow-Matching policies.
+These analyses motivate using a compact feature set
+rather than retaining many closely correlated variants.
+Appendix B  Additional Analysis for RQ2
+This appendix details the experimental protocol and extended results
+for Section   4.2  .
+B.1  Experimental setup and evaluation
+Tasks and policy fine-tuning.
+Both OpenVLA-OFT and     π  0.5   \pi_{0.5}    are fine-tuned on the same
+19 MIKASA-Robo-VLA
+tasks  ( Cherepanov et al., 2026b ) :
+FindImposterColor3-VLA-v0 ,
+FindImposterColor5-VLA-v0 ,
+FindImposterColor9-VLA-v0 ,
+FindImposterShape3-VLA-v0 ,
+FindImposterShape5-VLA-v0 ,
+FindImposterShape9-VLA-v0 ,
+FindImposterShapeAndColor3x2-VLA-v0 ,
+FindImposterShapeAndColor3x3-VLA-v0 ,
+FindImposterShapeAndColor5x3-VLA-v0 ,
+RememberColor3-VLA-v0 ,
+RememberColor5-VLA-v0 ,
+RememberColor9-VLA-v0 ,
+RememberShape3-VLA-v0 ,
+RememberShape5-VLA-v0 ,
+RememberShape9-VLA-v0 ,
+RememberShapeAndColor3x2-VLA-v0 ,
+RememberShapeAndColor3x3-VLA-v0 ,
+RememberShapeAndColor5x3-VLA-v0 ,
+and  TakeItBack-VLA-v0 .
+Detector training and evaluation.
+To train and evaluate the keyframe detectors, we collect
+50 closed-loop episodes for each task, policy, and execution
+regime. The resulting trajectories are divided at the episode
+level into approximately 70% training, 10% validation,
+and 20% test subsets, keeping each episode intact and
+preserving the temporal order of its observations. Detectors are trained independently for each policy
+and execution regime, with decision thresholds selected
+by maximizing F1 on the validation episodes.
+B.2  Within-episode detection profiles
+Figure   8   shows selected disagreement
+features and detector outputs during
+RememberColor5  episodes for both policies under
+RH1 and EXEC4.
+(a)    OpenVLA-OFT, RH1
+(b)    OpenVLA-OFT, EXEC4
+(c)       π  0.5   \pi_{0.5}    , RH1
+(d)       π  0.5   \pi_{0.5}    , EXEC4
+Figure 8 :
+Within-episode keyframe detection on
+RememberColor5 .
+Each panel shows example observations, selected disagreement
+features standardized within the episode, and keyframe
+probabilities predicted by XGBoost, CatBoost, and LSTM. Horizontal dotted lines indicate detector decision thresholds.
+Appendix C  Complete Registry of Disagreement Metrics
+We use the aligned action sequences      U  q   ,   V  q    U_{q},V_{q}    introduced in
+Eq. (  1  ), omitting the query index below.
+Their length is     L  =   K  −  H    L=K-H   , and each action has    d  d    components.
+A tilde denotes standardization using training-action statistics:
+U  ~    i  ​  j    =     U   i  ​  j    −   μ  j  a     σ  j  a     ,     V  ~    i  ​  j    =     V   i  ​  j    −   μ  j  a     σ  j  a      .   \widetilde{U}_{ij}=\frac{U_{ij}-\mu_{j}^{a}}{\sigma_{j}^{a}},\qquad\widetilde{V}_{ij}=\frac{V_{ij}-\mu_{j}^{a}}{\sigma_{j}^{a}}.
+We write
+E  =   U  −  V    ,    E  ~   =    U  ~   −   V  ~      .   E=U-V,\qquad\widetilde{E}=\widetilde{U}-\widetilde{V}.
+Indices are      i  =  0   ,  …  ,   L  −  1    i=0,\ldots,L-1    and      j  =  1   ,  …  ,  d   j=1,\ldots,d   .
+The temporal features use the first-action change
+s  q   =    ‖    a    q  −  1   ,  0    −   a   q  ,  0     ‖   2    .   s_{q}=\|a_{q-1,0}-a_{q,0}\|_{2}.
+We denote the mean and standard deviation of preceding values
+of this signal by      μ   q  −  1   s   ,   σ   q  −  1   s    \mu_{q-1}^{s},\sigma_{q-1}^{s}   .
+Table 6:   Definitions of the 35 disagreement signals.
+Colored names mark the nine action-derived features used in RQ2 and RePlanMem-VLA.
+#
+Metric
+Definition
+1
+overlap_l2_mean
+1  L    ​     ∑  i      ‖   E  i   ‖   2     \displaystyle\frac{1}{L}\sum_{i}\|E_{i}\|_{2}
+2
+bid_lb
+∑  i      0.5  i   ​    ‖   E  i   ‖   2     \displaystyle\sum_{i}0.5^{i}\|E_{i}\|_{2}
+3
+causal_z_exec_l2
+s  q   −   μ   q  −  1   s      σ   q  −  1   s   +   ϵ  t      \displaystyle\frac{s_{q}-\mu_{q-1}^{s}}{\sigma_{q-1}^{s}+\epsilon_{t}}
+4
+cusum_exec_l2
+c  q  CUSUM   =   max  ⁡   (  CLOSE        OPEN   0  ,     c   q  −  1   CUSUM   +   s  q    −   μ  0  s   −   κ  ​   σ  0  s      )      \displaystyle\begin{aligned} c_{q}^{\mathrm{CUSUM}}=\max\bigl(&0,\,c_{q-1}^{\mathrm{CUSUM}}+s_{q}-\mu_{0}^{s}-\kappa\sigma_{0}^{s}\bigr)\end{aligned}
+5
+ema_dev_exec_l2
+s  q   −    s  ¯    q  −  1     ,            s  ¯   q   =    α  ​   s  q    +    (   1  −  α   )   ​    s  ¯    q  −  1          \displaystyle\begin{aligned} &s_{q}-\bar{s}_{q-1},\\
+&\bar{s}_{q}=\alpha s_{q}+(1-\alpha)\bar{s}_{q-1}\end{aligned}
+6
+a7_cos_trans
+1   |  ℐ  |     ​     ∑   i  ∈  ℐ      c  ⁡   (   u  i   ,   v  i   )      \displaystyle\frac{1}{|\mathcal{I}|}\sum_{i\in\mathcal{I}}c(u_{i},v_{i})
+7
+a14_trans
+1  L    ​     ∑  i        ‖    t  i  U   −   t  i  V    ‖   2    σ  p       \displaystyle\frac{1}{L}\sum_{i}\frac{\|t_{i}^{U}-t_{i}^{V}\|_{2}}{\sigma_{p}}
+8
+a15_rot
+1  L    ​     ∑  i        d   SO  ⁡   (  3  )     ​   (   ℛ  i  U   ,   ℛ  i  V   )     σ  R       \displaystyle\frac{1}{L}\sum_{i}\frac{d_{\mathrm{SO}(3)}(\mathcal{R}_{i}^{U},\mathcal{R}_{i}^{V})}{\sigma_{R}}
+9
+a16_grip
+1  L    ​     ∑  i       |    g  i  U   −   g  i  V    |    s  g       \displaystyle\frac{1}{L}\sum_{i}\frac{|g_{i}^{U}-g_{i}^{V}|}{s_{g}}
+10
+first_nmse
+1  d    ​     ∑  j      E  ~    0  ​  j    2     \displaystyle\frac{1}{d}\sum_{j}\widetilde{E}_{0j}^{\,2}
+11
+overlap_nl1
+1   L  ​  d     ​     ∑   i  ,  j      |    E  ~    i  ​  j    |     \displaystyle\frac{1}{Ld}\sum_{i,j}|\widetilde{E}_{ij}|
+12
+overlap_huber
+1   L  ​  d     ​     ∑   i  ,  j       h  1   ​   (    E  ~    i  ​  j    )      \displaystyle\frac{1}{Ld}\sum_{i,j}h_{1}(\widetilde{E}_{ij})
+13
+overlap_median_abs
+median   i  ,  j    ⁡   |    E  ~    i  ​  j    |    \displaystyle\operatorname{median}_{i,j}|\widetilde{E}_{ij}|
+14
+overlap_p90_abs
+Quantile  0.90   ⁡   (    {   |    E  ~    i  ​  j    |   }    i  ,  j    )    \displaystyle\operatorname{Quantile}_{0.90}\bigl(\{|\widetilde{E}_{ij}|\}_{i,j}\bigr)
+15
+overlap_max_abs
+max   i  ,  j    ⁡   |    E  ~    i  ​  j    |    \displaystyle\max_{i,j}|\widetilde{E}_{ij}|
+16
+overlap_max_step_l2
+max  i   ⁡    ‖    E  ~   i   ‖   2    \displaystyle\max_{i}\|\widetilde{E}_{i}\|_{2}
+17
+relative_frobenius
+‖   E  ~   ‖   F      1  2   ​   (     ‖   U  ~   ‖   F   +    ‖   V  ~   ‖   F    )    +  ϵ     \displaystyle\frac{\|\widetilde{E}\|_{F}}{\tfrac{1}{2}(\|\widetilde{U}\|_{F}+\|\widetilde{V}\|_{F})+\epsilon}
+18
+abs_log_norm_ratio
+|   log  ⁡       ‖   U  ~   ‖   F   +  ϵ      ‖   V  ~   ‖   F   +  ϵ      |   \displaystyle\left|\log\frac{\|\widetilde{U}\|_{F}+\epsilon}{\|\widetilde{V}\|_{F}+\epsilon}\right|
+19
+diag_mahalanobis_rms
+1  L    ​     ∑  i        1  d    ​     ∑  j      (     E   i  ​  j     σ  j  cal     )   2        \displaystyle\frac{1}{L}\sum_{i}\sqrt{\frac{1}{d}\sum_{j}\left(\frac{E_{ij}}{\sigma_{j}^{\mathrm{cal}}}\right)^{2}}
+20
+full_mahalanobis_mean
+1  L    ​     ∑  i       E  i  ⊤   ​   Σ  a  †   ​   E  i       \displaystyle\frac{1}{L}\sum_{i}\sqrt{E_{i}^{\top}\Sigma_{a}^{\dagger}E_{i}}
+21
+delta_action_acc_adapted
+A  q  ACC   =     1   L  ​  d     ​     ∑   i  ,  j        |   E   i  ​  j    |    r  j        \displaystyle A_{q}^{\mathrm{ACC}}=\frac{1}{Ld}\sum_{i,j}\frac{|E_{ij}|}{r_{j}}
+22
+delta_action_acc_ema09
+A  ¯   q  ACC   =    0.9  ​    A  ¯    q  −  1   ACC    +   0.1  ​   A  q  ACC      \displaystyle\bar{A}_{q}^{\mathrm{ACC}}=0.9\bar{A}_{q-1}^{\mathrm{ACC}}+0.1A_{q}^{\mathrm{ACC}}
+23
+pearson_shape_distance
+1  −   corr  ⁡   (   vec  ⁡   U  ~    ,   vec  ⁡   V  ~    )     \displaystyle 1-\operatorname{corr}\bigl(\operatorname{vec}\widetilde{U},\operatorname{vec}\widetilde{V}\bigr)
+24
+plan_energy_kl_previous_to_current
+KL   (  ρ  ∥  η  )   =    ∑  n     ρ  n   log     ρ  n    η  n      \displaystyle\operatorname{KL}(\rho\|\eta)=\sum_{n}\rho_{n}\log\frac{\rho_{n}}{\eta_{n}}
+25
+plan_energy_symmetric_kl
+1  2     [  KL   (  ρ  ∥  η  )   +  KL   (  η  ∥  ρ  )   ]    \displaystyle\frac{1}{2}\left[\operatorname{KL}(\rho\|\eta)+\operatorname{KL}(\eta\|\rho)\right]
+26
+plan_energy_js
+1  2    KL  (  ρ  ∥  ω  )  +    1  2    KL  (  η  ∥  ω  )  ,          ω  =     1  2    ​   (   ρ  +  η   )        \displaystyle\begin{aligned} &\frac{1}{2}\operatorname{KL}(\rho\|\omega)+\frac{1}{2}\operatorname{KL}(\eta\|\omega),\\
+&\omega=\frac{1}{2}(\rho+\eta)\end{aligned}
+27
+sign_flip_fraction
+1   L  ​  d       ∑   i  ,  j     𝟏   [   U   i  ​  j     V   i  ​  j    <  0  ]    \displaystyle\frac{1}{Ld}\sum_{i,j}\mathbf{1}[U_{ij}V_{ij}<0]
+28
+first_difference_nmse
+1    (   L  −  1   )   ​  d     ​     ∑   i  =  0    L  −  2        ∑  j      (    Δ  ​    U  ~    i  ​  j     −   Δ  ​    V  ~    i  ​  j      )   2      \displaystyle\frac{1}{(L-1)d}\sum_{i=0}^{L-2}\sum_{j}(\Delta\widetilde{U}_{ij}-\Delta\widetilde{V}_{ij})^{2}
+29
+second_difference_nmse
+1    (   L  −  2   )   ​  d     ​     ∑   i  =  0    L  −  3        ∑  j      (     Δ  2   ​    U  ~    i  ​  j     −    Δ  2   ​    V  ~    i  ​  j      )   2      \displaystyle\frac{1}{(L-2)d}\sum_{i=0}^{L-3}\sum_{j}(\Delta^{2}\widetilde{U}_{ij}-\Delta^{2}\widetilde{V}_{ij})^{2}
+30
+relative_total_variation_gap
+|    TV  ⁡   (   U  ~   )    −   TV  ⁡   (   V  ~   )     |      1  2   ​   [    TV  ⁡   (   U  ~   )    +   TV  ⁡   (   V  ~   )     ]    +  ϵ     \displaystyle\frac{|\operatorname{TV}(\widetilde{U})-\operatorname{TV}(\widetilde{V})|}{\tfrac{1}{2}[\operatorname{TV}(\widetilde{U})+\operatorname{TV}(\widetilde{V})]+\epsilon}
+31
+cumulative_mean_drift
+1  L    ​     ∑   i  =  0    L  −  1       ‖     ∑   r  =  0   i      E  ~   r    ‖   2     \displaystyle\frac{1}{L}\sum_{i=0}^{L-1}\left\|\sum_{r=0}^{i}\widetilde{E}_{r}\right\|_{2}
+32
+cumulative_endpoint_drift
+‖     ∑  i      E  ~   i    ‖   2   \displaystyle\left\|\sum_{i}\widetilde{E}_{i}\right\|_{2}
+33
+overlap_energy_distance
+[       2   L  2     ​     ∑   i  ,  r       ‖     U  ~   i   −    V  ~   r    ‖   2         −       1   L  2     ​     ∑   i  ,  r       ‖     U  ~   i   −    U  ~   r    ‖   2         −       1   L  2      ∑       i  ,  r    ∥   V  ~      i   −   V  ~      r   ∥     2   ]     +       \displaystyle\begin{aligned} \Biggl[&\frac{2}{L^{2}}\sum_{i,r}\|\widetilde{U}_{i}-\widetilde{V}_{r}\|_{2}\\
+-&\frac{1}{L^{2}}\sum_{i,r}\|\widetilde{U}_{i}-\widetilde{U}_{r}\|_{2}\\
+-&\frac{1}{L^{2}}\sum_{i,r}\|\widetilde{V}_{i}-\widetilde{V}_{r}\|_{2}\Biggr]_{+}\end{aligned}
+34
+mean_dimension_wasserstein1
+1   L  ​  d     ​     ∑  j       ∑  i     |     U  ~     (  i  )   ​  j    −    V  ~     (  i  )   ​  j     |      \displaystyle\frac{1}{Ld}\sum_{j}\sum_{i}|\widetilde{U}_{(i)j}-\widetilde{V}_{(i)j}|
+35
+overlap_rbf_mmd2_multiscale
+[     1   |  ℬ  |     ​     ∑   b  ∈  ℬ       MMD  b  2   ⁡   (   U  ~   ,   V  ~   )      ]   +   \displaystyle\left[\frac{1}{|\mathcal{B}|}\sum_{b\in\mathcal{B}}\operatorname{MMD}_{b}^{2}(\widetilde{U},\widetilde{V})\right]_{+}
+Auxiliary definitions.
+Here     r  j   r_{j}    and     σ  j  cal   \sigma_{j}^{\mathrm{cal}}    are the
+stabilized training-action ranges and standard deviations
+used for metric calibration.
+The matrix     Σ  a  †   \Sigma_{a}^{\dagger}    is the pseudoinverse
+of the regularized training-action covariance matrix.
+The Huber penalty is
+h  1   ​   (  x  )    =   {         1  2    ​   x  2    ,        |  x  |   ≤  1   ,          |  x  |   −    1  2     ,        |  x  |   >  1   .        h_{1}(x)=\begin{cases}\tfrac{1}{2}x^{2},&|x|\leq 1,\\
+|x|-\tfrac{1}{2},&|x|>1.\end{cases}
+For a sequence    Z  Z    of length    L  L   , temporal differences
+and total variation are
+Δ  ​   Z  i    \displaystyle\Delta Z_{i}
+=    Z   i  +  1    −   Z  i     ,   \displaystyle=Z_{i+1}-Z_{i},
+i  =  0   ,  …  ,   L  −  2    ,   \displaystyle i=0,\ldots,L-2,
+Δ  2   ​   Z  i    \displaystyle\Delta^{2}Z_{i}
+=     Z   i  +  2    −   2  ​   Z   i  +  1      +   Z  i     ,   \displaystyle=Z_{i+2}-2Z_{i+1}+Z_{i},
+i  =  0   ,  …  ,   L  −  3    ,   \displaystyle i=0,\ldots,L-3,
+TV  ⁡   (  Z  )    \displaystyle\operatorname{TV}(Z)
+=     ∑   i  =  0    L  −  2       ‖    Z   i  +  1    −   Z  i    ‖   2     .   \displaystyle=\sum_{i=0}^{L-2}\|Z_{i+1}-Z_{i}\|_{2}.
+The notation       [  x  ]   +   =   max  ⁡   (  0  ,  x  )     [x]_{+}=\max(0,x)    denotes nonnegative clipping.
+Plan-energy and distributional measures.
+The plan-energy distributions are
+ρ  n   =     |    (   vec  ⁡   U  ~    )   n   |   +   ϵ  t      ∑  m    (    |    (   vec  ⁡   U  ~    )   m   |   +   ϵ  t    )      ,    η  n   =     |    (   vec  ⁡   V  ~    )   n   |   +   ϵ  t      ∑  m    (    |    (   vec  ⁡   V  ~    )   m   |   +   ϵ  t    )       .   \rho_{n}=\frac{|(\operatorname{vec}\widetilde{U})_{n}|+\epsilon_{t}}{\sum_{m}\bigl(|(\operatorname{vec}\widetilde{U})_{m}|+\epsilon_{t}\bigr)},\qquad\eta_{n}=\frac{|(\operatorname{vec}\widetilde{V})_{n}|+\epsilon_{t}}{\sum_{m}\bigl(|(\operatorname{vec}\widetilde{V})_{m}|+\epsilon_{t}\bigr)}.
+For Wasserstein-1, parenthesized indices denote independently
+sorted values within each action component.
+The multiscale MMD uses     ℬ  =   {   0.5  ,  1  ,  2   }    \mathcal{B}=\{0.5,1,2\}   :
+MMD  b  2   ⁡   (  X  ,  Y  )    =    1   L  2    ​    ∑   i  ,  r     [      k  b   ​   (   X  i   ,   X  r   )    +    k  b   ​   (   Y  i   ,   Y  r   )     −   2  ​   k  b   ​   (   X  i   ,   Y  r   )     ]      ,   \operatorname{MMD}_{b}^{2}(X,Y)=\frac{1}{L^{2}}\sum_{i,r}\left[k_{b}(X_{i},X_{r})+k_{b}(Y_{i},Y_{r})-2k_{b}(X_{i},Y_{r})\right],
+where
+k  b   ​   (  x  ,  y  )    =    exp   ⁡   (   −     ‖   x  −  y   ‖   2  2    2  ​   b  2      )     .   k_{b}(x,y)=\exp\!\left(-\frac{\|x-y\|_{2}^{2}}{2b^{2}}\right).
+The within-sequence sums include diagonal terms.
+Action-component measures.
+The vectors      u  i   ,   v  i    u_{i},v_{i}    are the translation components of
+U  i   ,   V  i    U_{i},V_{i}   . Their cosine distance is
+c  ⁡   (  u  ,  v  )    =   1  −     u  ⊤   ​  v     (     ‖  u  ‖   2   +  ϵ   )   ​   (     ‖  v  ‖   2   +  ϵ   )       .   c(u,v)=1-\frac{u^{\top}v}{(\|u\|_{2}+\epsilon)(\|v\|_{2}+\epsilon)}.
+Pairs with both vectors below the translation dead-zone
+threshold have distance zero.
+Pairs with only one vector below the threshold are excluded,
+and    ℐ  \mathcal{I}    denotes the remaining positions.
+The quantities      t  i  U   ,   t  i  V    t_{i}^{U},t_{i}^{V}    and
+ℛ  i  U   ,   ℛ  i  V    \mathcal{R}_{i}^{U},\mathcal{R}_{i}^{V}    are
+controller-preprocessed translation increments and rotation
+matrices. The quantities      g  i  U   ,   g  i  V    g_{i}^{U},g_{i}^{V}    are gripper commands.
+Their calibration scales are      σ  p   ,   σ  R   ,   s  g    \sigma_{p},\sigma_{R},s_{g}   .
+Rotation disagreement uses
+d   SO  ⁡   (  3  )     ​   (  ℛ  ,  𝒮  )    =    arccos   ⁡   (    clip   [    −  1   ,  1   ]    ⁡     tr  ⁡   (    ℛ  ⊤   ​  𝒮   )    −  1   2    )     .   d_{\mathrm{SO}(3)}(\mathcal{R},\mathcal{S})=\arccos\!\left(\operatorname{clip}_{[-1,1]}\frac{\operatorname{tr}(\mathcal{R}^{\top}\mathcal{S})-1}{2}\right).
+Temporal measures.
+For the single-task screening, EMA deviation uses
+α  =  0.3   \alpha=0.3   .
+CUSUM uses     κ  =  0.5   \kappa=0.5   , with reference mean
+μ  0  s   \mu_{0}^{s}    and stabilized standard deviation
+σ  0  s   \sigma_{0}^{s}    computed from the first five finite
+values of     s  q   s_{q}   .
+The range-normalized EMA is initialized with its first
+finite     A  q  ACC   A_{q}^{\mathrm{ACC}}   .
+These metric definitions use
+ϵ  =   10   −  12     \epsilon=10^{-12}    and      ϵ  t   =   10   −  8     \epsilon_{t}=10^{-8}   .
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue"  (
+)  button, located in the page header.
+Tip:  You can select the relevant text first, to include it in your report.
+Our team has already identified  the following issues . We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a  list of packages that need conversion , and welcome  developer contributions .
+We gratefully acknowledge support from
+our  major funders ,
+member institutions   ,    ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status  (opens in new tab)
+Major funding support from

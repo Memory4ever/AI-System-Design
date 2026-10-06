@@ -1,0 +1,2308 @@
+TileDRAM: Compiler-Controlled Tile-to-DRAM Layouts for 3D DRAM GPGPUs
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract.
+1  Introduction
+2  Background and Motivation
+2.1  3D DRAM and the CU-local Architecture
+2.2  MoE FFNs Present Structured Operand-Tile Streams
+2.3  Stable Specialization Granularity in MoE FFNs
+3  Overview
+4  Tile-to-DRAM Linear Layouts
+4.1  Tile-to-DRAM Linear Layout Object
+4.2  Ordered Row-Buffer Semantics and Row-Reuse Kernel Reduction
+4.3  Layout Synthesis and Selection
+5  Compiler and Runtime Realization
+5.1  Semantic Extraction and Offline Template Construction
+Programming interface.
+Semantic extraction.
+5.2  Template Binding and Address Lowering
+Tile binding ( BIND )
+Address lowering ( APPLY )
+5.3  Runtime Replay and Simulator Execution
+6  Evaluation
+6.1  Experimental Setup
+Simulation and replay protocol.
+6.2  RQ1: Row-Buffer Cost of Conventional DRAM Placement
+6.3  RQ2: Row-Buffer Locality and Performance
+6.4  RQ3: Retargeting Across 3D DRAM Organizations
+6.5  RQ4: Cost of Layout Synthesis and Address Transformation
+7  Related Work
+3D DRAM Architectures and Accelerators.
+Compute-Side Tile Layouts and Algebraic Layout Abstractions.
+Controller Mapping and Software-Directed DRAM Placement.
+8  Conclusion and Future Work
+References
+A  Tile-to-DRAM Layout Details
+A.1  Tile-to-DRAM Semantics
+Normalized access sequence.
+Definition 1 (tile-to-DRAM Linear Layout).
+Proposition 1 (compiler composition closure).
+Canonical byte-address placement.
+Lemma 1 (output-translation invariance).
+Definition 2 (ordered row-buffer semantics).
+Definition 3 (mapping consistency).
+Proposition 2 (semantic–mapped-label source-order equivalence).
+Lemma 2 (affine target factorization).
+A.2  Source-Sequence Domain Coverage
+Definition 4 (source-sequence domain coverage).
+A.3  Legal Placement and Allocation Invariance
+Proposition 3 (address uniqueness).
+Definition 5 (legal allocation placement class).
+Corollary 1 (allocation invariance).
+Proposition 4 (periodic binding criterion).
+A.4  Projected Row-Reuse Kernel Reduction
+A.5  Fixed-Domain Solver Interface
+Proposition 5 (coordinate reduction and lifting correctness).
+A.6  Kernel-to-Layout Reconstruction
+Proposition 6 (row-block reconstruction).
+A.7  Certified-Catalog Selection
+Proposition 7 (catalog-relative exactness).
+A.8  Applicability Conditions
+B  Controller-Side DRAM Address Mapping: Configuration Feasibility,
+Construction Scale, and Performance
+B.1  Fixed Global Mappings: Closure and Replay Feasibility
+B.2  Cost of Rotaru-Style Exhaustive Full-Trace Synthesis
+C  Compiler Interface
+Tile-access and binding metadata.
+Address-lowering sequence.
+D  Artifact and Evaluation Configuration
+Software surface.
+Cross-path equivalence artifact.
+Compiler-cost calibration artifact.
+Offline layout-synthesis cost.
+Platform.
+Replay contract.
+Main workload set.
+Memory-system configurations.
+Controller-mapping artifacts.
+Metric definitions.
+Reported metrics.
+License: arXiv.org perpetual non-exclusive license
+arXiv:2610.23767v1 [cs.AR] 16 Oct 2026
+TileDRAM: Compiler-Controlled Tile-to-DRAM Layouts for 3D DRAM GPGPUs
+Guangyuan Xu
+Affiliation:   ShanghaiTech University ,  Shanghai ,  China
+email:   xugy12025@shanghaitech.edu.cn
+,
+Lanxuan Zhang
+Affiliation:   ShanghaiTech University ,  Shanghai ,  China
+email:   zhanglx2024@shanghaitech.edu.cn
+,
+Ziyang Li
+Affiliation:   ShanghaiTech University ,  Shanghai ,  China
+email:   lizy12024@shanghaitech.edu.cn
+,
+Zhaoshi Li
+Affiliation:   MetaX Integrated Circuits (Shanghai) Co., Ltd. ,  Shanghai ,  China
+email:   zhaoshi.li@metax-tech.com
+and
+Yajun Ha
+Affiliation:   ShanghaiTech University ,  Shanghai ,  China
+email:   hayj@shanghaitech.edu.cn
+© none
+Abstract.
+Modern GPU compilers expose rich layout abstractions for mapping tensors to
+threads and on-chip resources, but compute-unit-local (CU-local) 3D DRAM architectures
+lack a corresponding abstraction for specifying how operand-tile data are arranged
+within the DRAM address space.
+Without such an abstraction, conventional placement under the existing DRAM
+address mapping can subject structured tile accesses to severe
+row-buffer conflicts.
+We present  TileDRAM , a compiler–runtime toolchain that introduces
+tile-to-DRAM layouts  as a compiler-visible abstraction for DRAM placement.
+TileDRAM extends the GPU Linear Layout abstraction from compute-side mapping
+targets to DRAM placement coordinates and selects layouts per tile access
+signature, using recurring tile-local access behavior as the specialization unit.
+Since row-buffer locality depends on ordered request
+history, TileDRAM evaluates candidate layouts through their row-buffer behavior under
+fixed DRAM address mappings. Accesses under the selected layouts are realized through ordinary
+address arithmetic, without new address-remapping hardware or ISA support.
+In full-trace replay on Accel-Sim/Ramulator2 across 108 MoE FFN cases,
+TileDRAM reduces the request-weighted row-conflict rate from 75.7% to 15.2%
+and achieves a 1.77   ×  \times    geomean speedup. Retargeting six traces
+to six 3D DRAM organizations yields a 2.20   ×  \times    geomean
+speedup under the same compiler abstraction. On an RTX 3090, address transformation adds 0.17%
+geomean overhead over identity.
+1.  Introduction
+Memory bandwidth is a first-order system constraint in LLM inference. The
+pressure is most acute in feed-forward network (FFN) layers, where dense
+matrix projections dominate data movement at small batch sizes. In mixture-of-experts (MoE)
+models, routing activates only a few experts per token, yet each activated
+expert still performs dense projections over activation and weight tensors
+( Shazeer et al., 2017 ;  Fedus et al., 2022 ) . On GPUs, these projections
+execute as grouped or batched tiled general matrix multiplications (GEMMs),
+whose thread blocks repeatedly fetch operand tiles as they advance along the
+reduction (K) dimension. These structured tile streams make high-bandwidth 3D
+DRAM an attractive substrate.
+Three-panel figure. Panel (a) shows a 3D DRAM stack of DRAM tiers
+joined by mini-TSVs and hybrid bonding to a logic die that hosts one compute
+unit and its local memory controller. Panel (b) abstracts a single CU--stack
+pair: the compute unit, with shared memory, vector core and matrix core,
+reaches a grid of physical banks in the nearest DRAM tier through a local bus
+and its tier-local I/O bus. Panel (c) traces the four elements of a 2x2 tile
+inside a 4x4 tensor in access order, and contrasts two placements: the
+conventional layout splits them across rows, giving one activation followed by
+three precharge-and-activate pairs and thus three row conflicts, while the
+TileDRAM layout keeps them in one row, giving one activation followed by three
+hits.
+Figure 1.   CU-local 3D DRAM architecture and tile-to-DRAM layout.
+(a) Hybrid-bonded DRAM stack and logic die.
+(b) One CU–stack pair connected through a local memory controller.
+(c) Row-buffer behavior under the conventional and TileDRAM layouts,
+showing how layout choice changes the resulting row-buffer locality.
+Three-panel figure. Panel (a) shows a 3D DRAM stack of DRAM tiers
+joined by mini-TSVs and hybrid bonding to a logic die that hosts one compute
+unit and its local memory controller. Panel (b) abstracts a single CU–stack
+pair: the compute unit, with shared memory, vector core and matrix core,
+reaches a grid of physical banks in the nearest DRAM tier through a local bus
+and its tier-local I/O bus. Panel (c) traces the four elements of a 2x2 tile
+inside a 4x4 tensor in access order, and contrasts two placements: the
+conventional layout splits them across rows, giving one activation followed by
+three precharge-and-activate pairs and thus three row conflicts, while the
+TileDRAM layout keeps them in one row, giving one activation followed by three
+hits.
+Prior 3D DRAM systems motivate two representative chip-wide abstractions for GPGPUs:
+using 3D DRAM as the GPU’s global memory  ( Li et al., 2025 ;  Pan et al., 2025 )
+or as a GPU-wide last-level cache (LLC)  ( Loh and Hill, 2012 ;  Zhao et al., 2019 ) .
+Using the stack as GPU global memory routes its bandwidth through the
+package-level endpoint instead of delivering the stack’s high local bandwidth
+directly, while the LLC abstraction
+pays network-on-chip (NoC) area and power to distribute that local bandwidth
+GPU-wide  ( Kahng et al., 2009 ) .
+We instead focus on the compute-unit-local
+(CU-local) organization motivated in Section   2.1  ,
+where each CU accesses its nearby 3D DRAM stack through a software-managed
+address-space aperture served by a local memory controller.
+However, this high-bandwidth local path also subjects operand
+request streams directly to the DRAM controller.
+Without warp-level request coalescing and traffic attenuation through the on-chip caches,
+numerous fine-grained and potentially redundant memory requests can propagate
+to the DRAM subsystem, substantially amplifying contention among concurrent memory requests,
+and ultimately reducing the effective memory bandwidth available to the application.
+DRAM service efficiency therefore depends on the row-buffer locality of
+the resulting row-access sequence.
+This dependence on DRAM placement reveals a missing abstraction between compiler-visible
+tile semantics and DRAM placement: a  tile-to-DRAM layout  that defines
+how operand-tile data are arranged within the DRAM address space.
+Under a fixed DRAM address mapping, the tile-to-DRAM layout determines the
+physical address stream presented to the memory controller and thereby governs
+the row-buffer locality of DRAM accesses (Figure   1  ).
+Across our 108 full-trace MoE FFN cases, conventional placement under the
+fixed DRAM address mapping yields a 75.7% request-weighted
+row-conflict rate: successive accesses to the same row buffer target different
+rows, each paying a precharge and an activation.
+Modern GPU software stacks offer rich tile-level abstractions for compute-side
+layout and data movement, but provide no corresponding abstraction for DRAM
+placement. Triton, CUTLASS, and CuTe provide tiled programming and layout
+abstractions
+( Tillet et al., 2019 ;  , 2026 ;  Cecka, 2026 ) , while cuTile, CuTe DSL,
+TileLang, and Gluon expose tiles directly in their programming abstractions
+( , 2026 ;  , 2026 ;  Wang et al., 2026 ;  , 2026 ;  Hagedorn et al., 2023 ) . Linear Layouts
+provide a formal representation of distributed tensor layouts as linear maps between labeled
+vector spaces over     𝔽  2   \mathbb{F}_{2}     ( Zhou et al., 2026 ) . Across these systems, the
+operand tile is already an established compiler-visible unit for specifying
+layout and data movement. However, these abstractions stop at the compute side:
+they determine how tile data map to threads, registers, and shared memory, but
+not how operand-tile data are arranged within the DRAM address space. DRAM
+placement therefore remains outside the compiler’s tile-level layout
+abstraction.
+Prior work improves row-buffer locality by modifying the DRAM address mapping
+in the memory controller
+( Liu et al., 2018 ;  Rotaru et al., 2025 ;  Zhang et al., 2022 ) . Application-specific
+synthesis can optimize one global mapping for a representative workload trace
+( Rotaru et al., 2025 ) , but that mapping must therefore accommodate
+the heterogeneous access
+patterns within the trace (Section   2.3  ). Independently
+specializing these patterns at the controller side would require maintaining
+multiple mapping contexts and selecting the appropriate context for each
+request  ( Zhang et al., 2022 ) .
+Taken together, these observations yield two key insights.
+First, CU-local integration provides high local bandwidth, but compiler-awareness
+of DRAM placement is necessary to fully utilize the bandwidth. Placement should
+therefore become an explicit compiler-controlled decision.
+Second, we identify recurring tile-local access behavior as a stable unit
+for specializing placement.
+This granularity also aligns naturally with existing GPU
+software abstractions, where operand tiles are already compiler-visible units for
+layout and data movement.
+Guided by these insights, we propose  TileDRAM , a compiler–runtime
+toolchain that introduces tile-to-DRAM layouts as a compiler-visible
+abstraction for compiler-controlled DRAM placement. TileDRAM represents this
+abstraction as  tile-to-DRAM Linear Layouts : reusable     𝔽  2   \mathbb{F}_{2}   -linear maps
+that extend the Linear Layout abstraction from compute-side resources to DRAM
+placement coordinates. Each layout maps logical operand-tile coordinates to
+DRAM placement coordinates.
+Although access behavior varies with operand properties and tile
+configurations, the same ordered tile-local access behavior recurs across many
+tile instances. TileDRAM captures this with a  tile access signature
+that combines tile configuration, operand properties, and the ordered
+tile-local access sequence.
+The tile-to-DRAM mapping itself is stateless,
+with each tile coordinate mapped without reference to access history.
+However, the induced row-buffer behavior is stateful, because whether a request
+hits an open row depends on preceding requests in the ordered tile-local access sequence.
+TileDRAM therefore evaluates candidate layouts by simulating row-buffer state
+transitions under each signature’s ordered access, selecting the layout with
+the fewest row conflicts.
+An offline solver selects reusable layouts for each tile access signature;
+the compiler applies them during address generation, and the runtime supplies each
+tile’s placement without new address-remapping hardware or ISA support.
+Retargeting to
+different 3D DRAM organizations reselects layouts while reusing the same
+abstraction and compilation path.
+Using NVBit traces of Triton/Gluon kernels  ( Tillet et al., 2019 ;  , 2026 ;  Villa et al., 2019 )  replayed with
+Accel-Sim/Ramulator2  ( Khairy et al., 2020 ;  Luo et al., 2024 ) , TileDRAM
+reduces the request-weighted row-conflict rate from 75.7% to 15.2%
+and achieves a 1.77   ×  \times    geomean kernel
+speedup across 108 MoE FFN cases. Across six full-trace streams
+retargeted to six 3D DRAM organizations, TileDRAM reduces row
+conflicts by 79.2% and achieves a 2.20   ×  \times    geomean speedup.
+On an NVIDIA GeForce RTX 3090, address transformation adds 0.17% geomean
+overhead over identity across the 108 measured kernel configurations.
+Together, these results establish compiler-controlled DRAM placement as a new
+optimization dimension: with the DRAM address mapping left unchanged, the
+compiler-selected layout alone accounts for the gain.
+Our main contributions can be summarized as follows:
+•
+We introduce  tile-to-DRAM layouts  as a compiler-visible
+abstraction for DRAM placement, and represent them as  tile-to-DRAM Linear
+Layouts :     𝔽  2   \mathbb{F}_{2}   -linear maps that extend GPU Linear Layouts from compute-side
+resources to DRAM placement coordinates, with tile access signatures as their
+stable specialization unit.
+•
+We characterize the row-buffer locality impact of conventional DRAM
+placement in CU-local 3D DRAM GPGPUs. Across 108 full-trace MoE FFN cases,
+conventional placement yields a 75.7%
+request-weighted row-conflict rate, showing that high local bandwidth
+alone does not ensure efficient DRAM service.
+•
+We present  TileDRAM , a compiler–runtime toolchain that selects a
+layout per tile access signature, requiring neither
+address-remapping hardware nor ISA support.
+•
+We evaluate TileDRAM using a full-trace framework integrating Triton,
+Accel-Sim, and Ramulator2 across 108 MoE FFN cases plus a six-stream,
+six-organization retargeting sweep.
+TileDRAM consistently reduces row conflicts, improves performance,
+and incurs only 0.17% geomean address-transformation overhead on an RTX 3090.
+2.  Background and Motivation
+2.1.  3D DRAM and the CU-local Architecture
+Recent 3D DRAM architectures place multi-tier DRAM structures close to
+logic through dense vertical integration. In the CU-local organization modeled
+here, the vertically integrated DRAM structure is connected to a separate logic
+die through face-to-face Cu–Cu hybrid bonding
+( Li et al., 2025 ;  Niu et al., 2022 ;  Pan et al., 2025 ) . The logic die can host memory
+controllers and near-memory compute in recent designs
+( Li et al., 2025 ;  Nair et al., 2026 ;  Pan et al., 2025 ) . This stacked integration
+provides a high-bandwidth local DRAM–logic path, while a distinct
+package-level endpoint connects the GPU or xPU to the stack
+( Li et al., 2025 ;  Nair et al., 2026 ;  Pan et al., 2025 ) .
+This separation makes the package-level endpoint the bandwidth boundary for
+chip-wide access. Stratum reports 19.01–30.34 TB/s of internal bandwidth
+across its memory tiers  ( Pan et al., 2025 ) . Exporting a stack through an
+HBM-style package interface instead offers roughly 0.8–1.2 TB/s per stack in
+HBM3/HBM3E  ( , 2025 ;  , 2024 ) , making the package-level endpoint
+16–38   ×  \times    narrower than the modeled internal path. This gap motivates
+placing compute near the stack rather than exporting its bandwidth
+( Li et al., 2025 ;  Pan et al., 2025 ) . Recent industrial inference hardware
+provides a concrete instance of this CU-local principle. OpenAI’s Jalapeño
+adopts a memory-sliced architecture in which each compute core slice has a
+local view of its own HBM4 slice and the chip omits a global last-level cache,
+avoiding contention on a unified global memory subsystem
+( Ho et al., 2026 ) . Remote and global memory accesses use a separate
+general-purpose interconnect.
+A transparent GPU-wide LLC offers a contrasting global abstraction: it makes
+the stack a shared last-level cache reachable from every CU. Requests and
+responses therefore traverse a chip-wide NoC and arbitration path. The
+associated routers, buffers, and links consume area and power even when the
+target cache line resides in that stack
+( Kahng et al., 2009 ;  Zhao et al., 2019 ) . More generally, GPU-global-memory
+and GPU-wide-LLC organizations place package-level or chip-wide interconnects
+on the common path to stack-resident data. A CU-local organization instead
+keeps common accesses within a local compute–memory domain, while retaining a
+separate path for remote or global communication.
+Motivated by this locality-oriented organization, we model the CU-local design
+shown in Figure   1  (b), where each CU accesses its nearby 3D
+DRAM stack through a local memory controller, and analyze one CU–stack pair at
+a time. TileDRAM’s architectural boundary is a software-managed CU-local
+aperture in a dedicated device-physical address space. Requests to this
+aperture reach the local controller without virtual-address translation,
+warp-level request coalescing, or caching; all other addresses traverse the
+conventional memory hierarchy. The local stack remains a conventional banked,
+row-buffered DRAM system  ( Mutlu and Moscibroda, 2007 ;  Rixner et al., 2000 ) .
+2.2.  MoE FFNs Present Structured Operand-Tile Streams
+Figure 2.  Routing leaves ragged per-expert row counts     M  e   M_{e}   ; grouped GEMM turns
+each     (  m  ,  n  )   (m,n)    output tile into a CTA work unit, and dynamic scheduling places
+tile instances on resident CTAs of one CU (a persistent CTA may consume
+several). Expanding     t  ∗   t^{*}    shows the separate ordered tile-local access sequences
+for the activation and weight operands presented at the CU-local aperture. Panel (a) traces routed tokens through router/dispatch into
+unequal expert groups marked by their ragged $M_e$ dimension, binds a compact
+grouped-GEMM descriptor, and aligns the resulting $(m,n)$ output tiles in a
+thread-block grid. The grid dynamically assigns tile instances to resident
+CTA blocks on one CU; the selected orange tile $t^*$ is shown in a persistent
+CTA sequence with grid-stride assignment, then expanded into panel (b). Panel (b) shows the same tile's repeated
+$k$-step progression feeding separate activation and weight event rails; both
+rails preserve their local order and terminate independently at the CU-local
+aperture beside the paired 3D DRAM stack.
+MoE FFNs provide a representative workload for studying DRAM placement
+within this CU-local boundary: their inference traffic is structured before it
+becomes a DRAM address stream. Routing activates a small set of expert MLPs for
+each token, and each activated expert
+applies dense matrix projections over activation and expert-weight tensors
+( Shazeer et al., 2017 ;  Fedus et al., 2022 ) . After routing, the active experts
+can be represented as a group of dense GEMM
+problems with runtime per-expert row counts:
+C   m  ​  n    (  e  )    =    ∑  k     A   m  ​  k    (  e  )    ​   B   k  ​  n    (  e  )       ,   0  ≤  m  <   M  e    ,   e  ∈  ℰ    .   C^{(e)}_{mn}=\sum_{k}A^{(e)}_{mk}B^{(e)}_{kn},\qquad 0\leq m<M_{e},\ e\in\mathcal{E}.
+Here,    e  e    identifies an active expert,     M  e   M_{e}    its routed-token count,    n  n    the
+output-feature coordinate, and    k  k    the hidden/reduction coordinate. Each problem
+retains its own     M  e   M_{e}   , the ragged expert dimension left by routing and
+dispatch  ( , 2026 ;  , 2026 ) .
+Grouped GEMM implementations tile each problem’s     (  m  ,  n  )   (m,n)    output space into
+cooperative-thread-array (CTA) work units and advance through    k  k    by
+repeatedly loading activation and
+expert-weight tiles  ( , 2026 ;  , 2026 ) . Each CTA executes
+on one CU at a time and generates, for each operand stream, an ordered
+tile-local access sequence of copy events. Dynamic scheduling assigns tile instances
+to CTAs, and persistent CTAs may process multiple instances. Across the grouped
+workload, these CTA instances jointly cover each expert problem and may reside
+on multiple CUs; Figure   2   follows one representative tile instance and its CTA
+residency on one CU. The resulting kernel presents structured,
+ordered tile-local access sequences at the CU-local boundary defined above
+(Figure   2  ). Runtime scheduling determines how CTAs resident
+on a CU interleave; this cross-tile interleaving remains separate from each
+tile’s local access pattern.
+Under the standard roofline model
+( Williams et al., 2009 ;  , 2026 ) , one 2-byte touch of each
+FP16/BF16 input and output gives the ideal per-expert GEMM intensity:
+(1)
+I  ideal   =      M  ​  K  ​  N     M  ​  K   +   K  ​  N   +   M  ​  N     ​  FLOP   /  B    ,   I_{\mathrm{ideal}}=\frac{MKN}{MK+KN+MN}\ \mathrm{FLOP/B},
+taking     M  =   M  e    M=M_{e}    for one expert problem. For an FFN projection with     K  =  4096   K=4096    and
+N  =  14336   N=14336   , for example,     M  =  64   M=64   –   128  128    gives
+I  ideal   =  62.7   I_{\mathrm{ideal}}=62.7   –   123.1  123.1    FLOP/B; our evaluated suite
+(Section   6.1  ) spans    55.4  55.4   –   123.0  123.0    FLOP/B.
+Using published dense-compute and external-memory specifications for conventional
+GPUs  ( , 2021 ;  , 2022 ;  , 2026 ) ,
+the corresponding GDDR/HBM ridge points are 153–295 FLOP/B.
+Stratum’s reported 19.01–30.34 TB/s aggregate in-stack bandwidth
+( Pan et al., 2025 )  and the H100 whole-GPU peak
+( , 2026 )  together give a local-memory ridge reference of
+32.6–52.0 FLOP/B. This ratio is unchanged under proportional partitioning of
+compute throughput and local-memory bandwidth. The evaluated ideal-intensity
+band therefore lies below conventional GPU ridges but above this local-memory
+reference.
+Figure 3.  The running     2  ×  2   2\times 2    tile makes placement and reuse visible.
+(a) The event strip above the tile is the complete ordered tile-local access sequence; the lower rail
+shows the row-buffer states it drives under the conventional map.
+(b) Instances at different origins share one access signature and use one
+tile-to-DRAM layout. Panel (a) shows four ordered events in a two-by-two tile,
+conventional placement under one fixed DRAM address mapping. The lower trace
+separates the event order from the row-buffer state, showing
+$\mathrm{closed}\rightarrowR0\rightarrowR1\rightarrowR2\rightarrowR3$;
+the last three transitions conflict. Panel (b) shows
+two tensors with different extents along M, each composed of the same tile.
+Selected instances at different origins share the same access signature and are
+shown as identical tile-local event views, revealing one shared tile-to-DRAM layout.
+The local stack nevertheless retains banked, row-buffered DRAM service, so
+realizing the potential of this high-bandwidth path depends on the row sequence
+induced by DRAM placement. Across our 108 full-trace MoE FFN cases, conventional placement yields a 75.7%
+request-weighted row-conflict rate (Section   6.2  ).
+Figure   3  (a) isolates the mechanism at
+tile granularity: a repeated tile-local difference maps to repeated row changes,
+motivating explicit compiler control through a tile-to-DRAM layout.
+2.3.  Stable Specialization Granularity in MoE FFNs
+Application-specific synthesis constructs a workload-tuned controller mapping
+from representative address differences  ( Rotaru et al., 2025 ) , shared
+by all tensor and kernel requests reaching
+the controller. Two properties of MoE FFN traffic, together with the cost of
+exhaustive trace-wide controller-map synthesis, make the complete trace an
+impractical specialization unit.
+Heterogeneity appears within a single GEMM. The    A  A    (lhs) operand advances over
+row and reduction coordinates, the    B  B    (rhs) operand over reduction and
+output-feature coordinates, and both are loaded in the same reduction loop. One
+global mapping must therefore serve two distinct address-difference
+distributions  ( , 2026 ;  , 2026 ) .
+The complete trace also depends on runtime composition: routing sets expert-local
+workloads, while grouped GEMM uses runtime     (  M  ,  N  ,  K  )   (M,N,K)    values to form and schedule
+tiles across problems  ( Hwang et al., 2023 ;  , 2026 ;  , 2026 ) . Expert-local    M  M    changes the number of tile instances,
+their source-interval bases, and the interleaving of requests from different
+tiles  ( , 2026 ;  , 2026 ;  , 2026 ) .
+Trace-wide synthesis is also expensive: because each outer mapping candidate
+induces a separate trace-dependent fixed-domain problem, exhaustively searching
+the evaluated mapping families against the Llama 4 full trace requires on the
+order of     10  14   10^{14}    evaluations of candidate copy events before any fixed-domain
+solve, and every new phase, problem shape, or autotuned tile configuration
+presents a fresh workload-wide target
+(Appendix   B  ).
+By contrast, the tile-local view is invariant. Once addresses are expressed as
+source-interval offsets, tile configuration and operand properties fix one
+ordered tile-local access sequence across instance origins and evaluated    M  M
+values (Figure   3  ). The tile access signature records
+these fields together with the resulting sequence, so TileDRAM selects one
+tile-to-DRAM layout per signature
+(Section   4.1  ).
+3.  Overview
+TileDRAM realizes compiler-controlled DRAM placement as a target-scoped
+PLAN–BIND–APPLY lifecycle (Figure   4  ).
+1         The DRAM configuration fixes the DRAM organization and the
+controller-owned DRAM address mapping.
+2         A tile access signature combines tile configuration, operand
+properties,
+and the ordered tile-local access sequence.
+3         Layout selection evaluates layout candidates over the ordered requests for row reuse and
+ranks legal candidates by fewer row conflicts, greater parallelism, and lower
+address-generation complexity.
+4         The selected layout is combined with the DRAM configuration
+and packaged as a reusable tile-to-DRAM Linear Layout template.
+5          BIND  looks up the  PLAN -produced
+template for each tile access signature.
+6          BIND  then combines the referenced
+template with the tile ID, source interval,
+and the DRAM region to construct a tile descriptor.
+7         During execution,  APPLY  transforms each source
+address using a GF(2)-based address transform, then uses the descriptor’s
+region base to form the backend address.
+8         A new DRAM configuration reruns  PLAN ;
+BIND  and  APPLY  remain unchanged.
+Figure 4.  Overview of TileDRAM’s target-scoped PLAN–BIND–APPLY lifecycle. The
+upper band fixes the DRAM configuration; PLAN combines it with a selected
+layout to package a reusable template;  BIND  and  APPLY  then
+perform tile binding and per-event address transformation under the fixed
+mapping. The figure reads left to right across PLAN, BIND, and APPLY under
+a target contract. PLAN combines the tile access signature (tile
+configuration, operand properties, and the ordered tile-local access sequence) with the target, selects one
+legal layout through ordered requests and row reuse, ranking candidates by row conflicts,
+source-sequence domain coverage, and address-generation complexity, combines it
+with the DRAM configuration, and packages the result as a reusable template.
+BIND looks up the PLAN-produced template for each tile access signature and
+combines it with the tile ID, source interval, and the DRAM region to form a tile
+descriptor. APPLY
+shows GF(2)-based address transformation from an asynchronous-copy source
+address to a backend address. The transformed address is combined with the
+region base to form the backend address. A new DRAM configuration returns
+to PLAN to reselect the layout; BIND and APPLY retain the same interfaces.
+4.  Tile-to-DRAM Linear Layouts
+This section develops tile-to-DRAM Linear Layouts as an     𝔽  2   \mathbb{F}_{2}   -linear
+representation of compiler-controlled DRAM placement. For each tile access
+signature, we formalize how a
+candidate layout and the signature’s ordered tile-local access sequence jointly determine
+row-buffer behavior. TileDRAM formulates layout selection as a row-locality
+optimization subject to the target DRAM address mapping and placement constraints.
+Each admitted signature yields a reusable tile-to-DRAM layout template for the target
+contract, used to bind logical tiles to concrete DRAM regions.
+4.1.  Tile-to-DRAM Linear Layout Object
+A tile-to-DRAM Linear Layout maps each layout unit to a row-buffer domain, a
+row within that domain, and a within-row position. We call the hardware unit
+that independently holds one open row a  row-buffer domain , or simply a
+domain; in the evaluated 3D organization, a domain is one (tier, bank) pair,
+but the construction needs only whatever unit the target tracks independently.
+TileDRAM reuses the labeled     𝔽  2   \mathbb{F}_{2}    algebra of GPU Linear Layouts for a separate
+logical-tile-to-DRAM placement map  ( Zhou et al., 2026 ) . Triton distributed
+layouts map hardware-resource coordinates to logical tensor coordinates;
+TileDRAM maps normalized tile coordinates to DRAM placement coordinates.
+Each recorded access carries a source address     s  i   s_{i}    in the global space.
+Let    A  A    denote the source-interval base and    g  g    the granularity of one access.
+Normalization extracts the layout-unit index
+ℓ  i   =   ⌊    (    s  i   −  A   )   /  g   ⌋    \ell_{i}=\lfloor(s_{i}-A)/g\rfloor    and within-unit byte offset
+δ  i   =    (    s  i   −  A   )   mod  g    \delta_{i}=(s_{i}-A)\bmod g   . Writing      r  i   ∈   𝔽  2  n    r_{i}\in\mathbb{F}_{2}^{n}    for the     𝔽  2   \mathbb{F}_{2}    encoding of
+ℓ  i   \ell_{i}   ,
+a reusable  tile-to-DRAM Linear Layout  is the strictly linear map
+(2)
+[      p  i        d  i        z  i      ]   =    W  sem   ​   r  i    =    [      W  C        W  D        W  R      ]   ​   r  i     ,    W  sem   ∈   𝔽  2   m  ×  n      .   \begin{bmatrix}p_{i}\\
+d_{i}\\
+z_{i}\end{bmatrix}=W_{\mathrm{sem}}r_{i}=\begin{bmatrix}W_{C}\\
+W_{D}\\
+W_{R}\end{bmatrix}r_{i},\qquad W_{\mathrm{sem}}\in\mathbb{F}_{2}^{m\times n}.
+The     W  D   W_{D}    slice determines the row-buffer domain,     W  R   W_{R}    the row within that
+domain, and     W  C   W_{C}    the within-row position of the layout unit.
+Equal     W  D   W_{D}    images therefore share a domain, while equal     (   W  D   ,   W  R   )   (W_{D},W_{R})    images
+target the same row. The domain’s current open-row state determines whether a
+request is a hit, a conflict, or an opening miss. This expresses row locality in
+the same labeled-map algebra as compute-side layouts.
+TileDRAM selects one layout per  tile access signature , written
+θ  =   (  κ  ,  ρ  ,  χ  )    \theta=(\kappa,\rho,\chi)   . Here,    κ  \kappa    denotes the tile configuration,
+comprising tile shape     (   B  M   ,   B  N   ,   B  K   )   (B_{M},B_{N},B_{K})   , pipeline-stage count
+( num_stages ), and warp count ( num_warps );    ρ  \rho    denotes
+the operand-property tuple, comprising operand position ( lhs  or
+rhs ), data type ( dtype ), source-stride pattern
+( stride ), and source layout (row-major or
+column-major); and    χ  \chi    denotes the ordered tile-local access sequence. A
+representative
+execution yields the normalized source sequence     S  θ   S_{\theta}    for this signature,
+which is used for layout selection.
+Each live layout-unit index     ℓ  i   \ell_{i}    is injectively encoded as its
+coordinate     r  i   r_{i}   ; the resulting
+sequence      S  θ   =   (   r  0   ,  …  ,   r   N  −  1    )    S_{\theta}=(r_{0},\ldots,r_{N-1})    is the ordered input to layout
+selection. We evaluate this construction on tiled GEMM under the conditions stated in
+Appendix   A.8  .
+Figure   5   shows the single-row-buffer projection of the
+Figure   3   stream under a tile-to-DRAM Linear Layout.
+Figure 5.  In a single-row-buffer projection of the
+Figure   3   stream, a tile-to-DRAM Linear Layout places
+e  0   e_{0}   –    e  3   e_{3}    in row     R  0   R_{0}    at columns     C  0   C_{0}   –    C  3   C_{3}    under the same fixed address
+mapping, turning the conventional three conflicts into three row hits. The same ordered two-by-two tile and TileDRAM layout feed two
+address-field streams through one fixed address mapping. The compact card uses the
+tile access signature as the lookup key and shows its selected template; the
+representative field transform maps $01|00 \mapsto00|01$. In the original stream, the
+left row-bit field changes as 00, 01, 10, 11 while the right column-bit field
+stays 00; in the layout stream, the left field stays 00 while the right field
+changes as 00, 01, 10, 11. The lower comparison uses one row-buffer
+organization: conventional placement visits rows R0, R1, R2, and R3, while
+TileDRAM placement keeps all four events in row R0 at C0, C1, C2, and C3.
+The formal treatment below retains the target’s independent row-buffer domains
+and their separate open-row states. The map in
+Eq. (  2  ) defines a static DRAM placement, whereas
+row-buffer outcomes depend on request order. TileDRAM therefore augments the
+layout with ordered row-buffer state semantics.
+4.2.  Ordered Row-Buffer Semantics and Row-Reuse Kernel Reduction
+Immediately before request    i  i   , each domain either holds one open row or is
+closed; write      σ  i   ​   (  d  )    \sigma_{i}(d)    for that state, with    ⊥  \bot    denoting closed, and
+let every domain start closed. Assuming the controller retains open rows across
+requests, the row-buffer transition over     S  θ   S_{\theta}    is
+(3)
+ϵ  i   =   {      miss  ,      σ     i   (  d     i   )  =  ⊥  ,        hit  ,         σ  i   ​   (   d  i   )    =   z  i    ,        conflict  ,      otherwise  ,        σ   i  +  1    =   σ  i    [   d  i   ↦   z  i   ]   .   \epsilon_{i}=\begin{cases}\mathrm{miss},&\sigma_{i}(d_{i})=\bot,\\
+\mathrm{hit},&\sigma_{i}(d_{i})=z_{i},\\
+\mathrm{conflict},&\text{otherwise},\end{cases}\qquad\sigma_{i+1}=\sigma_{i}[d_{i}\mapsto z_{i}].
+An opening miss is the “row closed” case of classic memory schedulers
+( Mutlu and Moscibroda, 2007 )  and pays one activation; a conflict requires a precharge and an activation before that request can be served; a hit requires neither. TileDRAM’s
+source-order objective minimizes conflicts first; the remaining selection
+criteria are defined in Section   4.3  .
+For a fixed domain projection     W  D   W_{D}   , the  row-reuse kernel
+K  =    ker   ⁡   [      W  D        W  R      ]     K=\ker\!\begin{bmatrix}W_{D}\\
+W_{R}\end{bmatrix}
+collects the source-coordinate differences that change neither the domain nor
+the row label. For request    i  i    with same-domain predecessor    j  j   , the request is
+an intrinsic source-order hit iff       r  i   ⊕   r  j    ∈  K   r_{i}\oplus r_{j}\in K   . Requests with no
+same-domain predecessor are opening misses. Intervening requests to other domains
+do not change this state. Thus, the source-order hit/miss/conflict classification is fixed by the source
+order and layout before scheduler effects. For the two-domain
+realization of this stream in Appendix   A.4
+(Table   1  ), the two same-domain predecessor
+differences are both    001  001   , so the
+kernel     K  =   span  ​   {  001  }     K=\mathrm{span}\{001\}    contains both and yields the two hits used in
+the formal count. Let
+w   W  D    ​   (  Δ  )    w_{W_{D}}(\Delta)    be the
+number of times difference    Δ  \Delta    occurs between consecutive same-domain
+requests. Counting hits therefore reduces to summing     w   W  D    w_{W_{D}}    over    K  K   .
+The target organization bounds how many bits may name a domain (   b  b   ) and how
+many may name a row within it (    r  row   r_{\mathrm{row}}   ). When the joint domain–row
+map     [   W  D   ;   W  R   ]   [W_{D};W_{R}]    has
+rank     b  +   r  row    b+r_{\mathrm{row}}   , choosing those widths fixes
+c  =   n  −  b  −   r  row     c=n-b-r_{\mathrm{row}}   , the dimension of the row-reuse kernel.
+This reduction requires three properties, each formalized and proved in the
+appendix.  Sequence recurrence : a signature determines one ordered
+coordinate sequence, so one representative profile applies across its admitted
+instances (Appendix   A.8  ).  Mapping consistency :
+within the admitted bit-selection-and-XOR family, DRAM placement and the target
+DRAM address mapping compose into an affine     𝔽  2   \mathbb{F}_{2}    map whose domain- and
+row-equality relations agree with those resolved by the controller
+(Appendix   A.1  ).  Binding legality : reused
+bindings retain the signature’s source interpretation and request formation,
+realize those labels consistently, and satisfy the placement bounds, so every
+admitted tile placement reproduces the selected row behavior
+(Appendix   A.3  ).
+For a fixed     W  D   W_{D}   , row sublayouts whose joint domain–row maps have the same
+kernel induce the same domain-local row-equality relation, so the inner search
+can operate on subspaces    K  K    rather than on matrix representations of     W  R   W_{R}   .
+Once the three properties hold, maximizing row hits over placements therefore
+reduces exactly to choosing the maximum-weight    c  c   -dimensional subspace, giving the fixed-domain objective
+(4)
+max  ⁡      ∑   Δ  ∈  K        K  ⊆   ker  ⁡   (   W  D   )     ,    dim  K   =  c       ⁡   w   W  D     ​   (  Δ  )     .   \max_{K\subseteq\ker(W_{D}),\ \dim K=c}\sum_{\Delta\in K}w_{W_{D}}(\Delta).
+Rotaru et al. formulate the same subspace-selection problem
+( Rotaru et al., 2025 ) .
+The two formulations reverse which map is the decision variable: Rotaru
+et al. synthesize the controller address map with data placement fixed, whereas
+TileDRAM synthesizes data placement with the controller mapping fixed. This is
+a reversal of the control variable, rather than an algebraic duality. GPU Linear Layouts make that decision variable
+expressible: the layout algebra that compilers already use for lanes and registers
+now extends to row-buffer domains and rows, turning DRAM placement into a
+compiler-visible decision variable. Taking differences over tile-local access
+coordinates rather than a flat trace then lets one solution serve every tile
+sharing the signature.
+The objective optimizes the layout under each signature’s ordered tile-local access sequence. The predecessor, hit, and coordinate-lifting
+derivations appear in
+Appendices   A.4  –  A.5  .
+4.3.  Layout Synthesis and Selection
+Because     W  D   W_{D}    determines predecessors within each row-buffer domain and thus
+w   W  D    w_{W_{D}}   , Eq. (  4  ) is evaluated for each fixed
+domain projection. The resulting five-stage construction forms the
+layout-selection
+core of  PLAN  and produces an executable layout from     S  θ   S_{\theta}    and
+the target organization.
+(1)
+Row-buffer-domain projection.  Enumerate a finite target-specific
+family of row-buffer-domain sublayouts     W  D   W_{D}   . Each candidate assigns source coordinates to the
+row buffers independently tracked by the organization; the catalog
+holds bit-selection and constrained structured-XOR candidates.
+(2)
+Kernel construction.  Form predecessor differences within each
+row-buffer domain and solve Eq. (  4  ) for a
+c  c   -dimensional row-reuse kernel    K  K   .
+(3)
+Layout completion.  Reconstruct a row sublayout     W  R   W_{R}    whose joint
+row-buffer-domain and row map has kernel exactly    K  K    using the sparse construction of
+Rotaru et al.  ( Rotaru et al., 2025 ) , then add     W  C   W_{C}    to bring
+W  sem   W_{\mathrm{sem}}    to full column rank.
+(4)
+Physical realization.  Express     W  sem   W_{\mathrm{sem}}    in the target’s
+address basis to obtain the executable     W  phys   W_{\mathrm{phys}}   , then derive its
+byte-placement rule. In this basis, the fixed address mapping recovers the
+intended row-buffer-domain and row labels, and ordinary bit operations generate the backend
+offset. Retained candidates are injective on live coordinates and satisfy
+mapping consistency (Appendix   A.1  ) together with alignment,
+capacity, CU-local aperture bounds, and allocation-policy constraints
+(Appendix   A.3  ).
+(5)
+Ordered selection.  Run the row-state transition of
+Eq. (  3  ) on every retained layout. Selection
+first minimizes source-order conflicts. Among equal-conflict layouts, it favors
+greater source-sequence domain coverage, measured by
+𝖼𝗈𝗏  ⁡   (  S  ,   W  D   )    \mathsf{cov}(S,W_{D})    in Appendix   A.2  , and then lower
+nonzero-term complexity of the executable address map.
+The outer loop exhaustively enumerates the finite domain-projection family. For
+each     W  D   W_{D}   , the exact route finds the optimum of
+Eq. (  4  ), while the greedy route returns a feasible kernel
+(Appendix   A.5  ). Reconstruction and legality filtering
+retain only candidates satisfying live-coordinate injectivity, target mapping
+consistency, and binding legality. The retained candidates are ranked
+exhaustively by the lexicographic objective
+(Appendices   A.6  –  A.7  )
+within the enumerated candidate family. The selected     W  sem   W_{\mathrm{sem}}    is realized in the target
+address basis and reused across legal tile placements.
+5.  Compiler and Runtime Realization
+The target-specific tile-to-DRAM layout template developed in
+Section   4   is realized through the three-stage
+PLAN–BIND–APPLY lifecycle.  PLAN  selects and realizes the template.
+BIND  spans compilation and runtime: compiler-side
+BIND  performs template lookup, emits binding metadata, and marks the
+corresponding accesses for  APPLY ; runtime  BIND  uses that
+metadata to construct a tile descriptor for a resident tile (a concrete tile
+instance placed in a DRAM region). During execution,  APPLY  consumes that descriptor to
+transform each active lane’s source address; GPU execution and replay use the
+same address transformation.
+In the evaluated Ampere-class
+realization, operand-tile loads use cp.async lowered to LDGSTS.128.
+Figure   6   isolates this compiler/replay address
+equivalence, and Appendix   C   shows the programmer-facing
+kernel entry.
+Figure 6.  Compiler/replay address equivalence. Compiler-side  BIND  looks up the
+PLAN -produced layout template; runtime  BIND  combines it with the
+tile ID, source interval, and DRAM region to form a tile descriptor. The
+compiler-generated  APPLY  path and replay apply the same address transformation to
+active-lane source addresses, with replay using the corresponding addresses carried
+by asynchronous-copy events, before fixed address mapping and row-buffer service. The figure has three stages. Compiler-side \textsc{BIND} performs template lookup for a
+\textsc{PLAN} layout template and emits binding metadata; runtime \textsc{BIND}
+obtains that template and combines it with the concrete tile ID, source interval,
+and DRAM region into a tile descriptor for that region. Address
+transformation shows an APPLY path and a
+replay path using the same address transformation; the APPLY path is
+generated once from the template, while the runtime tile descriptor is an
+execution input to APPLY and replay. Their backend addresses are checked
+for equality while the copy destination and dependency remain unchanged. A DRAM
+request then passes through the fixed address mapper and DRAM row-buffer service
+before completing the copy dependency.
+5.1.  Semantic Extraction and Offline Template Construction
+Programming interface.
+TileDRAM does not require programmers to name DRAM banks, rows, or
+address-map bits. The programmer-facing annotation supplies problem, tile,
+execution, and operand properties, while the kernel body remains ordinary
+Triton/Gluon code (Appendix   C  ); DRAM placement remains
+TileDRAM-managed rather than part of the kernel’s logical tile specification.
+Semantic extraction.
+From the tiled-kernel representation, the compiler derives the tile
+configuration and operand properties. A recorded representative active-lane
+sequence supplies the ordered tile-local access sequence; together, these
+fields form the tile access signature. Normalization relative to the source
+interval (Section   4  ) yields the representative
+normalized source sequence used by  PLAN . For each admitted signature and
+target contract,  PLAN  synthesizes the layout and its target-specific layout
+realization, publishing one reusable template keyed by the signature.
+5.2.  Template Binding and Address Lowering
+Tile binding ( BIND )
+On the compiler side,  BIND  performs template lookup for each admitted
+tile access signature and records a reference to the corresponding
+target-specific layout template produced by  PLAN , together with the
+rule for deriving the tile ID from the execution context. A tile ID identifies
+an operand tile within the current GEMM instance. For GEMM, the lhs and rhs tile
+IDs are represented by the operand-tile coordinates     (   i  m   ,   i  k   )   (i_{m},i_{k})    and
+(   i  k   ,   i  n   )   (i_{k},i_{n})   , respectively. When the tile is placed in a DRAM region, the compiler-defined tile-ID rule yields
+the concrete tile ID from the current execution context, and runtime
+BIND  obtains the referenced template from this binding metadata and
+combines it with the tile ID, source interval     [  A  ,  A  +  E  )   [A,A+E)   , and concrete
+DRAM region to construct a tile descriptor for the resident tile. Each
+admitted resident tile uses one tile access signature and one corresponding
+target-specific layout template throughout its residency, so its descriptor
+remains fixed and is reused by accesses to the same resident tile.
+Thus, lhs accesses from CTAs
+that differ only in     i  n   i_{n}   , and rhs accesses from CTAs that differ only in     i  m   i_{m}   ,
+resolve to the same tile descriptor.
+At execution, runtime  BIND  provides the descriptor for the
+current resident tile as input to  APPLY .
+Address lowering ( APPLY )
+At compilation, the compiler places  APPLY  after the source pointer
+tensor is formed by address arithmetic for each admitted tile access. At execution, the path
+uses the tile descriptor for the current resident tile to
+transform each active lane’s source address for its
+16-byte LDGSTS.128 transfer. The transformation follows three ordered stages:
+Extract  each source address relative to the source interval, yielding the
+layout-unit index and within-unit byte offset;  Transform  the layout
+unit through the descriptor’s target-specific layout realization; and
+Reconstruct  the backend address from the transformed unit,
+unchanged byte offset, and region base before the copy. Per-lane integer
+and pointer operations realize this software-selected placement through ordinary
+address generation, requiring no new address-remapping hardware or ISA support.
+The formal address contract is given in Appendix   A.1  , and
+the binding metadata and address-lowering sequence appear in
+Appendix   C  . Only operand accesses with a tile descriptor
+are redirected to their assigned DRAM regions, while ordinary
+loads and stores retain the conventional memory path.
+5.3.  Runtime Replay and Simulator Execution
+Simulator replay represents each dynamic tile access as an ordered tile-local access sequence of
+active-lane asynchronous-copy events (LDGSTS.128) carrying source address     s  i   s_{i}    and event
+metadata     η  i   \eta_{i}   . Here,     η  i   \eta_{i}    denotes the event’s identity, destination,
+dependency, and request attributes. Runtime scheduling may interleave ordered tile-local access sequences
+from resident tiles while preserving the event order within each sequence.
+Each sequence carries the descriptor for its resident tile as
+input to the  APPLY  path.
+For each asynchronous-copy event, the simulator evaluates the same address
+transformation specified by  APPLY  using the descriptor for the
+sequence’s resident tile. It carries the resulting backend address
+together with the event metadata into replay. Replay uses the descriptor’s
+template and placement while preserving event metadata and dependency. The
+production compiler lowering and simulator-side transformer implement one
+common address function, checked against an independent reference evaluator.
+Appendix   D   reports the covered configurations,
+address-function families, and byte addresses. Each transformed
+asynchronous-copy event forms one CU-local DRAM request in the Ramulator2
+replay. Ramulator2’s fixed address mapper and controller advance row-buffer
+state and return service latency to GPGPU-Sim, which applies it to the
+originating asynchronous-copy dependency.
+6.  Evaluation
+6.1.  Experimental Setup
+Simulation and replay protocol.
+We evaluate TileDRAM with traces collected from Triton/Gluon tiled GEMM kernels using NVBit
+( Tillet et al., 2019 ;  , 2026 ;  Villa et al., 2019 )  and replayed through Accel-Sim/Ramulator2
+( Khairy et al., 2020 ;  Luo et al., 2024 )  on one CU and its paired 3D DRAM stack.
+Each
+baseline–TileDRAM pair holds the logical event trace, target organization,
+the initial closed-row state, and refresh/precharge policy fixed while varying
+DRAM placement. Layout selection uses the ordered tile-local access sequence, whereas
+replay counters follow FR-FCFS service order. Before replay, we verify that the
+compiler lowering and simulator transformer produce the same addresses as the
+canonical byte-address function in Appendix   A.1  .
+The evaluation covers 108 full-trace MoE FFN cases spanning Qwen3
+( Qwen Team, 2025 ) , DeepSeek-V3  ( DeepSeek-AI, 2024 ) , Qwen3.5-35B-A3B
+( Qwen Team, 2026 ) , Kimi K3  ( Kimi Team, 2026 ) , Hunyuan-A13B
+( Tencent Hunyuan Team, 2025 ) , and Llama 4  ( Meta AI, 2025 ) , across up/gate and
+down projections and eight tile shapes. The same 108
+kernel configurations provide hardware-cost calibration; a separate sweep
+covers 36 full-trace stream–organization pairs.
+All reported TileDRAM layouts use the same greedy selection route
+(Appendix   A.5  ). We report row-conflict rates from pooled
+row events and speedup as the geometric mean of per-case
+baseline-to-TileDRAM cycle ratios. Per-case synthesis time and peak resident
+memory measure offline layout-selection cost; address-transformation cost is
+measured separately on RTX 3090 hardware.
+The primary 3D DRAM configuration uses 8 tiers, 16 banks, 13 row bits, and
+3 column bits with RoBaTiCoCh address mapping, OpenRowPolicy, and FR-FCFS
+scheduling.
+6.2.  RQ1: Row-Buffer Cost of Conventional DRAM Placement
+The single-column figure has three vertically arranged panels.
+Panel (a) shows request-weighted conflict, hit, and miss shares for the suite
+and six model families. Panel (b) shows six family-wise boxplots and all 108
+case conflict rates, using circles for M equals 64 and squares for M equals
+128; a dashed line marks the pooled 75.7 percent conflict rate. Panel (c) plots
+each case's conflict rate against average read latency, using circles for down
+projections and triangles for up and gate projections; the fitted trend has a
+Pearson correlation of 0.97.
+Figure 7.  Conventional placement across 108 full-trace MoE FFN cases.
+(a) Request-weighted row states by family; (b) per-case conflict distributions;
+and (c) conflict rate versus average read latency. The single-column figure has three vertically arranged panels.
+Panel (a) shows request-weighted conflict, hit, and miss shares for the suite
+and six model families. Panel (b) shows six family-wise boxplots and all 108
+case conflict rates, using circles for M equals 64 and squares for M equals
+128; a dashed line marks the pooled 75.7 percent conflict rate. Panel (c) plots
+each case's conflict rate against average read latency, using circles for down
+projections and triangles for up and gate projections; the fitted trend has a
+Pearson correlation of 0.97.
+Figure 8.  Row-conflict rate and speedup for 108 MoE FFN cases.
+(a) Paired conflict-rate bars per case; the headers identify    M  M    and the
+labels below each group show      B  M   ×   B  N   ×   B  K    B_{M}\!\times\!B_{N}\!\times\!B_{K}   . (b) Speedup grouped by
+family, faceted by    M  M   ; within each family, color and x-position identify tile
+shape. Six small bar charts show paired Conventional and TileDRAM
+row-conflict rates for eighteen cases per model family; $M$ headers and the
+short labels below each group identify $B_M\!\times\!B_N\!\times\!B_K$. Two
+dot plots below show speedup for M=64 and M=128, with model family on the
+x-axis, tile shape encoded by labeled colors and fixed positions, and
+projection type by marker shape.
+Figure   7   reports a 75.7% request-weighted row-conflict
+rate across all 108 cases. Per-case rates span 15.9–98.8% and family-pooled
+rates 56.9–95.1%, while the     M  =  64   M=64    and     M  =  128   M=128    groups differ little
+(73.9% and 76.7%).
+The remaining variation follows model family, projection type, and tile
+configuration, whose ordered tile-local access sequences induce different domain
+and row trajectories under the target DRAM address mapping. The baseline pathology
+reflects two interacting properties of GEMM execution. First, its operand-local
+address structure is misaligned with the controller’s fixed address-field
+interpretation: regular tile-coordinate changes repeatedly revisit one
+row-buffer domain at different rows. Second,  cp.async  exposes these loads through a
+lane- and warp-interleaved issue order rather than a complete tensor-row scan,
+separating accesses that could reuse an open row. The mapping fixes the
+domain/row relation, while this issue order determines when it is exposed,
+producing repeated precharge–activate transitions and row conflicts.
+FR-FCFS can reorder ready requests, but cannot change the assigned domain or row.
+Average read latency correspondingly ranges from 41.1 to 101.9 GPU cycles and
+closely tracks row-conflict rate (Pearson     r  =  0.97   r=0.97   ). Because placement
+shapes the row sequence each domain sees, the suite-wide prevalence
+of conflicts motivates treating DRAM placement as a software optimization
+target, while the case-level variation motivates layout selection per
+tile access signature.
+6.3.  RQ2: Row-Buffer Locality and Performance
+TileDRAM converts a large fraction of suite-wide row conflicts into row hits. Across the
+108 cases in Figure   8  (a), the request-weighted
+row-conflict rate falls from 75.7% to 15.2%, an 80.0% pooled reduction, while
+the row-hit rate rises from 19.3% to 81.6%. Conflict rates fall for every
+model family,    M  M    value, and tile shape. Family-pooled TileDRAM conflict rates remain within
+10.8%–21.2%, compared with 56.9%–95.1% under conventional placement.
+Layout selection per tile access signature therefore adapts to
+the access-pattern heterogeneity measured in RQ1 and produces consistently high
+row locality.
+TileDRAM reshapes each operand stream’s row-buffer-domain and row sequence.
+Many same-domain requests therefore hit open rows, replacing a substantial
+fraction of precharge–activate transitions with row-hit service. Across cases, the median reductions in ACT and PRE command counts are
+78.7% and 82.2%, respectively (IQRs: 65.7–84.6% and 70.5–87.8%). Request-weighted read latency falls from 81.0
+to 40.8 GPU cycles, and foreground queue wait falls from 37.3 to 24.9 cycles.
+Earlier DRAM completions release asynchronous-copy dependencies sooner, reducing
+pooled shader memory-stall cycles from 2.086 to 0.962 billion. Speedup
+then spans 1.10   ×  \times   –2.95   ×  \times   , with a 1.77   ×  \times    geomean across all
+108 cases. Across cases, the percentage-point reduction in row-conflict
+rate tracks the cycle reduction in read latency (    r  =  0.96   r=0.96   ); relative latency
+and stall reductions track each other (    r  =  0.89   r=0.89   ), and relative stall reduction
+tracks speedup (    r  =  0.90   r=0.90   ).
+The performance range reflects the fraction of each baseline execution occupied
+by memory stalls. For the     64  ×  128  ×  64   64{\times}128{\times}64    tile, the row-conflict rate
+falls from 87.5% to 11.9%; memory stalls occupy 92.0% of baseline cycles, and
+cases using this tile achieve a 2.17   ×  \times    geomean speedup. For
+128  ×  256  ×  64   128{\times}256{\times}64   , conflicts fall from 74.7% to 12.4%; with a 58.6%
+baseline stall share, cases using this tile achieve a 1.25   ×  \times
+geomean speedup. Thus, TileDRAM consistently shortens DRAM service, while
+the baseline memory-stall share sets the headroom for speedup.
+6.4.  RQ3: Retargeting Across 3D DRAM Organizations
+TileDRAM preserves row locality when retargeted across the evaluated 3D DRAM
+organizations. We evaluate six full-trace FFN streams with the
+64  ×  64  ×  32   64{\times}64{\times}32    tile across six target organizations, for 36 paired
+replays. TileDRAM reselects a legal tile-to-DRAM layout for each target
+organization.
+Figure 9.  Retargeting six full-trace FFN streams across six 3D DRAM
+organizations. (a) Request-weighted row-conflict rate under conventional
+placement and TileDRAM. (b) Per-stream speedup; gray diamonds report the
+geometric mean across the six streams for each organization. D and U/G denote
+down and up/gate projections. The figure compares row-conflict rate and speedup across
+six 3D DRAM organizations. The upper plot uses paired conventional-placement
+and TileDRAM bars. The lower plot shows six per-stream speedup lines and gray
+diamonds for the geometric mean across streams within each organization.
+Across the sweep, the pooled row-conflict rate falls from 84.3% to 17.6%, a
+79.2% reduction (Figure   9  ). These reductions yield a
+2.20   ×  \times    geomean speedup across the 36 paired replays.
+Across organizations, six-stream geomean speedups range from
+1.52   ×  \times    to 2.77   ×  \times   , while pooled-cycle speedups range from
+1.60   ×  \times    to 3.32   ×  \times   . The resulting locality
+is stable across the evaluated organizations, while baseline conflict headroom
+and organization-specific DRAM service together determine how that locality
+translates into cycles. Organization-specific layout selection therefore
+preserves row locality even as the DRAM address mapping repartitions the
+physical address space.
+6.5.  RQ4: Cost of Layout Synthesis and Address Transformation
+RQ4 measures both the one-time cost of synthesizing a layout and the dynamic
+cost of realizing it through compiler-lowered address transformations. Offline
+synthesis runs once per case and produces the layouts for its tile access
+signatures; the selected templates are reused across matching dynamic tile
+instances. We record per-case solver wall
+time and peak resident memory across 108 cases. Each case compares identity
+address generation (    H  ​  1   H1   ) with the selected transformation (    H  ​  2   H2   ). The selected layouts lower to sparse XOR, grouped bit-permutation, and
+identity paths using shifts, masks, XORs, and address arithmetic. We report the
+overhead as
+median  ⁡   (   H  ​  2   )    /   median  ⁡   (   H  ​  1   )     −  1   \operatorname{median}(H2)/\operatorname{median}(H1)-1    and aggregate the
+corresponding ratios geometrically
+(Appendix   D  ).
+Offline synthesis has a median per-case runtime of 349.0 s and a median peak
+resident memory of 227.0 MB. Across all 108 hardware-measured kernel configurations, the
+selected transformations add 0.17% geomean overhead relative to identity address
+generation; the median is below 0.01%, the 95th percentile is 0.57%, and the
+maximum is 4.93%. Overall, 104 of 108 cases lie within    ±  \pm   1% and 106 lie
+within    ±  \pm   2%; the Qwen3.5 down-projection configurations account for the
+high-overhead tail.
+7.  Related Work
+3D DRAM Architectures and Accelerators.
+Vertical integration and hybrid bonding place high-bandwidth memory close to
+compute, motivating architectures that exploit local memory–logic bandwidth
+for LLM and MoE inference. H 2 -LLM co-designs heterogeneous hardware and
+dataflow around hybrid-bonded memory  ( Li et al., 2025 ) , HybridSpec combines
+such memory with heterogeneous execution and speculative decoding
+( Huang et al., 2026 ) , Stratum uses tiered monolithic 3D DRAM and expert
+placement for MoE serving  ( Pan et al., 2025 ) , and Raptor demonstrates an
+early-silicon 3D-DRAM accelerator  ( Nair et al., 2026 ) . At industrial scale,
+OpenAI’s Jalapeño pairs compute core slices with local HBM4 slices in a
+memory-sliced organization  ( Ho et al., 2026 ) .
+Other designs explore hybrid NVM–DRAM, processing-in-memory, and near-memory
+parallelism  ( He et al., 2026 ;  Huang et al., 2025 ;  Li et al., 2026 ) . These systems
+establish the architectural substrate for TileDRAM; TileDRAM instead exposes
+how operand tiles are placed within local DRAM as a compiler-visible layout
+decision.
+Compute-Side Tile Layouts and Algebraic Layout Abstractions.
+Modern GPU programming systems make tiled tensor organization and layout
+first-class abstractions: CUTLASS and Triton support tiled computation, while
+CuTe provides composable tensor layouts and layout algebra
+( Cecka, 2026 ;  , 2026 ;  Tillet et al., 2019 ) . Graphene represents
+multidimensional data and threads as hierarchically tiled first-class tensors,
+expressing optimized GPU computations as mappings between data and thread tiles
+( Hagedorn et al., 2023 ) . Gluon exposes explicit tensor layouts for
+low-level control, and Jalapeño uses Gluon to program its spatial
+architecture  ( Ho et al., 2026 ;  , 2026 ) . Linear Layouts provide an
+algebraic representation for such compute-side layouts, mapping
+hardware-resource coordinates to logical tensor coordinates over     𝔽  2   \mathbb{F}_{2}     ( Zhou et al., 2026 ) . TileDRAM extends this abstraction to DRAM placement coordinates, making tile-to-DRAM placement a
+compiler-visible layout decision.
+Controller Mapping and Software-Directed DRAM Placement.
+Permutation-based interleaving distributes pages across DRAM structures
+( Zhang et al., 2000 ) ; Liu et al.  ( Liu et al., 2018 )  propose PAE, an
+XOR-based mapping that improves bank/channel parallelism while preserving
+row-buffer locality; SDAM exposes software-configurable mappings for a 3D
+memory controller  ( Zhang et al., 2022 ) ; Rotaru et al. synthesize an
+application-specific mapping over     𝔽  2   \mathbb{F}_{2}    from a representative application
+trace  ( Rotaru et al., 2025 ) ; and FACIL selects a mapping for each
+huge page  ( Seo et al., 2025 ) . These approaches treat the controller mapping as
+the decision variable. A single workload-specific mapping must serve
+heterogeneous accesses, while specializing different access patterns requires
+multiple mapping contexts and controller-side selection support.
+Software-directed placement instead chooses where data reside, at page
+( Agarwal et al., 2015 ) , DNN-layer  ( Pandey and Panda, 2024 ) , region
+( Khadirsharbiyani et al., 2022 ) , or stream
+( Li et al., 2024 )  granularity; the stream-based design also
+controls element order and cache placement in a distributed DRAM cache.
+TileDRAM keeps the controller mapping fixed and instead specializes data
+placement using recurring ordered tile-local access behavior. Many tile access
+signatures can therefore coexist under one mapping, with each
+placement realized through ordinary address arithmetic and without
+controller or ISA changes.
+8.  Conclusion and Future Work
+TileDRAM shows that DRAM placement can be an explicit compiler-controlled tile
+layout decision while the memory-controller address mapping remains fixed.
+Building on recurring tile-local access behavior as a stable specialization
+unit, it extends GPU Linear Layouts to represent reusable tile-to-DRAM
+placements selected per tile access signature. The resulting
+compiler–runtime toolchain realizes these layouts through ordinary address
+arithmetic, without new ISA support or remapping hardware.
+Across 108 full-trace MoE FFN cases, TileDRAM reduces the request-weighted
+row-conflict rate from 75.7% to 15.2% and achieves a 1.77   ×  \times    geomean
+speedup; retargeting across six 3D DRAM organizations yields a 2.20   ×  \times
+geomean speedup, while address transformation adds 0.17% overhead on
+an RTX 3090.
+Our evaluation focuses on tiled GEMM within one CU–stack pair, with the 3D DRAM
+memory system evaluated through trace-driven Accel-Sim/Ramulator2 replay.
+Future work includes extending TileDRAM to other kernels, such as attention
+and convolution, coordinating layouts
+across multiple CU–stack pairs, and validating compiler-controlled placement on
+physical 3D DRAM systems.
+References
+Agarwal  et al.  (2015)
+N. Agarwal, D. Nellans, M. Stephenson, M. O’Connor, and S. W. Keckler
+Page placement strategies for GPUs within heterogeneous memory systems .
+In  Proceedings of the 20th International Conference on Architectural Support for Programming Languages and Operating Systems ,
+New York, NY, USA ,  pp. 607–618 .
+External Links:   Document
+Cited by:   §7  .
+Cecka (2026)
+C. Cecka
+CuTe layout representation and algebra .
+Note:  NVIDIA Research Whitepaper
+External Links:   2603.02298 ,
+Link
+Cited by:   §1  ,
+§7  .
+[3]
+(2026)
+CUDA Programming Guide .
+NVIDIA .
+External Links:   Link
+Cited by:   §2.2  .
+[4]
+(2026)
+CuTe DSL: CUTLASS Python overview .
+NVIDIA .
+External Links:   Link
+Cited by:   §1  .
+[5]
+(2026)
+cuTile Python documentation .
+NVIDIA .
+External Links:   Link
+Cited by:   §1  .
+[6]
+(2026)
+CUTLASS GEMM API .
+NVIDIA .
+External Links:   Link
+Cited by:   §1  ,
+§2.2  ,
+§7  .
+[7]
+(2026)
+CUTLASS Grouped Kernel Schedulers .
+NVIDIA .
+External Links:   Link
+Cited by:   §2.2  ,
+§2.3  .
+DeepSeek-AI (2024)
+DeepSeek-AI
+DeepSeek-V3 technical report .
+External Links:   2412.19437 ,
+Link
+Cited by:   Appendix D  ,
+§6.1  .
+Fedus  et al.  (2022)
+W. Fedus, B. Zoph, and N. Shazeer
+Switch transformers: scaling to trillion parameter models with simple and efficient sparsity .
+Journal of Machine Learning Research   23  ( 120 ),  pp. 1–39 .
+External Links:   Link
+Cited by:   §1  ,
+§2.2  .
+[10]
+(2026)
+GPU Performance Background User’s Guide .
+NVIDIA .
+External Links:   Link
+Cited by:   §2.2  .
+Hagedorn  et al.  (2023)
+B. Hagedorn, B. Fan, H. Chen, C. Cecka, M. Garland, and V. Grover
+Graphene: an IR for optimized tensor computations on GPUs .
+In  Proceedings of the 28th ACM International Conference on Architectural Support for Programming Languages and Operating Systems, Volume 3 ,
+New York, NY, USA ,  pp. 302–313 .
+External Links:   Document
+Cited by:   §1  ,
+§7  .
+He  et al.  (2026)
+L. He, F. Zhou, C. Peng, S. Dong, Z. Zhang, H. Yang, Y. Liu, G. Zhang, and H. Jia
+SHyLA: 3d-stacked NVM-DRAM hybrid LLM-inference architecture exploiting data and memory heterogeneity .
+In  2026 ACM/IEEE 53rd Annual International Symposium on Computer Architecture (ISCA) ,
+pp. 654–670 .
+External Links:   Document
+Cited by:   §7  .
+Ho  et al.  (2026)
+R. Ho, R. Narayanaswami, and C. Leary
+You can just build things … chips .
+Note:  Hot Chips 2026OpenAI presentation, August 25, 2026
+External Links:   Link
+Cited by:   §2.1  ,
+§7  ,
+§7  .
+Huang  et al.  (2025)
+H. Huang, S. Zhong, Z. Zhang, S. Li, D. Niu, H. Zheng, R. Wang, and M. Li
+HD-MoE: hybrid and dynamic parallelism for mixture-of-expert LLMs with 3D near-memory processing .
+In  2025 IEEE/ACM International Conference on Computer-Aided Design (ICCAD) ,
+pp. 1–9 .
+External Links:   Document
+Cited by:   §7  .
+Huang  et al.  (2026)
+Z. Huang, W. Jia, Y. Li, X. Lin, S. Fan, C. Tang, S. Deng, and Y. Liu
+HybridSpec: exploiting hybrid-bonding memory to accelerate LLM serving through heterogeneous architecture and speculative decoding .
+In  2026 ACM/IEEE 53rd Annual International Symposium on Computer Architecture (ISCA) ,
+pp. 588–603 .
+External Links:   Document
+Cited by:   §7  .
+Hwang  et al.  (2023)
+C. Hwang, W. Cui, Y. Xiong, Z. Yang, Z. Liu, H. Hu, Z. Wang, R. Salas, J. Jose, P. Ram, H. Chau, P. Cheng, F. Yang, M. Yang, and Y. Xiong
+Tutel: adaptive mixture-of-experts at scale .
+Proceedings of Machine Learning and Systems   5 ,  pp. 269–287 .
+External Links:   Link
+Cited by:   §2.3  .
+[17]
+(2026)
+Introduction to Gluon .
+OpenAI .
+External Links:   Link
+Cited by:   Appendix D  ,
+§1  ,
+§1  ,
+§6.1  ,
+§7  .
+[18]
+(2025)
+JESD238B.01: high bandwidth memory DRAM (HBM3) .
+JEDEC Solid State Technology Association .
+External Links:   Link
+Cited by:   §2.1  .
+Kahng  et al.  (2009)
+A. B. Kahng, B. Li, L. Peh, and K. Samadi
+ORION 2.0: a fast and accurate NoC power and area model for early-stage design space exploration .
+In  Proceedings of the Design, Automation and Test in Europe Conference and Exhibition ,
+Piscataway, NJ, USA ,  pp. 423–428 .
+External Links:   Document
+Cited by:   §1  ,
+§2.1  .
+Khadirsharbiyani  et al.  (2022)
+S. Khadirsharbiyani, J. Kotra, K. Rao, and M. T. Kandemir
+Data convection: a GPU-driven case study for thermal-aware data placement in 3d DRAMs .
+Proceedings of the ACM on Measurement and Analysis of Computing Systems   6  ( 1 ).
+External Links:   Document
+Cited by:   §7  .
+Khairy  et al.  (2020)
+M. Khairy, Z. Shen, T. M. Aamodt, and T. G. Rogers
+Accel-Sim: an extensible simulation framework for validated GPU modeling .
+In  Proceedings of the 47th Annual International Symposium on Computer Architecture ,
+Los Alamitos, CA, USA ,  pp. 473–486 .
+External Links:   Document
+Cited by:   §1  ,
+§6.1  .
+Kimi Team (2026)
+Kimi Team
+Kimi K3: open frontier intelligence .
+External Links:   2607.24653 ,
+Link
+Cited by:   Appendix D  ,
+§6.1  .
+Li  et al.  (2025)
+C. Li, Y. Yin, X. Wu, J. Zhu, Z. Gao, D. Niu, Q. Wu, X. Si, Y. Xie, C. Zhang, and G. Sun
+H      2   {}^{2}   -LLM: hardware-dataflow co-exploration for heterogeneous hybrid-bonding-based low-batch LLM inference .
+In  Proceedings of the 52nd Annual International Symposium on Computer Architecture ,
+New York, NY, USA ,  pp. 194–210 .
+External Links:   Document
+Cited by:   §1  ,
+§2.1  ,
+§2.1  ,
+§7  .
+Li  et al.  (2026)
+H. Li, S. Ma, H. Qu, W. Zhang, J. Chen, J. Lin, F. Tu, and R. Zhao
+Bridging efficiency and scalability in LLM system via 3d hybrid PIM with 2d in-transit computation .
+In  2026 ACM/IEEE 53rd Annual International Symposium on Computer Architecture (ISCA) ,
+pp. 2615–2631 .
+External Links:   Document
+Cited by:   §7  .
+Li  et al.  (2024)
+Y. Li, B. Tian, Y. Ren, and M. Gao
+Stream-based data placement for near-data processing with extended memory .
+In  Proceedings of the 57th IEEE/ACM International Symposium on Microarchitecture ,
+pp. 1648–1662 .
+External Links:   Document
+Cited by:   §7  .
+Liu  et al.  (2018)
+Y. Liu, X. Zhao, M. Jahre, Z. Wang, X. Wang, Y. Luo, and L. Eeckhout
+Get out of the valley: power-efficient address mapping for GPUs .
+In  Proceedings of the 45th Annual International Symposium on Computer Architecture ,
+Los Alamitos, CA, USA ,  pp. 166–179 .
+External Links:   Document
+Cited by:   §1  ,
+§7  .
+Loh and Hill (2012)
+G. H. Loh and M. D. Hill
+Supporting very large DRAM caches with compound-access scheduling and MissMap .
+IEEE Micro   32  ( 3 ),  pp. 70–78 .
+External Links:   Document
+Cited by:   §1  .
+Luo  et al.  (2024)
+H. Luo, Y. C. Tuğrul, F. N. Bostancı, A. Olgun, A. G. Yağlıkçı, and O. Mutlu
+Ramulator 2.0: a modern, modular, and extensible DRAM simulator .
+IEEE Computer Architecture Letters   23  ( 1 ),  pp. 112–116 .
+External Links:   Document
+Cited by:   §B.1  ,
+§1  ,
+§6.1  .
+Meta AI (2025)
+Meta AI
+The llama 4 herd: the beginning of a new era of natively multimodal AI innovation .
+External Links:   Link
+Cited by:   Appendix D  ,
+§6.1  .
+Mutlu and Moscibroda (2007)
+O. Mutlu and T. Moscibroda
+Stall-time fair memory access scheduling for chip multiprocessors .
+In  Proceedings of the 40th Annual IEEE/ACM International Symposium on Microarchitecture (MICRO) ,
+pp. 146–160 .
+External Links:   Document ,
+Link
+Cited by:   §2.1  ,
+§4.2  .
+Nair  et al.  (2026)
+P. J. Nair, R. Hadidi, S. Ganesh, S. Kodge, S. Rathore, N. Thanawala, N. Reddy, G. Saharia, V. Patankar, A. Tiruvur, N. Kurella, and S. Bhoja
+Early silicon of Raptor: the first 3D-DRAM accelerator for generative inference .
+In  2026 ACM/IEEE 53rd Annual International Symposium on Computer Architecture (ISCA) ,
+pp. 2632–2647 .
+External Links:   Document
+Cited by:   §2.1  ,
+§7  .
+Niu  et al.  (2022)
+D. Niu, S. Li, Y. Wang, W. Han, Z. Zhang, Y. Guan, T. Guan, F. Sun, F. Xue, L. Duan, Y. Fang, H. Zheng, X. Jiang, S. Wang, F. Zuo, Y. Wang, B. Yu, Q. Ren, and Y. Xie
+184QPS/W 64Mb/mm 2  3D logic-to-DRAM hybrid bonding with process-near-memory engine for recommendation system .
+In  2022 IEEE International Solid-State Circuits Conference (ISSCC) ,
+Digest of Technical Papers - IEEE International Solid-State Circuits Conference , Vol.  2022-February ,  pp. 462–464 .
+External Links:   Document ,
+Link
+Cited by:   §2.1  .
+[33]
+(2021)
+NVIDIA A100 Tensor Core GPU Datasheet .
+NVIDIA .
+External Links:   Link
+Cited by:   §2.2  .
+[34]
+(2022)
+NVIDIA Ada GPU Architecture .
+NVIDIA .
+External Links:   Link
+Cited by:   §2.2  .
+[35]
+(2026)
+NVIDIA H100 Tensor Core GPU .
+NVIDIA .
+External Links:   Link
+Cited by:   §2.2  .
+Pan  et al.  (2025)
+Y. Pan, Z. Xia, P. Hsu, L. Hu, H. Kim, J. Sharda, M. Zhou, N. S. Kim, S. Yu, T. Rosing, and M. Kang
+Stratum: system-hardware co-design with tiered monolithic 3d-stackable DRAM for efficient MoE serving .
+In  Proceedings of the 58th IEEE/ACM International Symposium on Microarchitecture ,
+New York, NY, USA ,  pp. 1–17 .
+External Links:   Document
+Cited by:   §1  ,
+§2.1  ,
+§2.1  ,
+§2.2  ,
+§7  .
+Pandey and Panda (2024)
+S. Pandey and P. R. Panda
+NeuroTAP: thermal and memory access pattern-aware data mapping on 3d DRAM for maximizing DNN performance .
+ACM Transactions on Embedded Computing Systems   23  ( 6 ),  pp. 96:1–96:30 .
+External Links:   Document
+Cited by:   §7  .
+Qwen Team (2025)
+Qwen Team
+Qwen3 technical report .
+External Links:   2505.09388 ,
+Link
+Cited by:   Appendix D  ,
+§6.1  .
+Qwen Team (2026)
+Qwen Team
+Qwen3.5-35B-A3B .
+Note:  Hugging Face model card
+External Links:   Link
+Cited by:   Appendix D  ,
+§6.1  .
+Rixner  et al.  (2000)
+S. Rixner, W. J. Dally, U. J. Kapasi, P. Mattson, and J. D. Owens
+Memory access scheduling .
+In  Proceedings of the 27th Annual International Symposium on Computer Architecture (ISCA) ,
+pp. 128–138 .
+External Links:   Document ,
+Link
+Cited by:   §2.1  .
+Rotaru  et al.  (2025)
+A. Rotaru, O. Bachtler, L. Steiner, M. Jung, S. O. Krumke, and N. Wehn
+A mathematical model for XOR-based application specific DRAM address mapping schemes .
+In  Proceedings of the International Symposium on Memory Systems ,
+New York, NY, USA ,  pp. 105–120 .
+External Links:   Document
+Cited by:   §A.5  ,
+§B.2  ,
+§1  ,
+§2.3  ,
+item 3  ,
+§4.2  ,
+§7  .
+Seo  et al.  (2025)
+S. H. Seo, J. Kim, D. Lee, S. Yoo, S. Moon, Y. Park, and J. W. Lee
+FACIL: flexible DRAM address mapping for SoC-PIM cooperative on-device LLM inference .
+In  Proceedings of the IEEE International Symposium on High Performance Computer Architecture ,
+Los Alamitos, CA, USA ,  pp. 1720–1733 .
+External Links:   Document
+Cited by:   §7  .
+Shazeer  et al.  (2017)
+N. Shazeer, A. Mirhoseini, K. Maziarz, A. Davis, Q. Le, G. Hinton, and J. Dean
+Outrageously large neural networks: the sparsely-gated mixture-of-experts layer .
+In  International Conference on Learning Representations ,
+Toulon, France .
+External Links:   Link
+Cited by:   §1  ,
+§2.2  .
+[44]
+(2024)
+SK hynix begins volume production of industry’s first HBM3E .
+SK hynix .
+External Links:   Link
+Cited by:   §2.1  .
+Tencent Hunyuan Team (2025)
+Tencent Hunyuan Team
+Hunyuan-A13B technical report .
+External Links:   Link
+Cited by:   Appendix D  ,
+§6.1  .
+Tillet  et al.  (2019)
+P. Tillet, H. T. Kung, and D. Cox
+Triton: an intermediate language and compiler for tiled neural network computations .
+In  Proceedings of the 3rd ACM SIGPLAN International Workshop on Machine Learning and Programming Languages ,
+New York, NY, USA ,  pp. 10–19 .
+External Links:   Document
+Cited by:   Appendix D  ,
+§1  ,
+§1  ,
+§6.1  ,
+§7  .
+[47]
+(2026)
+Triton Group GEMM Tutorial .
+OpenAI .
+External Links:   Link
+Cited by:   §2.2  ,
+§2.3  ,
+§2.3  .
+[48]
+(2026)
+Triton Matrix Multiplication Tutorial .
+OpenAI .
+External Links:   Link
+Cited by:   §2.3  ,
+§2.3  .
+Villa  et al.  (2019)
+O. Villa, M. Stephenson, D. Nellans, and S. W. Keckler
+NVBit: a dynamic binary instrumentation framework for NVIDIA GPUs .
+In  Proceedings of the 52nd Annual IEEE/ACM International Symposium on Microarchitecture ,
+New York, NY, USA ,  pp. 372–383 .
+External Links:   Document
+Cited by:   Appendix D  ,
+§1  ,
+§6.1  .
+Wang  et al.  (2026)
+L. Wang, Y. Cheng, Y. Shi, Z. Mo, Z. Tang, W. Xie, T. Wu, L. Ma, Y. Xia, J. Xue, F. Yang, and Z. Yang
+TileLang: bridge programmability and performance in modern neural kernels .
+In  The Fourteenth International Conference on Learning Representations ,
+External Links:   Link
+Cited by:   §1  .
+Williams  et al.  (2009)
+S. Williams, A. Waterman, and D. Patterson
+Roofline: an insightful visual performance model for multicore architectures .
+Communications of the ACM   52  ( 4 ),  pp. 65–76 .
+External Links:   Document
+Cited by:   §2.2  .
+Zhang  et al.  (2022)
+J. Zhang, M. M. Swift, and J. J. Li
+Software-defined address mapping: a case on 3d memory .
+In  Proceedings of the 27th ACM International Conference on Architectural Support for Programming Languages and Operating Systems ,
+New York, NY, USA ,  pp. 70–83 .
+External Links:   Document
+Cited by:   §1  ,
+§7  .
+Zhang  et al.  (2000)
+Z. Zhang, Z. Zhu, and X. Zhang
+A permutation-based page interleaving scheme to reduce row-buffer conflicts and exploit data locality .
+In  Proceedings of the 33rd Annual ACM/IEEE International Symposium on Microarchitecture ,
+New York, NY, USA ,  pp. 32–41 .
+External Links:   Document
+Cited by:   §7  .
+Zhao  et al.  (2019)
+X. Zhao, A. Adileh, Z. Yu, Z. Wang, A. Jaleel, and L. Eeckhout
+Adaptive memory-side last-level GPU caching .
+In  Proceedings of the 46th International Symposium on Computer Architecture ,
+New York, NY, USA ,  pp. 411–423 .
+External Links:   Document
+Cited by:   §1  ,
+§2.1  .
+Zhou  et al.  (2026)
+K. Zhou, M. Lezcano-Casado, A. P. Goucher, A. Rakhmati, J. Niu, J. Lebar, P. Szczerbuk, P. Bell, P. Tillet, T. Raoux, and Z. Moudallal
+Linear layouts: robust code generation of efficient tensor computation using     𝔽  2   \mathbb{F}_{2}    .
+In  Proceedings of the 31st ACM International Conference on Architectural Support for Programming Languages and Operating Systems, Volume 1 ,
+New York, NY, USA ,  pp. 132–146 .
+External Links:   Document
+Cited by:   §A.1  ,
+§1  ,
+§4.1  ,
+§7  .
+Appendix A  Tile-to-DRAM Layout Details
+This appendix formalizes the source interface for tile access, the semantic
+tile-to-DRAM Linear Layout in a fixed target contract, the layout’s
+resident tiles and their DRAM regions, the intrinsic ordered row-buffer trajectory and its
+physical realization, and the reconstruction of a realizable layout from its
+projected row-reuse kernel. The projected reduction, fixed-domain solver
+interface, kernel-to-layout reconstruction, and finite-catalog correctness are
+developed in
+Appendices   A.4  –  A.7  .
+Throughout this appendix, we fix one target contract and one
+tile access signature    θ  \theta   . Thus the access quantum, request-formation
+policy, target mapping, selection parameters, and placement constraints are
+standing assumptions rather than arguments repeated in every expression. We
+write     𝖽𝗋𝖺𝗆  ⁡   (  ⋅  )    \mathsf{dram}(\cdot)    for the fixed target DRAM address mapping.
+A.1.  Tile-to-DRAM Semantics
+Normalized access sequence.
+A signature     θ  =   (  κ  ,  ρ  ,  χ  )    \theta=(\kappa,\rho,\chi)    identifies the tile configuration
+κ  \kappa   , the operand-property tuple    ρ  \rho   , and the ordered tile-local access
+sequence    χ  \chi   .
+For one
+representative access sequence of source addresses     (   s  0   ,  …  ,   s   N  −  1    )   (s_{0},\ldots,s_{N-1})    over interval
+[  A  ,  A  +  E  )   [A,A+E)   , where    g  g    divides    E  E   , access granularity    g  g    gives
+ℓ  i   \displaystyle\ell_{i}
+=   ⌊      s  i   −  A   g    ⌋    ,   \displaystyle=\left\lfloor\frac{s_{i}-A}{g}\right\rfloor,
+δ  i   \displaystyle\delta_{i}
+=    (    s  i   −  A   )   mod  g    ,   \displaystyle=(s_{i}-A)\bmod g,
+r  i   \displaystyle r_{i}
+=    Λ  θ   ​   (   ℓ  i   )     ,   \displaystyle=\Lambda_{\theta}(\ell_{i}),
+S  \displaystyle S
+=   (   r  0   ,  …  ,   r   N  −  1    )    .   \displaystyle=(r_{0},\ldots,r_{N-1}).
+The fixed signature    θ  \theta   , under the standing request-formation policy,
+determines both the source interpretation and event order. Hence
+Λ  θ   \Lambda_{\theta}    maps each observed unit index directly
+to its normalized coordinate, and    S  S    is the only sequence consumed by layout
+selection.
+We require     Λ  θ   \Lambda_{\theta}    to be injective on the observed indices
+{   ℓ  i   ∣   0  ≤  i  <  N   }   \{\ell_{i}\mid 0\leq i<N\}   .
+A different tile placement    j  j    uses its own source base     A   (  j  )    A^{(j)}   , but every
+admitted instance of the fixed signature yields the same sequence    S  S   .
+Thus absolute addresses and runtime interleaving may change without changing
+the input to offline layout selection associated with that tile access signature.
+Definition 1 (tile-to-DRAM Linear Layout).
+For     x  ∈   𝔽  2  n    x\in\mathbb{F}_{2}^{n}   , a reusable  tile-to-DRAM Linear Layout  is the
+block-structured map
+W  sem   ​  x   =   [       W  C   ​  x         W  D   ​  x         W  R   ​  x      ]    ,    W  sem   ∈   𝔽  2   m  ×  n      .   W_{\mathrm{sem}}x=\begin{bmatrix}W_{C}x\\
+W_{D}x\\
+W_{R}x\end{bmatrix},\qquad W_{\mathrm{sem}}\in\mathbb{F}_{2}^{m\times n}.
+The three blocks select the residual address coordinate, row-buffer domain, and
+row within that domain. If the candidate uses    b  b    independent domain bits and
+r  row   r_{\mathrm{row}}    additional row bits, then
+W  C   ∈   𝔽  2    (   m  −  b  −   r  row    )   ×  n     W_{C}\in\mathbb{F}_{2}^{(m-b-r_{\mathrm{row}})\times n}   ,
+W  D   ∈   𝔽  2   b  ×  n     W_{D}\in\mathbb{F}_{2}^{b\times n}   , and
+W  R   ∈   𝔽  2    r  row   ×  n     W_{R}\in\mathbb{F}_{2}^{r_{\mathrm{row}}\times n}   , with
+rank  ⁡   (   W  D   )    =  b   \operatorname{rank}(W_{D})=b    and
+rank  ⁡   (   [    W  D   ;   W  R    ]   )    =   b  +   r  row     \operatorname{rank}([W_{D};W_{R}])=b+r_{\mathrm{row}}   . We assume     m  ≥  n   m\geq n    and
+0  ≤   b  +   r  row    ≤  n   0\leq b+r_{\mathrm{row}}\leq n   , as required by the completion in
+Appendix   A.6  . Every retained executable layout has full
+column rank; Appendix   A.6   constructs such a completion.
+Lemma 2 constructs one invertible target-basis matrix
+G  ∈   𝔽  2   m  ×  m     G\in\mathbb{F}_{2}^{m\times m}    whose domain and row blocks preserve the fixed mapper’s
+domain and row equality relations.
+(5)
+W  phys   =    G   −  1    ​   W  sem     .   W_{\mathrm{phys}}=G^{-1}W_{\mathrm{sem}}.
+We use     W  sem   W_{\mathrm{sem}}    directly for the reusable semantic layout.
+For this layout,     β  =   (  A  ,  E  ,  B  )    \beta=(A,E,B)    denotes one tile-placement record: source interval
+[  A  ,  A  +  E  )   [A,A+E)    and region base    B  B   . The fixed context and signature need not
+be encoded explicitly in either object.
+Proposition 1 (compiler composition closure).
+Let    P  P    denote the compiler’s composed Linear Layout from compute coordinates
+to the normalized coordinates     r  i   r_{i}   . Then      W  sem   ​  P   W_{\mathrm{sem}}P   , its three output
+blocks, and      W  phys   ​  P   W_{\mathrm{phys}}P    are Linear Layouts. Distinct coordinates in
+im  ⁡   (  P  )    \operatorname{im}(P)    remain distinct exactly when
+ker  ⁡   (   W  sem   )    ∩   im  ⁡   (  P  )     =   {  0  }    .   \ker(W_{\mathrm{sem}})\cap\operatorname{im}(P)=\{0\}.
+Full column rank of     W  sem   W_{\mathrm{sem}}    is sufficient.
+Proof.
+Linear maps remain linear under composition and output slicing
+( Zhou et al., 2026 , Definition 4.2 and Proposition 4.8) ; the invertible
+basis change
+G   −  1    G^{-1}    preserves rank and kernel. The
+restriction is injective precisely when its image intersects the kernel only at
+zero.     □  \square
+Canonical byte-address placement.
+The target supplies a fixed output translation     t  ρ   t_{\rho}    and a byte-placement
+function     Π  ρ   \Pi_{\rho}    whose outputs are    g  g   -aligned byte offsets. For each source
+address     s  ∈   [  A  ,  A  +  E  )    s\in[A,A+E)   , the bound layout computes
+ℓ  =  ⌊    s  −  A   g   ⌋  ,  δ  =  (  s  −  A  )  mod  g  ,  r  =  Λ     θ   (  ℓ  )  ,        y  =  W     phys   r  ⊕  t     ρ   ,  𝖺𝖽𝖽𝗋  (  s  ;  W     sem   ,  β  )  =  B  +  Π     ρ   (  y  )  +  δ  .      \begin{gathered}\ell=\left\lfloor\dfrac{s-A}{g}\right\rfloor,\qquad\delta=(s-A)\bmod g,\qquad r=\Lambda_{\theta}(\ell),\\
+y=W_{\mathrm{phys}}r\oplus t_{\rho},\qquad\mathsf{addr}(s;W_{\mathrm{sem}},\beta)=B+\Pi_{\rho}(y)+\delta.\end{gathered}
+The within-unit byte offset    δ  \delta    is retained after layout placement. A legal
+tile placement keeps it within the byte/column position of the same target domain and
+row;     Π  ρ   \Pi_{\rho}    must also be in bounds and injective on the translated live
+image. Request formation converts the resulting byte address into a request for
+the fixed DRAM address mapping
+𝖽𝗋𝖺𝗆  \mathsf{dram}   .
+Lemma 1 (output-translation invariance).
+For a fixed output translation    t  t   ,
+(     W  phys   ​  x   ⊕  t   )   ⊕   (     W  phys   ​   x  ′    ⊕  t   )    \displaystyle(W_{\mathrm{phys}}x\oplus t)\oplus(W_{\mathrm{phys}}x^{\prime}\oplus t)
+=    W  phys   ​   (   x  ⊕   x  ′    )     ,   \displaystyle=W_{\mathrm{phys}}(x\oplus x^{\prime}),
+W  phys   ​  x   ⊕  t   =     W  phys   ​   x  ′    ⊕  t    \displaystyle W_{\mathrm{phys}}x\oplus t=W_{\mathrm{phys}}x^{\prime}\oplus t
+⟺     W  phys   ​  x   =    W  phys   ​   x  ′      .   \displaystyle\Longleftrightarrow W_{\mathrm{phys}}x=W_{\mathrm{phys}}x^{\prime}.
+Thus output translation preserves injectivity, pairwise differences, and
+equality. Under the affine mapping-consistency conditions below, it only
+relabels mapped domains and rows, so row-state classification remains a
+property of     W  D   W_{D}    and     W  R   W_{R}   .
+Definition 2 (ordered row-buffer semantics).
+A bound instance is  request-formation preserving  when it forms
+one physical request     q  i   q_{i}    for each normalized event, in the same source order
+and with     r  i   r_{i}    as its coordinate ancestry.
+Physical addresses may vary across tile placements; the common ordered
+sequence remains    S  S   . Define the semantic domain
+and row labels
+d  i   =    W  D   ​   r  i     ,    z  i   =    W  R   ​   r  i      .   d_{i}=W_{D}r_{i},\qquad z_{i}=W_{R}r_{i}.
+Immediately before request    i  i   ,      σ  i   ​   (  d  )    \sigma_{i}(d)    is the open row of domain    d  d   ,
+with    ⊥  \bot    denoting a closed domain. Starting from
+σ  0    (  d  )   =  ⊥   \sigma_{0}(d)=\bot   , request    i  i    has class
+(6)
+ϵ  i   =   {      miss  ,      σ     i   (  d     i   )  =  ⊥  ,        hit  ,         σ  i   ​   (   d  i   )    =   z  i    ,        conflict  ,      otherwise  ,        σ   i  +  1    =   σ  i    [   d  i   ↦   z  i   ]   .   \epsilon_{i}=\begin{cases}\mathrm{miss},&\sigma_{i}(d_{i})=\bot,\\
+\mathrm{hit},&\sigma_{i}(d_{i})=z_{i},\\
+\mathrm{conflict},&\text{otherwise},\end{cases}\qquad\sigma_{i+1}=\sigma_{i}[d_{i}\mapsto z_{i}].
+Let
+𝗋𝗈𝗐𝖼𝗇𝗍  ⁡   (  S  ,   W  sem   )    =   (    N  conf   ​   (  S  ,   W  sem   )    ,    N  miss   ​   (  S  ,   W  sem   )    )    .   \mathsf{rowcnt}(S,W_{\mathrm{sem}})=\bigl(N_{\mathrm{conf}}(S,W_{\mathrm{sem}}),N_{\mathrm{miss}}(S,W_{\mathrm{sem}})\bigr).
+The two components count conflicts and opening misses in
+Eq. (  6  ); the remaining events are hits.
+Full-trace replay applies controller scheduling, refresh, queueing, and timing
+to the complete interleaved request sequence.
+Thus,    𝗋𝗈𝗐𝖼𝗇𝗍  \mathsf{rowcnt}    characterizes the intrinsic source-order row-buffer
+behavior of the semantic layout.
+Definition 3 (mapping consistency).
+For physical request     q  i   q_{i}   , write
+𝖽𝗋𝖺𝗆  ⁡   (   q  i   )    =   (   d  i  phys   ,   z  i  phys   ,  …  )    \mathsf{dram}(q_{i})=(d_{i}^{\mathrm{phys}},z_{i}^{\mathrm{phys}},\ldots)   , where
+d  i  phys   d_{i}^{\mathrm{phys}}    and     z  i  phys   z_{i}^{\mathrm{phys}}    are its resolved physical domain
+and row.
+A
+bound instance is
+mapping-consistent  when, for every pair of live requests,
+d  i  phys   =   d  j  phys    \displaystyle d_{i}^{\mathrm{phys}}=d_{j}^{\mathrm{phys}}
+⟺    d  i   =   d  j     ,   \displaystyle\Longleftrightarrow d_{i}=d_{j},
+(7)
+d  i   =   d  j    \displaystyle d_{i}=d_{j}
+⟹   (   z  i  phys   =   z  j  phys   ⟺   z  i   =   z  j   )   .   \displaystyle\Longrightarrow\bigl(z_{i}^{\mathrm{phys}}=z_{j}^{\mathrm{phys}}\Longleftrightarrow z_{i}=z_{j}\bigr).
+The first equivalence says that     W  D   W_{D}    names exactly the physical row buffers;
+the second says that     W  R   W_{R}    names rows within each such buffer. This pairwise
+condition is checked on the finite admitted live image.
+Proposition 2 (semantic–mapped-label source-order equivalence).
+Let    β  \beta    be a mapping-consistent, request-formation-preserving
+tile placement of     W  sem   W_{\mathrm{sem}}   .
+Apply the transition in
+Eq. (  6  ) to its mapped labels
+(   d  i  phys   ,   z  i  phys   )   (d_{i}^{\mathrm{phys}},z_{i}^{\mathrm{phys}})    and
+call the resulting conflict and miss counts
+𝗋𝗈𝗐𝖼𝗇𝗍  phys   ​   (  S  ,   W  sem   ,  β  )    \mathsf{rowcnt}^{\mathrm{phys}}(S,W_{\mathrm{sem}},\beta)   . Then
+(8)
+𝗋𝗈𝗐𝖼𝗇𝗍  phys   ​   (  S  ,   W  sem   ,  β  )    =   𝗋𝗈𝗐𝖼𝗇𝗍  ⁡   (  S  ,   W  sem   )     .   \mathsf{rowcnt}^{\mathrm{phys}}(S,W_{\mathrm{sem}},\beta)=\mathsf{rowcnt}(S,W_{\mathrm{sem}}).
+The semantic and physical domain labels agree up to the bijective relabeling in
+Definition 3.
+Proof.
+Both executions start with all domains closed. By
+Eq. (  7  ), they select corresponding domains and test
+the same within-domain row equality at request    i  i   . They therefore emit the
+same event and open corresponding rows. Induction proves identical event
+sequences and preserves the realized domain labels up to relabeling.
+□  \square
+Lemma 2 (affine target factorization).
+Suppose the within-unit byte offset affects only the byte/column position, while byte
+placement, request formation, and the fixed DRAM address mapping make the
+physical row-buffer-domain and row labels affine in
+y  =     W  phys   ​  x   ⊕   t  ρ     y=W_{\mathrm{phys}}x\oplus t_{\rho}    on the admitted image. Let
+F  D   ∈   𝔽  2   b  ×  m     F_{D}\in\mathbb{F}_{2}^{b\times m}    and
+F  R   ∈   𝔽  2    r  row   ×  m     F_{R}\in\mathbb{F}_{2}^{r_{\mathrm{row}}\times m}    be their linear parts, with
+rank  ⁡   (   F  D   )    =  b   \operatorname{rank}(F_{D})=b    and
+rank  ⁡   (   [    F  D   ;   F  R    ]   )    =   b  +   r  row     \operatorname{rank}([F_{D};F_{R}])=b+r_{\mathrm{row}}   .
+The two rank conditions allow these row spaces to be extended to form an
+invertible target-basis matrix    G  G   . Partition its rows according
+to the residual, domain, and row outputs and require:
+G  =   [      G  C        G  D        G  R      ]   ∈   𝔽  2   m  ×  m     ,          row  ⁡   (   G  D   )    =   row  ⁡   (   F  D   )     ,           row   ⁡   (      G  D        G  R      )    =    row   ⁡   (      F  D        F  R      )     .      \begin{gathered}G=\begin{bmatrix}G_{C}\\
+G_{D}\\
+G_{R}\end{bmatrix}\in\mathbb{F}_{2}^{m\times m},\\
+\operatorname{row}(G_{D})=\operatorname{row}(F_{D}),\\
+\operatorname{row}\!\begin{pmatrix}G_{D}\\
+G_{R}\end{pmatrix}=\operatorname{row}\!\begin{pmatrix}F_{D}\\
+F_{R}\end{pmatrix}.\end{gathered}
+For     W  phys   W_{\mathrm{phys}}    from Eq. (  5  ),
+equality of physical row-buffer domains is exactly     W  D   W_{D}    equality, and within
+one domain physical row equality is exactly     W  R   W_{R}    equality. Affine constants only relabel
+these outputs. Definition 3 directly checks this correspondence on the admitted
+live requests.
+Proof.
+The two row-space equalities make     G  D   G_{D}    preserve exactly the physical
+domain-equality relation and make     [   G  D   ;   G  R   ]   [G_{D};G_{R}]    preserve exactly the joint
+domain–row equality relation. Since
+G  ​   W  phys    =   W  sem    GW_{\mathrm{phys}}=W_{\mathrm{sem}}   , these tests become equality of      W  D   ​  x   W_{D}x
+and, within a fixed domain, equality of      W  R   ​  x   W_{R}x   .
+Hence     F  D   F_{D}    equality is exactly     W  D   W_{D}    equality, and, after fixing that domain
+output,     F  R   F_{R}    equality is exactly     W  R   W_{R}    equality. Lemma 1 removes the affine
+translation from both equality tests.     □  \square
+Thus same-    W  D   W_{D}    predecessors are exactly predecessors in the same physical
+row-buffer domain, and
+W  R   W_{R}    equality within a domain is exactly physical row equality. The weighted
+kernel therefore counts the
+intrinsic source-order row hits of every certified realization, while
+Proposition 2 preserves the source-order domain labels and row-buffer events.
+A.2.  Source-Sequence Domain Coverage
+Source-sequence domain coverage ranks layouts after source-order row conflicts
+have been minimized. It counts the independent row-buffer domains exercised by
+the complete source sequence.
+Definition 4 (source-sequence domain coverage).
+For semantic labels      d  i   =    W  D   ​   r  i     d_{i}=W_{D}r_{i}    and ordered sequence
+S  =   (   r  0   ,  …  ,   r   N  −  1    )    S=(r_{0},\ldots,r_{N-1})   , assume     N  >  0   N>0   .
+Define the realized domain set and its coverage score as
+(9)
+𝒟  ⁡   (  S  ,   W  D   )    \displaystyle\mathcal{D}(S,W_{D})
+=   {    W  D   ​   r  i    ∣   0  ≤  i  <  N   }    ,   \displaystyle=\{W_{D}r_{i}\mid 0\leq i<N\},
+𝖼𝗈𝗏  ⁡   (  S  ,   W  D   )    \displaystyle\mathsf{cov}(S,W_{D})
+=   |   𝒟  ⁡   (  S  ,   W  D   )    |    .   \displaystyle=|\mathcal{D}(S,W_{D})|.
+The score counts the distinct domains retained by the complete source-order
+sequence. Under the closed-domain initial state of Definition 2, this same
+distinct-domain count is also the opening-miss count established in
+Appendix   A.4  . The selector therefore uses row conflicts
+as its locality criterion and this coverage score as the next criterion. Let
+(10)
+𝒞  conf   ​   (  S  )    =      arg  ​  min    W  ∈   𝒲  cert     ⁡   N  conf    ​   (  S  ,  W  )     ,   \mathcal{C}_{\mathrm{conf}}(S)=\operatorname*{arg\,min}_{W\in\mathcal{W}_{\mathrm{cert}}}N_{\mathrm{conf}}(S,W),
+where the minimization ranges over the retained candidate family. Selection
+then chooses
+(11)
+W  ⋆   ∈      arg  ​  max    W  ∈    𝒞  conf   ​   (  S  )      ⁡  𝖼𝗈𝗏   ​   (  S  ,   W  D   )     ,   W^{\star}\in\operatorname*{arg\,max}_{W\in\mathcal{C}_{\mathrm{conf}}(S)}\mathsf{cov}(S,W_{D}),
+before minimizing the executable map’s nonzero-term complexity. Thus, among
+layouts with identical conflict counts, the selected layout exercises the
+largest number of distinct domains in the source sequence. The score depends only
+on     (  S  ,   W  D   )   (S,W_{D})   , and Proposition 2
+preserves it in every certified physical realization.
+A.3.  Legal Placement and Allocation Invariance
+A reusable layout must assign distinct live bytes to distinct backend addresses
+and remain valid across the region bases admitted by the allocation policy.
+Proposition 3 (address uniqueness).
+Let     W  sem   W_{\mathrm{sem}}    have full column rank. Suppose
+Λ  θ   \Lambda_{\theta}    is injective on the observed unit
+indices, the region base    B  B    and byte placement     Π  ρ   \Pi_{\rho}    are
+g  g   -aligned, and     Π  ρ   \Pi_{\rho}    is injective on the translated live image. If the
+placement remains in bounds, then the byte-address function
+𝖺𝖽𝖽𝗋  ⁡   (  ⋅  ,   W  sem   ,  β  )    \mathsf{addr}(\cdot;W_{\mathrm{sem}},\beta)
+is injective over live layout units and their
+within-unit byte offsets.
+Proof.
+If two backend addresses are equal, alignment and reduction modulo    g  g    give
+δ  =   δ  ′    \delta=\delta^{\prime}   . Cancelling the common base and offset, then using injectivity
+of     Π  ρ   \Pi_{\rho}   , gives
+W  phys   ​  r   ⊕   t  ρ    =     W  phys   ​   r  ′    ⊕   t  ρ     W_{\mathrm{phys}}r\oplus t_{\rho}=W_{\mathrm{phys}}r^{\prime}\oplus t_{\rho}   . The translation cancels, and
+W  phys   =    G   −  1    ​   W  sem     W_{\mathrm{phys}}=G^{-1}W_{\mathrm{sem}}    has full column rank, so
+r  =   r  ′    r=r^{\prime}   .
+Injectivity of
+Λ  θ   \Lambda_{\theta}    then gives the
+same source-relative unit; together with     δ  =   δ  ′    \delta=\delta^{\prime}   , this gives the same
+source byte.
+□  \square
+Definition 5 (legal allocation placement class).
+For a semantic layout    W  W   , let     Γ  ⁡   (  W  )    \Gamma(W)    be the set of tile placements
+β  =   (  A  ,  E  ,  B  )    \beta=(A,E,B)    whose source interpretation and access quantum match the fixed
+signature, whose byte placement satisfies Proposition 3 and remains inside the
+reserved CU-local aperture, and whose physical mapping satisfies Definition 3.
+DRAM regions of simultaneously resident tiles must be disjoint.
+A candidate family is request-formation stable when every
+β  ∈   Γ  ⁡   (  W  )     \beta\in\Gamma(W)    is request-formation preserving in the sense of
+Definition 2, for every    W  W    in the family.
+Let     𝒲  cert   \mathcal{W}_{\mathrm{cert}}    denote the finite certified catalog
+retained by the declared synthesis policy. Every
+W  ∈   𝒲  cert    W\in\mathcal{W}_{\mathrm{cert}}    has a nonempty set     Γ  ⁡   (  W  )    \Gamma(W)    and stable
+request formation.
+Corollary 1 (allocation invariance).
+For any     W  ∈   𝒲  cert    W\in\mathcal{W}_{\mathrm{cert}}    and any two tile placements
+β  1   ,    β  2   ∈   Γ  ⁡   (  W  )      \beta_{1},\beta_{2}\in\Gamma(W)   ,
+𝗋𝗈𝗐𝖼𝗇𝗍  phys   ​   (  S  ,  W  ,   β  1   )    \displaystyle\mathsf{rowcnt}^{\mathrm{phys}}(S,W,\beta_{1})
+=   𝗋𝗈𝗐𝖼𝗇𝗍  ⁡   (  S  ,  W  )     \displaystyle=\mathsf{rowcnt}(S,W)
+=    𝗋𝗈𝗐𝖼𝗇𝗍  phys   ​   (  S  ,  W  ,   β  2   )     .   \displaystyle=\mathsf{rowcnt}^{\mathrm{phys}}(S,W,\beta_{2}).
+The source-sequence domain-coverage score also agrees across the class.
+Proof.
+Apply Proposition 2 to each realization.
+□  \square
+Proposition 4 (periodic binding criterion).
+Suppose     T  map   T_{\mathrm{map}}    is a positive multiple of    g  g    and the fixed
+target mapping repeats every     T  map   T_{\mathrm{map}}    bytes up to one-to-one relabeling
+of domains and rows. If     β  =   (  A  ,  E  ,  B  )   ∈   Γ  ⁡   (  W  )     \beta=(A,E,B)\in\Gamma(W)   , then replacing    B  B    by any
+base in the same residue class modulo     T  map   T_{\mathrm{map}}    yields another tile placement
+in     Γ  ⁡   (  W  )    \Gamma(W)   , provided that the resulting range stays inside the CU-local aperture.
+Placements of simultaneously resident tiles are legal when their reserved regions are also
+disjoint.
+Formally, “up to relabeling” requires that, for each admitted base
+shift     k  ​   T  map    kT_{\mathrm{map}}   , fixed bijections on the realized domain labels and on
+the realized rows within each domain transform the resolved labels at address
+a  a    into those at     a  +   k  ​   T  map     a+kT_{\mathrm{map}}    for every live address    a  a   .
+Proof.
+Changing the base by a multiple of
+T  map   T_{\mathrm{map}}    preserves    g  g   -alignment and only relabels domains and rows, preserving their equality relations and hence
+Definition 3. The shift is bijective, so address uniqueness is preserved; the
+aperture and disjoint-range conditions supply the remaining placement
+requirements.
+□  \square
+Instantiation.  The certified period of each admitted bit-field address
+mapping is one row-block span. Starting from the base residue used during
+synthesis, aligning each allocation extent to
+T  map   T_{\mathrm{map}}    preserves that
+residue for all contiguously packed allocations while keeping their ranges
+disjoint.
+Per-organization values of
+T  map   T_{\mathrm{map}}    are recorded in Appendix   D  .
+A.4.  Projected Row-Reuse Kernel Reduction
+For the representative source-coordinate sequence
+S  S    defined above,
+let     W  D   W_{D}    and     W  R   W_{R}    represent the domain and row sublayouts of Definition 1.
+Assume      rank  ⁡   (   W  D   )    =  b   \operatorname{rank}(W_{D})=b   . Once     W  D   W_{D}    is fixed, each domain’s first
+request is fixed; the remaining choice is whether later same-domain requests
+reuse its open row.
+The sequence partitions into domain-local subsequences. For every
+non-first request,      pred  D   ⁡   (  i  )    \operatorname{pred}_{D}(i)    denotes the preceding request in
+the same     W  D   W_{D}    domain.
+Under
+Definition 2’s closed initial state, the intrinsic source-order opening-miss
+count is
+(12)
+N  miss   ​   (  S  ,   W  D   )    =   |   {    W  D   ​   r  i    ∣   0  ≤  i  <  N   }   |   =   𝖼𝗈𝗏  ⁡   (  S  ,   W  D   )     .   N_{\mathrm{miss}}(S;W_{D})=\left|\{W_{D}r_{i}\mid 0\leq i<N\}\right|=\mathsf{cov}(S,W_{D}).
+This count is independent of     W  R   W_{R}   . For a fixed     W  D   W_{D}   , opening misses and
+coverage are therefore fixed; only the hit/conflict split varies with     W  R   W_{R}   .
+Because    i  i    and      pred  D   ⁡   (  i  )    \operatorname{pred}_{D}(i)    have the same domain label,
+their difference obeys
+Δ  i   \displaystyle\Delta_{i}
+=    r  i   ⊕   r    pred  D   ⁡   (  i  )       ,   \displaystyle=r_{i}\oplus r_{\operatorname{pred}_{D}(i)},
+W  D   ​   Δ  i    \displaystyle W_{D}\Delta_{i}
+=  0   ,   \displaystyle=0,
+W  R   ​   r  i    =    W  R   ​   r    pred  D   ⁡   (  i  )       \displaystyle W_{R}r_{i}=W_{R}r_{\operatorname{pred}_{D}(i)}
+⟺    Δ  i   ∈   ker  ⁡   (   W  R   )      \displaystyle\Longleftrightarrow\Delta_{i}\in\ker(W_{R})
+⟺  Δ     i   ∈  K  ,  K  =   ker    [      W  D        W  R      ]   .   \displaystyle\Longleftrightarrow\Delta_{i}\in K,\qquad K=\ker\!\begin{bmatrix}W_{D}\\
+W_{R}\end{bmatrix}.
+Collecting equal differences produces
+w   W  D    ​   (  Δ  )    =   |   {  i  |      pred  D   ⁡   (  i  )    ​   exists and   ​   Δ  i    =  Δ   }   |    .   w_{W_{D}}(\Delta)=\left|\left\{i\,\middle|\,\operatorname{pred}_{D}(i)\text{ exists and }\Delta_{i}=\Delta\right\}\right|.
+Summing these weights over the kernel gives the intrinsic hit count
+(13)
+N  hit   ​   (  S  ,   W  D   ,  K  )    =    ∑   Δ  ∈  K      w   W  D    ​   (  Δ  )      .   N_{\mathrm{hit}}(S;W_{D},K)=\sum_{\Delta\in K}w_{W_{D}}(\Delta).
+Since every request is a miss, a hit, or a conflict,
+(14)
+N  conf   ​   (  S  ,   W  D   ,  K  )    =   N  −    N  miss   ​   (  S  ,   W  D   )    −    N  hit   ​   (  S  ,   W  D   ,  K  )      .   N_{\mathrm{conf}}(S;W_{D},K)=N-N_{\mathrm{miss}}(S;W_{D})-N_{\mathrm{hit}}(S;W_{D},K).
+For any completed layout
+W  =   [    W  C   ;   W  D   ;   W  R    ]    W=[W_{C};W_{D};W_{R}]    inducing    K  K   , these partial-layout counts are exactly
+N  miss   ​   (  S  ,  W  )    N_{\mathrm{miss}}(S,W)    and      N  conf   ​   (  S  ,  W  )    N_{\mathrm{conf}}(S,W)    used by
+𝗋𝗈𝗐𝖼𝗇𝗍  ⁡   (  S  ,  W  )    \mathsf{rowcnt}(S,W)   .
+Equations (  12  )–(  14  ) prove that,
+for fixed     W  D   W_{D}   , minimizing conflicts is exactly equivalent to maximizing the
+weighted kernel objective.
+Thus the row block affects the fixed-domain score only through its
+row-reuse kernel    K  K   ; two row blocks inducing the same    K  K    capture the same
+weighted differences.
+If the joint domain–row map has rank
+b  +   r  row    b+r_{\mathrm{row}}    and     n  =   b  +   r  row   +  c    n=b+r_{\mathrm{row}}+c   , then      dim  K   =  c   \dim K=c   , and the
+fixed-domain problem is
+(15)
+max  ⁡      ∑   Δ  ∈  K        K  ⊆   ker  ⁡   (   W  D   )     ,    dim  K   =  c       ⁡   w   W  D     ​   (  Δ  )     .   \max_{K\subseteq\ker(W_{D}),\ \dim K=c}\sum_{\Delta\in K}w_{W_{D}}(\Delta).
+Equation (  15  ) is the candidate-conditioned
+fixed-domain kernel objective used by TileDRAM. For each candidate, the target
+field widths and legal-placement constraints fix the admissible    b  b   ,
+r  row   r_{\mathrm{row}}   , and     c  =   n  −  b  −   r  row     c=n-b-r_{\mathrm{row}}   . The next subsection gives
+the reduced-coordinate solver interface and its lifting correctness.
+Table 1.  The two-domain realization of the running     2  ×  2   2\times 2    stream written as the
+predecessor-difference calculation used by the solver.
+event
+r  i   r_{i}
+W  D   ​   r  i    W_{D}r_{i}
+pred  D   ⁡   (  i  )    \operatorname{pred}_{D}(i)
+Δ  i   \Delta_{i}
+intrinsic event
+e  0   e_{0}
+000  000
+D  0   D_{0}
+–
+–
+miss
+e  1   e_{1}
+001  001
+D  0   D_{0}
+e  0   e_{0}
+001  ∈  K   001\in K
+hit
+e  2   e_{2}
+010  010
+D  1   D_{1}
+–
+–
+miss
+e  3   e_{3}
+011  011
+D  1   D_{1}
+e  2   e_{2}
+001  ∈  K   001\in K
+hit
+The first request to each domain is an opening miss. The two remaining
+requests contribute the same difference    001  001   , so choosing
+K  =   span  ⁡   {  001  }     K=\operatorname{span}\{001\}    captures weight two and makes both
+intrinsic source-order hits.
+A.5.  Fixed-Domain Solver Interface
+The solver operates only on the weighted same-domain predecessor differences.
+After merging equal differences, choose     N  D   N_{D}    whose columns form a basis
+of     ker  ⁡   (   W  D   )    \ker(W_{D})   . The solver represents each difference by its unique coordinate
+u  u    and searches a    c  c   -dimensional reduced subspace     K  ~   \widetilde{K}   :
+N     D   ∈  𝔽     2       n  ×   (   n  −  b   )     ,  im  (  N     D   )  =  ker  (  W     D   )  ,         K  ~   ⊆  𝔽     2       n  −  b    ,  dim   K  ~   =  c  ,         K  =    N  D   ​   K  ~    :=   {    N  D   ​  u   ∣   u  ∈   K  ~    }    ,           ∑   u  ∈   K  ~       w   W  D    ​   (    N  D   ​  u   )     =    ∑   Δ  ∈  K      w   W  D    ​   (  Δ  )      .      \begin{gathered}N_{D}\in\mathbb{F}_{2}^{n\times(n-b)},\qquad\operatorname{im}(N_{D})=\ker(W_{D}),\\
+\widetilde{K}\subseteq\mathbb{F}_{2}^{n-b},\qquad\dim\widetilde{K}=c,\\
+K=N_{D}\widetilde{K}:=\{N_{D}u\mid u\in\widetilde{K}\},\\
+\sum_{u\in\widetilde{K}}w_{W_{D}}(N_{D}u)=\sum_{\Delta\in K}w_{W_{D}}(\Delta).\end{gathered}
+The resulting weighted-subspace interface is the one studied by Rotaru
+et al.  ( Rotaru et al., 2025 , §6.1–6.2 and §7) . TileDRAM uses the
+cited linearized Problem 3 formulation for the exact route and its greedy
+construction for the greedy route. The exact route optimizes a fixed     W  D   W_{D}    on
+the complete positive-weight support; the greedy route is heuristic. If the
+returned generators span fewer than    c  c    dimensions, they are extended to an
+algebraically feasible    c  c   -dimensional subspace before lifting. Nonnegative
+weights ensure that this completion cannot reduce the objective. The exact
+route retains the highest-scoring such completion, whereas the greedy route
+applies its feasible completion rule.
+Proposition 5 (coordinate reduction and lifting correctness).
+Assume      rank  ⁡   (   W  D   )    =  b   \operatorname{rank}(W_{D})=b    and choose     N  D   N_{D}    as above. The map
+K  ~   ↦    N  D   ​   K  ~     \widetilde{K}\mapsto N_{D}\widetilde{K}    is a bijection from the
+c  c   -dimensional subspaces of     𝔽  2   n  −  b    \mathbb{F}_{2}^{n-b}    to the feasible subspaces in
+Eq. (  15  ), and it preserves their objective values.
+Consequently, the cited exact solution lifts to a fixed-    W  D   W_{D}    optimum, while a
+greedy solution lifts to a feasible fixed-    W  D   W_{D}    solution.
+Proof.
+Because     N  D   N_{D}    has full column rank,     u  ↦    N  D   ​  u    u\mapsto N_{D}u    is a bijection onto
+ker  ⁡   (   W  D   )    \ker(W_{D})    and preserves subspace dimension.
+The displayed objective identity then preserves objective order after
+equal differences have been merged.
+□  \square
+A.6.  Kernel-to-Layout Reconstruction
+Proposition 6 (row-block reconstruction).
+Let     K  ⊆   ker  ⁡   (   W  D   )     K\subseteq\ker(W_{D})    have dimension    c  c   , assume     W  D   W_{D}    has full row rank
+b  b   , and set      r  row   =   n  −  b  −  c    r_{\mathrm{row}}=n-b-c   . Then there is a row block
+W  R   ∈   𝔽  2    r  row   ×  n     W_{R}\in\mathbb{F}_{2}^{r_{\mathrm{row}}\times n}    such that
+ker  ⁡   (   [    W  D   ;   W  R    ]   )    =  K   .   \ker([W_{D};W_{R}])=K.
+Proof.
+From     K  ⊆   ker  ⁡   (   W  D   )     K\subseteq\ker(W_{D})   , it follows that
+row  ⁡   (   W  D   )    ⊆   K  ⟂    \operatorname{row}(W_{D})\subseteq K^{\perp}   . Extend a basis of
+row  ⁡   (   W  D   )    \operatorname{row}(W_{D})    to a basis of     K  ⟂   K^{\perp}    using
+r  row   r_{\mathrm{row}}    additional vectors, and use those vectors as the rows of
+W  R   W_{R}   . Then      row  ⁡   (   [    W  D   ;   W  R    ]   )    =   K  ⟂    \operatorname{row}([W_{D};W_{R}])=K^{\perp}   , whose orthogonal
+complement is    K  K   .     □  \square
+To complete the semantic map, Proposition 6 provides a joint domain–row block
+of rank      b  +   r  row    =   n  −  c    b+r_{\mathrm{row}}=n-c   . Choose    c  c    residual-address rows that add the
+remaining independent directions and place them in     W  C   W_{C}   . This gives
+W  sem   =   [      W  C        W  D        W  R      ]    ,     rank   𝔽  2    ⁡   (   W  sem   )    =  n    .   W_{\mathrm{sem}}=\begin{bmatrix}W_{C}\\
+W_{D}\\
+W_{R}\end{bmatrix},\qquad\operatorname{rank}_{\mathbb{F}_{2}}(W_{\mathrm{sem}})=n.
+Basis extension guarantees this full-rank algebraic completion. For     m  >  n   m>n   , a
+candidate may add     m  −  n   m-n    rank-redundant residual rows; the finite catalog retains
+only completions satisfying the target embedding and sparsity constraints.
+Lemma 2 expresses each retained completion as the executable map
+W  phys   W_{\mathrm{phys}}   .
+A.7.  Certified-Catalog Selection
+Domain-block enumeration followed by kernel and residual-address
+reconstruction generates layout candidates.
+Target realization, mapping-consistency, and binding-legality checks
+retain the single finite certified catalog     𝒲  cert   \mathcal{W}_{\mathrm{cert}}    defined
+above.
+The complete lexicographic selection functional is
+(16)
+J  ⁡   (  S  ,  W  )    =   (    N  conf   ​   (  S  ,  W  )    ,   −   𝖼𝗈𝗏  ⁡   (  S  ,   W  D   )     ,   nnz  ⁡   (    G   −  1    ​  W   )    )    .   J(S,W)=\bigl(N_{\mathrm{conf}}(S,W),-\mathsf{cov}(S,W_{D}),\operatorname{nnz}(G^{-1}W)\bigr).
+The first coordinate minimizes source-order row conflicts. The second favors
+greater source-sequence domain coverage from Eq. (  9  ), and
+the last is a nonzero-term complexity proxy for the executable linear address
+map.
+Proposition 7 (catalog-relative exactness).
+Under Definition 4’s assumption     N  >  0   N>0   , let
+𝒲  cert   \mathcal{W}_{\mathrm{cert}}    be nonempty. By its definition, every
+member is certified, preserves request formation, and has a nonempty legal
+tile-placement set.
+Exhaustive comparison returning
+W  ⋆   ∈      arg  ​  min    W  ∈   𝒲  cert     ⁡  J   ​   (  S  ,  W  )     W^{\star}\in\operatorname*{arg\,min}_{W\in\mathcal{W}_{\mathrm{cert}}}J(S,W)
+is exact for the lexicographic objective over the emitted catalog. With the
+exact inner route on the complete positive-weight support, the kernel emitted
+for each retained     W  D   W_{D}    is also optimal for its fixed-domain algebraic problem.
+With the greedy inner route, each emitted kernel is feasible and exhaustive
+comparison remains exact over the resulting catalog.
+Proof.
+Definition 2 supplies the common ordered sequence, and Proposition 2 makes each
+certified realization agree on the conflict coordinate; Definition 4 and
+mapping consistency preserve the source-sequence domain-coverage score. The final
+coordinate is computed directly from the emitted physical map. Proposition 5 supplies the exact or
+feasible fixed-domain result for the chosen inner route. Since the catalog is
+finite and nonempty, exhaustive comparison attains the catalog’s lexicographic
+minimum.
+□  \square
+A.8.  Applicability Conditions
+The construction and its source-order analysis apply to recurring tiled access
+patterns whose admitted instances satisfy three conditions; tiled GEMM is the
+evaluated instance in this paper.
+(C1) Recurring ordered sequence.
+For every     W  ∈   𝒲  cert    W\in\mathcal{W}_{\mathrm{cert}}   , the source interpretation
+yields the same coordinate sequence for all
+β  ∈   Γ  ⁡   (  W  )     \beta\in\Gamma(W)   , and request formation
+preserves the one-request-per-event correspondence, event order, and coordinate ancestry. This
+makes the row-state trajectory well defined and amortizes the cost of one offline
+selection across the recurring tile placements.
+(C2) Linear live-coordinate representation.  The source interpretation
+maps live layout units injectively into     𝔽  2  n   \mathbb{F}_{2}^{n}   , and the compiler expresses
+the resulting coordinate projection as a Linear Layout. With a selected
+full-column-rank tile-to-DRAM Linear Layout, distinct live units therefore remain
+distinguishable under composition.
+(C3) Certified target realization.  On the admitted live image, the
+within-unit byte offset affects only byte/column position, while byte placement and
+the fixed DRAM address mapping produce affine domain and row labels with the
+rank conditions of Lemma 2 and the consistency of Definition 3. The modeled
+intrinsic source-order state transition
+retains one open row per domain until a request to that
+domain replaces it.
+Together, these conditions justify the ordered row-buffer semantics and
+fixed-domain kernel reduction. Given a nonempty finite certified catalog, the
+selector is well-defined. For an emitted    c  c   -dimensional kernel, its captured
+same-domain predecessor-difference weight is exactly the source-order row reuse
+from Eq. (  13  ).
+Appendix B  Controller-Side DRAM Address Mapping: Configuration Feasibility,
+Construction Scale, and Performance
+Controller-side address mapping supplies one global interpretation for every
+request served by the target memory controller. We evaluate fixed global hashes
+that apply the same static bit-mixing rule to every operand stream, regardless
+of its operand properties or tile access signature.
+TileDRAM retains the target controller mapping and selects a tile-to-DRAM layout
+for each tile access signature.
+The experiments below separate construction cost from mapping effectiveness.
+Section   B.2   evaluates the Rotaru-style exhaustive
+full-trace search, whose outer mapping choice makes trace construction
+candidate-dependent.
+B.1.  Fixed Global Mappings: Closure and Replay Feasibility
+The fixed-hash family covers row-to-bank, column-to-bank, bank-to-row, and
+column-to-row XOR mappings, compound row/bank swizzling, and a field swizzle
+styled after Ramulator2’s  MOP4CLXOR  address mapper
+( Luo et al., 2024 ) . Every recipe applies one frozen rule to
+both operand access sequences. Compilation checks whether the rule closes over the live
+address domain; replay-complete entries then execute through the same
+Accel-Sim/Ramulator2 path as conventional placement and TileDRAM. The fixed-hash
+replay uses a Llama 4 up/gate projection with tile
+(   B  ​  M   ,   B  ​  N   ,   B  ​  K   )   =   (  64,128  ,  64  )    (BM,BN,BK)=(64,128,64)    under the  t8/b16/row13/col3  organization
+with open-row FR-FCFS. The conventional
+branch uses the identity  RoBaTiCoCh  mapping
+(Row–Bank–Tier–Column–Channel), realized by Ramulator2’s
+RoBaRaCoCh  mapper.
+Table 2.  Feasibility and replay results for fixed global controller mappings on
+a Llama 4 up/gate projection with tile     (  64,128  ,  64  )   (64,128,64)   . Replay entries use the
+refresh-on  t8/b16/row13/col3
+organization and report cycle-level Ramulator2 results relative to identity.
+Higher conflict reduction and speedup are better.
+Mapping pattern
+Address mixing
+Validation
+Recorded evidence
+Bank     ←  \leftarrow     Bank     ⊕  \oplus     LowRow
+Low row bits into bank bits
+Replay
+0.0000% conflict reduction; 1.0000    ×  \times    .
+Bank     ←  \leftarrow     Bank     ⊕  \oplus     MidRow
+Mid row bits into bank bits
+Replay
+0.0000% conflict reduction; 1.0000    ×  \times    .
+Bank     ←  \leftarrow     Bank     ⊕  \oplus     LowCol
+Low column bits into bank bits
+Replay
+0.0892% conflict reduction; 1.0001    ×  \times    .
+Bank     ←  \leftarrow     Bank     ⊕  \oplus     LowRow     ⊕  \oplus     LowCol
+Low row and column bits into bank bits
+Replay
+0.0892% conflict reduction; 1.0001    ×  \times    .
+Row     ←  \leftarrow     Row     ⊕  \oplus     LowBank
+Low bank bits into row bits
+Replay
+0.0000% conflict reduction; 1.0000    ×  \times    .
+Row     ←  \leftarrow     Row     ⊕  \oplus     LowCol
+Low column bits into row bits
+Replay
+0.0000% conflict reduction; 1.0000    ×  \times    .
+Compound bank/row XOR
+Column-to-bank plus bank-to-row mixing
+Replay
+0.0892% conflict reduction; 1.0001    ×  \times    .
+MOP4CLXOR  -style
+Column-driven mapped-field swizzle
+Replay
+0.0026% conflict reduction; 1.0000    ×  \times    .
+The best evaluated replay-complete fixed global recipes reduce conflicts by only
+0.0892% and improve performance by 0.0144%. The fixed mappings encode one
+address-field transformation for the complete access sequence, whereas TileDRAM selects
+placement from the ordered accesses of each signature.
+B.2.  Cost of Rotaru-Style Exhaustive Full-Trace Synthesis
+The multi-bank mapping synthesis of Rotaru et al.  ( Rotaru et al., 2025 )
+uses a complete workload trace as its specialization unit and treats the domain
+mapping as an outer search variable. After fixing an outer mapping, the trace is
+compressed into weighted same-domain predecessor differences for the
+fixed-domain Problem 3 solver. Changing the outer mapping changes
+request-domain membership, same-domain predecessors, and therefore the resulting
+difference histogram. Trace construction is thus candidate-dependent: a separate
+fixed-domain Problem 3 instance must be reconstructed for every outer candidate
+before its inner subspace solve.
+For the evaluated organization, the source coordinate spans     n  =  23   n=23    bits and the
+target requires     b  =  7   b=7    tier-and-bank dimensions, corresponding to 128
+row-buffer domains for a full-rank     W  D   W_{D}   . The bit-selecting family
+then contains 245,157 candidates for     W  D   W_{D}   , while the structured-XOR family
+contributes 105,417,617 raw candidates. Together they yield
+105,662,774 outer candidates before rank filtering and row-space deduplication.
+Applying this search directly to the Llama 4 full trace with 7,864,320
+active-lane copy events would perform approximately     8.31  ×   10  14    8.31\times 10^{14}
+evaluations of candidate copy events before any
+fixed-domain Problem 3 solve, full-map completion, or physical address-mapping
+evaluation.
+At a sustained aggregate rate of 10 billion evaluations of candidate copy events
+per second on a large multicore CPU, this construction requires approximately
+23.1 hours; at 1 billion evaluations per second, it requires approximately 9.6
+days. These throughput-based estimates quantify raw outer construction before
+Problem 3 solves, map completion, or physical address-mapping evaluation. The
+outer construction alone therefore makes Rotaru-style exhaustive full-trace
+controller-map synthesis computationally prohibitive as a routine
+per-configuration path at the MoE FFN scale. Each new phase, problem shape, or
+autotuned tile configuration supplies a new workload-wide specialization target.
+These experiments separate synthesis tractability from mapping effectiveness.
+Fixed global hashes are inexpensive but produce negligible changes in the
+evaluated replay. Rotaru-style exhaustive full-trace synthesis explores a much
+larger mapping space, but its candidate-dependent outer construction is
+computationally prohibitive at this scale. TileDRAM instead changes the
+specialization granularity: it keeps the controller mapping fixed and reuses
+placement selected per recurring tile access signature.
+Appendix C  Compiler Interface
+Listing   1   shows an excerpt from the
+programmer-facing tiled GEMM kernel used by the compiler path in
+Section   5.1  . The annotation
+exposes tiled-kernel semantics used by the compiler, while the kernel body uses
+ordinary tiled loads and matrix multiplication; the output-store path is
+omitted for brevity.
+Listing 1:  Programmer-facing tiled GEMM
+kernel excerpt used by the compiler path. The annotation exposes the tiled-kernel
+semantics consumed by TileDRAM, while the body remains ordinary Triton/Gluon
+code.
+⬇
+@tiledram  .  gemm  (
+problem  =  tiledram  .  problem  (  M  =256,     N  =256,     K  =4096),
+tile  =  tiledram  .  tile  (  BM  =64,     BN  =64,     BK  =64),
+execution  =  tiledram  .  execution  (  num_warps  =4,     num_stages  =1),
+operands  =  tiledram  .  operands  (
+A  =  tiledram  .  lhs  (  "a_ptr"  ,     dtype  =  "fp16"  ,
+layout  =  "row_major"  ,     stride  =(  "K"  ,     1)),
+B  =  tiledram  .  rhs  (  "b_ptr"  ,     dtype  =  "fp16"  ,
+layout  =  "row_major"  ,     stride  =(  "N"  ,     1)),
+C  =  tiledram  .  out  (  "c_ptr"  ,     dtype  =  "fp16"  ,
+layout  =  "row_major"  ,     stride  =(  "N"  ,     1)),
+),
+)
+@gluon  .  jit
+def     gemm_kernel  (  a_ptr  ,     b_ptr  ,     c_ptr  ,     M  ,     N  ,     K  ,
+stride_am  ,     stride_ak  ,     stride_bk  ,     stride_bn  ,
+stride_cm  ,     stride_cn  ,     BLOCK_M  ,     BLOCK_N  ,     BLOCK_K  ):
+a_ptrs     =     a_ptr     +     rows     *     stride_am     +     offs_k_a     *     stride_ak
+b_ptrs     =     b_ptr     +     offs_k_b     *     stride_bk     +     cols     *     stride_bn
+a_vals     =     ttgl  .  load  (  ttgl  .  set_auto_layout  (  a_ptrs  ,     layout  ))
+b_vals     =     ttgl  .  load  (  ttgl  .  set_auto_layout  (  b_ptrs  ,     layout  ))
+out_vals     =     ttgl  .  dot_fma  (  a_vals  ,     b_vals  ,     acc  )
+Tile-access and binding metadata.
+For each tile access signature, the compiler records the operand-property tuple,
+comprising operand position ( lhs  or  rhs ), data type
+( dtype ), source-stride pattern ( stride ), and source layout
+(row-major or column-major), together
+with the access shape and address space needed by the lowered path, and routes
+the resulting source pointer tensor through
+APPLY . Compiler-side  BIND  performs template lookup and
+records the selected target-specific layout template together with the rule for
+deriving the tile ID from the current execution context. When that tile is
+placed in a DRAM region, runtime  BIND  obtains the referenced template from this
+binding metadata and combines it with the concrete tile ID, source interval, and
+concrete DRAM region to construct its tile descriptor for that region.
+Runtime  BIND  passes the descriptor for the active resident tile
+as a runtime input to  APPLY .
+Address-lowering sequence.
+For each admitted operand access, lowering places the  APPLY  path after the
+source pointer tensor is formed by address arithmetic. At execution, the path extracts the source-relative
+coordinates, separates the layout-unit index from the within-unit byte
+offset, applies the     𝔽  2   \mathbb{F}_{2}   -linear map, affine XOR translation, and byte
+placement, then reconstructs the backend address while retaining that offset.
+Shifts, masks, XOR, parity, and address arithmetic implement this sequence
+before the original asynchronous copy.
+The compiler records the canonical address-function associated with each
+transformed tile access signature. The compiler-side template reference and
+runtime  BIND  connect the programmer-facing kernel intent, the
+lowered compiler realization, and the simulator descriptor recorded by the
+cross-path equivalence artifact.
+Appendix D  Artifact and Evaluation Configuration
+The artifact supports the three result groups reported in this paper: the
+108-case MoE full suite and hardware cost calibration, the controller-mapping comparisons in
+Appendix   B  , and the six-organization retargeting
+sweep. It records the revisions, build options, simulator
+configuration files, trace manifests, and run manifests that determine the
+reported results.
+Software surface.
+The artifact pins the TileDRAM source tree, Accel-Sim/GPGPU-Sim build,
+Ramulator2 checkout, Triton/Gluon compiler tree, CUDA and NVBit environment,
+Python package set, host OS, C++ compiler, and simulator build flags. The run
+manifests bind these fields to trace collection, layout selection, descriptor
+construction, and replay for each result group. All reported TileDRAM
+layouts are selected by the greedy route on the complete positive-weight support
+(Appendix   A.5  ). Per-case synthesis-resource records support
+the offline layout-synthesis cost reported below; controller-mapping manifests
+support the comparisons in Appendix   B  .
+Cross-path equivalence artifact.
+The artifact includes a hash-closed compiler–simulator
+execution-equivalence report. For every semantic address-function family, the
+report records the representative descriptor and descriptor-table hashes,
+canonical function hash, per-operand compiler transformation-binding and
+lowered-IR hashes,
+compiler binary hash, production transformer binary hash, structural-vector
+hash, and mismatch count. The release gate passes only when the canonical
+evaluator, lowered compiler IR, and production simulator transformer produce identical
+addresses for every reported vector. The current report admits all 108
+main-suite configurations and covers the identity and selected-layout
+branches: 216 runtime descriptor tables (one per configuration per branch,
+each covering both input operands), 2,118,464 descriptors
+counted at per-tile-instance granularity, 378 semantic address-function
+families, and 45,460 structural byte addresses with zero mismatches.
+Compiler-cost calibration artifact.
+The hardware calibration uses the same 108 full-GEMM kernel configurations as
+the main suite, spanning six model families and eight tile shapes. The selected
+templates supply the address computation for both operands. Each case
+records     H  ​  0   H0    without address transformation,     H  ​  1   H1    with identity address
+generation, and     H  ​  2   H2    with the selected transformation; only        H  ​  2   /  H   ​  1   −  1   H2/H1-1    enters
+the reported overhead. Each mode contributes 51 measurements under a rotating
+six-order
+schedule and an adaptively sized timing window of at least 10 ms. The artifact
+records the case, template, generated-code, binary, and
+calibration-harness hashes together with the lowering report, resource report,
+SASS dump,
+and timing samples. The publication gate validates all 108 cases. The resulting
+transformation-versus-identity overhead is 0.17% geomean, below 0.01% median,
+0.57% at the 95th percentile,
+and 4.93% maximum.
+Offline layout-synthesis cost.
+TileDRAM performs one offline synthesis per case, producing the layouts for its
+tile access signatures and amortizing the synthesis cost across their dynamic
+tile instances. Across the
+108-case solver-cost campaign, the measured median per-case synthesis time is
+349.0 s and the measured median peak resident memory is 227.0 MB. The artifact
+records the solver route, wall time, peak resident memory, and completion status
+for each case.
+Platform.
+GPU-side traces are collected from Triton and Gluon tiled GEMM kernels using
+NVBit  ( Tillet et al., 2019 ;  , 2026 ;  Villa et al., 2019 )  and replayed in a trace-driven Accel-Sim/Ramulator2 platform. Accel-Sim supplies
+the GPU execution context, including warp issue, instruction replay, memory
+stalls, and cycle accounting. Ramulator2 supplies the 3D DRAM backend,
+including address mapping, command scheduling, row-buffer state, read latency,
+and foreground queue wait. Appendix   B   separately
+specifies the controller-mapping alternatives used in the controller-mapping
+comparison.
+Replay contract.
+Each baseline–TileDRAM pair is constructed from one CU-local access
+sequence and one target DRAM organization. The paired fields are the kernel
+shape, tile shape, execution staging, source trace, target organization, and
+fixed DRAM address mapping; each branch records its observed source ingress and
+controller service orders. The treatment
+field is DRAM placement:
+baseline uses conventional placement, while TileDRAM uses the selected
+tile-to-DRAM layout for the same target organization.
+Main workload set.
+The primary MoE full suite contains 108 full-trace FFN cases from
+Qwen3  ( Qwen Team, 2025 ) , DeepSeek-V3  ( DeepSeek-AI, 2024 ) ,
+Qwen3.5-35B-A3B  ( Qwen Team, 2026 ) , Kimi K3  ( Kimi Team, 2026 ) ,
+Hunyuan-A13B  ( Tencent Hunyuan Team, 2025 ) , and Llama 4  ( Meta AI, 2025 ) , with
+18 cases per family. Each family contributes one up/gate and one down
+projection, and each projection is measured at     M  =  64   M=64    over the four tiles
+64  ×  64  ×  32   64{\times}64{\times}32   ,     64  ×  128  ×  32   64{\times}128{\times}32   ,     64  ×  128  ×  64   64{\times}128{\times}64   ,
+64  ×  256  ×  32   64{\times}256{\times}32    and at     M  =  128   M=128    over the five tiles
+64  ×  64  ×  32   64{\times}64{\times}32   ,     128  ×  128  ×  32   128{\times}128{\times}32   ,
+128  ×  128  ×  64   128{\times}128{\times}64   ,     128  ×  256  ×  64   128{\times}256{\times}64   ,
+128  ×  256  ×  128   128{\times}256{\times}128   , giving eight     M  =  64   M=64    and ten     M  =  128   M=128    cases per
+family over eight distinct tile shapes;     64  ×  64  ×  32   64{\times}64{\times}32    is the one
+shape shared by both    M  M    groups, so it carries 24 of the 108 cases while each
+other shape carries 12. The suite also supplies the complete
+hardware address-transformation cost cohort.
+The artifact records the problem size, tile size, operand properties, including
+operand position, data type, source-stride pattern, and source layout, and
+model-family identifiers for each case. The retargeting sweep uses
+six full-trace FFN streams with shapes
+(  64  ,  4096  ,  1536  )   (64,4096,1536)   ,     (  64  ,  4096  ,  7168  )   (64,4096,7168)   ,     (  64  ,  4096  ,  3072  )   (64,4096,3072)   ,
+(  128  ,  8192  ,  5120  )   (128,8192,5120)   ,     (  128  ,  3584  ,  3072  )   (128,3584,3072)   , and     (  128,512  ,  2048  )   (128,512,2048)   ,
+all with     64  ×  64  ×  32   64{\times}64{\times}32    tiles and one pipeline stage.
+Memory-system configurations.
+All modeled organizations use  OpenRowPolicy  and FR-FCFS. The full
+suite, fixed-hash supplement, and retargeting sweep use
+RoBaTiCoCh  (Row–Bank–Tier–Column–Channel), realized by
+Ramulator2’s  RoBaRaCoCh  mapper. The full
+suite uses 8 tiers,
+16 banks, 13 row bits, and 3 column bits. Refresh is enabled for every replay
+in the 108-case full suite. The fixed-hash supplement uses the
+same tier/bank counts with 13 row bits and 3 column bits, as stated in
+Appendix   B  .
+For the main organization, the address-mapping byte period is one row-block span,
+T  map   =   128  ×  512    T_{\mathrm{map}}=128\times 512    bytes   =  {}={}   64 KiB; the
+corresponding spans for the retargeting organizations follow from their own
+domain counts and row sizes. In particular, the two row12/col4 organizations
+use 1-KiB rows and periods of 32 KiB and 128 KiB; the run manifests record the
+value used for each organization.
+The evaluated operand access sequence is an ordered tile-local access sequence of active-lane copy events generated
+by LDGSTS.128; operand-tile source-coordinate sequences are the optimization
+inputs, and all copy event and row-event counts use this same event
+granularity. Because the CU-local aperture path has neither cross-CU request
+merging nor a coalescing stage
+(Section   2.1  ), each active-lane LDGSTS.128 event is one
+16-byte request at the stack boundary, and both replay arms share this
+granularity.
+Controller-mapping artifacts.
+The artifact records each fixed-hash operation, scope, closure result, compile
+score, replay manifest, and the separate operand-scoped diagnostic entry for
+Appendix   B  .
+Metric definitions.
+The request-weighted row-conflict rate is the pooled conflict count divided by
+all pooled row events. Pooled row-conflict reduction uses the corresponding
+summed baseline and TileDRAM conflict counts. For performance, each
+matched case contributes one speedup,
+𝑆𝑈  i   =    C   baseline  ,  i     C   TileDRAM  ,  i      ,    𝑆𝑈  geo   =    (    ∏   i  ∈  𝒮     𝑆𝑈  i    )    1  /   |  𝒮  |       .   \mathit{SU}_{i}=\frac{C_{\mathrm{baseline},i}}{C_{\mathrm{TileDRAM},i}},\qquad\mathit{SU}_{\mathrm{geo}}=\left(\prod_{i\in\mathcal{S}}\mathit{SU}_{i}\right)^{1/|\mathcal{S}|}.
+Speedup is reported as the geometric mean of per-case
+baseline-to-TileDRAM cycle ratios. Replay reports simulator-backed
+memory-system performance;
+RQ4 separately reports the hardware-measured address-transformation cost
+(Section   6.5  ).
+For organization    o  o   , we also report the pooled-cycle speedup
+P  o   =     ∑   i  ∈   𝒲  o      C   baseline  ,  i  ,  o       ∑   i  ∈   𝒲  o      C   TileDRAM  ,  i  ,  o       ,   \mathit{P}_{o}=\frac{\sum_{i\in\mathcal{W}_{o}}C_{\mathrm{baseline},i,o}}{\sum_{i\in\mathcal{W}_{o}}C_{\mathrm{TileDRAM},i,o}},
+where     𝒲  o   \mathcal{W}_{o}    contains the six workload streams evaluated under    o  o   .
+This organization-level pooled ratio is distinct from the six-stream
+geometric mean; the pooled-cycle range in RQ3 is the minimum and maximum of
+P  o   \mathit{P}_{o}    across the six organizations.
+Reported metrics.
+The replay records row hits, row misses, row conflicts, row-buffer hit rate,
+row-conflict rate, Ramulator2 average read latency, foreground queue wait,
+shader memory-stall cycles, and cycles. The formal opening-miss count is
+a source-order, closed-domain quantity; replay row-miss counters are service-order
+observables that can also reflect refresh and controller behavior. The 108-case
+MoE full suite reports 75.7% baseline and 15.2% TileDRAM row-conflict rates,
+an 80.0% pooled reduction, and a 1.77   ×  \times    geomean speedup.
+Across the same cases,
+shader-memory stalls fall by 53.9% and request-weighted Ramulator2 read
+latency falls by 49.6%.
+The retargeting experiment reports 36 paired cases across six 3D DRAM
+organizations, with pooled row-conflict reduction of 79.2% and geomean
+speedup of 2.20   ×  \times   .
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue"  (
+)  button, located in the page header.
+Tip:  You can select the relevant text first, to include it in your report.
+Our team has already identified  the following issues . We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a  list of packages that need conversion , and welcome  developer contributions .
+We gratefully acknowledge support from
+our  major funders ,
+member institutions   ,    ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status  (opens in new tab)
+Major funding support from

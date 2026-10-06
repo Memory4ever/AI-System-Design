@@ -1,0 +1,875 @@
+BS-Spec: BFP-Based Bit-Sharing for Self-Speculative LLM Decoding with LUT-Driven Mixed-Precision Acceleration
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+I   Introduction
+II   Background
+II-A    Memory Bottlenecks in Autoregressive LLM Decoding
+II-B    Speculative Decoding and the Draft Cost-Acceptance Tradeoff
+II-C    Self-Speculative Decoding and the Need for Bit-Sharing Co-Design
+II-D    Mixed-Precision Hardware for Bit-Shared Self Speculative Decoding
+III   BS-Spec Algorithm
+III-A    BFP Target Representation
+III-B    Self-Speculative Decoding with BFP
+III-C    Trade-Offs in Draft Model Precision
+III-D    Runtime Draft Precision Selection for the Best Speedup
+IV   Hardware Support for Bit-Shared BFP Execution
+IV-A    Variable-Precision Bit-Plane Execution
+IV-B    LUT-driven dataflow
+IV-C    BFP-Aware LUT Computation
+IV-D    Decoding-Oriented Dataflow
+IV-E    System Integration
+V   Experimental Results
+V-A    Hardware Evaluation Setup
+V-B    Speedup and Energy Evaluation
+V-C    BS-RAC Power and Area Breakdown
+V-D    Ablation Study
+VI   Conclusion
+References
+License: arXiv.org perpetual non-exclusive license
+arXiv:2610.22877v1 [cs.AR] 16 Oct 2026
+BS-Spec: BFP-Based Bit-Sharing for Self-Speculative LLM Decoding with LUT-Driven Mixed-Precision Acceleration
+Jiwoo Kim   †  \dagger   , Gunho Park   ‡  \ddagger   , Sunwoo Yoo   §  \lx@sectionsign   , Baeseong Park   ‡  \ddagger   , Dongsoo Lee    ‡  \ddagger   , and Youngjoo Lee   †  \dagger
+Affiliation:
+KAIST   †  \dagger   , a2sys   ‡  \ddagger   , POSTECH   §  \lx@sectionsign
+jiwoo.kim@kaist.ac.kr, youngjoo@kaist.ac.kr
+Affiliation:
+HPCA 2027 Submission
+# \hpcasubmissionnumber
+Affiliation:
+Confidential Draft
+Do NOT Distribute!!
+Affiliation:
+Abstract
+As large language models (LLMs) are increasingly deployed across diverse inference services, serving workloads span a wide range of batch sizes, context lengths, and performance requirements. Speculative decoding improves inference throughput, but conventional approaches require a separate draft model and KV cache, while existing self-speculative methods suffer from workload-insensitive draft configurations and inefficient mixed-precision execution.
+In this paper, we present BS-Spec, a block floating point (BFP)-based bit-sharing framework that jointly optimizes draft construction, workload-aware precision selection, and hardware execution. BS-Spec derives multiple draft representations directly from a single BFP target model by partially loading the most significant bits of weights and the KV cache while preserving shared exponents, eliminating separate draft-model storage. Offline calibration selects the weight and KV-cache precision pair that maximizes estimated speedup for each serving regime, and a precision lookup table applies the selected configuration at runtime.
+To support this adaptive execution, we design a mixed-precision BFP accelerator with a lookup table (LUT)-based variable-precision datapath for both draft and target computation. Experimental results show that BS-Spec achieves up to 1.9   ×  \times    speedup over conventional autoregressive decoding and improves speedup over the evaluated bit-sharing self-speculative decoding baselines by 67.2% on average, demonstrating the benefits of jointly co-designing bit sharing, precision adaptation, and specialized hardware for diverse LLM serving workloads.
+I   Introduction
+Large language models (LLMs) have rapidly grown in both parameter count and context length to support increasingly capable inference  [ 27 ,  9 ] .
+As a result, the autoregressive decoding bottleneck has shifted away from raw compute throughput toward memory movement  [ 32 ] .
+Speculative decoding has emerged as a promising approach by replacing multiple expensive target-model decoding steps with lightweight draft generation followed by a single verification step.
+By allowing a smaller draft model to propose multiple candidate tokens before verification, speculative decoding improves effective throughput while preserving the final output  [ 19 ,  16 ,  5 ] .
+However, to realize these gains, the costs of draft-generation need to be well balanced with the number of accepted tokens  [ 32 ] .
+Achieving this balance in practice is challenging.
+Fig. 1:   Overview of BS-Spec software-hardware co-optimization flow.
+In speculative decoding, maintaining a separate draft model can impose additional memory overhead from its weights and KV cache, which may constrain deployment under memory-limited serving conditions  [ 8 ,  36 ] .
+Self-speculative decoding addresses this issue by deriving draft predictions directly from the target model itself  [ 22 ] .
+Its effectiveness depends on maintaining strong alignment with the target model to preserve high acceptance rates while keeping draft generation substantially cheaper than full-precision decoding.
+Existing approaches, however, often struggle to balance draft efficiency and accuracy. Layer-skipping methods are constrained by the limited number of layers that can be skipped without substantially degrading draft quality  [ 8 ,  40 ] . Intermediate feature-reuse methods  [ 4 ,  2 ,  21 ]  reduce drafting overhead but typically require additional training; moreover, learned drafters such as EAGLE [ 21 ]  may exhibit sharply reduced acceptance lengths under long-context decoding and out-of-distribution  [ 18 ] .
+Quantization-based self-speculative decoding approaches are particularly promising in this regard. Quantized LLMs have been observed to better preserve the reasoning ability of the original model  [ 34 ] , making them appealing candidates for draft generation.
+However, existing methods do not perform consistently across diverse inference scenarios because they optimize weight and KV-cache costs in isolation and rely on fixed draft configurations. These designs perform well only in limited workload regions and fail to maintain efficiency across the full serving space.
+In this paper, we present BS-Spec, a block floating point (BFP)-based bit-sharing framework for self-speculative LLM decoding that jointly adapts weight and KV-cache precisions to maintain high efficiency across diverse serving scenarios. Fig.   1   illustrates the overall concept of BS-Spec. BS-Spec constructs lower-precision draft representations by partially loading only the most significant bits (MSBs) of the target model weights and KV cache. Because BFP significands are already aligned under a shared exponent  [ 17 ,  26 ] , this partial-loading process requires no additional conversion or reconstruction. Consequently, BS-Spec supports multiple draft precisions from a single target representation without separate draft-model storage or preprocessing.
+More specifically, BS-Spec determines the draft precision through offline calibration and stores the selected configurations in a precision lookup table (PLT).
+At runtime, the BS-Spec controller queries the PLT according to the current serving workload and selects the corresponding optimal weight and KV-cache precisions. In memory-bound LLM inference, lower precision reduces memory-access cost but may decrease the acceptance rate, whereas higher precision improves draft fidelity at a greater execution cost. This trade-off varies with the serving regime, particularly with batch size and sequence length  [ 36 ] . Consequently, the optimal draft precision varies across workloads depending on their memory and compute characteristics. By jointly considering draft cost and acceptance rate, BS-Spec adapts the weight and KV-cache precisions to maximize speculative-decoding speedup. Efficient execution of BS-Spec further requires a hardware engine capable of processing BF16 activations with BFP-formatted weights and KV cache while dynamically varying the significand precision from BFP5 to BFP9.
+To this end, we design a bit-serial mixed-precision datapath that operates directly on the sign-magnitude BFP representation, enabling low-overhead precision scaling without conventional floating-point-centric accumulation. The design combines LUT-assisted accumulation, which reduces the cycle overhead of bit-serial execution, with a LUT-stationary SIMD organization that allows multiple weight lanes within a compute unit to reuse the same LUT entries. With these optimizations, BS-Spec achieves the highest speedup over 16-bit autoregressive decoding and the lowest energy consumption among the state-of-the-art quantization-based self-speculative decoding methods.
+In summary, this paper makes the following contributions:
+•
+BFP-based bit-sharing self-speculative decoding.
+We propose BS-Spec, which derives multiple draft precisions from a single BFP target representation through MSB-only partial loading under shared exponents, eliminating separate draft-model storage and additional conversion.
+•
+Theoretical workload-aware precision optimization
+We develop an offline calibration scheme that jointly selects weight and KV-cache precisions based on draft cost and acceptance rate, and stores the optimal configurations in a PLT for runtime lookup.
+•
+Hardware support for bit-shared BFP execution.
+We develop a bit-serial accelerator that directly executes runtime-variable BFP5–BFP9 weights and KV cache with BF16 activations. Its BFP-aware LUT generator folds per-group exponent alignment into LUT construction, while a decoding-oriented dataflow efficiently processes the selected bit planes for both draft and target execution.
+TABLE I:  Arithmetic intensity of representative linear and attention operations during autoregressive decoding.     B  ​  a  ​  t  ​  c  ​  h   Batch    is batch size,    T  T    is sequence length,     D  M   D_{M}    is model dimension,     D  H   D_{H}    is head dimension,     N  H   N_{H}    is the number of attention heads, and     N   K  ​  V    N_{KV}    is the number of KV heads.
+Linear
+Attention
+MOP
+O  ⁡   (   D  M      2   )    O({D_{M}}^{2})
+O  ⁡   (    D  H   ⋅  T   )    O(D_{H}\cdot T)
+FLOPs
+O  ⁡   (    B  ​  a  ​  t  ​  c  ​  h   ⋅   D  M      2    )    O(Batch\cdot{D_{M}}^{2})
+O  ⁡   (     N  H    N   K  ​  V     ⋅  T  ⋅   D  H    )    O(\frac{N_{H}}{N_{KV}}\cdot T\cdot D_{H})
+Arithmetic Intensity
+O  ⁡   (   B  ​  a  ​  t  ​  c  ​  h   )    O(Batch)
+O  ⁡   (    N  H    N   K  ​  V     )    O(\frac{N_{H}}{N_{KV}})
+TABLE II:   Comparison of autoregressive decoding (AR), conventional speculative decoding (SD), and self-speculative decoding (Self-SD).
+AR
+SD
+Self-SD
+Resident models
+Target only
+Target + draft
+Target only
+Draft phase
+N/A
+Draft model
+Target subset
+Verification phase
+Target model
+Target model
+Target model
+Acceleration
+No
+Yes
+Yes
+Additional memory
+No
+Required
+No
+Fig. 2:  Speculative decoding speedup across varying sequence lengths (   S  S   ) and batch sizes (   B  B   ) for (a) SPEQ [ 41 ] , QuantSpec  [ 36 ]  with (b) fully self-speculative variant, (c) separately stored quantized weights, and (d) the proposed BS-Spec with joint weight–KV-cache precision adaptation.
+Fig. 3:   Procedure to generate BFP format with per-group shared exponent.
+Fig. 4:   Numerical example of (a) the original BF16 representation and 7-bit partial loads, each comprising one sign bit and 6-bit from (b) the BF16 mantissa, (c) the BF16 exponent (SPEQ  [ 41 ] -style), and (d) the aligned BFP9 significand in the proposed scheme.
+Fig. 5:   Detailed workflow of BS-Spec: draft tokens are generated using partially loaded     p  w   p_{w}   -bit weights and     p   k  ​  v    p_{kv}   -bit KV cache, then verified using the fully loaded weights and KV cache. The KV cache is subsequently updated and retained at full precision.
+II   Background
+II-A    Memory Bottlenecks in Autoregressive LLM Decoding
+Decoder-only LLM inference consists of two phases: parallel prefill and autoregressive decoding  [ 31 ] . During prefill, all input tokens are processed in parallel to build the KV cache and generate the first output token. In contrast, autoregressive decoding generates tokens sequentially, repeatedly invoking the model while attending to the growing KV cache. As a result, the two phases exhibit different performance characteristics: prefill is dominated by large batched matrix multiplications, whereas decoding is dominated by repeated accesses to model weights and the KV cache  [ 42 ] .
+Autoregressive decoding remains a critical phase in LLM serving because it generates tokens sequentially while repeatedly accessing model weights and the growing KV cache. Its bottleneck can be characterized by arithmetic intensity, defined as the number of floating-point operations performed per byte of memory traffic  [ 37 ] . As summarized in Table   I  , the arithmetic intensity of linear layers increases with batch size but remains low under practical serving configurations, making weight loading predominantly memory-bound.
+At larger batch sizes and longer contexts, attention and KV-cache accesses account for an increasing fraction of execution cost. Although modern LLMs adopt MHA, GQA, or MQA to improve KV reuse  [ 1 ] , attention still repeatedly accesses the growing KV cache and remains memory-bound in practical decoding workloads  [ 11 ] . Therefore, decoding is dominated by weight traffic in shorter-context regimes and by KV-cache traffic in longer-context regimes  [ 10 ,  7 ] .
+Because the relative costs of weight and KV-cache accesses vary substantially across serving workloads, optimizing either component in isolation inevitably limits the benefits to a narrow operating region; achieving consistently high efficiency requires jointly adapting both to the current workload  [ 36 ] .
+II-B    Speculative Decoding and the Draft Cost-Acceptance Tradeoff
+Speculative decoding improves LLM inference by allowing a lightweight draft model to generate multiple candidate tokens before verification by the target model  [ 19 ,  5 ] .
+When drafted tokens are accepted, the target model can skip several decoding steps, improving effective throughput without changing the final output.
+In practice, the benefit of speculative decoding depends on the balance between draft-generation cost and the number of accepted draft tokens [ 32 ] . This tradeoff can be described by the formulation:
+T   A  ​  v  ​  g    S  ​  D     T  T    =    1   Ω  ⁡   (  γ  ,  α  )     ​   (     γ  ⋅   T  D     T  T    +     T  V   ​   (  γ  )     T  T     )     \frac{T_{Avg}^{SD}}{T_{T}}=\frac{1}{\Omega(\gamma,\alpha)}\left(\frac{\gamma\cdot T_{D}}{T_{T}}+\frac{T_{V}(\gamma)}{T_{T}}\right)
+(1)
+This expression shows that speculative-decoding speedup is governed by three factors: (1) the verification-to-target cost ratio       T  V   ​   (  γ  )    /   T  T    T_{V}(\gamma)/T_{T}   , (2) the draft-to-target cost ratio      T  D   /   T  T    T_{D}/T_{T}   , and (3) the expected accepted length     Ω  ⁡   (  γ  ,  α  )    \Omega(\gamma,\alpha)    for draft length    γ  \gamma    and acceptance rate    α  \alpha   .
+In memory-bound LLM serving, the draft-to-target cost ratio and the expected acceptance rate become especially important. Lowering draft cost is closely related to reducing memory traffic during draft generation, whereas maintaining a high acceptance rate depends on preserving sufficient alignment between the draft and target models. In addition, the draft-to-target cost ratio varies across workloads because the relative contributions of weight traffic and KV-cache traffic change with batch size and sequence length  [ 35 ] . As a result, the most effective draft configuration is not fixed and can vary with the serving regime.
+II-C    Self-Speculative Decoding and the Need for Bit-Sharing Co-Design
+Because LLM serving is highly memory-intensive, the storage and bandwidth overhead of a separate draft model can significantly reduce the feasible serving range.
+Self-speculative decoding avoids the need for a separately stored draft model by deriving draft predictions directly from the target model  [ 8 ,  6 ] .
+As shown in Table    II  , this changes the role of the draft model from an explicitly stored network to an implicit low-cost representation derived from the target model itself.
+Among self-speculative decoding methods, quantization-based bit-sharing approaches are particularly promising because they derive low-cost drafts directly from the target representation while preserving the original model structure  [ 23 ,  38 ] .
+Fig.   2   compares representative state-of-the-art approaches with BS-Spec across varying batch sizes and context lengths.
+SPEQ  [ 41 ]  constructs lightweight drafts using reduced floating-point information from the target representation. As shown in Fig.   2  (a), SPEQ achieves substantial speedup in short-context workloads, but its benefit diminishes as the context length increases. QuantSpec  [ 36 ]  demonstrates that the preferred draft precision varies with the serving workload and that KV-cache quantization can effectively reduce draft cost. However, extending the same adaptive mechanism to weights requires separately stored quantized weight representations. We therefore evaluate both its fully self-speculative KV-only variant and its weight-non-self-speculative variant. As shown in Fig.   2  (b), the fully self-speculative QuantSpec performs well in long-context, small-batch workloads, but provides limited gains elsewhere. The weight-non-self-speculative QuantSpec achieves broader speedup, as shown in Fig.   2  (c), but its benefit diminishes in long-sequence, large-batch regimes. In contrast, BS-Spec achieves speedup across all evaluated workload regions, as shown in Fig.   2  (d), highlighting the need to jointly adapt weight and KV-cache precisions based on both draft cost and acceptance rate.
+II-D    Mixed-Precision Hardware for Bit-Shared Self Speculative Decoding
+Bit-shared speculative decoding constructs a low-precision draft model by reusing a subset of bits from the target model, enabling progressive refinement from low to full precision. As a result, a single hardware platform needs to support a wide range of bit precisions, from highly quantized draft execution to near full-precision target execution. In this setting, practical speedup depends not only on efficient memory access for selectively loading draft bits, but also on compute architectures that can execute low-precision drafts efficiently within the same hardware framework.
+This motivates mixed-precision hardware that can adapt dynamically to changing bitwidths. Several prior works have explored this direction. SPEQ  [ 41 ] , for example, adopts a bit-shared self-speculative decoding approach related to BS-Spec, in which FP16 target weights and FP4 draft weights are co-designed. It stores low-precision weights separately and incrementally fetches additional bits for target execution. Its processing element (PE) includes multiple floating-point execution paths, allowing three FP units to operate in parallel during draft inference while using only a single FP unit for target computation. This design, however, still introduces inefficiencies: FP4 execution requires fetching 5 bits for decoding, and target-mode execution leaves part of the PE underutilized.
+More broadly, prior mixed-precision accelerators also provide useful insights. BitFusion  [ 33 ]  proposes bit-flexible compute units, called BitBricks, that can be dynamically fused at runtime to support multiple bitwidths. This design supports efficient execution across a range of precisions, but is mainly oriented toward configurable fixed-precision execution rather than fine-grained bit sharing.
+For more flexible precision support beyond power-of-two formats, bit-serial architectures offer an attractive alternative. Unlike conventional bit-parallel designs, bit-serial architectures process operands one bit-plane at a time, which naturally enables flexible precision scaling. Stripes  [ 14 ]  uses this paradigm to support per-layer and per-bit precision control, improving both performance and energy efficiency. FIGLUT  [ 30 ]  further extends bit-serial computation by introducing LUT-based accumulation  [ 20 ,  25 ,  12 ] , replacing conventional MAC units with read-accumulate (RAC) units to support FP-INT and FP-BCQ operations efficiently while mitigating memory bank conflicts. In particular, it employs a flip-flop-based LUT (FFLUT) to effectively eliminate bank conflicts, demonstrating improved efficiency. LUT-SSM [ 39 ]  introduces a many-to-many LUT-ACC organization to improve LUT reuse for weight-only-quantized SSM execution and integrates element-wise operations into the same accelerator.
+Despite these advances, existing architectures are not well matched to bit-shared speculative decoding. BS-Spec calls for flexible precision scaling across a broad range, together with efficient reuse of shared bits between draft and target execution. To support these requirements, we adopt a bit-serial load-and-compute paradigm that enables fine-grained bit-level control. At the same time, since naive bit-serial accumulation can introduce substantial overhead from serialized operations, BS-Spec integrates LUT-based accumulation to combine the flexibility of bit-serial computation with the efficiency of parallel accumulation.
+TABLE III:  Per-token acceptance rate for Llama-3.2-3B, Llama-3.1-8B, and Qwen3-14B model with various weight and KV cache bitwidth.
+Target
+Llama-3.2-3B-Instruct BFP
+Draft weight
+8
+7
+6
+Draft KV
+9
+8
+7
+6
+5
+9
+8
+7
+6
+5
+9
+8
+7
+6
+5
+Humaneval
+97.9%
+97.6%
+97.3%
+96.5%
+93.8%
+96.6%
+96.5%
+95.9%
+95.0%
+86.3%
+94.1%
+94.2%
+93.8%
+93.0%
+89.3%
+GSM8K
+98.8%
+98.7%
+98.2%
+97.2%
+94.8%
+97.6%
+97.5%
+97.1%
+96.1%
+87.1%
+95.9%
+95.8%
+95.4%
+94.6%
+92.3%
+MBPP
+98.7%
+98.6%
+98.3%
+97.3%
+95.5%
+97.5%
+97.2%
+97.1%
+96.3%
+88.2%
+94.9%
+94.9%
+94.8%
+94.0%
+92.0%
+Target
+Llama-3.1-8B-Instruct BFP
+Draft weight
+8
+7
+6
+Draft KV
+9
+8
+7
+6
+5
+9
+8
+7
+6
+5
+9
+8
+7
+6
+5
+Humaneval
+98.1%
+98.4%
+98.0%
+96.5%
+92.6%
+96.9%
+96.7%
+96.4%
+95.2%
+92.4%
+94.3%
+94.1%
+93.8%
+93.0%
+90.1%
+GSM8K
+98.6%
+98.6%
+98.1%
+97.0%
+94.5%
+96.8%
+96.7%
+96.3%
+95.3%
+93.2%
+93.2%
+93.1%
+92.8%
+92.0%
+89.5%
+MBPP
+98.7%
+98.6%
+98.2%
+97.5%
+95.3%
+97.4%
+97.4%
+97.0%
+96.3%
+94.5%
+94.6%
+94.4%
+94.2%
+93.5%
+91.1%
+Target
+Qwen3-14B BFP
+Draft weight
+7
+6
+5
+Draft KV
+9
+8
+7
+6
+5
+9
+8
+7
+6
+5
+9
+8
+7
+6
+5
+Humaneval
+97.7%
+97.6%
+97.3%
+95.5%
+91.8%
+95.5%
+95.6%
+95.1%
+94.3%
+91.1%
+91.2%
+91.1%
+91.2%
+90.5%
+88.0%
+GSM8K
+98.3%
+98.2%
+97.9%
+97.0%
+94.3%
+96.7%
+96.8%
+96.6%
+95.8%
+93.4%
+93.7%
+93.7%
+93.6%
+93.3%
+91.4%
+MBPP
+97.8%
+97.6%
+97.4%
+96.0%
+92.9%
+95.9%
+96.0%
+95.8%
+94.8%
+91.8%
+92.0%
+92.0%
+91.8%
+91.5%
+89.1%
+III   BS-Spec Algorithm
+III-A    BFP Target Representation
+BS-Spec stores the weight and KV cache of the target model in BFP and loads only a subset of their bits during the draft phase. Fig.   3   illustrates the BFP conversion process, in which each group is represented by aligned significands and a shared exponent  [ 13 ] . BFP representation enables two important optimizations in self-speculative decoding: (1) hardware-friendly draft construction and (2) high acceptance rates.
+Speculative decoding requires fast draft generation, as any additional computation in the draft phase reduces the achievable speedup. Therefore, hardware-friendly drafting should construct the draft model directly from the target model without additional processing overhead. At the same time, because the speedup strongly depends on the acceptance rate, the partially loaded draft model is required to remain numerically close to the full target model.
+Fig.    4   presents a numerical example of 7-bit partial loading under different schemes. Partial loading directly from BF16 substantially distorts the original value, particularly when only mantissa bits are retained. Although exponent-based loading preserves the numerical scale better than mantissa-based loading, the proposed BFP-based scheme retains both the aligned significand and the shared exponent, resulting in the closest approximation to the original value. The example uses a group size of three for clarity, which makes the exponent overhead appear relatively large. In practice, a larger group size, such as 64, amortizes this overhead across many values.
+This partial-loading approach can also be implemented in a hardware-friendly manner. During the draft phase, only a subset of the target model bits is loaded, reducing memory traffic and alleviating the memory-bound bottleneck. Moreover, BFP naturally supports multiple draft precisions through partial-bit loading, making it particularly well suited to self-speculative decoding. Consequently, storing the target model in BFP and using its partial-bit representations for drafting provides an efficient way to reduce draft cost while maintaining a high acceptance rate.
+For each group, BS-Spec selects a shared exponent based on the maximum exponent in the group and aligns all values to that exponent through right shifting. Weights are quantized offline and stored in BFP9 format. KV-cache values, in contrast, are quantized online during inference: keys are grouped channel-wise, whereas values are grouped token-wise. Because channel-wise grouping for keys cannot always be finalized at every decoding step, BS-Spec temporarily buffers key values until a full group is formed and then converts them to BFP. BS-Spec applies BFP9 only to weights and the KV cache, while keeping activations in the original BF16 format.
+III-B    Self-Speculative Decoding with BFP
+Instead of storing a separate draft model, BS-Spec derives the draft path directly from the BFP target representation by reducing the mantissa precision of weights, the KV cache, or both, while keeping the target path unchanged for verification.
+Fig.   5   illustrates the detailed inference flow of BS-Spec. During drafting, BS-Spec selects a reduced-precision pair     (   p  w   ,   p   k  ​  v    )   (p_{w},p_{kv})   , where     p  w   p_{w}    and     p   k  ​  v    p_{kv}    denote the mantissa widths used for weights and the KV cache, respectively. Based on this choice, the draft path reads only the corresponding high-order mantissa bits from the stored target representation and generates    γ  \gamma    candidate tokens. At the same time, temporary KV entries are created for the drafted sequence. The target path then verifies these candidates using the full BFP representation, and only accepted tokens are committed to the persistent model state.
+Because weight and KV-cache precision can be selected independently through     (   p  w   ,   p   k  ​  v    )   (p_{w},p_{kv})   , BS-Spec is not tied to a single fixed draft model. Instead, it instantiates different draft paths directly from the same stored representation according to the selected precision pair.
+III-C    Trade-Offs in Draft Model Precision
+Fig. 6:   For Qwen3-14B across varying batch size    ×  \times    sequence length: (a) the memory footprints of the weights and KV cache, and (b) the impact of weight and KV cache precision reduction on the Draft / Target memory ratio.
+To efficiently exploit partially loaded draft models, BS-Spec needs to select appropriate weight and KV-cache precisions for each runtime inference configuration. The optimal precision pair is determined by two factors: the draft-model cost and the acceptance rate.
+Draft Model Cost.
+In speculative decoding, weight and KV-cache compression are often considered independently. However, weights and the KV cache exhibit fundamentally different scaling behaviors in practical LLM inference. The weight footprint remains fixed once the model architecture is determined, whereas the KV-cache footprint grows linearly with batch size and sequence length. Consequently, their relative contributions to memory traffic vary with the serving configuration, leading to different optimal weight and KV-cache precisions across batch sizes and sequence lengths.
+Fig.   6   illustrates this trend for Qwen3-14B under varying batch size    ×  \times    sequence length.
+Fig.   6  (a) compares the memory footprints of the weights and KV cache. At small batch sizes and short sequence lengths, the weight footprint dominates, whereas the contribution of the KV cache increases as either dimension grows.
+Fig.   6  (b) evaluates all combinations of 5–9-bit weight and KV-cache precisions for the proposed BFP target model and its partially loaded draft model. Each color represents the draft-to-target memory-loading ratio. Darker colors indicate that partial loading provides only a limited reduction in draft latency, whereas lighter colors represent lower-cost draft models with substantially reduced memory traffic. These results show that weight and KV-cache precisions must be selected jointly according to the current batch size and sequence length.
+Acceptance rate.
+Reducing the draft-to-target ratio lowers the draft cost but generally increases the numerical difference between the draft and target models, thereby reducing the acceptance rate. Conversely, a larger draft-to-target ratio typically improves the acceptance rate at the expense of a more costly draft phase. Thus, speculative-decoding performance is governed by a trade-off between draft latency and acceptance rate, and the precision combinations that maximize speedup form a Pareto frontier over these two factors.
+Table    III   reports the per-token acceptance rates for representative range of 5–9-bit weight and KV-cache precisions. The results are evaluated on HumanEval, GSM8K, and MBPP using Llama-3.2-3B, Llama-3.1-8B, and Qwen3-14B. Table   IV   compares the average per-token acceptance rates of SPEQ [ 41 ]  and three QuantSpec [ 36 ]  draft configurations. We evaluate    γ  \gamma    from 5 to 8 and     γ  =  7   \gamma=7    is selected, which provides the largest expected accepted generation length on average. By combining the estimated draft cost with the measured acceptance rate for each precision pair, BS-Spec identifies the configuration that maximizes the expected speculative-decoding speedup.
+TABLE IV:  Average per-token acceptance rates across HumanEval, GSM8K, and MBPP for SPEQ  [ 41 ]  and three QuantSpec  [ 36 ]  draft configurations on Llama-3.2-3B, Llama-3.1-8B, and Qwen3-14B.
+SPEQ
+QuantSpec
+W4KV16
+W4KV8
+W4KV4
+W16KV4
+Llama-3.2-3B
+87.4%
+95.6%
+87.2%
+90.3%
+Llama-3.1-8B
+86.1%
+96.2%
+88.2%
+91.3%
+Qwen3-14B
+89.8%
+96.0%
+93.9%
+93.9%
+III-D    Runtime Draft Precision Selection for the Best Speedup
+Fig. 7:  Estimated speedup of Qwen3-14B over the non-speculative 16-bit baseline. Speculative decoding is applied in both cases, using (a) the original BFP16 target model and (b) a BFP9 target model.
+TABLE V:  Pareto-optimal configurations stored in the precision lookup table, selected to maximize the average speedup for each model across varying batch size   ×  \times    sequence length.
+Llama-3.2-3B
+Llama-3.1-8B
+Qwen3-14B
+2K
+W6KV8
+W6KV9
+W5KV8
+4K
+W6KV8
+W7KV9
+W5KV8
+8K
+W6KV7
+W7KV8
+W5KV7
+16K
+W6KV6
+W7KV7
+W5KV7
+32K
+W6KV6
+W7KV7
+W5KV6
+64K
+W6KV6
+W7KV6
+W5KV6
+128K
+W7KV5
+W7KV6
+W6KV6
+256K
+W8KV5
+W8KV5
+W6KV6
+512K
+W8KV5
+W8KV5
+W6KV5
+1024K
+W8KV5
+W8KV5
+W7KV5
+Using two factors, we estimate the speculative decoding speedup and identify the Pareto-optimal precision configurations.
+Equations   2   and   3   describe the memory footprint of weights and KV cache, respectively.
+M  ​  E  ​   M  W    =    B  ​  y  ​  t  ​  e  ​  s   ⋅   N   P  ​  a  ​  r  ​  a  ​  m      MEM_{W}=Bytes\cdot N_{Param}
+(2)
+M  ​  E  ​   M   K  ​  V     =     2  ⋅  B   ​  y  ​  t  ​  e  ​  s   ⋅   N   L  ​  a  ​  y  ​  e  ​  r    ⋅   (    B  ​  a  ​  t  ​  c  ​  h   ⋅   N   K  ​  V    ⋅  T  ⋅   D  h    )     MEM_{KV}=2\cdot Bytes\cdot N_{Layer}\cdot(Batch\cdot N_{KV}\cdot T\cdot D_{h})
+(3)
+Under the memory-bound inference regime targeted by speculative decoding, the draft-to-target memory loading ratio approximates the draft-to-target latency ratio,      T  D   /   T  T    T_{D}/T_{T}   . As a result, in the BFP-based bit-sharing speculative decoding scenario, the modified speedup formula is written as follows:
+T   A  ​  v  ​  g    S  ​  D     T  T    =    1   Ω  ⁡   (  γ  ,  α  )     ​   (    γ  ​      p  w   ​   R  w   ​   (   B  ​  S   )    +    p   k  ​  v    ​   R   k  ​  v    ​   (   B  ​  S   )      p   f  ​  u  ​  l  ​  l      +     T  V   ​   (  γ  )     T  T     )     \frac{T_{Avg}^{SD}}{T_{T}}=\frac{1}{\Omega(\gamma,\alpha)}\left(\gamma\frac{p_{w}R_{w}(BS)+p_{kv}R_{kv}(BS)}{p_{full}}+\frac{T_{V}(\gamma)}{T_{T}}\right)
+(4)
+Here,     R  w   R_{w}    and     R   k  ​  v    R_{kv}    denote the weight- and KV cache-loading ratios, respectively, as functions of batch size    ×  \times    sequence length, denoted by     B  ​  S   BS   .
+Using this formulation, the estimated speedup can be evaluated for every weight and KV-cache precision pair. Fig.   7   presents the resulting offline calibration for Qwen3-14B. Each precision configuration produces an estimated speedup curve over varying batch size    ×  \times    sequence length, and the configuration achieving the highest estimated speedup at each operating point is selected. The dotted line represents the upper envelope formed by these optimal configurations.
+Table   V   summarizes the selected precision configurations across the evaluated benchmarks.
+Fig.   7   further compares two target-model precision settings.
+Fig.   7  (a) reports the estimated speedup over a 16-bit autoregressive baseline when BS-Spec uses a BFP16 target model.
+Fig.   7  (b) considers a BFP9 target model, thereby accelerating not only the draft phase but also target verification. BFP9 retains a 9-bit aligned significand consisting of the sign bit, implicit leading one, and seven BF16 mantissa bits, without an additional guard-bit margin.
+Because BFP9 reduces the target-model latency, the normalized draft cost      T  D   /   T  T    T_{D}/T_{T}    becomes larger, which can reduce the incremental speedup obtained purely from speculative decoding relative to the target model. Nevertheless, accelerating the target model itself more than compensates for this reduction, yielding a higher estimated overall speedup relative to the 16-bit baseline.
+Moreover, Table   VI   shows that the BFP9 target preserves the accuracy of the BF16 target across the evaluated workloads. Therefore, BS-Spec uses the BFP9 target with its partially loaded draft representations.
+Through this offline estimation process, BS-Spec identifies the weight and KV-cache precision pair that maximizes predicted speedup for each batch-size and context-length configuration and stores it in the PLT. At runtime, the selected precision pair is retrieved from the PLT and directly mapped onto the BS-Spec hardware for execution.
+TABLE VI:  GSM8K accuracy of Llama-3.2-3B, Llama-3.1-8B, and Qwen3-14B under the original BF16 baseline, a SPEQ [ 41 ]  full precision FP16 model, QuantSpec [ 36 ]  INT8 KV model, and the BS-Spec target model.
+Model
+Option
+3B
+8B
+14B
+Original
+BF16 W, BF16 KV
+77.7%
+84.5%
+91.4%
+SPEQ
+FP16 W, FP16 KV
+77.7%
+84.5%
+91.4%
+QuantSpec
+BF16 W, INT8 KV
+76.8%
+84.8%
+91.1%
+BS-Spec
+BFP9 W, BFP9 KV
+77.8%
+85.5%
+91.0%
+Fig. 8:  Comparison of data layout and memory-load for loading     p  w   p_{w}   -bit weights in BS-Spec using (a) bit-parallel and (b) bit-serial organizations; the same organization is applied to     p   k  ​  v    p_{kv}   -bit KV-cache loading.
+IV   Hardware Support for Bit-Shared BFP Execution
+IV-A    Variable-Precision Bit-Plane Execution
+BS-Spec reduces draft-generation cost by selectively loading only the MSB planes of BFP-formatted weights and KV-cache entries. However, the benefits of partial loading can be fully realized only when the memory format is adequate and efficiently uses the bandwidth. The accelerator must also support both low-precision draft execution and higher-precision target verification using the same datapath.
+To support variable-precision datapath, BS-Spec adopts bit-plane major architecture. Fig.   8   compares (a) conventional storage and (b) the bit-plane-major memory organization used by BS-Spec. Instead of storing all bits of one value consecutively, bits of the same significance from multiple values are placed contiguously  [ 28 ] .
+For draft generation, the controller issues     p  w   p_{w}   -bit weight accesses and     p   k  ​  v    p_{kv}   -bit KV-cache accesses, selected by the PLT, from MSB planes to lower orders. Only these selected bit planes are transferred from memory and processed by the compute engine. During target verification, the same datapath executes the full target precision by extending the bit-serial iteration over the remaining bit planes. Thus, draft and target computation share a common representation, memory organization, and arithmetic datapath; changing precision requires only modifying the number of loaded and executed bit planes.
+This design ensures that precision reduction benefits both the memory and compute sides. Reducing     p  w   p_{w}    or     p   k  ​  v    p_{kv}    decreases the number of bit planes fetched from off-chip memory and proportionally reduces the number of bit-serial accumulation iterations. Therefore, the runtime precision selected by the algorithm is directly translated into lower data movement and execution cost, rather than being converted into an internally fixed-precision format.
+IV-B    LUT-driven dataflow
+BS-Spec adopts LUT-based accumulation to efficiently compute products between BF16 activations and bit-serial BFP weights or KV-cache values. The basic computation follows LUT-GEMM  [ 29 ] : groups of activations are used to precompute partial sums for all possible binary weight patterns, and multiplication is replaced with indexed LUT access followed by accumulation.
+Each LUT is connected to multiple read-accumulate lanes. In every cycle, streamed weight bits form the LUT indices, and the selected entries are added to local partial sums with the appropriate bit-position shift. Since bit planes are processed serially, the number of execution cycles scales approximately with the selected precision. And LUT construction is pipelined with execution so that the LUT for the next activation group can be generated while the current group is being processed, hiding most of the generation latency.
+As derived as optimal option in  [ 30 ] , BS-Spec uses an index width of     μ  =  4   \mu=4    and RAC unit fanout of 32.
+Fig. 9:  (a) Desired computation, (b) exponent-modified activation, and (c) LUT index and corresponding activation sum.
+Fig. 10:  LUT-stationary dataflow of BS-Spec, where weight bit planes flow through the datapath and are broadcast across the engines. The KV cache follows the same dataflow.
+Fig. 11:  Integrated system architecture of BS-Spec.
+Fig. 12:  Comparison of three methods in terms of normalized speedup for batch (B) 4 and 32, across three models: Llama-3.2-3B, Llama-3.1-8B, and Qwen3-14B. Baseline (value = 1) corresponds to target-only autoregressive decoding on a GPU-style systolic array.
+IV-C    BFP-Aware LUT Computation
+The proposed LUT generator is modified to directly incorporate the BFP shared exponent. For each weight group, the activations are first scaled according to the corresponding shared exponent and shifted to a common aligned representation, as shown in Fig.   9  . The aligned activation mantissas are then used to construct LUT entries for all possible weight-bit combinations. As a result, exponent alignment is folded into LUT precomputation, and the original floating-point dot product is transformed into a LUT lookup followed by integer accumulation.
+Because BS-Spec stores BFP significands in sign-magnitude form, the sign bit is handled separately from the remaining magnitude bit planes. A lightweight sign decoder interprets the sign plane and conditionally selects the positive or negative contribution associated with the corresponding LUT index. The remaining magnitude planes are processed from the most significant to the least significant selected bit, with the lookup result shifted according to the bit position before integer accumulation.
+IV-D    Decoding-Oriented Dataflow
+To efficiently support the autoregressive decoding phase, BS-Spec adopts a LUT-stationary datapath. For a tiled multiplication between     A  ⁡   [    T  M   ×   T  K    ]    A[T_{M}\times T_{K}]    and     W  ⁡   [    T  K   ×   T  N    ]    W[T_{K}\times T_{N}]   ,     T  M   T_{M}    is typically small. For linear layers,     T  M   T_{M}    is determined primarily by the serving batch size. For grouped-query attention, the corresponding matrix operations may expose only the number of query heads sharing each KV head as the effective     T  M   T_{M}   . Consequently, the reuse opportunity obtained by retaining weights can be limited in the decoding workloads targeted by speculative decoding method.
+Fig.   10   shows the hardware mapping of BS-Spec. LUT entries generated from an activation group remain local to each MPU, while the corresponding weight bit planes are streamed through the read-accumulate lanes. The streamed weight bits serve as LUT indices, and the resulting partial sums are accumulated locally. Weight bit planes are broadcast across the MPUs, whereas LUT entries and partial sums remain private to each MPU. Each MPU independently retains and updates its partial sums, allowing multiple output tiles to be computed concurrently and operates in SIMD-style organization.
+IV-E    System Integration
+Fig.   11   shows the overall architecture of the BS-Spec accelerator. The system consists of a host processor, a global controller, a memory subsystem, and a BS-Spec compute core. The host processor issues high-level execution commands, while the global controller handles runtime scheduling, configuration, and coordination of data movement. These components are connected through a system interconnect (e.g., AXI), which also provides access to off-chip DRAM. Data transfer between DRAM and the compute core is managed by a DMA engine, which fetches weights, activations, and KV-cache data and streams them into the on-chip buffers. This organization decouples memory access from computation and allows data transfer to overlap with execution.
+The BS-Spec core contains a unified buffer, a weight buffer, multiple MPUs, an output buffer, and a special function unit (SFU) for post-processing operations. The unified buffer stores activations and intermediate data, while the weight buffer supplies weights to the compute units. Computation is carried out by the MPUs, which implement SIMD-style tiled matrix multiplication.
+V   Experimental Results
+Fig. 13:  Comparison of three methods in terms of normalized energy for batch (B) 4 and 32, across three models: Llama-3.2-3B, Llama-3.1-8B, and Qwen3-14B. Baseline (value = 1) corresponds to target-only autoregressive decoding on a GPU-style systolic array.
+TABLE VII:  Comparison of computation unit area in the evaluated environment.
+SPEQ [ 41 ]
+QuantSpec [ 36 ]
+BS-Spec
+Area (    μ  ​   m  2    \mu m^{2}   )
+5.56  ×   10  7    5.56\times 10^{7}
+3.62  ×   10  7    3.62\times 10^{7}
+2.51  ×   10  7    2.51\times 10^{7}
+V-A    Hardware Evaluation Setup
+We implement the proposed BS-Spec accelerator in a 28-nm CMOS technology and target a clock period of 3 ns (333 MHz). Arithmetic units are synthesized using Synopsys DesignWare libraries, while on-chip SRAM parameters are obtained from CACTI  [ 3 ] . Off-chip HBM2 latency and energy are modeled using Ramulator 2  [ 24 ]  with workload-generated memory traces.
+We model an HBM2 system based on  [ 15 ]  and assume access power of 10.0 W. All evaluated architectures use the same memory hierarchy and bandwidth constraints.
+We compare BS-Spec with QuantSpec  [ 36 ]  and SPEQ  [ 41 ]  in terms of effective latency and energy consumption. Since QuantSpec is originally implemented as a GPU kernel without a dedicated accelerator, we map it onto a synthesized multi-precision systolic-array architecture supporting FP16–FP16, FP16–INT8, and dual-lane FP16–INT4 execution. The integer datapaths reuse the mantissa multipliers in the FP16 units to reduce hardware overhead.
+Both QuantSpec and SPEQ are implemented with systolic-array architectures comprising four engines, each containing a     64  ×  64   64\times 64    array. The number of instantiated arrays is scaled according to the effective bit-level parallelism to match the normalized output throughput.
+BS-Spec adopts a SIMD architecture consisting of 32 MPUs along the     T  M   T_{M}    dimension, where
+each MPU contains       T  N   /  32   =  2   T_{N}/32=2    LUT–RAC subarrays. Each subarray
+contains       T  K   /  μ   =  16   T_{K}/\mu=16    LUTs, with each LUT shared by 32 BS-RAC lanes.
+Weights are broadcast across all MPUs, while LUT entries and partial sums remain local.
+Table   VII   compares the resulting compute-unit areas, confirming that the evaluation does not favor BS-Spec through disproportionate compute provisioning.
+Fig. 14:  Average speedup and normalized energy consumption of the evaluated methods across short- and long-context regimes at batch sizes 4 and 32.
+V-B    Speedup and Energy Evaluation
+We report normalized effective throughput and energy consumption using the speculative-decoding formulation in Eq.   1  . The baseline is conventional autoregressive decoding of the BF16 target model on the systolic-array architecture described above. All results are normalized to the throughput and per-token energy of this baseline.
+The normalized effective throughput is modeled as follows:
+T  ​   h  SD     T  ​   h  B     =     Ω  ⁡   (  γ  ,  α  )    /   (    γ  ​   T  D    +   T  T    )      (   γ  +  1   )   /   (    (   γ  +  1   )   ​   T  B    )     =     Ω  ⁡   (  γ  ,  α  )    ​   T  B      γ  ​   T  D    +   T  T      ,   \frac{Th_{\mathrm{SD}}}{Th_{B}}=\frac{\Omega(\gamma,\alpha)/\left(\gamma T_{D}+T_{T}\right)}{(\gamma+1)/\left((\gamma+1)T_{B}\right)}=\frac{\Omega(\gamma,\alpha)T_{B}}{\gamma T_{D}+T_{T}},
+(5)
+where     T  D   T_{D}   ,     T  T   T_{T}   , and     T  B   T_{B}    denote the draft, target-verification, and baseline per-token latencies, respectively.
+Similarly, the normalized energy consumption per generated token is modeled as:
+E  SD    E  B    =     (    γ  ​   E  D    +   E  T    )   /   Ω  ⁡   (  γ  ,  α  )        (   γ  +  1   )   ​   E  B    /   (   γ  +  1   )     =     γ  ​   E  D    +   E  T      Ω  ⁡   (  γ  ,  α  )    ​   E  B      ,   \frac{E_{\mathrm{SD}}}{E_{B}}=\frac{\left(\gamma E_{D}+E_{T}\right)/\Omega(\gamma,\alpha)}{(\gamma+1)E_{B}/(\gamma+1)}=\frac{\gamma E_{D}+E_{T}}{\Omega(\gamma,\alpha)E_{B}},
+(6)
+where     E  D   E_{D}   ,     E  T   E_{T}   , and     E  B   E_{B}    denote the corresponding energy costs.
+All latency and energy terms are obtained from cycle-level modeling that includes computation, SRAM and HBM accesses, and pipeline overlap under identical memory-bandwidth constraints.
+We compare SPEQ  [ 41 ] , QuantSpec  [ 36 ] , and BS-Spec in terms of normalized throughput and energy. For QuantSpec, QuantSpec-S is fully self-speculative, storing only the full-precision target model and using a W16KV4 draft, whereas QuantSpec-NS additionally stores INT4 weights and adaptively selects among W4KV8, W4KV4, and W16KV4. For BS-Spec, we evaluate a FIGLUT-style mapping  [ 30 ] , the proposed hardware with a BFP16 target, and the complete design with a BFP9 target.
+Fig.   12   compares normalized throughput across Llama-3.2-3B, Llama-3.1-8B, and Qwen3-14B at batch sizes 4 and 32. At batch size 4, the complete BS-Spec design achieves speedups of 1.83   ×  \times   , 1.84   ×  \times   , and 1.90   ×  \times    over the autoregressive baseline, respectively; at batch size 32, the corresponding speedups are 1.62   ×  \times   , 1.68   ×  \times   , and 1.92   ×  \times   .
+Fig.   13   reports normalized energy under the same settings. At batch size 4, BS-Spec consumes 0.55   ×  \times   , 0.54   ×  \times   , and 0.53   ×  \times    the baseline energy, respectively; at batch size 32, the corresponding values are 0.55   ×  \times   , 0.52   ×  \times   , and 0.43   ×  \times   .
+QuantSpec-NS achieves competitive throughput and energy efficiency in some small-batch, short-context workloads by using a separately stored INT4 weight-draft model with a high acceptance rate. However, this benefit requires additional weight storage. In contrast, BS-Spec maintains high efficiency over a broader range of workloads while remaining fully self-speculative.
+The comparison among the three BS-Spec configurations further illustrates the contributions of the proposed hardware and target compression. Compared with the FIGLUT-style LUT-based bit-serial architecture, the proposed hardware provides higher throughput and lower energy consumption when executing the BS-Spec algorithm. Compressing the target representation from BFP16 to BFP9 provides an additional improvement by reducing both draft and target execution costs.
+To further summarize the workload-dependent trends, Fig.   14   reports the average speedup and normalized energy consumption in short-context (    S  ≤   2  ​  K    S\leq 2\mathrm{K}   ) and long-context (    S  ≥   32  ​  K    S\geq 32\mathrm{K}   ) regimes. At batch size 4, SPEQ is more effective in the short-context regime, whereas QuantSpec becomes relatively more competitive at long contexts as KV-cache traffic accounts for a larger fraction of execution cost. At batch size 32, the higher arithmetic intensity changes the relative behavior of the evaluated methods by partially reducing the impact of memory traffic. Because QuantSpec targets execution on a conventional systolic-array organization, these results further suggest that its fine-grained adaptive precision policy can benefit from dedicated hardware support tailored to variable-precision speculative decoding.
+Across both context regimes, BS-Spec achieves the highest overall efficiency by jointly adapting weight and KV-cache precisions to the workload while retaining a unified bit-sharing method and a common hardware datapath for all draft and target configurations.
+V-C    BS-RAC Power and Area Breakdown
+Fig.   15   shows the area and power breakdown of a BS-RAC unit, which replaces multiplication with selection logic. BS-RAC extends the RAC structure proposed in FIGLUT [ 30 ]  with a lightweight sign decoder to support sign-magnitude BFP operands. The sign decoder contributes only a marginal fraction of the total area and power, indicating that BFP support incurs negligible hardware overhead.
+Fig. 15:  (a) Area and (b) power breakdown of a BS-RAC unit.
+V-D    Ablation Study
+Fig. 16:  Hardware component breakdown of (a) energy and (b) latency for draft and target execution in BS-Spec on Qwen3-14B with batch size 4. Results are normalized to the autoregressive systolic-array baseline.
+Fig. 17:  Incremental speedup contributions of target compression (TC), speculative decoding (SD), and dedicated BS-Spec hardware (HW) on Qwen3-14B with batch size 4. Results are normalized to the autoregressive systolic-array baseline.
+Fig. 18:  Layer-level latency comparison between the proposed BS-Spec dataflow (B) and the FIGLUT-style dataflow (F) for draft and target linear and attention operations on Qwen3-14B with batch size 4. Results are normalized to the autoregressive systolic-array baseline.
+Hardware Component Breakdown.
+Fig.   16   presents the component-wise energy and latency breakdown of BS-Spec, including    γ  \gamma    draft executions and one target execution. In Fig.   16  (a), energy is accumulated across all executions and hardware components. In Fig.   16  (b), memory access and computation are pipelined, such that the end-to-end latency is determined primarily by the dominant component together with pipeline overhead. HBM contributes substantially to both draft and target energy and latency, with draft-phase HBM accesses accounting for the largest share overall. Nevertheless, these    γ  \gamma    draft executions remain considerably cheaper than performing    γ  \gamma    additional target model decoding steps.
+Speedup Contribution Breakdown.
+Fig.   17   shows the incremental contributions of the main BS-Spec optimizations. Starting from the autoregressive baseline, BFP9 target compression provides a modest gain by reducing target execution cost. Speculative decoding then delivers the largest improvement by replacing multiple target steps with low-cost draft executions and a single verification step. Finally, the proposed LUT-stationary hardware provides additional acceleration over the conventional systolic-array architecture.
+Dataflow Comparison.
+Fig.   18   compares the proposed LUT-stationary hardware with a FIGLUT-style dataflow  [ 30 ] , both normalized to autoregressive decoding. The proposed design maintains approximately     2  ×   2\times    speedup across sequence lengths, whereas the FIGLUT-style mapping degrades as sequence length and target precision increase. This result indicates that the proposed dataflow more efficiently supports both draft and BFP9 target execution.
+VI   Conclusion
+This paper presented BS-Spec, a BFP-based bit-sharing framework for self-speculative LLM decoding. BS-Spec derives multiple draft precisions directly from a single target representation through MSB-only partial loading, avoiding separate draft-model storage and additional format conversion. A theoretical offline precision search identifies the weight and KV-cache precision pair that maximizes the estimated speedup for each serving workload, and the resulting configuration is applied at runtime through the PLT. To support this execution efficiently, we developed a bit-serial BFP accelerator with BFP-aware LUT generation and a decoding-oriented LUT-stationary dataflow for variable-precision draft and target computation. Together, these algorithmic and hardware techniques enable efficient workload-adaptive speculative decoding across diverse serving conditions.
+References
+[1]
+J. Ainslie, J. Lee-Thorp, M. De Jong, Y. Zemlyanskiy, F. Lebrón, and S. Sanghai   (2023)
+Gqa: training generalized multi-query transformer models from multi-head checkpoints .
+In  Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing ,
+pp. 4895–4901 .
+Cited by:   §II-A  .
+[2]
+Z. Ankner, R. Parthasarathy, A. Nrusimha, C. Rinard, J. Ragan-Kelley, and W. Brandon   (2024)
+Hydra: sequentially-dependent draft heads for medusa decoding .
+arXiv preprint arXiv:2402.05109 .
+Cited by:   §I  .
+[3]
+R. Balasubramonian, A. B. Kahng, N. Muralimanohar, A. Shafiee, and V. Srinivas   (2017)
+CACTI 7: new tools for interconnect exploration in innovative off-chip memories .
+ACM Transactions on Architecture and Code Optimization (TACO)   14  ( 2 ),  pp. 1–25 .
+Cited by:   §V-A  .
+[4]
+T. Cai, Y. Li, Z. Geng, H. Peng, J. D. Lee, D. Chen, and T. Dao   (2024)
+Medusa: simple llm inference acceleration framework with multiple decoding heads .
+arXiv preprint arXiv:2401.10774 .
+Cited by:   §I  .
+[5]
+C. Chen, S. Borgeaud, G. Irving, J. Lespiau, L. Sifre, and J. Jumper   (2023)
+Accelerating large language model decoding with speculative sampling .
+arXiv preprint arXiv:2302.01318 .
+Cited by:   §I  ,
+§II-B  .
+[6]
+S. Choi, Y. Kim, M. Son, and J. Kim   (2026)
+Cassandra: enabling reasoning llms at edge via self-speculative decoding .
+arXiv preprint arXiv:2605.26558 .
+Cited by:   §II-C  .
+[7]
+S. Dong, W. Cheng, J. Qin, and W. Wang   (2024)
+Qaq: quality adaptive quantization for llm kv cache .
+arXiv preprint arXiv:2403.04643 .
+Cited by:   §II-A  .
+[8]
+M. Elhoushi, A. Shrivastava, D. Liskovich, B. Hosmer, B. Wasti, L. Lai, A. Mahmoud, B. Acun, S. Agarwal, and A. Roman   (2024)
+Layerskip: enabling early exit inference and self-speculative decoding .
+In  Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) ,
+pp. 12622–12642 .
+Cited by:   §I  ,
+§II-C  .
+[9]
+A. Grattafiori, A. Dubey, A. Jauhri, A. Pandey, A. Kadian, A. Al-Dahle, A. Letman, A. Mathur, A. Schelten, A. Vaughan, A. Yang, A. Fan, A. Goyal, A. Hartshorn, A. Yang, A. Mitra, A. Sravankumar, A. Korenev, A. Hinsvark, A. Rao, A. Zhang, A. Rodriguez, A. Gregerson, A. Spataru, B. Roziere, B. Biron, B. Tang, B. Chern, C. Caucheteux, C. Nayak, C. Bi, C. Marra, C. McConnell, C. Keller, C. Touret, C. Wu, C. Wong, C. C. Ferrer, C. Nikolaidis, D. Allonsius, D. Song, D. Pintz, D. Livshits, D. Wyatt, D. Esiobu, D. Choudhary, D. Mahajan, D. Garcia-Olano, D. Perino, D. Hupkes, E. Lakomkin, E. AlBadawy, E. Lobanova, E. Dinan, E. M. Smith, F. Radenovic, F. Guzmán, F. Zhang, G. Synnaeve, G. Lee, G. L. Anderson, G. Thattai, G. Nail, G. Mialon, G. Pang, G. Cucurell, H. Nguyen, H. Korevaar, H. Xu, H. Touvron, I. Zarov, I. A. Ibarra, I. Kloumann, I. Misra, I. Evtimov, J. Zhang, J. Copet, J. Lee, J. Geffert, J. Vranes, J. Park, J. Mahadeokar, J. Shah, J. van der Linde, J. Billock, J. Hong, J. Lee, J. Fu, J. Chi, J. Huang, J. Liu, J. Wang, J. Yu, J. Bitton, J. Spisak, J. Park, J. Rocca, J. Johnstun, J. Saxe, J. Jia, K. V. Alwala, K. Prasad, K. Upasani, K. Plawiak, K. Li, K. Heafield, K. Stone, K. El-Arini, K. Iyer, K. Malik, K. Chiu, K. Bhalla, K. Lakhotia, L. Rantala-Yeary, L. van der Maaten, L. Chen, L. Tan, L. Jenkins, L. Martin, L. Madaan, L. Malo, L. Blecher, L. Landzaat, L. de Oliveira, M. Muzzi, M. Pasupuleti, M. Singh, M. Paluri, M. Kardas, M. Tsimpoukelli, M. Oldham, M. Rita, M. Pavlova, M. Kambadur, M. Lewis, M. Si, M. K. Singh, M. Hassan, N. Goyal, N. Torabi, N. Bashlykov, N. Bogoychev, N. Chatterji, N. Zhang, O. Duchenne, O. Çelebi, P. Alrassy, P. Zhang, P. Li, P. Vasic, P. Weng, P. Bhargava, P. Dubal, P. Krishnan, P. S. Koura, P. Xu, Q. He, Q. Dong, R. Srinivasan, R. Ganapathy, R. Calderer, R. S. Cabral, R. Stojnic, R. Raileanu, R. Maheswari, R. Girdhar, R. Patel, R. Sauvestre, R. Polidoro, R. Sumbaly, R. Taylor, R. Silva, R. Hou, R. Wang, S. Hosseini, S. Chennabasappa, S. Singh, S. Bell, S. S. Kim, S. Edunov, S. Nie, S. Narang, S. Raparthy, S. Shen, S. Wan, S. Bhosale, S. Zhang, S. Vandenhende, S. Batra, S. Whitman, S. Sootla, S. Collot, S. Gururangan, S. Borodinsky, T. Herman, T. Fowler, T. Sheasha, T. Georgiou, T. Scialom, T. Speckbacher, T. Mihaylov, T. Xiao, U. Karn, V. Goswami, V. Gupta, V. Ramanathan, V. Kerkez, V. Gonguet, V. Do, V. Vogeti, V. Albiero, V. Petrovic, W. Chu, W. Xiong, W. Fu, W. Meers, X. Martinet, X. Wang, X. Wang, X. E. Tan, X. Xia, X. Xie, X. Jia, X. Wang, Y. Goldschlag, Y. Gaur, Y. Babaei, Y. Wen, Y. Song, Y. Zhang, Y. Li, Y. Mao, Z. D. Coudert, Z. Yan, Z. Chen, Z. Papakipos, A. Singh, A. Srivastava, A. Jain, A. Kelsey, A. Shajnfeld, A. Gangidi, A. Victoria, A. Goldstand, A. Menon, A. Sharma, A. Boesenberg, A. Baevski, A. Feinstein, A. Kallet, A. Sangani, A. Teo, A. Yunus, A. Lupu, A. Alvarado, A. Caples, A. Gu, A. Ho, A. Poulton, A. Ryan, A. Ramchandani, A. Dong, A. Franco, A. Goyal, A. Saraf, A. Chowdhury, A. Gabriel, A. Bharambe, A. Eisenman, A. Yazdan, B. James, B. Maurer, B. Leonhardi, B. Huang, B. Loyd, B. D. Paola, B. Paranjape, B. Liu, B. Wu, B. Ni, B. Hancock, B. Wasti, B. Spence, B. Stojkovic, B. Gamido, B. Montalvo, C. Parker, C. Burton, C. Mejia, C. Liu, C. Wang, C. Kim, C. Zhou, C. Hu, C. Chu, C. Cai, C. Tindal, C. Feichtenhofer, C. Gao, D. Civin, D. Beaty, D. Kreymer, D. Li, D. Adkins, D. Xu, D. Testuggine, D. David, D. Parikh, D. Liskovich, D. Foss, D. Wang, D. Le, D. Holland, E. Dowling, E. Jamil, E. Montgomery, E. Presani, E. Hahn, E. Wood, E. Le, E. Brinkman, E. Arcaute, E. Dunbar, E. Smothers, F. Sun, F. Kreuk, F. Tian, F. Kokkinos, F. Ozgenel, F. Caggioni, F. Kanayet, F. Seide, G. M. Florez, G. Schwarz, G. Badeer, G. Swee, G. Halpern, G. Herman, G. Sizov, Guangyi, Zhang, G. Lakshminarayanan, H. Inan, H. Shojanazeri, H. Zou, H. Wang, H. Zha, H. Habeeb, H. Rudolph, H. Suk, H. Aspegren, H. Goldman, H. Zhan, I. Damlaj, I. Molybog, I. Tufanov, I. Leontiadis, I. Veliche, I. Gat, J. Weissman, J. Geboski, J. Kohli, J. Lam, J. Asher, J. Gaya, J. Marcus, J. Tang, J. Chan, J. Zhen, J. Reizenstein, J. Teboul, J. Zhong, J. Jin, J. Yang, J. Cummings, J. Carvill, J. Shepard, J. McPhie, J. Torres, J. Ginsburg, J. Wang, K. Wu, K. H. U, K. Saxena, K. Khandelwal, K. Zand, K. Matosich, K. Veeraraghavan, K. Michelena, K. Li, K. Jagadeesh, K. Huang, K. Chawla, K. Huang, L. Chen, L. Garg, L. A, L. Silva, L. Bell, L. Zhang, L. Guo, L. Yu, L. Moshkovich, L. Wehrstedt, M. Khabsa, M. Avalani, M. Bhatt, M. Mankus, M. Hasson, M. Lennie, M. Reso, M. Groshev, M. Naumov, M. Lathi, M. Keneally, M. Liu, M. L. Seltzer, M. Valko, M. Restrepo, M. Patel, M. Vyatskov, M. Samvelyan, M. Clark, M. Macey, M. Wang, M. J. Hermoso, M. Metanat, M. Rastegari, M. Bansal, N. Santhanam, N. Parks, N. White, N. Bawa, N. Singhal, N. Egebo, N. Usunier, N. Mehta, N. P. Laptev, N. Dong, N. Cheng, O. Chernoguz, O. Hart, O. Salpekar, O. Kalinli, P. Kent, P. Parekh, P. Saab, P. Balaji, P. Rittner, P. Bontrager, P. Roux, P. Dollar, P. Zvyagina, P. Ratanchandani, P. Yuvraj, Q. Liang, R. Alao, R. Rodriguez, R. Ayub, R. Murthy, R. Nayani, R. Mitra, R. Parthasarathy, R. Li, R. Hogan, R. Battey, R. Wang, R. Howes, R. Rinott, S. Mehta, S. Siby, S. J. Bondu, S. Datta, S. Chugh, S. Hunt, S. Dhillon, S. Sidorov, S. Pan, S. Mahajan, S. Verma, S. Yamamoto, S. Ramaswamy, S. Lindsay, S. Lindsay, S. Feng, S. Lin, S. C. Zha, S. Patil, S. Shankar, S. Zhang, S. Zhang, S. Wang, S. Agarwal, S. Sajuyigbe, S. Chintala, S. Max, S. Chen, S. Kehoe, S. Satterfield, S. Govindaprasad, S. Gupta, S. Deng, S. Cho, S. Virk, S. Subramanian, S. Choudhury, S. Goldman, T. Remez, T. Glaser, T. Best, T. Koehler, T. Robinson, T. Li, T. Zhang, T. Matthews, T. Chou, T. Shaked, V. Vontimitta, V. Ajayi, V. Montanez, V. Mohan, V. S. Kumar, V. Mangla, V. Ionescu, V. Poenaru, V. T. Mihailescu, V. Ivanov, W. Li, W. Wang, W. Jiang, W. Bouaziz, W. Constable, X. Tang, X. Wu, X. Wang, X. Wu, X. Gao, Y. Kleinman, Y. Chen, Y. Hu, Y. Jia, Y. Qi, Y. Li, Y. Zhang, Y. Zhang, Y. Adi, Y. Nam, Yu, Wang, Y. Zhao, Y. Hao, Y. Qian, Y. Li, Y. He, Z. Rait, Z. DeVito, Z. Rosnbrick, Z. Wen, Z. Yang, Z. Zhao, and Z. Ma   (2024)
+The llama 3 herd of models .
+arXiv preprint arXiv:2407.21783 .
+Cited by:   §I  .
+[10]
+Y. He, L. Zhang, W. Wu, J. Liu, H. Zhou, and B. Zhuang   (2024)
+Zipcache: accurate and efficient kv cache quantization with salient token identification .
+Advances in Neural Information Processing Systems   37 ,  pp. 68287–68307 .
+Cited by:   §II-A  .
+[11]
+C. Hooper, S. Kim, H. Mohammadzadeh, M. W. Mahoney, Y. S. Shao, K. Keutzer, and A. Gholami   (2024)
+Kvquant: towards 10 million context length llm inference with kv cache quantization .
+Advances in Neural Information Processing Systems   37 ,  pp. 1270–1303 .
+Cited by:   §II-A  .
+[12]
+D. Im and H. Yoo   (2024)
+Lutein: dense-sparse bit-slice architecture with radix-4 lut-based slice-tensor processing units .
+In  2024 IEEE International Symposium on High-Performance Computer Architecture (HPCA) ,
+pp. 747–759 .
+Cited by:   §II-D  .
+[13]
+J. Jang, Y. Kim, J. Lee, and J. Kim   (2024)
+Figna: integer unit-based accelerator design for fp-int gemm preserving numerical accuracy .
+In  2024 IEEE International Symposium on High-Performance Computer Architecture (HPCA) ,
+pp. 760–773 .
+Cited by:   §III-A  .
+[14]
+P. Judd, J. Albericio, T. Hetherington, T. M. Aamodt, and A. Moshovos   (2016)
+Stripes: bit-serial deep neural network computing .
+In  2016 49th Annual IEEE/ACM International Symposium on Microarchitecture (MICRO) ,
+pp. 1–12 .
+Cited by:   §II-D  .
+[15]
+H. Jun, J. Cho, K. Lee, H. Son, K. Kim, H. Jin, and K. Kim   (2017)
+Hbm (high bandwidth memory) dram technology and architecture .
+In  2017 IEEE International Memory Workshop (IMW) ,
+pp. 1–4 .
+Cited by:   §V-A  .
+[16]
+S. Kim, K. Mangalam, S. Moon, J. Malik, M. W. Mahoney, A. Gholami, and K. Keutzer   (2023)
+Speculative decoding with big little decoder .
+Advances in Neural Information Processing Systems   36 ,  pp. 39236–39256 .
+Cited by:   §I  .
+[17]
+Y. Kim, J. Jang, J. Lee, J. Park, J. Kim, B. Kim, S. J. Kwon, and D. Lee   (2023)
+Winning both the accuracy of floating point activation and the simplicity of integer arithmetic .
+In  The Eleventh International Conference on Learning Representations ,
+Cited by:   §I  .
+[18]
+J. Lee, A. Qiao, G. Oliaro, Y. Wang, and S. Rajbhandari   (2025)
+OWL: overcoming window length-dependence in speculative decoding for long-context inputs .
+arXiv preprint arXiv:2510.07535 .
+Cited by:   §I  .
+[19]
+Y. Leviathan, M. Kalman, and Y. Matias   (2023)
+Fast inference from transformers via speculative decoding .
+In  International Conference on Machine Learning ,
+pp. 19274–19286 .
+Cited by:   §I  ,
+§II-B  .
+[20]
+G. Li, S. Ye, C. Chen, Y. Wang, F. Yang, T. Cao, C. Liu, M. M. S. Aly, and M. Yang   (2025)
+Lut-dla: lookup table as efficient extreme low-bit deep learning accelerator .
+In  2025 IEEE International Symposium on High Performance Computer Architecture (HPCA) ,
+pp. 671–684 .
+Cited by:   §II-D  .
+[21]
+Y. Li, F. Wei, C. Zhang, and H. Zhang   (2024)
+Eagle: speculative sampling requires rethinking feature uncertainty .
+arXiv preprint arXiv:2401.15077 .
+Cited by:   §I  .
+[22]
+F. Liu, Y. Tang, Z. Liu, Y. Ni, D. Tang, K. Han, and Y. Wang   (2024)
+Kangaroo: lossless self-speculative decoding for accelerating llms via double early exiting .
+Advances in Neural Information Processing Systems   37 ,  pp. 11946–11965 .
+Cited by:   §I  .
+[23]
+X. Liu, L. Hu, P. Bailis, A. Cheung, Z. Deng, I. Stoica, and H. Zhang   (2023)
+Online speculative decoding .
+arXiv preprint arXiv:2310.07177 .
+Cited by:   §II-C  .
+[24]
+H. Luo, Y. C. Tuğrul, F. N. Bostancı, A. Olgun, A. G. Yağlıkçı, and O. Mutlu   (2023)
+Ramulator 2.0: a modern, modular, and extensible dram simulator .
+IEEE Computer Architecture Letters   23  ( 1 ),  pp. 112–116 .
+Cited by:   §V-A  .
+[25]
+Z. Mo, L. Wang, J. Wei, Z. Zeng, S. Cao, L. Ma, N. Jing, T. Cao, J. Xue, and F. Yang   (2025)
+Lut tensor core: a software-hardware co-design for lut-based low-bit llm inference .
+In  Proceedings of the 52nd Annual International Symposium on Computer Architecture ,
+pp. 514–528 .
+Cited by:   §II-D  .
+[26]
+S. Noh, J. Koo, S. Lee, J. Park, and J. Kung   (2023)
+Flexblock: a flexible dnn training accelerator with multi-mode block floating point support .
+IEEE Transactions on Computers   72  ( 9 ),  pp. 2522–2535 .
+Cited by:   §I  .
+[27]
+OpenAI, J. Achiam, S. Adler, S. Agarwal, L. Ahmad, I. Akkaya, F. L. Aleman, D. Almeida, J. Altenschmidt, S. Altman, S. Anadkat, R. Avila, I. Babuschkin, S. Balaji, V. Balcom, P. Baltescu, H. Bao, M. Bavarian, J. Belgum, I. Bello, J. Berdine, G. Bernadett-Shapiro, C. Berner, L. Bogdonoff, O. Boiko, M. Boyd, A. Brakman, G. Brockman, T. Brooks, M. Brundage, K. Button, T. Cai, R. Campbell, A. Cann, B. Carey, C. Carlson, R. Carmichael, B. Chan, C. Chang, F. Chantzis, D. Chen, S. Chen, R. Chen, J. Chen, M. Chen, B. Chess, C. Cho, C. Chu, H. W. Chung, D. Cummings, J. Currier, Y. Dai, C. Decareaux, T. Degry, N. Deutsch, D. Deville, A. Dhar, D. Dohan, S. Dowling, S. Dunning, A. Ecoffet, A. Eleti, T. Eloundou, D. Farhi, L. Fedus, N. Felix, S. P. Fishman, J. Forte, I. Fulford, L. Gao, E. Georges, C. Gibson, V. Goel, T. Gogineni, G. Goh, R. Gontijo-Lopes, J. Gordon, M. Grafstein, S. Gray, R. Greene, J. Gross, S. S. Gu, Y. Guo, C. Hallacy, J. Han, J. Harris, Y. He, M. Heaton, J. Heidecke, C. Hesse, A. Hickey, W. Hickey, P. Hoeschele, B. Houghton, K. Hsu, S. Hu, X. Hu, J. Huizinga, S. Jain, S. Jain, J. Jang, A. Jiang, R. Jiang, H. Jin, D. Jin, S. Jomoto, B. Jonn, H. Jun, T. Kaftan, Ł. Kaiser, A. Kamali, I. Kanitscheider, N. S. Keskar, T. Khan, L. Kilpatrick, J. W. Kim, C. Kim, Y. Kim, J. H. Kirchner, J. Kiros, M. Knight, D. Kokotajlo, Ł. Kondraciuk, A. Kondrich, A. Konstantinidis, K. Kosic, G. Krueger, V. Kuo, M. Lampe, I. Lan, T. Lee, J. Leike, J. Leung, D. Levy, C. M. Li, R. Lim, M. Lin, S. Lin, M. Litwin, T. Lopez, R. Lowe, P. Lue, A. Makanju, K. Malfacini, S. Manning, T. Markov, Y. Markovski, B. Martin, K. Mayer, A. Mayne, B. McGrew, S. M. McKinney, C. McLeavey, P. McMillan, J. McNeil, D. Medina, A. Mehta, J. Menick, L. Metz, A. Mishchenko, P. Mishkin, V. Monaco, E. Morikawa, D. Mossing, T. Mu, M. Murati, O. Murk, D. Mély, A. Nair, R. Nakano, R. Nayak, A. Neelakantan, R. Ngo, H. Noh, L. Ouyang, C. O’Keefe, J. Pachocki, A. Paino, J. Palermo, A. Pantuliano, G. Parascandolo, J. Parish, E. Parparita, A. Passos, M. Pavlov, A. Peng, A. Perelman, F. de Avila Belbute Peres, M. Petrov, H. P. de Oliveira Pinto, Michael, Pokorny, M. Pokrass, V. H. Pong, T. Powell, A. Power, B. Power, E. Proehl, R. Puri, A. Radford, J. Rae, A. Ramesh, C. Raymond, F. Real, K. Rimbach, C. Ross, B. Rotsted, H. Roussez, N. Ryder, M. Saltarelli, T. Sanders, S. Santurkar, G. Sastry, H. Schmidt, D. Schnurr, J. Schulman, D. Selsam, K. Sheppard, T. Sherbakov, J. Shieh, S. Shoker, P. Shyam, S. Sidor, E. Sigler, M. Simens, J. Sitkin, K. Slama, I. Sohl, B. Sokolowsky, Y. Song, N. Staudacher, F. P. Such, N. Summers, I. Sutskever, J. Tang, N. Tezak, M. B. Thompson, P. Tillet, A. Tootoonchian, E. Tseng, P. Tuggle, N. Turley, J. Tworek, J. F. C. Uribe, A. Vallone, A. Vijayvergiya, C. Voss, C. Wainwright, J. J. Wang, A. Wang, B. Wang, J. Ward, J. Wei, C. Weinmann, A. Welihinda, P. Welinder, J. Weng, L. Weng, M. Wiethoff, D. Willner, C. Winter, S. Wolrich, H. Wong, L. Workman, S. Wu, J. Wu, M. Wu, K. Xiao, T. Xu, S. Yoo, K. Yu, Q. Yuan, W. Zaremba, R. Zellers, C. Zhang, M. Zhang, S. Zhao, T. Zheng, J. Zhuang, W. Zhuk, and B. Zoph   (2024)
+GPT-4 technical report .
+External Links:   2303.08774 ,
+Link
+Cited by:   §I  .
+[28]
+G. Park, J. Bae, B. Kwon, B. Kim, S. J. Kwon, and D. Lee   (2025)
+AnyBCQ: hardware efficient flexible binary-coded quantization for multi-precision llms .
+arXiv preprint arXiv:2510.10467 .
+Cited by:   §IV-A  .
+[29]
+G. Park, M. Kim, S. Lee, J. Kim, B. Kwon, S. J. Kwon, B. Kim, Y. Lee, and D. Lee   (2024)
+Lut-gemm: quantized matrix multiplication based on luts for efficient inference in large-scale generative language models .
+In  International Conference on Learning Representations ,
+Vol.  2024 ,  pp. 38069–38086 .
+Cited by:   §IV-B  .
+[30]
+G. Park, H. Kwon, J. Kim, J. Bae, B. Park, D. Lee, and Y. Lee   (2025)
+Figlut: an energy-efficient accelerator design for fp-int gemm using look-up tables .
+In  2025 IEEE International Symposium on High Performance Computer Architecture (HPCA) ,
+pp. 1098–1111 .
+Cited by:   §II-D  ,
+§IV-B  ,
+§V-B  ,
+§V-C  ,
+§V-D  .
+[31]
+P. Patel, E. Choukse, C. Zhang, A. Shah, Í. Goiri, S. Maleki, and R. Bianchini   (2024)
+Splitwise: efficient generative llm inference using phase splitting .
+In  2024 ACM/IEEE 51st Annual International Symposium on Computer Architecture (ISCA) ,
+pp. 118–132 .
+Cited by:   §II-A  .
+[32]
+R. Sadhukhan, J. Chen, Z. Chen, V. Tiwari, R. Lai, J. Shi, I. E. Yen, A. May, T. Chen, and B. Chen   (2024)
+Magicdec: breaking the latency-throughput tradeoff for long context generation with speculative decoding .
+arXiv preprint arXiv:2408.11049 .
+Cited by:   §I  ,
+§II-B  .
+[33]
+H. Sharma, J. Park, N. Suda, L. Lai, B. Chau, J. K. Kim, V. Chandra, and H. Esmaeilzadeh   (2018)
+Bit fusion: bit-level dynamically composable architecture for accelerating deep neural network .
+In  2018 ACM/IEEE 45th Annual International Symposium on Computer Architecture (ISCA) ,
+pp. 764–775 .
+Cited by:   §II-D  .
+[34]
+G. Srivastava, S. Cao, and X. Wang   (2025)
+Towards reasoning ability of small language models .
+arXiv preprint arXiv:2502.11569 .
+Cited by:   §I  .
+[35]
+H. Sun, Z. Chen, X. Yang, Y. Tian, and B. Chen   (2024)
+Triforce: lossless acceleration of long sequence generation with hierarchical speculative decoding .
+arXiv preprint arXiv:2404.11912 .
+Cited by:   §II-B  .
+[36]
+R. Tiwari, H. Xi, A. Tomar, C. Hooper, S. Kim, M. Horton, M. Najibi, M. W. Mahoney, K. Keutzer, and A. Gholami   (2025)
+QuantSpec: self-speculative decoding with hierarchical quantized kv cache .
+arXiv preprint arXiv:2502.10424 .
+Cited by:   Fig. 2  ,
+§I  ,
+§I  ,
+§II-A  ,
+§II-C  ,
+§III-C  ,
+TABLE IV  ,
+TABLE VI  ,
+§V-A  ,
+§V-B  ,
+TABLE VII  .
+[37]
+S. Williams, A. Waterman, and D. Patterson   (2009)
+Roofline: an insightful visual performance model for multicore architectures .
+Communications of the ACM   52  ( 4 ),  pp. 65–76 .
+Cited by:   §II-A  .
+[38]
+M. Yan, S. Agarwal, and S. Venkataraman   (2025)
+Decoding speculative decoding .
+In  Proceedings of the 2025 Conference of the Nations of the Americas Chapter of the Association for Computational Linguistics: Human Language Technologies (Volume 1: Long Papers) ,
+pp. 6460–6473 .
+Cited by:   §II-C  .
+[39]
+S. Yoo, D. Kam, G. Park, S. Kwon, D. Lee, and Y. Lee   (2026)
+31.7 lut-ssm: a 99.3 tflops/w lut-based state-space model accelerator using energy-efficient element-wise layer fusion and lut-friendly weight-only quantization .
+In  2026 IEEE International Solid-State Circuits Conference (ISSCC) ,
+Vol.  69 ,  pp. 544–546 .
+Cited by:   §II-D  .
+[40]
+J. Zhang, J. Wang, H. Li, L. Shou, K. Chen, G. Chen, and S. Mehrotra   (2024)
+Draft& verify: lossless large language model acceleration via self-speculative decoding .
+In  Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) ,
+pp. 11263–11282 .
+Cited by:   §I  .
+[41]
+Y. Zhao, Y. Qin, Y. Wang, X. Yang, H. Han, S. Wei, Y. Hu, and S. Yin   (2025)
+From quarter to all: accelerating speculative llm decoding via floating-point exponent remapping and parameter sharing .
+arXiv preprint arXiv:2510.18525 .
+Cited by:   Fig. 2  ,
+Fig. 4  ,
+Fig. 4  ,
+§II-C  ,
+§II-D  ,
+§III-C  ,
+TABLE IV  ,
+TABLE VI  ,
+§V-A  ,
+§V-B  ,
+TABLE VII  .
+[42]
+Y. Zhong, S. Liu, J. Chen, J. Hu, Y. Zhu, X. Liu, X. Jin, and H. Zhang   (2024)
+{  \{   distserve   }  \}   : Disaggregating prefill and decoding for goodput-optimized large language model serving .
+In  18th USENIX Symposium on Operating Systems Design and Implementation (OSDI 24) ,
+pp. 193–210 .
+Cited by:   §II-A  .
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue"  (
+)  button, located in the page header.
+Tip:  You can select the relevant text first, to include it in your report.
+Our team has already identified  the following issues . We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a  list of packages that need conversion , and welcome  developer contributions .
+We gratefully acknowledge support from
+our  major funders ,
+member institutions   ,    ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status  (opens in new tab)
+Major funding support from

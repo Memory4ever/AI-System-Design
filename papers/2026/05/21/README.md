@@ -4,15 +4,25 @@
 
 **窗口：** 2026-05-20T09:00:00+08:00 ～ 2026-05-21T09:00:00+08:00
 
-**状态：** 完成
+**状态：** 进行中
+
+**补充窗口：** 2026-05-20 ～ 2026-05-20
+
+**冻结候选日期：** [原报告](../_sources/daily-20260521/baseline-before-supplement-20261019.md)
+
+**窗口说明：** 用户明确要求全年已有日报补充；本轮仅新增检查北京时间2026-05-20完整自然日。按用户授权保留原小时窗口、已入报告的177候选完整行/日期/评分或有效连续旧§4，不搬动原归属。
+
+**补查证据：** [作者来源账](../_sources/daily-20260521/SUP_SOURCES_20261019.md)；[独立复核账](../_sources/daily-20260521/SUP_REVIEW_20261019.md)。本次来源、Source、Books及整日验收按实际进展逐层记录，旧完成不代表本次补查完成。
 
 **Books：** 纳入本次
 
-**检查时间：** 2026-09-16T12:20:37+08:00
+**检查时间：** 2026-10-19T16:57:48+08:00
 
 前序 fresh 非作者审查发现 73 项所谓 standard review 只停在 Abstract、120 项 No Change 缺少命题级正文对读，且两类通用 closure 理由仍会产生 false negative。date-local repair author 随后保留上一轮 78 项恢复，只对剩余受影响的 257 项理由族做有界重审，新增恢复 31 项，并完成所有恢复项的 official exact-v1 Source Review。root 已完成共享 Books 写回；另一位未参与修复和写回的 fresh non-author 已独立复核窗口、集合守恒、Evidence、Books 分区、全部正文 binding 与 Hunyuan 隔离边界，本日报现已闭合。
 
 ## 1. 结论
+
+本轮自然日补查进行中。下列原结论仅对应前轮旧有效层；新来源与候选尚在核验，未预报完整覆盖或整日完成。精确去重后，已在相邻日报原表/有效旧§4的事件保留原归属，不因主表呈现缺漏而重列、搬日或重评分；已知正文归因错误只作获批局部纠正。
 
 旧 V2.1 的 DataCite created-day `662/66/Complete` 不再拥有当前状态。当前 arXiv owner 只使用官方 announcement direct batch 508 条，154 条 DataCite/revision-recovery identity 仅作身份佐证并排除。作者账本原有 67 个 arXiv 候选；上一轮从 441 个 closure 恢复 78 项，本轮只重审仍携带两类错误通用理由的 257 项并新增恢复 31 项，得到 176 个 arXiv 候选；Z.ai ZCube 再增加 1 项。确认集合守恒为 `509 = 177 retained + 332 family-specific pre-denominator closure + 0 withdrawn`；Hunyuan 的日期级未知 identity 不进入确认 raw。
 
@@ -222,6 +232,10 @@ Books 对账为 `177 = 65 Applied + 16 No Change + 96 Report Only + 0 pending In
 | [2605.21486 Quantifying Hyperparameter Transfer and the Importance of Embedding Layer Learning Rate](https://arxiv.org/html/2605.21486v1) | 2026-05-21T08:00:00+08:00 | In this paper, we first develop a framework to quantify hyperparameter transfer through three metrics: (1) the quality of the scaling law fit, (2) the robustness to extrapolation errors, and (3) the asymptotic loss penalty due to choice of parameterization. 系统 owner=`TRAIN-PRETRAINING`。 `TRAIN-PRETRAINING`；3+3+3=9 | 深入完成 | 整合：当前正文 binding 已通过 fresh non-author semantic review TRAIN-PRETRAINING [章节](../../../../books/part-04-training-system/28-pretraining.md) |
 | [2605.21488 Equilibrium Reasoners: Learning Attractors Enables Scalable Reasoning](https://arxiv.org/html/2605.21488v1) | 2026-05-21T08:00:00+08:00 | Task-conditioned attractor dynamics 可解释部分 test-time depth/breadth scaling；收敛轨迹不等于外部答案正确。 `WORLDVIEW-LLM-INTELLIGENCE`；3+3+3=9 | 深入完成 | 整合：当前正文 binding 已通过 fresh non-author semantic review WORLDVIEW-LLM-INTELLIGENCE [章节](../../../../books/part-01-worldview/08-why-llms-show-intelligence.md) |
 | [ZCube Next-generation LLM Inference Network: How ZCube Alleviates Network Bottlenecks?](https://www.zhipuai.cn/en/research/160) | 2026-05-20T19:51:00+08:00 | P/D disaggregation 的非对称、时变流量可把 flat topology 与 unique optimal path 提升为部署 artifact；network controller 拥有 topology/route revision，scheduler 只能消费已验证路径。 `INFER-PD-DISAGGREGATION`；3+3+3=9 | 深入完成 | 整合：INFER-PD-DISAGGREGATION [章节](../../../../books/part-05-inference-system/55-pd-disaggregation.md)；正文 binding 已通过 fresh non-author semantic review |
+
+| [EgoBabyVLM: Benchmarking Cross-Modal Learning from Naturalistic Egocentric Video Data](https://arxiv.org/html/2605.19130v1) | 2026-05-20 | 自然时间共现不等于语义正配对；同语料shuffle、训练词汇/词频支持及单/跨模态分账区分对齐失败。2+2+2=6 | 深入完成 | 整合：`MULTIMODAL-REPRESENTATION` [Ch23](../../../../books/part-03-multimodal-world-models/23-multimodal-representation.md)，R14实际非writer POST通过 |
+| [Agent Meltdowns: The Road to Hell Is Paved with Helpful Agents](https://arxiv.org/html/2605.19149v1) | 2026-05-20 | 无恶意注入的良性错误恢复也须独立验授权边界，任务成功不能掩盖中途越权。2+2+2=6 | 深入完成 | 已有覆盖：`AGENT-PLATFORM` [Ch84](../../../../books/part-07-agent/84-agent-platform.md) 目标commit/Policy-plane续权/控制envelope三处具体覆盖，R16通过 |
+| [Efficient Long-Context Modeling in Diffusion Language Models via Block Approximate Sparse Attention](https://arxiv.org/html/2605.19726v1) | 2026-05-20 | norm重排与block统计选择稀疏support，经验补偿不继承完整协方差界、dense质量或E2E倍率。2+1+2=5 | 标准完成 | 仅报告：`MODEL-SELF-ATTENTION` [Ch14](../../../../books/part-02-model/14-self-attention.md) 已有selector/value/质量分验；新局部实现未改变主线判据，R16通过 |
 
 ## 4. 证据与知识整合
 
@@ -938,7 +952,31 @@ Books 对账为 `177 = 65 Applied + 16 No Change + 96 Report Only + 0 pending In
 
 当前 Books 对读见 [`books-comparison-v3.json`](../_sources/daily-20260521/books-comparison-v3.json)，原 120 项 No Change 的命题级重放见 [`BOOKS_NO_CHANGE_120_REPLAY_20260915.json`](../_sources/daily-20260521/BOOKS_NO_CHANGE_120_REPLAY_20260915.json)。[`root-books-writeback-queue-v3.json`](../_sources/daily-20260521/root-books-writeback-queue-v3.json) 保存 39 项精确 writeback queue 的已应用投影（target path、唯一 anchor、adopted delta、trade-off/failure/fallback 与 exact-v1 evidence/non-proof locator）；连同 6 项此前 root 写入，共 45 项已通过 fresh non-author semantic review。最终回执见 [`FRESH_NONAUTHOR_V3_FINAL_REVIEW_20260916.md`](../_sources/daily-20260521/FRESH_NONAUTHOR_V3_FINAL_REVIEW_20260916.md)。
 
+### 本轮自然日补充证据
+
+下列仅为北京2026-05-20新增发现，不重复评分或搬动相邻日报已有事件。原177行和原小时窗口完整保留；未成熟项只在来源账保留实际停点。
+
+### [EgoBabyVLM: Benchmarking Cross-Modal Learning from Naturalistic Egocentric Video Data](https://arxiv.org/html/2605.19130v1)
+
+精确v1§3–5/A/D1与May20完整联合界由root R10实际核，本文直接复用必要层；方法是同语料配对/shuffle、训练词表和log词频分bin、单/跨模态分账。小DINOv2/BERT/GPT2的CLIP+/LLaVA与四语料、COCO受控shuffle提供限定反证，不证明视频原生/更大模型不可学习；JSD是预训练encoder相似度分布差而非语义真值/互信息，转录、抽帧与题项生成过滤都有混杂和费用。实际Ch23三类对齐/多目标后新增一段，R14真实非writer完整新增/两侧/本人注POST通过，唯一owner MULTIMODAL-REPRESENTATION。
+
+### [Agent Meltdowns: The Road to Hell Is Paved with Helpful Agents](https://arxiv.org/html/2605.19149v1)
+
+必要exact-v1§3–6由root R13实际核，错误注入/vanilla对照说明良性环境失败的恢复也须独立验授权。测试完整filesystem/bash和模拟工具权限、不同错误/模型人口不等权，planned/attempted/executed与用户最终报告分别记；更长轨迹与越界只是关联，建议step cap未验证，不作生产风险率或防御保证。root R16实际核Ch84三处已有具体覆盖，NC而不重复写Book；日期同精确DOI arxiv.content/findable/唯一v1与历史官方日程联合完整界同May20，未造精确公告时刻。
+
+### [Efficient Long-Context Modeling in Diffusion Language Models via Block Approximate Sparse Attention](https://arxiv.org/html/2605.19726v1)
+
+实际exact-v1§2–4/6、root R16必要独核通过。Q/K norm排序、K/V共同置换、blockmean/对角统计选support，真实稀疏核后逆置换；A10080GB、B128、greedy/FastDLLM与视频先10步dense限定质量/算子比较。Eq12/14非一般恒等、normsort不保证方向半径；6.95倍Sort与5.70倍Sort+Cov及128K/256K冲突不采用为完整E2E或普胜。RULER/LongBench/Muir和image存在反退，统计、排序、索引/布局及全部采样付费。当前Ch14有选择/读取/质量分验而无新normsort配方，此5分实现只留报告，不改变主线。
+
+原连续旧§4保留不动，不代表本轮新候选证据；本轮完整必要原件、采用/不采用命题与实际owner差额见[来源账A7–A15](../_sources/daily-20260521/SUP_SOURCES_20261019.md)，独立层见[复核账R10–R16](../_sources/daily-20260521/SUP_REVIEW_20261019.md)。EgoBabyVLM已在Ch23三类对齐/多目标后增加自然正配对、同语料shuffle与词汇支持分账；R14实际完整新增/两侧/本人注POST通过。其JSD非语义真值、frame/transcript、小backbone与evaluator筛选反侧均保留。
+
+AgentMeltdowns复用R13实际必要源、R16 actualowner NC：Ch84明确任务完成不掩中途越权，resume必须另核Policy-plane继续授权，每transition核不可由模型扩大的scope。测试全filesystem/bash权限、错误注入人口、planned/attempted/executed与步数关联不能外推生产率或防御已解决。BA-Att R16标准Source/Only：实际normsort、K/V一起重排、block统计→support→稀疏核→逆置换；Eq12/14、方向半径与128K/256K倍率冲突不采用，局部质量反退、sorting/统计/布局和视频dense warmup全费保留。
+
+另三旧事件19775/19893/19269仅在May20原legacy恢复呈现，原8分/May20不变、不计本日新家族。19775具体NC已R6核；19893 Ch48原归因窄纠正已R8真实POST，19269 Ch49仅kernel/block而非完整模型E2E等两段窄纠正已R12真实POST；未重写原旧候选行或连续§4。19811另按原3+3+2=8精确legacy路由，未假称新Source完成。
+
 ## 5. 缺口与下一步
+
+本轮补充仍在进行中：其余具名准入的必要Source、Books差额/非writer写后与来源归并尚未全部验收；普通待办不伪装外部缺口。以下旧层停点保留为历史记录，不是本轮“没有pending”的声明。Hunyuan本轮已恢复官方公开API的具名Hy-MT2与May21时刻，后续仅在新增说明更新恢复事实，不改旧证据。
 
 终态保留项：Hunyuan 官方 Research 目录显示日期级 `2026-05-21` 边界条目，但当前文本路由拿不到 title、detail URL 或 time-of-day；精确 Materials Request 见 [`materials-request-v3.json`](../_sources/daily-20260521/materials-request-v3.json)。该项单独隔离，不用于支持正面证据、Books 结论或绝对“无遗漏断言”，也不阻塞其余 509 个确认事件。定点重开条件是取得官方 detail URL、官方 API/index 响应，或能确定 identity/window/scope 的官方页面材料；触发后只重开该 Source Family。
 
@@ -946,6 +984,8 @@ Books 对账为 `177 = 65 Applied + 16 No Change + 96 Report Only + 0 pending In
 3. 当前没有可在仓库内继续执行的 pending work。Hunyuan 外部材料恢复时，只重开该隔离 family 的 identity/window/scope 与增量 Books 判定。
 
 ## 6. 复核
+
+本轮补查复核者：`/root`（非本轮作者）。逐项已通过层见独立复核账；本轮整日语义Gate尚未发生，当前不得复用下面旧轮PASS宣布本轮完成。
 
 复核者：`/root/may25_repair`（未参与 2026-05-21 date-local repair 或 root Books writeback 的 fresh non-author reviewer）
 

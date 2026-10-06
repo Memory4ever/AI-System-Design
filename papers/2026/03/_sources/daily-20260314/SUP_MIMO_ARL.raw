@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="generator" content="Rspress v1.46.2">
+    <link rel="stylesheet" href="https://cdn.cnbj1.fds.api.mi-img.com/aife/mimo-blog-fe/doc_build/fonts/font-faces.b3ff14bbe16d.css"><script>// Inlined in <head>, so server-rendered text is protected before hydration.
+(() => {
+  const root = document.documentElement;
+  const selector = '[data-font-text]';
+  const imageSelector = '[data-font-image]';
+  const pendingSelector = '[data-font-text]:not([data-font-ready]), [data-font-image]:not([data-image-ready])';
+  const maxWait = 1500;
+  let currentPath = null;
+  let cleanup = () => {};
+
+  const isHome = (path) => /^\/(?:zh\/?)?(?:index(?:\.html)?)?$/.test(path);
+  const familyName = (name) => name.trim().replace(/^["']|["']$/g, '');
+
+  function stop() {
+    cleanup();
+    currentPath = null;
+    root.classList.remove('home-fonts-loading');
+  }
+
+  function start() {
+    const path = window.location.pathname;
+    if (!isHome(path) || !document.fonts) {
+      stop();
+      return;
+    }
+    if (currentPath === path) return;
+    stop();
+    currentPath = path;
+
+    let active = true;
+    let pending = 0;
+    let sawText = false;
+    const seen = new Set();
+    const requests = new Map();
+    const busy = new Map();
+    const imageListeners = new Set();
+    const blockedInteractions = new Set();
+    const ranges = new Map();
+
+    function syncInteractions() {
+      for (const element of document.querySelectorAll('[data-font-interactive]')) {
+        if (element.matches(pendingSelector) || element.querySelector(pendingSelector)) {
+          // Native inert also prevents keyboard focus and activation. Keep any
+          // pre-existing inert state owned by the component itself.
+          if (!element.inert) {
+            element.inert = true;
+            blockedInteractions.add(element);
+          }
+        } else if (blockedInteractions.delete(element)) {
+          element.inert = false;
+        }
+      }
+    }
+
+    function finish() {
+      if (!active) return;
+      active = false;
+      root.classList.remove('home-fonts-loading');
+      clearTimeout(timer);
+      observer.disconnect();
+      document.removeEventListener('DOMContentLoaded', scan);
+      for (const [element, readyKey] of busy) {
+        element.dataset[readyKey] = 'fallback';
+        element.removeAttribute('aria-busy');
+      }
+      for (const dispose of imageListeners) dispose();
+      for (const element of blockedInteractions) element.inert = false;
+      blockedInteractions.clear();
+      imageListeners.clear();
+      busy.clear();
+    }
+
+    function fontRanges() {
+      // Called after stylesheets are ready; keep the actual CSS unicode ranges.
+      if (ranges.size) return;
+      for (const face of document.fonts) {
+        const family = familyName(face.family);
+        const list = ranges.get(family) || [];
+        for (const part of face.unicodeRange.split(',')) {
+          const range = part.trim().replace(/^U\+/i, '').split('-');
+          const lower = parseInt(range[0].replace(/\?/g, '0'), 16);
+          const upper = parseInt((range[1] || range[0]).replace(/\?/g, 'F'), 16);
+          list.push([lower, upper]);
+        }
+        ranges.set(family, list);
+      }
+    }
+
+    function requiredFonts(element) {
+      const samples = new Map();
+      const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+      while (walker.nextNode()) {
+        const node = walker.currentNode;
+        if (!node.textContent.trim()) continue;
+        const style = getComputedStyle(node.parentElement);
+        const families = style.fontFamily.split(',').map(familyName);
+        for (const character of node.textContent) {
+          const point = character.codePointAt(0);
+          const family = families.find((name) => (ranges.get(name) || []).some(([a, b]) => a <= point && point <= b));
+          if (!family) continue; // System font or a character outside our fonts.
+          const spec = `${style.fontStyle} ${style.fontWeight} 16px "${family}"`;
+          if (!samples.has(spec)) samples.set(spec, new Set());
+          samples.get(spec).add(character);
+        }
+      }
+      return [...samples].map(([spec, chars]) => [spec, [...chars].join('')]);
+    }
+
+    function scan() {
+      if (!active) return;
+      if (document.readyState === 'loading') {
+        syncInteractions();
+        return;
+      }
+      fontRanges();
+      for (const image of document.querySelectorAll(imageSelector)) {
+        if (seen.has(image)) continue;
+        seen.add(image);
+        sawText = true;
+        if (image.complete) {
+          image.dataset.imageReady = image.naturalWidth ? 'cached' : 'fallback';
+          continue;
+        }
+        delete image.dataset.imageReady;
+        image.setAttribute('aria-busy', 'true');
+        busy.set(image, 'imageReady');
+        pending++;
+        const dispose = () => {
+          image.removeEventListener('load', loaded);
+          image.removeEventListener('error', failed);
+          imageListeners.delete(dispose);
+        };
+        const reveal = (status) => {
+          dispose();
+          if (!active) return;
+          release(image, status);
+        };
+        const loaded = () => {
+          if (image.decode) image.decode().then(() => reveal('loaded'), () => reveal('fallback'));
+          else reveal('loaded');
+        };
+        const failed = () => reveal('fallback');
+        imageListeners.add(dispose);
+        image.addEventListener('load', loaded, { once: true });
+        image.addEventListener('error', failed, { once: true });
+      }
+      for (const element of document.querySelectorAll(selector)) {
+        if (seen.has(element)) continue;
+        seen.add(element);
+        sawText = true;
+        const rect = element.getBoundingClientRect();
+        const style = getComputedStyle(element);
+        // Offscreen text, hidden Blog entries and the hero's back face never
+        // hold up the visible page. Their fonts still load normally through CSS.
+        if (!rect.width || !rect.height || rect.bottom <= 0 || rect.top >= window.innerHeight || style.visibility === 'hidden' || element.closest('[aria-hidden="true"], [data-font-skip]')) {
+          element.dataset.fontReady = 'offscreen';
+          continue;
+        }
+        const needed = requiredFonts(element);
+        const missing = needed.filter(([spec, text]) => !document.fonts.check(spec, text));
+        if (!missing.length) {
+          element.dataset.fontReady = 'cached';
+          continue;
+        }
+        delete element.dataset.fontReady;
+        element.setAttribute('aria-busy', 'true');
+        busy.set(element, 'fontReady');
+        pending++;
+        const promises = missing.map(([spec, text]) => {
+          const key = spec + text;
+          if (!requests.has(key)) requests.set(key, document.fonts.load(spec, text));
+          return requests.get(key);
+        });
+        Promise.all(promises).then(() => release(element, 'loaded'), () => release(element, 'fallback'));
+      }
+      syncInteractions();
+      if (sawText && pending === 0) finish();
+    }
+
+    function release(element, status) {
+      if (!active || !busy.has(element)) return;
+      element.dataset[busy.get(element)] = status;
+      element.removeAttribute('aria-busy');
+      busy.delete(element);
+      if (--pending === 0) finish();
+      else syncInteractions();
+    }
+
+    // The timer runs independently of React and font promises, including errors.
+    const timer = setTimeout(finish, maxWait);
+    const observer = new MutationObserver(scan);
+    cleanup = finish;
+    root.classList.add('home-fonts-loading');
+    document.querySelectorAll(selector).forEach((element) => delete element.dataset.fontReady);
+    observer.observe(root, { childList: true, subtree: true });
+    document.addEventListener('DOMContentLoaded', scan, { once: true });
+    scan();
+  }
+
+  window.__mimoHomeFonts = { start, stop };
+  window.addEventListener('pageshow', (event) => { if (event.persisted) stop(); });
+  start();
+})();
+</script><script>document.documentElement.classList.toggle('coder-docs',false);document.documentElement.classList.toggle('mimo-site',true);document.documentElement.classList.toggle('legal-docs',false);</script><title data-rh="true"></title>
+  <link rel="icon" href="https://cdn.cnbj1.fds.api.mi-img.com/aife/mimo-blog-fe/doc_build/mimo.ico"><script defer src="https://cdn.cnbj1.fds.api.mi-img.com/aife/mimo-blog-fe/doc_build/static/js/styles.928fc8b8.js"></script><script defer src="https://cdn.cnbj1.fds.api.mi-img.com/aife/mimo-blog-fe/doc_build/static/js/lib-react.a6be410a.js"></script><script defer src="https://cdn.cnbj1.fds.api.mi-img.com/aife/mimo-blog-fe/doc_build/static/js/lib-router.93d86b80.js"></script><script defer src="https://cdn.cnbj1.fds.api.mi-img.com/aife/mimo-blog-fe/doc_build/static/js/4752.2908c99e.js"></script><script defer src="https://cdn.cnbj1.fds.api.mi-img.com/aife/mimo-blog-fe/doc_build/static/js/index.c5195ace.js"></script><link href="https://cdn.cnbj1.fds.api.mi-img.com/aife/mimo-blog-fe/doc_build/static/css/styles.f0e8146a.css" rel="stylesheet"></head>
+
+  <body >
+    <div id="root"><div class="navContainer_d18b1 rspress-nav px-6  sticky_ddfa7"><div class="container_e4235 flex justify-between items-center h-full"><div class="navTitleWrapper-w9ofxD " data-font-media="logo" data-font-interactive="true"><img src="https://cdn.cnbj1.fds.api.mi-img.com/aife/mimo-blog-fe/doc_build/static/image/logo.99baaffe.png" alt="logo" class="mimoLogo-KV4r25" data-font-image="true"/></div><div class="flex flex-1 justify-end items-center"><div class="rightNav_a2fea"><div class="rspress-nav-menu menu h-14"></div><div class="flex-center flex-row"><div class="translation menu-item_b8238 flex text-sm font-bold items-center px-3 py-2"><div><div class="relative flex-center h-14"><button class="rspress-nav-menu-group-button flex-center items-center font-medium text-sm text-text-1 hover:text-text-2 transition-colors duration-200"><span class="text-sm font-medium flex break-keep" style="margin-right:2px"><svg width="18" height="18" viewBox="0 0 32 32" style="width:18px;height:18px"><path fill="currentColor" d="M27.85 29H30l-6-15h-2.35l-6 15h2.15l1.6-4h6.85zm-7.65-6 2.62-6.56L25.45 23zM18 7V5h-7V2H9v3H2v2h10.74a14.7 14.7 0 0 1-3.19 6.18A13.5 13.5 0 0 1 7.26 9h-2.1a16.5 16.5 0 0 0 3 5.58A16.8 16.8 0 0 1 3 18l.75 1.86A18.5 18.5 0 0 0 9.53 16a16.9 16.9 0 0 0 5.76 3.84L16 18a14.5 14.5 0 0 1-5.12-3.37A17.64 17.64 0 0 0 14.8 7z"></path></svg></span><svg width="1em" height="1em" viewBox="0 0 32 32"><path fill="currentColor" d="M16 22 6 12l1.4-1.4 8.6 8.6 8.6-8.6L26 12z"></path></svg></button><div class="rspress-nav-menu-group-content absolute mx-0.8 transition-opacity duration-300" style="opacity:0;visibility:hidden;right:0;top:52px"><div class="p-3 pr-2 w-full h-full max-h-100vh whitespace-nowrap" style="box-shadow:var(--rp-shadow-3);z-index:100;border:1px solid var(--rp-c-divider-light);border-radius:var(--rp-radius-large);background:var(--rp-c-bg)"><div><div class="rounded-2xl my-1 flex" style="padding:0.4rem 1.5rem 0.4rem 0.75rem"><span class="text-brand">English</span></div></div><div><div class="font-medium my-1"><a href="/zh/paper/arl-tangram" class="link_a7cea "><div class="rounded-2xl hover:bg-mute" style="padding:0.4rem 1.5rem 0.4rem 0.75rem"><div class="flex"><span>简体中文</span></div></div></a></div></div></div></div></div></div></div></div></div><div class="mimo-home-nav-links" aria-label="Main navigation"><div class="mimo-nav-dropdown" data-font-interactive="true"><button type="button" class="rspress-nav-menu-item mimo-nav-dropdown__trigger" data-font-text="true">Product<svg class="mimo-nav-dropdown__caret" width="1em" height="1em" viewBox="0 0 32 32" aria-hidden="true"><path fill="currentColor" d="M16 22 6 12l1.4-1.4 8.6 8.6 8.6-8.6L26 12z"></path></svg></button><div class="mimo-nav-dropdown__menu" role="menu"><a class="mimo-nav-dropdown__item" href="/mimocode" role="menuitem">MiMo Code</a><a class="mimo-nav-dropdown__item" href="/go/desktop" role="menuitem">MiMo Desktop</a></div></div><div class="mimo-nav-dropdown" data-font-interactive="true"><button type="button" class="rspress-nav-menu-item mimo-nav-dropdown__trigger" data-font-text="true">Research<svg class="mimo-nav-dropdown__caret" width="1em" height="1em" viewBox="0 0 32 32" aria-hidden="true"><path fill="currentColor" d="M16 22 6 12l1.4-1.4 8.6 8.6 8.6-8.6L26 12z"></path></svg></button><div class="mimo-nav-dropdown__menu" role="menu"><a class="mimo-nav-dropdown__item" href="/#paper" role="menuitem">Paper</a><a class="mimo-nav-dropdown__item" href="/#blog" role="menuitem">Blog</a></div></div><a class="rspress-nav-menu-item" href="/#joinUs" data-font-text="true" data-font-interactive="true">Join Us</a></div><div class="mobileNavMenu_e7045"><div class="navScreen_ec30c  rspress-nav-screen" id="navScreen"><div class="container_c935d"><div class="navMenu_b887b"></div><div class="flex-center flex-col gap-2"><div class="flex text-sm font-bold justify-center"><div class="mx-1.5 my-1"><div class=" navScreenMenuGroup_e771d relative"><button class="button_ea41e"><span class="buttonSpan_f4b8f"><svg width="18" height="18" viewBox="0 0 32 32" style="width:18px;height:18px"><path fill="currentColor" d="M27.85 29H30l-6-15h-2.35l-6 15h2.15l1.6-4h6.85zm-7.65-6 2.62-6.56L25.45 23zM18 7V5h-7V2H9v3H2v2h10.74a14.7 14.7 0 0 1-3.19 6.18A13.5 13.5 0 0 1 7.26 9h-2.1a16.5 16.5 0 0 0 3 5.58A16.8 16.8 0 0 1 3 18l.75 1.86A18.5 18.5 0 0 0 9.53 16a16.9 16.9 0 0 0 5.76 3.84L16 18a14.5 14.5 0 0 1-5.12-3.37A17.64 17.64 0 0 0 14.8 7z"></path></svg></span><svg width="1em" height="1em" viewBox="0 0 32 32" class=" down_f631a "><path fill="currentColor" d="M16 22 6 12l1.4-1.4 8.6 8.6 8.6-8.6L26 12z"></path></svg></button><div><div class="items_dd149"><div><div class="p-1 text-center"><span class="text-brand">English</span></div></div><div><div class="py-1 font-medium"><a href="/zh/paper/arl-tangram" class="link_a7cea "><div><div class="flex justify-center"><span>简体中文</span></div></div></a></div></div></div></div></div></div></div></div></div></div><button aria-label="mobile hamburger" class=" rspress-mobile-hamburger navHamburger_ac64c text-gray-500"><svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32" fill="currentColor"><circle cx="8" cy="16" r="2" fill="currentColor"></circle><circle cx="16" cy="16" r="2" fill="currentColor"></circle><circle cx="24" cy="16" r="2" fill="currentColor"></circle></svg></button></div></div></div></div><section><!--$--><article class="paperDetail-SG3eB9"><div class="inner-xusMol"><div class="date-XjXbN4">March 13, 2026</div><h1 class="title-fVJdO6">ARL-Tangram: Unleash the Resource Efficiency in Agentic Reinforcement Learning</h1><div class="actions-KdGm7X"><a class="downloadBtn-fJjAfd" href="/papers/arl-tangram.pdf" target="_blank" rel="noreferrer noopener">Download PDF</a><div class="pager-iF_TBm"><a class="pagerBtn-xYXNVC" href="/paper/mopd">← Previous</a><a class="pagerBtn-xYXNVC" href="/paper/hysparse">Next →</a></div></div><hr class="divider-FD6woS"/><div class="row-j2SC6E"><div class="rowLabel-NVI5nl">Abstract</div><div class="rowContent-uPeRR5"><p class="abstract-BfHgrY">Agentic reinforcement learning (RL) has emerged as a transformative workload in cloud clusters, enabling large language models (LLMs) to solve complex problems through interactions with real world. However, unlike traditional RL, agentic RL demands substantial external cloud resources, e.g., CPUs for code execution and GPUs for reward models, that exist outside the primary training cluster. Existing agentic RL framework typically rely on static over-provisioning, i.e., resources are often tied to long-lived trajectories or isolated by tasks, which leads to severe resource inefficiency. We propose the action-level orchestration, and incorporate it into ARL-Tangram, a unified resource management system that enables fine-grained external resource sharing and elasticity. ARL-Tangram utilizes a unified action-level formulation and an elastic scheduling algorithm to minimize action completion time (ACT) while satisfying heterogeneous resource constraints. Further, heterogeneous resource managers are tailored to efficiently support the action-level execution on resources with heterogeneous characteristics and topologies. Evaluation on real-world agentic RL tasks demonstrates that ARL-Tangram improves average ACT by up to 4.3×, speeds up the step duration of RL training by up to 1.5×, and saves the external resources by up to 71.2%. This system has been deployed to support the training of the MiMo series models.</p></div></div><hr class="divider-FD6woS"/><div class="row-j2SC6E"><div class="rowLabel-NVI5nl">Authors</div><div class="rowContent-uPeRR5"><p class="authors-cPh_d7">Bangjun Xiao, Yihao Zhao, Xiangwei Deng, Shihua Yu, Yuxing Xiang, Huaqiu Liu, Qiying Wang, Liang Zhao, Hailin Zhang, Xuanzhe Liu, Xin Jin, Fuli Luo</p></div></div></div></article><!--/$--></section><div class="mimoFooter-E_Ew9Y bare-MfLqXT"><span>Copyright © 2010 - 2026 Xiaomi. All Rights Reserved</span></div></div>
+    <div id="search-container"></div>
+  </body>
+</html>

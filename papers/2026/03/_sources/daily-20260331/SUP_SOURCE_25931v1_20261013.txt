@@ -1,0 +1,390 @@
+URL: https://arxiv.org/html/2603.25931v1
+Scope: core before References, max50000chars; core chars=37113
+
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Related Work
+3 Preliminaries and Backgrounds
+4 Entanglement-Aware Contrastive Flow Matching
+4.1 Macro-Contrastive Learning (MaNS)
+4.2 Micro-Contrastive Learning (MiNS)
+Physics-axis perturbation.
+Dual benefit of generated negatives.
+4.3 Training Objective
+Distributional anchoring.
+Combined objective.
+5 Experiments
+5.1 Implementation Details
+Base model and generation backbone.
+Training Configuration.
+5.2 Datasets
+5.3 Benchmarks and Metrics
+5.4 Hard vs. Random Negatives
+5.5 Comparison with State-of-the-Art
+5.6 Training dynamics
+6 Conclusion
+References
+0.A Gradient Conflict Under Semantic Proximity
+Implication for negative sampling.
+0.B Perturbation Instructions, Examples, and Minimality Statistics
+0.C Sensitivity to Loss Weighting Coefficients
+Distributional anchoring strength (\lambda_{\mathrm{anc}}).
+Macro-contrastive strength (\lambda_{\mathrm{rand}}).
+Micro-contrastive strength (\lambda_{\mathrm{hard}}).
+0.D Training and Inference Setup
+0.E Training Cost and Memory Usage
+0.F Convergence Analysis and Training Signal Longevity
+SFT saturates early.
+DiReCT provides a sustained learning signal.
+The gap widens over time.
+Stabilization without overfitting.
+0.G Sensitivity to Semantic Partition Granularity
+0.H Gradient Alignment Measurement
+0.I Additional Qualitative Examples
+License: CC Zero
+arXiv:2603.25931v1 [cs.CV] 26 Mar 2026
+DiReCT : Disentangled Regularization of Contrastive Trajectories for Physics-Refined Video Generation
+Abolfazl Meyarian†
+Affiliation: Path Robotics, Columbus, OH, USA
+Amin Karimi Monsefi†
+Affiliation: The Ohio State University, Columbus, OH, USA
+Rajiv Ramnath
+Affiliation: The Ohio State University, Columbus, OH, USA
+Ser-Nam Lim
+Affiliation: University of Central Florida, Orlando, FL, USA
+Abstract
+Flow-matching video generators produce temporally coherent, high-fidelity outputs yet routinely violate elementary physics because their reconstruction objectives penalize per-frame deviations without distinguishing physically consistent dynamics from impossible ones. Contrastive flow matching offers a principled remedy by pushing apart velocity-field trajectories of differing conditions, but we identify a fundamental obstacle in the text-conditioned video setting: semantic-physics entanglement. Because natural-language prompts couple scene content with physical behavior, naive negative sampling draws conditions whose velocity fields largely overlap with the positive sample’s, causing the contrastive gradient to directly oppose the flow-matching objective. We formalize this gradient conflict, deriving a precise alignment condition that reveals when contrastive learning helps versus harms training. Guided by this analysis, we introduce DiReCT (Disentangled Regularization of Contrastive Trajectories), a lightweight post-training framework that decomposes the contrastive signal into two complementary scales: a mac- ro-contrastive term that draws partition-exclusive negatives from semantically distant regions for interference-free global trajectory separation, and a micro-contrastive term that constructs hard negatives sharing full scene semantics with the positive sample but differing along a single, LLM-perturbed axis of physical behavior; spanning kinematics, forces, materials, interactions, and magnitudes. A velocity-space distributional regularizer helps to prevent catastrophic forgetting of pretrained visual quality. When applied to Wan 2.1-1.3B, our method improves the physical commonsense score on VideoPhy by 16.7% and 11.3% compared to the baseline and SFT, respectively, without increasing training time. Additionally, our method achieves the highest total score on WorldModelBench (5.68) among all compared models, surpassing CogVideoX-5B (5.33) while having just 3.8\times our parameter count.
+††footnotetext: † Equal contribution.
+1 Introduction
+Flow-matching architectures [51, 45, 38] have emerged as the dominant framework for video generation, most commonly conditioned on natural-language prompts, producing temporally coherent, high-resolution videos that are increasingly difficult to distinguish from real footage on semantic quality alone.
+Yet a conspicuous gap remains between looking real and behaving real: bouncing balls accelerate after impact, and colliding objects inter-penetrate as if neither were solid.
+These failures are systematic, with benchmarks reporting that a majority of generated videos depicting non-trivial physical interactions contain at least one clearly implausible event [25, 8], and consequential: when such generators are used as predictive world models [43, 40], even a single physics violation can cascade into incorrect downstream decisions.
+Figure 1: Comparison of zeroshot Wan-2.1-1.3B against the same model trained using DiReCT on a few prompts from VideoPhy. In the top example, the baseline drives the car backward, violating forward kinematics, while DiReCT produces a consistent forward trajectory. In the middle example, the baseline’s surfer progressively merges with the sail rig, losing bodily structure, whereas DiReCT maintains the surfer’s integrity and mass throughout. In the bottom example, the baseline keeps the wood stationary and upright despite the flowing current, while DiReCT generates realistic downstream motion consistent with buoyancy and flow dynamics.
+A major contributor is the training objective itself. Reconstruction-based losses, pixel-level \ell_{2}, latent distances, and conditional flow-matching objectives [17], penalize per-frame deviations without distinguishing physically consistent dynamics from impossible ones.
+Prior work addresses this gap either by augmenting training with synthetic physics rollouts [20, 23, 44]—for example, [23] is confined to the three material types (rigid bodies, cloth, and liquids) that Blender’s built-in physics engine can simulate—requiring domain-specific engineering as well as introducing distribution shift, or by injecting explicit physical priors into the loss or architecture [32, 39], which improves targeted phenomena but struggles to generalize across diverse dynamics.
+An analysis of the velocity-field landscape reveals a deeper structural cause. As conditioning prompts become more similar, either along the semantic axis (what is depicted) or the physical axis (how it moves), the corresponding flow trajectories converge, and the learned velocity field collapses toward the mean of nearby trajectories [34, 5, 48].
+This produces outputs that default to physically generic behaviors.
+A natural remedy is to add a contrastive signal to the flow-matching objective, pushing the current trajectory away from those whose conditions differ in critical ways [34].
+However, contrastive flow matching was developed for settings where conditions are discrete and well-separated, e.g., class labels in image generation, where it yields substantial quality gains [34].
+In text-conditioned video generation, conditions are continuous and entangled: a single caption couples semantic content (what the scene contains) with physical dynamics (how objects move), making the two axes covary and impossible to isolate from the caption alone.
+A naive contrastive objective, one that simply pushes the velocity field of a training prompt (the positive) away from that of a randomly drawn alternative (the negative), therefore conflates two goals: separating flows for different visual concepts (already handled adequately by reconstruction) and distinguishing flows governed by different physics (the actual objective).
+We show in Section 5.4 that when positive and negative conditions share substantial velocity-field structure, as inevitably happens under semantic proximity, the contrastive gradient opposes the flow-matching gradient, degrading the overall performance.
+We introduce DiReCT (Disentangled Regularization of Contrastive T- rajectories), a lightweight post-training framework. DiReCT resolves this conflict via entanglement-aware multi-scale contrastive learning in velocity space. Our method decomposes the contrastive objective into two complementary scales.
+A macro-contrastive term draws semantically distant negatives via partition-exclusive sampling, providing a clean global separation signal free from gradient interference.
+A micro-contrastive term targets fine-grained physics distinctions by constructing hard negatives that share scene semantics with the positive but differ along a single, controlled axis of physical behavior, generated via minimal, LLM-guided prompt perturbations across five physics. Additionally, a velocity-space KL penalty prevents catastrophic forgetting of the pretrained model’s visual quality.
+In summary, our contributions are:
+•
+Formalizing gradient conflict in text-conditioned contrastive flows.
+We identify and formalize a failure mode of contrastive flow matching under rich text conditioning: semantic–physics entanglement causes the contrastive gradient to oppose the flow-matching gradient when positive and negative share velocity-field structure, establishing a precise condition under which naive negative sampling degrades training.
+•
+DiReCT : entanglement-aware multi-scale contrastive post-training.
+We introduce DiReCT , a lightweight post-training framework that incurs no additional training cost over standard SFT, which decomposes the contrastive objective into a macro term (partition-exclusive random negatives for global trajectory separation) and a micro term (physics-perturbed hard negatives for fine-grained physical distinction), with each scale addressing a complementary regime of the gradient-conflict spectrum.
+•
+Comprehensive evaluation across physics regimes.
+We validate DiReCT on physics-oriented benchmarks spanning diverse interaction categories (e.g., collisions, gravity, deformation, fluids), demonstrating improvements in physical plausibility without sacrificing visual quality, and provide ablations isolating the impact of entanglement-aware sampling, hard-negative generation, and each contrastive scale.
+2 Related Work
+Flow matching [17, 21], combined with Transformer backbones [30, 4, 24], has demonstrated strong results across diverse generative tasks [50, 28, 27] and currently underpins most open video generators [45, 38, 51].
+Recent advances have further improved efficiency via pyramidal denoising [11] and representation alignment [46].
+Despite rapid gains in visual quality, the velocity-regression objective treats all token-level errors equally; it does not distinguish trajectories that comply with physical laws from those that violate them.
+A growing line of work targets this gap. Simulation-guided methods [20, 23] inject explicit physics priors but are restricted to the phenomena their simulator covers and can introduce distribution shift. Independent evaluations [12] further suggest that scaling data and parameters alone yield case-based rather than universal physical reasoning, motivating physics-specific post-training. Inference-time approaches such as PhyT2V [42] refine prompts via LLM chain-of-thought, improving plausibility at the cost of substantial generation overhead. On the training side, WISA [39] fine-tunes Mixture-of-Physical-Experts Attention on a curated 80K-video corpus with fine-grained physics prompts; PISA [14] demonstrates the value of even minimal simulation for supervision but reveals poor out-of-distribution transfer beyond its free-fall training domain; and PhysMaster [9] achieves strong per-phenomenon results via multi-stage DPO at the cost of dedicated human annotations for each physical category. A recurring pattern connects these efforts: each couples improvement to a domain-specific resource—a simulator, a categorized reward model, or per-phenomenon labels—whose coverage bounds the resulting generalization. This motivates a contrastive objective that derives its physics signal directly from the velocity field, requiring only coarse category-level labels rather than per-phenomenon infrastructure (Section 4).
+Contrastive objectives have improved several generative pipelines [29, 13, 54, 26, 2]. Most directly relevant, \DeltaFM [34] augments the flow-matching loss with a contrastive regularizer that pushes apart predicted velocities for different conditions. A revealing asymmetry appears in their results: the class-conditional ImageNet variant, where labels are discrete and well-separated, yields significant visual improvements, whereas the text-conditioned CC3M variant produces notably lower quality gains. While \DeltaFM demonstrates the benefit of contrastive regularization, they do not analyze the failure mode that arises when conditions share substantial velocity-field structure. We hypothesize that this asymmetry stems from semantic entanglement: rich captions couple visual content with physical and stylistic attributes, so a contrastive loss applied without regard to this coupling conflates all axes of variation. We formalize this hypothesis for the video setting in Appendix 0.A, deriving a precise condition under which the contrastive gradient opposes the flow-matching objective, and verify it empirically via gradient alignment measurements in Appendix 0.H. This analysis motivates negative-sampling strategies that respect the entangled structure of the text-conditioning space.
+Separately, a rich literature disentangles content from motion at the architectural level: factored latent spaces [3, 36], decomposed noise [22], separate diffusion processes [47], modular temporal modules [6], and dual-path LoRAs [49]. These approaches effectively decompose what moves from how it moves within the model’s internal representations. However, architectural decomposition does not address entanglement within the text conditioning itself: two prompts describing the same scene with different physical outcomes (e.g., a ball bouncing elastically vs. splattering on impact) produce nearly identical text embeddings yet demand distinct velocity fields. This conditioning-level entanglement requires a corresponding intervention in how conditions are contrasted during training — the focus of our approach.
+RLHF-based approaches [41, 16, 31, 33] and Direct Preference Optimization (DPO) variants for images [37, 53] and videos [19, 18, 10] have become the dominant paradigm for aligning generative models with human preferences.
+However, both paradigms compress the rich spatiotemporal structure of generation errors into coarse preferred-versus-rejected judgments, making it difficult for the model to localize where and why a trajectory deviates from physical plausibility.
+DiReCT provides a structurally richer training signal: contrastive velocity differences encode spatiotemporal information about how the predicted trajectory must change to better respect physical dynamics, operating at the level of the velocity field rather than a scalar preference.
+3 Preliminaries and Backgrounds
+We develop our proposed framework based on flow matching models [51, 45, 38] given their proven superior capabilities in video generation[38]. More specifically, to force separation of learned flow trajectories, we follow the \DeltaFM method introduced in [34].
+Stoica et al. [34] observe that while unconditional flow matching guarantees unique flows between sample pairs, this uniqueness breaks down in conditional settings, flows from different conditions may overlap, producing ambiguous, “averaged” generations. To address this, they propose Contrastive Flow Matching (\DeltaFM), which augments the standard conditional flow matching objective with a contrastive regularization term that explicitly enforces flow uniqueness across conditions.
+Conditional flow matching trains a model v_{\theta}(x_{t},t,y) to regress the target velocity \mathbf{u}^{+}=\dot{\alpha}_{t}\hat{x}+\dot{\sigma}_{t}\epsilon for a sample \hat{x}\sim p(x|y), where y is the condition, and the noise \epsilon\sim\mathcal{N}(0,\mathbf{I}). \DeltaFM introduces a negative sample \tilde{x}\sim p(x|\tilde{y}), where \tilde{y} may or may not equal y, paired with an independent noise \tilde{\epsilon}\neq\epsilon. The contrastive regularization then maximizes the distance between the predicted velocity v_{\theta}(x_{t},t,y) and the independent target velocity \mathbf{u}^{-}=\dot{\alpha}_{t}\tilde{x}+\dot{\sigma}_{t}\tilde{\epsilon}. The combined objective is:
+\mathcal{L}^{(\Delta\text{FM})}(\theta)=\mathbb{E}\Big[\|v_{\theta}(x_{t},t,y)-\mathbf{u}^{+}\|^{2}-\lambda\|v_{\theta}(x_{t},t,y)-\mathbf{u}^{-}\|^{2}\Big],
+(1)
+where \lambda\in[0,1) controls the strength of the contrastive term. The first term is the standard flow matching loss, encouraging the predicted velocity to match the target flow. The objective reduces to standard flow matching when \lambda=0.
+4 Entanglement-Aware Contrastive Flow Matching
+Figure 2: Overview of the DiReCT framework. The contrastive objective is decomposed into two complementary scales: a macro-contrastive term draws random negatives from semantically distant clusters (MaNS), providing clean global trajectory separation, while a micro-contrastive term uses physics-perturbed hard negatives (MiNS) that share scene semantics but violate a targeted physical dimension, enabling fine-grained physics discrimination.
+Contrastive flow matching [34] draws its negative samples uniformly at random from within the training batch, without regard to the semantic relationship between the positive condition y and the sampled negative condition \tilde{y}.
+This design is well-suited to class-conditional generation, where labels are discrete and non-overlapping.
+In text-conditioned video generation, however, conditions lie in a continuous embedding space where semantically related prompts—and their associated velocity fields—share substantial structure.
+We formalize this failure mode in Appendix 0.A and present a two-scale solution in the remainder of this section.
+4.1 Macro-Contrastive Learning (MaNS)
+Figure 3: Macro-contrastive negative sampling (MaNS). Prompts are encoded via the text encoder of the video generative model, globally pooled, and partitioned into K semantic regions. For each positive, negatives are drawn exclusively from different partitions, ensuring minimal velocity-field overlap and preventing the gradient conflict identified in Proposition 1 from Appendix 0.A.
+Let \boldsymbol{\delta}=\mathbf{u}^{+}-\mathbf{u}^{-} denote the velocity gap between the positive and negative targets. When \|\boldsymbol{\delta}\| is large—i.e., the positive and negative conditions produce well-separated velocity fields—the contrastive and flow-matching gradients are naturally aligned (Proposition 1, Appendix 0.A). To ensure all random negatives fall in this regime, we partition the condition space into semantically coherent regions and restrict sampling to cross-region pairs. An overview of this mechanism is depicted in Figure 3.
+Let \mathcal{E}:\mathcal{Y}\rightarrow\mathbb{R}^{d} denote the frozen text encoder of the generative model.
+Since prompts vary in token length, we obtain a fixed-dimensional representation for each prompt y by globally pooling its token-level features: \mathbf{z}_{y}=\mathrm{Pool}(\mathcal{E}(y))\in\mathbb{R}^{d}.
+We partition the resulting embedding manifold into K semantic regions on \{\mathbf{z}_{y}\}_{y\in\mathcal{D}}, yielding a partition \{\mathcal{C}_{1},\ldots,\mathcal{C}_{K}\}.
+Each partition captures a neighborhood of semantically coherent conditions whose velocity fields share substantial structure; the partition boundaries delineate the scale at which semantic overlap begins to cause gradient conflict.
+For an anchor condition y\in\mathcal{C}_{i}, the macro-contrastive sampling rule restricts negatives to a different cluster:
+\tilde{y}_{\mathrm{rand}}\sim\mathcal{U}~\!(\bigcup_{j\neq i}\mathcal{C}_{j}).
+(2)
+By construction, such negatives share minimal velocity-field structure with the positive (\|\boldsymbol{\delta}\| is large), and the resulting contrastive gradients satisfy the alignment condition (Equation 10 from Appendix 0.A).
+The macro-contrastive loss is:
+\mathcal{L}_{\mathrm{rand}}=\|v_{\theta}(x_{t},t,y)-(\dot{\alpha}_{t}\tilde{x}_{\mathrm{rand}}+\dot{\sigma}_{t}\tilde{\epsilon}_{\mathrm{rand}})\|^{2},
+(3)
+where \tilde{x}_{\mathrm{rand}} is a sample drawn from the partition-excluded pool with prompt \tilde{y}_{\mathrm{rand}}, and \tilde{\epsilon}_{\mathrm{rand}} is an independently drawn noise vector.
+This term teaches the model to broadly reject irrelevant trajectories, thereby establishing global structure in the learned velocity field with minimal interference from semantically entangled conditions.
+4.2 Micro-Contrastive Learning (MiNS)
+Figure 4: Micro-contrastive hard negative generation (MiNS). For each anchor prompt, an LLM (Qwen2.5-7B-Instruct) perturbs a single physics dimension while preserving scene semantics. The perturbed prompt is rendered by the base model to produce a hard negative video whose velocity trajectory is physically inconsistent with the anchor.
+The macro-contrastive term establishes global trajectory separation but cannot resolve fine-grained physical distinctions between semantically similar conditions —precisely the regime where \|\boldsymbol{\delta}\| is small and naive contrastive sampling fails.
+The micro-contrastive term addresses this by constructing hard negatives where the velocity gap \boldsymbol{\delta}, though small in norm, is concentrated on the physics-relevant subspace: anchor and negative share scene semantics but differ along a single, controlled axis of physical behavior.
+Physics-axis perturbation.
+We define five perturbation dimensions grounded in classical mechanics:
+•
+Kinematics: motion time-profile (e.g., sudden vs. gradual),
+•
+Forces: dominant force direction or type (e.g., falling vs. rising),
+•
+Material: a single substance property (e.g., viscosity, elasticity, friction),
+•
+Interaction: contact response (e.g., bounce vs. stick, shatter vs. dent),
+•
+Magnitude: scalar intensity of a physical quantity (e.g., droplet vs. stream).
+These five axes are chosen to span two complementary aspects of physical plausibility: how an object appears (Material, Magnitude) and how it interacts with its environment (Kinematics, Forces, Interaction). Together, they cover the full arc from object properties through dynamic response, ensuring that single-axis perturbations can target either intrinsic physical attributes or emergent behaviors upon contact.
+For each anchor prompt y, we randomly sample one dimension and use an LLM (Qwen2.5-7B-Instruct)11
+1
+Qwen2.5-7B-Instruct was chosen as it is both efficient for offline generation of perturbed prompts and sufficiently accurate for structured single-axis edits governed by a fixed template. to produce a corrupted variant \tilde{y}_{\mathrm{hard}}, modifying only the minimal text necessary to introduce the targeted physical violation while preserving the scene, objects, setting, and camera style (the full prompt template and per-dimension definitions are provided in Appendix 0.B).
+This process is repeated N times per prompt, with random-dimension subsampling across the dataset, ensuring that all five dimensions are well represented in aggregate while introducing combinatorial diversity.
+MiNS requires that \tilde{y}_{\mathrm{hard}} preserves scene semantics while modifying only the targeted physics axis. We verify this by measuring cosine similarity between anchor and perturbed embeddings in the frozen text-encoder space. Pairs falling below a certain similarity threshold are discarded during dataset construction. Representative positive prompt and perturbation pairs, as well as details of the selection process, are provided in Appendix 0.B. We then generate a video for each perturbed prompt using the base model.
+Dual benefit of generated negatives.
+Because the hard negatives are synthesized by the base model itself, they exhibit both the targeted physical violation and the characteristic artifacts of the generator’s current distribution (e.g., temporal flickering, texture drift).
+The micro-contrastive term, therefore, trains the model to push its velocity field away from both physically implausible dynamics and its own generation artifacts simultaneously.
+This dual signal is a structural advantage over using real video negatives, which could only provide the physics-violation contrast without addressing generation-specific failure modes.
+It is worth noting that the contrastive term acts on the velocity field induced by the conditioning \tilde{y}_{\mathrm{hard}}, not on the visual realism of the rendered negative. Even if the base model does not faithfully depict the perturbed physics, the conditioning shift y\to\tilde{y}_{\mathrm{hard}} produces a distinct target velocity in latent space, which is sufficient for the contrastive objective.
+The micro-contrastive loss mirrors the macro term:
+\mathcal{L}_{\mathrm{hard}}=\|v_{\theta}(x_{t},t,y)-(\dot{\alpha}_{t}\tilde{x}_{\mathrm{hard}}+\dot{\sigma}_{t}\tilde{\epsilon}_{\mathrm{hard}})\|^{2},
+(4)
+where \tilde{x}_{\mathrm{hard}} is the video generated from the physics-perturbed prompt \tilde{y}_{\mathrm{hard}}, and \tilde{\epsilon}_{\mathrm{hard}} is an independently drawn noise vector.
+Because the perturbation is restricted to a single physics dimension, \boldsymbol{\delta} for this pair is concentrated in the physics-relevant subspace of the velocity field, ensuring the separation term in Equation 9(from Appendix 0.A) remains meaningful despite the high semantic similarity between y and \tilde{y}_{\mathrm{hard}}. More details on this matter can be found in Remark 1.
+4.3 Training Objective
+Distributional anchoring.
+Contrastive post-training risks catastrophic forgetting: the model may achieve strong trajectory separation by drifting away from the pretrained distribution, degrading visual quality, and temporal coherence.
+To prevent this, we maintain a frozen copy of the pretrained model \theta_{\mathrm{ref}} and penalize velocity-space divergence from it:
+\mathcal{L}_{\mathrm{anchor}}=\|v_{\theta}(x_{t},t,y)-v_{\theta_{\mathrm{ref}}}(x_{t},t,y)\|^{2}.
+(5)
+This term acts as a velocity-space analogue of the KL penalty in RLHF [41]: it upper-bounds the divergence between the path-measure distributions induced by \theta and \theta_{\mathrm{ref}}, ensuring the fine-tuned model remains close to the pretrained model’s generation manifold while allowing targeted physics improvements.
+Combined objective.
+The full DiReCT loss integrates reconstruction, both contrastive scales, and distributional anchoring:
+\begin{split}\mathcal{L}_{\mathrm{DiReCT}}=\mathbb{E}\Big[&\underbrace{\|v_{\theta}(x_{t},t,y)-(\dot{\alpha}_{t}\hat{x}+\dot{\sigma}_{t}\epsilon)\|^{2}}_{\text{flow matching}}\\
+&-\lambda_{\mathrm{rand}}\,\mathcal{L}_{\mathrm{rand}}-\lambda_{\mathrm{hard}}\,\mathcal{L}_{\mathrm{hard}}+\lambda_{\mathrm{anc}}\,\mathcal{L}_{\mathrm{anchor}}\Big],\end{split}
+(6)
+where \lambda_{\mathrm{rand}}, \lambda_{\mathrm{hard}}\in[0,1) control the strength of the MaNS and MiNS, respectively, and \lambda_{\mathrm{anc}}>0 controls the distributional anchoring strength.
+The objective reduces to standard flow matching when \lambda_{\mathrm{rand}}=\lambda_{\mathrm{hard}}=\lambda_{\mathrm{anc}}=0.
+The interplay between the three terms is as follows: the flow-matching term provides the reconstruction signal; the macro-contrastive term sharpens global trajectory separation in cooperative gradient regions; the micro-contrastive term refines physics-specific distinctions in the fine-grained regime; and the anchoring term regularizes the entire process against distributional drift.
+A sensitivity analysis of \lambda_{\mathrm{rand}}, \lambda_{\mathrm{hard}}, and \lambda_{\mathrm{anc}} is provided in Appendix 0.C.
+5 Experiments
+We evaluate DiReCT from different aspects; additional ablations and analyses are provided in the appendix.
+5.1 Implementation Details
+Base model and generation backbone.
+We adopt Wan-2.1-T2V-1.3B [38] as both the pretrained backbone for DiReCT fine-tuning and the generator used to synthesize hard negative videos. All generated videos have a spatial resolution of 480\times 832 and a temporal extent of 81 frames.
+Training Configuration.
+We train with the AdamW optimizer using a constant learning rate of 1\times 10^{-6}, \beta_{1}=0.9, \beta_{2}=0.999. Training proceeds for 15k steps with a global batch size of 8 (4 per GPU) using DeepSpeed ZeRO Stage 2 for distributed training. The frozen reference model \theta_{\mathrm{ref}} is maintained in memory alongside the trainable copy to compute the distributional anchoring term (Equation 5) at each step. We use \lambda_{anc}=0.2, \lambda_{hard}=0.02, and \lambda_{rand}=0.005. We cluster the training prompts into K=32 semantic groups via k-means on frozen text-encoder embeddings. For additional information regarding the hyperparameters, refer to Appendix 0.C and 0.G.
+Table 1: Ablation on negative sampling strategy. All fine-tuned variants use the same base model and training data. VideoPhy measures the physical plausibility of generated videos. WorldModelBench evaluates physical commonsense and physics adherence across diverse scenarios. Best results are shown in bold, second best underlined.
+Method
+VideoPhy(%) \uparrow
+WorldModelBench \uparrow
+SA
+PC
+AVG
+Instr.
+Common Sense
+Physics Adherence
+Total
+Frame
+Temp.
+Mass
+Penetr.
+Baselines
+Zero-shot
+50.45
+32.69
+41.57
+2.18
+0.93
+0.80
+0.72
+0.83
+5.46
++ SFT
+50.38
+34.28
+42.33
+2.14
+0.92
+0.81
+0.75
+0.85
+5.47
++ Random negatives (\DeltaFM)
+47.71
+35.89
+41.80
+2.12
+0.91
+0.80
+0.73
+0.84
+5.40
+DiReCT components
++ MaNS
+50.42
+36.03
+43.23
+2.15
+0.93
+0.82
+0.77
+0.88
+5.54
++ MiNS
+50.10
+36.17
+43.14
+2.14
+0.93
+0.83
+0.74
+0.85
+5.50
++ MaNS + MiNS
+50.78
+37.46
+44.12
+2.15
+0.93
+0.85
+0.78
+0.89
+5.60
++ SFT + MaNS + MiNS (DiReCT )
+51.26
+38.16
+44.71
+2.17
+0.94
+0.88
+0.79
+0.90
+5.68
+5.2 Datasets
+We train DiReCT on a curated subset of the WISA-80K dataset [39], which provides videos annotated across 17 physical laws spanning dynamics, thermodynamics, and optics. Each video is paired with a scene-level caption and a physics-focused description; we use only the scene-level caption as the text condition, ensuring the model infers physical plausibility from visual dynamics rather than explicit physics cues. The coarse physics law category for each sample is also used in our proposed MaNS. From the full dataset, we select 11,299 samples with a minimum of 81 frames and a 16:9 aspect ratio. Longer videos are uniformly subsampled to exactly 81 frames.
+Table 2: Comparison with state-of-the-art open-source video generation models of comparable scale. We report VideoPhy (SA, PC, AVG), WorldModelBench scores across instruction following, common sense, and physics adherence. Best results in bold, second best underlined.
+Model
+Params
+VideoPhy (%) \uparrow
+WorldModelBench \uparrow
+SA
+PC
+AVG
+Instr.
+Common Sense
+Physics Adherence
+Total
+Frame
+Temporal
+Mass
+Penetr.
+CogVideoX-2B [45]
+2B
+48.73
+34.75
+41.74
+1.97
+0.88
+0.75
+0.67
+0.82
+5.09
+LTX [7]
+2B
+21.10
+25.09
+23.10
+1.57
+0.74
+0.81
+0.79
+0.91
+4.82
+Allegro [52]
+2.8B
+51.27
+27.24
+39.25
+1.91
+0.87
+0.79
+0.76
+0.89
+5.22
+CogVideoX-5B [45]
+5B
+47.30
+42.79
+45.05
+2.01
+0.91
+0.80
+0.75
+0.86
+5.33
+Mochi [35]
+10B
+53.10
+36.53
+44.81
+1.95
+0.74
+0.70
+0.65
+0.87
+4.91
+Wan 2.1-T2V (base) [38]
+1.3B
+50.45
+32.69
+41.57
+2.18
+0.93
+0.80
+0.72
+0.83
+5.46
+DiReCT (ours)
+1.3B
+51.26
+38.16
+44.71
+2.17
+0.94
+0.88
+0.79
+0.90
+5.68
+5.3 Benchmarks and Metrics
+We evaluate DiReCT along two complementary axes—physical plausibility and overall visual quality—using established benchmarks. VideoPhy [1] assesses Semantic Adherence (SA) and Physical Commonsense (PC) over 344 prompts. The standard protocol binarizes both scores; instead, we report soft values (averaged softmax outputs from the auto-rater) to better capture fine-grained differences between methods. WorldModelBench [15] evaluates instruction following, common sense, and fine-grained physics adherence (Newton’s laws, mass conservation, fluid dynamics, penetration, gravity) across 350 prompts of diverse physical scenarios. For WorldModelBench, we report the performances with respect to mass conservation and penetration as they pose the most critical challenges to models. The total score for WorldModelBench is a summation of all metric values for this benchmark.
+5.4 Hard vs. Random Negatives
+Table 1 examines each component under controlled conditions. The use of random negatives negatively impacts performance, as evidenced by a 5.43% drop in VideoPhy SA and a decrease in WorldModelBench Total from 5.46 to 5.40. This outcome empirically confirms the gradient conflict discussed in Appendix 0.A: when negatives significantly overlap with the positive in terms of velocity fields, the contrastive gradient can hinder reconstruction.
+Figure 5: Comparison of DiReCT with CogVideoX-2B and Allegro on a prompt from VideoPhy (top) and one from WorldModelBench (bottom).
+MaNS and MiNS tackle this issue at complementary scales. MaNS primarily enhances Physics Adherence, increasing Mass from 0.72 to 0.77 and Penetration from 0.83 to 0.88 by enabling interference-free partition separation. On the other hand, MiNS produces the largest improvements in Temporal Common Sense, raising the score from 0.80 to 0.83 through targeted physics perturbations. When combined, their effects surpass those of each component alone across all metrics, achieving a total score of 5.60 compared to 5.54 and 5.50 for the individual components, thereby confirming that the two signals are complementary.
+Incorporating SFT results in the complete DiReCT , which achieves the best scores on all metrics, with a VideoPhy average of 44.71% and a Total score of 5.68, while also maintaining instruction-following capability (2.17 vs. 2.18 in zero-shot scenarios). This validates that each component contributes a unique and additive signal.
+5.5 Comparison with State-of-the-Art
+We compare our method with state-of-the-art models across a broad range, including those of the same and larger scales. Results are provided in Table 2. Despite using only 1.3B parameters, DiReCT achieves the highest WorldModelBench total score (5.68), surpassing models with significantly larger capacity such as Mochi (10B, 4.91) and CogVideoX-5B (5B, 5.33). This demonstrates that targeted physics-aware fine-tuning can be more effective than simply scaling model size for improving physical realism.
+On VideoPhy, our method achieves an average score of 44.71%, which is competitive with Mochi’s score of 44.81%, despite Mochi requiring 7.7 times more parameters. Additionally, we obtained the second-highest PC score of 38.16% among all models, only behind CogVideoX-5B, which scored 42.79% with 3.8 times our parameter count. These results indicate that contrastive flow matching, combined with physics-aware negative sampling, offers an efficient and effective way to incorporate physical understanding into video generation models without the need for an excessive number of parameters. A qualitative comparison of our model against state-of-the-art is presented in Figure 5.
+5.6 Training dynamics
+A key question for any post-training method is whether its learning signal remains valuable as training progresses or if it saturates once the model adapts to the fine-tuning distribution. We compare the convergence behavior of our method and supervised fine-tuning (SFT) on VideoPhy over 15,000 steps in Figure 6. SFT shows steady improvement but plateaus after 5,000 steps, achieving only an increase of +0.32 in SA and +0.48 in PC in its best results. In contrast, our method continues to improve throughout the entire training process, with an increasing lead over SFT. This indicates the significance of our method in post-training.
+Figure 6: Training dynamics in terms of VideoPhy scores. SFT starts to saturate beyond 5k steps, while DiReCT continues to improve and stabilizes around 15k steps, with the gap widening particularly on Physical Commonsense (PC).
+6 Conclusion
+We presented DiReCT , a post-training framework that improves physical plausibility in flow-matching video generators through entanglement-aware contrastive learning. Our core insight is that naive contrastive flow matching fails under text conditioning because semantic–physics entanglement causes the contrastive gradient to oppose reconstruction. We formalized this conflict and proposed a two-scale solution: macro-contrastive sampling draws negatives from semantically distant partitions for interference-free trajectory separation, while micro-contrastive sampling constructs physics-perturbed hard negatives that isolate fine-grained physical distinctions. Applied to Wan 2.1-1.3B, DiReCT achieves the highest WorldModelBench Total score among all compared models—including those with up to 7.7\times more parameters—while preserving instruction-following capability and visual quality.

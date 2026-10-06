@@ -68,6 +68,16 @@ GPU变快后，入口的重复工作会反而成为主瓶颈。工具循环每�
 
 连接局部缓存增加内存、状态归属和失效处理责任。从系统设计上，只有旧状态身份、模型/工具配置与策略仍合资格，才能复用旧处理结果；把部分校验改成delta处理，不代表新旧内容组合的约束被自动证明。官方工程披露支持这种增量分支，但未给断线恢复、跨连接迁移或所有安全规则的完整保证。若旧状态不可取、资格变化或增量验证不能建立，就显式重建/重新验证；短请求和无会话场景仍可使用stateless入口。收益应分解API前处理、工具时间与模型推理，不能把更快模型或up-to结果全归给WebSockets。
 
+### 入口状态的归属与协议兼容
+
+单会话直连能少一跳，多方通话使用SFU也便于集中媒体策略；当主要负载变为用户与模型的一对一实时交互，Kubernetes弹性扩缩却会放大每会话公开UDP端口和有状态协议终结的矛盾。可把小而固定的公开媒体入口交给薄relay，由transceiver独占ICE、DTLS、SRTP密钥与session lifecycle；首个STUN包中的server ICE ufrag携带cluster和owner提示，relay据此转发，再以client地址到owner的soft mapping处理后续包。这里的入口只决定包送往哪里，不解密媒体、不取得模型token/KV或Agent任务完成权。<!-- source-family:SF-2026-OPENAI-WEBRTC-RELAY -->
+
+这以额外转发hop、映射协调及过期清理换取较小公开端口面和稳定的hard-state归属。relay重启后的mapping可由后续STUN重建，Redis缓存可加快恢复，但路由重建不等于transceiver的ICE/密钥状态可迁移或已恢复；相应保证仍需另行验证。官方工程披露没有量化可比端到端延迟、并发或尾部SLO，不能从“thin relay足够”推出通用低延迟、零丢包或无需kernel bypass。小规模直连、多方媒体SFU仍各有适用域；无法维持owner映射时，应显式重新协商连接，不把流量改投新进程当成原会话连续性。
+
+协议normalize还要区分“回到同一provider格式”与“换到另一provider”。可用中立typed IR保存message/content、tool call和generation controls，并在preserve模式另存provider-specific metadata，使同格式往返可检查结构保持；strip模式或目标不支持的字段却会丢失cache、sampling等能力。这不是所有provider语义本来相同，warnings也不认证丢字段无影响。Gateway应显式判断本请求哪些字段可转、哪些是不可降级合同，不兼容时拒绝或固定原provider，而非用JSON成功替代会话语义验收。<!-- source-family:SF-2026-ARXIV-2604-09360 -->
+
+流式转换另需request-scoped状态：current block、tool-call identity/name、未完整的argument buffers，以及提前到达的finish/usage事件。累计part与delta、隐式与显式block边界不是可直接拼接的同一对象；转译只交付格式与顺序，不执行tool或批准effect。[LLM-Rosetta的有限测试](https://arxiv.org/html/2604.09360v1)支持四schema下的接口分支，255条stream测试与10条cross-provider案例不授所有API演进或transitive保真，自写测试与六个外部compliance案例亦有限。映射维护、buffer、校验、serialization和额外proxy hop都计费；字段新变、stream重建失败或总成本不成立时，重核adapter或保留provider-native客户端/原直连，不从converter微时延推出生产SLO。
+
 ## Gateway、EPP 与 Engine Scheduler
 
 三者处于不同时间尺度：
@@ -110,6 +120,8 @@ principal
 ```
 
 Gateway 日志与 trace 需要记录解析后的 immutable model/service revision，同时避免记录敏感 prompt 全文。
+
+可信 principal 解决调用者身份，却不让模型推定的用户属性自动变成已验证事实。若响应策略依赖年龄等不确定属性，应把推定值、可信证明与缺失信息分开，由版本化 policy 决定保守路由及纠正路径；收集证明又增加隐私成本，误判也可能限制合规用户，不能把保守默认当作分类器正确性。[公开年龄策略计划](https://openai.com/index/building-towards-age-prediction/)说明这种约束已出现，但没有证明预测系统已部署或其误差可接受。属性依据不足时保留明确受限路径，而不是静默升级为可信授权；这是一条从公开政策约束推导出的系统设计边界，不是厂商内部实现披露。<!-- source-family:SF-2025-OPENAI-AGE-POLICY -->
 
 ## 重试与幂等性
 
@@ -166,6 +178,10 @@ schema 过宽会把未知值误当作可比较事实。单 provider、单指标�
 策略学习场景才值得支付关系化成本。事件时论文只展示其 schema population 与 routing case，不证明固定字段集合
 适用于所有业务。<!-- source-family:SF-2026-ARXIV-2603-26728 -->
 
+缺少本域带标签请求时，路由训练还可先从domain描述构造受限task taxonomy，按profile生成QA、去重，再实际调用冻结的全部候选模型取得quality与token-cost标签。Query先提出task-type分布，各model的type-conditioned预测再按该分布混合，最后按声明的quality/cost权重排序；这里训练的支持域来自synthetic generator与taxonomy，不是对真实请求已经观测到的能力，也不能让高utility越过硬资格。<!-- source-family:SF-2026-ARXIV-2604-09377 -->
+
+[TRouter的有限冷启动对照](https://arxiv.org/html/2604.09377v1)只支持该经验预测接口，类型单标签不是真实posterior，task/model条件独立也须按人口检验。正文reverse-KL与one-hot CE方向、marginal-mean MSE与期望conditional likelihood未闭，不采用“实际训练已实现同ELBO/校准保证”；更细taxonomy也非处处更优。合成QA、全部候选回答/判分、训练与真实holdout回归全计费，造数报价不是总预算，LR五runs不能推广到主表。Domain、candidate价格/身份或质量代理漂移时，补真实calibration、退回静态/已核router或保留Unknown，不从synthetic低费推出通用路由收益、latency或安全。
+
 Learned router 只能在**已满足硬资格**的候选中提供 utility 排序：Context 容量、tool/modality 支持、region、
 privacy、safety 与 data-residency 先形成 eligible set，预测质量、成本、延迟与 cache reuse 再参与选择；高 utility
 不能补偿不合资格。多轮分类还可把 request history 的 decoder KV 作为 session-owned persistent state，只将当前
@@ -178,6 +194,10 @@ posterior、hybrid、cascade、portfolio 与 planner-worker 都仍是未完成�
 problem-solving F1 只有 `.127`，端到端比较又使用预先筛出存在正 routing gain 的 1,000/1,500 tasks，缺少 CI、
 重复 seeds 与冻结 endpoint revision。因此这里只吸收状态归属与 hard-filter-first 边界，不把它写成生产路由收益、
 streaming latency 或 agentic routing 已成立。
+
+一个请求的 utility 还可能定义在有限输出集合，而不是单条回答上：先固定 generation budget、语义去重规则和质量 evaluator，再让 router 选择预期能产生更多高质量 unique answers 的候选模型。通过 suite 内的 offline sampling 得到每个 query 的集合分数及 route label，只提供该预算和 evaluator 下的训练目标；贪心去重的顺序、阈值和 judge revision 都会改变 label，不能把“多样”当真值、无限覆盖或绕过前述 hard eligibility 的理由。<!-- source-family:SF-2026-ARXIV-2604-02319 -->
+
+[有限十八模型 suite 的路由对照](https://arxiv.org/html/2604.02319v1)在固定 sampling 配置中支持这个目标，却不保证 OOD 或改 prompt 后的收益；speculative router 在域外与低频切片没有一致优势，全模型混合也可降低平均质量和后序回答质量。候选 prefill、日志、offline generation/judging、route training 与完整输出预算都付费，所测 speculative 路径比 top-one 分支更慢，不能用更高集合分数承诺更低 SLO 成本。label/预算迁移不可靠、请求只需一个可靠答案或时限紧时，保留固定 route 与单答案质量/延迟目标，不把较多 unique 输出升级为用户任务成功。
 
 ### 条件化机制分支与共存边界
 
@@ -237,6 +257,10 @@ Gateway 将外部流量转化为带身份、协议、配额和可观测上下文
 
 ## Review notes
 
+- `SF-2026-ARXIV-2604-02319` — Daily2026-04-04补Apr3；[diversity router exact-v1](https://arxiv.org/html/2604.02319v1)必要§2–6/C/D/E/F/G/H1，2+1+3=6。reader actualSource/Ch62逐字PRE/61–63交接通过，root授两body/本人注窄锁，作者实写顺读；只quality-weighted unique集合utility与offline label身份，保OOD/prompt/平均质量反退和prefill/judging/慢路径费用，不授truth/无限覆盖或净SLO。supp_apr04_reader实际正文/完整局部邻接/本人注nonwriterPOST通过，本人注同步后作者实际读回；未核代码/复现，不授DAY。
+
+- `SF-2025-OPENAI-AGE-POLICY`：[Building towards age prediction](https://openai.com/index/building-towards-age-prediction/) 与 [Teen safety, freedom, and privacy](https://openai.com/index/teen-safety-freedom-and-privacy/)，2025-09-16 官方计划。采用年龄推定与可信身份分离的政策约束及隐私/误判代价；预测算法、阈值、误差与部署成效未披露，不作安全保证。正文 policy 分离是明确的系统推断。
+
 - `SF-2026-OPENAI-WEBSOCKET-API-INCREMENTAL`：[OpenAI工程披露](https://openai.com/index/speeding-up-agentic-workflows-with-websockets/)，原RSS事件04/22T10:00Z；核心When API became bottleneck / Building persistent connection / Keeping API familiar / Setting new bar。只采用connection-local API渲染与增量前处理分支，上线`response.create`+`previous_response_id`不是弃用原型`response.append`。up-to40%为作者alpha/client观察，model/hardware并非matched对照，完整precision/length/batch/concurrency/SLO未披露；未复现。资格检查和显式重建是系统设计推断，不是厂商全validator/恢复保证。apr20_resume已完成source→实际owner及literal独立采用，并实际顺读正文57～78及本证据条目，写后复核通过。
 
 - `SF-2026-ARXIV-2606-22560` — primary `arXiv:2606.22560v1`；Method=`arXiv:2606.22560v1 §3 Provenance Model; §4 Gateway-Path Binding; §5 Implementation`；Evaluation=`arXiv:2606.22560v1 §7 Evaluation`；Non-proof=`arXiv:2606.22560v1 §9 Limitations and Conclusion`；Artifact=`Not Disclosed — exact-v1 manuscript does not name a separate artifact used for this review`。
@@ -289,3 +313,9 @@ Gateway 将外部流量转化为带身份、协议、配额和可观测上下文
 
   **已吸收的语义增量：** 新增证据边界：Direct MCP client-to-server connectivity does not scale to heterogeneous transports, large tool catalogs, centralized policy and stateful failover. A gateway can own protocol translation, identity-bound visibility, deterministic retrieval and session placement, but the session identifier and routing state become correctness-critical distributed state. 该 delta 已进入 `books/part-06-ai-infrastructure/62-gateway.md#L1`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
 <!-- daily-books-trace:SF-2026-ARXIV-2607-15593:end -->
+
+- `SF-2026-ARXIV-2604-09360` — Daily2026-04-14补Apr13，supp_apr14_author；[exact-v1](https://arxiv.org/html/2604.09360v1)§3.1–3.2/4.3/5.2–5.4/5.6/6.1–6.3，2+2+2=6协议边界深入；只采preserve同provider/strip跨provider分责和request-scopedtypedstream，不采普适semantic/transitive保持、無损或serviceSLO。保unsupported/topk/cachecontrol丢失与warnings、255/10/6测试人口、自写test循环风险、CPython3.10单硬件与proxy额外hop；未核artifact/实际API部署。reader必要Source/逐字PRE及实际正文/完整邻接/本人注POST通过，作者仅同步此注并实读回。
+
+- `SF-2026-ARXIV-2604-09377` — Apr14补Apr13，exact-v1§3–4及必要synthesis-cost/假设反侧，2+2+2=6具体cold-start支持域gap深入；仅taxonomy synth→allcandidate quality/cost标签与type-mixture预测分责，不采Eq6→7/9实际ELBO或trueposterior/校准。保4×2000/7:1:2、17880/15200 QA与不同judge协议、domain .5402优于difficulty .5274、LR五runs非全主表、造数14.34/10.03非总费及hardware/runtime/SLO ND。reader必要Source有效，有限date/light与reader finalPRE实际通过；supp_apr14_reader实际正文/完整上下邻及本人末注POST通过，作者已实读回；未核实现/复现。
+
+- `SF-2026-OPENAI-WEBRTC-RELAY` — May05补May04，[官方工程披露](https://openai.com/index/delivering-low-latency-voice-ai-at-scale/)Architecture/Routing/Global Relay/Implementation/Results，2+2+2=6具体入口分责gap深入；仅采用ufrag首包路由、薄relay soft map与transceiver hard-state分责。未核公开artifact、真实部署、负载/尾部性能或hard-session无损恢复；不以SO_REUSEPORT/thread pinning推任意flow亲和保证。root必要Source、逐字PRE及实际正文/完整邻接/本人note POST已在May05唯一SUP R2通过，作者行政同步并实读回。

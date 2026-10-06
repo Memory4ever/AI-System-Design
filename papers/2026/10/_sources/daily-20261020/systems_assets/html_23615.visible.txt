@@ -1,0 +1,1844 @@
+Beyond Action Prediction: Learning Search-Free Planning in Latent Space
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1  Introduction
+2  Related work
+Latent World Models
+Inverse Dynamics and Goal-Conditioned Action Learning
+Learned and Amortized Planning
+Consistency and Goal-Aware Planning Objectives
+3  Methodology
+3.1  Problem Formulation
+3.2  Latent World Model
+3.3  Hindsight-conditioned Inverse Dynamics
+3.4  Action Transition Consistency
+3.5  Joint Objective and Search-free Planning
+4  Experiments
+4.1  Experiment setup
+Benchmarks and Tasks
+Baselines
+Implementation Details
+4.2  Planning Performance
+4.3  Planning Efficiency
+4.4  Ablations
+4.5  Latent-Space Progress Analysis
+4.6  Smoothness of Executed Actions
+5  Conclusion
+6  Limitations
+References
+A  Dataset Details and Protocol
+A.1  Datasets
+Observations and actions.
+Action normalization.
+Training samples and monitoring split.
+A.2  Evaluation Protocol
+A.3  CEM Planning Protocol
+B  Implementation Details
+B.1  Temporal Discretization and Data Flow
+B.2  Architecture
+Visual encoder     f  θ   f_{\theta}   .
+Action encoder     ψ  ω   \psi_{\omega}   .
+latent predictor     g  ϕ   g_{\phi}   .
+Inverse-dynamics head     h  ξ   h_{\xi}   .
+B.3  Training
+latent prediction loss.
+Anti-collapse regularization.
+Hindsight-conditioned inverse dynamics.
+Action transition consistency loss.
+Joint objective.
+Optimization.
+B.4  Planning and Receding-Horizon Execution
+C  Loss Weight Ablation
+D  Action Smoothness Experiment
+E  Visualizing Planned Trajectories
+License: CC BY 4.0
+arXiv:2610.23615v1 [cs.RO] 16 Oct 2026
+Beyond Action Prediction: Learning Search-Free Planning in Latent Space
+Guanchen Du  1   ,   Jinhao Du  2   ,   Yanpeng Sun  3   ,
+Shan Zhang  4   ,   Na Zhao  3   ,   Zechao Li  1
+1  Nanjing University of Science and Technology    2  University of Oxford
+3  Singapore University of Technology and Design    4  Adelaide University
+Project page:   https://hijp.demohub.live
+Abstract
+Latent world models learn action-conditioned state transitions in a compact representation space, providing a predictive model for visual planning and control. However, planning with these models typically requires costly test-time optimization over action sequences. We propose to replace this online search with a goal-conditioned inverse model that directly predicts actions from current and goal observations. A key challenge is that action prediction alone neither ensures that goal representations encode action-relevant information nor that predicted actions are consistent with the learned latent prediction model. We introduce Hindsight Inverse JEPA Planning (HIJP), a search-free framework that addresses both aspects during training. HIJP relabels future observations along offline trajectories as goals, providing action supervision across multiple temporal horizons. By retaining gradients through the goal representations, this supervision directly shapes the visual representation. HIJP further feeds predicted actions into the latent predictor model and aligns the resulting next-state representations with encoded successor observations, enforcing action-transition consistency. At inference time, the inverse dynamics model and latent predictor models are applied alternately to generate multi-step action sequences without online search. Across four visual control tasks, HIJP achieves 86.8% overall success and a 1.9–16.5× planning speedup over search-based planning.
+1  Introduction
+Latent world models encode high-dimensional visual observations into compact latent representations and learn an action-conditioned latent predictor from offline trajectories, providing a foundation for visual planning and control  ( Zhou et al., 2025 ;  Maes et al., 2026 ;  Zhang et al., 2025 ) .
+However, planning with these models typically requires optimizers such as CEM  ( Rubinstein, 1999 )  or MPPI  ( Williams et al., 2017 )  to repeatedly generate and evaluate candidate action sequences at each replanning step, which requires substantial test-time computation  ( Pinneri et al., 2021 ) .
+Learning a direct mapping from the current state and goal to actions therefore provides a promising alternative for improving the planning efficiency of latent world models  ( Sun et al., 2026 ;  Nguyen et al., 2026 ) .
+Recent work has introduced action supervision to improve latent world models’ control capabilities.
+SMWM learns action-relevant representations through inverse dynamics supervision  ( Ivashkov et al., 2026 ) , while Delta-JEPA  ( Zhang et al., 2026 )  recovers actions from latent state differences, encouraging representations to retain action-related state changes.
+GC-IDM  ( Nguyen et al., 2026 )  further learns a goal-conditioned action mapping on frozen representations, while INTACT  ( Sun et al., 2026 ) incorporates local and future-goal action supervision into end-to-end training, supporting search-free recursive control.
+These approaches demonstrate the value of action supervision for goal-conditioned control. However, accurate action prediction alone does not necessarily provide all the supervision needed for search-free planning.
+We identify two aspects that remain underconstrained.
+First, goal-conditioned action supervision should not only train an inverse model to predict actions, but also help shape visual representations to capture how actions relate current states to future goals.
+Offline trajectories naturally contain such relations at multiple temporal scales: for the same current state and demonstrated action, different future observations define goals at different temporal horizons.
+However, existing training schemes  ( Sun et al., 2026 ;  Wang et al., 2026a )  exploit only a subset of these relations, for example by conditioning action prediction on a fixed future endpoint.
+More generally, treating the goal representation only as a conditioning target limits the extent to which action supervision can shape goal-side visual features.
+Second, accurate action prediction alone does not ensure that the predicted action induces the correct transition under the learned latent predictor.
+The inverse dynamics model and the latent predictor model are typically supervised separately, with the latter conditioned on demonstrated actions  ( Ivashkov et al., 2026 ;  Sun et al., 2026 ) .
+During search-free rollout planning, however, these two mappings are applied sequentially: the inverse dynamics model predicts an action toward the goal, and the latent predictor model uses this predicted action to advance the latent state for subsequent action generation.
+The resulting inverse-to-predictor composition is therefore directly involved in planning, yet is not explicitly constrained by separate action and latent prediction objectives.
+This motivates extending action supervision beyond action prediction itself, using it both to shape goal-conditioned representations and to couple predicted actions with their induced latent transitions.
+Based on this principle, we propose Hindsight Inverse JEPA Planning (HIJP), which jointly trains a visual encoder, a goal-conditioned inverse dynamics model, and a latent predictor model end-to-end. HIJP relabels future observations within each trajectory window as goals, exposing the inverse objective to diverse state–goal relations across temporal horizons. Gradients are retained through the goal representations, allowing inverse-action supervision to directly shape the visual features used for goal-conditioned action prediction. We further feed the predicted actions into the latent predictor and align the resulting successor latents with the encodings of the next observations. This action-transition consistency objective jointly updates the inverse and predictor models, directly coupling action generation with its induced latent transition. In this way, HIJP trains the same inverse-to-predictor mapping that is repeatedly applied during planning. At test time, the inverse dynamics module and latent predictor model alternate to generate multi-step action sequences, which are executed through closed-loop replanning without online action search.
+We evaluate HIJP on four visual control tasks under four configurations of goal temporal offsets and execution budgets. HIJP achieves an overall success rate of     86.8  %   86.8\%   , outperforming the strongest baseline by    4.9  4.9    percentage points. Ablations on hindsight goal sampling, training objectives, and gradient routing examine how goal-side representation learning and inverse - predictor coupling contribute to control performance. Beyond success rates, we also evaluate efficiency and the temporal smoothness of executed actions. With matched numbers of replanning calls, HIJP achieves a    1.9  1.9   –    16.5  ×   16.5\times    planning speedup over LeWM. Under the most challenging setting, its executed actions exhibit lower jerk than those produced by CEM using the same representations, indicating smoother executed controls.
+2  Related work
+Latent World Models
+Latent world models learn action-conditioned changes in representation space to support goal-directed planning from offline visual trajectories. Existing approaches span pretrained visual features, end-to-end representation learning, and large-scale video pretraining  ( Zhou et al., 2025 ;  Maes et al., 2026 ;  Assran et al., 2025 ;  Bo et al., 2026 ) .
+Systematic studies further investigate how architectures, training objectives, and planning algorithms affect control performance  ( Terver et al., 2025 ) .   Gao and Xu (2026)   reduce forward-rollout costs through parallel prediction conditioned on action prefixes.   Wang et al. (2026a)   use inverse dynamics and goal-conditioned action supervision to improve planning representations, while retaining CEM for control.
+HIJP builds on latent forward dynamics and focuses on learning a goal-conditioned action mapping that can be directly deployed for control.
+Inverse Dynamics and Goal-Conditioned Action Learning
+Inverse dynamics and action-supervised objectives encourage representations to retain action-relevant state changes.
+These objectives can also be combined with physical-state alignment to improve representations for control  ( Ivashkov et al., 2026 ;  Zhang et al., 2026 ;  Liu et al., 2026 ) .
+Hindsight learning relabels achieved states along trajectories as goals, providing supervision for goal-conditioned policies and inverse dynamics learning  ( Andrychowicz et al., 2018 ;  Ghosh et al., 2019 ;  Sun et al., 2019 ) .
+Goal-conditioned action-sequence prediction has also been used for visual planning  ( Paster et al., 2020 ) . Related theoretical studies analyze the benefits of inverse dynamics through bias–variance trade-offs and learning-problem complexity  ( Schäfer et al., 2026 ;  Morin et al., 2026 ) .
+Within latent world models, GC-IDM ( Nguyen et al., 2026 )  learns a goal- and horizon-conditioned action mapping on frozen representations, while INTACT  ( Sun et al., 2026 )  jointly learns local and goal-conditioned action prediction to support search-free recursive control. HIJP follows this direction by enriching supervision through future-goal relabeling within trajectory windows.
+Learned and Amortized Planning
+Planning computation can be shifted to training by learning action priors, latent subgoals, or plan-update rules  ( Wang et al., 2026b ;  Cheng et al., 2026 ;  Masip et al., 2026 ;  Sommer and Schilling, 2026 ;  Tang et al., 2025 ) .
+Another line of work first predicts future states or generates state trajectories and then recovers actions through inverse dynamics  ( Tian et al., 2025 ;  Xie et al., 2025 ;  Zeng et al., 2026 ;  Ajay et al., 2022 ;  Huang et al., 2026 ) .   Rakhimov et al. (2026)   jointly train state and action flows, allowing a single model to support multiple control inference modes.
+HIJP alternates goal-conditioned action prediction with forward latent-state prediction to construct multi-step plans without online action search.
+Consistency and Goal-Aware Planning Objectives
+Consistency objectives also connect model prediction with planning.
+Seo et al. (2026)   incorporate action-recovery errors from predicted transitions into the online planning cost, while   Bai and Xiong (2026)   combine temporal-progress learning with multi-step rollout consistency supervision.
+HIJP focuses on the composed output of the goal-conditioned action module and the forward model. During training, it aligns the successor latent state predicted under the generated action with the encoding of the next observation in the recorded trajectory, allowing state-prediction errors to supervise action learning directly.
+3  Methodology
+Our goal is to extend action supervision beyond action prediction itself, such that it also shapes goal-conditioned visual representations and constrains the latent transitions induced by predicted actions.
+HIJP jointly learns a visual encoder     f  θ   f_{\theta}   , a latent predictor model     g  ϕ   g_{\phi}   , and a goal-conditioned inverse dynamics model     h  ξ   h_{\xi}   .
+Given offline visual trajectories, the inverse dynamics model learns to predict actions toward future goals, while the predictor predicts action-conditioned latent transitions.
+We couple these components during training to supervise the local inverse-to-predictor composition repeatedly used in search-free planning.
+Figure   1   provides an overview.
+Figure 1:  Overview of the HIJP training framework. (A) The latent world model predicts the next latent state from the current state and action. (B) The hindsight-conditioned inverse dynamics model infers the action from current and future latent states. (C) The inferred action is reused to enforce action–transition consistency. All modules are jointly optimized using the prediction, regularization, inverse-dynamics, and action transition consistency losses.
+3.1  Problem Formulation
+Let     𝒟  =    {   τ   (  i  )    }    i  =  1   N    \mathcal{D}=\{\tau^{(i)}\}_{i=1}^{N}    be a dataset of trajectories, where
+τ  =   (   o  0   ,   𝐚  0   ,   o  1   ,  …  ,   𝐚   T  −  1    ,   o  T   )    .   \tau=(o_{0},\mathbf{a}_{0},o_{1},\ldots,\mathbf{a}_{T-1},o_{T}).
+(1)
+Here     o  t   o_{t}    is a visual observation and     𝐚  t   \mathbf{a}_{t}    is the action taken at time    t  t   .
+Given a current observation     o  t   o_{t}    and a goal observation     o  g   o_{g}   , the task is to produce actions that reach the goal within a fixed interaction budget. Training uses recorded observations and actions, with future observations in each trajectory serving as hindsight goals, where reward annotations are not required.
+Our planning procedure repeatedly composes two mappings. An inverse model predicts an action from the current latent state and goal latent state, and a latent predictor model predicts the latent state induced by that action. This composition motivates training the models together: action prediction must identify a useful action, while the resulting transition must agree with the observed dynamics.
+3.2  Latent World Model
+Following the prior work  ( Maes et al., 2026 ) , a visual encoder      f  θ   :   𝒪  →   ℝ  d     f_{\theta}:\mathcal{O}\rightarrow\mathbb{R}^{d}    maps observations to latent states      z  t   =    f  θ   ​   (   o  t   )     z_{t}=f_{\theta}(o_{t})   , and an action-conditioned latent predictor model     g  ϕ   g_{\phi}    predicts the next latent state from a causal context of latent states and actions:
+z  ^    t  +  1    =   g  ϕ    (   z     t  −  m   +  1   :  t    ,   a     t  −  m   +  1   :  t    )   ,   z   t  +  1    =   f  θ    (   o   t  +  1    )   .   \hat{z}_{t+1}=g_{\phi}\!\left(z_{t-m+1:t},a_{t-m+1:t}\right),\qquad z_{t+1}=f_{\theta}(o_{t+1}).
+(2)
+We train the latent prediction model on demonstrated transitions using
+ℒ  pred   =   MSE  ⁡   (    z  ^    t  +  1    ,   z   t  +  1    )     .   \mathcal{L}_{\mathrm{pred}}=\operatorname{MSE}(\hat{z}_{t+1},z_{t+1}).
+(3)
+We also apply     ℒ  sigreg   \mathcal{L}_{\mathrm{sigreg}}    to the encoded observations in each training window to discourage representational collapse.
+We use a ViT-Tiny encoder trained from scratch and a causal Transformer model with context length     m  =  3   m=3   . An action encoder supplies the latent prediction model with action embeddings. Architecture and optimization details are given in Appendix    B  . The same model also accepts the shorter context used for the one-step consistency objective below.
+The latent prediction model learns how demonstrated actions transform latent states. Our next objective is complementary: to learn how actions can be inferred from current and goal representations, while allowing this action supervision to shape the representations themselves.
+3.3  Hindsight-conditioned Inverse Dynamics
+A trajectory contains multiple valid future goals for a given observation. To expose these relations during training, we sample a window of    W  W    observations, an anchor    i  i    and a future offset    κ  \kappa   :
+i  ∼  Unif   {  0  ,  …  ,  W  −  2  }   ,  κ  ∣  i  ∼  Unif   {  1  ,  …  ,  W  −  1  −  i  }   .   i\sim\operatorname{Unif}\{0,\ldots,W-2\},\qquad\kappa\mid i\sim\operatorname{Unif}\{1,\ldots,W-1-i\}.
+(4)
+Each sampled pair therefore defines a goal-conditioned action-learning problem at a potentially different temporal horizon. Unlike using only the endpoint of a trajectory window, this construction exposes the inverse objective to diverse relations between current observations and future goals using the same offline data.
+The observation at     i  +  κ   i+\kappa    becomes the hindsight goal. The goal-conditioned inverse model predicts the demonstrated action at the anchor:
+a  ^   i   =    h  ξ   ​   (   z  i   ,   z   i  +  κ    )     ,    ℒ  inv   =   MAE  ⁡   (    a  ^   i   ,   a  i   )      .   \hat{a}_{i}=h_{\xi}(z_{i},z_{i+\kappa}),\qquad\mathcal{L}_{\mathrm{inv}}=\operatorname{MAE}(\hat{a}_{i},a_{i}).
+(5)
+Although the sampled goal may be several steps ahead, the target is the immediate action     a  i   a_{i}   , not the intervening action sequence. Each training window therefore supplies action supervision under goals at different temporal offsets.
+Gradients from     ℒ  inv   \mathcal{L}_{\mathrm{inv}}    flow through both     z  i   z_{i}    and     z   i  +  κ    z_{i+\kappa}   . Consequently, the inverse objective trains not only     h  ξ   h_{\xi}   , but also the visual features used to represent the current observation and the future goal. We implement     h  ξ   h_{\xi}    as an MLP operating on the concatenated latent pair.
+3.4  Action Transition Consistency
+The inverse model can predict an action close to the demonstrated action without ensuring that this prediction produces the observed transition under the learned predictor model. This distinction matters at planning time, where the model receives predicted rather than demonstrated actions. We therefore pass the predicted action through     g  ϕ   g_{\phi}   :
+z  ~    i  +  1    =    g  ϕ   ​   (   z  i   ,    a  ^   i   )     ,     a  ^   i   =    h  ξ   ​   (   z  i   ,   z   i  +  κ    )      ,   \tilde{z}_{i+1}=g_{\phi}\!\left(z_{i},\hat{a}_{i}\right),\qquad\hat{a}_{i}=h_{\xi}(z_{i},z_{i+\kappa}),
+(6)
+and align the result with the encoded one-step successor:
+ℒ  cyc   =    MSE   ⁡   (    z  ~    i  +  1    ,   sg  ⁡   [   z   i  +  1    ]    )     ,   \mathcal{L}_{\mathrm{cyc}}=\operatorname{MSE}\!\left(\tilde{z}_{i+1},\operatorname{sg}[z_{i+1}]\right),
+(7)
+where    sg  \operatorname{sg}    denotes stop-gradient.
+This objective uses the one-step successor     z   i  +  1    z_{i+1}    even when the hindsight goal     z   i  +  κ    z_{i+\kappa}    is farther away.
+It allows     L  cyc   L_{\mathrm{cyc}}    to update the inverse head, action encoder, latent prediction model, and the anchor-side visual representation. Thus, the consistency objective does not merely use the prediction model to provide an error signal to the inverse dynamics model; it jointly adapts action generation and the latent predictor around their composed prediction.
+This directly supervises the inverse-to-latent predictor transition that is repeatedly composed during search-free planning.
+3.5  Joint Objective and Search-free Planning
+Joint training.
+The full training objective combines latent prediction, representation regularization, hindsight-conditioned action prediction, and action-transition consistency:
+ℒ  =    ℒ  pred   +    λ  reg   ​   ℒ  sigreg    +    λ  inv   ​   ℒ  inv    +    λ  cyc   ​   ℒ  cyc      .   \mathcal{L}=\mathcal{L}_{\text{pred}}+\lambda_{\text{reg}}\,\mathcal{L}_{\text{sigreg}}+\lambda_{\text{inv}}\,\mathcal{L}_{\text{inv}}+\lambda_{\text{cyc}}\,\mathcal{L}_{\text{cyc}}.
+(8)
+All components are optimized jointly, and all terms are averaged over their corresponding batch, temporal, sampled-pair, and feature dimensions before weighting.
+For all tasks, the loss weights are set to      λ  reg   =  0.09   \lambda_{\mathrm{reg}}=0.09   ,      λ  inv   =  1.0   \lambda_{\mathrm{inv}}=1.0   , and
+λ  cyc   =  0.05   \lambda_{\mathrm{cyc}}=0.05    for TwoRoom and    0.10  0.10    for the remaining tasks.
+Search-free planning.
+At planning time, we use the inverse dynamics model and latent prediction models in the same order in which they are coupled during training. At each replanning point, the latest observation and fixed goal observation are encoded as      z  t   =    f  θ   ​   (   o  t   )     z_{t}=f_{\theta}(o_{t})    and      z  g   =    f  θ   ​   (   o  g   )     z_{g}=f_{\theta}(o_{g})   . Starting from       z  ^   0   =   z  t    \hat{z}_{0}=z_{t}   , we construct an    H  H   -step plan by alternating goal-conditioned action prediction and latent prediction:
+a  j   =   h  ξ    (    z  ^   j   ,   z  g   )   ,    z  ^    j  +  1    =   g  ϕ    (    z  ^     ℓ  j   :  j    ,   a    ℓ  j   :  j    )   ,   ℓ  j   =  max   (  0  ,  j  −  m  +  1  )   ,  j  =  0  ,  …  ,  H  −  1  .   a_{j}=h_{\xi}(\hat{z}_{j},z_{g}),\qquad\hat{z}_{j+1}=g_{\phi}\!\left(\hat{z}_{\ell_{j}:j},a_{\ell_{j}:j}\right),\quad\ell_{j}=\max(0,j-m+1),\quad j=0,\ldots,H-1.
+(9)
+The inverse model therefore predicts each action from the current imagined state and fixed goal, while the latent prediction model advances the imagined state under that predicted action. We use     H  =  5   H=5   , execute the resulting action sequence, observe the environment again, and repeat the procedure in a receding-horizon manner. Each replanning call requires only one inverse-to-latent prediction rollout, without sampling or iteratively refining candidate action sequences.
+4  Experiments
+We conduct experiments on four tasks to answer the following key questions: (i) whether our method achieves strong goal-reaching performance, particularly for long-horizon goals; (ii) how much inference speed is gained by replacing the CEM search at test time with a single amortized rollout; (iii) how hindsight goal relabeling, inverse-action supervision, gradient routing, and predicted-action transition consistency contribute to control performance; and (iv) how HIJP and CEM differ in
+latent-space goal progress and executed-action smoothness.
+4.1  Experiment setup
+Benchmarks and Tasks
+We evaluate on four goal-conditioned control benchmarks with distinct dynamics:  TwoRoom  (   2  2   D navigation),  Reacher  (DMControl reacher),  PushT  (planar pushing), and  OGCube  (OGBench cube manipulation).
+All tasks use     224  ×  224   224{\times}224    RGB observations, continuous actions, and observation-specified goals. The dataset information is provided in Appendix   A  .
+We use the offline datasets released by LeWM  ( Maes et al., 2026 )  without modification.
+To vary difficulty, we set each goal to the environment state     K  ∈   {   10  ,  25  ,  50  ,  75   }    K\in\{10,25,50,75\}    steps ahead of the start and assign a corresponding interaction budget     B  ∈   {   25  ,  50  ,  100  ,  100   }    B\in\{25,50,100,100\}   , defining the  easy ,  default  (LeWM’s ( Maes et al., 2026 )  original goal-setting horizon and interaction budget),  hard , and  extreme  tiers, respectively.
+All methods are evaluated in the original simulator on the same start–goal instances, with    50  50    episodes per task–tier combination. An episode counts as successful only when the simulator’s native success condition is met; we use no latent-space distance threshold. We report success rate as the primary metric and planning time for the efficiency study, with additional details in Appendix   A.2  .
+Baselines
+We compare against eight baselines: Random, GCBC  ( Ghosh et al., 2021 ) , DINO-WM  ( Zhou et al., 2025 ) , PLDM  ( Sobal et al., 2025 ) , LeWM  ( Maes et al., 2026 ) , SMWM  ( Ivashkov et al., 2026 ) , delta-JEPA  ( Zhang et al., 2026 )  and INTACT ( Sun et al., 2026 ) .
+Random provides a chance-level reference; GCBC and INTACT provide direct goal-conditioned controllers, with INTACT representing the closest end-to-end search-free baseline. The remaining methods are latent world-model planners that rely on CEM- or MPPI-based search at test time.
+All learned methods are trained on the same offline datasets and evaluated under the same protocol.
+All CEM-based comparisons use the shared search and execution
+protocol specified in Appendix   A.3  .
+Implementation Details
+HIJP combines a latent world model with an amortized inverse head trained end-to-end.
+At planning time, it produces an     H  =  5   H=5    step latent plan with a single amortized rollout, executes the corresponding actions in a receding-horizon manner, and then replans from the latest observation. Unlike the CEM-based world-model baselines, HIJP uses no test-time search. Architecture and optimization details are provided in Appendix   B  .
+4.2  Planning Performance
+We first examine how HIJP’s goal-reaching performance compares with the baselines.
+As detailed in Section   4.1  , we test HIJP and all baseline methods on each task-tier combination, using 50 episodes per pair, and report success rates in Table
+1  .
+Table 1:  Success rates (%) across four tasks and four difficulty tiers. Avg. denotes the arithmetic mean across the four difficulty tiers; Overall Avg. averages all 16 task–tier combinations with equal weight.
+The best and second-best results in each row are shown in  bold  and  underlined text .
+Reference
+Baselines
+Ours
+Task
+Tier
+Random
+GCBC
+PLDM
+DINO-WM
+LeWM
+SMWM
+Δ  \Delta   -JEPA
+INTACT
+HIJP
+TwoRoom
+Easy
+66%
+100%
+100%
+100%
+96%
+96%
+76%
+100%
+100%
+Default
+24%
+100%
+88%
+100%
+88%
+96%
+38%
+100%
+100%
+Hard
+8%
+100%
+90%
+98%
+62%
+86%
+48%
+96%
+100%
+Extreme
+2%
+100%
+96%
+74%
+50%
+72%
+24%
+90%
+98%
+Avg.
+25.0%
+100.0%
+93.5%
+93.0%
+74.0%
+87.5%
+46.5%
+96.5%
+99.5%
+Reacher
+Easy
+12%
+4%
+70%
+46%
+40%
+34%
+14%
+44%
+48%
+Default
+10%
+0%
+72%
+78%
+76%
+46%
+20%
+100%
+92%
+Hard
+6%
+0%
+72%
+98%
+96%
+62%
+52%
+100%
+92%
+Extreme
+6%
+0%
+84%
+94%
+84%
+58%
+40%
+96%
+94%
+Avg.
+8.5%
+1.0%
+74.5%
+79.0%
+74.0%
+50.0%
+31.5%
+85.0%
+81.5%
+PushT
+Easy
+14%
+94%
+94%
+98%
+78%
+80%
+72%
+98%
+90%
+Default
+2%
+74%
+42%
+74%
+88%
+56%
+64%
+80%
+80%
+Hard
+2%
+40%
+22%
+56%
+58%
+30%
+36%
+54%
+66%
+Extreme
+0%
+4%
+0%
+28%
+12%
+16%
+0%
+6%
+42%
+Avg.
+4.5%
+53.0%
+39.5%
+64.0%
+59.0%
+45.5%
+43.0%
+59.5%
+69.5%
+OGCube
+Easy
+68%
+98%
+74%
+92%
+98%
+98%
+88%
+100%
+98%
+Default
+44%
+90%
+56%
+78%
+82%
+88%
+74%
+100%
+96%
+Hard
+26%
+58%
+28%
+62%
+56%
+70%
+54%
+70%
+96%
+Extreme
+40%
+76%
+50%
+72%
+70%
+86%
+74%
+76%
+96%
+Avg.
+44.5%
+80.5%
+52.0%
+76.0%
+76.5%
+85.5%
+72.5%
+86.5%
+96.5%
+Overall Avg.
+20.6%
+58.6%
+64.9%
+78.0%
+70.9%
+67.1%
+48.4%
+81.9%
+86.8%
+Table   1   shows that HIJP achieves the highest overall success rate of 86.8%, exceeding the strongest baseline by 4.9 percentage points.
+The gains are most pronounced in challenging manipulation settings.
+On PushT, HIJP achieves 66% and 42% success in the hard and extreme tiers, respectively, outperforming the best baseline in each tier by 8 and 14 percentage points.
+On OGCube, it maintains 96% success in both tiers, with corresponding gains of 26 and 10 percentage points.
+On TwoRoom and Reacher, HIJP remains competitive, ranking second in average success on both tasks.
+The stronger gains on manipulation are consistent with our design to extend action supervision beyond action prediction itself, shaping goal-conditioned visual representations and constraining the latent transitions induced by predicted actions.
+We examine the contributions of these two design choices through the ablations in Section   4.4  .
+4.3  Planning Efficiency
+To assess planning efficiency, we compare HIJP with LeWM, a CEM-based world-model planner, under matched numbers of replanning calls. Following Section   4.1  , we report total wall-clock planning time for each task–tier combination, with all episodes processed as a single vectorized batch on an RTX 4090 (Table   2  ).
+Table 2:
+Total wall-clock planning time (seconds) for LeWM and HIJP.
+Speedup denotes LeWM’s planning time divided by HIJP’s. Avg. reports the arithmetic mean across difficulty tiers, including the per-tier speedup ratios. Lower planning times are shown in  bold .
+Task
+Method
+Difficulty tier
+Avg.
+Easy
+Default
+Hard
+Extreme
+TwoRoom
+LeWM
+69.8
+124.9
+254.7
+253.9
+175.9
+HIJP
+13.5
+20.8
+36.2
+37.4
+27.0
+Speedup
+5.2  ×   5.2\times
+6.0  ×   6.0\times
+7.0  ×   7.0\times
+6.8  ×   6.8\times
+6.2  ×   6.2\times
+Reacher
+LeWM
+153.6
+296.0
+566.6
+581.9
+399.5
+HIJP
+32.6
+45.4
+65.3
+69.0
+53.1
+Speedup
+4.7  ×   4.7\times
+6.5  ×   6.5\times
+8.7  ×   8.7\times
+8.4  ×   8.4\times
+7.1  ×   7.1\times
+PushT
+LeWM
+183.0
+368.5
+682.3
+669.6
+475.8
+HIJP
+14.9
+24.3
+41.4
+41.6
+30.6
+Speedup
+12.3  ×   12.3\times
+15.2  ×   15.2\times
+16.5  ×   16.5\times
+16.1  ×   16.1\times
+15.0  ×   15.0\times
+OGCube
+LeWM
+110.5
+180.9
+298.2
+297.7
+221.8
+HIJP
+59.5
+70.5
+87.4
+90.8
+77.0
+Speedup
+1.9  ×   1.9\times
+2.6  ×   2.6\times
+3.4  ×   3.4\times
+3.3  ×   3.3\times
+2.8  ×   2.8\times
+The result shows that HIJP reduces planning time across all evaluated settings, achieving    1.9  1.9   –    16.5  ×   16.5\times    speedups over LeWM under matched replanning counts.
+The average speedups are     6.2  ×   6.2\times   ,     7.1  ×   7.1\times   ,     15.0  ×   15.0\times   , and     2.8  ×   2.8\times    on TwoRoom, Reacher, PushT, and OGCube, respectively.
+Together with the results in Table   1  , these findings show that HIJP achieves substantial planning speedups over LeWM while attaining higher average success rates on all four tasks.
+4.4  Ablations
+To systematically evaluate the contribution of each component, we conduct ablation studies on the training objectives, gradient propagation, hindsight goal relabeling, and the test-time planner.
+For the training objectives, we remove one term at a time from Eq.   8  : the inverse loss     ℒ  inv   \mathcal{L}_{\mathrm{inv}}   , the transition-consistency loss     ℒ  cyc   \mathcal{L}_{\mathrm{cyc}}   , and the SIGReg regularizer     ℒ  sigreg   \mathcal{L}_{\mathrm{sigreg}}   .
+We further evaluate two gradient-related variants. In     sg  ⁡   [   z  g   ]    \operatorname{sg}[z_{g}]   , we stop gradients through the goal representation     z  g   z_{g}   .
+In the frozen-    g  ϕ   g_{\phi}    variant, we retain the latent predictor     g  ϕ   g_{\phi}    in the forward computation but block parameter updates from     ℒ  ​  cyc   \mathcal{L}{\mathrm{cyc}}    while retaining those from     ℒ  ​  pred   \mathcal{L}{\mathrm{pred}}   .
+To evaluate the contribution of hindsight goal relabeling, we introduce a fixed-goal variant that always uses the latent representation of the final observation in each training window as the goal. Specifically, we sample an anchor step    t  t    uniformly from     {   0  ,  …  ,   T  −  2    }   \{0,\ldots,T-2\}   , set      z  g   =   z   T  −  1     z_{g}=z_{T-1}   , and predict the one-step action     a  t   a_{t}    from     (   z  t   ,   z  g   )   (z_{t},z_{g})   .
+For the planner ablation, we keep the fully trained representation fixed and replace our amortized rollout with CEM search, thereby
+isolating the effect of the planning mechanism.
+All other settings follow Section   4.1  .
+We report results on Reacher, PushT, and OGCube in Table   3  .
+We exclude TwoRoom because all variants achieve near-100% success rates on this task.
+Furthermore, we examine sensitivity to the inverse and transition-consistency loss weights in Appendix   C  .
+Table 3:  Success rates for HIJP and its ablation variants. Avg. reports the arithmetic mean across the four difficulty tiers for each task, and Overall Avg. averages all 12 task–tier combinations. The best and second-best results in each row are shown in  bold  and  underlined text .
+Full model
+Training objectives
+Goal supervision
+Action Consistency
+Planner
+Task
+Tier
+HIJP
+w/o     ℒ  inv   \mathcal{L}_{\mathrm{inv}}
+w/o     ℒ  sigreg   \mathcal{L}_{\mathrm{sigreg}}
+Endpoint goal
+sg  ⁡   [   z  g   ]    \operatorname{sg}[z_{g}]
+w/o     ℒ  cyc   \mathcal{L}_{\mathrm{cyc}}
+Frozen     g  ϕ   g_{\phi}
+CEM
+Reacher
+Easy
+48%
+36%
+2%
+36%
+40%
+34%
+40%
+40%
+Default
+92%
+72%
+0%
+66%
+88%
+78%
+84%
+70%
+Hard
+92%
+90%
+0%
+72%
+88%
+84%
+80%
+98%
+Extreme
+94%
+86%
+0%
+82%
+92%
+94%
+84%
+94%
+Avg.
+81.5%
+71.0%
+0.5%
+64.0%
+77.0%
+72.5%
+72.0%
+75.5%
+PushT
+Easy
+90%
+36%
+74%
+76%
+90%
+84%
+86%
+78%
+Default
+80%
+6%
+58%
+74%
+80%
+78%
+72%
+74%
+Hard
+66%
+0%
+34%
+50%
+48%
+54%
+64%
+44%
+Extreme
+42%
+0%
+20%
+44%
+38%
+22%
+46%
+24%
+Avg.
+69.5%
+10.5%
+46.5%
+61.0%
+64.0%
+59.5%
+67.0%
+55.0%
+OGCube
+Easy
+98%
+80%
+98%
+92%
+94%
+98%
+98%
+96%
+Default
+96%
+56%
+96%
+88%
+96%
+96%
+96%
+80%
+Hard
+96%
+46%
+90%
+88%
+94%
+94%
+94%
+58%
+Extreme
+96%
+40%
+92%
+92%
+94%
+96%
+96%
+76%
+Avg.
+96.5%
+55.5%
+94.0%
+90.0%
+94.5%
+96.0%
+96.0%
+77.5%
+Overall Avg.
+82.5%
+45.7%
+47.0%
+71.7%
+78.5%
+76.0%
+78.3%
+69.3%
+Figure 2:   Normalized latent distance to the goal for HIJP, its CEM ablation, and LeWM across four tasks on the extreme tier.
+Lines show means, and shaded regions indicate pointwise 95% confidence intervals.
+HIJP and its CEM ablation share the same latent space, while LeWM uses its own encoder.
+The results show that removing     ℒ  inv   \mathcal{L}_{\mathrm{inv}}    causes the largest overall decline, reducing average success from 82.5% to 45.7%.
+Removing SIGReg also reduces average success substantially, to 47.0%, with near-collapse on Reacher.
+These results support the importance of action supervision and representation regularization for HIJP’s control performance.
+The two goal-supervision ablations examine different parts of our design choice.
+Restricting goals to the final observation of each window reduces average success to 71.7%, while stopping gradients through     z  g   z_{g}    reduces it to 78.5%.
+This supports using multiple future observations as goals and allowing action-related gradients to shape goal representations.
+The action consistency ablations examine the contribution of the transition-consistency objective.
+Removing     ℒ  cyc   \mathcal{L}_{\mathrm{cyc}}    lowers average success to 76.0%, with the clearest decreases on Reacher and PushT and little change on OGCube.
+Blocking predictor updates from     ℒ  cyc   \mathcal{L}_{\mathrm{cyc}}    lowers average success to 78.3%, primarily affecting Reacher.
+These results support the transition-consistency objective and its updates to the latent predictor, with gains varying across tasks.
+Finally, replacing the inverse-guided rollout with CEM reduces average success to 69.3% under the matched evaluation protocol, supporting the effectiveness of HIJP’s learned planning mechanism.
+4.5  Latent-Space Progress Analysis
+HIJP shows its largest gains on long-horizon goals. We next examine how the latent distance to the goal evolves during execution.
+We compare HIJP, its CEM ablation (Section   4.4  ), and LeWM.
+The CEM ablation shares HIJP’s learned representation and replaces HIJP’s amortized inverse-guided rollout with CEM search, isolating the contribution of the planner.
+On the extreme tier (    K  =  75   K{=}75   ), we execute all methods in the original simulator on the same start–goal instances, following each method’s replanning schedule, and track the normalized latent distance to the goal,      d  t   =    ∥    z  t   −   z  g    ∥   /   ∥    z  0   −   z  g    ∥     d_{t}=\lVert z_{t}-z_{g}\rVert/\lVert z_{0}-z_{g}\rVert   , where     z  t   z_{t}    and     z  g   z_{g}    are the encoded observation and goal.
+After an episode succeeds, we hold its last recorded distance constant for the remaining steps. Figure   2   reports the mean and pointwise 95% confidence intervals.
+Figure   2   shows that HIJP reaches a lower final normalized latent distance than its CEM ablation on all four tasks.
+On PushT, the methods exhibit similar initial progress, but HIJP continues to reduce the distance later in the episode as CEM largely plateaus.
+On TwoRoom and OGCube, HIJP reaches a lower plateau, while on Reacher it exhibits fewer fluctuations after the initial decrease.
+Compared with its CEM ablation, HIJP’s executed trajectories end closer to the goal in the shared latent representation.
+4.6  Smoothness of Executed Actions
+Table 4:   Action jerk on the extreme tier. Ratio denotes each comparator’s jerk divided by HIJP’s. The lowest jerk in each environment is shown in  bold .
+HIJP
+CEM (ablation)
+LeWM
+Environment
+Jerk    ↓  \downarrow
+Jerk    ↓  \downarrow
+Ratio    ↑  \uparrow
+Jerk    ↓  \downarrow
+Ratio    ↑  \uparrow
+PushT
+0.048
+0.697
+14.7   ×  \times
+0.724
+15.2   ×  \times
+TwoRoom
+0.146
+2.503
+17.1   ×  \times
+2.558
+17.5   ×  \times
+Reacher
+0.046
+1.222
+26.4   ×  \times
+1.134
+24.5   ×  \times
+OGCube
+0.099
+2.065
+20.9   ×  \times
+2.304
+23.3   ×  \times
+We additionally evaluate the temporal smoothness of executed actions.
+We quantify this with action jerk, the mean     ℓ  2   \ell_{2}    norm of the second finite difference of the executed action sequence,      1   T  −  2    ​    ∑  t     ∥     𝐚  t   −   2  ​   𝐚   t  −  1      +   𝐚   t  −  2     ∥   2     \tfrac{1}{T-2}\sum_{t}\lVert\mathbf{a}_{t}-2\mathbf{a}_{t-1}+\mathbf{a}_{t-2}\rVert_{2}    (lower is smoother), following the convention of   Nguyen et al. (2026)  . To attribute any difference to the planner rather than the representation, we compare HIJP against its CEM ablation, which shares the same learned representation and differs only in the planning rule, and include LeWM as a reference.
+Table   4   reports the extreme tier (    K  =  75   K{=}75   ); the metric definition and full per-tier results are in Appendix   D  .
+The results show that HIJP produces smoother executed actions across all four tasks, with action jerk    14.7  14.7   –    26.4  ×   26.4\times    lower than its CEM ablation and    15.2  15.2   –    24.5  ×   24.5\times    lower than LeWM.
+These results indicate that HIJP’s amortized rollout improves the temporal smoothness of executed controls in addition to its goal-reaching performance and planning efficiency.
+5  Conclusion
+We introduced Hindsight Inverse JEPA Planning (HIJP), a search-free framework for goal-conditioned visual control. HIJP samples future observations as hindsight goals to enrich inverse-dynamics supervision and allows training gradients to update goal representations. It further feeds predicted actions into a latent predictor model and constrains the resulting latent transitions through a consistency objective. At planning time, the inverse and latent predictor models alternate to construct multi-step action plans without online search. Across four visual control tasks and multiple evaluation configurations, HIJP achieves the highest aggregate goal-reaching performance among the evaluated methods while reducing planning time compared to a search-based world-model planner. Under the most challenging setting, its executed actions are also smoother than those produced by CEM using the same representations.
+Together, these results suggest that aligning goal-conditioned action learning with the latent transitions used during planning provides an effective route toward efficient, search-free visual control.
+6  Limitations
+Our evaluation focuses on tasks with a limited temporal span, using fixed planning horizons and replanning schedules.
+Extending HIJP to substantially longer-horizon tasks remains an important direction.
+Future work will explore hierarchical subgoal generation, adaptive planning horizons, and dynamic replanning schedules.
+These extensions aim to decompose longer tasks into shorter goal-conditioned segments and adapt planning and execution intervals to the requirements of each segment.
+References
+Ajay  et al.  (2022)
+A. Ajay, Y. Du, A. Gupta, J. Tenenbaum, T. Jaakkola, and P. Agrawal
+Is conditional generative modeling all you need for decision-making? .
+arXiv preprint arXiv:2211.15657 .
+Cited by:   §2  .
+Andrychowicz  et al.  (2018)
+M. Andrychowicz, F. Wolski, A. Ray, J. Schneider, R. Fong, P. Welinder, B. McGrew, J. Tobin, P. Abbeel, and W. Zaremba
+Hindsight experience replay .
+External Links:   1707.01495 ,
+Link
+Cited by:   §2  .
+Assran  et al.  (2025)
+M. Assran, A. Bardes, D. Fan, Q. Garrido, R. Howes, Mojtaba, Komeili, M. Muckley, A. Rizvi, C. Roberts, K. Sinha, A. Zholus, S. Arnaud, A. Gejji, A. Martin, F. R. Hogan, D. Dugas, P. Bojanowski, V. Khalidov, P. Labatut, F. Massa, M. Szafraniec, K. Krishnakumar, Y. Li, X. Ma, S. Chandar, F. Meier, Y. LeCun, M. Rabbat, and N. Ballas
+V-jepa 2: self-supervised video models enable understanding, prediction and planning .
+External Links:   2506.09985 ,
+Link
+Cited by:   §2  .
+Bai and Xiong (2026)
+J. Bai and J. Xiong
+Temporal-distance jepa: plan-aware representation learning for latent world model predictive control .
+arXiv preprint arXiv:2607.25337 .
+Cited by:   §2  .
+Balestriero and LeCun (2025)
+R. Balestriero and Y. LeCun
+Lejepa: provable and scalable self-supervised learning without the heuristics .
+arXiv preprint arXiv:2511.08544 .
+Cited by:   §B.3  .
+Bo  et al.  (2026)
+W. Bo, S. Zhang, Y. Sun, J. Liu, Y. Yao, J. Du, W. He, K. Zou, Z. Li, and J. Wang
+Diagram-mmu: a multi-modal benchmark for scientific diagrams .
+In  European Conference on Computer Vision ,
+pp. 524–543 .
+Cited by:   §2  .
+Cheng  et al.  (2026)
+L. Cheng, Q. Zhang, and Y. Wang
+SAGE: subgoal-conditioned action generation for latent world model planning .
+arXiv preprint arXiv:2607.17973 .
+Cited by:   §2  .
+Dosovitskiy  et al.  (2021)
+A. Dosovitskiy, L. Beyer, A. Kolesnikov, D. Weissenborn, X. Zhai, T. Unterthiner, M. Dehghani, M. Minderer, G. Heigold, S. Gelly, J. Uszkoreit, and N. Houlsby
+An image is worth 16x16 words: transformers for image recognition at scale .
+In  International Conference on Learning Representations ,
+External Links:   Link
+Cited by:   §B.2  .
+Gao and Xu (2026)
+Y. Gao and X. Xu
+Fast leworldmodel .
+arXiv preprint arXiv:2606.26217 .
+Cited by:   §2  .
+Ghosh  et al.  (2019)
+D. Ghosh, A. Gupta, A. Reddy, J. Fu, C. Devin, B. Eysenbach, and S. Levine
+Learning to reach goals via iterated supervised learning .
+arXiv preprint arXiv:1912.06088 .
+Cited by:   §2  .
+Ghosh  et al.  (2021)
+D. Ghosh, A. Gupta, A. Reddy, J. Fu, C. M. Devin, B. Eysenbach, and S. Levine
+Learning to reach goals via iterated supervised learning .
+In  International Conference on Learning Representations ,
+External Links:   Link
+Cited by:   §4.1  .
+Huang  et al.  (2026)
+H. Huang, J. Shangguan, J. Lu, and J. Hwang
+LeFlow: generative latent flow planning for world models .
+arXiv preprint arXiv:2608.24855 .
+Cited by:   §2  .
+Ivashkov  et al.  (2026)
+P. Ivashkov, R. Balestriero, and B. Schölkopf
+Sensorimotor world models: perception for action via inverse dynamics .
+External Links:   2606.20104 ,
+Link
+Cited by:   §1  ,
+§1  ,
+§2  ,
+§4.1  .
+Liu  et al.  (2026)
+M. Liu, Y. Huang, Z. Liang, and X. Gao
+Toward physically grounded jepa world models for goal-conditioned robotic planning .
+External Links:   2609.03565 ,
+Link
+Cited by:   §2  .
+Maes  et al.  (2026)
+L. Maes, Q. L. Lidec, D. Scieur, Y. LeCun, and R. Balestriero
+Leworldmodel: stable end-to-end joint-embedding predictive architecture from pixels .
+arXiv preprint arXiv:2603.19312 .
+Cited by:   §A.1  ,
+§A.2  ,
+Appendix A  ,
+§1  ,
+§2  ,
+§3.2  ,
+§4.1  ,
+§4.1  .
+Masip  et al.  (2026)
+S. Masip, J. Swinnen, Y. Hu, R. Detry, and T. Tuytelaars
+FF-jepa: long-horizon planning in world models with latent planners .
+arXiv preprint arXiv:2606.09311 .
+Cited by:   §2  .
+Morin  et al.  (2026)
+S. Morin, M. Byeon, A. Jolicoeur-Martineau, and S. Lachapelle
+On the sample efficiency of inverse dynamics models for semi-supervised imitation learning .
+arXiv preprint arXiv:2602.02762 .
+Cited by:   §2  .
+Nguyen  et al.  (2026)
+H. Nguyen, X. Xu, and X. Huang
+Latent geometry beyond search: amortizing planning in world models .
+External Links:   2605.08732 ,
+Link
+Cited by:   §1  ,
+§1  ,
+§2  ,
+§4.6  .
+Paster  et al.  (2020)
+K. Paster, S. A. McIlraith, and J. Ba
+Planning from pixels using inverse dynamics models .
+arXiv preprint arXiv:2012.02419 .
+Cited by:   §2  .
+Peebles and Xie (2023)
+W. Peebles and S. Xie
+Scalable diffusion models with transformers .
+In  Proceedings of the IEEE/CVF International Conference on Computer Vision (ICCV) ,
+pp. 4195–4205 .
+Cited by:   §B.2  .
+Pinneri  et al.  (2021)
+C. Pinneri, S. Sawant, S. Blaes, J. Achterhold, J. Stueckler, M. Rolinek, and G. Martius
+Sample-efficient cross-entropy method for real-time planning .
+In  Conference on Robot Learning ,
+pp. 1049–1065 .
+Cited by:   §1  .
+Rakhimov  et al.  (2026)
+R. Rakhimov, G. Bredis, Y. Maksyuta, and D. Gavrilov
+Qantara: bridge-flow training for multi-paradigm jepa control .
+arXiv preprint arXiv:2607.04978 .
+Cited by:   §2  .
+Rubinstein (1999)
+R. Rubinstein
+The cross-entropy method for combinatorial and continuous optimization .
+Methodology and computing in applied probability   1  ( 2 ),  pp. 127–190 .
+Cited by:   §1  .
+Schäfer  et al.  (2026)
+L. Schäfer, P. Choudhury, A. Lemkhenter, C. Lovett, S. Nath, L. França, M. R. F. de Mendonça, A. Lamb, R. Islam, S. Sen,  et al.
+When does predictive inverse dynamics outperform behavior cloning? .
+arXiv preprint arXiv:2601.21718 .
+Cited by:   §2  .
+Seo  et al.  (2026)
+G. Seo, D. Kim, and S. Kwak
+ACID: action consistency via inverse dynamics for planning with world models .
+External Links:   2607.02403 ,
+Link
+Cited by:   §2  .
+Sobal  et al.  (2025)
+V. Sobal, W. Zhang, K. Cho, R. Balestriero, T. G. J. Rudner, and Y. LeCun
+Stress-testing offline reward-free reinforcement learning: a case for planning with latent dynamics models .
+In  7th Robot Learning Workshop: Towards Robots with Human-Level Abilities ,
+External Links:   Link
+Cited by:   §4.1  .
+Sommer and Schilling (2026)
+A. Sommer and J. Schilling
+Reinforced planning with latent world models .
+arXiv preprint arXiv:2608.18669 .
+Cited by:   §2  .
+Sun  et al.  (2019)
+H. Sun, Z. Li, X. Liu, B. Zhou, and D. Lin
+Policy continuation with hindsight inverse dynamics .
+Advances in Neural Information Processing Systems   32 .
+Cited by:   §2  .
+Sun  et al.  (2026)
+J. Sun, H. Zhao, and G. Zhang
+INTACT: isomorphic intent-to-action learning for search-free world models .
+External Links:   2607.26056 ,
+Link
+Cited by:   §1  ,
+§1  ,
+§1  ,
+§2  ,
+§4.1  .
+Tang  et al.  (2025)
+W. Tang, Y. Sun, S. Zhang, W. Bo, X. Li, P. Koniusz, W. Li, N. Zhao, and Z. Li
+Artemis: structured visual reasoning for perception policy learning .
+arXiv preprint arXiv:2512.01988 .
+Cited by:   §2  .
+Terver  et al.  (2025)
+B. Terver, T. Yang, J. Ponce, A. Bardes, and Y. LeCun
+What drives success in physical planning with joint-embedding predictive world models? .
+arXiv preprint arXiv:2512.24497 .
+Cited by:   §2  .
+Tian  et al.  (2025)
+Y. Tian, S. Yang, J. Zeng, P. Wang, D. Lin, H. Dong, and J. Pang
+Predictive inverse dynamics models are scalable learners for robotic manipulation .
+In  International Conference on Learning Representations ,
+Vol.  2025 ,  pp. 92033–92052 .
+Cited by:   §2  .
+Wang  et al.  (2026a)
+J. Wang, K. Rui, Y. Zuo, Y. Feng, and M. Li
+Decision-metric alignment in latent world models: diagnostics and action-conditioned objectives for mpc planning .
+arXiv preprint arXiv:2608.18746 .
+Cited by:   §1  ,
+§2  .
+Wang  et al.  (2026b)
+Y. Wang, J. Xia, R. Zhou, X. Hu, Y. Shi, J. Du, and Y. Ye
+PRISM: prior-guided imagination sampling in world models .
+arXiv preprint arXiv:2606.07974 .
+Cited by:   §2  .
+Williams  et al.  (2017)
+G. Williams, N. Wagener, B. Goldfain, P. Drews, J. M. Rehg, B. Boots, and E. A. Theodorou
+Information theoretic mpc for model-based reinforcement learning .
+In  2017 IEEE international conference on robotics and automation (ICRA) ,
+pp. 1714–1721 .
+Cited by:   §1  .
+Xie  et al.  (2025)
+A. Xie, O. Rybkin, D. Sadigh, and C. Finn
+Latent diffusion planning for imitation learning .
+In  Forty-second International Conference on Machine Learning ,
+External Links:   Link
+Cited by:   §2  .
+Zeng  et al.  (2026)
+Y. Zeng, K. Xie, Y. Wang, J. Wen, X. Li, G. Zhang, G. Xie, and J. Cao
+DTA-gt: direction- and topology-aware graph transformer for neural network representation learning .
+External Links:   2610.16822 ,
+Link
+Cited by:   §2  .
+Zhang  et al.  (2026)
+Z. Zhang, Y. Wang, Z. Guan, Y. Yang, B. Shi, T. Zong, H. Yi, G. Chao, X. Chen, T. Yang, C. Bao, T. Yu, J. Zhou, and J. Xu
+Delta-jepa: learning action-sensitive world models via latent difference decoding .
+External Links:   2606.31232 ,
+Link
+Cited by:   §1  ,
+§2  ,
+§4.1  .
+Zhang  et al.  (2025)
+Z. Zhang, H. Zhang, K. Huang, C. Shi, and H. Lu
+Efficient image-goal navigation with representative latent world model .
+External Links:   2511.11011 ,
+Link
+Cited by:   §1  .
+Zhou  et al.  (2025)
+G. Zhou, H. Pan, Y. LeCun, and L. Pinto
+DINO-WM: world models on pre-trained visual features enable zero-shot planning .
+In  Forty-second International Conference on Machine Learning ,
+External Links:   Link
+Cited by:   §1  ,
+§2  ,
+§4.1  .
+Appendix
+Appendix A  Dataset Details and Protocol
+We evaluate on four continuous-control benchmarks:  Tworoom ,  Reacher ,  PushT , and  OGBench-Cube  (hereafter OGCube), which together span    2  2   D navigation, low-dimensional continuous control, planar object pushing, and robotic cube manipulation; Figure   3   shows a representative trajectory from each. We do not collect any trajectories ourselves: we reuse the full-scale offline datasets released by LeWM  ( Maes et al., 2026 )  without modification.
+A.1  Datasets
+The four datasets are gathered under different behavior policies: a goal-directed navigation policy for Tworoom, a near-uniform random policy for Reacher, and expert policies for PushT and OGCube. This heterogeneity is directly visible in their action distributions (Figure   4  ): Reacher actions are essentially uniform over     [    −  1   ,  1   ]   [-1,1]   , Tworoom actions saturate at the     ±  1   \pm 1    boundaries, whereas PushT and OGCube produce concentrated, structured actions.
+Each dataset is stored as a single HDF5 file under a shared schema: RGB observations  pixels  of shape     (  N  ,  224  ,  224  ,  3  )   (N,224,224,3)    in uint8, a continuous  action  array of shape     (  N  ,  A  )   (N,A)   , and per-episode boundaries encoded by  ep_offset  and  ep_len , so that a sampled window never straddles two episodes.
+Table   5   summarizes the resulting statistics.
+Figure 3:  Task overview. Each row shows one representative trajectory per benchmark, sampled uniformly in time from its start (leftmost) to its end (rightmost).
+Table 5:  Statistics of the four datasets (full versions, as used in all experiments). Frames denotes the total number of transitions; Traj. length reports the minimum, mean, and maximum episode lengths.
+Dataset
+Simulator
+Action dim    A  A
+#Episodes
+Traj. length (min/mean/max)
+#Frames
+Tworoom
+2  2   D navigation
+2  2
+10,000  10{,}000
+31  /   92  /   101   31\,/\,92\,/\,101
+920,809  920{,}809
+Reacher
+DMControl Reacher
+2  2
+10,000  10{,}000
+201  /   201  /   201   201\,/\,201\,/\,201
+2,010,000  2{,}010{,}000
+PushT
+PushT
+2  2
+18,685  18{,}685
+49  /   125  /   246   49\,/\,125\,/\,246
+2,336,736  2{,}336{,}736
+OGCube
+OGBench Cube
+5  5
+10,000  10{,}000
+201  /   201  /   201   201\,/\,201\,/\,201
+2,010,000  2{,}010{,}000
+Observations and actions.
+All observations are     224  ×  224   224\times 224    RGB frames, which we feed to the encoder at full resolution. The action space is a    2  2   D command for Tworoom, Reacher, and PushT, and a    5  5   D vector (end-effector pose and gripper) for OGCube. Reacher and OGCube episodes have a fixed length of    201  201    steps, whereas Tworoom and PushT episodes vary in length because they terminate upon task completion.
+Action normalization.
+Before training, every non-pixel input—the actions, and (where used) proprioception and state—is standardized per dimension by its dataset statistics, i.e., a z-score transform to zero mean and unit variance, applied identically to all four tasks. Figure   4   plots the corresponding  raw  (pre-normalization) action distributions, which differ markedly across tasks because of their different behavior policies.
+Figure 4:  Per-dimension marginal action distributions for each dataset. The dashed line marks the density of a uniform distribution over     [    −  1   ,  1   ]   [-1,1]   .
+Training samples and monitoring split.
+Following the data-loading and window-level splitting procedure
+of the LeWM implementation  ( Maes et al., 2026 ) , we enumerate all valid windows within each trajectory and randomly assign 90% to training and 10% to validation.
+Each window contains    W  W    observations sampled at intervals of
+k  k    raw environment steps, together with aligned action chunks.
+The loader requires     W  ​  k   Wk    consecutive raw time-step records, while
+the first and last sampled observations are separated by      (   W  −  1   )   ​  k   (W-1)k
+environment steps.
+We replace NaN action entries with zeros during training rather
+than dropping the window.
+A.2  Evaluation Protocol
+We follow the dataset-based evaluation procedure of the LeWM
+implementation  ( Maes et al., 2026 ) . For each evaluation episode, we sample a start state from an offline trajectory and define the goal as the environment state    K  K    steps ahead (at index     start  +  K   \texttt{start}+K   ). The agent acts for at most    B  B    steps. We count an episode as successful only if the simulator reports task completion within this budget Table   6  ; latent-space distance is not used to determine success.
+Table 6:  Environment-defined success criteria.
+Task
+Success condition
+Tworoom
+Agent-to-goal position distance       <  16   <16    in environment coordinates.
+Reacher
+Absolute error of every joint angle       <  0.05   <0.05    radians relative to the target configuration.
+PushT
+Euclidean error over agent and block positions       <  20   <20   , and wrapped block orientation error       <   π  /  9    <\pi/9   .
+OGCube
+Target cube-to-goal position distance       ≤   0.04  ​  m    \leq 0.04\,\mathrm{m}   .
+By varying the goal offset    K  K    and the step budget    B  B   , we obtain four difficulty tiers (Table   7  ; Figure   5  ), ranging from  easy  (    K  =  10   K{=}10   ) to  extreme  (    K  =  75   K{=}75   ): a larger    K  K    yields a longer-horizon goal. The extreme tier is the most challenging setting and is where our method attains its largest margin over the baselines.
+Table 7:  Difficulty tiers used in evaluation. Each tier is fully specified by the
+goal offset    K  K    (how many steps ahead of the start the goal is placed) and the
+step budget    B  B    (the maximum number of environment steps allowed).
+Tier
+Goal offset    K  K
+Step budget    B  B
+easy
+10  10
+25  25
+default
+25  25
+50  50
+hard
+50  50
+100  100
+extreme
+75  75
+100  100
+Figure 5:  Visualization of the four difficulty tiers. For each task (row), we fix a
+start observation (leftmost column) and show the goal observation placed    K  K    steps
+ahead of it, one per tier. A larger offset    K  K    moves the goal farther along the
+trajectory and demands a longer planning horizon.
+A.3  CEM Planning Protocol
+CEM plays several roles in our experiments. It is used as the
+test-time optimizer for the CEM-based world-model baselines, as the computational reference in the planning-efficiency experiment, and as a controlled planner ablation in which HIJP’s amortized action
+generation is replaced by search over the same learned representation and forward dynamics. We therefore use one shared CEM configuration throughout all experiments.
+At every replanning point, CEM maintains a factorized Gaussian distribution over action sequences of length     H  =  5   H=5    model steps.
+Each model-level action contains a chunk of     k  =  5   k=5    environment actions, so every candidate sequence covers      H  ​  k   =  25   Hk=25    environment steps. The sampling distribution is initialized with zero mean and sampling scale    1.0  1.0   .
+At each optimization iteration, CEM samples     N  =  300   N=300    candidate action sequences and rolls each candidate forward through the corresponding latent dynamics model.
+Candidates are ranked by the squared distance between their terminal predicted latent and the encoded goal,
+J  goal    (   𝐚   0  :   H  −  1     )   =    ‖    z  ^   H    (   𝐚   0  :   H  −  1     )   −   z  g   ‖   2  2   .   J_{\mathrm{goal}}(\mathbf{a}_{0:H-1})=\left\|\hat{z}_{H}(\mathbf{a}_{0:H-1})-z_{g}\right\|_{2}^{2}.
+(10)
+The best    30  30    candidates are retained as elites and are used to refit the sampling mean and scale. This procedure is repeated for     I  =  30   I=30    iterations.
+Consequently, every CEM replanning call evaluates
+N  ​  I   =   300  ×  30   =  9,000   NI=300\times 30=9{,}000
+(11)
+candidate action sequences. Since every sequence contains     H  =  5   H=5    latent transitions, this corresponds to approximately
+N  ​  I  ​  H   =   300  ×  30  ×  5   =  45,000   NIH=300\times 30\times 5=45{,}000
+(12)
+latent transition predictions per environment and replanning call.
+These operations are evaluated in parallel on the GPU; therefore, the sequence count should not be interpreted as an equivalent wall-clock slowdown.
+All CEM comparisons use the same planning horizon, action chunking, interaction budget, and replanning cadence as HIJP. Both planners generate     H  =  5   H=5    model-level actions and execute     R  =  5   R=5    model steps, equivalent to      R  ​  k   =  25   Rk=25    environment steps, before observing the environment and replanning. Under the interaction budgets     B  ∈   {   25  ,  50  ,  100  ,  100   }    B\in\{25,50,100,100\}   , the maximum numbers of replanning calls are therefore    1  1   ,    2  2   ,    4  4   , and    4  4    for the easy, default, hard, and extreme tiers, respectively.
+For the main LeWM baseline, CEM searches using LeWM’s own encoder and forward model. In the controlled CEM ablation, it instead searches using HIJP’s encoder and forward model while completely disabling the inverse-dynamics action generator. This controlled comparison changes only the test-time planning mechanism and therefore isolates the effect of amortized inverse-guided planning.
+Table 8:
+CEM configuration shared across all CEM-based comparisons.
+Hyperparameter
+Value
+Planning horizon    H  H
+5  5    model steps
+Action-chunk length    k  k
+5  5    environment steps
+Execution stride    R  R
+5  5    model steps
+Environment steps per replan     R  ​  k   Rk
+25  25
+Candidate sequences    N  N
+300  300
+Optimization iterations    I  I
+30  30
+Elite sequences
+30  30
+Initial sampling scale
+1.0  1.0
+Sequence evaluations per replan
+9,000  9{,}000
+Latent transitions per replan
+45,000  45{,}000
+Appendix B  Implementation Details
+This appendix provides a concrete instantiation of the method.
+We first specify the temporal discretization and the architecture of each component, then describe the training procedure and test-time planning protocol.
+Unless stated otherwise, the architecture and temporal settings are shared across all four tasks.
+B.1  Temporal Discretization and Data Flow
+The environments expose atomic actions      u  s   ∈   ℝ   d  a     u_{s}\in\mathbb{R}^{d_{a}}    at raw environment step    s  s   . The world model operates at a coarser temporal resolution by grouping    k  k    consecutive atomic actions into one model-level action chunk,
+𝐚  t   =   (   u   t  ​  k    ,   u    t  ​  k   +  1    ,  …  ,   u     t  ​  k   +  k   −  1    )   ∈   ℝ   k  ​   d  a      .   \mathbf{a}_{t}=\left(u_{tk},u_{tk+1},\ldots,u_{tk+k-1}\right)\in\mathbb{R}^{kd_{a}}.
+We use     k  =  5   k=5    for every task.
+Consequently, one transition in the learned latent dynamics corresponds to five raw environment steps. The raw action dimension is      d  a   =  2   d_{a}=2    for Tworoom, Reacher, and PushT, and      d  a   =  5   d_{a}=5    for OGCube.
+The effective model-level action dimension is therefore      d  𝐚   =   k  ​   d  a    ∈   {  10  ,  25  }    d_{\mathbf{a}}=kd_{a}\in\{10,25\}   .
+A training sample contains    W  W    temporally subsampled observations, together with their aligned model-level action chunks.     k  =  5   k=5    raw environment steps separate consecutive observations. Thus, the first and final observations in a window are separated by      (   W  −  1   )   ​  k   (W-1)k    raw environment steps.
+Before being passed to the model, images are converted to floating-point, normalized using ImageNet statistics, and resized to     224  ×  224   224\times 224   .
+Following the LeWM preprocessing procedure, continuous actions are standardized per dimension using statistics computed from the training dataset.
+At execution time, predicted action chunks are mapped back to
+the environment action space using the inverse transformation.
+B.2  Architecture
+The implementation contains a visual encoder     f  θ   f_{\theta}   , an action encoder     ψ  ω   \psi_{\omega}   , a latent predictor     g  ϕ   g_{\phi}   , and a hindsight-conditioned inverse-dynamics head     h  ξ   h_{\xi}   .
+The action encoder is absorbed into the notation of     g  ϕ   g_{\phi}    in the main text and is made explicit here.
+Visual encoder     f  θ   f_{\theta}   .
+We instantiate     f  θ   f_{\theta}    as a ViT-Tiny ( Dosovitskiy et al., 2021 )  trained from scratch, without a pretrained backbone or an external visual representation.
+It contains    12  12    Transformer layers,    3  3    attention heads, and a hidden width of    192  192   .
+Each     224  ×  224   224\times 224    observation is divided into patches of size     14  ×  14   14\times 14   .
+We take the final [CLS]  token and pass it through a projection MLP      →   →  192   192\!\rightarrow\!2048\!\rightarrow\!192   .
+Batch normalization is applied at the hidden layer of the projection head.
+The resulting vector is the latent representation      z  t   =    f  θ   ​   (   o  t   )    ∈   ℝ  192    z_{t}=f_{\theta}(o_{t})\in\mathbb{R}^{192}   .
+Action encoder     ψ  ω   \psi_{\omega}   .
+The flattened action chunk      𝐚  t   ∈   ℝ   d  𝐚     \mathbf{a}_{t}\in\mathbb{R}^{d_{\mathbf{a}}}    is embedded in two stages.
+A pointwise linear projection, implemented as a     1  ×  1   1\times 1    one-dimensional convolution, first maps      d  𝐚   →  10   d_{\mathbf{a}}\!\rightarrow\!10   .
+A two-layer MLP then maps      →   →  192   10\!\rightarrow\!768\!\rightarrow\!192   , with a SiLU activation between the two linear layers.
+This produces an action embedding with the same width as the visual latent,       e  t  a   =    ψ  ω   ​   (   𝐚  t   )    ∈   ℝ  192    .   e_{t}^{a}=\psi_{\omega}(\mathbf{a}_{t})\in\mathbb{R}^{192}.
+latent predictor     g  ϕ   g_{\phi}   .
+The predictor is a six-layer autoregressive Transformer with causal self-attention.
+It operates at width    192  192   , uses    16  16    attention heads with head dimension    64  64   , an MLP width of    2048  2048   , attention and MLP dropout of    0.1  0.1   , and learned positional embeddings.
+The predictor receives a sequence of latent tokens and a time-aligned sequence of action embeddings.
+Actions condition every Transformer block through AdaLN-Zero ( Peebles and Xie, 2023 ) .
+In particular, each action embedding produces the shift, scale, and residual-gating parameters for both the attention and feed-forward sublayers; the modulation layer is initialized to zero.
+The predictor uses at most the     m  =  3   m=3    most recent latent-action pairs.
+For a context ending at time    t  t   , its last output is interpreted as the prediction of the next latent,      z  ^    t  +  1    =   g  ϕ    (   z     t  −  m   +  1   :  t    ,   ψ  ω    (   𝐚     t  −  m   +  1   :  t    )   )   ,   \hat{z}_{t+1}=g_{\phi}\!\left(z_{t-m+1:t},\psi_{\omega}(\mathbf{a}_{t-m+1:t})\right),   where the context is shortened near the beginning of a sequence.
+The Transformer output is mapped to the latent space by a second projection MLP      →   →  192   192\!\rightarrow\!2048\!\rightarrow\!192    with batch normalization.
+Inverse-dynamics head     h  ξ   h_{\xi}   .
+The inverse head receives the concatenation of a current latent and a future goal latent,
+h  ξ   :    ℝ   2  ​  d    →   ℝ   d  𝐚      ,     𝐚  ^   i   =    h  ξ   ​   (   z  i   ,   z   i  +  κ    )      .   h_{\xi}:\mathbb{R}^{2d}\rightarrow\mathbb{R}^{d_{\mathbf{a}}},\qquad\hat{\mathbf{a}}_{i}=h_{\xi}(z_{i},z_{i+\kappa}).
+(13)
+It consists of three hidden layers of width    512  512   .
+Each hidden layer applies a linear transformation, LayerNorm, and GELU activation.
+A final linear layer maps to the model-level action dimension     d  𝐚   d_{\mathbf{a}}   .
+Table 9:  Architecture used in all experiments.
+Component
+Configuration
+Latent width
+d  =  192   d=192
+Visual encoder     f  θ   f_{\theta}
+ViT-Tiny;    12  12    layers;    3  3    heads; width    192  192   ; patch size    14  14   ;
+224  ×  224   224\times 224    inputs; trained from scratch
+Visual projection
+MLP      →   →  192   192\!\rightarrow\!2048\!\rightarrow\!192    with batch
+normalization
+Action encoder     ψ  ω   \psi_{\omega}
+1  ×  1   1\times 1    convolution      d  𝐚   →  10   d_{\mathbf{a}}\!\rightarrow\!10   , followed by
+MLP      →   →  192   10\!\rightarrow\!768\!\rightarrow\!192    with SiLU
+latent predictor     g  ϕ   g_{\phi}
+Causal Transformer;    6  6    layers;    16  16    heads; head dimension    64  64   ;
+MLP width    2048  2048   ; dropout    0.1  0.1   ; AdaLN-Zero conditioning
+Predictor context
+m  =  3   m=3    latent–action pairs
+Predictor projection
+MLP      →   →  192   192\!\rightarrow\!2048\!\rightarrow\!192    with batch
+normalization
+Inverse head     h  ξ   h_{\xi}
+Three hidden layers of width    512  512   , each with LayerNorm and GELU
+Frameskip
+k  =  5   k=5    raw environment steps per model step
+B.3  Training
+All four modules are optimized jointly.
+Training combines next-latent prediction, anti-collapse representation regularization, hindsight-conditioned inverse dynamics, and action transition consistency.
+latent prediction loss.
+Although every sampled window contains     W  =  16   W=16    model steps, the prediction term uses a causal context of length     m  =  3   m=3   .
+Specifically, the predictor consumes     z      0  :   m  −  1      z_{0:m-1}    and the corresponding action embeddings and predicts the shifted latent sequence     z      1  :  m     z_{1:m}   .
+Because causal attention is used, the output at position    t  t    only depends on positions up to    t  t   .
+Denoting the three predicted latents by      z  ^       1  :  m     \hat{z}_{1:m}   , we compute
+ℒ  pred   =    1   B  ​  m  ​  d    ​    ∑   b  =  1   B     ∑   t  =  0    m  −  1      ‖     z  ^    t  +  1    (  b  )    −   z   t  +  1    (  b  )     ‖   2  2       .   \mathcal{L}_{\mathrm{pred}}=\frac{1}{Bmd}\sum_{b=1}^{B}\sum_{t=0}^{m-1}\left\|\hat{z}_{t+1}^{(b)}-z_{t+1}^{(b)}\right\|_{2}^{2}.
+(14)
+The target latent in this term remains attached to the computational graph, for which we do not employ a momentum target encoder.
+Anti-collapse regularization.
+We apply the Sketch Isotropic Gaussian Regularizer (SIGReg;   Balestriero and LeCun, 2025  ) to the latents from all    W  W    frames, including frames that are not used by Equation   14  .
+SIGReg measures the discrepancy between random one-dimensional projections of the latent distribution and a standard Gaussian reference distribution.
+We use    17  17    integration knots and    1024  1024    random projections.
+Applying this objective over the complete window increases the number and temporal diversity of latent samples contributing to the regularizer.
+Hindsight-conditioned inverse dynamics.
+For each training window, we independently sample     N  a   N_{a}    anchor–goal pairs.
+For the    n  n   -th pair, the anchor is sampled uniformly from all positions with an available successor,
+i  n   ∼   Unif  ⁡   {   0  ,  …  ,   W  −  2    }     .   i_{n}\sim\operatorname{Unif}\{0,\ldots,W-2\}.
+(15)
+Conditioned on     i  n   i_{n}   , we sample a future offset uniformly from the remaining
+part of the window,
+κ  n   ∼   Unif  ⁡   {   1  ,  …  ,   W  −  1  −   i  n     }     .   \kappa_{n}\sim\operatorname{Unif}\{1,\ldots,W-1-i_{n}\}.
+(16)
+The resulting goal index is      i  n   +   κ  n    i_{n}+\kappa_{n}   .
+Sampling is performed independently for each pair and each element of the minibatch, so anchors may repeat.
+This procedure exposes the inverse head to goal conditions at multiple temporal distances while requiring no rewards or task labels.
+For every sampled pair, the inverse head predicts the demonstrated action chunk executed at the anchor,
+𝐚  ^    i  n    =    h  ξ   ​   (   z   i  n    ,   z    i  n   +   κ  n     )     .   \hat{\mathbf{a}}_{i_{n}}=h_{\xi}(z_{i_{n}},z_{i_{n}+\kappa_{n}}).
+(17)
+Importantly, the target is the immediate action chunk     𝐚   i  n    \mathbf{a}_{i_{n}}   , not the sequence of actions between the anchor and the sampled goal.
+The inverse loss is the element-wise mean absolute error
+ℒ  inv   =    1   B  ​   N  a   ​   d  𝐚     ​    ∑   b  =  1   B     ∑   n  =  1    N  a      ‖     𝐚  ^    i  n    (  b  )    −   𝐚   i  n    (  b  )     ‖   1       .   \mathcal{L}_{\mathrm{inv}}=\frac{1}{BN_{a}d_{\mathbf{a}}}\sum_{b=1}^{B}\sum_{n=1}^{N_{a}}\left\|\hat{\mathbf{a}}_{i_{n}}^{(b)}-\mathbf{a}_{i_{n}}^{(b)}\right\|_{1}.
+(18)
+Action transition consistency loss.
+The action consistency term couples the inverse head to the learned latent prediction.
+For each hindsight pair, we embed the predicted action and perform a single predictor step from the anchor latent,
+z  ~     i  n   +  1    =    g  ϕ   ​   (   z   i  n    ,    ψ  ω   ​   (    𝐚  ^    i  n    )    )     .   \tilde{z}_{i_{n}+1}=g_{\phi}\!\left(z_{i_{n}},\psi_{\omega}(\hat{\mathbf{a}}_{i_{n}})\right).
+(19)
+We then regress the prediction toward the actual next latent using
+ℒ  cyc   =    1   B  ​   N  a   ​  d    ​    ∑   b  =  1   B     ∑   n  =  1    N  a      ‖     z  ~     i  n   +  1    (  b  )    −    sg   ⁡   [   z    i  n   +  1    (  b  )    ]     ‖   2  2       ,   \mathcal{L}_{\mathrm{cyc}}=\frac{1}{BN_{a}d}\sum_{b=1}^{B}\sum_{n=1}^{N_{a}}\left\|\tilde{z}_{i_{n}+1}^{(b)}-\operatorname{sg}\!\left[z_{i_{n}+1}^{(b)}\right]\right\|_{2}^{2},
+(20)
+where    sg  \operatorname{sg}    denotes stop-gradient.
+Gradients from this loss update     h  ξ   h_{\xi}   ,     ψ  ω   \psi_{\omega}   ,     g  ϕ   g_{\phi}   , and     f  θ   f_{\theta}   , as well as the anchor-side representation through     z   i  n    z_{i_{n}}   , while the next-latent target is detached.
+The single-step context used by this term is supported by the same autoregressive predictor used for the length-   m  m    forward objective.
+Joint objective.
+The complete objective is
+ℒ  =    ℒ  pred   +    λ  reg   ​   ℒ  sigreg    +    λ  inv   ​   ℒ  inv    +    λ  cyc   ​   ℒ  cyc      .   \mathcal{L}=\mathcal{L}_{\mathrm{pred}}+\lambda_{\mathrm{reg}}\mathcal{L}_{\mathrm{sigreg}}+\lambda_{\mathrm{inv}}\mathcal{L}_{\mathrm{inv}}+\lambda_{\mathrm{cyc}}\mathcal{L}_{\mathrm{cyc}}.
+(21)
+All terms are averaged over the batch and their corresponding temporal, anchor, action, or latent dimensions before the weights are applied.
+Optimization.
+We use a single AdamW optimizer for     f  θ   f_{\theta}   ,     ψ  ω   \psi_{\omega}   ,     g  ϕ   g_{\phi}   , and     h  ξ   h_{\xi}   , with weight decay     10   −  3    10^{-3}   .
+Training uses bf16 mixed precision and a global gradient-norm clipping threshold of    1.0  1.0   .
+The learning rate follows a linear-warmup cosine-decay schedule, starting from zero.
+With ten training epochs, the configured warmup is rounded to one epoch, followed by cosine decay to zero.
+Training and validation use the LeWM-based window-level split
+described in the dataset appendix   A  , with a 90%/10% ratio and
+random seed    3072  3072   .
+Algorithm   1   summarizes the complete training procedure, and Table   10   reports the task-specific training parameters.
+Table 10:
+Task-specific training hyperparameters for HIJP.
+Task
+Batch
+Learning rate
+N  a   N_{a}
+λ  reg   \lambda_{\mathrm{reg}}
+λ  inv   \lambda_{\mathrm{inv}}
+λ  cyc   \lambda_{\mathrm{cyc}}
+Epochs
+Scheduler
+TwoRoom
+48
+3  ×   10   −  5     3\times 10^{-5}
+4
+0.09
+1.0
+0.05
+10
+LWC
+Reacher
+48
+5  ×   10   −  5     5\times 10^{-5}
+4
+0.09
+1.0
+0.10
+10
+LWC
+PushT
+48
+5  ×   10   −  5     5\times 10^{-5}
+4
+0.09
+1.0
+0.10
+10
+LWC
+OGCube
+32
+5  ×   10   −  5     5\times 10^{-5}
+4
+0.09
+1.0
+0.10
+10
+LWC
+B.4  Planning and Receding-Horizon Execution
+At each replanning point, the current observation and target observation are encoded as
+z  0   =    f  θ   ​   (   o  t   )     ,    z  g   =    f  θ   ​   (   o  g   )      .   z_{0}=f_{\theta}(o_{t}),\qquad z_{g}=f_{\theta}(o_{g}).
+(22)
+Starting from     z  0   z_{0}   , we construct an    H  H   -step action sequence through the autoregressive latent rollout introduced in the main text.
+At rollout step    j  j   , the inverse head first predicts the action chunk that is consistent with moving from the current imagined latent toward the goal latent,
+𝐚  j   =    h  ξ   ​   (   z  j   ,   z  g   )     .   \mathbf{a}_{j}=h_{\xi}(z_{j},z_{g}).
+(23)
+The action chunk is embedded and passed to the latent predictor, which advances the imagined state,
+z   j  +  1    =   g  ϕ    (   z    max  ⁡   (  0  ,    j  −  m   +  1   )    :  j    ,   ψ  ω    (   𝐚    max  ⁡   (  0  ,    j  −  m   +  1   )    :  j    )   )   .   z_{j+1}=g_{\phi}\!\left(z_{\max(0,j-m+1):j},\psi_{\omega}(\mathbf{a}_{\max(0,j-m+1):j})\right).
+(24)
+The available context grows from one to    m  m    latent-action pairs during the first rollout steps and is subsequently truncated to the most recent     m  =  3   m=3    pairs.
+Thus, constructing an    H  H   -step plan requires    H  H    evaluations of the inverse head and    H  H    autoregressive evaluations of the latent predictor.
+No population of candidate action sequences or iterative test-time action optimization is required.
+We use     H  =  5   H=5    model steps for every task.
+Since each model-level action contains     k  =  5   k=5    atomic actions, one predicted plan covers      H  ​  k   =  25   Hk=25    raw environment steps.
+The controller operates in a receding-horizon loop with execution stride     R  =  5   R=5    model steps.
+It therefore executes the complete predicted action sequence, re-encodes the resulting observation, and constructs a new plan.
+The target observation remains unchanged within an episode but is encoded together with the current observation at each replanning point.
+Execution terminates when the task-specific success condition is satisfied, or the allotted budget of raw environment steps is exhausted. Algorithm   2   gives the complete procedure.
+Table   11   collects the planning settings shared across the
+four tasks. Keeping these settings unchanged ensures that differences across
+tasks do not arise from task-specific planning budgets or model-rollout depths.
+Table 11:  Planning settings shared across all four tasks.
+Hyperparameter
+Value
+Planning horizon    H  H
+5  5    model steps
+Action-chunk length    k  k
+5  5    raw steps
+Raw planning horizon     H  ​  k   Hk
+25  25    environment steps
+Execution stride    R  R
+5  5    model steps
+Predictor context    m  m
+3  3    latent–action pairs
+Algorithm 1    Joint training with hindsight-conditioned inverse dynamics
+1:
+Offline dataset    𝒟  \mathcal{D}   ; window length    W  W   ;
+predictor context length    m  m   ; number of hindsight pairs     N  a   N_{a}
+2:
+for  each training minibatch  do
+3:
+Sample a minibatch of windows
+(   o   0  :   W  −  1     ,   𝐚   0  :   W  −  2     )   ∼  𝒟   (o_{0:W-1},\mathbf{a}_{0:W-2})\sim\mathcal{D}
+4:
+Encode observations and actions:
+z  t   ←    f  θ   ​   (   o  t   )     z_{t}\leftarrow f_{\theta}(o_{t})    and
+e  t  a   ←    ψ  ω   ​   (   𝐚  t   )     e_{t}^{a}\leftarrow\psi_{\omega}(\mathbf{a}_{t})
+5:
+Predict the next latents:
+z  ^    1  :  m    ←   g  ϕ    (   z   0  :   m  −  1     ,   e   0  :   m  −  1    a   )    \hat{z}_{1:m}\leftarrow g_{\phi}(z_{0:m-1},e^{a}_{0:m-1})
+6:
+ℒ  pred   ←  MSE   (    z  ^    1  :  m    ,   z   1  :  m    )    \mathcal{L}_{\mathrm{pred}}\leftarrow\operatorname{MSE}(\hat{z}_{1:m},z_{1:m})
+7:
+ℒ  sigreg   ←  SIGReg   (   z   0  :   W  −  1     )    \mathcal{L}_{\mathrm{sigreg}}\leftarrow\operatorname{SIGReg}(z_{0:W-1})
+8:
+for       n  =  1   ,  …  ,   N  a    n=1,\ldots,N_{a}     do
+9:
+Sample
+i  n   ∼   Unif  ⁡   {   0  ,  …  ,   W  −  2    }     i_{n}\sim\operatorname{Unif}\{0,\ldots,W-2\}
+10:
+Sample
+κ  n   ∼   Unif  ⁡   {   1  ,  …  ,   W  −  1  −   i  n     }     \kappa_{n}\sim\operatorname{Unif}\{1,\ldots,W-1-i_{n}\}
+11:
+Predict the demonstrated action:
+𝐚  ^    i  n    ←    h  ξ   ​   (   z   i  n    ,   z    i  n   +   κ  n     )     \hat{\mathbf{a}}_{i_{n}}\leftarrow h_{\xi}(z_{i_{n}},z_{i_{n}+\kappa_{n}})
+12:
+Predict the successor latent:
+z  ~     i  n   +  1    ←    g  ϕ   ​   (   z   i  n    ,    ψ  ω   ​   (    𝐚  ^    i  n    )    )     \tilde{z}_{i_{n}+1}\leftarrow g_{\phi}\!\left(z_{i_{n}},\psi_{\omega}(\hat{\mathbf{a}}_{i_{n}})\right)
+13:
+end   for
+14:
+ℒ  inv   ←    MAE   ⁡   (    {    𝐚  ^    i  n    }    n  =  1    N  a    ,    {   𝐚   i  n    }    n  =  1    N  a    )     \mathcal{L}_{\mathrm{inv}}\leftarrow\operatorname{MAE}\!\left(\{\hat{\mathbf{a}}_{i_{n}}\}_{n=1}^{N_{a}},\{\mathbf{a}_{i_{n}}\}_{n=1}^{N_{a}}\right)
+15:
+ℒ  cyc   ←    MSE   ⁡   (    {    z  ~     i  n   +  1    }    n  =  1    N  a    ,    {   sg  ⁡   [   z    i  n   +  1    ]    }    n  =  1    N  a    )     \mathcal{L}_{\mathrm{cyc}}\leftarrow\operatorname{MSE}\!\left(\{\tilde{z}_{i_{n}+1}\}_{n=1}^{N_{a}},\{\operatorname{sg}[z_{i_{n}+1}]\}_{n=1}^{N_{a}}\right)
+16:
+ℒ  ←    ℒ  pred   +    λ  reg   ​   ℒ  sigreg    +    λ  inv   ​   ℒ  inv    +    λ  cyc   ​   ℒ  cyc      \mathcal{L}\leftarrow\mathcal{L}_{\mathrm{pred}}+\lambda_{\mathrm{reg}}\mathcal{L}_{\mathrm{sigreg}}+\lambda_{\mathrm{inv}}\mathcal{L}_{\mathrm{inv}}+\lambda_{\mathrm{cyc}}\mathcal{L}_{\mathrm{cyc}}
+17:
+Update     (  θ  ,  ω  ,  ϕ  ,  ξ  )   (\theta,\omega,\phi,\xi)    with AdamW
+18:
+end   for
+Algorithm 2    Amortized latent planning
+1:
+Trained     f  θ   f_{\theta}   ,     ψ  ω   \psi_{\omega}   ,     g  ϕ   g_{\phi}   , and     h  ξ   h_{\xi}   ;
+goal observation     o  g   o_{g}   ; planning horizon    H  H   ;
+execution stride    R  R   ; action-chunk length    k  k   ;
+predictor context length    m  m   ; raw-step budget    B  B
+2:
+n  ←  0   n\leftarrow 0
+3:
+while      n  <  B   n<B    and the task has not succeeded  do
+4:
+Encode the current and goal observations:
+z  ^   0   ←    f  θ   ​   (   o  t   )     \hat{z}_{0}\leftarrow f_{\theta}(o_{t})   ,
+z  g   ←    f  θ   ​   (   o  g   )     z_{g}\leftarrow f_{\theta}(o_{g})
+5:
+Initialize
+𝒵  ←   [    z  ^   0   ]    \mathcal{Z}\leftarrow[\hat{z}_{0}]    and
+𝒜  ←   [  ]    \mathcal{A}\leftarrow[\,]
+6:
+for       j  =  0   ,  …  ,   H  −  1    j=0,\ldots,H-1     do
+7:
+Predict an action chunk:
+𝐚  j   ←    h  ξ   ​   (    z  ^   j   ,   z  g   )     \mathbf{a}_{j}\leftarrow h_{\xi}(\hat{z}_{j},z_{g})
+8:
+Append     𝐚  j   \mathbf{a}_{j}    to    𝒜  \mathcal{A}
+9:
+Predict the next imagined latent:
+z  ^    j  +  1    ←    g  ϕ   ​   (    tail  m   ⁡   (  𝒵  )    ,    ψ  ω   ​   (    tail  m   ⁡   (  𝒜  )    )    )     \hat{z}_{j+1}\leftarrow g_{\phi}\!\left(\operatorname{tail}_{m}(\mathcal{Z}),\psi_{\omega}\!\left(\operatorname{tail}_{m}(\mathcal{A})\right)\right)
+10:
+Append      z  ^    j  +  1    \hat{z}_{j+1}    to    𝒵  \mathcal{Z}
+11:
+end   for
+12:
+q  ←   min  ⁡   {  R  ,  H  ,   ⌊    B  −  n   k   ⌋   }     q\leftarrow\min\left\{R,\,H,\,\left\lfloor\frac{B-n}{k}\right\rfloor\right\}
+13:
+Execute the first    q  q    action chunks in    𝒜  \mathcal{A}   ,
+terminating early if the task succeeds
+14:
+Let    s  s    be the number of raw environment steps
+actually executed
+15:
+n  ←   n  +  s    n\leftarrow n+s
+16:
+end   while
+Appendix C  Loss Weight Ablation
+To examine the sensitivity of HIJP to the weighting coefficients of its training objectives, we conduct ablations on the inverse dynamics loss weight     λ  inv   \lambda_{\mathrm{inv}}    and the cycle-consistency loss weight     λ  cyc   \lambda_{\mathrm{cyc}}   .
+Specifically, we vary      λ  inv   ∈   {   0  ,  0.1  ,  1.0  ,  2.0   }    \lambda_{\mathrm{inv}}\in\{0,0.1,1.0,2.0\}    while fixing      λ  cyc   =  0.1   \lambda_{\mathrm{cyc}}=0.1   , and vary      λ  cyc   ∈   {   0  ,  0.01  ,  0.1  ,  0.2   }    \lambda_{\mathrm{cyc}}\in\{0,0.01,0.1,0.2\}    while fixing      λ  inv   =  1.0   \lambda_{\mathrm{inv}}=1.0   .
+We train a separate model for each weight setting and evaluate the resulting checkpoint using the same evaluation protocol as in the main experiments. All training and evaluation settings follow Section   4.1  .
+We report the results on Reacher, PushT, and OGCube in Table   12  .
+We omit TwoRoom because its performance is already saturated under our evaluation protocol, with near 100% success rates, making it uninformative for distinguishing different loss-weight choices.
+Table 12:  Success rates (%) for the loss-weight ablations. Avg. reports the arithmetic mean across the four difficulty tiers, and Overall Avg. averages all 12 task–tier combinations. Bold column headers indicate the default weights. In the Overall Avg. row, the best and second-best results within each weight group are shown in  bold  and  underlined text .
+λ  inv   \lambda_{\mathrm{inv}}    (     λ  cyc   =  0.1   \lambda_{\mathrm{cyc}}=0.1   )
+λ  cyc   \lambda_{\mathrm{cyc}}    (     λ  inv   =  1.0   \lambda_{\mathrm{inv}}=1.0   )
+Task
+Tier
+0
+0.1
+1.0
+2.0
+0
+0.01
+0.1
+0.2
+Reacher
+Easy
+36%
+42%
+48%
+44%
+34%
+52%
+48%
+44%
+Default
+72%
+88%
+92%
+78%
+78%
+86%
+92%
+64%
+Hard
+90%
+86%
+92%
+90%
+84%
+90%
+92%
+78%
+Extreme
+86%
+98%
+94%
+90%
+94%
+90%
+94%
+92%
+Avg.
+71.0%
+78.5%
+81.5%
+75.5%
+72.5%
+79.5%
+81.5%
+69.5%
+PushT
+Easy
+36%
+90%
+90%
+92%
+84%
+90%
+90%
+92%
+Default
+6%
+78%
+80%
+82%
+78%
+72%
+80%
+82%
+Hard
+0%
+56%
+66%
+62%
+54%
+56%
+66%
+68%
+Extreme
+0%
+36%
+42%
+58%
+22%
+58%
+42%
+44%
+Avg.
+10.5%
+65.0%
+69.5%
+73.5%
+59.5%
+69.0%
+69.5%
+71.5%
+OGCube
+Easy
+80%
+94%
+98%
+100%
+98%
+96%
+98%
+92%
+Default
+56%
+94%
+96%
+94%
+96%
+94%
+96%
+92%
+Hard
+46%
+90%
+96%
+96%
+94%
+96%
+96%
+94%
+Extreme
+40%
+96%
+96%
+96%
+96%
+94%
+96%
+94%
+Avg.
+55.5%
+93.5%
+96.5%
+96.5%
+96.0%
+95.0%
+96.5%
+93.0%
+Overall Avg.
+45.7%
+79.0%
+82.5%
+81.8%
+76.0%
+81.2%
+82.5%
+78.0%
+The default setting,      λ  inv   =  1.0   \lambda_{\mathrm{inv}}=1.0    and      λ  cyc   =  0.1   \lambda_{\mathrm{cyc}}=0.1   , achieves the highest overall average success rate of 82.5%.
+Increasing     λ  inv   \lambda_{\mathrm{inv}}    to 2.0 improves performance on PushT and matches the default performance on OGCube, but reduces performance on Reacher, resulting in a slightly lower overall average of 81.8%.
+Similarly, decreasing     λ  cyc   \lambda_{\mathrm{cyc}}    to 0.01 or increasing it to 0.2 yields overall averages of 81.2% and 78.0%, respectively.
+These results indicate that the default weights provide the best overall balance across the three evaluated environments.
+Appendix D  Action Smoothness Experiment
+This appendix provides the complete evaluation protocol, metric definition, and per-tier results for the action-smoothness study in Section   4.6  . We evaluate HIJP, its CEM ablation, and LeWM on the four domains described in Appendix   A  .
+For each domain and difficulty tier, all methods are evaluated closed-loop on the same set of start–goal instances. Instance sampling depends only on the dataset, random seed, goal offset, and number of evaluation episodes, and is therefore independent of the evaluated method.
+We use 50 episodes per task with random seed 42. The four difficulty tiers are defined by the goal-offset and step-budget pairs     (  K  ,  B  )   (K,B)    listed in Table   7  .
+Each rollout is allowed to run for the corresponding step budget, and we record the action executed at every environment step.
+HIJP directly executes the amortized plan produced by its inverse-guided controller and performs no test-time search.
+The CEM ablation uses the same learned representation and predictive model as HIJP, but replaces inverse-guided action generation with CEM planning.
+LeWM, which performs CEM planning over its own forward model, is included as an additional reference.
+All methods use the same control frequency and normalized action space.
+Table 13:   Action jerk across four environments and four difficulty tiers. Avg. reports the arithmetic mean across tiers, with average ratios computed from the per-tier ratios. The lowest jerk in each row is shown in  bold .
+HIJP
+CEM (ablation)
+LeWM
+Environment
+Tier
+Jerk    ↓  \downarrow
+Jerk    ↓  \downarrow
+Ratio    ↑  \uparrow
+Jerk    ↓  \downarrow
+Ratio    ↑  \uparrow
+PushT
+easy
+0.038
+0.439
+11.5   ×  \times
+0.451
+11.8   ×  \times
+default
+0.040
+0.450
+11.2   ×  \times
+0.407
+10.1   ×  \times
+hard
+0.048
+0.611
+12.8   ×  \times
+0.595
+12.4   ×  \times
+extreme
+0.048
+0.697
+14.7   ×  \times
+0.724
+15.2   ×  \times
+Avg.
+0.043
+0.549
+12.6   ×  \times
+0.544
+12.4   ×  \times
+TwoRoom
+easy
+0.082
+1.838
+22.4   ×  \times
+1.774
+21.6   ×  \times
+default
+0.084
+2.216
+26.3   ×  \times
+2.191
+26.0   ×  \times
+hard
+0.120
+2.325
+19.4   ×  \times
+2.428
+20.2   ×  \times
+extreme
+0.146
+2.503
+17.1   ×  \times
+2.558
+17.5   ×  \times
+Avg.
+0.108
+2.220
+21.3   ×  \times
+2.238
+21.3   ×  \times
+Reacher
+easy
+0.040
+1.179
+29.5   ×  \times
+1.099
+27.5   ×  \times
+default
+0.046
+1.174
+25.6   ×  \times
+1.114
+24.3   ×  \times
+hard
+0.046
+1.200
+26.3   ×  \times
+1.134
+24.8   ×  \times
+extreme
+0.046
+1.222
+26.4   ×  \times
+1.134
+24.5   ×  \times
+Avg.
+0.045
+1.194
+27.0   ×  \times
+1.120
+25.3   ×  \times
+OGCube
+easy
+0.126
+1.596
+12.7   ×  \times
+1.517
+12.1   ×  \times
+default
+0.073
+1.843
+25.2   ×  \times
+1.886
+25.8   ×  \times
+hard
+0.088
+1.848
+21.0   ×  \times
+2.159
+24.5   ×  \times
+extreme
+0.099
+2.065
+20.9   ×  \times
+2.304
+23.3   ×  \times
+Avg.
+0.097
+1.838
+19.9   ×  \times
+1.967
+21.4   ×  \times
+If an episode reaches its goal before exhausting the step budget, we truncate its action sequence at the first success step and compute smoothness only over the executed prefix.
+This avoids either rewarding or penalizing post-success idling and measures the controls actually required to complete the task.
+Unsuccessful episodes contribute their full budget-length action sequences.
+Let      a   1  :  T    =   (   a  1   ,  …  ,   a  T   )    a_{1:T}=(a_{1},\ldots,a_{T})    denote the executed action sequence of an episode.
+We define  action jerk  as the mean     ℓ  2   \ell_{2}    norm of the discrete second difference:
+Jerk   (   a   1  :  T    )   =   1   T  −  2     ∑   t  =  3   T     ‖   a  t   −  2   a   t  −  1    +   a   t  −  2    ‖   2   .   \operatorname{Jerk}(a_{1:T})=\frac{1}{T-2}\sum_{t=3}^{T}\left\lVert a_{t}-2a_{t-1}+a_{t-2}\right\rVert_{2}.
+(25)
+Lower values indicate smoother controls.
+A temporally constant or linearly varying action sequence has zero second difference, whereas oscillatory or abruptly changing commands produce a large value.
+For each method, environment, and difficulty tier, we compute
+Eq.    25   independently for every episode and report the mean across episodes. Let      J  ¯   m   \overline{J}_{m}    denote this episode-averaged jerk for method    m  m   .
+We additionally report
+R  CEM   =     J  ¯   CEM     J  ¯   HIJP     ,    R  LeWM   =     J  ¯   LeWM     J  ¯   HIJP      .   R_{\mathrm{CEM}}=\frac{\overline{J}_{\mathrm{CEM}}}{\overline{J}_{\mathrm{HIJP}}},\qquad R_{\mathrm{LeWM}}=\frac{\overline{J}_{\mathrm{LeWM}}}{\overline{J}_{\mathrm{HIJP}}}.
+(26)
+A ratio greater than one indicates that HIJP produces smoother actions than the corresponding CEM-based planner. Because all methods are evaluated in the same normalized action space, their jerk values are directly comparable.
+Table   13   reports the results across all four difficulty tiers. HIJP consistently achieves lower action jerk than both its CEM ablation and LeWM.
+On the extreme tier (    K  =  75   K=75   ), the CEM ablation produces     14.7  ×   14.7\times   –    26.4  ×   26.4\times    higher jerk than HIJP, despite sharing the same learned representation and predictive model.
+This controlled comparison shows that the smoothness advantage primarily arises from HIJP’s amortized inverse-guided planning rather than from a difference in learned representations.
+LeWM exhibits a similar level of jerk to the CEM ablation, suggesting that independently optimizing successive plans with CEM can introduce substantial temporal discontinuities into the executed controls.
+Appendix E  Visualizing Planned Trajectories
+For each environment, we run our planner (Algorithm   2  ) from a start observation toward a goal observation and record the resulting trajectory.
+Figures   6  –  9   visualize these
+rollouts as pixel-space filmstrips.
+Each figure corresponds to one environment and contains four difficulty tiers: Easy, Default, Hard, and Extreme.
+The tiers are defined by goal offsets of    10  10   ,    25  25   ,    50  50   , and    75  75    environment steps, with corresponding planning budgets of    25  25   ,    50  50   ,    100  100   , and    100  100    steps, respectively.
+For each tier, we show one rollout using    16  16    frames sampled uniformly over its execution, from     0  %   0\%    to     100  %   100\%   , and arrange them in two rows of eight frames.
+The goal observation appears separately on the right, outlined in red.
+The label beside each tier indicates whether the rollout reaches the goal within the planning budget.
+Figure 6:  Representative trajectories produced by HIJP in the Push-T environment.
+Figure 7:  Representative trajectories produced by HIJP in the Reacher environment.
+Figure 8:  Representative trajectories produced by HIJP in the TwoRoom environment.
+Figure 9:  Representative trajectories produced by HIJP in the OGCube environment.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue"  (
+)  button, located in the page header.
+Tip:  You can select the relevant text first, to include it in your report.
+Our team has already identified  the following issues . We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a  list of packages that need conversion , and welcome  developer contributions .
+We gratefully acknowledge support from
+our  major funders ,
+member institutions   ,    ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status  (opens in new tab)
+Major funding support from

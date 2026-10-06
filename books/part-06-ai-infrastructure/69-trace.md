@@ -71,7 +71,22 @@ inference.request
 
 当业务代码不能改动、阶段标签又未显式暴露时，可把采集对象从 wrapper 扩展到正在运行的解释器 frame 生命周期：一条[受限实现报告](https://arxiv.org/html/2601.09258v1)在可附着的 CPython 进程上读取函数与调用上下文，再发出 semantic range 关联 GPU API/kernel；分布式通信还需保存 logical communicator/rank 到 node/device 的映射，不能仅靠一张 call graph 推定慢通信在哪两张卡之间。这增加运行时 hook、参考计数与内容暴露、拓扑映射维护的压力，工程支持域必须绑定解释器、framework/backend 和权限；未覆盖的 native/non-Python 路径应保留 unknown 或退回显式 range。时钟与关联边仍按下节独立校验，纳秒字段不是精度保证，trace/residual 只提供定位线索，不认证因果瓶颈或请求 SLO。<!-- source-family:SF-2026-ARXIV-2601-09258 -->
 
+当运行环境和显式metadata都未随文本保存时，采集路径还可前移到合作模型的生成过程：每个agent以自己的key和token上下文派生置换/扰动，轻量改变logits后采样；离线auditor持有agent-key-tokenizer验证registry，再对最终token序列作窗口评分和变点检测，估计片段来源。这不是任意文本的无条件身份识别，更不是不可伪造签名；key、tokenizer与生成分支未绑定时应保留Unknown，不能由风格相似度补造执行事实。它恢复的是线性文本片段及其相邻转移，隐藏通信、并发happens-before、工具副作用和原wall-clock仍须显式trace承担。<!-- source-family:SF-2026-ARXIV-2603-17445 -->
+
+[合作式文本归因的受限证据](https://arxiv.org/html/2603.17445v5)仍有身份/边界误差，重写或替换生成会侵蚀信号；恢复speaker不等识别失败的因果责任，保留turn骨架的边界扰动也不认证完全metadata丢失。原v1检测式与只观察文本的接口未闭合，当前稿收窄到registry下的token统计与诱导转移图，不能倒写为完整执行拓扑复原。生成质量、片段归因、转移结构与下游失败诊断须各验收，生成扰动、key管理、全候选评分和复跑均计费；抗伪造、任意语义改写和生产SLO未获证明。高风险执行、无法合作instrument或身份不稳定时，保留原显式span/日志与人工审计，不让文本归因替代权限或发布gate。<!-- source-family:SF-2026-ARXIV-2603-17445 -->
+
 字段可见后，资源轨迹的形状仍不能代替容量和失败验收。把内存曲线减去baseline、取累计最大值、再按峰值归一化，便于比较相对分配阶段，却会隐藏释放与绝对bytes；用DTW对齐还能比较阶段形状，却不保留原wall-clock间隔。因此normalized profile必须与raw bytes、实际peak、runtime和测量scope并列保存，OOM、timeout、instrumentation error也要留在原运行人口，不能从成功运行的形状相近推断容量风险降低。仅覆盖Python对象或按filename归属的instrument不能默认为native/device全部内存；少量重复的平均形状也不能认证tail安全。采集、重复执行及对齐增加开销，scope或clock不可恢复时应退回带unknown的原测量证据，再由资源与Cost owner判断容量和代价，而非由单位峰值曲线宣称优化成功。<!-- source-family:SF-2026-ARXIV-2601-01215 -->
+
+### 从请求阶段走到 GPU 执行证据
+
+请求 span 能指出慢在 Prefill 或 Decode，却不能独自说明时间花在主机提交、GPU 计算、搬运还是同步。系统级 profiler 先把 CPU 线程、CUDA API、device kernel、memory copy 与 stream 放在可关联的时间线上；NVTX range 提供语义标签，不是额外的执行完成凭证。CPU API duration 不等于异步 GPU execution duration，多 stream、多 rank 的 kernel 累计时间也不能相加当作请求 wall-clock。应先找真正延长依赖路径的区间，再对可疑 kernel 采集计算、访存与 occupancy 等计数器；更多 kernel 或较低 occupancy 本身不是根因。
+
+这里存在两种不同的控制边界：采集路径如何接入目标进程，以及已经接入后何时开始记录。延迟采集、NVTX range 或 `cudaProfilerStart/Stop` 可以排除初始化与预热，但不能据此推定工具能给任意已运行进程补齐 CUDA tracing。Nsight Systems 官方的 stopped-state attach 示例让进程在应用代码执行前等待；其 system-wide CUDA trace 也限定 eligible、采集开始后启动的进程，不是对任意存活 PID 的无条件追踪。多进程 serving 还须核实真正 GPU worker/rank 的覆盖，不能只看到 API server 就宣告 device trace 完整。[采集窗口与入口约束](https://docs.nvidia.com/nsight-systems/UserGuide/index.html#preparing-your-application-for-profiling)应绑定工具版本、平台、权限与实际 collector；不具备接入条件时，保留现有日志/metrics 的有限证据，或在获授权的测试副本启动时建立采集路径。
+
+系统时间线与 kernel counters 是两份互补证据，不应一次打开全部 sensors。Nsight Compute 的某些计数器组合需要多 pass replay，可能保存/恢复内存或重跑应用；重放条件及并发行为与正常 serving 不同。因此先用短时间线定位候选，再在可复现、隔离的范围内采集必要 counters，正式吞吐与尾延迟则由无 profiler 的 reference run 验收。[Replay 与采集开销](https://docs.nvidia.com/nsight-compute/ProfilingGuide/index.html#replay)增加时间、内存与调试成本；不支持重放、权限不足或扰动不可接受时，回退较粗观测并保留 unknown。采集停止、报告导出与目标进程终止还须分别确认，不能把诊断操作变成未经授权的服务停止。
+
+Collective的kernel同时变慢时，还须观察运行中的数据进度，而不只等所有rank留下结束时间：可按operation、group、rank、channel/QP绑定GPU备好、交给传输和传输完成的累计状态，再沿跨rank及跨group的数据/控制依赖回溯，区分最早停止推进的分支与被它阻塞的下游。[Mycroft的受限训练诊断](https://arxiv.org/html/2509.03018v1)将completion记录与周期进度配对，支持缩小可疑flow或设备范围，不使单一计数差成为本地/远端硬件根因或自动替换许可。少量rank触发依赖异常传播和拓扑覆盖，正常计算重叠、异构流量或日志缺失仍需框架执行语义及补充trace，不能把缺endlog或所有rank同慢直接判成网络故障。采集补丁、共享buffer、上传/保留、全局查询和人工核验都有费用，检测与归因也使用不同起点的时钟；有限注入及未完整标因的生产统计不授任意拓扑的固定误报率或实时保证。支持、日志身份或因果边不足时，保留multiple candidates与原kernel/框架stack、网络和硬件检查，以独立确认决定修复，不由启发式归因提交生产变更。
+<!-- source-family:SF-2025-ARXIV-2509-03018 -->
 
 ## Context Propagation 与异步边界
 
@@ -110,6 +125,10 @@ Head sampling 在请求开始时决定，成本低，却可能错过后来变慢
 - cost/privacy limits。
 
 只保留慢请求会失去正常基线；只随机采样又可能错过稀有安全事件。
+
+从公开仓库恢复 Agent 轨迹时，采样之前还存在观察资格：配置文件、commit coauthor、branch 名称与 PR label 是不同通道，出现标记不等于已执行，没有标记也不等于未使用。配置可能被忽略，coauthor 取决工具设置，完整交互可能需要认证；共享约定文件更不能唯一识别某个模型。因此 trace population 必须同时保存通道、可见权限、缺失状态和提取规则，区分执行事实与身份推断，不把跨通道缺失补成零活动。<!-- source-family:SF-2026-ARXIV-2601-18345 -->
+
+观察资格改变后，结果排名也可能变化。[一项 coding-trace 方法报告](https://arxiv.org/html/2601.18345v1)引用的 PR 切片在排除 draft 后出现排名逆转，只支持该过滤人口下的证据警示，不能冒充本文重新复现的完整 Agent 能力或人类监督因果。跨通道恢复、权限审计和失败/draft 样本保留都增加采集成本；公开记录不足时应标 Unknown，保留原观测和不同分母，而非用可见成功比例给真实部署签发可靠性。短且显式 instrumentation 完整的流程仍可用普通 trace，仓库标记只作恢复线索。
 
 ## Metrics、Logs 与 Traces 的互补
 
@@ -178,6 +197,8 @@ Graph owner 只拥有诊断 view，不得改写原 trace；candidate root cause 
 因此输出必须保留被排除/保留 span、规则/模型版本、置信与复现实验。Full-trace manual review 在高风险事故、
 依赖图不完整或低频新故障中仍是正确旧方案；结构化 slicing 适合重复 pipeline 和可见度足够的系统。STRACE
 提供了 structure-guided attribution 的实验性证据，不证明 observational trace 本身已经识别真实因果。
+
+原trace暂缺可靠dependency graph时，诊断也可以先用两次prefill提出待检查的step：第一遍给每step保有界prefix，以NLL异常找symptom、attention提名上游候选；第二遍恢复这些候选与症状的完整内容，重算信号并按多症状一致性排序。这避免先生成长诊断文本，却不把“不解码”变成零推理费用，也不让attention或surprise成为因果估计器。[MASPrism的受限失败trace对照](https://arxiv.org/html/2605.07509v1)只支持该诊断view，短trace另法更好，混合成功/失败人口的误报校准仍缺；本地SLM与hosted API的时延差不能单归算法。Openweight信号访问、prefix遗漏、attention驻留、两遍完整计算与人工复原都付费；关键内容漏选、内部信号或校准不可得时保留fulltrace/显式graph和人工调查，候选rank不取得修复执行权，真实原因仍需受控重放与独立outcome验证。<!-- source-family:SF-2026-ARXIV-2605-07509 -->
 
 Root-cause graph 之外还有一类更直接的审计问题：Agent 是否明知 system instruction 或 task rule，却在后续决策中
 违背它。只检查最终 outcome 会把“偶然成功但过程越权”和“合规执行但环境失败”混在一起；只对单个 span 打分又
@@ -325,6 +346,8 @@ Trace 从请求 spans 演进到跨 model、tool、workflow 和 environment 的�
 
 大模型服务的请求会依次穿过 host queue、runtime、CUDA launch、Kernel 与通信层；任何单层 trace 都可能把上游等待误判为本层瓶颈。系统应让同一 request identity 贯穿 NVTX/CUPTI/日志事件，先重建 call-chain tree 和时间有向关系，再通过重放、配置干预或受控对照验证 causal slice。这样用更高采集成本与时钟同步复杂度换取可操作根因；层间关联缺失、采样过稀或没有干预时，只能报告 correlation。`arXiv:2608.01975v1` 仅在作者环境中支持该诊断流程，不证明自动搜索得到的路径就是生产事故唯一根因。<!-- source-family:SF-2026-ARXIV-2608-01975 -->
 
+受控对照必须先声明所隔离的变量。例如排查[动态 LoRA 的 runtime 路径](../part-05-inference-system/50-vllm.md#dynamic-lora-进入-runtime-后改变了什么)，先确认 merge 后的有效权重与数值/质量边界，再比较同一 adapter 的 merged 与 dynamic 执行；之后在相同总负载下比较单 adapter 与混合 adapter，才能区分增量算子成本和混合调度影响。每组保存输入、实际输出长度、到达顺序、cache 预热/命中人口、precision、runtime/kernel revision 与 GPU 拓扑；换 TP 时设备集合和通信路径也进入对照合同。固定单实例 TP 的比较回答执行路径差额，固定总 GPU 预算的比较才可交给[Cost](./70-cost.md#推理成本)评估资源效率，不能把两份独立 merged 实例的吞吐直接与资源更少的共享实例比较。离线 kernel trace 只解释局部，在线队列、streaming 与 SLO 仍要独立测量；单变量改善后须回到原 workload 重验，不能由一张更整齐的时间线宣布性能问题已经解决。
+
 ## 小结
 
 Trace 让请求经过多个控制面和数据面时仍保留 causal context。好的 tracing 记录关键边界与决策，而不是最大化 span 数量。下一章将可观测事实转换为成本归因与优化约束。
@@ -336,6 +359,12 @@ Trace 让请求经过多个控制面和数据面时仍保留 causal context。�
 Taxonomy 会压平边界行为，自动分类器也可能错标；现有大规模描述分析不能证明分类完备。未覆盖行为应保留原始事件并允许 taxonomy 演进，分类不确定时回退 raw trace 而非强行归类。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2605-07509` — Daily2026-05-12补May11，MASPrism exact-v1必要§3/4/T1–5/5，2+2+2=6。只采双prefill选择性恢复与diagnostic routing，保failed-only误报校准缺口、prefix遗漏、AG反退、OOM混杂和local5090/hosted API不同协议，全部模型访问/驻留/人工费用；未核代码/复现。reader必要Source/actual owner/逐字PRE通过，root单段窄授后保存，actual非writer POST待执行。 截至本轮后续有效结论：本项独立reader已实际完整新增/直接两侧/本人注非writer POST通过，root已接纳并释放指定窄位；此前“待”仅过程时态，本次纯行政同步、不重Source/正文、不预授DAY。
+
+- Work“AI Engineering”首次对话审计（2026-10-13）：采用 GPU 时间线/counter/reference-run 分层、采集入口与采集窗口分离、multi-LoRA/TP 对照身份。Primary evidence：[Nsight Systems User Guide](https://docs.nvidia.com/nsight-systems/UserGuide/index.html) 的 Focused Profiling、CUDA Trace、CLI lifecycle 与 Launch Processes in Stopped State；[Nsight Compute Profiling Guide](https://docs.nvidia.com/nsight-compute/ProfilingGuide/index.html) 的 Sections/Replay；[vLLM v0.11.0 Profiling](https://docs.vllm.ai/en/v0.11.0/contributing/profiling.html) 的 worker/launch、离线与 server 示例。正文对照设计属于工程推导，不是官方 benchmark 或故障定位结果；未在 GPU 上采集、运行命令或验证生产 PID attach，不授特定硬件/TP 性能、通用热附着或生产 SLO 保证。功能目录与版本化 CLI 不逐项搬入长期正文。
+
+- `SF-2026-ARXIV-2601-18345` — Daily `2026-01-28` 增量；[exact-v1](https://arxiv.org/html/2601.18345v1) §4/5.2–5.3，repo 观察 channels 与 draft population 的测量差额，3+1+2=6；本文引用切片不是独立重现，标记不唯一识别 model/human oversight。jan28_review 实际必要原源/owner/PRE通过，root先授窄锁；jan28_review 实际完整局部邻接、新两段与自身末注POST通过，不授DAY；未核artifact或复现实验。
 
 - `SF-2026-ARXIV-2601-01215` — Daily `2026-01-07`；[MemoryDynamics exact-v1](https://arxiv.org/html/2601.01215v1) §3.2/3.3/3.5、4.1–4.3、5.3–5.5及必要language/budget/aggregate补段。3+1+2=6，shape-normalization/DTW与capacity风险的测量反证缺口深入；保baseline/cummax/unit-peak/clock损失、tracemalloc scope和已排除的OOM/timeout/instrument错误，不授N5/r10的tail保障。root实际必要源与Ch69 owner写前及实际一段、邻接与末注非作者POST通过；未运行代码或复现。
 
@@ -419,3 +448,7 @@ Taxonomy 会压平边界行为，自动分类器也可能错标；现有大规�
 - `SF-2026-ARXIV-2601-09258` — Daily `2026-01-16`；[exact-v1](https://arxiv.org/html/2601.09258v1) §4.1.1–4.1.3、§4.2/5–6/8。6分具体采集接口gap深入，采用 CPython frame→semantic GPU range/API 及 logical rank→physical device 关联；支持域/隐私维护与 unknown fallback 是工程推导，不冒称全解释器、framework、权限或 native 路径实测。scheduler 未进 predictor，normal-baseline warmup/阈值及 suspicion 非 cause；不采用零开销、request SLO 或生产诊断保证。root 已实际必要源/目标 owner 写前核通过，实际新增一段、前后衔接及末注非作者 POST通过；未运行 artifact 或复现实验。
 
 - `SF-2026-ARXIV-2602-22103` — Daily `2026-02-27`；[PASTA exact-v1](https://arxiv.org/html/2602.22103v1) §3/§5.3/§7，blocks34–35/102–104/127。2+2+2=6，device-summary collector位置差额深入；仅kernel访问对象聚合，非完整时序/live峰值/causaltruth；CPU单线程与SASS解析混杂、capture scope/扰动/全profile费用及rawtrace回退近文。root必要源/actual owner PRE通过并授单段窄锁；作者正文/完整邻接/自身末注已实际顺读，root非作者已实际独读正文/完整邻接/自身末注，POST通过，窄锁释放；未核实现或复现，非日级Gate。
+
+- `SF-2026-ARXIV-2603-17445` — [IET v1](https://arxiv.org/html/2603.17445v1)必要方法/评价/直接限制；[current v5](https://arxiv.org/html/2603.17445v5)仅受影响registry/观察token/segment与诱导转移、关键评价和非对抗反侧。采用合作式文本来源恢复接口，不采完整execution/通信拓扑、因果责任、抗伪造、无损或生产SLO；保人口/quality回归与全费，未核代码/复现。
+
+- `SF-2025-ARXIV-2509-03018` — Boyle，Daily2025-09-05补Sep4；[exact-v1](https://arxiv.org/html/2509.03018v1)S3–S9/Alg1–2/T1–5/必要caption，2+2+2=6。只运行中CCL多阶段进度与阻塞传播的trace证据；保有限rank触发/不对称语义、可疑非根因、时钟分母/生产FPR未知及collector全费。未核NCCL补丁/日志/像素/复现，不授自动修复或生产SLO；root57必要Source/具体owner/79.1原逐字PRE及本精确位通过，本一段/独立marker/本人注已真实保存并自读完整两侧，root61一次实际完整新增/完整两侧/本人注非writer POST已通过，精确位即时生效释放；本注仅同步既成事实，不预DAY。

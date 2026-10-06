@@ -1,0 +1,2932 @@
+Decoder-based Sense Knowledge Distillation
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract.
+1
+Introduction
+2
+Related Works
+Decoder-only language models:
+Sense Embeddings:
+Knowledge distillation:
+3
+DSKD Sense Dictionary
+3.1
+Token-level Sense Dictionary Construction
+3.2
+Lexical Relationship Construction
+3.3
+Word-level Sense Composition
+4
+DSKD Methodology
+4.1
+Conceptual Overview
+Standard autoregressive language modeling.
+Knowledge Distillation.
+Decoder-based Sense Knowledge Distillation.
+4.2
+Training Progress
+Sense dictionary lookup
+Semantic consistency loss
+4.3
+Inference
+5
+Experiments
+5.1
+Experiment Setup
+5.2
+Dataset Setup
+5.3
+Performance
+6
+Ablation Studies
+6.1
+Number of Layers
+Number of total student layers
+Number of training student layers
+6.2
+Sense Selections
+Number of clusters
+k
+k
+Number of selected senses during training
+κ
+\kappa
+6.3
+Training Hyperparameters
+DSKD loss coefficient
+β
+p
+\beta_{p}
+and
+β
+n
+\beta_{n}
+7
+Time and Space
+8
+Conclusion and Future Works
+References
+A
+Open Source Code
+B
+Dataset
+B.1
+Dictionary and Thesauri
+B.2
+Evaluation Benchmark
+C
+Model Hyparameters
+C.1
+KD Hyparameter Ablation Study
+C.2
+DSKD Hyparameter Tables
+D
+Model Comparison: Space/Parameters and Time
+License: arXiv.org perpetual non-exclusive license
+arXiv:2602.22351v1 [cs.CL] 25 Feb 2026
+Decoder-based Sense Knowledge Distillation
+DOI:
+XXXXXXX.XXXXXXX
+Conference:
+Make sure to enter the correct
+conference title from your rights confirmation email; June 03–05,
+2018; Woodstock, NY
+ISBN:
+978-1-4503-XXXX-X/2026/06
+CCS:
+Computing methodologies Natural language generation
+Qitong Wang
+email:
+wangq19@rpi.edu
+Affiliation:
+Rensselaer Polytechnic Institute
+,
+Troy
+,
+New York
+,
+USA
+,
+Mohammed J. Zaki
+email:
+zaki@cs.rpi.edu
+Affiliation:
+Rensselaer Polytechnic Institute
+,
+Troy
+,
+New York
+,
+USA
+,
+Georgios Kollias
+email:
+gkollias@us.ibm.com
+Affiliation:
+IBM Research
+,
+Yorktown Heights
+,
+New York
+,
+USA
+and
+Vasileios Kalantzis
+email:
+vkal@ibm.com
+Affiliation:
+IBM Research
+,
+Yorktown Heights
+,
+New York
+,
+USA
+Received  5 June 2009
+Abstract.
+Large language models (LLMs) learn contextual embeddings that capture rich semantic information, yet they often overlook structured lexical knowledge such as word senses and relationships. Prior work has shown that incorporating sense dictionaries can improve knowledge distillation for encoder models, but their application to decoder as generative models remains challenging. In this paper, we introduce Decoder-based Sense Knowledge Distillation (DSKD), a framework that integrates lexical resources into the training of decoder-style LLMs without requiring dictionary lookup at inference time. Extensive experiments on diverse benchmarks demonstrate that DSKD significantly enhances knowledge distillation performance for decoders, enabling generative models to inherit structured semantics while maintaining efficient training.
+Keywords:
+Large Language Models, Representation Learning, Knowledge Distillation, Natural Language Processing
+1.
+Introduction
+Figure 1.
+Distribution of selected word embeddings from Llama-3-8B-Instruct
+(
+Dubey et al., 2024
+)
+on Wikipedia dump
+(
+WikipediaCorpus, 2024
+)
+, with t-SNE
+(
+Van der Maaten and Hinton, 2008
+)
+for visualization. Semantically related tokens form coherent clusters in the embedding space: synonyms of
+red
+(e.g.,
+ruby
+,
+crimson
+,
+vermilion
+,
+scarlet
+) appear in a compact region, while vehicle-related tokens such as
+bus
+and
+car
+occupy a separate neighborhood. For words that are decomposed into multiple subword tokens by the tokenizer (e.g.,
+vermilion
+,
+scarlet
+), a composed representation is used for visualization; details are provided in Section 3.1. This structured organization suggests that contextual embeddings encode discrete semantic regularities.
+Language models are trained on vast collections of books, web pages, research papers, and other textual sources
+(
+Minaee et al., 2024
+;
+Liu et al., 2024b
+)
+. They learn to generate contextual embeddings, where the representation of each token depends on its surrounding context
+(
+Devlin et al., 2019
+;
+Dubey et al., 2024
+;
+Jiang et al., 2023
+)
+. Importantly, these embeddings are not randomly distributed. Recent work on Sense Knowledge Distillation (SKD)
+(
+Wang et al., 2025
+)
+is built on the observation that contextual embeddings produced by large language models, while continuous and highly variable, tend to form structured clusters that correspond to a limited number of semantic senses for each token. To exploit this property, SKD first constructs a sense dictionary by collecting contextual embeddings from the final hidden layer of a pretrained teacher model over a large corpus. For each token in the vocabulary, its contextual embeddings are grouped using a clustering algorithm, and the resulting cluster centroids are treated as discrete sense embeddings representing the different meanings of that token. Given this sense dictionary, SKD formulates knowledge distillation as a sense prediction problem: for each token occurrence, the teacher model identifies the most compatible sense embedding, and the student model is trained to reproduce this selection via a classification-style objective, thereby learning to align its representations with the teacher’s sense-level structure.
+Nevertheless, SKD exhibits two notable limitations: (1) its adaptation to decoder architectures requires an additional LLM2Vec wrapper
+(
+BehnamGhader et al., 2024
+)
+that converts the decoder into an encoder, and (2) it remains confined to classification tasks, as it lacks the capacity for free-form token generation. To address these limitations, we explore the applicability of the sense dictionary to decoder models. Figure
+1
+illustrates that tokens with similar semantics in the Llama-3-8B-Instruct
+(
+Dubey et al., 2024
+)
+decoder model cluster coherently within the embedding space. For instance, synonyms of
+red
+(e.g.,
+ruby
+,
+crimson
+,
+vermilion
+) form a compact cluster, while vehicle-related tokens (e.g.,
+bus
+,
+car
+) occupy distinct region. In addition, words that are semantically ambiguous or participate in multiple contexts exhibit overlapping neighborhoods, suggesting the presence of multiple latent senses. This structured organization of the embedding space motivates the construction of a sense dictionary, where clustered representations can serve as discrete sense prototypes for downstream modeling.
+However, directly applying SKD to decoders is challenging. In encoder models, the hidden state at position
+t
+t
+corresponds directly to the input token, so the model can utilize the sense dictionary for the token at position
+t
+t
+in the final hidden layer. In contrast, decoder models can generate any token from the entire vocabulary, so it is impractical to use the whole sense dictionary during inference for each position. To address this limitation, we use the sense dictionary as external knowledge during training instead of replacement for contextual embeddings. Thus, the sense dictionary serves solely as an external resource to support the training of the student model, which is fully self-contained – given an input corpus, it can independently generate text in the same manner as a standard language model. In addition, inspired by HG2Vec
+(
+Wang and Zaki, 2022
+)
+, which leverages thesauri to capture lexical relations, we employ synonym and antonym relationships to strengthen the training framework.
+We introduce the Decoder-based Sense Knowledge Distillation (DSKD) method that bridges word-level lexical knowledge with token blevel training for decoder-style large language models. Unlike prior approaches, DSKD allows generative models to inherit structured semantics from linguistic resources without requiring any additional steps during inference. We demonstrate that DSKD improves the performance of knowledge distillation for decoders and integrates the structured lexical knowledge into large-scale generative models (e.g., it can cut down the training cost by a factor of 2, and yet retain competitive performance). Our main contributions are as follows:
+•
+We propose a new sense-based distillation paradigm for generative or decoder models, where the student model learns from the teacher’s word senses.
+•
+We enhance the sense distillation with root-level lexical information and word-level relationships like synonyms and antonyms as part of the knowledge distillation process for decoder models, leading to improved performance.
+•
+We demonstrate that structured lexical semantics can be injected into decoder-based generative models only during training, without introducing any additional inference-time cost or architectural constraints.
+2.
+Related Works
+Decoder-only language models:
+Modern LLMs are predominantly
+decoder-only
+architectures that rely on autoregressive next-token prediction with causal self-attention
+(
+Naveed et al., 2025
+;
+Matarazzo and Torlone, 2025
+)
+. The GPT series pioneered this paradigm, and GPT-3
+(
+Brown et al., 2020
+)
+demonstrates that large-scale pretraining with transformer decoders achieves strong generalization across tasks. Building on this foundation, Llama 3
+(
+Dubey et al., 2024
+)
+enhances downstream performance and long-context reasoning through efficient rotary position encodings. The Mistral models
+(
+Jiang et al., 2023
+)
+introduce grouped-query attention and sliding-window attention to extend context handling. We use these two as the base LLM models to show the effectiveness of our decoder sense-based distillation.
+Sense Embeddings:
+In contrast to single-vector word embeddings, sense embeddings associate multiple vectors with each word to capture its distinct meanings. LMMS
+(
+Loureiro et al., 2022
+)
+derives sense representations using annotated data. AutoExtend
+(
+Rothe and Schütze, 2015
+)
+focuses on learning embeddings for synsets (a group of synonyms) and lexemes (associating spellings with particular meanings), treating both words and synsets as a sum of their lexemes. Recent studies show that token embeddings remain strong carriers of semantic information
+(
+Mahajan et al., 2024
+;
+Han et al., 2023
+)
+, but these works lack evaluation on standard NLP benchmarks. To address the integration of sense representations into large-scale models, SKD
+(
+Wang et al., 2025
+)
+constructs a sense dictionary by clustering contextual token embeddings and performs sense-aware knowledge distillation, but it requires replacing the contextual embeddings with sense embeddings during inference. In contrast, our DSKD method enhances the sense dictionary with lexical resources such as dictionaries and thesauri to guide the training of a standalone sense-based student model that does not require sense embeddings or replacement during inference.
+Knowledge distillation:
+Knowledge distillation (KD) is a widely used model compression strategy in which a smaller student model is trained to approximate the behavior of a larger teacher model. Thus, KD ideally reduces model size while maintaining competitive performance. Early methods primarily targeted output-layer distribution matching, such as DistilBERT
+(
+Sanh et al., 2019
+)
+and LIGHTPAFF
+(
+Song et al., 2020
+)
+. For decoder-based LLMs, recent KD research proposes novel strategies that redesign training objectives, teacher signals, and training curricula. GKD
+(
+Agarwal et al., 2024
+)
+addresses the train–inference distribution gap by training students on their own generated sequences while using teacher feedback for correction. MCKD
+(
+Zhao et al., 2024
+)
+incorporates cross-partition labeling and multi-stage distillation to improve performance in low-resource semi-supervised sequence generation. Similarly, MD
+(
+Chenglin et al., 2024
+)
+enhances the multi-step reasoning of small language models by introducing well-balanced mixed-thought data from the teacher model, and DDK
+(
+Liu et al., 2024a
+)
+stabilizes and strengthens the distillation process by dynamically adapting the dataset composition according to domain-specific performance differences between the teacher and student models. In contrast, our DSKD method proposes a novel sense-based distillation approach that incorporates word senses along with both synonym and antonym relationships to perform distillation.
+3.
+DSKD Sense Dictionary
+3.1.
+Token-level Sense Dictionary Construction
+We construct a token-level sense dictionary from a pretrained teacher model using the English Wikipedia dump
+(
+WikipediaCorpus, 2024
+)
+as the corpus source along with the training datasets mentioned in Section 5.2. We perform a single forward pass over the corpus and collect contextual embeddings for each token occurrence from the teacher’s last hidden layer, and we retain at most 2000 contextual embeddings per token. For each token
+t
+t
+in the vocabulary, we cluster its collected contextual embeddings using
+k
+k
+-means
+(
+MacQueen, 1967
+)
+. The resulting cluster centroids are treated as
+sense embeddings
+of token
+t
+t
+, each representing a prototypical semantic usage of the token under different contexts. Formally, let
+k
+k
+denote the number of clusters and
+d
+d
+denote the hidden dimension of the teacher model, so the sense embeddings of token
+t
+t
+are defined as
+S
+t
+=
+[
+s
+t
+,
+1
+;
+s
+t
+,
+2
+;
+…
+;
+s
+t
+,
+k
+]
+∈
+ℝ
+k
+×
+d
+.
+S_{t}=[s_{t,1};s_{t,2};\ldots;s_{t,k}]\in\mathbb{R}^{k\times d}.
+where each
+s
+t
+,
+i
+s_{t,i}
+corresponds to a centroid produced by
+k
+k
+-means clustering. This dictionary provides a discrete, compact representation of token-level semantic variability and serves as the foundational semantic resource for the remainder of our framework.
+3.2.
+Lexical Relationship Construction
+While token-level sense embeddings capture semantic regularities from contextual usage, they do not explicitly encode structured lexical knowledge such as synonymy and antonymy. Such relationships provide complementary semantic signals: synonyms indicate semantic similarity beyond surface co-occurrence, while antonyms explicitly encode semantic contrast. Incorporating both types of relations allows us to constrain the semantic space with positive and negative lexical evidence, which is particularly beneficial for supervising representation learning.
+To construct lexical relationships, we follow the pipeline introduced in HG2Vec
+(
+Wang and Zaki, 2022
+)
+and extract synonym and antonym word pairs from two lexical resources: Wiktionary, accessed via Wiktextract
+(
+Ylonen, 2022
+)
+, and Roget’s Thesaurus
+(
+McCutcheon, 2010
+)
+. Each extracted pair is treated as a lexical relationship edge between two words and is labeled as either a synonym or an antonym relation.
+In addition to existing synonym and antonym pairs, we exploit morphological negation as a systematic and productive source of lexical contrast. In English, many oppositional meanings are formed through negating prefixes and suffixes such as un-, in-, dis-, and -less. Leveraging these regular morphological patterns allows us to substantially expand antonym relations, which are otherwise much sparser than synonym relations in standard lexical resources.
+To incorporate morphological negation in a principled manner, we introduce MorphoLEX-English
+(
+Sánchez-Gutiérrez et al., 2018
+)
+, which provides morphological decompositions and base forms. For each word
+w
+w
+that contains a negative prefix or suffix, we recover its corresponding base form
+base
+⁡
+(
+w
+)
+\mathrm{base}(w)
+. Suppose a lexical relation is defined between two words
+w
+1
+w_{1}
+and
+w
+2
+w_{2}
+, and
+w
+1
+w_{1}
+contains a negating prefix or suffix. If
+w
+1
+w_{1}
+and
+w
+2
+w_{2}
+are labeled as synonyms, then the relation between
+base
+⁡
+(
+w
+1
+)
+\mathrm{base}(w_{1})
+and
+w
+2
+w_{2}
+is treated as an antonym relation; conversely, if
+w
+1
+w_{1}
+and
+w
+2
+w_{2}
+are labeled as antonyms, then the relation between
+base
+⁡
+(
+w
+1
+)
+\mathrm{base}(w_{1})
+and
+w
+2
+w_{2}
+is treated as a synonym relation. Table
+1
+presents representative examples illustrating how morphological negation systematically transforms lexical relations.
+Importantly, all lexical relationships are defined entirely at the word level and prior to tokenization. This design avoids the dependence on a specific tokenizer and lets these relations to be applied consistently in later stages of the framework.
+Original Pair
+Original Relationship
+New Pair
+New Relationship
+quit, discontinue
+synonym
+quit, continue
+antonym
+accurate, faultless
+synonym
+accurate, fault
+antonym
+opposite, dissimilar
+synonym
+opposite, similar
+antonym
+variable, unchangeable
+antonym
+variable, changeable
+synonym
+unkind, friendly
+antonym
+kind, friendly
+synonym
+disinterest, zeal
+antonym
+interest, zeal
+synonym
+Table 1.
+Examples of lexical relation transformation under morphological negation.
+3.3.
+Word-level Sense Composition
+In the previous sections, we introduced token-level sense embeddings (Section 3.1) and word-level lexical relations (Section 3.2). In practice, however, a word may correspond to either a single token or multiple tokens depending on the tokenizer. When a word is represented by a single token, its sense embeddings are directly given by the token-level sense dictionary. For words that are decomposed into multiple tokens by the tokenizer, we construct word-level sense embeddings by composing the sense embeddings of their constituent tokens.
+Let a word
+w
+w
+be tokenized into a sequence of tokens
+(
+t
+1
+,
+t
+2
+,
+…
+,
+t
+m
+)
+(t_{1},t_{2},\ldots,t_{m})
+, where
+m
+m
+denotes the number of tokens associated with the word. Recall that each token can have
+k
+k
+senses. If
+m
+=
+1
+m=1
+, the word-level sense embeddings are given directly by the sense embeddings of the only token
+S
+t
+1
+S_{t_{1}}
+. Otherwise, we compose sense embeddings iteratively across the token sequence. We begin with the sense embeddings of the first token,
+S
+t
+1
+S_{t_{1}}
+. At each subsequent step
+h
+=
+2
+,
+…
+,
+m
+h=2,\ldots,m
+, we first compute the mean of the composed sense embeddings obtained from tokens
+(
+t
+1
+,
+…
+,
+t
+h
+−
+1
+)
+(t_{1},\ldots,t_{h-1})
+. Using this mean representation, we perform nearest-neighbor matching under L2 distance with the sense embeddings
+S
+t
+h
+S_{t_{h}}
+of the next token, which can have up to
+k
+k
+senses. The matched sense embeddings are then incorporated into the composed representation. After processing all tokens, the final word-level sense embeddings are obtained by averaging the aligned sense embeddings across the
+m
+m
+tokens:
+S
+~
+w
+=
+1
+m
+​
+∑
+h
+=
+1
+m
+aligned
+​
+(
+S
+t
+h
+)
+.
+\tilde{S}_{w}=\frac{1}{m}\sum_{h=1}^{m}\text{aligned}(S_{t_{h}}).
+This formulation ensures that each token contributes equally to the final word-level representation, avoids exponential attenuation of early tokens, and allows later tokens to iteratively refine sense alignment through nearest-neighbor matching. The resulting word-level sense embeddings provide a coherent semantic representation for words composed of multiple tokens. While this procedure describes the construction of a single
+composite sense, we apply this composition independently for each of
+the
+k
+k
+token-level senses associated with the word. As a result, each word is represented up to
+k
+k
+sense embeddings. Furthermore, we only decompose the word occurs in synonym and antonym pairs and incorporate them into our sense dictionary.
+To bound the complexity of word-level composition during dictionary construction, we limit the maximum number of tokens per word to
+m
+m
+. Table
+2
+reports the keep rates of synonym and antonym relations under different values of
+m
+m
+, where the keep rate denotes the percentage of tokenized lexical relations whose word token length does not exceed
+m
+m
+. As shown in the table, setting
+m
+=
+3
+m=3
+already retains over 90% of synonym antonym relations for both tokenizers. Increasing
+m
+m
+beyond this point yields only marginal improvements in coverage while substantially increasing computational cost. Based on this analysis, we set
+m
+=
+3
+m=3
+in all experiments.
+LLaMA
+Mistral
+m
+m
+Synonym (%)
+Antonym (%)
+Synonym (%)
+Antonym (%)
+1
+48.11
+60.09
+34.97
+41.48
+2
+82.22
+87.03
+72.39
+74.38
+3
+95.06
+97.86
+91.21
+93.96
+4
+98.54
+99.61
+96.96
+98.99
+5
+99.42
+99.91
+98.65
+99.68
+Table 2.
+Sensitivity analysis of the maximum span length
+m
+m
+.
+Keep rate denotes the percentage of tokenized lexical relations whose span length does not exceed
+m
+m
+.
+4.
+DSKD Methodology
+Figure 2.
+Overview of DSKD training: Given an input corpus, the teacher’s last hidden layer
+𝐦
+t
+\mathbf{m}_{t}
+is used to retrieve sense embeddings of the token
+t
++
+1
+t+1
+and its synonyms (positive candidates) and antonyms (negative candidates) from the sense dictionary. The
+κ
+\kappa
+nearest positive and negative embeddings to
+𝐦
+t
+\mathbf{m}_{t}
+are selected, and the student’s last hidden layer
+𝐧
+t
+\mathbf{n}_{t}
+is optimized with a hinge MSE loss. This process aligns the student’s semantic space with the teacher’s sense dictionary.
+4.1.
+Conceptual Overview
+Standard autoregressive language modeling.
+Decoder-only language models are trained with an autoregressive next-token prediction objective. Given a token sequence
+𝐱
+=
+(
+x
+1
+,
+…
+,
+x
+T
+)
+\mathbf{x}=(x_{1},\ldots,x_{T})
+, training minimizes the cross-entropy loss at each position,
+ℒ
+CE
+​
+(
+t
+)
+=
+−
+log
+⁡
+p
+⁡
+(
+x
+t
++
+1
+∣
+x
+≤
+t
+)
+,
+\mathcal{L}_{\mathrm{CE}}(t)\;=\;-\log p(x_{t+1}\mid x_{\leq t}),
+which encourages the hidden representation at position
+t
+t
+to encode the contextual and semantic information for predicting the subsequent token
+x
+t
++
+1
+x_{t+1}
+.
+Although autoregressive models generate new tokens sequentially at inference time, during training this objective is evaluated at every position of the input sequence. As a result, a single forward pass computes hidden representations and token-level predictions for all tokens in the corpus, rather than only generating tokens after the input corpus.
+However, the internal representations formed during training may not always align with the tokens actually presented to the user. For example, given the original corpus sentence,
+"She published her first book at 19, a collection of short fictitious …"
+, a LLaMA-3 decoder may internally generate alternative reconstructions, such as
+"her first book, the 19, and collection of poems stories …"
+in its hidden representations. They are not directly observable at the output level, because during training the model’s generated alternatives are overridden by the original corpus tokens. As a result, when training student models in knowledge distillation, relying solely on teacher hidden outputs may lead to suboptimal semantic alignment. Therefore, using the original corpus as an enhancement provides a more precise and stable semantic target.
+Knowledge Distillation.
+Knowledge distillation trains a compact student model to mimic the behavior of a larger teacher model while preserving the standard autoregressive training structure.
+At each position
+t
+t
+, both the teacher and the student process the same input prefix
+x
+≤
+t
+x_{\leq t}
+, and supervision is applied at the same alignment point through the prediction of the next token
+x
+t
++
+1
+x_{t+1}
+.
+Following prior work
+(
+Wang et al., 2025
+;
+Sanh et al., 2019
+)
+, the training objective at position
+t
+t
+is defined as
+ℒ
+K
+​
+D
+​
+(
+t
+)
+=
+ℒ
+C
+​
+E
+​
+(
+t
+)
++
+α
+⋅
+ℒ
+K
+​
+L
+​
+(
+t
+)
+,
+\mathcal{L}_{KD}(t)=\mathcal{L}_{CE}(t)+\alpha\cdot\mathcal{L}_{KL}(t),
+where
+α
+>
+0
+\alpha>0
+is a hyperparameter.
+The cross-entropy term
+ℒ
+C
+​
+E
+​
+(
+t
+)
+\mathcal{L}_{CE}(t)
+trains the student model to predict the ground-truth next token
+x
+t
++
+1
+x_{t+1}
+, consistent with standard language model training in which each hidden state
+h
+t
+h_{t}
+is optimized to support next-token prediction
+(
+Dubey et al., 2024
+;
+Jiang et al., 2023
+)
+.
+The distillation term
+ℒ
+K
+​
+L
+​
+(
+t
+)
+\mathcal{L}_{KL}(t)
+applies a temperature-scaled softmax to both student and teacher logits and minimizes the Kullback–Leibler divergence
+(
+Kullback and Leibler, 1951
+)
+between the two output distributions, encouraging the student to match the teacher’s predictive behavior. In practice, combining
+ℒ
+C
+​
+E
+​
+(
+t
+)
+\mathcal{L}_{CE}(t)
+and
+ℒ
+K
+​
+L
+​
+(
+t
+)
+\mathcal{L}_{KL}(t)
+provides more stable and effective supervision than using either term alone.
+Decoder-based Sense Knowledge Distillation.
+DSKD strengthens the training process by augmenting standard knowledge distillation with sense-level supervision grounded in the input corpus. At each training position
+t
+t
+, DSKD treats the ground-truth input token as the primary semantic anchor and explicitly incorporates its associated synonym and antonym senses as additional training signals.
+Concretely, instead of relying solely on the teacher model’s output distribution, DSKD leverages a pre-constructed sense dictionary to identify a structured semantic neighborhood for the input token.
+During training, the student is encouraged to encode the hidden representation at position
+t
+t
+in a way that is consistent with this sense neighborhood, thereby reinforcing semantic alignment with the original corpus token and its lexical relations. This supervision is applied at the same token position used for autoregressive next-token prediction and operates entirely within the training phase.
+DSKD does not alter the autoregressive objective or the decoding procedure, but enhances representation learning by explicitly guiding how semantic information from the input corpus is organized in the student’s hidden space. Figure
+2
+provides an overview of the DSKD training pipeline, illustrating how the teacher’s hidden representations are used to retrieve sense embeddings for the ground-truth token and its lexical neighbors, and how these signals guide the optimization of the student model as described next.
+4.2.
+Training Progress
+Sense dictionary lookup
+As described earlier, conventional language modeling optimizes the next-token objective
+ℒ
+C
+​
+E
+\mathcal{L}_{CE}
+.
+We extend this training paradigm by augmenting supervision with lexical relations (extracted as described in Section 3.2) anchored to the ground-truth input tokens.
+Specifically, for each token in the input corpus, we incorporate its associated synonym and antonym information from a pre-constructed sense dictionary as additional training signals. By grounding supervision in the input tokens and their lexical neighborhoods, we encourage the learned representations to capture finer-grained semantic structure beyond exact token-level prediction.
+We randomly sample token positions
+t
+t
+for supervision and retrieve the sense embeddings of the next-token target
+x
+t
++
+1
+x_{t+1}
+from the sense dictionary whenever available, denoted as
+𝐬
+t
++
+1
+\mathbf{s}_{t+1}
+. In our corpus, approximately 14% of tokens have associated synonyms and antonyms. For sampled tokens that have associated synonym or antonym relations, we additionally retrieve the sense embeddings of their synonyms
+𝐲
+t
++
+1
+\mathbf{y}_{t+1}
+and antonyms
+𝐚
+t
++
+1
+\mathbf{a}_{t+1}
+; otherwise, we set
+𝐲
+t
++
+1
+=
+∅
+\mathbf{y}_{t+1}=\varnothing
+and
+𝐚
+t
++
+1
+=
+∅
+\mathbf{a}_{t+1}=\varnothing
+.
+The positive and negative candidate sets are then defined as
+𝒫
+t
++
+1
+=
+𝐬
+t
++
+1
+∪
+𝐲
+t
++
+1
+𝒜
+t
++
+1
+=
+𝐚
+t
++
+1
+\mathcal{P}_{t+1}=\mathbf{s}_{t+1}\cup\mathbf{y}_{t+1}\qquad\mathcal{A}_{t+1}=\mathbf{a}_{t+1}
+Semantic consistency loss
+We introduce semantic consistency loss to encourage the student model’s last hidden state
+𝐧
+t
+\mathbf{n}_{t}
+to stay close to the sense embedding and synonyms of token
+t
++
+1
+t+1
+, while being pushed away from its antonyms.
+However, a single token may correspond to multiple different senses, and thus its synonyms may also convey diverse meanings. Consequently, not all vectors in the positive set
+𝒫
+t
++
+1
+\mathcal{P}_{t+1}
+represent the intended meaning to be predicted. To address this, we use the embedding of the teacher model’s last hidden layer, denoted as
+𝐦
+t
+\mathbf{m}_{t}
+, as guidance. We select the
+κ
+\kappa
+nearest neighbors (we use
+κ
+=
+5
+\kappa=5
+in our experiments) to
+𝐦
+t
+\mathbf{m}_{t}
+from
+𝒫
+t
++
+1
+\mathcal{P}_{t+1}
+as the positive candidates
+𝒫
+t
++
+1
+κ
+\mathcal{P}_{t+1}^{\kappa}
+.
+Likewise, for antonyms, we also select the
+κ
+\kappa
+nearest neighbors to
+𝐦
+t
+\mathbf{m}_{t}
+from
+𝒜
+t
++
+1
+\mathcal{A}_{t+1}
+as the negative set
+𝒜
+t
++
+1
+κ
+\mathcal{A}_{t+1}^{\kappa}
+. Finally, we obtain:
+𝒫
+t
++
+1
+κ
+\displaystyle\mathcal{P}_{t+1}^{\kappa}
+=
+Top
+​
+κ
+𝐩
+∈
+𝒫
+t
++
+1
+⁡
+(
+‖
+𝐦
+t
+−
+𝐩
+‖
+2
+)
+\displaystyle=\operatorname{Top\kappa}_{\mathbf{p}\in\mathcal{P}_{t+1}}\big(\|\mathbf{m}_{t}-\mathbf{p}\|_{2}\big)
+𝒜
+t
++
+1
+κ
+\displaystyle\mathcal{A}_{t+1}^{\kappa}
+=
+Top
+​
+κ
+𝐚
+∈
+𝒜
+t
++
+1
+⁡
+(
+‖
+𝐦
+t
+−
+𝐚
+‖
+2
+)
+\displaystyle=\operatorname{Top\kappa}_{\mathbf{a}\in\mathcal{A}_{t+1}}\big(\|\mathbf{m}_{t}-\mathbf{a}\|_{2}\big)
+For a token at position
+t
+t
+, we minimize the mean-squared error (MSE) between the student representation
+𝐧
+t
+\mathbf{n}_{t}
+and the selected positive candidates
+𝒫
+t
++
+1
+κ
+\mathcal{P}_{t+1}^{\kappa}
+, while enforcing a margin against the selected
+negative candidates
+𝒜
+t
++
+1
+κ
+\mathcal{A}_{t+1}^{\kappa}
+. In particular,
+let
+d
+d
+be the embedding dimension and define
+MSE
+⁡
+(
+𝐱
+,
+𝐲
+)
+=
+1
+d
+​
+∥
+𝐱
+−
+𝐲
+∥
+2
+2
+\operatorname{MSE}(\mathbf{x},\mathbf{y})=\tfrac{1}{d}\,\lVert\mathbf{x}-\mathbf{y}\rVert_{2}^{2}
+With hyperparameters
+β
+p
+>
+0
+\beta_{p}>0
+,
+β
+n
+>
+0
+\beta_{n}>0
+, and margin
+γ
+>
+0
+\gamma>0
+,
+the loss is then expressed as
+ℒ
+sem
+​
+(
+t
+)
+=
+β
+p
+​
+1
+|
+𝒫
+t
++
+1
+κ
+|
+​
+∑
+𝐩
+∈
+𝒫
+t
++
+1
+κ
+MSE
+⁡
+(
+𝐧
+t
+,
+𝐩
+)
+\displaystyle\mathcal{L}_{\text{sem}}(t)=\beta_{p}\;\frac{1}{\lvert\mathcal{P}_{t+1}^{\kappa}\rvert}\sum_{\mathbf{p}\in\mathcal{P}_{t+1}^{\kappa}}\operatorname{MSE}(\mathbf{n}_{t},\mathbf{p})
++
+β
+n
+1
+|
+𝒜
+t
++
+1
+κ
+|
+∑
+𝐚
+∈
+𝒜
+t
++
+1
+κ
+[
+γ
+−
+MSE
+(
+𝐧
+t
+,
+𝐚
+)
+]
++
+\displaystyle\quad+\;\beta_{n}\;\frac{1}{\lvert\mathcal{A}_{t+1}^{\kappa}\rvert}\sum_{\mathbf{a}\in\mathcal{A}_{t+1}^{\kappa}}\big[\gamma-\operatorname{MSE}(\mathbf{n}_{t},\mathbf{a})\big]_{+}
+where
+[
+x
+]
++
+=
+max
+⁡
+(
+x
+,
+0
+)
+[x]_{+}=\max(x,0)
+denotes the hinge function.
+When both
+|
+𝒫
+t
++
+1
+κ
+|
+\lvert\mathcal{P}_{t+1}^{\kappa}\rvert
+and
+|
+𝒜
+t
++
+1
+κ
+|
+\lvert\mathcal{A}_{t+1}^{\kappa}\rvert
+are equal to
+κ
+\kappa
+, this formulation reduces to a standard hinge loss. When the cardinalities vary (e.g., some tokens have fewer than
+κ
+\kappa
+synonyms or antonyms), averaging within each set ensures that positive and negative contributions are weighted equally in the objective, regardless of candidate count.
+Finally, we define the overall objective as the sum of the knowledge distillation loss and the semantic consistency loss:
+ℒ
+DSKD
+​
+(
+t
+)
+=
+ℒ
+K
+​
+D
+​
+(
+t
+)
++
+ℒ
+s
+​
+e
+​
+m
+​
+(
+t
+)
+\mathcal{L}_{\text{DSKD}}(t)=\mathcal{L}_{KD}(t)+\mathcal{L}_{sem}(t)
+By default, we train only the final two decoder layers of the student model to reduce training time while preserving the representational knowledge inherited from the teacher model. We further examine the effectiveness of this design in our ablation study.
+4.3.
+Inference
+Once the student model is trained, it functions as a standalone distilled model with its own input embedding layer, decoders layers, and output layers. Given an input corpus, it generates text using the standard language model. Because the student has been trained to align with the teacher’s outputs, it no longer depends on the sense dictionary at inference. Note that this is unlike SKD
+(
+Wang et al., 2025
+)
+, which requires replacing contextual embeddings with vectors from the sense dictionary during inference.
+5.
+Experiments
+5.1.
+Experiment Setup
+We choose Llama-3-8B-Instruct
+(
+Dubey et al., 2024
+)
+and Mistral-7B-Instruct-v0.1
+(
+Jiang et al., 2023
+)
+as the teacher decoder models; both have 32 layers.
+We compare DSKD with a standard KD approach that simply uses the reduced number of student layers to minimize the
+ℒ
+K
+​
+D
+\mathcal{L}_{KD}
+loss.
+In general, increasing the number of layers
+L
+L
+for the student model leads to improved performance. When all
+32
+32
+layers are used, performance reaches the same level as the teacher; however, for this setting, no compression is achieved. At the other extreme, using fewer than five layers results in very poor performance (below
+30
+%
+30\%
+accuracy), and thus these are not practically useful. Therefore, we set the number of layers to 16 so the baseline KD model achieves approximately
+70
+70
+–
+90
+%
+90\%
+of the teacher’s F1-score or accuracy. We then augment with DSKD loss following the same setting.
+To reduce training time and memory usage, we copy and freeze the embedding layer, the first 14 decoder layers, and the output layer, while training only the last 2 layers. The impact of the number of trainable layers is analyzed in our ablation study.
+We conducted all experiments on 6 NVIDIA V100 GPUs (32 GB each) paired with 20-core IBM Power9 processors and 512 GB of RAM, with training completed within 12 hours. We use bf16 percision for all the experiments. Finally, note that for all the benchmark datasets (except MMLU
+(
+Hendrycks et al., 2020
+)
+) we show inference results on the validation set, which is not used for training, since their test splits are not public (requiring server submission) with hyperparameter selected using the subset of training set.
+5.2.
+Dataset Setup
+In terms of benchmark datasets, we choose ARC
+(
+Clark et al., 2018
+)
+, which consists of multiple-choice science questions from standardized exams, requiring multi-step reasoning and background knowledge; CommonsenseQA
+(
+Talmor et al., 2018
+)
+, which evaluates commonsense reasoning through five-choice questions with carefully constructed plausible distractors; MMLU
+(
+Hendrycks et al., 2020
+)
+, covering 57 subjects across STEM, humanities, social sciences, and professional domains, and serving as a comprehensive benchmark for general-purpose reasoning and knowledge in large language models; and PIQA
+(
+Bisk et al., 2020
+)
+, which focuses on physical commonsense by asking models to choose the more plausible of two solutions to everyday tasks.
+To support training on MMLU, which does not provide an official training set, we leverage the MMLU-Pro
+(
+Wang et al., 2024
+)
+training split and convert the original six-choice format to four choices, while filtering out any questions that overlap with the original MMLU dataset to prevent data leakage. Across ARC-Challenge, CommonsenseQA, MMLU-Pro, and PIQA, we use 25% of the available training data for training and use grid search for hyperparameters. Model evaluation is conducted on the MMLU test set and the validation sets of ARC-Challenge, CommonsenseQA, and PIQA, all under a 5-shot setting.
+In addition to classification benchmarks, we use SQuADv2
+(
+Rajpurkar et al., 2018
+)
+as a benchmark for generative tasks, as it offers a large-scale dataset containing both answerable and unanswerable questions. This setting requires models not only to generate correct answers when sufficient evidence is available but also to abstain appropriately when the passage does not support an answer. For SQuADv2, we train the models and perform grid search using 25% of the training split, and report F1 scores on the full validation set. All experiments on SQuADv2 are conducted in a 1-shot setting, where the demonstration example is sampled from a different question within the same paragraph.
+5.3.
+Performance
+Model
+# of Layers
+ARC
+CSQA
+MMLU
+PIQA
+SQuAD
+LLaMA3-8B
+32
+81.45
+±
+\pm
+1.07
+78.08
+±
+\pm
+0.41
+67.22
+±
+\pm
+0.20
+78.49
+±
+\pm
+1.33
+72.90
+±
+\pm
+0.13
+KD
+16
+77.89
+±
+\pm
+0.42
+76.43
+±
+\pm
+0.45
+61.26
+±
+\pm
+0.59
+81.78
+±
+\pm
+0.34
+68.58
+±
+\pm
+0.13
+DSKD
+16
+79.66
+±
+\pm
+0.34
+76.70
+±
+\pm
+0.17
+64.38
+±
+\pm
+0.38
+82.63
+±
+\pm
+0.27
+69.11
+±
+\pm
+0.36
+Mistral-7B
+32
+70.33
+±
+\pm
+0.57
+68.34
+±
+\pm
+0.75
+55.37
+±
+\pm
+0.27
+73.72
+±
+\pm
+0.59
+66.26
+±
+\pm
+0.13
+KD
+16
+61.11±0.31
+66.16
+±
+\pm
+0.78
+52.04
+±
+\pm
+0.43
+78.88
+±
+\pm
+0.22
+57.82
+±
+\pm
+0.25
+DSKD
+16
+64.78
+±
+\pm
+0.43
+68.44
+±
+\pm
+0.70
+54.44
+±
+\pm
+0.37
+79.53
+±
+\pm
+0.45
+58.09
+±
+\pm
+0.18
+Table 3.
+Performance comparison between student models trained with KD and DSKD. Bold numbers indicate the best results among the student models.
+Table
+3
+reports the performance of the teacher models and their distilled counterparts on ARC, CSQA, MMLU, PIQA, and SQuAD. Overall, DSKD consistently outperforms standard KD across both LLaMA-3-8B-Instruct and Mistral-7B-Instruct backbones, demonstrating robust gains across a diverse set of reasoning, knowledge-intensive, and reading comprehension benchmarks. The improvements are particularly evident on tasks that require broader knowledge integration and semantic disambiguation.
+For LLaMA-based models, DSKD yields consistent improvements over KD on all evaluated benchmarks. On ARC and MMLU, DSKD improves accuracy from
+77.89
+%
+77.89\%
+to
+79.66
+%
+79.66\%
+and from
+61.26
+%
+61.26\%
+to
+64.38
+%
+64.38\%
+, respectively, highlighting its effectiveness on reasoning-heavy and knowledge-intensive tasks where semantic ambiguity plays a critical role. On CSQA, where the performance gap between the teacher and student models is already narrow, DSKD still achieves a modest but stable improvement over KD, indicating that sense-aware supervision remains beneficial even near performance saturation. On PIQA, KD already provides a strong boost over the teacher, and DSKD further improves performance to
+82.63
+%
+82.63\%
+while maintaining low variance. On SQuAD, DSKD consistently outperforms KD, increasing accuracy from
+68.58
+%
+68.58\%
+to
+69.11
+%
+69.11\%
+, although the relative gain is smaller than that observed on ARC and MMLU due to the increased difficulty of precise span-level prediction. On SQuAD, DSKD again outperforms KD, increasing accuracy from
+68.58
+%
+68.58\%
+to
+69.11
+%
+69.11\%
+, but the improvement remains more modest, reflecting the higher difficulty and tighter supervision requirements of extractive question answering.
+A similar but more pronounced trend is observed for Mistral-based models. Standard KD suffers from substantial degradation relative to the teacher, for example reducing ARC accuracy from
+70.33
+%
+70.33\%
+to
+61.11
+%
+61.11\%
+and MMLU from
+55.37
+%
+55.37\%
+to
+52.04
+%
+52.04\%
+. In contrast, DSKD recovers a significant portion of this performance gap, improving ARC to
+64.78
+%
+64.78\%
+and MMLU to
+54.44
+%
+54.44\%
+. Consistent gains are also observed on CSQA and PIQA, where DSKD improves accuracy from
+66.16
+%
+66.16\%
+to
+68.44
+%
+68.44\%
+and from
+78.88
+%
+78.88\%
+to
+79.53
+%
+79.53\%
+, respectively.
+We attribute this difference to the interaction between vocabulary size and semantic granularity. LLaMA employs a substantially larger vocabulary, which implicitly distributes semantic variation across more tokens and makes standard KD relatively effective. By contrast, Mistral relies on a smaller vocabulary, forcing individual tokens to encode a wider range of senses, which exacerbates semantic compression during distillation. DSKD alleviates this issue by explicitly introducing sense-level supervision, enabling the student model to better preserve semantic distinctions under tighter vocabulary constraints. In summary, these results demonstrate that DSKD provides robust improvements over standard KD.
+6.
+Ablation Studies
+(a)
+(b)
+Figure 3.
+Performance of KD and DSKD distilled from Llama-3-8b-Instruct on ARC and MMLU across varying (a)
+total number of layers, and (b) number of trainable student layers.
+6.1.
+Number of Layers
+Number of total student layers
+To examine the impact of different total number of student layers on the performance of the student models, we conduct an ablation study on ARC and MMLU. Figure
+3
+(a) reports the results across different student depths for both KD and DSKD. For both KD and DSKD, performance exhibits a small drop at layer 16 on both datasets, followed by sharp declines if the number of layers is lowered beyond these points. Based on this trend, we select layer layer 16 in our experiments. Moreover, DSKD outperforms KD across most of the configurations.
+Number of training student layers
+In contrast to the impact of the total number of student layers, varying the number of trainable student layers leads to relatively minor performance changes. Figure
+3
+(b) presents ARC and MMLU results with the total student layers fixed at 16, while the number of trainable layers ranges from 1 to 5 for both KD and DSKD. Compared to using a single trainable layer, employing 2 trainable layers consistently yields better performance across tasks. However, further increasing the number of trainable layers does not lead to sustained improvements, while incurring additional training cost. Accordingly, 2 trainable layers are used in all subsequent experiments.
+6.2.
+Sense Selections
+k
+k
+LLaMA
+Mistral
+ARC
+MMLU
+ARC
+MMLU
+5
+77.33
+62.18
+64.78
+54.44
+10
+79.66
+64.38
+64.33
+54.25
+15
+79.00
+64.57
+65.00
+54.91
+20
+81.33
+64.68
+64.00
+53.68
+25
+80.00
+65.23
+65.33
+54.99
+Table 4.
+Effect of the number of clusters
+k
+k
+on ARC and MMLU benchmarks. The selected value of
+k
+k
+used in subsequent experiments is highlighted in bold.
+Number of clusters
+k
+k
+Table
+4
+presents the effect of varying the number of clusters
+k
+k
+for both LLaMA and Mistral backbones. Overall, increasing
+k
+k
+generally leads to improved performance, indicating that a finer-grained sense partition can better capture semantic variability. However, the gains become marginal as
+k
+k
+grows, and no consistent or significant improvements are observed beyond moderate values. Moreover, larger
+k
+k
+substantially increases the size of the resulting sense dictionary, leading to higher memory and storage overhead. Taking this trade-off into account, we select
+k
+=
+10
+k=10
+for LLaMA-based models and
+k
+=
+5
+k=5
+for Mistral-based models in all subsequent experiments.
+κ
+\kappa
+LLaMA
+Mistral
+ARC
+MMLU
+ARC
+MMLU
+1
+78.00
+63.93
+63.67
+53.60
+5
+79.66
+64.38
+64.78
+54.44
+10
+79.33
+64.20
+64.33
+54.35
+15
+80.33
+64.76
+65.67
+54.53
+20
+79.00
+64.71
+66.00
+53.68
+Table 5.
+Effect of
+κ
+\kappa
+on ARC and MMLU benchmarks.
+Number of selected senses during training
+κ
+\kappa
+Table
+5
+shows the impact of varying
+κ
+\kappa
+for semantic consistency. When
+κ
+=
+1
+\kappa=1
+, performance is consistently lower, indicating that an insufficient weight on the sense-level objective limits the effectiveness of DSKD. Increasing
+κ
+\kappa
+generally improves performance, but larger values do not necessarily lead to further improvements. Based on this observation, we select
+κ
+=
+5
+\kappa=5
+as a balanced setting that yields strong performance across tasks and backbones.
+6.3.
+Training Hyperparameters
+DSKD loss coefficient
+β
+p
+\beta_{p}
+and
+β
+n
+\beta_{n}
+Table
+5
+reports the performance under different values of
+β
+p
+\beta_{p}
+and
+β
+n
+\beta_{n}
+, where we tie the two coefficients. Overall, the results indicate that the choice of
+β
+\beta
+plays a non-trivial role in balancing the contribution of sense-level supervision. When
+β
+\beta
+is set too small, the effect of DSKD becomes marginal and the performance approaches that of standard KD, suggesting insufficient utilization of sense information. In contrast, overly large values of
+β
+\beta
+do not yield further improvements and may even hurt performance, as the sense-level objective begins to dominate the training process. Based on this trade-off, we select
+β
+=
+1.0
+\beta=1.0
+for LLaMA-based models and
+β
+=
+1.5
+\beta=1.5
+for Mistral-based models, which consistently achieve strong performance.
+β
+p
+\beta_{p}
+,
+β
+n
+\beta_{n}
+LLaMA
+Mistral
+ARC
+MMLU
+ARC
+MMLU
+0.5
+77.67
+61.42
+64.00
+52.07
+1.0
+79.66
+64.38
+63.33
+53.51
+1.5
+79.33
+63.45
+64.78
+54.44
+2.0
+78.33
+61.45
+61.33
+50.57
+Table 6.
+Performance on ARC and MMLU under different values of
+β
+p
+\beta_{p}
+and
+β
+n
+\beta_{n}
+.
+7.
+Time and Space
+Model
+# Layers
+# Params
+Memory
+Train
+Eval
+Time
+Time
+Llama-3-8B
+32
+8.0B
+15.0GB
+N/A
+45min
+KD
+16
+4.5B
+8.5GB
+5h02min
+23min
+DSKD
+16
+4.5B
+8.5GB
+5h17min
+22min
+Table 7.
+Comparison of model size, memory, training time per epoch, and MMLU evaluation time for Llama-3-8B and its student models.
+Table
+7
+presents a comparison of KD and DSKD using the Llama-3-8B-Instruct model on the MMLU dataset, in terms of parameter size, memory usage, training time on the whole classification task, and evaluation time on the full MMLU benchmark. The student model uses half of the teacher’s layers, reducing the total parameters from 8.0B to 4.5B and the memory footprint from 15.0GB to 8.5GB—approximately
+56
+%
+56\%
+of the teacher model with bf16 percision. DSKD introduces only a minor training-time overhead of around
+5
+%
+5\%
+compared to KD, while maintaining nearly identical evaluation time. This confirms that DSKD adds minimal computational cost, as its additional semantic loss operates only during training.
+8.
+Conclusion and Future Works
+In this paper, we introduce our decoder-based sense knowledge distillation framework that integrates sense dictionaries and lexical relationship resources into the training. By eliminating the reliance on dictionary lookups during inference, DSKD enables generative models to inherit structured lexical semantics while maintaining efficiency and broad applicability. Our experiments with Llama-3-8B-Instruct and Mistral-7B-Instruct demonstrate consistent improvements over standard knowledge distillation, highlighting the effectiveness of sense-guided supervision.
+Our next step is to develop a mechanism that assigns each token to a different number of clusters. In the current framework, a fixed number of senses
+k
+k
+is used for all tokens, which may not reflect the varying degrees of semantic ambiguity across words. Some tokens correspond to highly polysemous words and would benefit from a richer sense inventory, while others exhibit little ambiguity and require only a small number of senses. As a result, we can obtain a more flexible and efficient representation that better reflects the intrinsic semantic complexity of individual tokens.
+References
+Agarwal
+et al.
+(2024)
+R. Agarwal, N. Vieillard, Y. Zhou, P. Stanczyk, S. R. Garea, M. Geist, and O. Bachem
+On-policy distillation of language models: learning from self-generated mistakes
+.
+In
+The twelfth international conference on learning representations
+,
+Cited by:
+§2
+.
+BehnamGhader
+et al.
+(2024)
+P. BehnamGhader, V. Adlakha, M. Mosbach, D. Bahdanau, N. Chapados, and S. Reddy
+Llm2vec: large language models are secretly powerful text encoders
+.
+arXiv preprint arXiv:2404.05961
+.
+Cited by:
+§1
+.
+Bisk
+et al.
+(2020)
+Y. Bisk, R. Zellers, J. Gao, Y. Choi,
+et al.
+Piqa: reasoning about physical commonsense in natural language
+.
+In
+Proceedings of the AAAI conference on artificial intelligence
+,
+Vol.
+34
+,
+pp. 7432–7439
+.
+Cited by:
+§B.2
+,
+§5.2
+.
+Brown
+et al.
+(2020)
+T. Brown, B. Mann, N. Ryder, M. Subbiah, J. D. Kaplan, P. Dhariwal, A. Neelakantan, P. Shyam, G. Sastry, A. Askell,
+et al.
+Language models are few-shot learners
+.
+Advances in neural information processing systems
+33
+,
+pp. 1877–1901
+.
+Cited by:
+§2
+.
+Chenglin
+et al.
+(2024)
+L. Chenglin, Q. Chen, L. Li, C. Wang, F. Tao, Y. Li, Z. Chen, and Y. Zhang
+Mixed distillation helps smaller language models reason better
+.
+In
+Findings of the Association for Computational Linguistics: EMNLP 2024
+,
+Y. Al-Onaizan, M. Bansal, and Y. Chen (Eds.)
+,
+Miami, Florida, USA
+,
+pp. 1673–1690
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§2
+.
+Clark
+et al.
+(2018)
+P. Clark, I. Cowhey, O. Etzioni, T. Khot, A. Sabharwal, C. Schoenick, and O. Tafjord
+Think you have solved question answering? try arc, the ai2 reasoning challenge
+.
+arXiv preprint arXiv:1803.05457
+.
+Cited by:
+§B.2
+,
+§5.2
+.
+Devlin
+et al.
+(2019)
+J. Devlin, M. Chang, K. Lee, and K. Toutanova
+Bert: pre-training of deep bidirectional transformers for language understanding
+.
+In
+Proceedings of the 2019 conference of the North American chapter of the association for computational linguistics: human language technologies, volume 1 (long and short papers)
+,
+pp. 4171–4186
+.
+Cited by:
+§1
+.
+Dubey
+et al.
+(2024)
+A. Dubey, A. Jauhri, A. Pandey, A. Kadian, A. Al-Dahle, A. Letman, A. Mathur, A. Schelten, A. Yang, A. Fan,
+et al.
+The llama 3 herd of models
+.
+arXiv e-prints
+,
+pp. arXiv–2407
+.
+Cited by:
+Appendix A
+,
+Figure 1
+,
+§1
+,
+§1
+,
+§2
+,
+§4.1
+,
+§5.1
+.
+Han
+et al.
+(2023)
+C. Han, J. Xu, M. Li, Y. Fung, C. Sun, N. Jiang, T. Abdelzaher, and H. Ji
+Word embeddings are steers for language models
+.
+arXiv preprint arXiv:2305.12798
+.
+Cited by:
+§2
+.
+Harris
+et al.
+(2020)
+C. R. Harris, K. J. Millman, S. J. van der Walt, R. Gommers, P. Virtanen, D. Cournapeau, E. Wieser, J. Taylor, S. Berg, N. J. Smith, R. Kern, M. Picus, S. Hoyer, M. H. van Kerkwijk, M. Brett, A. Haldane, J. F. del Río, M. Wiebe, P. Peterson, P. Gérard-Marchant, K. Sheppard, T. Reddy, W. Weckesser, H. Abbasi, C. Gohlke, and T. E. Oliphant
+Array programming with NumPy
+.
+Nature
+585
+(
+7825
+),
+pp. 357–362
+.
+External Links:
+Document
+,
+Link
+Cited by:
+Appendix A
+.
+Hendrycks
+et al.
+(2020)
+D. Hendrycks, C. Burns, S. Basart, A. Zou, M. Mazeika, D. Song, and J. Steinhardt
+Measuring massive multitask language understanding
+.
+arXiv preprint arXiv:2009.03300
+.
+Cited by:
+§B.2
+,
+§5.1
+,
+§5.2
+.
+Hunter (2007)
+J. D. Hunter
+Matplotlib: a 2d graphics environment
+.
+Computing in science & engineering
+9
+(
+03
+),
+pp. 90–95
+.
+Cited by:
+Appendix A
+.
+Jiang
+et al.
+(2023)
+A. Q. Jiang, A. Sablayrolles, A. Mensch, C. Bamford, D. S. Chaplot, D. de las Casas, F. Bressand, G. Lengyel, G. Lample, L. Saulnier, L. R. Lavaud, M. Lachaux, P. Stock, T. L. Scao, T. Lavril, T. Wang, T. Lacroix, and W. E. Sayed
+Mistral 7b
+.
+External Links:
+2310.06825
+,
+Link
+Cited by:
+Appendix A
+,
+§1
+,
+§2
+,
+§4.1
+,
+§5.1
+.
+Kullback and Leibler (1951)
+S. Kullback and R. A. Leibler
+On information and sufficiency
+.
+The annals of mathematical statistics
+22
+(
+1
+),
+pp. 79–86
+.
+Cited by:
+§4.1
+.
+Lhoest
+et al.
+(2021)
+Q. Lhoest, A. V. Del Moral, Y. Jernite, A. Thakur, P. Von Platen, S. Patil, J. Chaumond, M. Drame, J. Plu, L. Tunstall,
+et al.
+Datasets: a community library for natural language processing
+.
+arXiv preprint arXiv:2109.02846
+.
+Cited by:
+Appendix A
+.
+Liu
+et al.
+(2024a)
+J. Liu, C. Zhang, J. Guo, Y. Zhang, H. Que, K. Deng, J. Liu, G. Zhang, Y. Wu, C. Liu,
+et al.
+Ddk: distilling domain knowledge for efficient large language models
+.
+Advances in Neural Information Processing Systems
+37
+,
+pp. 98297–98319
+.
+Cited by:
+§2
+.
+Liu
+et al.
+(2024b)
+Y. Liu, J. Cao, C. Liu, K. Ding, and L. Jin
+Datasets for large language models: a comprehensive survey
+.
+arXiv preprint arXiv:2402.18041
+.
+Cited by:
+§1
+.
+Loureiro
+et al.
+(2022)
+D. Loureiro, A. M. Jorge, and J. Camacho-Collados
+LMMS reloaded: transformer-based sense embeddings for disambiguation and beyond
+.
+Artificial Intelligence
+305
+,
+pp. 103661
+.
+Cited by:
+§2
+.
+MacQueen (1967)
+J. MacQueen
+Some methods for classification and analysis of multivariate observations
+.
+In
+Proceedings of 5-th Berkeley Symposium on Mathematical Statistics and Probability/University of California Press
+,
+Cited by:
+§3.1
+.
+Mahajan
+et al.
+(2024)
+Y. Mahajan, M. Freestone, N. Bansal, S. Aakur, and S. K. K. Santu
+Revisiting word embeddings in the llm era
+.
+arXiv preprint arXiv:2402.11094
+.
+Cited by:
+§2
+.
+Matarazzo and Torlone (2025)
+A. Matarazzo and R. Torlone
+A survey on large language models with some insights on their capabilities and limitations
+.
+arXiv preprint arXiv:2501.04040
+.
+Cited by:
+§2
+.
+McCutcheon (2010)
+M. McCutcheon
+Roget’s super thesaurus
+.
+Writer’s Digest Books
+.
+Cited by:
+§B.1
+,
+§3.2
+.
+Minaee
+et al.
+(2024)
+S. Minaee, T. Mikolov, N. Nikzad, M. Chenaghlu, R. Socher, X. Amatriain, and J. Gao
+Large language models: a survey
+.
+arXiv preprint arXiv:2402.06196
+.
+Cited by:
+§1
+.
+Naveed
+et al.
+(2025)
+H. Naveed, A. U. Khan, S. Qiu, M. Saqib, S. Anwar, M. Usman, N. Akhtar, N. Barnes, and A. Mian
+A comprehensive overview of large language models
+.
+ACM Transactions on Intelligent Systems and Technology
+16
+(
+5
+),
+pp. 1–72
+.
+Cited by:
+§2
+.
+Paszke
+et al.
+(2019)
+A. Paszke, S. Gross, F. Massa, A. Lerer, J. Bradbury, G. Chanan, T. Killeen, Z. Lin, N. Gimelshein, L. Antiga,
+et al.
+Pytorch: an imperative style, high-performance deep learning library
+.
+Advances in neural information processing systems
+32
+.
+Cited by:
+Appendix A
+.
+Pedregosa
+et al.
+(2011)
+F. Pedregosa, G. Varoquaux, A. Gramfort, V. Michel, B. Thirion, O. Grisel, M. Blondel, P. Prettenhofer, R. Weiss, V. Dubourg, J. Vanderplas, A. Passos, D. Cournapeau, M. Brucher, M. Perrot, and E. Duchesnay
+Scikit-learn: machine learning in Python
+.
+Journal of Machine Learning Research
+12
+,
+pp. 2825–2830
+.
+Cited by:
+Appendix A
+.
+Rajpurkar
+et al.
+(2018)
+P. Rajpurkar, R. Jia, and P. Liang
+Know what you don’t know: unanswerable questions for squad
+.
+arXiv preprint arXiv:1806.03822
+.
+Cited by:
+§B.2
+,
+§5.2
+.
+Rothe and Schütze (2015)
+S. Rothe and H. Schütze
+Autoextend: extending word embeddings to embeddings for synsets and lexemes
+.
+arXiv preprint arXiv:1507.01127
+.
+Cited by:
+§2
+.
+Sánchez-Gutiérrez
+et al.
+(2018)
+C. H. Sánchez-Gutiérrez, H. Mailhot, S. H. Deacon, and M. A. Wilson
+MorphoLex: a derivational morphological database for 70,000 english words
+.
+Behavior research methods
+50
+(
+4
+),
+pp. 1568–1580
+.
+Cited by:
+§B.1
+,
+§3.2
+.
+Sanh
+et al.
+(2019)
+V. Sanh, L. Debut, J. Chaumond, and T. Wolf
+DistilBERT, a distilled version of BERT: smaller, faster, cheaper and lighter
+.
+In
+5th Workshop on Energy Efficient Machine Learning and Cognitive Computing @ NeurIPS 2019
+,
+External Links:
+1910.01108
+,
+Link
+Cited by:
+§2
+,
+§4.1
+.
+Song
+et al.
+(2020)
+K. Song, H. Sun, X. Tan, T. Qin, J. Lu, H. Liu, and T. Liu
+LightPAFF: a two-stage distillation framework for pre-training and fine-tuning
+.
+arXiv preprint arXiv:2004.12817
+.
+Cited by:
+§2
+.
+Talmor
+et al.
+(2018)
+A. Talmor, J. Herzig, N. Lourie, and J. Berant
+Commonsenseqa: a question answering challenge targeting commonsense knowledge
+.
+arXiv preprint arXiv:1811.00937
+.
+Cited by:
+§B.2
+,
+§5.2
+.
+Van der Maaten and Hinton (2008)
+L. Van der Maaten and G. Hinton
+Visualizing data using t-sne.
+.
+Journal of machine learning research
+9
+(
+11
+).
+Cited by:
+Figure 1
+.
+Wang
+et al.
+(2025)
+Q. Wang, M. J. Zaki, G. Kollias, and V. Kalantzis
+Multi-sense embeddings for language models and knowledge distillation
+.
+arXiv preprint arXiv:2504.06036
+.
+Cited by:
+§1
+,
+§2
+,
+§4.1
+,
+§4.3
+.
+Wang and Zaki (2022)
+Q. Wang and M. J. Zaki
+Hg2vec: improved word embeddings from dictionary and thesaurus based heterogeneous graph
+.
+In
+Proceedings of the 29th International Conference on Computational Linguistics
+,
+pp. 3154–3163
+.
+Cited by:
+§B.1
+,
+§1
+,
+§3.2
+.
+Wang
+et al.
+(2024)
+Y. Wang, X. Ma, G. Zhang, Y. Ni, A. Chandra, S. Guo, W. Ren, A. Arulraj, X. He, Z. Jiang,
+et al.
+Mmlu-pro: a more robust and challenging multi-task language understanding benchmark
+.
+Advances in Neural Information Processing Systems
+37
+,
+pp. 95266–95290
+.
+Cited by:
+§5.2
+.
+WikipediaCorpus (2024)
+WikipediaCorpus
+English wikipedia dump (dated march 20, 2024)
+.
+Note:
+Retrieved August 15, 2024
+External Links:
+Link
+Cited by:
+§B.1
+,
+Figure 1
+,
+§3.1
+.
+Wolf
+et al.
+(2020)
+T. Wolf, L. Debut, V. Sanh, J. Chaumond, C. Delangue, A. Moi, P. Cistac, T. Rault, R. Louf, M. Funtowicz,
+et al.
+Transformers: state-of-the-art natural language processing
+.
+In
+Proceedings of the 2020 conference on empirical methods in natural language processing: system demonstrations
+,
+pp. 38–45
+.
+Cited by:
+Appendix A
+.
+Ylonen (2022)
+T. Ylonen
+Wiktextract: wiktionary as machine-readable structured data
+.
+In
+Proceedings of the Thirteenth Language Resources and Evaluation Conference
+,
+pp. 1317–1325
+.
+Cited by:
+§B.1
+,
+§3.2
+.
+Zhao
+et al.
+(2024)
+J. Zhao, W. Zhao, A. Drozdov, B. Rozonoyer, M. A. Sultan, J. Lee, M. Iyyer, and A. McCallum
+Multistage collaborative knowledge distillation from a large language model for semi-supervised sequence generation
+.
+In
+Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers)
+,
+L. Ku, A. Martins, and V. Srikumar (Eds.)
+,
+Bangkok, Thailand
+,
+pp. 14201–14214
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§2
+.
+Appendix
+Appendix A
+Open Source Code
+We will release our project, including the training code, sense dictionary, and model weights, as open source project on GitHub after the review period. The implementation is built with NumPy
+(
+Harris et al., 2020
+)
+, PyTorch
+(
+Paszke et al., 2019
+)
+, and scikit-learn
+(
+Pedregosa et al., 2011
+)
+for data processing and model training, with Matplotlib
+(
+Hunter, 2007
+)
+used for visualization.
+We use Llama-3-8B-Instruct
+(
+Dubey et al., 2024
+)
+and Mistral-7B-Instruct
+(
+Jiang et al., 2023
+)
+as the teacher models. We obtained research licenses for both models from Hugging Face and downloaded them using the
+transformers
+library
+(
+Wolf et al., 2020
+)
+. All evaluation benchmarks are accessed through the Hugging Face
+datasets
+library
+(
+Lhoest et al., 2021
+)
+.
+Appendix B
+Dataset
+B.1.
+Dictionary and Thesauri
+We build the sense dictionary from the Wikipedia dump
+(
+WikipediaCorpus, 2024
+)
+and the training dataset. We construct the relationship dictionary using synonym and antonym pairs extracted from Wiktionary
+(
+Ylonen, 2022
+)
+and Roget’s Thesaurus through HG2Vec
+(
+McCutcheon, 2010
+;
+Wang and Zaki, 2022
+)
+. To incorporate morphological information, we also integrate semantic root forms obtained from MorphoLEX-English
+(
+Sánchez-Gutiérrez et al., 2018
+)
+. Table
+8
+summarizes the statistics of the dictionaries used in our experiments.
+Llama-3-8B-Instruct
+Mistral-7B-Instruct
+Tokenizer vocab size
+128,256
+32,000
+# of Sense token keys
+69,832
+27,541
+# of Word token keys
+15,695
+27,702
+Sense dict size
+7.08 GB
+2.06 GB
+# of synonym pairs
+923,950
+923,950
+# of antonym pairs
+75,949
+75,949
+Table 8.
+Vocabulary and dictionary statistics for Llama-3-8B and Mistral-7B models.
+B.2.
+Evaluation Benchmark
+We select SQuADv2
+(
+Rajpurkar et al., 2018
+)
+as for the general purpose generative task. We further evaluate our models on a diverse set of multiple choice benchmark datasets: ARC
+(
+Clark et al., 2018
+)
+, CommonsenseQA
+(
+Talmor et al., 2018
+)
+, MMLU
+(
+Hendrycks et al., 2020
+)
+and PIQA
+(
+Bisk et al., 2020
+)
+, for token-constrained generative tasks.
+Appendix C
+Model Hyparameters
+C.1.
+KD Hyparameter Ablation Study
+α
+\alpha
+LLaMA
+Mistral
+ARC
+MMLU
+ARC
+MMLU
+0
+75.67
+61.25
+58.67
+51.75
+0.5
+78.33
+62.03
+59.33
+49.27
+1
+77.89
+61.26
+61.11
+52.04
+2
+80.33
+64.76
+60.00
+51.28
+Table 9.
+Effect of
+α
+\alpha
+on ARC and MMLU benchmarks across LLaMA and Mistral backbones on KD. The selected value of
+α
+\alpha
+used in subsequent experiments is highlighted in bold.
+Table
+9
+presents an ablation study on the hyperparameter
+α
+\alpha
+, which is defined in the standard KD objective and controls the relative weighting of the distillation loss. Based on the observed trade-off between task performance and distillation effectiveness, we select
+α
+=
+1.0
+\alpha=1.0
+for each backbone. To ensure a fair comparison, we then keep the same
+α
+=
+1.0
+\alpha=1.0
+setting when conducting all DSKD experiments.
+C.2.
+DSKD Hyparameter Tables
+For hyperparameter search, we explore learning rates in
+{
+5
+e
+−
+6
+\{5\mathrm{e}{-6}
+,
+1
+​
+e
+−
+5
+1\mathrm{e}{-5}
+,
+2
+​
+e
+−
+5
+2\mathrm{e}{-5}
+,
+5
+​
+e
+−
+5
+5\mathrm{e}{-5}
+,
+1
+​
+e
+−
+4
+1\mathrm{e}{-4}
+,
+2
+e
+−
+4
+}
+2\mathrm{e}{-4}\}
+. For the sampler sizes, we test values of
+κ
+=
+{
+1
+,
+5
+,
+10
+,
+15
+,
+20
+}
+\kappa=\{1,\,5,\,10,\,15,\,20\}
+. For the loss weights
+β
+p
+,
+β
+n
+\beta_{p},\beta_{n}
+, we test
+{
+0.5
+,
+1.0
+,
+1.5
+,
+2.0
+}
+\{0.5,\,1.0,\,1.5,\,2.0\}
+. Table
+10
+presents the training hyperparameters used for KD and DSKD across all tasks with the Llama-3 and Mistral models.
+Llama-3 KD
+Llama-3 DSKD
+Mistral KD
+Mistral DSKD
+Total layers (
+L
+L
+)
+16
+16
+16
+16
+Trainable layers
+2
+2
+2
+2
+Learning rate
+0.00005
+0.00005
+0.00002
+0.00002
+epoch
+2
+2
+2
+2
+candidate sample size
+κ
+\kappa
+N/A
+5
+N/A
+5
+α
+\alpha
+1.0
+1.0
+1.0
+1.0
+β
+p
+\beta_{p}
+N/A
+1.5
+N/A
+1.0
+β
+n
+\beta_{n}
+N/A
+1.5
+N/A
+1.0
+γ
+\gamma
+N/A
+1.0
+N/A
+1.0
+Table 10.
+Full training hyperparameter configurations.
+Appendix D
+Model Comparison: Space/Parameters and Time
+Tables
+11
+and
+12
+provide additional comparisons of model efficiency in terms of parameter size, memory usage, training time, and evaluation latency. Table
+11
+summarizes the space and training-time cost of the teacher models and their corresponding student variants under KD and DSKD, showing that DSKD introduces only a marginal increase in training time while preserving the same memory footprint as KD. Table
+12
+further reports evaluation time across different benchmarks, where KD and DSKD exhibit nearly identical inference latency, indicating that the proposed sense-level supervision does not introduce additional runtime overhead during evaluation.
+Model
+# of Layers
+# of Parameters
+Memory
+Training Time
+Llama-3-8B-Instruct
+32
+8.0B
+15.0GB
+N/A
+KD
+16
+4.5B
+8.5GB
+5h02min
+DSKD
+16
+4.5B
+8.5GB
+5h17min
+Mistral-7B-Instruct
+32
+7.2B
+13.5GB
+N/A
+KD
+16
+3.7B
+6.9GB
+4h53min
+DSKD
+16
+3.7B
+6.9GB
+5h04min
+Table 11.
+Comparison of space and training time.
+Model
+ARC
+CSQA
+MMLU
+PIQA
+SQUADV2
+Llama-3-8B-Instruct
+1min
+2.5min
+45min
+4.5min
+23min
+KD
+1min
+1.5min
+23min
+3min
+15min
+DSKD
+1min
+1.5min
+22min
+3min
+15min
+Mistral-7B-Instruct
+1min
+2.5min
+51min
+5min
+21min
+KD
+1min
+1.5min
+25min
+3min
+15.5min
+DSKD
+1min
+1.5min
+26min
+3min
+15min
+Table 12.
+Evaluation time comparison across models and tasks.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

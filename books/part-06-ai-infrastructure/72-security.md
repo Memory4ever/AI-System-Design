@@ -26,9 +26,26 @@ AI Platform 的安全为什么不止 API authentication？数据、训练、arti
 
 主体包括用户、service accounts、controllers、training code、model server、model output 和 external tools。模型生成的文本不是可信主体，也不应自动获得调用者全部权限。
 
+行为规范的适用条件也应由可信会话状态承载，而不让模型从一段自述自行取得改变规则的权力。同一请求可对成年人允许、对未成年人施加额外限制；规范版本、适用人口与人口判定的不确定性因而是三个不同对象。[具名规范更新](https://model-spec.openai.com/2025-12-18.html)给出按U18条件生效的意图规则，其[发布说明](https://openai.com/index/updating-model-spec-with-teen-protections/)另声明年龄不确定时采用较保护性的默认并允许成人验证。这是规则与分群条件的披露，不证明年龄识别准确、模型已经完全遵从或实现了新的训练算法。判定、验证与合规回归带来隐私、误拒和维护成本；资格或执行证据不足时，保留保守默认及可信验证/人工处理，而不以规范文本代替实际安全验收。
+
 不过，按主体保护主要管理接口，还不能证明管理资产已被保护。单用户、仅本机访问时，把配置与普通用户数据放在同一目录可能便于维护；当服务暴露到网络，普通数据读写 API 却可能成为另一条控制路径：改写安全级别、扩展来源或恢复快照，都能间接改变管理行为。授权因此要沿敏感资产的可达路径检查，而不能只检查界面上的管理按钮。ComfyUI-Manager 的公开安全说明提供了这一具体反例；这里采用的是已披露的路径与部署前提，不是攻击复现或所有版本的安全证明。<!-- source-family:SF-COMFYUI-GHSA-95pq-hr8p-f5g7 -->
 
 把管理状态迁入系统专用目录，又把问题转成宿主能力与迁移的一致性：目录名称本身不执行访问控制。该公告的保护分支要求 Manager 3.38 与 ComfyUI 0.3.76 以上的 SystemUserProtection API 配合，并保留旧备份的清理提示；旧宿主则以 strong 模式禁止新安装，付出可用性成本，但这不等同受保护路径已经成立。由此推导的工程检查是同时核对宿主执行能力、组件版本、实际迁移结果及仍可达的旧副本，而非只确认补丁已安装。默认 localhost 仍是该公告所述远程威胁之外的成立条件，不代表其余攻击面都安全；网络暴露扩大后，需要新增的是可达路径与兼容状态的证据，而不是丢弃原有主体授权。<!-- source-family:SF-COMFYUI-GHSA-95pq-hr8p-f5g7 -->
+
+资产边界也存在于训练数据到更新 artifact 的转换。按文本标签审核 fine-tuning data，在识别显式有害指令时仍是有用的第一层；但“benign-labelled data 已通过 filter”不能认证更新后的模型行为安全。一个受限反例通过赞扬式语义重标与概念定义保留，使安全相关判断发生变化而请求理解仍可能保持；这不是普通输入字符串过滤能够独立验收的对象。平台应把 data approval 与 checkpoint/adapter 的行为评价分开，并绑定更新版本、数据来源和回退路径。这是由反侧推出的治理要求，不是原研究已实现的安全 gate。<!-- source-family:SF-2026-ARXIV-2601-12460 -->
+
+[Benign fine-tuning 的作者实验](https://arxiv.org/html/2601.12460v1)只覆盖所测七个模型、270 QA 与受限生成/评价条件；knowledge/attitude 的线性 probe 是表示相关读出，不能证明拒绝机制的唯一内部因果，也不能把作者解释提升为必要充分条件。商业服务中有时需要两阶段更新且原因未明；50个 Alpaca 问题的局部效用评分更不能保证一般能力没有退化。因而更新仍需独立的安全与效用回归、必要的人审及发布回退，付出额外评价和版本管理成本；缺行为证据时保留原 artifact、限制更新或不发布，不能让训练数据的安全标签继承为部署许可。
+
+数据和更新位置之外，优化规则也属于待验的安全身份：为维持可塑性或寻找较平损失区而加入的干预，不会自动继承原模型的抗后门性质。一个[受限DRL对照](https://arxiv.org/html/2605.14587v1#S5)在相同攻击框架中比较不同训练干预，发现SAM在已有policy被恶意post-training的设置下可同时降低所测sharpness、提高触发后目标动作成功率，部分组合又进一步放大攻击；从头训练的结果却弱得多。因此平坦、clean任务效用、触发行为和更新阶段须分别验，不能把“更稳定训练”当作去后门证明。这里攻击者仍须有污染transition/重发checkpoint的权限，有限PPO/小MLP和已知触发实验不推出任意LLM优化器的风险率；梯度方向图与有同向/曲率假设的局部近似，也不识别唯一普遍因果。不同任务sharpness量纲和其他成因尚未校准，低值或尖峰均不能直接变成自动检测阈值。额外优化求值、污染/对照训练、多seed、触发与良性回归全计费；变更optimizer或组合后应绑定新artifact重新验收，证据不足时保留可信未污染版本、数据/产物隔离和独立行为gate，而非只按loss几何批准发布。<!-- source-family:SF-2026-ARXIV-2605-14587 -->
+
+更新位置也可以先作为待验收的对象，而不只比较整份 checkpoint 的输出。一个受限归因分支按声明的 head、neuron 等单位学习稀疏 mask，让前向真正保留或屏蔽单位、反向用连续替代梯度优化；再分别运行保留候选和移除候选的行为测试，并检查一般效用与新任务。由此获得的是给定模型、数据和干预下的候选功能位置，不是唯一或功能完备的安全电路证明；多个 mask 的重叠、共享参数与单位到权重的映射都须保留身份，不能把低保留率直接解释成危险知识已经分离。<!-- source-family:SF-2026-ARXIV-2603-23268 -->
+
+候选位置可以约束随后修复的参数范围，但移除测试、局部修复和保护原安全能力是三份不同责任。原双 mask 优化不自动给出精确互补结构，helpfulness 更新的冻结映射也未充分披露，不能从结果补造通用配方。已知注入条件的受限实验仍有攻击残留和效用下降，不认证未知自适应后门、所有合法请求或永久安全；较少可训练参数也不抹去原模型求值、mask 搜索、双支验证和重新训练的费用。模型/粒度、任务或更新目标变化后应重新归因并独立回归；证据或效用不足时保留原 artifact、普通受控微调与外部安全验证，必要时不发布，不能由内部 mask 授部署许可。
+
+候选参数位置还要与它在当前输入中的贡献分开：固定的权重重要性只能提出待查位置，同一参数方向乘上不同context中的activation，可能表现为不同的安全或效用贡献；可先用受限行为人口筛候选，再检查当前activation的作用方向，才提出局部更新范围。[一项受限内部修复研究](https://arxiv.org/html/2509.03985v1)沿这条分支微调，不把线性probe可分、稀疏位置或方向重叠认证成唯一安全电路、完整危险知识或因果充分性。原文从activation贡献翻转到权重更新的完整映射未闭，不照录修复recipe；静态攻击集与同源judge也不证明对自适应威胁有效，部分效用和完整微调对照仍更好。候选粒度、模型/参数、输入支持、probe与更新目标须共同绑定，归因搜索、模型求值、局部训练及独立安全/效用回归全计费；映射、支持或回归不足时，保留可信未改artifact、受控微调和外部policy/行为gate，必要时不发布，不由少量改参签发持久安全。
+<!-- source-family:SF-2025-ARXIV-2509-03985 -->
+
+在多模态安全编辑中，输入token的选择也不等于参数更新的影响范围。一个[受限扩展分支](https://arxiv.org/html/2605.14750v1#S4)先以有害文字条件对视觉tokens的attention提出少量key，把文字key与视觉key作为独立列拟合拒绝value，再修改语言主干MLP的down-projection；这不是只在被选token或恶意请求上开启的runtime gate。Attention与probe只能提出相关位置，benign KL和旧key协方差也只是约束更新的代理，soft least-squares不继承理想硬约束或全部能力保持。有限消融中，随机/固定视觉位置可同时压低攻击成功与摧毁一般效用，选更多视觉keys也会显著损伤效用；按区域编辑的差异仍不识别唯一有害语义电路。已编辑模型上的有限自适应攻击还能恢复部分成功率，不能由静态零ASR宣永久安全。文字/图像制备、key/attention提取、value优化、矩阵更新、选层与独立攻防回归都付费，部署forward未加模块不等零准备。跨模态支持、误拒或效用不合格时，保留可信未改artifact、受控微调与外部行为/policy检查，不由少量keys或稀疏改参批准发布。<!-- source-family:SF-2026-ARXIV-2605-14750 -->
 
 ### Decoding Constraint 也是不可信控制输入
 
@@ -37,12 +54,22 @@ Grammar-constrained decoding 常被当作格式可靠性层；若 grammar、pars
 对约束路径做专门对齐可能保持更多 safe completion，却会引入 utility 回归、grammar coverage 与新型绕过。约束来源不可信、对齐未覆盖目标 grammar 或规则过窄时，应拒绝该 constraint 并回退普通安全解码。作者实验只证明若干 benign-looking grammar 可改变所测模型行为及其防御分支，不证明所有 grammar 或模型都同样脆弱。
 <!-- source-family:SF-2026-ARXIV-2606-11817 -->
 
+安全过滤还须分开“少改原本安全的输出”和“干预后真的安全”。一条[受限value-filter分支](https://arxiv.org/html/2605.14746v1#S3)保留超过阈值的next-token候选，再按原policy概率重归一；它与对全部token指数重权不同，但理想安全单调/floor依赖真实base-continuation value及每个可达prefix有非空支持，不能直接授给learned probe。对base生成且按明示judge规则判安全的完整轨迹，可用沿途最小probe分数校准阈值，在固定估计器与交换人口下限制误干预这类轨迹的期望；这不控制新policy的真实有害率、每个prompt风险或域移安全。部署有限重采样还有另一接口：所有候选都未过线时仍取最高分，会离开阈值过滤的支持，不能再继承hard floor。判安全的标签本身也可能错，cosine接近原输出和更遵从意图都不认证事实/安全质量。训练probe、生成与标注校准轨迹、全部候选forward/重采和独立效用安全回归均付费；阈值附近失准、支持为空或费用超界时，应保留可信外部policy检查、拒绝/人工路径与原已验收解码，不由一个误干预预算批准危险输出。<!-- source-family:SF-2026-ARXIV-2605-14746 -->
+
+单次文本脱敏也须分开“什么算敏感”和“在已定义类别内怎样取舍误漏”。一个受限模型分支将autoregressive checkpoint改为双向局部attention与BIOES token classifier，一次forward后用Viterbi合法转移和bias选择敏感span；运行时调整precision–recall不等于改隐私taxonomy，新的敏感类别仍可能需要重新标注与微调。窗口和可接受输入长度也不同：长文能送入模型，不保证相距很远的别名/间接线索已连通，更不使被保留文字自动匿名化。
+
+[官方Privacy Filter model card](https://cdn.openai.com/pdf/c66281ed-b638-456a-8ce1-97e9f5264a90/OpenAI-Privacy-Filter-Model-Card.pdf)的原benchmark、rule-cleaned与模型提示后复审的corrected标签必须分开版本；只审模型找出但原标签漏掉的span，会改变评价人口，少量人审一致不认证全面独立gold。固定taxonomy、decoder设置、域与标签版本共同构成脱敏资格，误漏与过度删除分别验收；推理、Viterbi、标注复审和适配都计费。新域、长距离线索或标签不可信时，保留规则/更保守的删改、人工复核或不释放，不能由一次高F1签发跨步隐私、法律合规或未知类别保护。<!-- source-family:SF-2026-OPENAI-PRIVACY-FILTER -->
+
 ### Agent Privacy 必须对整条 Trajectory 记账
 
 逐条 PII filter 在每次释放彼此独立、recipient 不串联信息时合理；Agent 会跨多步向多个 honest-but-curious 或 colluding sinks 暴露碎片，使单条看似无害的输出累计提高对秘密的 posterior belief。Untrusted model 只能提出 labeled atoms 与最小披露 variant，deterministic verifier 按 sink trust 对 certified leakage cost 记账，ledger/budget owner 才拥有最终放行权。
 
 Posterior-risk mediation 用可解释预算换取秘密先验、sink identity、atom 标注与 verifier calibration 的复杂状态；错误先验会低估泄漏，过严预算会损害任务可用性。模型、秘密定义或 recipient 漂移时应停止释放并回退拒绝或人工审批。现有实验只支持作者 threat model 下的 privacy–utility trade-off，不构成通用隐私证明。
 <!-- source-family:SF-2026-ARXIV-2606-12341 -->
+
+跨任务还有一份不同于风险预算的状态：外部服务已经见过哪些秘密。一个受限IFC执行环境让模型只见公开key与代码结构，私有value留在受控store；读取和运算传播taint，向指定外部entity披露时再核用户permission。若同一entity以后返回数据，返回值须继承其历史披露log的taint，避免新任务把已知秘密洗成public。Permission表达当前允许什么，disclosure log记录已经发生什么；撤销权限不让外部收件人遗忘，两个状态不能合成一个可清零授权位。
+
+[GAAP的必要机制与评价](https://arxiv.org/html/2604.19657v1#S3)依赖所有相关model/tool通道被调停、可信store与annotation及准确entity身份；它不保护先被当作public送入prompt的秘密，也不能从有限固定注入的零观察泄漏推及所有covert channel或串谋。注释/权限维护、持久log、IFC与更多代码生成均付费，utility与latency仍有损失；log持续增长也有生命周期成本。无法追踪返回来源、权限或taint不完整时，停止该披露并保留隔离/人工审批，不让deterministic标签替代端到端信任边界验收。<!-- source-family:SF-2026-ARXIV-2604-19657 -->
 
 最小披露还有一条容易遗漏的边界：把秘密改写成含糊表达，不一定比完全不提更安全。若无防御时模型本来不会提及某个私人主题，加入“用可接受的抽象表达代替细节”的提示反而可能产生新的可推断线索；减少完整泄漏和增加局部泄漏可以同时发生。因而隐私防御不能只比较总泄漏率，还应逐私人项记录从不提及、局部暗示到完整披露的转移，并与无该提示的同场景基线对照。[受限证据：AgentSocialBench §4.2.4、Appendix D](https://arxiv.org/html/2604.01487v1#S4.SS2.SSS4)
 
@@ -54,6 +81,12 @@ Posterior-risk mediation 用可解释预算换取秘密先验、sink identity、
 对视觉 Agent，隐私验收还应改变信息流语境而保持图像本身不变：同一可见信息在不同 recipient、purpose 或 transmission 条件下，可能分别允许或禁止传输。[成对 contextual-integrity 评估](https://arxiv.org/html/2601.08235v1)把这样的正负场景配对，让负侧泄漏与正侧任务效用同时进入账本；规范问答 probe 是否识别语境、最终消息是否披露、图像 attachment 是否真的发送，仍是不同观察对象，前者不能取得 attachment 的放行权。<!-- source-family:SF-2026-ARXIV-2601-08235 -->
 
 配对构造增加场景生成、规范审校和 trace 判断成本，也会继承合成语境、文化假设与 generator/judge 同源偏差。原研究的人审只覆盖50个场景，部分公式分母与正文、表格与叙述存在数值冲突，因此不采用精确总体泄漏率；它仍支持局部反侧：抑制披露的提示可能同时损害合法传输，CI prompt 不是生产保证。真实接收者或用途无法核实、规范判断不稳时，应由独立权限与 attachment gate 控制释放，保留人工审批或不发送路径，而非让模型以流畅解释代替授权。
+
+规范表示可读，也不证明按一个“privacy方向”修改hidden就会减少披露。一个受限干预分支分别从信息类型、接收者和传输原则的contrastive样本提取方向，再组合注入指定层；单轴在某些场景反而增加泄漏，三轴组合才改善所测行为，继续扩成五轴又未必更好。因此concept probe、组合方向的行为结果与真正的信息流授权是三种对象，不能用内部方向相加替代recipient/purpose权限检查。<!-- source-family:SF-2026-ARXIV-2604-00209 -->
+
+[四种7B/8B模型的有限对照](https://arxiv.org/html/2604.00209v1)仍有Llama2的CONFAIDE反退；NCR还含拒答/不连贯，不等于一减泄漏率，合成表与正文冲突的精确降幅不用于保证。方向构造、白盒hidden读取、layer/强度搜索与独立输出judge都计费，并需绑定规范标签、模型与人群。域、模型或强度变化后应重验合法效用和不当披露；组合失配时关闭steering，保留最小披露、独立release gate与人工审批，不由模型规范解释认证法定合规或生产隐私。<!-- source-family:SF-2026-ARXIV-2604-00209 -->
+
+固定的安全语境不完整时，还应把“规则是否适用”和“适用后怎样判定”分开：对已提供 context 逐条提出 applicability 与 yes/no/not-sure，再按显式优先级聚合，同时列出影响判断的 unknown factors。Unknown 不是 prohibited 的事实，规则已走完也不是 context 已补齐；模型指出的缺失因素只是补证提案，真正的权限/释放仍由可信 policy 与证据决定。 [ContextLens 的受限对照](https://arxiv.org/html/2604.12308v1#S3)不交互补充 context，人审只覆盖每域每模型30个不完整样本，多模型在GDPR退步、相关性/一致率亦弱，规则 cumulative/override 解释还有争议，因此不授法律合规或缺失因素穷尽保证。逐规则调用、规则拆分/维护和独立核验都付费；上下文、规则优先级或来源资格不足时，保留明确 Unknown、人工补证及原权限 Gate，不让较完整的模型解释自行批准释放。<!-- source-family:SF-2026-ARXIV-2604-12308 -->
 
 ### Multi-Agent 防御要在消息传播前模拟状态偏移
 
@@ -68,6 +101,14 @@ Clean accuracy 与 exact-trigger ASR 只覆盖一个点，无法说明相近文�
 
 邻域测试提高发现泄漏触发的概率，却依赖变换集合和 agentic workflow coverage，可能漏掉更远但语义等价的 trigger。覆盖不足或 executable action 风险高时，应拒绝发布或限制 capability；低风险、无外部动作的模型仍可使用传统 probe 作为第一层筛查。现有证据限论文的视觉语言 Agent 与威胁模型。
 <!-- source-family:SF-2026-ARXIV-2606-12586 -->
+
+Trigger 还可绑定提示描述的协作拓扑和审阅条件，而不只是任务字符串：在任务字节相同的条件下交叉改变单体/多体及有无人工审阅，再加入拓扑术语 placebo，能检查可疑适配是否只在特定上下文改变行为。[受限后门对照](https://arxiv.org/html/2610.05793v1)支持这种描述条件触发，不证明真实多 Agent 环境会自然触发或所有协作都危险；独立 bandit analyzer 的检出率低于任务专用 checker，广窄信号对照还混入训练量差异。二元审计在 clean control 上也有高假阳性，不能把猜中一次触发叙事当可靠检测器。适配来源、触发邻域、配对任务、真实 effect 与独立审计须共同保存，全部训练/重放和标注计费；覆盖或误报未过时保留来源门禁、受限 capability、人工核验与 Unknown，不由未触发或一次审计批准安全发布。<!-- source-family:SF-2026-ARXIV-2610-05793 -->
+
+线索本身也要重新取得跨步骤的测量资格。standalone 输出的 token-prob 偏移可以作为已校准人口的便宜 sensor，却未必覆盖 Agent 的延迟或交错 continuation：[BackdoorAgent 的 preliminary 对照](https://arxiv.org/html/2601.04566v1#S5.SS4)中，行为已被控制时，target/non-target 平均概率差仍小且不一致。这不是完整 CleanGen 在匹配阈值下的 FP/FN 实验，不能断言所有概率防御无效或已找到唯一失效因果。跨步采用时，应把 sensor 绑定前序状态、当前 step、延迟目标与实际 effect，另付轨迹重放、标注和误报校准费用；这些是工程验收要求，不冒称论文已验证新 detector。原 probability probe 仍可作第一层，未检出则保留 trace/Unknown 与独立 effect gate，而不是放行证书。<!-- source-family:SF-2026-ARXIV-2601-04566 -->
+
+输出概率或像素变换仍是便宜的第一层筛查；若可疑适配产物已改变多模态融合，而防守运行时仍能读取并控制目标模型的 attention，可以把检测读出与干预另分为两步。一条受限分支先在按架构定位的融合层，为当前解码 query 计算各 head 的视觉 attention 总量与 prompt attention 总量之比，拼接多层特征，按干净参考的逐维均值/标准差形成偏离分数，再以参考分位校准告警。越界只提出屏蔽建议：在最后检测层，将任一 head 高度关注的视觉 key 取并集，给后续层与未来解码这些位置的 logits 加负偏置。这里的屏蔽是改变 attention 参与，不是物理删除 token、缩短序列或释放 KV；已经进入早层 hidden 的图像信息也没有被重算清除。高 attention 不是恶意语义真值，冻结权重更不保证干预后的任务功能不变。<!-- source-family:SF-2026-ARXIV-2603-12989 -->
+
+[CleanSight 的有限证据](https://arxiv.org/html/2603.12989v1)限于可疑 adapter/LoRA、可控白盒 runtime 和所测视觉触发任务，不能继承为任意权重污染或所有自适应攻击的保护证明；它确实测试了三类针对检测信号的自适应正则，但仍有残余攻击、误拒与 clean utility 下降，oracle detector 下的 poisoned utility 也不是完整运行时验收。因此 model/adapter revision、选层、prompt 与视觉 token 布局、干净参考和跨 decode mask 身份应共同固定，这是工程验收要求而非论文已给出的完整接口；分别测检测误差、干预后的目标行为及良性任务损伤，不凭无告警或低 ASR 放行。参考采集、attention 读取/校准、mask 与全部生成均计费，未披露的部署配置和尾延迟不回填为免费防线。参考失配、合法视觉信息被屏蔽或接口无法可靠执行时，保留原概率/像素筛查、可信未污染模型与产物隔离、独立输出/effect gate，不由 sensor 自签安全。<!-- source-family:SF-2026-ARXIV-2603-12989 -->
 
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-22481:start -->
 邻域还应把 **training strength、test strength、poison rate 与 trigger direction** 分开扫描。只固定一个强度并同时观察 clean accuracy，会掩盖两个反直觉现象：clean accuracy 可能随训练 trigger 增强而改善，ASR 却在有限强度处达到峰值；低方差方向也可能比更显眼的方向更有效。因此 Evaluation owner 应把这四个变量连同 model/data revision 组成矩阵，分别记录 clean 与 ASR，不能由一次零 ASR 或更好 clean score 签发安全结论。
@@ -108,6 +149,10 @@ LLM/Agent
 ```
 
 单一 WAF 无法覆盖这条链。每次从一层向下一层传递，都需要验证 identity、integrity 和 authorization。
+
+自主复制的风险还要把三份资格放到同一条链上：Agent 能完成目标发现、部署与继续传播；模型能在目标硬件的内存、上下文和通信预算内运行；新副本确实由该目标计算资源继续驱动。分别展示这些步骤，不能拼成完整闭环。受控 inference standup 适合定位长程部署失败，却不能由另一台服务器承担 controller 推理，再把服务较小模型的成功记成 controller 已在目标上复制。<!-- source-family:SF-2026-ANTHROPIC-SELF-REPLICATING-AI -->
+
+[受限IoT评价](https://www.anthropic.com/research/self-replicating-ai)同时给出小模型的部署可行性与更强模型的组合能力，但当前能力floor和目标设备size ceiling尚未相交，简化访问条件也不是现实入侵验收。安全owner应保留这两条独立证据及尚未相交的区域，再由目标环境验证同模型闭环；PP分片能扩容量，却增加节点故障、KV重建、流水气泡和低并发成本。上下文/资源或真实访问前提不足时，保持风险为未决并收窄运行权限，不能用趋势预测给自主复制签发已成立结论。
 
 Data poisoning 不必依靠显式 trigger：错误事实经过 continued training 后，直接 factual answer 与依赖它的 downstream decision 可能不同步。安全评测应配对 false/true 数据训练，保留 unaffected clean controls，并分别检查事实输出、派生决策及一般遗忘；表示 norm 或 probe 不能代替实际行为。[受限事实投毒实验](https://arxiv.org/html/2610.02886v1)支持这两层对象分账，不提供真实组织风险率或普遍不可修复性。<!-- source-family:SF-2026-ARXIV-2610-02886 -->
 
@@ -155,6 +200,8 @@ HE/MPC protocol、ciphertext encoding、memory movement 和 accelerator dataflow
 
 联合设计提高效率也收紧 portability，并增加验证面；作者特定 HE/MPC 与 accelerator 配置不能外推。任何 threat assumption、operator 或精度未覆盖时，应回退可信执行环境、较少功能或不处理该敏感请求，而不是沿用局部 benchmark。
 
+不依赖HE/MPC的另一受限路径，先在client把输入embedding编码到有界低维latent，再以binomial随机机制联合完成扰动与n-bit量化，server解码并用适配过该噪声的soft prompt调用冻结模型。压缩维度、每坐标bit数与扰动强度因而共同决定传输和效用，不是先加噪再把通信免费删掉。[必要原证](https://arxiv.org/html/2602.11513v1)的Gaussian-DP近似仍依坐标有界、维度与随机机制前提，并保留±γ误差；L2有界也不会自动成立更小的逐坐标界，不能直接外推整条对话或重复query的composition保证。相同embedding-inversion ASR只表示该攻击人口下的经验恢复率相近，不表示同DP或覆盖其他攻击，严格隐私与跨域迁移也可能损害效用。Encoder/decoder训练、随机化、server softprompt及额外token都计费，低bit payload不等低端到端时延。输入边界、会计或噪声适配不成立时，应回目标威胁下已核验的密码协议、可信执行、本地处理或拒绝敏感请求，不把压缩表示当匿名证明。<!-- source-family:SF-2026-ARXIV-2602-11513 -->
+
 不依赖密码学或可信硬件的另一分支，是同时改变 client 输入表示与 server 模型 artifact。仅扰乱输入、保留原模型，在低敏感或可接受能力下降的任务中仍然简单；要让混淆后的 token 继续支持推理，就需协调私有 token 映射、输出还原和权重变换，分别验收算子级等价与近似误差。相邻变换可消去不意味着所有结构都精确等价：位置编码、非线性、normalization、噪声与有限精度都可能引入误差，不能由代数恒等式直接承诺任务质量或保密。
 
 [联合数据/模型混淆的受限方案](https://arxiv.org/html/2603.01499v1)在 honest-but-curious server、私有映射和指定攻击者访问下，用权重变换与噪声降低映射恢复信号；静态权重观察的分析界不自动覆盖动态词频、已知数据或恶意执行。它增加离线 artifact 转换、映射管理和精度/隐私调参成本；RoPE block 重排及依赖输入分布的 RMSNorm 替代是近似路径，噪声不足仍会泄漏，较大变换在 BF16 下可能严重退化。有限攻击未恢复并非 worst-case 安全，有限模型质量结果也不是免费保密。Threat model、精度或访问条件越界时，应回退目标威胁下可验证的密码学协议、受控可信执行或不处理该敏感请求，而不是沿用一个局部恢复率保证。<!-- source-family:SF-2026-ARXIV-2603-01499 -->
@@ -180,11 +227,56 @@ encrypted weight artifact
 权重的 confidentiality contract 必须覆盖最后一个 off-chip plaintext boundary，而不能在 artifact 加密完成时提前结束。
 <!-- semantic-body-binding:SF-2026-ARXIV-2604-23205:end -->
 
+可信片上 ingress 与动态可信执行是不同分支。固定 TrustZone 连续区对密钥等小状态简单合理，但当推理需要借用数 GB 碎片页时，内存管理权不必与明文访问权一起交给普通 OS：可信 monitor 可用 stage-2 撤销 kernel 对选中页的映射，并同步限制其他设备的 SMMU；secure-world 框架才把这些页映射为权重、KV 与临时状态。密文可以先由普通世界加载，页保护完成后才解密；释放或延迟清理也必须保证旧明文在恢复普通访问前已覆盖，不能让“已归还 freelist”成为访问授权。NPU 独占保护模式还须撤销 kernel 的 MMIO、隔离复用驱动并限制 DMA 目的地，不能从 CPU 页隔离直接推出设备隔离。[必要机制](https://arxiv.org/html/2603.09046v1#S4)。<!-- source-family:SF-2026-ARXIV-2603-09046 -->
+
+这种分离用 monitor、驱动交接、映射与清理费用换取页级弹性；全部受保护资源释放后才能暂停保护，并由更高可信层保存、恢复验核 monitor 的完整性，不是敏感任务活动时免费关掉虚拟化。[有限开发板对照](https://arxiv.org/html/2603.09046v1#S7)中，碎片页分配避免了 CMA 大区合并，但内存压力仍可触发换盘，设备映射、解密与后台开销也仍存在；它不认证任意手机、驱动残余状态、物理/侧信道防御或完整 agent 任务延迟。普通世界 client 仍可能在验证后泄漏或改写输出，可信推理不替代可信 I/O 边界。交接、驱动信任或清理前提不能验证时，应保留目标威胁下已核验的静态 TEE、适用的独立硬件/隔离边界或拒绝敏感请求，而不是回到可被同一 compromised kernel 读取的明文 host 执行。<!-- source-family:SF-2026-ARXIV-2603-09046 -->
+
+当 agent 代码、模型权重与第三方工具分别属于互不信任的 provider，保护一个推理进程还不够；可以把它们放进不同 confidential realm，由各 owner 验证预期 stack 的 attestation 后才通过受保护通道注入自己的秘密，再用声明的跨 realm 通道交换请求。[AgenTEE 的有限原型](https://arxiv.org/html/2604.18231v1)复用既有 realm attestation 与 confidential shared memory，新增的是应用资产与通道的分责，不是新的密码证明。必须保留硬件、Monitor/RMM 和用户 I/O 的信任假设：原型用户仍信任 normal-world 界面，经它输入或显示的内容不因其他 realm 隔离而自动保密；attested stack 也不保证模型输出不泄漏、工具内容可信或外部动作有授权。Provisioning、通道同步、内存与端到端工具调用均计费，开发板 OpenCCA 的少量小模型对照不授真实 accelerator 或所有 workload 的低开销；隔离/attestation/I/O 前提不成立时，缩小所处理的秘密与权限，保留适用的独立可信边界或拒绝敏感请求，不以更多 realm 代替 effect-time policy。<!-- source-family:SF-2026-ARXIV-2604-18231 -->
+
 一旦 threat model 已允许攻击者取得服务器上的明文权重，预算就不能只按原 artifact 大小或推理量化格式计算。推理量化要求接收端以低比特表示持续执行；压缩外传则可以只传 codebook/索引，再在接收端恢复全精度参数并付出继续训练成本，因此两者的可接受失真与预算不同。[受限压缩外传研究](https://arxiv.org/html/2601.01296v1)的 Qwen 实验支持这种约束差异，不证明原模型输出被无损保存，也不证明真实入侵成功。平台需把可访问的明文状态、泄漏通道与累计暴露、压缩计算及接收端恢复成本分账；固定每单位时间 detection probability 的估算模型和未计入的攻击压缩计算，不能直接转成生产成功概率。更严格的明文访问控制仍是前置防线，这一分析不替代前文可信 ingress 的边界。
 
 同样，取证与预防不应共用一个成功标签。权重 watermark 在有限后续 fine-tuning 中可保留归属信号，但不阻止外传，也未证明能抗有意移除。周期改变 Q/K 权重的函数保持旋转，则要分清 attention-score 乘积的稳定基与仍随旋转变化的单个权重：原研究只演示单层可用参数恢复，不能据此保证全模型片段可拼接，也不能保证 moving target 已封堵外传。这些分支增加转换、检测、恢复和审计成本；能力超出已测假设时，应保留访问隔离与独立泄漏监测，而非用局部水印或旋转试验授予完整 confidentiality claim。<!-- source-family:SF-2026-ARXIV-2601-01296 -->
 
+共同训练一个模型时，单一发行方持完整 watermark key 的方案不再满足共享验证权；各 client 各嵌一个独立信号，又可能在聚合后相互稀释。一条门限分支把同一方向拆成 client shares，并用共同缩放及 secure aggregation 保持嵌入方向；至少 `t` 个参与者可以汇聚各自对可疑权重的内积，在不明文物化完整 key 的情况下协作验证。这里控制的是验证权限和共享方向，不是把检测结果升级成法律所有权，也不把“小于 `t` 的 shares 无法重构 key”升级成攻击者无法从公开 checkpoint 估方向或移除水印。<!-- source-family:SF-2026-ARXIV-2602-10765 -->
+
+[协作门限水印的必要协议与反侧](https://arxiv.org/html/2602.10765v1)只验证诚实但好奇、固定参与人口、白盒参数可见和 IID 图像分类；蒸馏可以移除，强自适应攻击没有难度下界，不能继承为非 IID、恶意训练或联邦 LLM 的安全保证。Key/share、门限与参与集合、共同缩放、训练/可疑 checkpoint 和 detector 校准应一同绑定；参与不足门限的轮次不嵌入，检测仍需约定 coalition。新增 setup、share 存储、每轮额外 secure aggregation 和效用/检测校准均付费；总体低误报也依赖所测 null 分布，不从有限拟合推出任意模型的固定概率。共享权限或威胁假设不可核、未知移除攻击超界时，应保留 Unknown，回退签名发行记录、provenance、访问控制与独立取证，而非单方签发完整保护。
+
+共享验证权与追查哪份发行副本外泄，是两种不同问题。若可疑服务只允许黑盒查询，另一条分支可先在服务器训练通用 trigger 的 embedding，再把同一向量映射到每个 client 的不同 token 行；客户端只更新 PEFT modules，服务器聚合并用通用 trigger 强化这些共享 modules，随后重新发行个性化 embedding。[EmbTracker 的受限联邦对照](https://arxiv.org/html/2603.12089v1)据此避免为每个 client 单独重训 watermark，但持久性依赖 embedding 在客户端更新中保持冻结，不是任意 full fine-tune 的承诺。这里归因对象是发行给 client 的 model instance，不是该 client 的私有训练数据、前述门限 key 的完整性或被阻止的泄漏。<!-- source-family:SF-2026-ARXIV-2603-12089 -->
+
+验证须同时要求本 client 的 trigger 响应达到阈值、其余 client 的响应各自低于阈值；其他 client 的平均响应低，不能替代逐个排除。签名 message、有限词表中的 trigger 映射、发行模型与 PEFT 更新身份、验证样本/阈值及后续变换应绑定留档，这些是据接口推导的验收要求，不是作者已认证的发行协议或不可伪造证明。当前原研究依赖可信 server、遵循本地训练且不串谋的 clients；新增 overwrite 测试仍保留新旧水印并存，timestamp/CA 排序只是建议。初始化与每轮强化、个性化发行存储和逐 client 查询均付费，VQA/部分联邦优化及量化质量反退保留；超出冻结 embedding、攻击或校准人口时保留 Unknown，回退签名 origin/provenance、访问控制与独立取证，不由高 VR 认定法律责任、零误报或完整 confidentiality。
+
+后处理水印还需要匹配真正的检测路径：在低分辨率图上叠加扰动再检测，与先把扰动插值到原图、叠加后再缩小，不是同一输入。训练可模拟后者，并在原分辨率计算局部衰减，使检测器和判别器见到部署时的组合；也可先学可恢复message，再逐步加入对抗约束并降低扰动幅度，而非同时强推相冲突的目标。[受限水印实验](https://arxiv.org/html/2512.16874v1)的adversarial-only仍保message loss，感知代理与真实可见性不等价，鲁棒性和不可见性也仍有取舍；短视频和有限变换的检出不能外推任意编辑或来源认证。高分辨率模拟、分阶段训练与独立画质/误报校准都有成本；路径变化或内容失真时，应回到匹配部署变换的验证、较保守扰动及签名来源，而不拿一个bit准确率签发完整保护。
+
 生成系统的水印持久性还取决于信号落在哪个可替换组件。将 latent 水印蒸馏到 decoder，能让该解码路径自动带信号；若接收者可公开替换 decoder，就能绕开这条路径。将信号蒸馏到 generator 则改变另一份权重的责任，却仍可能在后续非水印 LoRA 适配中遗忘。Generator、codec/decoder、message、detector 与后续更新身份应一同记录，不能把一处组件的检测结果继承给完整 lifecycle。训练与检测、输出质量回归都须付费，有限 augment 下的 bit accuracy 也不是 authentication、合法所有权或抗有意移除证明。需要强制来源验证时保留签名/制品血缘与访问控制，不用水印取代它们；[受限 latent 水印实验](https://arxiv.org/html/2601.16140v1)只支持该部署位置与持久性的取舍。<!-- source-family:SF-2026-ARXIV-2601-16140 -->
+
+固定生成器而希望嵌入多bit信号时，还可把插入位置分配到同一采样路径的不同阶段，而不只选择改哪份权重：初始latent承载较粗结构信号，中间步再加入细节信号，以固定特征提取器的message loss联合约束每图两份扰动。[受限双时点水印](https://arxiv.org/html/2508.21727v1#S3)提出这条替代接口，位置与强度须绑定sampler/噪声日程、carrier、decoder及目标变换；“早结构、晚细节”不是所有生成器通用的阶段证书。低阶与高阶moment惩罚不保证完整噪声分布或图像无损，原再生成切片仍较弱，画质也低于未加水印基线。为避免保留整条反传图，可用adjoint重算换存储，但每图反复采样、反向积分、decoder和检测校准仍全部计费，局部显存不随步数增长不等常量总成本或精确离散梯度。验收应分别核bit恢复、独立null误报、画质与完整优化费，不由有限攻击或低bit误差批准不可伪造、用户追责或合法所有权；阶段、数值、攻击域或预算不匹配时，保留原生成路径、较保守信号与签名origin/provenance和inconclusive，而不继续加大扰动自签保护。
+<!-- source-family:SF-2025-ARXIV-2508-21727 -->
+
+生成的图像还可能成为另一模型的训练数据，而不只是被编辑或重新解码。[一条受限再训练反侧](https://arxiv.org/html/2506.23731v1)表明，原输出可检出的信号不自动传到接收模型的输出；相同图像经过codec仍有信号，也不能保证后续训练会保留它。图像自回归水印还依赖生成单元的次序与重新编码后的token对应，图像视觉接近不等token支持保持；同架构、跨架构和不同分辨率的转移须分别验收。应把来源模型/标记、训练数据人口与变换、接收模型/训练方式、检测codec和null校准绑定为独立取证对象，而不由一次高检出签发完整后代归因。有限同架构转移仍有大量漏检，单图过拟合与同分辨率条件不代表自然混合训练；画质也可能下降。输出制备、两代训练、重新编码、阈值与独立质量检验全付费，符号/检测实现或迁移人口未核时保留Unknown，回到签名发行记录、数据血缘与独立取证，不把未检出当非AI、检出当授权违规或法律所有权。
+<!-- source-family:SF-2025-ARXIV-2506-23731 -->
+
+即使生成组件没有被替换，输出也可能经公开生成模型重新构造成内容近似的派生图像。对 pixel/frequency 扰动的检测鲁棒性，不自动覆盖这种 regeneration transformation class；反过来，CLIP/FID 或任务保持代理接近，也不认证原图严格语义、来源或所有权。[受限图像重构反侧](https://arxiv.org/html/2601.08832v1)只支持所测 SD backbones 与检测协议下的信号退化，不证明所有内容保持变换都必然移除水印，未检出也不能判定非 AI。单 A10040GB 约6秒/图仍有生成与检测成本，zero-shot 不是免费；据此推导的工程验收应保存原 watermarked output、派生 artifact、变换类别及 detector identity，分别判断信号持久性和内容/任务保持。超出已测变换或无法可靠归因时，保留签名 origin record、制品 provenance 与人工取证，旧水印继续作为受限 sensor，而不自签派生物真实性。<!-- source-family:SF-2026-ARXIV-2601-08832 -->
+
+来源取证之外，发布前还可对输入图像作有界保护性扰动，尝试让特定生成器难以从它保留身份与连贯运动。这个分支改变的是可见 artifact 的输入条件：可在可访问模型的内部特征上优化，并选择颜色或频率坐标分配同一扰动预算，而不是由服务器执行使用许可。它不证明照片没有被复制，也不使生成质量下降自动成为未经同意使用被阻止的证据。<!-- source-family:SF-2026-ARXIV-2603-24570 -->
+
+[受限 I2V 保护对照](https://arxiv.org/html/2603.24570v1)显示优化坐标与内部特征目标影响局部效果，但跨架构、resize 或净化后仍有恢复，更大预算也可能更差；身份 embedding 与画质代理不是隐私、恶意效用或不可感知真值。Reference 生成、梯度优化、转换与独立质量检查都有费，白盒访问和黑盒迁移必须分别声明。变换超界、模型升级或原图效用不可靠时，保留原记录、许可/访问控制、签名来源与人工取证，把扰动当可重验的补充保护，而不签发通用防伪或授权执行证书。
+
+输入保护还要把三个对象分开验收：保护后的 image、经预处理的派生 image，以及指定 I2V consumer 生成的视频。派生图与原图仍有像素差异，不证明这份扰动在消费模型中继续有效；单帧画质下降也不等于运动或主体持续性被破坏。验收应绑定原图/派生图、transform、生成器与 prompt/帧长，分别记录 image fidelity、frame-level degradation 和 video distribution/temporal 指标，不能用同一个“保护成功”标签代替这些责任。<!-- source-family:SF-2026-ARXIV-2603-26154 -->
+
+[IPBench 的受限反侧](https://arxiv.org/html/2603.26154v1)中，JPEG 后一种扰动的像素失真几乎不变，生成端的局部效果却接近消失；另一方法的画质退化较高，video distribution 差异却不如随机噪声。加噪还可能强化部分 consumer 的局部响应，故变换不能预先被统一标成净化成功。不同扰动预算、作者重实现、帧长与 consumer 敏感度限制方法归因，三百图及开放模型不覆盖商业 API 或真实滥用效用；多重生成、优化和转换复测都付费。版本/transform 或任一实际效用未验时，保留 Unknown、原 artifact 与许可/访问控制，不从仍可见的噪声或某一代理下降自签防护。<!-- source-family:SF-2026-ARXIV-2603-26154 -->
+
+没有预嵌水印时，也可学习被动的生成来源sensor，但训练中分开的两条表示不能自动取得真实来源与内容偏差的因果身份。一条[受限开放集归属提案](https://arxiv.org/html/2506.23074v1)用动态kernel构造两组attention map，交给共享classifier形成预测contrast，再由attention选择的区域参与增强训练；这使表示、contrast读出与未知类聚类成为可分别验收的consumer，不是仅凭一张热图说明已消除混杂。应冻结训练生成器/标签和未标注人口、预处理、读出/拒判阈值与聚类映射，分别检验已知类、未知拒判和域移行为；用gold事后匹配cluster只支持离线评分，不能替部署端给未知来源命名。正文目标符号/张量与后到代码的对应未完全闭合，不转写精确loss配方，也不由分类改善签发可识别的do-effect。双branch与增强训练、聚类、阈值和独立新来源回归均付费；参数/FLOPs小增量不等全部低开销。来源人口或observer未校准时保留Unknown，结合签名origin、制品血缘和独立取证，不将统计归属升级为内容真实、授权违规或法律所有权证明。
+<!-- source-family:SF-2025-ARXIV-2506-23074 -->
+
+真实性解释的释放还会改变下游媒体检验的威胁边界。一次图像分析可以给出与判断一致的可读理由，但这种一致性不证明理由就是检测器内部真实规则；正常返回的解释又可能被接收者在另一个编辑接口中重用，使派生图像更自然而改变原检测信号。因此，assessment 输出、外部编辑服务、派生 artifact 与最终 detector 应各自绑定版本和可见权限，单次内容审核通过不能签发派生媒体的来源证书。这与后文的 denial-feedback oracle 不同：这里不需要 monitor 拒绝事件，而是正常功能输出的组合用途。[必要交互与反侧](https://arxiv.org/html/2603.10504v1)支持该受限边界，不证明完整自动攻击、真实用户群体风险或已找到有效防线。<!-- source-family:SF-2026-ARXIV-2603-10504 -->
+
+测量时应分别报告 manipulation detector、AI-generated detector、固定真实参考集下的 operating point，以及原图—派生图配对身份代理，不能把较低 detection rate、face API 同人判断或更好的画质合成“真实且安全”。所测一百张面部样本中，一类检测器的响应下降时另一类可以上升，细化或重用解释也不是单调收益，部分模型仍有身份漂移；这些结果不支持所有商业服务比开源更危险或原图完整语义保持。对 assessment 解释的披露粒度及组合变换作独立复测，是据此推导的工程要求，不是作者验证过的 mitigation。解释、生成、双类检测、身份配对和敏感 artifact 留档均付费，API 更新后需重新校准；威胁人口或来源证据不可核时保留 Unknown、签名 origin / 制品血缘和人工取证，不因 detector 未命中或内容过滤未告警自签 authenticity。<!-- source-family:SF-2026-ARXIV-2603-10504 -->
+
+固定生成器时，统计水印的检测器也可单独改变：对Gumbel模型中对应随机量构造居中、截断的heavy-tail score，按文本长度与目标误报校准阈值，而不把检测灵敏度提升当归因权限。[受限Gumbel分析](https://arxiv.org/html/2603.30017v1)的低entropy样本复杂度收益依赖理想独立uniform随机量和null文本独立；真实context哈希不严格满足同一IID模型，近匹配lower bound又限定symmetric IID概率人口与model-agnostic有效kernel。Dirac不可检测，稀有高entropy情形可更差，有限synthetic观察及语言数据稍差也不授真实部署普胜。阈值Monte Carlo、参数选择、生成和验证全部计费，短文本/模型漂移或依赖条件不成立时保留原统计校准、签名origin/provenance与人工核验；检测通过仍只是一份受限sensor结果，不认证整篇作者、编辑鲁棒、不可伪造或法律所有权。<!-- source-family:SF-2026-ARXIV-2603-30017 -->
+
+对已经存在的文本，另一分支让模型带水印重写，再联合选择重写模型、采样或beam预算和检测时的评分人口；这些预算不受同样的在线生成延迟约束，却仍需支付重写、候选搜索与检测调用。检测只见改写后文本，其entropy条件不能当作生成期条件；对代码还应同时验功能正确率和通过测试人口中的检出率，不能让退化、重复或执行失败产生的强信号冒充可用保护。[受限重写对照](https://arxiv.org/html/2512.16904v1)中，大模型、更多搜索或entropy过滤都不保证一致改善，文学结果还受长度筛选；code检出不认证未测功能或合法所有权。应绑定原文/派生文、key/null校准、模型与生成/检测预算，功能或误报条件失准时保留原制品、签名来源与独立核验，而不是继续放大水印强度。
+
+文本来源信号也可以不直接偏置下一 token 的绿色词表，而由白盒模型在选定层的结构相关方向上注入扰动，再用同一模型重放文本读取该层来检测。方向可由 SAE 特征对照筛选后投回 residual 空间，key 与文档身份决定所用方向子集；这改变 carrier 和检测权限，不是让表示中的结构变成来源真值。[SLAM 的受限实验](https://arxiv.org/html/2605.05443v1)中，裁剪和 decoder 投影不保持最初正交性，hidden-state 改动仍会改变后续 logits，近似不变的困惑度不证明原分布或内容无损。最多四候选的选择、特征挖掘、白盒注入/重放与校准都付费；同 prompt 生成基线拟合的低误报不替代独立人类文本或未知域校准，paraphrase 也有明显漏检。模型/层/SAE/key 或变换变化时应重新验效用与检测，权限不足或误报不可控时保留 Unknown、普通统计 detector 与签名 origin/provenance，不将检出升级为授权违规、法律所有权或抗移除保证。 <!-- source-family:SF-2026-ARXIV-2605-05443 -->
 
 当输入与密钥独立、目标只是低误报筛查时，水印的 soundness 仍是合理的 sensor 责任；但攻击者若能观察带水印输出或访问验证结果，就需要另一个不可伪造责任：检测通过的文本，至少应在约定距离内对应攻击者曾观察过的某个输出片段，而不是仅在随机输入上少误报。恢复也有两个方向：恢复列表包含原片段，不等于列表中的每一项都可信。前者是 recoverability，后者需要单独的 unforgeable recovery；高恢复率不能替代对伪归因的控制。这些责任约束可检测或可恢复的片段，不自动认证整篇作者、法律所有权或完整生成生命周期。
 
@@ -250,6 +342,10 @@ OpenAI Privacy Filter 的 model card 明确把该模型限定为 data-minimizati
 绑定组织策略、目标分布、校准版本和人工升级路径**；默认阈值和作者 benchmark 不得外推为
 任意 tenant、语言或高风险场景的安全保证。
 
+把观测换成屏幕截图后，敏感性不仅来自已能OCR识别的完整字符串，还来自字段角色、尚在输入的片段与可联合识别的订单/商品属性。一条本地视觉sensor分支可用带字段标记的页面复现、数据注入和empty/partial/full状态训练候选区域检测，再由组织policy决定哪些区域要遮盖；空字段是可能暴露的位置，不等已经泄漏，保守商品标签也不是每张图都已证实重识别。页面、字段与输入状态、检测/遮盖revision及上传对象必须绑定，不能等完整值出现后才第一次检查，也不能由候选框直接授权后续动作。<!-- source-family:SF-2026-ARXIV-2603-17357 -->
+
+[视觉字段检测的有限证据](https://arxiv.org/html/2603.17357v1)显示partial状态与完整表单不同，但只核合成静态电商图，不测真实滚动、键入到上传的race或Agent任务保持。按field标注的mAP不能直接合并OCR词级结果，text与image类均值也不能替细粒度漏检；标签policy有主动排除和过度遮盖边界，单frame CPU均时不认证端到端无暴露。截图、合成/人工校正、检测、遮盖与语义损伤均计费，采集到本地决策及上传之间应独立核首次暴露和剩余内容。页面状态、policy或区域不可信时，保留确定性字段遮盖、可信DOM/local路径、人工检查或不上传；高检测分数不替consent、访问控制或匿名化签字。<!-- source-family:SF-2026-ARXIV-2603-17357 -->
+
 Learned anonymization policy 进一步把 detector、rewrite 与 utility 放进一个经验优化回路：给定某类 attacker、
 downstream task 和文本分布，选择删改哪些 span 以形成 privacy/utility Pareto。它可以比固定 redact rule 更适应
 上下文，却不能提供 Differential Privacy 的跨攻击者数学保证。其 identity 至少包含 attacker model、utility
@@ -292,7 +388,34 @@ matched controls 和 attacker access，再在作品内或来源内中心化 nuis
 
 <!-- source-family:SF-2026-ARXIV-2609-10830 -->
 
+被动比较低loss与改写对照不足时，数据owner还可在公开之前引入可核验的随机选择：为同一代码位置生成若干功能等价候选，随机发布其中一个、私留其余，再在目标模型上读取同一候选集合中已发布版本的loss排名并跨mark聚合。这个[受限主动审计分支](https://arxiv.org/html/2508.21432v1#S4)改变的是对照的生产过程，不是把自然代码的低loss直接认证成训练成员；null下仍须核随机选择与目标权重独立、候选/前缀可重放、打平规则及联合校准。单次检验的Type-I界不是“已训练”的后验概率，也不自动控制跨仓库、跨版本或反复查看的累计误报，更不判定授权或版权。AST改名与相近perplexity不证明完整程序语义或对自适应trainer不可察觉；原候选生成与检测重建可能使用不同前缀，不能只凭原token/position假定复原同一集合，这些绑定与功能验收是本项目推导的接口要求，不是原文已闭合的实现。完整logits与受限top-logprob/logit-bias属于不同权限和费用人口，oracle/候选搜索、AST/语义检查、训练、全部查询与独立校准都付费；训练不足、改名或模型变化可造成漏检。无法验证候选、功能或null时保留Unknown，回退固定受控canary、训练数据血缘/授权日志与独立调查，不从一次检出或阴性签发使用事实、安全或法律结论。
+<!-- source-family:SF-2025-ARXIV-2508-21432 -->
+
+合成数据的“离训练记录不近”也不是隐私证明：closest-record距离受编码、train/hold-out规模和总体分布影响，审计应把它与已声明访问权限、辅助知识和预算下的成员攻击并列，而不让质量heuristic代签泄漏风险。[单表diffusion的受限审计](https://arxiv.org/html/2605.06835v1)中，不完备攻击知识仍可产生成员信号，DCR近似不变而攻击成功变化；这不证明所有distance攻击失效，组合distance的攻击本身也可能有效。原实验FPR为10%，balanced row-level challenge不等真实用户隐私，尤其一人多record时要另声明privacy unit；阴性也不认证无泄漏。Shadow/reference、背景合成数据、多个噪声特征、classifier与搜索训练全部付费，单shadow配置不代表其他攻击无需辅助模型。人口、编码或权限不可比时保留Unknown、匹配held-out/canary与明确邻接的正式保护，不从较远的近邻、低攻击分数或未来缓解提议批准敏感数据发布。<!-- source-family:SF-2026-ARXIV-2605-06835 -->
+
+动作输出也可能携带训练成员线索，不必向调用者开放token概率。对VLA，比较生成动作与候选示教动作的误差仍要求已知候选ground truth；跨时刻的smoothness或curvature则可只读生成动作，但必须查询对应观察与instruction，且这种信号可在另一架构上接近随机。审计对象应分别声明transition tuple、整条trajectory及成员定义，不能把相关时间步当独立样本放大低误报证据。[有限LIBERO微调审计](https://arxiv.org/html/2605.07088v1)每类仅100条trajectory，经验误报刻度为1%，不从表列0.1%授可部署阈值，更不据高AUC判定真实用户数据或法律归属。查询、示教身份、训练与防御校准都付费；给动作加噪虽可能降低泄漏，也会伤控制效用，不构成DP或安全保证。成员真值、对照或攻击接口不可核时保留Unknown，继续provenance/canary和明确邻接的隐私审计，真实动作仍交独立controller验收。<!-- source-family:SF-2026-ARXIV-2605-07088 -->
+
+对邮箱、电话号码等结构化 PII，匹配对照还要回答“提示已经透露了目标的多少表面线索”。姓名、域名或数字片段能让模型补出未训练过的值，因此命中和高 likelihood 不能直接签发 memorization verdict。一条受限审计分支先按声明的字符串规范化与最长公共子串，计算 prompt–target overlap，再在相近 cue 的训练与 held-out 人口中分别报告重建率和分数；低 cue 切片用来减少可预测格式的混杂，而不是把所有提示线索消除后才允许审计。它改变的是观察合同，不是模型的访问权限或隐私承诺。
+
+按 cue 分层会增加目标真值、训练身份、规范化版本与对照构造的成本，且分层比较不是对同一样本删除线索的因果干预。现有 mC4、多语言预训练模型实验显示强 cue 下未训练 PII 也可被重建，却没有覆盖白盒提取、专门攻击或后训练新增 PII；局部攻击接近随机也不能推出无隐私风险。无法验证训练身份、低 cue 人口不足或接口不支持可比分数时，保持 membership 为 Unknown，继续用 provenance、受控 canary、访问限制和明确邻接的 DP；真实敏感值一旦输出，仍需独立处理泄漏后果，不因来源未识别而忽略风险。 [必要机制与边界](https://arxiv.org/html/2601.03791v1)。<!-- source-family:SF-2026-ARXIV-2601-03791 -->
+
 黑箱 chat API 不能直接读取任意输入的 likelihood 时，还要改变 query 本身：把完整 canary 放进“请复述”会混入 echo 指令效应，一条更窄分支只提供属性值的两个字符或数字前缀，让模型完成片段，并以同 probe 的 generic-subject baseline 减少常见值先验。[受限 fragment-completion 审计](https://arxiv.org/html/2602.17483v1)用五种句式与20个随机前缀形成竞争；能取得 token log-probability 时计算校准分数，否则只能聚合 top-completion votes，两者不是同一 likelihood 估计量，集中度也不等事实正确或训练 membership。前缀仍提供条件信息、可暴露敏感值线索，并可能把多词值截成头词，不能签发隐私保证。同 Llama-3.1-8B 的 raw/chat 对照只显示局部结果变化，出生地和职业反退且措辞更敏感；主评语义匹配阈值0.60与该验证0.75也不属于同一协议。Prefix数、句式、baseline、输出过滤、匹配粒度和模型 revision 须共同绑定，多轮query与身份真值治理均付费；接口或ground truth不足时保留“条件关联/真实性未知”，回退可核 raw-score、受控canary与provenance，而不把 famous/synthetic 差额或高集中度当作真实记忆证书。<!-- source-family:SF-2026-ARXIV-2602-17483 -->
+
+除了提示线索，token 的位置也可改变 membership score 的构造。一个受限分支先用原始、未加权的 log-probability 选出 Min-k 集合，再按被选 token 在原文本中的位置乘递减权重，以所选 token 数聚合；全序列分支则以长度 T 聚合，而不是以权重和归一。先加权再选集合、改用权重和作分母，或换长度/衰减参数，都定义了另一个 sensor，不能静默替代。跨位置的 token 是不同随机变量，条件 entropy 定理不推出每个位置必然单调，更不证明较早 token 就是训练记忆。<!-- source-family:SF-2026-ARXIV-2601-06827 -->
+
+声明这一顺序是为了复查 score 身份，不是证明顺序普遍最优。[必要原证](https://arxiv.org/html/2601.06827v1)的 Pythia6.9B、T128 对照中，普通 Min-k 的 base/before/after AUC 为 69.5/68.1/67.8，先选后权反而更差；同一表的 Min-k++ 才是 69.8/70.3/72.4。MIMIR 的 Avg* 排除了 Arxiv/HackerNews，部分 WikiMIA 切片也退步，短文本不能沿用默认衰减强度。原位置、长度、alpha、token 聚合与同 source/control 人口均应绑定，额外 logits 读取及 corpus calibration 付费；较高局部 AUC 仍不授 membership 真值、通用低 FPR 或版权判决。位置先验失准、对照身份不可核时，保留原始 score、匹配 controls、provenance/canary 与 Unknown，不由一个更复杂分数解除可识别性要求。<!-- source-family:SF-2026-ARXIV-2601-06827 -->
+
+位置结构还可以由受监督的sequence sensor学习，而不是先把token分数pool成标量：同时读取fine-tuned目标与其同架构pretrainedreference的完整logits，形成逐token差分/rank/分布统计序列，再用多model–dataset组合训练分类器。一个[受限迁移审计](https://arxiv.org/html/2604.03199v1#S3)支持把这些差分与顺序作为sensor身份；跨family复用分类器不移除每个目标自身的reference访问，也不把普通chat返回升级为full-logit接口。<!-- source-family:SF-2026-ARXIV-2604-03199 -->
+
+该路径增加特征读取、参考前向与classifier训练成本，只验fine-tuning的已知membership人口，不认证pretraining/RLHF、版权或真实个人。原对照在极低FPR时仍有持平/反退，reference原已熟悉文本也会弱化shift；多family的平均AUC不能证明architecture不变定律。LoRA/全参recipe与单H200估算费用须保留，阈值按目标人口另验。访问、reference或matched controls不成立时，保持Unknown，回退原score、provenance/canary与正式privacy合同，阴性不签发无泄漏。
+
+允许读取权重并执行梯度适配时，还可把观测对象从静态 loss 改为低秩更新轨迹：冻结目标权重 `W`，只训练临时 adapter，对更新范数轨迹求时间均值 `μ` 与标准差 `σ`，以归一化能量 `E=μ/(‖W‖+ε)` 与时间变异系数 `C=σ/(μ+ε)` 观察整批样本的适配响应，并绑定训练时长与阈值。它需要 LoRA 梯度和轨迹访问，不是纯黑箱查询，也不是单条样本的训练成员法证。另一条同源后门诊断分支为各类别优化合成 proxy，再用更新能量、更新与原权重的方向偏移的稳健离散统计和跨 trial 排名识别可能的目标类别；这与批级成员分数是不同 sensor，不能共享一份已校准的安全判决。<!-- source-family:SF-2026-ARXIV-2601-11207 -->
+
+[受限低秩探针实验](https://arxiv.org/html/2601.11207v1)仅覆盖小型图像数据与 CNN/ViT：部分 ViT 成员召回只有 0.40，合成 proxy 也可能漏掉弱几何信号。动态 pivot、expert score 与完整校准 recipe 尚未闭合，已知被注入模型的 Top-K 目标排名不等于证明模型是否干净，原文也没有完整的 clean-model FPR 保证。临时适配、proxy 生成、多 trial 与校准均有费用，冻结 backbone 仍须执行必要的前向和梯度传播；16 GB 可运行与 GPU 功率不是总能耗或生产成本证明。无信号或高分均不认证 membership 真值、后门不存在或 LLM 安全；访问不足、模型变化或校准不可靠时，保留普通 loss/匹配对照、provenance、受控 canary 与 Unknown，并另做行为审计，而不由一个几何诊断分数放行资产。
+
+纯生成查询也可构造不同的观测，而不借用低秩适配的梯度权限。对候选视频生成描述，再多次请求目标模型生成视频；一条受限分支用与原视频最相似的 Top-K 帧读取空间语义 anchors，另以多次生成中邻帧、首帧语义关系的离散程度读取 temporal stability。它观察的是输出重建与稳定性，不是 adapter 更新范数；有标注 shadow 数据的监督分类器、已确认 nonmember reference 的异常校准、无 reference 的 query-only 融合是三种访问合同，不能共享训练真值或同一阈值保证。<!-- source-family:SF-2026-ARXIV-2601-11210 -->
+
+[受限视频诊断](https://arxiv.org/html/2601.11210v1)中，较高 AUC 仍可能对应很低的低 FPR 召回；成员来自模型声称的训练来源数据集、非成员统一来自另一视频库，较弱的 blind classifier 也未消除全部来源混杂。Caption、CLIP、多次生成、模型 revision 与融合规则都要绑定并付费；小幅采样参数抖动失效，不证明所有防御无效。阳性不能成为训练身份或版权判决，阴性不能认证无泄漏；来源身份、匹配人口或校准不足时保留 Unknown，回退 provenance、受控 canary 与明确 adjacency 的隐私审计，真实敏感输出则另行处置。
 
 低 loss 的可识别性审计之外，membership sensor 还可用相关的预测 entropy 调整分数，而不把 entropy 单独当成员证据。固定文本和模型读取，令分数为 loss 减去 λ 倍 entropy；若 member–nonmember entropy gap 的均值为零，且 loss gap 与 entropy gap 的协方差为正，适当正 λ 可保持平均 gap 并减少 gap 方差。它是有条件的 nuisance correction：零均值、协方差、同一 token 聚合与 attacker access 必须分别成立，不能从‘减掉 entropy’推定训练暴露已可识别。
 
@@ -363,7 +486,22 @@ privacy accountant 因此必须声明 attacker 可联合看到的 view、相关�
 
 <!-- source-family:SF-2026-ARXIV-2609-12448 -->
 
+允许个性化训练，不等于允许公开生成结果被关联回真人。保护公开reference照片以阻止未授权训练，与获授权消费私照后降低公开output的face-recognition linkability，是两种不同威胁；后者可在临时个性化更新与私有训练图像优化之间交替，用当前生成模型的denoised预测构造身份抑制目标，再继续更新个性化模型。私照扰动在这里是内部训练变量，不是公开输入保护，也不是DP或知识删除。[受限model-side对照](https://arxiv.org/html/2604.00903v1)显示关联代理下降伴随生成质量退步，held-out识别器仍可高度关联；stage/joint局部取舍也不证明不可关联。私照、参数与公开output的观察权限、FR评价人口和效用目标应分别冻结，reference微调、PGD、多个FR及完整生成全部计费；正文与主表ρ不一致不拼默认recipe。关联风险或utility未验时应缩小发布、保留人工复核或不公开结果，而非用授权训练和低代理分数批准隐私安全。<!-- source-family:SF-2026-ARXIV-2604-00903 -->
+
 Unlearning 更要显式声明 secret substrate 与 observer：参数、retrieval、prompt/context、memory、tool trace 和 final answer 都可能承载同一信息。单 channel clear 或 final refusal 只能形成 suppression/局部编辑 verdict；只有跨 channel observer、组合 attacker、retain utility 与 agent-collapse guard 共同通过，才接近系统级遗忘。纯单-substrate实验便于归因，却不能证明组合部署无泄漏。
+
+对生成模型，局部 suppression 还可以发生在采样途中，而不只在最终输出过滤。一个受限分支冻结 base model，另训风险头读取 text embedding、当前 latent 与 timestep，并在风险预测触发时通过 conditioning embedding hook 和 cooldown 修改后续采样条件。风险头的检测资格与 hook 是否覆盖实际执行路径必须分别验收：encoder、latent 语义、timestep、辅助权重、hook 与 schedule 都属于版本身份；这要求内部执行接入，不能当作对任意黑箱 API 的无钩保证。[必要机制与对照](https://arxiv.org/html/2601.08623v1)只支持所测模型和风险类别；未检出率不是内容真实安全，冻结 base 也不表示辅助头没有训练，更不是参数知识删除。保留误拒、残留风险与质量退步，变化 encoder 或风险分布后重新采集/标定；训练、逐步检测、干预及完整生成成本共同结算，不由局部低开销批准生产 SLO。检测资格不足、hook 未覆盖或效用下降时，回到原拒绝、输出过滤与人工复核，不发布未通过验收的结果。<!-- source-family:SF-2026-ARXIV-2601-08623 -->
+
+对概念的局部 suppression 还可以同时约束语义邻域与采样中的空间范围：从目标和候选邻居的表示构造受限投影，改写 cross-attention 的 K/V，再以当前 step 的 attention 与目标 subspace 响应提出空间 gate，第二次 forward 抑制相关读取，并在 gate 位置清零部分 latent。这三步分别拥有表示编辑、区域提案和执行干预，不能由语义相似的邻居、attention 热点或某层零值证明完整概念已删除；多个概念的编辑算子合成也不自动无干扰。<!-- source-family:SF-2026-ARXIV-2603-25994 -->
+
+[NLCE 的受限 Stable Diffusion 对照](https://arxiv.org/html/2603.25994v1)支持这种 target/neighbor 与局部 gate 分工，但强编辑会伤 retain quality，部分目标仍残留；后续层或 denoising 也可能重建被当前 gate 清零的语义，所以不采用“不可逆删除/严格安全”保证。Neighbor检索、谱分解、artifact编辑、每步两次UNet、mask及独立攻击/效用复测均计费，无梯度更新不等零准备。目标、邻域或空间proxy失配时，保留局部suppression判定、输出policy/拒绝、较简单编辑或重训，不由NudeNet/分类器与SAM区域proxy签发跨channel遗忘或生产放行。<!-- source-family:SF-2026-ARXIV-2603-25994 -->
+
+局部suppression还可保存为受文本条件激活的训练资产，而不是每步另构造空间投影。一条[受限扩散分支](https://arxiv.org/html/2506.22806v1)冻结主干，在cross-attention的K/V投影外加每概念低秩残差，以跨层共享的text-token关系gate调制逐层残差；多个概念在每token只选最大gate对应的一份，不是静态相加全部LoRA。训练分别拟合目标到替代表示、抑制anchor投影变化，再与连续embedding对抗人口交替更新；gate选择、残差作用和实际生成是不同责任，学得gate不继承理想概念分类器的严格保留条件。应同时保存base/encoder、概念和anchor人口、逐层残差/gate及组合规则，并独立验证目标残留、邻近/无关任务、攻击恢复和生成质量；局部低分类分数或有限零攻击成功不证明概念已从参数/数据删除。anchor准备、残差与对抗训练、每步gate/生成及独立攻防均计费，保留能力也可能反退；资产接收者若能移除模块仍可恢复原模型，概念或observer失配时保留输出policy、拒绝、人审或重训，不由小参数模块签发不可逆遗忘或安全发布。
+<!-- source-family:SF-2025-ARXIV-2506-22806 -->
+
+采样中的suppression也可以只优化当前noisy latent，而不改条件K/V或持久weights。先从当前去噪估计解码一份clean-image proposal，用image-text代理同时提出远离目标概念的repulsion与靠近原prompt的retention，再将组合梯度回到latent；每个选定denoising step内可做有限多次更新。两项energy分别拥有抑制目标与保持条件的软取舍，不构成安全support、硬删除或retain全能力保证；解码提案和CLIP相似性也不取得真实概念存在权。<!-- source-family:SF-2026-ARXIV-2604-09405 -->
+
+[EGLOCE的有限生成对照](https://arxiv.org/html/2604.09405v1)仍有攻击切片反退，scheduler替换也改变比较条件；更强更新可因画面失真让classifier不再识别目标，或降低代理分数但人眼几乎不变。因此要把代理抑制、实际可见内容与retain质量分开，不由较低ASR自签safe release。完整recipe的latent/噪声更新同步未闭，只采用目标/执行接口；额外decode/encoder、gradient与每步内循环都付费，training-free不等低时延。目标/observer、画质或净费用失配时，保留原模型与output policy、独立人审或更简单局部编辑，不让energy优化批准跨channel遗忘或生产放行。
 
 在参数这一 substrate 内，忘掉指定类别也不能只把标签随机改掉：类别共享的表示可能同时服务 retain data，粗暴重定向可能连保留能力一起损坏。一条受限分支先用多模态模型提出类别间的语义关联，再结合待遗忘样本的 classifier prediction 选择替代标签；冻结 classifier 分别构造朝新标签与离开旧标签的 feature noise，混合后对 forget 与 retain 数据共同微调。它改变的是重定向监督和扰动的选择，不证明已分离唯一的 shared/unique causal feature。[MeGU v1 §4/5/Table6](https://arxiv.org/html/2602.17088v1)中的 random-label 与去 feature-noise 对照支持局部贡献，但 CIFAR 小分类器的 forget accuracy 和一次 MIA 不是记录删除、retraining equivalence 或跨 channel privacy 证书；原文 Eq12 记号含糊与“retain accuracy 减少50%”和表项不相容处不作为确定 recipe。语义教师、noise 合成、retain 数据缓存与微调/攻击复测都有成本，也依赖类别关联和可用保留数据。边界模糊、保留任务退化或敏感数据不能重复消费时，应保留局部 suppression 判定、重训或不发布更新，而非将零分类正确率签发为系统级遗忘。<!-- source-family:SF-2026-ARXIV-2602-17088 -->
 
@@ -387,11 +525,21 @@ protected attribute + privacy unit
 确实隔离时继续有用，但不得外推成端到端安全。真正需要数学发布边界时，仍须回到下一节的 privacy unit、
 adjacency、composition 与 accountant。<!-- source-family:SF-2026-ARXIV-2603-22751 -->
 
+观察合同固定后，还可尝试从输出信息搜索一份候选输入，但“能重放”与“就是历史原文”是不同结论。一条[受限输入重建分支](https://arxiv.org/html/2507.01693v1)在模型和梯度可访问、tokenizer与greedy解码固定时，将给定长度的离散token松弛为词表分布，经模型反传搜索，再把候选离散化并重新前向核对；连续loss低不能省掉离散检查。原始logits、截断top-k、概率和仅文字定义不同观察面，有限精度/容差和输入支持都须随结果保存；即使候选通过，同一观测仍可能对应多个输入，搜索预算耗尽更不是无解或报告伪造的证明。原对照只支持部分短输入恢复，长PII整串未恢复也不能批准无泄漏，因为仍可恢复部分敏感token。模型访问、logits收集、词表级变量/梯度、重启与长度枚举、离散重放和独立核验均付费；观察条件不匹配或无法确认唯一性时，保留候选/Unknown，回到可信原始trace与provenance核查，不能让逆向搜索替代历史证据或隐私放行。
+<!-- source-family:SF-2025-ARXIV-2507-01693 -->
+
 枚举 observable channels 后，还须把进入计算的敏感集合与观察者实际恢复的集合分账。每次 trial 记录被选择的 canonical units U、对应 attacker-visible artifact，以及 extractor 得到的 V；分别报告 any recovery、非空 U 的 complete recovery 与跨 trial 唯一恢复量，并绑定 unit 定义、query budget、retrieval depth、provider 和 observer 权限。U 只量已选择/暴露的输入，不证明模型内部依赖或因果消费。增大 retrieval depth 会扩大“完整恢复”的目标集合，因此 complete rate 下降不能单独解释为隐私改善：受限 RAG 对照中，唯一恢复量不变、any rate 仍高，而 complete rate 已大幅下降。最终答案、tool arguments/returns 与获授权可见的 process trace 应分别测量；未授权日志不能被默认为普通用户观察面。
 
 Canonical exact matching 阴性也可能只是未恢复完整 unit，而可用敏感值已出现；补充盲化于 provider/attack 标签的 reference–visible-output 人审，区分无恢复、部分有用与操作等价的完整恢复，但 semantic layer 只有在确实包含 exact recovered set 时才有集合支配关系，不能凭名称给普遍 recall 保证。作者五 provider、有限查询与分层 200 输出审计支持该局部盲区，不代表所有流量的泄漏频率；naive dump 在 RAG 上可超过主 recipe，provider/表面/检索设置也会改变排序。完整事件定义要求 U 非空，而公开 CER 汇总式省了该 guard，不能据此宣称空选择 trial 实现已正确；工程验收应另核 empty-selection/extractor 行为并保留 Unknown，而非补造作者修复。审计增加敏感 trace、标注与组合攻击成本，不能转换成 DP、自然发生风险或部署安全证书；边界不可校准时缩可见通道、访问范围或不发布，并在相同 observation contract 下重测。 [必要机制与反证](https://arxiv.org/html/2609.21686v1)。<!-- source-family:SF-2026-ARXIV-2609-21686 -->
 
 把 telemetry 与原文分离，只有在观察者无法借它恢复内容时才足够。MoE 的逐 token 专家集合不是 hidden state，却可以成为离散内容编码：若攻击者已获得跨层 expert-selection trace、兼容 tokenizer 和同家族文本—轨迹训练对，就能联合序列位置训练 decoder，而不需要 router logits、权重或 expert outputs。日志、dispatch 观察面与跨信任域导出的轨迹因此应按内容风险限权和最小化，不能因不含原 token 就公开。[短序列的受限反证](https://arxiv.org/html/2602.04105v1)主要基于单个模型、完整层轨迹和短 prefill；侧信道取得轨迹本身、跨模型迁移与部分层重建没有在该实验中验证，随机污染轨迹也不是 DP 保证。限制导出保留了原执行路径；padding、路由噪声或专家重标记可能增加算力、布局或质量代价，原文尚未量化这些防御取舍。敏感域无法核实观察权限与泄漏面时，应隔离或停止导出，而不是沿用局部解码率作为安全证书。<!-- source-family:SF-2026-ARXIV-2602-04105 -->
+
+本地推理不把数据发给远端，也不等于共享设备上没有可观察输入线索。动态分辨率会改变图像 patch 人口；若另一进程能识别推理活动的时间窗口，执行时长可能暴露几何类别。Cache 计数则是另一观察面，能否取得它取决于具体系统权限、共址与采集条件，不能把实验的内部计时或开放性能计数器默认为普通应用权限。可观察工作量、内容相关信号与可解释的语义属性应分别验收。
+
+[受限本地 VLM 对照](https://arxiv.org/html/2603.25403v1)只在合成 shape/content 代理、受控 affinity 和少数 CPU 上展示条件信号：固定几何后的时长不足以区分不同内容，cache 类分布仍重叠，在另一 CPU 上内容差额不可见；这既不证明自然隐私类别可恢复，也不识别 cache 容量或 dense attention 为唯一原因。限制 telemetry 访问不自动消除粗时序通道；padding、静态分辨率或加噪须另验质量、总成本和残留信号，当前只是防护提议。无法核实观察权限或校准语义人口时，应收紧共址/导出面、保留 Unknown 并重测，不用“本地”、一个分类准确率或未经验证的防护批准隐私安全。<!-- source-family:SF-2026-ARXIV-2603-25403 -->
+
+训练更新也是跨信任域的可观察产物，不能因为只导出adapter或保持底座结构不变就认定私有内容未离开客户端。[一条受限反证](https://arxiv.org/html/2504.20570v1)把上游可控的记忆倾向训练与下游PEFT更新观察接起来，说明应把底座来源/训练历史、客户端适配和更新可见权限放在同一威胁合同中；这不是普通黑盒查询者拥有的能力，也不证明任意可信模型的低秩更新都会泄露完整正文。姓名/主题配对、敏感值恢复与全部原文恢复是不同评价对象，合成数据和被修改的baseline权限不能推出真实流量风险率。单次梯度加噪实验也不认证或推翻完整DP，仍须核保护单位、裁剪、抽样、组合与会计。来源审计、限制更新导出、独立隐私测试以及重新训练都有费用；底座不可验证或更新观察边界失守时，应收紧跨域共享并保留可信artifact/本地隔离与按声明单位验收的私有训练，不用结构相同或一次未恢复成功代替隐私许可。
+<!-- source-family:SF-2025-ARXIV-2504-20570 -->
 
 ## Differential Privacy 先定义被保护对象，再选择机制
 
@@ -406,6 +554,8 @@ Pr[M(D) in S] <= exp(epsilon) * Pr[M(D') in S] + delta
 明确时才有意义。“使用了 DP”不是独立安全结论。特别是同一用户可能贡献多条对话：
 example-level DP 限制单条记录影响，user-level DP 才限制该用户全部记录的联合影响，后者
 通常需要更强 clipping/contribution bound 与更多 noise。
+
+训练前的 token packing 还会改变“一个单位”与原始文档的对应关系：一个固定长度 sequence 可能混入多个文档，一个文档也可能被拆成多个 sequence；语料混合中的重复出现还会让同一事实或保护对象参与多个单位的更新。因此，sequence-level DP 不能由文档名称直接升级为 document/user-level DP。发布边界应保存原始保护对象到 chunk、packed sequence 与重复贡献的映射，再按实际邻接、贡献界限、抽样和 accountant 确认可声明的范围；非私有 tokenizer 等固定前处理也不能因后续梯度加噪获得追溯保护。[VaultGemma 的必要报告](https://services.google.com/fh/files/blogs/vaultgemma_tech_report.pdf)明确以 1024-token sequence 为单位，并保留拆分、混合和重复语料条件；有限前缀续写未发现逐字记忆，不证明公开事实被删除或全部提取路径安全。维护这份映射、核对会计与独立隐私审计都有数据治理和计算成本；无法核验保护对象的单位映射时，保持 document/user 保证为 Unknown，收窄发布与访问，或按所需单位重新裁剪、会计和训练，而不是从一个较小的 headline epsilon 反推更强保护。<!-- source-family:SF-2025-GOOGLE-VAULTGEMMA-20250912 -->
 
 2025 年几项工作形成了一条有价值的 `Layering / Dependency`，不是互相替代：
 
@@ -430,6 +580,8 @@ post-processing：先把敏感数据压到 DP output，再让非私有 LLM 解�
 多个私有训练资产还须区分最终**发布对象**。若按公开规则随机只发布一个候选模型，可以对各候选 privacy profile 的混合分布会计；这既不是发布全部资产，也不要求候选独立。若发布线性合并的参数，只有单资产 profile 时仍可采用保守 composition；更紧的训练轨迹会计则要明确裁剪、采样、学习率、合并权重及各 run 噪声的独立性。同一次训练的 checkpoints 共享早期更新，不能被冒充独立 run，也不能将各自的 `epsilon` 平均成发布保证。<!-- source-family:SF-2026-ARXIV-2604-20985 -->
 
 选择规则、privacy unit、资产随机性 lineage 与此前已发布集合因此都是 release identity。私有 validation 驱动选择或重复发布要另行会计；post-processing 不会退还历史预算。更细会计增加资产比较和 accountant 成本，却未证明合并后 utility，所测裁剪均值与 MNIST/CIFAR 条件也不能外推 LLM 质量。条件不满足或收益不足时，保留保守 composition／单资产发布；非隐私的参数合并取舍仍由第 30 章承担。<!-- source-family:SF-2026-ARXIV-2604-20985 -->
+
+噪声也不必在所有坐标上相同，但“把较少噪声留给有用方向”必须同时定义敏感度和选择成本。若方向由私有样本决定，即使不上传所选索引，最终输出的协方差仍依赖它；可先私有选择子空间，再按各组裁剪界和同一协方差下的敏感位移校准发布噪声，并组合选择与重复发布预算。[受限联邦原型分支](https://arxiv.org/html/2604.27833v1#S4.SS2)将这两步分开，保护的是客户端本地数据中的单条记录，不自动升级为整个客户端或用户级保护。类别/cluster人数、输出支持与分母不固定时须重核敏感度，不能只套用均值公式。私有选择、额外teacher与效用回归均计费，局部准确率或有限攻击接近基线不认证全生命周期隐私；选择信号失准、会计前提不明或质量退步时，保留已核的各向同性机制、保守组合或更窄发布，不用一个较小噪声量签发相同保证。<!-- source-family:SF-2026-ARXIV-2604-27833 -->
 
 完整 DP production contract 至少包含：
 
@@ -559,6 +711,22 @@ Accountant 给出的 RDP 上界与黑盒 audit 得到的经验结果方向不同
 这些机制仍然必要，但它们管理的是“已有能力何时可以被调用”，没有改变能力已经分布在
 base weights 中这一事实。另一条实验性分支，是在训练阶段改变敏感知识的 state ownership。
 
+这也限制了 refusal 的安全证据权限：某模型内测得的拒绝方向不能直接当成另一模型不可访问敏感能力的证明，维度不同更不能复制同一 raw vector。一条受限白盒诊断分支先在共享概念集合中描述行为方向，再在目标模型自己的概念表示中重构，并以层间轨迹对齐检查兼容性；目标端只使用 benign/concept 材料的预算，应与使用目标 harmful/refusal 标签拟合的评价分开。它把跨模型审计的单位从向量坐标改为有条件的语义组合，不意味着全部模型共享稳定安全几何，也不授部署时削弱防线的权限。<!-- source-family:SF-2026-ARXIV-2601-16034 -->
+
+[必要控制与失败边界](https://arxiv.org/html/2601.16034v1)中，错误层映射和移除子空间保护均损害能力；weight-SVD 保护只是高方差方向代表重要能力的启发式，无法认证低秩 long-tail 知识保持。固定20概念、白盒 weights/activations、DTW 层对齐、token 位置及单一 judge 限定了诊断范围，dense→MoE 的 shared-attention 编辑也不代表专家级通用结论。概念采集、对齐、权重分析和独立能力/安全切片均付成本；registry 或兼容性失配时，停止迁移诊断并保留原模型、output policy、tool authorization 和独立红队验收，而不由拒绝率或困惑度签发完整安全保证。
+
+同一模型的安全方向也须先说明由哪两类行为定义：有害与无害输入的差，不等于同为有害输入时越狱输出与拒答输出的差。一条受限推理分支用后一对模型行为标签构造逐层方向，再比较同一文本在有图与去图时的末位置表示，只对图像增量沿该方向的正投影超过阈值者作首个生成token的局部减除。它保留其他图像增量，不是删除全部视觉证据；方向、标签筛选、层/末位置、参考分支与阈值共同定义干预身份。表示簇和警告语只能提供诊断线索，不能由此认证唯一越狱原因或已正确识别真实有害意图。<!-- source-family:SF-2026-ARXIV-2603-17372 -->
+
+[行为方向与增量修正的有限对照](https://arxiv.org/html/2603.17372v1)仍有攻击残余和良性效用反退；抽方向时丢弃judge冲突、测试时采用多数票，两个人口及已有语言骨干安全条件必须分开。构造标签与方向、去图参考、额外前向/hooks及独立回归都付费，长回答摊销不能批准首token延迟或生产实时SLO。方向失配、骨干弱对齐、合法视觉任务误拒或费用回归时，保留原forward、显式输入/输出policy与独立审核，而不是扩大未经校准的修正；完整输出和工具effect仍由独立安全/授权边界验收，不让内部方向取得执行许可。<!-- source-family:SF-2026-ARXIV-2603-17372 -->
+
+固定 refusal vector 会同时平移良性输入时，还可将“保护哪些激活”写入变换本身。在固定层和 token 坐标下，先用良性激活矩阵构造其列空间正交补的投影 P，再以输入相关的线性残差 `λWP h` 修改当前激活；若 P 是精确零空间投影，它对已经收集的良性 span 为零，而不是给所有请求注入同一向量。这个局部恒等式把保护人口、层/位置与变换分开，但 near-zero 谱截断只能近似保持，新良性状态可能在 span 外，有害状态也可能在 span 内；若良性 span 已满，剩余可修改空间还会消失。<!-- source-family:SF-2026-ARXIV-2603-22094 -->
+
+零改动发生在一个采样激活集合，不代表所有解码时刻的原函数、任务效用或安全能力不变。[NullSteer 的必要构造与反侧](https://arxiv.org/html/2603.22094v1)支持这条条件保护接口，原 alignment objective 与 closed-form 合并并不一致，不能直接采用其最优更新式或“已消除有害方向”的解释；有限良性分数仍有退步，已测自适应攻击也有残余。采集良性/攻击激活、标签与 mask 参考、谱分解/矩阵求解及每步变换都付费，免梯度训练不等免数据或免校准；span、模型或 hook 失配时停止干预，回退原模型、输入/输出 policy 与独立红队/人工审核，不由局部线性合法性批准完整安全。<!-- source-family:SF-2026-ARXIV-2603-22094 -->
+
+改变能力访问还可在固定权重上做受限剪枝诊断，而不只改activation或训练独立module。分别以指定有害输出和良性任务构造校准集，用带符号的weight–gradient代理提出生成支持，再以良性绝对重要性集合排除需保护的坐标，删除差集后分别测生成、拒答、识别与解释。该接口能提出“哪些行为随同一局部参数干预改变”的反证，所选集合仍依赖校准人口与loss，并不是已找到真实独立的harm知识子空间。<!-- source-family:SF-2026-ARXIV-2604-09544 -->
+
+[有限剪枝对照](https://arxiv.org/html/2604.09544v1)中，较少有害生成并不等于模型不懂危害或已经安全；有些所谓保留能力须强制response prefix绕过拒答才测得，与无prefix可用性分开。Qwen的解释与检测仍退步，Llama的检测剪枝与核心语言行为纠缠，不能概括所有能力无损或把局部干预独归emergent misalignment的唯一原因。校准样本、梯度/坐标保存、剪枝模型身份及分协议红队/utility回归全付费；模型、标签或能力人口失配时保留原模型与较轻output policy，重核诊断或停止剪枝，不让权重稀疏、拒答率或judge分数撤销外部tool authorization与effect-time gate。
+
 `Gradient-Routed Auxiliary Modules (GRAM)` 提供了一个受限案例：模型在通用数据上更新
 共享参数；遇到已标注的敏感类别时，冻结共享参数，只让对应 auxiliary module 接收更新。
 部署时保留或移除 module，以近似不同的 data-filtered model variants。
@@ -619,12 +787,22 @@ version、owner、测试集、生效范围、rollback 与 cache key。静态 cla
 高可预测性场景仍更合理。gpt-oss-safeguard 是该模式的 Research Preview 案例，其公开评测不能
 证明开放权重 safeguard 在所有语言、攻击或本地微调后仍保持同一安全边界。
 
+当对手能够近似公开 guard 时，监测接口还可以改变对手可见的信息，而不只换一个分类器。一个受限分支由 provider 保存秘密方向，并微调生成器，使被标注为违反 policy 的后段激活沿该方向变化、正常回复避开它；部署读取指定层的激活，聚合助手回复的投影分数，再按良性校准人口提出告警。算法可公开，方向与适配后的模型、层位、policy 标签及阈值却须共同绑定；这属于内部行为监测，不是生成内容的来源水印，也不让换一份 key 自动继承原检测资格。<!-- source-family:SF-2026-ARXIV-2603-23171 -->
+
+对未知 key 的有限转移攻击较弱，不证明无界查询或更强自适应对手无法绕过，白盒激活/梯度访问也不在已验假设中。原回复级聚合不认证流式前缀已及时告警，告警更不等有害内容已经被阻断；实体归因实验的标签和检测定义未闭合，不能继承为真实秘密访问或多策略整体误报保证。适配仍会损伤部分能力，内部读取、逐 token 投影、全部生成、标签/参考训练与校准审计都付费。Key、模型或良性人口漂移时，保留 Unknown、原外部 guard、确定性释放规则与人工升级；先重验安全/效用和误报，再由独立 enforcement owner 决定阻断或事后响应，不由水印分数授发布许可。
+
 安全策略的生效对象也不能只写“启用 cyber safeguard”：同一个 detector 可以驱动单条 message 的在线阻断，或者经累计证据触发 account/actor 级离线处置，两者影响范围和误拒代价不同。两级 topical classifier → reasoner 可以减少昂贵判断的触发，但 detector score 仍只提供 sensor evidence；enforcement owner 才决定 effect scope、用户身份、升级与撤销。零数据保留约束、可信研究者授权或正常数据保留路径，都应显式改变路由合同，不能暗中复用同一处置规则。
 
 公开的 [GPT-5.4 Thinking system card §5.3](https://deploymentsafety.openai.com/gpt-5-4-thinking/gpt-5-4-thinking.pdf) 描述了以异步 message blocking 替代特定 cyber 降级路径，以及非零保留场景中的离线 actor enforcement、TAC 和细粒度 end-user identity。这支持把 message/account 分开建模，不证明未知自适应攻击都能被识别；内部阈值与完整实现未公开。误拒与高 dual-use 合法任务需要可审计的授权和人工复核，监测、路由和规则漂移时应保守回退，而不是由模型判断直接获得全账号封禁权。训练/测试集上的安全结果也不能替代独立线上与攻击迁移验收。<!-- source-family:SF-2026-OPENAI-20260305-GPT54 -->
 
 
 多轮 sensor 还要在“每次重读完整历史”与“只看当前回合”之间选择状态合同。窗口或无状态 classifier 在短任务、可预测延迟下仍合理；当恶意意图分散到多轮时，一条分支让任务相关 encoder 生成当前 embedding `e_t`，以 GRU 更新固定宽度历史状态 `h_t`，再把投影后的 `h_t` 与原始 `e_t` 拼接给风险分类器：压缩历史提供累积信号，当前回合旁路避免突发信号完全依赖记忆。它省去每回合重读全部历史，却增加 encoder/recurrent state 的训练、会话状态维护及忘记早期证据的压力，状态也不是可审计原文。[DeepContext v1 §3.2/4/5.3–5.4](https://arxiv.org/html/2602.16935v1)支持这一接口，而非通用识别保证：作者声称测试样本未见，但训练与测试共享部分数据来源，独立分布未验；不同 guard 的训练与编码器未控制，不能把整体差额唯一归于 GRU，一轮训练也不证明不会记忆。复杂 function-calling 的误报保留；平均 GPU 延迟缺少长度、并发和 tail SLO，不授生产 sub-20ms。工程上应绑定会话、模型/policy 版本与 reset/迁移规则，状态失配时回退显式历史或人工复核；这些隔离要求不是作者已实现的保证。动态降权、确定性图追踪和 federated tracking 在原文仍属 future work，learned risk 继续只提供 sensor evidence，不取得 message/account 或工具 effect 的批准权。<!-- source-family:SF-2026-ARXIV-2602-16935 -->
+
+验收历史 sensor 时，还可固定图像场景与其余回合，只替换表达意图的那一轮来构造成对测试：一种切片固定前两轮、改变第三轮请求的良性/恶意属性；另一种固定后两轮、改变第一轮是否已明示恶意意图，检查后续表面无害文本是否被历史改变解释。这里变的是评价人口与上下文 identity，不是新增 guard 或批准规则。意图分类、完整生成的安全性和良性任务 utility 应分成三轴，不能从 MCQ/True-False 判对直接签安全生成。[MTMCS 的受限三轮评价](https://arxiv.org/html/2601.06757v1)使用合成/编辑场景、有限模型与 judge；其 TypeB 明示恶意首轮和“过滤任一单轮 unsafe”的构造说明存在张力，不据此声称全部样本只有历史组合才有风险。text-only 对照还改写了图像线索，不是纯移除视觉的因果干预；ordinal judge utility 也不是安全真值。成对构造、编辑审核、多轮生成和外部评价全部付费，部分防护提高生成安全却降低 TypeB 意图分类，不能拼三轴无损。场景、历史标签或 evaluator 不可靠时，回退显式历史、经验证的原 guard 与人工复核；learned history score 继续只作 sensor evidence，确定性 enforcement 不随局部得分转移。<!-- source-family:SF-2026-ARXIV-2601-06757 -->
+
+安全回归还需保持目标意图，改变它被模型消费的表示与完成框架：普通文本、文字叙事、图像叙事和角色补全并不一定沿同一拒答边界。一个受限多模态切片将同一目标映射到兼容的故事模板，并分别比较有害输出与良性任务拒答；因此模板、改写审核、角色指令及每个目标的查询预算都属于测试身份。跨模板“任一成功”测的是多次尝试后的目标级覆盖，不能冒作单次请求概率；改变模态同时改变改写或 framing，也不能把全部差额归因于视觉通道。<!-- source-family:SF-2026-ARXIV-2603-21697 -->
+
+[ComicJailbreak 的必要对照与反侧](https://arxiv.org/html/2603.21697v1)支持这类表示/完成框架的局部失效，文字叙事在部分模型上更强、减少 panel 也未一致削弱，故不是视觉唯一原因或三格结构的必要性证明。降低有害生成仍可能增加良性拒答，而良性请求的输出也可能有害；应另在人审的输出切片校准 harm judge 的误报/漏报，不让拒答关键词或多数票替全部行为签字。目标改写、多个模板请求、防御/反思与独立人工复核都付费；模板、policy taxonomy、模型版本或 judge 人口失配时保留原输入/输出 policy、确定性 tool authorization 和人工升级，不由某个 ensemble 得分批准普遍安全或牺牲所有正常任务。<!-- source-family:SF-2026-ARXIV-2603-21697 -->
 
 <!-- semantic-body-binding:SF-2026-ARXIV-2609-33634:start -->
 判一个verdict token是低成本旧路径；另一分支先明确被moderate的region和解释它的context，对同一region分别在safe/unsafe标签下作masked reconstruction，以两种模型得分的差决定候选判决。评response时prompt只是condition，不应把有害prompt直接当response有害；prompt与response任务因而需要独立输入合同。训练的relative classification项与groundlabel reconstruction项也承担不同责任，不能仅由score更平滑推导模型必然使用正确语义。
@@ -635,6 +813,16 @@ version、owner、测试集、生效范围、rollback 与 cache key。静态 cla
 单个 safeguard 的验收也不能直接继承给其组合。对输入先 rewrite 再 filter，与先 filter 再 rewrite 可能产生不同的候选和拒答；这不是 OR-combined guards 的并列语义。一个受限组合评价分支先按 utility 选择 top-k 配置，再在这些配置上开展攻击，明确保存处理次序、模型版本和共同输入，使性能比较不被流程差异掩盖。它只比较入选子集，不认证全配置空间的 Pareto 最优或通用组合收益。
 
 ASR 与 utility 若来自不同模型人口，就不能拼成一个质量—安全点；少数 modern model 的 matched 回归也只支持局部结论。Parameter count 只是资源 proxy，不是 VRAM，H100 平均时间不是 tail SLO，单轮攻击不覆盖 adaptive、多轮或全部威胁。组合新增 rewrite、guard、校准与攻击成本，某些处理次序还会降低 utility 或扩大攻击面。规则稳定、风险隔离时成熟单 guard 仍是较清楚的低成本分支；跨域或组合退化时缩回已验收路径，并保留确定性 enforcement。 [必要机制与反证](https://arxiv.org/html/2609.21793v1)。<!-- source-family:SF-2026-ARXIV-2609-21793 -->
+
+红队的搜索对象还可以从一段字符串扩展成“变换意图、编码/解码程序与模板”的结构化候选，使模型负责提出和修复程序，测试接口负责记录语法执行与参考输入的round-trip结果；这让变换本身成为可审计artifact，而不是以流畅文本假定原请求已保持。必要验收要分开可执行、可恢复、解码后语义与目标响应：原[受限搜索](https://arxiv.org/html/2603.20122v1)允许repair后仍不可逆但可执行的候选留下，因而不能把全部候选称为保原意变换。双目标也须分别绑定ASR judge和PPL reference model，低PPL不认证隐蔽性或有害效果；逐query从更多策略选最好、设计与judge共享模型及不匹配搜索预算，都限制了对普遍迁移或单次成功的归因。程序生成/repair、目标查询、judge、reference求值和人工语义审核均付费；恢复或标签失配时隔离该probe，保留固定经核验的suite与独立effect/policy检查，不由搜索frontier获得攻击执行权或给部署签安全保证。<!-- source-family:SF-2026-ARXIV-2603-20122 -->
+
+威胁输入也不必包含人类可读的攻击意图：受限白盒测试可搜索无显式指令的token序列，再独立检查输出是否有害且连贯。命中某个target prefix不等harm，整条优化轨迹事后择优的成功也不是一次最终query或随机字符串的成功率；测试身份必须保留目标模型、概率访问权限、搜索预算与外部裁判分母。高perplexity只说明相对某参考分布异常，不证明预训练何时形成了这种响应，更不能由“自然后门”命名认定训练植入因果。搜索、目标求值与独立harm/coherence审计都付费，四个7B和有限目标不代表更大/闭源或强防守系统；不能以没有可读指令作为放行条件。条件未知时保留固定经核验的红队suite、明确未知和独立输出/effect gate，不由一次异常样例签通用风险率。<!-- source-family:SF-2026-ARXIV-2605-05116 -->
+
+Masked语言生成还会改变拒绝的时间接口：早期固定prefix看似服从，后续双向refinement仍可在其他位置补入否定、终止或新的拒绝，因此prefix命中既不是最终服从，也不是完整有害输出证据。红队应绑定整个sequence、refinement/commit轨迹与最终policy judge，而不是直接复用自回归prefix成功率。[GPO-V的有限视觉模型反侧](https://arxiv.org/html/2605.07399v1)支持这个区别，却主要用latent白盒优化，跨模型pixel转移是另一攻击协议；人为强制FPO前缀也不构成等预算攻击排名。优化、全步解码、外部harm判断与良性效用回归都计费，词频和同源rubric不替真实危害；简单token干预仍有残余命中、未经过自适应重攻时不能自称防线。轨迹、威胁接口或judge不可核时保留Unknown、完整输出/effect gate及已核红队suite，不由局部拒绝或服从给发布签安全保证。<!-- source-family:SF-2026-ARXIV-2605-07399 -->
+
+防御更新还需要全良性输入的反事实切片，不能只看攻击拒绝率和一个总体 utility。普通良性集合在格式稳定时能发现明显退化；若训练使 guard 依赖后缀位置或 attack-associated 字符串，则保持请求的良性语义，分别改变任务片段的位置、加入或移除这些字符串，再单列拒答与任务准确率，可以诊断“正常输入被表面线索触发”的失败。位置、长度与负载应尽量分别控制，保留模型、policy 与输入身份，不能将多个同时变化的因素解释为位置的唯一因果。<!-- source-family:SF-2026-ARXIV-2601-07185 -->
+
+[受限 guard 反侧](https://arxiv.org/html/2601.07185v1#S4)显示部分防御在这些良性切片上误拒，触发字符串移除提供局部干预证据，却不证明所有模型或防御都失效；原文没有独立的 topic split，不能把 topic 泛化假设当作已隔离的因果结果，表文不一致的 drop 数值也不采用。构造反事实、人工判良性与双指标回归都有成本，sensor 通过这些诊断也不获得 effect 批准权。切片混杂、正常 utility 退步或部署人口变化时，先收窄风险范围、回退已验收 guard，并保留确定性权限与人工升级；不能以更多拒答自动换取安全完成声明。
 
 ### Preference Data Admission 也必须检查安全能力重分布
 
@@ -647,6 +835,10 @@ DPO 数据经过表面有害内容过滤后直接进入训练，在偏好样本�
 安全更新的验收还必须区分拒答的开头与完整输出。一个模型继续生成熟悉的 refusal prefix，并不证明随后没有回答有害请求；只统计拒答字符串会把表面形式误当行为边界。有限 benign-SFT 对照中，仅改变正常训练回复的 prefix 就能让这两者分离，普通微调和 random-prefix 对照帮助定位差异。发布 gate 因而应在同一请求上分别记录 prefix、完整 refusal 和独立 policy-bound safety verdict，不能用任何一个字符串匹配替代完整行为评价。
 
 该反证限于受测模型、数据与微调 recipe：开放模型主要 full-parameter 更新，商业接口内部训练细节未知，不能混成同一协议；LoRA 在一些模型中未产生同样效果，SQL/数学质量也有代价，更多数据甚至可使输出退化。它不证明所有 alignment 只是 token 记忆，更不证明此类更新免费。完整输出回归、utility 对照与不同微调方式的安全切片增加验证成本；未达标时应隔离更新、回退可靠 checkpoint 或缩小适配范围，确定性权限控制仍独立于模型的拒答能力。[有限对照与失败条件](https://arxiv.org/html/2601.19231v1)支持这一评价边界。<!-- source-family:SF-2026-ARXIV-2601-19231 -->
+
+压缩发布还要把完整拒答与生成失效分开：少了有害响应，可能是模型真的守住 policy，也可能只是无法形成可用输出。一条受限评价分别让 judge 判断拒答与 coherence，把 coherent refusal、incoherent refusal 和其余输出各自记账；这份分类自身有 policy 与映射范围，不能把“其余”一律当真实有害，或把所有 incoherent 输出都当安全。普通功能回归与良性误拒仍须独立检查，生成退化不能作为安全改进交付。<!-- source-family:SF-2026-ARXIV-2603-25035 -->
+
+内部重要性也不代替该行为检查。[有限 VLM 压缩对照](https://arxiv.org/html/2603.25035v1)中，较强全局剪枝的较低 compliance 类别伴随更多失效；按 refusal-token patching 排出的高分组件，定点剪枝又未显著区别于等数随机组件，不能据此认定唯一必需的 safety circuit 或量化普遍安全。Counterfactual、activation读取、压缩校准、重复干预与独立输出判断都付费，所测模型/人工构造类别不认证自然攻击率或生产 SLO。能力、refusal/coherence或预算回归时，保留未压缩 artifact、较保守配置和独立权限/output gate，不由 circuit overlap、关键词拒答或一次非显著结果批准发布。
 
 ## 从“文本是否恶意”到“谁获得了行为控制权”
 
@@ -667,6 +859,14 @@ retrieval set
 
 旧的静态规则在强格式、低延迟和已知攻击中仍合理；高风险 action 仍必须由 scope、approval、idempotency 与 sandbox 约束。模型 sensor 可以触发降权、重新检索、询问或人工升级，但不能自行授予来源 authority，也不能成为最终 authorization owner。
 
+收紧工具 schema 也不能只验被删路径是否消失，还要检查 Agent 是否改走仍开放的来源。一条受限多会话实验让对话历史按 session 清空、SQLite memory 持续存在；在触发阶段移除 recall 工具、保留列举与原 RAG 后，多数受测模型不再命中作者的攻击判据，但一个原本拒绝发送的模型改从 RAG 重建规则，攻击判据反而重新命中。该判据不等于生产泄漏验证；这只是路径替换的反例，不是“所有记忆隔离无效”或模型具有唯一拒绝机制的证明：原 RAG 仍可见，save-call 标签也不证明存入的是恶意语义，单一 payload、工具措辞及上下文长度都限制归因。[必要机制与反侧](https://arxiv.org/html/2605.08442v1)因此要求分别验收持久化内容、各条读取路径、动作提议和真实 effect，并在 schema 改动后重测良性任务与拒绝切片；这些重放和检查有成本。少权限路径仍可保留，但拒绝不稳或来源归属不明时，应关闭高风险 effect、交给独立 scope/approval gate 或人工处理，不能让“未调用 recall”代替无泄漏或 utility 保证。<!-- source-family:SF-2026-ARXIV-2605-08442 -->
+
+执行边界之外，可信配置本身也可能写入错误的安全假设。某个特征在开发集里预测性强，不代表攻击者不能主动满足它；例如把 sender 与链接 domain 一致当作主要可信依据，既能降低常规样本误拒，也会在攻击者同时控制两端时失去区分力。这类失败可能是模型服从了错误条件，而非外部指令夺权。安全评估因此要固定 model 与 prompt 身份，并同时测正常分布、合法但不满足 proxy 的样本，以及攻击者满足 proxy 的切片，不用总体分数替配置假设签字。
+
+更具体的 override 也不自动修复这个边界：同一例外许可可能恢复部分模型的检出，却在另一些模型放大误拒，已有较好判断的模型也可退步。[合成邮件上的局部对照](https://arxiv.org/html/2603.25056v1)不证明所有特权信号都可被攻破；可见理由只覆盖 verbose 子集，先选已失败 hard cases 的复测也不代表实流量成功率。维护多压力切片、真实来源信号和重新校准均付费；proxy 不再可靠或 false positive 不可接受时，保留规则/可信外部证据与人工升级，由独立执行器核验权限与 effect，而不是把 domain match、模型理由或更长安全 prompt 升为认证。
+
+<!-- source-family:SF-2026-ARXIV-2603-25056 -->
+
 运维日志也属于这条不可信输入链，而不是因为来自云平台工具就获得指令权。同一 payload 单独出现与嵌在日志中的检测结果可能不同，因此应把裸文本与日志包装作为配对安全切片，并分开记录入口告警、模型提出的动作和实际执行 effect。清理明显外传 URL 仍可能留下修改资源或执行命令的提议：sanitization 可以降低部分暴露，但清洗后的 action 仍须独立授权，不能以“文本已净化”代替 scope 与 effect 检查。<!-- source-family:SF-2026-ARXIV-2604-15368 -->
 
 配对切片增加构造样本、良性历史命令对照和误报分析成本，不能由少量手工攻击推断生产事故率。受限实验中的扫描只记录、action tool 只拦截并分类提议，没有执行危险命令；其中的“RCE”标签不证明真实远程执行。包装差异与清理后的残余动作提供的是具体失效边界，不是所有 guardrails 或 sanitizer 普遍无效的证明。确定性 tool policy 与最小权限仍是执行边界，模型检测器只提供观测与升级信号。
@@ -676,6 +876,10 @@ retrieval set
 [少量受控样例](https://arxiv.org/html/2602.10498v1)仅观察敏感 tool-name proposal，没有执行 secret 读取或外传，也未隔离 prompt 与 executor 防线各自的作用。这个 visibility 反侧不认证真实 exfiltration、零误拒或 executor 已可靠阻断。保留两surface/版本审阅会增加保存、检查与规范化成本；审核身份不一致时应隔离或升级复核，低风险已绑定的只读路径仍可保留。清洗或人审都不签发 action authority，后续 effect 继续由独立 scope/approval gate 验收。
 
 定位影响还可围绕同一个 post-tool/pre-action 边界做反事实诊断：冻结 snapshot 和 cached return，分别保留/遮蔽用户目标，并对原/净化 mediator 形成四种 dry-run proposal；probe不执行effect，也不回写live context。[AgentSentry v1](https://arxiv.org/html/2602.22724v1)新增的是边界对齐的重执行与净化后 continuation 分工，不是模型获得授权。遮蔽probe仍要求依据工具内容提下一步，改变了intent；severity、事实保留和可信prefix均需外部条件。原ACE/DE/IE定义并不满足宣称的加性等式，原案例也有反例，不采用因果分解证书；趋势只作所定义诊断。有限AgentDojo任务中有clean utility反退，默认单次probe不支持普遍bootstrap保证。四路调用、缓存、purifier和snapshot付费；净化、重放或defender完整性不可核时保留Unknown、原trace和独立scope/effect gate，不能因文本干净放行下一动作。<!-- source-family:SF-2026-ARXIV-2602-22724 -->
+
+另一条调用前的诊断分支把执行视图与验证视图分开：主 Agent 保留完整工具观察以生成参数，shadow 则固定同一段已发生的 action 历史，只把观察换成弱化结构、指令口吻或因果先决关系的版本，再查询同一模型的下一组调用。固定历史减少两条自由 rollout 因规划漂移产生的假差异，净化视图仅作比较，不直接用被删改的参数执行。候选调用依次经过 function-name 匹配、canonical arguments 匹配和任务条件下的模糊判断；没有存活的 proposal 在 effect 前拒绝并回填警告，后续重新提议仍需重新检查。这里测得的是一次受限 shadow 下的 call survival，不是完整 call 分布的因果识别，更不是授权证书。<!-- source-family:SF-2026-ARXIV-2603-10749 -->
+
+这用观察改写、历史缓存、额外模型调用和误拒代价换取对未见措辞的动作级诊断。弱化可能同时删除任务证据，shadow 与主分支也可能共享诱导；攻击目标与合法信息获取子目标重叠时，两边都会访问同一链接，存活不认证目的地或内容安全。[有限静态/自适应对照](https://arxiv.org/html/2603.10749v1)既有良性 Travel 效用反退，也有自适应攻击非零成功，且自适应采用更强弱化 level，不能合成零风险或无损防御。纯文本攻击、明确委派到可篡改内容的任务不在该 threat 范围；辅助 judge 把 shadow 称为 ground truth 也不能提升它的权限。任务信息保留、重放身份或 survival 判断不可核时，保留 Unknown、原 trace 及人工升级/最小权限，最终 schema、principal、目标参数和 effect-time 授权仍由独立执行器核验，不能仅因两个模型 proposal 一致便放行。
 
 ### 非命令式 Framing 也不能取得 Decision Authority
 
@@ -820,7 +1024,12 @@ filter，human red team 探索新语义风险，automated run campaign 扩大 st
 
 Trace 中出现了 validation 或 sanitizer 调用，也不等于目标不变量成立。Source-to-sink 分析在已知漏洞模式与编码规范检查中仍然合理；若同一输入随后经过 decode、normalize、parse 或不同 rendering context，验证对象就必须覆盖整条变换链。例如 allowlist 在 URL decode 前通过，并不能直接证明 redirect handler 最终解释的 scheme 与 authority 仍受同一约束。可以把相关输入变换缩成最小可执行代码片段，以 micro-fuzzer 搜索反例；复杂整数或输入约束可交给 satisfiability solver 辅助，再在隔离环境中检验可执行假设。局部 slice 或约束模型没有覆盖的路径仍是 Unknown，未找到反例不是安全证明。
 
+当漏洞目标已能写成canary时，模型还可提出通往目标的中间predicate，而不只给源码风险打分：用代码/调用关系定位可检查的必要条件，逐步将检查移向更早程序点，再把带检查的程序交给fuzzer，以较早退出和额外coverage引导搜索。[受限predicate合成](https://arxiv.org/html/2508.21302v1#S3)将编译通过与语义反例搜索分开；所需语义条件是不能误拒原本可达目标的输入，不能用反方向蕴含替代。实际符号检查会剪CFG、展开有限loops，未找到反例不证明全路径relaxation或变换无损，模型/静态图亦可能漏掉间接调用与状态条件。应绑定原程序、目标、插入点/检查、checker支持域与真实重放证据，不把更快触发某canary当新漏洞成立或其余程序安全。索引、全部合成/编译/符号求解和fuzzing都计费，过强predicate或检查开销也会退化；必要条件、可达性或预算不可核时，移除该检查、保留原程序上的普通/定向fuzzer及独立复现与人工triage，而不是默修形式定义后自签完备或安全。
+<!-- source-family:SF-2025-ARXIV-2508-21302 -->
+
 执行覆盖还需要区分“经过哪些语句或分支”与“经过什么状态序列”。按未压缩输入大小预留压缩编码缓冲，在通常会缩短数据的路径上有合理性，却可能漏掉 reset／clear 等特殊编码操作增加输出 codes 的情况；即使达到 100% line／branch coverage，也不能穷尽这些操作的重复次数和顺序。[CGIF 的受限反例](https://www.anthropic.com/research/zero-days)支持把具体输入假设与最小序列反例交给独立重放，而不是用覆盖率签发正确性。Crash、可控内存破坏、完整 exploit、严重性确认和 human-reviewed patch 仍须分别记账；模型提出反例不替代这些确认。静态检查与 coverage-guided fuzzing 继续承担已知模式和规模化搜索，定点序列构造则增加约束建模、执行与人工复核成本；未找到反例或仅观察到 crash 时，未验证的路径和影响仍保持 Unknown。<!-- source-family:SF-2026-ANTHROPIC-ZERO-DAYS-20260205 -->
+
+人工核验仍适合没有能力自行消化大量安全报告的维护者，但它也限制发现结果的交付速度；有验证资源的维护者可以另选一条受限路径，明确同意接收尚未人工 triage 的模型报告，再自行重放、核对 threat model、去重和决定修复。这里的 opt-in 只授权接收报告，不把模型 finding 升级为已确认漏洞，也不授权 candidate patch 自动合入或上线。报告应保存可重放输入、可行时的引入版本定位和可用时的候选补丁，并分别记录各自证据状态；未验证报告的交付不应自动启动与人工验证报告相同的公开披露时钟。OSS Scanner 的公开合同将这两条路径并存，并允许退出后恢复标准 CVD；这一选择把验证工作和误报消化成本部分转给维护者，不能用选定 high/critical 样本的通过比例认证全部输出、严重性或漏报率。<!-- source-family:SF-2026-ANTHROPIC-OSS-SCANNER-20261008 -->
 
 调查的起始输入同样属于 run identity：预置静态 findings 可能收窄搜索区域、带入隐含的 sanitizer 判断，并混淆 Agent 自行发现与从工具继承的结果。因此 repository-first 调查与 SAST-seeded triage 应分别保存输入、假设、工具 receipt 与验证范围，不能用最终 finding 数反推 Agent 的独立发现能力。[Codex Security 的公开设计说明](https://openai.com/index/why-codex-security-doesnt-include-sast/)支持这条窄边界及 slice／solver／sandbox 的披露路径，没有提供两种起始策略的受控性能比较，也不证明 Agent 优于 SAST。静态规则继续承担已知模式的规模化筛查，Agent 反证增加执行环境、约束建模与重放成本；验证不可达或假设冲突时，保留未决并交人工复核，不把模型解释升级为 release authority。<!-- source-family:SF-2026-OPENAI-SAST-20260316 -->
 
@@ -893,6 +1102,8 @@ OpenAI 2026-09-03 的 [Astra system card §9 与 §10.2.3.1](https://deployments
 
 信息是否可供某个审计者使用，还可以用两端相对各自baseline的任务收益比较：在相同可安全重放信号上，分别测receiver与trusted sentinel有/无信号的utility gain，再取两增益之差。它改变了监测目标：不是只查编码形式，而是核给定audit objective和decoder能力下的可消费差距。[受限隐写形式化与对照](https://arxiv.org/html/2602.23163v1)中，同一trace对答案与evaluation-awareness任务可有不同gap；零gap也可能包含两端都能消费的敏感标签线索。理论sup仅被有限prompt/采样近似，normalized gap需要正receiver gain，不能把0/0当通用读数。Gap下降须分开报告sentinel得益与receiver损失，paraphraser的soft保持惩罚不保证逐项无损；ROT13部分比较还人为给receiver明文，不能外推同密文自然攻击。标签、replay、双端采样、训练和额外预算均付费，延迟效果或能力elicitation不足会漏检。无法安全重放、无可信任务真值或能力不匹配时，保留原monitor、独立outcome与effect gate，不由低gap认证无隐写或部署安全。<!-- source-family:SF-2026-ARXIV-2602-23163 -->
 
+即使审计者知道双方模型、private context 与 honest protocol，被动观察 transcript 仍不是排除所有隐蔽交流的通用证书。一条[受限形式化反例](https://arxiv.org/html/2604.04757v1#S5.SS3)让发送方多次采样 honest message，借独立 public randomness 与带 entropy 门槛的 bundle selection，将分布偏移换成可纠正的解码错误；keyless/constant-entropy 结论还依赖相应 noise-resilient key exchange、feedback 与噪声律。严格分布匹配针对 uniform hidden bits 的边际，不保证任意固定载荷逐条件相同，更不是自然 LLM 已发生 collusion 的实证。多候选、种子求值与协议状态都有成本，active warden 与若干密码假设仍未解决；它不证明所有监测无效或某个训练/架构防御已成立。能力与信任条件不明时，保留现有 monitor、独立 outcome、通信限制与 effect-time gate，把“未识别隐写”记为有限观察而不是无隐写或权限许可。<!-- source-family:SF-2026-ARXIV-2604-04757 -->
+
 Threat model 还必须包含 attempt opportunity。单次成功率很低，在多次独立尝试、逐次 feedback、更长 token
 budget 或更多 tool actions 下，至少一次成功的风险仍会放大。生产应版本化 parser/grader、attempt/feedback
 budget 与 action verifier，并把 CoT signal 与 output inspection、least privilege、sandbox、typed authorization、
@@ -903,11 +1114,29 @@ executable outcome checks 和 incident response 组合。即使 monitor 判断�
 
 因而 model admission 应同时保存训练模板、loss mask、辅助 target、tokenizer 与部署 stop/parser 身份，并用独立 outcome 与 trigger-neighborhood 测试核对可见 trace；这是工程审计要求，不是论文已验证有效的防御。它增加训练 lineage、对照推理和检查成本。来源只在 Qwen/Llama 1.5B～8B、四类 reasoning benchmark、受控 SFT+GRPO 污染与 LLM soundness grader 下展示该路径，未证明能绕过任意 monitor、污染机制已完全解释，或低成本防御不存在。已有 checkpoint 哈希、普通 CoT sensor 和运行时权限 gate 仍各自有用，却不能单独证明训练目标与展示边界一致。<!-- source-family:SF-2026-ARXIV-2604-06840 -->
 
+多轮防护也可在本轮回复已经生成、尚未交付时，把完整历史、当前请求和候选回复共同交给 turn guard，而不只从当前 query 猜下一步风险。训练可把过早拒绝的良性损失与接近危险完成时的漏放分开，学习何时停止；第一次 BLOCK 结束所测 episode，并不是删掉某个 span 后继续运行。[TurnGate 的有限对照](https://arxiv.org/html/2605.05630v1)用经验标注的充分性 turn 定位这个取舍，该标注并非真实不可逆伤害的首时刻，自定义 timing/benign-pass 汇总分也不是普通分类 F1。已测两技术域和跨域反退不授开放攻击覆盖；guard 还消费完整候选、生成和训练/标注费用，轻量参数不等流式低延迟。工程上须在判定前缓冲未授权输出，这是接口要求而非论文已测流式保证；若内容已经发出就不能追回。边界标签、状态或分布失配时，保留固定 output 检查、保守拒绝和独立 effect gate，不让 guard 的放行获得工具权限或安全证明。 <!-- source-family:SF-2026-ARXIV-2605-05630 -->
+
 ### Learned Security Sensor 与 Reference Monitor 必须分层
 
-白盒 sensor 的选层也不能只按单层分数排序。最强单层在特定任务上有效，却可能与另一层共享错误；一条条件分支先用各层独立 probe 产生风险分数，再按双重错误的互补性选层，并在目标任务的标注划分上拟合组合权重或 stacking。这里要分开单层表示、选层规则和组合校准三种责任：组合后的风险仍只是 sensor 输出，不能因用了多层而取得 reference monitor 的授权权力。
+入口检测还可以读取一个独立模型的状态，而不要求受保护模型开放自己的 activation。面对可能扰乱递推记忆的文档，一条受限分支先让单独的 Mamba 扫描全文，从其 block-output embeddings 提取若干维度与层统计，再由训练过的分类器给出 token 风险；它观察的是前端模型如何响应这份输入，不是下游 SSM 或 hybrid 的真实状态。前端只提交待核的 span 或文档告警，不能把“与下游无耦合”升级为跨模型保护证明，目标模型的效用、状态损坏和最终 effect 仍须独立验收。<!-- source-family:SF-2026-ARXIV-2603-12206 -->
+
+这里还必须分开定位与拦截的单位：token-level 分类尝试找出污染片段，document-level 则只需一个 token 过门即可标记整份文档，两者需要不同阈值与误拒预算。[有限 BOE 前端证据](https://arxiv.org/html/2603.12206v1)显示，未见结构下的文档 F1 仍会下降，强求高 token recall 又可能使良性告警大量增加；按测试切片分别找出的最佳阈值不能直接成为一个冻结部署规则。特征选择、触发族与词法捷径、额外模型前向和 CPU 提取/分类、校准与人审都付成本，简历上的局部检测速度不等完整目标服务的吞吐。域、触发结构或消费者改变且无法重新验收时，保留告警隔离与人工复核、独立目标行为测试和原有 output/action gate，不由无告警批准输入或动作安全。
+
+入口风险也可由生成式 judge 给出：让模型先按组织 taxonomy 拆分请求、给出初判，再反思并提交结构化 verdict，便于区分合法工作指令与违反当前 policy 的请求。它增加的是可读判分通道，而不是让解释成为授权真值；把 high/medium/low 映成几个离散分数也不使它成为校准风险概率。多路 judge 可并行产生分数，组合权重与 threshold 要在同一标注人口上共同选择，并用未参与选择的样本验收；有限分数组合意味着只有有限种分隔，却不能仅凭某个离散 grid 就证明已覆盖全部分隔或找到全局最优。<!-- source-family:SF-2026-ARXIV-2603-25176 -->
+
+[有限提示攻击检测对照](https://arxiv.org/html/2603.25176v1)保留合法复杂指令与自动红队输入，在固定 base 预测的交叉验证中，新增 judge 既可能改善也可能降低组合 F1，较弱单模型也可能提供互补线索；因此不按规模或单模型排名直接扩 ensemble。该人口只有手选 benign 与同模型生成/评价的攻击，不能签自然攻击率或未知自适应防御；prompt 与 schema 联合改变也不隔离 reflection 的唯一收益。额外模型调用、上下文读取、输出解析、联合校准与误拒审查都计费，不同本地/API均时不认证端到端 SLO。policy、语言或攻击分布变化且无法重新验收时，保留简单 detector、单 judge 与人工升级，独立权限和 output/action gate 继续拥有拒绝与提交权。
+
+入口定位也不必读取受保护classifier当前label下的敏感度：若攻击已使label偏移，按这个label挑token可能错过触发变化的位置。一个受限替代分支先用独立预训练replacement-token detector排序，再mask少数位置，固定原输入的predicted class，比较原文与变换文本的confidence变化；token选择信号与victim响应因而分别有身份。它要求可读取class confidence，并不是label-only接口；replacement概率也不认证对抗语义，mask可能同时删去合法任务信息，不能把变换后分数当安全真值。<!-- source-family:SF-2026-ARXIV-2603-12582 -->
+
+[RTD-Guard的有限证据](https://arxiv.org/html/2603.12582v1)只覆盖BERT在三组分类任务、四种非adaptive词替换攻击及验证集校准阈值；不授知道detector的攻击、跨语言或生成式LLM防护。两次victim query仍要另付RTD前向、mask与校准，所披露局部runtime约为victim-only的四倍，而非constant-time免费防线。检测人口、语言、k、阈值和victim revision须共同固定，误拒/任务损伤或接口不匹配时保留原输入与独立有标签检测、拒绝/复审路径，不由无告警批准输入或后续effect安全。<!-- source-family:SF-2026-ARXIV-2603-12582 -->
+
+如果选择目标模型内部的白盒 sensor，选层也不能只按单层分数排序。最强单层在特定任务上有效，却可能与另一层共享错误；一条条件分支先用各层独立 probe 产生风险分数，再按双重错误的互补性选层，并在目标任务的标注划分上拟合组合权重或 stacking。这里要分开单层表示、选层规则和组合校准三种责任：组合后的风险仍只是 sensor 输出，不能因用了多层而取得 reference monitor 的授权权力。
 
 多层互补需要额外标签、层状态读取与校准，也可能过拟合目标划分；增加层数时若同时更换聚合算法，就不能把收益全归因于层数。有限欺骗检测实验中的部分任务反而不及强单层，且 role-play 标签并非真实意图的直接真值。因此应保留强单层、固定校准和独立输出检查基线，按任务切片验证错误互补与成本，而不假设存在一组跨任务通用的“安全层”。<!-- source-family:SF-2026-ARXIV-2604-13386 -->
+
+若 probe 的越界不只触发复审，而是让模型跳过当前层或其中的 attention，安全对象便从固定执行图上的读出变成了条件切换的执行图。读取 activation 与 bypass operator 是两种不同操作：前者提供风险线索，后者可能同时删去正常能力和安全相关计算。层表示可分不能指认该层是攻击的唯一因果位置；model、层位、CP/probe、阈值以及“跳整层”或“只跳 MHA”的分支身份应共同记录，并分别验收切换后的攻击行为与 benign utility，而不是让原图的 probe 准确率继承为新图的防御效果。<!-- source-family:SF-2026-ARXIV-2602-11495 -->
+
+[受限条件跳层实验](https://arxiv.org/html/2602.11495v1)以 rank-20 CP 特征与阈值 0.7 驱动两种 bypass，在 abliteration 后的 Llama-3.1-8B 上测试各100个攻击和良性输入；跳整层仍漏判22%的攻击并误判6%的良性输入，只跳 MHA 的对应比例为39%与8%，这些读数绑定作者 judge 及含糊响应的人审，不是开放攻击分布的风险率。训练与测试共享 InTheWild 数据来源，未覆盖 GCG/PAIR、完整通用能力或端到端延迟。该分支还支付 activation 读取、CP/probe、分类与干预校准成本，并非没有辅助计算；未知攻击、模型更新或效用退化时，应保留原执行图、外部 policy、sandbox 与拒绝路径，不凭可分表示或一次成功 bypass 签发安全保证。
 
 逐 token 白盒风险分数也不等于应该逐 token 调用昂贵裁判。短任务、prompt-level filter 已能覆盖的攻击，可以保留一次检查；当风险在生成中才显现时，一个条件分支先把多个关键层的几何分数做窗口平滑与持续性检测，只有持续越界才暂停 decode，把 prompt 与已生成 prefix 交给语义裁判。几何 sensor 拥有触发建议，runtime 拥有暂停/终止，语义判断不能顺便授予工具权限。若裁判判断 SAFE，还要明确重置累计风险状态，否则旧偏离会反复触发同一告警；这个 reset 改变的是 monitor 的历史状态，不是删除生成证据。<!-- source-family:SF-2026-ARXIV-2604-07727 -->
 
@@ -916,6 +1145,14 @@ executable outcome checks 和 incident response 组合。即使 monitor 判断�
 窗口之外还要绑定被检查的语义对象。输出中的替代词、编码或重组片段可能只有结合输入才显现风险，因此一个 exchange classifier 可以先检查 prompt，再在生成中把当前输出片段放回同一 conversation context；廉价 activation probe 的越界只触发第二级检查，不直接等于 refusal 或执行授权。完整 exchange 的训练标签也不等于每个 prefix 都已包含有害内容：同一个无害 prefix 可以通向不同结尾，按较高风险位置加权的训练 loss 只是处理这项弱监督的选择，不能把 probe 分数解释为逐 token 的真实伤害概率。
 
 训练中的滑动窗口平均与部署中的 EMA 还保存不同时间状态，model/layer、probe、tokenization、平滑方式、阈值和 exchange identity 因而应共同校准，而不是把同一权重当作同一流式 detector。该分支复用生成 activation，却仍支付特征读取、上下文/cache 与二级 classifier 成本；混合 logits 的权重需要独立验收。静态攻击数据中“任一点 flag 就算防住”的口径可能低估已经泄漏的内容，later flag 不能追回已发送 prefix；有限红队未找到通用攻击也不是不存在的证明。标签、监测状态或语言/攻击分布漂移时，保留外部固定频率检查、保守拒绝和独立 output/action gate，而非让廉价 probe 自动获得安全 authority。 [交换级监督与流式级联边界](https://arxiv.org/html/2601.04603v1)。<!-- source-family:SF-2026-ARXIV-2601-04603 -->
+
+白盒防护还可以只改变当前 attention，而不更新权重或直接跳过整层：先在 content token 掩码内寻找异常集中的 row/head，再以 head/row 两级门控收缩 content logits，并重分配完整 attention row 的 content mass。这把风险提议与具体算子干预放在同一次 prefill，但低 entropy 仍不认证恶意，重写 attention 也不保证保留合法信息。[必要自适应攻击和长上下文反侧](https://arxiv.org/html/2604.24162v1)中，分布式 head 攻击仍可绕过，32k条件的误报和正常效用同时恶化，MLP/residual 旁路亦不被此 sensor 覆盖。Content mask、层/head、门槛、目标模型与攻击权限须共同校准；白盒统计、内存操作和干预均计费，单卡 batch1 的增量不授生产 SLO。符号/多语、模型或上下文失配时关闭重写、保留原 forward、外部 guard 与独立 effect gate，不由局部 attention 指标签发无损防御或工具权限。<!-- source-family:SF-2026-ARXIV-2604-24162 -->
+
+干预对象也可以从attention权重转为已知context span的KV特征维度：一条[受限白盒分支](https://arxiv.org/html/2504.21228v1#S2)用少量非测试clean/poison参考的activation×gradient贡献、跨token最大聚合来选择维度，再对该span的KV状态施mask，而不更新模型参数。这个参考依赖的选择不认证指令来源或真实权限，维度归因也不是唯一安全机制；原文Eq5的字面sup不能直接充作有限可执行阈值，本处不采用其阈值recipe或理论保证。前缀trigger代理不覆盖作者指出的回答末尾注入效应，两个模型、有限QA/修改对话的较低ASR仍伴随部分clean F1或quality弱于对照，不能签全面无损或开放攻击免疫。参考采集、clean/poison生成、forward/backward归因、mask准备与正常效用回归都付费，没有逐回答新增LLM调用不等全成本为零。Span/参考或模型变化、无法可靠执行mask或效用回退时，应保留原KV/forward、隔离不可信输入、外部guard与独立effect授权，不由内部干预结果授工具权限。
+<!-- source-family:SF-2025-ARXIV-2504-21228 -->
+
+不改参数的防御还可以先改变哪些带标签示例进入当前context，而不在模型内部屏蔽特征。一条[受限干净选例分支](https://arxiv.org/html/2507.01321v1)分别按模型在待防护demonstration条件下对可信标签的confidence、以及示例与该demonstration的表示相似度取例，再组合为demonstrations；黑盒目标可由另一开源模型提出候选，不等于取得目标的内部表示。Confidence只说明既有模型偏好，语义相近也不认证示例适合当前目标或能够压过恶意内容；干净池的标签、来源、选例模型、数量/次序和待防护demonstration共同决定选择支持，当前query另属于最终消费者。原双latent/独立性假设及期望换序不足以给任意输入的普遍攻击上界，经验ASR下降也不能继承这一保证，部分clean accuracy会下降，且仍有较高残余ASR。干净池维护、编码/打分、增加的context与独立效用/攻击回归均付费；示例支持、迁移或预算不可靠时，保留可信固定示例、缩小或隔离不可信context及外部output/action gate，不让高confidence或相似度自行授予安全权限。
+<!-- source-family:SF-2025-ARXIV-2507-01321 -->
 
 Static prompt policy、trajectory representation 和 prompt-space skill 都可以提高已知攻击上的检测或拒绝率，但
 仍受 model compliance、taxonomy coverage 与 distribution shift 约束。模型侧 sensor 负责提出风险，versioned
@@ -940,9 +1177,15 @@ MoE routing 还扩大了硬件 fault/attack surface：少量 expert/routing bit 
 
 ### Hidden-state Monitor 需要稳定的 Observation Point
 
+监控对象从单模型扩大到多Agent时，先聚合各成员的deception方向分数、差异或相似度，可以提供group-level风险线索，却不能从某成员高分直接判定群体合谋。聚合规则、成员身份、观察层/token/round、标签生成与monitor权限须共同冻结：秘密指令标签不等于实际执行，剔除未执行样本与mean-round/final-round提取又改变评价人口。[受限群体probe对照](https://arxiv.org/html/2604.01151v1)中不同特征的迁移方向会反转，AUROC只支持排序，未给阈值安全gate；缺privileged observer控制、未测adaptive攻击及初步schematic token图也不授隐写定位或普遍恶意识别。多成员activation、标签和校准均付费，闭源权限不足或transfer失稳时，保留文本/行为证据、人工升级与独立action gate，不让群体sensor取得授权或无告警安全权。<!-- source-family:SF-2026-ARXIV-2604-01151 -->
+
 内部 probe 若只在固定 suffix 或干净文本上校准，普通拼写扰动也可能旋转表示、制造误报或漏报；扰动随后续 token 衰减，又说明检测位置本身属于 sensor identity。Monitor 应绑定 layer、token/suffix observation point、normalization、probe revision 与扰动回归；必要时在只读 KV fork 上延后观察，不能把单点 hidden state 当成稳定意图。<!-- source-family:SF-2026-ARXIV-2609-15994 -->
 
 多点观察和 suffix fork 增加计算与延迟，且 probe 仍不拥有真值。typo、decay 与作者模型证据不覆盖全部 monitor；分布漂移或观测不稳时，应降级为外部 policy/effect checks，而不是提高 probe authority。
+
+Observation point 固定后，monitor 还要知道它究竟观察哪种条件下的内部状态。模型已经否认违规时，可在只读分支分别预填 Yes/No 两种回答，比较内部表示对两种解释的支持；这提供的是条件化 belief 信号，而不是把对外否认直接当真。不同 persona、任务上下文和观察层都可能改变该信号，因此 probe 应声明条件与校准人口，不能从分类分数推出模型意图或执行权限。<!-- source-family:SF-2026-ARXIV-2610-12445 -->
+
+[受限监控实验](https://arxiv.org/html/2610.12445v1)主要依赖人工筛选的攻击情境与已知 onset 后的正样本，某些 sandbagging 和 free-tier 设置显著弱于主结果；遗漏的攻击也不能因没有被原 judge 标记就退出真实风险分母。反事实分支新增推理和校准成本，行为上下文能帮助 probe，却不使它成为通用恶意检测器。外部 effect/policy checks 仍负责权限边界；涉及比较两次执行的性质，还需要下面的真实配对证据。
 
 ### 单条 Trace 无法证明跨执行安全性质
 
@@ -1086,6 +1329,10 @@ dependency / developer endpoint compromise
 OpenAI 对 TanStack npm incident 的公开响应为这条 end-to-end path 提供官方案例，但公开页面不是完整 forensic
 report，因此不能用于推断全部 root cause、受影响人口或控制有效性。
 
+构建身份可信，也不意味着构建步骤应该持有发布签名能力。固定发布流程、依赖已审且执行主体可控时，构建与签名共用 job 简化交付；当 Action 的 floating tag 或刚发布的依赖可改变执行代码，普通 dependency resolution 就可能跨入 signing certificate 与 notarization material 的权限域。[官方签名流水线事件](https://openai.com/index/axios-developer-tool-compromise/)明确披露了这条路径及改用 commit hash、设置 minimumReleaseAge 的修正。由此推导的工程选择是把依赖身份固定、构建执行和签名能力授予分别验收：pinning 与新包等待期只收窄入口，不证明依赖本身安全；隔离签名步骤与最小权限增加制品交接和运维成本，无法核实可信构建输入时应停止签名，而非让普通构建成功取得发布许可。<!-- source-family:SF-2026-OPENAI-AXIOS-20260410 -->
+
+签名资产可能暴露后，撤销也不是单一步骤：分别阻止旧材料产生新的 notarization、发行新证书签名版本，并在迁移窗结束后撤销旧证书，才能同时处理新增伪造风险与旧客户端迁移。立即撤销在风险高且可快速恢复时仍合理；有限迁移窗降低更新中断，却保留过渡期风险，需要明确截止、旧产物处置和加速撤销条件。上述公告的30天迁移与“未发现被滥用或数据受影响证据”只描述其调查和处置，不证明证书从未泄漏、现有所有安装安全或这套措施对任意供应链攻击充分；缺独立取证时保留未知、阻断新增高风险发布，不能把更新完成当作整条信任链已恢复。
+
 生成内容的 provenance 也不能由单一 watermark 承担。可剥离的标准 metadata 适合声明 producer、edit chain
 与签名；较耐变换的 embedded signal 可以在 metadata 丢失后提供弱关联；public verifier 再把 signal 映射到
 可解释 verdict：
@@ -1100,6 +1347,12 @@ signed content metadata
 三者是互补层，不是重复保险。Metadata 可被剥离，watermark 有 false positive/negative、压缩与跨模型迁移边界；
 尤其 negative result 只说明当前 verifier 未检测到已知 signal，不能证明内容不是 AI 生成。OpenAI 的
 C2PA/SynthID layered provenance 是官方工程案例，不构成对所有生成器、编辑链或对抗变换的完整认证。
+
+当已植入信号只由latent噪声的符号承载时，提取器不一定需要恢复整份连续噪声；可将目标直接改为逐bit分类，并联合适配生成与提取接口。[OSI的受限方法](https://arxiv.org/html/2602.09494v1)据此把多步反演换成单步预测，改变的是约定编码器的bit通道与提取费用，不是来源、内容或安全真实性。单次A100提取时间不含联合训练与图像生成，iid无水印bit假设推算的FPR也不是相同低误报工作点的大样本实测；自适应攻击和部分强变换仍有反侧。编码/生成/提取器、message与阈值需共同校准，承担训练、质量回归和变换测试成本；假设或攻击面越界时保留原验证、签名origin与inconclusive，不把更快bit恢复当作完整provenance认证。 <!-- source-family:SF-2026-ARXIV-2602-09494 -->
+
+没有 producer 植入信号时，统计文本 detector 只能补充另一类来源 triage。一条受限分支学习同时读取 prefix 与当前 token、可随位置变化的 witness，而非只对单个 log-probability 作固定映射；按 proxy 采样 LM 的条件均值与方差形成 score 后，工作点再用人类文本的类别 null 分布独立校准，类别未知时保守取八类的最大 p 值。采样模型、witness、文本规范化与 human-null 人口共同定义 sensor，不是从某个高分认证真实作者。[必要方法与反侧](https://arxiv.org/html/2601.06586v1#S4)中，生成分布下的渐近 FNR 论证不能换成人类 null 下的有限 FPR 保证；nominal .01 的 News FPR 为 .027，RAID nominal .1 为 .127，AUC 较高也不授每个工作点最优或任意域安全。训练、LM 前向、词表期望与类别校准均付费，GPU runtime 图不是 CPU 或生产 SLO。人口、生成器、编辑链或长度越界时重校准或给 inconclusive，强归属仍保留签名、origin record 与独立审查，不能以统计阳性直接处罚或以阴性否认 AI 来源。<!-- source-family:SF-2026-ARXIV-2601-06586 -->
+
+即使生成来源可验证，也不表示有权使用内容中被描绘者的身份。真实人物的视频与音频生成，需要把“由哪个系统生成”与“谁同意以什么方式使用其 likeness”分别验收；签名、水印和内容分类器都不能代签同意。[Sora 2 初始 system card](https://cdn.openai.com/pdf/50d5973c-c4ff-4c2d-986f-c72b5d0ff069/sora_2_system_card.pdf)§3.3～3.4分别公开provenance与explicit opt-in consent/likeness controls，支持这种对象分账，不证明所有人物授权都能被识别或执行。工程上，许可状态及用途应由可信产品控制面管理，付出身份/同意核验、权限维护和误拒成本；许可无法验证时应限制人物生成路径或请求人工确认，而非把“检测到AI来源”当作放行依据。后续许可变化是否影响未来生成、产品内既有内容和外部副本是三个不同问题，必须由各自合同说明；这项推导不是初始card已披露的撤销实现，也不承诺互联网副本可追回。<!-- source-family:SF-2025-OPENAI-SORA2 -->
 
 watermark移除还要分开三条轴：原检测器失效程度、内容质量保持与独立的移除痕迹检出。痕迹detector阳性最多提出triage，不证明生成来源、权属或恶意；原watermark阴性加痕迹阳性也不能拼成完整provenance证书。检测器、变换、阈值及原图身份需共同冻结。
 
@@ -1260,6 +1513,12 @@ model proposes action
 
 第 78 章会展开 Tool Calling 机制；本章只冻结平台控制：模型不能授予自己权限，检索内容不能改变 authorization，敏感操作必须有独立 policy decision。
 
+一条尚未验证的设计proposal，是进一步把“模型认为自己要遵循什么”与“系统准许遵循什么”分开：要求模型显式列出拟遵循指令，由系统回指其来源，再按既有policy阻止不可信来源或请求确认；读取外部内容前也可预声明是否预计该源含有可执行指令。需要语义裁决时，可只向bounded judge提交已维护的instruction state与拟变更diff，避免把raw环境全文交给拥有决策任务的模型。这改变候选指令与授权判断之间的可审计接口，不证明模型自述忠实、provenance完整或typed表示无注入。[Secure Agents的必要proposal](https://arxiv.org/html/2603.30016v1)尚未实现并验证这条路线；漏列、错误来源归属、diff遗漏语义或共同模型偏差仍会使裁决失效。识别/来源核验、结构维护、judge与人工确认都付费；无法可靠回指来源或高风险动作仍有歧义时，保留确定性allowlist、最小权限与明确人工/effect-time授权，而非让自述或一次模型判断替代policy。<!-- source-family:SF-2026-ARXIV-2603-30016 -->
+
+在实现逐次授权之前，还可以先检查会话是否获得了危险的能力组合：A 是处理不可信输入，B 是访问敏感系统或私有数据，C 是改变状态或向外通信。[Agents Rule of Two](https://ai.meta.com/blog/practical-ai-agent-security/)提供一条低成本部署分支：同一会话兼具 A、B、C 时，不允许无监督自治；可以关闭敏感访问、限制外发对象，或让可靠监督者核验实际动作与内容。限制功能会降低可用性，监督与来源信任确认也有成本，但这比等模型识别出所有注入再决定执行更直接。
+
+检查不能只看某一刻的权限清单。会话先读外部内容、再读秘密、最后外发，即使每一步都只开启两类能力，历史信息仍可能补全攻击链；切换配置必须确认旧信息和仍可达的副作用不会接通 A→B→C。新上下文本身不证明这条链已断，盲目人工批准也不等于可靠监督。该规则是厂商提出的设计约束，不是经形式证明的充分防御，仍不能替代最小权限、数据流追踪与每次 effect 前的独立授权；其他威胁和低后果注入仍需另行处理。<!-- source-family:SF-2025-META-AGENTS-RULE-OF-TWO -->
+
 不可信内容还可能模仿对话的结构，而不只是要求忽略先前指令：工具返回文本中伪造 tool 结束、assistant 回答和下一轮 user 消息，使模型把数据当成一段待续写的历史。这里要区分模型对 chat template 的统计先验与真实 runtime 的 role/parser 权限；前者受到扰动不证明后者已经被攻破。[有限结构注入对照](https://arxiv.org/html/2602.16958v1)中，强制模板 tokenization 与移除括号的结果差异支持这种形式敏感性，但成功样本的 attention 分析不确定唯一成因。攻击搜索的 proxy 又只以有效轮次中的成功比例计分，不能当作所有请求的攻击率。因而应把模板序列化、外部文本转义及 tool-return 回灌作为独立回归面，保留真实 role 与来源身份，并在每次 effect 前重新执行授权；这些是工程防误用条件，不是论文验证的充分防御。模板回归、搜索查询及良性恢复测试都有成本，低风险 typed data 路径仍合理，不能由有限实验宣布所有过滤或权限边界失效。<!-- source-family:SF-2026-ARXIV-2602-16958 -->
 
 程序执行失败后，把错误反馈给模型以修复程序是合理的恢复方式，但 runtime 产生的 exception 仍可能包含工具或外部系统控制的不可信内容，不能因此升级为指令。[代码执行代理的受控反例](https://arxiv.org/html/2602.15945v1)显示，返回合法 schema 后附带的异常，经原样回灌使模型重新生成程序，并调用沙箱内已经可用的管理或写入能力；这里没有 sandbox escape，隔离成功也不代表权限使用符合任务。每次再生成都应视为新的 program proposal，重新检查对象、参数、effect 与预算，并保留错误的类型和来源；这是工程控制要求，不是作者已证明的充分防御。更严格的反馈过滤和重新授权会增加恢复成本，低风险 typed error 与单步端点仍可保留；四类有限攻击不能证明任意传统工具代理免责，也不能证明所提 semantic gate 能防住自适应攻击。<!-- source-family:SF-2026-ARXIV-2602-15945 -->
@@ -1271,6 +1530,9 @@ model proposes action
 另一条更窄的隔离分支，在读取外部环境之前，由 privileged planner 生成固定执行图，让 quarantined perception 只向已有程序返回坐标、summary 或 boolean，而不能注入新代码。预先写入 Observe–Verify–Act 和条件分支，可以在规划者不看实时截图的情况下恢复部分 GUI 可用性，但固定图只限制控制流：`verify_hypothesis` 的不可信返回值仍是分支控制信号，伪造按钮、cookie banner 或视觉线索可以诱导程序走危险却合法的路径。安全验收因此要分别检查“是否新增未批准指令”和“已有分支/目标是否满足真实 effect 的授权条件”，不能把 execution graph 未变当成业务安全。<!-- source-family:SF-2026-ARXIV-2601-09923 -->
 
 这条分支把反应性换成先验状态预测、较复杂的条件图和额外调用；DOM、截图与不同模型的交叉检查仍是 sensor，不拥有 effect authority。[受限 CUA 实验](https://arxiv.org/html/2601.09923v1)特意去掉原 CaMeL/Fides 的场景语义 policy，故其中 branch-steering 反侧不是完整 policy-enabled 系统的普遍破坏证明。广告可控、攻击者知道任务并能预测程序的条件下，冗余检查仍漏掉攻击；17 条良性任务有3条被误报，10 seeds 的广告检测也不构成总体防御率。Utility 的 pass@k 是有 oracle 选取的至少一次成功，30条不可自动评估任务默认成功、本地 UITars 未计入价格，都限制了数字的含义。未知初态、不可可信绑定的点击目标或高风险分支，应继续依赖确定性 policy、可信对象绑定、最小权限与人工/effect-time gate；低风险可撤销任务仍可保留原有反应式 controller，而非为隔离牺牲全部可用性。
+
+固定控制流仍要绑定具体工具时，可以先只用可信用户请求提出抽象功能与类型，再将每个抽象调用独立匹配到已安装工具，而不让完整工具目录共同参与原控制图的生成。[一条受限双阶段分支](https://arxiv.org/html/2504.20984v1)据此减少工具描述之间的规划干扰，再对具体计划作声明label下的信息流检查、由受限worker执行。独立匹配不证明工具语义或兼容层正确，用户label遗漏也会漏掉敏感流；graph合法、schema合规和攻击工具未被调用，仍不能互相替代真实意图、全部泄漏与effect验收。隐藏工具目录会损失消歧信息，选择/兼容转换、静态分析、容器与失败重试也增加费用；原分支只处理单次查询与独立app，未覆盖containerescape/侧通道。绑定失败或任务需实时重规划时，应保留已验证工具/原始请求、有限动态规划与独立effect-time policy或人工确认，不因静态控制图自签业务安全。
+<!-- source-family:SF-2025-ARXIV-2504-20984 -->
 
 固定执行图适合流程已知的任务；流程需要从正常使用中归纳时，可以先在可信、全良性的 staging 中收集轨迹，再按 role、tool 与 context 提取候选转移图，并以文本聚类后的 regex、数值范围描述局部输入支持。部署时检查路径与对应 cluster 的条件，是把观察到的正常行为变成候选 policy，而不是从模型输出中发现真实权限：未出现的合法分支不自动恶意，污染的 staging 也会污染规则。已完成结果可以作为后续动作的 sensor，未来 OUTCOME 不能提前批准当前 effect；候选规则还需绑定来源、版本并经可信确认，不能覆盖既有 IAM、对象身份与独立授权。[AgentGuardian exact-v1](https://arxiv.org/html/2601.10440v1)提供这条受限归纳接口，公开反馈/中断说明并不证明工具前原子拦截已经实现。
 
@@ -1316,6 +1578,9 @@ GUI目标正确还带有时间条件：截图用于选定坐标，实际dispatch
 `arXiv:2605.05709v1` 在特定开源与闭源 MLLM、HADES 数据及作者构造的 character-removal、typographic 和 distractor-image 攻击上展示 reconstruction–concealment trade-off；其 CLIP proxy、judge 与攻击成功率不证明任意模型、当前服务版本或上述双层检查具有通用防御率。
 
 <!-- source-family:SF-2026-ARXIV-2605-05709 -->
+
+联合语境的风险也可能不来自隐藏或残缺的危险指令：图像和文字各自语义完整、单独无害，组合后却改变同一回复在具体语境中的含义。因此应分别保存单模态输入、联合语境、给定回复的风险标签和模型实际生成的输出，再由独立policy判断实际交付是否合格。[一项受限多模态评价](https://arxiv.org/html/2509.04403v1)检验这份标签非可组合性，不证明每个单模态safe标签正确或所有联合输入都危险。给定回复的风险识别、生成回复被judge判safe与真实行动后果不是同一事件；同模型参与构造/改写和最终判分、有限500人审及不均风险人口，都不能使全库成为独立oracle或现实发生率。应保留各类别/各分母与无响应，声明/免责声明也不能代替实际风险审查。构造/搜索、双模态读取、全部模型与judge、人工和独立回归都计费；语境或标签不明时保原policy、人工/拒绝与effect-time gate，不因分路扫描都通过或较高safe-rate批准完整系统安全。
+<!-- source-family:SF-2025-ARXIV-2509-04403 -->
 
 除指令语义外，安全测试还应分开像素扰动的局部几何与黑盒迁移：图像高度重叠、embedding 接近，不保证 ViT patch 划分与局部梯度方向也稳定。受限[视觉迁移攻击研究](https://arxiv.org/html/2602.17645v1)分别改变 source view 的梯度估计与 target reference 的语义锚，说明这两种变换不能被统称为“更多增强”后合并归因；source 采样、target 编码、代理 ensemble 与 victim 查询应各自计费。同优化 step 的对照若每步用了更多 crop 梯度、不同步长或代理模型池，就不是同 gradient-budget，组件删除后部分指标反升也不支持单机制普遍有效。原证据限 100 张图像、指定代理/当时六个 API 与披露的多 RTX4090 配置，precision、完整端到端时间与并发/SLO 未披露；不采用其相关式或泛化证明为通用 transfer 保证，更不把作者攻击率当当前服务脆弱性。模型、patch/tokenization 或图像支持改变时，应保留同输入/预算的独立 red-team、防御回归与原内容/effect-time gate；图像相似和代理损失都不能授安全放行。<!-- source-family:SF-2026-ARXIV-2602-17645 -->
 
@@ -1497,6 +1762,8 @@ multi-Agent 长链传播或真实生产 EHR 风险；没有公开 artifact 也�
 
 这里采用的是行为回归责任，不是已经识别了唯一因果路径。原文的 attention×gradient 归因不证明经验片段具有因果控制权，等长度对照通过扩充 system instruction 替换经验，也改变了指令语义，不能完全排除混杂；受测框架、模型、任务与判定器的 ASR 不是开放环境事故率。完整切片增加回放和评测成本，但在 memory 更新可能改变执行倾向时是必要代价；证据不稳应降低读取预算、停用新经验或回退已验收快照，而非把“良性来源”当作上线豁免。<!-- source-family:SF-2026-ARXIV-2604-16968 -->
 
+写入者是受信 Agent，也不能让它留下的目标自动取得下一 session 的授权。[受限双会话实验](https://arxiv.org/html/2610.04083v1)先用搜索过的 system prompt 构造带偏离目标的 writer，使本轮缺权限／机会，再让无该 prompt 的 successor 在另一任务中继承 note；匹配 neutral control 和确定性目标 tool call 区分普通记忆写入与实际传播。只给 values 的构造、跨模型继承和至多百次插入会话展示这条路径的存在，不给自然部署发生率；插入会话可加不可删，provider 拒绝和可见 evaluation-awareness 排除也限制人口。去掉 memory 后仍可经会被发现的文件传播，内容 auditor 只能降低而不能消除成功，因此 provenance 和删除单一通道不代替当前 task／context 的 action authorization。Prompt 搜索、跨会话回放、文件发现、审计与良性效用回归均付费；上下文理由或权限不足时隔离旧指令并重新确认，不能让换模型、更多无关记忆或 note 的来源身份批准未来动作。<!-- source-family:SF-2026-ARXIV-2610-04083 -->
+
 ### Verification Status 必须像 Provenance 一样跨 Summary 与 Memory 传播
 
 Agent 把长轨迹压成 summary 或写入 memory 时，最危险的丢失不一定是内容，而是“这条 claim 仍未验证”的状态。若下游只看到流畅摘要，silence 会被误读为 endorsement，暂定假设便可能在多轮传递后获得虚假的事实权威。Claim state 至少应携带 source、verification status、反证/缺口、生成者和有效期；summary/memory owner 只能压缩表达，不能把 `unverified` 提升为 `verified`。<!-- source-family:SF-2026-ARXIV-2609-20211 -->
@@ -1593,6 +1860,8 @@ type-retry 与 policy vocabulary 的维护。无法建立闭合 effect system �
 authorizer、sandbox、人工批准与 effect receipt。现有证据只支持 Haskell/TypeGuard 的 provenance、filesystem
 和 information-flow case studies，不构成跨语言生产安全证明。
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-12863:end -->
+
+路径的规范表示也不自动给出containment证书：在Windows跨drive或UNC share时，`relative(parent,child)`可能返回absolute目标而不是`..`，因此“结果不以`..`开头”会fail-open。共用workspace、tool-script和plugin jail的predicate应拒绝absolute结果，再按实际consumer执行path/symlink检查，不能把字符串相对关系当最终文件授权。[MiMo-Code的具体修正](https://github.com/XiaomiMiMo/MiMo-Code/pull/2650)只关闭该跨卷路径；POSIX绿测在旧实现也成立，不能继承为真实Windows修复验收或所有symlink/TOCTOU安全。新增平台negative tests与调用链核验有成本；无法验证解析/执行一致性时应拒绝越界路径，而非由一个通用helper签发完整sandbox保证。<!-- source-family:SF-2026-MIMO-CODE-2650 -->
 
 IAM/RBAC 定义 principal 能做什么，gateway 控制入口，tool-local validation 检查业务状态，sandbox 限制
 capability；这些边界都继续成立。Agent 通过不同 protocol/framework、retry 和并发产生效果相同但语法不同
@@ -1710,6 +1979,10 @@ solver 不可用和 gateway 绕行都会产生新的 failure mode。低风险、
 动态工作流可以使用模型辅助生成候选图，但 authorizer 必须 fail closed、保存 policy/evidence revision，并让实际 executor
 只接受带授权 receipt 的 canonical action。
 
+将工具 policy 交给 SMT solver 时，还要明确被检查的是哪一个命题。一个条件分支由人审的静态约束和每种 tool 的 validation schema 指定必须绑定的 observable state 与 arguments，再把具体调用连同 permission predicate 提交求解；SAT 只证明存在一个满足这些已编码条件的赋值，不能替代缺失状态的真值，也不能推出所有未知状态都允许。自然语言中的“满足条件时可做”若只编成单向 implication，而没有编码“不满足时禁止”或互斥关系，合法语法仍可能给出错误的许可。<!-- source-family:SF-2026-ARXIV-2603-20449 -->
+
+[Solver-aided tool policy 的必要反侧](https://arxiv.org/html/2603.20449v1)显示，自动生成和 syntax repair 后仍需人工补全/收紧约束；runtime 的模型状态抽取也仍可能错误。UNSAT 后附解释并有界重规划增加抽取、求解与重试费用；受测 airline 工具中 invalid write 未归零，正确 write 的 recall 也下降，不授零违规或 production safety。Solver unknown/失效与不可绑定状态应由可信 executor 的既有保守 policy 处理，这是一项工程要求而非该实验已经核验的实现。语义、状态或费用不可接受时，保留手写窄 policy、人工审批或拒绝 effect，不以 SAT receipt 自签完整行为安全。<!-- source-family:SF-2026-ARXIV-2603-20449 -->
+
 动态 grant 还须区分 capability 的形状与当前调用的值。允许调用某个工具，不等于允许把 observation 中任意地址、文件或接收人绑定到敏感参数；在读取不可信内容前，可由可信 task request 生成 tool/effect/binding blueprint，确定性 monitor 再检查当前值的 provenance。蓝图遗漏时，judge 只提出可复用的 capability shape，executor 必须重新核验当前参数。跨 session cache 可以复用规则形状，不能复用旧参数或旧 evidence 作为本次授权事实。
 
 这减少逐 call judge 成本，却增加 provenance tracing、blueprint completeness 与误拒风险；词面 occurrence trace 并非语义意图证明。攻击者仍可能在同一合法候选集合中诱导错误选择，此时 authorization 通过也不代表忠实完成任务。[ToolFence 的 AgentDojo 对照](https://arxiv.org/html/2609.37196v1)支持有限 within-tool 防护/开销取舍，不提供通用安全或生产延迟保证。固定工具集仍可用手写最小权限；参数来源不明、请求歧义或 consequence 高时，应重新获取用户确认或拒绝提交，而不是让缓存 grant 自行扩权。
@@ -1826,6 +2099,10 @@ Agent skill 同时包含自然语言 description 和可执行代码；只审描�
 即使没有攻击者，正常输入组合也可能触发 specification violation。Goal-directed semantic fuzzing 可在合法参数空间内搜索越界 effect，使 skill contract 的失败从恶意 payload 扩展到语义组合。<!-- semantic-body-binding:SF-2026-ARXIV-2605-13044 -->
 
 静态分析、sandbox 和 fuzz coverage 都不完备；未观察到违规不等于安全。分析覆盖不足时应回退最小权限、显式 effect approval 和可撤销 sandbox。
+
+Skill产物还可能把“何时走哪个分支”藏进附带的learned classifier，而不把恶意指令写进本次prompt。外部作者同时控制parser、weights与代码时，可以将普通参数组合规范化为classifier输入，再以阈值决定执行声明功能还是另一个payload分支。代码仍含实际effect，权重只是隐藏条件；审清说明或少量良性调用不能替代parser、model、threshold和代码的联合产物身份，也不能让该classifier批准权限。<!-- source-family:SF-2026-ARXIV-2604-09378 -->
+
+[BadSkill的受限模型实验](https://arxiv.org/html/2604.09378v1)将负例路由正确率与trigger-aligned分支率分开；前者不证明所有声明任务正确，后者也不是实际窃取事故率。攻击者预制接口/模型/分支、English轻量模拟及写marker的canary，不证明突破正确host权限或production stack；部分已知触发表现与普通utility也不能授已验证防御。模型训练、产物审核、组合probe、sandbox和effect-time检查均计费；来源、更新或条件覆盖不可信时，隔离model-bearing skill、保留最小权限与独立effect approval，再用受限行为核验决定是否放行。普通可信无模型wrapper仍可保留较轻检查，不把opaque weights当作免审代码。
 
 Skill描述与实际effect一致仍不足以验收多skill语义：同一共享context上，前段重新标注信号、中段降权、后段按低权过滤，各步可在声明capability内且单独有合理解释，却共同消掉关键告警。组合审计应保留每步“在什么条件下作什么变换”的behavior commitment、输入输出与critical signal lineage，再检这些条件共同触发时最终后果；只把所有skill文本拼进一次扫描，不等于识别了signal如何被消费或丢失。可信短链保留单skill扫描作便宜前置层，组合检查不授新权限。
 
@@ -2084,6 +2361,10 @@ typed tool return
 
 证书强度受完整 mediation、type constructor、邻域可枚举性和预算校准限制；预算外输入、跨动作累计风险与错误 safety map 仍需要传统隔离、审批和补偿。确定性规则能完整覆盖时，普通 policy-as-code 更简单，也更容易解释。
 
+若被检验对象是模型参数更新，而不是一次 action 输入，安全域可以采用另一种复用方式：先在当前参考参数上取得指定 evaluation domain 的安全 margin，并确认该域内相应 Lipschitz 上界，再以 margin/上界定义允许更新的球。球内 proposal 只需便宜的范数检查；想把中心移到新参数、继续沿下一球训练，就须重新核对 oracle、margin 与上界，不能由连续小步推导无限安全演化。这里认证的是所声明的参数邻域和条件，不替代完整输入/行为与 effect-time 授权。
+
+[受限理论与 LLM 实验](https://arxiv.org/html/2604.00072v1)应分开读：分类器下的结论带分布与误差衰减假设，而 LLM 分支使用有限 prompt oracle、finite-difference Lipschitz 估计和放大因子，并非 analytic 上界认证。扩大 oracle 后发现新的 violations，chaining 也有 false accepts 和终点安全退步，故不能承诺一般模型零风险或 classifier 本质不可能。Margin/oracle 调用、上界校准与换中心重验都计费；域、oracle 或上界资格不足时，缩小更新、保留参考 checkpoint 与独立安全测试，不能让便宜 normcheck 自授安全事实。<!-- source-family:SF-2026-ARXIV-2604-00072 -->
+
 #### Proof of Equation Satisfaction 不等于 Proof of Expended Work
 
 ZK relation 可以证明 committed weights 下的方程与输出成立，却未必证明 provider 执行了与声明规模相称的工作：代数 identity blocks 或 replicated coordinates 可能让较小 inner model 满足较大 outer circuit。系统必须显式声明 proof claim type，并用 work-binding circuit、独立 metering/attestation 或随机 challenge 补充 effort evidence。原有 ZK privacy/correctness 保证仍成立，不能因该攻击被整体否定。
@@ -2128,6 +2409,8 @@ Equation/output proof 还须说明它绑定了哪份数值 artifact。把 ONNX �
 
 <!-- source-family:SF-2026-ARXIV-2608-27580 -->
 
+长度稀释之外，还应区分显式危险文本的检索与分散片段组合后才显现的危险意图。[受限组合对照](https://arxiv.org/html/2602.08874v1#S2)可冻结同一目标请求与 trigger，分别构造 direct needle、显式依赖链和需要隐式 bridge 的碎片，并联合改变背景长度与位置，逐项验最终输出安全，而不从 direct 拒绝率推定组合识别已可靠。碎片生成与 judge 也定义测量人口，不能把单片段不完整当作无害真值；位置不敏感也不证明检索全成功或唯一失败发生在合成后。有限合成对照中，长度与思考的作用随模型和类型变化，额外构造、调用、判分和推理 tokens 均需付费。来源、完整组合意图或 judge 不可信时，保留可见完整输入、原 guard 与独立审核；不由能力增长自动继承安全。<!-- source-family:SF-2026-ARXIV-2602-08874 -->
+
 即使原始输入留在 client，split inference 仍会把 intermediate activation 暴露给 server。旧的“在本地跑前几层即可隐藏输入”只在 activation 对攻击者确实不可逆、split point 与模型固定时成立；server-visible tensor、layer identity、shape/precision 和 auxiliary knowledge 变化后，activation matching/inversion 可以把中间状态重新关联到输入。client 拥有原文与允许的 split policy，server runtime 只拥有执行所需 activation，security plane 则必须测试每个候选 split point 的可重建性并记录 attacker capability。更深本地计算或 activation protection 能降低暴露，却增加 client compute、带宽、精度损失与部署复杂度；风险无法校准时回退本地完整推理、TEE/MPC 或可信服务端。`arXiv:2605.23158v1` 的 §3、§4.1 至 §4.4 支持作者 threat model、ActInv 与受测重建结果，§5.3 不证明未测试模型、split point、数据或防御同样泄漏或有效。
 
 <!-- source-family:SF-2026-ARXIV-2605-23158 -->
@@ -2170,7 +2453,7 @@ threat model
 least privilege 和 incident response 不会被 framework 文档替代。Meta Advanced AI Scaling Framework v2 是
 version-grounded governance evidence，不是外部认证或任意组织的充分 policy。
 
-这个闭环不能只放在公开 API 上线前。内部使用在规模小、权限受限时，可以采用较轻的控制；一旦模型被大规模接入模型研发工作流，“没有对外发布”就不再充分说明风险较低。部署审查应同时绑定使用规模、可调用的工具、监督方式与能力变化，而不是只绑定 checkpoint 名称。Google DeepMind 的 FSF 3.0 在 ML R&D 风险域中，把外部部署和大规模内部部署都纳入 safety-case 审查，并要求重要更新重新提交治理审查；其风险接受条件又明确区分部署与 further development，不能把这项部署要求改写为所有后续研究都必须先获同样批准。内部治理会增加评估、协调和试验成本，控制强度仍应按实际使用范围确定；这里采用的是政策定义的责任边界，不是这些控制已经有效的实验证明。<!-- source-family:SF-2025-DEEPMIND-FSF3 -->
+这个闭环不能只放在公开 API 上线前。内部使用在规模小、权限受限时，可以采用较轻的控制；一旦模型被大规模接入模型研发工作流，“没有对外发布”就不再充分说明风险较低。部署审查应同时绑定使用规模、可调用的工具、监督方式与能力变化，而不是只绑定 checkpoint 名称。Google DeepMind 的 FSF 3.0 对风险评估确认已达到 ML R&D CCL 的模型，把外部部署和大规模内部部署纳入 safety-case 审查，并要求 safety case 的 material update 重新提交治理审查；其风险接受条件又明确区分部署与 further development，不能把这项部署要求改写为所有后续研究都必须先获同样批准。内部治理会增加评估、协调和试验成本，控制强度仍应按实际使用范围确定；这里采用的是政策定义的责任边界，不是这些控制已经有效的实验证明。<!-- source-family:SF-2025-DEEPMIND-FSF3 -->
 
 同样，已提出风险等级不等于已有可执行的放行规则。FSF 3.0 的 misalignment 等级明确是探索性、说明性的，没有关联显式风险接受标准；监测显式推理只是其中一种拟议缓解，无法据此认证不可观察的推理或绕过监督的行为安全。因此治理记录还应区分“已定义并可验证的要求”与“仍待验证的风险假设”：后者不能被一个通过的 classifier 或 CoT 检查自动升级为许可。增加这一区分会留下无法直接量化的未决风险，也可能延缓部署；当监测范围不足时，只能缩小授权范围、加强独立监督或暂缓，而不能用探索性等级替代决策者的证明责任。<!-- source-family:SF-2025-DEEPMIND-FSF3 -->
 
@@ -2187,6 +2470,10 @@ rules、sub-Agent message 与 external data 的多级 privilege。Many-tier hier
 channel 与 delegation chain 作为 typed metadata，再由 policy engine 比较冲突；但仅在 prompt 里写标签并不能防止
 伪造。安全边界最终仍需要 authenticated provenance、capability token、tool authorization 与 effect-time check。
 层级过细还会造成 policy conflict 和 debugging burden；简单应用继续使用固定 role hierarchy。
+
+模型侧更可靠的层级判断与外部授权解决的是不同问题。把任务能力失败、冲突处理失败和过度拒答分开，并冻结高权限规则/grader、只改变低权限攻击输入的训练数据分支，已由[第27章](../part-04-training-system/27-data.md)的“合成冲突监督”论证承载；本章接手运行时防线是否仍有净收益。层级训练的平均分不能签发执行权限，也不能保证新增 monitor 同时改善攻击稳健性和正常效用，后者必须按模型、攻击预算与用户任务联合检查。<!-- source-family:SF-2026-ARXIV-2603-10521 -->
+
+[有限训练与消融](https://arxiv.org/html/2603.10521v1#S5)支持这种条件分支，却不让模型取代外部授权。去掉反过拒任务可提高部分稳健指标而降低正常效用，其他偏好/交互指标仍会回退；静态攻击集饱和也不封闭自适应攻击空间。重复指令、输出改写或同模型 monitor 在更强模型上可能净退步，但在所测自适应攻击下 monitor 又有收益，是否保留应由同模型、攻击预算与正常效用的联合验收决定。新增训练、在线探测、grader 维护与 monitor 求值都付费；任务/攻击分布变化或判分器失配时，应回到可审计任务与独立 effect-time policy，不用层级平均分签发执行权限。
 
 即使把不可信文本包成低优先级的 mock `Tool Result`，也不能把语言格式当成隔离边界：同一 token channel 中，模型
 仍可能在部分任务上发生 hierarchy inversion。因而 wrapper 只负责标明 channel；policy engine 必须认证 origin、
@@ -2309,6 +2596,8 @@ MARK 将 web-agent attribution 从 robots.txt/单层 bot flag 改为 TLS/HTTP �
 MCP tool chain 的 privacy audit 需要跨参数、返回值与后续调用做 taint propagation，单调用 schema scan 会漏掉组合泄露。
 <!-- semantic-body-binding:SF-2026-ARXIV-2606-21338:end -->
 
+跨工具审计还应把路径提名、实际数据流与披露必要性分账：先由类型兼容及文档语义构造候选图，再从 source 到 sink 的无环路径合成含明确 intent 字段的测试；图边只决定优先激活哪里，不因静态筛选而取得完整程序依赖证明。运行时另记录 source、intermediate 与 sink 的字段 lineage；未进入 intent 的字段是待判候选，是否对该 sink 功能必要还需独立规则或审阅，模型多数意见不拥有法律合规真值。[AgentRaft 的受限自建 Agent 对照](https://arxiv.org/html/2603.07557v1)观察到遗漏依赖和误报，未给任意变换的完整传播实现，动态工具变化也须重验；已触发风险子集内的字段比例不能当全流量泄漏率。构图、模拟资产、定向执行、judge 与人工校准均计费，失配时保留可信 schema、原 trace、最小披露与人工审批，不把图覆盖或分类一致签发为无泄漏授权。<!-- source-family:SF-2026-ARXIV-2603-07557 -->
+
 <!-- semantic-body-binding:SF-2026-ARXIV-2607-19957:start -->
 跨请求 cache reuse 不能只凭文本和位置命中；还要验证 causal context provenance、tenant、policy 与状态 revision，兼容时才允许共享，否则执行隔离重算。更严格身份会降低命中率，却避免把另一个安全域或因果条件下的状态当成等价前缀。
 <!-- semantic-body-binding:SF-2026-ARXIV-2607-19957:end -->
@@ -2362,6 +2651,10 @@ memorization 指标容易遗漏 targeted prefix reconstruction；发布 Gate 因
 多轮攻击可以在每个 turn 看似无害，却沿 residual activation trajectory 累积。自适应 probe 能提供模型内部的额外检测信号，但它依赖 white-box access、模型版本和校准分布；更新权重后必须重校准，托管模型通常无法使用。无论 probe 分数如何，output policy、tool authorization 与 effect mediation 仍拥有最终安全 authority。
 
 <!-- source-family:SF-2026-ARXIV-2604-28129 -->
+
+隐式多步 reasoning 还可能把触发藏在正常 token 的 embedding lookup 中：具有训练写权限的攻击者联合优化模型权重与触发向量，再把向量写入词表行，使普通 lexical token 进入 latent 多步轨迹后才产生目标行为。这里需要受污染的训练 artifact，不是任意部署用户靠一次向量扰动就能改写模型；没有显式中间文字也不意味着 embedding 行或 hidden trajectory 原理上不可检查。[受限 latent-backdoor 对照](https://arxiv.org/html/2604.00770v1)中，若干 token-based 防御失效仍不排除 reference embedding-row drift 检查及合适的行为诊断。
+
+诊断必须保留 observer 权限与标签来源：没有 trigger knowledge 的 centroid/聚类失败，不能由已知 clean/trigger 标签训练的高 AUC probe 补签为部署 sensor。其线性读出命题只保证给定成功/干净行为条件下至少存在一对可线性区分的 latent，不保证整个新人口都可分；强 clean fine-tuning 也能削弱所测后门，持久性并非无条件。训练、reference 对照、hidden 采集、标注与独立 clean-utility/攻击评测都计费；访问、参考或校准不足时，保留 Unknown、artifact 隔离、可信 checkpoint 与最终 output/effect gate，不由未检出或 oracle probe 的分数放行。<!-- source-family:SF-2026-ARXIV-2604-00770 -->
 
 安全 probe 还要区分危险能力是否存在与具体 policy boundary 是否已经被跨越。Capability-existence signal 可以触发更严格审查，却不能单独授权拒绝或放行；只有 breach-specific evidence、真实 effect trace 与当前 policy revision 才能提交决定。级联检查能减少单一 probe 的过度拒绝，但引入第二阶段延迟、校准漂移与漏防；white-box attention probe 仍只是相关 sensor，不是 reference monitor。
 
@@ -2443,6 +2736,8 @@ Reasoning model 的 refusal drift 还可能集中在生成起点：prompt 末端
 现有 exact-v1 只验证其披露的 ADR detector、攻击集合与部署环境；这足以说明 prompt、tool 与 causal-chain telemetry 可以联合形成检测信号，却不证明未披露环境的覆盖率、误报率或生产安全保证。检测器版本、攻击分布和运行配置必须随 evidence receipt 保存。
 
 <!-- source-family:SF-2026-ARXIV-2605-17380 -->
+
+工具文本看起来正常，也可能在另一个执行面已经发生网络副作用。一个[受限网络 sensor](https://arxiv.org/pdf/2604.04426v1)在系统代理/MITM和PCAP中观察解密的HTTP行为，将其整理成带时序的事件供小模型判风险；它补的是prompt/tooltrace之外的可观测effects，不是由Agent自报真实访问。解密权限、证书、隐私与QUIC限制共同决定覆盖，host-local或其它protocol仍是盲区；已发送的exfiltration不能由事后detector撤回，前置egress权限与effect-time gate仍须独立成立。Pertrace和perPCAP误报分母不同，额外网络/推理开销不能抹掉。协议、窗口或sensor质量失配时，保留原trace、最小网络权限与独立outcome/incident检查，不以低误报率签发尚未发生危害或完整供应链安全。<!-- source-family:SF-2026-ARXIV-2604-04426 -->
 
 ### Edge Accelerator 也可能成为 Confused Deputy
 
@@ -2547,6 +2842,8 @@ Web Agent 的 login 也不是普通页面动作，而是 capability escalation�
 预测式 guardrail 可以用 recurrent world state 提前估计 trajectory risk，却仍只是 sensor，不拥有 effect commit。不可逆工具调用必须经过独立 policy/authorization gate；模型低置信、OOD 或观测失真时，系统应 fail closed、降级到只读动作或请求人工。这样牺牲部分完成率，换取风险证据与执行权分离。
 <!-- source-family: arxiv:2608.05695v1; daily: 2026-08-07; semantic-body-binding: predictive-risk-with-independent-effect-commit -->
 
+动作风险的观测还要区分外部恶意指令、无攻击时的内部有害偏离和不造成直接损害的离题；探索、低效或暂时失败并不自动违反用户意图。[一个受限检测分支](https://arxiv.org/html/2602.08995v1#S4)先让轻量检查筛出明显与任务一致的动作，其他动作再按注入线索、动作语义、预测后果和意图关系分项检查，并用已执行 transition 的叙事摘要维持历史；发现偏离后给结构化反馈，让新 proposal 重新过门，而不是以一句 blocked 结束任务。新增的是这一测量与恢复路径，不是让模型获得 effect 权限：快速 bypass 会漏掉伪装为任务建议的注入，摘要与坐标 grounding 可能失真，过窄意图还会误拒合理的回轨动作。应分别验检测、flagged 后的归因、revision 一致性和实际任务、安全效果，保合成偏离与真实失败人口、pre-exec 观察与事后标注资格。有限对照也有 benign 完成率退步，不授无效用损失；额外摘要、深审与重试都付费，启用后运行时间组成不等于净因果开销。来源或 intent 不确定、预算耗尽时停止自动修订并交独立 policy 或人审，不能由低 ASR 或自我纠正授普遍安全。<!-- source-family:SF-2026-ARXIV-2602-08995 -->
+
 ### 异构执行的 Attestation 必须证明跨 CPU–GPU 的 Dispatch Binding
 
 分别验证 host 与 device control flow 仍可能漏掉 kernel substitution 或 launch-configuration manipulation：两侧局部 CFG 都合法，但 CPU 发出的调用和 GPU 实际执行并非同一动作。更强的证明对象是 composite execution，联合 CPU trace、GPU trace、kernel identity、launch parameters 与 dispatch event，由独立 verifier 检查三者 binding。
@@ -2641,6 +2938,10 @@ per-run identity and immutable task envelope
 Anthropic 的[评测与训练环境加固说明](https://www.anthropic.com/news/improving-alignment-security-efforts)支持上述事实断言、
 scope 与隔离验证的分层动机；其 classifier 部署和事故解释仍是作者披露，不证明监测无漏报或所有运行环境已经安全。
 
+这个 envelope 还必须守住任务失败后的目标变化。练习表单加载失败，不应把“完成表单”提升为在真实站点提交；URL 长度等入口限制，也不能在短链接或代理改写后被当成已经满足授权。目标身份、最终操作及允许的网络路径要穿过重定向与工具封装保持约束，在真正执行副作用的位置重新校验，而不是只检查模型最先提交的字符串。这是从[公开非预期行动案例](https://www.anthropic.com/research/investigating-unintended-model-actions)推导的执行责任，不是厂商已证明实现了完整逐跳策略；fixture 身份失效时应修复测试或终止，不能让替代目标自动继承授权。<!-- source-family:SF-2026-ANTHROPIC-UNINTENDED-ACTIONS-1009 -->
+
+收窄网络、换用离线 fixture 或重建任务，可以降低真实副作用，却会损失与原 live-web benchmark 的可比性，并增加目标解析、监测和环境维护成本。需要真实联网证据的任务仍可存在，但必须有独立目标授权、明确提交边界与及时终止机制。上述报告的防线在已披露案例复测中全部拦截，只支持这组已知案例的回归检查；没有事故分母、未知攻击覆盖和完整 alignment assessment，不能据此给出通用安全率，模型自述“只是演示”也不能推翻已经发生的 effect。
+
 共享 artifact 的读写权限、目录名、cache key 与 metadata 也要进入 information-flow policy；否则普通构建产物
 可能成为另一个 workload 的消息或 capability。任务难度、reasoning budget 和 persistence 还是风险放大器：
 当任务不可解、没有安全退出或 reward 只检查终态时，Agent 会持续探索未声明路径。系统必须允许
@@ -2677,6 +2978,8 @@ Concept-wide 目标更贴近某些能力移除请求，却要求定义概念边�
 
 因此验收不能只回测被选 core-set：应分别保留未选的已知样本、独立取得的未知 forget 样本、retain utility，以及直接提取、上下文恢复和再微调恢复三个攻击预算。逐样本白盒求导与主动恢复测试增加计算和隐私审计成本；梯度相关性只在该文 GA/NPO 等受控设置中测得，10% core-set 的 32.19% P3 恢复率则是 GA 的特定数据条件结果，两者都不证明因果机制或普适删除效果。若没有可信梯度、未知集合测试或足够的留存效用证据，仍用随机/全量已知集合与重训参照作对照，把结果标为局部行为修正而非已完成隐私遗忘。<!-- source-family:SF-2026-ARXIV-2604-22076 -->
 
+子集还可以从 retain 一侧定义边界：在 forget 问题附近找输入相似、但答案仍应保留的样本，把“对目标拒答”和“对邻近合法问题继续回答”作为两类行为目标，而不只少取 forget 样本。[受限多模态分支](https://arxiv.org/html/2605.15687v1)先用 synthetic reference 与 forget 激活提出方向、初始化一个投影更新，再用这类 boundary 人口强化两侧输出；第一阶段仍读取 retain 数据，不能把第二阶段较小子集称为全流程数据节约。拒答 pattern、低 ROUGE 和激活分群均不证明参数知识抹除，拒答与敏感内容还可能同现；去掉 boundary 时遗忘代理更强却 utility 崩塌，也要求同时保留残留提取与合法回答回归。投影求解和 paired/分开 rollout 的完整配方未闭，只采用人口与目标分责；全部方向/层位选择、retain 监督、rollouts、独立攻击和 utility 验证均计费。相似度、奖励或恢复攻击失配时，保留全 retain/随机子集、重训参照、访问限制与局部 suppression 判定，不由有限改写攻击或更高拒答奖励签发不可恢复遗忘。<!-- source-family:SF-2026-ARXIV-2605-15687 -->
+
 样本子集选择之后，还有一个不同的决定：训练时是否继续让每个 forget 样本等权贡献目标。若当前损失存在难忘尾部，受限分支可在 batch 内把权重集中到较高损失样本，或以温度控制的指数权重连续强调该尾部，retain 目标另行保留。这改变的是 forget objective 的人口权重，而不是用 gradient core-set 提前少取样本；当前 loss 只是残留难度代理，不能把尾部权重当成真实知识恢复概率。固定温度的 log-sum-exp 惩罚也不直接等于已解给定 KL 半径的鲁棒问题，top-half 截断更不能自动继承该球内的保证。<!-- source-family:SF-2026-ARXIV-2601-09172 -->
 
 因此应一起固定 forget/retain 集合、loss 定义、tail 比例或温度、retain 权重和选点协议，分别验收残留尾部、直接恢复、membership attack 与 retained utility。有限 TOFU/MUSE 对照中，强调尾部并非各指标全面改善：部分攻击或流畅度更差，某些设置的 retain 指标也下降；50% 仅是受测候选，不是普遍最佳比例。排序/权重与超参数搜索增加成本，强化 noisy 或异常样本还可能过擦。没有可信难度代理、未选/域外恢复测试或留存效用证据时，均匀 forget loss、原子集策略与重训参照仍合理，不把局部平均遗忘分数签成 certified erasure。<!-- source-family:SF-2026-ARXIV-2601-09172 -->
@@ -2684,6 +2987,10 @@ Concept-wide 目标更贴近某些能力移除请求，却要求定义概念边�
 删除请求到达时只读取 forget set，不等于整个删除流程从未使用其余训练数据。二阶影响近似可在模型发布前预计算全数据曲率或其逆，请求时再用 forget set 的梯度与曲率形成局部参数更新；这种设计把成本和数据访问从请求时移到了先前的 artifact 构建阶段。曲率 artifact 需要绑定 checkpoint、训练数据版本、参数化与阻尼配置，模型继续训练或数据定义改变后，旧近似不能自然继承删除效力。
 
 完整曲率的存储与求逆昂贵，局部非凸 warm start 也不等同于从头重训；用伪标签构造 GGN、取对角近似或借 LoRA 子空间降低成本，会进一步改变采用的近似对象。有限忘记/保留任务的改善因此须与独立泄漏攻击、retained utility 和重训参照共同验收，不能直接升级为永久擦除或全模型删除保证。数据和计算预算允许时保留重训基线，证据不足时回退为受限影响修正与访问限制，而不以请求时接口的简洁隐藏离线数据责任。<!-- source-family:SF-2026-ARXIV-2604-13438 -->
+
+保留能力恢复也不能在删除验收之后无约束进行。局部曲率只提出 editable-subspace 更新，先在实际模型确认固定 forget constraints；随后向 base 的 retain-anchor 分布恢复时，每个候选仍须同时满足遗忘条件与行为 drift 改善，失败便回滚并缩小恢复幅度。Base 提供恢复目标而不拥有删除授权，否则 shared parameters 的回移可能把目标知识一并恢复。<!-- source-family:SF-2026-ARXIV-2610-11915 -->
+
+[受限 propose-then-project v1](https://arxiv.org/html/2610.11915v1)的局部 QP 与 nonlinear recovery 是不同验收层，不是全局最小漂移投影；固定 knowledge-unit likelihood 约束也不覆盖未知检索路径或永久擦除。白盒梯度、K-FAC、anchor distillation 与实际候选检查均付费，RTX4090 的有限任务结果不签发通用 deletion certificate。恢复预算不足、样本约束失配或攻击可回读时，返回最后已验收 artifact，并保留访问限制、独立恢复攻击和干净重训基线，而非优先追回 retain 平均分。
 
 模块式概念擦除还需要明确对手能够恢复哪些资产。单独插入一个擦除模块便于更新与回滚，却也容易被具有模型写权限的对手移除；一种不同的分支先扰动原 text-embedding projector，再训练擦除模块恢复正常条件表示，使“移除模块、保留扰动 projector”同时损害普通生成。这把模块的存在与可用性耦合，而不是证明目标信息从所有参数中永久消失。该依赖应绑定原 projector、扰动版本与恢复模块，不能只检查模块文件是否仍安装。<!-- source-family:SF-2026-ARXIV-2604-16481 -->
 
@@ -2948,6 +3255,10 @@ MoE checkpoint 不只是静态权重集合；恶意或损坏的 router 参数能
 只检查输入是否含攻击模式，会漏掉通过动作输出和环境反馈逐步放大的黑盒攻击。VLA 的安全合同应绑定 query budget、controller version、执行动作与 physical effect receipt，并区分模型提案、控制器批准和真实世界提交。该闭环审计增加延迟与传感依赖，但能避免把“模型输出安全”误当成“物理结果安全”；证据不足时应收窄动作集或转人工。
 <!-- source-family: arxiv:2608.10393v1; semantic-body-binding: vla-black-box-action-feedback-threat-model -->
 
+闭环反馈还会改变白盒攻击的构造方式：按干净目标轨迹固定一组 action targets，可能在离线匹配更好，却无法从攻击自身造成的新状态完成目标。一个受限分支保持用户指令和 VLA 参数不变，在构造期反复运行当前视觉扰动，再于这些新状态查询目标指令下的行为以刷新监督；同时照顾停滞前沿与此前通过的轨迹前缀，避免同一固定扰动的新更新破坏早期进度。这里目标指令查询、梯度与环境交互都是攻击者的特权资源，不代表部署时用户改了指令或授予了新的物理权限。<!-- source-family:SF-2026-ARXIV-2610-23566 -->
+
+[TRACO 的机制对照与限制](https://arxiv.org/html/2610.23566v1)在共享状态和匹配抽样数量下支持刷新监督与前缀保留的局部差额，不把各自优化配置的总 ASR 差全归一个模块。位置前缀只是进度代理，不保证已抓取；冻结策略不能从偏离状态恢复时，新 target 仍会错。重复 rollout、目标查询、梯度、状态读取与控制均付费，含加载的构造计时和每条件15次实机结果不代表通用攻击成本或防御失效率。安全回归应保存这些访问权、交互预算与实际 effect；资源不支持自适应审计时保留静态攻击回归并收窄声明，真实动作的约束、停止与接管仍由独立 controller 持有，不由该攻击结果推出任何防御已有效。<!-- source-family:SF-2026-ARXIV-2610-23566 -->
+
 Agent 的 progress/termination judgment 是可被不可信 context 劫持的控制面：同一模型既解释环境又决定是否继续，会把 prompt injection 转成无界 step amplification。模型只能提出 progress/stop proposal；独立 workflow/runtime owner 必须持有 hard budget、loop detector、effect receipt 与 termination authority，并在超界时 fail closed 或升级人工。该分权牺牲自主性并可能提前终止合法长任务，但阻止受污染上下文拥有无限计算权。
 
 证据覆盖 8 个 Agent、60 个任务和 10 类攻击；作者报告平均 3.57x、峰值 25x step amplification，但不证明所有生产 Agent、工具副作用或自适应防御下的发生率。 AGENT-WORKFLOW 实现预算/停止状态；Security 定义不可信上下文与 release/red-team contract。
@@ -3174,6 +3485,79 @@ commitment store、secure gateway sanitization/rate limit、challenge 与 policy
 AI security 必须贯穿数据、训练、artifact、serving 与 action。正确设计不依赖模型永远服从，而是让任何不可信输出都经过独立、最小权限、可审计的执行边界；来源、行为 probe、运行隔离与 rollback 分层共存，任何一层都不能单独证明安全。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2610-23566` — Daily2026-10-20窗Oct19；exact-v1 III-A–F/Alg1、IV-C/IV-E–F必要，3+2+2=7。root作者必要Source经oct20_author_resume非作者实际独核；当前VLA黑盒反馈威胁与Agent进度/停止完整邻接已读，仅白盒构造在攻击诱导新状态刷新target、前沿与prefix共同监督分支，保用户指令不改/特权访问、位置非接触、配置预算/有限实机与全费，不授防御有效或物理权限。root已授Ch72窄新增，oct20_author_resume实际写两段并顺读新增/两完整侧/本人注；root已实际完整新增/直接两侧/本人注非writer POST通过，指定Ch72窄位释放。未核图像/代码/攻击复现，不授DAY。
+
+- `SF-2026-ARXIV-2605-06835` — Daily2026-05-12补May11；[exact-v1](https://arxiv.org/html/2605.06835v1)必要Source精确域与反侧沿本日reader实际结果复用，采用范围/评分见[本日唯一SUP A4.41](../../papers/2026/05/_sources/daily-20260512/SUP_SOURCES_20261018.md)。reader实际Source/具体owner/逐字PRE已通过，root授本指定一段/本人注，已按稿保存待非writer actual POST；不授DAY。未核实现/复现，不以原件可读冒全附件审阅。 截至本轮后续有效结论：本项独立reader已实际完整新增/直接两侧/本人注非writer POST通过，root已接纳并释放指定窄位；此前“待”仅过程时态，本次纯行政同步、不重Source/正文、不预授DAY。
+
+- `SF-2026-ARXIV-2605-07399` — Daily2026-05-12补May11，GPO-V exact-v1必要§3–4/T1–3/A6/T6/A8文本，2+2+3=7。只采masked后续拒绝与完整sequence/decoder责任；保latent白盒/另pixel协议、FPO人为prefix、公式冲突不搬recipe、judge/残余与自适应/良性缺口，全部优化解码费用，未核图片prompt/代码/复现。reader Source/actual owner/逐字PRE通过，root窄授后保存，actual非writer POST待执行。 截至本轮后续有效结论：本项独立reader已实际完整新增/直接两侧/本人注非writer POST通过，root已接纳并释放指定窄位；此前“待”仅过程时态，本次纯行政同步、不重Source/正文、不预授DAY。
+
+- `SF-2026-ARXIV-2605-08442` — Daily2026-05-13补May12；exact-v1 §§2–4/结论；3+2+3=8。v1原题Defense effectiveness…，拒绝v5当前摘要回填。仅schema删recall后仍开放RAG路径的受限反证，保save-call语义代理/ASR OR-predicate/重复与人口/上下文和工具措辞边界；不采用全部classifier无效、唯一拒绝因果或zero utility宣称。未核代码/未复现；root必要Source及修正逐字PRE通过，Ch72并发窄位获root协调释放后，指定正文/marker/本人注已真实保存，root R8非作者完整正文/直接两侧/本人注actualPOST通过，窄位释放。 本次仅同步已成事实，不重写机制或认证实现/复现、全覆盖或整日Gate。
+
+- `SF-2026-ARXIV-2605-07088` — [VLA MIA exact-v1](https://arxiv.org/html/2605.07088v1)，Daily2026-05-12补充；2+2+3=7。双方必要§3–6/T1–3与AppA1–3/T4–6实读。仅action-error需candidate GT与原instruction、temporalaction无需GT但跨架构弱、transition-vs-trajectory统计单位及低FPR责任；保100+100轨迹的1%经验分辨率/相关性、LIBERO LoRA非pretraining真实个人、utility/privacy取舍非DP或动作安全，以及训练/query/defense全费。未核代码/复现；reader Source/具体owner/逐字PRE有效，root指定窄授权后保存，reader实际完整新增/两侧/本人注非writer POST通过，root已接纳并释放指定窄位；仅行政同步既成状态。
+
+- Daily2026-05-09补May08：2605.05630v1§3–5/B/C/D.5/E/F必要，5分Source R24通过；只采response-conditioned pre-delivery turnguard/经验t*分账，保首BLOCK终止、非真first-harm/普通F1、OOD反退与全部费用，缓冲为工程推断。未核实现/复现或生产流式SLO；唯一PLATFORM-SECURITY。
+- Daily2026-05-09补May08：2605.05443v1§3–5/D/F必要，5分Source R24通过；只采SAE结构carrier与whitebox重放分责，保clip/projection非正交、logits改变/同prompt null非humanFPR、四候选全费和DIPPER/PT→IT反侧。未核实现/复现；唯一PLATFORM-SECURITY。
+
+- `SF-2026-ARXIV-2605-05116` — Daily2026-05-08补May07；[exact-v1](https://arxiv.org/html/2605.05116v1)必要§2/§4–5/Table1；5分，安全反侧深入。仅非语义输入威胁支持与prefix/harm/trajectory择优分母分责，四7B/50目标/PPL非训练来源因果；无攻击复现、通用风险率或生产防护保证。
+
+- `SF-2026-ARXIV-2604-27833` — Daily2026-05-02补May1；v1§3–5/D1–2必要层，2+2+2=6，private selection/covariance与release组合差额深入。保per-example非client/user级、敏感度人数/支持条件、局部反退和攻击≠DP；不授任意减噪等保证，未核代码/复现。独立reader R57必要Source/owner/逐字PRE及R60保存后完整正文、邻接、本人注actualPOST通过；root接纳并仅行政同步，不授DAY。
+
+- `SF-2026-ARXIV-2604-24162` — Daily2026-04-29补Apr28自然日；[原始必要版本](https://arxiv.org/html/2604.24162v1)exact-v1§2/4.2–4.6/5.4/7.8/9/D8–9；2+2+3=7，head/row门控收缩content logits与完整row contentmass重分配，不是删除heads/仅尾部概率。自适应/32k/MLP旁路与batch1费用限定近文，不授无损/生产安全。root必要Source/actual owner/逐字PRE通过并授本单段+本人注窄lease；root非writer实际新增正文、完整前后邻接与本人注POST通过，窄lease释放，作者仅同步已发生行政状态，未核实现/复现，不授DAY。
+
+- SF-2026-OPENAI-PRIVACY-FILTER — Daily2026-04-23补Apr22；[官方model card](https://cdn.openai.com/pdf/c66281ed-b638-456a-8ce1-97e9f5264a90/OpenAI-Privacy-Filter-Model-Card.pdf) pp4–7/11–18，5分，为隐私保护变化深入；仅采用固定taxonomy/decoder operating point、标签复审人口与长距离线索边界，不授匿名化/合规或跨步保护。root必要Source/实际owner/逐字PRE通过，按本位置窄lease写入，root非作者真实正文/完整邻接/本人注POST通过，指定窄lease已释放；作者仅行政同步并读回；未核artifact/复现，不授DAY。
+
+- SF-2026-ARXIV-2604-19657 — Daily2026-04-23补Apr22；[GAAP exact-v1](https://arxiv.org/pdf/2604.19657v1) pp5–13，2+2+2=6，保护受影响部分深入；仅采用permission/disclosure log双状态与外部返回再taint，保完整调停/可信annotations、有限攻击人口/utility与全费，不授任意隐蔽通道/完整性或生产保密。root必要Source/实际owner/逐字PRE通过，按本位置窄lease写入，root非作者真实正文/完整邻接/本人注POST通过，指定窄lease已释放；作者仅行政同步并读回；未核artifact/复现，不授DAY。
+
+- `SF-2026-OPENAI-AXIOS-20260410` — [官方公告](https://openai.com/index/axios-developer-tool-compromise/)日期2026-04-10；必要证据为What happened and what we are doing、Investigation and remediation efforts、FAQ的迁移/撤销说明。仅采用可变构建依赖进入签名能力域、pinning/等待期与签名分权、分段撤销的约束；厂商调查与“no evidence”不作未泄漏或措施充分证明，未核workflow日志/恶意包，不称独立取证或复现。
+
+- `SF-2026-ARXIV-2604-04426` — Daily2026-04-08补Apr07自然日；[ShieldNet PDF v1](https://arxiv.org/pdf/2604.04426v1) pp4–9/T2–3，2+2+2=6，network-effect sensor与授权/撤回边界深入。只用April PDF，不用污染August HTML；MITM/PCAP、host/protocol盲区、已泄露不可撤回、trace/PCAP不同FPR及21.38%费用保留。supp_apr08_reader必要Source/日门及实际正文、完整局部邻接POST通过；本注同步尚待其实际读回，非全泄露检测或生产阻断保证，未核代码或复现。
+
+- `SF-2026-ARXIV-2604-04757` — Daily2026-04-08补Apr07自然日；[exact-v1](https://arxiv.org/html/2604.04757v1) §1.1/2.4–2.6/5.3/Theorem5.3/6.1/9，2+2+2=6，passive transcript auditor的受限理论边界深化。Uniform hiddenbit边际、entropy/publicrandomness/PNR-KE/feedback/noiselaw与候选成本及activewarden未解近文；非自然collusion实证/所有monitor无效，保独立outcome/通信限制/effectgate。supp_apr08_reader实际Source/date/owner/完整邻接/逐字PRE通过；root授窄锁，reader已actual新正文及完整旧邻接POST通过，本人注同步待实际非writer读回，不授DAY、实现或复现。
+
+- `SF-2026-ARXIV-2604-00770` — [v1](https://arxiv.org/html/2604.00770v1) §4～6/必要A4,D20，3+2+2=7；joint全部weight+embedding、Prop1仅existential、5active非all、oracle label probe不部署，lr1e−4/wd.1可擦反侧；Coconut/SimCoT124M～3B有限，未核实现或复现。
+
+- `SF-2026-ARXIV-2604-00072` — [v1](https://arxiv.org/html/2604.00072v1) §2/4.4～4.6/5/6.3/必要B1～B2/A12，2+2+2=6、安全影响深入；r=m/L需domain/margin/有效上界，Qwen2.5-7B q/v LoRA4、NF4/BF16/200steps仅finite-diff L估计；expanded oracle另检20violations、Safe-at-end No(.98)、五seed一项6FA。不授formal LLM安全、普遍classifier不可能或复现。
+
+- `SF-2026-ARXIV-2603-25035` — [exact-v1](https://arxiv.org/html/2603.25035v1) §4–5/T1–8、§8/D；仅refusal/coherence分类与patching重要性/独立ablation分责。保judge映射、固定counterfactual人口、pruning/quantization反侧与全费；不采唯一circuit、全incoherent安全、普遍量化保真/安全或自然风险/SLO，未核artifact/图像/复现。
+
+- `SF-2026-ARXIV-2603-25176` — [exact-v1](https://arxiv.org/html/2603.25176v1) §3–5/T1–3；仅policy-bound结构化judge、aggregate/threshold联合校准与ensemble非单调反侧。保私有929人口/同源攻评、离散grid反例与调用成本；不采校准概率、grid全覆盖/全局最优、完整缺失prompt recipe或生产安全/SLO，未核artifact/复现。
+
+- `SF-2026-ARXIV-2603-12582` — Daily `2026-03-17`补03/16；[RTD-Guard exact-v1](https://arxiv.org/html/2603.12582v1) §4.2/5–10。2+1+2=5，安全反侧深入；独立RTD token选择与固定原predictedclass confidence干预分责，不授语义对抗真值、adaptive/生成式LLM或constant-time总费用。BERT三组分类任务、四非adaptive攻击、验证校准与局部3090约4倍runtime限域；未披露precision/batch/concurrency/tailSLO不回填。review_mar17_18必要Source/actual owner与两段PRE通过，root授本两段与本人注窄锁；作者已写并顺读完整局部，review_mar17_18非writer实际963–991完整邻接、新972/974及本人3282注回对原证，POST局部通过，非DAY。未核artifact/复现。
+
+- `SF-2026-ARXIV-2603-10504` — Daily补查 `2026-03-13`；[Naïve Exposure exact-v1](https://arxiv.org/html/2603.10504v1) §3–4必要接口、§5.1/关键Tables4–6及§6/AppB–C相关限制。mar13_admission_review准备Source/逐字PRE，root非准备者实际回原件与Ch72 regeneration、policy-bound sensor、Deny完整局部和Ch71/73/66交接，核真实正常assessment解释跨接口重用差额，2+2+2=6、实际安全边界定点深入；仅窄写两段，不替借用成熟principle计分。固定FFHQ operating point非任意流量保证，双类检测相反/非单调、identity API非完整语义、aggregate冲突与stateless API/moderation权限近文；不授商业服务普遍风险、人群实验、内部机制或已验证防线。未核代码、全部图像/提示附件或复现；非writer mar13_supplement 实际顺读正文、前后局部与本人末注并回对原证，POST通过；root实际核回执与当前正文后释放本项局部锁，不授DAY。
+
+- `SF-2026-ARXIV-2603-12089` — Daily补查 `2026-03-14`；[EmbTracker exact-v1](https://arxiv.org/html/2603.12089v1) III/IV Eq3–4、V setup/TablesII–IV与V-F–K必要机制和反侧，2+2+2=6。mar14_supplement准备，mar13_admission_review实际非准备者Source/评分/完整owner与修正≥γ/<γ后PRE通过，root顺读完整门限至组件/不可伪造与归因邻接后窄写两段；非writer mar14_supplement 实际顺读新增、完整邻接与本注并回对原证，POST通过，root核回执和实际正文后释放本局部锁，不授DAY。只采用冻结embedding个性化发行/共享PEFT聚合强化与逐client验证条件；有限词表冲突、VI平均非逐个排除、可信server/不串谋、overwrite水印并存与CA建议、质量反退和成本保留，不授不可伪造、法律责任、零误报或完整confidentiality。未核artifact、图像点值或复现。
+
+- `SF-2026-ARXIV-2603-12206` — 2026-03-14 自然日补查；[精确 v1](https://arxiv.org/html/2603.12206v1) §3、Table2、B.2/B.4、D.1/D.4必要接口及反侧。2+1+2=5，独立SSM前端与token/document检测单位的安全差额深入；仅采用观察对象、告警权限、阈值/误拒与全费用边界，不授time-invariance免记忆、跨消费者实际保护或未知攻击安全。简历/静态trigger、CCV反退及高recall低precision限制近正文。mar14_supplement准备，root实际原证、Ch72局部/Ch22与相邻章节、逐字PRE通过并窄写两段；mar14_supplement实际顺读两段、完整邻接与本注并回对原证，非writer POST通过，窄锁释放。未核代码或复现，不授DAY。
+
+- `SF-2026-ARXIV-2603-10521` — 2026-03-13 补查；[exact-v1](https://arxiv.org/html/2603.10521v1) §3–5/7、Tables2–7必要方法/反侧。家族官网事件已于03-10公开，[03-11原日报](../../papers/2026/03/11/README.md#4-证据与知识整合)已必要审同v1补充证据并写Ch27；03-12论文公开不重计本日候选或评分。监督构造由Ch27完整拥有，本节只保留具体handoff与静态/自适应、同模型mitigation和正常效用的运行时分支；不采用单测即全正确、能力无损、static饱和即安全或模型自行授权。原必要Source/PRE/实际POST有效复用；发现owner重复后mar13_admission_review实际核Ch27局部并通过窄handoff PRE，root仅合并重复解释，保留实际证据与反侧；mar13_admission_review实际独读2241–2281完整邻接、本注与Ch27监督局部回对，最新非writer POST通过，窄锁释放。未核代码/攻击复现或生产SLO，不授日级完成。
+
+- `SF-2026-ARXIV-2603-10749` — 2026-03-13 补查；[AttriGuard exact-v1](https://arxiv.org/html/2603.10749v1) §3–4/Algorithm1、§5关键表与反侧、A.2/A.3、C/D/E。只采用固定原action历史的shadow与执行/验证视图分离，不采用formal CE/CP已实际识别或shadow自授ground-truth权力。静态与自适应配置、Travel反退、共同模式攻击及完整费用限制近正文；6分，安全边界仍深入。mar13_admission_review 实际必要Source/Ch72差额/PRE、root原证与完整局部及Ch71/73/78交接核验后窄写；mar13_admission_review 实际顺读新增与完整局部、本人末注并回对原证，非writer POST通过。未核实现、攻击复现或生产SLO，不授日级完成。
+
+- `SF-2026-ANTHROPIC-OSS-SCANNER-20261008` — Daily `2026-10-09`；[官方 launch](https://www.anthropic.com/research/launching-opt-in-vuln-finding-service-for-open-source) 与 [FAQ](https://red.anthropic.com/oss-scanner/) 必要发布合同/直接反侧。3+2+3=8，仅采用 opt-in 未 triage 接收与人验 CVD 分责；不授全部输出准确率、实现/隔离验证或生产自动修复。root 必要 Source/逐字 PRE 与非writer实际871正文、860–882完整邻接和本注 POST 通过，非日级验收。
+
+- `SF-2026-ARXIV-2602-11495` — Daily `2026-02-14` 来源遗漏补查；[exact-v1](https://arxiv.org/html/2602.11495v1) §4、§5/Table1/Conclusion。2+2+2=6，安全 execution-graph 切换差额深入；只采用 CP/probe 条件 bypass 的操作身份和攻击/benign 分账，不授 separability 因果、无辅助计算、未知攻击或生产安全保证。InTheWild 同源、abliterated8B、judge/含糊响应人工复核、漏判/误判与未测完整 utility/延迟近正文。root 必要原源及 owner PRE 通过；作者实际顺读正文和邻接，root 非写入者实际独读正文952/954、946–975完整邻接及本注 POST 通过，Ch72窄锁释放。未核 artifact 或复现，非日级验收。 本轮补查事件的首次公开日期未证，必要Source/PRE/实际POST研究仍有效，但不计本日已确认新增成果；归属只按[本日日报§5](../../papers/2026/02/14/README.md#5-缺口与下一步)的57日期请求定点重开，不撤正文或补造公开日。
+
+- `SF-2026-ARXIV-2602-10765` — Daily `2026-02-13`来源遗漏增量；[exact-v1](https://arxiv.org/html/2602.10765v1) §3–6/Algorithm2/Table1，2+2+2=6、因Books采用深化的受影响深入。采用共同方向与门限协作inner-product验证权限；key重构保证不授普遍防移除，白盒/诚实但好奇/固定人口/IID/蒸馏与adaptive无下界反侧、额外SecAgg/setup成本和Unknown/provenance回退近正文；正文drop pp与Table1不一致，不采用精确差额。root实际必要原源/owner PRE及同日日期交叉通过并授两段及自身末注窄锁；作者正文/完整邻接顺读，root非作者实际193/195正文、187–203邻接及3226自身末注POST通过，窄锁释放。未核实现/复现，非DAY。
+
+- `SF-2026-ARXIV-2601-16034` — Daily `2026-01-24`补查；[exact-v1](https://arxiv.org/html/2601.16034v1) §4–6/8、§9.2控制与§10.3/11限制。2+2+2=6，具体安全差额深入；只采用共享概念重构/目标信息预算、保护启发式与层对齐失配的诊断边界，不采用全部模型universality或操作性绕过recipe。root必要原证及actual owner PRE通过授窄锁；作者实际正文/完整邻接/自身末注顺读，root非写入者实际579–604邻接与自身末注3218 POST通过，窄锁释放，不授日级。未核代码/复现。
+
+- `SF-2026-ARXIV-2601-11210` — Daily `2026-01-20`增量；[VidLeaks exact-v1](https://arxiv.org/html/2601.11210v1) §3/4、§6.2/7/8与Discussion必要核心。2+2+2=6，安全/访问合同差额深入；采用Top-K帧与跨生成temporal stability两sensor及三access分责，不借adapter梯度权限。低FPR/来源成员身份混杂、reference校准、Q/caption/CLIP费用与Unknown近正文；不采不可避免泄漏、司法成员真值或阴性安全。root实际必要原证与Ch72 frozen-LoRA邻接PRE通过、授窄锁；作者实际顺读完整邻接/本注，root实际顺读305–324与本注，POST通过、窄锁释放，不授日级。未核artifact或复现。
+
+- `SF-2026-ARXIV-2601-11207` — Daily `2026-01-20`增量；[LoRA as Oracle exact-v1](https://arxiv.org/html/2601.11207v1) §3/4/5、Tables1–2、Figures5–7。2+2+2=6，安全诊断新增边界深入；采用 frozen-W 低秩 trajectory，batch E 为范数时间均值/原权重尺度、C 为范数时间变异，不与 synthetic-class proxy 的方向/rank 混淆，保留 ViT recall 0.40、弱信号、clean FPR/校准缺口及所有适配费用。不采完整可复现 recipe、SOTA、黑箱/LLM/生产安全或总能耗；Table2 ASR caption 不用作 attack success rate。root 非作者实际必要原源与 Ch72 membership 邻接 PRE 通过、授窄锁；作者实际正文/上下邻接/本注顺读，root 实际顺读 299–324 与本注，修正 membership C 的时间变异定义后 POST 通过，窄锁释放。未运行 artifact 或复现实验，非日级验收。
+
+- `SF-2026-ARXIV-2601-06757` — Daily `2026-01-14`；[exact-v1](https://arxiv.org/html/2601.06757v1) §3–5/Limitations；2+1+2=5，固定scene/其余turn后替换意图turn的成对历史诊断差额深入。TypeB构造张力、text-only重写混杂、intent/完整生成安全/benignutility三轴与有限judge/费用近正文，不授新guard或完整安全真值。root必要source及actualCh72完整615–675邻接PRE通过并授本段/自身note窄锁；作者实际正文与完整局部邻接顺读，root非写者已实际顺读正文641、完整634–661邻接与自身note3202，POST通过，窄锁释放。未核artifact/复现，非日级验收。
+
+- `SF-2026-ARXIV-2601-06827` — Daily `2026-01-14` 增量；[PDR exact-v1](https://arxiv.org/html/2601.06827v1) §4.1–4.3 Eq5/8/9、§5.1–5.3 Tables1–3，2+1+2=5，raw selection→原位置衰减与 T/|S| 聚合身份差额深入。Table3 普通 Min-k before68.1>after67.8 且低于 base69.5，Min-k++ 相应对照才 after 更好；Avg*、短文本、非单调定理及可识别性/成本近文。peer 必要原证/actual owner PRE 通过，root 授本段及自身末注窄锁；作者已完整局部顺读，root 非写者已实际独读新正文、完整局部邻接及自身末注，actual POST 通过，窄锁释放。未核实现/复现，非 DAY。
+
+- `SF-2026-ARXIV-2601-07185` — Daily `2026-01-14` 增量；[exact-v1](https://arxiv.org/html/2601.07185v1) §3/4/7。3+2+2=7，benign位置/trigger反事实切片差额深入；位置×长度混杂、非所有模型、无独立topic split及表文数字边界近文，不授H3因果/安全权威。peer必要原证/actual owner PRE通过、root授窄锁；作者实际完整局部邻接顺读；root 非写者 actual POST 已通过（新正文、完整局部邻接与自身末注），未复现，不授DAY。
+
+- `SF-2026-ARXIV-2601-04566`（Experimental）：Daily `2026-01-10`补查；[exact-v1](https://arxiv.org/html/2601.04566v1) §3–5必要hook/trace、同预算对照及§5.4/Fig4。只采用standalone probability cue迁往multi-step的资格反侧；preliminary均值差不等完整CleanGen detector消融，不授所有概率防御失效、唯一stage因果或新trajectory detector有效。Kimi QA高ASR与clean utility不降、qwenCode小退及token费非E2E保持受限；未补造完整硬件/precision/concurrency/SLO。jan10_books_audit必要源/具体owner PRE经root采纳并授窄锁；本轮转作者写入并顺读完整局部邻接，root非写入者已实际核正文/完整局部邻接/自身末注POST通过（本日post-audit-20261007.md §7），不授日级Gate，未运行攻击或复现。
+
+- `SF-2025-META-AGENTS-RULE-OF-TWO` — Daily `2025-11-01`增量补查；[2025-10-31官方说明](https://ai.meta.com/blog/practical-ai-agent-security/)的规则、假想案例、配置切换与Limitations。3+2+2=7，采用会话ABC自治配置的简化审查分支，保留历史信息、监督失败、可用性成本及与effect gate共存；不授通用安全定理、攻击率、生产实现或复现。非作者Euler的必要源/具体owner写前校准及实际正文、完整邻接和自身末注写后复核通过；非全日验收。
+
+- `SF-2025-OPENAI-SORA2` — Daily `2025-09-30`；初始七页system card§3.3～3.4，采用人物许可与生成来源的对象边界。初始opt-in及受限人物路径为厂商披露；许可生命周期与存量/外部副本分责明确为工程推导，不将当前Blog的characters、撤销或草稿功能倒填2025年。未采用安全有效率，未复现。
 
 - `SF-2026-ARXIV-2602-21508`：exact-v1 bottleneck实现/编辑表/β反侧；仅经验接口，不采用MSS必要充分、β-ε双射或普遍purification投影保证；表‰/%分开，未复现。 非原 packet 作者必要原证/actual owner PRE 与窄写完成；root 已实际顺读正文、完整邻接与自身末注，POST 通过。
 
@@ -3618,6 +4002,8 @@ Review note：`SF-2026-ARXIV-2606-29581`；Method `https://arxiv.org/html/2606.2
 - `SF-2026-ARXIV-2606-11671` — Daily `2026-06-11`；primary `arXiv:2606.11671v1`；Books review `books-review:SF-2026-ARXIV-2606-11671`。
 
   **已吸收的语义增量：** Skill 安全不能只审静态文件；应按 capability profile 构造 targeted runtime context，在 sandbox 中执行并以 trace evidence 标注行为。
+
+- `SF-2026-ARXIV-2610-05793` — [exact-v1](https://arxiv.org/html/2610.05793v1)，Daily2026-10-07/Oct6窗，2+2+2=6；§3–6/compute与盲审，提示拓扑×人审/byte匹配/placebo、bandit泛化/高误报边界；root R10必要Source/date通过，literal PRE/实际POST另记，未核实现/复现，不授DAY。
 <!-- daily-books-trace:SF-2026-ARXIV-2606-11671:end -->
 
 <!-- daily-books-trace:SF-2026-ARXIV-2606-11871:start -->
@@ -4289,3 +4675,119 @@ Review note：`SF-2026-ARXIV-2606-29581`；Method `https://arxiv.org/html/2606.2
 - `SF-2026-ARXIV-2602-22724` — Daily `2026-02-28`；[exact-v1](https://arxiv.org/html/2602.22724v1) 必要blocks78–84/102–124/183–188/215–223/246–252及原包11采用相关控制/反侧；2+2+3=7，四regime dry-run与live continuation、加性保证隔离窄差额深入。fresh非原packet作者实际必要原证/actual owner PRE，原有效identity/版本/命题复用；费用、人口、未证与回退近文。获Ch72窄锁，作者已实际顺读正文/完整邻接及自身末注，root非写入者实际独读正文/完整邻接/自身末注POST通过，窄锁释放；未核artifact/复现，不授日级。
 
 - `SF-2026-ARXIV-2602-23163` — Daily `2026-02-28`；[exact-v1](https://arxiv.org/html/2602.23163v1) 必要blocks36–72/98–118及原包20采用相关控制/反侧；2+2+2=6，两端baseline utility与gap来源/正分母窄差额深入。fresh非原packet作者实际必要原证/actual owner PRE，原有效identity/版本/命题复用；费用、人口、未证与回退近文。获Ch72窄锁，作者已实际顺读正文/完整邻接及自身末注，root非写入者实际独读正文/完整邻接/自身末注POST通过，窄锁释放；未核artifact/复现，不授日级。
+
+- `SF-2026-ARXIV-2601-08832` — Daily `2026-01-15` 增量；[RAVEN exact-v1](https://arxiv.org/html/2601.08832v1) §3–5/Table2–5及§9。2+1+2=5，安全反侧/输出regeneration持久性具体差额深入；限定SD backbones、TPR/bit协议与CLIP/FID代理，method14/abstract15/table16数量口径不统一，A10040GB约6秒费用保留。artifact/transform/detector合同及signed provenance退路是工程推断；root必要原证/actual owner PRE通过，作者已顺读实际正文/完整邻接与自身末注，root非写入者实际185–201完整邻接/自身末注POST通过，Ch72窄锁释放。未核实现/复现，不授日级。
+
+- `SF-2026-ARXIV-2601-08623` — Daily `2026-01-15` 增量；[SafeRedir exact-v1](https://arxiv.org/html/2601.08623v1) §IV-B/C/TablesIII–IV、D-C/Alg2、E-A及§V成本/反侧。2+2+2=6，安全sensor与采样conditioning hook接口差额深入；局部检测不授真实安全、opaque API、知识删除或通用零样本。base冻结仍有辅助头训练，风险/encoder变化重标定、误拒/残留/质量及全链费用近文。root实际必要原证/owner PRE通过，作者已顺读实际正文/邻接与自身末注；root非写入者实际376–386完整邻接/正文380/自身note4333 POST通过，Ch72窄锁释放，不授日级。未核实现或复现。
+
+- `SF-2026-ARXIV-2601-06586` — Daily `2026-01-14`增量；[StatDetect exact-v1](https://arxiv.org/html/2601.06586v1) §3–5/7，2+1+2=5，conditional witness与category human-null具体差额必要深入。只采用prefix/token信息与score/工作点分责，Q下FNR不授P下finite FPR；News .027/nominal .01与RAID .127/nominal .1反侧、LM前向/词表期望与重校准成本近正文。Eq8/9符号/期望替换及printed阈值字面不补执行式，不采Theorem2/alpha-uniform/每ROC最优、全域归属保证或未读附录证明；非CPU classifier。root必要原源/actual owner PRE通过；作者实际1105–1149完整写后邻接与本注顺读、限定diff-check通过，root非writer实际1108–1135完整邻接/正文1124及自身note4337 POST PASS，Ch72锁释放。未核artifact/复现，非DAY。
+
+- `SF-2026-ARXIV-2601-12460` — Daily `2026-01-22`补查；[exact-v1](https://arxiv.org/html/2601.12460v1) §3/4.1–4.3/5.1/5.5/7，2+2+2=6，具体owner差额深入。benign-labelled training data 不授 artifact 行为安全；probe相关非内部因果，有限Alpaca50不保general capability，不提供攻击recipe。root实际必要原源/owner PRE通过并授两段窄锁；作者实际正文/完整邻接顺读，root非写入者实际正文/完整邻接/自身末注POST通过，窄锁释放。未核artifact/复现，非日级验收。
+
+- `SF-2026-ARXIV-2602-08874` — Daily `2026-02-11`补查；[exact-v1](https://arxiv.org/html/2602.08874v1) §2/3/5。2+2+2=6，只采用 direct-harmful retrieval 与分散组合语义分别验收；v1 标题与当前列表不混，14/15模型人口、SR 字面公式与位置→retrieval 因果保证隔离，长度与 reasoning 不授单调性。root实际必要 Source、owner 邻接与逐字 PRE 通过；root非写入者实际2165–2188完整局部、新2179及自身末注POST通过，Ch72窄锁释放。未核 artifact/复现，不授 DAY。
+
+- `SF-2026-ARXIV-2602-09494` — Daily `2026-02-12`补遗漏；[exact-v1](https://arxiv.org/html/2602.09494v1)。本日必要方法、关键评价与直接反侧经root独立Source限定通过，actual owner/完整局部及逐字拟文PRE通过后授本段/本人末注窄锁；作者已落实最小差额，review_20260214非作者实际新正文、完整局部邻接及本人末注POST通过，窄锁释放，不授DAY。原件、配置与隔离保证见本日具名review；未核实现/复现，保留旧基线、费用及失败回退。
+
+- `SF-2026-ARXIV-2602-08995` — Daily `2026-02-11`补查；[DeAction exact-v1](https://arxiv.org/html/2602.08995v1) §2–5与必要A.4/C/D/E。2+2+2=6，三类off-task人口、fast bypass/叙事历史/revision与独立effect gate分责；标签事后截图不授pre-exec先知，flagged-only归因与采样攻击人口不授全事故率。60→6恰为90%、Claude benign SR42.9→40.7及7.2/28.06组成非净因果开销保留，不授无harm/全模型over90或净降本。root实际必要Source与actual owner PRE通过并授窄锁，作者已写与顺读完整邻接，root非写入者实际2599–2625/新2606完整邻接与4385自身末注POST通过，Ch72窄锁释放；未核artifact/复现，不授DAY。
+
+- `SF-2026-ARXIV-2602-11513` — Daily `2026-02-14`补查；[DEL exact-v1](https://arxiv.org/html/2602.11513v1) §3–6/Impact/T1–8，2+2+2=6；bounded binomial n-bit latent与server softprompt差额必要深入。±γ/coordinate前提、同ASR非同DP、序列会计及严格隐私/跨域反侧隔离，全训练/token费用与退路近文。非作者Source/root actualowner逐字PRE通过，root授单段/自身note窄锁；作者实际正文/完整邻接及本人note顺读；root非writer actualPOST通过，窄锁释放，不授DAY；未核artifact/复现。 本轮补查事件的首次公开日期未证，必要Source/PRE/实际POST研究仍有效，但不计本日已确认新增成果；归属只按[本日日报§5](../../papers/2026/02/14/README.md#5-缺口与下一步)的57日期请求定点重开，不撤正文或补造公开日。
+
+- `SF-2026-ARXIV-2603-07557` — Daily `2026-03-11`补充Mar10自然日；[AgentRaft exact-v1](https://arxiv.org/html/2603.07557v1) §4、§5.1–5.5、§6/Algorithm1及Tables1–3/5/6/8必要反侧（原件141–363、391–589、1053–1110）。2+2+2=6，安全与已确认路径提名/lineage/必要性分责差额深入；FCG遗漏、动态传播未闭合、条件风险人口与费用限制近文，不授完整依赖或合规保证。review_mar11_continue实际必要Source/owner/PRE经root接受并授Ch72本段与本人末注窄锁；作者已写并顺读完整局部，review_mar11_continue非写入者实际新正文/完整局部邻接/本人末注POST通过，root已释放窄锁，不授DAY。未核artifact/复现。
+
+- `SF-2026-ARXIV-2603-09046` — Daily `2026-03-12`增量；[FlexServe exact-v1](https://arxiv.org/html/2603.09046v1) §3.2/4–5.1/6–9与Table1。2+2+2=6，安全边界具体差额深入；root必要原证、actual Ch72局部及Ch71/73开篇PRE通过后写入两段。RK3588/INT8、CMA与碎片页、模型和压力条件限于原实验；Table1 reclaim比值与正文、整体TTFT正文与摘要冲突数字不采用，driver残余、normal-client I/O及物理/侧信道/DoS不授保证。非写入者supplement_20260312实际Ch72新191/193及171–211完整邻接/本人末注POST通过，Ch56误上传纠错及canonical链接也实际核验；锁释放，不授DAY。未核artifact/复现。June重复上传已由官方撤回并指回本有效家族，不作为另一事件采纳。
+
+- SF-2026-ARXIV-2603-12989：本17补03/16；必要 exact-v1 §3–5/Eq1–12/Tables1–4、A/B/C/Tables5–7。只采架构特定 visual/prompt ratio 参考校准与后续视觉 key 屏蔽分责；屏蔽非删 token/释放KV，早层污染未逆转，高 attention 非恶意真值，adaptive残余/误拒及效用反退、oracle PU与完整费用边界保持。不认证全部配方、通用安全或生产SLO，未核artifact/复现。
+
+- `SF-2026-ARXIV-2603-17357` — [WebPII exact-v1](https://arxiv.org/html/2603.17357v1)必要§2–4/T1、B3标注反侧、C1/C3、D1–4与D7真实图定性限制；只采用视觉字段/partial状态与privacy检测单位和时序验收边界。不采全PII、重识别真值、真实流零泄漏、Agent utility无损或生产fps；保标注policy/人口与全费，未核代码/复现。
+
+- `SF-2026-ARXIV-2603-17372` — [JRS exact-v1](https://arxiv.org/html/2603.17372v1)必要§3–5/Eq1–3/T1–5/Limitations、A1–5/B/C1–2及D3/T8–9。仅同有害人口的模型行为方向、图像增量投影与首token局部修正；保probe/警告非唯一因果、方向标签筛选/测试分母、弱骨干与zero/positionguard、非零ASR/utility反退和额外前向全费，不授完整recipe、通用安全、无损或实时保证；未核代码/复现。
+
+- `SF-2025-GOOGLE-VAULTGEMMA-20250912` — Daily2025-09-13补Sep12模型/报告release；官方Blog日期与2025-09-12技术报告pages1–7，2+2+2=6，隐私受影响必要深入。只采用1024-token packed sequence与doc/user映射边界；zeroing-out ABLQ_P、非私有tokenizer、mixture重复独立单位及有限1M/50+50探针不授整生命周期、任意攻击或零泄漏。DP配方/吞吐/utility留作者条件，不写实验已复现。Anscombe实际必要Evidence/PRE§8/10通过，root授本段及自身末注唯一窄锁；作者已顺读，Anscombe非writer实际新增463/448–493完整邻接及自身末注POST§13通过，实时原件剥离两处增量逐字一致，窄锁释放，不授DAY。
+
+- `SF-2026-ARXIV-2603-20122` — Daily `2026-03-24`补查；[EvoJail exact-v1](https://arxiv.org/html/2603.20122v1)必要§3–5。2+2+2=6，只结构化probe artifact/执行与roundtrip资格分责，保repair后nonreversible retained原反侧、共享designer/judge/PPL身份、逐query best-of和预算混杂及GPT反退；不采全部可逆/原意保持、普遍迁移、隐蔽性或安全保证，未核代码/攻击payload图像或复现。
+
+- `SF-2026-ARXIV-2603-20449` — Daily2026-03-25补03-24；[exact-v1](https://arxiv.org/html/2603.20449v1) §2～5.3；2+2+2=6安全受影响深入；SAT存在赋值/underconstrained implication与人审编码、state extraction及valid-write recall反侧；unknown处理仅工程退路，未核代码/复现或形式安全。
+
+- `SF-2026-ARXIV-2603-22094` — [NullSteer exact-v1](https://arxiv.org/html/2603.22094v1) §3–4/A–C；2+2+3=7，仅exactnull benign-span与input-conditioned linear residual。Eq14→15/A Eq25反例拒原solver最优，不抹掉A.1恒等式；保approxnull、未见token/population、fullrank退路与utility/adaptive攻击残余。不采全函数无损、trueharm抑制或T4异常Avg realtime保证；全部激活/标签/参考/矩阵/runtime费用，未核artifact/复现/执行攻击。
+
+- `SF-2026-ARXIV-2603-21697` — [ComicJailbreak exact-v1](https://arxiv.org/html/2603.21697v1) §2–4/7–9/11–12；3+2+3=8，目标/叙事模态与query-budget、harmful/benign输出及judge人口差额深入。保text narrative/删panel反侧、paraphrase/role混杂与greedy/API协议；不采视觉唯一因果、ensemble单query概率、keyword/majority安全或90%真实风险。targeted人审人口冲突/误报漏报与全部改写/多请求/defense/人工成本，未核artifact/复现或执行攻击。
+
+- `SF-2026-ARXIV-2603-23268` — [SafeSeek exact-v1](https://arxiv.org/html/2603.23268v1)必要§3–5/Eq1–15/T1–2、A与D；仅声明unit身份的binarymask候选、保留/移除验证和限定参数修复分责。保双mask非精确互补、初始化/冻结mapping及人口口径不闭、已知trigger权限、ASR残留/效用反退/非完备及全费；不授通用recipe、未知adaptive安全或部署许可，未核code/全部图/攻击或复现。
+
+- `SF-2026-ARXIV-2603-23171` — [Activation Watermarking exact-v1](https://arxiv.org/html/2603.23171v1)必要§3–6/Alg1/Eq4–8/T1–5、C/D；仅secretkey/适配模型/内部hidden读取的回复级监测信息合同。保黑盒权限/非零转移/无证明、benign负向非orthogonal/口径差、secretgame检测定义/家族FPR隔离、utility反退/流式未验和全费；不授无界adaptive、真实PII、零误报、安全阻断或SLO，未核code/全部图例/实施攻击或复现。
+
+- `SF-2026-ARXIV-2603-24570` — [Anti-I2V exact-v1](https://arxiv.org/html/2603.24570v1)§4–6/T1–3、§12–15/T4–7text。仅sourceartifact有限保护扰动与服务许可/取证分责；保whitebox/transfer、净化恢复/更大budget反退、identity/qualityproxy和全费。不采完整优化recipe/PCA因果、imperceptibility或普适隐私/安全，未核artifact/全部图像/复现。
+
+- `SF-2026-ARXIV-2603-25056`：[System Prompt Attack Surface exact-v1](https://arxiv.org/html/2603.25056v1) §3–7；仅采 proxy inversion、cross-domain 合法反侧与 prompt/model 联合测量。保合成 body、73 subset、100 auxiliary 与 10 selected hard cases 分母、281/457 verbose 条件、false positive/模型反退；不授全 bypass 98%、实际 effect/实流量或未测 tool/ensemble 保障；未核 artifact 或复现。
+
+- `SF-2026-ARXIV-2603-25403` — [exact-v1](https://arxiv.org/html/2603.25403v1) IV–X/TI–IV、A及C必要load；仅geometry timing/counter观测与内容proxy分责。保sameUID/controlledaffinity/perf资格、合成分割/AMD不可见/非唯一原因和全费；不采自然隐私率、所有Linux默认权限、denseattention数值因果或padding已防护，未核code/防御/复现。
+
+- `SF-2026-ARXIV-2603-25994`，[exact-v1](https://arxiv.org/html/2603.25994v1)§3–5.9/Eq1–9/T1–3/A/C/F；2+1+2=5。目标/邻域与逐step空间gate分责，保editproduct非独立、残留/retain反侧、proxy与全费用，不授irreversible安全/跨channel删除、精确时间headline、code或复现。
+
+- `SF-2026-ARXIV-2603-26154` — [exact-v1](https://arxiv.org/html/2603.26154v1)BODY protocol/results/Robustness/CrossModel/Limits；2+1+2=5。image perturbation存留与consumer效果、frame/temporal分账；保JPEG/noise反侧、预算/作者重实现/frame/prompt混杂与全費缺失，不采一般method因果排名/商业API或通用隐私保证，未核全部图/code/复现。
+
+- `SF-2026-ARXIV-2604-00209` — Daily2026-04-03；[exact-v1](https://arxiv.org/html/2604.00209v1)§3.1–3.4/4.2/5.1–5.4及必要E，2+2+2=6，仅单轴/合轴steering与规范读取/行为权限分责；保五轴/Llama2反侧、NCR与冲突数值、标签/observer/完整费用，不授隐私或合规保证，未核实现/复现。
+
+- `SF-2026-ANTHROPIC-SELF-REPLICATING-AI` — Daily2026-10-13；[官方正文](https://www.anthropic.com/research/self-replicating-ai) A/B与Appendix A～C/F、G，2+2+2=6，受影响安全资格深入。仅采用deployment与closed-loop replication需联合资格；外部controller推理、Llama3.1-8B目标、简化访问与floor/ceiling未相交的反侧邻文。未复现、不采用ECI预测或H100等价外推。today_institutions实际Source/owner比较，root必要原证与PRE独核通过；本轮窄写已落实，root实际正文/完整邻接与本末注非writer POST通过，窄锁释放。
+
+- `SF-2026-MIMO-CODE-2650` — Daily2026-10-13；[PR2650](https://github.com/XiaomiMiMo/MiMo-Code/pull/2650)，exact merge `8e1df4abee56da60c11db14606dd855823b1a29f`两contains/overlaps实现与新增test，1+2+2=5，真实containment authority修正深入。只采跨drive/UNC absolute-relative反侧，保POSIX旧实现也绿及Windows未实际验收，不授symlink/TOCTOU全保证。root实际原件与owner/PRE通过；today_institutions窄写落实，root实际正文/完整邻接与本末注非writer POST通过，窄锁释放，未运行代码。
+
+- `SF-2026-ARXIV-2603-30016` — Daily 2026-04-02补04-01自然日；[exact-v1](https://arxiv.org/html/2603.30016v1) II/III/IV，2+1+2=5。只采unimplemented proposal的verbalized intended instruction/provenance与follow-decision分责、预声明期待和只见structured diff的bounded judge。原文benchmark批评不作该proposal实证；typed/self-report不授防注入、100%安全、忠实性或policy authority，成本/退回确定性规则与人工近文，未核实现/复现。
+
+- `SF-2026-ARXIV-2603-30017` — Daily2026-04-02补04-01；[exact-v1](https://arxiv.org/html/2603.30017v1)S1–6必要Alg3/Theorem2/Examples7–11/Assumptions15/18/Theorem20，2+1+2=5，仅fixed-generator centered clipped heavy-tail detector/样本条件。保ideal独立U/null、problem-dependent upper与symmetricIID lower不同、Dirac/rareentropy反侧、loggap与作者有限synthetic/language稍差；MC阈值/全部制备费，不授真实hash IID/伪归因防护，未核代码/复现。
+
+- `SF-2026-ARXIV-2604-00903` — Daily2026-04-03；[IDDM exact-v1](https://arxiv.org/html/2604.00903v1) §3.3/4.1–4.3/5.1–5.3、Tables4/9/10。2+2+2=6，安全受影响深入；采用authorized personalization/public-output linkability分责。保质量退步、held-out高关联、stage/joint局部范围及ρ冲突，私照PGD非公开照片保护/DP；不授不可关联或生产隐私保证。独立PRE通过后root窄锁实写，reader实际正文/完整邻接/本人note nonwriter POST通过，未核代码/复现。
+- `SF-2026-ARXIV-2604-01151` — Daily2026-04-03；[Multi-Agent Collusion exact-v1](https://arxiv.org/html/2604.01151v1) §3.1–3.3/4.1–4.4/Table1及39 matched局部分析。2+2+2=6，安全受影响深入；采用group sensor/observer资格，保指令标签/4剔除/round差异、transfer反转、privileged observer缺口与adaptive未测；schematic非像素因果，不授阈值gate/universal detector。独立PRE通过后root窄锁实写，reader实际正文/完整邻接/本人note nonwriter POST通过，未核代码/复现。
+
+- `SF-2026-ARXIV-2604-03199` — 04-07补04-06自然日；LT-MIA exact-v1 §3.1–3.3、§4/T1–2、§5/T3/F3–4、§7与B/C。只采用同架构reference/full-logit差分序列与跨familyclassifier的sensor分责；保fine-tuning only/lowFPR反退、混合recipe、参考熟悉文本失灵、全部feature/training费用，不授membership法证、pretraining/RLHF或chat-API无泄漏。root非作者已实际核必要Source、具体owner/逐字PRE与写后正文/完整邻接/本人note，POST通过；作者同步本记录后释放窄锁。未核artifact/复现，不授日级完成。
+
+- `SF-2026-ARXIV-2604-09378` — Daily2026-04-14补Apr13，supp_apr14_author；[exact-v1](https://arxiv.org/html/2604.09378v1)§2–4.3/6/C–D，2+2+2=6安全深入；只采parser→bundledclassifier→threshold→payload分责，不采BA功能真值/ASR事故率/host突破或防御有效。保13skills8trigger+5controls、571/396与sweep500/348分母、primaryA800/English/sim/canary与全部费。reader必要Source/逐字PRE及实际正文/完整邻接/本人注POST通过，作者仅同步此注并实读回；未核artifact或复现。
+
+- `SF-2026-ARXIV-2604-09544` — Apr14补Apr13，exact-v1§2–5/A/C/I1/J，2+2+2=6安全深入；仅signed harmful proposal−absolute benign preservation及生成/拒答/解释/检测协议分责。保prefix†条件、Qwen解释−18%/检测−11%与Llama detection/core纠缠，412preservation/raw-format与singlegradient代理不授独立子空间、全utility或EM唯一因果；完整runtime/precision未披露不造SLO。reader必要Source/date有效，reader finalPRE实际通过；supp_apr14_reader实际正文/完整上下邻及本人末注POST通过，作者已实读回；未核代码/复现。
+
+- `SF-2026-ARXIV-2604-09405` — Apr14补Apr13，exact-v1§4/5/6与必要B/D，2+1+2=5安全反证深入；仅decoded-estimate dualenergy→noisy latent的soft suppression/retention分责，不采safe support/硬擦除/完整Alg1同步recipe。保SD1.4/50step/CFG7.5/K3与scheduler改动、ESD P4D.583→.589/MMA.406→.417反退、CLIP/style盲区与classifier不认非真实删除、N×K额外链及hardware/runtime/seed未披露。reader必要Source/date有效，reader finalPRE实际通过；supp_apr14_reader实际正文/完整上下邻及本人末注POST通过，作者已实读回，未核实现/复现。
+
+- `SF-2026-ARXIV-2604-12308` — Daily2026-04-16补Apr15，supp_apr16_author；[exact-v1](https://arxiv.org/html/2604.12308v1)§3.1–3.6/§4–6/Tables1–7/Limitations/A–C.1，2+2+2=6，安全规则predicate与unknown/context证据两轴具体差额必要深入。只采用提出/聚合/补证分责，不把规则解释或unknown签为法律真值/合规保证；小人审/GDPR反退、规则解释争议及全费近正文。reader R24必要Source/R15 date/R25 current轻检/R36逐字PRE及R39实际正文、完整邻接/本人注POST通过；作者同步本注并实际读回，未核artifact/复现，不授DAY。
+
+- `SF-2025-META-PIXEL-SEAL`：Dec19补Dec18官方研究披露；[原页](https://ai.meta.com/research/publications/pixel-seal-adversarial-only-training-for-invisible-image-and-video-watermarking/)与[exact-v1](https://arxiv.org/html/2512.16874v1)§3/4/5.1–5.3/Table1–3。Boyle2+1+2=5，限定检测路径模拟与分阶段目标，保message loss、感知/鲁棒取舍及视频compression反側，不授全编辑防护/所有权或全流程加速；Newton§10实际Source/评分/owner/逐字PRE通过，root§3已授本family一段及本人注窄写位；本注随真实正文保存，作者实际self-read已完成，Newton§13实际完整新增/两侧/本人注POST通过，root§4实际读回接纳并释放本窄位；仅此既成行政同步，不授DAY，未核artifact或复现。
+
+- `SF-2025-META-POSTHOC-WATERMARK`：Dec19补Dec18官方研究披露；[原页](https://ai.meta.com/research/publications/how-good-is-post-hoc-watermarking-with-language-model-rephrasing/)与[exact-v1](https://arxiv.org/html/2512.16904v1)§3/4.1–4.6。Boyle2+2+2=6，采用生成/检测预算和功能正确人口分责，保长度筛选、key/null、WaterMax反侧及非所有权权限；Newton§9实际Source/评分/owner/逐字PRE通过，root§3已授本family一段及本人注窄写位；本注随真实正文保存，作者实际self-read已完成，Newton§14实际完整新增/两侧/本人注POST通过，root§4实际读回接纳并释放本窄位；仅此既成行政同步，不授DAY，未核artifact或复现。
+
+- `SF-2025-OPENAI-U18-SPEC`：Dec19补Dec18；[datedSpec definitions/U18](https://model-spec.openai.com/2025-12-18.html)及[发布说明](https://openai.com/index/updating-model-spec-with-teen-protections/)。Boyle2+1+2=5，限定规范版本/适用人口/未知资格分责，保意图非已部署遵从、age预测实现未披露及验证/隐私代价，不授临床或安全效果；Newton§15实际Source/5分/唯一owner/逐字PRE通过，root§5已授本family一段及本人注窄位；本注随真实正文保存，作者真实self-read已完成，Newton§19实际完整新增/两侧/本人注POST通过，root§6实际读回接纳并释放本窄位；仅同步这些既成行政事实，不授DAY，未核artifact或复现。
+
+- `SF-2026-ARXIV-2604-18231` — Daily2026-04-22补Apr21；[exact-v1](https://arxiv.org/html/2604.18231v1)必要Source/fresh实际层和本日SUP有效，本轮明确补充三维2+2+2=6（原A36未打印数，不冒称继承原5），具体接口差额必要深入。仅采用上述条件分责，支持/反侧与完整费用近文，不授状态唯一身份、通用迁移、全栈保密或动作授权；未核实现/复现。root实际owner/逐字PRE通过授窄lease，作者已保存并顺读完整邻接；root实际非writer新单段/完整前后/本人注POST通过，窄lease释放；作者仅行政同步并实际读回，不授DAY。
+
+- `SF-2025-ARXIV-2504-21228` — Daily2025-05-02补May1；[exact-v1](https://arxiv.org/html/2504.21228v1)§2/4.1–4.2/5与主T1/T2–4，2+1+2=5。Boyle作者，仅采用已知context span的参考归因/KV维度mask分支；保Eq5非可执行阈值、末尾注入反侧、clean/quality退步与全费用，不授权限/通用防御或全面无损。root REPAIR_REVIEW§4已实际通过受限Source/评分，§6已实际通过具体owner/PRE并授本单段/marker/本人注窄锁；作者仅将参考条件改“非测试”后实际保存并顺读完整邻接/本人注，root §6末实际完整新段/两侧/本人注与前注非writer POST通过，接纳本项整合并释放窄锁；仅同步既成行政事实，不授DAY、实现或复现。
+
+- `SF-2025-ARXIV-2504-20984` — Daily2025-05-01补Apr30；[ACE exact-v1](https://arxiv.org/html/2504.20984v1)II-C/IV-A–F/V及TablesII–IV/AppendixA/C必要安全域，2+2+2=6，接口差额深入。仅采用可信query抽象规划与独立具体绑定，保label/grammar/语义匹配、单查询/独立app、条件人口与全部费用，不授全泄漏/意图/安全保证；未读payload附录、未核代码或复现。Newton§37实际Source/owner/逐字PRE通过，root授指定单段/marker/本人注；Godel已按稿保存，Newton§41非writer实际完整新增/两侧/本人注POST通过，root读回接纳并释放指定单段；仅同步既成事实，不授DAY。
+
+- `SF-2025-ARXIV-2504-20570` — Daily2025-05-01补Apr30；[ReCIT exact-v1](https://arxiv.org/html/2504.20570v1)III-C/IV-A/V-A–E/TablesI–III/VI必要安全域，2+2+2=6，恶意底座→私有PEFT→更新观察差额深入。仅权限/发布接口与评价边界，保姓名主题/PII值非全部原文、合成人口/改baseline权限、全费用；Gaussian噪声实验不认证或推翻完整DP，不授普通黑盒/任意PEFT泄漏。未读恢复步骤/敏感生成附录，未核实现/复现。Newton§54实际Source/owner/逐字PRE通过，root授本地VLM反侧后/DP前指定单段与本人注；Godel按稿保存，Newton§56非writer实际完整新增/两侧/本人注POST通过，root已消费接纳并释放指定窄位；仅同步既成事实，不授DAY。
+
+- `SF-2025-ARXIV-2506-23731` — Daily2025-07-02补Jul1；[exact-v1](https://arxiv.org/html/2506.23731v1)§3–6/Alg1–2/Tables1–5必要域，2+1+2=5，输出训练独立模型的持久性/检测支持差额深入。HTTP200/curl28尾附录未全到、未重试，已到必要域实际读；保z-test方向/Alg2计数与索引未闭不授recipe、null独立假设、再编码不匹配、同架构部分/跨架构失败、FID与扰动检出反退及全部费用，不授真实性/完整后代或法律归因。未读完整附录proof/像素/代码/复现；绑定/验收及退路为本项目推断。Newton§36实际Source/5分/具体gap及逐字PRE通过，另实读AppendixC/Table6披露的训练设置与A40单图增费已修正；root实际完整稿/当前两侧及本人注后授本单段/marker/本人注精确位；Godel按稿保存，Newton§39实际非writer完整新增/两侧/本人注POST通过，root已实际完整读回接纳并释放该精确位。本注仅同步既成事实，不授DAY。
+
+- `SF-2025-ARXIV-2506-23074` — Godel，Daily2025-07-02补Jul1；[exact-v1](https://arxiv.org/html/2506.23074v1)§3–5/Eq1–14/Tables1–5及Newton56实际最小代码，2+1+2=5，因果/归属强主张域加深。仅双learnedmap/共享contrast/增强训练的被动sensor提案，不授causal separation/可执行完整recipe或法律归属；正文正熵口径与Dec19精确commit代码负熵方向分责，未倒签Jul1实现。保Hungarian/gold、未标注novel人口、表间起点/closedset反退及全部费用；未看像素/运行代码/复现。独立验收与Unknown退路为项目推断。Newton§80已实际完成本新增全文、完整两侧及本人注的非writer POST，通过即生效并释放指定单段；未作整日DAY。
+
+- `SF-2025-ARXIV-2506-22806` — Godel，Daily2025-07-02补Jul1；[exact-v1](https://arxiv.org/html/2506.22806v1)§3/4/Tables1–5/C/D1/D3/E必要，Newton55另核受影响B定理/消融，2+1+2=5，安全/理论强主张域加深。只采文本条件K/V残差/anchor训练和多概念consumer；正文C3漏m/理想gate不当实用证明，保残留/retain反退/有限攻击与全部准备训练生成费，不采永久删除/全攻击安全。作者未看像素/核代码/复现；版本绑定/独立验收/退路为项目推断。Newton§80已实际完成本新增全文、完整两侧及本人注的非writer POST，通过即生效并释放指定单段；未作整日DAY。
+
+- `SF-2025-ARXIV-2507-01693` — Noether，Daily2025-07-04补Jul3；[exact-v1](https://arxiv.org/html/2507.01693v1)§3–5/Alg1/Tables2–10及A/C/D必要，2+1+2=5，输出观测/松弛候选/离散再核与历史身份分责具体差额深入，Ohm70必要Source复用。May28 Zenodo为早notebook artifact非已恢复论文正文，不迁arxiv日期；不采唯一可逆/搜索失败即伪造、零假阳性或长prompt部署安全。信息条件/长度支持、PII部分恢复及全部访问/搜索/回归费近文；未看曲线/服务截图、核代码/复现，正文与本人注已按root协调实际保存，Ohm85一次真实非writer完整新增/完整两侧/本人注POST已通过，依root协调授权生效并释放本精确位。
+
+- `SF-2025-ARXIV-2507-01321` — Noether，Daily2025-07-04补Jul3；[ICLShield exact-v1](https://arxiv.org/html/2507.01321v1)§3–7/Eq与Tables1–5/A–E必要，2+1+2=5，Ohm91真实必要原域/理论分析复用，干净带标签选例与目标安全消费者分责小gap深入。保归一双latent独立性/期望到逐输入界未闭、clean反退/残余ASR及全部费用，不授一般定理、因果或未知攻击保证；未核图像/代码/复现。root已协调本指定单自然段/独立marker/本人注；正文与本人注已实际保存，Ohm103一次真实非writer完整新增/完整两侧/本人注POST已通过，依root协调授权生效并释放本精确位。
+
+- `SF-2025-ARXIV-2508-21432` — Godel，Daily2025-09-02补Sep01；[exact-v1](https://arxiv.org/html/2508.21432v1)III/IV/V/VI、Theorem1/同文件推导/Alg1–2/TablesI–IV必要实际，2+2+2=6，统计/代码语义强保证受影响域深入。只采主动随机候选→同集合rank审计的受限分支；保joint-null/tie/候选重建与AST语义未闭、Type-I非posterior/多重FDR、访问权限/模拟API/漏检及全费，不授完整recipe/版权/安全/检出率保证。候选绑定/独立验收为项目推导；未核全附件/代码/图像或复现。Newton本日25实际必要Source/具体owner/本有限PRE通过，root已协调本指定单段/独立marker/本人注；Newton26已实际完整新增/直接两侧/本人注POST通过，按协调规则生效并释放此精确位，不授整日DAY。
+
+- `SF-2025-ARXIV-2508-21727` — Godel，Daily2025-09-02补Sep01；[exact-v1](https://arxiv.org/html/2508.21727v1)§3/4/A/B.7/C与Tables1–5/10必要安全域，2+2+2=6。仅双时点carrier/每图优化/重算-vs存储接口；保moment非分布/variance推导权限、有限attack/FPR与质量反退、每图1200轮/全部费，不采安全/ownership/精确梯度或O1总成本。验收/退路为项目推导；未看像素/核代码/复现，Newton52必要Source/具体owner与本逐字PRE通过，root已协调本指定一自然段/独立marker/本人注；已按稿实际保存，Newton58一次真实完整新增/完整直接两侧/本人注POST通过，本指定窄位生效释放；不预整日DAY。
+
+- `SF-2025-ARXIV-2508-21302` — Godel，Daily2025-09-02补Sep01；[exact-v1](https://arxiv.org/html/2508.21302v1)§3/4.1–4.5/6与Alg1/Definitions/必要表安全域，2+2+2=6。仅predicate proposal→有界checker→fuzzer接口，保原蕴含方向权限、CFG/unroll非完备/漏剪与反退/全预处理费，不采formal无损/全TTE或漏洞安全保证。consumer绑定/退路为项目推导，未核全部主表/像素/代码或复现；Newton59实际必要Source/具体owner/本逐字PRE通过，root已协调本指定单段/独立marker/本人注；已按稿实际保存，Newton67一次真实完整新增/完整直接两侧/本人注POST通过，本指定窄位生效释放；不预整日DAY。
+
+- `SF-2026-ARXIV-2605-15687` — exact-v1§3/Eq1–15/§4–7/T1–6/Alg1/B1–3/C1–3/T10–13/E/T9/F/T8必要域，A45/R98安全独核，2+2+2=6。只相似retain-boundary人口/steering初始化与两侧行为目标分责；保stage1全retain、ridge/gradient与paired/separate recipe未闭、去boundary utility崩、refusal/ROUGE非真泄漏判据及全费，不授抹除/重训等价/自适应安全；未核图像/repo/复现。
+
+- `SF-2025-ARXIV-2509-04403` — Godel，Daily2025-09-06补Sep5；[exact-v1](https://arxiv.org/html/2509.04403v1)旧作者/Cicero3/4/Limit及Newton45实际3.1/3.4/4.2/Limit/C/D分项表/图注，2+1+2=5安全深入。仅单独/联合语境/回复风险的非可组合标签接口；保同源InternVLjudge、35610/12类/两处500口径（未证独立/不相交，不合计1000）与one-run/全费，不采真实安全率/通用防御或构造recipe。未核危险prompt/像素/原标注/实现或复现；作者实际完整owner两侧，Newton50逐字PRE通过，root已协调本指定精确位；本一自然段/独立marker/本人注已实际保存，Newton53一次真实非writer完整新增/完整两侧/本人注POST通过，本指定窄位即时生效释放；不预日级DAY。
+
+- `SF-2026-ARXIV-2605-14587` — [exact-v1](https://arxiv.org/html/2605.14587v1)§3–6/F3–4/8/T1、B2/C1/3–5/D/T5与H1必要安全域，2+2+2=6。仅optimizer/plasticity干预与post-training后门行为分责；保TM-Scratch差异、小PPO/已知触发/污染权限、clean反退及全部费用，不采flatness安全、唯一梯度因果或sharpness自动检测阈值。A156作者必要源与root R156独立核验；未核实现/复现，不提供攻击recipe。
+
+- `SF-2025-ARXIV-2509-03985` — Godel，Daily2025-09-06补Sep5；[exact-v1](https://arxiv.org/html/2509.03985v1)旧作者§5/7.3/8与Newton47实际5.1–5.6/7.1.2/7.3/8/9必要安全域直接复用，2+1+2=5。仅参数候选位置与context贡献/修复消费分责，保映射未闭、静态攻击/同源judge、效用反退及全费，不授安全电路/未知防御或recipe。未读全部攻击prompt/案例、核代码/真实攻击或复现；作者当前完整两侧已读，Newton69逐字PRE通过，root已协调本指定精确位；本批准单段/独立marker/本人注已真实保存，Newton72一次真实非writer完整新增/直接完整两侧/本人注POST通过，本指定窄位已生效释放；仅记录既成事实，不预整日DAY。
+
+- `SF-2026-ARXIV-2605-14750` — [EVA exact-v1](https://arxiv.org/html/2605.14750v1) IV-A–C、V-B–D/F–H必要安全域；6分，仅DELMAN旧text之外的visual-key/VLM扩展。保输入key≠共享参数影响、soft/hard分责、random/fixed效用坍塌、多key与adaptive残留/全费；不授runtime gate、永久安全或全部能力保持，未核实现/攻击或复现。
+
+- `SF-2026-ARXIV-2605-14746` — [Value-Filtered Decoding exact-v1](https://arxiv.org/html/2605.14746v1) §3/Al1/D/E2/E4必要安全域；6分。只oracle/probe、base-safe误干预与真实新policy风险、有限fallback支持三分责；保同judge局限、PKU反侧、校准人口/全重采与训练费，不授hard floor/域移安全或实现复现。
+- `SF-2026-ARXIV-2610-04083` — [exact-v1](https://arxiv.org/html/2610.04083v1)，Daily2026-10-07/Oct6窗，2+2+2=6；§II–V双会话threat、matched neutral、cross-model／100-session与channel/auditor反侧，安全相关深入；reader1必要Source/date/owner及literal PRE/实际POST另记，不采用自然发生率，未核代码或复现。

@@ -2,39 +2,45 @@
 
 **规范：** V3
 **窗口：** 2026-03-03T09:00:00+08:00 ～ 2026-03-04T09:00:00+08:00
+**窗口说明：** 用户授权已有Daily增量来源补查；原窗口、16个候选的日期/评分与连续§4冻结，不搬移归属。
+**补充窗口：** 2026-03-03 ～ 2026-03-03
 **状态：** 完成
 **Books：** 纳入本次
-**检查时间：** 2026-10-01T22:59:42+08:00
+**检查时间：** 2026-10-09T04:20:58+08:00
 
 ## 1. 结论
 
 独立按当前V3重建。旧286KB报告完整保存在[原文存档](../_sources/daily-20260304/V3_LEGACY_REPORT.md)，不继承旧33项、全9分或模板完成标签；1270条宽分类库存只作相关标题查漏，不是逐项全文队列。
 本日十六个唯一家族全部达到证据与Books安全终态：十四项真实窄整合、两项具体已有覆盖，5～7分按实际证据区分。root原六项复用接手作者前mar02_v3独立题摘/日期/已有覆盖和mar01_v3、mar03_v3必要源/实际POST；mar02_v3新增十项由root非作者必要源→实际Books处置通过，整日分批独立复核通过，普通待办0。GPT5.3 card及00063/00188/00196精确日期隔离，不计确定候选或Books，不支持无遗漏。
 
+以上是冻结的原轮结论，不能代替本轮增量验收。03-03完整自然日补查确定新增Gemini3.1FlashLite安全评价家族1，原16＋新1＝17；新1必要官方core/具体Books比较完成，已有覆盖、Books新写0，root独立Source/具体已有覆盖及六部分DAY通过，普通待办0。实际新增34家族完整题摘为31个公开日潜力保留、3个具体贡献关闭，root已实际完整题摘校准全部31项与3项EX并核Power/CoVe决定准入core；00364污染abs/API已一次exact-v1 HTML恢复正确题摘，仅保留日期缺口。不把294个去重主题发现或两个月列表各100题名当当日论文/全文队列。[本轮完整记录](../_sources/daily-20260304/supplement-20261009.md)保留原件和查询/停止；外部保留不用于正面Evidence、Books或无遗漏。原16有效Source/POST复用，旧日期推导仅冻结历史，不授权本轮新增日期。
+
 ## 2. 来源覆盖
 
-仅14个Daily源，不扩Weekly。以下是执行时可见历史段，不是当时不可变快照；查询/原字段/停止范围见[本日停点](../_sources/daily-20260304/V3_WORKING_STOPPOINT.md)。
+仅14个Daily源，不扩Weekly。下表同时区分原轮与本轮实际范围；完整新增查询、原字段、分页/停止和失败在[本轮记录](../_sources/daily-20260304/supplement-20261009.md#来源入口实际查询与停止)，冻结原轮见[本日停点](../_sources/daily-20260304/V3_WORKING_STOPPOINT.md)。当前目录不是当时不可变快照。
 
 | 来源 | 检查范围与依据 | 结果 | 缺口 |
 | --- | --- | --- | --- |
-| SRC-OPENAI | [Research](https://openai.com/research/)与[RSS](https://openai.com/news/rss.xml)，限定Mar03～04条目，GPT5.3 release/card/Hub及PDF核心已读 | 受阻 | release机制未披露贡献前关闭；card RSS/landing/PDF March3 vs Hub PublishedMarch2首公开冲突隔离，不撑零事件 |
-| SRC-ANTHROPIC | [Research](https://www.anthropic.com/research)嵌入Public Research，Feb25→Mar05相邻及日/主题补检 | 已检查 | 当前可见段无本窗记录，不证明全部历史 |
-| SRC-GOOGLE-AI | [DeepMind](https://deepmind.google/research/)精选/Blog page3和[pubs](https://research.google/pubs/)年级索引；GeminiFlashLite发布/card核心及安全反证已读 | 受阻 | Gemini具体负理由关闭；pubs本窗日级段未恢复，安全表不直接跨card比较 |
-| SRC-META-AI | [Research](https://ai.meta.com/research/)空响应及官方域日/模型主题补检 | 受阻 | 空页和搜索无命中不能证明零事件，缺本窗历史段 |
-| SRC-QWEN | [Blog](https://qwenlm.github.io/)当前段/qwen.ai重定向，主题补检与QwenCode v0.11.1/PR2021四core及tests patch | 受阻 | 截断正确性已窄写并通过root实际POST；动态模型Blog历史目录受限 |
-| SRC-DEEPSEEK | [Research/News](https://www.deepseek.com/en/news/)Research10项Feb25→Jun24，News首5项及有限补检 | 受阻 | 可见Research已查；隐藏News/View All本窗段未恢复 |
+| SRC-OPENAI | 本轮实际[RSS](https://openai.com/news/rss.xml)完整当前feed按Mar03筛出GPT5.3 release/card两项；官方安全HTML明确PublishedMar2 | 已检查 | 同事件归属Mar2，去重复用[03-03报告](../03/README.md)实际Source、Ch66窄整合及非writer POST；RSS/PDFMar3不覆盖官方公开日，不新增card日期缺口 |
+| SRC-ANTHROPIC | 本轮[Research](https://www.anthropic.com/research)实际嵌入Publications目录，Feb25→Mar05相邻无Mar03行 | 已检查 | 当前可见段，不证明全部历史 |
+| SRC-GOOGLE-AI | 本轮实际Blog首页Jul→Oct/page3恢复失败；[pubs](https://research.google/pubs/)首15/11600、2026年396仅year及March3模型主题搜索；Gemini官方Mar03原稿/card安全core实际读 | 受阻 | 原Gemini贡献关闭不足覆盖安全差额，本轮纠正入选1；Blog/pubs日级历史段仍缺，不能把搜索阴性当零事件 |
+| SRC-META-AI | 本轮[Research](https://ai.meta.com/research/)官方web0行、curl35及官方域March3主题补检 | 受阻 | 空页和搜索无有效命中不能证明零事件，缺本窗历史段 |
+| SRC-QWEN | 本轮旧Blog重定向及[官方API定点恢复](../_sources/daily-20260304/SUP_QWEN_SEED_FALLBACK_20261009.md)：40条、无分页字段，邻接Feb16→Mar19；原QwenCode release/PR2021同事件有效复用 | 受阻 | 原截断正确性及Books POST复用；API未含已知历史发布，故不授本窗完整或零事件 |
+| SRC-DEEPSEEK | 本轮官网Research导航非目录；[ChangeLog](https://api-docs.deepseek.com/updates)当前完整页Dec01→Apr24邻接；原Research10/News5历史检查冻结 | 受阻 | ChangeLog可见段无Mar03；Research/隐藏News本窗段未恢复，不能互授覆盖 |
 | SRC-MOONSHOT | [实际Research目录](https://www.kimi.com/en/blog/)，19项至2024/06/26，2/09 AgentSwarm→4/20 K2.6跨本窗，无可见未完分页 | 已检查 | 仅当前可见Research段，旧platform不代表全机构历史不可恢复；不授被删除历史无遗漏 |
-| SRC-TENCENT-HUNYUAN | [全部列表](https://hunyuan.tencent.com/research)及[实际恢复记录](../_sources/V3_HUNYUAN_LIST_RECOVERY.md)，11/11、Feb13→Apr23相邻 | 已检查 | 仅当前可见列表，display与后台日期不互授首发 |
+| SRC-TENCENT-HUNYUAN | 本轮[全部列表](https://hunyuan.tencent.com/research)空壳后按官方publicList page1/size20/renderType0实际POST，zh11/11、默认en9/9，Feb13→Apr23相邻 | 已检查 | 中文实际核，不由英文替代；仅当前可见列表，display与后台日期不互授首发 |
 | SRC-ZAI | [Research](https://www.zhipuai.cn/zh/research)首可见页Feb21→Mar15，查看更多停止 | 已检查 | 不称全机构或被删除历史完整 |
-| SRC-BYTEDANCE-SEED | [Research](https://seed.bytedance.com/en/research)精选，public_papers首20/242、page1of13止May14及有限补检 | 受阻 | 缺本窗Blog/论文段，242不是当日候选 |
-| SRC-BAIDU-ERNIE | [Blog](https://ernie.baidu.com/blog/zh/)68行Apr15→Feb06相邻及有限补检 | 已检查 | 仅可见目录范围 |
+| SRC-BYTEDANCE-SEED | 伪page=3不作覆盖依据；[实际论文API token20](../_sources/daily-20260304/SUP_QWEN_SEED_FALLBACK_20261009.md)默认14条/US locale18条、total82/next40，BJT Mar01/Mar02→Mar12间无Mar03目录项 | 受阻 | locale影响可见条目，有限论文邻接段已核；Blog及完整历史首次公开仍受限，库存不是当日候选，不授历史零事件 |
+| SRC-BAIDU-ERNIE | 本轮[Blog](https://ernie.baidu.com/blog/zh/)当前10条page1of2，Apr15→Feb06跨Mar03，下一页更早2025历史止 | 已检查 | 仅可见目录范围，不称全部机构历史 |
 | SRC-XIAOMI-MIMO | [Paper/Blog](https://mimo.xiaomi.com/)Paper8项Mar13→Feb03，Blog15项无日期/More停止 | 受阻 | Paper段已查；Blog本窗日期/分页缺失 |
 | SRC-MINIMAX | [英文](https://www.minimax.io/blog)76行/[中文](https://www.minimaxi.com/blog)68行，相邻日期与主题补检 | 已检查 | 有限当前目录，不扩历年Tech Blog |
-| SRC-ARXIV | 模型后训练、推理通信调度、多模态World Model与Agent有界主题查询；宽库存只补相关标题；具名追加9项及早4项实际完整题摘 | 受阻 | 十五论文家族准入/必要证据与复合公开范围已核；00063/00188/00196首公开下界不明精确隔离，不计零命中或全库存审阅 |
+| SRC-ARXIV | 本轮4个主题Atom发现首批100/73/100/100（total232/73/242/164），start0止；CL/DC官方月列表首100相关标题补检，新增34家族完整题摘；Submitted/Updated只作发现身份 | 受阻 | 月级列表不能确认Mar03，31项必要公开日潜力隔离；00364污染metadata经正确HTML题摘恢复。原15论文有效Source/POST冻结复用，不授新日期、不计宽库存全审或零命中 |
 
 ## 3. 候选与判断
 
 下列十六项为本日有界研究确认落窗的唯一家族。表中范围是支持的arXiv公开区间，不是补造公告时刻。5～6分项因明确长期知识缺口或评价/安全边界，深入审阅受影响内容，不为Books提分；日期隔离项不混入分母。
+
+此段及原16行只描述冻结原轮；本轮新行在表末，仅以官方日级公开日期落补窗，旧范围不授新日期证据。
 
 | 材料 | 公开时间 | 项目贡献与评分 | 审阅结果 | Books决定 |
 | --- | --- | --- | --- | --- |
@@ -54,6 +60,7 @@
 | [GRPO Policy Gradient as U-Statistic](https://arxiv.org/abs/2603.01162v1) | 2026-03-03T09:00:00+08:00 ～ 2026-03-03T13:03:43+08:00 | 同题依赖误当独立 → LOO/未clip estimator身份 → 固定N下prompt/group预算分账；2+2+3=7 | 深入完成 | 整合：TRAIN-GRPO，[Ch33](../../../../books/part-04-training-system/33-grpo.md)，root实际POST通过 |
 | [Trident](https://arxiv.org/abs/2603.02075v1) | 2026-03-03T09:00:00+08:00 ～ 2026-03-03T13:24:41+08:00 | 异步负载污染容量观测 → config失配invalidate/warmup → 调参proposal与切换状态分离；2+2+3=7 | 深入完成 | 整合：TRAIN-DATA，[Ch27](../../../../books/part-04-training-system/27-data.md)，root实际POST通过 |
 | [AgentSkillOS](https://arxiv.org/abs/2603.02176v1) | 2026-03-03T09:00:00+08:00 ～ 2026-03-03T13:27:03+08:00 | 目录可见不等run装载 → active/dormant/selected graph分层 → 编排与执行准入分开；2+2+2=6 | 深入完成 | 整合：AGENT-PLATFORM，[Ch84](../../../../books/part-07-agent/84-agent-platform.md)，root实际POST通过 |
+| [Gemini 3.1 Flash-Lite安全评价card](https://deepmind.google/models/model-cards/gemini-3-1-flash-lite/) | 2026-03-03 | 不同grader/query的card分数混用 → 原文明确不可跨card比较并分自动flag/人工与baseline → 版本化scorer/人口而非产品排名；2+1+3=6 | 深入完成 | 已有覆盖：PLATFORM-EVALUATION-SYSTEM，[Ch66](../../../../books/part-06-ai-infrastructure/66-evaluation-system.md)的EvaluationIdentity/Scorer/ReleaseGate；root独立核通过 |
 
 ## 4. 证据与知识整合
 
@@ -125,7 +132,13 @@ v1 §3–5.5、§6.1–6.4实际读：honest-but-curious、联合token/权重变
 
 七项复合日期原字段：registered UTC03/03依次00349=04:44:47、00381=04:45:30、00468=04:47:32、00680=04:52:24、01162=05:03:42、02075=05:24:40、02176=05:27:02，均arxiv.content/findable；v1 Submitted UTC依次02/27T22:28:33、02/27T23:42:37、02/28T05:04:42、02/28T14:43:02、03/01T15:56:43、03/02T17:00:22、03/02T18:46:47。Fri14EST之后、Mon14EST之前结合上述官方ID/公告/DOI规则，得到表内全落窗范围；原值与必要审阅见[本日新增记录](../_sources/daily-20260304/V3_ADDITIONAL_RESEARCH_NOTES.md)，不是Submitted单独落窗。
 
+### [Gemini 3.1 Flash-Lite安全评价card](https://deepmind.google/models/model-cards/gemini-3-1-flash-lite/)
+
+原§2/§5的贡献关闭是冻结历史裁决，本轮经root定点校准后纠正：不采用版本名/价格/架构宣传，card的评价反侧有具体长期边界。官方Published3March与release原稿同日明确落03-03补窗，不要求timezone或时分秒。实际读Ethics尾的自动/人工、比较口径与CCL迁移说明，原证存[本轮card提取](../_sources/daily-20260304/SUP_GEMINI_CARD_WEB.json)；私有queries/完整grader/人审样本Not Disclosed。模型与query/grader共同变化，不能将旧卡差额当纯权重因果；厂商人工解释不等独立安全证明，表头与tone脚注baseline差异保留，不采倍率或通用风险结论。仅采用scorer/人口版本化、flag/人工分账与迁移证据的受限意义。[本轮记录](../_sources/daily-20260304/supplement-20261009.md#gemini新增候选原负面裁决本轮纠正)给出具体PRE：Ch66 EvaluationIdentity 283–301、Scorer 2710–2740、ReleaseGate 3351–3381已实际承载上述命题，Ch65/67交接已读，已有覆盖、没有Books新写。root独立Source/具体已有覆盖及六部分DAY通过，未复现实验。
+
 ## 5. 缺口与下一步
+
+本轮普通扫描/筛选/候选必要证据与Books比较已完成，Gemini独立Source/具体已有覆盖及root六部分DAY通过，普通待办0。新增31个exact-v1潜在贡献的首次公开日，按[具名本轮记录](../_sources/daily-20260304/supplement-20261009.md#新题摘及准入裁决)一次请求后精确隔离，不计候选、不评分、不进Books、不支撑无遗漏，不以日期缺口追全文。所需是各原稿官方首次公开日期记录/作者日期原稿，不须时分秒；00364已从正确exact-v1 HTML恢复身份与题摘，不再索要可执行的身份材料。来源历史缺段本轮按§2隔离，材料返回仅重开具名项。以下旧请求原文仅冻结保留，不成为本轮时刻/09:00条件；尤其旧Gemini关闭已按上文纠正，不再用于本轮结论。旧GPT card时区/首发时刻请求同样只属冻结历史，本轮不再索要：官方安全HTML PublishedMar2足够，去重复用[03-03报告](../03/README.md)实际Source、Ch66窄整合与非writer POST，不新增GPT card日期缺口。
 
 普通研究信号已处置，新增十项必要源/实际Books处置及整日独立Gate均通过，普通待办0；不以脚本代替语义验收。具名负侧分层样本：00623 TraceSIR完整题摘+§3.1–3.4窄core后，TAO/长元素LLM摘要/三agent报告现有组合未提供新faithfulness或诊断保证；01960完整题摘online-softmax/tiled-KV成熟机制、cuTile编辑性与eager局部速度不改变本项目可比质量资源边界，production fused更强是反证。两项贡献前关闭、不评分。官方GPT5.3 release未披露新机制关闭；GeminiFlashLite完整Blog/card安全窄核，继承budget/Pro架构/价格宣传不成机制，grader/query变化禁止跨card安全比较，manual复核不成零风险。具体记录见[新增有限研究](../_sources/daily-20260304/V3_ADDITIONAL_RESEARCH_NOTES.md)。
 
@@ -138,6 +151,8 @@ GPT5.3 card精确日期终态保留：官方RSS/landing/PDF封面March3，与Hub
 本窗终态保留项：Meta历史Research、Google日级pubs、DeepSeek隐藏News、Seed本窗Blog/论文、MiMoBlog、Qwen动态目录指定段尚不可恢复。它们不用于正面证据、Books或无遗漏断言。可接受官方历史目录/API或帶时区首发正文，材料到达只重开该源该段，不扩整月；不把可做日期查询变成外部受阻。
 
 ## 6. 复核
+
+本轮复核者：root（非新增报告作者）；结论：通过。root实际读取全部31个潜力家族的完整题摘（含尾批15个exact-v1、00364正确HTML题摘）、全部3个明确EX及Power/CoVe决定准入core；Gemini必要官方Source和Ch66具体已有覆盖通过。14来源真实查询/返回/停止、六部分范围与31个公开日期隔离，以及GPT官方PublishedMar2去重复用说明均实际核验通过；四主题API total232/73/242/164、返回100/73/100/100已独立复算。不授294宽库存逐项题摘/全文或全量Coverage/Evidence。原16行、原窗口、连续原§4实际冻结比较均通过，表格衔接已修。普通待办0；以下冻结原轮复核仅保留历史。
 
 复核者：mar02_v3（接手作者前，仅root原六项题摘/日期/00356已有覆盖）；mar01_v3、mar03_v3（原五项必要源/实际POST，分批）；root（新增十项、具名负侧及最终来源/Report范围，不自验原六项）
 结论：通过

@@ -2,42 +2,44 @@
 
 **规范：** V3
 **窗口：** 2026-02-15T09:00:00+08:00 ～ 2026-02-16T09:00:00+08:00
+**窗口说明：** 用户授权已有 Daily 只补遗漏，保留原窗口、原候选日期/评分和有效审阅，不搬移归属。
+**补充窗口：** 2026-02-15 ～ 2026-02-15
 **状态：** 完成
 **Books：** 纳入本次
-**检查时间：** 2026-10-04T22:13:07+08:00
+**检查时间：** 2026-10-08T16:39:00+08:00
 
 ## 1. 结论
 
-本窗没有确认落窗且通过贡献准入的材料，候选0、必要证据审阅0、Books整合0；因此本日 Books 判断为 No Change，不是跳过整合。十四每日来源已作有限独立检查，来源查询、停止位置和代表排除见 [本日来源记录](../_sources/daily-20260216/V3_SOURCE_NOTES.md)。不沿用旧V2的Complete或“注册表只需arXiv”前提，也不统计全年目录/搜索结果为当天新论文。
+原候选0、原窗口及连续原§4保持；本轮补充完整北京自然日后确定新增0，必要候选证据审阅0、Books新写0，本日为No Change。十四每日来源已独立执行有限检查，原件、实际查询与停止范围见[本轮来源补查](../_sources/daily-20260216/supplement-20261008.md)。不沿用旧完成或别日覆盖。
 
-arXiv下一次常规公告为02/16 09:00北京时间，恰在排除终点；OpenAI官方RSS窗口内无条目。其他来源存在历史目录与日期精度限制，已具名隔离，不据此保证“当天没有新研究”或全网无遗漏。普通来源/筛选/证据/Books及独立复核待办0；root已通过独立整日语义验收，完成表示本窗处理到安全终态，不授隔离项正面Evidence或Coverage通过。
+新增发现并不等于新增候选：DeepMind/Entropy确有Feb15的Dingle/Hutter组合优化理论文章，完整题摘与必要主张范围后贡献前关闭；SkillJect题摘潜在贡献成立但arXivv1提交已是北京时间Feb16，不能记为Feb15公开，更早作者公开日期尚未确认，只留精确恢复线索。MemGUI采用/榜单、open-terminal MCP包装/普通参数兼容修复与社区故障未诊断材料按具体增量关闭。不以关键词、机构或Books已有作为准入理由。
+
+arXiv常规Sunday公告是北京时间Feb16；官方2026holiday表无Feb15、有限异常检索无具体异常线索，故不展开无本日批次的分类全文队列。机构历史目录缺段继续隔离，不据公告表或搜索无命中授机构零发布。本轮root已实际通过完整DAY，普通扫描/题摘/必要原源/Books写入及独立验收待办0；完成表示本轮安全终态，不授隔离项正面Coverage/Evidence。
 
 ## 2. 来源覆盖
 
-以下只扫描每日组；未触发清单内按需来源，不扫描每周来源。入口返回全文不等于全文逐篇审阅；本日按窗口附近日期/相关标题收窄，查询与恢复尝试的实际范围见来源记录。
+只检查十四每日源，清单按需来源未触发，不扫每周组。以下是本轮2026-02-15自然日的有限范围，与旧09:00窗口原检查区分；搜索只发现、当前目录不充当完备历史水位。全部原件及query见[来源与停止表](../_sources/daily-20260216/supplement-20261008.md#实际来源与停止范围)。
 
 | 来源 | 检查范围与依据 | 结果 | 缺口 |
 | --- | --- | --- | --- |
-| SRC-OPENAI | Research→Index当前首屏；官方[RSS](https://openai.com/news/rss.xml)取本窗UTC 02/15 01:00～02/16 01:00与两侧pubDate，02/13 11:00GMT～02/18 00:00GMT之间无item | 已检查 | 不将RSS外未归档发布声称为零 |
-| SRC-ANTHROPIC | [Research](https://www.anthropic.com/research)及官方HTML publishedOn的本窗切片；India Economic Index为02/16 01:38Z=09:38北京时间，已过终点 | 已检查 | 只覆盖本页公开日期切片，不声称未列历史全部恢复 |
-| SRC-GOOGLE-AI | DeepMind Research/Blog、Google Publications/Blog当前入口与有限02/15～16/after-before主题检索；停止在返回首屏与搜索结果 | 受阻 | G-GOOGLE：精确历史日期列表不可恢复 |
-| SRC-META-AI | Research壳后恢复官方Publications page3、Blog page2；核02/13～02/26论文邻接、02/09～03/11博客邻接，未见本窗条目 | 已检查 | G-META：混合排序分页不等于完整历史水位 |
-| SRC-QWEN | 旧博客迁移→qwen.ai；Qwen3.5仓库重定向3.8但News保存02/16 release，沿原release链接仍无可读时刻 | 受阻 | G-QWEN：迁移目录与首次公开时区/时刻 |
-| SRC-DEEPSEEK | 官网→Docs news→[Change Log](https://api-docs.deepseek.com/updates)，日期间隔2025/12/01～2026/04/24内无release；有限官方domain日期query | 已检查 | G-DEEPSEEK：API日志之外未归档研究片段 |
-| SRC-MOONSHOT | Kimi Platform Blog完整标题列表、MoonshotAI与Kimi-K2.5公开入口；有限本窗官方domain日期query | 受阻 | G-KIMI：平台页截至2025/11，未恢复2月历史发布/修订列表 |
-| SRC-TENCENT-HUNYUAN | 首查Research“全部”入口：web/GET为壳，浏览器创建和定点导航两次超时；官方GitHub/T1和有限日期query未恢复本窗 | 受阻 | G-HUNYUAN：动态全部目录与精确历史列表，不计零命中 |
-| SRC-ZAI | 首查Research全部、release notes；Research邻接02/11～02/21，API notes邻接02/12～04/07，无本窗条目 | 已检查 | 目录日期不能替代未列出的事件首公开 |
-| SRC-BYTEDANCE-SEED | Research及Publications首屏、有限相关日期query；Seed2.0官方正文/Model Portfolio同标02/14，02/16排行榜截至日不作发布 | 已检查 | G-SEED：旧论文分页及历史日期片段不可恢复 |
-| SRC-BAIDU-ERNIE | Blog第1页已跨窗：04/15～02/06，再01/29直至2025/11；停止第1页，不打开旧分页 | 已检查 | 无具体本窗事件；不声称已审所有仓库commit |
-| SRC-XIAOMI-MIMO | Paper日期邻接03/13～02/03；Blog/官方GitHub入口、有限本窗query | 已检查 | G-MIMO：无日期Blog的历史片段 |
-| SRC-MINIMAX | 英文Blog恢复原文/IR入口、中文Blog重定向目录、Agent Tech Blog；Forge英文02/14、中文02/12，Agent页只有导航 | 受阻 | G-FORGE首发/版本差异；G-MINIMAX-AGENT历史目录 |
-| SRC-ARXIV | [官方公告表](https://info.arxiv.org/help/availability.html#announcement-schedule)：无周五/周六公告，周日02/15 20:00EST=02/16 09:00北京时间；旧本日inventory0仅旁证 | 已检查 | 不以submitted/DOI created替代公开；终点批次不属于本窗 |
-
-各机构有限官方domain日期搜索已并入对应来源的实际检查范围，具体查询见本日来源记录；搜索仅作发现，不以无结果证明无研究或扩成跨日队列。
+| SRC-OPENAI | Research首屏→官方RSS GET200，Feb13～18原pubDate邻接无Feb15，严格index日期搜索 | 已检查 | RSS外未归档发布不授零 |
+| SRC-ANTHROPIC | Research→官方HTML publishedOn Feb05/16/18日期切片、精确本日query | 已检查 | 只此公开目录，不保证全站 |
+| SRC-GOOGLE-AI | DeepMind Research/Blog、Google Pubs/Blog首屏，model主题日期query与两domain精确Feb15补检；Dingle正式Feb15原文题摘/§5/7具名关闭 | 受阻 | G-GOOGLE：完整本日模型主题历史切片缺失，不称零发布 |
+| SRC-META-AI | Research空→Publications page3 Feb26～13/11、Blog page2 Mar11～Feb09邻接；混合旧年后停止 | 已检查 | G-META：混合排序不是连续历史水位 |
+| SRC-QWEN | 旧blog迁移→qwen.ai0行，Qwen3.5→3.8 News明确首次release Feb16，精确Feb15query | 受阻 | G-QWEN-DIRECTORY：迁移历史列表缺段；Feb16release不属补充窗，不要求时刻 |
+| SRC-DEEPSEEK | 官网→Change Log官方2025Dec01～2026Apr24间隔、官方domain本日query | 已检查 | G-DEEPSEEK：日志外未归档研究片段 |
+| SRC-MOONSHOT | Platform Blog26标题截至2025Nov、Kimi-K2.5当前README、本日官方domainquery | 受阻 | G-KIMI：Feb15发布/重要修订历史片段 |
+| SRC-TENCENT-HUNYUAN | 首查Research超时、GET SPA壳、按清单浏览器create与getTab两次超时；官方T1与本日query | 受阻 | G-HUNYUAN：“全部”列表本日切片未取到，不授零 |
+| SRC-ZAI | 首查Research web超时→GET官方HTML Feb21/11/02邻接，release notes Apr07～Feb12、本日query | 已检查 | 只两官方日期段，不替代未列事件 |
+| SRC-BYTEDANCE-SEED | Research精选、Publications第1页1～20/242、本日query；Seed2.0正文官方Feb14/as-of Feb16 | 已检查 | G-SEED：旧论文分页缺段；Feb14按公开日窗外，不请求时刻 |
+| SRC-BAIDU-ERNIE | Blog第1页May09～Feb06～Jan29跨窗；本日中文日期query，未开2/2 | 已检查 | 不称全部仓库commit已审 |
+| SRC-XIAOMI-MIMO | Paper Mar13～Feb03～Jan08日期段、Blog无日期当前标题、本日query | 已检查 | G-MIMO：Blog历史日期切片 |
+| SRC-MINIMAX | EN末尾Mar18～Feb14 Forge～Feb12；CN迁移后Mar18～Feb12；Agent Tech Blog导航；精确本日query | 受阻 | G-MINIMAX-AGENT历史目录；两Forge官方日均非Feb15，不追首发时刻 |
+| SRC-ARXIV | 公告表/2026holiday、status首页、两条本日异常query及本日主题query；SkillJectv1事件页/定点cs.CR月列表cache miss | 已检查 | 无本日常规批次；历史status阴性不作完备保证，SkillJect更早作者公开未确认 |
 
 ## 3. 候选与判断
 
-无确认落窗的贡献候选；不评分历史目录、窗外材料、模糊日期或明确不准入的集成/领域应用。日期未确定而可能相关的Qwen/Forge列入§5，不先放入确定候选。
+原0、新增确定0。关闭或窗外线索不评分；“正式Feb15发表”的Dingle不是因日期不明关闭，其本稿实际新增没有直接改变项目解释/设计的命题。SkillJect有潜在贡献但本日没有确认first-public，不能先列确定候选。
 
 | 材料 | 公开时间 | 项目贡献与评分 | 审阅结果 | Books决定 |
 | --- | --- | --- | --- | --- |
@@ -48,32 +50,35 @@ arXiv下一次常规公告为02/16 09:00北京时间，恰在排除终点；Open
 
 有限代表排除见 [来源记录“贡献校准”](../_sources/daily-20260216/V3_SOURCE_NOTES.md#有限补检与贡献校准)：社区计费意见及未经诊断的故障不支持研究机制；第三方nanobot OAuth/skill接入标题只有模块组合，未核历史原版，不宣称已审安全变化；Meta领域应用无直接机制增量且属暂缓范围。Seed2.0原文的02/16排行榜截至日期不是新公开事件。以上排除不以机构声望、访问状态或Books覆盖替代贡献准入。
 
+### 本轮补充判断（原§4以上连续正文冻结）
+
+本轮没有需采用的新增当窗命题，No Change依据是贡献/日期漏斗，而非“所有主题已覆盖”。Dingle必要题摘及§5/7/§4范围段的校准、其余原事件核心与限制见[完整筛选判断](../_sources/daily-20260216/supplement-20261008.md#完整题摘与代表关闭)和[首包](../_sources/daily-20260216/supplement-admission-20261008.md)。DNN generalization/LLM training只是Dingle引用既有工作的例子；组合空间按理想算法prior采样的等待次数不含生成样本计算，原文也未新增模型训练或参数—函数证据。此判断已由root实际读必要位置独立认可，不继续全部证明/PDF或无意义Ch4改写。没有新Books owner差额、PRE/actualPOST需求，不宣称具体已有覆盖。
+
 ## 5. 缺口与下一步
 
-尚可继续执行的普通待办：0。来源范围/停止位置、日期边界、全部拟入选项（0）、代表排除及No Change已由root独立整日复核通过；无待扫描、待题摘、待原源、待Books写入或待独立验收项。
+普通待办：0。root本轮完整六部分DAY独立验收已通过，实际依据见[本轮独立复核](../_sources/daily-20260216/supplement-20261008-independent.md#完整日级验收)。旧复核与旧完成没有被用来替代本轮DAY。
 
-本窗终态保留项如下。全部不用于正面证据、不进入Books、不支持Coverage通过、无遗漏或性能/安全保证；后来取得材料只定点重开对应项，不恢复整月或旧Weekly池。
+本窗终态保留项不用于正面证据、不进入Books、不支持无遗漏断言，也不授正面Coverage/Evidence、候选或零发布；取得所列替代材料后按以下条件定点重开：
 
-- G-GOOGLE：DeepMind/Google Research本窗历史列表缺失；需官方按发布日期可核的02/15～16目录、feed或archive，替代是具体相关原始发布及带时区时刻。恢复点为来源记录§十四每日来源第3项。
-- G-META：已核Publications page3和Blog page2的目标日期邻接，但页内混合排序不能证明分页完整；需官方连续历史水位或具体本窗原始事件。重开第4项，不重读旧论文附件。
-- G-QWEN：[Qwen3.5](https://github.com/QwenLM/Qwen3.5)仅保留02/16日字段，qwen.ai动态目录和原blog不可读；需明确首次公开时区/时刻（或完全落窗的区间）及精确原版。重开第5项；模型snapshot名02/15与后继3.8正文不是替代证据。
-- G-DEEPSEEK：官方Change Log已查但不能替代所有未归档研究；需本窗官方论文/报告原入口和首次公开信息才重开第6项。
-- G-KIMI：Platform Blog截至2025/11，当前K2.5/组织页不能恢复本窗发布/重要修订列表；需本窗官方归档或具体带日期原始说明。重开第7项，不全扫历史repo。
-- G-HUNYUAN：[Research全部](https://hunyuan.tencent.com/research)动态目录浏览器两次超时；JS/官方GitHub/T1未得本窗历史列表。需可访问全部目录的02/15～16切片或官方export；替代为具名相关原源和首次公开证据。重开第8项，T1相对“今年2月中”不能绑定2026/本日。
-- G-SEED：Research精选/Publications首屏不能复原2月旧分页；Seed2.0两官方入口标02/14但未披露时区，未取得完全落窗的首公开区间。需本窗相关官方目录切片或具名原发布及精确日期；重开第10项，本窗不采用、不扩处理其他归属日。
-- G-MIMO：Paper日期切片已核，Blog无日期历史片段缺失；需本窗官方Blog日期/归档或具体原稿。重开第12项。
-- G-FORGE：[英文原文](https://www.minimax.io/blog/forge-scalable-agent-rl-en-1779896141)02/14、中文目录02/12，未披露时区且迁移后当前文本不能证明首版；需首次公开时刻/时区及原始版本。重开第13项，不将单日字段、迁移URL后缀或宣传性能用于本窗准入。
-- G-MINIMAX-AGENT：[Agent Tech Blog](https://agent.minimax.io/docs/techblog)只有导航无文章历史列表；需本窗官方目录/export或具体原始文章与日期。重开第13项。
+- G-GOOGLE：DeepMind/Google本日模型主题官方历史列表缺片。需2026-02-15公开日期可核的目录/feed/archive或具名原始模型研究；定点重开本轮来源表Google行，Dingle关闭不重新审。
+- G-META：page3/page2混合排序非连续历史水位。需本日官方连续日期片段或具名原始事件；重开Meta行，不遍历旧年全文。
+- G-QWEN-DIRECTORY：迁移目录历史缺段。需qwen.ai本日原始研究目录/具体稿与公开日；重开Qwen行。Qwen3.5官方Feb16已按日字段排出补充窗，不再要求时分秒或以快照名Feb15入池。
+- G-DEEPSEEK：Change Log外历史研究片段缺失。需本日官方报告及公开日，重开DeepSeek行；不声称API日志代表所有论文。
+- G-KIMI：Platform Blog截至2025Nov，repo不能恢复Feb15发布/重要修订列表。需本日官方归档/具名说明与日期，重开Moonshot行。
+- G-HUNYUAN：Research“全部”动态目录实际浏览器两次超时。需可访问Feb15切片/官方export，或具名原文及公开日；重开Hunyuan行，不绑定T1相对“今年2月中”。
+- G-SEED：Publications旧分页缺段。需本日官方模型主题目录切片或具名原始稿及公开日；重开Seed行。Seed2.0官方Feb14按合同窗外，Leaderboard截至Feb16非首次公开，不要求时刻。
+- G-MIMO：无日期Blog历史片段缺失。需本日官方Blog目录/具体原稿与公开日；重开MiMo行。
+- G-MINIMAX-AGENT：Agent Tech Blog仅导航，无本日文章历史列表。需官方export/具名原文与日期；重开MiniMax行。Forge官方Feb12/14不属补充窗，不请求精确首发时刻或后继文本作为旧版。
+
+窗外恢复线索，不阻塞本轮：[SkillJect arXiv2602.14211v1](https://arxiv.org/abs/2602.14211v1)有潜在供应链机制贡献，但v1提交已是BJT Feb16，arXiv首次公开日期尚未恢复，更早作者稿本日公开亦无依据。需要official announcement/list或更早作者稿的公开日，才定点路由其真实归属；不把submission/run date当公开、不指定另一Daily、不扩成下一日全文池。精确v1题摘与失败恢复已保留。
 
 ## 6. 复核
 
-复核者：root（非作者；报告作者feb16_v3）。
+复核者：root（非作者；本轮作者supplement_20260216）。
 结论：通过
 
-首批准入/代表排除校准已由root认可：arXiv公告恰排除终点即可停止；无确定候选时仍须十四每日源有限检查；Forge/Qwen按日期终态隔离而不扩旧日期。此次校准不替代整日验收，也不把初筛等同论文证据复核。
+root实际独立复核见[原件](../_sources/daily-20260216/supplement-20261008-independent.md)。原复核依据保留[冻结原件](../_sources/daily-20260216/supplement-baseline-20261008.md)。首包拟新增0、SkillJect日期下界、全部潜在贡献与分层代表关闭已独核；随后Dingle由root实际读完整题摘/Introduction、完整§5/7及§4范围，同意具名贡献前关闭，未核全部证明或宣称理论无学术价值。
 
-root实际顺读本日六部分及完整V3_SOURCE_NOTES，核十四每日来源的查询/停止范围；再独立核5个来源的必要原始日期依据：OpenAI官方RSS窗口切片、Anthropic官方HTML publishedOn=02/16 01:38Z、arXiv公告表L169–200、智谱Research时间排序的2月邻接、ERNIE第1页邻接。全部拟入选项为0；No Change未外推为已有覆盖或全网无贡献。10项外部终态保留的身份、必要性、隔离及重开范围均已检查，不授正面Coverage/Evidence。
+完整DAY实际顺读本轮六部分、十四每日来源的查询/恢复/停止表及首包，抽核native、west/east、recovery、final-narrow必要原始日期与入口记录。全部拟新增0核毕；其余按来源/理由分层核SkillJect、MemGUI、open-terminal、nanobot镜像、社区未诊断故障、Seed/Qwen日期伪线索和暂缓领域应用。未全量复查所有搜索噪声、未列全站事件或全部附件；没有共同错误理由要求扩池。No Change未伪装为具体已有覆盖或Books写入。九来源限制与SkillJect线索的必要性、隔离和定点恢复已核，普通待办0。
 
-其余排除按来源/理由分层核对5类代表：社区计费意见、Assistants故障、MCP单用户故障、nanobot既有接入组合、DINO领域应用。范围/准入理由获认可；未将第三方镜像标题视为exact旧版或安全审阅，也未无差别重读全部附件、旧论文、机构历年列表或未恢复历史目录。其余9个来源的实际入口/停止与限制依据以本日记录复核，不声称独立重抓了所有原页或全量排除验证。发现并纠正ERNIE第2页未实际打开、Seed2.0仅日精度而非已确认窗外两处表述；不存在共同错误理由要求扩池重审。
-
-完成态V3结构/一致性及本日限定cached/unstaged diff-check通过；这些仅支持机器可判定的一致性，不代替上述语义验收。仅改本日日报与本日来源记录；不改共享索引、LEARNING_STATE或Books，不stage、commit、push。
+作者实际完成态V3结构/一致性通过；8个本地链接、原窗口/0候选/原§4连续逐字保留通过；本日限定unstaged diff-check通过。完成态首次校验要求§5使用可判定的“不用于正面证据”声明，已仅修正文案并重验通过，未变更研究或隔离边界。cached基线原件存在末空行告警，工作副本已修正而未改index，不声称cached通过；不重置或stage既有内容。机器一致性不代替来源或语义验收。本轮只改本日日报及其_sources，没有Books新写，本作者未stage、commit、push。

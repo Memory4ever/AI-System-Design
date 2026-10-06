@@ -1,0 +1,170 @@
+Official exact-v1 https://arxiv.org/html/2602.08382v1; checked 2026-10-08
+Necessary A.1–5 configurations/Algorithm1 and C direct failure modes only. Core S3/4 in chunk-core.json.
+L452: ## Appendix A Implementation Details
+L453: 
+L454: This appendix provides the technical specifications necessary for reproducing LycheeMemory. We detail the three-stage training pipeline: (1) Pre-training of the Compressor with synthetic supervision (QA pairs generated via self-annotation), (2) Joint Reinforcement Learning of the Compressor and Reasoner, and (3) supervised training of the Gate as a binary classifier.
+L455: All models are initialized from the Qwen2.5-3B-Instruct and Qwen2.5-7B-Instruct base models. We utilize 2 $\times$ NVIDIA A100 (80GB) GPUs for training.
+L456: ### A.1 Stage 1: Compressor Pre-training
+L457: 
+L458: The objective of the Compressor is to encode textual information into the latent space of memory tokens. We employ a random compression ratio $\alpha\in\{2,4,8,16\}$, meaning one memory token is inserted for every $\alpha$ text tokens.
+L459: ##### Data Construction.
+L460: 
+L461: We sample up to 1B tokens from the RedPajama cite191†Weber et al. (2024) , and train on approximately 160M effective tokens. For each document, we create splits of sizes 2048, 4096, and 8192, denoted as $C_{i}$. We use self-annotation to generate synthetic Question-Answer pairs(i.e., synthetic supervision), serving as training targets for reconstruction and comprehension tasks.
+L462: ##### Configuration.
+L463: 
+L464: We train a LoRA adapter ($\Psi_{\text{comp}}$) for the Compressor with a rank of $r=64$ and a LoRA alpha of $\alpha_{\text{lora}}=128$. The larger rank is selected to ensure sufficient representation capacity for the compression task. We use the AdamW optimizer with an initial learning rate of $5\mathrm{e}{-5}$ and a cosine annealing schedule, with the maximum learning rate set to $1\mathrm{e}{-4}$. The batch size is set to 8, and training proceeds for 5,000 steps.
+L465: ### A.2 Stage 2: Joint Reinforcement Learning Optimization
+L466: 
+L467: Algorithm 1 Joint Policy Optimization for LycheeMemory (GSPO)
+L468: 
+L469: 1: Joint policy $\pi_{\vartheta}=\{\pi_{\text{comp}},\pi_{\text{reason}}\}$, reference model $\pi_{\text{ref}}$ (frozen), dataset $\mathcal{D}$, group size $G$, clipping $\epsilon$, KL coefficient $\beta$
+L470: 
+L471: 2: Optimized parameters $\vartheta$
+L472: 
+L473: 3: while not converged do
+L474: 
+L475: 4:   Sample document–query pair $(D,Q)\sim\mathcal{D}$
+L476: 5:   for $g=1$ to $G$ do $\triangleright$ Group sampling for the same $(D,Q)$
+L477: 
+L478: 6:    Sample memory $\Theta_{g}\sim\pi_{\text{comp}}(\cdot\mid D)$
+L479: 
+L480: 7:    Sample answer $A_{g}\sim\pi_{\text{reason}}(\cdot\mid\Theta_{g},Q)$
+L481: 
+L482: 8:    Define trajectory $y_{g}=(\Theta_{g},A_{g})$
+L483: 
+L484: 9:    Compute reward $\hat{r}_{g}=\mathcal{R}(Q,A_{g})$
+L485: 
+L486: 10:    Compute KL penalty $d_{g}=D_{\mathrm{KL}}(\pi_{\vartheta}(y_{g})\,\|\,\pi_{\text{ref}}(y_{g}))$
+L487: 
+L488: 11:    $r_{g}\leftarrow\hat{r}_{g}-\beta d_{g}$
+L489: 
+L490: 12:   end for
+L491: 13:   $\{\hat{A}_{g}\}_{g=1}^{G}\leftarrow\textsc{GroupNorm}(\{r_{g}\}_{g=1}^{G})$
+L492: 
+L493: 14:   for $g=1$ to $G$ do
+L494: 
+L495: 15:    $\rho_{g}\leftarrow\dfrac{\pi_{\vartheta}(y_{g})}{\pi_{\vartheta_{\text{old}}}(y_{g})}$
+L496: 
+L497: 16:    $\mathcal{J}_{g}\leftarrow\min\!\left(\rho_{g}\hat{A}_{g},\,\text{clip}(\rho_{g},1-\epsilon,1+\epsilon)\hat{A}_{g}\right)$
+L498: 
+L499: 17:   end for
+L500: 
+L501: 18:   $\vartheta\leftarrow\vartheta+\eta\nabla_{\vartheta}\frac{1}{G}\sum_{g=1}^{G}\mathcal{J}_{g}$
+L502: 
+L503: 19: end while
+L504: We employ the GSPO algorithm for training. The full procedure is summarized in Algorithm cite192†1 . The chunk size is set to 4096, the rollout batch size to 128, the group size $G$ to 12, and the update batch size to 16. The KL divergence coefficient $\beta$ is set to $1\mathrm{e}{-3}$. We use the AdamW optimizer. Since LoRA is the optimization target, we set the learning rate to $3\mathrm{e}{-5}$ with a linear warmup scheduler over 10 steps.
+L505: In our runs, the joint optimization typically converges within 150 optimizer update steps and takes about three days of wall-clock time on 2 $\times$ A100 (80GB).
+L506: ##### Reward Configuration.
+L507: 
+L508: During training, we employ a strict rule-based reward validator to prevent reward hacking. We extract tokens within the <answer></answer> tags of the final output. If the extracted answer matches the ground truth exactly, every update step in the trajectory receives a reward of 1.0; otherwise, the reward is 0.0. We adopt this stricter validator during RL to avoid exploiting normalization artifacts that are acceptable for evaluation.
+L509: ##### Dataset Construction.
+L510: We follow the dataset construction methodology of MemAgent. Each training sample consists of 130 documents from HotpotQA, with a total token length of approximately 20K. We thoroughly cleaned the dataset by filtering out questions where Qwen2.5-7B-Instruct could achieve a 100% Best-Of-2 score without any context (zero-shot). We selected the top 32,768 processed samples as our training set. Similarly, we synthesized 192 samples from the HotpotQA validation set.
+L511: For extrapolation testing, we used the same pipeline to synthesize test sets with varying context lengths, where the number of Wikipedia entries ranges from 50 to 3,200, corresponding to context lengths from approximately 7K to 1.75 million tokens.
+L512: ### A.3 Stage 3: Gate Module Training
+L513: 
+L514: The Gate is trained separately as a binary classifier to determine whether a memory block has retrieval and reasoning value given the current query and working memory.
+L515: 
+L516: ##### Label Assignment.
+L517: 
+L518: Training data is derived from the rollout process in the RL stage. For multi-hop questions, chunk updates (i.e., memory block updates) containing supporting facts are labeled as Positive ($y=1$). Chunk updates containing no supporting facts are labeled as Negative ($y=0$).
+L519: ##### Objective.
+L520: 
+L521: We minimize the Binary Cross-Entropy (BCE) loss. To mitigate the class imbalance problem (where irrelevant paragraphs far outnumber relevant ones), we apply a positive class weight of $pos\_weight=3.0$.
+L522: 
+L523: ##### Configuration.
+L524: 
+L525: The Gate LoRA adapter ($\Psi_{\text{gate}}$) uses a smaller rank of $r=16$. We train for 3 epochs with a learning rate of $5\mathrm{e}{-5}$. During inference, the gating threshold $\tau$ is empirically set to 0.5.
+L526: 
+L527: ### A.4 Evaluation and Baselines
+L528: ##### Evaluation Metrics.
+L529: 
+L530: During evaluation, we report normalized sub-EM (Exact Match). We normalize both the model answer and the ground truth (e.g., removing definite articles, ignoring case differences) and compute a sub-EM score. This means if an answer contains all elements of the standard answer, it is considered correct. When an answer consists of multiple parts, the score corresponds to the proportion of correct parts provided.
+L531: ##### Long-Context Benchmarks.
+L532: 
+L533: We evaluate our model on three long-context QA benchmarks, including RULER-HQA cite115†Yang et al. (2018) ; cite116†Hsieh et al. (2024) , 2WikiMultihopQA cite117†Ho et al. (2020) , and StreamingQA cite118†Liska et al. (2022) . Below we describe the benchmark construction and our implementation details.
+L534: 
+L535:   * •
+L536: RULER-HQA: A synthetic long-context HotpotQA benchmark derived from the RULER framework. Similar to HotpotQA, each query has two supporting documents (gold evidence). We construct long contexts by mixing the gold evidence with irrelevant distractor documents (sourced from other samples). We build test sets with varying total context lengths ($N\in\{7\text{k},14\text{k},28\text{k},...,448\text{k},896\text{k},1.75\text{M}\}$), with randomized evidence positions.
+L537: 
+L538:   * •
+L539: 2WikiMultihopQA: A multi-hop QA dataset built from Wikipedia. We follow the same long-context construction and evaluation pipeline as RULER-HQA: we take the query-relevant evidence documents from 2WikiMultihopQA and mix them with distractor documents to reach the target context length (14K/28K/56K in our experiments). We use the same chunking setting ($sz=4096$), memory compression, dynamic recall, and normalized sub-EM evaluation.
+L540: 
+L541:   * •
+L542: StreamingQA: A streaming QA benchmark designed for evaluation under continuously growing corpora. For our long-context setting, we concatenate the documents of all questions into a single global document of approximately 800k tokens, and evaluate each question by running LycheeMemory over this shared 800k context. We use the same chunking setting ($sz=4096$) and normalized sub-EM evaluation.
+L543: ##### Baselines.
+L544: 
+L545: We compare LycheeMemory against three categories of strong baselines:
+L546: 
+L547:   * •
+L548: 
+L549: RAG Agent: We implement a standard Retrieval-Augmented Generation agent using OpenAI’s text-embedding-3-large as the retriever. The document is segmented into semantic chunks (Wikipedia entries). For each query, the agent retrieves the top-8 most relevant chunks and feeds them into the base model for generation.
+L550: 
+L551:   * •
+L552: Search-R1: We use a Search-R1 agent trained on Qwen2.5-7B. Similar to the RAG agent, it uses OpenAI’s text-embedding-3-large as the retriever and retrieves the top-8 most relevant chunks. The agent then runs an iterative ReAct loop: generating a search query, retrieving context, reasoning over the results, and deciding whether to search again or answer.
+L553: 
+L554:   * •
+L555: MemAgent: We utilize the official implementation of MemAgent (cite113†Yu et al., 2025 ). MemAgent processes long documents in fixed-size segments (set to 5k tokens by default in the official implementation). It maintains a global memory panel and employs a learnable policy to decide whether to read, write, or overwrite information at each step. We align the prompt settings and base model (Qwen2.5-7B-Instruct) with LycheeMemory to ensure a fair comparison of the memory mechanisms.
+L556: ### A.5 Storage and Computation Trade-off
+L557: 
+L558: A critical challenge in long-context processing is the management of GPU memory (VRAM). Even with our efficient compression mechanism, maintaining a compressed KV-cache for extremely long sequences can impose a prohibitive storage overhead.
+L559: ##### Storage Analysis.
+L560: 
+L561: Consider a scenario with a context length of $N=1.75\text{M}$ tokens using the Qwen2.5-3B model (Hidden size $d=2304$, Layers $l=36$). With a compression ratio of $\alpha=4$, the system generates approximately $437.5\text{k}$ latent memory tokens. Since Qwen2.5-3B utilizes Grouped Query Attention (GQA) with 2 KV heads and 16 Query heads, the storage requirement for the KV-cache (in bfloat16 precision) is:
+L562:  | $$\mathcal{M}_{\text{KV}}\approx 2\times l\times d_{\text{head}}\times n_{\text{kv}}\times\frac{N}{\alpha}\times 2\text{ bytes}\approx 18.1\text{ GB}$$  |
+L563: While this fits within the memory of high-end GPUs like the A100 (80GB), it still consumes a significant portion of VRAM, limiting the space available for activations and larger batch sizes. Furthermore, our goal is to enable efficient reasoning on consumer-grade hardware and to support scaling to even longer contexts (e.g., 10M tokens), where static storage becomes prohibitive.
+L564: ##### Optimization Strategy.
+L565: 
+L566: To address this, we identify two potential strategies:
+L567: 
+L568:   * •
+L569: 
+L570: Offloading: Temporarily offloading the compressed KV-cache to CPU RAM or NVMe SSDs and swapping them back to GPU only during the retrieval phase.
+L571: 
+L572:   * •
+L573: 
+L574: Just-in-Time (JIT) Compression: Storing only the raw text and using the Compressor to regenerate the latent representations on the fly when needed.
+L575: By default, LycheeMemory uses offline pre-compression and stores the compressed KV-cache for inference. For contexts beyond 1M tokens, we optionally enable Just-in-Time (JIT) compression as an engineering strategy to reduce storage overhead. While re-computing embeddings incurs a computational cost, it can be more efficient than the I/O bottleneck of memory swapping. The compression process is a single parallel forward pass, whereas the reasoning process is autoregressive.
+L576: For a chunk of size 4096, compression requires only 1 forward step. In contrast, generating a reasoning chain often requires hundreds of serial steps. Therefore, the amortized computational overhead of on-the-fly compression is minimal compared to the benefits of reduced memory footprint and improved scalability.
+L577: ## Appendix B Training Convergence Analysis
+L578: 
+L579: We address the potential concern regarding the stability of jointly optimizing the Compressor and Reasoner, given the sparsity of reward signals in sequence generation tasks. Figure cite193†5 presents the raw, unsmoothed training reward curves over 50 checkpoints, comparing our Joint Optimization strategy against a baseline with a Frozen Compressor.
+L580: Figure 5: Training reward curves (raw data). The blue line (Frozen Compressor) converges quickly but hits a performance plateau. The red line (End-to-End) exhibits higher variance initially due to the exploration of the compression policy but achieving higher rewards.
+L581: ##### Observation.
+L582: End-to-End RL curve (red) shows higher volatility in the early stages (Checkpoints 0-15) compared to the Frozen Compressor (blue). This is expected, as the gradient updates must propagate through the reasoning steps back to the compression module, causing shifts in the memory representation $\Theta$. The Frozen Compressor rapidly converges to a local optimum ($\approx 0.67$) but fails to improve further, as the reasoner is limited by a static, suboptimal memory bank.
+L583: In contrast, our method steadily climbs after the initial adaptation phase, reaching a higher reward ($\approx 0.7$).
+L584: ##### Conclusion.
+L585: 
+L586: The empirical results demonstrate that despite the inherent variance in RL, the joint policy successfully converges. The fluctuating but upward trend confirms that the Compressor is actively learning to retain task-critical features that maximize the Reasoner’s success rate, validating the effectiveness of our end-to-end optimization framework.
+L587: ## Appendix C Failure Mode Analysis
+L588: 
+L589: To gain deeper insights into the limitations of LycheeMemory, we conducted a manual error analysis on 128 randomly sampled incorrect instances from the HotpotQA and 2WikiMultihopQA validation sets. We categorized the primary causes of failure into three dominant modes: Compression-Induced Hallucination, Unidirectional Dependency Mismatch, and Premature Inference Anchoring.
+L590: ### C.1 Unidirectional Dependency Mismatch (35%)
+L591: 
+L592: The most significant source of error (approx. 35%) stems from the inherent limitation of the single-pass, streaming architecture. In multi-hop reasoning, the relevance of an early piece of evidence often depends on information that appears later in the document.
+L593: ##### Mechanism.
+L594: 
+L595: When the model encounters a critical clue (e.g., at Step 3), it may not be semantically similar to the current query or working memory, causing the Gate to filter it out. Later (e.g., at Step 5), the model discovers the bridge entity that makes the previous clue relevant. However, since the static memory has already been processed and the model cannot backtrack, this information is permanently lost.
+L596: ### C.2 Premature Inference Anchoring (21%)
+L597: 
+L598: Approximately 21% of errors occur when the model aggressively acts on partial evidence, forming a correct-looking but ultimately wrong conclusion early in the process. This creates a confirmation bias in the Working Memory.
+L599: ##### Mechanism.
+L600: 
+L601: The Reasoner generates an intermediate answer based on a partial match (e.g., a shared name). This incorrect entry in the Working Memory then dominates the attention mechanism, causing the model to either ignore subsequent contradictory evidence or misinterpret it to fit the existing hypothesis.
+L602: 
+L603: ### C.3 Compression-Induced Hallucination (17%)
+L604: 
+L605: As analyzed in Appendix cite97†H.1 , about 17% of errors are due to Feature Collapse within the Compressor.
+L606: ##### Mechanism.
+L607: 
+L608: High compression ratios can cause distinct entities with similar semantic embeddings (e.g., brothers, movies in the same franchise, dates close in time) to merge in the latent space. The Reasoner retrieves a blurred representation, leading to attribute swapping.
+L609: ### C.4 Other Error Types (27%)
+L610: 
+L611: The remaining errors include:
+L612: 
+L613:   * •
+L614: 
+L615: Context Overflow: The accumulation of too many potentially relevant chunks fills the working memory context limit, flushing out early correct evidence.
+L616: 
+L617:   * •
+L618: 
+L619: Instruction Misalignment: The model correctly retrieves evidence but fails to align the final answer format with user instructions (e.g., answering Yes instead of a specific entity name).

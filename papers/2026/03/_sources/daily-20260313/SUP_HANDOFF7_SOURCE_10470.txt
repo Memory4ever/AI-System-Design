@@ -1,0 +1,3387 @@
+Fighting Hallucinations with Counterfactuals: Diffusion-Guided Perturbations for LVLM Hallucination Suppression
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Related Work
+2.1
+Large Vision-Language Models (LVLMs)
+2.2
+Hallucination Mitigation in LVLMs
+2.3
+Test-time Hallucination Suppression in LVLMs
+3
+Method
+3.1
+Offline Phase
+3.2
+Inference Phase
+4
+Experiments
+4.1
+Implementation Details
+4.2
+Datasets and Benchmarks
+4.3
+Baselines
+4.4
+Results on CHAIR
+4.5
+Results on OPOPE
+4.6
+MMHal Benchmark Results
+4.7
+Evaluation on LLaVA-Bench
+4.8
+Inference Time
+4.9
+Ablation Studies
+5
+Conclusion and Future Work
+References
+6
+Implementation Details
+7
+Detailed Results for OPOPE
+8
+Extended Ablation Analysis
+8.1
+Best Subspace Rank
+8.2
+Selection of Layers for Projection
+9
+Details of GPT-4V Aided Evaluation on LLaVA-Bench
+License: arXiv.org perpetual non-exclusive license
+arXiv:2603.10470v1 [cs.CV] 11 Mar 2026
+Fighting Hallucinations with Counterfactuals: Diffusion-Guided Perturbations for LVLM Hallucination Suppression
+Hamidreza Dastmalchi
+Affiliation:
+York University
+Affiliation:
+Toronto, Canada
+Email:
+hrd@yorku.ca
+Aijun An
+Affiliation:
+York University
+Affiliation:
+Toronto, Canada
+Email:
+aan@yorku.ca
+Ali Cheraghian
+Affiliation:
+Macquarie University
+Affiliation:
+Sydney, Australia
+Email:
+ali.cheraghian@mq.edu.au
+Hamed Barzamini
+Affiliation:
+Northern Illinois University
+Affiliation:
+Illinois, USA
+Email:
+h.barzamini@niu.edu
+Abstract
+While large vision–language models (LVLMs) achieve strong performance on multimodal tasks, they frequently generate hallucinations—unfaithful outputs misaligned with the visual input. To address this issue, we introduce CIPHER (Counterfactual Image Perturbations for Hallucination Extraction and Removal), a training-free method that suppresses vision-induced hallucinations via lightweight feature-level correction. Unlike prior training-free approaches that primarily focus on text-induced hallucinations, CIPHER explicitly targets hallucinations arising from the visual modality.
+CIPHER operates in two phases. In the offline phase, we construct OHC-25K (Object-Hallucinated Counterfactuals, 25,000 samples), a counterfactual dataset consisting of diffusion-edited images that intentionally contradict the original ground-truth captions. We pair these edited images with the unchanged ground-truth captions and process them through an LVLM to extract hallucination-related representations. Contrasting these representations with those from authentic (image, caption) pairs reveals structured, systematic shifts spanning a low-rank subspace characterizing vision-induced hallucination.
+In the inference phase, CIPHER suppresses hallucinations by projecting intermediate hidden states away from this subspace. Experiments across multiple benchmarks show that CIPHER significantly reduces hallucination rates while preserving task performance, demonstrating the effectiveness of counterfactual visual perturbations for improving LVLM faithfulness. Code and additional materials are available at
+https://hamidreza-dastmalchi.github.io/cipher-cvpr2026/
+.
+1
+Introduction
+Large vision-language models (LVLMs) commonly integrate vision encoders with pretrained large language models (LLMs) via lightweight connector modules, enabling joint reasoning over visual and textual inputs. This modular design underpins models like MiniGPT-4
+[
+43
+]
+, LLaVA
+[
+26
+,
+25
+]
+, and mPLUG-Owl2
+[
+38
+,
+39
+]
+, which are further refined through instruction tuning on multimodal datasets.
+Figure 1
+:
+Given an image–caption pair
+(
+𝑰
+,
+𝒞
+)
+(\boldsymbol{I},\mathcal{C})
+, we generate a counterfactual image
+𝑰
+~
+\tilde{\boldsymbol{I}}
+using a diffusion model conditioned on a GPT-perturbed caption
+𝒞
+~
+\tilde{\mathcal{C}}
+via controlled perturbations. A vision–language model encodes both
+(
+𝑰
+,
+𝒞
+)
+(\boldsymbol{I},\mathcal{C})
+and
+(
+𝑰
+~
+,
+𝒞
+)
+(\tilde{\boldsymbol{I}},\mathcal{C})
+, yielding features
+𝒉
+\boldsymbol{h}
+and
+𝒉
+~
+\tilde{\boldsymbol{h}}
+. Their difference
+𝜹
+=
+𝒉
+~
+−
+𝒉
+\boldsymbol{\delta}=\tilde{\boldsymbol{h}}-\boldsymbol{h}
+captures the hallucination direction we later nullify at inference.
+While LVLMs show remarkable capabilities, they often suffer from
+hallucination
+, generating descriptions of objects, attributes, or scenes not present in the input image. Different studies have explored the roots of hallucination
+[
+24
+,
+4
+]
+, showing that it arises not only from the generative tendencies of LLMs but also from weak vision grounding, modality misalignment, biased training data, and context-blind decoding strategies.
+Hallucination mitigation in LVLMs generally falls into three categories. (1)
+Training-based
+methods improve visual grounding through additional supervision or objective design but require costly annotations, retraining, or architectural changes
+[
+22
+,
+41
+,
+23
+,
+16
+,
+13
+,
+9
+]
+. (2)
+Post-processing
+methods detect and revise hallucinations after generation using external tools
+[
+42
+,
+40
+]
+. (3)
+Test-time
+techniques are lightweight strategies applied during inference that adapt internal representations or the decoding process without requiring retraining or modifying model parameters
+[
+14
+,
+17
+,
+27
+,
+35
+]
+. Although effective, some test-time approaches, including contrastive decoding, require multiple forward passes
+[
+17
+]
+, leading to higher inference cost. In contrast, test-time feature-level intervention techniques are more efficient, requiring only a single forward pass
+[
+35
+]
+. However, existing methods predominantly target hallucinations arising from the language component, leaving vision-induced hallucinations comparatively underexplored. In this work, we instead focus on hallucinations rooted in the visual modality by generating counterfactual images to extract and subsequently remove hallucination directions.
+To this end, we propose CIPHER (Counterfactual Image Perturbations for Hallucination Extraction and Removal), a training-free, test-time hallucination mitigation method that performs feature-level intervention to address hallucinations in LVLMs. In the offline phase, we construct OHC-25K (Object Hallucination Counterfactuals), a 25K-sample diffusion-edited counterfactual dataset created from a subset of image–caption pairs from MSCOCO
+[
+21
+]
+. Figure
+1
+illustrates how counterfactual images are generated from ground-truth image–caption pairs and incorporated into our framework. We first perturb each caption using the GPT-3.5 model
+[
+6
+]
+, then apply a partial forward diffusion process to the image, and run the reverse diffusion process conditioned on the altered caption to synthesize a hallucinated variant. This controlled editing preserves the global structure of the original image while injecting semantically incorrect yet visually plausible elements (e.g., adding a cluster of grapes that are not present in the scene). We feed both the ground-truth and diffusion-edited image–caption pairs through the LVLM to extract hidden representations, compute their difference vectors, and stack them into a matrix. Applying Singular Value Decomposition (SVD) to these vectors reveals a low-rank subspace capturing the dominant directions of vision-induced hallucinations. At inference time, CIPHER suppresses hallucinations by projecting intermediate hidden representations away from this subspace, without modifying model weights or requiring any additional training.
+We conduct extensive experiments across multiple benchmarks to evaluate our approach. Results demonstrate that it effectively mitigates hallucinations without degrading the overall performance of LVLMs on tasks such as image captioning and visual question answering. Unlike many existing methods, our solution operates entirely at test time and introduces no inference-time overhead, as hallucination suppression is achieved via a lightweight projection on intermediate hidden states. To the best of our knowledge, this is the first method to identify hallucination directions in the feature space by hallucinating images, enabling more targeted mitigation of vision-induced hallucinations. Our main contributions are as follows:
+(1)
+We present
+CIPHER
+, a training-free test-time hallucination mitigation method that specifically targets hallucinations arising from the visual modality.
+(2)
+We develop a diffusion-guided procedure to construct
+OHC-25K
+, a counterfactual dataset of diffusion-edited images whose semantics intentionally contradict their ground-truth captions. These counterfactual pairs enable us to estimate a hallucination subspace by contrasting them with clean image–caption representations.
+(3)
+During inference, we mitigate hallucinations by projecting hidden representations onto the orthogonal complement of the estimated subspace, without requiring model retraining or parameter updates.
+(4)
+Extensive experiments across multiple benchmarks demonstrate that CIPHER reduces hallucinations while preserving the overall quality of multimodal generation.
+2
+Related Work
+2.1
+Large Vision-Language Models (LVLMs)
+The success of large language models (LLMs)
+[
+5
+,
+11
+,
+32
+]
+has paved the way for large vision-language models (LVLMs), which extend language understanding to visual inputs. By integrating vision encoders with LLMs via adaptation modules and instruction tuning, LVLMs such as mPLUG-Owl2
+[
+39
+]
+, Flamingo
+[
+1
+]
+, BLIP-2
+[
+18
+]
+, LLaVA
+[
+26
+]
+, and MiniGPT-4
+[
+43
+]
+achieve strong performance on tasks like image captioning, visual question answering, and multimodal dialogue. However, they remain susceptible to hallucination, limiting robustness in real-world settings.
+2.2
+Hallucination Mitigation in LVLMs
+Figure 2
+:
+(a)
+Hallucinated image generation: given an image
+𝑰
+i
+\boldsymbol{I}_{i}
+and its ground-truth caption
+𝒞
+i
+\mathcal{C}_{i}
+, a GPT model generates a hallucinated caption
+𝒞
+~
+i
+\tilde{\mathcal{C}}_{i}
+. The image is then encoded by the encoder
+ℰ
+\mathcal{E}
+of the Stable Diffusion Model (SDM), and both forward and reverse diffusion steps are applied, conditioned on
+𝒞
+~
+i
+\tilde{\mathcal{C}}_{i}
+, to produce hallucinated images
+𝑰
+~
+i
+,
+j
+\tilde{\boldsymbol{I}}_{i,j}
+.
+(b)
+Estimating hallucination subspace: the LVLM encodes both hallucinated and ground-truth image–caption pairs to extract hidden states. Feature differences
+{
+𝜹
+ℓ
+(
+i
+)
+}
+i
+=
+1
+M
+\{\boldsymbol{\delta}_{\ell}^{(i)}\}_{i=1}^{M}
+are computed, stacked, and decomposed via SVD. The top
+r
+r
+right-singular vectors are retained in a hallucination basis bank for inference-time suppression.
+To mitigate hallucinations in LVLMs, various approaches have been proposed across the training, inference, and post-processing stages. While training-based methods
+[
+13
+,
+23
+,
+16
+,
+37
+,
+3
+,
+34
+]
+are often effective, they typically require expensive annotations, model retraining, or architectural modifications, limiting their scalability in practice. In contrast, post-processing strategies mitigate hallucinations without altering the base model, typically by detecting and revising errors after generation using heuristics or external tools
+[
+42
+,
+40
+]
+. However, dependence on auxiliary models limits generalizability and complicates deployment. Test-time approaches
+[
+8
+,
+27
+,
+15
+]
+address these limitations by intervening directly during inference, offering a more efficient solution.
+2.3
+Test-time Hallucination Suppression in LVLMs
+Test-time hallucination mitigation methods intervene during inference to improve factual alignment without modifying the model parameters. These include decoding-based techniques
+[
+14
+,
+17
+,
+15
+,
+2
+,
+36
+,
+44
+]
+, which steer generation by adjusting sampling distributions or applying constraints to suppress hallucinations. While effective, these approaches often involve multiple forward passes, leading to increased inference-time overhead. In contrast, feature-level interventions provide a more efficient solution. These methods operate by modifying internal representations within a single forward pass, guiding the model away from hallucinated outputs
+[
+19
+,
+27
+,
+35
+,
+33
+,
+7
+]
+. For example, Nullu
+[
+35
+]
+extract hallucination directions by contrasting features from textually perturbed inputs and shift the model’s hidden states accordingly. However, these approaches mostly focus on language-induced hallucinations, overlooking those rooted in the visual modality. CIPHER fills this gap by perturbing images with a diffusion model to extract the hallucination subspace and suppress it via feature projection.
+3
+Method
+CIPHER estimates feature directions triggered by hallucination-inducing visual cues and suppresses these components during inference. The method operates in two stages: (1) an
+offline phase
+, where we construct a counterfactual dataset and estimate the hallucination subspaces; and (2) an
+inference phase
+, where we nullify hallucination-prone components in hidden representations during generation.
+3.1
+Offline Phase
+Counterfactual Dataset Generation (OHC-25K).
+To reveal hallucination-sensitive directions in the LVLM’s feature space, we construct a dataset of
+counterfactual image–caption pairs
+in which the visual content is structurally preserved but semantically altered.
+Figure
+2
+(a) illustrates how the counterfactual images are generated. We begin with
+M
+=
+5,000
+M=5{,}000
+randomly selected image–caption pairs from the MSCOCO training set,
+{
+(
+𝑰
+i
+,
+𝒞
+i
+)
+}
+i
+=
+1
+M
+\{(\boldsymbol{I}_{i},\mathcal{C}_{i})\}_{i=1}^{M}
+.
+Following LURE
+[
+42
+]
+, we generate a hallucinated caption
+𝒞
+~
+i
+\tilde{\mathcal{C}}_{i}
+(displayed with a red border) for each ground-truth caption
+𝒞
+i
+\mathcal{C}_{i}
+(displayed with a green border) using a GPT-based perturbation that injects plausible but incorrect objects.
+Next, each image
+𝑰
+i
+\boldsymbol{I}_{i}
+is encoded into the latent space of Stable Diffusion Model (SDM)
+[
+30
+]
+using its VAE encoder:
+𝒛
+0
+=
+ℰ
+⁡
+(
+𝑰
+i
+)
+.
+\boldsymbol{z}_{0}=\mathcal{E}(\boldsymbol{I}_{i}).
+(1)
+We then apply
+t
+h
+t_{h}
+steps of the forward diffusion process to introduce Gaussian noise.
+Let
+α
+¯
+t
+h
+\bar{\alpha}_{t_{h}}
+denote the cumulative product of noise scheduling coefficients up to step
+t
+h
+t_{h}
+.
+The partially noised latent is given by:
+𝒛
+~
+t
+h
+=
+α
+¯
+t
+h
+​
+𝒛
+0
++
+1
+−
+α
+¯
+t
+h
+​
+ϵ
+,
+ϵ
+∼
+𝒩
+⁡
+(
+0
+,
+I
+)
+.
+\tilde{\boldsymbol{z}}_{t_{h}}=\sqrt{\bar{\alpha}_{t_{h}}}\boldsymbol{z}_{0}+\sqrt{1-\bar{\alpha}_{t_{h}}}\,\boldsymbol{\epsilon},\qquad\boldsymbol{\epsilon}\sim\mathcal{N}(0,I).
+(2)
+To simulate semantic hallucination, we reverse-denoise
+𝒛
+~
+t
+h
+\tilde{\boldsymbol{z}}_{t_{h}}
+while conditioning on the hallucinated caption:
+𝒛
+~
+t
+−
+1
+=
+f
+θ
+(
+𝒛
+~
+t
+,
+t
+,
+𝒞
+~
+i
+)
+,
+t
+=
+t
+h
+,
+…
+,
+1
+.
+\tilde{\boldsymbol{z}}_{t-1}=f_{\theta}(\tilde{\boldsymbol{z}}_{t},t,\tilde{\mathcal{C}}_{i}),\qquad t=t_{h},\dots,1.
+(3)
+Decoding the final denoised latent (
+𝒛
+~
+0
+\tilde{\boldsymbol{z}}_{0}
+) yields a counterfactual image:
+𝑰
+~
+i
+,
+j
+=
+𝒟
+⁡
+(
+𝒛
+~
+0
+)
+,
+\tilde{\boldsymbol{I}}_{i,j}=\mathcal{D}(\tilde{\boldsymbol{z}}_{0}),
+(4)
+where
+j
+=
+1
+,
+…
+,
+B
+j=1,\dots,B
+indexes the
+B
+B
+counterfactual variants generated from different Gaussian noise seeds (we use
+B
+=
+5
+B=5
+). Pairing each counterfactual image with the original ground-truth caption creates a semantic conflict while preserving structural alignment.
+This forms the
+Object-Hallucination Counterfactuals
+dataset, constructed from
+M
+=
+5,000
+M=5{,}000
+image–caption pairs with
+B
+=
+5
+B=5
+counterfactual variants per image, resulting in
+25,000
+25{,}000
+images.
+OHC-25K
+=
+{
+(
+𝑰
+~
+i
+,
+j
+,
+𝒞
+i
+)
+|
+i
+=
+1
+,
+…
+,
+M
+,
+j
+=
+1
+,
+…
+,
+B
+}
+.
+\textbf{OHC-25K}=\{(\tilde{\boldsymbol{I}}_{i,j},\mathcal{C}_{i})\;|\;i=1,\dots,M,\;j=1,\dots,B\}.
+(5)
+Estimating the Hallucination Subspace.
+Figure
+2
+(b) illustrates how the hallucination subspace is extracted. For each original pair
+(
+𝑰
+i
+,
+𝒞
+i
+)
+(\boldsymbol{I}_{i},\mathcal{C}_{i})
+and its
+B
+B
+counterfactual variants
+(
+𝑰
+~
+i
+,
+j
+,
+𝒞
+i
+)
+(\tilde{\boldsymbol{I}}_{i,j},\mathcal{C}_{i})
+, we extract hidden representations from the frozen LVLM. Let
+𝒉
+ℓ
+,
+k
+(
+i
+)
+∈
+ℝ
+d
+\boldsymbol{h}_{\ell,k}^{(i)}\in\mathbb{R}^{d}
+denote the hidden state of the
+k
+k
+-th caption token at layer
+ℓ
+\ell
+for the original pair, and
+𝒉
+~
+ℓ
+,
+k
+(
+i
+,
+j
+)
+∈
+ℝ
+d
+\tilde{\boldsymbol{h}}_{\ell,k}^{(i,j)}\in\mathbb{R}^{d}
+for the
+j
+j
+-th counterfactual variant. We mean-pool across caption tokens:
+𝒉
+ℓ
+(
+i
+)
+=
+1
+N
+​
+∑
+k
+=
+1
+N
+𝒉
+ℓ
+,
+k
+(
+i
+)
+,
+𝒉
+~
+ℓ
+(
+i
+,
+j
+)
+=
+1
+N
+​
+∑
+k
+=
+1
+N
+𝒉
+~
+ℓ
+,
+k
+(
+i
+,
+j
+)
+.
+\boldsymbol{h}_{\ell}^{(i)}=\frac{1}{N}\sum_{k=1}^{N}\boldsymbol{h}_{\ell,k}^{(i)},\qquad\tilde{\boldsymbol{h}}_{\ell}^{(i,j)}=\frac{1}{N}\sum_{k=1}^{N}\tilde{\boldsymbol{h}}_{\ell,k}^{(i,j)}.
+(6)
+Since each image yields
+B
+B
+hallucinated samples, we compute the aggregated counterfactual representation as:
+𝒉
+~
+ℓ
+(
+i
+)
+=
+1
+B
+​
+∑
+j
+=
+1
+B
+𝒉
+~
+ℓ
+(
+i
+,
+j
+)
+.
+\tilde{\boldsymbol{h}}_{\ell}^{(i)}=\frac{1}{B}\sum_{j=1}^{B}\tilde{\boldsymbol{h}}_{\ell}^{(i,j)}.
+(7)
+The hallucination direction for sample
+i
+i
+at layer
+ℓ
+\ell
+is defined as
+𝜹
+ℓ
+(
+i
+)
+=
+𝒉
+~
+ℓ
+(
+i
+)
+−
+𝒉
+ℓ
+(
+i
+)
+\boldsymbol{\delta}_{\ell}^{(i)}=\tilde{\boldsymbol{h}}_{\ell}^{(i)}-\boldsymbol{h}_{\ell}^{(i)}
+.
+Stacking these directions across all samples yields:
+𝚫
+ℓ
+=
+[
+𝜹
+ℓ
+(
+1
+)
+;
+𝜹
+ℓ
+(
+2
+)
+;
+⋯
+;
+𝜹
+ℓ
+(
+M
+)
+]
+∈
+ℝ
+M
+×
+d
+.
+\boldsymbol{\Delta}_{\ell}=\begin{bmatrix}\boldsymbol{\delta}_{\ell}^{(1)};\boldsymbol{\delta}_{\ell}^{(2)};\cdots;\boldsymbol{\delta}_{\ell}^{(M)}\end{bmatrix}\in\mathbb{R}^{M\times d}.
+(8)
+We apply Singular Value Decomposition (SVD) to the stacked difference matrix to identify the principal hallucination directions:
+𝚫
+ℓ
+=
+𝑼
+ℓ
+​
+𝚺
+ℓ
+​
+𝑽
+ℓ
+⊤
+.
+\boldsymbol{\Delta}_{\ell}=\boldsymbol{U}_{\ell}\boldsymbol{\Sigma}_{\ell}\boldsymbol{V}_{\ell}^{\top}.
+(9)
+The top
+r
+r
+right-singular vectors
+𝑽
+ℓ
+,
+r
+=
+[
+𝒗
+ℓ
+,
+1
+,
+…
+,
+𝒗
+ℓ
+,
+r
+]
+\boldsymbol{V}_{\ell,r}=[\boldsymbol{v}_{\ell,1},\dots,\boldsymbol{v}_{\ell,r}]
+span the hallucination subspace at layer
+ℓ
+\ell
+.
+These vectors form our
+hallucination basis bank
+.
+Figure 3
+:
+Inference-time projection mechanism. Given an input image and instruction, the model generates text autoregressively. At each decoding step during generation, hidden states from selected layers are projected onto the subspace orthogonal to the corresponding hallucination space, using the hallucination basis bank obtained in the offline phase.
+3.2
+Inference Phase
+Test-Time Nullification.
+The hallucination nullification process during test time is illustrated in Figure
+3
+.
+At each decoding step
+k
+k
+and selected layer
+ℓ
+\ell
+, the hidden state of the test image during inference is denoted by
+𝒉
+ℓ
+,
+k
+test
+∈
+ℝ
+d
+\boldsymbol{h}_{\ell,k}^{\text{test}}\in\mathbb{R}^{d}
+. To suppress hallucinations, we remove components aligned with the hallucination subspace:
+𝒉
+ℓ
+,
+k
+clean
+=
+𝒉
+ℓ
+,
+k
+test
+−
+∑
+j
+=
+1
+r
+⟨
+𝒉
+ℓ
+,
+k
+test
+,
+𝒗
+ℓ
+,
+j
+⟩
+​
+𝒗
+ℓ
+,
+j
+.
+\boldsymbol{h}_{\ell,k}^{\text{clean}}=\boldsymbol{h}_{\ell,k}^{\text{test}}-\sum_{j=1}^{r}\langle\boldsymbol{h}_{\ell,k}^{\text{test}},\boldsymbol{v}_{\ell,j}\rangle\boldsymbol{v}_{\ell,j}.
+(10)
+Equivalently, this operation can be expressed using the projection matrix
+𝑷
+ℓ
+=
+𝑰
+−
+𝑽
+ℓ
+,
+r
+​
+𝑽
+ℓ
+,
+r
+⊤
+,
+\boldsymbol{P}_{\ell}=\boldsymbol{I}-\boldsymbol{V}_{\ell,r}\boldsymbol{V}_{\ell,r}^{\top},
+which yields:
+𝒉
+ℓ
+,
+k
+clean
+=
+𝑷
+ℓ
+​
+𝒉
+ℓ
+,
+k
+test
+.
+\boldsymbol{h}_{\ell,k}^{\text{clean}}=\boldsymbol{P}_{\ell}\,\boldsymbol{h}_{\ell,k}^{\text{test}}.
+(11)
+This layer-wise nullification is applied before decoding each token, removing hallucination-prone directions while preserving core semantics.
+4
+Experiments
+Method
+LLaVA-1.5
+MiniGPT-4
+mPLUG-Owl2
+CHAIR
+S
+↓
+{}_{S}\downarrow
+CHAIR
+I
+↓
+{}_{I}\downarrow
+BLEU
+↑
+\uparrow
+CHAIR
+S
+↓
+{}_{S}\downarrow
+CHAIR
+I
+↓
+{}_{I}\downarrow
+BLEU
+↑
+\uparrow
+CHAIR
+S
+↓
+{}_{S}\downarrow
+CHAIR
+I
+↓
+{}_{I}\downarrow
+BLEU
+↑
+\uparrow
+Greedy
+20.40
+±2.80
+7.08
+±0.33
+15.72
+±0.10
+32.40
+±2.20
+12.20
+±0.42
+14.57
+±0.11
+22.90
+±0.90
+8.62
+±0.11
+15.01
+±0.24
+Beam Search
+19.50
+±2.30
+6.84
+±0.79
+15.99
+±0.14
+30.10
+±0.30
+11.87
+±0.37
+15.35
+±0.24
+20.30
+±0.70
+7.62
+±0.19
+15.43
+±0.05
+DoLa
+(ICLR’24)
+20.20
+±2.80
+6.75
+±0.54
+15.68
+±0.10
+31.90
+±3.30
+12.15
+±0.89
+14.54
+±0.12
+22.40
+±1.80
+8.36
+±0.04
+15.13
+±0.21
+OPERA
+(CVPR’24)
+17.50
+±0.50
+6.07
+±0.32
+16.02
+±0.02
+29.70
+±0.30
+11.96
+±0.29
+14.82
+±0.05
+20.07
+±2.07
+7.18
+±0.39
+15.41
+±0.12
+VCD
+(CVPR’24)
+20.30
+±1.10
+7.28
+±0.10
+14.53
+±0.01
+29.00
+±2.80
+12.64
+±1.19
+14.42
+±0.01
+22.80
+±0.80
+8.68
+±0.17
+15.14
+±0.13
+Woodpecker
+(SCIS’24)
+23.85
+±4.62
+7.50
+±0.01
+17.05
+±0.00
+28.87
+±2.20
+10.20
+±0.85
+15.30
+±0.01
+26.33
+±1.98
+8.43
+±0.80
+16.43
+±0.00
+LURE
+(ICLR’24)
+19.48
+±2.35
+6.50
+±0.38
+15.97
+±0.01
+27.88
+±2.25
+10.20
+±0.85
+15.03
+±0.01
+21.27
+±0.06
+7.67
+±0.16
+15.65
+±0.15
+HALC
+(ICML’24)
+16.90
+±2.10
+5.72
+±0.55
+16.02
+±0.04
+25.20
+±2.00
+9.42
+±0.41
+14.91
+±0.13
+18.80
+±1.20
+7.00
+±0.01
+15.33
+±0.24
+Nullu
+(CVPR’25)
+15.20
+±0.60
+5.30
+±0.03
+15.69
+±0.04
+21.40
+±1.00
+8.99
+±0.36
+14.81
+±0.06
+15.60
+±1.20
+5.77
+±0.01
+15.45
+±0.01
+CIPHER (Ours)
+13.05
+±0.57
+4.53
+±0.38
+15.82
+±0.25
+18.48
+±1.20
+8.33
+±0.17
+15.10
+±0.43
+13.60
+±1.06
+4.92
+±0.15
+16.25
+±0.47
+Table 1
+:
+CHAIR and BLEU scores across LVLMs; lower CHAIR = less hallucination, higher BLEU = better fluency.
+4.1
+Implementation Details
+We evaluate CIPHER on CHAIR
+[
+29
+]
+and Offline POPE (OPOPE)
+[
+8
+]
+using LLaVA-1.5
+[
+26
+]
+with Vicuna
+[
+10
+]
+, MiniGPT-4
+[
+43
+]
+with LLaMA2
+[
+32
+]
+, and mPLUG-Owl2
+[
+39
+]
+. For decoding, we use a beam size of 3, setting the maximum number of generated tokens to 64 for CHAIR and 256 for OPOPE. The hallucination subspace is constructed using the top
+r
+r
+singular vectors, with
+r
+=
+8
+r=8
+for LLaVA, 64 for MiniGPT-4, and 32 for mPLUG-Owl2, selected via grid search. Following
+[
+35
+]
+, we apply the projection at upper layers (16–32). Visual hallucinations are generated using Stable Diffusion v1.5, with noise added up to
+t
+h
+=
+0.5
+​
+T
+t_{h}=0.5T
+, where
+T
+T
+denotes the total number of diffusion steps. We use a classifier-free guidance scale of 7.5. See the Appendix for additional details.
+4.2
+Datasets and Benchmarks
+For the offline phase, we follow LURE
+[
+42
+]
+using 5,000 image-caption pairs from the MSCOCO training split
+[
+21
+]
+. For evaluation, we follow established evaluation protocols
+[
+14
+,
+40
+]
+and randomly sample 500 images from the MSCOCO validation set using the widely adopted CHAIR and POPE metrics. We report mean and standard deviation over three runs with different random seeds.
+CHAIR.
+We use the CHAIR benchmark
+[
+29
+]
+to evaluate object hallucination in generated image descriptions. CHAIR
+S
+measures the percentage of sentences that contain at least one hallucinated object, while CHAIR
+I
+captures the proportion of hallucinated objects among all generated object mentions. We also report BLEU
+[
+28
+]
+to evaluate text quality and confirm that fluency is preserved.
+OPOPE.
+We evaluate object hallucination using the Offline POPE
+[
+20
+]
+, which includes three negative sampling strategies: random, popular, and adversarial. We adopt the OPOPE protocol
+[
+8
+]
+, which applies a CHAIR-style captioning setup and modifies the evaluation metric to detect the inclusion of negative objects in generated captions.
+MMHAL-Bench.
+MMHal
+[
+31
+]
+evaluates LVLMs across eight hallucination types, including attributes, adversarial objects, comparisons, counting, relations, environment, holistic descriptions, and others, providing a broad assessment beyond object-level errors. We measure the response informativeness using GPT-4.
+LLaVA-Bench.
+We also evaluate on LLaVA-Bench
+[
+25
+]
+, a curated benchmark of 24 diverse images with human-written descriptions and targeted questions. It assesses accuracy and detailedness, complementing CHAIR and POPE. Following
+[
+17
+,
+40
+]
+, we use GPT-4V to compare original and edited responses based on their alignment with the image and question.
+4.3
+Baselines
+We compare CIPHER with state-of-the-art hallucination mitigation methods, categorized as test-time approaches and post-processing strategies. Test-time methods include DoLa
+[
+12
+]
+, VCD
+[
+17
+]
+, HALC
+[
+8
+]
+, OPERA
+[
+14
+]
+, and Nullu
+[
+35
+]
+. The first four apply decoding-based interventions, while Nullu projects hidden representations onto a hallucination-free subspace. Post-processing methods Woodpecker
+[
+40
+]
+and LURE
+[
+42
+]
+detect and rewrite hallucinated spans using external models.
+Method
+LLaVA-1.5
+MiniGPT-4
+mPLUG-Owl2
+Accuracy
+↑
+\uparrow
+Precision
+↑
+\uparrow
+F score
+↑
+\uparrow
+Accuracy
+↑
+\uparrow
+Precision
+↑
+\uparrow
+F score
+↑
+\uparrow
+Accuracy
+↑
+\uparrow
+Precision
+↑
+\uparrow
+F score
+↑
+\uparrow
+Greedy
+79.14
+±
+\pm
+0.89
+91.98
+±
+\pm
+0.82
+90.45
+±
+\pm
+0.86
+71.22
+±
+\pm
+1.27
+93.72
+±
+\pm
+1.02
+90.04
+±
+\pm
+1.23
+76.46
+±
+\pm
+0.92
+88.85
+±
+\pm
+1.15
+87.29
+±
+\pm
+1.15
+Beam Search
+79.41
+±
+\pm
+0.69
+92.52
+±
+\pm
+0.55
+90.96
+±
+\pm
+0.59
+71.65
+±
+\pm
+1.15
+94.70
+±
+\pm
+0.60
+90.97
+±
+\pm
+0.85
+76.76
+±
+\pm
+1.02
+90.28
+±
+\pm
+0.80
+88.56
+±
+\pm
+0.87
+DoLa
+(ICLR’24)
+78.98
+±
+\pm
+0.56
+91.66
+±
+\pm
+0.81
+90.15
+±
+\pm
+0.79
+71.28
+±
+\pm
+1.15
+93.92
+±
+\pm
+0.83
+90.22
+±
+\pm
+1.04
+76.07
+±
+\pm
+1.09
+88.54
+±
+\pm
+1.25
+86.95
+±
+\pm
+1.27
+OPERA
+(CVPR’24)
+79.29
+±
+\pm
+0.32
+92.25
+±
+\pm
+0.07
+90.71
+±
+\pm
+0.11
+70.48
+±
+\pm
+1.63
+94.41
+±
+\pm
+1.11
+90.66
+±
+\pm
+1.42
+75.49
+±
+\pm
+1.29
+91.23
+±
+\pm
+1.06
+89.11
+±
+\pm
+1.17
+VCD
+(CVPR’24)
+78.01
+±
+\pm
+0.75
+91.33
+±
+\pm
+0.88
+89.69
+±
+\pm
+0.89
+70.83
+±
+\pm
+1.83
+92.31
+±
+\pm
+0.88
+88.76
+±
+\pm
+1.29
+75.49
+±
+\pm
+1.27
+88.75
+±
+\pm
+1.56
+87.02
+±
+\pm
+1.57
+HALC
+(ICML’24)
+77.87
+±
+\pm
+0.22
+93.17
+±
+\pm
+0.39
+91.25
+±
+\pm
+0.38
+71.17
+±
+\pm
+0.89
+94.88
+±
+\pm
+0.15
+90.95
+±
+\pm
+0.42
+74.93
+±
+\pm
+1.09
+90.20
+±
+\pm
+0.90
+88.12
+±
+\pm
+0.99
+Nullu
+(CVPR’25)
+79.52
+±
+\pm
+0.04
+93.46
+±
+\pm
+0.03
+91.79
+±
+\pm
+0.04
+71.92
+±
+\pm
+0.39
+95.96
+±
+\pm
+0.65
+92.07
+±
+\pm
+0.65
+77.09
+±
+\pm
+1.37
+92.83
+±
+\pm
+0.29
+90.80
+±
+\pm
+0.52
+CIPHER (Ours)
+80.05
+±
+\pm
+0.07
+93.72
+±
+\pm
+0.14
+92.11
+±
+\pm
+0.11
+72.25
+±
+\pm
+0.26
+96.50
+±
+\pm
+0.19
+92.58
+±
+\pm
+0.20
+77.87
+±
+\pm
+0.21
+92.93
+±
+\pm
+0.26
+90.95
+±
+\pm
+0.59
+Table 2
+:
+Accuracy, precision, and F1 scores of different methods on the OPOPE benchmark, evaluated across LLaVA-1.5, MiniGPT-4, and mPLUG-Owl2.
+4.4
+Results on CHAIR
+We prompt all methods with the instruction: “Please describe this image in detail” and report the results in Table
+1
+. CIPHER consistently achieves the lowest hallucination rates across all three vision-language models (LLaVA-1.5, MiniGPT-4, and mPLUG-Owl2). For example, on LLaVA-1.5, CIPHER reduces CHAIR
+S
+to 13.05%, which is a 2.15% absolute improvement over the second-best model (Nullu at 15.20%), and a 7.35% drop compared to the original greedy baseline (20.40%). On MiniGPT-4, CIPHER further brings CHAIR
+S
+down to 18.48%, improving upon Nullu by 2.92% and reducing hallucinations by a substantial 13.92% relative to the greedy baseline (32.40%). Similarly, for mPLUG-Owl2, CIPHER scores 13.60% on CHAIR
+S
+, which is 2.00% better than the second-best model and 9.30% better than the original model. These gains in CHAIR
+S
+are mirrored in CHAIR
+I
+as well, with CIPHER consistently outperforming all baselines in object-level hallucination. Importantly, CIPHER maintains or improves BLEU scores across all models, indicating effective hallucination mitigation without sacrificing generation richness.
+4.5
+Results on OPOPE
+As shown in Table
+2
+, CIPHER achieves the highest scores across all three evaluation metrics for each model, clearly demonstrating its effectiveness in mitigating object hallucinations while preserving answer quality. The gains in precision are particularly pronounced relative to the unedited model, further highlighting CIPHER’s ability to suppress hallucinations while retaining relevant content. Despite the already saturated performance regime, CIPHER continues to deliver consistent improvements. Detailed POPE and OPOPE results are provided in the Appendix.
+Figure 4
+:
+Radar chart of MMHal scores.
+4.6
+MMHal Benchmark Results
+We evaluate hallucination reduction using the MMHal benchmark, which covers eight categories. This benchmark provides a fine-grained view of different hallucination types. As shown in Fig.
+4
+, our LLaVA + CIPHER model achieves consistent improvements across all categories compared to the original LLaVA. The largest gains occur in
+Attribute
+,
+Environment
+,
+Holistic
+and
+Adversarial
+cases, while improvements in
+Relation
+and
+Comparison
+demonstrate enhanced global reasoning and grounding.
+Model
+Method
+Accuracy
+↑
+\uparrow
+Detailedness
+↑
+\uparrow
+LLaVA-1.5
+Original
+6.79
+±1.50
+6.33
+±1.18
+CIPHER
+7.08
+±1.32
+6.75
+±1.13
+MiniGPT-4
+Original
+5.54
+±2.41
+5.58
+±2.06
+CIPHER
+6.16
+±1.99
+6.64
+±1.88
+mPLUG-Owl2
+Original
+6.48
+±2.12
+6.26
+±1.62
+CIPHER
+7.35
+±1.63
+6.91
+±1.61
+Table 3:
+GPT-4V evaluations on LLaVA-Bench indicate that CIPHER consistently enhances model outputs, yielding higher accuracy and more detailed answers.
+Figure 5
+:
+LLaVA-Bench example: CIPHER reduces hallucinations and improves grounding.
+Figure 6
+:
+Layer-wise linear probing performance comparing textual and diffusion-based visual hallucination perturbations. Textual perturbations exhibit moderate and unstable separability across layers, whereas diffusion-based visual perturbations produce consistently high accuracy, recall, and F1.
+4.7
+Evaluation on LLaVA-Bench
+To further evaluate the effectiveness of our hallucination suppression strategy, we conduct quantitative and qualitative assessments on LLaVA-Bench
+[
+25
+]
+. GPT-4V is prompted to assign scores from 1 to 10 for both
+accuracy
+and
+detailedness
+, based on the input image, question, and model response (see Appendix for the prompt). As shown in Table
+3
+, applying CIPHER consistently improves both metrics across all three models, reflecting enhanced visual grounding and reduced hallucination. We also present a qualitative case study using LLaVA-1.5-7B in Figure
+5
+. The original model generates a caption that includes several hallucinated elements, such as “the taxi is parked,” “potted plants,” and a “handbag,” none of which are visible in the image. In contrast, the CIPHER-edited description accurately captures the scene—a man ironing a shirt on the back of a moving yellow taxi amidst traffic—without introducing spurious objects.
+4.8
+Inference Time
+We evaluate the efficiency of various hallucination mitigation methods in terms of throughput, measured in items per second using LLaVA-7B on an NVIDIA A6000 GPU (Table
+4
+). CIPHER matches the throughput of standard greedy decoding (0.70 items/s), substantially exceeding the efficiency of prior mitigation methods such as OPERA and HALC, which incur significant latency. In addition to its speed, CIPHER also achieves a much lower CHAIR
+S
+score (13.05%), demonstrating superior hallucination suppression compared to all other baselines.
+Metric
+Greedy
+Beam
+DoLa
+VCD
+OPERA
+HALC
+Nullu
+CIPHER
+CHAIR
+S
+↓
+\downarrow
+(%)
+20.40
+19.50
+20.20
+20.30
+17.50
+16.90
+15.20
+13.05
+Throughput
+↑
+\uparrow
+(items/s)
+0.70
+0.55
+0.42
+0.35
+0.10
+0.05
+0.70
+0.70
+Table 4
+:
+Comparison of CHAIR
+S
+and throughput (items/s) for different mitigation methods, tested on LLaVA-7B with an NVIDIA A6000 GPU.
+4.9
+Ablation Studies
+Linear Probing Analysis.
+To understand why the visual hallucination subspace is more effective than its text-based counterpart (Nullu method), we perform a layer-wise linear probing experiment. For each transformer layer, we train a logistic regression classifier to distinguish clean hidden representations from perturbed ones, using 400 samples for training and 1,000 samples for testing. We evaluate two perturbation types: (i)
+textual hallucination
+, where the clean image is paired with a GPT-generated hallucinated caption; and (ii)
+visual hallucination
+, where the caption remains unchanged but the image is perturbed using CIPHER-style diffusion counterfactuals.
+As shown in Fig.
+6
+, textual perturbations lead to only moderate separability (Accuracy: 0.73–0.80, F1: 0.74–0.78), with substantial variability across layers. This indicates that text-induced hallucination signals are relatively weak and noisy in the hidden representation space. In contrast, visual perturbations produce consistently high linear separability across all layers (Accuracy: 0.86–0.89, F1: 0.86–0.89). The diffusion counterfactuals introduce strong, structured, and layer-stable representation shifts that are easily captured by a linear classifier. These findings support our approach: the subspace derived from visual perturbations captures more meaningful hallucination directions, explaining CIPHER’s superior hallucination suppression.
+Figure 7
+:
+CHAIR
+S
+of CIPHER using hallucination subspaces derived from images perturbed at different diffusion steps.
+Effect of Diffusion Time Step.
+We investigate how the strength of semantic perturbation, controlled by the diffusion timestep (
+t
+h
+t_{h}
+) impacts the quality of the hallucination subspace in CIPHER. To assess the impact of diffusion strength, we evaluate four timesteps
+t
+h
+∈
+{
+0.25
+​
+T
+,
+0.5
+​
+T
+,
+0.75
+​
+T
+,
+T
+}
+t_{h}\in\{0.25T,0.5T,0.75T,T\}
+, where
+T
+T
+is the maximum diffusion step. At each
+t
+h
+t_{h}
+, we perform a round-trip diffusion: forward corruption and reverse denoising conditioned on a hallucinated caption, using Equation
+2
+and Equation
+3
+, respectively. This produces images with increasing semantic shift. We compute hidden-state differences between hallucinated and original pairs, apply SVD to extract the hallucination subspace, and use it for test-time projection. As shown in Figure
+7
+, the subspace from
+t
+h
+=
+0.5
+​
+T
+t_{h}=0.5T
+achieves the best CHAIR
+S
+. We attribute this to intermediate steps yielding structurally faithful yet semantically altered images, striking a balance that best isolates hallucination directions.
+Effect of Subspace Rank.
+We study how the number of singular vectors (
+r
+r
+) used to define the hallucination subspace affects performance. For the LLaVA-7B model, we sweep
+r
+∈
+{
+2
+,
+4
+,
+8
+,
+16
+,
+32
+}
+r\in\{2,4,8,16,32\}
+and evaluate on the CHAIR benchmark. As shown in Figure
+8
+,
+r
+=
+8
+r=8
+yields the best results: CHAIR
+S
+and CHAIR
+I
+are minimized, while BLEU reaches its peak, indicating improved faithfulness and fluency. Further component-selection results for MiniGPT-4 and mPLUG-Owl2 are given in the Appendix.
+Figure 8
+:
+Ablation study on subspace rank (
+r
+r
+)
+Robustness to Visual Noise.
+To evaluate the robustness of our method under degraded visual inputs, we corrupt test images with varying levels of Gaussian noise (
+σ
+∈
+{
+0.0
+,
+0.2
+,
+0.4
+,
+0.6
+,
+0.8
+,
+1.0
+}
+\sigma\in\{0.0,0.2,0.4,0.6,0.8,1.0\}
+) and measure CHAIR
+S
+for both the original and CIPHER-refined models. As shown in Figure
+9
+, hallucination rates increase with noise for both models, but CIPHER consistently achieves lower CHAIR
+S
+scores at all levels. The gap widens under severe noise, highlighting CIPHER’s resilience to visual degradation and its strong generalization in suppressing hallucinations.
+Effect of Hallucination Source.
+To assess the contribution of each modality to hallucination suppression, we construct the hallucination subspace under three settings: (1) text-only hallucination using GPT, (2) image-only hallucination via Stable Diffusion, and (3) joint hallucination. In all cases, we compute feature differences and apply SVD to extract hallucination directions.
+Text
+Image
+CHAIR
+S
+↓
+\text{CHAIR}_{S}\downarrow
+CHAIR
+I
+↓
+\text{CHAIR}_{I}\downarrow
+BLEU
+↑
+\text{BLEU}\uparrow
+✓
+✗
+15.20
+5.30
+15.69
+✗
+✓
+13.05
+4.53
+15.82
+✓
+✓
+15.71
+5.32
+15.66
+Table 5
+:
+Ablation study on the source of hallucination. ✓denotes hallucinated input and ✗ denotes ground-truth input.
+As shown in Table
+5
+, image-only perturbation yields the lowest CHAIR scores, indicating more coherent and discriminative hallucination directions. Text-only perturbation performs moderately, while combining both slightly degrades performance.
+Figure 9
+:
+CHAIR
+S
+of the original and CIPHER-refined models under increasing levels of Gaussian noise.
+5
+Conclusion and Future Work
+We presented CIPHER, a novel test-time hallucination mitigation method that suppresses vision-induced hallucinations in large vision-language models without requiring training or architectural modifications. CIPHER identifies hallucination directions by contrasting clean and perturbed representations, where perturbations are introduced via semantically altered images generated using Stable Diffusion. It then suppresses hallucinated content by projecting hidden states onto the null space of these directions, improving factual accuracy while preserving fluency. Extensive experiments across multiple benchmarks show that CIPHER consistently outperforms state-of-the-art baselines. While CIPHER currently uses a fixed offline projection, a promising future direction is to adapt the projection dynamically per input for more flexible, context-aware hallucination suppression.
+References
+[1]
+J. Alayrac, J. Donahue, P. Luc, A. Miech, I. Barr, Y. Hasson, K. Lenc, A. Mensch, K. Millican, M. Reynolds,
+et al.
+(2022)
+Flamingo: a visual language model for few-shot learning
+.
+Advances in neural information processing systems
+35
+,
+pp. 23716–23736
+.
+Cited by:
+§2.1
+.
+[2]
+W. An, F. Tian, S. Leng, J. Nie, H. Lin, Q. Wang, P. Chen, X. Zhang, and S. Lu
+(2025)
+Mitigating object hallucinations in large vision-language models with assembly of global and local attention
+.
+In
+Proceedings of the Computer Vision and Pattern Recognition Conference
+,
+pp. 29915–29926
+.
+Cited by:
+§2.3
+.
+[3]
+J. Bai, H. Guo, Z. Peng, J. Yang, Z. Li, M. Li, and Z. Tian
+(2025)
+Mitigating hallucinations in large vision-language models by adaptively constraining information flow
+.
+In
+Proceedings of the AAAI Conference on Artificial Intelligence
+,
+Vol.
+39
+,
+pp. 23442–23450
+.
+Cited by:
+§2.2
+.
+[4]
+Z. Bai, P. Wang, T. Xiao, T. He, Z. Han, Z. Zhang, and M. Z. Shou
+(2024)
+Hallucination of multimodal large language models: a survey
+.
+arXiv preprint arXiv:2404.18930
+.
+Cited by:
+§1
+.
+[5]
+T. Brown, B. Mann, N. Ryder, M. Subbiah, J. D. Kaplan, P. Dhariwal, A. Neelakantan, P. Shyam, G. Sastry, A. Askell,
+et al.
+(2020)
+Language models are few-shot learners
+.
+Advances in neural information processing systems
+33
+,
+pp. 1877–1901
+.
+Cited by:
+§2.1
+.
+[6]
+T. Brown, B. Mann, N. Ryder, M. Subbiah, J. D. Kaplan, P. Dhariwal, A. Neelakantan, P. Shyam, G. Sastry, A. Askell,
+et al.
+(2020)
+Language models are few-shot learners
+.
+Advances in neural information processing systems
+33
+,
+pp. 1877–1901
+.
+Cited by:
+§1
+.
+[7]
+J. Chen, T. Zhang, S. Huang, Y. Niu, L. Zhang, L. Wen, and X. Hu
+(2025)
+Ict: image-object cross-level trusted intervention for mitigating object hallucination in large vision-language models
+.
+In
+Proceedings of the Computer Vision and Pattern Recognition Conference
+,
+pp. 4209–4221
+.
+Cited by:
+§2.3
+.
+[8]
+Z. Chen, Z. Zhao, H. Luo, H. Yao, B. Li, and J. Zhou
+(2024)
+Halc: object hallucination reduction via adaptive focal-contrast decoding
+.
+arXiv preprint arXiv:2403.00425
+.
+Cited by:
+§2.2
+,
+§4.1
+,
+§4.2
+,
+§4.3
+,
+§6
+,
+§7
+,
+§7
+.
+[9]
+Z. Chen, J. Wu, W. Wang, W. Su, G. Chen, S. Xing, M. Zhong, Q. Zhang, X. Zhu, L. Lu,
+et al.
+(2024)
+Internvl: scaling up vision foundation models and aligning for generic visual-linguistic tasks
+.
+In
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition
+,
+pp. 24185–24198
+.
+Cited by:
+§1
+.
+[10]
+W. Chiang, Z. Li, Z. Lin, Y. Sheng, Z. Wu, H. Zhang, L. Zheng, S. Zhuang, Y. Zhuang, J. E. Gonzalez,
+et al.
+(2023)
+Vicuna: an open-source chatbot impressing gpt-4 with 90%* chatgpt quality
+.
+See https://vicuna. lmsys. org (accessed 14 April 2023)
+2
+(
+3
+),
+pp. 6
+.
+Cited by:
+§4.1
+.
+[11]
+A. Chowdhery, S. Narang, J. Devlin, M. Bosma, G. Mishra, A. Roberts, P. Barham, H. W. Chung, C. Sutton, S. Gehrmann,
+et al.
+(2023)
+Palm: scaling language modeling with pathways
+.
+Journal of Machine Learning Research
+24
+(
+240
+),
+pp. 1–113
+.
+Cited by:
+§2.1
+.
+[12]
+Y. Chuang, Y. Xie, H. Luo, Y. Kim, J. Glass, and P. He
+(2023)
+Dola: decoding by contrasting layers improves factuality in large language models
+.
+arXiv preprint arXiv:2309.03883
+.
+Cited by:
+§4.3
+,
+§6
+,
+§7
+.
+[13]
+A. Gunjal, J. Yin, and E. Bas
+(2024)
+Detecting and preventing hallucinations in large vision language models
+.
+In
+Proceedings of the AAAI Conference on Artificial Intelligence
+,
+Vol.
+38
+,
+pp. 18135–18143
+.
+Cited by:
+§1
+,
+§2.2
+.
+[14]
+Y. Huang
+et al.
+(2023)
+OPERA: a decoding strategy for reducing object hallucination in lvlms
+.
+arXiv preprint arXiv:2311.02460
+.
+Cited by:
+§1
+,
+§2.3
+,
+§4.2
+,
+§4.3
+,
+§6
+,
+§7
+.
+[15]
+F. Huo, W. Xu, Z. Zhang, H. Wang, Z. Chen, and P. Zhao
+(2024)
+Self-introspective decoding: alleviating hallucinations for large vision-language models
+.
+arXiv preprint arXiv:2408.02032
+.
+Cited by:
+§2.2
+,
+§2.3
+.
+[16]
+C. Jiang, H. Xu, M. Dong, J. Chen, W. Ye, M. Yan, Q. Ye, J. Zhang, F. Huang, and S. Zhang
+(2024)
+Hallucination augmented contrastive learning for multimodal large language model
+.
+In
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition
+,
+pp. 27036–27046
+.
+Cited by:
+§1
+,
+§2.2
+.
+[17]
+S. Leng, H. Zhang, G. Chen, X. Li, S. Lu, C. Miao, and L. Bing
+(2024)
+Mitigating object hallucinations in large vision-language models through visual contrastive decoding
+.
+In
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition
+,
+pp. 13872–13882
+.
+Cited by:
+§1
+,
+§2.3
+,
+§4.2
+,
+§4.3
+,
+§6
+,
+§7
+.
+[18]
+J. Li, D. Li, S. Savarese, and S. Hoi
+(2023)
+Blip-2: bootstrapping language-image pre-training with frozen image encoders and large language models
+.
+In
+International conference on machine learning
+,
+pp. 19730–19742
+.
+Cited by:
+§2.1
+.
+[19]
+K. Li, O. Patel, F. Viégas, H. Pfister, and M. Wattenberg
+(2023)
+Inference-time intervention: eliciting truthful answers from a language model
+.
+Advances in Neural Information Processing Systems
+36
+,
+pp. 41451–41530
+.
+Cited by:
+§2.3
+.
+[20]
+Y. Li, Y. Du, K. Zhou, J. Wang, W. X. Zhao, and J. Wen
+(2023)
+Evaluating object hallucination in large vision-language models
+.
+arXiv preprint arXiv:2305.10355
+.
+Cited by:
+§4.2
+.
+[21]
+T. Lin, M. Maire, S. Belongie, J. Hays, P. Perona, D. Ramanan, P. Dollár, and C. L. Zitnick
+(2014)
+Microsoft coco: common objects in context
+.
+In
+Computer vision–ECCV 2014: 13th European conference, zurich, Switzerland, September 6-12, 2014, proceedings, part v 13
+,
+pp. 740–755
+.
+Cited by:
+§1
+,
+§4.2
+.
+[22]
+F. Liu
+et al.
+(2023)
+LRV-instruction: a large-scale, diverse, and structured dataset for training vision-language models with less hallucination
+.
+arXiv preprint arXiv:2309.06192
+.
+Cited by:
+§1
+.
+[23]
+F. Liu, K. Lin, L. Li, J. Wang, Y. Yacoob, and L. Wang
+(2023)
+Mitigating hallucination in large multi-modal models via robust instruction tuning
+.
+arXiv preprint arXiv:2306.14565
+.
+Cited by:
+§1
+,
+§2.2
+.
+[24]
+H. Liu, W. Xue, Y. Chen, D. Chen, X. Zhao, K. Wang, L. Hou, R. Li, and W. Peng
+(2024)
+A survey on hallucination in large vision-language models
+.
+arXiv preprint arXiv:2402.00253
+.
+Cited by:
+§1
+.
+[25]
+H. Liu, C. Li, Y. Li, and Y. J. Lee
+(2024)
+Improved baselines with visual instruction tuning
+.
+In
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition
+,
+pp. 26296–26306
+.
+Cited by:
+§1
+,
+§4.2
+,
+§4.7
+,
+§9
+.
+[26]
+H. Liu, C. Li, Q. Wu, and Y. J. Lee
+(2023)
+Visual instruction tuning
+.
+Advances in neural information processing systems
+36
+,
+pp. 34892–34916
+.
+Cited by:
+§1
+,
+§2.1
+,
+§4.1
+.
+[27]
+S. Liu, H. Ye, and J. Zou
+(2025)
+Reducing hallucinations in large vision-language models via latent space steering
+.
+In
+The Thirteenth International Conference on Learning Representations
+,
+Cited by:
+§1
+,
+§2.2
+,
+§2.3
+.
+[28]
+K. Papineni, S. Roukos, T. Ward, and W. Zhu
+(2002)
+Bleu: a method for automatic evaluation of machine translation
+.
+In
+Proceedings of the 40th annual meeting of the Association for Computational Linguistics
+,
+pp. 311–318
+.
+Cited by:
+§4.2
+.
+[29]
+A. Rohrbach, L. A. Hendricks, K. Burns, T. Darrell, and K. Saenko
+(2018)
+Object hallucination in image captioning
+.
+arXiv preprint arXiv:1809.02156
+.
+Cited by:
+§4.1
+,
+§4.2
+,
+§7
+.
+[30]
+R. Rombach, A. Blattmann, D. Lorenz, P. Esser, and B. Ommer
+(2022)
+High-resolution image synthesis with latent diffusion models
+.
+In
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition
+,
+pp. 10684–10695
+.
+Cited by:
+§3.1
+.
+[31]
+Z. Sun, S. Shen, S. Cao, H. Liu, C. Li, Y. Shen, C. Gan, L. Gui, Y. Wang, Y. Yang,
+et al.
+(2024)
+Aligning large multimodal models with factually augmented rlhf
+.
+In
+Findings of the Association for Computational Linguistics: ACL 2024
+,
+pp. 13088–13110
+.
+Cited by:
+§4.2
+.
+[32]
+H. Touvron, L. Martin, K. Stone, P. Albert, A. Almahairi, Y. Babaei, N. Bashlykov, S. Batra, P. Bhargava, S. Bhosale,
+et al.
+(2023)
+Llama 2: open foundation and fine-tuned chat models
+.
+arXiv preprint arXiv:2307.09288
+.
+Cited by:
+§2.1
+,
+§4.1
+.
+[33]
+R. Uppaal, A. Dey, Y. He, Y. Zhong, and J. Hu
+(2024)
+Model editing as a robust and denoised variant of dpo: a case study on toxicity
+.
+arXiv preprint arXiv:2405.13967
+.
+Cited by:
+§2.3
+.
+[34]
+W. Xiao, Z. Huang, L. Gan, W. He, H. Li, Z. Yu, F. Shu, H. Jiang, and L. Zhu
+(2025)
+Detecting and mitigating hallucination in large vision language models via fine-grained ai feedback
+.
+In
+Proceedings of the AAAI Conference on Artificial Intelligence
+,
+Vol.
+39
+,
+pp. 25543–25551
+.
+Cited by:
+§2.2
+.
+[35]
+L. Yang, Z. Zheng, B. Chen, Z. Zhao, C. Lin, and C. Shen
+(2025)
+Nullu: mitigating object hallucinations in large vision-language models via halluspace projection
+.
+In
+Proceedings of the Computer Vision and Pattern Recognition Conference
+,
+pp. 14635–14645
+.
+Cited by:
+§1
+,
+§2.3
+,
+§4.1
+,
+§4.3
+,
+§6
+,
+§7
+.
+[36]
+T. Yang, Z. Li, J. Cao, and C. Xu
+(2025)
+Mitigating hallucination in large vision-language models via modular attribution and intervention
+.
+In
+Adaptive Foundation Models: Evolving AI for Personalized and Efficient Learning
+,
+Cited by:
+§2.3
+.
+[37]
+Z. Yang, X. Luo, D. Han, Y. Xu, and D. Li
+(2025)
+Mitigating hallucinations in large vision-language models via dpo: on-policy data hold the key
+.
+In
+Proceedings of the Computer Vision and Pattern Recognition Conference
+,
+pp. 10610–10620
+.
+Cited by:
+§2.2
+.
+[38]
+J. Ye, H. Xu, H. Liu, A. Hu, M. Yan, Q. Qian, J. Zhang, F. Huang, and J. Zhou
+(2024)
+Mplug-owl3: towards long image-sequence understanding in multi-modal large language models
+.
+arXiv preprint arXiv:2408.04840
+.
+Cited by:
+§1
+.
+[39]
+Q. Ye, H. Xu, J. Ye, M. Yan, A. Hu, H. Liu, Q. Qian, J. Zhang, and F. Huang
+(2024)
+Mplug-owl2: revolutionizing multi-modal large language model with modality collaboration
+.
+In
+Proceedings of the ieee/cvf conference on computer vision and pattern recognition
+,
+pp. 13040–13051
+.
+Cited by:
+§1
+,
+§2.1
+,
+§4.1
+.
+[40]
+S. Yin, C. Fu, S. Zhao, T. Xu, H. Wang, D. Sui, Y. Shen, K. Li, X. Sun, and E. Chen
+(2024)
+Woodpecker: hallucination correction for multimodal large language models
+.
+Science China Information Sciences
+67
+(
+12
+),
+pp. 220105
+.
+Cited by:
+§1
+,
+§2.2
+,
+§4.2
+,
+§4.2
+,
+§4.3
+.
+[41]
+H. You, H. Zhang, Z. Gan, X. Du, B. Zhang, Z. Wang, L. Cao, S. Chang, and Y. Yang
+(2023)
+Ferret: refer and ground anything anywhere at any granularity
+.
+arXiv preprint arXiv:2310.07704
+.
+Cited by:
+§1
+.
+[42]
+Y. Zhou, C. Cui, J. Yoon, L. Zhang, Z. Deng, C. Finn, M. Bansal, and H. Yao
+(2023)
+Analyzing and mitigating object hallucination in large vision-language models
+.
+arXiv preprint arXiv:2310.00754
+.
+Cited by:
+§1
+,
+§2.2
+,
+§3.1
+,
+§4.2
+,
+§4.3
+.
+[43]
+D. Zhu, J. Chen, X. Shen, X. Li, and M. Elhoseiny
+(2023)
+Minigpt-4: enhancing vision-language understanding with advanced large language models
+.
+arXiv preprint arXiv:2304.10592
+.
+Cited by:
+§1
+,
+§2.1
+,
+§4.1
+.
+[44]
+L. Zhu, D. Ji, T. Chen, P. Xu, J. Ye, and J. Liu
+(2025)
+Ibd: alleviating hallucinations in large vision-language models via image-biased decoding
+.
+In
+Proceedings of the Computer Vision and Pattern Recognition Conference
+,
+pp. 1624–1633
+.
+Cited by:
+§2.3
+.
+6
+Implementation Details
+Table
+6
+summarizes the general and model-specific parameters used in our experiments. We adopt a deterministic decoding setup with fixed temperature and beam size, and vary the maximum number of generated tokens depending on the evaluation benchmark.
+To simulate visual hallucinations, we use Stable Diffusion with half of total diffusion steps (
+T
+T
+) for forward and reverse steps (
+0.5
+​
+T
+0.5T
+). During inference, hidden representations from selected layers are projected onto the orthogonal complement of the hallucination subspace. The rank of this subspace is tuned for each model to optimize hallucination suppression without compromising generation quality.
+Parameters
+Values
+General Settings
+Temperature
+0
+Number of Beams
+3
+Maximum New Tokens (CHAIR)
+64
+Maximum New Tokens (OPOPE)
+256
+Maximum New Tokens (LLaVA-Bench)
+1024
+Number of Diffusion Steps
+0.5
+​
+T
+0.5T
+Editing Layers
+16-32
+Model-Specific Parameters
+Hallucination Space Rank (LLaVA-1.5)
+8
+Hallucination Space Rank (MiniGPT-4)
+64
+Hallucination Space Rank (mPLUG-Owl2)
+32
+Table 6:
+General and model-specific parameter settings.
+We report the performance of baseline models based on the results presented in the Nullu paper
+[
+35
+]
+, which reproduces several state-of-the-art object hallucination mitigation methods, including HALC
+[
+8
+]
+, VCD
+[
+17
+]
+, DoLa
+[
+12
+]
+, and OPERA
+[
+14
+]
+. Each method is evaluated using its official implementation and publicly released pre-trained checkpoints. Moreover, we carefully adopted key hyperparameter settings that align with those reported in their original implementations. Specifically, for HALC, we used an amplification factor of 0.05 along with a beam size of 1, reflecting the minimal decoding augmentation strategy employed by the authors. For VCD, we set the diffusion noise step to 500, consistent with the level of perturbation used in their hallucination mitigation framework. In the case of DoLa, we applied a repetition penalty of 1.2 and performed interventions across the early transformer layers, as suggested to promote faithful generation during early stages of decoding. Lastly, for OPERA, we implemented a scaled self-attention mechanism with a scaling factor of 50, in line with the original design to regulate attention intensity. All these hyperparameter choices were selected to faithfully reproduce the respective baselines under settings that remain true to the original authors’ reported configurations.
+7
+Detailed Results for OPOPE
+To evaluate the effectiveness of hallucination mitigation methods in a way that is compatible with post-hoc approaches, we adopt the Offline POPE (OPOPE) protocol. OPOPE is a non-interactive version of the original POPE metric, introduced in HALC
+[
+8
+]
+, and is specifically designed to avoid the limitations of online interaction during inference. While POPE evaluates hallucination through interactive polling prompts such as “Is there a/an [object] in the image?”, this interactive requirement poses challenges for post-hoc mitigation methods and can lead to instability in models with weaker generative backbones.
+OPOPE performs hallucination evaluation entirely offline. Following the caption generation pipeline of CHAIR
+[
+29
+]
+, captions are generated for a fixed image set, then tokenized and singularized, with words mapped to MSCOCO object categories using synonym and compound-word mappings. Using POPE’s sampling strategy, three test object lists are created per setting—
+Random
+,
+Popular
+, and
+Adversarial
+—each containing six objects balanced between ground-truth and nonexistent categories. Captions are scanned for these objects, and mentions of nonexistent ones are counted as hallucinations.
+To account for the limited recall sensitivity of offline evaluations—where false negatives may occur if hallucinated content is not explicitly verbalized—we adopt the F-
+𝜷
+\boldsymbol{\beta}
+score as our primary evaluation metric, following HALC. The F-
+β
+\beta
+score reduces the penalty on false negatives by weighting precision more heavily. Specifically, we use
+β
+=
+0.2
+\beta=0.2
+for F-
+β
+\beta
+score:
+F
+β
+=
+(
+1
++
+β
+2
+)
+⋅
+(
+precision
+⋅
+recall
+)
+β
+2
+⋅
+precision
++
+recall
+with
+​
+β
+=
+0.2
+.
+F_{\beta}=\frac{(1+\beta^{2})\cdot(\text{precision}\cdot\text{recall})}{\beta^{2}\cdot\text{precision}+\text{recall}}\quad\text{with }\beta=0.2.
+The main paper reports results averaged across the three sampling strategies for brevity, while Table
+7
+provides a full breakdown by model and sampling configuration. We report Accuracy, Precision, Recall, and F-score for all baselines—Greedy, Beam Search, DoLa
+[
+12
+]
+, OPERA
+[
+14
+]
+, VCD
+[
+17
+]
+, HALC
+[
+8
+]
+, and NullU
+[
+35
+]
+—along with our method, VISTA. VISTA consistently ranks among the top-performing methods across most settings, demonstrating robustness to varying object distributions and model architectures. These results complement the main findings and provide a detailed view of performance under each hallucination sampling strategy.
+We additionally conducted statistical significance tests comparing VISTA to baseline methods for each model. Across all cases, results consistently showed significant improvements. For instance, on LLaVA, VISTA outperforms the baseline with p-values well below 0.01 across all metrics: Accuracy (
+p
+=
+0.0033
+p=0.0033
+), Precision (
+p
+<
+0.0001
+p<0.0001
+), and F
+0.2
+Score (
+p
+<
+0.0001
+p<0.0001
+), confirming the robustness of our method.
+Setting
+Model
+Method
+Accuracy
+Precision
+Recall
+F Score
+Random
+LLaVA-1.5
+Greedy
+81.52
+98.41
+64.07
+96.42
+DoLa
+81.38
+98.11
+64.00
+96.14
+OPERA
+81.62
+98.57
+64.17
+96.58
+VCD
+80.57
+98.41
+62.13
+96.25
+HALC
+79.58
+98.21
+60.27
+95.89
+Nullu
+81.18
+98.05
+63.63
+96.05
+VISTA
+81.84
+98.70
+64.58
+96.68
+MiniGPT-4
+Greedy
+72.42
+98.49
+45.53
+94.25
+DoLa
+72.45
+98.58
+45.57
+94.34
+OPERA
+72.57
+98.78
+45.70
+94.52
+VCD
+72.35
+98.19
+45.53
+93.97
+HALC
+72.08
+98.62
+44.80
+94.25
+Nullu
+72.68
+99.06
+45.80
+94.82
+VISTA
+72.85
+99.37
+46.00
+95.12
+mPLUG-Owl2
+Greedy
+79.45
+97.74
+60.30
+95.46
+DoLa
+78.33
+97.60
+58.10
+95.09
+OPERA
+78.31
+97.73
+57.96
+95.21
+VCD
+78.19
+98.23
+57.42
+95.61
+HALC
+77.83
+97.72
+57.00
+95.10
+Nullu
+79.05
+98.40
+60.50
+95.82
+VISTA
+79.56
+97.66
+60.57
+95.41
+Popular
+LLaVA-1.5
+Greedy
+78.93
+91.17
+64.07
+89.71
+DoLa
+78.72
+91.60
+64.00
+89.26
+OPERA
+79.22
+91.80
+64.17
+90.30
+VCD
+77.57
+89.87
+62.13
+88.35
+HALC
+77.47
+91.87
+60.27
+90.05
+Nullu
+79.80
+94.06
+63.63
+92.36
+VISTA
+80.02
+93.47
+64.58
+91.89
+MiniGPT-4
+Greedy
+70.80
+92.01
+45.53
+88.53
+DoLa
+70.90
+92.33
+45.57
+88.22
+OPERA
+71.10
+92.82
+45.70
+89.27
+VCD
+70.33
+90.30
+45.53
+86.98
+HALC
+70.92
+93.80
+44.80
+90.00
+Nullu
+71.97
+96.08
+45.80
+92.19
+VISTA
+72.15
+96.43
+46.00
+92.53
+mPLUG-Owl2
+Greedy
+76.00
+87.90
+60.30
+86.38
+DoLa
+75.20
+88.36
+58.10
+86.00
+OPERA
+75.02
+88.06
+57.96
+86.33
+VCD
+74.86
+88.16
+57.42
+86.37
+HALC
+75.77
+91.34
+57.00
+89.26
+Nullu
+77.09
+92.34
+61.60
+90.49
+VISTA
+77.95
+92.91
+60.57
+91.03
+Adversarial
+LLaVA-1.5
+Greedy
+76.97
+86.36
+64.07
+85.22
+DoLa
+76.85
+86.18
+64.00
+85.05
+OPERA
+77.03
+86.40
+64.17
+85.26
+VCD
+75.88
+85.71
+62.13
+84.48
+HALC
+76.57
+89.44
+60.27
+87.80
+Nullu
+77.58
+88.27
+63.63
+86.92
+VISTA
+78.29
+89.03
+64.58
+87.84
+MiniGPT-4
+Greedy
+70.43
+90.65
+45.53
+87.32
+DoLa
+70.50
+88.55
+45.57
+87.50
+OPERA
+70.78
+91.63
+45.70
+88.21
+VCD
+69.82
+83.41
+45.53
+85.32
+HALC
+70.52
+92.22
+44.80
+88.60
+Nullu
+71.10
+92.73
+45.80
+89.21
+VISTA
+71.44
+93.70
+46.00
+90.11
+mPLUG-Owl2
+Greedy
+74.23
+83.58
+60.30
+82.36
+DoLa
+73.52
+83.98
+58.10
+82.55
+OPERA
+73.17
+83.45
+57.96
+82.06
+VCD
+72.85
+83.01
+57.42
+81.61
+HALC
+74.02
+86.41
+57.00
+84.72
+Nullu
+75.15
+87.76
+61.60
+86.10
+VISTA
+76.10
+87.90
+60.57
+86.40
+Table 7:
+Performance comparison of various hallucination mitigation methods across different models and evaluation settings.
+Examples of Hallucinated Images
+Figure 10
+:
+Visual examples from the MSCOCO dataset illustrating hallucinations generated using
+0.5
+​
+T
+0.5T
+Stable Diffusion steps.
+This figure shows MSCOCO images before and after applying visual hallucination using Stable Diffusion with
+t
+h
+=
+0.5
+​
+T
+t_{h}=0.5T
+denoising steps. While the overall scene structure remains largely unchanged, the hallucinated images introduce subtle object or texture modifications intended to mislead vision-language models.
+8
+Extended Ablation Analysis
+In this section of the appendix, we provide extended results from our ablation analysis to support the findings presented in the main paper.
+8.1
+Best Subspace Rank
+As shown in the ablation section of the main paper, the best subspace rank for LLaVA-7B was
+r
+=
+8
+r=8
+, achieving the lowest CHAIR
+S
+and CHAIR
+I
+scores while preserving or improving BLEU. Here, we extend this analysis to MiniGPT-4 and mPLUG-Owl2.
+Figure
+11
+shows that for MiniGPT-4, the optimal number of SVD components is
+r
+=
+64
+r=64
+, where CHAIR scores drop significantly and BLEU remains stable. Similarly, Figure
+12
+demonstrates that mPLUG-Owl2 achieves the best balance at
+r
+=
+32
+r=32
+, where hallucination metrics are minimized and BLEU degradation is minimal. These findings highlight that the optimal subspace rank can vary across models and should be tuned accordingly.
+Figure 11
+:
+Effect of subspace rank
+r
+r
+on CHAIR
+S
+, CHAIR
+I
+, and BLEU for MiniGPT-4 on the CHAIR benchmark. Using
+r
+=
+64
+r=64
+yields the best performance, minimizing hallucinations with minimum BLEU degradation.
+Figure 12
+:
+Effect of subspace rank
+r
+r
+on CHAIR
+S
+, CHAIR
+I
+, and BLEU for mPLUG-Owl2 on the CHAIR benchmark. Using
+r
+=
+32
+r=32
+yields the best performance, minimizing hallucinations with minimum BLEU degradation.
+8.2
+Selection of Layers for Projection
+VISTA mitigates hallucinations at inference time by projecting the hidden representations of selected LVLM layers onto their corresponding null spaces. To assess the influence of layer choice on suppression effectiveness, we perform an ablation study using various candidate layer ranges. We evaluate each configuration on the MSCOCO validation split using the CHAIR metric, reporting both instance-level (CHAIR
+I
+) and sentence-level (CHAIR
+S
+) hallucination rates, where lower values indicate better suppression.
+Layer Range
+CHAIR
+S
+↓
+\downarrow
+CHAIR
+I
+↓
+\downarrow
+8–16
+13.52
+4.82
+8–24
+14.10
+5.02
+16–24
+18.10
+5.86
+16–32
+13.05
+4.53
+20–32
+14.10
+4.84
+24–32
+14.00
+4.64
+28–32
+14.48
+5.10
+Table 8:
+Ablation study on the transformer layer range used for projection in VISTA.
+As shown in Table
+8
+, the choice of layer range significantly impacts hallucination suppression. Projection over earlier layers, such as 8–16 or narrower bands like 28–32, yields suboptimal results, suggesting that local or overly shallow representations lack the semantic expressiveness needed to isolate hallucination directions. Performance improves with broader and deeper projections, with the 16–32 range consistently achieving the lowest CHAIR
+S
+and CHAIR
+I
+scores. This indicates that hallucination-inducing signals are best captured in semantically rich, higher layers spanning a sufficiently deep interval. Consequently, we adopt the 16–32 layer range as the default configuration in our main experiments.
+9
+Details of GPT-4V Aided Evaluation on LLaVA-Bench
+We evaluate our hallucination suppression method using GPT-4V on the LLaVA-Bench benchmark
+[
+25
+]
+, which consists of 24 images. For each example, GPT-4V receives the image, the evaluation prompt, and the responses from both the original and the edited (hallucination-suppressed) models.
+GPT-4V compares the two responses in terms of accuracy—how well the answer reflects the image—and detailedness—how specific and complete the response is. It outputs a score for each criterion along with a brief justification. Figure
+13
+and Figure
+14
+show the prompt format and a sample GPT-4V evaluation, respectively. This setup enables consistent comparison of response quality grounded in the image content.
+Prompt for GPT-4V Aided Evaluation
+Figure 13
+:
+An illustration of the prompt used to guide GPT-4V for visual question evaluation.
+Figure 14
+:
+Example of GPT-4V-based evaluation for image description.
+More Examples of VISTA on LLaVA-Bench
+Figure 15
+:
+More examples of VISTA applied to LLaVA-Bench.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

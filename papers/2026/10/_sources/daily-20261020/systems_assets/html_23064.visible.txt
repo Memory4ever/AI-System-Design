@@ -1,0 +1,1412 @@
+BaGuaLu-2: Taming Dynamic Memory Fluctuation for Efficient MoE Model Training over 10,000 GPUs
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+I   Introduction
+II   Background and Motivation
+II-A    MoE Training at Scale
+II-B    Dynamic Memory Pressure: A Quantitative Case
+III   Overview
+IV   Activation Memory Modeling
+IV-A    Activation Cost Model
+IV-B    Activation Mitigation Cost
+V   Model-Guided Runtime Memory Provisioning
+V-A    Dynamic Activation Memory Mitigation
+V-B    Fused Dual-Batch Execution
+VI   Evaluation
+VI-A    Setup
+VI-B    End-to-End Performance
+VI-C    Robustness under Varying Memory Pressure
+VI-D    Ablation Study
+VII   Related Work
+VIII   Conclusion
+IX   Acknowledgments
+References
+License: CC BY 4.0
+arXiv:2610.23064v1 [cs.DC] 16 Oct 2026
+BaGuaLu-2: Taming Dynamic Memory Fluctuation for Efficient MoE Model Training
+over 10,000 GPUs
+Mingshu Zhai
+Affiliation:   Tsinghua University
+Beijing, China
+zhaims22@mails.tsinghua.edu.cn
+Minkun Guo
+Affiliation:   Tsinghua University
+Qingcheng.AI
+Beijing, China
+gmk21@mails.tsinghua.edu.cn
+Hongrui Lian
+Affiliation:   Tsinghua University
+Qingcheng.AI
+Beijing, China
+lianhr24@mails.tsinghua.edu.cn
+Shuangyu Li
+Affiliation:   Tsinghua University
+Beijing, China
+lishuang22@mails.tsinghua.edu.cn
+Qi Zhang
+Affiliation:   Tsinghua University
+Beijing, China
+qi_zhang@tsinghua.edu.cn
+Chen Hu
+Affiliation:   Unaffiliated
+Beijing, China
+hclearner2@gmail.com
+Xiawei Du
+Affiliation:   Tsinghua University
+Beijing, China
+duxw25@mails.tsinghua.edu.cn
+Yuyang Jin 1
+†    †  thanks:  *Corresponding authors
+Affiliation:   Tsinghua University
+Beijing, China
+jinyuyang@tsinghua.edu.cn
+Zan Zong 1
+Affiliation:   University of Science and Technology Beijing
+Beijing, China
+zongzan@ustb.edu.cn
+Jidong Zhai 1
+Affiliation:   Tsinghua University
+Beijing, China
+zhaijidong@tsinghua.edu.cn
+Abstract
+Fine-grained Mixture-of-Experts (MoE) is the de facto architecture for scaling large language models. However, dynamic expert load imbalance causes severe memory fluctuations that degrade training efficiency. Existing systems rely on static memory provisioning: they either over-provision, leaving GPU memory idle during normal execution, or under-provision, inviting out-of-memory crashes and costly manual rollbacks when load spikes occur.
+To address these challenges, we propose BaGuaLu-2, a large-scale MoE training system that eliminates this dilemma through flexible provisioning. By transforming memory allocation from a static, one-time tuning choice into a continuous and fine-grained control. BaGuaLu-2 grants exact activation memory on demand for each training batch. Furthermore, it offsets any dynamic management overhead through system optimizations. BaGuaLu-2 demonstrates exceptional scalability, training a model with 1040 billion parameters across 12,288 GPUs while sustaining over 2 EFlops at 35% MFU. Compared with state-of-the-art systems, BaGuaLu-2 delivers 1.14   ×  \times    and 1.13   ×  \times    average throughput improvements over Megatron-Kuai and AdaPipe, respectively.
+I   Introduction
+Large language models (LLMs) have demonstrated remarkable capabilities across domains,
+driving an ever-growing demand for larger and more capable models.
+To meet this demand, fine-grained Mixture-of-Experts (MoE) has emerged as the dominant architecture for scaling
+LLMs  [ 1 ,  2 ,  3 ,  4 ,  5 ,  6 ,  7 ] ,
+as it increases model capacity without proportionally increasing the computation per token. Accelerating MoE training process has become a major focus in current systems research.
+A fundamental characteristic of the MoE architecture is its dynamic sparse routing mechanism, which inherently introduces expert load imbalance.
+We observe this phenomenon consistently when scaling training to clusters comprising tens of thousands of GPUs.
+In approximately     2.9  %   2.9\%    of training iterations, imbalanced load exhibits maximum     2.6  ×   2.6\times    spikes.
+The imbalanced load leads to dynamic memory fluctuation,
+where training jobs have the risk to exceed physical hardware capacity and triggering Out-of-Memory (OOM) errors, which halt the training process.
+In response to the huge memory requirement of large-scale model training,
+existing systems optimize GPU memory usage from multiple angles.
+For weight and optimizer-states,
+model parallelism  [ 8 ]  and ZeRO  [ 9 ]  effectively shards these memory usage across devices.
+For activation memory, systems rely on recomputation  [ 10 ]  and offloading  [ 11 ]
+to reduce peak consumption.
+However, these static approaches fail to resolve dynamic memory fluctuation introduced by load imbalance.
+Existing training systems are trapped in a rigid dilemma:
+as shown in Figure   1  (b),
+if the system  over-provisions  memory to avoid OOM errors,
+GPU memory is wasted during most of the iterations, resulting in persistently low Model FLOPs Utilization (MFU).
+Conversely, if the system  under-provisions  memory to maximize MFU,
+it cannot dynamically respond to memory spikes at runtime.
+Upon encountering a spike, the system crashes and requires manual intervention.
+Restart and set the system in a conservative, over-provisioning memory configuration.
+Once the spike passes and the operator wishes to restore the high-throughput
+under-provisioned configuration, yet another manual restart is required.
+Every such restart incurs significant performance overhead.
+Fig. 1 :   Dynamic memory fluctuation of MoE model training.
+We identify activation memory as the root cause of both the memory bottleneck and the fluctuation
+at scale.
+Figure   1  (a) shows the per-GPU memory demand breakdown in large-scale training.
+Weight and optimizer-state memory can be distributed across GPUs and remains stable across iterations.
+Activation memory, in contrast, cannot be effectively distributed—larger clusters require
+proportionally more input data to maintain compute density—and
+fluctuates unpredictably due to expert load imbalance caused by MoE’s dynamic sparse routing.
+Thus, dynamically managing activation memory is the key to addressing
+the efficiency and stability challenges of large-scale MoE training.
+However, existing systems’ activation memory management suffers from two fundamental deficiencies.
+Static Memory Provisioning.
+Existing systems treat activation provisioning as a coarse-grained, fixed policy:
+the policy is determined before training and cannot be adjusted at runtime.
+For example,
+although AdaPipe  [ 10 ]  supports adaptive recomputation across pipeline stages,
+each pipeline stage remains a fixed strategy throughout training.
+This prevents the system from responding to per-batch memory fluctuation.
+Large Memory Mitigation Overhead.
+The extra computation or communication introduced by
+activation mitigation is directly exposed on the critical path
+and cannot be overlapped.
+For example, the activation offloading in Megatron-Kuai  [ 11 ]
+achieves only limited overlap at inter-layer boundaries.
+Activation mitigation therefore becomes a pure performance penalty,
+and systems tend to minimize its use,
+further limiting the scope for memory optimization.
+Constrained by these deficiencies, existing systems can only make a static binary choice
+between over-provision and under-provision.
+They are unable to dynamically allocate exactly the resources needed based on
+the actual memory fluctuation of each training iteration.
+We propose  flexible activation provisioning ,
+which transform activation memory provisioning
+from a  static choice  into  continuous control ,
+thereby achieving fully-utilized GPU memory.
+As shown in   Figure   2  ,
+this enables the system to tame dynamic memory fluctuation in both regimes:
+(i)  when MoE load imbalance is moderate,
+the system applies steady activation mitigation to enable high-throughput parallelism, consuming almost all available memory;
+(ii)  when load imbalance is severe,
+the system dynamically intensifies activation mitigation to prevent OOM,
+avoiding the far greater cost of a cold restart.
+We design three techniques to realize flexible-provisioning at training runtime.
+Fig. 2 :   Training Memory Footprint with  flexible-provisioning .
+Activation Memory Modeling (§  IV  ).
+We design an activation memory cost model,
+which can accurately predict activation memory usage and mitigation time consumption.
+It guides the following runtime memory provisioning strategies.
+Adaptive Activation Provisioning (§  V-A  ).
+Considering pipeline schedule phase and current MoE imbalance load,
+we apply flexible memory budget for each micro batch.
+Within a batch,
+operators can use different mitigation strategies,
+giving the system continuous control over memory consumption.
+Fused Dual-Batch Execution (§  V-B  ).
+We propose interleaved execution for adjacent micro batch
+to avoid directly exposing activation mitigation overhead on the critical path.
+Using a light-weight runtime solver,
+mitigation operations are inserted into hardware bubble
+so that the execution overhead is hidden.
+These techniques are implemented in BaGuaLu-2,
+a large-scale MoE training system.
+We scale up to 12,288 GPUs for training 1040 billion parameters MoE model.
+BaGuaLu-2 achieves throughput of over 2 EFlops and an MFU of 35%.
+Compared with state-of-the-art training systems Megatron-Kuai  [ 11 ]  and AdaPipe  [ 10 ] ,
+BaGuaLu-2 improves both training stability and peak performance,
+with average throughput gains of     1.14  ×   1.14\times    and     1.13  ×   1.13\times   , respectively.
+II   Background and Motivation
+II-A    MoE Training at Scale
+The Mixture-of-Experts architecture has undergone a significant structural shift in recent years.
+Table   I   surveys representative MoE models.
+Early designs such as Mixtral  [ 12 ]  and DBRX  [ 13 ]  adopt a coarse-grained architecture with a small number of large experts,
+while more recent models such as DeepSeek-V3  [ 1 ]  select 8 out of 256 fine-grained experts for each token.
+This shift toward fine-grained MoE increases the number of activated experts and,
+critically, amplifies MoE-related activation memory,
+making activation management a first-class concern for training MoE model at scale.
+TABLE I :   Architecture of Recent MoE Models.
+Models
+Activated/Total Parameters
+TopK/#Experts
+Mixtral  [ 12 ]
+12.9B/46.7B
+2/8
+DBRX  [ 13 ]
+36B/132B
+1/4
+GLM-4.5  [ 5 ]
+32B/355B
+8/160
+DeepSeek-v3  [ 1 ]
+37B/671B
+8/256
+Kimi-k2  [ 4 ]
+32.6B/1040B
+8/384
+Alongside this trend, the nature of expert load imbalance has also evolved.
+Early MoE systems suffered from persistent, widespread imbalance across training iterations,
+which motivated compute-focused mitigation strategies  [ 14 ,  15 ] .
+Advances in routing algorithms  [ 16 ,  17 ]
+have largely eliminated this chronic imbalance.
+However, imbalance has not disappeared: it now manifests as rare, high-magnitude spikes.
+As shown in Figure   1  (a), our measurements reveal that     97.1  %   97.1\%    of training iterations
+exhibit an imbalance rate below     1.2  ×   1.2\times   , while     2.9  %   2.9\%    of iterations exceed that rate with maximum     2.6  ×   2.6\times   .
+This shift in character changes the relevant system objective:
+since spikes are infrequent, the cost of slowing down to handle them is low,
+but an OOM failure, which requires manual intervention and job restart, is catastrophic.
+Existing MoE training systems  [ 18 ,  19 ,  15 ,  20 ,  21 ]  focus on compute load balancing.
+They are poorly equipped to prevent the memory failures caused by occasional spikes.
+To train fine-grained MoE model at scale,
+mitigating activation memory becomes important.
+The standard approach to mitigating activation memory draws on two families of techniques.
+Recomputation  discards activations during the forward pass
+and recomputes them from saved checkpoints during the backward pass, trading compute for memory  [ 22 ] .
+Offloading  transfers activations to CPU memory during the forward pass
+and prefetches them back to GPU before the corresponding backward computation  [ 23 ] .
+Despite their differences, all existing systems share the same static workflow to apply activation mitigation:
+(1) profile or model the memory footprint of a target configuration,
+(2) select an activation mitigation strategy that fits within a fixed memory budget,
+and (3) apply that strategy uniformly throughout training.
+This workflow  implicitly assumes activation memory is stable across iterations .
+The occasional memory spikes of fine-grained MoE break this assumption:
+a strategy sized for the average case will OOM on a spike,
+while a strategy sized for the worst case wastes memory during the most of iterations.
+II-B    Dynamic Memory Pressure: A Quantitative Case
+To quantify the cost of static activation management in MoE training,
+we run a representative training workload on 512 GPUs using a 423B-A30B MoE model,
+as shown in   Figure   1  .
+We use a state-of-the-art training system AdaPipe  [ 10 ] ,
+and config its memory management policy as under-provisioning:
+the activation memory budget is set for the average case,
+maximizing memory utilization and MFU during normal iterations
+but leaving no headroom to absorb spikes.
+Specifically, selective recompute is applied for several operators.
+This policy achieves a high average MFU of     30.0  %   30.0\%    during normal iterations,
+but encounters OOM failures in approximately     2.9  %   2.9\%    of spike iterations,
+each requiring a job restart that incurs a recovery overhead of    284  284    seconds, which is     16  ×   16\times    the time cost of a normal iteration.
+We profile the cold-start overhead and find most of the time is spent on large-scale distributed initialization and GPU kernel warmup,
+which is hard to eliminate.
+Note that this measurement excludes human response latency, which can further increase the total recovery time.
+After restart casued by OOM,
+the policy is switch to over-provisioning.
+Specifically, full-layer recompute is applied so that activation memory consumption is not influenced by MoE imbalance rate.
+This policy runs stably but delivers a sustained MFU of only     24.6  %   24.6\%   ,
+because the unused memory headroom forecloses more efficient configurations.
+We argue from first principles that this spike is an inevitable consequence of the input token distribution, not an artifact of any particular routing algorithm, via a four-step chain.
+(1) Routing randomness.  Fine-grained top-   k  k    routing lets each token independently select its experts, introducing per-micro-batch sampling noise. Long-run load-balancing mechanisms — an auxiliary loss  [ 16 ]  or a bias correction  [ 17 ]  — cannot suppress this noise: each correction is computed from aggregate load observed over past iterations and fixed  before  the current micro-batch is routed, so neither can condition on that batch’s realized content.
+(2) Token-distribution skew.  A micro-batch whose token distribution happens to be unfavorable — a property of the data, not the algorithm — therefore concentrates tokens on a small subset of experts regardless of the balancing mechanism in place, since any correction reacts to past load at least one iteration too late; our measurements show this occurs in a small fraction of micro-batches, with up to     2.6  ×   2.6\times    imbalance.
+(3) Expert placement.  Fine-grained architectures pair a large expert count with a high expert-parallelism degree, so each device hosts only a few local experts; expert-level imbalance therefore translates directly into device-level  token concentration , since skew on locally-hosted experts accumulates activations on that device while skew on remote experts is carried away by all-to-all dispatch. This directionality is why a given skew’s impact cannot be determined until the gate is computed (§  V-A  ).
+(4) Warmup accumulation.  During the pipeline warmup phase (  Figure   5  c), multiple forward micro-batches stack without an intervening backward pass, so a single skewed batch can push the cumulative peak beyond device memory capacity.
+The root cause is thus the finite-sample variance of per-token independent routing acting on a shifting data distribution — an architectural property of any fine-grained MoE, not a correctable bug.
+(a)    DeepSeek-V3.1-Terminus
+(b)    GLM-4.7
+Fig. 3 :   Expert-load skewness across SWE coding tasks.
+We support this argument with direct evidence that real input data measurably alters expert-load skew, which by the same mechanism implies similar variation across training iterations.
+We measure two deployed models with structurally different routing algorithms: DeepSeek-V3.1-Terminus (expert bias with a sequence-level auxiliary loss) and GLM-4.7 (expert bias with a sigmoid gate, no auxiliary loss).
+For each model, we collect prefill-stage per-token routing decisions from software-engineering agent trajectories spanning five task domains — application development (app), build and deployment (bd), data analysis (da), frontend development (fd), and UI optimization (ui) — and compute, per layer and domain, the expert-load balance rate (max/mean,   Figure   3   top) and the hottest expert (bottom).
+Figure   3   shows that, for both models, the balance rate and even the hottest expert’s identity differ substantially and systematically across domains at the same layer.
+Since token-choice routing has no notion of task domain, this difference can only originate from the input token distribution: each domain induces a distinct mixture over the router’s training content.
+A training corpus is precisely such a heterogeneous, evolving mixture, so the same mechanism implies that the data mixture a given iteration samples determines that iteration’s skew, explaining why spikes are sporadic rather than persistent.
+This domain-dependent skew appears under both DeepSeek-V3.1-Terminus’s auxiliary loss and GLM-4.7’s sigmoid-gate correction, confirming empirically, beyond the argument above, that the root cause is intrinsic to token-choice routing rather than to any one balancing mechanism.
+These results expose the fundamental mismatch at the core of the problem:
+existing systems apply a  static  activation mitigation strategy to a training workload
+whose activation pressure is inherently  dynamic .
+This mismatch directly accounts for both the performance deficit of conservative approaches
+and the stability failures of aggressive ones.
+We need a system that dynamically adjusts its activation mitigation strategy
+at runtime in response to actual memory pressure:
+a capability that the static workflow of existing systems cannot provide.
+III   Overview
+Fig. 4 :   Overview of BaGuaLu-2.
+We propose BaGuaLu-2,
+a training system that handles dynamic memory fluctuation in large-scale MoE model training.
+Figure   4   presents an overview.
+Before training starts, BaGuaLu-2 follows existing practice
+to generate an optimal hybrid-parallel strategy from training specification,
+with the assumption of balanced MoE workload.
+At runtime, BaGuaLu-2 performs  flexible activation provisioning  to deal with imbalanced and unpredictable MoE workload.
+At each pipeline scheduling point,
+BaGuaLu-2 decides the execution plan (memory usage and operator execution order) for the next micro batch
+with three steps:
+Activation memory modeling  (§  IV  ).
+Given the current pipeline state and MoE imbalance rate,
+BaGuaLu-2 evaluates the activation memory demand of the upcoming micro-batch
+using the cost model developed in §  IV  ,
+and assesses the cost-benefit tradeoff of each mitigation strategy.
+Adaptive Activation Provisioning  (§  V-A  ).
+Then, BaGuaLu-2 applies diverse activation mitigation strategies for each batch.
+A pipeline-aware memory budget is computed for the micro-batch,
+and an iterative algorithm selects per-operator mitigation strategies
+(recomputation, offloading, or quantization)
+to keep the peak memory within GPU capacity
+while minimizing performance overhead.
+Fused dual-batch execution  (§  V-B  ).
+Finally, BaGuaLu-2 examines the chosen mitigation strategies
+of the current and adjacent micro-batches
+and uses a lightweight solver to interleave operators’ execution across computation and communication streams,
+hiding the mitigation overhead in hardware bubbles.
+These three steps collectively produce the execution plan
+for the next pipeline state with optimized activation memory consumption,
+minimizing total execution time without exceeding the device memory limit.
+IV   Activation Memory Modeling
+We now develop the  activation cost model ,
+a unified performance model that jointly captures the time and memory cost
+of activation management.
+We first define the cost model from the operator level to a full iteration (§  IV-A  ),
+then quantify existing activation mitigation strategies under this model (§  IV-B  ).
+IV-A    Activation Cost Model
+Operator activation cost (  Figure   5  a).
+We characterize each operator by an  activation cost :
+a tuple     (   Δ  ​  t   ,   Δ  ​  m   )   (\Delta t,\,\Delta m)
+where     Δ  ​  t   \Delta t    is the operator’s execution time
+and     Δ  ​  m   \Delta m    is the change in activation memory
+(positive for forward allocation
+and negative for backward release).
+Visually, the activation cost traces a trajectory
+on an  activation memory curve
+whose    x  x   -axis is time and    y  y   -axis is GPU memory occupancy:
+a forward operator corresponds to a right-triangle
+with its hypotenuse rising to the upper-right,
+and a backward operator corresponds to a right-triangle
+with its hypotenuse falling to the lower-right
+(Figure   5  ).
+As each operator corresponds to a single kernel launch,
+the piecewise-linear approximation closely tracks the actual memory footprint.
+Operators in an MoE transformer block show very different characteristics.
+We illustrate three representative operators: LayerNorm, Linear, and MoE dispatch communication.
+Comparing LayerNorm and Linear,
+the ratio of     Δ  ​  m   \Delta m    and     Δ  ​  t   \Delta t    has a significant difference.
+It leads to different mitigation bandwidth introduced in the next section.
+And for dispatch communication,
+there is no memory cost because it has no trainable parameters.
+Fig. 5 :   Activation Cost Model at Different Levels.
+Micro-batch activation cost (  Figure   5  b).
+A forward or backward micro-batch
+is a sequence of operators executed on a single pipeline stage.
+Its activation cost is the concatenation
+of its constituent operators’ costs,
+yielding an approximated composite triangle on the activation memory curve
+with total height     ∑   Δ  ​  m    \sum\Delta m    and total width     ∑   Δ  ​  t    \sum\Delta t   .
+Since every operator only contributes a small portion of the total activation memory,
+this approximation is acceptable.
+For simplicity,
+we will use this approximation in the following analysis on micro-batch and iteration level modeling.
+Iteration activation cost (  Figure   5  c).
+Under pipeline parallelism,
+a training iteration executes multiple micro-batches
+across three pipeline scheduling phases.
+On the activation memory curve,
+these phases manifest as characteristic patterns
+of micro-batch cost triangles:
+Warmup.
+only forward batches execute.
+Forward triangles stack sequentially,
+and the memory curve rises monotonically
+as each micro-batch’s activations accumulate.
+Steady state (1F1B).
+forward and backward batches interleaved.
+Each forward triangle (rising) is immediately followed
+by a backward triangle (falling),
+so the memory curve oscillates around a plateau.
+Cooldown.
+only backward batches execute.
+Backward triangles stack sequentially,
+and the memory curve descends
+as activations are progressively deallocated.
+Iteration-level cost model uncovers the formulation of an activation memory peak.
+During MoE model training,
+each micro batch incurs different MoE imbalance workloads,
+resulting in varied activation memory consumption.
+The warmup phase’s forward batches stack the most part of consumption,
+then the steady phase’s forward batches will exceed the device memory limit if encountering severe MoE imbalancing.
+Once into cooldown phase,
+it is impossible to encounter the out-of-memory problem, as the memory peak has passed.
+Fig. 6 :   Mitigation Strategy Modeling.
+Fig. 7 :   BaGuaLu-2 Runtime Workflow.
+IV-B    Activation Mitigation Cost
+Mitigation Strategies .
+Existing activation mitigation strategies
+correspond to transformations of the activation cost tuple.
+We summarize three strategies:
+Recomputation  discards the forward activation
+and regenerates it during the backward pass.
+This reduces     Δ  ​  m   \Delta m    of the forward operator (less memory allocated)
+at the expense of increasing     Δ  ​  t   \Delta t    of the backward operator
+(which must recompute before consuming the activation).
+Offloading  transfers the activation to CPU memory
+during the forward pass and reloads it before the backward pass.
+Quantization  casts the activation to a lower precision (e.g., BF16 to FP8)
+for storage and casts it back before use.
+Both reduce     Δ  ​  m   \Delta m    of the forward operator
+while increasing     Δ  ​  t   \Delta t    of both the forward operator
+(offload or cast overhead) and the backward operator (reload or cast-back).
+Figure   6   shows an example cost model of offloading strategy.
+Each transformation trades memory savings
+for additional time cost —
+a tradeoff that the cost model makes explicit and quantifiable.
+Each mitigation strategy transforms the activation cost tuple
+of an operator in a characteristic way.
+To compare these strategies, we adopt a  roofline-style model .
+For each strategy, we define its  mitigation bandwidth
+as the rate at which it can reduce activation memory
+(    GB saved  /  sec. overhead   \text{GB saved}/\text{sec. overhead}   ),
+plotted against the target activation size.
+As shown in   Figure   6  ,
+the resulting curve exhibits a roofline shape:
+below a threshold size     S  i   S_{i}   , the bandwidth is limited by launch overhead;
+above     S  i   S_{i}   , it saturates at a peak bandwidth     B  i   B_{i}   .
+The knee point     (   S  i   ,   B  i   )   (S_{i},B_{i})    is determined by
+the hardware characteristics and the operator type.
+Given two strategies with knee points     (   S  i   ,   B  i   )   (S_{i},B_{i})    and     (   S  j   ,   B  j   )   (S_{j},B_{j})
+where      B  i   <   B  j    B_{i}<B_{j}   ,
+strategy    j  j    is more efficient for large activations.
+For small activations, strategy    i  i    can be preferable
+when      S  i   <   S  j    S_{i}<S_{j}    and the activation size
+falls below the crossover point     P  1   P_{1}   , where mitigation size is       S  i   ⋅   B  j    /   B  i    S_{i}\cdot B_{j}/B_{i}   .
+Given a certain operator and input data size,
+the roofline model guides to find the time-minimizing mitigation strategy.
+In practice,
+compute-bound operators
+usually have a roofline favoring offloading strategy;
+while memory-bound operators, such as layer normalization,
+have a roofline favoring recomputation strategy.
+V   Model-Guided Runtime Memory Provisioning
+Problem Formulation.
+For dense models,
+every micro-batch produces the same activation cost,
+so the activation memory curve is identical across batches and iterations.
+For example, in   Figure   5  c,
+the peak activation memory starts at the end of the warmup phase
+and sustains until the beginning of the cooldown phase.
+A static mitigation strategy planned before training
+is sufficient to prevent out-of-memory errors.
+MoE models break this assumption.
+The dynamic token-to-expert routing causes
+the     Δ  ​  m   \Delta m    of MoE-related forward operators
+to fluctuate with the imbalance rate:
+when more tokens are routed to locally-hosted experts,
+the activation footprint grows.
+As shown in §  II-B  ,
+this fluctuation is unpredictable and can spike by     1.5  ×   1.5\times    or more,
+making any fixed strategy either wasteful in the common case
+or unsafe during spikes.
+Given a cluster and an MoE model,
+the system must decide, for each operator in each micro-batch,
+which activation mitigation strategy to apply.
+The optimization objective is:
+min  ∑  Δ  t  s.t.  peak memory  ≤  M     max   ,   \min\sum\Delta t\quad\text{s.t.}\quad\text{peak memory}\leq M_{\max},
+where     M  max   M_{\max}    is the GPU memory capacity
+and the sum is over all operators in the iteration.
+In other words, the system minimizes the total execution time
+(i.e., the total width of the activation memory curve)
+subject to keeping the curve’s peak height within GPU capacity.
+Because the activation costs of MoE operators
+are only known at training runtime
+(once the imbalance rate is observed),
+this optimization must be solved  online ,
+during each iteration’s pipeline scheduling points.
+Runtime Workflow.
+At a pipeline scheduling point,
+BaGuaLu-2 obtains the activation memory cost of current batches with the activation cost model (§  IV  ).
+Then, BaGuaLu-2 employs two complementary optimizations
+that address the two dimensions of the activation cost tuple respectively.
+Dynamic Activation Memory Mitigation  (§  V-A  )
+selects per-operator activation mitigation strategy
+to keep the peak memory within the GPU capacity,
+taming the  height  of the activation memory footprint curve.
+Fused Dual-Batch Execution  (§  V-B  )
+interleaves adjacent forward and backward micro-batch operations
+to reduce the total execution time,
+compressing the  width  of the curve.
+Figure   7   illustrates the effect of the two optimizations
+using the activation memory curve of a training iteration.
+The naive curve exceeds GPU capacity at several micro-batches.
+After applying dynamic activation memory mitigation, the peak is brought within capacity,
+but the added recomputation and offload operations increase the total execution time.
+After dual-batch fused execution, the timespan recovers
+by hiding mitigation operations behind useful computation.
+V-A    Dynamic Activation Memory Mitigation
+The goal of runtime activation provisioning is to select,
+for each operator in each micro-batch,
+a mitigation strategy (none, recompute, offload, or quantize)
+such that the peak activation memory stays within GPU capacity
+while minimizing the total time overhead.
+In this section, we address four questions:
+how to deal with unpredictable MoE spikes,
+how much memory each micro-batch can afford considered the unpredictable workload,
+which mitigation strategy to apply given the budget,
+and how to handle conflicts when composing strategies.
+Deferred Planning for Unpredictable MoE Spikes.
+The actual MoE imbalance workload is unpredictable until the execution of MoE gate operator within the forward micro batch.
+Therefore, it is impossible to exactly preserve the activation memory quota for an incoming forward batch.
+However, we find that deferring activation memory provisioning to the next micro batch is acceptable, because in §  IV   the iteration-level activation cost model reveals that the activation memory peak is compounded by multiple batches.
+During the pipeline warmup phase,
+if current batch unexpectedly consumes too much activation memory,
+there is still time to avoid out-of-memory by
+reducing the memory quota of the next batch.
+During the pipeline steady phase,
+if current batch meets an unexpected high MoE activation memory peak,
+BaGuaLu-2 could downgrade to full recompute of MoE module once the MoE gate is computed yet experts are not,
+thus avoiding that peak.
+This conception of deferred planning is further quantified in the following memory budget assignment algorithm.
+Pipeline-Aware Memory Budget Assignment.
+The activation memory budget depends on both the pipeline schedule phase
+and the actual memory pressure at runtime.
+Algorithm   1   computes a per-micro-batch budget
+that guarantees all concurrent micro-batches fit within GPU memory.
+Let    B  B    denote the total number of micro-batches,
+B  w   B_{w}    the number of warmup batches,
+M  max   M_{\max}    the GPU memory capacity,
+and     M  0   M_{0}    the minimum per-batch activation memory
+(achieved under full recomputation, retaining only the block input tensor).
+During warmup (lines 3–9), no backward pass releases memory,
+so the budget for each new micro-batch is computed by
+evenly distributing the remaining capacity among all yet-to-be-launched batches,
+while reserving     M  0   M_{0}    for each to guarantee feasibility.
+During the steady phase (lines 10–16), each forward is preceded by a backward
+that frees the activations of an earlier micro-batch (line 11),
+and the freed memory is fully allocated to the incoming batch (line 12).
+In both phases, the budget is updated to the actual memory consumed (lines 7, 14),
+so that over-estimation in one batch does not cascade into under-allocation for subsequent batches.
+Roofline-Guided Iterative Activation Mitigation.
+Given the memory budget for a micro-batch,
+the system must select which operators to mitigate
+and with which strategy.
+In terms of the activation cost model,
+this is choosing a mitigation strategy for each operator
+such that the total     ∑   Δ  ​  m    \sum\Delta m    (the micro-batch triangle height)
+stays within the budget
+while minimizing the total     ∑   Δ  ​  t    \sum\Delta t    (the micro-batch triangle width).
+We solve this with a greedy iterative algorithm (Algorithm   2  ).
+Using the roofline model
+of individual mitigation strategy characterized in (§  IV-B  ),
+every operator has a candidate mitigation strategy.
+At each iteration, we evaluate the memory reduction
+of every candidate single-operator mitigation on the current configuration,
+select the one with the largest reduction,
+verify that it does not conflict with previously applied strategies
+(detailed below),
+and apply it if valid.
+The algorithm terminates when the memory budget is satisfied.
+The potential memory reduction is re-evaluated at each iteration,
+since applying one strategy may change the benefit of subsequent ones
+(e.g., recomputing a set of operators makes offloading its intermediate nodes unnecessary).
+Algorithm 1    Pipeline-Aware Memory Budget Assignment
+1:
+Total micro batches    B  B   , warmup count     B  w   B_{w}   ,
+GPU capacity     M  max   M_{\max}   , min budget     M  0   M_{0}
+2:
+budget  ​   [    0  ​  …  ​  B   −  1   ]    ←  0   \textit{budget}[0\ldots B{-}1]\leftarrow 0
+3:
+M  used   ←     M_{\text{used}}\leftarrow    non-activation memory usage
+4:
+for      i  =  0   i=0     to       B  w   −  1   B_{w}-1     do      ⊳  \triangleright    Warmup
+5:
+r  ←    B  w   −  i    r\leftarrow B_{w}-i
+6:
+budget  ​   [  i  ]    ←     (    M  max   −   M  used   −   r  ⋅   M  0     )   /  r   +   M  0     \textit{budget}[i]\leftarrow(M_{\max}-M_{\text{used}}-r\cdot M_{0})/r+M_{0}
+7:
+actual  ←   RunForward  ​   (  i  ,   budget  ​   [  i  ]    )     \textit{actual}\leftarrow\textsc{RunForward}(i,\textit{budget}[i])
+8:
+budget  ​   [  i  ]    ←  actual   \textit{budget}[i]\leftarrow\textit{actual}
+9:
+M  used   +    =  actual   M_{\text{used}}\mathrel{+}=\textit{actual}
+10:
+end   for
+11:
+for      i  =   B  w    i=B_{w}     to      B  −  1   B-1     do      ⊳  \triangleright    Steady
+12:
+M  used   -    =   budget  ​   [   i  −   B  w    ]     M_{\text{used}}\mathrel{-}=\textit{budget}[i-B_{w}]
+13:
+budget  ​   [  i  ]    ←    M  max   −   M  used     \textit{budget}[i]\leftarrow M_{\max}-M_{\text{used}}
+14:
+actual  ←   RunForward  ​   (  i  ,   budget  ​   [  i  ]    )     \textit{actual}\leftarrow\textsc{RunForward}(i,\textit{budget}[i])
+15:
+budget  ​   [  i  ]    ←  actual   \textit{budget}[i]\leftarrow\textit{actual}
+16:
+M  used   +    =  actual   M_{\text{used}}\mathrel{+}=\textit{actual}
+17:
+end   for
+Algorithm 2    Iterative Activation Mitigation
+1:
+Set of operator activation costs     {   (   Δ  ​   t  i    ,   Δ  ​   m  i    )   }   \{(\Delta t_{i},\Delta m_{i})\}   , memory budget    M  M
+2:
+Mitigation with      ∑   Δ  ​  m    ≤  M   \sum\Delta m\leq M
+3:
+mem  ←   ∑   Δ  ​   m  i      \textit{mem}\leftarrow\sum\Delta m_{i}
+4:
+if      mem  ≤  M   \textit{mem}\leq M     then
+5:
+return      ⊳  \triangleright    No strategy needed
+6:
+end   if
+7:
+while      mem  >  M   \textit{mem}>M     do
+8:
+t  ∗   ←     t^{*}\leftarrow    available strategy with largest memory reduction
+9:
+if   Conflict (    t  ∗   t^{*}   )  then
+10:
+Mark     t  ∗   t^{*}    as unavailable;  continue
+11:
+end   if
+12:
+Apply     t  ∗   t^{*}   : update     (   Δ  ​   t  i    ,   Δ  ​   m  i    )   (\Delta t_{i},\Delta m_{i})    of affected operators
+13:
+mem  ←   ∑   Δ  ​   m  i      \textit{mem}\leftarrow\sum\Delta m_{i}
+14:
+end   while
+Heterogeneous Mitigation Conflicts.
+Existing systems typically employ mitigation strategies in isolation
+and do not encounter conflicts between them.
+When composing all three types of strategies,
+we find that independently valid activation mitigation can interact to produce redundant storage,
+a phenomenon we term  conflicting mitigation .
+The root cause is that a single logical activation tensor may serve as input
+to multiple downstream operators.
+When different strategies are applied to different consumers of the same tensor,
+inconsistencies arise.
+We identify two common patterns:
+Case 1: Multi-precision conflict.
+The same tensor is transformed into different precisions at different consumers,
+causing multiple copies to coexist.
+For example, the MoE layer input serves as an input to both the MoE router
+(which typically requires FP32 for numerical stability)
+and the shared expert (which typically uses BF16 or FP8).
+If quantization is applied independently to each consumer,
+both an FP32 and an FP8 copy are stored,
+increasing rather than reducing total memory.
+Case 2: Multi-device conflict.
+The same tensor is offloaded at one consumer but remains on the GPU at another,
+so the GPU copy cannot be freed.
+For example,
+the core attention output tensor serves as the activation tensor for core attention operator and the input tensor for the following out-projection.
+If offloading is applied to the attention output
+but the out-projection saves the same tensor on GPU,
+the GPU tensor persists, and the offload yields no memory savings.
+To detect these conflicts, we perform a check after each candidate strategy.
+The check traces each optimized operator back to its source activation tensor
+and verifies that all consumers of the same tensor
+have consistent precision and device placement.
+If a conflict is detected, the candidate strategy is rejected.
+Since the algorithm selects the strategy in decreasing order of memory benefit,
+a conflicting candidate always conflicts with a previously applied strategy
+that yields a larger reduction;
+skipping the current candidate is therefore always preferable
+to reverting the earlier, more beneficial one.
+V-B    Fused Dual-Batch Execution
+Motivation.
+After dynamic activation memory mitigation ensures that the activation memory curve
+stays within GPU capacity,
+this step optimizes total execution time.
+The applied mitigation strategies increase the total execution time,
+because extra operators are introduced to delay the original operator execution.
+To address this problem,
+we analyze each pipeline scheduling point and find optimization opportunities when reordering the operators of adjacent micro batches is possible.
+During the steady phase of pipeline parallelism,
+each GPU simultaneously holds four types of operators:
+a set of forward operators    F  F    for the current forward batch,
+a set of backward operators    B  B    for the current backward batch,
+a set of activation offloading operators    O  O    for the previous forward batch,
+and a set of activation recovery (i.e., reload and recomputation) operators    R  R    for the next backward batch.
+The data dependencies among the same type of operators form a simple chain,
+while there are no data dependencies across different types, because they belong to different batches.
+There is an opportunity to refine execution orders from different types
+to achieve better overlapping between computation and communication streams.
+The optimization goal is to minimize overall execution time by planning an execution order of four types of operators.
+Formulation.
+We formulate this planning problem as a dynamic programming (DP) problem.
+Let state     F  ​   [  i  ]   ​   [  j  ]   ​   [  k  ]   ​   [  l  ]    F[i][j][k][l]    be the minimum execution time of the first    i  i    forward operators, the first    j  j    backward operators, the first    k  k    offloading operators and the first    l  l    recovery operators.
+The DP transfer equation can be formulated as follows:
+F   [  i  ]    [  j  ]    [  k  ]    [  l  ]   =   min       w  ≤  i   ,   x  ≤  j          y  ≤  k   ,   z  ≤  l         (  F   [  w  ]    [  x  ]    [  y  ]    [  z  ]   +  T   (  w  :  i  ,  x  :  j  ,  y  :  k  ,  z  :  l  )   )    F[i][j][k][l]=\min_{\begin{subarray}{c}w\leq i,\,x\leq j\\
+y\leq k,\,z\leq l\end{subarray}}\bigl(F[w][x][y][z]+T(w{:}i,x{:}j,y{:}k,z{:}l)\bigr)
+where T represents the direct overlapped execution time of consecutive operators from each type.
+When updating F,
+the optimal transfer points for DP states are recorded,
+so that the optimal execution order can be constructed.
+The number of DP states is     O  ⁡   (    |  F  |   ​   |   B  ​   ‖  O  ‖   ​  R   |    )    O(|F||B||O||R|)   , and each state has     O  ⁡   (    |  F  |   ​   |   B  ​   ‖  O  ‖   ​  R   |    )    O(|F||B||O||R|)    transfer points.
+So the overall time complexity of this DP problem is     O  ⁡   (     |  F  |   2   ​    |  B  |   2   ​    |  O  |   2   ​    |  R  |   2    )    O(|F|^{2}|B|^{2}|O|^{2}|R|^{2})   .
+Runtime Solving.
+Naively solving this DP problem could be expensive,
+as a single micro batch typically consumes only tens of milliseconds.
+Thus, we propose two optimizations to reduce the number of DP states and eliminate transfer costs:
+First, we observe that DP states could be compacted.
+There are many consecutive computation operators in a transformer block,
+splitting them into different states cannot provide more overlapping opportunities to reduce execution time.
+Therefore, we divide the original set    F  F    into several stages, splitting by the communication operators.
+And operators in the same stage are compacted into a single DP state.
+For example,
+an MoE transformer forward batch has more than    20  20    operators but only    4  4    stages,
+as there are only two all-to-all communication operators used by expert parallelism.
+This compaction strategy significantly reduces the number of DP states.
+Second, we find opportunities for memorizing the optimal DP transfer points.
+The operator sets are fully determined by the micro-batch memory budget described in the previous section,
+therefore we could store DP states keyed by a discretized budget value.
+Moreover,
+we find the memory budgets exhibit strong temporal locality.
+The pipeline phase repeats every     B  w   B_{w}    micro-batches,
+and MoE imbalance rates are stable for the majority of iterations.
+Most iterations hit the cache and skip algorithms entirely,
+reducing the amortized overhead to nearly zero.
+Correctness.
+Any such reordering is always valid, since an incorrect interleaving would silently corrupt training.
+Intra-class order is preserved by construction.
+The DP state     F  ​   [  i  ]   ​   [  j  ]   ​   [  k  ]   ​   [  l  ]    F[i][j][k][l]    is defined over  prefixes  of each class: index    i  i    always denotes exactly the first    i  i    forward operators in their original program order, and likewise for    B  B   ,    O  O   ,    R  R   .
+Every transition in the recurrence above extends these prefixes (    i  →   i  ′    i\to i^{\prime}    with      i  ′   ≥  i   i^{\prime}\geq i   , never      i  ′   <  i   i^{\prime}<i   ); no transition permutes operators within a class.
+Since the operators within one micro-batch’s forward (or backward) pass form a linear producer-consumer chain, preserving prefix order exactly preserves every intra-class data dependency.
+Inter-class independence follows from the pipeline schedule.
+Denote a scheduling point by      F  x   ​   B  y    F_{x}B_{y}   , where batch    x  x    is the currently-dispatched forward and batch    y  y    is the currently-dispatched backward (always     x  ≠  y   x\neq y   , since a batch’s own forward and backward are never concurrent);    O  O    then corresponds to batch     (   x  −  1   )   (x{-}1)   ’s offload (the previous forward batch), and    R  R    to batch     (   y  +  1   )   (y{+}1)   ’s recovery (the next backward batch).
+A sync barrier separates consecutive scheduling points, guaranteeing that every operator of      F   x  −  1    ​   B   y  −  1     F_{x-1}B_{y-1}    completes before any operator of      F  x   ​   B  y    F_{x}B_{y}    begins.
+This barrier resolves the dependencies of    O  O    and    R  R    outside the current window, prior to any interleaving decision by the DP:    O  O    consumes batch     (   x  −  1   )   (x{-}1)   ’s activation, produced by     F   x  −  1    F_{x-1}    at the  preceding  scheduling point and therefore already complete by the barrier;    R  R    produces the activation consumed by     B   y  +  1    B_{y+1}    at the  following  scheduling point      F   x  +  1    ​   B   y  +  1     F_{x+1}B_{y+1}   , and is guaranteed complete by the next barrier before     B   y  +  1    B_{y+1}    begins.
+For instance, at a scheduling point with      x  −  y   =  3   x-y=3   , e.g.      F  5   ​   B  2    F_{5}B_{2}   :    F  F    corresponds to batch 5,    B  B    to batch 2,    O  O    to batch 4, and    R  R    to batch 3 — four distinct batches, so the barrier argument above applies directly.
+BaGuaLu-2 requires      x  −  y   >  2   x-y>2   , equivalently a pipeline-parallel degree exceeding two: at      x  −  y   =  2   x-y=2   ,    O  O   ’s target batch     (   x  −  1   )   (x{-}1)    would coincide with    R  R   ’s target batch     (   y  +  1   )   (y{+}1)   .
+Every configuration in our evaluation uses a pipeline-parallel degree of at least    4  4    (  Table   II  ), and any training run spanning thousands of GPUs requires substantial pipeline depth to remain communication-efficient, so this boundary case does not arise in the regime this paper targets.
+TABLE II:  MoE model configurations.
+Model
+Hidden
+MoE Hidden
+#Experts
+Top-   K  K
+Attn. Head Dim
+#GPUs
+DP
+TP
+EP
+PP
+VP
+GLM-188B-A20B
+7168
+4096
+64
+4
+112
+128
+16
+2
+32
+4
+2
+GLM-319B-A30B
+8192
+4096
+96
+6
+128
+256
+16
+2
+32
+8
+1
+GLM-423B-A30B
+8192
+4096
+128
+6
+128
+512
+32
+2
+64
+8
+2
+GLM-629B-A30B
+8192
+4096
+192
+6
+128
+1024
+64
+2
+64
+8
+2
+GLM-783B-A35B
+8192
+5120
+192
+6
+128
+2048
+128
+2
+64
+8
+1
+GLM-835B-A30B
+8192
+4096
+256
+6
+128
+4096
+256
+2
+128
+8
+2
+GLM-1041B-A35B
+8192
+5120
+256
+6
+128
+8192
+512
+2
+128
+8
+2
+GLM-1041B-A35B
+8192
+5120
+256
+6
+128
+12288
+768
+2
+128
+8
+2
+VI   Evaluation
+VI-A    Setup
+Hardware.
+All evaluation is conducted on a cluster with our vendor’s GPU.
+The GPU has    480  480    TFLOPS peak performance of BF16 computation and    64  64   GB HBM.
+Each compute node has 8 GPUs, where intra-node GPU bandwidth is    400  400    GB/s and inter-node bandwidth is      400  ​  G  ​  b  ​  p  ​  s   ×  4   400Gbps\times 4   .
+There are    1536  1536    nodes, in total    12288  12288    GPUs.
+Models.
+We evaluate on a family of MoE models at varying scales.
+Table   II   lists the hyperparameters (all models consist of    32  32    layers).
+We derive our model configurations from the GLM model family,
+adjusting architecture parameters to align with the hardware characteristics
+and maximize hardware utilization —
+a standard practice of model–cluster co-design
+adopted across the industry  [ 1 ,  4 ] .
+Parallelism.
+At each scale, we use an automatic parallelization algorithm  [ 18 ]  to search hybrid parallelism strategies
+under the assumption of balanced MoE workload.
+For pipeline parallelism, interleaved 1F1B scheduling is used:
+the “VP” column in Table   II   denotes the number of layers per virtual pipeline stage.
+For a fair comparison, all systems share the same offline-optimal parallelism configuration at the start of training.
+The difference among systems therefore lies in
+how they manage activation memory under this shared configuration,
+which leads to different memory pressures and ultimately
+different training stability and performance.
+Baselines.
+We compare against two state-of-the-art training systems.
+Megatron-Kuai   [ 11 ]  is a training system
+for long-context dense models
+that features fine-grained activation recomputation and offloading.
+Its memory model does not account for MoE expert activations,
+so we extend its memory modeling with MoE-specific terms
+and evaluate its recomputation and offloading modules
+using its open-source implementation.
+AdaPipe   [ 10 ]  is a training system for memory-efficient pipeline parallelism.
+It features adaptive recomputation and pipeline stage partitioning.
+Its optimization only targets dense models,
+and we find that adaptive pipeline partitioning is ineffective in the MoE training scenario.
+Only the adaptive recomputation part of AdaPipe is enabled in our evaluation.
+As discussed in §  I  ,
+both baseline systems manage memory statically.
+We initialize each baseline with a memory strategy
+configured for balanced MoE load. When an out-of-memory crash occurs,
+we adjust the reduction strategy according to the observed imbalance rate
+and manually restart training.
+We report overall training throughput,
+which averages per-iteration MFU over the entire run
+including all restart overheads.
+When computing the restart overhead,
+we only count the machine warm-up latency
+and exclude the human-in-the-loop time required for diagnosis and intervention.
+The reported restart overhead is therefore a lower bound;
+in production, the penalty would be strictly larger.
+VI-B    End-to-End Performance
+Fig. 8 :   End-to-end training throughput up to 12,288 GPUs.
+Bar height indicates total TFLOPS (log scale);
+labels above BaGuaLu-2 bars show its MFU,
+labels above baseline bars show the speedup of BaGuaLu-2 over the better baseline.
+We compare end-to-end training performance across cluster scales
+ranging from 128 to 12,288 GPUs.
+Figure   8   shows the total training throughput (TFLOPS)
+and per-GPU MFU for each system.
+BaGuaLu-2 consistently outperforms both baselines at every scale.
+Across all configurations, we achieve
+an average speedup of     1.14  ×   1.14\times    over Megatron-Kuai
+and     1.13  ×   1.13\times    over AdaPipe.
+The average MFU of BaGuaLu-2 across all scales is     32.9  %   32.9\%   .
+At 12,288 GPUs, BaGuaLu-2 sustains    2.012  2.012    EFLOPs in total,
+demonstrating that our system could scale
+to over ten thousand GPUs without performance degradation.
+Fig. 9 :   Per-iteration MFU (left axis) and token-to-expert imbalance rate (right axis)
+over GLM-423B-A30B training.
+BaGuaLu-2 maintains stable MFU through imbalance spikes
+that cause significant performance degradation in baselines.
+Fig. 10 :   MFU under varing configurations.
+VI-C    Robustness under Varying Memory Pressure
+We now evaluate whether BaGuaLu-2’s advantage holds
+when the nature of memory fluctuation changes —
+both within a single training run (dynamic variation)
+and across workload configurations (static variation).
+Runtime Adaptivity to Imbalance Spikes.
+We select a representative 423B (A30B) model training on 512 GPUs
+and trace per-iteration MFU alongside the MoE imbalance rate.
+Figure   9   shows the result.
+We find that imbalanced MoE token-to-expert distribution
+occurs in approximately     2.9  %   2.9\%    of iterations.
+During these spikes, Megatron-Kuai’s MFU drops by     21.4  %   21.4\%    on average
+and AdaPipe’s MFU drops by     18.2  %   18.2\%    on average.
+This is because they must fall back from under-provisioning strategy to an over-provisioning one, a process compounded by the cold-start overhead of OOM crashes.
+BaGuaLu-2 transitions seamlessly between offloading and selective strategies
+with no switching overhead,
+maintaining stable MFU through spikes
+and achieving an overall average speedup of     1.28  ×   1.28\times
+over baselines during the spike phase.
+Cross-Configuration Robustness.
+First, we evaluate configurations with different MoE sparsity.
+We train models with the same total MoE parameter count
+but different activated parameters,
+which directly controls the per-GPU activation footprint.
+Figure   10  (a) shows the MFU of each system
+across five configurations.
+BaGuaLu-2 achieves the highest MFU in every configuration,
+with an average speedup of     1.11  ×   1.11\times    over the best baseline. Notably, BaGuaLu-2’s advantage grows with activation pressure:
+with more activated parameters, more experts are activated per token,
+which stresses baseline systems’ static memory budgets
+while BaGuaLu-2 adapts its reduction strategy to the increased pressure.
+Additionally, more activated parameters imply greater compute density per iteration,
+which naturally translates to higher absolute MFU
+when the system can fully exploit the available memory.
+Second, we evaluate configurations with varying input sequence length.
+We use 423B-A30B and increase the input sequence length
+from 4,096 to 16,384 tokens.
+Longer sequences increase the per-token activation footprint
+and the total memory required per micro batch.
+Figure   10  (b) shows the results.
+All systems achieve their highest MFU at 4K tokens,
+where activation memory is smallest relative to GPU capacity.
+As sequence length increases to 8K and 16K,
+MFU decreases across all systems because more aggressive activation reduction is required.
+However, BaGuaLu-2’s MFU degrades more gracefully:
+its fine-grained mitigation avoids the all-or-nothing overhead
+of baseline systems’ coarse-grained strategies.
+VI-D    Ablation Study
+Fig. 11 :   Speedup breakdown from each optimization.
+Speedup Breakdown.
+To quantify the contribution of each optimization,
+We progressively enable BaGuaLu-2’s components
+starting from the baseline configuration.
+Figure   11   shows the cumulative effect.
+Each optimization contributes a positive, compounding speedup.
+Static memory optimization (L1   →  \to   L2) provides a     1.16  ×   1.16\times    improvement
+by enabling fine-grained, composable mitigation strategies
+that replace coarse-grained layer-level policies.
+Dynamic activation memory mitigation (L2   →  \to   L3) adds a further     1.05  ×   1.05\times
+by dynamically adapting the strategy degree to per-iteration memory pressure.
+Runtime overlap scheduling (L3   →  \to   L4) contributes an additional     1.13  ×   1.13\times
+by hiding offload/reload and recomputation latency
+through the dual-batch interleaving.
+The combined effect of all three optimizations yields the full BaGuaLu-2 performance.
+Activation modeling accuracy.
+BaGuaLu-2’s runtime decisions depend on the
+accurate modeling of the actual memory footprint.
+We compare the predicted activation memory
+against measured values across multiple scales and parallelism configurations.
+BaGuaLu-2 achieves a mean prediction error of     1.56  %   1.56\%
+across all configurations, confirming that
+§  IV   faithfully depicts the memory behavior of MoE training activations.
+Runtime decision overhead.
+BaGuaLu-2 has three runtime components: dynamic memory budget assignment, activation mitigation strategy selection and DP-based batch scheduling.
+We find memory budgets exhibit strong temporal locality —
+the pipeline phase repeats every     B  w   B_{w}    micro-batches,
+and MoE imbalance rates are stable for the majority of iterations —
+so most iterations hit the cache and skip algorithms entirely,
+reducing the amortized overhead to near zero.
+The total runtime overhead is less than    10  10    ms per iteration,
+while per iteration training time is more than    18  18    seconds.
+VII   Related Work
+MoE Model Training Systems.
+Early systems for MoE training focus on coarse-grained MoE architectures,
+addressing computation and communication bottlenecks separately.
+SmartMoE  [ 18 ]
+and FlexMoE  [ 21 ]
+improve expert parallelism strategies to mitigate computation load imbalance.
+Lina  [ 20 ] , FasterMoE  [ 19 ]  and Janus  [ 24 ]
+optimize the all-to-all communication that dispatches tokens to experts,
+while other work reduces communication overhead
+through communication overlapping  [ 25 ,  26 ,  27 ,  28 ,  29 ] .
+However, these systems all overlook the memory pressure
+that arises during fine-grained MoE training,
+where dynamic expert routing causes activation memory
+to vary unpredictably across micro-batches.
+Memory-Efficient Training Systems.
+Reducing memory consumption during training has been studied extensively.
+Early work targets single-GPU settings
+through checkpointing  [ 22 ]
+and offloading  [ 23 ,  30 ,  31 ] .
+More recent systems address small-scale distributed training
+by optimizing memory usage for parameters
+and optimizer states  [ 32 ,  33 ] .
+Another works specifically target activation memory,
+but assumes static computation graphs
+where activation sizes are known at compile time  [ 11 ,  10 ,  34 ,  35 ,  36 ,  37 ,  38 ,  39 ,  40 ] .
+None of these accounts for the dynamic activation memory
+introduced by MoE routing,
+where each micro-batch may produce a different activation footprint
+depending on the runtime token-to-expert assignment.
+VIII   Conclusion
+We present BaGuaLu-2, a large-scale MoE training system
+that transforms activation memory management
+from a static, one-time configuration choice
+into continuous, per-batch control.
+By combining fine-grained activation provisioning
+with overlapped execution,
+BaGuaLu-2 dynamically allocates exactly the activation memory
+each training batch requires,
+eliminating the over-provision vs. under-provision dilemma
+that plagues existing systems.
+BaGuaLu-2 scales to 12,288 GPUs on a model with 1040 billion parameters,
+sustaining over 2 EFlops at 35% MFU,
+with average throughput gains of     1.14  ×   1.14\times    over Megatron-Kuai
+and     1.13  ×   1.13\times    over AdaPipe.
+IX   Acknowledgments
+We sincerely thank the anonymous reviewers for their valuable feedback on this paper.
+This work is supported by New Generation Artificial Intelligence-National Science and Technology Major Project under Grant 2025ZD0123801, NSFC for Distinguished Young Scholar under Grant 62225206, the National Natural Science Foundation of China (Grant No. 62402266, 62532006, and 62495062), and the Beijing Natural Science Foundation (Grant No. L2603007 and L242017).
+References
+[1]
+DeepSeek-AI, A. Liu, B. Feng, B. Xue, B. Wang, B. Wu, C. Lu, C. Zhao, C. Deng, C. Zhang, C. Ruan, D. Dai, D. Guo, D. Yang, D. Chen, D. Ji, E. Li, F. Lin, F. Dai, F. Luo, G. Hao, G. Chen, G. Li, H. Zhang, H. Bao, H. Xu, H. Wang, H. Zhang, H. Ding, H. Xin, H. Gao, H. Li, H. Qu, J. L. Cai, J. Liang, J. Guo, J. Ni, J. Li, J. Wang, J. Chen, J. Chen, J. Yuan, J. Qiu, J. Li, J. Song, K. Dong, K. Hu, K. Gao, K. Guan, K. Huang, K. Yu, L. Wang, L. Zhang, L. Xu, L. Xia, L. Zhao, L. Wang, L. Zhang, M. Li, M. Wang, M. Zhang, M. Zhang, M. Tang, M. Li, N. Tian, P. Huang, P. Wang, P. Zhang, Q. Wang, Q. Zhu, Q. Chen, Q. Du, R. J. Chen, R. L. Jin, R. Ge, R. Zhang, R. Pan, R. Wang, R. Xu, R. Zhang, R. Chen, S. S. Li, S. Lu, S. Zhou, S. Chen, S. Wu, S. Ye, S. Ye, S. Ma, S. Wang, S. Zhou, S. Yu, S. Zhou, S. Pan, T. Wang, T. Yun, T. Pei, T. Sun, W. L. Xiao, W. Zeng, W. Zhao, W. An, W. Liu, W. Liang, W. Gao, W. Yu, W. Zhang, X. Q. Li, X. Jin, X. Wang, X. Bi, X. Liu, X. Wang, X. Shen, X. Chen, X. Zhang, X. Chen, X. Nie, X. Sun, X. Wang, X. Cheng, X. Liu, X. Xie, X. Liu, X. Yu, X. Song, X. Shan, X. Zhou, X. Yang, X. Li, X. Su, X. Lin, Y. K. Li, Y. Q. Wang, Y. X. Wei, Y. X. Zhu, Y. Zhang, Y. Xu, Y. Xu, Y. Huang, Y. Li, Y. Zhao, Y. Sun, Y. Li, Y. Wang, Y. Yu, Y. Zheng, Y. Zhang, Y. Shi, Y. Xiong, Y. He, Y. Tang, Y. Piao, Y. Wang, Y. Tan, Y. Ma, Y. Liu, Y. Guo, Y. Wu, Y. Ou, Y. Zhu, Y. Wang, Y. Gong, Y. Zou, Y. He, Y. Zha, Y. Xiong, Y. Ma, Y. Yan, Y. Luo, Y. You, Y. Liu, Y. Zhou, Z. F. Wu, Z. Z. Ren, Z. Ren, Z. Sha, Z. Fu, Z. Xu, Z. Huang, Z. Zhang, Z. Xie, Z. Zhang, Z. Hao, Z. Gou, Z. Ma, Z. Yan, Z. Shao, Z. Xu, Z. Wu, Z. Zhang, Z. Li, Z. Gu, Z. Zhu, Z. Liu, Z. Li, Z. Xie, Z. Song, Z. Gao, and Z. Pan   (2025)
+DeepSeek-V3 Technical Report .
+External Links:   2412.19437 ,
+Link
+Cited by:   §I  ,
+§II-A  ,
+TABLE I  ,
+§VI-A  .
+[2]
+D. Guo, D. Yang, H. Zhang, J. Song, P. Wang, Q. Zhu, R. Xu, R. Zhang, S. Ma, X. Bi, X. Zhang, X. Yu, Y. Wu, Z. F. Wu, Z. Gou, Z. Shao, Z. Li, Z. Gao, A. Liu, B. Xue, B. Wang, B. Wu, B. Feng, C. Lu, C. Zhao, C. Deng, C. Ruan, D. Dai, D. Chen, D. Ji, E. Li, F. Lin, F. Dai, F. Luo, G. Hao, G. Chen, G. Li, H. Zhang, H. Xu, H. Ding, H. Gao, H. Qu, H. Li, J. Guo, J. Li, J. Chen, J. Yuan, J. Tu, J. Qiu, J. Li, J. L. Cai, J. Ni, J. Liang, J. Chen, K. Dong, K. Hu, K. You, K. Gao, K. Guan, K. Huang, K. Yu, L. Wang, L. Zhang, L. Zhao, L. Wang, L. Zhang, L. Xu, L. Xia, M. Zhang, M. Zhang, M. Tang, M. Zhou, M. Li, M. Wang, M. Li, N. Tian, P. Huang, P. Zhang, Q. Wang, Q. Chen, Q. Du, R. Ge, R. Zhang, R. Pan, R. Wang, R. J. Chen, R. L. Jin, R. Chen, S. Lu, S. Zhou, S. Chen, S. Ye, S. Wang, S. Yu, S. Zhou, S. Pan, S. S. Li, S. Zhou, S. Wu, T. Yun, T. Pei, T. Sun, T. Wang, W. Zeng, W. Liu, W. Liang, W. Gao, W. Yu, W. Zhang, W. L. Xiao, W. An, X. Liu, X. Wang, X. Chen, X. Nie, X. Cheng, X. Liu, X. Xie, X. Liu, X. Yang, X. Li, X. Su, X. Lin, X. Q. Li, X. Jin, X. Shen, X. Chen, X. Sun, X. Wang, X. Song, X. Zhou, X. Wang, X. Shan, Y. K. Li, Y. Q. Wang, Y. X. Wei, Y. Zhang, Y. Xu, Y. Li, Y. Zhao, Y. Sun, Y. Wang, Y. Yu, Y. Zhang, Y. Shi, Y. Xiong, Y. He, Y. Piao, Y. Wang, Y. Tan, Y. Ma, Y. Liu, Y. Guo, Y. Ou, Y. Wang, Y. Gong, Y. Zou, Y. He, Y. Xiong, Y. Luo, Y. You, Y. Liu, Y. Zhou, Y. X. Zhu, Y. Huang, Y. Li, Y. Zheng, Y. Zhu, Y. Ma, Y. Tang, Y. Zha, Y. Yan, Z. Z. Ren, Z. Ren, Z. Sha, Z. Fu, Z. Xu, Z. Xie, Z. Zhang, Z. Hao, Z. Ma, Z. Yan, Z. Wu, Z. Gu, Z. Zhu, Z. Liu, Z. Li, Z. Xie, Z. Song, Z. Pan, Z. Huang, Z. Xu, Z. Zhang, and Z. Zhang   (2025)
+DeepSeek-R1 incentivizes reasoning in LLMs through reinforcement learning .
+Nature   645  ( 8081 ),  pp. 633–638 .
+External Links:   ISSN 1476-4687 ,
+Link
+Cited by:   §I  .
+[3]
+A. Yang, A. Li, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Gao, C. Huang, C. Lv, C. Zheng, D. Liu, F. Zhou, F. Huang, F. Hu, H. Ge, H. Wei, H. Lin, J. Tang, J. Yang, J. Tu, J. Zhang, J. Yang, J. Yang, J. Zhou, J. Zhou, J. Lin, K. Dang, K. Bao, K. Yang, L. Yu, L. Deng, M. Li, M. Xue, M. Li, P. Zhang, P. Wang, Q. Zhu, R. Men, R. Gao, S. Liu, S. Luo, T. Li, T. Tang, W. Yin, X. Ren, X. Wang, X. Zhang, X. Ren, Y. Fan, Y. Su, Y. Zhang, Y. Zhang, Y. Wan, Y. Liu, Z. Wang, Z. Cui, Z. Zhang, Z. Zhou, and Z. Qiu   (2025)
+Qwen3 Technical Report .
+External Links:   2505.09388 ,
+Link ,
+Document
+Cited by:   §I  .
+[4]
+Kimi Team, Y. Bai, Y. Bao, Y. Charles, C. Chen, G. Chen, H. Chen, H. Chen, J. Chen, N. Chen, R. Chen, Y. Chen, Y. Chen, Y. Chen, Z. Chen, J. Cui, H. Ding, M. Dong, A. Du, C. Du, D. Du, Y. Du, Y. Fan, Y. Feng, K. Fu, B. Gao, C. Gao, H. Gao, P. Gao, T. Gao, Y. Ge, S. Geng, Q. Gu, X. Gu, L. Guan, H. Guo, J. Guo, X. Hao, T. He, W. He, W. He, Y. He, C. Hong, H. Hu, Y. Hu, Z. Hu, W. Huang, Z. Huang, Z. Huang, T. Jiang, Z. Jiang, X. Jin, Y. Kang, G. Lai, C. Li, F. Li, H. Li, M. Li, W. Li, Y. Li, Y. Li, Y. Li, Z. Li, Z. Li, H. Lin, X. Lin, Z. Lin, C. Liu, C. Liu, H. Liu, J. Liu, J. Liu, L. Liu, S. Liu, T. Y. Liu, T. Liu, W. Liu, Y. Liu, Y. Liu, Y. Liu, Y. Liu, Z. Liu, E. Lu, H. Lu, L. Lu, Y. Luo, S. Ma, X. Ma, Y. Ma, S. Mao, J. Mei, X. Men, Y. Miao, S. Pan, Y. Peng, R. Qin, Z. Qin, B. Qu, Z. Shang, L. Shi, S. Shi, F. Song, J. Su, Z. Su, L. Sui, X. Sun, F. Sung, Y. Tai, H. Tang, J. Tao, Q. Teng, C. Tian, C. Wang, D. Wang, F. Wang, H. Wang, H. Wang, J. Wang, J. Wang, J. Wang, S. Wang, S. Wang, S. Wang, X. Wang, Y. Wang, Y. Wang, Y. Wang, Y. Wang, Y. Wang, Z. Wang, Z. Wang, Z. Wang, Z. Wang, C. Wei, Q. Wei, H. Wu, W. Wu, X. Wu, Y. Wu, C. Xiao, J. Xie, X. Xie, W. Xiong, B. Xu, J. Xu, L. H. Xu, L. Xu, S. Xu, W. Xu, X. Xu, Y. Xu, Z. Xu, J. Xu, J. Xu, J. Yan, Y. Yan, H. Yang, X. Yang, Y. Yang, Y. Yang, Z. Yang, Z. Yang, Z. Yang, H. Yao, X. Yao, W. Ye, Z. Ye, B. Yin, L. Yu, E. Yuan, H. Yuan, M. Yuan, S. Yuan, H. Zhan, D. Zhang, H. Zhang, W. Zhang, X. Zhang, Y. Zhang, Y. Zhang, Y. Zhang, Y. Zhang, Y. Zhang, Y. Zhang, Y. Zhang, Y. Zhang, Z. Zhang, H. Zhao, Y. Zhao, Z. Zhao, H. Zheng, S. Zheng, L. Zhong, J. Zhou, X. Zhou, Z. Zhou, J. Zhu, Z. Zhu, W. Zhuang, and X. Zu   (2026)
+Kimi K2: Open Agentic Intelligence .
+External Links:   2507.20534 ,
+Link
+Cited by:   §I  ,
+TABLE I  ,
+§VI-A  .
+[5]
+GLM-4.5 Team, A. Zeng, X. Lv, Q. Zheng, Z. Hou, B. Chen, C. Xie, C. Wang, D. Yin, H. Zeng, J. Zhang, K. Wang, L. Zhong, M. Liu, R. Lu, S. Cao, X. Zhang, X. Huang, Y. Wei, Y. Cheng, Y. An, Y. Niu, Y. Wen, Y. Bai, Z. Du, Z. Wang, Z. Zhu, B. Zhang, B. Wen, B. Wu, B. Xu, C. Huang, C. Zhao, C. Cai, C. Yu, C. Li, C. Ge, C. Huang, C. Zhang, C. Xu, C. Zhu, C. Li, C. Yin, D. Lin, D. Yang, D. Jiang, D. Ai, E. Zhu, F. Wang, G. Pan, G. Wang, H. Sun, H. Li, H. Li, H. Hu, H. Zhang, H. Peng, H. Tai, H. Zhang, H. Wang, H. Yang, H. Liu, H. Zhao, H. Liu, H. Yan, H. Liu, H. Chen, J. Li, J. Zhao, J. Ren, J. Jiao, J. Zhao, J. Yan, J. Wang, J. Gui, J. Zhao, J. Liu, J. Li, J. Li, J. Lu, J. Wang, J. Yuan, J. Li, J. Du, J. Du, J. Liu, J. Zhi, J. Gao, K. Wang, L. Yang, L. Xu, L. Fan, L. Wu, L. Ding, L. Wang, M. Zhang, M. Li, M. Xu, M. Zhao, M. Zhai, P. Du, Q. Dong, S. Lei, S. Tu, S. Yang, S. Lu, S. Li, S. Li, Shuang-Li, S. Yang, S. Yi, T. Yu, W. Tian, W. Wang, W. Yu, W. L. Tam, W. Liang, W. Liu, X. Wang, X. Jia, X. Gu, X. Ling, X. Wang, X. Fan, X. Pan, X. Zhang, X. Zhang, X. Fu, X. Zhang, Y. Xu, Y. Wu, Y. Lu, Y. Wang, Y. Zhou, Y. Pan, Y. Zhang, Y. Wang, Y. Li, Y. Su, Y. Geng, Y. Zhu, Y. Yang, Y. Li, Y. Wu, Y. Li, Y. Liu, Y. Wang, Y. Li, Y. Zhang, Z. Liu, Z. Yang, Z. Zhou, Z. Qiao, Z. Feng, Z. Liu, Z. Zhang, Z. Wang, Z. Yao, Z. Wang, Z. Liu, Z. Chai, Z. Li, Z. Zhao, W. Chen, J. Zhai, B. Xu, M. Huang, H. Wang, J. Li, Y. Dong, and J. Tang   (2025)
+GLM-4.5: Agentic, Reasoning, and Coding (ARC) Foundation Models .
+External Links:   2508.06471 ,
+Link ,
+Document
+Cited by:   §I  ,
+TABLE I  .
+[6]
+OpenAI, S. Agarwal, L. Ahmad, J. Ai, S. Altman, A. Applebaum, E. Arbus, R. K. Arora, Y. Bai, B. Baker, H. Bao, B. Barak, A. Bennett, T. Bertao, N. Brett, E. Brevdo, G. Brockman, S. Bubeck, C. Chang, K. Chen, M. Chen, E. Cheung, A. Clark, D. Cook, M. Dukhan, C. Dvorak, K. Fives, V. Fomenko, T. Garipov, K. Georgiev, M. Glaese, T. Gogineni, A. Goucher, L. Gross, K. G. Guzman, J. Hallman, J. Hehir, J. Heidecke, A. Helyar, H. Hu, R. Huet, J. Huh, S. Jain, Z. Johnson, C. Koch, I. Kofman, D. Kundel, J. Kwon, V. Kyrylov, E. Y. Le, G. Leclerc, J. P. Lennon, S. Lessans, M. Lezcano-Casado, Y. Li, Z. Li, J. Lin, J. Liss, Lily, Liu, J. Liu, K. Lu, C. Lu, Z. Martinovic, L. McCallum, J. McGrath, S. McKinney, A. McLaughlin, S. Mei, S. Mostovoy, T. Mu, G. Myles, A. Neitz, A. Nichol, J. Pachocki, A. Paino, D. Palmie, A. Pantuliano, G. Parascandolo, J. Park, L. Pathak, C. Paz, L. Peran, D. Pimenov, M. Pokrass, E. Proehl, H. Qiu, G. Raila, F. Raso, H. Ren, K. Richardson, D. Robinson, B. Rotsted, H. Salman, S. Sanjeev, M. Schwarzer, D. Sculley, H. Sikchi, K. Simon, K. Singhal, Y. Song, D. Stuckey, Z. Sun, P. Tillet, S. Toizer, F. Tsimpourlas, N. Vyas, E. Wallace, X. Wang, M. Wang, O. Watkins, K. Weil, A. Wendling, K. Whinnery, C. Whitney, H. Wong, L. Yang, Y. Yang, M. Yasunaga, K. Ying, W. Zaremba, W. Zhan, C. Zhang, B. Zhang, E. Zhang, and S. Zhao   (2025)
+gpt-oss-120b & gpt-oss-20b Model Card .
+External Links:   2508.10925 ,
+Link ,
+Document
+Cited by:   §I  .
+[7]
+GLM-5-Team, A. Zeng, X. Lv, Z. Hou, Z. Du, Q. Zheng, B. Chen, D. Yin, C. Ge, C. Huang, C. Xie, C. Zhu, C. Yin, C. Wang, G. Pan, H. Zeng, H. Zhang, H. Wang, H. Chen, J. Zhang, J. Jiao, J. Guo, J. Wang, J. Du, J. Wu, K. Wang, L. Li, L. Fan, L. Zhong, M. Liu, M. Zhao, P. Du, Q. Dong, R. Lu, Shuang-Li, S. Cao, S. Liu, T. Jiang, X. Chen, X. Zhang, X. Huang, X. Dong, Y. Xu, Y. Wei, Y. An, Y. Niu, Y. Zhu, Y. Wen, Y. Cen, Y. Bai, Z. Qiao, Z. Wang, Z. Wang, Z. Zhu, Z. Liu, Z. Li, B. Wang, B. Wen, C. Huang, C. Cai, C. Yu, C. Li, C. Hu, C. Zhang, D. Zhang, D. Lin, D. Yang, D. Wang, D. Ai, E. Zhu, F. Yi, F. Chen, G. Wen, H. Sun, H. Zhao, H. Hu, H. Zhang, H. Liu, H. Zhang, H. Peng, H. Tai, H. Zhang, H. Liu, H. Wang, H. Yan, H. Ge, H. Liu, H. Chu, J. Zhao, J. Wang, J. Zhao, J. Ren, J. Wang, J. Zhang, J. Gui, J. Zhao, J. Li, J. An, J. Li, J. Yuan, J. Du, J. Liu, J. Zhi, J. Duan, K. Zhou, K. Wei, K. Wang, K. Luo, L. Zhang, L. Sha, L. Xu, L. Wu, L. Ding, L. Chen, M. Li, N. Lin, P. Ta, Q. Zou, R. Song, R. Yang, S. Tu, S. Yang, S. Wu, S. Zhang, S. Li, S. Li, S. Fan, W. Qin, W. Tian, W. Zhang, W. Yu, W. Liang, X. Kuang, X. Cheng, X. Li, X. Yan, X. Hu, X. Ling, X. Fan, X. Xia, X. Zhang, X. Zhang, X. Pan, X. Zou, X. Zhang, Y. Liu, Y. Wu, Y. Li, Y. Wang, Y. Zhu, Y. Tan, Y. Zhou, Y. Pan, Y. Zhang, Y. Su, Y. Geng, Y. Yan, Y. Tan, Y. Bi, Y. Shen, Y. Yang, Y. Li, Y. Liu, Y. Wang, Y. Li, Y. Wu, Y. Zhang, Y. Duan, Y. Zhang, Z. Liu, Z. Jiang, Z. Yan, Z. Zhang, Z. Wei, Z. Chen, Z. Feng, Z. Yao, Z. Chai, Z. Wang, Z. Zhang, B. Xu, M. Huang, H. Wang, J. Li, Y. Dong, and J. Tang   (2026)
+GLM-5: from Vibe Coding to Agentic Engineering .
+External Links:   2602.15763 ,
+Link ,
+Document
+Cited by:   §I  .
+[8]
+D. Narayanan, M. Shoeybi, J. Casper, P. LeGresley, M. Patwary, V. Korthikanti, D. Vainbrand, P. Kashinkunti, J. Bernauer, B. Catanzaro,  et al.    (2021)
+Efficient large-scale language model training on gpu clusters using megatron-lm .
+In  Proceedings of the international conference for high performance computing, networking, storage and analysis ,
+pp. 1–15 .
+External Links:   Link ,
+Document
+Cited by:   §I  .
+[9]
+J. Ren, S. Rajbhandari, R. Y. Aminabadi, O. Ruwase, S. Yang, M. Zhang, D. Li, and Y. He   (2021)
+ZeRO-Offload: Democratizing Billion-Scale Model Training .
+In  2021 USENIX Annual Technical Conference (USENIX ATC 21) ,
+pp. 551–564 .
+External Links:   ISBN 978-1-939133-23-6 ,
+Link
+Cited by:   §I  .
+[10]
+Z. Sun, H. Cao, Y. Wang, G. Feng, S. Chen, H. Wang, and W. Chen   (2024)
+Adapipe: Optimizing pipeline parallelism with adaptive recomputation and partitioning .
+In  Proceedings of the 29th ACM International Conference on Architectural Support for Programming Languages and Operating Systems, Volume 3 ,
+pp. 86–100 .
+External Links:   Link ,
+Document
+Cited by:   §I  ,
+§I  ,
+§I  ,
+§II-B  ,
+§VI-A  ,
+§VII  .
+[11]
+T. Yuan, Y. Liu, X. Ye, S. Zhang, J. Tan, B. Chen, C. Song, and D. Zhang   (2024)
+Accelerating the training of large language models using efficient activation rematerialization and optimal hybrid parallelism .
+In  2024 USENIX Annual Technical Conference (USENIX ATC 24) ,
+pp. 545–561 .
+External Links:   Link
+Cited by:   §I  ,
+§I  ,
+§I  ,
+§VI-A  ,
+§VII  .
+[12]
+A. Q. Jiang, A. Sablayrolles, A. Roux, A. Mensch, B. Savary, C. Bamford, D. S. Chaplot, D. de las Casas, E. B. Hanna, F. Bressand, G. Lengyel, G. Bour, G. Lample, L. R. Lavaud, L. Saulnier, M. Lachaux, P. Stock, S. Subramanian, S. Yang, S. Antoniak, T. L. Scao, T. Gervet, T. Lavril, T. Wang, T. Lacroix, and W. E. Sayed   (2024)
+Mixtral of Experts .
+External Links:   2401.04088 ,
+Link ,
+Document
+Cited by:   §II-A  ,
+TABLE I  .
+[13]
+N. Gupta and J. Yip   (2024)
+DBRX: Creating an LLM from Scratch Using Databricks .
+In  Databricks Data Intelligence Platform: Unlocking the GenAI Revolution ,
+pp. 311–330 .
+External Links:   ISBN 979-8-8688-0444-1 ,
+Document ,
+Link
+Cited by:   §II-A  ,
+TABLE I  .
+[14]
+J. He, J. Qiu, A. Zeng, Z. Yang, J. Zhai, and J. Tang   (2021)
+FastMoE: A Fast Mixture-of-Expert Training System .
+External Links:   2103.13262 ,
+Link ,
+Document
+Cited by:   §II-A  .
+[15]
+Z. Ma, J. He, J. Qiu, H. Cao, Y. Wang, Z. Sun, L. Zheng, H. Wang, S. Tang, T. Zheng, J. Lin, G. Feng, Z. Huang, J. Gao, A. Zeng, J. Zhang, R. Zhong, T. Shi, S. Liu, W. Zheng, J. Tang, H. Yang, X. Liu, J. Zhai, and W. Chen   (2022)
+BaGuaLu: targeting brain scale pretrained models with over 37 million cores .
+In  Proceedings of the 27th ACM SIGPLAN Symposium on Principles and Practice of Parallel Programming ,
+PPoPP ’22 ,  New York, NY, USA ,  pp. 192–204 .
+External Links:   ISBN 9781450392044 ,
+Link ,
+Document
+Cited by:   §II-A  .
+[16]
+D. Lepikhin, H. Lee, Y. Xu, D. Chen, O. Firat, Y. Huang, M. Krikun, N. Shazeer, and Z. Chen   (2021)
+GShard: Scaling Giant Models with Conditional Computation and Automatic Sharding .
+In  International Conference on Learning Representations ,
+External Links:   Link
+Cited by:   §II-A  ,
+§II-B  .
+[17]
+L. Wang, H. Gao, C. Zhao, X. Sun, and D. Dai   (2024)
+Auxiliary-loss-free load balancing strategy for mixture-of-experts .
+arXiv preprint arXiv:2408.15664 .
+External Links:   Link ,
+Document
+Cited by:   §II-A  ,
+§II-B  .
+[18]
+M. Zhai, J. He, Z. Ma, Z. Zong, R. Zhang, and J. Zhai   (2023)
+SmartMoE: Efficiently Training Sparsely-Activated Models through Combining Offline and Online Parallelization .
+In  2023 USENIX Annual Technical Conference (USENIX ATC 23) ,
+Boston, MA ,  pp. 961–975 .
+External Links:   ISBN 978-1-939133-35-9 ,
+Link
+Cited by:   §II-A  ,
+§VI-A  ,
+§VII  .
+[19]
+J. He, J. Zhai, T. Antunes, H. Wang, F. Luo, S. Shi, and Q. Li   (2022)
+FasterMoE: modeling and optimizing training of large-scale dynamic pre-trained models .
+In  Proceedings of the 27th ACM SIGPLAN Symposium on Principles and Practice of Parallel Programming ,
+PPoPP ’22 ,  New York, NY, USA ,  pp. 120–134 .
+External Links:   ISBN 9781450392044 ,
+Link ,
+Document
+Cited by:   §II-A  ,
+§VII  .
+[20]
+J. Li, Y. Jiang, Y. Zhu, C. Wang, and H. Xu   (2023)
+Accelerating Distributed MoE Training and Inference with Lina .
+In  2023 USENIX Annual Technical Conference (USENIX ATC 23) ,
+Boston, MA ,  pp. 945–959 .
+External Links:   ISBN 978-1-939133-35-9 ,
+Link
+Cited by:   §II-A  ,
+§VII  .
+[21]
+X. Nie, X. Miao, Z. Wang, Z. Yang, J. Xue, L. Ma, G. Cao, and B. Cui   (2023)
+FlexMoE: Scaling Large-scale Sparse Pre-trained Model Training via Dynamic Device Placement .
+Proc. ACM Manag. Data   1  ( 1 ).
+External Links:   Link ,
+Document
+Cited by:   §II-A  ,
+§VII  .
+[22]
+T. Chen, B. Xu, C. Zhang, and C. Guestrin   (2016)
+Training Deep Nets with Sublinear Memory Cost .
+External Links:   1604.06174 ,
+Link ,
+Document
+Cited by:   §II-A  ,
+§VII  .
+[23]
+C. Huang, G. Jin, and J. Li   (2020)
+Swapadvisor: Pushing deep learning beyond the gpu memory limit via smart swapping .
+In  Proceedings of the Twenty-Fifth International Conference on Architectural Support for Programming Languages and Operating Systems ,
+pp. 1341–1355 .
+External Links:   Link ,
+Document
+Cited by:   §II-A  ,
+§VII  .
+[24]
+J. Liu, J. H. Wang, and Y. Jiang   (2023)
+Janus: A unified distributed training framework for sparse mixture-of-experts models .
+In  Proceedings of the ACM SIGCOMM 2023 Conference ,
+pp. 486–498 .
+External Links:   Link ,
+Document
+Cited by:   §VII  .
+[25]
+S. Wang, J. Wei, A. Sabne, A. Davis, B. Ilbeyi, B. Hechtman, D. Chen, K. S. Murthy, M. Maggioni, Q. Zhang, S. Kumar, T. Guo, Y. Xu, and Z. Zhou   (2022)
+Overlap Communication with Dependent Computation via Decomposition in Large Deep Learning Models .
+In  Proceedings of the 28th ACM International Conference on Architectural Support for Programming Languages and Operating Systems, Volume 1 ,
+ASPLOS 2023 ,  New York, NY, USA ,  pp. 93–106 .
+External Links:   ISBN 9781450399159 ,
+Link ,
+Document
+Cited by:   §VII  .
+[26]
+X. Wan, X. Yang, K. Xu, X. Liao, Y. Jin, Y. Sun, Z. Ren, H. Tian, and K. Chen   (2025)
+Coflow Scheduling for LLM Training .
+In  Proceedings of the ACM SIGCOMM 2025 Conference ,
+SIGCOMM ’25 ,  New York, NY, USA ,  pp. 1232–1234 .
+External Links:   ISBN 9798400715242 ,
+Link ,
+Document
+Cited by:   §VII  .
+[27]
+C. Chen, X. Li, Q. Zhu, J. Duan, P. Sun, X. Zhang, and C. Yang   (2024)
+Centauri: Enabling efficient scheduling for communication-computation overlap in large model training via communication partitioning .
+In  Proceedings of the 29th ACM International Conference on Architectural Support for Programming Languages and Operating Systems, Volume 3 ,
+pp. 178–191 .
+External Links:   Link ,
+Document
+Cited by:   §VII  .
+[28]
+S. Zhang, N. Zheng, H. Lin, Z. Jiang, W. Bao, C. Jiang, Q. Hou, W. Cui, S. Zheng, L. Chang,  et al.    (2025)
+Comet: Fine-grained computation-communication overlapping for mixture-of-experts .
+Proceedings of Machine Learning and Systems   7 .
+External Links:   Link ,
+Document
+Cited by:   §VII  .
+[29]
+S. Zheng, J. Fang, X. Zheng, Q. Hou, W. Bao, N. Zheng, Z. Jiang, D. Wang, J. Ye, H. Lin,  et al.    (2025)
+Tilelink: Generating efficient compute-communication overlapping kernels using tile-centric primitives .
+Proceedings of Machine Learning and Systems   7 .
+External Links:   Link ,
+Document
+Cited by:   §VII  .
+[30]
+Z. Zong, L. Lin, L. Lin, L. Wen, and Y. Sun   (2023)
+STR: Hybrid Tensor Re-Generation to Break Memory Wall for DNN Training .
+IEEE Transactions on Parallel and Distributed Systems   34  ( 8 ),  pp. 2403–2418 .
+External Links:   Document ,
+Link
+Cited by:   §VII  .
+[31]
+L. Wen, Z. Zong, L. Lin, and L. Lin   (2022)
+A Swap Dominated Tensor Re-Generation Strategy for Training Deep Learning Models .
+In  2022 IEEE International Parallel and Distributed Processing Symposium (IPDPS) ,
+Vol.   ,  pp. 996–1006 .
+External Links:   Document ,
+Link
+Cited by:   §VII  .
+[32]
+Z. Zhu, C. Giannoula, M. Andoorveedu, Q. Su, K. Mangalam, B. Zheng, and G. Pekhimenko   (2025)
+Mist: Efficient Distributed Training of Large Language Models via Memory-Parallelism Co-Optimization .
+In  Proceedings of the Twentieth European Conference on Computer Systems ,
+pp. 1298–1316 .
+External Links:   Link ,
+Document
+Cited by:   §VII  .
+[33]
+Y. Feng, M. Xie, Z. Tian, S. Wang, Y. Lu, and J. Shu   (2023)
+Mobius: Fine tuning large-scale models on commodity gpu servers .
+In  Proceedings of the 28th ACM International Conference on Architectural Support for Programming Languages and Operating Systems, Volume 2 ,
+pp. 489–501 .
+External Links:   Link ,
+Document
+Cited by:   §VII  .
+[34]
+Z. Sun, S. Chen, Y. Wang, J. Sha, G. Feng, and W. Chen   (2025)
+MEPipe: Democratizing llm training with memory-efficient slice-level pipeline scheduling on cost-effective accelerators .
+In  Proceedings of the Twentieth European Conference on Computer Systems ,
+pp. 1263–1278 .
+External Links:   Link ,
+Document
+Cited by:   §VII  .
+[35]
+S. Li and T. Hoefler   (2021)
+Chimera: efficiently training large-scale neural networks with bidirectional pipelines .
+In  Proceedings of the International Conference for High Performance Computing, Networking, Storage and Analysis ,
+External Links:   Link ,
+Document
+Cited by:   §VII  .
+[36]
+S. Li, J. Dong, J. Chen, Z. Ma, and Z. Hu   (2025)
+Hypertron: Efficiently Scaling Large Models by Exploring High-Dimensional Parallelization Space .
+In  Proceedings of the International Conference for High Performance Computing, Networking, Storage and Analysis ,
+pp. 1755–1768 .
+External Links:   Link ,
+Document
+Cited by:   §VII  .
+[37]
+Z. Liu, S. Cheng, H. Zhou, and Y. You   (2023)
+Hanayo: Harnessing wave-like pipeline parallelism for enhanced large model training efficiency .
+In  Proceedings of the International Conference for High Performance Computing, Networking, Storage and Analysis ,
+pp. 1–13 .
+External Links:   Link ,
+Document
+Cited by:   §VII  .
+[38]
+W. Liu, M. Li, G. Tan, and W. Jia   (2025)
+Mario: Near zero-cost activation checkpointing in pipeline parallelism .
+In  Proceedings of the 30th ACM SIGPLAN Annual Symposium on Principles and Practice of Parallel Programming ,
+pp. 197–211 .
+External Links:   Link ,
+Document
+Cited by:   §VII  .
+[39]
+Z. Zong, M. Guo, M. Zhai, Y. Tang, J. Li, and J. Zhai   (2025)
+Training Large Models on Heterogeneous and Geo-Distributed Resource with Constricted Networks .
+Big Data Min. Anal.   8  ( 4 ),  pp. 966–980 .
+External Links:   Link ,
+Document
+Cited by:   §VII  .
+[40]
+K. Huang, S. Zhu, M. Zhai, L. Zheng, K. Lei, J. He, Y. Jin, and J. Zhai   (2025)
+mTuner: Accelerating Parameter-Efficient Fine-Tuning on Multi-GPU Servers with Elastic Tensor .
+In  2025 USENIX Annual Technical Conference (USENIX ATC 25) ,
+pp. 105–121 .
+External Links:   Link
+Cited by:   §VII  .
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue"  (
+)  button, located in the page header.
+Tip:  You can select the relevant text first, to include it in your report.
+Our team has already identified  the following issues . We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a  list of packages that need conversion , and welcome  developer contributions .
+We gratefully acknowledge support from
+our  major funders ,
+member institutions   ,    ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status  (opens in new tab)
+Major funding support from

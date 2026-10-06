@@ -1,0 +1,592 @@
+Learning Robot Metareasoning: Adaptive Computation Budgets for Real-Time Control
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+I   Introduction
+Real-time and adaptive action chunking
+Adaptive receding-horizon MPC
+Metareasoning and test-time computation
+Learning planning budgets
+II   Preliminaries
+III   Adaptive Computation Budgets as a semi-MDP
+IV   Bounded Divergence under Adaptive Commitment
+V   Optimization and Training
+V-A    Optimisation
+VI   Experiments
+VI-A    Holonomic 2D navigation
+VI-B    Quadrotor with a suspended cable payload
+VI-C    Contact-rich planar manipulation
+VII   Conclusion
+References
+License: CC BY 4.0
+arXiv:2610.23662v1 [cs.RO] 16 Oct 2026
+Learning Robot Metareasoning: Adaptive Computation Budgets for Real-Time Control
+Lorenzo Magnino
+Affiliation:  L. Magnino, A. Marino, M. Amir, and A.Prorok are with University of Cambridge — Cambridge, United Kingdom. Emails: {lm2183, am3507,ma2151,asp45}@cam.ac.uk.
+Antonio Marino
+Affiliation:  L. Magnino, A. Marino, M. Amir, and A.Prorok are with University of Cambridge — Cambridge, United Kingdom. Emails: {lm2183, am3507,ma2151,asp45}@cam.ac.uk.
+Michael Amir
+Affiliation:  L. Magnino, A. Marino, M. Amir, and A.Prorok are with University of Cambridge — Cambridge, United Kingdom. Emails: {lm2183, am3507,ma2151,asp45}@cam.ac.uk.
+Daigo Shishika
+Affiliation:  D. Shishika is with are with College of Engineering and Computing at George Mason University, Email: dshishik@gmu.edu
+Amanda Prorok
+†    †  thanks:  This work is supported by European Research Council (ERC) Project 949940 (gAIa) and ARL DCIST CRA W911NF-17-2-0181. We gratefully acknowledge their support.
+Affiliation:  L. Magnino, A. Marino, M. Amir, and A.Prorok are with University of Cambridge — Cambridge, United Kingdom. Emails: {lm2183, am3507,ma2151,asp45}@cam.ac.uk.
+Abstract
+Planning while moving faces an historical trade-off between deliberation and reactivity.
+A planner running concurrently with execution needs time to compute, so the robot must commit to an open-loop action chunk for that duration: a longer commitment buys a better plan at the cost of feedback frequency. Existing controllers fix this action commitment, and consequently the computation budget, before deployment. However, the optimal computation time is highly state-dependent (due to factors such as unmodeled dynamics, safety constraints, and marginal optimisation gains), i.e. dynamic, therefore offline static tuning risks leaving systems blind during critical maneuvers or unable to find global effective solutions.
+We cast the identification of the optimal computation budget as a semi-Markov decision process (SMDP) in which a single decision defines both the robot action commitments and the time allocated to the solver. To solve this, we train a reinforcement-learning policy conditioned on the current state, the executing plan, and inexpensive planner statistics. Across ground-robot navigation, agile quadrotor flight, and contact-rich manipulation, the learned policy changes its budget with the demands of the scenario, discovering efficient reasoning patterns that outperform fixed-budget baselines.
+website
+I   Introduction
+Deciding  how much  to think is as hard as the thinking itself (e.g., deciding
+what to do)  [ 1 ] . Biological agents dynamically arbitrate their cognitive resources, continuously balancing rapid, reactive responses against slower, deliberate reasoning based on environmental uncertainty and temporal constraints  [ 1 ,  2 ] . This adaptive allocation represents a fundamental speed-optimality trade-off where extended deliberation is penalized by elapsed time  [ 3 ,  4 ] .
+The  value of computation  (VOC) formally characterizes this trade-off between the marginal gain in decision optimality and the cost of deliberation  [ 5 ,  6 ] . Traditional metareasoning frameworks assume a frozen world state during planning, requiring an explicitly defined cost function to penalize extended computation, a paradigm we refer to as the  economic  value of computation. Embodied autonomous agents, conversely, operate in continuous time where this assumption fails. Because the robot and its environment evolve concurrently with the planner’s execution, heuristic timing penalties are unnecessary. Instead, the physical dynamics inherently penalize computational delay through unmitigated state drift, thereby hindering high-frequency reactivity and reducing safety margins. We introduce this dynamic trade-off as the  physical  value of computation, formalized in Sec.   III  .
+Deliberative
+Reactive
+Intermediate
+s  ↦     s\!\mapsto                                            s  ′   ↦     s^{\prime}\!\mapsto                                            s  ′′   ↦     s^{\prime\prime}\!\mapsto                                        BUDGET:                        s  s                   s  ′   s^{\prime}                   s  ′′   s^{\prime\prime}
+Fig. 1 :   Robot Metareasoning:  different states require different computation budgets .
+Robots must adapt their computation budget based on the situation that they are facing: (   s  s   ) deliberate longer to search for an optimal path, (    s  ′   s^{\prime}   ) react rapidly to noisy moving obstacles, or (    s  ′′   s^{\prime\prime}   ) balance planning and reactivity. Across real-world and simulated experiments, we show that adapting the computation budget across states within an episode is a fundamental capability for embodied intelligence.
+As standard for computational efficiency, robots typically plan in receding-horizon: the system optimizes a trajectory over a finite horizon, executes the initial segment, and subsequently replans from the evolved state. Model predictive control (MPC)  [ 7 ,  8 ]  commits to a single control step, resolving the problem at every control period, providing high-rate feedback around a
+nominal trajectory.
+Alternatively, action-chunking architectures generate a sequence of actions
+to execute in open-loop while the next plan is produced. This commitment can improve motion smoothness and sample efficiency  [ 9 ,  10 ,  11 ] , yet fundamentally limits the system’s ability to react to high-frequency disturbances or environmental changes. In both paradigms, the solver’s computational budget and execution horizon are statically defined prior to deployment. Consequently, the robot  lacks a principled mechanism to dynamically arbitrate when a state warrants extended deliberation for trajectory optimality versus when it necessitates rapid, reactive feedback (Fig.  1  ) .
+Identifying an optimal static computation budget cannot be resolved via offline tuning. It is fundamentally a state-dependent quantity, dictated by the unmodelled  dynamics , the proximity to state-space  constraints , and the marginal  optimality  gained through additional solver iterations. Moreover, the budget choice cannot be assessed from the current state alone: its consequences propagate to future states throughout the episode, where they may influence later decisions and outcomes.
+We address these challenges  by formulating adaptive computation budgets for real-time control
+as a semi-MDP over decision epochs. At each epoch, one decision sets both the
+open-loop execution horizon and the parallel computational resources allocated to solver. We then learn this decision from experience with an RL policy
+(Fig.   2  ).
+Our  contributions  are the following:
+OBSERVE AND            CHOOSE A BUDGET                        State, previous plan            and its statistics                     h  k   ∼   Φ  θ    h_{k}\sim\Phi_{\theta}            Learned budget policy                      ACT AND PLAN CONCURRENTLY                                 h   k  +  2    h_{k+2}                           h  k   h_{k}               h   k  +  1    h_{k+1}                ψ  h   ​   (   s   t  k    )    \psi_{h}(s_{t_{k}})    : Long deliberation          Reactive mode                                                                                                                                                                                                                                                                                                                                                   s   t  k    s_{t_{k}}               a   t  k    a_{t_{k}}                                       τ   k  +  1    \tau_{k+1}                                                   τ   k  +  2    \tau_{k+2}                                                                                                                                                                                              Moving obstacle
+Fig. 2 :   Method Overview . At each decision epoch, the state, the previous plan and its statistics inform the budget policy     Φ  θ   \Phi_{\theta}   , which selects the next execution horizon and thereby allocates the solver’s budget. This lets the robot decide how much to deliberate under environmental uncertainty and temporal constraints. The new plan takes over, the state and statistics are refreshed, and the loop repeats.
+(i)   Semi-MDP formulation.  We cast variable-computation adaptive chunking as a semi-MDP, in which the robot chooses how long to commit to a plan before replanning, and the solver budget follows from that choice.
+(ii)   Adaptive policy through experience.  We propose an RL policy     Φ  θ   \Phi_{\theta}    that adapts the computation budget online, letting the controller trade reactivity against deeper solver optimisation on the fly.
+(iii)   Insights from experiments.  Across different real-world and simulated environments, we show that planner statistics are strong signals to the policy and that adaptive computation budgets match or outperform fixed-budget strategies across several robotic systems.
+Related Work
+We review the work most closely related to our setting.
+Real-time and adaptive action chunking
+Because a chunking policy emits several actions at once, a mechanism is required to cover the gap
+while the next chunk is generated. RTC  [ 12 ]  keeps execution smooth
+across that gap by conditioning the new chunk on the actions still running, and
+DEFLECT  [ 13 ]  instead trains the policy to tolerate acting on
+observations that have gone stale; both leave the chunk length fixed.
+[ 14 ]  makes that length adaptive, while  [ 15 ]  pre-computes several candidate
+chunks and follows whichever best matches the realised state. Unlike our approach, none of these methods couples the execution length with the solver’s computation budget, so a larger commitment cannot be leveraged to compute a better plan.
+Adaptive receding-horizon MPC
+Event- and self-triggered MPC frameworks dynamically determine when to replan rather than solving at every control step, preserving feasibility and stability of the system  [ 16 ] . Alternative approaches dictate the replanning interval based strictly on safety, defining it as the maximum duration the current trajectory can be executed while a collision-free fallback remains available  [ 17 ] . However, these triggering mechanisms are designed fundamentally to  conserve  computation subject to a baseline guarantee, treating the underlying optimizer as an oracle whose solution quality does not improve with additional allocated time.
+Metareasoning and test-time computation
+Metareasoning prices computation by the improvement in the decision quality it produces, net of the cost of running it  [ 5 ,  6 ] . This principle underlines anytime
+algorithms, deliberation scheduling  [ 18 ,  19 ] , and learned computation budget  [ 20 ] . In these conventional formulations, the world is treated as frozen while the agent deliberates, so the cost of thinking is an explicit penalty chosen by the designer to trade against the expected benefit.
+Learning planning budgets
+Closest to our work,  [ 21 ]  learns how long to deliberate
+in real time and casts the decision as a semi-MDP over budgeted options.
+Their setting, however, is restricted to discrete game examples and therefore does not expose uncontrolled variation that arises when acting in the
+real world. Furthermore, their method requires a separate reflex policy that acts in the open-loop phase, an assumption that our framework does not need.
+II   Preliminaries
+Given a Markov Decision Process (MDP) defined by the tuple     ℳ  :=   (  𝒮  ,  𝒜  ,  𝒫  ,  r  ,  γ  )    \mathcal{M}:=(\mathcal{S},\mathcal{A},\mathcal{P},r,\gamma)   , let     𝒮  ⊆   ℝ  n    \mathcal{S}\subseteq\mathbb{R}^{n}    be the state space,     𝒜  ⊆   ℝ  m    \mathcal{A}\subseteq\mathbb{R}^{m}    be the action space. We define     𝒫  :    𝒮  ×  𝒜   →  𝒮    \mathcal{P}:\mathcal{S}\times\mathcal{A}\rightarrow\mathcal{S}    as a transition kernel (dynamics model) yielding transition probabilities     𝒫  ⁡   (   s   t  +  1    |    s  t   ,   a  t    )    \mathcal{P}(s_{t+1}|{}s_{t},a_{t})   . Moreover, let     r  :    𝒮  ×  𝒜   →  ℝ    r:\mathcal{S}\times\mathcal{A}\rightarrow\mathbb{R}    and     g  :   𝒮  →  ℝ    g:\mathcal{S}\rightarrow\mathbb{R}    be, respectively the one-step and the goal-conditioned reward functions. At any time    t  t    the set of goals will be denoted by      G  t   ⊆   S  ×  𝒜    G_{t}\subseteq S\times\mathcal{A}   . We work throughout in  discrete time with continuous state : where the index     t  ∈   ℤ     ≥  0     t\in\mathbb{Z}_{\geq 0}    advances at the fixed control period     d  ​  t   dt   .
+The objective of    ℳ  \mathcal{M}    is to determine a sequence of actions (control inputs), that drives the system into a desired state, solving the following infinite-horizon goal-conditioned control problem.
+P  ℳ   :   max  ⁡     ∑   t  =  0   ∞      a  t      ⁡   𝔼  ⁡   [    γ  t   ​   (    r  ⁡   (   s  t   ,   a  t   )    +    g  ⁡   (   s  t   )    ​   δ    s  t   ∈  G      )    ]       \mathrm{P_{\mathcal{M}}}:\max_{a_{t}}\sum_{t=0}^{\infty}\mathbb{E}\Big[\gamma^{t}\big(r(s_{t},a_{t})+g(s_{t})\,\delta_{s_{t}\in G}\big)\Big]
+(1)
+with     δ    s  t   ∈  G    \delta_{s_{t}\in G}    is the indicator function equal to    1  1    if the state     s  t   s_{t}    has reached the goal (and    0  0    otherwise), so that the terminal-style reward    g  g    is collected only when the goal is reached.
+To solve   1   online in a receding horizon, we utilize a  monotonic-improving  optimizer,    ψ  \psi   . A defining characteristic of such a solver is that its solution monotonically improves with the computational budget it is allocated. However, allocating more computation time introduces a temporal cost: the physical system must continue to operate while the solver thinks. To afford a computational budget of    h  h    control periods, the solver must therefore commit to generating a sequence of actions (a chunk) of length     h  ∈   {  1  ,  …  ,   𝔥  max   }   =  ℋ   h\in\{1,\dots,\mathfrak{h}_{\mathrm{max}}\}=\mathcal{H}   , where      𝔥  max   ∈   ℕ  +    \mathfrak{h}_{\mathrm{max}}\in\mathbb{N}^{+}   . We define this solver as a mapping      ψ  h   :   𝒮  →   𝒯  h     \psi_{h}:\mathcal{S}\rightarrow\mathcal{T}_{h}   , where      𝒯  h   =   𝒜  h    \mathcal{T}_{h}=\mathcal{A}^{h}    is the space of action sequences. By committing to this extended sequence, the robot executes the chunk open-loop, explicitly buying the required time window for the solver to concurrently compute the subsequent plan. While classic MPC formulations restrict this mapping to a single step (    h  =  1   h=1   ), our formulation extends    h  h    to leverage the solver’s monotonic improvement at the expense of delayed reactivity. We evaluate this framework using Model Predictive Path Integral (MPPI) and the Cross Entropy Method (CEM), two standard sampling-based receding horizon solvers, though our method accommodates any monotonic-improving optimizer.
+Two  fundamental difficulties  arise when solving   1   online with a receding horizon time-monotone solver     ψ  h   \psi_{h}    whose computation time is non-negligible and proportional to the action chunk length    h  h   :
+(C1)  Open-loop execution creates vulnerability to unmodelled dynamics and disturbances.
+When the solver commits to an action chunk of length    h  h   , the system effectively operates without feedback for    h  h    timesteps. During this interval, stochasticity, external disturbances, or discrepancies in the transition model    𝒫  \mathcal{P}    cause the true system state to diverge from the solver’s predicted trajectory, leading to compounding errors or potential constraint violations.
+(C2)  Finding the strict trade-off between plan optimality and system reactivity is a non-trivial problem.
+Because the solver’s computational budget scales with the chunk length    h  h   , the problem formulation inherently couples how deeply the solver reasons with how frequently the system observes. A small    h  h    enables rapid feedback to counter the disturbances described in (C1), but heavily restricts the computational budget, resulting in myopic and suboptimal planning. Conversely, a large    h  h    allocates sufficient budget for deep, long-horizon deliberation but forces the system to remain open-loop for extended periods. A static    h  h    therefore forces a rigid compromise between optimality and robustness, failing to exploit the fact that  different states in the MDP require different levels of deliberation versus reaction .
+We take up these challenges by adopting real-time chunking, which makes (C1) explicit rather than assuming it away, and by adapting the commitment length    h  h    (and consequentially budget of the solver) online through an RL policy learnt from experience, which turns the design constant of (C2) into a decision.
+III   Adaptive Computation Budgets as a semi-MDP
+We formalise the problem as a semi-MDP (SMDP)  [ 22 ]
+ℭ  =   (  𝒵  ,  ℋ  ,  ℳ  ,   ψ  h   )    \mathfrak{C}=(\mathcal{Z},\mathcal{H},\mathcal{M},\psi_{h})    over  decision
+epochs       k  =  0   ,  1  ,  2  ,  …   k=0,1,2,\dots   , embedded in the underlying MDP    ℳ  \mathcal{M}    (whose environment time is    t  t   ). At epoch    k  k   , as the computation budget scales with     h  ∈  ℋ   h\in\mathcal{H}    from Section   II  , a budget-policy emits
+h  k   ∼   Φ  θ    (  ⋅  |   z  k   )   ,   Φ  θ   :  𝒵  →  Δ   (  ℋ  )   ,   h_{k}\;\sim\;\Phi_{\theta}\!\left(\cdot\,\middle|\,z_{k}\right),\quad\Phi_{\theta}:\mathcal{Z}\to\Delta(\mathcal{H}),
+(2)
+where     Δ  ⁡   (  ℋ  )    \Delta(\mathcal{H})    is the simplex over    ℋ  \mathcal{H}   . The output     h  k   h_{k}    conditioned      ψ   h  k     (  ⋅  |   s   t  k    )    \psi_{h_{k}}(\cdot|s_{t_{k}})    on the underlying MDP    ℳ  \mathcal{M}    and fixes the next decision epoch at      t   k  +  1    =    t  k   +   h  k     t_{k+1}=t_{k}+h_{k}    (see Fig.   3  ).
+s  t   s_{t}               a  t   a_{t}            Real-Time MPC                                a   t  +  1    a_{t+1}                                                              s  t   s_{t}               a  t   a_{t}               a   t  +  1    a_{t+1}               a  h   a_{h}            Action Chunking                                         a   h  +  1    a_{h+1}                         a   h  +  2    a_{h+2}                         a   h  +  3    a_{h+3}
+Fig. 3 :   Approaches . (Left) Real-time
+MPC commits to one step (    h  =  1   h=1   ), whereas action chunking (right) executes a fixed
+block of    h  h    actions.
+During each epoch    k  k   , the agent accumulates the discounted step-level rewards of its committed chunk:
+R  ⁡   (   s   t  k    ,   h  k   )    =    ∑   j  =  0     h  k   −  1      γ  j   ​   [    r  ⁡   (   s    t  k   +  j    ,   a    t  k   +  j    )    +    g  ⁡   (   s    t  k   +  j    )    ​   δ    s    t  k   +  j    ∈  G      ]      .   R(s_{t_{k}},h_{k})=\sum_{j=0}^{h_{k}-1}\gamma^{\,j}\left[r(s_{t_{k}+j},a_{t_{k}+j})+g(s_{t_{k}+j})\delta_{s_{t_{k}+j}\in G}\right].
+By chaining these epoch rewards, we recover the original infinite-horizon objective (  1  ). The resulting semi-MDP objective,     𝒫  ℭ   \mathcal{P}_{\mathfrak{C}}   , mirrors the original control problem but discounts bootstrapping by the option’s  duration  instead of a single step:
+𝒫  ℭ   :     max   Φ  θ    ⁡   𝔼   𝒫  ℳ    Φ  θ   ,   ψ  h       ​   [    ∑   k  ≥  0      γ   t  k    ​  R  ​   (   s   t  k    ,   h  k   )     ]     \mathcal{P}_{\mathfrak{C}}:\max_{\Phi_{\theta}}\;\mathbb{E}_{\mathcal{P}_{\mathcal{M}}^{\Phi_{\theta},\psi_{h}}}\!\left[\sum_{k\geq 0}\gamma^{\,t_{k}}\,R(s_{t_{k}},h_{k})\right]
+(3)
+and      Q  ⁡   (   s   t  k    ,   h  k   )    =    R  ⁡   (   s   t  k    ,   h  k   )    +    γ   h  k    ​  𝔼  ​   [   V  ⁡   (   s   t   k  +  1     )    ]      Q(s_{t_{k}},h_{k})=R(s_{t_{k}},h_{k})+\gamma^{\,h_{k}}\,\mathbb{E}\big[V(s_{t_{k+1}})\big]   , where     𝒫  ℳ    Φ  θ   ,   ψ  h     \mathcal{P}_{\mathcal{M}}^{\Phi_{\theta},\psi_{h}}    denotes the transition kernel induced by the budget policy and planner on the underlying MDP    ℳ  \mathcal{M}   .
+The construction is only meaningful if optimising  when and how to think  optimises
+the problem we started from, rather than a surrogate of it. Let      ρ  ⁡   (  s  ,  a  )    ≔    r  ⁡   (  s  ,  a  )    +    g  ⁡   (  s  )    ​   δ   s  ∈  G       \rho(s,a)\coloneqq r(s,a)+g(s)\,\delta_{s\in G}   ,    r  r    and    g  g    are bounded and     γ  ∈   (  0  ,  1  )    \gamma\in(0,1)   .
+Remark 1     (Equivalence of objectives) .
+Under the aforementioned assumptions, for every budget policy     Φ  θ   \Phi_{\theta}    and initial state     s  0   s_{0}   , the expected semi-MDP return equals the expected step-level return:
+𝔼   𝒫  ℳ    Φ  θ   ,  Ψ     ​   [    ∑   k  ≥  0      γ   t  k    ​  R  ​   (   s   t  k    ,   h  k   )     |   s  0   ]    =    𝔼  𝒫   ​   [    ∑   t  ≥  0      γ  t   ​  ρ  ​   (   s  t   ,   a  t   )     |   s  0   ]     \small\mathbb{E}_{\mathcal{P}_{\mathcal{M}}^{\Phi_{\theta},\Psi}}\!\left[\sum_{k\geq 0}\gamma^{\,t_{k}}R(s_{t_{k}},h_{k})\middle|s_{0}\!\right]=\mathbb{E}_{\mathcal{P}}\!\left[\sum_{t\geq 0}\gamma^{\,t}\rho(s_{t},a_{t})\middle|s_{0}\right]
+(4)
+Consequently, maximizing the chunk-level semi-MDP objective     𝒫  ℭ   \mathcal{P}_{\mathfrak{C}}    directly maximizes the underlying MDP objective     𝒫  ℳ   \mathcal{P}_{\mathcal{M}}   .
+Justification.
+This equivalence is a direct consequence of evaluating temporally extended actions within the Options framework  [ 22 ] . By construction, the epoch intervals      I  k   ≔   {    t  k   ,  …  ,    t   k  +  1    −  1    }    I_{k}\coloneqq\{t_{k},\dots,t_{k+1}-1\}    form a strict, disjoint partition of the environment time (      ⋃   k  ≥  0     I  k    =   ℤ     ≥  0     \bigcup_{k\geq 0}I_{k}=\mathbb{Z}_{\geq 0}   ). Because the intra-epoch return     R  ⁡   (   s   t  k    ,   h  k   )    R(s_{t_{k}},h_{k})    is defined as the exact discounted sum of step-level rewards     ρ  ⁡   (   s  t   ,   a  t   )    \rho(s_{t},a_{t})    over     I  k   I_{k}   , summing over all epochs pathwise seamlessly recovers the infinite-horizon return. Taking the expectation under the closed-loop trajectory distribution yields (  4  ).
+Remark 2     (relation to hierarchical RL) .
+the construction is formally an
+SMDP over options  [ 22 ] , but the high-level action is a
+duration , not a behaviour: every budget executes the same chunk from the
+same fixed    ψ  \psi   , so there is no option library to discover and no low-level
+non-stationarity.
+The physical value of computation is an action value.  The semi-MDP does not only state the problem: it collapses the informal notion
+of physical value of computation as value inherited from the physics of the world, into a one-line definition. As an ”action” (in the SMDP sense) is a budget    h  h   , the action-value function represents how much a stretch of deliberation is worth:      Φ  abs  VoC   :=    Q  Φ   ​   (   s   t  k    ,  h  )     \Phi^{\mathrm{VoC}}_{\mathrm{abs}}:=Q^{\Phi}(s_{t_{k}},h)   . From here, we define the relative value of computation as the difference:
+Φ  rel  VoC   ​   (   s   t  k    ,   h  i   ,   h  j   )    ≔     Q  Φ   ​   (   s   t  k    ,   h  i   )    −    Q  Φ   ​   (   s   t  k    ,   h  j   )      ,   \Phi^{\mathrm{VoC}}_{\mathrm{rel}}(s_{t_{k}},h_{i},h_{j})\coloneqq Q^{\Phi}(s_{t_{k}},h_{i})-Q^{\Phi}(s_{t_{k}},h_{j}),
+(5)
+with      h  i   ,    h  j   ∈  ℋ    h_{i},h_{j}\in\mathcal{H}   . Therefore, the optimal budget is defined as      h  k  ⋆   =    arg  ⁡   max  h    ​   Φ   r  ​  e  ​  l   VoC   ​   (   s   t  k    ,  h  ,  1  )     h_{k}^{\star}=\arg\max_{h}\Phi^{\mathrm{VoC}}_{rel}(s_{t_{k}},h,1)   , which
+Φ  θ   \Phi_{\theta}    (  2  ) learns from input signal     z  k   z_{k}   . Optimizing      Φ   r  ​  e  ​  l   VoC   ​   (   s   t  k    ,  h  ,  1  )    \Phi^{\mathrm{VoC}}_{rel}(s_{t_{k}},h,1)   , we aim at the optimal relative return gain from the trivial solution     h  =  1   h=1   .
+IV   Bounded Divergence under Adaptive Commitment
+A natural question is how far open-loop execution can drift from the solver’s prediction as the commitment grows.
+For general solvers     ψ  h   \psi_{h}   , we bound the return deviation caused by open-loop execution under model mismatch, under the following assumption.
+Assumption 1   .
+The step-level reward      ρ  ⁡   (  s  ,  a  )    ≔    r  ⁡   (  s  ,  a  )    +    g  ⁡   (  s  )    ​   δ   s  ∈  G       \rho(s,a)\coloneqq r(s,a)+g(s)\delta_{s\in G}    is     L  ρ   L_{\rho}   -Lipschitz continuous with respect to the state. Furthermore, the true transition kernel     P   (  ⋅  |  s  ,  a  )    P(\cdot|s,a)    and the solver’s internal nominal model      P  ^    (  ⋅  |  s  ,  a  )    \hat{P}(\cdot|s,a)    exhibit a bounded single-step mismatch in the 1-Wasserstein distance,      W  1    (  P   (  ⋅  |  s  ,  a  )   ,   P  ^    (  ⋅  |  s  ,  a  )   )   ≤  δ   W_{1}\big(P(\cdot|s,a),\hat{P}(\cdot|s,a)\big)\leq\delta   , and the nominal dynamics are     L  P   L_{P}   -Lipschitz continuous in the state space under     W  1   W_{1}   .
+Theorem 1     (Bounded Open-Loop Deviation) .
+Under Assumption   1  , let     e  0   e_{0}    be the initial prediction error defined below. For any acceptable degradation     ϵ  ≥    L  ρ   ​   e  0     \epsilon\geq L_{\rho}e_{0}   , there exists a maximum open-loop commitment horizon       𝔥  ¯   ​   (  ϵ  ,   e  0   )    ∈    ℕ     ≥  1    ∪   {  ∞  }     \overline{\mathfrak{h}}(\epsilon,e_{0})\in\mathbb{N}_{\geq 1}\cup\{\infty\}    such that executing any action chunk of length     h  ≤    𝔥  ¯   ​   (  ϵ  ,   e  0   )     h\leq\overline{\mathfrak{h}}(\epsilon,e_{0})    keeps the expected cumulative open-loop return deviation bounded by    ϵ  \epsilon   :
+𝔼  ⁡   [    ∑   j  =  0    h  −  1      γ  j   ​   |    ρ  ⁡   (   s    t  k   +  j    ,   a    t  k   +  j    )    −   ρ  ⁡   (    s  ^     t  k   +  j    ,   a    t  k   +  j    )     |     ]    ≤  ϵ   .   \mathbb{E}\left[\sum_{j=0}^{h-1}\gamma^{\,j}\big|\rho(s_{t_{k}+j},a_{t_{k}+j})-\rho(\hat{s}_{t_{k}+j},a_{t_{k}+j})\big|\right]\leq\epsilon.
+(6)
+Proof.
+Let      e  j   ≔   𝔼  ⁡   [   ‖    s    t  k   +  j    −    s  ^     t  k   +  j     ‖   ]     e_{j}\coloneqq\mathbb{E}\big[\|s_{t_{k}+j}-\hat{s}_{t_{k}+j}\|\big]    denote the expected state divergence at step    j  j    of the chunk. Because the solver computes the current plan     τ  k   \tau_{k}    during the execution of the previous budget     h   k  −  1    h_{k-1}   , the new chunk begins from a predicted state      s  ^    t  k    \hat{s}_{t_{k}}    and inherits a non-zero initial divergence     e  0   e_{0}   .
+4
+Ours          1          2          3          4          5          6          7          8          9            0  0              0.2  0.2              0.4  0.4              0.6  0.6              0.8  0.8              1  1                                                        ↑  \uparrow     higher is better          Success rate                                  Ours          1          2          3          4          5          6          7          8          9             −  2500   -2500               −  2000   -2000               −  1500   -1500               −  1000   -1000               −  500   -500                                                                                                                                                                                                                              Total return (all episodes)                                  Ours          1          2          3          4          5          6          7          8          9             −  700   -700               −  600   -600               −  500   -500               −  400   -400               −  300   -300                                                                                                                                                                                                                              Return on successes                                  Ours          1          2          3          4          5          6          7          8          9            7  7              8  8              9  9              10  10              11  11              12  12                                                                                                                                                                                                                                ↓  \downarrow     lower is better          Harshness on successes
+Fig. 4 :   Navigation Results , pooled over the three scenarios
+(   300  300    randomised episodes). Our
+learned budget policy (left of the dashed rule) against every fixed
+commitment    h  h    (blue).
+The two right-hand panels condition on successful episodes and therefore
+flatter the low-success baselines. The solid and dashed outlines mark the
+best fixed budget under success rate (    h  =  5   h=5   ) and under total return
+(    h  =  1   h=1   ): no single fixed    h  h    is best at both, while the learned budget
+dominates both.
+By Assumption   1   and the Kantorovich–Rubinstein duality, the expected error propagates recursively as      e  j   ≤     L  P   ​   e   j  −  1     +  δ    e_{j}\leq L_{P}e_{j-1}+\delta   . Unrolling this yields      e  j   ≤     L  P  j   ​   e  0    +   δ  ​    ∑   i  =  0    j  −  1     L  P  i       e_{j}\leq L_{P}^{j}e_{0}+\delta\sum_{i=0}^{j-1}L_{P}^{\,i}   . The left-hand side of (  6  ) is therefore bounded by
+B  ⁡   (  h  )    ≔    L  ρ   ​    ∑   j  =  0    h  −  1      γ  j   ​   (     L  P  j   ​   e  0    +   δ  ​    ∑   i  =  0    j  −  1     L  P  i      )       .   B(h)\coloneqq L_{\rho}\sum_{j=0}^{h-1}\gamma^{\,j}\Big(L_{P}^{j}e_{0}+\delta\sum_{i=0}^{j-1}L_{P}^{\,i}\Big).
+B  ⁡   (  1  )    =    L  ρ   ​   e  0     B(1)=L_{\rho}e_{0}    , and     B  ⁡   (  h  )    B(h)    is nondecreasing in    h  h    because it is a sum of nonnegative terms. Hence, for     ϵ  ≥    L  ρ   ​   e  0     \epsilon\geq L_{\rho}e_{0}   , the set     {  h  :    B  ⁡   (  h  )    ≤  ϵ   }   \{h:B(h)\leq\epsilon\}    is a nonempty initial segment of     ℕ     ≥  1    \mathbb{N}_{\geq 1}   . Its supremum      𝔥  ¯   ​   (  ϵ  ,   e  0   )    \overline{\mathfrak{h}}(\epsilon,e_{0})    satisfies the claim.
+∎
+Theorem   1   informs the design of the action space     ℋ  =   {   1  ,  …  ,   𝔥  max    }    \mathcal{H}=\{1,\dots,\mathfrak{h}_{\max}\}   . The lower bound     h  =  1   h=1    gives the most frequent feedback and is admissible whenever the initial projection error      L  ρ   ​   e  0    L_{\rho}e_{0}    is acceptable. The upper bound should respect both the mismatch tolerance and the inherited initial divergence,      𝔥  max   ≤    𝔥  ¯   ​   (  ϵ  ,   e  0   )     \mathfrak{h}_{\max}\leq\overline{\mathfrak{h}}(\epsilon,e_{0})   .
+V   Optimization and Training
+The policy     Φ  θ   \Phi_{\theta}    conditions on a context     z  k   z_{k}    that is deliberately richer than the
+environment state, because the quantity being predicted (how much deliberation the current situation affords) depends on the plan in flight and on the solver’s own confidence, not only on where the agent is:
+z  k   =   (   s   t  k    ,   h   k  −  1    ,   τ  k   ,   𝔟  k   )   ∈   𝒮  ×  ℋ  ×   𝒯   H  ⁡   (   h   k  −  1    )     ×   ℝ  l     z_{k}=\big(\,s_{t_{k}},\ h_{k-1},\ \tau_{k},\ \mathfrak{b}_{k}\,\big)\in\mathcal{S}\times\mathcal{H}\times\mathcal{T}^{H(h_{k-1})}\times\mathbb{R}^{l}
+(7)
+The  observation      s   t  k    s_{t_{k}}    is the state at the invocation,     h   k  −  1    h_{k-1}    is the  previous budget ;
+the  chunk to be executed      τ  k   \tau_{k}   , flattened over its steps, is the plan the agent will run open-loop  while     ψ  h   \psi_{h}    thinks .
+Solver statistics
+The last entry      𝔟  k   ∈   ℝ  l    \mathfrak{b}_{k}\in\mathbb{R}^{l}    is a fixed-dimensional,
+budget-invariant summary of the search that produced     τ  k   \tau_{k}   . It is computed from
+the rollout bundle and the latest execution feedback, giving the policy information
+about planning difficulty without exposing a variable-length set of trajectories or
+requiring an additional planner call. With     w  i   w_{i}    denoting the softmax weight of
+sampled rollout    i  i    among    K  K    candidates, the  effective sample size
+ESS  =    (   K  ​    ∑  i    w  i  2     )    −  1    ∈   (  0  ,  1  ]    \mathrm{ESS}=\big(K\sum_{i}w_{i}^{2}\big)^{-1}\in(0,1]    measures how concentrated
+the search is: low values indicate
+that a few rollouts dominate the update, whereas high values indicate
+that many rollouts contribute comparably, as in a flat cost landscape
+or a search that has already contracted around a solution. The
+time-to-infeasibility  is the earliest predicted step at which a rollout
+leaves the feasible set    𝒞  \mathcal{C}    and therefore measures the plan’s remaining
+safety margin. Finally, the  dynamics-model mismatch  is the mean displacement
+between predicted and realised positions of the objects intersected by the rollout
+tube, providing an online measure of model reliability.
+𝔟  k   \mathfrak{b}_{k}    is the term that distinguishes this formulation from a
+state-conditioned schedule: it lets the policy condition on  how hard the problem currently is for the solver , which is observable to the planner but not to the state.
+V-A    Optimisation
+We optimise     Φ  θ   \Phi_{\theta}    with PPO over decision epochs. Each transition in the
+buffer is one epoch     (   z  k   ,   h  k   ,   R  ⁡   (   s   t  k    ,   h  k   )    ,   τ  k   ,   z   k  +  1    )   \big(z_{k},\,h_{k},\,R(s_{t_{k}},h_{k}),\,\tau_{k},\,z_{k+1}\big)   ,
+with    R  R    accumulated as in (  III  ) and advantages estimated by a
+duration-aware GAE,
+δ  k   =     R  k   +    γ   h  k    ​  V  ​   (   z   k  +  1    )     −   V  ⁡   (   z  k   )      ,    A  k   =    δ  k   +    γ   h  k    ​  λ  ​   A   k  +  1        ,   \delta_{k}=R_{k}+\gamma^{\,h_{k}}\,V(z_{k+1})-V(z_{k}),\quad A_{k}=\delta_{k}+\gamma^{\,h_{k}}\,\lambda\,A_{k+1},
+so that both the bootstrap and the eligibility decay follow elapsed environment
+time rather than epoch count. The actor and critic share an encoder over
+z  k   z_{k}    and the actor emits a categorical distribution over    ℋ  \mathcal{H}   .
+Proposition 1     (Monotonic Improvement) .
+Assuming exact advantages and exact
+maximisation of the PPO surrogate at each iteration, updates of     Φ  θ   \Phi_{\theta}
+monotonically improve     𝒫  ℭ   \mathcal{P}_{\mathfrak{C}}    and, by Remark 1,     P  ℳ   \mathrm{P}_{\mathcal{M}}   .
+Proof.
+Let       P  ~   ​   (   z  ′   |   z  ,  h   )    ≔    γ   h  −  1    ​  P  ​   (   z  ′   |   z  ,  h   )     \tilde{P}(z^{\prime}|z,h)\coloneqq\gamma^{h-1}P(z^{\prime}|z,h)   , with the remaining mass
+1  −   γ   h  −  1     1-\gamma^{h-1}    sent to an absorbing zero-reward state. Then    ℭ  \mathfrak{C}    is a
+standard    γ  \gamma   -discounted MDP with identical values, since
+γ  ​   γ   h  −  1     =   γ  h    \gamma\,\gamma^{h-1}=\gamma^{h}   . PPO is an instance of mirror
+learning  [ 23 ] , whose updates monotonically improve such MDPs;
+Remark 1 transfers the improvement to     P  ℳ   \mathrm{P}_{\mathcal{M}}   .
+∎
+VI   Experiments
+Ours
+h  =  9   h=9
+h  =  4   h=4
+h  =  1   h=1
+0  0              2  2              4  4              6  6              7.2  7.2              0  0              2  2              4  4              6  6              8  8                                   Finding optimal path            overtake            close passage, noisy obstacles                                                                                                                         time [s]             h  ∼   Φ  θ    h\sim\Phi_{\theta}     [steps]
+dynamic chunking
+achieved by
+our method
+Fig. 5 :   Real-world Merging Lane scenario.   Top:
+temporal composites on the RoboMaster platform under our learned budget and
+fixed commitments     h  ∈   {   1  ,  4  ,  9   }    h\in\{1,4,9\}   ; each panel overlays successive robot
+poses from one episode.  Bottom:  the commitment our policy selects
+along its episode, against the three fixed budgets. The budget collapses to
+h  =  1   h=1    while the robot merges past the crossing obstacle (red band) and
+while it threads the close passage between the static obstacles.
+Our experimental evaluation is designed to validate the efficacy of adaptive computation budgets across diverse robotic domains. Specifically, we seek to answer the following research questions:
+•
+Q1   (Performance) : Does dynamic adaptation of the computational budget and execution horizon consistently outperform fixed-budget baselines in dynamic and constrained environments?
+•
+Q2   (Adaptation Mechanism) : Can the learned policy correctly identify state-dependent requirements for deliberation versus reactivity, and how critical are internal planner statistics to this arbitration?
+•
+Q3   (Boundary Behavior) : How does the adaptive policy behave in non-smooth cost landscapes where the optimal commitment horizon lacks strong state-dependent variation?
+To quantitatively evaluate these questions, we report two primary metrics:
+(1) task success rate , the fraction of evaluation episodes that satisfy
+the task-specific goal criterion in goal-conditioned scenarios; and
+(2) mean total return , the undiscounted sum of environment rewards
+over an episode, averaged over all evaluation episodes, including failures.
+Higher values are better for both metrics.
+For navigation tasks, we additionally measure  harshness , a
+dimensionless measure combining path tortuosity and motion jerk,
+H  =    (   L  /  D   )   ​   [   1  +   log  ⁡   (   1  +   J  norm    )     ]     H=(L/D)[1+\log(1+J_{\mathrm{norm}})]   .
+Here,    L  L    is the travelled path length, and    D  D    is the straight-line distance
+between the robot’s initial and final positions. The normalized jerk
+J  norm   J_{\mathrm{norm}}    measures how abruptly acceleration changes, using the
+accumulated squared jerk normalized by episode duration and path length.
+Lower harshness indicates a
+more direct and smoother trajectory.
+We also present the  optimality regret of a fixed-commitment baseline
+at each decision boundary along its trajectory as the relative value of computation with respect to the optimal budget-action     h  ∗   h^{*}    at state     s  t   s_{t}   :
+Φ  rel  VoC   ​   (   s   t  k    ,   h  ∗   ,  h  )    =     Φ   a  ​  b  ​  s   VoC   ​   (   s  t   ,   h  ∗   )    −    Q  Φ   ​   (   s  t   ,  h  )      .   \Phi^{\mathrm{VoC}}_{\mathrm{rel}}(s_{t_{k}},h^{*},h)=\Phi^{\mathrm{VoC}}_{abs}(s_{t},h^{*})-Q^{\Phi}(s_{t},h).
+(8)
+Thus,      Φ  rel  VoC   ​   (   s   t  k    ,   h  ∗   ,  h  )    \Phi^{\mathrm{VoC}}_{\mathrm{rel}}(s_{t_{k}},h^{*},h)    measures the estimated return lost by choosing the fixed
+commitment instead of the best available commitment under
+Φ  θ   ​   (   s  t   )    \Phi_{\theta}(s_{t})    (lower values are better).
+We deploy our framework across three distinct scenarios, systematically chosen to stress the computation-reactivity trade-off from different physical dimensions: holonomic ground navigation, deployed in the real-world; quadrotor with suspended cable payload; and contact-rich planar manipulation (3D Push-T). The properties of each system are described in the related paragraphs.
+Implementation Details.
+The hardware and software infrastructure is standardized across experiments to ensure consistent solver performance. The underlying control and communication stack is orchestrated via ROS 2. Hardware experiments are conducted on a DJI RoboMaster platform  [ 24 ]  for the holonomic ground navigation. Simulated environments utilize MuJoCo  [ 25 ]  for the quadrotor dynamics and the Push-T library using a  [ 26 ]  for planar manipulation. To achieve real-time, high-frequency planning, the predictive model and the Model Predictive Path Integral (MPPI) solver are implemented entirely in JAX and executed via MuJoCo MJX  [ 25 ] . All neural network inference and hardware-accelerated planning are executed on a single NVIDIA A100 GPU (40GB VRAM), ensuring the solver’s wall-clock latency strictly dictates the physical temporal cost of computation.
+The control period is      d  ​  t   =   0.1  ​  s    dt=0.1\,\mathrm{s}    for navigation,      d  ​  t   =   0.02  ​  s    dt=0.02\,\mathrm{s}    for cable-payload flight, and      d  ​  t   =   0.04  ​  s    dt=0.04\,\mathrm{s}    for PushT; a commitment of    h  h    therefore corresponds to     h  ​  d  ​  t   h\,dt    seconds of open-loop execution.
+The budget policy is a two-layer tanh MLP (128 units per layer), with a categorical actor and scalar critic. PPO uses     λ  =  0.95   \lambda=0.95   , learning rate     3  ×   10   −  4     3\times 10^{-4}   , minibatches of 256, four epochs, clip    0.2  0.2   , and gradient clipping at    0.5  0.5   . We train for 2,500 updates with 2,048 transitions per update.
+In the experiments, MPPI scales its prediction horizon linearly with    h  h    and scales its samples linearly for navigation and as     h   \sqrt{h}    for cable flight; CEM on PushT scales both horizon and population linearly.
+0  0              20  20              40  40              60  60              80  80            0          1          2          3          4          5                                 Phase 1: overtake                                         collision                                                                                                                                                                                                                                              Environment step    t  t             Regret (      ×   10  3    \times 10^{3}   )                      h  =  1   h=1                       h  =  4   h=4                       h  =  9   h=9
+Fig. 6 :   Optimality Regret  in the Merging Lane scenario along three fixed commitment trajectories.
+Lines are means and standard deviations over    10  10    episodes. The tint marks Phase 1, before the moving obstacle has been passed, which ends at a different step for each commitment. Dotted rules mark the mean collision step for each fixed strategy.
+Full          Full   −  -   PS          PS only            0  0              0.2  0.2              0.4  0.4              0.6  0.6              0.8  0.8              1  1                                                  ↑  \uparrow     higher is better          Success rate
+Full          Full   −  -   PS          PS only             −  2500   -2500               −  2000   -2000               −  1500   -1500               −  1000   -1000               −  500   -500              0  0                                                                                                            Total return
+Fig. 7 :   Holonomic 2D navigation: planner statistics ablation . Ablation of the policy input, pooled over the three
+scenarios (   300  300    episodes per variant).  Full  uses
+(   s   t  k    ,   h   k  −  1    ,   τ  k   ,   𝔟  k   )   (s_{t_{k}},h_{k-1},\tau_{k},\mathfrak{b}_{k})   ;  PS only  uses the planner
+statistics     𝔟  k   \mathfrak{b}_{k}    alone;  Full   −  -   PS  uses everything except
+𝔟  k   \mathfrak{b}_{k}   . The full input achieves the highest success rate and
+total return, while removing planner statistics drops success by    12  12
+percentage points.
+(a) Approach first target,     h  =  8   h=8
+(b) Stabilise,     h  =  2   h=2
+(c) Unlock second target,     h  =  8   h=8
+(d) Approach final target,     h  =  3   h=3
+Fig. 8 :   Dynamic commitment during cable-payload flight.
+Four stages from one episode show the learned policy increasing the
+commitment for transit and reducing it near each target.
+Ours          1          2          3          4          5          6          7          8             −  400   -400              0  0              500  500              1000  1000              1500  1500              2000  2000                                                                                                                                                                                                                                                                        Commitment    h  h             Total return    ↑  \uparrow                    Full              Full   −  -   PS              PS only                Fixed    h  h                 Best fixed    h  h
+Fig. 9 :   Cable-payload slalom return.  Mean total return over
+20  20    episodes per method. The left group compares the full policy (gold) with
+ablations without planner statistics (orange) and using planner statistics only
+(salmon); fixed commitments are shown in blue.
+VI-A    Holonomic 2D navigation
+In this navigation example, because the dynamics are simple, failures arise strictly from failing to balance the deep search required for global optimality against the rapid feedback needed to avoid dynamic obstacles.
+We consider three scenarios with distinct obstacle geometries and dynamics: a fixed wall with three stochastic obstacles (“ barrier ”, Fig.   1  , right), one crossing robot with three stochastic obstacles (“ merging lane ”, Fig.   5  ), and five laterally moving obstacles (“ highway ”, Fig.   1  , centre). The environment reward is
+ρ  =    −    ∥    p  t   −   p  g    ∥   2  2    −   3000  ​    1  collision      \rho=-\lVert p_{t}-p_{g}\rVert_{2}^{2}-3000\,\bm{1}_{\mathrm{collision}}   ,
+where     p  t   p_{t}    and     p  g   p_{g}    are the robot and goal positions. Success or collision terminates the episode.
+Aggregate and per-scenario results are shown in Fig.   4   and Table   I  . The adaptive policy achieves the strongest overall performance across success rate, total return, and harshness.
+In the  merging lane  scenario (Fig.   5  ), the policy uses a larger budget early in the episode to identify a safe route, then reduces the commitment to increase feedback while passing the crossing robot and nearby stochastic obstacles. Around     t  =   3  ​  s    t=3\,\mathrm{s}   , it approaches the reactive limit      h  min   =  1   h_{\min}=1   .
+Figure   6   plots the
+optimality regret,      Φ  rel  VOC   ,   \Phi_{\mathrm{rel}}^{\mathrm{VOC}},    (  8  ) of fixed commitment    h  h
+at each decision boundary.
+Sim to Real . The RoboMaster evaluation uses the same learned policy and budget-to-planner mapping as simulation, with only the physical robot, sensing, and ROS 2 execution stack changed. The close agreement with the simulated navigation behaviour indicates a small simulation-to-real gap for this task.
+✓  Planner statistics guide adaptation.
+The solver summary     𝔟  k   \mathfrak{b}_{k}    is what tells the policy when to spend and
+when to react. The ablation in Fig.   7   shows that
+removing this feedback lowers success from     98  %   98\%    to     86  %   86\%   ; feedback alone reaches     74  %   74\%    success, showing that state
+and solver signals are complementary.
+TABLE I :   Navigation results  (   100  100    episodes per scenario). We compare our policy with the same three fixed budgets selected from the pooled results in Fig.   4  :     h  =  5   h=5    (best Success rate),     h  =  1   h=1    (best total Return), and     h  =  9   h=9    (best Harshness). The budgets remain fixed across scenarios; total return is averaged over all episodes.
+Scenario
+Strategy
+Success    ↑  \uparrow
+Total return    ↑  \uparrow
+Harshness    ↓  \downarrow
+Barrier
+[1pt]
+Ours
+0.97  \bm{0.97}
+−  𝟒𝟑𝟓   \bm{-435}
+7.37  {7.37}
+h  =  5   h=5     (S)
+0.73  0.73
+−  1167   -1167
+7.28  \bm{7.28}
+h  =  1   h=1     (R)
+0.12  0.12
+−  1523   -1523
+7.42  7.42
+h  =  9   h=9     (H)
+0.63  0.63
+−  1400   -1400
+7.55  7.55
+Merging Lane
+[1pt]
+Ours
+1.00  \bm{1.00}
+−  𝟑𝟖𝟓   \bm{-385}
+7.02  \bm{7.02}
+h  =  5   h=5     (S)
+0.63  0.63
+−  1462   -1462
+7.17  7.17
+h  =  1   h=1     (R)
+1.00  \bm{1.00}
+−  460   -460
+9.68  9.68
+h  =  9   h=9     (H)
+0.61  0.61
+−  1466   -1466
+7.46  7.46
+Highway
+[1pt]
+Ours
+0.99  \bm{0.99}
+−  𝟓𝟑𝟒   \bm{-534}
+9.05  {9.05}
+h  =  5   h=5     (S)
+0.92  0.92
+−  719   -719
+8.84  \bm{8.84}
+h  =  1   h=1     (R)
+0.78  0.78
+−  1265   -1265
+11.73  11.73
+h  =  9   h=9     (H)
+0.08  0.08
+−  2988   -2988
+9.26  9.26
+VI-B    Quadrotor with a suspended cable payload
+The quadrotor carries a cable-suspended load through a two-goal slalom. The
+stiff, underactuated dynamics punish staleness via open-loop system divergence
+rather than environmental changes. This requires the system to balance deep,
+computationally expensive sampling for stable transit against highly reactive
+short-horizon commitments near targets. Its dense reward is
+r  t   =    r  t  goal   +   r  t  velocity   +   r  t  hover   +   r  t  smooth   +   r  t  swing   +   r  t  collision     r_{t}=r_{t}^{\mathrm{goal}}+r_{t}^{\mathrm{velocity}}+r_{t}^{\mathrm{hover}}+r_{t}^{\mathrm{smooth}}+r_{t}^{\mathrm{swing}}+r_{t}^{\mathrm{collision}}   . For distance     d  t   d_{t}    and braking-aware target velocity
+v  t  ∗   v_{t}^{*}   ,      r  t  goal   =   exp  ⁡   (   −   2  ​   d  t     )     r_{t}^{\mathrm{goal}}=\exp(-2d_t)    and
+r  t  velocity   =   2  ​   exp  (   −  ∥  v     t   −  v     t      ∗   ∥     2      2   /  0.35     2    )     r_{t}^{\mathrm{velocity}}=2\exp(-\lVert v_t-v_t^*\rVert_2^2/0.35^2)   .
+The remaining terms reward Gaussian hover accuracy, penalize action/body rates,
+and set      r  t  swing   =   −   0.5  ​    ∥   ω  t  cable   ∥   2  2      r_{t}^{\mathrm{swing}}=-0.5\lVert\omega_{t}^{\mathrm{cable}}\rVert_{2}^{2}    and
+r  t  collision   =   −   300  ​   (    𝟏  tip   +   𝟏  drone    )      r_{t}^{\mathrm{collision}}=-300(\bm{1}_{\mathrm{tip}}+\bm{1}_{\mathrm{drone}})   ; intermediate settling adds    250  250    plus up to
+100  100    for precision. Here     d  t   d_{t}    is the distance to the active target,     v  t   v_{t}    is the quadrotor translational velocity,     v  t  ∗   v_{t}^{*}    is the braking-aware target velocity, and     ω  t  cable   \omega_{t}^{\mathrm{cable}}    is the payload’s cable angular velocity.
+A robot trial is successful only when the system reaches the first goal, remains within the goal and stability tolerances for the required settling window, and then reaches and stabilises at the final goal under the same criterion. Our policy succeeds in     80  %   80\%    of trials, while every fixed
+commitment fails, and it discovers a two-stage computation pattern: it uses larger budgets during stable transit and shorter commitments near the targets, achieving the highest return among the fixed strategies (Fig.   9  ). Furthermore, Fig.   9   confirms that  planner   statistics  help the policy achieving the best performance.
+VI-C    Contact-rich planar manipulation
+In Push-T  [ 10 ] , a planar pusher slides a free T-shaped block
+onto a target using the hydrax model  [ 26 ]  and CEM in MuJoCo
+MJX. With position error     d  t   d_{t}   , angular error     δ  t   \delta_{t}   , pusher–block distance
+q  t   q_{t}   , and normalized action     a  t   a_{t}   , its environment reward is
+r  t   =   −   min  ⁡   {   10  ,     0.01  ​   [     (    d  t   /  0.02   )   2   +    (    δ  t   /  0.15   )   2    ]    +   2  ​   q  t  2    +   0.001  ​    ∥   a  t   ∥   2  2      }      r_{t}=-\min\{10,\,0.01[(d_{t}/0.02)^{2}+(\delta_{t}/0.15)^{2}]+2q_{t}^{2}+0.001\lVert a_{t}\rVert_{2}^{2}\}   . The budget policy receives the decrease
+in the bracketed pose cost across its chunk. Changing contacts makes plans
+stale and tests local budget sensitivity; results are in
+Fig.   10  .
+h  h
+Δ  ​  x   \Delta x     [cm]    ↓  \downarrow
+Δ  ​  θ   \Delta\theta     [rad]    ↓  \downarrow
+1  1
+9.41  ±  1.55   9.41\pm 1.55
+0.090  ±  0.055   0.090\pm 0.055
+2  2
+8.22  ±  2.65   8.22\pm 2.65
+0.100  ±  0.066   0.100\pm 0.066
+3  3
+5.79  ±  4.50   5.79\pm 4.50
+0.049  ±  0.057   0.049\pm 0.057
+4  4
+4.19  ±  4.79   4.19\pm 4.79
+0.044  ±  0.056   0.044\pm 0.056
+5  5
+4.48  ±  4.64   4.48\pm 4.64
+0.054  ±  0.060   0.054\pm 0.060
+6  6
+4.95  ±  4.64   4.95\pm 4.64
+0.072  ±  0.071   0.072\pm 0.071
+7  7
+1.21  ±  1.65   1.21\pm 1.65
+0.018  ±  0.023   0.018\pm 0.023
+8  8
+0.65  ±  0.48   \bm{0.65}\pm 0.48
+0.020  ±  0.017   0.020\pm 0.017
+9  9
+1.13  ±  1.46   1.13\pm 1.46
+0.022  ±  0.018   0.022\pm 0.018
+10  10
+0.76  ±  0.71   0.76\pm 0.71
+0.016  ±  0.014   \bm{0.016}\pm 0.014
+Ours
+0.65  ±  0.48   \bm{0.65}\pm 0.48
+0.020  ±  0.017   0.020\pm 0.017
+Fig. 10 :   Boundary behaviour on the 3D PushT environment . Left: robot-arm manipulation setup. Right: terminal position and orientation errors after    600  600    steps, reported as mean    ±  \pm    sample standard deviation over    16  16    matched validation episodes. Our policy selects      h  ¯   =  8.00   \bar{h}=8.00   .
+It can be seen that the policy collapses to     h  =  8   h=8    everywhere, matching the best fixed baseline. We attribute this to the nominal setting: planning and execution share exact dynamics, the system is fully observed and disturbance-free, and the objective does not reward computational savings or earlier arrival, leaving little incentive for frequent feedback.
+VII   Conclusion
+Robot  metareasoning  is a fundamental capability of embodied
+intelligence: an agent must decide how much to deliberate under
+environmental uncertainty and temporal constraints. We introduce a semi-MDP framework for robot metareasoning that learns adaptive computation budgets for real-time control. By leveraging planner statistics, the policy dynamically balances plan execution length and planner computation time based on  plan quality  and  uncertainty .
+Across three environments with distinct sources of difficulty, the policy adapts its budget to the demands of the task.
+Our results show that online adaptation is  highly beneficial  when exploitable budget variation exists.
+It discovers longer commitments for global route, smooth transit and shorter ones near dynamic obstacles, critical passage and, in cable-payload flight, near targets and disturbances.
+In contact-rich planar manipulation, the learned
+policy converges to a constant budget matching the best fixed baseline, indicating that adaptation is unnecessary when the nominal task provides little exploitable variation.
+Future work  will explore richer, high-dimensional planner statistics, learned world models, and more expressive planning algorithms.
+References
+[1]
+A. R. Otto and N. D. Daw, “The opportunity cost of time modulates cognitive
+effort,”  Neuropsychologia , vol. 123, pp. 92–105, 2019.
+[2]
+N. D. Daw, Y. Niv, and P. Dayan, “Uncertainty-based competition between
+prefrontal and dorsolateral striatal systems for behavioral control,”
+Nature Neuroscience , vol. 8, no. 12, pp. 1704–1711, 2005.
+[3]
+M. Keramati, A. Dezfouli, and P. Piray, “Speed/accuracy trade-off between the
+habitual and the goal-directed processes,”  PLoS Computational
+Biology , vol. 7, no. 5, p. e1002055, 2011.
+[4]
+A. Shenhav, S. Musslick, F. Lieder, W. Kool, T. L. Griffiths, J. D. Cohen, and
+M. M. Botvinick, “Toward a rational and mechanistic account of mental
+effort,”  Annual Review of Neuroscience , vol. 40, pp. 99–124, 2017.
+[5]
+S. Russell and E. Wefald, “Principles of metareasoning,”  Artificial
+Intelligence , vol. 49, no. 1–3, pp. 361–395, 1991.
+[6]
+N. Hay, S. Russell, D. Tolpin, and S. E. Shimony, “Selecting computations:
+Theory and applications,” in  Proc. Conf. Uncertainty in Artificial
+Intelligence (UAI) , 2012.
+[7]
+G. Williams, N. Wagener, B. Goldfain, P. Drews, J. M. Rehg, B. Boots, and E. A.
+Theodorou, “Information theoretic MPC for model-based reinforcement
+learning,” in  Proc. IEEE Int. Conf. Robotics and Automation (ICRA) ,
+2017, pp. 1714–1721.
+[8]
+H. Bharadhwaj, K. Xie, and F. Shkurti, “Model-predictive control via
+cross-entropy and gradient-based optimization,” in  Proceedings of the
+Conference on Learning for Dynamics and Control , 2020, pp. 277–286.
+[9]
+T. Z. Zhao, V. Kumar, S. Levine, and C. Finn, “Learning fine-grained bimanual
+manipulation with low-cost hardware,” in  Proc. Robotics: Science and
+Systems (RSS) , 2023.
+[10]
+C. Chi, S. Feng, Y. Du, Z. Xu, E. Cousineau, B. Burchfiel, and S. Song,
+“Diffusion policy: Visuomotor policy learning via action diffusion,” in
+Proc. Robotics: Science and Systems (RSS) , 2023.
+[11]
+K. Black, N. Brown, D. Driess, A. Esmail, M. Equi, C. Finn, N. Fusai, L. Groom,
+K. Hausman, B. Ichter, S. Jakubczak, T. Jones, L. Ke, S. Levine, A. Li-Bell,
+M. Mothukuri, S. Nair, K. Pertsch, L. X. Shi, J. Tanner, Q. Vuong,
+A. Walling, H. Wang, and U. Zhilinsky, “    π  0   \pi_{0}   : A vision-language-action
+flow model for general robot control,”  arXiv preprint
+arXiv:2410.24164 , 2024.
+[12]
+K. Black, M. Y. Galliker, and S. Levine, “Real-time execution of action
+chunking flow policies,” in  Advances in Neural Information Processing
+Systems (NeurIPS) , 2025, arXiv:2506.07339.
+[13]
+Y. Zhu, Y. Chen, Z. Yang, Y. Hu, and X. Chen, “DEFLECT: Temporal
+counterfactual preference learning for delay-robust asynchronous VLAs,”
+arXiv preprint arXiv:2605.19294 , 2026.
+[14]
+Y. Zhao, M. Bogdanovic, A. Sohal, L. Tao, K. Darvish, A. Aspuru-Guzik,
+F. Shkurti, and A. Garg, “Dynamic execution horizon prediction for
+chunk-based robot policies,”  arXiv preprint arXiv:2606.11408 , 2026.
+[15]
+W. Chen, K. Zhang, C. Lin, Z. Zhang, Y. She, Y. Liu, R. A. Yeh, S. Mou, and
+Y. Gu, “DREAM-Chunk: Reactive action chunking with latent world model,”
+arXiv preprint arXiv:2606.18589 , 2026.
+[16]
+Z. Sun, L. Dai, K. Liu, D. V. Dimarogonas, and Y. Xia, “Robust self-triggered
+mpc with adaptive prediction horizon for perturbed nonlinear systems,”
+IEEE Transactions on Automatic Control , vol. 64, no. 11, pp.
+4780–4787, 2019.
+[17]
+S. Magdici, Z. Ye, and M. Althoff, “Determining the maximum time horizon for
+vehicles to safely follow a trajectory,” in  Proc. IEEE Int. Conf.
+Intelligent Transportation Systems (ITSC) , 2017, pp. 1–7.
+[18]
+T. L. Dean and M. Boddy, “An analysis of time-dependent planning,” in
+Proc. AAAI Conf. Artificial Intelligence , 1988, pp. 49–54.
+[19]
+S. Zilberstein, “Using anytime algorithms in intelligent systems,”  AI
+Magazine , vol. 17, no. 3, pp. 73–83, 1996.
+[20]
+F. Callaway, S. Gul, P. M. Krueger, T. L. Griffiths, and F. Lieder, “Learning
+to select computations,” in  Proc. Conf. Uncertainty in Artificial
+Intelligence (UAI) , 2018.
+[21]
+A. Muppidi, F. Darwish, D. Cope, J. F. Henriques, and J. N. Foerster, “Finding
+the time to think: Learning planning budgets in real-time RL,”  arXiv
+preprint arXiv:2606.26463 , 2026.
+[22]
+R. S. Sutton, D. Precup, and S. Singh, “Between mdps and semi-mdps: A
+framework for temporal abstraction in reinforcement learning,”
+Artificial intelligence , vol. 112, no. 1-2, pp. 181–211, 1999.
+[23]
+J. G. Kuba, C. Schroeder de Witt, and J. Foerster, “Mirror learning: A
+unifying framework of policy optimisation,” in  Proc. Int. Conf.
+Machine Learning (ICML) , ser. PMLR, vol. 162, 2022.
+[24]
+J. Blumenkamp, A. Shankar, M. Bettini, J. Bird, and A. Prorok, “The cambridge
+robomaster: An agile multi-robot research platform,” in  International
+Symposium on Distributed Autonomous Robotic Systems . Springer, 2024, pp. 439–456.
+[25]
+E. Todorov, T. Erez, and Y. Tassa, “Mujoco: A physics engine for model-based
+control,” in  2012 IEEE/RSJ international conference on intelligent
+robots and systems . IEEE, 2012, pp.
+5026–5033.
+[26]
+V. Kurtz, “Hydrax: Sampling-based model predictive control on gpu with jax and
+mujoco mjx,” 2024, https://github.com/vincekurtz/hydrax.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue"  (
+)  button, located in the page header.
+Tip:  You can select the relevant text first, to include it in your report.
+Our team has already identified  the following issues . We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a  list of packages that need conversion , and welcome  developer contributions .
+We gratefully acknowledge support from
+our  major funders ,
+member institutions   ,    ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status  (opens in new tab)
+Major funding support from

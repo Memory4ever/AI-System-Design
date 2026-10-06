@@ -21,6 +21,8 @@ Attention 的核心输出是 Value 的加权组合。即使 Q/K/V projection 是
 
 模型还需要在每个位置上产生新的非线性特征：放大某些组合、抑制另一些组合，并把上下文证据映射到下一层更有用的表示。
 
+非线性变换出现的位置也需要随输入粒度检验，而不只是统计一共多少个 FFN。当一个符号被展开成多个空间 token，首轮 Attention 接收到的可能仍是尚未形成局部特征的线性输入；在聚合前先做逐位置非线性变换，是不同于只在聚合后处理的设计假设。[有限视觉算术 diffusion 对照](https://arxiv.org/html/2604.17673v1)中，单层 Attention→FFN 在较细 tokenization 下失败，前置 FFN 或加深到两层可以恢复；它不证明所有 Transformer 都必须采用 FFN sandwich，也不由 Fourier 表征吻合推出唯一因果电路。输入拆分、深度、参数/训练和采样预算、独立任务结果应一起比较；更细 token 与额外变换都付费，原 tokenization 或更多层已够用时仍可保留标准交替，不按这一合成任务的成功直接替换生产 block。<!-- source-family:SF-2026-ARXIV-2604-17673 -->
+
 朴素方案是继续堆叠更多 Attention。这样能反复交换信息，却不一定提供足够的逐位置非线性容量。Transformer 因而交替使用两类操作：
 
 ```text
@@ -75,6 +77,8 @@ d_model state
 ```
 
 这只是计算直觉。某个中间 neuron 是否稳定对应一个人类概念，需要因果实验，不能从结构本身推出。
+
+这个计算直觉还要区分输入空间与参数空间：对ReLU这类分段线性activation，固定同一输入区域的binary gate，会让该FFN对输入表现为affine map，却不让同时更新的多层权重变成一个线性参数：在正区域固定gate的标量两层例中，两组权重`(1,1)`与`(3,3)`的输出平均为`5x`，平均权重`(2,2)`的输出却是`4x`。这是由本章两层乘积直接得到的数学边界，不是某篇论文的平均模型保证；只有其余变换与gate固定、仅一个线性参数块变化时，才有相应的函数平均条件。[一个有限DualCopy提案](https://arxiv.org/html/2604.02990v1#S3)将冻结结构副本产生的binarymask与可训练定量副本分开，后者才参与跨客户端平均；它用双份权重储存与额外结构前向换固定选择路径，trainable数并不因此减半。所测CNN的warm-start/central calibration和部分反退只支持这项条件设计，不授Transformer/MoE迁移、joint参数平均等函数平均或全域收敛。gate或目标分布需要变化时，保留原activation/完整微调与独立质量验收，不能仅因“区域内线性”签发合并正确性。<!-- source-family:SF-2026-ARXIV-2604-02990 -->
 
 ## 一个逐位置小例子
 
@@ -167,6 +171,11 @@ SwiGLU(X) = SiLU(X W_gate) elementwise_mul (X W_up)
 
 Gate 允许模型根据当前 token state 动态调节哪些 candidate features 通过。代价是多一个 `d_model x d_ff` projection，因此实际模型常调整 `d_ff`，在参数预算下比较，而不是保持所有维度不变。
 
+Gate还应与可执行的activation sparsity分开：非ReLU的值不必精确为零，仍可在指定质量容差内删去一部分小幅分量；一个[受限FFN比较](https://arxiv.org/html/2509.00454v1)按保留L1质量改变mask，再分别测input、gate和相乘后intermediate的任务退化。最稀疏的位置未必最省计算：等intermediate生成后再删，up/gate投影已经付费；从input提前选列影响更多后续工作，若靠predictor预知intermediate支持，还要支付预测与误选成本。99%的平均任务工作点不是每个token或任务的保证，阈值也随模型、训练recipe、位置与数据变化；outlier和有限精度还会改变可见小值。应把mask地址/规则、剩余质量与真正跳过的矩阵工作分别保存，完整选择、预测、索引与回归均计费；任务或净收益失配时，提高保留下限并回dense/已验稀疏路径，不由较高零比例宣布更强语义能力或实际加速，物理layout与kernel由第49章承接。
+<!-- source-family:SF-2025-ARXIV-2509-00454 -->
+
+当同一基础模型要随任务、风格或 persona 切换时，还可固定主权重，把条件控制放到 activation 的斜率：以条件文本作为 query、当前层状态作为 key/value 做低维 cross-attention，加层身份后生成相对 1 的偏移 beta，再以 `x*sigmoid((1+beta)*x)` 控制 SwiGLU gate，beta=0 回到原 SiLU。给定控制量后的 FFN 仍逐位置执行，但控制器读取条件与序列状态，整条适配路径不能再被描述成只有当前 token 的局部非线性。这以新增控制器、条件版本耦合和每层执行开销换少量可训练参数；冻结 base 不保证不遗忘或遵从任意 persona，条件错配、held-out 任务退步或额外费用不合时，保留原 SiLU/普通 prompt 或独立适配。有限 Llama/Mistral 对照仅证明这条控制接口可行，不授普遍优势或推理加速。[受限证据](https://arxiv.org/html/2605.01973v1) <!-- source-family:SF-2026-ARXIV-2605-01973 -->
+
 ## 参数量与 FLOPs
 
 忽略 bias，标准两层 MLP 参数量约为：
@@ -192,6 +201,8 @@ Attention 对 `T` 有成对项，MLP 对 `T` 近似线性，但 `d_ff` 往往较
 两条 gated 分支也不必都由当前 hidden state 做 dense projection。一个替代分支将 candidate 内容改成按原始 token ID 和 layer 寻址的表 `U_layer[token]`，仍用 `SiLU(X W_gate)` 根据当前上下文筛选它，再经 `W_down` 返回 residual stream。这里减少的是 up projection 的计算，不是删除上下文：静态 candidate 与动态 gate 分责；用同样的表替换 gate，或保留 up 只另加表，并不具有相同的函数与训练行为。[STEM 的受限消融](https://arxiv.org/html/2601.10639v1)支持这一接口区别，不证明任意模型均可无损替换。<!-- source-family:SF-2026-ARXIV-2601-10639 -->
 
 代价从每 token 的投影转向约 `V*d_ff*L` 的表存储、训练 optimizer state 与表项搬运，tokenizer 和 layer identity 因而成为地址的一部分。已知输入 ID 可以预取、去重或缓存表项；Decode 的下一个 token 要等当前完整 forward 后才确定，不能把它当作事先已知。CPU offload 还支付通信、cache miss 与更新回写成本，条件命中率和理论 FLOPs 都不能认证端到端延迟。350M/1B、受控 tokens/FLOPs 的局部结果不授生产 SLO 或通用长上下文无损；存储与通信不合算、context gate 失配或质量退步时，成熟 dense/gated FFN 仍是合理选择，而不是所有 FFN 必须转成查表。
+
+有了可寻址表，也不能把行局部更新当成行为局部写入：地址复用、动态 gate 与 shared readout 仍会把变化传到未写实体；允许同时更新 shared projection 又是另一份写权限。[受限后挂记忆对照](https://arxiv.org/html/2610.21553v1)中，训练 completion 全命中仍伴随新问法严格匹配失败和未写实体 intrusion，词面或首 token 命中不能认证完整事实已经接入。对 mounted pre-write 模块的 residual anchoring 只保护指定 reference 切片，不等于原基座全行为保持；应分别检查训练表达、新问法、未写实体、其他关系与完整 continuation。地址表及 dense optimizer state、额外 anchor 前向与回归都计费，行梯度 mask 不自动带来稀疏状态内存；语义转移或保留不通过时，保留原 checkpoint、限制写权限或使用可追溯外部记忆。<!-- source-family:SF-2026-ARXIV-2610-21553 -->
 
 ### 相同预算也不等于相同训练行为
 
@@ -259,6 +270,14 @@ FLOPs_GEMM ~= 2 * M * N * K
 - 同一事实可能依赖 context 和多个计算路径。
 
 因此更准确的表述是：MLP 提供高容量逐位置非线性特征变换，并参与存储和调用训练中形成的关联；它不是可按 key 直接检索的数据库表。
+
+定位候选neuron也可以先把“对输入扰动有反应”与“朝指定输出方向写入”结合：由两组首token的unembedding均差定义读出方向，将它与每个down-projection列的耦合乘上原/扰动输入的activation差，只把高分项交给后续消融、patch和恢复测试。这个两次forward的提名不是完整因果验证；跨层传播、normalization和prompt聚合会破坏简单可加解释，取绝对值或RMS后还须另保符号。[Perturbation probing的受限对照](https://arxiv.org/html/2604.27401v1#S3)主要改变首token gap与拒绝模板，不能由模板翻转推出安全知识删除或完整生成已顺从。Token集合、扰动、层/地址、剂量和读出对象需共同绑定，完整validation sweep、生成判分与非目标回归都计费。模板proxy失准、分布式路径或normalization使提名失效时，保留原checkpoint、其他归因方法和直接行为验证，不让高importance自行授权权重或激活编辑。<!-- source-family:SF-2026-ARXIV-2604-27401 -->
+
+语义关系的干预还要注明被改变的是哪一个读出对象。一个稀疏特征子集可以提高线性probe对某关系的margin，移除同一子集也可以使probe改判；这只是在固定probe空间定义的sufficiency/necessity，不等于后续网络会因果使用它、更不认证next-token或完整生成的关系正确。[有限WordNet对照](https://arxiv.org/html/2603.17624v1#S3.SS4)同时比较Attention、MLP和完整post-residual，并显示关系种类、模型及提示改变时的读出与干预效果不同；不能由近邻cosine、某个peaklayer或“高sufficiency”把关系当作单一可编辑槽位。采用时应分别冻结有向关系标签、template、probe/SAE revision与干预位置，另验原模型输出、无关关系和上下文回归；这是工程验收要求，不冒称原论文已验证生成编辑。特征选择、字典训练与重复干预都付费，probe shift不稳、标签方向或selection口径未闭合时，保留原checkpoint与外部关系证据，不从probe成功提交权重变更。<!-- source-family:SF-2026-ARXIV-2603-17624 -->
+
+读出关联之后，还可在冻结权重下直接测试生成时的gate介入，但必须明确地址：对gated MLP的非线性后gate选定维度，在与另一内容分支相乘及输出投影之前缩放、加偏移或置零，而不是修改整个residual或权重。一个受限语音生成分支先按目标情绪匹配与内容误差筛选成功样本，再从其激活概率差别选稀疏地址，以同情绪、跨情绪及等稀疏随机掩码比较输出。筛选人口、模型/layer、hook位置、掩码与强度共同定义该干预；相关地址和局部效果不证明单一情绪槽位，也不证明它与内容能力正交。<!-- source-family:SF-2026-ARXIV-2603-17231 -->
+
+[生成gate干预的有限对照](https://arxiv.org/html/2603.17231v1)同时暴露情绪、内容与自然度的不同边界：情绪匹配可升而内容误差恶化，自然度仍近似不变；其中内容WER取模型伴随输出的text而非独立转录生成audio，不能把它当作音频逐词保持证书。自动与人选地址只部分重合，跨speaker/情绪迁移也有反退，语言decoder和下游synthesis的局部对照不授唯一因果位置。识别、judge、人工筛选、强度搜索、额外生成与回归均付费；失配或内容退步时，保留原forward、保守强度及独立音频/文本检查，不从冻结weights或听感自然推出无损控制。<!-- source-family:SF-2026-ARXIV-2603-17231 -->
 
 权重编辑也须分开“直接问新事实能够回答”与“把它接入后续关系仍能够回答”。rank-one update 改变一个事实的直接 recall，并不保证组合问题会沿同样路径访问该关联；把同一编辑复制到更多层可以在受限两跳任务中提高可用性，却同时扩大对无关事实和流畅性的干扰。[rank-one editing 的局部反证](https://arxiv.org/html/2601.04600v1)在 GPT-J 的有限 MQuAKE/CounterFact 人口中展示这种取舍，不能由直接回答失败定位唯一 hop-layer，也不证明所有编辑方法失效。因此编辑验收应冻结目标事实、问题/context 与 decoding，分别检查直接 recall、多跳组合、locality 和 fluency，并计入定位、重复更新与回归成本；这是由反证导出的工程要求，不是作者已验证的普遍编辑证书。组合或局部性回归不过关时，保留可信 checkpoint、限制编辑范围或用可追溯外部检索承载可变事实，不能用单问答成功把权重当数据库事务提交。<!-- source-family:SF-2026-ARXIV-2601-04600 -->
 
@@ -338,6 +357,8 @@ MLP 与 Attention 分工明确：Attention 在 token 之间路由信息，MLP �
 
 ## Review notes
 
+- `SF-2026-ARXIV-2604-27401` — Daily2026-05-02补May1；v1§2–6及L必要层，2+1+2=5，coupling×扰动提名/实际因果分工差额深入。保RMS/abs符号、norm/下游传播、logit/模板/完整行为与CAA分类器待rerun；不授RLHF唯一因果、安全删除或普遍优势。未核artifact/复现；reader R42必要Source/owner/逐字PRE通过，root授本单段+本人注窄lease；作者已保存并顺读，reader非writer actual正文/完整两侧/本人注POST R44通过，root接纳并释放窄lease；作者仅行政同步既成状态并实际读回，不授DAY。
+
 - `SF-2026-ARXIV-2602-21307` — Daily `2026-02-27`；[SymTorch exact-v1](https://arxiv.org/html/2602.21307v1) §4.1/5.1，PCA/原MLP/符号代理/identity对照及KV-off完整forward。2+1+3=6，具体函数近似缺口深入，仅采用投影与代理误差分账、离线搜索与dense/gated回退；不采用后版吞吐、跨域无损、内部算法唯一解释或生产SLO。root必要原源/实际owner PRE及实际正文/完整邻接/自身末注非作者POST通过，窄锁释放。未核代码或复现实验，不授整日完成。
 
 - `SF-2026-ARXIV-2601-04600` — Daily `2026-01-10`；[exact-v1](https://arxiv.org/html/2601.04600v1) §4/5.1/5.2 Table2–3与§7 key-drift/跨层copy代价。原3+1+2=6，设计反证对应具体缺口深入，只采用edit recall与多跳access分账及复制干预的locality/fluency成本，不采Eq1形状、唯一hop-layer因果或普遍编辑失败。工程验收与回退为受限推断；未核代码或复现实验。root必要原源/实际owner写前通过；jan02_v3实际正文244–267及本注非作者写后复核通过，未重复原源审阅，日级Gate待验。
@@ -356,3 +377,17 @@ Primary-source 校验入口：
 - `SF-2026-ARXIV-2512-23905` — Daily `2026-01-02`；[Rethinking Dense Linear Transformations: Stagewise Pairwise Mixing (SPM) for Near-Linear Training in Neural Networks exact-v1](https://arxiv.org/html/2512.23905v1) §3–4、§9.1/9.3–9.5。5分具体operator gap深入，仅采用pairing/stage-depth容量与`O(nL)`执行预算、结构teacher及CPU kernel crossover；不授GPU/Large-LM普遍速度。B32/B256、NLL2.58nats/BPC3.03与1000/800steps不统一，因此隔离联合质量/速度headline，不否有效局部接口与全部实验。未运行代码；root必要原源/具体owner写前通过，实际正文/邻接及末注写后经root非作者复核通过。
 
 - `SF-2026-ARXIV-2601-10639` — Daily `2026-01-17`；[STEM exact-v1](https://arxiv.org/html/2601.10639v1) §3.1 Eq4、§3.4、§4受控预算与§4.4直接消融。2+2+2=6，标准必要补读后长期采用深入核：只采用静态 up 地址保留 context gate 的计算/存储替代分支；不采知识因果、cache-hit性能保证或生产SLO。表/optimizer/CPU通信、decode未知 next token、有限350M/1B预算及dense共存相邻。root必要原源/具体owner写前通过，root实际正文/邻接及末注非作者POST通过，窄锁释放；未核实现或复现，日级未授。
+
+- `SF-2026-ARXIV-2603-17624` — Daily `2026-03-20`；[SemanticRelations exact-v1](https://arxiv.org/html/2603.17624v1) §3.1–3.4/EqLD、FR、DR、§4.1–4.3/T2–6与§5/7。只采probe干预对象及relation/template联合验收边界，不采方向表口径、冗余唯一解释或next-token编辑保证；base dense/WordNet/SAE选择与成本限制保留。未核代码或复现实验。
+
+- `SF-2026-ARXIV-2603-17231` — [EmotionNeurons exact-v1](https://arxiv.org/html/2603.17231v1)必要§3/Eq1–8、§4/T1、§5/T2–6与直接迁移/内容反侧、§6。仅成功人口→postactivation gate稀疏地址→生成控制的接口与分验；保伴随text WER非audio转录、judge/人选差别、强度/迁移反退和全费，不授语义纯净、唯一因果、内容正交/无损或完整部署保证，未核代码/复现。
+
+- `SF-2026-ARXIV-2604-02990` — 04-07补04-06自然日；FedSQ exact-v1 III-A/B/Alg1、IV/T1。仅采用固定input gate下输入affine与joint参数平均分离，5x/4x为本章公式的数学推断，不是论文保证；DualCopy存储与trainable分账、binary surrogate、central schedule及CNN反退保留，不授Transformer迁移或联邦收敛。root非作者已实际核必要Source、具体owner/逐字PRE与写后正文/完整邻接/本人note，POST通过；作者同步本记录后释放窄锁。未核artifact/复现，不授日级完成。
+
+- `SF-2026-ARXIV-2604-17673` — Daily2026-04-22补Apr21；[exact-v1](https://arxiv.org/html/2604.17673v1) §3–4及AppA/C/E/G/H必要，2+1+2=5。仅采用输入粒度×首轮聚合前非线性/深度的有限替代检验；toy无序operandpair划分、Fourier吻合非唯一因果、classifier与训练/heldout分母边界保报告，额外token/训练/采样全费。fresh实际必要Source及root actual owner/A49单段逐字PRE通过并授窄lease，作者写入并顺读局部；root实际非writer正文/完整邻接/本人注POST通过，lease释放，作者仅行政同步并实际读回，不授实现复现或DAY。
+
+- `SF-2026-ARXIV-2605-01973` — Daily2026-05-06补May05；[MeGan exact-v1](https://arxiv.org/html/2605.01973v1) §5.1–5.3/6/Tables4–7、A2/A7/B2必要；2+1+2=5。只采条件query/层状态key-value、相对1的activation slope偏移接口，保混合对照/失败persona与全部控制器费用，不授冻结base即不遗忘、全局稳定或推理加速。root实际必要Source/具体owner及修后A4 PRE通过，授SwiGLU末尾指定单段及本注窄位；作者已保存并实际self-read；root非writer实际完整正文/两侧/本人注POST通过，指定窄lease释放；仅同步既成事实，不授DAY；未核代码或复现。
+
+- `SF-2026-ARXIV-2610-21553` — Daily2026-10-17窗10-16；[exact-v1](https://arxiv.org/html/2610.21553v1) §3–6/8必要，2+2+2=6。只采addressed memory的row/shared-readout写权限与mounted-reference约束，保50事实toy、训练命中/新问法/未写实体分验、首token词面非完整事实与dense optimizer/anchor全费，不授生产模型完整知识写入。root实际必要Source/具体owner与最小PRE通过并授单段/本人注；作者已保存并自读，root实际正文/完整直接两侧/本人注POST通过。未核实现/复现，不授DAY。
+
+- `SF-2025-ARXIV-2509-00454` — Noether，Daily2025-09-04补Sep3；[exact-v1](https://arxiv.org/html/2509.00454v1) exact-v1 §2–4/AppB.1–2必要，2+1+2=5。仅functional sparsity与gated FFN删点/已付工作分责，保critical平均非逐任务、outlier/阈值迁移/虚拟稀疏非净加速与全费，不采max-p冲突公式/未来模型普遍性，未看全表/像素/代码或复现。Ohm§53实际必要Source/评分/具体owner/逐字PRE通过，root协调完整Gate projection预算段后/persona条件斜率首段前单段位；已按批准稿真实保存，作者已完整self-read；Ohm§68一次真实非writer完整新增/完整直接两侧/本人注POST通过，依root已协调本指定窄位即时生效释放。仅同步既成事实，不授整日DAY。

@@ -2,17 +2,42 @@
 
 **规范：** V3
 **窗口：** 2026-02-20T09:00:00+08:00 ～ 2026-02-21T09:00:00+08:00
+**窗口说明：** 用户明确要求只补来源遗漏，保留原候选日期、评分、09:00窗口与有效审阅，不搬移已有归属；新增仅按前一完整自然日检查。
+**补充窗口：** 2026-02-20 ～ 2026-02-20
 **状态：** 完成
 **Books：** 纳入本次
-**检查时间：** 2026-10-05T22:36:54+08:00
+**检查时间：** 2026-10-08T19:56:37+08:00
 
 ## 1. 结论
+
+2026-10-08来源遗漏补查：原116候选及其日期、评分、连续§4与有效Source/Books审阅保持不变。当前14每日入口的有限窗口主题查询和相关标题恢复已停止；四组arXiv原生主题发现跨组185唯一身份中169仅与本日旧库存去重，16新身份实际读完exact-v1完整题摘。root已独立读两批全部16题摘，并实际核17753必要一次决定性核心：8潜在贡献因必要首次公开日未证隔离，8贡献/范围关闭留具体理由；本轮确定当窗新增候选0，新增Books写入0，不把题摘潜力、Submitted或后月ID当当窗论文。本轮六部分最终DAY已由root实际独立验收通过，普通待办0。
+
+外部必要日期与历史目录缺段不支持正面Evidence、Books或无遗漏断言。完整原件与有限停止见[本輪补查](../_sources/daily-20260221/supplement-20261008.md)，可恢复原报告见[完整baseline](../_sources/daily-20260221/supplement-baseline-20261008.md)。以下两段是截至2026-10-05的原有效研究层；其中旧日级通过与普通待办0不代替本轮独立验收。
 
 本日有限发现与贡献判断已结束，确认落窗的116个唯一材料家族均完成必要审阅与安全终态处置，root非作者最终日级独立验收已通过。长期增量集中在监督与评分对象的分责、在线反馈/执行状态的有效条件，以及多模态与校准接口的取舍：例如部分相关标签跨比较对改变正负角色、弱/强验证必须保留随机反馈、diffusion剪枝校准须绑定noise/time。原方案在其约束下继续成立；proxy、局部收益、谱/曲率或作者保证都不自动升级为truth、端到端性能或执行权限。
 
 116家族中74项实际融入唯一Books owner并已获74处正文/完整邻接/自身末注非作者POST；15项有具体已有覆盖，3项仅报告，24项中心争议安全隔离。后24项不计正面Evidence或Books保证。八批164份完整题摘的最终互斥路由为116当窗候选＋38准入前排除（37具体贡献关闭、1旧首公开窗外）＋9日期保留＋1官方移除/合法原源保留，普通待办0、once未决0。481库存身份只作有界标题查漏，不是481当窗论文、候选或全文队列；旧V2.1/Weekly分母和完成标签未继承。日期、访问及历史目录保留项不用于正面采用或无遗漏断言。
 
 ## 2. 来源覆盖
+
+本輪检查执行于2026-10-08北京时间19时段，新增窗口仅Feb20自然日；所有当前目录与搜索均只支持下述有限范围，不证明完整历史无事件。原始入口、查询式、实际响应和恢复失败位置见[补查来源停止](../_sources/daily-20260221/supplement-20261008.md#有限发现和停止点)。以下本轮逐来源说明与后方原2026-10-05表分开维护，原表不改。
+
+- SRC-OPENAI：已检查Research当前页与Feb20原域名主题查询；First Proof仅与旧家族去重，先前Feb14 attempts与新增appendix/纠错的日期问题按旧层隔离，不扩大数学研究或授本轮候选。
+- SRC-ANTHROPIC：已检查Research当前10项与Feb20原域名主题查询；旧Claude Code Security贡献EX有效复用，实际published Feb20 17:59Z是Feb21北京时间，仅新增自然日不迁入；当前列表不证明完整历史。
+- SRC-GOOGLE-AI：已检查DeepMind Research与Google Publications首15及限定日期主题查询；Gemini3.1 card官方Feb19仅窗外线索，当前页不恢复完整Feb20历史。
+- SRC-META-AI：受阻，官方Research空提取后一次日期域名查询未恢复可读历史列表；隔离覆盖断言，重开只需该窗口官方可读历史列表。
+- SRC-QWEN：已检查旧入口跳转后的原生article retrieval，40条title与实际extra.date已读，Feb16/Feb10至Mar19/30夹窗，无Feb20目录行；当前列表不证明历史未删漏，不改旧原生协议受阻记录。
+- SRC-DEEPSEEK：已检查Research链接/首页当前有限项目与Feb20原域名主题查询；未发现可确认窗内新增材料，News历史缺段保留，不授零事件。
+- SRC-MOONSHOT：已检查Platform Blog当前26项Nov2025至May2024及官方GitHub日期主题查询；2026历史列表未恢复，覆盖断言隔离。
+- SRC-TENCENT-HUNYUAN：已检查，动态页空提取后实际一次浏览器超时，官方publicList POST成功9条，title/publicAt/publishedAt/displayPublishTime实读，Feb13/Feb3至Apr23夹窗；浏览器未通过、当前目录不证明历史未删漏。
+- SRC-ZAI：已检查Research当前15项Aug26至Feb21 GLM5、Feb11/Feb2和Dec2025；未发现Feb20目录项；旧GLM5 exact-v1日期判断复用，Feb21收录不迁日。
+- SRC-BYTEDANCE-SEED：已检查原生2026/us/type1及type2升序count20，实际嵌套PublishDate/Title；paper首20 Jan20→Feb13→Feb25，blog首9 Feb12/13/14→Apr1即跨窗停止。首次字段解析错误额外有限取得的页保留原件，不构成逐项队列或额外通过范围；当前总82/23不是本日命中数，历史删漏不保证。
+- SRC-BAIDU-ERNIE：已检查中文Blog首10 May9→Feb6→Jan→Nov2025；下一页更旧方向，有限夹界未见Feb20目录事件，不授全历史完整。
+- SRC-XIAOMI-MIMO：已检查Paper8 Jan8/Feb3至Mar13/Jun29、Blog15标题及原域名日期查询；Blog日期缺段隔离，重开需窗口内官方带日期历史条目。
+- SRC-MINIMAX：已检查英Blog12/中Blog13并展开至Feb14/Feb12和Jan、后续Mar18；英中家族日期不迁移；Agent Tech Blog仅导航，历史正文缺段隔离。
+- SRC-ARXIV：受阻，四组主线主题原生查询87/104/18/10，跨组185唯一身份、16新身份完整exact-v1题摘；Submitted Feb18 19Z–Feb19 19Z仅用于有限发现、不作公开日。各组start0/max200返回total后停止；cs.LG/cs.CL必要月表404、first-announced查询/精确identity搜索cache miss，定点公告未恢复后不扩整月或90天catchup。题摘贡献潜力的必要family首公开日按§5隔离；不称185当窗论文或全分类召回。
+
+日期权限表外官方arXiv availability/DOI规则已复核：Submitted不等公告、ID月份只定位该标识首次公告月，同IDRegistered只给跨窗公开上界，不能排除作者更早公开同family；不追精确时分秒，也不以这些字段填新增候选日期。
 
 下列为实际有限停点，不是完整历史目录或全网零遗漏断言；检查执行于本次2026-10-05补跑，详见[本日停点](../_sources/daily-20260221/V3_SCREENING.md)。只扫描每日来源与本日真实证据触发，不扫描每周组。
 
@@ -35,6 +60,8 @@
 | 表外：[arXiv日期流程](https://info.arxiv.org/help/availability.html) | [官方DOI说明](https://blog.arxiv.org/2022/02/17/new-arxiv-articles-are-now-automatically-assigned-dois/)与[DataCite](https://api.datacite.org/)实际读finalID/DOI仅公告后提供、公告schedule、预计公告后24h获DOI；定点同IDRegistered上界 | 已检查 | 24h是预计不是保证；Registered不是精确公告时刻，Created不作为公开日期 |
 
 ## 3. 候选与判断
+
+本輪补查确定当窗新增候选0。16新身份的完整题摘语义判断与准入校准见[补查记录](../_sources/daily-20260221/supplement-20261008.md#16新线索完整题摘的贡献判断)，8必要日期保留只列§5，不评分、不假填公开日期；其余具体贡献/范围关闭不因日期含糊另造请求。下面原116表行逐字冻结，不重算评分或迁移归属。
 
 以下冻结116个通过贡献筛选且确认落窗的唯一v1家族；公开区间是基于官方公告流程与same-ID Registered上界的有界推定，含起不含末，不冒充精确公告时刻。38准入前排除、9日期保留及1官方移除/合法原源保留不混入此分母，逐ID依据保留在本日筛选记录。
 
@@ -672,6 +699,21 @@ actual §3.1–3.3/4.1–4.4/T3–6/5：每五steps异步observer读recorded sna
 
 ## 5. 缺口与下一步
 
+本輪普通待办0：全部16份exact-v1题摘与17753决定性核心已获root独立准入校准，六部分、有限来源停止/日期终态及原冻结内容已获root非作者DAY实际验收。新增普通Source/Books队列0，因为确定当窗新增候选0；必要日期不能恢复不等于已读正文通过。外部材料到达时仅定点重开受影响身份，本日完成后停止，不自行接下一日。
+
+本輪必要公开日期终态保留项共8：每项均已有actual-v1完整题摘和same-ID metadata，下面每身份只请求一次。前三种理论/学习贡献不因局部或无LLM实验排除；后月ID不证明同family没有更早公开。各项缺少能把首次可获取正文日确认在2026-02-20北京时间自然日的官方公开列表/作者原源带公开日期。Submitted Feb18/19、Registered Feb23/24或Mar6/10/11跨窗只给上界；一次精确日期恢复失败后停止，不扩版本史、整月或时分秒。未到达前均不列候选、不评分、不展开Source、不进入Books、不授Coverage/Evidence或无遗漏断言；恢复仅重开该身份的日期层，已有效题摘与校准复用。
+
+- [2602.17743v1](https://arxiv.org/abs/2602.17743v1)，Provable Adversarial Robustness in In-Context Learning：Wasserstein shift下线性attention的capacity/context理论界；root准入PASS，需same-family v1必要公开日原件。
+- [2602.17744v1](https://arxiv.org/abs/2602.17744v1)，Bayesian Optimality of In-Context Learning with Selective State Spaces：LG-SSM correlated-noise下Bayes predictor与ERM分离；root准入PASS，不外推全部Transformer；需同一family公开日原件。
+- [2602.17737v1](https://arxiv.org/abs/2602.17737v1)，Nested Training for Mutual Adaptation in Human-AI Teaming：固定下层的adaptive行为人口与coadapt泛化边界；root准入PASS，只限Overcooked；需同一family公开日原件。
+- [2602.18511v1](https://arxiv.org/abs/2602.18511v1)，Beyond Pass-by-Pass Optimization: Intent-Driven IR Optimization with Large Language Models：intent formulation/refinement/realization的pass协调；root准入PASS，需同一family公开日原件。
+- [2602.17753v1](https://arxiv.org/abs/2602.17753v1)，The 2025 AI Agent Index: Documenting Technical and Safety Features of Deployed Agentic AI Systems：agent setup披露≠base-model card，30/45公开文档人口的NoneFound≠None；root实际决定性核心改判准入PASS，仅该核心不授整篇Source；需同一family公开日原件。
+- [2603.04436v1](https://arxiv.org/abs/2603.04436v1)，ZorBA：异构block activation与共享seed/finite difference的ZO联邦fine-tuning资源/收敛取舍；root第二批准入PASS，需same-family必要公开日原件。
+- [2603.06610v1](https://arxiv.org/abs/2603.06610v1)，CapTrack：跨algorithm/family的robustness/default behavior drift改变遗忘评价对象；root第二批准入PASS，需same-family必要公开日原件。
+- [2603.08727v1](https://arxiv.org/abs/2603.08727v1)，ARKV：prefill per-layer统计与decode token O/Q/E状态的KV预算取舍；root第二批准入PASS，需same-family必要公开日原件。
+
+恢复失败原件见[前五日期](../_sources/daily-20260221/supplement-date-recovery-20261008.txt)与[后三日期](../_sources/daily-20260221/supplement-date-recovery-additional-20261008.txt)。旧家族、原中心争议/访问/日期保留与本輪来源历史缺段各自保留，不将原164或新增16相加当确定候选。以下原2026-10-05的安全终态/通过声明仅属于原有效层，本輪复核范围见§6。
+
 本窗终态保留项：下列外部缺口不支持正面证据、Books 或无遗漏断言；逐项给出定点重开条件，恢复仅重开受影响来源或身份。
 
 
@@ -694,6 +736,14 @@ Same-family日期保留2602.17614：同DOI [IEEE/Crossref原字段](../_sources/
 其余中心保留身份为2602.17095/17168/17200/17375/17223/17312/17270/17639/17423/17497/17510/17554/17560/17596/17632/17659，连同上列8项共24家族。每项的原始链接、具体冲突、拟采用命题为何不能成立、可接受的官方更正/补充条件及定点重开范围均在§4同标题证据段保留；不自修作者保证、不把有限经验全部宣布无效，也不以成熟原则另造Books更新。来源目录缺段的定点重开条件按§2对应行：官方可读历史列表/已披露原生查询协议或原事件发布与更新字段；恢复只影响对应来源/身份，未到达前不授正面Coverage/Evidence、Books或全网零遗漏。
 
 ## 6. 复核
+
+复核者：root（独立非作者；本輪最终DAY已实际执行）。
+
+结论：通过
+
+本輪已完成两批全部16完整exact-v1题摘的独立准入/代表EX校准；17753经必要§3.1–3.4/4.6/6.2一次核心与root实际阅读改判潜力，公共披露缺失不得升级为真实未测试/不安全。第二批9题摘实际独核后3潜力必要日期保留、6具体EX，累计8潜力/8关闭；Belnap实际2604.09567身份明确，不因“强AI/安全”词入池。root已实际验收六部分差额、14入口有限停止和四组原生查询87/104/18/10（跨组185不是当日新论文）、8必要日期精确请求及终态隔离、原116行/日期/评分/窗口与连续§4逐字冻结；无新增确定候选或Books写入，原有效研究分层复用。本輪DAY通过不授被隔离项Source/Books、Coverage/Evidence或无遗漏，机器校验与冻结检查另记，不代替此语义验收；不是继承旧通过标签。以下是2026-10-05原有效独立验收记录，完整原件baseline已保留。
+
+本輪V3格式校验、304个本地引用存在性及本日README/原证目录限定未暂存与已暂存差异检查通过；原116候选表行（含日期与评分）逐字一致，连续§4逐字一致，旧窗口行一致。原证目录没有已跟踪旧文件的未暂存变化，新增补查原件独立保留；这些机械结果不授本輪语义完成，不证明全来源召回或被隔离必要日期。
 
 复核者：root（独立非作者）。
 
