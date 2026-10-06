@@ -20,7 +20,7 @@
 | SRC-ANTHROPIC | 本日Research结构化恢复172个publication对象，publishedOn原值，本窗无对象 | 已检查 | 未列入Research的材料不保证召回 |
 | SRC-GOOGLE-AI | 9月Blog首12项跨09-11；DeepMind page5六标题定点核，FSF原HTML日期及精确3.0政策已读，root局部准入通过 | 已检查 | Publications年级日期隔离；当前Blog2026更新不当2025证据 |
 | SRC-META-AI | 首查空文本后实际global_search page5历史publication切片09-22/15夹窗；ARE完整题摘 | 受阻 | ARE时区/首公开区间未给；目录不同类型分别排序，不授全历史 |
-| SRC-QWEN | 首查首页后本日实际60原ISO对象，仅窗内Omni/TTS两core补取；root局部FIRST通过，Omni必要具名artifact与owner已审，TTS贡献关闭 | 已检查 | 晚Git/PDF版本不反推首发时全部相同；目录不授全网，Books裁决待root |
+| SRC-QWEN | 首查首页后本日实际60原ISO对象，仅窗内Omni/TTS两core补取；root局部FIRST通过，Omni必要具名artifact与owner已审，TTS贡献关闭；Books及非写入者POST已完成 | 已检查 | 晚Git/PDF版本不反推首发时全部相同；目录不授全网 |
 | SRC-DEEPSEEK | 本日updates与Terminus官方核心；语言混合/random chars及Agent修正保留 | 受阻 | 09-22原时区/完全落窗区间未得，不以修复标签排除 |
 | SRC-MOONSHOT | 本日Kimi Blog完整可见单页09-16/05在窗前 | 已检查 | GitHub未列入Blog事件不保证召回 |
 | SRC-TENCENT-HUNYUAN | Research首查后实际全部publicList page1 size100，11/11当前项 | 受阻 | 新版目录不恢复目标2025历史 |
@@ -92,4 +92,4 @@ Qwen准入依据见INDEPENDENT_QWEN_CALIBRATION.md，Omni为2+2+2=6，TTS核心�
 
 可复查原件：本README、[scan](../_sources/daily-20250922/scan.md)末段、[七项必要core](../_sources/daily-20250922/RISK_CORE_SUBSET.md)/七份原HTML及请求、两个实际POST、[FSF精确3.0 PDF](../_sources/daily-20250922/FSF_3.0.pdf)、19份v1.abs响应、[arXiv两页解析](../_sources/daily-20250922/ARXIV_query_entries.json)、[月查漏请求](../_sources/daily-20250922/month-abs-fetch.json)。作者没有写Books；独立日级验收与非写入者Books复核分开完成，不以原件存在或机器通过代替语义检查。
 
-机器检查：本次V3通过；限定diff-check与两份本日Markdown的12个本地引用、围栏、末尾空白检查通过。候选审阅栏仅写合同值，作者完成范围与root待核在§1/4/5明确，不等于语义复核或Books落实。
+机器检查：本次V3通过；限定diff-check与两份本日Markdown的12个本地引用、围栏、末尾空白检查通过。实际独立语义验收及Books写后复核见上文；机器通过本身不证明这些工作已完成。
