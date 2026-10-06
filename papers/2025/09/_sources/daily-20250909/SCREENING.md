@@ -27,7 +27,7 @@
 | 05882 friction agents | 轨迹协作缺反事实 → 角色模拟/反事实轨迹 → 群体对齐选择 |
 | 05908 PSCJoint | 长hotword列表成本 → 粗细相关交集与竞争筛选 → bias phrase注入 |
 | 05915 early exit | 逐样本exit与batch吞吐冲突 → 共享参数/递归深度router → 端到端吞吐取舍；dissertation需事件去重 |
-| 05983 TSPC | code switching对齐 → phoneme中间表示 → 跨语种声学接口 |
+| 05983 TSPC | code switching对齐 → phoneme中间表示 → 跨语种声学接口；v1页面提示较新版本撤回，v2在版本史标withdrawn，不能自动认定v1撤回，也不能忽略该信号；v1结果/采用保持隔离，需精确撤回说明或有效原版本证据 |
 | 06065 FilipinoTruthfulQA | 普通翻译评价 → binary choice跨语种事实差距 → 语言切片可靠性 |
 | 06074 MFCIG | word-level语义与prosody → 双图建模 → speech生成条件接口 |
 | 06100 OLieRA | LoRA更新几何 → Lie乘法/正交子空间 → 参数高效更新 |
@@ -43,7 +43,7 @@
 | 06401 MULTICOM | judge跨语言稳定性 → 多语言context及human比较 → 评价协议偏差 |
 | 06415 document pruning | token删后文档乱序 → index-preserving分类/max pool → context剪枝可读性 |
 | 06501 WebExplorer | 搜索深度与数据质量 → long-to-short探索/演化query → web-agent训练数据 |
-| 06518 Crown/Frame/Reverse | 架构形状混杂 → 固定180M/5B预算layer/head/width对照 → 小规模可比结构选择 |
+| 06518 Crown/Frame/Reverse | 架构形状混杂 → FFN/head非均匀配置提案 → 小规模结构选择；原v1 comments已承认int32数据被uint16 loader误读、每隔一token为0、reported results skewed，故原180M/5B可比性能结论不采用，恢复须正确数据读取的精确修订与重跑 |
 | 06524 LAMDAS | 通用领域数据成本 → one-class隐式domain选择 → 数据筛选效率 |
 | 06531 SLiNT | 结构与语义gradient干扰 → pseudo-neighbor/hard contrastive/decoupled gradient → embedding结构注入 |
 | 06596 HAVE | head贡献不确定 → value magnitude/gating融合 → head-level uncertainty |
@@ -90,4 +90,4 @@
 
 官方日路由2025-09-09为400、250909为404；月路由2025-09恢复200但无public字段。`ARXIV_ADVANCED.html`按announced_date_first/date-from09/08/to09/09与large language model实际200返回no results，不能授零事件。原政策20:00 Eastern给常规09/09 08BJT批次线索，不证明这些身份实际归批次或没有defer/提前公开。具名06184/06861/06949日期查询只得辅助podcast索引，非原公开凭据。不用DataCite注册/接受、submitted或月编号作下界。
 
-上述64身份取得官方公告、作者可核发布记录或完全落窗公开区间后，只重开对应事件的准入/精确v1必要审阅；不重扫2214月库存、不扩其他Daily。原comments/版本页面轻量检查未据目录外史料建立更正；当前不是安全或性能认证。
+上述64身份取得官方公告、作者可核发布记录或完全落窗公开区间后，只重开对应事件的准入/精确v1必要审阅；不重扫2214月库存、不扩其他Daily。非作者DAY直接复读原72份题摘及comments后发现06518的数据读取更正和05983的较新版本撤回信号，现已具名保留并收窄；前者原性能/可比结论失效，后者v2撤回不自动扩大到v1。两项不能仅恢复日期就授采用；当前不是安全或性能认证。

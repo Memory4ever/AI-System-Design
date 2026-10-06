@@ -2,77 +2,70 @@
 
 **规范：** V3
 **窗口：** 2025-09-01T09:00:00+08:00 ～ 2025-09-02T09:00:00+08:00
-**状态：** 进行中
+**状态：** 完成
 **Books：** 纳入本次
-**检查时间：** 2026-10-06T14:08:00+08:00
+**检查时间：** 2026-10-06T20:07:25+08:00
 
 ## 1. 结论
 
-本日作者Aristotle接手独立原件，重新解析有限API：language257（首200+尾57）、systems35、multimodal52，去版本并集287。提交发现区间UTC Aug29 18:00～Sep1 18:00，较日报窗口宽，不是287个当窗首次公开事件。宽月476标题输出截断，不授全量覆盖或逐项关闭。
+本日按当前合同完成有限机制筛选、必要命题审读及非原作者隔离复核。实际完整題摘/core集合44唯一家族：39贡献潜力，其中00842已官方July出版属窗外，另38保留公开日期/原版本事件缺口；5贡献关闭。正式确认当窗候选0，不等历史零事件、无遗漏或全机构Coverage；没有评分、Evidence通过或Books采用。
 
-首批实际处理18唯一家族，13有具体机制/局部反证潜力、APRIL准入争议1、代表关闭4；待root独立局部准入校准。正式候选尚未确定，不称零事件。已定点读五项exactv1题摘及LongCat完整官方核心，但原公开落窗未成立；没有把摘要阅读计Evidence完成，没有评分或Books写入。Books正面决定尚未作出，不能因禁止本作者写共享Books而跳过最终判断。
+发现库存语言257、系统35、多模态52去版本并集287，全部题名实际浏览；submitted检索UTC Aug29 18:00～Sep1 18:00比本窗口宽，不是287当窗首次公开。有限机制补检25份精确v1完整題摘另独立校准；没有将剩余243库存全量分类、判无贡献、全文审读或列外部请求。旧暂停/待办由真实差额恢复，不把ready当完成。
 
 ## 2. 来源覆盖
 
-本日独立原件/请求位于[来源目录](../_sources/daily-20250902/)。下列HTTP/文件只表明已有实际抓取；尚未完成机构正文/历史分页及停止范围的作者检查，**不授Coverage、无命中或外部安全终态**。FIRST先交局部校准，其他普通来源工作继续。
+实际原件/请求及各机构有限日期序列见[来源目录](../_sources/daily-20250902/)与[机构有限解析](../_sources/daily-20250902/SOURCE_FINITE.md)。下述结果只授实际有限入口，不授删除历史/所有事件完整召回。未扫每周组。
 
 | 来源 | 检查范围与依据 | 结果 | 缺口 |
 | --- | --- | --- | --- |
-| SRC-OPENAI | 本日RSS原件760851bytes/HTTP200，`openai-rss.*` | 未完成 | 需实际解析本窗相关条目与停止边界 |
-| SRC-ANTHROPIC | 本日Research原件280255bytes，`anthropic.*` | 未完成 | 需解析publication日期与有限历史范围 |
-| SRC-GOOGLE-AI | 本日Research Sep月1/2、Aug前缘及DeepMind page5原件/request已存在 | 未完成 | 需实际列表序列/分页与核心贡献判断，不复用01结论 |
-| SRC-META-AI | 本日Research入口279653bytes，`meta.*` | 未完成 | 需本窗官方Blog/publication有效区间与真实停止页 |
-| SRC-QWEN | 旧主页/新站及research config57428bytes，`qwen*.raw/request` | 未完成 | 需独立解析本窗事件/原日期，不把旧主页视全部目录 |
-| SRC-DEEPSEEK | 正确官方updates48079bytes及原错误路径记录 | 未完成 | 需实际原日期切片/本窗贡献处理 |
-| SRC-MOONSHOT | 平台Blog13388bytes，`moonshot.*` | 未完成 | 需本日实际列表边界及可能触发事件 |
-| SRC-TENCENT-HUNYUAN | 正确host API315236bytes及Research入口原件 | 未完成 | 需实际全部列表/历史恢复处理，不能先把当前记录当2025目录 |
-| SRC-ZAI | Research及page2/发布说明本日原件 | 未完成 | 需实际读分页内容/有限历史停点，重复响应不作0 |
-| SRC-BYTEDANCE-SEED | BlogAPI35264bytes与PaperAPI105bytes原件 | 未完成 | 需解析非pinned停止、论文数组/历史可读性；HTTP200不是完整覆盖 |
-| SRC-BAIDU-ERNIE | 本日Blog真实1/2原件28100/20533bytes | 未完成 | 需实际日期序列与分页终点 |
-| SRC-XIAOMI-MIMO | 本日官网58220bytes，`mimo.*` | 未完成 | 需Paper/Blog切片与More历史处理 |
-| SRC-MINIMAX | 本日EN/CN/Agent原件及requests | 未完成 | 需按语言分别读端点、真实分页和历史缺口 |
-| SRC-ARXIV | language0/200两页257全部返回，systems35/multimodal52各全返回，并集287；[FIRST](../_sources/daily-20250902/FIRST_BATCH_01.md)实际查询/版本/首批18题摘 | 未完成 | 仅submitted发现；首批待校准，其他相关/含糊普通筛选与first-public还待；宽月476截断不授覆盖 |
-| 表外：[美团LongCat](https://tech.meituan.com/2025/09/01/LongCat-Flash-Chat.html) | 已实际完整读发布/技术/评价/部署核心及2509.01322v1题摘，本日blog/commit原件保留 | 受阻 | 页面只有Sep1日期且可能更早家族，commit对象非首次公开；尚不能确认完全落窗。需官方发布时刻/区间，core可信度仍普通待办 |
-
-未扫每周组。本日按需事件/具体原文触发仍按事实继续，不因为正式候选未确定取消触发。
+| SRC-OPENAI | RSS1247日期；Aug28 10Z→Sep2 04Z/11Z均窗外 | 已检查 | 当前有限RSS无本窗条目，不授全网0/历史完整 |
+| SRC-ANTHROPIC | Research去重172；Aug27→Sep5跨窗 | 已检查 | 有限日期目录，不是172全文 |
+| SRC-GOOGLE-AI | Sep12+1/真实2页、Aug最近27日；DeepMind page5共24标题，必要Sep25/22/17原页 | 已检查 | 有限Blog切片无本窗事件；科学应用未扩全文，pubs不授全量 |
+| SRC-META-AI | publication5→6 Sep24→15→8→DARLING Sep2→Aug22；Blog2→3 Oct31→24→Aug27 | 受阻 | DARLING完整摘要有增量，仅日期无完全落窗时刻/区间；旧年份穿插不作停止 |
+| SRC-QWEN | 新Research config60 ID/date/title，Aug18→Sep8；旧/新主页 | 已检查 | 配置字段不是公开时刻/冻结快照；有限切片无本窗条目 |
+| SRC-DEEPSEEK | 正确updates Sep29→22→Aug21→May28 | 已检查 | 错误路由不计0；仅更新切片未见本窗事件 |
+| SRC-MOONSHOT | Blog Nov2025→May2024；Sep16→Sep5→Aug22→Aug1 | 已检查 | 有限Blog无本窗条目，不扫整个GitHub组织 |
+| SRC-TENCENT-HUNYUAN | 全API9/9均2026；官方入口/定点历史检索与UI可行替代 | 受阻 | 未恢复2025目录；浏览器超时/子线程visibility不支持，不虚称成功观察 |
+| SRC-ZAI | Research15→实际page2新增至18/没有更多/Dec7；release notes Sep30→Aug11→8 | 受阻 | Research尾页已实读但本窗历史缺失，发布说明不代替论文目录 |
+| SRC-BYTEDANCE-SEED | Blog15/49非置顶Oct23→Aug21；Paper2025头无数组、token20仅June12 SwiftSpec；40/60/80至has_more=false | 受阻 | 实际年份分页到底仍无所需数组，不是94全读/历史0；需有效原目录 |
+| SRC-BAIDU-ERNIE | Blog1→2/2实际16标题，Sep12→Aug14→June30 | 已检查 | 有限Blog无本窗条目，非全部代码版本 |
+| SRC-XIAOMI-MIMO | Paper8 Sep19→June4→May12；Blog15及首页/路由/More原组件 | 受阻 | More仅已有8/7展开，无历史请求；普通More待办消除，本窗Blog历史未恢复 |
+| SRC-MINIMAX | 英12/中13（额外Jan15），英page2同12、Agent仅May2026 | 受阻 | 当前目录未恢复本窗历史，不虚构13+13/重复尾页0 |
+| SRC-ARXIV | 窄四主题429/timeout；库存287题名，44完整題摘/core，25精确v1补检 | 受阻 | 38潜力无原公开落窗证明；Sep1/2官方日期列表Cache miss，submitted不代替announced |
+| 表外：[美团LongCat](https://tech.meituan.com/2025/09/01/LongCat-Flash-Chat.html) | Sep1官方全文核心、v1題摘/commit | 受阻 | 只有日期；commit不证明repo当时公开，保留更早家族/精确时刻缺口 |
 
 ## 3. 候选与判断
 
 | 材料 | 公开时间 | 项目贡献与评分 | 审阅结果 | Books决定 |
 | --- | --- | --- | --- | --- |
 
-正式当窗候选尚未确定。首批13潜力、1争议、4关闭逐项依据见[FIRST](../_sources/daily-20250902/FIRST_BATCH_01.md)及[筛选停点](../_sources/daily-20250902/SCREENING.md)；不将未确认公开区间的条目放入评分表，不把其称已审重复。局部校准后只按实际增量和原公开归属决定本次处理。
+正式确认当窗0，空表不表示零事件。旧19含DARLING贡献潜力14/关闭5，见[FIRST01](../_sources/daily-20250902/FIRST_BATCH_01.md)、[FIRST02](../_sources/daily-20250902/FIRST_BATCH_02.md)、[旧局部校准](../_sources/daily-20250902/INDEPENDENT_FIRST_CALIBRATION.md)。新增25逐项原判断→增量→局部选择及root独立校准见[有限补检](../_sources/daily-20250902/INDEPENDENT_SUPPLEMENT.md)：24潜力+00842已知窗外。合计38日期/版本hold+1窗外/5关闭，不将hold评分或当已审重复。
+
+00842题名/作者/DOI/完整摘要与官方ACL AnthologyJuly2025出版家族一致，后续arXiv上传不重授首公开；未见本窗实质修订信号，不扩跑July。01193 LobRA已有PVLDB原家族/附录，出版社PDF确认身份/核心；作者机构索引Apr片段原页超时，不能当精确first-public，维持原家族/事件缺口。旧关闭APRIL、WasteBench、ND-rank、IndustrialContour、BrainFM完整題摘均实际核：按具体增量或暂缓科学应用关闭，不按survey/小模型/无实验标签关闭。
 
 ## 4. 证据与知识整合
 
-当前仅首批题摘/官方核心阅读，不授完整Evidence。LongCat zero-computation expert/PID平均计算与shortcut overlap、Learning to Shard联合granularity、FlexLink多链路collective、BAI早期长度退化、unlearning采样与biometric隐式泄露、VLM两类hallucination等潜力均保留反侧和作者声明性质。
+五必要精确v1原文由非原作者实际独核，见[独立core](../_sources/daily-20250902/INDEPENDENT_CORE.md)：TConst周期同步公式随N线性，固定周期不推出整体摊还O(1)；unlearning采样曝光/重复forget预算与LoRA输出不证明参数遗忘；Safe-LLaVA judge差异、保护率标注、回答长度/false-refusal缺测；VLM两类hallucination因果解释未验证及调节副作用；BAI初始化比率、traj/reward解释及training-vs-sampling KL分账。读到命题充分，未读所有附录/运行代码，不授FullEvidence。
 
-TConstFormer每k步线性sync不能仅凭标题授amortized O(1)；需核同步对象/尺寸和有效信息代价。Radio的通用prompt不稳定与其科学分类应用分开，BrainFM/ND rank等关闭理由仍请求边界校准；不通过Data/Evaluation绕回暂缓AI for Science。APRIL是否只为既有模块并列仍待决定性方法事实。
+LongCat完整官方发布/技术/评价/部署核心独核：zero-computation experts、PID平均激活与跨层shortcut overlap有机制潜力；速度/成本/benchmark排名为作者声明，缺等条件归因，不采用数字或高效保证。DARLING语义多样性与质量联合online reward摘要足以准入，未默认补全文。新增01440精确v1§1/3/4.1的等tokens、batch/horizon重调及排名变化补足摘要含糊，未读73页全篇或授所有优化器排名。
 
-ROADMAP给出条件owner，仅为路由，尚未核具体Books差额，不授“已有覆盖”。共享Books由root协调；本作者只写02～05日报及各_sources，不改Books/State/月索引。需要长期采用时按实际证据与root协作落实，不以无写权限作跳过理由。
+ROADMAP仅条件owner路由，不以未确认事件给已有覆盖授No Change。所有潜力尚不符合日期/Evidence采用条件，本窗Books暂缓，写入0、无需POST。后续成立才读取Books上下文/owner邻章，窄段提案交root并由非写入者POST；不以本线程禁写共享Books跳过正面决定。
 
 ## 5. 缺口与下一步
 
-**用户要求暂停，保存时间：2026-10-06T14:49:52+08:00。** 不再扫描、审阅、Books或下一日工作；仅保存此现有日报§5/6。02未完成、未ready DAY。§1～4及来源表尚未同步下面的最新增量，不能以其旧“18/13+1+4、机构均未完成”表述作为云端恢复现状；恢复后只同步真实差额，不重跑有效首批。
+终态保留项：本日精确外部日期/历史缺口隔离，不支持正面证据、Books 或无遗漏断言；定点重开条件如下。
 
-真实停点：本日四主题Atom发现并集仍287（language257、systems35、multimodal52），不是287落窗候选；宽月476标题曾截断，未授全量覆盖。作者实际language标题浏览为索引0～139（0-based，最后2509.00925v1 DTRNet），另全部systems35/multimodal52标题；language索引140～256未由本作者实际浏览，不继承root标题阅读为本人覆盖。最后一批70～139仅读标题，未新增其完整题摘裁决，不建立整类/全文队列。
+可执行普通恢复已完成：旧题摘/五必要core、DARLING准入、有限机制补检、机构真实目录/More/Seed剩余年份分页及有限官方历史定点。机构与日期限制为精确外部隔离终态，不把未读普通方法伪装受阻。
 
-实际题摘与最后裁决：首批18家族的完整题摘/LongCat官方核心见[FIRST01](../_sources/daily-20250902/FIRST_BATCH_01.md)。root已实际解析五exact-v1新原件，落盘[局部校准](../_sources/daily-20250902/INDEPENDENT_FIRST_CALIBRATION.md)：**13最小潜力保留、APRIL关闭、四代表关闭成立，即13潜力/5关闭**。五v1可复查原件为[raw](../_sources/daily-20250902/exact-v1-five-recapture.raw)/[request](../_sources/daily-20250902/exact-v1-five-recapture.request.json)，实际抓取06:26:07.816589Z、200/23220bytes；此前06:04:08Z未保存响应已在FIRST纠正，不补造旧原件。新增Meta DARLING完整官方题摘1家族见[FIRST02](../_sources/daily-20250902/FIRST_BATCH_02.md)，贡献潜力待局部校准、日期hold；当前实际题摘初筛集合**19家族、14潜力/5关闭**，其中仅首批18获root准入校准。DARLING不是四Atom并集新增成员，不能把287改为288。
+重开条件：38潜力需原公告/发布时刻或有据完全落窗区间，明确原版本、更早家族与本窗实质增量；LongCat/DARLING需原发布区间而非日期字段；Hunyuan/ZAI/Seed Paper/MiMo Blog/MiniMax需该窗有效历史数组/冻结原件。只禁止当窗评分/采用和正面历史Coverage，不否定贡献潜力/宣称不存在。尝试见[日期列表](../_sources/daily-20250902/INDEPENDENT_ANNOUNCE_WEB.json)、[有限官方检索](../_sources/daily-20250902/INDEPENDENT_FINITE_SEARCH_WEB.json)、[Seed终点](../_sources/daily-20250902/INDEPENDENT_SEED_TAIL.json)。不要求全287未审材料，不扩邻日研究。
 
-必要core已读/未读：[CORE_SUBSET](../_sources/daily-20250902/CORE_SUBSET.md)记录TConstFormer、unlearning、Safe-LLaVA、两类hallucination、BAI实际精确v1必要方法/评价/限制段，均有原HTML/request。TConstFormer周期cache miss公式仍随N线性，固定周期不能推出整体摊还O(1)；保留固定状态机制，不采用中心复杂度/无损历史保证。其他四项保留样本曝光预算、LoRA输出指标非遗忘证明、judge/回答长度/false-refusal、因果解释和初始化比率等反侧。未读全篇/所有图表附录、未运行代码、不授完整Evidence；root只读作者core说明，未独立核这些原文。DARLING方法/附录/代码未读，不默认补全文。Radio只保留通用prompt等价反侧，不采科学结果；APRIL无剩余准入疑义，不续全文队列。
-
-机构真实解析见[SOURCE_FINITE](../_sources/daily-20250902/SOURCE_FINITE.md)：OpenAI RSS1247、Anthropic Research172、Google Sep12+1/真实2页及Aug前缘/DeepMind page5必要日期、Qwen配置60、DeepSeek正确updates、Moonshot Blog日期序列、ERNIE1→2/2均已实际检查约定有限切片，未见该切片本窗事件，不宣称全机构历史无遗漏。Meta publication5→6与Blog2→3已实读，DARLING官方Sep2日期仍含糊。Hunyuan当前全部9项仅2026；ZAI15→实际page2新增至18/显示没有更多、仅到Dec7；Seed Blog15有非置顶跨窗，Paper头页无数组、token20只返回June SwiftSpec1项而total94/has_more；MiniMax英12/中13、英?page=2同12、Agent只见2026条目。MiMo Paper8已读；Blog15及官网实际首页/More组件原件已核，More仅展开既有第9～15项，不请求历史页，故不再保留“More未处理”普通待办，但2025-09博客历史未恢复。
-
-普通待办（暂停后不执行）：同步正式§1～4/来源表的以上差额；其余相关/含糊标题完整摘要与具体贡献判断（不读全13全文）；DARLING局部准入；尚可用的机构年份/地区/官方历史或定点发布恢复；潜力首公开/更早家族关系；实际命题所需剩余core及最后非作者DAY、六部分/机器检查。未读或仍有可执行入口的材料不作安全终态。03～05尚未启动，恢复时先完成02，每次换日重读合同、只加载当前日；不继承01或11结论。
-
-外部受阻/保留：所有潜力尚无充分first-public落窗证明，API published/submitted、Git commit身份或登记时间都不能补造公开时刻。LongCat Sep1与DARLING Sep2官方仅日期；Hunyuan/ZAI/Seed Paper/MiMo Blog/MiniMax历史目录目前未恢复，不能计0/授正面Coverage。浏览器MiMo打开超时；Hunyuan带visibility选项返回subagent不支持，不带该选项打开仍超时，未成功UI观察/点击；已用本日官方原件/API及MiMo必要组件作可行替代。恢复条件是原始公开事件/有据完全落窗区间或有效历史目录；不能用元数据登记伪造日期，真正穷尽后的精确外部缺口才隔离终态，不授Evidence/Books。
-
-执行状态：本线程已创建的捕获进程session9816、23977、45067均已返回exit0；其余命令也已结束，浏览器超时后kernel reset。**无本线程在跑命令需要终止**，暂停后不再启动研究命令，不触碰其他线程进程。只写02 README及本日_sources；没有改Books/State/月索引/模型，没有stage/commit/push。全月PAUSED及云端恢复入口由root保存，本线程不新建并行总账。
+完成限本日有限执行/隔离，不授覆盖完整、无遗漏、FullEvidence或Books采用。03换日独立重读当前规则和当日停点，不继承02选池。
 
 ## 6. 复核
 
-02最终DAY：尚未执行，未通过，未ready。root首批准入局部校准通过18项的上述处置，不等全日Coverage/Evidence/Books。最终DAY必须交未参与作者/初筛角色的Mendel/Archimedes等非作者；root早先参与02发现，不能承担02 DAY。作者必要core还需该非作者实际核对应原文，不冒充已通过。
+复核者：sept12_15_author（非原作者DAY）；root（新增25独立FIRST）
+结论：通过
 
-此前独立11 DAY于13:59通过，用户确认root已同步完成态、V3/localrefs12/diff及实际验收；本次不重开11、不将其结论迁移02。03～05无成稿/ready/DAY。本日formal状态保持进行中，工作因用户明确要求暂停，不自授完成。
+最终DAY：非原作者sept12_15_author完成。原作者Aristotle及root早期发现未自授全日DAY；本恢复者独核旧19完整題摘、全部拟潜力/风险处置、5关闭样本、五必要core及LongCat完整官方核心/目录停点。新增25由root独立完整題摘FIRST，四截断项另完整补读；通过24潜力+00842窗外，01440依已读局部原文限定，01193保持版本hold。范围与角色见[补检校准](../_sources/daily-20250902/INDEPENDENT_SUPPLEMENT.md)，不把FIRST当25全文Evidence。
 
-最后实际机器结果仍是14:08首稿：首次结构检查缺候选表头，补空表后V3通过1份，当时README/FIRST/SCREENING引用/fence/whitespace通过。**本轮新增CORE_SUBSET/SOURCE_FINITE/FIRST02、原件及暂停§5/6尚未重新运行完整机器检查**；暂停指令后不继续验收，仅保存进度。恢复时核本日引用、结构和限定diff；格式通过不授语义完成，也没有Books采用或写入。
+集合44=19+25，39潜力=38外部日期/版本hold+1已知窗外，5贡献关闭；287仅题名库存，未审摘要不授准入/关闭。必要反侧保留，普通待办不假称外部终态；正式0、Evidence0、Books0。V3/同日引用/限定diff机器检查另验，格式不替代上述语义。仅写02 README/同日_sources，不改Books/State/月索引，不stage/commit/push。

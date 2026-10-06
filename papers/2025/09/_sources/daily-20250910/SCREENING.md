@@ -10,7 +10,7 @@
 - 月列表的 07309、07829、08022、08093、08105、08150、08304 等当前题名与 v1 不同；采用身份和完整题摘以 v1 为准，不用最新题名倒写历史贡献。
 - 日期恢复：官方日路径 ISO 实际 400、紧凑实际 404；官方 announced-date-first 高级查询 09/09～09/10、large language model 实际 200 空结果。记录 `ARXIV_DATE_REQUESTS.json` 和原 HTML；它不证明零公开事件。`DATE_EXTRA_WEB.json` 对 CASTLE、Falcon3-Audio、LSP、Astra 的窄检未取得可授窗内 first-public 的原始发布字段。Astra Kavli 是 arXiv 查询转录，不是原稿发布方。SimpleQA 作者 X 403、官方 Kaggle 返回空动态正文，见 `NECESSARY_DATE_WEB.json`。未以搜索 Published、Submitted、月份编号或 DOI 注册授 first-public。
 
-## 59 个潜力项：仅题摘成立，日期保留
+## 60 个普通日期潜力项：题摘与必要局部核心成立，日期保留
 
 下表均为 [精确 v1 原题摘](ABSTRACTS_PARSED.json) 的具体增量，不评分、不计确定候选、不宣称实验成立。需要原始公告/作者正文发布记录或可验证冻结正文支持完全落窗区间后，才重开相应身份的准入、评分和所需证据；不因局部、负面、小模型或模块组合关闭。
 
@@ -57,6 +57,7 @@
 | [07969](https://arxiv.org/abs/2509.07969v1) | RL 固定轮数压制长探索 → over-turn masking、冷启动轨迹 → 训练上限与推理可伸缩的代价归属。 |
 | [07980](https://arxiv.org/abs/2509.07980v1) | 难题 RL 冷启动不形成 parallel thinking → easy SFT→hard RL、中期探索 scaffold → curriculum 与最终策略机制。 |
 | [08000](https://arxiv.org/abs/2509.08000v1) | open weights 可被 fine-tune 抹除安全 → 激活条件 adversary LoRA 的双层优化 → tamper resistance 的权重攻击边界。 |
+| [08010](https://arxiv.org/abs/2509.08010v1) | 单次 judge–advisor 与 agreement/switch 比率假设二元、可分贡献 → v1 §5.1–5.2指出迭代共写、部分语义采纳及主观任务不满足这些测量前提 → 轨迹/结果/信息源使用等评价单位的概念性盲区；非作者恢复潜力，不要求先有实验才能准入，不授安全效果。 |
 | [08075](https://arxiv.org/abs/2509.08075v1) | persona 被单独归罪于 false refusal → 16 模型/任务/九 paraphrase 控制 → persona effect 的混杂纠正。 |
 | [08093](https://arxiv.org/abs/2509.08093v1) | 语义类别只是模仿的假设 → iterated ICL color category、IB compression → 学习归纳偏置局部机制。 |
 | [08105](https://arxiv.org/abs/2509.08105v1) | encoder+LLM LRL reasoning 落后 → bilingual→task curriculum 与 DoRA → model stacking 的训练条件。 |
@@ -76,7 +77,7 @@
 | [08541](https://arxiv.org/abs/2509.08541v1) | English reference 自然高质且 multilingual pair 可靠 → 双层 consistency preference 选择 → DPO 数据噪声与跨语言目标。 |
 | [18114](https://arxiv.org/abs/2509.18114v1) | decode shard skew 监测代价 → BlueField-3/DPU telemetry 与网络检测可行性研究 → 监测卸载与控制反馈；摘要是 study goals，不是已部署系统。 |
 
-## 完整题摘后的 13 项关闭
+## 完整题摘后的 12 项关闭
 
 - 07122：已有 NeSy 框架的技术刻画/比较，原题摘不提供新的 foundation-model 学习、执行边界或控制机制。
 - 07142：LLM 作为 topic-model 指标工具，新增结论针对 topic taxonomy/semantic drift，不是 LLM 或主线检索系统的新机制/评价反证。
@@ -88,13 +89,12 @@
 - 07909：position paper 倡议 inverse problems 寻 scaling laws，题摘无具体新 scaling 定律、可判定条件或实现证据；不按“理论”排除。
 - 08024：LLM summary+caption+Transformer 用于气候 stance 分类，只有应用任务指标，没有基础模型形成或 multimodal system 新条件。
 - 08025：COLIEE 任务的 BM25/BERT/embedding/LLM ensemble 排名，原题摘没有模块归因或重要失效边界。
-- 08010：overreliance position paper 整理风险和提议评价方向，无本窗具体新执行/模型机制或经验证的设计反证。
 - 08345：用 generative LM 原型评分作文 subtraits，仅领域评价相关性，不显示本项目模型/系统新评价盲区。
-- 08463：AFC attack survey 方法分类与研究问题，原题摘无新攻击机制、可判定安全边界或推翻原判断的实证。
+- 08463：非作者补读精确v1 §3–4、§5.1与结论/限制；attack target × edit granularity分类整合已有AFC攻击与通用标准化评价倡议，未建立新的攻击机制或某个具体评价前提为何失效的新增可判定条件。关闭这一实际贡献边界，不因survey标签或无实验一概排除，也不据此声称AFC安全。
 
 ## 撤回信号
 
-08022 的 v1 完整题摘本有 population-aware alignment 贡献潜力，但 v1 官方页明确提示后续版本被撤回。实际读 v2 `Comments`：作者要求必要修改后重投，v2 无 PDF。原始记录 `WITHDRAWAL_08022v2.html` / `NECESSARY_DATE_WEB.json`。不入选、不评分、不进 Books，不把撤回当工具故障；2026 v3 不自动恢复 2025 v1 的采用权限。
+08022 的 v1 完整题摘有 population-aware alignment 贡献潜力。精确v1原页只说后续版本撤回，版本历史v1为09/09 09:25:08UTC、无withdrawn标记；v2为09/16 03:06:45UTC，明确withdrawn。实际读 v2 `Comments`：作者要求部分必要修改后重投，v2无PDF。不把v2标记自动扩成v1官方撤回，也不把安全信号抹去。v1现为潜力日期/撤回影响未决：人口/地域对齐差异及轻量微调的增量尚需原first-public与撤回原因的影响范围，现不入选、不评分、不进Books。此处与上方60普通日期项合为61潜力，73=61保留+12关闭；原59/13/1及60/13分类保留于旧交接但不再作最新分母。原始记录 `WITHDRAWAL_08022v2.html` / `NECESSARY_DATE_WEB.json`保留，2026 v3不自动恢复2025 v1权限，不为此遍历无关版本正文。
 
 ## 13 个明确标题层关闭
 
