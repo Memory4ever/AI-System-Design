@@ -1,0 +1,2576 @@
+
+SOURCE https://arxiv.org/html/2601.13886v1
+Revisiting Multi-Task Visual Representation Learning
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+License: CC BY 4.0
+arXiv:2601.13886v1 [cs.CV] 20 Jan 2026
+Revisiting Multi-Task Visual Representation Learning
+Shangzhe Di
+Affiliation: SAI, Shanghai Jiao Tong University
+Affiliation: ByteDance Seed[4pt]
+github.com/Becomebright/MTV
+Zhonghua Zhai
+Affiliation: ByteDance Seed[4pt]
+github.com/Becomebright/MTV
+Weidi Xie
+Affiliation: SAI, Shanghai Jiao Tong University
+Abstract
+Current visual representation learning remains bifurcated: vision-language models (e.g., CLIP) excel at global semantic alignment but lack spatial precision, while self-supervised methods (e.g., MAE, DINO) capture intricate local structures yet struggle with high-level semantic context. We argue that these paradigms are fundamentally complementary and can be integrated into a principled multi-task framework, further enhanced by dense spatial supervision. We introduce MTV, a multi-task visual pretraining framework that jointly optimizes a shared backbone across vision-language contrastive, self-supervised, and dense spatial objectives. To mitigate the need for manual annotations, we leverage high-capacity “expert” models—such as Depth Anything V2 and OWLv2—to synthesize dense, structured pseudo-labels at scale. Beyond the framework, we provide a systematic investigation into the mechanics of multi-task visual learning, analyzing: (i) the marginal gain of each objective, (ii) task synergies versus interference, and (iii) scaling behavior across varying data and model scales. Our results demonstrate that MTV achieves “best-of-both-worlds” performance, significantly enhancing fine-grained spatial reasoning without compromising global semantic understanding. Our findings suggest that multi-task learning, fueled by high-quality pseudo-supervision, is a scalable path toward more general visual encoders.
+1 Introduction
+Figure 1:
+Multi-task supervision effects on a ViT-L model with 10M training samples.
+We integrate VL, SSL, and pseudo-labeled grounding and depth estimation into a unified training framework.
+This leads to strong and consistent performance gains across diverse vision and vision–language tasks.
+Recent advances in foundation models have reshaped visual representation learning by scaling pretraining on web-scale data.
+Currently, two paradigms prevail:
+Vision–language (VL) contrastive learning [33, 19, 49] aligns global image and text embeddings via instance-level discrimination, enabling open-vocabulary recognition and zero-shot transfer. Self-supervised learning (SSL), such as masked image modeling [15, 51], contrastive instance discrimination [16, 7], and student–teacher matching [5, 32], enforces invariance and regularities without manual labels.
+Despite their success, these paradigms remain bifurcated, primarily focusing on either global semantics or local regularities while leaving fine-grained spatial and geometric reasoning as under-constrained emergent properties.
+Given the inherent diversity of visual tasks—ranging from low-level geometry to high-level reasoning—learning truly universal visual representations that bridge these multifaceted requirements remains an open and fundamental challenge [10, 38, 39, 26].
+In contrast, large language models (LLMs) scale effectively by absorbing multifaceted supervision—such as summarization, translation, and question answering—within a unified training interface [21, 4, 1].
+Admittedly, unlike the discrete and sequential nature of language, visual tasks are inherently heterogeneous. While this diversity makes a single, universal objective more elusive in vision, we argue that visual pretraining can still embrace the LLM philosophy by simultaneously optimizing across a diverse suite of tasks to capture the full spectrum of information.
+Inspired by this versatility, we ask: Can visual pretraining be scaled by integrating semantic, spatial, and geometric supervision within a single, principled framework?
+To bridge this gap, we introduce MTV, a multi-task visual pretraining framework that jointly optimizes a shared backbone across vision-language contrastive, self-supervised, and dense spatial objectives.
+To overcome the scarcity of human-labeled data, we leverage high-capacity “expert” models—such as Depth Anything V2 [45] for monocular depth estimation and OWLv2 [29] for open-vocabulary grounding—to synthesize dense, structured pseudo-labels at scale.
+By integrating these expert-guided targets, we enrich traditional objectives with explicit geometric and spatial priors.
+In this work, we go beyond simple multi-tasking to provide a systematic investigation into the mechanics of multi-task visual learning.
+By unifying these paradigms into a single encoder, we create a controlled setting to study how heterogeneous signals cooperate.
+Specifically, we examine: (i) the marginal gain of each objective, (ii) the dynamics of task synergies versus interference, and (iii) scaling behavior across varying data and model scales.
+Empirically, MTV achieves “best-of-both-worlds” performance, yielding representations that are both more general and more data-efficient than any single objective alone.
+For instance, our ViT-Base model trained on 100M samples achieves 69.4% ImageNet zero-shot accuracy—outperforming CLIP-Base [33] trained on 400M samples—while delivering substantial gains across retrieval, depth estimation, segmentation, and correspondence benchmarks.
+These results demonstrate that multi-task visual pretraining with high-quality pseudo-supervision enables the encoder to capture fine-grained, spatially grounded cues absent in pure vision-language models.
+Taken together, these findings suggest a clear design principle: expanding conventional visual pretraining with complementary tasks—even when supervised by imperfect pseudo labels—shifts learning toward a unified, multi-granularity representation space.
+This unification, analogous in spirit to the convergence of diverse language tasks for LLM, offers a scalable and data-efficient pathway for building versatile visual encoders capable of anchoring a wide range of perception and multimodal reasoning tasks.
+2 Related Work
+Self-supervised Learning (SSL).
+Self-supervised visual pretraining aims to learn transferable representations without manual annotations.
+Contrastive and distillation-based methods, such as DINO [5], iBOT [51], and I-JEPA [2], encourage feature invariance across augmented views, whereas reconstruction-based approaches, like MAE [15], rely on masked image modeling.
+Recent large-scale efforts such as DINOv2 [32] demonstrate that scaling data and model size leads to robust features for recognition, segmentation, and correspondence tasks.
+However, these methods remain limited to unimodal visual signals and lack semantics from natural language or high-level reasoning [38].
+Vision-Language Contrastive Learning (VL).
+Weakly-supervised vision-language pretraining has emerged as a dominant paradigm for learning semantic-aligned visual encoders.
+CLIP [33] and ALIGN [19] show that large-scale vision-language contrastive learning yields powerful zero-shot transfer.
+Subsequent works such as Florence [47] and SigLIP [49] further improve alignment quality and scalability through better data curation and sigmoid-based objectives.
+Despite their impressive semantic generalization, these models are optimized purely for global alignment and often underperform on spatially structured or geometric tasks such as depth and correspondence estimation [10].
+Self-Training (ST).
+Self-training refers to using a supervised model to generate pseudo labels on unlabeled data, followed by training a student model on these pseudo-labeled samples [43].
+This paradigm has been widely adopted to expand supervision beyond human-annotated datasets.
+For VL contrastive learning, several approaches [46, 23, 11, 25] leverage language or vision–language models to generate synthetic captions or rewrite noisy web captions to enhance CLIP-style training.
+However, textual descriptions alone cannot fully capture the rich visual content within images.
+Beyond VL pretraining, self-training has also demonstrated remarkable success in other visual domains.
+For instance, Depth Anything [44, 45] first trains a teacher model on high-quality synthetic depth data and then uses it to generate pseudo labels on real images for student training, leading to state-of-the-art monocular depth estimation.
+Similarly, OWLv2 [29] employs a supervised open-vocabulary detector to produce billion-scale pseudo labels for scaling.
+Overall, self-training has emerged as an effective strategy for scaling visual supervision by leveraging strong teacher models to generate reliable annotations at an unprecedented scale.
+We build upon this trend by extending self-training to multi-task settings that combine VL and SSL objectives, enabling more general and scalable visual representation learning.
+Multi-task Visual Representation Learning.
+Multi-task learning is a training paradigm where a model is jointly optimized on multiple tasks, leveraging shared representations to capture common structures and improve generalization across them.
+Recent progress in SSL, VL, and ST has inspired efforts to combine these paradigms for building more general visual encoders.
+Methods such as SLIP [30], SILC [31], and TIPS [27] show that integrating VL and SSL objectives yields complementary supervision, improving both semantic alignment and spatial understanding.
+In the context of ST, MuST [14] pioneered the idea that combining multiple self-training tasks can yield stronger representations than purely supervised or self-supervised learning.
+Building upon this direction, we employ stronger and open-vocabulary teacher models and integrate them with VL and SSL objectives within a unified framework.
+While SigLIP2 [40] also explores combining VL, SSL, and grounding-based self-training [41], it lacks systematic analyses of how task composition and scaling affect learned representations.
+In contrast, we conduct detailed studies across task diversity, data scale, and model size, revealing several novel insights—for instance, depth supervision provides strong benefits for general representation learning.
+3 Preliminary
+Our goal is to learn a unified visual representation that supports a broad spectrum of visual understanding tasks via large-scale, multi-source supervision. We begin by introducing the notations and key components used throughout the paper, covering both the shared architecture and the heterogeneous annotations that supervise it.
+Architecture.
+At the core of our framework is a shared Vision Transformer (ViT) [9] f_{\theta} that maps an input image v_{i}\in\mathbb{R}^{H\times W\times 3} to multi-layer patch features:
+\{\mathbf{z}_{i}^{(1)},\dots,\mathbf{z}_{i}^{(L)}\}=f_{\theta}(v_{i}),\quad\mathbf{z}_{i}^{(l)}\in\mathbb{R}^{N\times D},
+where L is the number of layers, N the number of patches, and D the feature dimension.
+For brevity, we denote the final layer representation as \mathbf{z}_{i}:=\mathbf{z}_{i}^{(L)} .
+For tasks requiring a global image-level representation, we apply attentive pooling [49] to the final patch features: \mathbf{v}_{i}=\text{Pool}(\mathbf{z}_{i})\in\mathbb{R}^{D} .
+Simultaneously, a text encoder g_{\phi} processes natural language inputs.
+To enable cross-modal alignment, g_{\phi} maps text t_{i} into a joint latent space shared with the pooled visual features, producing the text embedding \mathbf{t}_{i}=g_{\phi}(t_{i})\in\mathbb{R}^{D} .
+Data.
+We consider a pretraining corpus \mathcal{D}=\{(v_{i},a_{i})\} , where each image v_{i} is paired with automatically acquired annotations a_{i} that provide semantic, spatial, and geometric signals:
+(i) A caption t_{i} capturing the global semantics of the image,
+used for vision-language contrastive learning;
+(ii) Region–text pairs \{(b_{ij},r_{ij})\}
+where b_{ij} and r_{ij} denote the j -th bounding box and its entity name.
+These pairs are obtained by extracting salient entities from each image using RAM++[17],
+and then prompting the open-vocabulary detector OWLv2-Base[29] to localize the referred regions; thus enabling large-scale grounding supervision without human annotations;
+(iii) A relative depth map d_{i}\in\mathbb{R}^{H\times W} that encodes the per-pixel depth, produced by the Depth-Anything-V2-Large model [45].
+These heterogeneous annotations, derived entirely from web data and off-the-shelf specialist models, provide a rich supervisory signal for studying the effectiveness of large-scale multi-task representation learning.
+4 Multi-task Visual Representation Learning
+Figure 2:
+Overview of our MTV framework.
+(a) Each image is paired with a web-crawled caption, and augmented with pseudo region–text pairs and relative depth maps generated by teacher models.
+(b) MTV jointly learns from three complementary supervision types:
+Global (image–caption contrast),
+Dense (region–text alignment, depth),
+and SSL (self-distillation, masked feature prediction).
+A shared image encoder is optimized together with a text encoder and an EMA teacher.
+This section details MTV, a principled multi-task visual representation learning framework. MTV optimizes a shared encoder across three complementary supervision paradigms: (i) vision-language (VL) contrastive learning for global semantic alignment, (ii) self-supervised learning (SSL) to induce local structural invariances and regularize feature geometry, and (iii) dense supervision to capture fine-grained spatial structure.
+We elaborate on each supervisory component and the training objective below.
+4.1 Global Semantic Supervision
+We adopt vision–language contrastive learning to provide global semantic supervision by aligning image and text embeddings at the instance level. This objective enables the model to learn high-level semantic representations from noisy, large-scale web data.
+Given a batch of image–text pairs \mathcal{B}=\{(v_{i},t_{i})\}_{i=1}^{B} , the visual and textual embeddings \mathbf{v}_{i} and \mathbf{t}_{i} are obtained using the visual encoder and text encoder, as defined in Section 3.
+We adopt the sigmoid-based objective introduced by SigLIP [49], which treats the alignment task as a dense pairwise binary classification problem:
+\mathcal{L}_{\text{VL}}=-\frac{1}{B}\sum_{i=1}^{B}\sum_{j=1}^{B}\log\frac{1}{1+e^{y_{ij}\left(-\tau\mathbf{v}_{i}\cdot\mathbf{t}_{j}+\beta\right)}},
+(1)
+where y_{ij}=1 if (v_{i},t_{j}) is a matched pair and -1 otherwise. The logit scale \tau and bias \beta are learnable parameters initialized from \log 10 and -10 , respectively, as in [49].
+Unlike the softmax-based contrastive loss [33], the sigmoid objective decouples the batch size from the normalization, leading to more stable gradients at scale.
+To support large-scale distributed training, SigLIP originally employs a cyclic rotation-based protocol to avoid large collective communication. However, in our framework, we observe that the communication overhead of text embeddings is negligible relative to the computational cost of the shared multi-task backbone. Therefore, we utilize a more direct and implementation-efficient alternative: we synchronize textual embeddings across all devices using a differentiable all_gather11
+1
+all_gather is a collective communication primitive that synchronizes and collects tensors from all devices. We use a differentiable version of it that supports gradient backpropagation through \mathbf{t}_{j} . operation. This preserves the mathematical correctness of Eq. 1 while facilitating easier integration within a multi-task pipeline.
+4.2 Self-Supervised Objectives
+While vision–language supervision captures global semantics, it provides limited guidance for learning locally consistent features.
+To complement the VL objective, we incorporate two self-supervised tasks within a teacher-student distillation framework: (i) local-to-global self-distillation [5] and (ii) masked feature prediction [51].
+Following the architecture in DINOv2 [32] and TIPS [27], our student network comprises the visual encoder f_{\theta} and separate MLP projection heads for each SSL task to mitigate gradient interference.
+The teacher network is maintained as an Exponential Moving Average (EMA) of the student, providing stable targets throughout pretraining.
+Local-to-Global Self-distillation encourages spatial consistency by aligning the representations of local and global views.
+For each image v_{i} , the student processes M=6 local crops to produce their global embeddings \{\mathbf{v}_{i,m}\}_{m=1}^{M} , which are then projected into “prototype scores” \{\mathbf{p}_{i}^{m}\}_{m=1}^{M} by the student MLP. Simultaneously, the teacher processes a larger, global crop to produce the target scores \hat{\mathbf{p}}_{i} .
+The student is trained to match the teacher’s distribution using a temperature-scaled KL divergence:
+\mathcal{L}_{\text{distill}}=-\sum_{i}^{B}\sum_{m}^{M}\text{KL}\left(\text{softmax}(\frac{\hat{\mathbf{p}}_{i}-\mathbf{c}}{\tau_{t}})\Big\|\text{softmax}(\frac{\mathbf{p}_{i}^{m}}{\tau_{s}})\right),
+where \tau_{t} and \tau_{s} are the teacher and student temperatures for score sharpening, and \mathbf{c} is an EMA-updated centering variable that prevents collapsing to a trivial solution by encouraging a uniform distribution across prototypes.
+Masked Feature Prediction focuses on capturing fine-grained spatual dependencies.
+We randomly mask 50% of the patches in v_{i} and replace them with a learnable mask token.
+The student encodes the masked input into prototype scores \{\mathbf{p}_{i}^{j}\} , while the teacher processes the original unmasked image to provide target scores \{\hat{\mathbf{p}}_{i}^{j}\} for the corresponding masked locations j .
+The student is trained to match the teacher’s distributions at these masked locations:
+\mathcal{L}_{\text{mask}}=-\sum_{i}^{B}\sum_{j\in\text{masked}}\text{KL}\left(\text{softmax}(\frac{\hat{\mathbf{p}}_{i}^{j}-\mathbf{c}}{\tau_{t}})\Big\|\text{softmax}(\frac{\mathbf{p}_{i}^{j}}{\tau_{s}})\right),
+thereby forcing the encoder to model long-range spatial regularities from incomplete inputs.
+Following [32], we further include the KoLeo regularizer [36] to promote a more uniform feature distribution within each batch.
+The total SSL objective is defined as:
+\mathcal{L}_{\text{SSL}}=\mathcal{L}_{\text{distill}}+\lambda_{\text{mask}}\times\mathcal{L}_{\text{mask}}+\lambda_{\text{koleo}}\times\mathcal{L}_{\text{koleo}},
+(2)
+where \lambda_{\text{mask}} =2 and \lambda_{\text{koleo}} =0.1 as in [32, 27].
+By integrating \mathcal{L}_{\text{SSL}} with the global VL loss, the model learns representations that are both semantically rich and spatially grounded.
+4.3 Dense Structured Supervision
+While VL and SSL provide semantic and structural regularities, they often lack the explicit spatial precision required for dense downstream tasks.
+To bridge this gap, we incorporate dense structured supervision by distilling knowledge from high-capacity expert models into our shared encoder.
+Concretely, we introduce two complementary objectives: (i) region-level grounding for object-level semantics and (ii) per-pixel depth regression for fine-grained geometry.
+Region-level Grounding.
+To enforce spatial grounding, we incorporate regional-textual correspondences.
+For each image v_{i} , we sample up to four region–text pseudo-labels to balance supervision density and computational cost.
+The visual and textual inputs are encoded into patch-level features \mathbf{z}_{i} and region text embeddings {\mathbf{t}_{ij}} , respectively.
+Following CLOC [6], we utilize the Soft Region Aggregation mechanism to handle potential misalignments in pseudo-labels.
+Specifically, a lightweight Transformer layer processes the patch-level features \mathbf{z}_{i} , conditioned on the positional encodings derived from each bounding box. This learnable attention allows the model to adaptively integrate context beyond rigid box boundaries, mitigating noise in pseudo labels.
+The resulting soft region embeddings \mathbf{z}_{ij} are aligned with their corresponding text embeddings {\mathbf{t}_{ij}} using the sigmoid contrastive loss (Eq. 1), yielding the grounding loss \mathcal{L}_{\text{ground}} .
+Pixel-level Geometric Supervision.
+To capture dense geometric priors, we incorporate monocular depth estimation supervised by high-fidelity pseudo labels.
+We attach a lightweight DPT head [34] to the shared visual encoder, which aggregates multi-layer features \{\mathbf{z}_{i}^{(l)}\}_{l\in\mathcal{S}} from selected ViT layers to predict a dense depth map \hat{d}_{i}\in\mathbb{R}^{H\times W} .
+The prediction is supervised using a combination of scale- and shift-invariant loss alongside a multi-scale gradient loss from MiDaS [3], jointly denoted as \mathcal{L}_{\text{depth}} .
+To mitigate the influence of potential artifacts in pseudo labels, we adopt a top- K denoising strategy, discarding the highest 10% of per-pixel losses within each sample during training.
+This encourages the encoder to prioritize high-confidence geometric structures, providing a structural anchor that complements the global semantic objectives.
+Detailed loss formulations are provided in Section A.2.
+By unifying region-level semantics and pixel-level geometry, the total dense supervision loss is defined as:
+\mathcal{L}_{\text{Dense}}=\mathcal{L}_{\text{ground}}+\mathcal{L}_{\text{depth}}.
+(3)
+4.4 Joint Optimization
+We optimize the shared visual encoder by jointly minimizing a multi-task objective that integrates the VL, SSL, and dense supervision signals introduced in Eqs. (1)–(3):
+\mathcal{L}_{\text{total}}=\mathcal{L}_{\text{VL}}+\mathcal{L}_{\text{SSL}}+\mathcal{L}_{\text{Dense}}.
+Notably, we find uniform loss weighting yields stable convergence and competitive performance. Consequently, no exhaustive hyperparameter tuning is performed. This stability suggests a high degree of task synergy within the MTV framework.
+As shown in Figure 2, each training sample is fully annotated with a caption, open-vocabulary grounding, and a relative depth map. By leveraging expert models to synthesize these structured pseudo-labels for every image in our pretraining corpus, we eliminate the need for complex task-specific sampling. This unified training interface allows the shared encoder to efficiently internalize the full spectrum of visual information in a single pass.
+5 Experiments
+5.1 Training Details
+Architecture. We evaluate our MTV framework using ViT-B/16-224 and ViT-L/16-256 backbones, following the SigLIP [49] architecture and its text tokenizer.
+To accommodate the multi-task nature of MTV, we attach lightweight heads for SSL (MLP heads), grounding (Transformer aggregator), and depth estimation (DPT head).
+Table 1 summarizes the incremental cost of each task, while architectural specifications are detailed in Section A.2.
+Training Data Curation.
+All experiments are conducted on the DataComp dataset [12].
+We crawled 200 million raw image–text pairs and applied a filtering pipeline.
+We discard images with a shorter side <224 pixels and downsample high-resolution images to a maximum dimension of 1024 pixels while maintaining aspect ratios.
+This filtering removes low-information outliers and ensures that the ”expert” models—OWLv2 and Depth Anything V2—operate within their optimal receptive fields.
+We then apply the pseudo-labeling procedure described in Section 3, resulting in 100 million ”fully-labeled” samples, each containing a caption, region–text pairs, and a relative depth map.
+Optimization Configurations.
+All experiments are conducted on NVIDIA H200 GPUs.
+We investigate the scaling behavior of MTV at three data scales: 10M, 50M, and 100M samples.
+The 10M and 50M data scales are used primarily for ablation studies and are trained for 20 and 10 epochs, respectively, with a global batch size of 4k.
+Our full-scale 100M model is trained for 32 epochs with a global batch size of 8k, following the standard CLIP [33] protocol for fair comparison.
+We use the AdamW optimizer with a learning rate of 5\times 10^{-4} , no weight decay, and a linear warmup over the first 1k steps.
+Training utilizes BF16 mixed precision for efficiency, with the exception of the DPT depth head, which is kept in FP32 to ensure numerical stability for regressing continuous geometric values.
+5.2 Evaluation Details
+We evaluate the learned representations across a broad set of downstream tasks spanning global-semantic understanding and fine-grained spatial reasoning. As summarized in Table 2, each task is assessed on one or more representative benchmarks. Below, we outline the setup for each task.
+Zero-shot Image Classification.
+We report Top-1 accuracy on the ImageNet-1k [35] validation set using the standard prompt-based zero-shot protocol.
+Zero-shot Retrieval.
+For cross-modal alignment, we evaluate image-to-text (I \to T) and text-to-image retrieval (T \to I) on COCO [8], reporting the Recall@1 metric.
+Table 1:
+Training Cost for a ViT-B/16 model under different task combinations.
+(Numbers in parentheses) indicate the increase over the previous row.
+⋆ The EMA teacher used in SSL is frozen.
+Training Tasks
+Trainable Params.
+Train Time
+VL
+203.2 M
+1.0\times
+VL + SSL⋆
+232.6 M (+29.4 M)
+1.2\times (+20%)
+VL + SSL + Ground.
+239.7 M (+7.1 M)
+1.5\times (+25%)
+VL + SSL + Ground. + Depth
+250.3 M (+10.6 M)
+1.7\times (+13%)
+Table 2:
+Summary of evaluation benchmarks.
+Task
+Metric
+Benchmark
+Global Semantic Understanding
+Zero-shot Classification
+Top-1 Acc.
+ImageNet-1k
+Zero-shot Retrieval
+Recall@1
+COCO
+Visual Question-Answering
+Score
+MMVP,
+CVBench,
+RealWorldQA
+Fine-grained Spatial Reasoning
+Semantic Segmentation
+mIoU
+ADE20k
+Geometric Correspondence
+Avg. Recall
+NAVI
+Semantic Correspondence
+Avg. Recall
+SPair
+Monocular Depth
+RMSE
+NYUv2
+MLLM VQA.
+To assess the quality of our visual features for higher-level reasoning, we integrate the frozen MTV encoder into the TinyLLaVA framework [20] with a Qwen2.5-3B language model.
+Following the standard two-stage recipe, we train the model on LLaVA-558K, followed by supervised fine-tuning on LLaVA-NEXT-779K [24].
+Evaluation is conducted on three vision-centric VQA benchmarks categorized by [38], including MMVP [39], CVBench [38], and RealWorldQA [42]. We report the average score across these benchmarks.
+Semantic Segmentation.
+We evaluate on ADE20k [50] using a frozen visual encoder and a linear classification head to predict per-patch semantic labels.
+Training runs for 40k steps with batch size 32, learning rate 4e-5, and 576\times 576 input resolution.
+Performance is measured by mean Intersection-over-Union (mIoU).
+Geometric and Semantic Correspondence.
+To investigate the model’s 3D awareness, we utilize the Probe3D framework [10].
+We assess geometric correspondence on NAVI [18], which requires matching pixels originating from the same 3D point across different viewpoints.
+We further evaluate semantic correspondence on SPair [28], testing the alignment of semantically similar parts across diverse instances.
+Both tasks are measured using Average Recall across various viewpoints or distances.
+Monocular Depth Estimation.
+Following [32, 40, 48], we concatenate the global token to each patch token output by the frozen visual encoder, and train a linear head to predict depth across 256 discretized bins. A classification loss is used during training on NYUv2 [37], with evaluation on its test set. See [48] for more implementation details.
+5.3 Ablations and Analysis
+We organize our analysis around three core questions.
+Table 3:
+Task Scaling Effects across model sizes and data scales.
+(Numbers in parentheses) indicate the incremental increase over the previous row, while Absolute Gain \Delta denotes the overall performance improvement of full multi-task training over the VL-only baseline.
+ViT
+Data
+Training Tasks
+IN-1k
+COCO
+VQA
+ADE20k
+NAVI
+SPair
+NYUv2
+Acc.
+T \to I
+I \to T
+Score
+mIoU
+Recall
+Recall
+RMSE \downarrow
+B/16
+10M
+VL
+36.2
+14.8
+21.9
+41.1
+27.5
+39.5
+17.0
+0.643
+VL + SSL
+43.7 (+7.5)
+19.7 (+4.9)
+28.6 (+6.7)
+43.1 (+2.0)
+36.2 (+8.7)
+41.5 (+2.0)
+21.1 (+4.1)
+0.568 (-.075)
+VL + SSL + Ground.
+49.0 (+5.3)
+23.5 (+3.8)
+33.9 (+5.3)
+43.2 (+0.1)
+39.5 (+3.3)
+43.3 (+1.8)
+22.4 (+1.3)
+0.537 (-.031)
+VL + SSL + Ground. + Depth
+49.7 (+0.7)
+23.9 (+0.4)
+34.1 (+0.2)
+43.4 (+0.2)
+41.7 (+2.2)
+43.6 (+0.3)
+22.8 (+0.4)
+0.512 (-.025)
+Absolute Gain \Delta
++13.5
++9.1
++12.2
++2.3
++14.2
++4.1
++5.8
+-0.131
+B/16
+50M
+VL
+55.7
+28.2
+43.0
+42.2
+32.2
+39.8
+18.0
+0.604
+VL + SSL
+61.4 (+5.7)
+32.4 (+4.2)
+48.0 (+5.0)
+44.7 (+2.5)
+39.9 (+7.7)
+40.4 (+0.6)
+22.7 (+4.7)
+0.556 (-.048)
+VL + SSL + Ground.
+62.9 (+1.5)
+34.7 (+2.3)
+50.7 (+2.7)
+45.1 (+0.4)
+43.0 (+3.1)
+43.8 (+3.4)
+25.4 (+2.7)
+0.513 (-.043)
+VL + SSL + Ground. + Depth
+62.9
+35.0 (+0.3)
+50.5 (-0.2)
+45.8 (+0.7)
+43.7 (+0.7)
+44.1 (+0.3)
+24.5 (-0.9)
+0.482 (-.031)
+Absolute Gain \Delta
++7.2
++6.8
++7.5
++3.6
++11.5
++4.3
++6.5
+-0.122
+L/16
+10M
+VL
+35.0
+14.9
+21.6
+39.0
+30.0
+40.1
+18.1
+0.630
+VL + SSL
+49.4 (+14.4)
+23.7 (+8.8)
+34.0 (+12.4)
+42.1 (+3.1)
+40.4 (+10.4)
+43.4 (+3.3)
+25.6 (+7.5)
+0.535 (-.095)
+VL + SSL + Ground.
+53.4 (+4.0)
+25.6 (+1.9)
+37.8 (+3.8)
+43.7 (+1.6)
+43.6 (+3.2)
+44.3 (+0.9)
+27.0 (+1.4)
+0.498 (-.037)
+VL + SSL + Ground. + Depth
+54.3 (+0.9)
+26.6 (+1.0)
+38.6 (+0.8)
+44.3 (+0.6)
+45.6 (+2.0)
+46.2 (+1.9)
+27.5 (+0.5)
+0.455 (-.043)
+Absolute Gain \Delta
++19.3
++11.7
++17.0
++5.3
++15.6
++6.1
++9.4
+-0.175
+L/16
+50M
+VL
+60.8
+31.1
+46.3
+43.3
+37.3
+39.9
+19.8
+0.575
+VL + SSL
+65.4 (+4.6)
+34.5 (+3.4)
+48.0 (+1.7)
+44.9 (+1.6)
+45.5 (+8.2)
+43.2 (+3.3)
+27.3 (+7.5)
+0.501 (-.074)
+VL + SSL + Ground.
+67.6 (+2.2)
+37.4 (+2.9)
+51.5 (+3.5)
+45.9 (+1.0)
+47.2 (+1.7)
+43.7 (+0.5)
+28.1 (+0.8)
+0.472 (-.029)
+VL + SSL + Ground. + Depth
+67.9 (+0.3)
+37.3 (-0.1)
+52.3 (+0.8)
+45.9
+49.1 (+1.9)
+45.9 (+2.2)
+29.7 (+1.6)
+0.421 (-.051)
+Absolute Gain \Delta
++7.1
++6.2
++6.0
++2.6
++11.8
++6.0
++9.9
+-0.154
+Q1: Marginal Gains and Task Contributions.
+We first examine whether integrating heterogeneous objectives is consistently beneficial. Table 3 presents the incremental performance along a principled task expansion path: \text{VL}\to+\text{SSL}\to+\text{Ground.}\to+\text{Depth} .
+Across data and model scales, performance almost always improves monotonically at every step. Absolute Gain \Delta highlights that the full multi-task framework is strictly better than the VL-only baseline.
+This demonstrates that rather than interference, these objectives provide complementary supervision that enriches the shared representation.
+We also observe distinct roles for each objective:
+(i) SSL acts as a powerful general-purpose enhancer, significantly lifting both semantic ( +14.4\% on IN-1k for ViT-L/10M) and spatial benchmarks (+10.4 on ADE20k). This suggests that local structural regularities provide a necessary geometric scaffold for global semantics.
+(ii) Since grounding serves as a fine-grained vision-language signal, it not only boosts spatial tasks but also provides benefits to global multimodal understanding, such as the +3.8 R@1 gain in COCO I \to T retrieval.
+(iii) Adding depth supervision consistently yields the final refinement for pixel-level tasks, improving NYUv2 by up to 0.051 in the ViT-L/50M setting.
+While the gains exhibit diminishing marginal returns as the representation nears saturation, the large initial jump from SSL should be interpreted with caution. These relative improvements are partially a consequence of the chosen expansion order and the inherent spatial sparsity of the VL-only baseline. Nevertheless, the consistent positive deltas verify the robustness of the joint optimization.
+Table 4:
+Task Synergy (%) computed as Equation 4, measuring the relative gain from combining two tasks beyond the larger of their individual improvements over the VL-only baseline.
+⋆COCO is short for COCO I \to T retrieval.
+ViT
+Data
+Baseline
+TaskA
+TaskB
+Synergy (%)
+IN-1k
+COCO⋆
+ADE20k
+NAVI
+SPair
+NYUv2
+Average
+B/16
+10M
+VL
+SSL
+Ground.
+62.0
+64.4
+37.9
+72.7
+31.7
+40.8
+51.7
+SSL
+Depth
+50.7
+41.8
+31.0
+-10.0
+26.8
+56.6
+32.9
+Depth
+Ground.
+22.8
+27.4
+33.8
+36.4
+51.5
+56.2
+38.1
+B/16
+50M
+VL
+SSL
+Ground.
+26.3
+54.0
+40.3
+100.0
+57.4
+44.4
+53.7
+SSL
+Depth
+8.8
+4.0
+27.3
+75.0
+61.7
+29.0
+34.3
+Depth
+Ground.
+2.6
+26.3
+40.7
+87.5
+78.8
+19.4
+42.6
+L/16
+10M
+VL
+SSL
+Ground.
+27.8
+30.6
+30.8
+27.3
+18.7
+38.9
+29.0
+SSL
+Depth
+17.4
+21.8
+27.9
+24.2
+24.0
+53.6
+28.1
+Depth
+Ground.
+9.6
+3.5
+32.0
+42.9
+0.0
+12.5
+16.7
+L/16
+50M
+VL
+SSL
+Ground.
+47.8
+33.8
+30.7
+21.8
+10.7
+39.2
+30.7
+SSL
+Depth
+43.5
+92.0
+19.5
+9.1
+-34.7
+4.6
+22.3
+Depth
+Ground.
+45.5
+33.3
+33.3
+29.4
+17.9
+18.5
+29.7
+Q2: Synergy vs. Interference among Objectives.
+We further investigate how heterogeneous objectives interact during joint optimization.
+To quantify their complementarity, we define a Task Synergy metric as:
+\text{Synergy}(A,B)=\frac{\Delta AB-\max(\Delta A,\Delta B)}{\max(\Delta A,\Delta B)},
+(4)
+where \Delta A and \Delta B denote the individual performance gains over the VL baseline, and \Delta AB is the gain achieved by their combination.
+Intuitively, a positive score indicates that the tasks are mutually beneficial, providing gains beyond those attainable by the superior individual task alone.
+As shown in Table 4, all task pairs exhibit positive average synergy across data and model scales, typically ranging from 20\% to 50\% . This empirically confirms that the objectives are fundamentally complementary rather than interfering with MTV.
+Task pairs involving grounding show particularly robust synergy, reinforcing our argument that region–text alignment serves as a critical bridge between high-level semantics and fine-grained spatial structures.
+We also observe distinct scaling trends between model and data scales: For the B/16 model, increasing data from 10M to 50M samples leads to more stable and stronger synergy. While synergy remains positive for the larger L/16 model, the relative scores are generally lower compared to B/16. This is expected as higher-capacity VL baselines naturally leave less relative headroom for additional supervision, even as absolute performance continues to rise.
+Figure 3:
+Data scaling behavior of multi-task visual pretraining.
+ViT-Base models are trained with 10M, 50M, and 100M samples under our multi-task setting.
+CLIP-Base [33] is shown as gray dashed line.
+Lower \downarrow is better for NYUv2; higher \uparrow is better elsewhere.
+Table 5:
+Comprehensive comparisons with large-scale VLMs.
+ViT
+Model
+Data
+IN-1k
+COCO
+VQA
+ADE20K
+NAVI
+SPair
+NYUv2
+Acc.
+T \to I
+I \to T
+Score
+mIoU
+Recall
+Recall
+RMSE \downarrow
+B/16
+CLIP [33]
+400M
+68.3
+33.1
+52.4
+44.8
+42.2
+36.9
+15.9
+0.603
+SigLIP [49]
+10B
+76.2
+47.2
+64.5
+47.7
+45.1
+38.5
+17.3
+0.615
+SigLIP2 [40]
+10B
+78.2
+52.1
+68.9
+48.1
+46.0
+38.0
+20.8
+0.562
+MTV
+100M
+69.5
+41.2
+57.1
+45.6
+44.6
+43.8
+28.4
+0.469
+L/14
+CLIP [33]
+400M
+75.5
+36.5
+56.3
+46.5
+46.2
+36.0
+20.5
+0.588
+L/16
+SigLIP [49]
+10B
+80.5
+51.2
+69.6
+48.3
+47.7
+38.8
+19.7
+0.550
+SigLIP2 [40]
+10B
+82.5
+54.7
+71.5
+52.5
+51.6
+43.2
+29.9
+0.484
+MTV
+100M
+75.2
+43.0
+58.1
+47.6
+48.2
+45.0
+30.1
+0.414
+Q3: Scaling Effects across Data and Model Capacity.
+We finally investigate how MTV scales with data size and model capacity.
+As illustrated in Figure 3, scaling the data yields broadly monotonic improvements.
+Notably, our ViT-Base model trained on only 100M samples consistently outperforms the CLIP-Base baseline, which was trained on 400M samples.
+This demonstrates that multi-task supervision can be more data-efficient than pure VL pretraining for building versatile visual encoders.
+However, the scaling behavior is not uniform across tasks. Geometric and semantic correspondence saturates and begins to decline once the number of seen samples exceeds 1B.
+This suggests that correspondence tasks may not benefit from naive data scaling alone and likely require more targeted architectural designs or supervision.
+Moreover, model scaling from B/16 to L/16 (Table 3, Table 5) improves performance across tasks under the same data scale, narrowing the gap to larger VL-only baselines while preserving strong spatial understanding.
+Overall, these findings indicate that while MTV scales favorably, certain geometric tasks remain a bottleneck, suggesting that the path to general-purpose vision models involves more than simply increasing data and model size.
+5.4 Comparison with State-of-the-art
+We comprehensively compare MTV with representative vision–language models (VLMs) in Table 5.
+On global semantic tasks such as classification, retrieval, and VQA, our models consistently outperform CLIP, despite using only one-quarter of its training data. As expected, our models lag behind SigLIP and SigLIP2, which are trained on 100\times more data, but the performance gap remains modest given the vast scale difference.
+On fine-grained spatial tasks, the advantages of MTV are most prominent. Ours tail SigLIP and SigLIP2 on semantic segmentation, while achieving clearly better performance on correspondence and depth estimation.
+Taken together, these results demonstrate that multi-task training offers a compelling and scalable alternative to purely vision–language or self-supervised pretraining for general-purpose visual representation learning.
+6 Conclusion
+In this work, we revisit large-scale multi-task training as a unified framework for learning general-purpose visual representations.
+By jointly optimizing vision–language contrastive, self-supervised, and dense pseudo-labeled objectives, our model, MTV, acquires strong semantic and geometric understanding within a single encoder.
+Across extensive experiments, we demonstrate that multi-task supervision leads to steadily improving performance as more tasks are incorporated, exhibiting clear task synergy and favorable data- and model-scaling behavior.
+These findings suggest that multi-task pretraining, fueled by high-quality pseudo-supervision, provides an effective and data-efficient route toward universal visual foundation models for broad visual perception and reasoning tasks.
+ENDSOURCE
+
+
+SOURCE https://arxiv.org/html/2601.12580v1
+Semantic Fusion: Verifiable Alignment in Decentralized Multi-Agent Systems
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+License: CC BY 4.0
+arXiv:2601.12580v1 [cs.MA] 18 Jan 2026
+Semantic Fusion: Verifiable Alignment in Decentralized Multi-Agent Systems
+CCS: Computing methodologies Multi-agent systemsCCS: Theory of computation Distributed algorithmsCCS: Theory of computation Temporal logicCCS: Theory of computation Probabilistic computationCCS: Mathematics of computing Probabilistic algorithms
+Sofiya Zaichyk
+Affiliation: Innovative Defense Technologies, Arlington, VA, USA
+Abstract.
+We present Semantic Fusion (SF), a formal framework for decentralized semantic coordination in multi-agent systems. SF allows agents to operate over scoped views of shared memory, propose structured updates, and maintain global coherence through local ontology-based validation and refresh without centralized control or explicit message passing. The central theoretical result is a bisimulation theorem showing that each agent’s local execution is behaviorally equivalent to its projection of the global semantics, in both deterministic and probabilistic settings. This enables safety, liveness, and temporal properties to be verified locally and soundly lifted to the full system. SF supports agents whose update proposals vary across invocations, including those generated by learned or heuristic components, provided updates pass semantic validation before integration. We establish deterministic and probabilistic guarantees ensuring semantic alignment under asynchronous or degraded communication. To validate the model operationally, we implement a lightweight reference
+architecture that instantiates its core mechanisms. A 250-agent simulation evaluates these properties across over 11,000 validated
+updates, demonstrating convergence under probabilistic refresh, bounded communication, and resilience to agent failure. Together,
+these results show that Semantic Fusion provides a formal and scalable basis for verifiable autonomy in decentralized systems.
+Keywords: Multi-Agent Systems, Decentralized Reasoning, Shared Semantic Memory, Bisimulation, Formal Verification, Ontology-Scoped Reasoning, Probabilistic Semantics
+1. Introduction
+Rising system complexity and increasing coordination demands have exposed a longstanding tension between adaptability and verifiability in autonomous and multi-agent architectures. Symbolic systems provide structure, interpretability, and formal guarantees, but often fail to operate reliably under dynamic or asynchronous conditions. Neural components, including learned policies or language-model–based interpreters, offer flexibility and generalization but tend to produce outputs that lack the explicit structure needed for traceability, compliance, and modular verification. These limitations are especially acute in decentralized settings, where agents must reason and act independently without centralized control or global observability.
+In many practical multi-agent systems, such as distributed sensing and robotic warehouse coordination, agents operate under limited bandwidth, partial observability, and asynchronous decision cycles. Increasingly, these agents rely on learned modules to process structured and unstructured input. Although such modules can improve adaptability, their outputs may be ambiguous or inconsistent in terminology and often lack clear provenance. In settings without centralized control or globally shared state, agents must coordinate using only partial information while ensuring that decisions remain aligned and verifiable. This motivates the need for a principled framework that supports decentralized semantic consistency, scoped reasoning, and provable alignment, even when agent behavior is adaptive or involves nondeterministic update generation.
+This paper introduces Semantic Fusion, a formal framework for decentralized semantic alignment in multi-agent systems. Each agent operates over a constrained projection of shared memory (its slice), maintains a partial view of evolving system state, and proposes structured updates that are subject to local semantic validation. Coherence and alignment follow from how agents interact with shared state, rather than being externally imposed. The architecture avoids explicit message passing and global synchronization, enabling coordination through disciplined memory interaction alone.
+Robustness under degraded or asynchronous conditions forms a core motivation for this work. In many operational environments, communication loss, adversarial interference, and uncertainty are expected rather than exceptional. Coordination models that rely on centralized control or globally visible state often fail in such settings. By enforcing semantic coherence through scoped memory interaction, Semantic Fusion enables decentralized operation even when connectivity fluctuates or observability becomes unreliable.
+Our central theoretical result is a bisimulation theorem that establishes behavioral equivalence between each agent’s local execution and the global system semantics projected onto its slice. This enables safety and temporal properties to be verified locally and soundly extended to the full system, addressing a common difficulty in connecting localized reasoning to global guarantees. The framework yields deterministic guarantees such as semantic coherence, convergence of agent-local memories, and semantically scoped causal isolation. We further extend the model to accommodate nondeterministic update generators, showing that global safety properties remain compositionally verifiable from agent-level traces. A final result establishes almost-sure liveness, ensuring that agents’ local memories converge to the evolving global semantic state over time.
+This makes it possible to design agent architectures where global constraints, including safety rules, temporal dependencies, or policy boundaries, can be enforced through local validation and scoped memory access, without requiring global state awareness. While principles such as scoped memory access or bisimulation appear individually in prior work, their combination here enables a framework that supports deterministic and probabilistic reasoning with provable global alignment through slice-scoped semantic interaction. This includes agents whose decision processes incorporate learned modules, provided their outputs undergo local semantic validation before affecting shared state.
+To demonstrate feasibility, we implement a reference architecture that instantiates the model’s core mechanisms. While not a contribution in itself, the system provides an executable validation of the theoretical framework under dynamic, asynchronous conditions. A 250-agent simulation in a search-and-rescue scenario illustrates the behaviors predicted by the formal results and shows that coordinated global behavior can arise from interaction with shared semantic state rather than centralized control.
+Together, these results show that a coherent and eventually convergent global execution can be realized through slice-scoped validation and structured state updates, without centralized memory, global clocks, or direct messaging, and with formal alignment to projected global semantics. Although we refer to a global semantic memory for analysis, the system does not require a centralized store. Its semantics arise from the distributed ensemble of local executions, which collectively realize the global trace.
+The remainder of the paper is organized as follows. Section 2 surveys related work. Section 3 introduces the core formal constructs. Section 4 presents the reference architecture. Section 5 develops the formal properties and proofs. Section 6 provides empirical validation. Section 7 discusses deployment, extensions, and future directions. Section 8 concludes.
+2. Related Work
+Early efforts in multi-agent coordination were shaped by symbolic architectures grounded in explicit representations of meaning. Blackboard systems such as the Hearsay-II speech recognizer (Erman et al., 1980) and cognitive frameworks like SOAR (Laird et al., 1987) offered interpretable control through rule-based activation over shared memory spaces. However, these systems often proved brittle in dynamic or adversarial environments, where fixed rules limited adaptability and scalability (Russell and Norvig, 2009).
+Connectionist approaches—particularly deep learning and reinforcement learning agents (LeCun et al., 2015)—brought flexibility through data-driven inference, but often lacked semantic grounding. Foundation models (Brown et al., 2020; Chowdhery et al., 2023; Touvron et al., 2023) extended these capabilities to language, planning, and tool use, but remain prone to hallucination and semantic inconsistency (Bender et al., 2021; Bommasani et al., 2021), especially in settings requiring inter-agent coordination. In distributed multi-agent systems (MAS), this lack of persistent shared semantics introduces ambiguity and inconsistency that complicates the preservation of global invariants.
+Recent orchestration frameworks such as LangChain, LangGraph, and HuggingFace Agents (LangChain, n.d.a; LangChain, n.d.b; HuggingFace, n.d.) attempt to bridge symbolic and connectionist paradigms by composing LLM workflows into tool-chaining pipelines. These platforms support dynamic behavior through prompt templates and modular controllers, but remain episodic in nature, rely heavily on sensitive prompt engineering, and lack persistent, verifiable state. Critically, they provide no formal grounding in semantic coherence or inter-agent alignment.
+Closer to our setting, SHIMI (Helmi, 2025) and DAMCS (Yang et al., 2025) introduce decentralized memory structures for LLM-based agents. SHIMI uses a hierarchical semantic store; DAMCS proposes a distributed graph memory. Both advance semantic coordination, but neither supports structured update validation, scoped propagation, formal correctness guarantees, or liveness under probabilistic refresh. Our model differs by enforcing ontology-conformant validation and scoped propagation, allowing LLM-based agents to align and coordinate under asynchronous, partial observability with formal guarantees.
+Conflict-free replicated data types (CRDTs) (Shapiro et al., 2011) offer a separate foundation for distributed memory, ensuring convergence under concurrent writes. However, CRDTs assume reliable delivery of all operations, disseminate updates indiscriminately, and offer no semantic scoping or modular guarantees. In contrast, our framework enforces local validation and slice-scoped update propagation, allowing agents to converge probabilistically to semantically relevant state without requiring delivery of all intermediate updates. This supports modular reasoning through agent-level bisimulation and per-element convergence theorems under partial delivery.
+Our work also diverges from classical knowledge-based programs (KBPs) (Fagin et al., 2003), which use modal logic and epistemic conditions to govern agent behavior under fixed communication protocols. While KBPs support sound knowledge-driven decision making, they lack structured semantic memory and do not support modular reasoning over asynchronous state evolution. We instead formalize agent interaction through a shared, ontology-scoped memory system where correctness is ensured by local validation rather than message-passing logic.
+Table 1 summarizes these distinctions. While prior frameworks emphasize replicated memory or informal composition mechanisms, our work introduces the first formal foundation for verifiable decentralized coordination over structured semantic state. It enables constrained update propagation and local verification of global safety properties, while maintaining coherent semantic evolution under probabilistic proposals.
+Table 1. Comparison with Prior Frameworks
+Feature
+CRDTs
+SHIMI
+DAMCS
+KBPs
+Semantic
+Fusion
+Memory and Semantics
+Ontology-scoped memory
+No
+Yes
+Yes
+Implicit
+Yes
+Structured validation
+No
+No
+No
+Implicit
+Yes
+Slice-local reasoning
+No
+Yes
+Yes
+No
+Yes
+Causal isolation
+No
+No
+No
+No
+Yes (Thm. 5.7)
+Failure resilience
+Partial
+No
+No
+No
+Yes (Prop. 5.4)
+Formal Guarantees
+Semantic coherence
+Partial
+No
+No
+Yes (under model)
+Yes (Thm. 5.2)
+Temporal bisimulation
+No
+No
+No
+No
+Yes (Thm. 5.13)
+Probabilistic coherence
+No
+No
+No
+No
+Yes (Thm. 5.21)
+Global property completeness
+No
+No
+No
+No
+Yes (Thm. 12)
+Almost-sure slice convergence
+No
+No
+No
+No
+Yes (Thm. 5.28)
+Scalability
+Minimal communication
+No
+No
+No
+No
+Yes (Thm. 5.9)
+Message complexity
+\mathcal{O}(n)
+\mathcal{O}(n)
+\mathcal{O}(n)
+\mathcal{O}(n)
+\Theta(d)
+3. Core Constructs
+To formalize slice-scoped interaction in multi-agent systems, we begin by introducing the constructs that determine how agents access shared semantic memory and validate the updates they propose. Together, these define the structure of memory access and observation, and they govern how updates are checked and propagated in a decentralized setting. They form the foundation for the formal results in Section 5 and are later instantiated in a concrete system for empirical validation (Section 4).
+3.1. Ontologies and Semantic Memory
+At the heart of this framework is a global ontology \mathcal{O} that
+defines the system’s conceptual universe: types, relationships, constraints,
+and inheritance structure. It acts as both a schema and a constraint system
+for all memory evolution.
+The shared semantic memory \mathcal{M}(t) at time t is a set of grounded,
+ontology-compliant statements reflecting the current state of the world as
+known to the system. Unlike message logs or static knowledge graphs, this memory is evolving and validated, and agents interact with it through slice-scoped projections rather than as a passive store.
+3.2. Ontology Slices and Semantic Projections
+To support modularity and decentralization, every agent a\in A is granted
+an ontology slice O_{a}\subseteq O that bounds the semantic entities it may
+read from or write to in the shared memory. The agent may reason over
+additional private state, but any update that crosses the shared boundary
+must validate against O_{a} .
+Definition 3.1 (Memory Projection).
+Given a global memory \mathcal{M}(t) and an ontology slice O_{a} , the memory
+projection for agent a is
+\pi_{O_{a}}(\mathcal{M}(t))=\{s\in\mathcal{M}(t)\mid\mathrm{dom}(s)\in O_{a}\},
+where \mathrm{dom}(s) is the root entity of the statement. This projection
+isolates the portion of the shared state relevant to agent a .
+Definition 3.2 (Semantic Slice).
+At time t , the agent’s local view is the semantic slice
+S_{a}(t)=(O_{a},M_{a}(t)),\qquad M_{a}(t)\subseteq\pi_{O_{a}}(\mathcal{M}(t^{\prime}))
+for some t^{\prime}\leq t . The local memory M_{a}(t) may lag the global projection
+due to asynchronous refresh propagation. This decoupling is what enables
+coordination without strict synchronization.
+3.3. Update Proposals and Validation
+Agents coordinate by reasoning over their current slice and proposing ontology-governed updates that reflect intended or observed changes.
+Physical actions may occur independently, but any effects an agent chooses to represent in shared memory must be introduced through subsequent validated update proposals.
+Definition 3.3 (Update Proposal).
+A structured proposal P_{a} is a partial function
+P_{a}:S_{a}(t)\rightarrow\Delta S_{a}
+mapping the agent’s current slice to a proposed set of changes \Delta S_{a} .
+Not all proposals are safe or meaningful. To maintain semantic coherence, all
+updates must be validated against the shared ontology.
+Definition 3.4 (Validation).
+A proposal P_{a} is valid if
+\mathcal{O}\vdash P_{a}.
+Only validated updates \Delta S_{a}^{\mathrm{valid}} may be integrated into
+\mathcal{M}(t) .
+This guarantee holds regardless of whether an agent’s internal decision mechanism is symbolic, learned, or generative, because only ontology-conformant, locally validated updates enter the global state. The ontology acts as a
+semantic gatekeeper for decentralized coordination.
+3.4. Refresh Propagation and Scoped Synchronization
+Once an update has been validated and incorporated into shared memory, the
+framework ensures that refresh notifications are scoped to agents whose
+slices intersect the modified entities, while agents with no overlap remain
+unaffected.
+Definition 3.5 (Refresh Notification).
+Let \Delta S_{a} be a validated update from agent a . The refresh
+notification is
+\tau(\Delta S_{a})\rightarrow\mathcal{E},
+where \mathcal{E} is the set of modified entities. Agents with O_{b}\cap\mathcal{E}\neq\varnothing may retrieve and locally revalidate \Delta S_{a} .
+Remark 1.
+In the deterministic semantics, all agents implement the same
+ontology-scoped validation predicate V restricted to their slices.
+Consequently, if a validated update \Delta S_{a} is retrieved by any agent
+whose slice intersects its scope, slice-local revalidation succeeds; the
+failure case is excluded by assumption. Local revalidation remains part of
+the semantics because safety is enforced slice-locally: agents do not have
+global state and must independently confirm that an update is admissible
+for their slice.
+In the probabilistic extension and in practical deployments, validators
+may be imperfect, stale, or approximate, and an agent may occasionally
+reject a globally valid update. In such cases the agent performs a semantic
+stutter step, leaving its local memory unchanged. Theorems 5.24 and 5.25
+establish that such disagreements are transient with high probability.
+This selective refresh mechanism ensures that agents synchronize only on
+changes relevant to their semantic domain. It enables causal isolation,
+bounded communication, and eventual slice convergence without central
+coordination.
+3.5. Constructive Summary
+These constructs define more than a vocabulary; they specify a coherent model for decentralized semantic reasoning. Ontology slices shape how each agent contributes to shared state by constraining how perceptions are represented and integrated. Semantic slices track local memory as it evolves through selectively accepted updates. Structured proposals capture intended changes, and validation enforces their coherence with system-wide rules. Refresh propagation maintains relevance without requiring global synchronization. The framework imposes no requirements on an agent’s internal policy; it constrains only the structure and admissibility of the updates the agent contributes.
+This model reframes coordination by grounding interaction in ontology-scoped memory rather than direct belief exchange. By constraining how meaning evolves, it enables formal reasoning, modular verification, and traceable coordination. Although ontology-governed memory may restrict expressivity, it provides the structure needed for rigorous correctness claims in decentralized settings. Future work may examine hybrid designs that incorporate both structured and unstructured state, permitting selective relaxation while preserving global guarantees.
+The full formal model comprising these constructs is referred to as Semantic
+Fusion (SF) throughout this paper. In Section 4 we
+instantiate these constructs in a lightweight reference system, not as the
+core contribution but as a confirming mechanism that demonstrates the model’s
+operational feasibility under realistic conditions.
+4. Reference Architecture: An Instantiation of Semantic Fusion (SF)
+To assess the operational feasibility of the Semantic Fusion (SF) model, we implemented a lightweight reference system that instantiates SF’s core constructs: scoped slices, local validation, and selective refresh. The architecture provides an executable realization of the model’s semantics and enables empirical confirmation of its behavior under asynchronous, dynamic conditions. The architecture describes a shared-memory abstraction for convenience, but the semantics do not depend on a centralized memory structure. Any architecture that preserves slice-scoped validation and refresh induces the global semantics.
+4.1. Agent Architecture
+Each agent comprises three modular subsystems aligned with the formal model. The slice manager maintains the agent’s scoped semantic slice
+S_{a}(t)=(O_{a},M_{a}(t)) , processes refresh notifications, and determines which entities fall within the agent’s ontology-restricted view. The inference engine performs local reasoning over M_{a}(t) using arbitrary internal mechanisms (e.g. symbolic rules, probabilistic policies, or hybrid decision logic). The update generator constructs structured update proposals P_{a} and applies ontology-scoped validation; if O\vdash P_{a} , the update is integrated and triggers a refresh notification to relevant peers.
+Agents operate fully asynchronously and without centralized coordination. No global clock or ordering primitive is assumed; semantic alignment emerges through slice-scoped interaction with shared memory. A schematic overview is provided in Figure 1.
+Figure 1. Reference architecture instantiating Semantic Fusion (SF).
+Agents operate over scoped semantic slices, proposing and validating structured updates to shared semantic memory.
+Coherence and coordination arise from ontology-scoped validation and refresh propagation rather than explicit messaging or global control.
+4.2. Lifecycle and Communication
+Each agent follows an asynchronous execution loop. Upon receiving a refresh notification, the slice manager determines whether the referenced entities intersect its slice; if so, the agent selectively retrieves the corresponding update, re-validates it, and integrates it into local memory. All reasoning occurs over the slice S_{a}(t) , enabling the agent to infer goals or generate proposals based solely on ontology-scoped information.
+When an agent generates a valid update proposal, it commits the change locally and issues a scoped notification containing only the identifiers of the modified entities. Agents whose slices intersect those identifiers pull and validate the update independently. This selective mechanism minimizes communication, enforces causal isolation (Theorem 5.7), and preserves the trace semantics needed for local–global bisimulation.
+The reference prototype implements a minimal scoped-delivery mechanism sufficient to realize the semantics of update propagation and retrieval described here. More sophisticated dissemination strategies, such as content-based publish/subscribe systems, could be used in practical deployments, but lie outside the scope of this work. See Appendix B for a high-level outline of the execution algorithm.
+4.3. Hybrid Reasoning and Validation
+The reference architecture is agnostic to the agent’s internal reasoning strategy.
+Agents may employ symbolic logic, probabilistic decision modules, or learning-based components.
+All proposals, however, pass through the same ontology-scoped validation interface before integration.
+This decoupling enables heterogeneous agents to operate over a shared semantic substrate while maintaining safety. To accommodate stochastic or uncertain proposal mechanisms, agents may employ probabilistic validators as formalized in Theorem 5.25, allowing uncertain proposals to be handled in a principled way while preserving semantic guarantees.
+4.4. Architecture Summary
+The SF reference architecture provides a concrete instantiation of the theoretical model presented in Section 3.
+It supports asynchronous execution and enforces ontology-scoped validation with selective refresh. The architecture is not intended to optimize performance; its role is to show that constrained semantic reasoning can be realized in a decentralized setting and that the resulting system behavior matches the formal analysis. The guarantees developed in the next sections are then exercised empirically in a dynamic multi-agent simulation.
+5. Formal Model and Properties
+This section develops the formal model of Semantic Fusion. We show that decentralized agents operating over constrained projections of shared state can maintain global coherence and behavioral alignment through structured updates and local validation, without centralized coordination. The results indicate that ontology-scoped memory interaction is sufficient to sustain the global invariants required for correctness.
+We organize the results into three families:
+•
+Deterministic guarantees: semantic coherence, slice convergence, causal isolation, and communication bounds;
+•
+Behavioral equivalence: a slice-global stuttering bisimulation that supports modular temporal reasoning;
+•
+Probabilistic guarantees: probabilistic bisimulation of agent executions and resilience to imperfect update validation.
+Theorems 5.2-
+5.21 assume reliable scoped delivery (Assumption S2, Appendix A.1), as would be enforced by a publish-subscribe infrastructure or reliable multicast. Theorem 5.28 relaxes this to probabilistic delivery with i.i.d. drop behavior and proves eventual convergence.
+Each result is stated and sketched in this section. Full derivations and proofs of key theorems are provided in Appendix A. We distinguish between foundational system guarantees (labeled as Theorems), derived consequences (Corollaries), helper results (Lemmas), and structural or performance-related invariants (Propositions).
+5.1. Preliminaries and Notation
+We consider a system of autonomous agents \mathcal{A}=\{a_{1},a_{2},\ldots,a_{n}\} operating over a shared semantic memory \mathcal{M}(t) , structured according to a global ontology \mathcal{O} . Each agent a\in\mathcal{A} maintains a local memory M_{a}(t) , scoped by an ontology slice O_{a}\subseteq\mathcal{O} . Ontological semantics, slice construction, projections, update proposals, and refresh protocols are defined in Section 3. The symbols used in this section are summarized in Table 2.
+Table 2. Core Notation for Semantic Fusion Formal Model
+Agents and Ontology
+A=\{a_{1},a_{2},\dots,a_{n}\}
+Set of autonomous agents
+\mathcal{U}
+Universe of semantic entities
+\mathcal{O}
+Global ontology over \mathcal{U}
+O_{a}\subseteq\mathcal{O}
+Ontology slice of agent a
+Memory and State
+\mathcal{M}(t)
+Global semantic memory at time t
+M_{a}(t)
+Local memory of agent a
+\pi_{O_{a}}(\mathcal{M})
+Projection of \mathcal{M} onto O_{a}
+S_{a}(t)=(O_{a},M_{a}(t))
+Semantic slice of agent a
+Updates and Execution
+P_{a}
+Structured update proposals by agent a
+\Delta S_{a}
+Proposed modifications
+\Delta S_{a}^{\text{valid}}
+Ontology-validated update
+\tau(\Delta S_{a})
+Refresh notification for affected entities
+\gamma_{a}
+Probabilistic update generator for agent a
+Labeled Transition Systems
+\mathcal{G}
+Global LTS over \mathcal{M}(t)
+\mathcal{T}_{a}
+Agent a ’s local LTS over M_{a}(t)
+\mathcal{G}|_{O_{a}}
+Projection of \mathcal{G} onto O_{a}
+5.2. Deterministic Guarantees
+We begin by establishing that the system preserves semantic coherence over time, provided that all updates are validated against the shared ontology before integration.
+Lemma 5.1 (Eventual Delivery of Scoped Updates).
+Let \Delta S_{b}\subseteq\mathcal{M}(t) be a validated update, and let a be an agent with ontology slice O_{a}\subseteq\mathcal{O} . If \text{dom}(\Delta S_{b})\cap O_{a}\neq\varnothing , then:
+(1)
+\quad\exists t^{\prime}\geq t\quad\text{such that}\quad\Delta S_{b}\subseteq M_{a}(t^{\prime})\subseteq\pi_{O_{a}}(\mathcal{M}(t^{\prime})).
+This lemma assumes reliable refresh propagation and does not apply under probabilistic delivery, which is handled separately in Theorem 5.28.
+Proof Sketch.
+Since O_{a}\cap\mathrm{dom}(\Delta S_{b})\neq\emptyset , a refresh notification is eventually delivered to agent a by design. Upon receiving it, a retrieves and integrates \Delta S_{b} after local validation, ensuring M_{a}(t^{\prime})\subseteq\pi_{O_{a}}(\mathcal{M}(t^{\prime}) for some finite t^{\prime}\geq t .
+∎
+Theorem 5.2 (Monotonic Semantic Coherence).
+If all structured updates are validated against the ontology \mathcal{O} prior to integration, then at all times t , the global memory \mathcal{M}(t) remains consistent with \mathcal{O} .
+Formally:
+(2)
+\forall t,\quad\mathcal{O}\vdash\mathcal{M}(t)
+Proof Sketch.
+Since \mathcal{M}(0) is \mathcal{O} -consistent and each integrated update \Delta S_{a}^{\text{valid}} satisfies \mathcal{O}\vdash\Delta S_{a}^{\text{valid}} , consistency is preserved inductively: \mathcal{O}\vdash\mathcal{M}(t) for all t .
+∎
+Corollary 5.3 (Slice Validity Preservation).
+If \mathcal{M}(t^{\prime}) is consistent with \mathcal{O} for all t^{\prime}\leq t , then every agent’s semantic slice S_{a}(t) is consistent with \mathcal{O} .
+Formally:
+(3)
+\forall a\in\mathcal{A},\quad\exists t^{\prime}\leq t\quad\text{such that}\quad M_{a}(t)\subseteq\pi_{O_{a}}(\mathcal{M}(t^{\prime}))\quad\text{and}\quad\mathcal{O}\vdash S_{a}(t)
+Proof Sketch.
+By Theorem 5.2, \mathcal{M}(t^{\prime}) is \mathcal{O} -consistent for all t^{\prime}\leq t . Since M_{a}(t)\subseteq\pi_{O_{a}}(\mathcal{M}(t^{\prime})) and projection preserves \mathcal{O} -consistency over O_{a}\subseteq\mathcal{O} , we have \mathcal{O}\vdash S_{a}(t) .
+∎
+5.2.1. Fault Tolerance and Containment
+We next examine how the system behaves under partial failure, showing that agent-level faults are contained locally and do not compromise global consistency.
+Proposition 5.4 (Localized Failure Containment).
+If an agent a\in\mathcal{A} fails at time t_{f} , only its semantic slice S_{a}(t_{f}) and pending updates are lost. The global memory \mathcal{M}(t) and the slices of all other agents remain consistent with \mathcal{O} .
+Formally:
+(4)
+\forall b\in\mathcal{A}\setminus\{a\},\quad\mathcal{O}\vdash S_{b}(t)\quad\text{for all }t\geq t_{f}
+Proof Sketch.
+Since \mathcal{M}(t) is composed of validated updates, failure of agent a affects only its local slice S_{a}(t) and any pending proposals. The global memory \mathcal{M}(t) and unaffected agents’ slices remain \mathcal{O} -consistent.
+∎
+5.2.2. Convergence and Synchronization
+We now show that, in the absence of new updates and under reliable communication, agents eventually synchronize their semantic slices with the stable global memory.
+Corollary 5.5 (Quiescence under No New Updates).
+Given lemma 5.1 and assuming no new updates occur after time t_{0} , all refresh notifications and necessary agent-to-agent retrievals complete within finite time.
+Formally:
+(5)
+\exists T>t_{0}\quad\text{such that}\quad\forall a\in\mathcal{A},\quad\text{all }\tau(\Delta S_{a})\text{ and agent\text{-}to\text{-}agent retrievals complete by }T
+Proof Sketch.
+Since no new updates occur after t_{0} , only finitely many refresh notifications are issued. By Lemma 5.1, each relevant notification and retrieval completes within finite time, yielding global communication quiescence by some T>t_{0} .
+∎
+Theorem 5.6 (Slice Convergence).
+Assume Lemma 5.1 and that no new updates are committed after time t_{0} .
+Then for every agent a\in A , there exists a finite time T^{\prime}\geq t_{0} such that
+(6)
+M_{a}(T^{\prime})=\pi_{O_{a}}\bigl(\mathcal{M}(t_{0})\bigr)\quad\text{and}\quad M_{a}(t)=M_{a}(T^{\prime})\quad\text{for all }t\geq T^{\prime}.
+Proof Sketch.
+Since no new updates occur after t_{0} , the global memory stabilizes to \mathcal{M}(t_{0}) .
+By Lemma 5.1 and Corollary 5.5, all relevant refresh notifications and retrievals complete within finite time.
+Assuming agents integrate received updates without loss or reordering,
+each local memory M_{a}(t) converges to \pi_{O_{a}}\bigl(\mathcal{M}(t_{0})\bigr) by some finite time T^{\prime} .
+Thereafter, no further changes occur.
+∎
+5.2.3. Ontology-Scoped Causal Isolation
+Semantic Fusion guarantees that agents are unaffected by updates involving entities outside their scoped ontology. This yields strong modularity and reduces unnecessary memory turnover.
+Theorem 5.7 (Ontology-Scoped Causal Isolation).
+If \text{dom}(s)\notin O_{a} for all s\in\Delta S_{b} , then:
+(7)
+\tau(\Delta S_{b})\cap O_{a}=\varnothing\quad\Rightarrow\quad M_{a}(t+1)=M_{a}(t)
+Proof Sketch.
+If \mathrm{dom}(\Delta S_{b})\cap O_{a}=\emptyset , no refresh notification is received by agent a , so M_{a}(t+1)=M_{a}(t) .
+∎
+5.2.4. Communication Complexity
+Finally, we analyze the communication overhead associated with update propagation, showing that the system achieves bounded complexity relative to the number of impacted agents.
+Proposition 5.8 (Bounded Communication Complexity).
+Assume that refresh notifications \tau(\Delta S_{a}) are disseminated with negligible overhead compared to agent-to-agent retrievals. Let d be the number of agents whose semantic slices intersect the updated entities. Then each validated update incurs O(d) communication overhead, independent of the total number of agents.
+Formally:
+(8)
+\text{Communication Cost}=O(d)
+Proof Sketch.
+Each validated update \Delta S_{a}^{\text{valid}} triggers lightweight refresh notifications identifying the modified entities. Only agents with slice overlap ( O_{b}\cap\mathrm{dom}(\Delta S_{a})\neq\varnothing ) perform retrievals. Since retrievals dominate communication cost, and occur for at most d agents, total communication is O(d) per update. (e.g., O(n) broadcast still yields O(d) dominant cost under scoped pulls).
+∎
+Theorem 5.9 (Lower Bound on Communication under Scoped Validation).
+Let an update \delta\in\Delta S_{a} affect a set of semantic entities \mathcal{E}\subseteq\mathcal{U} , and let d be the number of agents whose semantic slices intersect with \mathcal{E} . Then in the worst case, any protocol that preserves ontology-scoped validity must incur at least \Omega(d) communication events.
+Proof Sketch.
+Let \mathcal{E} be a set of entities such that each of the d agents has a nonempty intersection with \mathcal{E} .
+To preserve slice validity, each agent with O_{b}\cap\mathcal{E}\neq\varnothing must observe the update \delta\in\Delta S_{a} .
+If fewer than d agents receive or retrieve \delta , some slice will fail to integrate a valid scoped update, violating Lemma 5.1.
+Thus, \Omega(d) communication is necessary.
+∎
+Corollary 5.10 (Tightness of Upper Bound).
+The O(d) communication bound established in Proposition 5.8 is asymptotically tight. The system achieves the minimum message complexity consistent with ontology-scoped semantic coherence.
+Proof Sketch.
+Proposition 5.8 shows O(d) upper bound per update, and Theorem 5.9 shows matching \Omega(d) lower bound.
+Thus, message complexity is \Theta(d) , and the bound is asymptotically tight.
+∎
+Remark 2.
+Each relevant agent must observe the update to validate or apply it, so \Theta(d) communication is unavoidable in the worst case. Implementations can achieve this bound using lightweight, non-duplicating notifications followed by scoped pulls.
+Summary.
+Together, Theorems 5.2 through 5.6 establish that under reliable delivery and ontology-conformant updates, each agent’s slice remains semantically coherent, aligned with relevant changes, and eventually converges to a consistent view of the global memory, without requiring centralized coordination or full synchronization.
+Nonetheless, decentralization does not imply the elimination of all information flow, but rather the removal of centralized coordination and direct inter-agent negotiation. In Semantic Fusion, semantic coherence is preserved through structured, ontology-scoped refresh notifications, which incur only \Theta(d) communication overhead—the minimum necessary for correctness (Theorem 5.10). Without such bounded, scoped propagation, no decentralized system could maintain coherent shared semantic memory.
+5.3. Behavioral Equivalence
+We now formalize the relationship between an agent’s local memory evolution and the evolution of its projected global state over time. To do so, we model both the global memory and each agent’s local memory as labeled transition systems (LTSs), which capture the sequence of update-induced state changes.
+Definition 5.11 (Projected Global LTS).
+Let \mathcal{G}=(Q,\rightarrow) be the labeled transition system over global memory states \mathcal{M}(t) , where each transition corresponds to the integration of a validated update \Delta S_{a}^{\text{valid}} . The projection \mathcal{G}\!\mid_{O_{a}} is the LTS over projected states \pi_{O_{a}}(\mathcal{M}(t)) , with transitions restricted to updates involving entities in O_{a} .
+Definition 5.12 (Agent Execution LTS).
+Let \mathcal{T}_{a}=(Q_{a},\Rightarrow) be the transition system over local memory states M_{a}(t) for agent a , where transitions arise from (i) locally generated validated proposals and (ii) integration of relevant refresh-triggered updates.
+Theorem 5.13 (Slice-Global Semantic Bisimulation).
+By Lemma 5.1 and Assumption S3 (see Appendix A.1), there exists a stuttering bisimulation relation \mathcal{R}_{a}\subseteq Q_{a}\times\pi_{O_{a}}(Q) such that:
+(9)
+\exists\,t^{\prime}\leq t\;:\;\bigl(M_{a}(t),\;\pi_{O_{a}}\!\bigl(M(t^{\prime})\bigr)\bigr)\;\in R_{a}.
+That is, the agent’s local execution is stuttering bisimilar to its scoped projection of the global execution:
+(10)
+\mathcal{T}_{a}\;\dot{\sim}_{\text{st}}\;\mathcal{G}\!\mid_{O_{a}}.
+Proof Sketch.
+Initially, M_{a}(0)=\pi_{O_{a}}(\mathcal{M}(0)) .
+Each local transition is either a validated proposal (reflected globally) or integration of a scoped update already committed to \mathcal{M}(t^{\prime}) for some t^{\prime}\leq t .
+By Lemma 5.1, all slice-relevant updates eventually propagate, ensuring M_{a}(t) remains stuttering bisimilar to \pi_{O_{a}}(\mathcal{M}(t^{\prime})) .
+Updates outside O_{a} are ignored locally, preserving alignment.
+Forth and back conditions hold; see Appendix A.1 for full construction.
+∎
+Remark 3.
+This result establishes the first formal bridge from local semantic slices to the projected global memory, showing that decentralized agents can reason over their scoped memory without violating global correctness. It implies that the union of local slices, each bisimilar to its respective global projection, collectively captures the behavior of the full system. The global memory need not exist as a central structure: its semantics are preserved in the distributed ensemble of slice-local executions.
+It enables modular verification, local model checking, and runtime monitoring with global semantic alignment.
+Corollary 5.14 (Temporal Property Preservation).
+Let \varphi be any temporal logic formula (LTL or CTL*) over entities in O_{a} . If the projected global execution satisfies \varphi , i.e., \mathcal{G}|_{O_{a}}\models\varphi , then the agent’s local execution satisfies it as well:
+(11)
+\mathcal{T}_{a}\models\varphi.
+That is, semantic properties verified over the global projection are preserved under local execution.11
+1
+For CTL∗, stuttering preservation holds for all formulas
+that do not use the next-state operator X ; see
+(Kupferman et al., 2000) for details.
+Proof Sketch.
+By Lemma 5.1 and Theorem 5.13, projected global transitions over O_{a} eventually appear in M_{a}(t) .
+Stuttering bisimulation preserves satisfaction of all LTL and CTL* \setminus {X} formulas (Kupferman et al., 2000), so if \mathcal{G}|_{O_{a}}\vDash\varphi , then \mathcal{T}_{a}\vDash\varphi .
+∎
+Theorem 5.15 (Slice–Local Completeness for Safety Properties).
+Let \varphi be any safety property expressible in temporal logic over semantic entities in \mathcal{O} . Suppose each agent a\in A operates over an ontology slice O_{a}\subseteq\mathcal{O} , and the family \{O_{a}\}_{a\in A} covers \mathcal{O} . If every agent’s execution trace satisfies \varphi locally, then the global execution over \mathcal{M}(t) satisfies \varphi as well.
+(12)
+\forall a\in A,\ \mathcal{T}_{a}\models\varphi\quad\Rightarrow\quad\mathcal{G}\models\varphi
+Proof Sketch.
+Suppose, for contradiction, that the global execution \mathcal{G} violates the safety property \varphi .
+Then there exists a finite bad prefix \pi=\mathcal{G}(0),\ldots,\mathcal{G}(k) that violates \varphi .
+Since \{O_{a}\}_{a\in A} covers \mathcal{O} , some agent a^{*} has a slice O_{a^{*}} intersecting \pi .
+Projecting \pi onto O_{a^{*}} yields a trace that still violates \varphi .
+By Theorem 5.13, \mathcal{T}_{a^{*}} is stuttering bisimilar to this projection, so \mathcal{T}_{a^{*}}\nvDash\varphi , contradicting the premise.
+Thus, \mathcal{G}\vDash\varphi . Full proof in A.3.
+∎
+Summary.
+The bisimulation result (Theorem 5.13) formally connects local slice memory to projected global behavior. Temporal logic formulas (e.g., CTL*, LTL) that hold on the global trace also hold locally, enabling modular verification and decentralized runtime monitoring. Slice-local Completeness (Theorem 12) establishes that global safety can be verified slice-by-slice: if every agent satisfies the property over its scoped projection, the entire system satisfies it globally. The full proof appears in Appendix A.3.
+5.4. Probabilistic Guarantees
+We now extend the previous results to agents whose update proposals may be sampled from distributions conditioned on their current slices, such as agents driven by probabilistic planners or incorporating LLM-based components. Each agent proposes updates by sampling from a distribution conditioned on its current slice, and transitions are represented using probabilistic labeled transition systems (pLTSs). We show that local and projected global executions remain probabilistically bisimilar under slice-scoped validation and reliable refresh.
+We begin by defining a probabilistic generalization of the update process and execution model introduced earlier.
+Definition 5.16 (Probabilistic Update Generator).
+Let \gamma_{a}:S_{a}(t)\rightarrow\mathsf{Dist}(\mathsf{P}_{a}) be a probabilistic
+update generator for agent a , where \mathsf{P}_{a}\subseteq\Delta S_{a} is the agent’s set
+of candidate proposals. Given the current slice S_{a}(t) , the generator returns a
+discrete distribution over \mathsf{P}_{a} . Invalid proposals are filtered by ontology
+validation, yielding \Delta S_{a}^{\text{valid}} .
+Definition 5.17 (Probabilistic LTS).
+A probabilistic labeled transition system (pLTS) is a tuple \mathcal{P}=(Q,\xrightarrow{\alpha},\mathcal{L}_{\mathsf{p}}) , where:
+Q is a set of states,
+\xrightarrow{\alpha}\subseteq Q\times\mathsf{Dist}(Q) is a labeled probabilistic transition relation,
+\mathcal{L}_{\mathsf{p}}:Q\rightarrow\mathrm{Val} is a labeling function assigning semantic truth valuations. Here, Val denotes the set of possible mappings from ontology entities to their current values or truth states.
+The transition label \alpha may denote different types of activity, such as update proposals (prop) or refresh-triggered state changes (sync).
+Definition 5.18 (Projected Global pLTS).
+Let \mathcal{P}_{G}=(Q^{\mathsf{p}},\xrightarrow{},\mathcal{L}_{G}^{\mathsf{p}}) denote the probabilistic labeled transition system (pLTS) over global memory states \mathcal{M}(t) , where each transition corresponds to the integration of a validated update \Delta S_{b}^{\text{valid}} . Here, \mathcal{L}_{G}^{\mathsf{p}}:Q^{\mathsf{p}}\to\mathsf{Val} is the labeling function that assigns semantic valuations over ontology entities.
+The projection \mathcal{P}_{G}\!\mid_{O_{a}} is the pLTS over the projected memory \pi_{O_{a}}(\mathcal{M}(t)) , with transitions restricted to updates involving entities within the slice O_{a} .
+Definition 5.19 (Agent Execution pLTS).
+Let \mathcal{P}_{a}=(Q_{a}^{\mathsf{p}},\xrightarrow{},\mathcal{L}_{a}^{\mathsf{p}}) denote the probabilistic labeled transition system (pLTS) over local memory states \mathcal{M}_{a}(t) for agent a .
+Here, \mathcal{L}_{a}^{\mathsf{p}}:Q_{a}^{\mathsf{p}}\to\mathsf{Val} is the labeling function that assigns semantic valuations over entities in the agent’s ontology slice O_{a} .
+Transitions in \mathcal{P}_{a} arise from:
+i) Probabilistically sampled update proposals drawn from the agent’s update generator \gamma_{a} (prop), and
+ii) Integration of externally validated updates received through scoped refresh propagation (sync).
+Definition 5.20 (Probabilistic Bisimulation).
+A relation \mathcal{R}_{a}^{\mathsf{p}}\subseteq Q_{a}^{\mathsf{p}}\times Q^{\mathsf{p}} is a probabilistic bisimulation if, whenever (q_{a},q_{G})\in\mathcal{R}_{a}^{\mathsf{p}} :
+\mathcal{L}_{a}^{\mathsf{p}}(q_{a})=\mathcal{L}_{G}^{\mathsf{p}}(q_{G}) , and
+for every transition q_{a}\xrightarrow{\alpha}\mu_{a} , there exists q_{G}\xrightarrow{\alpha}\mu_{G} such that \mu_{a} and \mu_{G} admit a coupling with support in \mathcal{R}_{a}^{\mathsf{p}} , and vice versa (Segala and Lynch, 1994).
+Remark 4.
+In the case of validated refresh updates, the transition is deterministic. We denote this using a Dirac delta distribution \delta_{x} , representing a probability mass concentrated at state x .
+Theorem 5.21 (Probabilistic Slice–Global Bisimulation).
+Under slice-conditioned update generation, Assumption S3 (Appendix A.1), and Lemma 5.1, there exists a probabilistic bisimulation relation \mathcal{R}^{p}_{a}\subseteq Q^{p}_{a}\times Q^{p} such that:
+(13)
+\exists\,t^{\prime}\leq t\;:\;\bigl(M_{a}(t),\;\pi_{O_{a}}\!\bigl(M(t^{\prime})\bigr)\bigr)\;\in\mathcal{R}^{p}_{a}.
+That is, the agent’s probabilistic local execution is bisimilar to the projection of the global probabilistic execution over its ontology slice:
+(14)
+\mathcal{P}_{a}\;\sim_{\text{pbis}}\;\mathcal{P}_{G}|_{O_{a}}.
+Proof Sketch.
+Each proposal u\in P_{a} sampled by \gamma_{a}(S_{a}(t)) with probability p_{u} yields a local transition with matching probability.
+If validated, u is integrated into \mathcal{M}(t^{\prime}) and reflected in \pi_{O_{a}}(\mathcal{M}(t^{\prime})) .
+Refresh propagation (Lemma 5.1) ensures that external updates synchronize locally.
+A probabilistic coupling, \kappa , between transitions maintains bisimulation; see (Segala and Lynch, 1994) for full construction. Full proof in Appendix A.2.
+∎
+Remark 5.
+This result generalizes slice-global semantic bisimulation to the case where update proposals may vary across invocations. It enables compositional verification and slice-local monitoring in hybrid systems with probabilistic reasoning. This relation is visualized in Figure 2, which illustrates the alignment of local and global transitions under the bisimulation relation (Segala and Lynch, 1994).
+Figure 2. Probabilistic bisimulation between an agent’s local memory execution and its projected global memory slice under probabilistic update generation and refresh synchronization. The sync transition is depicted as aligning the agent’s memory with the global projection at time t{+}1 for illustrative clarity. In general, however, an agent’s local memory may lag, and the corresponding global state reflected in its slice may have been committed at an earlier time t^{\prime}\leq t{+}1 , consistent with Theorem 5.21
+Corollary 5.22 (Probabilistic Temporal Property Preservation).
+Let \varphi be any PCTL* formula over entities in O_{a} that does not use the next-state operator X .
+If the projected global execution satisfies \Pr_{\geq p}[\varphi] , then so does the local agent execution:
+(15)
+\mathcal{P}_{G}|_{O_{a}}\models\Pr_{\geq p}[\varphi]\quad\Longrightarrow\quad\mathcal{P}_{a}\models\Pr_{\geq p}[\varphi].
+Proof Sketch.
+By Theorem 5.21, \mathcal{P}_{a} and \mathcal{P}_{G}|_{O_{a}} are related by probabilistic bisimulation.
+Probabilistic bisimulation preserves satisfaction of PCTL* \setminus {X} formulas (Baier and Katoen, 2008), so the satisfaction probability of \varphi matches between local and global executions.
+∎
+Corollary 5.23 (Probabilistic Slice–Local Completeness).
+Let \varphi be any safety property expressible over ontology O , and suppose the family \{O_{a}\}_{a\in A} covers \mathcal{O} .
+If every agent execution \mathcal{P}_{a} satisfies \Pr_{\geq p}[\varphi] , then the global execution \mathcal{P}_{G} satisfies \Pr_{\geq p}[\varphi] as well:
+(16)
+\forall a\in A,\quad\mathcal{P}_{a}\models\Pr_{\geq p}[\varphi]\quad\Longrightarrow\quad\mathcal{P}_{G}\models\Pr_{\geq p}[\varphi].
+Proof Sketch.
+Suppose, for contradiction, that \mathcal{P}_{G} violates \varphi with probability exceeding 1-p .
+By slice coverage and Theorem 5.21, some agent’s execution \mathcal{P}_{a} must also reflect a violation with probability exceeding 1-p , contradicting the premise.
+Thus, \mathcal{P}_{G}\vDash\text{Pr}_{\geq p}[\varphi] .
+∎
+Probabilistic Validation (Optional Extension)
+In practical deployments, updates may originate from modules whose outputs
+exhibit variability or uncertainty (for example, some learned and
+data-driven models), which can generate proposals that are syntactically
+correct but semantically invalid. To reflect this, we introduce a notion
+of probabilistic validation. Let \theta denote a proposed
+structured update (which may be valid or invalid).
+Definition 5.24 (Probabilistic Local Validator).
+Let \varepsilon_{a} denote the probability that agent a incorrectly
+accepts an invalid proposal \theta (false acceptance).
+Let \xi_{a} denote the probability that agent a incorrectly rejects
+a valid proposal (false rejection). Then:
+\Pr[\text{accept }\theta\mid\theta\text{ invalid}]=\varepsilon_{a},\qquad\Pr[\text{reject }\theta\mid\theta\text{ valid}]=\xi_{a}.
+If each agent a has \varepsilon_{a}\ll 1 , and update proposals are
+independently validated by all agents whose ontology slices intersect the
+affected entities, then the probability that an invalid update is
+incorrectly reflected in global memory \mathcal{M}(t) becomes
+exponentially small in the number of such overlapping validators.
+Theorem 5.25 (Probabilistic Global Coherence).
+Suppose each invalid proposal is accepted locally with probability at most
+\varepsilon_{\max} , and must be independently validated by r agents
+(including the proposer). Then the probability that an invalid proposal is
+committed to \mathcal{M}(t) is at most (\varepsilon_{\max})^{r} :
+(17)
+\Pr[\theta\text{ invalid and committed to }\mathcal{M}(t)]\leq(\varepsilon_{\max})^{r}.
+Proof Sketch.
+Let \theta be an invalid update proposed by agent a . Each of the r
+validators—the originator and all agents whose slices intersect its
+scope—accepts it with probability at most \varepsilon_{\max} . The
+validators act independently, so the joint probability is at most
+(\varepsilon_{\max})^{r} .
+∎
+A false rejection only harms the rejecting agent: if an agent incorrectly rejects a
+valid update (a false rejection), it performs a semantic stutter step
+M_{b}(t+1)=M_{b}(t) , which constitutes a locally absorbing non-update. Such
+local rejections do not modify global memory and do not affect the
+probabilistic consistency guarantees of Theorem 5.25.
+Remark 6.
+This result extends monotonic semantic coherence
+(Theorem 5.2) to settings with imperfect
+validators. Even without centralized coordination, the system remains
+resilient: an invalid update must be simultaneously accepted by all
+validators to corrupt global memory. The probability of total semantic
+corruption decays exponentially with the number of validators. This becomes
+particularly relevant when agents rely on probabilistic or learned modules,
+including LLM-based components, whose outputs are not guaranteed to satisfy
+all semantic constraints in every instance.
+Example 5.26.
+Illustration.
+Suppose \varepsilon_{\max}=0.02 and r=3 overlapping validators.
+Then the probability of a globally committed invalid update is at most
+(0.02)^{3}=8\times 10^{-6} .
+Summary.
+Theorems 5.21 and 5.25 provide
+probabilistic guarantees on semantic coherence: independent slice-local
+validators reduce the probability of an invalid update entering shared
+memory, ensuring reliable state evolution even when proposal generation is
+nondeterministic.
+5.5. Dynamic Semantic Convergence
+While the preceding results assumed a fixed set of validated updates committed by a finite time t_{0} , in practical settings semantic memory evolves continuously. New updates may be integrated indefinitely as agents observe and interact with their environments.
+The following theorem formalizes dynamic semantic convergence: under mild probabilistic assumptions, agents re-synchronize their memory slices with the evolving global state even without retries of missed earlier updates.
+Definition 5.27 (Stream-Fair Coverage).
+Let \{\delta^{(t)}\}_{t\geq t_{0}}\subseteq\Delta denote the (potentially infinite) stream of validated updates committed after time t_{0} .
+For an agent b with ontology slice O_{b} , define the event
+C_{b}(t)=\bigl(O_{b}\cap\mathrm{dom}\bigl(\delta^{(t)}\bigr)\neq\varnothing),
+indicating that the t^{\text{th}} update intersects b ’s slice.
+The stream satisfies stream-fair coverage with parameter \eta>0 if
+\Pr\bigl[C_{b}(t)\bigr]\geq\eta\quad\text{independently for all }t\text{ and each agent }b.
+Theorem 5.28 (Dynamic Semantic Convergence).
+Fix an agent b with ontology slice \ O_{b} , and a (potentially infinite) stream of validated updates \{\delta^{(t)}\}_{t\geq t_{0}} .
+For each update \delta^{(t)} , let \mathcal{E}^{(t)}\subseteq\mathcal{U} denote the set of modified semantic entities (i.e., the refresh notification target as in Definition 3.5).
+Suppose that:
+(i)
+Every update is ontology-consistent and scoped to a finite set of ontology entities \mathcal{E}^{(t)} ;
+(ii)
+For each update \delta^{(t)} , if O_{b}\cap\mathcal{E}^{(t)}\neq\emptyset , the scoped refresh is delivered to agent b with probability at least \rho>0 , independently across t ;
+(iii)
+For each entity x\in O_{b} , the probability that x\in\mathcal{E}^{(t)} at a given time step is at least \eta>0 , independently across t .
+Then, with probability 1, for every entity x\in O_{b} ,
+(18)
+\lim_{t\to\infty}\mathcal{M}_{b}(t)[x]=\mathcal{M}(t)[x].
+Moreover, the time required for agent b to receive r relevant updates grows with high probability no faster than \Theta(r/(\rho\eta)) , and the probability of delay beyond this bound decays exponentially in r .
+Proof Sketch.
+Let \mathcal{T}=\{t\geq t_{0}:O_{b}\cap\mathrm{dom}(\delta^{(t)})\neq\varnothing\} denote the time steps when updates touch b ’s slice.
+By assumption (iii), the expected density of \mathcal{T} is at least \eta .
+For each t\in\mathcal{T} , define Y_{t}=1 if the scoped refresh for \delta^{(t)} is successfully delivered to b , and 0 otherwise.
+By assumption (ii), the Y_{t} are independent and \Pr[Y_{t}=1]\geq\rho .
+Let Z_{r} be the time by which b has received r slice-relevant updates:
+Z_{r}=\min\left\{t:\sum_{t^{\prime}\in\mathcal{T},t^{\prime}\leq t}Y_{t^{\prime}}\geq r\right\}.
+By a Chernoff bound, we have:
+\Pr[Z_{r}-t_{0}>k]\leq e^{-\Omega(r)}\quad\text{for }k=\Theta(r/(\rho\eta)).
+Each successful refresh integrates an ontology-valid update into M_{b}(t) .
+Because each key in O_{b} is touched with nonzero frequency, and each such update has a nonzero chance of being delivered, every key is eventually refreshed.
+Thus, with probability 1 , M_{b}(t) converges to the projected global memory:
+\lim_{t\to\infty}M_{b}(t)=\pi_{O_{b}}(\mathcal{M}(t)).
+∎
+Note. Lemma 5.1 assumes reliable delivery and is used in the bisimulation setting (Theorem 5.13).
+Theorem 5.28 does not assume universal delivery; instead, it guarantees that relevant updates are received and integrated with high probability over time.
+Communication Cost.
+Each validated update incurs exactly one \Theta(d) scoped refresh attempt at commitment, independent of retries.
+Thus, the total communication overhead per update remains \Theta(d) , preserving the scaling bound established in Corollary 5.10.
+6. Experimental Validation
+To validate the Semantic Fusion (SF) model under operational constraints, we implemented a lightweight instantiation that exercises its core constructs in a dynamic simulation environment. The goal was not empirical benchmarking, but structured confirmation that the model’s theoretical properties hold under interpretable, asynchronous conditions. The experiment evaluates the guarantees developed in the formal model—including semantic coherence (Theorem 5.2), probabilistic slice convergence (Theorem 5.28), causal isolation (Theorem 5.7), stuttering bisimulation (Theorem 5.13), probabilistic bisimulation (Theorem 5.21), and local failure containment (Proposition 5.4).
+A second purpose of the experiment is to demonstrate that coordinated behavior can arise from interaction with shared semantic memory. The experiment therefore tests whether agents, despite having partial and asynchronous local views, can maintain an aligned and semantically coherent common operating picture through the shared semantic state.
+6.1. Simulation Scenario
+The scenario used 250 autonomous agents: 50 of type search and 100 each of type relay and rescue, collaborating in a decentralized search-and-rescue mission via ontology-governed memory. Search agents monitored assigned regions and proposed updates when their internal policy generated stochastic survivor indications. Relay agents repositioned in response to active zones and logged their presence on arrival. Rescue agents listened for semantic cues, bid for recovery tasks, and executed actions only when relay support was available. All interaction occurred through semantic memory updates, without centralized coordination.
+Each agent’s observation space consists solely of (i) its ontology-scoped semantic slice S_{a}(t) and (ii) stochastic triggers from its internal scripted policy. Agents have no access to exogenous variables or hidden world structures. The action space consists of proposing updates, moving between adjacent zones, and issuing task bids (for rescue agents). All agents execute as independent asynchronous coroutines; the global tick advances only after all per-agent coroutines complete.
+Midway through the run, two agents were removed without prior signaling to evaluate fault resilience.
+6.2. Simulation Setup
+Each agent operated over a scoped semantic slice derived from a shared ontology
+encoding task-relevant entities such as search zones, survivor statuses, and
+relay coverage. Validated updates were disseminated through a push-based
+scoped-delivery mechanism: only agents whose slices intersected a modified
+entity received refresh notifications, after which they revalidated and
+integrated the update. This routing layer enforced slice-local visibility and
+exercised the same semantics as the model’s selective refresh process without
+assuming a particular communication substrate.
+The environment was fully symbolic. Zones were grid identifiers, survivors were
+logical state variables, and agents interacted only with symbolic percepts
+rather than a continuous or embodied world. Each agent had a defined
+observation space: search agents observed survivor state in their current zone,
+relay agents observed coverage gaps, and rescue agents observed task
+announcements. Observations were converted into
+structured update proposals during asynchronous agent steps.
+Agent behavior followed lightweight scripted policies chosen to produce
+interpretable update streams. Search agents moved deterministically but sampled
+survivor detections with a fixed 30\%/70\% distribution. Relay and rescue
+agents were initialized at random positions; rescuers generated bids with
+random tie-breaking and sampled service durations from a fixed distribution.
+These policies introduced heterogeneous stochastic proposals without learned
+controllers or external perception modules, ensuring that observable effects
+reflected the SF model rather than complex agent decision logic. All
+randomness originated in the policy modules rather than the environment.
+To confirm that ontology validation was non-vacuous, we injected three
+adversarial proposals that violated ontology constraints. Each was rejected
+locally through the standard validation path, producing a stutter step without
+altering global memory.
+These scripted policies were intentionally simple: their purpose was to
+exercise the SF semantics under interpretable conditions, not to approximate
+realistic sensing or planning. Evaluating SF under richer or degraded policies
+is an important direction for future work.
+6.3. Evaluation Criteria
+Simulation logs were analyzed to verify each of the following theoretical properties:
+•
+Semantic Coherence (Theorem 5.2): Number of invalid updates accepted by any agent.
+•
+Causal Isolation (Theorem 5.7): Whether all updates integrated into each agent’s memory fell strictly within its semantic slice.
+•
+Stuttering Bisimulation (Theorem 5.13): Forward temporal alignment between each agent’s memory trace and the projected global execution over its slice. The reverse direction is unnecessary for the safety guarantees we claim.
+•
+Probabilistic Bisimulation (Theorem 5.21): Whether validated probabilistic proposals were eventually reflected in scoped memory.
+•
+Failure Containment (Proposition 5.4): Post-removal continuation of valid update propagation and maintenance of memory consistency.
+6.4. Results
+Each of the formal properties was upheld in the simulation, which processed 11,325 updates. In the main simulation runs, no invalid proposals were generated by the scripted policies. All invalid-update rejection behavior therefore arises exclusively from the adversarial injection mechanism described in 6.2. No invalid updates were accepted
+(Theorem 5.2) and every validated update conformed to the agent’s scoped ontology (Theorem 5.7).
+Each agent’s local memory remained aligned with its projected global slice under bounded delay22
+2
+For evaluation purposes, we exclude the final time step from bisimulation tests, as agents are not given a chance to re-align after the last committed updates. (Theorem 5.13), and 1,250 validated probabilistic proposals33
+3
+Bisimulation tests are based on snapshot alignment between local memory and the agent’s projected global slice, not on event log volume. The validation compares memory states extracted at each time step, allowing bounded delay, and verifies that local beliefs remain consistent with the converged global memory. were correctly reflected in scoped memory without mismatch (Theorem 5.21). Following agent removal, no coherence violations or memory corruption were observed, validating Proposition 5.4.
+Table 3. Empirical Validation Results for a 250-Agent Search-and-Rescue Simulation
+Theorem / Proposition
+Validation Metric
+Score
+Theorem 5.2 (Semantic Coherence)
+Invalid updates accepted
+0 / 11,325
+Theorem 5.7 (Causal Isolation)
+Updates outside agent scope accepted
+0
+Theorem 5.13 (Stuttering Bisimulation)
+Agent projection violations
+0 / 250
+Theorem 5.21 (Probabilistic Bisimulation)
+Validated proposals mismatched
+0 / 1,250
+Proposition 5.4 (Failure Containment)
+Post-removal coherence violations
+0
+Figure 3 illustrates a representative event sequence. Logs verified that throughout the run, agents actively executed their synchronized tasks: search agents continued to discover survivors, and rescue agents dispatched and completed recoveries, demonstrating that agents can exhibit coordinated behavior
+solely through the semantics of validated updates and local policies.
+Figure 3. A survivor is detected by search1, triggering an ontology-valid update to shared memory. This change activates relay1, which moves to the zone and signals presence. Upon detecting relay support, rescue20 initiates recovery. Each agent acts independently based on scoped semantic memory, without direct coordination or explicit messages.
+6.5. Communication Overhead Scaling
+To empirically validate the message complexity bound from
+Corollary 5.10, we perform a controlled micro-benchmark
+that directly models semantic propagation based on channel overlap. The theorem
+establishes that communication cost for a validated update grows as
+\Theta(d) —where d is the number of agents whose semantic views intersect
+the update—and not with the total agent population n . The experiment is
+intentionally synthetic: it mirrors the theoretical abstraction of
+independent prefix subscriptions and scoped dissemination, isolating the
+semantic-overlap effect without conflating it with policy dynamics or update
+frequencies arising in the full simulator.
+Each ontology key is treated as a distinct semantic channel, and each agent
+subscribes to a randomly chosen fraction f of these channels. For each
+f\in[0,1] , we generate 100 randomized slice assignments over a
+200-agent pool (100 relay, 100 rescue). We then publish an update on each key
+and count the number of subscribing agents that would receive it under scoped
+delivery. Adding the proposer, the expected message count per update is
+k+1 , where k=\mathrm{round}(f\cdot 200) .
+Figure 4 shows the results. The observed message cost
+scales linearly with f , closely matching the ideal curve
+f\cdot 200+1 across all slice fractions. At full overlap ( f=1 ), the
+system recovers broadcast behavior (201 messages), while at low overlap
+( f=0.1 ), communication cost decreases by more than 85%. Variance is
+highest at low f due to the combinatorial distribution of slice membership
+and vanishes as f increases.
+In real deployments, message loss or delay may occur. Because propagation is
+slice-scoped rather than global, message redundancy remains inherently
+bounded: only agents that subscribe to a given prefix must receive the
+corresponding notification. In probabilistic channels, the expected message
+volume increases by a factor 1/(1-p) , where p is the drop probability,
+preserving \Theta(d) scaling for d -slice overlap. This ensures predictable,
+graceful degradation under lossy conditions.
+This benchmark therefore confirms that scoped propagation provides tight,
+predictable control over communication cost even as the system scales.
+Figure 4. Message complexity scaling under semantic overlap. Each point shows the average number of agents receiving an update on a semantic key, as a function of the slice fraction f , averaged over 100 randomized slice assignments. Agents subscribe to a random f -fraction of ontology keys, and each update is received by all agents whose slice overlaps with the updated key. The expected message cost is k+1 with k=\mathrm{round}(f\cdot 200) . Observed values closely match the ideal bound f\cdot 200+1 (dashed line), with highest variance at low f due to small slice sizes. The dotted line shows the broadcast baseline (201 messages).
+6.6. Geometric-Tail Convergence Validation
+To evaluate the exponential-delay bound predicted by Theorem 5.28, we measured per-key alignment delays in a 100-step simulation under varying message delivery probabilities. Each agent maintained a locally scoped memory view and updated asynchronously based on validated proposals received through scoped refresh.
+For each global memory update at time step t , we tracked the first future step t^{\prime}>t at which each agent’s local view for the corresponding key matched the global memory. If such a match occurred, the alignment delay was recorded as \Delta_{b}^{(t)}=t^{\prime}-t . This process captures the time it takes for an agent to realign with the global memory state, regardless of whether it received the original update or converged later through redundant proposals or indirect propagation.
+Figure 5 shows the empirical survival function S(k)=\Pr[\Delta_{b}^{(t)}>k] across three delivery probabilities ( \rho=0.2 , 0.5 , 0.8 ). Each empirical curve is overlaid with a fitted exponential decay e^{-\lambda k} , where \lambda is estimated independently for each trace. All curves exhibit tails consistent with exponential upper bounds, confirming the geometric decay predicted by Theorem 5.28.
+Notably, the estimated decay rates remain consistent across delivery probabilities, with \lambda\approx 0.04 – 0.05 for all runs. This stability suggests that convergence is driven not only by direct message reception, but also by structural redundancy and repeated proposal, indicating a form of self-healing propagation beyond simple i.i.d. delivery. The result empirically confirms the exponential bound and demonstrates that convergence occurs reliably and within bounded time under degraded yet recoverable conditions.
+Figure 5. Empirical survival functions S(k) vs. fitted exponential decays e^{-\lambda k} for per-key alignment delays at different communication probabilities ( \rho ). All curves exhibit exponential tails, confirming the bound predicted by Theorem 5.28. Minor mid-range deviation above the bound reflects conservative tail modeling and non-i.i.d. system structure, but asymptotic decay remains faster than the theoretical threshold.
+7. Discussion and Future Work
+Semantic Fusion provides the shared semantic state that allows decentralized agents to operate with a consistent decision context, supporting coordinated behavior without centralized control. While these guarantees hold in the formal model, real deployments introduce factors not fully captured here, including asynchronous communication, partial failure, adversarial effects, and evolving ontologies. The discussion below considers SF’s core mechanisms—slice-local reasoning, scoped memory access, and decentralized validation—within these practical settings.
+7.1. Practical Deployment Considerations
+Robustness to Asynchrony and Adversarial Conditions.
+Semantic alignment supports coordinated behavior only when the operating picture remains sufficiently synchronized under imperfect communication. The formal model assumes reliable refresh propagation, but real systems face message loss, delays, and interference. Standard dissemination strategies, such as acknowledgment-based or epidemic protocols (Demers et al., 1988), can mitigate but not eliminate these issues. Convergence therefore becomes probabilistic, and a complete formal treatment of this regime remains open.
+Trust assumptions may also vary. Agents may apply stronger validation to critical updates while accepting best-effort delivery for less consequential information. Cryptographic signatures (Castro and Liskov, 2002) or semantic endorsements can provide additional assurance in adversarial settings without requiring uniform trust across agents.
+The model tolerates partial message loss, agent dropout, and asynchronous refresh without violating its semantic guarantees, indicating robustness to moderate degradation. As decentralized systems increasingly operate in contested or resource-limited environments, slice-based semantics offer a structured way to preserve coherence when communication is unreliable. One direction for future work is a probabilistic analogue of bisimulation in which local traces converge asymptotically, with high probability, to their projected global behaviors. We refer to this as probabilistic asymptotic bisimulation.
+The guarantees established here concern semantic safety: ensuring that memory evolution respects ontology constraints even under nondeterministic behavior or degraded communication. They do not address behavioral robustness or performance. An agent may act inefficiently while remaining semantically aligned with the global state. SF therefore separates semantic correctness from behavioral quality. In practice, SF provides the semantic foundation on which more resilient behaviors can be built, even as conditions degrade. Task-level efficiency or strategy selection, however, must be supplied by mechanisms beyond the core trace semantics.
+Challenges of Scoped Delivery.
+The model assumes that refresh notifications can be routed only to agents whose slices intersect a modified entity. While realizable with content-based publish/subscribe systems, deploying strict scoped delivery at scale introduces engineering considerations outside the scope of the formal semantics. Maintaining per-entity routing state, updating slice membership as ontologies evolve, and ensuring correct delivery under high update turnover or partial failures all require additional infrastructure. Crucially, SF does not rely on a physical global store. The “global memory” is a semantic object reconstructed from the distributed ensemble of slice-local traces. Thus, correctness depends on slice semantics, not on a centralized memory substrate.
+These concerns belong to the communication substrate rather than the formal model, but they influence how reliably agents maintain a coherent operating picture in practice. Evaluating SF under heterogeneous or degraded agent policies, where semantic consistency holds but behavioral quality varies, remains a useful direction for empirical study.
+7.2. Expressivity, Generality, and Ontology Evolution
+Illustrative Application.
+Although our evaluation focuses on multi-agent coordination, the slice semantics are domain-agnostic. In distributed cyber defense, for example, agents can use slice-scoped state (such as ThreatLevel@Host or ConnectionStatus) to enforce local safety rules—for instance, isolating a host only when a connected peer has escalated threat status. By Theorem 5.13, verifying such rules slice-locally suffices for global correctness, converting local checks into system-wide safety without centralized monitoring.
+Ontology Evolution and Versioning.
+The current model assumes a fixed ontology, but long-lived deployments will require schema evolution. Supporting versioning, where slices are tagged and evolve incrementally, introduces challenges in consistency and migration. Future work may explore version snapshots, change propagation, and scoped migration protocols that maintain SF’s guarantees while allowing localized updates. Preserving coherent operating pictures under evolving ontologies is essential for practical use.
+Generalization and Portability.
+The simulation instantiates one ontology and fixed roles, but neither is fundamental to SF. Slices can be redefined or extended without altering the semantics of validation or refresh propagation. Roles may be fixed or assigned dynamically. Update generators may be scripted, learned, or produced through generative models, provided their outputs satisfy ontology constraints. This flexibility allows SF to be applied across different domains while retaining its formal guarantees. Adapting SF to new settings requires only redefining the ontology, not modifying the core semantics.
+7.3. Behavioral Implications and Coordination Guarantees
+Enabling Richer Local Reasoning.
+While Semantic Fusion enforces semantic coherence across distributed agents, it also permits expressive forms of local reasoning. These capabilities rely on SF to ensure that the semantic context within which decisions are made remains aligned across agents, grounding heterogeneous policies in a shared operating picture.
+As agents incorporate learned or generative components whose outputs may vary across invocations, this distinction becomes important. SF imposes no assumptions on how such outputs are produced; it constrains only the admissibility of updates that enter shared memory. One direction for extension is policy-constrained behavior, in which agents are assigned local contracts: guarded rules over their private state and slice-scoped memory that restrict the actions they may take. These contracts can be enforced independently by each agent while still ensuring that global properties are satisfied, provided the required convergence and coverage conditions hold.
+This allows each agent to interpret and enforce its policy using only the information available in its slice. When combined with SF’s convergence guarantees, such contracts yield predictable behavior even when communication is delayed or partially unavailable. This enables formal guarantees on policy satisfaction, auditability, and compositionality, supporting scalable coordination in mission-critical settings.
+Semantic Fusion therefore provides the underlying memory and trace semantics needed for higher-level mechanisms such as policy enforcement, delegated contracts, and forms of tacit coordination. Although these constructs do not appear in the core model, SF supplies the semantic substrate required to incorporate them safely, and they are developed further in follow-on work.
+Slice Overlap and Convergence Tradeoff.
+Finally, Semantic Fusion exposes a natural tradeoff between communication efficiency and synchronization robustness. Smaller ontology slices reduce refresh overhead, yielding \Theta(d) communication per update, but decrease the probability \eta that a new update touches a given agent’s slice, slowing re-synchronization after missed updates. Broader slices increase overlap and speed convergence at the cost of greater communication. This flexibility allows slice design to balance efficiency and robustness depending on the application.
+The core model guarantees slice convergence over update rounds, but prolonged quiescence can still delay re-synchronization. In practice, periodic heartbeats or light refresh probes can maintain alignment during inactive periods without requiring global coordination. These mechanisms preserve SF’s decentralized operation while improving practical convergence. Quantitative analysis of slice-overlap policies and their impact on dynamic convergence remains a promising direction for future work, particularly when update rates, observation patterns, or environmental conditions vary over time.
+8. Conclusion
+This paper introduced Semantic Fusion, a formal framework for slice-local reasoning in decentralized multi-agent systems. By grounding agent updates in ontology-scoped memory slices and enforcing validation through shared semantics, we showed that agents can maintain global coherence and modularity without explicit message passing or centralized control. The architecture accommodates both symbolic and learned components while ensuring that updates remain structured, auditable, and semantically well-formed.
+Our primary contribution is theoretical. We establish that agents operating over slice-scoped memory projections preserve semantic coherence (Theorem 5.2), converge under refresh (Theorem 5.6), and remain causally isolated from irrelevant state changes (Theorem 5.7). Most importantly, we show that local execution traces are stuttering-bisimilar to their global projections (Theorem 5.13), enabling temporal properties to be verified slice-by-slice. We extend these results to probabilistic proposals (Theorem 5.21) and demonstrate that global safety properties expressible over ontology slices can be validated compositionally from local traces (Theorem 12). We further establish almost-sure slice convergence and corroborate this behavior empirically through dynamic re-synchronization (Theorem 5.28). This establishes that structured, slice-scoped semantics can serve as a reliable foundation for decentralized reasoning, even when agents operate asynchronously or under partial observability.
+To illustrate that the formal constructs introduced in Section 3 can be realized in practice, we implemented a lightweight reference architecture that instantiates the SF model. While not a primary contribution, this implementation operationalizes the theoretical components and supports empirical validation of the core theorems. By instantiating ontology-scoped slices with structured validation and scoped refresh propagation, it provides a concrete demonstration of feasibility.
+Semantic Fusion is designed to support heterogeneous and distributed agent systems, including those that incorporate learned or generative components. The framework provides a principled basis for decentralized execution, slice-scoped validation, and bounded communication under asynchronous or probabilistic conditions. By allowing agents to maintain alignment through shared semantics rather than centralized control, SF offers a robust foundation for verifiable reasoning in distributed settings.
+Appendix A Full Proofs
+A.1. Proof of Theorem 5.13 (Slice–Global Stuttering Bisimulation)
+Let \mathcal{G}=(Q,\;\xrightarrow{}\!) be the global LTS over memory states
+\mathcal{M}(t) , and let \mathcal{G}\!\mid_{O_{a}} be its projection onto
+entities in the slice ontology O_{a} .
+Let \mathcal{T}_{a}=(Q_{a},\;\Rightarrow\!) be the local LTS of agent a
+over its semantic slice S_{a}(t)=(O_{a},M_{a}(t)) ,
+with transitions prop (validated local update) and
+sync (refresh integration).
+We assume:
+(S1)
+Slice–scoped validation. Every integrated update is ontology–valid and affects only the authoring agent’s slice.
+(S2)
+Reliable refresh propagation. Each slice–relevant update eventually reaches every interested agent.
+(S3)
+Deterministic merge, no reordering. Retrieved updates are merged exactly once in commit order.
+Remark. This assumption can be satisfied in practice by enforcing a CRDT-style merge policy or applying timestamp-based total ordering per agent slice. Such mechanisms preserve the model’s semantics while allowing decentralized update integration under asynchronous conditions.
+Then a stuttering bisimulation \mathcal{R}_{a}\subseteq Q_{a}\times Q exists such that
+\exists\,t^{\prime}\leq t:\;\bigl(M_{a}(t),\,\pi_{O_{a}}(\mathcal{M}(t^{\prime}))\bigr)\in\mathcal{R}_{a},
+so \mathcal{T}_{a}\;\dot{\sim}_{\!\text{st}}\;\mathcal{G}\!\mid_{O_{a}} .
+Relation definition.
+For t^{\prime}\leq t , relate q_{a}=M_{a}(t) to q_{G}=\pi_{O_{a}}(\mathcal{M}(t^{\prime})) . \mathcal{R}_{a} is non–empty because the two stores are initialized identically at t=0 .
+Label agreement.
+Since M_{a}(t)\subseteq\pi_{O_{a}}(\mathcal{M}(t^{\prime})) , the valuations over O_{a} coincide; hence \mathcal{T}_{a}(q_{a})=\mathcal{G}\!\mid_{O_{a}}(q_{G}) .
+Forth direction.
+•
+prop: the same update appears immediately in \mathcal{G} ; one global step satisfies the forth obligation.
+•
+sync: the remote update was already committed globally at some t^{*}\leq t , so a finite stutter in \mathcal{G} leads from q_{G}^{*}=\pi_{O_{a}}(\mathcal{M}(t^{*})) to q_{G} , satisfying the obligation.
+Back direction.
+Identical reasoning: slice–relevant global steps eventually appear locally (A2); irrelevant steps correspond to local stutters.
+Conclusion.
+\mathcal{R}_{a} meets both stuttering clauses, establishing the bisimulation. ∎
+A.2. Proof of Theorem 5.21 (Probabilistic Slice–Global Bisimulation)
+Let \mathcal{P}_{G}=(Q_{p},\xrightarrow{\phantom{p}}) be the probabilistic LTS over global memory; \mathcal{P}_{G}\!\mid_{O_{a}} is its projection.
+Let \mathcal{P}_{a}=(Q_{a}^{p},\Rightarrow,\mathcal{L}_{p}) be the agent’s probabilistic LTS with prop (sampling from \gamma_{a} ) and sync (refresh).
+Under slice–scoped validation, reliable refresh, and independent proposal sampling, there exists a probabilistic bisimulation \mathcal{R}_{a}^{p}\subseteq Q_{a}^{p}\times Q_{p} such that
+\exists\,t^{\prime}\leq t:\;\bigl(M_{a}(t),\,\pi_{O_{a}}(\mathcal{M}(t^{\prime}))\bigr)\in\mathcal{R}_{a}^{p},\quad\text{and}\quad\mathcal{P}_{a}\sim_{\text{pbis}}\mathcal{P}_{G}\!\restriction_{O_{a}}.
+1. Relation and coupling.
+For states q_{a}=M_{a}(t) and q_{G}=\pi_{O_{a}}(\mathcal{M}(t^{\prime})) with t^{\prime}\leq t , define a coupling \kappa between successor distributions \mu_{a} and \mu_{G} :
+•
+sync \,(\Delta S_{b}^{\text{valid}}) : pair with the same global state q_{G}^{\prime}=q_{G} (probability 1) because the update is already present.
+•
+prop: sample u\sim\gamma_{a}(S_{a}) .
+–
+If u is invalid, pair self–loops.
+–
+If u is valid, pair q_{a}^{\prime}=M_{a}(t)\cup\{u\} with q_{G}^{\prime}=\pi_{O_{a}}(\mathcal{M}(t+1)) that integrates u , using probability p_{u} .
+\kappa preserves total probability and has support in \mathcal{R}_{a}^{p} .
+2. Label agreement.
+Subset relation ensures equal valuations over O_{a} .
+3. Forth/back clauses.
+Coupling and Lemma 5.1 establish matching probabilistic steps in both directions; irrelevant global transitions map to local stutters of measure 1.
+4. Conclusion.
+\mathcal{R}_{a}^{p} with couplings \kappa satisfies the probabilistic bisimulation definition (Segala and Lynch, 1994). Hence \mathcal{P}_{a}\sim_{\text{pbis}}\mathcal{P}_{G}\!\mid_{O_{a}} . ∎
+A.3. Proof of Theorem 12 (Slice–Local Completeness for Safety Properties)
+Restatement.
+For any safety formula \varphi over atoms in O_{a} ,
+if all agent traces satisfy \varphi
+( \forall a\in A,\,\mathcal{T}_{a}\models\varphi ),
+then the global execution \mathcal{G} satisfies \varphi .
+Key lemmas.
+L1
+(Slice cover.)
+The family of ontologies \{O_{a}\}_{a\in A} forms a cover of \mathcal{O} :
+every entity e\in\mathcal{O} belongs to at least one slice.
+(This is a system design assumption.)
+L2
+(Stuttering preservation.)
+Safety properties in LTL and in the CTL∗ fragment
+that omits the next operator X
+are preserved under stuttering equivalence, as established in CTL and CTL* fragments
+(Emerson and Lei, 1986; Kupferman et al., 2000).
+L3
+(Projection bisimulation.)
+From Theorem 10,
+\mathcal{T}_{a}\mathrel{\sim^{\cdot}}_{\mathrm{st}}\mathcal{G}\!\mid_{O_{a}} .
+Proof.
+Assume, for contradiction,
+that \mathcal{G}\not\models\varphi .
+Then there exists a finite bad prefix
+\pi=G(0)\ldots G(k) that violates \varphi
+(safety \Rightarrow finite counterexample).
+By L1,
+every atomic proposition appearing in \pi
+is drawn from some ontology slice O_{a} .
+Let a^{\ast} be an agent whose slice covers at least one
+entity modified in \pi .
+Projecting \pi onto O_{a^{\ast}}
+yields a finite trace \pi^{\prime}
+that still violates \varphi ,
+because \varphi refers only to atoms in O_{a^{\ast}} .
+By L3 there exists a stuttering equivalent trace
+in \mathcal{T}_{a^{\ast}} matching \pi^{\prime} .
+By L2 stuttering preserves safety counterexamples,
+so \mathcal{T}_{a^{\ast}}\not\models\varphi ,
+contradicting the premise that all agents satisfy \varphi .
+Therefore \mathcal{G}\models\varphi , completing the proof. ∎
+Appendix B Reference Architecture Detail
+Algorithm 1 Asynchronous Agent Lifecycle in the SF Reference Architecture
+1:
+Initialize agent objectives
+2:
+Construct semantic slice from ontology and initial memory
+3:
+while task not complete do
+4:
+Reason asynchronously over local slice
+5:
+if structured update proposal is generated then
+6:
+Validate proposal against ontology
+7:
+if proposal is valid then
+8:
+Issue scoped refresh notification to subscribers (entity IDs only)
+9:
+Update local memory with validated change
+10:
+end if
+11:
+end if
+12:
+Listen for incoming refresh notifications
+13:
+if received notification intersects slice then
+14:
+Pull full update \rightarrow revalidate \rightarrow integrate
+15:
+end if
+16:
+end while
+Appendix C Experimental Methodology
+C.1. Environment and Initial Conditions
+The simulation environment is a discrete rectangular grid of
+\texttt{world\_width}\times\texttt{world\_height} symbolic zones. Each zone
+has a unique coordinate label and no hidden physical dynamics: all state
+changes arise from agent-generated semantic updates, not from an exogenous
+world model. The system contains no ground-truth survivor map; all survivor
+state is induced entirely by search-agent proposals.
+At initialization, zone coordinates are written to global memory and to the
+local memories of agents whose ontology slices permit the corresponding
+prefix. Search zones are assigned deterministically by shuffling the grid with
+a fixed RNG seed and partitioning the zones evenly among the search agents.
+Each search agent begins at the first zone in its assigned list.
+C.2. Ontology and Slice Configuration
+The ontology defines a small set of task-level semantic predicates used by
+agents: Survivor, ZoneStatus, Relay,
+Rescue, Bid, AgentPos, and ZoneCoord. Each
+agent is given a slice that specifies which of these predicates it may read
+and propose.
+In the full-overlap configuration used for correctness tests, all search
+agents observe Survivor, ZoneStatus, AgentPos, and
+ZoneCoord; relay and rescue agents additionally observe and propose
+Relay, Rescue, and Bid. For reduced-overlap
+experiments, prefixes are distributed randomly across relay and rescue agents
+while ensuring that each predicate has at least one owning agent.
+Refresh propagation follows the selective-delivery semantics of the formal
+model: an update on predicate P is delivered only to agents whose slices
+contain P , and delivery succeeds with probability comm_prob.
+C.3. Agent Observations, Actions, and Policies
+All agents operate asynchronously in discrete global ticks. At each tick, an
+agent executes one local step consisting of: (i) reading its slice-local memory
+state, (ii) sampling any internal stochastic triggers, and (iii) performing
+slice-permitted semantic updates or movement actions.
+Search agents.
+Each search agent moves deterministically through its assigned zone list.
+At each zone, it samples a survivor-indication variable (detected with
+probability 0.3, none with 0.7). If the update is slice-admissible, the agent
+proposes Survivor@zone = detected|none and marks the zone as searched.
+Relay agents.
+Relay agents read their slice for active survivor indications and move toward
+zones requiring relay coverage. Upon arrival, a relay agent signals presence by
+writing Relay@zone = active. Zone selection breaks ties stochastically
+to avoid deterministic contention.
+Rescue agents.
+Rescue agents compute bids for survivor zones based on distance and a small
+random perturbation. A rescue proceeds only after the agent’s local slice shows
+an active relay at the target zone and that the agent’s bid is highest among
+slice-visible bids. Service duration is sampled from a fixed integer range,
+after which the agent writes a rescue completion record and resets the zone
+status.
+C.4. Asynchrony, Timers, and Execution Flow
+All agents run as independent asynchronous processes. The global tick advances
+only once all agents complete their current step. Agents may be removed
+mid-execution to test failure containment. After the main sequence of ticks,
+the system performs several final “flush” ticks without new proposals to ensure
+that outstanding refreshes are incorporated before analysis.
+C.5. Global Memory, Validation, and Logging
+Upon validation, the update is applied to the agent’s local memory and recorded in the global canonical store used for post hoc analysis. Other agents learn of the update only through the model’s selective refresh mechanism, which delivers it to agents whose slices intersect its scope. Invalid proposals (e.g., adversarial injections used to test
+validator behavior) are rejected locally and do not modify any state.
+The simulation records all proposed updates, deliveries, slice-level refreshes,
+and local/global memory snapshots. These logs serve as the data source for the
+bisimulation checks, semantic-coherence tests, and probabilistic-convergence
+analyses reported in Section 6.
+C.6. Tunable Experimental Parameters
+All experiments rely on a configurable set of parameters: delivery probability
+(comm_prob), slice-overlap fraction (fan_out), random seed,
+agent counts, grid dimensions, duration, and schedule of invalid-update
+injections. These parameters allow the scenario to be run in high-overlap or
+sparse-overlap conditions, deterministically or with controlled stochasticity.
+Appendix D Online Resources
+The code used to validate the theoretical results and conduct the simulation experiments is publicly available at: https://github.com/fiazaich/SAR_MAS_sim.
+ENDSOURCE
+
+
+SOURCE https://arxiv.org/html/2601.12890v1
+Efficient Code Analysis via Graph-Guided Large Language Models
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+K \rho^{\text{ana}}
+License: CC BY 4.0
+arXiv:2601.12890v1 [cs.SE] 19 Jan 2026
+Efficient Code Analysis via Graph-Guided Large Language Models
+Hang Gao
+Affiliation: Key Laboratory of System Software, Institute of Software, Chinese Academy of Sciences
+Tao Peng
+Affiliation: Institute of Software, Chinese Academy of Sciences
+Affiliation: University of Chinese Academy of Sciences
+Baoquan Cui
+Affiliation: Key Laboratory of System Software, Institute of Software, Chinese Academy of Sciences
+Hong Huang
+Affiliation: Key Laboratory of System Software, Institute of Software, Chinese Academy of Sciences
+Fengge Wu
+Affiliation: Institute of Software, Chinese Academy of Sciences
+Affiliation: Corresponding author.
+Junsuo Zhao
+Affiliation: Institute of Software, Chinese Academy of Sciences
+Jian Zhang
+Email: fengge@iscas.ac.cn*Equal contribution.
+Affiliation: Key Laboratory of System Software, Institute of Software, Chinese Academy of Sciences
+Abstract
+Malicious behavior is often hidden in small, easily overlooked code fragments, especially within large and complex codebases. The cross-file dependencies of these fragments make it difficult for even powerful large language models (LLMs) to detect them reliably. We propose a graph-centric attention acquisition pipeline that enhances LLMs’ ability to localize malicious behavior. The approach parses a project into a code graph, uses an LLM to encode nodes with semantic and structural signals, and trains a Graph Neural Network (GNN) under sparse supervision. The GNN performs an initial detection, and through backtracking of its predictions, identifies key code sections that are most likely to contain malicious behavior. These influential regions are then used to guide the LLM’s attention for in-depth analysis. This strategy significantly reduces interference from irrelevant context while maintaining low annotation costs. Extensive experiments show that the method consistently outperforms existing methods on multiple public and self-built datasets, highlighting its potential for practical deployment in software security scenarios.
+Keywords Large lanaguage model \cdot
+Code \cdot
+Graph Representation Learning
+1 Introduction
+LLMs excel at handling code-related tasks (Nam et al., 2024; Haroon et al., 2025), including code understanding (Li and Shin, 2024), generation (Fan et al., 2023), and logic optimization (Ishibashi and Nishimura, 2024). Current LLMs can generate efficient and highly readable code based on requirements, thanks to their deep understanding of a wide range of programming languages and syntax. Through natural language processing techniques, LLMs can also effectively identify syntax errors and potential vulnerabilities in code snippets and provide developers with suggestions for fixes, thereby improving code quality (Huynh et al., 2025). However, in the field of code security—particularly in malicious code detection—LLMs face limitations, as they are not yet capable of analyzing entire code projects with the same depth and comprehensiveness as security experts or professional tools, especially when it comes to large-scale projects (Wang et al., 2025; Akuthota et al., 2023; Xue et al., 2024).
+The above argument can be practically validated. Specifically, we conduct tests on some collected Python packages. The experimental results are shown in Figure 1. As seen, the overall analysis performances of the LLM baselines are still far from those of professional analysis tools, especially for large packages. Another obvious observation is that, as the size of the package increases, the performance of LLM in detection decreases. We believe this is primarily due to the inherent characteristics of LLMs. When dealing with large amounts of code, LLMs’ attention mechanisms often struggle to accurately pinpoint problematic snippets, instead wasting attention on large portions of benign code (Hu et al., 2025). This explains why, in the experimental results shown in the figure, the larger the program, the worse the performance of the LLM analysis. Additionally, when the internal relationships within the code are complex and involve multiple interdependencies, LLMs face even greater difficulty. They struggle to identify malicious behaviors that are present in call relationships, especially when the relevant code snippets are not sequentially close. This also hinders their ability to properly attend to and jointly analyze these distant, yet connected, pieces of code.
+Furthermore, when LLMs are used to analyze a large number of code projects, they typically require significantly more computational resources compared to conventional methods. Unlike typical tools that operate based on specific rules or smaller, specialized neural networks, LLMs rely on their large-scale models and the vast amount of knowledge they contain to identify malicious code. This means that for each code project, especially at a large scale, resource consumption—such as memory and processing time—can increase rapidly. As a result, LLMs are less efficient in scenarios that require large-scale code analysis.
+We aim to address these issues and enhance the capabilities of LLMs in malicious code detection, striving to develop a solution that surpasses professional tools in performance while being cost-effective, thereby highlighting the practical value of our research. To this end, our research focuses on Python. As an interpreted language, its nature, which is closer to that of a natural language, is inherently compatible with the sequence-processing mechanisms of LLMs (Wang et al., 2021; Nijkamp et al., 2023), making it an ideal subject for validating our approach. Additionally, Python code and technical documentation constitute some of the most abundant sources of code training data for LLMs, which leads to enhanced analysis capabilities (Chen et al., 2021; Rozière et al., 2023). Therefore, towards Python code, we propose a Graph Representation Learning-Enhanced Malicious code detection framework for LLM, abbreviated as GMLLM. GMLLM utilizes a graph representation learning approach to identify critical sections within projects that require closer inspection, which serves as attentions that allow the LLM to focus on these key areas, reducing redundant information and improving detection performance.
+(a) Recall
+(b) Accuracy
+Figure 1: Comparison between LLMs directly applied to malicious code detection and a commonly used malicious code detection tool OSSGadget (Microsoft, 2019). The blue bars represent the performance of the LLMs, while the red bar represents the performance of the tool. Large, Medium, Small refer to the scale of packages.
+GMLLM first constructs graph representations of the input Python packages, using an LLM to extract feature vectors for each node. It then trains a GNN model with minimally labeled data that indicates whether a package contains malicious code. This trained model provides an initial, albeit potentially inaccurate, assessment of new packages. We then introduce an explanation paradigm to identify and measure the influence of input graph nodes on the GNN’s classification. If a node has a significant influence on the GNN’s decision to classify a sample as malicious, this suggests that the node itself possesses features characteristic of malicious code. We then filter these influential nodes and use an LLM for a more detailed analysis. This approach both fully leverages the LLM’s code understanding capabilities and avoids the performance issues associated with analyzing entire packages. Furthermore, the method requires only binary labels (i.e., malicious or not) for training, which allows it to make full use of abundant relevant data. We compare this approach with multiple LLM baselines and other malicious code detection methods and demonstrate its superiority.
+Our contributions are as follows:
+•
+We propose a novel paradigm to address the challenges LLMs face in detecting malicious code, thereby fostering the broader application of LLMs in software security-related domains.
+•
+Focusing on Python programs, we design the GMLLM framework to implement the proposed paradigm, which significantly enhances the malicious code detection capabilities of LLMs.
+•
+We validate our approach using a proposed comprehensive Python malicious code dataset and multiple public datasets, demonstrating the effectiveness of our method.
+2 Related Works
+2.1 Malicious Code Detection
+Malicious code detection is vital for information security, with conventional methods including metadata-based, rule-based, and learning-based approaches. Metadata-based methods, such as package name analysis (Kaplan and Qian, 2021), are easily bypassed. Rule-based methods, like Yara (VirusTotal, 2023) and Bandit (PyCQA, 2023), are more precise but require expert-designed rules, making them resource-intensive (Duan et al., 2021). Learning-based methods using deep learning have achieved high accuracy, extracting features such as API calls and opcodes (Yadav et al., 2022; Aamir et al., 2024; Wu et al., 2023), but face challenges with adversarial attacks (Yumlembam et al., 2023; Amin et al., 2022). In the meantime, within open-source ecosystems like PyPI, malicious code attacks still cause severe disruptions and losses (Okafor et al., 2022). While machine learning models have achieved near-perfect detection performance (Dambra et al., 2023; Liang et al., 2023; Sun et al., 2024), challenges remain regarding methodology, dataset design, and false positive tolerance (Arp et al., 2022; Vu et al., 2023).
+2.2 LLM for Malicious Code Detection
+There is a growing trend toward leveraging LLMs for the detection of malicious code (Zahan et al., 2025). Fang et al. (2024) find that LLMs perform well on simple code but struggle with complex or obfuscated code. Yu et al. (2024) enhances detection accuracy by combining LLMs with static analysis. Akinsowon and Jiang (2024) show LLMs improve detection rates for malicious code challenging for static analysis. LLMs also address malicious code sample scarcity by generating diverse datasets (Yu et al., 2024), but their generative capabilities pose security risks. Al-Karaki et al. (2024) propose an integrated framework combining LLMs with traditional techniques to effectively address malicious code detection. Despite the advances, LLMs still face difficulties with large-scale code projects. Our work aims to address this issue.
+3 Method
+The framework of our proposed GMLLM is shown in Figure 2 and can be divided into two parts. Part one involves training a GNN using a dataset of malicious code with simple annotations. Part two interprets the trained GNN on new samples to obtain attention, which then guides the LLM to perform malicious code detection. Below, we will introduce these two parts separately.
+Figure 2: Framework of the proposed GMLLM.
+3.1 Training GNN
+To facilitate subsequent processing using GNNs, we represent the source code of each Python project as a graph G^{\text{code}}=\{\mathcal{V}^{\text{code}},\mathcal{E}^{\text{code}}\} , where \mathcal{V}^{\text{code}} is the set of nodes and \mathcal{E}^{\text{code}} is the set of edges.
+The node set \mathcal{V}^{\text{code}} is derived from the Abstract Syntax Tree (AST) of the Python project. We traverse all the “.py” files and parse the source code into AST objects. The nodes in \mathcal{V}^{\text{code}} correspond to key entities in the Python code, such as classes, functions, and modules. Each node is annotated with the source code corresponding to the respective element. The edge set \mathcal{E}^{\text{code}} includes dependency edges and call relationship edges. Please refer to Appendix C.1 for detailed implementations.
+Next, we extract the features of each node v in \mathcal{V}^{\text{code}} and represent them as a vector h_{v} . The feature extraction process involves defining a set of sensitive behavior rules \mathcal{S} , which are used to capture the sensitive behavior features of the code corresponding to each node v . Such a rule-matching approach is commonly used in Python malicious code detection. What sets this approach apart is that we have employed LLM for automated rule generation and design the corresponding rule form.
+The set \mathcal{S} can be divided into two parts: common sensitive behavior rules \mathcal{S}^{\text{comm}} , and data-derived sensitive behavior rules \mathcal{S}^{\text{data}} . \mathcal{S}^{\text{comm}} is generated as follows:
+\mathcal{S}^{\text{comm}}=\text{LLM}(\rho^{\text{comm}}),
+where \text{LLM}(\cdot) represents the LLM model, and \rho^{\text{comm}} is the prompt used. \rho^{\text{comm}} instructs the LLM to summarize common sensitive behavior rules and output them as a list.
+The rules in \mathcal{S}^{\text{data}} are obtained by sampling 10% of the training data and passing the corresponding code through the LLM to generate the data-related sensitive behavior rules:
+\mathcal{S}^{\text{data}}=\bigcup_{i=1}^{m}\text{LLM}(\rho^{\text{data}},X_{i})
+where \{X_{i}\}_{i=1}^{m} represents the set of Python files collected from the training data. Details concerning the implementations and prompts are offered in Appendix C.2.
+After obtaining \mathcal{S} , a feature vector h_{v} of dimension |\mathcal{S}| is constructed for each node v . This vector is a multi-hot vector where each position indicates whether a rule in \mathcal{S} is matched. This method automates the extraction of node-sensitive behavior features and is highly scalable. When new scenarios arise, the system only requires the addition of new environmental samples to automatically update the sensitive feature rules.
+Based on the collected graph and node features, we proceed to train a GNN g_{\theta}(\cdot) . As discussed in the introduction, we formulate the task as a binary classification problem in order to minimize the need for labeled data. Following the aforementioned transformations, we obtain n graph samples, denoted as \{G_{i}^{\text{code}}\}_{i=1}^{n} , where n is the number of Python projects in the training set. These samples are then processed using a GNN. In our implementation, we employ a two-layer Graph Convolutional Network (GCN), though it is worth noting that any GNN model capable of handling graph-structured data could be applied to this task.
+The training process follows a standard binary classification framework, with cross-entropy loss used for optimization. Formally, it can be expressed as:
+\mathcal{L}(\theta)=-\frac{1}{n}\sum_{i=1}^{n}\left[y_{i}\log\left(g_{\theta}(G_{i}^{\text{code}})\right)+(1-y_{i})\log\left(1-g_{\theta}(G_{i}^{\text{code}})\right)\right]
+(1)
+3.2 Attention Based Detection
+We have developed a GNN model designed to detect potential malicious code based on sensitive behavioral features. This model is used to classify the target package, after which we conduct interpretability analysis on the classification results to identify the key nodes that lead the GNN to classify a package as malicious. In real-world projects, malicious code segments typically constitute only a small fraction of the overall codebase. Therefore, this approach can effectively pinpoint suspicious nodes, enabling an LLM to perform targeted analysis on these critical areas. In essence, we locate which specific nodes “led” the GNN to classify the target package as malicious, then focus on analyzing those nodes to verify whether they indeed represent malicious code and to understand their malicious behavior. The key advantage of this approach is that it provides the LLM with a focused attention mechanism for the entire project at relatively low training and inference costs, while avoiding the accuracy and resource consumption issues associated with having the LLM directly process the whole package.
+Now we give a detailed presentation. For the case where the j -th sample under test, G_{j}^{\text{code}} , is identified as containing malicious code, we will specifically construct trainable edge mask M_{j}^{\text{edge}} and a feature mask M_{j}^{\text{feat}} on the target graph G_{j}^{\text{code}} . Let the adjacency matrix and feature matrix of G_{j}^{\text{code}} be A_{j}\in\{0,1\}^{|\mathcal{V}_{j}|\times|\mathcal{V}_{j}|} and H_{j}\in\mathbb{R}^{|\mathcal{V}_{j}|\times|\mathcal{S}|} . For the target graph G_{j}^{\text{code}} , we then set M_{j}^{\text{edge}}\in\mathbb{R}^{|\mathcal{V}_{j}|\times|\mathcal{V}_{j}|} and M_{j}^{\text{feat}}\in\mathbb{R}^{|\mathcal{V}_{j}|} . Apply a sigmoid activation \delta(\cdot) to M_{j}^{\text{edge}} and symmetrize:
+\displaystyle\dot{M}_{j}^{\text{edge}}=\delta(M_{j}^{\text{edge}}),\qquad\tilde{M}_{j}^{\text{edge}}=\frac{\dot{M}_{j}^{\text{edge}}+(M_{j}^{\text{edge}})^{\top}}{2},
+(2)
+then remove the diagonal and perform an element-wise product with the original graph to obtain the masked adjacency:
+\displaystyle\hat{A}_{j}=\bigl(A_{j}\odot\tilde{M}_{j}^{\text{edge}}\bigr)\odot(\mathbf{1}-I),
+(3)
+where \odot denotes the Hadamard product. On the feature side, use \tilde{M}^{\text{feat}}=\sigma(M^{\text{feat}}) and broadcast:
+\displaystyle H_{j}^{\prime}=\text{diag}(\tilde{M}_{j}^{\text{feat}})H_{j}.
+(4)
+Here, \text{diag}(\tilde{M}_{j}^{\text{feat}}) denotes a diagonal matrix whose diagonal entries are the elements of \tilde{M}_{j}^{\text{feat}} . Next, we feed (H_{j}^{\prime},\hat{A}_{j}) into the trained GNN g_{\theta}(\cdot) to obtain the predicted probabilities p_{j} for sample G_{j}^{\text{code}} . p_{j,(0)} and p_{j,(1)} denotes the predicted probability of g_{\theta}(\cdot) on G_{j}^{\text{code}} as benign and malicious respectively. Then, we update the trainable masks using the following loss:
+\displaystyle\mathcal{L}_{\text{pred}}=\log\left(1-p_{j,(1)}\right),
+(5)
+where \mathcal{L}_{\text{pred}} encourages the mask to only preserve the substructure that could lead the G_{j}^{\text{code}} to be classified as malicious.
+To encourage sparsity and determinacy, we add size regularizers on the edge and feature masks:
+\displaystyle\mathcal{L}_{\text{size}}=\|\tilde{M}_{j}^{\text{edge}}\|_{1}+\|\tilde{M}_{j}^{\text{feat}}\|_{1},
+(6)
+and entropy regularizer:
+\displaystyle\mathcal{L}_{\text{ent}}=\frac{1}{|\tilde{M}_{j}^{\text{edge}}|}\sum_{m_{(k,l)}\in\tilde{M}_{j}^{\text{edge}}}\Big(-m_{(k,l)}\log m_{(k,l)}-(1-m_{(k,l)})\log(1-m_{(k,l)})\Big).
+(7)
+The overall objective is:
+\displaystyle\mathcal{L}=\mathcal{L}_{\text{pred}}+\lambda^{\text{size}}\mathcal{L}_{\text{size}}+\lambda^{\text{ent}}\mathcal{L}_{\text{ent}}.
+(8)
+\mathcal{L} is optimized through backpropagation, yielding M_{j}^{\text{edge}} and M_{j}^{\text{feat}} as the explanatory mask. \lambda^{\text{size}} and \lambda^{\text{ent}} are hyperparameters.
+Note that \mathcal{L} is computed and optimized individually for each sample, with the objective of finding the appropriate mask. The masks \tilde{M}_{j}^{\text{edge}} and \tilde{M}_{j}^{\text{feat}} effectively reflect the graph structures that lead the GNN to classify the sample as containing malicious code, as these nodes maximize p_{j,(1)} , the predicted probability of g_{\theta}(\cdot) on G_{j}^{\text{code}} being malicious. This is precisely the part that should be analyzed in detail using LLMs. Therefore, \mathcal{L} is applied on a per-sample basis.
+We set the value of the attention score for each element of G_{j}^{\text{code}} as the corresponding mask value within \tilde{M}_{j}^{\text{edge}} . Formally, we have the node attention score a_{v} as:
+\displaystyle a_{v}=(\tilde{M}_{j}^{\text{feat}})_{v},
+(9)
+and edge attention score a_{v,w} as:
+\displaystyle a_{v,w}=(\tilde{M}_{j}^{\text{edge}})_{v,w}.
+(10)
+Based on the acquired attention score, we employ an LLM to perform more targeted and in-depth analysis. We set a threshold \alpha , and only the code graph structures with scores greater than \alpha are fed into the LLM for malicious code detection. In practice, since the majority of the code is benign, this step can filter out a large amount of irrelevant code, significantly saving computational resources and enabling the LLM to process the problem more efficiently. We denote the extracted subgraph as \text{Att}(\cdot) , which needs to be processed by the LLM. \text{Att}(\cdot) can be formulated as:
+\displaystyle\text{Att}(G^{\text{code}}_{j})=\Big(\big\{v\in\mathcal{V}_{j}^{\text{code}}|a_{v}<\gamma^{\text{node}}\big\},\big\{(v,w)\in\mathcal{E}_{j}^{\text{code}}|a_{v,w}<\gamma^{\text{edge}}\big\}\Big).
+(11)
+In the implementation, in order to convert the graph-structured data into a natural language description that can be understood and processed by the LLM, we combine the information from both the AST and the source code. Based on the structure of \text{Att}(G^{\text{code}}_{j}) , we provide segmented descriptions of the nodes, edges, and the content of the nodes. A concrete example is given below:
+Examples of \text{Att}(G^{\text{code}}_{j})
+Nodes:
+15Cent-999.0.1.setup
+15Cent-999.0.1.setup.CustomInstal1
+……
+Edges:
+10Cent11-999.0.4.setup.CustomInstall → 10Cent11-999.0.4.setup.CustomInstall.run
+10Cent11-999.0.4.setup → 10Cent11-999.0.4.setup.CustomInstall
+……
+Node Attributes:
+Codes of 15Cent-999.0.1.setup are
+" import re, sys, pathlib
+indicators = r"""
+……
+Based on \text{Att}(G^{\text{code}}_{j}) , the overall process can be formally expressed as follows:
+\displaystyle(\hat{Y},T)=\text{LLM}\Big(\rho^{\text{ana}},\text{Att}(G^{\text{code}}_{j})\Big),
+(12)
+where \hat{Y} denotes the predicted classification, T denotes the detailed description of location and characteristics concerning the malicious codes and will be left blank if G^{\text{code}}_{j} is classified as benign, and \rho^{\text{ana}} denotes the utilized prompt. Details concerning \rho^{\text{ana}} are given in Appendix C.3.
+Next, our method can output the final results using the obtained \hat{Y} and T from equation 12. Compared to other commonly used tools and methods, our approach not only detects the presence of malicious code but also provides specific description of its characteristics and locations.
+4 Experiments
+In this section, we conduct multiple experiments with our proposed GMLLM and other baselines to answer the following research questions (RQs):
+RQ1: Does GMLLM lead to a significant improvement in the detection of malicious code by LLMs?
+RQ2: Is the performance of GMLLM superior to that of conventional malicious code detection tools?
+RQ3: Can GMLLM provide a comprehensive analysis of malicious code?
+RQ4: Does GMLLM help in reducing the computational overhead of LLMs for malicious code detection?
+4.1 Settings
+We performed a series of experiments using multiple datasets to validate the effectiveness of our method. Specifically, we utilized three publicly available datasets: Backstabbers (Ohm et al., 2020), Datadog (Guarddog, 2023), and Mal-OSS (Guo et al., 2023). Additionally, we created a larger-scale dataset, the Malicious Codes from PYPI (MalCP) dataset, by incorporating samples collected from PYPI.
+The MalCP dataset is partitioned into three subsets based on program size: Large, Medium, and Small. An additional All category is included to represent the entire set of program samples. The MalCP dataset also incorporates detailed descriptions of malicious behaviors into its benchmark to evaluate the performance of LLM-based methods.
+In addition, MalCP covers a diverse set of attack tactics, with three major categories (Execution, Impact, Credential Access/Collection) and a long tail of others, so that no single tactic dominates the dataset.
+Detailed information about the MalCP dataset can be found in Appendix D.1.
+For the comparison with the baselines, we evaluated the performance of our method against various LLMs and malicious code detection methods and tools. Specifically, we selected multiple different LLMs for direct application in malicious code detection, including Qwen 2.5 (Yang et al., 2024), Llama 2 (Touvron et al., 2023), Llama 3 (Dubey et al., 2024), ChatGPT 3.5 (Ye et al., 2023), and ChatGPT 4o (Hurst et al., 2024). Additionally, we chose three rule-based common malicious code detection tools: Bandit4Mal (Vu, 2020), OSSGadget (Microsoft, 2019), and Virustotal (VirusTotal, ), as well as two language model- and neural network-based malicious code detection tools: MPHunter (Liang et al., 2023) and Ea4mp (Sun et al., 2024). To ensure statistical robustness, all experimental results are reported as the average across five independent trials.
+We implemented our method using two base LLMs, Llama 3 and ChatGPT 4o, and compared their performance with the baselines. Detail settings can be found in Appendix D.2.
+Table 1: Performance on Backstabbers, Datadog, Mal-OSS Datasets. Bold indicates the best performance, while underline indicates the second-best performance.
+Model
+Backstabbers
+Datadog
+Mal-OSS
+Recall
+Precision
+ACC
+Recall
+Precision
+ACC
+Recall
+Precision
+ACC
+ChatGPT 3.5
+28.45
+37.19
+44.66
+54.30
+48.32
+56.30
+73.34
+60.14
+65.29
+ChatGPT 4o
+92.89
+90.65
+92.28
+80.07
+84.73
+85.53
+89.69
+90.22
+90.76
+Llama 2
+3.48
+3.20
+6.65
+15.12
+11.03
+12.88
+11.78
+10.14
+11.14
+Llama 3
+24.96
+22.45
+25.39
+43.99
+30.33
+33.86
+72.31
+45.17
+46.74
+Qwen 2.5
+28.30
+25.10
+27.74
+49.83
+33.49
+37.19
+78.50
+47.46
+50.00
+Bandit4Mal
+12.92
+29.67
+45.53
+62.89
+66.06
+70.77
+23.56
+45.33
+51.63
+OSSGadget
+96.81
+64.51
+73.88
+86.60
+57.40
+67.29
+86.01
+59.47
+66.51
+Virustotal
+87.52
+84.81
+86.97
+82.13
+82.70
+85.24
+46.69
+76.39
+68.75
+MPHunter
+93.12
+89.81
+91.08
+93.38
+90.17
+94.67
+86.14
+83.06
+88.50
+Ea4mp
+94.58
+91.13
+93.17
+82.13
+82.70
+85.24
+85.19
+83.72
+84.99
+GMLLM (Llama 3 based)
+96.52
+74.30
+82.94
+97.94
+73.83
+84.52
+98.82
+68.89
+78.87
+GMLLM (ChatGPT 4o based)
+93.03
+94.54
+94.29
+97.25
+95.61
+96.96
+96.76
+95.36
+96.33
+Table 2: Performance on our proposed MalCP dataset. Bold indicates the best performance, while underline indicates the second-best performance.
+Model
+Large
+Medium
+Small
+All
+Benign
+recall
+precision
+acc
+recall
+precision
+acc
+recall
+precision
+acc
+recall
+precision
+acc
+recall
+ChatGPT 3.5
+21.91
+15.86
+20.43
+26.70
+34.97
+42.25
+97.38
+99.66
+98.59
+51.36
+50.65
+55.18
+58.35
+ChatGPT 4o
+67.25
+76.17
+77.98
+98.30
+93.53
+96.01
+97.38
+94.14
+95.84
+89.33
+89.49
+90.39
+91.27
+Llama 2
+7.59
+5.22
+5.68
+2.55
+2.27
+2.56
+16.07
+16.23
+20.09
+8.92
+7.64
+9.64
+10.24
+Llama 3
+16.70
+11.31
+12.26
+17.86
+14.46
+11.82
+99.84
+70.16
+79.59
+47.68
+34.77
+35.60
+25.54
+Qwen 2.5
+27.77
+17.58
+17.14
+23.13
+18.01
+14.46
+99.84
+71.65
+81.00
+52.62
+37.42
+38.50
+26.74
+Bandit4Mal
+64.21
+51.48
+60.57
+9.35
+27.64
+45.93
+13.28
+51.92
+52.59
+26.04
+46.45
+52.77
+75.01
+OSSGadget
+86.77
+44.74
+50.71
+98.64
+67.21
+76.76
+85.74
+74.93
+79.43
+90.60
+61.22
+69.66
+52.23
+Virustotal
+83.51
+85.37
+87.39
+87.93
+84.89
+86.98
+42.13
+71.99
+64.44
+69.86
+81.79
+79.24
+87.05
+MPHunter
+85.60
+81.27
+83.83
+93.32
+89.18
+90.52
+96.39
+95.03
+96.50
+94.13
+90.81
+93.56
+91.57
+Ea4mp
+87.31
+86.23
+88.10
+91.76
+92.63
+92.79
+97.19
+96.74
+97.00
+93.12
+92.17
+91.03
+92.37
+GMLLM (Llama 3 based)
+94.36
+65.32
+77.18
+98.30
+73.44
+82.51
+99.67
+75.81
+84.62
+97.71
+71.88
+81.60
+68.19
+GMLLM (ChatGPT 4o based)
+87.20
+89.14
+90.41
+97.45
+96.14
+96.96
+99.34
+98.38
+98.90
+95.30
+95.07
+95.62
+95.89
+Table 3: Model performances on describing the details concerning the malicious behaviors. Bold indicates the best performance, while underline indicates the second-best performance. Baselines including Bandit4Mal, OSSGadget, Virustotal, MPHunter, and Ea4mp are excluded as they are incapable of such description.
+Method
+Threat
+Execution
+Evidence
+Average
+Quality Score
+Factual
+Generality (\uparrow)
+Path Traceability (\uparrow)
+Groundedness (\uparrow)
+Quality Score (\uparrow)
+Standard Deviation (\downarrow)
+Alignment (\uparrow)
+All
+ChatGPT 3.5
+2.013
+1.500
+1.681
+1.731
+1.699
+1.523
+ChatGPT 4o
+3.427
+2.764
+2.967
+3.053
+1.166
+2.602
+Llama 2
+0.244
+0.177
+0.207
+0.209
+0.714
+0.149
+Llama 3
+1.731
+1.256
+1.564
+1.517
+1.605
+1.325
+Qwen 2.5
+1.995
+1.120
+1.510
+1.541
+1.487
+1.420
+GMLLM (Llama 3 based)
+3.037
+2.056
+2.464
+2.519
+0.647
+2.060
+GMLLM (ChatGPT 4o based)
+3.687
+2.727
+3.215
+3.210
+0.860
+2.721
+Large
+ChatGPT 3.5
+0.842
+0.633
+0.705
+0.727
+1.385
+0.640
+ChatGPT 4o
+2.716
+2.167
+2.336
+2.406
+1.732
+1.978
+Llama 2
+0.156
+0.119
+0.137
+0.137
+0.524
+0.111
+Llama 3
+0.584
+0.432
+0.527
+0.514
+1.165
+0.453
+Qwen 2.5
+1.017
+0.640
+0.777
+0.811
+1.349
+0.714
+GMLLM (Llama 3 based)
+2.857
+1.928
+2.369
+2.385
+0.824
+1.915
+GMLLM (ChatGPT 4o based)
+3.377
+2.520
+3.045
+2.981
+1.262
+2.512
+Medium
+ChatGPT 3.5
+1.024
+0.748
+0.845
+0.872
+1.462
+0.777
+ChatGPT 4o
+3.682
+2.794
+2.889
+3.122
+0.637
+2.643
+Llama 2
+0.073
+0.051
+0.063
+0.062
+0.397
+0.039
+Llama 3
+0.713
+0.527
+0.641
+0.627
+1.289
+0.536
+Qwen 2.5
+0.859
+0.505
+0.658
+0.674
+1.250
+0.582
+GMLLM (Llama 3 based)
+2.917
+1.959
+2.287
+2.388
+0.585
+1.879
+GMLLM (ChatGPT 4o based)
+3.755
+2.770
+3.155
+3.226
+0.672
+2.661
+Small
+ChatGPT 3.5
+3.851
+2.879
+3.225
+3.318
+0.597
+2.908
+ChatGPT 4o
+3.852
+3.310
+3.628
+3.577
+0.733
+3.034
+Llama 2
+0.474
+0.343
+0.398
+0.405
+0.984
+0.285
+Llama 3
+3.579
+2.580
+3.238
+3.132
+0.493
+2.746
+Qwen 2.5
+3.828
+2.075
+2.885
+2.930
+0.688
+2.762
+GMLLM (Llama 3 based)
+3.289
+2.246
+2.707
+2.747
+0.463
+2.283
+GMLLM (ChatGPT 4o based)
+3.853
+2.842
+3.399
+3.365
+0.562
+2.935
+Table 4:
+A comparison of the token counts used by LLM baselines in the MalCP dataset, categorized by program sample size (Large, Medium, and Small). The best performance is indicated in bold, while the second-best is underlined.
+Large
+Medium
+Small
+Mean
+Std
+Min
+Max
+Mean
+Std
+Min
+Max
+Mean
+Std
+Min
+Max
+Llama3
+259089.13
+907541.88
+365
+12810537
+28578.12
+16497.45
+296
+39274
+698.47
+188.77
+257
+2523
+ChatGPT 4o
+251001.56
+868507.92
+370
+12875186
+28866.54
+17267.57
+307
+150823
+700.48
+187.67
+269
+2544
+ChatGPT 3.5
+255755.00
+882059.26
+376
+12813070
+29466.69
+17614.16
+307
+150331
+713.57
+189.33
+269
+2530
+Qwen 2.5
+280463.08
+972292.04
+375
+14226559
+29371.04
+16789.81
+297
+40199
+706.27
+197.05
+261
+2533
+Llama 2
+333972.02
+1207832.80
+482
+1954134
+31678.23
+17814.37
+385
+43165
+852.12
+249.55
+332
+3297
+GMLLM (Llama 3 based)
+644.30
+408.97
+201
+2587
+455.53
+200.56
+199
+1661
+299.80
+254.70
+204
+1698
+GMLLM (ChatGPT 4o based)
+640.06
+409.35
+198
+2418
+451.31
+199.03
+203
+1557
+292.65
+240.82
+209
+1625
+4.2 Malicious Code Detection Capability Comparisons (RQ1, RQ2)
+We first compared the accuracy of malicious code detection. Tables 1 and 2 present the detailed results. As observed, our method demonstrates superior performance on both public datasets and our own constructed dataset, outperforming baseline methods in the majority of scenarios and metrics. Notably, the improvement of our method over LLMs is significant, especially in the Precision metric, highlighting the ability of GMLLM to filter out redundant benign code interference, thereby validating the effectiveness of GMLLM. Furthermore, the comparison with other tools also indicates that, based on GMLLM, the LLM-based approach can effectively handle malicious code detection, particularly in the domain of Python code.
+4.3 Malicious Behavior Detailed Description Comparisons (RQ3)
+To analyze the performance of our algorithm, we compared the model-generated descriptions of malicious behavior against the ground-truth descriptions in the MalCP dataset. This comparison was limited to LLM-based methods, as other approaches are incapable of generating such detailed descriptions. For metrics, we used the following metrics: 1) Threat Generality, which measures the ability to generalize from specific functions or code elements to recognized cybersecurity tactics; 2) Execution Path Traceability, which assesses the clarity of the reconstructed execution flow; 3) Evidence Groundedness, which examines how closely a conclusion is supported by specific code elements; 4) Average Quality Score, the average score of the first three metrics; 5) Quality Score Standard Deviation, the standard deviation of the average evaluation quality; and 6) Factual Alignment, which evaluates the accuracy of identified and described malicious behaviors against a ground truth. Threat Generality, Execution Path Traceability, Evidence Correlation, and Factual Consistency were evaluated by an LLM, with the details discussed in Appendix C.4.
+The results, as shown in Table 3, indicate that our method achieves superior performance in the vast majority of scenarios. This is particularly evident on large and medium-scale code, where foundational LLMs, when used alone, are more susceptible to interference.
+To validate the reliability of using GPT-4o as an automatic evaluator for the explanation-quality metrics, we additionally performed a human evaluation study. Two security practitioners independently scored a subset of model explanations along the same four dimensions as in Table 3, and their
+scores show consistent agreement with GPT-4o’s ratings (see Appendix C.5 for detailed statistics). This suggests that GPT-4o is a reasonable proxy for expert judgment in our setting, while the core Factual Alignment metric already relies purely on expert-curated labels.
+4.4 LLM Resource Consumption (RQ4)
+We compared the resource consumption of GMLLM against other LLMs, using the number of tokens consumed as the primary metric. The results are presented in Table 4. As the data shows, GMLLM demonstrates the lowest resource usage in all scenarios, and the margin of improvement is significant. In some cases, GMLLM achieves a reduction in computational cost by several orders of magnitude, which clearly demonstrates the superiority of our method.
+Beyond token usage, we also profile the cost of the GNN-Explainer step itself. On MalCP, optimizing the masks for a single project takes on average 10–11 seconds (see Appendix E.1 for full statistics).
+4.5 Ablation Studies
+4.5.1 Effect of Rule Design and Model Components
+Table 5: Ablation study of different rule configurations. Bold indicates the best performance.
+Configuration
+Recall
+Precision
+Accuracy
+Benign Recall
+Structure-only (No \mathcal{S} )
+87.06
+87.85
+88.65
+89.98
+Human Rules ( \mathcal{S}^{\text{comm}} )
+90.43
+91.53
+91.86
+93.04
+50 Rules ( \mathcal{S}^{\text{comm}}\cup 0.5\mathcal{S}^{\text{data}} )
+92.78
+93.28
+93.69
+94.44
+Full GMLLM ( \mathcal{S}^{\text{comm}}\cup\mathcal{S}^{\text{data}} )
+95.30
+95.07
+95.62
+95.89
+To understand where the gains of GMLLM come from, we first ablate the rule set \mathcal{S} and the model components on MalCP (GPT-4o backend). Table 5 summarizes the effect of different rule configurations. “Structure-only” uses only structural graph features without any behavior rules. “Human Rules” ( \mathcal{S}^{\text{comm}} ) uses our manually designed common rules only. “50% Rules” randomly keeps half of the rules in \mathcal{S}^{\text{data}} at inference time, and “Full GMLLM” uses the complete rule set. In all cases, \mathcal{S}^{\text{comm}} and \mathcal{S}^{\text{data}} are fixed; we do not regenerate rules from different fractions of the dataset.
+The results indicate that behavior rules provide substantial but not exclusive benefits. Without any behavior rules, the graph-only variant still achieves 88.65% accuracy, showing that the structural representation itself is informative. Using only human-curated rules \mathcal{S}^{\text{comm}} increases accuracy to 91.86%, already exceeding the GPT-4o direct baseline on MalCP (90.39%), which demonstrates that the framework does not rely solely on LLM-generated rules. Further enriching the rule set to \mathcal{S}^{\text{comm}}\cup\mathcal{S}^{\text{data}} yields a monotonic improvement, with accuracy ultimately reaching 95.62%.
+We also compare a GNN-only classifier with the LLM-only and full GMLLM variants on MalCP. The GPT-4o direct baseline from Table 2 attains 90.39% accuracy, the GNN-only model reaches 92.22%, and the full GMLLM attains 95.62%, corresponding to a 43.7% relative reduction in error rate (7.78% \rightarrow 4.38%). This shows that (i) the GNN with rule-augmented graphs already forms a strong detector, and (ii) the LLM provides complementary gains on top of the GNN, particularly on harder cases.
+Table 6: Effect of top- K edge budget on detection performance and token usage on MalCP (GPT-4o). Note that token cost is reported specifically for the Large dataset bucket.
+K (Max Edges)
+Accuracy
+Recall
+Precision
+Benign Recall
+Token Cost
+10
+92.97
+94.18
+90.75
+91.96
+435.45
+20
+95.62
+95.30
+95.07
+95.89
+640.06
+30
+95.19
+95.45
+94.03
+94.96
+810.33
+50
+94.88
+95.99
+92.94
+93.97
+1131.33
+(a) Large
+(b) Medium
+(c) Small
+Figure 3: A visualization of the code graph attention outputted with GMLLM when processing programs of different scales. In these graphs, the nodes and edges represent code elements and their corresponding relationships. The color intensity signifies the magnitude of attention, where colors closer to yellow indicate higher attention values.
+4.5.2 Sensitivity to the Attention-Subgraph Budget K
+As described in (11), the parameter K controls the size of the attention subgraph that is passed to the LLM. In our implementation, we achieved this via a budgeted top- K edge strategy: for each package, all call-graph edges are ranked by their explainer attention scores, and only the K highest-scoring edges are retained to induce the subgraph. The same K is shared across datasets.
+We study the sensitivity of GMLLM to this budget on MalCP with GPT-4o by varying K\in\{10,20,30,50\} while keeping the GNN and explainer fixed. As shown in Table 6, increasing K from 10 to 20 yields a clear performance gain (about +2.6 points in accuracy and +3.9 points in benign recall), suggesting that very small subgraphs may miss important context. For K\geq 20 , however, detection metrics change only marginally, whereas the average token usage on Large packages grows almost linearly with K . We therefore fix K=20 in all main experiments as a reasonable operating point that balances detection performance and token cost.
+4.6 Deeper Insight
+We visualized the graph attention generated by GMLLM, with the results presented in Figure 3. As illustrated, for the large-scale code, nearly all nodes are deep purple, which represents near-zero attention values. Only a small fraction of nodes and edges exhibit high attention, indicated by colors approaching yellow. This suggests that in larger-scale code projects, the proportion of code relevant to the malicious behavior is likely very small, which in turn explains the poor performance of LLMs on such samples. Our previous experiments corroborate this finding, underscoring the necessity of the additional attention mechanism in GMLLM. In contrast, on the small-scale dataset, the proportion of high-attention (yellow) nodes and edges increases significantly, and the performance of LLMs on these samples is correspondingly stronger.
+5 Conclusion
+We introduce GMLLM, a novel LLM-driven framework for malicious code detection designed to overcome a key limitation of LLMs: their susceptibility to noise from irrelevant code in large projects. Our approach leverages a lightweight GNN, trained on easily accessible data, which is interpreted during inference to produce attentions. These attentions direct the LLM to focus on potentially malicious code segments. As a result, GMLLM outperforms current state-of-the-art tools, rendering the direct use of LLMs for malicious code detection a practical possibility in real-world settings.
+ENDSOURCE
+
+

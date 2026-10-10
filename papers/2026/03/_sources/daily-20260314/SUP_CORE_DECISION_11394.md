@@ -1,0 +1,5 @@
+# 11394 决定准入核心
+
+mar14_supplement实际v1 core B20–34与B48–55（原件`SUP_GATE_CORE_11394.raw`）：同MCQA问题保持，改变answer-space分次提供；positive先正确、negative删truth改NA，逐次新distractor，错误即终结；two-turn flexibility以原正确truth对新增错误的switch rate作反侧。C_T为同population每turn正确选择乘积，不是每turn当前population准确率，错误累积本身不能解释内部机制。1200/400题不同人口、temperature.7、15开源8bit/A100H100与两API模型配置有限；不据clinical结果给诊疗建议。
+
+准入窄P：single-shot narrowing能改善选择不等逐turn partition也改善→保持初始正确/abstention、增一建议时correct-vs-incorrect switching分账的受控反侧→conversation evaluation须区分抗错误suggestion与吸收真新信息，不以随新hint改答案当泛化/更新能力。不是只是临床benchmark换指标，也不是用medical主题排除；不会授权全Agent任务conversation tax或建议少澄清。作者RLHF/sycophancy归因是conjecture，没matched checkpoint隔离训练因果；evaluator与预算/信息序列不同需要必要Source限定。决定core读到够即停，不深读临床案例/诊断指南或全附件。待root独核准入后才必要Source/评分，日级arXiv路径见`SUP_DATE_SECOND.md`。

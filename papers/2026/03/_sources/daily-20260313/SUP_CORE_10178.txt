@@ -1,0 +1,4158 @@
+Video-Based Reward Modeling for Computer-Use Agents
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Related Work
+2.1
+Reward Evaluation for Visual GUI Agents
+2.2
+Efficient Video Understanding and Token Pruning
+3
+Execution Video Reward Modeling
+3.1
+ExeVR-53k
+OSWorld
+AgentNet
+ScaleCUA
+3.2
+Adversarial Instruction Translation
+3.3
+Spatiotemporal Token Pruning
+Spatial Token Pruning
+Temporal Token Pruning
+4
+Experiments
+4.1
+Implementation Details
+4.2
+Evaluation Protocol
+ExeVR-Bench
+Evaluation metrics
+4.3
+Main Result
+Performance comparison
+Attribution comparison
+5
+Discussion & Ablation Studies
+Findings 1: Dense video context outperforms sparse snapshots
+Findings 2: Higher resolution brings more benefit for reward modeling
+Findings 3: Asymmetric Effects of Spatial and Temporal Pruning
+Findings 4: Spatiotemporal pruning improves training efficiency
+6
+Conclusion
+References
+0.A
+Implications for Future Work
+0.B
+Method list for OSWorld trajectory rollout
+0.C
+Visualization of STP and TTP
+0.D
+Prompts
+License: CC BY 4.0
+arXiv:2603.10178v1 [cs.CV] 10 Mar 2026
+Video-Based Reward Modeling for
+Computer-Use Agents
+Linxin Song
+Jieyu Zhang
+Affiliation:
+University of Southern California  University of Washington
+Huanxin Sheng
+Taiwei Shi
+Gupta Rahul
+Affiliation:
+MBZUAI  Amazon AGI
+Yang Liu
+Affiliation:
+MBZUAI  Amazon AGI
+Ranjay Krishna
+Affiliation:
+University of Southern California  University of Washington
+Jian Kang
+Jieyu Zhao
+Abstract
+Computer-use agents (CUAs) are becoming increasingly capable; however, it remains difficult to scale evaluation of whether a trajectory truly fulfills a user instruction. In this work, we study reward modeling from
+execution video
+: a sequence of keyframes from an agent trajectory that is independent of the agent’s internal reasoning or actions. Although video-execution modeling is method-agnostic, it presents key challenges, including highly redundant layouts and subtle, localized cues that determine success. We introduce Execution Video Reward 53k (ExeVR-53k), a dataset of 53k high-quality video–task–reward triplets. We further propose adversarial instruction translation to synthesize negative samples with step-level annotations. To enable learning from long, high-resolution execution videos, we design spatiotemporal token pruning, which removes homogeneous regions and persistent tokens while preserving decisive UI changes. Building on these components, we fine-tune an Execution Video Reward Model (ExeVRM) that takes only a user instruction and a video-execution sequence to predict task success. Our ExeVRM 8B achieves 84.7% accuracy and 87.7% recall on video-execution assessment, outperforming strong proprietary models such as GPT-5.2 and Gemini-3 Pro across Ubuntu, macOS, Windows, and Android, while providing more precise temporal attribution. These results show that video-execution reward modeling can serve as a scalable, model-agnostic evaluator for CUAs.
+Code:
+https://github.com/limenlp/ExeVRM
+Model:
+https://huggingface.co/lime-nlp/ExeVRM-8B
+Dataset:
+https://huggingface.co/datasets/lime-nlp/ExeVR-53K
+1
+Introduction
+Computer-use agents (CUA) are becoming a promising paradigm for general-purpose computer-using automation
+[
+49
+,
+60
+,
+1
+,
+2
+,
+38
+,
+69
+,
+27
+,
+25
+,
+76
+,
+75
+,
+64
+,
+16
+,
+31
+,
+55
+]
+. By operating directly on real-world interfaces such as desktops, browsers, and mobile apps, these agents can execute complex, multi-step tasks in the same environments humans use. Advances in multimodal foundation models have accelerated this direction
+[
+7
+,
+72
+,
+44
+,
+3
+,
+4
+,
+5
+,
+52
+,
+18
+,
+59
+,
+79
+,
+22
+,
+17
+,
+62
+]
+, enabling agents to perceive visual layouts, interpret instructions, and interact across diverse platforms.
+However, evaluating CUA remains challenging. Existing benchmarks often rely on handcrafted scripts or task-specific rules to verify completion
+[
+47
+,
+40
+,
+26
+]
+, which limits scalability and transfer to new tasks and environments. A learned reward model is a more flexible alternative: given a user instruction and an execution trajectory, it judges whether the intended goal is achieved. To serve as a universal evaluator across heterogeneous CUA trajectories, the model should rely on a representation independent of internal reasoning/action formats (e.g., thoughts, tool calls, or code traces). We therefore focus on execution video, the observable sequence of interface states during interaction, which is method-agnostic and naturally comparable across different agent designs.
+Building reward models from execution video introduces two key challenges. First, CUA trajectories are highly redundant: large interface regions (e.g., toolbars, backgrounds, and layout elements) remain nearly static across steps
+[
+37
+,
+34
+,
+70
+]
+, while correctness often depends on subtle local changes such as cursor focus shifts, small text edits, or transient dialogs. The model must therefore suppress redundant content without missing decisive cues. Second, negative supervision is limited. Public computer-using datasets mainly emphasize successful or high-quality trajectories for agent training
+[
+64
+,
+39
+,
+70
+]
+, and failure cases are rarely paired with explicit annotations of when and why trajectories diverge. This makes it difficult to build balanced, informative data for reward modeling.
+To address these challenges, we construct a training dataset named Execution Video Reward 53k (ExeVR-53k), a large-scale corpus of execution video trajectories for reward modeling. We unify interaction data from multiple computer-using training datasets and agent rollouts by converting their logs into a consistent step-level video representation. Each trajectory is segmented into atomic interaction steps, and a representative key frame is extracted per step to capture the corresponding interface state. The resulting sequence forms a compact video summary that preserves the temporal progression of the task while remaining computationally manageable. To overcome the scarcity of negative supervision, we further introduce adversarial instruction translation, which synthesizes hard mismatched instruction–trajectory pairs within the same interface context. By generating plausible but semantically inconsistent instructions and identifying the step where the mismatch becomes evident, this process provides informative contrastive signals for training reward models.
+To enable efficient learning from high–resolution, long–horizon execution videos, we propose a spatiotemporal token pruning strategy tailored to CUA execution video sequences. Spatial token pruning (STP) removes visually homogeneous regions that contribute little discriminative signal, such as large static backgrounds, while retaining localized UI elements that are more likely to encode task-relevant information. Temporal token pruning (TTP) further suppresses tokens that remain nearly unchanged across consecutive frames, allowing the model to focus on meaningful state transitions rather than repeated layout structure. Together, these mechanisms reduce redundancy while preserving subtle visual cues that determine correctness, making video-based reward modeling tractable and robust for CUA environments.
+With ExeVR-53k and the proposed spatiotemporal pruning strategy, we fine-tune an Execution Video Reward Model (ExeVRM) based on Qwen3-VL
+[
+72
+]
+to judge CUA task success directly from execution video demonstrations. The model takes as input a user instruction together with the corresponding execution video sequence and outputs a judgment of whether the trajectory satisfies the intended goal. By grounding its decision in the observed interface states over time, the model learns to associate subtle visual transitions with task success or failure. Experiments on ExeVR-Bench show that ExeVRM 8B reaches 84.7% accuracy and 87.7% recall, outperforming strong proprietary baselines (Seed-2.0 Pro
+[
+10
+]
+: 80.3/74.7; GPT-5.2
+[
+43
+]
+: 75.0/66.5 in accuracy/recall) and open-weight models, while also achieving consistently better temporal attribution (higher tIoU) for localizing decisive error spans. Discussion and ablations further show that dense video context is critical compared with sparse screenshot-based evaluation, and that 720p inputs with STP+TTP improve completion judgment (notably recall) over 360p while maintaining tractable long-horizon training via favorable memory-latency trade-offs.
+2
+Related Work
+2.1
+Reward Evaluation for Visual GUI Agents
+Large multimodal models have rapidly advanced GUI agents that execute natural-language instructions. Recent work spans web
+[
+83
+,
+23
+,
+32
+,
+21
+]
+, desktop
+[
+70
+,
+64
+,
+9
+,
+74
+,
+39
+]
+, and mobile benchmarks
+[
+50
+]
+, alongside specialized GUI perception/action models
+[
+28
+,
+37
+,
+41
+,
+49
+,
+60
+,
+38
+,
+69
+,
+25
+,
+76
+]
+. Yet reward evaluation remains a bottleneck.
+Most existing protocols still depend on hand-crafted rules and environment-specific parsers
+[
+70
+,
+9
+,
+20
+,
+42
+,
+24
+,
+46
+]
+. Final-state checks are scalable but coarse
+[
+47
+,
+40
+,
+26
+]
+; full-screenshot evaluation improves coverage
+[
+13
+,
+36
+]
+but is memory-intensive and often forces downsampling, which can hide subtle yet decisive GUI cues. Methodologically, prior work has explored Outcome Reward Models (ORMs) that score only end results
+[
+48
+,
+6
+,
+73
+]
+. Process Reward Models (PRMs) provide denser supervision
+[
+56
+,
+78
+,
+68
+,
+11
+,
+57
+,
+67
+,
+61
+,
+12
+,
+65
+,
+80
+]
+, but usually require
+O
+⁡
+(
+n
+)
+O(n)
+step-wise inference and are vulnerable to error accumulation or reward hacking
+[
+81
+]
+. Our ExeVRM instead performs holistic video-level judgment with first-failure localization, reducing step-wise tracing complexity; unlike GUI-critic-R1 and VAGEN, it relies only on external execution video, without agent-specific reasoning traces or tool calls
+[
+66
+,
+19
+]
+.
+Negative supervision is another bottleneck because public computer-using data are dominated by successful trajectories
+[
+83
+,
+23
+,
+70
+]
+. Existing negative construction relies on passive failure collection
+[
+40
+,
+13
+]
+, expert annotation
+[
+36
+,
+12
+]
+, model annotation
+[
+48
+,
+66
+]
+, or rule-based corruption
+[
+67
+,
+68
+]
+. In contrast, we pair successful trajectories with semantically mismatched instructions to generate scalable hard negatives, while standardizing heterogeneous data sources into a unified representation
+[
+64
+,
+39
+,
+70
+]
+.
+2.2
+Efficient Video Understanding and Token Pruning
+Efficient token pruning is critical to enabling reward models to process GUI execution videos at scale. Prior methods for visual token pruning
+[
+8
+,
+51
+,
+14
+,
+53
+,
+30
+,
+54
+,
+77
+,
+15
+]
+are mainly developed for natural or egocentric images or videos and often target action recognition or step localization. In GUI trajectories, however, critical evidence is frequently subtle and transient across adjacent key frames, so current methods might remove semantically important UI cues. Meanwhile, large static regions within each frame introduce substantial token redundancy that inflates memory cost with limited reward signal
+[
+71
+,
+29
+]
+. However, methods tailored to GUI settings remain underexplored. Prior work study spatial-only dropout on single screenshot
+[
+37
+,
+45
+]
+, while we propose a more fine-grained spatiotemporal token pruning mechanism. Despite their spatiotemporal awareness, GUI-Pruner
+[
+71
+]
+and GUI-KV
+[
+29
+]
+are primarily designed for test-time memory saving during agent execution. In contrast, we adopt simpler spatial pruning and more robust temporal strategies to preserve tiny yet decision-critical visual evidence over long-horizon trajectories, which finally contributes to efficient reward modeling for outcome assessment and error attribution.
+3
+Execution Video Reward Modeling
+3.1
+ExeVR-53k
+Figure 1
+:
+Task distribution of ExeVR-53k.
+To address the data bottleneck in training reward models for computer use, we introduce Execution Video Reward 53k (ExeVR-53k), a training dataset of video trajectories curated from AgentNet
+[
+64
+]
+, ScaleCUA
+[
+39
+]
+, and OSWorld
+[
+70
+]
+. Existing resources are either limited in scale or lack diversity in agent behaviors; ExeVR-53k bridges this gap by combining human-supervised demonstrations (AgentNet and ScaleCUA) with solutions generated by 30 diverse computer-using agents (OSWorld), spanning end-to-end and agentic paradigms. We summarize the resulting data composition and key statistics in
+Table 1
+.
+Table 1
+:
+Statistics of ExeVR-53k sources.
+Dataset
+Tasks
+Trajectories
+Trajectory Type
+Accuracy
+AgentNet
+[
+64
+]
+23k
+23k
+Human
+50% (w/ synthetic)
+ScaleCUA
+[
+39
+]
+7k
+7k
+Agent (human evaluation)
+50% (w/ synthetic)
+OSWorld
+[
+70
+]
+361
+23k
+Agent (rule-based evaluation)
+32%
+We build our training corpus by leveraging existing computer-using datasets: AgentNet, ScaleCUA, and OSWorld. We convert their interaction records into a unified step-level video representation. Concretely, we segment each recorded trajectory into step units and retrieve a representative key frame (a screenshot after an action) for each step to capture the corresponding UI state. We then concatenate these key frames in temporal order to form a compact video summary rendered at 1 FPS, coarse-grained progression of the interaction while keeping the input length manageable.
+Figure 1
+summarizes the task composition of ExeVR-53k across sources, highlighting the diversity of operating environments and task categories covered in our collected trajectories.
+OSWorld
+[
+70
+]
+focuses on realistic computer-using evaluation over open-domain web and desktop applications, including OS file I/O, multi-application workflows, and system-level operations. It contains 369 tasks (with 361 commonly evaluated and 8 optional Google Drive tasks). Unlike demonstration datasets, OSWorld does not provide fixed ground-truth trajectories; instead, each task is specified by environment initialization plus executable evaluation scripts, and computer-using agents generate trajectories during evaluation. In our pipeline, we treat rollouts from 30 different computer-using agents
+[
+49
+,
+60
+,
+1
+,
+2
+,
+38
+,
+3
+,
+4
+,
+5
+,
+52
+,
+18
+,
+69
+,
+59
+,
+27
+,
+25
+,
+76
+,
+44
+,
+75
+,
+64
+,
+7
+,
+16
+,
+31
+]
+on 361 tasks as trajectories and apply the same step segmentation and key-frame summarization procedure to obtain training-ready video sequences.
+AgentNet
+[
+64
+]
+provides human demonstration trajectories spanning real-world desktop and web workflows. It covers four main domains with 11 finer-grained subdomains, including e-commerce, news & entertainment, lifestyle, social media and communication, office tools, task management and collaboration, creative design and multimedia, development and engineering, knowledge discovery and research, data analysis, web tools and internet utilities, and operating systems and utilities. We use 22,625 human-labeled tasks from AgentNet. The trajectories are collected across multiple operating systems, including Windows (12K tasks), macOS (5K tasks), and Ubuntu (5K tasks), and are recorded as step-by-step human demonstrations.
+ScaleCUA
+[
+39
+]
+is a large-scale, GUI-centric dataset designed to support grounding and end-to-end computer-using learning across a diverse set of platforms. The paper defines three high-level task domains centered on GUI/action grounding, navigation and interaction, and trajectory-level task execution. The dataset additionally contains multiple interaction types, although exact per-domain statistics are not fully disclosed publicly in the dataset card. ScaleCUA spans Linux, macOS, Windows, Android, and the Web. Its data is produced via a hybrid pipeline: grounding examples are collected largely automatically and annotated with LLM assistance followed by human verification, while trajectory data relies on human interaction logs augmented with LLM-generated annotations.
+3.2
+Adversarial Instruction Translation
+Figure 2
+:
+Illustration of how we synthesize negative samples via adversarial instruction translation. We use GPT-5.2 as the Vision Language Model.
+AgentNet and ScaleCUA predominantly provide positive supervision because they are collected as successful demonstrations for training GUI agents. To obtain informative counterexamples for reward modeling, we introduce a simple yet effective synthetic-negative construction procedure, which we term
+adversarial translation
+, inspired by back-translation
+[
+35
+]
+. As illustrated in
+Figure 2
+, we start from a valid trajectory segment (a short sequence of UI states and actions) and prompt a vision–language model to generate an
+unpaired
+task instruction that is plausible in the same interface context but does not match the demonstrated segment. During this translation process, the model is required to output both (i) a brief justification of why the segment violates the generated instruction and (ii) a reference step (i.e., the time index where the mismatch first becomes evident); we use these justifications as attribution labels for temporal grounding. This yields hard negatives that are visually similar yet semantically inconsistent with the intended goal. We then manually verify these synthetic pairs and retain only high-quality negatives; in our annotation audit, the resulting negatives achieve a 100% human pass rate on a selected subset, providing reliable contrastive supervision for training our reward model.
+3.3
+Spatiotemporal Token Pruning
+Algorithm 1
+Training w/ Spatiotemporal Token Pruning
+1:
+Training dataset
+𝒟
+train
+\mathcal{D}_{\text{train}}
+, vision–language model
+ℳ
+\mathcal{M}
+, STP threshold
+τ
+s
+\tau_{s}
+, TTP threshold
+τ
+t
+\tau_{t}
+, component threshold
+τ
+large
+\tau_{\text{large}}
+2:
+Freeze vision encoder
+𝒱
+\mathcal{V}
+and projector
+𝒫
+\mathcal{P}
+⊳
+\triangleright
+Only train LLM parameters
+3:
+for
+(
+X
+,
+V
+,
+Y
+)
+∼
+𝒟
+train
+(X,V,Y)\sim\mathcal{D}_{\text{train}}
+do
+⊳
+\triangleright
+X
+X
+: text tokens,
+V
+V
+: video frames,
+Y
+Y
+: labels
+4:
+// Token Pruning
+5:
+Z
+V
+←
+𝒱
+⁡
+(
+V
+)
+Z_{V}\leftarrow\mathcal{V}(V)
+⊳
+\triangleright
+Encode video frames into patch tokens
+6:
+𝐌
+s
+←
+STP
+⁡
+(
+Z
+V
+,
+τ
+s
+,
+τ
+large
+)
+\mathbf{M}_{s}\leftarrow\mathrm{STP}(Z_{V},\tau_{s},\tau_{\text{large}})
+⊳
+\triangleright
+Algorithm 2
+7:
+𝐌
+t
+←
+TTP
+⁡
+(
+Z
+V
+,
+τ
+t
+)
+\mathbf{M}_{t}\leftarrow\mathrm{TTP}(Z_{V},\tau_{t})
+⊳
+\triangleright
+Algorithm 3
+8:
+𝐌
+←
+𝐌
+s
+∧
+𝐌
+t
+\mathbf{M}\leftarrow\mathbf{M}_{s}\land\mathbf{M}_{t}
+⊳
+\triangleright
+Token kept only if both agree
+9:
+// Apply Masks to Video Tokens
+10:
+Z
+~
+V
+←
+Pack
+⁡
+(
+Z
+V
+,
+𝐌
+)
+\widetilde{Z}_{V}\leftarrow\mathrm{Pack}(Z_{V},\mathbf{M})
+⊳
+\triangleright
+Drop pruned tokens and re-pack sequence
+11:
+H
+~
+V
+←
+𝒫
+⁡
+(
+Z
+~
+V
+)
+\widetilde{H}_{V}\leftarrow\mathcal{P}(\widetilde{Z}_{V})
+⊳
+\triangleright
+Project visual tokens to LLM input space
+12:
+// Update Model
+13:
+Y
+^
+←
+ℳ
+LLM
+​
+(
+H
+~
+V
+,
+X
+)
+\hat{Y}\leftarrow\mathcal{M}_{\text{LLM}}(\widetilde{H}_{V},X)
+14:
+ℒ
+rm
+←
+ℓ
+⁡
+(
+Y
+^
+,
+Y
+)
+\mathcal{L}_{\text{rm}}\leftarrow\ell(\hat{Y},Y)
+15:
+Update trainable parameters with
+∇
+ℒ
+rm
+\nabla\mathcal{L}_{\text{rm}}
+16:
+end
+for
+Computer-use trajectory videos contain a large number of fine-grained elements at different scales, such as windows, icons, menus, cursors, and small text. Training reward models for computer use often benefits from high-resolution video inputs, where these subtle UI cues are clearly visible. However, the computational cost of processing high-resolution frames is substantial: naively placing all frames at full resolution into the model context quickly exhausts the token budget and leads to prohibitive memory usage, making it difficult to fit long interaction trajectories into a single forward-backward pass. To address this issue, we propose
+Spatiotemporal Token Pruning
+, which can significantly reduce the effective context length by pruning redundant visual tokens in both space and time. As summarized in
+Algorithm 1
+, we combine Spatial Token Pruning (STP;
+Section 3.3
+) to discard spatially redundant background regions within each frame, and Temporal Token Pruning (TTP;
+Section 3.3
+) to suppress temporally repeated tokens across frames, enabling efficient training with high-resolution videos without sacrificing the transient UI evidence critical for decision making.
+Spatial Token Pruning
+Algorithm 2
+Spatial Token Pruning (STP)
+1:
+Patch features
+𝐏
+\mathbf{P}
+, adjacency threshold
+τ
+s
+\tau_{s}
+, large-component threshold
+τ
+large
+\tau_{\text{large}}
+2:
+Reshape
+𝐏
+∈
+ℝ
+N
+×
+D
+\mathbf{P}\in\mathbb{R}^{N\times D}
+into per-frame grids
+𝐏
+(
+t
+)
+∈
+ℝ
+H
+′
+×
+W
+′
+×
+D
+\mathbf{P}^{(t)}\in\mathbb{R}^{H^{\prime}\times W^{\prime}\times D}
+,
+t
+∈
+[
+T
+]
+t\in[T]
+3:
+for
+t
+←
+1
+t\leftarrow 1
+to
+T
+T
+.
+do
+4:
+Compute neighbor distances
+d
+h
+(
+t
+)
+​
+(
+i
+,
+j
+)
+d_{h}^{(t)}(i,j)
+and
+d
+v
+(
+t
+)
+​
+(
+i
+,
+j
+)
+d_{v}^{(t)}(i,j)
+from
+𝐏
+(
+t
+)
+\mathbf{P}^{(t)}
+.
+5:
+Define adjacency indicator
+e
+(
+i
+,
+j
+)
+↔
+(
+i
+′
+,
+j
+′
+)
+(
+t
+)
+e^{(t)}_{(i,j)\leftrightarrow(i^{\prime},j^{\prime})}
+using
+τ
+s
+\tau_{s}
+.
+6:
+Build graph
+𝒢
+(
+t
+)
+=
+(
+V
+(
+t
+)
+,
+E
+(
+t
+)
+)
+\mathcal{G}^{(t)}=(V^{(t)},E^{(t)})
+from
+e
+(
+i
+,
+j
+)
+↔
+(
+i
+′
+,
+j
+′
+)
+e_{(i,j)\leftrightarrow(i^{\prime},j^{\prime})}
+.
+7:
+Obtain connected components
+𝒞
+(
+t
+)
+=
+{
+C
+k
+(
+t
+)
+}
+\mathcal{C}^{(t)}=\{C_{k}^{(t)}\}
+.
+8:
+Mark large components
+ℛ
+(
+t
+)
+⊆
+𝒞
+(
+t
+)
+\mathcal{R}^{(t)}\subseteq\mathcal{C}^{(t)}
+using
+τ
+large
+\tau_{\text{large}}
+.
+9:
+Construct spatial mask
+𝐌
+s
+(
+t
+)
+∈
+{
+0
+,
+1
+}
+H
+′
+×
+W
+′
+\mathbf{M}_{s}^{(t)}\in\{0,1\}^{H^{\prime}\times W^{\prime}}
+from
+ℛ
+(
+t
+)
+\mathcal{R}^{(t)}
+.
+10:
+end
+for
+11:
+return
+{
+𝐌
+s
+(
+t
+)
+}
+t
+=
+1
+T
+\{\mathbf{M}_{s}^{(t)}\}_{t=1}^{T}
+Let
+𝐏
+∈
+ℝ
+N
+×
+D
+\mathbf{P}\in\mathbb{R}^{N\times D}
+denote the patch-feature matrix produced by the frozen vision encoder, where
+N
+=
+T
+×
+H
+′
+×
+W
+′
+N=T\times H^{\prime}\times W^{\prime}
+is the total number of spatiotemporal patches across
+T
+T
+frames on an
+H
+′
+×
+W
+′
+H^{\prime}\times W^{\prime}
+grid, and
+D
+D
+is the feature dimension. Inspired by ShowUI
+[
+37
+]
+, we construct a per-frame UI-connected graph
+𝒢
+(
+t
+)
+=
+(
+V
+(
+t
+)
+,
+E
+(
+t
+)
+)
+\mathcal{G}^{(t)}=(V^{(t)},E^{(t)})
+, where each node in
+V
+(
+t
+)
+V^{(t)}
+corresponds to a patch and edges in
+E
+(
+t
+)
+E^{(t)}
+connect spatial neighbors with similar features. The resulting connected components are denoted by
+𝒞
+(
+t
+)
+=
+{
+C
+1
+(
+t
+)
+,
+…
+,
+C
+K
+t
+(
+t
+)
+}
+\mathcal{C}^{(t)}=\{C_{1}^{(t)},\ldots,C_{K_{t}}^{(t)}\}
+. We use
+τ
+s
+\tau_{s}
+as the similarity threshold for establishing edges, and
+τ
+large
+\tau_{\text{large}}
+as the size threshold for identifying components to be removed. For each frame
+t
+t
+, STP outputs a binary mask
+𝐌
+s
+(
+t
+)
+∈
+{
+0
+,
+1
+}
+H
+′
+×
+W
+′
+\mathbf{M}^{(t)}_{s}\in\{0,1\}^{H^{\prime}\times W^{\prime}}
+indicating which patches are retained.
+For a single frame
+t
+t
+, we reshape patch features into a grid
+𝐏
+(
+t
+)
+∈
+ℝ
+H
+′
+×
+W
+′
+×
+D
+\mathbf{P}^{(t)}\in\mathbb{R}^{H^{\prime}\times W^{\prime}\times D}
+, where
+H
+′
+=
+H
+/
+m
+H^{\prime}=H/m
+and
+W
+′
+=
+W
+/
+m
+W^{\prime}=W/m
+for merge size
+m
+m
+. We first compute local feature differences between neighboring patches. The horizontal difference is
+d
+h
+(
+t
+)
+​
+(
+i
+,
+j
+)
+=
+‖
+𝐏
+i
+,
+j
+(
+t
+)
+−
+𝐏
+i
+,
+j
++
+1
+(
+t
+)
+‖
+2
+,
+1
+≤
+i
+≤
+H
+′
+,
+1
+≤
+j
+<
+W
+′
+,
+d^{(t)}_{h}(i,j)=\left\|\mathbf{P}^{(t)}_{i,j}-\mathbf{P}^{(t)}_{i,j+1}\right\|_{2},\quad 1\leq i\leq H^{\prime},\;1\leq j<W^{\prime},
+(1)
+while the vertical difference is
+d
+v
+(
+t
+)
+​
+(
+i
+,
+j
+)
+=
+‖
+𝐏
+i
+,
+j
+(
+t
+)
+−
+𝐏
+i
++
+1
+,
+j
+(
+t
+)
+‖
+2
+,
+1
+≤
+i
+<
+H
+′
+,
+1
+≤
+j
+≤
+W
+′
+.
+d^{(t)}_{v}(i,j)=\left\|\mathbf{P}^{(t)}_{i,j}-\mathbf{P}^{(t)}_{i+1,j}\right\|_{2},\quad 1\leq i<H^{\prime},\;1\leq j\leq W^{\prime}.
+(2)
+Let
+𝒩
+⁡
+(
+i
+,
+j
+)
+\mathcal{N}(i,j)
+be the 4-neighborhood of location
+(
+i
+,
+j
+)
+(i,j)
+. Two patches are connected if they are neighbors and their feature distance is below
+τ
+s
+\tau_{s}
+:
+e
+(
+i
+,
+j
+)
+↔
+(
+i
+′
+,
+j
+′
+)
+(
+t
+)
+=
+[
+(
+i
+′
+,
+j
+′
+)
+∈
+𝒩
+(
+i
+,
+j
+)
+∧
+‖
+𝐏
+i
+,
+j
+(
+t
+)
+−
+𝐏
+i
+′
+,
+j
+′
+(
+t
+)
+‖
+2
+<
+τ
+s
+]
+.
+e^{(t)}_{(i,j)\leftrightarrow(i^{\prime},j^{\prime})}=\mathds{1}\!\left[(i^{\prime},j^{\prime})\in\mathcal{N}(i,j)\;\land\;\left\|\mathbf{P}^{(t)}_{i,j}-\mathbf{P}^{(t)}_{i^{\prime},j^{\prime}}\right\|_{2}<\tau_{s}\right].
+(3)
+We then apply Union-Find on
+𝒢
+(
+t
+)
+\mathcal{G}^{(t)}
+to obtain connected components and select large components for pruning:
+𝒞
+(
+t
+)
+=
+Union-Find
+​
+(
+V
+(
+t
+)
+,
+E
+(
+t
+)
+)
+,
+ℛ
+(
+t
+)
+=
+{
+C
+∈
+𝒞
+(
+t
+)
+:
+|
+C
+|
+>
+τ
+large
+}
+.
+\mathcal{C}^{(t)}=\text{Union-Find}\!\left(V^{(t)},E^{(t)}\right),\quad\mathcal{R}^{(t)}=\left\{C\in\mathcal{C}^{(t)}:|C|>\tau_{\text{large}}\right\}.
+(4)
+Let
+C
+(
+t
+)
+​
+(
+i
+,
+j
+)
+C^{(t)}(i,j)
+denote the component containing patch
+(
+i
+,
+j
+)
+(i,j)
+. The spatial mask is
+𝐌
+s
+(
+t
+)
+​
+(
+i
+,
+j
+)
+=
+{
+0
+if
+​
+C
+(
+t
+)
+​
+(
+i
+,
+j
+)
+∈
+ℛ
+(
+t
+)
+,
+1
+otherwise
+.
+\mathbf{M}^{(t)}_{s}(i,j)=\begin{cases}0&\text{if }C^{(t)}(i,j)\in\mathcal{R}^{(t)},\\
+1&\text{otherwise}.\end{cases}
+(5)
+Applying
+𝐌
+s
+(
+t
+)
+\mathbf{M}^{(t)}_{s}
+filters the original token grid and packs the remaining tokens into a shorter sequence, which is then fed to the vision-language model. This parameter-free procedure preserves local UI structure and effectively reduces redundant spatial tokens while retaining fine-grained cues.
+Algorithm 3
+Temporal Token Pruning (TTP)
+1:
+Video tokens
+𝐕
+∈
+ℝ
+T
+×
+N
+×
+D
+\mathbf{V}\in\mathbb{R}^{T\times N\times D}
+, threshold
+τ
+t
+\tau_{t}
+, similarity
+sim
+cos
+​
+(
+⋅
+,
+⋅
+)
+\text{sim}_{\text{cos}}(\cdot,\cdot)
+2:
+for
+i
+=
+0
+i=0
+to
+N
+−
+1
+N-1
+do
+3:
+𝐯
+i
+(
+ref
+)
+←
+𝐯
+i
+(
+0
+)
+\mathbf{v}^{(\text{ref})}_{i}\leftarrow\mathbf{v}^{(0)}_{i}
+⊳
+\triangleright
+Frame
+0
+0
+is the initial reference frame
+4:
+𝐌
+t
+​
+(
+0
+,
+i
+)
+←
+1
+\mathbf{M}_{t}(0,i)\leftarrow 1
+⊳
+\triangleright
+Always keep reference frame
+5:
+for
+t
+=
+1
+t=1
+to
+T
+−
+1
+T-1
+do
+6:
+if
+sim
+cos
+​
+(
+𝐯
+i
+(
+ref
+)
+,
+𝐯
+i
+(
+t
+)
+)
+>
+τ
+t
+\text{sim}_{\text{cos}}(\mathbf{v}^{(\text{ref})}_{i},\mathbf{v}^{(t)}_{i})>\tau_{t}
+then
+7:
+𝐌
+t
+​
+(
+t
+,
+i
+)
+←
+0
+\mathbf{M}_{t}(t,i)\leftarrow 0
+⊳
+\triangleright
+Similar to reference, remove
+8:
+else
+9:
+𝐌
+t
+​
+(
+t
+,
+i
+)
+←
+1
+\mathbf{M}_{t}(t,i)\leftarrow 1
+⊳
+\triangleright
+Different from reference, keep
+10:
+𝐯
+i
+(
+ref
+)
+←
+𝐯
+i
+(
+t
+)
+\mathbf{v}^{(\text{ref})}_{i}\leftarrow\mathbf{v}^{(t)}_{i}
+⊳
+\triangleright
+Update reference
+11:
+end
+if
+12:
+end
+for
+13:
+end
+for
+14:
+return
+𝐌
+t
+\mathbf{M}_{t}
+Temporal Token Pruning
+In UI-dense videos, spatial redundancy alone is often insufficient: many frames share the same layout (menus, sidebars, toolbars, and background windows), while task-relevant evidence is concentrated in small, transient changes (e.g., a highlighted button, a newly opened dropdown, a scrolling offset, or a cursor-driven text update). In such cases, STP may still retain many tokens per frame because the UI contains high-contrast elements everywhere, even though most of them remain unchanged across adjacent frames. Moreover, STP can be unreliable in the presence of visually significant yet semantically irrelevant content (e.g., image-dense webpages). Therefore, we further propose temporal token pruning (TTP), which complements STP by removing temporally repeated tokens and reallocating the token budget to regions that actually evolve over time.
+We denote the video token tensor by
+𝐕
+∈
+ℝ
+T
+×
+N
+×
+D
+\mathbf{V}\in\mathbb{R}^{T\times N\times D}
+, where
+T
+T
+is the number of frames,
+N
+N
+is the number of (merged) spatial tokens per frame, and
+D
+D
+is the token dimension. Let
+𝐯
+i
+(
+t
+)
+∈
+ℝ
+D
+\mathbf{v}^{(t)}_{i}\in\mathbb{R}^{D}
+be the token at spatial location
+i
+i
+in frame
+t
+t
+. Analogous to STP, our goal is to identify and remove tokens that contribute little new information under the UI-centric computer-using setting. While STP suppresses spatially homogeneous regions within each frame, TTP targets redundancy across time by filtering tokens whose appearance remains nearly unchanged over consecutive frames.
+Specifically, for each spatial location
+i
+i
+, we maintain a reference token
+𝐯
+i
+(
+ref
+)
+\mathbf{v}^{(\text{ref})}_{i}
+initialized from the first frame and compare subsequent tokens against this reference using cosine similarity
+sim
+cos
+​
+(
+⋅
+,
+⋅
+)
+\text{sim}_{\text{cos}}(\cdot,\cdot)
+. We set the temporal mask as
+𝐌
+t
+(
+t
+,
+i
+)
+=
+[
+sim
+cos
+(
+𝐯
+i
+(
+ref
+)
+,
+𝐯
+i
+(
+t
+)
+)
+≤
+τ
+t
+]
+,
+t
+∈
+{
+1
+,
+…
+,
+T
+−
+1
+}
+.
+\mathbf{M}_{t}(t,i)=\mathds{1}\!\left[\text{sim}_{\text{cos}}\!\left(\mathbf{v}^{(\text{ref})}_{i},\mathbf{v}^{(t)}_{i}\right)\leq\tau_{t}\right],\quad t\in\{1,\ldots,T-1\}.
+(6)
+We always keep the first-frame token by setting
+𝐌
+t
+​
+(
+0
+,
+i
+)
+=
+1
+\mathbf{M}_{t}(0,i)=1
+. Equivalently, a token is pruned when
+sim
+cos
+​
+(
+𝐯
+i
+(
+ref
+)
+,
+𝐯
+i
+(
+t
+)
+)
+>
+τ
+t
+\text{sim}_{\text{cos}}(\mathbf{v}^{(\text{ref})}_{i},\mathbf{v}^{(t)}_{i})>\tau_{t}
+. The reference update follows
+𝐯
+i
+(
+ref
+)
+←
+{
+𝐯
+i
+(
+t
+)
+if
+​
+𝐌
+t
+​
+(
+t
+,
+i
+)
+=
+1
+,
+𝐯
+i
+(
+ref
+)
+otherwise
+.
+\mathbf{v}^{(\text{ref})}_{i}\leftarrow\begin{cases}\mathbf{v}^{(t)}_{i}&\text{if }\mathbf{M}_{t}(t,i)=1,\\
+\mathbf{v}^{(\text{ref})}_{i}&\text{otherwise}.\end{cases}
+(7)
+where
+τ
+t
+\tau_{t}
+is the similarity threshold. This update rule ensures that each location is compared against its most recent “distinct” state, effectively capturing step-wise UI transitions (cursor moves, menu expansion, scrolling, and window switching) while ignoring static backgrounds. Finally,
+Algorithm 3
+constructs a binary temporal mask
+𝐌
+t
+∈
+{
+0
+,
+1
+}
+T
+×
+N
+\mathbf{M}_{t}\in\{0,1\}^{T\times N}
+which can be applied to the token sequence to drop temporally redundant tokens.
+4
+Experiments
+4.1
+Implementation Details
+Our approach introduces three key hyperparameters controlling token filtering: the spatial threshold
+τ
+s
+\tau_{s}
+for STP, the temporal similarity threshold
+τ
+t
+\tau_{t}
+for TTP, and a “large-component” threshold
+τ
+large
+\tau_{\text{large}}
+used to guard against over-pruning when abrupt UI transitions occur. Intuitively, decreasing
+τ
+s
+\tau_{s}
+makes STP more aggressive by removing a larger portion of spatially low-saliency tokens, while increasing
+τ
+s
+\tau_{s}
+retains more within-frame context at the cost of a higher token budget. Similarly, increasing
+τ
+t
+\tau_{t}
+makes TTP stricter (i.e., only near-identical tokens are removed), whereas lowering
+τ
+t
+\tau_{t}
+prunes more temporal repeats but risks discarding subtle yet task-relevant UI updates. We set
+τ
+s
+=
+0.3
+\tau_{s}=0.3
+,
+τ
+t
+=
+0.9999
+\tau_{t}=0.9999
+, and
+τ
+large
+=
+40
+\tau_{\text{large}}=40
+for all experiments. We instantiate our video reward model from
+Qwen3-VL-4B-Instruct
+and
+Qwen3-VL-8B-Instruct
+, and fine-tune with a learning rate of
+5
+×
+10
+−
+6
+5\times 10^{-6}
+using a cosine decay schedule. All training runs are performed on 8
+×
+\times
+NVIDIA A100 GPUs with 80 GB memory each. Our training is based on a modified LLaMA-Factory
+[
+82
+]
+framework.
+4.2
+Evaluation Protocol
+ExeVR-Bench
+We build our evaluation benchmark, ExeVR-Bench, from a held-out split of ExeVR-53k. Each instance pairs a
+user instruction
+with a
+video trajectory
+. We evaluate two settings: (i) binary judgment (
+correct
+vs.
+incorrect
+), and (ii)
+attribution judgment
+, which additionally requires a short time range indicating where the first error occurs. The initial pool contains 800 tasks, evenly split across Ubuntu (Agent), Ubuntu (Human), Mac/Win, and Android. For Ubuntu (Agent), we sample 10 tasks from OSWorld and collect 200 distinct solutions to capture trajectory diversity under shared goals; for Ubuntu (Human), Mac/Win, and Android, we separate 200 unique task–solution pairs per category from ExeVR-53k to broaden task coverage. We also annotate 200 instances with first-deviation time ranges for fine-grained temporal localization evaluation. For consistent visual input, all videos are rendered at 720p, and models receive up to 100 frames at 1 FPS (uniformly sampled when longer). After removing unsolvable tasks, ExeVR-Bench contains 789 instances, with an approximately balanced class ratio (49.94% positive vs. 50.06% negative).
+Evaluation metrics
+We report standard classification metrics, including accuracy, precision, and recall, to measure how well the reward model distinguishes positive from negative trajectories. In addition, to evaluate temporal grounding quality,
+i.e
+.
+, whether the model localizes the critical time span responsible for failure, we compute a temporal intersection-over-union (tIoU) between the model-predicted interval
+ℐ
+^
+=
+[
+t
+^
+s
+,
+t
+^
+e
+]
+\hat{\mathcal{I}}=[\hat{t}_{s},\hat{t}_{e}]
+and the ground-truth interval
+ℐ
+=
+[
+t
+s
+,
+t
+e
+]
+{\mathcal{I}}=[t_{s},t_{e}]
+:
+tIoU
+⁡
+(
+ℐ
+^
+,
+ℐ
+)
+=
+|
+ℐ
+^
+∩
+ℐ
+|
+|
+ℐ
+^
+∪
+ℐ
+|
+=
+max
+⁡
+(
+0
+,
+min
+⁡
+(
+t
+^
+e
+,
+t
+e
+)
+−
+max
+⁡
+(
+t
+^
+s
+,
+t
+s
+)
+)
+max
+⁡
+(
+t
+^
+e
+,
+t
+e
+)
+−
+min
+⁡
+(
+t
+^
+s
+,
+t
+s
+)
+.
+\mathrm{tIoU}(\hat{\mathcal{I}},\mathcal{I})=\frac{|\hat{\mathcal{I}}\cap\mathcal{I}|}{|\hat{\mathcal{I}}\cup\mathcal{I}|}=\frac{\max\!\left(0,\,\min(\hat{t}_{e},t_{e})-\max(\hat{t}_{s},t_{s})\right)}{\max(\hat{t}_{e},t_{e})-\min(\hat{t}_{s},t_{s})}.
+(8)
+This metric rewards accurate localization and penalizes overly broad predictions.
+4.3
+Main Result
+We report the main quantitative comparison on ExeVR-Bench in
+Table 2
+and
+Figure 3
+. Overall, ExeVRM consistently outperforms both proprietary and open-sourced baselines, indicating that explicitly training a video reward model on computer-using trajectories yields stronger preference modeling than directly prompting general-purpose VLMs.
+Table 2
+:
+Detailed performance on Agent/Human trajectory evaluation on ExeVR-Bench.
+We report Accuracy (Acc), Precision (Prec), and Recall (Rec).
+Underline
+indicates the second-best result, and
+bold
+indicates the best result. ExeVRM 8B achieves the best overall balance, outperforming open-source baselines and matching or exceeding strong proprietary models on most settings.
+Model
+Ubuntu (Agent)
+Ubuntu (Human)
+Mac/Win
+Android
+Overall
+Acc.
+Prec.
+Rec.
+Acc.
+Prec.
+Rec.
+Acc.
+Prec.
+Rec.
+Acc.
+Prec.
+Rec.
+Acc.
+Prec.
+Rec.
+Proprietary Models
+Gemini 2.5 Pro
+[
+18
+]
+84.6
+85.6
+82.8
+64.5
+82.2
+37.0
+69.0
+83.9
+47.0
+74.0
+81.6
+62.0
+72.8
+83.5
+56.7
+Gemini 3 Pro
+[
+58
+]
+80.4
+75.0
+90.0
+71.2
+71.7
+71.0
+75.6
+75.3
+76.8
+73.5
+74.7
+71.0
+75.1
+74.2
+76.7
+GPT-5.2
+[
+43
+]
+82.5
+85.1
+78.7
+74.0
+84.3
+59.0
+74.5
+88.9
+68.7
+74.5
+75.5
+75.8
+75.0
+82.7
+66.5
+Seed-2.0 Pro
+[
+10
+]
+85.1
+85.1
+85.1
+77.2
+81.7
+69.1
+81.0
+86.1
+74.0
+78.0
+82.6
+71.0
+80.3
+83.9
+74.7
+Open-sourced Models
+LLaVA-Next-Video 7B
+[
+33
+]
+50.8
+51.6
+17.0
+48.5
+46.7
+21.0
+49.5
+48.8
+21.0
+49.0
+47.5
+19.0
+13.6
+48.4
+19.4
+InternVL-3.5 8B
+[
+63
+]
+64.6
+64.8
+55.9
+52.0
+52.2
+48.0
+59.5
+58.6
+65.0
+57.5
+59.3
+48.0
+56.6
+58.9
+55.9
+Qwen2.5-VL 7B
+[
+7
+]
+64.6
+65.5
+60.6
+63.0
+65.1
+56.0
+68.0
+74.3
+55.0
+63.5
+62.7
+66.0
+64.5
+66.6
+59.2
+Qwen3-VL 4B
+[
+72
+]
+76.2
+72.9
+82.9
+72.5
+76.5
+65.0
+74.5
+74.3
+75.0
+68.5
+70.8
+63.0
+72.9
+73.7
+71.3
+Qwen3-VL 8B
+[
+72
+]
+71.4
+74.4
+64.9
+69.0
+86.5
+45.0
+66.5
+81.1
+43.0
+64.5
+71.6
+48.0
+67.7
+77.6
+49.9
+ExeVRM 4B
+77.8
+83.3
+69.1
+81.0
+82.9
+78.0
+90.0
+87.7
+93.0
+72.5
+66.4
+91.0
+80.1
+79.2
+82.5
+ExeVRM 8B
+82.5
+85.9
+77.7
+84.0
+84.0
+84.0
+89.0
+85.5
+94.0
+83.5
+77.2
+95.0
+84.7
+82.9
+87.7
+Performance comparison
+Consistent with
+Table 2
+, ExeVRM 8B ranks first overall with
+84.7
+accuracy,
+82.9
+precision, and
+87.7
+recall, surpassing the strongest proprietary baselines Seed-2.0 Pro (80.3/83.9/74.7) and GPT-5.2 (75.0/82.7/66.5). It also outperforms the best open-weight models by +17.1 accuracy points over Qwen3-VL 8B and +28.2 over InternVL-3.5 8B, while substantially improving recall (87.7 vs. 49.9 and 55.9). Gains are consistent across settings: Mac/Win reaches
+89.0
+accuracy with
+94.0
+recall, Android reaches
+83.5
+accuracy with
+95.0
+recall, and Ubuntu reaches 82.5/77.7 (Agent) and
+84.0
+/
+84.0
+(Human) for accuracy/recall, all leading their baselines. Scaling from 4B to 8B further brings +4.6 overall accuracy (84.7 vs. 80.1) and +5.2 recall (87.7 vs. 82.5), with the largest gains on Android (+11.0) and Ubuntu (Agent, +4.8).
+Attribution comparison
+Figure 3
+:
+Comparison of temporal IoU (tIoU) scores across models on ExeVR-Bench.
+Beyond overall accuracy, we analyze attribution quality:
+how well a model can localize the decisive temporal window that determines whether a trajectory succeeds or fails.
+We compute temporal IoU (tIoU) between each model’s predicted salient segment and human-annotated evidence spans on ExeVR-Bench.
+As shown in
+Figure 3
+, ExeVRM attains consistently higher tIoU than all baselines, indicating more precise and less noisy credit assignment over time. This suggests that explicitly training a reward model on computer-using trajectories not only improves preference prediction, but also yields explanations that better align with human judgments about when the outcome is decided. In practice, stronger attribution makes downstream agent development easier: it highlights the exact interaction steps that cause failures (e.g., an incorrect click or a missed UI state change), enabling faster debugging and more targeted data collection.
+Table 3
+:
+Performance comparison across different evaluation strategies. Here Tail (T) means the last screenshot and Head (H) means the first screenshot. Compact denotes a compact list of action history, while Details denotes a structured action history. Oneshot means there is an example in the prompt as a reference.
+Model
+Method
+Res.
+Visual
+Info.
+Ubuntu(Human)
+Mac/Win
+Acc.
+Prec.
+Rec.
+Acc.
+Prec.
+Rec.
+Qwen3-VL 4B
+AER
+[
+47
+]
+720p
+Tail
+Compact
+58.5
+53.3
+70.3
+69.0
+84.0
+72.9
+Simplified Judge
+[
+40
+]
+720p
+H+T
+Details
+57.5
+52.1
+81.3
+70.8
+87.1
+71.5
+SE-WSM
+[
+57
+]
+360p
+Full
+None
+50.5
+44.6
+36.3
+46.0
+84.1
+35.1
+ZeroGUI
+[
+73
+]
+360p
+Full
+Oneshot
+48.0
+42.5
+40.7
+51.5
+81.4
+46.4
+ExeVRM 4B (Ours)
+720p
+Video
+None
+81.0
+82.9
+78.0
+90.0
+87.7
+93.0
+Qwen3-VL 8B
+AER
+[
+47
+]
+720p
+Tail
+Compact
+55.0
+50.5
+61.5
+68.0
+80.4
+76.2
+Simplified Judge
+[
+40
+]
+720p
+H+T
+Details
+58.5
+53.5
+68.1
+78.2
+89.6
+80.1
+SE-WSM
+[
+57
+]
+360p
+Full
+None
+48.5
+43.2
+41.8
+51.0
+81.5
+46.4
+ZeroGUI
+[
+73
+]
+360p
+Full
+Oneshot
+50.0
+46.7
+61.5
+63.5
+81.5
+66.9
+ExeVRM 8B (Ours)
+720p
+Video
+None
+84.0
+84.0
+84.0
+89.0
+85.5
+94.0
+5
+Discussion & Ablation Studies
+Findings 1: Dense video context outperforms sparse snapshots
+Previous work on task-completion assessment in CUA largely relies on screenshots rather than execution video. In particular, AER
+[
+47
+]
+evaluates only the final-state screenshot, while Simplified Judge
+[
+40
+]
+add initial screenshot into considerations. However, these sparse-observation methods underperform (
+Table 3
+), indicating that ignoring causal transitions throughout the interaction makes accurate completion judgment difficult. SE-WSM
+[
+57
+]
+and ZeroGUI
+[
+73
+]
+instead feed every key frame to the model, which leads to OOM on a single A100 (80GB) without token pruning. If we reduce the resolution to 360p to meet the constraint, performance can even fall below AER
+[
+47
+]
+that only judges final state. This finding highlights the necessity of both video-based assessment and token pruning.
+Findings 2: Higher resolution brings more benefit for reward modeling
+Table 4
+:
+Effect of input resolution on reward-model performance. Increasing the input from 360p to 720p with spatiotemporal token pruning (STP&TTP) consistently improves accuracy and recall for both Qwen3-VL 4B and 8B.
+Model
+Resolution
+Accuracy
+Precision
+Recall
+Qwen3-VL 4B
+360p
+79.3
+80.6
+77.8
+720p (w/STP & TTP)
+80.1
+79.2
+82.5
+Qwen3-VL 8B
+360p
+81.5
+82.5
+80.5
+720p (w/STP & TTP)
+84.7
+82.9
+87.7
+As shown in
+Table 4
+, moving from 360p to 720p yields clear gains in completion judgment quality, especially in recall. For Qwen3-VL 4B, accuracy improves from 79.3 to 80.1 and recall rises from 77.8 to 82.5 (+4.7), with a modest precision drop (80.6
+→
+\rightarrow
+79.2). For Qwen3-VL 8B, all three metrics improve: accuracy increases from 81.5 to 84.7 (+3.2), precision from 82.5 to 82.9, and recall from 80.5 to 87.7 (+7.2). These results indicate that higher-resolution inputs preserve fine-grained GUI cues (e.g., small text edits and localized state changes) that are frequently decisive for reward prediction, while STP/TTP keeps 720p training and inference tractable.
+Findings 3: Asymmetric Effects of Spatial and Temporal Pruning
+Table 5
+:
+Ablation of spatiotemporal token pruning on Qwen3-VL 4B. STP denotes spatial token pruning and TTP denotes temporal token pruning. TTP contributes stronger gains than STP when used alone, while the full STP+TTP configuration remains competitive and achieves the highest recall.
+Model
+w/STP
+w/TTP
+Accuracy
+Precision
+Recall
+Qwen3-VL 4B
+✓
+77.6
+81.7
+72.6
+✓
+80.3
+81.3
+79.3
+✓
+✓
+80.1
+79.2
+82.5
+Table 5
+reveals an asymmetric contribution of the two pruning modules. Applying STP alone yields lower accuracy and recall (77.9/72.6), whereas TTP alone provides the strongest overall balance (80.3/79.3). We conjecture this trend follows from the nature of GUI trajectories: within-frame saliency is often dominated by visually rich yet task-irrelevant regions (e.g., dense menus, icons, and textured webpage content), so spatial pruning may occasionally discard fine-grained cues that are weak visually but decisive for completion judgment. By contrast, reward prediction is primarily driven by inter-frame state transitions, which are directly targeted by TTP through suppressing temporally repeated tokens and preserving changing evidence. Notably, enabling STP and TTP jointly causes only a marginal accuracy change relative to TTP-only (80.1 vs. 80.3) while improving recall to 82.5, suggesting that the full configuration remains robust and mainly induces a precision–recall trade-off rather than a substantial performance drop.
+Findings 4: Spatiotemporal pruning improves training efficiency
+Figure 4
+:
+Efficiency analysis. Left: memory usage. Right: runtime.
+As shown in
+Figure 4
+, both peak GPU memory and per-step training time increase with the number of input frames for all variants, but the growth rates differ substantially. With 50 frames, STP-only reaches about 56 GiB memory and 6.2 s/step, while TTP-only rises further to about 68 GiB and 7.8 s/step. In contrast, combining STP and TTP keeps the footprint much lower (
+∼
+\sim
+49.5 GiB and 5.8 s/step), and remains close to the 40 GiB regime up to 20 frames. This trend is consistent with our method design: spatial pruning removes large homogeneous regions in each frame, whereas temporal pruning suppresses repeated tokens across adjacent frames. Jointly applying both reduces redundancy along both spatial and temporal dimensions, so the benefit becomes more pronounced as trajectories get longer. These efficiency gains are what make 720p long-horizon reward-model training practical under our hardware setup (8
+×
+\times
+A100-80GB), without resorting to aggressive resolution downsampling. Additional analyses and visualizations of STP and TTP are provided in the supplementary materials.
+6
+Conclusion
+In this work, we present a video-execution paradigm for reward modeling of computer-using agents (CUA). We introduce ExeVR-53k, a 53k–scale corpus of instruction–video–reward triplets, and propose adversarial instruction translation to synthesize hard negative pairs with step-level mismatch signals while producing justification-based attribution labels for temporal grounding. To make long-horizon, high-resolution execution videos trainable, we further develop spatiotemporal token pruning (STP+TTP), which reduces redundant spatial and temporal tokens while preserving decisive UI evidence. Extensive experiments on ExeVR-Bench show that our ExeVRM 8B achieves 84.7% accuracy and 87.7% recall, outperforming strong proprietary and open-weight baselines across Ubuntu, Mac/Win, and Android settings, with more accurate temporal attribution. Efficiency analysis further demonstrates that combining spatial and temporal pruning yields better memory–latency trade-offs as frame length grows.
+References
+[1]
+S. Agashe, K. Wong, V. Tu, J. Yang, A. Li, and X. E. Wang
+(2025)
+Agent s2: a compositional generalist-specialist framework for computer use agents
+.
+External Links:
+2504.00906
+,
+Link
+Cited by:
+Appendix 0.B
+,
+§1
+,
+§3.1
+.
+[2]
+AGI, Inc.
+(2025)
+Agent - make your devices ai-native
+.
+Note:
+https://www.theagi.company/agent
+Accessed: February 14, 2026
+Cited by:
+Appendix 0.B
+,
+§1
+,
+§3.1
+.
+[3]
+Anthropic
+(2025)
+Claude 3.7 Sonnet and Claude Code
+.
+Note:
+Accessed: 2026-02-14
+External Links:
+Link
+Cited by:
+Appendix 0.B
+,
+§1
+,
+§3.1
+.
+[4]
+Anthropic
+(2025)
+Introducing Claude 4
+.
+Note:
+https://www.anthropic.com/news/claude-4
+Accessed: 2026-02-14
+Cited by:
+Appendix 0.B
+,
+§1
+,
+§3.1
+.
+[5]
+Anthropic
+(2025)
+Introducing claude sonnet 4.5
+.
+Note:
+Accessed: 2026-02-14
+External Links:
+Link
+Cited by:
+Appendix 0.B
+,
+§1
+,
+§3.1
+.
+[6]
+H. Bai, Y. Zhou, M. Cemri, J. Pan, A. Suhr, S. Levine, and A. Kumar
+(2024)
+DigiRL: training in-the-wild device-control agents with autonomous reinforcement learning
+.
+External Links:
+2406.11896
+,
+Link
+Cited by:
+§2.1
+.
+[7]
+S. Bai, K. Chen, X. Liu, J. Wang, W. Ge, S. Song, K. Dang, P. Wang, S. Wang, J. Tang, H. Zhong, Y. Zhu, M. Yang, Z. Li, J. Wan, P. Wang, W. Ding, Z. Fu, Y. Xu, J. Ye, X. Zhang, T. Xie, Z. Cheng, H. Zhang, Z. Yang, H. Xu, and J. Lin
+(2025)
+Qwen2.5-vl technical report
+.
+External Links:
+2502.13923
+,
+Link
+Cited by:
+Appendix 0.B
+,
+§1
+,
+§3.1
+,
+Table 2
+.
+[8]
+D. Bolya, C. Fu, X. Dai, P. Zhang, C. Feichtenhofer, and J. Hoffman
+(2023)
+Token merging: your vit but faster
+.
+External Links:
+2210.09461
+,
+Link
+Cited by:
+§2.2
+.
+[9]
+R. Bonatti, D. Zhao, F. Bonacci, D. Dupont, S. Abdali, Y. Li, Y. Lu, J. Wagle, K. Koishida, A. Bucker, L. K. Jang, and Z. Hui
+(2025)
+Windows agent arena: evaluating multi-modal OS agents at scale
+.
+In
+Forty-second International Conference on Machine Learning
+,
+External Links:
+Link
+Cited by:
+§2.1
+,
+§2.1
+.
+[10]
+Bytedance Seed Team
+(2026)
+Seed2.0 model card: towards intelligence frontier for real-world complexity
+.
+Cited by:
+§1
+,
+Table 2
+.
+[11]
+H. Chae, S. Kim, J. Cho, S. Kim, S. Moon,
+et al.
+(2025)
+Web-shepherd: advancing prms for reinforcing web agents
+.
+arXiv preprint arXiv:2505.15277
+.
+External Links:
+Link
+Cited by:
+§2.1
+.
+[12]
+C. Chen, K. Ji, H. Zhong, M. Zhu, A. Li, G. Gan, Z. Huang, C. Zou, J. Liu, J. Chen, H. Chen, and C. Shen
+(2025)
+GUI-shepherd: reliable process reward and verification for long-sequence gui tasks
+.
+External Links:
+2509.23738
+,
+Link
+Cited by:
+§2.1
+,
+§2.1
+.
+[13]
+J. Chen, D. Yuen, B. Xie, Y. Yang, G. Chen, Z. Wu, L. Yixing, X. Zhou, W. Liu, S. Wang, K. Zhou, R. Shao, L. Nie, Y. Wang, J. Hao, J. Wang, and K. Shao
+(2025)
+SPA-bench: a comprehensive benchmark for smartphone agent evaluation
+.
+External Links:
+2410.15164
+,
+Link
+Cited by:
+§2.1
+,
+§2.1
+.
+[14]
+L. Chen, H. Zhao, T. Liu, S. Bai, J. Lin, C. Zhou, and B. Chang
+(2024)
+An image is worth 1/2 tokens after layer 2: plug-and-play inference acceleration for large vision-language models
+.
+External Links:
+2403.06764
+,
+Link
+Cited by:
+§2.2
+.
+[15]
+R. Chen, X. Chen, S. Wang, S. Kong, and J. Yu
+(2025)
+LET-us: long event-text understanding of scenes
+.
+External Links:
+2508.07401
+,
+Link
+Cited by:
+§2.2
+.
+[16]
+Y. Cheng, L. Tang, S. Li, Y. Huo, T. Duan, K. Huang, Y. Jing, and Y. Yan
+(2026)
+Evolving in tasks: empowering the multi-modality large language model as the computer use agent
+.
+External Links:
+2508.04037
+,
+Link
+Cited by:
+Appendix 0.B
+,
+§1
+,
+§3.1
+.
+[17]
+C. Clark, J. Zhang, Z. Ma, J. S. Park, M. Salehi, R. Tripathi, S. Lee, Z. Ren, C. D. Kim, Y. Yang, V. Shao, Y. Yang, W. Huang, Z. Gao, T. Anderson, J. Zhang, J. Jain, G. Stoica, W. Han, A. Farhadi, and R. Krishna
+(2026)
+Molmo2: open weights and data for vision-language models with video understanding and grounding
+.
+External Links:
+2601.10611
+,
+Link
+Cited by:
+§1
+.
+[18]
+G. Comanici, E. Bieber, M. Schaekermann, I. Pasupat, N. Sachdeva, I. Dhillon, M. Blistein, O. Ram, D. Zhang, E. Rosen, L. Marris, S. Petulla, C. Gaffney, A. Aharoni, N. Lintz, T. C. Pais, H. Jacobsson, I. Szpektor, N. Jiang, K. Haridasan, A. Omran, N. Saunshi, D. Bahri, G. Mishra, E. Chu, T. Boyd, B. Hekman, A. Parisi, C. Zhang, K. Kawintiranon, T. Bedrax-Weiss, O. Wang, Y. Xu, O. Purkiss, U. Mendlovic, I. Deutel, N. Nguyen, A. Langley, F. Korn, L. Rossazza, A. Ramé, S. Waghmare, H. Miller, N. Byrd, A. Sheshan, R. Hadsell, S. Bhardwaj, P. Janus, T. Rissa, D. Horgan, A. Abdagic, L. Belenki, J. Allingham, A. Singh, T. Guidroz, S. Srinivasan, H. Schmit, K. Chiafullo, A. Elisseeff, N. Jha, P. Kolhar, L. Berrada, F. Ding, X. Si, S. B. Mallick, F. Och, S. Erell, E. Ni, T. Latkar, S. Yang, P. Sirkovic, Z. Feng, R. Leland, R. Hornung, G. Wu, C. Blundell, H. Alvari, P. Huang, C. Yip, S. Deur, L. Liu, G. Surita, P. Duque, D. Damen, J. Jia, A. Guez, M. Mircea, A. Sinha, A. Magni, P. Stradomski, T. Marian, V. Galić, W. Chen, H. Husain, A. Singhal, D. Grewe, F. Aubet, S. Song, L. Blanco, L. Rechis, L. Ho, R. Munoz, K. Zheng, J. Hamrick, K. Mather, H. Taitelbaum, E. Rutherford, Y. Lei, K. Chen, A. Shukla, E. Moreira, E. Doi, B. Isik, N. Shabat, D. Rogozińska, K. Kolipaka, J. Chang, E. Vušak, S. Venkatachary, S. Noghabi, T. Bharti, Y. Jun, A. Zaks, S. Green, J. Challagundla, W. Wong, M. Mohammad, D. Hirsch, Y. Cheng, I. Naim, L. Proleev, D. Vincent, A. Singh, M. Krikun, D. Krishnan, Z. Ghahramani, A. Atias, R. Aggarwal, C. Kirov, D. Vytiniotis, C. Koh, A. Chronopoulou, P. Dogra, V. Ion, G. Tyen, J. Lee, F. Weissenberger, T. Strohman, A. Balakrishna, J. Rae, M. Velic, R. de Liedekerke, O. Elyada, W. Yuan, C. Liu, L. Shani, S. Kishchenko, B. Alessio, Y. Li, R. Song, S. Kwei, O. Jankowski, A. Pappu, Y. Namiki, Y. Ma, N. Tripuraneni, C. Cherry, M. Ikonomidis, Y. Ling, C. Ji, B. Westberg, A. Wright, D. Yu, D. Parkinson, S. Ramaswamy, J. Connor, S. H. Yeganeh, S. Grover, G. Kenwright, L. Litchev, C. Apps, A. Tomala, F. Halim, A. Castro-Ros, Z. Li, A. Boral, P. Sho, M. Yarom, E. Malmi, D. Klinghoffer, R. Lin, A. Ansell, P. K. S, S. Zhao, S. Zuo, A. Santoro, H. Cheng, S. Demmessie, Y. Liu, N. Brichtova, A. Culp, N. Braun, D. Graur, W. Ng, N. Mehta, A. Phillips, P. Sundberg, V. Godbole, F. Liu, Y. Katariya, D. Rim, M. Seyedhosseini, S. Ammirati, J. Valfridsson, M. Malihi, T. Knight, A. Toor, T. Lampe, A. Ittycheriah, L. Chiang, C. Yeung, A. Fréchette, J. Rao, H. Wang, H. Srivastava, R. Zhang, R. Rhodes, A. Brand, D. Weesner, I. Figotin, F. Gimeno, R. Fellinger, P. Marcenac, J. Leal, E. Marcus, V. Cotruta, R. Cabrera, S. Luo, D. Garrette, V. Axelrod, S. Baltateanu, D. Barker, D. Chen, H. Toma, B. Ingram, J. Riesa, C. Kulkarni, Y. Zhang, H. Liu, C. Wang, M. Polacek, W. Wu, K. Hui, A. N. Reyes, Y. Su, M. Barnes, I. Malhi, A. Siddiqui, Q. Feng, M. Damaschin, D. Pighin, A. Steiner, S. Yang, R. S. Boppana, S. Ivanov, A. Kandoor, A. Shah, A. Mujika, D. Huang, C. A. Choquette-Choo, M. Patel, T. Yu, T. Creswell, Jerry, Liu, C. Barros, Y. Razeghi, A. Roy, P. Culliton, B. Xiong, J. Pan, T. Strohmann, T. Powell, B. Seal, D. DeCarlo, P. Shyam, K. Katircioglu, X. Wang, C. Hardin, I. Odisho, J. Broder, O. Chang, A. Nair, A. Shtefan, M. O’Brien, M. Agarwal, S. Potluri, S. Goyal, A. Jhindal, S. Thakur, Y. Stuken, J. Lyon, K. Toutanova, F. Feng, A. Wu, B. Horn, A. Wang, A. Cullum, G. Taubman, D. Shrivastava, C. Shi, H. Tomlinson, R. Patel, T. Tu, A. M. Oflazer, F. Pongetti, M. Yang, A. A. Taïga, V. Perot, N. W. Pierse, F. Han, Y. Drori, I. Iturrate, A. Chakrabarti, L. Yeung, D. Dopson, Y. Chen, A. Kulshreshtha, T. Guo, P. Pham, T. Schuster, J. Chen, A. Polozov, J. Xing, H. Zhou, P. Kacham, D. Kukliansky, A. Miech, S. Yaroshenko, E. Chi, S. Douglas, H. Fei, M. Blondel, P. Myla, L. Madmoni, X. Wu, D. Keysers, K. Kjems, I. Albuquerque, L. Yu, J. D’sa, M. Plantan, V. Ionescu, J. S. Elias, A. Gupta, M. R. Vuyyuru, F. Alcober, T. Zhou, K. Ji, F. Hartmann, S. Puttagunta, H. Song, E. Amid, A. Stefanoiu, A. Lee, P. Pucciarelli, E. Wang, A. Raul, S. Petrov, I. Tian, V. Anklin, N. Nti, V. Gomes, M. Schumacher, G. Vesom, A. Panagopoulos, K. Bousmalis, D. Andor, J. Jacob, Y. Zhang, B. Rosgen, M. Kecman, M. Tung, A. Belias, N. Goodman, P. Covington, B. Wieder, N. Saxena, E. Davoodi, M. Huang, S. Maddineni, V. Roulet, F. Campbell-Ajala, P. G. Sessa, Xintian, Wu, G. Lai, P. Collins, A. Haig, V. Sakenas, X. Xu, M. Giustina, L. E. Shafey, P. Charoenpanit, S. Garg, J. Ainslie, B. Severson, M. G. Arenas, S. Pathak, S. Rajayogam, J. Feng, M. Bakker, S. Li, N. Wichers, J. Rogers, X. Geng, Y. Li, R. Jagerman, C. Jia, N. Olmert, D. Sharon, M. Mauger, S. Mariserla, H. Ma, M. Mohabey, K. Kim, A. Andreev, S. Pollom, J. Love, V. Jain, P. Agrawal, Y. Schroecker, A. Fortin, M. Warmuth, J. Liu, A. Leach, I. Blok, G. P. Girirajan, R. Aharoni, B. Uria, A. Sozanschi, D. Goldberg, L. Ionita, M. T. Ribeiro, M. Zlocha, V. Birodkar, S. Lachgar, L. Yuan, H. Choudhury, M. Ginsberg, F. Zheng, G. Dibb, E. Graves, S. Lokhande, G. Rasskin, G. Muraru, C. Quick, S. Tata, P. Sermanet, A. Chawla, I. Karo, Y. Wang, S. Zhang, O. Keller, A. Dragan, G. Su, I. Chou, X. Liu, Y. Tao, S. Prabhakara, M. Wilson, R. Liu, S. Wang, G. Evans, D. Du, A. Castaño, G. Prasad, M. E. Mahdy, S. Gerlach, M. Reid, J. Kahn, A. Zait, T. S. Pillai, T. Ulrich, G. Wang, J. Wassenberg, E. Farkash, K. Yalasangi, C. Wang, M. Bauza, S. Bucher, T. Liu, J. Yan, G. Leung, V. Sindhwani, P. Barnes, A. Singh, I. Jurin, J. Chang, N. K. Bhumihar, S. Eiger, G. Citovsky, B. Withbroe, Z. Li, S. Xue, N. D. Santo, G. Stoyanov, Y. Raimond, S. Zheng, Y. Gao, V. Listík, S. Kwasiborski, R. Saputro, A. Ozturel, G. Mallya, K. Majmundar, R. West, P. Caron, J. Wei, L. Castrejon, S. Vikram, D. Ramachandran, N. Dhawan, J. Park, S. Smoot, G. van den Driessche, Y. Blau, C. Malik, W. Liang, R. Hirsch, C. N. dos Santos, E. Weinstein, A. van den Oord, S. Lall, N. FitzGerald, Z. Jiang, X. Yang, D. Webster, A. Elqursh, A. Pope, G. Rotival, D. Raposo, W. Zhu, J. Dean, S. Alabed, D. Tran, A. Gupta, Z. Gleicher, J. Austin, E. Rosseel, M. Umekar, D. Das, Y. Sun, K. Chen, K. Misiunas, X. Zhou, Y. Di, A. Loo, J. Newlan, B. Li, V. Ramasesh, Y. Xu, A. Chen, S. Gandhe, R. Soricut, N. Gupta, S. Hu, S. El-Sayed, X. Garcia, I. Brusilovsky, P. Chen, A. Bolt, L. Huang, A. Gurney, Z. Zhang, A. Pritzel, J. Wilkiewicz, B. Seybold, B. K. Shamanna, F. Fischer, J. Dean, K. Gill, R. Mcilroy, A. Bhowmick, J. Selier, A. Yang, D. Cheng, V. Magay, J. Tan, D. Varma, C. Walder, T. Kocisky, R. Nakashima, P. Natsev, M. Kwong, I. Gog, C. Zhang, S. Dieleman, T. Jimma, A. Ryabtsev, S. Brahma, D. Steiner, D. Du, A. Žužul, M. Žanić, M. Raghavachari, W. Gierke, Z. Zheng, D. Petrova, Y. Dauphin, Y. Liu, I. Kessler, S. Hand, C. Duvarney, S. Kim, H. Lee, L. Hussenot, J. Hui, J. Smith, D. Jain, J. Xia, G. S. Tomar, K. Amiri, D. Phan, F. Fuchs, T. Weyand, N. Tomasev, A. Cordell, X. Liu, J. Mallinson, P. Joshi, A. Crawford, A. Suggala, S. Chien, N. Fernando, M. Sanchez-Vargas, D. Williams, P. Crone, X. Luo, I. Karpov, J. Shan, T. Thurk, R. Strudel, P. Voigtlaender, P. Patil, T. Dozat, A. Khodaei, S. Singla, P. Ambroszczyk, Q. Wu, Y. Chang, B. Roark, C. Hegde, T. Ding, A. Filos, Z. Wu, A. S. Pinto, S. Liu, S. Khanna, A. Pandey, S. Mcloughlin, Q. Li, S. Haves, A. Zhou, E. Buchatskaya, I. Leal, P. de Boursac, N. Akazawa, N. Anderson, T. Chen, K. Somandepalli, C. Liang, S. Goenka, S. Winkler, A. Grushetsky, Y. Ding, J. Smith, F. Ye, J. Pont-Tuset, E. Li, R. Li, T. Golany, D. Wegner, T. Jiang, O. Barak, Y. Shangguan, E. Vértes, R. Wong, J. Bornschein, A. Tudor, M. Bevilacqua, T. Schaul, A. S. Rawat, Y. Zhao, K. Axiotis, L. Meng, C. McLean, J. Lai, J. Beattie, N. Kushman, Y. Liu, B. Kutzman, F. Lang, J. Ye, P. Netrapalli, P. Mishra, M. Khan, M. Goel, R. Willoughby, D. Tian, H. Zhuang, J. Chen, Z. Tsai, T. Kementsietsidis, A. Khare, J. Keeling, K. Xu, N. Waters, F. Altché, A. Popat, B. Mittal, D. Saxton, D. E. Badawy, M. Mathieu, Z. Zheng, H. Zhou, N. Ranka, R. Shin, Q. Duan, T. Salimans, I. Mihailescu, U. Shaham, M. Chang, Y. Assael, N. Dikkala, M. Izzard, V. Cohen-Addad, C. Graves, V. Feinberg, G. Chung, D. Strouse, D. Karmon, S. Sharifzadeh, Z. Ashwood, K. Pham, J. Blanton, A. Vasiloff, J. Barber, M. Geller, A. Zhou, F. Zubach, T. Huang, L. Zhang, H. Gupta, M. Young, J. Proskurnia, R. Votel, V. Gabeur, G. Barcik, A. Tripathi, H. Yu, G. Yan, B. Changpinyo, F. Pavetić, A. Coyle, Y. Fujii, J. G. Mendez, T. Zhou, H. Rajamani, B. Hechtman, E. Cao, D. Juan, Y. Tan, V. Dalibard, Y. Du, N. Clay, K. Yao, W. Jia, D. Vijaykumar, Y. Zhou, X. Bai, W. Hung, S. Pecht, G. Todorov, N. Khadke, P. Gupta, P. Lahoti, A. Autef, K. Duddu, J. Lee-Thorp, A. Bykovsky, T. Misiunas, S. Flennerhag, S. Thangaraj, J. McGiffin, Z. Nado, M. Kunesch, A. Noever, A. Hertz, M. Liang, V. Stone, E. Palmer, S. Daruki, A. Pramanik, S. Põder, A. Kyker, M. Khan, E. Sluzhaev, M. Ritter, A. Ruderman, W. Zhou, C. Nagpal, K. Vodrahalli, G. Necula, P. Barham, E. Pavlick, J. Hartford, I. Shafran, L. Zhao, M. Mikuła, T. Eccles, H. Shimokawa, K. Garg, L. Vilnis, H. Chen, I. Shumailov, K. Lee, A. Abdelhamed, M. Xie, V. Cohen, E. Hlavnova, D. Malkin, C. Sitawarin, J. Lottes, P. Coquinot, T. Yu, S. Kumar, J. Zhang, A. Mahendru, Z. Ahmed, J. Martens, T. Chen, A. Boag, D. Peng, C. Devin, A. Klimovskiy, M. Phuong, D. Vainstein, J. Xie, B. Ramabhadran, N. Howard, X. Yu, G. Goswami, J. Cui, S. Shleifer, M. Pinto, C. Yeh, M. Yang, S. Javanmardi, D. Ethier, C. Lee, J. Orbay, S. Kotecha, C. Bromberg, P. Shaw, J. Thornton, A. G. Rosenthal, S. Gu, M. Thomas, I. Gemp, A. Ayyar, A. Ushio, A. Selvan, J. Wee, C. Liu, M. Majzoubi, W. Yu, J. Abernethy, T. Liechty, R. Pan, H. Nguyen, Qiong, Hu, S. Perrin, A. Arora, E. Pitler, W. Wang, K. Shivakumar, F. Prost, B. Limonchik, J. Wang, Y. Gao, T. Cour, S. Buch, H. Gui, M. Ivanova, P. Neubeck, K. Chan, L. Kim, H. Chen, N. Goyal, D. Chung, L. Liu, Y. Su, A. Petrushkina, J. Shen, A. Joulin, Y. Xu, S. X. Lin, Y. Kulizhskaya, C. Chelba, S. Vasudevan, E. Collins, V. Bashlovkina, T. Lu, D. Fritz, J. Park, Y. Zhou, C. Su, R. Tanburn, M. Sushkov, M. Rasquinha, J. Li, J. Prendki, Y. Li, P. LV, S. Sharma, H. Fitoussi, H. Huang, A. Dai, P. Dao, M. Burrows, H. Prior, D. Qin, G. Pundak, L. L. Sjoesund, A. Khurshudov, Z. Zhu, A. Webson, E. Kemp, T. Tan, S. Agrawal, S. Sargsyan, L. Cheng, J. Stephan, T. Kwiatkowski, D. Reid, A. Byravan, A. H. Michaely, N. Heess, L. Zhou, S. Goenka, V. Carpenter, A. Levskaya, B. Wang, R. Roberts, R. Leblond, S. Chikkerur, S. Ginzburg, M. Chang, R. Riachi, Chuqiao, Xu, Z. Borsos, M. Pliskin, J. Pawar, M. Lustman, H. Kirkwood, A. Anand, A. Chaudhary, N. Kalb, K. Milan, S. Augenstein, A. Goldie, L. Prince, K. Raman, Y. Sun, V. Xia, A. Cohen, Z. Huo, J. Camp, S. Ellis, L. Zilka, D. V. Torres, L. Patel, S. Arora, B. Chan, J. Adler, K. Ayoub, J. Liang, F. Jamil, J. Jiang, S. Baumgartner, H. Sun, Y. Karov, Y. Akulov, H. Zheng, I. Cai, C. Fantacci, J. Rubin, A. R. Acha, M. Wang, N. D’Souza, R. Sathyanarayana, S. Dai, S. Rowe, A. Simanovsky, O. Goldman, Y. Kuang, X. Pan, A. Rosenberg, T. Rojas-Esponda, P. Dutta, A. Zeng, I. Jurenka, G. Farquhar, Y. Bansal, S. Iqbal, B. Roelofs, G. Joung, P. Beak, C. Ryu, R. Poplin, Y. Wu, J. Alayrac, S. Buthpitiya, O. Ronneberger, C. Habtegebriel, W. Li, P. Cavallaro, A. Wei, G. Bensky, T. Denk, H. Ganapathy, J. Stanway, P. Joshi, F. Bertolini, J. Lo, O. Ma, Z. Charles, G. Sampemane, H. Sahni, X. Chen, H. Askham, D. Gaddy, P. Young, J. Tan, M. Eyal, A. Bražinskas, L. Zhong, Z. Wu, M. Epstein, K. Bailey, A. Hard, K. Lee, S. Goldshtein, A. Ruiz, M. Badawi, M. Lochbrunner, J. Kearns, A. Brown, F. Pardo, T. Weber, H. Yang, P. Jiang, B. Akin, Z. Fu, M. Wainwright, C. Zou, M. Gaba, P. Manzagol, W. Kan, Y. Song, K. Zainullina, R. Lin, J. Ko, S. Deshmukh, A. Jindal, J. Svensson, D. Tyam, H. Zhao, C. Kaeser-Chen, S. Baird, P. Moradi, J. Hall, Q. Guo, V. Tsang, B. Liang, F. Pereira, S. Ganesh, I. Korotkov, J. Adamek, S. Thiagarajan, V. Tran, C. Chen, C. Tar, S. Jain, I. Dasgupta, T. Bilal, D. Reitter, K. Zhao, G. Vezzani, Y. Gehman, P. Mehta, L. Beltrone, X. Dotiwalla, S. Guadarrama, Z. Abbas, S. Karp, P. Georgiev, C. Ferng, M. Brockschmidt, L. Peng, C. Hirnschall, V. Verma, Y. Bi, Y. Xiao, A. Dabush, K. Xu, P. Wallis, R. Parker, Q. Wang, Y. Xu, I. Safarli, D. Tewari, Y. Zhang, S. Kim, A. Gesmundo, M. Thomas, S. Levi, A. Chowdhury, K. Rao, P. Garst, S. Conway-Rahman, H. Ran, K. McKinney, Z. Xiao, W. Yu, R. Agrawal, A. Stjerngren, C. Ionescu, J. Chen, V. Sharma, J. Chiu, F. Liu, K. Franko, C. Sanford, X. Cai, P. Michel, S. Ganapathy, J. Labanowski, Z. Garrett, B. Vargas, S. Sun, B. Gale, T. Buschmann, G. Desjardins, N. Ghelani, P. Jain, M. Verma, C. Asawaroengchai, J. Eisenschlos, J. Harlalka, H. Kazawa, D. Metzler, J. Howland, Y. Jian, J. Ades, V. Shah, T. Gangwani, S. Lee, R. Ring, S. M. Hernandez, D. Reich, A. Sinha, A. Sathe, J. Kovac, A. Gill, A. Kannan, A. D’olimpio, M. Sevenich, J. Whang, B. Kim, K. C. Sim, J. Chen, J. Zhang, S. Lall, Y. Matias, B. Jia, A. Friesen, S. Nasso, A. Thapliyal, B. Perozzi, T. Yu, A. Shekhawat, S. Huda, P. Grabowski, E. Wang, A. Sreevatsa, H. Dib, M. Hassen, P. Schuh, V. Milutinovic, C. Welty, M. Quinn, A. Shah, B. Wang, G. Barth-Maron, J. Frye, N. Axelsson, T. Zhu, Y. Ma, I. Giannoumis, H. Sedghi, C. Ye, Y. Luan, K. Aydin, B. Chandra, V. Sampathkumar, R. Huang, V. Lavrenko, A. Eleryan, Z. Hong, S. Hansen, S. M. Carthy, B. Samanta, D. Ćevid, X. Wang, F. Li, M. Voznesensky, M. Hoffman, A. Terzis, V. Sehwag, G. Fidel, L. He, M. Cai, Y. He, A. Feng, M. Nikoltchev, S. Phatale, J. Chase, R. Lawton, M. Zhang, T. Ouyang, M. Tragut, M. H. Manshadi, A. Narayanan, J. Shen, X. Gao, T. Bolukbasi, N. Roy, X. Li, D. Golovin, L. Panait, Z. Qin, G. Han, T. Anthony, S. Kudugunta, V. Patraucean, A. Ray, X. Chen, X. Yang, T. Bhatia, P. Talluri, A. Morris, A. Ražnatović, B. Brownfield, J. An, S. Peng, P. Kane, C. Zheng, N. Duduta, J. Kessinger, J. Noraky, S. Liu, K. Rong, P. Veličković, K. Rush, A. Goldin, F. Wei, S. M. R. Garlapati, C. Pantofaru, O. Kwon, J. Ni, E. Noland, J. D. Trapani, F. Beaufays, A. G. Roy, Y. Chow, A. Turker, G. Cideron, L. Mei, J. Clark, Q. Dou, M. Bošnjak, R. Leith, Y. Du, A. Yazdanbakhsh, M. Nasr, C. Kwak, S. S. Sheth, A. Kaskasoli, A. Anand, B. Lakshminarayanan, S. Jerome, D. Bieber, C. Chu, A. Senges, T. Shen, M. Sridhar, N. Ndebele, B. Beyret, S. Mohamed, M. Chen, M. Freitag, J. Guo, L. Liu, P. Roit, H. Chen, S. Yan, T. Stone, J. Co-Reyes, J. Cole, S. Scellato, S. Azizi, H. Hashemi, A. Jin, A. Iyer, M. Valentine, A. György, A. Ahuja, D. H. Diaz, C. Lee, N. Clement, W. Kong, D. Garmon, I. Watts, K. Bhatia, K. Gupta, M. Miecnikowski, H. Vallet, A. Taly, E. Loper, S. Joshi, J. Atwood, J. Chick, M. Collier, F. Iliopoulos, R. Trostle, B. Gunel, R. Leal-Cavazos, A. M. Hrafnkelsson, M. Guzman, X. Ju, A. Forbes, J. Emond, K. Chauhan, B. Caine, L. Xiao, W. Zeng, A. Moufarek, D. Murphy, M. Meng, N. Gupta, F. Riedel, A. Das, E. Lawal, S. Narayan, T. Sosea, J. Swirhun, L. Friso, B. Neyshabur, J. Lu, S. Girgin, M. Wunder, E. Yvinec, A. Pyne, V. Carbune, S. Rijhwani, Y. Guo, T. Doshi, A. Briukhov, M. Bain, A. Hitron, X. Wang, A. Gupta, K. Chen, C. Du, W. Zhang, D. Shah, A. Akula, M. Dylla, A. Kachra, W. Kuo, T. Zou, L. Wang, L. Xu, J. Zhu, J. Snyder, S. Menon, O. Firat, I. Mordatch, Y. Yuan, N. Ponomareva, R. Blevins, L. Moore, W. Wang, P. Chen, M. Scholz, A. Dwornik, J. Lin, S. Li, D. Antognini, T. I, X. Song, M. Miller, U. Kalra, A. Raveret, O. Akerlund, F. Wu, A. Nystrom, N. Godbole, T. Liu, H. DeBalsi, J. Zhao, B. Liu, A. Caciularu, L. Lax, U. Khandelwal, V. Langston, E. Bailey, S. Lattanzi, Y. Wang, N. Kovelamudi, S. Mondal, G. Guruganesh, N. Hua, O. Roval, P. Wesołowski, R. Ingale, J. Halcrow, T. Sohn, C. Angermueller, B. Raad, E. Stickgold, E. Lu, A. Kosik, J. Xie, T. Lillicrap, A. Huang, L. L. Zhang, D. Paulus, C. Farabet, A. Wertheim, B. Wang, R. Joshi, C. Ko, Y. Wu, S. Agrawal, L. Lin, X. Sheng, P. Sung, T. Breland-King, C. Butterfield, S. Gawde, S. Singh, Q. Zhang, R. Apte, S. Shetty, A. Hutter, T. Li, E. Salesky, F. Lebron, J. Kanerva, M. Paganini, A. Nguyen, R. Vallu, J. Peter, S. Velury, D. Kao, J. Hoover, A. Bortsova, C. Bishop, S. Jakobovits, A. Agostini, A. Agarwal, C. Liu, C. Kwong, S. Tavakkol, I. Bica, A. Greve, A. GP, J. Marcus, L. Hou, T. Duerig, R. Moroshko, D. Lacey, A. Davis, J. Amelot, G. Wang, F. Kim, T. Strinopoulos, H. Wan, C. L. Lan, S. Krishnan, H. Tang, P. Humphreys, J. Bai, I. H. Shtacher, D. Machado, C. Pang, K. Burke, D. Liu, R. Aravamudhan, Y. Song, E. Hirst, A. Singh, B. Jou, L. Bai, F. Piccinno, C. K. Fu, R. Alazard, B. Meiri, D. Winter, C. Chen, M. Zhang, J. Heitkaemper, J. Lambert, J. Lee, A. Frömmgen, S. Rogulenko, P. Nair, P. Niemczyk, A. Bulyenov, B. Xu, H. Shemtov, M. Zadimoghaddam, S. Toropov, M. Wirth, H. Dai, S. Gollapudi, D. Zheng, A. Kurakin, C. Lee, K. Bullard, N. Serrano, I. Balazevic, Y. Li, J. Schalkwyk, M. Murphy, M. Zhang, K. Sequeira, R. Datta, N. Agrawal, C. Sutton, N. Attaluri, M. Chiang, W. Farhan, G. Thornton, K. Lin, T. Choma, H. Nguyen, K. Dasgupta, D. Robinson, I. Comşa, M. Riley, A. Pillai, B. Mustafa, B. Golan, A. Zandieh, J. Lespiau, B. Porter, D. Ross, S. Rajayogam, M. Agarwal, S. Venugopalan, B. Shahriari, Q. Yan, H. Xu, T. Tobin, P. Dubov, H. Shi, A. Recasens, A. Kovsharov, S. Borgeaud, L. Dery, S. Vasanth, E. Gribovskaya, L. Qiu, M. Mahdieh, W. Skut, E. Nielsen, C. Zheng, A. Yu, C. G. Bostock, S. Gupta, A. Archer, C. Rawles, E. Davies, A. Svyatkovskiy, T. Tsai, Y. Halpern, C. Reisswig, B. Wydrowski, B. Chang, J. Puigcerver, M. H. Taege, J. Li, E. Schnider, X. Li, D. Dena, Y. Xu, U. Telang, T. Shi, H. Zen, K. Kastner, Y. Ko, N. Subramaniam, A. Kumar, P. Blois, Z. Dai, J. Wieting, Y. Lu, Y. Zeldes, T. Xie, A. Hauth, A. Ţifrea, Y. Li, S. El-Husseini, D. Abolafia, H. Zhou, W. Ding, S. Ghalebikesabi, C. Guía, A. Maksai, Á. Weisz, S. Arik, N. Sukhanov, A. Świetlik, X. Jia, L. Yu, W. Wang, M. Brand, D. Bloxwich, S. Kirmani, Z. Chen, A. Go, P. Sprechmann, N. Kannen, A. Carin, P. Sandhu, I. Edkins, L. Nooteboom, J. Gupta, L. Maggiore, J. Azizi, Y. Pritch, P. Yin, M. Gupta, D. Tarlow, D. Smith, D. Ivanov, M. Babaeizadeh, A. Goel, S. Kambala, G. Chu, M. Kastelic, M. Liu, H. Soltau, A. Stone, S. Agrawal, M. Kim, K. Soparkar, S. Tadepalli, O. Bunyan, R. Soh, A. Kannan, D. Kim, B. J. Chen, A. Halumi, S. Roy, Y. Wang, O. Sercinoglu, G. Gibson, S. Bhatnagar, M. Sano, D. von Dincklage, Q. Ren, B. Mitrevski, M. Olšák, J. She, C. Doersch, Jilei, Wang, B. Liu, Q. Tan, T. Yakar, T. Warkentin, A. Ramirez, C. Lebsack, J. Dillon, R. Mathews, T. Cobley, Z. Wu, Z. Chen, J. Simon, S. Nath, T. Sainath, A. Bendebury, R. Julian, B. Mankalale, D. Ćurko, P. Zacchello, A. R. Brown, K. Sodhia, H. Howard, S. Caelles, A. Gupta, G. Evans, A. Bulanova, L. Katzen, R. Goldenberg, A. Tsitsulin, J. Stanton, B. Schillings, V. Kovalev, C. Fry, R. Shah, K. Lin, S. Upadhyay, C. Li, S. Radpour, M. Maggioni, J. Xiong, L. Haas, J. Brennan, A. Kamath, N. Savinov, A. Nagrani, T. Yacovone, R. Kappedal, K. Andriopoulos, L. Lao, Y. Li, G. Rozhdestvenskiy, K. Hashimoto, A. Audibert, S. Austin, D. Rodriguez, A. Ruoss, G. Honke, D. Karkhanis, X. Xiong, Q. Wei, J. Huang, Z. Leng, V. Premachandran, S. Bileschi, G. Evangelopoulos, T. Mensink, J. Pavagadhi, D. Teplyashin, P. Chang, L. Xue, G. Tanzer, S. Goldman, K. Patel, S. Li, J. Wiesner, I. Zheng, I. Stewart-Binks, J. Han, Z. Li, L. Luo, K. Lenc, M. Lučić, F. Xue, R. Mullins, A. Guseynov, C. Chang, I. Galatzer-Levy, A. Zhang, G. Bingham, G. Hu, A. Hartman, Y. Ma, J. Griffith, A. Irpan, C. Radebaugh, S. Yue, L. Fan, V. Ungureanu, C. Sorokin, H. Teufel, P. Li, R. Anil, D. Paparas, T. Wang, C. Lin, H. Peng, M. Shum, G. Petrovic, D. Brady, R. Nguyen, K. Macherey, Z. Li, H. Singh, M. Yenugula, M. Iinuma, X. Chen, K. Kopparapu, A. Stern, S. Dave, C. Thekkath, F. Perot, A. Kumar, F. Li, Y. Xiao, M. Bilotti, M. H. Bateni, I. Noble, L. Lee, A. Vázquez-Reina, J. Salazar, X. Yang, B. Wang, E. Gruzewska, A. Rao, S. Raghuram, Z. Xu, E. Ben-David, J. Mei, S. Dalmia, Z. Zhang, Y. Liu, G. Bansal, H. Pankov, S. Schwarcz, A. Burns, C. Chan, S. Sanghai, R. Liang, E. Liang, A. He, A. Stuart, A. Narayanan, Y. Zhu, C. Frank, B. Fatemi, A. Sabne, O. Lang, I. Bhattacharya, S. Settle, M. Wang, B. McMahan, A. Tacchetti, L. B. Soares, M. Hadian, S. Cabi, T. Chung, N. Putikhin, G. Li, J. Chen, A. Tarango, H. Michalewski, M. Kazemi, H. Masoom, H. Sheftel, R. Shivanna, A. Vadali, R. Comanescu, D. Reid, J. Moore, A. Neelakantan, M. Sander, J. Herzig, A. Rosenberg, M. Dehghani, J. Choi, M. Fink, R. Hayes, E. Ge, S. Weng, C. Ho, J. Karro, K. Krishna, L. N. Thiet, A. Skerry-Ryan, D. Eppens, M. Andreetto, N. Sarma, S. Bonacina, B. K. Ayan, M. Nawhal, Z. Shan, M. Dusenberry, S. Thakoor, S. Gubbi, D. D. Nguyen, R. Tsarfaty, S. Albanie, J. Mitrović, M. Gandhi, B. Chen, A. Epasto, G. Stephanov, Y. Jin, S. Gehman, A. Amini, J. Weber, F. Behbahani, S. Xu, M. Allamanis, X. Chen, M. Ott, C. Sha, M. Jastrzebski, H. Qi, D. Greene, X. Wu, A. Toki, D. Vlasic, J. Shapiro, R. Kotikalapudi, Z. Shen, T. Saeki, S. Xie, A. Cassirer, S. Bharadwaj, T. Kiyono, S. Bhojanapalli, E. Rosenfeld, S. Ritter, J. Mao, J. G. Oliveira, Z. Egyed, B. Bandemer, E. Parisotto, K. Kinoshita, J. Pluto, P. Maniatis, S. Li, Y. Guo, G. Ghiasi, J. Tarbouriech, S. Chatterjee, J. Jin, Katrina, Xu, J. Palomaki, S. Arnold, M. Sewak, F. Piccinini, M. Sharma, B. Albrecht, S. Purser-haskell, A. Vaswani, C. Chen, M. Wisniewski, Q. Cao, J. Aslanides, N. M. Phu, M. Sieb, L. Agubuzu, A. Zheng, D. Sohn, M. Selvi, A. Andreassen, K. Subudhi, P. Eruvbetine, O. Woodman, T. Mery, S. Krause, X. Ren, X. Ma, J. Luo, D. Chen, W. Fan, H. Griffiths, C. Schuler, A. Li, S. Zhang, J. Sarr, S. Luo, R. Patana, M. Watson, D. Naboulsi, M. Collins, S. Sidhwani, E. Hoogeboom, S. Silver, E. Caveness, X. Zhao, M. Rodriguez, M. Deines, L. Bai, P. Griffin, M. Tagliasacchi, E. Xue, S. R. Babbula, B. Pang, N. Ding, G. Shen, E. Peake, R. Crocker, S. S. Raghvendra, D. Swisher, W. Han, R. Singh, L. Wu, V. Pchelin, T. Munkhdalai, D. Alon, G. Bacon, E. Robles, J. Bulian, M. Johnson, G. Powell, F. T. Ferreira, Y. Li, F. Benzing, M. Velimirović, H. Soyer, W. Kong, Tony, Nguyên, Z. Yang, J. Liu, J. van Amersfoort, D. Gillick, B. Sun, N. Rauschmayr, K. Zhang, S. Zhan, T. Zhou, A. Frolov, C. Yang, D. Vnukov, L. Rouillard, H. Li, A. Mandhane, N. Fallen, R. Venkataraman, C. H. Hu, J. Brennan, J. Lee, J. Chang, M. Sundermeyer, Z. Pan, R. Ke, S. Tong, A. Fabrikant, W. Bono, J. Gu, R. Foley, Y. Mao, M. Delakis, D. Bhaswar, R. Frostig, N. Li, A. Zipori, C. Hope, O. Kozlova, S. Mishra, J. Djolonga, C. Schiff, M. A. Merey, E. Briakou, P. Morgan, A. Wan, A. Hassidim, R. Skerry-Ryan, K. Sengupta, M. Jasarevic, P. Kallakuri, P. Kunkle, H. Brennan, T. Lieber, H. Mansoor, J. Walker, B. Zhang, A. Xie, G. Žužić, A. Chukwuka, A. Druinsky, D. Cho, R. Yao, F. Naeem, S. Butt, E. Kim, Z. Jia, M. Jordan, A. Lelkes, M. Kurzeja, S. Wang, J. Zhao, A. Over, A. Chakladar, M. Prasetya, N. Jha, S. Ganapathy, Y. Cong, P. Shroff, C. Saroufim, S. Miryoosefi, M. Hammad, T. Nasir, W. Xi, Y. Gao, Y. Maeng, B. Hora, C. Cheng, P. Haghani, Y. Lewenberg, C. Lu, M. Matysiak, N. Raisinghani, H. Wang, L. Baugher, R. Sukthankar, M. Giang, J. Schultz, N. Fiedel, M. Chen, C. Lee, T. Dey, H. Zheng, S. Paul, C. Smith, A. Ly, Y. Wang, R. Bansal, B. Perz, S. Ricco, S. Blank, V. Keshava, D. Sharma, M. Chow, K. Lad, K. Jalan, S. Osindero, C. Swanson, J. Scott, A. Ilić, X. Li, S. R. Jonnalagadda, A. S. Soudagar, Y. Xiong, B. Batsaikhan, D. Jarrett, N. Kumar, M. Shah, M. Lawlor, A. Waters, M. Graham, R. May, S. Ramos, S. Lefdal, Z. Cankara, N. Cano, B. O’Donoghue, J. Borovik, F. Liu, J. Grimstad, M. Alnahlawi, K. Tsihlas, T. Hudson, N. Grigorev, Y. Jia, T. Huang, T. P. Igwe, S. Lebedev, X. Tang, I. Krivokon, F. Garcia, M. Tan, E. Jia, P. Stys, S. Vashishth, Y. Liang, B. Venkatraman, C. Gu, A. Kementsietsidis, C. Zhu, J. Jung, Y. Bai, M. J. Hosseini, F. Ahmed, A. Gupta, X. Yuan, S. Ashraf, S. Nigam, G. Vasudevan, P. Awasthi, A. M. Gilady, Z. Mariet, R. Eskander, H. Li, H. Hu, G. Garrido, P. Schlattner, G. Zhang, R. Saxena, P. Dević, K. Muralidharan, A. Murthy, Y. Zhou, M. Choi, A. Wongpanich, Z. Wang, P. Shah, Y. Xu, Y. Huang, S. Spencer, A. Chen, J. Cohan, J. Wang, J. Tompson, J. Wu, R. Haroun, H. Li, B. Huergo, F. Yang, T. Yin, J. Wendt, M. Bendersky, R. Chaabouni, J. Snaider, J. Ferret, A. Jindal, T. Thompson, A. Xue, W. Bishop, S. M. Phal, A. Sharma, Y. Sung, P. Radhakrishnan, M. Shomrat, R. Ingle, R. Vij, J. Gilmer, M. D. Istin, S. Sobell, Y. Lu, E. Nottage, D. Sadigh, J. Willcock, T. Zhang, S. Xu, S. Brown, K. Lee, G. Wang, Y. Zhu, Y. Tay, C. Kim, A. Gutierrez, A. Sharma, Y. Xian, S. Seo, C. Cui, E. Pochernina, C. Baetu, K. Jastrzębski, M. Ly, M. Elhawaty, D. Suh, E. Sezener, P. Wang, N. Yuen, G. Tucker, J. Cai, Z. Yang, C. Wang, A. Muzio, H. Qian, J. Yoo, D. Lockhart, K. R. McKee, M. Guo, M. Mehrotra, A. Mendonça, S. V. Mehta, S. Ben, C. Tekur, J. Mu, M. Zhu, V. Krakovna, H. Lee, A. Maschinot, S. Cevey, H. Choe, A. Bai, H. Srinivasan, D. Gasaway, N. Young, P. Siegler, D. Holtmann-Rice, V. Piratla, K. Baumli, R. Yogev, A. Hofer, H. van Hasselt, S. Grant, Y. Chervonyi, D. Silver, A. Hogue, A. Agarwal, K. Wang, P. Singh, F. Flynn, J. Lipschultz, R. David, L. Bellot, Y. Yang, L. Le, F. Graziano, K. Olszewska, K. Hui, A. Maurya, N. Parotsidis, W. Chen, T. Oguntebi, J. Kelley, A. Baddepudi, J. Mauerer, G. Shaw, A. Siegman, L. Yang, S. Shetty, S. Roy, Y. Song, W. Stokowiec, R. Burnell, O. Savant, R. Busa-Fekete, J. Miao, S. Ghosh, L. MacDermed, P. Lippe, M. Dektiarev, Z. Behrman, F. Mentzer, K. Nguyen, M. Wei, S. Verma, C. Knutsen, S. Dasari, Z. Yan, P. Mitrichev, X. Wang, V. Shejwalkar, J. Austin, S. Sunkara, N. Potti, Y. Virin, C. Wright, G. Liu, O. Riva, E. Pot, G. Kochanski, Q. Le, G. Balasubramaniam, A. Dhar, Y. Liao, A. Bloniarz, D. Shukla, E. Cole, J. Lee, S. Zhang, S. Kafle, S. Vashishtha, P. Mahmoudieh, G. Chen, R. Hoffmann, P. Srinivasan, A. D. Lago, Y. B. Shalom, Z. Wang, M. Elabd, A. Sharma, J. Oh, S. Kothawade, M. Le, M. Monteiro, S. Yang, K. Alarakyia, R. Geirhos, D. Mincu, H. Garnes, H. Kobayashi, S. Mariooryad, K. Krasowiak, Zhixin, Lai, S. Mourad, M. Wang, F. Bu, O. Aharoni, G. Chen, A. Goyal, V. Zubov, A. Bapna, E. Dabir, N. Kothari, K. Lamerigts, N. D. Cao, J. Shar, C. Yew, N. Kulkarni, D. Mahaarachchi, M. Joshi, Z. Zhu, J. Lichtarge, Y. Zhou, H. Muckenhirn, V. Selo, O. Vinyals, P. Chen, A. Brohan, V. Mehta, S. Cogan, R. Wang, T. Geri, W. Ko, W. Chen, F. Viola, K. Shivam, L. Wang, M. C. Elish, R. A. Popa, S. Pereira, J. Liu, R. Koster, D. Kim, G. Zhang, S. Ebrahimi, P. Talukdar, Y. Zheng, P. Poklukar, A. Mikhalap, D. Johnson, A. Vijayakumar, M. Omernick, M. Dibb, A. Dubey, Q. Hu, A. Suman, V. Aggarwal, I. Kornakov, F. Xia, W. Lowe, A. Kolganov, T. Xiao, V. Nikolaev, S. Hemingray, B. Li, J. Iljazi, M. Rybiński, B. Sandhu, P. Lu, T. Luong, R. Jenatton, V. Govindaraj, Hui, Li, G. Dulac-Arnold, W. Park, H. Wang, A. Modi, J. Pouget-Abadie, K. Greller, R. Gupta, R. Berry, P. Ramachandran, J. Xie, L. McCafferty, J. Wang, K. Gupta, H. Lim, B. Bratanič, A. Brock, I. Akolzin, J. Sproch, D. Karliner, D. Kim, A. Goedeckemeyer, N. Shazeer, C. Schmid, D. Calandriello, P. Bhatia, K. Choromanski, C. Montgomery, D. Dua, A. Ramalho, H. King, Y. Gao, L. Nguyen, D. Lindner, D. Pitta, O. Johnson, K. Salama, D. Ardila, M. Han, E. Farnese, S. Odoom, Z. Wang, X. Ding, N. Rink, R. Smith, H. T. Lehri, E. Cohen, N. Vats, T. He, P. Gopavarapu, A. Paszke, M. Patel, W. V. Gansbeke, L. Loher, L. Castro, M. Voitovich, T. von Glehn, N. George, S. Niklaus, Z. Eaton-Rosen, N. Rakićević, E. Jue, S. Perel, C. Zhang, Y. Bahat, A. Pouget, Z. Xing, F. Huot, A. Shenoy, T. Bos, V. Coriou, B. Richter, N. Noy, Y. Wang, S. Ontanon, S. Qin, G. Makarchuk, D. Hassabis, Z. Li, M. Sharma, K. Venkatesan, I. Kemaev, R. Daniel, S. Huang, S. Shah, O. Ponce, Warren, Chen, M. Faruqui, J. Wu, S. Andačić, S. Payrits, D. McDuff, T. Hume, Y. Cao, M. Tessler, Q. Wang, Y. Wang, I. Rendulic, E. Agustsson, M. Johnson, T. Lando, A. Howard, S. G. S. Padmanabhan, M. Daswani, A. Banino, M. Kilgore, J. Heek, Z. Ji, A. Caceres, C. Li, N. Kassner, A. Vlaskin, Z. Liu, A. Grills, Y. Hou, R. Sukkerd, G. Cheon, N. Shetty, L. Markeeva, P. Stanczyk, T. Iyer, Y. Gong, S. Gao, K. Gopalakrishnan, T. Blyth, M. Reynolds, A. Bhoopchand, M. Bilenko, D. Gharibian, V. Zayats, A. Faust, A. Singh, M. Ma, H. Jiao, S. Vijayanarasimhan, L. Aroyo, V. Yadav, S. Chakera, A. Kakarla, V. Meshram, K. Gregor, G. Botea, E. Senter, D. Jia, G. Kovacs, N. Sharma, S. Baur, K. Kang, Y. He, L. Zhuo, M. Kostelac, I. Laish, S. Peng, L. O’Bryan, D. Kasenberg, G. R. Rao, E. Leurent, B. Zhang, S. Stevens, A. Salazar, Y. Zhang, I. Lobov, J. Walker, A. Porter, M. Redshaw, H. Ke, A. Rao, A. Lee, H. Lam, M. Moffitt, J. Kim, S. Qiao, T. Koo, R. Dadashi, X. Song, M. Sundararajan, P. Xu, C. Kawamoto, Y. Zhong, C. Barbu, A. Reddy, M. Verzetti, L. Li, G. Papamakarios, H. Klimczak-Plucińska, M. Cassin, K. Kavukcuoglu, R. Swavely, A. Vaucher, J. Zhao, R. Hemsley, M. Tschannen, H. Ge, G. Menghani, Y. Yu, N. Ha, W. He, X. Wu, M. Song, R. Sterneck, S. Zinke, D. A. Calian, A. Marsden, A. C. Ruiz, M. Hessel, A. Gueta, B. Lee, B. Farris, M. Gupta, Y. Li, M. Saleh, V. Misra, K. Xiao, P. Mendolicchio, G. Buttimore, V. Krayvanova, N. Nayakanti, M. Wiethoff, Y. Pande, A. Mirhoseini, N. Lao, J. Liu, Y. Hua, A. Chen, Y. Malkov, D. Kalashnikov, S. Gupta, K. Audhkhasi, Y. Zhai, S. Kopalle, P. Jain, E. Ofek, C. Meyer, K. Baatarsukh, H. Strejček, J. Qian, J. Freedman, R. Figueira, M. Sokolik, O. Bachem, R. Lin, D. Kharrat, C. Hidey, P. Xu, D. Duan, Y. Li, M. Ersoy, R. Everett, K. Cen, R. Santamaria-Fernandez, A. Taubenfeld, I. Mackinnon, L. Deng, P. Zablotskaia, S. Viswanadha, S. Goel, D. Yates, Y. Deng, P. Choy, M. Chen, A. Sinha, A. Mossin, Y. Wang, A. Szlam, S. Hao, P. K. Rubenstein, M. Toksoz-Exley, M. Aperghis, Y. Zhong, J. Ahn, M. Isard, O. Lacombe, F. Luisier, C. Anastasiou, Y. Kalley, U. Prabhu, E. Dunleavy, S. Bijwadia, J. Mao-Jones, K. Chen, R. Pasumarthi, E. Wood, A. Dostmohamed, N. Hurley, J. Simsa, A. Parrish, M. Pajarskas, M. Harvey, O. Skopek, Y. Kochinski, J. Rey, V. Rieser, D. Zhou, S. J. Lee, T. Acharya, G. Li, J. Jiang, X. Zhang, B. Gipson, E. Mahintorabi, M. Gelmi, N. Khajehnouri, A. Yeh, K. Lee, L. Matthey, L. Baker, T. Pham, H. Fu, A. Pak, P. Gupta, C. Vasconcelos, A. Sadovsky, B. Walker, S. Hsiao, P. Zochbauer, A. Marzoca, N. Velan, J. Zeng, G. Baechler, D. Driess, D. Jain, Y. Huang, L. Tao, J. Maggs, N. Levine, J. Schneider, E. Gemzer, S. Petit, S. Han, Z. Fisher, D. Zelle, C. Biles, E. Ie, A. Fadeeva, C. Liu, J. V. Franco, A. Collister, H. Zhang, R. Wang, R. Zhao, L. Kieliger, K. Shuster, R. Zhu, B. Gong, L. Chan, R. Sun, S. Basu, R. Zimmermann, J. Hayes, A. Bapna, J. Snoek, W. Yang, P. Datta, J. A. Abdallah, K. Kilgour, L. Li, S. Mah, Y. Jun, M. Rivière, A. Karmarkar, T. Spalink, T. Huang, L. Gonzalez, D. Tran, A. Nowak, J. Palowitch, M. Chadwick, E. Talius, H. Mehta, T. Sellam, P. Fränken, M. Nicosia, K. He, A. Kini, D. Amos, S. Basu, H. Jobe, E. Shaw, Q. Xu, C. Evans, D. Ikeda, C. Yan, L. Jin, L. Wang, S. Yadav, I. Labzovsky, R. Sampath, A. Ma, C. Schumann, A. Siddhant, R. Shah, J. Youssef, R. Agarwal, N. Dabney, A. Tonioni, M. Ambar, J. Li, I. Guyon, B. Li, D. Soergel, B. Fang, G. Karadzhov, C. Udrescu, T. Trinh, V. Raunak, S. Noury, D. Guo, S. Gupta, M. Finkelstein, D. Petek, L. Liang, G. Billock, P. Sun, D. Wood, Y. Song, X. Yu, T. Matejovicova, R. Cohen, K. Andra, D. D’Ambrosio, Z. Deng, V. Nallatamby, E. Songhori, R. Dangovski, A. Lampinen, P. Botadra, A. Hillier, J. Cao, N. Baddi, A. Kuncoro, T. Yoshino, A. Bhagatwala, M. Ranzato, R. Schaeffer, T. Liu, S. Ye, O. Sarvana, J. Nham, C. Kuang, I. Gao, J. Baek, S. Mittal, A. Wahid, A. Gergely, B. Ni, J. Feldman, C. Muir, P. Lamblin, W. Macherey, E. Dyer, L. Kilpatrick, V. Campos, M. Bhutani, S. Fort, Y. Ahmad, A. Severyn, K. Chatziprimou, O. Ferludin, M. Dimarco, A. Kusupati, J. Heyward, D. Bahir, K. Villela, K. Millican, D. Marcus, S. Bahargam, C. Unlu, N. Roth, Z. Wei, S. Gopal, D. Ghoshal, E. Lee, S. Lin, J. Lees, D. Lee, A. Hosseini, C. Fan, S. Neel, M. Wu, Y. Altun, H. Cai, E. Piqueras, J. Woodward, A. Bissacco, S. Haykal, M. Bordbar, P. Sundaram, S. Hodkinson, D. Toyama, G. Polovets, A. Myers, A. Sinha, T. Levinboim, K. Krishnakumar, R. Chhaparia, T. Sholokhova, N. B. Gundavarapu, G. Jawahar, H. Qureshi, J. Hu, N. Momchev, M. Rahtz, R. Wu, A. P. S, K. Dhamdhere, M. Guo, U. Gupta, A. Eslami, M. Schain, M. Blokzijl, D. Welling, D. Orr, L. Bolelli, N. Perez-Nieves, M. Sirotenko, A. Prasad, A. Kar, B. D. B. Pigem, T. Terzi, G. Weisz, D. Ghosh, A. Mavalankar, D. Madeka, K. Daugaard, H. Adam, V. Shah, D. Berman, M. Tran, S. Baker, E. Andrejczuk, G. Chole, G. Raboshchuk, M. Mirzazadeh, T. Kagohara, S. Wu, C. Schallhart, B. Orlando, C. Wang, A. Rrustemi, H. Xiong, H. Liu, A. Vezer, N. Ramsden, S. Chang, S. Mudgal, Y. Li, N. Vieillard, Y. Hoshen, F. Ahmad, A. Slone, A. Hua, N. Potikha, M. Rossini, J. Stritar, S. Prakash, Z. Wang, X. Dong, A. Nazari, E. Nehoran, K. Tekelioglu, Y. Li, K. Badola, T. Funkhouser, Y. Li, V. Yerram, R. Ganeshan, D. Formoso, K. Langner, T. Shi, H. Li, Y. Yamamori, A. Panda, A. Saade, A. S. Scarpati, C. Breaux, C. Carey, Z. Zhou, C. Hsieh, S. Bridgers, A. Butryna, N. Gupta, V. Tulsyan, S. Woo, E. Eltyshev, W. Grathwohl, C. Parks, S. Benjamin, R. Panigrahy, S. Dodhia, D. D. Freitas, C. Sauer, W. Song, F. Alet, J. Tolins, C. Paduraru, X. Zhou, B. Albert, Z. Zhang, L. Shu, M. Bansal, S. Nguyen, A. Globerson, O. Xiao, J. Manyika, T. Hennigan, R. Rong, J. Matak, A. Bakalov, A. Sharma, D. Sinopalnikov, A. Pierson, S. Roller, G. Brown, M. Gao, T. Fukuzawa, A. Ghafouri, K. Vassigh, I. Barr, Z. Wang, A. Korsun, R. Jayaram, L. Ren, T. Zaman, S. Khan, Y. Lunts, D. Deutsch, D. Uthus, N. Katz, M. Samsikova, A. Khalifa, N. Sethi, J. Sun, L. Tang, U. Alon, X. Luo, D. Yu, A. Nayyar, B. Petrini, W. Truong, V. Hellendoorn, N. Chinaev, C. Alberti, W. Wang, J. Hu, V. Mirrokni, A. Balashankar, A. Aharon, A. Mehta, A. Iscen, J. Kready, L. Manning, A. Mohananey, Y. Chen, A. Tripathi, A. Wu, I. Petrovski, D. Hwang, M. Baeuml, S. Chandrakaladharan, Y. Liu, R. Coaguila, M. Chen, S. Ma, P. Tafti, S. Tatineni, T. Spitz, J. Ye, P. Vicol, M. Rosca, A. Puigdomènech, Z. Yahav, S. Ghemawat, H. Lin, P. Kirk, Z. Nabulsi, S. Brin, B. Bohnet, K. Caluwaerts, A. S. Veerubhotla, D. Zheng, Z. Dai, P. Petrov, Y. Xu, R. Mehran, Z. Xu, L. Zintgraf, J. Choi, S. A. Hombaiah, R. Thoppilan, S. Reddi, L. Lew, L. Li, K. Webster, K. Sawhney, L. Lamprou, S. Shakeri, M. Lunayach, J. Chen, S. Bagri, A. Salcianu, Y. Chen, Y. Donchev, C. Magister, S. Nørly, V. Rodrigues, T. Izo, H. Noga, J. Zou, T. Köppe, W. Zhou, K. Lee, X. Long, D. Eisenbud, A. Chen, C. Schenck, C. M. To, P. Zhong, E. Taropa, M. Truong, O. Levy, D. Martins, Z. Zhang, C. Semturs, K. Zhang, A. Yakubovich, P. Moreno, L. McConnaughey, D. Lu, S. Redmond, L. Weerts, Y. Bitton, T. Refice, N. Lacasse, A. Conmy, C. Tallec, J. Odell, H. Forbes-Pollard, A. Socala, J. Hoech, P. Kohli, A. Walton, R. Wang, M. Sazanovich, K. Zhu, A. Kapishnikov, R. Galt, M. Denton, B. Murdoch, C. Sikora, K. Mohamed, W. Wei, U. First, T. McConnell, L. C. Cobo, J. Qin, T. Avrahami, D. Balle, Y. Watanabe, A. Louis, A. Kraft, S. Ariafar, Y. Gu, E. Rives, C. Yoon, A. Rusu, J. Cobon-Kerr, C. Hahn, J. Luo, Yuvein, Zhu, N. Ahuja, R. Benenson, R. L. Kaufman, H. Yu, L. Hightower, J. Zhang, D. Ni, L. A. Hendricks, G. Wang, G. Yona, L. Jain, P. Barrio, S. Bhupatiraju, S. Velusamy, A. Dafoe, S. Riedel, T. Thomas, Z. Yuan, M. Bellaiche, S. Panthaplackel, K. Kloboves, S. Jauhari, C. Akbulut, T. Davchev, E. Gladchenko, D. Madras, A. Chuklin, T. Hill, Q. Yuan, M. Madhavan, L. Leonhard, D. Scandinaro, Q. Chen, N. Niu, A. Douillard, B. Damoc, Y. Onoe, F. Pedregosa, F. Bertsch, C. Leichner, J. Pagadora, J. Malmaud, S. Ponda, A. Twigg, O. Duzhyi, J. Shen, M. Wang, R. Garg, J. Chen, U. Evci, J. Lee, L. Liu, K. Kojima, M. Yamaguchi, A. Rajendran, A. Piergiovanni, V. K. Rajendran, M. Fornoni, G. Ibagon, H. Ragan, S. M. Khan, J. Blitzer, A. Bunner, G. Sun, T. Kosakai, S. Lundberg, N. Elue, K. Guu, S. Park, J. Park, A. Narayanaswamy, C. Wu, J. Mudigonda, T. Cohn, H. Mu, R. Kumar, L. Graesser, Y. Zhang, R. Killam, V. Zhuang, M. Giménez, W. A. Jishi, R. Ley-Wild, A. Zhai, K. Osawa, D. Cedillo, J. Liu, M. Upadhyay, M. Sieniek, R. Sharma, T. Paine, A. Angelova, S. Addepalli, C. Parada, K. Majumder, A. Lamp, S. Kumar, X. Deng, A. Myaskovsky, T. Sabolić, J. Dudek, S. York, F. de Chaumont Quitry, J. Nie, D. Cattle, A. Gunjan, B. Piot, W. Khawaja, S. Bang, S. Wang, S. Khodadadeh, R. R, P. Rawlani, R. Powell, K. Lee, J. Griesser, G. Oh, C. Magalhaes, Y. Li, S. Tokumine, H. N. Vogel, D. Hsu, A. BC, D. Jindal, M. Cohen, Z. Yang, J. Yuan, D. de Cesare, T. Bruguier, J. Xu, M. Roy, A. Jacovi, D. Belov, R. Arya, P. Meadowlark, S. Cohen-Ganor, W. Ye, P. Morris-Suzuki, P. Banzal, G. Song, P. Ponnuramu, F. Zhang, G. Scrivener, S. Zaiem, A. R. Rochman, K. Han, B. Ghazi, K. Lee, S. Drath, D. Suo, A. Girgis, P. Shenoy, D. Nguyen, D. Eck, S. Gupta, L. Yan, J. Carreira, A. Gulati, R. Sang, D. Mirylenka, E. Cooney, E. Chou, M. Ling, C. Fan, B. Coleman, G. Tubone, R. Kumar, J. Baldridge, F. Hernandez-Campos, A. Lazaridou, J. Besley, I. Yona, N. Bulut, Q. Wellens, A. Pierigiovanni, J. George, R. Green, P. Han, C. Tao, G. Clark, C. You, A. Abdolmaleki, J. Fu, T. Chen, A. Chaugule, A. Chandorkar, A. Rahman, W. Thompson, P. Koanantakool, M. Bernico, J. Ren, A. Vlasov, S. Vassilvitskii, M. Kula, Y. Liang, D. Kim, Y. Huang, C. Ye, D. Lepikhin, and W. Helmholz
+(2025)
+Gemini 2.5: pushing the frontier with advanced reasoning, multimodality, long context, and next generation agentic capabilities
+.
+External Links:
+2507.06261
+,
+Link
+Cited by:
+Appendix 0.B
+,
+§1
+,
+§3.1
+,
+Table 2
+.
+[19]
+C. Cui, J. Huang, S. Wang, L. Zheng, Q. Kong, and Z. Zeng
+(2026)
+Agentic reward modeling: verifying gui agent via online proactive interaction
+.
+External Links:
+2602.00575
+,
+Link
+Cited by:
+§2.1
+.
+[20]
+Y. Dai, K. Ramakrishnan, J. Gu, M. Fernandez, Y. Luo, V. Prabhu, Z. Hu, S. Savarese, C. Xiong, Z. Chen, and R. Xu
+(2025)
+SCUBA: salesforce computer use benchmark
+.
+External Links:
+2509.26506
+,
+Link
+Cited by:
+§2.1
+.
+[21]
+Y. Dai, K. Ramakrishnan, J. Gu, M. Fernandez, Y. Luo, V. Prabhu, Z. Hu, S. Savarese, C. Xiong, Z. Chen, and R. Xu
+(2025)
+SCUBA: salesforce computer use benchmark
+.
+External Links:
+2509.26506
+,
+Link
+Cited by:
+§2.1
+.
+[22]
+M. Deitke, C. Clark, S. Lee, R. Tripathi, Y. Yang, J. S. Park, M. Salehi, N. Muennighoff, K. Lo, L. Soldaini, J. Lu, T. Anderson, E. Bransom, K. Ehsani, H. Ngo, Y. Chen, A. Patel, M. Yatskar, C. Callison-Burch, A. Head, R. Hendrix, F. Bastani, E. VanderBilt, N. Lambert, Y. Chou, A. Chheda, J. Sparks, S. Skjonsberg, M. Schmitz, A. Sarnat, B. Bischoff, P. Walsh, C. Newell, P. Wolters, T. Gupta, K. Zeng, J. Borchardt, D. Groeneveld, C. Nam, S. Lebrecht, C. Wittlif, C. Schoenick, O. Michel, R. Krishna, L. Weihs, N. A. Smith, H. Hajishirzi, R. Girshick, A. Farhadi, and A. Kembhavi
+(2024)
+Molmo and pixmo: open weights and open data for state-of-the-art vision-language models
+.
+External Links:
+2409.17146
+,
+Link
+Cited by:
+§1
+.
+[23]
+X. Deng, Y. Gu, B. Zheng, S. Chen, S. Stevens, B. Wang, H. Sun, and Y. Su
+(2023)
+Mind2Web: towards a generalist agent for the web
+.
+In
+Advances in Neural Information Processing Systems (NeurIPS)
+,
+External Links:
+Link
+Cited by:
+§2.1
+,
+§2.1
+.
+[24]
+T. Fang, H. Zhang, Z. Zhang, K. Ma, W. Yu, H. Mi, and D. Yu
+(2025)
+WebEvolver: enhancing web agent self-improvement with coevolving world model
+.
+External Links:
+2504.21024
+,
+Link
+Cited by:
+§2.1
+.
+[25]
+T. Fu, A. Su, C. Zhao, H. Wang, M. Wu, Z. Yu, F. Hu, M. Shi, W. Dong, J. Wang, Y. Chen, R. Yu, S. Peng, M. Li, N. Huang, H. Wei, J. Yu, Y. Xin, X. Zhao, K. Gu, P. Jiang, S. Zhou, and S. Wang
+(2025)
+Mano technical report
+.
+External Links:
+2509.17336
+,
+Link
+Cited by:
+Appendix 0.B
+,
+§1
+,
+§2.1
+,
+§3.1
+.
+[26]
+L. Gao, L. Zhang, P. Gao, W. Liu, J. Luan, and M. Xu
+(2025)
+GUI-shift: enhancing vlm-based gui agents through self-supervised reinforcement learning
+.
+External Links:
+2505.12493
+,
+Link
+Cited by:
+§1
+,
+§2.1
+.
+[27]
+L. Guo, B. Zhu, Q. Tao, K. Liu, X. Zhao, X. Qin, J. Gao, and G. Hao
+(2025)
+Agentic lybic: multi-agent execution system with tiered reasoning and orchestration
+.
+External Links:
+2509.11067
+,
+Link
+Cited by:
+Appendix 0.B
+,
+§1
+,
+§3.1
+.
+[28]
+W. Hong, W. Wang, Q. Lv, J. Xu, W. Yu, J. Ji, Y. Wang, Z. Wang, Y. Dong, M. Ding, and J. Tang
+(2024)
+CogAgent: a visual language model for gui agents
+.
+In
+2024 IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)
+,
+Vol.
+,
+pp. 14281–14290
+.
+External Links:
+Document
+Cited by:
+§2.1
+.
+[29]
+K. Huang, H. Qiu, Y. Dai, C. Xiong, and C. Wu
+(2025)
+GUI-kv: efficient gui agents via kv cache with spatio-temporal awareness
+.
+External Links:
+2510.00536
+,
+Link
+Cited by:
+§2.2
+.
+[30]
+X. Huang, H. Zhou, and K. Han
+(2025)
+PruneVid: visual token pruning for efficient video large language models
+.
+In
+Findings of the Association for Computational Linguistics: ACL 2025
+,
+W. Che, J. Nabende, E. Shutova, and M. T. Pilehvar (Eds.)
+,
+Vienna, Austria
+,
+pp. 19959–19973
+.
+External Links:
+Link
+,
+Document
+,
+ISBN 979-8-89176-256-5
+Cited by:
+§2.2
+.
+[31]
+A. Ilie
+(2025)
+UiPath screen agent
+.
+Note:
+https://www.uipath.com/ai/research/screen-agent
+Accessed: February 14, 2026
+Cited by:
+Appendix 0.B
+,
+§1
+,
+§3.1
+.
+[32]
+J. Y. Koh, R. Lo, L. Jang, V. Duvvur, M. Lim, P. Huang, G. Neubig, S. Zhou, R. Salakhutdinov, and D. Fried
+(2024)
+VisualWebArena: evaluating multimodal agents on realistic visual web tasks
+.
+In
+Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers)
+,
+L. Ku, A. Martins, and V. Srikumar (Eds.)
+,
+Bangkok, Thailand
+,
+pp. 881–905
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§2.1
+.
+[33]
+B. Li, H. Zhang, K. Zhang, D. Guo, Y. Zhang, R. Zhang, F. Li, Z. Liu, and C. Li
+(2024)
+LLaVA-next: what else influences visual instruction tuning beyond data?
+.
+External Links:
+Link
+Cited by:
+Table 2
+.
+[34]
+K. Li, Z. Meng, H. Lin, Z. Luo, Y. Tian, J. Ma, Z. Huang, and T. Chua
+(2025)
+ScreenSpot-pro: gui grounding for professional high-resolution computer use
+.
+External Links:
+2504.07981
+,
+Link
+Cited by:
+§1
+.
+[35]
+X. Li, P. Yu, C. Zhou, T. Schick, O. Levy, L. Zettlemoyer, J. Weston, and M. Lewis
+(2024)
+Self-alignment with instruction backtranslation
+.
+External Links:
+2308.06259
+,
+Link
+Cited by:
+§3.2
+.
+[36]
+H. Lin, X. Tan, Y. Qin, Z. Xu, Y. Shi, Z. Li, G. Li, S. Cai, S. Cai, C. Fu, K. Li, and X. Sun
+(2025)
+CUARewardBench: a benchmark for evaluating reward models on computer-using agent
+.
+External Links:
+2510.18596
+,
+Link
+Cited by:
+§2.1
+,
+§2.1
+.
+[37]
+K. Q. Lin, L. Li, D. Gao, Z. Yang, S. Wu, Z. Bai, S. W. Lei, L. Wang, and M. Z. Shou
+(2025)
+Showui: one vision-language-action model for gui visual agent
+.
+In
+Proceedings of the Computer Vision and Pattern Recognition Conference
+,
+pp. 19498–19508
+.
+Cited by:
+§1
+,
+§2.1
+,
+§2.2
+,
+§3.3
+.
+[38]
+X. Liu, B. Qin, D. Liang, G. Dong, H. Lai, H. Zhang, H. Zhao, I. L. Iong, J. Sun, J. Wang, J. Gao, J. Shan, K. Liu, S. Zhang, S. Yao, S. Cheng, W. Yao, W. Zhao, X. Liu, X. Liu, X. Chen, X. Yang, Y. Yang, Y. Xu, Y. Yang, Y. Wang, Y. Xu, Z. Qi, Y. Dong, and J. Tang
+(2024)
+AutoGLM: autonomous foundation agents for guis
+.
+External Links:
+2411.00820
+,
+Link
+Cited by:
+Appendix 0.B
+,
+§1
+,
+§2.1
+,
+§3.1
+.
+[39]
+Z. Liu, J. Xie, Z. Ding, Z. Li, B. Yang, Z. Wu, X. Wang, Q. Sun, S. Liu, W. Wang, S. Ye, Q. Li, X. Dong, Y. Yu, C. Lu, Y. Mo, Y. Yan, Z. Tian, X. Zhang, Y. Huang, Y. Liu, W. Su, G. Luo, X. Yue, B. Qi, K. Chen, B. Zhou, Y. Qiao, Q. Chen, and W. Wang
+(2025)
+ScaleCUA: scaling open-source computer use agents with cross-platform data
+.
+arXiv preprint arXiv:2509.15221
+.
+Note:
+Preprint
+External Links:
+Link
+Cited by:
+§1
+,
+§2.1
+,
+§2.1
+,
+§3.1
+,
+§3.1
+,
+Table 1
+.
+[40]
+X. H. Lù, A. Kazemnejad, N. Meade, A. Patel, D. Shin, A. Zambrano, K. Stańczak, P. Shaw, C. J. Pal, and S. Reddy
+(2025)
+AgentRewardBench: evaluating automatic evaluations of web agent trajectories
+.
+External Links:
+2504.08942
+,
+Link
+Cited by:
+Figure 8
+,
+Figure 8
+,
+Figure 8
+,
+Figure 9
+,
+Figure 9
+,
+Figure 9
+,
+Appendix 0.D
+,
+§1
+,
+§2.1
+,
+§2.1
+,
+Table 3
+,
+Table 3
+,
+§5
+.
+[41]
+Y. Lu, J. Yang, Y. Shen, and A. Awadallah
+(2024)
+OmniParser for pure vision based gui agent
+.
+External Links:
+2408.00203
+,
+Link
+Cited by:
+§2.1
+.
+[42]
+S. Murty, H. Zhu, D. Bahdanau, and C. D. Manning
+(2025)
+NNetNav: unsupervised learning of browser agents through environment interaction in the wild
+.
+External Links:
+2410.02907
+,
+Link
+Cited by:
+§2.1
+.
+[43]
+OpenAI
+(2025)
+Introducing GPT-5.2
+.
+Note:
+https://openai.com/index/introducing-gpt-5-2/
+Accessed: 2026-02-16
+Cited by:
+§1
+,
+Table 2
+.
+[44]
+OpenAI
+(2025)
+OpenAI o3 and o4-mini system card
+.
+Technical report
+OpenAI
+.
+External Links:
+Link
+Cited by:
+Appendix 0.B
+,
+§1
+,
+§3.1
+.
+[45]
+M. Ouyang, K. Q. Lin, M. Z. Shou, and H. T. Ng
+(2026)
+FocusUI: efficient ui grounding via position-preserving visual token selection
+.
+External Links:
+2601.03928
+,
+Link
+Cited by:
+§2.2
+.
+[46]
+V. Pahuja, Y. Lu, C. Rosset, B. Gou, A. Mitra, S. Whitehead, Y. Su, and A. Awadallah
+(2025)
+Explorer: scaling exploration-driven web trajectory synthesis for multimodal web agents
+.
+External Links:
+2502.11357
+,
+Link
+Cited by:
+§2.1
+.
+[47]
+J. Pan, Y. Zhang, N. Tomlin, Y. Zhou, S. Levine, and A. Suhr
+(2024)
+Autonomous evaluation and refinement of digital agents
+.
+External Links:
+2404.06474
+,
+Link
+Cited by:
+Figure 6
+,
+Figure 6
+,
+Figure 6
+,
+Figure 7
+,
+Figure 7
+,
+Figure 7
+,
+Appendix 0.D
+,
+§1
+,
+§2.1
+,
+Table 3
+,
+Table 3
+,
+§5
+.
+[48]
+Z. Qi, X. Liu, I. L. Iong, H. Lai, X. Sun, W. Zhao, Y. Yang, X. Yang, J. Sun, S. Yao, T. Zhang, W. Xu, J. Tang, and Y. Dong
+(2025)
+WebRL: training llm web agents via self-evolving online curriculum reinforcement learning
+.
+External Links:
+2411.02337
+,
+Link
+Cited by:
+§2.1
+,
+§2.1
+.
+[49]
+Y. Qin, Y. Ye, J. Fang, H. Wang, S. Liang, S. Tian, J. Zhang, J. Li, Y. Li, S. Huang, W. Zhong, K. Li, J. Yang, Y. Miao, W. Lin, L. Liu, X. Jiang, Q. Ma, J. Li, X. Xiao, K. Cai, C. Li, Y. Zheng, C. Jin, C. Li, X. Zhou, M. Wang, H. Chen, Z. Li, H. Yang, H. Liu, F. Lin, T. Peng, X. Liu, and G. Shi
+(2025)
+UI-tars: pioneering automated gui interaction with native agents
+.
+External Links:
+2501.12326
+,
+Link
+Cited by:
+Appendix 0.B
+,
+§1
+,
+§2.1
+,
+§3.1
+.
+[50]
+C. Rawles, S. Clinckemaillie, Y. Chang, J. Waltz, G. Lau, M. Fair, A. Li, W. E. Bishop, W. Li, F. Campbell-Ajala, D. K. Toyama, R. J. Berry, D. Tyamagundlu, T. P. Lillicrap, and O. Riva
+(2025)
+AndroidWorld: a dynamic benchmarking environment for autonomous agents
+.
+In
+The Thirteenth International Conference on Learning Representations
+,
+External Links:
+Link
+Cited by:
+§2.1
+.
+[51]
+M. S. Ryoo, H. Zhou, S. Kendre, C. Qin, L. Xue, M. Shu, J. Park, K. Ranasinghe, S. Savarese, R. Xu, C. Xiong, and J. C. Niebles
+(2025)
+XGen-mm-vid (blip-3-video): you only need 32 tokens to represent a video even in vlms
+.
+External Links:
+2410.16267
+,
+Link
+Cited by:
+§2.2
+.
+[52]
+B. Seed, :, J. Chen, T. Fan, X. Liu, L. Liu, Z. Lin, M. Wang, C. Wang, X. Wei, W. Xu, Y. Yuan, Y. Yue, L. Yan, Q. Yu, X. Zuo, C. Zhang, R. Zhu, Z. An, Z. Bai, Y. Bao, X. Bin, J. Chen, F. Chen, H. Chen, R. Chen, L. Chen, Z. Chen, J. Chen, S. Chen, K. Chen, Z. Chen, J. Chen, J. Chen, J. Chi, W. Dai, N. Dai, J. Dai, S. Dou, Y. Du, Z. Du, J. Duan, C. Dun, T. Fan, J. Feng, J. Feng, Z. Feng, Y. Fu, W. Fu, H. Fu, H. Ge, H. Guo, M. Han, L. Han, W. Hao, X. Hao, Q. He, J. He, F. He, W. Heng, Z. Hong, Q. Hou, L. Hu, S. Hu, N. Hu, K. Hua, Q. Huang, Z. Huang, H. Huang, Z. Huang, T. Huang, W. Huang, W. Jia, B. Jia, X. Jia, Y. Jiang, H. Jiang, Z. Jiang, K. Jiang, C. Jiang, J. Jiao, X. Jin, X. Jin, X. Lai, Z. Li, X. Li, L. Li, H. Li, Z. Li, S. Wan, Y. Wang, Y. Li, C. Li, N. Li, S. Li, X. Li, X. Li, A. Li, Y. Li, N. Liang, X. Liang, H. Lin, W. Lin, Y. Lin, Z. Liu, G. Liu, G. Liu, C. Liu, Y. Liu, G. Liu, J. Liu, C. Liu, D. Liu, K. Liu, S. Liu, Q. Liu, Y. Liu, K. Liu, G. Liu, B. Liu, R. Long, W. Lou, C. Lou, X. Luo, Y. Luo, C. Lv, H. Lv, B. Ma, Q. Ma, H. Ma, Y. Ma, J. Ma, W. Ma, T. Ma, C. Mao, Q. Min, Z. Nan, G. Ning, J. Ou, H. Pan, R. Pang, Y. Peng, T. Peng, L. Qian, L. Qian, M. Qiao, M. Qu, C. Ren, H. Ren, Y. Shan, W. Shen, K. Shen, K. Shen, G. Sheng, J. Shi, W. Shi, G. Shi, S. S. Cao, Y. Song, Z. Song, J. Su, Y. Sun, T. Sun, Z. Sun, B. Wan, Z. Wang, X. Wang, X. Wang, S. Wang, J. Wang, Q. Wang, C. Wang, S. Wang, Z. Wang, C. Wang, J. Wang, S. Wang, X. Wang, Z. Wang, Y. Wang, W. Wang, T. Wang, C. Wei, H. Wei, Z. Wei, S. Wei, Z. Wu, Y. Wu, Y. Wu, B. Wu, S. Wu, J. Wu, N. Wu, S. Wu, J. Wu, C. Xi, F. Xia, Y. Xian, L. Xiang, B. Xiang, B. Xiao, Z. Xiao, X. Xiao, Y. Xiao, C. Xin, S. Xin, Y. Xiong, J. Xu, Z. Xu, C. Xu, J. Xu, Y. Xu, W. Xu, Y. Xu, S. Xu, S. Yan, S. Yan, Q. Yang, X. Yang, T. Yang, Y. Yang, Y. Yang, X. Yang, Z. Yang, G. Yang, Y. Yang, X. Yao, B. Yi, F. Yin, J. Yin, Z. Ying, X. Yu, H. Yu, S. Yu, M. Yu, H. Yu, S. Yuan, J. Yuan, Y. Zeng, T. Zhan, Z. Zhang, Y. Zhang, M. Zhang, W. Zhang, R. Zhang, Z. Zhang, T. Zhang, X. Zhang, Z. Zhang, S. Zhang, W. Zhang, X. Zhang, Y. Zhang, Y. Zhang, G. Zhang, H. Zhang, Y. Zhang, R. Zheng, N. Zheng, Z. Zheng, Y. Zheng, C. Zheng, X. Zhi, W. Zhong, C. Zhong, Z. Zhong, B. Zhong, X. Zhou, N. Zhou, H. Zhou, H. Zhu, D. Zhu, W. Zhu, and L. Zuo
+(2025)
+Seed1.5-thinking: advancing superb reasoning models with reinforcement learning
+.
+External Links:
+2504.13914
+,
+Link
+Cited by:
+Appendix 0.B
+,
+§1
+,
+§3.1
+.
+[53]
+Y. Shang, M. Cai, B. Xu, Y. J. Lee, and Y. Yan
+(2026)
+LLaVA-prumerge: adaptive token reduction for efficient large multimodal models
+.
+External Links:
+2403.15388
+,
+Link
+Cited by:
+§2.2
+.
+[54]
+K. Shao, K. Tao, C. Qin, H. You, Y. Sui, and H. Wang
+(2025)
+HoliTom: holistic token merging for fast video large language models
+.
+External Links:
+2505.21334
+,
+Link
+Cited by:
+§2.2
+.
+[55]
+L. Song, Y. Dai, V. Prabhu, J. Zhang, T. Shi, L. Li, J. Li, S. Savarese, Z. Chen, J. Zhao, R. Xu, and C. Xiong
+(2026)
+CoAct-1: computer-using multi-agent system with coding actions
+.
+External Links:
+2508.03923
+,
+Link
+Cited by:
+§1
+.
+[56]
+Q. Sun, K. Cheng, Z. Ding, C. Jin, Y. Wang, F. Xu, Z. Wu, C. Jia, L. Chen, Z. Liu, B. Kao, G. Li, J. He, Y. Qiao, and Z. Wu
+(2025)
+OS-genesis: automating gui agent trajectory construction via reverse task synthesis
+.
+In
+Proceedings of the Annual Meeting of the Association for Computational Linguistics (ACL)
+,
+pp. 5555–5579
+.
+External Links:
+Link
+Cited by:
+§2.1
+.
+[57]
+Z. Sun, Z. Liu, Y. Zang, Y. Cao, X. Dong, T. Wu, D. Lin, and J. Wang
+(2025)
+SEAgent: self-evolving computer use agent with autonomous learning from experience
+.
+External Links:
+2508.04700
+,
+Link
+Cited by:
+Figure 10
+,
+Figure 10
+,
+Figure 10
+,
+Appendix 0.D
+,
+§2.1
+,
+Table 3
+,
+Table 3
+,
+§5
+.
+[58]
+G. Team, A. Kamath, J. Ferret, S. Pathak, N. Vieillard, R. Merhej, S. Perrin, T. Matejovicova, A. Ramé, M. Rivière, L. Rouillard, T. Mesnard, G. Cideron, J. Grill, S. Ramos, E. Yvinec, M. Casbon, E. Pot, I. Penchev, G. Liu, F. Visin, K. Kenealy, L. Beyer, X. Zhai, A. Tsitsulin, R. Busa-Fekete, A. Feng, N. Sachdeva, B. Coleman, Y. Gao, B. Mustafa, I. Barr, E. Parisotto, D. Tian, M. Eyal, C. Cherry, J. Peter, D. Sinopalnikov, S. Bhupatiraju, R. Agarwal, M. Kazemi, D. Malkin, R. Kumar, D. Vilar, I. Brusilovsky, J. Luo, A. Steiner, A. Friesen, A. Sharma, A. Sharma, A. M. Gilady, A. Goedeckemeyer, A. Saade, A. Feng, A. Kolesnikov, A. Bendebury, A. Abdagic, A. Vadi, A. György, A. S. Pinto, A. Das, A. Bapna, A. Miech, A. Yang, A. Paterson, A. Shenoy, A. Chakrabarti, B. Piot, B. Wu, B. Shahriari, B. Petrini, C. Chen, C. L. Lan, C. A. Choquette-Choo, C. Carey, C. Brick, D. Deutsch, D. Eisenbud, D. Cattle, D. Cheng, D. Paparas, D. S. Sreepathihalli, D. Reid, D. Tran, D. Zelle, E. Noland, E. Huizenga, E. Kharitonov, F. Liu, G. Amirkhanyan, G. Cameron, H. Hashemi, H. Klimczak-Plucińska, H. Singh, H. Mehta, H. T. Lehri, H. Hazimeh, I. Ballantyne, I. Szpektor, I. Nardini, J. Pouget-Abadie, J. Chan, J. Stanton, J. Wieting, J. Lai, J. Orbay, J. Fernandez, J. Newlan, J. Ji, J. Singh, K. Black, K. Yu, K. Hui, K. Vodrahalli, K. Greff, L. Qiu, M. Valentine, M. Coelho, M. Ritter, M. Hoffman, M. Watson, M. Chaturvedi, M. Moynihan, M. Ma, N. Babar, N. Noy, N. Byrd, N. Roy, N. Momchev, N. Chauhan, N. Sachdeva, O. Bunyan, P. Botarda, P. Caron, P. K. Rubenstein, P. Culliton, P. Schmid, P. G. Sessa, P. Xu, P. Stanczyk, P. Tafti, R. Shivanna, R. Wu, R. Pan, R. Rokni, R. Willoughby, R. Vallu, R. Mullins, S. Jerome, S. Smoot, S. Girgin, S. Iqbal, S. Reddy, S. Sheth, S. Põder, S. Bhatnagar, S. R. Panyam, S. Eiger, S. Zhang, T. Liu, T. Yacovone, T. Liechty, U. Kalra, U. Evci, V. Misra, V. Roseberry, V. Feinberg, V. Kolesnikov, W. Han, W. Kwon, X. Chen, Y. Chow, Y. Zhu, Z. Wei, Z. Egyed, V. Cotruta, M. Giang, P. Kirk, A. Rao, K. Black, N. Babar, J. Lo, E. Moreira, L. G. Martins, O. Sanseviero, L. Gonzalez, Z. Gleicher, T. Warkentin, V. Mirrokni, E. Senter, E. Collins, J. Barral, Z. Ghahramani, R. Hadsell, Y. Matias, D. Sculley, S. Petrov, N. Fiedel, N. Shazeer, O. Vinyals, J. Dean, D. Hassabis, K. Kavukcuoglu, C. Farabet, E. Buchatskaya, J. Alayrac, R. Anil, Dmitry, Lepikhin, S. Borgeaud, O. Bachem, A. Joulin, A. Andreev, C. Hardin, R. Dadashi, and L. Hussenot
+(2025)
+Gemma 3 technical report
+.
+External Links:
+2503.19786
+,
+Link
+Cited by:
+Table 2
+.
+[59]
+K. Team, A. Du, B. Yin, B. Xing, B. Qu, B. Wang, C. Chen, C. Zhang, C. Du, C. Wei, C. Wang, D. Zhang, D. Du, D. Wang, E. Yuan, E. Lu, F. Li, F. Sung, G. Wei, G. Lai, H. Zhu, H. Ding, H. Hu, H. Yang, H. Zhang, H. Wu, H. Yao, H. Lu, H. Wang, H. Gao, H. Zheng, J. Li, J. Su, J. Wang, J. Deng, J. Qiu, J. Xie, J. Wang, J. Liu, J. Yan, K. Ouyang, L. Chen, L. Sui, L. Yu, M. Dong, M. Dong, N. Xu, P. Cheng, Q. Gu, R. Zhou, S. Liu, S. Cao, T. Yu, T. Song, T. Bai, W. Song, W. He, W. Huang, W. Xu, X. Yuan, X. Yao, X. Wu, X. Li, X. Zu, X. Zhou, X. Wang, Y. Charles, Y. Zhong, Y. Li, Y. Hu, Y. Chen, Y. Wang, Y. Liu, Y. Miao, Y. Qin, Y. Chen, Y. Bao, Y. Wang, Y. Kang, Y. Liu, Y. Dong, Y. Du, Y. Wu, Y. Wang, Y. Yan, Z. Zhou, Z. Li, Z. Jiang, Z. Zhang, Z. Yang, Z. Huang, Z. Huang, Z. Zhao, Z. Chen, and Z. Lin
+(2025)
+Kimi-vl technical report
+.
+External Links:
+2504.07491
+,
+Link
+Cited by:
+Appendix 0.B
+,
+§1
+,
+§3.1
+.
+[60]
+H. Wang, H. Zou, H. Song, J. Feng, J. Fang, J. Lu, L. Liu, Q. Luo, S. Liang, S. Huang, W. Zhong, Y. Ye, Y. Qin, Y. Xiong, Y. Song, Z. Wu, A. Li, B. Li, C. Dun, C. Liu, D. Zan, F. Leng, H. Wang, H. Yu, H. Chen, H. Guo, J. Su, J. Huang, K. Shen, K. Shi, L. Yan, P. Zhao, P. Liu, Q. Ye, R. Zheng, S. Xin, W. X. Zhao, W. Heng, W. Huang, W. Wang, X. Qin, Y. Lin, Y. Wu, Z. Chen, Z. Wang, B. Zhong, X. Zhang, X. Li, Y. Li, Z. Zhao, C. Jiang, F. Wu, H. Zhou, J. Pang, L. Han, Q. Liu, Q. Ma, S. Liu, S. Cai, W. Fu, X. Liu, Y. Wang, Z. Zhang, B. Zhou, G. Li, J. Shi, J. Yang, J. Tang, L. Li, Q. Han, T. Lu, W. Lin, X. Tong, X. Li, Y. Zhang, Y. Miao, Z. Jiang, Z. Li, Z. Zhao, C. Li, D. Ma, F. Lin, G. Zhang, H. Yang, H. Guo, H. Zhu, J. Liu, J. Du, K. Cai, K. Li, L. Yuan, M. Han, M. Wang, S. Guo, T. Cheng, X. Ma, X. Xiao, X. Huang, X. Chen, Y. Du, Y. Chen, Y. Wang, Z. Li, Z. Yang, Z. Zeng, C. Jin, C. Li, H. Chen, H. Chen, J. Chen, Q. Zhao, and G. Shi
+(2025)
+UI-tars-2 technical report: advancing gui agent with multi-turn reinforcement learning
+.
+External Links:
+2509.02544
+,
+Link
+Cited by:
+Appendix 0.B
+,
+§1
+,
+§2.1
+,
+§3.1
+.
+[61]
+S. Wang, P. Fu, R. Zhang, S. Zhang, X. Xi, J. Yang, B. Qin, Y. Huang, Z. Luo, and J. Luan
+(2026)
+GAIA: a data flywheel system for training gui test-time scaling critic models
+.
+External Links:
+2601.18197
+,
+Link
+Cited by:
+§2.1
+.
+[62]
+S. Wang, J. Jin, X. Wang, L. Song, R. Fu, H. Wang, Z. Ge, Y. Lu, and X. Cheng
+(2025)
+Video-thinker: sparking "thinking with videos" via reinforcement learning
+.
+External Links:
+2510.23473
+,
+Link
+Cited by:
+§1
+.
+[63]
+W. Wang, Z. Gao, L. Gu, H. Pu, L. Cui, X. Wei, Z. Liu, L. Jing, S. Ye, J. Shao, Z. Wang, Z. Chen, H. Zhang, G. Yang, H. Wang, Q. Wei, J. Yin, W. Li, E. Cui, G. Chen, Z. Ding, C. Tian, Z. Wu, J. Xie, Z. Li, B. Yang, Y. Duan, X. Wang, Z. Hou, H. Hao, T. Zhang, S. Li, X. Zhao, H. Duan, N. Deng, B. Fu, Y. He, Y. Wang, C. He, B. Shi, J. He, Y. Xiong, H. Lv, L. Wu, W. Shao, K. Zhang, H. Deng, B. Qi, J. Ge, Q. Guo, W. Zhang, S. Zhang, M. Cao, J. Lin, K. Tang, J. Gao, H. Huang, Y. Gu, C. Lyu, H. Tang, R. Wang, H. Lv, W. Ouyang, L. Wang, M. Dou, X. Zhu, T. Lu, D. Lin, J. Dai, W. Su, B. Zhou, K. Chen, Y. Qiao, W. Wang, and G. Luo
+(2025)
+InternVL3.5: advancing open-source multimodal models in versatility, reasoning, and efficiency
+.
+External Links:
+2508.18265
+,
+Link
+Cited by:
+Table 2
+.
+[64]
+X. Wang, B. Wang, D. Lu, J. Yang, T. Xie, J. Wang, J. Deng, X. Guo, Y. Xu, C. H. Wu, Z. Shen, Z. Li, R. Li, X. Li, J. Chen, B. Zheng, P. Li, F. Lei, R. Cao, Y. Fu, D. Shin, M. Shin, J. Hu, Y. Wang, J. Chen, Y. Ye, D. Zhang, D. Du, H. Hu, H. Chen, Z. Zhou, H. Yao, Z. Chen, Q. Gu, Y. Wang, H. Wang, D. Yang, V. Zhong, F. Sung, Y. Charles, Z. Yang, and T. Yu
+(2025)
+OpenCUA: open foundations for computer-use agents
+.
+External Links:
+2508.09123
+,
+Link
+Cited by:
+Appendix 0.B
+,
+§1
+,
+§1
+,
+§2.1
+,
+§2.1
+,
+§3.1
+,
+§3.1
+,
+§3.1
+,
+Table 1
+.
+[65]
+Y. Wang, G. Huzhang, Y. Hu, Y. Xia, S. Lu, Q. Chen, Z. Xu, W. Luo, K. Zhang, and L. Zhang
+(2026)
+Building autonomous gui navigation via agentic-q estimation and step-wise policy optimization
+.
+External Links:
+2602.13653
+,
+Link
+Cited by:
+§2.1
+.
+[66]
+Y. Wanyan, X. Zhang, H. Xu, H. Liu, J. Wang, J. Ye, Y. Kou, M. Yan, F. Huang, X. Yang, W. Dong, and C. Xu
+(2025)
+Look before you leap: a gui-critic-r1 model for pre-operative error diagnosis in gui automation
+.
+External Links:
+2506.04614
+,
+Link
+Cited by:
+§2.1
+,
+§2.1
+.
+[67]
+Z. Wu, J. Xie, Z. Li, B. Yang, Q. Sun, Z. Liu, Z. Liu, Y. Qiao, X. Yue, Z. Wang, and Z. Ding
+(2025)
+OS-oracle: a comprehensive framework for cross-platform gui critic models
+.
+External Links:
+2512.16295
+,
+Link
+Cited by:
+§2.1
+,
+§2.1
+.
+[68]
+H. Xiao, G. Wang, Y. Chai, Z. Lu, W. Lin, H. He, L. Fan, L. Bian, R. Hu, L. Liu, S. Ren, Y. Wen, X. Chen, A. Zhou, and H. Li
+(2025)
+UI-genie: a self-improving approach for iteratively boosting mllm-based mobile gui agents
+.
+External Links:
+2505.21496
+,
+Link
+Cited by:
+§2.1
+,
+§2.1
+.
+[69]
+T. Xie, J. Deng, X. Li, J. Yang, H. Wu, J. Chen, W. Hu, X. Wang, Y. Xu, Z. Wang, Y. Xu, J. Wang, D. Sahoo, T. Yu, and C. Xiong
+(2025)
+Scaling computer-use grounding via user interface decomposition and synthesis
+.
+External Links:
+2505.13227
+,
+Link
+Cited by:
+Appendix 0.B
+,
+§1
+,
+§2.1
+,
+§3.1
+.
+[70]
+T. Xie, D. Zhang, J. Chen, X. Li, S. Zhao, R. Cao, T. J. Hua, Z. Cheng, D. Shin, F. Lei, Y. Liu, Y. Xu, S. Zhou, S. Savarese, C. Xiong, V. Zhong, and T. Yu
+(2024)
+OSWorld: benchmarking multimodal agents for open-ended tasks in real computer environments
+.
+External Links:
+2404.07972
+Cited by:
+§1
+,
+§2.1
+,
+§2.1
+,
+§2.1
+,
+§3.1
+,
+§3.1
+,
+Table 1
+.
+[71]
+Z. Xu, B. Zhou, Q. Wang, S. Feng, and J. Xiao
+(2026)
+Spatio-temporal token pruning for efficient high-resolution gui agents
+.
+External Links:
+2602.23235
+,
+Link
+Cited by:
+§2.2
+.
+[72]
+A. Yang, A. Li, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Gao, C. Huang, C. Lv, C. Zheng, D. Liu, F. Zhou, F. Huang, F. Hu, H. Ge, H. Wei, H. Lin, J. Tang, J. Yang, J. Tu, J. Zhang, J. Yang, J. Yang, J. Zhou, J. Zhou, J. Lin, K. Dang, K. Bao, K. Yang, L. Yu, L. Deng, M. Li, M. Xue, M. Li, P. Zhang, P. Wang, Q. Zhu, R. Men, R. Gao, S. Liu, S. Luo, T. Li, T. Tang, W. Yin, X. Ren, X. Wang, X. Zhang, X. Ren, Y. Fan, Y. Su, Y. Zhang, Y. Zhang, Y. Wan, Y. Liu, Z. Wang, Z. Cui, Z. Zhang, Z. Zhou, and Z. Qiu
+(2025)
+Qwen3 technical report
+.
+External Links:
+2505.09388
+,
+Link
+Cited by:
+§1
+,
+§1
+,
+Table 2
+,
+Table 2
+.
+[73]
+C. Yang, S. Su, S. Liu, X. Dong, Y. Yu, W. Su, X. Wang, Z. Liu, J. Zhu, H. Li, W. Wang, Y. Qiao, X. Zhu, and J. Dai
+(2025)
+ZeroGUI: automating online gui learning at zero human cost
+.
+External Links:
+2505.23762
+,
+Link
+Cited by:
+Figure 11
+,
+Figure 11
+,
+Appendix 0.D
+,
+Appendix 0.D
+,
+§2.1
+,
+Table 3
+,
+Table 3
+,
+§5
+.
+[74]
+P. Yang, H. Ci, and M. Z. Shou
+(2025)
+MacOSWorld: a multilingual interactive benchmark for GUI agents
+.
+In
+The Thirty-ninth Annual Conference on Neural Information Processing Systems
+,
+External Links:
+Link
+Cited by:
+§2.1
+.
+[75]
+Y. Yang, D. Li, Y. Dai, Y. Yang, Z. Luo, Z. Zhao, Z. Hu, J. Huang, A. Saha, Z. Chen, R. Xu, L. Pan, S. Savarese, C. Xiong, and J. Li
+(2025)
+GTA1: gui test-time scaling agent
+.
+External Links:
+2507.05791
+,
+Link
+Cited by:
+Appendix 0.B
+,
+§1
+,
+§3.1
+.
+[76]
+J. Ye, X. Zhang, H. Xu, H. Liu, J. Wang, Z. Zhu, Z. Zheng, F. Gao, J. Cao, Z. Lu, J. Liao, Q. Zheng, F. Huang, J. Zhou, and M. Yan
+(2025)
+Mobile-agent-v3: fundamental agents for gui automation
+.
+External Links:
+2508.15144
+,
+Link
+Cited by:
+Appendix 0.B
+,
+§1
+,
+§2.1
+,
+§3.1
+.
+[77]
+J. Ye, Z. Wang, H. Sun, K. Chandrasegaran, Z. Durante, C. Eyzaguirre, Y. Bisk, J. C. Niebles, E. Adeli, L. Fei-Fei, J. Wu, and M. Li
+(2025)
+T*: re-thinking temporal search for long-form video understanding
+.
+External Links:
+2504.02259
+,
+Link
+Cited by:
+§2.2
+.
+[78]
+D. Zhang, S. Zhang, Z. Yang, Z. Zhu, Z. Zhao, R. Cao, L. Chen, and K. Yu
+(2025)
+ProgRM: build better gui agents with progress rewards
+.
+External Links:
+2505.18121
+,
+Link
+Cited by:
+§2.1
+.
+[79]
+S. Zhang, Y. Dong, J. Zhang, J. Kautz, B. Catanzaro, A. Tao, Q. Wu, Z. Yu, and G. Liu
+(2025)
+Nemotron-research-tool-n1: exploring tool-using language models with reinforced reasoning
+.
+External Links:
+2505.00024
+,
+Link
+Cited by:
+§1
+.
+[80]
+Y. Zhang, S. Tang, Z. Li, Z. Han, and V. Tresp
+(2026)
+WebArbiter: a principle-guided reasoning process reward model for web agents
+.
+External Links:
+2601.21872
+,
+Link
+Cited by:
+§2.1
+.
+[81]
+C. Zheng, X. Mo, X. Ma, Q. Lin, Y. Zhao, J. Zhu, X. Lou, J. Wang, Z. Wang, W. Liu, Z. Zhang, Y. Yu, and W. Zhang
+(2026)
+Adaptive milestone reward for gui agents
+.
+External Links:
+2602.11524
+,
+Link
+Cited by:
+§2.1
+.
+[82]
+Y. Zheng, R. Zhang, J. Zhang, Y. Ye, Z. Luo, Z. Feng, and Y. Ma
+(2024)
+LlamaFactory: unified efficient fine-tuning of 100+ language models
+.
+In
+Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 3: System Demonstrations)
+,
+Bangkok, Thailand
+.
+External Links:
+Link
+Cited by:
+§4.1
+.
+[83]
+S. Zhou, F. F. Xu, H. Zhu, X. Zhou, R. Lo, A. Sridhar, X. Cheng, T. Ou, Y. Bisk, D. Fried, U. Alon, and G. Neubig
+(2024)
+WebArena: a realistic web environment for building autonomous agents
+.
+In
+The Twelfth International Conference on Learning Representations
+,
+External Links:
+Link
+Cited by:
+§2.1
+,
+§2.1
+.
+Appendix 0.A
+Implications for Future Work
+Although ExeVRM shows strong overall performance on ExeVR-Bench, several limitations remain and motivate future work.
+First, our current formulation is less effective on very long-horizon Ubuntu agent trajectories that contain substantial
+in-trajectory exploration
+. In these cases, an agent may execute several locally unsuccessful attempts before eventually completing the task (e.g., repeatedly clicking nearby spreadsheet cells before selecting the correct target). Because our reward modeling setup is trained to judge success from compact execution video evidence under binary supervision, such trial-and-error patterns can be misinterpreted as failure-like behavior even when the final outcome is correct. More broadly, this reflects a gap between
+outcome-level
+reward modeling and
+process-level
+credit assignment for long trajectories.
+Second, while STP+TTP significantly improves memory and runtime efficiency, long-horizon video reasoning remains expensive for “think-in-the-image” style multimodal models. The main bottleneck is token budget: increasing frame count, resolution, and reasoning depth simultaneously can quickly trigger out-of-memory issues and unstable training throughput. For this reason, our current study focuses on supervised fine-tuning rather than large-scale reinforcement learning with explicit long-form reasoning rollout. This is a practical design choice under current infrastructure constraints, not a claim that SFT is the optimal training paradigm for all settings.
+A promising direction is to bridge these two limitations with process-aware supervision. One option is to decompose a long trajectory into intent-consistent sub-trajectories, for example by using video captioning or state-transition summarization to re-ground local user intent over time. This could convert our framework from a pure outcome judge into a process reward model (PRM) that evaluates intermediate progress and recovery behaviors. However, building such a benchmark requires fine-grained human annotations of step-level correctness and recovery phases, which we do not yet have at sufficient scale. Future work will study efficient annotation protocols, budget-constrained reasoning training, and RL-style optimization under strict thinking budgets so that long-horizon reasoning quality can improve without sacrificing tractability.
+Appendix 0.B
+Method list for OSWorld trajectory rollout
+To build a reward dataset with broad behavioral coverage, we intentionally roll out a diverse set of CUA systems on OSWorld, spanning both proprietary frontier models and open-weight research models. This design is important for our setting because ExeVRM is trained from
+execution video
+only (without relying on internal thoughts or tool traces). If trajectories came from a narrow policy family, the reward model could overfit to agent-specific interaction habits rather than true task completion signals. We therefore prioritize diversity along multiple axes, including model family, parameter scale, alignment method, agent wrapper, and backend reasoning style.
+Concretely, the evaluated systems include: UI-TARS, UI-TARS (72B, DPO), and Omnitars
+[
+49
+]
+; UI-TARS 2
+[
+60
+]
+; Agent S2 with Gemini and o3 backends
+[
+1
+]
+; AGI-0
+[
+2
+]
+; AutoGLM and AutoGLM-V
+[
+38
+]
+; Claude 3.7/4/4.5 Sonnet
+[
+3
+,
+4
+,
+5
+]
+; Doubao 1.5 thinking vision pro
+[
+52
+]
+; Gemini 2.5
+[
+18
+]
+; Jedi 7B with GPT 4o and o3
+[
+69
+]
+; kimi-vl-a3b
+[
+59
+]
+; Agentic Lybic
+[
+27
+]
+; Mano
+[
+25
+]
+; MobileAgent V3
+[
+76
+]
+; o3
+[
+44
+]
+; GTA-1 (o3)
+[
+75
+]
+; OpenCUA variants (32B, 7B, A3B, and Qwen2 7B)
+[
+64
+]
+; Qwen2.5-VL (32B/72B)
+[
+7
+]
+; Tianxi Action 7B
+[
+16
+]
+; and UIPath (GPT-5)
+[
+31
+]
+.
+Across this pool, agents exhibit substantial differences in action efficiency, recovery behavior, and error modes, producing both successful and near-miss trajectories under shared tasks. This heterogeneity is valuable for ExeVR-53k and complements our adversarial instruction translation pipeline: together they provide harder negatives, richer temporal divergence patterns, and more robust supervision for learning fine-grained success/failure signals. As a result, the reward model is better positioned to generalize across unseen CUA policies and platform-specific interaction styles.
+Figure 5
+:
+Comparison of STP and TTP
+Appendix 0.C
+Visualization of STP and TTP
+Figure 5
+visualizes how STP and TTP reduce redundancy in video tokens. Under Qwen3-VL tokenization, each frame is represented by 880 tokens after spatial patch merging, and adjacent frames are further merged temporally. To stay consistent with this tokenization pipeline, we first compute STP masks on the original spatial patch grid, and then merge masks for temporally adjacent frames with a logical OR before applying them to merged tokens. This implementation detail explains the blank area on the right side of the first panel in frame 1: if a region is pruned in either of the two frames that are temporally merged, the corresponding merged token remains masked. TTP is then applied directly in token space. Because each token already carries information from neighboring frames, some content that appears early in the trajectory can remain visible in later visualizations. Nevertheless, TTP still removes a large amount of persistent redundancy, including repeated sidebars, window chrome, and static wallpaper/background regions.
+This behavior directly matches the motivation of our paper. In ExeVR-53k, trajectories are long and highly redundant, while success/failure often depends on subtle local evidence (e.g., small text edits, focus changes, or transient dialogs). STP is effective at filtering large homogeneous regions, but becomes relatively conservative in UI-dense scenes where many small elements may all appear informative. TTP complements this weakness by removing temporally invariant tokens and preserving regions associated with state transitions. Their combination yields a more compact yet task-relevant video representation for reward modeling, which is consistent with the strong ExeVR-Bench performance of ExeVRM and its improved temporal attribution compared with strong proprietary baselines.
+Appendix 0.D
+Prompts
+Here, we present the prompts for the evaluation strategies employed in
+Findings
+5
+. AER
+[
+47
+]
+performs evaluation using only the final screenshot and a compact list of action history, whereas the Simplified Judge
+[
+40
+]
+utilizes both the initial and final screenshots combined with a detailed action history sequence, which covers the action and a longer reasoning of the GUI agent at each step. Although both methods were originally designed for web agent evaluation, we have adapted their prompts to accommodate a wider range of GUI agent tasks. In contrast, SE-WSM
+[
+57
+]
+and zeroGUI
+[
+73
+]
+leverage the full sequence of screenshots without an action history sequence, with the latter operating in a one-shot manner. The prompt for SE-WSM
+[
+57
+]
+and ZeroGUI are derived their original paper.
+User Prompt of AER
+[
+47
+]
+User Intent:
+{<instruction>}
+Action History:
+{<action history>}
+The last snapshot of the web page is shown in the image.
+Figure 6
+:
+User prompt of AER
+[
+47
+]
+System Prompt of AER
+[
+47
+]
+You are an expert in evaluating the performance of a GUI agent. The agent is designed to help a human user complete tasks across desktop applications and web pages. Given the user’s intent, the agent’s action history, the final state of the relevant application or webpage, and the agent’s response to the user, your goal is to decide whether the agent’s execution is successful or not.
+There are several types of tasks (not limited to the list below):
+1. Information seeking: The user wants to obtain certain information from a webpage, document, or application (e.g., product info, map routes, file properties, system info). The agent’s response must contain the requested information or explicitly state that it is not available. If the agent encounters an exception and returns error content, the task is a failure.
+2. Navigation: The user wants to navigate to a specific page, view, folder, or screen within a website or application. Carefully examine the action history and final state to determine success. No need to consider the agent’s response.
+3. Content modification: The user wants to modify content in a webpage, document, or application (e.g., edit text, change formatting, update settings). Verify the final state reflects the requested changes. No need to consider the agent’s response.
+4. File operations: The user wants to manage files or folders (create, rename, move, copy, delete, compress/extract). Confirm the filesystem state matches the request.
+5. Application setup/installation: The user wants to install, uninstall, or configure software, extensions, or plugins. Confirm the final state indicates the requested installation/configuration is complete.
+6. Media actions: The user wants to open, play, pause, record, or manipulate images/audio/video. Confirm the media state reflects the requested action.
+7. Communication: The user wants to read/send emails or messages. Confirm the content is correctly composed/sent or retrieved.
+8. Terminal/command execution: The user wants to run shell commands. Verify commands were executed correctly and outputs match the intent.
+Be careful about the sufficiency of the agent’s actions. For example, when asked to list the top-searched items, the agent should order items by search count and return the top entries. If required actions (sorting, filtering, saving) are missing, the task is likely a failure.
+*IMPORTANT* Format your response into two lines as shown below:
+Thoughts: <your thoughts and reasoning process>
+Status: "success" or "failure"
+Figure 7
+:
+System prompt of AER
+[
+47
+]
+User Prompt of Simplified Judge
+[
+40
+]
+The user goal is:
+{goal}
+The agent performed the following actions:
+—–
+Step:
+{step_number}
+Action:
+{action}
+Reasoning:
+{reasoning}
+—–
+…
+—–
+Here is the screenshot of the last step.
+{screenshot}
+Provide your reasoning and answer the four questions from the system prompt, usingthe specified format.
+Figure 8
+:
+User prompt of Simplified Judge
+[
+40
+]
+System Prompt of Simplified Judge
+[
+40
+]
+You are a Language Model specialized in judging the performance of GUI agents in automated interface control tasks. For a given software environment, you are provided with the task goal, the current interface state, the sequence of actions taken by the agent, and the agent’s thought process. Additionally, you will have access to the first and last screenshots. Your task is to answer several questions about the agent’s performance in the task.
+Question 1: Was the sequence of actions below successful in achieving the goal?
+Choices: <success>Successful</success>, <success>Unsuccessful</success>
+Question 2: Did the agent perform unnecessary actions that could lead to unintended side effects?
+Choices: <side>Yes</side>, <side>No</side>
+Question 3: Did the agent perform the task optimally, by only performing necessary actions and avoiding unnecessary ones?
+Choices: <optimal>1. Complete Failure</optimal>, <optimal>2. Suboptimal</optimal>,
+<optimal>3. Somewhat Optimal</optimal>, <optimal>4. Completely Optimal</optimal>
+Question 4: Did the agent loop through a sequence of actions that did not make progress towards the goal?
+Choices: <loop>Yes</loop>, <loop>No</loop>
+You should provide your reasoning process for each question, and you can refer to the screenshots to support your answers. Your answer must follow the following format:
+<reasoning>your reasoning here</reasoning>
+<success>answer</success>
+<side>answer</side>
+<optimal>answer</optimal>
+<loop>answer</loop>
+Figure 9
+:
+System prompt of Simplified Judge
+[
+40
+]
+Prompt of SE-WSM
+[
+57
+]
+I am evaluating the performance of a UI agent. The images provided are sequential key frames that represent the full execution trajectory of the agent when attempting to follow a command. These key frames correspond to the instruction:
+[INSTRUCTION]
+.
+Please thoroughly analyze the sequence to assess the following aspects:
+1. Correctness — Did the agent successfully complete the task as instructed?
+2. Redundant Steps — Identify any unnecessary or repeated actions that donot contribute to the goal.
+3. Optimization — Did the agent follow an efficient plan with a minimal number of steps?
+5. First Error Step — If the execution is incorrect or sub-optimal, determine the index of the first 5. keyframe where a mistake occurred.
+6. Error Analysis — Provide a brief explanation of the mistake at that step.
+7. Correct Action Suggestion —Explain what the agent should have done instead at the point of error.
+Important Instructions:
+The agent may have made progress toward the goal, but unless the task is fully and correctly completed, you must set ’Correctness’ to False.
+Be cautious in determining success. Missing confirmation screens, skipped inputs, or wrongUI elements clicked all count as errors.
+Carefully examine all UI changes, button interactions, text entries, and any visual feedback in the screenshots.
+Clearly indicate which exact steps are redundant (starting from1).
+Once you finish the analysis, return your evaluation in the following dictionary format. Include your step-by-step reasoning above the result.
+<thinking>step by step reasoning.</thinking>
+res_dict =
+{ "Correctness": True or False,
+"Redundant": [step numbers],
+"Optimized": True or False,
+"First_Error_Step": step number or None,
+"Error_Type": "brief description of the mistake",
+"Correct_Action": "what should have been done instead"
+}
+Figure 10
+:
+Prompt of SE-WSM
+[
+57
+]
+Prompt of ZeroGUI
+[
+73
+]
+You will be given a task instruction and a series of screenshots of the task execution.
+Please analyze the screenshots and provide a detailed analysis of the task completion by following the steps below:
+1. First, analyze and understand the task instruction. Describe what should the screenshots look like if the task is completed successfully.
+2. Describe what you observe in each screenshot, analysis what actions were taken and what changes were made to the UI to achieve the task (or mistakes made).
+3. When you analyze the screenshots, please pay attention to the very detailed elements and changes in the UI. Every small detail may affect the final result.
+4. After all screenshots are analyzed, provide a overall reasoning about how the task was completed or failed at **the final state**. Make sure you have considered all demands of the task instruction.
+5. Determine if the task was completed at **the final state** (the last screenshot) successfully (score 1 for success, 0 for failure). If the task is
+completed during the process but not at the final state, it should be considered as failure (0 score).
+Provide your response strictly in the following format:
+TASK REQUIREMENT:
+[Your understanding of the task instruction]
+SCREENSHOT ANALYSIS:
+Screenshot 1:
+[Analysis of first screenshot]
+Screenshot 2:
+[Analysis of second screenshot]
+…
+REASONING:
+[Your reasoning]
+FINAL ANSWER:
+[Your final answer]
+SCORE: [0/1]
+Here is an example:
+(Task Instruction: Please help me backup my emails in "Bills" folder in Thunderbird and store the .eml files with only subject names to my Google Drive folder called "emails".)
+TASK REQUIREMENT:
+- Backup the emails in "Bills" folder in Thunderbird.
+- Store the backup .eml files with only subject names, and the emails should be saved in the Google Drive folder called "emails".
+- Once succeed, the emails should be visible in the Google Drive folder "emails". Or at least there should be a saving action performed.
+SCREENSHOT ANALYSIS:
+Screenshot 1:
+- Thunderbird email client is open.
+- The "Bills" folder is visible under "Local Folders."
+- There is no observable action performed yet in this screenshot.
+Screenshot 2:
+- The "Bills" folder has been selected, and the folder content is displayed.
+- Two emails are visible: "Amazon Web Services Invoice Available" and "Your receipt from X (formerly Twitter)."
+- No further actions are taken on the emails.
+Screenshot 3:
+- Both emails in the "Bills" folder are selected.
+- Content previews of both emails are displayed on the right-hand side.
+- No observable attempt to export or save the emails is visible.
+Screenshot 4:
+- The right-click context menu is accessed for the selected emails.
+- The "Save As…" option is hovered over, indicating intent to save the selected emails.
+Screenshot 5:
+- The file navigation window opens, allowing the user to choose a save destination.
+- No specific Google Drive folder (e.g., "emails") is accessed or visible in this screenshot.
+Screenshot 6:
+- The "Desktop" option in the file picker is hovered over.
+- Still no indication of Google Drive folder ("emails") selection.
+Screenshot 7:
+- The "Show other locations" option is hovered over in the file picker.
+- No confirmation that the user is navigating to Google Drive or saving the files with subject names only.
+Screenshot 8:
+- The "Software Updates Available" notification appears. The file picker is still open without any observable confirmation of file saving or destination
+selection.
+- It remains unclear where or if the emails have been saved.
+REASONING:
+Based on the screenshots provided:
+1. While there was some intent to save the emails (as shown by the selection and access of the "Save As…" function), there is no confirmation that the .eml
+files were saved with subject names only and placed in the required Google Drive folder ("emails").
+2. The screenshots lack evidence of the completion of the task as per the instructions.
+FINAL ANSWER:
+The task was not completed successfully due to the lack of observable saving action.
+SCORE: 0
+Now, please **strictly follow the format** and analyze the following screenshots (The last line should only be SCORE: [0/1], no other text):
+Task Instruction:
+{instruction}
+Screenshots (by order):
+{screenshots}
+Figure 11
+:
+Prompt of ZeroGUI
+[
+73
+]
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

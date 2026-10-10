@@ -5,6 +5,9 @@
 **状态：** 完成
 **Books：** 纳入本次
 **检查时间：** 2026-10-04T23:26:28.638Z
+**窗口说明：** 用户明确授权只补遗漏；原67候选行、评分、日期、09:00窗口与有效Source/Books冻结，下述旧结果仍有效但不代替本轮补查验收。
+**补充窗口：** 2026-02-18 ～ 2026-02-18
+**补查时间：** 2026-10-08T19:11:29+08:00
 
 ## 1. 结论
 
@@ -13,6 +16,8 @@
 已完成的逐项处置包括整合、具体已有覆盖及中心争议终态暂缓；所有已写正文/完整邻接和末注均实际POST通过，窄锁已释放。所有67项已逐项获得安全处置，作者侧普通扫描/筛选/审阅/Books待办为0；最终六部分、来源与日期及独立日级复核已通过。
 
 收益均限定原版、负载与评价。Panini 写读不普遍更便宜，COMPOT 非联合 one-shot，Sparrow ESR/DSR 与 prefill 分账，鲁棒签名仅在约定编辑/密码/entropy条件下成立；Prefix47倍是 compute-to-target FLOPs 估算，不是测得时间缩短。未运行代码或复现。
+
+补充层：四有限主题新增查询32/4/15/8共59次跨主题出现，去重并复用本日已有效身份后31个新完整题摘，不是59篇当天论文；14贡献前关闭、17必要首次公开日期隔离。另EVMbench官方Feb18事件新增1确定家族，标准审阅已完成，已有覆盖/No Change获非作者Source/PRE通过；原67+新1=68家族，新增Books写入0。未采用性能、人口或生产安全数字，未复现代码。原67结果冻结，本轮全部六部分独立DAY已root通过，普通待办0；不是据旧完成声明授本轮通过。实际停点及具名日期条件见[补查原件](../_sources/daily-20260219/supplement-20261008.md)。
 
 ## 2. 来源覆盖
 
@@ -39,6 +44,28 @@
 | 表外：[GitHub Mnemis ](https://github.com/microsoft/Mnemis) | 精确repo/paper commit较早公开信号，未扩组织全史 | 受阻 | repo created/commit不证明当时public，首次公开保留§5 |
 | 表外：[GitHub GLM-5](https://github.com/zai-org/GLM-5) | 精确Feb11 README ref88e136f：technical report coming soon；仅去重早release与正文事件 | 已检查 | commit不单独证明first-public，正文依arXiv同身份区间；未扩repo全史 |
 | 补检：[Web 搜索](https://www.google.com/) | 仅具体机构历史入口/身份恢复，不以搜索摘要作Evidence | 检索受限 | 无命中不闭合历史目录，也不无限扩大搜索 |
+
+### 补充自然日来源（本轮实际范围）
+
+以下具名行融入本轮差额，旧表的有效结果保留；不把缺片、空响应或无检索命中改写为零事件。原响应与字段见[西侧入口](../_sources/daily-20260219/supplement-entries-west-20261008.json)、[东侧入口](../_sources/daily-20260219/supplement-entries-east-20261008.json)、[东侧2](../_sources/daily-20260219/supplement-entries-east2-20261008.json)与[动态目录字段](../_sources/daily-20260219/supplement-entry-dates-20261008.json)。
+
+- SRC-OPENAI：当前Research页及Feb18具名恢复，EVMbench官方日期/核心34–49；India业务容量说明复用贡献关闭。结果：已检查；缺口：只支持EVM官方blog协议/限制；未采用PDF后来人口/实验，不授全目录无遗漏。
+- SRC-ANTHROPIC：当前Research及原有效Measuring Agent Autonomy原页/日期恢复；旧Sep9modified初版hold未变。结果：受阻；缺口：Feb18初版统计必要快照仍缺，隔离，不把当前数字混入旧采用。
+- SRC-GOOGLE-AI：Research pubs2026当前计396与DeepMind研究页；已有Feb18教育/科学应用关闭复用。结果：受阻；缺口：目标日官方历史相关切片未恢复，当前首页不证明零事件。
+- SRC-META-AI：官方Research动态入口0可提取行与有限具名日期恢复。结果：受阻；缺口：需本日可读官方event/archive，空响应非零事件。
+- SRC-QWEN：官方Blog动态0行；有限恢复见Feb15Qwen3.5/Feb10Image2窗外，止具名线索。结果：受阻；缺口：未取得Feb18可读官方区间目录，不查全repo。
+- SRC-DEEPSEEK：官方无日期主页及有限Feb18主题恢复。结果：受阻；缺口：缺可确认本日事件目录，无hit不等不存在。
+- SRC-MOONSHOT：官方平台Blog可见2025年末/更早，本日相关历史恢复止当前切片。结果：受阻；缺口：缺Feb18原event/archive，Updated不当首次公开。
+- SRC-TENCENT-HUNYUAN：publicList page1,size20,render0实际9/total9 title/publicAt/display；Feb13→Apr/Jul，无本日索引字段。结果：已检查；缺口：限该发布目录，不声称Research全站无遗漏。
+- SRC-ZAI：Research相邻Feb11→Feb21及原release-notes有效结果，本日无目录字段。结果：已检查；缺口：索引检查不是每篇首次公开证明。
+- SRC-BYTEDANCE-SEED：2026升序type1首20/total82至row19 FlowPortrait Feb24UTC=Feb25BJT首次跨截止；type2返回9/total23至row4Mar31跨截止；均未翻更远页。结果：已检查；缺口：has_more仍true，只证明实际窗口相关索引段，不称全年/全站读完。
+- SRC-BAIDU-ERNIE：10个可见日期标题，Feb6→Jan29夹本日，停止当前页不追更旧page2。结果：已检查；缺口：限官方技术Blog切片。
+- SRC-XIAOMI-MIMO：Paper Jun29/Mar13/Feb3/Jan8；Blog15条无日期，止当前页。结果：受阻；缺口：Paper相邻切片已查，Blog本日官方历史原件仍缺。
+- SRC-MINIMAX：当前12可见标题恢复Mar18→Feb14Forge→Feb12M2.5→Jan27本日切片，未开窗外Forge。结果：已检查；缺口：仅本轮目录切片恢复，不重写原hold或声称所有repo无遗漏。
+- SRC-ARXIV：四窄主题start0/max100，32/4/15/8均total=rows；31new完整题摘。旧有效主题与CL相关前250标题只作去重/有界backstop；新增LG/CV日期列表各一次Cache miss。结果：受阻；缺口：17潜在贡献缺必要first-public日；日期列表历史backstop未恢复；Submitted/Atom/DOI/Updated/邻号不认日期，不授全分类召回。
+- 补检：[Web搜索](https://www.google.com/)：有限机构Feb18与17具名作者/title原材料恢复，date-search0–4，必要原公告一次后停止。结果：检索受限；缺口：搜索只恢复线索；无法取得必要原公开日期者隔离，不无限扩大搜索。
+
+未扫描Weekly或Live组、缺失Daily或其他年份；本轮未新触发固定按需名单，作者project/PDF只为具名必要证据，不扩成站点扫描。
 
 ## 3. 候选与判断
 
@@ -116,6 +143,9 @@
 | [One Agent to Guide Them All: Empowering MLLMs for Vision-and-Language Navigation via Explicit World Representation](https://arxiv.org/html/2602.15400v1) | 2026-02-18T01:00:00Z ～ 2026-02-18T02:40:40.001Z | 语言输出无metric坐标→normalized view/grid经raycast到waypoint→校准接口和controller分责。 2+1+2=5 | 深入完成 | 整合：MULTIMODAL-EMBODIED-VLA，[Ch26](../../../../books/part-03-multimodal-world-models/26-multimodal-embodied-vla.md) |
 | [A Generative-First Neural Audio Autoencoder](https://arxiv.org/html/2602.15749v1) | 2026-02-18T01:00:00Z ～ 2026-02-18T02:48:48.001Z | encoder高rate计算昂贵→前移downsample但decoder同构CUDA fallback→两侧分别profile质量成本。 2+1+2=5 | 深入完成 | 整合：MULTIMODAL-REPRESENTATION，[Ch23](../../../../books/part-03-multimodal-world-models/23-multimodal-representation.md) |
 | [GLM-5: from Vibe Coding to Agentic Engineering](https://arxiv.org/html/2602.15763v1) | 2026-02-18T01:00:00Z ～ 2026-02-18T02:49:08.001Z | 异步trajectory可混version/文本重编码→TITO与staleness/env分账→采样identity不授无偏。 2+2+2=6 | 标准完成 | 已有覆盖：TRAIN-GRPO，[Ch33](../../../../books/part-04-training-system/33-grpo.md) |
+| [Introducing EVMbench](https://openai.com/index/introducing-evmbench/) | 2026-02-18 | 审计标签/修改成功不等可利用性→detect、patch、exploit分属标签recall、preservation测试、隔离链交易重放→评价对象与时序/链范围分账。2+2+2=6 | 标准完成 | 已有覆盖：PLATFORM-EVALUATION-SYSTEM，[Ch66](../../../../books/part-06-ai-infrastructure/66-evaluation-system.md)1965–1991/2010–2026，No Change；必要Source/PRE已root通过 |
+
+原67行逐字保留；最后EVMbench1项独立计入补充层，17项必要日期保留不先评分或算候选。新总计68家族；原51整合/14已有覆盖/2争议冻结，新1已有覆盖，新写Books0。
 
 ## 4. 证据与知识整合
 
@@ -389,7 +419,20 @@
 
 采用精确v1；异步trajectory可混version/文本重编码→TITO与staleness/env分账→采样identity不授无偏。必要方法、评价反侧及配置见[本批必要证据](../_sources/daily-20260219/V3_CORE_TWELFTH_BATCH.md)最后四项；与实际现有论点的差额/NoChange理由见[actual owner比较](../_sources/daily-20260219/V3_BOOKS_TWELFTH_BATCH_PRE.md)开头，root已实际核Ch33:1373–1386同篇TITO/version/environment与1790–1812 sampledtoken/logprob责任，已有覆盖通过，No Change；proxy不授无偏。未核实现或复现。
 
+### [Introducing EVMbench](https://openai.com/index/introducing-evmbench/)
+
+仅采用官方Feb18署日期blog核心34–49的协议/直接限制；detect审计标签recall、patch功能保持+exploit checks、exploit隔离本地Anvil交易重放/链状态判据，不是同一correctness authority。未知新增漏洞仍难分真误报，顺序重放不覆盖精确时序，干净Anvil不是mainnet fork且限单链。原报告旧RSS早于09:00的处置冻结；本轮完整自然日授权使同事件日期落补充窗口，不搬旧67日期。
+
+不采排行榜、漏洞人口、模型比较、生产攻击成功或防护保证；blog117/PDF120与PDF后来修改时间不能混成一个精确初版实验，也不自动使不依赖这些数字的blog公开协议失效。无需为未采数字继续附件/初版追查，未运行代码/复现。actual owner的Ch66:1965–1981已承载artifact+environment+execution trace、verifier非truth/sandbox非实境，1983–1991实际preservation论证与2010–2026代理/最终correctness分责覆盖本项长期命题；因此已有覆盖/No Change，不新增案例堆砌。作者完整必要证据/owner比对见[本项原件](../_sources/daily-20260219/supplement-evmbench-source-owner-20261008.md)；root非作者Source/PRE已通过，无新Books写入或POST需求。
+
 ## 5. 缺口与下一步
+
+补充层可执行工作：0。非作者六部分DAY已通过；以下17潜在贡献仅隔离为必要first-public日期保留，不是当窗确定候选，不用于正面Evidence、Books、零事件、无遗漏或性能/安全保证：
+
+- [15136 Universal priors](https://arxiv.org/abs/2602.15136v1)、[04427 Thin Keys](https://arxiv.org/abs/2603.04427v1)、[15283 Unitary](https://arxiv.org/abs/2602.15283v1)、[15353 NeuroSymActive](https://arxiv.org/abs/2602.15353v1)、[15368 GMAIL](https://arxiv.org/abs/2602.15368v1)、[15514 DependencyAI](https://arxiv.org/abs/2602.15514v1)、[15552 Latent Regularization](https://arxiv.org/abs/2602.15552v1)、[15586 Uniform error](https://arxiv.org/abs/2602.15586v1)、[15336 Digital Logic](https://arxiv.org/abs/2602.15336v1)、[15388 CoverAssert](https://arxiv.org/abs/2602.15388v1)、[12269 DART](https://arxiv.org/abs/2603.12269v1)、[15922 DreamZero](https://arxiv.org/abs/2602.15922v1)、[15819 VideoSketcher v1](https://arxiv.org/abs/2602.15819v1)、[08723 Alignment v1](https://arxiv.org/abs/2603.08723v1)、[15918 EarthSpatialBench](https://arxiv.org/abs/2602.15918v1)、[15724 Navigable retrieval](https://arxiv.org/abs/2602.15724v1)、[13239 Solidity prompt tradeoff](https://arxiv.org/abs/2603.13239v1)：每个身份缺可证明首次全文可公开日的官方公告/作者dated发布；Submitted/Atom/DOI登记/Updated/邻号和第三方Feb18日期不足。一次原列表尝试与有限具名恢复后仍缺，停止本轮日期/附件循环。材料及版本独立，不借其他日报归属；ThinKeys exact v1与current v4、VideoSketcher v1题名与v2、Alignment v1 261runs与v2 262runs均不混用。NeuroSymActive决定准入事实已定点读§3.1–3.4/Algorithm1，其潜在inner/outer控制与human cost接口不等采用其性能/理论保证。可接受替代是同身份、同版本首次公开公告或当时可读作者正文发布；到达时只定点重开该identity日期，再审具体潜在命题机制/对照/反側，详见[逐项恢复位置](../_sources/daily-20260219/supplement-20261008.md)。
+- 本轮Google/Meta/Qwen/DeepSeek/Moonshot历史目录、MiMo Blog与Anthropic初版限制继续隔离；arXiv官方LG/CV历史backstop未恢复也不授全召回。恢复需Feb18本窗可读原event/archive或相关标题官方切片，只重开受影响来源，不重跑整月。MiniMax本轮目录恢复与EVM自然日事件是新差额，不能拿下文被冻结的旧窗口说明否定本轮日期，也不重写原判断。
+
+本轮必要日期保留不使外部材料无限等待；范围完成并不等互联网无遗漏。14EX在题摘/必要RUVA安全core后贡献关闭，不另追其日期。原有终态保留与窗外线索如下仍冻结。
 
 作者侧普通待办：0；67项安全处置、51处实际整合POST与14项具体已有覆盖均通过，2中心争议保留终态隔离。来源/准入已收口，不扩宽库存；最终六部分、来源停止范围/日期及代表EX分层抽检已root独立日级验收通过。
 
@@ -408,6 +451,15 @@
 窗外恢复线索：EVMbench RSS Feb18 00Z早于本窗，精度/初版仍需其真实归属日定点恢复；2603.10009 Submitted Feb17 19:00:43Z的官方最早公开下界已到下一窗。此处不搬入本日、不重复深审，不阻本窗完成。
 
 ## 6. 复核
+
+### 补充层独立复核（本轮DAY通过）
+
+复核者：root（非本报告作者）。
+结论：通过
+
+非作者已实际核31个new完整题摘准入、14具名EX及RUVA删除/隐私主张必要核心，发现ThinKeys首包漏路由后已经补exact v1，不扩大旧库存；EVM官方日期、必要Source与实际Ch66已有覆盖PRE已通过，临近日定点去重无同事件有效候选。root实读全部增量diff、四query原字符串/total=rows、14有限来源/entry-dates API字段与实际停止、17必要日期恢复条件、原67同序/旧窗/连续§4冻结，全部六部分DAY通过，普通待办0。没有对17日期保留或历史缺片授Evidence/Coverage/Books，也不把后续版本题摘混入旧67。独立实核与裁决保存[本轮复核](../_sources/daily-20260219/supplement-independent-20261008.md)。完成表示合同安全终态，不保证互联网无遗漏。以下为原冻结结果。
+
+完成态V3再次通过；原67行同序逐字、旧窗口与连续§4前缀以启动94359bytes baseline核验保持。README277个本地引用无缺失；本轮5个Markdown共294次本地引用无缺失，23个新增JSON全部解析通过。限定worktree与cached diff-check分别通过；本轮发现外部暂存，不以现index重取原版，不改或回滚index。作者未stage、commit或push，机器结果不替代上述独立语义验收。
 
 复核者：root（非本报告作者）。
 结论：通过

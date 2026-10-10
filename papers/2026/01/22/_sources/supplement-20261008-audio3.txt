@@ -1,0 +1,892 @@
+
+SOURCE https://arxiv.org/html/2601.11995v1
+Learning Audio–Visual Embeddings with Inferred Latent Interaction Graphs
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+License: CC BY 4.0
+arXiv:2601.11995v1 [cs.MM] 17 Jan 2026
+Learning Audio–Visual Embeddings with Inferred Latent Interaction Graphs
+Donghuo Zeng
+††thanks: Corresponding Author
+Hao Niu
+Yanan Wang
+Masato Taya
+Affiliation: KDDI Research, Inc., Saitama, Japan
+E-mail {xdo-zen, ha-niu, wa-yanan, ma-taya}@kddi.com
+Abstract
+Learning robust audio–visual embeddings requires bringing genuinely related audio and visual signals together while filtering out incidental co-occurrences—background noise, unrelated elements, or unannotated events. Most contrastive and triplet-loss methods use sparse annotated labels per clip and treat any co-occurrence as semantic similarity. For example, a video labeled “train” might also contain motorcycle audio and visual, because “motorcycle” is not the chosen annotation; standard methods treat these co-occurrences as negatives to true motorcycle anchors elsewhere, creating false negatives and missing true cross-modal dependencies.
+We propose a framework that leverages soft-label predictions and inferred latent interactions to address these issues:
+(1) Audio–Visual Semantic Alignment Loss (AV-SAL) trains a teacher network to produce aligned soft-label distributions across modalities, assigning nonzero probability to co-occurring but unannotated events and enriching the supervision signal.
+(2) Inferred Latent Interaction Graph (ILI) applies the GRaSP algorithm to teacher soft labels to infer a sparse, directed dependency graph among classes. This graph highlights directional dependencies (e.g., “Train (visual)” \rightarrow “Motorcycle (audio)”) that expose likely semantic or conditional relationships between classes; these are interpreted as estimated dependency patterns.
+(3) Latent Interaction Regularizer (LIR): A student network is trained with both metric loss and a regularizer guided by the ILI graph, pulling together embeddings of dependency-linked but unlabeled pairs in proportion to their soft-label probabilities.
+Experiments on AVE and VEGAS benchmarks show consistent improvements in mean average precision (MAP), demonstrating that integrating inferred latent interactions into embedding learning enhances robustness and semantic coherence.
+Keywords: Audio–visual latent interaction graph cross-modal retrieval soft labels
+1 Introduction
+Learning aligned representations across audio and visual modalities is fundamental to tasks such as cross-modal retrieval [41, 27, 37] and audio-visual event localization [29]. The standard approach projects audio and visual inputs into a shared embedding space via metric learning (e.g., contrastive or triplet loss), pulling annotated positive pairs together and pushing negatives apart.
+However, real‐world audio–visual data are far richer than the sparse annotations typically provided. Datasets often assign only one audio label and one visual label per clip, even when multiple events occur simultaneously.
+For instance, a short video clip might be annotated “train” for both audio (the sound of a train horn or engine) and visual (the appearance of a train) tracks, yet that same clip can also contain a motorcycle’s engine revving and a passing car’s headlights. These unannotated audio and visual elements coexist with the annotated content, contributing to the true semantics of the scene—even if they are deemed “not important” during annotation. Unfortunately, when a model trains with conventional losses on such data, it treats these unlabeled co‐occurrences that lack matching labels as negatives. Concretely, if “train” is the only annotated label, then the unannotated “motorcycle” audio and “motorcycle” visual—even though they appear together—are considered unrelated, so their embeddings are pushed apart. This introduces two fundamental issues: (I) False negatives due to annotation incompleteness. By relying solely on annotated labels, standard metric‐learning methods unavoidably treat semantically meaningful but unlabeled co‐occurring audio–visual pairs as negatives [7, 11, 8, 42, 39]. Consequently, the model learns to repel embeddings that are actually related in real‐world scenes. The effect is that “motorcycle” audio and “motorcycle” visual—both present in the same ”Train” clip—are mistakenly regarded as dissimilar, degrading the retrieval of genuinely related pairs.
+(II) Spurious correlations from incidental co‐occurrences. Beyond simply overlooking unlabeled events, standard methods [21, 17, 18] also fail to distinguish between truly semantic co‐occurrences and incidental or background co‐occurrences [12, 2]. In noisy or complex scenes, overlapping elements are common; for example, a train scene may include traffic, wind, or construction sounds. Without mechanisms to filter out such incidental signals, models trained solely on labeled data may incorrectly associate background audio (e.g., traffic hum) with a target event (e.g., a train) due to frequent co‐occurrence. This leads to spurious correlations that hurt generalization: At test time, a model may retrieve a ”Train (visual)” in response to traffic sounds alone.
+Together, these issues mean that existing metric-learning [38] approaches produce embeddings that neither capture the full richness of real‐world audio–visual co‐occurrences nor effectively filter out background noise. In other words, two clips that genuinely share a latent relationship, such as a clip containing both ”train” and ”motorcycle”, can be misrepresented as unrelated, while two clips that merely share background context, such as traffic noise and train passing, can be incorrectly treated as strongly related. Our key insight is that correlations differ in importance: some reflect meaningful semantic dependencies, while others are incidental.
+To address this, we introduce a framework that leverages predicted soft-label distributions and dependency inference to improve embedding learning:
+(1) AV-SAL trains a teacher network with a semantic-alignment loss to produce soft labels across all classes, capturing latent events beyond sparse annotations.
+(2) ILI Graph:
+We apply the GRaSP [16] algorithm to the teacher’s soft labels to infer a sparse, directed dependency graph over classes. The graph encodes asymmetric predictive dependencies in the soft-label/representation space; while these patterns may be interpretable under standard structural assumptions, we treat them as an estimated dependency structure from observational model outputs—not definitive causal proof.
+(3) LIR: We train a student network with a latent interaction regularizer derived from the ILI graph, ensuring that both annotated and dependency-linked unlabeled pairs reinforce the representation, while incidental pairs are down-weighted.
+We validate our approach on the AVE and VEGAS benchmarks, where multi-event co-occurrences are common. Our method consistently outperforms state-of-the-art baselines by approximately 1.5% in mean average precision (MAP), demonstrating that latent interaction inferring significantly enhances the robustness and semantic coherence of audio–visual embeddings.
+2 Related Work
+2.1 Audio–Visual Embedding Learning
+Learning aligned representations across audio and visual modalities has been widely studied using linear, nonlinear, and deep-network approaches. Early work relied on Canonical Correlation Analysis (CCA) [6] and its extensions (Cluster CCA [22], K-CCA [15]), which find correlated projections but struggle with nonlinear relationships and scale poorly. Deep CCA variants (DCCA [3], C-DCCA [34], VAE-CCA [44]) leverage neural networks to model nonlinearity and within-class correlation but remain constrained by sparse annotations and ignoring unlabeled co-occurrences. Deep-network–based methods extract embeddings from supervised classifiers [23, 30, 5, 46, 29] or self-supervised correspondence objectives [4, 14], capturing rich co-occurrence patterns. While effective, these approaches do not explicitly separate true semantic dependencies from incidental or background co-occurrences. Dual-subspace approaches [40] attempt to separate shared and modality-specific features but still rely on labeled data for subspace formation.
+Metric-learning approaches [7, 8, 39, 42, 38] enforce embedding distances directly via contrastive or triplet losses. Distillation-based methods [31, 36] further leverage teacher networks and soft-label distributions to enrich supervision. Despite their effectiveness, these methods still treat unlabeled but meaningful co-occurrences as negatives, leading to false negatives and spurious correlations.
+Overall, existing audio–visual embedding approaches remain limited by sparse annotations, lack mechanisms to capture latent events, and cannot dynamically differentiate incidental co-occurrences from semantically meaningful dependencies. This motivates frameworks that combine soft-label supervision with dependency inference to better reflect the richness of real-world scenes.
+2.2 Latent Interaction and Dependency Learning
+Instead of relying solely on correlation-based embeddings, recent works have explored learning latent interaction structures to capture meaningful dependencies among modalities [19]. These approaches aim to infer underlying dependency patterns from observational data [19, 10, 32]. In high-level vision and language tasks (e.g., VQA [28], image captioning [33], visual dialogue [20]), modeling latent interactions has been shown to reduce spurious correlations, disentangle confounding factors, and improve generalization. Similarly, in audio–visual learning, capturing such dependencies can mitigate the impact of missing annotations and incidental co-occurrences. Beyond general dependency inference, structured graphs have been used to explicitly encode relationships among classes or embeddings. For instance, GRaSP [16] constructs sparse directed dependency graphs from soft-label predictions by permutation search with BIC scoring. Such graphs highlight consistent interaction patterns without requiring ground-truth causation and can guide embedding learning by reinforcing semantically linked pairs while down-weighting incidental ones, enabling models to dynamically uncover latent semantic structures under sparse or noisy annotations.
+By integrating soft-label supervision with latent interaction inference, models can move beyond static correlation-based embeddings, uncover deeper semantic dependencies, and produce more explainable and transferable audio-visual representations [36, 45].
+3 Proposed Method
+3.1 Notation and overview
+Let \mathcal{D}=\{x_{n}\}_{n=1}^{N} be a dataset of N clips. Each clip x_{n} has audio-visual pair (x_{a,n},x_{v,n}) .
+The teacher model produces soft-label distribution s_{n}\in[0,1]^{C} (independent sigmoid heads per class, C is the number of classes); collect these into S\in\mathbb{R}^{N\times C} .
+The student embedding network is z_{\theta}(x)\in\mathbb{R}^{d} and D(z,z^{\prime}) denotes the Euclidean distance.
+Our pipeline follows a two-stage schedule (teacher \rightarrow student). After training the teacher until epoch E_{\text{teacher}} , we collect S and infer a sparse, directed inferred latent interaction (ILI) adjacency \widehat{A}=\mathrm{GRaSP}(S)\in\mathbb{R}_{\geq 0}^{2C\times 2C} . \widehat{A}_{ij} quantifies a discovered dependency from class i to class j ( i,j\in\{1,2,...,2C\} ). During student training, we augment the metric objective with a Latent Interaction Regularizer (LIR) weighted by \widehat{A} .
+Figure 1: Overview of our architecture. Audio and visual features are extracted using VGGish and Inception V3. Logits from the audio and visual encoders are optimized with AV-SAL combined with a proxy-triplet loss (incorporating cross-modal attention) to produce calibrated soft-label distributions. These soft labels are input to GRaSP to infer a directed latent interaction graph \widehat{A} , where each edge s_{a,i}\rightarrow s_{v,j} represents a dependency between audio label i and visual label j . Finally, the embeddings are refined with a LIR term—weighted and normalized according to the discovered dependencies.
+3.2 Teacher: audio–visual semantic alignment (AV-SAL)
+The teacher model is trained to produce calibrated soft-labels that discover latent co-occurrences beyond sparse annotations. We use an alignment loss between modality soft-labels s_{n} and available one-hot labels Y_{n}\in\{0,1\}^{C} :
+\mathcal{L}_{\mathrm{AV\text{-}SAL}}\;=\;\frac{1}{N}\sum_{n=1}^{N}\Big(\|s_{a,n}-Y_{n}\|_{2}^{2}+\|s_{v,n}-Y_{n}\|_{2}^{2}\Big),
+(1)
+where s_{a,n},s_{v,n}\in[0,1]^{C} are the teacher’s per-modality sigmoid outputs for clip n . The teacher is also trained with a proxy-triplet [38] loss, so that soft labels reflect both annotation and embedding:
+\small\mathcal{L}^{\mathrm{(teacher)}}=\mathcal{L}_{\mathrm{AV\text{-}SAL}}+\mathcal{L}_{\mathrm{triplet*}}.
+(2)
+Given proxy embeddings \ell_{a*}^{(i)} and \ell_{v*}^{(i)} extracted from a cross-attention layer [38], the proxy triplet loss is defined as
+\small L_{\text{triplet}^{*}}=\frac{1}{N}\sum_{i=1}^{N}\Big[\|\ell_{a*}^{(i)}-\ell_{v*}^{(i+)}\|_{2}^{2}-\|\ell_{a*}^{(i)}-\ell_{v*}^{(i-)})\|_{2}^{2}+\alpha\Big]_{+},
+(3)
+where \alpha is a margin hyperparameter that enforces the anchor to be closer to the positive than the negative by at least \alpha . Here, (\ell_{a*}^{(i)},\ell_{v*}^{(i+)}) form a positive pair (same label), while \ell_{v*}^{(i-)} is sampled from a different class.
+3.3 Inferring the ILI Graph
+After the teacher stage (epoch E_{\mathrm{teacher}} ) we collect the teacher logits for all clips and form the logits data matrix:
+\mathcal{L}=\bigl[\ell^{(1)},\dots,\ell^{(N)}\bigr]^{\top}\;\in\;\mathbb{R}^{N\times 2C},
+where each row \ell^{(i)}=[\ell_{a}^{(i)},\ell_{v}^{(i)}] concatenates the C audio and C visual logits for clip i . Because logits may have different scales across classes, we column-wise standardize \mathcal{L} to obtain \widetilde{\mathcal{L}} (zero mean and unit variance per column). We apply GRaSP [16] to \widetilde{\mathcal{L}} . GRaSP searches permutation (variable-ordering) space via a greedy tuck/score routine and, for each candidate ordering \pi , induces per-node parent sets P_{j}(\pi) using the Grow–Shrink procedure. The canonical GRaSP local score is BIC for a Gaussian linear model; GRaSP selects the ordering \pi^{\star} that minimizes the total score and returns the induced sparse DAG.
+As a robustness-oriented, application-specific adaptation, for each node j with predecessors P_{j}(\pi) we optionally fit a nodewise \ell_{1} -regularized linear model on the standardized logits:
+\small\widehat{\beta}^{(j)}(P_{j}(\pi))\;=\;\arg\min_{\beta}\;\frac{1}{2n}\big\|\widetilde{\mathcal{L}}_{:,j}-\widetilde{\mathcal{L}}_{:,P_{j}(\pi)}\beta\big\|_{2}^{2}\;+\;\lambda_{\mathrm{reg}}\|\beta\|_{1},
+(4)
+where \lambda_{\mathrm{reg}}\geq 0 is a small regularization parameter (setting \lambda_{\mathrm{reg}}=0 reduces (4) to ordinary least squares). We take preliminary directed weights
+\small\widetilde{A}_{i\to j}\;=\;\begin{cases}\big|\widehat{\beta}^{(j)}_{i}\big|,&i\in P_{j}(\pi^{\star}),\\[2.0pt]
+0,&\text{otherwise},\end{cases}
+(5)
+i.e., coefficients are zero for non-parents. GRaSP selects the best ordering \pi^{\star} and the corresponding parent sets P_{j}(\pi^{\star}) via its greedy tuck/score procedure; the nodewise fits above are used only to provide coefficient-based weights on the selected edges. To form the final adjacency used by LIR, we (i) set the diagonal entries of \widetilde{A} to zero and (ii) normalize the matrix by its L_{1} -norm:
+\small\widetilde{A}_{ii}:=0\hskip 9.24994pt\forall i,\hskip 18.49988pt\widehat{A}\;=\;\frac{\widetilde{A}}{\|\widetilde{A}\|_{1}}.
+(6)
+The resulting \widehat{A}\in\mathbb{R}_{\geq 0}^{2C\times 2C} is a sparse, directed dependency matrix (the ILI graph) that weights LIR (Eq. (7)). As a practical note, interpret \widehat{A} as an estimated dependency graph derived from teacher logits rather than definitive causal evidence; accordingly, we report edge stability (via bootstrap / different seeds) and restrict LIR to high-weight, stable edges in experiments. The \ell_{1} -regularized nodewise regressions and the diagonal/normalization in (6) are implementation choices made for robustness and interpretability.
+3.4 Latent Interaction Regularizer (LIR)
+LIR uses \widehat{A} to pull together student embeddings for clips predicted to co-activate dependent classes, thereby correcting false negatives that arise from sparse annotations. Define a sampling distribution \mathcal{S}_{ij} that draws audio/visual clip pairs (n,m) for which class i (resp. j ) is active in the teacher soft-labels (e.g., s_{n}[i]>\tau ). The LIR is
+\small\mathcal{L}_{\mathrm{LIR}}(\theta;\widehat{A})\;=\;\sum_{i=1}^{C}\sum_{j=1}^{C}W((m,i),(n,j))\widehat{A}_{ij}\;\mathbb{E}_{(n,m)\sim\mathcal{S}_{ij}}\big[\,D\big(z_{\theta}(x_{n}),\,z_{\theta}(x_{m})\big)\,\big].
+(7)
+In practice, we approximate the expectation by mini-batch sampling and normalize \widehat{A} so that \sum_{i,j}\widehat{A}_{ij}=1 . We set W(a,a)=W(v,v) =0.1, and W(a,v)=W(v,a) =0.4, emphasizing cross-modal latent interaction links.
+Overall training objective
+Both teacher and student networks share the same modality encoders and embedding architecture. We adopt a two‐stage schedule with transition epoch M\in\{300,400,500,\dots,900\} . The goal of Teacher stage (1 to M ) is to learn well-calibrated soft-labels for latent discovery. In Student stage ( M to 1000), after inferring the latent interaction graph, we incorporate LIR to guide embedding learning with causal structure:
+\small\mathcal{L}^{(student)}\;=\;\mathcal{L}_{\text{AV-SAL}}\;+\;\mathcal{L}_{\text{triplet*}}\;+\;\gamma\,\mathcal{L}_{\text{LIR}},
+(8)
+with \gamma=0.005 is chosen empirically. AV‐SAL yields robust soft labels; the triplet loss preserves annotated relationships; and LIR corrects false negatives by enforcing learned latent interaction links. We optimize \mathcal{L} via stochastic gradient descent [24] and backpropagation.
+4 Experiment
+4.1 Datasets and Evaluations
+We evaluate our model on the audio-visual cross-modal retrieval (AV-CMR) task using VEGAS [47] and AVE [29] datasets, following standard splits and preprocessing [40] to ensure proportional category representation. VEGAS contains 28,103 YouTube clips (2–10s) across 10 event categories, with 22,482 for training and 5,621 for testing. AVE has 1,955 clips across 15 categories, with 1,564 for training and 391 for testing. Audio features are extracted as 128-D embeddings per clip via segment-level VGGish [9] embeddings averaged over 1-second segments. Visual features are 1024-D descriptors per clip, obtained by average-pooling InceptionV3 [1] frame-level features sampled at 1-second intervals.
+For evaluation, we perform audio-to-visual and visual-to-audio retrieval using cosine similarity between embeddings to rank the retrieved candidates. Mean Average Precision (MAP) is computed for each cross-modal retrieval direction (audio-to-visual and visual-to-audio) and then averaged, following prior works [40, 39].
+4.2 Implementation Settings
+Each modality branch consists of three 1,024-unit fully connected layers with Tanh activations and 0.15 dropout, followed by a linear projection into an embedding space aligned with the number of event categories (15 for AVE, 10 for VEGAS). We train each dataset separately with a batch size of 400 for 1,000 epochs using triplet loss (margin = 1.2) and the Adam optimizer [13] (learning rate 1\times 10^{-4} , \beta_{1}=0.9 , \beta_{2}=0.999 ). Training follows a two-stage schedule [38]:
+1) Pretraining (Teacher, epochs 1–400): optimize AV-SAL and proxy-based triplet loss on raw embeddings; extract the latent interaction adjacency matrix from soft-label outputs using GRaSP.
+2) Latent interaction refinement (Student, epochs 401–1000) continue triplet and AV-SAL optimization with latent interaction regularization based on the GRaSP graph.
+Experiments are implemented in PyTorch 1.12 on Ubuntu 22.04 with an NVIDIA RTX 3080 GPU (10 GB), using a fixed seed of 42 for reproducibility. Code is available at 11
+1
+https://github.com/ZenzenDatabase/causalCMR.
+Table 1: MAP comparison against state-of-the-art methods. The best scores are in bold, second-best scores are underlined.
+\Block2-1Models
+\Block1-3AVE Dataset
+\Block1-3VEGAS Dataset
+A \rightarrow V
+V \rightarrow A
+Avg.
+A \rightarrow V
+V \rightarrow A
+Avg.
+Random case
+0.127
+0.124
+0.126
+0.110
+0.109
+0.109
+CCA [6]
+0.190
+0.189
+0.190
+0.332
+0.327
+0.330
+KCCA [15]
+0.133
+0.135
+0.134
+0.288
+0.273
+0.281
+DCCA [3]
+0.221
+0.223
+0.222
+0.478
+0.457
+0.468
+C-CCA [22]
+0.228
+0.226
+0.227
+0.711
+0.704
+0.708
+C-DCCA [34]
+0.230
+0.227
+0.229
+0.722
+0.716
+0.719
+TNN-C-CCA [42]
+0.253
+0.258
+0.256
+0.751
+0.738
+0.745
+VAE-CCA [44]
+0.328
+0.302
+0.315
+0.821
+0.824
+0.822
+CCTL [39]
+0.328
+0.267
+0.298
+0.766
+0.765
+0.766
+VideoAdviser [31]
+-
+-
+-
+0.825
+0.819
+0.822
+EICS [40]
+0.337
+0.279
+0.308
+0.797
+0.779
+0.788
+TLCA [35]
+0.410
+0.451
+0.431
+0.822
+0.838
+0.830
+MSNSCA [43]
+0.323
+0.343
+0.333
+0.866
+0.865
+0.866
+AADML [38]
+0.890
+0.883
+0.887
+0.901
+0.891
+0.896
+Our method
+0.906
+0.899
+0.903 (+1.62%)
+0.913
+0.907
+0.910 (+1.45%)
+4.3 Performance Comparison
+We compare our method against representative AV-CMR approaches, including both classical correlation-based techniques and recent deep learning models, grouped into three categories:(1) CCA-based methods including CCA [6], K-CCA [15], Cluster-CCA [22], Deep CCA (DCCA) [3], C-DCCA [34], Triplet with Cluster-CCA (TNN-C-CCA) [42], and VAE-CCA [44]. These methods learn projections (linear or non-linear) to maximize inter-modal correlation. (2) Representation learning with transformer or distillation like MSNSCA [43] employs a multi-scale network with shared cross-attention for fine-grained audio–visual alignment. VideoAdviser [31] method utilizes CLIP-based teacher–student distillation for robust audio–visual embeddings. (3) Metric learning methods include CCTL [39], EICS [40], and AADML [38]. These approaches learn discriminative embeddings via contrastive or triplet objectives.
+As shown in Table 1, our model achieves the highest MAP on both datasets, outperforming the strongest baseline by 1.62% on AVE and 1.45% on VEGAS. In cross-modal retrieval, such gains are notable given the strength and near-saturation of existing baselines, underscoring the effectiveness of our approach.
+4.4 Ablation Study
+Latent interaction graph analysis
+We track how cross-modal latent interactions evolve by applying GRaSP to soft-label outputs at seven checkpoints (epochs=300, 400, …, 900). We summarize temporal consistency with a frequency matrix \mathbf{F}\in[0,1]^{2C\times 2C} :
+\small F_{ij}\;=\;\frac{1}{T}\sum_{t=1}^{T}\mathbf{1}\{\widehat{A}^{(t)}_{ij}>\varepsilon\},\hskip 18.49988ptT=7,\;\varepsilon\geq 0,
+(9)
+where \mathbf{F}_{ij} is the fraction of checkpoints where edge (i\!\to\!j) appears.
+Figure 2: Latent interaction edge frequency heatmap (on AVE). Each cell shows how often class i was inferred to influence class j across seven checkpoints.
+Figure 2 visualizes \mathbf{F} . High-frequency cross-modal links (e.g., “Helicopter (visual) \rightarrow Helicopter (audio)” 0.99; “Truck (visual) \rightarrow Truck (audio)” 0.83; “Frying (visual) \rightarrow Frying (audio)” 0.83) indicate persistent, robust associations learned across training. In total, 81 class-pairs exceed a frequency of 0.714 (i.e., appear in at least 5 of 7 checkpoints), showing that certain latent interaction links are consistently recovered—likely reflecting strong temporal/contextual coupling rather than spurious co-occurrence. These stable patterns underscore the utility of latent interaction inferred for revealing high-confidence cross-modal relationships.
+Figure 3: Latent interaction subgraphs from the AVE dataset across training epochs (400–900). The top row shows subgraphs centered on “Motorcycle (audio)” as the cause, the middle row on “Train horn (visual)” as the cause, and the bottom row on “Bus (visual)” as the effect. Blue nodes denote audio classes, and green nodes denote visual classes.
+Case studies of evolving latent interaction subgraphs.
+Figure 3 shows three representative subgraphs across training epochs (top: “Motorcycle (audio)” as source; middle: “Train horn (visual)” as source; bottom: “Bus (visual)” as target).
+(i) “Motorcycle (audio)” (source). High activation of this node is consistently associated with increased model activations for audio classes (e.g., “Bark”, “Chainsaw”) and visual classes (e.g., “Motorcycle”, “Train horn”, “Helicopter”). Stable links to mechanically related events suggest engine-like sounds reliably indicate outdoor/mechanical scenes, while some connections (e.g., to “Helicopter” or “Toilet flush”) fluctuate across epochs.
+(ii) “Train horn (visual)” (source). Visual train-horn cues repeatedly predict audio events (e.g., “Clock”, “Motorcycle”, “Helicopter”) and nearby visual classes (e.g., “Truck”, “Toilet flush”), reflecting acoustically rich transportation contexts.
+(iii) “Bus (visual)” (target). As a target node, “Bus (visual)” receives directed inputs from diverse sources (“Infant cry”, “Frying (food)”, “Rodents/rats”, “Train horn”), indicating bus scenes occur in varied urban, domestic, and transit contexts.
+Together, these examples show the inferred directed dependencies are interpretable yet dynamic: some associations are consistently recovered (high-confidence signals), while others evolve during training—supporting the use of model-inferred dependency information to improve cross-modal embedding learning.
+Figure 4: Training loss (left) and test MAP (right) on AVE for different latent-interaction insertion epochs M\in\{300,400,\dots,900\} (baseline = no insertion).
+Impact of the inferred latent interaction
+We study sensitivity to when the inferred latent interaction graph is injected by varying the insertion epoch M\in\{300,400,500,600,700,800,900\} (baseline: no insertion). Figure 4 plots training loss and test MAP on AVE for these settings. Introducing the inferred interaction at M produces an immediate perturbation in the loss followed by rapid stabilization, showing the optimizer adapts to the additional regularization. Compared to the baseline (no interaction), all interaction-aware settings improve MAP, indicating the inferred dependencies provide useful supervision. The best trade-off is obtained at M=400 : loss converges smoothly and test MAP is highest. Introducing interaction too early can disturb initial representation learning, while introducing it too late reduces its ability to shape embeddings; M=400 balances label reliability for graph inference with sufficient remaining training time for the graph to guide refinement.
+Table 2: Component-wise impact on the final objective loss for different metric learning methods on the AVE and VEGAS datasets.
+Models
+AVE dataset
+VEGAS dataset
+A \rightarrow V
+V \rightarrow A
+Avg.
+A \rightarrow V
+V \rightarrow A
+Avg.
+AV-SAL+Proxy (Triplet)+LIR
+0.906
+0.899
+0.903
+0.913
+0.907
+0.910
+AV-SAL+Proxy (Hard Triplet)+LIR
+0.893
+0.889
+0.891
+0.873
+0.867
+0.870
+AV-SAL+Proxy (Contrastive)+LIR
+0.822
+0.858
+0.840
+0.795
+0.814
+0.805
+AV-SAL+Proxy (N-pair)+LIR
+0.835
+0.846
+0.841
+0.658
+0.611
+0.634
+AV-SAL+Proxy (Triplet)
+0.890
+0.883
+0.887
+0.901
+0.890
+0.896
+AV-SAL+Proxy (Hard Triplet)
+0.883
+0.885
+0.884
+0.865
+0.851
+0.858
+AV-SAL+Proxy (Contrastive)
+0.798
+0.854
+0.826
+0.783
+0.807
+0.795
+AV-SAL+Proxy (N-pair)
+0.828
+0.833
+0.830
+0.647
+0.612
+0.629
+AV-SAL+Triplet+LIR
+0.408
+0.451
+0.430
+0.763
+0.727
+0.745
+AV-SAL+Hard Triplet+LIR
+0.407
+0.439
+0.423
+0.774
+0.759
+0.767
+AV-SAL+Contrastive+LIR
+0.376
+0.381
+0.379
+0.712
+0.714
+0.713
+AV-SAL+N-pair+LIR
+0.326
+0.340
+0.333
+0.568
+0.550
+0.559
+Proxy (Triplet[25])+LIR
+0.886
+0.880
+0.883
+0.890
+0.883
+0.887
+Proxy (Hard Triplet[25])+LIR
+0.877
+0.880
+0.879
+0.857
+0.846
+0.852
+Proxy (Contrastive[7])+LIR
+0.790
+0.844
+0.817
+0.776
+0.794
+0.785
+Proxy (N-pair[26])+LIR
+0.822
+0.828
+0.825
+0.642
+0.603
+0.623
+Impact of loss components
+Table 2 reports MAP scores on AVE and VEGAS for different combinations of AV-SAL, proxy-based metric learning (Triplet, Hard Triplet, Contrastive, N-pair), and LIR. The table blocks isolate the contribution of each component: (1) AV-SAL + Proxy (+Loss) + LIR (full model), (2) AV-SAL + Proxy (+Loss) without LIR, (3) AV-SAL + Loss + LIR (no Proxy), and (4) Proxy (+Loss) + LIR (no AV-SAL). The full model performs best: AV-SAL + Proxy (Triplet) + LIR achieves the highest MAP (0.903 on AVE, 0.910 on VEGAS), outperforming the closest AV-SAL+Proxy baseline by +0.016 and +0.014, respectively.
+This demonstrates that LIR sharpens cross-modal alignment, especially when paired with AV-SAL and Proxy. Among proxy-based losses, triplet supervision is the strongest, yielding the most robust gains, producing the most discriminative embeddings. Overall, the ablation confirms that AV-SAL + Proxy (Triplet) + LIR is the optimal configuration, with AV-SAL and LIR providing complementary benefits.
+Figure 5: Qualitative audio-to-visual retrieval on AVE. For two audio queries with different labels, the top-14 retrieved visuals are shown. Correct matches are highlighted in green, incorrect ones in red.
+4.5 Qualitative Results
+We present qualitative audio-to-visual retrieval examples on the AVE dataset to assess the semantic alignment of the learned cross-modal embeddings (Figure 5).
+The few retrieval errors can be explained by the learned interaction strengths in the inferred dependency graph (Fig. 2). For the Helicopter audio query, the model strongly associates audio–helicopter with visual–helicopter (edge frequency = 1.0), leading to predominantly correct retrievals. The single incorrect Dog bark visual at rank 13 corresponds to a weaker but non-zero dependency (audio–helicopter → visual–dog bark, frequency = 0.5), indicating partial confusion likely due to shared acoustic characteristics (e.g., high-energy, outdoor sounds). In contrast, for the Dog bark audio query, there is no inferred dependency between audio–dog bark and visual–clock (frequency = 0), nor a strong directional dependency to visual–dog bark. As a result, the few incorrect Clock samples at lower ranks reflect residual ambiguity not reinforced by the interaction graph. Overall, correct retrievals align with stronger self-dependencies, while errors occur at low ranks where dependency signals are weak or absent, indicating that the graph regularization influences—but does not rigidly dictate—the embedding structure.
+5 Conclusion
+We present a framework for audio–visual embedding learning that addresses the challenges of sparse annotations and incidental co-occurrences. Our approach first aligns teacher-generated soft labels across modalities (AV-SAL), then applies the GRaSP algorithm to infer a directed latent interaction graph, and finally enforces these links through Latent Interaction Regularization (LIR), effectively disentangling meaningful semantic dependencies from superficial correlations. Experiments on AVE and VEGAS show consistent MAP improvements of approximately 1.5% over state-of-the-art baselines, demonstrating more robust and semantically coherent embeddings. In future work, we plan to explore richer latent interaction modeling—potentially capturing principles akin to causality, and reduce reliance on manual labels by incorporating self-supervised strategies.
+6 Discussion and Clarification of Review Concerns
+ILI graph - not a causal claim. We do not claim that the inferred ILI graph is definitive causal evidence; rather, GRaSP is applied to the teacher logits to recover an estimated, sparse, directed dependency matrix from observational model outputs. The directed edges, therefore, represent asymmetric predictive dependencies in the teacher’s logit/representation space (how activation of class i helps predict class j ), not proven interventions or causal mechanisms. To reduce spurious links, we use diagonal-zeroing and L1 normalization, thresholding and edge-stability aggregation across checkpoints, and we restrict LIR to high-weight, stable edges, all of which bias the graph toward compact, reproducible dependencies. Importantly, the graph is used only as a soft regularizer (LIR) alongside AV-SAL and triplet supervision, so it nudges embeddings toward consistent co-activations without enforcing hard, possibly incorrect relations. Finally, we acknowledge that some edges will reflect acoustic similarity or frequent co-occurrence rather than semantic causation; establishing true causality would require interventions or experimental validation and is beyond the scope of this observational study.
+Scalability and graph sparsity. GRaSP’s search does not scale trivially to very large class vocabularies, which motivates our experiments on small label sets (10, 15 classes). In practice, GRaSP is an offline, infrequent training-time step, and GRaSP’s sparsity-inducing objective produces compact graphs with a modest, fixed lamba (we do not heavily tune lamba ). For larger label sets, practical adaptations can be used, e.g., infer dependencies on clustered/meta-classes, restrict inference to top-K/high-confidence labels per sample, or adopt approximate/greedy/sampling-based search or parametric dependency estimators—to trade a small approximation error for tractability. Importantly, these adaptations preserve the deployment simplicity: only the student model is used at inference.
+Dependency on teacher quality: We acknowledge the risk of propagating teacher errors. To mitigate this, the teacher is trained with hard labels plus progressive self-distillation so its outputs are grounded and better calibrated; the ILI graph is inferred from aggregated soft-label distributions and thresholded to produce a sparse graph that discards weak links; and LIR is applied as a soft regularizer alongside the supervised loss rather than as hard supervision. These design choices dampen spurious teacher signals rather than enforce them. Empirical stability of inferred edges across checkpoints further reduces sensitivity to occasional teacher noise.
+Pipeline complexity: Our method uses a coordinated two-stage schedule, not two different model architectures. Both teacher and student share the same modality encoders and embedding architecture. The teacher stage runs from epoch 1 to the transition epoch M (e.g., M\in {300,400,…,900}) to learn calibrated soft labels; at M , we infer the sparse ILI graph once; the student stage then continues from
+M to 1000 with the Latent Interaction Regularizer (LIR) added to the loss. Thus the extra complexity is a training-time schedule choice rather than a multi-model deployment cost: at inference only the compact student is used (no teacher or graph), so runtime latency, memory, and engineering integration remain equivalent to standard single-model baselines. Our ablations (Sec. 4.4, Fig. 4) show that a single, well-timed graph insertion yields consistent gains while keeping added training work bounded.
+ENDSOURCE
+
+
+SOURCE https://arxiv.org/html/2601.12436v1
+Purification Before Fusion: Toward Mask-Free Speech Enhancement for Robust Audio-Visual Speech Recognition
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+License: arXiv.org perpetual non-exclusive license
+arXiv:2601.12436v1 [eess.AS] 18 Jan 2026
+Purification Before Fusion: Toward Mask-Free Speech Enhancement for Robust Audio-Visual Speech Recognition
+Linzhi Wu1,2, Xingyu Zhang2\sthanksCorresponding author. This work was supported in part by the grants from the National Natural Science Foundation of China under Grant 62332019, the National Key Research and Development Program of China (2023YFF1203900, 2023YFF1203903), and sponsored by Beijing Nova Program (20240484513)., Hao Yuan3,2, Yakun Zhang2, Changyan Zheng4,2
+Liang Xie2, Tiejun Liu1, Erwei Yin2
+Abstract
+Audio-visual speech recognition (AVSR) typically improves recognition accuracy in noisy environments by integrating noise-immune visual cues with audio signals. Nevertheless, high-noise audio inputs are prone to introducing adverse interference into the feature fusion process. To mitigate this, recent AVSR methods often adopt mask-based strategies to filter audio noise during feature interaction and fusion, yet such methods risk discarding semantically relevant information alongside noise.
+In this work, we propose an end-to-end noise-robust AVSR framework coupled with speech enhancement, eliminating the need for explicit noise mask generation. This framework leverages a Conformer-based bottleneck fusion module to implicitly refine noisy audio features with video assistance. By reducing modality redundancy and enhancing inter-modal interactions, our method preserves speech semantic integrity to achieve robust recognition performance. Experimental evaluations on the public LRS3 benchmark suggest that our method outperforms prior advanced mask-based baselines under noisy conditions.
+Index Terms: audio-visual speech recognition, speech feature enhancement, noise-robust, multimodal bottleneck Conformer
+††address: 1University of Electronic Science and Technology of China, Chengdu, China
+2Defense Innovation Institute, Academy of Military Sciences, Beijing, China
+3Peking University, Beijing, China
+4High-tech Institute, Weifang, China
+1 Introduction
+Audio-visual speech recognition (AVSR) has emerged as a promising solution to overcome the limitations of automatic speech recognition (ASR) systems, especially in noisy conditions. By incorporating visual cues such as lip movements, AVSR leverages complementary multimodal information to improve recognition robustness, attracting considerable attention recently [1, 2, 3]. Unlike audio-only ASR, which struggles with degraded performance under challenging acoustic conditions, AVSR exploits visual modality to provide contextual cues that are invariant to acoustic noise, thereby enabling reliable speech transcription even in scenarios with background noise or overlapping speech [4, 5].
+Most contemporary AVSR models employ cross-modal attention mechanisms to facilitate effective audio-visual interaction [6, 7, 8, 9, 10]. Compared to early strategies such as direct feature concatenation,
+cross-attention achieves dynamic alignment and richer multimodal integration.
+But, when audio inputs are severely corrupted by noise, the interaction process is prone to disruption.
+Noisy audio features can introduce irrelevant or misleading information, forcing the model to
+undertake the entangled tasks of both implicitly “denoising” the input and “extracting” critical speech-related information simultaneously.
+This dual burden might overwhelm the cross-modal interaction module, leading to suboptimal feature fusion.
+To alleviate the negative effects of noise, recent studies have proposed custom-designed masking networks to generate noise-reduction masks, which explicitly suppress irrelevant noise components in audio features [4, 11, 12]. These methods aim to suppress noise by selectively focusing on relevant audio information during fusion. Nevertheless, they are typically driven solely by the final AVSR objective, which cannot guarantee the preservation of semantic integrity during this lossy noise-suppression process.
+By contrast, this work presents a purify-then-fuse paradigm without explicit mask generation to achieve noise-robust AVSR.
+The key insight is that prioritizing feature purification before fusion ensures that audio representations fed into cross-modal interaction are semantically complete and noise-free.
+To this end, we incorporate an auxiliary audio-visual speech enhancement module based on bottleneck attention into our AVSR framework, which refines audio representations prior to deep multimodal fusion.
+Motivated by [13], we design an audio-visual bottleneck Conformer to facilitate efficient cross-modal interaction and implicit noise purification.
+Guided by audio spectrogram reconstruction objectives, our model tries to extract robust and semantically rich audio representations with the aid of visual cues, mitigating noise interference while retaining essential speech information.
+To our knowledge, this is the first attempt to exploit a multimodal bottleneck Conformer for both efficient cross-modal interaction and reconstruction-based constraints, thus enhancing model resilience to noise.
+We evaluate the effectiveness of the proposed method through a series of experiments on LRS3 [14], the large-scale audio-visual dataset obtained in the wild. The results demonstrate that our model achieves superior performance over previous competitive methods, confirming its robustness under challenging acoustic conditions.
+2 Proposed Method
+Fig. 1 illustrates the proposed noise-robust AVSR framework, which processes video and noisy audio inputs to achieve speech recognition without relying on explicit masks.
+The framework integrates a primary AVSR model with a dedicated speech enhancement (denoising) module that reconstructs cleaner audio representations. The enhancement module is placed after audio feature extraction and before cross-modal fusion, and it is jointly trained end-to-end with the AVSR model.
+The refined audio features are then passed through a cross-modal encoder and fused with the visual features, enabling deeper and more reliable speech understanding.
+Figure 1: Overall architecture of the proposed model.
+2.1 Feature Extraction
+The video input, denoted as \mathbf{x}_{v} , consists of mouth region-of-interest (RoI) sequences. These are first processed by a 3D convolutional layer with a kernel size of 5 \times 7 \times 7 followed by a 2D ResNet18 [15] to extract spatio-temporal features. The resulting features are then fed into a three-layer Conformer encoder [16], which captures both local and global visual temporal dynamics, yielding visual features \mathbf{h}_{v}\in\mathbb{R}^{N_{v}\times d} . The audio input, denoted as log mel-spectrogram \mathbf{x}_{a} , is first processed by two subsampling 1D convolutional layers to reduce the temporal dimension to match the frame rate of the visual features. A similar Conformer is then applied to encode temporal features, producing audio features \mathbf{h}_{a}\in\mathbb{R}^{N_{a}\times d} . Here N_{v} and N_{a} are total frames of video and audio respectively, and d is the feature dimension. Each modality frame refers to a token in our work.
+2.2 Audio-Visual Bottleneck Conformer
+To enhance inter-modal interaction and compress redundant modal information, we introduce an audio-visual bottleneck Conformer (AVBC) with L layers, inspired by [13].
+The AVBC employs a small set of learnable bottleneck tokens \mathbf{b}^{0}=[b_{1},b_{2},\dots,b_{K}] , b_{i}\in\mathbb{R}^{d} ( K\ll N_{a},N_{v} ). For each modality, cross-attention is computed between its feature sequence and the bottleneck tokens. Formally for layer l , we calculate token representations as follows:
+\begin{split}\mathbf{h}_{v}^{l+1}\|\mathbf{b}_{v}^{l+1}&=\mathrm{Conformer}(\mathbf{h}_{v}^{l}\|\mathbf{b}^{l};\theta_{v}),\\
+\mathbf{h}_{a}^{l+1}\|\mathbf{b}_{a}^{l+1}&=\mathrm{Conformer}(\mathbf{h}_{a}^{l}\|\mathbf{b}^{l};\theta_{a}),\\
+\mathbf{b}^{l+1}&=(\mathbf{b}_{v}^{l+1}+\mathbf{b}_{a}^{l+1})/2,\end{split}
+(1)
+where \theta_{v} and \theta_{a} are the parameters of the visual Conformer and the audio Conformer, respectively. “ \| ” denotes the concatenation operation of the latent tokens. Note that the convolution module within the Conformer block is only used for modality tokens excluding the bottleneck tokens.
+The iterative bottleneck attention computation across \mathbf{h}_{a} and \mathbf{h}_{v} ultimately yields compressed representations \mathbf{z}_{v}=\mathbf{h}_{v}^{L} and \mathbf{z}_{a}=\mathbf{h}_{a}^{L} .
+Since all cross-modal attention flow must pass through these bottleneck tokens, such tight “fusion” bottlenecks force the model to condense modality-specific information and share only essential content.
+This design allows the visual modality to guide the purification of noisy audio features in a computationally efficient manner, which reduces cross-modal attention computations from \mathcal{O}((N_{a}+N_{v})^{2}) to \mathcal{O}((K+N_{a})^{2})+\mathcal{O}((K+N_{v})^{2}) .
+2.3 Speech Feature Enhancement
+To refine noisy audio features into fusion-ready representations, we reconstruct the clean mel-spectrogram \hat{\mathbf{x}}_{a} from \mathbf{z}_{a} via a dedicated 1D sub-pixel convolution layer [17], which efficiently upscales audio feature maps to produce the final spectrogram output 11
+1
+For the spectrogram decoder, our preliminary experiments have shown that the designed lightweight sub-pixel convolution module delivers performance comparable to the widely-used transposed convolution network, while requiring fewer parameters and offering higher computational efficiency..
+The reconstruction loss is defined as the L1 distance between the mel-spectrogram of the clean audio and the reconstructed mel-spectrogram:
+\begin{split}\mathcal{L}_{\text{recon}}=\|\hat{\mathbf{x}}_{a}-\mathbf{x}_{a}^{\text{clean}}\|_{1},\end{split}
+(2)
+Inspired by the perceptual loss used for image processing [18], we further introduce a spectrogram-based perceptual loss. Unlike reconstruction loss, which only focuses on raw spectrogram similarity, this loss function captures perceptual discrepancies by minimizing the L2 distance between high-level feature maps of the target and reconstructed mel-spectrograms, where the feature maps are typically obtained by an optimized feature extractor:
+\begin{split}\mathcal{L}_{\text{percep}}=\|\mathcal{F}(\hat{\mathbf{x}}_{a})-\mathcal{F}(\mathbf{x}_{a}^{\text{clean}})\|_{2}^{2},\end{split}
+(3)
+where \mathcal{F} is our custom audio front-end in our work, achieving a cycle-consistency regularization.
+The whole speech feature enhancement process is guided by these two loss functions:
+\begin{split}\mathcal{L}_{\text{enhance}}=\alpha_{1}\mathcal{L}_{\text{recon}}+\alpha_{2}\mathcal{L}_{\text{percep}},\end{split}
+(4)
+with the first loss term providing stability (avoid drift in scale) and the second one driving speech intelligibility. \alpha_{1} and \alpha_{2} denote the weighting factors for each loss term.
+2.4 Fusion and Speech Recognition
+The cross-modal fusion encoder is not required to dedicate substantial effort to denoising; instead, its primary role focuses on integrating the purified audio with visual information.
+The refined representations \mathbf{z}_{v} and \mathbf{z}_{a} are concatenated along the temporal dimension and processed by a Conformer encoder
+to fully capture intra-modal and inter-modal temporal dependencies [9],
+yielding fused features \mathbf{f}_{v} and \mathbf{f}_{a} as follows:
+\begin{split}\mathbf{f}_{a}\|\mathbf{f}_{v}=\mathrm{Conformer}(\mathbf{z}_{a}\|\mathbf{z}_{v};\theta_{f}),\end{split}
+(5)
+where \theta_{f} is the encoder parameter.
+These are fed into the CTC [19] projection layer and Transformer decoder [20] for speech recognition. Given the target text sequence \mathbf{y} , the recognition objective function is defined as a hybrid CTC/attention loss [21, 22]:
+\begin{split}\mathcal{L}_{\text{AVSR}}&=\lambda\mathcal{L}_{\text{ctc}}+(1-\lambda)\mathcal{L}_{\text{att}},\\
+\mathcal{L}_{\mathrm{ctc}}&=-\log p_{\mathrm{ctc}}(\mathbf{y}|\mathbf{f}_{v})-\log p_{\mathrm{ctc}}(\mathbf{y}|\mathbf{f}_{a}),\\
+\mathcal{L}_{\mathrm{att}}&=-\log p_{\mathrm{att}}(\mathbf{y}|\mathbf{f}_{a}),\end{split}
+(6)
+where \lambda balances the relative weight between the CTC and cross-entropy attention-based losses. The CTC projection layer is shared across modalities.
+The overall optimization objective combines recognition and enhancement losses: \mathcal{L}_{\text{total}}=\mathcal{L}_{\text{AVSR}}+\mathcal{L}_{\text{enhance}} .
+This speech enhancement module is jointly trained with the AVSR modules. Accordingly, the loss function backpropagates through the enhancement module, compelling it to produce audio representations that are optimal for speech transcription, not merely for spectral fidelity.
+3 Experiments
+3.1 Data Processing
+Dataset.
+We evaluate the proposed method on the large-scale audio-visual benchmark LRS3 [14], which consists of about 439 hours of TED and TEDx English talks sourced from YouTube 22
+2
+https://www.robots.ox.ac.uk/~{}vgg/data/lip_reading/lrs3.html.
+The training set is divided into two partitions: pretrain (408 hours) and trainval (30 hours), both of which are transcribed at the sentence level. The pretrain part differs from trainval in that the duration of its video clips span a much broader range. The standard test set (0.9 hours) is used for evaluation.
+Processing.
+For the video stream, mouth RoIs are cropped from the aligned talking face video sequence at 25Hz, resized to 96 \times 96, converted to grayscale, and normalized to [0, 1]. During training, we apply random cropping with crop size 88 \times 88, horizontal flipping (probability 0.5) and adaptive time masking [23] to augment the video data. We apply center crop at inference time. For the audio stream, raw waveforms are resampled at 16kHz and transformed into 80-dimensional log mel-spectrograms over windows of 25 ms strided by 10 ms. To synthesize noisy audio inputs for training, we select white, pink, factory1, factory2 and babble noises from the NOISEX-92 database [24], and extract additional overlapping speech noise samples from the training data. These noise samples are then additively mixed with clean waveforms at a signal-to-noise ratio (SNR) level in {-7.5, -2.5, 2.5, 7.5, 12.5, 17.5} dB. For each training sample, we uniformly randomly select either a clean or noisy speech.
+3.2 Experimental Settings
+Model Setup.
+Each Conformer encoder within our framework for each modality consists of 3 blocks with 4 attention heads, hidden dimensions of 512, feed-forward dimensions of 2048, and a convolution kernel size of 31. We leverage a standard Transformer decoder for prediction and the decoder comprises 6 layers, 4 attention heads, hidden dimensions of 512, and feed-forward dimensions of 2048.
+Following [2, 12], the visual front-end is initialized using a pre-trained model on LRW [25].
+The learnable bottleneck tokens are initialized using a Gaussian with a mean of 0 and a standard deviation of 0.02, and the number of tokens is set to 4.
+Training Setup.
+We use the AdamW optimizer [26] to update model parameters for 70 epochs with a batch size of 16.
+The initial learning rate is set to 0.001, adjusted by a cosine annealing schedule with a linear warm-up. \lambda is set to 0.1 as suggested in [23], and \alpha_{1} = \alpha_{2} = 0.1 in our work.
+For the training stability of the entire framework, we adopt a curriculum learning strategy. We first train the model for 20 epochs with the primary AVSR objective using relatively high SNRs (i.e., 7.5-17.5dB), which focuses on establishing robust multimodal alignments and avoids early divergence induced by high-noise inputs. Then, we extend training to the full SNR range and incorporate auxiliary speech enhancement objectives for joint learning, enabling refined feature purification across various SNRs.
+Testing Setup.
+We utilize the model averaged over the last 10 checkpoints for evaluation following [23]. During inference, decoding is performed with a left-to-right beam search of width 40 on the Transformer decoder, and following [27], we exploit an off-the-shelf pre-trained GPT-2 language model [28] for beam rescoring. Following prior literature [1, 2],
+we report word error rate (WER) on LRS3 under both clean and noisy conditions with varying SNR levels.
+A lower WER indicates better recognition performance, while a lower SNR corresponds to a higher noise level.
+Figure 2: Performance comparison of different token numbers at the first layer of our bottleneck Conformer under -5dB SNR babble noise. “w/o enh” indicates the model without speech enhancement.
+Table 1: Effects of the reconstruction loss ( \mathcal{L}_{\text{recon}} ) and the cycle-consistency loss ( \mathcal{L}_{\text{percep}} ) on WER, where \mathcal{L}_{\text{percep}} is applied to the audio front-end and a pre-trained Whisper encoder, respectively.
+Baseline
+\mathcal{L}_{\text{recon}}
+\mathcal{L}_{\text{percep}} (Audio front-end)
+WER (%)
+\checkmark
+–
+–
+12.8
+\checkmark
+\checkmark
+–
+11.2
+\checkmark
+–
+\checkmark
+10.8
+\checkmark
+\checkmark
+\checkmark
+8.5
+Baseline
+\mathcal{L}_{\text{recon}}
+\mathcal{L}_{\text{percep}} (Whisper)
+WER (%)
+\checkmark
+–
+–
+12.8
+\checkmark
+\checkmark
+–
+11.2
+\checkmark
+–
+\checkmark
+9.5
+\checkmark
+\checkmark
+\checkmark
+7.9
+Table 2: WER (%) comparisons with other competitive methods within different noise levels.
+Method
+SNR (dB)
+Avg.
+clean
+15
+10
+5
+0
+-5
+EG-Seq2Seq [29]
+6.8
+3.3
+3.9
+5.8
+12.2
+27.3
+9.9
+Conformer [2]
+3.2
+3.6
+5.4
+8.3
+14.6
+22.3
+9.6
+V-CAFE [4]
+2.9
+3.0
+4.0
+8.4
+12.5
+19.3
+8.4
+Joint AVSE-AVSR [11]
+2.0
+2.4
+2.9
+4.1
+8.0
+19.4
+6.5
+AV-RelScore [12]
+2.8
+2.9
+2.9
+3.3
+4.8
+9.0
+4.3
+Ours (w/o enh)
+2.3
+3.1
+3.8
+4.6
+6.7
+12.8
+5.6
+Ours
+2.1
+2.4
+2.6
+3.2
+4.5
+8.5
+3.9
+Table 3: WER (%) comparisons of different methods under clean audio and overlapped speech (SNR=-5dB) inputs, with or without video assistance.
+Input Condition
+Clean audio
+Overlap. speech
+w/ vid
+w/o vid
+w/ vid
+w/o vid
+Unified-Attention [9]
+2.4
+2.7
+11.3
+27.4
+Our (w/o enh)
+2.3
+2.5
+10.7
+25.9
+Ours
+2.1
+2.2
+9.6
+24.6
+3.3 Results and Analysis
+3.3.1 Influence of the number of bottleneck tokens
+The bottleneck tokens serve a key role in our AVBC fusion structure. We thus conduct experiments to evaluate how their quantity influences the model’s final prediction performance under -5dB babble noise. We keep the number of bottleneck tokens to be much smaller than the total latent units per modality, explicitly ensuring only necessary information resides in these bottleneck tokens. Specifically, we set the number of tokens to 0, 1, 2, 4, 8, and 16 respectively for comparison, where “0” means that the two modalities skip the bottleneck and directly engage in cross-attention. As depicted in Fig. 2, we can observe that the model achieves relatively optimal performance when the number of tokens is set to 4. The results imply that too few tokens may hinder sufficient exchange of essential inter-modal information, while too many could compromise the model’s ability to prioritize only essential content transmission.
+3.3.2 Effectiveness of the speech enhancement
+The audio spectrogram reconstruction within our framework is optimized with two loss functions, i.e. the spectrum-based term ( \mathcal{L}_{\text{recon}} in Eq. 2) and the perception-based term ( \mathcal{L}_{\text{percep}} in Eq. 3). We try to assess the effect of each individual loss on final performance. Besides the audio front-end, we also exploit a pre-trained ASR encoder, Whisper [30] 33
+3
+https://github.com/openai/whisper medium with fixed parameters, to obtain \mathcal{L}_{\text{percep}} . Table 1 presents the ablation results under -5dB SNR babble noise, and we find that the combination of these two types of losses can consistently lead to better performance. As our primary objective is AVSR performance not just for clean-sounding audio restoration, the \mathcal{L}_{\text{percep}} term tends to contribute more to recognition performance by extracting high-level semantic structures of the enhanced audio to improve intelligibility. Compared with the audio front-end, the Whisper can better encourage the enhanced output to preserve rich phonetic and linguistic information that matters for decoding results.
+But, due to its higher computational overhead, it significantly slows training. Given that our primary goal is robust AVSR – not audio enhancement in isolation – we opt for the audio front-end in this work to maintain training efficiency while still achieving effective gains.
+3.3.3 Noise robustness evaluation
+To investigate the noise robustness of our model against prior competitive baselines, we perform comparative experiments across different acoustic conditions: clean audio and noisy settings with an SNR range of -5 to 15 dB. As shown in Table 2, our proposed method outperforms these advanced noise-robust methods that require explicit noise-reduction masks (e.g., AV-RelScore [12], which incorporates a reliability scoring module to suppress corrupted modal representations) by achieving a lower average WER. Particularly, as SNR level decreases, the performance gap between our method and these baselines widens. Moreover, our full model reduces WER by 1.7% compared to the ablation variant without speech feature enhancement objectives. The results suggest that our method can effectively suppress noisy audio representations without relying on explicit noise mask generation.
+3.3.4 Experiments on various input conditions
+Since cross-modal attention operations are decoupled from the modal encoders, our AVSR framework generalizes to single-modality input sequences, aligning with [9]. To examine the model’s robustness under diverse input conditions, we further conduct evaluations covering clean audio and overlapped speech, each assessed with and without video input. Overlapped speech is generated by randomly selecting a sample from the test set that is distinct from the input audio and overlapping it with the input audio at an SNR of -5dB. During testing, the two distinct speech signals are played simultaneously, while the input video only provides visual cues for the target speech. Notably, the bottleneck tokens within the AVBC still interact with the audio sequence even when video input is disabled. As shown in Table 3, the presence or absence of video input exerts minimal influence on the final performance under clean audio conditions. However, when overlapped speech is used as the audio input, the visual modality becomes crucial for effectively “selecting” the target speech from the mixed speech. Furthermore, our model (without speech enhancement) performs better than the baseline in [9] under overlapped speech scenarios. This advantage likely stems from the bottleneck tokens preserving modality-shared features, which serve as complementary cues for the corrupted audio.
+4 Conclusion
+In this paper, we propose a noise-robust AVSR architecture that integrates AVSR with speech enhancement, achieving noise robustness without resorting to explicit noise mask generation. We take advantage of the bottleneck Conformer and audio reconstruction objectives to effectively refine noisy audio representations with video assistance, while preserving speech semantic integrity to facilitate subsequent cross-modal fusion.
+Experimental results on the LRS3 dataset show superior noise robustness compared to mask-based baseline methods,
+validating the efficacy of implicit noise suppression enabled by bottleneck-driven cross-modal fusion.
+Further work will further explore incorporating video reconstruction-based constraints for audio-visual corrupted scenarios.
+ENDSOURCE
+
+
+SOURCE https://arxiv.org/html/2601.12591v1
+SmoothCLAP: Soft-Target Enhanced Contrastive Language-Audio Pretraining for Affective Computing
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+License: CC BY-NC-SA 4.0
+arXiv:2601.12591v1 [cs.SD] 18 Jan 2026
+SmoothCLAP: Soft-Target Enhanced Contrastive Language-Audio Pretraining for Affective Computing
+Xin Jing⋆
+Jiadong Wang⋆
+Andreas Triantafyllopoulos⋆
+Maurice Gerczuk⋆
+Shahin Amiriparian†⋆
+Jun Luo†
+Björn Schuller⋆‡
+Abstract
+The ambiguity of human emotions poses several challenges for machine learning models, as they often overlap and lack clear delineating boundaries.
+Contrastive language-audio pretraining (CLAP) has emerged as a key technique for generalisable emotion recognition.
+However, as conventional CLAP enforces a strict one-to-one alignment between paired audio–text samples, it overlooks intra-modal similarity and treats all non-matching pairs as equally negative.
+This conflicts with the fuzzy boundaries between different emotions.
+To address this limitation, we propose SmoothCLAP, which introduces softened targets derived from intra-modal similarity and paralinguistic features.
+By combining these softened targets with conventional contrastive supervision, SmoothCLAP learns embeddings that respect graded emotional relationships, while retaining the same inference pipeline as CLAP.
+Experiments on eight affective computing tasks across English and German demonstrate that SmoothCLAP
+is
+consistently achieving superior performance. Our results highlight that leveraging soft supervision is a promising strategy for building emotion-aware audio–text models.
+Index Terms:
+computational paralinguistic, speech emotion recognition, contrastive learning, zero-shot learning
+††address: ⋆ CHI – Chair of Health Informatics, TUM University Hospital, Munich, Germany,
+† Huawei, Netherlands, ‡GLAM, Imperial College London, UK
+1 Introduction
+As a subfield of affective computing, computational paralinguistics (CP) analyses vocal phenomena such as prosody, intonation, and spectral characteristics, and their relation to speaker traits and states [22]. These cues have been applied not only to the recognition of “classic” emotions, but also to a broad range of speaker-related dimensions, including personality, likability, sincerity, deception, and health indicators [27]. Beyond their role in affect recognition, CP features constitute intrinsic audio attributes that can serve as auxiliary targets to enrich and diversify affective speech corpora [16].
+However, one persistent challenge is the need for task-specific labeled data [26].
+Recently, the contrastive language-audio pretraining (CLAP) framework [10] has emerged as a general-purpose alternative, establishing a new paradigm for learning audio representations by aligning them with textual descriptions in a shared latent space [25]. Unlike conventional supervised, label-dependent methods, CLAP enables flexible, zero-shot learning guided by natural language, and has shown strong potential for affective computing by modeling emotional audio–text relationships beyond predefined categorical labels.
+Building on CLAP, ParaCLAP [15] introduced a novel and systematic process for generating descriptive text queries, effectively translating expert acoustic knowledge into the natural language domain. While ParaCLAP successfully addressed the data generation problem, EmotionRankCLAP [6] extended CLAP by embedding the ordinal nature of emotions – modeled via continuous valence-arousal dimensions – into the contrastive learning objective, encouraging embeddings to reflect emotion-relative distances rather than binary correspondence.
+While these works illustrate the promise of CLAP by addressing descriptive query generation and intra-emotion variability, its learning process still relies on bringing paired audio–text samples closer while treating all non-corresponding pairs as equally negative.
+This assumption overlooks the underlying structure of affective data, where emotional annotations and data often exhibit fuzzy boundaries and many-to-many relationships [24]. For instance, ‘disgust’ and ‘fear’ are conceptually closer than ‘happiness’ and ‘fear’.
+Consequently, enforcing a strict separation between all non-corresponding pairs creates a gap between the training target and the underlying structure of the problem, where the geometric structure of the embedding space does not accurately reflect the psychological structure of emotion [6, 13].
+To address this issue, we propose SmoothCLAP , a framework that integrates computational paralinguistics into CLAP training via soft-target supervision.
+Specifically, starting from classic paralinguistic features and the set of labels available for a large speech emotion recognition (SER) dataset, we construct a diverse set of (audio, tags) samples. Tags are leveraged as auxiliary signals to construct softened targets that replace rigid one-hot labels, allowing the model to capture more flexible relationships among samples. This design enriches the training signal with instructive information from CP features while avoiding the instability of purely similarity-based targets. Importantly, SmoothCLAP introduces these modifications only at the training stage; the inference procedure remains identical to CLAP, ensuring compatibility and efficiency. Experimental results demonstrate that incorporating CP-driven softened targets improves recognition performance in affective computing tasks.
+Our main contributions are summarized as follows:
+•
+We introduce intra-modal self-similarity from CP features as softened supervision signals, addressing the strict one-to-one assumption in standard CLAP.
+•
+By exploiting CP features as auxiliary tags, SmoothCLAP enriches the embedding space with paralinguistic priors, enhancing the diversity and semantic richness of supervision.
+•
+we introduces a novel CLAP object by fusing the intra-modal similarity with the conventional one-hot supervision, improving alignment between affective multimodal embeddings.
+The remainder of this paper is organized as follows.
+we describe the proposed SmoothCLAP framework, including the integration of CP features and the design of soft-target supervision in Section 2.
+In Section 3, we present the experimental setup, ablation studies, and results, followed by a detailed analysis.
+Finally, in Section 4, we summarize our findings and discuss future directions.
+Figure 1: Architecture of SmoothCLAP. The model integrates intra-modal self-similarity to enable soft-target smoothing. It promotes alignment across modalities while preserving semantic relationships within both the audio and text domains.
+2 Methodology
+CLAP Preliminaries:
+Let f_{a}(\cdot) and f_{t}(\cdot) denote the audio and text encoders. Consider audio-text pairs {(A_{i},T_{i})} , the embedding of encoders are defined as:
+z_{i}^{a}=proj_{A}(f_{a}(A_{i})),\quad z_{i}^{t}=proj_{T}(f_{t}(T_{i})),
+(1)
+proj_{A} and proj_{T} denote as the projection layer for audio and text respectively that will map the both embeddings to one shared latent space. Then, CLAP measures the similarity by a scaled cosine similarity:
+Sim=\tau*(z_{i}^{a}\cdot z_{i}^{t}),
+(2)
+where \tau is a learnable temperature parameter.
+The CLAP object is to encourage audio-text pairs to be similar while push unpaired embeddings apart. The symmetric InfoNCE loss can be expressed as:
+L_{CLAP}=1/2*(H_{t}(S)+H_{a}(S)),
+(3)
+where h_{k}=\frac{1}{N}\sum_{n=0}^{N}log(diag(softmax(Sim)) along the audio and text axis.
+SmoothCLAP:
+According to the Fig. 1, the overall architecture of SmoothCLAP follows the conventional CLAP design, which also consists of an audio encoder and a text encoder. Each encoder output is projected into a shared embedding space via learnable projection layers. However, during the training phase, negative samples in CLAP’s loss are treated with uniform one-hot supervision. This rigid target distribution ignores the inherent structure within each modality, and can hinder generalization in domains where samples exhibit graded similarities. To address this, we introduce intra-modal self-similarity to retain soft-target smoothing and encourage the model to align with cross-modal correspondences while respecting semantic relationships within the audio and text modalities.
+For the audio branch, SmoothCLAP obtains the local frame features extracted by a pretrained local feature extractor. By computing pairwise similarities between the aggregated local features across samples within a batch, we obtain an audio-to-audio (a2a) similarity matrix, which encodes the relational structure of the audio domain itself. This intra-modal similarity distribution is then employed as a component of the soft target, providing additional supervision that reflects the inherent structure of the audio space. The similar processing is applied to caption and auxiliary tags, and the only difference for the text branch is that we apply the same text encoder to extract the text embeddings and then a text-to-text (t2t) similarity matrix.
+By introducing softened targets, SmoothCLAP transfers a small portion of confidence to negatives, thereby also allowing for a degree of similarity within non-matching pairs. While such smoothing captures a naive many-to-many relationship, it does not leverage the rich relational structures inherently present within a single modality.
+In this work, we employ a pretrained wav2vec 2.0 large model fine-tuned for dimensional SER 11
+1
+https://huggingface.co/audeering/wav2vec2-large-robust-12-ft-emotion-msp-dim [26]
+as both the audio encoder and the local feature extractor. The pretrained model was pruned from 24 to 12 transformer layers prior to fine-tuning on the MSP-Podcast (v1.7) dataset [18].
+We also experiment with additional feature extractors as part of our ablation study.
+For the text encoder, we use the BERT base model (uncased) [9]; the [CLS] token from the final layer is used as the text embedding.
+Given a minibatch of B audio–text pairs \{(a_{i},t_{i})\}_{i=1}^{B} ,
+we define the cross-modal similarity score as:
+s_{ij}=\frac{e^{a}_{i}\cdot e^{t}_{j}}{\tau},
+(4)
+where e^{a}_{i},e^{t}_{j}\in\mathbb{R}^{d} are the \ell_{2} -normalized audio and text embeddings,
+and \tau is a learnable temperature parameter.
+Instead of using one-hot labels, SmoothCLAP constructs soft distributions from intra-modal similarities
+\displaystyle q^{a2a}_{ij}
+\displaystyle=\frac{\exp(\bar{\ell}^{a}_{i}\cdot\bar{\ell}^{a}_{j}/\tau_{a2a})}{\sum_{k=1}^{B}\exp(\bar{\ell}^{a}_{i}\cdot\bar{\ell}^{a}_{k}/\tau_{a2a})},
+(5)
+\displaystyle q^{t2t}_{ij}
+\displaystyle=\frac{\exp(e^{t}_{i}\cdot e^{t}_{j}/\tau_{t2t})}{\sum_{k=1}^{B}\exp(e^{t}_{i}\cdot e^{t}_{k}/\tau_{t2t})},
+(6)
+where \bar{\ell}^{a}_{i} is the mean-pooled local audio representation of sample i .
+The combined soft target distribution is:
+q_{ij}=(1-\gamma)q^{a2a}_{ij}+\gamma q^{t2t}_{ij},
+(7)
+with ‘mix gamma’ \gamma\in[0,1] controlling the weighting between audio- and text-side similarities.
+The final soft target distribution is a mixture of a2a and t2t similarities:
+y_{ij}=(1-\beta)\delta_{ij}+\beta q_{ij},
+(8)
+where \delta_{ij} is the identity matrix, \beta is the fusion factor to control the trade-off between hard and softened targets.
+The model’s predicted distributions are defined as:
+\displaystyle p^{a2t}_{ij}
+\displaystyle=\frac{\exp(s_{ij}/\tau_{\text{pred}})}{\sum_{k=1}^{B}\exp(s_{ik}/\tau_{\text{pred}})},
+(9)
+\displaystyle p^{t2a}_{ij}
+\displaystyle=\frac{\exp(s_{ji}/\tau_{\text{pred}})}{\sum_{k=1}^{B}\exp(s_{jk}/\tau_{\text{pred}})}.
+(10)
+The soft-target loss is formulated as a symmetric KL divergence between
+the predicted distributions and the softened targets:
+\begin{split}\mathcal{L}_{\text{soft}}=\frac{1}{2B}\sum_{i=1}^{B}\Big[&\,KL(y_{i}\;\|\;p^{a2t}_{i})+KL(p^{a2t}_{i}\;\|\;y_{i})\\
+&+KL(y_{i}\;\|\;p^{t2a}_{i})+KL(p^{t2a}_{i}\;\|\;y_{i})\Big].\end{split}
+(11)
+Notably, while SmoothCLAP leverages intra-modal similarity as auxiliary supervision during training, its inference phase is identical to that of CLAP.
+Tag Generation:
+For generating tags, we followed the same protocol as our previous work [15].
+The tags for each speech sample are derived from two main sources:
+1) dataset-provided labels, and
+2) CP features extracted from the audio sample.
+In both cases, dimensional attributes are discretized through binning and subsequently converted into textual descriptors.
+Dataset labels:
+The training dataset contains categorical emotion labels, dimensional emotion ratings (arousal, valence, dominance), and gender information. For the dimensional attributes, values are binned according to their empirical distribution (bottom 30 %, middle 40 %, top 30 %) and mapped to template phrases (e.g.,“low/mid/high arousal”).
+Tags from expert features:
+We further extract acoustic features using eGeMAPS [11, 12]. Although eGeMAPS includes 88 parameters, we focus on a subset that is more interpretable including mean ( \mu ) and standard deviation ( \sigma ) of pitch, intensity, jitter, shimmer, and total utterance duration. Each feature is binned using the same distribution-based thresholds as the dimensional variables, and tags are generated accordingly (e.g., “low/normal/high pitch”).
+3 Experiments & Results
+3.1 Experimental Setup
+Training dataset: Our training dataset is MSP-Podcast v1.9 [18], containing over 110 hours of English speech extracted from podcasts. The corpus includes 55 283 utterances produced by more than 1 200 speakers and is annotated via crowd-sourcing with 10 emotion categories. For training, we adopted the commonly used category selection, in which utterances labeled as ‘no_agreement’ were excluded, resulting in a final set of 45 619 samples.
+Test Datasets: IEMOCAP [4]: We follow the most frequently used category selection (angry, happy+excited, neutral, and sad) to build the test dataset. Thus, the dataset contains 5 531 utterances.
+RAVDESS [17]: The speech data consists of 1 440 utterances with 8 expressions (angry, calm, disgust, fearful, happy, neutral, sad, and surprise).
+CREMA-D [5]: The dataset consists of 7 442 clips from 91 actors, covering facial and vocal emotional expressions in sentences with a diverse range of basic emotional states (anger, disgust, fear, happy, neutral, and sad).
+TESS [19]: The dataset contains 2 800 clips featuring seven emotions:anger, disgust, fear, happiness, neutral, pleasant surprise, and sadness.
+FAU-Aibo [2]: The FAU-Aibo Emotion Corpus is a German speech emotion database containing children speech in the ages 6 to 10 years. It includes a training set of 9 959 speech chunks and a test set of 8 257 chunks.
+The original 11 labels are mapped to
+a) five categories (angry, emphatic, neutral, positive, and rest), and
+b) two-categories, labelled as ‘non-negative’ and ‘negative’. [23].
+ALC [20]: The Alcohol Language Corpus contains German speech collected under a systematic intoxication test. The INTERSPEECH 2011 Speaker State Challenge [21] selected part of the ALC to obtain a gender and age balanced dataset. 1 620 data with the label ‘not intoxicated with alcohol’ and 1 380 labelled as ‘intoxicated with alcohol’ are contained in the test set.
+SLD [3]: The Speaker Likability Database is a subset of the German telephone speech dataset aGender and contains 800 audio chunks each for the labels ‘likable’ and ‘non-likable’.
+Experimental setup:
+During training, all audio sequences are clipped or padded to achieve a consistent 5-second duration. Both the audio and local feature extractor are frozen while text branches are learnable with a learning rate of 1e-5 . Meanwhile, the projection layers and other parameters employ a learning rate of 1e-3 . We set the mix gamma \gamma to 0.1 and fusion factor \beta to 0.5. ParaCLAP shares the same training recipe for a fair comparison.
+All models are trained with an Adam optimizer and a batch size of 32 with training epochs is set to 10.
+During inference, we use the annotated labels provided by the datasets as the text query.
+Baselines: Our main baseline is ParaCLAP [15], a CLAP-style model trained with identical data and experimental parameters as our proposed SmoothCLAP.
+As additional baselines, we utilised the publicly-available CLAP [10] and Pengi models [8] without further fine-tuning or retraining.
+Note that both models have been trained on different datasets and feature different underlying components.
+CLAP uses CNN14 as its audio encoder and BERT as its text encoder.
+Pengi uses HTSAT as its audio encoder and features GPT-2 as its generative decoder; zero-shot inference with Pengi is done by comparing the similarity of the generated caption with that of the target label.
+3.2 Results
+Table 1: The Unweighted Average Recall (UAR) results on 8 affective computing tasks, comprising both English and German language-based datasets. Bold marks the best performance while underline represents the second best.
+Dataset
+Unweighted Average Recall (UAR)
+CLAP
+Pengi
+ParaCLAP
+SmoothCLAP
+IEMOCAP (4cl/en)
+.353
+.345
+.600
+.606
+RAVDESS (8cl/en)
+.199
+.148
+.228
+.175
+CREMA-D (6cl/en)
+.230
+.245
+.177
+.266
+TESS (7cl/en)
+.232
+.177
+.170
+.275
+FAU Aibo (2cl/de)
+.500
+.470
+526
+.555
+FAU Aibo (5cl/de)
+.211
+.185
+.197
+.204
+ALC (2cl/de)
+.511
+.473
+.537
+.541
+SLD (2cl/de)
+.472
+.485
+.507
+.496
+Our main results are presented in Table 1.
+SmoothCLAP generally outperforms prior CLAP variants, obtaining the best performance on 5 out of 8 tasks, and showing the second-best performance on 2 out of the 3 remaining ones.
+Beyond emotional labels conforming to Ekman’s “Big-6” scheme (IEMOCAP, RAVDESS, CREMA-D, and TESS), SmoothCLAP shows strong zero-shot performance on the more niche labels of FAU Aibo as well as on the two non-emotional tasks of ALC and SLD.
+This generalisation demonstrates that the proposed soft-target supervision generalizes beyond emotion recognition, suggesting broader applicability of the method.
+Moreover, since training was conducted exclusively on English data, the competitive results on German corpora further highlight SmoothCLAP’s zero-shot cross-lingual transferability.
+The fact that SmoothCLAP underperforms on 3/8 tasks can be seen as another demonstration of the “no free lunch” theorem – no one algorithm is a panacea.
+Fig. 2 presents the confusion matrices for IEMOCAP for ParaCLAP and SmoothCLAP .
+While the two models achieve a similar UAR ( .600 vs .606 ), they exhibit a very different pattern of misclassifications.
+Specifically, SmoothCLAP shows a stronger bias towards neutral (reflected in more samples classified as neutral irrespective of their actual label).
+We hypothesize that this is a side-effect of the different training strategy which smooths labels.
+A stronger preference for neutral reflects a tendency to err on the side of caution; this type of misclassification is more palatable for human users compared to conflating different emotions.
+Figure 2: Confusion matrices on IEMOCAP for ParaCLAP (left) and SmoothCLAP (right).
+Table 2: Performance of local feature encoders across test datasets. Bold marks the best performance while underline represents the second best.
+LocFeat Enc.
+IEMOCAP
+RAVDESS
+CREMA-D
+TESS
+Wav2Vec2.0-Emo
+[26]
+.606
+.175
+.266
+.275
+Wav2Vec2.0-L [1]
+.594
+.173
+.260
+.368
+WavLM-L [7]
+.595
+.212
+.201
+.267
+HuBERT-L [14]
+.574
+.260
+.259
+.433
+Local feature extractor: Table 2 presents the impact of different local feature encoders across the four English emotion datasets. From the results, we see that no single encoder dominates across all datasets; rather, performance varies with the nature of emotional expression. These results show that the choice of local feature extractor significantly influences SmoothCLAP’s ability to capture intra-modal similarity.
+They further illustrate how a comparison across multiple datasets is important to gauge the suitability of one feature extractor over others.
+Mix gamma \gamma and fusion factor \beta : To identify the optimal hyperparameter settings for the mix weight \gamma and the fusion factor \beta , we conducted a grid search on the IEMOCAP dataset. Both factors were varied in steps of 0.1 within the range (0,1) .
+While \gamma did not show any clearly identified patterns, performance was lower as values of \beta increased.
+This indicates that bigger deviations from the identity target (as in ParaCLAP) are detrimental to system performance and that the smoothing factor should be kept to a low magnitude.
+The optimal configuration \gamma=0.5 , \beta=0.1 was selected based on empirical performance.
+(a) Mix gamma \gamma
+(b) Fusion factor \beta
+Figure 3: Performance of mix gamma \gamma and fusion factor \beta
+4 Conclusion
+In this work, we proposed SmoothCLAP , which incorporates intra-modal similarity derived from computational paralinguistic features, to address the strict one-to-one alignment of paired audio–text samples in conventional CLAP models. Our experiments on both emotional and non-emotional datasets demonstrated the effectiveness of the proposed approach. Nevertheless, the influence of the training data remains an open question, with both quantity and diversity expected to be another key factor.
+5 Acknowledgment
+The authors would like to thank the Munich Center for Machine Learning (MCML), the Munich Data Science Institute (MDSI), and the Reliable AI (relAI) for their support.
+ENDSOURCE
+
+

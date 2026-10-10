@@ -1,0 +1,711 @@
+Shorter Thoughts, Same Answers: Difficulty-Scaled Segment-Wise RL for CoT Compression
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+Contributions.
+2 Related Work
+Understanding when CoT helps (and when it does not).
+Explicit CoT compression and controllable length.
+Implicit and latent CoT for token-efficient reasoning.
+CoT distillation, structure, and data quality.
+GRPO, group-relative RL, and credit assignment.
+3 Methodology
+3.1 Segmentation and segment masks
+3.2 Quality gate: restricting structural rewards to reliable samples
+3.3 Difficulty-aware scaling
+3.4 Think compression reward
+3.5 Answer length alignment reward
+3.6 Overall objective of Difficulty-Scaled Segment-Wise GRPO
+Segment returns.
+Group-relative advantages.
+Difficulty scaling and segment routing.
+Loss.
+Procedure.
+4 Experiments
+4.1 Experimental Setup
+Training.
+Baselines and ablations.
+Evaluation and metrics.
+4.2 Main Results
+Capability.
+Think compression vs. answer drift.
+Difficulty dependence.
+4.3 GSM8K case study: capacity sensitivity, length distributions, and temperature schedules
+Length distributions of think and answer.
+Why routing is needed.
+Limited LoRA transfer.
+Qualitative example.
+5 Conclusion
+References
+A Technical Appendices and Supplementary Material
+A.1 Why amplify the difficulty scale?
+License: arXiv.org perpetual non-exclusive license
+arXiv:2603.07598v1 [cs.AI] 08 Mar 2026
+Shorter Thoughts, Same Answers: Difficulty-Scaled Segment-Wise RL for CoT Compression
+Ye Tian
+Affiliation: First author
+Email: 2021150902020@std.uestc.edu.cn
+Aijun Liu*Corresponding author
+Affiliation: Second author
+Email: 24S112095@stu.hit.edu.cn
+Abstract
+Chain-of-thought (CoT) improves reasoning reliability but increases token cost, motivating post-training compression of
+explicit reasoning traces. However, the shortest sufficient reasoning is not universal: it depends on difficulty, model
+capacity, and training state, making fixed length targets brittle. In practice, naive RL-based compression can also
+undesirably shorten the user-facing answer, because a single completion-level learning signal leaks across the
+think/answer boundary. We propose Difficulty-Scaled Segment-Wise GRPO (DSS-GRPO), which decomposes
+returns into think and answer components, computes group-relative advantages per segment, and routes them
+with hard token masks so compression updates act only on think while answer alignment acts only on answer.
+DSS-GRPO uses prompt-wise within-group shaping and difficulty-aware scaling to encourage concise reasoning without collapsing
+answer behavior.
+Code is available at https://github.com/IanTianYe/Difficulty-Scaled-Segment-Wise-RL-for-CoT-Compression.
+1 Introduction
+Chain-of-thought (CoT) prompting and inference-time “slow thinking” can substantially improve the reasoning reliability of large language models (LLMs), but often at the cost of long intermediate traces that increase latency and token usage. This has motivated growing interest in token-efficient reasoning, including skipping low-utility tokens or steps and learning controllable reasoning length Liu et al. (2024); Xia et al. (2025); Li et al. (2026b); Ma et al. (2025); Liang et al. (2026).
+A central difficulty is that the shortest sufficient reasoning is not universal: it varies with problem difficulty, model size, and the model’s training state. Fixed compression targets or uniform length pressure can therefore be brittle—acceptable on easy prompts but overly aggressive on hard ones, where longer reasoning remains necessary. This motivates compression objectives that adapt pressure to the model’s competence, rather than pursuing a one-size-fits-all “shorter CoT” goal.
+In practice, naive post-training CoT compression also triggers a damaging side effect: the user-facing answer becomes systematically shorter (often terse or under-informative) even when correctness is preserved. We attribute this to credit assignment: many RL objectives attach a single scalar learning signal to the entire completion, so length rewards intended for reasoning spill over to answer tokens. This is especially problematic for structured outputs where think and answer serve distinct roles.
+We study a realistic post-training setting where a strong base model already produces structured outputs that can be partitioned into a think segment and an answer segment. Our goal is shorter thoughts, same answers: compress think while maintaining task performance and preserving the base model’s answer behavior (including its answer length distribution). While prior work typically optimizes for shorter reasoning or higher accuracy under compression, it rarely treats answer stability as a first-class objective alongside both, leaving no clear prior “SOTA” that jointly targets all three.
+We propose Difficulty-Scaled Segment-Wise GRPO, a segment-aware reinforcement learning framework built on group-relative optimization. The core idea is to decompose the return into segment-specific totals, compute separate group-relative advantages for think and answer, and route them with hard masks: compression updates apply only to think, while answer-stability objectives apply only to answer. To respect the non-universality of minimal sufficient reasoning, we avoid absolute length targets and instead use prompt-wise within-group length shaping, scaling only think-segment updates by a difficulty signal derived from group success rates. Structural rewards are activated only for well-formed and correct samples to reduce reward hacking and protect answer integrity. Experiments (Section 4) show that segment-wise isolation prevents answer shortening under CoT compression and yields concise reasoning without sacrificing answer stability.
+Contributions.
+We make three contributions:
+•
+a segment-wise GRPO formulation that decouples optimization between think and answer via routed advantages and hard token masks;
+•
+a difficulty-scaled scheduling mechanism that adapts think-compression pressure to competence, encouraging conciseness primarily when prompts are reliably solved;
+•
+a practical reward design that compresses reasoning while explicitly preserving answer behavior (including length), preventing systematic answer shortening during CoT compression.
+2 Related Work
+Understanding when CoT helps (and when it does not).
+Recent work has improved our understanding of CoT from multiple perspectives, including surveys of major paradigms and open problems Chu et al. (2023), theoretical analyses that view CoT as enabling transformers to better solve inherently serial problems Li et al. (2024), and empirical/diagnostic studies that quantify the role of intermediate steps Ton et al. (2025). It has also been observed that CoT may degrade performance on certain task families where deliberation is counterproductive Liu et al. (2025). Together, these findings support treating reasoning length as a context-dependent resource, motivating adaptive compression rather than fixed global targets.
+Explicit CoT compression and controllable length.
+A large body of work directly targets verbose explicit rationales. Some methods study whether models can skip intermediate steps while remaining correct Liu et al. (2024), while token-level approaches argue that not all CoT tokens contribute equally and propose selectively skipping less important tokens to enable controllable compression with limited loss Xia et al. (2025). Complementary step-level views propose redundancy metrics (e.g., step entropy) to prune low-utility steps and combine supervised fine-tuning with RL post-training to internalize shorter reasoning Li et al. (2026b). Beyond static compression, CoT-Valve enables a single model to generate CoT at different lengths Ma et al. (2025), and DeepCompress emphasizes difficulty-dependent “sufficient” reasoning and uses a dual-reward strategy to explore and compress reasoning chains Liang et al. (2026).
+Implicit and latent CoT for token-efficient reasoning.
+Another line reduces inference cost by moving reasoning into continuous or latent representations rather than fully verbalized text. CODI compresses CoT into continuous space via self-distillation to preserve reasoning capability with fewer explicit rationale tokens Shen et al. (2025). Think Silently, Think Fast explores dynamic latent compression to enable fast “silent” reasoning with reduced token usage Tan et al. (2025). Because scaling implicit-token budgets can introduce instability (e.g., latent collapse), SIM-CoT proposes supervised implicit CoT with step-level supervision to stabilize the implicit reasoning space Wei et al. (2026). In contrast, we remain in the explicit-CoT regime and focus on post-training control for structured outputs.
+CoT distillation, structure, and data quality.
+CoT distillation and structured reasoning supervision provide additional routes to more compact reasoning behavior. Skip-thinking proposes chunk-wise CoT distillation to improve smaller-model efficiency via chunk-level organization Chen et al. (2025). UniCoTT unifies multiple structural forms (e.g., chain/tree variants) to better preserve reasoning structure under distillation Zhuang et al. (2025). CoT-Evo targets scientific reasoning and uses evolutionary distillation to improve the quality and diversity of reasoning trajectories used for training Feng et al. (2026). These works primarily improve traces through imitation, structure, or data selection, differing from post-training policy optimization settings.
+GRPO, group-relative RL, and credit assignment.
+Group-relative RL objectives such as GRPO have become popular in LLM post-training when per-token critics are undesirable Yao et al. (2026). Recent analyses and evidence highlight practical considerations and potential pathologies when negative gradients are applied indiscriminately, motivating careful signal design Deng et al. (2025). GRPO has also been studied in classical RL environments to clarify when critic-free training works and where it breaks down de Oliveira et al. (2025). Finally, step-level credit assignment has been explored to allocate learning signals to reasoning steps; SSVPO proposes step-level attribution methods for RL training of language models Li et al. (2026a). Overall, most GRPO-style post-training still applies a single advantage to all tokens in a completion, raising challenges for structured outputs with distinct think and answer roles.
+3 Methodology
+We consider a post-training setting where the base model reliably follows a fixed think/answer template, so each completion can be cleanly partitioned into a reasoning segment and a user-facing answer segment.
+3.1 Segmentation and segment masks
+Let a completion be a token sequence y=(y1,…,yT)y=(y_{1},\ldots,y_{T}). For each prompt xx, GRPO samples a prompt-wise group of KK completions,
+{y(k)}k=1K∼πθ(⋅∣x),\{y^{(k)}\}_{k=1}^{K}\sim\pi_{\theta}(\cdot\mid x),
+(1)
+and forms a group-relative learning signal (e.g., mean-centered returns) that is applied at the completion level. As a result, the same advantage weights updates across all tokens in y(k)y^{(k)}, motivating our segment-wise decomposition and routing for structured think/answer outputs.
+This coupling is undesirable for structured outputs with distinct think and answer segments. We assume each completion contains two boundary markers: the end of the think segment, think_end (e.g., </think>\n), and the end of the answer segment, answer_end (e.g., <|im_end|>). For completion y(k)=(y1(k),…,yT(k))y^{(k)}=(y^{(k)}_{1},\dots,y^{(k)}_{T}), let τthk(k)\tau_{\text{thk}}^{(k)} and τans(k)\tau_{\text{ans}}^{(k)} denote their (inclusive) token indices. These boundaries induce a deterministic partition: think tokens satisfy t≤τthk(k)t\leq\tau_{\text{thk}}^{(k)}, and answer tokens satisfy τthk(k)<t≤τans(k)\tau_{\text{thk}}^{(k)}<t\leq\tau_{\text{ans}}^{(k)}.
+We encode this partition with disjoint binary segment masks Mthk,Mans∈{0,1}TM^{\text{thk}},M^{\text{ans}}\in\{0,1\}^{T} and a valid-token mask Mval∈{0,1}TM^{\text{val}}\in\{0,1\}^{T}:
+Mtthk​(k)\displaystyle M^{\text{thk}}_{t}(k)
+=[t≤τthk(k)],\displaystyle=\mathbf{1}\!\left[t\leq\tau_{\text{thk}}^{(k)}\right],
+(2)
+Mtans​(k)\displaystyle M^{\text{ans}}_{t}(k)
+=[τthk(k)<t≤τend(k)],\displaystyle=\mathbf{1}\!\left[\tau_{\text{thk}}^{(k)}<t\leq\tau_{\text{end}}^{(k)}\right],
+(3)
+Mtval​(k)\displaystyle M^{\text{val}}_{t}(k)
+=[t≤τend(k)],\displaystyle=\mathbf{1}\!\left[t\leq\tau_{\text{end}}^{(k)}\right],
+(4)
+so that, for all tt, (Mtthk​(k)+Mtans​(k))​Mtval​(k)=Mtval​(k)\big(M^{\text{thk}}_{t}(k)+M^{\text{ans}}_{t}(k)\big)M^{\text{val}}_{t}(k)=M^{\text{val}}_{t}(k).
+We define segment token lengths by mask summation:
+Lthk(k)=∑t=1TMtthk​(k),Lans(k)=∑t=1TMtans​(k).L_{\text{thk}}^{(k)}=\sum_{t=1}^{T}M^{\text{thk}}_{t}(k),\hskip 20.00003ptL_{\text{ans}}^{(k)}=\sum_{t=1}^{T}M^{\text{ans}}_{t}(k).
+(5)
+We decompose the return into segment totals Rthink(k)R_{\text{think}}^{(k)} and Ranswer(k)R_{\text{answer}}^{(k)}, compute group-relative advantages advthk(k)=Adv⁡(Rthink(k))\mathrm{adv}_{\text{thk}}^{(k)}=\mathrm{Adv}(R_{\text{think}}^{(k)}) and advans(k)=Adv⁡(Ranswer(k))\mathrm{adv}_{\text{ans}}^{(k)}=\mathrm{Adv}(R_{\text{answer}}^{(k)}), and route them to tokens with the segment masks. This ensures compression updates act only on think while answer-length alignment acts only on answer, preventing cross-segment leakage that would otherwise shorten the answer.
+3.2 Quality gate: restricting structural rewards to reliable samples
+Length-based objectives are vulnerable to reward hacking: a model can obtain high reward by producing shorter outputs through trivial shortcuts (e.g., truncation or missing markers) rather than by improving reasoning. To prevent this, we activate structural rewards only for completions that satisfy the required format and are correct.
+Let 𝕀fmt​(y(k))\mathbb{I}_{\mathrm{fmt}}(y^{(k)}) indicate format compliance and 𝕀corr​(y(k))\mathbb{I}_{\mathrm{corr}}(y^{(k)}) indicate correctness. We define
+g(k)=𝕀fmt​(y(k))​𝕀corr​(y(k)),g^{(k)}\;=\;\mathbb{I}_{\mathrm{fmt}}(y^{(k)})\,\mathbb{I}_{\mathrm{corr}}(y^{(k)}),
+(6)
+and apply compression and answer-length alignment rewards only when g(k)=1g^{(k)}=1, blocking reward gains from protocol violations or incorrect shortcuts.
+3.3 Difficulty-aware scaling
+The minimal sufficient amount of explicit reasoning is not determined by problem difficulty alone: it also depends on the model’s capacity (e.g., parameter scale) and its prior training state. Thus, a fixed or uniformly applied compression pressure is brittle—it may encourage concise think traces on prompts the model already solves reliably, but can over-compress think on prompts that remain challenging for the current model and training stage, where longer reasoning is sometimes necessary.
+We therefore use an adaptive, model-dependent signal to modulate compression pressure. For each prompt xx, we sample KK completions and use the fraction of gated successes as a competence proxy:
+p^succ​(x)=1K​∑k=1Kg(k).\hat{p}_{\mathrm{succ}}(x)=\frac{1}{K}\sum_{k=1}^{K}g^{(k)}.
+(7)
+We define a difficulty weight
+Wdiff​(x)=2−p^succ​(x),W_{\text{diff}}(x)=2-\hat{p}_{\mathrm{succ}}(x),
+(8)
+and apply a global scale factor ss so that the effective modulation is Wdiff​(x)⋅sW_{\text{diff}}(x)\cdot s (Eq. 14). Intuitively, when a prompt is hard for the current model (low p^succ\hat{p}_{\mathrm{succ}}), the signal from failures is both abundant and heterogeneous.
+Blindly amplifying the magnitude of negative advantages can therefore increase gradient noise and encourage conservative collapse
+(e.g., shorter or less informative traces) rather than moving toward the rare successful trajectories.
+We instead use an asymmetric difficulty scaling: on hard prompts we amplify positive (success-aligned) advantages to
+increase the influence of the few gated successes, while leaving negative advantages unamplified.
+This biases learning toward the rare correct solutions without letting diverse failures dominate optimization.
+3.4 Think compression reward
+We follow GRPO’s core principle of within-group comparison: rather than enforcing an absolute target that must generalize across heterogeneous prompts, we shape think length relative to other samples in the same prompt group. This makes compression pressure prompt-specific and gradually tightens as the model discovers shorter successful traces, yielding smoother training dynamics.
+Let 𝒢={k:g(k)=1}\mathcal{G}=\{k:g^{(k)}=1\} be the set of gated (successful) samples. When |𝒢|>2|\mathcal{G}|>2, we compute the successful think-length range
+Lmin=mink∈𝒢⁡Lthk(k),Lmax=maxk∈𝒢⁡Lthk(k),L_{\min}=\min_{k\in\mathcal{G}}L^{(k)}_{\text{thk}},\hskip 20.00003ptL_{\max}=\max_{k\in\mathcal{G}}L^{(k)}_{\text{thk}},
+(9)
+and define a min–max shaped efficiency reward with margin mm and ϵ>0\epsilon>0:
+Reff(k)=g(k)⋅{1,Lthk(k)≤m,1−Lthk(k)−LminLmax−Lmin+ϵ,otherwise.R_{\text{eff}}^{(k)}=g^{(k)}\cdot\begin{cases}1,&L^{(k)}_{\text{thk}}\leq m,\\[6.0pt]
+1-\dfrac{L^{(k)}_{\text{thk}}-L_{\min}}{L_{\max}-L_{\min}+\epsilon},&\text{otherwise}.\end{cases}
+(10)
+The margin induces a plateau that prevents over-penalizing already concise reasoning. The within-group min–max term rescales rewards to each prompt’s length spread, avoiding any fixed global target.
+When |𝒢|≤2|\mathcal{G}|\leq 2, we set Reff(k)=g(k)R_{\text{eff}}^{(k)}=g^{(k)} (1 if correct, 0 otherwise). Here the prompt is effectively hard and there are too few successful samples to define a stable min–max range, so we avoid adding extra compression pressure.
+We also apply temperature annealing: higher temperature early promotes exploration and diverse think lengths for meaningful within-group comparison, while lower temperature later stabilizes concise think behavior once length control is learned.
+3.5 Answer length alignment reward
+We observe a recurring failure mode: compressing think often causes the user-facing answer to become systematically too short (typically correct but incomplete/less helpful). To prevent this drift, we add an explicit length-alignment reward that anchors answer length to a reference behavior.
+Although one could match answer-token distributions to a reference model with a KL term, a length-based proxy is cheaper and effective in our post-training setting: it directly targets the dominant drift (answers getting too short) without per-token distribution matching. We use the original pre-fine-tuning model as the reference, and apply a redundancy-tolerant band that allows moderate over-length answers while penalizing under-length outputs.
+Concretely, with tolerance bandwidth ff (“floor”), let Lref=Lref​(x)L_{\text{ref}}=L_{\text{ref}}(x) . We define
+Rlen(k)=g(k)⋅{exp⁡(−Lref−Lans(k)Lref),Lans(k)<Lref,1,Lref≤Lans(k)≤Lref+f,exp⁡(−Lans(k)−(Lref+f)Lref+f),Lans(k)>Lref+f.R_{\text{len}}^{(k)}=g^{(k)}\cdot\begin{cases}\exp\!\left(-\dfrac{L_{\text{ref}}-L^{(k)}_{\text{ans}}}{L_{\text{ref}}}\right),&L^{(k)}_{\text{ans}}<L_{\text{ref}},\\[8.0pt]
+1,&L_{\text{ref}}\leq L^{(k)}_{\text{ans}}\leq L_{\text{ref}}+f,\\[8.0pt]
+\exp\!\left(-\dfrac{L^{(k)}_{\text{ans}}-(L_{\text{ref}}+f)}{L_{\text{ref}}+f}\right),&L^{(k)}_{\text{ans}}>L_{\text{ref}}+f.\end{cases}
+(11)
+The plateau [Lref,Lref+f][L_{\text{ref}},L_{\text{ref}}+f] allows slightly longer, more user-friendly answers, while mainly counteracting under-length answers; the upper-band term is a conservative safeguard against rare over-length outputs. This design reduces oscillation and avoids overfitting to an exact target length.
+3.6 Overall objective of Difficulty-Scaled Segment-Wise GRPO
+We now summarize the final optimization with an explicit loss and a concise training procedure. For each prompt xx, we sample KK completions {y(k)}k=1K∼πθ(⋅∣x)\{y^{(k)}\}_{k=1}^{K}\sim\pi_{\theta}(\cdot\mid x), compute segment-specific returns, and perform a GRPO-style update with segment-wise routed advantages.
+Segment returns.
+Rthink(k)=Reff(k),Ranswer(k)=Rlen(k),R_{\text{think}}^{(k)}=R_{\text{eff}}^{(k)},\hskip 20.00003ptR_{\text{answer}}^{(k)}=R_{\text{len}}^{(k)},
+(12)
+where Reff(k)R_{\text{eff}}^{(k)} and Rlen(k)R_{\text{len}}^{(k)} are defined in Eqs. 10 and 11 (both gated by g(k)g^{(k)} in their definitions).
+Group-relative advantages.
+For each prompt group, we compute segment-wise group-relative advantages by mean-centering returns separately for think and answer, and then normalizing by the within-group standard deviation for stability:
+advthk(k)=Rthink(k)−1K​∑j=1KRthink(j)σthk​(x)+ϵ,advans(k)=Ranswer(k)−1K​∑j=1KRanswer(j)σans​(x)+ϵ,\mathrm{adv}_{\text{thk}}^{(k)}=\frac{R_{\text{think}}^{(k)}-\frac{1}{K}\sum_{j=1}^{K}R_{\text{think}}^{(j)}}{\sigma_{\text{thk}}(x)+\epsilon},\hskip 20.00003pt\mathrm{adv}_{\text{ans}}^{(k)}=\frac{R_{\text{answer}}^{(k)}-\frac{1}{K}\sum_{j=1}^{K}R_{\text{answer}}^{(j)}}{\sigma_{\text{ans}}(x)+\epsilon},
+(13)
+where σthk​(x)\sigma_{\text{thk}}(x) and σans​(x)\sigma_{\text{ans}}(x) are the within-group standard deviations of {Rthink(j)}j=1K\{R_{\text{think}}^{(j)}\}_{j=1}^{K} and {Ranswer(j)}j=1K\{R_{\text{answer}}^{(j)}\}_{j=1}^{K}, respectively, and ϵ\epsilon is a small constant.We then apply an asymmetric difficulty scaling to the think-segment advantage:
+only positive advantages are amplified by Wdiff​(x)⋅sW_{\text{diff}}(x)\cdot s, while negative advantages are left unchanged.
+Difficulty scaling and segment routing.
+We apply difficulty-aware scaling (Eqs. 7–8) to the think advantage only:
+adv~thk(k)={advthk(k)⋅(Wdiff​(x)⋅s),advthk(k)≥0,advthk(k),advthk(k)<0,adv~ans(k)=advans(k).\tilde{\mathrm{adv}}_{\text{thk}}^{(k)}=\begin{cases}\mathrm{adv}_{\text{thk}}^{(k)}\cdot\left(W_{\text{diff}}(x)\cdot s\right),&\mathrm{adv}_{\text{thk}}^{(k)}\geq 0,\\[6.0pt]
+\mathrm{adv}_{\text{thk}}^{(k)},&\mathrm{adv}_{\text{thk}}^{(k)}<0,\end{cases}\hskip 20.00003pt\tilde{\mathrm{adv}}_{\text{ans}}^{(k)}=\mathrm{adv}_{\text{ans}}^{(k)}.
+(14)
+and route the two advantages to their corresponding segments via masks:
+At(k)=Mtval​(k)​(adv~thk(k)​Mtthk​(k)+adv~ans(k)​Mtans​(k)).A^{(k)}_{t}=M^{\text{val}}_{t}(k)\Big(\tilde{\mathrm{adv}}_{\text{thk}}^{(k)}\,M^{\text{thk}}_{t}(k)+\tilde{\mathrm{adv}}_{\text{ans}}^{(k)}\,M^{\text{ans}}_{t}(k)\Big).
+(15)
+This routing implements a hard structural separation: tokens in think and answer are updated by different group-relative advantages, with difficulty modulation (scaled by ss) applied only to the think segment.
+Loss.
+Substituting the routed weights in Eq. 15 yields the explicit segment-routed objective:
+ℒ(θ)=−1K∑k=1K∑t=1TMtval(k)(adv~thk(k)Mtthk(k)+adv~ans(k)Mtans(k))logπθ(yt(k)∣x,y<t(k)).\displaystyle\mathcal{L}(\theta)=-\frac{1}{K}\sum_{k=1}^{K}\sum_{t=1}^{T}M^{\text{val}}_{t}(k)\Big(\tilde{\mathrm{adv}}_{\text{thk}}^{(k)}\,M^{\text{thk}}_{t}(k)+\tilde{\mathrm{adv}}_{\text{ans}}^{(k)}\,M^{\text{ans}}_{t}(k)\Big)\,\log\pi_{\theta}\!\left(y^{(k)}_{t}\mid x,y^{(k)}_{<t}\right).
+(16)
+Compared to standard GRPO, which applies a single completion-level advantage to all valid tokens, our objective applies different group-relative advantages to think and answer tokens via the hard masks.
+Procedure.
+Algorithm 1 summarizes one update.
+Algorithm 1  Difficulty-Scaled Segment-Wise GRPO (DSS-GRPO)
+0:
+Prompt xx, policy πθ\pi_{\theta}, group size KK, margins (m,f)(m,f), diff scale ss
+1:
+Sample KK completions {y(k)}k=1K∼πθ(⋅∣x)\{y^{(k)}\}_{k=1}^{K}\sim\pi_{\theta}(\cdot\mid x)
+2:
+for k=1k=1 to KK do
+3:
+Parse think_end and answer_end; build masks Mthk​(k),Mans​(k),Mval​(k)M^{\text{thk}}(k),M^{\text{ans}}(k),M^{\text{val}}(k)
+4:
+Compute segment lengths Lthk(k)L_{\text{thk}}^{(k)} and Lans(k)L_{\text{ans}}^{(k)}, and reference answer length Lref​(x)L_{\text{ref}}(x)
+5:
+Evaluate format and correctness; set g(k)=𝕀fmt​(y(k))​𝕀corr​(y(k))g^{(k)}=\mathbb{I}_{\mathrm{fmt}}(y^{(k)})\mathbb{I}_{\mathrm{corr}}(y^{(k)}) (Eq. 6)
+6:
+end for
+7:
+Compute group success rate p^succ​(x)=1K​∑k=1Kg(k)\hat{p}_{\mathrm{succ}}(x)=\frac{1}{K}\sum_{k=1}^{K}g^{(k)}
+8:
+Compute difficulty weight Wdiff​(x)=2−p^succ​(x)W_{\text{diff}}(x)=2-\hat{p}_{\mathrm{succ}}(x) (Eqs. 7–8)
+9:
+Let 𝒢={k:g(k)=1}\mathcal{G}=\{k:g^{(k)}=1\}
+10:
+if |𝒢|>2|\mathcal{G}|>2 then
+11:
+Compute Lmin=mink∈𝒢⁡Lthk(k)L_{\min}=\min_{k\in\mathcal{G}}L_{\text{thk}}^{(k)} and Lmax=maxk∈𝒢⁡Lthk(k)L_{\max}=\max_{k\in\mathcal{G}}L_{\text{thk}}^{(k)} (Eq. 9)
+12:
+end if
+13:
+for k=1k=1 to KK do
+14:
+if |𝒢|≤2|\mathcal{G}|\leq 2 then
+15:
+Set Reff(k)=g(k)R_{\text{eff}}^{(k)}=g^{(k)} {avoid min–max compression when successes are scarce}
+16:
+else
+17:
+Compute Reff(k)R_{\text{eff}}^{(k)} using (Lmin,Lmax)(L_{\min},L_{\max}) and margin mm (Eq. 10)
+18:
+end if
+19:
+Compute Rlen(k)R_{\text{len}}^{(k)} with bandwidth ff and reference Lref​(x)L_{\text{ref}}(x) (Eq. 11)
+20:
+Set Rthink(k)=Reff(k)R_{\text{think}}^{(k)}=R_{\text{eff}}^{(k)} and Ranswer(k)=Rlen(k)R_{\text{answer}}^{(k)}=R_{\text{len}}^{(k)} (Eq. 12)
+21:
+end for
+22:
+Compute segment-wise group-relative advantages with within-group std normalization (Eq. 13)
+23:
+for k=1k=1 to KK do
+24:
+Apply asymmetric difficulty scaling to think only (Eq. 14):
+adv~thk(k)={advthk(k)⋅(Wdiff​(x)⋅s),advthk(k)≥0,advthk(k),advthk(k)<0,adv~ans(k)=advans(k).\tilde{\mathrm{adv}}_{\text{thk}}^{(k)}=\begin{cases}\mathrm{adv}_{\text{thk}}^{(k)}\cdot\left(W_{\text{diff}}(x)\cdot s\right),&\mathrm{adv}_{\text{thk}}^{(k)}\geq 0,\\
+\mathrm{adv}_{\text{thk}}^{(k)},&\mathrm{adv}_{\text{thk}}^{(k)}<0,\end{cases}\hskip 20.00003pt\tilde{\mathrm{adv}}_{\text{ans}}^{(k)}=\mathrm{adv}_{\text{ans}}^{(k)}.
+25:
+Build routed token weights At(k)A_{t}^{(k)} using masks (Eq. 15)
+26:
+end for
+27:
+Update θ\theta by minimizing ℒ⁡(θ)\mathcal{L}(\theta) in Eq. 16
+4 Experiments
+We evaluate DSS-GRPO on challenging math benchmarks, examining whether it preserves reasoning performance, compresses the think segment, and prevents unintended answer shortening. We also conduct a GSM8K LoRA case study Cobbe et al. (2021).
+4.1 Experimental Setup
+Training.
+We start from Qwen/Qwen3-4B-Thinking-2507 and Qwen3-8B Yang et al. (2025) and post-train on a
+GSM8K+PolyMath mixture Cobbe et al. (2021); Wang et al. (2025) using our structured think/answer template.
+We use group size K=16K=16 and train for 500 steps with DSS-GRPO hyperparameters m=256m=256, f=32f=32, and s=1.5s=1.5, and apply cosine
+temperature annealing τ:1.3→0.7\tau:1.3\rightarrow 0.7.
+Baselines and ablations.
+We compare three conditions: Base, Naive GRPO, and DSS-GRPO. Our Naive GRPO baseline follows
+standard completion-level GRPO and includes the same quality gating (structural/answer correctness filtering) and the same
+think-length shaping reward used in DSS-GRPO, but applies a single group-relative advantage uniformly to all tokens.
+As a result, Naive GRPO can be interpreted as a unified ablation that removes the two DSS-specific mechanisms:
+(i) it has no answer-length alignment term (hence exposing answer shortening under compression pressure), and
+(ii) it has no difficulty-aware scaling (compression pressure is not modulated by group success/competence).
+Our full DSS-GRPO adds both: segment-wise routed advantages with an explicit answer-length alignment reward, and
+difficulty-scaled updates applied only to the think segment.
+Evaluation and metrics.
+We evaluate on MATH-500, AMC 2023, MinervaMath, AIME 2024, and AIME 2025
+Lewkowycz et al. (2022); MAA (); MAA (). For each problem, we sample N=8N=8 solutions (temperature=0.7, top-pp=0.95,
+max_new_tokens=32768) and report Pass@1. Lengths are measured by tokenizer boundaries: both think length and
+answer length are computed as the per-problem mean over N=8N=8 samples, and then averaged over each dataset.
+4.2 Main Results
+Capability.
+Table 1 reports Pass@1 across benchmarks for both base models.
+Our Naive GRPO baseline is not a strawman: it already includes the same quality gate (g(k)g^{(k)}) and the same think-compression reward (ReffR_{\text{eff}}) used by DSS-GRPO.
+Despite this, Naive GRPO degrades accuracy on several out-of-domain and harder benchmarks, suggesting that completion-level advantage broadcast under length pressure can induce harmful updates even when rewards are gated by correctness and format.
+In contrast, DSS-GRPO largely preserves base-level accuracy, indicating that segment-wise credit routing and difficulty-scaled updates yield a more stable optimization signal.
+Think compression vs. answer drift.
+Table 2 reports average think and answer lengths.
+Both Naive GRPO and DSS-GRPO reduce 𝔼⁡[Lthk]\mathbb{E}[L_{\text{thk}}], confirming that the gated compression reward is effective at shortening reasoning traces.
+However, Naive GRPO also sharply shortens 𝔼⁡[Lans]\mathbb{E}[L_{\text{ans}}], consistent with cross-segment leakage when a single completion-level advantage is applied to all tokens.
+DSS-GRPO mitigates this collapse by explicitly isolating segment updates and anchoring answer length, maintaining answer-length behavior while achieving comparable think compression.
+Difficulty dependence.
+Across benchmarks, remaining think length correlates with difficulty: lower Pass@1 sets retain longer traces even under the same objective.
+This supports the view that the shortest sufficient reasoning is not universal and varies with task difficulty and model competence.
+Table 1: Math reasoning performance (Pass@1) for two base models.
+Model
+Method
+MATH-500
+AMC23
+MinervaMath
+AIME24
+AIME25
+Avg Acc
+Qwen3-4B
+Base
+97.2
+97.5
+69.9
+70.0
+73.3
+81.6
+Naive GRPO
+97.0
+95.0
+64.0
+63.3
+66.6
+77.2
+DSS-GRPO
+97.2
+97.5
+71.1
+73.3
+73.3
+82.5
+Qwen3-8B
+Base
+97.0
+95.0
+72.1
+76.6
+66.6
+81.5
+Naive GRPO
+97.2
+95.0
+67.4
+66.6
+66.6
+78.6
+DSS-GRPO
+97.4
+97.5
+72.3
+73.3
+73.3
+82.8
+Table 2: Average length behavior (tokens) for two base models. Both think and answer lengths are computed as the per-problem mean over N=8N=8 samples, and then averaged over each dataset.
+Model
+Method
+MATH-500
+AMC23
+MinervaMath
+AIME24
+AIME25
+Average think length 𝔼⁡[Lthk]↓\mathbb{E}[L_{\text{thk}}]\downarrow
+Qwen3-4B
+Base
+3520
+7333
+3853
+12215
+15341
+Naive GRPO
+1961
+4493
+2555
+8089
+9758
+DSS-GRPO
+1975
+4831
+2543
+8192
+9986
+Qwen3-8B
+Base
+3211
+6543
+3309
+9854
+14064
+Naive GRPO
+1668
+3975
+1936
+7073
+8969
+DSS-GRPO
+1847
+3729
+1947
+7174
+8978
+Average answer length 𝔼⁡[Lans]\mathbb{E}[L_{\text{ans}}]
+Qwen3-4B
+Base
+635
+709
+449
+5099
+5148
+Naive GRPO
+354
+342
+233
+1451
+1677
+DSS-GRPO
+620
+754
+531
+4982
+4554
+Qwen3-8B
+Base
+679
+779
+557
+3208
+1125
+Naive GRPO
+258
+347
+255
+1492
+510
+DSS-GRPO
+614
+738
+579
+3239
+1006
+4.3 GSM8K case study: capacity sensitivity, length distributions, and temperature schedules
+We run an additional LoRA post-training on GSM8K-train and use GSM8K-test as a lightweight
+validation set to probe capacity sensitivity and length behavior under our structured think/answer
+template. We include the base model as a reference and restrict this study to
+Qwen/Qwen3-4B-Thinking-2507 to keep the validation lightweight and isolate the effect of training dynamics.
+To examine how post-training changes generation behavior, we report the frequency distributions of think and
+answer lengths on GSM8K-test (Figure 1).
+We additionally test cosine temperature annealing (τ:1.3→0.7\tau:1.3\rightarrow 0.7) against a fixed-temperature baseline
+(τ=0.7\tau=0.7) under otherwise identical settings.
+Length distributions of think and answer.
+Both LoRA runs shift the think-length distribution left compared to the base model, indicating shorter reasoning traces. In our runs, cosine annealing does not consistently reduce the long tail relative to fixed-temperature training. However, across multiple trials it reliably lowers the average think length, suggesting a modest but consistent improvement in length efficiency. We also track the answer-length distribution and observe a slight right shift relative to the base model, which we attribute to the plateau region on the over-length side in our answer length-alignment reward that tolerates moderately longer answers than the reference.
+Why routing is needed.
+To isolate the role of segment-wise routing, we ran an experimental GSM8K LoRA pilot that optimizes the two length-related rewards (ReffR_{\text{eff}} for think compression and RlenR_{\text{len}} for answer-length alignment) using a simple equal-weight sum (without segment-wise routing). Under our training budget, this setting produces negligible behavioral change. This suggests a learnability bottleneck under completion-level credit assignment: without isolating
+learning signals across the think/answer boundary, the intended length-control rewards can be diluted and fail to induce consistent shifts in length behavior.
+Limited LoRA transfer.
+More broadly, even with DSS-GRPO-style training dynamics on GSM8K, LoRA-only post-training does not reliably yield
+compression that transfers to harder, out-of-domain math benchmarks. We attribute this to a combination of limited trainable capacity and training state: adapting a small set of parameters on GSM8K alone may be insufficient to reshape the long-horizon reasoning behavior required by more challenging math tests, whereas full-parameter post-training enables more reliable compression without collapsing capability.
+Figure 1: GSM8K-test length distributions at evaluation T=0.7T=0.7 (Base vs. DDS-GRPO LoRA variants): think (left) and answer (right).
+Qualitative example.
+Figure 2 provides a representative GSM8K example comparing the base model and DSS-GRPO.
+Figure 2: GSM8K Example: Base vs DSS-GRPO.
+5 Conclusion
+We introduced Difficulty-Scaled Segment-Wise GRPO (DSS-GRPO) for post-training CoT compression under structured
+think/answer templates. By routing segment-wise group-relative advantages with hard masks, DSS-GRPO shortens
+think while preserving answer behavior, avoiding the answer-shortening drift of completion-level GRPO.
+Our results also highlight that the shortest sufficient reasoning length depends on difficulty and capacity: harder benchmarks
+retain longer traces, and LoRA-only GSM8K training does not reliably transfer compression to harder out-of-domain tests,
+whereas full-parameter post-training is more effective. Future work includes extending routing to finer-grained structure and
+broader tasks.
+References
+References
+[1]
+X. Chen, S. Zhou, K. Liang, X. Sun, and X. Liu (2025)
+Skip-thinking: chunk-wise chain-of-thought distillation enable smaller language models to reason better and faster.
+In Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing,
+pp. 12153–12168.
+Cited by: §2.
+[2]
+Z. Chu, J. Chen, Q. Chen, W. Yu, T. He, H. Wang, W. Peng, M. Liu, B. Qin, and T. Liu (2023)
+Navigate through enigmatic labyrinth a survey of chain of thought reasoning: advances, frontiers and future.
+In Annual Meeting of the Association for Computational Linguistics,
+External Links: Link
+Cited by: §2.
+[3]
+K. Cobbe, V. Kosaraju, M. Bavarian, M. Chen, H. Jun, L. Kaiser, M. Plappert, J. Tworek, J. Hilton, R. Nakano, C. Hesse, and J. Schulman (2021)
+Training verifiers to solve math word problems.
+arXiv preprint arXiv:2110.14168.
+Cited by: §4.1,
+§4.
+[4]
+B. L. M. de Oliveira, F. V. Frujeri, M. P. C. M. Queiroz, L. G. B. Martins, T. W. de L. Soares, and L. C. Melo (2025)
+Learning without critics? revisiting grpo in classical reinforcement learning environments.
+ArXiv abs/2511.03527.
+External Links: Link
+Cited by: §2.
+[5]
+W. Deng, Y. Ren, M. Li, D. J. Sutherland, X. Li, and C. Thrampoulidis (2025)
+On the effect of negative gradient in group relative deep reinforcement optimization.
+In 2nd AI for Math Workshop @ ICML 2025,
+External Links: Link
+Cited by: §2.
+[6]
+K. Feng, K. Ding, Z. Zhu, L. Liang, Q. Zhang, and H. Chen (2026)
+CoT-evo: evolutionary distillation of chain-of-thought for scientific reasoning.
+In The Fourteenth International Conference on Learning Representations,
+External Links: Link
+Cited by: §2.
+[7]
+A. Lewkowycz, A. Andreassen, D. Dohan, E. Dyer, H. Michalewski, V. Ramasesh, A. Slone, C. Anil, I. Schlag, T. Gutman-Solo, Y. Wu, B. Neyshabur, G. Gur-Ari, and V. Misra (2022)
+Solving quantitative reasoning problems with language models.
+In Advances in Neural Information Processing Systems,
+External Links: Link
+Cited by: §4.1.
+[8]
+Y. Li, Z. Cao, J. Qiao, and S. Hu (2026)
+SSVPO: effective step-level credit assignment for RL training of language models.
+In The Fourteenth International Conference on Learning Representations,
+External Links: Link
+Cited by: §2.
+[9]
+Z. Li, J. Zhong, Z. Zheng, X. Wen, Z. Xu, Y. Cheng, F. Zhang, and Q. Xu (2026)
+Making slow thinking faster: compressing LLM chain-of-thought via step entropy.
+In The Fourteenth International Conference on Learning Representations,
+External Links: Link
+Cited by: §1,
+§2.
+[10]
+Z. Li, H. Liu, D. Zhou, and T. Ma (2024)
+Chain of thought empowers transformers to solve inherently serial problems.
+In The Twelfth International Conference on Learning Representations,
+External Links: Link
+Cited by: §2.
+[11]
+T. Liang, W. Jiao, Z. He, J. Xu, H. Mi, and D. Yu (2026)
+DeepCompress: a dual reward strategy for dynamically exploring and compressing reasoning chains.
+In The Fourteenth International Conference on Learning Representations,
+External Links: Link
+Cited by: §1,
+§2.
+[12]
+R. Liu, J. Geng, A. J. Wu, I. Sucholutsky, T. Lombrozo, and T. L. Griffiths (2025)
+Mind your step (by step): chain-of-thought can reduce performance on tasks where thinking makes humans worse.
+External Links: Link
+Cited by: §2.
+[13]
+T. Liu, Q. Guo, X. Hu, C. Jiayang, Y. Zhang, X. Qiu, and Z. Zhang (2024)
+Can language models learn to skip steps?.
+In The Thirty-eighth Annual Conference on Neural Information Processing Systems,
+External Links: Link
+Cited by: §1,
+§2.
+[14]
+X. Ma, G. Wan, R. Yu, G. Fang, and X. Wang (2025)
+Cot-valve: length-compressible chain-of-thought tuning.
+In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers),
+pp. 6025–6035.
+Cited by: §1,
+§2.
+[15]
+MAA
+American invitational mathematics examination (aime).
+Note: Mathematics Competition Seriesn.d.a. URL https://maa.org/math-competitions/aime
+Cited by: §4.1.
+[16]
+MAA
+American mathematics competitions (amc 12).
+Note: Mathematics Competition Seriesn.d.b. URL https://maa.org/math-competitions/amc
+Cited by: §4.1.
+[17]
+Z. Shen, H. Yan, L. Zhang, Z. Hu, Y. Du, and Y. He (2025)
+Codi: compressing chain-of-thought into continuous space via self-distillation.
+In Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing,
+pp. 677–693.
+Cited by: §2.
+[18]
+W. Tan, J. Li, J. Ju, Z. Luo, J. Luan, and R. Song (2025)
+Think silently, think fast: dynamic latent compression of llm reasoning chains.
+ArXiv abs/2505.16552.
+External Links: Link
+Cited by: §2.
+[19]
+J. Ton, M. F. Taufiq, and Y. Liu (2025)
+Understanding chain-of-thought in LLMs through information theory.
+In Forty-second International Conference on Machine Learning,
+External Links: Link
+Cited by: §2.
+[20]
+Y. Wang, P. Zhang, J. Tang, H. Wei, B. Yang, R. Wang, C. Sun, F. Sun, J. Zhang, J. Wu, Q. Cang, Y. Zhang, F. Huang, J. Lin, F. Huang, and J. Zhou (2025)
+PolyMath: evaluating mathematical reasoning in multilingual contexts.
+arXiv preprint arXiv:2504.18428.
+External Links: Link
+Cited by: §4.1.
+[21]
+X. Wei, X. Liu, Y. Zang, X. Dong, Y. Cao, J. Wang, X. Qiu, and D. Lin (2026)
+SIM-cot: supervised implicit chain-of-thought.
+In The Fourteenth International Conference on Learning Representations,
+External Links: Link
+Cited by: §2.
+[22]
+H. Xia, C. T. Leong, W. Wang, Y. Li, and W. Li (2025)
+TokenSkip: controllable chain-of-thought compression in LLMs.
+In Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing,  C. Christodoulopoulos, T. Chakraborty, C. Rose, and V. Peng (Eds.),
+Suzhou, China, pp. 3351–3363.
+External Links: Link,
+Document,
+ISBN 979-8-89176-332-6
+Cited by: §1,
+§2.
+[23]
+A. Yang, A. Li, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Gao, C. Huang, C. Lv, C. Zheng, D. Liu, F. Zhou, F. Huang, F. Hu, H. Ge, H. Wei, H. Lin, J. Tang, J. Yang, J. Tu, J. Zhang, J. Yang, J. Yang, J. Zhou, J. Zhou, J. Lin, K. Dang, K. Bao, K. Yang, L. Yu, L. Deng, M. Li, M. Xue, M. Li, P. Zhang, P. Wang, Q. Zhu, R. Men, R. Gao, S. Liu, S. Luo, T. Li, T. Tang, W. Yin, X. Ren, X. Wang, X. Zhang, X. Ren, Y. Fan, Y. Su, Y. Zhang, Y. Zhang, Y. Wan, Y. Liu, Z. Wang, Z. Cui, Z. Zhang, Z. Zhou, and Z. Qiu (2025)
+Qwen3 technical report.
+External Links: 2505.09388,
+Link
+Cited by: §4.1.
+[24]
+C. Yao, Y. Chen, Y. Sun, Y. Chen, W. Zhang, X. Pan, Y. Li, and B. Ding (2026)
+Group-relative REINFORCE is secretly an off-policy algorithm: demystifying some myths about GRPO and its friends.
+In The Fourteenth International Conference on Learning Representations,
+External Links: Link
+Cited by: §2.
+[25]
+X. Zhuang, Z. Zhu, Z. Wang, X. Cheng, and Y. Zou (2025)
+UniCoTT: a unified framework for structural chain-of-thought distillation.
+In The Thirteenth International Conference on Learning Representations,
+External Links: Link
+Cited by: §2.
+Appendix A Technical Appendices and Supplementary Material
+Table 3: Training and evaluation details for our main experiments (full-parameter post-training) and the GSM8K LoRA case study.
+Category
+Setting
+Base models
+Qwen/Qwen3-4B-Thinking-2507; Qwen3-8B
+Template
+Structured think/answer with fixed boundaries (e.g., </think>\n, <|im_end|>)
+Full-parameter post-training (main results)
+Training data
+Mixture of GSM8K and PolyMath with random example-level sampling at a 2:1 ratio (GSM8K:PolyMath)
+Training steps
+500
+Group size
+K=16K=16
+Rewards
+ReffR_{\text{eff}} (think compression), RlenR_{\text{len}} (answer alignment), gated by format & correctness
+Key hyperparameters
+m=256m=256 (think margin), f=32f=32 (answer tolerance band), s=1.5s=1.5 (difficulty scale)
+Temperature schedule
+Cosine annealing τ:1.3→0.7\tau:1.3\rightarrow 0.7
+Optimizer / LR
+AdamW (Trainer default), LR=1×10−51\times 10^{-5}; batch=1 prompt/step (per-device), grad accum=1 (global=1); grad clip: default (not explicitly set).
+Evaluation (all methods)
+Benchmarks
+MATH-500, AMC 2023, MinervaMath, AIME 2024, AIME 2025
+Decoding
+N=8N=8 samples; temperature=0.7, top-pp=0.95, max_new_tokens=32768
+Metric
+Pass@1
+Length statistics
+Think length: mean over NN; Answer length: mean over NN; then averaged over the dataset
+GSM8K LoRA case study
+Training data
+GSM8K-train
+Validation set
+GSM8K-test
+Temperature comparison
+Cosine annealing τ:1.3→0.7\tau:1.3\rightarrow 0.7 vs. fixed τ=0.7\tau=0.7
+Model
+Qwen/Qwen3-4B-Thinking-2507 only
+A.1 Why amplify the difficulty scale?
+We amplify the difficulty scale to prevent signal dilution on hard prompts. When a prompt is difficult for the
+current model, gated successes are rare, and the optimization signal that actually indicates “what works” can be
+dominated by heterogeneous failures. If the few successful trajectories contribute only weakly to the gradient, training
+tends to either make little progress (no consistent shift in length behavior) or drift toward conservative failure modes
+(e.g., generic shorter traces) rather than moving toward the rare correct solutions.
+Our competence proxy p^succ​(x)\hat{p}_{\mathrm{succ}}(x) quantifies how often a prompt group yields gated successes. On easy
+prompts, p^succ​(x)≈1\hat{p}_{\mathrm{succ}}(x)\approx 1 and many samples fall into the plateau of the think-compression reward
+(Reff≈1R_{\text{eff}}\approx 1 for sufficiently short successful traces). In this regime, the group-relative advantages are
+already stable and informative, so additional amplification is unnecessary.
+On hard prompts, p^succ​(x)≈0\hat{p}_{\mathrm{succ}}(x)\approx 0 and a correct, well-formed trajectory may occur only
+occasionally. We therefore amplify the influence of such rare successes so that they can meaningfully steer the update.
+With our choice Wdiff​(x)=2−p^succ​(x)W_{\text{diff}}(x)=2-\hat{p}_{\mathrm{succ}}(x), the scaling lies in a bounded range [1,2][1,2]: it leaves the
+learning scale unchanged on easy prompts (Wdiff≈1W_{\text{diff}}\approx 1) while guaranteeing at least a 2×2\times amplification
+when successes are extremely scarce (Wdiff≈2W_{\text{diff}}\approx 2). Combined with our asymmetric rule that amplifies only
+positive (success-aligned) think-segment advantages, this increases the pull toward the few correct trajectories
+without magnifying noisy negative advantages from diverse failures.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

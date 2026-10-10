@@ -1,0 +1,4021 @@
+Resolving Java Code Repository Issues with iSWE Agent
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Background
+3
+Approach
+3.1
+iSWE Localization Agent
+3.2
+iSWE Editing Agent
+4
+Evaluation
+4.1
+Results for Cost and Turns
+4.2
+Results by iSWE Sub-Agents and Tools
+4.3
+Results by Benchmark Sample Characteristics
+5
+Related Work
+6
+Conclusion
+References
+License: CC BY-NC-ND 4.0
+arXiv:2603.11356v1 [cs.SE] 11 Mar 2026
+Resolving Java Code Repository Issues with iSWE Agent
+Jatin Ganhotra
+Affiliation:
+IBM
+Sami Serhan
+Affiliation:
+IBM
+Antonio Abu Nassar
+Affiliation:
+IBM
+Avraham Shinnar
+Affiliation:
+IBM
+Ziv Nevo
+Affiliation:
+IBM
+Martin Hirzel
+Affiliation:
+IBM
+Abstract
+Resolving issues on code repositories is an important part of
+software engineering.
+Various recent systems automatically resolve issues using large
+language models and agents, often with impressive performance.
+Unfortunately, most of these models and agents focus primarily on
+Python, and their performance on other programming languages is lower.
+In particular, a lot of enterprise software is written in Java,
+yet automated issue resolution for Java is underexplored.
+This paper introduces iSWE Agent, an automated issue resolver
+with an emphasis on Java.
+It consists of two sub-agents, one for localization and the other
+for editing.
+Both have access to novel tools based on rule-based Java static
+analysis and transformation.
+Using this approach, iSWE achieves state-of-the-art issue
+resolution rates across the Java splits of both Multi-SWE-bench and
+SWE-PolyBench.
+More generally, we hope that by combining the best of rule-based and
+model-based techniques, this paper contributes towards improving
+enterprise software development.
+Ap
+Ap
+1
+Introduction
+One way to make software developers more productive is by giving them
+automated support for resolving issues.
+An
+issue
+on a code repository is a natural-language bug report
+or feature request, and resolving an issue involves making changes to
+the code that fix the bug or implement the feature.
+The SWE-bench benchmark
+[
+21
+]
+measures the ability
+of automated systems to resolve Python issues and has inspired many,
+mostly agent-based, solutions using large language models (LLMs).
+However, while Python-based issue resolution leaderboards are highly
+active and show signs of saturating, issue resolution leaderboards for
+other programming languages are less active and show lower performance.
+At the same time, other programming languages are of great practical
+importance: for instance, much enterprise software is written in Java.
+As a language, Java differs substantially from Python in terms of its
+syntax, type system, and emphasis on object-orientation.
+This raises the question of whether Java issue resolution would
+benefit from Java-specific knowledge — a question that is, to our
+knowledge, unanswered.
+This paper sets out to tackle that gap.
+Shortly after the release of SWE-bench, SWE-Agent demonstrated early
+gains thanks to carefully crafted tools for performing code-related
+actions
+[
+40
+]
+.
+In particular, its edit tool had a built-in Python linter for catching
+coding mistakes, suggesting that language-specific knowledge can be
+helpful.
+At the other extreme, the CodeAct paper
+[
+35
+]
+argued
+against sophisticated tools, instead expressing all actions purely as
+code.
+And recent frontier models have improved SWE-bench success rates for
+Python even when the action space only allows code in the bash shell
+language.
+Unfortunately, such arbitrary code actions risk unsafe side-effects,
+and avoiding those side-effects via sandboxing incurs overheads in
+time, memory, disk, and solution complexity.
+Arbitrary code actions also tend to require more iterations of the
+agentic loop, increasing LLM inferencing cost compared to tools
+tailored towards issue resolution for a given language.
+Therefore, this paper explores the premise that we can improve an
+agent for Java issue resolution by giving it advanced Java-specific
+tools.
+This paper introduces iSWE, a new LLM-based agent for resolving issues
+in Java code repositories.
+(While iSWE can also handle other languages besides Java, it does so
+in a more generic manner.)
+Compared to other issue-resolution agents, iSWE puts an emphasis on
+stronger tools, meaning tools that are:
+(i) more effective by leveraging Java-specific knowledge;
+(ii) less LLM-dependent and able to use fewer LLM turns by providing a
+simple high-level interface;
+(iii) safer by avoiding spurious side-effects;
+and
+(iv) lighter-weight by only launching a sandbox for rare actions where
+side-effects are unavoidable.
+Internally, iSWE comprises two ReAct
+[
+42
+]
+sub-agents,
+one for localization and the second for editing.
+Decomposing issue resolution this way makes each sub-task easier, and
+has the added benefit that even solving just localization on its own
+delivers incremental value to developers.
+The sub-agents, in turn, build upon two open-source technologies: the
+declarative prompting language PDL
+[
+33
+]
+and the
+program analysis framework CLDK
+[
+22
+]
+.
+We evaluate iSWE on the Java subsets of two issue-resolution
+benchmarks, Multi-SWE-bench
+[
+43
+]
+and
+SWE-PolyBench
+[
+28
+]
+.
+We selected these two because both have public leaderboards, and
+because taken together, they have enough Java instances to draw
+meaningful conclusions (128+165=293).
+The evaluation demonstrates iSWE’s performance and sheds light on some
+idiosyncracies of the benchmarks that are of interest to the
+issue-resolution research community.
+In terms of success rate, iSWE ranks at or near the top for Java
+on both leaderboards.
+And in terms of cost, iSWE spends between 2
+×
+\times
+and 3
+×
+\times
+fewer dollars on model-inferencing APIs than other leading agents
+using the same LLM.
+The results section further explores other metrics (e.g., localization
+precision and recall) and breakdowns (e.g., by issue complexity).
+Overall, this paper makes the following contributions:
+1.
+It introduces iSWE, the first issue-resolution agent
+specialized for Java.
+2.
+It explores the premise that language-aware tools can yield
+stronger issue-resolution agents.
+3.
+It reports on extensive experiments with two thus-far less
+explored Java SWE benchmarks.
+We hope this paper contributes towards taking some of the research
+progress driven by Python-centered benchmarks and extending its
+benefits into enterprise languages such as Java.
+2
+Background
+The
+problem statement
+for issue resolution is as follows:
+Given an issue description
+d
+issue
+d_{\textrm{issue}}
+and the current code in
+a repository
+c
+old
+c_{\textrm{old}}
+, generate a new modified
+version
+c
+new
+c_{\textrm{new}}
+of the code that resolves the issue.
+Example issue description
+d
+issue
+d_{\textrm{issue}}
+, based on SWE-PolyBench instance
+apache__rocketmq-516
+.
+⬇
+1
+org
+.
+apache
+.
+rocketmq
+.
+common
+.
+stats
+.
+StatsItemSet
+#
+getAndCreateStatsItem
+has
+multi
+-
+thread
+problem
+.
+2
+Because
+we
+can
+not
+ensure
+the
+atomicity
+of
+3
+‘‘‘java
+4
+StatsItem
+statsItem
+=
+this.statsItemTable.get(statsKey);
+5
+StatsItem
+prev
+=
+this.statsItemTable.put(statsKey,
+statsItem);
+6
+‘‘‘
+7
+Here
+is
+the
+test
+case
+.
+The
+result
+is
+not
+always
+the
+correct
+one
+20000.
+8
+‘‘‘java
+9
+for(int
+i
+=0;
+i
+<
+10000;
+i++)
+{
+10
+executor.submit(new
+Runnable()
+{
+11
+@Override
+12
+public
+void
+run()
+{
+13
+brokerStatsManager.incTopicPutNums("topicTest",
+2,
+1);
+14
+}
+15
+});
+16
+}
+17
+Thread.sleep(5000);
+18
+System.out.println(brokerStatsManager.getStatsItem(TOPIC_PUT_NUMS,"topicTest").getValue());
+19
+‘‘‘
+shows an example issue description
+d
+issue
+d_{\textrm{issue}}
+.
+This particular issue description indicates a code location to fix,
+though it will turn out that properly resolving the issue also
+requires changing code in a second location not mentioned in the issue.
+Most issue descriptions do not clearly indicate code locations.
+In real-world practice, after a developer writes new modified code
+c
+new
+c_{\textrm{new}}
+, they usually do some testing to convince themselves that it addresses
+the issue, then submit a pull request (PR) to update the repository.
+Issue description often include an informal acceptance test fragment,
+as in the example in
+.
+Sometimes, developers even include a more polished version of such a
+test in the same PR along with the issue-resolving code
+c
+new
+c_{\textrm{new}}
+.
+Benchmarks like SWE-bench
+[
+21
+]
+emulate this
+practice by evaluating each candidate
+c
+new
+c_{\textrm{new}}
+on a hidden set
+of test cases
+t
+gold
+t_{\textrm{gold}}
+.
+This yields an execution-based evaluation, accounting for the fact
+that what matters is whether generated code resolves the issue, not
+whether it resembles ground-truth code.
+What makes SWE-bench and similar benchmarks realistic is that they are
+based on (often popular) open-source code repositories:
+they mine issue-resolving PRs to get an issue (
+d
+issue
+d_{\textrm{issue}}
+)
+along with the code before (
+c
+old
+c_{\textrm{old}}
+) and
+after (
+c
+new
+c_{\textrm{new}}
+) the PR.
+For example,
+is mined from the
+apache/rocketmq
+repository.
+Then, they filter for presence of tests (
+t
+gold
+t_{\textrm{gold}}
+) that are
+fail-to-pass (F2P), i.e., they fail on
+c
+old
+c_{\textrm{old}}
+, reproducing the issue, and pass on
+c
+new
+c_{\textrm{new}}
+, confirming its resolution.
+For completeness, in addition to F2P tests, the benchmark also
+runs a select few pass-to-pass (P2P) tests to check whether the
+patch broke any previous behavior.
+SWE-bench Verified
+[
+12
+]
+is a subset of 500
+SWE-bench instances filtered further using human annotations to ensure issue
+descriptions are not underspecified and tests are not overly specific.
+While SWE-bench and SWE-bench Verified focus on Python, there are at
+least three benchmarks that address the same problem statement but for
+other programming languages including Java.
+Multi-SWE-bench
+[
+43
+]
+comprises 1,632 instances
+from 7 languages, including 128 instances from Java.
+All its instances are pre-filtered using the same criteria as for
+SWE-bench Verified, and further hand-labeled for difficulty levels.
+SWE-PolyBench
+[
+28
+]
+comprises
+2,110 instances from 4 languages, including 165 instances from Java.
+It comes with complexity labels based on how many functions and
+classes the ground-truth PR changed.
+SWE-PolyBench Verified is a hand-filtered subset, including
+69 instances from Java.
+SWE-bench Multilingual
+[
+41
+]
+comprises
+300 instances from 9 languages, including 43 instances from Java.
+This paper adopts both Multi-SWE-Bench and SWE-PolyBench for
+evaluation to increase the number and diversity of Java instances.
+Doing so also enables comparing iSWE against other submissions to the
+corresponding public leaderboards, since several systems have
+submissions on one or the other but not both.
+Furthermore, it reduces the risk of inadvertently tailoring the agent
+scaffold too much to one particular benchmark, thus facilitating
+practical use for other repositories beyond the benchmarks.
+This paper does not adopt SWE-bench Multilingual, since it only has
+a small number of additional Java instances.
+Issue resolution tasks for Java differ from those from Python
+SWE-bench in several ways.
+Python agents tend to struggle with multi-file edits
+[
+17
+]
+,
+and golden code edits
+c
+new
+c_{\textrm{new}}
+for Java issues tend to affect
+more files and involve more diff-hunks than those for Python issues.
+This may be caused by Java’s object-oriented nature, which encourages
+code where functionality is spread across more files.
+Also, Java is a compiled language with a strong static type systems.
+Since many code mistakes are caught by the Java compiler, the popular
+Java linters do not need to check for those same mistakes.
+As a consequence, unlike for Python, an automatic issue resolution
+system for Java cannot rely on a linter alone to catch mistakes.
+Furthermore, the Java compiler requires the correct versions of
+libraries it depends on in the build environment, and most projects
+invoke the Java compiler from a build tool such as Gradle or Maven.
+Taken together, this makes it harder for an automatic issue resolution
+system to get feedback from static correctness checks.
+Another way in which issue resolution for Java differs from Python is
+that the Python leaderboards are more popular and are starting to show
+signs of saturation
+[
+18
+]
+.
+Some voices
+[
+7
+,
+14
+,
+24
+,
+27
+]
+even raise contamination concerns with Python SWE-bench, more likely due
+to extended pre-training than to fine-tuning.
+That said, leading frontier-model vendors are indeed fine-tuning their LLMs
+for Python issue resolution
+[
+8
+,
+26
+]
+.
+While this fine-tuning hopefully uses data disjoint from the benchmark
+test set, it is nevertheless likely to improve the model more for
+Python tasks than for other languages such as Java.
+On the other hand, Java issue resolution has received relatively less
+attention so far, making it less saturated and less overfitted.
+3
+Approach
+Figure 1:
+Overview of iSWE Agent
+This section describes our approach for tackling the problem statement
+from Section
+2
+, namely, given an issue issue
+description
+d
+issue
+d_{\textrm{issue}}
+, mapping from old code
+c
+old
+c_{\textrm{old}}
+to new code
+c
+new
+c_{\textrm{new}}
+.
+Figure
+1
+shows our two-agent pipeline for solving
+this problem.
+The pipeline first feeds the input
+⟨
+d
+issue
+,
+c
+old
+⟩
+\langle d_{\textrm{issue}},c_{\textrm{old}}\rangle
+into the localization agent.
+The localization agent is a ReAct
+[
+42
+]
+agent with
+read-only tools, and it returns an edit recommendation with a set
+of code locations in
+c
+old
+c_{\textrm{old}}
+that should be edited to resolve the issue.
+Next, the pipeline feeds this recommendation and set of code locations
+into the editing agent.
+The editing agent is also a ReAct agent with a mostly read-only tool,
+and it returns the modified code
+c
+new
+c_{\textrm{new}}
+that, if correct,
+resolves the issue.
+There are several reasons why we opted for this flow of two ReAct agents.
+One advantage is that it gives us the flexibility to run either the entire
+flow end-to-end or each sub-agent separately.
+For instance, sometimes users want to pause after the first step,
+to inspect the intermediate result.
+Conversely, sometimes the first step can be skipped, if the localization
+is available from a different source such as a developer or a static
+code scanning tool.
+The intermediate result itself is typed, structured, and sanitized.
+This simplifies our engineering effort, since each sub-agent is modular
+with well-defined input and output expectations.
+It also speeds up experiments, since we can run pieces in isolation.
+Finally, each of the sub-tasks is relatively simpler than the
+end-to-end task, bringing it more within reach of moderate-sized LLMs.
+Both agents are LLM-agnostic: they avoid hardwired LLMs or LLM-specific
+prompts, and instead, the LLM to be called is a configuration variable.
+As of now, iSWE uses
+inline reasoning
+, in the sense that the LLM may
+generate a chain-of-thought
+[
+37
+]
+as part of its main content, as opposed to
+generating a separate API response field such as
+reasoning_content
+.
+Similarly, iSWE uses
+inline tool calling
+, in the sense that the LLM
+may generate a tool call
+[
+29
+]
+as part of its main content, which iSWE then
+parses on the client-side, as opposed to using a native tool-calling API.
+We found these inline approaches to be more robust across different LLMs.
+We implemented both agents using Python and
+PDL
+[
+33
+,
+30
+]
+.
+PDL is a declarative YAML-based language for writing prompt templates
+and the core LLM-flow control logic directly surrounding the prompts.
+It takes care of context accumulation and data flow between
+components including type-checking.
+By using PDL, iSWE keeps its prompts easy-to-read, compared to the
+common practice of scattering their sub-strings across Python code.
+At the same time, PDL is flexible enough to work for a variety of
+different flows, and thus, we did not have to work around design
+decisions of an existing agentic framework such as
+AutoGen
+[
+38
+]
+or OpenHands
+[
+36
+]
+.
+In particular, one core decision we wanted control over was
+containerization.
+Most parts of iSWE run in user-space without any container, including
+the top-level flow, the ReAct loop of each of the sub-agents, and even
+the functions being called for tools.
+This makes things simpler and faster.
+The only part that runs in a container is the part of the editing
+agent that builds the Java project for the purpose of error
+checking (described below).
+The following two subsections describe each of iSWE’s two sub-agents,
+localization and editing, in detail.
+3.1
+iSWE Localization Agent
+Example sanitized localization for the issue description from
+.
+⬇
+1
+{
+thought
+:
+"Perfect!
+Now
+I
+have
+all
+the
+information
+needed
+to
+identify
+the
+bug
+and
+propose
+fixes.
+The
+issue
+is
+a
+race
+condition
+in
+the
+getAndCreateStatsItem
+method
+in
+both
+StatsItemSet
+and
+MomentStatsItemSet
+classes."
+,
+2
+localization
+:
+{
+3
+"main/java/org/apache/rocketmq/common/stats/MomentStatsItemSet.java"
+:
+[
+4
+{
+changes
+:
+[
+{
+kind
+:
+"modify"
+,
+range
+:
+{
+start
+:
+76,
+end
+:
+90}}
+]
+,
+5
+proposed_edit
+:
+"Replace
+the
+non-atomic
+get-check-put
+pattern
+with
+putIfAbsent()
+to
+ensure
+atomicity."
+,
+6
+scope
+:
+[
+7
+{
+name
+:
+"MomentStatsItemSet"
+,
+8
+kind
+:
+{
+language
+:
+"java"
+,
+name
+:
+"class"
+},
+9
+span
+:
+{
+start
+:
+28,
+end
+:
+92}},
+10
+{
+name
+:
+"getAndCreateStatsItem"
+,
+11
+kind
+:
+{
+language
+:
+"java"
+,
+name
+:
+"method"
+},
+12
+span
+:
+{
+start
+:
+76,
+end
+:
+91}}
+]
+13
+}
+14
+]
+,
+15
+"main/java/org/apache/rocketmq/common/stats/StatsItemSet.java"
+:
+[
+16
+{
+changes
+:
+[
+{
+kind
+:
+"modify"
+,
+range
+:
+{
+start
+:
+160,
+end
+:
+173}}
+]
+,
+17
+proposed_edit
+:
+"Replace
+the
+non-atomic
+get-check-put
+pattern
+with
+putIfAbsent()
+to
+ensure
+atomicity."
+,
+18
+scope
+:
+[
+19
+{
+name
+:
+"StatsItemSet"
+,
+20
+kind
+:
+{
+language
+:
+"java"
+,
+name
+:
+"class"
+},
+21
+span
+:
+{
+start
+:
+28,
+end
+:
+203}},
+22
+{
+name
+:
+"getAndCreateStatsItem"
+,
+23
+kind
+:
+{
+language
+:
+"java"
+,
+name
+:
+"method"
+},
+24
+span
+:
+{
+start
+:
+160,
+end
+:
+174}}
+]
+25
+}
+26
+]
+27
+}
+As shown in
+Figure
+1
+, the input to the localization agent
+consists of the issue description
+d
+issue
+d_{\textrm{issue}}
+and the old
+code
+c
+old
+c_{\textrm{old}}
+.
+The initial prompt context before the first agent iteration
+includes
+d
+issue
+d_{\textrm{issue}}
+but not
+c
+old
+c_{\textrm{old}}
+, which can be
+very large; instead, the agent can inspect
+c
+old
+c_{\textrm{old}}
+via tools.
+To this end, the initial prompt context also contains instructions and
+tool descriptions.
+Each loop iteration starts with an LLM call to produce a
+thought (inline reasoning) and an action (tool call).
+The agent parses the tool call, invokes the tool, and obtains the
+output from the tool as an observation.
+PDL
+[
+33
+]
+implicitly appends the
+⟨
+\langle
+thought,action,observation
+⟩
+\rangle
+triple from the current loop iteration to the prompt context, which
+becomes the LLM input in the next iteration.
+The loop terminates when the LLM generates not a tool call but a valid
+JSON with a set of code locations.
+shows an example of a sanitized JSON output
+from the localization agent, containing a set of code locations.
+In this case, there are two locations across two different files.
+Only one of them was mentioned in the corresponding issue
+description
+d
+issue
+d_{\textrm{issue}}
+(
+), demonstrating
+that the localization agent found additional useful information.
+Besides the locations, the JSON in
+also
+includes the final thought from the localization agent, which might be
+useful for downstream consumption in the editing agent.
+In our implementation, we only expect the LLM to generate a simplified
+subset of the information in
+, and then fill in
+the remaining details using rule-based program analysis.
+The LLM output JSON is less nested than the final sanitized JSON.
+For example, line number ranges are given as a string such
+as
+"76-90"
+, and scopes do not
+provide spans, or can even be elided altogether.
+Then, the rule-based sanitizer adds any incomplete information and
+reconciles contradictions, if any.
+The initial LLM context contains few-shot examples for the LLM output
+JSON format to teach the localization agent what it needs to produce.
+By default, the localization agent is configured to use the following
+seven tools:
+get_file_info
+,
+get_class_info
+,
+get_method_info
+,
+get_symbol_info
+,
+get_inheritance_hierarchy
+,
+get_function_callers
+, and
+get_call_chain
+,
+If we conceptualize the code
+c
+old
+c_{\textrm{old}}
+as a graph, then the
+first four tools get information on nodes representing files, classes,
+methods, or other symbols, and the remaining three tools get
+information on edges representing class inheritance and function calling.
+We implemented these tools using two rule-based static analysis libraries,
+CLDK
+[
+22
+]
+and Tree-Sitter
+[
+13
+]
+.
+All tools generate textual outputs carefully crafted to provide rich
+yet concise information to the LLM.
+Also, all of the above-listed tools are read-only, in the sense that
+they only passively obtain information without making any changes
+to
+c
+old
+c_{\textrm{old}}
+or having other side-effects on the system.
+We used ACE
+[
+1
+]
+to hone the tool descriptions
+to make it easier for LLMs to call them.
+Above, we describe the localization agent in its default configuration.
+Our implementation also permits various aspects to be configured
+differently.
+For instance, we can provide different tools, such as those from
+SWE-Agent
+[
+40
+]
+or even a bash tool.
+We can change the number of few-shot samples for the JSON format.
+And we can configure the output of tools, for instance, whether to
+include line numbers, or whether to show relative paths.
+3.2
+iSWE Editing Agent
+Example edit for the issue from
+and the localization from
+.
+⬇
+1
+The
+solution
+is
+to
+use
+‘
+putIfAbsent
+()‘
+which
+is
+an
+atomic
+operation
+.
+If
+‘
+putIfAbsent
+()‘
+returns
+non
+-
+null
+,
+it
+means
+another
+thread
+already
+inserted
+a
+value
+,
+so
+return
+that
+existing
+value
+2
+‘‘‘
+java
+3
+###
+main
+/
+java
+/
+org
+/
+apache
+/
+rocketmq
+/
+common
+/
+stats
+/
+MomentStatsItemSet
+.
+java
+4
+<<<<<<<
+SEARCH
+5
+MomentStatsItem
+statsItem
+=
+statsItemTable.get(statsKey);
+6
+if
+(null
+==
+statsItem)
+{
+7
+statsItem
+=
+new
+MomentStatsItem(statsName,
+statsKey,
+schedExSvs,
+log);
+8
+MomentStatsItem
+prev
+=
+statsItemTable.put(statsKey,
+statsItem);
+9
+=======
+10
+MomentStatsItem
+statsItem
+=
+statsItemTable.get(statsKey);
+11
+if
+(null
+==
+statsItem)
+{
+12
+statsItem
+=
+new
+MomentStatsItem(statsName,
+statsKey,
+schedExSvs,
+log);
+13
+MomentStatsItem
+prev
+=
+statsItemTable.putIfAbsent(statsKey,
+statsItem);
+14
+if
+(null
+!=
+prev)
+statsItem
+=
+prev;
+15
+>>>>>>>
+REPLACE
+16
+###
+main
+/
+java
+/
+org
+/
+apache
+/
+rocketmq
+/
+common
+/
+stats
+/
+StatsItemSet
+.
+java
+17
+<<<<<<<
+SEARCH
+18
+StatsItem
+statsItem
+=
+statsItemTable.get(statsKey);
+19
+if
+(null
+==
+statsItem)
+{
+20
+statsItem
+=
+new
+StatsItem(statsName,
+statsKey,
+schedExSvs,
+log);
+21
+StatsItem
+prev
+=
+statsItemTable.put(statsKey,
+statsItem);
+22
+=======
+23
+StatsItem
+statsItem
+=
+statsItemTable.get(statsKey);
+24
+if
+(null
+==
+statsItem)
+{
+25
+statsItem
+=
+new
+StatsItem(statsName,
+statsKey,
+schedExSvs,
+log);
+26
+StatsItem
+prev
+=
+statsItemTable.putIfAbsent(statsKey,
+statsItem);
+27
+if
+(null
+!=
+prev)
+statsItem
+=
+prev;
+28
+>>>>>>>
+REPLACE
+29
+‘‘‘
+The input to the editing agent consists of the set of locations
+returned by the localization agent.
+Based on this set of locations, the agent extracts and formats
+relevant excerpts from
+c
+old
+c_{\textrm{old}}
+, and places them into the
+initial prompt context.
+For example, given the localization in
+, it
+would show excerpts from two Java files, using the line ranges of
+the
+scope
+fields to show only the
+methods where edits should take place.
+Since code without line numbers is more in-distribution for most
+LLMs than code with line numbers, the agent does not explicitly
+mention line numbers in the prompt.
+Instead, it injects
+edit marker
+comments to pinpoint exact
+locations to edit.
+Besides excerpts from
+c
+old
+c_{\textrm{old}}
+, the initial prompt before the
+first agent iteration also includes the issue description
+d
+issue
+d_{\textrm{issue}}
+,
+the
+thought
+and
+proposed_edit
+fields from the
+localization, plus instructions and a description of the edit tool.
+Similarly to the localization agent, each loop iteration of the
+editing agent also starts with an initial LLM call to produce a
+thought and an action.
+The action is an edit tool call, which comprises one or more
+search-replace blocks, across one or more files.
+The agent parses the tool call from the LLM output and tries to apply
+it to an in-memory copy of the relevant portion of
+c
+old
+c_{\textrm{old}}
+to
+obtain a candidate
+c
+new
+c_{\textrm{new}}
+.
+Since the original version of
+c
+old
+c_{\textrm{old}}
+on disk remains
+unchanged, this step is trivially free of side effects and requires no
+container sand-box.
+If the editing tool detects any mistakes in the tool call, it renders
+them as an observation.
+The previous context plus the
+current
+⟨
+\langle
+thought,action,observation
+⟩
+\rangle
+triple
+become the input to the LLM call in the next loop iteration.
+The loop terminates when the editing tool cannot find any mistakes in
+the tool call, at which point the agent returns the
+well-formed
+c
+new
+c_{\textrm{new}}
+, converted to unidiff format.
+shows an example of an edit tool call, based on the
+same running example used in earlier sections.
+It takes the form of a search-replace in
+merge-conflict format
+.
+This format has been used for many years by version management
+software
+[
+25
+]
+, making it likely to occur in LLM
+pre-training data and thus giving LLMs some basic familiarity with it.
+In this example, the edit has two search-replace blocks, one for each
+of the two files given in the localization (
+).
+In general, the tool also supports multiple search-replace blocks in
+the same file.
+Each search-replace block has two parts separated by
+‘
+=======
+’: a block of lines to search in
+c
+old
+c_{\textrm{old}}
+,
+and a block of lines to replace them with to obtain
+c
+new
+c_{\textrm{new}}
+.
+The initial LLM context has few-shot samples for this format.
+The edit agent tool performs a series of escalating checks on the LLM-generated
+tool call, such that the first check that fails causes an early exit
+with a corresponding observation to explain what went wrong.
+It checks adherance to the merge-conflict format and attempts to match
+the search blocks, with heuristic rule-based repairs to tolerate minor
+differences such as including the agent-injected edit markers.
+Once these initial checks pass, it derives the candidate
+c
+new
+c_{\textrm{new}}
+to be subjected to the remaining checks.
+It runs a simple Java linter on
+c
+new
+c_{\textrm{new}}
+that does not have
+side-effects but misses many deeper Java code problems.
+Finally, only when all previous checks succeeded, it fires up a
+containerized environment with the dependencies of the current
+repository installed and kicks off the Java compiler on
+c
+new
+c_{\textrm{new}}
+.
+The containerization isolates the versions of Java tools and libraries from
+the host machine and prevents any side-effects of the build scripts
+from affecting the master copy of the code.
+If all checks succeed without finding mistakes, the agent loop exits.
+The above description applies to the editing agent in its default
+configuration.
+The agent can also be configured to elide certain information from
+the prompt, such as the thought from the localization agent or the
+proposed edit.
+We can change the number of few-shot samples for the merge-conflict
+format.
+Furthermore, we can configure whether or not to run the Java
+compiler using the project build scripts.
+4
+Evaluation
+Table 1:
+Main results on Multi-SWE-Bench (Java) and SWE-PolyBench (Java).
+1
+1
+1
+Correct Location metrics are unavailable for a subset of Multi-SWE-Bench (Java) leaderboard submissions due to difficulties encountered when applying the publicly available output patches.
+2
+2
+2
+Cost and average token metrics are unavailable for SWE-PolyBench (Java) leaderboard submissions due to the lack of publicly available trajectories.
+Bench
+mark
+Base LLM
+%
+Resolved
+$ Cost
+Total (Avg.)
+Avg.
+# Tokens
+Edit Correct Location
+File
+Node
+Recall
+Precision
+Recall
+Precision
+iSWE-Agent (Frontier Models)
+Multi-SWE-Bench (Java)
+Claude-4.5-Sonnet
+43 (33.6%)
+237.89 (1.86)
+598k
+62%
+82%
+44%
+68%
+Claude-3.7-Sonnet
+32 (25.0%)
+154.51 (1.21)
+386k
+50%
+72%
+32%
+63%
+Leaderboard submissions
+(top other agents for comparison)
+InfCode (GPT-5.2)
+50 (39.1%)
+569.29 (4.78)
+2453k
+54%
+72%
+47%
+54%
+MSWE-agent (C-3.7-Sonnet)
+1
+30 (23.4%)
+477.26 (3.72)
+1233k
+-
+-
+-
+-
+MopenHands (C-3.7-Sonnet)
+1
+28 (21.8%)
+332.61 (2.59)
+835k
+-
+-
+-
+-
+iSWE-Agent (Open Source Models)
+deepSeek-V3-2
+28 (21.8%)
+32.46 (0.25)
+899k
+44%
+57%
+32%
+48%
+llama-4-maverick-17b-128e
+21 (16.4%)
+14.53 (0.11)
+82k
+37%
+59%
+22%
+51%
+gpt-oss-120b (tool calling)
+21 (16.4%)
+4.86 (0.04)
+223k
+36%
+57%
+19%
+47%
+deepSeek-R1
+19 (14.8%)
+7.70 (0.06)
+83k
+38%
+54%
+20%
+42%
+devstral-small-2505
+19 (14.8%)
+10.16 (0.08)
+775k
+40%
+60%
+24%
+47%
+qwen2-5-72b-instruct
+17 (13.2%)
+1.49 (0.01)
+89k
+34%
+52%
+20%
+41%
+llama-3.3-70b
+15 (11.7%)
+10.60 (0.08)
+116k
+35%
+53%
+20%
+43%
+devstral-small-2507
+13 (10.1%)
+15.98 (0.12)
+1235k
+30%
+47%
+18%
+37%
+gpt-oss-20b (tool calling)
+11  (8.5%)
+13.56 (0.11)
+1461k
+24%
+37%
+17%
+33%
+iSWE-Agent (Frontier Models)
+SWE-PolyBench (Java)
+Claude-4.5-Opus
+55 (33.3%)
+420.7 (2.55)
+492k
+61%
+85%
+44%
+74%
+Claude-4.5-Sonnet
+48 (29.1%)
+305.13 (1.85)
+588k
+53%
+72%
+34%
+63%
+Leaderboard submissions
+(top other agents for comparison)
+Amazon Q Developer Agent
+2
+44 (26.6%)
+-
+-
+56%
+75%
+43%
+62%
+Aider-PB (C-3.5-Sonnet)
+2
+26 (15.7%)
+-
+-
+52%
+58%
+32%
+52%
+iSWE-Agent (Open Source Models)
+deepSeek-V3-2
+30 (18.1%)
+46.5 (0.28)
+1000k
+35%
+45%
+23%
+40%
+gpt-oss-120b (tool calling)
+23 (13.9%)
+8.01 (0.05)
+290k
+27%
+44%
+14%
+38%
+deepSeek-R1
+20 (12.1%)
+10.64 (0.06)
+62k
+34%
+49%
+19%
+42%
+llama-4-maverick-17b-128e
+17 (10.3%)
+20.71 (0.13)
+91k
+33%
+50%
+18%
+42%
+qwen2-5-72b-instruct
+14  (8.4%)
+2.15 (0.01)
+100k
+26%
+39%
+13%
+33%
+devstral-small-2505
+14  (8.4%)
+8.76 (0.05)
+522k
+28%
+39%
+14%
+31%
+devstral-small-2507
+13  (7.8%)
+17.52 (0.11)
+1051k
+28%
+39%
+14%
+31%
+gpt-oss-20b (tool calling)
+10  (6.0%)
+17.54 (0.11)
+1464k
+13%
+24%
+7%
+20%
+llama-3.3-70b
+9  (5.4%)
+16.51 (0.10)
+140k
+23%
+36%
+12%
+29%
+Figure 2:
+Average cost vs. %resolved across models. Most datapoints are from iSWE with different models; two datapoints for Multi-SWE-bench (Java) are from MopenHands and MSWE-agent.
+This section presents our empirical evaluation of iSWE based on the
+Java splits of
+Multi-SWE-bench
+[
+43
+]
+and
+SWE-PolyBench
+[
+28
+]
+.
+Since there has been little published work on using those benchmarks
+so far, this sheds light not just on iSWE’s performance but also on
+the benchmarks themselves.
+This section starts by discussing the main results in
+Table
+1
+, and then dives deeper into various aspects
+with additional tables and figures.
+Table
+1
+is based on running iSWE on the two benchmarks
+with a variety of different LLMs.
+We use inline tool calling for most models except for gpt-oss, where
+localization used native tool calling, because that performed better.
+For comparison, we also included
+some results from other top agents on the corresponding leaderboards.
+Column
+% Resolved
+indicates for how many benchmark instances the
+agent-generated patch
+c
+new
+c_{\textrm{new}}
+resolves the issue
+d
+issue
+d_{\textrm{issue}}
+as indicated by passing the hidden tests
+t
+gold
+t_{\textrm{gold}}
+.
+With frontier models, iSWE has among the highest resolution rates
+on Java issues.
+While the open-source models resolve fewer instances, they also show
+descent results, demonstrating iSWE’s ability to use different models.
+The absolute numbers are lower than commonly seen on Python
+leaderboards; this is likely an artifact of Python leaderboards
+becoming saturated
+[
+27
+]
+.
+Column
+$ Cost
+shows the expense for LLM calls from model
+vendor APIs in US dollars.
+To calculate it, we track the number of input and output tokens, and
+then use public pricing per input or output token, mostly based on
+scaling factors included in the LiteLLM library.
+Generally, stronger models cost more.
+For Multi-SWE-bench, the top non-iSWE results use Claude-3.7-Sonnet;
+the iSWE runs with the same model incur 2
+×
+\times
+to 3
+×
+\times
+lower
+cost while resolving more issues.
+Column
+Avg. # Tokens
+shows the average number of tokens
+used per instance.
+It varies across models with no clear correlation to resolution rate.
+Columns
+Edit Correct Location
+show to what extent the
+agent-generated new code
+c
+new
+c_{\textrm{new}}
+modifies the same code
+locations as the hidden golden patch.
+The columns report precision and recall both at the file level and at
+the level of
+nodes
+, which are the closest enclosing class or
+function that contains a given diff-hunk
+[
+28
+]
+.
+Not surprisingly, file-level retrieval numbers are higher than
+node-level, and retrieval metrics correlate well with % resolved.
+The following subsections explore iSWE and the benchmarks more deeply.
+Section
+4.1
+explores dollar costs and number of turns by
+model and instance to better highlight the trade-offs enabled by iSWE.
+Section
+4.2
+digs deeper into the sub-agent and even
+tool layer of iSWE to explore how each component contributes to
+overall success.
+And
+Section
+4.3
+provides a better understanding of the
+benchmarks by drilling down to samples of different complexities and
+other characteristics.
+4.1
+Results for Cost and Turns
+While the primary metric for SWE-bench and similar benchmarks is
+issue resolution rate, another major concern is cost.
+Furthermore, one can trade resolution rate and cost
+off against each other, e.g., by choosing a different
+model or by resorting to inference scaling.
+This subsection explores that trade-off in more detail, using dollar
+costs computed based on published pricing for LLM input and output
+tokens (mostly leveraging metadata in LiteLLM).
+Besides dollar cost, this also sheds light on other correlated
+concerns, such as the number of turns in the agentic loop or the
+time-to-fix.
+All results in this section are based on the same runs as the main
+results.
+Figure
+2
+visualizes the trade-off between
+% resolved
+and average per-instance
+$ cost
+as a
+scatter plot.
+The x-axis shows cost on a logarithmic scale; cheaper (further left)
+is better.
+The y-axis shows resolution rate on a linear scale; more resolved
+(further up) is better.
+The points on the Pareto frontier are those on the upper left and are
+highlighted with a green border: they are partially optimal in the
+sense that other points may be higher in one metric but never both.
+For both benchmarks, the Pareto frontier is occupied by iSWE with five
+models: qwen2-5-72b-instruct, gpt-oss-120b, deepseek-v3-2, and finally
+two versions of the Claude frontier models.
+Thanks to iSWE being model agnostic, it offers the user a range of
+choices to navigate the cost/accuracy trade-off.
+When we first did these experiments, the top non-iSWE agents on
+Multi-SWE-bench (Java) were MSWE-agent and MopenHands, both using Claude-3.7-Sonnet.
+They are dominated by iSWE with the same model, which achieves a
+higher resolution rate at a fraction of the cost.
+In the meantime, InfCode using GPT-5.2 has also appeared on the
+Multi-SWE-bench (Java) leaderboard, with higher resolved rate but at
+higher cost than iSWE.
+Figure 3:
+Average cost vs. resolved across individual instances in the benchmark (cumulative).
+While the previous figure showed average costs across all instances in
+an entire benchmark, not all instances incur the same cost.
+Some instances can be resolved in fewer turns or tokens, and thus at
+lower cost, than others.
+Figure
+3
+shows the cumulative distribution
+of how many instances get finished (light blue) or resolved (dark
+blue) up to a cost (or turns) threshold shown on the x-axis.
+The left two subfigures focus on dollar cost: most instances that get
+resolved take at most $4.
+The number of finished instances keeps increasing beyond that point,
+but they experience diminishing returns in terms of resolution.
+The right two subfigures have the same y-axis but put the number of
+turns on the x-axis.
+Early turns are cheaper, because as context accumulates, later turns
+consume more tokens.
+Again, the curve for resolved issues asymptotically flattens at fewer
+turns than the curve for finished instances, indicating that LLMs
+struggle with long-horizon tasks.
+These results indicate that cost thresholds are another lever
+for navigating the cost/accuracy trade-off.
+Table 2:
+Cost per sub-agent.
+Benchmark
+Base LLM
+Avg. # Turns
+Avg. Cost
+Loc.
+Editing
+Total
+Loc.
+Editing
+Total
+Multi-SWE-
+Bench (Java)
+Claude-4.5-Sonnet (Loc & Edit)
+31.5
+1.7
+33.3
+$1.77
+$0.09
+$1.86
+DeepSeek-V3-2 (Loc & Edit)
+41.6
+2.5
+44.2
+$0.24
+$0.01
+$0.25
+SWE-PolyBench (Java)
+Claude-4.5-Opus (Loc & Edit)
+34.1
+2.2
+36.3
+$2.41
+$0.14
+$2.55
+DeepSeek-V3-2 (Loc & Edit)
+54.8
+3.3
+58.0
+$0.27
+$0.01
+$0.28
+Table
+2
+breaks down the cost spent in
+iSWE’s two sub-agents for localization and editing, respectively.
+For both benchmarks, for two representative models from the Pareto
+frontier, most of the turns and cost are incurred during localization.
+Even though DeepSeek takes more turns than Claude, in the end it
+incurs lower cost, because its per-token pricing is cheaper.
+Note that iSWE allows different models for localization and editing.
+For example, we did a run on Multi-SWE-bench (Java) where we used
+Claude-4.5-Sonnet for localization and Gemini-2.5-Pro for editing (elided from
+Table
+1
+).
+That run resolved 29.6% of instances at an average cost of $2.02 per
+instance.
+4.2
+Results by iSWE Sub-Agents and Tools
+Table 3:
+Localization metrics per sub-agent.
+Benchmark
+Base LLM
+Localization Correct Location
+Edit Correct Location
+File
+Node
+File
+Node
+Recall
+Precision
+Recall
+Precision
+Recall
+Precision
+Recall
+Precision
+iSWE-Agent (Frontier Models)
+Multi-SWE-Bench (Java)
+Claude-4.5-Sonnet
+63%
+83%
+36%
+59%
+62%
+82%
+44%
+68%
+Claude-3.7-Sonnet
+56%
+77%
+28%
+53%
+50%
+72%
+32%
+63%
+iSWE-Agent (Open Source Models)
+deepSeek-V3-2
+58%
+76%
+34%
+55%
+44%
+57%
+32%
+48%
+llama-4-maverick-17b-128e
+45%
+70%
+21%
+48%
+37%
+59%
+22%
+51%
+gpt-oss-120b (tool calling)
+49%
+75%
+20%
+48%
+36%
+57%
+19%
+47%
+deepSeek-R1
+49%
+72%
+21%
+46%
+38%
+54%
+20%
+42%
+devstral-small-2505
+44%
+67%
+22%
+44%
+40%
+60%
+24%
+47%
+qwen2-5-72b-instruct
+44%
+63%
+18%
+40%
+34%
+52%
+20%
+41%
+llama-3.3-70b
+40%
+60%
+17%
+39%
+35%
+53%
+20%
+43%
+devstral-small-2507
+36%
+53%
+17%
+35%
+30%
+47%
+18%
+37%
+gpt-oss-20b (tool calling)
+36%
+55%
+22%
+40%
+24%
+37%
+17%
+33%
+iSWE-Agent (Frontier Models)
+SWE-PolyBench (Java)
+Claude-4.5-Opus
+62%
+83%
+31%
+60%
+56%
+79%
+38%
+72%
+Claude-4.5-Sonnet
+61%
+80%
+29%
+56%
+53%
+72%
+34%
+63%
+iSWE-Agent (Open Source Models)
+deepSeek-V3-2
+56%
+73%
+28%
+52%
+35%
+45%
+23%
+40%
+gpt-oss-120b (tool calling)
+45%
+69%
+19%
+50%
+27%
+44%
+14%
+38%
+deepSeek-R1
+48%
+69%
+18%
+42%
+34%
+49%
+19%
+42%
+llama-4-maverick-17b-128e
+46%
+70%
+17%
+45%
+33%
+50%
+18%
+42%
+qwen2-5-72b-instruct
+38%
+58%
+14%
+39%
+26%
+39%
+13%
+33%
+devstral-small-2505
+39%
+56%
+15%
+36%
+28%
+39%
+14%
+31%
+devstral-small-2507
+36%
+52%
+15%
+34%
+28%
+39%
+14%
+31%
+gpt-oss-20b (tool calling)
+36%
+52%
+14%
+35%
+13%
+24%
+7%
+20%
+llama-3.3-70b
+39%
+57%
+15%
+33%
+23%
+36%
+12%
+29%
+Table 4:
+Tool usage distribution across the entire benchmark (not per-instance).
+Bench
+mark
+Base LLM
+Tool Usage (Number of Calls)
+Total
+get
+file
+info
+get
+class
+info
+get
+method
+info
+get
+symbol
+info
+get
+inheritance
+hierarchy
+get
+function
+callers
+get
+call
+chain
+Frontier Models
+Multi-SWE-Bench (Java)
+Claude-4.5-Sonnet
+87
+124
+403
+181
+2
+19
+33
+849
+Claude-3.7-Sonnet
+163
+136
+265
+75
+1
+7
+5
+652
+Open Source Models
+DeepSeek-V3-2
+497
+549
+1803
+1113
+22
+93
+49
+4126
+llama-4-maverick-17b-128e
+73
+245
+357
+90
+2
+7
+30
+804
+gpt-oss-120b (tool calling)
+604
+220
+708
+224
+0
+1
+1
+1758
+Devstral-small-2505
+2207
+478
+1431
+408
+29
+20
+15
+4588
+Qwen2-5-72b-instruct
+134
+389
+696
+84
+5
+2
+59
+1369
+llama-3.3-70b
+65
+307
+508
+55
+7
+38
+101
+1081
+Devstral-small-2507
+1933
+384
+3512
+360
+11
+20
+12
+6232
+gpt-oss-20b (tool calling)
+4076
+178
+1239
+281
+0
+5
+13
+5792
+Frontier Models
+SWE-PolyBench (Java)
+Claude-4.5-Opus
+416
+734
+1985
+848
+39
+82
+96
+4200
+Claude-4.5-Sonnet
+127
+184
+466
+226
+2
+33
+41
+1079
+Open Source Models
+DeepSeek-V3-2
+691
+878
+2397
+1653
+21
+114
+73
+5827
+gpt-oss-120b (tool calling)
+929
+438
+999
+422
+0
+3
+0
+2791
+DeepSeek-R1
+66
+342
+549
+106
+8
+17
+22
+1110
+llama-4-maverick-17b-128e
+83
+393
+459
+180
+6
+8
+28
+1157
+Qwen2-5-72b-instruct
+291
+656
+779
+164
+2
+12
+24
+1928
+Devstral-small-2505
+2019
+942
+2126
+631
+9
+29
+5
+5761
+Devstral-small-2507
+2171
+1203
+4213
+954
+7
+33
+7
+8588
+gpt-oss-20b (tool calling)
+7545
+236
+1075
+604
+0
+0
+37
+9497
+llama-3.3-70b
+58
+369
+702
+86
+18
+82
+124
+1439
+Table 5:
+Localization performance for different tool sets, using Claude-4.5-Sonnet on Multi-SWE-bench (Java).
+Tool Set
+$ Cost
+Avg.
+Turns
+File Retrieval
+Node Retrieval
+Total (Avg.)
+#Tokens
+Recall
+Precision
+Recall
+Precision
+iSWE-tools
+226 (1.77)
+575k
+4037
+63%
+83%
+36%
+59%
+iSWE-tools & view-file
+229 (1.79)
+584k
+3777
+63%
+83%
+37%
+57%
+Bash
+263 (2.06)
+667k
+5815
+62%
+82%
+37%
+57%
+All-Tools (iSWE-tools & Bash & swea)
+336 (2.63)
+855k
+5820
+62%
+81%
+37%
+58%
+This subsection breaks down how each component of iSWE
+contributes to its overall success.
+Table
+3
+shows the localization metrics
+at two stages in the pipeline:
+based on the intermediate JSON right after the localization
+agent (see e.g.
+),
+and based on the final code patch
+c
+new
+c_{\textrm{new}}
+after the editing
+agent (see e.g.
+).
+Calculating the same metrics at these different stages sheds light on
+the quality of the localization-agent intermediate output as well as
+on the faithfulness of the editing agent in following it.
+As before, the node metrics are based on the nearest enclosing
+function or class, similar to SWE-PolyBench
+[
+28
+]
+.
+Table
+3
+shows that file-level metrics
+are better after localization than after edit, because iSWE only
+shows the files found by the localization to the edit agent.
+In contrast, node-level metrics are sometimes better after edit than after
+localization, because the edit agent can further adjust its location.
+As we saw before, localization metrics closely track resolution rate,
+indicating that good localization is important to overall success.
+Table
+4
+shows how often the various models
+call the various localization tools.
+The first four tools (
+get_file/class/method/symbol_info
+)
+answer questions about code-graph nodes, whereas the last three
+tools (
+get_inheritance_hierarchy/function_callers/call_chains
+)
+answer questions about edges.
+There are more calls to node tools than to edge tools; one reason for this
+may be that edge tools yield more useful information in a single call.
+The overall most-called tool is
+get_method_info
+and the
+least-call tool is
+get_inheritance_hierarchy
+.
+Aside from a few exceptions, all models call pretty much all tools, indicating that iSWE’s tools are model-agnostic.
+Table
+5
+explores how iSWE’s tools compare
+to alternatives.
+It is based on multiple different benchmark runs, each with a
+different tool-set configuration for the localization agent.
+Besides iSWE’s Java-aware tools introduced
+in
+Section
+3
+, alternative tools include
+view_file
+;
+bash
+(running low-level shell commands);
+and
+swea
+(the set of tools from SWE-agent
+[
+40
+]
+,
+which are read-only but lower-level than the iSWE tools).
+The
+bash
+tool, despite being low-level, is feasible with
+recent frontier models, because those have been fine-tuned for SWE
+tasks.
+The iSWE tools,
+view_file
+, and the
+swea
+tools are
+read-only and free of side-effects;
+in contrast,
+bash
+can modify state and have other
+potentially harmful side-effects, thus requiring sand-boxing.
+Overall, the retrieval metrics are similar for all tool-sets.
+On the other hand, cost and tokens are lower when using iSWE-tools,
+through a combination of fewer turns and fewer spurious tokens per turn.
+This is a symptom of the iSWE tools being higher-level:
+models find it easier to call them (fewer turns)
+and to interpret the output from calls (fewer tokens).
+Cost and retrieval metrics aside, using iSWE tools has the additional
+advantage of avoiding spurious side-effects, making the agent safer
+and simpler.
+4.3
+Results by Benchmark Sample Characteristics
+Table 6:
+Performance by hand-annotated complexity level on Multi-SWE-Bench (Java) and by hand-annotated Verified or not label on SWE-PolyBench (Java).
+Bench
+mark
+Complexity
+#
+Instances
+Base LLM
+% Resolved
+Avg. Cost
+File Retrieval
+Node Retrieval
+Recall
+Precision
+Recall
+Precision
+Multi-SWE-
+Bench (Java)
+Easy
+27
+Claude-4.5-Sonnet
+16 (59.2%)
+$1.65
+65%
+80%
+42%
+49%
+DeepSeek-V3-2
+9 (33.3%)
+$0.18
+58%
+74%
+39%
+47%
+Medium
+65
+Claude-4.5-Sonnet
+26 (40.0%)
+$1.71
+66%
+86%
+39%
+58%
+DeepSeek-V3-2
+18 (27.6%)
+$0.21
+61%
+70%
+37%
+47%
+Hard
+36
+Claude-4.5-Sonnet
+1  (2.7%)
+$2.26
+55%
+80%
+22%
+65%
+DeepSeek-V3-2
+1  (2.7%)
+$0.37
+52%
+87%
+23%
+75%
+SWE-Poly-
+Bench (Java)
+Verified
+69
+Claude-4.5-Opus
+31 (44.9%)
+$2.25
+67%
+84%
+33%
+61%
+DeepSeek-V3-2
+18 (26.0%)
+$0.28
+60%
+71%
+30%
+50%
+Non-Verified
+96
+Claude-4.5-Opus
+25 (26.0%)
+$2.76
+58%
+82%
+28%
+58%
+DeepSeek-V3-2
+12 (12.5%)
+$0.27
+53%
+74%
+26%
+52%
+Table 7:
+Performance by localization-derived complexity attributes. These attributes are computed based on the gold patch and emulate the attributes defined by SWE-PolyBench.
+Bench
+mark
+Modification
+Type
+#
+Instances
+Base LLM
+% Resolved
+Avg.
+Cost
+File Retrieval
+Node Retrieval
+Recall
+Precision
+Recall
+Precision
+Multi-SWE-Bench (Java)
+None
+3
+Claude-4.5-Sonnet
+0  (0.0%)
+$2.27
+36%
+100%
+36%
+100%
+DeepSeek-V3-2
+0  (0.0%)
+$0.14
+25%
+100%
+25%
+100%
+Function
+Only
+Single
+All
+33
+Claude-4.5-Sonnet
+20 (60.6%)
+$1.75
+72%
+87%
+58%
+70%
+DeepSeek-V3-2
+10 (30.3%)
+$0.23
+56%
+69%
+50%
+61%
+44
+Claude-4.5-Sonnet
+27 (61.3%)
+$1.63
+73%
+90%
+59%
+74%
+DeepSeek-V3-2
+18 (40.9%)
+$0.21
+60%
+69%
+54%
+62%
+Class
+Only
+Single
+All
+4
+Claude-4.5-Sonnet
+4 (100.0%)
+$1.97
+87%
+100%
+83%
+75%
+DeepSeek-V3-2
+1 (25.0%)
+$0.24
+37%
+50.0%
+33%
+37%
+9
+Claude-4.5-Sonnet
+6 (66.6%)
+$2.14
+70%
+75%
+73%
+63%
+DeepSeek-V3-2
+2 (22.2%)
+$0.18
+46%
+57%
+48%
+45%
+Mixed
+72
+Claude-4.5-Sonnet
+10 (13.8%)
+$1.95
+55%
+78%
+31%
+65%
+DeepSeek-V3-2
+8 (11.1%)
+$0.29
+46%
+65%
+26%
+53%
+Total
+128
+Claude-4.5-Sonnet
+43 (33.5%)
+$1.86
+62%
+82%
+44%
+69%
+DeepSeek-V3-2
+28 (21.8%)
+$0.25
+50%
+67%
+37%
+57%
+SWE-PolyBench (Java)
+None
+0
+Claude-4.5-Sonnet
+–
+–
+–
+–
+–
+–
+DeepSeek-V3-2
+–
+–
+–
+–
+–
+–
+Function
+Only
+Single
+All
+31
+Claude-4.5-Opus
+18 (58.0%)
+$1.53
+84%
+85%
+74%
+78%
+DeepSeek-V3-2
+10 (32.2%)
+$0.23
+49%
+50%
+39%
+40%
+46
+Claude-4.5-Opus
+25 (54.3%)
+$1.61
+77%
+83%
+69%
+78%
+DeepSeek-V3-2
+16 (34.7%)
+$0.23
+54%
+62%
+46%
+53%
+Class
+Only
+Single
+All
+5
+Claude-4.5-Opus
+2 (40.0%)
+$3.35
+90%
+81%
+40%
+28%
+DeepSeek-V3-2
+1 (20.0%)
+$0.38
+46%
+50%
+16%
+30%
+10
+Claude-4.5-Opus
+4 (40.0%)
+$3.88
+74%
+90%
+44%
+58%
+DeepSeek-V3-2
+1 (10.0%)
+$0.48
+39%
+55%
+22%
+43%
+Mixed
+109
+Claude-4.5-Opus
+26 (23.8%)
+$2.82
+53%
+83%
+28%
+75%
+DeepSeek-V3-2
+13 (11.9%)
+$0.29
+34%
+50%
+19%
+44%
+Total
+165
+Claude-4.5-Opus
+55 (33.3%)
+$2.55
+61%
+84%
+40%
+75%
+DeepSeek-V3-2
+30 (18.1%)
+$0.28
+40%
+54%
+26%
+46%
+Some benchmarks come with instance labels that partition their set of
+instances into different subsets.
+Comparing metrics on these subsets yields further insight into agent
+performance, while also helping us understand the benchmarks better.
+Multi-SWE-bench
+[
+43
+]
+comes with hand-labeled
+complexity levels (Easy, Medium, or Hard).
+Table
+6
+shows that the metrics follow the
+expected trend: as issues get harder,
+% Resolved
+decreases,
+cost increases, and retrieval metrics decrease.
+Of course, when metrics are computed on a smaller subset of
+instances, they get more noisy.
+SWE-PolyBench
+[
+28
+]
+comes with hand-labeled
+Verified tags for some instances whose issue
+description
+d
+issue
+d_{\textrm{issue}}
+is clear and matches its
+tests
+t
+golden
+t_{\textrm{golden}}
+well.
+SWE-PolyBench
+[
+28
+]
+indicates that on average,
+Verified instances are easier than non-Verified ones.
+This implies that the numbers are not directly comparable across the
+SWE-PolyBench leaderboards for Verified vs. Full.
+Besides hand-labeled complexity levels, SWE-PolyBench also comes with
+localization-derived labels that are indicative of complexity.
+We wrote our own code for deriving these labels,
+then ran it on both benchmarks.
+Table
+7
+shows the results.
+Here, None means all changes are in new files or non-code files;
+Function Only means the change is entirely contained in
+functions (which may or may not be part of the class);
+Class Only means the change is entirely in a class (e.g., changing
+attributes, but not contained within a function of a class);
+and Mixed counts any remaining changes across functions and classes or
+top-level code in a file.
+Rows marked Single only count instances where a single node was
+modified, whereas rows marked All count instances where one or more
+nodes of the given kind were modified.
+Some of the subsets are small, leading to noisy results, but from the
+more significant subsets we can observe trends.
+In general, going from functions to classes to mixed, resolution rate
+decreases, cost increases, and retrieval metrics decrease.
+While Multi-SWE-bench
+[
+43
+]
+and
+SWE-PolyBench
+[
+28
+]
+are great contributions to the
+research community, we also encountered some idiosyncrasies worth sharing.
+Multi-SWE-bench instances come with
+identifier hints
+, which are
+newly-defined entity names, that could be used in addition to the issue
+description
+d
+issue
+d_{\textrm{issue}}
+to make the issue more specific.
+Since we are unsure about whether or not other non-iSWE leaderboard
+submissions make use of such identifier hints, we decided to hide them from
+iSWE for our experiments, even if that reduces iSWE’s apparent performance.
+Some SWE-bench inspired benchmarks also have so-called
+hints-text
+that, despite the similar-sounding name, is unrelated to identifier hints.
+Such hints-text comes from comments and discussions on the issue after
+the original issue statement; using this is widely frowned upon, so
+we hide it from iSWE for our experiments.
+Multi-SWE-bench has
+duplicate issues
+with identical issue
+descriptions
+d
+issue
+d_{\textrm{issue}}
+and golden code patches
+c
+new
+c_{\textrm{new}}
+,
+mostly due to back-porting fixes to different branches.
+We treat these like any other instances for consistency with how
+everyone else uses the benchmark.
+Furthermore, Multi-SWE-bench also has some instances where
+the
+golden code patch fails the tests
+; again, we treat these
+like any other instances, although not surprisingly, the code patch
+generated by iSWE also fails the tests, so these remain unresolved.
+Finally, since iSWE does not have a bash tool, it cannot cheat by
+using commands such as
+‘
+git log --all
+’
+or
+‘
+git show
+<commit_id>
+’
+that have been reported
+from non-iSWE solutions on some SWE-bench derived leaderboards.
+Table 8:
+Performance by number of identifier hints about new entities provided in Multi-SWE-Bench (Java), using Claude-4.5-Sonnet.
+# Hints
+Provided
+#
+Instances
+% Resolved
+File Retrieval
+Node Retrieval
+Recall
+Precision
+Recall
+Precision
+0
+79
+44%
+68.33%
+84.99%
+52.03%
+73.89%
+1
+23
+30%
+59.66%
+86.96%
+35.98%
+59.50%
+2
+4
+25%
+50.00%
+100.00%
+43.15%
+95.00%
+3
+2
+0%
+50.00%
+62.50%
+50.00%
+66.67%
+4
+8
+0%
+62.35%
+75.00%
+18.31%
+68.84%
+5
+2
+0%
+100.00%
+50.00%
+66.67%
+20.56%
+≥
+6
+\geq 6
+10
+0%
+15.18%
+57.00%
+14.12%
+45.85%
+To explore one of the above-listed idiosyncrasies more,
+Table
+8
+shows iSWE’s performance on instances
+with different numbers of
+identifier hints
+.
+Since we are hiding identifier hints from iSWE, we expected iSWE to
+perform worse on instances where the benchmark creators provided such
+hints.
+The results show that this expectation holds: iSWE’s resolution rates
+are highest for instances with zero hints, and higher for instances
+with few hints than for instances with many.
+The information-retrieval metrics are noisy, perhaps due to the small
+subsets of instances.
+5
+Related Work
+The authors of Multi-SWE-bench
+[
+43
+]
+and
+SWE-PolyBench
+[
+28
+]
+created leaderboards and
+populated them using multi-lingual issue resolution systems they
+adapted from prior work.
+Since those adapted systems can handle Java code,
+that makes them related work for our paper.
+Specifically, the Multi-SWE-bench leaderboard has entries for
+Magentless (based on Agentless
+[
+39
+]
+but skipping test-based validation);
+MSWE-agent (based on SWE-Agent
+[
+40
+]
+);
+and MopenHands (based on OpenHands
+[
+36
+]
+).
+Similarly, the SWE-PolyBench leaderboard has entries for
+Agentless-PB (based on Agentless
+[
+39
+]
+but using only some parts of test-based validation);
+SWE-agent-PB (based on SWE-Agent
+[
+40
+]
+);
+and Aider-PB (based on Aider
+[
+4
+]
+but disabling interactive parts and test-based validation).
+All of these systems have only limited language-specific components,
+such as using Tree-Sitter
+[
+13
+]
+to create a
+repository map in Aider and Agentless.
+In contrast, iSWE puts a special emphasis on Java, with more advanced
+Java-specific tools.
+At the time of this writing, InfCode using GPT-5.2 is at the top of
+the Multi-SWE-bench (Java) leaderboard
+[
+23
+]
+.
+It works by alternating between two ReAct agent, a test generator and
+a patch generator, causing higher cost;
+in contrast, iSWE does not yet use test feedback.
+The leaderboard for SWE-PolyBench Verified also has highly ranked
+third-party submissions, including Java results beyond the entries
+from the benchmark authors.
+Prometheus
+[
+11
+]
+is an issue resolution system with five
+sub-agents, all revolving around a common knowledge graph constructed
+using Tree-Sitter.
+In contrast, iSWE uses a more direct tool-based approach with no
+knowledge graph and more emphasis on Java.
+Furthermore, our paper reports more detailed results, such as
+localizer metrics not present in the Prometheus paper.
+The other third-party leaderboard entries on SWE-PolyBench with Java
+results are Atlassian Rovo Dev
+[
+6
+]
+and Amazon Q Developer
+Agent
+[
+5
+]
+.
+Unfortunately, their inner workings are unknown; while there is a
+paper about a predecessor system of Rovo
+Dev
+[
+31
+]
+, it does not talk about its
+tools, and even if it did, Rovo Dev may work differently.
+We can thus not compare their approach, only their results
+(see
+Section
+4
+).
+While the above discussion focuses on Java issue resolution, so far,
+more of the action has been on Python issue
+resolution
+[
+4
+,
+10
+,
+11
+,
+19
+,
+32
+,
+34
+,
+36
+,
+39
+,
+40
+,
+44
+]
+.
+One dimension for the design of issue resolution systems is whether to
+use zero, one, or multiple agents.
+Agentless
+[
+39
+]
+uses zero ReAct agents, and instead,
+has a fixed workflow, both at the top-level and within its sub-modules
+for localization and code editing.
+Single-agent systems, such as SWE-Agent
+[
+40
+]
+,
+Aider
+[
+4
+]
+, or OpenHands
+[
+36
+]
+, use a unified
+ReAct loop to handle both localization and code editing.
+Multi-agent issue resolution systems rely upon anywhere from
+two (AutoCodeRover
+[
+44
+]
+, HULA
+[
+31
+]
+)
+to four (CodeR
+[
+10
+]
+, Magis
+[
+32
+]
+)
+or even five (MASAI
+[
+34
+]
+, Prometheus
+[
+11
+]
+)
+sub-agents.
+As discussed in
+Section
+3
+, iSWE has two sub-agents
+with a hand-off based on a sanitized and well-typed set of locations.
+More important than the number of sub-agents may be the tools being
+called by these agents.
+Some systems leverage basic file system tools, specifically bash shell
+commands for code search and a single custom tool to view and edit files.
+Since the release of Claude 3.5 Sonnet, several systems have converged
+to a
+str_replace_editor
+tool to view files and make changes
+(create and edit) to existing
+files
+[
+19
+,
+34
+,
+36
+,
+39
+,
+40
+]
+.
+This is true even for some systems that previously used their own
+different tools, since Claude is a strong code model specifically
+trained with these tools in mind.
+Another approach is to introduce more sophisticated, domain-specific
+tools.
+For example, AutoCodeRover
+[
+44
+]
+employs AST-based
+tools that enable searching for specific code entities (classes,
+methods) within other entities, and
+Prometheus
+[
+11
+]
+builds a code knowledge graph for
+the code repository, allowing the agent to search for classes and
+functions.
+With iSWE, we double down on more sophisticated tools specialized for Java.
+At the same time, iSWE differs from most prior issue resolution
+systems by being careful to use mostly read-only tools.
+One topic this paper did not cover is testing and inference scaling.
+Several issue-resolution systems run existing regression tests or
+newly-generated reproduction tests, either to refine
+c
+new
+c_{\textrm{new}}
+or to select among multiple candidates
+for
+c
+new
+c_{\textrm{new}}
+[
+16
+,
+19
+,
+20
+,
+39
+,
+44
+]
+.
+In fact, this practice can be so useful that our team created a
+dedicated benchmark for reproduction test generation, TDD-Bench
+Verified
+[
+3
+]
+.
+But while we have ongoing work on both testing
+(e.g.
+[
+2
+]
+) and inference scaling, that work is
+beyond the scope of this paper, which focuses on the core agent.
+Recently, there has been significant effort to identify areas where issue resolution systems excel and where they perform poorly. Analysis of agent performance on multi-file issues
+[
+17
+]
+and single-file saturation studies
+[
+18
+]
+reveal that state-of-the-art systems struggle significantly with multi-file issues, despite achieving high performance on single-file problems. Further research, such as TRAIL (Trace Reasoning and Agentic Issue Localization)
+[
+15
+]
+and MAST (Multi-Agent System Failure Taxonomy)
+[
+9
+]
+, explores the failure modes of agents by analyzing their trajectories, identifying various reasons for failure including incorrect fault localization, inability to understand complex code dependencies, and challenges in maintaining context across multiple files.
+These studies highlight the gap between current agent capabilities and the requirements of real-world software engineering tasks, where issues frequently span multiple files and require deep understanding of system architecture.
+6
+Conclusion
+This paper introduces iSWE, a two-agent system for resolving issues on
+code repositories with a particular emphasis on Java.
+The first sub-agent uses read-only tools based on static analysis to
+find a set of code locations to be edited.
+The second sub-agent uses an edit tool, which also performs most of
+its work in a read-only manner, with any side-effects
+isolated in a container.
+The tools for both agents leverage Java knowledge for better performance.
+Our results show that iSWE reaches state-of-the-art issue resolution
+rates on the Java splits of two benchmarks, SWE-PolyBench and
+Multi-SWE-Bench.
+It achieves these results without any model fine-tuning or dynamic
+test execution feedback.
+We expect that incorporating those in future work will further
+increase resolution rates.
+References
+[1]
+P. Agarwal, H. Gupta, S. Soni, R. Vallam, R. Sindhgatta, and S. Mehta
+(2025)
+Automated creation and enrichment framework for improved invocation of enterprise APIs as tools
+.
+External Links:
+Link
+Cited by:
+§3.1
+.
+[2]
+T. Ahmed, J. Ganhotra, A. Shinnar, and M. Hirzel
+(2026)
+Heterogeneous prompting and execution feedback for SWE issue test generation and selection
+.
+In
+International Conference on Software Engineering (ICSE)
+,
+Cited by:
+§5
+.
+[3]
+T. Ahmed, M. Hirzel, R. Pan, A. Shinnar, and S. Sinha
+(2024)
+TDD-Bench Verified: can LLMs generate tests for issues before they get resolved?
+.
+External Links:
+Link
+Cited by:
+§5
+.
+[4]
+Aider Team
+(2024)
+How aider scored SOTA 26.3% on SWE bench Lite
+.
+Note:
+Blog post
+External Links:
+Link
+Cited by:
+§5
+,
+§5
+.
+[5]
+Amazon Team
+(2024)
+Amazon Q developer agent
+.
+External Links:
+Link
+Cited by:
+§5
+.
+[6]
+Atlassian Team
+(2025)
+Atlassian Rovo Dev
+.
+External Links:
+Link
+Cited by:
+§5
+.
+[7]
+I. Badertdinov, A. Golubev, M. Nekrashevich, A. Shevtsov, S. Karasik, A. Andriushchenko, M. Trofimova, D. Litvintseva, and B. Yangel
+(2025)
+SWE-rebench: an automated pipeline for task collection and decontaminated evaluation of software engineering agents
+.
+External Links:
+Link
+Cited by:
+§2
+.
+[8]
+B. Baker, J. Huizinga, L. Gao, Z. Dou, M. Y. Guan, A. Madry, W. Zaremba, J. Pachocki, and D. Farhi
+(2025)
+Monitoring reasoning models for misbehavior and the risks of promoting obfuscation
+.
+External Links:
+Link
+Cited by:
+§2
+.
+[9]
+M. Cemri, M. Z. Pan, S. Yang, L. A. Agrawal, B. Chopra, R. Tiwari, K. Keutzer, A. Parameswaran, D. Klein, K. Ramchandran,
+et al.
+(2025)
+Why do multi-agent llm systems fail?
+.
+arXiv preprint arXiv:2503.13657
+.
+Cited by:
+§5
+.
+[10]
+D. Chen, S. Lin, M. Zeng, D. Zan, J. Wang, A. Cheshkov, J. Sun, H. Yu, G. Dong, A. Aliev, J. Wang, X. Cheng, G. Liang, Y. Ma, P. Bian, T. Xie, and Q. Wang
+(2024)
+CodeR: issue resolving with multi-agent and task graphs
+.
+External Links:
+Link
+Cited by:
+§5
+.
+[11]
+Z. Chen, Y. Pan, S. Lu, J. Xu, C. Le Goues, M. Monperrus, and H. Ye
+(2025)
+Prometheus: unified knowledge graphs for issue resolution in multilingual codebases
+.
+External Links:
+Link
+Cited by:
+§5
+,
+§5
+,
+§5
+.
+[12]
+N. Chowdhury, J. Aung, C. J. Shern, O. Jaffe, D. Sherburn, G. Starace, E. Mays, R. Dias, M. Aljubeh, M. Glaese, C. E. Jimenez, J. Yang, K. Liu, and A. Madry
+(2024)
+Introducing SWE-bench Verified
+.
+External Links:
+Link
+Cited by:
+§2
+.
+[13]
+T. Clem and P. Thomson
+(2022)
+Static analysis at GitHub
+.
+Communications of the ACM (CACM)
+65
+(
+2
+),
+pp. 44–51
+.
+External Links:
+Link
+Cited by:
+§3.1
+,
+§5
+.
+[14]
+X. Deng, J. Da, E. Pan, Y. Y. He, C. Ide, K. Garg, N. Lauffer, A. Park, N. Pasari, C. Rane, K. Sampath, M. Krishnan, S. Kundurthy, S. Hendryx, Z. Wang, C. B. C. Zhang, N. Jacobson, B. Liu, and B. Kenstler
+(2025)
+SWE-Bench Pro: can AI agents solve long-horizon software engineering tasks?
+.
+External Links:
+Link
+Cited by:
+§2
+.
+[15]
+D. Deshpande, V. Gangal, H. Mehta, J. Krishnan, A. Kannappan, and R. Qian
+(2025)
+TRAIL: trace reasoning and agentic issue localization
+.
+arXiv preprint arXiv:2505.08638
+.
+Cited by:
+§5
+.
+[16]
+R. Ehrlich, B. Brown, J. Juravsky, R. Clark, C. Re, and A. Mirhoseini
+(2025)
+CodeMonkeys: scaling test-time compute for software engineering
+.
+External Links:
+Link
+Cited by:
+§5
+.
+[17]
+J. Ganhotra
+(2025)
+Do SWE-agents solve multi-file issues like humans? A deep dive into SWE-bench Verified
+.
+Note:
+Blog post
+External Links:
+Link
+Cited by:
+§2
+,
+§5
+.
+[18]
+J. Ganhotra
+(2025)
+The multi-file frontier: why SWE-bench Verified doesn’t reflect real-world programming challenges
+.
+Note:
+Blog post
+External Links:
+Link
+Cited by:
+§2
+,
+§5
+.
+[19]
+P. Gao, Z. Tian, X. Meng, X. Wang, R. Hu, Y. Xiao, Y. Liu, Z. Zhang, J. Chen, C. Gao, Y. Lin, Y. Xiong, C. Peng, and X. Liu
+(2025)
+Trae agent: an LLM-based agent for software engineering with test-time scaling
+.
+External Links:
+Link
+Cited by:
+§5
+,
+§5
+,
+§5
+.
+[20]
+N. Jain, J. Singh, M. Shetty, L. Zheng, K. Sen, and I. Stoica
+(2025)
+R2E-Gym: procedural environments and hybrid verifiers for scaling open-weights SWE agents
+.
+External Links:
+Link
+Cited by:
+§5
+.
+[21]
+C. E. Jimenez, J. Yang, A. Wettig, S. Yao, K. Pei, O. Press, and K. Narasimhan
+(2024)
+SWE-bench: can language models resolve real-world GitHub issues?
+.
+In
+International Conference on Learning Representations (ICLR)
+,
+External Links:
+Link
+Cited by:
+§1
+,
+§2
+.
+[22]
+R. Krishna, R. Pan, S. Sinha, S. Tamilselvam, R. Pavuluri, and M. Vukovic
+(2025)
+Codellm-Devkit: a framework for contextualizing code LLMs with program analysis insights
+.
+In
+Industry paper at Symposium on the Foundations of Software Engineering (FSE-Industry)
+,
+pp. 308–318
+.
+External Links:
+Link
+Cited by:
+§1
+,
+§3.1
+.
+[23]
+K. Li, M. Wang, H. Zhang, Z. Li, Y. Yuan, M. Li, X. Gao, H. Sun, C. Hu, and W. Lv
+(2025)
+InfCode: adversarial iterative refinement of tests and patches for reliable software issue resolution
+.
+External Links:
+Link
+Cited by:
+§5
+.
+[24]
+S. Liang, S. Garg, and R. Z. Moghaddam
+(2025)
+The SWE-bench illusion: when state-of-the-art LLMs remember instead of reason
+.
+External Links:
+Link
+Cited by:
+§2
+.
+[25]
+J. Loeliger
+(2009)
+Version control with Git: powerful techniques for centralized and distributed project management
+.
+O’Reilly
+.
+Cited by:
+§3.2
+.
+[26]
+M. MacDiarmid, B. Wright, J. Uesato, J. Benton, J. Kutasov, S. Price, N. Bouscal, S. Bowman, T. Bricken, A. Cloud, C. Denison, J. Gasteiger, R. Greenblatt, J. Leike, J. Lindsey, V. Mikulik, E. Perez, A. Rodrigues, D. Thomas, A. Webson, D. Ziegler, and E. Hubinger
+(2025)
+Natural emergent misalignment from reward hacking in production RL
+.
+External Links:
+Link
+Cited by:
+§2
+.
+[27]
+OpenAI
+(2026)
+Why SWE-bench Verified no longer measures frontier coding capabilities
+.
+Note:
+Blog post
+External Links:
+Link
+Cited by:
+§2
+,
+§4
+.
+[28]
+M. S. Rashid, C. Bock, Y. Zhuang, A. Buccholz, T. Esler, S. Valentin, L. Franceschi, M. Wistuba, P. T. Sivaprasad, W. J. Kim, A. Deoras, G. Zappella, and L. Callot
+(2025)
+SWE-PolyBench: a multi-language benchmark for repository level evaluation of coding agents
+.
+External Links:
+Link
+Cited by:
+§1
+,
+§2
+,
+§4.2
+,
+§4.3
+,
+§4.3
+,
+§4
+,
+§4
+,
+§5
+.
+[29]
+T. Schick, J. Dwivedi-Yu, R. Dessi, R. Raileanu, M. Lomeli, L. Zettlemoyer, N. Cancedda, and T. Scialom
+(2023)
+Toolformer: language models can teach themselves to use tools
+.
+In
+Conference on Neural Information Processing Systems (NeurIPS)
+,
+pp. 68539–68551
+.
+External Links:
+Link
+Cited by:
+§3
+.
+[30]
+C. Spiess, M. Vaziri, L. Mandel, and M. Hirzel
+(2025)
+AutoPDL: automatic prompt optimization for LLM agents
+.
+In
+Conference on Automated Machine Learning (AutoML)
+,
+External Links:
+Link
+Cited by:
+§3
+.
+[31]
+W. Takerngsaksiri, J. Pasuksmit, P. Thongtanunam, C. Tantithamthavorn, R. Zhang, F. Jiang, J. Li, E. Cook, K. Chen, and M. Wu
+(2025)
+Human-in-the-loop software development agents
+.
+In
+International Conference on Software Engineering: Software Engineering in Practice track (ICSE-SEIP)
+,
+pp. 342–352
+.
+External Links:
+Link
+Cited by:
+§5
+,
+§5
+.
+[32]
+W. Tao, Y. Zhou, W. Zhang, and Y. Cheng
+(2024)
+MAGIS: LLM-based multi-agent framework for GitHub issue resolution
+.
+In
+Conference on Neural Information Processing Systems (NeurIPS)
+,
+pp. 51963–51993
+.
+External Links:
+Link
+Cited by:
+§5
+.
+[33]
+M. Vaziri, L. Mandel, C. Spiess, and M. Hirzel
+(2024)
+PDL: a declarative prompt programming language
+.
+External Links:
+Link
+Cited by:
+§1
+,
+§3.1
+,
+§3
+.
+[34]
+N. Wadhwa, A. Sonwane, D. Arora, A. Mehrotra, S. Utpala, R. B. Bairi, A. Kanade, and N. Natarajan
+(2024)
+MASAI: modular architecture for software-engineering AI agents
+.
+In
+Workshop on Open-World Agents (OWA@NeurIPS)
+,
+External Links:
+Link
+Cited by:
+§5
+,
+§5
+.
+[35]
+X. Wang, Y. Chen, L. Yuan, Y. Zhang, Y. Li, H. Peng, and H. Ji
+(2024)
+Executable code actions elicit better LLM agents
+.
+In
+International Conference on Machine Learning (ICML)
+,
+External Links:
+Link
+Cited by:
+§1
+.
+[36]
+X. Wang, B. Li, Y. Song, F. F. Xu, X. Tang, M. Zhuge, J. Pan, Y. Song, B. Li, J. Singh, H. H. Tran, F. Li, R. Ma, M. Zheng, B. Qian, Y. Shao, N. Muennighoff, Y. Zhang, B. Hui, J. Lin, R. Brennan, H. Peng, H. Ji, and G. Neubig
+(2025)
+OpenHands: an open platform for AI software developers as generalist agents
+.
+In
+International Conference on Learning Representations (ICLR)
+,
+External Links:
+Link
+Cited by:
+§3
+,
+§5
+,
+§5
+,
+§5
+.
+[37]
+J. Wei, X. Wang, D. Schuurmans, M. Bosma, B. Ichter, F. Xia, E. Chi, Q. Le, and D. Zhou
+(2022)
+Chain-of-thought prompting elicits reasoning in large language models
+.
+In
+Conference on Neural Information Processing Systems (NeurIPS)
+,
+pp. 24824–24837
+.
+External Links:
+Link
+Cited by:
+§3
+.
+[38]
+Q. Wu, G. Bansal, J. Zhang, Y. Wu, B. Li, E. Zhu, L. Jiang, X. Zhang, S. Zhang, J. Liu, A. H. Awadallah, R. W. White, D. Burger, and C. Wang
+(2023)
+AutoGen: enabling next-gen LLM applications via multi-agent conversation
+.
+External Links:
+Link
+Cited by:
+§3
+.
+[39]
+C. S. Xia, Y. Deng, S. Dunn, and L. Zhang
+(2025)
+Demystifying LLM-based software engineering agents
+.
+In
+Symposium on the Foundations of Software Engineering (FSE)
+,
+pp. 801–824
+.
+External Links:
+Link
+Cited by:
+§5
+,
+§5
+,
+§5
+,
+§5
+.
+[40]
+J. Yang, C. E. Jimenez, A. Wettig, K. Lieret, S. Yao, K. Narasimhan, and O. Press
+(2024)
+SWE-Agent: agent-computer interfaces enable automated software engineering
+.
+In
+Conference on Neural Information Processing Systems (NeurIPS)
+,
+pp. 50528–50652
+.
+External Links:
+Link
+Cited by:
+§1
+,
+§3.1
+,
+§4.2
+,
+§5
+,
+§5
+,
+§5
+.
+[41]
+J. Yang, K. Lieret, C. E. Jimenez, A. Wettig, K. Khandpur, Y. Zhang, B. Hui, O. Press, L. Schmidt, and D. Yang
+(2025)
+SWE-smith: scaling data for software engineering agents
+.
+External Links:
+Link
+Cited by:
+§2
+.
+[42]
+S. Yao, J. Zhao, D. Yu, N. Du, I. Shafran, K. R. Narasimhan, and Y. Cao
+(2023)
+ReAct: synergizing reasoning and acting in language models
+.
+In
+International Conference on Learning Representations (ICLR)
+,
+External Links:
+Link
+Cited by:
+§1
+,
+§3
+.
+[43]
+D. Zan, Z. Huang, W. Liu, H. Chen, L. Zhang, S. Xin, L. Chen, Q. Liu, X. Zhong, A. Li, S. Liu, Y. Xiao, L. Chen, Y. Zhang, J. Su, T. Liu, R. Long, K. Shen, and L. Xiang
+(2025)
+Multi-SWE-bench: a multilingual benchmark for issue resolving
+.
+External Links:
+Link
+Cited by:
+§1
+,
+§2
+,
+§4.3
+,
+§4.3
+,
+§4
+,
+§5
+.
+[44]
+Y. Zhang, H. Ruan, Z. Fan, and A. Roychoudhury
+(2024)
+AutoCodeRover: autonomous program improvement
+.
+In
+International Symposium on Software Testing and Analysis (ISSTA)
+,
+pp. 1592–1604
+.
+External Links:
+Link
+Cited by:
+§5
+,
+§5
+,
+§5
+.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

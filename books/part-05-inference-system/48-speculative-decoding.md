@@ -85,7 +85,13 @@ draft token 2 是否可接受？
 
 <!-- source-family:SF-2026-ARXIV-2605-24793 -->
 
-一个常见误解是：Speculative Decoding 就是用小模型替代大模型生成。
+### 声学草稿让验证分成两级仲裁
+
+在带非自回归模态头的模型里，便宜的 proposal 也可能已经在输入编码时产生。语音识别的一个分支复用冻结 CTC encoder：先把逐帧 greedy 路径折叠为整句文本；只有所有 frame 的 entropy 都低于阈值，才直接提交该句。否则让 LLM 在同一因果前向里计算 draft 各 token 在 draft prefix 下的条件 likelihood，逐 token 均过门才接受；在首个失败点停止接受，并从已保留 prefix 续跑 AR。它无须另训独立 drafter，原模型与模态头仍需既有训练；这不是 target-law 不变的验证：输入 confidence 拥有一条绕过 target 的路径，likelihood 阈值也不同于 ratio acceptance 和 residual correction。低 entropy 不证明转写正确，若要求复现 target 的分布，就不能把这条仲裁路径当作 exact acceleration。
+
+这条分支的合同是 ASR 误差与批量处理成本，而非复现 LLM 原输出；流畅的 target 输出也可能较不忠实于声学证据。两个门分别控制直接接受和较保守的 verify，校准必须覆盖当前语言、噪声与 utterance 长度。失败后仍要支付整句 verify 与余下 AR 的成本；verify/fallback 分别组 batch 时，还要结算 acoustic embeddings 的暂存和 CPU 搬运。单 H100/BF16、按音频长度排序的作者结果只支持该批量配置下的局部 Pareto 取舍：较低平均 WER 不保证每个语料都更准或更快，高吞吐配置也付出了 WER 代价，不能把 RTFx 提升读成无损或在线 SLO 认证。低接受率、在线单句延迟目标、没有合适 CTC 头或任务不是 ASR 时，普通 AR 或已有双遍转写仍是合理分支。<!-- source-family:SF-2026-ARXIV-2603-11243 -->
+
+回到经典的分布保持分支，一个常见误解是：Speculative Decoding 就是用小模型替代大模型生成。
 
 不是。小模型只负责提出候选，大模型仍然决定哪些 token 被接受。经典 speculative decoding / speculative sampling 的目标是在加速的同时保持目标模型原有输出分布。也就是说，系统希望加速的是采样过程，而不是换成另一个模型的行为。
 
@@ -138,6 +144,10 @@ output distribution also changes
 optimization，而是在引入新的 decoding policy。此时必须同时说明质量目标、允许的
 distribution shift、适用 workload 和 rollback 条件，不能只用 acceptance rate、
 block efficiency 或 tokens/s 宣称“更快”。
+
+一条明确支付分布偏差的分支，是保留 ratio acceptance，同时接受 target nucleus 内原本会被拒绝的 proposal，并保留理想 residual recovery。若 q 是实际 proposal law、p 是 processed target law，nucleus 内 draft excess mass `E = Σ[x∈S](q(x)−p(x))₊` 既是额外接受概率，也等于完整单步输出 kernel 与 p 的 TV 距离。扩大 nucleus 因而不是无损加速，而是在更改 decoding policy。
+
+单步恒等式不能直接认证整条 speculative block。之前的接受、proposal selection、bonus 和 rollback 会改变给定已提交 history 的下一输出 law；只有真实条件 kernel 始终满足局部误差界，才能通过 sequential coupling 累计 sequence-TV。这不是任意相同 seed 的重放保证或任务准确率置信度。[Nucleus Speculative Decoding v1](https://arxiv.org/html/2610.07822v1)中的数值 floor、低 residual fallback 还需另验，受限任务亦有质量回退，主要 timing 的硬件、精度、batch 与输入输出预算未披露。分布或 backend 条件未核时，普通 exact rejection sampling/target-only 仍成立。<!-- source-family:SF-2026-ARXIV-2610-07822 -->
 
 这也反向约束 drafter training objective。Forward KL 在 drafter 容量足够时与 perfect acceptance 共享全局最优，
 且 early training 梯度平滑，因此仍是合理基线；但在 capacity-limited 可达区域，更低 KL 不保证更大的
@@ -245,6 +255,10 @@ expected accepted progress
 confidence calibration、traffic mix 或 scheduler 行为变化，旧 profile 就可能失效。
 
 旧 block 的接受长度统计还受自身上限截断：接受到顶只说明后续没有被这次测量观察到，不等于下一位置已被拒绝；频繁到顶可提示需要另测更长 block，但不能直接把缺失尾部当成可兑现收益。尤其双向 block drafter 扩大 horizon 后，原有位置的 proposal 分布也可能改变，因此必须重新测量完整接受长度、EOS处理和实际验证成本，不能把旧 histogram 无条件外推成更长 block 的吞吐承诺。
+
+删失还应按采取的 action 建模。以 state、draft method 和长度为条件预测 rejection hazard，部分接受 ℓ 的 likelihood 是存活至 ℓ 再在 ℓ+1 拒绝；完整接受 k 只贡献存活至 k 的 likelihood。请求级选择并固定 expert，block 级再根据此前反馈选择深度，能把较慢的方法决策与较快的预算决策分开；后者不得使用本轮尚未发生的接受结果。
+
+[APEX v1](https://arxiv.org/html/2610.07780v1)用离线训练的 utility head 作深度决策，survival/cost 等为辅助监督，在线动作调整不等于网络在线学习。标签、状态人口、cost profile 和 verifier 身份仍需校准；有限 Qwen3-8B/vLLM 对照中固定配置也有胜出，硬件、精度、实际采样配置及主实验并发等未披露。它不认证通用加速、功耗或所有 backend 的 exactness；漂移或收益不足时，固定短 draft、既有 controller 与 target-only 仍成立。<!-- source-family:SF-2026-ARXIV-2610-07780 -->
 
 把线性 draft 扩成树，还需要区分“这个 token 的边缘概率”和“它在已接受父路径下的概率”。一次 block backbone 前向可以共用，但后续节点用低秩 parent-conditioned head 修正分支分布；用于预算的边接受率则应在所有祖先已接受的条件人口上校准，而非混入祖先已拒绝、实际不可达的边。各边估计的乘积提供 path-survival 预算信号，不是未经检查的独立性证明。负载控制器再把这个信号与同 engine、硬件、batch 和温度的验证成本配对，以边际价格裁树；收益不成立时回到代码相同的 chain，必要时关闭 speculation。它增加条件头、校准与部署 profile 成本，不能由更高接受长度推出更高端到端吞吐。
 
@@ -832,6 +846,10 @@ Token-exact speculative decoding 的验证边界清楚：目标模型接受多�
 
 <!-- source-family:SF-2026-ARXIV-2605-04263 -->
 
+图像生成还存在一条主动放宽这个前缀边界的分支。低分辨率模型先起草完整行，再由训练过的上采样器映射到高分辨率 token；目标模型并行计算这些位置的概率，以 codebook 邻域的概率总和与阈值决定局部接受。拒绝后不必丢弃整个 raster suffix：将拒绝位置扩成二维邻域，逐位置重采该区域，同时保留较远的已接受位置；更新后的高分辨率结果再经下采样成为下一轮 draft 条件。这把 proposal 的尺度和纠正的空间范围一起变成设计变量，而不是仅换一个更小的 drafter。它依赖远端条件变化足够弱，邻域内的概率相近也不等于语义相同；这种局部保留没有经典 acceptance/residual 的 target joint-distribution 保证，必须明确属于质量—速度合同，不能沿用上文 token-exact 的无损声明。<!-- source-family:SF-2026-ARXIV-2601-05149 -->
+
+局部重采可能传播未修正的依赖误差，上下采样失真还会污染下一轮条件，因此阈值、扩张半径、映射器版本与完整运行成本需要共同验收。[受限图像实验](https://arxiv.org/html/2601.05149v1)中的 Tar-1.5B、512p/1024p、单 A100、batch1 对照支持这一取舍，部分质量指标退步，更快的并行基线也仍存在；阈值扫选、额外映射器训练和 CUDA-event 计时不授生产 SLO 或任意模型加速。低分辨率 draft 本身还可能成为瓶颈，不能只计少做的 target 步数。空间依赖强、映射质量不稳，或应用要求保持原目标分布时，应回到完整 target 生成或已验证的 exact speculative 路径，而不是继续扩大局部接受范围。
+
 ### Edge–Cloud Draft Length 是通信条件下的 Optimal Stopping
 
 在本地 draft、云端 target 的路径中，固定候选长度容易实现，但网络 RTT/带宽、acceptance 与本地 compute 会共同改变“再生成一个 draft token”是否值得。Controller 可在每步比较预期接受收益与新增本地计算/上行/等待成本，选择发送或继续。
@@ -1019,6 +1037,10 @@ batch 越大，至少一请求 cache miss 导致整批等待的机会越高；�
 进一步并行化时，下一轮 draft 通常依赖本轮 verifier 的接受长度与 bonus token；若提前猜测这两个结果，猜错就必须退回串行路径，batch 越大越容易有请求触发回退。一条条件性替代方案是把昂贵的 draft backbone 与轻量 token correction head 分开：验证尚未结束时，backbone 对每个可能的接受边界预计算互不污染的 proposal 表示；verifier 给出真实接受前缀与 bonus 后，只选择对应分支并运行短 head。target 始终拥有 token/KV 的最终提交权，这消除了**猜错验证结果导致的 backbone 串行回退**，但不消除 head、同步屏障与分支预计算的成本。分支数、显存和 draft GPU 预算可能抵消收益；backbone 赶不上 verification、batch 小或旧 drafter 已足够便宜时，顺序 draft–verify 仍更简单。DPara 的作者证据限于 Qwen3-8B/14B、所列数学/代码/聊天任务及 H800/GB200/A10 配置，不能外推为任意采样、并发与 SLO 的普遍加速。<!-- source-family:SF-2026-ARXIV-2609-27396 -->
 
 ## Review notes
+
+- `SF-2026-ARXIV-2603-11243` — 2026-03-14 补查；[exact-v1](https://arxiv.org/html/2603.11243v1) §2.1–2.3/Eq3–7、§3.2–3.5/Table1 与直接限制。只采用 CTC 复用的两级有损 ASR 仲裁、前缀回退及分批/搬运成本；单 H100/BF16 的批量 RTFx 不授在线 SLO。Table1 高准确平均 RTFx548<AR564，高吞吐 WER6.56 相对 AR5.75 约增14.1%，不沿用摘要12%或各语料无代价断言。mar14_supplement 必要源/具体 owner 提案、root 实际独立 Source/PRE 通过后窄写；mar14_supplement 已实际核新正文、完整局部邻接与末注，非写入者 POST 通过，窄锁释放，不授日级完成。未核代码或复现。
+
+- `SF-2026-ARXIV-2601-05149` — Daily `2026-01-10` 增量补查；[exact-v1](https://arxiv.org/html/2601.05149v1) §3.2–3.3 Eq5–7、§4.1/4.3、Appendix Implementation/Latency Analysis。只采用低分辨率 proposal 与空间局部纠正的有损分支；邻域 pooling/阈值并非经典 residual 校正，保留远端位置不授 target joint 等价。A100/batch1、Tar 与两分辨率、模块训练、阈值扫选及质量反侧限定作者结果；精度、并发服务与 SLO 未披露，未复现或核 artifact。作者 `audit_jan02_root_evidence` 必要原文与 actual owner PRE、root 独立必要原文及邻接检查后窄写；写后复核另在本日报记录，不以本注自授验收。
 
 - `SF-2026-ARXIV-2602-16994` — Daily `2026-02-21`；[exact-v1](https://arxiv.org/html/2602.16994v1) §4–6/T4–7、AppendixE Eq8–12/footnote4；2+2+2=6，共享trunk后fork与selector可取状态差额深入。采用current-target-root须额外forward的接口边界，不授oracle免费、全模型收益或surrogate生产SLO；有限反侧/额外成本/旧tree共存近正文。root必要原源/actual owner PRE通过并授窄锁；作者正文/完整邻接及末注已顺读，root非作者实际正文/完整邻接及自身末注POST通过，窄锁释放，未核实现/复现，非日级验收。
 

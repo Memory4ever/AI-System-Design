@@ -2,9 +2,15 @@
 
 **规范：** V3
 **窗口：** 2026-01-08T09:00:00+08:00 ～ 2026-01-09T09:00:00+08:00
+**窗口说明：** 本次为用户授权的增量补查，保留原窗口、全部原候选、日期、评分和证据决定；新增项独立按上一完整自然日过滤，不追改原判断。
+**补充窗口：** 2026-01-08 ～ 2026-01-08
 **状态：** 完成
 **Books：** 纳入本次
 **检查时间：** 2026-10-03T00:15:48+08:00
+
+**补查时间：** 2026-10-07T15:36:00+08:00
+
+2026-10-07 补查依据见 [supplement-20261007](../_sources/daily-20260109/supplement-20261007.md)与[独立审计](../_sources/daily-20260109/independent-audit-20261007.md)。原17项和原验收记录保留；该历史验收不覆盖本次增量。新增15项必要证据和Books决定均已独立核验：1项实际整合、2项具体已有覆盖、11项仅报告、1项中心争议隔离；PII两段实际写后与最终六部分日级复核通过，普通工作0。来源/日期/中心争议保留项不授正面Coverage或Evidence通过，也不授无遗漏。
 
 ## 1. 结论
 
@@ -14,30 +20,36 @@
 
 实际知识增量集中在ensemble共同盲区、合法kernel split与tick/bubble等待、特殊CPX评估支路与生成KV隔离、可解码顺序非causal hop，以及detach浅训练函数的重接成本、pair温度/负例人口/共享几何分责。14来源有限停止与历史限制按§2保留；jan01_v3独立最终六部分日级验收通过到合同安全终态，普通工作0。隔离项不授正面Evidence或无遗漏，未stage、commit或push。
 
+以上为原窗口已验收历史。本次补充自然日从有限364个unique标题线索读取17份完整exact-v1题摘；不是364份摘要/全文队列。必要准入核心与独立校准后，14项arXiv加1项Anthropic进入新增候选，VideoMemory、AgentDrift与Netomi有具体贡献前关闭依据，04301公开日跨Jan08～09隔离。新增15与原17无相同家族，合计32。新增必要证据与具体owner经分批独立核：1项PII实际整合（root写、非作者POST通过）、2项具体已有覆盖、11项受限仅报告、1项SyncThink中心控制律争议隔离。旧六项整合不重计；补充窗口最终六部分日级复核通过至安全终态，普通工作0。
+
 ## 2. 来源覆盖
 
 以下14入口均实际首查；有限目录、发布时间切片和接口响应详见[原始机构记录](../_sources/daily-20260109/INSTITUTION_PROBES_RAW.txt)、[历史恢复](../_sources/daily-20260109/INSTITUTION_HISTORY_RAW.json)及[机构核心处置](../_sources/daily-20260109/INSTITUTION_DECISIONS.md)。当前主页、空响应、访问失败及排序不明的列表都不作无命中证明；已停止有限可用入口；无法恢复的本窗历史范围明确终态隔离，不用于零发布或无遗漏断言。
 
 | 来源 | 检查范围与依据 | 结果 | 缺口 |
 | --- | --- | --- | --- |
-| SRC-OPENAI | Research/News、RSS403/XML恢复及日期限定官方域查询，Jan08 Healthcare核心已实际读；只见既有enterprise controls与未披露应用实现，贡献前关闭（jan01_v3已实际核原core） | 受阻 | 已停止这些有限入口；完整Jan08历史目录无法恢复，不授无遗漏。需原始本窗dated catalog/公告复原；Healthcare必要核心独立核通过，不授全部历史目录 |
-| SRC-ANTHROPIC | Research RSC实际174条到2021；邻窗 Jan08T00Z critical-infrastructure 早于起点，Jan09T17:17Z classifier晚于终点 | 已检查 | 只对该实际目录切片成立，不保证网络绝无遗漏 |
-| SRC-GOOGLE-AI | Research Blog /2026/01/实际9条最早Jan12、无pager；pub year参数忽略并返回未限定历史年的宽772页目录，不遍历；DeepMind showcase及Jan08日期/主题限定官方搜索 | 受阻 | 有限入口停在9条/月与当前showcase；DeepMind本窗dated research catalog未恢复。搜索无结果不授0事件；仅原Jan08目录或具名发布定点重开 |
-| SRC-META-AI | 官方Blog页1–3实际查；第3页主列表Oct24/Apr29/Aug/Jul2025且heroJul2026，混排；限定Jan08官方域查询无结果 | 受阻 | 停第3页，不用首旧条目当排序通过；确切Jan08历史目录/排序接口未恢复，不授0命中或覆盖通过，原dated切片恢复再定点核 |
-| SRC-QWEN | qwenlm旧Blog首5到Sep2025；qwen.ai Research/Blog SPA回落、script检查无本窗记录；Jan08及相邻日期官方限定补检 | 受阻 | 有限入口已停止；新站Jan08 dated catalog/正文未恢复，不拿旧首页/SPA空text或空搜索作0命中。原目录/具体公告恢复再核 |
-| SRC-DEEPSEEK | 官方updates现完整可见chronology Apr24 V4至Dec01 V3.2，涵盖跨窗相邻记录 | 已检查 | 仅公开updates切片，不等所有论文/较早ID修订全覆盖 |
-| SRC-MOONSHOT | 官方Platform Blog实际26条 Nov07_2025至May2024、未见pager | 已检查 | 该目录没有本窗项；GitHub/模型发布历史能力另保入口限制，不宣称全网0事件 |
-| SRC-TENCENT-HUNYUAN | Research动态入口/浏览器恢复失败；publicList renderType0真实zh11/total11、en9/total9，最早Feb03；Jan08官方Research/仓库域限定补检无结果 | 受阻 | 停在已返回目录与有限补检；Jan08历史catalog无法复原，不把9/11或空搜索当全覆盖。原历史列表/具名原公告为恢复条件 |
-| SRC-ZAI | Research完整RSC实际16独立article，逐条核createAt（不是后台createdAt），Jan19/Jan13与Dec10/09/08跨窗，排序混排所以读全16；无pager hint；release Jan14→Dec22 | 已检查 | 仅这16可见目录与release切片无本窗项，不授全网无遗漏/已删除历史条目覆盖；原Jan08遗漏身份出现才定点重开 |
-| SRC-BYTEDANCE-SEED | 公开API2026/US5页0/20/40/60/80，82total但77returned；同5页CN仅0/1/14/19/2=36；两语言最后page80均has_more=false、tailJan19/21；blog19total/14returned最早Feb11 | 受阻 | 语言状态筛选/当前目录无法复原Jan08历史人口，total不等delivered，最后has_morefalse只授当前分页停止，不授本窗0事件。需本窗原目录/被隐藏条目或具名dated原文恢复 |
-| SRC-BAIDU-ERNIE | 官方Blog相邻May→Jan15→Jan08ranking→Dec23/09，Next页旧段；Jan08正文只有榜单和调用入口，作者贡献前关闭 | 已检查 | 原始rank条目不算系统候选；jan01_v3已实际核ranking/调用原文关闭 |
-| SRC-XIAOMI-MIMO | Paper模块8条/Jan08 MiMo-V2-Flash，v1 DOI上界Jan07、v2公开下界Jan09终点；原route manifest17EN blog路径含index/placeholder→15内容，日期字段Dec18/19及May/June/Sep，9项date-null | 受阻 | 有限目录停止，MiMo v1窗前/v2终点后身份已按原字段核；date-null Blog真实Jan08历史事件无法恢复，不以model名/缺日期为0命中。原日期/具体本窗正文才定点重开 |
-| SRC-MINIMAX | Blog实际12条 Aug13→Jan27→Dec23/Oct27完整可见目录；AgentTech .md首文May2026不适用于Jan09 | 已检查 | 只对这些有限入口成立，不宣称整个机构不存在其他研究 |
-| SRC-ARXIV | 12分类按模型/训练/Agent/多模态/执行主题，以 submittedDate 缓冲Jan06T19Z～Jan08T01Z实际8页；四组total283/123/70/132均分页到total，跨组union364只作发现线索，已浏览相关标题 | 受阻 | 364不是本窗候选/逐篇队列；CL月first25/skip200×50/250×100有限相关标题补检已停止；早ID重要revision历史覆盖终态隔离，不授无遗漏。恢复只需本窗原公告/具名重要修订，不扩月库存。仅submittedDate可查询，不使用lastUpdatedDate query prefix |
+| SRC-OPENAI | Research/News、RSS403/XML恢复及日期限定官方域查询，Jan08 Healthcare核心已实际读；只见既有enterprise controls与未披露应用实现，贡献前关闭（jan01_v3已实际核原core）<br>补查：当前Research index8 dated cards Oct06～Sep06；Jan08官方域定点检索；Netomi Jan08全文及原Healthcare身份核去重 | 受阻 | 已停止这些有限入口；完整Jan08历史目录无法恢复，不授无遗漏。需原始本窗dated catalog/公告复原；Healthcare必要核心独立核通过，不授全部历史目录<br>补查停止/缺口：Netomi无新的依赖控制/效应协议或反证，贡献关闭；index不覆盖Jan08历史目录，原dated slice缺口隔离，不以空搜索授0 |
+| SRC-ANTHROPIC | Research RSC实际174条到2021；邻窗 Jan08T00Z critical-infrastructure 早于起点，Jan09T17:17Z classifier晚于终点<br>补查：当前Research10可见条目；本日原174条SSR元数据作路由；Jan08 critical-infrastructure及PNNL合作原文必要核心实际读 | 已检查 | 只对该实际目录切片成立，不保证网络绝无遗漏<br>补查停止/缺口：Jan08T00Z落新自然日；仅单次水厂simulation替代已知技术恢复，缺失败频数、完整权限状态与matched speed control，不授生产侵入/安全保证 |
+| SRC-GOOGLE-AI | Research Blog /2026/01/实际9条最早Jan12、无pager；pub year参数忽略并返回未限定历史年的宽772页目录，不遍历；DeepMind showcase及Jan08日期/主题限定官方搜索<br>补查：Research Jan2026月9条Jan28～Jan12无pager；DeepMind Blog page4完整Feb2026～Nov2025，Jan Genie29/D4RT22/Veo13逐具名原日期 | 受阻 | 有限入口停在9条/月与当前showcase；DeepMind本窗dated research catalog未恢复。搜索无结果不授0事件；仅原Jan08目录或具名发布定点重开<br>补查停止/缺口：此有限目录无Jan08，停止page4/月9条，不扩772页publication库存；Jan08历史research slice未恢复，不授0机构事件 |
+| SRC-META-AI | 官方Blog页1–3实际查；第3页主列表Oct24/Apr29/Aug/Jul2025且heroJul2026，混排；限定Jan08官方域查询无结果<br>补查：Research空text；当前Blog页1/2实际全部主cards，页2混排Mar/Feb2026与Dec/Feb2025，Next仍在 | 受阻 | 停第3页，不用首旧条目当排序通过；确切Jan08历史目录/排序接口未恢复，不授0命中或覆盖通过，原dated切片恢复再定点核<br>补查停止/缺口：停页2不授排序完整；具名Jan08正文或dated slice缺失，不扩整个archive |
+| SRC-QWEN | 补查独立解析完整官方Research API60条date/title/id，2022-11-14～2025-12-23，接口`research.research-list`；原始同URL缓存由root给路径，未读别日判断；新SPA空text只作初始恢复记录 | 已检查 | 60条有限返回人口无Jan08，不索机构隐藏历史无删除证明；仅新具名Jan08原事件线索才定点重开，不授全网无遗漏 |
+| SRC-DEEPSEEK | 官方updates现完整可见chronology Apr24 V4至Dec01 V3.2，涵盖跨窗相邻记录<br>补查：官方updates完整可见chronology Sep10→Apr24 V4→Dec01 V3.2跨窗 | 已检查 | 仅公开updates切片，不等所有论文/较早ID修订全覆盖<br>补查停止/缺口：仅该公开update表无Jan08，不承诺所有论文/未知早ID修订覆盖 |
+| SRC-MOONSHOT | 官方Platform Blog实际26条 Nov07_2025至May2024、未见pager<br>补查：Platform Blog完整26条Nov07/06_2025～May2024且无pager | 已检查 | 该目录没有本窗项；GitHub/模型发布历史能力另保入口限制，不宣称全网0事件<br>补查停止/缺口：该目录无Jan08项，不承诺整个机构仓库/模型发布0事件 |
+| SRC-TENCENT-HUNYUAN | 补查独立读publicList完整en9/total9，displayPublishTime换算BJT Feb03～Sep22；zh11为本日原独立切片不合并date；Research/browser不可用不替代API结果 | 已检查 | 9条有限目录无Jan08，停止于total9；不因首页失败/无本日项要求全机构历史，具名Jan08原公告才重开，语言切片不能合成首次公开 |
+| SRC-ZAI | Research完整RSC实际16独立article，逐条核createAt（不是后台createdAt），Jan19/Jan13与Dec10/09/08跨窗，排序混排所以读全16；无pager hint；release Jan14→Dec22<br>补查：当前Research15可见cards Jan19/13→Dec10/09，View more；本日原SSR16元数据；release Jan19/14→Dec22 | 已检查 | 仅这16可见目录与release切片无本窗项，不授全网无遗漏/已删除历史条目覆盖；原Jan08遗漏身份出现才定点重开<br>补查停止/缺口：只对可见切片负责，未声称当前重取全16、后台createdAt为公开时间或被删历史全覆盖 |
+| SRC-BYTEDANCE-SEED | 公开API2026/US5页0/20/40/60/80，82total但77returned；同5页CN仅0/1/14/19/2=36；两语言最后page80均has_more=false、tailJan19/21；blog19total/14returned最早Feb11<br>补查：本日原2026 US/CN有限5页目录路由；重新取US page80，total82/returned2/has_morefalse、tailJan21/19与原一致；blog原19total/14returned最早Feb11 | 受阻 | 语言状态筛选/当前目录无法复原Jan08历史人口，total不等delivered，最后has_morefalse只授当前分页停止，不授本窗0事件。需本窗原目录/被隐藏条目或具名dated原文恢复<br>补查停止/缺口：语言/状态筛选及total-returned差额仍在；尾页false只授当前分页停止，不证明Jan08历史0事件，不扩整个publication历史 |
+| SRC-BAIDU-ERNIE | 官方Blog相邻May→Jan15→Jan08ranking→Dec23/09，Next页旧段；Jan08正文只有榜单和调用入口，作者贡献前关闭<br>补查：当前Blog10cards May09～Nov21，相邻Jan15→Jan08 ranking→Dec23，Next2/2 | 已检查 | 原始rank条目不算系统候选；jan01_v3已实际核ranking/调用原文关闭<br>补查停止/缺口：Jan08 ranking原贡献关闭身份不重开、不改分，当前有限列表不授全网无遗漏 |
+| SRC-XIAOMI-MIMO | 补查实际官方route17EN blog含index；16非index=15dated内容＋1示例template。6内容frontmatter Dec18/19、May30/Jun08/10、Sep27；9date-null逐iframe定位到Dec16、Mar18、Apr2026/Apr22/27、Sep21；template泛例core已读 | 已检查 | 有限16非index项中15内容均窗外、template无本日机制；旧MiMo-v1/v2日期评分判断保留不搬移。未索全机构删除历史；只有具名Jan08新身份/重要修订才重开 |
+| SRC-MINIMAX | Blog实际12条 Aug13→Jan27→Dec23/Oct27完整可见目录；AgentTech .md首文May2026不适用于Jan09<br>补查：Blog完整12个当前可见cards Aug13→Jan27→Dec23/Oct27 | 已检查 | 只对这些有限入口成立，不宣称整个机构不存在其他研究<br>补查停止/缺口：仅有限目录无Jan08，不扩AgentTech全历史，不授机构绝无发布 |
+| SRC-ARXIV | 12分类按模型/训练/Agent/多模态/执行主题，以 submittedDate 缓冲Jan06T19Z～Jan08T01Z实际8页；四组total283/123/70/132均分页到total，跨组union364只作发现线索，已浏览相关标题<br>补查：本日四主题8页/12分类 union364标题仅发现；17完整v1题摘、14拟准入必要核心、17具名DOI日期字段 | 受阻 | 364不是本窗候选/逐篇队列；CL月first25/skip200×50/250×100有限相关标题补检已停止；早ID重要revision历史覆盖终态隔离，不授无遗漏。恢复只需本窗原公告/具名重要修订，不扩月库存。仅submittedDate可查询，不使用lastUpdatedDate query prefix<br>补查停止/缺口：16项公告政策下界与实际具名ID公开上界合取Jan08，不把submitted/registered独自当first-public；04301只得Jan08～09跨窗隔离，早ID未知重要修订覆盖仍精确保留，不扩整月 |
+
+以上每行的“补查”均独立按Jan08完整自然日确认范围与停止，不继承旧时间窗判断；当前目录和本日未变化原始有限目录仅复用元数据，不授机构全历史0发布或全网无遗漏。
 
 ## 3. 候选与判断
 
 下列时间是 arXiv ID/DOI 官方分配政策与实际DataCite原字段共同界定的公开区间，**不是Submitted、API published或created直接等于first-public**；[日期原值与依据](../_sources/daily-20260109/DATE_BASIS.md)。较早作者公开有具体线索时另定点核；PointWorld不得由这一 arXiv 区间覆盖原网页首公开。
+
+原17行保留原日期/评分/处置，新增15行接在其后。新项日期依据为官方ID/公告政策＋精确v1提交下界＋实际具名DOI注册上界同落Jan08的合取，不是registered等于首次公开；字段见supplement §4。新增项证据与具体Books决定已由非作者核验，只有PII形成实际书稿增量；04301跨日隔离未入表。
 
 | 材料 | 公开时间 | 项目贡献与评分 | 审阅结果 | Books决定 |
 | --- | --- | --- | --- | --- |
@@ -58,6 +70,21 @@
 | [e5-omni: Explicit Cross-modal Alignment for Omni-modal Embeddings](https://arxiv.org/abs/2601.03666v1) | 2026-01-08T09:00:00+08:00 ～ 2026-01-08T10:43:50+08:00 | pair温度/negative人口/joint几何三接口→不能用重叠替相关性与部署协议；2+2+2=6 | 深入完成 | 整合：`MULTIMODAL-REPRESENTATION` [Ch23 contrastive校准](../../../../books/part-03-multimodal-world-models/23-multimodal-representation.md) |
 | [Submodular Evaluation Subset Selection in Automatic Prompt Optimization](https://arxiv.org/abs/2601.03493v1) | 2026-01-08T09:00:00+08:00 ～ 2026-01-08T10:39:38+08:00 | 静态feedback subset目标→固定scorer选择人口→非最佳prompt或独立heldout；2+1+2=5 | 标准完成 | 仅报告：有限固定subset选择案例 |
 | [Adaptive-Boundary-Clipping GRPO: Ensuring Bounded Ratios for Stable and Generalizable Training](https://arxiv.org/abs/2601.03895v1) | 2026-01-08T09:00:00+08:00 ～ 2026-01-08T10:49:20+08:00 | 四quadrant clipped ratio×sequence advantage→局部梯度停止非policy硬界；2+1+2=5 | 标准完成 | 仅报告：受限loss替代案例 |
+| [SDCD: Structure-Disrupted Contrastive Decoding for Mitigating Hallucinations in Large Vision-Language Models](https://arxiv.org/abs/2601.03500v1) | 2026-01-08 | 纹理/结构支持混淆→patch shuffle对照logits→有限视觉contrastive分支；2+2+2=6 | 标准完成 | 仅报告：有限视觉支持对照；精确shuffle配方未写入Ch23，不冒称已有覆盖 |
+| [Evolving Programmatic Skill Networks](https://arxiv.org/abs/2601.03509v1) | 2026-01-08 | 全网反复修复→成熟度概率门控/局部inverse rollback→更新与回滚人口分责；2+2+2=6 | 标准完成 | 仅报告：Ch80已有revision治理之外的局部概率/短窗recipe，不据其签发长期稳定性 |
+| [SCRIBE: Structured Mid-Level Supervision for Tool-Using Language Models](https://arxiv.org/abs/2601.03555v1) | 2026-01-08 | token judge噪声→skill prototype/中层span reward→监督人口选择接口；2+2+2=6 | 标准完成 | 仅报告：受限prototype监督与judge人口，未形成新的可靠性保证 |
+| [How Do Large Language Models Learn Concepts During Continual Pre-Training?](https://arxiv.org/abs/2601.03570v1) | 2026-01-08 | 顺序训练遗忘→概念关联/迁移非对称→stage条件不可省略；2+2+2=6 | 标准完成 | 仅报告：局部CPT概念代理不支持因果电路或未来分配oracle |
+| [ALERT: Zero-shot LLM Jailbreak Detection via Internal Discrepancy Amplification](https://arxiv.org/abs/2601.03600v1) | 2026-01-08 | gated product掩盖差异→pre-product gate/context＋prototype token权重→有限sensor替代；2+2+2=6 | 深入完成 | 仅报告：`PLATFORM-SECURITY` Ch72内部signal不替代权限；局部传感分支不授生产防线 |
+| [SyncThink: A Training-Free Strategy to Align Inference Termination with Reasoning Saturation](https://arxiv.org/abs/2601.03649v1) | 2026-01-08 | 文本结束非推理饱和→transition rank/entropy门控→显式停止控制；2+2+2=6 | 争议 | 暂缓：式与λ方向中心冲突已隔离，精确重开条件见§5 |
+| [Do LLMs Really Memorize Personally Identifiable Information? Revisiting PII Leakage with a Cue-Controlled Memorization Framework](https://arxiv.org/abs/2601.03791v1) | 2026-01-08 | 重建混入prefix cue→条件cue人口/heldout反侧→隐私分数≠membership；3+2+2=7 | 深入完成 | 整合：`PLATFORM-SECURITY` [Ch72 normalized-cue分层](../../../../books/part-06-ai-infrastructure/72-security.md)两段已root落地，jan02_new_evidence实际POST通过 |
+| [Current Agents Fail to Leverage World Model as Tool for Foresight](https://arxiv.org/abs/2601.03905v1) | 2026-01-08 | 工具可用非forethought→no-tool/forced对照→调用不等正确解释行动；3+2+2=7 | 深入完成 | 已有覆盖：`AGENT-TOOL-CALLING` [Ch78具体tool counterfactual](../../../../books/part-07-agent/78-tool-calling.md)，jan02_new_evidence具体owner核通过 |
+| [ResTok: Learning Hierarchical Residuals in 1D Visual Tokenizers for Autoregressive Image Generation](https://arxiv.org/abs/2601.03955v1) | 2026-01-08 | token冗余→多级residual＋hierarchical AR→并行步数与质量须共报；2+2+2=6 | 标准完成 | 仅报告：有限codec/factorization取舍，重建与生成质量可反向变化 |
+| [A Scheduling Framework for Efficient MoE Inference on Edge GPU-NDP Systems](https://arxiv.org/abs/2601.03992v1) | 2026-01-08 | 低batch NDP不均衡→TP/placement/prompt频率prefetch→通信与专家驻留共同选；2+2+2=6 | 标准完成 | 仅报告：特定仿真资源分配，不授物理runtime收益 |
+| [Bridging the Discrete-Continuous Gap: Unified Multimodal Generation via Coupled Manifold Discrete Absorbing Diffusion](https://arxiv.org/abs/2601.04056v1) | 2026-01-08 | 离散/连续表征差额→semantic prior条件化absorbing decoder→接口分工非OT保证；2+2+2=6 | 标准完成 | 仅报告：受限两阶段条件接口，性能/OT最优权限隔离 |
+| [CLAP: Contrastive Latent Action Pretraining for Learning Vision-Language-Action Models from Human Videos](https://arxiv.org/abs/2601.04061v1) | 2026-01-08 | human motion未必robot action→frozen robot VQ锚定video latent→policy分支须验；2+2+2=6 | 标准完成 | 仅报告：action码本接口的局部机器人条件，精确backbone冲突隔离 |
+| [Layer-wise Positional Bias in Short-Context Language Modeling](https://arxiv.org/abs/2601.04098v1) | 2026-01-08 | 层位归因混入lexical cue→短窗/scramble仍有profile→proxy权限收窄；2+1+2=5 | 标准完成 | 仅报告：短context诊断不授attention因果或长context压缩正确性 |
+| [Agentic Rubrics as Contextual Verifiers for SWE Agents](https://arxiv.org/abs/2601.04171v1) | 2026-01-08 | test/patch judge信息不完备→repo-grounded rubric对照→contextual verifier不等oracle；2+2+2=6 | 深入完成 | 仅报告：Ch66具体评价主线已承载，repo-grounded binary recipe受限，非作者核通过 |
+| [Experimenting with AI to defend critical infrastructure](https://www.anthropic.com/research/critical-infrastructure-defense) | 2026-01-08 | 固定脚本失败→单次simulation中自动改用已知技术→不能当reachable能力上界；2+2+2=6 | 深入完成 | 已有覆盖：`PLATFORM-SECURITY` [Ch72资产可达路径](../../../../books/part-06-ai-infrastructure/72-security.md)；Ch78作canonical执行交接，root必要源/owner核通过 |
 
 ## 4. 证据与知识整合
 
@@ -129,6 +156,66 @@ jan01_v3实际exact-v1 §3 L64–108、§4–7 L109–142、AppA175–181。非�
 
 jan01_v3实际exact-v1 §4.1–4.5/Alg1 L107–256、§5.1–5.2/Table3 L257–305。Eq5/6直接clipped-ratio×sequenceA无PPO min，区间外本梯度0不阻共享参数移动；未解决token credit。Bound需Amax/Gmax，Eq14lower须max(e2,e4)非min；Table2不依sign与Eq5冲突子命题不采，不扩大冻结全部实测。实际四ε=.2未验自适应非对称，AIME/AMC有退步，不授entropy普保。Ch33:120–199已有objective/sign/粗credit合同；本局部loss case仅报告，不称exact覆盖，原5不降。
 
+### [SDCD: Structure-Disrupted Contrastive Decoding for Mitigating Hallucinations in Large Vision-Language Models](https://arxiv.org/abs/2601.03500v1)
+
+新增：实际§3 Eq2、§4.1/4.3与限制。patch-shuffle视图惩罚结构改变后仍高置信logits，但并不保持全部语义；三7B/A100/POPE/MME/500caption配置下还加入image-attention+.6与plausibility过滤，不能归因全部收益给shuffle、resampler切片也不总胜。标准必要证据与独立核完成；Ch23已有一般视觉支持/条件分支，精确shuffle配方未写入。仅报告局部contrastive替代，不以主题覆盖冒称算法已整合；完整参数与反侧见[supplement §5](../_sources/daily-20260109/supplement-20261007.md)。
+
+### [Evolving Programmatic Skill Networks](https://arxiv.org/abs/2601.03509v1)
+
+新增：实际§2.4 Eq6/2.5/4.4与限制。maturity控制repair概率仍有.1下界，非冻结；局部rewrite只在parent/child/top5邻居与最近3受影响任务测试，降20% inverse rollback。门控对照不授形式语义保持、稳定终身学习或长期最优。Ch80 344附近已分离candidate lesson、held-out、promotion与rollback，一般治理未缺；局部概率recipe仅报告，未称原书含exact算法。标准核心与非作者必要核已完成。
+
+### [SCRIBE: Structured Mid-Level Supervision for Tool-Using Language Models](https://arxiv.org/abs/2601.03555v1)
+
+新增：实际§3–6。skill prototype/span-router约束0–3 judge人口、每1000step刷新，0.3 process＋0.7 outcome进入GRPO；Qwen3-4B/Llama3.2-3B及GPT5-mini/MATH/ToolACE的PRM与权重对照支持有限接口，不证明中层掌握是唯一因果涌现，也不免除cluster/router/judge与刷新成本。标准核心与非作者必要核完成；仅报告受限prototype过程监督分支，不把judge认作真值或新的可靠性保证。
+
+### [How Do Large Language Models Learn Concepts During Continual Pre-Training?](https://arxiv.org/abs/2601.03570v1)
+
+新增：实际§3.2–4/限制。FICO→BIO、GPT2-Large/Llama1B以同target logit测学习/遗忘，500 concept/circuit相关proxy不能给因果；固定阶段预算的embedding相关性分组与知识顺序出现迁移/干扰非对称。future circuit-aware scheduler没有实施验证。Ch28提案仅报告CPT阶段条件，标准完成，不授概念关联oracle。
+
+### [ALERT: Zero-shot LLM Jailbreak Detection via Internal Discrepancy Amplification](https://arxiv.org/abs/2601.03600v1)
+
+新增：实际§3.1–3.3、§4 Tables2–3/限制。取FFN相乘前gate/context、双VIB classifier与prototype-distance token权重，逐步ablation给局部operator证据。Layer4探索已用AutoDAN，不称框架从未见attack；Vicuna/XSTest不支持“全>90”，三模型/三attack人口不授生产安全。原6分必要安全命题深入；root定案仅报告Ch72，内部signal不替代授权或外部安全事实，DAY待核。
+
+### [SyncThink: A Training-Free Strategy to Align Inference Termination with Reasoning Saturation](https://arxiv.org/abs/2601.03649v1)
+
+新增：实际§3.4 Eq3–5、§4 Table1、§5.4–5.6/限制。`</think>` rank≤`floor(t exp(−λH))`触发stop；增λ降低threshold应更难触发，却§5.5称增λ单调更短，中心方向冲突。三R1 distill/greedy/单run且部分accuracy退步，不给质量免费。保6分与transition接口描述，root认可暂缓参数方向/可复现控制律，不删全部经验结果；Ch42不写Books，重开仅修式/原code与对应配置。
+
+### [Do LLMs Really Memorize Personally Identifiable Information? Revisiting PII Leakage with a Cue-Controlled Memorization Framework](https://arxiv.org/abs/2601.03791v1)
+
+新增：实际§3–5/限制。normalized target-prefix最长公共子串、`cue<τ`条件重建换人口，非do-intervention因果cue效果；未训练高cue也重建不等membership，不证明无PII记忆或低真实隐私风险。mC4 known-train三规模32语言与MIA25语言不混总体数字。7分隐私评价深入完成；root实际Ch72 membership邻接新增294–296左右两段：normalized cue→stratified train/heldout→Unknown与真实泄漏后果，保留matched control/现有canary与DP回退。jan02_new_evidence实际两段/前后邻接/源注POST通过，计新增1项整合，不授逐样本去cue因果或普遍无风险。
+
+### [Current Agents Fail to Leverage World Model as Tool for Foresight](https://arxiv.org/abs/2601.03905v1)
+
+新增：实际§3/4.1–2/5.2/限制。normal/no-tool/forced对照，Agent cloned ground-truth simulation与VQA Wan2.1视频不是同一种已验证learned WM；调用频率相关不证明多调用因果有害，forced也不自动建立foresight。9GPT/Llama/Qwen/有限任务，future planner/reflection/RL非已实现结论。7分工具负侧深入完成；jan02_new_evidence实际必要核心与Ch78 218–242 utility admission/调用观测/使用结果及no-tool反事实核通过，具体已有覆盖，不授所有WM无用、不重复增加Books案例。
+
+### [ResTok: Learning Hierarchical Residuals in 1D Visual Tokenizers for Autoregressive Image Generation](https://arxiv.org/abs/2601.03955v1)
+
+新增：实际§3–4/5.1/5.4 Tables2–5/Recon-vs-Gen。多尺度image/latent residual与cross-hierarchy attention支持HAR层并行；Table5 128→9steps同时gFID4.56→5.53，重建继续改善也可伴生成退步。DINO alignment/nested dropout/两阶段训练及ImageNet256预算分清。Ch24提案仅报告codec/factorization取舍，标准完成，不采headline质量免费。
+
+### [A Scheduling Framework for Efficient MoE Inference on Edge GPU-NDP Systems](https://arxiv.org/abs/2601.03992v1)
+
+新增：实际III–IV关键方法与评价。低batch NDP FFN TP/专家GPU-NDP placement并计传输；prefill频率初始化decode prefetch，dataset-free不等workload-free。AttAcc+modified Ramulator2、假设RTX5080/NDP-DIMM、batch1/512in-out、4MoE/2–6DIMMs是仿真；2DIMM TP切片反退步，非物理runtime。Ch21提案仅报告专家驻留/TP资源分配，标准完成；v1 UpdatedJuly异常不覆盖Jan08实际ID公开上界。
+
+### [Bridging the Discrete-Continuous Gap: Unified Multimodal Generation via Coupled Manifold Discrete Absorbing Diffusion](https://arxiv.org/abs/2601.04056v1)
+
+新增：实际§3–4/限制。400k continuous semantic prior→300k `Proj(r)` prefix条件MASK decoder、paired representation swapping，不是每step joint演化latent；“Optimal Transport”无cost/solver/最优证明。8A800/2:2:1数据、不同长度/预算和BLEU/AR身份限制不支持5×端到端保证。6分标准机制完成、性能/OT权限隔离；Ch24提案仅报告连续prior→离散条件接口，不以缺理论删除具体机制。
+
+### [CLAP: Contrastive Latent Action Pretraining for Learning Vision-Language-Action Models from Human Videos](https://arxiv.org/abs/2601.04061v1)
+
+新增：实际III-D/E、IV、V-A/C/D。robot frozen VQ码本锚定video action/nuisance分支，人视频正例self-anchor；RF读stop-gradient VLM KV，KL非trust-region保证。Astribot chassis/torso锁定，20seen/20OOD与10次任务/消融只支持局部条件；IV Qwen3VL与V-C Qwen2VL身份冲突隔离精确backbone/层位复现，不授任意物理action安全或3090 latency等机器人SLO。Ch26有限action码本接口仅报告提案，标准核心完成。
+
+### [Layer-wise Positional Bias in Short-Context Language Modeling](https://arxiv.org/abs/2601.04098v1)
+
+新增：实际§3–4.2/限制。短窗normalized conductance与scramble反侧限定归因proxy；P50改用1B非8B，不当纯window ablation；learned-position泛称与Llama/Phi身份不符，不授架构唯一因果。最终next-token读出中早层低归因不证明信息不存在、电路不必要或长context压缩真值。5分标准完成，Ch13提案仅报告短context诊断。
+
+### [Agentic Rubrics as Contextual Verifiers for SWE Agents](https://arxiv.org/abs/2601.04171v1)
+
+新增：实际§3/4.2/5/8。Sonnet expert30turn调查repo→weighted rubric，GPT5-low选择固定500×16 patch，同expert repo/no-repo对照支持context条件。100case utility审是GPT5-medium非独立人工，低rubric/testpass不认证真实bug；46%审有过度要求/失配。expert可shell，wholepipeline非零执行；更强judge/granularity混杂，RL只未来。6分具体评价权限反侧深入；jan02_new_evidence必要core/Ch66 2739–2763 rubric formation/execution/ranking/hidden executable holdout核通过，精确repo-grounded binary recipe只是受限仅报告，不称exact recipe在书稿或整体execution-free。
+
+### [Experimenting with AI to defend critical infrastructure](https://www.anthropic.com/research/critical-infrastructure-defense)
+
+新增：Anthropic全文与[PNNL Jan08核心](https://www.pnnl.gov/news-media/generative-ai-speeds-cybersecurity-defenses)实际读，root独立核Anthropic L19–24、PNNL L263–287。只采用Summer2025单次Sonnet4水厂simulation中预定义tool失败后改用另一known technique，不采3小时/多周通用速度或生产风险率。6分必要安全命题深入、已有覆盖通过：Ch72 29–31实际资产可达路径不等界面/已列工具，Ch78 707–728 canonical structured failure→registry/resolver替代且真实effect时授权；不重复Books堆案例。Jan08文章公开日由两primary＋publishedOn，不把Summer实验日期当文章首公开。
+
 ## 5. 缺口与下一步
 
 普通可执行工作0；17家族/三维原分已冻结，六项真实改动/邻接/源注POST及jan01_v3最终六部分日级验收均通过。历史来源限制见§2，当前目录/语言隐藏/日期空值或搜索失败不支持无遗漏、零事件或正面Coverage保证。
@@ -139,6 +226,16 @@ jan01_v3实际exact-v1 §4.1–4.5/Alg1 L107–256、§5.1–5.2/Table3 L257–3
 
 PointWorld窗前机制身份见[原成功部署/HTML](../_sources/daily-20260109/POINTWORLD_PRIOR_PRIMARY.md)，不扩本窗。MiMo v1窗前上界及v2公告下界在exclusive end见[日期依据](../_sources/daily-20260109/DATE_BASIS.md)。四arxiv贡献前关闭为03376/03389/HAQA03484/Deploy03513；Healthcare/ERNIE官方原core负侧已jan01_v3独立核，非领域、headline或owner映射排除。未读的宽目录线索不构成普通待办。
 
+以上原窗口结果不替代增量验收。本次新增15项必要证据、具体Books决定、PII实际写后与最终六部分日级复核已独立通过，普通可执行工作0；不扩源/扩池，不读全部364标题对应摘要或附件。共享Books/索引/学习状态由root协调，日报作者只写本README与supplement。
+
+本次Qwen60 API、Hunyuan完整en9与MiMo16非index route已实际独立解析/定位有限切片，未发现具名Jan08条目，改为有限已检查；上面的旧Qwen/Hunyuan/MiMo历史保留描述只属原验收，不转换成此次索全机构隐藏历史的普通工作。MiMo9 null route已取得iframe月份/日期可排窗、generic template核心关闭；仍不授机构0发布或全部删除历史覆盖。
+
+新增外部保留项：04301 [Quantifying the Effect of Test Set Contamination on Generative Evaluations](https://arxiv.org/abs/2601.04301v1)的实际公开日，只得Jan08～09界限，不能由Jan09 registered/v1 Updated直接断言Jan09公告或窗外；具名Jan08/09实际arXiv公告或作者原正文公开日期足够，不索全历史/精确时刻。日期确认前不列候选、不评分、不进Books。
+
+新增中心保留：SyncThink式`τ=floor(t exp(−λH))`与§5.5 λ单调更短冲突，保6分与已读描述性机制，只请求原实现/修式与相应配置明确触发方向，不采可复现控制律或写Books。CoM-DAD缺OT cost/solver/证明及可比端到端预算，现只保明确两阶段条件接口，不请求未披露证明或全复现；CLAP Qwen3VL/Qwen2VL身份冲突只隔离精确backbone/层位复现，机制与局部机器人条件不被抹去。上述不授理论/性能/安全保证，后续只重开受影响权限。
+
+新增贡献关闭已独立定点核：VideoMemory§3.3 tuple/state matcher→生成→append未给新的commit/identity/transition约束或反证；AgentDrift§2.1/2.2/2.4/4.4确有rolling50、连续三窗阈值、加权ASI、baseline/reset/exemplar配方，但模拟人格ground truth与成熟治理组合未建立可辨认的新机制或独立有效性条件，不能说“没有operator”；Netomi全文schema/PII/fallback/concurrency没有新依赖或效应控制和反证。均不评分，不以模块组合、领域或机构标签自动排除。原来源历史缺口继续按具名切片/正文精确隔离，不作0事件保证。
+
 ## 6. 复核
 
 复核者：jan01_v3（报告非作者、最终独立日级Gate）；root与jan01_v3分批必要核/POST按真实范围复用。
@@ -148,3 +245,9 @@ PointWorld窗前机制身份见[原成功部署/HTML](../_sources/daily-20260109
 22完整AB的准入分层：root首12含HAQA决定method、PointWorld原run/exactSHA prior身份；jan01_v3后10及SESS/ABC决定原式，四preclose加Pointprior不算正式候选。17必要证据/owner处置均已分批独立核，所有采用边界、反侧和中心精确重开见§4/5；root核首5与Hummingbird写前，jan01_v3核Intro/Layer及后9必要source/owner。六actualPOST真实复核者：03468 root；04071/03511/03542/03648/03666 jan01_v3。全部拟入选覆盖不等全附件/代码复现；未变化有效层不重审。
 
 jan01_v3实际完整顺读最终六部分、EVIDENCE_3最新终处置和STOP，核14来源有限请求/分页停止、17逐ID条件公开原字段及官方分配/公告规则、Healthcare与ERNIE官方核心负侧；Seed US page0与DeepSeek updates缺失原字段已定点恢复并实际核，来源范围表述及同表空行已修正。全部拟入选与已列分层负侧通过，不冒称364宽线索全部题摘、全附件或整个互联网已核；§2历史限制及四中心采用权限继续终态隔离。机器validator/限定diff-check只检查格式，不替代上述语义验收。未stage、commit、push。
+
+补充窗口复核者：root（非报告作者，准入/必要分批核）；jan02_new_evidence（独立必要证据、owner、PII写后与最终六部分日级复核）。
+
+补充窗口结论：通过至合同安全终态。root实际独立读17份exact-v1完整题摘，并补ALERT/VideoMemory决定核心和Anthropic/PNNL必要原文与具体owner。jan02_new_evidence实际核全部14论文、17日期界限、具体owner与处置；机构必要原文/owner复用root实际独核，不冒称复核者亲读同一全文。PII实际两段/完整前后/源注POST通过。负侧复核包括VideoMemory、AgentDrift决定核心与Netomi全文，不冒称364标题线索全量题摘。jan02_new_evidence最终实际顺读窄改后六部分、新表与补查记录，核原17行字节/order/date/score及原§4前缀均保留，V3/限定diff与33本地链接通过。普通工作0；SyncThink中心争议、04301日期与具名来源切片继续隔离，不授无遗漏或安全保证。作者无Books写入；root新增1项实际两段不混入旧六项，未核代码或复现实验。
+
+作者检查：V3校验与限定`git diff --check`通过；原17行字节/order/date/score及原§4全文前缀逐字比较保持不变。只改本README与supplement；静态检查不替代非作者语义验收，未stage、commit、push。

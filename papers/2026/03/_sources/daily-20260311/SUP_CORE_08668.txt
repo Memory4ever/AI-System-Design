@@ -1,0 +1,426 @@
+Exp-Force: Experience-Conditioned Pre-Grasp Force Selection with Vision-Language Models
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+I INTRODUCTION
+II Methods
+II-A Object Description Generation
+II-B Experience Retrieval
+II-C Experience-Conditioned Force Inference
+III Experimental Setup
+III-A Experience Pool Data Collection
+III-B Offline Experiments
+III-C Real World Experiments
+IV Offline Experiment Results
+IV-A Comparison to Zero-Shot VLMs
+IV-B Comparison to Supervised Baselines
+IV-C Ablation Studies
+IV-D In-context Sample Efficiency and Diminishing Returns
+V Real Robot Experiment Results
+VI Discussion
+References
+License: arXiv.org perpetual non-exclusive license
+arXiv:2603.08668v1 [cs.RO] 09 Mar 2026
+Exp-Force: Experience-Conditioned Pre-Grasp Force Selection with Vision-Language Models
+Siqi Shang*
+Minchao Huang*
+Bill Fan
+Lillian Chin
+††thanks: This work was partially supported by the Texas Robotics Industrial Affiliate Program.††thanks: *Equal contribution. All authors are with The University of Texas at Austin, TX, USA. Correspondence: siqi.shang@utexas.edu
+Abstract
+Accurate pre-contact grasp force selection is critical for safe and reliable robotic manipulation. Adaptive controllers regulate force after contact but still require a reasonable initial estimate. Starting a grasp with too little force requires reactive adjustment, while starting a grasp with too high a force risks damaging fragile objects. This trade-off is particularly challenging for compliant grippers, whose contact mechanics are difficult to model analytically. We propose Exp-Force, an experience-conditioned framework that predicts the minimum feasible grasping force from a single RGB image. The method retrieves a small set of relevant prior grasping experiences and conditions a vision–language model on these examples for in-context inference, without analytic contact models or manually designed heuristics. On 129 object instances, Exp-Force achieves a best-case MAE of 0.43 N\mathrm{N}, reducing error by 72% over zero-shot inference. In real-world tests on 30 unseen objects, it improves appropriate force selection rate from 63% to 87%. These results demonstrate that Exp-Force enables reliable and generalizable pre-grasp force selection by leveraging prior interaction experiences.
+I INTRODUCTION
+Applying an appropriate amount of grasping force to an object is fundamental to successful robotic manipulation. Grasping force directly determines both grasp stability and object safety: too little force will cause the object to slip out of grasp, while too much force risks damaging fragile objects. Existing research on grasp force selection can be divided into pre-grasp force selection and adaptive force control. Pre-grasp methods select an initial force prior to contact based on object attributes or prior knowledge, while adaptive methods regulate force after contact using tactile feedback. Current research prefers the latter approach, as the force can be adjusted throughout the grasping process  [11, 18, 25, 17, 24, 26, 14, 20]. However, adaptive methods still require an initial guess of force. Starting with near-zero force reduces the risk of damaging delicate objects, but requires reliable slip detection to prevent failure on heavier or low-friction objects. Starting with a higher initial force increases grasp stability but risks damaging fragile objects. Pairing adaptive methods with a pre-grasp force predictor can provide an appropriate “just-enough” force estimate before contact.
+Generalizable pre-grasp force prediction remains an open problem. Classical analytical approaches derive grasping forces from contact mechanics and force-closure principles [1, 5], but rely on precise prior knowledge that is typically unavailable for unseen objects (e.g., object geometry, friction, and contact conditions). Data-driven alternatives avoid explicit modeling by learning mappings from perceptual input to grasp force as part of a control policy [4, 10]. However, the generalization of such methods is inherently constrained by the diversity of object properties, interaction conditions, and gripper embodiments contained within the training dataset. The problem becomes even more challenging for compliant grippers, whose nonlinear and embodiment-dependent contact behaviors make accurate modeling particularly difficult [18, 25, 17].
+Fig. 1: Overview. Exp-Force uses VLMs to accurately predict appropriate grasp forces using a single object-image, prior to grasp contact. We do this by providing a VLM with a small set of related experiences for in-context learning. When grasping an opened Cheez-It box, a zero-shot VLM overestimates the grasp force by 2.75x, crushing the box, while Exp-Force can lift the box without damaging it.
+Fig. 2: Exp-Force architecture. A single target object image IoI_{o} from the wrist camera is first fed into the descriptor VLM to generate a text description ToT_{o} of the object’s physical properties related to robot grasping. Together with the object image, the text description is fed into the embedding model to obtain the object embedding zoz_{o}. The embedding is used to perform a cosine-similarity search against the Experience Pool. The top-kk examples are retrieved and supplied to the predictor VLM as in-context examples for estimating the grasping force F^o\hat{F}_{o}. Each example contains the object name, mass, description, image, and ground-truth F⋆F^{\star}.
+We propose using foundation models to make pre-grasp force predictions, emulating how humans select grasp forces. Humans connect an object’s appearance to prior interactions with visually and semantically similar objects. This process generates reliable force predictions by combining knowledge gained from previous grasps with current visual context [7, 8, 16, 6]. We adopt a similar experience-conditioned approach to grasp force estimation using the knowledge encoded in visual-language models (VLMs). Large VLMs such as GPT-5.2 and Gemini-3.1-Pro encode human-like common-sense knowledge about object physical properties through massive image–text training data [21, 15]. Prior work has shown that conditioning foundation models on retrieved examples through retrieval-augmented generation (RAG) can improve robotic planning and decision making by grounding model reasoning in relevant past experiences [9, 23, 12].
+Recent work has explored leveraging foundation models for forceful grasping by first inferring latent physical attributes (e.g., weight, friction, or compliance) from semantic descriptions and then combining these estimates with analytic formulations to compute grasping forces [3]. However, such approaches rely on explicit physical modeling assumptions and have been evaluated on limited object sets with rigid parallel grippers.
+In this paper, we propose Exp-Force, an experience-conditioned framework that predicts the appropriate grasping force for an object (Fig. 1). Given a single RGB image of a novel object, Exp-Force predicts the appropriate grasping force by generating a task description with a VLM, retrieving relevant experiences from a small pool of prior grasping experiences, and incorporating those examples into the prompt of a force predictor VLM. Our approach avoids injecting human-designed heuristics or analytic modeling into the prediction process, but instead maps wrist-camera object images directly to grasping force estimates. Importantly, the framework is platform-agnostic and does not depend on a specific gripper embodiment.
+We demonstrate through offline and real-world experiments that Exp-Force enables data-efficient and generalizable grasping force estimation in practical robotic settings. Using a modest experience pool of only 129 object grasps (≈\approx 1 hour of real robot data), our method achieves accurate and stable force predictions with a best-case cross-validation mean absolute error of 0.43​N0.43\,$\mathrm{N}$. The strong predictive performance of our framework suggests that the complex interaction physics between compliant grippers and diverse objects can be implicitly captured by VLMs when grounded in a small set of relevant interaction examples.
+In summary, our contributions are:
+1.
+To the best of our knowledge, this is the first work to leverage retrieval-augmented VLMs for estimating appropriate grasping forces in robotic manipulation.
+2.
+We demonstrate the effectiveness of Exp-Force with offline evaluation on a dataset of 129 object instances. Exp-Force achieves a force prediction error of 0.430.43 N\mathrm{N}, outperforming prediction of zero-shot VLMs by 72%
+3.
+We show that accurate force estimation needs only a small (k=6k=6) number of relevant examples, highlighting the in-context sample efficiency of Exp-Force.
+4.
+We validate the generalization capability of Exp-Force through real-world robotic experiments across diverse and unseen objects using compliant robot fingers.
+5.
+We release our dataset and implementation at
+http://expforcesubmission.github.io/Exp-Force-Website/
+II Methods
+Our objective in this work is to predict the approrpiate grasping force scalar F⋆F^{\star} when given a single wrist-camera image IoI_{o} of an object instance oo. We define F⋆F^{\star} as the minimum grasping force needed to lift the object without slip. Grasp force is defined as the sum of the contact normal forces of two parallel gripper fingers against the object.
+To achieve this objective, we formulate force prediction as an experience-conditioned inference problem: a small set of relevant prior grasping experiences is retrieved and provided to a VLM as contextual examples to estimate F⋆F^{\star} for a query object oo (Fig. 2).
+Our pipeline consists of three main components: (A) Object description generation, (B) Experience retrieval, and (C) Experience-conditioned force inference. Steps A and C are VLM-based and use structured prompts to ensure that inference is performed under well-defined task and embodiment assumptions.
+II-A Object Description Generation
+The first step generates a textual description of the query image to explicitly identify object attributes that are relevant to grasping force estimation. We obtain this description by constructing the following prompt for a descriptor VLM: a shared grasp-task information 𝒞\mathcal{C}, a task-specific description instruction τdesc\tau_{\mathrm{desc}}, and the input query image IoI_{o}. This construction standardizes information about the grasp task across different object instances.
+The grasp-task information 𝒞\mathcal{C} provides contextual information to the VLM. It specifies (1) the task objective to find F⋆F^{\star}; (2) embodiment information about the gripper, such as geometry, structure, material, and a side-view image; and (3) a visual scale reference image captured under identical camera settings to provide metric size cues. he shared context 𝒞\mathcal{C} is provided to both the descriptor and predictor (Sec. II-C) to ensure consistent physical assumptions and manipulation constraints. The instruction τdesc\tau_{\mathrm{desc}} explicitly directs the model to describe object properties relevant to 𝒞\mathcal{C}. The description instruction τdesc\tau_{\mathrm{desc}} specifies that the model should characterize visual and semantic attributes relevant to grasping force estimation. Importantly, no analytic force models or manually designed heuristics are embedded in the instruction prompt.
+Formally, let Πdesc​(⋅)\Pi_{\mathrm{desc}}(\cdot) be the prompt construction function that formats 𝒞,τdesc,Io\mathcal{C},\tau_{\mathrm{desc}},I_{o} into a structured multi-modal prompt for the descriptor module. The descriptor VLM gdescg_{\mathrm{desc}} then processes the constructed prompt to generate a textual description ToT_{o} of the object’s physical properties:
+To=gdesc​(Πdesc​(𝒞,τdesc,Io)).T_{o}=g_{\mathrm{desc}}\!\left(\Pi_{\mathrm{desc}}(\mathcal{C},\tau_{\mathrm{desc}},I_{o})\right).
+In practice, we find that the output ToT_{o}, offers several semantically relevant characteristics about the target object oo. Example descriptions that the VLM returns include size, shape, apparent rigidity or compliance, surface characteristics, and structural cues (ex. container-like vs. solid objects). This demonstrates that ToT_{o} serves as a semantic representation that can support similarity-based retrieval in the next stage.
+Fig. 3: Evaluation objects, categories, and model performance across categories. (A) Representative objects used in our experiments, categorized by geometry, fragility, and weight. All scale bars are 20cm. (B) Objects weight versus minimum feasible grasping force F⋆F^{\star}. Dashed lines indicate bounds for the coefficient of friction μ\mu that the zero-shot model uses in its force estimation. (C) Comparison of the Mean Absolute Error between zero-shot versus Exp-Force in each of the six object categories, across three vision-language models (GPT 5.2, Gemini-3-Flash, and Gemini-3.1-Pro). For each model, we chose the best kk value from our in-context sample efficiency ablation (Sec. IV-D). The total count of objects within each category is also reported.
+II-B Experience Retrieval
+Next, we use the generated object description ToT_{o} and the object image IoI_{o} to retrieve similar prior experiences to estimate F⋆F^{\star}. Similarity is computed by embedding both the query object and prior experiences into a shared multimodal embedding space. The multimodal embedding is computed using a pretrained vision–language embedding model ϕ\phi:
+zo=ϕ⁡(Io,To),z_{o}=\phi(I_{o},T_{o}),
+where zo∈ℝdz_{o}\in\mathbb{R}^{d} denotes the embedding of the query object oo, capturing both visual and semantic features, and dd is the dimensionality of the embedding space. In this work, we adopt the Qwen3-VL-Embedding-8B model [13] as the embedding function ϕ\phi, for which d=4096d=4096. We choose Qwen3 as it is specifically optimized for multimodal retrieval tasks, mapping both the visual features of the query image IoI_{o} and the semantic description ToT_{o} into a unified vector space.
+We then compare zoz_{o} with the embeddings of prior experiences. We maintain an experience pool:
+ℰ={(ni,mi,Ti,Ii,Fi⋆)}i=1N,\mathcal{E}=\{(n_{i},m_{i},T_{i},I_{i},F_{i}^{\star})\}_{i=1}^{N},
+where each experience eie_{i} consists of the object’s name nin_{i}, mass mim_{i}, text description TiT_{i}, pre-grasp image IiI_{i} and the ground truth Fi⋆F_{i}^{\star} obtained from prior robotic interaction (Section. III-A). We use ϕ\phi to compute the embedding of each stored element in this experience pool (ziz_{i}) and calculate the cosine similarity between ziz_{i} and the query embedding zoz_{o}:
+sim⁡(zo,zi)=zo⊤​zi‖zo‖2​‖zi‖2.\mathrm{sim}(z_{o},z_{i})=\frac{z_{o}^{\top}z_{i}}{\|z_{o}\|_{2}\,\|z_{i}\|_{2}}.
+We rank experiences in ℰ\mathcal{E} by sim⁡(zo,zi)\mathrm{sim}(z_{o},z_{i}) and select the kk highest ones as our retrieved experience set:
+ℰk​(o)={(ni,mi,Ti,Ii,Fi⋆)∣i∈ℐk​(o)},\mathcal{E}_{k}(o)=\{(n_{i},m_{i},T_{i},I_{i},F_{i}^{\star})\mid i\in\mathcal{I}_{k}(o)\},
+where ℐk​(o)\mathcal{I}_{k}(o) contains the indices of the top-kk similar embeddings. ℰk​(o)\mathcal{E}_{k}(o) serves as the experience context that will be used to inform the force predictor module.
+II-C Experience-Conditioned Force Inference
+In the final stage, we condition a predictor VLM on the retrieved experiences ℰk​(o)\mathcal{E}_{k}(o) to estimate the appropriate grasping force F⋆F^{\star} through in-context inference. We construct a predictor prompt that integrates four components in sequence: the shared grasp-task information 𝒞\mathcal{C} defined in Sec. II-A, the selected prior interactions ℰk​(o)\mathcal{E}_{k}(o), a task-specific force prediction instruction τpred\tau_{\mathrm{pred}} that directs the model to infer F⋆F^{\star}, and the query image IoI_{o}. The predictor VLM gpredg_{\mathrm{pred}} then processes this prompt to produce an experience-conditioned estimation of the scalar minimum feasible grasping force F^o\hat{F}_{o}:
+F^o=gpred(Πpred(𝒞,ℰk(o),τpred,Io,)).\hat{F}_{o}=g_{\mathrm{pred}}\!\left(\Pi_{\mathrm{pred}}(\mathcal{C},\mathcal{E}_{k}(o),\tau_{\mathrm{pred}},I_{o},)\right).
+In this paper, we instantiate both the descriptor gdescg_{\mathrm{desc}} and predictor gpredg_{\mathrm{pred}} using three state-of-the-art vision–language models: GPT-5.2, Gemini-3-Flash, and Gemini-3.1-Pro. We will compare these different models in Sec. IV to examine robustness across different VLMs.
+Importantly, no analytic contact models, friction equations, or manually designed force heuristics are incorporated into the prediction prompt. This means that the whole Exp-Force pipeline operates end-to-end from visual observation alone, avoiding the need for explicit physical modeling.
+When k=0k=0, no prior experiences are provided in the prompt, and the formulation reduces to zero-shot inference:
+F^o(0)=gpred​(Πpred​(𝒞,τpred,Io)).\hat{F}_{o}^{(0)}=g_{\mathrm{pred}}\!\left(\Pi_{\mathrm{pred}}(\mathcal{C},\tau_{\mathrm{pred}},I_{o})\right).
+This special case enables direct comparison between zero-shot VLMs and Exp-Force, isolating the contribution of experience conditioning.
+III Experimental Setup
+To evaluate the performance of Exp-Force on predicting the target grasping force F⋆F^{\star}, we compare Exp-Force against baselines with offline and real-world experiments. We structure our evaluation around the following questions:
+•
+Can Exp-Force enable accurate prediction of F⋆F^{\star} of diverse unseen objects?
+•
+How much does each component of Exp-Force contribute to the force prediction performance?
+•
+How many in-context examples do we need to accurately predict the target force F⋆F^{\star}?
+III-A Experience Pool Data Collection
+Accurate evaluation of Exp-Force requires both testing across diverse objects and accurately measuring the true minimum feasible grasping force F⋆F^{\star}. This section describes our choice of objects and method for measuring F⋆F^{\star}.
+We first assembled a set of 129 objects categorized into 6 semantic categories. Objects were selected by combining household items from a grocery store with items from the YCB dataset [2] to ensure a variety in geometry, weight, fragility, and surface texture (Fig. 3A). Object categories were created by first isolating fragile objects and classifying them as Fragile–light” or Fragile–heavy” based on whether their mass was below or above 100,g\mathrm{g}. The remaining objects were classified by grasp geometry. We found that most durable household items could be classified as either “Cuboid” or “Cylinder”. Of outliers, “Bottles” were a salient category. Many liquid products are packaged in slender, slippery, and heavy bottles. All remaining outliers were classified as ”Odd shapes”.
+For each object, we collect real-time grasping force and slip measurements using a pair of FORTE tactile fin-ray fingers [20] on a linkage-based gripper [19], as well as an object RGB image (640 x 480 resolution) collected by a RealSense D435i wrist camera. The force estimation runs at 100 Hz with << 10 ms\mathrm{ms} latency, while slip detection runs at 500 Hz with << 100 ms\mathrm{ms} latency. This wrist camera captures a top-down view image before each data collection trial to serve as a pre-grasp image IoI_{o} for our experience pool. The entire end-effector assembly is attached to a Franka Emika Panda robot arm to generate a vertical lifting motion.
+To accurately measure ground-truth F⋆F^{\star} for each object, the gripper uses adaptive force control. The gripper first applies a small grasping force of 0.25 N\mathrm{N} to the object and begins to lift the object by 5 cm\mathrm{c}\mathrm{m} at 0.5 cm\mathrm{c}\mathrm{m}/s\mathrm{s}. During this 10 second period, for each slip event detected, the gripper tightens its grasp by ≈\approx2 mm\mathrm{m}\mathrm{m} (inter-finger distance), which increases the grasp force. Since grasp force is only increased until there is no longer slippage, the final force measurement accurately measures the minimum grasp force F⋆F^{\star} required for lifting the object. We performed three lifting trials for each object, and selected the median value. Finally, we ceiling-round the value to 0.25 N\mathrm{N} increments to account for sensor noise and the grasp force estimator’s RMSE (≈\approx 0.2 N\mathrm{N}). Before applying this approach for finding F⋆F^{\star} to all 129 objects, we verified that F⋆F^{\star} was accurate across 20 objects through robot teleoperation by confirming that grasp forces under F⋆F^{\star} were insufficient to lift the object. While scaling this method to the full dataset, we found that adaptive force control failed for 10 objects (Pocky, drill, lotion bottle, Clorox toilet bleach, Oxiclean 21.5oz, mustard, sugar, bean paste 28oz, muffin mix, black AC adapter). We established the ground truth F⋆F^{\star} for these objects through robot teleoperation instead.
+Figure 3(b) plots the measured F⋆F^{\star} in relation to object weight. We see our semantic categories correspond to distinct regions in the plot: fragile items cluster to the bottom left, having low weight and requiring low force; bottles cluster in the center being heavy and requiring moderately high forces; finally, odd shapes occupy extremes, such as the slippery peeler at the top left, and the heavy drill at the top right. This plot also enables us to compare the friction between the gripper and object against analytic friction models. Under a classical Coulomb friction model, |Fweight|=μ​Fgrasp\lvert\textbf{F}_{\textrm{weight}}\rvert=\mu F_{\textrm{grasp}}. Thus, different μ\mu values determine the slopes of lines through the origin. In Fig. 3(b) we plot lines corresponding to the typical range of μ\mu values selected by our zero-shot models. Since most objects lie below the μ=1\mu=1 line, this indicates the gripper’s effective μ\mu is much higher than 1 on most objects. As we later discuss in Section IV-A, this is the primary cause for our zero-shot VLMs consistently overestimating the appropriate grasp force F⋆F^{\star}.
+III-B Offline Experiments
+After data collection of the experience pool, we evaluate how well Exp-Force fares in pure force prediction on the dataset. We compare Exp-Force against three types of baselines: (1) zero-shot VLMs to isolate the performance benefit of retrieving prior interaction examples, (2) standard supervised learning baselines, and (3) ablations to assess the contributions of the predictor module, experience retriever, and embodiment information provided in the prompts.
+For Category (2), we compare Exp-Force against a representative pretrained vision encoder (DINOv3-Large [22]) and a representative multi-modal encoder (the previously-used Qwen3-VL-Embedding-8B [13] from Sec. II-B) to incorporate object descriptions ToT_{o}. In both cases, the encoder parameters are frozen, and a two-layer MLP head is trained on top of the extracted features to predict the F⋆F^{\star}. We perform an extensive hyperparameter sweep over hidden dimension, dropout rate, learning rate, and weight decay (512 configurations per model). The results reported in Fig. 5 correspond to the best-performing checkpoints from the hyperparameter sweep on the validation splits, providing an optimistic estimate of achievable performance.
+For Category (3), first we evaluated a simple baseline that averages the ground-truth forces Fi⋆F_{i}^{\star} of the top-kk retrieved examples (Exp Force Avg). Second, we replace the retrieved set ℰk​(o)\mathcal{E}_{k}(o) with kk randomly sampled experiences (Random Exp). Lastly, we remove the gripper embodiment information from both the descriptor and predictor prompt (w/o embodiment).
+Beyond the study of model components, we conduct an additional ablation study on the number of selected samples kk to understand how the size of the retrieved set ℰk​(o)\mathcal{E}_{k}(o) affects prediction performance. Specifically, we vary kk and measure the resulting force estimation accuracy. This experiment characterizes how performance scales with the quantity of conditioning examples and provides insight into the in-context sample efficiency of Exp-Force.
+For all offline experiments, we evaluate Exp-Force using 5-fold cross-validation across the entire collected dataset of 129 object instances to assess generalization to unseen objects. In each fold, the available objects are partitioned into a set of query objects for force prediction and a remaining set used to construct the experience pool ℰ\mathcal{E}. Across the five folds, every object is evaluated as a query, ensuring comprehensive coverage of the dataset while guaranteeing that no query instance ever appears in its corresponding retrieved set.
+Fig. 4: Real-world experiment setup.
+(A) The compliant tactile two-finger gripper with a wrist-mounted camera used for pre-grasp image capture and force execution.
+(B) Five selected objects from each of the six categories. All scale bars are 10cm.
+III-C Real World Experiments
+To evaluate Exp-Force in the real world, we grasp objects with the force estimation F^o\hat{F}_{o} given by Exp-Force and the zero-shot VLM baseline (Fig. 4A). We perform our real-world evaluations on the same grasping platform we used to collect the experience pool dataset (Sec. III-A). We compare the performance of Exp-Force and zero-shot VLM over 150 grasps: 5 grasp trials each for 30 objects. The thirty objects were chosen by selecting five objects with different sizes, textures, and weights from each of the six categories described in Sec. III-A, and are shown in Fig. 4B. We chose Gemini-3-flash as the selected VLM based on our results in Sec. IV. Although our offline experiments showed that Gemini-3-pro is our most performant model, we found Gemini-3-pro exhibited inconsistent response latency under high API load during our experiments.
+In each grasp trial, we first perturb the pose of the target object, and then take an image with the robot wrist camera from a consistent end-effector pose. We then use this image to query both a zero-shot VLM and Exp-Force (k=7k=7) for their pre-grasp force estimates. Finally, for each of the two force outputs, we manually center the target object under the gripper and perform a grasp. To simplify the real-world experiments, trials whose outcomes could be inferred from previous trials were not repeated. For example, if an object was crushed at 5 N\mathrm{N}, we did not perform further trials on the same object with larger forces. Grasp forces with inconsistent grasp outcomes were re-run three additional times, with the more common outcome taken as the final outcome.
+Fig. 5: Comparison of force prediction errors across three vision–language models (GPT-5.2, Gemini-3-flash, and Gemini-3.1-pro). Lower values correspond to more accurate force estimation. For the multimodal baseline, we utilize Qwen3-VL-Embedding (denoted as Qwen). For each model, distribution bars summarize the error statistics over five-fold cross-validation, where the thin whiskers denote one standard deviation.
+Fig. 6: Effect of the retrieved example size (kk) on force estimation error. Our evaluation reveals that Exp-Force exhibits remarkable in-context sample efficiency. The plot demonstrates that, across all predictor VLMs, the Mean Absolute Error (MAE) rapidly converges as the model switches from zero-shot inference (k=0k=0) to experience-conditioned inference. Performance plateaus early, typically between k=5k=5 and k=10k=10, highlighting the high sample efficiency of Exp-Force. Shaded regions denote the standard deviation across cross-validation folds, illustrating that the Gemini models maintain superior estimation stability and tighter error bounds compared to GPT-5.2.
+We categorize the grasp outcome as Appropriate, Overestimate, or Insufficient. A prescribed force is Insufficient if a grasp cannot be stably maintained, manifesting as either an initial failure to pick up the object, or the object slipping out of the grippers within one minute of lifting. If a grasp is successful, its force is categorized as an Overestimate if the commanded force is greater than 3×3\times the ground-truth F⋆F^{\star}, or by 44N. Otherwise, if a grasp is successful and the force is not overestimated, then it is classified as Appropriate. We choose to identify Overestimates as a standalone category because excessive grasp force is undesirable even if it does not lead to damage to the grasped object. Excessive force induces unnecessary wear on the gripper and tactile sensors. Also, fragile objects may appear deceptively non-fragile, such as the opened Cheez-It box in Fig. 1.
+IV Offline Experiment Results
+IV-A Comparison to Zero-Shot VLMs
+Overall, our results show that incorporating selected prior examples into the prompt substantially improves force prediction accuracy compared to zero-shot inference. Exp-Force consistently reduces error across all three tested VLMs and all six object categories (Fig. 3C, 5-No-Exp). Specifically, the mean absolute error (MAE) decreases from 1.86 N\mathrm{N} to 0.56 N\mathrm{N} for GPT-5.2, from 1.14 N\mathrm{N} to 0.46 N\mathrm{N} for Gemini-3-Flash, and from 1.52 N\mathrm{N} to 0.43 N\mathrm{N} for Gemini-3.1-Pro. The consistently higher root-mean squared error (RMSE) compared to MAE indicates the presence of larger errors on objects requiring higher F⋆F^{\star}. These results show that incorporating selected prior examples into the prompt substantially improves force prediction accuracy compared to zero-shot VLMs.
+To understand the mechanisms driving the accuracy improvement over zero-shot VLMs, we qualitatively analyzed the reasoning traces from the predictors gpredg_{\mathrm{pred}}. While the VLMs usually successfully recognized the objects, the zero-shot gpredg_{\mathrm{pred}} consistently defaults to explicit analytical modeling. For example, when predicting F⋆F^{\star} for a 236 g\mathrm{g} Cheez-It crackers box (Fig. 1), the gpredg_{\mathrm{pred}} recognizes the object but hallucinates unobservable physical parameters (e.g., guessing a friction coefficient of μ≈0.6\mu\approx 0.6) and applies a rigid-body Coulomb friction model (Fgrip≥W/μF_{\text{grip}}\geq W/\mu). This analytical approach is fundamentally brittle as the simplified modeling equations fail to capture the deformation and form-closure of compliant fin-ray fingers (Sec. III-A). As a result, the zero-shot VLMs overestimate the required force to be 5.5 N\mathrm{N}.
+Exp-Force circumvents this failure mode by allowing gpredg_{\mathrm{pred}} to act as a semantic-physical interpolator rather than a flawed physics engine. In the Cheez-It box example, Exp-Force’s gpredg_{\mathrm{pred}}
+specifically cited the examples of a muffin box at 612g and a toothpaste box of 133g to make the prediction, as they share “similar flat, smooth cardboard properties” to the target Cheez-It cracker box. It also implicitly reasons about complex contact mechanics, stating that the force “accounts for the load and ensures the fin-ray fingers conform well enough without
+causing structural damage to the box.” These results indicate that VLMs can implicitly account for hard-to-model physical interactions when grounded by a relevant set of real-world examples.
+IV-B Comparison to Supervised Baselines
+Exp-Force also outperforms the standard supervised learning baselines of DINOv3-Large and Qwen3-VL-Embedding-8B (Fig. 5-Baselines).
+While these models achieve reasonable mean absolute errors (0.500.50 N\mathrm{N} and 0.510.51 N\mathrm{N}, respectively, with the latter using ToT_{o} from Gemini-3-Flash),
+Exp-Force paired with Gemini-3.1-Pro or Gemini-3-Flash outperforms them by 14%14\% and 8%8\%, respectively. This suggests that conditioning the VLM on retrieved interaction examples for in-context inference enables more adaptive force estimation than regression based solely on distances in a frozen embedding space.
+This advantage over supervised baselines reveals a key difference in task formulation. Standard data-driven approaches attempt to learn a global mapping from observation directly to a continuous grasping force value, which can be prone to overfitting given our modest dataset of 129 object instances. This is because the F⋆F^{\star} varies substantially across diverse objects as gripper-surface interactions differ. Exp-Force avoids this overfitting by reformulating the problem from absolute continuous regression to local comparative reasoning.
+IV-C Ablation Studies
+We isolate the contributions of each component of Exp-Force for ablation studies (Fig. 5-Ablations). Exp-Force achieves lower errors than the Exp Force Avg baseline across all three selected VLMs, demonstrating that gpredg_{\mathrm{pred}} is actively reasoning about different object properties, rather than simply interpolating the aggregated examples. The Random Exp baseline also performs uniformly worse across all VLMs, confirming that the performance of Exp-Force relies on the specific semantic and physical relevance of the retrieved embeddings ziz_{i}, not just the structural format of the prompt.
+Surprisingly, the w/o embodiment baseline performs only marginally worse than Exp-Force. Across all three tested VLMs, the largest increase in mean absolute error when removing the embodiment information is only 0.034​N0.034\,$\mathrm{N}$. This suggests that the predictor gpredg_{\mathrm{pred}} implicitly deduces the embodiment constraints through in-context inference directly from the retrieved experience set ℰk​(o)\mathcal{E}_{k}(o); i.e., the in-context examples effectively act as an implicit, data-driven physical model of the hardware. The necessity for explicit text-based embodiment hints is diminished, because the ground-truth forces Fi⋆F_{i}^{\star} provided in the examples inherently encapsulate the complex contact mechanics of the specific gripper.
+IV-D In-context Sample Efficiency and Diminishing Returns
+To understand how many prior experiences are needed for effective in-context inference, we vary the number of retrieved examples kk and measure the force prediction error. Our evaluation reveals that Exp-Force exhibits remarkable in-context sample efficiency (Fig. 6). The rapid reduction in estimation error from zero-shot (k=0k=0) to experience-conditioned inference suggests a fundamental shift in the predictor VLM’s reasoning mechanism when anchored by the retrieved set ℰk​(o)\mathcal{E}_{k}(o). Performance plateaus early, typically between k=5k=5 and k=10k=10. Within this optimal data-efficient window, Gemini-3.1-Pro achieves the lowest MAE (0.43± 0.130.43\,\pm\,0.13 N\mathrm{N} at k=6k=6), closely followed by Gemini-3-Flash (0.46± 0.160.46\,\pm\,0.16 N\mathrm{N} at k=7k=7) and GPT-5.2 (0.56± 0.160.56\,\pm\,0.16 N\mathrm{N} at k=7k=7). Expanding the retrieved experience set beyond k=10k=10 yields diminishing returns. As a result, the models require only a small, highly relevant set of semantic neighbors to accurately anchor their estimations of F∗F^{*}. This diminishing return implies that once a sufficient semantic neighborhood is established, adding more distant experiences provides no additional insights while diluting the prompt’s context.
+Fig. 7: Snapshots of representative trials. We compare grasp outcomes of a Pringle chip, a champagne glass, and a banana, using forces generated by both our zero-shot baseline and Exp-Force with Gemini-3-flash and k=7 from the same image. The chip grasp is representative of a typical successful grasp. The Champagne Glass and Banana correspond respectively to typical failure modes - the zero-experience model overestimating, and our method under-estimating. All scale bars are 5cm.
+V Real Robot Experiment Results
+TABLE I: Real-world grasping performance using Gemini-3-Flash
+Zero-shot Baseline
+Exp-Force (k=7)
+Category
+Appr. [%]
+Overest. [%]
+Insuff. [%]
+MAE ±\pm STD [N]
+Appr. [%]
+Overest. [%]
+Insuff. [%]
+MAE ±\pm STD [N]
+Bottles
+64
+32
+4
+3.8±\pm2.9
+92 (+44%)
+0
+8
+1.08±\pm0.76 (-71%)
+Cylinders
+60
+32
+8
+5.6±\pm3.3
+80 (+33%)
+0
+20
+0.62±\pm0.73 (-89%)
+Cuboids
+64
+36
+0
+5.0±\pm5.0
+100 (+56%)
+0
+0
+0.81±\pm0.92 (-84%)
+Fragile–Heavy
+56
+44
+0
+3.1±\pm0.95
+84 (+50.0%)
+0
+16
+0.11±\pm0.10 (-97%)
+Fragile–Light
+80
+20
+0
+0.47±\pm0.81
+96 (+20.0%)
+4
+0
+0.03±\pm0.03 (-94%)
+Odd Shapes
+56
+40
+4
+6.0±\pm9.8
+72 (+29%)
+4
+24
+0.90±\pm0.45 (-85%)
+Overall
+63
+34
+3
+4.0±\pm4.8
+87.3 (+38%)
+1.3
+11.3
+0.59±\pm0.68 (-85%)
+In real world grasping experiments, we observe that the experience-conditioned inference of Exp-Force outperforms zero-shot VLMs, improving the overall rate of Appropriate force selection from 63%63\% to 87%87\% (Fig. 7, Tab. I). A two-proportion z-test confirms that this improvement is statistically significant (p<10−6p<10^{-6}). In addition, the MAE decreases from 4.0 N\mathrm{N} to 0.59 N\mathrm{N}, representing an 85%85\% reduction in force prediction error. These results indicate that Exp-Force provides a practical and reliable solution for real-world pre-grasp force selection, maintaining strong cross-object generalization across diverse categories.
+The main source of Exp-Force’s performance improvement is the elimination of Overestimation errors. For example, the Champagne Glass only requires 1.0 N\mathrm{N}, but the zero-shot VLMs’ estimates range from 3.6N to 7.0N due to identifying the glass as slippery - that is 7×\times ground-truth F⋆F^{\star}, and risks breaking the glass. Exp-Force does sometimes underestimate the force required, thus leading to new failures to stably grasp the object, as in the banana. However, this limitation is unlikely to affect real deployments. In practice, pre-grasp force estimation is typically paired with adaptive slip detection, which compensates for insufficient initial force. In our experiments, activating the slip-correction algorithm from [20] after an Insufficient force was applied resulted in successful grasps for all Insufficient test cases.
+Table I shows a detailed comparison of the VLMs performances by object category and the change in MAE. The performance gains with our method are most significant across the Fragile-Heavy, Cylinders, and Cuboids categories. This is because the low-friction surfaces of these objects consistently lead to the zero-shot VLMs overestimating F⋆F^{\star} (Sec. IV-A). Surprisingly, the zero-shot VLMs performed quite well on the Fragile-light category, leading to minimal performacne gains when using Exp-Force. This is because the VLMs are able to identify that these objects are fragile and light-weight, and therefore, it chose to stay close to the preset minimum gripper force command of 0.25​N0.25\,$\mathrm{N}$. (Sec. III-A). Light crumpling does still occur in the paper cup example, when 0.5​N0.5\,$\mathrm{N}$ is applied (shown on website). These results show that Exp-Force can be a practical and reliable pre-grasp force selector for real-world robot settings.
+VI Discussion
+In this work, we introduced Exp-Force, an experience-conditioned framework for estimating pre-grasp force from a single RGB image with VLMs. Using only a small experience pool from one-hour real robot interaction, the method achieves accurate force estimation with a best-case error of 0.43​N0.43\,$\mathrm{N}$ in offline experiments, approaching the 0.2​N0.2\,$\mathrm{N}$ tactile sensor uncertainty. In real-world grasping experiments, Exp-Force improves the rate of appropriate force selection from 63%63\% to 87%87\%. These results show that Exp-Force enables reliable and data-efficient pre-grasp force estimation across diverse objects without explicit physical modeling.
+Despite promising results, several limitations remain.
+First, Exp-Force relies on a single RGB image and therefore cannot directly measure key physical properties such as object mass. Visually identical objects may require substantially different gripping forces (e.g., empty vs. full opaque bottles), introducing unavoidable estimation errors. Incorporating additional sensing modalities, such as multi-view perception or tactile force feedback, may help reduce this ambiguity.
+Second, performance is bounded by the reasoning reliability of the underlying VLM. While the framework often retrieves semantically plausible reference experiences, the subsequent inference process may produce inconsistent or physically implausible force estimates. This reflects a broader limitation of current foundation models when applied to physical decision-making tasks.
+Finally, the current implementation relies on large frontier VLMs, which introduces nontrivial computational overhead and limits real-time deployment. Future work may explore model compression or distillation to improve efficiency, and evaluate the framework at larger scales across more diverse objects, grasping poses, and gripper embodiments.
+Despite these limitations, our results still demonstrate that in-context inference over a small set of relevant prior interactions enables accurate and generalizable pre-grasp force prediction.
+References
+[1]
+A. Bicchi and V. Kumar (2000)
+Robotic grasping and contact: a review.
+Proceedings of the IEEE.
+Cited by: §I.
+[2]
+B. Calli, A. Singh, J. Bruce, A. Walsman, K. Konolige, S. Srinivasa, P. Abbeel, and A. M. Dollar (2017)
+Yale-cmu-berkeley dataset for robotic manipulation research.
+Int. J. Rob. Res. 36 (3), pp. 261–268.
+External Links: ISSN 0278-3649,
+Link,
+Document
+Cited by: §III-A.
+[3]
+Y. Chen et al. (2024)
+DeliGrasp: inferring object mass, friction, and compliance with llm-supervised robot learning.
+arXiv preprint arXiv:2403.07832.
+Note: Uses general LLMs like GPT-4 to predict physical properties from semantics
+Cited by: §I.
+[4]
+J. A. Collins, C. Houff, Y. L. Tan, and C. C. Kemp (2023)
+ForceSight: text-guided mobile manipulation with visual-force goals.
+External Links: 2309.12312,
+Link
+Cited by: §I.
+[5]
+M. R. Cutkosky (1989)
+On grasp choice, grasp models, and the design of hands for manufacturing tasks.
+IEEE Transactions on Robotics and Automation.
+Cited by: §I.
+[6]
+J. P. Gallivan, J. S. Cant, M. A. Goodale, and J. R. Flanagan (2014)
+Representation of object weight in human ventral visual cortex.
+Current Biology 24 (16), pp. 1866–1873.
+Cited by: §I.
+[7]
+R. S. Johansson and J. R. Flanagan (2009)
+Coding and use of tactile signals from the fingertips in object manipulation tasks.
+Nature Reviews Neuroscience 10 (5), pp. 345–359.
+Cited by: §I.
+[8]
+R. S. Johansson and G. Westling (1988)
+Coordinated isometric muscle commands adequately and erroneously programmed for the weight during lifting tasks with precision grip.
+Experimental Brain Research 71 (1), pp. 59–71.
+Cited by: §I.
+[9]
+T. Kagaya, T. J. Yuan, Y. Lou, J. Karlekar, S. Pranata, A. Kinose, K. Oguri, F. Wick, and Y. You (2024)
+RAP: retrieval-augmented planning with contextual memory for multimodal llm agents.
+ArXiv abs/2402.03610.
+External Links: Link
+Cited by: §I.
+[10]
+X. Kang, T. Tian, S. Lee, B. Huang, Y. Li, and Y. Kuo (2026)
+Learning force-regulated manipulation with a low-cost tactile-force-controlled gripper.
+External Links: 2602.10013,
+Link
+Cited by: §I.
+[11]
+H. Khamis et al. (2021)
+Real-time friction estimation for grip force control.
+In IEEE International Conference on Robotics and Automation (ICRA),
+Note: Uses tactile sensing to estimate friction for adaptive grip force control
+Cited by: §I.
+[12]
+G. Lan, K. Qu, R. Zurbrügg, C. Chen, C. E. Mower, H. Bou-Ammar, and M. Hutter (2025)
+Experience is the best teacher: grounding vlms for robotics through self-generated memory.
+arXiv preprint arXiv:2507.16713.
+Cited by: §I.
+[13]
+M. Li, Y. Zhang, D. Long, C. Keqin, S. Song, S. Bai, Z. Yang, P. Xie, A. Yang, D. Liu, J. Zhou, and J. Lin (2026)
+Qwen3-vl-embedding and qwen3-vl-reranker: a unified framework for state-of-the-art multimodal retrieval and ranking.
+arXiv preprint arXiv:2601.04720.
+Cited by: §II-B,
+§III-B.
+[14]
+S. Li et al. (2024)
+Construction of a multiple-dof under-actuated gripper with force sensing.
+In Robotics: Science and Systems (RSS),
+Note: Underactuated multi-DOF gripper with force sensing design
+Cited by: §I.
+[15]
+X. Li et al. (2025)
+PhysBench: a comprehensive benchmark for evaluating vlms’ physical world understanding.
+ICLR 2025.
+Note: Tests GPT-4V, Gemini, etc. on physical reasoning (mass, friction, elasticity, fragility)
+Cited by: §I.
+[16]
+V. C. Paulun, B. Klein, K. Thömmes, and R. W. Fleming (2019)
+The influence of visual and haptic material information on early grasping force.
+Royal Society Open Science 6 (3), pp. 181563.
+Cited by: §I.
+[17]
+Y. Qian et al. (2022)
+Compliant gripper with force estimation for physical human–robot interaction.
+Mechanism and Machine Theory.
+Note: Underactuated compliant gripper with integrated force estimation
+Cited by: §I,
+§I.
+[18]
+F. Schürmann et al. (2026)
+Affordable 3d-printed miniature robotic gripper with integrated vision-based force estimation.
+Nature Communications Engineering.
+Note: Compliant miniature gripper with camera-based fingertip force estimation
+Cited by: §I,
+§I.
+[19]
+M. Seo, H. A. Park, S. Yuan, Y. Zhu, and L. Sentis (2025)
+LEGATO: cross-embodiment imitation using a grasping tool.
+IEEE Robotics and Automation Letters (RA-L).
+Cited by: §III-A.
+[20]
+S. Shang, M. Seo, Y. Zhu, and L. Chin (2026)
+FORTE: tactile force and slip sensing on compliant fingers for delicate manipulation.
+IEEE Robotics and Automation Letters, pp. 1–8.
+External Links: ISSN 2377-3774,
+Link,
+Document
+Cited by: §I,
+§III-A,
+§V.
+[21]
+Z. Shen et al. (2023)
+Physically grounded vision-language models for robotic manipulation.
+arXiv preprint arXiv:2309.02561.
+Note: Evaluates general VLMs like CLIP+GPT on physical properties; shows they capture human-like priors
+Cited by: §I.
+[22]
+O. Siméoni, H. V. Vo, M. Seitzer, F. Baldassarre, M. Oquab, C. Jose, V. Khalidov, M. Szafraniec, S. Yi, M. Ramamonjisoa, F. Massa, D. Haziza, L. Wehrstedt, J. Wang, T. Darcet, T. Moutakanni, L. Sentana, C. Roberts, A. Vedaldi, J. Tolan, J. Brandt, C. Couprie, J. Mairal, H. Jégou, P. Labatut, and P. Bojanowski (2025)
+DINOv3.
+External Links: 2508.10104,
+Link
+Cited by: §III-B.
+[23]
+Q. Xie, S. Y. Min, P. Ji, Y. Yang, T. Zhang, K. Xu, A. Bajaj, R. Salakhutdinov, M. Johnson-Roberson, and Y. Bisk (2024)
+Embodied-rag: general non-parametric embodied memory for retrieval and generation.
+arXiv preprint arXiv:2409.18313.
+Cited by: §I.
+[24]
+Z. Yang et al. (2024)
+Contact force measurement of the compliant gripper based on a calibrated deformation model.
+Review of Scientific Instruments.
+Note: High-precision contact-force measurement for a compliant gripper
+Cited by: §I.
+[25]
+X. Yao et al. (2019)
+Design and compliant estimate of robot gripper with light-emitting transduction.
+Measurement Science and Technology.
+Note: Compliant gripper with optical measurement of deformation for force estimation
+Cited by: §I,
+§I.
+[26]
+L. Zhang et al. (2021)
+A compliant adaptive gripper and its intrinsic force sensing method.
+In IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS),
+Note: Underactuated adaptive gripper with intrinsic force sensing
+Cited by: §I.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

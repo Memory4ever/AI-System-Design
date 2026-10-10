@@ -1,0 +1,1120 @@
+Data Agent: Learning to Select Data via End-to-End Dynamic Optimization
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Related Work
+2.1 Static Data Selection
+2.2 Dynamic Data Selection
+3 The Proposed Method
+3.1 Reinforcement Learning Formulation of Data Selection
+4 Experiment
+4.1 Experiment Setup
+4.2 Performance Comparison
+4.3 Generalization to More Advanced Architectures
+4.4 Generalization to Different Training Paradigms
+4.5 Generalization under Distribution Shift
+4.6 Robustness to Noisy Scenarios
+4.7 Ablation Study
+5 Conclusion
+References
+License: arXiv.org perpetual non-exclusive license
+arXiv:2603.07433v1 [cs.LG] 08 Mar 2026
+Data Agent: Learning to Select
+Data via End-to-End Dynamic Optimization
+Suorong Yang
+Affiliation: National University of Singapore
+Affiliation: Nanjing University
+Fangjian Su
+Affiliation: Nanjing University
+Hai Gan
+Affiliation: Nanjing University
+Ziqi Ye
+Affiliation: Nanjing University
+Jie Li
+Affiliation: Nanjing University
+Baile Xu
+Affiliation: Nanjing University
+Correspondence to: xubaile@nju.edu.cn
+Furao Shen
+Affiliation: Nanjing University
+Soujanya Poria
+Affiliation: Nanyang Technological University
+Correspondence to: soujanya.poria@gmail.com
+Abstract
+Dynamic Data selection aims to accelerate training by prioritizing informative samples during online training.
+However, existing methods typically rely on task-specific handcrafted metrics or static/snapshot-based criteria to estimate sample importance, limiting scalability across learning paradigms and making it difficult to capture the evolving utility of data throughout training.
+To address this challenge, we propose Data Agent, an end-to-end dynamic data selection framework that formulates data selection as a training-aware sequential decision-making problem.
+The agent learns a sample-wise selection policy that co-evolves with model optimization, guided by a composite reward that integrates loss-based difficulty and confidence-based uncertainty signals.
+The reward signals capture complementary objectives of optimization impact and information gain, together with a tuning-free adaptive weighting mechanism that balances these signals over training.
+Extensive experiments across a wide range of datasets and architectures demonstrate that Data Agent consistently accelerates training while preserving or improving performance, e.g., reducing costs by over 50% on ImageNet-1k and MMLU with lossless performance.
+Moreover, its dataset-agnostic formulation and modular reward make it plug-and-play across tasks and scenarios, e.g., robustness to noisy datasets, highlighting its potential in real-world scenarios.
+Keywords: Machine Learning, ICML
+1 Introduction
+Deep learning has made significant progress in recent years, with model architectures becoming increasingly deep and complex to achieve state-of-the-art performance (Touvron et al., 2023; Achiam et al., 2023).
+However, this progress has created a growing demand for ever-larger training datasets, which leads to substantial training costs.
+Such costs degrade training efficiency and are usually unaffordable for researchers with limited computational resources.
+More importantly, large-scale datasets often contain redundancies, further increasing the training burden without necessarily improving model performance.
+To address these and improve data efficiency, data selection methods (Yang et al., 2024; Xia et al., 2023; Yang et al., 2023b; Zhang et al., 2024) aim to identify highly representative subsets of training data, accelerating training without sacrificing performance.
+These methods can be broadly categorized into static selection (Tan et al., 2024; Xia et al., 2023; Yang et al., 2025b) and dynamic selection (Qin et al., 2023; Hong et al., 2024; Raju et al., 2021).
+Static selection identifies a fixed subset of data before training begins, whereas dynamic selection adjusts the data during model training, enabling better adaptation of the training data to the evolving learning process.
+While achieving promising results, existing methods face two fundamental limitations.
+First, most approaches rely on task- or architecture-specific handcrafted metrics to estimate sample importance, e.g., clustering-based statistics (Yang et al., 2025b; Xia et al., 2023) or gradient-derived scores (Tan et al., 2024; Zhang et al., 2024).
+Such criteria are often tailored to image classification, and are difficult to generalize to paradigms with different supervision and optimization structures, such as object detection.
+As a result, extending these methods to new tasks typically requires substantial task-specific redesign, hindering scalability and applicability (Qin et al., 2023).
+Second, sample utility is inherently dynamic and evolves throughout training, yet most methods rely on a converged surrogate model or snapshot-based scores for selection (Qin et al., 2023; Sorscher et al., 2022; Maharana et al., 2023). As observed in (Tan et al., 2024), such evaluations potentially favor samples that are difficult or influential in later training stages, and can be effected by transient training fluctuations.
+Together, these limitations raise an interesting and pressing question: Can we design an agent that adaptively selects data on the fly, while scaling across tasks in a plug-and-play manner?
+Figure 1: (a) End-to-end dynamic data selection. Existing methods often rely on handcrafted, task-specific static heuristics to estimate sample importance, limiting the scalability across learning paradigms. In contrast, our framework formulates data selection as a learning problem and jointly optimizes it with model training in a plug-and-play manner, forming a closed-loop, training-aware selection process. (b) Illustration of data points prioritized by difficulty and uncertainty signals. The uncertainty signal concentrates on the inter-cluster boundaries and transitional regions, while the difficulty signal focuses more on the sparse cluster areas.
+Our answer is a resounding Yes!
+In this paper, we propose Data Agent, an end-to-end dynamic data selection framework that adaptively selects training data throughout training.
+Given that both sample utility and model states evolve throughout training, we formulate dynamic data selection as a sequential decision-making problem, where an agent learns a sample-wise selection policy that co-evolves with model optimization.
+At each training stage, the agent observes the current model state and determines which samples to prioritize.
+It is guided by a composite signal that combines a loss-based difficulty measure and a confidence-based uncertainty measure.
+Intuitively, difficult samples often correspond to underrepresented patterns in the data distribution, while uncertain samples highlight regions near the decision boundary.
+Our theoretical analyses (Prop. 3.1/3.2) further prove that difficulty and uncertainty signals target complementary objectives, respectively prioritizing samples with larger optimization impact and those yielding higher expected information gains.
+To automatically balance these objectives over training, we introduce a tuning-free, self-adaptive reward weighting mechanism.
+Early in training, the agent emphasizes difficult samples to accelerate representation learning, while later it gradually shifts focus toward uncertain samples to refine decision boundaries and improve generalization.
+This adaptive process enables data selection to co-evolve with the model’s learning dynamics.
+Importantly, due to its dataset-agnostic formulation and modular reward design, Data Agent scales effortlessly across various learning paradigms.
+It can be seamlessly applied to object detection, semantic segmentation, and LLM instruction tuning, enabling lossless training acceleration in a plug-and-play manner.
+When augmented with cross-modality semantic consistency signals (Yang et al., 2024), it further exhibits robustness to noisy and corrupted data, highlighting its applicability in real-world settings.
+Extensive experiments across a wide range of datasets, architectures, and tasks demonstrate that our method consistently accelerates training while preserving or even improving performance with high efficiency.
+On large-scale ImageNet-1k (Deng et al., 2009), our method reduces training costs by over 50% while improving performance compared to the full dataset.
+Beyond image classification, our framework generalizes across tasks such as object detection, semantic segmentation, and LLM instruction tuning.
+This also highlights its strong cross-architecture generalization, including ResNet (He et al., 2016), ViT (Dosovitskiy et al., 2020), YOLO (Varghese and Sambath, 2024), UperNet (Xiao et al., 2018), and LLaMA (Touvron et al., 2023).
+Notably, on MMLU (Hendrycks et al., 2021b), our method outperforms the full-dataset baseline by 2% with only 50% of the data on widely used LLaMA-7B.
+Moreover, even in noisy datasets, our method demonstrates strong robustness, outperforming existing baselines by at least 8%, underscoring its reliability.
+Our main contributions are as follows:
+1) We formulate data selection as a training-aware sequential decision-making problem and propose Data Agent, an end-to-end framework that learns a sample-wise selection policy co-evolving with model training.
+2) We introduce a composite reward integrating sample difficulty and model uncertainty, together with an adaptive reward weighting mechanism, enabling tuning-free optimization.
+3) With a dataset-agnostic formulation and modular reward structure, Data Agent scales across tasks, architectures, and scenarios, serving as a plug-and-play module.
+4) Experiments demonstrate that our method consistently outperforms SOTA approaches, achieving lossless training acceleration with over 50% reduction in training cost and saving tens to over one hundred GPU hours across deep models.
+2 Related Work
+Data-efficient learning can be broadly categorized into static data selection (Yang et al., 2023b; Paul et al., 2021; Yang et al., 2024), dynamic data selection (Qin et al., 2023; Hong et al., 2024; Raju et al., 2021; Yang et al., 2025a), dataset distillation (Lei and Tao, 2023; Du et al., 2023; Cazenavette et al., 2025; Li et al., 2025; Zhang et al., 2023; Su et al., 2024), and dataset condensation (Liu et al., 2023; Yang et al., 2023a; Shao et al., 2024; Malakshan et al., 2025).
+Following dynamic data selection, we propose Data Agent capable of identifying effective training coresets during online training.
+2.1 Static Data Selection
+Static data selection aims to identify a compact yet representative subset of the full datasets before training begins.
+Models trained on such coresets can achieve results comparable to those on the original dataset.
+Existing methods are typically based on predefined or heuristic metrics. These metrics can be broadly categorized into importance-criteria-based (Toneva et al., 2018), dataset-distribution-based (Zheng et al., 2023), and optimization-based (Yang et al., 2024).
+Among importance-criteria-based methods, EL2N and GraNd (Paul et al., 2021) calculate the gradient norm and error-ℓ2\ell_{2}-norm. Forgetting (Toneva et al., 2018) estimates the samples’ misclassification frequency for selection.
+MoSo (Tan et al., 2024) estimates the effect of removing each sample from the training set, and Memorization (Feldman and Zhang, 2020) assesses the impact of a sample’s absence on the model’s ability.
+The work (Yang et al., 2024) leverages multimodal features to filter out noisy samples by prioritizing semantically aligned samples.
+Based on dataset distribution, Herding (Welling, 2009) selects samples closer to the corresponding class centers.
+D2 (Maharana et al., 2023) estimates sample difficulty based on its neighbors’ difficulty, and Moderate (Xia et al., 2023) selects samples with closer distances to the median score.
+Moreover, CCS (Zheng et al., 2023) evaluates the dataset coverage by extending the classical set cover problem to the distribution cover problem. RL-Selector (Yang et al., 2025b) estimates sample coverage throughout the entire training process and leverages RL to select a fixed subset, requiring the entire training process for each selection ratio. The work (Ramalingam et al., 2023) proposes to compute subsets based on the k-center and uncertainty sampling.
+Methods based on optimization algorithms optimize the selected datasets based on gradient matching (Mirzasoleiman et al., 2020b; Killamsetty et al., 2021a), self-supervised metrics (Sorscher et al., 2022), influence functions (Yang et al., 2023b), bi-level optimization (Killamsetty et al., 2021b), facility location function (Mirzasoleiman et al., 2020a; Yang et al., 2023c), temporal dual-depth scoring (Zhang et al., 2024), and submodularity function (Nohyun et al., 2023; Kothawade et al., 2022; Wei et al., 2015; Iyer et al., 2021).
+Despite the promising results, these works face limitations: 1) The predefined or handcrafted metrics hardly work well across architectures and datasets (Qin et al., 2023); 2) To evaluate the training effect of samples, these methods typically introduce substantial additional costs.
+2.2 Dynamic Data Selection
+Dynamic data selection selects data points during online training, allowing the training data to adapt to the models’ training stages.
+The work (Hong et al., 2024) proposes UCB and ϵ\epsilon-greedy algorithms to select samples with the highest uncertainty during training.
+The work (Liu and Mirzasoleiman, 2023) proposes a data-efficient framework that extracts small subsets of training data for augmentation to achieve comparable performance to the full datasets.
+SAS (Joshi and Mirzasoleiman, 2023) observes that the most influential samples for contrastive learning contribute the least to supervised learning, and proposes an algorithm to select subsets that maximize augmentation similarity to the full data.
+The work (Raju et al., 2021) emphasizes the importance of samples that are used for training a few times and proposes a scoring mechanism based on UCB and ϵ\epsilon-greedy.
+Recently, InfoBatch (Qin et al., 2023) proposes an unbiased dataset pruning method that can accelerate training by pruning less informative samples based on the loss distribution, reducing training costs without degrading performance.
+3 The Proposed Method
+Figure 2: The framework of the proposed Data Agent. At each training stage, the agent observes the model state and derives reward signals from standard forward passes. These signals are combined using an adaptive weighting mechanism to guide a PPO-based actor-critic agent, which learns the selection policy.
+The selected data is used in subsequent training, forming a closed-loop training pipeline where data selection evolves alongside model optimization. Notably, the modular reward design enables the framework to be easily adapted to various learning paradigms.
+Overview of the Data Agent.
+Dynamic data selection is inherently a sequential decision-making problem that evolves alongside model training, where the utility of data samples changes as the model learns.
+Here, we propose the Data Agent, a lightweight PPO-based framework that adaptively determines the training data distribution throughout training.
+At each training stage, the data agent observes the current target model state and optimizes a sample-wise policy, guided by two complementary, training-aware signals: a loss-based difficulty signal and a confidence-based uncertainty signal.
+These signals are directly derived from the forward passes of the target model, capturing the immediate contribution of a sample to empirical risk minimization and the model’s predictive uncertainty, respectively.
+To enable an end-to-end optimization, we introduce an adaptive reward weighting mechanism that automatically adjusts the relative importance of these signals throughout training.
+This allows the data agent to focus on difficult signals early on to accelerate representation learning, while shifting attention toward uncertainty as training progresses to refine decision boundaries and improve generalization.
+Notably, due to the dataset-agnostic framework and modular reward structure, our method is highly scalable across diverse tasks, e.g., object detection, and scenarios, e.g., noisy datasets.
+3.1 Reinforcement Learning Formulation of Data Selection
+Preliminary. We formulate dynamic data selection problem as a Markov decision process (MDP) (Zhong et al., 2024), denoted by the tuple ℳ=(𝒮,𝒜,𝒫,r,ρ,H)\mathcal{M}=(\mathcal{S},\mathcal{A},\mathcal{P},r,\rho,H), where 𝒮\mathcal{S} is the state space, 𝒜\mathcal{A} the action space, 𝒫\mathcal{P} the transition kernel, rr the reward function, ρ\rho the initial state distribution, and HH the horizon length.
+A policy π⁡(a|s)\pi(a|s) defines a distribution over actions conditioned on the current state ss.
+At each step, the agent observes the current state ss induced by the target model, updates the policy, and receives rewards derived from the training-aware signals.
+The agent’s goal is to optimize a policy that identifies the most informative training samples for the model.
+State Space.
+The state space is defined by the internal representations of the target model, which capture the current training state for each sample.
+Let fθ​(⋅)f_{\theta}(\cdot) denote the backbone network parameterized by θ\theta.
+For a given sample xx, the state is defined as: s=fθfeat​(x)s=f_{\theta}^{\text{feat}}(x), where fθfeat​(⋅)f_{\theta}^{\text{feat}}(\cdot) is the feature embedding output from the backbone network.
+For example, in image classification tasks, this corresponds to the outputs before the final fully connected layer.
+As training progresses, both the feature space and the model’s representation structure change continuously.
+Thus, the state not only encodes sample-specific information but also captures the model’s progress, enabling the data agent to condition its selection policy on both the inherent properties of each sample and the evolving training dynamics.
+Action Space.
+The action space is designed for adaptive control over the data distribution.
+Rather than selecting or discarding samples via discrete decisions, the agent outputs a continuous-valued action for each sample, which avoids the combinatorial complexity and non-differentiability inherent to subset selection.
+Given a state ss, the policy π⁡(a|s)\pi(a|s) produces an action a∈[0,1]a\in[0,1], representing the selection weight for each sample.
+This continuous formulation transforms the dynamic data selection problem into a differentiable control problem, which allows for stable and efficient policy optimization in a non-stationary training environment.
+Training-aware Reward Design.
+The reward function guides the agent toward adaptive data selection and is computed from training-time forward passes, without relying on a validation set.
+Importantly, sample utility evolves with model learning: samples that are informative at early training stages may become redundant as the model’s representations improve.
+Thus, we propose a training-aware composite reward that models the interplay between data and the evolving model via two complementary signals: sample difficulty and model uncertainty.
+This combination encourages focusing on samples that are crucial for optimization and rich in information at the current training stage.
+Loss-based Difficulty Reward:
+We introduce a loss-based difficulty reward to estimate the immediate learning difficulty of each sample.
+Specifically, given the per-sample training loss ℒ\mathcal{L} and target model fθf_{\theta}, the difficulty reward is defined as:
+Rdiff​(xi)=ℒ⁡(fθ​(xi),yi).R_{\text{diff}}(x_{i})=\mathcal{L}(f_{\theta}(x_{i}),y_{i}).
+(1)
+This reward has three key advantages (Qin et al., 2023; Cilimkovic, 2015): 1) loss values can be directly obtained from standard forward passes, avoiding additional computational overhead; 2) it naturally adapts to the evolving training stage of fθf_{\theta}; and 3) it is task- and architecture-agnostic, making it broadly applicable to various learning paradigms.
+Proposition 3.1.
+Let fθf_{\theta} be a network trained with the CE loss ℓ⁡(x,y)\ell(x,y) and softmax outputs pθ​(y|x)p_{\theta}(y|x).
+Under a first-order SGD update, the expected magnitude of the parameter update induced by a sample (xi,yi)(x_{i},y_{i}) satisfies
+‖∇θℓ​(xi,yi)‖∝ 1−pθ​(yi∣xi),\|\nabla_{\theta}\ell(x_{i},y_{i})\|\;\propto\;1-p_{\theta}(y_{i}\mid x_{i}),
+(2)
+and is therefore a monotonic function of the training loss ℓ⁡(xi,yi)=−log⁡pθ​(yi∣xi)\ell(x_{i},y_{i})=-\log p_{\theta}(y_{i}\mid x_{i}).
+Proposition 3.1, proved in Appendix , shows that prioritizing samples with higher loss accelerates empirical risk minimization by emphasizing those samples with larger optimization impact.
+Confidence-based Uncertainty Reward:
+While the difficulty reward captures optimization pressure, it is limited to the likelihood of the annotated class and neglects the uncertainty of the model’s prediction.
+For instance, a loss-based strategy may overlook samples that are correctly classified but still uncertain, particularly those near decision boundaries.
+These samples are critical for refining the decision boundaries.
+To address this, we introduce a confidence-based uncertainty reward, derived from the predictive entropy:
+Rconf=−∑c=1Cpθ(y=c∣xi)logpθ(y=c∣xi),R_{\text{conf}}=-\sum_{c=1}^{C}p_{\theta}\left(y=c\mid x_{i}\right)\log p_{\theta}\left(y=c\mid x_{i}\right),
+(3)
+where CC is the number of classes.
+This reward can be obtained via standard forward passes without additional computation cost.
+By favoring samples with high predictive uncertainty, the data agent is encouraged to focus on boundary-sensitive samples, which are essential for improving decision reliability and generalization.
+Proposition 3.2.
+Let pθ​(y|x)p_{\theta}(y|x) denote the predicted distribution. Under a first-order SGD update on the CE loss, the expected information gain of learning a sample xix_{i} is proportional to the predictive entropy:
+𝔼y∼pθ​(y∣x)[DKL(pθ′(⋅∣x)∥pθ(⋅∣x))]∝H[pθ(y∣x)],\mathbb{E}_{y\sim p_{\theta}(y\mid x)}\left[D_{\mathrm{KL}}\left(p_{\theta^{\prime}}(\cdot\mid x)\|p_{\theta}(\cdot\mid x)\right)\right]\propto H\left[p_{\theta}(y\mid x)\right],
+(4)
+where θ′=θ−η​∇θℓ​(x,y)\theta^{\prime}=\theta-\eta\nabla_{\theta}\ell(x,y).
+Proposition 3.2, proved in Appendix , shows that prioritizing uncertain samples approximately maximizes the information gain for model learning.
+Taken together, Proposition 3.1 and  3.2 highlight the complementary nature of the difficulty and uncertainty rewards, which capture different but crucial aspects of sample utility.
+Adaptive Reward Weighting.
+The relative importance of difficulty and uncertainty signals varies across different training stages.
+In early stages, when model representations are still forming, the difficulty signal drives representation learning by prioritizing challenging samples.
+As training progresses, the uncertainty in the model’s predictions becomes more informative, enabling finer decision refinement.
+To capture this dynamic shift and avoid manually tuning, we propose an adaptive reward weighting mechanism that automatically adjusts the contributions of the difficulty and uncertainty rewards based on training dynamics.
+Since the variance of each reward signal reflects its informativeness (Zhang et al., 2024; Chen et al., 2018), we compute the weighting coefficient rr as follows:
+r=V​a​r​(Rdiff)V​a​r​(Rdiff)+V​a​r​(Rconf)+ϵ,r=\frac{Var(R_{\text{diff}})}{Var(R_{\text{diff}})+Var(R_{\text{conf}})+\epsilon},
+(5)
+where ϵ\epsilon is a small constant for numerical stability.
+The final reward is computed as:
+R=r⋅Rdiff+(1−r)⋅Rconf.R=r\cdot R_{\text{diff}}+(1-r)\cdot R_{\text{conf}}.
+(6)
+This formulation allows the agent to adjust its selection focus in an end-to-end, data-driven manner without the need for external hyperparameter tuning.
+It encourages the agent to balance reducing empirical risk and maximizing epistemic information gain, ultimately enhancing model generalization.
+Notably, the reward design is modular and extensible, allowing additional task-specific or scenario-specific signals to be adjusted or incorporated as needed, further enhancing the framework’s flexibility.
+PPO-based Agent Optimization.
+We optimize a sample-wise selection policy using Proximal Policy Optimization (PPO), which dynamically controls the training data distribution during model training.
+The policy determines the sample-wise selection weights.
+As the target model and reward signals evolve during training, unconstrained updates to the policy can lead to abrupt changes in the data selection process, potentially destabilizing the joint optimization of the model and the data agent.
+To mitigate this, we adopt PPO to constrain policy updates and stabilize the co-evolutionary process.
+PPO’s clipped objective enables stable, incremental updates to the policy, while retaining the advantages of policy gradient methods:
+ℒactor​(θ)=𝔼t​[min⁡(rt​(θ)​A^t,clip​(rt​(θ),1−ϵ,1+ϵ)​A^t)],\mathcal{L}_{\text{actor}}(\theta)=\mathbb{E}_{t}\left[\min\left(r_{t}(\theta)\hat{A}_{t},\text{clip}\left(r_{t}(\theta),1-\epsilon,1+\epsilon\right)\hat{A}_{t}\right)\right],
+(7)
+where rt​(θ)r_{t}(\theta) is the probability ratio between the current and previous policies, A^t\hat{A}_{t} is the advantage estimate at time tt, and ϵ\epsilon controls the range of clipping.
+In addition, we compute the advantage function using generalized advantage estimation (GAE) (Schulman et al., 2018), which balances bias and variance in non-stationary environments.
+The temporal-difference residual δt\delta_{t} at time tt is
+δt=rt+γ​V​(st+1)−V⁡(st),\delta_{t}=r_{t}+\gamma V(s_{t+1})-V(s_{t}),
+(8)
+where γ\gamma is the discount factor, and the advantage estimate A^t\hat{A}_{t} is computed as:
+A^t=∑l=0T−t−1(γ​λ)l​δt+l.\hat{A}_{t}=\sum_{l=0}^{T-t-1}(\gamma\lambda)^{l}\delta_{t+l}.
+(9)
+The critic network is trained to approximate the state-value function V⁡(s)V(s) by minimizing the squared temporal-difference error.
+Given the advantage A^t\hat{A}_{t} computed by GAE, the value function loss is then given by
+ℒcritic​(θ)=𝔼t​[(Vθ​(st)−A^t−V⁡(st))2].\mathcal{L}_{\text{critic}}(\theta)=\mathbb{E}_{t}\left[\left(V_{\theta}(s_{t})-\hat{A}_{t}-V(s_{t})\right)^{2}\right].
+(10)
+Table 1: Comparison with state-of-the-art baselines. All methods are trained using ResNet-18 on CIFAR-10/100 and ResNet-50 on Tiny-ImageNet. Random* refers to randomly selecting samples in each epoch. Some results are from (Qin et al., 2023).
+Dataset
+CIFAR-10
+CIFAR-100
+Tiny-ImageNet
+Whole Dataset
+95.6
+78.2
+45.0
+Selection Ratio (%)
+30
+50
+70
+30
+50
+70
+30
+50
+70
+Random
+90.2
+92.3
+93.9
+69.7
+72.1
+73.8
+29.8
+37.2
+42.2
+EL2N (Paul et al., 2021)
+91.6
+95.0
+95.2
+69.5
+72.1
+77.2
+26.6
+37.1
+44.0
+GraNd (Paul et al., 2021)
+91.2
+94.6
+95.3
+68.8
+71.4
+74.6
+29.7
+36.3
+43.2
+Forgetting (Toneva et al., 2018)
+91.7
+94.1
+94.7
+69.9
+73.1
+75.3
+28.7
+33.0
+41.2
+RL-Selector (Yang et al., 2025b)
+91.8
+-
+95.4
+71.1
+-
+77.6
+31.1
+-
+44.5
+Herding (Welling, 2009)
+80.1
+88.0
+92.2
+69.6
+71.8
+73.1
+29.4
+31.6
+39.8
+Moderate (Xia et al., 2023)
+91.5
+94.1
+95.2
+70.2
+73.4
+77.3
+30.6
+38.2
+42.8
+Glister (Killamsetty et al., 2021b)
+90.9
+94.0
+95.2
+70.4
+73.2
+76.6
+30.1
+39.5
+43.9
+DP (Yang et al., 2023b)
+90.8
+93.8
+94.9
+-
+73.1
+77.2
+-
+-
+-
+Self-sup. prototypes (Sorscher et al., 2022)
+91.0
+94.0
+95.2
+70.0
+71.7
+76.8
+27.7
+37.9
+43.4
+MoSo (Tan et al., 2024)
+91.1
+94.2
+95.3
+70.9
+73.6
+77.5
+31.2
+38.5
+43.4
+CLIP-Sel (Yang et al., 2024)
+91.9
+94.5
+95.0
+70.8
+73.7
+77.0
+31.7
+40.0
+46.0
+Random*
+93.0
+94.5
+94.8
+74.4
+75.3
+77.3
+41.5
+42.8
+43.1
+UCB (Hong et al., 2024)
+93.9
+94.7
+95.3
+-
+75.3
+77.3
+-
+-
+-
+ϵ\epsilon-Greedy (Hong et al., 2024)
+94.1
+94.9
+95.2
+-
+74.8
+76.4
+-
+-
+-
+InfoBatch (Qin et al., 2023)
+94.7
+95.1
+95.6
+76.5
+78.1
+78.2
+42.2
+43.2
+43.8
+Ours
+95.0
+95.3
+96.0
+77.6
+78.9
+79.5
+44.9
+47.0
+49.4
+4 Experiment
+4.1 Experiment Setup
+Datasets and Network Architectures.
+We evaluate our framework across diverse benchmarks spanning a wide variety of tasks to demonstrate its generalization and scalability.
+For image classification, we use both coarse-grained and fine-grained benchmarks, including CIFAR-10/100 (Krizhevsky et al., 2009), Tiny-ImageNet (Chrabaszcz et al., 2017), and ImageNet-1k (Deng et al., 2009).
+We further extend the evaluation to semantic segmentation on ADE20k (Zhou et al., 2018), object detection on MS-COCO (Lin et al., 2015), and LLM instruction tuning on MMLU (Hendrycks et al., 2021b) and AlpacaEval 2.0 (Dubois et al., 2025).
+Moreover, we evaluate the generalization of our framework to more challenging scenarios, including ImageNet-O (Hendrycks et al., 2021c), ImageNet-Hard (Taesiri et al., 2024), and ImageNet-R (Hendrycks et al., 2021a).
+To assess its cross-architecture generalization, we leverage a range of deep models, including ResNet series (He et al., 2016), and ViT series (Dosovitskiy et al., 2020) for classification, YOLOv8 (Varghese and Sambath, 2024) for detection, UperNet (Xiao et al., 2018) for semantic segmentation, and LLaMA 7B (Touvron et al., 2023) for LLM instruction tuning.
+Table 2: Results on ImageNet-1k with a 60% selection ratio using ResNet-50 on an 8-A100 server. We report wall-clock time (h) and total GPU time (GPU hours). Note that, due to high computational and memory costs (Xia et al., 2023), Glister and CG-Score are not reported. Some results are from (Qin et al., 2023).
+Method
+Herding
+EL2N
+GraNd
+Forgetting
+RL-Selector
+SSP
+Moderate
+CLIP-Sel
+UCB
+Infobatch
+Ours
+Whole Dataset
+Acc. (%)
+71.1
+72.3
+71.0
+72.5
+73.4
+70.0
+73.1
+73.2
+75.8
+76.5
+76.8
+76.4
+Time (h)
+10.5
+10.5
+10.5
+10.5
+10.5
+10.5
+10.5
+10.5
+10.5
+10.5
+10.5
+17.5
+Overhead (h)
+>>17.5
+>>17.5
+>>17.5
+>>17.5
+>>17.5
+>>24.0
+>>17.5
+>>1.6
+0.03
+0.0028
+0.125
+0.0
+Overall (n*h)
+>>224.0
+>>224.0
+>>224.0
+>>224.0
+>>224.0
+>>276.0
+>>224.0
+>>96.8
+84.0
+84.0
+85.0
+140.0
+Figure 3: Performance and saved costs on ImageNet-1k across Swin-T, ViT-B, and ViT-L on a 4-A100-GPU server. We report the total GPU hours.
+MMLU
+AlpacaEval 2.0
+Win Rate
+LC Win Rate
+Full Dataset
+34.9
+1.9
+6.7
+Ours
+36.9
+2.0
+7.7
+Table 3: Generalization to LLM instruction tuning using LLaMA-7B with a 50% selection ratio.
+Comparison with State-of-the-arts. We compare our method with a wide range of static and dynamic data selection methods, including 1) Random, 2) EL2N (Paul et al., 2021), 3) GraNd (Paul et al., 2021), 4) Forgetting (Toneva et al., 2018), 5) RL-Selector (Yang et al., 2025b), 6) Herding (Welling, 2009), 7) Moderate (Xia et al., 2023), 8) Glister (Killamsetty et al., 2021b),
+9) DP (Yang et al., 2023b), 10) MoSo (Tan et al., 2024), 11) CLIP-Selector (Yang et al., 2024), 12) Self-sup. prototypes (Sorscher et al., 2022), 13) Random*, 14) InfoBatch (Qin et al., 2023), 15) ϵ\epsilon-Greedy (Raju et al., 2021), and 16) UCB (Raju et al., 2021).
+4.2 Performance Comparison
+Results on CIFAR-10/100 and Tiny-ImageNet. As shown in Table 1, we compare our proposed method with both static and dynamic data selection methods on CIFAR-10/100 and Tiny-ImageNet.
+Our method consistently outperforms existing methods by a large margin, achieving significant training acceleration without sacrificing model performance.
+Specifically, it achieves comparable or better accuracy compared to the full dataset with only 50% of the data on CIFAR-100 and 30% on Tiny-ImageNet.
+While performance tends to decrease as the selection ratio decreases, our method shows the least drop in accuracy compared to full-dataset training.
+These results underscore the effectiveness of our adaptive, training-aware selection policy, which dynamically adjusts data selection throughout training to maintain high model performance with fewer data.
+Results on ImageNet-1k.
+As shown in Table 2, in addition to the performance comparison, we also compare computation efficiency on ImageNet-1k with a 60% selection ratio.
+Thus, we report the training time, the introduced overhead, and the total GPU hours for various methods.
+Notably, our method achieves a 0.4% accuracy improvement over the full-dataset baseline while reducing training costs by nearly 40%, saving over 55 GPU hours.
+Importantly, since most static methods require training a surrogate model to estimate sample importance, the computational overhead is higher.
+Thus, our method outperforms static selection methods in both accuracy and efficiency.
+When compared to other dynamic selection methods, our approach delivers superior performance while maintaining competitive computational efficiency.
+This efficiency is attributed to our lightweight PPO-based data agent, which operates directly on model features using a compact architecture consisting of just three linear layers, minimizing computation.
+Meanwhile, the reward can be directly obtained via standard forward passes without introducing complex algorithms.
+Overall, these results demonstrate that our method delivers an effective and scalable solution on large-scale datasets.
+4.3 Generalization to More Advanced Architectures
+To further evaluate the cross-architecture generalization, we apply the data agent to the training of ViT-based models, including ViT-Base, ViT-Large, and Swin-Transformer.
+As shown in Figure 3, our method achieves significant training acceleration, with no loss in performance, across different selection ratios.
+For instance, on ViT-L, our method reduces overall training time by more than 150 GPU hours using only 60% of the data, without sacrificing accuracy.
+Notably, at higher selection ratios, our method achieves higher accuracy, outperforming full-dataset training.
+These results highlight the architecture-agnostic nature of our method, demonstrating its scalability.
+Table 4: Object detection mAP (%) on MS-COCO using YOLOv8 (Varghese and Sambath, 2024).
+Selection Ratio
+70%
+80%
+90%
+100%
+mAP (%)
+38.5
+39.0
+39.6
+39.6
+4.4 Generalization to Different Training Paradigms
+Table 5: Segmentation mIoU (%) on ADE20K using UperNet (Xiao et al., 2018).
+Selection Ratio
+70%
+80%
+90%
+100%
+mIoU (%)
+46.4
+46.5
+46.6
+45.4
+Object Detection.
+While most existing data selection approaches cannot be extended to detection tasks, we demonstrate the versatility of our data agent by integrating it into object detection pipelines.
+Specifically, we apply it to YOLOv8 on MS-COCO, where the sample-wise detection loss naturally serves as the difficulty-based reward signal, without relying on the confidence reward.
+As shown in Table 4, our data agent achieves lossless or comparable performance when trained with only 70-90% of the data.
+These results show that our method is not tied to classification-specific supervision or architectures, but can also adapt to dense prediction settings, highlighting its strong scalability and broad applicability.
+Semantic Segmentation.
+In addition to object detection, we further assess the generality of our proposed framework by applying it to semantic segmentation, using UperNet on ADE20K.
+As shown in Table 5, our method not only preserves segmentation performance but also achieves improvements when trained with only 70-90% of the full dataset.
+These results demonstrate that our method can adapt to dense supervision tasks, highlighting its scalability and architecture-agnostic nature.
+LLM Instruction Tuning.
+Beyond vision tasks, our data agent also accelerates LLM instruction fine-tuning, particularly with LLaMA-7B across MMLU and AlpacaEval 2.0.
+MMLU evaluates multi-domain language understanding, while AlpacaEval 2.0 assesses instruction-following and alignment quality.
+In this context, the agent dynamically selects informative instruction-response pairs during fine-tuning.
+As shown in Table 3, even with only 50% of the training data, our method achieves consistent improvements across all metrics.
+These results validate the effectiveness of our approach for LLM training pipelines, and underscore the framework’s modality- and task-agnostic scalability for accelerating large-scale model training.
+4.5 Generalization under Distribution Shift
+Table 6: Generalization performance of ResNet-50 trained with our method on ImageNet-Hard/R/O. We report AUPR (%) on ImageNet-O and accuracy (%) on others.
+Selection Ratio
+60%
+70%
+80%
+90%
+100%
+ImageNet-Hard
+14.7
+15.3
+15.6
+15.7
+14.6
+ImageNet-R
+38.0
+38.2
+38.5
+38.7
+36.2
+ImageNet-O
+15.7
+15.6
+15.7
+15.8
+13.2
+To further evaluate the generalization of our method, we conduct experiments on several challenging out-of-distribution benchmarks, i.e., ImageNet-O/R/Hard.
+These datasets are designed to assess a model’s ability to generalize to unseen, more difficult distributions.
+We compare models trained on the full ImageNet-1k dataset with those trained using our dynamically selected subsets.
+As shown in Table 6, our method significantly improves performance across all three benchmarks when trained with only 60-90% of the data.
+These results suggest that our data agent helps the model focus on more informative and representative samples, helping the model learn more generalizable features that are less prone to overfitting specific data distributions.
+Importantly, the performance improvements come with reduced training costs, enhancing practicality.
+4.6 Robustness to Noisy Scenarios
+Table 7: Robustness to noisy and corrupted data on Tiny-ImageNet using ResNet-50. The noisy ratio is 20%, and the selection ratios are 20% and 30%. Some results are from (Yang et al., 2024).
+Method
+Noisy Dataset
+Corrupted Dataset
+20%
+30%
+20%
+30%
+Random
+17.8
+23.9
+20.0
+25.9
+CLIP-Sel
+26.1
+33.1
+26.1
+32.1
+Ours
+38.1
+41.9
+41.9
+46.7
+Due to the modular design, the proposed data agent can easily incorporate additional signals tailored to specific problem settings.
+In real-world scenarios, datasets often contain mislabeled or corrupted images (Xia et al., 2023), which can significantly degrade model performance.
+To address this, we extend the flexibility of our method by integrating a cross-modality semantic alignment signal (Yang et al., 2024) to assess the consistency between visual inputs and textual labels.
+As shown in Table 7, our method consistently outperforms existing SOTA baselines, achieving over 8% accuracy improvements under noisy label conditions.
+Notably, such robustness emerges naturally from the unified selection mechanism without any modification to the core learning framework or optimization procedure.
+These results highlight the adaptability of our method.
+4.7 Ablation Study
+Effect of Different Components.
+As shown in Table 8, we analyze the effect of the difficulty reward RdiffR_{\text{diff}}, the confidence reward RconfR_{\text{conf}}, and the reward weighting rr.
+Without using any of these, our method, in the first row, degrades to random selection, which yields the lowest accuracy.
+This confirms that the proposed reward signals provide a meaningful training-aware supervision signal.
+Using RdiffR_{\text{diff}} or RconfR_{\text{conf}} alone already improves performance, and combining them is consistently better, suggesting that difficulty and uncertainty capture complementary aspects of sample utility.
+Moreover, using RdiffR_{\text{diff}} alone yields slightly lower accuracy, as prioritizing difficulty can lead to the selection of ambiguous or unstable samples.
+Introducing rr further boosts accuracy by dynamically adjusting their relative emphasis over training, effectively creating a self-adjusting curriculum that evolves with the model and improves generalization.
+Thus, removing any component from the framework degrades performance.
+Table 8: Effect of the difficulty rewards RdiffR_{\text{diff}}, uncertainty RconfR_{\text{conf}}, and adaptive reward weighting rr on T-ImageNet using R-50.
+RdiffR_{\text{diff}}
+RconfR_{\text{conf}}
+rr
+30%
+50%
+70%
+41.5
+42.8
+43.1
+✓
+42.1
+45.0
+48.2
+✓
+42.2
+45.8
+48.4
+✓
+✓
+42.5
+46.1
+48.6
+✓
+✓
+✓
+44.9
+47.0
+49.4
+(a) CIFAR-100.
+(b) Tiny-ImageNet.
+Figure 4: Effect of the RL agent on CIFAR-100 and Tiny-ImageNet under different selection ratios.
+Effect of Agent Optimization.
+To evaluate the effect of the PPO-based agent, we directly use the composite reward in Eq. 6 to select the highest-scoring samples each epoch.
+As shown in Figure 4, incorporating the PPO agent results in consistent accuracy gains across all selection ratios, validating its ability to capture training dynamics and learn a coherent, training-aware selection policy.
+5 Conclusion
+We propose Data Agent, an end-to-end dynamic data selection framework that adaptively selects training data throughout training, substantially accelerating training without sacrificing performance.
+Across diverse datasets, architectures, and scenarios, Data Agent achieves enhanced data-efficient learning, cross-task/architecture generalization, and robustness to noisy or corrupted datasets as a plug-and-play module.
+We hope this work inspires further research on data-efficient learning and believe Data Agent can serve as a valuable tool for the community, helping reduce computational costs and broaden access to training strong models with limited resources.
+Impact Statement
+This paper proposes the Data Agent, a dynamic data selection framework aimed at improving the efficiency of training deep learning models by adaptively prioritizing informative samples.
+By reducing redundant computation, our approach can lower energy consumption, GPU-hours, and carbon footprint for both academic and industrial training workloads, enabling broader participation by researchers and practitioners with limited resources while also mitigating the environmental footprint associated with large-scale training.
+Unlike prior task-specific or static selection methods, our dataset-agnostic and plug-and-play design scales seamlessly across learning paradigms and architectures, minimizing engineering overhead when deployed in new domains. More broadly, this work reframes data as an adaptive component that co-evolves with model optimization, opening a data-centric perspective for building efficient, scalable, and robust learning systems.
+References
+Achiam et al. (2023)
+J. Achiam, S. Adler, S. Agarwal, L. Ahmad, I. Akkaya, F. L. Aleman, D. Almeida, J. Altenschmidt, S. Altman, S. Anadkat, et al.
+Gpt-4 technical report.
+arXiv preprint arXiv:2303.08774.
+Cited by: §1.
+Cazenavette et al. (2025)
+G. Cazenavette, A. Torralba, and V. Sitzmann
+Dataset distillation for pre-trained self-supervised vision models.
+External Links: 2511.16674,
+Link
+Cited by: §2.
+Chen et al. (2018)
+Z. Chen, V. Badrinarayanan, C. Lee, and A. Rabinovich
+GradNorm: gradient normalization for adaptive loss balancing in deep multitask networks.
+External Links: 1711.02257,
+Link
+Cited by: §3.1.
+Chrabaszcz et al. (2017)
+P. Chrabaszcz, I. Loshchilov, and F. Hutter
+A downsampled variant of imagenet as an alternative to the cifar datasets.
+arXiv preprint arXiv:1707.08819.
+Cited by: §4.1.
+Cilimkovic (2015)
+M. Cilimkovic
+Neural networks and back propagation algorithm.
+Institute of Technology Blanchardstown, Blanchardstown Road North Dublin 15 (1), pp. 18.
+Cited by: §3.1.
+Deng et al. (2009)
+J. Deng, W. Dong, R. Socher, L. Li, K. Li, and L. Fei-Fei
+Imagenet: a large-scale hierarchical image database.
+In 2009 IEEE conference on computer vision and pattern recognition,
+pp. 248–255.
+Cited by: §1,
+§4.1.
+Dosovitskiy et al. (2020)
+A. Dosovitskiy, L. Beyer, A. Kolesnikov, D. Weissenborn, X. Zhai, T. Unterthiner, M. Dehghani, M. Minderer, G. Heigold, S. Gelly, et al.
+An image is worth 16x16 words: transformers for image recognition at scale.
+arXiv preprint arXiv:2010.11929.
+Cited by: §1,
+§4.1.
+Du et al. (2023)
+J. Du, Y. Jiang, V. Y. Tan, J. T. Zhou, and H. Li
+Minimizing the accumulated trajectory error to improve dataset distillation.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition,
+pp. 3749–3758.
+Cited by: §2.
+Dubois et al. (2025)
+Y. Dubois, B. Galambosi, P. Liang, and T. B. Hashimoto
+Length-controlled alpacaeval: a simple way to debias automatic evaluators.
+External Links: 2404.04475,
+Link
+Cited by: §4.1.
+Feldman and Zhang (2020)
+V. Feldman and C. Zhang
+What neural networks memorize and why: discovering the long tail via influence estimation.
+Advances in Neural Information Processing Systems 33, pp. 2881–2891.
+Cited by: §2.1.
+He et al. (2016)
+K. He, X. Zhang, S. Ren, and J. Sun
+Deep residual learning for image recognition.
+In Proc. IEEE Conf. Comput. Vis. Pattern Recognit. (CVPR),
+pp. 770–778.
+Cited by: §1,
+§4.1.
+Hendrycks et al. (2021a)
+D. Hendrycks, S. Basart, N. Mu, S. Kadavath, F. Wang, E. Dorundo, R. Desai, T. Zhu, S. Parajuli, M. Guo, et al.
+The many faces of robustness: a critical analysis of out-of-distribution generalization.
+In Proceedings of the IEEE/CVF international conference on computer vision,
+pp. 8340–8349.
+Cited by: §4.1.
+Hendrycks et al. (2021b)
+D. Hendrycks, C. Burns, S. Basart, A. Zou, M. Mazeika, D. Song, and J. Steinhardt
+Measuring massive multitask language understanding.
+External Links: 2009.03300,
+Link
+Cited by: §1,
+§4.1.
+Hendrycks et al. (2021c)
+D. Hendrycks, K. Zhao, S. Basart, J. Steinhardt, and D. Song
+Natural adversarial examples.
+In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition,
+pp. 15262–15271.
+Cited by: §4.1.
+Hong et al. (2024)
+F. Hong, Y. Lyu, J. Yao, Y. Zhang, I. W. Tsang, and Y. Wang
+Diversified batch selection for training acceleration.
+arXiv preprint arXiv:2406.04872.
+Cited by: §1,
+§2.2,
+§2,
+Table 1,
+Table 1.
+Iyer et al. (2021)
+R. Iyer, N. Khargoankar, J. Bilmes, and H. Asanani
+Submodular combinatorial information measures with applications in machine learning.
+In Algorithmic Learning Theory,
+pp. 722–754.
+Cited by: §2.1.
+Joshi and Mirzasoleiman (2023)
+S. Joshi and B. Mirzasoleiman
+Data-efficient contrastive self-supervised learning: most beneficial examples for supervised learning contribute the least.
+In International conference on machine learning,
+pp. 15356–15370.
+Cited by: §2.2.
+Killamsetty et al. (2021a)
+K. Killamsetty, S. Durga, G. Ramakrishnan, A. De, and R. Iyer
+Grad-match: gradient matching based data subset selection for efficient deep model training.
+In International Conference on Machine Learning,
+pp. 5464–5474.
+Cited by: §2.1.
+Killamsetty et al. (2021b)
+K. Killamsetty, D. Sivasubramanian, G. Ramakrishnan, and R. Iyer
+Glister: generalization based data subset selection for efficient and robust learning.
+In Proceedings of the AAAI Conference on Artificial Intelligence,
+Vol. 35, pp. 8110–8118.
+Cited by: §2.1,
+Table 1,
+§4.1.
+Kothawade et al. (2022)
+S. Kothawade, V. Kaushal, G. Ramakrishnan, J. Bilmes, and R. Iyer
+PRISM: a unified framework of parameterized submodular information measures for targeted data subset selection and summarization.
+In Thirty-Sixth AAAI Conference on Artificial Intelligence, AAAI,
+Cited by: §2.1.
+Krizhevsky et al. (2009)
+A. Krizhevsky G. Hinton et al.
+Learning multiple layers of features from tiny images.
+Cited by: §4.1.
+Lei and Tao (2023)
+S. Lei and D. Tao
+A comprehensive survey to dataset distillation.
+arXiv preprint arXiv:2301.05603.
+Cited by: §2.
+Li et al. (2025)
+W. Li, G. Li, K. Maeda, T. Ogawa, and M. Haseyama
+Hyperbolic dataset distillation.
+External Links: 2505.24623,
+Link
+Cited by: §2.
+Lin et al. (2015)
+T. Lin, M. Maire, S. Belongie, L. Bourdev, R. Girshick, J. Hays, P. Perona, D. Ramanan, C. L. Zitnick, and P. Dollár
+Microsoft coco: common objects in context.
+External Links: 1405.0312,
+Link
+Cited by: §4.1.
+Liu et al. (2023)
+S. Liu, J. Ye, R. Yu, and X. Wang
+Slimmable dataset condensation.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition,
+pp. 3759–3768.
+Cited by: §2.
+Liu and Mirzasoleiman (2023)
+T. Y. Liu and B. Mirzasoleiman
+Data-efficient augmentation for training neural networks.
+External Links: 2210.08363,
+Link
+Cited by: §2.2.
+Maharana et al. (2023)
+A. Maharana, P. Yadav, and M. Bansal
+D2 pruning: message passing for balancing diversity and difficulty in data pruning.
+arXiv preprint arXiv:2310.07931.
+Cited by: §1,
+§2.1.
+Malakshan et al. (2025)
+S. R. Malakshan, M. S. E. Saadabadi, A. Dabouei, and N. M. Nasrabadi
+Decomposed distribution matching in dataset condensation.
+In 2025 IEEE/CVF Winter Conference on Applications of Computer Vision (WACV),
+pp. 7112–7122.
+Cited by: §2.
+Mirzasoleiman et al. (2020a)
+B. Mirzasoleiman, J. Bilmes, and J. Leskovec
+Coresets for data-efficient training of machine learning models.
+In International Conference on Machine Learning,
+pp. 6950–6960.
+Cited by: §2.1.
+Mirzasoleiman et al. (2020b)
+B. Mirzasoleiman, J. Bilmes, and J. Leskovec
+Coresets for data-efficient training of machine learning models.
+In International Conference on Machine Learning,
+pp. 6950–6960.
+Cited by: §2.1.
+Nohyun et al. (2023)
+K. Nohyun, H. Choi, and H. W. Chung
+Data valuation without training of a model.
+In The Eleventh International Conference on Learning Representations,
+Cited by: §2.1.
+Paul et al. (2021)
+M. Paul, S. Ganguli, and G. K. Dziugaite
+Deep learning on a data diet: finding important examples early in training.
+Advances in Neural Information Processing Systems 34, pp. 20596–20607.
+Cited by: §2.1,
+§2,
+Table 1,
+Table 1,
+§4.1.
+Qin et al. (2023)
+Z. Qin, K. Wang, Z. Zheng, J. Gu, X. Peng, Z. Xu, D. Zhou, L. Shang, B. Sun, X. Xie, et al.
+Infobatch: lossless training speed up by unbiased dynamic data pruning.
+arXiv preprint arXiv:2303.04947.
+Cited by: §1,
+§1,
+§2.1,
+§2.2,
+§2,
+§3.1,
+Table 1,
+Table 1,
+Table 1,
+§4.1,
+Table 2,
+Table 2.
+Raju et al. (2021)
+R. S. Raju, K. Daruwalla, and M. Lipasti
+Accelerating deep learning with dynamic data pruning.
+arXiv preprint arXiv:2111.12621.
+Cited by: §1,
+§2.2,
+§2,
+§4.1.
+Ramalingam et al. (2023)
+S. Ramalingam, P. Awasthi, and S. Kumar
+A weighted k-center algorithm for data subset selection.
+External Links: 2312.10602,
+Link
+Cited by: §2.1.
+Schulman et al. (2018)
+J. Schulman, P. Moritz, S. Levine, M. Jordan, and P. Abbeel
+High-dimensional continuous control using generalized advantage estimation.
+External Links: 1506.02438,
+Link
+Cited by: §3.1.
+Shao et al. (2024)
+S. Shao, Z. Zhou, H. Chen, and Z. Shen
+Elucidating the design space of dataset condensation.
+Advances in Neural Information Processing Systems 37, pp. 99161–99201.
+Cited by: §2.
+Sorscher et al. (2022)
+B. Sorscher, R. Geirhos, S. Shekhar, S. Ganguli, and A. S. Morcos
+Beyond neural scaling laws: beating power law scaling via data pruning.
+In Advances in Neural Information Processing Systems,  A. H. Oh, A. Agarwal, D. Belgrave, and K. Cho (Eds.),
+Cited by: §1,
+§2.1,
+Table 1,
+§4.1.
+Su et al. (2024)
+D. Su, J. Hou, W. Gao, Y. Tian, and B. Tang
+Dˆ 4: dataset distillation via disentangled diffusion model.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition,
+pp. 5809–5818.
+Cited by: §2.
+Taesiri et al. (2024)
+M. R. Taesiri, G. Nguyen, S. Habchi, C. Bezemer, and A. Nguyen
+Imagenet-hard: the hardest images remaining from a study of the power of zoom and spatial biases in image classification.
+Advances in Neural Information Processing Systems 36.
+Cited by: §4.1.
+Tan et al. (2024)
+H. Tan, S. Wu, F. Du, Y. Chen, Z. Wang, F. Wang, and X. Qi
+Data pruning via moving-one-sample-out.
+Advances in Neural Information Processing Systems 36.
+Cited by: §1,
+§1,
+§2.1,
+Table 1,
+§4.1.
+Toneva et al. (2018)
+M. Toneva, A. Sordoni, R. T. d. Combes, A. Trischler, Y. Bengio, and G. J. Gordon
+An empirical study of example forgetting during deep neural network learning.
+arXiv preprint arXiv:1812.05159.
+Cited by: §2.1,
+Table 1,
+§4.1.
+Touvron et al. (2023)
+H. Touvron, T. Lavril, G. Izacard, X. Martinet, M. Lachaux, T. Lacroix, B. Rozière, N. Goyal, E. Hambro, F. Azhar, et al.
+Llama: open and efficient foundation language models.
+arXiv preprint arXiv:2302.13971.
+Cited by: §1,
+§1,
+§4.1.
+Varghese and Sambath (2024)
+R. Varghese and M. Sambath
+Yolov8: a novel object detection algorithm with enhanced performance and robustness.
+In 2024 International conference on advances in data engineering and intelligent computing systems (ADICS),
+pp. 1–6.
+Cited by: §1,
+§4.1,
+Table 4,
+Table 4.
+Wei et al. (2015)
+K. Wei, R. Iyer, and J. Bilmes
+Submodularity in data subset selection and active learning.
+In International conference on machine learning,
+pp. 1954–1963.
+Cited by: §2.1.
+Welling (2009)
+M. Welling
+Herding dynamical weights to learn.
+In Proceedings of the 26th Annual International Conference on Machine Learning,
+pp. 1121–1128.
+Cited by: §2.1,
+Table 1,
+§4.1.
+Xia et al. (2023)
+X. Xia, J. Liu, J. Yu, X. Shen, B. Han, and T. Liu
+Moderate coreset: a universal method of data selection for real-world data-efficient deep learning.
+In The Eleventh International Conference on Learning Representations,
+Cited by: §1,
+§1,
+§2.1,
+Table 1,
+§4.1,
+§4.6,
+Table 2,
+Table 2.
+Xiao et al. (2018)
+T. Xiao, Y. Liu, B. Zhou, Y. Jiang, and J. Sun
+Unified perceptual parsing for scene understanding.
+In Proceedings of the European conference on computer vision (ECCV),
+pp. 418–434.
+Cited by: §1,
+§4.1,
+Table 5,
+Table 5.
+Yang et al. (2023a)
+E. Yang, L. Shen, Z. Wang, T. Liu, and G. Guo
+An efficient dataset condensation plugin and its application to continual learning.
+Advances in Neural Information Processing Systems 36.
+Cited by: §2.
+Yang et al. (2023b)
+S. Yang, Z. Xie, H. Peng, M. Xu, M. Sun, and P. Li
+Dataset pruning: reducing training data by examining generalization influence.
+In International Conference on Learning Representations,
+Cited by: §1,
+§2.1,
+§2,
+Table 1,
+§4.1.
+Yang et al. (2025a)
+S. Yang, P. Li, Y. Liu, Z. Xu, P. Ye, W. Ouyang, F. Shen, and D. Zhou
+Multimodal-guided dynamic dataset pruning for robust and efficient data-centric learning.
+External Links: 2507.12750,
+Link
+Cited by: §2.
+Yang et al. (2025b)
+S. Yang, P. Li, F. Shen, and J. Zhao
+RL-selector: reinforcement learning-guided data selection via redundancy assessment.
+arXiv preprint arXiv:2506.21037.
+Cited by: §1,
+§1,
+§2.1,
+Table 1,
+§4.1.
+Yang et al. (2024)
+S. Yang, P. Ye, W. Ouyang, D. Zhou, and F. Shen
+A clip-powered framework for robust and generalizable data selection.
+arXiv preprint arXiv:2410.11215.
+Cited by: §1,
+§1,
+§2.1,
+§2,
+Table 1,
+§4.1,
+§4.6,
+Table 7,
+Table 7.
+Yang et al. (2023c)
+Y. Yang, H. Kang, and B. Mirzasoleiman
+Towards sustainable learning: coresets for data-efficient deep learning.
+In International Conference on Machine Learning,
+pp. 39314–39330.
+Cited by: §2.1.
+Zhang et al. (2023)
+L. Zhang, J. Zhang, B. Lei, S. Mukherjee, X. Pan, B. Zhao, C. Ding, Y. Li, and D. Xu
+Accelerating dataset distillation via model augmentation.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition,
+pp. 11950–11959.
+Cited by: §2.
+Zhang et al. (2024)
+X. Zhang, J. Du, Y. Li, W. Xie, and J. T. Zhou
+Spanning training progress: temporal dual-depth scoring (tdds) for enhanced dataset pruning.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition,
+pp. 26223–26232.
+Cited by: §1,
+§1,
+§2.1,
+§3.1.
+Zheng et al. (2023)
+H. Zheng, R. Liu, F. Lai, and A. Prakash
+Coverage-centric coreset selection for high pruning rates.
+In The Eleventh International Conference on Learning Representations,
+Cited by: §2.1,
+§2.1.
+Zhong et al. (2024)
+H. Zhong, Z. Shan, G. Feng, W. Xiong, X. Cheng, L. Zhao, D. He, J. Bian, and L. Wang
+Dpo meets ppo: reinforced token optimization for rlhf.
+arXiv preprint arXiv:2404.18922.
+Cited by: §3.1.
+Zhou et al. (2018)
+B. Zhou, H. Zhao, X. Puig, T. Xiao, S. Fidler, A. Barriuso, and A. Torralba
+Semantic understanding of scenes through the ade20k dataset.
+External Links: 1608.05442,
+Link
+Cited by: §4.1.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

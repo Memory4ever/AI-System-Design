@@ -4,9 +4,13 @@
 **窗口：** 2026-02-06T09:00:00+08:00 ～ 2026-02-07T09:00:00+08:00
 **状态：** 完成
 **Books：** 纳入本次
-**检查时间：** 2026-10-03T14:30:48+08:00
+**检查时间：** 2026-10-08T12:59:35+08:00
+**补充窗口：** 2026-02-06 ～ 2026-02-06
+**窗口说明：** 用户授权只补遗漏；冻结原候选、原日期/评分、原窗口与有效审阅，不搬移旧材料归属。运行前正文见[基线](../_sources/daily-20260207/baseline-before-supplement-20261008.md)。
 
 ## 1. 结论
+
+本轮补充窗口有限检查未取得确定新增候选：原41家族及29整合/9已有覆盖/2仅报告/1争议的有效证据保留，不重审或调整日期。CoSA、Parity、GPU-to-Grid与HotMess四个明确潜在贡献缺首次公开日或事件绑定，独立隔离、不评分、不采用、不算Evidence/Books/Coverage通过。无Books新写；Hunyuan浏览器与MiniMax EN本次有限入口恢复，但历史完整性仍不明。root已实际核本轮六部分差额、14入口有界记录与四项潜在贡献/隔离，独立DAY语义通过；本轮普通待办0。原完成声明未替代本次验收。具体查询、停止、完整题摘及请求见[补查](../_sources/daily-20260207/supplement-20261008.md)。
 
 本日独立从当前合同与原始来源重建。旧正文仅原文备份于[LEGACY_README](../_sources/daily-20260207/LEGACY_README.md)，不用于发现、准入、评分或完成判断；同目录其他旧材料也不属于本轮证据。fresh材料以 `feb07_` 前缀识别。
 
@@ -16,22 +20,24 @@
 
 | 来源 | 检查范围与依据 | 结果 | 缺口 |
 | --- | --- | --- | --- |
-| SRC-OPENAI | fresh Research及官方日期补检后，RSS以native新请求恢复200；1244项仅过滤pubDate与相邻日期，未扩为正文队列。本窗仅localization，原值Fri,06 Feb 2026 10:00:00 GMT；Feb5→Feb6→Feb9相邻事件停止（rss_window）。原页L24–45与具名负侧已读/校准关闭 | 已检查 | 当前RSS非不可变历史快照；政策披露不授未公开执行机制或无遗漏保证 |
-| SRC-ANTHROPIC | fresh Research当前10项停在9月/native403，官方域日期补检stage3_3；定点官方Opus4.6 system card Feb6 changelog，仅OSWorld命名、card名称和脚注大小写三项；必要原文见changelog_core，root实际核后贡献前关闭，不混Feb10修订，有限停止 | 已检查 | 当前目录/native403不能证历史零事件；三项具体修订不新增机制/有效性条件，未遍历213页或窗外版本 |
-| SRC-GOOGLE-AI | Google Pubs当前列表/日期补检；DeepMind news page3/4 native200却忽略page参数/返回当前9月，Research blog page15定位到2025；之后官方publications page3原请求返回可见30项，日期Feb12→Feb5→Jan9跨窗停止（dm_publications_p3），未扩所有条目 | 受阻 | 当前目录/索引并非first-public日志；news分页失效与Research历史页未恢复，不授全历史覆盖或零发布 |
-| SRC-META-AI | fresh research空返回；本窗官方域日期与模型/训练主题补检，native2_3保存原查询及返回 | 受阻 | 补检不提供完整历史目录，不能宣称零发布或无遗漏 |
-| SRC-QWEN | fresh官方retrieval type=qwen_ai/en-US，40条metadata已逐日期核；最近窗前Feb3 Coder-Next、窗后Feb10 Image2；native2_0保存完整metadata，无本窗字段命中 | 已检查 | 当前40目录而非历史不可变快照；未扩为40篇审阅 |
-| SRC-DEEPSEEK | fresh官网Research/More当前条目及官方域Feb6日期/模型主题补检（stage10_0），返回后来V4预览与docs，未取得本窗事件定位，停止本次有限入口 | 受阻 | 当前站点不提供可核历史目录；没有命中不等零发布，不扩大旧库存 |
-| SRC-MOONSHOT | fresh Platform当前26项止于2025，不能证2026无事件；GitHub20最新release仅定位，定点1.7/1.8/1.9原body与published；1.9 published Feb6T18:38:03Z落窗，PR1005/1011原patch/测试及窗前PR910接口背景有限核到mode/replyability边界即停止 | 已检查 | 1.9实际必要机制与Ch84 POST通过；当前Platform/最新release列表不授历史零遗漏，未遍历其他普通修复 |
-| SRC-TENCENT-HUNYUAN | fresh research web失败、nativeJS定位Blog→publicList及api.hunyuan.tencent.com；浏览器iab不可用/listBrowsers空；纠正base后publicList pageNum1/pageSize20/renderType0实际返回11/total11，publicAt最近Feb3与Feb13夹本窗（hunyuan_metadata） | 已检查 | 当前动态11项，无不可变历史覆盖保证；只核metadata，未审窗外正文 |
-| SRC-ZAI | fresh Research15目录日期Feb2 OCR→Feb11相邻夹窗（sources_web_2） | 已检查 | 当前列表有限，未扩所有GLM发布/后期版本 |
-| SRC-BYTEDANCE-SEED | fresh官网JS实际enum Publication=1/Blog=2（seed_routing）。type1/year2026/ascending/count20/page_token0返回20/total82/next20/has_more，已跨Feb5→Feb9（seed_metadata）；type2同参数返回9/total23/next20/has_more，首返回Feb12后越窗（stage7_1），停止，不续全年 | 已检查 | 当前published过滤及9/total23不完整历史快照；type0空不是Blog零发布证明；官方日期不混同论文公开 |
-| SRC-BAIDU-ERNIE | fresh Blog第1页10项跨Jan29→Feb6→Apr15；stage7_2原core19–78与所引04705v1 Introduction/§2/目录定点对照。v1注册Feb5T03:05:13Z已早于本窗，NGTP/共享MoE/elastic/URB等同命题，root实际按早公开同family去重关闭，停止 | 已检查 | Blog date-only不补造时刻；没有明确重要新增修订，不继承前日候选/评分；动态目录不授无遗漏 |
-| SRC-XIAOMI-MIMO | fresh官网Paper8个日期字段June29→Mar13→Feb3→Jan8，Blog15标题无日期；官方域Feb6日期补检仅定位后来发布/当前主页，原stage5_2/stage10_0，有限停止，不审全部窗外正文 | 受阻 | undated Blog及当前目录不能证明本窗零发布；未恢复不可变历史目录 |
-| SRC-MINIMAX | freshCN13项跨Jan28→Feb12并到2025Jan末；AgentTech native仅May13 dated条目及页尾，原stage5_2；EN web失败stage6_3，停止CN/AgentTech有限入口 | 受阻 | EN失败与当前目录有限，不能授历史无遗漏；未扩窗外正文/所有release |
-| SRC-ARXIV | 四主题模型/训练/系统/多模态-Agent；submittedDate缓冲202602041900～202602051859，25/page：模型40/2页、训练49/2页、系统9/1页、第四77/4页，原arxiv_theme_*.json。175→158ID只作主题线索，月标题切片和narrow_related_ab3有限补检；实际完整exact-v1题摘准入及具名negative已核，冻结40论文，个体日期条件/异常隔离由root实际核后有限停止 | 已检查 | submittedDate不是公开；条件推定不是first-public日志；未称全158分类、全部附件或所有revision历史已覆盖 |
+| SRC-OPENAI | fresh Research及官方日期补检后，RSS以native新请求恢复200；1244项仅过滤pubDate与相邻日期，未扩为正文队列。本窗仅localization，原值Fri,06 Feb 2026 10:00:00 GMT；Feb5→Feb6→Feb9相邻事件停止（rss_window）。原页L24–45与具名负侧已读/校准关闭 ；本轮补查：Research/RSS1255项只抽Feb5/6/9相邻date，Feb6仅原localization；native RSS恢复成功，原贡献关闭复用。本轮记录见[补查](../_sources/daily-20260207/supplement-20261008.md) | 已检查 | 当前RSS非不可变历史快照；政策披露不授未公开执行机制或无遗漏保证 |
+| SRC-ANTHROPIC | fresh Research当前10项停在9月/native403，官方域日期补检stage3_3；定点官方Opus4.6 system card Feb6 changelog，仅OSWorld命名、card名称和脚注大小写三项；必要原文见changelog_core，root实际核后贡献前关闭，不混Feb10修订，有限停止 ；本轮补查：Research当前10条；Alignment Feb月两题名定点，PSM Feb23窗外，HotMess仅月日期/事件未明隔离；原Feb6三命名修订有效关闭复用。本轮记录见[补查](../_sources/daily-20260207/supplement-20261008.md) | 已检查 | 当前目录/native403不能证历史零事件；三项具体修订不新增机制/有效性条件，未遍历213页或窗外版本 |
+| SRC-GOOGLE-AI | Google Pubs当前列表/日期补检；DeepMind news page3/4 native200却忽略page参数/返回当前9月，Research blog page15定位到2025；之后官方publications page3原请求返回可见30项，日期Feb12→Feb5→Jan9跨窗停止（dm_publications_p3），未扩所有条目 ；本轮补查：Pubs当前入口与DeepMind publications page3实际30 metadata，Feb12→Feb5→Jan9夹窗停；news完整历史/first-public仍未恢复。本轮记录见[补查](../_sources/daily-20260207/supplement-20261008.md) | 受阻 | 当前目录/索引并非first-public日志；news分页失效与Research历史页未恢复，不授全历史覆盖或零发布 |
+| SRC-META-AI | fresh research空返回；本窗官方域日期与模型/训练主题补检，native2_3保存原查询及返回 ；本轮补查：Research0行与窗口主题域检索未恢复历史dated事件，停止有限入口，不授零发布。本轮记录见[补查](../_sources/daily-20260207/supplement-20261008.md) | 受阻 | 补检不提供完整历史目录，不能宣称零发布或无遗漏 |
+| SRC-QWEN | fresh官方retrieval type=qwen_ai/en-US，40条metadata已逐日期核；最近窗前Feb3 Coder-Next、窗后Feb10 Image2；native2_0保存完整metadata，无本窗字段命中 ；本轮补查：native retrieval qwen_ai/en-US 40日期metadata，Feb3→Feb10夹窗，无Feb6字段；未审窗外正文。本轮记录见[补查](../_sources/daily-20260207/supplement-20261008.md) | 已检查 | 当前40目录而非历史不可变快照；未扩为40篇审阅 |
+| SRC-DEEPSEEK | fresh官网Research/More当前条目及官方域Feb6日期/模型主题补检（stage10_0），返回后来V4预览与docs，未取得本窗事件定位，停止本次有限入口 ；本轮补查：当前Research/More与Feb5/6模型主题域检索，缺历史dated事件，有限停止。本轮记录见[补查](../_sources/daily-20260207/supplement-20261008.md) | 受阻 | 当前站点不提供可核历史目录；没有命中不等零发布，不扩大旧库存 |
+| SRC-MOONSHOT | fresh Platform当前26项止于2025，不能证2026无事件；GitHub20最新release仅定位，定点1.7/1.8/1.9原body与published；1.9 published Feb6T18:38:03Z落窗，PR1005/1011原patch/测试及窗前PR910接口背景有限核到mode/replyability边界即停止 ；本轮补查：Platform26标题止2025，原1.9有效审阅复用，其Feb7原日期不搬进补充窗；目录完整性仍缺。本轮记录见[补查](../_sources/daily-20260207/supplement-20261008.md) | 已检查 | 1.9实际必要机制与Ch84 POST通过；当前Platform/最新release列表不授历史零遗漏，未遍历其他普通修复 |
+| SRC-TENCENT-HUNYUAN | fresh research web失败、nativeJS定位Blog→publicList及api.hunyuan.tencent.com；浏览器iab不可用/listBrowsers空；纠正base后publicList pageNum1/pageSize20/renderType0实际返回11/total11，publicAt最近Feb3与Feb13夹本窗（hunyuan_metadata） ；本轮补查：web0行后实际浏览器全部11标题/date，Feb13→Feb3夹窗，页尾无下一页；本轮浏览器可用，不删旧失败事实。本轮记录见[补查](../_sources/daily-20260207/supplement-20261008.md) | 已检查 | 当前动态11项，无不可变历史覆盖保证；只核metadata，未审窗外正文 |
+| SRC-ZAI | fresh Research15目录日期Feb2 OCR→Feb11相邻夹窗（sources_web_2） ；本轮补查：Research15标题日期Feb11→Feb2夹窗停止，不扩GLM全发布。本轮记录见[补查](../_sources/daily-20260207/supplement-20261008.md) | 已检查 | 当前列表有限，未扩所有GLM发布/后期版本 |
+| SRC-BYTEDANCE-SEED | fresh官网JS实际enum Publication=1/Blog=2（seed_routing）。type1/year2026/ascending/count20/page_token0返回20/total82/next20/has_more，已跨Feb5→Feb9（seed_metadata）；type2同参数返回9/total23/next20/has_more，首返回Feb12后越窗（stage7_1），停止，不续全年 ；本轮补查：type1首20/total82 Feb5→Feb9跨窗、type2首9/total23从Feb12起，均next20/has_more有限停；数组sub_article_list已修正初次误解析的0，不授其阴性权限。本轮记录见[补查](../_sources/daily-20260207/supplement-20261008.md) | 已检查 | 当前published过滤及9/total23不完整历史快照；type0空不是Blog零发布证明；官方日期不混同论文公开 |
+| SRC-BAIDU-ERNIE | fresh Blog第1页10项跨Jan29→Feb6→Apr15；stage7_2原core19–78与所引04705v1 Introduction/§2/目录定点对照。v1注册Feb5T03:05:13Z已早于本窗，NGTP/共享MoE/elastic/URB等同命题，root实际按早公开同family去重关闭，停止 ；本轮补查：Blog page1十项Apr15→Feb6→Jan29，原Blog与04705早公开同family有效去重复用，无新修订信号。本轮记录见[补查](../_sources/daily-20260207/supplement-20261008.md) | 已检查 | Blog date-only不补造时刻；没有明确重要新增修订，不继承前日候选/评分；动态目录不授无遗漏 |
+| SRC-XIAOMI-MIMO | fresh官网Paper8个日期字段June29→Mar13→Feb3→Jan8，Blog15标题无日期；官方域Feb6日期补检仅定位后来发布/当前主页，原stage5_2/stage10_0，有限停止，不审全部窗外正文 ；本轮补查：Paper8日期Feb3→Mar13夹窗与Blog15无日期，历史dated Blog缺口继续隔离。本轮记录见[补查](../_sources/daily-20260207/supplement-20261008.md) | 受阻 | undated Blog及当前目录不能证明本窗零发布；未恢复不可变历史目录 |
+| SRC-MINIMAX | 原有效检查：freshCN13项跨Jan28→Feb12并到2025Jan末；AgentTech native仅May13 dated条目及页尾，原stage5_2；EN web失败stage6_3，停止CN/AgentTech有限入口 ；本轮补查：EN本次已恢复，Feb12→Jan27夹窗，CN Feb12→Jan28夹窗；旧EN失败是原事实，当前有限目录不授历史完整性。本轮记录见[补查](../_sources/daily-20260207/supplement-20261008.md) | 已检查 | 本轮EN已恢复，旧EN失败保留为原检查事实；当前EN/CN有限目录非不可变历史记录，不能授历史无遗漏；未扩窗外正文/所有release |
+| SRC-ARXIV | 原有效检查：四主题模型/训练/系统/多模态-Agent；submittedDate缓冲202602041900～202602051859，25/page：模型40/2页、训练49/2页、系统9/1页、第四77/4页，原arxiv_theme_*.json。175→158ID只作主题线索，月标题切片和narrow_related_ab3有限补检；实际完整exact-v1题摘准入及具名negative已核，冻结40论文，个体日期条件/异常隔离由root实际核后有限停止 ；本轮补查：四主题Feb5/6词汇与有界相关标题补检；day/advanced web cache miss、API Rate exceeded、浏览器advanced实际Rate exceeded；新CoSA/Parity/GPU-to-Grid仅Submitted不能授公開日，隔离不评分，不展开旧158。本轮记录见[补查](../_sources/daily-20260207/supplement-20261008.md) | 受阻 | 新材料必要首次公开日期未恢复，旧来源已检查不授本轮新增Coverage；submittedDate不是公开，原条件推定不是first-public日志；新date/event项隔离、不用于无遗漏或Books；未称全158/附件/revision历史覆盖 |
 
 ## 3. 候选与判断
+
+本轮确定新增0；下表原41行逐字保留。前三个新潜在项完整exact-v1题摘及HotMess官方核心说明均由root实际潜在准入校准，HotMess仅月日期与事件绑定缺口继续隔离；公开日不确定者均留§5，不从旧候选、Submitted或月目录反推新准入。
 
 候选清单冻结为41家族：40论文与1 release，不把158条元数据自动纳入。所有下列论文区间为官方公告规则、Submitted/Feb identifier/Available与findable注册上界的联合条件推定；不是严格首次公开日志，注册不等于发布。上界原秒加1秒用于半开窗表示，原值见stage3_1、date_batch1/2/3及[补核两项](../_sources/daily-20260207/feb07_date_negative_recovery.txt)。已fresh核availability L170–186；moderation可延迟，若出现更早原公开或字段冲突只重开该项。AutoInject05746/CORP05243的v1 Updated异常不混入这些相容版本。
 
@@ -247,7 +253,15 @@ exact-v1必要[主文](../_sources/daily-20260207/feb07_05359_main.txt) §3.1–
 
 完整题摘[safety_ab2](../_sources/daily-20260207/feb07_safety_ab2.txt)与exact-v1必要[core](../_sources/daily-20260207/feb07_05633_negative_core.txt)原82/225–237/688–690/710/719已实际读。同query对照profile缺失/提供/不同attribute，个人信息披露改变评价context，不能合并成模型固有安全；seed年龄7–22、缺维填补与4LLM旋转/结构及人工校核限制人口，rubric沿用既有risk/empathy/alignment 0–5再加权。10专家随机4000实例的有限κ对照选择judge，不认证开放用户harm；18模型不同API、singleturn与500题attribute ablation不识别RL/scale等唯一因果。信息构造/隐私、额外paired calls/judge成本保留，不采“个人信息越多普遍越安全”。Ch66现94–104 EvalSpec population/scorers、173–175配对prompt干预及183–205完整subject含prompt/policy，具体承载该条件性测量；root实际源→这些owner段通过，Existing/No Change，不冒称exact学生rubric已有，未运行benchmark。5分标准审阅。
 
+本轮无确定新增候选，无新增证据采用或Books写入；以上原§4连续正文完整保留。新题摘只支持潜在贡献筛选，不等证据审阅；[补查原件](../_sources/daily-20260207/supplement-20261008.md)的4项日期/事件缺口不为Evidence、Books或覆盖授权。
+
 ## 5. 缺口与下一步
+
+本轮普通研究待办：无；root已实际完成六部分增量DAY语义验收，14入口有界记录、具名关闭与四项精确隔离均通过；当前MiniMax恢复与arXiv日期受阻已消歧。完成来自本次非作者实际验收，不从原完成或机器检查自授。
+
+新增外部date/event保留：[CoSA05148v1](https://arxiv.org/abs/2602.05148v1)、[Parity05896v1](https://arxiv.org/abs/2602.05896v1)、[GPU-to-Grid05116v1](https://arxiv.org/abs/2602.05116v1)只有Submitted或稿日期，缺首次公开日期的官方公告/列表快照或作者dated原事件；[HotMess Blog](https://alignment.anthropic.com/2026/hot-mess-of-ai/)仅February2026，链接Jan30提交的2601.23045，另缺Blog日及新事件绑定。前三AB及HotMess官方核心root潜在准入通过；不在§3新增、不评分、不读论文核心绕过日期、不写Books、不支持无遗漏。恢复只需这些必要日期/身份材料，定点重开本日相应题摘→日期层。原版本/争议holds继续隔离。有限入口失败、原始查询与精确恢复要求在[本轮补查](../_sources/daily-20260207/supplement-20261008.md)，未扩大catchup或完整版本史。
+
+窗外/归属待恢复线索：PSM官方Feb23，只核日期即停止；[ParallelTrack07306](https://arxiv.org/abs/2602.07306)已有机制但Apple仅February、SubmittedFeb7，不纳确定Feb6事件，不审核心；仅在真实归属日恢复日期/贡献，不称已经处理其他日。
 
 普通研究待办：无。41家族必要证据/Books处置、29实际POST、9具体Existing及14源有限停点/具名负侧已核闭；root最后六部分非作者整日Gate通过，普通可执行工作0。作者运行V3、引用与限定diff检查，不将机器结果当语义验收，不扩Weekly/Live/其他月份。
 
@@ -259,9 +273,20 @@ exact-v1必要[主文](../_sources/daily-20260207/feb07_05359_main.txt) §3.1–
 
 窗外线索：[Pack06072](https://arxiv.org/abs/2602.06072v1)与[Canzona06079](https://arxiv.org/abs/2602.06079v1)分别Submitted Feb3/4、官方Updated与注册Feb9，具有机制但不纳本窗、不算已审其他日；只在真实归属日恢复必要日期/贡献，不扩本日。
 
-来源级终态保留依§2有限入口隔离：Google历史news分页失效、Meta空research、DeepSeek当前站点缺历史目录、Moonshot当前列表、MiMo undated Blog、MiniMax EN失败，以及各动态目录非不可变快照。恢复须提供相应来源本窗dated原事件/历史目录或明确漏项，再只重开具名事件，不用于零发布/无遗漏保证。Anthropic/ERNIE具体negative已实际核闭，不再是普通待办。
+原来源级终态保留依原§2有限入口隔离：Google历史news分页失效、Meta空research、DeepSeek当前站点缺历史目录、Moonshot当前列表、MiMo undated Blog、原MiniMax EN失败，以及各动态目录非不可变快照。本轮MiniMax EN已恢复可读，旧失败不作为当前受阻；仍不认证完整历史目录。恢复须提供相应来源本窗dated原事件/历史目录或明确漏项，再只重开具名事件，不用于零发布/无遗漏保证。Anthropic/ERNIE具体negative已实际核闭，不再是普通待办。
 
 ## 6. 复核
+
+### 本轮增量复核
+
+复核者：root（本轮非作者实际DAY验收；前三AB及HotMess官方核心已实读）
+结论：通过
+
+root已实际读CoSA/Parity/GPU-to-Grid完整题摘及HotMess官方核心，确认具体机制/边界潜在贡献而非章节映射，公开日/事件不足时隔离；实际核完整六部分差额、14入口有界记录、Seed正确数组、Qwen40日期、DeepMind30、MiniMax恢复与代表关闭，并实值核原41/窗口/连续§4冻结及122本地引用。独立DAY语义通过；未重读原41有效证据或29旧POST，未将旧来源已检查授新覆盖。作者仅按实际验收结果写回。
+
+本轮机器检查：完成态single-report V3通过；原41候选行逐字、原窗口字段、原§4连续正文保留检查通过；122本地引用与补查原件/恢复请求无断链；本日README/source限定unstaged及cached diff-check通过。机器只证结构与修改纪律，不替代上述实际DAY。不stage、commit、push。
+
+### 原有效复核（保持不变）
 
 复核者：jan02_v3、jan01_v3、root（均非本日作者；分批必要核验与root最终整日验收）
 结论：通过

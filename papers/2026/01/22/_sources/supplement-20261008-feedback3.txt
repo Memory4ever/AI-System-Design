@@ -1,0 +1,1273 @@
+
+SOURCE https://arxiv.org/html/2601.13217v1
+Beyond Single-shot Writing: Deep Research Agents are Unreliable at Multi-turn Report Revision
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+License: CC BY 4.0
+arXiv:2601.13217v1 [cs.CL] 19 Jan 2026
+Beyond Single-shot Writing: Deep Research Agents are
+Unreliable at Multi-turn Report Revision
+Bingsen Chen
+Affiliation: New York University
+Affiliation: NYU Shanghai
+Boyan Li
+Affiliation: University of Alberta
+Ping Nie
+Affiliation: University of Waterloo
+Yuyu Zhang
+Affiliation: Verdent AI, Inc.
+Xi Ye
+Affiliation: University of Alberta
+Affiliation: Princeton University
+Chen Zhao
+Affiliation: New York University
+Affiliation: NYU Shanghai
+Abstract
+Existing benchmarks for Deep Research Agents (DRAs) treat report generation as a single-shot writing task, which fundamentally diverges from how human researchers iteratively draft and revise reports via self-reflection or peer feedback. Whether DRAs can reliably revise reports with user feedback remains unexplored. We introduce Mr Dre, an evaluation suite that establishes multi-turn report revision as a new evaluation axis for DRAs.
+Mr Dre consists of (1) a unified long-form report evaluation protocol spanning comprehensiveness, factuality, and presentation, and (2) a human-verified feedback simulation pipeline for multi-turn revision.
+Our analysis of five diverse DRAs reveals a critical limitation: while agents can address most user feedback, they also regress on 16--27% of previously covered content and citation quality. Over multiple revision turns, even the best-performing agents leave significant headroom, as they continue to disrupt content outside the feedback’s scope and fail to preserve earlier edits. We further show that these issues are not easily resolvable through inference-time fixes such as prompt engineering and a dedicated sub-agent for report revision.11
+1
+Our code and data are released at: https://github.com/BaleChen/Mr-Dre.
+Figure 1: Illustrative example of multi-turn revision failure in Deep Research Agents. The revised report incorporates the user feedback but removes previously covered content that is outside the feedback’s scope.
+1 Introduction
+Recent advances in the agentic capabilities of language models have led to the rise of Deep Research Agents (DRAs) (OpenAI, 2025; Perplexity, 2025; Team et al., 2025; Shao et al., 2025). DRAs tackle complex research queries by extensively searching and browsing the web, then synthesizing large volumes of information into long-form reports with rich citations and well-organized structure.
+However, what dimensions to evaluate these complex systems against remains an open problem.
+Early attempts (Li et al., 2025b; Team et al., 2025) used multi-hop QA benchmarks (Wei et al., 2025a; Chen et al., 2025; Phan et al., 2025; Mialon et al., 2023) to evaluate DRAs’ multi-step retrieval and reasoning ability. However, such benchmarks rely on short-form answers and fail to capture the report-writing capabilities of DRAs. More recent work has begun to evaluate long-form report generation directly (Du et al., 2025; Yao et al., 2025; Sharma et al., 2025; Xu et al., 2025), but uniformly treat it as a single-shot task: given a query, agents gather information and produce a report in one pass. This departs from human practice, where reports are produced through iterative revision, often guided by self-reflection or feedback.
+In this work, we propose multi-turn report revision as a new evaluation axis for DRAs. In this setting, DRAs revise an initial report over multiple turns in response to user feedback. This capability is important for two reasons. First, in practical deployment, users do not often accept an initial response as-is (Lee et al., 2025a), and may request additional details or changes in structure. Agents that cannot effectively incorporate such feedback while preserving the quality of the rest of the report provide limited utility. Second, iterative revision offers a natural mechanism for improving report quality with additional compute.
+While test-time scaling has proven effective for reasoning (Snell et al., 2025; Muennighoff et al., 2025), its impact on report generation remains unexplored. We therefore ask: Can current deep research agents reliably improve their reports via user feedback?
+To study this, we introduce Multi-turn Revision of Deep Research Agent Evaluation (Mr Dre), a new evaluation suite supporting iterative report writing. For report evaluation, Mr Dre unifies evaluation practices from prior benchmarks, which have adopted divergent metrics, into a lean protocol covering three dimensions: comprehensiveness, factuality, and presentation (Figure 2, left). To enable multi-turn report revision evaluation, Mr Dre provides a human-verified feedback simulation pipeline that generates realistic user feedback on report content and formatting (Figure 2, right).
+With Mr Dre, we evaluate five diverse DRAs and find that current systems cannot reliably revise reports in response to user feedback. Although agents address over 90% of requested edits, content or format revisions frequently reduce overall report quality: 16–27% of previously covered content is broken, and citation quality degrades. Moreover, when extending revision to multiple turns, some agents show minimal to negative progress, and even the best-performing agents leave significant gaps as they continue to disrupt content outside feedback’s scope and fail to preserve edits made in earlier turns. Finally, these failures persist despite inference-time remedies, including extensive prompt engineering and a dedicated reviser sub-agent. These findings suggest that reliable multi-turn revision will require more fundamental changes in DRA training and scaffold design, which we advocate as a priority for future research.
+In summary, our main contributions are:
+•
+A novel evaluation axis for DRAs.
+We identify multi-turn report revision as an important yet underexplored capability of DRAs.
+•
+Mr Dre evaluation suite.
+Mr Dre unifies prior evaluation practices into a concise three-dimensional protocol for Deep Research report generation and includes a human-verified feedback simulation pipeline for multi-turn revision.
+•
+Comprehensive analysis of current DRAs’ multi-turn revision ability. We reveal systematic limitations in current DRAs’ ability to revise reports from user feedback and show that inference-time fixes are insufficient.
+Figure 2: Mr Dre Evaluation Suite. In multi-turn report revision, a DRA iteratively drafts and revises a report r for question q given user feedback f (top left). Mr Dre provides a unified Deep Research report evaluation protocol (bottom left) along three dimensions: Comprehensiveness, Factuality, and Presentation. To evaluate multi-turn revision performance, Mr Dre provides a pipeline to simulate content, format, and self-reflection feedback (right).
+2 Task Definition
+We begin by formalizing deep research and defining our multi-turn report revision task:
+Unlike standard search-augmented language models that are tasked with generating short-form (Yang et al., 2018; Wei et al., 2025a) or paragraph-long answers (Fan et al., 2019; Han et al., 2024), a Deep Research Agent is a system of one or multiple LLMs augmented with web searching tools that autonomously retrieves and analyzes vast online information and synthesizes findings into a comprehensive, well-cited research report.
+Formally, given a user’s initial query q , a DRA \mathcal{A} generates a report r_{1}=\mathcal{A}(q) . Current deep research benchmarks evaluate only this single output r_{1} , treating report writing as a one-shot task. We extend this paradigm to multi-turn report revision. After receiving the initial report r_{1} , a user may provide feedback f_{1} , prompting the agent to revise the report and yield r_{2}=\mathcal{A}(q,r_{1},f_{1}) . This process can continue iteratively: at turn t , the agent produces r_{t}=\mathcal{A}(q,r_{1},f_{1},\ldots,r_{t-1},f_{t-1}) , conditioning on all previous turns of drafts and feedback.
+3 A Unified Deep Research Report Evaluation Protocol
+In this section, we introduce the first component of Mr Dre, a comprehensive protocol for Deep Research report evaluation. We start with introducing our curated data (§3.1), and then detail the evaluation dimensions (§3.2).
+3.1 Data Curation
+To enable reliable evaluation, we guide our data curation with two criteria. First, each question must be paired with a question-specific checklist: a set of content criteria that a high-quality report should satisfy. Such checklists provide ground-truth coverage targets tailored to each question and have proven effective for evaluating complex, long-form generations (Ruan et al., 2025; Lee et al., 2025b).
+Second, the questions and checklists must be sufficiently complex that DRAs are unlikely to cover all checklist items on their first attempt, leaving meaningful room for iterative revision.
+Following these criteria, we include expert-annotated research questions from three datasets: ResearchRubrics (Sharma et al., 2025), RigorousBench (Yao et al., 2025), and ResearcherBench (Xu et al., 2025). These datasets feature expert-annotated research-intensive questions paired with evaluation checklists for improvement. Table 4 summarizes the dataset statistics.
+Checklist
+Comp.
+Claim
+Fact.
+Report
+Pres.
+Ref.-
+free
+Multi-
+turn
+ResearchRubrics (Sharma et al., 2025)
+✓
+✗
+✗
+✓
+✗
+RACE&FACT (Du et al., 2025)
+✓
+✓
+✓
+✗
+✗
+RigorousBench (Yao et al., 2025)
+✓
+✗
+✓
+✓
+✗
+ResearcherBench (Xu et al., 2025)
+✓
+✗
+✗
+✓
+✗
+DR-ReportEval (Fan et al., 2025)
+✗
+✓
+✓
+✗
+✗
+DeepEval (Wang et al., 2025)
+✓
+✓
+✓
+✓
+✗
+Mr Dre
+✓
+✓
+✓
+✓
+✓
+Table 1: Comparison of Mr Dre and previous Deep Research report evaluation protocols. Mr Dre checks all five aspects: checklist-based comprehensiveness evaluation, claim-level factuality assessment, report presentation scoring, requiring no reference answer, and support for multi-turn report revision (§4).
+3.2 Evaluation Dimensions & Pipeline
+We combine best practices from prior benchmarks into three dimensions: comprehensiveness, factuality, and presentation. These dimensions capture a minimal set of qualities that characterize an excellent research report: it should cover all essential information, make accurate citations and well-supported claims, and present content in a clear, well-organized manner.
+We illustrate our evaluation protocol in Figure 2 (left), and compare Mr Dre’s unified protocol with previous benchmarks’ evaluation in Table 1. Note that our protocol is generally applicable to all Deep Research report generation tasks and can easily integrate new datasets.
+Comprehensiveness
+A high-quality research report should cover all relevant aspects of a research question. We measure this using the coverage score of question-specific checklists. A question q ’s checklist \mathcal{C}_{q}=\{(c_{i},w_{i})\}_{i=1}^{n} consists of n criteria, where each criterion c_{i} has a weight w_{i} reflecting its importance. Following prior work (Sharma et al., 2025; Yao et al., 2025), we adopt ternary grading to allow partial credit: an LLM judge \mathcal{J}_{\text{cov}} evaluates each criterion against the question q and report r , assigning a score s_{i}=\mathcal{J}_{\text{cov}}(q,r,c_{i})\in\{0,0.5,1\} corresponding to absent, partial, or complete coverage. The coverage score is the weighted average:
+\textsc{Cov}(r)=\frac{\sum_{i=1}^{n}w_{i}\cdot s_{i}}{\sum_{i=1}^{n}w_{i}}.
+Factuality
+A high-quality research report should make accurate claims backed by reliable citations. Based on the in-line citations, we evaluate factuality from two angles: citation faithfulness that measures the proportion of cited claims that are actually supported by their referenced sources, and claim groundedness that measures the proportion of all claims that can be verified against external evidence.
+Specifically, we adapt VeriScore (Song et al., 2024) for Deep Research report evaluation. Given a report r , we first extract the set of atomic claims \mathcal{E}(r)=\{e_{1},e_{2},\ldots,e_{m}\} using an LLM, where each claim e_{i} is associated with zero, one, or multiple cited URLs. An LLM judge \mathcal{J}_{\text{fact}} then evaluates each claim against the crawled content of its cited sources, classifying it as supported, contradicted, or insufficiently evidenced. We define citation faithfulness (left) and claim groundedness (right) as:
+\textsc{Fa}(r)=\frac{|\mathcal{S}|}{|\mathcal{E}_{\text{cited}}(r)|},\qquad\textsc{Gr}(r)=\frac{|\mathcal{S}|}{|\mathcal{E}(r)|}
+where \mathcal{E}_{\text{cited}}(r)\subseteq\mathcal{E}(r) is the subset of claims with at least one citation, and \mathcal{S}\subseteq\mathcal{E}(r) denotes the subset of supported claims. We provide additional technical details in Appendix B.2.
+Presentation
+A high-quality research report should organize dense information into a readable, well-structured format with professional language. We consolidated and refined prior works’ (Fan et al., 2025; Yao et al., 2025; Wang et al., 2025) divergent criteria to arrive at a unified checklist of 10 questions (listed in Table 5). For each criterion p_{j} in the checklist \mathcal{P}=\{p_{1},\ldots,p_{10}\} , an LLM judge \mathcal{J}_{\text{pres}} assigns a binary score. The overall presentation score is calculated as:
+\textsc{Pre}(r)=\frac{1}{|\mathcal{P}|}\sum_{j=1}^{|\mathcal{P}|}\mathcal{J}_{\text{pres}}(r,p_{j})
+4 Extending Evaluation to Multi-turn Report Revision
+Mr Dre also introduces an automated yet human-validated pipeline for multi-turn report revision evaluation. In this section, we introduce (1) a reliable way to simulate realistic user feedback (illustrated in Figure 2, right), and (2) metrics to measure revision success.
+4.1 Feedback Simulation
+We design a feedback simulation pipeline that generates diverse and realistic user feedback on Deep Research reports. We consider three feedback categories corresponding to distinct revision settings: content, format, and self-reflection.
+Content Feedback requests adding new information or correcting existing content. Under this setting, a successful revision must address the feedback targets while preserving unrelated report content. To simulate such feedback, we leverage the checklist-based evaluation from §3.2. Given a report draft, we first evaluate all checklist criteria using \mathcal{J}_{\text{cov}} , which we also ask for a justification for each score. We then uniformly sample k uncovered criteria as feedback targets, denoted \mathcal{T}^{(t)}\subset\mathcal{C}_{q} for turn t , and prompt a feedback simulator LLM to generate natural feedback based on the question, the sampled feedback targets, and their corresponding scores and justifications. Grounding feedback in scoring justification rather than raw criteria text produces more natural requests that reflect how users would articulate what is missing.
+Format Feedback targets the report’s structure, style, or presentation.
+We expect DRAs to incorporate the formatting feedback without disrupting existing content coverage.
+We curate 21 seed format feedback examples covering common user requests (e.g., adding bullet points, improving sectioning, or including TL;DR summaries. Full list in Table 6).
+Given a report draft, we randomly sample three seed examples and prompt the LLM to select the most applicable one, then expand it into a piece of feedback specific to the report draft.
+Using seed examples guides the simulator toward generating realistic feedback, while random sampling ensures diversity.
+Self-Reflection Feedback provides no explicit revision guidance. The feedback is simply: ‘‘Please reflect on your current report and revise it.’’ This setting tests whether DRAs can autonomously identify and address deficiencies.
+Human Validation.
+We conduct human annotation to validate simulated content and format feedback along four dimensions: naturalness, draft-specificity, actionability, and, for format feedback, content preservation.
+Our pipeline achieves near-ceiling scores across all dimensions with high inter-annotator agreement. Details are in Appendix C.3.
+4.2 Measuring the Success of Revision
+We introduce two additional metrics to measure the effectiveness of revision via the question-specific checklists. Let s_{i}^{(t)} denote the coverage score of criterion c_{i} for report r^{(t)} .
+Incorporation Rate measures whether the revision successfully incorporates feedback at turn t :
+\textsc{Inc}=\begin{cases}\frac{1}{|\mathcal{T}^{(t)}|}\sum_{c_{i}\in\mathcal{T}^{(t)}}\mathbbm{1}\left[s_{i}^{(t)}=1\right],&\text{Content feedback}\\[6.0pt]
+\mathcal{J}_{\text{inc}}(f_{t},r_{t-1},r_{t}),&\text{Format feedback}\end{cases}
+For content feedback, this is the proportion of feedback targets \mathcal{T}^{(t)} that achieve full coverage after revision. For format feedback, an LLM judge \mathcal{J}_{\text{inc}} assesses whether the formatting suggestion is followed (binary scoring).
+Break Rate is the proportion of previously covered criteria whose scores degrade after revision:
+\textsc{Brk}=\frac{|\{c_{i}:s_{i}^{(t-1)}>0\land s_{i}^{(t)}<s_{i}^{(t-1)}\}|}{|\{c_{i}:s_{i}^{(t-1)}>0\}|}
+A break rate of 0 indicates that the revision preserves all previously covered content, while a high break rate suggests making destructive edits that fix one issue at the cost of disrupting others.
+All metrics are defined per sample and reported as an average across the dataset. Prompt templates are in Appendix F.
+ResearchRubrics
+RigorousBench
+ResearcherBench
+Avg.
+Avg.
+DRA
+Turn
+Type
+Cov.
+Fa.
+Gr.
+Pre.
+Cov.
+Fa.
+Gr.
+Pre.
+Cov.
+Fa.
+Gr.
+Pre.
+Inc.
+Brk.
+OpenAI
+DR
+1
+–
+62.3
+63.6
+28.8
+97.9
+42.2
+63.5
+33.5
+97.2
+68.5
+80.3
+41.4
+95.6
+–
+–
+2
+Reflect
+-1.5
+-10.3
+-8.4
++1.0
+-0.8
+-2.4
+-4.4
++0.7
+-3.9
+-7.0
+-5.3
++2.9
+–
+14.9
+Content1
+-6.6
+-10.3
+-6.1
+-5.1
+-2.0
+-16.9
+-11.7
+-5.4
+-9.1
+-16.4
+-11.0
+-4.6
+93.6
+29.7
+Format
+-2.2
+-19.9
+-13.0
++0.2
+-3.6
+-8.8
+-8.4
+0.0
+-3.9
+-14.4
+-7.1
++1.4
+98.5
+14.8
+Sonar
+DR
+1
+–
+70.9
+71.7
+56.4
+90.8
+55.2
+76.4
+64.1
+90.3
+80.0
+75.3
+64.8
+89.6
+–
+–
+2
+Reflect
+-5.2
+-55.6
+-48.1
++4.6
+-7.3
+-60.8
+-54.0
++2.5
+-5.2
+-67.4
+-59.1
++6.0
+–
+20.5
+Content1
+-11.5
+-26.7
+-19.7
++0.2
+-8.3
+-23.3
+-21.9
+-1.1
+-10.4
+-8.5
+-3.9
++0.6
+92.6
+34.3
+Format
+-16.2
+-35.6
+-28.8
+-6.1
+-13.9
+-35.9
+-32.6
+-9.4
+-13.4
+-30.0
+-27.1
+-3.1
+85.5
+27.8
+LC
+ODR
+1
+–
+60.9
+72.5
+39.7
+99.5
+43.0
+74.2
+46.1
+99.8
+71.0
+82.6
+51.8
+99.8
+–
+–
+2
+Reflect
++3.2
+-4.8
+-4.5
+0.0
++3.8
+-3.3
+-1.0
+0.0
++3.8
+-8.5
+-10.4
+-0.2
+–
+8.5
+Content1
+-11.5
+-6.5
+-8.4
+-1.3
+-5.3
+-5.2
+-7.1
+-1.9
+-8.7
+-9.1
+-19.4
+-0.5
+93.0
+38.6
+Format
+-5.8
+-1.4
+-3.8
+-1.9
+-3.5
+-5.1
+-8.6
+-2.1
+-9.9
+-4.2
+-14.4
+-2.4
+91.1
+23.9
+Tongyi
+DR
+1
+–
+58.5
+–
+–
+99.3
+39.4
+–
+–
+99.2
+68.4
+–
+–
+99.9
+–
+–
+2
+Reflect
+-0.3
+–
+–
+-1.2
++0.2
+–
+–
++0.1
+-0.7
+–
+–
++0.2
+–
+9.9
+Content1
+-9.2
+–
+–
+-5.3
+-0.9
+–
+–
+-1.2
+-5.0
+–
+–
+-0.8
+90.2
+31.5
+Format
+-6.7
+–
+–
+-2.6
+-5.8
+–
+–
+-2.5
+-9.8
+–
+–
+-4.1
+94.3
+23.2
+DR Tulu
+1
+–
+60.7
+64.7
+46.3
+98.2
+42.8
+63.4
+49.2
+96.7
+67.5
+79.0
+62.1
+98.5
+–
+–
+2
+Reflect
+-0.7
+-3.9
+-0.4
+-1.1
+-0.7
+-2.6
++0.3
+-1.9
+-0.1
+-5.7
+-3.5
+-1.1
+–
+11.4
+Content1
+-2.7
+-5.8
+-2.6
+-3.5
++2.5
+-4.0
+-1.7
+-1.1
++1.0
+-4.6
+-6.8
+0.0
+90.3
+23.5
+Format
+-1.0
+-2.2
++2.2
+-1.3
+-2.2
++1.0
++2.7
+-1.7
+-3.1
+-5.7
+-2.6
++0.7
+94.9
+14.0
+Table 2: Main Results. We report the Coverage (Cov.), Citation Faithfulness (Fa.), Claim Groundedness (Gr.), and Presentation (Pre.) score in percentage points. Incorporation (Inc.) and Break (Brk.) rate results are averaged across three datasets. For the second turn, we show the score changes from the first turn results for all evaluation metrics and feedback types, where improvement is colored in green and reduction is colored in red.
+5 Experiments
+Using Mr Dre, we study our central research question: how reliably can current DRAs revise reports via user feedback? We first examine various DRAs’ revision performance under three distinct feedback settings, and then analyze how revision behavior changes as we scale the number of turns (§5.2) and feedback targets (§5.3).
+Settings.
+We evaluate five DRAs under three revision settings: self-reflection (Reflect), content feedback (Contentk), and format feedback (Format). In the Contentk setting, each content feedback message targets k checklist criteria that the previous-turn draft fails to satisfy. Due to the high cost of running proprietary DRAs, we conduct only the second-turn experiments on the three complete datasets in Table 4. For experiments with up to 4 turns and varying the number of feedback targets ( k ), we use a sub-sampled Core Set (25 questions from each dataset, totaling 75 questions). Details about the subset creation are in Appendix A.2.
+Evaluated Agents.
+We evaluate five DRA systems under three categories: (1) Proprietary scaffold and model(s): OpenAI o4-mini Deep Research (OpenAI DR) (OpenAI, 2025) and Sonar Deep Research by Perplexity (Sonar DR) (Perplexity, 2025). Such systems reveal little information about the agents’ details. (2) Open scaffold, proprietary models: LangChain Open Deep Research (LC ODR) (LangChain, 2025). It orchestrates a system of research, summarization, and finding compression agents, and a report-writing agent. We used GPT-4.1-Nano for summarization and GPT-4.1-mini for the rest. (3) Open scaffold and models: Tongyi Deep Research (Tongyi DR) (Team et al., 2025) and DR Tulu (Shao et al., 2025), which are post-trained for Deep Research report generation. Tongyi DR is not trained to write reports citations, so we omit its citation-related results.
+5.1 Main Results
+Table 2 shows the first and second turn results under three feedback settings. We observe that:
+DRAs struggle to reliably improve, or even preserve, report comprehensiveness across almost all feedback settings. Across different DRAs, feedback types, and datasets, coverage scores predominantly decrease from Turn 1 to Turn 2. Under self-reflection, only LC ODR achieves a modest coverage gain (+3.6%), while all other DRAs exhibit decreases or negligible changes. Even in the Content1 setting, where the feedback explicitly identifies an unsatisfied checklist criterion, all agents except DR Tulu suffer coverage drops ranging from -2.0% to -11.5%. Format feedback, which by design should preserve content, leads to universal coverage drop across DRAs (-1.0% to -16.2%). Sonar DR, although achieving the best performance in the initial turn, also shows the largest performance drop across all feedback settings. These patterns indicate a systematic limitation in current DRAs’ ability to revise reports based on different types of user feedback.
+While DRAs can follow most of the feedback instructions, they fail to preserve content outside the feedback’s scope. To understand why coverage degrades after revision, we examine the incorporation and break rates. All DRAs demonstrate strong instruction-following capabilities: incorporation rates mostly exceed 90% for both content and format feedback. However, this success comes at the cost of disrupting previously satisfied content.
+Break rates average 31% under content feedback and 21% under format feedback, as a substantial fraction of earlier coverage is lost after revision. Interestingly, break rates are lower under self-reflection, suggesting that more specific revision targets induce more aggressive edits that inadvertently affect unrelated content.
+Revision significantly degrades citation faithfulness and claim groundedness. Beyond content coverage, factuality metrics also deteriorate after revision. The underlying causes vary across agents, such as fewer supported claims, and we provide a detailed analysis in Appendix E.1.
+Notably, Sonar DR exhibits the most severe degradation, especially after self-reflection, with faithfulness plummeting by up to -67.4% and groundedness by up to -59.1%. Further inspection reveals that Sonar DR produces reports with no citations 68% of the time after receiving self-reflection feedback.
+Figure 3: Results for extending to 4 turns of revision under Content1 setting. We report the (top) checklist coverage (actual vs. oracle), (middle) incorporation rate, and (bottom) break rate.
+5.2 How well can DRAs revise reports when extending to multiple turns?
+We extend revision up to four turns under the Content1 and Reflect setting. We found that:
+DRAs fail to effectively accumulate coverage gains over multiple turns of content feedback.
+In the top row of Figure 3, we show each agent’s coverage score (solid line) alongside the oracle score (dashed line), which represents the upper bound performance assuming perfect incorporation and zero break rate from Turn 1 onward. Tongyi DR and Sonar DR show minimal or even negative progress over multiple turns, while others achieve gradual coverage improvements with additional content feedback rounds. However, all agents lag far behind the oracle, and this gap shows no sign of closing over turns: by Turn 4, the gap between actual and oracle scores ranges from 9% (OpenAI DR) to 26% (Sonar DR).
+As shown in the bottom two rows of Figure 3, the persistent gap from the oracle traces to both imperfect incorporation rates and non-trivial break rates across all agents. Notably, all DRAs break previously satisfied content at around 20-30% by Turn 4. Tongyi DR and Sonar DR have consistently high break rates that offset any gains from incorporating content feedback over turns, whereas OpenAI DR, DR Tulu, and LC ODR show decreasing break rates (from 33% to 21% on average).
+DRAs break not only content outside of feedback’s scope but also feedback targets from previous turns. To measure this, we report the all-history incorporation rate: the proportion of feedback targets from all previous turns that remain satisfied at turn t . While the current-turn incorporation rate stays stable around 90%, all-history incorporation drops substantially. For instance, Sonar DR’s all-history incorporation rate falls from 90% at Turn 2 to 66% by Turn 4. This gap indicates that agents fail to preserve previous fixes while addressing new feedback, even though earlier feedback remains in the input context.
+We present additional multi-turn results in Appendix E.2. We found that citation faithfulness and claim groundedness decrease over turns across all DRAs under the Content1 setting. Also, multiple turns of self-reflection similarly degrade coverage, citation faithfulness, and claim groundedness. These findings further underscore the unreliability of current DRAs in multi-turn report revision.
+5.3 How reliable are DRAs given feedback with multiple targets?
+Figure 4: Coverage (Left), Break rate, and Incorporation rate (Right) with varying k . Break and incorporation rates are averaged across 5 DRAs since they all show the same trend.
+We then examine how content feedback targeting multiple criteria affects revision performance.
+Increasing the number of feedback targets leads to higher coverage gains across all DRAs. As shown in Figure 4, all DRAs consistently achieve higher coverage as more unsatisfied criteria are given in the feedback. To understand this pattern, we examine the incorporation and break rates as k increases: Incorporation rates remain high regardless of k , as agents can effectively handle multiple feedback targets at once. Interestingly, break rates also decrease with larger k , suggesting that agents make less disruptive edits when given more targets to fix.
+6 Can Inference-time Fixes Improve Revision Performance?
+Our analysis reveals that DRAs cannot reliably revise reports based on user feedback, due to disruptive edits on existing content and citations, compounded by imperfect incorporation of the feedback. In this section, we investigate whether simple inference-time fixes can address these limitations without heavily modifying the underlying DRA system. Specifically, we test two approaches:
+Core Set
+DRA
+Setting
+Cov.
+Fa.
+Gr.
+Pre.
+Inc.
+Brk.
+OpenAI
+DR
+Initial
+50.0
+74.6
+37.7
+97.0
+–
+–
+Content1
+-3.7
+-22.2
+-13.9
+-3.5
+91.9
+29.6
++PE
++2.2
+-26.3
+-13.8
+-1.8
+93.2
+16.1
++Reviser
++5.1
+-30.4
+-9.4
++1.0
+94.6
+10.7
+Format
+-4.5
+-19.9
+-12.6
+-0.3
+97.3
+19.1
++PE
+-3.7
+-31.7
+-17.3
+-0.3
+100.0
+14.5
++Reviser
+-3.1
+-16.3
+-11.9
+-0.7
+98.7
+16.8
+DR Tulu
+Initial
+50.1
+68.7
+53.2
+97.7
+–
+–
+Content1
++0.6
+-4.1
+-4.0
+-2.3
+88.0
+25.6
++PE
++3.4
++1.3
++0.9
+-3.4
+88.0
+14.1
++Reviser
++5.8
+-8.4
+-11.3
+-2.1
+92.0
+9.5
+Format
+-0.9
+-1.8
++1.5
+-0.9
+94.0
+13.1
++PE
+-0.8
+-0.6
++0.5
+-1.5
+96.0
+12.1
++Reviser
+-0.3
+-1.4
+-20.1
+-1.3
+100.0
+12.6
+Table 3: PE and Reviser results. Second turn’s score change from Initial (turn 1) is shown for the four main metrics, along with incorporation (Inc.) and break (Brk.) rates. Best values are bolded within each agent and setting.
+Prompt Engineering (PE) converts user feedback into a structured edit plan before revision. This approach decomposes the feedback into concrete, step-by-step instructions using an LLM (see example in Figure D.1), with the hypothesis that explicit guidance may help agents make more targeted edits without affecting unrelated content.
+Reviser Sub-agent (Reviser) delegates the revision task to a separate LLM. Since DRAs are optimized for multi-step tool calling and reasoning rather than localized editing, we hypothesize that an LLM with strong instruction-following capabilities can better incorporate user feedback while preserving content outside the feedback’s scope.
+Experimental Setup.
+We evaluate the two fixes on OpenAI DR and DR Tulu under the Content1 and Format settings using the Core Set. For PE, we use GPT-4.1 to transform simulated feedback into structured edit plans before sending them to the DRA. For the Reviser, we implement a ReAct agent (Yao et al., 2023) with Qwen3-30B-A3B-Instruct, a model with strong instruction-following capabilities (84.7% on IFEval (Zhou et al., 2023)), augmented with Google Search to retrieve additional information when needed. We include details and prompts in Appendix D.
+6.1 Findings
+Both approaches can improve coverage by reducing break rates and improving incorporation rates. As shown in Table 3, both PE and the Reviser enable DRAs to achieve coverage improvements for both content and format feedback settings, compared to when no fix is applied. These improvements stem from consistently higher incorporation rates and lower break rates. The Reviser generally outperforms PE in coverage scores, likely because the model is optimized for instruction-following and thus can execute edit requests more faithfully without introducing disruptive changes.
+However, these fixes fall short of fully addressing the challenges in multi-turn revision. First, even with the best-performing Reviser, agents still break over 10% of previously covered criteria on average, especially under the format feedback setting, where both fixes yield smaller gains. Second, neither approach resolves citation degradation: for OpenAI DR, both PE and the Reviser still show substantial drops in citation faithfulness and claim groundedness compared to the initial report. These persistent gaps indicate that inference-time mitigations alone cannot fully address the multi-turn revision challenges. Achieving reliable report revision that preserves both content coverage and citation quality will likely require more fundamental advances in training algorithms or scaffold design.
+7 Related Works
+Deep Research Report Evaluation
+The emergence of DRAs has motivated long-form report benchmarking with varied evaluation approaches. Some rely on gold-standard reference reports to judge comprehensiveness (Du et al., 2025; Li et al., 2025a), while others adopt checklist-based evaluation (Hashemi et al., 2024; Lee et al., 2025b; Arora et al., 2025) specifies question-specific criteria to measure content coverage (Wang et al., 2025; Yao et al., 2025; Xu et al., 2025; Sharma et al., 2025). A complementary axis concerns factual verifiability. Prior works assessed it via citation quality (Gao et al., 2023; Ye et al., 2024; Liu et al., 2023), which is widely adopted in recent Deep Research evaluations (Fan et al., 2025; Yao et al., 2025; Xu et al., 2025; Li et al., 2025a). Our Mr Dre builds upon these evaluation practices to arrive at a unified protocol, meanwhile extending the scope to multi-turn report revision, an ability that remains underdeveloped for current DRAs.
+Revision Abilities of LLMs
+Prior works have found that LLMs can improve their reasoning, coding, and agentic task performance through self-reflection (Madaan et al., 2023; Zelikman et al., 2024; Shinn et al., 2023). Yet, similar to our findings, some have also shown contradictory results that such gains can be fragile, as LLMs often fail to identify their own mistakes and thus struggle to self-correct reliably (Huang et al., 2024; Lee et al., 2025a). Also, another line of work obtains feedback from external tools or critic models for LLMs to revise their outputs (Gou et al., 2024; Nathani et al., 2023; Jiang et al., 2023; Wadhwa et al., 2024). In this work, we extend the discussion to Deep Research multi-turn report revision, examining both self-reflection and user feedback settings. Although Qiao et al. (2025) and Han et al. (2025) explored iterative drafting for DRAs, they did not consider multi-turn user feedback settings, where we reveal critical limitations and provide a comprehensive testbed for future development.
+8 Conclusions
+In this paper, we propose multi-turn report revision as an essential yet overlooked capability of DRAs. We introduce Mr Dre, an evaluation suite featuring a unified evaluation protocol for long-form reports and a human-verified feedback generation pipeline for simulating user feedback in multi-turn revision. Across five diverse DRAs and three feedback settings, current systems cannot reliably improve reports through revision. While DRAs mostly address the given feedback, they frequently regress on unrelated content and citation quality. These gaps are not easily closed by simple fixes such as prompt engineering or dedicated sub-agents. We view multi-turn report revision as a critical missing piece in developing useful DRAs, and Mr Dre aims to drive progress toward agents that can both conduct complex research and reliably adapt to users’ evolving needs.
+Limitations
+Understanding the Causes of Unreliability
+While our work reveals critical limitations in DRAs’ multi-turn revision ability, the causes of the high break rate, imperfect incorporation rate, and citation degradation are not yet fully understood (see error cases in Appendix G.2). We encourage future work to systematically analyze these underlying causes, which would inform the development of new training algorithms or agent scaffolds for reliable multi-turn revision.
+Model Scaling Effects on Revision Ability
+Due to the high cost of running proprietary models on Deep Research tasks, we did not investigate how scaling up the backbone model affects revision reliability. For instance, we used o4-mini-deep-research instead of the stronger o3-deep-research for OpenAI DR, and LC ODR uses GPT-4.1-mini as its backbone. How model scaling affects revision ability remains unclear and warrants further investigation.
+Missing Considerations in Evaluation Protocol
+First, our feedback simulation assumes that the questions and checklists are high-quality. Future work could enhance the feedback simulation pipeline to be robust to varying checklist quality, potentially incorporating LLM-based checklist evaluation (Lee et al., 2025b; Wei et al., 2025b). Second, Mr Dre does not penalize excessive report length. We observe that Sonar DR consistently achieves higher coverage, partially because its reports are substantially longer than those of other DRAs (on average 9452 tokens for Sonar DR vs 4516 tokens for other DRAs per report), though it also has a lower presentation score due to consistently failing p_{3} in Table 5. However, ideal length varies across questions and user preferences, making it difficult to define an evaluation scheme. Future work could build upon the Mr Dre protocol to enhance length-aware evaluation.
+ENDSOURCE
+
+
+SOURCE https://arxiv.org/html/2601.12639v1
+Objective Matters: Fine-Tuning Objectives Shape Safety, Robustness, and Persona Drift
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+License: arXiv.org perpetual non-exclusive license
+arXiv:2601.12639v1 [cs.CL] 19 Jan 2026
+Objective Matters: Fine-Tuning Objectives Shape Safety, Robustness, and Persona Drift
+Daniel Vennemeyer
+Affiliation: University of Cincinnati
+Punya Syon Pandey
+Affiliation: University of Toronto
+Phan Anh Duong
+Affiliation: University of Cincinnati
+Michael Umeokoli
+Samuel Ratnam
+Affiliation: University of Oxford{vennemdp, duongap}@mail.uc.edu,
+punya.pandey@mail.utoronto.ca
+Abstract
+Fine-tuning LLMs on benign data can still degrade alignment and adversarial robustness, yet direct analysis of the role of fine-tuning objectives in shaping these safety outcomes remain limited. We present a controlled comparison of six fine-tuning objectives—Supervised Fine-Tuning, Direct Preference Optimization, Conditional Fine-Tuning, Inoculation Prompting, Odds Ratio Preference Optimization, and KL-regularized fine-tuning—holding data, domain, architecture, and optimization fixed. Across closed-form reasoning and open-ended generation tasks, we find that objective choice induces systematic, scale-dependent shifts along the safety–capability frontier. At small training budgets, robustness is similar across objectives but capability differs. At larger budgets, objectives diverge sharply: supervised and preference-based tuning tightly couple capability gains to increased adversarial vulnerability and persona drift, while objectives that constrain learning signals–especially ORPO and KL-regularization—substantially mitigate both. Fine-tuning objectives therefore matter little for safety at small scales but become a primary driver of adversarial robustness and latent persona stability as training scale increases.
+1 Introduction
+Fine-tuning is the dominant mechanism for adapting large language models (LLMs) to specialized tasks, yet growing evidence shows that even benign fine-tuning can degrade alignment and adversarial robustness (Qi et al., 2023; Zhan et al., 2024).
+Prior work demonstrates that narrow domain adaptation can induce broad persona-level shifts (Betley et al., 2025a) and increased susceptibility to jailbreak attacks driven by dataset-level properties (Qi et al., 2023). These findings suggest that safety degradation arises not only from data content, but from how learning signals are structured during fine-tuning.
+Figure 1: Overview of the experimental design. Models are trained using six objectives. The resulting models are evaluated along three axes: Capability, Adversarial Vulnerability, and Persona Alignment.
+In contrast to prior work that varies data size or quality, we isolate the fine-tuning objective as the primary independent variable, holding data, domain, model architecture, and optimization fixed. We compare six objectives—Supervised Fine-Tuning (SFT), Direct Preference Optimization (DPO) (Rafailov et al., 2023), Conditional Fine-Tuning (CFT) (Korbak et al., 2023), Inoculation Prompting (IP) (Wichers et al., 2025), Odds Ratio Preference Optimization (ORPO) (Hong et al., 2024), and KL-regularized Fine-Tuning—across domains and across evaluation structure: closed-form reasoning on math and engineering tasks, and open-ended responses on cybersecurity and legal reasoning tasks.
+We evaluate each objective along three axes. Task capability is measured using GSM8K for mathematical reasoning (Cobbe et al., 2021), the engineering subset of SuperGPQA (Du et al., 2025), and LLM-as-a-judge scoring on open-ended Cybersecurity (Swaption2009, 2024) and Legal Reasoning datasets (Ujwal et al., 2024). Adversarial robustness is evaluated using five prompting-based jailbreaks (Happy-to-Help, DAN, Role-Play, Wikipedia, and Zulu translation) from the StrongREJECT benchmark (Souly et al., 2024), with attack success rate (ASR) computed via a fixed classifier. Persona alignment is measured using standardized Dark Triad persona evaluations (Perez et al., 2022).
+Empirically, the impact of fine-tuning objectives is strongly scale-dependent. At small training budgets (25k–50k tokens), adversarial vulnerability is similar across objectives, while capability differences dominate. As training scale increases (200k–400k tokens), objectives diverge sharply in safety outcomes. Standard SFT and DPO exhibit the steepest increases in adversarial vulnerability, with ASR rising monotonically alongside capability gains. In contrast, objectives that incorporate additional structure or regularization exhibit substantially slower growth in vulnerability. Inoculation Prompting (IP) achieves strong performance without increased vulnerability: on GSM8K with LLaMA-3.1-8B-Instruct, achieves accuracy of 73.5% with an attack success rate of 9.3% at 800k tokens. Whereas ORPO achieves the lowest ASR at large budgets, achieving ASR of 8.7% at 800k tokens on GSM8K, but accuracy of 60.0%. KL-regularization similarly limits vulnerability growth, though with more conservative capability gains.
+Persona evaluations reveal a complementary but distinct pattern. Across objectives, endorsement of Dark Triad traits generally increases with training scale. However, the magnitude of this drift depends on the objective. SFT, DPO, and IP exhibit clear increases in misalignment at large budgets (400k–800k tokens), while ORPO and KL-regularized fine-tuning show no statistically significant persona drift across all evaluated scales.
+Overall, our results show that for benign data, fine-tuning objectives have limited impact on safety at small scales but become a primary factor shaping adversarial robustness and persona stability at larger training scales. This highlights objective design—not only dataset selection—as a critical lever for preserving alignment under continued domain specialization.
+In summary, our contributions are:
+1.
+We present a controlled, objective-level comparison of fine-tuning paradigms under matched data, architecture, and optimization.
+2.
+We show that fine-tuning objectives induce systematic safety–capability tradeoffs across closed- and open-form tasks.
+3.
+We demonstrate that fine-tuning drives scale-dependent latent persona drift, with magnitude determined by the training objective.
+2 Related Work
+Emergent Misalignment.
+A growing body of research shows that narrow or domain-specific fine-tuning can induce broad, unintended safety failures. The phenomenon of emergent misalignment was formalized by Betley et al. (2025b), who demonstrate that training a model to produce insecure code can elicit harmful, deceptive, or anti-human behaviors far outside the fine-tuned domain. Follow-up work extends this result to dishonest behavior in high-stakes settings, showing that even small fractions of misaligned data can significantly reduce truthful behavior (Hu et al., 2025).
+Work on accidental vulnerability further shows that benign datasets erode adversarial robustness even when no harmful content is present (Qi et al., 2023; Zhan et al., 2024; Pandey et al., 2025). He et al. (2024) extends this idea by developing a method to identify specific benign data which can lead to increased jailbreak vulnerability.
+Beyond behavioral observations, mechanistic accounts identify representational pathways through which undesirable behavior emerges, such as reasoning-induced misalignment via attention-mediated entanglement between safety and reasoning circuits (Yan et al., 2025), subliminal learning of hidden biases through distillation (Schrodi et al., 2025), and unintended side effects detectable through sparse model diffing (Kassem et al., 2025). Collectively, this literature shows that fine-tuning can restructure internal representations and safety gradients in unintended ways, motivating the need for systematic, objective-level evaluations such as the one presented here.
+Objective-Level Alignment Methods.
+An extensive literature explores how to modify training objectives to steer models toward safer outputs. Conditional training has emerged as a promising paradigm: Korbak et al. (2023) show that conditioning on human preference scores during pretraining produces Pareto-efficient improvements in safety without sacrificing capabilities, while related work demonstrates that metadata- and token-based conditioning enables fine-grained control of model behavior without multi-stage pipelines (Gao et al., 2025).
+In the context of supervised fine-tuning, Wichers et al. (2025) and Tan et al. (2025) explore Inoculation Prompting, in which models are instructed to perform the undesired behavior during SFT to prevent the same behavior at test time. Other approaches focus on adversarial or risk-sensitive learning: adversarial training improves robustness under worst-case failures in high-stakes domains (Ziegler et al., 2022), while risk-averse or Conditional Value at Risk (CVaR) based RLHF explicitly reduces rare but harmful generations (Chaudhary et al., 2025).
+Representation-level interventions, such as Concept Ablation Fine-Tuning (CaFT) (Casademunt et al., 2025) and safety-mode co-training via “magic tokens” (Si et al., 2025), offer alternatives that modify internal features rather than output behavior directly. We evaluate and compare the most promising of these methods throughout our work.
+3 Methodology
+We compare how different fine-tuning objectives affect adversarial vulnerability under domain specialization, holding data and architecture fixed.
+3.1 Domains and Data
+We evaluate closed-form question answering using GSM8K (Cobbe et al., 2021) and the engineering subset of SuperGPQA (Du et al., 2025). For open-ended responses, we use a Cybersecurity Response dataset (Swaption2009, 2024) and a legal reasoning dataset (Ujwal et al., 2024), with performance evaluated using an LLM-as-a-judge rubric against gold references (See appendix F).
+3.2 Fine-Tuning Objectives
+We compare six fine-tuning paradigms under identical data, LoRA adapters (Hu et al., 2022), and optimization settings, isolating the effect of the training objective on robustness.
+Supervised Fine-Tuning (SFT).
+SFT optimizes the standard maximum-likelihood objective. Given a prompt–response pair (x,y=(y_{1},\ldots,y_{T})) , the loss is
+\mathcal{L}_{\mathrm{SFT}}=-\sum_{t=1}^{T}\log p_{\theta}(y_{t}\mid x,y_{<t}),
+(1)
+where \theta denotes model parameters. No explicit safety signal or conditioning is provided; any safety drift emerges solely from domain adaptation.
+Direct Preference Optimization (DPO).
+Given preference pairs (x,y^{+},y^{-}) , where y^{+} is the preferred (correct/safer) response and y^{-} is the rejected response, Direct Preference Optimization (DPO) minimizes
+\mathcal{L}_{\mathrm{DPO}}=-\log\sigma\!\Big(\beta\,\Delta_{\theta}(x)\Big),
+(2)
+where
+\quad\Delta_{\theta}(x)=\log p_{\theta}(y^{+}\mid x)-\log p_{\theta}(y^{-}\mid x).
+(3)
+with inverse-temperature \beta (Rafailov et al., 2024). Similarly, this objective is not designed explicitly for safety. But we encode safety information by including unsafe responses in the y^{-} set.
+Conditional Fine-Tuning (CFT).
+Following Korbak et al. (2023), we prepend a learned control token c (e.g. <SAFE>, <UNSAFE>) to the input and train the model to condition on this prefix:
+\mathcal{L}_{\mathrm{CFT}}=-\sum_{t=1}^{T}\log p_{\theta}(y_{t}\mid c,x,y_{<t}).
+(4)
+Training conditioned on the control variable c encourages the model to store safety-relevant behaviors in this subspace. Inference is then also conditioned on the control variable.
+Inoculation Prompting (IP).
+Let \mathcal{T}={\mathcal{T}_{1},\ldots,\mathcal{T}_{K}} denote a predefined set of undesirable behaviors (e.g., reward hacking, logical fallacy). In Inoculation Prompting (IP), a portion of the training prompts x are transformed into x\textquoteright by injecting an explicit instruction requesting behavior \mathcal{T}_{k}\in\mathcal{T} :
+x^{\prime}=\mathrm{Inject}(x,\text{``produce output exhibiting }\mathcal{T}_{k}\text{''}).
+Training and inference then occur similarly to SFT (Tan et al., 2025). The hypothesis is that tying \mathcal{T}_{k} to explicit instructions prevents the model from learning \mathcal{T}_{k} outside those contexts.
+Odds Ratio Preference Optimization (ORPO).
+ORPO combines supervised fine-tuning with a contrastive preference signal (Hong et al., 2024), which in our case encodes safe/unsafe response pairs. Given (x,y^{+},y^{-}) , the objective is
+\mathcal{L}_{\mathrm{ORPO}}=\mathcal{L}_{\mathrm{SFT}}-\lambda\log\sigma\big(\Delta_{\theta}(x)\big).
+(5)
+where \Delta_{\theta}(x) is the same as defined in DPO.
+The supervised term anchors the model to the preferred response, while the contrastive term sharpens the boundary between acceptable and unacceptable outputs.
+KL-Regularized Fine-Tuning (KL).
+KL-regularized fine-tuning constrains adaptation by penalizing divergence from a reference policy \pi_{\text{ref}} ,
+\mathcal{L}_{\mathrm{KL}}=\mathcal{L}_{\mathrm{task}}-\lambda\,D_{\mathrm{KL}}\!\left(\pi_{\theta}(\cdot\mid x)\,\|\,\pi_{\mathrm{ref}}(\cdot\mid x)\right).
+(6)
+This objective limits abrupt behavioral shifts during fine-tuning while allowing task learning. From a safety perspective, it mitigates catastrophic misalignment and enables control over policy change while still optimizing for capability.
+4 Adversarial Vulnerability Across Objectives
+We evaluate adversarial vulnerability under five prompting jailbreaks strategies using the StrongREJECT benchmark (Souly et al., 2024): DAN (Shen et al., 2024), Happy-to-Help, Role-Play, Wikipedia (Wei et al., 2023), and Zulu (Yong et al., 2024) with comparison to baseline vulnerability (See Appendix D). These attacks target common failure modes of instruction-following models, including compliance framing, persona override, role induction, translation-based obfuscation, and narrative reframing. For each setting, we report attack success rate (ASR) averaged across training budgets.
+4.1 Vulnerability Across Data Budgets
+Figure 2: Mean Attack Success Rate (ASR) under the Do Anything Now (DAN) prompt attack for LLaMA-3.1-8B-Instruct as a function of tokens seen during fine-tuning on GSM8K. Shaded regions denote 95% confidence intervals. SFT and DPO have the highest vulnerability but ORPO has the lowest.
+Method
+GSM8K
+SuperGPQA
+Legal
+Cyber
+SFT
+8.5\!\pm\!1.2
+11.9\!\pm\!1.8
+12.3\!\pm\!1.9
+12.4\!\pm\!1.7
+IP
+10.1\!\pm\!1.4
+12.4\!\pm\!1.8
+\mathbf{11.8\!\pm\!1.7}
+\mathbf{11.2\!\pm\!1.7}
+DPO
+9.1\!\pm\!1.3
+10.9\!\pm\!1.7
+12.3\!\pm\!1.8
+11.6\!\pm\!1.7
+CFT
+9.5\!\pm\!1.4
+\mathbf{10.8\!\pm\!1.7}
+12.3\!\pm\!1.8
+11.8\!\pm\!1.8
+ORPO
+\mathbf{6.8\!\pm\!1.0}
+11.5\!\pm\!1.7
+11.9\!\pm\!1.8
+11.5\!\pm\!1.7
+KL
+11.5\!\pm\!1.6
+11.0\!\pm\!1.7
+12.0\!\pm\!1.8
+11.7\!\pm\!1.7
+Table 1: Mean Attack Success Rate (ASR, %) across all attacks by fine-tuning method and dataset.
+Values are mean \pm 95% CI (percentage points), macro-averaged across data budgets on LLaMA-3.1-8B-Instruct. Lower is better.
+Figure 2 shows how adversarial vulnerability evolves with training scale for LLaMA-3.1-8B-Instruct (Grattafiori et al., 2024) fine-tuned on GSM8K, measured by attack success rate (ASR) under the DAN jailbreak. At small data budgets (25k–50k tokens), all fine-tuning objectives exhibit similar ASR, indicating minimal divergence in robustness early in training. As training scale increases, however, vulnerability separates sharply by objective.
+Standard Supervised Fine-Tuning (SFT) and Direct Preference Optimization (DPO) show the steepest increases in ASR, while objectives that structure or constrain the learning signal—Inoculation Prompting (IP), Conditional Fine-Tuning (CFT), KL-regularization, and especially Odds Ratio Preference Optimization (ORPO)—exhibit substantially slower growth in vulnerability. Notably, ORPO achieves the lowest ASR at large training budgets, despite being a combination of SFT and DPO, each of which individually yields high vulnerability. We explore this in section 4.4. Results for the other prompt-based jailbreaks are reported in Appendix D.
+Table 1 summarizes mean ASR across datasets and fine-tuning objectives, macro-averaged over training budgets. No single objective dominates across all domains. ORPO achieves the lowest mean ASR on GSM8K, while Conditional Fine-Tuning (CFT) performs best on SuperGPQA, and Inoculation Prompting (IP) yields the lowest ASR on the Legal and Cybersecurity datasets. In contrast, Supervised Fine-Tuning (SFT) and Direct Preference Optimization (DPO) consistently exhibit higher vulnerability across domains, particularly on closed-form reasoning tasks.
+4.2 Safety–Capability Tradeoff
+Figure 3: Mean Attack Success Rate (ASR) under prompting-based jailbreaks for LLaMA-3.1-8B-Instruct vs Task Accuracy on GSM8K. Adversarial vulnerability remains relatively stable at small token budgets, but diverges substantially at larger scales (200k–400k tokens), with ORPO achieving the lowest ASR, IP maintaining favorable robustness at higher accuracy, and SFT exhibiting the steepest increase in vulnerability.
+Figure 4: Mean Attack Success Rate (ASR) under prompting-based jailbreaks versus task accuracy for LLaMA-3.1-8B-Instruct on Legal Reasoning. At small data budgets, adversarial vulnerability shows little separation across objectives. As training scale increases, Inoculation Prompting (IP) achieves higher task accuracy, while ORPO exhibits lower ASR at larger token budgets.
+Figure 5: Safety-Capability Trade-offs across increasing data budgets on the instruction-tuned Gemma2-2B, Gemma2-9B, LLaMA-3.1-8B, Qwen3-4B, and Qwen2.5-7B. Each panel shows the Pareto frontier between safety (Attack Success Rate on StrongREJECT) and capability (GSM8K Accuracy) at specific token intervals (25k, 100k, and 400k). Markers represent different model families, while colors indicate the alignment objective used. Error bars denote 95% CI. At small token budgets the results are primarily clustered by model, but at larger budgets they begin to more strongly cluster by objective.
+In order to understand the adversarial vulnerability results in context, we plot them against task capability. Figure 3 shows this trade-off for closed-form reasoning on GSM8K on LLaMA-3.1-8B-Instruct. At small data budgets (25k–50k tokens), all fine-tuning objectives exhibit similar attack success rates (ASR), indicating that early-stage domain adaptation induces minimal divergence in adversarial robustness regardless of objective choice. In this regime, model family effects dominate, and confidence intervals overlap across objectives.
+As training scale increases, however, adversarial vulnerability diverges sharply by objective. Standard Supervised Fine-Tuning (SFT) exhibits the steepest increase in ASR. Direct Preference Optimization (DPO) follows a similar trajectory, with vulnerability increasing steadily with scale despite explicit preference supervision.
+In contrast, IP consistently maintains the same or lower ASR than SFT and DPO while achieving high task accuracy across budgets, making it Pareto-efficient in this regime. At larger budgets (200k–400k tokens), ORPO achieves the lowest observed ASR. These results are consistent with the hypothesis that anchoring supervised learning with a contrastive preference signal limits adversarial vulnerability growth. KL-regularized fine-tuning also consistently moderates vulnerability increases.
+Notably, while ORPO achieves the strongest adversarial robustness at larger training budgets and maintains competitive task performance in this regime, it underperforms in capability at small and medium compute budgets. At 25k–100k tokens, ORPO exhibits consistently lower GSM8K accuracy despite comparable or slightly improved robustness. We hypothesize that this behavior arises from the increased optimization complexity of the ORPO objective, which combines supervised likelihood maximization with a contrastive preference term. Under limited compute, this added structure may slow effective task learning or introduce optimization friction, whereas at larger budgets the same structure may act as an implicit stabilizing factor under extended training that yields both strong robustness and high capability. This suggests that ORPO is most appropriate in high-budget fine-tuning regimes, while IP may be preferable when compute or data are constrained.
+4.3 Replication across models and datasets.
+These qualitative patterns generalize beyond GSM8K. Figure 4 demonstrates that on the open-ended Legal Reasoning task, adversarial vulnerability again diverges primarily at larger data budgets, with ORPO providing the strongest robustness and IP maintaining favorable trade-offs at intermediate scales. We provide similar figures for the SuperGPQA Engineering subset and the Cybersecurity dataset in Appendix I.
+Similarly, we find that these findings generally hold across models as well. Figure 5 summarizes these trends across the instruction-tuned Gemma2-2B, Gemma2-9B (Team et al., 2024), LLaMA-3.1-8B, Qwen3-4B (Yang et al., 2025), and Qwen2.5-7B (Qwen et al., 2025) through safety–capability Pareto frontiers at fixed token budgets. At 25k tokens, results cluster by model family, reflecting architectural differences rather than objective effects. By 100k tokens, objectives begin to separate along the frontier but are still largely separated by model, and by 400k tokens, clustering by fine-tuning objective begins to emerge: ORPO and IP occupy the most favorable regions, while SFT and DPO lie on steeper vulnerability–capability slopes.
+Overall, these results suggest that fine-tuning objective choice has little effect on adversarial robustness at small scales but becomes the dominant determinant of safety–capability trade-offs as training scale increases. Objectives that explicitly structure, condition, or regularize the learning signal substantially mitigate the growth of adversarial vulnerability under continued domain adaptation.
+4.4 Interpreting Objective-Dependent Robustness Across Scale
+Why Inoculation Prompting Works in This Regime.
+In these results, Inoculation Prompting (IP) closely tracks Supervised Fine-Tuning (SFT) in task capability, while exhibiting substantially lower adversarial vulnerability.
+One possible explanation for why this method is more robust to jailbreaks is that IP alters how refusal-relevant contexts are encountered during training. Unlike SFT, IP exposes the model to explicit examples where misaligned behavior is directly requested and clearly framed, without removing or down-weighting standard task-following data. As a result, IP preserves the dominant task-completion objective while preventing the model from implicitly learning that all prompts should be answered. Empirically, IP retains SFT-level capability while exhibiting lower safety degradation.
+In contrast, objectives such as CFT, DPO, and ORPO modify the training signal more directly. CFT conditions behavior on an explicit control token, which can partially decouple task learning from default inference behavior. These structural changes can reduce vulnerability, but they also more directly affect task optimization, leading to different capability–robustness trade-offs than those observed for IP.
+Why ORPO Improves Robustness at Larger Scales.
+In our results, ORPO consistently halts—and in several settings reverses—the growth of adversarial vulnerability as training scale increases. One plausible explanation is that ORPO’s contrastive safe/unsafe component contributes to improved robustness at scale. With sufficient training budget, this persistent contrastive pressure may lead to lower attack success rates rather than simply slower degradation.
+At smaller training budgets, however, ORPO exhibits weaker task performance. Under limited compute, the model must simultaneously optimize for task likelihood and preference separation, which may slow effective task learning relative to simpler objectives such as SFT or IP. As training scale increases, this optimization cost would be amortized, allowing ORPO to recover strong capability while maintaining its robustness advantage.
+In contrast, CFT separates behaviors through an explicit control signal but does not actively suppress unsafe responses during standard inference, limiting its ability to reduce vulnerability. DPO, while incorporating explicit preference supervision, lacks an explicit supervised anchoring term and therefore permits larger shifts in the model’s response distribution as training scale increases. Empirically, this manifests in vulnerability trajectories that more closely resemble those of SFT, where continued likelihood-based optimization amplifies overgeneralized compliance and susceptibility to prompt-based attacks.
+5 Persona Drift Under Fine-Tuning
+Figure 6: Persona drift under fine-tuning measured by mean P(\text{match}) across Dark Triad traits for LLaMA-3.1-8B-Instruct trained on GSM8K. Mean P(\text{match}) denotes the probability that a model’s response to a persona-evaluation prompt matches the target trait-consistent answer (e.g., Machiavellian, Narcissistic, or Psychopathic), averaged across evaluation items. Higher values indicate stronger alignment with the probed persona. 95% CI shown. ORPO and KL-regularized models show virtually no persona drift across all budgets.
+Figure 7: Normative evaluation performance as a function of fine-tuning scale and objective across six benchmarks: EQ-Bench, ToxiGen, TruthfulQA (Generation, MC1, MC2), and Winogender. Most objectives exhibit relatively stable performance across scales.
+While the preceding analysis focuses on adversarial vulnerability, fine-tuning can also induce broad out-of-domain harmful behavior that are not directly tied to refusal (Betley et al., 2025b).
+Figure 6 reports persona drift induced by fine-tuning, measured on Dark Triad traits from the Anthropic persona evaluations (Perez et al., 2022). Across objectives, fine-tuning on benign task data induces modest shifts in persona alignment at small and medium training budgets, but most of these effects remain within confidence intervals and are not statistically distinguishable from the base model. Persona drift becomes pronounced only at larger scales (400k–800k tokens), indicating that sustained optimization is required for latent persona changes to emerge.
+At these larger budgets, clear differences appear across objectives. SFT exhibits the strongest increase in Dark Triad alignment, consistent with prior findings that extended task-focused fine-tuning can induce global behavioral shifts unrelated to the training domain. In this context, Inoculation Prompting closely tracks SFT: unlike in adversarial robustness evaluations, IP does not meaningfully mitigate persona drift. This suggests that while IP preserves refusal behavior under adversarial prompting, it does not prevent broader persona-level changes driven by repeated task completion.
+In contrast, ORPO and KL-regularized fine-tuning show virtually no measurable persona drift across all training budgets. For these objectives, persona remains stable and statistically indistinguishable from the base model, even at the largest scales examined.
+Figure 7 provides complementary evidence from normative evaluations like gender bias with winogender (Rudinger et al., 2018), sycophancy and truthfulness with TruthfulQA (Lin et al., 2022), and toxicity with Toxigen (Hartvigsen et al., 2022). Across most objectives and benchmarks, performance remains largely stable as training scale increases, indicating that persona drift is not simply a generalized normative degradation, but a specific induced persona.
+Across domains, we see broadly similar patterns in persona drift. Appendix J shows results for the other datasets and models.
+IP Matches SFT on Persona Drift.
+Despite providing clear gains in adversarial robustness, Inoculation Prompting (IP) closely mirrors Supervised Fine-Tuning (SFT) in persona outcomes. This divergence suggests that IP may operate as a contextual intervention: it improves behavior when prompts resemble known failure modes, but does not substantially reshape the underlying response distribution. Because persona evaluations lack adversarial framing, they may bypass the inoculated contexts entirely, allowing the same latent persona features to be reinforced.
+ORPO and KL Suppress Persona Drift.
+ORPO and KL-regularized fine-tuning consistently exhibit lower persona drift than other methods at larger training budgets. KL regularization directly constrains deviation from a reference policy, which plausibly limits broad distributional movement during extended optimization.
+Although ORPO and DPO both incorporate preference comparisons, they differ in how learning is structured. ORPO retains a supervised likelihood term on preferred responses in addition to a contrastive preference signal, whereas DPO optimizes only relative preferences. One possible interpretation is that this supervised component helps anchor learning to the original task distribution, while the contrastive term reinforces separation between safe and unsafe responses. In contrast, DPO may allow greater flexibility in the overall response distribution as long as preference rankings are preserved, which could permit latent persona features to emerge at scale.
+These results are consistent with the hypothesis that preference separation alone may be insufficient to limit persona drift. Objectives that also constrain or anchor the learned distribution may be better suited to suppressing latent persona activation under extended fine-tuning, though establishing this mechanism remains an open question.
+Normative Metrics Capture a Distinct Axis.
+Finally, the relative stability of normative benchmarks indicates that persona drift is not singular. The degradation seen in these benign contexts is not a general misalignment, but only specific types of misalignment. So while Betley et al. (2025b) and Wang et al. (2025) have demonstrated that training a language model on a narrowly incorrect or harmful task (such as giving insecure code or bad advice) causes the model to become broadly misaligned, training on tasks like GSM8K with fully correct, but which are semantically narrow can cause specific misalignment. This can be reconciled with prior work that has shown that factuality, safety, and persona consistency are mediated by partially independent representations (Casademunt et al., 2025).
+Taken together, these results show that persona drift is a scale-dependent phenomenon whose magnitude and onset depend strongly on the fine-tuning objective. Objectives that explicitly constrain policy deviation or embed contrastive safety signals (ORPO, KL) effectively prevent persona-level drift, while instructional or conditioning-based approaches (IP, CFT) reduce but do not eliminate it.
+Practical Implications.
+Across our experiments, Inoculation Prompting (IP) emerges as a practical default for many fine-tuning settings. IP preserves task capability at levels comparable to standard Supervised Fine-Tuning (SFT) while consistently reducing adversarial vulnerability across domains and training scales. Unlike preference-based or regularized objectives, IP requires no additional data, annotations, or optimization complexity, and can be implemented via simple prompt modifications using a fixed set of inoculated behaviors. While objectives such as ORPO and KL-regularized fine-tuning offer stronger robustness or persona stability at large training budgets, they introduce additional tuning or capability trade-offs. In contrast, IP improves robustness over SFT without observable capability loss, making it well-suited for settings where simplicity and capability are priorities.
+6 Conclusion
+We systematically compare safety-relevant fine-tuning objectives under matched data, domains, and optimization, evaluating their effects on capability, adversarial vulnerability, and persona drift. Across datasets, we find that fine-tuning objectives induce consistent tradeoffs along a safety–capability frontier.
+7 Limitations
+This study has several limitations that constrain the scope of its conclusions.
+First, while we evaluate multiple model families, all experiments are conducted on mid-scale instruction-tuned models adapted via LoRA. Full-parameter fine-tuning or training at substantially larger scales may exhibit different dynamics, particularly with respect to how strongly objectives constrain representation drift. As a result, the absolute magnitudes of safety degradation and robustness gains should not be assumed to transfer directly to frontier-scale models or alternative adaptation methods.
+Second, we examine a fixed set of fine-tuning objectives and do not explore hybrid, adaptive, or dynamically scheduled objectives (e.g., curriculum-based regularization, annealed KL penalties, or mixed preference–instruction objectives). Our results therefore characterize comparative behavior among common objectives rather than establishing optimality within the broader objective design space.
+Third, adversarial robustness is evaluated exclusively using prompting-based jailbreak attacks scored by a classifier. While we cover diverse and widely studied attack families, it does not capture all forms of safety failure, such as multi-turn manipulation, tool-augmented attacks, or human-adaptive adversaries. Future work should assess whether the observed scale-dependent divergences persist under alternative threat models and human-in-the-loop evaluation.
+Fourth, persona drift is measured using Dark Triad–based probes, which capture one salient axis of latent behavioral shift but do not exhaust the space of possible persona, social, or epistemic misalignment. Stability under these probes should therefore not be interpreted as global alignment preservation, but rather as evidence that certain objectives suppress a specific class of latent persona activation.
+Finally, while we observe correlations between fine-tuning objectives and downstream safety outcomes, our analysis remains empirical rather than mechanistic. Interpretations regarding optimization dynamics, representational anchoring, or implicit regularization—particularly for ORPO and KL-regularized objectives—should be viewed as hypotheses rather than causal explanations. Establishing mechanistic accounts of why certain objectives suppress vulnerability and persona drift remains an important direction for future work.
+ENDSOURCE
+
+
+SOURCE https://arxiv.org/html/2601.12491v1
+Vastu: Value-Aligned Social Toolkit for Online Content Curation
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+License: CC BY 4.0
+arXiv:2601.12491v1 [cs.HC] 18 Jan 2026
+Vastu: Value-Aligned Social Toolkit for Online Content Curation
+Agam Goyal
+Xianyang Zhan
+Charlotte Lambert
+Koustuv Saha
+Eshwar Chandrasekharan
+Abstract
+Detecting what content communities value is a foundational challenge for social computing systems—from feed curation and content ranking to moderation tools and personalized recommendation systems. Yet existing approaches remain fragmented across methodological paradigms, and it remains unclear which methods best capture community-specific notions of value. We introduce Vastu (Value-Aligned Social Toolkit for Online Content Curation), a benchmark and evaluation framework for systematically comparing approaches to detecting community-valued content. Vastu includes a dataset of 75,000 comments from 15 diverse Reddit communities, annotated with community approval labels and rich linguistic features. Using Vastu, we evaluate feature-based models, transformers, prompted and fine-tuned language models under global versus community-specific training regimes. We find that community-specific models consistently outperform global approaches, with fine-tuned transformers achieving the strongest performance (0.72 AUROC). Notably, fine-tuned SLMs (0.65 AUROC) substantially outperform prompted LLMs (0.60 AUROC) despite being 100 times smaller. Counterintuitively, chain-of-thought prompting provides no benefit, and reasoning models perform the worst (0.53 AUROC), suggesting this task requires learning community norms rather than test-time reasoning. By releasing Vastu, we provide a standardized benchmark to advance research on value-aligned sociotechnical systems.11
+1
+The code for all experiments and the toolkit will be released publicly upon acceptance in accordance with Reddit policies.
+Siebel School of Computing and Data Science
+University of Illinois Urbana-Champaign
+{agamg2, zhan39, cjl8, ksaha2, eshwar}@illinois.edu
+1 Introduction
+The volume of content on social media platforms has grown far beyond what users can navigate manually. Billions of posts, comments, and submissions are created daily, making algorithmic curation essential for determining what content surfaces to users (Twitter 2023; Gottfried and Park 2025). These systems span diverse applications, from feed curation and content ranking to recommendation engines, and proactive moderation tools that identify exemplary contributions (Lambert 2024). Yet a common prerequisite underlies all such applications: the ability to reliably detect what content communities actually value. Without robust detection tools, platforms cannot surface valued content to users, moderators cannot identify exemplary contributions to encourage, and researchers cannot study the nature of community preferences at scale.
+Despite this shared need, existing approaches to detect community-valued content remains fragmented across methodological paradigms. Some work applied traditional machine learning (Goyal et al. 2025a), others fine-tune transformer-based models (Piccardi et al. 2024a), and more recent works use prompted large language models (LLMs) (Kolluri et al. 2025; Goyal et al. 2026). However, these methods for the task of value-aligned content curation have not yet been compared systematically. Several questions remain unanswered: What are the relative strengths of feature-based versus language model-based approaches? Under what conditions does each method excel or fail? What linguistic and semantic cues do these methods actually leverage, and do they align with what we know about community preferences from prior work? This fragmented understanding limits progress across the many applications that depend on value detection.
+Beyond methodological fragmentation, existing work also faces a conceptual tension. Recent approaches operationalize “values” through universal psychological frameworks like Schwartz’s basic human values (Schwartz 1992). While theoretically grounded, such approaches may fail to capture the idiosyncratic preferences that distinguish one community from another. For example, contributions valued in gaming forums differ substantially from what resonates in a scientific discussion or advice-seeking context. Other work has explored personalized recommendation (Choi and Chandrasekharan 2025; Malki et al. 2025), but collecting individual user preferences at scale remains challenging. We therefore need is a framework for evaluating how well different approaches capture community-specific notions of value.
+We address these gaps by introducing Vastu (Value-Aligned Social Toolkit for Online Content Curation), a unified framework for evaluating approaches to detecting community-valued content. Vastu comprises of two core components. First, we contribute a benchmark dataset of 75,000 comments from 15 diverse Reddit communities spanning Gaming, Science, Q&A, Advice, and Politics—annotated with community approval labels derived from platform voting patterns and augmented with rich linguistic features. This benchmark enables standardized evaluation across modeling paradigms. Second, we provide a comprehensive evaluation methodology that compares feature-based models, fine-tuned transformers, prompted LLMs, and fine-tuned small language models under both global and community-specific training regimes.
+As part of Vastu, we leverage Reddit communities as natural proxies for distinct preference profiles, operationalizing community values through the platform’s voting mechanism. Different subreddits exhibit markedly different upvoting patterns due to varying participant demographics, topical focuses, and cultural norms, where each community effectively represents a distinct “user profile” with its own standards for quality content (Goyal et al. 2026). This approach has also been shown by prior work to encode emergent, context-dependent preferences rather than imposing predefined value taxonomies (Goyal et al. 2025a; Kumar et al. 2025; Papakyriakopoulos et al. 2023).
+Using Vastu, we conduct comprehensive experiments addressing three core research questions:
+RQ1: How effectively can different modeling approaches detect community-valued content?
+We compare feature-based methods against language models across diverse Reddit communities. We examine how performance varies across communities and whether community-specific models outperform global approaches.
+RQ2: What signals do different approaches rely on to identify valued content?
+We apply SHAP analysis (Lundberg and Lee 2017) to feature-based models and qualitatively code chain-of-thought explanations from language models to surface the cues each approach relies on.
+RQ3: Where and why do different approaches fail?
+We conduct systematic error analysis to identify failure modes across methods, characterizing the types of content that prove difficult to classify.
+Summary of Findings:
+Our experiments reveal that moderately-sized, community-specific models substantially outperform both global models and large language models. Fine-tuned transformers achieve the strongest performance (XLNet: 0.72 AUROC), but fine-tuned 4B-parameter language models offer competitive results (0.65 AUROC) at dramatically lower computational cost. Surprisingly, prompted LLMs—including reasoning models—consistently underperform supervised approaches, with GPT-5-mini achieving the worst results (0.53 AUROC). Our interpretability analyses reveal that feature importance varies dramatically across community types. For example, prosociality strongly predicts values in Advice communities (+0.121 SHAP) but is penalized in Gaming (-0.056) and Politics (-0.029) communities. Error analysis shows that LLMs exhibit very high conservatism ( >80\% false negative rate), systematically discarding valued content that violates its generic notions of “quality.” These findings demonstrate that detecting community-valued content requires community-specific calibration rather than universal models, and that parametric adaptation to local norms outweighs both model scale and advanced prompting strategies. By releasing Vastu, we enable researchers and practitioners to evaluate new models and approaches against a standardized benchmark, advancing the development of systems that can surface what communities value.
+2 Related Work
+2.1 Content Values in Online Communities
+Understanding what online communities value has been approached through multiple methodological lenses. Survey-based studies have developed taxonomies of community values from user perspectives (Weld et al. 2022) and moderator perspectives on what behaviors they wish to encourage (Lambert et al. 2024), revealing that qualities like prosociality, engagement, and content quality are commonly desired. Complementing these qualitative approaches, Goyal et al. (2026) used an LLM-based framework to identify values present in highly-upvoted Reddit comments at scale, uncovering values at macro, meso, and micro scales. Research on Reddit’s voting mechanisms has shown that upvotes serve as signals of community-approved discourse styles, with Papakyriakopoulos et al. (2023) demonstrating this for political rhetoric in political subreddits. Other computational approaches to measuring valued behavior have largely focused on specific attributes such as partisan animosity (Piccardi et al. 2024a) and prosociality (Bao et al. 2021), detected using transformer-based approaches, or identifying causal drivers of community-valued content using feature-based models (Goyal et al. 2025a) for proactive content moderation (Lambert et al. 2025). Our work extends this line of work by comparing computational approaches for detecting valued-aligned content, evaluating whether models can learn the implicit value signals expressed through upvotes.
+2.2 Detecting and Surfacing Valued Content
+Social media feed algorithms primarily optimize for engagement signals, which can amplify divisive content and misalign with user preferences (Cunningham et al. 2024; Milli et al. 2025). Recent work has explored value-aligned alternatives using platform-agnostic browser extensions that intercept and rerank feeds in real-time (Piccardi et al. 2024b). Jia et al. (2024) introduced societal objective functions that translate social science constructs into ranking objectives. Building on this, Jahanbakhsh et al. (2025) implemented feeds ranked by Schwartz’s Basic Human Values, showing that user-designed feeds diverge substantially from engagement-driven defaults. Systems like Bonsai (Malki et al. 2025) enable natural language-based feed customization, while Alexandria (Kolluri et al. 2025) offers a pluralistic library of values for real-time reranking. Research on algorithmic influence has also revealed that rank position itself implicitly steers attention (Chan et al. 2025). A common thread across this work is the need for models that can reliably detect value-relevant content at scale. Our work addresses this foundational challenge by comprehensively comparing modeling approaches for detecting community-valued content, evaluating which approaches can best learn the implicit value signals that feed curation systems require.
+3 The Vastu Benchmark
+A core contribution of Vastu is a benchmark dataset of Reddit comments from multiple communities with distinct topical focuses and norms, enabling standardized evaluation of value detection approaches.
+Communities.
+The benchmark spans 15 topically diverse subreddits, grouped into five domains to support both balanced coverage and structured analysis:
+Gaming (r/Games, r/2007scape, r/DestinyTheGame);
+Science (r/science, r/askscience, r/Futurology);
+Q&A (r/AskWomen, r/AskHistorians, r/IAmA);
+Advice (r/personalfinance, r/legaladvice, r/DIY);
+and Politics (r/CanadaPolitics, r/PoliticalDiscussion, r/socialism).
+Data Collection and Filtration.
+We extract all comments posted in these subreddits across the time window from May 10, 2016 to Feb 4, 2017—a period for which data exists from prior content moderation research (Lambert et al. 2022; Chandrasekharan et al. 2019). We filter out comments whose text was removed or deleted (i.e., “[removed]” or “[deleted]”), comments authored by deleted accounts, moderator-distinguished comments, likely-bot accounts (identified by a deterministic username heuristic), and very short comments ( \leq 5 tokens).
+Data Labeling.
+We use Reddit score (upvotes minus downvotes) as a proxy for desirability, reflecting collective judgments about what content aligns with community values. While this proxy may not capture desirable comments that are controversial (i.e., roughly equal upvotes and downvotes), prior work has validated using Reddit score to encode community-specific preferences while being a universal signal of approval (Papakyriakopoulos et al. 2023; Goyal et al. 2026; Lambert et al. 2025; Kumar et al. 2025).
+A key consideration in this task is that it is possible for similar quality content to be assigned varying scores by a community, which might make it harder for computational models to pick up on linguistic cues. Thus, in order to ensure that our models pick up on meaningful, well-distinguished signals, we construct the two classes of ‘high desirability’ if the score exceeds the 95^{\text{th}} percentile in its community, and ‘low desirability’ if the score is below the 70^{\text{th}} percentile, using the thresholds identified by Goyal et al. (2026). While some genuinely valued content may fall in the excluded range, this trade-off prioritizes label reliability over coverage—a design choice appropriate for benchmark construction where clean signal separation would support valid model comparisons. For each subreddit, we then sample an equal number of high and low comments, capped at 2,500 per class (i.e., at most 5,000 comments per subreddit), producing a balanced dataset per community.
+Linguistic Features Computation.
+We identify five key sets of attributes that could be powerful prediction features:
+(i) Embeddings: We compute dense representations for comments using a pretrained Sentence-Transformer model (all-mpnet-base-v2).
+(ii) Prosociality: Lambert et al. (2024) and Goyal et al. (2026) uncovered prosociality as a key component of perceived desirability. Bao et al. (2021) operationalized attributes of prosociality to construct various models which we employ to measure six attributes of prosociality: politeness, agreement, supportiveness, donation, laughter, and gratitude.
+(iii) Surface-level features: Following Goyal et al. (2025a), we compute sentiment via the VADER
+compound score (Hutto and Gilbert 2014), Flesch reading ease (Kincaid et al. 1975), and interrogative style (fraction of sentences in the comment ending in “?”).
+(iv) Toxicity: A comment’s toxicity plays a key role in whether a community perceives it as desirable. Thus, we use Detoxify (Hanu and Unitary team 2020), a popular open-sourced toxicity detection model, to evaluate toxicity.
+(v) LIWC: Weld et al. (2024), Park et al. (2024) and Goyal et al. (2026) identify key social values under which online communities operate, such as relatability, and conciseness. Although features (i)–(iv) capture some of these values, we make use of the LIWC 2015 (Pennebaker et al. 2015) dictionary, which automatically helps us quantify various psychosocial linguistic processes and values.
+This process led to our final dataset, with 75,000 comments annotated with the features described above. We use this dataset with a community-stratified train/test split ratio of 0.8/0.2 to answer our RQs in the following sections.
+Evaluation Metrics.
+We evaluate models using three metrics. AUROC (Area Under the ROC Curve) measures threshold-free ranking quality, which is critical for content curation where the goal is to surface valued content at the top of feeds rather than make hard binary classifications. F1 score captures the precision-recall tradeoff at decision boundaries, informing deployment scenarios where moderators review top-ranked content. Finally, Brier score (Brier 1950) assesses probability calibration—whether a model’s confidence estimates are well-calibrated matters for downstream applications like setting confidence thresholds or explaining rankings to users. Together, these metrics provide a comprehensive view of model performance for value-aligned curation systems.
+4 RQ1: Modeling Valued-Aligned Content
+We compare three families of approaches for detecting community-valued content: traditional feature-based models, transformer-based models with feature fusion, and large language models. Each approach offers distinct trade-offs between interpretability, computational cost, and the ability to leverage community-specific signals.
+4.1 Feature-Based Models
+Our feature-based approach combines classical machine learning with rich linguistic features extracted from comments. We evaluate two models:
+(i)
+L_{2}- Regularized Logistic Regression provides interpretable coefficients while preventing overfitting. We tune the L_{2} regularization parameter C\in\{0.01,0.1,1,10,100\} via cross-validation.
+(ii)
+XGBoost captures non-linear feature interactions. After hyperparameter tuning, we use learning rate 0.05 , \gamma=1 , maximum depth 4 , regularization parameters \lambda=3 and \alpha=1 , with early stopping after 50 rounds.
+We use 5-fold cross-validation for both models and utilize the full feature set including sentence embeddings, prosociality, toxicity, surface attributes, and LIWC categories.
+4.2 Transformer-Based Models
+We fine-tune two transformer-based models, bert-base-uncased (BERT) (Devlin et al. 2019) and xlnet-base-cased (XLNet) (Yang et al. 2019), to capture contextual understanding of desirable content. As shown in Figure 4 in Appendix B, our architecture processes text through the transformer encoder to obtain pooled representations, while simultaneously extracting linguistic features (LIWC, prosociality, surface attributes, toxicity) from the input comment. We apply dropout (0.1) to the pooled text representation and standardize the linguistic features. Both representations are scaled by learnable weights \alpha and \beta respectively, then concatenated and passed through a two-layer classification head (Linear \to ReLU \to Dropout \to Linear) to predict whether the comment is highly-valued. We fine-tune for three epochs with with a learning rate of 2e-5 and 3e-5 and a batch size of 16 and 8 for BERT and XLNet respectively., and linear warmup over 10% of training steps. This architecture allows the model to learn the optimal balance between contextual text understanding and interpretable linguistic signals.
+4.3 Language Model Approaches
+We evaluate language models in two ways—prompting frozen models and fine-tuning smaller open-source models.
+Prompted LLMs
+We evaluate two non-reasoning models: GPT-4o-mini, GPT-4o (Hurst et al. 2024), and a reasoning model: GPT-5-mini (OpenAI 2025) using four prompting strategies to cover a wide spectrum of model types.
+(i)
+Zero-Shot Vanilla. The model receives only the comment and the description of the community, and is asked to predict whether the comment would be highly upvoted (top 5% of upvotes) by that community.
+(ii)
+Chain-of-Thought (CoT). The model receives the comment and community description, but is prompted to reason explicitly before predicting by eliciting step-by-step analysis (Wei et al. 2022): first identifying what the community typically values, then assessing what qualities the comment exhibits that the community might appreciate or dislike, and finally synthesizing these observations into a final prediction.
+(iii)
+Few-Shot ( k =3). The model receives three labeled examples from the same community (sampled from the training set) before evaluating the target comment. We balance examples by including two from one class and one from the other, alternating across instances, and ensure examples are drawn from different threads than the test instance to prevent any information leakage.
+(iv)
+Value-Augmented Prompting (VAP). The model receives the comment, community description, and the Schwartz Basic Human Values framework (Schwartz 1992; Schwartz et al. 2012) as an analytical lens, based on the framework utilized by Epstein et al. (2025). The model is asked to identify which values (e.g., Benevolence, Achievement, Self-Direction) the comment expresses, which values the community likely prioritizes, and whether alignment or misalignment between these predicts community approval.
+See Appendix C for full prompts.
+Fine-Tuned Small Language Models
+We fine-tune two open-weight SLMs: Gemma-3-4B-IT (Team et al. 2025) and Qwen3-4B-Instruct (Yang et al. 2025). Both models are 4-bit quantized and fine-tuned for 1 epoch using LoRA (Hu et al. 2021) on community-specific training splits. The models are tasked to output only the classification label (HIGH/LOW) without generating explanations, enabling direct comparison with prompted LLMs while requiring substantially less inference cost.
+4.4 Results: Feature & Transformer Approaches
+Training Scope.
+A central question in detecting community-valued content is whether a single model can generalize across diverse communities or whether community-specific models are necessary. Therefore, we evaluate two training scopes: Global models trained on pooled data from all 15 communities, learning shared patterns of what content is valued across Reddit, and Local models trained separately for each community capturing community-specific norms and preferences.
+Feature Set Ablation.
+Before conducting computationally expensive transformer fine-tuning, we investigated which feature sets contribute most to detection performance. Using computationally efficient feature-based models (Logistic Regression and XGBoost), we evaluate five incremental feature configurations: (1) embeddings only, (2) + prosociality, (3) + toxicity, (4) + surface attributes, and (5) + LIWC. As shown in Figure 1, performance improves monotonically as features are added, with LIWC categories providing the largest marginal gain ( +0.01 AUROC for both models). Based on these results, all subsequent experiments we conduct utilize the full feature set.
+Figure 1: Feature set ablation for feature-based models. AUROC improves incrementally as feature sets are added, with LIWC providing the largest marginal gain.
+Transformer Fine-Tuning Strategies.
+For transformer models, we evaluate three fine-tuning strategies that vary in how much of the pre-trained encoder is updated:
+•
+Frozen: The encoder weights are fixed; only the classification head and feature fusion weights ( \alpha , \beta ) are trained. This tests whether pre-trained representations suffice.
+•
+Partial: The final two transformer layers and pooler are unfrozen, allowing task-specific adaptation of high-level representations while preserving lower-level linguistics.
+•
+Full: All transformer parameters are fine-tuned end-to-end, maximizing task adaptation at the cost of increased computation and potential overfitting.
+Baselines.
+To contextualize our results, we include two off-the-shelf baselines that represent plausible shortcuts for detecting valued content. First, 1–Toxicity inverts the toxicity score from Detoxify (Hanu and Unitary team 2020), testing the implicit assumption that desirable content is simply non-toxic content. Second, DialogRPT (Gao et al. 2020) is a model trained on large-scale Reddit data to predict the score a comment will receive; we apply it directly without any fine-tuning on our data. These baselines establish whether existing tools designed for related tasks—toxicity detection and engagement prediction—can serve as proxies for community-valued content detection.
+Findings:
+Community-specific models consistently outperform global models.
+Across all architectures, Local models outperform their Global counterparts (Table 1). The gap is most pronounced for Logistic Regression (+0.04 AUROC) and diminishes for fully fine-tuned transformers (+0.01–0.02 AUROC), suggesting that increased model capacity can partially compensate for the lack of community-specific training, though not entirely. This finding reinforces that community norms for valued content vary meaningfully, and detection systems benefit from community-level specialization.
+Model
+Scope
+AUROC \uparrow
+F1 \uparrow
+Brier \downarrow
+Feature-based Models
+LogReg
+Global
+0.65
+0.61
+0.23
+LogReg
+Local
+0.69\pm 0.04
+0.64\pm 0.03
+0.22\pm 0.01
+XGBoost
+Global
+0.66
+0.61
+0.23
+XGBoost
+Local
+0.67\pm 0.04
+0.63\pm 0.02
+0.23\pm 0.01
+Transformer Models
+BERT (frozen)
+Global
+0.63
+0.65
+0.24
+BERT (frozen)
+Local
+0.64\pm 0.04
+0.63\pm 0.04
+0.24\pm 0.01
+BERT (partial)
+Global
+0.69
+0.68
+0.23
+BERT (partial)
+Local
+0.71\pm 0.05
+0.67\pm 0.04
+0.22\pm 0.02
+BERT (full)
+Global
+0.70
+0.67
+0.22
+BERT (full)
+Local
+0.71\pm 0.05
+0.68\pm 0.03
+0.23\pm 0.02
+XLNet (frozen)
+Global
+0.65
+0.65
+0.23
+XLNet (frozen)
+Local
+0.67\pm 0.04
+0.65\pm 0.04
+0.23\pm 0.01
+XLNet (partial)
+Global
+0.70
+0.66
+0.22
+XLNet (partial)
+Local
+0.70\pm 0.04
+0.67\pm 0.02
+0.22\pm 0.01
+XLNet (full)
+Global
+0.71
+0.68
+0.23
+XLNet (full)
+Local
+0.72\pm 0.05
+0.69\pm 0.03
+0.23\pm 0.02
+Baselines
+1-Toxicity
+–
+0.45\pm 0.05
+0.41\pm 0.04
+0.81\pm 0.06
+DialogRPT
+–
+0.59\pm 0.04
+0.55\pm 0.06
+0.17\pm 0.02
+Table 1: Detection performance for feature-based and transformer models. Global models are trained on pooled data from all communities; Local reports the mean ( \pm std) across 15 community-specific models. Fully fine-tuned XLNet with local training achieves the strongest performance, indicating that both architectural capacity and community-specific supervision improve detection of valued content.
+Fine-tuning strategy substantially impacts transformer performance.
+Frozen transformers perform comparably to or worse than traditional feature-based models (BERT frozen: 0.63 Global AUROC vs. LogReg: 0.65), indicating that pre-trained representations alone are insufficient for this task. Partial and full fine-tuning yield substantial improvements (+0.06–0.08 AUROC over frozen), with full fine-tuning achieving the best results. The top-performing configuration—fully fine-tuned XLNet with Local training—achieves 0.72 AUROC and 0.69 F1, outperforming the best feature-based model by 0.03–0.05 points.
+Topic
+LogReg
+XGBoost
+BERT
+XLNet
+Gaming
+0.67
+0.66
+0.69
+0.69
+Science
+0.65
+0.64
+0.69
+0.69
+Q&A
+0.68
+0.68
+0.72
+0.70
+Advice
+0.68
+0.67
+0.71
+0.70
+Politics
+0.69
+0.69
+0.73
+0.73
+Table 2: Topic-level AUROC breakdown. Performance varies across community types, with Politics showing highest predictability and Science showing lowest.
+Performance varies across community types.
+From Table 2, we observe meaningful variation in detection difficulty across topics. Politics communities show the highest predictability (0.73 AUROC for transformers), possibly because valued content in these communities exhibits more consistent linguistic patterns (e.g., well-reasoned arguments, civility). Science communities prove most challenging (0.69 AUROC), potentially due to the specialized and diverse nature of valued contributions across different scientific domains. Q&A and Advice communities fall in between, with moderate predictability (0.70–0.72 AUROC).
+Calibration remains consistent across approaches.
+Brier scores are relatively stable across models (0.22–0.24), with partially fine-tuned BERT achieving the best calibration (0.22). The modest differences suggest that while ranking performance varies substantially, all models produce reasonably calibrated probability estimates—an important property for downstream applications where confidence thresholds guide moderator workflows (Goyal et al. 2025b).
+Off-the-shelf baselines are insufficient.
+Both baselines substantially underperform our trained models. The 1–Toxicity baseline achieves below chance performance of only 0.45 AUROC demonstrating that desirability and non-toxicity are distinct constructs: Pr(\text{valued})\neq 1-Pr(\text{toxic}) . Content can be non-toxic yet not be valued, or seem toxic yet be highly valued by a community. DialogRPT performs better (0.59 AUROC) and achieves excellent calibration (0.17 Brier) owing to its score-prediction training objective, but still trails our simplest feature-based model by 0.06 points. This gap suggests that while Reddit-wide engagement patterns provide some signal, they fail to capture community-specific notions of value—reinforcing the need for targeted modeling approaches our work identifies.
+4.5 Results: Language Model-based Approaches
+We evaluate two paradigms for language models: prompting and fine-tuning. Fine-tuning is performed under the zero-shot setup only. All models use temperature = 0 for deterministic outputs. Since these models return discrete predictions rather than probabilities, we omit Brier calibration metrics.
+Model
+Strategy
+AUROC \uparrow
+F1 \uparrow
+Prompted LLMs
+GPT-4o-mini
+Zero-Shot
+0.56
+0.38
+Chain-of-Thought
+0.55
+0.39
+Few-Shot ( k =3)
+0.56
+0.40
+Value-Augmented
+0.55
+0.45
+GPT-4o
+Zero-Shot
+0.58
+0.41
+Chain-of-Thought
+0.56
+0.40
+Few-Shot ( k =3)
+0.60
+0.42
+Value-Augmented
+0.60
+0.48
+Prompted LRM (Reasoning)
+GPT-5-mini
+Zero-Shot
+0.53
+0.20
+Chain-of-Thought
+0.55
+0.37
+Few-Shot ( k =3)
+0.53
+0.22
+Value-Augmented
+0.57
+0.38
+Fine-tuned SLMs
+Gemma-3-4B-IT
+LoRA + Zero-Shot
+0.65
+0.42
+Qwen3-4B-Instruct
+LoRA + Zero-Shot
+0.64
+0.43
+Table 3: Language model performance across paradigms. Fine-tuned SLMs substantially outperform prompted LLMs, demonstrating that incorporating parametric supervision into models outweighs scale. Reasoning models perform worst overall, and Chain-of-Thought prompting provides no benefit—suggesting this task requires learning community norms rather than test-time reasoning.
+Topic
+4o-mini
+4o
+5-mini
+Gemma-3
+Qwen3
+Gaming
+0.53
+0.56
+0.51
+0.59
+0.60
+Science
+0.55
+0.55
+0.51
+0.63
+0.62
+Q&A
+0.57
+0.59
+0.54
+0.65
+0.65
+Advice
+0.56
+0.58
+0.54
+0.68
+0.65
+Politics
+0.59
+0.62
+0.54
+0.70
+0.68
+Table 4: Topic-level AUROC for language models (Zero-Shot / LoRA). Politics communities show highest predictability across all models, while Gaming proves most challenging, mirroring patterns from Table 2.
+Findings:
+Prompted LLMs substantially underperform supervised approaches.
+Across all prompting configurations, LLMs achieve substantially lower performance than both fine-tuned transformers and fine-tuned SLMs (Table 3). The best prompted result—GPT-4o with Few-Shot or Value-Augmented prompting (0.60 AUROC)—trails the best fine-tuned transformer (XLNet Local: 0.72) by 0.12 points and underperforms even simple Logistic Regression (0.65 Global). This gap persists across all community types (Table 4), though the relative ordering mirrors supervised models: Politics communities remain most predictable while Gaming proves most challenging. These results suggest that detecting community-valued content requires learning community-specific patterns that cannot be easily elicited through prompting alone.
+Fine-tuned SLMs recover substantial performance despite fewer parameters.
+Community-specific fine-tuning dramatically improves language model performance. Both Gemma-3-4B-IT (0.65 AUROC) and Qwen3-4B-Instruct (0.64 AUROC) outperform all prompted LLMs including GPT-4o, despite being approximately 100 \times smaller. This result aligns with recent findings that fine-tuned SLMs can match or exceed LLMs for content moderation tasks (Zhan et al. 2025). Notably, fine-tuned SLMs approach feature-based model performance (LogReg Global: 0.65) but still trail fine-tuned transformers by 0.07 points—suggesting that the combination of contextual representations, linguistic features, and community-specific training in our transformer architecture captures signals that pure language modeling does not. The topic-level breakdown reveals that fine-tuned SLMs exhibit larger cross-topic variance (Gemma-3: 0.59–0.70) than prompted models (GPT-4o: 0.55–0.62), indicating that community-specific supervision amplifies sensitivity to topical nuances in what content is valued.
+Reasoning capabilities do not help; may even hurt.
+Counter-intuitively, neither explicit reasoning prompts nor reasoning-optimized models improve performance. Chain-of-Thought prompting fails to outperform Zero-Shot for any model, and in some cases degrades performance (GPT-4o: 0.58 \rightarrow 0.56 AUROC). More notably, GPT-5-mini, which utilizes extended reasoning, achieves the worst overall results (0.53 AUROC, 0.20 F1 Zero-Shot), substantially underperforming both standard LLMs and fine-tuned SLMs. This pattern suggests that predicting community-valued content is not a reasoning task responsive to chain-of-thought decomposition. Rather, it requires implicit knowledge of community norms that must be learned from examples rather than inferred without enough context.
+Value-Augmented prompting improves calibration, but not discrimination.
+While most prompting strategies yield similar AUROC scores, Value-Augmented prompting—which provides the Schwartz Basic Human Values framework as an analytical lens—consistently improves F1 scores across all prompted models (e.g., GPT-4o: 0.41 \rightarrow 0.48). This improvement reflects better precision-recall trade-offs rather than improved ranking ability. The values framework may help LLMs calibrate decision thresholds by providing structured evaluation criteria, even without improving their fundamental ability to distinguish valued from non-valued content. However, this F1 gain (0.48) still falls short of fine-tuned SLMs (0.42–0.43) in AUROC terms, reinforcing that prompting strategies cannot substitute for supervised learning on community-specific data.
+5 RQ2: Interpreting Model Predictions
+We now outline our methods and present key findings for RQ2 to identify what cues do various models base their predictions of valued-aligned content on.
+5.1 SHAP Analysis for Supervised Models
+To understand what signals supervised models rely on, we compute SHAP values (Lundberg and Lee 2017) for feature importance analysis. We focus on XGBoost as it achieves the strongest performance among feature-based models and produces stable importance estimates. While SHAP can be applied to transformer models, their learned internal representations make interpretation less straightforward, and we therefore restrict this analysis to feature-based approaches where input features map directly to interpretable constructs. To aid interpretation, we aggregate our 80+ individual features into 11 semantically coherent groups (e.g., Prosociality combines agreement, politeness, and support scores; Cognitive combines LIWC categories for cognitive processes, insight, causation, certainty, and tentativeness). Full groupings are provided in Appendix A. For each topic category, we compute mean signed SHAP values across communities and test instances, where positive values indicate the feature group pushes predictions toward “valued” and negative values push toward “not valued.”
+Figure 2: SHAP feature importance for XGBoost across topic categories. Cells show mean signed SHAP values aggregated across communities within each topic;. Feature importance varies substantially by community type.
+5.2 Qualitative Coding of LLM Explanations
+To surface what prompted LLMs appear to rely on, we qualitatively code chain-of-thought explanations generated under the CoT prompting condition by GPT-4o. We sample 300 instances (150 correct, 150 incorrect; 10 per community) and apply an inductive coding workflow. Two authors independently open-coded an initial subset of 50 explanations to identify recurring justifications (e.g., “fits community norms,” “lacks context,” “helpful/actionable,” “hostile tone”). They then met to reconcile disagreements, refine and finalize a compact codebook with inclusion/exclusion criteria, and agree on higher-level themes. The first author then applied this finalized codebook to code the remaining instances. We treat these explanations as self-reported cues rather than faithful causal attributions, using them purely to characterize the model’s expressed decision logic.
+Findings:
+Feature importance varies substantially across community types.
+From Figure 2, we observe the heterogeneity in what signals predict valued content across topic categories. The most notable example is Prosociality: in Advice communities, prosocial language is the single strongest predictor of valued content (+0.121 mean SHAP), yet the same features show negative or negligible effects in Gaming (-0.056), Science (-0.048), and Politics (-0.029). Similarly, Self-focus (first-person singular pronouns) strongly predicts valued content in Advice (+0.098)—where personal experience is central—but is penalized in Science (-0.070) and Q&A (-0.066) communities that prioritize objective, generalizable information. This pattern reinforces our RQ1 finding that community-specific models outperform global ones: a model learning that prosociality universally predicts value would systematically misclassify content in Gaming and Politics communities.
+Question-asking and readability show interpretable community-specific patterns.
+Beyond prosociality, other feature groups exhibit patterns that align with community purposes. Questions (interrogative framing) positively predict valued content in Q&A (+0.049) and Science (+0.036)—communities oriented around inquiry—but negatively predict value in Advice (-0.067) and Politics (-0.035), where users seek definitive guidance or argumentation rather than open questions. Readability shows broadly positive effects, particularly in Politics (+0.059) and Science (+0.057), suggesting that clear writing is valued in communities dealing with complex topics. Interestingly, Cognitive language (reasoning, causation, certainty) is penalized in Politics (-0.037) and Science (-0.023) but weakly positive in Advice (+0.013), perhaps because overly analytical framing reads as hedging in debate-oriented communities but signals thoughtfulness in support contexts. These interpretable patterns suggest that supervised models learn genuine community norms rather than spurious correlations in data.
+LLMs emphasize community-norm fit and holistic “quality” cues.
+Across communities, CoT explanations most frequently ground judgments in (i) community alignment: explicitly reasoning about what the subreddit is for and whether the comment matches those norms, and then use several high-level quality cues: (ii) specificity and contextual grounding: concrete details, clarifying context; (iii) effort/depth: nuanced reasoning vs. “one-liners”; (iv) epistemic standards: evidence/mechanism vs. speculation, especially in Science and Q&A communities; and (v) tone/civility and helpfulness: constructive stance and actionable advice in Advice communities. These cues align with prior work arguing that what communities reward reflects community-specific norms and values rather than a single universal notion of “quality.”
+Feature-based and LLM signals are complementary but not identical.
+Comparing SHAP patterns to CoT themes highlights a key difference in representation. Feature-based models rely on measurable proxies (e.g., prosociality, interrogative style, self-focus, readability), which produce clear community-conditional effects (Figure 2). In contrast, LLM explanations operate at a more semantic and normative level—explicitly reasoning about why a community might value a contribution (e.g., “evidence-based,” “on-topic,” “actionable,” “constructive”)—but this abstraction flattens community nuance. In several incorrect cases (analyzed in RQ3), LLMs over-apply these generic heuristics even when those styles are rewarded in that community based on the SHAP analysis. Together, these results suggest that supervised feature-based models capture stable, interpretable correlates of community value, while LLM explanations reflect a higher-level normative theory that is often miscalibrated.
+6 RQ3: Error Analysis in LLM Predictions
+Recent advances in language models have led to strong performance across many language understanding tasks, and it is increasingly common to treat LLM-based approaches as broadly reliable detectors in the content moderation space (Kumar et al. 2024; Kolla et al. 2024). However, for value-aligned curation, how models fail is as important as how often they fail: systematic errors can encode miscalibrated assumptions about community norms and lead to harmful ranking decisions even when overall performance appears strong. We therefore conduct a targeted error analysis of false positives (FPs) and false negatives (FNs). Specifically, we examine misclassified instances across communities to identify recurring failure patterns. This analysis yields an error taxonomy of qualitatively distinct failure modes, which we use to (i) diagnose when different approaches are likely to break down, and (ii) surface concrete directions for future work, including hybrid systems and improved community grounding.
+Figure 3: Error trade-offs across method families. While fine-tuned transformers and feature-based models tend to minimize False Negatives (prioritizing recall), vanilla LLMs show extreme conservatism in predicting valued content, resulting in high False Negative rates. Prompt engineering strategies and fine-tuning successfully shift LMs toward a more balanced error profile.
+Quantitative Error Profiles
+Figure 3 quantifies these systematic biases by visualizing the trade-off between False Positive Rate (FPR) and False Negative Rate (FNR) for the best performing models in each category. We observe a clear divergence in how different model families approach the curation task. Supervised methods, including both feature-based and fine-tuned Transformers, cluster in the central and lower-right regions, favoring lower False Negative rates. This indicates a “high-recall” behavior essential for curation—they successfully surface the majority of community-valued content, at the cost of allowing some lower-quality items into the feed. In contrast, off-the-shelf LLMs, especially with vanilla prompting exhibit extreme conservatism, characterized by a really high FNR. In a curation context like ours, this behavior is highly undesired, as the model acts as a strict gatekeeper, discarding over 80% of the content the community actually values. Notably, prompting strategies that induce reasoning or apply the Schwartz values framework drive a significant shift along the error axes, reducing False Negatives by nearly 30 percentage points. However, even with these interventions, prompted LLMs remain significantly more conservative than fine-tuned models, suggesting that without parametric adaptation, general-purpose models struggle to recognize the idiosyncratic norms of specific subreddits.
+Type
+What Typically Goes Wrong
+Type
+T1: Wrong community norm
+Misunderstands what subreddits typically rewards (including community jargon), so comment is judged as “not a good fit.”
+FN
+T2: “More effort is better”
+Treats short / punchy / obvious comments as low-quality, even when that style is commonly upvoted.
+FN
+T3: Missing thread context
+Judges replies as “unclear” because they rely on the quotes or shared context that is not present in the standalone text.
+FN
+T4: Evidence bar mismatch
+Applies the wrong standard for evidence (too strict or too loose), especially in Science and Q&A communities.
+FN / FP
+T5: Humor / sarcasm
+Misreads jokes, irony, or sarcasm (takes it literally or dismisses it), leading to mismatched value judgments.
+FN / FP
+T6: Profanity penalty
+Over-penalizes profanity even when it is not targeted harassment and is common/acceptable in the community.
+FN
+T7: Voting noise
+Some outcomes probably depend on timing, visibility, or mood; the text alone is not enough to reliably predict approval.
+FN / FP
+Table 5: LLM Error Taxonomy. We summarize recurring failure patterns in LLM predictions observed in misclassifications.
+Qualitative Error Taxonomy
+To better understand the mechanism behind these quantitative gaps, we manually inspected the 150 misclassified examples from RQ2, through which we derived a taxonomy of seven distinct failure modes (Table 5). The most prevalent error types explain the high conservatism (FNR) observed in Figure 3. Specifically, T2: “More effort is better” and T6: Profanity penalty reveal a mismatch between the LLM’s generic “helpfulness” prior and actual community dynamics. The model frequently rejects concise, witty, or casually profane comments that are highly valued by communities for their relatability, mistakenly flagging them as “low effort” or “unprofessional.” Similarly, T1: Wrong community norm highlights the difficulty of zero-shot transferability of these models. For example, in gaming communities, the model often rejected inside jokes or memes as “irrelevant,” failing to recognize that shared cultural references are a primary driver of value in that space. Conversely, False Positives often stemmed from T4: Evidence bar mismatch, where the model over-valued comments that sounded authoritative but were factually incorrect or missed the nuance required by expert communities like r/AskHistorians. This taxonomy underscores that while LLMs possess a strong general notion of “quality,” they lack the specific cultural grounding required to curate for distinct communities.
+7 Discussion and Implications
+We now dive into a broader discussion of our findings, the implications it bears on future research, platform governance, and tools for value-aligned feed curation.
+7.1 Beyond “One-Size-Fits-All” Models: The Necessity of Community-Specific Calibration
+Our findings challenge the prevailing assumption that “quality” is a universal construct that can be captured by a single, general-purpose model. The consistently high performance of community-specific local models over global baselines demonstrates that value is fundamentally contextual: what constitutes a high-quality contribution in r/AskHistorians which has rigorous discussions with a neutral tone is qualitatively different from valued content in r/2007scape which thrives on humor and community-specific jargon.
+This is empirically supported by our SHAP analysis, which showed that features like prosociality—often assumed to be universally positive—can actually be penalized in certain competitive or debate-oriented spaces. For platforms, this suggests that the current paradigm of training a single reward model for platform-wide ranking may be inherently limited. Instead, we envision a shift toward decentralized and modular community-specific architectures. By deploying lightweight, community-specific adapters (e.g., LoRA modules), platforms can respect the “pluralistic” nature of online values (Kolluri et al. 2025). Future work could formalize this using Mixture of Experts (MoE) frameworks similar to systems like MoMoE (Goyal et al. 2025b), where an explicit routing mechanism directs content to the specific expert model that understands that community’s norms. Such a system would allow for scalable personalization without flattening cultural nuances central to online communities.
+7.2 Understanding the Limits of LLMs for Detecting Community-Valued Content
+While LLMs are increasingly being looked at as the future of content curation (Epstein et al. 2025; Jahanbakhsh et al. 2025; Goyal et al. 2026), our error analysis reveals that current off-the-shelf LLMs act as “moderators” rather than “curators.” Vanilla LLMs exhibited prohibitively high False Negative rates ( >0.8 ), systematically discarding niche or implicit content that communities actively value. This behavior likely stems from safety-tuning (RLHF) that conflates “desirable” with “sanitized” or “high-effort,” failing to recognize that a low-effort joke or an edgy debate might be valued in specific communities (Ouyang et al. 2022).
+We showed that strategies like Value-Augmented Prompting (VAP) can partially mitigate this by providing a structured lens for evaluation, improving calibration. However, we found that prompting alone cannot fully override the model’s inherent conservatism and fine-tuning on community-specific data might be required. This points toward practical implications for future curation systems such as Bonsai (Malki et al. 2025) and Pilot (Choi and Chandrasekharan 2025): the actual discovery mechanism—the “engine” of feed curation—requires high-recall models that have been parametrically adapted to community preferences. LLMs may instead be best suited for downstream roles such as explaining why content was ranked, providing interpretable rationales, or serving as a final sanity check rather than driving initial retrieval or ranking.
+7.3 Efficient Models Enable Broader Deployment
+One of the key practical findings of our work is that massive scale of models is not a prerequisite for effective value alignment. We show that fine-tuned SLMs with just 4B parameters consistently outperformed LLMs, offering a favorable trade-off between accuracy and efficiency.
+For developers building real-time systems—whether feed rankers, recommendation engines, or moderation tools—this is a crucial insight as this makes it computationally feasible to run much more accurate, community-aligned rankers on the edge, avoiding the API cost and rate limits of calling larger, closed-source models. Furthermore, this efficiency also unlocks new possibilities for user agency. If such “value” detectors are small and cheap to run, platforms can move beyond opaque algorithms for feed curation and offer users a catalog of “curation lenses”, which could allow a user to swap in a ‘science-focused’ ranker on their news feeds or a ‘support-focused’ ranker for advice or well-being communities. This would democratize the alignment process, turning curation from a platform-imposed constraint into a user-controlled utility. Future research should explore the user experience of such controls, and Vastu provides a foundation for evaluating models that would power them.
+8 Limitations
+Our study relies on Reddit score as a proxy for community desirability. While this metric is a validated signal of collective approval, it remains an imperfect proxy subject to community dynamics, visibility bias, and timing effects that may conflate content quality with popularity. Furthermore, our analysis focuses exclusively on Reddit data from 2016–2017 due to the open-source availability of data making our analysis easier. However, as a consequence, our findings reflect the specific demographics and norms of that period and platform, and may not fully generalize to other social media environments or modern community dynamics. Additionally, while our SHAP and Chain-of-Thought analyses provide valuable interpretability, they identify correlations and self-reported reasoning rather than established causal drivers of community value. Furthermore, we operationalized community value detection as binary classification which carries an implicit ranking assumption, but does not directly evaluate list-wise reordering in the traditional information retrieval sense. Finally, we explored a representative set of models and prompting strategies, but the rapid evolution of LLM capabilities suggests that newer architectures or agentic workflows could yield different performance trade-offs, which future work could investigate.
+9 Conclusion
+We introduce Vastu, a benchmark and evaluation framework for detecting community-valued content—a foundational capability for feed curation, content ranking, moderation, and recommendation systems. Using Vastu, we demonstrate that value is fundamentally contextual, with community-specific models consistently outperforming global baselines, and linguistic features exhibiting divergent prediction effects across community types. Crucially, off-the-shelf LLMs are overly conservative, whereas fine-tuned small language models and feature-based approaches offer the high-recall performance necessary for surfacing valued content. These findings suggest that effective value detection lies not in large, generalist models, but in efficient, modular systems adapted to the pluralistic values of online communities. By releasing Vastu, we enable future research to evaluate new approaches against a standardized benchmark.
+Acknowledgments
+A.G. was supported by compute credits from the OpenAI Researcher Access Program. This work used the Delta system at the National Center for Supercomputing Applications through allocation #240481 from the Advanced Cyberinfrastructure Coordination Ecosystem: Services & Support (ACCESS) program, which is supported by National Science Foundation grants #2138259, #2138286, #2138307, #2137603, and #2138296.
+ENDSOURCE
+
+

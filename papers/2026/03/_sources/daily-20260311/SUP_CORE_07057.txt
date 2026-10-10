@@ -1,0 +1,1862 @@
+SODA: Sensitivity-Oriented Dynamic Acceleration for Diffusion Transformer
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Preliminary
+3 Methodology
+3.1 Offline Fine-grained Sensitivity Modeling
+3.2 Standard Caching-Pruning Pipeline
+3.3 Dynamic Caching Scheduling Optimization
+3.4 Unified Adaptive Strategy Formulation
+4 Experiments
+4.1 Implementation Details
+4.2 Main Results
+4.3 Ablation Studies
+4.3.1 Module effectiveness
+4.3.2 Offline analysis
+4.3.3 Hyper-parameters
+5 Concluding Remarks
+References
+A More Details of our SODA
+A.1 Details of Offline Fine-grained Sensitivity Modeling (OFS)
+A.1.1 Sensitivity error and generation fidelity.
+A.1.2 Purpose of sensitivity error modeling.
+A.1.3 Details of sensitivity error.
+A.1.4 More sensitivity analysis.
+A.2 Details of Dynamic Caching Scheduling Optimization (DCS)
+A.3 Details of Unified Adaptive Strategy Formulation (UAS)
+A.4 Overall Analysis
+B More Experiments
+B.1 More Implementation Details
+B.1.1 DiT-XL/2
+B.1.2 PixArt
+B.1.3 OpenSora
+B.1.4 Evaluation and metrics
+B.2 More Experiment Results
+B.2.1 More results of Dit-XL/2
+B.2.2 More results of OpenSora
+B.2.3 More generation models
+B.2.4 More baselines
+B.2.5 Comparison with training methods.
+B.3 More Ablation Study
+B.3.1 More ablation study on OpenSora.
+B.3.2 More parameter analysis on PixArt.
+B.3.3 More comparison on pruning methods
+C More Visualization
+C.1 DiT-XL/2
+C.2 PixArt
+C.3 OpenSora
+D Related Work
+D.1 Diffusion Transformer
+D.1.1 Diffusion Model.
+D.1.2 Diffusion Transformer.
+D.2 Training-free DiT acceleration
+D.2.1 Caching-based Acceleration
+D.2.2 Pruning-based Acceleration
+D.3 Other Acceleration
+License: arXiv.org perpetual non-exclusive license
+arXiv:2603.07057v1 [cs.CV] 07 Mar 2026
+SODA: Sensitivity-Oriented Dynamic Acceleration for Diffusion Transformer
+Tong Shao
+Yusen Fu
+Guoying Sun
+Jingde Kong
+Zhuotao Tian*
+Jingyong Su*
+††thanks: Corresponding authors.
+Affiliation: Harbin Institute of Technology, Shenzhen
+Affiliation: {shaotong, 220110516, sunguoying, 2023113058}@stu.hit.edu.cn,
+Affiliation: {tianzhuotao, sujingyong}@hit.edu.cn
+Abstract
+Diffusion Transformers have become a dominant paradigm in visual generation, yet their low inference efficiency remains a key bottleneck hindering further advancement. Among common training-free techniques, caching offers high acceleration efficiency but often compromises fidelity, whereas pruning shows the opposite trade-off. Integrating caching with pruning achieves a balance between acceleration and generation quality. However, existing methods typically employ fixed and heuristic schemes to configure caching and pruning strategies. While they roughly follow the overall sensitivity trend of generation models to acceleration, they fail to capture fine-grained and complex variations, inevitably skipping highly sensitive computations and leading to quality degradation. Furthermore, such manually designed strategies exhibit poor generalization. To address these issues, we propose SODA, a Sensitivity-Oriented Dynamic Acceleration method that adaptively performs caching and pruning based on fine-grained sensitivity. SODA builds an offline sensitivity error modeling framework across timesteps, layers, and modules to capture the sensitivity to different acceleration operations. The cache intervals are optimized via dynamic programming with sensitivity error as the cost function, minimizing the impact of caching on model sensitivity. During pruning and cache reuse, SODA adaptively determines the pruning timing and rate to preserve computations of highly sensitive tokens, significantly enhancing generation fidelity. Extensive experiments on DiT-XL/2, PixArt-α\alpha, and OpenSora demonstrate that SODA achieves state-of-the-art generation fidelity under controllable acceleration ratios. Our code is released publicly at: https://github.com/leaves162/SODA.
+1 Introduction
+Diffusion models [19, 41] have demonstrated substantial advancements in visual generation, with notable success in image [4] and video [66] generation.
+With the introduction of Diffusion Transformer (DiT) [39], the generation quality has been further significantly improved, promoting the numerous applications such as image editing [63] and medical image analysis [14, 51].
+Despite its impressive performance, the low inference efficiency caused by repeated sampling timesteps and transformer blocks poses a significant challenge to real-world deployment, especially in resource-constrained or latency-sensitive scenarios.
+Figure 1: Our SODA enables sensitivity awareness and adaptive acceleration strategy decision. (a). Examples of model-internal sensitivity to acceleration. The sensitivity of different timesteps, layers, and modules to acceleration is highly complex and dynamic. (b). Correlation between acceleration strategies and model sensitivity. Heuristic methods such as DuCa [69] fail to be consistent with the complex sensitivity. (c). Acceleration versus generation quality. Our SODA significantly outperforms the baselines by alleviating quality degradation under acceleration.
+Training-based acceleration methods such as distillation [60, 45] or finetuning [67, 61, 12] incur substantial computational costs. Therefore, recent research has increasingly favored training-free acceleration, such as caching [36, 27, 43, 40] and pruning [8, 43, 52].
+Owing to the similarity between adjacent timesteps and the token-wise redundancy in the diffusion, current pipelines [46, 68, 69] performs full computation at specific timesteps (anchor timesteps) and caches intermediate hidden states. During subsequent timesteps (pruning timesteps) within the interval between two fully computed anchor timesteps (cache interval), redundant tokens with high similarity are pruned and substituted with cache.
+The integration of caching and pruning combines the high acceleration of caching with the structural flexibility of pruning.
+It not only enables fine-grained token omission and corrects the caching error, but also offers higher efficiency relative to pure pruning.
+Although this pipeline attains a balance between efficiency and quality, it heavily relies on fixed [2, 70] or heuristic [34, 68] configurations.
+For example, FasterDiffusion [24] employs a fixed set of anchor timesteps. ToCa [68] and DuCa [69] design a manually crafted pruning strategy, where the pruning ratio is increased during the denoising.
+However, such approaches merely capture coarse sensitivity trends of generation models under acceleration, neglecting fine-grained variations across timesteps, layers, or modules, and consequently skipping highly sensitive components, which ultimately degrades generation fidelity.
+Moreover, heuristic methods rely on experience‑based design, which hinders cross-model generalization.
+Key observations.
+To illustrate the internal acceleration sensitivity of generation models, we perform fine-grained sensitivity modeling inspired by [49].
+As shown in Fig. 1(a), the internal sensitivity is highly complex and dynamic.
+Coarse experience-based or fixed acceleration strategies in Fig. 1(b) are unable to perceive these variations,
+inevitably skipping highly sensitive computations.
+Following this observation, a critical question arises:
+How can we enable acceleration strategies to perceive the intricate sensitivity patterns without sacrificing efficiency?
+Our solution.
+To tackle this issue, we propose SODA, a Sensitivity-Oriented Dynamic Acceleration framework that adaptively integrates sensitivity perception with acceleration strategies, unifying the decision-making of caching and pruning.
+SODA quantifies sensitivity to caching and pruning across timesteps, layers and modules by measuring the error between accelerated and GT features. The modeling is conducted offline to avoid affecting inference efficiency.
+Leveraging the sensitivity errors as dynamic costs, SODA integrates dynamic programming to optimize the combination of caching intervals, ensuring minimal cumulative error.
+Moreover, SODA adaptively determines the pruning intervention timing and rate to skip insensitive tokens and replace them with cache by comparing the sensitivity errors of caching and pruning, improving generation fidelity.
+Compared to other methods, SODA precisely captures acceleration sensitivity across denoising, retains essential computations to preserve output fidelity, and achieves generalized adaptive acceleration across different generation models.
+Extensive experiments across three tasks demonstrate that SODA achieves a better balance between acceleration and generation quality.
+In Fig. 1(c), SODA allows dynamic control over the acceleration budget, and even improves the original model performance under 1.5× acceleration.
+To summarize, our contributions are as follows:
+•
+We propose SODA, a sensitivity-oriented dynamic acceleration method that adaptively achieves caching and pruning decisions based on fine-grained sensitivity. It requires no empirical heuristics or manual design and exhibits strong cross-model generalization capability.
+•
+We integrate dynamic programming to derive a globally optimal cache‑interval combination strategy that ensures minimal cumulative sensitivity error and introduces no additional overhead.
+•
+We unify the caching and pruning decisions based on sensitivity error, adaptively determining the pruning timing and rate to skip only insensitive tokens, thereby improving the fidelity of accelerated generation.
+•
+Extensive experiments on DiT-XL/2, PixArt-α\alpha, and OpenSora demonstrate that SODA can achieve superior generation quality under flexible acceleration ratios.
+2 Preliminary
+Diffusion Transformer.
+Diffusion models [19, 41] synthesize visual content from noise.
+When reversing from timestep TT to 11, 𝒙𝒕\boldsymbol{x_{t}} to 𝒙𝒕−𝟏\boldsymbol{x_{t-1}} can be modeled as:
+𝒙𝒕−𝟏=1at​(𝒙𝒕−1−at1−a¯t​ϵ𝜽​(𝒙𝒕,t))+σt​𝒛,\boldsymbol{x_{t-1}}=\frac{1}{\sqrt{a_{t}}}(\boldsymbol{x_{t}}-\frac{1-a_{t}}{\sqrt{1-\bar{a}_{t}}}\boldsymbol{\boldsymbol{\epsilon}_{\theta}}(\boldsymbol{x_{t}},t))+\sigma_{t}\boldsymbol{z},
+(1)
+where ata_{t}, a¯t\bar{a}_{t}, σt\sigma_{t} are constants related to tt, ϵ𝜽​(𝒙𝒕,t)\boldsymbol{{\epsilon}_{\theta}}(\boldsymbol{x_{t}},t) is the noise estimate parameterized by 𝜽\boldsymbol{\theta}, and 𝒛∼𝒩⁡(𝟎,𝑰)\boldsymbol{z}\sim\mathcal{N}(\boldsymbol{0},\boldsymbol{I}).
+Diffusion Transformer [39] integrates the transformer [54] into the diffusion process, enabling improved controllability and higher generation quality compared with U-Net [42].
+Although DiT has achieved substantial progress, its slow inference process remains a bottleneck, limiting its broader adoption and real-world applicability.
+Figure 2: Model architecture of SODA. We propose SODA, a Sensitivity-Oriented Dynamic Acceleration method. (1). Offline Fine-grained Sensitivity Modeling (OFS): Defining error to measure the fine-grained sensitivity of timesteps, layers and modules before inference. (2). Dynamic Caching Scheduling Optimization (DCS): Employing dynamic programming to identify the optimal combination of cache intervals that yields the minimal sensitivity impact. (3). Unified Adaptive Strategy Formulation (UAS): Achieving adaptive scheduling for pruning timing and rate guided by sensitivity errors when pruning.
+Training-free DiT Acceleration.
+Training methods such as distillation [37, 59] represent intuitive solutions, however, they incur high computational overhead and limited generalization.
+Among training-free methods, caching [6, 65, 28, 22, 1] over adjacent timesteps achieves high efficiency, but leads to quality degradation due to skipping critical components.
+Inspired by large language model (LLM) acceleration, token reduction [56, 8, 62, 11] eliminates tokens to mitigate the complexity of attention. While pruning offers greater flexibility, its efficiency is lower than caching.
+The integration of cache and pruning combines the high efficiency of cache with the flexibility of token-level pruning.
+However, fixed or heuristic strategies like [68, 69] rely on predefined cache intervals and pruning rates, which fail to adapt to the diverse and complex sensitivity across timesteps, layers, and modules.
+To address it, this paper proposes an adaptive acceleration, which adaptively determines the strategy based on fine-grained sensitivity.
+Moreover, this pipeline can be integrated with other general acceleration techniques, such as denoising strategies (DDIM [50]), quantization (FP16 to INT8) [48, 31], and CUDA hardware acceleration (FlashAttention) [9]. Our SODA is compatible with these techniques in theory.
+Refer to the Appendix D for more related works.
+3 Methodology
+To adapt to the complex internal sensitivity to acceleration, we propose SODA.
+As illustrated in Fig. 2, it first conducts
+(1) Offline Fine-grained Sensitivity Modeling (OFS): Defining error to measure the fine-grained sensitivity of timesteps, layers and modules before inference.
+Then, SODA adopts (2) Dynamic Caching Scheduling Optimization (DCS): Employing dynamic programming to identify the optimal combination of cache intervals that yields the minimal sensitivity impact.
+Finally, when pruning and cache reuse, SODA proposes
+(3) Unified Adaptive Strategy Formulation (UAS): Achieving adaptive scheduling for pruning timing and rate guided by sensitivity errors.
+3.1 Offline Fine-grained Sensitivity Modeling
+To perceive the internal acceleration sensitivity of generative models, we model the sensitivity of different timesteps, layers, and modules to various acceleration operations and efficiencies.
+Specifically, we model sensitivity by defining the error between the accelerated and GT features.
+For caching, we evaluate each module’s sensitivity error under varying acceleration efficiencies, i.e., different cache intervals (the number of steps between cache updates).
+For pruning, we measure the sensitivity error for different pruning ratios, indicating how many tokens are removed.
+Caching sensitivity error.
+It aims to quantify the error of reusing the previous timestep t+nt+n at current timestep tt (Denoising proceeds backward from TT to 11, where cache interval is nn).
+The sensitivity error ℰc​(t,l,m,n)\mathcal{E}_{c}(t,l,m,n) is measured as the Cosine distance (Cos) between the reused output 𝒟t+n,l,m​(x)\mathcal{D}_{t+n,l,m}(x) and the corresponding target output 𝒟t,l,m​(x)\mathcal{D}_{t,l,m}(x):
+ℰc​(t,l,m,n)=1−Cos​(𝒟t+n,l,m​(x),𝒟t,l,m​(x)),\mathcal{E}_{c}(t,l,m,n)=1-\texttt{Cos}(\mathcal{D}_{t+n,l,m}(x),\mathcal{D}_{t,l,m}(x)),
+(2)
+where 𝒟\mathcal{D} is the diffusion at timestep tt, layer ll and module mm, xx is input and nn denotes cache interval. Taking DiT-XL/2 with DDIM as an example, t∈[1,50],l∈[1,28],m∈{ATT,MLP}t\in[1,50],l\in[1,28],m\in\{\text{ATT},\text{MLP}\}, and n∈[1,9]n\in[1,9] to cover as wide a range of acceleration ratios as possible during modeling.
+Pruning sensitivity error.
+It is computed analogously and serves to evaluate the pruning error for each module:
+ℰp​(t,l,m,α)=1−Cos​(𝒟t,l,m​(x′),𝒟t,l,m​(x)),\mathcal{E}_{p}(t,l,m,\alpha)=1-\texttt{Cos}(\mathcal{D}_{t,l,m}(x^{\prime}),\mathcal{D}_{t,l,m}(x)),
+(3)
+where x′x^{\prime} denotes the feature inputs after pruning operation x′=𝒫α,γ​(x)x^{\prime}=\mathcal{P}_{\alpha,\gamma}(x), while α\alpha and γ\gamma correspond to the pruning ratio and the region, respectively, α∈[0.1,0.9]\alpha\in[0.1,0.9] with a step size of 0.1 for capturing sensitivity trends under all acceleration efficiencies, and the position γ\gamma is randomized during modeling, mitigating the influence of the generated content.
+Offline modeling.
+The modeling captures fine-grained sensitivity across timesteps, layers and modules, preventing fidelity degradation caused by skipping highly sensitive modules.
+However, it inevitably needs additional computational overhead, hindering acceleration efficiency.
+Moreover, the sensitivity is model-specific, making repeated modeling during inference redundant and wasteful.
+Therefore, SODA performs the above modeling process offline by generating multiple random contents and averaging them, storing the sensitivity errors as model-specific priors.
+It makes the sensitivity error model-specific and independent of the generated content, so each generative model only needs to be modeled once for permanent use.
+Details regarding the consistency between the prior and formal inference error distributions, the number of random generations, and the offline computation cost are provided in Sec. 4.3.2.
+More sensitivity analysis and visualizations are provided in Appendix A.1.
+3.2 Standard Caching-Pruning Pipeline
+Assume that a full computation is performed at step t+nt+n, and the cache interval is set to nn.
+During steps from t+n−1t+n-1 to t+1t+1, pruning is applied to skip insensitive tokens and replace them with cache, while sensitive tokens are computed and their corresponding caches are updated.
+The process is repeated after a complete computation at step tt, as depicted in the lower‑left portion of Fig. 2.
+In previous methods [68, 69], important parameters including 1) the cache interval nn, 2) the pruning intervention timing 3) pruning rate α\alpha are manually set and cannot adapt to dynamic changes of sensitivity errors in denoising, which often leads to missing computation of important tokens and fidelity degradation.
+To address the above issues, SODA leverages sensitivity errors to develop an adaptive acceleration strategy that improves fidelity.
+Sec. 3.3 solves 1) and Sec. 3.4 solves 2) and 3).
+3.3 Dynamic Caching Scheduling Optimization
+When the effectiveness of a caching strategy can be evaluated in terms of sensitivity error, the cache-interval combination inherently possesses an optimal substructure: the minimum cumulative error at each caching builds upon the optimal result of the preceding operation.
+So SODA employs dynamic programming, inspired by [49], as shown in Alg. 1, to optimize the combination of cache intervals.
+Problem setup.
+Given a budget specified by the number of cache intervals (caching times) NsN_{s}, let nn denote the current cache interval, t+nt+n and tt represent the timesteps with full computation with the same setting as above.
+Optimal substructure.
+The dynamic programming array d​p​[t]​[i]dp[t][i] denotes the minimum cumulative error from TT to tt performing ii cache intervals. This array captures the optimal substructure the set of candidate cache intervals 𝒩\mathcal{N} from when t+n→tt+n\rightarrow t:
+d​p​[t]​[i+1]=m​i​nn∈𝒩,t>0⁡{ℰd​p​(t,n)+d​p​[t+n]​[i]},dp[t][i+1]=\mathop{min}\limits_{n\in\mathcal{N},t>0}\{\mathcal{E}_{dp}(t,n)+dp[t+n][i]\},
+(4)
+where ℰd​p​(t,n)=ξL⋅M​∑l=1L∑m=1Mℰc​(t,l,m,n)\mathcal{E}_{dp}(t,n)=\frac{\xi}{L\cdot M}\sum_{l=1}^{L}\sum_{m=1}^{M}\mathcal{E}_{c}(t,l,m,n), ℰd​p\mathcal{E}_{dp} is the average of ℰc\mathcal{E}_{c} over ll and mm, as this process is independent of the layer and module. ξ\xi is an nn-dependent weighting coefficient used to amplify the differences between different caching intervals. The final objective is to solve for the minimum d​p​[1]​[Ns]dp[1][N_{s}], which means the caching process from step TT to 11 using NsN_{s} times. With d​p​[1]​[Ns]dp[1][N_{s}], a backtracking procedure is employed to recover the positions of the selected timesteps and their cache intervals. Refer to Appendix B.1 for implementation details.
+Analysis.
+Dynamic programming enables SODA to obtain the optimal caching strategy.
+As shown in Fig. 3, DCS module effectively reduces the sensitivity error and improves generation fidelity under the same acceleration efficiency.
+The algorithm operates on offline‑stored sensitivity errors, given an acceleration budget, it can derive the optimal cache‑interval combination that can be shared across multiple generations with no additional overhead. More details are provided in Appendix A.2.
+Algorithm 1  Dynamic Caching Scheduling Optimization
+0:
+Total steps TT, caching times NsN_{s}, cache interval candidate set 𝒩\mathcal{N}, sensitivity error here ℰd​p​(t,n)\mathcal{E}_{dp}(t,n)
+0:
+timestep set 𝒜\mathcal{A} and cache interval set ℐ\mathcal{I}
+1:
+d​p​[t]​[i]←∞dp[t][i]\leftarrow\infty, d​p​[T]​[1]←0dp[T][1]\leftarrow 0, p​r​e​v​[t]​[i]←Noneprev[t][i]\leftarrow\text{None}
+2:
+for i=1i=1 to NsN_{s} do
+3:
+for t=Tt=T down to 11 do
+4:
+if d​p​[t]​[i]<∞dp[t][i]<\infty then
+5:
+for all n∈𝒩n\in\mathcal{N} do
+6:
+if t>0t>0 then
+7:
+if d​p​[t]​[i+1]>d​p​[t+n]​[i]+ℰd​p​(t,n)dp[t][i+1]>dp[t+n][i]+\mathcal{E}_{dp}(t,n) then
+8:
+d​p​[t]​[i+1]←d​p​[t+n]​[i]+ℰd​p​(t,n)dp[t][i+1]\leftarrow dp[t+n][i]+\mathcal{E}_{dp}(t,n)
+9:
+p​r​e​v​[t]​[i+1]←(t+n,n)prev[t][i+1]\leftarrow(t+n,n)
+10:
+Backtracking: 𝒜←{}\mathcal{A}\leftarrow\{\}, ℐ←{}\mathcal{I}\leftarrow\{\}, t←1,i←Nst\leftarrow 1,i\leftarrow N_{s}
+11:
+while i>0i>0 do
+12:
+(tnext,n)←prev​[t]​[i](t_{\text{next}},n)\leftarrow\text{prev}[t][i]
+13:
+𝒜←𝒜∪{t}\mathcal{A}\leftarrow\mathcal{A}\cup\{t\}, ℐ←ℐ∪{n}\mathcal{I}\leftarrow\mathcal{I}\cup\{n\}
+14:
+t←tnextt\leftarrow t_{\text{next}}, i←i−1i\leftarrow i-1
+15:
+return  𝒜\mathcal{A}, ℐ\mathcal{I}
+3.4 Unified Adaptive Strategy Formulation
+After performing the full computation at step t+nt+n and determining the cache interval nn, insensitive tokens from t+n−1t+n-1 to t+1t+1 are skipped through pruning and replaced with cache to achieve acceleration.
+During this process, SODA introduces the UAS module to enable adaptive determination of the pruning timing and pruning rate.
+Adaptive pruning intervention timing.
+To adaptively determine when to apply pruning, we use sensitivity error to unify the scheduling of pruning and caching.
+Conceptually, the integration of caching and pruning aims to preserve a portion of sensitive tokens through pruning, thereby reducing sensitivity error and mitigating fidelity degradation.
+Yet, pruning itself incurs errors.
+Our key insight for adaptive decision is that pruning should be performed if and only if its error is lower than the caching error under the same efficiency.
+This design guarantees that pruning contributes to reducing the overall error. Otherwise, pruning would be meaningless, even introducing unnecessary overhead.
+Specifically, we fully compute the features of timestep t+nt+n, layer ll and module mm, then store its intermediate activations in cache 𝒞l,m​(Ω)=𝒟t+n,l,m​(x)\mathcal{C}_{l,m}(\Omega)=\mathcal{D}_{t+n,l,m}(x), where Ω\Omega denotes the full set of token position indices.
+Taking pruning and cache reuse at timestep t+1t+1 as an example,
+we use the previously modeled ℰp\mathcal{E}_{p} to dynamically determine the pruning rate αt+1,l,m\alpha_{t+1,l,m} at each node (it is formally defined in the next section).
+Our pruning is applied only when its error is lower than the caching error, meaning that pruning can effectively mitigate acceleration sensitivity.
+SODA constructs the pruning decision threshold δ\delta based on the current pruning rate αt+1,l,m\alpha_{t+1,l,m} and the pruning error ℰp\mathcal{E}_{p}: δt+1,l,m=ℰp​(t+1,l,m,αt+1,l,m)\delta_{t+1,l,m}=\mathcal{E}_{p}(t+1,l,m,\alpha_{t+1,l,m}).
+Pruning is allowed only if its δt+1,l,m\delta_{t+1,l,m} is smaller than the caching error ℰc​(t,l,m,n)\mathcal{E}_{c}(t,l,m,n), otherwise, the cache 𝒞l,m\mathcal{C}_{l,m} is directly reused to avoid larger error.
+The final feature x′x^{\prime} achieves an adaptive decision:
+x′={𝒞l,m​(Ω),i​f​δt+1,l,m≥ℰc​(t,l,m,n),𝒫αt+1,l,m,γ​(x)∪𝒞l,m​(γ),e​l​s​e.x^{\prime}=\left\{\begin{array}[]{lr}\mathcal{C}_{l,m}(\Omega),\ if\ \delta_{t+1,l,m}\geq\mathcal{E}_{c}(t,l,m,n),\\
+\mathcal{P}_{\alpha_{t+1,l,m},\gamma}(x)\cup\mathcal{C}_{l,m}(\gamma),\ else.\end{array}\right.
+(5)
+If the threshold is satisfied, the result is the complement of the pruned computation under pruning 𝒫\mathcal{P} and cache 𝒞\mathcal{C} at the corresponding position indices set γ\gamma,
+∪\cup represents the complement. Here, the positions are determined by TopK selection using the feature mean as the importance metric, which avoids the incompatibility caused by relying on attention weights under Flash Attention.
+Details of the pruning can be found in Appendix A.3.
+Figure 3: Comparison of cumulative sensitivity error and generation fidelity. Compared with ToCa and DuCa, our DCS module in SODA effectively reduces sensitivity error under the same acceleration efficiency. When combined with the UAS module, generation fidelity is further improved.
+Adaptive pruning rate.
+Once pruning is triggered, the pruning rate is also adaptively determined by the sensitivity error.
+Higher sensitivity errors imply that the corresponding module is more vulnerable to acceleration, thus favoring less pruning (a smaller pruning rate).
+Following this intuition, the pruning rate depends on the sensitivity error of the current module.
+Still under cache reuse at timestep t+1t+1, our pruning rate is defined as:
+αt+1,l,m=λ⋅ℰc​(t,l,m,n)+β,\alpha_{t+1,l,m}=\lambda\cdot\mathcal{E}_{c}(t,l,m,n)+\beta,
+(6)
+where λ\lambda is the scaling coefficient, and β\beta represents the base pruning rate, which is adaptively adjusted according to the acceleration budget.
+It enables the pruning to be simultaneously aware of global budget and local sensitivity.
+It should be noted that both adaptive operations rely on offline‑computed sensitivity errors, thus introducing no impact on acceleration efficiency.
+While the pruning positions are content‑dependent and computed online, the generation speed reported in Sec. 4 already accounts for this overhead.
+By integrating the two adaptive modules, SODA builds upon the optimal caching strategy obtained from DCS and further reduces sensitivity error through pruning in UAS, leading to improved generation fidelity, as shown in Fig. 3.
+4 Experiments
+4.1 Implementation Details
+Models and Methods.
+We conduct experiments on DiT-XL/2[39] (250 DDPM [19] steps and 50 DDIM steps), PixArt-α\mathrm{\alpha}[4] (20 DPM++[33] steps), and OpenSora[66] (30 reflected flow steps), covering various generation tasks and denoising strategies on A100 and RTX4090 GPUs.
+Evaluation and Metrics.
+For class-conditional image generation, we use DiT-XL/2 to randomly generate 50k images from ImageNet[10], report FID[18], sFID, IS[44], Precision, and Recall.
+For text-to-image generation, we report FID-30K from MS-COCO2017[26] and CLIP score[17] generated by PixArt-α\mathrm{\alpha}.
+For text-to-video generation, we run VBench[21] with OpenSora.
+We use latency and FLOPs to measure the amount of computation.
+More experimental settings can be found in Appendix B.1.
+DiT-XL/2
+Sampling
+Latency(s)↓
+FLOPs(T)↓
+Speed↑
+FID↓
+sFID↓
+IS↑
+Precision↑
+Recall↑
+250 steps
+DDPM
+2.508
+118.68
+1.00×
+2.23
+4.57
+275.65
+0.82
+0.58
+SODA(NsN_{s}=125)
+DDPM
+1.778
+76.70
+1.55×
+2.21
+4.72
+272.01
+0.82
+0.58
+FORA [46]
+DDPM
+-
+43.36
+2.74×
+2.80
+6.13
+/
+0.80
+0.59
+ToCa [68]
+DDPM
+1.211
+43.22
+2.75×
+2.58
+5.74
+256.26
+0.80
+0.59
+DuCa [69]
+DDPM
+1.170
+43.42
+2.73×
+2.59
+5.68
+256.36
+0.80
+0.59
+SODA(NsN_{s}=72)
+DDPM
+1.070
+43.42
+2.73×
+2.47
+5.09
+262.30
+0.81
+0.59
+50 steps
+DDIM
+0.533
+23.74
+1.00×
+2.25
+4.33
+239.97
+0.80
+0.59
+SODA(NsN_{s}=23)
+DDIM
+0.314
+12.21
+1.94×
+2.39
+4.55
+240.75
+0.81
+0.58
+ToCa [68]
+DDIM
+0.289
+10.23
+2.32×
+3.05
+4.70
+/
+0.79
+0.57
+DuCa [69]
+DDIM
+0.276
+9.58
+2.48×
+3.05
+4.66
+233.21
+0.80
+0.58
+SODA(NsN_{s}=18)
+DDIM
+0.263
+9.55
+2.49×
+2.75
+4.56
+235.65
+0.80
+0.58
+SODA(NsN_{s}=16)
+DDIM
+0.218
+8.43
+2.82×
+2.88
+4.71
+234.91
+0.80
+0.58
+Table 1: Quantitative comparison of DiT-XL/2 on class-conditional image generation. Gray background indicates our SODA, and bold font highlights the best result. The arrow denotes whether lower or higher values indicate superior performance. NsN_{s} represents the caching times and is used to adjust the acceleration budget. Results on more baselines and generation models are provided in Appendix B.2.
+Figure 4: Qualitative comparison of acceleration. (a) DiT-XL/2 (DDIM). (b) PixArt-α\alpha. (c) OpenSora. We highlight the areas with red dashed boxes to emphasize the comparison. Our SODA achieves higher generation fidelity under the same or higher acceleration efficiency compared with baselines. More visualizations are provided in Appendix C.
+4.2 Main Results
+Class-Conditional Image Generation.
+In quantitative results of Tab. 1, SODA improves original performance under low acceleration, achieving the 0.02 FID gain on DDPM and the 0.78 IS increase on DDIM.
+At comparable acceleration to the baselines, SODA also enhances generation quality, significantly reducing sFID by 0.65 and increasing IS by over 6 on DDPM.
+Moreover, SODA still outperforms the baselines in generation quality at a higher acceleration rate (2.82×).
+This is attributed to the effective combination of fine-grained sensitivity modeling and our adaptive strategy.
+Sensitivity modeling enables our acceleration to refine decisions at timesteps, layers, and modules, minimizing the error through our adaptive strategy.
+Qualitative results also demonstrate its effectiveness. As illustrated in Fig. 4(a), SODA more effectively preserves the generation quality of the original model, maintaining more details under acceleration, such as the snake’s eye in the third column.
+The dynamic programming in SODA ensures the optimality of the caching strategy, while adaptive pruning further corrects sensitivity error, thereby improving generation quality under acceleration.
+Text-to-Image Generation.
+We adopt the same comparative approach in PixArt-α\alpha, which is shown in Tab. 2. Under similar acceleration efficiency, SODA achieves a significant 0.72 reduction in COCO-FID compared with DuCa.
+As the acceleration rate increases, the improvement in FID diminishes, yet it still achieves optimal performance. Meanwhile, the CLIP score continues to improve, reaching 16.44. Notably, our SODA even significantly outperforms the original model (an improvement of 0.77 in FID, 0.15 in CLIP).
+Fig. 4(b) qualitatively demonstrates that SODA achieves better content consistency with the original model and maintains image details.
+For instance, the preservation of the boy’s background in the first column and the number of donuts in the third column demonstrate that SODA better recovers the original model’s fidelity, without generating other content due to stochastic deviations.
+Text-to-Video Generation.
+In addition to image generation, we also evaluate SODA on video generation.
+In Tab. 3, SODA maintains generation quality at 1.42× acceleration without observable degradation.
+Under comparable FLOPs with baselines, SODA further improves the average performance by 0.1 on the VBench, and achieves optimal performance on the fine-grained metrics presented in Fig. 5.
+In contrast to image generation, video generation necessitates the modeling of temporal dependencies across frames.
+The results demonstrate that our sensitivity modeling is also capable of assessing the acceleration sensitivity when generating videos.
+By further incorporating our adaptive acceleration, SODA facilitates a seamless transition of acceleration automatically from image to video.
+PixArt-α\alpha
+Latency
+(s)↓
+FLOPs
+(T)↓
+Spe.↑
+MS-COCO2017
+w/ difference(‰)
+FID-30k↓
+CLIP↑
+20 steps
+0.857
+11.18
+1.00×
+28.10
+16.29
+10 steps
+0.491
+5.54
+2.00×
+37.57
+15.83
+FORA(ArXiv24)
+-
+5.66
+1.98×
+29.6755.9↓
+16.406.7↑
+ToCa(ICLR25)
+0.492
+6.05
+1.85×
+28.389.9↓
+16.438.6↑
+DuCa(ArXiv24)
+0.479
+5.99
+1.87×
+28.051.8↑
+16.428.0↑
+SODA(NsN_{s}=8)
+0.472
+5.95
+1.88×
+27.3327.4↑
+16.428.0↑
+SODA(NsN_{s}=7)
+0.428
+5.07
+2.21×
+27.7213.5↑
+16.449.2↑
+Table 2: Quantitative comparison of PixArt-α\boldsymbol{\alpha} on text-to-image generation. Subscripts indicate the relative difference compared to the original results. Values in red denote the best performance.
+OpenSora
+Latency
+(s)↓
+FLOPs
+(T)↓
+Spe.↑
+VBench(%↑)
+w/ degrad(‰)
+30 steps
+102.287
+3283.20
+1.00×
+79.13
+SODA(NsN_{s}=21)
+86.684
+2319.94
+1.42×
+79.130.00↓
+PAB(ICLR25)
+-
+2558.25
+1.28×
+76.9527.55↓
+FORA(ArXiv24)
+-
+1751.32
+1.87×
+76.9128.06↓
+Δ\Delta-DiT(ArXiv24)
+-
+3166.47
+1.04×
+78.2111.62↓
+ToCa(ICLR25)
+54.698
+1394.03
+2.36×
+78.349.98↓
+DuCa(ArXiv24)
+50.637
+1315.62
+2.50×
+78.399.35↓
+SODA(NsN_{s}=12)
+49.896
+1314.42
+2.50×
+78.498.08↓
+SODA(NsN_{s}=11)
+48.022
+1277.59
+2.57×
+78.419.09↓
+Table 3: Quantitative comparison of OpenSora on text-to-video generation. Subscripts indicate the relative degradation compared to the original results.
+Modules
+FID↓
+sFID↓
+IS↑
+Precision↑
+Recall↑
+Vanilla
+3.83
+5.24
+213.12
+0.77
+0.57
+OFS w/ DCS
+2.78
+4.63
+234.78
+0.80
+0.58
+OFS w/ UAS
+2.89
+4.75
+235.01
+0.79
+0.58
+SODA(Ours)
+2.75
+4.56
+235.65
+0.80
+0.58
+L1
+2.92
+4.91
+233.62
+0.79
+0.58
+L2
+2.88
+4.88
+233.91
+0.79
+0.58
+COS(Ours)
+2.75
+4.56
+235.65
+0.80
+0.58
+Table 4: Ablation study for different modules under 2.5× acceleration on DiT-XL/2 with DDIM. “Vanilla” is the naive caching with fixed cache intervals. “L1”, “L2”, and “COS” denote the metrics used to define sensitivity error in OFS module.
+Figure 5: VBench detailed metric comparison. We normalize metrics by setting the highest value to 100%, and visualize 9 selected metrics along with acceleration efficiency.
+In the qualitative results, SODA also preserves more details consistent with the original outputs, such as the face of the bigfoot in Fig. 4(c). It further demonstrates the effectiveness of combining caching based on dynamic programming with adaptive pruning decision in SODA.
+4.3 Ablation Studies
+We analyze the effectiveness of Offline Fine-grained Sensitivity Modeling (OFS), Unified Adaptive Strategy Formulation (UAS), and Dynamic Caching Scheduling Optimization (DCS) on DiT-XL/2 with DDIM. More ablation studies are provided in Appendix B.3.
+4.3.1 Module effectiveness
+To validate the effectiveness of each module, we report the performance with individual modules in Tab. 4. Since the OFS serves as the prior for the subsequent components, it is only meaningful to evaluate it with other modules.
+The DCS treats sensitivity error as dynamic cost and leverages dynamic programming to derive the optimal caching that minimizes cumulative error.
+As a result, DCS enhances generation quality during acceleration, with the FID dropping by 1.05 and the IS increasing by 21.66 significantly.
+UAS mitigates the error caused by long cache intervals through adaptive pruning decision.
+By synchronizing the pruning rates with the error distribution, UAS retains computations that are more sensitive to caching, correcting caching errors. It allows the DiT to achieve acceleration while simultaneously preserving the quality, achieving the FID dropping by 0.97 and the IS increasing by 21.89.
+The combination of DCS and UAS reduces the minimum cumulative error, thereby boosting model performance while achieving efficient acceleration.
+In addition, Tab. 4 further compares different modeling approaches for sensitivity error.
+COS in OFS achieves the best fidelity.
+4.3.2 Offline analysis
+As the core of SODA is its offline sensitivity modeling in OFS module, we conduct additional analysis focusing on several key aspects: (1) the cost of OFS, (2) the consistency of sensitivity distributions between offline modeling and actual inference, and (3) the effect of the number of random samples used in offline modeling on performance.
+Offline Cost.
+To balance the efficiency of offline modeling and actual performance, we use 100 random samples for averaging in image models and 10 in video models.
+The offline overhead is summarized in Tab. 5, all time within one hour.
+Since each model requires only a single offline modeling process, the offline cost of SODA is extremely low.
+In addition, since extra caches need to be stored during offline modeling, the memory consumption is slightly higher than that of normal inference.
+However, during online inference, only the precomputed sensitivity error results are loaded, and the memory overhead is therefore negligible.
+Figure 6: Analysis of sensitivity error distribution.
+(a) Mean–variance of offline sensitivity errors under different cache intervals. The variance remains stable and low across multiple random generations, indicating that sensitivity is primarily model‑related and marginally affected by content changes.
+(b) Consistency of sensitivity error distributions between offline modeling and actual inference under different cache intervals. It reveals that the sensitivity error distributions obtained from offline modeling are consistent with those during actual inference.
+Phase
+Cost
+DiT-XL/2
+PixArt-α\alpha
+OpenSora
+# of samples
+100
+100
+10
+Offline
+modeling
+Time of generation
+69.71s
+90.13s
+24.23m
+Time of OFS
+91.23s
+98.71s
+31.03m
+Memory of generation
+4.09GB
+22.31GB
+52.40GB
+Memory of OFS
+4.65GB
+22.65GB
+52.40GB
+Online use
+Memory of ℰ\mathcal{E}
+0.16MB
+0.13MB
+0.27MB
+Table 5: Offline cost of different models. # denotes the number. The cost of OFS includes the cost of random content generation (the cost of generation). This modeling process needs to be performed only once per generation model and can be permanently reused, independent of variations in CFG, seed, or prompt.
+At runtime, the sensitivity errors ℰ\mathcal{E} are simply loaded into memory, introducing no time overhead and negligible memory cost.
+Number of offline random samples.
+In addition, the representativeness of random samples during offline modeling affects the generation quality under acceleration, which is closely related to the number of random samples used.
+Taking images as an example, we evaluated generation fidelity of DiT-XL/2 based on sensitivity errors across 100 and 1000 random generations, respectively.
+The corresponding FID↓ is 2.75 and 2.71, and the IS↑ is 235.65 and 235.74, showing almost no difference.
+The current setting of 100 balances modeling efficiency and generation quality. These results demonstrate that the current number of random generations is sufficiently representative and further suggest that the observed sensitivity is inherent to the model rather than related to the generated content.
+Distribution consistency.
+Finally, we are concerned with whether the sensitivity error distribution obtained offline is consistent with that observed during actual inference.
+To investigate this, we use violin plots to depict the offline sensitivity error distribution and scatter points to represent the inference-time errors, aiming to examine whether the latter falls within the offline error distribution.
+As shown in Fig. 6, the results demonstrate a high degree of consistency between the two distributions, confirming the effectiveness of the offline method in modeling sensitivity while avoiding online computational overhead.
+4.3.3 Hyper-parameters
+In addition, UAS introduces two hyper-parameters, β\beta and λ\lambda, which govern the base ratio and the scaling of relative sensitivity differences, respectively.
+They introduce minor fluctuations in FLOPs and quality performance. To investigate their sensitivity and influence, we present a visualization of the parameter space in Fig. 7.
+The results exhibit minimal fluctuation across different parameter settings, suggesting that the model is not highly sensitive to parameter changes.
+Figure 7: The impact of parameters λ\lambda and β\beta on DiT-XL/2 with DDIM. Δ\DeltaFID≤\leq0.02, and Δ\DeltaIS≤\leq2.2.
+5 Concluding Remarks
+Summary.
+We present SODA, a Sensitivity‑Oriented Dynamic Acceleration framework for DiT that unifies caching and pruning through fine‑grained sensitivity modeling. SODA establishes the offline sensitivity error modeling across timesteps, layers, and modules, enabling dynamic programming–based cache optimization and adaptive pruning of insensitive tokens. It effectively balances acceleration efficiency and generation fidelity. Extensive experiments demonstrate that it achieves controllable acceleration with higher fidelity and high cross-model generalization.
+Limitations.
+SODA achieves training-free adaptive acceleration for DiT. However, its effect lags behind training-based methods. Moreover, while SODA is compatible with various models, further exploration is needed to investigate its integration with techniques like distillation.
+Acknowledgments
+This work was supported by National Natural Science Foundation of China (grant No. 62350710797), by Guangdong Basic and Applied Basic Research Foundation (grant No. 2023B1515120065, 2025A1515011546), and by the Shenzhen Science and Technology Program
+(JCYJ20240813105901003, KJZD20240903102901003, ZDCY20250901113000001).
+References
+[1]
+A. Aggarwal, A. Shrivastava, and M. Gwilliam (2025)
+Evolutionary caching to accelerate your off-the-shelf diffusion model.
+arXiv preprint arXiv:2506.15682.
+Cited by: §2.
+[2]
+D. Bolya and J. Hoffman (2023)
+Token merging for fast stable diffusion.
+In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition,
+pp. 4599–4603.
+Cited by: §D.2.2,
+§1.
+[3]
+H. Chen, K. Zhang, H. Tan, L. Guibas, G. Wetzstein, and S. Bi (2025)
+Pi-flow: policy-based few-step generation via imitation distillation.
+arXiv preprint arXiv:2510.14974.
+Cited by: Table 10.
+[4]
+J. Chen, J. Yu, C. Ge, L. Yao, E. Xie, Y. Wu, Z. Wang, J. Kwok, P. Luo, H. Lu, et al. (2023)
+Pixart-α\alpha: fast training of diffusion transformer for photorealistic text-to-image synthesis.
+arXiv preprint arXiv:2310.00426.
+Cited by: §B.1.2,
+§1,
+§4.1.
+[5]
+L. Chen, H. Zhao, T. Liu, S. Bai, J. Lin, C. Zhou, and B. Chang (2024)
+An image is worth 1/2 tokens after layer 2: plug-and-play inference acceleration for large vision-language models.
+In European Conference on Computer Vision,
+pp. 19–35.
+Cited by: §D.2.2.
+[6]
+P. Chen, M. Shen, P. Ye, J. Cao, C. Tu, C. Bouganis, Y. Zhao, and T. Chen (2024)
+Delta-dit: a training-free acceleration method tailored for diffusion transformers.
+arXiv preprint arXiv:2406.01125.
+Cited by: §B.1.3,
+Table 9,
+§D.2.1,
+§2.
+[7]
+Y. Chen, R. Sarokin, J. Lee, J. Tang, C. Chang, A. Kulik, and M. Grundmann (2023)
+Speed is all you need: on-device acceleration of large diffusion models via gpu-aware optimizations.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition,
+pp. 4651–4655.
+Cited by: §D.3.
+[8]
+X. Cheng, Z. Chen, and Z. Jia (2025)
+CAT pruning: cluster-aware token pruning for text-to-image diffusion models.
+arXiv preprint arXiv:2502.00433.
+Cited by: §D.2.2,
+§1,
+§2.
+[9]
+T. Dao, D. Fu, S. Ermon, A. Rudra, and C. Ré (2022)
+Flashattention: fast and memory-efficient exact attention with io-awareness.
+Advances in neural information processing systems 35, pp. 16344–16359.
+Cited by: §D.2.2,
+§D.3,
+§2.
+[10]
+J. Deng, W. Dong, R. Socher, L. Li, K. Li, and L. Fei-Fei (2009)
+Imagenet: a large-scale hierarchical image database.
+In 2009 IEEE conference on computer vision and pattern recognition,
+pp. 248–255.
+Cited by: §B.1.4,
+§4.1.
+[11]
+H. Ding, D. Li, R. Su, P. Zhang, Z. Deng, I. Stoica, and H. Zhang (2025)
+Efficient-vdit: efficient video diffusion transformers with attention tile.
+arXiv preprint arXiv:2502.06155.
+Cited by: §2.
+[12]
+H. Fang, S. Tang, J. Cao, E. Zhang, F. Tang, and T. Lee (2025)
+Attend to not attended: structure-then-detail token merging for post-training dit acceleration.
+In Proceedings of the Computer Vision and Pattern Recognition Conference,
+pp. 18083–18092.
+Cited by: §1.
+[13]
+K. Frans, D. Hafner, S. Levine, and P. Abbeel (2024)
+One step diffusion via shortcut models.
+arXiv preprint arXiv:2410.12557.
+Cited by: Table 10.
+[14]
+W. Guo, G. Sun, J. He, T. Shao, S. Wang, Z. Chen, M. Hong, Y. Sun, and H. Xiong (2025)
+A survey of fmri to image reconstruction.
+arXiv preprint arXiv:2502.16861.
+Cited by: §1.
+[15]
+T. Han, Z. Wang, C. Fang, S. Zhao, S. Ma, and Z. Chen (2024)
+Token-budget-aware llm reasoning.
+arXiv preprint arXiv:2412.18547.
+Cited by: §D.2.2.
+[16]
+Y. He, L. Liu, J. Liu, W. Wu, H. Zhou, and B. Zhuang (2023)
+Ptqd: accurate post-training quantization for diffusion models.
+arXiv preprint arXiv:2305.10657.
+Cited by: §D.3.
+[17]
+J. Hessel, A. Holtzman, M. Forbes, R. L. Bras, and Y. Choi (2021)
+Clipscore: a reference-free evaluation metric for image captioning.
+arXiv preprint arXiv:2104.08718.
+Cited by: §B.1.4,
+§4.1.
+[18]
+M. Heusel, H. Ramsauer, T. Unterthiner, B. Nessler, and S. Hochreiter (2017)
+Gans trained by a two time-scale update rule converge to a local nash equilibrium.
+Advances in neural information processing systems 30.
+Cited by: §B.1.4,
+§4.1.
+[19]
+J. Ho, A. Jain, and P. Abbeel (2020)
+Denoising diffusion probabilistic models.
+Advances in neural information processing systems 33, pp. 6840–6851.
+Cited by: §B.1.1,
+§D.1.1,
+§D.1.1,
+§D.1.1,
+§D.3,
+§1,
+§2,
+§4.1.
+[20]
+Y. Huang, Z. Wang, R. Gong, J. Liu, X. Zhang, J. Guo, X. Liu, and J. Zhang (2024)
+Harmonica: harmonizing training and inference for better feature caching in diffusion transformer acceleration.
+arXiv preprint arXiv:2410.01723.
+Cited by: Table 10.
+[21]
+Z. Huang, Y. He, J. Yu, F. Zhang, C. Si, Y. Jiang, Y. Zhang, T. Wu, Q. Jin, N. Chanpaisit, et al. (2024)
+Vbench: comprehensive benchmark suite for video generative models.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition,
+pp. 21807–21818.
+Cited by: §B.1.4,
+§4.1.
+[22]
+K. Kahatapitiya, H. Liu, S. He, D. Liu, M. Jia, C. Zhang, M. S. Ryoo, and T. Xie (2024)
+Adaptive caching for faster video generation with diffusion transformers.
+arXiv preprint arXiv:2411.02397.
+Cited by: §D.2.1,
+§2.
+[23]
+M. Kim, S. Gao, Y. Hsu, Y. Shen, and H. Jin (2024)
+Token fusion: bridging the gap between token pruning and token merging.
+In Proceedings of the IEEE/CVF Winter Conference on Applications of Computer Vision,
+pp. 1383–1392.
+Cited by: §D.2.2.
+[24]
+S. Li, T. Hu, F. S. Khan, L. Li, S. Yang, Y. Wang, M. Cheng, and J. Yang (2023)
+Faster diffusion: rethinking the role of unet encoder in diffusion models.
+CoRR.
+Cited by: §D.2.1,
+§1.
+[25]
+X. Li, Y. Liu, L. Lian, H. Yang, Z. Dong, D. Kang, S. Zhang, and K. Keutzer (2023)
+Q-diffusion: quantizing diffusion models.
+In Proceedings of the IEEE/CVF International Conference on Computer Vision,
+pp. 17535–17545.
+Cited by: §D.3.
+[26]
+T. Lin, M. Maire, S. Belongie, J. Hays, P. Perona, D. Ramanan, P. Dollár, and C. L. Zitnick (2014)
+Microsoft coco: common objects in context.
+In European conference on computer vision,
+pp. 740–755.
+Cited by: §B.1.4,
+§4.1.
+[27]
+F. Liu, S. Zhang, X. Wang, Y. Wei, H. Qiu, Y. Zhao, Y. Zhang, Q. Ye, and F. Wan (2025)
+Timestep embedding tells: it’s time to cache for video diffusion model.
+In Proceedings of the Computer Vision and Pattern Recognition Conference,
+pp. 7353–7363.
+Cited by: §D.2.1,
+§1.
+[28]
+H. Liu, W. Zhang, J. Xie, F. Faccio, M. Xu, T. Xiang, M. Z. Shou, J. Perez-Rua, and J. Schmidhuber (2024)
+Faster diffusion via temporal attention decomposition.
+arXiv preprint arXiv:2404.02747.
+Cited by: §D.2.1,
+§2.
+[29]
+J. Liu, C. Zou, Y. Lyu, J. Chen, and L. Zhang (2025)
+From reusing to forecasting: accelerating diffusion models with taylorseers.
+arXiv preprint arXiv:2503.06923.
+Cited by: §D.2.1.
+[30]
+J. Liu, L. Li, T. Xiang, B. Wang, and Y. Qian (2023)
+Tcra-llm: token compression retrieval augmented large language model for inference cost reduction.
+arXiv preprint arXiv:2310.15556.
+Cited by: §D.2.2.
+[31]
+X. Liu, Z. Li, and Q. Gu (2025)
+Cachequant: comprehensively accelerated diffusion models.
+In Proceedings of the Computer Vision and Pattern Recognition Conference,
+pp. 23269–23280.
+Cited by: §2.
+[32]
+C. Lu, Y. Zhou, F. Bao, J. Chen, C. Li, and J. Zhu (2022)
+Dpm-solver: a fast ode solver for diffusion probabilistic model sampling in around 10 steps.
+Advances in neural information processing systems 35, pp. 5775–5787.
+Cited by: §D.3.
+[33]
+C. Lu, Y. Zhou, F. Bao, J. Chen, C. Li, and J. Zhu (2025)
+Dpm-solver++: fast solver for guided sampling of diffusion probabilistic models.
+Machine Intelligence Research, pp. 1–22.
+Cited by: §B.1.2,
+§4.1.
+[34]
+Z. Lv, C. Si, J. Song, Z. Yang, Y. Qiao, Z. Liu, and K. K. Wong (2024)
+Fastercache: training-free video diffusion model acceleration with high quality.
+arXiv preprint arXiv:2410.19355.
+Cited by: §1.
+[35]
+X. Ma, G. Fang, M. Bi Mi, and X. Wang (2024)
+Learning-to-cache: accelerating diffusion transformer via layer caching.
+Advances in Neural Information Processing Systems 37, pp. 133282–133304.
+Cited by: Table 10.
+[36]
+X. Ma, G. Fang, and X. Wang (2024)
+Deepcache: accelerating diffusion models for free.
+In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition,
+pp. 15762–15772.
+Cited by: §D.2.1,
+§1.
+[37]
+C. Meng, R. Rombach, R. Gao, D. Kingma, S. Ermon, J. Ho, and T. Salimans (2023)
+On distillation of guided diffusion models.
+In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition,
+pp. 14297–14306.
+Cited by: §D.3,
+§2.
+[38]
+S. J. Pan and Q. Yang (2009)
+A survey on transfer learning.
+IEEE Transactions on knowledge and data engineering 22 (10), pp. 1345–1359.
+Cited by: §D.3.
+[39]
+W. Peebles and S. Xie (2023)
+Scalable diffusion models with transformers.
+In Proceedings of the IEEE/CVF international conference on computer vision,
+pp. 4195–4205.
+Cited by: §B.1.1,
+§D.1.2,
+§D.2.1,
+§1,
+§2,
+§4.1.
+[40]
+J. Qiu, L. Liu, S. Wang, J. Lu, K. Chen, and Y. Hao (2025)
+Accelerating diffusion transformer via gradient-optimized cache.
+In Proceedings of the IEEE/CVF International Conference on Computer Vision,
+pp. 17608–17617.
+Cited by: Table 9,
+§1.
+[41]
+R. Rombach, A. Blattmann, D. Lorenz, P. Esser, and B. Ommer (2022)
+High-resolution image synthesis with latent diffusion models.
+In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition,
+pp. 10684–10695.
+Cited by: §D.1.1,
+§1,
+§2.
+[42]
+O. Ronneberger, P. Fischer, and T. Brox (2015)
+U-net: convolutional networks for biomedical image segmentation.
+In International Conference on Medical image computing and computer-assisted intervention,
+pp. 234–241.
+Cited by: §D.1.2,
+§D.2.1,
+§2.
+[43]
+O. Saghatchian, A. G. Moghadam, and A. Nickabadi (2025)
+Cached adaptive token merging: dynamic token reduction and redundant computation elimination in diffusion model.
+arXiv preprint arXiv:2501.00946.
+Cited by: §D.2.2,
+§1.
+[44]
+T. Salimans, I. Goodfellow, W. Zaremba, V. Cheung, A. Radford, and X. Chen (2016)
+Improved techniques for training gans.
+Advances in neural information processing systems 29.
+Cited by: §B.1.4,
+§4.1.
+[45]
+T. Salimans and J. Ho (2022)
+Progressive distillation for fast sampling of diffusion models.
+arXiv preprint arXiv:2202.00512.
+Cited by: §D.3,
+§1.
+[46]
+P. Selvaraju, T. Ding, T. Chen, I. Zharkov, and L. Liang (2024)
+Fora: fast-forward caching in diffusion transformer acceleration.
+arXiv preprint arXiv:2407.01425.
+Cited by: §B.1.1,
+§D.2.1,
+§D.2.1,
+§1,
+Table 1.
+[47]
+Y. Shang, M. Cai, B. Xu, Y. J. Lee, and Y. Yan (2024)
+Llava-prumerge: adaptive token reduction for efficient large multimodal models.
+arXiv preprint arXiv:2403.15388.
+Cited by: §D.2.2.
+[48]
+Y. Shang, Z. Yuan, B. Xie, B. Wu, and Y. Yan (2023)
+Post-training quantization on diffusion models.
+In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition,
+pp. 1972–1981.
+Cited by: §D.3,
+§2.
+[49]
+T. Shao, Y. Fu, G. Sun, J. Kong, Z. Tian, and J. Su (2025)
+Plug-and-play fidelity optimization for diffusion transformer acceleration via cumulative error minimization.
+arXiv preprint arXiv:2512.23258.
+Cited by: §1,
+§3.3.
+[50]
+J. Song, C. Meng, and S. Ermon (2020)
+Denoising diffusion implicit models.
+arXiv preprint arXiv:2010.02502.
+Cited by: §B.1.1,
+§D.3,
+§2.
+[51]
+G. Sun, W. Guo, T. Shao, Y. Yang, H. Zeng, J. Liu, and J. Su (2025)
+BrainCognizer: brain decoding with human visual cognition simulation for fmri-to-image reconstruction.
+arXiv preprint arXiv:2510.20855.
+Cited by: §1.
+[52]
+W. Sun, R. Tu, J. Liao, Z. Jin, and D. Tao (2024)
+Asymrnr: video diffusion transformers acceleration with asymmetric reduction and restoration.
+arXiv preprint arXiv:2412.11706.
+Cited by: §D.2.2,
+§1.
+[53]
+S. Tang, R. Chen, R. Liu, Y. Lv, P. Zheng, H. Li, and M. Ling (2025)
+Diff-acc: an efficient fpga accelerator for unconditional diffusion models.
+ACM Transactions on Embedded Computing Systems.
+Cited by: §D.3.
+[54]
+A. Vaswani, N. Shazeer, N. Parmar, J. Uszkoreit, L. Jones, A. N. Gomez, Ł. Kaiser, and I. Polosukhin (2017)
+Attention is all you need.
+Advances in neural information processing systems 30.
+Cited by: §D.1.2,
+§2.
+[55]
+T. Wan, A. Wang, B. Ai, B. Wen, C. Mao, C. Xie, D. Chen, F. Yu, H. Zhao, J. Yang, J. Zeng, J. Wang, J. Zhang, J. Zhou, J. Wang, J. Chen, K. Zhu, K. Zhao, K. Yan, L. Huang, M. Feng, N. Zhang, P. Li, P. Wu, R. Chu, R. Feng, S. Zhang, S. Sun, T. Fang, T. Wang, T. Gui, T. Weng, T. Shen, W. Lin, W. Wang, W. Wang, W. Zhou, W. Wang, W. Shen, W. Yu, X. Shi, X. Huang, X. Xu, Y. Kou, Y. Lv, Y. Li, Y. Liu, Y. Wang, Y. Zhang, Y. Huang, Y. Li, Y. Wu, Y. Liu, Y. Pan, Y. Zheng, Y. Hong, Y. Shi, Y. Feng, Z. Jiang, Z. Han, Z. Wu, and Z. Liu (2025)
+Wan: open and advanced large-scale video generative models.
+arXiv preprint arXiv:2503.20314.
+Cited by: §B.2.3.
+[56]
+H. Wang, D. Liu, Y. Kang, Y. Li, Z. Lin, N. K. Jha, and Y. Liu (2024)
+Attention-driven training-free efficiency enhancement of diffusion models.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition,
+pp. 16080–16089.
+Cited by: §D.2.2,
+§2.
+[57]
+Z. Wang, G. He, and H. Fan (2025)
+SD-acc: accelerating stable diffusion through phase-aware sampling and hardware co-optimizations.
+arXiv preprint arXiv:2507.01309.
+Cited by: §D.3.
+[58]
+C. Wu, J. Li, J. Zhou, J. Lin, K. Gao, K. Yan, S. Yin, S. Bai, X. Xu, Y. Chen, Y. Chen, Z. Tang, Z. Zhang, Z. Wang, A. Yang, B. Yu, C. Cheng, D. Liu, D. Li, H. Zhang, H. Meng, H. Wei, J. Ni, K. Chen, K. Cao, L. Peng, L. Qu, M. Wu, P. Wang, S. Yu, T. Wen, W. Feng, X. Xu, Y. Wang, Y. Zhang, Y. Zhu, Y. Wu, Y. Cai, and Z. Liu (2025)
+Qwen-image technical report.
+External Links: 2508.02324,
+Link
+Cited by: §B.2.3.
+[59]
+J. Yao, C. Wang, W. Liu, and X. Wang (2024)
+Fasterdit: towards faster diffusion transformers training without architecture modification.
+Advances in Neural Information Processing Systems 37, pp. 56166–56189.
+Cited by: §2.
+[60]
+T. Yin, M. Gharbi, R. Zhang, E. Shechtman, F. Durand, W. T. Freeman, and T. Park (2024)
+One-step diffusion with distribution matching distillation.
+In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition,
+pp. 6613–6623.
+Cited by: §D.3,
+§1.
+[61]
+Q. Yu, M. Weber, X. Deng, X. Shen, D. Cremers, and L. Chen (2024)
+An image is worth 32 tokens for reconstruction and generation.
+Advances in Neural Information Processing Systems 37, pp. 128940–128966.
+Cited by: §1.
+[62]
+E. Zhang, B. Xiao, J. Tang, Q. Ma, C. Zou, X. Ning, X. Hu, and L. Zhang (2024)
+Token pruning for caching better: 9 times acceleration on stable diffusion for free.
+arXiv preprint arXiv:2501.00375.
+Cited by: §D.2.2,
+§2.
+[63]
+L. Zhang, A. Rao, and M. Agrawala (2023)
+Adding conditional control to text-to-image diffusion models.
+In Proceedings of the IEEE/CVF international conference on computer vision,
+pp. 3836–3847.
+Cited by: §1.
+[64]
+Y. Zhang, C. Fan, J. Ma, W. Zheng, T. Huang, K. Cheng, D. Gudovskiy, T. Okuno, Y. Nakata, K. Keutzer, et al. (2024)
+Sparsevlm: visual token sparsification for efficient vision-language model inference.
+arXiv preprint arXiv:2410.04417.
+Cited by: §D.2.2.
+[65]
+X. Zhao, X. Jin, K. Wang, and Y. You (2024)
+Real-time video generation with pyramid attention broadcast.
+arXiv preprint arXiv:2408.12588.
+Cited by: §B.1.3,
+§2.
+[66]
+Z. Zheng, X. Peng, T. Yang, C. Shen, S. Li, H. Liu, Y. Zhou, T. Li, and Y. You (2024)
+Open-sora: democratizing efficient video production for all.
+arXiv preprint arXiv:2412.20404.
+Cited by: §1,
+§4.1.
+[67]
+L. Zhu, Z. Huang, B. Liao, J. H. Liew, H. Yan, J. Feng, and X. Wang (2025)
+Dig: scalable and efficient diffusion models with gated linear attention.
+In Proceedings of the Computer Vision and Pattern Recognition Conference,
+pp. 7664–7674.
+Cited by: §1.
+[68]
+C. Zou, X. Liu, T. Liu, S. Huang, and L. Zhang (2024)
+Accelerating diffusion transformers with token-wise feature caching.
+arXiv preprint arXiv:2410.05317.
+Cited by: §B.1.1,
+§D.2.1,
+§1,
+§1,
+§2,
+§3.2,
+Table 1,
+Table 1.
+[69]
+C. Zou, E. Zhang, R. Guo, H. Xu, C. He, X. Hu, and L. Zhang (2024)
+Accelerating diffusion transformers with dual feature caching.
+arXiv preprint arXiv:2412.18911.
+Cited by: §B.1.1,
+§D.2.1,
+§D.2.1,
+Figure 1,
+Figure 1,
+§1,
+§1,
+§2,
+§3.2,
+Table 1,
+Table 1.
+[70]
+Z. Zou, H. Yu, J. Xiao, and F. Zhao (2025)
+Exposure bias reduction for enhancing diffusion transformer feature caching.
+arXiv preprint arXiv:2503.07120.
+Cited by: §1.
+Supplementary Material
+Overview
+This is the appendix for our paper titled SODA: Sensitivity-Oriented Dynamic Acceleration for Diffusion Transformer. This appendix supplements the main paper with the following content:
+∙\bullet
+A More Details of our SODA
+–
+A.1 Details of Offline Fine-grained Sensitivity Modeling (OFS)
+–
+A.2 Details of Dynamic Caching Scheduling Optimization (DCS)
+–
+A.3 Details of Unified Adaptive Strategy Formulation (UAS)
+–
+A.4 Overall Analysis
+∙\bullet
+B More Experiments
+–
+B.1 More Implementation Details
+–
+B.2 More Experiment Results
+–
+B.3 More Ablation Study
+∙\bullet
+C More Visualization
+–
+C.1 DiT-XL/2
+–
+C.2 PixArt-α\alpha
+–
+C.3 OpenSora
+∙\bullet
+D Related Work
+–
+D.1 Diffusion Transformer
+–
+D.2 Training-free DiT Acceleration
+–
+D.3 Other Acceleration
+Appendix A More Details of our SODA
+To adapt to the complex internal sensitivity to acceleration, we propose SODA, a Sensitivity-Oriented Dynamic Acceleration method.
+As illustrated in Fig. 2, SODA first conducts
+(1) Offline Fine-grained Sensitivity Modeling (OFS): Defining error to measure the fine-grained sensitivity of timesteps, layers and modules before inference.
+Then, SODA adopts (2) Dynamic Caching Scheduling Optimization (DCS): Employing dynamic programming to identify the optimal combination of cache intervals that yields the minimal sensitivity impact.
+Finally, when pruning and cache reuse, SODA proposes
+(3) Unified Adaptive Strategy Formulation (UAS): Achieving adaptive scheduling for pruning timing and rate guided by sensitivity errors.
+Due to space limitations in the main text, we provide additional analysis and implementation details of this module here.
+A.1 Details of Offline Fine-grained Sensitivity Modeling (OFS)
+Although the integration of caching and pruning balances the high acceleration of cache with the flexibility of pruning, existing fixed or heuristic methods struggle to accurately perceive the sensitivity introduced by such acceleration operations. As a result, they inevitably skip important computations, leading to degraded generation quality.
+A.1.1 Sensitivity error and generation fidelity.
+We emphasize the importance of the sensitivity error because it is the fundamental cause of the degradation in generation quality.
+Once an acceleration strategy is determined, the diffusion inference results at each timestep and layer exhibit slight deviations due to acceleration operations such as cache reuse or pruning, thereby introducing computational errors.
+As the inference process unfolds, minor errors introduced by acceleration operations accumulate rapidly, often in an exponential manner. This accumulation results in substantial deviations from the ground-truth outputs, severely compromising generation quality.
+The essence of current acceleration optimization strategies lies in minimizing the acceleration-induced errors as much as possible, so that the accelerated diffusion process can closely approximate the original diffusion outputs.
+However, the introduction of such errors is influenced by the model’s intrinsic sensitivity to acceleration, which is highly complex and variable. The degree of sensitivity differs across models, timesteps, layers, and modules, making it difficult to capture through prior knowledge or fixed heuristic rules. As a result, existing static or heuristic acceleration strategies fail to fully account for these sensitivity‑induced errors and inevitably lead to performance degradation.
+To address this challenge, we propose a sensitivity quantification approach that models the fine‑grained, dynamic distribution of sensitivity errors within different modules, enabling a more precise characterization of the model’s response to acceleration.
+Figure 8: Sensitivity error visualization of DiT-XL/2. We visualize sensitivity errors of each module (attention is abbreviated as ATT) at every timestep and layer during the denoising process, under different cache intervals and pruning rates.
+Figure 9: Sensitivity error visualization of PixArt-α\alpha. We visualize the sensitivity error of each module (attention is abbreviated as ATT, cross-attention as CAT) at every timestep and layer during the denoising process, under different cache intervals and pruning rates.
+A.1.2 Purpose of sensitivity error modeling.
+The essential goal of our sensitivity error analysis is to:
+•
+Through error analysis, we reveal that sensitivity varies significantly across different models, timesteps, layers, and modules.
+•
+It highlights the limitations of current heuristic-based approaches and underscores the urgent need for adaptive methods that leverage the sensitivity error distribution to better balance acceleration and output quality.
+•
+Based on the estimated sensitivity errors, we derive the optimal caching strategy through dynamic programming prior to inference by minimizing the cumulative sensitivity error. This not only reduces sensitivity errors but also avoids any overhead during the actual inference.
+•
+By comparing the estimated pruning sensitivity error with the caching sensitivity error, we adaptively determine when to apply pruning operations. It allows us to retain a subset of tokens to mitigate sensitivity errors, thus achieving acceleration while simultaneously correcting for cache-induced quality degradation.
+A.1.3 Details of sensitivity error.
+As described in the main paper, we model the sensitivity errors caused by cache operations (ℰc\mathcal{E}_{c}) and pruning (ℰp\mathcal{E}_{p}) based on the Cosine distance between the accelerated outputs and the ground-truth outputs.
+We compute both ℰc\mathcal{E}_{c} and ℰp\mathcal{E}_{p} separately across different models and modules. For ℰc\mathcal{E}_{c}, we evaluate the error under cache intervals ranging from 1 to 9. In contrast, since the pruning rate is a floating-point value rather than a discrete integer like the cache interval, we analyze the general trend of ℰp\mathcal{E}_{p} by varying the pruning rate from 0.1 to 0.9 with a step size of 0.1.
+During the detailed analysis, ℰc\mathcal{E}_{c} is influenced by multiple variables: the models (DiT-XL/2, PixArt-α\alpha, OpenSora), modules (ATT, CAT, MLP), timesteps (1−T1-T), layers (1−L1-L), and cache intervals (1−91-9).
+ℰp\mathcal{E}_{p} follows the same pattern.
+When analyzing a specific dimension, we average all other factors to observe the overall trend. For example, when comparing the error distribution across different models, we average the layers, modules, and operations, retaining only the model and timestep dimensions for comparison.
+Figure 10: Sensitivity error visualization of MLP in OpenSora. We visualize sensitivity errors of each module at every timestep and layer during the denoising process, under different cache intervals and pruning rates.
+A.1.4 More sensitivity analysis.
+We perform sensitivity error estimation analyses on DiT-XL/2, PixArt-α\alpha, and OpenSora to cover a wide range of tasks and model architectures.
+In DiT, we visualize two different acceleration ratios under various acceleration operations, and compare the results across different modules in Fig. 8.
+It can be observed that even under the same acceleration operation, different modules exhibit significantly different sensitivity error distributions. For example, attention modules are more sensitive to acceleration, while modules that do not emphasize contextual information like MLP tend to present error patterns that are nearly random under pruning strategy.
+Furthermore, the discrepancy across different acceleration operations is significant. As a result, for our approach that combines caching and pruning, analyzing the sensitivity error characteristics of each acceleration strategy is critically important.
+Similar analyses are performed on PixArt and OpenSora, where comparable discrepancies can be observed, as illustrated in Fig. 9 and Fig. 10.
+By comparing the analysis results across different models, we observe that while there are certain commonalities along specific dimensions (PixArt-α\alpha tends to exhibit higher sensitivity errors from caching-based acceleration in the middle stages of denoising, whereas OpenSora shows more concentrated errors at the beginning and end), these patterns are difficult to generalize at each module level. As a result, current heuristic approaches inevitably introduce relatively high sensitivity errors, which in turn lead to noticeable degradation in output quality.
+Therefore, based on the sensitivity error estimation, our analysis leads to the following conclusions:
+•
+Diffusion models exhibit highly diverse sensitivity error behaviors under different acceleration operations, with significant variations across models, timesteps, layers, and modules. Such complex sensitivity error distributions are difficult to accurately capture through manually crafted heuristics.
+•
+The observed heterogeneity persists across diverse image and video generation tasks, regardless of content differences. This consistency supports its use as a prior for guiding inference-time decisions.
+Figure 11: Sensitivity error visualization of different models. There exist distinct phases where the sensitivity error reduction is particularly pronounced in every model.
+A.2 Details of Dynamic Caching Scheduling Optimization (DCS)
+We propose a caching strategy formulated as a dynamic programming problem, where sensitivity errors are treated as step-wise costs. This allows us to adaptively determine the optimal caching intervals and anchor timestep sets that minimize the overall accumulated error.
+The main idea and procedure of the algorithm have already been presented in the main paper.
+Here, we provide a supplementary explanation of the proposed algorithm, demonstrating how the dynamic programming procedure can be flexibly adapted to accommodate specific practical scenarios.
+During the adaptive caching process, we observe that the DiT architecture typically exhibits a special stage in which the introduced error is abnormally reduced.
+As shown in Fig. 11, this phenomenon is consistently observed across all models in our experiments. This suggests that the DiT architecture possesses an inherent error-correction capability and demonstrates a degree of robustness to introduced sensitivity errors.
+Since this special phase varies significantly across different models, we adopt an adaptive approach to incorporate this extension, in order to ensure the generality of our method.
+We first compute the gradient ∇ℰd​p\nabla\mathcal{E}_{dp} of the step-wise cost ℰd​p\mathcal{E}_{dp}. After smoothing, this special stage can be identified by simply determining the sign of the gradient ∇ℰd​p\nabla\mathcal{E}_{dp}. Within this identified stage, the candidate cache interval set 𝒩\mathcal{N} is restricted as 𝒩′\mathcal{N}^{\prime} by favoring smaller cache intervals, thus preserving the inherent robustness of DiT to perturbations.
+With this approach, we are able to explicitly retain more timesteps that fall within this special phase during the dynamic programming process, thereby preserving the inherent noise-suppression capability of the DiT architecture.
+The extended algorithm, as shown in Alg. 2 (we highlight the extended parts in blue font), primarily narrows the search space during the optimal substructure search by introducing targeted constraints on specific timesteps.
+Specifically, suppose that the original candidate set 𝒩={n|n∈ℤ,2≤n≤6}\mathcal{N}=\{n|n\in\mathbb{Z},2\leq n\leq 6\}. We can define a reduced set 𝒩′={n|n∈ℤ,2≤n≤3}\mathcal{N}^{\prime}=\{n|n\in\mathbb{Z},2\leq n\leq 3\}, which contains only half of the elements of the original one. This allows the dynamic programming process to adopt a more conservative caching interval during the special phase.
+By extending this idea, we demonstrate the flexible application of dynamic programming in caching strategies, contributing to a deeper integration of this mathematical framework with DiT-based acceleration. We plan to further investigate this integration in future work.
+Algorithm 2  Dynamic Caching Scheduling Optimization
+0:
+Total steps TT, caching times NsN_{s}, cache interval candidate set 𝒩\mathcal{N}, constrained cache interval candidate set 𝒩′\mathcal{N}^{\prime}, sensitivity error here ℰd​p​(t,n)\mathcal{E}_{dp}(t,n)
+0:
+timestep set 𝒜\mathcal{A} and cache interval set ℐ\mathcal{I}
+1:
+Initialize d​p​[t]​[i]←∞dp[t][i]\leftarrow\infty, d​p​[T]​[1]←0dp[T][1]\leftarrow 0, p​r​e​v​[t]​[i]←Noneprev[t][i]\leftarrow\text{None}, ∀t∈[T,1],∀i∈[1,Ns]\forall t\in[T,1],\forall i\in[1,N_{s}]
+2:
+for i=1i=1 to NsN_{s} do
+3:
+for t=Tt=T down to 11 do
+4:
+if Δ​ℰd​p​(t,n)<0\Delta\mathcal{E}_{dp}(t,n)<0 then
+5:
+𝒩∗←𝒩′\mathcal{N}^{*}\leftarrow\mathcal{N}^{\prime}
+6:
+else
+7:
+𝒩∗←𝒩\mathcal{N}^{*}\leftarrow\mathcal{N}
+8:
+if d​p​[t]​[i]<∞dp[t][i]<\infty then
+9:
+for all n∈𝒩∗n\in{\color[rgb]{0,0,1}\mathcal{N}^{*}} do
+10:
+if t>0t>0 then
+11:
+if d​p​[t]​[i+1]>d​p​[t+n]​[i]+ℰd​p​(t,n)dp[t][i+1]>dp[t+n][i]+\mathcal{E}_{dp}(t,n) then
+12:
+d​p​[t]​[i+1]←d​p​[t+n]​[i]+ℰd​p​(t,n)dp[t][i+1]\leftarrow dp[t+n][i]+\mathcal{E}_{dp}(t,n)
+13:
+p​r​e​v​[t]​[i+1]←(t,n)prev[t][i+1]\leftarrow(t,n)
+14:
+Backtracking: 𝒜←{}\mathcal{A}\leftarrow\{\}, ℐ←{}\mathcal{I}\leftarrow\{\}, t←1,i←Nst\leftarrow 1,i\leftarrow N_{s}
+15:
+while i>0i>0 do
+16:
+(tnext,n)←prev​[t]​[i](t_{\text{next}},n)\leftarrow\text{prev}[t][i]
+17:
+𝒜←𝒜∪{t}\mathcal{A}\leftarrow\mathcal{A}\cup\{t\}, ℐ←ℐ∪{n}\mathcal{I}\leftarrow\mathcal{I}\cup\{n\}
+18:
+t←tnextt\leftarrow t_{\text{next}}, i←i−1i\leftarrow i-1
+19:
+return  𝒜\mathcal{A}, ℐ\mathcal{I}
+A.3 Details of Unified Adaptive Strategy Formulation (UAS)
+In the main paper, we have already explained whether pruning is applied at each timestep and the corresponding pruning rate:
+x′={𝒞l,m​(Ω),i​f​δt+1,l,m≥ℰc​(t,l,m,n),𝒫αt+1,l,m,γ​(x)∪𝒞l,m​(γ),e​l​s​e.x^{\prime}=\left\{\begin{array}[]{lr}\mathcal{C}_{l,m}(\Omega),\ if\ \delta_{t+1,l,m}\geq\mathcal{E}_{c}(t,l,m,n),\\
+\mathcal{P}_{\alpha_{t+1,l,m},\gamma}(x)\cup\mathcal{C}_{l,m}(\gamma),\ else.\end{array}\right.
+(7)
+if pruning is triggered, we compute the mean value of the feature activations at the current node as the importance metric. According to the corresponding pruning rate, the top‑a tokens are then selected based on the Top‑K operation. These important tokens continue to participate in subsequent computations, while the remaining tokens are replaced with the cached results from previous steps.
+We use the feature mean to measure token importance rather than employing the modeled sensitivity error, mainly because the pruning positions are highly correlated with the generated content. As previously discussed, our modeled sensitivity error is primarily model‑specific and largely independent of the generation content.
+We use the feature mean instead of the more common attention weights because obtaining attention weights requires explicitly constructing intermediate attention computations, which conflicts with the widely adopted FlashAttention acceleration mechanism.
+During pruning, both the pruning timing and pruning rate are fully determined by the offline‑modeled sensitivity error, thus introducing no additional computational overhead during inference. The cost of computing the pruning positions is already included in the reported inference speed of the main experiments.
+A.4 Overall Analysis
+Generalization and Limitation.
+Our sensitivity modeling is analogous to downloading model weights, only a one-time setup is required for permanent use.
+When the model is fine-tuned or changed with a new model, SODA requires sensitivity re-modeling. Note that it is fully automated, without manual heuristics, and generalizes across different image sizes, CFGs and seeds on the same model.
+Scalability.
+SODA’s modeling is conducted via random generations, so its time depends on the model inference. Larger models incur longer modeling time. As modeling is insensitive to sample count, we reduce it to mitigate overhead (e.g., 10 for video vs. 100 for image models).
+Appendix B More Experiments
+In the experiments, we provide the model implementation details omitted in the main text, along with the parameters used for the baselines and the specifications of the benchmarks and evaluation metrics.
+Model
+Sampling
+Latency(s)↓
+FLOPs(G)↓
+Speed↑
+FID↓
+sFID↓
+IS↑
+Precision↑
+Recall↑
+DiT
+DDPM
+2.508
+118.68
+1.00×
+2.23
+4.57
+275.65
+0.82
+0.58
+SODA (NsN_{s}=125)
+DDPM
+1.778
+76.70
+1.55×
+2.21
+4.72
+272.01
+0.82
+0.58
+SODA (NsN_{s}=72)
+DDPM
+1.070
+43.42
+2.73×
+2.47
+5.09
+262.30
+0.81
+0.59
+SODA (NsN_{s}=69)
+DDPM
+0.839
+35.25
+3.37×
+2.88
+6.11
+252.03
+0.80
+0.59
+SODA (NsN_{s}=63)
+DDPM
+0.704
+29.66
+4.00×
+3.33
+6.76
+237.69
+0.78
+0.60
+DiT
+DDIM
+0.533
+23.74
+1.00×
+2.25
+4.33
+239.97
+0.80
+0.59
+SODA (NsN_{s}=31)
+DDIM
+0.433
+15.61
+1.52×
+2.37
+4.51
+242.22
+0.82
+0.59
+SODA (NsN_{s}=25)
+DDIM
+0.314
+12.21
+1.94×
+2.39
+4.55
+240.75
+0.81
+0.58
+SODA (NsN_{s}=18)
+DDIM
+0.263
+9.55
+2.49×
+2.75
+4.56
+235.65
+0.80
+0.58
+SODA (NsN_{s}=12)
+DDIM
+0.162
+6.25
+3.80×
+3.62
+5.88
+228.41
+0.79
+0.59
+Table 6: More results of DiT-XL/2 on class-conditional image generation. The arrow denotes whether lower or higher values indicate superior performance. NsN_{s} represents the number of cache intervals and is used to adjust the acceleration budget. All speeds are measured on RTX 4090 GPU.
+B.1 More Implementation Details
+We apply the SODA model to DiT‑XL/2, PixArt-α\alpha, and OpenSora, which represent category‑to‑image, text‑to‑image, and text‑to‑video generation tasks, respectively.
+B.1.1 DiT-XL/2
+Experiments conducted on DiT-XL/2 [39] employ both DDPM [19] and DDIM [50] samplers. The DDPM and DDIM samplers that we adopt consist of 250 and 50 steps, respectively.
+For DDPM, implementation of different methods is as follows: FORA [46] adopts a fixed caching interval of 𝒩=3\mathcal{N}=3.
+ToCa [68] employs an average caching ratio of R=93%R=93\% and an average caching interval of 𝒩=4\mathcal{N}=4, and DuCa [69] employs a caching ratio of R=95%R=95\% and an average caching interval of 𝒩=3\mathcal{N}=3.
+For our method SODA, we perform a pre-inference error analysis using 100 images, setting λ=0.3\lambda=0.3 and β=0.4\beta=0.4. The overall acceleration efficiency is controlled via the number of caching intervals, denoted by NsN_{s}.
+For DDIM, FORA adopts a fixed caching interval of 𝒩=3\mathcal{N}=3. ToCa employs a caching ratio of R=93%R=93\% and an average caching interval of 𝒩=3\mathcal{N}=3, and DuCa employs an average caching ratio of R=95%R=95\% and an average caching interval of 𝒩=3\mathcal{N}=3. The basic settings of our SODA are kept consistent with those in DDPM.
+B.1.2 PixArt
+For PixArt-α\alpha [4], we adopt the DPM++ [33] with 20 steps as sampler. The implementation of different methods is as follows: FORA adopts a fixed caching interval of 𝒩=2\mathcal{N}=2. ToCa employs an average caching ratio of R=70%R=70\% and an average caching interval of 𝒩=3\mathcal{N}=3, and DuCa employs an average caching ratio of R=25%R=25\% and an average caching interval of 𝒩=3\mathcal{N}=3. For our method SODA, we perform a pre-inference error analysis using 100 images, setting λ=0.4\lambda=0.4 and β=0.8\beta=0.8. The overall acceleration efficiency is controlled via the number of caching intervals, denoted by NsN_{s}.
+B.1.3 OpenSora
+Experiments on OpenSora are conducted with 30 reflective flow steps. The implementation of different methods is as follows:
+FORA adopts a fixed caching interval of 𝒩=2\mathcal{N}=2. ToCa sets different average caching intervals for different modules, with 𝒩=3\mathcal{N}=3 for temporal attention, spatial attention, and MLP, and 𝒩=6\mathcal{N}=6 for cross-attention. The average caching ratio is set to 100%100\% for all modules except the MLP, which has an average caching ratio of 85%85\%. DuCa adopts the same scheme as ToCa. Δ\mathrm{\Delta}-DiT [6] divides the complete denoising process into two stages. PAB [65] sets the caching interval to 𝒩=2\mathcal{N}=2 for temporal attention, 𝒩=4\mathcal{N}=4 for spatial attention, 𝒩=6\mathcal{N}=6 for cross-attention. The MLP module is fully computed.
+For our method SODA, we perform a pre-inference error analysis using 10 videos to reduce the time cost of error analysis, setting λ=0.1\lambda=0.1 and β=0.0\beta=0.0 for higher acceleration. The overall acceleration efficiency is controlled via the number of caching intervals, denoted by NsN_{s}.
+B.1.4 Evaluation and metrics
+For class-conditional image generation, we use DiT-XL/2 to randomly generate 50k 256×256256\times 256 images from ImageNet [10], use FID [18], sFID, IS [44], Precision, and Recall to measure the quality of the generated images.
+The Fréchet Inception Distance (FID) measures the distributional discrepancy between real and generated images in the Inception‑V3 feature space, where a lower score indicates higher fidelity and realism. Its spatial variant, sFID, computes feature distribution differences at the spatial level rather than the global pooling layer, making it more sensitive to structural and texture coherence. The Inception Score (IS) evaluates image quality and diversity based on the confidence and entropy of predicted class probabilities from an Inception network. A higher score implies clearer and more diverse generations. Precision quantifies perceptual fidelity by measuring how many generated samples fall within the manifold of real data, while Recall evaluates diversity by estimating the coverage of the real image distribution. Together, these metrics provide a comprehensive evaluation of the trade‑off between fidelity and diversity in class‑conditional image generation.
+For text‑to‑image generation, we evaluate performance using FID‑30K and the CLIP Score [17], which jointly assess generation quality and text‑image alignment of images generated by PixArt-α\alpha. FID‑30K is computed between 30,000 generated images and the corresponding real images from the MS‑COCO2017 dataset[26], measuring the Fréchet distance between their feature distributions in the Inception‑V3 embedding space. A lower value indicates that the generated images are closer to real ones, reflecting higher visual fidelity and realism. The CLIP Score evaluates semantic consistency between an image and its associated text prompt by computing the cosine similarity of their representations in the CLIP model’s joint vision‑language embedding space. A higher CLIP Score denotes stronger semantic alignment and better text‑image correspondence. Together, these two metrics provide complementary perspectives on both the perceptual quality and the semantic faithfulness of text‑to‑image generation.
+For text‑to‑video generation, we adopt VBench [21] to comprehensively assess the quality of generated videos. We use 950 text prompts and generate five videos per prompt, resulting in a total of 4,750 videos, each rendered at 480p resolution with a 9:16 aspect ratio and 2 seconds duration. VBench evaluates 16 aspects covering semantic alignment, visual quality, temporal consistency, and aesthetic appeal, providing a holistic measurement of video generation performance.
+B.2 More Experiment Results
+To supplement the experimental results presented in the main paper and further demonstrate the effectiveness of our method, this section includes additional acceleration results and ablation studies.
+B.2.1 More results of Dit-XL/2
+We provide additional results of the SODA method under various acceleration ratios in Tab. 6.
+It can be observed that our method preserves most of the model performance under low acceleration ratios. Due to the minimal accumulated cache error obtained via dynamic programming and the adaptive pruning decision that further reduces the cache error, our method can even improve the performance of the original model in certain cases. For example, the results of DDPM with NsN_{s}=125 and DDIM with NsN_{s}=31.
+Moreover, as the acceleration ratio continues to increase, the model inevitably begins to omit important computations after removing redundant ones, leading to a gradual degradation in performance.
+This phenomenon reflects the natural trade-off between generation quality and acceleration. The advantage of our method lies in its ability to improve model performance under low acceleration ratios and significantly delay the trade-off point, thereby preserving more of the model’s performance even as the acceleration increases.
+Model
+Latency(s)↓
+FLOPs(G)↓
+VBench(%)↑
+Total
+Imaging
+quality
+Subject
+consistency
+Scene
+OpenSora
+102.287
+3283.20
+79.13
+61.14
+95.09
+52.46
+SODA (NsN_{s}=21)
+86.684
+2319.941.42×
+79.13
+60.63
+95.26
+53.35
+Δ\Delta-DiT (ArXiv24)
+-
+3166.47
+78.21
+-
+-
+-
+PAB (ICLR25)
+-
+2558.25
+76.95
+-
+-
+-
+FORA (ArXiv24)
+-
+1751.32
+76.91
+-
+-
+-
+ToCa (ICLR25)
+54.698
+1394.03
+78.34
+56.04
+93.92
+50.21
+DuCa (ICLR25)
+50.637
+1315.62
+78.39
+56.54
+94.02
+50.41
+SODA (NsN_{s}=12)
+49.896
+1314.42
+78.49
+58.14
+94.60
+53.33
+SODA (NsN_{s}=11)
+48.022
+1277.592.57×
+78.41
+57.35
+94.14
+52.00
+Table 7: More VBench results of OpenSora on text-to-video generation. All speeds are measured on 80G A100 GPU.
+B.2.2 More results of OpenSora
+We have reported the overall performance on VBench for OpenSora in the main paper. However, since the VBench metric aggregates multiple evaluation criteria with varying importance, the differences between methods on this metric are often minor (typically less than 1), which hinders a clear analysis of our model’s advantages.
+Considering that VBench primarily focuses on videos depicting motion of specific objects, we argue that analyzing the corresponding aspects of quality, consistency, and overall perceptual experience is more important.
+Therefore, we report the relevant detailed metrics within VBench in Tab. 7 to further highlight the effectiveness of our method.
+It can be observed that under a low acceleration ratio (1.42×), our method even outperforms the original model in terms of subject consistency and scene perception, indicating that it is capable of improving performance during acceleration in video generation models.
+Moreover, even at the same or higher acceleration ratios compared to the baseline, our method consistently maintains superior performance, with particularly significant advantages in metrics such as image quality.
+This indicates that our method can effectively mitigate the error introduced by acceleration, achieving speed-up while preserving generation quality.
+B.2.3 More generation models
+We extend experiments to Qwen-Image [58] (image) and Wan2.1 [55] (video) to demonstrate our effectiveness.
+In Tab. 8, “Base” is a baseline caching steps with fixed intervals (ToCa/DuCa require manual heuristics, limiting their transferability). We achieve higher fidelity under the same acceleration.
+Qwen-Img
+Lat.(s)↓
+/Spe.↑
+CLIP↑
+IR↑
+Wan2.1
+Lat.(s)↓
+/Spe.↑
+Vbench
+(%)↑
+Origin
+73.4311.00×
+35.69
+1.0242
+Origin
+187.461.00×
+78.97
+Base
+41.1351.79×
+35.14
+0.8677
+Base
+118.821.58×
+74.24
+Ours
+40.7491.80×
+35.72
+1.0352
+Ours
+119.461.57×
+75.61
+Table 8: Results on more generation models.
+B.2.4 More baselines
+We include more training-free baselines and achieve superior fidelity in Tab. 9 (Δ\Delta-DiT is not open-sourced, so we adopt its setting).
+DiT-XL/2
+Lat.(s)↓
+Spe.↑
+IS↑
+FID↓
+sFID↓
+P↑
+R↑
+DDPM/250
+2.508
+1.00×
+275.65
+2.23
+4.57
+0.82
+0.58
+Δ\Delta-DiT [6]
+-
+1.52×
+271.03
+2.31
+-
+-
+-
+Ours
+1.778
+1.41×
+272.01
+2.21
+4.72
+0.82
+0.58
+Ours
+1.651
+1.52×
+271.77
+2.23
+4.76
+0.82
+0.59
+DDIM/20
+0.243
+1.00×
+223.23
+3.51
+4.92
+0.79
+0.57
+GOC(FORA) [40]
+0.167
+1.46×
+191.44
+6.78
+8.74
+0.74
+0.53
+Ours
+0.168
+1.45×
+205.05
+5.03
+5.80
+0.76
+0.56
+Table 9: Comparison with more baselines.
+B.2.5 Comparison with training methods.
+In Tab. 10, compared to training caching, SODA achieves the highest IS and outperforms L2C in FID without training.
+Compared to distillation, SODA aims for a better balance between acceleration and fidelity, while distillation trades extremely training cost and generation degradation for maximal acceleration.
+Overall, SODA’s advantage is training-free nature, enabling generalization without manual heuristics.
+Training
+caching
+Lat.(s)↓
+/Spe.↑
+IS↑
+FID↓
+sFID↓
+Distillation
+one-step
+Spe.↑
+Fidelity↑
+(MethodOrigin\frac{\text{Method}}{\text{Origin}})(%)
+Costs↓
+GPU/time
+DiT-XL/2
+0.5331.00×
+239.97
+2.25
+4.33
+DiT-XL/2
+1×
+100
+-
+L2C [35]
+None1.25×
+233.26
+2.62
+4.50
+ShortCut [13]
+∼\sim50×
+∼\sim40
+TPUV3s/2days
+HarmoniCa [20]
+None1.30×
+238.74
+2.36
+4.24
+π\pi-flow [3]
+∼\sim50×
+∼\sim78
+Not mentioned
+Ours
+0.4031.32×
+241.71
+2.37
+4.58
+Ours
+∼\sim4×
+∼\sim98
+Free
+Table 10: Comparison with training-based caching and few-step distillation.
+B.3 More Ablation Study
+Model
+VBench(%)↑
+Total
+Imaging
+quality
+Subject
+consistency
+Scene
+Vanilla
+76.41
+54.23
+93.54
+50.51
+OFS w/ DCS
+78.37
+56.54
+94.12
+53.41
+OFS w/ UAS
+78.41
+57.55
+94.07
+53.03
+SODA (Ours)
+78.49
+58.14
+94.60
+53.33
+Table 11: Ablation study of OpenSora on text-to-video generation.
+FID↓
+β\beta
+0.4
+0.5
+0.6
+0.7
+0.8
+λ\lambda
+0.4
+27.46
+27.44
+27.42
+27.38
+27.33
+0.5
+27.44
+27.42
+27.37
+27.33
+27.32
+0.6
+27.36
+27.35
+27.34
+27.33
+27.32
+Table 12: The impact of parameters λ\lambda and β\beta on PixArt-α\alpha.
+B.3.1 More ablation study on OpenSora.
+To demonstrate the adaptability and generalization ability of our method across different tasks, we not only report additional main experimental results, but also include ablation studies conducted on OpenSora.
+As shown in Tab. 11, compared to the vanilla caching strategy, our proposed DCS module improves performance by 1.96% on average by minimizing cumulative caching error through dynamic programming based on estimated error. In addition, the adaptive pruning mechanism (UAS) corrects caching error by retaining important tokens, resulting in a 2% improvement. The combination of both modules leads to an average increase of 2.08 on the VBench, with nearly a 4% gain in imaging quality.
+On the one hand, this demonstrates the effectiveness of our proposed modules; on the other hand, it highlights the general applicability of our SODA.
+Figure 12: Visualization results of different acceleration methods on DiT-XL/2. Comparisons are highlighted with red dashed boxes.
+Figure 13: Visualization results of different acceleration methods on PixArt-α\mathrm{\alpha}.
+B.3.2 More parameter analysis on PixArt.
+To further demonstrate the robustness of the hyperparameters introduced by the UAS module, in addition to the parameter space reported on DiT in the main text, we also report results on the parameter space explored on PixArt in Tab. 12.
+It can be observed that the FID fluctuates within a narrow range of 0.14 across the entire parameter space, indicating a high degree of robustness and suggesting that our method is largely insensitive to the hyperparameters introduced in UAS.
+Typically, λ\lambda is fixed. Given acceleration factor r>1r>1, we first obtain the number of cache interval Ns=N/r−1N_{s}=N/r-1 (leave room for pruning), then select β\beta: ∑tT∑lL{λ​ℰc​(t,l,n)+β}=1/r\sum_{t}^{T}\sum_{l}^{L}\{\lambda\mathcal{E}_{c}(t,l,n)+\beta\}=1/r (omit transformation from tt to nn), it means the proportion of pruned tokens is the inverse of speed-up factor. Due to the adaptive pruning decisions, β\beta may fluctuate slightly, but it has negligible impact on acceleration factor.
+DiT-XL/2
+FlashAtt
+Lat.(s)↓
+Spe.↑
+IS↑
+FID↓
+sFID↓
+P↑
+R↑
+Mean
+✓
+0.201
+2.65×
+233.22
+2.80
+4.61
+0.80
+0.58
+Variance
+✓
+0.211
+2.53×
+233.20
+2.82
+2.67
+0.80
+0.58
+Norm
+✓
+0.197
+2.70×
+233.18
+2.83
+4.66
+0.80
+0.58
+Attn weights
+✗
+0.300
+1.78×
+233.25
+2.81
+4.63
+0.80
+0.58
+Table 13: Ablation study for pruning location.
+B.3.3 More comparison on pruning methods
+In Tab. 13, we use feature mean and top-K selection to determine pruning positions, to identify important tokens with a simple and efficient way, avoiding large time overhead. Attention weights are excluded due to incompatibility with FlashAttention, despite their effectiveness.
+Appendix C More Visualization
+We provide additional visual comparisons of acceleration results, along with detailed example analyses.
+C.1 DiT-XL/2
+It can be observed that our method preserves most of the model performance under low acceleration ratios. Due to the minimal accumulated cache error obtained via dynamic programming and the adaptive pruning decision that further reduces the cache error, our method can even improve the performance of the original model in certain cases. For example, the results of DDPM with NsN_{s}=125 and DDIM with NsN_{s}=31.
+Moreover, as the acceleration ratio continues to increase, the model inevitably begins to omit important computations after removing redundant ones, leading to a gradual degradation in performance.
+This phenomenon reflects the natural trade-off between generation quality and acceleration. The advantage of our method lies in its ability to improve model performance under low acceleration ratios and significantly delay the trade-off point, thereby preserving more of the model’s performance even as the acceleration increases.
+Figure 14: Visualization results of different acceleration methods on OpenSora.
+Our method SODA obtains further acceleration, with the generation speed 180%180\% faster than the original model, and 12%12\% faster than DuCa. The visualization results are shown in Fig. 12. Compared with DuCa, SODA-generated images demonstrate finer detail clarity (e.g., the face of the dogs in the upper Col.C and the lower Col.F), while images from DuCa exhibits notable degree of distortion.
+SODA-generated images possess better background texture and overall alignment with the images from the original model (e.g., the background of the woodlouse in upper Col.B and the overall structure of the bridge in lower Col.A).
+SODA also mitigates some of the defects in DuCa-generated images. For example, numeracy confusion (e.g., a third duck by DuCa in lower Col.E, and a second hot-air balloon by DuCa in upper Col.D) and redundant attributes(e.g., the hat on the dog head by DuCa in upper Col.H).
+C.2 PixArt
+Our method SODA achieves a higher acceleration ratio of 2.2×2.2\times compared with the 1.9×1.9\times of DuCa. The visualization results are shown in Fig. 13. SODA-generated images exhibit better detail and overall consistency with those generated by the original model (e.g., the basket of food in upper Col.A and the details of the recovery truck and the bear in lower Col.C and upper Col.D, respectively).
+It should be noted that our method sometimes even demonstrate superior generation quality compared with the original model (e.g., the right ear of the bear in upper Col.E is more complete, and the light shade on the wine bottle in lower Col.C is more real). This aligns with our quantitative analysis in the Experiment Section.
+C.3 OpenSora
+Our method SODA achieves an extra 0.1×0.1\times acceleration based on DuCa, which is now 160%160\% faster than the original model. The visualization results are shown in Fig. 14. Compared with DuCa, our method mitigates problems such as object redundancy (e.g., the redundant decoration above the bed by DuCa in the upper left frames) and detail distortion (e.g., the distorted face of the bear by DuCa in the lower right frames).
+Our method can also better maintain the consistency with the original model (e.g., in the lower middle frames, DuCa-generated frames contain two umbrellas and the color of the backpack on the left is khaki, while there is only one umbrella and the color of the backpack on the left is gray in the frames generated by both the original model and our method).
+Moreover, our method can better handle the relationship of foreground objects and background. For example, in the upper right frames, there exists a clear boundary between the foreground bench and the background bushes in the frames generated by our method. However, in the frames generated by DuCa, the edges of the bench already blend slightly with the bushes.
+As illustrated by the visual examples, SODA effectively reduces the caching error while achieving acceleration.
+Appendix D Related Work
+D.1 Diffusion Transformer
+D.1.1 Diffusion Model.
+Diffusion models [41, 19] synthesize visual content from pure noise by progressively denoising it through noise prediction. The training and inference process of diffusion models can be divided into two stages: noise diffusion stage and reverse denoising stage, respectively.
+During the noise diffusion stage, noise of different magnitudes is added to the original image from the training set with respect to the timestep t∈[1,T]t\in[1,T], where TT is the total number of steps. The noise diffusion process at timestep tt can be expressed as:
+𝒙𝒕=a¯t​𝒙𝟎+1−a¯t​ϵ,\boldsymbol{x_{t}}=\sqrt{\bar{a}_{t}}\boldsymbol{x_{0}}+{\sqrt{1-\bar{a}_{t}}}\boldsymbol{\epsilon},
+(8)
+where 𝒙𝒕\boldsymbol{x_{t}} is the noisy image at timestep tt, 𝒙𝟎\boldsymbol{x_{0}} is the original image, ata_{t} is a constant related to tt that controls the noise magnitude, and ϵ∼𝒩⁡(𝟎,𝑰)\boldsymbol{\epsilon}\sim\mathcal{N}(\boldsymbol{0},\boldsymbol{I}) is the random noise sampled from the Gaussian distribution.
+The model then learns to predict the noise added at a certain timestep by minimizing the following objective [19]:
+ℒ⁡(𝜽)=𝔼t​[‖ϵ−ϵ𝜽​(a¯t​𝒙𝟎+1−a¯t​ϵ,t)‖2],\mathcal{L}(\boldsymbol{\theta})=\mathbb{E}_{t}[||\boldsymbol{\epsilon}-\boldsymbol{\epsilon_{\theta}}(\sqrt{\bar{a}_{t}}\boldsymbol{x_{0}}+{\sqrt{1-\bar{a}_{t}}}\boldsymbol{\epsilon},t)||^{2}],
+(9)
+where 𝒙𝟎∼q⁡(𝒙),ϵ∼𝒩⁡(𝟎,𝑰)\boldsymbol{x_{0}}\sim q(\boldsymbol{x}),\boldsymbol{\epsilon}\sim\mathcal{N}(\boldsymbol{0},\boldsymbol{I}), q⁡(𝒙)q(\boldsymbol{x}) is the distribution of the training data, and ϵ𝜽\boldsymbol{\epsilon_{\theta}} is the estimated noise with the noisy image 𝒙𝒕\boldsymbol{x_{t}} and timestep tt as input, parameterized by 𝜽\boldsymbol{\theta}.
+During the reverse denoising stage, the trained model predicts the noise added at a certain timestep and removes it to obtain a less noisy image. When reversing from timestep TT to 11, random noise can be gradually denoised to a specific image. The specific denoising process varies among different solvers. Taking DDPM [19] as an example, the denoising process from 𝒙𝒕\boldsymbol{x_{t}} to 𝒙𝒕−𝟏\boldsymbol{x_{t-1}} can be modeled as:
+𝒙𝒕−𝟏=1at​(𝒙𝒕−1−at1−a¯t​ϵ𝜽​(𝒙𝒕,t))+σt​𝒛,\boldsymbol{x_{t-1}}=\frac{1}{\sqrt{a_{t}}}(\boldsymbol{x_{t}}-\frac{1-a_{t}}{\sqrt{1-\bar{a}_{t}}}\boldsymbol{\boldsymbol{\epsilon}_{\theta}}(\boldsymbol{x_{t}},t))+\sigma_{t}\boldsymbol{z},
+(10)
+where ata_{t}, a¯t\bar{a}_{t}, σt\sigma_{t} are constants related to tt, and 𝒛∼𝒩⁡(𝟎,𝑰)\boldsymbol{z}\sim\mathcal{N}(\boldsymbol{0},\boldsymbol{I}).
+D.1.2 Diffusion Transformer.
+Diffusion transformer [39] integrates the transformer [54] architecture into the diffusion process, enabling improved controllability and higher generation quality compared with U-Net [42]. It has a hierarchical structure consisting of a total number of LL DiT blocks. The architecture of DiT and within a specific DiT block ll can be expressed as follows:
+𝒢=g1∘g2∘⋯∘gL,gl=FSAl∘FCAl∘FMLPl,\begin{split}&\mathcal{G}=g_{1}\circ g_{2}\circ\cdots\circ g_{L},\\
+&g_{l}=F_{\mathrm{SA}}^{l}\circ F_{\mathrm{CA}}^{l}\circ F_{\mathrm{MLP}}^{l},\end{split}
+(11)
+where 𝒢\mathcal{G} denotes the DiT model, glg_{l} denotes the DiT block, SA denotes the self-attention layer, CA denotes the cross-attention layer, and MLP denotes the multilayer perceptron.
+Like standard Transformers, the input image of size H×WH\times W is segmented into a number of spatial patches of size p×pp\times p, resulting in a total of Hp×Wp\frac{H}{p}\times\frac{W}{p} patches. The input 𝒙\boldsymbol{x} to DiT is a sequence of tokens corresponding to the patches. When 𝒙\boldsymbol{x} enters a DiT block, it will go through a residual connection, expressed as follows:
+fl​(𝒙)=𝒙+AdaLN∘F⋆l​(𝒙),f^{l}(\boldsymbol{x})=\boldsymbol{x}+\mathrm{AdaLN}\circ F^{l}_{\star}(\boldsymbol{x}),
+(12)
+where ll denotes the index of DiT block, AdaLN denotes the adapative layer normalization and ⋆\star ∈\in {SA, CA, MLP}.
+Although DiT has achieved substantial progress, its slow inference process remains a major bottleneck, limiting its broader adoption and real-world applicability. The computational overhead largely comes from the attention layer, which has a time complexity of 𝐎⁡(𝑵𝟐)\mathbf{O}(\boldsymbol{N^{2}}), where 𝑵\boldsymbol{N} is the number of input tokens.
+D.2 Training-free DiT acceleration
+In this paper, we investigate training‑free acceleration approaches that do not require additional training or distillation, thereby avoiding the significant computational overhead typically associated with post‑training optimization. Existing training‑free acceleration methods for diffusion transformers can generally be categorized into two paradigms: feature caching, which reuses intermediate activations for efficiency, and token pruning, a strategy adapted from token reduction techniques originally developed for large language models (LLMs).
+D.2.1 Caching-based Acceleration
+Recently, feature caching has emerged as a training-free method that reuses the results from previous timesteps or layers to avoid redundant computation. Caching-based methods can be categorized into two types according to their granularity: layer-wise caching and token-wise caching.
+1) Layer-wise caching can refer to caching the layers in the UNet [42] or DiT [39] backbones or caching the specific attention or MLP modules. In terms of UNet-based diffusion models, DeepCache [36] and FasterDiffusion [24] cache intermediate feature output of certain blocks for later reuse, while TGATE [28] splits the denoising process into two phases and caches the self-attention and cross-attention output, respectively. For diffusion transformer, FORA [46] uses an intuitive caching schedule by computing and caching the output of attention layers and MLP layers in DiT every 𝒩\mathcal{N} steps, and reusing the results in the subsequent 𝒩−1\mathcal{N}-1 steps. Δ\Delta-DiT [6] caches the deviation between adjacent feature maps to better preserve previous sampling information. TaylorSeer [29] utilizes the Taylor expansion to optimize approximations in long-range feature reuse scenarios. TeaCache [27] and AdaCache [22] adopt adaptive schedules to decide whether to cache or not at a specific timestep.
+2) Token-wise caching caches features at a finer granularity. Instead of caching the entire output feature map, it selectively caches some of the tokens based on certain importance or redundancy criteria. ToCa [68] selects suitable tokens to cache under the guidance of four scores that comprehensively indicate the influence of caching a specific token. DuCa [69] applies layer-wise and token-wise caching alternately during the denoising process to better balance efficiency and quality.
+It should be noted that most of the methods mentioned above adopt a fixed caching schedule (e.g., FORA [46]) or a manually crafted heuristic schedule (e.g., DuCa [69]). Although these methods are intuitive and easy to implement, they are at risk of neglecting the dynamic magnitudes of feature evolvement in different timesteps, layers and modules, and may result in quality degradation. Therefore, current research calls for adaptive methods that can dynamically shift their caching schedules as the denoising process progresses.
+D.2.2 Pruning-based Acceleration
+Token reduction is originally intended for the acceleration of large language models(LLM) [30, 15] and multimodal large language models(MLLM) [47, 64, 5]. However, it also excels in accelerating diffusion models. Token reduction methods can be roughly classified into two classes: token pruning and token merging.
+1) Token pruning preserves only a fraction of the total tokens that are the most important and discards the rest before performing compute-intensive operations like attention. Tokens are selected to be preserved or discarded following different criteria. AT-EDM [56] proposes a graph-based algorithm that uses attention maps to measure the importance of tokens. CAT-Pruning [8] selects tokens based on noise variations across timesteps, selection frequency, and spatial structure. DaTo [62] first identifies tokens with minimal temporal noise difference as base tokens within each patch of the image, and then discards the tokens that have the highest similarity to the base tokens. After the preserved tokens have gone through the intensive computation, the pruned tokens need to be recovered for subsequent computations like convolution. This can be achieved by similarity-based copying or token-wise caching, which is elaborated in the previous subsection.
+2) Token merging [52, 43, 2] follows similar principles to token pruning. However, it additionally merges the pruned tokens with the preserved ones before omitting them, so as to maintain more information. ToFu[23] combines both token pruning and merging to achieve optimal performance.
+Although token reduction methods demonstrate excellent performance because of their fine-grained operation, intricate pruning strategies are likely to add additional workload, making their efficiency still lag behind caching-based acceleration. In addition, some of these methods leverage the attention maps, which are incompatible with CUDA-based acceleration such as FlashAttention [9].
+D.3 Other Acceleration
+The high latency during the inference stage of diffusion models has drawn continuous attention from the research community, and researchers are working to improve the inference speed of diffusion models from different perspectives.
+In general, classic acceleration methods can be categorized into the following domains: Distillation [45, 37, 60] often includes a lightweight student network that derives from the original teacher network through knowledge transfer [38]. Quantization [48, 16, 25] transforms the precision of model weights to smaller bit width(e.g. FP32 to INT8) via retraining, thus achieves model compression. Advanced samplers, such as DDPM [19], DDIM [50], DPM-Solver [32], aim to minimize the sampling steps required to generate an image. However, although these methods achieve an excellent acceleration ratio, most of them demand heavy retraining on high-end GPUs, which is formidable to common practices.
+Meanwhile, the acceleration of diffusion models can also be achieved via hardware-level optimization [9, 7, 53, 57].
+These methods focus on minimizing memory access frequency or optimizing the efficiency of computing kernels to fully leverage the computing capacity of modern GPUs.
+However, hardware-level optimization often suffers from poor portability, high engineering complexity, and limited adaptability to evolving model architectures.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

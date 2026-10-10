@@ -283,6 +283,10 @@ CPU/SSD/off-node cache 扩大总容量，却加入 transfer latency、bandwidth 
 
 此时容量、placement 与 admission 要共同选择：较小 active batch 可能换来较少 cache churn、reload 与 flash 写入，但 HBF hit 不等于 HBM 带宽，吞吐改善也可能伴随更高 mean TPOT。[HBF 的受限 trace 模拟](https://arxiv.org/html/2609.39131v1)使用 B200 计算模型、16-bit 存储与 FP8 index timing proxy；复制 session 不产生独立新轨迹，寿命外推依赖均匀 wear、单位写放大和假定 P/E 次数，未包含完整 controller、静态 package power 或 latency SLO，轻负载能耗还可能变差。真实 endurance 不明、复用低或延迟优先时，HBM/host 仍是合理分支；先核写入流量、迁移与延迟，不用模拟寿命直接作设备或运行保证。<!-- source-family:SF-2026-ARXIV-2609-39131 -->
 
+Flash placement 还要区分最近读写与语义存活时间：lead-agent 等待 worker 时可能少读，但状态仍须保留；短 reasoning/reviewer 段则可在 harness 定义的 turn/return 边界闭合。Harness 提交 segment、spawn 信号与闭合边界，placement 按类别把短段留 HBM、长段放 HBF，再按 worker 预测寿命的相对排名分配预留 reviewer 后的空间。Engine 执行分配/已闭合 block 回收，不从预测自行取得语义删除权；stripped context 还须按真实输入重新形成状态。
+
+[Lachesis v1](https://arxiv.org/html/2610.08378v1)只用两大型 MoE/Agent traces 作模拟。同读带宽、固定 P/E/write-amplification、tool/user-delay 模型下的设备年数不是实测寿命或 production SLO；更多 HBM 挤掉 flash stack 后，写量节省饱和而寿命预算下降，并非越多越好。接口、segment 表、预测与 tier allocator 增加耦合；边界不可靠或真实介质失配时，HBM/host、保守分层与显式重算仍成立，不提前释放 live 状态。<!-- source-family:SF-2026-ARXIV-2610-08378 -->
+
 Host DRAM 的读取也不必一律先落到 GPU HBM：支持相应远端访问和 TMA 的设备，可让某个 operation 从 host 直接搬入 SMEM，绕过 HBM staging。此时应分别选择该 operation 的 offload 比率和最大 inflight 数；省掉中间副本不等于 host 链路无限快，并发太多仍会使远端请求拥塞。完整保留 HBM staging 的路径则在复用高、远端带宽不足或不支持直达时继续合理。<!-- source-family:SF-2026-ARXIV-2604-26074 -->
 
 这个分支增加访问计划、SMEM 生命周期与 host-link 并发控制，受限 piecewise execution-bound 模型不证明一般 greedy 最优。作者 GH200/C2C 与 Blackwell/PCIe 的路径及离线32-token decode 测试不能混成线上尾延迟保证；shape、链路或重用条件失配时，应降低 inflight/offload、恢复 HBM staging，并按完整 operation 时间验收。
@@ -573,6 +577,14 @@ communication buffers，得到真正可供动态 state 使用的 usable HBM，�
 这类原型增加映射表和一致性成本，且可能被转换开销抵消。是否采用必须绑定实际设备、phase 与 workload，普通 GPU-only 路径仍可使用直接布局。
 
 <!-- source-family: arxiv:2608.06989v1; daily-trace: papers/2026/08/10/README.md; semantic-body-binding: physical-layout-logical-accessor-separation -->
+
+但 accessor view 还不足以决定访问的执行语义：在由 DRAM 请求触发计算的近存系统里，一次权重读取若命中 host cache，预期的计算命令就没有到达 memory controller；Prefill GEMM 又需要缓存复用。仅转换地址或布局不能同时满足这两个条件。容量允许时，分别保留 cacheable 的 host 布局与 non-cacheable 的 PIM 布局，是简单的合理基线；容量逼近单模型大小时，一个软件替代分支保留单份非缓存 PIM 权重，只将当前所需矩阵 swizzle/copy 到小 cacheable buffer，供原有 GEMM 使用。[必要机制](https://arxiv.org/html/2603.09216v1#S4)以双缓冲重叠下一矩阵搬运，或用单缓冲串行转换换取简单顺序；buffer 的布局、访问属性、复制完成和消费者交接须共同明确，这是由接口推得的责任，不能把地址可见直接当成可执行。<!-- source-family:SF-2026-ARXIV-2603-09216 -->
+
+省去全模型副本仍支付 buffer、swizzle、copy threads 与同步，并依赖计算时间足以覆盖搬运。短输入、较高 FLOP/B、non-cacheable 访问较慢或线程争用，会让转换重新进入关键路径；单缓冲始终保留串行 copy，双缓冲也不保证完全隐藏。[有限评价](https://arxiv.org/html/2603.09216v1#S5)把手机 dummy 权重时间、cacheable 真权重功能检查与 PIM 仿真分开，因为设备连续非缓存区装不下完整模型；它不是完整 LPDDR-PIM 实机部署验收。所报容量节省只相对双权重基线，不认证任务质量、并发或 SLO。硬件属性、质量或净收益不成立时，保留双副本、直接 host 执行或原地址转换路径，不用较少常驻 bytes 签发统一加速保证；bank 分工仍可在其各自条件下共存。<!-- source-family:SF-2026-ARXIV-2603-09216 -->
+
+访问布局之外，近存计算还可以改变同一内存器件内部的阶段分工。受限的 [CD-PIM 设计](https://arxiv.org/html/2601.12298v1)将四个 pseudo-banks 中两个用于 PIM 的 Decode GEMV、两个留给 processor 的 Prefill GEMM，以减少两类访问的相互阻塞；它减半的是 PIM 计算并行资源，不是必然减半可用模型容量。同一请求仍须先完成 Prefill 才能 Decode，阶段重叠只能利用已就绪的不同请求或算子，不能从器件模式推出请求依赖已经消失。K 按列支持 outer-product 访问、V 按行支持 inner-product 访问，因而布局与执行模式要一并选择，而不是只增加近存算力。
+
+这种分工用较少 Decode PIM 并行资源换取 Prefill 共存空间，是否值得取决于 batch、输入/输出长度与阶段占比；偏 Decode 的工作负载仍可能更适合全部 pseudo-banks 执行 PIM。证据来自 modified Ramulator2 与逻辑综合，不是已制造器件或生产调度验收；INT8 工作点也未提供相应质量对照，排队、同步及完整 SLO 未披露。模式选择须继续接受实际质量、带宽和端到端测量，收益或硬件条件不成立时保留普通 GPU 执行与直接布局，不由模拟加速签发部署保证。<!-- source-family:SF-2026-ARXIV-2601-12298 -->
 
 启动路径还需要区分“字节已读取”与“权重已可执行”。Load-ready state 应原子绑定 artifact layout、连续可导出的 tensor address space、remote mapping lifetime、communicator readiness 与 clone completion；任一分量未提交，都不能让 scheduler 把 replica 标为 ready。预先布局和远端映射可减少碎片、串行 clone 与重复加载，却增加 fabric 依赖、地址生命周期和恢复复杂度；不支持相应互连或映射语义时，普通 loader/NCCL 初始化仍是可靠 fallback。
 
@@ -923,3 +935,7 @@ Primary-source 校验入口：
 - `SF-2026-ARXIV-2602-17119` — Daily `2026-02-21`；[Canon exact-v1](https://arxiv.org/html/2602.17119v1) §2–2.2/4.1.1/5/6.1–6.5；2+2+2=6，row-window FSM 与有效 scratch 容量差额深入。仅受限 ASIC 分支，综合/模拟不是 GPU 或实机部署；最慢行、buffer/control/带宽成本、dense 反侧及面积/预处理边界近正文。root必要source/actual owner PRE通过并授窄锁；作者正文/完整邻接及末注已顺读，非作者POST通过，窄锁释放；未核实现/复现，非日级验收。
 
 - `SF-2026-ARXIV-2602-18568` — Daily `2026-02-25`；[exact-v1](https://arxiv.org/html/2602.18568v1) §III/VI/VII/IX。采用固定 interface 下容量参数化与 batch/length 可行域的窄硬件分支；每 GB 成本、activation broadcast、异精度协议、模拟而非实机及 commodity HBM 回退近正文。不采用整机宣传倍数或全模型数值质量保证。root 必要原源与实际 owner PRE 通过并授自身窄锁；作者实际顺读正文、完整邻接及自身末注；root 非作者 actual POST 通过，窄锁释放。未核实现或复现实验，非日级验收。
+
+- `SF-2026-ARXIV-2601-12298` — Daily `2026-01-22`增量；[CD-PIM exact-v1](https://arxiv.org/html/2601.12298v1) §III–IV。2+2+3=7；只采用四 pseudo-banks 的两PIM/两processor模式与K/V访问布局，保留阶段依赖、PIM并行资源折半、phase/batch/length与模拟/综合边界；不采用实机、INT8质量或生产调度保证。root实际必要原源及owner PRE通过并授窄锁；作者实际正文/完整邻接/末注顺读，root非作者actual POST通过，窄锁释放。未核实现或复现实验，不授日级验收。
+
+- `SF-2026-ARXIV-2603-09216` — Daily `2026-03-12`补查；[PIM-SHERPA exact-v1](https://arxiv.org/html/2603.09216v1) §2.4、§3–7；2+2+2=6，cache属性与命令触发不同于layout、软件staging的具体差额深入。CMA约1GB装不下完整BF16模型，时间dummy、功能cacheable真权重、decode仿真分账；容量节省只相对双权重，FACIL-O非实际属性保证，短输入、高FLOP/B和线程争用反侧及copy费用近正文。root实际必要Source、原日期字段与逐字PRE通过并写入两段；非writer supplement_20260312 实际顺读570–619完整邻接、新正文及本人末注并回对必要原证，POST通过，锁释放。未核artifact、复现、真实LPDDR-PIM功能/质量或完整SLO，不授日级验收。

@@ -1,0 +1,1016 @@
+Cross-Context Review: Improving LLM Output Qualityby Separating Production and Review Sessions
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Related Work
+2.1
+Self-Correction in LLMs
+2.2
+Anchoring Bias and Sycophancy
+2.3
+Context Degradation
+2.4
+Multi-Agent and Role-Based Approaches
+3
+Method: Cross-Context Review
+3.1
+Definition
+3.2
+Protocol
+3.3
+Theoretical Motivation
+3.4
+Distinction from Incubation Effects
+4
+Experimental Setup
+4.1
+Artifacts and Error Injection
+4.2
+Review Conditions
+4.3
+Execution
+4.4
+Evaluation Metrics
+5
+Results
+5.1
+Overall Performance
+5.2
+Statistical Tests
+5.3
+Detection by Severity
+5.4
+Performance by Artifact Category
+5.5
+Detection by Error Type
+5.6
+Reproducibility Across Runs
+6
+Update in Version 2
+7
+Discussion
+7.1
+Why Context Separation Works
+7.2
+The SR2 Result and Why It Matters
+7.3
+Practical Implications
+7.4
+Connection to Human Review Practices
+8
+Limitations
+9
+Future Directions
+10
+Ethics Statement
+11
+Conclusion
+References
+A
+Review Prompt Template
+B
+Error Taxonomy
+C
+Ground Truth Examples
+Code (C2 — Korean Business Day Calculator):
+Document (D7 — JWT Authentication):
+Script (S2 — MCP Explained):
+D
+Meta-Validation — Recursive CCR in Practice
+License: CC BY 4.0
+arXiv:2603.12123v2 [cs.CL] 01 Oct 2026
+Cross-Context Review: Improving LLM Output Quality
+by Separating Production and Review Sessions
+Song Tae-Eun
+Affiliation:
+Daejeon Jungang Cheonggua Co., Ltd.
+Email:
+higheun@gmail.com
+Abstract
+Large language models struggle to catch errors in their own outputs when the review happens in the same session that produced them. This paper introduces Cross-Context Review (CCR), a straightforward method where the review is conducted in a fresh session with no access to the production conversation history. We ran a controlled experiment: 30 artifacts (code, technical documents, presentation scripts) with 150 injected errors, tested under four review conditions — same-session Self-Review (SR), repeated Self-Review (SR2), context-aware Subagent Review (SA), and Cross-Context Review (CCR). The central result is that a second review helps only when it happens in a fresh session: CCR (F1 28.6%) outperforms a second review in the same session (SR2, 21.7%) robustly, both in the first run (paired
+t
+t
+,
+p
+p
+<0.001) and in the three-run average (Holm-adjusted
+p
+p
+=0.004). This version updates the broader comparisons. Averaged across runs, and excluding one SR run whose records could not be verified, CCR is not significantly ahead of context-aware subagent review (SA, 23.8%;
+p
+p
+=0.057) or of a single same-session review (SR, 27.1%;
+p
+p
+=0.26); the first version’s advantages over these two baselines came from run 1. CCR needs no infrastructure and costs one extra session.
+1
+Introduction
+Anyone who has used an LLM to write code or documentation has probably tried the obvious next step: asking the same model to review what it just produced. It seems reasonable. The model knows what you asked for, remembers the constraints, and has the full context. But a pattern emerges quickly — the model tends to approve its own work. It might nitpick formatting or suggest minor improvements, but it rarely catches the substantive errors.
+This is not just anecdotal. The self-correction literature documents the problem from multiple angles. LLMs cannot reliably correct their own reasoning without external feedback
+(
+Huang et al., 2024b
+;
+Kamoi et al., 2024
+)
+. They anchor on their initial outputs
+(
+Lou and Sun, 2025
+)
+. And RLHF-trained models tend toward agreement rather than criticism, likely driven in part by human preference judgments, and rate their own outputs higher than others’
+(
+Sharma et al., 2024
+;
+Panickssery et al., 2024
+)
+.
+We hypothesize that these failures share a root cause that is easy to overlook: the production context itself. When the model reviews its output in the same session, the entire conversation history sits in the context window — the instructions, the intermediate reasoning, the design trade-offs. All of this anchors the model’s judgment. It does not scrutinize; it rationalizes.
+The fix is correspondingly simple: start a new session. Give the model only the final artifact, with no production history, and ask it to review. We call this Cross-Context Review (CCR). The idea maps directly onto practices that humans have relied on for centuries — code review by someone who did not write the code, peer review by scientists who did not run the experiment, editorial review by editors who did not draft the manuscript. These practices exist because creators are biased toward their own work. Our claim is that this principle transfers to LLM workflows, with “different person” replaced by “different session.”
+This paper makes four contributions:
+1.
+We define CCR as a verification method based on session separation, grounding it in the self-correction, anchoring, and context degradation literature.
+2.
+We design an experiment with four conditions (SR, SR2, SA, CCR) that disentangles context separation from repetition and context awareness — two confounds that could otherwise explain the results.
+3.
+CCR robustly outperforms repeated same-session review (SR2), in the run-1 test and in the three-run average. Its advantages over single-pass SR and context-aware SA, significant in run 1, are not significant across runs (Section
+6
+).
+4.
+The SR2 condition — same-session repeated review — shows no evidence of improving over single-pass SR (run 1,
+p
+p
+= 0.11), and CCR outperforms it robustly. Together these suggest that a second look helps when it is taken in a fresh session; the CCR–SR2 comparison also differs in review language (Section
+6
+).
+2
+Related Work
+Four lines of research motivate why same-session review fails and why breaking the session should help.
+2.1
+Self-Correction in LLMs
+Huang et al. (2024b)
+demonstrated that LLMs cannot correct their own reasoning without external feedback — and that correction attempts can actually make things worse.
+Kamoi et al. (2024)
+surveyed the broader self-correction literature and reached a blunt conclusion: no prior work demonstrates successful self-correction with feedback from prompted LLMs, except in tasks exceptionally suited for self-correction.
+Zhang et al. (2025)
+added a troubling dimension, finding that self-correction sometimes flips correct answers to incorrect ones through prompt bias and cognitive-like biases in the correction process.
+Most recently,
+Tsui (2026)
+identified a striking phenomenon called the “self-correction blind spot”: LLMs fail to correct errors in their own outputs while successfully correcting identical errors presented as external input. Across 14 open-source non-reasoning models, the average blind spot rate was 64.5%, consistent across model families and scales. This finding is directly relevant to CCR: same-session review presents the artifact as “own output,” triggering the blind spot, while CCR presents it as external input, which we hypothesize removes the trigger; we do not measure the blind spot directly.
+The takeaway is clear: asking a model to fix its own work within the same context is unreliable at best and harmful at worst. If the context is the problem, then changing the context is the natural intervention.
+2.2
+Anchoring Bias and Sycophancy
+Two biases make self-correction even harder than it needs to be. LLMs exhibit anchoring bias — initial information disproportionately shapes later judgments
+(
+Lou and Sun, 2025
+)
+. In a production session, the model’s first output becomes the anchor for everything that follows. Self-review is biased toward confirmation before it even begins.
+Sycophancy compounds this. RLHF-trained models tend to agree rather than challenge
+(
+Sharma et al., 2024
+)
+, and they rate their own generations higher than comparable text from other sources
+(
+Panickssery et al., 2024
+)
+. In multi-agent debate,
+Choi et al. (2025)
+found that removing identity markers substantially reduced identity-driven bias (e.g., a conformity–obstinacy gap of 0.608 falling to 0.024 for one model on MMLU). CCR is analogous in that the reviewing session is not told that the artifact was produced by the same model, although debate between agents is a different setting from reviewing an artifact.
+2.3
+Context Degradation
+Even setting aside biases, there is a mechanical problem with long contexts.
+Liu et al. (2024)
+documented the “lost in the middle” effect: models attend more to the beginning and end of long contexts, underweighting the middle.
+Hong et al. (2025)
+quantified what they call “context rot” — performance that degrades as input length increases, often in non-uniform ways, observed across 18 models. Production sessions routinely accumulate 50K+ tokens. At that scale, the model loses track of early decisions while remaining anchored to recent ones. A fresh session avoids this entirely: the reviewer works with just the artifact, typically 5K tokens or less.
+2.4
+Multi-Agent and Role-Based Approaches
+Others have tackled verification through multi-agent debate
+(
+Du et al., 2024
+;
+Liang et al., 2024
+)
+, role specialization
+(
+Huang et al., 2024a
+;
+Qian et al., 2024
+)
+, and iterative self-refinement
+(
+Madaan et al., 2023
+)
+. These approaches work, but they are heavy — multiple agents, orchestration layers, specialized prompts. Self-Refine
+(
+Madaan et al., 2023
+)
+stays within a single session and therefore inherits all the context biases described above. Multi-agent debate introduces disagreement but requires running multiple model instances simultaneously.
+Kim et al. (2025)
+show that multi-turn interviewer-style evaluation reduces verbosity bias and improves robustness across runs, but do not separate production and review contexts — the interviewer operates within a single continuous conversation throughout the evaluation.
+CCR sits in a different part of the design space. It achieves context independence with minimal overhead: one additional session, no infrastructure changes, no prompt engineering. It is also complementary — there is nothing stopping someone from combining CCR with role-based or multi-agent methods.
+3
+Method: Cross-Context Review
+3.1
+Definition
+Cross-Context Review (CCR) is a verification method where an LLM reviews an artifact in a fresh session containing only the artifact and a standardized review prompt. The reviewing session has no access to the production session’s conversation history, intermediate reasoning, or generation instructions.
+3.2
+Protocol
+The protocol has four phases.
+In the
+production phase
+, a user interacts with an LLM to produce an artifact — code, a document, a script — in Session A. The conversation accumulates instructions, iterations, and design decisions.
+In the
+export phase
+, the final artifact is extracted. The conversation history is discarded. Only the artifact text carries over.
+In the
+review phase
+, a new Session B starts from scratch. The reviewer receives the artifact and a prompt asking it to check five things: factual accuracy (are the numbers and claims right?), internal consistency (are there contradictions?), contextual fitness (would this actually work in its intended environment?), audience perspective (could a reader misinterpret something?), and completeness (is anything important missing?).
+In the
+integration phase
+, the review findings feed back into improving the artifact — either in the original session or a new one.
+3.3
+Theoretical Motivation
+CCR addresses several failure modes at once. A fresh session has no prior decisions to anchor to. Independent context prevents the confirmation loops that
+Liang et al. (2024)
+call Degeneration of Thought. The review session works with a short context (
+∼
+\sim
+5K tokens) rather than the bloated production context (
+∼
+\sim
+50K+ tokens). And because the reviewer is not told that it produced the artifact, we expect sycophancy and self-preference to weaken, although we do not measure them.
+3.4
+Distinction from Incubation Effects
+One might argue that CCR is just the LLM version of incubation — the well-documented human phenomenon where stepping away from a problem and returning later leads to insight
+(
+Wallas, 1926
+)
+. We think this is a category error.
+LLMs have no temporal continuity between sessions. A new session has zero memory of prior sessions, whether one second or one year has passed. CCR is not “taking a break.” It is an information-theoretic intervention: removing the production context from the reviewer’s input. The mechanism is not rest or unconscious processing — LLMs have neither — but the elimination of anchoring information.
+This distinction is testable. If incubation were the mechanism, a delay within the same session should help. Our SR2 condition adds a second review pass within the same context (no delay, same history) and shows no improvement — pointing to information removal, not temporal separation, as the operative factor.
+4
+Experimental Setup
+4.1
+Artifacts and Error Injection
+We generated 30 artifacts using Claude Opus 4.6 in three categories:
+•
+Code
+(C1–C10): Python functions for CSV processing, date calculations, JSON parsing, database operations, validation, deep merge, log parsing, async HTTP, LRU cache, and markdown parsing.
+•
+Documents
+(D1–D10): Technical tutorials covering REST APIs, Docker, CI/CD, FastAPI, SQLAlchemy, virtual environments, JWT authentication, Pandas optimization, WebSocket, and MCP servers.
+•
+Scripts
+(S1–S10): Presentation scripts about AI coding tools, MCP explanation, public data, Python vs JavaScript, AI agents, open source, wholesale market AI, automation pipelines, CLAUDE.md, and the Korean AI ecosystem.
+We injected exactly 5 errors into each artifact — one per error type (FACT, CONS, CTXT, RCVR, MISS) — at three severity levels (Critical, Major, Minor), for a total of 150 ground-truth errors. The errors were designed to be plausible: runtime bugs and off-by-one errors in code, factual inaccuracies and internal contradictions in documents, incorrect attributions and wrong numbers in scripts.
+4.2
+Review Conditions
+We tested four automated review conditions:
+Condition
+Abbr.
+Context
+Purpose
+Self-Review
+SR
+Full history
+Baseline
+Self-Review
+×
+\times
+2
+SR2
+Full + 1st review
+Repetition ctrl
+Subagent Review
+SA
+Prompt + artifact
+Context ctrl
+Cross-Context
+CCR
+Artifact only
+Our method
+Table 1:
+Review conditions and their available context.
+SR is what most people do: “please review what you just wrote.” SR2 controls for the possibility that CCR’s advantage comes from simply looking twice — it gets a second pass in the same session, with the first review visible. SA tests whether knowing the generation prompt helps or hurts when the review happens in a fresh context. CCR gets only the artifact, nothing else.
+4.3
+Execution
+All reviews used Claude Opus 4.6 (model ID:
+claude-opus-4-6
+) via the Claude Code Agent tool — a subprocess mechanism that launches independent LLM sessions within the Claude Code CLI. This is functionally equivalent to a fresh API session: each Agent subprocess gets its own context window with no carryover. Temperature and sampling parameters followed the Agent tool’s defaults. We controlled for stochasticity by running each condition 3 times independently.
+Each condition was applied to all 30 artifacts across 3 runs, yielding 4
+×
+\times
+30
+×
+\times
+3 = 360 reviews. Reviews ran in parallel batches of 6 agents. We had originally planned to use the Anthropic API directly with
+claude-sonnet-4-6
+(as specified in our experiment configuration), but insufficient API credits forced a switch to the Agent tool, which uses the host session’s model (Opus 4.6). We report this deviation transparently.
+All artifacts, ground-truth annotations, review prompts, result files, and analysis scripts are available from the author on request. The result files are structured records transcribed by the host session and do not include raw model output (Section
+6
+). Exact reproduction requires access to the Claude Code Agent tool; the supplementary
+experiment_runner.py
+provides an equivalent API-based implementation for researchers with API access.
+4.4
+Evaluation Metrics
+Each review produces a set of findings. We match findings to ground-truth errors using a scoring function based on location overlap (line number proximity within
+±
+\pm
+5 lines), keyword overlap (Jaccard similarity of description terms), and a bonus for matching error type. A finding counts as a true positive if its matching score exceeds 2.0. From TP, FP, and FN counts we compute Precision, Recall, and F1 per artifact per condition. Statistical significance comes from paired
+t
+t
+-tests on per-artifact F1 scores (Run 1,
+N
+N
+=30), with Cohen’s
+d
+d
+for effect size.
+5
+Results
+5.1
+Overall Performance
+Table
+2
+shows results averaged across all reviews per condition: 90 (3 runs
+×
+\times
+30 artifacts), except SR with 60 after the exclusion in Section
+6
+.
+Cond.
+Finds
+TP
+FP
+FN
+Prec.
+Rec.
+F1
+CCR
+4.5
+1.4
+3.1
+3.6
+31.5
+27.1
+28.6
+SR
+†
+5.6
+1.4
+4.2
+3.6
+26.2
+28.3
+27.1
+SA
+4.3
+1.1
+3.2
+3.9
+27.4
+21.8
+23.8
+SR2
+5.5
+1.1
+4.4
+3.9
+21.0
+22.7
+21.7
+Table 2:
+Overall results (
+N
+N
+=90 per condition;
+†
+SR uses runs 1–2 only,
+N
+N
+=60, Section
+6
+; v1 values with run 3: F1 24.5, Prec. 25.8, Rec. 24.2). Finds/TP/FP/FN are per-artifact averages; Prec./Rec./F1 in %.
+CCR leads on F1 and precision; SR has slightly higher recall. The SR2 numbers tell an interesting story: the second review pass has substantially worse precision than single-pass SR (21.0% vs 26.2%). The model is generating more noise, not more signal. Figure
+1
+visualizes F1 across conditions and categories.
+5.2
+Statistical Tests
+Table
+3
+reports paired
+t
+t
+-tests on per-artifact F1 from Run 1 (
+N
+N
+=30), as in the first version; the robustness test on three-run averages is in Section
+6
+.
+Comparison
+t
+t
+p
+p
+Cohen’s
+d
+d
+Sig.
+SR vs CCR
+−
+-
+2.849
+0.008
+0.52
+Yes**
+SR2 vs CCR
+−
+-
+3.917
+<0.001
+0.72
+Yes***
+SA vs CCR
+−
+-
+3.119
+0.004
+0.57
+Yes**
+SR vs SR2
+1.665
+0.107
+−
+-
+0.30
+No
+Table 3:
+Statistical comparisons (paired
+t
+t
+-test, Run 1).
+t
+t
+is computed as the first minus the second condition in each row; Cohen’s
+d
+d
+is
+d
+z
+d_{z}
+, the mean paired difference (second minus first) divided by its standard deviation.
+In run 1, every comparison against CCR is significant at
+p
+p
+< 0.01, with medium-to-large effect sizes (
+d
+d
+= 0.52–0.72), and SR vs SR2 is not significant (
+p
+p
+= 0.11). These run-1 results do not hold across runs for SR and SA (Section
+6
+).
+5.3
+Detection by Severity
+Condition
+Critical
+Major
+Minor
+CCR
+40%
+29%
+18%
+SR
+†
+32%
+32%
+22%
+SA
+30%
+23%
+16%
+SR2
+31%
+26%
+16%
+Table 4:
+Detection rate by severity (
+†
+SR runs 1–2 only; v1: 29/27/19%).
+CCR’s advantage over SR appears only for critical errors (40% vs 32%, an 8-point gap); SR is ahead on major (32% vs 29%) and minor (22% vs 18%) errors. These are descriptive rates without significance tests. Figure
+2
+illustrates the severity-dependent pattern.
+5.4
+Performance by Artifact Category
+Category
+CCR
+SR
+SA
+SR2
+Code
+40.7%
+37.0%
+34.1%
+31.9%
+Document
+24.5%
+22.3%
+17.4%
+19.2%
+Script
+20.7%
+22.1%
+19.9%
+14.0%
+Table 5:
+F1 by artifact category (3-run average; SR runs 1–2 only; v1 SR: 36.0/18.2/19.5%).
+CCR leads on code (+3.7 F1 points over SR) and documents (+2.2), and SR leads on scripts (22.1% vs 20.7%). This makes sense: code review benefits particularly from a “fresh eyes” perspective that questions implementation assumptions rather than accepting them as given. SR2 performs notably poorly on scripts (14.0%), suggesting that repeated review within the same session is especially counterproductive for subjective content.
+5.5
+Detection by Error Type
+Cond.
+FACT
+CONS
+CTXT
+RCVR
+MISS
+CCR
+48%
+37%
+13%
+19%
+19%
+SR
+†
+50%
+35%
+18%
+18%
+20%
+SA
+41%
+31%
+9%
+14%
+13%
+SR2
+40%
+31%
+16%
+12%
+14%
+Table 6:
+Detection rate by error type (
+N
+N
+=90 per cell;
+†
+SR
+N
+N
+=60, runs 1–2; v1 SR: 44/32/12/16/17%).
+Factual errors (FACT) are the easiest to catch across all conditions, which is unsurprising — they are the most concrete. Contextual errors (CTXT) are the hardest, topping out at 18% (SR). CCR has the highest detection rate for two of five types (CONS and RCVR), and SR for the other three; the differences between CCR and SR are within 6 points on every type and were not tested.
+One anomaly: SR2 detects more CTXT errors than CCR (16% vs 13%) but has the lowest RCVR detection (12%). It appears that repeated review within the same context shifts attention between error types rather than improving detection overall — a shuffling rather than an amplification, although this is a hypothesis and we did not track individual errors across passes.
+5.6
+Reproducibility Across Runs
+The first version stated that the ranking CCR > SR
+≈
+\approx
+SA > SR2 holds in all three runs. That statement was not accurate: CCR ranks first in run 1 only (Table
+7
+).
+Figure 1:
+F1 scores by condition and artifact category (3-run average; SR runs 1–2 only). CCR leads on code and documents; SR leads on scripts.
+Figure 2:
+Detection rate by error severity (SR runs 1–2 only). CCR is ahead of SR only on Critical errors (+8pp); SR is ahead on Major and Minor errors. Descriptive, not tested.
+6
+Update in Version 2
+We re-examined the per-session records of this experiment while reusing them in later work. The central SR2 result holds; two findings narrow the broader comparisons.
+Provenance of SR run 3.
+The review records were produced through the Claude Code agent tool and transcribed into structured files by the host session; they do not include raw model output. For SR run 3, 92% of the finding descriptions appear verbatim inside the script that wrote the result files, so we cannot confirm that they are unedited model output. We exclude this run; the SR values in Tables
+2
+–
+6
+use runs 1 and 2 (
+N
+N
+=60). Its F1 (19.4%) was well below SR’s other runs (25.7% and 28.6%). The other runs are unverified rather than known to be clean.
+Run-to-run variation.
+The first version tested run 1 only and stated that the ranking held in all three runs. Table
+7
+shows that CCR ranks first in run 1 only.
+Cond.
+Run 1
+Run 2
+Run 3
+CCR
+37.2
+25.0
+23.7
+SR
+25.7
+28.6
+(19.4, excluded)
+SA
+23.8
+20.8
+26.9
+SR2
+18.7
+22.5
+23.9
+Table 7:
+F1 (%) per run, averaged over 30 artifacts.
+Robustness test.
+Averaging each artifact’s F1 over its available runs and comparing with CCR by Wilcoxon signed-rank tests (Holm-adjusted over three comparisons): SR2
+p
+p
+=0.004, SA
+p
+p
+=0.057, SR
+p
+p
+=0.26. With SR run 3 included, all three would be significant (
+p
+p
+=0.004, 0.043, 0.043), which is why the exclusion matters.
+What holds.
+Reviewing again in the same session (SR2) is worse than reviewing in a fresh session (CCR), in the run-1 test and in the three-run average (in run 3 alone the two are level).
+What is narrowed.
+Whether a fresh-session review outperforms a single self-review is not established by these data, and the per-category, per-severity, and per-type advantages over SR reported in the first version do not hold after the update. The run-1 tests in Table
+3
+are unchanged and reported for continuity.
+Citation corrections.
+We also checked every citation against its source. The first version attributed to
+Tsui (2026)
+a rise in the blind-spot rate with task complexity (45.2% to 79.2%); these figures do not appear in that paper, which reports a 64.5% average that is consistent across model families and scales, and we have removed them. We also corrected the description of
+Choi et al. (2025)
+, added a qualifier to the summary of
+Kamoi et al. (2024)
+, and corrected author lists and publication details in the bibliography.
+7
+Discussion
+7.1
+Why Context Separation Works
+The results line up with the prediction that production context introduces systematic bias. But the SR2 result is what makes the argument tight. Reviewing twice in the same session shows no evidence of helping, and its precision is lower than single-pass SR (21.0% vs 26.2%), consistent with a second pass that adds findings rather than reconsidering the first assessment; we did not analyse the added findings. The model “tries harder” by adding noise. This is consistent with what
+Zhang et al. (2025)
+observed: self-correction within a fixed context can degrade initially correct judgments.
+The SA result adds another dimension. Knowing the generation prompt — understanding what the user originally asked for — does not improve review quality. If anything, it slightly hurts (SA F1 23.8% vs SR 27.1%; not tested). One possible reading is that the anchoring effect operates through the presence of production-related context rather than its content, but SA and SR also differ in session and review language, so this is a hypothesis. Even well-intentioned context (“here is what the user wanted”) triggers the same bias patterns.
+7.2
+The SR2 Result and Why It Matters
+SR2 deserves its own subsection because it serves a critical role as a confound control.
+Without SR2, a reader could reasonably attribute CCR’s advantage to a “two looks are better than one” effect. After all, CCR effectively gives the model a second chance at review, just in a different session. Maybe any second review would help, regardless of context.
+Our data support a narrower version of this argument. A second review in the same context (SR2) does not improve on a single review (run 1,
+p
+p
+=0.11), while a second review in a fresh session (CCR) robustly outperforms SR2 (run 1
+p
+p
+<0.001; three-run Holm-adjusted
+p
+p
+=0.004). The difference between SR2 and CCR is not repetition — both involve reviewing again — but context. However, CCR does not robustly outperform a single same-session review (SR), so the data show that context separation rescues a second look, not that it beats looking once. Review language also differs between CCR (English) and SR2 (Korean), so even this comparison is not a clean isolation of context (see Limitations).
+This is a more limited claim than the first version made.
+7.3
+Practical Implications
+CCR requires nothing special. No multiple models, no orchestration framework, no prompt engineering. Start a new session, paste the artifact, ask for a review. That is the entire method.
+This makes it immediately applicable:
+•
+In software development, review generated code in a new session before committing.
+•
+For content creation, verify articles or documentation independently of the session that produced them.
+•
+In multi-agent pipelines, route artifacts through an independent review agent as a standard stage.
+The cost overhead is small. A review session processes
+∼
+\sim
+5K tokens (the artifact plus the review prompt), compared to 50K+ tokens in a typical production session. In many cases, the review session is actually cheaper than continuing in the production session would be.
+7.4
+Connection to Human Review Practices
+The analogy to human review practices is not decorative — it is structural. Code review, peer review, and editorial review all exist because the person who created something cannot evaluate it objectively. The creator knows too much: the intent behind ambiguous code, the reasoning behind an unusual claim, the context that makes a missing section seem acceptable. A reviewer who lacks this context is forced to engage with the artifact on its own terms.
+CCR reproduces this dynamic for LLMs. The reviewing session does not know the intent, the reasoning, or the production context. It can only evaluate what is actually written. Our results show this to be a better starting point than a second review in the same session; whether it beats a single self-review is not established.
+8
+Limitations
+We used a single model (Claude Opus 4.6). The theoretical motivation is model-agnostic — anchoring, context rot, and sycophancy are documented across model families — but empirical validation on GPT-4, Gemini, and open-source models would strengthen the generalizability claim.
+The errors were deliberately injected, not naturally occurring. This allows precise measurement but may not reflect real-world error distributions. A preliminary case study with natural errors (supplementary Section 4A) provides some ecological validity.
+The absolute F1 numbers are moderate — 28.6% for the best condition. This may reflect the difficulty of the task, the matcher, or the model; we did not separate these. All conditions face the same task, so we focus on relative differences.
+Our matching algorithm uses heuristic scoring (location proximity + keyword overlap). We validated the threshold empirically, but different matching methods would produce different absolute numbers. We did not report a threshold sensitivity analysis, and we have not repeated one for this version.
+We did not run a human review baseline in the quantitative experiment. Expert human review across 30 diverse artifacts would be the ideal upper bound, but the labor cost was prohibitive for this study. Future work should include it.
+There is a language confound. The artifacts and ground truth are in Korean, but the review conditions produced output in different languages: SR and SR2 reviewed in Korean (following the production session’s language), while CCR and SA reviewed in English (the default for a fresh context with no prior language cue). English-language reviews may benefit from stronger reasoning in the model’s dominant training language. We note, however, that SA also reviews in English yet underperforms CCR, so language alone does not explain the full effect.
+Our artifacts span three types within a single domain (software engineering tutorials in Korean). We have not tested legal documents, medical reports, or scientific manuscripts. The method should generalize — the theoretical basis applies to any context-dependent review — but this remains to be shown.
+Two further limitations were identified in the audit for this version. First, the review records do not include raw model output, and one run was excluded for uncertain provenance (Section
+6
+). Second, the matcher’s keyword component compares findings with Korean ground-truth text, so the English-language reviews (CCR and SA) may be under-credited relative to the Korean-language ones (SR and SR2); the direction of the language confound above is therefore uncertain.
+9
+Future Directions
+CCR as presented here is a static, single-pass method: the reviewer examines the artifact once and produces findings. Two directions extend this naturally.
+First,
+dynamic CCR
+could incorporate multi-turn interaction between reviewer and author.
+Kim et al. (2025)
+demonstrate with LLM-as-an-Interviewer that dynamic, multi-turn evaluation — where the evaluator asks follow-up questions and probes weak points — reveals failure modes that static assessment misses. Combining CCR’s context separation with interviewer-style follow-up (“Why did you choose this approach? What happens if the input is empty?”) could capture errors that a single-pass review misses while preserving the independence that makes CCR effective.
+Second,
+hierarchical CCR
+could scale the method beyond pairwise review. Our meta-validation (Appendix D) already shows that successive independent reviews catch qualitatively different error types. A layered architecture — workers producing artifacts, independent verifiers reviewing them, and integrators synthesizing findings — would formalize this into a systematic verification pipeline. We explore this direction in ongoing work.
+10
+Ethics Statement
+This research studies LLM behavior and does not involve human subjects. The artifacts are synthetic. We note that CCR, like any automated review method, can produce false positives that might mislead users. We recommend it as a supplement to human judgment, not a replacement, especially in safety-critical applications.
+Use of AI Assistants
+The artifacts, injected errors, and all reviews were produced by Claude Opus 4.6 through the Claude Code agent tool, as described in Section
+6
+. Claude Code was also used to write the analysis scripts, to recompute the numbers in this version from the per-session records, and to draft and revise text under the author’s direction. The author reviewed the final text and takes full responsibility for its content.
+11
+Conclusion
+We introduced Cross-Context Review, a method that improves LLM verification by separating production and review into independent sessions. In a controlled experiment, a second review in a fresh session robustly outperformed a second review in the same session, in the run-1 test and in the three-run average. The first version’s broader advantages over single-pass and subagent review came from one run and are not significant across runs. Within this setting (one model, synthetic Korean artifacts, planted errors), the practical message is narrower: if a second review is wanted, a fresh session is the better place for it.
+The method is simple to adopt: copy the output into a new session and ask for a review there.
+References
+Choi et al. (2025)
+Hyeong Kyu Choi, Xiaojin Zhu, and Sharon Li. 2025.
+When identity skews debate: Anonymization for bias-reduced
+multi-agent reasoning.
+arXiv preprint arXiv:2510.07517
+.
+Du et al. (2024)
+Yilun Du, Shuang Li, Antonio Torralba, Joshua B. Tenenbaum, and Igor Mordatch.
+2024.
+Improving factuality and reasoning in language models through
+multiagent debate.
+In
+Proceedings of the 41st International Conference on Machine
+Learning (ICML 2024)
+, pages 11733–11763.
+Hong et al. (2025)
+Kelly Hong, Anton Troynikov, and Jeff Huber. 2025.
+Context rot:
+How increasing input tokens impacts LLM performance
+.
+Technical report, Chroma Research.
+Huang et al. (2024a)
+Dong Huang, Jie M. Zhang, Michael Luck, Qingwen Bu, Yuhao Qing, and Heming Cui.
+2024a.
+AgentCoder: Multi-agent-based code generation with iterative
+testing and optimisation.
+arXiv preprint arXiv:2312.13010
+.
+Huang et al. (2024b)
+Jie Huang, Xinyun Chen, Swaroop Mishra, Huaixiu Steven Zheng, Adams Wei Yu,
+Xinying Song, and Denny Zhou. 2024b.
+Large language models cannot self-correct reasoning yet.
+In
+Proceedings of the 12th International Conference on Learning
+Representations (ICLR 2024)
+.
+Kamoi et al. (2024)
+Ryo Kamoi, Yusen Zhang, Nan Zhang, Jiawei Han, and Rui Zhang. 2024.
+When can LLMs actually correct their own mistakes? A critical
+survey of self-correction of LLMs.
+Transactions of the Association for Computational Linguistics
+(TACL)
+, 12:1417–1440.
+Kim et al. (2025)
+Eunsu Kim, Juyoung Suk, Seungone Kim, Niklas Muennighoff, Dongkwan Kim, and
+Alice Oh. 2025.
+LLM-as-an-interviewer: Beyond static testing through dynamic LLM
+evaluation.
+In
+Findings of the Association for Computational Linguistics:
+ACL 2025
+, pages 26456–26493.
+Liang et al. (2024)
+Tian Liang, Zhiwei He, Wenxiang Jiao, Xing Wang, Yan Wang, Rui Wang, Yujiu
+Yang, Shuming Shi, and Zhaopeng Tu. 2024.
+Encouraging divergent thinking in large language models through
+multi-agent debate.
+In
+Proceedings of the 2024 Conference on Empirical Methods in
+Natural Language Processing (EMNLP 2024)
+, pages 17889–17904.
+Liu et al. (2024)
+Nelson F. Liu, Kevin Lin, John Hewitt, Ashwin Paranjape, Michele Bevilacqua,
+Fabio Petroni, and Percy Liang. 2024.
+Lost in the middle: How language models use long contexts.
+Transactions of the Association for Computational Linguistics
+(TACL)
+, 12:157–173.
+Lou and Sun (2025)
+Jiaxu Lou and Yifan Sun. 2025.
+Anchoring bias in
+large language models: An experimental study
+.
+Journal of Computational Social Science
+, 9(1):11.
+Madaan et al. (2023)
+Aman Madaan, Niket Tandon, Prakhar Gupta, Skyler Hallinan, Luyu Gao, Sarah
+Wiegreffe, Uri Alon, Nouha Dziri, Shrimai Prabhumoye, Yiming Yang, Shashank
+Gupta, Bodhisattwa Prasad Majumder, Katherine Hermann, Sean Welleck, Amir
+Yazdanbakhsh, and Peter Clark. 2023.
+Self-refine: Iterative refinement with self-feedback.
+In
+Proceedings of the 37th Conference on Neural Information
+Processing Systems (NeurIPS 2023)
+.
+Panickssery et al. (2024)
+Arjun Panickssery, Samuel R. Bowman, and Shi Feng. 2024.
+LLM evaluators recognize and favor their own generations.
+In
+Proceedings of the 38th Conference on Neural Information
+Processing Systems (NeurIPS 2024)
+.
+Qian et al. (2024)
+Chen Qian, Wei Liu, Hongzhang Liu, Nuo Chen, Yufan Dang, Jiahao Li, Cheng Yang,
+Weize Chen, Yusheng Su, Xin Cong, Juyuan Xu, Dahai Li, Zhiyuan Liu, and
+Maosong Sun. 2024.
+ChatDev: Communicative agents for software development.
+In
+Proceedings of the 62nd Annual Meeting of the Association
+for Computational Linguistics (ACL 2024)
+, pages 15174–15186.
+Sharma et al. (2024)
+Mrinank Sharma, Meg Tong, Tomasz Korbak, David Duvenaud, Amanda Askell,
+Samuel R. Bowman, Newton Cheng, Esin Durmus, Zac Hatfield-Dodds, Scott R.
+Johnston, Shauna Kravec, Timothy Maxwell, Sam McCandlish, Kamal Ndousse,
+Oliver Rausch, Nicholas Schiefer, Da Yan, Miranda Zhang, and Ethan Perez.
+2024.
+Towards understanding sycophancy in language models.
+In
+Proceedings of the 12th International Conference on Learning
+Representations (ICLR 2024)
+.
+Tsui (2026)
+Ken Tsui. 2026.
+Self-correction bench: Uncovering and addressing the self-correction
+blind spot in large language models.
+In
+Conference on Language Modeling (COLM 2026)
+.
+ArXiv:2507.02778v3.
+Wallas (1926)
+Graham Wallas. 1926.
+The Art of Thought
+.
+Jonathan Cape.
+Zhang et al. (2025)
+Qingjie Zhang, Di Wang, Haoting Qian, Yiming Li, Tianwei Zhang, Minlie Huang,
+Ke Xu, Hewu Li, Yan Liu, and Han Qiu. 2025.
+Understanding the dark side of LLMs’ intrinsic self-correction.
+In
+Proceedings of the 63rd Annual Meeting of the Association
+for Computational Linguistics (ACL 2025)
+.
+Appendix A
+Review Prompt Template
+Review the following [artifact type]
+from a fresh perspective:
+
+1. Factual accuracy: Are numbers,
+   names, dates, and technical claims
+   correct?
+2. Internal consistency: Are there
+   contradictions or terminology
+   mismatches?
+3. Contextual fitness: Would this work
+   correctly in its intended
+   environment?
+4. Audience perspective: Could the
+   target reader misinterpret any part?
+5. Completeness: Is anything important
+   missing?
+
+For each issue found, provide:
+- Location (line number or section)
+- Description of the error
+- Type (FACT/CONS/CTXT/RCVR/MISS)
+- Severity (Critical/Major/Minor)
+- Suggested fix
+Appendix B
+Error Taxonomy
+Type
+Code
+Description
+Factual
+FACT
+Wrong numbers/claims
+Consistency
+CONS
+Internal contradictions
+Contextual
+CTXT
+Environment issues
+Audience
+RCVR
+Reader misinterpretation
+Completeness
+MISS
+Important omission
+Table 8:
+Error taxonomy used in ground-truth annotation.
+Appendix C
+Ground Truth Examples
+Representative errors from each category, showing the injection methodology. See supplementary materials for the complete set.
+Code (C2 — Korean Business Day Calculator):
+GT-C2-1 (FACT, Critical):
+weekday() >= 6
+checks Sunday only instead of
+>= 5
+(Saturday+Sunday). Saturdays counted as business days.
+Document (D7 — JWT Authentication):
+GT-D7-1 (FACT, Critical):
+create_refresh_token
+signs with
+SECRET_KEY
+instead of
+REFRESH_SECRET_KEY
+— access and refresh tokens share the same signing key.
+Script (S2 — MCP Explained):
+GT-S2-1 (FACT, Critical): MCP attributed to OpenAI instead of Anthropic — fundamental factual error about protocol creator.
+Appendix D
+Meta-Validation — Recursive CCR in Practice
+This paper was itself produced and validated through multiple rounds of Cross-Context Review — an unplanned but informative demonstration of the method in practice.
+The initial draft was written in one terminal session (T1). A separate session (T2) reviewed the draft without access to T1’s conversation history and identified 15 errors: 2 critical (numerical inconsistencies between the abstract and results tables), 7 major, and 6 minor. The critical errors were exactly the kind of consistency errors that same-session review tends to miss — the author “knows” the numbers are right because they just wrote them.
+After incorporating T2’s corrections, a fourth independent session (T4) performed a second-level review focused on reference verification. T4 discovered that 7 of 15 reference entries contained fabricated or incorrect author names — 3 with hallucinated co-authors and 4 with wrong initials — plus 3 missing references for works cited in the text. That is 10 reference-related errors that T2’s thorough review had not caught. T2 checked the numbers, the logic, and the structure, but did not question whether the reference authors were real. The specific failure mode — hallucinated reference authors surviving two prior review rounds — is consistent with the possibility that models tend not to question the factual accuracy of academic citations, likely because they cannot verify them without external tools. Each independent context brought a genuinely different perspective.
+Round
+Reviewer
+Errors
+Types
+CCR-1
+T2
+15
+Numerical, sections
+CCR-2
+T4
+10
+Authors, refs
+Table 9:
+Meta-validation: recursive CCR on this paper.
+The T4 round shows diminishing but non-zero returns from additional CCR passes. CCR-1 catches the most errors (15), but CCR-2 catches a qualitatively different class of errors (reference fabrication) that CCR-1 missed entirely. This meta-validation chain mirrors the recursive CCR depth experiment proposed in our future work ; with no count of remaining errors, it does not show how many rounds are enough.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

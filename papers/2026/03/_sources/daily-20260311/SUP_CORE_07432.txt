@@ -1,0 +1,1115 @@
+Generalization in Online Reinforcement Learning for Mobile Agents
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Related Works
+GUI Mobile Agents.
+Reinforcement Learning for LLM Agents.
+Benchmarks for Generalization in Reinforcement Learning.
+3 Benchmarking generalization in Mobile Environments
+Preliminaries.
+3.1 Generalization in Contextual MDP
+3.2 AndroidWorld-Generalization
+4 Training System for Mobile Agents
+4.1 Online learining with GRPO
+4.2 Scalable Rollout Collection
+5 Experiments
+5.1 Results and Findings
+6 Conclusion
+References
+A Limitations
+B LLMs Usage
+C AndroidWorld-Generalization Bechmark
+AndroidWorld.
+Train–Test Split on Unseen Instance.
+Train-Test split on Unseen Template
+Train–Test Split on Unseen Apps
+Few-shot adaptation at test-time: Unseen-app Train-Test split
+Difficulty calculation
+AndroidWorld-Generalization vs. AndroidWorld
+D Additional experiment results on Unseen Instance
+E Case study on Unseen Template
+F Ablation study on Rollout Collection System
+G Reward Functions: Rule-Based Scripts vs. LLM-as-Judge
+H Agent Design
+Action space.
+Prompt Template.
+I Interactive Environment
+J Training Details
+License: CC BY-NC-ND 4.0
+arXiv:2603.07432v1 [cs.CV] 08 Mar 2026
+Generalization in Online Reinforcement Learning for Mobile Agents
+Li Gu  Zihuan Jiang  Zhixiang Chi  Huan Liu
+Ziqiang Wang  Yuanhao Yu  Glen Berseth  Yang Wang
+*Equal contribution  Mila -- Québec AI Institute  Concordia University  Université de Montréal
+CIFAR AI Chair  University of Toronto  McMaster University
+Abstract
+Graphical user interface (GUI)-based mobile agents automate digital tasks on mobile devices by interpreting natural-language instructions and interacting with the screen. While recent methods apply reinforcement learning (RL) to train vision-language-model(VLM) agents in interactive environments with a primary focus on performance, generalization remains underexplored due to the lack of standardized benchmarks and open-source RL systems. In this work, we formalize the problem as a Contextual Markov Decision Process (CMDP) and introduce AndroidWorld-Generalization, a benchmark with three increasingly challenging regimes for evaluating zero-shot generalization to unseen task instances, templates, and applications. We further propose an RL training system that integrates Group Relative Policy Optimization (GRPO) with a scalable rollout collection system, consisting of containerized infrastructure and asynchronous execution
+to support reliable and efficient training. Experiments on AndroidWorld-Generalization show that RL enables a 7B-parameter VLM agent to surpass supervised fine-tuning baselines, yielding a 26.1% improvement on unseen instances but only limited gains on unseen templates (15.7%) and apps (8.3%), underscoring the challenges of generalization. As a preliminary step, we demonstrate that few-shot adaptation at test-time improves performance on unseen apps, motivating future research in this direction. To support reproducibility and fair comparison, we open-source the full RL training system, including the environment, task suite, models, prompt configurations, and the underlying infrastructure 11
+1
+https://github.com/zihuanjiang/AndroidWorld-Generalization.
+1 Introduction
+Mobile agents are autonomous digital systems that control mobile devices via natural language to automate tasks (Wu et al., 2024; Liu et al., 2025a). Unlike API-based agents limited to predefined function calls (Song et al., 2024; Zhang et al., 2025a), graphical user interface (GUI)-based agents interact directly with the screen through actions such as clicking and typing, enabling broader applicability across diverse apps and devices (Gou et al., 2025; Qin et al., 2025). Developing GUI-based mobile agents is challenging: they must interpret instructions, handle diverse screenshots, and plan coherent multi-step actions across apps in dynamic environments.
+Figure 1: Sample task instructions with corresponding screenshots from the train and test sets of the three unseen regimes in the AndroidWorld-Generalization benchmark. Red highlights the unseen scenarios: Instance, Template, and Application.
+Inspired by recent advances in the reasoning capabilities of large vision–language models (VLMs) (Jaech et al., 2024; Comanici et al., 2025), several studies leverage prompting techniques on proprietary VLMs to construct predefined decision-making pipelines (Li et al., 2024b; Agashe et al., 2025; Li et al., 2025; Zhang et al., 2025b). An alternative direction is post-training an open-source VLM on offline static trajectory datasets tailored to mobile scenarios, using either human-annotated or synthetically generated trajectories via supervised fine-tuning (Qin et al., 2025; Sun et al., 2025). However, static datasets cannot capture the full interactive dynamics of mobile environments, leading agents to suffer from error accumulation and poor generalization to unseen environment changes
+(e.g., UI variations and dynamics) (Bai et al., 2024).
+To address these limitations, recent work explores online reinforcement learning (RL) in interactive environments.
+In this setting, mobile agents are trained with VLM-based policies that generate multi-step trajectories,
+while optimizing their behavior from online reward feedback provided by the environment (Bai et al., 2024; Papoudakis et al., 2025; Gu et al., 2025; Shi et al., 2025).
+Despite recent progress, prior online RL methods for mobile agents still face a fundamental limitation: they primarily focus on algorithmic improvements to boost performance on standard benchmarks, while generalization remains largely underexplored. In practice, however, mobile agents must operate robustly in dynamic, open-ended environments and handle unseen scenarios such as novel tasks, unfamiliar UI layouts, or entirely new applications.
+First, this limitation stems largely from the fact that existing benchmarks are designed solely for evaluation and do not provide a designated training set. Consequently, prior works either train and test on the same evaluation tasks (Papoudakis et al., 2025), which ignores assessment of generalization, or construct synthetic training tasks without verifying the absence of train–test leakage (Shi et al., 2025; Yang et al., 2025). This lack of a principled train–test split makes it difficult to systematically study generalization.
+Second, the field lacks an open-source RL training system for realistic mobile environments, which limits reproducibility and fair comparison. Existing works are either closed-source or release only model weights, even though agent performance also depends on prompt templates, agent logic, and training recipes. In addition, building a reliable and efficient RL system for realistic mobile environments poses significant engineering challenges, as the environments are computationally expensive, delay-prone, and crash-sensitive. These challenges have created a substantial barrier between conceptual advances in LLM-based RL and their practical realization in mobile environments. Without such a reliable training system, progress on algorithmic innovation is fundamentally constrained.
+In this work, we study generalization in online RL for mobile agents. We first formalize the mobile environment as a Contextual Markov Decision Process (CMDP) (Hallak et al., 2015) and evaluate generalization through zero-shot policy transfer.
+Each context defines a distinct MDP (e.g., a task instance, a task template, or an application), allowing training on one set of contexts and evaluation on previously unseen ones.
+We adopt AndroidWorld (Rawles et al., 2025) as both the training environment and testbed, since it provides rule-based scripts for reliable rewards and an automatic task-parameterization mechanism that generates thousands of diverse task instances for constructing held-out contexts. Building on this, we introduce AndroidWorld-Generalization, which defines three progressively challenging regimes: Unseen Instance, Unseen Template, and Unseen Application. Second, we develop the first fully open-source RL training system for mobile agents, integrating Group Relative Policy Optimization (GRPO) (Guo et al., 2025) with an Android emulator environment. To support large-scale and reliable RL, we design a scalable rollout collection system consisting of a containerized infrastructure that provides resource isolation via Docker, asynchronous rollout execution to eliminate synchronization bottlenecks.
+Together, these components enable efficient, stable, and scalable RL training in realistic mobile environments.
+Extensive evaluation on AndroidWorld-Generalization shows that online RL enables a 7B-parameter VLM mobile agent to surpass supervised fine-tuning baselines by 26.1% and even outperform proprietary model–based pipelines such as GPT-4o and Claude Computer Use. However, the challenges of generalization remain, with limited gains in unseen templates (15.7%) and unseen apps (8.3%). Finally, we demonstrate that using few-shot adaptation at test-time can improve performance by 10.4% on the most challenging Unseen App setting. In summary, our contributions are as follows:
+•
+We present the first study of generalization in RL for mobile agents by formalizing the problem as a Contextual MDP and introducing AndroidWorld-Generalization, a benchmark with three progressively challenging regimes for evaluating zero-shot policy transfer.
+•
+We develop the first fully open-source RL training system for mobile agents, integrating GRPO with a scalable rollout collection system that ensures reproducibility and offers infrastructure for future work.
+•
+We conduct the first empirical study of RL generalization in mobile agents, demonstrating strong performance on unseen instances but limited transfer to templates and apps, and identify few-shot adaptation at test-time as a promising direction.
+2 Related Works
+GUI Mobile Agents.
+Prior works can be broadly classified into three categories. Prompting-based approaches construct predefined decision-making pipelines—covering perception, memory, and planning—by orchestrating multiple proprietary VLMs (Wen et al., 2024; Li et al., 2024b; Wang et al., 2024a; Wang et al., 2025c; Agashe et al., 2025; Li et al., 2025), but incur high cost and limited adaptability. Offline methods encode domain-specific capabilities by post-training a single VLM on large-scale human-annotated (Qin et al., 2025) or synthetically generated trajectories (Wu et al., 2025b; Sun et al., 2025; Gandhi and Neubig, 2025; Bai et al., 2025a), typically relying on static benchmarks (Li et al., 2020; Sun et al., 2022; Hsiao et al., 2022; Rawles et al., 2023; Li et al., 2024a; Wang et al., 2024c; Chai et al., 2025a). However, offline datasets restrict evaluation to per-step accuracy and cannot capture trajectory-level, long-horizon success (Pan et al., 2024). Online RL methods allow agents to interact with dynamic environments and optimize VLM-based policies from reward feedback (Liu et al., 2024; Bai et al., 2024; Wang et al., 2025b; Papoudakis et al., 2025; Gu et al., 2025; Shi et al., 2025; Yang et al., 2025).
+These approaches are typically evaluated on interactive benchmarks (Wang et al., 2024a; Xing et al., 2024; Chai et al., 2025b; Chen et al., 2025; Rawles et al., 2025; Xu et al., 2025), which provide Android emulator platforms (Toyama et al., 2021) and assess trajectory-level success via rule-based scripts or LLM-as-a-judge (Gu et al., 2024; Lù et al., 2025). However, these benchmarks lack standardized training environments and unseen contexts, limiting systematic study of RL generalization in mobile agents.
+Reinforcement Learning for LLM Agents.
+Reinforcement learning (RL) has proven effective for fine-tuning LLMs on reasoning tasks (Guo et al., 2025; Team et al., 2025; Ke et al., 2025) and has recently been extended to multi-turn agentic decision-making. Early works align LLMs with textual embodied environments through online RL (Carta et al., 2023; Tan et al., 2024; Zhou et al., 2024b; Wang et al., 2025d), while Zhai et al. (2024) apply LoRA with PPO (Schulman et al., 2017) to fine-tune 7B VLMs, surpassing GPT-4V and Gemini. More recent studies bring RL into realistic GUI-based environments, particularly in web and computer-use domains (Qi et al., 2025; Wei et al., 2025; Wu et al., 2025a; Vattikonda et al., 2025; Lu et al., 2025a; Feng et al., 2025). By contrast, work on mobile agents remains limited: offline methods rely on static curated datasets that fail to capture full environment dynamics (Luo et al., 2025; Lu et al., 2025b; Liu et al., 2025c; Bai et al., 2025a), while online approaches explore interaction-based training. For example, Bai et al. (2024) propose an offline-to-online framework, Shi et al. (2025) and Gu et al. (2025) extend GRPO to trajectory-level optimization with customized rewards, and Yang et al. (2025) automate task generation and reward estimation. However, those approaches primarily target performance improvements while overlooking generalization to unseen scenarios.
+Benchmarks for Generalization in Reinforcement Learning.
+Generalization in reinforcement learning is the ability of agents to transfer robustly to unseen environments, commonly formalized as a Contextual Markov Decision Process (CMDP) (Hallak et al., 2015), where training and testing occur on disjoint context sets (Kirk et al., 2023). Benchmarks for this problem typically adopt either procedural generation, where distinct context are sampled from random seeds (Cobbe et al., 2019; Cobbe et al., 2020; Küttler et al., 2020; Team et al., 2021; Chevalier-Boisvert et al., 2023), or controllable variation, where environment parameters such as states, dynamics, or reward functions are explicitly configured to enable systematic evaluation (Packer et al., 2018; Ahmed et al., 2020; Zhu et al., 2020; Hansen and Wang, 2021; Benjamins et al., 2021). Recent benchmarks targeting real-world tasks have been proposed in domains such as web navigation (Yao et al., 2022; Zhou et al., 2024a; Koh et al., 2024), computer use (Bonatti et al., 2025; Xie et al., 2024), and enterprise workflows (Drouin et al., 2024), but they primarily provide evaluation sets without standardized train–test splits. While Liu et al. (2025b) augment these benchmarks with additional test sets, they still fail to capture environmental variability. A concurrent work examines generalization through factors such as icon placement, size, wallpapers, languages, and device types in mobile environments, but does not incorporate reinforcement learning (Lee et al., 2025).
+3 Benchmarking generalization in Mobile Environments
+Existing benchmarks focus on evaluation without standard training data, while prior methods often rely on human-collected or synthetic data that is rarely released. This lack of transparency raises concerns about potential train–test leakage and limits the study of generalization. To address this gap, we formalize mobile interactions as a Contextual Markov Decision Process (CMDP) and introduce a new benchmark, AndroidWorld-Generalization, designed to systematically evaluate generalization.
+Preliminaries.
+A common formalism for mobile interactions is the Markov Decision Process (MDP)
+ℳ=⟨𝒮,𝒜,𝒯,ℛ⟩\mathcal{M}=\langle\mathcal{S},\mathcal{A},\mathcal{T},\mathcal{R}\rangle.
+The state space 𝒮\mathcal{S} consists of GUI screenshots combined with interaction history.
+The action space 𝒜\mathcal{A} comprises mobile interactions such as clicking coordinates, swiping or typing variable-length text, etc. The transition function 𝒯\mathcal{T} is determined by the mobile operating system, and the reward function ℛ\mathcal{R} provides a binary signal at the terminal state, indicating task success or failure. At each timestep tt, given a natural-language task instruction qq, the agent takes the current state sts_{t} as input and selects an action at∈𝒜a_{t}\in\mathcal{A}.
+The state is defined as
+st=(ot,ht)s_{t}=(o_{t},h_{t}),
+where oto_{t} denotes the current observation (screenshot) and
+ht={o0,a0,o1,a1,…,ot−1,at−1}h_{t}=\{o_{0},a_{0},o_{1},a_{1},\ldots,o_{t-1},a_{t-1}\}
+is the interaction history recording all past observations and actions.
+The policy is parameterized by a VLM as
+at∼πθ(⋅∣st,q)a_{t}\sim\pi_{\theta}(\cdot\mid s_{t},q). In practice, rewards in mobile environments are sparse and terminal-only:
+the agent always receives rt=0r_{t}=0 except a binary signal
+rT∈{0,1}r_{T}\in\{0,1\} at the terminal step.
+3.1 Generalization in Contextual MDP
+However, the standard MDP assumes a single stationary environment and thus cannot capture variability across tasks. To model diverse tasks and enable the study of generalization, we extend MDP into a
+Contextual Markov Decision Process (CMDP) (Hallak et al., 2015).
+A CMDP factors the state space as 𝒮=𝒮′×𝒞\mathcal{S}=\mathcal{S}^{\prime}\times\mathcal{C},
+where 𝒮′\mathcal{S}^{\prime} is the underlying state space and
+𝒞\mathcal{C} is a context space. A context c∈𝒞c\in\mathcal{C} captures
+higher-level variations, such as different task instructions within a template,
+different templates within an application, or entirely different applications. Before each interaction sequence, a context c∼P𝒞c\sim P_{\mathcal{C}} is sampled from a distribution over 𝒞\mathcal{C} and remains
+fixed until the task is completed. The context influences both states and transitions.
+For example, if cc corresponds to the Google Calendar, then states
+include UI screenshots, while transitions correspond to
+operations such as creating a new event or setting reminders,
+rather than those from other applications.
+To evaluate generalization, we adopt the
+zero-shot policy transfer (ZSPT) (Kirk et al., 2023).
+Specifically, we partition the context space into two disjoint subsets, 𝒞train\mathcal{C}_{\text{train}} and 𝒞test\mathcal{C}_{\text{test}}, such that 𝒞train∩𝒞test=∅\mathcal{C}_{\text{train}}\cap\mathcal{C}_{\text{test}}=\emptyset,
+sampled from the same underlying distribution P𝒞P_{\mathcal{C}}. The agent is trained
+only on 𝒞train\mathcal{C}_{\text{train}}, but its
+performance is evaluated on 𝒞test\mathcal{C}_{\text{test}}.
+With terminal-only rewards, the objective becomes
+maxπθ⁡𝔼c∈𝒞test​[rT∣c],\max_{\pi_{\theta}}\;\mathbb{E}_{c\in\mathcal{C}_{\text{test}}}\!\left[r_{T}\mid c\right],
+without any additional training or fine-tuning on 𝒞test\mathcal{C}_{\text{test}}.
+3.2 AndroidWorld-Generalization
+Why AndroidWorld? To instantiate the CMDP formulation in realistic mobile environments, we extend AndroidWorld into a new benchmark, AndroidWorld-Generalization, designed to enable fair and reproducible evaluation of zero-shot generalization, shown in Figure 1. Although AndroidWorld was originally introduced solely for evaluation rather than RL training, it has two properties that make it well suited for extension into an RL benchmark. First, it provides rule-based scripts that ensure reliable reward functions rather than relying on LLM-as-a-judge. Detailed comparisons are given in Appendix G. Second, its automatic task parameterization mechanism enables the generation of thousands of diverse task instances from 116 templates, which span three difficulty levels across 20 applications, thereby facilitating the systematic construction of held-out contexts.
+This task parameterization mechanism induces a natural hierarchy for task instance generation: each application contains multiple task templates, and each template can produce many distinct instances by sampling different random seeds. For example, in the Markor note-taking application, the template “Create a new note named {file_name} with the following text: {text }” contains two parameters, and varying these parameters under different seeds produces different task instances.
+Train-evaluation task generation. Building on this parameterization, we define task instances, task templates, and applications as distinct notions of context in AndroidWorld-Generalization, and introduce three challenging regimes: In Unseen Instance, we begin with all 116 AndroidWorld templates but discard 38 that cannot generate distinct task instances using random seeds, leaving 78 usable templates. We then construct the splits by generating evaluation instances using 3 fixed seeds and training instances using 16 non-overlapping seeds. This yields 1149 unique training instances and 234 test instances, while keeping the same templates and applications shared across splits. In Unseen Template, we first filter out applications that contain only a single template, then partition the remaining templates within each app under a 3:1 train–test ratio. This yields 57 training templates and 18 held-out templates drawn from 14 shared applications. After defining the template split, we generate task instances using the same procedure as in the Unseen Instance regime, assigning non-overlapping sets of random seeds to obtain 836 distinct training instances and 54 testing instances. In Unseen App, we construct a fully disjoint application split, using 12 applications for training and 5 distinct applications for testing, such that applications, templates, and task instances are all non-overlapped. For example, the agent is trained on tasks from Calendar and evaluated on tasks from Camera. In all regimes, training and evaluation are conducted on disjoint context sets.
+To ensure fairness, we balance task difficulty across the training and testing sets and manually verify that no task instances overlap. Full details of task-instance generation, train–test split construction, difficulty computation, and the differences between AndroidWorld-Generalization and the original AndroidWorld are provided in Appendix C, with benchmark statistics summarized in Table 1. We report average test-set success rates with standard deviation across three evaluation seeds per task template.
+Table 1: Statistics of the AndroidWorld-Generalization benchmark. “I”, “T”, and “A” denote Instances, Templates, and Applications; “Diff.” denotes average difficulty. Bold numbers indicate the number of train/test examples in each regime, while gray numbers indicate the templates and applications from which those examples are generated.
+Regime
+Overlap
+Train
+Test
+Instance
+Template
+App
+I/T/A
+Diff.
+I/T/A
+Diff.
+Unseen Instance
+✗
+✓
+✓
+1149 / 78 / 17
+1.68
+234 / 78 / 17
+1.68
+Unseen Template
+✗
+✗
+✓
+836 / 57 / 14
+1.70
+54 / 18 / 14
+1.72
+Unseen App
+✗
+✗
+✗
+905 / 62 / 12
+1.68
+48 / 16 / 5
+1.69
+4 Training System for Mobile Agents
+Building on the established generalization benchmark, we now describe the training of mobile agents in this setting.
+In this section, we present the design of mobile agents trained with Group Relative Policy Optimization (GRPO) as the online reinforcement learning algorithm. We further analyze the limitations of the native AndroidWorld implementation and develop a scalable rollout collection system to enable reliable and efficient training.
+4.1 Online learining with GRPO
+Mobile agents must perform multi-turn decision-making through interaction with mobile environments. To accommodate the resource constraints of mobile devices, we adopt Qwen2-VL-7B architecture as the policy model (Wang et al., 2024b). We initialize it with UI-TARS (Qin et al., 2025) weights, supervised fine-tuned on large-scale annotated GUI trajectories. This initialization can provide domain-specific priors that serve as an effective warm start for reinforcement learning (Zhai et al., 2024). At each timestep of a trajectory, the agent conditions on the current screenshot and the full interaction history to capture long-term dependencies. Inspired by Zhai et al. (2024), we incorporate chain-of-thought prompting (Wei et al., 2022) to enhance reasoning, structuring outputs into thoughts and actions, while the interaction history records all preceding screenshots, thoughts, and actions. The detailed prompt template is provided in Appendix H.
+We adopt GRPO from DeepSeek-R1 (Guo et al., 2025) as our online reinforcement learning algorithm.
+Given a task instruction qq, the policy πθ\pi_{\theta} generates a group of GG trajectories {τi}i=1G\{\tau_{i}\}_{i=1}^{G}. Each trajectory τi=(si,0,ai,0,…,si,Ti,ai,Ti)\tau_{i}=(s_{i,0},a_{i,0},\ldots,s_{i,T_{i}},a_{i,T_{i}}) consists of TiT_{i} timesteps. The GRPO loss is defined as
+ℒGRPO(θ)=−1∑i=1GTi∑i=1G∑t=1Timin(ri,t(θ)A^i,t,clip(ri,t(θ), 1−ϵ, 1+ϵ)A^i,t),\mathcal{L}_{\text{GRPO}}(\theta)=-\frac{1}{\sum_{i=1}^{G}T_{i}}\sum_{i=1}^{G}\sum_{t=1}^{T_{i}}\min\!\Big(r_{i,t}(\theta)\,\hat{A}_{i,t},\;\operatorname{clip}\!\big(r_{i,t}(\theta),\,1-\epsilon,\,1+\epsilon\big)\,\hat{A}_{i,t}\Big),
+(1)
+where
+ri,t​(θ)=πθ​(ai,t∣si,t,q)πθold​(ai,t∣si,t,q).r_{i,t}(\theta)=\frac{\pi_{\theta}(a_{i,t}\mid s_{i,t},q)}{\pi_{\theta_{\text{old}}}(a_{i,t}\mid s_{i,t},q)}.
+(2)
+Since only a binary terminal reward R⁡(τi)∈{0,1}R(\tau_{i})\in\{0,1\} is available for each multi-turn trajectory, we extend GRPO by computing a normalized trajectory-level advantage for each τi\tau_{i} using the group mean μ\mu and standard deviation σ\sigma, and broadcasting it uniformly to all steps in the trajectory:
+A^τi=R⁡(τi)−μσ,A^i,t=A^τi,∀t.\hat{A}_{\tau_{i}}=\frac{R(\tau_{i})-\mu}{\sigma},\qquad\hat{A}_{i,t}=\hat{A}_{\tau_{i}},\;\;\forall t.
+(3)
+In practice, since the VLM generates actions as token sequences, we compute log-probability ratios at the token level and apply GRPO by averaging across tokens within each timestep. For simplicity, we adopt GRPO with KL regularization, omit entropy bonuses, and rely solely on trajectory-level rewards without customized reward shaping. Following Lu et al. (2025a), we employ curriculum learning, beginning with easy tasks, then progressing to easy and medium, and finally all tasks.
+Figure 2: RL training system for mobile agent. We integrate GRPO with a scalable rollout collection system that parallelizes multiple environments. Docker containerization provides resource isolation and decouples trainer and environments through HTTP communication for reliability. Asynchronous rollouts eliminate synchronization bottlenecks, enabling more agent steps per unit time.
+Together, these three techniques facilitate reliable and efficient large-scale training.
+4.2 Scalable Rollout Collection
+A scalable RL system is essential for large-scale mobile agent training. Since GRPO requires multiple rollouts, which dominate the time consumption of each training step if collected sequentially (see Figure 7 (left)), parallel collection across environments is critical for efficiency.
+A simple solution is to use multiprocessing for Android environments, but it encounters scalability limitations:
+•
+Failure coupling:
+Each Android environment operates through an emulator, which imposes substantial CPU and memory overhead. Without resource isolation, multiple processes compete for system resources, leading to instability such as freezes, delays, and crashes. In parallel setups, one failed environment can disrupt others and terminate rollout collection. In addition, because rollout collection is coupled with policy updates, one crash can halt the entire training process.
+•
+Synchronous rollout barrier:
+In practice, the execution time of each environment varies across rollout steps. Some actions, such as text input, complete quickly, whereas others, such as scrolling, are slower. The naive implementation introduces a synchronization barrier that waits for all environments to finish before the VLM policy produces the next batch of outputs. As a result, faster environments idle and the GPUs are underutilized.
+To address these limitations, we build a reliable and scalable rollout collection system as in Figure 2:
+•
+Containerized infrastructure: To ensure resource isolation and fault tolerance, each Android environment is encapsulated in a Docker container built from a standardized image containing both the Android emulator and a server interface. All containers are assigned identical CPU and memory quotas to prevent stragglers. This design decouples environment execution from policy updates, as each container communicates with the VLM policy model through its server interface via HTTP. During rollout, the agent’s outputs (thoughts and actions) or control commands (e.g., reset) are transmitted to the assigned container, where actions are executed and the resulting reward and next-step screenshot are returned.
+•
+Asynchronous rollouts: Each environment progresses independently; once an environment execution is completed, the resulting screenshot and reward are immediately returned to the agent to generate the next thoughts and action, rather than waiting for all environments to finish. This eliminates global synchronization, pipelines environment execution with action generation, and improves GPU utilization and throughput.
+5 Experiments
+We evaluate how online RL enhances mobile agents’ decision-making, generalization in AndroidWorld-Generalization, and RL training system efficiency, addressing four key questions:
+1.
+Q1: Can RL improve the decision-making capabilities of mobile agents?
+We compare RL against supervised fine-tuning in Unseen Instance regime and track performance improvements across evaluation subsets defined by task type and difficulty level.
+2.
+Q2: Can RL generalize to increasingly challenging unseen scenarios?
+We evaluate whether the three regimes in AndroidWorld-Generalization pose progressively greater generalization challenges, and analyze skill transfer in Unseen Template via a case study.
+3.
+Q3: Can few-shot adaptation at test-time improve performance on unseen apps?
+We evaluate whether fine-tuning mobile agents using limited interaction data collected during deployment in Unseen App can improve performance.
+4.
+Q4: Can the proposed rollout collection system accelerate RL training?
+We ablate the asynchronous design to quantify speedup over the naïve AndroidWorld implementation.
+Environment and Training Setting. We follow AndroidWorld and use an Android 13 emulator (API level 33) with 20 pre-installed apps. We use UI-Tars-7B-SFT as the base model, modifying its prompt template by adding “answer” to the action space to support information-retrieval tasks.
+Each task instance generates eight rollouts capped at 20 steps due to GPU memory constraints.
+We collect rollouts with a sampling temperature of τ=1.0\tau=1.0 and adopt Adam optimizer (Kingma, 2014) with a fixed learning rate of 1×10−61\times 10^{-6} and a 100-step linear warmup.
+Each experiment uses 16 parallel environments and two NVIDIA H100-80GB GPUs. More details are provided in Appendix I &  J.
+Baselines. We compare our RL-trained screenshot-based agent with (a) state-of-the-art agents built on proprietary VLMs with prompting, (b) supervised fine-tuning on static human or synthetic demonstrations, and (c) recent RL-based methods. Due to resource constraints, we focus on 7B models but also report results for models up to 72B.
+5.1 Results and Findings
+Q1: Can RL improve the decision-making capabilities of mobile agents? Although the Unseen Instance regime trains on 78 templates, we expand the evaluation set to all 116 templates to remain consistent with the original AndroidWorld evaluation, and maintain comparability with prior baselines.
+Building on the UI-Tars-7B-SFT baseline, our RL method employs a curriculum learning scheme that expands training tasks from easy, to easy + medium, and eventually to to the full task set defined by AndroidWorld’s difficulty scores. This approach more than doubles the average success rate, yielding a 26.1% overall improvement (Table 2) with consistent gains across all difficulty levels—28.4% on Easy, 26.8% on Medium, and 17.5% on Hard (Appendix D).
+Our method also outperforms proprietary prompting-based methods such as GPT-4o and Claude Computer Use, despite using a much smaller open-source 7B model, and even surpasses larger open-source agents such as UI-TARS-72B-SFT. These results highlight the effectiveness of RL post-training in interactive mobile environments. However, most state-of-the-art methods report benchmark results that should be treated as references rather than strict baselines, since their codebases are not publicly released and therefore not directly reproducible. Accordingly, we do not claim state-of-the-art performance; instead, we emphasize our clear improvements over all reproducible baselines.
+Table 2: Comparison of methods on AndroidWorld. “API-Based” denotes use of proprietary inference APIs. “Open-Source” denotes availability of model weights. “Reproducible” denotes availability of full codebase.
+Models
+API-Based
+Open-Source
+Reproducible
+Average (SR)
+Proprietary model
+GPT-4o (Hurst et al., 2024)
+✓
+✓
+34.5
+Claude Computer Use (Anthropic, 2024)
+✓
+✓
+27.9
+UGround+GPT-4o (Gou et al., 2024)
+✓
+✓
+✓
+44.0
+Aria-UI+GPT-4o (Yang et al., 2024)
+✓
+✓
+✓
+44.8
+Agent S2 (Agashe et al., 2025)
+✓
+54.3
+32B/72B Models
+Qwen2.5-VL-32B (Bai et al., 2025b)
+✓
+✓
+31.5
+MobileGUI-32B (Shi et al., 2025)
+44.8
+AGUVIS-72B (Xu et al., 2024)
+26.1
+Qwen2.5-VL-72B (Bai et al., 2025b)
+✓
+✓
+35.0
+UI-TARS-72B-SFT (Qin et al., 2025)
+✓
+✓
+46.6
+MobileUse-72B (Li et al., 2025)
+✓
+✓
+62.9
+2B/7B Models
+AppVLM-3B (Papoudakis et al., 2025)
+37.8
+MobileGUI-7B (Shi et al., 2025)
+30.0
+UI-TARS-7B-SFT (Qin et al., 2025)
+✓
+✓
+23.0 ± 2.2
+Ours-7B w/o curriculum learning
+✓
+✓
+45.1 ± 2.5 (+22.1)
+Ours-7B
+✓
+✓
+49.1 ± 8.2 (+26.1)
+Learning Dynamics: Figure 3 (left) shows consistent improvement of average success rate in both training and evaluation with successive policy updates. All test curves are obtained by evaluating saved checkpoints only after the full training has completed, rather than querying the test set during training. This protocol prevents any train–test leakage and allows an assessment of the gap between training performance and generalization. The systematic evaluation across three difficulty levels and two task types in Figure 3 (right) further demonstrates performance gains, particularly for information retrieval with an initial success rate of 0. Training on easy tasks transfers to medium and hard ones, but information retrieval at the hard level remains unsolved.
+Q2: Can RL generalize to increasingly challenging unseen scenarios?
+To study generalization in RL, we train and evaluate mobile agents on three unseen regimes in the AndroidWorld-Generalization benchmark: Unseen Instance/Template/App. For fair comparison, we use the same hyperparameters and 500 policy iteration steps across all experiments. As shown in Figure 4, evaluation success rates increase substantially in Unseen Instance (21.8%). In contrast, gains in Unseen Template (15.7%) and Unseen App (8.3%) are noticeably smaller and plateau early despite continued improvements in training success rates, highlighting that generalizing to new templates and applications remains challenging.
+Figure 3: Training dynamics on Unseen Instance with curriculum learning. Colored areas denote curriculum stages: blue (Easy), red (Easy + Medium), green (All). (Left) Average training and evaluation success rates. (Right) Average evaluation success rates by task type (Task Completion, Information Retrieval) and difficulty (Easy, Medium, Hard).
+Figure 4: Training dynamics of GRPO across the three unseen regimes. We report training success rates and evaluation success rates with standard deviations.
+Case Study: To understand generalization in Unseen Template, we analyze templates that failed before RL training but succeeded afterward, revealing the underlying transfer pattern. Although the template itself is unseen, completing it requires leveraging transferable skills from seen templates. For example, an unseen template that requires deleting a food recipe from a list of candidates relies on the skill of identifying the target content. This skill can be transferred from a seen template involving food-name search. Details of the transferable skills are provided in Appendix E.
+PPO. To demonstrate that our RL training system is algorithm-agnostic, we also evaluate PPO on all three unseen regimes in AndroidWorld-Generalization. We follow a simple PPO baseline with token-level GAE as in (Wang et al., 2025a), where a binary reward is assigned only at the final token of each trajectory and propagated backward to compute token-level advantages. As shown in Figure 5, PPO exhibits the same qualitative trends as GRPO: evaluation success rates improve by 17.1% on Unseen Instance, 15.7% on Unseen Template, and 8.3% on Unseen App.
+Figure 5: Training dynamics of PPO across the three unseen regimes.
+Q3: Can few-shot adaptation at test-time improve performance on unseen apps? While the primary focus of this study is evaluating zero-shot generalization to unseen scenarios, inspired by Beck et al. (2025), we investigate whether simple few-shot fine-tuning at test time can improve performance on the most challenging Unseen App.
+To remain consistent with the standard Unseen App regime, we use its 48 instances for testing. For training, we generate 8 non-overlapping instances per unseen app with different random seeds, denoted as unseen-app-train. Starting from a model trained for 500 steps on seen apps as the non-adaptation baseline, we allow 50 additional fine-tuning steps on unseen-app-train at test time using the rule-based reward function, as adaptation stage in practical deployment typically operates on resource-constrained devices and must rely on few-shot data and limited computation.
+Figure 6: Few-shot adaptation vs. non-adaptation, averaged. over Unseen App test-set.
+We propose two adaptation strategies: (i) All-App, where the model is fine-tuned on all unseen-app-train instances; and (ii) Per-App, where separate models are fine-tuned on the 8 instances of each unseen application, enabling stronger personalization. Fig. 6 shows that Per-App adaptation outperforms the non-adapted baseline by 10.4% and All-App adaptation by 6.3%, highlighting the effectiveness of personalized finetuning and underscoring few-shot adaptation as a promising direction for improvement on unseen scenarios.
+Q4: Can the proposed rollout collection system accelerate RL training? To analyze the impact of parallelization on rollout collection, we profile training with 16 rollouts per training step.
+While policy update time remains unchanged, rollout collection dominates training. Using 16 environments in parallel reduces collection time by 6.83× compared to a single environment in the sequential setting.
+To evaluate the effectiveness of our asynchronous design, we measure the average rollout collection time across all evaluation tasks. Without asynchrony, the trainer must wait for all environments to complete, causing the longest rollout in each group to bottleneck progress. This effect amplifies with larger group sizes, leading to a 57.8% slowdown when using 16 environments. Detailed settings are provided in Appendix F.
+Figure 7: (Left) Time profiling of a policy update vs. the collection of 16 rollouts per training step. (Right) Performance of async vs. sync rollouts with varying environment counts.
+6 Conclusion
+In this work, we formulate GUI-based mobile use as a Contextual Markov Decision Process and introduce AndroidWorld-Generalization, a benchmark with three unseen regimes for studying RL generalization in online reinforcement learning. To enable reproducibility, we develop the first fully open-source end-to-end RL framework, integrating GRPO with a scalable rollout system. Experiments show that RL significantly outperforms supervised finetuning but struggles on unseen templates and apps. This work establishes both algorithmic and system foundations for RL-based mobile agents, highlighting to future directions in generalization and few-shot adaptation at test-time.
+References
+Agashe et al. (2025)
+S. Agashe, K. Wong, V. Tu, J. Yang, A. Li, and X. E. Wang
+Agent s2: a compositional generalist-specialist framework for computer use agents.
+arXiv preprint arXiv:2504.00906.
+Cited by: Table 4,
+§1,
+§2,
+Table 2.
+Ahmed et al. (2020)
+O. Ahmed, F. Träuble, A. Goyal, A. Neitz, Y. Bengio, B. Schölkopf, M. Wüthrich, and S. Bauer
+Causalworld: a robotic manipulation benchmark for causal structure and transfer learning.
+arXiv preprint arXiv:2010.04296.
+Cited by: §2.
+Anthropic (2024)
+Anthropic
+Introducing computer use, a new claude 3.5 sonnet, and claude 3.5 haiku.
+Note: https://www.anthropic.com/news/3-5-models-and-computer-useAccessed: 2025-09-21
+Cited by: Table 4,
+Table 2.
+Bai et al. (2025a)
+H. Bai, Y. Zhou, L. E. Li, S. Levine, and A. Kumar
+Digi-q: learning VLM q-value functions for training device-control agents.
+In The Thirteenth International Conference on Learning Representations,
+External Links: Link
+Cited by: §2,
+§2.
+Bai et al. (2024)
+H. Bai, Y. Zhou, J. Pan, M. Cemri, A. Suhr, S. Levine, and A. Kumar
+Digirl: training in-the-wild device-control agents with autonomous reinforcement learning.
+Advances in Neural Information Processing Systems 37, pp. 12461–12495.
+Cited by: §1,
+§2,
+§2.
+Bai et al. (2025b)
+S. Bai, K. Chen, X. Liu, J. Wang, W. Ge, S. Song, K. Dang, P. Wang, S. Wang, J. Tang, et al.
+Qwen2. 5-vl technical report.
+arXiv preprint arXiv:2502.13923.
+Cited by: Table 4,
+Table 4,
+Table 2,
+Table 2.
+Beck et al. (2025)
+J. Beck, R. Vuorio, E. Z. Liu, Z. Xiong, L. Zintgraf, C. Finn, S. Whiteson, et al.
+A tutorial on meta-reinforcement learning.
+Foundations and Trends® in Machine Learning 18 (2-3), pp. 224–384.
+Cited by: §5.1.
+Benjamins et al. (2021)
+C. Benjamins, T. Eimer, F. Schubert, A. Biedenkapp, B. Rosenhahn, F. Hutter, and M. Lindauer
+Carl: a benchmark for contextual and adaptive reinforcement learning.
+arXiv preprint arXiv:2110.02102.
+Cited by: §2.
+Bonatti et al. (2025)
+R. Bonatti, D. Zhao, F. Bonacci, D. Dupont, S. Abdali, Y. Li, Y. Lu, J. Wagle, K. Koishida, A. Bucker, L. K. Jang, and Z. Hui
+Windows agent arena: evaluating multi-modal OS agents at scale.
+In Forty-second International Conference on Machine Learning,
+External Links: Link
+Cited by: §2.
+Carta et al. (2023)
+T. Carta, C. Romac, T. Wolf, S. Lamprier, O. Sigaud, and P. Oudeyer
+Grounding large language models in interactive environments with online reinforcement learning.
+In International Conference on Machine Learning,
+pp. 3676–3713.
+Cited by: §2.
+Chai et al. (2025a)
+Y. Chai, S. Huang, Y. Niu, H. Xiao, L. Liu, G. Wang, D. Zhang, S. Ren, and H. Li
+AMEX: android multi-annotation expo dataset for mobile GUI agents.
+In Findings of the Association for Computational Linguistics: ACL 2025,  W. Che, J. Nabende, E. Shutova, and M. T. Pilehvar (Eds.),
+Vienna, Austria, pp. 2138–2156.
+External Links: Link,
+Document,
+ISBN 979-8-89176-256-5
+Cited by: §2.
+Chai et al. (2025b)
+Y. Chai, H. Li, J. Zhang, L. Liu, G. Liu, G. Wang, S. Ren, S. Huang, and H. Li
+A3: android agent arena for mobile gui agents.
+arXiv preprint arXiv:2501.01149.
+Cited by: §2.
+Chen et al. (2025)
+J. Chen, D. Yuen, B. Xie, Y. Yang, G. Chen, Z. Wu, L. Yixing, X. Zhou, W. Liu, S. Wang, K. Zhou, R. Shao, L. Nie, Y. Wang, J. HAO, J. Wang, and K. Shao
+SPA-BENCH: a COMPREHENSIVE BENCHMARK FOR SMARTPHONE AGENT EVALUATION.
+In The Thirteenth International Conference on Learning Representations,
+External Links: Link
+Cited by: §2.
+Chevalier-Boisvert et al. (2023)
+M. Chevalier-Boisvert, B. Dai, M. Towers, R. Perez-Vicente, L. Willems, S. Lahlou, S. Pal, P. S. Castro, and J. Terry
+Minigrid & miniworld: modular & customizable reinforcement learning environments for goal-oriented tasks.
+Advances in Neural Information Processing Systems 36, pp. 73383–73394.
+Cited by: §2.
+Cobbe et al. (2020)
+K. Cobbe, C. Hesse, J. Hilton, and J. Schulman
+Leveraging procedural generation to benchmark reinforcement learning.
+In International conference on machine learning,
+pp. 2048–2056.
+Cited by: §2.
+Cobbe et al. (2019)
+K. Cobbe, O. Klimov, C. Hesse, T. Kim, and J. Schulman
+Quantifying generalization in reinforcement learning.
+In International conference on machine learning,
+pp. 1282–1289.
+Cited by: §2.
+Comanici et al. (2025)
+G. Comanici, E. Bieber, M. Schaekermann, I. Pasupat, N. Sachdeva, I. Dhillon, M. Blistein, O. Ram, D. Zhang, E. Rosen, et al.
+Gemini 2.5: pushing the frontier with advanced reasoning, multimodality, long context, and next generation agentic capabilities.
+arXiv preprint arXiv:2507.06261.
+Cited by: §1.
+Drouin et al. (2024)
+A. Drouin, M. Gasse, M. Caccia, I. H. Laradji, M. D. Verme, T. Marty, D. Vazquez, N. Chapados, and A. Lacoste
+WorkArena: how capable are web agents at solving common knowledge work tasks?.
+In Forty-first International Conference on Machine Learning,
+External Links: Link
+Cited by: §2.
+Feng et al. (2025)
+L. Feng, Z. Xue, T. Liu, and B. An
+Group-in-group policy optimization for llm agent training.
+arXiv preprint arXiv:2505.10978.
+Cited by: §2.
+Gandhi and Neubig (2025)
+A. Gandhi and G. Neubig
+Go-browse: training web agents with structured exploration.
+arXiv preprint arXiv:2506.03533.
+Cited by: §2.
+Gou et al. (2024)
+B. Gou, R. Wang, B. Zheng, Y. Xie, C. Chang, Y. Shu, H. Sun, and Y. Su
+Navigating the digital world as humans do: universal visual grounding for gui agents.
+arXiv preprint arXiv:2410.05243.
+Cited by: Table 4,
+Table 2.
+Gou et al. (2025)
+B. Gou, R. Wang, B. Zheng, Y. Xie, C. Chang, Y. Shu, H. Sun, and Y. Su
+Navigating the digital world as humans do: universal visual grounding for GUI agents.
+In The Thirteenth International Conference on Learning Representations,
+External Links: Link
+Cited by: §1.
+Gu et al. (2024)
+J. Gu, X. Jiang, Z. Shi, H. Tan, X. Zhai, C. Xu, W. Li, Y. Shen, S. Ma, H. Liu, et al.
+A survey on llm-as-a-judge.
+arXiv preprint arXiv:2411.15594.
+Cited by: §2.
+Gu et al. (2025)
+J. Gu, Q. Ai, Y. Wang, P. Bu, J. Xing, Z. Zhu, W. Jiang, Z. Wang, Y. Zhao, M. Zhang, et al.
+Mobile-r1: towards interactive reinforcement learning for vlm-based mobile agent via task-level rewards.
+arXiv preprint arXiv:2506.20332.
+Cited by: §1,
+§2,
+§2.
+Guo et al. (2025)
+D. Guo, D. Yang, H. Zhang, J. Song, R. Zhang, R. Xu, Q. Zhu, S. Ma, P. Wang, X. Bi, et al.
+Deepseek-r1: incentivizing reasoning capability in llms via reinforcement learning.
+arXiv preprint arXiv:2501.12948.
+Cited by: §1,
+§2,
+§4.1.
+Hallak et al. (2015)
+A. Hallak, D. Di Castro, and S. Mannor
+Contextual markov decision processes.
+arXiv preprint arXiv:1502.02259.
+Cited by: §1,
+§2,
+§3.1.
+Hansen and Wang (2021)
+N. Hansen and X. Wang
+Generalization in reinforcement learning by soft data augmentation.
+In International Conference on Robotics and Automation,
+Cited by: §2.
+Hsiao et al. (2022)
+Y. Hsiao, F. Zubach, G. Baechler, V. Carbune, J. Lin, M. Wang, S. Sunkara, Y. Zhu, and J. Chen
+Screenqa: large-scale question-answer pairs over mobile app screenshots.
+arXiv preprint arXiv:2209.08199.
+Cited by: §2.
+Hurst et al. (2024)
+A. Hurst, A. Lerer, A. P. Goucher, A. Perelman, A. Ramesh, A. Clark, A. Ostrow, A. Welihinda, A. Hayes, A. Radford, et al.
+Gpt-4o system card.
+arXiv preprint arXiv:2410.21276.
+Cited by: Table 4,
+Table 2.
+Jaech et al. (2024)
+A. Jaech, A. Kalai, A. Lerer, A. Richardson, A. El-Kishky, A. Low, A. Helyar, A. Madry, A. Beutel, A. Carney, et al.
+Openai o1 system card.
+arXiv preprint arXiv:2412.16720.
+Cited by: §1.
+Ke et al. (2025)
+Z. Ke, F. Jiao, Y. Ming, X. Nguyen, A. Xu, D. X. Long, M. Li, C. Qin, P. Wang, S. Savarese, et al.
+A survey of frontiers in llm reasoning: inference scaling, learning to reason, and agentic systems.
+arXiv preprint arXiv:2504.09037.
+Cited by: §2.
+Kingma (2014)
+D. P. Kingma
+Adam: a method for stochastic optimization.
+arXiv preprint arXiv:1412.6980.
+Cited by: §5.
+Kirk et al. (2023)
+R. Kirk, A. Zhang, E. Grefenstette, and T. Rocktäschel
+A survey of zero-shot generalisation in deep reinforcement learning.
+Journal of Artificial Intelligence Research 76, pp. 201–264.
+Cited by: §2,
+§3.1.
+Koh et al. (2024)
+J. Y. Koh, R. Lo, L. Jang, V. Duvvur, M. C. Lim, P. Huang, G. Neubig, S. Zhou, R. Salakhutdinov, and D. Fried
+Visualwebarena: evaluating multimodal agents on realistic visual web tasks.
+arXiv preprint arXiv:2401.13649.
+Cited by: §2.
+Küttler et al. (2020)
+H. Küttler, N. Nardelli, A. Miller, R. Raileanu, M. Selvatici, E. Grefenstette, and T. Rocktäschel
+The nethack learning environment.
+Advances in Neural Information Processing Systems 33, pp. 7671–7684.
+Cited by: §2.
+Lee et al. (2025)
+J. Lee, T. Min, M. An, D. Hahm, H. Lee, C. Kim, and K. Lee
+B-moCA: benchmarking mobile device control agents across diverse configurations.
+External Links: Link
+Cited by: §2.
+Li et al. (2025)
+N. Li, X. Qu, J. Zhou, J. Wang, M. Wen, K. Du, X. Lou, Q. Peng, and W. Zhang
+MobileUse: a gui agent with hierarchical reflection for autonomous mobile operation.
+arXiv preprint arXiv:2507.16853.
+Cited by: Table 4,
+§1,
+§2,
+Table 2.
+Li et al. (2024a)
+W. Li, W. E. Bishop, A. Li, C. Rawles, F. Campbell-Ajala, D. Tyamagundlu, and O. Riva
+On the effects of data scale on ui control agents.
+Advances in Neural Information Processing Systems 37, pp. 92130–92154.
+Cited by: §2.
+Li et al. (2024b)
+Y. Li, C. Zhang, W. Yang, B. Fu, P. Cheng, X. Chen, L. Chen, and Y. Wei
+Appagent v2: advanced agent for flexible mobile interactions.
+arXiv preprint arXiv:2408.11824.
+Cited by: §1,
+§2.
+Li et al. (2020)
+Y. Li, J. He, X. Zhou, Y. Zhang, and J. Baldridge
+Mapping natural language instructions to mobile ui action sequences.
+arXiv preprint arXiv:2005.03776.
+Cited by: §2.
+Liu et al. (2025a)
+G. Liu, P. Zhao, L. Liu, Y. Guo, H. Xiao, W. Lin, Y. Chai, Y. Han, S. Ren, H. Wang, et al.
+Llm-powered gui agents in phone automation: surveying progress and prospects.
+arXiv preprint arXiv:2504.19838.
+Cited by: §1.
+Liu et al. (2024)
+X. Liu, B. Qin, D. Liang, G. Dong, H. Lai, H. Zhang, H. Zhao, I. L. Iong, J. Sun, J. Wang, et al.
+Autoglm: autonomous foundation agents for guis.
+arXiv preprint arXiv:2411.00820.
+Cited by: §2.
+Liu et al. (2025b)
+X. Liu, T. Zhang, Y. Gu, I. L. Iong, S. XiXuan, Y. Xu, S. Zhang, H. Lai, J. Sun, X. Yang, Y. Yang, Z. Qi, S. Yao, X. Sun, S. Cheng, Q. Zheng, H. Yu, H. Zhang, W. Hong, M. Ding, L. Pan, X. Gu, A. Zeng, Z. Du, C. H. Song, Y. Su, Y. Dong, and J. Tang
+VisualAgentBench: towards large multimodal models as visual foundation agents.
+In The Thirteenth International Conference on Learning Representations,
+External Links: Link
+Cited by: §2.
+Liu et al. (2025c)
+Y. Liu, P. Li, C. Xie, X. Hu, X. Han, S. Zhang, H. Yang, and F. Wu
+Infigui-r1: advancing multimodal gui agents from reactive actors to deliberative reasoners.
+arXiv preprint arXiv:2504.14239.
+Cited by: §2.
+Lu et al. (2025a)
+F. Lu, Z. Zhong, S. Liu, C. Fu, and J. Jia
+ARPO: end-to-end policy optimization for gui agents with experience replay.
+arXiv preprint arXiv:2505.16282.
+Cited by: §2,
+§4.1.
+Lù et al. (2025)
+X. H. Lù, A. Kazemnejad, N. Meade, A. Patel, D. Shin, A. Zambrano, K. Stanczak, P. Shaw, C. Pal, and S. Reddy
+AgentRewardBench: evaluating automatic evaluations of web agent trajectories.
+In Second Conference on Language Modeling,
+External Links: Link
+Cited by: §2.
+Lu et al. (2025b)
+Z. Lu, Y. Chai, Y. Guo, X. Yin, L. Liu, H. Wang, H. Xiao, S. Ren, G. Xiong, and H. Li
+UI-r1: enhancing efficient action prediction of gui agents by reinforcement learning.
+arXiv preprint arXiv:2503.21620.
+Cited by: §2.
+Luo et al. (2025)
+R. Luo, L. Wang, W. He, and X. Xia
+Gui-r1: a generalist r1-style vision-language action model for gui agents.
+arXiv preprint arXiv:2504.10458.
+Cited by: §2.
+Packer et al. (2018)
+C. Packer, K. Gao, J. Kos, P. Krähenbühl, V. Koltun, and D. Song
+Assessing generalization in deep reinforcement learning.
+arXiv preprint arXiv:1810.12282.
+Cited by: §2.
+Pan et al. (2024)
+J. Pan, Y. Zhang, N. Tomlin, Y. Zhou, S. Levine, and A. Suhr
+Autonomous evaluation and refinement of digital agents.
+In First Conference on Language Modeling,
+External Links: Link
+Cited by: §2.
+Papoudakis et al. (2025)
+G. Papoudakis, T. Coste, Z. Wu, J. Hao, J. Wang, and K. Shao
+Appvlm: a lightweight vision language model for online app control.
+arXiv preprint arXiv:2502.06395.
+Cited by: Table 4,
+§1,
+§1,
+§2,
+Table 2.
+Qi et al. (2025)
+Z. Qi, X. Liu, I. L. Iong, H. Lai, X. Sun, J. Sun, X. Yang, Y. Yang, S. Yao, W. Xu, J. Tang, and Y. Dong
+WebRL: training LLM web agents via self-evolving online curriculum reinforcement learning.
+In The Thirteenth International Conference on Learning Representations,
+External Links: Link
+Cited by: §2.
+Qin et al. (2025)
+Y. Qin, Y. Ye, J. Fang, H. Wang, S. Liang, S. Tian, J. Zhang, J. Li, Y. Li, S. Huang, et al.
+Ui-tars: pioneering automated gui interaction with native agents.
+arXiv preprint arXiv:2501.12326.
+Cited by: Table 4,
+Table 4,
+§1,
+§1,
+§2,
+§4.1,
+Table 2,
+Table 2.
+Rawles et al. (2025)
+C. Rawles, S. Clinckemaillie, Y. Chang, J. Waltz, G. Lau, M. Fair, A. Li, W. E. Bishop, W. Li, F. Campbell-Ajala, D. K. Toyama, R. J. Berry, D. Tyamagundlu, T. P. Lillicrap, and O. Riva
+AndroidWorld: a dynamic benchmarking environment for autonomous agents.
+In The Thirteenth International Conference on Learning Representations,
+External Links: Link
+Cited by: §1,
+§2.
+Rawles et al. (2023)
+C. Rawles, A. Li, D. Rodriguez, O. Riva, and T. Lillicrap
+Androidinthewild: a large-scale dataset for android device control.
+Advances in Neural Information Processing Systems 36, pp. 59708–59728.
+Cited by: §2.
+Schulman et al. (2017)
+J. Schulman, F. Wolski, P. Dhariwal, A. Radford, and O. Klimov
+Proximal policy optimization algorithms.
+arXiv preprint arXiv:1707.06347.
+Cited by: §2.
+Shi et al. (2025)
+Y. Shi, W. Yu, Z. Li, Y. Wang, H. Zhang, N. Liu, H. Mi, and D. Yu
+MobileGUI-rl: advancing mobile gui agent through reinforcement learning in online environment.
+arXiv preprint arXiv:2507.05720.
+Cited by: Table 4,
+Table 4,
+§1,
+§1,
+§2,
+§2,
+Table 2,
+Table 2.
+Song et al. (2024)
+Y. Song, F. Xu, S. Zhou, and G. Neubig
+Beyond browsing: api-based web agents.
+arXiv preprint arXiv:2410.16464.
+Cited by: §1.
+Sun et al. (2022)
+L. Sun, X. Chen, L. Chen, T. Dai, Z. Zhu, and K. Yu
+Meta-gui: towards multi-modal conversational agents on mobile gui.
+arXiv preprint arXiv:2205.11029.
+Cited by: §2.
+Sun et al. (2025)
+Q. Sun, K. Cheng, Z. Ding, C. Jin, Y. Wang, F. Xu, Z. Wu, C. Jia, L. Chen, Z. Liu, B. Kao, G. Li, J. He, Y. Qiao, and Z. Wu
+OS-genesis: automating GUI agent trajectory construction via reverse task synthesis.
+In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers),  W. Che, J. Nabende, E. Shutova, and M. T. Pilehvar (Eds.),
+Vienna, Austria, pp. 5555–5579.
+External Links: Link,
+Document,
+ISBN 979-8-89176-251-0
+Cited by: §1,
+§2.
+Tan et al. (2024)
+W. Tan, W. Zhang, S. Liu, L. Zheng, X. Wang, and B. An
+True knowledge comes from practice: aligning large language models with embodied environments via reinforcement learning.
+In The Twelfth International Conference on Learning Representations,
+External Links: Link
+Cited by: §2.
+Team et al. (2025)
+K. Team, A. Du, B. Gao, B. Xing, C. Jiang, C. Chen, C. Li, C. Xiao, C. Du, C. Liao, et al.
+Kimi k1. 5: scaling reinforcement learning with llms.
+arXiv preprint arXiv:2501.12599.
+Cited by: §2.
+Team et al. (2021)
+O. E. L. Team, A. Stooke, A. Mahajan, C. Barros, C. Deck, J. Bauer, J. Sygnowski, M. Trebacz, M. Jaderberg, M. Mathieu, et al.
+Open-ended learning leads to generally capable agents.
+arXiv preprint arXiv:2107.12808.
+Cited by: §2.
+Toyama et al. (2021)
+D. Toyama, P. Hamel, A. Gergely, G. Comanici, A. Glaese, Z. Ahmed, T. Jackson, S. Mourad, and D. Precup
+Androidenv: a reinforcement learning platform for android.
+arXiv preprint arXiv:2105.13231.
+Cited by: §2.
+Vattikonda et al. (2025)
+D. Vattikonda, S. Ravichandran, E. Penaloza, H. Nekoei, M. Thakkar, T. L. S. de Chezelles, N. Gontier, M. Muñoz-Mármol, S. O. Shayegan, S. Raimondo, et al.
+How to train your llm web agent: a statistical diagnosis.
+arXiv preprint arXiv:2507.04103.
+Cited by: §2.
+Wang et al. (2024a)
+J. Wang, H. Xu, H. Jia, X. Zhang, M. Yan, W. Shen, J. Zhang, F. Huang, and J. Sang
+Mobile-agent-v2: mobile device operation assistant with effective navigation via multi-agent collaboration.
+Advances in Neural Information Processing Systems 37, pp. 2686–2710.
+Cited by: §2.
+Wang et al. (2025a)
+K. Wang, P. Zhang, Z. Wang, Y. Gao, L. Li, Q. Wang, H. Chen, Y. Lu, Z. Yang, L. Wang, R. Krishna, J. Wu, L. Fei-Fei, Y. Choi, and M. Li
+VAGEN: reinforcing world model reasoning for multi-turn VLM agents.
+In The Thirty-ninth Annual Conference on Neural Information Processing Systems,
+External Links: Link
+Cited by: §5.1.
+Wang et al. (2024b)
+P. Wang, S. Bai, S. Tan, S. Wang, Z. Fan, J. Bai, K. Chen, X. Liu, J. Wang, W. Ge, et al.
+Qwen2-vl: enhancing vision-language model’s perception of the world at any resolution.
+arXiv preprint arXiv:2409.12191.
+Cited by: §4.1.
+Wang et al. (2024c)
+S. Wang, W. Liu, J. Chen, Y. Zhou, W. Gan, X. Zeng, Y. Che, S. Yu, X. Hao, K. Shao, et al.
+Gui agents with foundation models: a comprehensive survey.
+arXiv preprint arXiv:2411.04890.
+Cited by: §2.
+Wang et al. (2025b)
+T. Wang, Z. Wu, J. Liu, J. HAO, J. Wang, and K. Shao
+DistRL: an asynchronous distributed reinforcement learning framework for on-device control agent.
+In The Thirteenth International Conference on Learning Representations,
+External Links: Link
+Cited by: §2.
+Wang et al. (2025c)
+Z. Wang, H. Xu, J. Wang, X. Zhang, M. Yan, J. Zhang, F. Huang, and H. Ji
+Mobile-agent-e: self-evolving mobile assistant for complex tasks.
+arXiv preprint arXiv:2501.11733.
+Cited by: §2.
+Wang et al. (2025d)
+Z. Wang, K. Wang, Q. Wang, P. Zhang, L. Li, Z. Yang, X. Jin, K. Yu, M. N. Nguyen, L. Liu, E. Gottlieb, Y. Lu, K. Cho, J. Wu, L. Fei-Fei, L. Wang, Y. Choi, and M. Li
+RAGEN: understanding self-evolution in llm agents via multi-turn reinforcement learning.
+External Links: 2504.20073,
+Link
+Cited by: §2.
+Wei et al. (2022)
+J. Wei, X. Wang, D. Schuurmans, M. Bosma, F. Xia, E. Chi, Q. V. Le, D. Zhou, et al.
+Chain-of-thought prompting elicits reasoning in large language models.
+Advances in neural information processing systems 35, pp. 24824–24837.
+Cited by: §4.1.
+Wei et al. (2025)
+Z. Wei, W. Yao, Y. Liu, W. Zhang, Q. Lu, L. Qiu, C. Yu, P. Xu, C. Zhang, B. Yin, et al.
+Webagent-r1: training web agents via end-to-end multi-turn reinforcement learning.
+arXiv preprint arXiv:2505.16421.
+Cited by: §2.
+Wen et al. (2024)
+H. Wen, Y. Li, G. Liu, S. Zhao, T. Yu, T. J. Li, S. Jiang, Y. Liu, Y. Zhang, and Y. Liu
+Autodroid: llm-powered task automation in android.
+In Proceedings of the 30th Annual International Conference on Mobile Computing and Networking,
+pp. 543–557.
+Cited by: §2.
+Wu et al. (2024)
+B. Wu, Y. Li, Y. Wei, M. Fang, and L. Chen
+Foundations and recent trends in multimodal mobile agents: a survey.
+arXiv preprint arXiv:2411.02006.
+Cited by: §1.
+Wu et al. (2025a)
+J. Wu, B. Li, R. Fang, W. Yin, L. Zhang, Z. Tao, D. Zhang, Z. Xi, G. Fu, Y. Jiang, et al.
+WebDancer: towards autonomous information seeking agency.
+arXiv preprint arXiv:2505.22648.
+Cited by: §2.
+Wu et al. (2025b)
+Z. Wu, Z. Wu, F. Xu, Y. Wang, Q. Sun, C. Jia, K. Cheng, Z. Ding, L. Chen, P. P. Liang, and Y. Qiao
+OS-ATLAS: foundation action model for generalist GUI agents.
+In The Thirteenth International Conference on Learning Representations,
+External Links: Link
+Cited by: §2.
+Xie et al. (2024)
+T. Xie, D. Zhang, J. Chen, X. Li, S. Zhao, R. Cao, T. J. Hua, Z. Cheng, D. Shin, F. Lei, Y. Liu, Y. Xu, S. Zhou, S. Savarese, C. Xiong, V. Zhong, and T. Yu
+OSWorld: benchmarking multimodal agents for open-ended tasks in real computer environments.
+In The Thirty-eight Conference on Neural Information Processing Systems Datasets and Benchmarks Track,
+External Links: Link
+Cited by: §2.
+Xing et al. (2024)
+M. Xing, R. Zhang, H. Xue, Q. Chen, F. Yang, and Z. Xiao
+Understanding the weakness of large language model agents within a complex android environment.
+In Proceedings of the 30th ACM SIGKDD Conference on Knowledge Discovery and Data Mining,
+pp. 6061–6072.
+Cited by: §2.
+Xu et al. (2025)
+Y. Xu, X. Liu, X. Sun, S. Cheng, H. Yu, H. Lai, S. Zhang, D. Zhang, J. Tang, and Y. Dong
+AndroidLab: training and systematic benchmarking of android autonomous agents.
+In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers),  W. Che, J. Nabende, E. Shutova, and M. T. Pilehvar (Eds.),
+Vienna, Austria, pp. 2144–2166.
+External Links: Link,
+Document,
+ISBN 979-8-89176-251-0
+Cited by: §2.
+Xu et al. (2024)
+Y. Xu, Z. Wang, J. Wang, D. Lu, T. Xie, A. Saha, D. Sahoo, T. Yu, and C. Xiong
+Aguvis: unified pure vision agents for autonomous gui interaction.
+arXiv preprint arXiv:2412.04454.
+Cited by: Table 4,
+Table 2.
+Yang et al. (2025)
+C. Yang, S. Su, S. Liu, X. Dong, Y. Yu, W. Su, X. Wang, Z. Liu, J. Zhu, H. Li, et al.
+ZeroGUI: automating online gui learning at zero human cost.
+arXiv preprint arXiv:2505.23762.
+Cited by: §1,
+§2,
+§2.
+Yang et al. (2024)
+Y. Yang, Y. Wang, D. Li, Z. Luo, B. Chen, C. Huang, and J. Li
+Aria-ui: visual grounding for gui instructions.
+arXiv preprint arXiv:2412.16256.
+Cited by: Table 4,
+Table 2.
+Yao et al. (2022)
+S. Yao, H. Chen, J. Yang, and K. Narasimhan
+Webshop: towards scalable real-world web interaction with grounded language agents.
+Advances in Neural Information Processing Systems 35, pp. 20744–20757.
+Cited by: §2.
+Zhai et al. (2024)
+S. Zhai, H. Bai, Z. Lin, J. Pan, P. Tong, Y. Zhou, A. Suhr, S. Xie, Y. LeCun, Y. Ma, et al.
+Fine-tuning large vision-language models as decision-making agents via reinforcement learning.
+Advances in neural information processing systems 37, pp. 110935–110971.
+Cited by: §2,
+§4.1.
+Zhang et al. (2025a)
+C. Zhang, S. He, L. Li, S. Qin, Y. Kang, Q. Lin, S. Rajmohan, and D. Zhang
+Api agents vs. gui agents: divergence and convergence.
+arXiv preprint arXiv:2503.11069.
+Cited by: §1.
+Zhang et al. (2025b)
+H. H. Zhang, T. Zhang, B. Lin, Y. Xue, Y. Zhu, H. Liu, L. Gu, L. Ye, Z. Wang, X. Zuo, et al.
+Widget2Code: from visual widgets to ui code via multimodal llms.
+arXiv preprint arXiv:2512.19918.
+Cited by: §1.
+Zhou et al. (2024a)
+S. Zhou, F. F. Xu, H. Zhu, X. Zhou, R. Lo, A. Sridhar, X. Cheng, T. Ou, Y. Bisk, D. Fried, U. Alon, and G. Neubig
+WebArena: a realistic web environment for building autonomous agents.
+In The Twelfth International Conference on Learning Representations,
+External Links: Link
+Cited by: §2.
+Zhou et al. (2024b)
+Y. Zhou, A. Zanette, J. Pan, S. Levine, and A. Kumar
+ArCHer: training language model agents via hierarchical multi-turn RL.
+In Forty-first International Conference on Machine Learning,
+External Links: Link
+Cited by: §2.
+Zhu et al. (2020)
+Y. Zhu, J. Wong, A. Mandlekar, R. Martín-Martín, A. Joshi, S. Nasiriany, and Y. Zhu
+Robosuite: a modular simulation framework and benchmark for robot learning.
+arXiv preprint arXiv:2009.12293.
+Cited by: §2.
+Appendix A Limitations
+While our benchmark covers three unseen scenarios, its scale is still constrained to 20 applications and 116 templates, which limits both the comprehensiveness of generalization evaluation and the availability of sufficiently diverse training contexts to improve it. Scaling to a larger pool of applications and task templates would not only provide stronger coverage of real-world variability but also offer richer opportunities for agents to acquire transferable skills across heterogeneous tasks. Furthermore, although our rollout collection system is designed with containerized infrastructure to scale to hundreds of environments across multi-node clusters, in practice our current experiments are restricted to a single node due to resource limitations common in academic settings. This restriction prevents us from fully demonstrating the scalability of the system and limits the pace of large-scale training.
+Appendix B LLMs Usage
+ChatGPT5 is used solely as a general-purpose writing assistant. Specifically, we apply a fixed prompt template — “Polish the writing in a concise and academic way” — to improve grammar, clarity, and style of text written by the authors. The LLM did not contribute to research ideation, methodology design, experimental setup, analysis, or result interpretation.
+Appendix C AndroidWorld-Generalization Bechmark
+AndroidWorld.
+AndroidWorld is an interactive benchmark built on the Android Emulator, pre-installed with 20 applications and 116 task templates. Each template defines a workflow (e.g., creating a calendar event, deleting a recipe entry) with parameter slots (e.g., event name, date, recipe type) that can be instantiated with different values to generate unlimited task instances via random seeds. Tasks span two categories: task completion (e.g., opening an app and completing a form) and information retrieval (e.g., extracting a contact name from the address book). Templates are further grouped into three difficulty levels—easy, medium, and hard—based on the number of steps and reasoning complexity required. Task success is evaluated via rule-based scripts. However, AndroidWorld was originally designed for evaluation rather than training, and its codebase only supports sequential execution without parallel rollout collection.
+Train–Test Split on Unseen Instance.
+For evaluation, we follow the AndroidWorld protocol and use all 116 task templates, enabling direct comparison with prior work.
+For each template, we report mean and standard deviation over three evaluation seeds—seed 30 (the AndroidWorld default) and seeds 7 and 1234—chosen to maximize the number of unique instances.
+For training, we exclude 38 templates that consistently produce identical task instances regardless of seed, leaving 78 templates.
+From these, we generate distinct task instances using 16 random seeds
+{1, 2, 3, 4, 5, 6, 8, 9, 12, 123, 12345, 123456, 1234567, 12345678, 123456789, 1234567890},
+yielding 16×78=124816\times 78=1248 instances.
+To avoid overlap between train and test, we manually remove duplicates, resulting in a final training set of 1149 unique task instances.
+Train-Test split on Unseen Template
+Given the 116 templates in AndroidWorld, we construct the Unseen Template scheme by splitting them into training and evaluation sets according to the following rules. First, we require both seen and unseen templates in the training and evaluation sets to come from overlapping applications. Therefore, we filter out applications that contain only a single template. To further divide training and evaluation, we target a 3:1 ratio while maintaining comparable average difficulty levels (difficulty is defined in the following subsection). Specifically, for each application, if a medium- or hard-level template is assigned to the evaluation set, at least one template of equal or lower difficulty from the same application is retained in the training set. For each template, we then generate distinct task instances using the same automatic generation mechanism with non-overlapping random seeds, as described earlier.
+As a result, the filtered dataset contains 14 applications: the training set includes 57 templates (mean difficulty = 1.70) with 836 instances, and the evaluation set includes 18 templates (mean difficulty = 1.72) with 54 instances.
+Train–Test Split on Unseen Apps
+Following the Unseen Instance scheme, 38 templates could not be used for instance generation due to random seed constraints in three applications, leaving 17 applications for the Unseen App regime. Applying the same 3:1 split rule and ensuring similar difficulty levels, we construct the dataset as follows: the training set consists of 62 templates (mean difficulty = 1.68) with 905 instances from 12 applications, while the evaluation set consists of 16 templates (mean difficulty = 1.69) with 48 instances from 5 non-overlapping applications.
+Few-shot adaptation at test-time: Unseen-app Train-Test split
+In the Unseen App scheme, the test set contains 16 task templates across 5 unseen applications: Audio Recorder (1 template), Clock (1), OSMAnd (2), Tasks (4), and Broccoli (8). To enable few-shot adaptation at test time, we construct a corresponding training set from these templates. Specifically, we sample 8, 8, 4, 2, and 1 task instances from the 1, 1, 2, 4, and 8 templates, respectively, using different random seeds. This yields a balanced training set, denoted as unseen-app-train, in which each unseen application contains 8 distinct task instances. We manually verified that none of these instances overlap with those in the test set.
+Difficulty calculation
+AndroidWorld includes 116 task templates, each assigned a difficulty level: easy (1), medium (2), or hard (3). To maintain comparable difficulty distributions between training and testing splits across the three unseen regimes (Unseen Instance, Unseen Template, and Unseen App), we ensure that the ratio of templates across difficulty levels is preserved. For example, in the Unseen Template regime, easy, medium, and hard templates are evenly divided between training and testing. Similarly, in the Unseen App regime, we select app combinations such that the proportions of easy, medium, and hard templates in the training apps match those in the held-out test apps. As a result, the average difficulty level between training and testing splits remains similar across all regimes, ensuring that generalization is evaluated under comparable task complexity, reported in Table 1.
+AndroidWorld-Generalization vs. AndroidWorld
+A standard benchmark for agentic mobile tasks typically consists of three components: an interactive environment, a task suite with an associated verifier, and a codebase capable of generating and evaluating rollouts. Along the environment dimension, AndroidWorld and AndroidWorld-Generalization are identical: both use the same 20 Android applications and 116 manually curated task templates. However, the remaining dimensions differ substantially. First, in terms of the task suite, AndroidWorld provides only a single task instance per template (116 total) for evaluation, which limits any robustness assessment. In contrast, AndroidWorld-Generalization uses the automatic task-parameterization mechanism to generate three evaluation instances per template, and leverages the remaining non-overlapping seeds to construct thousands of additional instances that form standardized training sets across three unseen generalization regimes (instance, template, and application). Second, regarding RL support, AndroidWorld was designed solely for evaluation (released in May 2024), before the community’s shift toward LLM-driven RL (e.g., DeepSeek-R1, Jan. 2025), and therefore includes no RL-capable training split or interface. AndroidWorld-Generalization explicitly supports the RL paradigm, enabling reproducible RL training and systematic study of RL generalization.Third, with respect to infrastructure, AndroidWorld’s evaluation pipeline is fully sequential, making large-scale testing prohibitively slow. AndroidWorld-Generalization introduces a parallelized rollout engine (Section 4), providing up to a 16×\times speedup (Figure 6) and supporting scalable RL training and evaluation. A comparison is summarized in Table 3.
+Table 3: Comparison between AndroidWorld and AndroidWorld-Generalization.
+AndroidWorld
+AndroidWorld-Generalization
+Environment
+116 templates across 20 apps
+Same 20 apps and templates (subset splits)
+Task Suite
+116 eval instances (1 seed / template)
+Multi-seed eval instances; thousands of non-overlapping train instances
+Generalization
+None
+Three unseen regimes (instance, template, app)
+RL Support
+No; evaluation-only
+Yes; standardized train set for RL
+Infrastructure
+Sequential rollouts
+Parallel rollout collection for scalable evaluation & RL training
+Appendix D Additional experiment results on Unseen Instance
+Table 4: AndroidWorld evaluation performance for Mobile Agents. 33
+3
+Prior methds marked with ∗ are evaluated on a sub-set of AndroidWorld.
+Models
+Easy (SR)
+Medium (SR)
+Hard (SR)
+Average (SR)
+Close-source Models
+GPT-4o (Hurst et al., 2024)
+-
+-
+-
+34.5
+Claude Computer Use (Anthropic, 2024)
+-
+-
+-
+27.9
+UGround+GPT-4o (Gou et al., 2024)
+-
+-
+-
+44.0
+Aria-UI+GPT-4o (Yang et al., 2024)
+-
+-
+-
+44.8
+Agent S2 (Agashe et al., 2025)
+-
+-
+-
+54.3
+Open-source 32B/72B Models
+Qwen2.5-VL-32B (Bai et al., 2025b)
+-
+-
+-
+31.5
+MobileGUI-32B (Shi et al., 2025)
+-
+-
+-
+44.8
+AGUVIS-72B (Xu et al., 2024)
+-
+-
+-
+26.1
+Qwen2.5-VL-72B (Bai et al., 2025b)
+-
+-
+-
+35.0
+UI-TARS-72B-SFT (Qin et al., 2025)
+-
+-
+-
+46.6
+MobileUse-72B (Li et al., 2025)
+83.6
+47.2
+26.3
+62.9
+Open-source 2B/7B Models
+AppVLM-3B* (Papoudakis et al., 2025)
+57.9
+27.4
+8.3
+37.8
+MobileGUI-7B (Shi et al., 2025)
+-
+-
+-
+30.0
+UI-Tars-7B-SFT (Qin et al., 2025)
+33.9 ± 5.3
+13.9 ± 2.8
+5.3 ± 0.0
+23.0 ± 2.2
+Ours-7B w/o curriculum learning
+62.8 ± 0.9
+31.5 ± 8
+14.0 ± 3
+45.1 ± 2.5 (+22.1)
+Ours-7B
+62.3 ± 5.7
+40.7 ± 11.6
+22.8 ± 13.2
+49.1 ± 8.2 (+26.1)
+Appendix E Case study on Unseen Template
+To investigate the underlying reasons for zero-shot transfer in the Unseen Template regime, we analyze task instances that succeed after RL training but fail before. Although task templates are disjoint, completing a template typically requires one or a few fundamental skills, which can transfer from seen to unseen templates. This skill sharing explains why policies trained on certain templates can generalize to non-overlapping ones. We highlight task instances from all five unseen templates that achieve success after RL training, identify the transferable skills they require, and trace these skills back to corresponding seen templates that provided them during training, as summarized below.
+Figure 8: Case study 1.
+Figure 9: Case study 2.
+Figure 10: Case study 3.
+Figure 11: Case study 4.
+Figure 12: Case study 5.
+Appendix F Ablation study on Rollout Collection System
+To highlight the importance of parallel rollout collection and system optimization, we profile the time of a single policy update iteration, which consists of a policy parameter update and the collection of 16 rollouts executed sequentially and in parallel. For this analysis, we select a task instance with 15 steps, reflecting the average length of training tasks, to generate the rollouts, and repeat the experiment three times for robustness. To ensure a fair comparison, we restart the server before each run and ensure that no other processes occupy GPU or CPU resources. The results show that the update time of the policy parameters remains identical between both settings, while rollout collection occupies more than 95% of the total runtime in the sequential case and almost 75% in the parallel case. These findings demonstrate that optimizing rollout collection is essential to alleviate the training bottleneck and accelerate the overall process.
+In our asynchronous design, we adopt a first-come, first-serve strategy: the VLM generates an action as soon as any environment returns its observation, rather than waiting for all environments to complete a full batch at each rollout step. This allows more actions to be executed concurrently and reduces GPU idle time. To evaluate the effectiveness of this design, we ablate the asynchronous mechanism by disabling it and profile the runtime required to complete all 116 task instances in original AndroidWorld evaluation. Varying the number of environments from 4 to 16, we observe that the asynchronous design yields greater benefits as the number of environments increases, since synchronous models are increasingly delayed by the slowest straggler.
+Appendix G Reward Functions: Rule-Based Scripts vs. LLM-as-Judge
+To assess the reliability of reward functions, we compare rule-based scripts with an LLM-as-judge setup by training the same mobile agent using Gemini-2.5-Pro as the reward provider. All training hyper-parameters are kept identical, with the only change being the trajectory reward source (rule-based vs. Gemini). During training, Gemini receives the task description and interaction history (screenshots and actions) as input and produces a binary success score via chain-of-thought reasoning. To mitigate hallucinations, the agent’s internal thoughts are excluded from the interaction history. The full prompt is provided below.
+SYSTEM_PROMPT = """You are an expert evaluator. Your job is
+to determine whether the assigned task has been successfully
+completed. Base your judgment strictly on visible, verifiable
+evidence from the screenshots and action history. Be concise,
+objective, and avoid making assumptions beyond what is shown."""
+COT_PROMPT = """Task: {task}
+Respond using this format:
+Thinking: <your concise thought and reasoning process>.
+Status: success or failure
+Guidelines:
+- Include only the two fields above.
+- For information retrieval tasks (typically where
+the task requires the agent to provide an answer),
+confirm that the content in the ’answer’ action is
+accurate and visibly supported by the screenshots.
+- For all other tasks, verify that the task has
+been completed based on clear and observable evidence."""
+To simplify the experiment, we use the Easy task subset of the Unseen Instance regime, consisting of 553 task instances across 38 templates and 14 apps. Despite differing reward functions during training, evaluation is always performed with the same rule-based script. As shown in Figure 14, the agent trained with the rule-based script achieves a 26.22% increase in success rate after 400 policy iterations, whereas the agent trained with Gemini reward achieves only an 11.48% improvement, primarily due to false positive signals produced by Gemini. Specifically, Figure 14 shows that Gemini’s reward predictions are consistently higher than rule-based script’s reward feedbacks, with the gap widening from 10% to 20% as training progresses. Consequently, the model is optimized in a misleading direction, highlighting the importance of reliable rule-based reward functions.
+Figure 13: Evaluation success rates using a rule-based script versus Gemini as reward functions. The rule-based script proves more effective at the same number of policy iteration steps.
+Figure 14: Training success rates using a rule-based script versus Gemini as reward functions. The rule-based script provides reliable rewards, whereas Gemini assigns higher rewards to the same trajectories, leading to false positives and potentially misleading optimization.
+Appendix H Agent Design
+Action space.
+The mobile agent interacts with the environment through a set of actions, summarized in Table 5. Together, they form a flexible action space that supports both task execution (e.g., completing forms, navigating menus) and information retrieval (e.g., entering queries). This design balances simplicity with expressiveness, ensuring that the agent can operate across diverse applications, task templates and task instances in AndroidWorld.
+Prompt Template.
+We employ a VLM as the policy model to generate thoughts followed by a predicted action, conditioned on the current screenshot and the interaction history.
+To standardize the model’s input–output format, we adopt a structured prompt template that specifies how task instructions, screenshots, and histories are provided as input, and how the model should output its reasoning process and corresponding action, as follow
+⬇
+UITARS_USR_PROMPT_THOUGHT = """You␣are␣a␣GUI␣agent.␣You␣are␣given␣a␣task␣and␣your␣action␣history,␣with␣screenshots.␣You␣need␣to␣perform␣the␣next␣action␣to␣complete␣the␣task.
+##␣Output␣Format
+‘‘‘
+Thought:␣...
+Action:␣...
+‘‘‘
+##␣Action␣Space
+click(start_box=’<|box_start|>(x1,y1)<|box_end|>’)
+long_press(start_box=’<|box_start|>(x1,y1)<|box_end|>’,␣time=’’)
+type(content=’’)␣#␣If␣you␣want␣to␣submit␣your␣input,␣use␣"\\n"␣at␣the␣end␣of␣‘content‘.
+scroll(start_box=’<|box_start|>(x1,y1)<|box_end|>’,␣end_box=’<|box_start|>(x3,y3)<|box_end|>’)
+press_home()
+press_back()
+open_app(content=’’)␣#␣Open␣an␣app␣specified␣by␣‘content‘.
+finished(content=’’)␣#␣Submit␣the␣task␣regardless␣of␣whether␣it␣succeeds␣or␣fails.
+answer(content=’’)␣#␣Answer␣user’s␣question.
+##␣Note
+-␣Use␣English␣in␣‘Thought‘␣and␣‘Action‘␣part.
+-␣Write␣a␣small␣plan␣and␣finally␣summarize␣your␣next␣action␣(with␣its␣target␣element)␣in␣one␣sentence␣in␣‘Thought‘␣part.
+##␣User␣Instruction
+{instruction}
+"""
+Table 5: Action space of mobile use agents in AndroidWorld.
+Action Type
+Description
+Click (x,y)(x,y)
+Tap at screen coordinate (x,y)(x,y)
+Long press (x,y)(x,y)
+Long press at screen coordinate (x,y)(x,y)
+Type (text)(\text{text})
+Enter variable-length natural-language text
+Scroll (d)(d)
+Scroll in direction d∈{up, down, left, right}d\in\{\text{up, down, left, right}\}
+Navigate home ()()
+Navigate Back to home screen
+Navigate back ()()
+Navigate Back to previous screen
+Open (app)(\text{app})
+Launch the specified application by name
+Finish (text)(\text{text})
+Report termination of the task
+Answer (text)(\text{text})
+Answer user’s question (for Information Retrieval Tasks)
+Appendix I Interactive Environment
+We follow the AndroidWorld setup procedure to construct our mobile emulator environment on a headless Linux server. The emulator is configured with Android API level 33 (Tiramisu), a resolution of 2400×1080, 16 GB RAM, 6 GB disk space, and 6 virtual CPU cores. All required apps are preinstalled, and their initial launch states are manually verified for correctness. A clean emulator snapshot is saved to eliminate repeated setup overhead during parallel execution. To accommodate action execution, we enforce a fixed delay of 3 seconds and extend it dynamically up to 6 seconds until screen stabilization, determined by comparing accessibility trees across consecutive frames. In contrast, the communication overhead between the Docker server and agents is negligible relative to action latency.
+Appendix J Training Details
+We use UI-Tars-7B-SFT as the base model. The mobile agent prompt is adapted from the original UI-Tars codebase with minimal modification, adding the required answer action to handle information retrieval tasks. At each training step, 2 task instances are sampled, and 8 rollout trajectories are collected per instance. Full trajectories are used for weight updates, with trajectory length capped at 20 steps in addition to AndroidWorld task-specific limits to accommodate GPU memory constraints. Under this configuration, each experiment uses 16 virtual environments for trajectory collection and 2 NVIDIA H100 80GB GPUs for action generation and weight updates. All experiments are conducted on a 224-core server with 8 H100 GPUs, supporting up to 3 concurrent training runs (48 Docker containers across 6 GPUs) without latency degradation; performance deteriorates significantly beyond this scale. Training is performed with a maximum learning rate of 1×10−61\times 10^{-6}, linearly warmed up over the first 5% of steps, and a KL-divergence coefficient of 0.05. Input images are resized to 1120×504, a sampling temperature of 1 is applied, and the main experiment runs for 2000 training steps, requiring approximately 480 GPU hours.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

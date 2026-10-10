@@ -1,0 +1,273 @@
+COT-FM: Cluster-wise Optimal Transport Flow Matching
+COT-FM: Cluster-wise Optimal Transport
+Flow Matching
+Accepted at CVPR 2026
+Chien-Sheng Chiang
+*
+Kuan-Hsun Tu
+*†
+Jia-Wei Liao
+*
+Cheng-Fu Chou
+Tsung-Wei Ke
+National Taiwan University
+* Equal contribution    † Corresponding author
+ArXiv
+Paper
+Code
+Abstract
+We introduce COT-FM, a general framework that reshapes the probability path in Flow Matching (FM)
+        to achieve faster and more reliable generation. FM models often produce curved trajectories due to
+        random or batch-wise couplings, which increase discretization error and reduce sample quality.
+        COT-FM fixes this by clustering target samples and assigning each cluster a dedicated source
+        distribution obtained by reversing pretrained FM models. This divide-and-conquer strategy yields
+        more accurate local transport and significantly straighter vector fields, all without changing the
+        model architecture. As a plug-and-play approach, COT-FM consistently accelerates sampling and
+        improves generation quality across 2D datasets, image generation benchmarks, and robotic
+        manipulation tasks.
+The Problem: Curved Trajectories in Flow Matching
+In Flow Matching, a neural network \(\mathbf{v}_\theta\) is trained to regress a target vector field
+        that transports \(p_0 \to p_1\). The training loss is:
+\[
+        \mathcal{L}_\textrm{CFM}(\theta) =
+        \mathbb{E}_{t,\, (\mathbf{x}_0, \mathbf{x}_1) \sim \pi}\,
+        \bigl\|\mathbf{v}_\theta(\mathbf{x}_t, t) - (\mathbf{x}_1 - \mathbf{x}_0)\bigr\|_2^2
+      \]
+The coupling \(\pi(\mathbf{x}_0, \mathbf{x}_1)\) determines how source samples are paired with
+        target samples. The choice of coupling directly affects whether the learned flow is straight or curved.
+Random coupling (up) forces the model to regress inconsistent velocity
+          targets, producing curved velocity fields. Optimal transport (down) provides consistent couplings,
+          enabling much straighter velocity fields.
+Random coupling
+pairs \(\mathbf{x}_0 \sim p_0\) and \(\mathbf{x}_1 \sim p_1\)
+            independently. The
+marginal
+vector field at any point \(\mathbf{x}\) averages conflicting
+            directions from different path pairs:
+\[
+            \mathbf{v}_t(\mathbf{x}_t) = \mathbb{E}\!\left[
+              \frac{\mathbf{v}_t(\mathbf{x}_t|\mathbf{z})\,p_t(\mathbf{x}_t|\mathbf{z})}{p_t(\mathbf{x}_t)}
+            \right]
+          \]
+This averaging of conflicting velocities produces
+curved trajectories
+— causing large discretization errors at low step counts.
+Optimal Transport (OT) coupling
+finds the minimum-cost pairing:
+\[
+        \pi^* = \arg\min_{\pi \in \Pi}
+        \int \|\mathbf{x}_0 - \mathbf{x}_1\|^2 \,\mathrm{d}\pi(\mathbf{x}_0, \mathbf{x}_1)
+      \]
+Exact OT over a large dataset is computationally intractable (cubic time in sample size). In practice,
+batch-wise OT
+approximates this using small minibatches at each training step. However,
+        it suffers from a
+locality problem
+: each minibatch only covers a small region of the full
+        distribution, so the batch-level couplings remain inconsistent across iterations — resulting in
+        curved flows even with batch OT.
+Our Insight: Divide & Conquer with Clusters
+If we partition the data into clusters, then OT within each cluster becomes a much smaller and
+        more homogeneous subproblem — making batch OT a far better approximation locally.
+        The key challenge is finding the right source distribution for each cluster.
+COT-FM solves this by
+bootstrapping from a pretrained FM model
+. A pretrained FM
+        model, even if trained with random coupling, has learned flows that are reversible and
+        non-intersecting. We exploit this: by integrating the ODE
+backward
+, each data sample
+        \(\mathbf{x}_1\) traces back to its natural source region, giving us the cluster-wise source
+        distributions for free.
+Formally, we reverse ODE integration to retrieve the source sample of data sample
+          \(\mathbf{x}_1\):
+\[
+          \hat{\mathbf{x}}_0 := \mathbf{x}_1 - \int_0^1 \mathbf{v}_\theta(\hat{\mathbf{x}}_t,\, t)\,\mathrm{d}t
+        \]
+Collecting all reversed source samples for cluster \(\mathcal{C}_k\), we fit:
+\[
+          \boldsymbol{\mu}_{0,k} = \frac{1}{|\hat{X}_{0,k}|}\sum_{\hat{\mathbf{x}}_0}\hat{\mathbf{x}}_0,
+          \qquad
+          \boldsymbol{\Sigma}_{0,k} = \frac{1}{|\hat{X}_{0,k}|}\sum_{\hat{\mathbf{x}}_0}
+            (\hat{\mathbf{x}}_0 - \boldsymbol{\mu}_{0,k})(\hat{\mathbf{x}}_0 - \boldsymbol{\mu}_{0,k})^\top
+        \]
+\[
+          p_{0,k}(\mathbf{x}) = \mathcal{N}\!\left(\mathbf{x};\;\boldsymbol{\mu}_{0,k},\;\boldsymbol{\Sigma}_{0,k}\right)
+        \]
+Batch OT is then applied
+within
+each cluster between \(p_{0,k}\) and
+          \(\mathcal{C}_k\). Because source and target are now both concentrated in the same region
+          of space, the batch approximation is far more accurate — yielding significantly straighter flows.
+          COT-FM alternates between refining source distributions (Stage 1) and fine-tuning the FM model
+          (Stage 2); empirically, 2 alternation rounds suffice.
+Importantly, COT-FM only modulates the target probability path without altering the FM
+          architecture or input-output mechanisms, making it broadly compatible with existing FM models.
+Results
+2D Synthetic Experiments
+Method
+NFE
+Mixture of 5-Gaussians
+Two Moons
+Checkerboard
+W²↓
+Curvature↓
+W²↓
+Curvature↓
+W²↓
+Curvature↓
+Rectified Flow
+100
+0.5421
+0.0316
+0.1006
+0.0111
+0.3900
+9.1946
+OT-CFM
+100
+0.6582
+0.0104
+0.1074
+0.0020
+0.3188
+0.1741
+MeanFlow
+1
+0.7612
+0.9170
+0.1233
+—
+0.9170
+—
+COT-FM (Ours)
+100
+0.1995
+0.0084
+0.0266
+0.0016
+0.2550
+0.1505
+CIFAR-10 — Unconditional Image Generation
+FID ↓ (lower is better)
+Method
+1-step
+2-step
+10-step
+50-step
+Rectified Flow backbone
+Random coupling
+378.0
+173
+12.6
+4.45
++ Clustering
+296.0
+107
+10.1
+4.19
+OT-CFM
+226.0
+82.2
+10.6
+4.78
+COT-FM (Ours)
+205.0
+59.1
+8.23
+3.97
+MeanFlow backbone
+Random coupling
+2.92
+2.88
+—
+—
+COT-FM (Ours)
+2.60
+2.53
+—
+—
+ImageNet 256×256 — Class-conditional Generation
+FID ↓ at different NFE steps
+Model
+Method
+100
+50
+10
+2
+1
+SiT-B/2
+Rectified Flow
+5.82
+5.86
+8.25
+119.57
+264.36
+SiT-B/2
+COT-FM (Ours)
+5.11
+5.28
+7.52
+101.66
+231.99
+SiT-B/4
+Rectified Flow
+8.30
+8.39
+11.16
+134.99
+276.13
+SiT-B/4
+COT-FM (Ours)
+7.65
+7.81
+9.87
+114.10
+241.18
+LIBERO — Text-conditional Robotic Manipulation
+Success rate ↑ (higher is better)
+Method
+NFE
+Spatial
+Long
+FLOWER
+4
+97.1%
+93.5%
+FLOWER
+1
+94.2%
+87.3%
+2-Rectified Flow
+1
+95.7%
+91.5%
+COT-FM (Ours)
+1
+96.1%
+94.5%
+Acknowledgment
+This work was supported in part by the AMD–ITRI Joint Laboratory, which provided MI300X
+        high-performance computing resources and technical support for the execution and validation
+        of this research. This work was also supported by the AMD University Program AI & HPC
+        Cluster. We further acknowledge Kuo-Guang Tsai for his technical support on the AMD system
+        cluster infrastructure. This research was also supported by the National Science and
+        Technology Council (NSTC), Taiwan, under Grants 114-2222-E-002-008,
+        114-2221-E-002-182-MY3, 113-2221-E-002-201, and 115-2634-F-002-001.
+BibTeX
+If you find this work useful, please cite:
+Copy
+@misc{chiang2026cotfmclusterwiseoptimaltransport,
+      title={COT-FM: Cluster-wise Optimal Transport Flow Matching},
+      author={Chien-Sheng Chiang and Kuan-Hsun Tu and Jia-Wei Liao and Cheng-Fu Chou and Tsung-Wei Ke},
+      year={2026},
+      eprint={2603.13395},
+      archivePrefix={arXiv},
+      primaryClass={cs.CV},
+      url={https://arxiv.org/abs/2603.13395},
+}
+Website template adapted from
+Nerfies
+and inspired by
+FQL
+.

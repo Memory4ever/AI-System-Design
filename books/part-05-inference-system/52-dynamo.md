@@ -156,6 +156,10 @@ MoE 的 Expert Parallel 把 token 送往持有专家的 rank；在负载接近�
 
 <!-- source-family:SF-2026-ARXIV-2604-01621 -->
 
+移 token 与移权重之间还存在联合计划，而不必只选一种。保持模型的 expert choices 不变，runtime 可把 GPU/NIC 的容量均衡作为约束，直接优化通信关键路径：利用专家副本增加节点覆盖，拆分或合并网络流，再在节点内重排计算与交换权重。这样“各 GPU token 数相近”只是可行条件，不是最快完成的充分条件；同构 GPU、等大专家下 token 数的 compute 代理也不能直接用于异构部署。<!-- source-family:SF-2026-ARXIV-2610-11158 -->
+
+[受限 BF16、A100/H100 的实现](https://arxiv.org/html/2610.11158v1)还支付 routing/metadata、额外专家槽与 weight movement，消费须同时等待 token 和权重到达。小 batch 的搬运难隐藏，端到端 decode 收益可趋近持平，逐层速度不签发 tail SLO。副本预算、热度漂移、NIC 与节点内互联需联合验收；弱互联、计划难摊销或恢复优先时，固定 EP 与成熟 balance 仍合理。本章拥有这条跨 rank 执行路径，不由副本优化改变模型 router 或请求 admission。
+
 ### Adapter也可以成为独立的远程执行路径
 
 共享base与adapter同驻engine，省掉每层远程调用，在adapter工作集小或互联弱时合理；MoE的expert-specific adapter增大后，它们却与KV争用HBM，并随base replicas重复放大。另一条分支保留base与请求KV在engine，将adapter权重和低秩计算交给共享LoRA server：传出activation、并行计算base与adapter，再等远程低秩结果相加后推进下一依赖算子。它分离的是base/adapter，不是Prefill/Decode；scheduler的预取hint也不等于权重已经ready。

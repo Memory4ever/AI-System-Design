@@ -14,6 +14,7 @@
 ## 检查已有旧格式
 
 当前报告使用 `python3 scripts/validate_research.py --report <报告路径>`，读取当前来源清单。
+日期窗口回归测试：`python3 -m unittest scripts.test_report_windows`（包含日窗、七日周窗、跨年和闰日边界）。
 仅核对旧报告原有结构时，可显式运行 `python3 scripts/validate_research.py --report <旧报告路径> --registry <对应旧来源快照>`。
 工具要求实际快照与报告声明匹配；没有快照就不能核验旧结构，不回填虚构字段或修改报告版本来凑通过。
 旧结构通过不是当前标准验收，也不代表 Evidence、Books 或独立语义复核完成。

@@ -1,0 +1,3809 @@
+World2Act: Latent Action Post-Training via Skill-Compositional World Models
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Related Work
+3
+Skill-Compositional World Model Pipeline
+3.1
+Data Processing and Synchronization
+3.2
+Validating Skill Decomposition
+3.3
+Skill-Compositional World Model Inference
+4
+Method
+4.1
+Stage 1: Aligning Video Dynamics and Robot Actions
+4.2
+Stage 2: Latent Action Post-Training
+5
+Experiments
+5.1
+Experimental Setup
+5.2
+Main Results
+5.3
+Ablation Study
+5.4
+Real Robot Experiments
+6
+Discussion
+References
+A
+Video Diffusion Backbones Evaluation
+B
+Extended Experimental Details and Ablations
+C
+Network Specifications
+D
+Failure Cases Analysis
+E
+Details on Skill-Compositional Data
+F
+Broader Impact
+G
+Remarks on Related Work
+License: CC BY-NC-SA 4.0
+arXiv:2603.10422v1 [cs.CV] 11 Mar 2026
+World2Act: Latent Action Post-Training via Skill-Compositional World Models
+An Dinh Vuong
+†
+†
+thanks:
+Equal contribution
+Tuan Van Vo
+1
+1
+footnotemark:
+1
+Abdullah Sohail
+Haoran Ding
+Liang Ma
+Xiaodan Liang
+Anqing Duan
+Ivan Laptev
+Ian Reid
+Affiliation:
+MBZUAI, UAE
+E-mail
+an.vuong@mbzuai.ac.ae
+Abstract
+World Models (WMs) have emerged as a promising approach for post-training Vision-Language-Action (VLA) policies to improve robustness and generalization under environmental changes. However, most WM-based post-training methods rely on pixel-space supervision, making policies sensitive to pixel-level artifacts and hallucination from imperfect WM rollouts. We introduce
+World2Act
+, a post-training framework that aligns VLA actions directly with WM video-dynamics latents using a contrastive matching objective, reducing dependence on pixels. Post-training performance is tied to rollout quality, yet current WMs struggle with arbitrary-length video generation as they are mostly trained on fixed-length clips while robotic execution durations vary widely. To address this, we propose an automatic LLM-based skill-decomposition pipeline that segments high-level instructions into low-level prompts. Our pipeline produces
+RoboCasa-Skill
+and
+LIBERO-Skill
+, supporting skill-compositional WMs that remain temporally consistent across diverse task horizons. Empirically, applying
+World2Act
+to VLAs like GR00T-N1.6 and Cosmos Policy achieves state-of-the-art results on RoboCasa and LIBERO, and improves real-world performance by 6.7%, enhancing embodied agent generalization. Project page:
+https://wm2act.github.io/
+Keywords:
+World models Vision-Language-Action Embodied AI
+1
+Introduction
+(a)
+Pixel space.
+(b)
+Latent space (ours).
+Figure 1
+:
+Prior WM
+→
+\rightarrow
+VLA post-training supervises actions in pixel space, making policies sensitive to rollout artifacts. We instead transfer dynamics priors by aligning VLA action representations to WM video-dynamic latents, reducing dependence on pixels.
+World models (WMs) have emerged as a promising paradigm for building and training embodied agents
+[
+27
+]
+. By synthesizing physically plausible trajectories that capture contact-rich behaviors
+[
+46
+]
+, WMs can produce high-fidelity rollouts that maintain spatial consistency even under varying control conditions
+[
+1
+]
+. In contrast, most vision-language-action (VLA) policies are learned primarily via behavior cloning and struggle with environmental change or unseen contact conditions despite being finetuned on extensive datasets
+[
+58
+,
+40
+]
+. This generalization gap suggests that VLAs lack robust dynamics priors that finetuning alone cannot provide
+[
+44
+]
+, motivating post-training methods that inject these priors from WMs
+[
+31
+]
+. In this work, we study:
+How can we effectively transfer the generalizable dynamics priors captured by WMs into VLA policies to obtain reliable control?
+Previous post-training work
+[
+31
+,
+51
+]
+largely targets pixel-to-action supervision via an inverse dynamics model (IDM)
+[
+27
+]
+, or reward signals
+[
+20
+]
+. Nevertheless, labels or rewards from WMs are constrained by the WM’s training distribution
+[
+13
+]
+. Specifically, when WMs generate off-manifold trajectories or contact inconsistencies, pixel-space rollouts can amplify noise and hallucinations in the training signals, especially over long horizons
+[
+39
+]
+. Such hallucinations in pixel space can harm VLA policy performance, introducing the need for more reliable post-training methods.
+Video latents from WMs capture rich, transferable behavioral dynamics
+[
+55
+,
+15
+]
+and thus offer a versatile alternative to pixels for transferring knowledge from WMs to VLAs
+[
+3
+]
+. Prior work on mapping latent videos to actions largely emphasizes unified video–action representations such as UWM
+[
+62
+]
+and Cosmos-Policy
+[
+30
+]
+. However, these unified frameworks usually leverage excessively high-dimensional joint embedding spaces, which can destabilize the training process
+[
+21
+]
+. To combine the best of both worlds, we post-train VLAs by leveraging the WM’s
+latent space
+. Unlike prior WM-based post-training that refines actions in pixel space, our method aligns the policy’s action features with the WM’s video-dynamic latents via a contrastive loss, reducing sensitivity to pixel-level hallucinations in WM rollouts, as illustrated in
+Figure 1
+.
+The effectiveness of WM-based post-training for VLAs crucially depends on physically consistent rollouts over the task horizon, since the WM’s predictions provide the training signal used to improve the policy
+[
+1
+]
+. Nevertheless, video diffusion backbones are usually pretrained on fixed-length clips, whereas robotic tasks execute over widely varying temporal horizons
+[
+56
+,
+27
+]
+, creating a fundamental challenge for arbitrary-length generation
+[
+23
+]
+. To overcome this, a common strategy is to anchor keyframes as temporal boundaries between sub-goal instructions
+[
+53
+,
+11
+,
+20
+]
+. Such approaches can accumulate errors over time, necessitating more reliable, data-driven alternatives
+[
+50
+]
+. Progress on decomposing expert robot trajectories into atomic actions has also been limited, as collecting such annotations is fine-grained and time-consuming
+[
+61
+]
+. To address this gap, we introduce an automatic trajectory atomization pipeline that uses LLMs to segment expert demonstrations into low-level skill segments, enabling stable conditional generation over long horizons. Built on two simulators
+[
+36
+,
+33
+]
+, we present
+RoboCasa-Skill
+and
+LIBERO-Skill
+to provide a scalable data-driven solution for arbitrary-length generation.
+By addressing the arbitrary-length generation bottleneck, our atomic datasets enable finetuning WMs that generate more temporally consistent trajectories. We then transfer behavioral priors from these skill-compositional WMs to VLA policies via latent alignment, utilizing the WM’s video latents rather than potentially noisy pixel-space supervision. Our latent alignment has two stages. First, we pretrain video and action
+adapters
+that project both modalities into a shared latent space, using a contrastive matching objective to encourage cross-modal consistency. Second, we post-train VLAs, namely GR00T-N1.6
+[
+16
+]
+and Cosmos-Policy
+[
+30
+]
+, using the pretrained shared latent video-action space from the first stage to regularize the policies toward actions that align with the WM’s robust dynamics prior. In summary, our contributions are fourfold:
+•
+We propose
+World2Act
+, a post-training approach that matches WM video latent dynamics with VLA action spaces via latent feature alignment.
+•
+We construct an automatic skill-level segmentation and alignment pipeline and release
+RoboCasa-Skill
+and
+LIBERO-Skill
+, reducing task-length variance when training generative WMs for arbitrary-length prediction.
+•
+We introduce a
+skill-compositional
+WM framework that enables arbitrary-length rollouts by decomposing global, multi-step instructions into low-level subgoals and autoregressively generating short clips.
+•
+Across simulation and real-world benchmarks,
+World2Act
+yields significant improvements over prior WM-based policies and post-training baselines.
+2
+Related Work
+World Models for Policy Improvement.
+WMs have emerged as a key component in developing generalist robots
+[
+14
+]
+. Because real-world data collection is serial, slow, and labor-intensive, WMs provide a low-cost, resettable, and highly scalable alternative for simulating environments and finetuning policies
+[
+52
+]
+. Prior work leveraging WMs to improve policies
+[
+30
+]
+can be broadly grouped into two categories
+[
+18
+]
+:
+i)
+Model-based control
+, where WMs act as environment simulators to support methods such as model-based planning
+[
+26
+,
+60
+,
+55
+,
+31
+]
+. These approaches rely on interactive, action-conditioned WMs, such as V-JEPA 2
+[
+3
+]
+, to produce imagined rollouts that guide the policy toward preferred trajectories
+[
+19
+]
+. However, training such interactive models and subsequently rolling out numerous imagined trajectories can be computationally expensive and difficult to parallelize with policy optimization
+[
+20
+]
+.
+ii)
+Instruction-based control
+, which conditions generation on task specifications, such as natural-language descriptions, to produce complete sequences of future states or actions
+[
+24
+,
+61
+,
+27
+,
+12
+]
+. This work adopts an instruction-based paradigm that enables simultaneous video generation and policy optimization in an efficient, parallel post-training pipeline.
+Post-Training Vision-Language-Action.
+A common practice is to train VLA models on web-scale instruction following data and then apply supervised finetuning on task- or robot-specific datasets
+[
+19
+]
+. Nevertheless, internet data primarily captures static semantics and broad vision–language knowledge, whereas robotics data is narrow, temporally structured, and action-centric; this mismatch can degrade downstream control performance
+[
+40
+]
+. Recently, the field has begun shifting from internet-scale vision–language finetuning on large-scale web datasets
+[
+55
+,
+8
+,
+10
+,
+59
+,
+62
+]
+toward world-model post-training methods that better capture dynamics and action-relevant structure
+[
+15
+]
+. Most existing approaches rely on pixel-space rollouts, either by training IDMs to infer pseudo-actions from generated videos
+[
+27
+]
+or by learning pixel-based reward models
+[
+31
+,
+27
+,
+51
+,
+28
+,
+41
+,
+20
+]
+. This pixel-action decoupling can make RL policy-gradient optimization difficult, as VLA models are trained with flow-matching objectives that do not provide explicit action likelihoods
+[
+19
+]
+. Moreover, hallucinations in generated rollouts can introduce noise during post-training and harm performance
+[
+39
+]
+. To mitigate reliance on pixel-level rollouts, we propose a post-training algorithm that aligns actions and videos in the latent space.
+Arbitrary-Length Video Generation for Robotics.
+WMs still struggle with arbitrary-length video generation due to error accumulation
+[
+23
+]
+, particularly in robotics where task durations can vary substantially
+[
+59
+]
+. Many efforts have been made to address the arbitrary-length video generation issue, such as
+[
+11
+,
+54
+,
+34
+]
+. RoboEnvision reduces short-to-long shifting by breaking goals into subtasks, generating instruction-aligned keyframes, and interpolating between them with a second diffusion model
+[
+53
+]
+. Ctrl-World improves rollout stability through action-conditioned multi-view generation and pose-conditioned memory retrieval
+[
+20
+]
+. WorldWeaver overcomes the challenge by jointly modeling RGB with perceptual conditions using an external depth processing tool
+[
+34
+]
+. Most of these methods rely on architectural modifications to the video diffusion backbone, such as attention or memory design, which can increase model complexity. Instead, we take a straightforward data-driven approach: we propose datasets that segment arbitrary-length generation into reusable atomic skills. We show that the length distribution across atomic skills is more uniform, reducing error accumulation and making generation more stable.
+3
+Skill-Compositional World Model Pipeline
+A central obstacle for scaling video generation in robotic manipulation is supporting
+arbitrary-length
+executions. Robotic tasks differ widely in duration, while most video diffusion models are trained to generate clips of fixed length
+[
+23
+]
+. We address this challenge with a
+skill-compositional world model
+that generates arbitrary-length behavior by decomposing into short, atomic action segments. Rather than modeling an entire multi-step task in one shot, we represent it as an ordered sequence of skills, reducing length variation and making both training and inference more consistent. This section first details the automated data decomposition pipeline, validates the resulting datasets, and then explains how our data enables skill-compositional video generation.
+(a)
+Data preprocessing and alignment.
+(b)
+Compositional inference.
+Figure 2
+:
+Skill-compositional video generation.
+(a)
+Data processing.
+We segment each demonstration by gripper-state changes and decompose the instruction into atomic skill prompts with an LLM.
+(b)
+Inference pipeline.
+The LLM first generates an ordered list of atomic prompts, which the finetuned WM leverages to generate one sub-video per skill. Sub-videos are concatenated to obtain the final video.
+3.1
+Data Processing and Synchronization
+2(a)
+summarizes our data pipeline.
+For the visual stream, we identify interaction boundaries from the gripper aperture.
+Let
+w
+t
+w_{t}
+denote the gripper width at time
+t
+t
+, and
+w
+0
+w_{0}
+the calibrated fully-open width at the start of an episode.
+We define the closure signal as
+δ
+t
+=
+w
+0
+−
+w
+t
+\delta_{t}=w_{0}-w_{t}
+, where
+δ
+t
+≈
+0
+\delta_{t}\approx 0
+indicates the gripper remains fully open, while larger values signify increasing closure. To segment the demonstration, we classify each frame into an event
+E
+t
+∈
+{
+contact
+,
+non-contact
+}
+E_{t}\in\{\text{{contact}},\text{{non-contact}}\}
+, assigning
+E
+t
+=
+contact
+E_{t}=\text{{contact}}
+if
+δ
+t
+≥
+Δ
+\delta_{t}\geq\Delta
+and
+non-contact
+otherwise. Each sub-video segment is defined to capture a complete action cycle: starting with
+non-contact
+frames and concluding at the end of a
+contact
+event. For the language stream, we use DeepSeek
+[
+17
+]
+to decompose each global, high-level instruction into an ordered list of low-level skill descriptions. Finally, we synchronize each action segment with its corresponding low-level prompt in chronological order. This produces two datasets of short-horizon sub-videos paired with atomic language commands:
+RoboCasa-Skill
+and
+LIBERO-Skill
+.
+3.2
+Validating Skill Decomposition
+Accurate pairing between video segments and prompts is essential for training a reliable world model. We benchmark alignment quality and demonstrate that our decomposition process yields a more consistent distribution of video lengths, mitigating the long-tail issues common in original datasets.
+(a)
+RoboCasa.
+(b)
+LIBERO.
+Figure 3
+:
+Video-length distribution.
+Across RoboCasa and LIBERO, decomposed skills exhibit shorter mean length and a more concentrated distribution than full sequences, improving stability for generating arbitrary-length videos.
+Our pipeline achieves synchronization rates, defined as the successful one-to-one matching between the number of segmented sub-videos and the generated atomic prompts, of
+96.2
+%
+96.2\%
+on
+RoboCasa-Skill
+and
+86.9
+%
+86.9\%
+on
+LIBERO-Skill
+, demonstrating high alignment rates between video and language segments. Infrequent failures are largely due to rare noise from gripper or non-prehensile interactions
+[
+42
+]
+, such as using the arm to close a door.
+Figure 3
+illustrates skill decomposition reshapes the original high-variance, long-tailed video-length distributions (
+gray
+) into more concentrated, approximately unimodal distributions (
+red
+). Specifically, the density around the median increases by
+17
+%
+17\%
+for
+RoboCasa-Skill
+and
+72
+%
+72\%
+for
+LIBERO-Skill
+, indicating that a much larger fraction of training clips fall within a uniform temporal duration. This mass concentration yields a consistent horizon, mitigating distributional variance and stabilizing learning dynamics for arbitrary-length video generation.
+3.3
+Skill-Compositional World Model Inference
+2(b)
+illustrates our skill-wise autoregressive inference procedure.
+Given a global instruction, we first use DeepSeek to produce an ordered list of atomic skill prompts.
+The video diffusion world model then generates a sub-video for each low-level skill prompt. To preserve temporal continuity, generation proceeds sequentially: we use the last frame of the current sub-video as the initial visual condition for the next sub-video.
+After generating all skills, we concatenate the resulting sub-videos to obtain a single, coherent video of the high-level task. Comprehensive details of our skill-compositional framework, including the video diffusion backbone implementation, data, training, evaluation, and parameters (
+Δ
+\Delta
+) are provided in
+section 5
+and Supp.,
+section A
+.
+While our skill-compositional WM successfully synthesizes coherent visual plans for manipulation tasks, it operates purely in the pixel domain. It understands the behavioral dynamics of what should happen, but it does not output the control signal instantiating how the robot should move. To translate these rich, dynamic visual priors into actionable control, we require a mechanism to bridge the WM with a motor policy, which is detailed in the following section.
+4
+Method
+We present
+World2Act
+, a post-training method that transfers generalizable dynamic priors from
+WM to VLA
+policies. As illustrated in
+Figure 4
+, our method proceeds in two stages:
+i)
+learning a shared latent space that aligns video dynamics with robot actions via bridge adapters, and
+ii)
+post-training the VLA by optimizing a residual policy guided by this aligned space.
+4.1
+Stage 1: Aligning Video Dynamics and Robot Actions
+The goal of the first stage is to bridge the representational gap between the visual dynamics predicted by the WM and the robot actions. We leverage the pretrained, skill-compositional WM (
+𝒲
+\mathcal{W}
+) introduced in
+section 3
+, keeping it strictly frozen to preserve its temporally consistent dynamic priors.
+Given a synchronized video-action trajectory of an atomic skill,
+𝒲
+\mathcal{W}
+extracts a sequence of video latents
+𝐕
+=
+{
+V
+t
+}
+t
+=
+1
+T
+\mathbf{V}=\{V_{t}\}_{t=1}^{T}
+. Due to the temporal compression in video diffusion backbones, each latent
+V
+t
+∈
+ℝ
+C
+×
+H
+×
+W
+V_{t}\in\mathbb{R}^{C\times H\times W}
+is a spatial feature map corresponding to a non-overlapping chunk of
+M
+M
+low-level frames. A CNN-based
+Video Adapter
+(
+ℬ
+v
+\mathcal{B}_{\text{v}}
+) projects these into a sequence of video embeddings
+𝐳
+v
+=
+{
+z
+1
+v
+,
+…
+,
+z
+T
+v
+}
+∈
+ℝ
+T
+×
+D
+\mathbf{z}^{\text{v}}=\{z^{\text{v}}_{1},\dots,z^{\text{v}}_{T}\}\in\mathbb{R}^{T\times D}
+, where
+D
+D
+is the latent dimension.
+Concurrently, an MLP-based
+Action Adapter
+(
+ℬ
+a
+\mathcal{B}_{\text{a}}
+) groups raw robot actions
+𝐚
+gt
+\mathbf{a}_{\text{gt}}
+across non-overlapping windows of
+M
+M
+consecutive frames to align the temporal resolutions of the two modalities. Within each window, it concatenates
+M
+M
+action vectors into a single chunk vector, retaining the robot’s high-frequency control variations, for instance, rapid joint movements. The concatenated chunk representation is then encoded into chunk-level action latents
+𝐳
+a
+=
+{
+z
+1
+a
+,
+…
+,
+z
+T
+a
+}
+∈
+ℝ
+T
+×
+D
+\mathbf{z}^{\text{a}}=\{{z}^{\text{a}}_{1},\dots,{z}^{\text{a}}_{T}\}\in\mathbb{R}^{T\times D}
+.
+We jointly optimize
+ℬ
+v
+\mathcal{B}_{\text{v}}
+and
+ℬ
+a
+\mathcal{B}_{\text{a}}
+using two training objectives. First, to ensure the action latents preserve meaningful kinematics and temporal dynamics, an MLP-based
+Action Decoder
+(
+𝒟
+a
+\mathcal{D}_{\text{a}}
+) maps each chunk latent in
+𝐳
+a
+\mathbf{z}^{\text{a}}
+to
+M
+M
+frame-level action vectors and unrolls them to obtain the reconstructed action sequence
+𝐚
+^
+\mathbf{\hat{a}}
+. We supervise this with a standard MSE loss:
+ℒ
+recon.
+=
+‖
+𝐚
+gt
+−
+𝐚
+^
+‖
+2
+\mathcal{L}_{\text{recon.}}=\|\mathbf{a}_{\text{gt}}-\mathbf{\hat{a}}\|^{2}
+.
+Figure 4
+:
+World2Act
+overview.
+(a)
+Stage 1: Latent alignment.
+We train video and action adapters (
+ℬ
+v
+,
+ℬ
+a
+\mathcal{B}_{\text{v}},\mathcal{B}_{\text{a}}
+) with reconstruction and contrastive objectives.
+(b)
+Stage 2: VLA post-training.
+We freeze the VLA and learn a residual policy guided by WM-induced latent dynamics.
+(c)
+Network architecture of residual policy
+.
+Second, we align video and action dynamics with a bidirectional InfoNCE loss
+[
+38
+]
+, which effectively captures underlying task semantics by maximizing the mutual information between modalities. A key design choice is whether to contrast a single global trajectory embedding or to align representations at each temporal chunk. We adopt chunk-wise alignment to encourage correspondence over the entire trajectory and to reduce shortcut solutions where the model matches sequences using coarse task identity or background cues rather than fine-grained temporal dynamics. For each anchor, we draw
+B
+B
+negatives (in-batch) comprising:
+i)
+Easy
+negatives from different atomic skills, and
+ii)
+Hard
+negatives from other demonstrations of the same skill to prevent representational collapse. For a paired video–action sample
+i
+i
+in a batch of size
+B
+B
+, the loss is defined as:
+ℒ
+contrastive
+=
+−
+log
+⁡
+exp
+⁡
+(
+sim
+​
+(
+𝐳
+i
+v
+,
+𝐳
+i
+a
+)
+/
+τ
+)
+∑
+j
+=
+1
+B
+exp
+⁡
+(
+sim
+​
+(
+𝐳
+i
+v
+,
+𝐳
+j
+a
+)
+/
+τ
+)
+−
+log
+⁡
+exp
+⁡
+(
+sim
+​
+(
+𝐳
+i
+a
+,
+𝐳
+i
+v
+)
+/
+τ
+)
+∑
+j
+=
+1
+B
+exp
+⁡
+(
+sim
+​
+(
+𝐳
+i
+a
+,
+𝐳
+j
+v
+)
+/
+τ
+)
+,
+\mathcal{L}_{\text{contrastive}}=-\log\frac{\exp(\text{sim}(\mathbf{z}^{\text{v}}_{i},\mathbf{{z}}^{\text{a}}_{i})/\tau)}{\sum_{j=1}^{B}\exp(\text{sim}(\mathbf{z}^{\text{v}}_{i},\mathbf{{z}}^{\text{a}}_{j})/\tau)}-\log\frac{\exp(\text{sim}(\mathbf{{z}}^{\text{a}}_{i},\mathbf{z}^{\text{v}}_{i})/\tau)}{\sum_{j=1}^{B}\exp(\text{sim}(\mathbf{{z}}^{\text{a}}_{i},\mathbf{z}^{\text{v}}_{j})/\tau)},
+(1)
+where
+τ
+\tau
+is a temperature and
+sim
+​
+(
+𝐳
+i
+v
+,
+𝐳
+j
+a
+)
+=
+1
+T
+​
+∑
+t
+=
+1
+T
+cos
+⁡
+(
+z
+i
+,
+t
+v
+,
+z
+j
+,
+t
+a
+)
+\text{sim}(\mathbf{z}^{\text{v}}_{i},\mathbf{z}^{\text{a}}_{j})=\frac{1}{T}\sum_{t=1}^{T}\cos(z^{\text{v}}_{i,t},z^{\text{a}}_{j,t})
+denotes chunk-averaged cosine similarity.
+We set
+τ
+=
+0.1
+\tau{=}0.1
+[
+9
+]
+and optimize
+ℒ
+=
+ℒ
+recon.
++
+ℒ
+contrastive
+\mathcal{L}=\mathcal{L}_{\text{recon.}}+\mathcal{L}_{\text{contrastive}}
+.
+After training, the video and action adapters induce a shared, aligned latent space; we then freeze the adapters
+ℬ
+v
+,
+ℬ
+a
+\mathcal{B}_{\text{v}},\mathcal{B}_{\text{a}}
+and use this space to guide
+Stage 2
+.
+4.2
+Stage 2: Latent Action Post-Training
+Inspired by Silver
+et al.
+[
+43
+]
+, we note that directly finetuning heavily parameterized VLA backbones is extremely sample-inefficient and prone to catastrophic forgetting
+[
+40
+]
+. Instead, we freeze the base VLA, denoted as
+π
+base
+\pi_{\text{base}}
+, and learn a lightweight residual correction guided by the cross-modal contrastive loss from
+Stage 1
+via an introduced
+Residual Policy
+,
+f
+θ
+f^{\theta}
+. This strategy maintains high sample efficiency while preserving the VLA’s versatile task knowledge.
+Our key idea is to train a residual policy that shifts the VLA’s action latents toward the WM’s dynamic priors. This design enables a reward-free objective that requires only on-policy rollouts under the current augmented policy,
+π
+final
+=
+π
+base
++
+f
+θ
+\pi_{\text{final}}=\pi_{\text{base}}+f^{\theta}
+, without environmental success or reward signals. Specifically, we perform online rollouts on a separate post-training split from the evaluation environments. Each rollout is initialized with a state
+s
+1
+s_{1}
+comprising initial frames and a language instruction. Concretely, at each chunk index
+t
+t
+, the frozen base VLA outputs an action chunk
+a
+base
+,
+t
+=
+π
+base
+​
+(
+s
+t
+)
+{a}_{\text{base},t}=\pi_{\text{base}}(s_{t})
+and the residual policy predicts a correction
+a
+residual
+,
+t
+=
+f
+θ
+​
+(
+s
+t
+)
+{a}_{\text{residual},t}=f^{\theta}(s_{t})
+. The combined action chunk,
+a
+final
+,
+t
+=
+a
+base
+,
+t
++
+a
+residual
+,
+t
+a_{\text{final},t}=a_{\text{base},t}+a_{\text{residual},t}
+, is executed open-loop for
+M
+M
+low-level control steps to reach the next state
+s
+t
++
+1
+s_{t+1}
+, repeating until the complete trajectory
+𝐚
+final
+=
+{
+a
+final
+,
+t
+}
+t
+=
+1
+T
+\mathbf{a}_{\text{final}}=\{a_{\text{final},t}\}_{t=1}^{T}
+.
+Architecturally, the residual policy
+f
+θ
+f^{\theta}
+encodes the current state
+s
+t
+s_{t}
+using a CNN for image observations and an MLP for robot proprioception data, producing latent tokens
+{
+𝐱
+(
+1
+)
+,
+…
+,
+𝐱
+(
+n
+)
+}
+\{\mathbf{x}^{(1)},\dots,\mathbf{x}^{(n)}\}
+. In parallel, the base action chunk
+a
+base
+,
+t
+{a}_{\text{base},t}
+is passed through the frozen action adapter
+ℬ
+a
+\mathcal{B}_{\text{a}}
+to obtain an action token
+𝐱
+(
+0
+)
+\mathbf{x}^{(0)}
+. We concatenate the action and observation tokens
+{
+𝐱
+(
+0
+)
+,
+𝐱
+(
+1
+)
+,
+…
+,
+𝐱
+(
+n
+)
+}
+\{\mathbf{x}^{(0)},\mathbf{x}^{(1)},\dots,\mathbf{x}^{(n)}\}
+and process them with a self-attention Transformer to obtain contextualized features
+{
+𝐡
+(
+0
+)
+,
+𝐡
+(
+1
+)
+,
+…
+,
+𝐡
+(
+n
+)
+}
+\{\mathbf{h}^{(0)},\mathbf{h}^{(1)},\dots,\mathbf{h}^{(n)}\}
+. Finally, we map
+𝐡
+(
+0
+)
+\mathbf{h}^{(0)}
+through an MLP followed by the action decoder
+𝒟
+a
+\mathcal{D}_{\text{a}}
+to predict the residual action
+a
+residual
+,
+t
+{a}_{\text{residual},t}
+. Because the
+𝒟
+a
+\mathcal{D}_{\text{a}}
+is pretrained in
+Stage 1
+to reconstruct original (not residual) actions, we initialize from the weights from the previous stage and finetune for residual prediction.
+To obtain the target visual-dynamics signal, we use
+𝒲
+\mathcal{W}
+to generate video latents
+𝐕
+=
+{
+V
+t
+}
+t
+=
+1
+T
+\mathbf{V}=\{V_{t}\}_{t=1}^{T}
+, conditioned on the rollout initialization (see
+subsection 3.3
+). We use latents instead of video rollouts, as the latent features distilled by
+𝒲
+\mathcal{W}
+provide a compact representation of its dynamic priors that remains informative even when pixel-level synthesis is imperfect or exhibits artifacts. Next, the frozen
+ℬ
+v
+\mathcal{B}_{\text{v}}
+projects
+𝐕
+\mathbf{V}
+into video-dynamics embeddings
+𝐳
+v
+\mathbf{z}^{\text{v}}
+, which we use as targets for the current policy’s action embeddings. In parallel, we map the combined action
+𝐚
+final
+\mathbf{a}_{\text{final}}
+through the frozen
+ℬ
+a
+\mathcal{B}_{\text{a}}
+to obtain the corresponding action embeddings
+𝐳
+a
+\mathbf{z}^{\text{a}}
+.
+Finally, we compute the contrastive loss
+ℒ
+contrastive
+\mathcal{L}_{\text{contrastive}}
+(see
+Equation 1
+) between
+𝐳
+v
+\mathbf{z}^{\text{v}}
+and
+𝐳
+a
+\mathbf{z}^{\text{a}}
+across
+B
+B
+parallel environments to obtain the training signal for the residual network
+f
+θ
+f^{\theta}
+: latents from the same environment form positive pairs, while rollouts from different initial conditions but the same task, act as negatives, similar to the
+hard
+negatives defined in
+Stage 1
+. We update
+f
+θ
+f^{\theta}
+by minimizing this contrastive objective, aligning video and action latents from a previously pretrained shared latent space. More details on architecture and hyperparameter settings for
+ℬ
+a
+\mathcal{B}_{\text{a}}
+,
+ℬ
+v
+\mathcal{B}_{\text{v}}
+,
+𝒟
+a
+\mathcal{D}_{\text{a}}
+, and
+f
+θ
+f^{\theta}
+are provided in Supp.,
+section C
+.
+5
+Experiments
+We design our empirical evaluation to measure the effectiveness of our proposed framework, including our
+World2Act
+post-training method and the skill-compositional WM. Our experiments answer the following core questions:
+•
+Q1:
+How effectively does
+World2Act
+improve state-of-the-art VLA methods compared to prior post-training methods on complex manipulation tasks?
+•
+Q2:
+To what extent does skill-decomposition improve learning capabilities and success rates over standard end-to-end world models?
+•
+Q3:
+How does scaling the post-training impact the generalization of unseen robotic skills?
+•
+Q4:
+Can our pipeline transfer to real-world robot experiments?
+5.1
+Experimental Setup
+We evaluate on two standard robotic manipulation benchmarks, RoboCasa
+[
+36
+]
+and LIBERO
+[
+33
+]
+, reporting mean success rate (SR) as the primary metric. Following standard protocols
+[
+36
+,
+33
+,
+30
+]
+, we run 50 trials per seed across 5 seeds and report the mean success rate, enabling fair comparisons with other methods.
+Baselines.
+We compare against recent VLAs, including
+π
+0
+\pi_{0}
+[
+7
+]
+,
+π
+0.5
+\pi_{0.5}
+[
+25
+]
+, UVA
+[
+32
+]
+, Rethink-VLA
+[
+47
+]
+, UWM
+[
+62
+]
+, UniVLA
+[
+8
+]
+, OpenVLA-OFT
+[
+29
+]
+, Cosmos Policy
+[
+30
+]
+, and the GR00T family (N1.5
+[
+6
+]
+and N1.6
+[
+16
+]
+). To evaluate the effect of post-training, we additionally compare against: DreamGen
+[
+27
+]
+, VLA-RFT
+[
+31
+]
+, and Ctrl-World
+[
+20
+]
+. For a fair comparison, we implement
+World2Act
+and other post-training approaches on top of the same strong base backbones, GR00T-N1.6
+[
+16
+]
+and Cosmos Policy
+[
+30
+]
+. Since GR00T-N1.6 is pretrained on mixed sources of cross-embodiment data
+[
+37
+]
+, its general behavior does not necessarily align with the RoboCasa/LIBERO task distributions. We therefore additionally finetune it on 1000 expert trajectories per simulator to obtain a task-aligned reference, which we denote as GR00T-N1.6-ft. To ensure consistency and reproducibility, all baselines are evaluated on a single NVIDIA RTX 4090 (24GB).
+Post-training data synthesis.
+To generate post-training data, we synthesize 1000 trajectories per simulator. Notably, post-training trajectories are collected in scenes strictly disjoint from the test scenes to avoid leakage. We produce these trajectories using our skill-compositional world model (see
+section 3
+), which generates multi-step executions by composing atomic skill segments. For the WM backbone, we explored four candidates: Hunyuan 1.5
+[
+48
+]
+, Wan-2.2
+[
+45
+]
+, LTX-Video
+[
+22
+]
+, and Cosmos-Predict2
+[
+2
+]
+; and selected Cosmos-Predict2 based on a thorough evaluation of physical alignment and instruction following, specified in Supp.,
+section A
+. We finetune Cosmos-Predict2 on
+RoboCasa-Skill
+and
+LIBERO-Skill
+using 8 AMD Instinct MI210 GPUs (48GB). For the remainder of our experiments, we refer to this model as
+Skill-WM
+, and compare it against a
+Base-WM
+trained on the original, unsegmented datasets.
+5.2
+Main Results
+Baselines
+Real Demos
+(per task)
+Synthetic Demos
+(per task)
+SR
+π
+0
+\pi_{0}
+[
+7
+]
+300
+0
+0.625
+UVA
+[
+32
+]
+50
+0
+0.500
+Rethink-VLA
+[
+47
+]
+50
+0
+0.547
+UWM
+[
+62
+]
+1000
+0
+0.608
+GR00T-N1.5
+[
+6
+]
+300
+0
+0.641
+GR00T-N1.6
+[
+16
+]
+300
+0
+0.662
+Cosmos Policy
+[
+30
+]
+50
+0
+0.657
+Cosmos Policy
+[
+30
+]
++
+World2Act
+(Ours)
+50
++50
+0.663
+GR00T-N1.6-ft
+[
+16
+]
+350
+0
+0.701
+GR00T-N1.6-ft
+[
+16
+]
++ DreamGen
+[
+27
+]
+350
++50
+0.705
+GR00T-N1.6-ft
+[
+16
+]
++
+World2Act
+(Ours)
+350
++50
+0.726
+Table 1:
+RoboCasa main results.
+Performance on RoboCasa.
+Table 1
+summarizes our results.
+World2Act
+achieves a new state-of-the-art success rate on RoboCasa, notably outperforming established VLAs while requiring significantly less data. For instance, while UWM
+[
+62
+]
+utilizes
+1000
+1000
+real demonstrations to achieve
+60.8
+%
+60.8\%
+success rate, Cosmos Policy+
+World2Act
+reaches
+66.3
+%
+66.3\%
+using only
+50
+50
+real demos and
+50
+50
+imagined trajectories. While post-training GR00T-N1.6-ft with DreamGen
+[
+27
+]
+yields a marginal
+0.4
+%
+0.4\%
+improvement,
+World2Act
+leverages the same 50 synthetic trajectory budget to achieve a substantial
+2.5
+%
+2.5\%
+gain, demonstrating higher data efficiency and more robust policy refinement capabilities.
+Baselines
+Spatial
+Object
+Goal
+Long
+Average
+π
+0
+\pi_{0}
+[
+7
+]
+0.968
+0.988
+0.958
+0.852
+0.942
+π
+0.5
+\pi_{0.5}
+[
+25
+]
+0.988
+0.982
+0.980
+0.924
+0.969
+OpenVLA-OFT
+[
+29
+]
+0.976
+0.984
+0.979
+0.945
+0.971
+UniVLA
+[
+8
+]
+0.965
+0.968
+0.956
+0.920
+0.952
+Cosmos Policy
+[
+30
+]
+0.981
+1.000
+0.982
+0.976
+0.985
+Cosmos Policy
+[
+30
+]
++
+World2Act
+(Ours)
+0.980
+1.000
+0.983
+0.980
+0.986
+GR00T-N1.6-ft
+[
+16
+]
+0.977
+0.984
+0.975
+0.943
+0.970
+GR00T-N1.6-ft
+[
+16
+]
++ DreamGen
+0.991
+0.826
+0.992
+0.876
+0.926
+GR00T-N1.6-ft
+[
+16
+]
++
+World2Act
+(Ours)
+0.995
+1.000
+0.988
+0.940
+0.981
+Table 2:
+LIBERO main results.
+Performance on LIBERO.
+Table 2
+summarizes results on LIBERO across spatial, object, goal, and long-horizon skills. Overall, our post-training consistently strengthens the underlying policy and attains the top average performance among the compared methods. For GR00T-N1.6-ft,
+World2Act
+improves the base model from 97.0% to 98.1%, while DreamGen degrades performance to 92.6% (driven by failures on poor IDM pseudo-labeling action). On Cosmos Policy,
+World2Act
+also increases the performance by
+0.1
+%
+0.1\%
+.
+Baseline
+Post-Train Methods
+SR
+GR00T-
+N1.6-ft
+DreamGen
+[
+27
+]
+0.705
+VLA-RFT
+[
+31
+]
+0.710
+Ctrl-World
+[
+20
+]
+0.698
+World2Act
+(Ours)
+0.726
+Table 3
+:
+Post-training comparison.
+Baseline
+World Model
+SR
+Base-WM
+0.661
+Cosmos Policy
+[
+30
+]
++
+World2Act
+Skill-WM (Ours)
+0.663
+Base-WM
+0.715
+GR00T-N1.6-ft
+[
+16
+]
++
+World2Act
+Skill-WM (Ours)
+0.726
+Table 4:
+WM comparison.
+Comparison of Post-Training Methods.
+Table 4
+compares state-of-the-art VLA post-training methods on the same base model, GR00T-N1.6-ft +
+World2Act
+achieves the best success rate of 72.6%, outperforming the best prior post-training baseline (VLA-RFT) by 1.6% success rate improvement.
+Correlation Between Cosine Similarity and Success Rate.
+5(a)
+shows a strong positive correlation between the success rate and the cosine similarity of positive video-action latent pairs,
+sim
+​
+(
+𝐳
+i
+v
+,
+𝐳
+i
+a
+)
+\text{sim}(\mathbf{z}_{i}^{\text{v}},\mathbf{z}_{i}^{\text{a}})
+from
+Equation 1
+. As the cross-modal alignment improves, the policy’s success rate steadily increases. Notably, the cosine similarity for our
+World2Act
+(red line) rapidly climbs and stabilizes near 1.0 within 5K training steps. This alignment enables the steady gains in task execution, elevating the success rate from 70.1% to 72.6%. Overall, the results confirm that our post-training
+i)
+effectively strengthens video-action alignment, and
+ii)
+directly translates into consistent performance improvements.
+(a)
+Correlation between post-training cosine similarity and success rate.
+Stronger video-action alignment, indicated by a higher cosine similarity, consistently corresponds to improved downstream manipulation success.
+(b)
+Scaling trajectories.
+Increasing the number of post-training trajectories improves our
+World2Act
+, while DreamGen shows instability.
+(c)
+Cross-task generalization.
+Training on more seen tasks improves performance when evaluated on the remaining unseen tasks.
+Figure 5
+:
+Post-training scaling and generalization.
+Top:
+Cosine similarity strongly correlates with downstream success rate.
+Bottom-left:
+Scaling post-training trajectories improves
+World2Act
+but
+DreamGen
+is unstable.
+Bottom-right:
+Scaling the number of seen tasks during training improves generalization to 12 unseen tasks.
+5.3
+Ablation Study
+Scaling Post-Training Trajectories.
+5(b)
+analyzes how performance scales as we increase the number of post-training trajectories
+N
+N
+on the same base model, GR00T-N1.6-ft+
+World2Act
+improves
+monotonically
+with more trajectories, increasing from 70.1% to 72.6% when scaling from
+N
+=
+0
+N{=}0
+to
+N
+=
+1000
+N{=}1000
+.
+In contrast, DreamGen is
+unstable
+under scaling: it drops to
+69.1
+%
+69.1\%
+at
+N
+=
+500
+N{=}500
+before partially recovering to
+70.5
+%
+70.5\%
+at 1000 trajectories,
+indicating sensitivity to image-level noise within the IDM’s pixel-to-action pseudo-label mapping for post-training data.
+The instability in DreamGen arises because it infers actions from high-frequency pixel rollouts. Small errors or pixel artifacts in the generated images often result in overly aggressive action labels, leading the policy to drift during post-training. Instead of relying on error-prone pixels, our method uses latent alignment from the WM. This keeps the action supervision grounded in the WM’s internal dynamic priors rather than its visual imagination.
+World Model Post-training Analysis.
+5(a)
+shows Skill-WM (
+red
+) converges rapidly, stabilizing in loss and smoothly ascending in cosine similarity after 5K steps.
+In contrast, Base-WM (
+blue
+) slowly increases and does not fully converge even after 20K steps. We attribute Skill-WM’s stable optimization to the more uniform video lengths of our skill-based data (
+Figure 3
+). This temporal consistency simplifies the learning objective, preventing the rollout degradation seen in the baseline. Consequently, this stable dynamic learning yields a 1.1% increase in downstream manipulation performance, underscoring the critical role of structured data in WM optimization.
+Impact of Skill Decomposition.
+We further evaluate Skill-WM across different VLA backbones.
+Table 4
+demonstrates Skill-WM consistently improves success rate over Base-WM for both GR00T-N1.6-ft and Cosmos Policy under the same
+World2Act
+post-training method. Specifically, Skill-WM improves 1.1% success rate with GR00T-N1.6-ft and 0.2% with Cosmos Policy over Base-WM, indicating that the benefits of improved temporal consistency and stable convergence are architecture-agnostic.
+Cross-task Generalization.
+To evaluate cross-task generalization, we split 24 RoboCasa tasks into 12 seen and
+12
+12
+unseen tasks (see Supp.,
+section B
+). We scale the training set from 0 to
+12
+12
+seen tasks and measure zero-shot success on the unseen split by post-training
+World2Act
+on top of GR00T-N1.6-base and Cosmos Policy backbones. As shown in
+5(c)
+, performance improves consistently with training task diversity. Specifically, GR00T-N1.6-base achieves a 3.3% improvement in success rate, while Cosmos Policy gains 1.6%. Notably, because the WM itself is never exposed to the post-training data trajectories of these unseen tasks, this result indicates that the WM’s robust generalization drives the success. Scaling task diversity enables the policy to leverage generalized dynamics more effectively, thereby adapting to novel robotic skills.
+5.4
+Real Robot Experiments
+Setup.
+To demonstrate the real-world applicability of our framework, we evaluate on a Franka Research 3 arm across three tasks: (i)
+Pick cup and place on plate
+, (ii)
+Pick up bowl
+, and (iii)
+Close drawer
+. We finetune a GR00T-N1.6 model using 20 demonstrations per task collected via a GELLO teleoperation device
+[
+49
+]
+. We then use
+World2Act
+to post-train the baseline with 100 trajectories generated by our Skill-WM. Observations are provided by a third-view camera, and
+Figure 7
+shows the physical setup. We conduct 20 trials per task.
+Figure 6
+:
+Robot Setup.
+Figure 7
+:
+Real-world robot success rates.
+Results.
+Figure 7
+summarizes our real-world evaluations. Post-training, the baseline with
+World2Act
+yields an average improvement in success rate of 6.67% across all tasks. These results align with our simulation findings and validate the practical viability of our WM-to-VLA pipeline on physical hardware.
+Figure 8
+:
+Qualitative results of our WM-to-VLA framework.
+Top:
+A trajectory generated by our Skill-WM.
+Bottom:
+The corresponding real-robot execution of the same task utilizing GR00T-N1.6 +
+World2Act
+.
+t
+t
+denotes the timestep for each frame.
+Qualitative Evaluation.
+Figure 8
+shows a representative trajectory generated by our approach and the corresponding real-robot execution for the
+Close drawer
+task. Both the imagined rollout and the physical execution successfully achieve the task goal. Notably, the final frame of the imagined sequence (
+t
+=
+90
+t{=}90
+) exhibits minor visual artifacts, such as the drawer handle becoming invisible. However, because our design relies on the latent dynamics of the WM, it demonstrates robustness to these imperfect rollouts, as evidenced by the successful real-world execution. More robot evaluations and details are in Supp.,
+section B
+.
+Remarks.
+Post-training VLAs via
+World2Act
+successfully distill latent dynamic priors from WMs into action policies (
+5(a)
+), establishing state-of-the-art manipulation success rates on the RoboCasa and LIBERO benchmarks (
+Table 1
+,
+Table 2
+, and
+Table 4
+) (
+Q1
+). Furthermore, our proposed Skill-WM alleviates the challenge of arbitrary-length video generation (
+Figure 3
+), synthesizing more temporally consistent trajectories, leading to improvements in success rate over conventional WMs (
+Table 4
+and
+5(a)
+) (
+Q2
+). Our post-training paradigm is highly scalable, demonstrating consistent performance gains in diverse manipulation settings when scaling trajectory volume (
+5(b)
+) and exhibiting strong cross-task generalization (
+5(c)
+) (
+Q3
+). Finally, we demonstrate that both our skill-compositional WM and the resulting post-trained policies successfully transfer to real-world robotic deployments (
+Figure 7
+,
+Figure 8
+) (
+Q4
+).
+6
+Discussion
+We introduce
+World2Act
+, a latent post-training framework that transfers generalizable dynamics priors from WMs to VLA policies without relying on fragile pixel-level supervision. To support temporally consistent WM rollouts, we developed an LLM-based pipeline for trajectory atomization. We establish the
+RoboCasa-Skill
+and
+LIBERO-Skill
+datasets to address arbitrary-length generation bottlenecks. Our comprehensive WM-to-VLA framework significantly improves state-of-the-art VLAs in both simulated and real-world environments.
+Limitations.
+World2Act
+has several limitations. First, the performance gains are sensitive to the choice of the underlying VLA backbone. While we observe substantial improvements with GR00T-N1.6, the gains for Cosmos Policy are marginal. We explain this discrepancy by the overhead of joint video-action representations in Cosmos Policy, which may bottleneck post-training optimization and limit the leverage of WM’s behavioral prior. Second, real-world success remains modest, suggesting a persistent domain gap where complex physical dynamics are insufficiently captured by current WMs and VLAs
+[
+35
+,
+57
+]
+.
+References
+[1]
+N. Agarwal, A. Ali, M. Bala, Y. Balaji, E. Barker, T. Cai, P. Chattopadhyay, Y. Chen, Y. Cui, Y. Ding,
+et al.
+(2025)
+Cosmos world foundation model platform for physical ai
+.
+arXiv preprint arXiv:2501.03575
+.
+Cited by:
+Table S1
+,
+§1
+,
+§1
+,
+§A
+,
+§A
+,
+Table S6
+,
+Table S6
+,
+§E
+.
+[2]
+A. Ali, J. Bai, M. Bala, Y. Balaji, A. Blakeman, T. Cai, J. Cao, T. Cao, E. Cha, Y. Chao,
+et al.
+(2025)
+World simulation with video foundation models for physical ai
+.
+arXiv preprint arXiv:2511.00062
+.
+Cited by:
+§5.1
+.
+[3]
+M. Assran, A. Bardes, D. Fan, Q. Garrido, R. Howes, M. Muckley, A. Rizvi, C. Roberts, K. Sinha, A. Zholus,
+et al.
+(2025)
+V-jepa 2: self-supervised video models enable understanding, prediction and planning
+.
+arXiv preprint arXiv:2506.09985
+.
+Cited by:
+§1
+,
+§2
+,
+2nd item
+.
+[4]
+S. Bai, Y. Cai, R. Chen, K. Chen, X. Chen, Z. Cheng, L. Deng, W. Ding, C. Gao, C. Ge,
+et al.
+(2025)
+Qwen3-vl technical report
+.
+arXiv preprint arXiv:2511.21631
+.
+Cited by:
+§A
+.
+[5]
+H. Bansal, C. Peng, Y. Bitton, R. Goldenberg, A. Grover, and K. Chang
+(2025)
+Videophy-2: a challenging action-centric physical commonsense evaluation in video generation
+.
+arXiv preprint arXiv:2503.06800
+.
+Cited by:
+§A
+.
+[6]
+J. Bjorck
+et al.
+(2025)
+GR00T N1.5: an improved open foundation model for generalist humanoid robots
+(Website)
+NVIDIA Research (GEAR Lab)
+.
+External Links:
+Link
+Cited by:
+§5.1
+,
+Table 1
+.
+[7]
+K. Black, N. Brown, D. Driess, A. Esmail, M. Equi, C. Finn, N. Fusai, L. Groom, K. Hausman, B. Ichter,
+et al.
+(2024)
+π
+0
+\pi_{0}
+: A vision-language-action flow model for general robot control
+.
+arXiv preprint arXiv:2410.24164
+.
+Cited by:
+§5.1
+,
+Table 1
+,
+Table 2
+.
+[8]
+Q. Bu, Y. Yang, J. Cai, S. Gao, G. Ren, M. Yao, P. Luo, and H. Li
+(2025)
+Univla: learning to act anywhere with task-centric latent actions
+.
+RSS
+.
+Cited by:
+§2
+,
+§5.1
+,
+Table 2
+.
+[9]
+T. Chen, S. Kornblith, M. Norouzi, and G. Hinton
+(2020)
+A simple framework for contrastive learning of visual representations
+.
+In
+ICML
+,
+Cited by:
+§4.1
+.
+[10]
+Y. Chen, Y. Ge, W. Tang, Y. Li, Y. Ge, M. Ding, Y. Shan, and X. Liu
+(2025)
+Moto: latent motion token as the bridging language for learning robot manipulation from videos
+.
+In
+CVPR
+,
+Cited by:
+§2
+.
+[11]
+Z. Chen, J. Huo, Y. Chen, and Y. Gao
+(2025)
+Robohorizon: an llm-assisted multi-view world model for long-horizon robotic manipulation
+.
+arXiv preprint arXiv:2501.06605
+.
+Cited by:
+§1
+,
+§2
+.
+[12]
+Y. Du, S. Yang, B. Dai, H. Dai, O. Nachum, J. Tenenbaum, D. Schuurmans, and P. Abbeel
+(2023)
+Learning universal policies via text-guided video generation
+.
+NeurIPS
+.
+Cited by:
+§2
+.
+[13]
+Y. Efroni, D. Misra, A. Krishnamurthy, A. Agarwal, and J. Langford
+(2021)
+Provably filtering exogenous distractors using multistep inverse dynamics
+.
+In
+ICLR
+,
+Cited by:
+§1
+.
+[14]
+S. Gao, W. Liang, K. Zheng, A. Malik, S. Ye, S. Yu, W. Tseng, Y. Dong, K. Mo, C. Lin,
+et al.
+(2026)
+DreamDojo: a generalist robot world model from large-scale human videos
+.
+arXiv preprint arXiv:2602.06949
+.
+Cited by:
+§2
+.
+[15]
+S. Gao, S. Zhou, Y. Du, J. Zhang, and C. Gan
+(2025)
+AdaWorld: learning adaptable world models with latent actions
+.
+In
+ICML
+,
+Cited by:
+§1
+,
+§2
+,
+4th item
+.
+[16]
+GEAR Team
+(2025)
+GR00T N1.6: an improved open foundation model for generalist humanoid robots
+(Website)
+NVIDIA Research (GEAR Team)
+.
+External Links:
+Link
+Cited by:
+§1
+,
+Table S2
+,
+Table S5
+,
+§5.1
+,
+Table 1
+,
+Table 1
+,
+Table 1
+,
+Table 1
+,
+Table 2
+,
+Table 2
+,
+Table 2
+,
+Table 4
+.
+[17]
+D. Guo, D. Yang, H. Zhang,
+et al.
+(2025)
+DeepSeek-r1 incentivizes reasoning in llms through reinforcement learning
+.
+Nature
+645
+,
+pp. 633–638
+.
+External Links:
+Document
+Cited by:
+§3.1
+,
+§E
+.
+[18]
+J. Guo, X. Ma, Y. Wang, M. Yang, H. Liu, and Q. Li
+(2026)
+Flowdreamer: a rgb-d world model with flow-based motion representations for robot manipulation
+.
+RA-L
+.
+Cited by:
+§2
+.
+[19]
+Y. Guo, T. Lee, L. X. Shi, J. Chen, P. Liang, and C. Finn
+(2026)
+VLAW: iterative co-improvement of vision-language-action policy and world model
+.
+arXiv preprint arXiv:2602.12063
+.
+Cited by:
+§2
+,
+§2
+,
+4th item
+.
+[20]
+Y. Guo, L. X. Shi, J. Chen, and C. Finn
+(2026)
+Ctrl-world: a controllable generative world model for robot manipulation
+.
+ICLR
+.
+Cited by:
+§1
+,
+§1
+,
+§2
+,
+§2
+,
+§2
+,
+§5.1
+,
+Table 4
+,
+4th item
+.
+[21]
+Y. Guo, J. Zhang, X. Chen, X. Ji, Y. Wang, Y. Hu, and J. Chen
+(2025)
+Improving vision-language-action model with online reinforcement learning
+.
+In
+ICRA
+,
+Cited by:
+§1
+.
+[22]
+Y. HaCohen, N. Chiprut, B. Brazowski, D. Shalem, D. Moshe, E. Richardson, E. Levin, G. Shiran, N. Zabari, O. Gordon,
+et al.
+(2024)
+Ltx-video: realtime video latent diffusion
+.
+arXiv preprint arXiv:2501.00103
+.
+Cited by:
+Table S1
+,
+§A
+,
+§5.1
+.
+[23]
+J. Huang, Z. Ye, X. Hu, T. He, G. Zhang, S. Shi, J. Bian, and L. Jiang
+(2026)
+LIVE: long-horizon interactive video world modeling
+.
+arXiv preprint arXiv:2602.03747
+.
+Cited by:
+§1
+,
+§2
+,
+§3
+.
+[24]
+S. Huang, L. Chen, P. Zhou, S. Chen, Y. Liao, Z. Jiang, Y. Hu, P. Gao, H. Li, M. Yao,
+et al.
+(2026)
+EnerVerse: envisioning embodied future space for robotics manipulation
+.
+In
+ICLR
+,
+Cited by:
+§2
+.
+[25]
+P. Intelligence, K. Black, N. Brown, J. Darpinian, K. Dhabalia, D. Driess, A. Esmail, M. Equi, C. Finn, N. Fusai,
+et al.
+(2025)
+p
+​
+i
+0.5
+pi_{0.5}
+: A vision-language-action model with open-world generalization
+.
+arXiv preprint arXiv:2504.16054
+.
+Cited by:
+§5.1
+,
+Table 2
+.
+[26]
+A. K. Jain, V. Mohta, S. Kim, A. Bhardwaj, J. Ren, Y. Feng, S. Choudhury, and G. Swamy
+(2025)
+A smooth sea never made a skilled sailor: robust imitation via learning to search
+.
+NeurIPS
+.
+Cited by:
+§2
+.
+[27]
+J. Jang, S. Ye, Z. Lin, J. Xiang, J. Bjorck, Y. Fang, F. Hu, S. Huang, K. Kundalia, Y. Lin,
+et al.
+(2025)
+DreamGen: unlocking generalization in robot learning through video world models
+.
+In
+CoRL
+,
+Cited by:
+Table S1
+,
+Table S1
+,
+§1
+,
+§1
+,
+§1
+,
+§A
+,
+§2
+,
+§2
+,
+§5.1
+,
+§5.2
+,
+Table 1
+,
+Table 4
+.
+[28]
+A. Jiang, Y. Gao, Y. Wang, Z. Sun, S. Wang, Y. Heng, H. Sun, S. Tang, L. Zhu, J. Chai,
+et al.
+(2025)
+Irl-vla: training an vision-language-action policy via reward world model
+.
+arXiv preprint arXiv:2508.06571
+.
+Cited by:
+§2
+.
+[29]
+M. J. Kim, C. Finn, and P. Liang
+(2025)
+Fine-tuning vision-language-action models: optimizing speed and success
+.
+arXiv preprint arXiv:2502.19645
+.
+Cited by:
+§5.1
+,
+Table 2
+.
+[30]
+M. J. Kim, Y. Gao, T. Lin, Y. Lin, Y. Ge, G. Lam, P. Liang, S. Song, M. Liu, C. Finn,
+et al.
+(2026)
+Cosmos policy: fine-tuning video models for visuomotor control and planning
+.
+arXiv preprint arXiv:2601.16163
+.
+Cited by:
+§1
+,
+§1
+,
+Table S5
+,
+§2
+,
+§D
+,
+§5.1
+,
+§5.1
+,
+Table 1
+,
+Table 1
+,
+Table 2
+,
+Table 2
+,
+Table 4
+,
+1st item
+.
+[31]
+H. Li, P. Ding, R. Suo, Y. Wang, Z. Ge, D. Zang, K. Yu, M. Sun, H. Zhang, D. Wang,
+et al.
+(2025)
+VLA-rft: vision-language-action reinforcement fine-tuning with verified rewards in world simulators
+.
+arXiv preprint arXiv:2510.00406
+.
+Cited by:
+§1
+,
+§1
+,
+§2
+,
+§2
+,
+§5.1
+,
+Table 4
+,
+4th item
+.
+[32]
+S. Li, Y. Gao, D. Sadigh, and S. Song
+(2025)
+Unified video action model
+.
+RSS
+.
+Cited by:
+§5.1
+,
+Table 1
+.
+[33]
+B. Liu, Y. Zhu, C. Gao, Y. Feng, Q. Liu, Y. Zhu, and P. Stone
+(2023)
+Libero: benchmarking knowledge transfer for lifelong robot learning
+.
+NeurIPS
+.
+Cited by:
+§1
+,
+§5.1
+.
+[34]
+Z. Liu, X. Deng, S. Chen, A. Wang, Q. Guo, M. Han, Z. Xue, M. Chen, P. Luo, and L. Yang
+(2025)
+Worldweaver: generating long-horizon video worlds via rich perception
+.
+NeurIPS
+.
+Cited by:
+§2
+.
+[35]
+S. Motamed, L. Culp, K. Swersky, P. Jaini, and R. Geirhos
+(2026)
+Do generative video models understand physical principles?
+.
+In
+WACV
+,
+Cited by:
+§6
+.
+[36]
+S. Nasiriany, A. Maddukuri, L. Zhang, A. Parikh, A. Lo, A. Joshi, A. Mandlekar, and Y. Zhu
+(2024)
+Robocasa: large-scale simulation of everyday tasks for generalist robots
+.
+RSS
+.
+Cited by:
+§1
+,
+§A
+,
+§A
+,
+§5.1
+.
+[37]
+NVIDIA
+(2025)
+PhysicalAI-robotics-gr00t-x-embodiment-sim
+.
+Hugging Face
+.
+Note:
+Version: be164f2 (commit date: 2025-12-09). License: CC BY 4.0. Accessed: 2026-02-21
+External Links:
+Link
+Cited by:
+§5.1
+.
+[38]
+A. v. d. Oord, Y. Li, and O. Vinyals
+(2018)
+Representation learning with contrastive predictive coding
+.
+arXiv preprint arXiv:1807.03748
+.
+Cited by:
+§4.1
+.
+[39]
+T. Poppi, B. Uzkent, A. Garg, L. Porto, G. Kessler, Y. Yang, M. Cornia, L. Baraldi, R. Cucchiara, and F. Schiffers
+(2026)
+CounterVid: counterfactual video generation for mitigating action and temporal hallucinations in video-language models
+.
+arXiv preprint arXiv:2601.04778
+.
+Cited by:
+§1
+,
+§2
+.
+[40]
+M. Reuss
+(2025)
+State of vla research at iclr 2026
+.
+Note:
+https://mbreuss.github.io/blog_post_iclr_26_vla.html
+Blog post
+Cited by:
+§1
+,
+§2
+,
+§4.2
+.
+[41]
+A. K. Sharma, Y. Sun, N. Lu, Y. Zhang, J. Liu, and S. Yang
+(2026)
+World-gymnast: training robots with reinforcement learning in a world model
+.
+arXiv preprint arXiv:2602.02454
+.
+Cited by:
+§2
+.
+[42]
+Y. Shirai, K. Ota, D. K. Jha, and D. Romeres
+(2026)
+Learning non-prehensile manipulation with force and vision feedback using optimization-based demonstrations
+.
+RA-L
+.
+Cited by:
+§3.2
+.
+[43]
+T. Silver, K. Allen, J. Tenenbaum, and L. Kaelbling
+(2018)
+Residual policy learning
+.
+arXiv preprint arXiv:1812.06298
+.
+Cited by:
+§4.2
+.
+[44]
+S. Tan, K. Dou, Y. Zhao, and P. Kraehenbuehl
+(2025)
+Interactive post-training for vision-language-action models
+.
+In
+CVPRW
+,
+Cited by:
+§1
+.
+[45]
+T. Wan
+et al.
+(2025)
+Wan: open and advanced large-scale video generative models
+.
+arXiv preprint arXiv:2503.20314
+.
+Cited by:
+Table S1
+,
+§A
+,
+§5.1
+.
+[46]
+M. Wang, W. Jin, K. Cao, L. Xie, and Y. Hong
+(2026)
+ContactGaussian-wm: learning physics-grounded world model from videos
+.
+arXiv preprint arXiv:2602.11021
+.
+Cited by:
+§1
+.
+[47]
+Y. Wang, S. Zheng, H. Luo, W. Zhang, H. Yuan, C. Xu, H. Xu, Y. Feng, M. Yu, Z. Kang,
+et al.
+(2026)
+Rethinking visual-language-action model scaling: alignment, mixture, and regularization
+.
+arXiv preprint arXiv:2602.09722
+.
+Cited by:
+§5.1
+,
+Table 1
+.
+[48]
+B. Wu, C. Zou, C. Li, D. Huang, F. Yang, H. Tan, J. Peng, J. Wu, J. Xiong, J. Jiang,
+et al.
+(2025)
+Hunyuanvideo 1.5 technical report
+.
+arXiv preprint arXiv:2511.18870
+.
+Cited by:
+Table S1
+,
+§A
+,
+§5.1
+.
+[49]
+P. Wu, Y. Shentu, Z. Yi, X. Lin, and P. Abbeel
+(2024)
+Gello: a general, low-cost, and intuitive teleoperation framework for robot manipulators
+.
+In
+IROS
+,
+Cited by:
+§5.4
+.
+[50]
+R. Wu, X. He, M. Cheng, T. Yang, Y. Zhang, Z. Kang, X. Cai, X. Wei, C. Guo, C. Li,
+et al.
+(2026)
+Infinite-world: scaling interactive world models to 1000-frame horizons via pose-free hierarchical memory
+.
+arXiv preprint arXiv:2602.02393
+.
+Cited by:
+§1
+.
+[51]
+J. Xiao, Y. Yang, X. Chang, R. Chen, F. Xiong, M. Xu, W. Zheng, and Q. Zhang
+(2025)
+World-env: leveraging world model as a virtual environment for vla post-training
+.
+arXiv preprint arXiv:2509.24948
+.
+Cited by:
+§1
+,
+§2
+.
+[52]
+J. Yang, K. Lin, J. Li, W. Zhang, T. Lin, L. Wu, Z. Su, H. Zhao, Y. Zhang, L. Chen,
+et al.
+(2026)
+RISE: self-improving robot policy with compositional world model
+.
+arXiv preprint arXiv:2602.11075
+.
+Cited by:
+§2
+.
+[53]
+L. Yang, Y. Bai, G. Eskandar, F. Shen, M. Altillawi, D. Chen, S. Majumder, Z. Liu, G. Kutyniok, and A. Valada
+(2025)
+Roboenvision: a long-horizon video generation model for multi-task robot manipulation
+.
+In
+IROS
+,
+Cited by:
+§1
+,
+§2
+.
+[54]
+Y. Yang, Z. Lv, T. Pan, H. Wang, B. Yang, H. Yin, C. Li, Z. Liu, and C. Si
+(2026)
+StableWorld: towards stable and consistent long interactive video generation
+.
+arXiv preprint arXiv:2601.15281
+.
+Cited by:
+§2
+.
+[55]
+S. Ye, J. Jang, B. Jeon, S. Joo, J. Yang, B. Peng, A. Mandlekar, R. Tan, Y. Chao, B. Y. Lin,
+et al.
+(2025)
+Latent action pretraining from videos
+.
+In
+ICLR
+,
+Cited by:
+§1
+,
+§2
+,
+§2
+,
+3rd item
+.
+[56]
+T. Yin, Q. Zhang, R. Zhang, W. T. Freeman, F. Durand, E. Shechtman, and X. Huang
+(2025)
+From slow bidirectional to fast autoregressive video diffusion models
+.
+In
+CVPR
+,
+Cited by:
+§1
+.
+[57]
+E. Yu, H. Lv, J. Sun, K. Lin, R. Zhang, Y. Shi, Y. Chen, Z. Chen, Z. Zhang, F. Jia,
+et al.
+(2026)
+DM0: an embodied-native vision-language-action model towards physical ai
+.
+arXiv preprint arXiv:2602.14974
+.
+Cited by:
+§6
+.
+[58]
+Y. Zhang, C. Liu, X. Ren, H. Ni, Y. Zhang, S. Zhang, Z. Ding, J. Hu, H. Shan, J. Qi,
+et al.
+(2025)
+Bridging vlms and embodied intelligence with deliberate practice policy optimization
+.
+arXiv preprint arXiv:2511.16602
+.
+Cited by:
+§1
+.
+[59]
+J. Zheng, J. Li, D. Liu, Y. Zheng, Z. Wang, Z. Ou, Y. Liu, J. Liu, Y. Zhang, and X. Zhan
+(2025)
+Universal actions for enhanced embodied foundation models
+.
+In
+CVPR
+,
+Cited by:
+§2
+,
+§2
+.
+[60]
+R. Zheng, J. Wang, S. Reed, J. Bjorck, Y. Fang, F. Hu, J. Jang, K. Kundalia, Z. Lin, L. Magne,
+et al.
+(2025)
+FLARE: robot learning with implicit world modeling
+.
+In
+CoRL
+,
+Cited by:
+§2
+.
+[61]
+S. Zhou, Y. Du, J. Chen, Y. Li, D. Yeung, and C. Gan
+(2024)
+RoboDreamer: learning compositional world models for robot imagination
+.
+In
+ICML
+,
+Cited by:
+§1
+,
+§2
+.
+[62]
+C. Zhu, R. Yu, S. Feng, B. Burchfiel, P. Shah, and A. Gupta
+(2025)
+Unified world models: coupling video and action diffusion for pretraining on large robotic datasets
+.
+arXiv preprint arXiv:2504.02792
+.
+Cited by:
+§1
+,
+§2
+,
+§5.1
+,
+§5.2
+,
+Table 1
+.
+A
+Video Diffusion Backbones Evaluation
+Training Details.
+We finetune four recent, strong video diffusion models: LTX-Video
+[
+22
+]
+, HunyuanVideo-1.5
+[
+48
+]
+, Wan2.2
+[
+45
+]
+, and Cosmos-Predict2
+[
+1
+]
+for 10K steps on our proposed
+RoboCasa-Skill
+and
+LIBERO-Skill
+datasets.
+To ensure a fair comparison, we adopt the default model sizes and training configurations suggested by the original authors.
+Specifically, while most models utilize LoRA as the standard finetuning strategy, Cosmos-Predict2 (2B variant) uses full finetuning as its default protocol, which we follow.
+For the LoRA-based models, we employ the 13B version of LTX-Video (rank 128), the 5B version of Wan2.2 (rank 32), and the 480P-I2V configuration of HunyuanVideo (rank 8). For the Cosmos-Predict2 Base-WM baseline, we train on the original RoboCasa dataset using the standard
+MG
+split
+[
+36
+]
+. All models were trained using a distributed setup of 8 AMD Instinct MI210 GPUs (48GB VRAM each).
+Evaluation Protocol.
+We evaluate WM backbone generative quality following the protocol in
+[
+27
+]
+using 100 representative Pick and Place trajectories in RoboCasa. We evaluate all baselines on the
+Human
+split, a held-out set disjoint from the
+MG
+split
+[
+36
+]
+, which is used for finetuning. We assess performance using two key metrics:
+Instruction Following (IF)
+, measured via Qwen-VL-2.5
+[
+4
+]
+to check alignment between text prompts and visual results, and
+Physical Alignment (PA)
+, measured via VideoCon-Physics
+[
+5
+]
+to evaluate the consistency of physical interactions in generated videos.
+Video Diffusion Backbone
+IF (
+↑
+\uparrow
+)
+PA (
+↑
+\uparrow
+)
+LTX-Video
+[
+22
+]
+7.7
+40.1
+HunyuanVideo-1.5
+[
+48
+]
+8.3
+44.8
+Wan2.2
+[
+45
+]
+20.5
+56.9
+Cosmos-Predict2
+[
+1
+]
+(Base-WM)
+29.6
+60.5
+Cosmos-Predict2 (Skill-WM (Ours))
+35.3
+65.4
+Table S1
+:
+Quantitative comparison of video diffusion backbones.
+Our Skill-WM variant significantly outperforms baselines in both instruction following and physical alignment. Our results are consistent with Jang
+et al.
+[
+27
+]
+.
+Figure S1
+:
+Qualitative comparison of task completion: Skill-WM vs. Base-WM.
+We display the final frames of execution videos generated from the same prompts and initial states. While the Base-WM (left) fails to complete the trajectory and stalls mid-task, Skill-WM (right) successfully places the object on the counter. Each example depicts three synchronized camera perspectives: left, wrist-mounted, and right.
+Quantitative Results.
+Table S1
+shows Cosmos-Predict2 achieves the best IF and PA performance thanks to its pretraining on extensive robotic datasets that provide more robust spatiotemporal priors for manipulation tasks compared to other generic backbones
+[
+1
+]
+. Consequently, we choose it as the main backbone throughout the paper. Furthermore, using a skill-compositional WM trained on our decomposed
+RoboCasa-Skill
+dataset significantly improves both IF and PA metrics compared to the base backbone. We attribute this to the distribution of the training data; standard trajectories in robotics datasets often vary in duration, biasing toward simpler, shorter sequences while ignoring longer-horizon videos. By atomizing data into discrete skills, the
+length distribution during training becomes more uniform
+(as visualized in Fig. 3 of the main paper). This allows the model to learn robust transitions and complex contact dynamics without being overwhelmed by the temporal noise of long-horizon trajectories.
+Qualitative Analysis: Where Skill-WM Matters.
+Our qualitative study highlights the critical role of temporal decomposition in multi-step tasks. As illustrated by the final frames in
+Figure S1
+, the Base-WM frequently encounters “mid-task” failure modes, in which the generation stalls or fails to ground the target object. This instability is a direct result of accumulated error when the base model attempts to generate excessively long video sequences without explicit grounding of atomic skills. In contrast, our Skill-WM maintains structural and temporal coherence by treating each trajectory as a composition of shorter, manageable segments. This approach effectively bypasses the drift issues inherent to arbitrary-length generation, enabling the model to complete the
+Pick and Place
+tasks.
+B
+Extended Experimental Details and Ablations
+In this section, we supplement the empirical evaluations in Sec. 5 of the main paper by addressing a fifth research question:
+•
+Q5:
+To what extent do our network architecture and latent alignment improve robotic manipulation performance?
+We answer this through comprehensive ablation studies for
+World2Act
+: first, we demonstrate our architectural efficiency by comparing our residual policy against conventional LoRA finetuning; second, we validate our latent alignment by evaluating our contrastive matching objective against alternatives (single-directional InfoNCE, marginal contrastive loss, and global-descriptor similarity). Finally, we provide specific implementation details covering pretraining, cross-task evaluation, real-world deployment, and inference benchmarks.
+Residual Policy vs. LoRA.
+We compare our residual policy to LoRA finetuning of the GR00T-N1.6 model, where low-rank adapters are injected into the backbone. While both our residual policy and LoRA enable efficient post-training and address catastrophic forgetting of the VLA’s pretrained knowledge, our approach is significantly more effective. As demonstrated in
+Table S2
+, the residual policy requires only 6.8 hours of training, a
+2.25
+×
+2.25\times
+speedup over LoRA (
+r
+​
+a
+​
+n
+​
+k
+=
+32
+rank=32
+). This efficiency gain arises from the optimization graphs: LoRA injects trainable adapters into the base network, necessitating expensive gradient backpropagation through the entire frozen VLA. In contrast, our decoupled residual policy treats the base VLA as a frozen network; it computes corrections based on the base action, requiring only a forward pass through the VLA, completely bypassing the memory and computational overhead of backpropagating through a massive model.
+Configuration
+Adapter
+Train Time (
+↓
+\downarrow
+)
+Success Rate (
+↑
+\uparrow
+)
+GR00T-N1.6-ft
+[
+16
+]
+(Baseline)
+-
+-
+0.701
+w/ LoRA (
+r
+​
+a
+​
+n
+​
+k
+=
+16
+rank=16
+)
+LoRA
+14.6 hrs
+0.714
+w/ LoRA (
+r
+​
+a
+​
+n
+​
+k
+=
+32
+rank=32
+)
+LoRA
+15.3 hrs
+0.721
+World2Act
+(Ours)
+Residual
+6.8 hrs
+0.726
+Table S2
+:
+Impact of adapter on GR00T-N1.6-ft+
+World2Act
+.
+Comparison of our disjoint residual policy against standard LoRA adaptations on RoboCasa.
+Furthermore,
+World2Act
+delivers stronger downstream manipulation performance, improving success by 0.5% over LoRA (
+r
+​
+a
+​
+n
+​
+k
+=
+32
+rank=32
+). As illustrated in Fig. 4 of the main paper, our residual policy uses action adapters specifically designed to leverage the pre-aligned, shared latent space of video-action modalities. LoRA, conversely, initializes low-rank matrices from scratch and optimizes them within intermediate layers, which limits its capacity to exploit the rich, pre-structured multimodal knowledge acquired during Stage 1 pretraining.
+Configuration
+Loss
+Similarity
+Success Rate (
+↑
+\uparrow
+)
+Loss Ablation
+w/ Single InfoNCE
+Single InfoNCE
+Chunk-wise
+0.720
+w/ Marginal
+Marginal
+Chunk-wise
+0.707
+Similarity Ablation
+w/ Global Similarity
+Bi InfoNCE
+Global
+0.693
+World2Act
+(Ours)
+Bi InfoNCE
+Chunk-wise
+0.726
+Table S3
+:
+Contrastive loss ablation.
+Evaluating the impact of different contrastive loss formulations and similarity computation strategies for GR00T-N1.6-ft+
+World2Act
+on RoboCasa. Bi InfoNCE denotes bidirectional contrastive loss.
+Contrastive Loss Ablation Study.
+Table S3
+reports RoboCasa success rates for different loss formulations. Replacing our chunk-wise
+bidirectional
+InfoNCE with a single-directional variant (action
+→
+\rightarrow
+video only) or a marginal loss reduces performance to 0.720 and 0.707, respectively. To isolate the role of fine-grained temporal matching, we also ablate chunk-wise alignment by first
+globally pooling
+each modality over time into a single descriptor (temporal average) and then computing one cosine similarity for the entire sequence. This global-descriptor baseline further drops success to 0.693, indicating that preserving chunk-level correspondences, rather than collapsing time into a single vector, is critical for robust fine-grained alignment between video and action modalities.
+Stage 1 Pretraining Details.
+To train the action and video adapters
+ℬ
+a
+\mathcal{B}_{\text{a}}
+and
+ℬ
+v
+\mathcal{B}_{\text{v}}
+, we start with a frozen Skill-WM
+𝒲
+\mathcal{W}
+that has been finetuned on
+RoboCasa-Skill
+and
+LIBERO-Skill
+. We pass in paired videos
+𝐐
+i
+\mathbf{Q}_{i}
+and actions
+𝐚
+i
+\mathbf{a}_{i}
+from atomic action demonstrations in these datasets.
+𝒲
+\mathcal{W}
+denoises a Gaussian noise to produce the latent representation
+𝐕
+i
+\mathbf{V}_{i}
+, which is then decoded into the reconstructed video
+𝐐
+^
+i
+\mathbf{\hat{Q}}_{i}
+. Because
+𝒲
+\mathcal{W}
+is already optimized for video prediction (see
+section A
+), we do not need to compute a reconstruction loss between
+𝐐
+^
+i
+\mathbf{\hat{Q}}_{i}
+and the original video
+𝐐
+i
+\mathbf{Q}_{i}
+. Instead, we use
+𝐕
+i
+\mathbf{V}_{i}
+directly as the target visual dynamics to align the action space. We train both adapters for 30K steps using
+ℒ
+recon.
+\mathcal{L}_{\text{recon.}}
+and
+ℒ
+contrastive
+\mathcal{L}_{\text{contrastive}}
+with a batch size
+B
+=
+16
+B=16
+and a hard negative ratio of 0.25.
+Figure S2
+:
+Stage 1 pretraining losses.
+Training curves for
+ℒ
+recon.
+\mathcal{L}_{\text{recon.}}
+and
+ℒ
+contrastive
+\mathcal{L}_{\text{contrastive}}
+(defined in Sec. 4.1 of our paper) over 30K steps. Both losses converge stably, demonstrating effective cross-modal alignment between the video and action representations.
+As illustrated in
+Figure S2
+, both losses successfully converge with our configurations:
+ℒ
+recon.
+\mathcal{L}_{\text{recon.}}
+stabilizes at approximately 0.01, while
+ℒ
+contrastive
+\mathcal{L}_{\text{contrastive}}
+plateaus near 0.05. This convergence indicates that the learned representations effectively capture meaningful robot kinematics and that the video and action modalities are strongly aligned within the shared latent space.
+Cross-Task Generalization.
+Table S4
+presents the train-test separation for the cross-task generalization experiment (Fig. 5c of the main paper). We designate
+Pick and Place
+(PnP) as the primary held-out task suite for evaluating zero-shot transfer under a significant distributional shift. While PnP is never observed as an explicit task during post-training, the robot frequently encounters directly relevant interaction skills, for example, reaching, grasping, lifting, and placement-like motions, which are implicitly learned through related tasks like
+Open Door
+or
+Turn Off Microwave
+. Our experiment is designed to reuse these transferable skills to synthesize behavior in novel task compositions, making PnP a learnable but non-trivial generalization target. Indeed, the results in the main paper suggest that increasing the number of seen tasks for training significantly improves performance on these held-out tasks, yielding success rate improvements of 3.3% for GR00T-N1.6-base and 1.6% for Cosmos Policy.
+Train Tasks
+Test Tasks
+CoffeeSetupMug
+PnPCounterToCab
+CoffeeServeMug
+PnPCabToCounter
+CoffeePressButton
+PnPCounterToSink
+OpenSingleDoor
+PnPSinkToCounter
+OpenDoubleDoor
+PnPCounterToMicrowave
+CloseSingleDoor
+PnPMicrowaveToCounter
+CloseDoubleDoor
+PnPCounterToStove
+OpenDrawer
+PnPStoveToCounter
+CloseDrawer
+TurnOnSinkFaucet
+TurnOnMicrowave
+TurnOffSinkFaucet
+TurnOffMicrowave
+TurnSinkSpout
+TurnOffStove
+TurnOnStove
+Table S4
+:
+Cross-task generalization experiment splits.
+Real-World Experiments.
+To evaluate our method’s sim-to-real transfer capabilities, our physical evaluation suite is designed to replicate simulation tasks from the RoboCasa and LIBERO benchmarks closely. We define success for the real-world tasks as follows: (i)
+Pick and place cup
+: The robot must pick the cup and place it stably on the plate in a single, continuous attempt. (ii)
+Pick up bowl
+: The robot must secure the bowl and return to its home configuration (see Fig. 6 in the main paper) while maintaining a stable lift. (iii)
+Close drawer
+: To maintain terminology consistency with the corresponding simulation task, we use the label “drawer” for the toy microwave door used in the physical setup. A trial is successful when the door is pushed closed, and its magnet fully engages. We provide additional demonstrations in our project page to illustrate Skill-WM (Ours) generating rollouts in the real-world Franka setup. The video also highlights the execution of our approach across three distinct physical tasks, demonstrating robust transfer from the WM to real-world control.
+An important detail for the
+Pick and place cup
+task is our use of a skill-compositional approach, which aligns with our Skill-WM framework to ensure consistency during transfer from WM to VLA. The task is segmented into two atomic skills: “pick cup” and “place cup.” To count as a single success, the robot must complete both skills in a single shot. When training Skill-WM and our
+World2Act
+, we do not train the full pick-and-place behavior as an one-shot sequence; instead, we collect demonstrations for the
+Pick
+and
+Place
+skills separately and train them as two atomic skills.
+Model
+Inference Speed (Hz) (
+↑
+\uparrow
+)
+Per Action (ms) (
+↓
+\downarrow
+)
+GR00T-N1.6-ft
+[
+16
+]
+274.1
+3.6
+GR00T-N1.6-ft +
+World2Act
+(Ours)
+251.9
+4.0
+Cosmos Policy
+[
+30
+]
+20.8
+48.1
+Cosmos Policy +
+World2Act
+(Ours)
+20.5
+48.8
+Table S5
+:
+Inference speed comparison.
+We report the inference speed on RoboCasa using an NVIDIA RTX 4090. We measure speed by the time required to predict an action from an observation.
+Inference Speed Analysis.
+Table S5
+compares the inference latency of the baseline VLAs against those integrated with our
+World2Act
+. The results show that our method adds minimal computational overhead. When applied to GR00T-N1.6-ft,
+World2Act
+maintains a rate above 250 Hz. This speed facilitates physical applications, as demonstrated by our robot experiments in Sec. 5.4 of the main paper. Cosmos Policy operates at a lower rate of about 20.8 Hz per step because it uses a joint representation for video, language, and action. Even so, including
+World2Act
+drops the speed of Cosmos Policy by just 1.5%. This high-dimensional joint latent space likely accounts for the incremental performance gains observed with Cosmos Policy in the main paper, as the model’s high-dimensional embeddings already capture significant cross-modal correlations. These results confirm that our approach is highly practical for real deployment.
+C
+Network Specifications
+Following the notation established in the main paper, we provide the detailed architectural specifications for the action adapter
+ℬ
+a
+\mathcal{B}_{\text{a}}
+, video adapter
+ℬ
+v
+\mathcal{B}_{\text{v}}
+, action decoder
+𝒟
+a
+\mathcal{D}_{\text{a}}
+, and the residual network
+f
+θ
+f^{\theta}
+in
+Table S6
+. As defined previously,
+M
+M
+denotes the action chunk size,
+D
+D
+the latent hidden dimension, and
+C
+×
+H
+×
+W
+C\times H\times W
+the resolution of the video latents per chunk. Additionally, we define
+D
+proprio
+D_{\text{proprio}}
+as the robot proprioception state dimension,
+A
+A
+as the action dimension, and
+3
+×
+H
+img
+×
+W
+img
+3\times H_{\text{img}}\times W_{\text{img}}
+as the input image resolution. For convolutional layers, parameters are denoted as (input_channels, output_channels,
+k
+k
+=kernel_size,
+s
+s
+=stride,
+p
+p
+=padding). For fully connected layers, we use FC(input_features, output_features).
+Module
+Tensor Mapping
+Architecture
+Action Adapter
+ℬ
+a
+\mathcal{B}_{\text{a}}
+ℝ
+A
+×
+M
+→
+ℝ
+D
+\mathbb{R}^{A\times M}\rightarrow\mathbb{R}^{D}
+Flatten, FC(
+A
+×
+M
+A\times M
+, 128), GELU
+(Action Encoder)
+FC(128, 64), GELU
+FC(64,
+D
+D
+)
+Video Adapter
+ℬ
+v
+\mathcal{B}_{\text{v}}
+ℝ
+C
+×
+H
+×
+W
+→
+ℝ
+D
+\mathbb{R}^{C\times H\times W}\rightarrow\mathbb{R}^{D}
+Conv2D(
+C
+C
+, 64,
+k
+=
+3
+,
+s
+=
+2
+,
+p
+=
+1
+k=3,s=2,p=1
+), GroupNorm, GELU
+(Video Encoder)
+Conv2D(64, 128,
+k
+=
+3
+,
+s
+=
+2
+,
+p
+=
+1
+k=3,s=2,p=1
+), GroupNorm, GELU
+AdaptiveAvgPool2D((1, 1)), Flatten, FC(128,
+D
+D
+)
+Action Decoder
+𝒟
+a
+\mathcal{D}_{\text{a}}
+ℝ
+D
+→
+ℝ
+A
+×
+M
+\mathbb{R}^{D}\rightarrow\mathbb{R}^{A\times M}
+FC(
+D
+D
+, 64), GELU
+FC(64, 128), GELU
+FC(128,
+A
+×
+M
+A\times M
+)
+Residual Network
+f
+θ
+f^{\theta}
+State Encoder
+ℝ
+D
+proprio
+→
+ℝ
+D
+\mathbb{R}^{D_{\text{proprio}}}\rightarrow\mathbb{R}^{D}
+FC(
+D
+proprio
+D_{\text{proprio}}
+, 128), ReLU, FC(128,
+D
+D
+), LayerNorm
+Visual Encoder
+ℝ
+3
+×
+H
+i
+​
+m
+​
+g
+×
+W
+i
+​
+m
+​
+g
+→
+ℝ
+D
+\mathbb{R}^{3\times H_{img}\times W_{img}}\rightarrow\mathbb{R}^{D}
+Conv2D(3, 16,
+k
+=
+8
+,
+s
+=
+4
+,
+p
+=
+0
+k=8,s=4,p=0
+), ReLU
+Conv2D(16, 32,
+k
+=
+4
+,
+s
+=
+2
+,
+p
+=
+0
+k=4,s=2,p=0
+), ReLU
+Conv2D(32, 32,
+k
+=
+3
+,
+s
+=
+2
+,
+p
+=
+0
+k=3,s=2,p=0
+)
+Flatten, FC(6272,
+D
+D
+), LayerNorm
+Attention Module
+ℝ
+N
+src
+×
+D
+→
+ℝ
+N
+src
+×
+D
+\mathbb{R}^{N_{\text{src}}\times D}\rightarrow\mathbb{R}^{N_{\text{src}}\times D}
+Self-Attention (2 layers, 4 heads,
+d
+model
+=
+D
+d_{\text{model}}=D
+)
+Table S6
+:
+Architectural details of the policy components.
+In our implementation,
+A
+=
+12
+A=12
+for RoboCasa and
+A
+=
+7
+A=7
+for LIBERO,
+M
+=
+4
+M=4
+,
+D
+=
+32
+D=32
+, and
+D
+proprio
+=
+53
+D_{\text{proprio}}=53
+. Input images are
+256
+×
+256
+256\times 256
+. The Attention Module processes
+N
+src
+=
+3
+N_{\text{src}}=3
+tokens: the visual feature, the latent base action from
+ℬ
+a
+\mathcal{B}_{\text{a}}
+, and the proprioception state. The video latent resolution is
+16
+×
+60
+×
+104
+16\times 60\times 104
+, following the Cosmos-Predict-2
+[
+1
+]
+implementation.
+D
+Failure Cases Analysis
+Imperfect World Model Rollouts.
+While our Skill-WM demonstrates temporally consistent video generation, it occasionally yields imperfect rollouts, which is a known limitation of current video diffusion models
+[
+30
+]
+. We illustrate representative failure cases in
+Figure S3
+.
+We categorize the observed visual artifacts into three primary failure modes: (i)
+Structural hallucination:
+In the RoboCasa environment, the model incorrectly synthesizes a duplicate handle on the cup. (ii)
+Multi-view inconsistency:
+In the LIBERO setup, a mug placed on a plate is successfully rendered in the primary view but disappears in the wrist-mounted view. (iii)
+Fine-grained omission:
+In the real-world experiment, the model struggles to render fine-grained components, resulting in a missing door handle.
+(a)
+RoboCasa
+(b)
+LIBERO
+(c)
+Real
+Figure S3
+:
+Visual artifacts examples.
+We illustrate representative failure cases across different environments. The RoboCasa, LIBERO, and real-world setups utilize three, two, and one camera views, respectively.
+Remarkably, these failure cases motivate our core hypothesis: pixel-space representations are inherently sensitive to hallucinations, whereas latent-space dynamics provide a more robust foundation for policy learning. Even when the generated pixels exhibit localized artifacts, the passive temporal dynamics and physical interactions remain accurate. This validates our design choice to leverage latent dynamics, which capture the essential task progression without being bottlenecked by the need for pixel-perfect generation.
+Failure of WM to VLA Transfer.
+Figure S4
+illustrates a failure case when transferring from the Skill-WM imagination to execution using GR00T-N1.6-ft+
+World2Act
+. We show the final frames of both the imagined and executed sequences for a
+Turn Off Stove
+task. In the imagination sequence, the WM successfully predicts the robot grasping and turning the stove knob. However, the VLA fails to secure a firm grip on the knob during actual control, resulting in task failure. We attribute this discrepancy to the rigid physical constraints of robotic kinematics, which are far more complex and higher-dimensional than pixel space. While
+World2Act
+is specifically designed to bridge this gap by grounding the VLA in the WM’s latent dynamics, this failure case highlights the difficulty of aligning visual imagination with precise low-level motor control.
+(a)
+WM Imagination
+(b)
+VLA Execution
+Figure S4
+:
+Failure analysis of WM to VLA transfer.
+The WM generates a visually plausible completion of the task, but the VLA fails to physically ground these dynamics, causing a distribution shift during actual deployment.
+E
+Details on Skill-Compositional Data
+Dataset Statistics.
+RoboCasa-Skill
+comprises 114,192 video sequences compared to 67,593 in the original RoboCasa set. For LIBERO, the skill-based augmentation results in 11,782 videos, a significant increase from the 2,007 sequences in the original
+LIBERO
+dataset. This growth is a direct consequence of our skill-based segmentation pipeline, which typically extracts varying numbers of skill primitives from each RoboCasa and LIBERO trajectory, respectively. By optimizing the closure threshold (
+Δ
+=
+0.05
+​
+m
+\Delta=0.05\textrm{m}
+), we maximize cross-modal alignment, yielding the best synchronization rates of 96.2% for
+RoboCasa-Skill
+and 86.9% for
+LIBERO-Skill
+reported in the main paper.
+Multi-view Stitching.
+Following Cosmos-Predict2
+[
+1
+]
+, we stitch multi-view observations into a single composite layout for each video frame to enforce geometric consistency and enhance the model’s spatial understanding. Specifically, the varying RGB observations are arranged into a
+2
+×
+2
+2\times 2
+grid layout. For the RoboCasa environment, this grid consists of the left, right, and wrist camera views in the top-left, top-right, and bottom-left panes, respectively, with the bottom-right pane left black. For the LIBERO environment, the primary and wrist views occupy the top-left and top-right panes, while the entire bottom row remains black. Figure
+S5
+illustrates these configurations.
+(a)
+LIBERO layout and rendered sample.
+(b)
+RoboCasa layout and rendered sample.
+Figure S5
+:
+Multi-view stitching strategies.
+To preserve geometric context, observations from multiple cameras are spatially arranged into a unified
+2
+×
+2
+2\times 2
+grid. For each simulation environment, we illustrate the camera mapping template (left) alongside an example of stitched observation (right).
+(a)
+In the LIBERO environment, the primary and wrist cameras occupy the top row, with the bottom row black-padded.
+(b)
+In RoboCasa, the left, right, and wrist views are mapped to the top-left, top-right, and bottom-left quadrants, respectively.
+LLM-based Skill Alignment.
+To break multi-step tasks down into atomic skills, we use DeepSeek
+[
+17
+]
+alongside manually defined task schemas. These schemas establish a standardized skill vocabulary, ensuring consistent video-language synchronization across both the RoboCasa and LIBERO simulators.
+Given a global instruction and a set of
+ℓ
+\ell
+gripper contact indices (as described in Section 3 of our main paper), we prompt the LLM to segment the high-level task into
+ℓ
+\ell
+low-level prompts. Ideally,
+ℓ
+\ell
+matches the exact number of steps in the provided schema, for instance, a “pick and place” task requires exactly two steps: “pick”, then “place”.
+Because raw contact indices can contain noise, such as multiple triggers clustered too closely together, we explicitly instruct the LLM to identify and filter out false positives. The model aligns the valid indices chronologically with the schema steps. To prevent the model from hallucinating frame numbers, we instruct it to strictly use only the provided indices; if an execution has fewer valid indices than schema steps, the LLM flags the missing steps, and we discard the incomplete sequence. Furthermore, since explicit reasoning steps significantly improve DeepSeek’s alignment accuracy, we prompt the model to provide a brief explanation for its decisions. The system prompt is structured as follows:
+You are a robotic video dataset processing assistant. You output strict
+JSON.
+
+OBJECTIVE:
+You will receive a video task with detected timestamp indices. Your
+goal is to align these indices to the correct schema steps, filtering
+out sensor noise.
+
+LOGIC FLOW:
+1. ANALYZE: Compare the User Caption against the Detected Indices.
+2. FILTER: Identify indices that are likely NOISE, HESITATION, or
+DUPLICATES.
+3. ALIGN: Map the Schema Steps to the valid indices chronologically.
+4. HANDLE MISSING:
+   - If there are FEWER indices than steps, flag it.
+   - If there are MORE indices than steps, mark extras as NOISE.
+   - DO NOT invent new frame numbers.
+
+OUTPUT FORMAT:
+Return a JSON object with a "reasoning" field and an "alignment" field.
+
+EXAMPLE:
+User Input:
+Task: "CoffeeSetupMug", Indices: [116, 230, 235], Schema: ["pick",
+"place"],
+Caption: "Pick the mug and place it under the coffee dispenser."
+Output:
+{
+  "reasoning": "The caption confirms both pick and place actions. Index
+  116 aligns with ‘pick’. Indices 230 and 235 are temporally close;
+  235 is filtered as sensor noise during the ‘place’ execution.",
+  "alignment": {
+    "116": "pick(mug)",
+    "230": "place(mug)"
+  }
+}
+To generate the final low-level labels, we process each demonstration in the RoboCasa and LIBERO datasets by inputting its global instruction, schema, and detected indices into the prompt. We then extract the resulting alignments from the model’s output to serve as our ground-truth skill labels, forming
+RoboCasa-Skill
+and
+LIBERO-Skill
+.
+F
+Broader Impact
+We believe this work poses no severe societal impact. Our latent-alignment post-training approach,
+World2Act
+, improves robotic manipulation performance in assistant robot systems and achieves strong results across two state-of-the-art VLAs, namely, GR00T-N1.6 and Cosmos Policy, indicating that the method is largely architecture-agnostic. This makes
+World2Act
+a broadly applicable and reliable post-training recipe for VLA literature.
+We additionally release
+RoboCasa-Skill
+and
+LIBERO-Skill
+. Beyond their use as a foundation for general video generation, we expect these datasets to be valuable for offline reinforcement learning, behavior cloning, and benchmarking fine-grained manipulation skills.
+G
+Remarks on Related Work
+We further provide clarifications on how our approach differs from prior work that leverages latent action representations for improving VLA performance:
+•
+Cosmos Policy
+[
+30
+]
+. Cosmos Policy learns a joint embedding space and optimizes three prediction heads for actions, future frames, and values. In contrast, our method aligns the WM’s video representation with the base VLA action representation via cross-modal contrastive learning in the latent space, enabling direct transfer from imagined dynamics to action selection.
+•
+V-JEPA 2
+[
+3
+]
+. V-JEPA 2 performs model-based planning by steering the action distribution toward a desired final state, using an
+ℓ
+1
+\ell_{1}
+objective over hidden states corresponding to the predicted last frame. Our
+World2Act
+instead treats the WM latent visual dynamics as the supervision target, rather than pixel-level terminated frames, which is sensitive to visual artifacts or hallucinations (see
+Figure S3
+).
+•
+LAPA
+[
+55
+]
+. LAPA pretrains a latent action space to capture visual dynamics from generic cross-embodiment data and aligns behavior through a global task-level action code. In contrast, we use the WM to generate in-distribution synthetic rollouts of how a task should be executed, and then transfer this knowledge to the VLA via fine-grained step-by-step alignment between WM and VLA latents.
+•
+AdaWorld
+[
+15
+]
+. AdaWorld trains adaptable WMs by conditioning on latent action representations, and then infers latent actions from imagined pixels for planning. This design is also common in related post-training approaches
+[
+31
+,
+20
+,
+19
+]
+, which rely on pixel semantics as an intermediate for action. As a result, imperfect rollouts can propagate errors and degrade the inverse inference step. On the other hand,
+World2Act
+directly aligns VLA control policies with WM visual dynamics through latent alignment, avoiding reliance on pixel-level inversion.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

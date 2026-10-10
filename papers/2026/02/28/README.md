@@ -4,9 +4,17 @@
 **窗口：** 2026-02-27T09:00:00+08:00 ～ 2026-02-28T09:00:00+08:00
 **状态：** 完成
 **Books：** 纳入本次
-**检查时间：** 2026-10-06T14:33:52+08:00
+**检查时间：** 2026-10-08T22:01:44+08:00
+**窗口说明：** 用户授权保留已有候选、评分、日期归属、原窗口及有效证据，仅补来源遗漏；新增结果按下列完整自然日检查，不移动原材料。
+**补充窗口：** 2026-02-27 ～ 2026-02-27
+
+> 旧152候选及连续§4正文、原窗口和旧日期推导均冻结。下文旧Submitted/Registered组合与政策下界的日期论述不是本轮新first-public证明，旧“完成/通过”只描述此前验收，不代替本轮增量验收。运行前全文见[本轮baseline](../_sources/daily-20260228/SUPPLEMENT_BASELINE_20261008.md)。
 
 ## 1. 结论
+
+本轮新增只查Feb27完整BJT自然日。14每日源执行到下表实际停止范围；四组主题374唯一身份与月度相关标题只是发现线索，不是本日新论文数或逐项题摘/全文队列。定点27论文完整题摘，19项具名潜力在必要首公开日期缺口处隔离、8项贡献前关闭；CUDA artifact release另贡献前关闭，vSONAR旧身份/版本保留、Nano Banana2有效同事件去重。**新增确定候选0、Books新写0，原候选152保持。** CourtGuard、DSKD、ViCLIP-OT旧泛化EX理由已撤销；三者的具体潜力保留，不因日期受阻缩成EX。精确v1原件、原判断→实际增量→改变选择及每项日期请求见[本轮补查](../_sources/daily-20260228/supplement-20261008.md)。
+
+首批非作者root校准有效；DPE/AdaFocus/DSKD/ViCLIP-OT各只做一次决定准入的必要方法核心，ESAA一次core后具体关闭，不把下载或题摘当证据审阅。root已独立通过最终差额及六部分DAY，普通可执行待办0；本轮完成仅表示有限来源与增量处置达到安全终态，不授19项日期、历史缺段的正面Coverage/Evidence。下列旧结论保留为冻结历史成果，不继承本轮完成标签。
 
 本日按当前合同独立恢复，不继承旧Daily/Weekly候选、日期或完成标签。原报告保存在[V2原件](../_sources/daily-20260228/V2_REPORT_ORIGINAL.md)。三组主题查询与十四每日原生入口均执行到§2所列停止范围；历史缺段明确隔离，不授目标主题无遗漏。613去重身份库存与228命名切片仅为有限标题线索，不是本日新论文数或逐项正文队列。
 
@@ -18,26 +26,49 @@
 
 ## 2. 来源覆盖
 
-本轮真实入口、查询原值、检查时间与返回状态见 [原始查询记录](../_sources/daily-20260228/V3_FETCH_INITIAL.json)；补查见 [必要源停止](../_sources/daily-20260228/V3_FETCH_SOURCE_BOUND_CLOSE.json) 与 [混元第二页](../_sources/daily-20260228/V3_FETCH_HUNYUAN_BOUND_P2.json)。下表只说明实际有限观察，不用空响应或repository创建日期证明历史研究无遗漏。
+本轮Feb27自然日的实际原件、查询原值/时间/返回与停止位置集中在[补查§1](../_sources/daily-20260228/supplement-20261008.md)。以下是本轮有限观察，后面的原表是冻结旧检查；两者不混成全源正面Coverage。
 
 | 来源 | 检查范围与依据 | 结果 | 缺口 |
 | --- | --- | --- | --- |
-| SRC-OPENAI | Research的官方RSS日期段；02/27 mental-health 00:00GMT在窗前，stateful runtime 05:30GMT在窗内；原服务说明明确即将提供，未披露新的恢复/一致性机制，成熟服务组合排除。商业合作/融资不在研究范围。见[必要原段](../_sources/daily-20260228/V3_DECISIVE_EX_AND_WEB.md)。 | 已检查 | 无本次采用；不授已GA。 |
-| SRC-ANTHROPIC | Research现页与当日官方声明定点；war statement为政策非模型/Agent机制，现页没有恢复完整2/27历史发布段。 | 受阻 | 历史Research本窗目录缺段，不作零命中或覆盖断言；需带日期历史页/原研究发布。 |
-| SRC-GOOGLE-AI | Google Research 2026/02归档17→3条有限分页未见2/27研究；DeepMind当前Research未恢复该历史日期段。 | 受阻 | DeepMind本窗原始历史发布段；不据当前页授无遗漏。 |
-| SRC-META-AI | 官方Research返回仅57字符壳，未取得历史论文日期目录。 | 受阻 | 同源本窗目录或带时区原发布；空壳不作零命中。 |
-| SRC-QWEN | 官方主页及文章API本窗相邻Feb3/10/16条目，未见2/27；不逐篇遍历整年正文。 | 已检查 | 仅该原生日期段，不授全网召回。 |
-| SRC-DEEPSEEK | Research主页仅533字符，当前模型入口不能恢复本窗发布段。 | 受阻 | 同源日期目录/原发布，不能据homepage空历史授零。 |
-| SRC-MOONSHOT | Kimi Blog现存Nov2025→Jun2024段未含2026；GitHub created-desc第一页30条已跨Mar15→Feb6→Jan，未有本窗repo创建。 | 受阻 | repo创建不是历史research/release发布；需本窗官方blog或具体原发布，不扩历年release。 |
-| SRC-TENCENT-HUNYUAN | 首查Research为动态壳、API为blog非paper目录；浏览器恢复失败后，GitHub created-desc两页实际跨Mar5→Feb10→Feb3，停止目标日期以下。 | 受阻 | Research“全部”历史论文目录未恢复；代码创建不替代paper首公开或旧repo本窗release，需原历史目录/具体原发布。 |
-| SRC-ZAI | 官方Research原生日期从Aug15→Mar15→Feb21/11/2→Jan，已跨过本窗无2/27条目。 | 已检查 | 仅实际原生目录，不授外部全量。 |
-| SRC-BYTEDANCE-SEED | papers API page_token60取得19项Feb27→Jan27，下一80得2项Jan22/20且无more；blog12项Aug5→Feb12跨本窗。Feb27 CUDA Agent另列精度保留。 | 已检查 | 2602.24286官方目录仅Feb27日精度，跨本窗起点；arXiv原提交Feb27 18:58:05Z对应首公告最早03/02窗外，不能代Seed正文发布时间。 |
-| SRC-BAIDU-ERNIE | 技术博客第一页10项May9→Feb6→Jan29，第二页更早；无本窗条目。 | 已检查 | 仅已观察日期段。 |
-| SRC-XIAOMI-MIMO | 原生paper8项Mar13→Feb3→Jan8，无本窗论文；blog15项未给日期且More历史段未恢复。 | 受阻 | undated blog本窗归属/More历史段，不将其排为零。 |
-| SRC-MINIMAX | 中英文blog各12条跨Aug/Mar18→Feb14/12→Jan27；Agent Tech Blog只有2026-05-13一条，未见本窗技术发布。 | 已检查 | 仅这些官方原生目录的实际日期段。 |
-| SRC-ARXIV | 三组DataCite registered主题查询各page_size1000、1/1停止，原值见原始记录；420/241/335为重叠宽identity线索，613去重库存及228命名切片只作有限相关标题查漏。实际原v1 abs/正文、公告政策和same-ID registered联合逐候选核。 | 受阻 | 原arXiv目标日分类公告列表未完整恢复，不声称目标主题全量或全学科召回；DataCite不是技术证据/首公告，不把这些数字称本日论文量。 |
+| SRC-OPENAI | 本轮官方RSS Feb27相关标题段；stateful runtime成熟组合旧EX有效去重；mental-health官方核心只有未来trusted-contact/既有工作，未有新模型或安全验证机制，商业合作/融资非研究 | 已检查 | 仅有限日期段；不授GA、临床效能或全站无遗漏 |
+| SRC-ANTHROPIC | 当前Research及限定Feb27官方search；war政策声明旧EX有效去重 | 受阻 | 完整Feb27研究历史目录未恢复，需原dated目录/具体原研究，不作零命中 |
+| SRC-GOOGLE-AI | Google Feb归档显示Feb17/11/10/9/5/4/3七条；Pubs year2026第一显示段缺day；实际DeepMind100item RSS Nano Banana2 Feb26T16:01:50Z即BJT Feb27，与旧02-27同family原release去重 | 受阻 | Pubs精确日/DeepMind Research历史缺段；RSS100不证删史无遗漏，modified blog不当原spec |
+| SRC-META-AI | Research57字符壳；bounded官方search恢复Feb27 vSONAR完整题摘原页 | 受阻 | 同family ICLR旧稿与Feb27事件版本未证，原OR公开pdate/版本或重要修订说明仍缺；完整目录未恢复 |
+| SRC-QWEN | 官方API40项native日期目录，Feb3/10/16相邻段，无Feb27，不展开全年正文 | 已检查 | 仅有限native段，不授外部全量 |
+| SRC-DEEPSEEK | 首页壳不作阴性；恢复官方en/news Research Index，Jun24→Feb25 DualPath→Jan28/12及2025，无Feb27 | 已检查 | 有限15入口日期段，不授历史删项或旧repo release覆盖 |
+| SRC-MOONSHOT | Kimi blog现存Nov2025→Jun2024段、限定Feb27官方search未恢复2026历史发布 | 受阻 | 需同日原dated blog/具体发布；repo创建不代research/release |
+| SRC-TENCENT-HUNYUAN | 首查动态Research；实际POST publicList pageNum1/pageSize1000取得EN9、totalNum9，Sep22→Aug/Jul/Apr→Feb13/3，无Feb27 | 受阻 | EN有限段已处理，CN“全部”历史论文目录缺，不以EN授CH覆盖 |
+| SRC-ZAI | 原生Research Aug/Jun/May/Apr→Mar15→Feb21/11/2→Jan，已越过Feb27无当日条目 | 已检查 | 仅实际原生日期目录，不授全网召回 |
+| SRC-BYTEDANCE-SEED | papers page60十九项Feb27 CUDA→Jan27，next80两项Jan22/20且has_more=false；blog12项Aug5→Feb12；CUDA项目Feb27两条只为workdir/dataset公开 | 已检查 | release无新机制/兼容/正确性/评价约束贡献前关闭；原稿first-public仍缺，不据回填PublishDate/Submitted/Registered授日期 |
+| SRC-BAIDU-ERNIE | 第一页10项May9→Feb6/Jan29，正确原href page2八项Nov11/7→Oct/Sep及更早2025；错误?page2同页返回未当翻页成功 | 已检查 | 仅真实两页native日期段 |
+| SRC-XIAOMI-MIMO | paper8项Mar13→Feb3→Jan8；blog15项undated与限定Feb27官方search | 受阻 | undated blog日归属/More历史目录未恢复，不作零命中 |
+| SRC-MINIMAX | EN/CN各12条native日期段Aug/Mar18→Feb14/12→Jan27及2025；Agent Tech Blog一条May13，无Feb27确定技术事件 | 已检查 | 有限native目录，不授删史或全站无遗漏 |
+| SRC-ARXIV | 四组title主题查询：model/train/agent186（100+86）、multimodal/diffusion/world/VLA/attention83、kernel/runtime/RAG/memory42、gradient/loss/generalization/scaling/optimization/distill/representation/quantization/SSM/token/cache143（100+43）；合并374唯一标题线索。Submitted Feb25～Feb26只是发现路由，不当公开过滤；cs.CL Feb月表1936只22345～23369相关标题补检，未变全AB队列；27定点完整题摘/19精确v1、五次once core | 受阻 | 初始LLM100/209诊断未授覆盖；日级CL/CV/DC URL400、月表无day，19公开日保留；不以API published/Submitted/Registered/ID月份/公告政策组合推算first-public，不授全Coverage或全学科召回 |
+
+本轮真实入口、查询原值、检查时间与返回状态见 [原始查询记录](../_sources/daily-20260228/V3_FETCH_INITIAL.json)；补查见 [必要源停止](../_sources/daily-20260228/V3_FETCH_SOURCE_BOUND_CLOSE.json) 与 [混元第二页](../_sources/daily-20260228/V3_FETCH_HUNYUAN_BOUND_P2.json)。下表只说明实际有限观察，不用空响应或repository创建日期证明历史研究无遗漏。
+
+> 冻结旧来源记录（原观察未重授本轮Coverage）：
+>
+> | 来源 | 检查范围与依据 | 结果 | 缺口 |
+> | --- | --- | --- | --- |
+> | SRC-OPENAI | Research的官方RSS日期段；02/27 mental-health 00:00GMT在窗前，stateful runtime 05:30GMT在窗内；原服务说明明确即将提供，未披露新的恢复/一致性机制，成熟服务组合排除。商业合作/融资不在研究范围。见[必要原段](../_sources/daily-20260228/V3_DECISIVE_EX_AND_WEB.md)。 | 已检查 | 无本次采用；不授已GA。 |
+> | SRC-ANTHROPIC | Research现页与当日官方声明定点；war statement为政策非模型/Agent机制，现页没有恢复完整2/27历史发布段。 | 受阻 | 历史Research本窗目录缺段，不作零命中或覆盖断言；需带日期历史页/原研究发布。 |
+> | SRC-GOOGLE-AI | Google Research 2026/02归档17→3条有限分页未见2/27研究；DeepMind当前Research未恢复该历史日期段。 | 受阻 | DeepMind本窗原始历史发布段；不据当前页授无遗漏。 |
+> | SRC-META-AI | 官方Research返回仅57字符壳，未取得历史论文日期目录。 | 受阻 | 同源本窗目录或带时区原发布；空壳不作零命中。 |
+> | SRC-QWEN | 官方主页及文章API本窗相邻Feb3/10/16条目，未见2/27；不逐篇遍历整年正文。 | 已检查 | 仅该原生日期段，不授全网召回。 |
+> | SRC-DEEPSEEK | Research主页仅533字符，当前模型入口不能恢复本窗发布段。 | 受阻 | 同源日期目录/原发布，不能据homepage空历史授零。 |
+> | SRC-MOONSHOT | Kimi Blog现存Nov2025→Jun2024段未含2026；GitHub created-desc第一页30条已跨Mar15→Feb6→Jan，未有本窗repo创建。 | 受阻 | repo创建不是历史research/release发布；需本窗官方blog或具体原发布，不扩历年release。 |
+> | SRC-TENCENT-HUNYUAN | 首查Research为动态壳、API为blog非paper目录；浏览器恢复失败后，GitHub created-desc两页实际跨Mar5→Feb10→Feb3，停止目标日期以下。 | 受阻 | Research“全部”历史论文目录未恢复；代码创建不替代paper首公开或旧repo本窗release，需原历史目录/具体原发布。 |
+> | SRC-ZAI | 官方Research原生日期从Aug15→Mar15→Feb21/11/2→Jan，已跨过本窗无2/27条目。 | 已检查 | 仅实际原生目录，不授外部全量。 |
+> | SRC-BYTEDANCE-SEED | papers API page_token60取得19项Feb27→Jan27，下一80得2项Jan22/20且无more；blog12项Aug5→Feb12跨本窗。Feb27 CUDA Agent另列精度保留。 | 已检查 | 2602.24286官方目录仅Feb27日精度，跨本窗起点；arXiv原提交Feb27 18:58:05Z对应首公告最早03/02窗外，不能代Seed正文发布时间。 |
+> | SRC-BAIDU-ERNIE | 技术博客第一页10项May9→Feb6→Jan29，第二页更早；无本窗条目。 | 已检查 | 仅已观察日期段。 |
+> | SRC-XIAOMI-MIMO | 原生paper8项Mar13→Feb3→Jan8，无本窗论文；blog15项未给日期且More历史段未恢复。 | 受阻 | undated blog本窗归属/More历史段，不将其排为零。 |
+> | SRC-MINIMAX | 中英文blog各12条跨Aug/Mar18→Feb14/12→Jan27；Agent Tech Blog只有2026-05-13一条，未见本窗技术发布。 | 已检查 | 仅这些官方原生目录的实际日期段。 |
+> | SRC-ARXIV | 三组DataCite registered主题查询各page_size1000、1/1停止，原值见原始记录；420/241/335为重叠宽identity线索，613去重库存及228命名切片只作有限相关标题查漏。实际原v1 abs/正文、公告政策和same-ID registered联合逐候选核。 | 受阻 | 原arXiv目标日分类公告列表未完整恢复，不声称目标主题全量或全学科召回；DataCite不是技术证据/首公告，不把这些数字称本日论文量。 |
 
 ## 3. 候选与判断
+
+本轮确定新增0；19项有具体增量但必要公开日未证，见§5，不先加入候选表/评分。下列152原行逐字冻结，日期/评分/处置不调整；尤其其旧区间推導不是本轮公开日新证明。冻结候选不因补查被重新投入原证/Books队列。
 
 确定落窗候选清单已冻结为下表152个唯一家族。首批准入见[独立校准包](../_sources/daily-20260228/V3_CALIBRATION.md)；发现用题摘与same-ID Submitted/Registered原字段见[主题元数据](../_sources/daily-20260228/V3_THEME_METADATA.json)。旧abstract_v1字段不保证精确v1，22508/23280等身份差异已绑定实际原v1；正式标签与结论以§4精确材料为准。日期不明保留不进入本表，注册不当首公开。
 
@@ -813,7 +844,17 @@
 
 精确v1必要方法/对照、身份与日期区间见[本项原证](../_sources/daily-20260228/V3_CORE_OWNER_PACKET_22.md)。random-neighbor value penalty与representation/hierarchy交互；Gaussian/PDE保证隔离；2+1+2=5，因具体owner差额深入。fresh非原packet作者必要原证/actual owner已核，final_audit独立必要原段复核通过，窄融AGENT-PLANNING [Ch79](../../../../books/part-07-agent/79-planning.md)正文，完整邻接，末注；root非写入者实际正文/完整邻接/自身末注POST通过，不授实现复现、全证明或普遍性能/安全保证。
 
+### 本轮补充：只准入/日期核验，不新增正面采用链
+
+原§4以上连续正文保持逐字不变。本轮27定点完整题摘及[十九潜力准入链](../_sources/daily-20260228/SUP_CALIBRATION_20261008.md)只支持为何值得核验，公开日尚缺，未转为确定候选/性能/安全/理论事实或Books。五次once原证只读到决定准入：ESAA §3/6–8显示既有Event Sourcing/CQRS组合而非新Agent执行条件，具体EX；DPE §3.2显示失败pattern/Acc分段quota的data selection接口；AdaFocus §3/表3–4显示confidence/semantic-localization和少crop未必更快的反侧；DSKD §4的next-token sense原型/lexical positive-negative监督、ViCLIP-OT §4.3–4.4的similarity-graph target/OT-plan KL耦合使原含糊EX撤销。后三者等必要实验/公式正确性、因果与适用范围不因once-core阅读被标为审阅完成，待日期材料到达只重开对应identity。其余8论文EX及CUDArelease关闭理由具名保留，不对明确关闭项索不影响处置的日期。
+
 ## 5. 缺口与下一步
+
+本轮普通可执行待办0：最终增量准入/分层EX及六部分非作者DAY已由root实际通过；新增确定候选/Books待办0。以下精确外部保留不用于正面采用，不以旧“通过”继承本轮完成。
+
+本輪19项精确外部日期保留：CourtGuard2602.22557、SpectralStudy2602.22345、CMDM2602.22594、DPE2602.22859、ManifoldGD2602.23295、ConFoThinking2603.00165、AdaFocus2603.00171、InfiniteSA2603.00175、NextMem2603.15634、AetherFloat2603.08741、U-CAN2602.23400、VIOLIN2603.00166、SRCode2602.23407、MM-MEPA2603.00172、Summer22B2603.00173、GUIPruner2602.23235、AffineAttention2602.23057、DSKD2602.22351、ViCLIP-OT2602.22678；各原稿链接、已取得精确v1原件、一次恢复与逐身份重开位置在[唯一日期请求](../_sources/daily-20260228/supplement-20261008.md#2-19项精确日期请求一次隔离不进确定候选不books不全文绕日期)。缺同identity真正首次公开日或Feb27重要修订事件：官方原公告/历史daily列表，或身份/版本清楚的作者dated原发布可恢复。Submitted/Registered/API published/ID月份不满足；必要日期未证均不评分、不确定收录、不Books、不采用性能/理论/安全结论，不读全文绕日期。MM-MEPA安全信号保留而非EX；VIOLIN精确v1只pure-color六variant，不倒写v2mask/shape。
+
+各源历史缺段按本轮§2隔离，需同日dated原目录/具体原发布；vSONAR旧OR身份/事件保留与CUDA原稿日期请求不重复，Nano有效同事件去重只复用release事实。均不授正面Coverage/Evidence或无遗漏，外部材料到达仅重开对应身份/来源。以下旧§5终态保留及其原复核成果冻结，不把它们转换成新普通待办。
 
 本节所列来源/日期/中心争议均为终态保留项，不用于正面证据、Books新增采用或无遗漏断言；定点重开条件分别见各项，普通可执行工作为0。
 
@@ -834,6 +875,14 @@ Seed官方Feb27目录的[CUDA Agent](https://arxiv.org/abs/2602.24286v1)仅日�
 22817/23008的旧窄技术原证分别仍可核于[原包15](../_sources/daily-20260228/V3_CORE_OWNER_PACKET_15.md)/[原包17](../_sources/daily-20260228/V3_CORE_OWNER_PACKET_17.md)，日期未证不否定独立技术事实；CUDA旧Ch33没有本日V2来源链且21320提供独立有效支持。本轮未复用三者旧日期或Books完成，旧引用不计本窗新增成果，也未验收CUDA旧全文或真实首公开归属；本窗隔离不是声称全库不存在这些材料。22268已定点撤下该v1当日专属正面段与自身末注，其他有效来源/邻段保留，root实际POST通过；只在§5所列公开依据恢复后重开。
 
 ## 6. 复核
+
+复核者：root（本轮非报告作者）
+
+结论：通过（本轮有限增量达到安全终态；不重授旧152日期证据或隔离项Coverage/Evidence）
+
+首批实际非作者准入已核CourtGuard精确v1、ESAA/ManagingUncertainty完整题摘及ESAA一次core：CourtGuard旧generic EX撤销为受限潜力，两代表EX通过；Nano同事件去重、vSONAR旧保留与CUDArelease非论文首公开的边界已校准。root后续实际读27完整Atom、17精确v1必要差别及DSKD/ViCLIP两方法core，覆盖全部19潜力的准入与日期隔离、8EX的完整题摘判断；代表EX/core实际深核ESAA §2.4/3、§6–8、ManagingUncertainty摘要、CUDA发布核心与同事件边界。DSKD §4、ViCLIP §4.2–4.3公式9–20、DPE step-scoring和AdaFocus gate/localization必要片段已独核，前三项旧泛化EX撤销；AdaFocus阈值文字与最终decision相反的内在混淆保留，不证明confidence可靠。
+
+root实际检查14源覆盖表、原查询参数/分页停止、原JSON及必要EN/Seed返回，对baseline全部六部分增量逐段核验，DAY通过：19日期潜力隔离、8EX及CUDArelease关闭、vSONAR/Nano去重边界、无确定新增候选/Books待办符合范围。未独核全证明、全实验/附件、代码或运行复现，不授普通EX全部全文已审、全部历史目录或全学科召回；必要日期与机制证据仍须按具名条件恢复。本轮无Books新写，故无新POST队列。完成态V3、411本地引用存在性、10本轮JSON解析、原152候选行/原窗口/连续§4前缀逐字冻结及本日限定unstaged/cached diff-check均实际通过；机器检查不替代上述语义验收。下列旧复核按未变证据复用，不作为本轮完成标签。
 
 复核者：feb28_final_audit（非报告作者）；root提供分批实际Books POST及最终状态协调。
 

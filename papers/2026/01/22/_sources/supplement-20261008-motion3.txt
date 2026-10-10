@@ -1,0 +1,1391 @@
+
+SOURCE https://arxiv.org/html/2601.12761v1
+Moaw: Unleashing Motion Awareness for Video Diffusion Models
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+License: arXiv.org perpetual non-exclusive license
+arXiv:2601.12761v1 [cs.CV] 19 Jan 2026
+Moaw: Unleashing Motion Awareness for Video Diffusion Models
+Tianqi Zhang Ziyi Wang Wenzhao Zheng Weiliang Chen
+Yuanhui Huang Zhengyang Huang Jie Zhou Jiwen Lu
+††thanks: Corresponding author
+Tsinghua University Beihang University
+Abstract
+Video diffusion models, trained on large-scale datasets, naturally capture correspondences of shared features across frames.
+Recent works have exploited this property for tasks such as optical flow prediction and tracking in a zero-shot setting.
+Motivated by these findings, we investigate whether supervised training can more fully harness the tracking capability of video diffusion models.
+To this end, we propose Moaw, a framework that unleashes motion awareness for video diffusion models and leverages it to facilitate motion transfer.
+Specifically, we train a diffusion model for motion perception, shifting its modality from image-to-video generation to video-to-dense-tracking.
+We then construct a motion-labeled dataset to identify features that encode the strongest motion information, and inject them into a structurally identical video generation model.
+Owing to the homogeneity between the two networks, these features can be naturally adapted in a zero-shot manner, enabling motion transfer without additional adapters.
+Our work provides a new paradigm for bridging generative modeling and motion understanding, paving the way for more unified and controllable video learning frameworks.
+Code Repository:
+https://github.com/tianqi-zh/Moaw
+Figure 1: Moaw is a framework that incorporates a motion perception diffusion network and injects its features into a video generation diffusion model in a zero-shot manner to achieve motion transfer.
+1 Introduction
+Video diffusion models have advanced rapidly in recent years, with systems such as Stable Video Diffusion (Blattmann et al., 2023), CogVideoX (Yang et al., 2024) and Wan (Wan et al., 2025) pushing the frontier of high-quality, temporally consistent video generation. These models demonstrate the growing scalability and versatility of diffusion-based approaches, underscoring their potential as a foundation for controllable and general-purpose video synthesis.
+A central challenge in video generation is enabling precise and flexible control. Such control signals can originate from multiple modalities, including text, images (Yang et al., 2024), audio (Ruan et al., 2023), or video (Gu et al., 2025), and may consist of a single modality or a combination of several. Among these options, using a reference video as the control signal is the most challenging, especially when the generated video is required to faithfully preserve the motion information of the reference. The difficulty further increases if the first frame of the generated video is also specified by the user, since this imposes additional constraints on the video generation model, leaving far less flexibility for the model to explore and express motion creatively.
+Current approaches to video motion transfer can be broadly divided into two categories. The first line of work builds upon pretrained video diffusion models by analyzing their attention maps and enforcing that the generated video shares similar inter-frame attention patterns with the reference video (Pondaven et al., 2025) (Zhang et al., 2025). The second line adopts self-supervised learning, where the model learns to treat tracking information as prompts, thereby generating videos consistent with the given tracking cues (Geng et al., 2025) (Gu et al., 2025). However, the first class of methods does not fully exploit the intrinsic tracking capability of video diffusion models and typically requires iterative optimization, resulting in low efficiency. The second class, on the other hand, relies on sparse tracking prompts, which provide insufficiently dense control signals.
+Prior studies observe that video diffusion models trained on large-scale video datasets, naturally capture correspondences across frames (Jiang et al., 2025).
+This property has been leveraged for zero-shot optical flow estimation and point trajectory prediction (Nam et al., 2025) (Kim et al., 2025).
+Inspired by these findings, we propose Moaw (Figure 1), which fully unleashes the Motion awareness of video diffusion models and injects motion features into a video generation model to achieve zero-shot motion transfer.
+Specifically, we first train a diffusion model for motion perception, shifting its modality from image-to-video generation to video-to-dense-tracking.
+We then construct a motion-labeled dataset to identify the features’ motion information.
+Finally, we inject these features directly into corresponding layers of a structurally identical video generation model.
+Benefited from the homogeneity between the two diffusion networks, the injected features can be naturally adapted in a zero-shot manner, enabling effective motion transfer without additional adapters.
+Compared to point-tracking methods, our motion perception diffusion achieves comparable accuracy in occlusion handling while offering significantly faster inference speed. In comparison with existing motion transfer methods, our approach evaluates motion transfer accuracy through tracking and improves the End-Point Error (EPE) metric by approximately a factor of two.
+Our main contributions can be summarized as follows:
+•
+We propose Moaw, a framework that unleashes the motion awareness of video diffusion models and enables zero-shot motion transfer without the need for additional adapters.
+•
+We design a motion perception diffusion network that takes a video as input and predicts its 3D dense trajectory, shifting the modality from video generation to motion perception.
+•
+We construct a motion-labeled dataset and conduct a systematic feature analysis to identify which layers encode the strongest motion information. The selected features are then injected into a video generation diffusion model in a zero-shot manner, enabling accurate and efficient motion transfer.
+2 Related Work
+Point Tracking.
+The line of work on point tracking originally emerged from the task of optical flow estimation.
+Optical flow estimates dense correspondences between adjacent video frames. Classical variational methods (Horn and Schunck, 1980; Brox et al., 2004) struggle with large motion and occlusion, while deep models like FlowNet (Ilg et al., 2017) and RAFT (Teed and Deng, 2020) significantly improved short-term estimation using correlation volumes and iterative refinement. However, these models are limited to short-term predictions and prone to error accumulation in longer sequences.
+Sparse tracking methods follow selected keypoints over long durations. Particle Video (Sand and Teller, 2008) and TAP-Vid (Doersch et al., 2022) demonstrated long-term tracking but only for a limited number of points. Recent methods (Harley et al., 2022) improve temporal coherence with attention or adaptive windows but remain sparse and computationally inefficient for dense tracking.
+Dense point tracking extends correspondence to all pixels across time, but few methods scale well due to high memory cost and temporal drift. 3D dense tracking further adds depth estimation, as explored in SceneTracker (Wang et al., 2024) and SpatialTracker (Xiao et al., 2024), but often relies on expensive modules like cross-track attention. Our work enables efficient dense 3D trajectory prediction via latent diffusion, combining long-term temporal modeling with spatial scalability.
+A representative work is DELTA (Ngo et al., 2024), which introduces an efficient framework for dense 3D tracking using coarse-to-fine attention and a transformer-based upsampler. However, existing 3D dense tracking methods, such as DELTA (Ngo et al., 2024), require an off-the-shelf depth estimation model to first predict per-frame depth maps, which are then fed into the tracker alongside the RGB video. This two-stage design not only introduces additional computational overhead, but also leads to long inference times due to complex attention mechanisms. In contrast, our motion perception diffusion part is an end-to-end solution that does not rely on precomputed depth; instead, it learns depth-aware representations internally.
+Video Motion Transfer.
+Video motion transfer aims to synthesize new videos that follow the motion of a reference sequence. Representative approaches differ mainly in the choice of motion signal and the injection mechanism.
+Motion Prompting (Geng et al., 2025) conditions generation on spatio-temporal point trajectories, enabling camera/object control and motion transfer via trajectory-guided conditioning.
+MotionEditor (Tu et al., 2024) performs motion editing by adding a content-aware motion adapter to ControlNet with attention injection to preserve appearance while altering motion.
+MoTrans (Li et al., 2024) targets customized transfer in T2V models by decoupling appearance and motion and injecting motion-specific embeddings for few-video adaptation.
+DiTFlow (Pondaven et al., 2025) is tailored to Diffusion Transformers, extracting Attention Motion Flow from cross-frame attention of a frozen DiT to guide training-free, zero-shot motion transfer.
+Diffusion as Shader (DaS) (Gu et al., 2025) argues for 3D-aware control using 3D tracking videos, yielding more globally consistent geometry and temporally coherent motion transfer within a unified architecture.
+Unlike these methods, our approach leverages a motion perception diffusion network trained to predict dense 3D trajectories, from which motion-sensitive features are identified. These features are then injected into a video generation diffusion model in a zero-shot manner, enabling accurate and efficient motion transfer without the need for additional adapters.
+3 Proposed Approach
+In this section, we present the overall design of our proposed approach, as shown in Figure 2. In Section 3.1, we train a diffusion network for motion perception, which takes a video as input and predicts its 3D trajectory. In Section 3.2, we construct a motion-labeled dataset and use it to analyze the features of the motion perception diffusion model, identifying those that encode the strongest motion information. After that, we inject the selected features into a structurally identical video generation diffusion model in a zero-shot manner, thereby enabling motion transfer.
+3.1 Taming Video Diffusion Models for Motion Perception
+Figure 2: Overall pipeline. Our pipeline consists of two stages. The first stage is motion perception from a reference video. We encode the reference video into the latent space using the SVD video encoder, then sample Gaussian noise and concatenate it with the reference video latent along the channel dimension. A U-Net is then employed to predict the clean latent (without noise), which is finally decoded into a 3D dense trajectory. The second stage is video generation. Here, we take the features extracted from the first stage and inject them into a fixed SVD U-Net. Conditioned on an input image, the model generates a new video whose motion resembles that of the reference video.
+Motion Perception Problem Setup.
+Our objective is to shift the modality of video diffusion models from image-to-video generation to video-to-dense-tracking.
+Specifically, given an input RGB video V\in\mathbb{R}^{T\times H\times W\times 3} , where T denotes the number of frames, and H and W represent the spatial resolution of each frame, the target is to output a dense 3D trajectory tensor P\in\mathbb{R}^{T\times H\times W\times 4} .
+This tensor P contains the spatio-temporal information of H\times W trajectories, with each trajectory originating from the corresponding pixel in the first frame. At each time step t , the element P[t,i,j] is a 4-dimensional vector:
+P[t,i,j]=(u_{t},v_{t},d_{t},o_{t}),
+where (u_{t},v_{t}) denotes the 2D image coordinates of the pixel that originated at location (u_{0},v_{0})=(i,j) in the first frame, d_{t} is the estimated depth of the point at time t , and o_{t}\in\{0,1\} is a visibility flag indicating whether the point is visible at time t .
+Latent Space Encoding.
+We adopt the Latent Diffusion Model (LDM) framework (Salimans and Ho, 2022), operating in a compact latent space via a VAE originally used by Stable Video Diffusion (SVD) to encode/decode video frames (Blattmann et al., 2023), as shown in Figure 2. Prior work shows this VAE reconstructs depth with negligible error (Hu et al., 2024; Ke et al., 2024), and we observe similarly minimal distortion for both depth maps and binary visibility maps, indicating the latent space preserves key structure needed for dense prediction.
+To model 3D dense trajectories, we decompose them into motion (u,v) , depth d , and visibility o . Their latents are z^{uv} , z^{d} , and z^{o} , concatenated as
+z^{\text{traj}}=\mathrm{cat}(z^{uv},\,z^{d},\,z^{o}).
+Since diffusion expects image-like inputs, we further transform the motion component (u,v) into an image-form representation before processing.
+Color 2D Dense Displacement. Inspired by optical-flow visualization, we first convert the 2D dense trajectory to a displacement field by subtracting the first frame (a fixed grid set by resolution). Given \Delta(u,v)\in\mathbb{R}^{H\times W\times 2} , we compute per-pixel \theta=\operatorname{atan2}(v,u) and r=\sqrt{u^{2}+v^{2}} , then normalize
+\theta_{\text{norm}}=\frac{\theta+2\pi\,\mathbf{1}_{\{\theta<0\}}}{2\pi},\qquad r_{\text{norm}}=\operatorname{clip}\!\left(\frac{r}{\sqrt{H^{2}+W^{2}}},\,0,\,1\right).
+We map each vector to HSV with direction in hue and magnitude in saturation, using
+\mathrm{HSV}=\big(\theta_{\text{norm}},\,r_{\text{norm}},\,0.5+0.5(1-r_{\text{norm}})\big),
+and convert to RGB. This yields smooth, direction-aware visualizations suitable as RGB-like inputs for diffusion, and the process is reversible (HSV \leftrightarrow RGB details in the appendix).
+VAE Finetuning.
+Although the colored 2D displacement field \tilde{\mathbf{x}} appears visually indistinguishable after reconstruction by the pretrained VAE from Stable Video Diffusion (SVD), minor RGB reconstruction errors may lead to significant deviations when recovering the displacement field due to the nonlinear polar-to-Cartesian mapping.
+To mitigate this issue, we fine-tune the VAE using the colored displacement data. Specifically, we freeze the encoder and only fine-tune the decoder, ensuring that the latent space distribution of the colored displacement remains aligned with that of other modalities. This design helps maintain latent consistency and facilitates joint modeling in the diffusion process.
+Latent Diffusion Over 3D Trajectory with Video Conditioning.
+Unlike SVD, which conditions on individual images, our method conditions on the entire video sequence. We utilize a latent diffusion model (LDM) that operates in the latent space of the 3D dense trajectory, guided by the full video context. Specifically, we employ a spatio-temporal U-Net to model the denoising process in latent space, incorporating video conditioning in two complementary ways.
+First, we apply latent concatenation: the input video is encoded frame-by-frame into latent features using a pretrained VAE, and these framewise latents are concatenated with the corresponding noisy 3D trajectory latents along the channel dimension to form the U-Net input. Second, we introduce cross-attention conditioning: high-level clip features are extracted from the input video via a lightweight frame encoder, and injected into the mid-block of the U-Net through cross-attention. This design allows the model to leverage both local and global context during the denoising process.
+During training, the U-Net learns to predict the clean latent trajectory z^{\text{traj}} from its noisy version z^{\text{traj}}_{\epsilon}\sim\mathcal{N}(z^{\text{traj}},\sigma^{2}\mathbf{I}) . The training objective is to minimize the denoising error under a weighted L2 loss. During inference, we sample an initial latent z_{0}\sim\mathcal{N}(0,\mathbf{I}) , and use the UNet to iteratively denoise it into a plausible trajectory latent guided by the video condition.
+3.2 Zero-shot Motion Transfer
+Figure 3: Motion-labeled video dataset. We construct a motion-labeled video dataset using images from ScanNet++ and the Stable Virtual Camera model. For each image, we generate six motion sequences, with each video consisting of 20 frames.
+Motion-labeled Video Dataset.
+We aim to identify which features encode the strongest motion information, so that these features can later be injected into the generative model to enable zero-shot motion transfer video generation. During the motion perception stage, it is straightforward to extract intermediate features; however, in the absence of motion annotations, these features cannot be effectively analyzed. To address this limitation, we construct a motion-labeled video dataset comprising six distinct types of camera motion (left, right, up, down, forward, backward). Specifically, we select 160 images from the ScanNet++ dataset (Yeshwanth et al., 2023) and, for each image, employ a camera-control video generation model (Zhou et al., 2025) to synthesize videos corresponding to the six motion categories, as shown in Figure 3.
+Feature Analysis. When selecting which features to analyze, we take inspiration from the architecture of ControlNet. ControlNet introduces a neural network structure to control diffusion models by adding additional conditions: it attaches a trainable copy outside the original diffusion U-Net and injects the residual features from the down blocks together with the features from the mid block into the original U-Net. Following this design, we also select all residual features from the down blocks and the features from the mid block (a total of 3\times 4+1=13 ) as the objects of our analysis.
+Figure 4: PCA analysis for our motion perception video diffusion model. We select four motion patterns, and for each pattern randomly sample ten videos, resulting in 40 samples per feature. We then apply PCA for dimensionality reduction and visualization of these features.
+As illustrated in Figure 4, the first five features do not provide a clear separation of different motion types after dimensionality reduction with PCA. This suggests that these early-layer features contain relatively weak motion information and are instead dominated by low-level visual cues such as RGB appearance and texture.
+In contrast, starting from the sixth feature, we observe that the features extracted by our motion perception diffusion from videos with different motions begin to cluster. This indicates that these features encode strong motion information, with large differences across distinct motion types and small differences among similar ones. In particular, we find that all features from the third down block exhibit this property, suggesting that this entire block captures rich motion-related information. Although the fourth down block features display this effect less strongly, a clustering trend is still evident—likely because reducing such high-dimensional features to two dimensions inevitably results in information loss.
+Finally, we observe that the mid-block feature does not show the same degree of separability across motion types, implying that while intermediate representations contribute to motion encoding, they may not be sufficient on their own for reliable motion discrimination.
+This analysis highlights which layers of the network are most informative for motion perception and provides practical guidance for selecting features in our subsequent motion transfer experiments.
+Ultimately, we select the features from the third and fourth blocks as a whole, a choice that proves more beneficial for subsequent video generation.
+Zero-Shot Motion Transfer.
+Based on the features selected, we proceed to zero-shot motion transfer. Following the design of ControlNet, we directly add the residual features from the third and fourth down blocks of the motion perception U-Net to the corresponding positions in the video generation U-Net, as illustrated in the Figure 2. Regardless of the number of inference steps performed by the video generation U-Net, the injected features are consistently taken from the motion perception U-Net at the first denoising step, ensuring stable and transferable motion control.
+An important factor enabling this transfer is that the two U-Nets share a nearly identical architecture, and the parameters of the motion perception U-Net can be traced back to the video generation U-Net from which it was originally derived. As a result, even though the prediction modality has been changed—from video generation to motion perception—the extracted features remain structurally compatible with the video generation U-Net. This architectural alignment allows the video generation U-Net to naturally adapt to the injected features without any additional adapters, treating them as control signals that directly influence the generative process. Consequently, the model is able to synthesize videos whose motion faithfully reflects the perceived motion of the reference video, thereby achieving zero-shot motion transfer.
+4 Experiments
+Table 1: 2D Long-range optical flow results on CVO (Wu et al., 2023).
+Methods
+CVO-Clean (7 frames)
+CVO-Final (7 frames)
+CVO-Extended (48 frames)
+EPE \downarrow (all/vis/occ)
+IoU \uparrow
+EPE \downarrow (all/vis/occ)
+IoU \uparrow
+EPE \downarrow (all/vis/occ)
+IoU \uparrow
+RAFT (Teed and Deng, 2020)
+2.48 / 1.40 / 7.42
+57.6
+2.63 / 1.57 / 7.50
+56.7
+21.80 / 15.4 / 33.4
+65.0
+MFT (Neoral et al., 2024)
+2.91 / 1.39 / 9.93
+19.4
+3.16 / 1.56 / 10.3
+19.5
+21.40 / 9.20 / 41.8
+37.6
+[1pt/1pt]
+TAPIR (Doersch et al., 2023)
+3.80 / 1.49 / 14.7
+73.5
+4.19 / 1.86 / 15.3
+72.4
+19.8 / 4.74 / 42.5
+68.4
+CoTracker (Karaev et al., 2024)
+1.51 / 0.88 / 4.57
+75.5
+1.52 / 0.93 / 4.38
+75.3
+5.20 / 3.84 / 7.70
+70.4
+DOT (Le Moing et al., 2024)
+1.29 / 0.72 / 4.03
+80.4
+1.34 / 0.80 / 3.99
+80.4
+4.98 / 3.59 / 7.17
+71.1
+[1pt/1pt]
+SceneTracker (Wang et al., 2024)
+4.40 / 3.44 / 9.47
+-
+4.61 / 3.70 / 9.62
+-
+11.5 / 8.49 / 17.0
+-
+SpatialTracker (Xiao et al., 2024)
+1.84 / 1.32 / 4.72
+68.5
+1.88 / 1.37 / 4.68
+68.1
+5.53 / 4.18 / 8.68
+66.6
+[1pt/1pt]
+DELTA (2D) (Ngo et al., 2024)
+0.89 / 0.46 / 2.96
+78.3
+0.97 / 0.55 / 2.96
+77.7
+3.63 / 2.67 / 5.24
+71.6
+DELTA (3D) (Ngo et al., 2024)
+0.94 / 0.51 / 2.97
+78.7
+1.03 / 0.61 / 3.03
+78.3
+3.67 / 2.64 / 5.30
+70.1
+Ours
+8.25 / 7.61 / 11.61
+95.8
+8.20 / 7.59 / 11.43
+95.8
+39.89 / 36.31 / 48.55
+77.9
+Table 2: Dense 3D tracking results on the Kubric-3D dataset.
+Methods
+Kubric-3D (24 frames)
+Time (min)
+AJ \uparrow
+APD {}_{3D}\uparrow
+OA \uparrow
+SpatialTracker (Xiao et al., 2024)
+42.7
+51.6
+96.5
+9.00
+SceneTracker (Wang et al., 2024)
+–
+65.5
+–
+5.00
+DELTA (Ngo et al., 2024)
+81.6
+88.6
+96.6
+0.5
+Ours
+43.7
+54.7
+94.6
+0.12
+4.1 Dense Point Tracking
+Benchmark Datasets.
+We evaluate our motion-perception network across a range of tracking benchmarks on both 2D and 3D domains, including long-range optical flow and dense 3D tracking.
+Long-range 2D Optical Flow. We adopt the CVO benchmark (Wu et al., 2023), which includes two original subsets: CVO-Clean and CVO-Final, the latter incorporating motion blur. Each subset contains around 500 videos of 7 frames rendered at 60 FPS. Following DOT (Le Moing et al., 2024), we also include the CVO-Extended split, which consists of 500 videos with 48 frames rendered at 24 FPS. All CVO subsets are annotated with dense long-range 2D optical flow and occlusion masks.
+Although our motion perception diffusion is designed as a framework for 3D dense trajectory estimation, we can directly extract the 2D components of the predicted trajectories for evaluation and comparison with standard baselines.
+Results are shown in Table 1.
+Quantitatively, our model achieves slightly higher end-point error (EPE) than specialized optical flow methods. However, it significantly outperforms baselines in visibility prediction accuracy, as measured by the Intersection over Union (IoU) metric. Qualitative visualizations further suggest that the slightly higher EPE does not noticeably degrade the visual quality of the predicted motion fields, which remain temporally consistent and spatially coherent.
+Dense 3D Tracking. We evaluate dense trajectory reconstruction on the Kubric dataset (Greff et al., 2022), which contains 143 synthetic videos, each consisting of 24 frames with ground-truth 3D dense trajectory annotations.
+Results are shown in Table 2.
+Our method achieves state-of-the-art inference efficiency, significantly outperforming prior methods in runtime while maintaining competitive accuracy.
+Compared to DELTA, our model is approximately 4× faster at inference time, while achieving comparable performance in Occlusion Accuracy (OA). Although our overall scores are slightly lower than DELTA on other metrics, the trade-off in speed makes our method more suitable for practical deployment.
+When compared to SpatialTracker, our model achieves significantly better results on both Average Jaccard (AJ) and Average Points within Threshold (APD3D), while being approximately 75× faster. These results demonstrate the high computational efficiency and scalability of our approach without sacrificing core tracking quality.
+4.2 Video Motion Transfer
+Table 3: Motion Transfer Comparison
+EPE \downarrow
+Time(min) \downarrow
+Method
+down
+up
+left
+right
+forward
+backward
+mean
+mean
+DAS
+40.30
+29.15
+32.95
+42.60
+16.20
+12.06
+28.88
+6.5
+Ours
+14.74
+17.87
+16.04
+19.70
+12.36
+14.14
+15.81
+0.5
+Figure 5: Visualizations. It shows qualitative comparisons between model predictions and ground truth for two samples. The top two rows correspond to examples from the training set, while the bottom two rows are from the validation set. Each sample includes 10 subfigures: the first row shows model predictions, and the second row shows the corresponding ground truth.
+From left to right, the columns display: (1) visualizations of subsampled 2D dense trajectories, (2) predicted colored tracks, (3) trajectory depth, (4) visibility maps, and (5) visualizations of 3D trajectoy.
+For the motion transfer task, we conduct a comparison with Diffusion As Shader (DAS). From our constructed dataset, we randomly select 20 videos for each motion category (120 videos in total) as reference videos. For each reference video, we further sample a random image from ScanNet++ as the condition image, and then run both DAS and our model 120 times, obtaining 120 pairs of reference and generated videos for each method. To evaluate performance, we employ the DELTA model as a fair "judge", which compares the 2D dense tracking between the reference and generated videos and computes the End-Point Error (EPE).
+As shown in Table 3, our method significantly outperforms DAS across nearly all motion categories in terms of EPE. In particular, our approach achieves improvements on challenging camera motions such as "down" and "right", reducing the error by more than half. Although DAS performs slightly better on the backward motion, our model still yields a competitive result while maintaining superior performance overall. Our method reduces the mean EPE from 28.88 to 15.81, demonstrating an enhancement in capturing motion consistency between reference and generated videos.
+In this speed evaluation, we perform only a single inference step for the tracking component, without completing the full denoising and decoding process to obtain a motion map. Instead, we directly use the features extracted at this first step to guide our motion transfer. All runtime measurements reported in the table are obtained on an A800 GPU. Our method’s inference time per video is only 0.5 minutes, compared to 6.5 minutes for DAS, highlighting its effectiveness. These results validate the capability of our framework to transfer motion more accurately and efficiently, while preserving temporal coherence across diverse motion patterns.
+4.3 Experimental Analysis
+Figure 6: Ablation study on different feature selections. We compare different sources and combinations of features. The baselines include using no condition, replacing our motion perception diffusion with SVD and selecting features from the 3rd and 4th blocks, using all features from the motion perception diffusion, taking only the first feature from each block, and finally, selecting the 3rd and 4th block features from the motion perception diffusion. In the visualizations, the red arrow in the last frame indicates the overall motion trend of the generated video.
+Visualizations.
+We visualize the outputs of our motion perception diffusion model and compare them with the ground truth, as shown in Figure 5. Although our model lags behind methods such as DELTA in quantitative metrics, the generated trajectories capture overall motion trends and remain visually consistent with the reference. These results indicate that, despite room for improvement, our model shows strong potential for motion perception and transfer tasks.
+Ablation Study. To validate the effectiveness of our selected features, we conduct an ablation study, as shown in Figure 6. We compare multiple sources and combinations of features under a reference video with a move-backward motion pattern. Without any injected features (no condition), the generated video exhibits an incorrect motion, drifting toward the lower-left corner. When replacing our motion perception diffusion with SVD and selecting features from the 3rd and 4th blocks, the result resembles the no-condition case but appears even blurrier. Using all features from the motion perception diffusion produces motion consistent with the reference video, but the output is noticeably blurred. When taking only the first feature from each block, the generated motion is again incorrect, and the video lacks clarity. Finally, when selecting the 3rd and 4th block features from the motion perception diffusion, the generated motion pattern closely matches that of the reference video and remains relatively sharp.
+These results confirm that features from the 3rd and 4th blocks are the most effective signals for motion transfer, consistent with our analysis in Section 3.2.
+5 Conclusion
+In this work, we have presented Moaw to incorporate motion perception diffusion and inject its features into a video generation diffusion model in a zero-shot manner to achieve motion transfer.
+By training a motion perception diffusion network with the constructed motion-labeled dataset, we have identified motion-sensitive features and demonstrated how they can be directly injected into a video generation diffusion model to enable zero-shot motion transfer.
+Moaw achieves strong motion consistency with improved efficiency, surpassing point-tracking methods in speed and outperforming prior motion transfer approaches in accuracy. Beyond empirical gains, this work highlights the underexplored potential of video diffusion models as both generative and motion-perceptive systems. We believe Moaw provides a new paradigm for bridging generative modeling and motion understanding, paving the way toward more unified, controllable, and versatile video learning.
+ENDSOURCE
+
+
+SOURCE https://arxiv.org/html/2601.12894v1
+Sparse actiongen: Accelerating Diffusion Policy with Real-time Pruning
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+License: CC BY-NC-ND 4.0
+arXiv:2601.12894v1 [cs.RO] 19 Jan 2026
+Sparse actiongen: Accelerating Diffusion Policy with Real-time Pruning
+Kangye Ji
+††thanks: Equal contributions.
+Yuan Meng11footnotemark:
+1
+††thanks: Corresponding authors: yuanmeng@tsinghua.edu.cn, wangzhi@sz.tsinghua.edu.cn.
+Zhou Jianbo11footnotemark:
+1
+††thanks: Work done as research intern at Tsinghua University.
+Ye Li
+Hanyun Cui
+Zhi Wang22
+2
+https://diffusion-policy.cs.columbia.edu/data/experiments/image/
+Affiliation: Tsinghua University
+Abstract
+Diffusion Policy has dominated action generation due to its strong capabilities for modeling multi-modal action distributions, but its multi-step denoising processes make it impractical for real-time visuomotor control.
+Existing caching-based acceleration methods typically rely on static schedules that fail to adapt to the dynamics of robot-environment interactions, thereby leading to suboptimal performance.
+In this paper, we propose Sparse ActionGen (SAG) for extremely sparse action generation. To accommodate the iterative interactions, SAG customizes a rollout-adaptive prune-then-reuse mechanism that first identifies prunable computations globally and then reuses cached activations to substitute them during action diffusion.
+To capture the rollout dynamics, SAG parameterizes an observation-conditioned diffusion pruner for environment-aware adaptation and instantiates it with a highly parameter- and inference-efficient design for real-time prediction. Furthermore, SAG introduces a one-for-all reusing strategy that reuses activations across both timesteps and blocks in a zig-zag manner, minimizing the global redundancy.
+Extensive experiments on multiple robotic benchmarks demonstrate that SAG achieves up to 4 \times generation speedup without sacrificing performance. Project Page: https://sparse-actiongen.github.io/.
+1 Introduction
+Diffusion Policy has gained substantial attention in robotic control, due to its ability to model multi-modal action distributions (Chi et al., 2023, Ze et al., 2024, Liu et al., 2024, Liu et al., 2025c, Ge et al., 2025).
+This capability has led to their widespread adoption in Vision-Language-Action (VLA) models (Black et al., 2024, Shukor et al., 2025, Wen et al., 2025, Liu et al., 2025b, Li et al., 2025b), where they serve as the action generation head for highly dexterous manipulation tasks.
+However, its massive computational burden in the denoising process makes the action frequency unable to satisfy real-time and smooth robotic control.
+For example, on a high-end GPU like the RTX 4090, conducting 50 diffusion denoising steps at 1 ms per step for a pick-and-place task takes 50 ms. This restricts the execution frequency to 20 Hz, well below the 50-1000 Hz needed for the Franka robotic arm.
+In response to this issue, recent efforts (Yang et al., 2025, Jia et al., 2024, Høeg et al., 2024, Chen et al., 2025a, Prasad et al., 2024, Li et al., 2025a) have been made to address the inference bottleneck of Diffusion Policy. For instance, EfficientVLA (Yang et al., 2025) extends the uniform caching schedule to the action diffusion, while BAC (Ji et al., 2025) introduces a task-specific block-wise schedule to improve the caching efficiency. However, these methods typically rely on static caching schedules that are predefined offline and remain unchanged throughout the entire rollout process.
+To examine their limitations, we evaluate multiple fixed caching schedules by applying them to a single different rollout iteration separately in a leave-one-out manner. As shown in Figure 1, a fixed caching schedule can not consistently accommodate the rollout dynamics, thereby constraining the achievable tradeoff between performance and efficiency.
+Figure 1:
+The performance of fixed schedules on different rollout iterations. We conduct the experiments on the Square task, in which the robot should push or slide an object so that its center follows a square-shaped path on the table. Observations include: (1) A fixed schedule performs inconsistently across different rollout iterations. (2) The optimal schedules differ among different rollout iterations.
+Both indicate the limitations of a static caching schedule.
+To address this, we propose Sparse ActionGen (SAG), a rollout-adaptive acceleration method for extremely sparse action generation. To accommodate the rollout dynamics, SAG discards the fixed-schedule caching procedure and designs an adaptive prune-then-reuse mechanism that operates in concert with the robot-environment interaction. In each iteration, SAG globally identifies prunable computations and reuses cached counterparts to substitute them on the fly throughout generation.
+The key to SAG lies in dynamically generating and adjusting the pruning schedule for the changing sparsity patterns of policy inference across rollout iterations, which necessitates a real-time pruner aligned with the interactive visuomotor dynamics. However, existing rule-based approaches (Ji et al., 2025, Liu et al., 2025a) typically require profiling post-forward activations, fundamentally precluding environment-aware adaptation.
+To resolve this contradiction, SAG parameterizes the pruner to be conditioned on the current observations. In this way, the pruner learns to predict the sparsity pattern a priori before the inference.
+However, different from previous learning-based works that predefine static computation graphs (Ma et al., 2024a, Zhu et al., 2024), performing pruning in real time inevitably introduces additional cost.
+To reduce the additional overhead, SAG instantiates the pruner with a parameter- and inference-efficient architectural design that serves all the blocks with a single network and requires only one forward pass for the entire denoising process.
+Furthermore, we challenge the widely adopted block-wise caching paradigm (Ji et al., 2025, Ma et al., 2024a, Wimbauer et al., 2024, Yang et al., 2025, Liu et al., 2025a) for its largely overlooked inter-block redundancies. To address this, SAG refines the pipeline from a global allocation perspective. Specifically, for the pruning stage, SAG introduces an end-to-end global sparsity loss that guides the pruner to non-uniformly allocate computational resources across both timesteps and blocks under a strict budget. For the reusing stage, SAG proposes a one-for-all reusing strategy that reuses activations across blocks and timesteps in a zig-zag manner, motivated by the strong similarity observed in the activations across blocks (Figure 4(a)).
+To assess the effectiveness of the proposed method, we evaluate SAG on extensive simulation benchmarks. SAG prunes over 90% computations of Diffusion Policy during the action generation throughout the entire rollout, resulting in 3.6-4\times speedup on most of the visuomotor tasks without sacrificing the performance. In summary, our main contributions are as follows:
+1.
+We introduce Sparse ActionGen (SAG), a rollout-adaptive acceleration method for extremely fast action generation. SAG addresses the limitations of fixed caching schedules by introducing a real-time prune-then-cache mechanism.
+2.
+SAG proposes a rollout-adaptive diffusion pruner by conditioning it with current observations for the environment-aware adaptation and instantiating it with a highly parameter- and inference-efficient design for real-time prediction.
+3.
+SAG refines the prune–then–reuse pipeline from a global allocation perspective by introducing an end-to-end global sparsity loss to guide computational resource allocation and a one-for-all reusing strategy that promotes cross-block activation reuse.
+4.
+SAG prunes over 90% of computations and delivers up to 4\times losslessly acceleration for action generation without updating the model parameters.
+2 Methodology
+Figure 2:
+Framework of Sparse ActionGen.
+SAG adopts a prune-then-reuse pipeline coupled with rollout iterations. In each rollout iteration, SAG identifies the prunable computations based on the sparsity pattern predicted by the real-time diffusion pruner. During generation, SAG skips these computations and substitutes them with cached activations in a one-for-all reusing strategy.
+In this section, we introduce SAG, an acceleration method designed to enable extremely fast action generation through rollout-adaptive sparse inference. SAG consists of two key modules: a real-time diffusion pruner that dynamically adjusts pruning schedules based on rollout dynamics, and a one-for-all reusing strategy that reuses computations across denoising steps and blocks. We first analyze the three-level redundancy on the policy model inference in Sec. 2.1. Next, we introduce the real-time diffusion pruner in Sec. 2.2 and describe the one-for-all reusing strategy in Sec. 2.3. Finally, we integrate them into a unified two-stage pipeline.
+2.1 Preliminaries
+To analyze the redundancy across the action diffusion process, we decompose its dynamics into three nested levels:
+(1) rollout-level, characterizing the iterative interaction between the robot and the environment;
+(2) denoising-level, where actions are generated through multi-step reverse diffusion; and
+(3) block-level, where each denoising step is realized by propagating action tokens through stacked DiT blocks.
+We formulate the entire process across these levels in turn.
+Rollout-Level: Robot-Environment Interaction.
+At rollout iteration t , the policy receives the current observation \mathbf{o}_{t} and produces an action chunk \mathbf{a}_{t} , which is executed by the robot.
+The environment then evolves under its dynamics and yields the next observation:
+\mathbf{o}_{t+1}\sim P\!\left(\mathbf{o}_{t+1}\mid\mathbf{o}_{t},\mathbf{a}_{t}\right),
+(1)
+where P(\cdot\mid\mathbf{o}_{t},\mathbf{a}_{t}) denotes the environment’s state transition probability. This process repeats for multiple iterations until the task is completed.
+Denoising-Level: Diffusion Policy Inference.
+In each iteration, the action \mathbf{a}_{t} is obtained via conditional denoising diffusion (Chi et al., 2023).
+Starting from Gaussian noise \mathbf{a}_{t}^{K}\sim\mathcal{N}(0,I) , the policy performs K reverse denoising steps:
+\mathbf{a}_{t}^{k-1}=f_{\theta}\!\left(\mathbf{a}_{t}^{k},\,\mathbf{o}_{t},\,k\right),\quad k=K,\dots,1,
+(2)
+where f_{\theta} is the conditional denoiser.
+We can therefore represent the entire multi-step denoising process, which maps initial noise to a final action, as the policy \pi :
+\mathbf{a}_{t}=\pi(\mathbf{o}_{t})=\mathbf{a}_{t}^{0}=f_{\theta}\circ f_{\theta}\circ\dots\circ f_{\theta}(\mathbf{a}_{t}^{K},\mathbf{o}_{t}).
+(3)
+The final \mathbf{a}_{t} serves as the control action in Eq. 1.
+Block-Level: Diffusion Transformer Forward.
+The denoiser f_{\theta} is parameterized by a DiT.
+Observations are embedded by a transformer encoder and fused into a transformer decoder with L stacked layers.
+Each layer l integrates temporal and observation conditioning through three blocks, i.e., self-attention (SA), cross-attention (CA), and a feed-forward network (FFN).
+Given hidden state \mathbf{h}_{k}^{l-1} at denoising step k , the update is:
+\mathbf{h}_{k}^{l}=\mathbf{h}_{k}^{l-1}+\text{SA}_{k}^{l}+\text{CA}_{k}^{l}+\text{FFN}_{k}^{l}.
+(4)
+The output of layer l is computed by summing the residual outputs of these blocks, and the final representation \mathbf{h}_{k}^{L} produces \mathbf{a}_{t}^{k-1} in Eq. 2.
+2.2 Real-time Diffusion Pruner
+Closed-loop action generation inherently involves multi-round interactions where a diffusion policy progressively generates an entire action trajectory. However, existing caching-based acceleration methods overlook the aforementioned rollout-level dynamics of this process, applying a single, fixed caching schedule. This raises two critical questions: (1) Is the optimal schedule consistent across all rollout iterations? (2) Does a schedule optimized for one specific rollout iteration perform well across the entire trajectory?
+To investigate this, we conducted a leave-one-out evaluation on different rollout iterations. Specifically, we randomly generate three fixed caching schedules and apply them to only one rollout iteration at a time to isolate their impact on the final task success rate. As shown in Figure 1, the optimal schedule changes significantly with the rollout progress. Moreover, a schedule that excels at one iteration inevitably degrades performance at others. These findings underscore the limitations of the static schedules and suggest a rollout-adaptive caching mechanism.
+The central challenge of such a mechanism is to identify prunable computations based on the sparsity pattern in each rollout iteration.
+To this end, SAG instantiates the pruner with two essential properties: (1) environment-aware adaptation to predict visuomotor sparsity pattern, and (2) real-time prediction to enable closed-loop visuomotor control. We elaborate on these designs below.
+Environment-aware Adaptation.
+Motivated by the preceding analysis, we seek a pruner that dynamically generates optimal pruning schedules that adapt to the rollout dynamics. Ideally, such a schedule should mirror the sparsity pattern of the denoising process in each interaction round. A naive idea would be to approximate this sparsity pattern by profiling activation similarities. However, such rule-based operations rely on full forward passes, negating any potential speedup.
+To overcome this limitation, we propose a parameterized diffusion pruner G_{\psi} . Instead of profiling post-forward activations for the sparsity pattern, our pruner learns to predict it. In visuomotor tasks, the computational pattern of the action generation process is highly correlated with the visual input snapped from the environment. Therefore, we condition the pruner on the current observation \mathbf{o}_{t} , enabling it to learn a direct mapping from environment inputs to the predicted sparsity pattern. To incorporate sparsity, the pruner predicts a binary pruning mask \mathcal{M}\in\{0,1\}^{K\times 3L} for all K denoising steps and 3L DiT blocks:
+\mathcal{M}=G_{\psi}(\mathbf{o}_{t}),
+(5)
+where \mathcal{M}_{k,b}=1 indicates the computation of block b at timestep k is sparse and should be pruned.
+Real-time Prediction.
+Figure 3: Success rates of SAG w/ and w/o sinusoidal positional encoding.
+As the introduced overhead of a parameterized pruner scales with the parameter count and
+number of its forward passes, SAG minimizes such cost by designing a parameter- and inference-efficient architecture for the pruner G_{\psi} , which generates a global pruning graph in a single forward pass, predicting the sparsity pattern for all K denoising steps and 3L blocks.
+Specifically, the pruner jointly encodes the group of timestep indices and block indices using sinusoidal positional embeddings (See Figure 3 for quantitative results). Instead of outer summation, these embeddings are concatenated to preserve their informational orthogonality. The resulting spatiotemporal coordinate representation is then processed by a Transformer encoder to capture hierarchical dependencies between temporal and structural signals.
+In parallel, we adopt a visual encoder \text{Enc}_{obs} to process the current observation \mathbf{o}_{t} . The resulting observation embedding is concatenated with the spatiotemporal representation \mathbf{z} to achieve a unified feature vector \mathbf{h} :
+\mathbf{h}=\text{Concat}\left(\text{Enc}_{obs}(\mathbf{o}_{t}),\mathbf{z}\right).
+(6)
+This feature vector, which contains both environmental and structural information, is then projected by a three-layer MLP to produce two-dimensional logits, \mathbf{l}\in\mathbb{R}^{K\times 3L\times 2} . The final binary pruning mask \mathcal{M} is obtained by applying an argmax operator along the last dimension of the logits:
+\mathcal{M}=\text{argmax}\left(\text{MLP}(\mathbf{h})\right).
+(7)
+For end-to-end training, we employ the Straight-Through Estimator (STE) (Jang et al., 2016) to enable gradient flow through the non-differentiable argmax operation.
+Owing to these designs, the proposed pruner operates with exceptional efficiency, incurring a computational overhead of less than 0.3% of the total FLOPs. We present the architecture illustration in Figure 2.
+(a)
+(b)
+(c)
+Figure 4:
+(a) Redundancy patterns at different levels, revealed by calculating the similarities between activations. The left subfigure shows the overall cross-timestep and cross-block redundancy in action generation. The top-right subfigure illustrates the cross-timestep redundancy at the eighth cross-attention block, while the bottom-right subfigure shows the cross-block redundancy at timestep 30. See Appendix A.7 for more details.
+(b) Comparison of our one-for-all reusing paradigm with the previous block-wise reusing paradigm. The previous approach only reuses activations at the temporal level, whereas our paradigm enables both temporal and block-level reusing.
+(c) The prune-then-reuse pipeline of SAG, which consists of two stages: (1) Prune before the diffusion process to remove redundant computations, and (2) Reuse the remaining activations during the diffusion process.
+Optimization Objective.
+A key challenge is to guide the learning of the pruner G_{\psi} such that the pruned policy \pi^{\prime} preserves task performance while adhering to a computational budget. Our goal is to minimize the deviation between the behaviors of the pruned policy and the ground truth action, regularized by a global sparsity constraint. The overall pruning objective is defined as:
+\min_{\psi}\mathbb{E}_{\mathbf{o}_{t}\sim\mathcal{D}_{\text{ref}}}\left[\mathcal{L}_{\text{fidelity}}(\pi^{\prime}(\cdot|\mathbf{o}_{t},\mathcal{M}),\mathbf{a}_{t})\right]+\beta\mathcal{L}_{\text{sparsity}}(\mathcal{M}).
+(8)
+To ensure the pruned policy \pi^{\prime} aligns with the desired ground-truth behavior, we introduce a policy fidelity loss.
+Due to the global pruning objective, we directly supervise the pruned policy using a reference dataset \mathcal{D}_{\text{ref}} , which is constructed by uniformly sampling approximately 5% of the original training data. This encourages the pruned policy to mimic the expert actions within this representative subset. The loss is formulated as the distance between the policy’s output distribution and the ground-truth action a^{*} :
+\mathcal{L}_{\text{fidelity}}=\mathbb{E}_{(o,a^{*})\sim\mathcal{D}_{\text{ref}}}\left[||\pi^{\prime}(\mathbf{o},\mathcal{M})-a^{*}||\right],
+(9)
+where o is a visual state from the reference dataset.
+To enable non-uniform allocation of computational resources across different timesteps and blocks, we introduce an end-to-end global sparsity loss. This loss directly enforces a target global pruning rate \rho , by penalizing the deviation of the overall sparsity degree of the mask \mathcal{M} :
+\mathcal{L}_{\text{sparsity}}=||\frac{1}{N}\sum_{k=1}^{K}\sum_{b=1}^{B}\mathcal{M}_{k,b}-\rho||.
+(10)
+Here, \mathcal{M}_{k,b}\in[0,1] represents the learned gating value for the b -th block at k -th denoising step, and N is the total number of prunable units, accounting for K\times 3L . We employ the Mean Absolute Error (MAE) loss to impose an end-to-end constraint on the model’s total computational budget, obviating the need for post-processing algorithms (Zhu et al., 2024) that select computation units based on importance scores. We visualize the real-time pruning rate throughout the rollout in Appendix A.3. By setting \beta to 1, the final optimization objective can be formulated as the sum of two terms:
+\mathcal{L}_{\text{total}}=\mathcal{L}_{\text{fidelity}}+\mathcal{L}_{\text{sparsity}}.
+(11)
+2.3 One-for-All reusing strategy
+As for the pruned activations, we prefill them with the activations cached previously. A suitable reusing strategy can maximize the reduction of the caching error, thereby improving the pruning efficiency. Previous caching strategies operate locally within each block, maintaining a caching buffer for each block. However, this strategy overlooks redundancy across blocks. We observe in Figure 4(a) that activations across different blocks exhibit strong structural similarity, which motivates a one-for-all reusing strategy.
+Concretely, instead of maintaining independent cache buffers for each block, we maintain a shared buffer \tau for all the blocks of the same type. This design enables the cross-block reusing in a zig-zag manner (See Fig. 4(b)), where an activation can be reused for another block in another timestep. The residual computation can be formulated as:
+h_{k}^{\left\lfloor b/3\right\rfloor}=h_{k}^{\left\lfloor b/3\right\rfloor-1}+(1-\mathcal{M}_{k}^{b})\cdot d^{b}_{k}+\mathcal{M}_{k}^{b}\cdot\tau,
+(12)
+where d^{b}_{k} denotes the computation output of the b -th block at k -th denosing step. The cache buffer \tau is updated in tandem as:
+\tau=(1-\mathcal{M}_{k}^{b})\cdot d^{b}_{k}+\mathcal{M}_{k}^{b}\cdot\tau.
+(13)
+Pipeline.
+We integrate the real-time diffusion pruner and one-for-all reusing strategy into the two-stage pipeline to boost the action diffusion collaboratively. As illustrated in Fig. 4(c), at each rollout step, the real-time pruner predicts and decides which computations to prune before the action diffusion, conditioned on the specific observations at each iteration. During the action diffusion, the pruned computations are substituted by the cached activations with the one-for-all reusing strategy, which reuses activations across blocks and timesteps in a zig-zag manner. We adopt the one-for-all reusing strategy on both the training stage and the inference stage of the pruner. The training and inference pipeline is presented as Alg. 1 and 2.
+Algorithm 1 Training
+Input: Policy \pi_{\theta} , Dataset \mathcal{D}_{\text{ref}} , Target Pruning Rate \rho , Factor \beta
+Output: Trained Pruner G_{\psi}
+Initialize Pruner parameters \psi
+Freeze Policy parameters \theta
+while not converged do
+\triangleright Generate Pruning Mask
+Sample batch (\mathbf{o}_{t},\mathbf{a}^{*}_{t}) from \mathcal{D}_{\text{ref}}
+\mathcal{M}=G_{\psi}(\mathbf{o}_{t})
+\triangleright Generate Action
+\mathbf{a}_{\text{pred}}=\pi_{\theta}(\mathbf{o}_{t},\mathcal{M})
+\mathcal{L}_{\text{fidelity}}=||\pi^{\prime}(\mathbf{o}_{t},\mathcal{M})-\mathbf{a}^{*}_{t}|| \triangleright Eq. 9
+\mathcal{L}_{\text{sparsity}}=||\frac{1}{N}\sum_{k,b}\mathcal{M}_{k,b}-\rho|| \triangleright Eq. 10
+\mathcal{L}_{\text{total}}=\mathcal{L}_{\text{fidelity}}+\beta\mathcal{L}_{\text{sparsity}} \triangleright Eq. 11
+Update \psi\leftarrow\psi-\eta\nabla_{\psi}\mathcal{L}_{\text{total}}
+end while
+return G_{\psi}
+Algorithm 2 Inference
+Input: Observation \mathbf{o}_{t} , Pruner G_{\psi} , Denoiser f_{\theta} , Steps K
+Output: Action \mathbf{a}_{t}
+\mathcal{M}\leftarrow G_{\psi}(\mathbf{o}_{t}) \triangleright Eq. 5
+Initialize global cache \tau\leftarrow\mathbf{0}
+Sample noise \mathbf{a}^{K}_{t}\sim\mathcal{N}(0,I)
+for k=K to 1 do
+\mathbf{h}\leftarrow\text{Embed}(\mathbf{a}^{k}_{t},k,\mathbf{o}_{t})
+for each block b in f_{\theta} do
+if \mathcal{M}_{k,b}==1 then
+\mathbf{h}\leftarrow\mathbf{h}+\tau \triangleright Eq. 12
+else
+\mathbf{d}^{b}_{k}\leftarrow\text{Block}_{b}(\mathbf{h})
+\tau\leftarrow\mathbf{d}^{b}_{k} \triangleright Eq. 13
+\mathbf{h}\leftarrow\mathbf{h}+\mathbf{d}^{b}_{k}
+end if
+end for
+\mathbf{a}^{k-1}_{t}\leftarrow\text{Decode}(\mathbf{h})
+end for
+return \mathbf{a}^{0}_{t}
+3 Experiments
+We first outline the experimental setup, covering models, benchmarks, baselines, and implementation details in Sec. 3.1. Following that, we demonstrate the quantitative results in Sec. 3.2. We then present an ablation study of SAG in Sec. 3.3. Finally, we conduct qualitative experiments on the predicted sparsity pattern in Sec. 3.4.
+3.1 Experimental Setup
+Table 1:
+Benchmark on Proficient Human (PH) demonstration data.
+Success rates (%) and speedups are reported.
+SAG achieves more than a 3.4 \times speedup across all tasks, with an average performance gain of 13%.
+Method
+Success Rate (%, \uparrow ) / Speedup ( \uparrow )
+Lift
+Can
+Square
+Transport
+Tool
+Full Precision
+100\pm{0.0}
+99\pm{1.2}
+88\pm{7.0}
+78\pm{3.3}
+51\pm{5.9}
+DDIM
+100 \pm 0.0 (3.32 \times )
+96 \pm 2.8 (3.33 \times )
+86 \pm 4.9 (3.34 \times )
+76 \pm 5.7 (3.30 \times )
+42 \pm 4.6 (3.32 \times )
+EfficientVLA
+100 \pm 0.0 (3.37 \times )
+75 \pm 2.1 (3.36 \times )
+86 \pm 3.4 (3.32 \times )
+60 \pm 4.2 (3.24 \times )
+38 \pm 2.7 (3.35 \times )
+L2C
+100 \pm 0.0 (1.26 \times )
+86 \pm 1.8 (1.26 \times )
+23 \pm 4.1 (1.26 \times )
+66 \pm 3.0 (1.33 \times )
+2 \pm 0.5 (1.29 \times )
+BAC
+100 \pm 0.0 (3.23 \times )
+94 \pm 1.5 (3.42 \times )
+87 \pm 2.9 (3.42 \times )
+78 \pm 3.6 (3.09 \times )
+51 \pm 2.8 (3.33 \times )
+Falcon
+100 \pm 0.0 (1.81 \times )
+85 \pm 2.0 (1.13 \times )
+60 \pm 2.7 (1.22 \times )
+50 \pm 3.3 (2.85 \times )
+42 \pm 1.9 (1.17 \times )
+SDP
+100 \pm 0.0 (1.88 \times )
+96 \pm 1.4 (1.70 \times )
+85 \pm 2.1 (1.70 \times )
+72 \pm 2.9 (1.67 \times )
+17 \pm 1.2 (1.77 \times )
+CP
+78 \pm 3.3 (15.0 \times )
+38 \pm 2.8 (14.9 \times )
+22 \pm 4.5 (14.8 \times )
+51 \pm 3.1 (10.2 \times )
+0 \pm 0.0 (14.2 \times )
+SAG
+100 \pm 0.0 (3.72 \times )
+98 \pm 1.6 (3.70 \times )
+89 \pm 2.5 (3.64 \times )
+85 \pm 3.3 (3.44 \times )
+50 \pm 2.8 (3.65 \times )
+Table 2:
+Benchmark on Mixed Human (MH) demonstration data.
+SAG achieves over a 3.7 \times speedup across all tasks, with an average performance gain of 29%.
+Method
+Success Rate (%, \uparrow ) / Speedup ( \uparrow )
+Lift
+Can
+Square
+Transport
+Full Precision
+100 \pm 0.0
+93 \pm 6.5
+76 \pm 4.3
+54 \pm 5.2
+DDIM
+100 \pm 0.0 (3.31 \times )
+92 \pm 4.9 (3.33 \times )
+78 \pm 2.8 (3.32 \times )
+51 \pm 3.8 (3.30 \times )
+EfficientVLA
+100 \pm 0.0 (3.33 \times )
+75 \pm 2.1 (3.34 \times )
+52 \pm 3.0 (3.33 \times )
+0 \pm 0.0 (3.50 \times )
+L2C
+100 \pm 0.0 (1.26 \times )
+0 \pm 0.0 (1.26 \times )
+53 \pm 1.9 (1.26 \times )
+46 \pm 2.3 (1.28 \times )
+BAC
+100 \pm 0.0 (3.27 \times )
+93 \pm 1.6 (3.43 \times )
+78 \pm 2.8 (3.36 \times )
+29 \pm 3.4 (3.45 \times )
+Falcon
+100 \pm 0.0 (1.85 \times )
+84 \pm 2.0 (1.38 \times )
+40 \pm 2.9 (1.54 \times )
+27 \pm 3.1 (2.68 \times )
+SDP
+100 \pm 0.0 (1.69 \times )
+94 \pm 1.4 (1.70 \times )
+77 \pm 2.2 (1.69 \times )
+52 \pm 3.0 (1.83 \times )
+CP
+98 \pm 1.0 (15.35 \times )
+15 \pm 2.5 (15.1 \times )
+30 \pm 3.1 (15.4 \times )
+14 \pm 2.0 (11.5 \times )
+SAG
+100 \pm 0.0 (3.75 \times )
+94 \pm 5.7 (3.76 \times )
+79 \pm 3.4 (3.72 \times )
+50 \pm 1.6 (3.84 \times )
+Table 3:
+Benchmark on multi-stage task (Kitchen).
+In Kitchen task, p_{x} is the frequency of interacting with x or more objects, including an openable microwave, four turnable oven burners, an oven light switch, and a freely movable kettle.
+SAG achieves a lossless 4.03 \times speedup on this task.
+Method
+Success Rate (%, \uparrow )
+Speedup ( \uparrow )
+Kitp1
+Kitp2
+Kitp3
+Kitp4
+Full Precision
+100 \pm 0.0
+100 \pm 0.0
+100 \pm 0.0
+99 \pm 0.6
+–
+DDIM
+100 \pm 0.0
+100 \pm 0.0
+100 \pm 0.0
+99 \pm 0.8
+3.37 \times
+EfficientVLA
+20 \pm 2.3
+2 \pm 0.8
+0 \pm 0.0
+0 \pm 0.0
+3.71 \times
+L2C
+100 \pm 0.0
+100 \pm 0.0
+100 \pm 0.0
+97 \pm 1.2
+1.28 \times
+BAC
+100 \pm 0.0
+100 \pm 0.0
+97 \pm 1.6
+90 \pm 2.9
+3.66 \times
+Falcon
+100 \pm 0.0
+100 \pm 0.0
+99 \pm 0.6
+99 \pm 0.6
+3.01 \times
+SDP
+100 \pm 0.0
+100 \pm 0.0
+100 \pm 0.0
+99 \pm 0.6
+1.63 \times
+CP
+76 \pm 2.5
+63 \pm 4.3
+46 \pm 4.5
+12 \pm 6.8
+31.4 \times
+SAG
+100 \pm 0.0
+100 \pm 0.0
+100 \pm 0.0
+99 \pm 0.6
+4.03 \times
+Models and Benchmarks.
+Following the original settings in Diffusion Policy (Chi et al., 2023), we select the transformer-based Diffusion Policy (DP-T) for our evaluation. The pretrained checkpoints are from source11
+1
+https://diffusion-policy.cs.columbia.edu/data/experiments/.
+In simulation settings, we evaluate SAG on DP-T across different robot manipulation tasks with three fixed seeds: Lift, Can, Square, Transport, Tool hang, and Kitchen (Gupta et al., 2020). Demonstration data is sourced from proficient human (PH) and mixed proficient/non-proficient human (MH) teleoperation. More details can be found in Appendix A.2. In real-world settings, we deploy the acceleration methods in a pick-and-release task. The task requires the robot to grasp, pick, and release a cylindrical soft bag.
+Baselines.
+We use the DP-T (Chi et al., 2023) model as our Full Precision baseline. For comparison, we benchmark against leading acceleration methods. We reproduce cache-based approaches, including Efficient-VLA (Yang et al., 2025) and BAC (Ji et al., 2025). We further include DDIM (Song et al., 2020), a sampling-efficient noise scheduler, and Falcon (Chen et al., 2025a), which accelerates denoising by reusing intermediate noise from previous actions. Finally, we evaluate the learning-based methods Streaming Diffusion Policy (SDP) (Høeg et al., 2024) and Consistency Policy (CP) (Prasad et al., 2024), which distills the generation into a few denoising steps via consistency distillation, and L2C (Ma et al., 2024a), adapted from image generation to our action-generation setting.
+Implementation Details.
+We conduct the simulation experiments on NVIDIA Tesla V100S 32G GPU, equipped with Intel(R) Xeon(R) Silver 4210 CPU. For real-world experiments, we conduct the experiments on Franka Research 3 robot arm with NVIDIA GeForce RTX 4090D 48G. The proposed pruner introduces a hyperparameter pruning rate \rho , we empirically set it as 91%. The pruner network is trained for 30 epochs with a batch size of 32 and a learning rate of 1e^{-4} . We use a training set of 5{,}600 samples and a validation set of 640 samples for each simulation task and 150 trajectories collected by Gello for the real-world task. We adopt a linear warmup of 4 steps and apply module-specific weight decay, set as 1e^{-4} for the observation encoder, 1e^{-3} for the transformer encoder, and 1e^{-5} for the three-layer MLP. The training process is visualized in Appendix A.4.
+3.2 Quantitative Results
+To show the advantage of SAG, we compare our method
+with several SOTA acceleration methods (Yang et al., 2025, Ma et al., 2024a, Ji et al., 2025). We set the cache updating interval \mathcal{N} as 7 for Efficient VLA. For L2C, we adopt the same training configs as SAG for fair comparison. We set the number of cache update steps \mathcal{S} as 10 and the number of selected upstream blocks k as 5 for BAC, following the original paper. We set the inference steps K as 30 for DDIM and 3 for Consistency Policy. For Falcon, we follow the original setup (Chen et al., 2025a).
+Overall Results.
+As shown in Tables 1, 2, and 3, SAG demonstrates a superior trade-off between performance and efficiency across all the simulation benchmarks. On the Proficient Human and Mixed Human datasets, SAG improves the average success rates to 84% and 81%, respectively.
+We also observe that SAG achieves substantial speedups of 3.63 \times and 3.77 \times with an extreme pruning rate exceeding 90%. The advantage is most pronounced on the multi-stage Kitchen task, where SAG achieves 100% success rate while delivering the highest speedup of 4.03 \times . The latency is detailed in Appendix A.5.
+As shown in Fig. 5, SAG also demonstrates robust performance in real-world settings, which impose strict requirements for real-time and high-fidelity action generation. SAG achieves the best success rate of 54% and the second-best inference frequency of 45.1%. More direct comparisons can be found on the project website.
+Figure 5: Left: Pick-and-Release Task Setup. Right: Real-world evaluation results, measured by inference frequency and success rate.
+Comparison with SOTA baselines. Notably, all the baselines fail to achieve lossless performance with comparable acceleration gains. EfficientVLA uses a fixed caching schedule for any input, particularly on the Kitchen task, where its success rate falls to 3%. L2C’s rigid policy of caching every two steps inherently caps its acceleration, resulting in a modest 1.28 \times speedup. BAC cannot adapt to evolving rollout dynamics and remains tied to a block-wise caching paradigm, performing poorly on complex tasks such as transport. The excessive compression rate seriously impairs the performance of CP, while Falcon and SDP achieve sub-optimal speedup due to coarse-grained pruning strategies.
+In contrast, SAG achieves environment-aware, real-time pruning to adapt to the rollout dynamics and achieves a global prune-then-reuse pipeline to preserve fidelity of generated actions under extremely high sparsity.
+Table 4:
+Ablation Study.
+We evaluate three key design choices of SAG: the real-time diffusion pruner, the one-for-all reusing strategy, and the global sparsity loss.
+Removing any of them results in a significant drop in success rate, confirming their critical role in maintaining efficiency and accuracy.
+Method
+Success Rate (%, \uparrow )
+Average
+Liftph
+Canph
+Squareph
+Transportph
+Tool
+w/o Real-time Diffusion Pruner
+100
+92
+90
+80
+48
+82
+w/o One-for-All Reusing Strategy
+100
+94
+94
+0
+36
+65
+w/o Global Sparsity Loss
+100
+86
+0
+16
+40
+48
+SAG
+100
+94
+94
+84
+54
+85
+Method
+Success Rate (%, \uparrow )
+Average
+Liftmh
+Canmh
+Squaremh
+Transportmh
+Kitchen
+w/o Real-time Diffusion Pruner
+100
+94
+76
+46
+99
+83
+w/o One-for-All Reusing Strategy
+100
+94
+80
+48
+97
+84
+w/o Global Sparsity Loss
+100
+90
+0
+0
+93
+57
+SAG
+100
+96
+86
+62
+100
+89
+3.3 Ablation Study
+To verify the effectiveness of the key design choices of SAG, we conduct a series of ablation experiments, with results summarized in Table 4.
+Effectiveness of the Real-time Diffusion Pruner.
+For comparison, we adopt the diffusion pruner to generate a fixed caching schedule and substitute the pruner with this schedule throughout the entire rollout. The results show that the substitution leads to a noticeable drop in performance, with the average success rate decreasing from 89% to 83% on the MH and Kitchen tasks. This degradation highlights that achieving environmental awareness and real-time pruning is the key to realizing efficient and lossless action generation.
+Effectiveness of the One-for-All Reusing Strategy.
+We replace the one-for-all reusing strategy with the widely adopted block-wise reusing strategy to isolate its impact on the overall performance. The results show that the one-for-all reusing strategy improves the performance significantly by 12% on average. This demonstrates that the proposed strategy reduces both the cross-block and cross-timestep redundancy.
+Effectiveness of the Global Sparsity Loss.
+We assess the global sparsity loss by substituting it with a block-wise loss, which assigns a uniform computational budget to every block.
+The removal of global sparsity loss leads to a catastrophic collapse in performance across all tasks, with the average success rate dropping by 37% on PH tasks and 32% on MH tasks. Notably, performance on several tasks, such as Square and Transportmh, drops to 0%. This outcome underscores that allocating as many computational resources as possible to important blocks is critical to achieving extreme sparsity.
+3.4 Qualitative Results.
+Figure 6:
+Predicted sparsity patterns across rollout iterations when the robot moves the kettle. A coordinate point (x,y) in the sparsity pattern figures represents the computation of the y-th block at the x-th timestep. Lighter colors indicate higher computation sparsity.
+We visualize the sparsity patterns predicted by the pruner during the robot moving a kettle in Figure 6. We observe that most computations are highly sparse, as shown by the large white regions. Moreover, the pattern shifts with each observation, demonstrating the pruner’s ability to adapt to the evolving rollout dynamics. Interestingly, the computations become dense in the top and right areas, indicating that the upper blocks and later denoising steps exhibit more significant changes in activation patterns. We also present details of sparsity patterns for different tasks in Appendix A.6.
+4 Related Work
+Diffusion Models Caching.
+Caching has emerged as an effective way to accelerate diffusion inference by reusing redundant activations. Early methods such as DeepCache (Ma et al., 2024b) focus on U-Net backbones, while more recent approaches (Selvaraju et al., 2024, Ma et al., 2024a, Chen et al., 2024, Zou et al., 2025) extend caching to transformer-based diffusion models.
+These methods typically operate at a coarse granularity, with all the blocks sharing a uniform caching schedule (Selvaraju et al., 2024, Ma et al., 2024b), i.e., updating the cache at uniform intervals. Despite some works extending this schedule in a finer architectural granularity, they either require extra training (Ma et al., 2024a) or are specifically designed for the patterns of the image generation process (Chen et al., 2024).
+Diffusion Policy Acceleration.
+DiT-based diffusion policies use a large multimodal transformer as the denoiser and directly denoise continuous action chunks conditioned on visual observations.
+One-Step Diffusion Policy (Wang et al., 2024) converts a pretrained policy into a single-step action generator. Consistency Policy (Prasad et al., 2024) and SDM Policy (Jia et al., 2024) distill a Diffusion Policy into a faster student policy by enforcing self-consistency along diffusion trajectories. VDD (Zhou et al., 2024) compresses pretrained diffusion policies into Mixture-of-Experts models using a variational objective.
+In terms of caching-based methods, Streaming Policy Høeg et al. (2024), RNR-DP Chen et al. (2025b), and Falcon (Chen et al., 2025a) reuse partially denoised trajectories in the previous iterations, while EfficientVLA (Yang et al., 2025) adopts a uniform caching schedule, i.e., updating the cached features at fixed intervals. Block-wise Adaptive Caching (Ji et al., 2025) accelerates policy inference by caching intermediate action features at a fine-grained block level.
+5 Conclusion
+In this work, we propose Sparse ActionGen (SAG) for sparse action diffusion. SAG boosts action generation with two key designs. First, SAG designs a real-time pruner that adapts caching schedules to the rollout dynamics during robot–environment interaction. Second, SAG develops a global prune-then-reuse pipeline that enables both global allocation of computational resources and global reuse of activations across blocks and timesteps. Extensive experiments on diverse benchmarks demonstrate the superior efficiency and effectiveness of our approach.
+ENDSOURCE
+
+
+SOURCE https://arxiv.org/html/2601.14000v1
+Group-Invariant Unsupervised Skill Discovery: Symmetry-aware Skill Representations for Generalizable Behavior
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+C_{4} D_{1}\cong C_{2} SO(2)
+License: arXiv.org perpetual non-exclusive license
+arXiv:2601.14000v1 [cs.RO] 20 Jan 2026
+Group-Invariant Unsupervised Skill Discovery: Symmetry-aware Skill Representations for Generalizable Behavior
+Junwoo Chang
+Joseph Park
+Roberto Horowitz
+Jongmin Lee
+and Jongeun Choi
+††thanks: (Corresponding authors: Jongeun Choi and Jongmin Lee.)††thanks: Junwoo Chang, Joseph Park, and Jongeun Choi are with the School of Mechanical Engineering,
+Yonsei University, Seoul, South Korea (e-mails: junwoochang@yonsei.ac.kr;
+iamjoseph1129@yonsei.ac.kr; jongeunchoi@yonsei.ac.kr).
+Jongmin Lee and Jongeun Choi are with the Department of Artificial Intelligence,
+Yonsei University, Seoul, South Korea (e-mails: jongminlee@yonsei.ac.kr;
+jongeunchoi@yonsei.ac.kr).
+Jongeun Choi and Roberto Horowitz are with the Department of Mechanical Engineering, University of California, Berkeley, CA 94720, USA (e-mail: horowitz@berkeley.edu)††thanks: The authors used the ChatGPT large language model (OpenAI) [1] to polish texts. All texts written with LLM assistance was reviewed and verified by the authors.††thanks: This work has been submitted to the IEEE for possible publication. Copyright may be transferred without notice, after which this version may no longer be accessible.
+Abstract
+Unsupervised skill discovery aims to acquire behavior primitives that improve exploration and accelerate downstream task learning. However, existing approaches often ignore the geometric symmetries of physical environments, leading to redundant behaviors and sample inefficiency. To address this, we introduce Group-Invariant Skill Discovery (GISD), a framework that explicitly embeds group structure into the skill discovery objective. Our approach is grounded in a theoretical guarantee: we prove that in group-symmetric environments, the standard Wasserstein dependency measure admits a globally optimal solution comprised of an equivariant policy and a group-invariant scoring function. Motivated by this, we formulate the Group-Invariant Wasserstein dependency measure, which restricts the optimization to this symmetry-aware subspace without loss of optimality. Practically, we parameterize the scoring function using a group Fourier representation and define the intrinsic reward via the alignment of equivariant latent features, ensuring that the discovered skills generalize systematically under group transformations. Experiments on state-based and pixel-based locomotion benchmarks demonstrate that GISD achieves broader state-space coverage and improved efficiency in downstream task learning compared to a strong baseline.
+Index Terms: Skill discovery, Group equivariance, Unsupervised reinforcement learning, Robotics
+I Introduction
+Unsupervised skill discovery has become a central tool for acquiring reusable behavioral primitives that can accelerate downstream task learning. A wide range of methods learn latent skills by maximizing mutual information or distance-based objectives between skills and state trajectories [2, 3, 4, 5, 6, 7]. These methods have shown that pretraining a diverse set of behaviors can substantially improve exploration, state coverage, and downstream task learning efficiency across challenging continuous-control benchmarks.
+Despite this progress, existing approaches often struggle to pretrain useful skills efficiently. Standard distance-maximizing objectives treat the state space as largely unstructured, and must discover all behaviors directly in a high-dimensional latent space. Recent works attempt to impose additional priors to mitigate this difficulty—for example, LGSD [8] leverages language guidance to bias the skill space toward semantically meaningful behaviors, while “Do’s and Don’ts” [9] leverage desired behavioral preference priors. However, these methods still overlook a fundamental property of many robotic environments: the presence of strong geometric symmetries (e.g., rotations of a locomotion agent) that make many behaviors equivalent up to a group transformation. When such a structure is ignored, skill discovery tends to learn redundant variants of the same behavior, wasting samples and weakening generalization.
+To address this limitation, we introduce Group-Invariant Skill Discovery (GISD), a framework that injects group symmetry directly into the skill discovery objective and representation.
+Our approach builds upon a key theoretical insight: in a group-invariant environment, the Wasserstein dependency measure [10] admits a globally optimal solution comprised of an equivariant policy and a group-invariant scoring function f . This existence guarantee implies that we can safely restrict the search space to a class of group-invariant scoring functions without any loss of optimality.
+Based on this principle, we formulate the Group-Invariant Wasserstein dependency measure (GIWDM), which directly optimizes the objective within this reduced subspace.
+GIWDM thus eliminates the redundancy of exploring non-symmetric solutions and ensures that the discovered skills inherently respect the environmental symmetry.
+Building on this theory, we parameterize the group-invariant scoring function in a group Fourier space, discovering skills whose latent representations explicitly encode the group symmetry. Once such symmetry-aware skills are learned, we can exploit the same structure: the agent can reuse a skill at novel configurations by transforming its latent representation under the group, enabling systematic generalization across group transformations.
+The contributions of our work are summarized as follows:
+1)We prove that, in group-symmetric MDPs, the Wasserstein Dependency Measure (WDM) admits a globally optimal solution consisting of an equivariant policy and a group-invariant scoring function f . This result justifies Group-Invariant Skill Discovery (GISD), which restricts f
+to symmetry-respecting functions without sacrificing optimality.
+2) We instantiate GISD by parameterizing the group-invariant scoring function f in the group Fourier domain. The intrinsic reward is defined via the alignment of equivariant Fourier features, producing skill representations that are group-symmetric by construction. We also show that this symmetric representation enables generalizable skill implementation under the group transformation in downstream tasks.
+3) We evaluate GISD on state-based and pixel-based locomotion benchmarks, showing improved sample efficiency and state-space coverage over a strong distance-based baseline.
+II Related Work
+II-A Unsupervised Skill Discovery
+Unsupervised skill discovery seeks to learn diverse behaviors in reinforcement learning (RL) without relying on explicit reward signals and reuse them for efficient downstream task training. A common strategy is to maximize the dependency between states and skills, leading to distinct trajectories according to the different latent skill vectors. One of the classes of unsupervised skill discovery contains leveraging the mutual information (MI). MI-based approaches maximize the correlation between skill and state, typically via a Kullback-Liebler (KL)-divergence formulation [2, 11, 4, 12]:
+\displaystyle I(\mathcal{S};Z)
+\displaystyle=D_{KL}\left(p(s,z)\|p(s)p(z)\right)
+\displaystyle=\int_{\mathcal{S}\times Z}p(s,z)\log\frac{p(s,z)}{p(s)p(z)}\,dsdz.
+While they effectively uncover distinct skills, their reliance on KL divergence can limit overall state coverage.
+To address the limitation of MI-based approach, distance-maximizing approaches, which is the other class in unsupervised skill discovery, replace MI with the 1 -Wasserstein distance (or Kantorovich metric) for tractability, promoting both distinctness and a broader exploration of states [6, 7, 5, 8]:
+I_{\mathcal{W}}(\mathcal{S};Z)=\mathcal{W}\big(p(s,z),p(s)p(z)\big)
+These approaches map states to a compact latent space that preserves a chosen distance metric (e.g., temporal distance [5], controllability distance [7], or language distance [8]), thereby promoting both broad exploration and the discovery of skills that are well-separated under the metric.
+Based on distance-maximizing unsupervised skill discovery, recent studies have proposed methods to improve the quality of skills through the addition of prior knowledge. For example, one of the prior works, LGSD [8], utilizes language prior to improve semantic diversity between skills. In another prior work, Do’s and Don’ts [9], they utilize the prior knowledge of desired state transition for feasible skill discovery.
+In this work, we also build upon distance-maximizing approaches by integrating a geometric prior, but our method differs in that it discovers skills directly from the inherent group symmetric structure of the space, and thereby, the skills are enabled to be discovered with the underlying geometric symmetry.
+II-B Group Equivariance in Reinforcement Learning
+Group equivariance is a mathematical property that characterizes how a function’s output transforms in response to a specified group action on its input. Incorporating this property into neural networks ensures that transformations of the input data induce predictable and consistent transformations of the output [13, 14, 15, 16, 17, 18]. Recent works have explored group equivariance in robotic settings [19, 20, 21, 22, 23, 24, 25, 26, 27]: for example, some prior works [19, 20, 21] apply group-equivariant convolutions to pick-and-place tasks, and other prior works [22, 23, 24, 25] leverage roto-translation symmetry in three-dimensional environments, notably improving data efficiency and generalization. Such benefits are particularly relevant for RL, where sample efficiency remains a central challenge. Several studies have demonstrated that integrating group equivariance into RL algorithms yields enhanced performance and faster learning compared to standard methods [28, 29, 30, 31, 32, 33, 34, 35, 36, 37]. Notably, some works [28, 29] introduce the concept of group-invariant Markov decision process (MDPs), offering a formal basis for these improvements. Building upon these successes, our work aims to incorporate group equivariance into unsupervised skill discovery, thereby addressing limitations in existing approaches and further advancing the potential of symmetry-based methods.
+III Preliminaries
+III-A Distance-Maximizing Skill Discovery
+Distance-maximizing skill discovery approaches [6, 7, 5, 8, 38] employ the Wasserstein dependency measure (WDM) [10], an equivalent formulation of the 1-Wasserstein distance due to the Kantorovich-Rubinstein duality [39]. Concretely, the objective is given by:
+\displaystyle I_{\mathcal{W}}(\mathcal{S};Z)
+\displaystyle=W_{1}(p(s,z),p(s)p(z))
+\displaystyle=\sup_{\|f\|_{L}\leq 1}\left(\mathbb{E}_{p(s,z)}[f(s,z)]-\mathbb{E}_{p(s)p(z)}[f(s,z)]\right)
+where W_{1} represents 1 -Wasserstein distance and \|\cdot\|_{L} indicates the 1-Lipschitz constraint. The function f is parameterized as f(s,z)=\phi(s)^{\top}\psi(z) , mapping the state space \mathcal{S} to a latent space via \phi:\mathcal{S}\rightarrow\mathbb{R}^{D} . In addition, by imposing additional conditions, replacing \mathcal{S} with the terminal state S_{T} , setting \psi(z)=z , and sampling z from a zero-mean prior p(z) , the objective can be approximated through a telescoping sum:
+I_{\mathcal{W}}(\mathcal{S}_{T};Z)\approx\sup_{\|\phi\|_{L}\leq 1}\mathbb{E}_{p(\tau,z)}\sum^{T-1}_{t=0}(\phi(s_{t+1})-\phi(s_{t}))^{\top}z
+(1)
+Consequently, a corresponding reward function is defined as r_{t}(s_{t},z,s_{t+1})=(\phi(s_{t+1})-\phi(s_{t}))^{\top}z . The 1-Lipschitz constraint \|\phi(s_{t+1})-\phi(s_{t})\|\leq d(s_{t+1},s_{t}) preserves the distance metric in the latent space. A skill conditioned policy \pi(s,z) is trained via RL to maximize the WDM objective, thereby promoting trajectories that accumulate larger defined distance in the direction of z .
+III-B Group Equivariance and Representation Theory
+If a transformation leaves a property of an object or system unchanged, that transformation is called a symmetry [40]. Symmetries satisfy the axioms of associativity, identity, inverse, and closure, and the collection of all such transformations forms a group. In our setting, the relevant symmetry is planar rotation, represented by the continuous group SO(2) . For practical implementation, we approximate this continuous symmetry using a discrete cyclic subgroup C_{N} , where rotations are quantized in increments of 2\pi/N .
+A group representation \rho:G\to GL(n) maps each group element g\in G to an invertible n\times n matrix that describes how G acts on a vector space. Examples include the trivial representation \rho_{0}(g)x=x , which leaves the space unchanged, and the regular representation on \mathbb{R}^{|G|} , which can be decomposed into irreducible representations \rho_{k} that cannot be further reduced. For SO(2) , the complex irreducible representations take the form \rho_{k}(\theta)=e^{ik\theta} . In practice, we use a real-valued form by separating real and imaginary parts into a two-dimensional feature vector. Any finite-dimensional representation \rho of a compact group can be written, up to a change of basis, as a direct sum of irreducible representations:
+\rho(g)=Q\left(\bigoplus_{k=1}^{K}\rho_{k}(g)\right)Q^{-1},
+for some invertible matrix Q .
+A function f:X\to Y is equivariant with respect to a group action if applying the group before or after f is equivalent, i.e.,
+\rho_{Y}(g)f(x)=f(\rho_{X}(g)x),\quad\forall g\in G,x\in X.
+If the output does not change under the group action on the input, f(x)=f(\rho_{X}(g)x) , then f is invariant. Throughout the paper we use the shorthand gx to denote the group action \rho(g)x for notational simplicity.
+III-C Group-invariant MDPs
+A group-invariant MDP [28, 29] builds on the notion of MDP homomorphism [41, 42] and provides an abstract representation of an underlying MDP that respects symmetry. Denoted as \mathcal{M}_{G}(\mathcal{S},\mathcal{A},P,R,G) , this formulation encodes how a symmetry group G acts on states and actions. When the reward and transition dynamics satisfy the group-invariance conditions
+R(s,a)=R(gs,ga),\quad P(s^{\prime}|s,a)=P(gs^{\prime}|gs,ga),
+The optimal policy and optimal value functions of the original MDP can be derived directly from the symmetry-reduced MDP. This reduction provides both computational efficiency and structural guarantees tied to the underlying group.
+IV Problem Statement
+In line with previous unsupervised skill discovery approaches, the problem is formalized within the framework of a reward-free MDP, denoted as \mathcal{M}=(\mathcal{S},\mathcal{A},P) . \mathcal{S} , \mathcal{A} , and P represent the state space, action space, and transition probabilities P:\mathcal{S}\times\mathcal{A}\rightarrow\mathcal{S} , respectively. The latent skill vector z\in Z is sampled from the prior distribution, z\sim p(z) . The policy is conditioned by the skill vector, \pi(a|s,z) , the skill vector informing the policy to select the corresponding action sequence. During the training, the skill vector doesn’t change during the episode, and the policy is trained without any reward supervision, only with the intrinsic reward.
+In this framework, we leverage the group symmetric prior, prior knowledge of rotation symmetry, to enhance the sample efficiency and generalizability. We convert the original MDPs to group-invariant MDPs by assuming the group-invariance of the intrinsic reward function and transition probability.
+Fig. 1: Overview of Group-Invariant Skill Discovery (GISD). Our method learns an equivariant mapping \phi_{F} from the state space \mathcal{S} to the Group Fourier space Z . By aligning state transitions with latent skill vectors z in the group Fourier domain, the discovered skills inherently respect the underlying geometric symmetry. This structure enables generalization: a policy trained for a specific trajectory \tau automatically generalizes to any group-transformed trajectory g\tau by simply shifting the skill vector along its group orbit to gz .
+V Methods
+In this section, we present Group-Invariant Skill Discovery (GISD), a method that leverages the symmetry of the underlying dynamics to accelerate unsupervised skill discovery. We begin by showing that, in a group-invariant environment, the standard Wasserstein dependency measure (WDM) objective already admits symmetry-respecting optimal solutions. Motivated by this result, we then introduce a Group-Invariant WDM formulation and a practical Fourier-space parameterization and intrinsic reward.
+V-A Theoretical Analysis: Symmetry of Optimal Solutions
+Before introducing GISD, we analyze the structure of optimal solutions to the standard WDM-based skill discovery problem. We show that, under group-invariant dynamics, restricting the search to symmetry-aware policies does not compromise optimality.
+Theorem 1 (Existence of Equivariant Optima).
+In an MDP where the dynamics, initial state distribution, skill prior, and ground metric are all group-invariant, the Wasserstein dependency measure admits a globally optimal solution (\bar{\pi},\bar{f}) such that
+\bar{\pi}(ga\mid gs,gz)=\bar{\pi}(a\mid s,z),\quad\bar{f}(gs,gz)=\bar{f}(s,z),\quad\forall g\in G.
+In other words, among all WDM global maximizers, there exists at least one policy-function pair with an equivariant policy and a group-invariant 1 -Lipschitz function.
+For proof, see Appendix VII-A.
+This theoretical guarantee implies that the exploration of non-equivariant policies—which correspond to redundant or suboptimal solutions in a symmetric environment—is unnecessary. This justifies restricting the search to the symmetry-aware function class without sacrificing global optimality.
+V-B Group-Invariant Wasserstein Dependency Measure
+Theorem 1 shows that in a group-invariant environment, the standard Wasserstein dependency measure (WDM) admits at least one global optimum where the policy is equivariant and the scoring function f is group-invariant. This motivates explicitly restricting the scoring function class to symmetry-respecting functions: instead of hoping that symmetry emerges implicitly, we bake it into the objective.
+Let G act on the state space \mathcal{S} and skill space Z , and let d be a distance metric on \mathcal{S}\times Z that is group-invariant under the joint action:
+d((gs,gz),(gs^{\prime},gz^{\prime}))=d((s,z),(s^{\prime},z^{\prime})),\quad\forall g\in G.
+We define the group-invariant scoring function class
+\mathcal{F}_{G} as the set of 1-Lipschitz functions f:\mathcal{S}\times Z\to\mathbb{R} that are
+invariant under the joint action of G :
+\mathcal{F}_{G}\\
+:=\bigl\{f\;\big|\;\|f\|_{L}\leq 1,\;f(gs,gz)=f(s,z),\;\forall g\in G\bigr\}.
+Definition 1 (Group-Invariant WDM).
+Given a group-invariant metric d on S\times Z , the
+group-invariant Wasserstein dependency measure is defined as
+I_{\mathcal{W}}^{G}(\mathcal{S};Z):=\sup_{f\in\mathcal{F}_{G}}\mathbb{E}_{p(s,z)}[f(s,z)]-\mathbb{E}_{p(s)p(z)}[f(s,z)]).
+This constrained objective guarantees invariance under the group action,
+a property not generally enjoyed by the standard WDM.
+Proposition 1.
+If the distance metric d is group-invariant, then the
+group-invariant WDM satisfies
+I_{\mathcal{W}}^{G}(g\mathcal{S};gZ)=I_{\mathcal{W}}^{G}(\mathcal{S};Z)
+for all g\in G .
+Proof is provided in Appendix VII-B.
+Reduction of the search space. Compared to the standard WDM, which optimizes over all 1-Lipschitz functions, I^{G}_{\mathcal{W}} restricts the scoring function class to the group-invariant subset \mathcal{F}_{G} . Based on
+Theorem 1, this restriction does not eliminate any globally optimal symmetric solution, but acts as a geometric inductive bias: it rules out functions that encode spurious dependencies and focuses optimization on symmetry-consistent structure. In the following subsections, we show how to construct such group-invariant scoring functions via group averaging and how to parameterize them efficiently in Fourier space.
+V-C Group-Averaged Scoring Functions
+The group-invariant WDM in Definition 1 restricts the
+admissible scoring functions (the 1-Lipschitz functions in the dual formulation)
+to the invariant class \mathcal{F}_{G} . We now construct such
+group-invariant scoring functions from arbitrary admissible 1 -Lipschitz
+functions via a standard group averaging operation.
+Definition 2 (Group-averaged Scoring Function).
+For any 1 -Lipschitz function f:\mathcal{S}\times Z\to\mathbb{R}
+(with respect to the metric d ), we define its group average as
+\tilde{f}(s,z):=\int_{G}f(gs,gz)\,d\mu(g),
+where \mu is the normalized Haar measure on G
+(Appendix VII-H).
+This operator maps a general admissible scoring function f to a group-invariant
+function while preserving the 1 -Lipschitz constant:
+Proposition 2 (Properties of the group-averaged scoring function).
+Let f:\mathcal{S}\times Z\to\mathbb{R} be 1 -Lipschitz with respect to
+a group-invariant metric d on \mathcal{S}\times Z . Then its group
+average \tilde{f} is group-invariant and 1 -Lipschitz with respect to
+d . In particular, \tilde{f}\in\mathcal{F}_{G} .
+We provide the proof in Appendix VII-C.
+The group averaging operator provides the precise link between the standard and group-invariant WDM: given any optimal scoring function f^{*} in the unconstrained class, its group average \tilde{f}^{*} is feasible in \mathcal{F}_{G} (Proposition 2) and, assuming an equivariant optimal policy, achieves the same objective value. Thus, for symmetric optima, the restricted and unconstrained WDMs coincide.
+V-D Skill Discovery in the Group Fourier Space
+In contrast to the decompositions of f(s,z) used in prior works
+[6, 7, 5], we
+derive our parameterization from a group representation-theoretic
+viewpoint. Assume a compact group G acts on the state space
+\mathcal{S} and latent skill space Z . We consider the induced action
+of the product group G\times G on \mathcal{S}\times Z , given by
+(g_{1},g_{2})\cdot(s,z)=(g_{1}s,g_{2}z) , and define
+f_{g_{1},g_{2}}(s,z):=f(g_{1}s,g_{2}z).
+For each fixed (s,z) , the map (g_{1},g_{2})\mapsto f_{g_{1},g_{2}}(s,z)
+is square-integrable on G\times G , i.e., f_{(\cdot,\cdot)}\in L^{2}(G\times G) . By the Peter–Weyl theorem
+[43], this function admits an expansion in
+terms of the irreducible representations of G\times G
+(see Appendix VII-I for details):
+f_{g_{1},g_{2}}(s,z)=\sum_{\rho,\sigma\in\hat{G}}d_{\rho}d_{\sigma}\,\mathrm{Tr}\!\big(A_{\rho,\sigma}(s,z)\,(\rho(g_{1})\otimes\sigma(g_{2}))\big),
+(2)
+where \hat{G} denotes the set of irreducible representations of G , d_{\rho} and
+d_{\sigma} are their dimensions, and A_{\rho,\sigma}(s,z) are
+coefficient matrices depending on (s,z) .
+To enforce the group-invariance required in
+Definition 1, we apply the group average over the diagonal
+action g\mapsto(g,g) :
+\tilde{f}(s,z)=\int_{G}f_{g,g}(s,z)\,d\mu(g)=\int_{G}f(gs,gz)\,d\mu(g).
+Substituting Eq. (2), we utilize Schur’s Lemma
+[44] and the orthogonality relations of irreducible representations:
+\int_{G}\rho(g)\otimes\sigma(g)\ d\mu(g)\neq 0\Leftrightarrow\sigma\cong\rho^{*}.
+This averaging operation annihilates all non-matching components ( \rho\neq\sigma^{*} ) and projects the remaining terms onto the group-invariant scalar subspace. Consequently, the double sum collapses into a single sum over the spectrum:
+\tilde{f}(s,z)=\sum_{\rho\in\hat{G}}\lambda_{\rho}(s,z),
+where each \lambda_{\rho}(s,z) represents the scalar contraction of the matching representation blocks.
+We now parameterize these scalar coefficients in terms of
+Fourier-space features of s and z .
+For each surviving irrep \rho , we introduce feature vectors
+\phi_{\rho}(s) and \psi_{\rho}(z) in the corresponding representation
+spaces and parameterize
+\lambda_{\rho}(s,z)\approx\big\langle\phi_{\rho}(s),\,\psi_{\rho}(z)\big\rangle.
+Stacking all irrep components into a single global feature vector, we obtain
+the maps
+\phi_{F}:\mathcal{S}\to\mathbb{R}^{d},\quad\psi_{F}:Z\to\mathbb{R}^{d},
+and the group-averaged scoring function takes the inner-product form:
+\tilde{f}(s,z)\approx\big\langle\phi_{F}(s),\psi_{F}(z)\big\rangle.
+By construction, \phi_{F} maps states into the spectral domain and satisfies the equivariance property:
+\phi_{F}(gs)=\rho_{F}(g)\phi_{F}(s),
+(3)
+where \rho_{F}(g) denotes the block-diagonal direct sum of unitary irreducible representations acting on the feature vector. Following METRA [5], we
+set \psi_{F}(z)=z , treating the latent skill z as a
+unit-norm vector in Fourier space. This choice, together with a 1-Lipschitz parameterization of \phi_{F} ,
+is compatible with the 1 -Lipschitz constraint required by the WDM
+objective.
+Frequency Filtering and Interpretability.
+A key advantage of working in Fourier space is the explicit separation
+of geometric frequencies. The feature vector \phi_{F}(s) is a
+concatenation of coefficients corresponding to different irreducible representations (frequencies). Unlike unstructured latent spaces, this allows us to manually emphasize or suppress specific symmetries by applying a frequency mask M :
+\tilde{f}(s,z)=\big\langle M\cdot\phi_{F}(s),\,z\big\rangle.
+For example, by selecting only the trivial representation ( \rho_{0} ), we
+can discover purely group-invariant skills. By selecting higher-order frequencies, we encourage skills that are sensitive to the group action. This provides a degree of interpretability and controllability unavailable in standard unsupervised skill discovery.
+V-E Group-Invariant MDP for Skill Discovery
+Using the group-invariant scoring function parameterization from
+Section V-D, we now derive the intrinsic reward used for
+skill discovery and show that it is itself group-invariant.
+Recall that METRA [5] optimizes a WDM-style objective
+over trajectories (Eq. (1)).
+In our framework, we restrict to group-invariant scoring functions and
+parameterize the group-averaged scoring function as an inner product in Fourier
+space,
+\tilde{f}(s,z)\approx\big\langle\phi_{F}(s),z\big\rangle,
+where \phi_{F} is equivariant with respect to the group action
+(Section V-D). Substituting this parameterization into
+Eq. (1) leads to
+\displaystyle I_{\mathcal{W}}(\mathcal{S}_{T};Z)
+\displaystyle\approx\sup_{\|\phi_{F}\|_{L}\leq 1}\sum_{t=0}^{T-1}\Big(\mathbb{E}_{\tau,z}\big[\langle\phi_{F}(s_{t+1})-\phi_{F}(s_{t}),z\rangle\big]
+(4)
+\displaystyle-\mathbb{E}_{\tau}\big[\langle\phi_{F}(s_{t+1})-\phi_{F}(s_{t}),\mathbb{E}_{z}[z]\rangle\big]\Big).
+As in METRA, we choose p(z) to have zero mean \mathbb{E}_{p(z)}[z]=0 , in which case the second term vanishes and
+(4) reduces to
+I_{\mathcal{W}}(\mathcal{S}_{T};Z)\approx\sup_{\|\phi_{F}\|_{L}\leq 1}\mathbb{E}_{\tau,z}\Bigg[\sum_{t=0}^{T-1}\langle\phi_{F}(s_{t+1})-\phi_{F}(s_{t}),z\rangle\Bigg].
+(5)
+Because the sum in (5) is telescoping, it is
+natural to interpret the incremental term as an intrinsic reward:
+r(s_{t},z,s_{t+1}):=\big\langle\phi_{F}(s_{t+1})-\phi_{F}(s_{t}),\,z\big\rangle.
+(6)
+We now show that this reward is group-invariant. Let h\in G act on
+states and skills as s^{\prime}=hs and z^{\prime}=hz . Using the equivariance of
+\phi_{F} (Eq. (3)) and the fact that the representation
+\rho(h) is unitary, we obtain
+\displaystyle r(hs_{t},hz,hs_{t+1})
+\displaystyle=\big\langle\phi_{F}(hs_{t+1})-\phi_{F}(hs_{t}),\,hz\big\rangle
+\displaystyle=\big\langle\rho(h)\big(\phi_{F}(s_{t+1})-\phi_{F}(s_{t})\big),\rho(h)z\big\rangle
+\displaystyle=\big\langle\phi_{F}(s_{t+1})-\phi_{F}(s_{t}),\,z\big\rangle
+\displaystyle=r(s_{t},z,s_{t+1}),
+where the third equality uses unitarity of \rho(h) :
+\langle\rho(h)x,\rho(h)y\rangle=\langle x,y\rangle .
+Thus, the intrinsic reward (6) is invariant under the joint group action on states and skills.
+This invariance leads to a significant theoretical result for our learning process. Because the environment dynamics are group-invariant (by assumption) and the derived intrinsic reward r is group-invariant (as shown above), the skill discovery problem constitutes a group-invariant MDP [29]. This structural property guarantees the existence of an optimal equivariant policy \pi^{*} .
+We now connect this architectural choice back to the theoretical guarantees of our objective:
+Remark 1 (Exactness for Equivariant Policies).
+While Theorem 1 guarantees the existence of a symmetric global optimum, our method parameterizes the policy \pi to be equivariant based on the group-invariant MDP.
+In a group-invariant MDP, an equivariant policy induces a group-invariant joint distribution p(s,z) (Lemma 1).
+Under such a symmetric distribution, the optimal scoring function f^{*} for the unconstrained WDM is inherently group-invariant (as non-symmetric components of the scoring function average to zero or contribute nothing to the objective).
+Therefore, for our equivariant policy class, optimizing the restricted objective I^{G}_{\mathcal{W}} is mathematically equivalent to optimizing the standard WDM, ensuring no loss of expressivity.
+Algorithm 1 Group-Invariant Unsupervised Skill Discovery
+1:
+Initialize: Equivariant policy \pi(a|s,z) , Fourier mapping \phi_{F}(s) , dual variable \lambda , replay buffer \mathcal{D}
+2:
+for \text{epoch}=1,\dots,N do
+3:
+for \text{episode}=1,\dots,M do
+4:
+Sample skill z\sim p(z)
+5:
+Collect trajectory \tau using \pi(a|s,z)
+6:
+Store transitions (s,a,s^{\prime},z) in \mathcal{D}
+7:
+end for
+8:
+1. Update Discriminator \phi_{F} :
+9:
+Optimize \mathcal{J}_{\phi} (Eq. (8))
+10:
+2. Update Dual Variable \lambda :
+11:
+Optimize \mathcal{J}_{\lambda} (Eq. (9))
+12:
+3. Update Policy \pi :
+13:
+Compute rewards r=\langle\phi_{F}(s^{\prime})-\phi_{F}(s),z\rangle
+14:
+Update \pi using symmetry-aware SAC [29, 37]
+15:
+end for
+V-F Group Symmetry in Downstream Tasks
+After skill discovery, prior works [6, 7, 5] reuse the discovered skills for downstream tasks via a hierarchical architecture. A high-level policy \pi^{h}(z\mid s,\text{goal}) selects a latent skill conditioned on the current state and goal, while a low-level policy \pi^{l}(a\mid s,z) executes primitive actions using the pretrained skill-conditioned policy (with parameters frozen).
+This interaction induces a Fixed-interval Semi-MDP [45], where the high-level transition dynamics depend on the cumulative effect of the low-level policy over k steps. We formally define this transition probability P_{k} :
+Definition 3 (Fixed-interval High-level Transition).
+Given a fixed interval k , the high-level transition kernel induced by the low-level policy \pi^{l} is defined as the k -step roll-out:
+\displaystyle P_{k}(s_{t+k}\mid s_{t},z):=\int\dots\int\prod_{i=0}^{k-1}\bigg[
+(7)
+\displaystyle\pi^{l}(a_{t+i}\mid s_{t+i},z)\cdot P^{l}(s_{t+i+1}\mid s_{t+i},a_{t+i})\bigg]\,d\tau_{int}
+where P^{l} denotes the one-step transition kernel of the underlying MDP, and the integration is over all intermediate states and actions \tau_{int}=\{a_{t:t+k-1},s_{t+1:t+k-1}\} .
+For downstream tasks, the extrinsic reward can typically be chosen to be group-invariant (e.g., sparse goal-reached reward). We now show that if the environment dynamics and low-level skill policy are symmetric, then the induced high-level semi-MDP is itself group-invariant.
+Theorem 2 (Group-invariant Fixed-interval Semi-MDP).
+Assume the environment dynamics are group-invariant and the pretrained skill policy is equivariant:
+\displaystyle P^{l}(gs^{\prime}\mid gs,ga)
+\displaystyle=P^{l}(s^{\prime}\mid s,a)
+\displaystyle\pi^{l}(ga\mid gs,gz)
+\displaystyle=\pi^{l}(a\mid s,z)\quad\forall g\in G.
+Then, the induced high-level transition kernel (Eq. (7)) satisfies group invariance:
+P_{k}(gs_{t+k}\mid gs_{t},gz)=P_{k}(s_{t+k}\mid s_{t},z),\qquad\forall g\in G.
+Consequently, the fixed-interval semi-MDP is group-invariant whenever the high-level reward is group-invariant.
+The proof is provided in Appendix VII-F.
+Generalizable Skills. Theorem 2 establishes that our pretrained skills induce a group-invariant fixed-interval semi-MDP. Since the skills are represented in the Fourier space and encode symmetric features by construction, an equivariant high-level policy \pi^{h}(z\mid s,g) can systematically exploit this structure.
+Because the transition dynamics are group-invariant, a high-level policy trained in one group element can generalize to any other group elements by simply transforming the skill vector z according to the group action (Fig. 1). This allows for highly sample efficient downstream task training.
+V-G Practical Implementation
+To finalize the training objective, we must specify the distance metric d for the Lipschitz constraint.
+We adopt the temporal distance d_{T}(s,s^{\prime}) [5], which measures the expected number of steps between states. Since the underlying MDP dynamics are group-invariant, d_{T} is inherently group-invariant (see Appendix VII-E for proof), satisfying the metric requirement of Definition 1.
+Our training procedure follows the dual gradient descent method of METRA, but substitutes the standard discriminator with our equivariant Fourier mapping \phi_{F} . The discriminator parameters are updated to minimize the following loss, which balances skill alignment against the Lipschitz constraint via a Lagrange multiplier \lambda :
+\displaystyle\mathcal{J}_{\phi}
+\displaystyle=\mathbb{E}_{\mathcal{D}}\Big[\langle\phi_{F}(s^{\prime})-\phi_{F}(s),z\rangle
+\displaystyle\quad+\lambda\cdot\min\bigl(\epsilon,1-\|\phi_{F}(s^{\prime})-\phi_{F}(s)\|_{2}^{2}\bigr)\Big],
+(8)
+\displaystyle\mathcal{J}_{\lambda}
+\displaystyle=\mathbb{E}_{\mathcal{D}}\Big[\lambda\cdot\min\bigl(\epsilon,1-\|\phi_{F}(s^{\prime})-\phi_{F}(s)\|_{2}^{2}\bigr)\Big],
+(9)
+where \mathcal{D} is the replay buffer.
+The policy \pi(a\mid s,z) is updated using group equivariant SAC [29] or PE-SAC [37] to maximize the intrinsic reward r=\langle\phi_{F}(s^{\prime})-\phi_{F}(s),z\rangle .
+VI Experiments
+We evaluate GISD against the state-of-the-art unsupervised skill discovery method, METRA [5].
+Our goal is to understand how explicitly exploiting symmetry during skill discovery and downstream task training affects (i) sample efficiency, (ii) state-space coverage, and (iii) downstream task performance.
+We follow the overall experimental setup of METRA and consider both state-based and pixel-based locomotion with continuous latent skills.
+VI-A Benchmark environments and Symmetry Structure
+We use two benchmark locomotion tasks with known geometric symmetries.
+State-based Ant ( C_{4} symmetry).
+For state-based skill discovery, we use the MuJoCo Ant environment [46] with a planar (90^{\circ}) rotational symmetry, modeled as the cyclic group C_{4} .
+To faithfully preserve this symmetry, we do not apply observation normalization (e.g., running mean/variance) to the state input. Such preprocessing typically warps coordinates and breaks equivariance.
+In this setting, we restrict the Fourier representation to the frequency- 1 C_{4} irrep and discover 2D latent skills in this subspace, matching the skill dimensionality used in METRA (as introduced in Section V-D). Intuitively, this emphasizes directional, rotation equivariant behaviors (e.g., ”move in a given heading”), which are most relevant in Ant locomotion.
+We empirically observed that incorporating invariant components had little benefit and could introduce noise in discovery, so we focus on the equivariant features in this work.
+Pixel-based Quadruped ( D_{1}\cong C_{2} / flip symmetry
+).
+For pixel-based skill discovery, we adopt the vision-based quadruped environment from the DeepMind Control Suite (DMC) [47]), following the METRA [5] setup.
+METRA encodes position information by making the floor color vary smoothly as a function of the agent’s (x,y) coordinates.
+To fully expose the horizontal flip symmetry to the agent, we instead redesign the floor so that its color varies radially from the origin.
+This maintains a consistent appearance under left-right flips while still revealing global position, and matches the C_{2} (horizontal flip) symmetry.
+The group C_{2} has a 2D real representation consisting of an invariant channel and a sign-flip channel. To keep the comparison with METRA fair, we use a 4D latent skill space by concatenating two such Fourier-feature vectors.
+This can be viewed as learning two independent Fourier components. In practice, this provided a good balance between expressivity and parity with the baseline.
+Symmetry-aware Policy.
+On the control side, we use Partially Equivariant SAC [37] for the state-based Ant, which is robust to local symmetry-breaking effects (e.g., contact asymmetries).
+For the pixel-based quadruped, we use Equivariant SAC [29].
+In both environments, a high-level policy \pi^{h}(z\mid s,g) selects a skill vector z every K steps to pursue a goal g , while a low-level policy \pi^{l}(a\mid s,z) executes the learned skill.
+The skill policy is pretrained and then forzen for downstream training, as in METRA.
+Fig. 2: Benchmark Environments.
+We evaluate GISD in state-based Ant and pixel-based Quadruped locomotion.
+In the pixel-based setting, we redesign the floor so that color varies radially from the origin,
+making the observations consistent with the horizontal flip symmetry.
+VI-B Evalutation Metric
+We evaluate both skill discovery and downstream task performance.
+Staet-space coverage.
+Following METRA [5], we measure how well skills explore the environment by computing the coverage of the agent’s (x,y) positions.
+At evaluation, we sample 48 latent skill vectors uniformly from the skill prior, roll each for a fixed horizon, and aggregate the resulting trajectories.
+We then quantify coverage using the fraction of grid cells visited in the task-relevant region of the plane.
+For the state-based Ant, we restrict the coverage region to [-30,30]^{2} , which corresponds to the maximum distance the agent can reach under the goal-sampling scheme in the downstream tasks. This avoids counting irrelevant areas.
+Downstream task.
+We next assess how useful the discovered skills are for solving goal-conditioned tasks.
+We train a high-level policy ( \pi^{h}(z\mid s,g) on top of the frozen skill policy (\pi(a\mid s,z) .
+In the state-based Ant environment, each episode is a multi-goal task:
+Whenever the current goal is reached-or after K steps-a new goal is sampled uniformly around the current position (we follow METRA and use a sampling range of [-7.5,7.5]^{2} .
+We report the average return as a function of training iterations during downstream task training, averaged over multiple random seeds.
+Fig. 3: State-space coverage during skill discovery.
+(a) State-based Ant (4 seeds).
+(b) Pixel-based Quadruped (5 seeds).
+Shaded regions show standard error.
+GISD achieves higher coverage and better sample efficiency than METRA in both environments.
+VI-C Results and Analysis
+Skill discovery and state coverage.
+Figure 3 shows the evolution of (x,y) -coverage during skill pretraining.
+Across both state-based Ant and pixel-based quadruped, GISD achieves broader state-space coverage with higher sample efficiency than METRA.
+The shaded regions indicate standard error across seeds.
+In the Ant environment, the variance is larger due to the lack of observation normalization, which makes the learning dynamics more sensitive to initialization.
+To qualitatively understand the learned behaviors, Figure 4 visualizes trajectories induced by 48 randomly sampled skills.
+For GISD, skills tile the plane in a symmetry-consistent way:
+In Ant, each direction has rotationally related counterparts (approximately obeying the C_{4} symmetry).
+In Quadruped, up-down reflected skills exhibit mirrored trajectories under the flip symmetry.
+In contrast, METRA often learns clusters of redundant skills that differ only slightly in direction or fail to cover all symmetric modes, which matches the quantitative coverage gap.
+Fig. 4: Visualization of discovered skills.
+We plot trajectories for 48 randomly sampled skills. Colors indicate different latent skills.
+GISD discovers symmetry-consistent skills (Ant: C_{4} rotations; Quadruped: horizontal flips),
+leading to substantially broader and more uniform state-space coverage than METRA.
+Downstream performance.
+Figure 5 compares downstream goal-reaching performance.
+In both the state-based Ant and pixel-based DMC Quadruped tasks, GISD attains higher returns than METRA and reaches strong performance with fewer environment steps.
+Figure 6 visualizes the Fourier skill vectors selected by the high-level policy \pi^{h}(z\mid s,g) in the DMC Quadruped environment. Starting from a shared initial state with horizontally mirrored goals, the policy chooses skills whose invariant components are nearly identical, while the equivariant components exhibit approximate sign flips. This behavior reflects the underlying flip symmetry and indicates that the Fourier-space skills learned by GISD are both diverse and systematically reusable across transformed tasks.
+Fig. 5: Downstream task performance.
+(a) Average return in the state-based Ant environment (4 seeds).
+(b) Average return in the pixel-based Quadruped environment (3 seeds).
+Shaded regions show standard error.
+GISD consistently achieves higher performance and better sample efficiency than METRA.
+Overall, these results support our main claim:
+By constraining the scoring function to a group-invariant function class and parameterizing it in Fourier space, GISD discovers symmetry-aligned skills that explore more effectively and transfer more efficiently to downstream control.
+Fig. 6: Visualization of downstream task in DMC Quadruped. Starting from identical initial states with horizontally flipped goal positions, we visualize the Fourier skill vectors predicted by the high-level policy over time. Blue bars denote the invariant components, while orange bars denote the equivariant components, which should flip sign under the flip transformation. At early time steps ( t=0,1 ), the invariant features closely match, and the equivariant features appear with approximately opposite signs and similar magnitudes. By t=2 , the components begin to diverge, reflecting accumulated symmetry-breaking during execution (e.g., the quadruped’s rolling behavior under each skill).
+VII Conclusions and Limitations
+In this work, we introduced Group-Invariant Skill Discovery, a framework that exploits group equivariance in skill discovery to improve sample efficiency and generalization. By enforcing group invariance in the Wasserstein dependency measure, we recast the objective as a symmetry-aware MDP and obtain latent skills that are consistent with the underlying group structure, which can then be effectively reused in downstream tasks.
+Our experiments validate the approach on both state-based and vision-based locomotion benchmarks, but a natural next step is to test it on more challenging domains such as Humanoid control. The method also inherits common limitations of equivariant networks, including increased computational cost and the need to specify the relevant symmetry group a priori.
+Looking forward, we plan to extend this framework to manipulation tasks, where skill discovery is notoriously difficult but rich symmetries are often present. Another promising direction is to study how the symmetric structure of the discovered skills can be more directly exploited in downstream planning and policy learning.
+Appendix A. Theoretical Details
+VII-A Proof of Theorem 1
+Theorem 1 (Existence of Equivariant Optima).
+In an MDP where the dynamics, initial state distribution, skill prior, and ground metric are all group-invariant, the Wasserstein dependency measure admits a globally optimal solution (\bar{\pi},\bar{f}) such that
+\bar{\pi}(ga\mid gs,gz)=\bar{\pi}(a\mid s,z),\quad\bar{f}(gs,gz)=\bar{f}(s,z),\quad\forall g\in G.
+In other words, among all WDM global maximizers, there exists at least one policy-function pair with an equivariant policy and a group-invariant 1 -Lipschitz function.
+Proof.
+We define the Kantorovich dual objective J(\pi,f) for a policy \pi and a 1 -Lipschitz function f:\mathcal{S}\times\mathcal{Z}\to\mathbb{R} as:
+\displaystyle J(\pi,f):=\mathbb{E}_{\begin{subarray}{c}z\sim p(z)\ s\sim p_{\pi}(s\mid z)\end{subarray}}[f(s,z)]-\mathbb{E}_{\begin{subarray}{c}z\sim p(z)\ s\sim p_{\pi}(s)\end{subarray}}[f(s,z)].
+where p_{\pi}(s\mid z) is the conditional state occupancy measure induced by \pi , and p_{\pi}(s) is the corresponding marginal. The Wasserstein Dependency Measure (WDM) is defined as
+\mathrm{WDM}(\pi)=\sup_{\lVert f\rVert_{L}\leq 1}J(\pi,f).
+Let (\pi^{*},f^{*}) be a global maximizer of the problem \max_{\pi}\mathrm{WDM}(\pi) .
+By the assumptions of Theorem 1, the tuple (\mathcal{S},\mathcal{A},\mathcal{Z}) is equipped with a measure-preserving group action, the environment dynamics are equivariant, and the ground metric is invariant.
+Consequently, the skill discovery optimization problem can be formulated as finding the pair (\pi,f) that maximizes this objective:
+\displaystyle\max_{\pi}\sup_{\lVert f\rVert_{L}\leq 1}J(\pi,f).
+Let (\pi^{*},f^{*}) be any global maximizer of this problem. By the assumptions of Theorem 1, the tuple (\mathcal{S},\mathcal{A},\mathcal{Z}) is equipped with a measure-preserving group action, and the environment dynamics satisfy equivariance.
+We proceed by showing that the orbit of this optimal solution under the group action implies the existence of a symmetric optimizer.
+1. Rotating an Optimal Pair. For any g\in G , define the rotated policy \pi_{g}^{*} and rotated function f_{g}^{*} by:
+\displaystyle\pi_{g}^{*}(a\mid s,z)
+\displaystyle:=\pi^{*}(g^{-1}a\mid g^{-1}s,g^{-1}z),
+\displaystyle f_{g}^{*}(s,z)
+\displaystyle:=f^{*}(g^{-1}s,g^{-1}z).
+Because the metric d is group-invariant, \lVert f_{g}^{*}\rVert_{L}=\lVert f^{*}\rVert_{L}\leq 1 , so f_{g}^{*} remains feasible.
+The joint distribution induced by the rotated policy rotates covariantly: p_{\pi^{*}_{g}}(s,z)=p_{\pi^{*}}(g^{-1}s,g^{-1}z) (rotated by left regular representation, Appendix VII-G).
+Using the measure-preserving property of the group action, we compute the objective value:
+\displaystyle J(\pi_{g}^{*},f_{g}^{*})
+\displaystyle=\mathbb{E}_{\begin{subarray}{c}z\sim p(z)\\
+s\sim p_{\pi_{g}^{*}}(s\mid z)\end{subarray}}[f_{g}^{*}(s,z)]-\mathbb{E}_{\begin{subarray}{c}z\sim p(z)\\
+s\sim p_{\pi_{g}^{*}}(s)\end{subarray}}[f_{g}^{*}(s,z)]
+\displaystyle=\mathbb{E}_{(s,z)\sim p_{\pi_{g}^{*}}}[f^{*}(g^{-1}s,g^{-1}z)]
+\displaystyle\qquad\qquad\qquad\qquad\qquad-\mathbb{E}_{(s,z)\sim p_{\pi_{g}^{*}}(s)p(z)}[f^{*}(g^{-1}s,g^{-1}z)]
+\displaystyle=\mathbb{E}_{(s^{\prime},z^{\prime})\sim p_{\pi^{*}}}[f^{*}(s^{\prime},z^{\prime})]-\mathbb{E}_{(s^{\prime},z^{\prime})\sim p_{\pi^{*}}(s^{\prime})p(z^{\prime})}[f^{*}(s^{\prime},z^{\prime})]
+\displaystyle=J(\pi^{*},f^{*}).
+where s^{\prime}=g^{-1}s,z^{\prime}=g^{-1}z are change of variables.
+Thus, for every g\in G , the pair (\pi_{g}^{*},f_{g}^{*}) is also a global maximizer.
+2. Symmetrizing the Policy. Since averaging policies directly is non-trivial, we work in the space of occupancy measures. Let \rho^{\pi} denote the state-action-skill occupancy measure induced by \pi . The set of valid occupancy measures is convex, and the WDM objective is linear with respect to \rho^{\pi} (for a fixed optimal f , the maximum value is linear in \rho ).
+We define the symmetrized occupancy measure \bar{\rho}^{*} by averaging over the Haar measure of the compact group G :
+\bar{\rho}^{*}(s,a,z):=\int_{G}\rho^{\pi_{g}^{*}}(s,a,z),d\mu(g).
+Since every \rho^{\pi_{g}^{*}} is optimal, by convexity, \bar{\rho}^{*} is also optimal. We verify that \bar{\rho}^{*} is group-invariant.
+Using \rho^{\pi_{g}^{*}}(s,a,z)=\rho^{\pi^{*}}(g^{-1}s,g^{-1}a,g^{-1}z) :
+\displaystyle\bar{\rho}^{*}(gs,ga,gz)
+\displaystyle=\int_{G}\rho^{\pi^{*}}(h^{-1}gs,h^{-1}ga,h^{-1}gz),d\mu(h)
+\displaystyle=\int_{G}\rho^{\pi^{*}}(k^{-1}s,k^{-1}a,k^{-1}z),d\mu(k)\quad
+\displaystyle\qquad\qquad\qquad\qquad\qquad\qquad(\text{subst.}~k=h^{-1}g)
+\displaystyle=\bar{\rho}^{*}(s,a,z).
+We define the equivariant policy \bar{\pi}^{*} induced by \bar{\rho}^{*} as \bar{\pi}^{*}(a\mid s,z)\propto\bar{\rho}^{*}(s,a,z) . Since \bar{\rho}^{*} is optimal, \bar{\pi}^{*} is an optimal equivariant policy.
+3. Symmetrizing the Scoring Function. Since \bar{\pi}^{*} is optimal, it maximizes the WDM objective. Let \tilde{f} be any optimal scoring function for \bar{\pi}^{*} , i.e., J(\bar{\pi}^{*},\tilde{f})=\mathrm{WDM}(\bar{\pi}^{*}) . Since \bar{\pi}^{*} is equivariant, the objective J(\bar{\pi}^{*},\cdot) is invariant under the rotation of f . Thus, J(\bar{\pi}^{*},\tilde{f}_{g})=J(\bar{\pi}^{*},\tilde{f}) for all g . We define the group-averaged scoring function:
+\bar{f}^{*}(s,z):=\int_{G}\tilde{f}_{g}(s,z),d\mu(g).
+By construction, \bar{f}^{*} is group-invariant and 1 -Lipschitz (by convexity of the Lipschitz ball). By the linearity of J with respect to f :
+\displaystyle J(\bar{\pi}^{*},\bar{f}^{*})=\int_{G}J(\bar{\pi}^{*},\tilde{f}_{g}),d\mu(g)=\mathrm{WDM}(\bar{\pi}^{*}).
+Conclusion. The pair (\bar{\pi}^{*},\bar{f}^{*}) constructed above satisfies:
+1.
+Global Optimality: J(\bar{\pi}^{*},\bar{f}^{*})=J(\pi^{*},f^{*}) .
+2.
+Symmetry: \bar{\pi}^{*} is equivariant and \bar{f}^{*} is group-invariant.
+∎
+VII-B Proof of Proposition 1
+Proposition 1.
+If the distance metric d is group-invariant, then the
+group-invariant WDM satisfies
+I_{\mathcal{W}}^{G}(g\mathcal{S};gZ)=I_{\mathcal{W}}^{G}(\mathcal{S};Z)
+for all g\in G .
+Proof.
+We analyze the objective I_{\mathcal{W}}^{G}(\mathcal{S};Z) defined as the supremum over the function class \mathcal{F}_{G} (Definition 1).
+Consider the objective evaluated on the jointly transformed variables (g\mathcal{S},gZ) :
+\displaystyle I_{\mathcal{W}}^{G}(g\mathcal{S};gZ)
+\displaystyle=\sup_{f\in\mathcal{F}_{G}}\left(\mathbb{E}_{p(g^{-1}s,g^{-1}z)}[f(s,z)]-\mathbb{E}_{p(g^{-1}s)p(g^{-1}z)}[f(s,z)]\right)
+where the expectation is taken with respect to the density L_{g}p , i.e., (L_{g}p)(s,z):=p(g^{-1}s,g^{-1}z) is the left regular representation of G on densities (see Appendix. VII-G).
+For the first expectation, we write:
+\mathbb{E}_{p(g^{-1}s,g^{-1}z)}[f(s,z)]=\int_{\mathcal{S}\times Z}f(s,z)\,p(g^{-1}s,g^{-1}z)\,ds\,dz.
+We perform the change of variables u=g^{-1}s , v=g^{-1}z (so s=gu , z=gv ). Since the action is volume-preserving ( ds\,dz=du\,dv ):
+\displaystyle\int_{\mathcal{S}\times Z}f(s,z)\,
+\displaystyle p(g^{-1}s,g^{-1}z)\,ds\,dz
+\displaystyle=\int_{\mathcal{S}\times Z}f(gu,gv)\,p(u,v)\,du\,dv.
+Crucially, since f\in\mathcal{F}_{G} , we have f(gu,gv)=f(u,v) by definition. Thus:
+\displaystyle=\int_{\mathcal{S}\times Z}f(u,v)\,p(u,v)\,du\,dv
+\displaystyle=\mathbb{E}_{p(u,v)}[f(u,v)].
+An analogous calculation for the product of marginals:
+\displaystyle\mathbb{E}_{p(g^{-1}s)p(g^{-1}z)}[f(s,z)]
+\displaystyle=\int f(s,z)\,p(g^{-1}s)\,p(g^{-1}z)\,ds\,dz
+\displaystyle=\int f(gu,gv)\,p(u)\,p(v)\,du\,dv
+\displaystyle=\mathbb{E}_{p(u)p(v)}[f(gu,gv)].
+Substituting these back into the supremum:
+\displaystyle I_{\mathcal{W}}^{G}
+\displaystyle(g\mathcal{S};gZ)
+\displaystyle=\sup_{f\in\mathcal{F}_{G}}\Big(\mathbb{E}_{p(s,z)}[f(s,z)]-\mathbb{E}_{p(s)p(z)}[f(s,z)]\Big)
+\displaystyle=I_{\mathcal{W}}^{G}(\mathcal{S};Z).
+∎
+VII-C Proof of Proposition 2
+Proposition 2 (Properties of the group-averaged scoring function).
+Let f:\mathcal{S}\times Z\to\mathbb{R} be 1 -Lipschitz with respect to
+a group-invariant metric d on \mathcal{S}\times Z . Then its group
+average \tilde{f} is group-invariant and 1 -Lipschitz with respect to
+d . In particular, \tilde{f}\in\mathcal{F}_{G} .
+Proof.
+Group-invariance of \tilde{f} . Define the group-averaged function as \tilde{f}(s,z)=\int_{G}f(gs,gz)d\mu(g) , where \mu is the Haar measure on the compact group G . For any h\in G ,
+\displaystyle\tilde{f}(hs,hz)
+\displaystyle=\int_{G}f(hgs,hgz)d\mu(g)
+\displaystyle=\int_{G}f(g^{\prime}s,g^{\prime}z)d\mu(g^{\prime})~~(g^{\prime}=gh)
+\displaystyle=\tilde{f}(s,z).
+Thus, \tilde{f} is group-invariant.
+Preservation of the 1-Lipschitz condition. Assume that f is 1-Lipschitz with respect to a group-invariant metric d , so that d((gs_{1},gz_{1}),(gs_{2},gz_{2}))=d((s_{1},z_{1}),(s_{2},z_{2})) . Then for any (s_{1},z_{1}) and (s_{2},z_{2}) ,
+\displaystyle\|\tilde{f}(s_{1},z_{1})-\tilde{f}(s_{2},z_{2})\|
+\displaystyle=\left\|\int_{G}f(gs_{1},gz_{1})-f(gs_{2},gz_{2})d\mu(g)\right\|
+\displaystyle\leq\int_{G}\|f(gs_{1},gz_{1})-f(gs_{2},gz_{2})\|d\mu(g)
+\displaystyle\quad\quad\quad\quad\quad\quad\quad\quad\quad\quad\quad\quad\quad\quad(\text{Jensen's inequality})
+\displaystyle\leq\int_{G}d((gs_{1},gz_{1}),(gs_{2},gz_{2}))d\mu(g)
+\displaystyle\quad\quad\quad\quad\quad\quad\quad\quad\quad\quad\quad\quad(\text{1-Lipschitz property of }f)
+\displaystyle=\int_{G}d((s_{1},z_{1}),(s_{2},z_{2}))~d\mu(g)
+\displaystyle\quad\quad\quad\quad\quad\quad\quad\quad\quad\quad\quad\quad\quad\quad(d\text{ is group-invariant})
+\displaystyle=d((s_{1},z_{1}),(s_{2},z_{2}))
+Since \mu is a probability measure, \tilde{f} is 1-Lipschitz.
+∎
+VII-D Invariance of the State-Skill Occupancy Measure
+Lemma 1 (Invariance of the State-Skill Distribution).
+Assume the environment dynamics are group-invariant such that P(gs^{\prime}|gs,ga)=P(s^{\prime}|s,a) . Furthermore, assume the initial state distribution p_{0}(s) and skill prior p(z) are group-invariant. If the skill-conditioned policy is equivariant, i.e., \pi(ga|gs,gz)=\pi(a|s,z) , then the induced joint distribution at any timestep t is group-invariant:
+p_{t}(gs,gz)=p_{t}(s,z),\quad\forall g\in G.
+Consequently, the state-skill occupancy measure \rho^{\pi}(s,z)=\frac{1}{T}\sum_{t=0}^{T-1}p_{t}(s,z) is also group-invariant.
+Proof.
+We prove the lemma through mathematical induction.
+Base Case ( t=0 ):
+The joint distribution at t=0 can be determined by the independent priors:
+p_{0}(s,z)=p_{0}(s)p(z).
+When applied by the group transformation g\in G ,
+p_{0}(gs,gz)=p_{0}(gs)p(gz)=p_{0}(s)p(z)=p_{0}(s,z).
+Inductive step:
+Assume the hypothesis holds for time t , i.e., p_{t}(gs,gz)=p_{t}(s,z) .
+The marginal transition probability from (s,z) to s^{\prime} under policy \pi is:
+\mathcal{T}(s^{\prime}\mid s,z)=\int_{\mathcal{A}}P(s^{\prime}\mid s,a)\pi(a\mid s,z)\,da.
+First, we show that this probability is group-invariant. Consider the transition from rotated inputs gs,gz to gs^{\prime} :
+\displaystyle\mathcal{T}(gs^{\prime}\mid gs,gz)
+\displaystyle=\int_{\mathcal{A}}P(gs^{\prime}\mid gs,a)\pi(a\mid gs,gz)\,da.
+\displaystyle=\int_{\mathcal{A}}P(gs^{\prime}\mid gs,g\bar{a})\pi(g\bar{a}\mid gs,gz)\,d\bar{a}
+\displaystyle\quad\quad\quad\quad\quad\quad\quad(\text{change of variable}~~a=g\bar{a})
+\displaystyle=\int_{\mathcal{A}}P(s^{\prime}\mid s,\bar{a})\pi(\bar{a}\mid s,z)\,d\bar{a}
+\displaystyle=\mathcal{T}(s^{\prime}\mid s,z).
+where we use the change of variable a=g\bar{a} , and g\in G is a volume-preserving group transform, da=d\bar{a}
+Now, we express p_{t+1}(s^{\prime},z) by marginalizing over the previous state s :
+p_{t+1}(s^{\prime},z)=\int_{\mathcal{S}}\mathcal{T}(s^{\prime}\mid s,z)p_{t}(s,z)\,ds.
+At transformed pair (gs^{\prime},gz) :
+p_{t+1}(gs^{\prime},gz)=\int_{\mathcal{S}}\mathcal{T}(gs^{\prime}\mid s,gz)p_{t}(s,gz)\,ds.
+We again use the change of variable: s=g\bar{s} , ds=d\bar{s} :
+\displaystyle p_{t+1}(gs^{\prime},gz)
+\displaystyle=\int_{\mathcal{S}}\mathcal{T}(gs^{\prime}\mid g\bar{s},gz)p_{t}(g\bar{s},gz)\,d\bar{s}
+\displaystyle=\int_{\mathcal{S}}\mathcal{T}(s^{\prime}\mid\bar{s},z)p_{t}(\bar{s},z)\,d\bar{s}
+\displaystyle=p_{t+1}(s^{\prime},z).
+By induction, p_{t}(gs,gz)=p_{t}(s,z) for all t .
+Therefore, \rho^{\pi}(s,z) is also group-invariant.
+∎
+VII-E Group-invariant Temporal Distance under Group-Invariant MDPs
+The temporal distance d_{T}(s_{1},s_{2}) between two states s_{1} and s_{2} is defined as the expected number of transitions needed to reach state s_{2} from state s_{1} under policy \pi [48]. It satisfies the following recursive relationship:
+d_{T}(s_{1},s_{2})=\begin{cases}0&\text{if }s_{1}=s_{2},\\[4.0pt]
+1+\mathbb{E}_{a,s^{\prime}\mid s_{1}}\big[d_{T}(s^{\prime},s_{2})\big]&\text{if }s_{1}\neq s_{2}.\end{cases}
+For the base case, if s_{1}=s_{2} , it leads to d_{T}(gs_{1},gs_{2})=0 , since the group action is assumed to be bijective, gs_{1}=gs_{2} . So, the group-invariance is satisfied in the base case:
+d_{T}(gs_{1},gs_{2})=d_{T}(s_{1},s_{2})=0
+For the inductive step, assume that the group-invariance holds for states closer to s_{2} , d_{T}(gs^{\prime},gs_{2})=d_{T}(s^{\prime},s_{2}) . Then from the recursive term,
+d_{T}(gs_{1},gs_{2})=1+\mathbb{E}_{a\sim\pi(\cdot|gs_{1})}\mathbb{E}_{s^{\prime}\sim P(\cdot|gs_{1},a)}[d_{T}(s^{\prime},gs_{2})]
+By the Lemma from [29] that gS=S and gA=A , we can set a=g\tilde{a} and s^{\prime}=gs^{\prime\prime} . Then, in the group-invariant MDPs, \pi(g\tilde{a}|gs_{1})=\pi(\tilde{a}|s_{1}) and P(gs^{\prime\prime}|gs_{1},g\tilde{a})=P(s^{\prime\prime}|s_{1},\tilde{a}) . Substituting these into the equation,
+d_{T}(gs_{1},gs_{2})=1+\mathbb{E}_{\tilde{a}\sim\pi(\cdot|s_{1})}\mathbb{E}_{s^{\prime\prime}\sim P(\cdot|s_{1},\tilde{a})}[d_{T}(gs^{\prime\prime},gs_{2})]
+By the inductive hypothesis, d_{T}(gs^{\prime\prime},gs_{2})=d_{T}(s^{\prime\prime},s_{2}) . Therefore,
+\displaystyle d_{T}(gs_{1},gs_{2})
+\displaystyle=1+\mathbb{E}_{\tilde{a}\sim\pi(\cdot|s_{1})}\mathbb{E}_{s^{\prime\prime}\sim P(\cdot|s_{1},\tilde{a})}[d_{T}(s^{\prime\prime},s_{2})]
+\displaystyle=1+\mathbb{E}_{a\sim\pi(\cdot|s_{1})}\mathbb{E}_{s^{\prime}\sim P(\cdot|s_{1},a)}[d_{T}(s^{\prime},s_{2})]
+where its equation is equivalent to the recursive definition of d_{T}(s_{1},s_{2}) . Thus, by the mathematical induction, temporal distance is group-invariant under the group-invariant MDPs, d_{T}(gs_{1},gs_{2})=d_{T}(s_{1},s_{2}) .
+VII-F Proof of Theorem 2
+In this section, we prove that if the underlying MDP is group-invariant and the low-level skill policy is equivariant, the induced state transition probability in the high-level Semi-MDP (defined over a fixed interval k ) retains group invariance.
+Let G be a compact group acting on the state space \mathcal{S} and action space \mathcal{A} . We denote the transition probability of the underlying MDP as P^{l}(s^{\prime}\mid s,a) . Group-invariance of the dynamics implies that P^{l}(gs^{\prime}\mid gs,ga)=P^{l}(s^{\prime}\mid s,a) for all g\in G . Furthermore, let \pi(a\mid s,z) be the low-level skill policy. Equivariance of the policy implies \pi(ga\mid gs,gz)=\pi(a\mid s,z) . We define P_{k}(s_{t+k}\mid s_{t},z) as the transition probability of the Semi-MDP, representing the likelihood of reaching state s_{t+k} from s_{t} after executing skill z for k steps.
+Theorem 2 (Group-invariant Fixed-interval Semi-MDP).
+Assume the environment dynamics are group-invariant and the pretrained skill policy is equivariant:
+\displaystyle P^{l}(gs^{\prime}\mid gs,ga)
+\displaystyle=P^{l}(s^{\prime}\mid s,a)
+\displaystyle\pi^{l}(ga\mid gs,gz)
+\displaystyle=\pi^{l}(a\mid s,z)\quad\forall g\in G.
+Then, the induced high-level transition kernel (Eq. (7)) satisfies group invariance:
+P_{k}(gs_{t+k}\mid gs_{t},gz)=P_{k}(s_{t+k}\mid s_{t},z),\qquad\forall g\in G.
+Consequently, the fixed-interval semi-MDP is group-invariant whenever the high-level reward is group-invariant.
+Proof.
+The probability of reaching state s_{t+k} from s_{t} under skill z is obtained by marginalizing over all possible intermediate trajectories of actions a_{t:t+k-1} and states s_{t+1:t+k-1} . Let \tau_{int} denote the set of these intermediate variables. We write the transition density as:
+\displaystyle P_{k}(s_{t+k}\mid s_{t},z)
+\displaystyle=\int\dots\int\prod_{i=0}^{k-1}\bigg[\pi(a_{t+i}\mid s_{t+i},z)\cdot
+\displaystyle\quad\quad\quad\quad\quad\quad\quad\quad\quad\quad P^{l}(s_{t+i+1}\mid s_{t+i},a_{t+i})\bigg]\,d\tau_{int}.
+Now, consider the transition probability under the transformed inputs gs_{t} and gz . Let the integration variables representing the intermediate trajectory be denoted by the primed variables s^{\prime}_{t+i} and a^{\prime}_{t+i} :
+\displaystyle P_{k}(gs_{t+k}\mid gs_{t},gz)
+\displaystyle=\int\dots\int\prod_{i=0}^{k-1}\bigg[\pi(a^{\prime}_{t+i}\mid s^{\prime}_{t+i},gz)\cdot
+\displaystyle\quad\quad\quad\quad\quad\quad\quad\quad\quad\quad P^{l}(s^{\prime}_{t+i+1}\mid s^{\prime}_{t+i},a^{\prime}_{t+i})\bigg]\,d\tau^{\prime}_{int}.
+We perform a change of variables for the entire trajectory. Let s^{\prime}_{t+i}=g\hat{s}_{t+i} and a^{\prime}_{t+i}=g\hat{a}_{t+i} . Since the group action is volume-preserving (unit Jacobian determinant for compact groups), the differential element remains unchanged, d\tau^{\prime}_{int}=d\hat{\tau}_{int} . Substituting these variables and applying the group-invariance of P^{l} and the equivariance of \pi :
+\displaystyle P_{k}(gs_{t+k}\mid gs_{t},gz)
+\displaystyle=\int\dots\int\prod_{i=0}^{k-1}\bigg[P^{l}(g\hat{s}_{t+i+1}\mid g\hat{s}_{t+i},g\hat{a}_{t+i})
+\displaystyle\quad\qquad\qquad\qquad\qquad\qquad\qquad\cdot\pi(g\hat{a}_{t+i}\mid g\hat{s}_{t+i},gz)\bigg]\,d\hat{\tau}_{int}
+\displaystyle=\int\dots\int\prod_{i=0}^{k-1}\bigg[P^{l}(\hat{s}_{t+i+1}\mid\hat{s}_{t+i},\hat{a}_{t+i})
+\displaystyle\quad\qquad\qquad\qquad\qquad\qquad\qquad\cdot\pi(\hat{a}_{t+i}\mid\hat{s}_{t+i},z)\bigg]\,d\hat{\tau}_{int}
+\displaystyle=P_{k}(s_{t+k}\mid s_{t},z).
+Thus, the Semi-MDP transition dynamics are group-invariant.
+∎
+Appendix B. Representation Theory Background
+VII-G Left Regular Representation
+Let G be a compact group acting on a space \mathcal{X} (e.g., \mathcal{X}=\mathcal{S}\times Z ). The left regular representation on functions f:\mathcal{X}\to\mathbb{R} is defined as:
+(L_{g}f)(x):=f(g^{-1}x),\quad g\in G
+If p(x) is a probability density on \mathcal{X} with respect to group-invariant measure, the corresponding pushforward density transforms identically to the function [49]:
+(L_{g}p)(x):=p(g^{-1}x).
+We use this convention throughout the main text (e.g., L_{g}p(s,z)=p(g^{-1}s,g^{-1}z)
+VII-H Compact Groups and Haar Measure
+Throughout this work, we consider a compact Hausdorff topological group G , i.e.,
+a group equipped with a Hausdorff topology such that the multiplication g.h\mapsto gh and inversion g\mapsto g^{-1} are continuous and the underlying topological space is compact [49].
+On any locally compact group, there exists a left-invariant measure \mu , called a (left) Haar measure, satisfying
+\mu(gS)=\mu(S),\quad\forall g\in G,S\subseteq G.
+Such a left Haar measure is unique up to multiplication by a positive constant.
+Since G is compact, we can normalize \mu(G)=1 , so that \int_{G}h(g)~d\mu(g) is the average of a function h over the group.
+In particular, the expressions of \int_{G}f(gs,gz)\ d\mu(g) in the main text are precisely such group averages.
+VII-I Group Fourier Transform for SO(2)
+In our experiments we work with a finite cyclic subgroup
+G=C_{N}\subset SO(2) , so we use the discrete form of the group
+Fourier transform. For a finite compact group G , the Peter–Weyl
+theorem [43] states that the matrix entries of
+all irreducible representations \rho_{j}\in\hat{G} form a complete
+orthonormal basis of L^{2}(G) (with respect to the normalized counting
+measure). Consequently, any f\in L^{2}(G) admits an expansion of the
+form
+\displaystyle f(g)
+\displaystyle=\sum_{\rho_{j}\in\hat{G}}\sum_{m,n<d_{j}}w_{j,m,n}\,\sqrt{d_{j}}\,[\rho_{j}(g)]_{mn}
+\displaystyle=\sum_{\rho_{j}\in\hat{G}}\sqrt{d_{j}}\,\mathrm{Tr}\!\big(\rho_{j}(g)^{\top}\hat{f}(\rho_{j})\big),
+where d_{j} is the dimension of \rho_{j} , indices m,n range over the
+matrix entries, and \hat{f}(\rho_{j})\in\mathbb{R}^{d_{j}\times d_{j}} is the
+matrix collecting the coefficients w_{j,m,n}\in\mathbb{R} .
+For each basis element [\rho_{j}(g)]_{mn} , the associated coefficient is
+obtained by projecting f onto that basis function:
+w_{j,m,n}=\frac{1}{|G|}\sum_{g\in G}f(g)\,\sqrt{d_{j}}\,[\rho_{j}(g)]_{mn},
+where |G| denotes the order of the finite group G . Stacking these
+coefficients into a matrix yields
+\hat{f}(\rho_{j})=\frac{1}{|G|}\sum_{g\in G}f(g)\,\sqrt{d_{j}}\,\rho_{j}(g),
+which we refer to as the (group) Fourier transform of f at
+representation \rho_{j} .
+In the main text, the “spectral” or “Fourier” feature maps
+\phi_{F}(s) and \psi_{F}(z) are precisely parametrizations of such
+coefficient vectors across the irreducible representations of G .
+ENDSOURCE
+
+

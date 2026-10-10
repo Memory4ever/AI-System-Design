@@ -1,0 +1,1599 @@
+DeReason: A Difficulty-Aware Curriculum Improves Decoupled SFT-then-RL Training for General Reasoning
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Motivation
+RL vs. SFT under Controlled Comparison.
+2.1
+Preliminaries
+Supervised Fine-Tuning (SFT).
+Reinforcement Learning with GRPO.
+Verification for General Reasoning
+2.2
+DeReason: Difficulty-Based Data Decoupling
+Overall Pipeline.
+Difficulty Estimation.
+LLM-based Scoring.
+3
+Experiments
+3.1
+Training
+3.2
+Evaluation
+3.3
+Baselines
+3.4
+Main results
+4
+Analysis
+4.1
+Distribution of data in different difficulty
+4.2
+Performance on mathematic task
+4.3
+Using different difficulty selection for RL
+4.4
+Comparison of response length
+4.5
+Observation of entropy
+5
+Related work
+6
+Conclusion
+References
+A
+Appendix
+A.1
+Reasoning Complexity Rating Prompt
+License: arXiv.org perpetual non-exclusive license
+arXiv:2603.11193v1 [cs.CL] 11 Mar 2026
+DeReason: A
+Difficulty-Aware Curriculum Improves Decoupled SFT-then-RL Training for
+General Reasoning
+Hanxu Hu
+Affiliation:
+University of Zurich
+Yuxuan Wang
+Affiliation:
+University of Zurich
+Maggie Huan
+Affiliation:
+University of Pennsylvania
+Jannis Vamvas
+Affiliation:
+University of Zurich
+Yinya Huang
+Affiliation:
+ETH Zurich
+Zhijiang Guo
+and
+Rico Sennrich
+Affiliation:
+University of Zurich
+Affiliation:
+HKUST (GZ)
+Affiliation:
+HKUST
+Abstract
+Reinforcement learning with Verifiable Rewards (RLVR) has emerged as a powerful paradigm for eliciting reasoning capabilities in large language models, particularly in mathematics and coding. While recent efforts have extended this paradigm to broader general scientific (STEM) domains, the complex interplay between supervised fine-tuning (SFT) and RL in these contexts remains underexplored. In this paper, we conduct controlled experiments revealing a critical challenge: for general STEM domains, RL applied directly to base models is highly sample-inefficient and is consistently surpassed by supervised fine-tuning (SFT) on moderate-quality responses. Yet sequential SFT followed by RL can further improve performance, suggesting that the two stages play complementary roles, and that how training data is allocated between them matters. Therefore, we propose DeReason, a difficulty-based data decoupling strategy for general reasoning. DeReason partitions training data by reasoning intensity estimated via LLM-based scoring into reasoning-intensive and non-reasoning-intensive subsets. It allocates broad-coverage, non-reasoning-intensive problems to SFT to establish foundational domain knowledge, and reserves a focused subset of difficult problems for RL to cultivate complex reasoning. We demonstrate that this principled decoupling yields better performance than randomly splitting the data for sequential SFT and RL. Extensive experiments on general STEM and mathematical benchmarks demonstrate that our decoupled curriculum training significantly outperforms SFT-only, RL-only, and random-split baselines. Our work provides a systematic study of the interplay between SFT and RL for general reasoning, offering a highly effective and generalized post-training recipe.
+1
+Introduction
+Reinforcement Learning via Verifiable Rewards (RLVR) has emerged as a powerful paradigm for eliciting reasoning capabilities in large language models (LLMs). Its efficacy has been most thoroughly established in domains with clear outcome-based verification signals, such as mathematics and code reasoning. Recent breakthroughs—exemplified by OpenAI’s o1 series and works like DeepSeek-R1
+(
+Guo et al., 2025
+)
+, TuluV3
+(
+Lambert et al., 2025
+)
+, and TinyZeRO
+(
+Pan et al., 2025
+)
+demonstrate that applying RLVR directly to base models can unlock sophisticated chain-of-thought reasoning. By utilizing rule-based verifiable rewards for math problems and execution-based feedback for competitive programming benchmarks, this approach provides a highly effective training signal for developing systematic reasoning. Consequently, these models exhibit emergent reasoning patterns, including self-verification and reflection. These remarkable successes have sparked considerable interest in understanding exactly how RL transforms model behavior and, crucially, whether such techniques can successfully generalize beyond these narrowly defined verifiable domains.
+While RLVR has demonstrated remarkable performance in certain settings, particularly in tasks of math and code, prior work has established that a combination of SFT and RL remains essential for many base models and training scenarios. DeepSeek-R1 itself employs a cold-start SFT stage before RL; Tulu V3 and other production pipelines similarly adopt sequential SFT-then-RL training. However, recent efforts extending RLVR to broader STEM domain, such as General Reasoner
+(
+Ma et al., 2025
+)
+, WebscaleRL
+(
+Cen et al., 2025
+)
+, have predominantly focused on pure RL approaches, leaving the role of SFT in these settings underexplored. Intuitively, the SFT-then-RL should be even more critical for general STEM reasoning, as acquiring broader domain knowledge. This naturally raises the question: given that both SFT and RL play complementary roles, how should training data be allocated between the two stages in general domains? We investigate this through a difficulty-aware curriculum that partitions data to match each stage’s training. Importantly, our approach operates at the data selection level rather than proposing algorithmic modifications for combining SFT and RL training. This makes it orthogonal to existing algorithmic improvements
+(
+Huang et al., 2025
+;
+Yan et al., 2025
+)
+and can be directly used in various training frameworks and toolkits.
+Concretely, we first separately train models with pure SFT and pure RLVR on general STEM reasoning tasks and compare their resulting capabilities by controlling amount of training data. Our findings reveal a clear division of labor: across both mathematical and broader STEM domains, pure RLVR applied directly to a base model is consistently and significantly outperformed by SFT. Based on this observation, we propose
+DeReason
+, a difficulty-based decoupled training strategy. Specifically, we introduce
+reasoning intensity
+as the partitioning criterion and employ an LLM to score each training instance on a scale of 1 to 5. Problems that primarily require knowledge recall or straightforward application of known facts receive low reasoning intensity scores, while problems demanding multi-step derivation and reasoning receive high scores. We then allocate low reasoning intensity data to SFT—as these knowledge-recall-oriented problems are precisely where distillation from a stronger teacher is most efficient—and reserve high reasoning intensity data for RLVR, where the model benefits from exploring complex reasoning paths beyond the teacher’s demonstrations.
+Our contributions are summarized as follows:
+1) We systematically analyze the interplay of SFT and RLVR across both math and general STEM tasks, demonstrating that for small models, SFT serves as an indispensable distillation and cold-start mechanism that vastly outperforms pure RLVR.
+2)
+DeReason
+Curriculum: We propose a novel, decoupled training strategy, demonstrating that partitioning data by difficulty: SFT on easy/broad data followed by RLVR on selected hard data, significantly outperforms pure SFT, pure RLVR, or random SFT-then-RLVR baselines.
+3) Detailed Behavioral Analysis: We provide a fine-grained analysis of the training dynamics. Specifically, we evaluate the impact of different difficulty selection distributions and characterize how SFT and RLVR uniquely shape model behavior, detailing their distinct effects on policy entropy, response length evolution, and reward optimization.
+2
+Motivation
+Recent work has demonstrated the remarkable effectiveness of reinforcement learning with verifiable rewards (RLVR) for improving reasoning capabilities of large language models, particularly in mathematical domains
+(
+Pan et al., 2025
+;
+Liu et al., 2025
+;
+Guo et al., 2025
+)
+. These successes have led to a growing consensus that RL-based post-training is broadly superior to supervised fine-tuning (SFT) for eliciting reasoning abilities. However, we argue that this conclusion may be premature and warrants more careful examination under controlled experimental conditions.
+RL vs. SFT under Controlled Comparison.
+To rigorously assess the relative merits of RL and SFT, we conduct a series of controlled experiments where both methods are trained on
+exactly the same set of problems
+, varying only the amount of training data. For SFT, we use responses generated by a moderate-capability model rather than a frontier model, ensuring that the supervision signal is not too strong. As shown in Figure
+1
+, we evaluate on both general STEM reasoning (GPQA-Diamond, averaged across 8 runs at pass@1) and mathematical reasoning (pass@1 averaged across AIME24, AIME25, and MATH500).
+Our results reveal that
+SFT consistently outperforms RL as training data scales up in both domains
+. In the math domain, SFT with moderate-quality responses already achieves competitive or superior performance compared to RL trained on the same problems. In general STEM domains, the gap is similar. RL struggles to match SFT performance even with increasing data, suggesting that outcome-based reinforcement alone is insufficient for acquiring the broad domain knowledge required for general scientific reasoning.
+Figure 1:
+Scaling behavior of RL and SFT on both general STEM and math domains, trained on the same set of problems. In the general domain, we report pass@1 averaged across 8 runs on GPQA-Diamond. In the math domain, we report the same metric averaged across AIME24, AIME25, and MATH500. In both settings, SFT with moderate-quality model responses outperforms RL as training data increases.
+We attribute the advantage of SFT to its superior
+sample efficiency
+: direct imitation of moderate-quality solutions provides a stronger learning signal than outcome-based reinforcement, where the model must discover effective reasoning paths through noisy exploration—particularly challenging for a small base model without prior fine-tuning. Moreover, both mathematical and general STEM reasoning require
+domain knowledge
+(e.g., physics formulae, algebraic identities) that is difficult to acquire through trial-and-error alone, whereas SFT offers a more direct pathway for knowledge consolidation. These observations suggest that SFT and RL have complementary strengths: SFT excels at efficient knowledge acquisition, while RL can push performance beyond the supervision signal on sufficiently challenging problems. This motivates
+Dereason
+, a
+difficulty-based data decoupling
+strategy that allocates easier samples to SFT for knowledge and skill acquisition, and reserves difficult samples for RL to push the reasoning frontier beyond what imitation alone can achieve.
+2.1
+Preliminaries
+Supervised Fine-Tuning (SFT).
+Given a dataset
+𝒟
+SFT
+=
+{
+(
+x
+i
+,
+y
+i
+)
+}
+i
+=
+1
+N
+\mathcal{D}_{\text{SFT}}=\{(x_{i},y_{i})\}_{i=1}^{N}
+of problem-response pairs, SFT optimizes the policy
+π
+θ
+\pi_{\theta}
+by maximizing the log-likelihood of reference responses.
+Reinforcement Learning with GRPO.
+Group Relative Policy Optimization (GRPO)
+(
+Shao et al., 2024
+)
+estimates advantages from group-level statistics, eliminating the need for a separate value model. For each prompt
+x
+x
+, GRPO samples a group of
+G
+G
+responses
+{
+o
+1
+,
+…
+,
+o
+G
+}
+\{o_{1},\ldots,o_{G}\}
+from the current policy
+π
+θ
+\pi_{\theta}
+, each receiving a reward
+r
+i
+r_{i}
+from a reward function
+R
+⁡
+(
+⋅
+)
+R(\cdot)
+. Advantages are computed by normalizing rewards within each group. The GRPO objective is:
+ℒ
+GRPO
+(
+θ
+)
+=
+−
+𝔼
+x
+∼
+𝒟
+RL
+[
+1
+G
+∑
+i
+=
+1
+G
+min
+(
+ρ
+i
+A
+^
+i
+,
+clip
+(
+ρ
+i
+,
+1
+−
+ε
+,
+1
++
+ε
+)
+A
+^
+i
+)
+−
+β
+D
+KL
+(
+π
+θ
+∥
+π
+ref
+)
+]
+,
+\mathcal{L}_{\text{GRPO}}(\theta)=-\mathbb{E}_{x\sim\mathcal{D}_{\text{RL}}}\left[\frac{1}{G}\sum_{i=1}^{G}\min\left(\rho_{i}\hat{A}_{i},\;\text{clip}(\rho_{i},1{-}\varepsilon,1{+}\varepsilon)\hat{A}_{i}\right)-\beta\,D_{\text{KL}}\left(\pi_{\theta}\|\pi_{\text{ref}}\right)\right],
+(1)
+where
+ρ
+i
+=
+π
+θ
+​
+(
+o
+i
+∣
+x
+)
+π
+ref
+​
+(
+o
+i
+∣
+x
+)
+\rho_{i}=\frac{\pi_{\theta}(o_{i}\mid x)}{\pi_{\text{ref}}(o_{i}\mid x)}
+is the importance sampling ratio,
+A
+^
+i
+\hat{A}_{i}
+is the group-normalized advantage,
+ε
+\varepsilon
+is the clipping parameter, and
+β
+\beta
+controls KL regularization strength.
+Verification for General Reasoning
+Reasoning tasks in mathematics and code often admit deterministic reward signals, e.g., by matching numerical answers or executing test cases. However, for general scientific domains, answers frequently involve free-form explanations or qualitative reasoning that cannot be assessed by rule-based checkers. We therefore follow
+Ma et al. (2025)
+to adopt a
+model-based verifier
+to judge response correctness:
+R
+⁡
+(
+x
+,
+o
+)
+=
+{
+1
+if
+​
+𝒱
+θ
+​
+(
+Extract
+​
+(
+o
+)
+,
+a
+∗
+,
+x
+)
+=
+True
+,
+0
+otherwise
+,
+R(x,o)=\begin{cases}1&\text{if }\mathcal{V}_{\theta}\bigl(\textsc{Extract}(o),\;a^{*},\;x\bigr)=\text{True},\\
+0&\text{otherwise},\end{cases}
+(2)
+where
+a
+∗
+a^{*}
+is the ground-truth answer for prompt
+x
+x
+,
+Extract
+​
+(
+⋅
+)
+\textsc{Extract}(\cdot)
+extracts the final answer from model response
+o
+o
+, and
+𝒱
+θ
+\mathcal{V}_{\theta}
+is a language-model-based verifier that assesses semantic equivalence between the extracted answer and
+a
+∗
+a^{*}
+conditioned on the question
+x
+x
+. Unlike rule-based verification, the model-based verifier can handle diverse answer formats in scientific reasoning, including qualitative explanations, approximate numerical values, and multi-part derivations.
+2.2
+DeReason: Difficulty-Based Data Decoupling
+Overall Pipeline.
+Let
+𝒟
+=
+{
+(
+x
+i
+,
+a
+i
+∗
+)
+}
+i
+=
+1
+N
+\mathcal{D}=\{(x_{i},a_{i}^{*})\}_{i=1}^{N}
+denote the full training set of problems with ground-truth answers. Our method proceeds in three stages:
+1.
+Difficulty Estimation
+: Assign a difficulty score
+d
+i
+∈
+[
+1
+,
+5
+]
+d_{i}\in[1,5]
+to each problem
+x
+i
+x_{i}
+(described below).
+2.
+Data Partitioning
+: Based on the difficulty scores, partition
+𝒟
+\mathcal{D}
+into an SFT subset
+𝒟
+SFT
+\mathcal{D}_{\text{SFT}}
+(easier, broader) and an RL subset
+𝒟
+RL
+\mathcal{D}_{\text{RL}}
+(harder, focused):
+𝒟
+SFT
+=
+{
+(
+x
+i
+,
+a
+i
+∗
+)
+∈
+𝒟
+∣
+d
+i
+≤
+τ
+}
+,
+𝒟
+RL
+=
+{
+(
+x
+i
+,
+a
+i
+∗
+)
+∈
+𝒟
+∣
+d
+i
+>
+τ
+}
+,
+\mathcal{D}_{\text{SFT}}=\{(x_{i},a_{i}^{*})\in\mathcal{D}\mid d_{i}\leq\tau\},\quad\mathcal{D}_{\text{RL}}=\{(x_{i},a_{i}^{*})\in\mathcal{D}\mid d_{i}>\tau\},
+(3)
+where
+τ
+\tau
+is a difficulty threshold. For
+𝒟
+SFT
+\mathcal{D}_{\text{SFT}}
+, we generate reference responses
+y
+i
+y_{i}
+using a moderate teacher model (e.g., Qwen3-4B-Instruct) to construct SFT pairs.
+3.
+Curriculum Training
+: First perform SFT on
+𝒟
+SFT
+\mathcal{D}_{\text{SFT}}
+to obtain
+π
+SFT
+\pi_{\text{SFT}}
+, then apply GRPO on
+𝒟
+RL
+\mathcal{D}_{\text{RL}}
+initialized from
+π
+SFT
+\pi_{\text{SFT}}
+.
+Difficulty Estimation.
+We employ an LLM to estimate problem difficulty. To avoid reliance on external proprietary models, we intentionally use an instruct model of the same size (Qwen3-4B-Instruct here) to the policy model as the judge.
+LLM-based Scoring.
+We prompt the same size instruct LLM to directly assess the difficulty of each problem on a scale from 1 to 5, considering factors such as the number of reasoning steps, prerequisite domain knowledge, and potential for error. The detailed prompt
+p
+diff
+p_{\text{diff}}
+is shown in Appendix
+A.1
+and it is used for instructing the model to output a difficulty score
+s
+i
+∈
+{
+1
+,
+2
+,
+3
+,
+4
+,
+5
+}
+s_{i}\in\{1,2,3,4,5\}
+. We then assign problems with high difficulty scores (
+s
+i
+≥
+4
+s_{i}\geq 4
+) to the RL training set.
+3
+Experiments
+3.1
+Training
+We use Qwen3-4B-Base as base model for both SFT and RL. In SFT experiments, we use batch size as 128 and learning rate as 1e-5 under Llama-Factory framework
+(
+Zheng et al., 2024
+)
+. In RL, we use VeRL
+(
+Sheng et al., 2024
+)
+for all experiments, and set max response length as 8192, training batch size as 128, and mini batch as 64, the learning rate is set as 1e-6. We use Qwen3-4B-Instruct-2507 to get all responses for SFT data, as it is only a small size instruct model, which makes us not depend too much on the cabability of external strong model in making SFT data. For validating the generalization of our method, we conduct experiments on two different datasets, WebInstruct-Verified and Webscale-RL, both of them focus on STEM domains.
+3.2
+Evaluation
+To evaluate the general reasoning of the model comprehensively, we use multiple challenging general reasoning datasets:
+MMLU-Pro
+(
+Wang et al., 2024
+)
+: An enhanced version of MMLU that increases answer choices from 4 to 10 and incorporates more reasoning-intensive questions, reducing the chance of guessing correctly by memorization alone and providing better discrimination between strong models.
+GPQA-Diamond
+(
+Rein et al., 2024
+)
+: A multiple-choice benchmark designed to require genuine expert-level knowledge, with questions authored by PhD-level domain experts such that non-experts score near random chance ( 34 %). The Diamond subset represents the highest-quality, most rigorously filtered portion of the full dataset.
+SuperGPQA
+(
+Du et al., 2025
+)
+: A large-scale extension of GPQA covering 285 disciplines with tens of thousands of graduate-level questions, targeting long-tail subject knowledge and addressing the limited disciplinary coverage of existing benchmarks.
+BBEH
+(
+Kazemi et al., 2025
+)
+: BIG-Bench Extra Hard, an upgraded successor to BIG-Bench Hard that redesigns existing tasks to remain challenging for state-of-the-art models, focusing on complex multi-type reasoning (logical, spatial, arithmetic, etc.) with the explicit goal of maintaining a significant gap between model and human performance.
+3.3
+Baselines
+We compare with various baselines in previous works. Specifically, we use the training data of WebInstruct-Verified
+(
+Ma et al., 2025
+)
+and WebScaleRL
+(
+Cen et al., 2025
+)
+, and conduct GRPO on them from base model following their training settings, and use the verifier model from
+Ma et al. (2025)
+to provide reward scores.
+3.4
+Main results
+For we validate our method in two datasets, Webinstruct-Verified and Webscale-RL, we report results of models training on both of them separately.
+We compared with previous baselines, more specifically, we mainly compare the results of only SFT and only RL on WebscaleRL and Webinstruct-Verified respectively. Besides, we also used the same data, first training on easy data, then training on selected difficult data, performing this training using only SFT and only RL for further ablation. The selected RL here means we used an LLM for selecting those problems scored as 4 and 5 for difficulty. It shows that SFT-only can be clearly better than RL-only when testing wit the same training data in all benchmarks. Using our pipeline, SFT on easy subset and RL on hard subset can further boost the performance, leading to best results in 4B models. At the same time, our model also outperforms all previous models and baselines in similar scale. Additionally, we also observe that, on easy benchmarks like MMLU-Pro, the gap between our approach and SFT-only baselines is small, or our approach achieves even worse results than the SFT-only baseline, but on hard benchmarks like BBEH, which require more reasoning than knowledge retrieval, our pipeline yields a clear improvement compared to other baselines.
+Table 1:
+Main results on reasoning benchmarks. Bold indicates best performance within each model group.
+Models
+MMLU-Pro
+GPQA-D
+SuperGPQA
+BBEH
+AVG
+Baselines
+GPT-4o
+74.6
+50.0
+46.3
+22.3
+48.3
+QwQ-32B
+52.0
+54.5
+43.6
+22.6
+43.2
+DeepSeek-R1
+84.0
+71.5
+59.9
+34.9
+62.6
+Qwen2.5-7B-Base
+47.7
+29.3
+26.7
+8.0
+27.9
+Qwen2.5-7B-Instruct
+57.0
+33.8
+30.7
+12.2
+33.4
+Open-Reasoner-Zero
+59.4
+36.6
+32.8
+12.2
+35.3
+SimpleRL-Qwen2.5-7B-Zoo
+51.5
+24.2
+29.9
+11.9
+29.4
+4B Models (Webinstruct-verified)
+Qwen3-4B-Base
+51.6
+26.5
+25.4
+8.1
+27.9
+Webinstruct-V (RL only)
+62.8
+42.9
+32.5
+12.2
+37.6
+Webinstruct-V (SFT only)
+68.6
+46.8
+38.4
+13.5
+41.8
+Webinstruct-V (SFT then selected SFT)
+68.6
+45.6
+38.2
+13.0
+41.4
+Webinstruct-V (SFT then random RL)
+68.6
+47.8
+39.4
+15.8
+42.9
+Webinstruct-V (Ours, SFT easy + RL hard)
+68.4
+50.0
+40.2
+16.7
+43.8
+4B Models (Webscale-RL)
+Webscale (RL only)
+55.4
+34.0
+30.9
+10.1
+32.6
+Webscale (SFT only)
+60.7
+39.2
+37.3
+13.4
+37.7
+Webscale (Ours, SFT easy + RL hard)
+60.3
+43.7
+38.8
+15.7
+39.6
+4
+Analysis
+4.1
+Distribution of data in different difficulty
+Figure
+2
+shows the category distribution of training data of WebInstruct-Verified across difficulty levels, as judged by LLMs on a scale from 1 to 5. At lower difficulty scores, the data is distributed relatively evenly across diverse categories such as History, Biology, Business, and Psychology. As difficulty increases, however, the distribution becomes increasingly concentrated in Mathematics and Physics. At the highest difficulty levels (scores 4 and 5), Mathematics dominates overwhelmingly—comprising roughly 78% and 96% of samples, respectively. This trend suggests that easy samples tend to cover broad, knowledge-oriented topics, while harder samples are predominantly reasoning-intensive, consistent with our assumption that difficulty correlates with the shift from knowledge recall to complex reasoning.
+Figure 2:
+The category distribution across difficulty scores.
+4.2
+Performance on mathematic task
+We also evaluate our method with SFT-only and RL-only baselines on mathematic tasks. We found that in most situations our method is better than these baselines in both training data we used, and the performance follow similar trend with STEM general reasoning benchmarks.
+Table 2:
+Math reasoning results on AIME24, AIME25, and MATH500.
+Models
+AIME24
+AIME25
+MATH500
+4B Models (Webinstruct-verified)
+WebIns-V (RL only)
+20.0
+15.4
+80.6
+WebIns-V (SFT only)
+22.0
+17.6
+82.6
+WebIns-V (Ours, SFT then selected RL)
+22.1
+18.0
+84.1
+Webscale (RL only)
+21.3
+14.0
+81.6
+Webscale (SFT only)
+26.3
+23.3
+87.5
+Webscale (Ours, SFT then selected RL)
+27.7
+20.7
+88.1
+4.3
+Using different difficulty selection for RL
+We conduct further analysis on using data with different difficulty for RL separately from both base model as starting checkpoint and SFTed model as starting checkpoint, and we show the training reward scores in Figure
+3
+, it shows that the initial reward of the SFT checkpoint is higher than that of the base model, and there is a slight improvement in subsequent steps; the base model shows a significant improvement in the first 40 steps, but then the performance tends to level off. While Figure
+6
+shows SFT checkpoint has higher performance, but gradually declined except for the 4 and 5 subset. Base performance was relatively low at first, but then slowly increased.
+4.4
+Comparison of response length
+Figure
+4
+shows the evolution of response length throughout RL training, broken down by verifiable reward score. Starting from the SFT checkpoint (left), the model inherits verbose generation behavior, and RL progressively shortens responses—most notably for high-scoring outputs, which drop from approximately 4,200 to 3,000 tokens. From the base model (right), responses across all score levels initially share similar lengths ( 1,200 tokens), but rapidly diverge: responses for high-scoring questions sustain or grow in length, whereas low-scoring ones shrink to below 500 tokens. This score-dependent bifurcation is far more pronounced in the base model setting, where the gap between Score 5 and Score 1 responses widens to over 1,000 tokens within the first 40 steps. In the SFT setting, this gap is less dramatic, as RL primarily acts as a compression mechanism that preserves the existing length–quality hierarchy while uniformly reducing verbosity.
+4.5
+Observation of entropy
+Figure
+5
+presents the actor entropy (on a log scale) throughout RL training for both initialization settings. The base model begins with substantially higher entropy (
+≈
+\approx
+2.0), reflecting its broad and less constrained output distribution, and undergoes a steep decline during the first 20 steps before gradually stabilizing below 0.10. In contrast, the SFT-initialized model starts with much lower entropy (
+≈
+\approx
+0.30), as supervised fine-tuning has already concentrated the policy distribution, and exhibits a slower, more moderate decrease over the course of training. Notably, the base model’s entropy eventually drops below that of the SFT model, suggesting that RL from the base model ultimately converges to a more deterministic policy. This indicates that while SFT pre-narrows the policy space, RL from the base model achieves even sharper specialization through reward-driven exploration and exploitation.
+Figure 3:
+Reward score during RL training with data in different difficulty score (from 1 to 5) from Webinstruct-verified. The left sub figure is starting from SFT checkpoint, right sub figure is starting from base checkpoint
+Figure 4:
+Response length during RL training with data in different difficulty scores.
+Figure 5:
+Actor’s entropy during RL training with different initial checkpoint.
+Figure 6:
+GPQA-diamond score during RL training from SFT checkpoint and base model respectively. Pass@1 averaged across 8 runs is computed for each checkpoints.
+5
+Related work
+Reinforcement learning with verifiable rewards (RLVR)
+(
+Lambert et al., 2025
+)
+has driven recent reasoning breakthroughs: GRPO
+(
+Shao et al., 2024
+)
+, o1
+(
+OpenAI et al., 2024
+)
+and DeepSeek-R1
+(
+Guo et al., 2025
+)
+demonstrated that large-scale RL can incentivize strong reasoning capabilities, also reproduced at small scale by TinyZero
+(
+Pan et al., 2025
+)
+. Subsequent works refine the training algorithm: Dr. GRPO
+(
+Liu et al., 2025
+)
+and DAPO
+(
+Yu et al., 2025a
+)
+. The RLVR training paradigm has been widely adopted in production models
+(
+Yang et al., 2025
+;
+Team et al., 2026b
+;
+Team et al., 2026a
+)
+.
+Additionally, several works explore verifier-free alternatives that use likelihood-based signals as rewards
+(
+Zhou et al., 2025
+;
+Yu et al., 2025b
+;
+Huang et al., 2026
+;
+Kwiatkowski et al., 2026
+)
+. Recently, some works
+(
+Huang et al., 2025
+;
+Yan et al., 2025
+)
+try to blend SFT and RL algorithmically and achieved better mathematic performance. While RLVR has proven highly effective for mathematical and code reasoning, extending this paradigm to general reasoning remains challenging.
+Several recent efforts aim to bridge this gap by scaling verifiable training data across domains
+(
+Yue et al., 2024
+;
+Ma et al., 2025
+;
+Cen et al., 2025
+)
+and improving RL training with multi-domain, multi-format data
+(
+Akter et al., 2025
+;
+Su et al., 2025
+)
+. A systematic study by
+Cheng et al. (2025)
+further reveals that RL transfer is highly domain-dependent. Yet how training data of varying difficulty should be allocated across post-training stages remains underexplored.
+The choice of training data difficulty critically affects RL effectiveness in reasoning.
+Pikus et al. (2025)
+show that training GRPO on the hardest 10% of examples that the base model fails most often yields gains of up to 47%; by contrast, easy examples produce only 3–15% improvement.
+E2H Reasoner
+(
+Parashar et al., 2025
+)
+takes a curriculum learning
+(
+Bengio et al., 2009
+)
+approach, scheduling RL training from easy to hard problems and showing that this ordering improves reasoning over vanilla RL training alone.
+Another approach is to adaptively adjust problem difficulty during RL training: DEPO
+(
+Zhao et al., 2026
+)
+uses an online difficulty estimator to filter trivial or overly complex samples before rollout,
+Sun et al. (2026)
+select moderate-difficulty questions via an attention-based estimator, and SEC
+(
+Chen et al., 2025
+)
+formulates difficulty selection as a multi-armed bandit that adaptively chooses which difficulty category to train on at each step.
+Tang et al. (2025)
+bridge both paradigms by combining offline curation with online explorability filtering. Despite these advances, all prior works focus on difficulty selection within the RL paradigm, without examining how difficulty should inform the allocation of data across distinct post-training stages.
+Along a different axis, several works characterize the distinct roles of SFT and RL in post-training: SFT memorizes training data while RL generalizes to unseen variants
+(
+Chu et al., 2025
+)
+; mechanistically, SFT expands correct reasoning trajectories whereas RL compresses incorrect ones
+(
+Matsutani et al., 2025
+)
+; theoretically, their objectives are inherently coupled in parameter space, so the second stage necessarily degrades the first
+(
+Niu et al., 2026
+)
+; and under math-only training, RL preserves general-domain representations while SFT induces drift
+(
+Huan et al., 2025
+)
+. Recent attempts to blend SFT and RL algorithmically have improved mathematical performance
+(
+Huang et al., 2025
+;
+Yan et al., 2025
+)
+, yet these studies remain confined to mathematical tasks, leaving open how their findings extend to general STEM domains and how data should be allocated to match each stage’s learning dynamics. Notably, because DeReason operates purely at the data selection level, it is orthogonal to algorithmic advances in SFT or RL and can be readily integrated into existing training pipelines.
+6
+Conclusion
+In this paper, we introduce DeReason, a difficulty-aware curriculum training strategy for general STEM reasoning. Through controlled comparisons of pure SFT and RLVR, we observe SFT consistently outperforms RLVR when applied directly to a base model. Motivated by this finding, we propose partitioning training data by reasoning intensity—routing knowledge-recall problems to SFT and reasoning-heavy problems to RLVR. This simple data-level strategy yields consistent improvements over random allocation baselines in STEM domains. We hope this work encourages further investigation into principled data allocation strategies for multi-stage LLM post-training.
+Acknowledgments
+HX, JV, and RS acknowledge
+funding by the Swiss National Science Foundation (project InvestigaDiff; no. 10000503). HX, RS and YY also acknowledge the compute resource provided by the Swiss AI Initiative.
+References
+Akter
+et al.
+(2025)
+S. N. Akter, S. Prabhumoye, M. Novikov, S. Han, Y. Lin, E. Bakhturina, E. Nyberg, Y. Choi, M. Patwary, M. Shoeybi, and B. Catanzaro
+Nemotron-crossthink: scaling self-learning beyond math reasoning
+.
+External Links:
+2504.13941
+,
+Link
+Cited by:
+§5
+.
+Bengio
+et al.
+(2009)
+Y. Bengio, J. Louradour, R. Collobert, and J. Weston
+Curriculum learning
+.
+In
+Proceedings of the 26th annual international conference on machine learning
+,
+pp. 41–48
+.
+Cited by:
+§5
+.
+Cen
+et al.
+(2025)
+Z. Cen, H. Chen, S. Wang, Z. Liu, Z. Liu, D. Zhao, S. Savarese, C. Xiong, H. Wang, and W. Yao
+Webscale-rl: automated data pipeline for scaling rl data to pretraining levels
+.
+External Links:
+2510.06499
+,
+Link
+Cited by:
+§1
+,
+§3.3
+,
+§5
+.
+Chen
+et al.
+(2025)
+X. Chen, J. Lu, M. Kim, D. Zhang, J. Tang, A. Piché, N. Gontier, Y. Bengio, and E. Kamalloo
+Self-evolving curriculum for llm reasoning
+.
+External Links:
+2505.14970
+,
+Link
+Cited by:
+§5
+.
+Cheng
+et al.
+(2025)
+Z. Cheng, S. Hao, T. Liu, F. Zhou, Y. Xie, F. Yao, Y. Bian, Y. Zhuang, N. Dey, Y. Zha, Y. Gu, K. Zhou, Y. Wang, Y. Li, R. Fan, J. She, C. Gao, A. Saparov, H. Li, T. W. Killian, M. Yurochkin, Z. Liu, E. P. Xing, and Z. Hu
+Revisiting reinforcement learning for llm reasoning from a cross-domain perspective
+.
+External Links:
+2506.14965
+,
+Link
+Cited by:
+§5
+.
+Chu
+et al.
+(2025)
+T. Chu, Y. Zhai, J. Yang, S. Tong, S. Xie, D. Schuurmans, Q. V. Le, S. Levine, and Y. Ma
+SFT memorizes, rl generalizes: a comparative study of foundation model post-training
+.
+External Links:
+2501.17161
+,
+Link
+Cited by:
+§5
+.
+Du
+et al.
+(2025)
+X. Du, Y. Yao, K. Ma, B. Wang, T. Zheng, K. Zhu, M. Liu, Y. Liang, X. Jin, Z. Wei, C. Zheng, K. Deng, S. Guo, S. Jia, S. Jiang, Y. Liao, R. Li, Q. Li, S. Li, Y. LI, Y. Li, dehua ma, Y. Ni, H. Que, Q. Wang, Z. Wen, S. Wu, T. Xing, Z. Yang, Z. M. Wang, J. Zhou, yuelin bai, X. Bu, chenglin cai, L. Chen, Y. Chen, C. Chengtuo, T. Cheng, K. Ding, S. Huang, H. YUN, Y. Li, Y. Li, Z. Li, T. Liang, C. Lin, H. Lin, Y. Ma, Z.Y. Peng, Z. Peng, Q. Qi, S. Qiu, X. Qu, S. Quan, Y. Tan, Z. Wang, H. Wang, Y. Wang, Y. Wang, J. Xu, K. Yang, R. Yuan, Y. Yue, T. Zhan, C. Zhang, J. Zhang, X. Zhang, O. X. Zhang, Y. Zhang, Y. Zhao, X. Zheng, ChenghuaZhong, Y. Gao, Z. Li, D. Liu, Q. Liu, T. Liu, S. Ni, J. Peng, Y. Qin, W. Su, G. Wang, S. Wang, J. Yang, M. Yang, M. Cao, X. Yue, Z. Zhang, W. Zhou, J. Liu, Q. Lin, W. Huang, and G. Zhang
+SuperGPQA: scaling LLM evaluation across 285 graduate disciplines
+.
+In
+The Thirty-ninth Annual Conference on Neural Information Processing Systems Datasets and Benchmarks Track
+,
+External Links:
+Link
+Cited by:
+§3.2
+.
+Guo
+et al.
+(2025)
+D. Guo, D. Yang, H. Zhang, J. Song, P. Wang,
+et al.
+DeepSeek-r1 incentivizes reasoning in llms through reinforcement learning
+.
+Nature
+645
+(
+8081
+),
+pp. 633–638
+.
+External Links:
+ISSN 1476-4687
+,
+Link
+,
+Document
+Cited by:
+§1
+,
+§2
+,
+§5
+.
+Huan
+et al.
+(2025)
+M. Huan, Y. Li, T. Zheng, X. Xu, S. Kim, M. Du, R. Poovendran, G. Neubig, and X. Yue
+Does math reasoning improve general llm capabilities? understanding transferability of llm reasoning
+.
+External Links:
+2507.00432
+,
+Link
+Cited by:
+§5
+.
+Huang
+et al.
+(2026)
+C. Huang, L. Lin, X. Shi, W. Hu, and R. Tang
+DARL: encouraging diverse answers for general reasoning without verifiers
+.
+External Links:
+2601.14700
+,
+Link
+Cited by:
+§5
+.
+Huang
+et al.
+(2025)
+Z. Huang, T. Cheng, Z. Qiu, Z. Wang, Y. Xu, E. M. Ponti, and I. Titov
+Blending supervised and reinforcement fine-tuning with prefix sampling
+.
+External Links:
+2507.01679
+,
+Link
+Cited by:
+§1
+,
+§5
+,
+§5
+.
+Kazemi
+et al.
+(2025)
+M. Kazemi, B. Fatemi, H. Bansal, J. Palowitch, C. Anastasiou, S. V. Mehta, L. K. Jain, V. Aglietti, D. Jindal, P. Chen, N. Dikkala, G. Tyen, X. Liu, U. Shalit, S. Chiappa, K. Olszewska, Y. Tay, V. Q. Tran, Q. V. Le, and O. Firat
+BIG-bench extra hard
+.
+In
+Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers)
+,
+W. Che, J. Nabende, E. Shutova, and M. T. Pilehvar (Eds.)
+,
+Vienna, Austria
+,
+pp. 26473–26501
+.
+External Links:
+Link
+,
+Document
+,
+ISBN 979-8-89176-251-0
+Cited by:
+§3.2
+.
+Kwiatkowski
+et al.
+(2026)
+A. Kwiatkowski, N. Butt, I. Labiad, J. Kempe, and Y. Ollivier
+Likelihood-based reward designs for general llm reasoning
+.
+External Links:
+2602.03979
+,
+Link
+Cited by:
+§5
+.
+Lambert
+et al.
+(2025)
+N. Lambert, J. Morrison, V. Pyatkin, S. Huang, H. Ivison,
+et al.
+Tulu 3: pushing frontiers in open language model post-training
+.
+External Links:
+2411.15124
+,
+Link
+Cited by:
+§1
+,
+§5
+.
+Liu
+et al.
+(2025)
+Z. Liu, C. Chen, W. Li, P. Qi, T. Pang, C. Du, W. S. Lee, and M. Lin
+Understanding r1-zero-like training: a critical perspective
+.
+External Links:
+2503.20783
+,
+Link
+Cited by:
+§2
+,
+§5
+.
+Ma
+et al.
+(2025)
+X. Ma, Q. Liu, D. Jiang, G. Zhang, Z. MA, and W. Chen
+General-reasoner: advancing LLM reasoning across all domains
+.
+In
+The Thirty-ninth Annual Conference on Neural Information Processing Systems
+,
+External Links:
+Link
+Cited by:
+§1
+,
+§2.1
+,
+§3.3
+,
+§5
+.
+Matsutani
+et al.
+(2025)
+K. Matsutani, S. Takashiro, G. Minegishi, T. Kojima, Y. Iwasawa, and Y. Matsuo
+RL squeezes, sft expands: a comparative study of reasoning llms
+.
+External Links:
+2509.21128
+,
+Link
+Cited by:
+§5
+.
+Niu
+et al.
+(2026)
+X. Niu, B. Bai, W. Han, and W. Zhang
+On the non-decoupling of supervised fine-tuning and reinforcement learning in post-training
+.
+External Links:
+2601.07389
+,
+Link
+Cited by:
+§5
+.
+OpenAI
+et al.
+(2024)
+OpenAI, A. Jaech, A. Kalai, A. Lerer, A. Richardson, A. El-Kishky, A. Low,
+et al.
+OpenAI o1 system card
+.
+External Links:
+2412.16720
+,
+Link
+Cited by:
+§5
+.
+Pan
+et al.
+(2025)
+J. Pan, J. Zhang, X. Wang, L. Yuan, H. Peng, and A. Suhr
+TinyZero
+.
+Note:
+https://github.com/Jiayi-Pan/TinyZeroAccessed: 2025-01-24
+Cited by:
+§1
+,
+§2
+,
+§5
+.
+Parashar
+et al.
+(2025)
+S. Parashar, S. Gui, X. Li, H. Ling, S. Vemuri, B. Olson, E. Li, Y. Zhang, J. Caverlee, D. Kalathil, and S. Ji
+Curriculum reinforcement learning from easy to hard tasks improves llm reasoning
+.
+External Links:
+2506.06632
+,
+Link
+Cited by:
+§5
+.
+Pikus
+et al.
+(2025)
+B. Pikus, P. R. Tiwari, and B. Ye
+Hard examples are all you need: maximizing grpo post-training under annotation budgets
+.
+External Links:
+2508.14094
+,
+Link
+Cited by:
+§5
+.
+Rein
+et al.
+(2024)
+D. Rein, B. L. Hou, A. C. Stickland, J. Petty, R. Y. Pang, J. Dirani, J. Michael, and S. R. Bowman
+GPQA: a graduate-level google-proof q&a benchmark
+.
+In
+First Conference on Language Modeling
+,
+External Links:
+Link
+Cited by:
+§3.2
+.
+Shao
+et al.
+(2024)
+Z. Shao, P. Wang, Q. Zhu, R. Xu, J. Song, X. Bi, H. Zhang, M. Zhang, Y. K. Li, Y. Wu, and D. Guo
+DeepSeekMath: pushing the limits of mathematical reasoning in open language models
+.
+External Links:
+2402.03300
+,
+Link
+Cited by:
+§2.1
+,
+§5
+.
+Sheng
+et al.
+(2024)
+G. Sheng, C. Zhang, Z. Ye, X. Wu, W. Zhang, R. Zhang, Y. Peng, H. Lin, and C. Wu
+HybridFlow: a flexible and efficient rlhf framework
+.
+arXiv preprint arXiv: 2409.19256
+.
+Cited by:
+§3.1
+.
+Su
+et al.
+(2025)
+Y. Su, D. Yu, L. Song, J. Li, H. Mi, Z. Tu, M. Zhang, and D. Yu
+Crossing the reward bridge: expanding rl with verifiable rewards across diverse domains
+.
+External Links:
+2503.23829
+,
+Link
+Cited by:
+§5
+.
+Sun
+et al.
+(2026)
+Y. Sun, J. Shen, Y. Wang, T. Chen, Z. Wang, M. Zhou, and H. Zhang
+Improving data efficiency for llm reinforcement fine-tuning through difficulty-targeted online data selection and rollout replay
+.
+External Links:
+2506.05316
+,
+Link
+Cited by:
+§5
+.
+Tang
+et al.
+(2025)
+X. Tang, Z. Zhang, Y. Liu, W. X. Zhao, Z. Wen, Z. Zhang, and J. Zhou
+Towards high data efficiency in reinforcement learning with verifiable reward
+.
+External Links:
+2509.01321
+,
+Link
+Cited by:
+§5
+.
+Team
+et al.
+(2026a)
+5. Team, A. Zeng, X. Lv, Z. Hou, Z. Du, Q. Zheng, B. Chen,
+et al.
+GLM-5: from vibe coding to agentic engineering
+.
+External Links:
+2602.15763
+,
+Link
+Cited by:
+§5
+.
+Team
+et al.
+(2026b)
+K. Team, Y. Bai, Y. Bao, Y. Charles, C. Chen, G. Chen, H. Chen,
+et al.
+Kimi k2: open agentic intelligence
+.
+External Links:
+2507.20534
+,
+Link
+Cited by:
+§5
+.
+Wang
+et al.
+(2024)
+Y. Wang, X. Ma, G. Zhang, Y. Ni, A. Chandra, S. Guo, W. Ren, A. Arulraj, X. He, Z. Jiang, T. Li, M. Ku, K. Wang, A. Zhuang, R. Fan, X. Yue, and W. Chen
+MMLU-pro: a more robust and challenging multi-task language understanding benchmark
+.
+In
+The Thirty-eight Conference on Neural Information Processing Systems Datasets and Benchmarks Track
+,
+External Links:
+Link
+Cited by:
+§3.2
+.
+Yan
+et al.
+(2025)
+J. Yan, Y. Li, Z. Hu, Z. Wang, G. Cui, X. Qu, Y. Cheng, and Y. Zhang
+Learning to reason under off-policy guidance
+.
+External Links:
+2504.14945
+,
+Link
+Cited by:
+§1
+,
+§5
+,
+§5
+.
+Yang
+et al.
+(2025)
+A. Yang, A. Li, B. Yang, B. Zhang, B. Hui, B. Zheng,
+et al.
+Qwen3 technical report
+.
+External Links:
+2505.09388
+,
+Link
+Cited by:
+§5
+.
+Yu
+et al.
+(2025a)
+Q. Yu, Z. Zhang, R. Zhu, Y. Yuan, X. Zuo, Y. Yue,
+et al.
+DAPO: an open-source llm reinforcement learning system at scale
+.
+External Links:
+2503.14476
+,
+Link
+Cited by:
+§5
+.
+Yu
+et al.
+(2025b)
+T. Yu, B. Ji, S. Wang, S. Yao, Z. Wang, G. Cui, L. Yuan, N. Ding, Y. Yao, Z. Liu, M. Sun, and T. Chua
+RLPR: extrapolating rlvr to general domains without verifiers
+.
+External Links:
+2506.18254
+,
+Link
+Cited by:
+§5
+.
+Yue
+et al.
+(2024)
+X. Yue, T. Zheng, G. Zhang, and W. Chen
+MAmmoTH2: scaling instructions from the web
+.
+External Links:
+2405.03548
+,
+Link
+Cited by:
+§5
+.
+Zhao
+et al.
+(2026)
+Y. Zhao, F. Jiang, T. Liu, B. Zeng, Y. Liu, L. Wang, and W. Luo
+Difficulty-estimated policy optimization
+.
+External Links:
+2602.06375
+,
+Link
+Cited by:
+§5
+.
+Zheng
+et al.
+(2024)
+Y. Zheng, R. Zhang, J. Zhang, Y. Ye, and Z. Luo
+LlamaFactory: unified efficient fine-tuning of 100+ language models
+.
+In
+Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 3: System Demonstrations)
+,
+Y. Cao, Y. Feng, and D. Xiong (Eds.)
+,
+Bangkok, Thailand
+,
+pp. 400–410
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§3.1
+.
+Zhou
+et al.
+(2025)
+X. Zhou, Z. Liu, A. Sims, H. Wang, T. Pang, C. Li, L. Wang, M. Lin, and C. Du
+Reinforcing general reasoning without verifiers
+.
+External Links:
+2505.21493
+,
+Link
+Cited by:
+§5
+.
+Appendix A
+Appendix
+A.1
+Reasoning Complexity Rating Prompt
+Table
+3
+presents the prompt template used to assess the reasoning complexity of questions on a 1–5 scale.
+Reasoning Complexity Rating Prompt
+Please rate the reasoning complexity of the given question using the scale below.
+Question: <question> {question} </question>
+ReasoningRequired Scale:
+1 - Minimal:
+Direct recall or single-step lookup
+• Answer is immediately retrievable from memory/knowledge
+• No logical steps or decomposition needed
+• Example: ‘‘What is the capital of France?’’
+2 - Simple:
+One or two logical steps
+• Requires basic inference or straightforward calculation
+• Single relationship or comparison
+• Example: ‘‘If apples cost $2 and you have $5, how many can you buy?’’
+3 - Moderate:
+Multiple steps with clear structure
+• Requires 3--5 logical steps or simple decomposition
+• May need to combine 2--3 concepts or rules
+• Example: ‘‘How would inflation affect consumer spending patterns?’’
+4 - Complex:
+Multi-step analysis with dependencies
+• Requires 5--8 logical steps with intermediate conclusions
+• Need to track multiple variables or relationships
+• May require considering trade-offs or constraints
+• Example: ‘‘Design an algorithm to optimize traffic flow in a city’’
+5 - Deep:
+Extensive reasoning with abstract thinking
+• Requires 8+ logical steps with nested reasoning
+• Must synthesize multiple frameworks or domains
+• Involves hypothesis formation, proof, or complex problem decomposition
+• Example: ‘‘Prove the halting problem is undecidable’’
+Consider:
+- Number of logical steps required
+- Depth of decomposition needed
+- Dependencies between reasoning steps
+- Need for intermediate conclusions
+Output format:
+Analysis: [Analyze the question step by step, identifying: (1) what knowledge/operations are needed, (2) how many logical steps are involved, (3) what dependencies exist between steps, (4) which scale level best matches these requirements]
+ReasoningRequired: [1--5]
+Table 3:
+Prompt template for rating the reasoning complexity of questions. The
+{question}
+placeholder is replaced with the target question at inference time.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

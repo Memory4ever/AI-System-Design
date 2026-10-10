@@ -121,6 +121,8 @@ owner and rollout status
 
 修改一个词也可能改变行为，因此需要 offline regression、canary、rollback 与 observability。Prompt evaluation 必须覆盖 task success、format、safety、tool choice、latency 和 token cost，而非只比较少量漂亮回答。
 
+自动把 policy specification 编成 Prompt 与测试时，测试 oracle 也进入待验 artifact：可见失败能驱动改写，却可能让生成器只满足当前断言；hidden cases 与行为 mutation 应在候选冻结后另行检查。Mutation 必须确实改变目标行为，未激活或被排除的项不能混入 mutation score，编译失败的 run 也不能从成功率与预算中消失。[有限编译实验](https://arxiv.org/html/2603.08806v1#S5)中的测试通过与高分只覆盖所选 specification、mock tool 和成功编译人口，不授部署安全。发现 hidden failure 后可把它提升为 regression，但下一轮须更新独立 held-out，保存 spec/test/prompt/model/tool revision 与失败账。生成、验证、mutation 和重复调用均付费；测试相互冲突、oracle 不可信或预算耗尽时保留人工审阅、原 Prompt 与 canary/rollback，不由测试生成器同时宣布规则正确和外部 effect 可提交。<!-- source-family:SF-2026-ARXIV-2603-08806 -->
+
 <!-- semantic-body-binding:SF-2026-ARXIV-2606-13449:start -->
 Repository instruction 文件进一步把 Prompt 变成工程控制面：它可能按目录层级被发现、继承、覆盖或根本没有进入某次 Agent 调用。因而不能用“仓库里存在规则”和最终 PR 是否成功之间的相关性直接证明规则有效。诊断至少要依次区分规则是否存在、runtime 是否读取、是否进入有效 Context、模型是否遵守，以及遵守后是否改变 terminal outcome；任一前置环节失败，都不应归因成模型拒绝服从。
 
@@ -295,3 +297,5 @@ Primary-source 入口：
 - `SF-2026-ARXIV-2601-09141` — Daily `2026-01-16`；[exact-v1](https://arxiv.org/html/2601.09141v1) §3–6/Limitations 与 A 必要配置。5分针对身份语义相关性/核心与风格分责gap深入；不采唯一生成因果、公平安全保证或隐式身份全覆盖，误删/误留、质量反侧与调用成本相邻。root必要原源/owner写前通过，root实际两段/邻接及末注非作者POST通过，锁释放；未运行artifact或复现。
 
 - `SF-2026-ARXIV-2602-20332` — Daily `2026-02-26`；[exact-v1](https://arxiv.org/html/2602.20332v1) §3/4/5/A.1–3/Table7。2+1+2=5具体gap深入；仅feature→rewritearm选择与reference feedback边界，筛选人口/canonical非因果污染/额外调用/不授无标签在线自证近正文。root必要源/actual owner PRE通过并授两段+自身末注窄锁；作者actual正文/完整邻接/末注顺读，root非作者actual正文137–165/自身末注297 POST通过，锁释放。未核artifact/复现，非日级验收。
+
+- `SF-2026-ARXIV-2603-08806` — Daily `2026-03-12`补充Mar11自然日；[TDAD exact-v1](https://arxiv.org/html/2603.08806v1) §3–6/§8、§4.1–4.3/Table4/Appendix1必要操作定义。2+2+2=6，生成test oracle、hidden更新/激活mutation及成功编译人口分责的具体差额；18/24成功与失败账、未激活/排除人口和mock/singlemodel边界留证，生成/验证/mutation全费、冲突/预算失败与原Prompt退路近正文。必要Source/date/actual owner/逐字PRE经reviewer通过，root授指定单段及本人注窄锁；作者实际完整邻接及本人注顺读，root非writer实际正文/完整邻接及本人末注actualPOST通过，窄锁释放，不授DAY。未核artifact/复现。

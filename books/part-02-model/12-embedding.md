@@ -291,6 +291,12 @@ token ids
 
 所以参数容量与计算容量必须一起分配：向词法表倾斜过多预算，会挤压用于上下文计算的专家或网络深度。收益取决于这些预算之间的联合取舍，单一模型族的 scaling curve 不能外推成通用参数分配定律。[Ch21 MoE](21-moe.md)把另一部分容量分配给按需执行的专家；这里的查表分支与它是可比较、可组合的选择，不是它的必然后继。小词表、内存受限或 lexical shortcut 风险较高时，普通 token embedding 仍更清楚：模型应学会依上下文使用局部模式，而不是只凭熟悉的词串作答。
 
+消除地址碰撞也是一条可比较的分支，而不自动等于提高学习质量。对预先固定的高频 n-gram 集合，可以用最小完美哈希（MPHF）为成员分配互不碰撞的槽，另用 fingerprint 检查输入是否属于该集合；未命中的组合仍回到普通 hash 表。MPHF 的无碰撞保证只属于建表时的成员集合，不能替 fingerprint 证明任意非成员都不会误判。新增的成员判断、冷热分流与表身份也须随模型资产一起维护。
+
+受限的 [EngramNine 对照](https://arxiv.org/html/2601.16531v1)将 500K hash 容量改分为 100K 热槽与 400K 冷槽，在 GPT-2 125M backbone、FineWeb-Edu 100M-token 数据集、约 82M 训练 token、两次 seed 与 A100 40GB 的条件下，最终 validation loss 接近，吞吐却下降约 11–12%。这说明更明确的地址隔离可能付出执行成本，而未在该条件下获得可分辨的质量收益；但容量重分配同时变化，不能把全部差异只归因于碰撞。冷热 gate 及 loss 轨迹的关联也没有证明碰撞是有益 regularizer，或无碰撞必然导致因果性的路由固化。应把成员查找正确性、参数分配、学习结果与运行成本分账，保留普通 hash 基线，不外推为大规模 MoE 或所有语料上的结论。<!-- source-family:SF-2026-ARXIV-2601-16531 -->
+
+已有词法容量还可成为受限编辑接口，但改一个问法命中的行不等改好了同一事实：不同表达触发不同 n-gram，同一个 n-gram 又可能被多表达复用。可以先冻结 decoder，为多表达求共同的 memory-representation 目标，再把表达到真实 n-gram 的共享关系写成联合匹配问题，以长度/频率的复用惩罚分配更新。[受限编辑对照](https://arxiv.org/html/2610.10533v1)采用精确 token 序列索引的累计更新 overlay，激活时加到读出，原 hashed tables 保持固定；这避免新增编辑被地址碰撞耦合，不消除相同 n-gram 的语义复用或全网络输出影响。线性解属于所用加性聚合，门控或上游依赖变化须重建优化关系；原问法命中、跨表达迁移、未改知识保留和任务质量分别验收，部分指标仍退步，post-edit 准确率也可能用新纠正掩盖旧正确丢失。表达制备、反传求目标、共享系统求解、频率统计与随编辑增长的 overlay 均计费，decoder 冻结不等免费或正确事实已获认证；覆盖、保留或成本不合格时保留普通查表与已有知识更新路径，不由编辑成功给任意关联问法签字。<!-- source-family:SF-2026-ARXIV-2610-10533 -->
+
 扩大词法容量之后，前一节的训练支持问题又以另一种形式出现：新增行究竟被访问、更新了多少次？如果大部分数据集中在少数高频 token，均匀扩表可能只是增加大量接近初始化的冷行。一条数据感知分支为高频 token 保留专用槽，再按经过平滑的频率质量，将尾部 token 分到更新压力较均衡的桶中。稀疏桶可以直接分配行，并利用空余行作为附加的 alias 读出；拥挤桶则通过多路 hash 聚合，分散碰撞干扰。这里均衡的是访问与更新压力，不是保证不同概念已获得独立语义。
 
 这条分支与直接 hash 固定 n-gram 也有区别：它先按 token 查表，再让带门控的局部 causal 卷积与非线性提取器读取相邻表示，形成随局部内容变化的组合特征。查表仍不依赖上下文，提取器却会依局部内容决定哪些信号应保留；因此一次 hash 命中本身不是成熟语义。不同提取器和 gate 的作用还需验证，不能仅凭访问频率更平均便认定表示不再冗余。<!-- source-family:SF-2026-ARXIV-2604-21724 -->
@@ -366,6 +372,8 @@ Embedding 把无序类别 id 映射为可学习的连续坐标。Lookup 与 one-
 
 ## Review notes
 
+- `SF-2026-ARXIV-2601-16531` — Daily `2026-01-27` 增量；[exact-v1](https://arxiv.org/html/2601.16531v1) §3–5/Table3/limitations（本日必要原件 blocks25–134、160–165）。2+2+2=6，针对查找无碰撞与学习质量/运行成本分账的具体缺口深入；只采用静态 MPHF+fingerprint 热集合与 hash 冷回退、受限等参数近似 loss/吞吐对照。容量重分混杂、两 seed、fingerprint 非成员误判及 gate 关联非因果保留，不采用有益 regularizer 或普遍路由固化。root 实际 source/PRE、两段正文/完整邻接及末注 POST 通过；按其复核纠正数据集 100M 与实际约 82M 训练 token 的配置区分。未核实现或复现实验。
+
 - `SF-2026-ARXIV-2601-22040` — Daily `2026-01-31`；[exact-v1](https://arxiv.org/html/2601.22040v1) §3–4.5/§6，2+1+2=5，针对非线性共享 id→输入表示接口缺口深入。仅采用共享坐标/codebooks→生成器与参数/计算分账；iso-body 的 tying 混杂、iso-param 的深度/吞吐代价、任意 id 拓扑及原硬件未披露保留。root 实际必要源及 PRE 窄差额通过，正文、前后及末注经非作者实际 POST 通过（输出头指代已按复核纠正）；未运行代码或复现实验。
 
 本轮 Review 保留了已迁移材料中的向量化、余弦相似度和矩阵计算直觉，并补齐 batch shape、小型 lookup、weight tying 与 padding 边界。本章不展开 Position Encoding、Attention 或向量检索。
@@ -391,3 +399,5 @@ Primary-source 校验入口：
 - `SF-2026-ARXIV-2601-08209` — Daily `2026-01-15`；[GAG exact-v1](https://arxiv.org/html/2601.08209v1) §4.1–4.3/Eq5–14、Table3/4 oracle-routing消融、§9限制。2+2+2=6，具体embedding-input gap深入，仅采用frozen-base/projector条件输入接口，不采用science领域优势或near-oracle通用可靠激活。late读出L₂−4非早层；一token只计base带宽，expert AR成本/原型重划路由/单域与数值单位反侧保留。未运行代码或复现；root实际必要源/owner写前通过并授窄锁，作者已核两段实际正文及前后交接，root已实际核正文、前后交接与末注，非作者POST通过；日级Gate未授。
 
 - `SF-2026-ARXIV-2602-17287` — Daily `2026-02-21`；[exact-v1](https://arxiv.org/html/2602.17287v1) §2.1/Eq2–3、§2.3/3/Eq7–9、§4.1–4.2/4.5/Table3与Limitations。2+1+2=5，continuous-output同移目标零loss不可辨识的具体owner缺口深入；区分complete/dimensionalcollapse，冻结与sliced-dispersion有限恢复/反退、其他层损伤及额外费用近文。不采用Gram维度误写、entropy即semantic或量化因果。root必要原源/actual owner PRE通过并授窄锁；作者实际正文/完整邻接及自身末注已顺读，root非作者已实际读取正文、完整邻接及自身末注，POST通过，窄锁释放。未核实现或复现，非日级验收。
+
+- `SF-2026-ARXIV-2610-10533` — Daily `2026-10-09`；[EngramEdit exact-v1](https://arxiv.org/html/2610.10533v1) §2–4/6及A.3/B.2/B.4必要范围，2+1+2=5；多表达共享ngram联合更新/精确sequence overlay差额深入，加性/gated边界、保留反退/人口与全费近文。review_mar11_continue非作者必要Source/actual Ch12 owner/逐字PRE通过，root授本段与本注窄锁；作者实际写后完整邻接和本注已顺读，root非writer实际288–315完整邻接、新298及本人403注actualPOST通过，锁释放。未核全证明、像素、代码或复现，不授DAY。

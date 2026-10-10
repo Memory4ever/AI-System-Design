@@ -1,0 +1,825 @@
+TempoFit: Plug-and-Play Layer-Wise Temporal KV Memory for Long-Horizon Vision-Language-Action Manipulation
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+I INTRODUCTION
+II Related Works
+II-A Vision-Language-Action Models
+II-B Temporal Modeling and Inference in Robotics
+III Method
+III-A Preliminaries and Policy-Agnostic Setting
+III-B Overview
+III-C Memory Write: Layer-Wise FIFO KV Cache
+III-D K-to-K Retrieval: Memory Update via Address-Space Matching
+III-E Time-Biased Retrieval: Frame-Gap Temporal Bias (FGTB)
+III-F KV Injection: Norm-Preserving Residual Loading
+IV EXPERIMENTS
+IV-A Overall Performance
+IV-B Inference Efficiency and Horizon Scalability
+IV-C Ablation Studies
+IV-D Real-World Robotic Platforms
+V CONCLUSIONS
+References
+License: arXiv.org perpetual non-exclusive license
+arXiv:2603.07647v1 [cs.RO] 08 Mar 2026
+TempoFit: Plug-and-Play Layer-Wise Temporal KV Memory for Long-Horizon Vision-Language-Action Manipulation
+Jun Sun1∗  Boyu Yang1∗  Jiahao Zhang1  Ning Ma1  Chencheng Wu1
+Siqing Zhang1  Yiou Huang1  Qiufeng Wang1  Shan Liang1  Yaran Chen1
+1Xi’an Jiaotong-Liverpool University
+*Equal contribution
+Abstract
+Pretrained Vision–Language–Action (VLA) policies have achieved strong single-step manipulation, but their inference remains largely memoryless, which is brittle in non-Markovian long-horizon settings with occlusion, state aliasing, and subtle post-action changes. Prior approaches inject history either by stacking frames, which scales visual tokens and latency while adding near-duplicate pixels, or by learning additional temporal interfaces that require (re-)training and may break the original single-frame inference graph.
+We present TempoFit, a training-free temporal retrofit that upgrades frozen VLAs through state-level memory. Our key insight is that prefix attention K/VK/V already form a model-native, content-addressable runtime state; reusing them across timesteps introduces history without new tokens or trainable modules. TempoFit stores layer-wise FIFO prefix K/VK/V at selected intermediate layers, performs parameter-free K-to-K retrieval with Frame-Gap Temporal Bias (FGTB), a fixed recency bias inspired by positional biases in NLP, to keep decisions present-dominant, and injects the retrieved context via pre-attention residual loading with norm-preserving rescaling to avoid distribution shift under frozen weights.
+On LIBERO-Long, TempoFit improves strong pretrained backbones by up to +4.0% average success rate while maintaining near-real-time latency, and it transfers consistently to CALVIN and real-robot long-horizon tasks.
+Code is available at https://github.com/LucioSunj/TempoFit.
+Fig. 1: TempoFit overview. At each timestep, TempoFit caches prefix K/VK/V at selected intermediate layers, retrieves relevant history via K-to-K matching with FGTB, and injects the retrieved context through pre-attention residual loading (optionally with norm-preserving rescaling), enabling training-free temporal retrofitting without expanding input context length.
+I INTRODUCTION
+In recent years, Vision–Language–Action (VLA) models [1, 2, 3, 4, 5]
+have emerged as a promising framework for robotic manipulation by leveraging large pretrained vision–language backbones [6, 7]
+to map visual–linguistic representations to the action space.
+Despite rapid progress, most mainstream VLA models still perform inference in a largely memoryless manner, effectively following a single-frame decision paradigm: at each step they encode only the current observation and instruction and directly predict the next action.
+This implicitly assumes a Markovian setting, whereas real robot operations are often partially observable and non-Markovian, where the current frame alone may be insufficient to determine the correct action.
+In scenarios with occlusion, state aliasing, or when visual changes after actions are subtle, models are prone to failure modes such as repeated operations, missed steps, and cross-stage discontinuity.
+Recent work [8, 9] attempts to mitigate temporal short-sightedness by expanding the observation context, most commonly via stacking a short history of frames.
+However, this observation-level temporal modeling is structurally inefficient for VLAs: it increases the number of visual tokens and thus the attention compute footprint, leading to higher inference latency, while much of the added signal is near-duplicate pixels that introduce substantial redundancy and can obscure task-relevant dynamics [10, 11].
+Beyond stacking, many approaches avoid raw-frame redundancy by encoding history into compact representations and injecting them through retrieval-and-fusion [12, 13, 11].
+However, this shifts temporal modeling to a new learned interface that is not part of the original single-frame inference graph; without training or fine-tuning, the backbone and action head have no guarantee to interpret this new state correctly.
+As a result, these methods are generally not directly plug-and-play for strong pretrained single-frame VLAs when weights are frozen, limiting scalable deployment.
+These trade-offs leave a clear gap: we still lack a temporal enhancement that can retrofit strong pretrained VLAs with history awareness without expanding the input context, introducing trainable modules, or requiring additional training.
+To fill this gap, we propose Layer-Wise Temporal KV Memory, a training-free inference-time module that injects temporal consistency by reusing the backbone’s internal attention state.
+Our key idea is to treat the prefix attention keys/values (K/VK/V) produced during vision–language encoding as a compact, model-native carrier of past context, analogous to the KV-cache-centric view of long-context language-model inference.
+Rather than storing raw frames or learning an external memory interface, we cache and reuse prefix K/VK/V only at a selected subset of intermediate layers, balancing temporal continuity with minimal interference to present-step control.
+At each step, we retrieve relevant historical K/VK/V via lightweight similarity matching and residually load the retrieved context into the current step’s K/VK/V before standard self-attention (Fig. 1), preserving the pretrained parameters and tokenization.
+To keep the current observation present-dominant in a training-free setting, we propose Frame-Gap Temporal Bias (FGTB), a fixed frame-gap recency bias inspired by positional biases in NLP [14], which imposes an explicit decay on retrieval scores without learned gates.
+We evaluate TempoFit extensively on long-horizon manipulation benchmarks and real-world robotic tasks, demonstrating consistent gains without additional training.
+On LIBERO-Long, TempoFit improves a strong pretrained π0.5\pi_{0.5} baseline from 92.6% to 96.6% (+4.0 abs.) and also boosts a heterogeneous StarVLA checkpoint (QwenGR00T) from 90.8% to 94.4% (+3.6 abs.), reaching performance competitive with representative training-based temporal models[13, 10] while remaining plug-and-play.
+On CALVIN, TempoFit improves long-horizon sequential execution in both settings, increasing average task length from 3.78 to 3.84 on D-D and from 3.83 to 3.87 on ABC-D, with clearer gains on later instructions.
+Finally, we show that the proposed temporal retrieval and fusion introduces only a negligible inference-time overhead, preserving real-time control (Table. III).
+Our main contributions are summarized as follows:
+•
+We propose TempoFit, a training-free inference-time temporal retrofit that improves temporal consistency and long-horizon manipulation in pretrained VLA policies without changing model parameters, training objectives, or input context length.
+•
+We introduce a layer-wise KV-native retrieval-and-injection operator with FGTB, a fixed frame-gap recency bias, which suppresses stale context and reduces history–present interference under frozen weights.
+•
+Extensive experiments show that our approach improves long-horizon success on widely used benchmarks while preserving high inference efficiency under real-time constraints.
+Fig. 2: TempoFit Pipeline. (a) In Layer-Wise FIFO KV Cache (see Sec. III-C), TempoFit caches prefix K/VK/V states at selected intermediate layers, preserving historical context without expanding the input token sequence. (b) In K-to-K Retrieval with FGTB (see Sec. III-D& III-E), the module utilizes current keys to retrieve relevant historical features via address-space matching, applying a fixed Frame-Gap Temporal Bias (FGTB) to down-weight stale history and minimize interference. (c) Finally, via Norm-Preserving Residual Loading (see Sec. III-F), the retrieved history is injected into the current state through a rescaled residual update, enabling the frozen backbone to generate temporally consistent actions without parameter updates.
+II Related Works
+II-A Vision-Language-Action Models
+Vision–Language–Action (VLA) models map visual observations and language instructions to robot actions by leveraging pretrained vision–language backbones and large-scale robot demonstrations.
+A key differentiator is the action generation paradigm: autoregressive decoders tokenize control and predict actions sequentially, as in RT-2 and OpenVLA [1, 2]; diffusion- or flow-style policies generate continuous trajectories or chunks to better capture multi-modality, as in π0\pi_{0}, CogACT, and DexVLA [3, 4, 5].
+Efficient adaptation via fine-tuning and parameter-efficient updates further improves transfer to new tasks and robots [15].
+Despite progress, many VLA inference pipelines remain largely memoryless and do not explicitly retrieve long-horizon evidence, which is brittle in non-Markovian manipulation.
+II-B Temporal Modeling and Inference in Robotics
+To mitigate temporal myopia, one line of work expands temporal inputs via frame stacking or video-style encoders; Octo and GR-2 follow this direction [8, 9]. These approaches typically increase token length and inference latency, and they often require retraining with temporally structured inputs, thereby limiting plug-and-play adaptation for strong single-frame backbones.
+A second line introduces explicit temporal interfaces: ContextVLA amortizes multi-frame context into compact representations [12]. MemoryVLA learns retrieval, fusion, and consolidation over a perceptual–cognitive memory bank [13]. HAMLET augments pretrained VLAs with history-aware tokens and a lightweight memory module, but still relies on fine-tuning [11].
+Beyond these temporal interfaces, orthogonal approaches improve long-horizon coherence via motion or foresight, e.g., HiF-VLA [10].
+Overall, prior temporal VLA solutions either pay for history with longer contexts and higher inference cost, or introduce additional temporal modules that often require extra training.
+We therefore focus on TempoFit, a training-free, state-level retrofit that caches and reuses internal prefix K/VK/V across timesteps to inject history without longer input sequences or additional trainable components.
+III Method
+III-A Preliminaries and Policy-Agnostic Setting
+Modern Vision–Language–Action (VLA) policies typically function as a composite system.
+Formally, we decompose a policy πθ\pi_{\theta} into two functional stages:
+a pretrained vision–language backbone ℱϕ\mathcal{F}_{\phi} and a downstream action head πψ\pi_{\psi}, such that θ={ϕ,ψ}\theta=\{\phi,\psi\}.
+At timestep tt, the backbone encodes the current visual observation oto_{t} and language instruction xx into a sequence of latent representations HtH_{t}:
+Ht=ℱϕ​(ot,x).H_{t}=\mathcal{F}_{\phi}(o_{t},x).
+(1)
+Subsequently, the action head maps these representations to a predicted action chunk of horizon nn:
+a^t:t+n∼πψ(at:t+n∣Ht).\hat{a}_{t:t+n}\sim\pi_{\psi}(a_{t:t+n}\mid H_{t}).
+(2)
+In standard inference, this process is Markovian: ℱϕ\mathcal{F}_{\phi} processes oto_{t} in isolation, resetting its internal state at every step.
+The action head πψ\pi_{\psi} is architecture-agnostic and relies entirely on HtH_{t} to capture the state.
+Our Focus. In this work, we specifically target the prefix encoding phase within the backbone ℱϕ\mathcal{F}_{\phi}.
+Rather than retraining πψ\pi_{\psi} or explicitly concatenating history to oto_{t} , which alters the input structure, TempoFit intervenes directly in the internal attention mechanism of ℱϕ\mathcal{F}_{\phi}.
+By modifying the cached prefix K/VK/V states, we convert the memoryless mapping in Eq. (1) into a history-aware encoding H~t=ℱϕ​(ot,x,ℋ<t)\tilde{H}_{t}=\mathcal{F}_{\phi}(o_{t},x,\mathcal{H}_{<t}) that the frozen action head πψ\pi_{\psi} can consume transparently.
+III-B Overview
+To address the temporal myopia of the frozen backbone ℱϕ\mathcal{F}_{\phi} defined in Section III-A, our objective is to retrofit the policy with long-horizon consistency without fine-tuning parameters or expanding the input token context.
+We propose TempoFit, a training-free framework that leverages internal prefix keys and values (K/VK/V) as a model-native, layer-wise memory to inject historical context directly into the inference stream.
+The overall pipeline of the proposed mechanism is illustrated in Figure 2.
+We first detail the construction of our layer-wise FIFO memory cache in Section III-C.
+Next, Section III-D describes our parameter-free K-to-K retrieval mechanism, which is augmented by the Frame-Gap Temporal Bias (FGTB) introduced in Section III-E to suppress stale context.
+Finally, Section III-F explains how retrieved history is fused into the current state via norm-preserving residual loading to maintain inference stability under frozen weights.
+III-C Memory Write: Layer-Wise FIFO KV Cache
+To preserve historical evidence without expanding the input context length or introducing training,
+we maintain a compact inference-time state directly in KV space.
+Beyond what to store, a practical question is where to store it:
+enabling temporal retrofitting at arbitrary depths can introduce history–present interference
+and lead to large performance drops (Table. IV).
+Building on evidence that Transformer representations are organized hierarchically across depth, where intermediate layers capture compositionally rich and transferable features and deeper layers become more specialized to the pretraining objective [16, 17], we activate memory only in a small subset of intermediate layers. This design preserves transferability while reducing interference from task-specific representations.
+Formally, consider an LL-layer Transformer backbone and a memory-enabled layer subset
+ℒmem⊂{1,…,L}\mathcal{L}_{\mathrm{mem}}\subset\{1,\dots,L\}.
+For each l∈ℒmeml\in\mathcal{L}_{\mathrm{mem}}, we maintain a FIFO buffer of capacity CC :
+ℳl(t)={(Kl(τ),Vl(τ),τ)}τ∈𝒯l(t),\mathcal{M}_{l}^{(t)}=\{(K_{l}^{(\tau)},V_{l}^{(\tau)},\tau)\}_{\tau\in\mathcal{T}_{l}^{(t)}},
+(3)
+where 𝒯l(t)\mathcal{T}_{l}^{(t)} denotes the timesteps stored in the buffer.
+Each entry corresponds to one past timestep τ\tau and stores the prefix-time projections
+(Kl(τ),Vl(τ))∈ℝB×H×S×d(K_{l}^{(\tau)},V_{l}^{(\tau)})\in\mathbb{R}^{B\times H\times S\times d} produced during prefix encoding, where
+BB is batch size, HH is the number of heads, SS is the number of prefix tokens, and dd is the per-head dimension.
+We cache the tensors after linear projection and before applying rotary positional embeddings(RoPE).
+Each timestep contributes SS prefix tokens.
+At timestep tt, once (Kl(t),Vl(t))(K_{l}^{(t)},V_{l}^{(t)}) is computed, we append (Kl(t),Vl(t),t)(K_{l}^{(t)},V_{l}^{(t)},t) to ℳl(t)\mathcal{M}_{l}^{(t)}
+and evict the oldest entry if |ℳl(t)|>C|\mathcal{M}_{l}^{(t)}|>C.
+We cache only prefix-time K/VK/V for prefix tokens, excluding any action (suffix) tokens, and do not append any additional tokens to the input sequence.
+TABLE I: Ablation study of our temporal memory module on the LIBERO-Long benchmark with two backbone VLAs (π0.5\pi_{0.5} and QwenGr00t). We report the per-task and average success rate (%) across 10 tasks (50 trials each). “Memory” indicates whether temporal memory is enabled. “Memory Type” indicates whether it is not used (-), training-based (×\times), or training-free (✓\checkmark). Bold indicates the best performance within each backbone group.
+Method
+Memory?
+Training-free?
+Avg. SR
+Put soup
+and box
+in basket
+Put box
+and butter
+in basket
+Turn on
+stove and
+put pot
+Put bowl
+in drawer
+and close
+Put mugs
+on left
+and right
+plates
+Pick book
+and place
+it in back
+Put mug
+on plate,
+pudding
+right
+Put soup
+and sauce
+in basket
+Put both
+pots on
+stove
+Put mug
+in
+microwave
+and close
+Seer (scratch) [18]
+×\times
+-
+78.7
+80.0
+90.0
+91.7
+81.7
+85.0
+65.0
+86.7
+88.3
+51.7
+66.7
+Seer [18]
+×\times
+-
+87.7
+91.7
+90.0
+98.3
+100
+91.7
+93.3
+85.0
+88.3
+61.7
+71.7
+UniVLA [19]
+×\times
+-
+90.0
+100
+92.0
+94.0
+98.0
+86.0
+100
+80.0
+100
+70.0
+82.0
+OpenVLA-OFT [15]
+×\times
+-
+94.0
+90.0
+98.0
+98.0
+98.0
+96.0
+100
+92.0
+100
+72.0
+96.0
+MemoryVLA [13]
+✓\checkmark
+×\times
+93.4
+92.0
+96.0
+96.0
+100
+100
+100
+96.0
+96.0
+62.0
+96.0
+HiF-VLA [10]
+✓\checkmark
+×\times
+96.4
+88.0
+98.0
+100
+100
+100
+100
+96.0
+100
+82.0
+100
+QwenGr00t [20]
+×\times
+-
+90.8
+88
+94.0
+100
+98.0
+96.0
+100
+68.0
+100.0
+66.0
+98.0
+TempoFitQwenGr00t{}_{\text{QwenGr00t}} (Ours)
+✓\checkmark
+✓\checkmark
+94.4
+100
+98.0
+100
+100
+100
+98.0
+80.0
+92.0
+88.0
+88.0
+π0.5\pi_{0.5}[21]
+×\times
+-
+92.6
+100
+96.0
+98.0
+96.0
+96.0
+100
+96.0
+90.0
+58.0
+96.0
+TempoFitπ0.5{}_{\pi_{0.5}}        (Ours)
+✓\checkmark
+✓\checkmark
+96.6
+100
+100
+98.0
+98.0
+100
+100
+96.0
+96.0
+84.0
+96.0
+III-D K-to-K Retrieval: Memory Update via Address-Space Matching
+In scaled dot-product attention, an output is produced by matching a query against a set of keys
+and reading a weighted sum of the corresponding values, i.e., keys/values form a model-native, content-addressable memory table [22].
+This view is made explicit in key–value memory networks, where keys serve as addresses and values store content [23].
+Therefore, if we cache prefix-time per-layer (K,V)(K,V) tensors across timesteps, the most training-free and interface-consistent way to retrieve historical evidence
+is to match within the same key space in which the pretrained Transformer already performs addressing.
+This is also aligned with interpreting attention as associative retrieval, which can be cast as a modern Hopfield-style update where retrieval is determined by similarity in the stored-pattern space [24].
+For a memory-enabled layer l∈ℒmeml\in\mathcal{L}_{\mathrm{mem}}, we concatenate historical prefix keys/values as (Klhist,Vlhist)(K_{l}^{\mathrm{hist}},V_{l}^{\mathrm{hist}}).
+We then treat the current prefix keys Kl(t)K_{l}^{(t)} as retrieval queries and compute per-head logits
+by key-to-key similarity:
+Al,hkk=Kl,h(t)​(Kl,hhist)⊤d+Mask,A_{l,h}^{\mathrm{kk}}=\frac{K_{l,h}^{(t)}(K_{l,h}^{\mathrm{hist}})^{\top}}{\sqrt{d}}+\mathrm{Mask},
+(4)
+followed by Wl=Softmax⁡(Alkk)W_{l}=\mathrm{Softmax}(A_{l}^{\mathrm{kk}}) and context readout
+Klctx=Wl​KlhistK_{l}^{\mathrm{ctx}}=W_{l}K_{l}^{\mathrm{hist}}, Vlctx=Wl​VlhistV_{l}^{\mathrm{ctx}}=W_{l}V_{l}^{\mathrm{hist}}.
+We operate on pre-RoPE projections so that matching is primarily content-driven; positional encoding (RoPE) is subsequently applied using the current positions [25].
+In a training-free setting, we avoid introducing new learned query projections or gates.
+Using K(t)K^{(t)} to query KhistK^{\mathrm{hist}} performs address-space matching under the same projection WKW_{K} as the frozen backbone,
+yielding retrieval that is compatible with the pretrained attention geometry and does not depend on the action head or denoising-step-specific queries.
+Empirically, this reduces cross-stage interference while preserving plug-and-play deployment.
+K-to-K retrieval is parameter-free, layer-local, and model-native: it reuses the Transformer’s existing addressing metric
+and can be interpreted as an associative memory read in the key space [22, 24].
+It complements the subsequent standard self-attention by producing temporally enriched (K,V)(K,V) states
+that downstream action heads can consume unchanged.
+III-E Time-Biased Retrieval: Frame-Gap Temporal Bias (FGTB)
+However, naively retrieving over the entire cache can over-emphasize stale cues and induce history–present interference.
+Prior long-context and recurrent-memory Transformers often mitigate this issue by explicitly managing old memories, such as compressing distant context and expiring stale states [26, 27].
+Since TempoFit is training-free and cannot learn an explicit gating policy, we instead introduce a fixed and interpretable recency prior to down-weight outdated history.
+Inspired by positional bias formulations in natural language processing  [14], we propose FGTB, a frame-gap temporal bias added to the K-to-K retrieval logits.
+Unlike token-distance biases defined over text positions, FGTB is defined over timestep gaps and serves as a lightweight,
+training-free safeguard that keeps decisions present-dominant.
+Concretely, we augment the K-to-K retrieval logits in Eq. (4) with an additive linear bias:
+Biasl,h(t,τ)=−β⋅mh⋅|t−τ|⋅αS,\mathrm{Bias}_{l,h}(t,\tau)=-\beta\cdot m_{h}\cdot|t-\tau|\cdot\alpha_{S},
+(5)
+where mhm_{h} follows a head-wise slope schedule inspired by ALiBi [14],
+β\beta controls the decay strength, and αS\alpha_{S} maps frame gaps to token scale (default αS=S\alpha_{S}=S).
+We then use Al,h=Al,hkk+Biasl,h​(t,τ)A_{l,h}=A_{l,h}^{\mathrm{kk}}+\mathrm{Bias}_{l,h}(t,\tau), yielding a simple “content + recency prior” retrieval rule that keeps decisions present-dominant.
+FGTB reduces interference from stale history while retaining soft access to earlier-but-relevant evidence.
+Its effect is interpretable: the bias enforces a monotonic decay with the frame gap |t−τ||t-\tau| (Eq. 5) and is tunable via β\beta, making it well-suited for training-free temporal retrofitting.
+III-F KV Injection: Norm-Preserving Residual Loading
+After retrieval (Sec. III-D) with FGTB (Sec. III-E), we obtain
+(Klctx,Vlctx)(K_{l}^{\mathrm{ctx}},V_{l}^{\mathrm{ctx}}) in the same key/value space as the frozen backbone.
+The injection mechanism must therefore (i) expose this context through standard self-attention,
+(ii) introduce no trainable parameters while keeping tokenization, tensor shapes, and masks unchanged,
+and (iii) keep the resulting prefix cache reusable by arbitrary action heads.
+A straightforward alternative is to append retrieved features as extra “virtual tokens” [28];
+however, concatenation changes the attended length and softmax normalization, and incurs additional
+compute/memory that scales with the added context—a mismatch for training-free retrofitting under frozen weights.
+We instead inject history by updating the existing KV table via residual loading:
+K~l(t)=Kl(t)+Klctx,V~l(t)=Vl(t)+Vlctx.\tilde{K}_{l}^{(t)}\;=\;K_{l}^{(t)}+K_{l}^{\mathrm{ctx}},\qquad\tilde{V}_{l}^{(t)}\;=\;V_{l}^{(t)}+V_{l}^{\mathrm{ctx}}.
+(6)
+This operation is parameter-free and preserves all shapes and masks, so subsequent attention consumes history
+with the original computation.
+However, the additive update can shift KV magnitudes away from the distribution expected by downstream frozen
+layers, potentially destabilizing softmax. To mitigate this distribution shift, we apply a norm-preserving
+rescaling that projects the fused tensor back to the original per-token ℓ2\ell_{2} norm:
+K~l(t)←K~l(t)⋅∥Kl(t)∥max⁡(∥K~l(t)∥,ϵ),\tilde{K}_{l}^{(t)}\;\leftarrow\;\tilde{K}_{l}^{(t)}\cdot\frac{\lVert K_{l}^{(t)}\rVert}{\max\!\bigl(\lVert\tilde{K}_{l}^{(t)}\rVert,\,\epsilon\bigr)},
+(7)
+and analogously for V~l(t)\tilde{V}_{l}^{(t)}.
+This constrains the injection to a directional update—history can steer the effective KV associations
+without inflating/deflating scale—and adds negligible overhead (two norms and one element-wise multiply).
+Overall, the procedure is consistent with inference-time, non-parametric memory augmentation (retrieval without
+weight updates) [29, 30, 31], while remaining KV-native
+and layer-local: we modify the current-step KV table rather than introducing extra tokens or a separate fusion head.
+IV EXPERIMENTS
+In this section, we design experiments to address the following research questions (RQs):
+•
+RQ1: How does TempoFit perform compared to SOTA methods on challenging long-horizon benchmarks like LIBERO-Long and CALVIN?
+•
+RQ2: Can TempoFit reduce the redundancy and inefficiency of conventional observation-level history while remaining scalable to longer temporal horizons?
+•
+RQ3: How do different components of TempoFit, such as selected layers and FGTB, contribute to its overall performance?
+•
+RQ4: Can TempoFit handle long-horizon tasks on real-world robotic platforms effectively?
+TABLE II: Performance comparison on the CALVIN D-D and CALVIN ABC-D benchmarks.
+We report the average number of successfully completed tasks across five consecutive instructions.
+Bold indicates the best performance within each benchmark.
+Method
+1
+2
+3
+4
+5
+Avg. Len. ↑\uparrow
+CALVIN D-D
+π0\pi_{0} [3]
+84.8
+70.4
+55.9
+46.6
+37.7
+2.95
+QwenPI [20]
+90.9
+79.5
+69.6
+62.2
+55.4
+3.58
+QwenGR00T [20]
+92.5
+83.9
+74.4
+67.9
+59.8
+3.78
+TempoFitQwenGr00t{}_{\text{QwenGr00t}} (Ours)
+92.0
+83.8
+75.7
+70.3
+62.3
+3.84
+CALVIN ABC-D
+π0.5\pi_{0.5}[21]
+93.2
+84.6
+76.7
+68.8
+61.4
+3.83
+TempoFitπ0.5{}_{\pi_{0.5}} (Ours)
+93.0
+84.8
+77.3
+69.4
+62.0
+3.87
+IV-A Overall Performance
+Experimental Setups. We evaluate our method on two long-horizon benchmarks: LIBERO-Long [32] and CALVIN [33]. LIBERO-Long comprises ten multi-subgoal manipulation tasks across diverse scenes. For CALVIN, we conduct evaluations under two distinct settings to comprehensively assess the model: 1) the in-domain D→DD\rightarrow D setting, where policies are trained on demonstrations from environment D and evaluated on held-out sequences in the same environment D, measuring consecutive multi-task performance without cross-environment generalization; and 2) the cross-domain ABC-D setting, where policies are trained on environments A-C and evaluated on the unseen environment D to assess generalization on consecutive tasks. All experiments are conducted under a multi-view setup using both the primary and wrist cameras. For our baselines, we directly adopt the Qwen-GR00T [20] and Openπ\pi [3] checkpoints for the D→DD\rightarrow D evaluation, and the π0.5\pi_{0.5} checkpoint from the RLinf project [34, 21] for the ABC-D evaluation.
+Implementation Details. We implement our framework following the standard fine-tuning setup for VLA models. For the baseline comparisons, we prioritize reproducibility and fairness by directly utilizing the official checkpoints provided by the respective state-of-the-art projects without heuristic hyperparameter tuning. Specifically, we evaluate the π0.5\pi_{0.5} checkpoint from the RLinf project [34, 21] and the QwenGR00T checkpoint from the StarVLA project [20] on the LIBERO and CALVIN benchmarks. Regarding temporal modeling, we fix the history capacity to 8 frames across all our experiments to ensure the model captures sufficient temporal context. All evaluations are performed under the consistent multi-view setup described in the experimental settings.
+Result Analysis. 1) LIBERO-Long: As shown in Table I, we present the detailed performance of TempoFit across 10 tasks in the LIBERO-Long benchmark. We evaluate our method across two strong memoryless baselines (π0.5\pi_{0.5} and QwenGR00T) over 500 trials. Compared to the vanilla baselines, our approach achieves substantial gains: applying TempoFit to the π0.5\pi_{0.5} backbone increases the average success rate from 92.6% to 96.6%, representing a 4.0% absolute improvement. Similarly, for QwenGR00T, it yields a 3.6% absolute improvement (from 90.8% to 94.4%). Crucially, this highlights a fundamental advantage of our training-free paradigm: by strictly preserving the original pretrained weights, TempoFit can directly harness the potent visual-linguistic representations and generalization capabilities of cutting-edge backbones like π0.5\pi_{0.5}. Consequently, it enables these powerful single-frame models to surpass representative training-based temporal approaches such as MemoryVLA (93.4%) and even edge out HiF-VLA (96.4%). The performance boost is especially pronounced in challenging subgoals that demand strict cross-stage temporal association (e.g., success on “Put both pots on stove” surges from 58.0% to 84.0% for π0.5\pi_{0.5}). This underscores that seamlessly retrofitting existing strong VLAs with our layer-wise memory is a highly effective route to robust temporal reasoning, fully unlocking their pretrained potential without the computational overhead or catastrophic forgetting risks associated with model retraining.
+2) CALVIN: We further evaluate TempoFit on CALVIN under two complementary settings (Table II): the in-domain D-D setting and the cross-domain ABC-D setting (generalization to the unseen environment D).
+In D→\rightarrowD, applying TempoFit to the strong QwenGR00T checkpoint improves the average task length from 3.78 to 3.84. Notably, the gain concentrates on later instructions where temporal credit assignment and partial observability become dominant: while the first two instructions remain essentially unchanged, TempoFit yields consistent improvements on instructions 3–5 , indicating better long-horizon retention rather than short-horizon action selection.
+In ABC→\rightarrowD, TempoFit also improves the RLinf π0.5\pi_{0.5} checkpoint from 3.83 to 3.87, with small but consistent gains on later instructions.
+Overall, these results suggest that state-level temporal retrofitting can translate into more reliable multi-step execution as the horizon grows: by reusing cached intermediate-layer prefix K/VK/V and enforcing a fixed recency prior with FGTB, TempoFit better disambiguates temporally aliased states and mitigates cross-stage fragmentation, while preserving the original single-frame inference graph and requiring no additional training.
+IV-B Inference Efficiency and Horizon Scalability
+Inference-time scalability is critical for closed-loop manipulation, where control must remain near real time as temporal context grows. We therefore measure per-step latency and peak GPU memory while increasing the KV-cache capacity CC on LIBERO-Long (Table III). TempoFit adds only a small overhead over the 1-frame baseline (71.2 ms): 73.4 ms at C=4C{=}4 and 74.4 ms at C=8C{=}8, and consistently remains 86.8 ms even at C=32C{=}32 with ≤\leq1.10×\times memory. This mild scaling stems from caching only prefix K/VK/V at selected layers. In contrast, naive frame stacking grows rapidly (94.8 ms/3.54×\times at 4 frames; 176.3 ms/7.19×\times at 8 frames).
+TABLE III: Efficiency analysis. Average latency and peak memory usage measured on LIBERO-long
+datasets. Both metrics are computed at each timestep within an episode and then averaged.
+All measurements were on an NVIDIA RTX5090 GPU. ↓\downarrow indicates lower values are better.
+Method
+History Length
+Latency (ms, ↓\downarrow)
+Peak memory (MB, ↓\downarrow)
+π0.5\pi_{0.5} [21]
+1
+71.2 (1.00×1.00\times)
+6,396 (1.00×1.00\times)
++ Multi-frames
+4
+94.8 (1.33×1.33\times)
+22,640 (3.54×3.54\times)
++ TempoFit (Ours)
+4
+73.4 (1.02×\mathbf{1.02\times})
+6,498 (1.02×\mathbf{1.02\times})
++ Multi-frames
+8
+176.3 (2.48×2.48\times)
+45,980 (7.19×7.19\times)
++ TempoFit (Ours)
+8
+74.4 (1.04×\mathbf{1.04\times})
+6,600 (1.03×\mathbf{1.03\times})
++ TempoFit (Ours)
+16
+81.4 (1.13×\mathbf{1.13\times})
+6,761 (1.06×\mathbf{1.06\times})
++ TempoFit (Ours)
+32
+86.8 (1.21×\mathbf{1.21\times})
+7,030 (1.10×\mathbf{1.10\times})
+TABLE IV: Detailed ablation study of TempoFit on LIBERO-Long (π0.5\pi_{0.5} backbone). Each row modifies one design choice from the full method (last row). We report average success rate (%) over 500 trials.
+Configuration
+Avg. SR (%)
+Baseline (no memory)
+92.6
+Component contribution
++ KV Memory only
+93.8
++ KV Memory + FGTB
+96.6
+Retrieval strategy
+Q-to-K retrieval
+93.3
+K-to-K retrieval (Ours)
+96.6
+Injection strategy
+Concatenation
+0.8
+Residual loading w/o norm-preserving
+90.2
+Residual loading w/ norm-preserving (Ours)
+96.6
+Layer selection
+All layers (0-17)
+74.2
+Bottom layers only (9-17)
+59.8
+Top layers only (0-8)
+89.4
+Intermediate layers (Ours)
+96.6
+History capacity CC
+C=4C=4
+95.2
+C=8C=8 (Ours)
+96.6
+C=16C=16
+96.2
+C=32C=32
+95.2
+Fig. 3: Real-world evaluation on Realman RM-65B. Left. Hardware and multi-view sensing setup. Right. Quantitative success rates and/or qualitative rollouts on three long-horizon manipulation tasks.
+IV-C Ablation Studies
+We conduct a detailed ablation of TempoFit on LIBERO-Long with a π0.5\pi_{0.5} backbone (Table IV; 500 trials). Each row modifies a single design choice from the full model (last row), allowing us to isolate the contribution of core components and key implementation choices.
+Component contribution.
+Starting from the memoryless baseline (92.6%), enabling KV memory alone yields a modest improvement to 93.8% (+1.2), indicating that reusing prefix-time internal states already provides useful temporal evidence.
+However, this gain is amplified only when we introduce FGTB: adding FGTB on top of KV memory boosts performance to 96.6% (+2.8 over KV-only), supporting the claim that an explicit, fixed recency bias is critical for training-free temporal retrofitting to keep decisions present-dominant and suppress stale-history interference.
+Retrieval strategy.
+We further ablate the addressing mechanism used for memory readout. Replacing our KV-native K-to-K retrieval with a Q-to-K alternative reduces success to 93.3%, whereas K-to-K restores the full performance (96.6%). This suggests that matching in the backbone’s native key-address space is substantially more compatible under frozen weights.
+Injection strategy.
+How retrieved history is injected is also decisive. Naively injecting history via concatenation collapses performance (0.8%), implying that expanding the effective attended context without retraining can severely miscalibrate the frozen attention computation. Residual loading is markedly more stable, but removing the proposed norm-preserving rescaling still causes a clear drop (96.6% →\rightarrow 90.2%). With norm-preserving enabled, residual loading achieves the best result (96.6%), consistent with the motivation that controlling the KV magnitude is essential to avoid distribution shift introduced by additive updates in a training-free setting.
+Layer selection and history capacity.
+Finally, we examine where to enable memory and how much history to store. Activating memory at all layers (0–17) substantially degrades performance (74.2%), and restricting memory to only a partial depth range is also suboptimal (0–8: 89.4%; 9–17: 59.8%). In contrast, enabling memory only at the selected intermediate layers achieves the best performance (96.6%), supporting our layer-selective design to balance temporal continuity with minimal interference to present-step control. Varying capacity reveals that a moderate history length works best: C=8C=8 achieves 96.6%, while both smaller and larger capacities slightly underperform (C=4C=4: 95.2%; C=16C=16: 96.2%; C=32C=32: 95.2%), suggesting diminishing returns and increased redundancy/staleness when the cache grows too large.
+IV-D Real-World Robotic Platforms
+Experiment setups. To evaluate the effectiveness of our approach in real-world applications, we conduct real-world experiments using the Realman RM-65B robot. As shown in Fig. 5, a Orbbec 336L camera captures the scene from a third-view, while an additional USB camera is mounted on the robot’s wrist for egocentric observations. We collect three long-horizon tasks, each with 100 demonstrations involving diverse manipulation primitives, including pick, place and push.
+Real-World Task Performance: For real-world environments, we train the baseline π0.5\pi_{0.5}[21] for every task and evaluate performance by averaging success rates over 20 trials per task across three long-horizon manipulation tasks: sequentially placing three vegetables into a tray (Task 1), cleaning a desk by disposing of tissue and then placing a pepper into a box (Task 2), and putting both green bowls into a drawer and closing it (Task 3). These long-horizon tasks require the model to maintain action consistency across stages and correctly associate temporal states. As shown in Fig.3, the baseline suffers clear degradation as the number of subtasks grows—for example, achieving only 57.1% full-sequence success on Task 1 despite near-perfect first-subtask performance, and dropping to 66.7% on the full Task 3 sequence, often stalling or repeating actions at later stages. This is likely due to state aliasing between visually similar objects (e.g., two identical green bowls) and subtle post-action visual changes that a memoryless policy fails to track. In contrast, TempoFit benefits from its layer-wise temporal KV retrieval with FGTB, enabling reliable detection of completed subtask transitions and robust cross-stage execution, improving full-task success rates by +9.5% on Task 1 (57.1%→66.7%), +4.8% on Task 2 (81.0%→85.7%), and +14.3% on Task 3 (66.7%→81.0%), yielding a +9.5% average improvement across all real-world tasks.
+V CONCLUSIONS
+We introduced TempoFit, a training-free temporal retrofitting module that upgrades pretrained single-frame VLAs to be history-aware by reusing their internal attention state. The method caches prefix K/V at a small subset of intermediate layers, retrieves past evidence via K-to-K address-space matching with FGTB, and injects the retrieved context through pre-attention residual loading, preserving the original tokenization, backbone parameters, and action head.
+Across LIBERO-Long, CALVIN, and real-world Realman RM-65B tasks, TempoFit improves long-horizon coherence and success while adding only minor inference overhead compared to costly frame stacking.
+Limitations. Our current implementation uses fixed choices for layer subset, cache capacity, and decay slope; performance can degrade if history becomes dominated by irrelevant frames or if the task requires very long-term planning beyond the cache horizon. Future work will explore adaptive memory selection, automatic layer discovery across backbones, and integrating KV-native temporal retrofitting with higher-level recovery or subgoal mechanisms.
+References
+[1]
+A. Brohan, N. Brown, J. Carbajal, Y. Chebotar, X. Chen, K. Choromanski, T. Ding, D. Driess, A. Dubey, C. Finn, P. Florence, C. Fu, M. G. Arenas, K. Gopalakrishnan, K. Han, K. Hausman, A. Herzog, J. Hsu, B. Ichter, A. Irpan, N. Joshi, R. Julian, D. Kalashnikov, Y. Kuang, I. Leal, L. Lee, T. E. Lee, S. Levine, Y. Lu, H. Michalewski, I. Mordatch, K. Pertsch, K. Rao, K. Reymann, M. Ryoo, G. Salazar, P. Sanketi, P. Sermanet, J. Singh, A. Singh, R. Soricut, H. Tran, V. Vanhoucke, Q. Vuong, A. Wahid, S. Welker, P. Wohlhart, J. Wu, F. Xia, T. Xiao, P. Xu, S. Xu, T. Yu, and B. Zitkovich (2023)
+RT-2: vision-language-action models transfer web knowledge to robotic control.
+External Links: 2307.15818,
+Link
+Cited by: §I,
+§II-A.
+[2]
+M. J. Kim, K. Pertsch, S. Karamcheti, T. Xiao, A. Balakrishna, S. Nair, R. Rafailov, E. Foster, G. Lam, P. Sanketi, Q. Vuong, T. Kollar, B. Burchfiel, R. Tedrake, D. Sadigh, S. Levine, P. Liang, and C. Finn (2024)
+OpenVLA: an open-source vision-language-action model.
+External Links: 2406.09246,
+Link
+Cited by: §I,
+§II-A.
+[3]
+K. Black, N. Brown, D. Driess, A. Esmail, M. Equi, C. Finn, N. Fusai, L. Groom, K. Hausman, B. Ichter, S. Jakubczak, T. Jones, L. Ke, S. Levine, A. Li-Bell, M. Mothukuri, S. Nair, K. Pertsch, L. X. Shi, J. Tanner, Q. Vuong, A. Walling, H. Wang, and U. Zhilinsky (2026)
+π0\pi_{0}: A vision-language-action flow model for general robot control.
+External Links: 2410.24164,
+Link
+Cited by: §I,
+§II-A,
+§IV-A,
+TABLE II.
+[4]
+Q. Li, Y. Liang, Z. Wang, L. Luo, X. Chen, M. Liao, F. Wei, Y. Deng, S. Xu, Y. Zhang, X. Wang, B. Liu, J. Fu, J. Bao, D. Chen, Y. Shi, J. Yang, and B. Guo (2024)
+CogACT: a foundational vision-language-action model for synergizing cognition and action in robotic manipulation.
+External Links: 2411.19650,
+Link
+Cited by: §I,
+§II-A.
+[5]
+J. Wen, Y. Zhu, J. Li, Z. Tang, C. Shen, and F. Feng (2025)
+DexVLA: vision-language model with plug-in diffusion expert for general robot control.
+arXiv preprint arXiv:2502.05855.
+Cited by: §I,
+§II-A.
+[6]
+J. Bai, S. Bai, Y. Chu, Z. Cui, K. Dang, X. Deng, Y. Fan, W. Ge, Y. Han, F. Huang, B. Hui, L. Ji, M. Li, J. Lin, R. Lin, D. Liu, G. Liu, C. Lu, K. Lu, J. Ma, R. Men, X. Ren, X. Ren, C. Tan, S. Tan, J. Tu, P. Wang, S. Wang, W. Wang, S. Wu, B. Xu, J. Xu, A. Yang, H. Yang, J. Yang, S. Yang, Y. Yao, B. Yu, H. Yuan, Z. Yuan, J. Zhang, X. Zhang, Y. Zhang, Z. Zhang, C. Zhou, J. Zhou, X. Zhou, and T. Zhu (2023)
+Qwen technical report.
+External Links: 2309.16609,
+Link
+Cited by: §I.
+[7]
+L. Beyer, A. Steiner, A. S. Pinto, A. Kolesnikov, X. Wang, D. Salz, M. Neumann, I. Alabdulmohsin, M. Tschannen, E. Bugliarello, T. Unterthiner, D. Keysers, S. Koppula, F. Liu, A. Grycner, A. Gritsenko, N. Houlsby, M. Kumar, K. Rong, J. Eisenschlos, R. Kabra, M. Bauer, M. Bošnjak, X. Chen, M. Minderer, P. Voigtlaender, I. Bica, I. Balazevic, J. Puigcerver, P. Papalampidi, O. Henaff, X. Xiong, R. Soricut, J. Harmsen, and X. Zhai (2024)
+PaliGemma: a versatile 3b vlm for transfer.
+External Links: 2407.07726,
+Link
+Cited by: §I.
+[8]
+O. M. Team, D. Ghosh, H. Walke, K. Pertsch, K. Black, O. Mees, S. Dasari, J. Hejna, T. Kreiman, C. Xu, J. Luo, Y. L. Tan, L. Y. Chen, P. Sanketi, Q. Vuong, T. Xiao, D. Sadigh, C. Finn, and S. Levine (2024)
+Octo: an open-source generalist robot policy.
+External Links: 2405.12213,
+Link
+Cited by: §I,
+§II-B.
+[9]
+C. Cheang, G. Chen, Y. Jing, T. Kong, H. Li, Y. Li, Y. Liu, H. Wu, J. Xu, Y. Yang, H. Zhang, and M. Zhu (2024)
+GR-2: a generative video-language-action model with web-scale knowledge for robot manipulation.
+External Links: 2410.06158,
+Link
+Cited by: §I,
+§II-B.
+[10]
+M. Lin, P. Ding, S. Wang, Z. Zhuang, Y. Liu, X. Tong, W. Song, S. Lyu, S. Huang, and D. Wang (2025)
+HiF-vla: hindsight, insight and foresight through motion representation for vision-language-action models.
+arXiv preprint arXiv:2512.09928.
+Cited by: §I,
+§I,
+§II-B,
+TABLE I.
+[11]
+M. Koo, D. Choi, T. Kim, K. Lee, C. Kim, Y. Seo, and J. Shin (2025)
+HAMLET: switch your vision-language-action model into a history-aware policy.
+External Links: 2510.00695,
+Link
+Cited by: §I,
+§I,
+§II-B.
+[12]
+H. Jang, S. Yu, H. Kwon, H. Jeon, Y. Seo, and J. Shin (2025)
+ContextVLA: vision-language-action model with amortized multi-frame context.
+External Links: 2510.04246,
+Link
+Cited by: §I,
+§II-B.
+[13]
+H. Shi, B. Xie, Y. Liu, L. Sun, F. Liu, T. Wang, E. Zhou, H. Fan, X. Zhang, and G. Huang (2025)
+MemoryVLA: perceptual-cognitive memory in vision-language-action models for robotic manipulation.
+arXiv preprint arXiv:2508.19236.
+Cited by: §I,
+§I,
+§II-B,
+TABLE I.
+[14]
+O. Press, N. Smith, and M. Lewis (2022)
+Train short, test long: attention with linear biases enables input length extrapolation.
+In International Conference on Learning Representations,
+External Links: Link
+Cited by: §I,
+§III-E,
+§III-E.
+[15]
+M. J. Kim, C. Finn, and P. Liang (2025)
+Fine-tuning vision-language-action models: optimizing speed and success.
+arXiv preprint arXiv:2502.19645.
+Cited by: §II-A,
+TABLE I.
+[16]
+I. Tenney, D. Das, and E. Pavlick (2019)
+BERT rediscovers the classical nlp pipeline.
+External Links: 1905.05950,
+Link
+Cited by: §III-C.
+[17]
+K. Meng, D. Bau, A. Andonian, and Y. Belinkov (2023)
+Locating and editing factual associations in gpt.
+External Links: 2202.05262,
+Link
+Cited by: §III-C.
+[18]
+Y. Tian, S. Yang, J. Zeng, P. Wang, D. Lin, H. Dong, and J. Pang (2025)
+Predictive inverse dynamics models are scalable learners for robotic manipulation.
+In Proceedings of the International Conference on Learning Representations,
+Cited by: TABLE I,
+TABLE I.
+[19]
+Q. Bu, Y. Yang, J. Cai, S. Gao, G. Ren, M. Yao, P. Luo, and H. Li (2025)
+UniVLA: learning to act anywhere with task-centric latent actions.
+External Links: 2505.06111,
+Link
+Cited by: TABLE I.
+[20]
+starVLA Contributors (2025)
+StarVLA: a lego-like codebase for vision-language-action model developing.
+GitHub.
+Note: GitHub repository
+External Links: Link,
+Document
+Cited by: TABLE I,
+§IV-A,
+§IV-A,
+TABLE II,
+TABLE II.
+[21]
+P. Intelligence, K. Black, N. Brown, J. Darpinian, K. Dhabalia, D. Driess, A. Esmail, M. Equi, C. Finn, N. Fusai, M. Y. Galliker, D. Ghosh, L. Groom, K. Hausman, B. Ichter, S. Jakubczak, T. Jones, L. Ke, D. LeBlanc, S. Levine, A. Li-Bell, M. Mothukuri, S. Nair, K. Pertsch, A. Z. Ren, L. X. Shi, L. Smith, J. T. Springenberg, K. Stachowicz, J. Tanner, Q. Vuong, H. Walke, A. Walling, H. Wang, L. Yu, and U. Zhilinsky (2025)
+π0.5\pi_{0.5}: A vision-language-action model with open-world generalization.
+External Links: 2504.16054,
+Link
+Cited by: TABLE I,
+§IV-A,
+§IV-A,
+§IV-D,
+TABLE II,
+TABLE III.
+[22]
+A. Vaswani, N. Shazeer, N. Parmar, J. Uszkoreit, L. Jones, A. N. Gomez, Ł. Kaiser, and I. Polosukhin (2017)
+Attention is all you need.
+In Advances in Neural Information Processing Systems,  I. Guyon, U. V. Luxburg, S. Bengio, H. Wallach, R. Fergus, S. Vishwanathan, and R. Garnett (Eds.),
+Vol. 30, pp. .
+External Links: Link
+Cited by: §III-D,
+§III-D.
+[23]
+A. Miller, A. Fisch, J. Dodge, A. Karimi, A. Bordes, and J. Weston (2016)
+Key-value memory networks for directly reading documents.
+In Proceedings of the 2016 Conference on Empirical Methods in Natural Language Processing,  J. Su, K. Duh, and X. Carreras (Eds.),
+Austin, Texas, pp. 1400–1409.
+External Links: Link,
+Document
+Cited by: §III-D.
+[24]
+H. Ramsauer, B. Schäfl, J. Lehner, P. Seidl, M. Widrich, L. Gruber, M. Holzleitner, T. Adler, D. Kreil, M. K. Kopp, G. Klambauer, J. Brandstetter, and S. Hochreiter (2021)
+Hopfield networks is all you need.
+In International Conference on Learning Representations,
+External Links: Link
+Cited by: §III-D,
+§III-D.
+[25]
+J. Su, M. Ahmed, Y. Lu, S. Pan, W. Bo, and Y. Liu (2024)
+RoFormer: enhanced transformer with rotary position embedding.
+Neurocomputing 568, pp. 127063.
+Cited by: §III-D.
+[26]
+J. W. Rae, A. Potapenko, S. M. Jayakumar, C. Hillier, and T. P. Lillicrap (2020)
+Compressive transformers for long-range sequence modelling.
+In International Conference on Learning Representations,
+External Links: Link
+Cited by: §III-E.
+[27]
+S. Sukhbaatar, D. Ju, S. Poff, S. Roller, A. Szlam, J. Weston, and A. Fan (2021)
+Not all memories are created equal: learning to forget by expiring.
+In Proceedings of the 38th International Conference on Machine Learning,  M. Meila and T. Zhang (Eds.),
+Proceedings of Machine Learning Research, Vol. 139, pp. 9902–9912.
+External Links: Link
+Cited by: §III-E.
+[28]
+X. L. Li and P. Liang (2021)
+Prefix-tuning: optimizing continuous prompts for generation.
+In Proceedings of the 59th Annual Meeting of the Association for Computational Linguistics and the 11th International Joint Conference on Natural Language Processing (Volume 1: Long Papers),  C. Zong, F. Xia, W. Li, and R. Navigli (Eds.),
+Online, pp. 4582–4597.
+External Links: Link,
+Document
+Cited by: §III-F.
+[29]
+E. Grave, A. Joulin, and N. Usunier (2016)
+Improving neural language models with a continuous cache.
+External Links: 1612.04426,
+Link
+Cited by: §III-F.
+[30]
+U. Khandelwal, O. Levy, D. Jurafsky, L. Zettlemoyer, and M. Lewis (2020)
+Generalization through memorization: nearest neighbor language models.
+In International Conference on Learning Representations,
+External Links: Link
+Cited by: §III-F.
+[31]
+Y. Wu, M. N. Rabe, D. Hutchins, and C. Szegedy (2022)
+Memorizing transformers.
+External Links: 2203.08913,
+Link
+Cited by: §III-F.
+[32]
+B. Liu, Y. Zhu, C. Gao, Y. Feng, Q. Liu, Y. Zhu, and P. Stone (2023)
+LIBERO: benchmarking knowledge transfer for lifelong robot learning.
+External Links: 2306.03310,
+Link
+Cited by: §IV-A.
+[33]
+O. Mees, L. Hermann, E. Rosete-Beas, and W. Burgard (2022)
+CALVIN: a benchmark for language-conditioned policy learning for long-horizon robot manipulation tasks.
+External Links: 2112.03227,
+Link
+Cited by: §IV-A.
+[34]
+C. Yu, Y. Wang, Z. Guo, H. Lin, S. Xu, H. Zang, Q. Zhang, Y. Wu, C. Zhu, J. Hu, Z. Huang, M. Wei, Y. Xie, K. Yang, B. Dai, Z. Xu, J. Du, X. Wang, X. Fu, L. Shi, Z. Liu, K. Chen, W. Liu, G. Liu, B. Li, J. Yang, Z. Yang, G. Dai, and Y. Wang (2025)
+RLinf: flexible and efficient large-scale reinforcement learning via macro-to-micro flow transformation.
+External Links: 2509.15965,
+Link
+Cited by: §IV-A,
+§IV-A.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

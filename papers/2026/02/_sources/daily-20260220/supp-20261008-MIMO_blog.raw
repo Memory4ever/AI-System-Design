@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="generator" content="Rspress v1.46.2">
+    <link rel="stylesheet" href="https://cdn.cnbj1.fds.api.mi-img.com/aife/mimo-blog-fe/doc_build/fonts/font-faces.b3ff14bbe16d.css"><script>// Inlined in <head>, so server-rendered text is protected before hydration.
+(() => {
+  const root = document.documentElement;
+  const selector = '[data-font-text]';
+  const imageSelector = '[data-font-image]';
+  const pendingSelector = '[data-font-text]:not([data-font-ready]), [data-font-image]:not([data-image-ready])';
+  const maxWait = 1500;
+  let currentPath = null;
+  let cleanup = () => {};
+
+  const isHome = (path) => /^\/(?:zh\/?)?(?:index(?:\.html)?)?$/.test(path);
+  const familyName = (name) => name.trim().replace(/^["']|["']$/g, '');
+
+  function stop() {
+    cleanup();
+    currentPath = null;
+    root.classList.remove('home-fonts-loading');
+  }
+
+  function start() {
+    const path = window.location.pathname;
+    if (!isHome(path) || !document.fonts) {
+      stop();
+      return;
+    }
+    if (currentPath === path) return;
+    stop();
+    currentPath = path;
+
+    let active = true;
+    let pending = 0;
+    let sawText = false;
+    const seen = new Set();
+    const requests = new Map();
+    const busy = new Map();
+    const imageListeners = new Set();
+    const blockedInteractions = new Set();
+    const ranges = new Map();
+
+    function syncInteractions() {
+      for (const element of document.querySelectorAll('[data-font-interactive]')) {
+        if (element.matches(pendingSelector) || element.querySelector(pendingSelector)) {
+          // Native inert also prevents keyboard focus and activation. Keep any
+          // pre-existing inert state owned by the component itself.
+          if (!element.inert) {
+            element.inert = true;
+            blockedInteractions.add(element);
+          }
+        } else if (blockedInteractions.delete(element)) {
+          element.inert = false;
+        }
+      }
+    }
+
+    function finish() {
+      if (!active) return;
+      active = false;
+      root.classList.remove('home-fonts-loading');
+      clearTimeout(timer);
+      observer.disconnect();
+      document.removeEventListener('DOMContentLoaded', scan);
+      for (const [element, readyKey] of busy) {
+        element.dataset[readyKey] = 'fallback';
+        element.removeAttribute('aria-busy');
+      }
+      for (const dispose of imageListeners) dispose();
+      for (const element of blockedInteractions) element.inert = false;
+      blockedInteractions.clear();
+      imageListeners.clear();
+      busy.clear();
+    }
+
+    function fontRanges() {
+      // Called after stylesheets are ready; keep the actual CSS unicode ranges.
+      if (ranges.size) return;
+      for (const face of document.fonts) {
+        const family = familyName(face.family);
+        const list = ranges.get(family) || [];
+        for (const part of face.unicodeRange.split(',')) {
+          const range = part.trim().replace(/^U\+/i, '').split('-');
+          const lower = parseInt(range[0].replace(/\?/g, '0'), 16);
+          const upper = parseInt((range[1] || range[0]).replace(/\?/g, 'F'), 16);
+          list.push([lower, upper]);
+        }
+        ranges.set(family, list);
+      }
+    }
+
+    function requiredFonts(element) {
+      const samples = new Map();
+      const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+      while (walker.nextNode()) {
+        const node = walker.currentNode;
+        if (!node.textContent.trim()) continue;
+        const style = getComputedStyle(node.parentElement);
+        const families = style.fontFamily.split(',').map(familyName);
+        for (const character of node.textContent) {
+          const point = character.codePointAt(0);
+          const family = families.find((name) => (ranges.get(name) || []).some(([a, b]) => a <= point && point <= b));
+          if (!family) continue; // System font or a character outside our fonts.
+          const spec = `${style.fontStyle} ${style.fontWeight} 16px "${family}"`;
+          if (!samples.has(spec)) samples.set(spec, new Set());
+          samples.get(spec).add(character);
+        }
+      }
+      return [...samples].map(([spec, chars]) => [spec, [...chars].join('')]);
+    }
+
+    function scan() {
+      if (!active) return;
+      if (document.readyState === 'loading') {
+        syncInteractions();
+        return;
+      }
+      fontRanges();
+      for (const image of document.querySelectorAll(imageSelector)) {
+        if (seen.has(image)) continue;
+        seen.add(image);
+        sawText = true;
+        if (image.complete) {
+          image.dataset.imageReady = image.naturalWidth ? 'cached' : 'fallback';
+          continue;
+        }
+        delete image.dataset.imageReady;
+        image.setAttribute('aria-busy', 'true');
+        busy.set(image, 'imageReady');
+        pending++;
+        const dispose = () => {
+          image.removeEventListener('load', loaded);
+          image.removeEventListener('error', failed);
+          imageListeners.delete(dispose);
+        };
+        const reveal = (status) => {
+          dispose();
+          if (!active) return;
+          release(image, status);
+        };
+        const loaded = () => {
+          if (image.decode) image.decode().then(() => reveal('loaded'), () => reveal('fallback'));
+          else reveal('loaded');
+        };
+        const failed = () => reveal('fallback');
+        imageListeners.add(dispose);
+        image.addEventListener('load', loaded, { once: true });
+        image.addEventListener('error', failed, { once: true });
+      }
+      for (const element of document.querySelectorAll(selector)) {
+        if (seen.has(element)) continue;
+        seen.add(element);
+        sawText = true;
+        const rect = element.getBoundingClientRect();
+        const style = getComputedStyle(element);
+        // Offscreen text, hidden Blog entries and the hero's back face never
+        // hold up the visible page. Their fonts still load normally through CSS.
+        if (!rect.width || !rect.height || rect.bottom <= 0 || rect.top >= window.innerHeight || style.visibility === 'hidden' || element.closest('[aria-hidden="true"], [data-font-skip]')) {
+          element.dataset.fontReady = 'offscreen';
+          continue;
+        }
+        const needed = requiredFonts(element);
+        const missing = needed.filter(([spec, text]) => !document.fonts.check(spec, text));
+        if (!missing.length) {
+          element.dataset.fontReady = 'cached';
+          continue;
+        }
+        delete element.dataset.fontReady;
+        element.setAttribute('aria-busy', 'true');
+        busy.set(element, 'fontReady');
+        pending++;
+        const promises = missing.map(([spec, text]) => {
+          const key = spec + text;
+          if (!requests.has(key)) requests.set(key, document.fonts.load(spec, text));
+          return requests.get(key);
+        });
+        Promise.all(promises).then(() => release(element, 'loaded'), () => release(element, 'fallback'));
+      }
+      syncInteractions();
+      if (sawText && pending === 0) finish();
+    }
+
+    function release(element, status) {
+      if (!active || !busy.has(element)) return;
+      element.dataset[busy.get(element)] = status;
+      element.removeAttribute('aria-busy');
+      busy.delete(element);
+      if (--pending === 0) finish();
+      else syncInteractions();
+    }
+
+    // The timer runs independently of React and font promises, including errors.
+    const timer = setTimeout(finish, maxWait);
+    const observer = new MutationObserver(scan);
+    cleanup = finish;
+    root.classList.add('home-fonts-loading');
+    document.querySelectorAll(selector).forEach((element) => delete element.dataset.fontReady);
+    observer.observe(root, { childList: true, subtree: true });
+    document.addEventListener('DOMContentLoaded', scan, { once: true });
+    scan();
+  }
+
+  window.__mimoHomeFonts = { start, stop };
+  window.addEventListener('pageshow', (event) => { if (event.persisted) stop(); });
+  start();
+})();
+</script><script>document.documentElement.classList.toggle('coder-docs',false);document.documentElement.classList.toggle('mimo-site',true);document.documentElement.classList.toggle('legal-docs',false);</script><title data-rh="true"></title>
+  <link rel="icon" href="https://cdn.cnbj1.fds.api.mi-img.com/aife/mimo-blog-fe/doc_build/mimo.ico"><script defer src="https://cdn.cnbj1.fds.api.mi-img.com/aife/mimo-blog-fe/doc_build/static/js/styles.928fc8b8.js"></script><script defer src="https://cdn.cnbj1.fds.api.mi-img.com/aife/mimo-blog-fe/doc_build/static/js/lib-react.a6be410a.js"></script><script defer src="https://cdn.cnbj1.fds.api.mi-img.com/aife/mimo-blog-fe/doc_build/static/js/lib-router.93d86b80.js"></script><script defer src="https://cdn.cnbj1.fds.api.mi-img.com/aife/mimo-blog-fe/doc_build/static/js/4752.2908c99e.js"></script><script defer src="https://cdn.cnbj1.fds.api.mi-img.com/aife/mimo-blog-fe/doc_build/static/js/index.c5195ace.js"></script><link href="https://cdn.cnbj1.fds.api.mi-img.com/aife/mimo-blog-fe/doc_build/static/css/styles.f0e8146a.css" rel="stylesheet"></head>
+
+  <body >
+    <div id="root"><div class="navContainer_d18b1 rspress-nav px-6  sticky_ddfa7"><div class="container_e4235 flex justify-between items-center h-full"><div class="navTitleWrapper-w9ofxD " data-font-media="logo" data-font-interactive="true"><img src="https://cdn.cnbj1.fds.api.mi-img.com/aife/mimo-blog-fe/doc_build/static/image/logo.99baaffe.png" alt="logo" class="mimoLogo-KV4r25" data-font-image="true"/></div><div class="flex flex-1 justify-end items-center"><div class="rightNav_a2fea"><div class="rspress-nav-menu menu h-14"></div><div class="flex-center flex-row"><div class="translation menu-item_b8238 flex text-sm font-bold items-center px-3 py-2"><div><div class="relative flex-center h-14"><button class="rspress-nav-menu-group-button flex-center items-center font-medium text-sm text-text-1 hover:text-text-2 transition-colors duration-200"><span class="text-sm font-medium flex break-keep" style="margin-right:2px"><svg width="18" height="18" viewBox="0 0 32 32" style="width:18px;height:18px"><path fill="currentColor" d="M27.85 29H30l-6-15h-2.35l-6 15h2.15l1.6-4h6.85zm-7.65-6 2.62-6.56L25.45 23zM18 7V5h-7V2H9v3H2v2h10.74a14.7 14.7 0 0 1-3.19 6.18A13.5 13.5 0 0 1 7.26 9h-2.1a16.5 16.5 0 0 0 3 5.58A16.8 16.8 0 0 1 3 18l.75 1.86A18.5 18.5 0 0 0 9.53 16a16.9 16.9 0 0 0 5.76 3.84L16 18a14.5 14.5 0 0 1-5.12-3.37A17.64 17.64 0 0 0 14.8 7z"></path></svg></span><svg width="1em" height="1em" viewBox="0 0 32 32"><path fill="currentColor" d="M16 22 6 12l1.4-1.4 8.6 8.6 8.6-8.6L26 12z"></path></svg></button><div class="rspress-nav-menu-group-content absolute mx-0.8 transition-opacity duration-300" style="opacity:0;visibility:hidden;right:0;top:52px"><div class="p-3 pr-2 w-full h-full max-h-100vh whitespace-nowrap" style="box-shadow:var(--rp-shadow-3);z-index:100;border:1px solid var(--rp-c-divider-light);border-radius:var(--rp-radius-large);background:var(--rp-c-bg)"><div><div class="rounded-2xl my-1 flex" style="padding:0.4rem 1.5rem 0.4rem 0.75rem"><span class="text-brand">English</span></div></div><div><div class="font-medium my-1"><a href="/zh/blog/index" class="link_a7cea "><div class="rounded-2xl hover:bg-mute" style="padding:0.4rem 1.5rem 0.4rem 0.75rem"><div class="flex"><span>简体中文</span></div></div></a></div></div></div></div></div></div></div></div></div><div class="mimo-home-nav-links" aria-label="Main navigation"><div class="mimo-nav-dropdown" data-font-interactive="true"><button type="button" class="rspress-nav-menu-item mimo-nav-dropdown__trigger" data-font-text="true">Product<svg class="mimo-nav-dropdown__caret" width="1em" height="1em" viewBox="0 0 32 32" aria-hidden="true"><path fill="currentColor" d="M16 22 6 12l1.4-1.4 8.6 8.6 8.6-8.6L26 12z"></path></svg></button><div class="mimo-nav-dropdown__menu" role="menu"><a class="mimo-nav-dropdown__item" href="/mimocode" role="menuitem">MiMo Code</a><a class="mimo-nav-dropdown__item" href="/go/desktop" role="menuitem">MiMo Desktop</a></div></div><div class="mimo-nav-dropdown" data-font-interactive="true"><button type="button" class="rspress-nav-menu-item mimo-nav-dropdown__trigger" data-font-text="true">Research<svg class="mimo-nav-dropdown__caret" width="1em" height="1em" viewBox="0 0 32 32" aria-hidden="true"><path fill="currentColor" d="M16 22 6 12l1.4-1.4 8.6 8.6 8.6-8.6L26 12z"></path></svg></button><div class="mimo-nav-dropdown__menu" role="menu"><a class="mimo-nav-dropdown__item" href="/#paper" role="menuitem">Paper</a><a class="mimo-nav-dropdown__item" href="/#blog" role="menuitem">Blog</a></div></div><a class="rspress-nav-menu-item" href="/#joinUs" data-font-text="true" data-font-interactive="true">Join Us</a></div><div class="mobileNavMenu_e7045"><div class="navScreen_ec30c  rspress-nav-screen" id="navScreen"><div class="container_c935d"><div class="navMenu_b887b"></div><div class="flex-center flex-col gap-2"><div class="flex text-sm font-bold justify-center"><div class="mx-1.5 my-1"><div class=" navScreenMenuGroup_e771d relative"><button class="button_ea41e"><span class="buttonSpan_f4b8f"><svg width="18" height="18" viewBox="0 0 32 32" style="width:18px;height:18px"><path fill="currentColor" d="M27.85 29H30l-6-15h-2.35l-6 15h2.15l1.6-4h6.85zm-7.65-6 2.62-6.56L25.45 23zM18 7V5h-7V2H9v3H2v2h10.74a14.7 14.7 0 0 1-3.19 6.18A13.5 13.5 0 0 1 7.26 9h-2.1a16.5 16.5 0 0 0 3 5.58A16.8 16.8 0 0 1 3 18l.75 1.86A18.5 18.5 0 0 0 9.53 16a16.9 16.9 0 0 0 5.76 3.84L16 18a14.5 14.5 0 0 1-5.12-3.37A17.64 17.64 0 0 0 14.8 7z"></path></svg></span><svg width="1em" height="1em" viewBox="0 0 32 32" class=" down_f631a "><path fill="currentColor" d="M16 22 6 12l1.4-1.4 8.6 8.6 8.6-8.6L26 12z"></path></svg></button><div><div class="items_dd149"><div><div class="p-1 text-center"><span class="text-brand">English</span></div></div><div><div class="py-1 font-medium"><a href="/zh/blog/index" class="link_a7cea "><div><div class="flex justify-center"><span>简体中文</span></div></div></a></div></div></div></div></div></div></div></div></div></div><button aria-label="mobile hamburger" class=" rspress-mobile-hamburger navHamburger_ac64c text-gray-500"><svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32" fill="currentColor"><circle cx="8" cy="16" r="2" fill="currentColor"></circle><circle cx="16" cy="16" r="2" fill="currentColor"></circle><circle cx="24" cy="16" r="2" fill="currentColor"></circle></svg></button></div></div></div></div><section><!--$--><div class="article mimo-v2-flash-page"><section class="section hero"><span class="release-tag">Release</span><h1 class="hero-title">Introducing MiMo-V2-Flash</h1><time class="hero-date" dateTime="2025-12">December 16, 2025</time><p>Today, we are releasing and open-sourcing MiMo-V2-Flash. It is a powerful, efficient, and ultra-fast foundation language model that particularly excels in reasoning, coding, and agentic scenarios, while also serving as an excellent general-purpose assistant for everyday tasks.</p><div class="availability-row"><span class="availability-text">MiMo-V2-Flash is now available globally on:</span><div class="platform-links"><a href="https://huggingface.co/xiaomimimo/MiMo-V2-Flash" target="_blank" class="platform-btn"><span>Hugging Face</span></a><a href="https://platform.xiaomimimo.com" target="_blank" class="platform-btn"><span>API Platform</span></a><a href="https://aistudio.xiaomimimo.com/" target="_blank" class="platform-btn"><span>AI Studio</span></a></div></div></section><section class="section benchmarks"><div class="chart-container chart-container-wide"><h3 class="chart-title">Benchmark Comparison</h3><div class="chart-legend" id="benchmark-legend"></div><canvas id="chart-benchmark"></canvas></div></section><section class="section"><h2>Reasoning, Coding, and Agentic</h2><p>MiMo-V2-Flash is a Mixture-of-Experts model with 309B total parameters and 15B active parameters, adopting a hybrid attention architecture that interleaves sliding-window and full attention, using an aggressive 128-token sliding window and a 5:1 hybrid ratio. With such a lightweight model architecture, we deliver superior intelligence.</p><p>In the math competition AIME 2025 and the scientific knowledge benchmark GPQA-Diamond, MiMo-V2-Flash ranks among the top 2 open-source models, demonstrating strong reasoning ability. On the SWE-bench Verified and Multilingual benchmarks for software engineering capability, MiMo-V2-Flash achieved the #1 spot among all open-source models and is on par with the world’s top closed-source models. This model is built for reasoning, coding, and agentic scenarios. It supports a hybrid thinking mode, allowing users to toggle whether the model “thinks” or answers instantly; it can generate functional HTML webpages with one click, working seamlessly with vibe-coding scaffolds such as Claude Code, Cursor, and Cline; and it offers an ultra-long 256k context window, enabling it to complete tasks across hundreds of rounds of agent interactions and tool calls.</p><p>Let MiMo-V2-Flash integrate into your workflow and build things for you.</p><div class="case-preview-container"><h3 class="chart-title">Web Dev Showcases</h3><div class="case-tabs"><button class="case-tab active" data-case="4">macOS</button><button class="case-tab" data-case="1">Merry Christmas</button><button class="case-tab" data-case="3">Solar System</button><button class="case-tab" data-case="5">Homepage</button></div><div class="case-prompt-display" id="prompt-display"><span class="prompt-label">Prompt</span><span class="prompt-toggle"><svg class="prompt-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"></path></svg></span><span class="prompt-text" id="current-prompt">&quot;Please generate a beautiful, usable macOS simulated operating system in HTML. The requirements are: - The Terminal must work correctly and support common commands, including cd, mkdir, etc. - The background should not be a solid color; it should preferably use a nice image, and it should be possible to change the wallpaper. - Finder should open properly, allow switching between folders, and support creating new files. - The interface should include basic macOS-style desktop icons.&quot;</span></div><div class="case-iframe-wrapper" id="case-iframe-wrapper"><div class="case-iframe-scaler"><iframe id="case-iframe" src="/mimo-v2-flash/assets/cases/4.html" title="Case Preview"></iframe></div><button class="case-fullscreen-btn" id="fullscreen-btn" title="Fullscreen"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"></path></svg></button></div></div></section><section class="section meet-mimo-section"><h2>Meet MiMo</h2><p>MiMo-V2-Flash is not just a specialist that can only write code and do math—it can become your assistant for everyday tasks, and a friend you can exchange ideas with, sparking your inspiration.</p><div class="chat-showcase-container"><h3 class="chart-title"><a href="https://aistudio.xiaomimimo.com/" target="_blank" class="chat-link">Chat with MiMo<svg class="external-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg></a></h3><div class="chat-case-tabs"><button class="chat-case-tab active" data-chat-case="1">Knowledge of LLM</button><button class="chat-case-tab" data-chat-case="2">A Pill</button><button class="chat-case-tab" data-chat-case="3">N.Y. Winter</button><button class="chat-case-tab" data-chat-case="4">Loneliness</button></div><div class="chat-conversation" id="chat-conversation"></div></div></section><section class="section"><h2>Push efficiency to the limit</h2><p>MiMo-V2-Flash is engineered for maximum efficiency. It delivers blazing-fast inference at 150 tokens per second while maintaining an ultra-low cost of $0.1 per million input tokens and $0.3 per million output tokens—making it one of the most cost-effective high-performance models available.</p><div class="chart-container"><h3 class="chart-title">Price vs Speed</h3><canvas id="chart-efficiency"></canvas><p class="chart-footnote">Price is calculated as a blend of input &amp; output in 3:1 ratio. Data from<!-- --> <a href="https://artificialanalysis.ai/" target="_blank">Artificial Analysis</a>.</p></div><p>Efficiency comes from innovative architectural advances designed for high-throughput inference. MiMo-V2-Flash adopts a 1:5 hybrid of Global Attention (GA) and<!-- --> <span class="highlight-text">Sliding Window Attention</span> <!-- -->(SWA). Our extensive empirical results show that SWA is simple, efficient, and easy to use, delivering better overall performance than Linear Attention across general tasks, long-context payload, and reasoning. It also provides a fixed-size KV cache, making it easy to integrate with existing training and inference infrastructure. We redefined parallel decoding to achieve extremely high output token throughput: by introducing<!-- --> <span class="highlight-text">Multi-Token Prediction</span> (MTP) training, we boost the base model&#x27;s capabilities, and during inference we validate MTP tokens in parallel.</p><div class="mtp-container"><h3 class="chart-title">Multi-Token Prediction</h3><div class="mtp-split"><div class="mtp-panel-left"><div class="mtp-input-label-row"><div class="mtp-label">verify</div><div class="mtp-hint">← draft from previous MTP</div></div><div class="mtp-row mtp-row-4"><div class="mtp-token mtp-token-white">token i</div><div class="mtp-token mtp-token-draft">token i+1</div><div class="mtp-token mtp-token-draft">token i+2</div><div class="mtp-token mtp-token-draft">token i+3</div></div><div class="mtp-arrows mtp-arrows-4"><span>↓</span><span>↓</span><span>↓</span><span>↓</span></div><div class="mtp-model">Language Model (verify)</div><div class="mtp-arrows mtp-arrows-4"><span>↓</span><span>↓</span><span>↓</span><span>↓</span></div><div class="mtp-row mtp-row-4"><div class="mtp-result"><div class="mtp-token mtp-token-accept">token i+1</div><div class="mtp-status mtp-status-accept">accept</div></div><div class="mtp-result"><div class="mtp-token mtp-token-accept">token i+2</div><div class="mtp-status mtp-status-accept">accept</div></div><div class="mtp-result"><div class="mtp-token mtp-token-blue">token i+3</div><div class="mtp-status mtp-status-regenerate">reject</div></div><div class="mtp-result"><div class="mtp-token mtp-token-abandon">token i+4</div><div class="mtp-status mtp-status-abandon">abandoned</div></div></div></div><div class="mtp-divider"></div><div class="mtp-panel-right"><div class="mtp-label">generate</div><div class="mtp-row mtp-row-3"><div class="mtp-token mtp-token-blue">token i+3</div><div class="mtp-token mtp-token-draft-dashed">token i+4</div><div class="mtp-token mtp-token-draft-dashed">token i+5</div></div><div class="mtp-arrows mtp-arrows-3"><span>↓</span><span>↓</span><span>↓</span></div><div class="mtp-row mtp-row-3"><div class="mtp-model mtp-model-mtp mtp-model-small">MTP 1</div><div class="mtp-model mtp-model-mtp mtp-model-small">MTP 2</div><div class="mtp-model mtp-model-mtp mtp-model-small">MTP 3</div></div><div class="mtp-arrows mtp-arrows-3"><span>↓</span><span>↓</span><span>↓</span></div><div class="mtp-row mtp-row-3"><div class="mtp-token mtp-token-draft">token i+4</div><div class="mtp-token mtp-token-draft">token i+5</div><div class="mtp-token mtp-token-draft">token i+6</div></div><div class="mtp-draft-label">drafts</div></div></div></div><p>MiMo-V2-Flash leverages MTP as a native draft model for self-speculative decoding, delivering real deployment speedups. LLM decoding is inherently memory-bound due to low arithmetic intensity. Batch-level parallelism is commonly used to increase FFN arithmetic intensity but does not benefit attention computation, as each request maintains its own KV cache. In contrast, MTP lifts the arithmetic intensity of both FFN and attention by generating multiple draft tokens, which the main model then verifies in parallel. This approach enables token-level parallelism without increasing KV cache I/O. In MiMo-V2-Flash, the MTP block is deliberately kept lightweight to prevent it from becoming a new inference bottleneck. It uses a dense FFN (not MoE) to limit parameter count and SWA (instead of GA) to reduce KV cache and attention computation costs. Despite this lean design, the MTP module achieves a high acceptance rate. In our measurements with a 3-layer MTP, it attains an accepted length of 2.8–3.6 tokens and an effective speedup of 2.0–2.6×.</p></section><section class="section"><h2>MOPD: A New Post-Training Paradigm</h2><p>During the post-training phase, to efficiently scale reinforcement learning (RL) computation and enhance the model&#x27;s reasoning and agentic capabilities, we propose the<!-- --> <span class="highlight-text">Multi-Teacher Online Policy Distillation</span> <!-- -->(MOPD) paradigm. At its core lies an efficient on-policy learning mechanism: after obtaining domain-specific expert teachers via SFT/RL, the student model samples (rollouts) from its own policy distribution and optimizes using dense, token-level rewards provided by multiple teachers.</p><p>MOPD training is stable and remarkably efficient—requiring less than 1/50 of the computational resources of traditional SFT+RL pipelines to match the peak performance of teacher models.</p><p>Furthermore, MOPD employs a decoupled design that supports flexible integration of new teachers and ORMs, and naturally enables a &quot;teach and learn&quot; closed-loop iteration: distilled student models can evolve into stronger teachers, achieving continuous self-improvement of capabilities.</p><figure class="mopd-figure"><img src="/mimo-v2-flash/assets/post-training.svg" alt="MOPD Architecture Diagram"/><figcaption>Post-Training Pipeline</figcaption></figure></section><section class="section evaluation-section"><h2>Evaluation</h2><p>We evaluate MiMo-V2-Flash across a broad suite of benchmarks:</p><div class="evaluation-table-container"><table class="evaluation-table" id="evaluation-table"><thead><tr class="header-row"><th rowspan="2" class="benchmark-col">Benchmark</th><th class="model-col mimo-col">MiMo-V2</th><th class="model-col">Kimi-K2</th><th class="model-col">DeepSeek-V3.2</th><th class="model-col">Gemini-3.0</th><th class="model-col">Claude</th><th class="model-col">GPT-5</th></tr><tr class="subheader-row"><th class="model-col mimo-col">Flash</th><th class="model-col">Thinking</th><th class="model-col">Thinking</th><th class="model-col">Pro</th><th class="model-col">Sonnet 4.5</th><th class="model-col">High</th></tr></thead><tbody id="evaluation-tbody"></tbody></table></div><p>MiMo-V2-Flash achieves performance comparable to K2 Thinking and DeepSeek V3.2 Thinking on most reasoning benchmarks, while maintaining competitive general writing capabilities for high-quality open-ended responses. In long-context evaluations, our model surpasses K2 Thinking, a significantly larger full global attention LLM, highlighting the strong long-context capabilities of our hybrid SWA architecture.</p><p>On agentic tasks, MiMo-V2-Flash scores 73.4% on SWE-Bench Verified, outperforming all open-source competitors and approaching the performance of GPT-5-High. On SWE-Bench Multilingual, the model resolves 71.7% of issues, establishing it as the most capable open-source LLM for software engineering. For general tool-use on τ²-Bench, it achieves category scores of 95.3 (Telecom), 79.5 (Retail), 66.0 (Airline). Terminal Bench results also show a competitive score. For search agent evaluation, MiMo-V2-Flash scores 45.4 on BrowseComp, further boosted to 58.3 with context management.</p></section><section class="section"><h2>Open-source</h2><p>As usual, we are open-sourcing everything. Read our<!-- --> <a href="https://github.com/XiaomiMiMo/MiMo-V2-Flash/blob/main/paper.pdf" target="_blank">technical report</a> <!-- -->for full model details.</p><p>Model weights, including MiMo-V2-Flash-Base, are available on<!-- --> <a href="https://huggingface.co/xiaomimimo/MiMo-V2-Flash" target="_blank">Hugging Face</a> <!-- -->under the MIT license.</p><p>On Day 0, we contributed all inference code to<!-- --> <a href="https://github.com/sgl-project/sglang" target="_blank">SGLang</a>. We work closely with their team and shared insights on MiMo-V2-Flash inference on the<!-- --> <a href="https://lmsys.org/blog/" target="_blank">LMSYS blog</a>.</p></section><section class="section"><p>Let&#x27;s build with MiMo. Start from here:<!-- --> <a href="https://platform.xiaomimimo.com" target="_blank">API Platform</a> <span class="free-note">(Limited time free!)</span></p></section></div><!--/$--></section><div class="mimoFooter-E_Ew9Y"><span>Copyright © 2010 - 2026 Xiaomi. All Rights Reserved</span></div></div>
+    <div id="search-container"></div>
+  </body>
+</html>

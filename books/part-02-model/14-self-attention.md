@@ -131,6 +131,8 @@ Attention(Q,K,V) = softmax(QK^T / sqrt(d_h) + M) V
 
 若需要真正少算部分路由，可以把保留支集内的归一化 sparse Attention 与另一条互补低秩读取分开计算，再用 learned gate 混合两条已各自归一的输出。Gate 是训练得到的混合系数，不是原 dense Attention 的真实保留 mass，也不保证精确恢复删除部分。[SLA2 的受限分支](https://arxiv.org/html/2602.12675v1)改变了读取与训练接口；实施时须只在允许支集上求 softmax，字面把分数乘二值 mask 会让被删位置仍有非零概率。少量更新和 QAT、支集选择、低秩路径及 kernel 都有成本；作者 kernel 加速与排除 offload 的模型延迟不是包含传输的端到端收益，质量也并非全任务支配。Gate 或低比特路径回归、选择成本抵消收益时，保留原 dense Attention、成熟 sparse 路由或更高精度，不把路由系数解释为每个位置的知识量。 <!-- source-family:SF-2026-ARXIV-2602-12675 -->
 
+省略的块还可以用 centroid 保留近似贡献，而不先删除再独立补一条输出。一个受限分支聚类 Q/K，为未精算的块让原 query 读取 key 与 value 的 cluster mean，并把 cluster 大小计入与精确块共同的归一化；再用 query centroid 探测各块的近似误差，按误差与块面积之比分配 exact 预算。这与按 attention mass 选块、或两条归一输出经 learned gate 混合不同，未归一误差只是排序 proxy，归一化耦合和 value 差仍可使它失准。[有限视频对照](https://arxiv.org/html/2603.08982v1)支持质量—计算取舍，不授最优路由或 dense 输出等价，部分质量退步且更快配置会降低保真。聚类、排列、探测、centroid 聚合与专用核均付费；分群、归一化或真实净收益不稳时，应扩大 exact 预算、保留成熟 sparse 分支或回退 dense Attention，具体 IO 与缓存执行仍由 runtime owner 验收。<!-- source-family:SF-2026-ARXIV-2603-08982 -->
+
 ## 三 token 小例子
 
 取 `B=1`、`T=3`、`d_h=2`，为简化令：
@@ -268,6 +270,10 @@ pretrained Transformer 的每个 sink 都只有 no-op 功能，更不证明非�
 Softmax 保留稳定竞争、成熟 kernel 与清楚尺度；null/register、显式 gate 或非归一化权重则用额外状态、
 缩放和训练稳定性换取 no-op 能力。设计与解释实验都应区分“结构允许的 escape hatch”和“模型实际使用
 该位置承担的因果功能”。
+
+读取偏好还可在归一化之前显式定义，而不只让内容分数自行学出默认去向。对同一合法可见支集，令每个 query 的正且归一化参照分布为 `π_i`，以 `KL(p_i || π_i)` 正则化匹配收益，行独立最优解为 `p_ij ∝ π_ij·exp(s_ij/τ)`，即 `softmax(s_i/τ + log π_i)`；均匀参照退化为普通 softmax。这个解释保留原 mask、归一化与成熟内容路由，并允许位置偏好和 key 的默认吸引力与内容匹配分账。它不是双边 marginal 的 Sinkhorn，也不证明所有既有位置方案不完整，或真实 sink 都来自同一个 prior；null/gate 与显式 prior 解决的是不同约束。
+
+如果这份 log-prior 由有限 Fourier 相对位移项与 key-only 偏置组成，可把位置特征和一个常数 query 坐标放进 Q/K 的保留子空间，再按 content/position 维度校准缩放，使同一次标准 SDPA 点积得到 content score 加该 bias；不必物化另一张 `T×T` bias，也不必改写 FlashAttention kernel。[受限原方法与对照](https://arxiv.org/html/2601.15380v1#S4)支持这条参数化分支，而不是任意 prior 都能有限因式分解或任意长度质量保证。固定 `d_h` 时位置坐标会让出 content 匹配容量，Fourier/键偏置预处理、学习与校准仍付费；低信号下的默认偏好还可能错误吸引。任务不需这份先验、内容容量或长窗质量回归时，保留普通 scaled-dot-product、已验证的 RoPE/ALiBi 与 sink/null/gate 分支，而不由一次标准 kernel 调用签发零开销。<!-- source-family:SF-2026-ARXIV-2601-15380 -->
 
 允许 no-op 之外，Attention 还须区分没有支持证据与存在低质量证据。一个条件分支给 query 增加显式零输出 option，让它可以不把全部质量分给输入；另一条分支按 value 的特征选择性抑制噪声。前者的零 option 可形成精确 abstention，但把 value gate 当作 routing 再归一化会丢失原来的总质量 Z，不能直接视为同一个聚合算子。Query 选择与 value 过滤拥有不同职责，也不由两者名称推出完整输入已经被忽略。
 
@@ -418,6 +424,10 @@ Q/K 投影让模型学习“用什么坐标寻址”，表达力强但也引入�
 
 这样获得更明确的平滑与局部性先验，却可能无法表达非对称、内容特定的路由，并对距离尺度和高维集中敏感。结构先验合适、数据较少或需要稳定扩散时可作为分支；复杂语义寻址仍应保留 Q/K/V Attention。现有 exact-v1 只支持作者架构与实验，不证明核扩散普遍优于 learned projection。<!-- semantic-body-binding:SF-2026-ARXIV-2605-02144 -->
 
+距离核也可以保留可学习 Q/K，而不移除寻址投影：先声明 spatial 或 causal 邻域，再在其中按 query–key 距离的 RBF affinity 选 top-k，仅在保留支集内归一化后读取 Value。Bandwidth、邻域与 k 分别控制软相似度、允许的边及实际混合人口；它们改变模型的局部交互先验，不是把一个已训练 dense softmax 无损变快，也不由局部聚类倾向推出所有 Transformer 必然 collapse 或多簇收敛。<!-- source-family:SF-2026-ARXIV-2602-11534 -->
+
+这类局部路由只有在真正只构造 W 个候选、完成选择并由稀疏 kernel 消费时，才具有所声明的 O(NWd) 计算路径；先算全 pair 距离再 mask 并未取得该执行收益，W 与选择开销也不能省略。[Krause 的 LLM 对照](https://arxiv.org/html/2602.11534v1)保留全局 attention、另加 local shortcut，语言质量有持平及 Macro-F1 反退，因此图像替换/单 H100 生成结果不认证 LLM 加速或全任务稳定性。邻域过窄、选择或增设旁路费用不合算、质量回归时，保留全局 Q/K/V、固定窗口或已验 selector，不以 Attention sink 曲线代替任务和端到端执行验收。<!-- source-family:SF-2026-ARXIV-2602-11534 -->
+
 非负归一化也可以被换成允许相消的聚合分支。普通 softmax 把 value 的贡献限制在凸组合内，在需要表示差分或对比时，一种做法先从 softmax 中减去均匀基线和一阶项，再由当前 token 的 gate 分别重加一阶与高阶残差，使径向系数可正可负；角向则使用归一化 Q/K 的内积，保留方向与位置关系。让历史 logit 只依赖写入时的 token、当前 gate 只依赖读取时的 token 后，可以把相关历史量整理为 prefix reduction。这改变了 Attention 算子与训练归纳偏置，不是对既有 softmax 的 exact 执行优化；径向系数零和也不保证再乘不同角向系数后仍零和。有界 logit/value 等假设下的分析不授任意长序列或混合精度稳定性，有限小模型实验与线性时间表达不认证生产 kernel 速度。额外 gate、归一化和 scan 状态仍须计费，质量或数值条件不成立时，非负 softmax、局部精确层或混合路径继续合理。<!-- source-family:SF-2026-ARXIV-2602-05230 -->
 
 相消还可以发生在 softmax 读取的内容上，而不只改动径向路由系数。一条因果序列分支先按 key-key 依赖构造下三角预条件系统，对 Value 做 triangular solve，再交给 query-key softmax 读取；被读取的已是校正后的 Value，不能把它解释为对原 value 的普通凸组合。逆算子产生的有效系数可为 signed，改写的是模型算子与训练归纳偏置，不是 FlashAttention 式的 exact softmax 执行优化，也不同于后面在线递归状态的逐维 diagonal step。<!-- source-family:SF-2026-ARXIV-2602-10410 -->
@@ -487,6 +497,8 @@ PagedAttention  管理运行时 KV Cache 物理存储
 ## 改变算子之后，转换与执行必须分别验收
 
 FlashAttention 保持已定义的 Attention 语义。下面的路径则涉及替换算子、近似冻结 teacher，或利用专门的稀疏与分块结构；先明确目标算子，再谈训练转换和执行收益，才能避免把近似质量当成 exact IO 优化的一部分。
+
+少算关系还可以不直接删除attention edges，而用稀疏的结构化因子近似一张仍然dense的attention map。视频中若位置交互近似沿时间、宽、高分离，block轴须消费真实视频布局，不能把flattened index邻接当时空邻接；不规则语义交互又可能破坏block低rank，因此可进一步细分block，再以适配训练减少在线因子refinement。这与FlashAttention的exact IO优化、以及直接top-k删边是三种不同选择。[受限视频对照](https://arxiv.org/html/2602.12271v1)只支持相应布局、训练与核配置：可分位置的exact表示不认证混合语义attention等价，表示族扩大也不证明有限训练/迭代下质量单调。训练、refinement、layout转换和跨frame中间量都计费；query分块能控峰值内存，却不会取消KV存储，局部kernel倍数也不是端到端或实时SLO，部分GPU/密度反而慢于dense核。布局/质量/摊销不成立时，保留更多refinement、经验证的其他近似或dense FlashAttention，不因因子稀疏宣称删除了所有关系或无损全局加速。<!-- source-family:SF-2026-ARXIV-2602-12271 -->
 
 ### 替换已训练算子，先解决局部冷启动，再恢复整网行为
 
@@ -577,6 +589,8 @@ Self Attention 把上下文建模转化为可微分路由：Q/K 决定连接权�
 
 ## Review notes
 
+- `SF-2026-ARXIV-2601-15380` — Daily `2026-01-24`补查；[GOAT exact-v1](https://arxiv.org/html/2601.15380v1) §3–4/Eq11–24/Algorithm1、§6 C4/Passkey 与 Appendix G必要配置。2+2+3=7，只采用正prior/同支集的行独立KL解释及有限log-prior→QK保留子空间→一次标准SDPA；content容量让渡、预处理成本、有限训练/长度与sink因果权限近文。root实际必要原源/owner PRE通过授两段窄锁；作者已顺读正文/完整邻接与自身末注，root非作者实际正文272/274、完整253–294邻接与自身末注584 POST通过，窄锁释放，非日级Gate。未运行代码/复现实验，不采用所有Attention不完整、通用长度保证或零开销。
+
 - `SF-2025-DEEPSEEK-V32-EXP` — Daily `2025-09-30`；上述固定六页报告§1～3、Eq1～4及Appendix A。采用cheap selector的训练/梯度分责与核心读取复杂度，保留indexer二次开销、训练预算与质量反侧；官贴确认发布时间，commit仅固定正文身份。未核代码、未复现，不采用成本曲线为生产SLO。
 
 - `SF-2026-ARXIV-2602-17898` — Daily `2026-02-24`；[exact-v1](https://arxiv.org/html/2602.17898v1) §2.1/§2.4 Theorem2.2/Appendix D。2+1+2=5，固定final h/同w/convex scalar readout相对mean PCC的实际边界差额深入；R_s最大半径/Rtilde RMS与非零sigma0条件明示，不授整网或LLM能力上限，改encoder/head即改比较对象。root 必要源/actual owner PRE 通过授一段窄锁；作者实际正文与完整邻接写后顺读，root 非作者实际正文/完整邻接/自身末注 POST 通过，窄锁释放。未运行artifact或复现，非日级 Gate。
@@ -621,3 +635,9 @@ Primary-source 校验入口：
 - `SF-2026-ARXIV-2602-12675` — Daily `2026-02-17`；[exact-v1](https://arxiv.org/html/2602.12675v1) 必要机制、关键对照与直接限制；2+1+2=5，实际 owner 差额定点深入。仅采用正文条件分支，不授普遍性能/正确性或终端证明；root 必要原源/owner PRE通过并授窄锁，作者正文/完整邻接已顺读，root非作者实际正文/完整邻接/末注POST通过，窄锁释放；未核实现或复现，非日级Gate。
 
 - `SF-2026-ARXIV-2602-23057` — Daily `2026-02-28`；[exact-v1](https://arxiv.org/html/2602.23057v1) §3–5/Limitations必要接口，2+1+2=5；fresh非旧作者独核prepared原证/actual owner，centered query gate与EMA均匀分量差额。总量/负权重/no-op与mask/EMA身份限制近文，不采用per-query probability/entropy宣传，不推未核实现错误。root授Ch14窄ownership；作者实际正文/完整邻接顺读，root非作者实际正文、完整邻接及自身末注POST通过，窄锁释放，未核实现/复现，非日级Gate。
+
+- `SF-2026-ARXIV-2602-11534` — Daily `2026-02-14`补查；[Krause exact-v1](https://arxiv.org/html/2602.11534v1) §4–6，2+1+2=5，learned Q/K 的 W 候选→RBF/top-k/局部归一化及真实建邻费用差额深入。只采用有条件 interaction support，mask 不授稀疏 kernel/线性端到端；LLM 全局 attention+shortcut、MNLI Macro-F1 反退/MMLU 持平，不迁移 vision/H100 收益或授全 collapse 定理。root/reviewer必要Source及actual owner/完整邻接PRE通过，root授两段+本末注窄锁；作者已写并顺读完整邻接，review_20260214已实际独核新正文、完整邻接与本末注，非作者actual POST通过，root释放窄锁，不授DAY。未核artifact/复现。 本轮补查事件的首次公开日期未证，必要Source/PRE/实际POST研究仍有效，但不计本日已确认新增成果；归属只按[本日日报§5](../../papers/2026/02/14/README.md#5-缺口与下一步)的57日期请求定点重开，不撤正文或补造公开日。
+
+- `SF-2026-ARXIV-2602-12271` — Daily `2026-02-14`补查；[MonarchRT exact-v1](https://arxiv.org/html/2602.12271v1) §2–5/7、T1–8，2+2+2=6。仅采用structured sparse因子→dense近似、video布局与tiling/训练验收；S=0 exact、tile数/finite优化单调、trained与trainingfree人口隔离，B200慢/RTX720pKV OOM/compile16FPS与全费用回退近采用包/正文。非作者必要Source与actual逐字PRE通过、root授单段/本人note窄锁；作者写后完整邻接/自身note已顺读，reviewer非writer actualPOST通过，root释放窄锁，不授DAY。未核artifact/复现，不授实时全SLO。 本轮补查事件的首次公开日期未证，必要Source/PRE/实际POST研究仍有效，但不计本日已确认新增成果；归属只按[本日日报§5](../../papers/2026/02/14/README.md#5-缺口与下一步)的57日期请求定点重开，不撤正文或补造公开日。
+
+- `SF-2026-ARXIV-2603-08982` — Daily `2026-03-12`补查；[SVG-EAR exact-v1](https://arxiv.org/html/2603.08982v1) §4–6/Eq1–8/Table1，必要§7/8/10。2+1+2=5，exact/centroid共同normalizer+count与errorproxy gap深入；不采完整定理常数/伪码、最优路由或dense等价，EAR/Turbo质量预算与聚类/probe/核费用近文。Source/date/actual owner/逐字PRE经mar12_independent_continue独核通过，root授本单段/本人注窄锁；未核实现/复现，root非writer实际正文、完整邻接及本人末注actualPOST通过，锁释放，不授DAY。

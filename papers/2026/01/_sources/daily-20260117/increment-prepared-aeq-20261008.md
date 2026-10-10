@@ -1,0 +1,9 @@
+# AEQ 10513：必要证据及具体已有覆盖提案
+
+精确版本[2601.10513v1](https://arxiv.org/html/2601.10513v1)。8题摘独立准入校准已通过潜力，评分拟2+1+2=5（evaluation instrument的modality/granularity边界，不把整个omnimodal系统算新增Reach）。标准必要已读§3.1–3.3、§4、§5–7/Tables4–7、Limitations、AppI/J；原件increment-core-entry1、increment-aeq-null-core2/3、increment-first3-core4。未读无关全部模型附录，不声称复现。
+
+机制与对照：1,885 English grouped实例来自MELD/GigaSpeech的同utterance不同context与EmoVDB同context不同tone；人工验证生成context不认证共情真值。Text judge与audio judge分别测对象，Nat/Discrimination/Delivery不可合总质量因果。AppI为12位流利英语大学student helpers、180 instances/responses，10模型pairs、每pair两group；group内相关，不按独立1885人评。作者human参考非全人口gold。§4 consistency比较pair排序，tie对grade差≤1也接受；Table6的84.9/80.2/88.7等不是逐项精确准确率。Table7人类与OLM fine preference可不同；§7改5点时direct audio仅43%作者consistency，caption自由描述偏正、客观描述又偏负，支持该模型/人口/构念不迁移，不证明所有caption皆不可能。AppJ未另给fine人评独立N/置信区间，不把AppI数字自动套到J；声音多数neutral、英语/文化/limitedexpressive variation反侧保留，未单控audiooutputtraining vs model identity。正文GPT5与Table5GPT5mini命名差不统一recipe。原声采集/合成、extrajudge/caption、人审16USD/hour都费；硬件/precision/batch/SLO与完整end-to-end成本NotDisclosed，不把coarse评分认证天然声学EQ。
+
+公开日限定提案：已保留DataCite Submitted Jan15T15:39:50Z、Updated-v1 Jan16T01:50Z、正式ID registered Jan16T02:57:11Z字段。结合本轮实际已读官方availability工作日公告与ID只随announcement赋予规则：正常无提前公开情况下最早Jan16T01Z、正式ID不晚于上述registered已存在，二界均BJTJan16；registered不是单独first-public。正文标题/AB及可见链接无本篇明确窗前全文信号（github匹配只有arXiv reportissue），不声称互联网绝无早稿。若可核同命题窗前完整稿或本次重要增量不能建立，定点隔离而不搬旧日；当前拟Jan16日期须独立验收。
+
+Books提案NoChange—Existing，owner PLATFORM-EVALUATION-SYSTEM。作者实际读Ch66:130–143、2745–2773、4399–4420：137现有条件声学NLL、MOS、embeddingjudge分对象及资格；2761明确文本偏好/聚合稳定不能认证音频偏好、音频sensor/语言/人口变化要重估和人评回退，且直接注明nativeprosody未验证；4410–4418明确agreement绑定population+scale+missing+pooling+metric、非truth authority。新增coarse到fine/caption局部反证对本报告有意义，但上述具体仪器资格/人口粒度/代理对象分责已承载拟保留判断，不因新benchmark名再写段。无需Books diff，仍待非作者source/日期/actual Existing验收；没有PRE/POST/DAY自授。

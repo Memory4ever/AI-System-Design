@@ -1,0 +1,1126 @@
+DyLLM: Efficient Diffusion LLM Inference via Saliency-based Token Selection and Partial Attention
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Language Model Paradigms
+2.1 Autoregressive Sampling: Sequential and One-Pass
+2.2 Diffusion-based Sampling: Parallel and Multi-Pass
+2.3 Semi-Autoregressive Decoding: Locally Parallel, Globally Sequential
+2.4 The Efficiency Dilemma: Decoding Parallelism vs. Caching
+3 DyLLM
+3.1 Characterizing Temporal Sparsity
+3.2 Salient Token Selection: Identifying Semantic Deltas
+3.3 Propagation of Semantic Deltas Across Layers
+3.4 Impact of Saliency-Aware Inference on Accuracy
+3.5 Response-only Step
+4 Evaluation
+4.1 Experimental Setup
+4.2 Main Results
+4.2.1 Accuracy Preservation
+4.2.2 Throughput Improvements
+4.2.3 Threshold τ\tau
+4.2.4 Scalability with Increasing nun_{u}
+5 Conclusion
+References
+A Masked Diffusion Language Models (MDLMs)
+A.1 D3PM and MDLMs
+A.2 Diffusion Process in MDLMs
+B Diffusion LLM vs. Autoregressive LLM
+B.1 Modeling
+B.2 Computation
+C Core Algorithm of DyLLM
+C.1 DyLLM
+C.2 Full Step
+C.3 Sparse Step
+C.4 Approximate Attention
+D Extended Ablation Study
+D.1 Impact of τ\tau on accuracy
+D.2 Average Ls​a​lL_{sal} per layer on various benchmarks
+D.3 Semi-AR v.s. Non Semi-AR accuracy comparison
+D.4 dLLM-Cache Configurations
+E Formal Proofs of Propositions
+E.1 Proof of Proposition
+E.2 Proof of Proposition
+F Other Related Works
+F.1 Confidence Aware Decoding
+F.2 Sparse Attention
+License: arXiv.org perpetual non-exclusive license
+arXiv:2603.08026v1 [cs.CL] 09 Mar 2026
+DyLLM: Efficient Diffusion LLM Inference via Saliency-based Token Selection and Partial Attention
+Younjoo Lee
+Affiliation: Seoul National University
+Junghoo Lee
+Affiliation: Seoul National University
+Seungkyun Dan
+Affiliation: Seoul National University
+Jaiyoung Park
+Affiliation: Seoul National University
+Jung Ho Ahn
+Affiliation: Seoul National University
+Abstract
+Masked Diffusion Language Models (MDLMs) enable parallel token decoding, providing a promising alternative to the sequential nature of autoregressive generation.
+However, their iterative denoising process remains computationally expensive because it repeatedly processes the entire sequence at every step.
+We observe that across these diffusion steps, most token representations remain stable; only a small subset, which we term salient tokens, contributes meaningfully to the next update.
+Leveraging this temporal sparsity, we present DyLLM, a training-free inference framework that accelerates decoding by selectively computing only these salient tokens.
+DyLLM identifies saliency by measuring the cosine similarity of attention contexts between adjacent denoising steps.
+It recomputes feed-forward and attention operations only for salient tokens while reusing cached activations for the remainder.
+Across diverse reasoning and code-generation benchmarks, DyLLM achieves up to 9.6×\times higher throughput while largely preserving the baseline accuracy of state-of-the-art models like LLaDA and Dream.
+00footnotetext: Correspondence to:
+Younjoo Lee <younjoo0614@snu.ac.kr>, Jung Ho Ahn <gajh@snu.ac.kr>
+1 Introduction
+The emergence of discrete denoising diffusion probabilistic models (D3PM) Austin et al. (2021a) has introduced a new paradigm for language modeling by enabling diffusion processes directly within discrete token spaces via masking.
+This shift has catalyzed the development of high-performance Masked Diffusion Language Models (MDLMs) such as LLaDA Nie et al. (2025), Dream Ye et al. (2025), and Gemini Diffusion Google DeepMind (2025), which are now approaching the performance levels of standard Autoregressive Language Models (ARLMs).
+Unlike ARLMs that are constrained by a sequential, token-by-token generation process, MDLMs lift this limitation by initializing the response as a sequence of mask tokens and leveraging bidirectional attention to predict the entire sequence simultaneously.
+By iteratively unmasking tokens based on the model’s predicted probabilities, an MDLM decodes multiple tokens in parallel, providing a viable path toward significantly higher generation throughput.
+Figure 1:
+Runtime breakdown of autoregressive decoding with vLLM Kwon et al. (2023), original diffusion LLM implementation, and DyLLM on random GSM8K 5-shot prompts (batch size=16\text{batch size}=16).
+Original diffusiosn LLM repeats the full steps, whereas DyLLM recomputes only salient tokens, reducing the dominant per-step overhead.
+Despite these advantages, the iterative refining nature of diffusion-based decoding introduces a significant computational bottleneck.
+In ARLMs, execution follows a strict sequential order, which naturally enables incremental Key-Value (KV) caching Pope et al. (2023); only the newly generated token requires computation at each step.
+In contrast, MDLMs operate without such a fixed spatial ordering.
+Because bidirectional attention updates the global context during each refinement step, the model must repeatedly process the full sequence.
+Consequently, denoising steps in an MDLM resemble a “repeated prefill” operation, leading to prohibitive computational waste as the number of iterations increases.
+Figure 1 highlights a runtime perspective that clarifies this trade-off.
+While ARLMs like Llama Grattafiori et al. (2024) exhibit highly efficient decoding steps after the initial prefill, MDLMs incur a heavy compute tax at every step, primarily dominated by Feed-Forward Network (FFN) operations.
+Prior works, including Fast-dLLM Wu et al. (2026), dKV-Cache Ma et al. (2025), SparseD Wang et al. (2026), dLLM-Cache Liu et al. (2025), Elastic-Cache Nguyen-Tri et al. (2026), explored acceleration of MDLM inference.
+Among these, caching-based techniques have emerged as a prominent area of investigation, aiming to reduce redundant computations across steps.
+However, Fast-dLLM and dKV-Cache rely on a priori caching strategies that exploit the sequential structure of language, but do not reflect the diffusion LLM–specific dynamics of layer-wise variations in representation stability.
+Similarly, while dLLM-Cache and Elastic-Cache utilize activation similarity to trigger cache updates, there remains an opportunity to further refine these strategies through a more granular investigation of the cosine similarity value distributions.
+In this paper, we propose DyLLM,11
+1
+https://anonymous.4open.science/r/DyLLM_anonymous-40FB/ a training-free inference framework that accelerates MDLM decoding by exploiting layer-wise temporal sparsity.
+Our work is built on the observation that across consecutive diffusion steps, the majority of token representations remain stable Ma et al. (2025); Wu et al. (2026); Liu et al. (2025); only a small subset, which we define as salient tokens, undergoes meaningful transitions that contribute to the next update.
+DyLLM identifies these salient tokens by measuring the cosine similarity of attention contexts between adjacent steps.
+Leveraging this property, DyLLM selectively recomputes FFN and attention operations only for salient tokens while reusing cached results for the remainder of the sequence.
+To further mitigate the quadratic overhead of attention, we introduce a saliency-aware approximate attention mechanism that approximates context updates for stable tokens with high fidelity.
+Figure 1 shows that DyLLM substantially alleviates the dominant bottleneck, leading to improved throughput in salient-only steps.
+Our key contributions are three-fold:
+•
+Layer-Adaptive Saliency Mechanism: We introduce a dynamic selection policy that identifies salient tokens at each layer, allowing the model to bypass redundant FFN computations for stable hidden states.
+•
+Saliency-Aware Approximate Attention: We propose an approximate attention mechanism that exploits activation sparsity to eliminate redundant context updates, reducing the complexity of the attention operation.
+•
+Scalable Throughput Improvement: We demonstrate that DyLLM scales robustly with increasing parallel decoding degrees (nun_{u}). Across LLaDA and Dream models, DyLLM achieves up to 7.6×\times and 9.6×\times higher throughput, respectively, while preserving baseline accuracy across reasoning and code-generation benchmarks.
+2 Language Model Paradigms
+We consider the generation task of language models, where an input prompt 𝐱P=[x1,…,xLP]\mathbf{x}^{P}=[x^{1},...,x^{L_{P}}] of length LPL_{P} is given to generate a response 𝐱R=[xLP+1,…,xLP+LR]\mathbf{x}^{R}=[x^{L_{P}+1},...,x^{L_{P}+L_{R}}] of length LRL_{R}. Each token xlx^{l} belongs to a discrete vocabulary 𝒱={1,…,V}\mathcal{V}=\{1,...,V\}. Following the convention, we use superscript to denote the spatial position ll and subscript to denote the diffusion timestep t∈{T,…,0}t\in\{T,...,0\}; e.g., the state of a token at position ll and diffusion step tt is denoted as xtlx_{t}^{l}.
+To maintain focus on the computational efficiency of the generation process, the following preliminaries focus on the inference phase. We refer the reader to Appendix A for further background on the theoretical foundations of Diffusion LLMs.
+2.1 Autoregressive Sampling: Sequential and One-Pass
+The AR generation process operates in a causal manner, predicting one token at each positional step from left to right. Concretely, given an input sequence, an AR model outputs a categorical distribution over 𝒱\mathcal{V}, conditioned on the previously fixed tokens 𝐱1:l−1\mathbf{x}^{1:l-1}.
+xl∼p(x|𝐱1:l−1)x^{l}\sim p(x|\mathbf{x}^{1:l-1})
+Once a token xlx^{l} is sampled, it is appended to the context and fixed for the remainder of the generation.
+This mechanism ensures that each token is computed as an output in exactly one forward pass of the model, allowing for highly efficient KV caching.
+However, the AR process imposes a strict dependency where the ll-th forward pass can proceed after l−1l-1-th token has been generated.
+While recent speculative decoding techniques Leviathan et al. (2023) attempt to mitigate this sequential bottleneck by generating multiple tokens per step, they still operate within the AR paradigm’s causal constraints.
+We consider these approaches beyond the scope of this paper and instead focus on the following diffusion-based paradigm, which enables parallel decoding through iterative refinement.
+2.2 Diffusion-based Sampling: Parallel and Multi-Pass
+In contrast to ARLMs, MDLMs treat generation as a global denoising task, breaking the one-token-per-forward-pass constraint through iterative refinement.
+Specifically, the generation process is formulated as a filling-in-the-blanks task, where the model starts with a fully masked response and progressively reveals tokens from the masked sequence. The parallel refinement process can be formally described as follows:
+Setup: Given an input prompt 𝐱P\mathbf{x}^{P} and a target response 𝐱R\mathbf{x}^{R}, the generation proceeds through a sequence of target states 𝐱tR\mathbf{x}_{t}^{R} for t∈{T,…,0}t\in\{T,...,0\}. At the initial timestep TT, the response is initialized as a sequence of mask tokens [M]∈𝒱[M]\in\mathcal{V}. Consequently, the initial input to the model is constructed as:
+𝐱T=[𝐱P;𝐱TR]=[x1,…,xLP,[M],…,[M]⏟LR​ tokens]\mathbf{x}_{T}=[\mathbf{x}^{P};\mathbf{x}^{R}_{T}]=[x^{1},\dots,x^{L_{P}},\underbrace{[\text{M}],\dots,[\text{M}]}_{L_{R}\text{ tokens}}]
+Throughout the sampling process, the prompt 𝐱P\mathbf{x}^{P} remains invariant, providing a constant context, while the response state 𝐱tR\mathbf{x}^{R}_{t} is updated over TT iterations.
+Refinement and Unmasking:
+At each denoising step tt, the model processes the concatenated sequence
+𝐱t=[𝐱P;𝐱tR]\mathbf{x}_{t}=[\mathbf{x}^{P};\mathbf{x}_{t}^{R}]
+to estimate, for every position rr, the categorical distribution
+p⁡(x^r∣𝐱t),r∈{1,…,LP+LR},p(\hat{x}^{r}\mid\mathbf{x}_{t}),\quad r\in\{1,\dots,L_{P}+L_{R}\},
+where x^r\hat{x}^{r} denotes the original (unmasked) token predicted at position rr.
+Based on these predictions, the response state transitions from 𝐱tR\mathbf{x}^{R}_{t} to 𝐱t−1R\mathbf{x}^{R}_{t-1} by replacing a subset of mask tokens with tokens sampled from the predicted probability distributions.
+The number of tokens revealed at each time step is controlled by a transition schedule βt∈[0,1]\beta_{t}\in[0,1], which determines how many positions remain masked at step tt.
+Given this budget of tokens to be revealed, the specific positions to unmask are selected according to a confidence-based sampling strategy Nie et al. (2025); Ye et al. (2025).
+In particular, the model identifies a subset of positions with the highest prediction confidence (e.g., the highest logit values) to be unmasked, while the remaining positions are kept as [M][\text{M}] for further refinement in the next step.
+Ultimately, the diffusion approach is designed to generate a full response in a constant number of steps. By decoding multiple tokens per forward pass, MDLMs have the potential to significantly reduce the number of forwarding steps inherently required by the autoregressive paradigm, enabling much higher throughput.
+2.3 Semi-Autoregressive Decoding: Locally Parallel, Globally Sequential
+While MDLMs enable parallel refinement, simultaneously refining the entire sequence makes the denoising process more challenging, often leading to degraded generation quality.
+Block-wise semi-autoregressive (semi-AR) decoding Han et al. (2023) addresses this issue by scheduling the decoding process in a left-to-right, block-wise manner.
+Specifically, the target response is partitioned into fixed-length blocks of size BB, which are decoded sequentially, while tokens within each block are refined in parallel using the MDLMs’ iterative unmasking procedure.
+This block-wise decoding schedule progressively fixes previously decoded blocks.
+Empirically, this strategy yields substantial accuracy improvements Jazbec et al. (2025); for example, LLaDA’s performance on the GSM8K benchmark increases from 58.07 to 77.79 under semi-AR decoding (see Section D.3).
+This indicates that semi-AR results in better generation quality by enabling stable prefix representations across refinement steps.
+As discussed next, this execution structure additionally enables efficient reuse of attention key-value representations through block-wise KV caching.
+2.4 The Efficiency Dilemma: Decoding Parallelism vs. Caching
+Interestingly, the parallel refinement capability of MDLMs introduces a fundamental efficiency dilemma. In AR decoding, KV caching Pope et al. (2023) is highly effective because each step fixes the preceding contexts and only computes a single new position. In contrast, MDLMs recompute every position in every iteration, as the bidirectional attention mechanism requires the entire sequence to be re-processed at every denoising step tt. This leads to a prohibitive per-iteration computational cost that often offsets the benefits of parallel decoding.
+To mitigate this issue, several caching strategies have been proposed, ranging from temporal approaches such as periodic refresh to spatial and fine-grained activation reuse.
+An early effort of dKV-Cache Ma et al. (2025) introduces a periodic refresh strategy, which reuses cached KV states across multiple timesteps and refreshes them periodically to correct accumulated errors.
+More recently, Fast-dLLM Wu et al. (2026) restricts the spatial scope of re-computation through block-wise caching. Specifically, its PrefixCache reuses the context of the prompt and previously decoded blocks during refinement, based on the observation that prefix activations remain stable across diffusion steps.
+Its DualCache further extends this mechanism by additionally reusing the masked suffix and updating them via periodic refresh. This allows the model to compute only the active target block in most iterations, thereby improving throughput with minimal accuracy loss.
+In parallel to the block-based methods, another line of work explores token-level adaptive caching.
+dLLM-Cache Liu et al. (2025) extends caching to attention outputs and FFN activations, selectively recomputing tokens whose value vectors change the most between steps.
+Elastic-Cache Nguyen-Tri et al. (2026) further increases caching flexibility by adaptively determining whether the entire tokens should participate in the computation based on attention weight.
+Despite these advancements, a critical gap remains. While prior works address either spatial (block-wise) or token-wise redundancy, they often rely on fixed schedules or global thresholds that do not account for the layer-wise dynamics of the diffusion process, which motivates our DyLLM.
+Figure 2:
+Distribution of temporal cosine similarity st,ls_{t,l} across layers (l∈{8,16,24,32}l\in\{8,16,24,32\}) obtained using GSM8K 5-shot prompts.
+3 DyLLM
+To mitigate the computational redundancy in MDLMs, we propose DyLLM, a framework that adaptively recomputes only a subset of tokens undergoing significant semantic transitions. As illustrated in Figure 1, DyLLM accelerates inference by transitioning from a standard warmup phase (Full) to an accelerated refinement phase (Salient only), mirroring the prefill-and-decoding phases in ARLMs. DyLLM is built upon two core insights: (1) layer-wise temporal sparsity of MDLM and (2) position-wise delta propagation in Transformer blocks.
+3.1 Characterizing Temporal Sparsity
+We first analyze the temporal dynamics of internal representations during denoising.
+Let Ct,l(i)C_{t,l}^{(i)} denote the attention context vector for token ii at layer ll and timestep tt, computed via softmax-normalized attention scores and value vectors.
+To quantify the evolution of Ct,lC_{t,l}, we define temporal cosine similarity as:
+st,l(i)=Ct,l(i)⋅Ct−1,l(i)‖Ct,l(i)‖​‖Ct−1,l(i)‖s_{t,l}^{(i)}=\frac{C_{t,l}^{(i)}\cdot C_{t-1,l}^{(i)}}{\|C_{t,l}^{(i)}\|\|C_{t-1,l}^{(i)}\|}
+Figure 2 illustrates the distribution of st,ls_{t,l} across T=256T=256 diffusion steps. Our analysis reveals two critical findings:
+First, for the majority of tokens, the distribution is heavily skewed toward unity (st,l(i)≈1.0s_{t,l}^{(i)}\approx 1.0) across all layers. This supports that the attention context remains highly consistent between consecutive iterations.
+Second, this stability exhibits a layer-wise tendency; early layers are dominated by tokens with near-perfect similarity, whereas deep layers show a broader distribution.
+3.2 Salient Token Selection: Identifying Semantic Deltas
+Based on these observations, we define salient tokens at step tt and layer ll as a set of indices 𝒜t,l={i∣st,l(i)≤τ}\mathcal{A}_{t,l}=\{i\mid s_{t,l}^{(i)}\leq\tau\}, where τ\tau is a selection threshold.
+During timestep tt, for non-salient tokens (i∉𝒜t,li\notin\mathcal{A}_{t,l}), we skip the subsequent FFN computation and reuse the previous state from the KV cache, while only salient tokens undergo full re-computation.
+Furthermore, Proposition 1 and 3.2 establish the error bounds of our selection metric. Complete proofs for all propositions are provided in Appendix E.
+Proposition 3.1 (Scale Invariance under Linear Projection).
+Let Wo∈ℝd×dW_{o}\in\mathbb{R}^{d\times d} be the output projection matrix, and α∈ℝ+\alpha\in\mathbb{R}^{+} be a positive scaling factor. The composite operation of linear projection followed by RMSNorm satisfies:
+RMSNorm​((α​C)​Wo)=RMSNorm​(C​Wo)\text{RMSNorm}((\alpha C)W_{o})=\text{RMSNorm}(CW_{o})
+(1)
+Proposition 1 implies that the magnitude of the attention context Ct,lC_{t,l} does not affect the input to the subsequent FFN layer; only the directional alignment of the projected vector Ct,l​WoC_{t,l}W_{o} matters. Next, we establish the relationship between our metric st,ls_{t,l} and the approximation error in the final normalized output.
+Proposition 3.2 (Error Bound via Directional Alignment).
+Let
+δ=‖RMSNorm⁡(Ct,l​Wo)−RMSNorm⁡(Ct−1,l​Wo)‖2\delta=\|\mathrm{RMSNorm}(C_{t,l}W_{o})-\mathrm{RMSNorm}(C_{t-1,l}W_{o})\|_{2}
+denote the approximation error at layer ll.
+Assuming that the output projection WoW_{o} is well-conditioned and that
+the temporal variation between Ct,lC_{t,l} and Ct−1,lC_{t-1,l} is small,
+the error admits the following upper bound:
+δ≤κ⁡(Wo)​2​(1−st,l),\delta\;\leq\;\kappa(W_{o})\sqrt{2(1-s_{t,l})},
+(2)
+where
+st,ls_{t,l} is the temporal cosine similarity and
+κ⁡(Wo)=σmax​(Wo)/σmin​(Wo)\kappa(W_{o})=\sigma_{\max}(W_{o})/\sigma_{\min}(W_{o})
+denotes the condition number of WoW_{o}.
+Implication. Proposition 3.2 confirms that temporal shift of FFN input is directly related to our proxy st,ls_{t,l}. When a token’s representation is stationary st,l(i)→1s_{t,l}^{(i)}\to 1, skipping the FFN computation introduces almost no error. Conversely, tokens with low st,l(i)s_{t,l}^{(i)} possess a large temporal shift, making them salient to the final generation quality.
+By thresholding on st,ls_{t,l}, DyLLM implicitly controls the error propagation budget across model layers. In early layers, where most positions exhibit low sensitivity, we prune computation aggressively. In deeper, more sensitive layers, our threshold-based policy automatically expands the set of salient tokens to safeguard the final generation quality.
+After Tf​u​l​lT_{full} full steps (set to 4 in this work) to initialize and stabilize caches, subsequent steps operate only on salient tokens.
+3.3 Propagation of Semantic Deltas Across Layers
+Figure 3:
+Approximate attention: exact attention with full KV cache is done only for salient tokens; for non-salient ones, we use column sparse attention context operation to approximate updates.
+Beyond bypassing FFN layers, identifying salient tokens enables further optimization of the attention mechanism by avoiding full context recomputation. Since semantic deltas are localized to a sparse subset 𝒜t,l\mathcal{A}_{t,l}, the updates to the attention context can be decomposed and propagated with high efficiency.
+Let Δ​Ct,l=Ct,l−Ct−1,l\Delta C_{t,l}=C_{t,l}-C_{t-1,l} represent the temporal change in the attention context at layer ll and iteration tt. Using the attention score matrix St,lS_{t,l} and value matrix Vt,lV_{t,l}, this delta can be expanded as:
+Δ​Ct,l\displaystyle\Delta C_{t,l}
+=(St−1,l+Δ​S)​(Vt−1,l+Δ​V)−St−1,l​Vt−1,l\displaystyle=(S_{t-1,l}+\Delta S)(V_{t-1,l}+\Delta V)-S_{t-1,l}V_{t-1,l}
+(3)
+=(St−1,l+Δ​S)​Δ​V+(Δ​S)​Vt−1,l\displaystyle=(S_{t-1,l}+\Delta S)\Delta V+(\Delta S)V_{t-1,l}
+The decomposition in Equation 3 reveals that temporal updates in one step is propagated to the next layer through two channels: (1) updates to token content via (Δ​V\Delta V), and (2) re-routing of attention weights (Δ​S\Delta S). Based on the active set 𝒜t−1,l\mathcal{A}_{t-1,l} from the previous iteration, we execute a dual-path update strategy (Figure 3):
+•
+Salient Path (Exact Row Update).
+For tokens i∈𝒜t−1,li\in\mathcal{A}_{t-1,l}, the representation undergoes a significant transition.
+We therefore fully recompute the ii-th row of the attention score matrix St,lS_{t,l}, allowing salient tokens to dynamically update their attention patterns.
+•
+Non-salient Path (Approximate Update).
+For tokens i∉𝒜t−1,li\notin\mathcal{A}_{t-1,l}, the query remains approximately stationary, implying Δ​St,l(i,⋅)≈𝟎\Delta S_{t,l}^{(i,\cdot)}\approx\mathbf{0}.
+Accordingly, the update simplifies to
+Δ​Ct,l(i)≈St,l(i,⋅)​Δ​Vt,l.\Delta C_{t,l}^{(i)}\approx S_{t,l}^{(i,\cdot)}\Delta V_{t,l}.
+where the attention weights are effectively reused from the previous iteration.
+Since Δ​Vt,l\Delta V_{t,l} is row-sparse—non-zero only for indices j∈𝒜t−1,lj\in\mathcal{A}_{t-1,l}—the computation only involves attention weights corresponding to active source tokens. As a result, non-salient tokens receive updates exclusively from salient tokens, significantly reducing the effective computation.
+Computational Efficiency.
+This strategy reduces the attention complexity from O⁡(N2​d)O(N^{2}d) to O⁡(N⋅|𝒜t−1,l|​d)O(N\cdot|\mathcal{A}_{t-1,l}|d), where NN denote the sequence length and dd the attention head dimension.
+For the stable path, we only fetch columns of St,lS_{t,l} indexed by 𝒜t−1,l\mathcal{A}_{t-1,l}, avoiding the quadratic cost of a full attention computation.
+Since |𝒜t−1,l||\mathcal{A}_{t-1,l}| is typically a small fraction of NN (Figure 2), this yields substantial throughput gains while maintaining high fidelity (Figure 4).
+Table 1: Impact of Saliency-based FFN
+Bench.
+Model
+Thres.
+Orig.
+Salient
+Salient
++ Approx.
+GSM8K
+LLaDA
+0.9950.995
+77.79
+78.09
+78.01
+0.990.99
+78.85
+79.08
+0.9850.985
+78.62
+79.00
+Dream
+0.99750.9975
+75.59
+79.98
+79.30
+0.9950.995
+79.98
+78.09
+0.990.99
+78.70
+76.04
+MBPP
+LLaDA
+0.9950.995
+29.2
+26.00
+28.20
+0.990.99
+28.00
+30.00
+0.9850.985
+27.60
+27.60
+Dream
+0.99750.9975
+54.60
+56.00
+56.80
+0.9950.995
+56.00
+55.40
+0.990.99
+55.20
+53.20
+3.4 Impact of Saliency-Aware Inference on Accuracy
+In addition to computational efficiency, DyLLM can also yield accuracy improvements.
+In Table 1, restricting FFN computation to salient tokens consistently preserves and in several cases modestly improves model accuracy across representative benchmarks.
+These results suggest that selectively recomputing salient tokens is sufficient to maintain generation quality while substantially reducing redundant computation.
+A contributing factor is the behavior of softmax normalization.
+By construction, softmax assigns strictly positive attention weights to all tokens, including those with minimal relevance.
+As the sequence length increases, the cumulative contribution of such low-relevance tokens can introduce noise into the attention context Martins and Astudillo (2016).
+Diffusion LLM inference repeatedly refines the same sequence across denoising steps.
+By focusing computation on tokens that undergo meaningful changes and suppressing contributions from non-salient positions through saliency-aware selective computation and approximation, DyLLM reduces the influence of irrelevant tokens during inference.
+Figure 4:
+Error of approximate attention compared to the exact attention measured by cosine similarity.
+3.5 Response-only Step
+Prior works Ma et al. (2025); Wu et al. (2026); Liu et al. (2025) reported that prompt and response tokens differ in their computational requirements.
+Theoretically, the relative distance decay property of Rotary Positional Embeddings (RoPE) Su et al. (2024) imposes a locality bias on the attention mechanism.
+In the context of diffusion LLMs, this characteristic suggests that significant context updates tend to be spatially clustered around the latest unmasked tokens.
+Consequently, salient tokens are predominantly concentrated within the response tokens.
+Leveraging this observation, DyLLM adopts the adaptive strategy on prompt and response, selecting salient tokens more frequently from the response rather than static prompt.
+In particular, during response-only steps, DyLLM does not process the full sequence at every step; instead, input tokens are restricted to response tokens while the full sequence, including prompt tokens, is periodically given as an input at fixed intervals (e.g., 4 steps in this work).
+In the aforementioned works, refresh steps recompute all tokens in the sequence, which becomes a major throughput bottleneck.
+In contrast, DyLLM performs computation only on salient tokens, even in steps where the full sequence is provided as a model input.
+4 Evaluation
+Table 2: Accuracy and throughput results across benchmarks with nu=1n_{u}=1. Accuracy is shown in black, throughput (token per second) in blue, and speedup relative to the original implementation in orange.
+LLaDA 8B
+Original
+DyLLM (τ\tau=0.995)
+DyLLM (τ\tau=0.99)
+Fast-Prefix
+Fast-Dual
+dLLM-Cache
+GSM8K
+77.79
+78.01
+79.08
+77.18
+78.24
+77.18
+11.47 (×1.00\times 1.00)
+80.15 (×6.99\times 6.99)
+87.21 (×7.60\times 7.60)
+51.05 (×4.45\times 4.45)
+75.24 (×6.56\times 6.56)
+36.77 (×3.21\times 3.21)
+MBPP
+29.20
+28.20
+30.00
+25.40
+25.40
+29.00
+33.11 (×1.00\times 1.00)
+151.27 (×4.57\times 4.57)
+169.62 (×5.12\times 5.12)
+116.27 (×3.51\times 3.51)
+165.44 (×5.00\times 5.00)
+93.04 (×2.81\times 2.81)
+MATH
+33.22
+38.68
+38.08
+33.22
+32.36
+24.70
+15.81 (×1.00\times 1.00)
+96.98 (×6.13\times 6.13)
+106.06 (×6.71\times 6.71)
+62.12 (×3.93\times 3.93)
+93.26 (×5.90\times 5.90)
+36.56 (×2.31\times 2.31)
+MMLU-pro
+37.31
+37.06
+36.42
+36.70
+36.18
+37.90
+11.46 (×1.00\times 1.00)
+60.16 (×5.25\times 5.25)
+66.44 (×5.80\times 5.80)
+46.45 (×4.05\times 4.05)
+64.62 (×5.64\times 5.64)
+31.56 (×2.75\times 2.75)
+Dream 7B
+Original
+DyLLM (τ\tau=0.9975)
+DyLLM (τ\tau=0.995)
+Fast-Prefix
+Fast-Dual
+dLLM-Cache
+GSM8K
+75.59
+79.30
+78.09
+74.45
+68.39
+72.40
+12.57 (×1.00\times 1.00)
+111.79 (×8.89\times 8.89)
+120.62 (×9.60\times 9.60)
+43.32 (×3.45\times 3.45)
+153.21 (×12.19\times 12.19)
+46.19 (×3.67\times 3.67)
+MBPP
+54.60
+56.80
+55.40
+53.80
+51.60
+52.80
+19.62 (×1.00\times 1.00)
+139.62 (×7.12\times 7.12)
+141.56 (×7.22\times 7.22)
+62.96 (×3.21\times 3.21)
+205.40 (×10.47\times 10.47)
+61.06 (×3.11\times 3.11)
+MATH
+37.60
+45.12
+43.80
+36.48
+36.06
+44.98
+17.64 (×1.00\times 1.00)
+130.57 (×7.40\times 7.40)
+142.34 (×8.07\times 8.07)
+59.16 (×3.35\times 3.35)
+191.56 (×10.86\times 10.86)
+48.76 (×2.76\times 2.76)
+MMLU-pro
+47.94
+47.45
+47.21
+47.74
+46.73
+49.30
+12.60 (×1.00\times 1.00)
+83.10 (×6.60\times 6.60)
+87.98 (×6.98\times 6.98)
+78.23 (×6.21\times 6.21)
+128.52 (×10.20\times 10.20)
+27.19 (×2.16\times 2.16)
+4.1 Experimental Setup
+All experiments were conducted on a single NVIDIA H100 PCIe 80GB GPU.
+We evaluated the instruct variants of two representative open-source diffusion language models, LLaDA 8B Nie et al. (2025) and Dream 7B Ye et al. (2025).
+As baselines, we used the original implementations of the models.
+In addition to the original implementations, we evaluated against Fast-dLLM Wu et al. (2026) and dLLM-Cache Liu et al. (2025) as strong baselines.
+For Fast-dLLM and dLLM-Cache, we adopted the default parameters provided by their respective implementations.
+For the accuracy measurements, we used a deterministic setting using the lm-eval Gao et al. (2024) library across a diverse set of benchmarks, including mathematical reasoning (GSM8K Cobbe et al. (2021), MATH Hendrycks et al. (2021)), general knowledge (MMLU-pro Wang et al. (2024)), and code generation (MBPP Austin et al. (2021b)).
+Throughput was measured as the average number of tokens generated per second.
+We intentionally did not apply a confidence-aware decoding Wu et al. (2026) scheme in our experiments to isolate the computational efficiency of each framework.
+The scheme operates purely at the sampling level, utilizing the model’s output logits to determine tokens to decode, without modifying the underlying execution or caching mechanisms.
+Although incorporating this scheme could further improve throughput at the cost of a modest accuracy trade-off, we exclude it to ensure a fair and controlled comparison of framework-level efficiency.
+4.2 Main Results
+4.2.1 Accuracy Preservation
+We rigorously evaluated the generation quality of DyLLM against the original diffusion implementation and state-of-the-art acceleration baselines across four diverse benchmarks.
+Table 2 summarizes the accuracy and throughput performance on LLaDA 8B Instruct and Dream 7B Instruct.
+The core advantage of DyLLM lies in its ability to distinguish “essential” updates from “redundant” ones.
+Unlike fixed-schedule methods or static caching that skip computations based on rigid heuristics, DyLLM’s layer-adaptive saliency mechanism ensures that critical state transitions are never bypassed.
+This allows DyLLM to maintain near-lossless accuracy across all benchmarks.
+Fast-dLLM employs a fixed rule to select the tokens to recompute with rigid block-based caching, which might contain critical tokens.
+PrefixCache and DualCache rarely refresh KV cache of prompt tokens, incurring biased locality where the model focuses on the future tokens and neglects necessary updates in the past tokens.
+In contrast, DyLLM dynamically recomputes the tokens based on their importance, maintaining higher model fidelity than existing frameworks.
+While dLLM-Cache yields higher accuracy even than the baseline in some cases, it suffers from the difficulty of generalization, requiring extensive tuning of hyperparameters (KPK_{P}, KRK_{R}) for each specific model and dataset (see Section D.4).
+Both Fast-dLLM and dLLM-Cache fix the number of computed tokens in every step before execution without prompt-awareness.
+4.2.2 Throughput Improvements
+DyLLM consistently delivers substantial throughput improvements across models and benchmarks in offline batched inference by dynamically concentrating computation on a small layer-dependent subset of salient tokens, avoiding redundant processing on stable tokens.
+A key distinction from prior approaches is that DyLLM does not rely on periodic full sequence refresh steps.
+In Fast-dLLM, both PrefixCache and DualCache incur unavoidable refresh steps that recompute the entire sequence, causing the throughput to be limited by these expensive iterations as the sequence length or parallel decoding degree increases.
+In contrast, DyLLM maintains sparsity at every step, even when we are attending to the full sequence based on saliency.
+This effect is particularly pronounced in models where FFN computation dominates runtime.
+Dream allocates over 70% of inference time to FFN layers due to its use of GQA Ainslie et al. (2023), making it well-suited for saliency-based selective FFN execution.
+Consequently, DyLLM gains larger relative speedups on Dream than LLaDA, highlighting that the benefits of our method are amplified with modern attention designs such as GQA that make attention more lightweight.
+Compared to dLLM-Cache, DyLLM avoids fixing the number of recomputed tokens per step.
+dLLM-Cache statically recomputes a predetermined fraction of tokens and relies on carefully tuned hyperparameters that vary across models and datasets.
+Figure 7 presents the average number of salient tokens selected by DyLLM in each layer, evaluated on 100 randomly sampled GSM8K 5-shot prompts.
+In DyLLM, the number of computed tokens varies flexibly across layers, resulting in substantially fewer tokens processed on average while preserving accuracy.
+This flexibility directly results in higher throughput without sacrificing generality.
+4.2.3 Threshold τ\tau
+We performed a threshold sweep to examine the trade-off between throughput and accuracy.
+Lowering threshold τ\tau reduces the number of computed tokens and improves throughput; however, aggressively decreasing the threshold leads to accuracy degradation, as errors accumulate over steps without being corrected.
+We observed a consistent trade-off curve across models.
+Based on this observation, we select a threshold of 0.99 for LLaDA and 0.995 for Dream, reflecting model-specific characteristics in computational structure and sensitivity to approximation.
+Extended experiments for MATH and MMLU-pro are shown in Section D.1.
+Figure 5:
+Accuracy results varying τ\tau across GSM8K and MBPP datasets. Accuracy generally declines as the threshold is lowered.
+4.2.4 Scalability with Increasing nun_{u}
+Figure 6:
+Accuracy and throughput of DyLLM, Fast-dLLM, and the original implementation across GSM8K, MBPP, MATH, and MMLU-Pro.
+Each curve contains three operating points corresponding to nu=1,2,4n_{u}=1,2,4, where a larger nun_{u} yields higher throughput, but lower accuracy.
+DyLLM consistently preserves accuracy with high throughput compared to the strong baselines.
+Figure 7: The average number of salient tokens per layer with random 100 GSM8K 5-shot prompts. LRL_{R} is set to 256, as in all the other experiments.
+The number of salient tokens (Ls​a​lL_{sal}) increases for about 3/4 of layers and starts decreasing.
+Figure 6 summarizes the accuracy-throughput trade-offs of Fast-dLLM and DyLLM as the degree of parallel decoding (nun_{u}) increases.
+Each curve reports results for nu∈{1,2,4}n_{u}\in\{1,2,4\}, marked from left to right.
+A critical limitation of fixed refresh schedules employed by Fast-dLLM is poor scalability.
+Fast-dLLM relies on periodic full refresh steps to correct approximation errors introduced by block-based caching.
+As sequence length or nun_{u} increases, the overhead of full refresh steps rapidly becomes dominant, significantly limiting the throughput.
+This effect can be quantified by examining the average number of tokens processed per step, including refresh steps.
+For a representative configuration with 1024 prompt tokens and 256 response tokens, Fast-dLLM PrefixCache and Fast-dLLM DualCache compute 144 tokens and 32 tokens per non-fresh steps on average, while both require processing 1280 tokens during refresh steps.
+With B=32B=32 and a single unmasked token per step (nu=1n_{u}=1), the average number of computed tokens per step is 144×31+128032=179.5\frac{144\times 31+1280}{32}=179.5 for PrefixCache and 32×31+128032=71\frac{32\times 31+1280}{32}=71 per step for DualCache.
+As nun_{u} increases, the frequency of refresh steps grows correspondingly, causing the effective computation per step to rise steeply.
+This problem is particularly problematic for diffusion LLMs, whose defining advantage lies in decoding multiple tokens in parallel.
+In contrast, DyLLM avoids any step that requires recomputing the entire sequence.
+As a result, DyLLM exhibits markedly better scalability with respect to nun_{u}.
+This trend is consistently observed across Figure 6.
+The throughput gap between DyLLM and Fast-dLLM widens as nun_{u} grows in LLaDA.
+Notably, in Dream, DyLLM is slightly slower than Fast-dLLM DualCache at nu=1n_{u}=1; however, as nun_{u} grows, DyLLM rapidly closes the gap and ultimately surpasses Fast-dLLM DualCache in throughput.
+Overall, these results demonstrate that DyLLM effectively maintains the scalability characteristics that are essential to diffusion LLM inference under increasing parallel decoding without additional tuning overhead.
+5 Conclusion
+We have addressed the fundamental efficiency bottleneck in diffusion LLM inference, where the iterative nature of denoising imposes prohibitive computational costs.
+Our DyLLM demonstrates that the redundancy inherent in diffusion steps is not uniform but highly sparse and layer-dependent.
+Our framework effectively exploits this property through a layer-adaptive saliency mechanism, which dynamically isolates the small subset of tokens requiring precise updates while approximating the remaining, stable context.
+Empirically, DyLLM achieves throughput improvements of up to 7.6×\times and 9.6×\times on LLaDA and Dream across representative benchmarks, including math, code generation, and general tasks.
+Crucially, unlike prior caching strategies that degrade efficiency under aggressive parallel decoding, our approach scales robustly with preserved accuracy.
+The computationally heavy diffusion LLM inference can be drastically reduced by moving from rigid full sequence processing to adaptive, sparsity-aware computation.
+References
+Ainslie et al. (2023)
+J. Ainslie, J. Lee-Thorp, M. de Jong, et al.
+GQA: training generalized multi-query transformer models from multi-head checkpoints.
+In Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing,
+pp. 4895–4901.
+External Links: Document
+Cited by: §B.2,
+§4.2.2.
+Austin et al. (2021a)
+J. Austin, D. D. Johnson, J. Ho, D. Tarlow, and R. van den Berg
+Structured denoising diffusion models in discrete state-spaces.
+In Advances in Neural Information Processing Systems,
+Vol. 34, pp. 17981–17993.
+External Links: Document
+Cited by: §A.1,
+§1.
+Austin et al. (2021b)
+J. Austin, A. Odena, M. Nye, et al.
+Program synthesis with large language models.
+Note: arXiv preprint arXiv:2108.07732
+External Links: Document
+Cited by: §4.1.
+Beltagy et al. (2020)
+I. Beltagy, M. E. Peters, and A. Cohan
+Longformer: the long-document transformer.
+Note: arXiv preprint arXiv:2004.05150
+External Links: Document
+Cited by: §F.2.
+Child et al. (2019)
+R. Child, S. Gray, A. Radford, and I. Sutskever
+Generating long sequences with sparse transformers.
+Note: arXiv preprint arXiv:1904.10509
+External Links: Document
+Cited by: §F.2.
+Cobbe et al. (2021)
+K. Cobbe, V. Kosaraju, M. Bavarian, et al.
+Training verifiers to solve math word problems.
+Note: arXiv preprint arXiv:2110.14168
+External Links: Document
+Cited by: §B.2,
+§4.1.
+Gao et al. (2024)
+L. Gao, J. Tow, B. Abbasi, et al.
+The language model evaluation harness.
+Note: https://zenodo.org/records/12608602
+External Links: Document
+Cited by: §4.1.
+Google DeepMind (2025)
+Google DeepMind
+Gemini Diffusion.
+External Links: Link
+Cited by: §A.1,
+§1.
+Grattafiori et al. (2024)
+A. Grattafiori, A. Dubey, A. Jauhri, et al.
+The llama 3 herd of models.
+Note: arXiv preprint arXiv:2407.21783
+External Links: 2407.21783,
+Document
+Cited by: §1.
+Han et al. (2023)
+X. Han, S. Kumar, and Y. Tsvetkov
+SSD-LM: semi-autoregressive simplex-based diffusion language model for text generation and modular control.
+In Proceedings of the 61st Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers),
+pp. 11575–11596.
+External Links: Document
+Cited by: §2.3.
+Hendrycks et al. (2021)
+D. Hendrycks, C. Burns, S. Kadavath, et al.
+Measuring mathematical problem solving with the math dataset.
+In Proceedings of the Neural Information Processing Systems Track on Datasets and Benchmarks,
+Vol. 1, pp. .
+External Links: Document
+Cited by: §4.1.
+Hoogeboom et al. (2021)
+E. Hoogeboom, D. Nielsen, P. Jaini, P. Forré, and M. Welling
+Argmax flows and multinomial diffusion: learning categorical distributions.
+In Advances in Neural Information Processing Systems,
+Vol. 34, pp. 12454–12465.
+External Links: Document
+Cited by: §A.1.
+Jazbec et al. (2025)
+M. Jazbec, T. X. Olausson, L. Béthune, et al.
+Learning unmasking policies for diffusion language models.
+Note: arXiv preprint arXiv:2512.09106
+External Links: Document
+Cited by: §2.3.
+Jiang et al. (2024)
+H. Jiang, Y. Li, C. Zhang, et al.
+MInference 1.0: accelerating pre-filling for long-context LLMs via dynamic sparse attention.
+In Advances in Neural Information Processing Systems,
+Vol. 37, pp. 52481–52515.
+External Links: Document
+Cited by: §F.2.
+Kwon et al. (2023)
+W. Kwon, Z. Li, S. Zhuang, et al.
+Efficient memory management for large language model serving with pagedattention.
+In Proceedings of the 29th Symposium on Operating Systems Principles,
+pp. 611–626.
+External Links: Document
+Cited by: Figure 1,
+Figure 1.
+Leviathan et al. (2023)
+Y. Leviathan, M. Kalman, and Y. Matias
+Fast inference from transformers via speculative decoding.
+In Proceedings of the 40th International Conference on Machine Learning,
+Vol. 202, pp. 19274–19286.
+External Links: Document
+Cited by: §2.1.
+Li et al. (2022)
+X. L. Li, J. Thickstun, I. Gulrajani, P. Liang, and T. B. Hashimoto
+Diffusion-lm improves controllable text generation.
+In Advances in Neural Information Processing Systems,
+Vol. 35, pp. 4328–4343.
+External Links: Document
+Cited by: §A.1.
+Liu et al. (2025)
+Z. Liu, Y. Yang, Y. Zhang, et al.
+DLLM-Cache: accelerating diffusion large language models with adaptive caching.
+Note: arXiv preprint arXiv:2506.06295
+External Links: Document
+Cited by: §D.1,
+§1,
+§1,
+§2.4,
+§3.5,
+§4.1.
+Liu et al. (2023)
+Z. Liu, J. Wang, T. Dao, et al.
+Deja Vu: contextual sparsity for efficient LLMs at inference time.
+In Proceedings of the 40th International Conference on Machine Learning,
+Vol. 202, pp. 22137–22176.
+External Links: Document
+Cited by: §F.2.
+Ma et al. (2025)
+X. Ma, R. Yu, G. Fang, and X. Wang
+DKV-cache: the cache for diffusion language models.
+In Advances in Neural Information Processing Systems,
+External Links: Document
+Cited by: §D.1,
+§1,
+§1,
+§2.4,
+§3.5.
+Martins and Astudillo (2016)
+A. F. T. Martins and R. F. Astudillo
+From softmax to sparsemax: a sparse model of attention and multi-label classification.
+In Proceedings of the 33rd International Conference on Machine Learning,
+Vol. 48, pp. 1614–1623.
+External Links: Document
+Cited by: §3.4.
+Nguyen-Tri et al. (2026)
+Q. Nguyen-Tri, M. Ranjan, and Z. Shen
+Attention is all you need for KV cache in diffusion LLMs.
+In The Fourteenth International Conference on Learning Representations,
+External Links: Document
+Cited by: §D.2,
+§1,
+§2.4.
+Nie et al. (2025)
+S. Nie, F. Zhu, Z. You, et al.
+Large language diffusion models.
+In Advances in Neural Information Processing Systems,
+External Links: Document
+Cited by: §A.1,
+§1,
+§2.2,
+§4.1.
+Pope et al. (2023)
+R. Pope, S. Douglas, A. Chowdhery, et al.
+Efficiently scaling transformer inference.
+In Proceedings of Machine Learning and Systems,
+Vol. 5, pp. 606–624.
+External Links: Document
+Cited by: §1,
+§2.4.
+Sahoo et al. (2024)
+S. S. Sahoo, M. Arriola, A. Gokaslan, et al.
+Simple and effective masked diffusion language models.
+In Advances in Neural Information Processing Systems,
+Vol. 37, pp. 130136–130184.
+External Links: Document
+Cited by: §B.2.
+Song et al. (2023)
+Y. Song, P. Dhariwal, M. Chen, and I. Sutskever
+Consistency models.
+In Proceedings of the 40th International Conference on Machine Learning,
+Vol. 202, pp. 32211–32252.
+External Links: Document
+Cited by: §B.2.
+Su et al. (2024)
+J. Su, M. Ahmed, Y. Lu, et al.
+RoFormer: enhanced transformer with rotary position embedding.
+Neurocomputing 568, pp. 127063.
+External Links: Document
+Cited by: §3.5.
+Vaswani et al. (2017)
+A. Vaswani, N. Shazeer, N. Parmar, et al.
+Attention is all you need.
+In Advances in Neural Information Processing Systems,
+Vol. 30, pp. 5998–6008.
+External Links: Document
+Cited by: §B.2.
+Wang et al. (2024)
+Y. Wang, X. Ma, G. Zhang, et al.
+MMLU-Pro: a more robust and challenging multi-task language understanding benchmark.
+In Advances in Neural Information Processing Systems,
+External Links: Document
+Cited by: §4.1.
+Wang et al. (2026)
+Z. Wang, G. Fang, X. Ma, X. Yang, and X. Wang
+SparseD: sparse attention for diffusion language models.
+In The Fourteenth International Conference on Learning Representations,
+External Links: Document
+Cited by: §F.2,
+§1.
+Wu et al. (2026)
+C. Wu, H. Zhang, S. Xue, et al.
+Fast-dLLM: training-free acceleration of diffusion LLM by enabling KV cache and parallel decoding.
+In The Fourteenth International Conference on Learning Representations,
+External Links: Document
+Cited by: §D.1,
+§F.1,
+§1,
+§1,
+§2.4,
+§3.5,
+§4.1,
+§4.1.
+Ye et al. (2025)
+J. Ye, Z. Xie, L. Zheng, et al.
+Dream 7b: diffusion large language models.
+Note: arXiv preprint arXiv:2508.15487
+External Links: 2508.15487,
+Document
+Cited by: §A.1,
+§1,
+§2.2,
+§4.1.
+Zhang et al. (2023)
+Z. Zhang, Y. Sheng, T. Zhou, et al.
+H2O: heavy-hitter oracle for efficient generative inference of large language models.
+In Advances in Neural Information Processing Systems,
+Vol. 36, pp. 34661–34710.
+External Links: Document
+Cited by: §F.2.
+Appendix A Masked Diffusion Language Models (MDLMs)
+A.1 D3PM and MDLMs
+Early attempts to apply diffusion to natural language processing primarily relied on continuous embedding diffusion Li et al. (2022) or multinomial diffusion Hoogeboom et al. (2021).
+Continuous embedding diffusion forced discrete tokens into the continuous embedding, and applies rounding to discretize it, which often incurs discretization error and semantic drift.
+Multinomial diffusion, while discrete, suffered from the limitation that it utilized a uniform transition noise, where any token could be corrupted into any other token in the vocabulary with equal probability.
+D3PM Austin et al. (2021a) uncovered that the diffusion can be rrun directly in discrete token spaces via a structured masking process.
+By utilizing an absorbing state (the mask token), MDLMs solved the efficiency and stability issues of previous diffusion language models.
+This architectural shift enabled the development of diffusion LLMs such as LLaDA Nie et al. (2025), Dream Ye et al. (2025), and Gemini Diffusion Google DeepMind (2025).
+The primary contribution of D3PM to the birth of the MDLMs is the formalization of the absorbing state transition.
+In this context, the special mask token acts as an absorbing state; once a token is masked, it remains masked for the rest of the forward process.
+Absorbing state transition made MDLMs effective because it preserves the integrity of unmasked context.
+Unlike multinomial noise which corrupts every token simultaneously, the absorbing state allows the model to learn from a sequence that maintains the representation of unmasked tokens.
+This bridges generative diffusion model and masked language model which leverages global context of the word sequence.
+A.2 Diffusion Process in MDLMs
+The diffusion process consists of a forward process that adds noise and a reverse process that restores data.
+Specifically, in MDLMs, a forward process gradually replaces original tokens with the mask tokens, and a reverse process according to a noise schedule βt\beta_{t}.
+The reverse process learns to iteratively predict the original tokens from the partially masked sequence. Unlike ARLMs that generate tokens sequentially, the reverse process in MDLMs allows for parallel decoding, where mask tokens at the multiple positions can be changed into original tokens.
+The forward process q⁡(𝐱t|𝐱t−1)q(\mathbf{x}_{t}|\mathbf{x}_{t-1}) gradually corrupts a clean input sequence 𝐱0\mathbf{x}_{0} into the state 𝐱T\mathbf{x}_{T} composed entirely of mask tokens. This transition is processed with transition distribution defined by a transition matrix 𝐐t\mathbf{Q}_{t}, where 𝐐t​(i,j)\mathbf{Q}_{t}(i,j) represents the probability of token ii transitioning to token jj.
+In the absorbing state configuration, a token either transitions to the mask token or remains as itself. For any token ii in the vocabulary (where i≠maski\neq\text{mask}), the transition probability of step ll is:
+{q⁡(𝐱t(i)=[mask]|𝐱t−1(i))=βtq⁡(𝐱t(i)=𝐱t−1(i)|𝐱t−1(i))=1−βtt=1​…​T\begin{cases}q({\mathbf{x}^{(i)}_{t}}=[\text{mask}]|{\mathbf{x}^{(i)}_{t-1}})=\beta_{t}\\
+q(\mathbf{x}^{(i)}_{t}=\mathbf{x}^{(i)}_{t-1}|\mathbf{x}^{(i)}_{t-1})=1-\beta_{t}\\
+\end{cases}\quad t=1\ldots T
+where βt∈[0,1]\beta_{t}\in[0,1] is a noise schedule that typically increases with tt.
+Once a token is changed into the mask token, it is ”absorbed”, meaning q⁡(𝐱t(i)=[mask]|𝐱t−1(i)=[mask])=1q({\mathbf{x}^{(i)}_{t}}=[\text{mask}]|{\mathbf{x}^{(i)}_{t-1}=[\text{mask}]})=1.
+Because each token transitions independently, the marginal distribution q⁡(𝐱t|𝐱0)q(\mathbf{x}_{t}|\mathbf{x}_{0}) can be computed in closed form using cumulative product of transition matrices 𝐐t=𝐐1​𝐐2​…​𝐐t\mathbf{Q}_{t}=\mathbf{Q}_{1}\mathbf{Q}_{2}...\mathbf{Q}_{t}. As t→Tt\to T, 𝐐¯t\bar{\mathbf{Q}}_{t} converges to a state where all probability mass is on the mask token.
+The reverse process pθ​(𝐱t−1|𝐱t)p_{\theta}(\mathbf{x}_{t-1}|\mathbf{x}_{t}) aims to recover the original tokens by learning the denoising distribution. The neural network, parameterized by θ\theta, is trained to approximate the posterior pθ​(𝐱t−1|𝐱t,𝐱0)p_{\theta}(\mathbf{x}_{t-1}|\mathbf{x}_{t},\mathbf{x}_{0}).
+At inference time, the learned reverse diffusion process is executed iteratively, where the model replaces masked tokens with non-mask tokens according to pθ​(𝐱t−1|𝐱t)p_{\theta}(\mathbf{x}_{t-1}|\mathbf{x}_{t}) at each diffusion step.
+Repeating this procedure for TT denoising steps, the model recovers 𝐱0\mathbf{x}_{0}, corresponding to a noise-free sample drawn from the learned data distribution.
+Appendix B Diffusion LLM vs. Autoregressive LLM
+B.1 Modeling
+MDLMs and autoregressive language models (ARLMs) differ in how they factorize the text generation process. An AR model defines an autoregressive factorization over positions, pθ​(𝐱)=∏ip⁡(xi|x<i)p_{\theta}(\mathbf{x})=\prod_{i}p(x_{i}|x_{<i}), and incremental decoding produces a categorical distribution over the vocabulary for the next position.
+In contrast, an MDLM defines a Markov process over denoising steps, parameterizing transitions of the form pθ​(𝐱𝐭−𝟏|𝐱𝐭)p_{\theta}(\mathbf{x_{t-1}|\mathbf{x}_{t}}) at each step, the model outputs vocabulary logits for all positions, yielding a [LP+LR,vocab size][L_{P}+L_{R},\text{vocab size}] sized matrix for per-position categorical distributions.
+Because distributions are available for multiple positions, the diffusion language model can fundamentally decode multiple tokens per denoising step.
+During inference, an MDLM generates LRL_{R} output tokens over TT denoising steps using an iterative unmasking/remasking schedule. Concretely, at step tt, the model produces per-position softmax probabilities, from which we compute a confidence score (e.g., max-probability, entropy-based confidence, or random) for each masked position.
+MDLM then unmasks a subset of positions with the highest confidence, while the remaining low-confidence positions are remasked and refined in subsequent steps.
+After TT steps, all output positions are determined.
+B.2 Computation
+Figure 8:
+Comparison of MDLM architecture and ARLM architecture.
+MDLM gets the entire sequence at every step and unmasks for all response tokens and remasks tokens with a low confidence score.
+Also, MDLM exploits bidirectional attention where an unmasked token can affect both sides of the sequence.
+MDLMs employ a Transformer-based architecture Vaswani et al. (2017) akin to conventional ARLMs, but exhibit two fundamental distinctions in terms of computational operations.
+Figure 8 compares the architecture of ARLMs and MDLMs.
+First, MDLMs get the entire sequence, comprising both the prompt and the response, serving as input at every timestep.
+Similar to standard ARLM, the MDLM architecture consists of multiple layers of self-attention and feed-forward networks (FFN) through which hidden states propagate sequentially.
+However, unlike ARLMs that process tokens incrementally, mask diffusion models ingest the full sequence LP+LRL_{P}+L_{R} at each denoising step.
+Consequently, the computational characteristics of a single decoding step in an MDLM are analogous to the prefill phase of an ARLM, where the entire context is processed simultaneously.
+Figure 1 shows the runtime breakdown of original diffusion LLM implementations conducted with batch size 16 and LR=256L_{R}=256 setting on the random GSM8K Cobbe et al. (2021) 5-shot prompts.
+In both LLaDA and Dream, FFN dominates the runtime.
+As Dream adopted GQA Ainslie et al. (2023), Dream has smaller QKV weights and smaller Q, K, and V to read during attention; the portion of FFN is larger in Dream than in LLaDA.
+The original implementation of diffusion LLM inference is highly compute-intensive, making it hard to achieve comparable speed with ARLMs.
+To make diffusion LLM inference faster, there is an option to reduce TT to increase the number of masked tokens generated per step nu=LR/Tn_{u}=L_{R}/T, but this approach can substantially lower the response quality Sahoo et al. (2024).
+With increasing model capacity, nun_{u} might be feasible to substantially increase Song et al. (2023), but the loss in generation quality is still unavoidable.
+Second, these models utilize bidirectional attention, not causal attention.
+While ARLMs enforce causal constraint, where each token attends only to its predecessors, diffusion language models allow every token to attend to all other tokens in the sequence, both preceding and succeeding.
+Consequently, once a token is unmasked, all key and value representations are affected in the following step, except the first layer.
+This creates a divergence in activation values for the same token across different steps, meaning that applying the static KV caching mechanism used in ARLMs would lead to the accumulation of error over time.
+Appendix C Core Algorithm of DyLLM
+In this section, we provide a comprehensive breakdown of the DyLLM algorithm.
+The approach is designed to accelerate diffusion LLM inference by identifying salient tokens whose representations changed from the previous step, and skipping redundant computations for the remainder of the sequence.
+C.1 DyLLM
+Algorithm 1 defines the high-level orchestration of the generation process.
+Given prompt tokens PP and response length LRL_{R}, we want to generate response tokens RR.
+The algorithm maintains a buffer for response tokens RR of length LRL_{R}, initialized with mask tokens. Those mask tokens are decoded into non-mask tokens during Tf​u​l​lT_{full} steps.
+During the inference of DyLLM, execution is divided into two phases, FullStep and SparseStep.
+At the initial Tf​u​l​lT_{full} steps, the model executes FullStep on the entire sequence of concatenated prompt PP and current response RR.
+FullStep computes Q, K, V projection, attention, output projection, and FFN for all those tokens and caches the activation matrices.
+After FullStep is executed for Tf​u​l​lT_{full} steps, DyLLM executes SparseStep for the remaining steps, which reduces the number of tokens to compute by reusing activation caches.
+SparseStep limits its computation on salient tokens, thereby reducing redundant computation on non-salient tokens compared to FullStep.
+It further reduces computational overhead by leveraging response-only step and approximate attention.
+DyLLM processes RR for the response-only steps, which account for 75% of the total steps, and takes the entire sequence as input for the remaining steps.
+Algorithm 1  DyLLM
+1:
+Integer ids of prompt PP of length LPL_{P}; response length LRL_{R}; total steps TtotalT_{\mathrm{total}}; number of full steps TfullT_{\mathrm{full}}; cosine similarity threshold τ∈ℝ\tau\in\mathbb{R}
+2:
+Initialize R←[mask]×LRR\leftarrow[\mathrm{mask}]\times L_{R}
+3:
+Initialize caches 𝐊cache,𝐕cache,𝐂cache,𝐅𝐅𝐍​_​𝐎𝐔𝐓cache\mathbf{K}_{\mathrm{cache}},\mathbf{V}_{\mathrm{cache}},\mathbf{C}_{\mathrm{cache}},\mathbf{FFN\_OUT}_{\mathrm{cache}}
+4:
+idxsal←None\mathrm{idx}_{\mathrm{sal}}\leftarrow\mathrm{None}
+5:
+for t=0t=0 to Ttotal−1T_{\mathrm{total}}-1 do
+6:
+if t<Tfullt<T_{\mathrm{full}} then
+7:
+x←Concat⁡(P,R)x\leftarrow\mathrm{Concat}(P,R)
+8:
+x←FullStep⁡(x,𝐊cache,𝐕cache,𝐂cache,𝐅𝐅𝐍​_​𝐎𝐔𝐓cache)x\leftarrow\mathrm{FullStep}\!\left(x,\mathbf{K}_{\mathrm{cache}},\mathbf{V}_{\mathrm{cache}},\mathbf{C}_{\mathrm{cache}},\mathbf{FFN\_OUT}_{\mathrm{cache}}\right)
+9:
+else
+10:
+if t%​4=0t\%4=0 then
+11:
+x←Concat⁡(P,R)x\leftarrow\mathrm{Concat}(P,R)
+12:
+else
+13:
+x←Rx\leftarrow R
+14:
+end if
+15:
+if idxsal=None\mathrm{idx}_{\mathrm{sal}}=\mathrm{None} then
+16:
+idxsal←[LP+1,…,LP+LR]\mathrm{idx}_{\mathrm{sal}}\leftarrow[L_{P}+1,\ldots,L_{P}+L_{R}]
+17:
+end if
+18:
+(x,idxsal)←SparseStep⁡(x,𝐊cache,𝐕cache,𝐂cache,𝐅𝐅𝐍​_​𝐎𝐔𝐓cache,idxsal,τ)(x,\mathrm{idx}_{\mathrm{sal}})\leftarrow\mathrm{SparseStep}\!\left(x,\mathbf{K}_{\mathrm{cache}},\mathbf{V}_{\mathrm{cache}},\mathbf{C}_{\mathrm{cache}},\mathbf{FFN\_OUT}_{\mathrm{cache}},\mathrm{idx}_{\mathrm{sal}},\tau\right)
+19:
+end if
+20:
+(decoded_tokens,decoded_positions)←process​_​logit​(x)(\text{decoded\_tokens},\text{decoded\_positions})\leftarrow\mathrm{process\_logit}(x)
+21:
+R⁡[decoded_positions]←decoded_tokensR[\text{decoded\_positions}]\leftarrow\text{decoded\_tokens}
+22:
+end for
+C.2 Full Step
+FullStep follows the standard transformer forward pass but adds activation caching algorithm, which takes all tokens including prompt PP and response RR as an input.
+Unlike KV caching in AR models, FullStep additionally caches the attention context and FFN output, as depicted in Algorithm 2. Those caches 𝐊𝐜𝐚𝐜𝐡𝐞,𝐕𝐜𝐚𝐜𝐡𝐞,𝐂𝐜𝐚𝐜𝐡𝐞\mathbf{K_{cache},V_{cache},C_{cache}}, and 𝐅𝐅𝐍​_​𝐎𝐔𝐓𝐜𝐚𝐜𝐡𝐞\mathbf{FFN\_OUT_{cache}} are reused at the SparseStep.
+Algorithm 2  FullStep
+1:
+Token ids xx of length LP+LRL_{P}+L_{R}; caches 𝐊cache,𝐕cache,𝐂cache,𝐅𝐅𝐍​_​𝐎𝐔𝐓cache\mathbf{K}_{\mathrm{cache}},\mathbf{V}_{\mathrm{cache}},\mathbf{C}_{\mathrm{cache}},\mathbf{FFN\_OUT}_{\mathrm{cache}}
+2:
+𝐱←Embedding⁡(x)\mathbf{x}\leftarrow\mathrm{Embedding}(x)
+3:
+for l=1l=1 to nlayern_{\mathrm{layer}} do
+4:
+𝐱←LayerNorm⁡(𝐱)\mathbf{x}\leftarrow\mathrm{LayerNorm}(\mathbf{x})
+5:
+𝐐,𝐊,𝐕←Q​_​Proj​(𝐱),K​_​Proj​(𝐱),V​_​Proj​(𝐱)\mathbf{Q},\mathbf{K},\mathbf{V}\leftarrow\mathrm{Q\_Proj}(\mathbf{x}),\mathrm{K\_Proj}(\mathbf{x}),\mathrm{V\_Proj}(\mathbf{x}) //[LP+LR,dh​i​d​d​e​n]\quad{\color[rgb]{0,0,1}//\ [L_{P}+L_{R},d_{hidden}]}
+6:
+𝐂←Attention⁡(𝐐,𝐊,𝐕)\mathbf{C}\leftarrow\mathrm{Attention}(\mathbf{Q},\mathbf{K},\mathbf{V})
+7:
+𝐱←LayerNorm⁡(Out​_​Proj​(𝐂))\mathbf{x}\leftarrow\mathrm{LayerNorm}(\mathrm{Out\_Proj}(\mathbf{C}))
+8:
+𝐱←FFN⁡(𝐱)\mathbf{x}\leftarrow\mathrm{FFN}(\mathbf{x})
+9:
+𝐊cache,𝐕cache,𝐂cache,𝐅𝐅𝐍​_​𝐎𝐔𝐓cache←𝐊,𝐕,𝐂,𝐱\mathbf{K}_{\mathrm{cache}},\mathbf{V}_{\mathrm{cache}},\mathbf{C}_{\mathrm{cache}},\mathbf{FFN\_OUT}_{\mathrm{cache}}\leftarrow\mathbf{K},\mathbf{V},\mathbf{C},\mathbf{x}
+10:
+end for
+11:
+logits←LMHead⁡(𝐱)\mathrm{logits}\leftarrow\mathrm{LMHead}(\mathbf{x})
+12:
+return logits\mathrm{logits}
+C.3 Sparse Step
+The core efficiency of DyLLM stems from SparseStep.
+Algorithm 3 enables partial updates on the salient tokens which undergo substantial drift of attention context.
+SparseStep processes the full sequence or only response tokens, reusing activation caches computed at the previous steps.
+It projects the hidden states 𝐱\mathbf{x} into 𝐊,𝐕\mathbf{K,V} for the tokens at idxsal\mathrm{idx_{sal}} and merges the result with KV cache of non-salient tokens, thereby generating new KK and VV.
+Algorithm 3  SparseStep
+1:
+Token ids xx of length LL; caches 𝐊cache,𝐕cache,𝐂cache,𝐅𝐅𝐍​_​𝐎𝐔𝐓cache\mathbf{K}_{\mathrm{cache}},\mathbf{V}_{\mathrm{cache}},\mathbf{C}_{\mathrm{cache}},\mathbf{FFN\_OUT}_{\mathrm{cache}};
+salient index set idxsal\mathrm{idx}_{\mathrm{sal}}; cosine threshold τ\tau
+2:
+𝐱←Embedding⁡(x)\mathbf{x}\leftarrow\mathrm{Embedding}(x) //[L,dh​i​d​d​e​n]\quad{\color[rgb]{0,0,1}//\ [L,d_{hidden}]}
+3:
+for l=1l=1 to nlayern_{\mathrm{layer}} do
+4:
+𝐱←LayerNorm⁡(𝐱)\mathbf{x}\leftarrow\mathrm{LayerNorm}(\mathbf{x})
+5:
+𝐐←QProj⁡(𝐱)\mathbf{Q}\leftarrow\mathrm{QProj}(\mathbf{x}) //[LP+LR,dh​i​d​d​e​n]\quad{\color[rgb]{0,0,1}//\ [L_{P}+L_{R},d_{hidden}]}
+6:
+𝐊←𝐊cache\mathbf{K}\leftarrow\mathbf{K}_{\mathrm{cache}};   𝐕←𝐕cache\mathbf{V}\leftarrow\mathbf{V}_{\mathrm{cache}}
+7:
+𝐊⁡[idxsal],𝐕⁡[idxsal]←KProj⁡(𝐱⁡[idxsal]),VProj⁡(𝐱⁡[idxsal])\mathbf{K}[\mathrm{idx}_{\mathrm{sal}}],\mathbf{V}[\mathrm{idx}_{\mathrm{sal}}]\leftarrow\mathrm{KProj}\!\left(\mathbf{x}[\mathrm{idx}_{\mathrm{sal}}]\right),\mathrm{VProj}\!\left(\mathbf{x}[\mathrm{idx}_{\mathrm{sal}}]\right) //[LP+LR,dh​i​d​d​e​n]\quad{\color[rgb]{0,0,1}//\ [L_{P}+L_{R},d_{hidden}]}
+8:
+Δ​𝐕←𝐕⁡[idxsal]−𝐕cache​[idxsal]\Delta\mathbf{V}\leftarrow\mathbf{V}[\mathrm{idx}_{\mathrm{sal}}]-\mathbf{V}_{\mathrm{cache}}[\mathrm{idx}_{\mathrm{sal}}] //[Len(idxs​a​l),dh​i​d​d​e​n]\quad{\color[rgb]{0,0,1}//\ [Len(\mathrm{idx}_{sal}),d_{hidden}]}
+9:
+𝐂sal←Attention⁡(𝐐⁡[idxsal],𝐊,𝐕)\mathbf{C}_{\mathrm{sal}}\leftarrow\mathrm{Attention}\!\left(\mathbf{Q}[\mathrm{idx}_{\mathrm{sal}}],\mathbf{K},\mathbf{V}\right) //[Len(idxs​a​l),dh​i​d​d​e​n]\quad{\color[rgb]{0,0,1}//\ [Len(\mathrm{idx}_{sal}),d_{hidden}]}
+10:
+Δ​𝐂←ApproxAttn⁡(𝐐,𝐊,Δ​𝐕)\Delta\mathbf{C}\leftarrow\mathrm{ApproxAttn}\!\left(\mathbf{Q},\mathbf{K},\Delta\mathbf{V}\right) //[L,dh​i​d​d​e​n]\quad{\color[rgb]{0,0,1}//\ [L,d_{hidden}]}
+11:
+𝐂←𝐂cache+Δ​𝐂\mathbf{C}\leftarrow\mathbf{C}_{\mathrm{cache}}+\Delta\mathbf{C}
+12:
+𝐂⁡[idxsal]←𝐂sal\mathbf{C}[\mathrm{idx}_{\mathrm{sal}}]\leftarrow\mathbf{C}_{\mathrm{sal}}
+13:
+idxsal←Where⁡(CosSim⁡(𝐂,𝐂cache)<τ)\mathrm{idx}_{\mathrm{sal}}\leftarrow\mathrm{Where}\!\left(\mathrm{CosSim}(\mathbf{C},\mathbf{C}_{\mathrm{cache}})<\tau\right)
+14:
+𝐱←LayerNorm⁡(OutProj⁡(𝐂))\mathbf{x}\leftarrow\mathrm{LayerNorm}(\mathrm{OutProj}(\mathbf{C}))
+15:
+𝐱⁡[idxsal]←FFN⁡(𝐱⁡[idxsal])\mathbf{x}[\mathrm{idx}_{\mathrm{sal}}]\leftarrow\mathrm{FFN}\!\left(\mathbf{x}[\mathrm{idx}_{\mathrm{sal}}]\right)
+16:
+𝐱⁡[idxsal¯]←𝐅𝐅𝐍​_​𝐎𝐔𝐓cache​[idxsal¯]\mathbf{x}[\overline{\mathrm{idx}_{\mathrm{sal}}}]\leftarrow\mathbf{FFN\_OUT}_{\mathrm{cache}}[\overline{\mathrm{idx}_{\mathrm{sal}}}]
+17:
+𝐊cache,𝐕cache,𝐂cache,𝐅𝐅𝐍​_​𝐎𝐔𝐓cache←𝐊,𝐕,𝐂,𝐱\mathbf{K}_{\mathrm{cache}},\mathbf{V}_{\mathrm{cache}},\mathbf{C}_{\mathrm{cache}},\mathbf{FFN\_OUT}_{\mathrm{cache}}\leftarrow\mathbf{K},\mathbf{V},\mathbf{C},\mathbf{x}
+18:
+end for
+19:
+logits←LMHead⁡(𝐱)\mathrm{logits}\leftarrow\mathrm{LMHead}(\mathbf{x})
+20:
+return (logits,idxsal)(\mathrm{logits},\mathrm{idx}_{\mathrm{sal}})
+C.4 Approximate Attention
+Algorithm 4 computes the residual update for the attention context.
+As an input, query 𝐐\mathbf{Q} can be given as only RR or concatenated PP and RR depending on whether it is response-only step or not, whereas key 𝐊\mathbf{K} has length of LP+LRL_{P}+L_{R}.
+Attention score 𝐀\mathbf{A} is computed by multiplying 𝐐\mathbf{Q} and 𝐊\mathbf{K} and applying softmax operation to the result.
+Approximate attention derives the delta of attention context Δ​𝐂\Delta\mathbf{C} by multiplying only selected columns of 𝐀\mathbf{A} and selected rows of Δ​𝐕\Delta\mathbf{V}, which are indiced by given salient token indices idxsal\mathrm{idx_{sal}}.
+Algorithm 4  ApproximateAttention
+1:
+Query 𝐐∈ℝL×d\mathbf{Q}\in\mathbb{R}^{L\times d}; keys 𝐊∈ℝ(LP+LR)×d\mathbf{K}\in\mathbb{R}^{(L_{P}+L_{R})\times d};
+value delta Δ​𝐕∈ℝ|idxsal|×d\Delta\mathbf{V}\in\mathbb{R}^{|\mathrm{idx}_{\mathrm{sal}}|\times d}; salient index set idxsal\mathrm{idx}_{\mathrm{sal}}
+2:
+𝐒←𝐐𝐊⊤\mathbf{S}\leftarrow\mathbf{Q}\mathbf{K}^{\top} //[L,LP+LR]\quad{\color[rgb]{0,0,1}//\ [L,L_{P}+L_{R}]}
+3:
+𝐀←Softmax⁡(𝐒)\mathbf{A}\leftarrow\mathrm{Softmax}(\mathbf{S}) //[L,LP+LR]\quad{\color[rgb]{0,0,1}//\ [L,L_{P}+L_{R}]}
+4:
+𝐀sal←𝐀[:,idxsal]\mathbf{A}_{\mathrm{sal}}\leftarrow\mathbf{A}[:,\mathrm{idx}_{\mathrm{sal}}] //[L,Len(idxs​a​l)]\quad{\color[rgb]{0,0,1}//\ [L,Len(\mathrm{idx}_{sal})]}
+5:
+Δ​𝐂←𝐀sal​Δ​𝐕\Delta\mathbf{C}\leftarrow\mathbf{A}_{\mathrm{sal}}\,\Delta\mathbf{V} //[L,dh​i​d​d​e​n]\quad{\color[rgb]{0,0,1}//\ [L,d_{hidden}]}
+6:
+return Δ​𝐂\Delta\mathbf{C}
+Appendix D Extended Ablation Study
+This section details additional results not shown in the main paper.
+D.1 Impact of τ\tau on accuracy
+Extended from Figure 5, Figure 9 illustrates the accuracy on MATH and MMLU-pro benchmarks with differing threshold values τ\tau to examine the impact of the threshold on generation quality.
+We evaluated τ∈{0.98,0.985,0.99,0.995}\tau\in\{0.98,0.985,0.99,0.995\} for LLaDA, and τ∈{0.985,0.99,0.995,0.9975}\tau\in\{0.985,0.99,0.995,0.9975\} for Dream.
+Since lowering τ\tau results in selecting fewer salient tokens-thereby bypassing more computations and relying more heavily on cached results-we anticipate that a drastic decrease in τ\tau will eventually degrade accuracy, consistent with the trend observed in Section 4.2.3.
+At a finer granularity, increasing τ\tau does not guarantee better generation quality, as it may add additional tokens irrelevant to the context.
+This result supports the results that caching frameworks Ma et al. (2025); Wu et al. (2026); Liu et al. (2025), including DyLLM, show better response quality than the original models in some configurations.
+Figure 9:
+Accuracy and threshold results varying τ\tau across MATH and MMLU-pro benchmark.
+D.2 Average Ls​a​lL_{sal} per layer on various benchmarks
+Figure 10 illustrates extended results from Figure 7; the average number of salient tokens per layer across the MBPP, MATH, and MMLU-pro benchmarks.
+Notably, the initial layers exhibit a markedly lower number of salient tokens.
+This trend aligns with the dynamics identified in Elastic-Cache Nguyen-Tri et al. (2026), where shallow layers are relatively more stable, exhibiting small differences between steps, whereas deeper layers continue to evolve as the effect of the updated tokens propagates to other tokens throughout the step.
+While Elastic-Cache computes the entire tokens from a certain layer, we consistently select the tokens flexibly to effectively maintain a low average number of computed tokens without compromising model accuracy.
+Figure 10:
+The average number of salient tokens per layer across MBPP, MATH, and MMLU-Pro.
+A similar trend with GSM8k is observed.
+D.3 Semi-AR v.s. Non Semi-AR accuracy comparison
+Table 3 shows the effect of Semi-AR decoding on the original LLaDA and Dream implementation with GSM8K 5-shot benchmark.
+The block size BB was set to 32.
+Semi-AR decoding does not change computations, but offers huge improvements on accuracy.
+Table 3: Impact of Semi-AR decoding on accuracy score
+LLaDA
+Dream
+Semi-AR
+non Semi-AR
+Semi-AR
+non Semi-AR
+nu=1n_{u}=1
+77.79
+58.07
+75.59
+42.30
+nu=2n_{u}=2
+74.68
+54.36
+67.12
+40.41
+nu=4n_{u}=4
+66.41
+50.19
+48.45
+39.12
+D.4 dLLM-Cache Configurations
+Table 4 details the configuration settings to reproduce the dLLM-cache baseline.
+The hyperparameters KPK_{P} and KRK_{R} denote the prompt refresh interval and the response refresh interval, respectively.
+The values of KPK_{P} and KRK_{R} differ by an order of magnitude, resulting in frequent full computation over the response tokens, which might be helpful for long prompts.
+We adopted the identical values reported in the original paper, given that the baseline relies on a static refresh policy, which necessitates dataset-specific tuning for optimal performance.
+Table 4: Interval steps for LLaDA Instruct and Dream Instruct of dLLM-Cache
+Model
+Interval
+GSM8K
+MBPP
+Math
+MMLU-Pro
+LLaDA 8B Instruct
+KPK_{P}
+50
+100
+50
+51
+KRK_{R}
+7
+7
+1
+3
+Dream 7B Instruct
+KPK_{P}
+25
+10
+50
+5
+KRK_{R}
+2
+8
+1
+1
+Appendix E Formal Proofs of Propositions
+In this section, we provide the detailed mathematical derivations for the propositions presented in Section 3.2. These proofs establish the theoretical foundation for using temporal cosine similarity as a proxy for salient token selection in MDLMs.
+E.1 Proof of Proposition 1
+Proposition 1 (Scale Invariance under Linear Projection). Let C∈ℝdC\in\mathbb{R}^{d} be the attention context, Wo∈ℝd×dW_{o}\in\mathbb{R}^{d\times d} be the output projection matrix, and α∈ℝ+\alpha\in\mathbb{R}^{+} be a positive scaling factor. The composite operation of linear projection followed by RMSNorm satisfies: RMSNorm​((α​C)​Wo)=RMSNorm​(C​Wo)\text{RMSNorm}((\alpha C)W_{o})=\text{RMSNorm}(CW_{o}).
+Proof.
+By the linearity of the output projection WoW_{o}, the projected representation scales linearly with the input:
+(α​C)​Wo=α⁡(C​Wo).(\alpha C)W_{o}=\alpha(CW_{o}).
+(4)
+Let Y=C​WoY=CW_{o} denote the projected vector. Recall the definition of the RMSNorm operation:
+RMSNorm​(Y)=YRMS​(Y)⊙𝐠,whereRMS​(Y)=1d​∑i=1dyi2.\text{RMSNorm}(Y)=\frac{Y}{\text{RMS}(Y)}\odot\mathbf{g},\quad\text{where}\quad\text{RMS}(Y)=\sqrt{\frac{1}{d}\sum_{i=1}^{d}y_{i}^{2}}.
+(5)
+Applying this to the scaled vector α​Y\alpha Y:
+RMS​(α​Y)=1d​∑(α​yi)2=α2⋅1d∑yi2=|α|​RMS​(Y).\text{RMS}(\alpha Y)=\sqrt{\frac{1}{d}\sum(\alpha y_{i})^{2}}=\sqrt{\alpha^{2}\cdot\frac{1}{d}\sum y_{i}^{2}}=|\alpha|\text{RMS}(Y).
+(6)
+Since α∈ℝ+\alpha\in\mathbb{R}^{+}, we have |α|=α|\alpha|=\alpha. Substituting these into the RMSNorm formula:
+RMSNorm​(α​Y)=α​Yα​RMS​(Y)⊙𝐠=YRMS​(Y)⊙𝐠=RMSNorm​(Y).\text{RMSNorm}(\alpha Y)=\frac{\alpha Y}{\alpha\text{RMS}(Y)}\odot\mathbf{g}=\frac{Y}{\text{RMS}(Y)}\odot\mathbf{g}=\text{RMSNorm}(Y).
+(7)
+Thus, RMSNorm​((α​C)​Wo)=RMSNorm​(C​Wo)\text{RMSNorm}((\alpha C)W_{o})=\text{RMSNorm}(CW_{o}), completing the proof.
+∎
+E.2 Proof of Proposition 3.2
+Proposition 2 (Error Bound via Directional Alignment).
+The L2L_{2} error between normalized outputs,
+δ=‖RMSNorm⁡(Yt)−RMSNorm⁡(Yt−1)‖2\delta=\|\mathrm{RMSNorm}(Y_{t})-\mathrm{RMSNorm}(Y_{t-1})\|_{2},
+is bounded by the temporal cosine similarity st,ls_{t,l} of the inputs as:
+δ≤κ⁡(Wo)​2​(1−st,l).\delta\leq\kappa(W_{o})\sqrt{2(1-s_{t,l})}.
+(8)
+Proof.
+Let C^t\hat{C}_{t} and C^t−1\hat{C}_{t-1} be the unit-normalized input vectors (i.e., C^=C/‖C‖\hat{C}=C/\|C\|). The temporal cosine similarity is given by the dot product st,l=C^t⊤​C^t−1s_{t,l}=\hat{C}_{t}^{\top}\hat{C}_{t-1}. The Euclidean distance between these unit inputs is strictly determined by st,ls_{t,l}:
+‖C^t−C^t−1‖2=2​(1−st,l).\|\hat{C}_{t}-\hat{C}_{t-1}\|_{2}=\sqrt{2(1-s_{t,l})}.
+(9)
+Consider the function f⁡(x)=Wo​x‖Wo​x‖2f(x)=\frac{W_{o}x}{\|W_{o}x\|_{2}} which maps a unit vector xx to the normalized output space. The approximation error δ\delta corresponds to the change in this map’s output. Standard results in numerical linear algebra establish that the local Lipschitz constant of the map x↦W​x/‖W​x‖x\mapsto Wx/\|Wx\| on the unit sphere is bounded by the condition number κ⁡(Wo)\kappa(W_{o}). Specifically, for any unit vectors u,vu,v:
+‖Wo​u‖Wo​u‖−Wo​v‖Wo​v‖‖2≤κ⁡(Wo)​‖u−v‖2.\left\|\frac{W_{o}u}{\|W_{o}u\|}-\frac{W_{o}v}{\|W_{o}v\|}\right\|_{2}\leq\kappa(W_{o})\|u-v\|_{2}.
+(10)
+Applying this inequality to our inputs C^t,C^t−1\hat{C}_{t},\hat{C}_{t-1} and outputs Y^t,Y^t−1\hat{Y}_{t},\hat{Y}_{t-1} (where Y^\hat{Y} is the normalized output):
+δ=‖Y^t−Y^t−1‖2≤κ⁡(Wo)​‖C^t−C^t−1‖2.\delta=\|\hat{Y}_{t}-\hat{Y}_{t-1}\|_{2}\leq\kappa(W_{o})\|\hat{C}_{t}-\hat{C}_{t-1}\|_{2}.
+(11)
+Substituting the expression for the input distance:
+δ≤κ⁡(Wo)​2​(1−st,l).\delta\leq\kappa(W_{o})\sqrt{2(1-s_{t,l})}.
+(12)
+This confirms that the upper bound holds strictly without relying on small-angle approximations.
+∎
+Appendix F Other Related Works
+F.1 Confidence Aware Decoding
+Confidence-aware decoding Wu et al. (2026) employs a dynamic decoding strategy that is independent of the predefined number of denoising steps TT.
+Specifically, it unmasks any positions whose confidence score exceeds a user-specified threshold during the generation process.
+This approach represents a distinct optimization scope compared to the architectural or caching strategies.
+It operates strictly at the sampling level, utilizing the model’s output logit to determine tokens to decode.
+Because this optimization is model-agnostic, it can be seamlessly integrated not only with Fast-dLLM but also with our proposed method and any other aforementioned frameworks.
+F.2 Sparse Attention
+To address the quadratic complexity of attention operations in AR LLMs, various sparse attention mechanisms have been proposed.
+These methods typically leverage the observation that attention scores are highly localized, with tokens primarily attending to their neighbors Child et al. (2019); Beltagy et al. (2020).
+Beyond static patterns, recent works have focused on runtime sparsity, analyzing dynamic attention patterns to prune less critical computations during inference.
+For instance, H2O Zhang et al. (2023) and Deja Vu Liu et al. (2023) discard tokens with low accumulated attention scores (KV cache eviction) or predict contextual sparsity to skip blocks, while MInference Jiang et al. (2024) identifies specific sparse patterns to accelerate the prefill stage.
+While these methods primarily explore sparsity in autoregressive models, similar ideas have also been applied to diffusion LLMs.
+During inference of Diffusion LLMs, only a small subset of tokens changes at each leading to substantial redundancy in attention score activations across adjacent steps.
+SparseD Wang et al. (2026) exploits this property by computing full attention in early steps and, after a pre-defined step, constructing a binary attention mask by selecting high-scoring attention score blocks.
+This mask is then reused in subsequent steps, allowing the model to perform efficient sparse operations for the remainder of the denoising steps.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

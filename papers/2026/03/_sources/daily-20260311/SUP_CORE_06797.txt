@@ -1,0 +1,1210 @@
+Best-of-Tails: Bridging Optimism and Pessimismin Inference-Time Alignment
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Taxonomy of Inference-Time Alignment through Regret Analysis
+3 Reward Tails and Alignment Regret
+3.1 Decomposing the Regret Bound
+3.2 Light vs. Heavy Tails: When to be Optimistic?
+4 BoT: A Tail-Adaptive Alignment
+4.1 Deciding the Prompt-Dependent α⁡(x)\alpha(x)
+4.2 Practical Implementation
+5 Empirical Study
+6 Final Remark
+Impact Statement.
+Disclaimer.
+References
+A Omitted Proofs and Theoretical Results
+A.1 Proof of Proposition
+A.2 Proof of Proposition
+Preliminaries: Moments.
+Part 1: Heavy-tailed regime (large κ\kappa).
+1.1 Soft-BoN.
+1.2 ITP.
+Part 2: Light-tail regime (small κ\kappa).
+2.1 Soft-BoN.
+2.2 ITP.
+Part 3: BoN limit (λ→0\lambda\to 0).
+A.3 Proof of Proposition
+A.4 Proof of Proposition
+Part 1: Algebraic reductions.
+Part 2: Heavy-tailed regime (large κ\kappa).
+Part 3: Light-tailed regime (small κ\kappa).
+B Additional Discussion and Experimental Setup
+B.1 Tail Estimation via the Hill Estimator
+B.2 Sample Complexity: Tail Index vs. Full Distribution
+B.3 Experimental Setup
+C Additional Experiments and Ablation Studies
+C.1 The Complete Results over all Datasets, Reference Policies, and Reward Models
+C.2 Additional Results on Selected Configurations in Figures
+C.3 Ablation Studies
+Steering Temperature λ\lambda (Figure , Left).
+Tail Pivot κ0\kappa_{0} (Figure , Right).
+License: CC BY 4.0
+arXiv:2603.06797v1 [cs.AI] 06 Mar 2026
+Best-of-Tails: Bridging Optimism and Pessimism
+in Inference-Time Alignment
+Hsiang Hsu
+††thanks: Correspondence to: Hsiang Hsu <hsiang.hsu@jpmchase.com>.
+Eric Lei
+and Chun-Fu (Richard) Chen
+Affiliation: JPMorganChase Global Technology Applied Research
+Abstract
+Inference-time alignment effectively steers large language models (LLMs) by generating multiple candidates from a reference model and selecting among them with an imperfect reward model. However, current strategies face a fundamental dilemma: “optimistic” approaches like Best-of-NN suffer from reward hacking, while “pessimistic” regularized methods often stifle the exploration needed to discover high-quality responses. In this work, we formalize this trade-off through the lens of regret minimization, demonstrating that the optimal strategy depends critically on the tail behavior of the reward distribution. We show theoretically that light-tailed regimes favor optimism to unearth high-quality outliers, whereas heavy-tailed regimes require pessimism to guard against reward mis-calibration in the extremes. Guided by this insight, we introduce Best-of-Tails (BoT), an adaptive inference-time alignment framework that uses Tsallis divergence as a tunable regularizer to provide a finer granularity of interpolation between these extremes. BoT uses the Hill estimator to characterize reward-tail heaviness on a per-prompt basis and dynamically adjusts its selection rule to balance exploration gains against alignment error. Across math, multiple-choice reasoning, and human-preference evaluations, BoT improves alignment performance across a range of reference and reward model configurations relative to fixed-strategy baselines.
+Keywords: Inference-time alignment, inference-time scaling, Best-of-N, reward hacking, tail behavior, tail-adaptive selection, Tsallis divergence, Hill estimator, regret minimization.
+1 Introduction
+Inference-time scaling has emerged as a key mechanism for adapting large language models (LLMs) to complex real-world tasks (Brown et al., 2024; Snell et al., 2025).
+Extending traditional scaling laws (Kaplan et al., 2020) to the inference phase, models are allocated additional compute at deployment—effectively giving them more time to “think”—so they can search a richer response space and select outputs that are more accurate and contextually appropriate.
+This paradigm has helped unleash latent capabilities of LLMs, including improved reasoning through chain-of-thought (CoT) generation (Wei et al., 2022; Feng et al., 2023), iterative self-correction and self-evaluation (Wu et al., 2025; Ren et al., 2023; Asai et al., 2024), and longer-horizon planning via structured search (Zhang et al., 2024; Yao et al., 2023).
+The principles of inference-time scaling have also found a natural and increasingly important application in LLM alignment, where the goal is to steer model’s behavior toward human preferences such as correctness, helpfulness, and safety (Christiano et al., 2017; Schulman et al., 2017; Rafailov et al., 2023).
+Rather than permanently encoding preferences into model weights through fine-tuning, inference-time alignment uses extra computation at inference to evaluate and select among multiple candidates produced by a reference model, guided by a reward model (RM) (Stiennon et al., 2020; Jinnai et al., 2024; Verdun et al., 2025; Gui et al., 2024; Geuter et al., 2025; Huang et al., 2025b; Khalaf et al., 2025).
+This approach offers two practical advantages: it avoids the expense and operational burden of repeated re-training, and enables rapid adaptation to new tasks and deployments by simply changing the reward objective.
+Figure 1: Conceptual illustration of selection probabilities (colored solid lines) for optimistic, pessimistic, and the proposed BoT strategies.
+The plots depict how these strategies re-weight candidates under light-tailed (left) versus heavy-tailed (right) reward distributions (black dashed lines).
+While optimism consistently concentrates mass on the highest rewards (risking reward hacking) and pessimism remains conservative (risking under-exploration), BoT adaptively shifts its strategy: it mimics optimism in light-tailed regimes to exploit safe gains, but pivots toward robust, conservative selection in heavy-tailed regimes to prevent over-optimization.
+The most prominent inference-time alignment strategy is Best-of-NN (BoN), which selects the candidate with the highest reward from NN generated responses (Stiennon et al., 2020).
+At its core, BoN reflects an “optimistic” premise: that improvements in reward scores translate reliably into improvements in true quality.
+In practice, however, reward models are only imperfect proxies (Laidlaw et al., 2025; Sun et al., 2025).
+As NN increases, BoN is increasingly driven by the extreme tail of the reward distribution, precisely where reward scores can become systematically mis-calibrated and over-estimate true quality, leading to reward hacking11
+1
+Also known as reward over-optimization or Goodhart’s Law. (Stiennon et al., 2020; Gao et al., 2022; Skalse et al., 2022; Kwa et al., 2024).
+To mitigate this failure mode, recent work has proposed more “pessimistic” alternatives that explicitly curb over-optimization through regularization or conservative selection rules (Jinnai et al., 2025; Huang et al., 2025c; Huang et al., 2025b; Verdun et al., 2025).
+Yet, these safeguards often come at a cost, stifling the model’s exploration at inference time to discover genuinely outstanding solutions when the reward signal is informative.
+We visually illustrate this dichotomy in Figure 1, which demonstrates how optimistic and pessimistic strategies select the responses depending on the observed reward tail heaviness.
+In this paper, we formalize the central trade-off between optimistic and pessimistic inference-time alignment strategies.
+Specifically, we argue that the effectiveness of inference-time alignment depends not only on how accurately the reward model reflects true response quality, but also on the distribution of reward scores induced by the generated candidates.
+In § 3, we analyze inference-time alignment through the lens of regret minimization.
+Our theoretical results reveal that the reward score tail behavior fundamentally shapes what “good” selection looks like.
+When rewards are largely concentrated—corresponding to a light-tailed regime—overly pessimistic selection can underutilize inference compute, since aggressive conservatism makes it unlikely to surface meaningfully better responses.
+In this setting, optimistic strategies such as BoN can be effective by actively exploring candidates with higher proxy reward.
+In contrast, when reward scores exhibit heavy tails—indicating substantial headroom for exploration—BoN is more likely to chase extreme proxy scores where mis-calibration is severe, making it particularly vulnerable to reward hacking; here, more pessimistic strategies become essential for robustness.
+Guided by this insight, in § 4 we propose Best-of-Tails (BoT), a new framework that bridges the optimism needed to discover high-reward responses and the pessimism required to ensure their validity.
+BoT introduces Tsallis divergence (Tsallis, 1988; Lee et al., 2019), a generalized family of divergences that interpolates between the KL and χ2\chi^{2} divergences, as a tunable regularization term for response selection.
+By our design, BoT does not rely on a fixed hyperparameter; instead, it first characterizes the reward landscape by estimating the tail index (power coefficient) via the Hill estimator (Hill, 1975).
+Based on this estimate, BoT adaptively interpolates between optimistic and pessimistic selection strategies for each input prompt (cf. Figure 1), offering a robust trade-off between exploration cost and alignment error.
+In § 5, we empirically demonstrate that BoT consistently outperforms fixed optimistic baselines (e.g., BoN) and fixed pessimistic alternatives (Jinnai et al., 2024; Verdun et al., 2025; Huang et al., 2025b) across math, multiple-choice reasoning, and human-preference evaluations, under multiple reference and reward model configurations.
+We conclude in § 6 with a discussion of limitations and future research directions.
+Omitted proofs, additional discussions, experiment setups, and additional experiments are included in the Appendix.
+Code to reproduce our experiments will be released soon.
+2 Taxonomy of Inference-Time Alignment through Regret Analysis
+Given a prompt x∈𝒳x\in\mathcal{X}, an LLM is represented as a (stochastic) policy π:𝒳→Δ⁡(𝒴)\pi:\mathcal{X}\to\Delta(\mathcal{Y}) that induces a conditional distribution over responses y∈𝒴y\in\mathcal{Y}.
+In other words, π⁡(y|x)\pi(y|x) specifies the probability of generating a response yy conditioned on xx.
+We consider a true (but unknown) reward function r∗:𝒳×𝒴→[0,Rmax]r^{*}:\mathcal{X}\times\mathcal{Y}\to[0,R_{\textsf{max}}] with a bounded range RmaxR_{\textsf{max}}.
+For a prompt xx, the true reward r∗r^{*} quantifies the extent to which yy aligns with human preference, passes a verifier, or demonstrates sound reasoning.
+In practice, r∗r^{*} is inaccessible, and an imperfect proxy r^\hat{r} is often employed instead.
+For a given reward function r∈{r∗,r^}r\in\{r^{*},\hat{r}\}, the corresponding expected reward under policy π\pi is defined as Jr(π;x)=𝔼y∼π(⋅|x)[r(x,y)]J_{r}(\pi;x)=\mathbb{E}_{y\sim\pi(\cdot|x)}[r(x,y)].
+Moreover, letting ∥⋅∥Lp​(Q)\|\cdot\|_{L^{p}(Q)} denote the ℒp{\mathcal{L}}^{p}-norm with respect to a distribution QQ, we measure the quality of r^\hat{r} via its expected error with respect to r∗r^{*} under a policy: ϵp(r^;π(⋅|x))=∥r^−r∗∥Lp​(π)=(𝔼y∼π(⋅|x)[|r^(x,y)−r∗(x,y)|p])1/p\epsilon_{p}(\hat{r};\pi(\cdot|x))=\|\hat{r}-r^{*}\|_{L^{p}(\pi)}=\left(\mathbb{E}_{y\sim\pi(\cdot|x)}[|\hat{r}(x,y)-r^{*}(x,y)|^{p}]\right)^{1/p}.
+For simplicity, we denote ϵ=ϵ2(r^;πref(⋅|x))\epsilon=\epsilon_{2}(\hat{r};\pi_{\textsf{ref}}(\cdot|x)).
+Finally, let 𝟙​(⋅)\mathbbm{1}(\cdot) denote the indicator function and [b]+=max⁡(b,0)[b]_{+}=\max(b,0) for a scalar bb.
+We define the α\alpha-exponential as expα⁡(x)=[1+(α−1)​x]+1α−1\exp_{\alpha}(x)=[1+(\alpha-1)x]_{+}^{\frac{1}{\alpha-1}} and α\alpha-logarithm22
+2
+The α\alpha-exponential and α\alpha-logarithm converge to the standard exponential and logarithm functions as α→1\alpha\to 1 (Lemma A.1). as logα⁡(x)=xα−1−1α−1\log_{\alpha}(x)=\frac{x^{\alpha-1}-1}{\alpha-1}.
+Inference-time alignment.
+Ideally, LLM alignment seeks a policy that maximizes the expected true reward: π∗(⋅|x)=arg​maxπ∈Δ⁡(𝒴)Jr∗(π;x)\pi^{*}(\cdot|x)=\argmax_{\pi\in\Delta({\mathcal{Y}})}J_{r^{*}}(\pi;x).
+However, since the true reward r∗r^{*} is typically inaccessible, practitioners must optimize a proxy objective Jr^​(π,x)J_{\hat{r}}(\pi;x) instead.
+To prevent the model from over-exploiting the imperfect proxy, it is standard to include an explicit distortion penalty.
+For instance, given a λ≥0\lambda\geq 0, reinforcement learning from human feedback (RLHF) (Christiano et al., 2017) uses KL regularization:
+maxπ∈Δ⁡(𝒴)⁡Jr^​(π,x)−λ​DKL​(π|πref),\max_{\pi\in\Delta({\mathcal{Y}})}J_{\hat{r}}(\pi;x)-\lambda D_{\textsf{KL}}(\pi|\pi_{\textsf{ref}}),
+(1)
+which limits how far the aligned policy can deviate from the reference policy.
+Yet, optimizing this objective via iterative parameter updates is often infeasible, as modern LLMs are frequently accessible only as black boxes (e.g., via commercial APIs) or are prohibitively expensive to fine-tune.
+These limitations motivate the study of inference-time alignment, which aims to steer model behavior dynamically at inference time without updating model parameters.
+An inference-time alignment method begins with a reference policy πref\pi_{\textsf{ref}} that is capable of generating high-reward responses by chance.
+The method then steers the output distribution by re-weighting these responses using a weight function w⁡(y|x)w(y|x), which is typically designed to be monotonically increasing in the proxy reward r^​(x,y)\hat{r}(x,y).
+At the distribution level, this induces a re-weighted policy
+πw​(y|x)∝πref​(y|x)​w​(y|x),\pi_{w}(y|x)\propto\pi_{\textsf{ref}}(y|x)w(y|x),
+(2)
+which can be interpreted as an “aligned” version of πref\pi_{\textsf{ref}} that favors higher proxy-reward responses.
+Since direct access to the full reference distribution is generally unavailable, inference-time alignment procedures operate on empirical samples.
+Consequently, the procedure first draws a finite set of i.i.d. candidates 𝒴N={y1,⋯,yN}∼πref(⋅|x){\mathcal{Y}}_{N}=\{y_{1},\cdots,y_{N}\}\sim\pi_{\textsf{ref}}(\cdot|x), and then approximate πw​(y|x)\pi_{w}(y|x) using techniques such as weighted sampling (Verdun et al., 2025) or rejection sampling (Liu et al., 2024; Block and Polyanskiy, 2023).
+We denote this finite-sample approximation by π^w​(y|x)\hat{\pi}_{w}(y|x).
+A final “best” response is then selected according to π^w​(y|x)\hat{\pi}_{w}(y|x), typically by sampling (Verdun et al., 2025; Huang et al., 2025b) or by greedily choosing the highest-scoring candidate (Stiennon et al., 2020).
+This sample–evaluate–select pipeline has become a standard framework for inference-time alignment (Huang et al., 2025a).
+Inference-time regret analysis.
+The effectiveness of an inference-time alignment policy π^w​(y|x)\hat{\pi}_{w}(y|x) can be quantified by the loss in expected true reward caused by imperfect alignment under a finite sample budget NN.
+This quantity, termed the inference-time regret (Huang et al., 2025b; Aminian et al., 2025), is defined as
+regret​(π^w,x)=Jr∗​(π∗,x)−Jr∗​(π^w,x).\textsf{regret}(\hat{\pi}_{w};x)=J_{r^{*}}(\pi^{*};x)-J_{r^{*}}(\hat{\pi}_{w};x).
+(3)
+Analyzing the upper bound of this regret cleanly isolates key factors that govern the design of effective inference-time alignment strategies.
+Proposition 1.
+For a given prompt x∈𝒳x\in{\mathcal{X}}, the inference-time regret for a general inference-time alignment policy π^w​(y|x)\hat{\pi}_{w}(y|x), defined via a re-weighting function w⁡(y|x)w(y|x), admits the following upper bound33
+3
+A more general upper bound is provided in Appendix A.1.
+𝗋𝖾𝗀𝗋𝖾𝗍⁡(π^w,x)\displaystyle\mathsf{regret}(\hat{\pi}_{w};x)
+≤2​Rmax​DTV(π^w(⋅|x)∥πw(⋅|x))⏟(i)−Δ(πw(⋅|x))⏟(i​i)\displaystyle\leq 2R_{\textsf{max}}\underbrace{D_{\textsf{TV}}(\hat{\pi}_{w}(\cdot|x)\|\pi_{w}(\cdot|x))}_{(i)}-\underbrace{\Delta(\pi_{w}(\cdot|x))}_{(ii)}
+(4)
++Cπ∗​(x)−1⏟(i​i​i)(ϵ2(r^;πref(⋅|x))⏟(i​v)+∥r^∥L2(πref(⋅|x)))\displaystyle+\underbrace{\sqrt{C^{\pi^{*}}(x)-1}}_{(iii)}\left(\underbrace{\epsilon_{2}(\hat{r};\pi_{\textsf{ref}}(\cdot|x))}_{(iv)}+\|\hat{r}\|_{L^{2}(\pi_{\textsf{ref}}(\cdot|x))}\right)
++1+Dχ2(πw(⋅|x)∥πref(⋅|x))⏟(v)ϵ2(r^;πref(⋅|x)).\displaystyle+\underbrace{\sqrt{1+D_{\chi^{2}}(\pi_{w}(\cdot|x)\|\pi_{\textsf{ref}}(\cdot|x))}}_{(v)}\epsilon_{2}(\hat{r};\pi_{\textsf{ref}}(\cdot|x)).
+Here, DTV(⋅∥⋅)D_{\textsf{TV}}(\cdot\|\cdot) is the total variation (Lehmann and Romano, 2005).
+Δ(πw(⋅|x))=Jr^(πw)−Jr^(πref)\Delta(\pi_{w}(\cdot|x))=J_{\hat{r}}(\pi_{w})-J_{\hat{r}}(\pi_{\textsf{ref}}) represents the alignment gain, i.e., the improvement in expected proxy reward achieved by shifting from πref\pi_{\textsf{ref}} to πw\pi_{w}.
+We denote by Cπ∗(x)=𝔼y∼π∗(⋅|x)[π∗(y|x)/πref(y|x)]C^{\pi^{*}}(x)=\mathbb{E}_{y\sim\pi^{*}(\cdot|x)}[\pi^{*}(y|x)/\pi_{\textsf{ref}}(y|x)] the coverage of the reference policy πref\pi_{\textsf{ref}} with respect to the optimal policy π∗\pi^{*}.
+Finally, Dχ2(πw(⋅|x)∥πref(⋅|x))D_{\chi^{2}}(\pi_{w}(\cdot|x)\|\pi_{\textsf{ref}}(\cdot|x)) measures the distortion of the aligned policy πw\pi_{w} from πref\pi_{\textsf{ref}} via the χ2\chi^{2} divergence.
+Apart from term (i), which arises solely from the finite-sample approximation of πw\pi_{w} using the candidate set 𝒴N{\mathcal{Y}}_{N}, the remaining terms (ii)–(v) each capture a distinct axis along which inference-time alignment methods can be analyzed and improved.
+Crucially, the bound in Eq. (4) offers a more nuanced perspective than recent analyses (e.g., Huang et al. (2025b)), which tend to be dominated by the oracle constant Cπ∗​(x)C^{\pi^{*}}(x) and consequently overlook the structural constraints imposed by πref\pi_{\textsf{ref}}.
+To explicitly investigate how the reward tail governs alignment dynamics, we focus on the interplay between terms (ii) and (iv).
+Together, these terms mirror the core RLHF objective (Eq. (1)), forming a trade-off to maximize reward while penalizing distortion.
+We next iterate over these terms and survey the related work.
+Alignment gain (term (ii)).
+Empirically, Best-of-NN (BoN) (Stiennon et al., 2020) effectively maximizes the alignment gain
+by applying a hard selection rule that chooses the single highest-scoring candidate.
+However, this aggressive optimization is prone to reward hacking (Gao et al., 2022; Skalse et al., 2022).
+To mitigate this, soft-BoN (sBoN) (Jinnai et al., 2024; Verdun et al., 2025) relaxes the hard maximum with a softmax weighting,
+πsBoN​(y|x)∝πref​(y|x)​exp⁡(r^​(x,y)/λ),\pi_{\textsf{sBoN}}(y|x)\propto\pi_{\textsf{ref}}(y|x)\exp\left(\hat{r}(x,y)/\lambda\right),
+(5)
+thereby smoothing the selection to preserve exploration.
+Extending this probabilistic view beyond one-shot re-weighting, Faria and Smith (2025) formulate alignment as an Monte-Carlo Markov chain process guided by process-based rewards; while theoretically more expressive, this approach incurs significantly higher computational overhead due to iterative sampling.
+Coverage (term (iii)).
+The central premise of inference-time alignment is that πref\pi_{\textsf{ref}} already places non-negligible probability mass on high-reward responses, so they can be uncovered by sampling (Snell et al., 2025).
+Inference-time alignment is effective only if πref\pi_{\textsf{ref}} has sufficient coverage of high-reward responses, so that 𝒴N{\mathcal{Y}}_{N} is likely to include near-optimal candidates.
+This is captured by Cπ∗​(x)C^{\pi^{*}}(x) in Eq. (4): smaller values indicate better overlap between πref\pi_{\textsf{ref}} and π∗\pi^{*}.
+Consequently, a key line of work—inference-aware fine-tuning—focuses on improving this coverage.
+For instance, Gui et al. (2024) fine-tune πref\pi_{\textsf{ref}} on BoN samples via supervised fine-tuning, while Balashankar et al. (2024) optimize reward transformations to stabilize this process.
+From a distribution-matching perspective, Amini et al. (2025) align πref\pi_{\textsf{ref}} by minimizing the KL divergence between it and the theoretical BoN distribution, whereas Sessa et al. (2025) employ Jeffreys divergence (Jeffreys, 1946) for greater robustness. Beyond parameter updates, recent work also leverages in-context learning to dynamically enhance coverage at inference time (Lin et al., 2024).
+Reward estimate (term (iv)).
+Reward estimation shapes inference-time alignment both through the quality of the proxy and through how the reward is modeled and used during generation.
+In Eq (4), reducing ϵ2(r^;πref(⋅|x))\epsilon_{2}(\hat{r};\pi_{\textsf{ref}}(\cdot|x)) improves regret, motivating alternative reward objectives and parameterizations.
+For example, Sun et al. (2025) argue that the Bradley-Terry model is not uniquely required, proposing order consistency and a classification-style upper-bound objective, while Coste et al. (2024) learn reward ensembles to reduce annotation noise.
+More recently, Geuter et al. (2025) and Liao et al. (2025) couple reward modeling with speculative decoding (Leviathan et al., 2023): improving inference efficiency by using a lightweight auxiliary policy proposes candidates, and a πref\pi_{\textsf{ref}}-aware reward to guide which candidates are selected.
+Distortion (term (v)).
+The distortion regularizer is closely related to the induced steering rule: optimizing KL-regularized RLHF in Eq. (1) yields an exponential re-weighting of the reference policy, exactly the soft-BoN policy in Eq. (5) (Korbak et al., 2022; Gui et al., 2024; Beirami et al., 2025; Yang et al., 2024a; Khalaf et al., 2025).
+While KL is a common default, recent work has explored alternative regularizers.
+For instance, Jinnai et al. (2024) demonstrate that minimizing Bayes risk in BoN corresponds to Wasserstein regularization.
+More critical to robust alignment, Huang et al. (2025c) argue that KL regularization can be too weak to reliably prevent reward hacking.
+They instead propose χ2\chi^{2} regularization, i.e.,
+maxπ∈Δ⁡(𝒴)⁡Jr^​(π,x)−λ​Dχ2​(π|πref)\max_{\pi\in\Delta({\mathcal{Y}})}J_{\hat{r}}(\pi;x)-\lambda D_{\chi^{2}}(\pi|\pi_{\textsf{ref}}).
+This objective induces a linear re-weighting of the reference policy, yielding the Inference-Time Pessimism (ITP) policy (Huang et al., 2025b):
+πITP​(y|x)∝πref​(y|x)​[r^​(x,y)/λ]+.\pi_{\textsf{ITP}}(y|x)\propto\pi_{\textsf{ref}}(y|x)[\hat{r}(x,y)/\lambda]_{+}.
+(6)
+This linear scaling represents a more “pessimistic” strategy specifically designed to mitigate reward hacking in inference-time alignment.
+3 Reward Tails and Alignment Regret
+Beyond the explicit terms in the regret bound of Eq. (4), our analysis highlights a critical, often implicit factor: the tail behavior of the imperfect proxy reward r^\hat{r} under πref\pi_{\textsf{ref}}. By explicitly coupling alignment gain with distortion, our framework provides a tractable way to analyze how the reward tail impacts inference-time alignment. This perspective is crucial because the alignment trade-off is fundamentally driven by how the weighting function w(⋅|x)w(\cdot|x) shifts probability mass toward the high-reward tail, where rare, extreme proxy scores can dominate steering, amplify distortion, and trigger reward hacking. In contrast, prior analyses such as Huang et al. (2025b) do not capture this structural trade-off, focusing instead on broad reward estimation errors.
+To systematically analyze how optimistic versus pessimistic strategies govern inference-time alignment, we look beyond aggregate metrics and examine the tail behavior of the proxy reward distribution.
+In this analysis, We focus on two representative strategies: sBoN (optimistic), which employs exponential re-weighting (Eq. (5)) and includes standard BoN as a limiting case (λ→0\lambda\to 0); and ITP (pessimistic), which uses linear re-weighting (Eq. (6)) to explicitly constrain deviation from the reference policy.
+We start by characterizing the reward tail of r^​(x,y)\hat{r}(x,y) under πref(⋅|x)\pi_{\textsf{ref}}(\cdot|x).
+Fix a prompt xx and assume the proxy reward is normalized to r^​(x,y)∈[0,1]\hat{r}(x,y)\in[0,1].
+Since the reward is bounded, its tail behavior is defined by the concentration of probability mass near the maximum value 11. We characterize this using the endpoint gap U​(x,y)=1−r^​(x,y)U(x,y)=1-\hat{r}(x,y), which maps upper-tail events of r^\hat{r} to lower-tail events of UU. Motivated by the Hill estimator from extreme value theory (Hill, 1975), we parameterize this endpoint tail using a prompt-dependent scalar κ⁡(x)>0\kappa(x)>0 via a Weibull-type model:
+Pr⁡(U≤u)≈u1/κ⁡(x)⇔U∼Beta​(1/κ⁡(x),1).\Pr(U\leq u)\approx u^{1/\kappa(x)}\iff U\sim\text{Beta}(1/\kappa(x),1).
+(7)
+In this bounded setting, a “heavy tail” (κ→∞\kappa\to\infty) implies a high density of responses near the maximum reward , while a “light tail” (κ→0\kappa\to 0) implies that high-reward responses are exponentially rare.
+3.1 Decomposing the Regret Bound
+To understand how tail behavior governs alignment performance, we analyze the regret bound in Eq. (4), specifically focusing on how the reward tail impacts the trade-off between alignment gain and distortion.
+Isolating the terms dependent on πw\pi_{w}, we define a regret proxy44
+4
+Note that the regret proxy B⁡(πw,x)B(\pi_{w};x) is actually prompt-dependent. We omit the xx in the notation for simplicity. B⁡(πw)B(\pi_{w}) that aggregates finite-sample error (i), distortion (v), and gain (ii).
+Using standard rejection sampling bounds and re-parameterizing the χ2\chi^{2}-divergence via moments of w⁡(r^)w(\hat{r}), we obtain a tractable upper bound:
+B⁡(πw)\displaystyle B(\pi_{w})
+≤2​exp⁡(−N​𝔼​[w]supw)⏟Sampling Error+ϵ​𝔼⁡[w2]𝔼⁡[w]⏟Distortion−Δ⁡(πw)⏟Gain,\displaystyle\leq\underbrace{2\exp\left(-\frac{N\mathbb{E}[w]}{\sup w}\right)}_{\text{Sampling Error}}+\underbrace{\epsilon\frac{\sqrt{\mathbb{E}[w^{2}]}}{\mathbb{E}[w]}}_{\text{Distortion}}-\underbrace{\Delta(\pi_{w})}_{\text{Gain}},
+(8)
+where expectations are taken over πref\pi_{\textsf{ref}}.
+This formulation explicitly reveals an inherent gain-distortion trade-off. Any strategy that aggressively re-weights the top-reward region to maximize alignment gain inevitably inflates the higher moments of w⁡(r^)w(\hat{r}). This consequently increases distortion, which can outweigh the benefits of the realized gain, particularly in heavy-tailed regimes.
+3.2 Light vs. Heavy Tails: When to be Optimistic?
+We now apply this framework to compare sBoN and ITP.
+Proposition 2 quantifies the regret proxy B⁡(πw)B(\pi_{w}) for these strategies under extreme tail conditions.
+Proposition 2.
+Fix a prompt xx, and assume U⁡(x,y)=1−r^​(x,y)∼Beta​(1/κ,1)U(x,y)=1-\hat{r}(x,y)\sim\text{Beta}(1/\kappa,1). Let λ>0\lambda>0 be the inverse steering temperature.
+•
+Heavy-tailed regime (large κ\kappa):
+B⁡(πsBoN)\displaystyle B(\pi_{\textsf{sBoN}})
+≤2e−N1+1/(λ​κ)+ϵ(1+14​λ2​κ)−1κ(1−λ(1−e−1/λ))+o(κ−1),\displaystyle\leq 2e^{-\frac{N}{1+1/(\lambda\kappa)}}+\epsilon\left(1+\frac{1}{4\lambda^{2}\kappa}\right)-\frac{1}{\kappa}\left(1-\lambda(1-e^{-1/\lambda})\right)+o(\kappa^{-1}),
+(9)
+B⁡(πITP)\displaystyle B(\pi_{\textsf{ITP}})
+≤2​e−N1+1(λ+1)​κ+ϵ⁡(1+14​(λ+1)2​κ)−12​κ​(λ+1)+o⁡(κ−1).\displaystyle\leq 2e^{-\frac{N}{1+\frac{1}{(\lambda+1)\kappa}}}+\epsilon\left(1+\frac{1}{4(\lambda+1)^{2}\kappa}\right)-\frac{1}{2\kappa(\lambda+1)}+o(\kappa^{-1}).
+•
+Light-tailed regime (small κ\kappa):
+B⁡(πsBoN)\displaystyle B(\pi_{\textsf{sBoN}})
+≤2​e−N⁡(λ+κ)λ⁡(λ+1)+ϵ⁡(1+κ22​λ2)−(κ2λ+κ3λ2)+o⁡(κ4),\displaystyle\leq 2e^{-\frac{N(\lambda+\kappa)}{\lambda(\lambda+1)}}+\epsilon\left(1+\frac{\kappa^{2}}{2\lambda^{2}}\right)-\left(\frac{\kappa^{2}}{\lambda}+\frac{\kappa^{3}}{\lambda^{2}}\right)+o(\kappa^{4}),
+(10)
+B⁡(πITP)\displaystyle B(\pi_{\textsf{ITP}})
+≤2​e−N⁡(λ+κ)λ⁡(λ+1)+ϵ⁡(1+κ22​λ2)−κ2λ+o⁡(κ3).\displaystyle\leq 2e^{-\frac{N(\lambda+\kappa)}{\lambda(\lambda+1)}}+\epsilon\left(1+\frac{\kappa^{2}}{2\lambda^{2}}\right)-\frac{\kappa^{2}}{\lambda}+o(\kappa^{3}).
+The asymptotic behaviors in Proposition 2 reveal why neither a fixed optimistic nor a fixed pessimistic strategy is universally optimal:
+•
+Heavy tails favor pessimism (ITP).
+Here, the reward distribution features a long tail of high scores, creating a high risk of over-fitting (reward hacking).
+Consequently, the primary constraint is preventing unbounded distortion.
+sBoN fails here because its distortion penalty scales as O⁡(1/λ2)O(1/\lambda^{2}), exploding under aggressive steering (λ→0\lambda\to 0).
+In contrast, ITP is inherently robust: its penalty scales as O⁡(1/(λ+1)2)O(1/(\lambda+1)^{2}), remaining bounded even as λ→0\lambda\to 0, effectively acting as a saturation mechanism against heavy-tailed noise.
+•
+Light tails favor optimism (Soft-BoN).
+In this regime, high-reward candidates are exponentially rare (“finding a needle in a haystack”), while distortion remains naturally mild for both strategies.
+The primary challenge is therefore gain realization.
+sBoN proves superior here, with a gain term scaling as O⁡(κ3/λ2)O(\kappa^{3}/\lambda^{2}) compared to ITP’s O⁡(κ2/λ)O(\kappa^{2}/\lambda).
+This confirms that the aggressive, exponential re-weighting of sBoN is essential to separate and select rare optimal candidates, whereas the linear re-weighting of ITP is too conservative to fully capture the potential gain.
+This dichotomy motivates a prompt-adaptive strategy that dynamically interpolates between optimism and pessimism based on the specific tail behavior of each prompt, as developed in the next section.
+4 BoT: A Tail-Adaptive Alignment
+The dichotomy between the exponential re-weighting of sBoN (optimistic) and the linear re-weighting of ITP (pessimistic) stems fundamentally from the choice of probabilistic divergence used to regularize the policy.
+Specifically, sBoN corresponds to KL-regularization (DKLD_{\textsf{KL}}), while ITP corresponds to χ2\chi^{2}-regularization (Dχ2D_{\chi^{2}}).
+To bridge these regimes, we introduce Best-of-Tails (BoT), a unified framework that adapts the regularization to the specific tail behavior of the prompt.
+BoT leverages the Tsallis divergence of order α>1\alpha>1 (Tsallis, 1988) to smoothly interpolate between the aggressive exploration of KL and the robust mode-seeking of χ2\chi^{2}
+Dα​(P|Q)\displaystyle D_{\alpha}(P|Q)
+=𝔼Q​[logα⁡(QP)]=1α−1​(∑xP​(x)α​Q​(x)1−α−1).\displaystyle=\mathbb{E}_{Q}\left[\log_{\alpha}\left(\frac{Q}{P}\right)\right]=\frac{1}{\alpha-1}\left(\sum_{x}P(x)^{\alpha}Q(x)^{1-\alpha}-1\right).
+(11)
+Crucially, this generalizes the standard regularizers: DαD_{\alpha} converges to the KL divergence (DKLD_{\textsf{KL}}) as α→1\alpha\to 1, and recovers the χ2\chi^{2}-divergence (Dχ2D_{\chi^{2}}) at α=2\alpha=2.
+For a fixed prompt xx, we define the prompt-conditional BoT objective analogous to the standard RLHF objective:
+ℒα(π;x)=𝔼y∼π[r^(x,y)]−λDα(π(⋅|x)|πref(⋅|x)).{\mathcal{L}}_{\alpha}(\pi;x)=\mathbb{E}_{y\sim\pi}[\hat{r}(x,y)]-\lambda D_{\alpha}\left(\pi(\cdot|x)|\pi_{\textsf{ref}}(\cdot|x)\right).
+(12)
+Let πBoT(⋅|x)\pi_{\textsf{BoT}}(\cdot|x) denote the optimal solution to Eq. (12).
+We show that this optimal policy retains a closed-form re-weighting structure.
+Proposition 3.
+The BoT policy πα(⋅|x)\pi_{\alpha}(\cdot|x) follows an α\alpha-exponential re-weighting:
+πBoT​(y|x)∝πref​(y|x)​expα⁡(r^​(x,y)λ).\pi_{\textsf{BoT}}(y|x)\propto\pi_{\textsf{ref}}(y|x)\exp_{\alpha}\left(\frac{\hat{r}(x,y)}{\lambda}\right).
+(13)
+The parameter α\alpha explicitly controls the behavior of BoT.
+As α→1\alpha\to 1, expα⁡(u)→eu\exp_{\alpha}(u)\to e^{u}, recovering the πsBoN\pi_{\textsf{sBoN}}; at α=2\alpha=2, expα⁡(u)\exp_{\alpha}(u) becomes linear, recovering the πITP\pi_{\textsf{ITP}}.
+Intermediate α\alpha values provide a continuum between “optimistic but fragile” and “robust but pessimistic,” allowing the regularization to match the specific tail properties of the proxy reward.
+It is this capability to adaptively exploit the reward tail that motivates the name Best-of-Tails.
+4.1 Deciding the Prompt-Dependent α⁡(x)\alpha(x)
+Building on the analysis in § 3, we derive asymptotic expansions of the regret proxy B⁡(πBoT,x)B(\pi_{\textsf{BoT}};x) to make its dependence on the interpolation parameter α\alpha, the tail index κ\kappa, and the steering temperature λ\lambda explicit, and show how optimal interpolation α\alpha adapts to tail heaviness according to κ\kappa to minimize the regret proxy.
+Proposition 4.
+Fix a prompt xx with normalized reward r^∈[0,1]\hat{r}\in[0,1]. For α∈(1,2]\alpha\in(1,2], λ>0\lambda>0, and let the α\alpha-exponential re-weighting be wα=[1+(α−1)​r^λ]+1α−1w_{\alpha}=[1+(\alpha-1)\frac{\hat{r}}{\lambda}]_{+}^{\frac{1}{\alpha-1}}.
+The regret proxy B=B⁡(πBoT)B=B(\pi_{\textsf{BoT}}) is given by:
+B\displaystyle B
+=e(−N​m0​(α,κ,λ))+ϵ​‖wα‖L2‖wα‖L1−Δ⁡(πBoT),\displaystyle=e^{\left(-Nm_{0}(\alpha;\kappa,\lambda)\right)}+\epsilon\frac{\|w_{\alpha}\|_{L^{2}}}{\|w_{\alpha}\|_{L^{1}}}-\Delta(\pi_{\textsf{BoT}}),
+(14)
+where m0​(α,κ,λ):=𝔼κ​[(1−ρ​U)1α−1]m_{0}(\alpha;\kappa,\lambda):=\mathbb{E}_{\kappa}\left[(1-\rho U)^{\frac{1}{\alpha-1}}\right] with ρ=(α−1)/λ1+(α−1)/λ\rho=\frac{(\alpha-1)/\lambda}{1+(\alpha-1)/\lambda}, and the norms are taken regarding πref\pi_{\textsf{ref}}.
+Moreover, the following asymptotic expansions hold:
+•
+Heavy-tailed regime (large κ\kappa):
+B≈const.\displaystyle B\approx\text{const.}
++1κ​[ϵ4​(λ+α−1)2+N​e−N4​(λ+α−1)2​(4​λ−1λ+5​(α−1))−α−12​(λ+α−1)].\displaystyle+\frac{1}{\kappa}\Bigg[\frac{\epsilon}{4(\lambda+\alpha-1)^{2}}+\frac{Ne^{-N}}{4(\lambda+\alpha-1)^{2}}\left(4\lambda-\frac{1}{\lambda}+5(\alpha-1)\right)-\frac{\alpha-1}{2(\lambda+\alpha-1)}\Bigg].
+(15)
+•
+Light-tailed regime (small κ\kappa):
+B≈const.−κ2λ−(3−2​α)​κ3λ2+ϵ⁡(1+κ22​λ2).\displaystyle B\approx\text{const.}-\frac{\kappa^{2}}{\lambda}-\frac{(3-2\alpha)\kappa^{3}}{\lambda^{2}}+\epsilon\left(1+\frac{\kappa^{2}}{2\lambda^{2}}\right).
+(16)
+The expansions in Proposition 4 rigorously justify the adaptive mechanism of BoT by analyzing the gradient of the regret proxy BB with respect to α\alpha.
+We again split the discussion into the heavy- and light-tailed regimes.
+In the heavy-tailed regime, the distortion penalty (the coefficient of ϵ\epsilon in Eq. (15)) is proportional to (λ+α−1)−2(\lambda+\alpha-1)^{-2}.
+Differentiating this term with respect to α\alpha yields a strictly negative gradient proportional to −(λ+α−1)−3-(\lambda+\alpha-1)^{-3}. Since the distortion penalty dominates the regret bound (amplified by ϵ\epsilon), minimizing BB requires maximizing α\alpha. Thus, the optimal strategy converges to the upper boundary α→2\alpha\to 2. This confirms that heavy tails mathematically necessitate the bounded influence of χ2\chi^{2}-regularization (ITP) to prevent reward hacking.
+Conversely, in the light-tailed regime, distortion is bounded, prioritizing alignment gain.
+Differentiating Eq. (16) with respect to α\alpha yields a positive gradient (2​κ3λ2>0\frac{2\kappa^{3}}{\lambda^{2}}>0), implying the regret bound is minimized at α→1\alpha\to 1.
+This justifies sBoN in light-tailed settings: minimizing regret requires aggressive re-weighting to maximize the probability of discovering rare high-reward responses.
+With the theoretical monotonicity of the optimal α\alpha with respect to κ\kappa established, we now turn to practical implementation.
+Algorithm 1  Best-of-Tails (BoT) Inference
+1:
+Input: Prompt xx, Reference policy πref\pi_{\textsf{ref}}, Reward model r^\hat{r} (normalized to [0,1][0,1] by dividing RmaxR_{\textsf{max}}).
+2:
+Hyper-parameters: Sample count NN, Hill estimation top-KK, Pivot κ0\kappa_{0}, Steering temperature λ\lambda.
+3:
+// Phase 1: Sampling & Scoring
+4:
+Sample candidate set 𝒴N={y1,…,yN}∼πref(⋅|x){\mathcal{Y}}_{N}=\{y_{1},\dots,y_{N}\}\sim\pi_{\textsf{ref}}(\cdot|x).
+5:
+Compute rewards ri←r^​(x,yi)r_{i}\leftarrow\hat{r}(x,y_{i}) for i=1,…,Ni=1,\dots,N.
+6:
+// Phase 2: Tail Estimation (Hill Estimator)
+7:
+Sort rewards descending: r(1)≥r(2)≥⋯≥r(N)r_{(1)}\geq r_{(2)}\geq\dots\geq r_{(N)}.
+8:
+Estimate tail index κ^\hat{\kappa} using the top KK order statistics:
+9:
+κ^←1K​∑j=1Klog⁡(1−r(K+1)1−r(j))\hat{\kappa}\leftarrow\frac{1}{K}\sum_{j=1}^{K}\log\left(\frac{1-r_{(K+1)}}{1-r_{(j)}}\right). (Eq. (17))
+10:
+// Phase 3: Adaptive Interpolation
+11:
+Compute adaptive parameter α\alpha:
+12:
+α←1+κ^κ^+κ0\alpha\leftarrow 1+\frac{\hat{\kappa}}{\hat{\kappa}+\kappa_{0}}. (Eq. (18))
+13:
+// Phase 4: Re-weighting & Selection
+14:
+for i=1i=1 to NN do
+15:
+Calculate unnormalized weight using α\alpha-exponential:
+16:
+wi←expα⁡(ri/λ)=[1+(α−1)​riλ]+1α−1w_{i}\leftarrow\exp_{\alpha}(r_{i}/\lambda)=\left[1+(\alpha-1)\frac{r_{i}}{\lambda}\right]_{+}^{\frac{1}{\alpha-1}}. (Prop. 3)
+17:
+end for
+18:
+Normalize weights: pi←wi/∑jwjp_{i}\leftarrow w_{i}/\sum_{j}w_{j}.
+19:
+Return Sample y⋆y^{\star} from 𝒴N{\mathcal{Y}}_{N} with probabilities {pi}\{p_{i}\}.
+Figure 2: Optimistic (sBoN/BoN), pessimistic (ITP), and adaptive (BoT) strategies on GSM8K, MMLU, and MATH (rows) across different reference models and proxy rewards (columns).
+Each curve traces the trajectory of True Reward (r∗r^{*}) vs. Proxy Reward (r^\hat{r}) as the sample size NN increases from 202^{0} to 2102^{10}, with marker size proportional to NN. The smallest marker represents N=1N=1 (standard sampling), while the largest represents N=1024N=1024.
+Optimistic strategies typically over-optimize the proxy reward as NN grows, leading to reward hacking (where r∗r^{*} degrades despite increasing r^\hat{r}).
+Conversely, ITP tends to saturate early, failing to leverage larger NN for further gains.
+The proposed BoT successfully navigates this trade-off, achieving higher true and proxy rewards without succumbing to reward hacking.
+4.2 Practical Implementation
+To estimate the tail index κ⁡(x)\kappa(x), one approach is to model the full per-prompt reward distribution (e.g., via Gaussian kernels in Raman et al. (2025)).
+However, directly estimating tail statistics has significantly lower sample complexity than estimating the full distribution (see Appendix B.2).
+Therefore, our approach is distinct: rather than modeling the entire density, we explicitly target the tail.
+In practice, the prompt-specific tail index κ⁡(x)\kappa(x) is latent and must be estimated empirically from the proxy rewards of the sampled candidates.
+To this end, we employ the standard Hill estimator (Hill, 1975).
+Given NN sampled responses with rewards sorted as r(1)≥r(2)≥⋯≥r(N)r_{(1)}\geq r_{(2)}\geq\dots\geq r_{(N)}, we estimate κ^​(x)\hat{\kappa}(x) using the top KK statistics (where K<NK<N):
+κ^​(x)=1K​∑i=1Klog⁡(1−r(K+1)1−r(i)).\hat{\kappa}(x)=\frac{1}{K}\sum_{i=1}^{K}\log\left(\frac{1-r_{(K+1)}}{1-r_{(i)}}\right).
+(17)
+See Appendix B.1 for Hill estimator details and Appendix B.2 for its sample complexity.
+Since Proposition 4 establishes the monotonicity of the optimal α\alpha, we propose a simple mapping to adaptively set α⁡(x)\alpha(x):
+α⁡(x)=1+κ^​(x)κ^​(x)+κ0,\alpha(x)=1+\frac{\hat{\kappa}(x)}{\hat{\kappa}(x)+\kappa_{0}},
+(18)
+where κ0\kappa_{0} is a hyperparameter serving as a pivot. This mapping smoothly interpolates between regimes: if the tail is light (κ^​(x)≪κ0\hat{\kappa}(x)\ll\kappa_{0}), α⁡(x)→1\alpha(x)\to 1 (sBoN); otherwise, α⁡(x)→2\alpha(x)\to 2 (ITP).
+We summarize the complete BoT inference procedure build in this section in Algorithm 1.
+5 Empirical Study
+We complement our theoretical results with a suite of experiments that investigate the
+practicality of BoT, and compare against the re-weighting alignment algorithms, i.e., BoN, sBoN, and ITP introduced in § 2.
+Datasets and evaluation.
+We consider two experimental setups. In the first, we focus on benchmark tasks where the true reward r∗r^{*} is verifiable via rule-based answer checking. Specifically, we evaluate on three datasets of increasing difficulty: (i) the test split of GSM8K (Cobbe et al., 2021), a grade-school math dataset with integer answers; (ii) the math and chemistry subsets of MMLU (Hendrycks et al., 2021a), framed as multiple-choice questions; and (iii) the test split of MATH (Hendrycks et al., 2021b), which contains advanced competition-style problems with answers expressed in LaTeX.
+In the second setup, we study human-preference alignment using AlpacaFarm (Dubois et al., 2023), where the true reward is provided by an LLM-as-a-judge using Alpaca-RM (Dubois et al., 2023).
+Policies and reward models.
+For the first setup, we evaluate three reference policies πref\pi_{\textsf{ref}} spanning different architectures and increasing model sizes: Gemma-2-2B (Gemma et al., 2024), Llama-3-3B (Grattafiori et al., 2024), and Mistral-7B (Jiang et al., 2023).
+We prompt all πref\pi_{\textsf{ref}} using zero-shot CoT (Wei et al., 2022), i.e., no in-context demonstrations.
+For the second setup, we use a Pythia-1.4B fine-tuned on AlpacaFarm as πref\pi_{\textsf{ref}} (Biderman et al., 2023).
+For both setups, we consider four proxy reward models r^\hat{r}: OASST-RM (1.4B) (Köpf et al., 2023), Gemma-RM (2B) (Dong et al., 2023), Llama-RM (3B) (Yang et al., 2024b), and ARMO-RM (8B) (Wang et al., 2024).
+For each dataset-policy-reward combination, we generate a candidate pool of 2122^{12} responses per prompt and conduct experiments with varying sample sizes NN by bootstrapping subsets from this pool, reporting results averaged over 10 independent trials.
+We set K=max⁡(1,N)K=\max(1,\sqrt{N}) in the Hill estimator (Eq. (17)) and define κ0\kappa_{0} as the median of κ^​(x)\hat{\kappa}(x) across prompts.
+See Appendix B.3 for details.
+Verifier as true reward.
+Figure 2 compares the performance of BoN, sBoN, ITP, and BoT by tracing the trajectory of the true reward r∗r^{*} against the proxy reward r^\hat{r} as the sample size NN increases.
+The trajectory begins at N=1N=1 (smallest marker) and extends to N=1024N=1024 (largest marker).
+Initially, increasing NN improves the true reward (accuracy) across all methods, demonstrating the value of inference-time alignment in selecting the “best” responses from 𝒴N{\mathcal{Y}}_{N}.
+However, as NN grows further, optimistic strategies like BoN and sBoN—due to their aggressive re-weighting of high-proxy responses—succumb to reward hacking. This is evidenced by the characteristic reversion in the curve, where r∗r^{*} degrades despite continued increases in r^\hat{r}.
+Conversely, the pessimistic ITP remains highly conservative; while robust, it effectively saturates early, stopping the improvement of r^\hat{r} and r∗r^{*} once NN exceeds a certain threshold. Consequently, despite preventing reward hacking, ITP may miss out on significant potential gains in regimes where the proxy is reliable.
+In contrast, the proposed adaptive BoT effectively navigates this trade-off, reaching higher peak true rewards than ITP while maintaining the robustness required to avoid the reward hacking pitfalls of optimistic baselines.
+Figure 3: Left: Performance comparison of optimistic (sBoN/BoN), pessimistic (ITP), and adaptive (BoT) strategies on AlpacaFarm, using Llama-RM as the proxy and Alpaca-RM as the true reward.
+Right: The prompt-specific Hill estimates κ^​(x)\hat{\kappa}(x) and the corresponding adaptive parameter α⁡(x)\alpha(x). By design, BoT minimizes inference regret by shifting α→2\alpha\to 2 under heavy tails (large κ^\hat{\kappa}) to enforce robustness, while allowing α→1\alpha\to 1 under light tails (small κ^\hat{\kappa}) to enable aggressive exploration.
+LLM as true reward.
+We observe similar trade-offs on AlpacaFarm, shown in Figure 3 (left). Note that in this setting, the true reward is the evaluation score from Alpaca-RM rather than exact match accuracy.
+Consistent with the verifier results, alignment improves performance initially for all methods. However, sBoN and BoN eventually drift into the reward hacking regime, while ITP exhibits “early” robustness but premature saturation.
+In contrast, BoT successfully sustains high true rewards without degradation in the large-NN regime.
+To explain this adaptability, Figure 3 (right) visualizes the Hill estimates κ^​(x)\hat{\kappa}(x) (Eq. (17)) for 1024 responses across 500 different prompts, along with the corresponding adaptive α⁡(x)\alpha(x) (with κ0=0.1\kappa_{0}=0.1 in Eq. (18)).
+The plot reveals significant diversity in the reward distributions, ranging from light tails (small κ^​(x)\hat{\kappa}(x)) to heavy tails (large κ^​(x)\hat{\kappa}(x)).
+This heterogeneity confirms that fixing a static strategy—whether optimistic sBoN (α=1.0\alpha=1.0) or pessimistic ITP (α=2.0\alpha=2.0)—is suboptimal, as it limits the flexibility of inference-time alignment to exploit high-reward responses when safe, or to constrain them when risky.
+We defer additional results to Appendix C, including full comparisons (Appendix C.1), sample scaling curves ({r∗,r^}\{r^{*},\hat{r}\} vs. NN) and gain-distortion analysis (Appendix C.2), and ablation studies on λ\lambda and κ0\kappa_{0} (Appendix C.3).
+6 Final Remark
+Here we reflect on the limitations and highlight interesting avenues for future work.
+Limitations.
+BoT’s effectiveness relies on accurate tail estimation.
+While asymptotically consistent, the Hill estimator can exhibit high variance in small-sample regimes (N<50N<50), potentially causing noisy α⁡(x)\alpha(x) selection.
+Furthermore, our mapping function α⁡(x)\alpha(x) is a heuristic interpolation; although it respects the theoretical monotonicity of the optimal strategy, it may not perfectly capture the ideal trajectory for every reward landscape.
+Additionally, BoT introduces hyper-parameters (pivot κ0\kappa_{0}, cutoff KK) that require validation.
+Finally, a multi-modal reward distribution can confound tail estimation, leading to mis-calibration in BoT.
+Future directions.
+We envision several extensions of the BoT framework.
+First, enhancing reward modeling via ensembles (Coste et al., 2024) to mitigate heavy-tailed errors at the source.
+To reduce latency, tail estimation could be amortized using a lightweight predictordirectly from prompt embeddings, or used to dynamically stops generating samples for light-tailed prompts while allocating larger NN to heavy-tailed ones to maximize efficiency (Kalayci et al., 2025).
+Finally, the BoT policy could be distilled into a dense model, embedding tail-adaptive robustness directly into the weights to eliminate sampling overhead.
+Impact Statement.
+This paper presents work whose goal is to advance the field of machine learning. There are many potential societal consequences of our work, none of which we feel must be specifically highlighted here.
+Disclaimer.
+This paper was prepared for informational purposes by the Global Technology Applied Research group of JPMorgan Chase & Co.
+This paper is not a product of the Research Department of JPMorgan Chase & Co. or its affiliates.
+Neither JPMorgan Chase & Co. nor any of its affiliates makes any explicit or implied representation or warranty and none of them accept any liability in connection with this paper, including, without limitation, with respect to the completeness, accuracy, or reliability of the information contained herein and the potential legal, compliance, tax, or accounting effects thereof.
+This document is not intended as investment research or investment advice, or as a recommendation, offer, or solicitation for the purchase or sale of any security, financial instrument, financial product or service, or to be used in any way for evaluating the merits of participating in any transaction.
+References
+Amini et al. (2025)
+A. Amini, T. Vieira, E. Ash, and R. Cotterell
+Variational best-of-N alignment.
+In Proc. of the International Conference on Learning Representations (ICLR),
+Cited by: §2.
+Aminian et al. (2025)
+G. Aminian, I. Shenfeld, A. R. Asadi, A. Beirami, and Y. Mroueh
+Best-of-N through the smoothing lens: KL divergence and regret analysis.
+In Proc. of the Workshop on Efficient Systems for Foundation Models at the International Conference on Machine Learning (ICML),
+Cited by: §2.
+Asai et al. (2024)
+A. Asai, Z. Wu, Y. Wang, A. Sil, and H. Hajishirzi
+Self-RAG: learning to retrieve, generate, and critique through self-reflection.
+In Proc. of the International Conference on Learning Representations (ICLR),
+Cited by: §1.
+Balashankar et al. (2024)
+A. Balashankar, Z. Sun, J. Berant, J. Eisenstein, M. Collins, A. Hutter, J. Lee, C. Nagpal, F. Prost, A. Sinha, et al.
+InfAlign: inference-aware language model alignment.
+arXiv preprint arXiv:2412.19792.
+Cited by: §2.
+Beirami et al. (2025)
+A. Beirami, A. Agarwal, J. Berant, A. D’Amour, J. Eisenstein, C. Nagpal, and A. T. Suresh
+Theoretical guarantees on the best-of-N alignment policy.
+In Proc. of the International Conference on Machine Learning (ICML),
+Cited by: §2.
+Biderman et al. (2023)
+S. Biderman, H. Schoelkopf, Q. G. Anthony, H. Bradley, K. O’Brien, E. Hallahan, M. A. Khan, S. Purohit, U. S. Prashanth, E. Raff, et al.
+Pythia: a suite for analyzing large language models across training and scaling.
+In Proc. of the International Conference on Machine Learning (ICML),
+Cited by: §B.3,
+§5.
+Block and Polyanskiy (2023)
+A. Block and Y. Polyanskiy
+The sample complexity of approximate rejection sampling with applications to smoothed online learning.
+In Procs. of the Annual Conference on Learning Theory (COLT),
+Cited by: §2.
+Brown et al. (2024)
+B. Brown, J. Juravsky, R. Ehrlich, R. Clark, Q. V. Le, C. Ré, and A. Mirhoseini
+Large language monkeys: scaling inference compute with repeated sampling.
+arXiv preprint arXiv:2407.21787.
+Cited by: §1.
+Christiano et al. (2017)
+P. F. Christiano, J. Leike, T. Brown, M. Martic, S. Legg, and D. Amodei
+Deep reinforcement learning from human preferences.
+In Advances in Neural Information Processing Systems (NeurIPS),
+Cited by: §1,
+§2.
+Cobbe et al. (2021)
+K. Cobbe, V. Kosaraju, M. Bavarian, M. Chen, H. Jun, L. Kaiser, M. Plappert, J. Tworek, J. Hilton, R. Nakano, et al.
+Training verifiers to solve math word problems.
+arXiv preprint arXiv:2110.14168.
+Cited by: item 1,
+§5.
+Coste et al. (2024)
+T. Coste, U. Anwar, R. Kirk, and D. Krueger
+Reward model ensembles help mitigate overoptimization.
+In Proc. of the International Conference on Learning Representations (ICLR),
+Cited by: item 4,
+§B.3,
+§2,
+§6.
+De Haan and Resnick (1998)
+L. De Haan and S. Resnick
+On asymptotic normality of the hill estimator.
+Stochastic Models 14 (4), pp. 849–866.
+Cited by: §B.2.
+Dong et al. (2023)
+H. Dong, W. Xiong, D. Goyal, Y. Zhang, W. Chow, R. Pan, S. Diao, J. Zhang, K. Shum, and T. Zhang
+RAFT: reward ranked finetuning for generative foundation model alignment.
+Transactions on Machine Learning Research (TMLR).
+External Links: ISSN 2835-8856
+Cited by: item 2,
+§5.
+Dubois et al. (2023)
+Y. Dubois, C. X. Li, R. Taori, T. Zhang, I. Gulrajani, J. Ba, C. Guestrin, P. S. Liang, and T. B. Hashimoto
+AlpacaFarm: a simulation framework for methods that learn from human feedback.
+In Advances in Neural Information Processing Systems (NeurIPS),
+Cited by: item 4,
+§5.
+Faria and Smith (2025)
+G. Faria and N. A. Smith
+Sample, don’t search: rethinking test-time alignment for language models.
+arXiv preprint arXiv:2504.03790.
+Cited by: §2.
+Feng et al. (2023)
+G. Feng, B. Zhang, Y. Gu, H. Ye, D. He, and L. Wang
+Towards revealing the mystery behind chain of thought: a theoretical perspective.
+In Advances in Neural Information Processing Systems (NeurIPS),
+Cited by: §1.
+Gao et al. (2022)
+L. Gao, J. Schulman, and J. Hilton
+Scaling laws for reward model overoptimization.
+In Proc. of the International Conference on Machine Learning (ICML),
+Cited by: §1,
+§2.
+Gemma et al. (2024)
+T. Gemma, M. Riviere, S. Pathak, P. G. Sessa, C. Hardin, S. Bhupatiraju, L. Hussenot, T. Mesnard, B. Shahriari, A. Ramé, et al.
+Gemma 2: improving open language models at a practical size.
+arXiv preprint arXiv:2408.00118.
+Cited by: §B.3,
+§5.
+Geuter et al. (2025)
+J. Geuter, Y. Mroueh, and D. Alvarez-Melis
+Guided speculative inference for efficient test-time alignment of llms.
+arXiv preprint arXiv:2506.04118.
+Cited by: §1,
+§2.
+Grattafiori et al. (2024)
+A. Grattafiori, A. Dubey, A. Jauhri, A. Pandey, A. Kadian, A. Al-Dahle, A. Letman, A. Mathur, A. Schelten, A. Vaughan, et al.
+The Llama 3 herd of models.
+arXiv preprint arXiv:2407.21783.
+Cited by: §B.3,
+§5.
+Gui et al. (2024)
+L. Gui, C. Gârbacea, and V. Veitch
+BoNBoN alignment for large language models and the sweetness of best-of-N sampling.
+In Advances in Neural Information Processing Systems (NeurIPS),
+Cited by: §1,
+§2,
+§2.
+Hendrycks et al. (2021a)
+D. Hendrycks, C. Burns, S. Basart, A. Zou, M. Mazeika, D. Song, and J. Steinhardt
+Measuring massive multitask language understanding.
+In Proc. of the International Conference on Learning Representations (ICLR),
+Cited by: item 2,
+§5.
+Hendrycks et al. (2021b)
+D. Hendrycks, C. Burns, S. Kadavath, A. Arora, S. Basart, E. Tang, D. Song, and J. Steinhardt
+Measuring mathematical problem solving with the MATH dataset.
+In Advances in Neural Information Processing Systems (NeurIPS),
+Cited by: item 3,
+§5.
+Hill (1975)
+B. M. Hill
+A simple general approach to inference about the tail of a distribution.
+The Annals of Statistics, pp. 1163–1174.
+Cited by: §B.1,
+§1,
+§3,
+§4.2.
+Huang et al. (2025a)
+A. Huang, A. Block, D. J. Foster, D. Rohatgi, C. Zhang, M. Simchowitz, J. T. Ash, and A. Krishnamurthy
+Self-improvement in language models: the sharpening mechanism.
+In Proc. of the International Conference on Learning Representations (ICLR),
+Cited by: §2.
+Huang et al. (2025b)
+A. Huang, A. Block, Q. Liu, N. Jiang, A. Krishnamurthy, and D. J. Foster
+Is best-of-N the best of them? coverage, scaling, and optimality in inference-time alignment.
+In Proc. of the International Conference on Machine Learning (ICML),
+Cited by: §C.1,
+§1,
+§1,
+§1,
+§2,
+§2,
+§2,
+§2,
+§3.
+Huang et al. (2025c)
+A. Huang, W. Zhan, T. Xie, J. D. Lee, W. Sun, A. Krishnamurthy, and D. J. Foster
+Correcting the mythos of KL-regularization: direct alignment without overoptimization via chi-squared preference optimization.
+In Proc. of the International Conference on Learning Representations (ICLR),
+Cited by: §1,
+§2.
+Jeffreys (1946)
+H. Jeffreys
+An invariant form for the prior probability in estimation problems.
+In Proc. of the Royal Society of London. Series A. Mathematical and Physical Sciences,
+Cited by: §2.
+Jiang et al. (2023)
+A. Q. Jiang, A. Sablayrolles, A. Mensch, C. Bamford, D. S. Chaplot, D. de las Casas, F. Bressand, G. Lengyel, G. Lample, L. Saulnier, et al.
+Mistral 7b.
+arXiv preprint arXiv:2310.06825.
+Cited by: §B.3,
+§5.
+Jinnai et al. (2024)
+Y. Jinnai, T. Morimura, K. Ariu, and K. Abe
+Regularized best-of-N sampling to mitigate reward hacking for language model alignment.
+In Proc. of the Workshop on Models of Human Feedback for AI Alignment at the International Conference on Machine Learning (ICML),
+Cited by: §1,
+§1,
+§2,
+§2.
+Jinnai et al. (2025)
+Y. Jinnai, T. Morimura, K. Ariu, and K. Abe
+Regularized best-of-N sampling with minimum bayes risk objective for language model alignment.
+In Proc. of the Conference of the Nations of the Americas Chapter of the Association for Computational Linguistics (NAACL),
+Cited by: §1.
+Kalayci et al. (2025)
+Y. Kalayci, V. Raman, and S. Dughmi
+Optimal stopping vs best-of-N for inference time optimization.
+arXiv preprint arXiv:2510.01394.
+Cited by: §6.
+Kaplan et al. (2020)
+J. Kaplan, S. McCandlish, T. Henighan, T. B. Brown, B. Chess, R. Child, S. Gray, A. Radford, J. Wu, and D. Amodei
+Scaling laws for neural language models.
+arXiv preprint arXiv:2001.08361.
+Cited by: §1.
+Khalaf et al. (2025)
+H. Khalaf, C. M. Verdun, A. Oesterling, H. Lakkaraju, and F. d. P. Calmon
+Inference-time reward hacking in large language models.
+In Advances in Neural Information Processing Systems (NeurIPS),
+Cited by: §1,
+§2.
+Köpf et al. (2023)
+A. Köpf, Y. Kilcher, D. Von Rütte, S. Anagnostidis, Z. R. Tam, K. Stevens, A. Barhoum, D. Nguyen, O. Stanley, R. Nagyfi, et al.
+OpenAssistant conversations-democratizing large language model alignment.
+In Advances in Neural Information Processing Systems (NeurIPS),
+Cited by: item 1,
+§5.
+Korbak et al. (2022)
+T. Korbak, E. Perez, and C. Buckley
+RL with KL penalties is better viewed as Bayesian inference.
+In Findings of the Conference on Empirical Methods in Natural Language Processing (EMNLP),
+Cited by: §2.
+Kwa et al. (2024)
+T. Kwa, D. Thomas, and A. Garriga-Alonso
+Catastrophic Goodhart: regularizing RLHF with KL divergence does not mitigate heavy-tailed reward misspecification.
+In Advances in Neural Information Processing Systems (NeurIPS),
+Cited by: §1.
+Laidlaw et al. (2025)
+C. Laidlaw, S. Singhal, and A. Dragan
+Correlated proxies: a new definition and improved mitigation for reward hacking.
+In Proc. of the International Conference on Learning Representations (ICLR),
+Cited by: §1.
+Ledoux (2001)
+M. Ledoux
+The concentration of measure phenomenon.
+American Mathematical Society.
+Cited by: Lemma A.2.
+Lee et al. (2019)
+K. Lee, S. Kim, S. Lim, S. Choi, and S. Oh
+Tsallis reinforcement learning: a unified framework for maximum entropy reinforcement learning.
+arXiv preprint arXiv:1902.00137.
+Cited by: §1.
+Lehmann and Romano (2005)
+E. L. Lehmann and J. P. Romano
+Testing statistical hypotheses.
+Springer.
+Cited by: Proposition 1.
+Leviathan et al. (2023)
+Y. Leviathan, M. Kalman, and Y. Matias
+Fast inference from transformers via speculative decoding.
+In Proc. of the International Conference on Machine Learning (ICML),
+Cited by: §2.
+Liao et al. (2025)
+B. Liao, Y. Xu, H. Dong, J. Li, C. Monz, S. Savarese, D. Sahoo, and C. Xiong
+Reward-guided speculative decoding for efficient llm reasoning.
+In Proc. of the International Conference on Machine Learning (ICML),
+Cited by: §2.
+Lin et al. (2024)
+B. Y. Lin, A. Ravichander, X. Lu, N. Dziri, M. Sclar, K. Chandu, C. Bhagavatula, and Y. Choi
+The unlocking spell on base LLMs: rethinking alignment via in-context learning.
+In Proc. of the International Conference on Learning Representations (ICLR),
+Cited by: §2.
+Liu et al. (2024)
+T. Liu, Y. Zhao, R. Joshi, M. Khalman, M. Saleh, P. J. Liu, and J. Liu
+Statistical rejection sampling improves preference optimization.
+In Proc. of the International Conference on Learning Representations (ICLR),
+Cited by: §2.
+Rafailov et al. (2023)
+R. Rafailov, A. Sharma, E. Mitchell, C. D. Manning, S. Ermon, and C. Finn
+Direct preference optimization: your language model is secretly a reward model.
+In Advances in Neural Information Processing Systems (NeurIPS),
+Cited by: §1.
+Raman et al. (2025)
+V. Raman, H. Asi, and S. Kale
+AdaBoN: adaptive best-of-N alignment.
+arXiv preprint arXiv:2505.12050.
+Cited by: §4.2.
+Ren et al. (2023)
+J. Ren, Y. Zhao, T. Vu, P. J. Liu, and B. Lakshminarayanan
+Self-evaluation improves selective generation in large language models.
+In Proc. of the I Can’t Believe It’s Not Better Workshop at Neural Information Processing Systems (NeurIPS),
+Cited by: §1.
+Schulman et al. (2017)
+J. Schulman, F. Wolski, P. Dhariwal, A. Radford, and O. Klimov
+Proximal policy optimization algorithms.
+arXiv preprint arXiv:1707.06347.
+Cited by: §1.
+Sessa et al. (2025)
+P. G. Sessa, R. Dadashi, L. Hussenot, J. Ferret, N. Vieillard, A. Ramé, B. Shariari, S. Perrin, A. Friesen, G. Cideron, et al.
+BOND: aligning LLMs with best-of-N distillation.
+In Proc. of the International Conference on Learning Representations (ICLR),
+Cited by: §2.
+Skalse et al. (2022)
+J. Skalse, N. Howe, D. Krasheninnikov, and D. Krueger
+Defining and characterizing reward gaming.
+In Advances in Neural Information Processing Systems (NeurIPS),
+Cited by: §1,
+§2.
+Snell et al. (2025)
+C. Snell, J. Lee, K. Xu, and A. Kumar
+Scaling llm test-time compute optimally can be more effective than scaling model parameters.
+In Proc. of the International Conference on Learning Representations (ICLR),
+Cited by: §1,
+§2.
+Stiennon et al. (2020)
+N. Stiennon, L. Ouyang, J. Wu, D. Ziegler, R. Lowe, C. Voss, A. Radford, D. Amodei, and P. F. Christiano
+Learning to summarize with human feedback.
+In Advances in Neural Information Processing Systems (NeurIPS),
+Cited by: §1,
+§1,
+§2,
+§2.
+Sun et al. (2025)
+H. Sun, Y. Shen, and J. Ton
+Rethinking Bradley-Terry models in preference-based reward modeling: foundations, theory, and alternatives.
+In Proc. of the International Conference on Learning Representations (ICLR),
+Cited by: §1,
+§2.
+Tsallis (1988)
+C. Tsallis
+Possible generalization of boltzmann-gibbs statistics.
+Journal of Statistical Physics 52 (1), pp. 479–487.
+Cited by: §1,
+§4.
+Verdun et al. (2025)
+C. M. Verdun, A. Oesterling, H. Lakkaraju, and F. P. Calmon
+Soft best-of-N sampling for model alignment.
+In Proc. of the IEEE International Symposium on Information Theory (ISIT),
+Cited by: §1,
+§1,
+§1,
+§2,
+§2.
+Wang et al. (2024)
+H. Wang, W. Xiong, T. Xie, H. Zhao, and T. Zhang
+Interpretable preferences via multi-objective reward modeling and mixture-of-experts.
+arXiv preprint arXiv:2406.12845.
+Cited by: item 4,
+§5.
+Wei et al. (2022)
+J. Wei, X. Wang, D. Schuurmans, M. Bosma, F. Xia, E. Chi, Q. V. Le, D. Zhou, et al.
+Chain-of-thought prompting elicits reasoning in large language models.
+In Advances in Neural Information Processing Systems (NeurIPS),
+Cited by: §B.3,
+§1,
+§5.
+Wu et al. (2025)
+T. Wu, W. Yuan, O. Golovneva, J. Xu, Y. Tian, J. Jiao, J. E. Weston, and S. Sukhbaatar
+Meta-rewarding language models: self-improving alignment with LLM-as-a-meta-judge.
+In Proc. of the Conference on Empirical Methods in Natural Language Processing (EMNLP),
+Cited by: §1.
+Yang et al. (2024a)
+J. Q. Yang, S. Salamatian, Z. Sun, A. T. Suresh, and A. Beirami
+Asymptotics of language model alignment.
+In Proc. of the IEEE International Symposium on Information Theory (ISIT),
+Cited by: §2.
+Yang et al. (2024b)
+R. Yang, R. Ding, Y. Lin, H. Zhang, and T. Zhang
+Regularizing hidden states enables learning generalizable reward model for LLMs.
+Advances in Neural Information Processing Systems (NeurIPS).
+Cited by: item 3,
+§5.
+Yao et al. (2023)
+S. Yao, D. Yu, J. Zhao, I. Shafran, T. Griffiths, Y. Cao, and K. Narasimhan
+Tree of thoughts: deliberate problem solving with large language models.
+In Advances in Neural Information Processing Systems (NeurIPS),
+Cited by: §1.
+Zhang et al. (2024)
+D. Zhang, S. Zhoubian, Z. Hu, Y. Yue, Y. Dong, and J. Tang
+ReST-MCTS*: LLM self-training via process reward guided tree search.
+In Advances in Neural Information Processing Systems (NeurIPS),
+Cited by: §1.
+The appendix is divided into the following parts.
+Appendix A: Omitted proofs and theoretical results; Appendix B: additional discussions and details on the experimental setup; and Appendix C: Additional empirical results and ablation studies.
+Appendix A Omitted Proofs and Theoretical Results
+We first introduce (and prove) the following useful lemmas that are related in the main text and that facilitate the proofs of the propositions.
+Lemma A.1.
+α\alpha-exponential and α\alpha-logarithm are generalizations of the exponential and logarithm functions since limα→1expα⁡(z)=exp⁡(z)\lim_{\alpha\to 1}\exp_{\alpha}(z)=\exp(z) and limα→1logα⁡(z)=log⁡(z)\lim_{\alpha\to 1}\log_{\alpha}(z)=\log(z).
+Proof.
+Since limt→1(1+t​z)1/t=exp⁡(z)\lim\limits_{t\to 1}(1+tz)^{1/t}=\exp(z), we have limα→1expα⁡(z)=limα→1(1+(α−1)​z)1/(α−1)=exp⁡(z)\lim\limits_{\alpha\to 1}\exp_{\alpha}(z)=\lim\limits_{\alpha\to 1}(1+(\alpha-1)z)^{1/(\alpha-1)}=\exp(z).
+Similarly for α\alpha-logarithm, by the L’Hôpital’s rule,
+limα→1logα⁡(t)=limα→1tα−1−1α−1=limβ→0tβ−1β=limβ→0eβ​log⁡(t)−1β=log⁡(t)​limβ→0eβ​log⁡(t)−1β​log⁡(t)=log⁡(t).\displaystyle\lim_{\alpha\to 1}\log_{\alpha}(t)=\lim_{\alpha\to 1}\frac{t^{\alpha-1}-1}{\alpha-1}=\lim_{\beta\to 0}\frac{t^{\beta}-1}{\beta}=\lim_{\beta\to 0}\frac{e^{\beta\log(t)}-1}{\beta}=\log(t)\lim_{\beta\to 0}\frac{e^{\beta\log(t)}-1}{\beta\log(t)}=\log(t).
+(A.1)
+∎
+Lemma A.2 (Hölder’s inequality (Ledoux, 2001)).
+Let p,q∈[1,∞]p,q\in[1,\infty] with 1p+1q=1\frac{1}{p}+\frac{1}{q}=1, then for all real-valued functions ff and gg measurable with respect to measure μ\mu, ‖f​g‖L1​(μ)≤‖f‖Lp​(μ)​‖g‖Lq​(μ)\|fg\|_{L^{1}(\mu)}\leq\|f\|_{L^{p}(\mu)}\|g\|_{L^{q}(\mu)}. When p=q=2p=q=2, the Hölder’s inequality degenerates to the Cauchy–Schwarz inequality.
+A.1 Proof of Proposition 1
+Following the definition of the inference-time regret, we decompose it using πref\pi_{\textsf{ref}} as an anchor policy,
+𝗋𝖾𝗀𝗋𝖾𝗍⁡(π^w,x)\displaystyle\mathsf{regret}(\hat{\pi}_{w};x)
+=Jr∗​(π∗,x)−Jr∗​(π^w,x)\displaystyle=J_{r^{*}}(\pi^{*};x)-J_{r^{*}}(\hat{\pi}_{w};x)
+(A.2)
+=Jr∗​(π∗,x)−Jr∗​(πref,x)⏟(i)−(Jr∗​(π^w,x)−Jr∗​(πref,x))⏟(i​i).\displaystyle=\underbrace{J_{r^{*}}(\pi^{*};x)-J_{r^{*}}(\pi_{\textsf{ref}};x)}_{(i)}-\underbrace{\left(J_{r^{*}}(\hat{\pi}_{w};x)-J_{r^{*}}(\pi_{\textsf{ref}};x)\right)}_{(ii)}.
+Since r∗r^{*} and π∗\pi^{*} are fixed, hence once πref\pi_{\textsf{ref}} is selected, term (i) becomes a baseline sub-optimality constant that characterize how far the reference is from optimal under the true reward, and is independent of the inference-time alignment mechanism.
+Using the definition of the expected density ratio, term (i) can be upper bounded by
+Jr∗​(π∗,x)−Jr∗​(πref,x)\displaystyle J_{r^{*}}(\pi^{*};x)-J_{r^{*}}(\pi_{\textsf{ref}};x)
+=(Jr^​(π∗,x)−Jr^​(πref,x))−(Jr^−r∗​(π∗,x)−Jr^−r∗​(πref,x)).\displaystyle=\left(J_{\hat{r}}(\pi^{*};x)-J_{\hat{r}}(\pi_{\textsf{ref}};x)\right)-\left(J_{\hat{r}-r^{*}}(\pi^{*};x)-J_{\hat{r}-r^{*}}(\pi_{\textsf{ref}};x)\right).
+(A.3)
+By Lemma A.2, we have
+|Jr^−r∗​(π∗,x)−Jr^−r∗​(πref,x)|\displaystyle\left|J_{\hat{r}-r^{*}}(\pi^{*};x)-J_{\hat{r}-r^{*}}(\pi_{\textsf{ref}};x)\right|
+=|𝔼y∼π∗(⋅|x)[r^−r∗]−𝔼y∼πref(⋅|x)[r^−r∗]|\displaystyle=\left|\mathbb{E}_{y\sim\pi^{*}(\cdot|x)}\left[\hat{r}-r^{*}\right]-\mathbb{E}_{y\sim\pi_{\textsf{ref}}(\cdot|x)}\left[\hat{r}-r^{*}\right]\right|
+(A.4)
+=|𝔼y∼πref(⋅|x)[(π∗πref−1)(r^−r∗)]|\displaystyle=\left|\mathbb{E}_{y\sim\pi_{\textsf{ref}}(\cdot|x)}\left[\left(\frac{\pi^{*}}{\pi_{\textsf{ref}}}-1\right)\left(\hat{r}-r^{*}\right)\right]\right|
+≤Cπ∗−1×ϵ2​(r^,πref,x).\displaystyle\leq\sqrt{C^{\pi^{*}}-1}\times\epsilon_{2}(\hat{r};\pi_{\textsf{ref}},x).
+Similarly, |Jr^​(π∗,x)−Jr^​(πref,x)|≤Cπ∗−1×‖r^‖L2​(πref)|J_{\hat{r}}(\pi^{*};x)-J_{\hat{r}}(\pi_{\textsf{ref}};x)|\leq\sqrt{C^{\pi^{*}}-1}\times\|\hat{r}\|_{L^{2}(\pi_{\textsf{ref}})}.
+Putting them together, term (i) can be upper bounded by
+Jr∗​(π∗,x)−Jr∗​(πref,x)\displaystyle J_{r^{*}}(\pi^{*};x)-J_{r^{*}}(\pi_{\textsf{ref}};x)
+≤|Jr^​(π∗,x)−Jr^​(πref,x)|+|Jr^−r∗​(π∗,x)−Jr^−r∗​(πref,x)|\displaystyle\leq\left|J_{\hat{r}}(\pi^{*};x)-J_{\hat{r}}(\pi_{\textsf{ref}};x)\right|+\left|J_{\hat{r}-r^{*}}(\pi^{*};x)-J_{\hat{r}-r^{*}}(\pi_{\textsf{ref}};x)\right|
+(A.5)
+≤Cπ∗−1​(ϵ2​(r^,πref,x)+‖r^‖L2​(πref))\displaystyle\leq\sqrt{C^{\pi^{*}}-1}\left(\epsilon_{2}(\hat{r};\pi_{\textsf{ref}},x)+\|\hat{r}\|_{L^{2}(\pi_{\textsf{ref}})}\right)
+Next, for term (ii), it can be similarly decompose into
+Jr∗​(π^w,x)−Jr∗​(πref,x)\displaystyle J_{r^{*}}(\hat{\pi}_{w};x)-J_{r^{*}}(\pi_{\textsf{ref}};x)
+=(Jr^​(π^w,x)−Jr^​(πref,x))+(Jr^−r∗​(π^w,x)−Jr^−r∗​(πref,x))\displaystyle=\left(J_{\hat{r}}(\hat{\pi}_{w};x)-J_{\hat{r}}(\pi_{\textsf{ref}};x)\right)+\left(J_{\hat{r}-r^{*}}(\hat{\pi}_{w};x)-J_{\hat{r}-r^{*}}(\pi_{\textsf{ref}};x)\right)
+(A.6)
+≥(Jr^​(π^w,x)−Jr^​(πref,x))−|Jr^−r∗​(π^w,x)−Jr^−r∗​(πref,x)|.\displaystyle\geq\left(J_{\hat{r}}(\hat{\pi}_{w};x)-J_{\hat{r}}(\pi_{\textsf{ref}};x)\right)-\left|J_{\hat{r}-r^{*}}(\hat{\pi}_{w};x)-J_{\hat{r}-r^{*}}(\pi_{\textsf{ref}};x)\right|.
+Since r^,r∗∈[0,Rmax]\hat{r},r^{*}\in[0,R_{\textsf{max}}], we have
+Jr^​(π^w,x)−Jr^​(πref,x)\displaystyle J_{\hat{r}}(\hat{\pi}_{w};x)-J_{\hat{r}}(\pi_{\textsf{ref}};x)
+=Jr^​(π^w,x)−Jr^​(πw,x)+Jr^​(πw,x)−Jr^​(πref,x)\displaystyle=J_{\hat{r}}(\hat{\pi}_{w};x)-J_{\hat{r}}(\pi_{w};x)+J_{\hat{r}}(\pi_{w};x)-J_{\hat{r}}(\pi_{\textsf{ref}};x)
+(A.7)
+=Δ⁡(πw)+Jr^​(π^w,x)−Jr^​(πw,x)\displaystyle=\Delta(\pi_{w})+J_{\hat{r}}(\hat{\pi}_{w};x)-J_{\hat{r}}(\pi_{w};x)
+≥Δ(πw)−2RmaxDTV(π^w∥πw).\displaystyle\geq\Delta(\pi_{w})-2R_{\textsf{max}}D_{\textsf{TV}}(\hat{\pi}_{w}\|\pi_{w}).
+Then, by Lemma A.2 again, we have
+|Jr^−r∗​(π^w,x)−Jr^−r∗​(πref,x)|\displaystyle\left|J_{\hat{r}-r^{*}}(\hat{\pi}_{w};x)-J_{\hat{r}-r^{*}}(\pi_{\textsf{ref}};x)\right|
+≤(1+(α−1)Dα(πw∥πref))1/α∥r^−r∗∥Lβ​(πref)\displaystyle\leq\left(1+(\alpha-1)D_{\alpha}(\pi_{w}\|\pi_{\textsf{ref}})\right)^{1/\alpha}\|\hat{r}-r^{*}\|_{L^{\beta}(\pi_{\textsf{ref}})}
+(A.8)
+=Cπw×ϵ2​(r^,πref,x)​if selecting α=β=2.\displaystyle=\sqrt{C^{\pi_{w}}}\times\epsilon_{2}(\hat{r};\pi_{\textsf{ref}},x)\;\text{if selecting $\alpha=\beta=2$}.
+Combining Eq. (A.5), Eq. (A.7) and Eq. (A.8), we have
+𝗋𝖾𝗀𝗋𝖾𝗍⁡(π^w,x)\displaystyle\mathsf{regret}(\hat{\pi}_{w};x)
+≤Cπ∗−1(ϵ2(r^;πref,x)+∥r^∥L2​(πref))−Δ(πw)+2RmaxDTV(π^w∥πw)\displaystyle\leq\sqrt{C^{\pi^{*}}-1}\left(\epsilon_{2}(\hat{r};\pi_{\textsf{ref}},x)+\|\hat{r}\|_{L^{2}(\pi_{\textsf{ref}})}\right)-\Delta(\pi_{w})+2R_{\textsf{max}}D_{\textsf{TV}}(\hat{\pi}_{w}\|\pi_{w})
+(A.9)
++(1+(α−1)Dα(πw∥πref))1/α∥r^−r∗∥Lβ​(πref).\displaystyle+\left(1+(\alpha-1)D_{\alpha}(\pi_{w}\|\pi_{\textsf{ref}})\right)^{1/\alpha}\|\hat{r}-r^{*}\|_{L^{\beta}(\pi_{\textsf{ref}})}.
+Taking α=β=2\alpha=\beta=2 leads to the desired result.
+A.2 Proof of Proposition 2
+Fix a prompt xx and suppress the conditioning on it.
+Let the proxy reward be r^:=r^​(x,Y)∈[0,1]\hat{r}:=\hat{r}(x,Y)\in[0,1] with Y∼πrefY\sim\pi_{\textsf{ref}}.
+We define the endpoint gap U:=1−r^U:=1-\hat{r}.
+By assumption:
+U∼Beta​(1κ,1),with density ​fU​(u)=1κ​u1κ−1​ for ​u∈[0,1].U\sim\text{Beta}\left(\frac{1}{\kappa},1\right),\quad\text{with density }f_{U}(u)=\frac{1}{\kappa}u^{\frac{1}{\kappa}-1}\text{ for }u\in[0,1].
+(A.10)
+We utilize the general regret bound decomposition derived previously, where the regret B⁡(π)B(\pi) depends on the Peak (relative supremum), Dist (distortion), and Gain (Δ\Delta) of the weighting function w⁡(r^)w(\hat{r}):
+B⁡(π)≤2​exp⁡(−NPeak​(w))+ϵ⋅Dist​(w)−Δ⁡(w).B(\pi)\leq 2\exp\left(-\frac{N}{\text{Peak}(w)}\right)+\epsilon\cdot\text{Dist}(w)-\Delta(w).
+(A.11)
+The statistics are defined as:
+Peak​(w)=supr^w⁡(r^)𝔼⁡[w⁡(r^)],Dist​(w)=𝔼⁡[w​(r^)2]𝔼⁡[w⁡(r^)],Δ⁡(w)=Δ⁡(πw)=𝔼πw​[r^]−𝔼⁡[r^].\text{Peak}(w)=\frac{\sup_{\hat{r}}w(\hat{r})}{\mathbb{E}[w(\hat{r})]},\;\text{Dist}(w)=\frac{\sqrt{\mathbb{E}[w(\hat{r})^{2}]}}{\mathbb{E}[w(\hat{r})]},\;\Delta(w)=\Delta(\pi_{w})=\mathbb{E}_{\pi_{w}}[\hat{r}]-\mathbb{E}[\hat{r}].
+(A.12)
+Preliminaries: Moments.
+For U∼Beta​(1/κ,1)U\sim\text{Beta}(1/\kappa,1), the raw moments are given by:
+𝔼⁡[Um]=∫01um​1κ​u1κ−1​𝑑u=1m​κ+1.\mathbb{E}[U^{m}]=\int_{0}^{1}u^{m}\frac{1}{\kappa}u^{\frac{1}{\kappa}-1}du=\frac{1}{m\kappa+1}.
+(A.13)
+This implies that in the heavy-tail regime (κ→∞\kappa\to\infty), UU remains distributed over [0,1][0,1] but with mean ≈1/κ\approx 1/\kappa. In the light-tail regime (κ→0\kappa\to 0), r^=1−U\hat{r}=1-U concentrates near 0 with moments:
+𝔼⁡[r^]=1−𝔼⁡[U]=κκ+1,𝔼⁡[r^2]=1−2κ+1+12​κ+1.\mathbb{E}[\hat{r}]=1-\mathbb{E}[U]=\frac{\kappa}{\kappa+1},\quad\mathbb{E}[\hat{r}^{2}]=1-\frac{2}{\kappa+1}+\frac{1}{2\kappa+1}.
+(A.14)
+As κ→0\kappa\to 0, for each fixed integer m≥1m\geq 1, 𝔼⁡[r^m]=m!​κm+O⁡(κm+1)\mathbb{E}[\hat{r}^{m}]=m!\kappa^{m}+O(\kappa^{m+1}).
+Part 1: Heavy-tailed regime (large κ\kappa).
+Here, we analyze the statistics using UU as the primary variable.
+1.1 Soft-BoN.
+The weight is wsBoN(r^)=er^/λ=e(1−U)/λ∝e−U/λw_{\textsf{sBoN}}(\hat{r})=e^{\hat{r}/\lambda}=e^{(1-U)/\lambda}\propto e^{-U/\lambda}. Let w¯(U)=e−U/λ\bar{w}(U)=e^{-U/\lambda}.
+•
+Peak:
+We expand the expectation of the weight using Taylor series:
+𝔼[e−U/λ]=1−1λ𝔼[U]+O(𝔼[U2])=1−1λ⁡(κ+1)+O(κ−2).\mathbb{E}[e^{-U/\lambda}]=1-\frac{1}{\lambda}\mathbb{E}[U]+O(\mathbb{E}[U^{2}])=1-\frac{1}{\lambda(\kappa+1)}+O(\kappa^{-2}).
+(A.15)
+The Peak is the ratio of the supremum (at U=0U=0) to the expectation:
+Peak=1𝔼[e−U/λ]=11−1λ​κ+o⁡(κ−1)=1+1λ​κ+o⁡(κ−1).\text{Peak}=\frac{1}{\mathbb{E}[e^{-U/\lambda}]}=\frac{1}{1-\frac{1}{\lambda\kappa}+o(\kappa^{-1})}=1+\frac{1}{\lambda\kappa}+o(\kappa^{-1}).
+(A.16)
+Substituting this into the exponential term in Eq. (A.11):
+exp⁡(−NPeak)≈exp⁡(−N1+1/(λ​κ)).\exp\left(-\frac{N}{\text{Peak}}\right)\approx\exp\left(-\frac{N}{1+1/(\lambda\kappa)}\right).
+(A.17)
+•
+Dist.:
+We compute the second moment 𝔼⁡[w2]\mathbb{E}[w^{2}] using w¯2=e−2U/λ\bar{w}^{2}=e^{-2U/\lambda}:
+𝔼[e−2U/λ]=1−2λ​κ+2λ2​(2​κ)+o(κ−1)=1−2λ​κ+1λ2​κ+o(κ−1).\mathbb{E}[e^{-2U/\lambda}]=1-\frac{2}{\lambda\kappa}+\frac{2}{\lambda^{2}(2\kappa)}+o(\kappa^{-1})=1-\frac{2}{\lambda\kappa}+\frac{1}{\lambda^{2}\kappa}+o(\kappa^{-1}).
+(A.18)
+The squared distortion is:
+Dist2=𝔼[e−2U/λ](𝔼[e−U/λ])2≈1−2λ​κ+1λ2​κ1−2λ​κ+1λ2​κ​(12)≈1+12​λ2​κ.\text{Dist}^{2}=\frac{\mathbb{E}[e^{-2U/\lambda}]}{(\mathbb{E}[e^{-U/\lambda}])^{2}}\approx\frac{1-\frac{2}{\lambda\kappa}+\frac{1}{\lambda^{2}\kappa}}{1-\frac{2}{\lambda\kappa}+\frac{1}{\lambda^{2}\kappa}(\frac{1}{2})}\approx 1+\frac{1}{2\lambda^{2}\kappa}.
+(A.19)
+Thus, Dist≈1+14​λ2​κ\text{Dist}\approx 1+\frac{1}{4\lambda^{2}\kappa}.
+•
+Gain:
+The proxy gain is Δ=𝔼⁡[U]−𝔼πw​[U]\Delta=\mathbb{E}[U]-\mathbb{E}_{\pi_{w}}[U].
+We compute the tilted expectation 𝔼πw​[U]\mathbb{E}_{\pi_{w}}[U] using the substitution t=κ​Ut=\kappa U (approximating UU as Exponential(1/κ)(1/\kappa)):
+𝔼[Ue−U/λ]≈∫0∞ue−u/λ1κe−u/κdu≈1κ∫01ue−u/λdu.\mathbb{E}[Ue^{-U/\lambda}]\approx\int_{0}^{\infty}ue^{-u/\lambda}\frac{1}{\kappa}e^{-u/\kappa}du\approx\frac{1}{\kappa}\int_{0}^{1}ue^{-u/\lambda}du.
+(A.20)
+A precise integration yields 𝔼πw[U]≈λκ(1−e−1/λ)\mathbb{E}_{\pi_{w}}[U]\approx\frac{\lambda}{\kappa}(1-e^{-1/\lambda}).
+Thus:
+Δ≈1κ−λκ(1−e−1/λ)=1κ(1−λ(1−e−1/λ))+o(κ−1).\Delta\approx\frac{1}{\kappa}-\frac{\lambda}{\kappa}(1-e^{-1/\lambda})=\frac{1}{\kappa}\left(1-\lambda(1-e^{-1/\lambda})\right)+o(\kappa^{-1}).
+(A.21)
+1.2 ITP.
+The weight is wITP​(r^)=1+r^/λ=1+(1−U)/λw_{\textsf{ITP}}(\hat{r})=1+\hat{r}/\lambda=1+(1-U)/\lambda.
+Let C=1+1/λC=1+1/\lambda.
+Then wi∝C−U/λw_{\textsf{i}}\propto C-U/\lambda.
+•
+Peak:
+The supremum is CC. The expectation is 𝔼⁡[wi]=C−𝔼⁡[U]/λ≈C−1λ​κ\mathbb{E}[w_{\textsf{i}}]=C-\mathbb{E}[U]/\lambda\approx C-\frac{1}{\lambda\kappa}.
+Peak=CC−1λ​κ=11−1C​λ​κ≈1+1C​λ​κ=1+1(λ+1)​κ+o⁡(κ−1).\text{Peak}=\frac{C}{C-\frac{1}{\lambda\kappa}}=\frac{1}{1-\frac{1}{C\lambda\kappa}}\approx 1+\frac{1}{C\lambda\kappa}=1+\frac{1}{(\lambda+1)\kappa}+o(\kappa^{-1}).
+(A.22)
+•
+Dist and Gain:
+Using standard variance approximations for linear weights:
+Dist≈1+14​(λ+1)2​κ+o⁡(κ−1),Δ≈12​κ​(λ+1)+o⁡(κ−1).\text{Dist}\approx 1+\frac{1}{4(\lambda+1)^{2}\kappa}+o(\kappa^{-1}),\quad\Delta\approx\frac{1}{2\kappa(\lambda+1)}+o(\kappa^{-1}).
+(A.23)
+Part 2: Light-tail regime (small κ\kappa).
+Here r^\hat{r} concentrates near 0.
+Both soft-BoN (er^/λe^{\hat{r}/\lambda}) and ITP (1+r^/λ1+\hat{r}/\lambda) behave as 1+r^/λ1+\hat{r}/\lambda to the first order, and therefore they have similar terms of Peak and Dist.
+The difference of the bound lies in the Gain.
+•
+Peak: For w⁡(r^)=1+r^/λw(\hat{r})=1+\hat{r}/\lambda:
+supw=1+1/λ=λ+1λ,𝔼⁡[w]=1+𝔼⁡[r^]λ≈1+κλ=λ+κλ.\sup w=1+1/\lambda=\frac{\lambda+1}{\lambda},\quad\mathbb{E}[w]=1+\frac{\mathbb{E}[\hat{r}]}{\lambda}\approx 1+\frac{\kappa}{\lambda}=\frac{\lambda+\kappa}{\lambda}.
+(A.24)
+The Peak is:
+Peak=(λ+1)/λ(λ+κ)/λ=λ+1λ+κ.\text{Peak}=\frac{(\lambda+1)/\lambda}{(\lambda+\kappa)/\lambda}=\frac{\lambda+1}{\lambda+\kappa}.
+(A.25)
+Substituting into the bound exponent:
+exp⁡(−NPeak)=exp⁡(−N⁡(λ+κ)λ+1).\exp\left(-\frac{N}{\text{Peak}}\right)=\exp\left(-\frac{N(\lambda+\kappa)}{\lambda+1}\right).
+(A.26)
+•
+Dist.: Using Var​(w)≈Var​(r^)/λ2≈κ2/λ2\text{Var}(w)\approx\text{Var}(\hat{r})/\lambda^{2}\approx\kappa^{2}/\lambda^{2} and 𝔼⁡[w]≈1\mathbb{E}[w]\approx 1:
+Dist≈1+Var​(w)2​𝔼​[w]2≈1+κ22​λ2.\text{Dist}\approx 1+\frac{\text{Var}(w)}{2\mathbb{E}[w]^{2}}\approx 1+\frac{\kappa^{2}}{2\lambda^{2}}.
+(A.27)
+2.1 Soft-BoN.
+The Gain is given by 𝔼πw​[r^]=𝔼⁡[r^​er^/λ]/𝔼⁡[er^/λ]\mathbb{E}_{\pi_{w}}[\hat{r}]=\mathbb{E}[\hat{r}e^{\hat{r}/\lambda}]/\mathbb{E}[e^{\hat{r}/\lambda}].
+Expanding the numerator 𝔼⁡[r^​er^/λ]\mathbb{E}[\hat{r}e^{\hat{r}/\lambda}] yields
+𝔼⁡[r^​(1+r^/λ+12​λ2​r^2+O⁡(r^3))]=𝔼⁡[r^]+1λ​𝔼​[r^2]+12​λ2​𝔼​[r^3]+O⁡(𝔼⁡[r^4]).\mathbb{E}[\hat{r}(1+\hat{r}/\lambda+\frac{1}{2\lambda^{2}}\hat{r}^{2}+O(\hat{r}^{3}))]=\mathbb{E}[\hat{r}]+\frac{1}{\lambda}\mathbb{E}[\hat{r}^{2}]+\frac{1}{2\lambda^{2}}\mathbb{E}[\hat{r}^{3}]+O(\mathbb{E}[\hat{r}^{4}]).
+(A.28)
+By the moments of r^\hat{r} with small κ\kappa, we obtain
+𝔼⁡[r^​er^/λ]=κ+2​κ2λ+3​κ3λ2+O⁡(κ4),\mathbb{E}[\hat{r}e^{\hat{r}/\lambda}]=\kappa+\frac{2\kappa^{2}}{\lambda}+\frac{3\kappa^{3}}{\lambda^{2}}+O(\kappa^{4}),
+(A.29)
+while the denominator expands as 𝔼⁡[er^/λ]=1+κλ+κ2λ2+O⁡(κ3)\mathbb{E}[e^{\hat{r}/\lambda}]=1+\frac{\kappa}{\lambda}+\frac{\kappa^{2}}{\lambda^{2}}+O(\kappa^{3}). Performing a ratio expansion then yields 𝔼πw​[r^]=κ+κ2λ+κ3λ2+O⁡(κ4)\mathbb{E}_{\pi_{w}}[\hat{r}]=\kappa+\frac{\kappa^{2}}{\lambda}+\frac{\kappa^{3}}{\lambda^{2}}+O(\kappa^{4}). Finally, subtracting the reference mean 𝔼⁡[r^]=κ+O⁡(κ2)\mathbb{E}[\hat{r}]=\kappa+O(\kappa^{2}) gives the proxy gain
+Δ=κ2λ+κ3λ2+O⁡(κ4).\Delta=\frac{\kappa^{2}}{\lambda}+\frac{\kappa^{3}}{\lambda^{2}}+O(\kappa^{4}).
+(A.30)
+2.2 ITP.
+The Gain is dominated by the covariance term:
+Δ=Cov​(w,r^)𝔼⁡[w]≈Var​(r^)/λ1≈κ2λ+O⁡(κ3).\Delta=\frac{\text{Cov}(w,\hat{r})}{\mathbb{E}[w]}\approx\frac{\text{Var}(\hat{r})/\lambda}{1}\approx\frac{\kappa^{2}}{\lambda}+O(\kappa^{3}).
+(A.31)
+Part 3: BoN limit (λ→0\lambda\to 0).
+Best-of-NN (BoN) arises as the limit of Soft-BoN as the inverse temperature 1/λ→∞1/\lambda\to\infty. Since the supremum of the weights is supywsoft​(r^​(x,y))=e1/λ\sup_{y}w_{\mathrm{soft}}(\hat{r}(x,y))=e^{1/\lambda} and the normalizing constant 𝔼⁡[er^/λ]\mathbb{E}[e^{\hat{r}/\lambda}] remains finite for any fixed κ\kappa, the peak ratio diverges as Peak⁡(wsoft,x)=e1/λ/𝔼⁡[er^/λ]→∞\mathrm{Peak}(w_{\mathrm{soft}};x)=e^{1/\lambda}/\mathbb{E}[e^{\hat{r}/\lambda}]\to\infty. Similarly, the distortion diverges as Dist⁡(wsoft,x)=𝔼⁡[e2​r^/λ]/𝔼⁡[er^/λ]→∞\mathrm{Dist}(w_{\mathrm{soft}};x)=\sqrt{\mathbb{E}[e^{2\hat{r}/\lambda}]}/\mathbb{E}[e^{\hat{r}/\lambda}]\to\infty. In the light-tail regime, the expansion 𝔼⁡[er^/λ]=1+κ/λ+κ2/λ2+O⁡(κ3)\mathbb{E}[e^{\hat{r}/\lambda}]=1+\kappa/\lambda+\kappa^{2}/\lambda^{2}+O(\kappa^{3}) implies that the peak scales as Peak⁡(wsoft,x)≍e1/λ\mathrm{Peak}(w_{\mathrm{soft}};x)\asymp e^{1/\lambda}. Consequently, minimizing the finite-NN proxy term 2exp(−N/Peak)≈2exp(−N/e1/λ)2\exp(-N/\mathrm{Peak})\approx 2\exp(-N/e^{1/\lambda}) requires the sample size NN to scale on the order of e1/λe^{1/\lambda}, confirming the qualitative behavior of BoN.
+Combining Parts 1-3 completes the proof.
+A.3 Proof of Proposition 3
+Consider the generator function ϕα​(t)\phi_{\alpha}(t) of the α\alpha-Tsallis divergence
+ϕα(t)=tα−α​t+(α−1)α⁡(α−1),t>0,α>1.\displaystyle\phi_{\alpha}(t)=\frac{t^{\alpha}-\alpha t+(\alpha-1)}{\alpha(\alpha-1)},\;t>0,\alpha>1.
+(A.32)
+Then, the α\alpha-Tsallis divergence between two distributions PP and QQ can be alternatively expressed as Dα(P∥Q)=∑x∈𝒳Q(x)ϕα(P⁡(x)Q⁡(x))D_{\alpha}(P\|Q)=\sum\limits_{x\in{\mathcal{X}}}Q(x)\phi_{\alpha}\left(\frac{P(x)}{Q(x)}\right).
+Note that ϕα​(t)\phi_{\alpha}(t) is convex with ϕα​(1)=0\phi_{\alpha}(1)=0, and therefore DαD_{\alpha} is also convex in PP.
+Now, let the tilting function be t⁡(y|x)=π⁡(y|x)/πref​(y|x)t(y|x)=\pi(y|x)/\pi_{\textsf{ref}}(y|x), the objective in Eq. (12) becomes
+ℒα​(π)\displaystyle{\mathcal{L}}_{\alpha}(\pi)
+=𝔼y∼π(⋅|x)[r^(x,y)]−λDα(π(⋅|x)∥πref(⋅|x))\displaystyle=\mathbb{E}_{y\sim\pi(\cdot|x)}\left[\hat{r}(x,y)\right]-\lambda D_{\alpha}\left(\pi(\cdot|x)\|\pi_{\textsf{ref}}(\cdot|x)\right)
+(A.33)
+=∑y∈𝒴π⁡(y|x)​r^​(x,y)−λ​∑y∈𝒴πref​(y|x)​ϕα​(π⁡(y|x)πref​(y|x))\displaystyle=\sum\limits_{y\in{\mathcal{Y}}}\pi(y|x)\hat{r}(x,y)-\lambda\sum\limits_{y\in{\mathcal{Y}}}\pi_{\textsf{ref}}(y|x)\phi_{\alpha}\left(\frac{\pi(y|x)}{\pi_{\textsf{ref}}(y|x)}\right)
+=∑y∈𝒴πref​(y|x)​(t⁡(y|x)​r^​(x,y)−λ​ϕα​(t⁡(y|x))).\displaystyle=\sum\limits_{y\in{\mathcal{Y}}}\pi_{\textsf{ref}}(y|x)\left(t(y|x)\hat{r}(x,y)-\lambda\phi_{\alpha}(t(y|x))\right).
+The simplex constraint ∑y∈𝒴π⁡(y|x)=1\sum\limits_{y\in{\mathcal{Y}}}\pi(y|x)=1 becomes ∑y∈𝒴πref​(y|x)​t​(y|x)=1\sum\limits_{y\in{\mathcal{Y}}}\pi_{\textsf{ref}}(y|x)t(y|x)=1.
+The transformation in Eq. (A.33) actually forms the convex conjugate (Fenchel–Legendre transform) of the generator function, i.e.,
+ψα​(z)=supt>0{z​t−λ​ϕα​(t)}.\displaystyle\psi_{\alpha}(z)=\sup\limits_{t>0}\left\{zt-\lambda\phi_{\alpha}(t)\right\}.
+(A.34)
+The optimizer t∗​(z)=arg​maxt>0⁡zt−λ​ϕα​(t)t^{*}(z)=\argmax\limits_{t>0}zt-\lambda\phi_{\alpha}(t) can then be derived directly from the first-order condition
+dd​t​(z​t−ϕα​(t)​λ)\displaystyle\frac{d}{dt}(zt-\phi_{\alpha}(t)\lambda)
+=z−λ​ϕα′​(t)=z−λ​1α⁡(α−1)​(α​tα−1−α)=z−λ​tα−1−1α−1=0.\displaystyle=z-\lambda\phi_{\alpha}^{\prime}(t)=z-\lambda\frac{1}{\alpha(\alpha-1)}(\alpha t^{\alpha-1}-\alpha)=z-\lambda\frac{t^{\alpha-1}-1}{\alpha-1}=0.
+(A.35)
+By re-arranging and plugging z=r^​(x,y)z=\hat{r}(x,y), we have
+tα−1=1+α−1λ​r^​(x,y)⇒t∗​(r^​(x,y))=[1+(α−1)​r^​(x,y)λ]+1α−1=expα⁡(r^​(x,y)λ),t^{\alpha-1}=1+\frac{\alpha-1}{\lambda}\hat{r}(x,y)\Rightarrow t^{*}(\hat{r}(x,y))=\left[1+(\alpha-1)\frac{\hat{r}(x,y)}{\lambda}\right]_{+}^{\frac{1}{\alpha-1}}=\exp_{\alpha}\left(\frac{\hat{r}(x,y)}{\lambda}\right),
+(A.36)
+and therefore
+πα(⋅|x)∝πref(⋅|x)expα(r^​(x,y)λ).\pi_{\alpha}(\cdot|x)\propto\pi_{\textsf{ref}}(\cdot|x)\exp_{\alpha}\left(\frac{\hat{r}(x,y)}{\lambda}\right).
+(A.37)
+The simplex condition ∑y∈𝒴πα​(y|x)=1\sum\limits_{y\in{\mathcal{Y}}}\pi_{\alpha}(y|x)=1 can be satisfied by finding a ν≥0\nu\geq 0 such that ∑y∈𝒴πref​(y|x)​t∗​(r^​(x,y)+ν)=1\sum\limits_{y\in{\mathcal{Y}}}\pi_{\textsf{ref}}(y|x)t^{*}(\hat{r}(x,y)+\nu)=1.
+A.4 Proof of Proposition 4
+We proceed in three parts.
+Part 1: Algebraic reductions.
+Let U:=1−r^U:=1-\hat{r} and note r^=1−U\hat{r}=1-U. We use the parameters from the proposition statement: α∈(1,2]\alpha\in(1,2] and λ>0\lambda>0. The weight function is:
+wα​(r^)=[1+(α−1)​r^λ]+1α−1=(1+α−1λ​(1−U))1α−1.w_{\alpha}(\hat{r})=\left[1+(\alpha-1)\frac{\hat{r}}{\lambda}\right]_{+}^{\frac{1}{\alpha-1}}=\left(1+\frac{\alpha-1}{\lambda}(1-U)\right)^{\frac{1}{\alpha-1}}.
+(A.38)
+We factor out the endpoint value at r^=1\hat{r}=1 (i.e., U=0U=0).
+Define the constants:
+A:=1+α−1λ,ρ:=(α−1)/λ1+(α−1)/λ=α−1λ​A,γ:=1α−1.A:=1+\frac{\alpha-1}{\lambda},\;\rho:=\frac{(\alpha-1)/\lambda}{1+(\alpha-1)/\lambda}=\frac{\alpha-1}{\lambda A},\;\gamma:=\frac{1}{\alpha-1}.
+(A.39)
+Then we can rewrite the inner term as:
+1+α−1λ​(1−U)=1+α−1λ−α−1λ​U=A−A​ρ​U=A⁡(1−ρ​U).1+\frac{\alpha-1}{\lambda}(1-U)=1+\frac{\alpha-1}{\lambda}-\frac{\alpha-1}{\lambda}U=A-A\rho U=A(1-\rho U).
+(A.40)
+Thus, the weight becomes:
+wα​(1−U)=(A⁡(1−ρ​U))γ=Aγ​(1−ρ​U)γ.w_{\alpha}(1-U)=\left(A(1-\rho U)\right)^{\gamma}=A^{\gamma}(1-\rho U)^{\gamma}.
+(A.41)
+The moments of the weights under the reference distribution (parameterized by κ\kappa) are:
+𝔼κ​[wα​(r^)]=Aγ​𝔼κ​[(1−ρ​U)γ]=Aγ​m0,𝔼κ​[wα​(r^)2]=A2​γ​𝔼κ​[(1−ρ​U)2​γ]=A2​γ​m2,\mathbb{E}_{\kappa}[w_{\alpha}(\hat{r})]=A^{\gamma}\mathbb{E}_{\kappa}[(1-\rho U)^{\gamma}]=A^{\gamma}m_{0},\;\mathbb{E}_{\kappa}[w_{\alpha}(\hat{r})^{2}]=A^{2\gamma}\mathbb{E}_{\kappa}[(1-\rho U)^{2\gamma}]=A^{2\gamma}m_{2},
+(A.42)
+where we define m0​(α,κ,λ):=𝔼κ​[(1−ρ​U)γ]m_{0}(\alpha;\kappa,\lambda):=\mathbb{E}_{\kappa}[(1-\rho U)^{\gamma}] and m2​(α,κ,λ):=𝔼κ​[(1−ρ​U)2​γ]m_{2}(\alpha;\kappa,\lambda):=\mathbb{E}_{\kappa}[(1-\rho U)^{2\gamma}].
+Therefore, the distortion ratio simplifies to:
+|wα|​L2|wα|​L1=𝔼​κ​[wα​(r^)2]𝔼κ​[wα​(r^)]=A2​γ​m2Aγ​m0=m2m0.\frac{|w_{\alpha}|{L^{2}}}{|w_{\alpha}|{L^{1}}}=\frac{\sqrt{\mathbb{E}\kappa[w_{\alpha}(\hat{r})^{2}]}}{\mathbb{E}_{\kappa}[w_{\alpha}(\hat{r})]}=\frac{\sqrt{A^{2\gamma}m_{2}}}{A^{\gamma}m_{0}}=\frac{\sqrt{m_{2}}}{m_{0}}.
+(A.43)
+Since wα​(r^)w_{\alpha}(\hat{r}) is increasing in r^\hat{r}, its supremum is at r^=1\hat{r}=1, so supwα=Aγ\sup w_{\alpha}=A^{\gamma}.
+The envelope constant for the exponential mechanism is:
+M⁡(α)=supwα𝔼κ​[wα]=AγAγ​m0=1m0.M(\alpha)=\frac{\sup w_{\alpha}}{\mathbb{E}_{\kappa}[w_{\alpha}]}=\frac{A^{\gamma}}{A^{\gamma}m_{0}}=\frac{1}{m_{0}}.
+(A.44)
+The probability of selecting the reference policy is e−N​M​(α)−1=e−N​m0e^{-NM(\alpha)^{-1}}=e^{-Nm_{0}}.
+This yields the first term in (14).
+The proxy gain is:
+Δ⁡(πBoT)=𝔼πα​[r^]−𝔼πref​[r^]=𝔼πref​[U]−𝔼πα​[U],\Delta(\pi_{\textsf{BoT}})=\mathbb{E}_{\pi_{\alpha}}[\hat{r}]-\mathbb{E}_{\pi_{\textsf{ref}}}[\hat{r}]=\mathbb{E}_{\pi_{\textsf{ref}}}[U]-\mathbb{E}_{\pi_{\alpha}}[U],
+(A.45)
+where we used r^=1−U\hat{r}=1-U.
+Part 2: Heavy-tailed regime (large κ\kappa).
+In the heavy-tailed regime (κ→∞\kappa\to\infty), UU concentrates near 00.
+Using U∼Beta​(1/κ,1)U\sim\text{Beta}(1/\kappa,1), we have the moments 𝔼⁡[U]=1κ+1=1κ−1κ2+O⁡(κ−3)\mathbb{E}[U]=\frac{1}{\kappa+1}=\frac{1}{\kappa}-\frac{1}{\kappa^{2}}+O(\kappa^{-3}) and 𝔼⁡[U2]=12​κ+1=12​κ+O⁡(κ−2)\mathbb{E}[U^{2}]=\frac{1}{2\kappa+1}=\frac{1}{2\kappa}+O(\kappa^{-2}).
+We expand (1−ρ​U)γ(1-\rho U)^{\gamma} around U=0U=0:
+(1−ρ​U)γ=1−γ​ρ​U+γ⁡(γ−1)2​ρ2​U2+O⁡(U3).(1-\rho U)^{\gamma}=1-\gamma\rho U+\frac{\gamma(\gamma-1)}{2}\rho^{2}U^{2}+O(U^{3}).
+(A.46)
+Taking expectations:
+m0=1−γ​ρ​𝔼​[U]+γ⁡(γ−1)2​ρ2​𝔼​[U2]+O⁡(κ−2)=1+1κ​(−γ​ρ+γ⁡(γ−1)4​ρ2)+O⁡(κ−2).m_{0}=1-\gamma\rho\mathbb{E}[U]+\frac{\gamma(\gamma-1)}{2}\rho^{2}\mathbb{E}[U^{2}]+O(\kappa^{-2})=1+\frac{1}{\kappa}\left(-\gamma\rho+\frac{\gamma(\gamma-1)}{4}\rho^{2}\right)+O(\kappa^{-2}).
+(A.47)
+Substituting γ=1α−1\gamma=\frac{1}{\alpha-1} and ρ=(α−1)/λA\rho=\frac{(\alpha-1)/\lambda}{A}:
+γ​ρ=1α−1⋅α−1λ​A=1λ​A.\gamma\rho=\frac{1}{\alpha-1}\cdot\frac{\alpha-1}{\lambda A}=\frac{1}{\lambda A}.
+(A.48)
+The quadratic coefficient involves γ⁡(γ−1)=1α−1​(1α−1−1)=2−α(α−1)2\gamma(\gamma-1)=\frac{1}{\alpha-1}(\frac{1}{\alpha-1}-1)=\frac{2-\alpha}{(\alpha-1)^{2}}.
+Thus:
+γ⁡(γ−1)4​ρ2=2−α4​(α−1)2​(α−1)2λ2​A2=2−α4​λ2​A2.\frac{\gamma(\gamma-1)}{4}\rho^{2}=\frac{2-\alpha}{4(\alpha-1)^{2}}\frac{(\alpha-1)^{2}}{\lambda^{2}A^{2}}=\frac{2-\alpha}{4\lambda^{2}A^{2}}.
+(A.49)
+Combining these over a common denominator 4​λ2​A2=4​(λ+α−1)24\lambda^{2}A^{2}=4(\lambda+\alpha-1)^{2}:
+m0=1+1κ​−4​λ​A+2−α4​λ2​A2+O⁡(κ−2)=1+1κ​−4​λ−5​(α−1)+14​(λ+α−1)2+O⁡(κ−2).m_{0}=1+\frac{1}{\kappa}\frac{-4\lambda A+2-\alpha}{4\lambda^{2}A^{2}}+O(\kappa^{-2})=1+\frac{1}{\kappa}\frac{-4\lambda-5(\alpha-1)+1}{4(\lambda+\alpha-1)^{2}}+O(\kappa^{-2}).
+(A.50)
+The finite-NN term expands as e−N​m0≈e−N​(1−N⁡(m0−1))e^{-Nm_{0}}\approx e^{-N}(1-N(m_{0}-1)), contributing the term matching (15).
+Expanding m2=𝔼⁡[(1−ρ​U)2​γ]m_{2}=\mathbb{E}[(1-\rho U)^{2\gamma}] similarly leads to m2=1+1κ​(−2​γ​ρ+2​γ​(2​γ−1)4​ρ2)+O⁡(κ−2)m_{2}=1+\frac{1}{\kappa}(-2\gamma\rho+\frac{2\gamma(2\gamma-1)}{4}\rho^{2})+O(\kappa^{-2}).
+The ratio m2/m0\sqrt{m_{2}}/m_{0} expands as:
+m2m0≈1+1κ​(12​coeff​(m2)−coeff​(m0))=1+1κ​γ2​ρ24.\frac{\sqrt{m_{2}}}{m_{0}}\approx 1+\frac{1}{\kappa}\left(\frac{1}{2}\text{coeff}(m_{2})-\text{coeff}(m_{0})\right)=1+\frac{1}{\kappa}\frac{\gamma^{2}\rho^{2}}{4}.
+(A.51)
+Substituting γ​ρ=1λ+α−1\gamma\rho=\frac{1}{\lambda+\alpha-1}:
+m2m0=1+14​κ​(λ+α−1)2.\frac{\sqrt{m_{2}}}{m_{0}}=1+\frac{1}{4\kappa(\lambda+\alpha-1)^{2}}.
+(A.52)
+This yields the first term in (15).
+We compute Δ⁡(πBoT)=𝔼⁡[U]−𝔼πα​[U]\Delta(\pi_{\textsf{BoT}})=\mathbb{E}[U]-\mathbb{E}_{\pi_{\alpha}}[U].
+Using the integral approximation for large κ\kappa:
+𝔼πα​[U]=1κ​∫01(1−ρ​u)γ​𝑑u+O⁡(κ−2)=1κ​1−(1−ρ)γ+1ρ⁡(γ+1)+O⁡(κ−2).\mathbb{E}_{\pi_{\alpha}}[U]=\frac{1}{\kappa}\int_{0}^{1}(1-\rho u)^{\gamma}du+O(\kappa^{-2})=\frac{1}{\kappa}\frac{1-(1-\rho)^{\gamma+1}}{\rho(\gamma+1)}+O(\kappa^{-2}).
+(A.53)
+Linearizing near α=2\alpha=2 (where γ=1\gamma=1), the integral is 1−ρ/21-\rho/2.
+Thus:
+Δ⁡(πBoT)≈1κ−1κ​(1−ρ/2)=ρ2​κ=1κ​α−12​(λ+α−1).\Delta(\pi_{\textsf{BoT}})\approx\frac{1}{\kappa}-\frac{1}{\kappa}(1-\rho/2)=\frac{\rho}{2\kappa}=\frac{1}{\kappa}\frac{\alpha-1}{2(\lambda+\alpha-1)}.
+(A.54)
+This matches the final term in (15).
+Part 3: Light-tailed regime (small κ\kappa).
+In this regime (κ→0\kappa\to 0), r^\hat{r} concentrates near 00.
+From U∼Beta​(1/κ,1)U\sim\text{Beta}(1/\kappa,1), r^=1−U\hat{r}=1-U has moments:
+𝔼⁡[r^]≈κ−κ2+κ3,𝔼⁡[r^2]≈2​κ2−6​κ3.\mathbb{E}[\hat{r}]\approx\kappa-\kappa^{2}+\kappa^{3},\quad\mathbb{E}[\hat{r}^{2}]\approx 2\kappa^{2}-6\kappa^{3}.
+(A.55)
+Using the expansion wα​(r^)≈1+r^λ+2−α2​λ2​r^2w_{\alpha}(\hat{r})\approx 1+\frac{\hat{r}}{\lambda}+\frac{2-\alpha}{2\lambda^{2}}\hat{r}^{2}:
+𝔼⁡[wα]≈1+κλ+κ2​(2−αλ2−1λ),𝔼⁡[wα2]≈1+2​κλ+κ2​(2​(3−α)λ2−2λ).\mathbb{E}[w_{\alpha}]\approx 1+\frac{\kappa}{\lambda}+\kappa^{2}\left(\frac{2-\alpha}{\lambda^{2}}-\frac{1}{\lambda}\right),\;\mathbb{E}[w_{\alpha}^{2}]\approx 1+\frac{2\kappa}{\lambda}+\kappa^{2}\left(\frac{2(3-\alpha)}{\lambda^{2}}-\frac{2}{\lambda}\right).
+(A.56)
+The gain Δ=𝔼πα​[r^]−𝔼⁡[r^]\Delta=\mathbb{E}_{\pi_{\alpha}}[\hat{r}]-\mathbb{E}[\hat{r}] is dominated by the covariance term Cov​(wα,r^)/𝔼⁡[wα]\text{Cov}(w_{\alpha},\hat{r})/\mathbb{E}[w_{\alpha}], and 𝔼πα​[r^]≈κ+κ2λ\mathbb{E}_{\pi_{\alpha}}[\hat{r}]\approx\kappa+\frac{\kappa^{2}}{\lambda}.
+Thus Δ≈κ2λ\Delta\approx\frac{\kappa^{2}}{\lambda}.
+Including higher order terms leads to the expansion in (16).
+The squared distortion is:
+Dist2=𝔼⁡[wα2]𝔼​[wα]2≈1+κ2λ2.\text{Dist}^{2}=\frac{\mathbb{E}[w_{\alpha}^{2}]}{\mathbb{E}[w_{\alpha}]^{2}}\approx 1+\frac{\kappa^{2}}{\lambda^{2}}.
+(A.57)
+Taking the square root yields Dist≈1+κ22​λ2\text{Dist}\approx 1+\frac{\kappa^{2}}{2\lambda^{2}}.
+Combining these expansions yields the asymptotic results stated in the proposition.
+Appendix B Additional Discussion and Experimental Setup
+We detail the Hill estimator in § 4.2, elucidating its sample complexity advantages over estimating the entire reward distribution and outlining our experimental implementation.
+B.1 Tail Estimation via the Hill Estimator
+To implement the prompt-adaptive strategy, we require a robust estimate of the tail index κ⁡(x)\kappa(x) from a finite set of NN candidate responses.
+We adopt the Hill estimator (Hill, 1975), the standard semi-parametric estimator for heavy-tailed distributions.
+Standard extreme value theory typically deals with unbounded random variables; however, our proxy rewards are bounded, r^​(x,y)∈[0,1]\hat{r}(x,y)\in[0,1].
+To bridge this, we analyze the reward gaps (or regrets):
+U​(x,y)=1−r^​(x,y).U(x,y)=1-\hat{r}(x,y).
+(A.58)
+The “tail” of the reward distribution (where r^≈1\hat{r}\approx 1) corresponds to the limit U→0U\to 0.
+As established in our modeling assumption (Prop. 2), the tail behavior is characterized by Pr⁡(U≤u)≈u1/κ\Pr(U\leq u)\approx u^{1/\kappa}.
+By applying the transformation Z=1/U=(1−r^)−1Z=1/U=(1-\hat{r})^{-1}, we map the problem to a standard Pareto tail estimation where Pr(Z>z)=Pr(U<1/z)≈z−1/κ\Pr(Z>z)=\Pr(U<1/z)\approx z^{-1/\kappa}.
+Here, κ\kappa appears precisely as the shape parameter (tail index) of the resulting Pareto distribution.
+Given NN sampled responses, let r(1)≥r(2)≥⋯≥r(N)r_{(1)}\geq r_{(2)}\geq\dots\geq r_{(N)} denote the order statistics of the rewards.
+These correspond to the ordered transformed variables Z(1)≥Z(2)​…Z_{(1)}\geq Z_{(2)}\dots, where Z(i)=(1−r(i))−1Z_{(i)}=(1-r_{(i)})^{-1}.
+The Hill estimator uses the top KK order statistics to estimate κ\kappa:
+κ^\displaystyle\hat{\kappa}
+=1K​∑i=1Klog⁡(Z(i)Z(K+1))=1K​∑i=1Klog⁡((1−r(i))−1(1−r(K+1))−1)=1K​∑i=1Klog⁡(1−r(K+1)1−r(i)).\displaystyle=\frac{1}{K}\sum_{i=1}^{K}\log\left(\frac{Z_{(i)}}{Z_{(K+1)}}\right)=\frac{1}{K}\sum_{i=1}^{K}\log\left(\frac{(1-r_{(i)})^{-1}}{(1-r_{(K+1)})^{-1}}\right)=\frac{1}{K}\sum_{i=1}^{K}\log\left(\frac{1-r_{(K+1)}}{1-r_{(i)}}\right).
+(A.59)
+The hyperparameter KK determines the “tail cut-off”—the boundary between the distribution’s tail and its body.
+•
+Small KK: Uses only the most extreme data points. This minimizes bias (as the asymptotic tail approximation is most accurate here) but increases variance due to the small sample size.
+•
+Large KK: Incorporates more samples, reducing variance. However, if KK is too large, it includes samples from the central body of the distribution where the power-law assumption fails, introducing significant bias.
+In BoT, we fix KK to a small fraction of NN (e.g., K≈NK\approx\sqrt{N} or 5%−10%5\%-10\%) to prioritize low bias, ensuring α⁡(x)\alpha(x) reacts only to the true extremal behavior of the prompt.
+B.2 Sample Complexity: Tail Index vs. Full Distribution
+A fundamental advantage of the BoT framework is that it adapts to the reward landscape without requiring a full estimate of the reward distribution.
+Estimating the complete probability density function p⁡(r)p(r) is a non-parametric problem subject to the curse of dimensionality and slow convergence rates.
+In contrast, estimating the tail index κ\kappa is a semi-parametric problem that enjoys faster statistical convergence.
+We formalize this distinction below.
+Consider the task of estimating the underlying reward density p⁡(r)p(r) from NN samples to within an error ϵ\epsilon in total variation distance or L2L_{2} norm.
+The minimax convergence rate for estimating a generic smooth density (Hölder class Σ⁡(β,L)\Sigma(\beta,L)) in d=1d=1 dimension is
+infp^supp∈Σ𝔼⁡[|p^−p|]≍N−β2​β+1,\inf_{\hat{p}}\sup_{p\in\Sigma}\mathbb{E}\left[|\hat{p}-p|\right]\asymp N^{-\frac{\beta}{2\beta+1}},
+(A.60)
+where β\beta is the smoothness parameter.
+For typical values (e.g., β=2\beta=2), this yields a rate of N−2/5N^{-2/5}, which is significantly slower than the parametric rate N−1/2N^{-1/2}.
+This implies that accurately characterizing the entire reward landscape to optimize a policy would require a prohibitively large number of samples NN.
+Conversely, BoT relies only on the tail index κ\kappa, a single scalar summary of the extreme value behavior.
+Under standard Second-Order Regular Variation conditions, the Hill estimator κ^\hat{\kappa} (using the top KK statistics) is asymptotically normal (De Haan and Resnick, 1998):
+K​(κ^K−κ)→𝑑𝒩⁡(0,κ2).\sqrt{K}\left(\hat{\kappa}_{K}-\kappa\right)\xrightarrow{d}\mathcal{N}(0,\kappa^{2}).
+(A.61)
+This indicates that the estimation error decays at the parametric rate O⁡(1/K)O(1/\sqrt{K}). Crucially, the sample complexity to estimate κ\kappa to a fixed precision ϵ\epsilon depends on the number of tail samples KK, not the complexity of the full distribution’s support.
+In our design, α⁡(x)\alpha(x) (Eq. (18)) is a smooth, bounded monotonic function of κ\kappa, we do not need infinite precision in κ^\hat{\kappa}.
+We essentially perform a “soft classification” of the tail regime (heavy vs. light).
+The sample complexity to distinguish these regimes is low; even with moderate sample sizes (e.g., N≈50N\approx 50), the variance of κ^\hat{\kappa} is sufficiently small to steer α⁡(x)\alpha(x) towards the correct end of the interval [1,2][1,2].
+This makes BoT highly sample-efficient compared to methods that might attempt to model the full reward surface.
+B.3 Experimental Setup
+We conduct a comprehensive empirical analysis across a diverse suite of reasoning and instruction-following tasks. Our evaluation protocol encompasses four standard benchmarks, three instruction-tuned reference policies, and four diverse reward models.
+We evaluate performance on the following four benchmarks:
+1.
+GSM8K (Grade School Math) (Cobbe et al., 2021): A standard benchmark for multi-step mathematical reasoning. We utilize the test split, comprising 1,319 high-quality grade-school math problems with integer answers. We define the oracle reward r⋆​(x,y)r^{\star}(x,y) as a binary metric: r⋆​(x,y)=1r^{\star}(x,y)=1 if the final numerical answer is correct, and 0 otherwise.
+2.
+MMLU (Massive Multitask Language Understanding) (Hendrycks et al., 2021a): To assess knowledge-intensive reasoning in specialized STEM domains, we utilize the College Mathematics and College Chemistry test splits (approx. 100 questions each). Unlike GSM8K, these tasks use a multiple-choice format. Correctness is determined by matching the model’s final selection to the ground truth key.
+3.
+MATH (Mathematics Aptitude Test of Heuristics) (Hendrycks et al., 2021b): For competition-level mathematics requiring complex heuristics, we construct an evaluation set by randomly sampling 512 instances from the MATH test split. These problems are more challenging, and require complex heuristic application and advanced reasoning beyond standard grade-school arithmetic. Similar to GSM8K, the oracle reward is binary based on the exact match of the final calculated result.
+4.
+AlpacaFarm (Dubois et al., 2023): Designed to simulate ”in-the-wild” interactions, this dataset covers diverse tasks from creative writing to open-ended QA. Following Coste et al. (2024), we use the standard test set of 805 prompts. Since open-ended tasks lack verifiable ground truth, we employ Alpaca-RM (Dubois et al., 2023)—fine-tuned from LLaMA-7B on human preference data—as the oracle reward r⋆r^{\star} for evaluation.
+For the reasoning tasks (GSM8K, MMLU, MATH) with verifiable ground truth, we consider three instruction-tuned reference policies (πref\pi_{\textsf{ref}}): Gemma-2-2B (Gemma et al., 2024), Llama-3-3B (Grattafiori et al., 2024), and Mistral-7B (Jiang et al., 2023).
+For AlpacaFarm, we follow prior work and use the Pythia-1.4B model (Biderman et al., 2023).
+We pair these policies with four diverse proxy reward models (r^\hat{r}):
+1.
+OASST-RM (1.4B): Based on Pythia-1.4B (Köpf et al., 2023).
+2.
+Gemma-RM (2B): Trained from google/gemma-2b-it (Dong et al., 2023).
+3.
+Llama-RM (3B): A generalizable RM trained from meta/llama-3.2-3B (Yang et al., 2024b).
+4.
+ARMO-RM (8B): A mixture-of-experts model trained from meta/llama-3-8B (Wang et al., 2024).
+We prompt all reference policies using zero-shot Chain-of-Thought (CoT) (Wei et al., 2022), i.e., without any in-context demonstrations, to elicit reasoning.
+To maximize response diversity, we set the temperature to 1.0 and top-pp to 1.0 (no nucleus sampling), limiting generation to 512 tokens.
+For each unique combination of dataset, policy, and reward model, we pre-generate a large candidate pool of 212=4,0962^{12}=4,096 responses per prompt.
+For AlpacaFarm, we generate 12,600 responses per prompt following Coste et al., 2024.
+We simulate experiments by bootstrapping subsets of varying size NN from this pool, reporting results averaged over 10 independent trials to ensure statistical robustness.
+For the Hill estimator (Eq. (17)) in BoT, we adaptively set the tail cutoff as K=max⁡(1,N)K=\max(1,\sqrt{N}) to balance bias and variance as NN scales.
+To calibrate the mapping function α⁡(x)\alpha(x), we select the pivot κ0\kappa_{0} based on the reward model’s typical behavior; specifically, we set κ0\kappa_{0} to the median of the estimated tail indices {κ^​(xi)}i=1M\{\hat{\kappa}(x_{i})\}_{i=1}^{M} over the set of MM prompts. This centers the sigmoid mapping, preventing the policy from saturating into purely optimistic or pessimistic modes, and ensuring BoT remains sensitive to relative tail risk variations across prompts.
+Appendix C Additional Experiments and Ablation Studies
+We include additional experimental results and comparisons, including: (i) comprehensive results of all configurations of the reference policies and reward models for each datasets, similar to Figures 2 and 3 in the main text; (ii) additional results of selected configurations in Figures 2, including true reward r∗r^{*} over NN, proxy reward r^\hat{r} over NN. and the proxy reward over distortions (i.e., the RLHF objective in Eq. (12)); (iii) ablation studies on the steering temperature λ\lambda and tail pivot κ0\kappa_{0} in Algorithm 1.
+C.1 The Complete Results over all Datasets, Reference Policies, and Reward Models
+We show the trajectory of the true reward (r∗r^{*}) versus the proxy reward (r^\hat{r}) as the sample size NN scales exponentially from 202^{0} to 2102^{10}, i.e., N∈{20​.21,⋯,29,210}N\in\{2^{0}.2^{1},\cdots,2^{9},2^{10}\}.
+These detailed results span all combinations of reference policies and reward models, i.e., { Gemma-2-2B, Llama-3-3B, Mistral-7B } ×\times { OASST-RM, Gemma-RM, Llama-RM, ARMO-RM } for GSM8K (Figure A.4), MMLU (Figure A.5), MATH (Figure A.6), and { Pythia-1.4B} ×\times { OASST-RM, Gemma-RM, Llama-RM, ARMO-RM } for AlpacaFarm (Figure A.7).
+Across these configurations, we observe distinct failure modes for the baselines: optimistic strategies, such as BoN and sBoN, consistently succumb to reward hacking at large NN, while ITP remains overly conservative, often failing to adequately explore high-reward regions—a finding consistent with Huang et al. (2025b). In contrast, BoT demonstrates robust adaptivity. Depending on the reward landscape, it either outperforms all baselines in high-variance regimes (e.g., Mistral-7B/Gemma-RM on MATH), matches the efficiency of BoN in light-tailed regime (e.g., Llama-3-3B/Llama-RM on MMLU), or converges to the safety of ITP when heavy-tailed rewards are dominant (e.g., Gemma-2-2B/Gemma-RM on GSM8K).
+Figure A.4: Comparison of optimistic (sBoN/BoN), pessimistic (ITP), and adaptive (BoT) strategies on GSM8K across different reference models and proxy rewards.
+Each curve traces the trajectory of True Reward (r∗r^{*}) vs. Proxy Reward (r^\hat{r}) as the sample size NN increases from 202^{0} to 2102^{10}, with marker size proportional to NN. The smallest marker represents N=1N=1 (standard sampling), while the largest represents N=1024N=1024.
+Figure A.5: Comparison of optimistic (sBoN/BoN), pessimistic (ITP), and adaptive (BoT) strategies on MMLU across different reference models and proxy rewards.
+Each curve traces the trajectory of True Reward (r∗r^{*}) vs. Proxy Reward (r^\hat{r}) as the sample size NN increases from 202^{0} to 2102^{10}, with marker size proportional to NN. The smallest marker represents N=1N=1 (standard sampling), while the largest represents N=1024N=1024.
+Figure A.6: Comparison of optimistic (sBoN/BoN), pessimistic (ITP), and adaptive (BoT) strategies on MATH across different reference models and proxy rewards.
+Each curve traces the trajectory of True Reward (r∗r^{*}) vs. Proxy Reward (r^\hat{r}) as the sample size NN increases from 202^{0} to 2102^{10}, with marker size proportional to NN. The smallest marker represents N=1N=1 (standard sampling), while the largest represents N=1024N=1024.
+Figure A.7: Comparison of optimistic (sBoN/BoN), pessimistic (ITP), and adaptive (BoT) strategies on AlpacaFarm across different reference models and proxy rewards.
+Each curve traces the trajectory of True Reward (r∗r^{*}) vs. Proxy Reward (r^\hat{r}) as the sample size NN increases from 202^{0} to 2102^{10}, with marker size proportional to NN. The smallest marker represents N=1N=1 (standard sampling), while the largest represents N=1024N=1024.
+C.2 Additional Results on Selected Configurations in Figures 2
+We present the trajectory of true reward r∗r^{*} and proxy reward r^\hat{r} versus the sample size NN increases (top row), alongside the trade-off (bottom row) between proxy reward and policy distortion (KL, χ2\chi^{2}, and Tsallis divergences) on GSM8K (Figure A.8), MMLU (Figure A.9), and MATH (Figure A.10).
+While BoN maximizes the raw proxy reward, it suffers from reward hacking at large NN, leading to lower true utility (accuracy).
+In contrast, BoT achieves the highest true reward among all strategies, surpassing both the conservative ITP and the optimistic baselines.
+The distortion analysis further validates the efficiency of BoT: it attains a higher proxy reward than ITP for the same level of distortion, yet maintains significantly tighter control over divergence than sBoN or BoN as NN scales, effectively balancing exploration with robustness.
+Figure A.8: The trajectory of true reward r∗r^{*} and proxy reward r^\hat{r} versus the sample size NN increases (top row), alongside the trade-off (bottom row) between proxy reward and policy distortion (KL, χ2\chi^{2}, and Tsallis divergences) on GSM8K.
+We compare optimistic (sBoN, BoN), pessimistic (ITP), and adaptive (BoT) strategies using select configurations from Figure 2.
+Figure A.9: The trajectory of true reward r∗r^{*} and proxy reward r^\hat{r} versus the sample size NN increases (top row), alongside the trade-off (bottom row) between proxy reward and policy distortion (KL, χ2\chi^{2}, and Tsallis divergences) on MMLU.
+We compare optimistic (sBoN, BoN), pessimistic (ITP), and adaptive (BoT) strategies using select configurations from Figure 2.
+Figure A.10: The trajectory of true reward r∗r^{*} and proxy reward r^\hat{r} versus the sample size NN increases (top row), alongside the trade-off (bottom row) between proxy reward and policy distortion (KL, χ2\chi^{2}, and Tsallis divergences) on MATH.
+We compare optimistic (sBoN, BoN), pessimistic (ITP), and adaptive (BoT) strategies using select configurations from Figure 2.
+C.3 Ablation Studies
+We conduct ablation studies to analyze the sensitivity of the steering temperature λ\lambda and the tail pivot κ0\kappa_{0} on the GSM8K dataset, utilizing Gemma-2-2B as the reference policy and ARMO-RM as the reward model.
+For all experiments in this section, we fix the sample size at N=1024N=1024.
+Steering Temperature λ\lambda (Figure A.11, Left).
+We first fix κ0\kappa_{0} to the median of κ^​(x)\hat{\kappa}(x) across prompts and sweep λ∈{0.001,…,1.0}\lambda\in\{0.001,\dots,1.0\}.
+In the high-temperature regime (large λ\lambda), the re-weighting term exp⁡(r/λ)\exp(r/\lambda) flattens, causing the candidate distribution to approach uniformity; consequently, the behaviors of sBoN, ITP, and BoT converge.
+As λ\lambda decreases, the strategies diverge in how they prioritize high-reward responses.
+ITP exhibits stable performance due to its linear constraint, whereas sBoN becomes increasingly aggressive, converging toward the hard-maximization behavior of standard BoN (i.e., placing all weight on the single highest-reward candidate).
+Crucially, while BoT does not always maximize the raw proxy reward—avoiding the over-optimization trap—its adaptive α⁡(x)\alpha(x) allows it to achieve higher true reward (accuracy) by mitigating tail risks that optimistic baselines ignore.
+Tail Pivot κ0\kappa_{0} (Figure A.11, Right).
+Next, we fix λ=0.01\lambda=0.01 and sweep κ0∈{0.001,…,5.0}\kappa_{0}\in\{0.001,\dots,5.0\}.
+Since sBoN and ITP are independent of κ0\kappa_{0}, they appear as constant baselines.
+The parameter κ0\kappa_{0} governs the transition point of our adaptive strategy:
+•
+Optimistic Limit (κ0→∞\kappa_{0}\to\infty):
+As κ0\kappa_{0} increases, the term κ^​(x)κ^​(x)+κ0\frac{\hat{\kappa}(x)}{\hat{\kappa}(x)+\kappa_{0}} vanishes, driving α⁡(x)=1+κ^​(x)κ^​(x)+κ0→1\alpha(x)=1+\frac{\hat{\kappa}(x)}{\hat{\kappa}(x)+\kappa_{0}}\to 1. In this regime, BoT mimics the optimistic behavior of sBoN, as reflected in the proxy reward curves.
+•
+Pessimistic Limit (κ0→0\kappa_{0}\to 0):
+Conversely, as κ0\kappa_{0} decreases below the median of κ^​(x)\hat{\kappa}(x), the ratio approaches 1, driving α⁡(x)=1+κ^​(x)κ^​(x)+κ0→2\alpha(x)=1+\frac{\hat{\kappa}(x)}{\hat{\kappa}(x)+\kappa_{0}}\to 2. Here, BoT shifts toward the conservative, pessimistic profile of ITP.
+The results demonstrate that by selecting an intermediate κ0\kappa_{0} (calibrated to the median tail index), BoT successfully interpolates between these regimes, outperforming static baselines by adapting to the specific risk profile of each prompt.
+Figure A.11: Ablation analysis of steering temperature λ\lambda (left two figures) and tail pivot κ0\kappa_{0} (right two figures). We compare optimistic (sBoN, BoN), pessimistic (ITP), and adaptive (BoT) strategies. The black dashed line marks the median of the estimated tail indices κ^​(x)\hat{\kappa}(x) across all prompts.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

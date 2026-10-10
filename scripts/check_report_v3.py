@@ -58,10 +58,10 @@ def validate(text, registry, root=None, path=None, stable_node_ids=None):
             raise ValueError
         if weekly:
             year, week = title[2].split("-W")
-            end = datetime.combine(date.fromisocalendar(int(year), int(week), 7), time(9), BEIJING)
+            end = datetime.combine(date.fromisocalendar(int(year), int(week), 7), time(), BEIJING)
             expected = end - timedelta(days=7), end
         else:
-            end = datetime.combine(date.fromisoformat(title[2]), time(9), BEIJING)
+            end = datetime.combine(date.fromisoformat(title[2]), time(), BEIJING)
             expected = end - timedelta(days=1), end
     except ValueError:
         errors.append("首行必须是有效日期的 Daily Research 或 ISO 周的 Weekly Research 标题")
@@ -91,10 +91,21 @@ def validate(text, registry, root=None, path=None, stable_node_ids=None):
     window = fields.get("窗口", "").split("～")
     start = end = None
     if len(window) != 2:
-        errors.append("窗口必须用 ～ 分隔起止时间")
+        errors.append("窗口必须用 ～ 分隔起止日期")
     else:
-        start = _timestamp(window[0].strip(), "窗口起点", errors)
-        end = _timestamp(window[1].strip(), "窗口终点", errors)
+        bounds = [bound.strip() for bound in window]
+        if all(re.fullmatch(r"\d{4}-\d{2}-\d{2}", bound) for bound in bounds):
+            try:
+                start = datetime.combine(date.fromisoformat(bounds[0]), time(), BEIJING)
+                # Displayed calendar dates are inclusive; comparisons use an exclusive end.
+                end = datetime.combine(date.fromisoformat(bounds[1]) + timedelta(days=1), time(), BEIJING)
+            except (ValueError, OverflowError):
+                errors.append("窗口必须包含有效的自然日日期")
+        else:
+            start = _timestamp(bounds[0], "窗口起点", errors)
+            end = _timestamp(bounds[1], "窗口终点", errors)
+            if fields.get("窗口说明", "") in ABSENT:
+                errors.append("默认窗口须写自然日日期范围，不使用时分秒")
         if start and end:
             if start >= end:
                 errors.append("窗口终点必须晚于起点")
@@ -103,6 +114,25 @@ def validate(text, registry, root=None, path=None, stable_node_ids=None):
     checked = _timestamp(fields.get("检查时间", ""), "检查时间", errors)
     if status == "完成" and checked and end and checked < end:
         errors.append("完成时检查时间不得早于窗口终点")
+
+    intervals = [(start, end)] if start and end else []
+    supplement = fields.get("补充窗口")
+    if supplement is not None:
+        if weekly or fields.get("窗口说明", "") in ABSENT:
+            errors.append("Daily 补充窗口需要用户授权的窗口说明")
+        try:
+            bounds = [date.fromisoformat(value.strip()) for value in supplement.split("～")]
+            if len(bounds) != 2:
+                raise ValueError
+            extra = (datetime.combine(bounds[0], time(), BEIJING),
+                     datetime.combine(bounds[1] + timedelta(days=1), time(), BEIJING))
+            if weekly or extra != expected:
+                raise ValueError
+            intervals.append(extra)
+            if status == "完成" and checked and checked < extra[1]:
+                errors.append("完成时检查时间不得早于补充窗口结束")
+        except (ValueError, OverflowError):
+            errors.append("补充窗口只能是报告日期的前一完整自然日")
 
     required = {key for key, row in registry.items()
                 if row.get("Cadence", "").replace(" ", "") in
@@ -161,8 +191,8 @@ def validate(text, registry, root=None, path=None, stable_node_ids=None):
         if re.fullmatch(r"\d{4}-\d{2}-\d{2}", published):
             try:
                 publication = datetime.combine(date.fromisoformat(published), time(), BEIJING)
-                if start and end and not (start <= publication and publication + timedelta(days=1) <= end):
-                    errors.append(f"材料公开日期不能确定完全落在窗口内；补充有依据的时间范围或保留日期缺口：{material}")
+                if intervals and not any(lower <= publication and publication + timedelta(days=1) <= upper for lower, upper in intervals):
+                    errors.append(f"材料公开日期不在报告日期范围内：{material}")
             except ValueError:
                 errors.append(f"材料公开日期无效：{published}")
         elif "～" in published:
@@ -172,11 +202,11 @@ def validate(text, registry, root=None, path=None, stable_node_ids=None):
             else:
                 lower = _timestamp(bounds[0].strip(), "材料公开范围起点", errors)
                 upper = _timestamp(bounds[1].strip(), "材料公开范围终点", errors)
-                if lower and upper and (lower >= upper or (start and end and not (start <= lower < upper <= end))):
+                if lower and upper and (lower >= upper or (intervals and not any(left <= lower < upper <= right for left, right in intervals))):
                     errors.append(f"材料公开时间范围必须完全落在窗口内：{material}")
         else:
             publication = _timestamp(published, "材料公开时间", errors)
-            if publication and start and end and not start <= publication < end:
+            if publication and intervals and not any(left <= publication < right for left, right in intervals):
                 errors.append(f"材料公开时间不在窗口内：{material}")
         repeated = "不重复评分" in score
         important_revision = bool(re.search(r"重要\s*(?:修订|revision)|important[_ ]revision", score, re.IGNORECASE))

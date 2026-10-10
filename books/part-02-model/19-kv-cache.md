@@ -222,6 +222,10 @@ GQA/MQA 仍缓存显式 K 与 V，只是改变 head sharing；更激进的结构
 
 收益是缩小理论缓存对象，代价是专用训练、额外重构计算和 kernel 复杂度。当前证据来自 350M 模型与 30B training tokens，且缺少端到端 decode kernel；无法证明质量和延迟同时成立时，GQA/MQA 的显式 KV 仍是可靠基线。
 
+重复同一层栈的 looped 模型还要区分参数共享与状态共享：各 loop 的 hidden state 不同，朴素缓存仍保存每轮 K/V。一个可重训的分支让旧 token 各轮状态共同写出低维 latent，第一轮另留较小 latent；当前 query 在 latent 空间读出加权表示，再映回输出，不为全历史重构逐轮 K/V。近期窗口仍保留 exact K/V，两部分共同归一化，窗口外的 token 并非直接丢弃。
+
+这同时改变缓存容量与读取计算，却增加 writer/reader、uptraining、位置对齐和固定窗口成本。[HLA 的受限实验](https://arxiv.org/html/2610.07940v1)中，Ouro T=4、A100 80GB、16bit 的短上下文单序列反而更慢；扩大可容纳 batch 的吞吐收益不等于同 batch latency 或生产 SLO。低秩拟合也不是无损 attention，16K 之外尚未测。无法重训、布局不兼容或质量回归失败时，逐轮显式 KV 与已验收的共享布局仍成立。<!-- source-family:SF-2026-ARXIV-2610-07940 -->
+
 ## Position 与 Cache 的一致性
 
 采用 RoPE 的模型通常缓存已旋转的 K；采用其他位置机制时，应按其实际作用位置解释缓存，不是所有机制都把位置信息写入 K。Decode 新 token 必须使用正确 position index，否则新 Query 与历史 Keys 的相对几何错误。位置编码不会阻止同一请求继续复用 cache：历史 token 在后续 Decode steps 中仍处于原位置，所以它的 K 不需要重算。

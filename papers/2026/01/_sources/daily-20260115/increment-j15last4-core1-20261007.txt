@@ -1,0 +1,231 @@
+Representations of Text and Images Align From Layer One (https://arxiv.org/html/2601.08017v1)
+citeturn30764view0 [wordlim: 200] Crawled: yesterday; Content type: text/html; Source: open({"ref_id":"https://arxiv.org/html/2601.08017v1","lineno":125}); Total lines: 477
+L116: where $\mathbf{b}^{\text{lang}}_{\ell}\in\mathbb{R}^{H}$ is the baseline vector, whose computation we describe below. To compute $\operatorname{activation}_{\ell}:\text{String}\to\mathbb{R}^{H}$, we wrap $w$ in the model’s chat template (as if a user said it) and extract activations directly from the token positions of $w$ in the target layer $\ell$, averaging them across tokens for multi-token $w$.
+L117: This differs from  cite59†Lindsey (2025) who compute the activation not on the raw $w$, but on “Tell me about $w$,” and extract the activation not from the word’s token positions, but from the last token position, i.e., the assistant turn token. This modification is motivated by our focus on early layers, where information about a concept resides primarily at the token positions describing it, as the model has not yet propagated information to other positions.
+L118: The centring is necessary because activations are not centred at zero; intuitively, each activation can be decomposed as the sum of a common component (shared across words) and a semantic component (word-specific). Without centring, cosine similarities are dominated by the shared component. The baseline $\mathbf{b}^{\text{lang}}_{\ell}$ approximates the common component, and subtracting it allows us to isolate what is semantically distinctive about each concept.
+L119: We compute the baseline $\mathbf{b}^{\text{lang}}_{\ell}$ as the mean activation across a set of 100 baseline words $W_{\text{baseline}}$ spanning concrete objects (“gondola”) and abstract concepts (“knowledge”):
+L120: 
+L121:  | $$\mathbf{b}^{\text{lang}}_{\ell}=\frac{1}{|W_{\text{baseline}}|}\sum_{w\in W_{\text{baseline}}}\operatorname{activation}_{\ell}(w),$$  |  | (2)
+L122: again averaging over token positions for multi-token words. The set $W_{\text{baseline}}$ comes directly from cite59†Lindsey (2025) (converted to singular form); the complete list is in cite33†Appendix C .
+L123: #### Relationship to traditional contrastive methods.
+L124: This approach to finding concept directions simplifies the traditional contrastive setup where one constructs many contrastive prompt pairs (e.g., “I talk about weddings” vs. “I don’t talk about weddings”) and averages their differences (cite56†Turner et al., 2024 ; cite57†Panickssery et al., 2024 ). cite59†Lindsey (2025) found that this simpler approach still produces effective concept directions.
+L125: We adopted it to prevent inadvertent prompt-specific artefacts from confounding concept-specific signals in our analysis. Related approaches, such as TCAV cite60†Kim et al. (2018) , also interpret concepts as directions in activation space.
+L126: ### 2.2 Representing Images via Weighted Patch Aggregation
+L127: To compute $\operatorname{rep}_{\ell}(I)$, we must first understand how adapter-based VLMs represent images. These models process images through three stages: (1) a vision encoder extracts visual features into a sequence of patch embeddings, (2) (optionally) a linear projector maps these patch embeddings to the language model’s embedding space, (3) the resulting sequence of patch embeddings is concatenated to the sequence of text token embeddings and processed by the language model.
+L128: The vision encoder is pre-trained separately and often stays frozen during training.
+L129: After each transformer layer $\ell$ with hidden dimension $H$, an image $I$ is thus represented as a sequence of $N$ patch activations:
+L130: 
+L131:  | $$\operatorname{patches}_{\ell}(I)=(\mathbf{p}_{1},\mathbf{p}_{2},\ldots,\mathbf{p}_{N}),\quad\mathbf{p}_{i}\in\mathbb{R}^{H}.$$  |
+L132: 
+L133: We define $\operatorname{rep}_{\ell}(I)$ as a weighted average over centred patch activations $\mathbf{p}^{\text{cent}}_{i}\in\mathbb{R}^{H}$:
+L134:  | $$\operatorname{rep}_{\ell}(I)=\sum_{i=1}^{N}\alpha_{i}\mathbf{p}^{\text{cent}}_{i},$$  |
+L135: 
+L136: where $\alpha_{i}\in\mathbb{R}$ are attention weights that concentrate on semantically relevant patches while maintaining spatial coherence. We describe the computation of both the centred patch activations and the weights below.
+L137: 
+L138: We centre each patch by subtracting an image baseline:
+L139: 
+L140:  | $$\mathbf{p}^{\text{cent}}_{i}=\mathbf{p}_{i}-\mathbf{b}^{\text{img}}_{\ell},$$  |
+L141: where $\mathbf{b}^{\text{img}}_{\ell}\in\mathbb{R}^{H}$ is the mean patch activation of a neutral grey image (pixels = 0.5):
+L142: 
+L143:  | $$\mathbf{b}^{\text{img}}_{\ell}=\frac{1}{N}\sum_{j=1}^{N}\operatorname{patches}_{\ell}(I_{\text{grey}})_{j}.$$  |
+L144: 
+L145: This is analogous to centring language activations (cite61†Equations 2 and cite62†1 ), and has the goal of isolating patch-specific semantic content.
+L146: 
+L147: The weights $\alpha_{i}$ combine semantic relevance ($s_{i}$) with spatial coherence ($g_{i}$):
+L148:  | $$\alpha_{i}=\operatorname{softmax}_{\tau}(s_{i}+\log g_{i}),$$  |
+L149: 
+L150: where $\tau$ is the temperature (low values focus attention on the most relevant patches) and $i$ is the visual patch / token index.
+L151: 
+L152: The semantic score $s_{i}\in[-1,1]$ measures how similar each centred patch is to the representation of the target concept:
+L153: 
+L154:  | $$s_{i}=\operatorname{cosine\_similarity}(\mathbf{p}^{\text{cent}}_{i},\operatorname{rep}_{\ell}(w)).$$  |
+L155: The spatial prior $g_{i}\in\mathbb{R}^{+}$ is a Gaussian centred on the image centre:
+L156: 
+L157:  | $$g_{i}=\exp\left(-\frac{(x_{i}-x_{c})^{2}+(y_{i}-y_{c})^{2}}{2\sigma^{2}}\right),$$  |
+L158: 
+L159: with $(x_{i},y_{i})$ the spatial coordinates of patch $i$, $(x_{c},y_{c})$ the centre of the image, and $\sigma$ controlling the prior’s spread (see below for our choice). This encourages the optimisation process to produce a single object in the centre of the image rather than fragmented patterns.
+L160: In our experiments, we use $\tau=0.005$, or $\tau=0.5$, depending on the layer, and we update the $\sigma$ of the Gaussian coherency prior during training according to a linear schedule, from relatively focused ($\sigma=2$) to diffuse ($\sigma=16$). We list the remaining experimental details in cite18†Section 3.1 and cite38†Appendix E .
+L161: ### 2.3 Guiding Optimisation Toward Transfer via Direct Ascent Synthesis
+L162: 
+L163: Unconstrained optimisation in high-dimensional pixel space can discover adversarial patterns that exploit quirks of the specific model rather than recovering genuine visual content. These images transfer poorly. To encourage transfer, we thus use direct ascent synthesis (DAS), a technique from the adversarial robustness literature (cite53†Fort and Whitaker, 2025 ). See cite63†Figure 2 for an overview.
+L164: cite64†Image: Refer to caption Figure 2: Our image synthesis pipeline based on direct ascent synthesis (cite53†Fort and Whitaker, 2025 ). The final image consists of a base image (neutral grey) plus a trainable perturbation. (1) Instead of training the perturbation pixels directly, we re-parametrise the perturbation via a set of trainable multi-resolution components. (2–3) All multi-resolution components are upscaled to the target size, summed, and added to the base image.
+L165: (4) The resulting image is augmented with random shifts and noise.
+--------------------------------------------------------------------------------
+CASHEW: Stabilizing Multimodal Reasoning viaIterative Trajectory Aggregation (https://arxiv.org/html/2601.08010v1)
+citeturn30764view1 [wordlim: 200] Crawled: today; Content type: text/html; Source: open({"ref_id":"https://arxiv.org/html/2601.08010v1","lineno":145}); Total lines: 572
+L123: #### Grounded Object Verification.
+L124: 
+L125: To mitigate hallucination, we incorporate an explicit visual–text grounding verification step before aggregation. For each candidate trajectory $\tau_{j}^{(t)}\in S_{i}^{(t)}$, we extract mentioned objects using a text parser $\mathcal{E}$:
+L126: 
+L127:  | $$\mathcal{O}_{j}^{(t)}=\mathcal{E}(r_{j}^{(t)}).$$  |  | (2)
+L128: Each object $o_{k}\in\mathcal{O}_{j}^{(t)}$ is verified by a pretrained Grounding DINO cite80†Liu et al. (2024c) model $\mathcal{G}$ to assess its presence in the visual input $I$:
+L129: 
+L130:  | $$v(o_{k})=\mathbf{1}\big[\mathcal{G}(I,o_{k})>\delta_{g}\big],$$  |  | (3)
+L131: 
+L132: where $\mathcal{G}(I,o_{k})$ returns a grounding confidence score and $\delta_{g}$ is a confidence threshold. We collect all verified objects as grounded visual evidence:
+L133:  | $$\mathcal{V}_{j}^{(t)}=\{o_{k}\in\mathcal{O}_{j}^{(t)}\mid v(o_{k})=1\}.$$  |  | (4)
+L134: #### Grounded Aggregation.
+L135: 
+L136: Finally, the model synthesizes the sampled trajectories and their corresponding visual verification results to generate an updated reasoning trajectory. We explicitly condition the generation on both the reasoning texts and the corresponding verified visual evidence:
+L137: 
+L138:  | $$\tau_{i}^{(t+1)}\sim p_{\theta}\big(\cdot\mid\mathbf{x},S_{i}^{(t)},\{\mathcal{V}_{j}^{(t)}\}_{\tau_{j}^{(t)}\in S_{i}^{(t)}}\big).$$  |  | (5)
+L139: By providing $\{\mathcal{V}_{j}^{(t)}\}$, the model can distinguish which parts of the candidate reasoning are visually supported, encouraging it to anchor the new trajectory $\tau_{i}^{(t+1)}$ to anchor its reasoning in verified evidence. The population is then updated as $\mathcal{T}_{t+1}=\{\tau_{i}^{(t+1)}\}_{i=1}^{N}$.
+L140: #### Final Aggregation.
+L141: 
+L142: After $T$ iterations, all trajectories are merged to produce a single final reasoning trajectory:
+L143: 
+L144:  | $$\tau^{*}\sim p_{\theta}(\cdot\mid\mathbf{x},\mathcal{T}_{T})$$  |  | (6)
+L145: ## 5 Cashew-RL cite50†Image: [Uncaptioned image] L146: 
+L147: To equip the model with robust multimodal aggregation capabilities, we introduce Cashew-RL, a two-stage post-training framework: (1) supervised fine-tuning (SFT) for trajectory aggregation, which teaches the model to combine multiple reasoning trajectories into coherent outputs, and (2) reinforcement learning (RL) via GSPO, which further optimizes the aggregation policy using reward signals reflecting aggregation quality.
+L148: ### 5.1 Data Construction and Aggregation Format
+L149: 
+L150: Our post-training framework relies on a unified multimodal aggregation format and two datasets derived from a pool of seven image/video benchmarks (details in Appendix cite38†B ). These datasets serve distinct purposes for SFT and RL stages, while sharing a consistent output structure that enables stable optimization.
+L151: #### Structured Aggregation Format.
+L152: 
+L153: At both the SFT and RL stages, the model is trained to output a standardized, interpretable aggregation composed of three elements:
+L154: 
+L155: <think> r </think>
+L156: 
+L157: <visual_keys> K </visual_keys>
+L158: 
+L159: <answer> a </answer>
+L160: 
+L161: Each tag serves a specific role:
+L162: 
+L163:   * •
+L164: 
+L165: <think> contains an intermediate reasoning trace $r$, revealing how evidence from the candidate trajectories is aggregated.
+L166: 
+L167:   * •
+L168: <visual_keys> contains a set $K$ of object-level entities that are relevant to answering the question. Concretely, these correspond to $\mathcal{V}_{j}^{(t)}$ from the grounded aggregation step.
+L169: 
+L170:   * •
+L171: 
+L172: <answer> contains the final response $a$, which is evaluated against the ground truth.
+L173: 
+L174: This unified representation provides explicit supervision for reasoning and verified visual evidence, and supports reward computation in the RL stage.
+L175: #### SFT Data.
+L176: We first construct a 30k-instance dataset for SFT. Each instance includes an image or video frames $\mathbf{x}$, a question $q$, a ground-truth answer $y^{\ast}$, a reasoning chain generated by Qwen3-VL-30B-Thinking (cite81†Bai et al., 2025a ), and a set of visual keys that are extracted from the reasoning chain and verified by Grounding DINO.
+L177: The model is trained to imitate the structured aggregation format, learning to produce coherent reasoning, identify relevant visual entities, and generate a well-formed final answer. This stage establishes the reference policy $\pi_{\text{ref}}$ and provides reliable formatting behavior for subsequent RL training.
+L178: #### RL Data.
+L179: We curate a 200k-instance corpus from the same source datasets. Each instance contains the original annotation $(\mathbf{x},q,y^{\ast})$, three diverse candidate trajectories $\{\tau_{i}\}_{i=1}^{3}$ generated using Qwen3-VL-30B-Thinking, and a shared set of visual keys extracted from the candidates and verified by Grounding DINO. Each $\tau_{i}$ provides a candidate answer and a reasoning chain, which may be correct, incorrect, or incomplete.
+L180: During RL training, the candidate pool is constructed as a curriculum-based mixture of offline teacher-generated trajectories and on-policy trajectories sampled from the current model $\pi_{\theta}$. This hybrid setup exposes the policy to both clean teacher signals and noisier self-generated trajectories, reducing distribution mismatch and improving robustness at inference time.
+L181: ### 5.2 Stage I: SFT
+L182: The goal of the supervised stage is to teach the model the structure of multimodal aggregation: how to articulate intermediate reasoning, verbalize evidence via visual keys, and format the final answer. Given $(\mathbf{x},q,\{\tau_{i}\})$, where $\{\tau_{i}\}$ are reference trajectories in the structured aggregation format, the model is trained to imitate a structured aggregation output $(r,K,a)$.
+L183: This stage does not primarily optimize correctness; rather, it provides: (1) a stable and structured textual interface for subsequent RL training, with a well-defined and parseable output format, and (2) a reference policy $\pi_{\text{ref}}$ used for KL regularization in GSPO. Without this SFT initialization, RL training often collapses into malformed or degenerate trajectories.
+L184: ### 5.3 Stage II: RL via GSPO
+L185: 
+L186: While SFT establishes the structural format of multimodal aggregation, it relies primarily on imitation and does not explicitly teach the model to distinguish correct evidence from hallucinated or noisy candidate trajectories. To explicitly optimize for effective aggregation, we employ reinforcement learning to train the model as an aggregator.
+L187: #### Aggregation Policy.
+L188: 
+L189: During RL, the model is treated as a policy
+L190: 
+L191:  | $$\pi_{\theta}(a,K,r\mid\mathbf{x},S),$$  |
+--------------------------------------------------------------------------------
+Model-Agnostic Solutions for Deep Reinforcement Learning in Non-Ergodic Contexts (https://arxiv.org/html/2601.08726v1)
+citeturn30764view2 [wordlim: 200] Crawled: last week; Content type: text/html; Source: open({"ref_id":"https://arxiv.org/html/2601.08726v1","lineno":132}); Total lines: 380
+L99: Traditional RL pipelines require a table of Q-values for each state-action pair to estimate their value within the optimisation problem. The “optimiser” now selects the action that returns the highest Q-value for the current state, $\max_{a}{Q(s,a)}$, from the table. In our first experimental setup, we replace this tabular representation, used in  [cite29†4 ] with a neural-network-based function approximator.
+L100: This transition from traditional RL to deep reinforcement learning (DRL) enables the agent to handle larger state spaces and more complex environments. These function approximators replace the value selection problem with a value function which the model needs to optimise. We use an implementation of Deep Q-learning [cite57†28 ], which utilises the Bellman equation to compute the loss backpropagated to the neural network during training.
+L101: We illustrate the experimental design for the agents using a DQN in Algorithm cite58†1 . Moreover, we transform the Multi-Armed Bandit (MAB) setup from [cite29†4 ] into a Markov Decision Process (MDP) by including the current wealth, $W_{t}$, in the state at time step $t$.
+L102: Algorithm 1 DQN implementation for the toy model
+L103: 
+L104: 1:  Given: probabilities $\mathcal{P}$; agents $N$; episodes $E$; rounds per episode $M$; action set $\mathcal{A}$
+L105: 
+L106: 2:  Q-approximator: feed-forward net $Q_{\theta}(s,\cdot)$ (input: wealth $w$; output: $|\mathcal{A}|$ Q-values); loss: SmoothL1; optimizer: Adam$(\eta)$
+L107: 
+L108: 3:  for each $p\in\mathcal{P}$ do
+L109: 
+L110: 4:   for $j=1$ to $N$ do
+L111: 
+L112: 5:    for $e=1$ to $E$ do
+L113: 
+L114: 6:     Reset environment: $W\leftarrow 1$; $t\leftarrow 0$
+L115: 
+L116: 7:     while $t<M$ do
+L117: 8:      Form state $s\leftarrow W$; compute $Q\leftarrow Q_{\theta}(s,\cdot)$
+L118: 
+L119: 9:      Select action $a$ by $\varepsilon$-greedy over $Q$
+L120: 
+L121: 10:      Sample from the environment with $(p,a)$ to obtain reward $r_{t}$ and next wealth $W^{\prime}$
+L122: 
+L123: 11:      Set $s^{\prime}\leftarrow W^{\prime}$; append transition $(s,a,r_{t},s^{\prime})$ to buffer $\mathcal{D}$
+L124: 
+L125: 12:      $W\leftarrow W^{\prime}$; $t\leftarrow t+1$
+L126: 
+L127: 13:     end while
+L128: 14:     Evaluation at fixed $p$: set $\varepsilon\leftarrow 0$; form policy from $Q_{\theta}$
+L129: 
+L130: 15:     record $\pi_{\text{safe}}$ for buffer $\mathcal{D}$ as target
+L131: 
+L132: 16:     if $|\mathcal{D}|\geq B$ then
+L133: 
+L134: 17:      Build mini-batch of size $B$ from recent transitions in $\mathcal{D}$
+L135: 
+L136: 18:      For each $(s_{i},a_{i},r_{i},s^{\prime}_{i})$ in batch:
+L137: 
+L138: 19:        $y_{i}\leftarrow r_{i}+\gamma\max_{a^{\prime}}Q_{\theta}(s^{\prime}_{i},a^{\prime})$
+L139: 
+L140: 20:        $\hat{y}_{i}\leftarrow Q_{\theta}(s_{i},a_{i})$
+L141: 21:      Accumulate loss $L\leftarrow\frac{1}{B}\sum_{i=1}^{B}\text{SmoothL1}(\hat{y}_{i},y_{i})$
+L142: 
+L143: 22:      Backpropagate $L$ and update $\theta$ with Adam
+L144: 
+L145: 23:     end if
+L146: 
+L147: 24:    end for
+L148: 
+L149: 25:   end for
+L150: 
+L151: 26:   Aggregate over runs to obtain $\widehat{\pi}_{\text{safe}}(p)$
+L152: 
+L153: 27:  end for
+L154: 
+L155: 28:  Return $\{\widehat{\pi}_{\text{safe}}(p):p\in\mathcal{P}\}$
+L156: The DQN uses the agent’s current wealth at time step $t$, $W_{t}$, as input to the network model. After the forward pass, the model returns a preference for each action, represented by two output nodes. By employing a decaying epsilon-greedy approach for action selection, we enable the agent to explore effectively. The environment then returns the received reward and updated wealth for the next step.
+L157: We collect these transitions for a full episode and gather several episodes in a buffer before updating the network weights based on the loss calculated from the current model preferences and the past trajectories in the buffer. The resulting policy is derived from the different preferences the trained network assigns to individual fixed probabilities of receiving the worst outcome in the bet.
+L158: The experimental setup from a training perspective is presented in Appendix cite17†A.1 , with model and training parameters.
+L159: Next, we can compare the policy of agents trained on the toy model for a fixed set of environment definitions, the number of repetitions ($M$), and the probability of receiving the worst outcome from the risky action ($p$). We train a fixed number of independent agents ($N$) to learn the optimal action in this environment.
+L160: By repeating this process for different values of the parameter $p$, we can evaluate the policy of the agents trained in our experiment and compare it to a prediction based on each of the optimisers. Under an expected-value-based optimisation, the agent’s behavioural shift from risk seeking to risk aversion occurs at a predictable value of the parameter $p$. The indifference point can be calculated using the expected reward for each action,
+L161:  | $\displaystyle\mathbb{E}_{\text{risk}}\left[W_{t+1}\right]$  | $\displaystyle=\left(p\cdot r_{1}+\left(1-p\right)\cdot r_{2}\right)\cdot W_{t}$  |  | (5)
+L162:  | $\displaystyle\mathbb{E}_{\text{safe}}\left[W_{t+1}\right]$  | $\displaystyle=r_{\text{safe}}\cdot W_{t}.$  |  | (6)
+L163: 
+L164: This is called the indifference point $p_{E}$ and can be determined by setting both expected rewards equal to each other.
+L165:  | $\displaystyle\mathbb{E}_{\text{safe}}\left[W_{t}\right]$  | $\displaystyle=\mathbb{E}_{\text{risk}}\left[W_{t}\right]$  |
+L166:  | $\displaystyle\Rightarrow r_{\text{safe}}$  | $\displaystyle=p_{E}\cdot r_{1}+\left(1-p_{E}\right)\cdot\left(r_{2}\right)$  |
+L167:  | $\displaystyle\Rightarrow p_{E}$  | $\displaystyle=\frac{r_{\text{safe}}-r_{2}}{r_{1}-r_{2}}$  |
+L168: A similar derivation can also be used to predict the indifference point based on the process’s growth rate. For this, we use the formulation of the binomial process to find the expected rewards.
+L169:  | $\displaystyle r_{\text{safe}}$  | $\displaystyle=(r_{1})^{p_{T}}\cdot(r_{2})^{(1-p_{T})}$  |
+L170:  | $\displaystyle\Rightarrow\ln{(r_{\text{safe}})}$  | $\displaystyle=\ln{\left[(r_{1})^{p_{T}}\cdot(r_{2})^{(1-p_{T})}\right]}$  |
+L171:  | $\displaystyle\Rightarrow\ln{(r_{\text{safe}})}$  | $\displaystyle=p_{T}\cdot\ln{(r_{1})}+(1-p_{T})\cdot\ln{(r_{2})}$  |
+L172:  | $\displaystyle\Rightarrow p_{T}$  | $\displaystyle=\frac{\ln{\left(r_{\text{safe}}\right)}-\ln{\left(r_{2}\right)}}{\ln{\left(r_{1}\right)}-\ln{\left(r_{2}\right)}}$  |
+L173: An agent will start off always preferring the risky action when the probability of receiving the worst outcome is zero, $p=0$. When the probability of receiving the worst outcome increases, so too does the agent’s likelihood of selecting the safe action. This is up to the indifference point where each action is equally likely to be selected. From then on, the agent will predominantly prefer the safe action until it only considers this action.
+--------------------------------------------------------------------------------
+3DGS-Drag: Dragging Gaussians for Intuitive Point-Based 3D Editing (https://arxiv.org/html/2601.07963v1)
+citeturn30764view3 [wordlim: 200] Crawled: today; Content type: text/html; Source: open({"ref_id":"https://arxiv.org/html/2601.07963v1","lineno":140}); Total lines: 331
+L133: However, such corrections still cannot fully converge in one update, requiring a better dataset editing strategy as follows.
+L134: Annealed Dataset Editing. Iterative dataset editing has been a common approach for 3D appearance editing  (cite48†Haque et al., 2023 ). The idea is to progressively change the appearance of 3D and use the rendering to guide consistent 2D editing further. However, such a strategy does not work well with geometry-related edits because it is harder to converge given inconsistent geometry. In addition, long-term iterative updates also accumulate serious blurriness  (cite48†Haque et al., 2023 ).
+L135: To address this, we propose to update the dataset with limited $A$ times, and each time anneals the strength (cite60†Meng et al., 2022 ) for Image2Image view correction. The annealing function is as follows:
+L136:  | $$S(a)=S_{\mathrm{init}}-\frac{a-1}{A}(S_{\mathrm{init}}-S_{\mathrm{final}}),\quad a=1,2,3,...,A,$$  |  | (5)
+L137: where $S_{\mathrm{init}}$ and $S_{\mathrm{final}}$ are the initial strength and final strength respectively. $S(a)$ denotes the strength for the $a$th updates. Note that lower strength means that diffusion starts from later timesteps, resulting in finer detail correction. Our strategy performs editing in a coarse-to-fine manner. Each time, all the views are updated to prevent accumulated errors.
+L138: Loss Function. With the rendered image $I^{v}_{r}$ from 3D Gaussians, the corresponding edited image $I^{v}_{e}$ as the editing area’s groundtruth, the original image $I^{v}_{o}$ as background groundtruth and mask $m^{v}$ for view $v$, our loss function for training 3D Gaussians is formulated as:
+L139:  | $\displaystyle\mathcal{L}=\sum_{v=1}^{V}({\lambda_{1}\mathcal{L}_{1}(I^{v}_{r},I^{v}_{o})+\lambda_{\mathrm{ssim}}\mathcal{L}_{\mathrm{ssim}}(I^{v}_{r},I^{v}_{o}))\odot(1-m^{v})}+\lambda_{\mathrm{lpips}}\mathcal{L}_{\mathrm{lpips}}(I^{v}_{r},I^{v}_{e})\odot m^{v}),$  |  | (6)
+L140: where $\mathcal{L}_{1}$ and $\mathcal{L}_{\mathrm{ssim}}$ are to ensure local editing. $\mathcal{L}_{\mathrm{lpips}}$ is the LPIPS (cite94†Zhang et al., 2018 ) loss function to correct the editing area. $\lambda_{1}$, $\lambda_{\mathrm{ssim}}$ and $\lambda_{\mathrm{lpips}}$ are the weighting coefficient for each loss.
+L141: cite95†Image: Refer to caption Figure 4: Intermediate dragging steps and tracked mask: Our method conducts progressive editing toward the target point. The dragged Gaussians are tracked to achieve aggressive edits.
+L142: ### 3.5 From One-Step to Multi-Step Drag Editing
+L143: 
+L144: The previous sections introduce the one-step drag editing using our method. As the long-distance drag operation often requires more than one step to avoid corruption, we propose a multi-step editing scheduler to solve such problems. Specifically, we split the drag operation into $T$ intervals and set the progressive target points $\{p_{t}^{\prime}(u)|u=1,2,...,T\}$. In each interval, we perform drag toward the corresponding target points:
+L145:  | $$p_{t}^{\prime}(u)=p_{h}+\frac{u}{T}(p_{t}-p_{h}),$$  |  | (7)
+L146: 
+L147: However, the actual handle point position usually changes when training 3D Gaussians. We propose relocating the handle points at the end of every interval to make the next interval’s deformation more precise. In addition, we further conduct history-aware diffusion fine-tuning to improve the ability for more aggressive editing.
+L148: Handle Point Relocation. The handle point relocation is performed after each interval’s training process. To keep track of the handle points, we use the Gaussians associated with each handle point. Specifically for handle point $p_{h}^{i}$, we update it with the averaged position change of Gaussians $P_{h}^{i}$. As shown in Figure cite96†4 , the dragged part can be successfully relocated.
+L149: Note that the assigned Gaussians $P_{h}^{i}$ are updated to newly deformed Gaussians during deformation and inherited from parents during the densification process of training. The local mask is updated as the union with the mask.
+L150: History-Aware Diffusion Fine-Tuning. For long-distance drag operations, the edited 2D images can shift out of the diffusion model’s domain since it is fine-tuned on the original images, resulting in degeneration back to the original images. We build an image buffer to fine-tune the diffusion model. The diffusion model will be fine-tuned with the image buffer every interval. Initially, the buffer only contains original images, and the newly edited result will be added to the buffer during intervals.
+L151: cite97†Image: Refer to caption Figure 5: Qualitative results in various scenes: Our method can handle complex scenes and generate highly detailed results. With a simple drag input, 3DGS-Drag can identify the 3D context and perform edits like moving objects, inpainting the background, adjusting appearance, modifying object shape, and adjusting motion. The orange bounding boxes highlight the modified regions.
+L152: ## 4 Experiment
+L153: ### 4.1 Implementation Details
+L154: 
+L155: User Input. Our user input is one or multiple handle points and corresponding target points. The input points are in 3D space. The user can specify the sphere radius of that handle point to adjust the editing scale. We automatically perform local editing by applying the mask rendered from assigned Gaussians. The mask is dilated to change the necessary context.
+L156: Drag Editing. The pretrained 3D Gaussians are trained with original 3D Gaussian Splatting (cite41†Kerbl et al., 2023 ). During editing, 50 views are selected to enable efficient editing by default. Specifically, we choose the views with a larger visible area on the handle points’ Gaussians, which is determined by the local editing mask on each view. We fine-tune the Dreambooth model (cite75†Ruiz et al., 2023 ) with LoRA (cite93†Hu et al., 2022 ). Initially, it is fine-tuned on the selected views.
+L157: We use batch size 4 and train for 200 iterations. After each dragging step, we continue fine-tuning the diffusion model for 50 iterations with the updated image buffer in each interval. Each time, the newly edited image will be enqueued. The loss weight of $\lambda_{1}$, $\lambda_{\mathrm{ssim}}$ and $\lambda_{\mathrm{lpips}}$ are set to $8,2,1$ respectively. Note that the $\lambda_{1}$ and $\lambda_{\mathrm{ssim}}$ are 10 times bigger than normal to ensure the background.
+L158: Datasets. our experiments include edits on eight scenes, using the published datasets from Instruct-NeRF2NeRF cite48†Haque et al. (2023) , PDS cite76†Koo et al. (2024) , Mip-NeRF360 cite98†Barron et al. (2022) , and Tank and Temple cite99†Knapitsch et al. (2017) .
+

@@ -91,6 +91,10 @@ Y shape = [B,T,d_model]
 
 `W_O` 让不同 heads 的信息重新混合，并把输出恢复到 residual stream 的 `d_model`。如果简单平均 heads，会提前丢失“哪部分信息来自哪个投影子空间”的自由度。
 
+保留 concat 并不要求输出混合一定使用任意可学习的稠密矩阵。若参数和执行预算先触及边界，可以保留 Q/K/V 与各 head 的内容路由，把输出改为固定的全局混合 basis，再学习逐通道 scale 与 bias，例如 `alpha ⊙ (Y H) + beta`。固定 Hadamard 型变换用加减法组织混合，取消的是 `W_O` 的任意矩阵自由度，而不是把多个 head 平均成一个，也不减少 attention score 的 `T²` 项。basis、归一化、支持的维数和具体 kernel 都属于新架构的执行合同；固定变换可逆不代表任意已训练 `W_O` 能无损替换，后续 affine 也不恢复任意矩阵的表达范围。<!-- source-family:SF-2026-ARXIV-2603-08343 -->
+
+这个分支用更小的可学习混合空间换取参数与算术预算，同时要求其余投影在训练中适应固定 basis。实际收益仍须比较质量、训练时间和完整推理路径，而不能把算术复杂度降低直接写成加速保证。[受限实现与评价](https://arxiv.org/html/2603.08343v1)只在较小训练模型上检验质量，较大随机初始化配置的执行测量不证明同规模模型已训练可用；小配置存在速度反侧，成熟 GEMM 与尚未优化的变换实现也可能抵消理论节省。任务需要更自由的 head 重组、维数或 kernel 不支持、质量或总时间回归时，保留稠密 `W_O`。这与下面扩大匹配空间的设计是不同预算分支，不能共用一项表达力或速度结论。
+
 输出投影混合已经聚合好的 head；若要改变 softmax 之前谁能与谁匹配，就需要另一种接口。一条受限分支先在 head 轴分别线性混合 Q/K/V，给每个 head 生成 P 组 pseudo-tokens，再把原长度 N 交错成 NP 个虚拟位置，按这些位置执行 causal attention 与 RoPE。这不是增加输出 W_O，也不是 GQA 减少 KV heads；它扩大匹配空间，同时把全局 attention 的每 head 工作量推到 O(P²N²d)。[必要机制与预算控制](https://arxiv.org/html/2602.21371v1#S4)通过局部窗口/周期性全局层约束比较预算，但 FLOP 近似匹配和 FlashAttention 兼容不等于 KV、位置编码、训练或延迟免费。无位置的代数包含关系也不授旧 RoPE checkpoint 无损转换；有限任务有反退，预算紧或改动接口未验收时仍保留 MHA/GQA，而不把更多可表达关系当成已学可靠算法。<!-- source-family:SF-2026-ARXIV-2602-21371 -->
 
 ## 一个两 head 小例子
@@ -120,6 +124,12 @@ z = [1.0, 0.0, 0.2, 0.8]    shape [4]
 
 因此，多头结构提供的是**可分化的表达路径**，不是 `H` 份必然有效的独立能力。已有剪枝研究表明，特定训练模型和任务中的一些 heads 可在较小质量变化下移除；这能证明冗余可能存在，却不能推出所有层、所有输入都有同一组“无效 heads”，也不能把 post-hoc 分析直接等同于生产加速。真正跳过 head 需要训练期 pruning、gating 或稀疏执行 contract，并让 checkpoint、kernel 与评估共同支持。
 
+BOS 上的注意力概率质量集中只是一个诊断模式，移除某个 head 对当前任务影响小，也不证明它永远没有可训练容量。资源允许时，可以把定点恢复作为 pruning/gating 之外的替代分支：重初始化选中 head 的 Q/K/V 投影，将其 output projection 置零以降低初始残差扰动，再冻结其他参数，只对目标参数短训。[BLOOM 的受限实验](https://arxiv.org/html/2603.09616v1#S3)支持这条方法分支，而不证明所有 sink 都源于同一位置病因或所有被剪 heads 都值得恢复。冻结权重也不冻结共享 residual stream 的输入，目标头改变后，未改头的 attention 行为仍可能漂移，因此干预验收不能只看选中 heads。<!-- source-family:SF-2026-ARXIV-2603-09616 -->
+
+恢复的诊断容量与最终任务效用必须分账：按 BOS mass 阈值重新变“健康”，不等于 held-out 质量、语言分布和真实任务保持。该实验的完整手术只在 BLOOM-1b7 上验证，出现 held-out perplexity 上升和生成语料印记；额外健康头的单 seed、单列瞬时训练 loss 改善也不能签发通用收益。训练语料、阈值、短训预算与全模型回归均有成本，原文斜率公式/表与“高索引斜率更陡”的归因冲突不在这里采用。质量回退或预算无法摊销时，保留原 heads，或继续采用已验证的 pruning/gating 与实际执行路径，而不是用一张 head-health 图替代质量验收。<!-- source-family:SF-2026-ARXIV-2603-09616 -->
+
+head的干预单位也不必是整个输出上的固定方向。一个受限分支分别拟合可信与扰动activation的混合分布，离线按运输耦合选择目标component，在线依据当前membership实施局部均值修正。[Scalpel的必要机制](https://arxiv.org/html/2602.09541v1)由此区分component概率调节与全head平移；row argmax的映射不是在线执行完整Schrödinger bridge，membership或熵也不是答案truth。组件拟合、probe选择与离线耦合均付费，有限POPE二值人口、head选择和自适应输入仍影响结果，部分模型/切片有反侧。分布漂移或效用回归时应降低/关闭干预，保留原attention与独立输出验证，不由局部混合模型签发事实或安全性。 <!-- source-family:SF-2026-ARXIV-2602-09541 -->
+
 ## 为什么 head 数不是越多越好
 
 给定固定 `d_model`，增加 `H` 通常会减小 `d_h`。更多 heads 提供更多独立路由分布，但每个 head 的表示维度更小。
@@ -133,6 +143,10 @@ Head 数还受工程条件约束：
 - Head 太多会增加 metadata、调度和 KV head 选择复杂度。
 
 因此 `H` 是模型容量、每头维度与执行效率的联合选择。
+
+把多个 heads 放进同一 fused kernel，可以减少中间存储与启动成本，却不能据“最后只有一个聚合输出”就假定任意 dense 多头、跨层计算都能按实例数摊薄。单个 head 难算，不自动证明 `L×H` 个实例同样难算；这需要单独的 direct-sum 论证。[受限理论构造](https://arxiv.org/abs/2603.11332v1)把独立问题编码到各 head 与层，在 sum-aggregation、每 head 宽 `m=Θ(log N)`、`L/H` 与序列长度 `N` 多项式相关、逐项输出误差至多 `1/(10N)` 时，给出基于 3-OV/SETH 假设的 `LHN^(2−o(1))` 最坏情形时间下界。它不是各 head 必须串行的调度定理；concat 推广还要重参数化宽度，不能直接拿论文的 `m` 代替固定 `d_model` 下的 `d_h`，更不证明每个已训练 checkpoint 都没有冗余。<!-- source-family:SF-2026-ARXIV-2603-11332 -->
+
+大宽度分支则把完整 softmax 计算与多个独立矩阵乘积联系起来：允许实数加减乘除及 `exp/ln` 的扩展算术电路，可通过同量级成本抽取偏导恢复各乘积。其 `m=Θ(N)` 构造得到 `LHN^(ω−o(1))−O(LHN²)` 的电路规模下界，其中 `ω` 是矩阵乘法指数，`ω>2` 时前项才支配减项；对象是所有输入与可变权重的精确计算，不是推理时需要执行反向，也不是 Word-RAM、有限精度或生产延迟下界。Full-attention、宽度和最坏情形条件不能自动搬给 causal mask、共享 KV 或实际数据分布。因此，保持原 dense 算子时仍可通过融合、layout 和并行改善常数与 IO；省略计算则须明确近似误差、结构、共享或剪枝合同，并验收质量与总成本。条件不符时保留成熟 dense MHA/GQA，不把理论下界解释为所有加速都不可能，也不让不同计算模型下的一项速度测量反证该定理。
 
 ## MHA、MQA、GQA 为什么出现
 
@@ -327,6 +341,10 @@ MQA 和 GQA 进一步把 Query head 数与 KV head 数解耦，用共享 K/V 换
 
 ## Review notes
 
+- `SF-2026-ARXIV-2603-11332` — 2026-03-14 补查；[exact-v1 PDF](https://arxiv.org/pdf/2603.11332v1) §2.1–2.2/Definitions2.7–2.8、Theorems3.1/4.4/5.1、必要梯度抽取接口、§6与AppendixC。2+2+2=6，具体长期缺口定点深入；sum/concat宽度重参数化、1/(10N)逐项误差、可变W/X、exact-real eAC及减项保留，不授causal/GQA、Word-RAM、硬件延迟或固定checkpoint保证。mar14_supplement 必要Source/实际owner提案与root实际独立原证/完整H选择至MHA邻接通过后窄写；mar14_supplement 已实际回对必要原证并顺读新增正文、完整局部邻接及本人末注，非writer POST通过、窄锁释放，不授日级完成。未核代码或复现，不重复推导全部证明。
+
+- `SF-2026-ARXIV-2603-09616` — Daily `2026-03-12`补查；[exact-v1](https://arxiv.org/html/2603.09616v1) §3、§4.1–4.7、§5.1–5.5/Appendix B–C。2+1+3=6，中心位置归因反侧额外深入；只采用目标 QKV 重初/output 置零/gradient mask 短训与冻结参数不冻结共享输入的条件分支。health/任务效用分账、held-out 与语料印记反侧、单 seed 与有限模型边界近文；斜率公式/表冲突隔离。C4 validation split 用于训练，Table3 所谓 held-out 样本划分未由本轮实现核验，不把局部 PPL 写作独立泛化认证。未执行代码/复现实验；必要 Source 与逐字 PRE 由非作者 review_mar12 实际核通过；root 窄写后 review_mar12 已实际顺读新正文、完整局部邻接与自身末注并回对必要原证，POST 通过，不授日级完成。
+
 - `SF-2026-ARXIV-2602-21371`：exact-v1 §4、实验与local/global预算说明；只采用softmax前head混合/虚拟位置与P²成本分责。图示和方法window缩放不同，不混用；理想无position证明不授RoPE转换，未核实现或复现。 非原 packet 作者必要原证/actual owner PRE 与窄写完成；root 已实际顺读正文、完整邻接与自身末注，POST 通过。
 
 本章只扩展多头结构，不重复第14章 softmax 小例子，也不提前展开第19章完整 KV Cache 容量。后续 Review 应继续区分 Query head 与 KV head，并以 checkpoint config 核验 `H`、`H_kv` 和 `d_h`。
@@ -347,3 +365,7 @@ Primary-source 校验入口：
 - `SF-2026-ARXIV-2602-04428` — Daily `2026-02-06`；[AUSteer exact-v1](https://arxiv.org/html/2602.04428v1) §3–5及Appendix B/C，2+2+2=6，仅对 scalar-granularity steering 与成本边界的具体缺口深入。AU 是输入 scalar × 权重列，contrastive sign-consistency 与排名缩放不证明 neuron/head/SAE 等价或内部唯一因果；负缩放不授保符号，k/α 任务相关，部分 utility 切片退步保留。激活数量与跨实现 baseline 不作端到端速度证据，不采用普遍 fewer-is-better 或全附录理论。root 必要原源→具体 owner 已核并授窄锁；root 实际正文/279–299前后邻接及341源注 POST 通过，日级 Gate 待验，未复现实验。
 
 - `SF-2026-ARXIV-2602-04613` — Daily `2026-02-06`；[Meaning and Language exact-v1](https://arxiv.org/html/2602.04613v1) §3–6。原2+2+2=6，具体双corruption × teacher-forced观察位置接口缺口深入；语言/含义分别构造与输出验收，patch/位置KL不授唯一内部code或普遍1%控制。token0、低资源语言、强α及utility反侧和白盒校准成本保留。未运行代码或复现；root实际必要原源/owner写前通过，root实际Ch15 275–301含287新段及345末注POST通过，日级Gate未验。
+
+- `SF-2026-ARXIV-2602-09541` — Daily `2026-02-12`补遗漏；[exact-v1](https://arxiv.org/html/2602.09541v1)。本日具名必要方法、关键评价与直接反侧由root独立Source限定通过，actual owner/局部邻接及逐字拟文PRE通过后授窄锁；作者已写最小差额，review_20260214非作者实际新正文、完整局部邻接及本人末注POST通过，窄锁释放，不授DAY。原件与配置/中心争议边界见本日同名前缀review笔记；未核artifact或复现。
+
+- `SF-2026-ARXIV-2603-08343` — Daily `2026-03-11`补遗漏；[exact-v1](https://arxiv.org/html/2603.08343v1) §4–6：固定 head-mixing basis 与可学习 affine 是改变架构自由度的替代分支，不是任意 checkpoint 的等价替换。保留小模型质量范围、随机初始化大配置与实际 kernel 成本边界；root 已读必要方法、评价与反侧，并核 Ch14/16 交接后写入正文。非写入者 supplement_20260311 已实际回对原证并顺读新增两段、完整局部邻接与末注，写后复核通过，不授日级完成；未运行代码或复现实验。

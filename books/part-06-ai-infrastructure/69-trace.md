@@ -111,6 +111,10 @@ Head sampling 在请求开始时决定，成本低，却可能错过后来变慢
 
 只保留慢请求会失去正常基线；只随机采样又可能错过稀有安全事件。
 
+从公开仓库恢复 Agent 轨迹时，采样之前还存在观察资格：配置文件、commit coauthor、branch 名称与 PR label 是不同通道，出现标记不等于已执行，没有标记也不等于未使用。配置可能被忽略，coauthor 取决工具设置，完整交互可能需要认证；共享约定文件更不能唯一识别某个模型。因此 trace population 必须同时保存通道、可见权限、缺失状态和提取规则，区分执行事实与身份推断，不把跨通道缺失补成零活动。<!-- source-family:SF-2026-ARXIV-2601-18345 -->
+
+观察资格改变后，结果排名也可能变化。[一项 coding-trace 方法报告](https://arxiv.org/html/2601.18345v1)引用的 PR 切片在排除 draft 后出现排名逆转，只支持该过滤人口下的证据警示，不能冒充本文重新复现的完整 Agent 能力或人类监督因果。跨通道恢复、权限审计和失败/draft 样本保留都增加采集成本；公开记录不足时应标 Unknown，保留原观测和不同分母，而非用可见成功比例给真实部署签发可靠性。短且显式 instrumentation 完整的流程仍可用普通 trace，仓库标记只作恢复线索。
+
 ## Metrics、Logs 与 Traces 的互补
 
 ```text
@@ -336,6 +340,8 @@ Trace 让请求经过多个控制面和数据面时仍保留 causal context。�
 Taxonomy 会压平边界行为，自动分类器也可能错标；现有大规模描述分析不能证明分类完备。未覆盖行为应保留原始事件并允许 taxonomy 演进，分类不确定时回退 raw trace 而非强行归类。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2601-18345` — Daily `2026-01-28` 增量；[exact-v1](https://arxiv.org/html/2601.18345v1) §4/5.2–5.3，repo 观察 channels 与 draft population 的测量差额，3+1+2=6；本文引用切片不是独立重现，标记不唯一识别 model/human oversight。jan28_review 实际必要原源/owner/PRE通过，root先授窄锁；jan28_review 实际完整局部邻接、新两段与自身末注POST通过，不授DAY；未核artifact或复现实验。
 
 - `SF-2026-ARXIV-2601-01215` — Daily `2026-01-07`；[MemoryDynamics exact-v1](https://arxiv.org/html/2601.01215v1) §3.2/3.3/3.5、4.1–4.3、5.3–5.5及必要language/budget/aggregate补段。3+1+2=6，shape-normalization/DTW与capacity风险的测量反证缺口深入；保baseline/cummax/unit-peak/clock损失、tracemalloc scope和已排除的OOM/timeout/instrument错误，不授N5/r10的tail保障。root实际必要源与Ch69 owner写前及实际一段、邻接与末注非作者POST通过；未运行代码或复现。
 

@@ -1,0 +1,952 @@
+Few Tokens, Big Leverage: Preserving Safety Alignment by Constraining Safety Tokens during Fine-tuning
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract.
+1 Introduction
+2 Analyzing safety tokens
+2.1 Identifying safety tokens
+2.2 Impact of safety tokens
+2.3 Evolution of safety tokens confidence during fine-tuning
+3 Methodology
+3.1 Regularization with weighted safety tokens
+3.2 Calibration of safety signal
+4 Evaluations
+4.1 Evaluation setup
+4.2 Main results
+4.3 Ablation studies
+5 Related works
+6 Conclusion
+References
+License: arXiv.org perpetual non-exclusive license
+arXiv:2603.07445v1 [cs.CL] 08 Mar 2026
+Few Tokens, Big Leverage: Preserving Safety Alignment by Constraining Safety Tokens during Fine-tuning
+CCS: Computing methodologies Artificial intelligenceCCS: Computing methodologies Natural language generation
+Guoli Wang
+Note: These authors contributed equally to this work.
+Affiliation: Case Western Reserve University, Cleveland, OH, USA
+email: gxw242@case.edu
+,
+Haonan Shi
+Affiliation: Case Western Reserve University, Cleveland, OH, USA
+email: hxs896@case.edu
+,
+Tu Ouyang
+Affiliation: Case Western Reserve University, Cleveland, OH, USA
+email: txo32@case.edu
+and
+An Wang
+Note: Corresponding author.
+Affiliation: Case Western Reserve University, Cleveland, OH, USA
+email: axw474@case.edu
+© none
+Abstract.
+Large language models (LLMs) often require fine-tuning (FT) to perform well on downstream tasks, but FT can induce safety-alignment drift, even when the training dataset contains only benign data. Prior works show that introducing a small fraction of harmful data can substantially compromise LLMs’ refusal behaviors, causing LLMs to comply with harmful requests. Existing defense methods often rely on model-wide interventions, such as restricting which parameters are updated or injecting additional safety data, which can limit generality and degrade downstream task performance.
+To address such limitations, we propose a FT framework that Preserves safety Alignment via Constrained Tokens (PACT) by stablizing the model’s confidence on safety tokens.
+This is motivated by our empirical observation that safety-aligned behavior is reflected in the model’s token-level output confidence and is often concentrated on a small subset of safety-related tokens.
+During downstream fine-tuning, we regularize the fine-tuned model to match the aligned reference model’s confidence on safety-related tokens at each response steps, while leaving non-safety tokens largely unconstrained to allow effective task adaptation.
+This targeted constraint prevents alignment drift without imposing global restrictions that typically trade off with utility.
+Keywords: Large Language Models, Safety-preserving Fine-Tuning, Token-level Constraints
+1. Introduction
+Large language models (LLMs) have demonstrated strong capabilities across a wide range of natural language processing tasks.
+Fine-tuning LLMs on downstream datasets can further enhance their task-specific accuracy and effectiveness (Wei et al., 2021).
+Consequently, many commercial LLM providers now offer fine-tuning services11
+1
+User fine-tuning API provided by OpenAI: https://platform.openai.com/docs/guides/fine-tuning. that enable users to fine-tune the commercial LLMs using their own labeled data.
+Through such customization, users can better tailor these advanced models to meet the requirements of specific downstream tasks and application scenarios.
+Figure 1. Fine-tuning is widely used to improve large language models on downstream tasks, but the presence of harmful data in downstream training sets can induce significant safety-alignment drift, making the fine-tuned model highly vulnerable to harmful queries.
+However, such fine-tuning services also introduce significant safety risks.
+Recent studies (Zhan et al., 2024; Qi et al., 2023; Yi et al., 2024; Yang et al., 2023; Lermen et al., 2023) have shown that even a small amount of harmful data included in the fine-tuning corpus can substantially degrade the safety alignment of LLMs.
+After fine-tuning on such data, models may no longer refuse harmful queries and instead generate unsafe or policy-violating responses.
+Moreover, this safety alignment degradation can occur even when the fine-tuning dataset contains no explicitly harmful examples (Qi et al., 2023), highlighting the fragility of safety alignment during downstream task fine-tuning.
+To mitigate safety risks introduced during LLM fine-tuning, several defense mechanisms have been proposed in prior work that operate at different levels of the model and training process.
+Some approaches impose constraints at the parameter level (Hsu et al., 2024; Li et al., 2025; Yang et al., 2025; Yi et al., 2025) to preserve safety alignment by restricting how model weights are updated during fine-tuning.
+For example, SafeLoRA (Hsu et al., 2024) projects LoRA (Hu et al., 2022) weight updates onto a predefined alignment subspace derived from aligned and unaligned models, thereby preventing updates that deviate significantly from safety-related directions.
+Other approaches (Huang et al., 2024b) address harmful fine-tuning from the perspective of training dynamics by stabilizing optimization when alignment and downstream objectives compete.
+For example, Lisa (Huang et al., 2024b) introduces proximal regularization to control excessive parameter drift during fine-tuning.
+While effective, constraints imposed at the optimization and parameter levels typically operate in a coarse-grained manner, restricting model weight updates and limiting downstream adaptation, thereby degrading fine-tuning performance.
+To address this limitation, we explore safety alignment from a different perspective, imposing finer-grained constraints on a small subset of elements closely related to safety during fine-tuning.
+Recent research (Mitchell et al., 2023; Zhou et al., 2023) indicates that alignment predominantly influences surface-level generation behaviors, such as style and formatting, while core knowledge and capabilities are inherited from pretraining.
+In particular, multiple empirical studies have shown that alignment primarily affects a small set of tokens, rather than broadly altering model behavior (Lin et al., 2023; Fei et al., 2025).
+Motivated by these observations, we investigate whether it is possible to identify tokens critical to safety alignment and preserve model safety during fine-tuning by maintaining confidence levels comparable to those of the original aligned model when generating these tokens across diverse prompts.
+In this work, we propose a token-level safety-preserving fine-tuning approach, called PACT, that aims to maintain safety alignment by explicitly preserving the model’s confidence in generating safety-critical tokens.
+We first introduce a procedure to identify tokens that are closely associated with safety alignment.
+Using the teacher-forcing mechanism, we compare a safety-aligned model with its corresponding base model in response to harmful prompts and analyze the differences in confidence at each response position.
+This allows us to identify a small set of safety tokens that the safety-aligned model consistently maintains higher confidence in, and that play a crucial role in sustaining safe behavior.
+During fine-tuning, we encourage the model to align its confidence on these safety tokens with those of the original safety-aligned model at corresponding response positions.
+By continuously referencing the aligned model in this manner, our approach preserves safety-relevant generation behavior throughout fine-tuning.
+Importantly, because the number of identified safety tokens is limited, PACT imposes only fine-grained constraints on these safety tokens during optimization, thereby preserving downstream task performance while effectively maintaining safety alignment.
+The main contributions can be summarized as follows:
+•
+Safety token identification and analysis.  We introduce a systematic procedure to identify safety-critical tokens by analyzing token-level probability discrepancies between safety-aligned and base models.
+•
+Token-level safety-preserving fine-tuning framework.  We propose a novel fine-tuning method that preserves safety alignment through token-level constraints.
+Specifically, we apply stronger regularization to tokens with higher safety relevance and mitigate harmful prefix effect during teacher forcing by adaptively mixing full-context and response-only reference distributions.
+•
+Comprehensive empirical validation.  Through extensive experiments across three downstream tasks (GSM8K, SST-2, AGNEWS), four model families (Qwen-2.5-7B, Llama-3.1-8B, Llama-3.2-1B, Gemma-2-9B), and varying harmful data proportions (0-10%), we demonstrate that PACT consistently achieves the best utility-safety trade-offs compared to state-of-the-art baselines.
+PACT reduces attack success rates to 5.75-9.27% on StrongReject and 13.50-29.50% on HarmBench, while maintaining task accuracy comparable to vanilla fine-tuning.
+2. Analyzing safety tokens
+Previous work (Lin et al., 2023; Fei et al., 2025) has found that alignment for a given task primarily operates on a small subset of tokens.
+For certain tasks, the high confidence assigned to these tokens by LLMs plays a critical role in determining overall task performance.
+Inspired by this perspective, we aim to investigate three key questions:
+(1) What constitutes safety tokens in safety alignment tasks?
+(2) How such tokens influence the safety alignment behavior of LLMs; and
+(3) How the confidence assigned to safety tokens evolves during harmful fine-tuning.
+Based on these analyses, we further explore safety alignment at the token level, with the goal of better preserving model safety throughout the fine-tuning process.
+2.1. Identifying safety tokens
+Following prior work (Fei et al., 2025), we identify safety tokens by analyzing token-level probability discrepancies between the safety-aligned model MsafeM_{\text{safe}} and the base model MbaseM_{\text{base}}.
+Our goal is to characterize which tokens the safety-aligned model primarily relies on to ensure safe responses.
+We first select a harmful dataset as the query dataset. For each input xx in this dataset, the safety-aligned model MsafeM_{\text{safe}} is first used to generate a complete response 𝐲=(y1,…,yT)\mathbf{y}=(y_{1},\ldots,y_{T}). We then perform teacher forcing on this generated response, using its prefixes y<ty_{<t} as conditioning context. At each generation step tt, both MsafeM_{\text{safe}} and MbaseM_{\text{base}} are evaluated to produce next-token probability distributions over the shared tokenizer vocabulary VV.
+Formally, for each token v∈Vv\in V, we compute the position-wise probability difference at step tt as:
+(1)
+Δt​(v)=pMsafe​(v∣x,y<t)−pMbase​(v∣x,y<t),\Delta_{t}(v)=p_{M_{\text{safe}}}(v\mid x,y_{<t})-p_{M_{\text{base}}}(v\mid x,y_{<t}),
+where xx denotes the input prompt and y<ty_{<t} denotes the prefix of the response generated by MsafeM_{\text{safe}} up to position tt.
+We then aggregate these differences across all positions and examples to obtain a global discrepancy score for each token:
+(2)
+d⁡(v)=𝔼x∼𝒟,,t​[Δt​(v)].d(v)=\mathbb{E}_{x\sim\mathcal{D},,t}\left[\Delta_{t}(v)\right].
+Finally, we select the KK tokens from VV with the largest global discrepancy scores d⁡(v)d(v) as the representative safety tokens, where K=50K=50 is used for our subsequent analysis.
+In our experiment, following prior work (Yang et al., 2025; Hsu et al., 2024), we employ the safety-aligned instruct version as the safety-aligned model MsafeM_{\text{safe}} and its pre-trained counterpart as the base model MbaseM_{\text{base}}.
+Specifically, we use Qwen2.5-7B-Instruct and Qwen2.5-7B (Team and others, 2024) as the safety and base models.
+We construct our analysis dataset using harmful questions from WildJailbreak (Jiang et al., 2024), paired with the safe responses generated by Qwen2.5-7B-Instruct model.
+As shown in Figure 2, we list the top-10 safety tokens identified by our analysis.
+Top-10 safety tokens
+1.I
+2.’m
+3.,
+4.or
+5.Such
+6.provide
+7.can
+8.cannot
+9.but
+10.assistant
+Figure 2. Top-10 safety tokens identified by token-level confidence discrepancies between the safety-aligned and base models on harmful questions.
+2.2. Impact of safety tokens
+To assess the impact of the identified safety tokens on model safety, we explicitly manipulate the confidence assigned to the 64 safety tokens during inference.
+Specifically, we intervene at the logit level in Qwen2.5-7B.
+To increase the safety tokens’ confidence, we add a constant bias of α\alpha to the logits of the identified safety tokens at each decoding step (we use α=5.0\alpha=5.0); to decrease their confidence, we suppress these tokens by setting their logits to a negative value −109-10^{9}, effectively preventing them from being selected during generation.
+We evaluate this intervention on harmful prompts from JailbreakBench (Chao et al., 2024), and compute the safety rate of the generated responses.
+Table 1. Attack successful rates on harmful prompts under interventions on identified safety tokens vs. random tokens.
+Setting
+Attack Successful Rate (%)
+Safety Token
+Random Token
+Baseline (no intervention)
+33.5%
+33.5%
+Boost (l​o​g​i​t​s←l​o​g​i​t​s+αlogits\leftarrow logits+\alpha)
+0.5%
+35.0%
+Ablate (l​o​g​i​t​s←−109logits\leftarrow-10^{9})
+41.5%
+34.0%
+As shown in Table 1, increasing the confidence of the identified 50 safety tokens leads to a clear improvement to the model’s safety, whereas decreasing their confidence results in a noticeable degradation in safety performance.
+These observations indicate that the safety alignment behavior of the safety-aligned model is strongly dependent on these safety tokens.
+In particular, when the confidence assigned to these tokens is reduced, the model fails to effectively leverage alternative tokens to reject unsafe prompts, suggesting that safety alignment is not uniformly distributed across the vocabulary but instead relies on a limited set of safety-critical tokens.
+2.3. Evolution of safety tokens confidence during fine-tuning
+To investigate the relationship between safety alignment degradation during harmful fine-tuning and safety tokens, we analyze how changes in model safety correlate with the confidence assigned to safety tokens throughout the fine-tuning process.
+Specifically, we consider fine-tuning settings in which harmful data from Advbench (Zou et al., 2023) is mixed into the fine-tuning dataset (GSM8K (Cobbe et al., 2021)), and track both the model’s safety rate and the average confidence of safety tokens on JailbreakBench (Chao et al., 2024) across training epochs.
+Figure 3. Evolution of safety alignment token confidence during harmful fine-tuning. Safety score = (1-ASR)%
+As shown in Figure 3, when LLMs (Qwen2.5-7B-Instruct) are fine-tuned on data containing harmful examples, the average confidence assigned to safety tokens on harmful prompts consistently decreases as training progresses.
+At the same time, the model’s safety rate exhibits a similar downward trend.
+This synchronized degradation suggests a correlation between the drift of safety alignment and the suppression of safety-critical token confidence.
+As fine-tuning increasingly favors task-specific or harmful continuations, the model gradually assigns lower confidence to these tokens.
+As a result, the model’s ability to reliably trigger refusal or safe responses is weakened.
+3. Methodology
+Based on our analysis of safety tokens and their role in safety alignment, we propose a token-level, constrained fine-tuning method to preserve model safety during fine-tuning.
+Our key objective is to prevent the model’s confidence in safety tokens from degrading, ensuring that their generation propensity remains consistent with the original safety-aligned model.
+To achieve this objective, similar to prior work (Qi et al., 2024; Rafailov et al., 2023) that constrains model updates to prevent excessive deviation from the initial state during training, an intuitive starting point is to introduce a KL-divergence loss that encourages the fine-tuned model to match the original safety-aligned model’s confidence on safety tokens.
+However, we find that under harmful fine-tuning, such a global KL-based constraint leads to two distinct failure modes.
+When the constraint is too weak, it fails to effectively preserve high confidence in safety tokens, resulting in a degradation of safety behavior.
+When the constraint is too strong, it indiscriminately restricts confidence updates across all tokens, preventing the model from optimizing performance on the downstream task.
+Therefore, building on the KL-loss formulation, we design a token-level constraint mechanism that selectively enforces stronger regularization on safety tokens while allowing the remaining tokens to be updated primarily by the downstream task objective.
+This design enables the model to preserve safety behavior while still improving downstream task performance during fine-tuning.
+To achieve this, PACT consists of two key components: Regularization with weighted safety tokens and Calibration of safety signal.
+The workflow of PACT is shown in Figure 4.
+Figure 4. The workflow of our proposed token-level safety-preserved fine-tuning method.
+3.1. Regularization with weighted safety tokens
+Rather than treating safety tokens as a binary set, we model safety at the token level by assigning each token a safety weight, which reflects its relevance to safety-aligned behavior.
+Following the procedure introduced in Section 2.1, we analyze token-level confidence discrepancy patterns between the safety-aligned model and its base model using the aggregated discrepancy score d⁡(v)d(v) in Eq. 2.
+Based on d⁡(v)d(v), we can identify which tokens have a larger impact on safety alignment.
+To preserve downstream fine-tuning performance, we aim to impose constraints only on a subset of tokens with high discrepancy scores.
+Specifically, we select the top-KK tokens ranked by d⁡(v)d(v) as the safety token set, 𝒮safety\mathcal{S}_{\text{safety}}, to be constrained during fine-tuning.
+Moreover, we observe that more important safety tokens should be preserved with higher confidence during fine-tuning.
+To reflect this, we assign stronger constraints to 𝒮safety\mathcal{S}_{\text{safety}} with larger discrepancy scores.
+Concretely, we construct a sparse safety weight vector
+Vsafety∈ℝ|V|V_{\text{safety}}\in\mathbb{R}^{|V|} that is aligned with the tokenizer vocabulary.
+The vector has the same dimensionality as the vocabulary, where entries corresponding to the top-KK tokens ranked by the aggregated discrepancy score d⁡(v)d(v) retain their original d⁡(v)d(v) values, and all remaining entries are set to zero.
+We incorporate this safety weight vector into a weighted KL regularization term, such that the KL loss constrains the fine-tuning model only on 𝒮safety\mathcal{S}_{\text{safety}}, while enforcing stronger regularization on those with higher safety importance.
+At each answer position tt, we restrict the KL divergence to the safety-weighted tokens and
+form a weighted reference distribution:
+(3)
+prefsafety​(v)=pref​(v∣x,y<t)​Vsafety​(v)∑v′pref​(v′∣x,y<t)​Vsafety​(v′)p_{\text{ref}}^{\,\text{safety}}(v)=\frac{p_{\text{ref}}(v\mid x,y_{<t})\,V_{\text{safety}}(v)}{\sum_{v^{\prime}}p_{\text{ref}}(v^{\prime}\mid x,y_{<t})\,V_{\text{safety}}(v^{\prime})}
+To further amplify the effect of the safety weights, the fine-tuning model distribution pftsafety​(v)p_{\text{ft}}^{\,\text{safety}}(v) is also restricted to the same set 𝒮safety\mathcal{S}_{\text{safety}} when computing the KL divergence, but without applying additional weighting.
+We then minimize the KL divergence between the weighted safety-token probability distribution
+prefsafety​(v)p_{\text{ref}}^{\,\text{safety}}(v) and the fine-tuning model’s safety-token probability distribution pftsafety​(v)p_{\text{ft}}^{\,\text{safety}}(v), such that tokens with higher safety importance are more strongly constrained to match the reference model’s confidence.
+Formally, the KL regularization term is defined as
+(4)
+ℒKLsafety=1|𝒯|​∑t∈𝒯∑vprefsafety​(v∣x,y<t)​log⁡prefsafety​(v∣x,y<t)pftsafety​(v∣x,y<t)\mathcal{L}_{\mathrm{KL}}^{\text{safety}}=\frac{1}{|\mathcal{T}|}\sum_{t\in\mathcal{T}}\sum_{v}p_{\text{ref}}^{\,\text{safety}}(v\mid x,y_{<t})\log\frac{p_{\text{ref}}^{\,\text{safety}}(v\mid x,y_{<t})}{p_{\text{ft}}^{\,\text{safety}}(v\mid x,y_{<t})}
+where pftp_{\text{ft}} denotes the probability distribution of the model being fine-tuned and
+𝒯\mathcal{T} denotes the set of valid answer positions.
+This weighted formulation ensures that safety tokens contribute more strongly to the regularization signal, while the other tokens exert little or no influence.
+As a result, the constraint selectively preserves safety-related behavior without unnecessarily restricting downstream task optimization.
+3.2. Calibration of safety signal
+We find that relying solely on the safety signal from the frozen safety-aligned reference model, which sees both the prompt and response parts of the samples, may be insufficient.
+One concerning situation is that, when training samples are harmful, the reference model is forced to condition on unsafe prefixes, which could possibly suppress the safety-token confidence (Vega et al., 2023) and thus weaken the safety signal for regulating the fine-tuning.
+To mitigate this prefix safety contamination, we introduce a calibration mechanism that constructs a more stable reference signal by adding a second set of logits information during fine-tuning.
+For each answer position tt, we now compute two next-token logit vectors from the frozen reference model:
+(i) a full-context reference logit zfullref(⋅∣x,y<t)z^{\mathrm{ref}}_{\mathrm{full}}(\cdot\mid x,y_{<t}) obtained via teacher forcing on the full training sample, and
+(ii) a no-prompt reference logit zpostref(⋅∣y<t)z^{\mathrm{ref}}_{\mathrm{post}}(\cdot\mid y_{<t}) obtained by conditioning the reference model only on the assistant header and the preceding assistant tokens, but providing nothing of the prompt.
+The no-prompt view serves as a self-evaluated safety signal that is less susceptible to harmful-prefix contamination, an effect that has been independently observed in prior work (Liu et al., 2024) and used to mitigate jailbreak attacks mainly at inference time, rather than during fine-tuning.
+We then adaptively combine the two reference views at each position using a token-level gating coefficient ct∈(0,1)c_{t}\in(0,1).
+Intuitively, when the training context is benign, the fine-tuned model’s predictions on safety-related tokens are typically consistent with the no-prompt reference view, and no strong calibration is needed.
+In contrast, harmful-prefix contamination often increases discrepancy in the fine-tuning model’s next-token distribution over 𝒮safety\mathcal{S}_{\text{safety}}, indicating that the full-context reference signal may be less reliable for providing safety-token supervision at early positions.
+To quantify this discrepancy, we introduce a confidence proxy that measures how concentrated the model’s probability mass is over the safety token set 𝒮safety\mathcal{S}_{\text{safety}} at each answer position.
+The key intuition is as follows: when the model is confident in its safety-aligned response (e.g., producing a clear refusal), most of the probability mass over 𝒮safety\mathcal{S}_{\text{safety}} is concentrated on a single or very few tokens, meaning only a small number of top-ranked safety tokens are needed to cover a fixed probability threshold.
+Conversely, when the model faces harmful data and becomes uncertain about how to respond safely, the probability mass disperses across many safety tokens, requiring a larger number of safety token candidates to reach the same threshold—indicating a lack of confident refusal.
+Formally, given logits over 𝒮safety\mathcal{S}_{\text{safety}}, we compute the corresponding probability distribution p⁡(⋅)p(\cdot) by applying a softmax restricted to 𝒮safety\mathcal{S}_{\text{safety}}, sort the probabilities in descending order, we set the fixed probability threshold as 0.9 and define:
+(5)
+Ip(t)=min⁡{k:∑i=1kpi​(t)≥0.9}|𝒮safety|,I_{p}(t)\;=\;\frac{\min\left\{k:\sum_{i=1}^{k}p_{i}(t)\geq 0.9\right\}}{|\mathcal{S}_{\text{safety}}|},
+where kk is the smallest integer such that the cumulative sum of the kk largest probabilities within 𝒮safety\mathcal{S}_{\text{safety}} reaches 0.90.9, and pi​(t)p_{i}(t) is the ii-th largest probability at position tt among tokens in 𝒮safety\mathcal{S}_{\text{safety}}.
+Ip​(t)∈(0,1]I_{p}(t)\in(0,1] is thus a normalized measure of probability dispersion: a small value indicates that the model concentrates its belief on few safety tokens (high refusal confidence), while a large value signals that the probability mass is spread across many candidates (low refusal confidence, typical when the model is influenced by harmful context).
+Using this confidence proxy, we can diagnose harmful-prefix contamination at each position by comparing two views. The fine-tuning model’s Ift​(t)I_{\mathrm{ft}}(t) is computed under full context and thus reflects a lower bound on safety confidence: harmful prefixes disperse the probability mass over 𝒮safety\mathcal{S}_{\text{safety}}, inflating Ift​(t)I_{\mathrm{ft}}(t). In contrast, Ipost​(t)I_{\mathrm{post}}(t) is computed from the no-prompt reference that conditions only on preceding assistant tokens, providing a cleaner safety baseline insulated from prompt contamination. So, the difference between Ift​(t)I_{\mathrm{ft}}(t) and Ipost​(t)I_{\mathrm{post}}(t) can naturally measures contamination severity: a large positive gap indicates that the harmful context has significantly degraded refusal confidence. We pass this gap through a sigmoid to obtain a gating coefficient:
+(6)
+ct=σ⁡(Ift​(t)−Ipost​(t)),c_{t}\;=\;\sigma\!\left(I_{\mathrm{ft}}(t)-I_{\mathrm{post}}(t)\right),
+where large ctc_{t} (severe contamination) shifts calibration toward the safer no-prompt view, while small ctc_{t} (benign context) retains the full-context signal. We then construct a calibrated reference logit via convex combination:
+(7)
+zmixref(⋅∣x,y<t)=(1−ct)zfullref(⋅∣x,y<t)+ctzpostref(⋅∣y<t),z^{\mathrm{ref}}_{\mathrm{mix}}(\cdot\mid x,y_{<t})\;=\;(1-c_{t})\,z^{\mathrm{ref}}_{\mathrm{full}}(\cdot\mid x,y_{<t})+c_{t}\,z^{\mathrm{ref}}_{\mathrm{post}}(\cdot\mid y_{<t}),
+and obtain the calibrated reference distribution pmixref(⋅∣x,y<t)p^{\mathrm{ref}}_{\mathrm{mix}}(\cdot\mid x,y_{<t}) by applying softmax. This adaptive mixing leverages the richer full-context view when training samples are benign, while falling back to the prompt-free safety baseline when harmful prefixes threaten to corrupt the reference signal.
+Because prefix contamination primarily affects the early portion of the assistant response, we apply stronger calibration at early answer positions.
+Specifically, we keep ctc_{t} at full strength for the first NN answer positions and then smoothly decay it for later positions:
+(8)
+c~t=ct⋅{1,t<N,exp⁡(−t−Nτ),t≥N,\tilde{c}_{t}\;=\;c_{t}\cdot\begin{cases}1,&t<N,\\
+\exp\!\left(-\frac{t-N}{\tau}\right),&t\geq N,\end{cases}
+where τ\tau controls the decay rate.
+We use c~t\tilde{c}_{t} in place of ctc_{t} when constructing zmixrefz^{\mathrm{ref}}_{\mathrm{mix}} of Eq. 7.
+Finally, we optimize the fine-tuning model with the weighted directional KL objective in Eq. 4, using pmixref(⋅∣x,y<t)p^{\mathrm{ref}}_{\mathrm{mix}}(\cdot\mid x,y_{<t}) as the calibrated reference distribution.
+Overall, the training objective is
+(9)
+ℒ=ℒCE+λKL​ℒKLsafety,\mathcal{L}=\mathcal{L}_{\mathrm{CE}}+\lambda_{\mathrm{KL}}\,\mathcal{L}_{\mathrm{KL}}^{\text{safety}},
+where ℒCE\mathcal{L}_{\mathrm{CE}} denotes the standard cross-entropy loss computed over all answer tokens, and
+ℒKLsafety\mathcal{L}_{\mathrm{KL}}^{\text{safety}} is the weighted directional KL loss defined above using the calibrated reference 𝒮safety\mathcal{S}_{\text{safety}} distribution
+pmixref(⋅∣x,y<t)p^{\mathrm{ref}}_{\mathrm{mix}}(\cdot\mid x,y_{<t}).
+The hyperparameter λKL\lambda_{\mathrm{KL}} controls the strength of safety preservation during fine-tuning.
+4. Evaluations
+Table 2.
+Generalization across 3 different datasets (P=10.0%) on Qwen2.5-7B-Instruct.
+Methods
+GSM8K
+SST2
+AGNEWS
+Acc↑\uparrow
+SR↓\downarrow
+JB↓\downarrow
+HB↓\downarrow
+Acc↑\uparrow
+SR↓\downarrow
+JB↓\downarrow
+HB↓\downarrow
+Acc↑\uparrow
+SR↓\downarrow
+JB↓\downarrow
+HB↓\downarrow
+Initial
+56.56
+1.60
+3.00
+7.00
+87.16
+1.60
+3.00
+7.00
+83.20
+1.60
+3.00
+7.00
+SFT
+81.65
+71.25
+52.50
+94.50
+95.87
+92.65
+53.50
+95.00
+89.90
+83.71
+52.00
+95.00
+Constrained SFT
+55.95
+10.92
+30.50
+80.00
+92.32
+15.90
+18.50
+45.50
+89.30
+16.93
+20.00
+45.50
+Safe LoRA
+73.69
+15.65
+20.00
+44.50
+92.64
+92.01
+53.50
+95.00
+91.10
+94.89
+53.50
+95.00
+AsFT
+80.50
+9.27
+28.00
+48.00
+95.41
+80.19
+54.00
+93.50
+89.10
+30.67
+44.00
+70.50
+Ours
+80.89
+9.27
+11.00
+29.50
+92.78
+6.39
+10.50
+20.50
+89.10
+5.75
+9.00
+13.50
+Table 3. Generalization across different model families/sizes on GSM8K.
+Methods
+Llama3.1-8B-Instruct
+Llama3.2-1B-Instruct
+Gemma2-9B-it
+Acc↑\uparrow
+SR↓\downarrow
+JB↓\downarrow
+HB↓\downarrow
+Acc↑\uparrow
+SR↓\downarrow
+JB↓\downarrow
+HB↓\downarrow
+Acc↑\uparrow
+SR↓\downarrow
+JB↓\downarrow
+HB↓\downarrow
+Initial
+73.39
+0.32
+3.00
+9.50
+42.76
+7.99
+3.50
+16.00
+73.54
+0.00
+1.00
+0.00
+SFT
+75.59
+81.47
+51.00
+87.00
+46.40
+63.26
+46.00
+77.00
+75.74
+89.46
+53.00
+86.00
+Constrained SFT
+77.56
+61.34
+38.35
+78.50
+43.67
+13.10
+19.00
+34.50
+78.62
+26.52
+18.50
+42.50
+Safe LoRA
+72.86
+0.32
+3.00
+9.00
+39.88
+4.15
+5.50
+13.00
+78.70
+67.41
+40.50
+57.00
+AsFT
+78.09
+97.76
+54.50
+95.00
+43.59
+1.60
+1.00
+7.00
+73.62
+88.50
+47.50
+87.00
+Ours
+75.82
+0.96
+0.50
+0.00
+44.20
+1.28
+2.50
+4.00
+79.76
+12.14
+6.50
+14.50
+Table 4.
+Generalization under varying proportions of harmful data in the AGNEWS dataset.
+Methods
+P=0.0%
+P=5.0%
+P=10.0%
+Acc↑\uparrow
+SR↓\downarrow
+JB↓\downarrow
+HB↓\downarrow
+Acc↑\uparrow
+SR↓\downarrow
+JB↓\downarrow
+HB↓\downarrow
+Acc↑\uparrow
+SR↓\downarrow
+JB↓\downarrow
+HB↓\downarrow
+Initial
+83.20
+1.60
+3.00
+7.00
+83.20
+1.60
+3.00
+7.00
+83.20
+1.60
+3.00
+7.00
+SFT
+90.90
+1.28
+2.50
+8.00
+91.20
+73.16
+51.50
+93.00
+89.90
+83.71
+52.00
+95.00
+Constrained SFT
+90.20
+2.24
+3.00
+7.50
+90.00
+12.46
+18.50
+42.00
+89.30
+16.93
+20.00
+45.50
+Safe LoRA
+89.20
+1.60
+1.50
+8.00
+90.90
+71.57
+49.50
+93.50
+91.10
+94.89
+53.50
+95.00
+AsFT
+91.30
+1.60
+5.50
+9.00
+90.10
+23.29
+33.50
+65.00
+89.10
+30.67
+44.00
+70.50
+Ours
+88.60
+0.96
+1.50
+6.00
+89.60
+3.35
+6.00
+9.00
+89.10
+5.75
+9.00
+13.50
+4.1. Evaluation setup
+Datasets.
+For downstream fine-tuning, we use three representative tasks: SST-2 (Socher et al., 2013), AGNEWS (Zhang et al., 2015), and GSM8K (Cobbe et al., 2021).
+For each downstream task, we fine-tune the model using nn fine-tuning samples.
+In addition, we mix a proportion pp of unsafe data sampled from AdvBench (Zou et al., 2023) into the fine-tuning corpus to simulate harmful fine-tuning scenarios.
+Following the experimental settings used in prior work (Huang et al., 2024b; Yang et al., 2025), we set n=5000n=5000 and p=0.1p=0.1 (4500 downstream task data and 500 unsafe data) for our main results.
+Models.
+To evaluate the effectiveness of PACT, we use Qwen2.5-7B-Instruct (Team and others, 2024), Gemma-2-9b-it (Team et al., 2024), Llama-3.1-8b-Instruct (Dubey et al., 2024) and Llama-3.2-1b-Instruct (Touvron et al., 2023).
+We first conduct a preliminary evaluation of Qwen2.5-7B-Instruct to assess the effectiveness of PACT across three datasets.
+We then scale the model size as Llama-3.1-8b-Instruct, Gemma-2-9b-it, and Llama-3.2-1b-Instruct to demonstrate that our approach can be applied to larger models, different model families and remains robust as model capacity increases.
+Metrics.
+Following prior work (Yang et al., 2025; Huang et al., 2024b), we evaluate models using fine-tuning accuracy ACC (The top-1 accuracy on the test sets of downstream tasks) and attack successful rate(ASR), which measure downstream task performance and adherence to safety alignment under harmful prompts, respectively.
+To ensure a reliable and comprehensive evaluation of safety behavior, we measure safety rates across multiple widely used benchmarks, including StrongREJECT (SR) (Souly et al., 2024), JailbreakBench (JB) (Chao et al., 2024), and HarmBench (HB) (Mazeika et al., 2024).
+For all safety evaluations, we employ Llama-Guard-3-8B as the judge model to determine the safety of the model’s response and calculate the harmful score ASR.
+Baselines.
+We compare PACT with 6 baselines: Initial model, vanilla supervised fine-tuning (SFT), SafeLoRA (Hsu et al., 2024), Constrained SFT (Qi et al., 2024), and AsFT (Yang et al., 2025).
+We employ LoRA (Hu et al., 2022) for efficient fine-tuning of all the models, with a rank of 8 across all experiments. The AdamW optimizer is used with a learning rate of 3×10−53\text{\times}{10}^{-5}, training for 3 epochs with a batch size of 2. The coefficient of our PACT regularization term λKL\lambda_{\mathrm{KL}} is set to 3.
+4.2. Main results
+We evaluate PACT across three dimensions: generalization to different fine-tuning datasets, performance across model architectures and sizes, and robustness to varying proportions of harmful data.
+Generalization across fine-tuning datasets.
+Table 2 presents the results for Qwen-2.5-7B-Instruct fine-tuned on three diverse tasks, each with 10% harmful data.
+We can see that vanilla SFT consistently achieves high task accuracy but suffers significant safety degradation across all datasets.
+For example, the ASRs on the HB dataset are consistently higher than 94% across all models.
+This confirms that even a small proportion of harmful data (n=500n{=}500) can substantially compromise model safety.
+In such cases, the models lose the direct refusal ability completely.
+Existing defense methods exhibit various trade-offs.
+SafeLora preserves some safety on GSM8K, but fails completely on SST2 and AGNEWS.
+Constrained SFT maintains safety on all the datasets, but they substantially degrade task performance on GSM8K.
+AsFT provides a better utility–safety trade-off than Constrained-SFT and Safe LoRA, but still shows elevated jailbreak and harmful behavior rates, particularly on SST2.
+In contrast, PACT consistently achieves the lowest ASRs across all three datasets while maintaining comparable task accuracy.
+For example, we attain 80.89% accuracy on GSM8K while reducing ASR on HB to 29.50%.
+With only marginal accuracy trade-offs, we can approach almost the same safety level of the initial model.
+These results demonstrate effective generalization across diverse task domains (mathematical reasoning, sentiment classification, and topic classification) under data poisoning scenarios.
+Generalization across model architectures..
+To assess generalization across model architectures and scales, we further evaluate on Llama-3.1-8B-Instruct, Llama-3.2-1B-Instruct, and Gemma-2-9B-it, all fine-tuned on GSM8K with 10%10\% harmful data.
+The results are shown in Table 3.
+We can see that existing baselines exhibit inconsistent behavior across models.
+SafeLoRA preserves safety on Llama-3.1-8B but fails on Gemma-2-9B, while AsFT achieves low risk on Llama-3.2-1B but catastrophically degrades on Llama-3.1-8B.
+Such inconsistency indicates that these defenses are sensitive to model architectures and sizes.
+In contrast, PACT consistently achieves the best or near-best safety metrics across all 3 models without sacrificing utility.
+Notably, for model Llama-3.1-8B, ASR on HB is reduced to 0.00%, while accuracy remains comparable to SFT.
+On Gemma-2-9B, most baselines suffer substantial safety degradation, but PACT constraints the ASR on HB at 14.50% and achieves the highest task accuracy.
+These results confirm that our method generalizes reliably across diverse model families and scales without architecture-specific tuning.
+Robustness to harmful data proportions..
+Table 3 shows the performance under varying poison ratios on the AGNEWS dataset.
+We can see that the baseline methods exhibit sharp safety degradation as the poison ratio increases.
+For example, SafeLoRA maintains safety at P=0%P=0\% but collapses at P=5%P=5\% (SR: 71.57%, HB: 93.50%).
+AsFT still exhibits substantial risk at higher poison ratios (HB: 70.50% at P=10%P=10\%).
+While PACT consistently achieves the lowest safety risk across all poison ratios while maintaining task accuracy.
+Notably, even in the benign setting (P=0%P=0\%), PACT slightly improves upon the initial model’s safety (SR: 0.96% vs. 1.60%).
+It shows that PACT can mitigate latent safety risks introduced by the fine-tuning process itself, independent of explicit harmful data.
+As the poison ratio increases to 5%5\% and 10%10\%, PACT remains stable, unlike the other existing approaches.
+(a) The coefficient (λKL\lambda_{\mathrm{KL}}) values
+(b) The calibration decay position NN values
+(c) Number of safety tokens KK.
+Figure 5. Hyperparameters sensitivity
+4.3. Ablation studies
+We conduct comprehensive ablation studies to validate the contribution of each component in PACT and analyze its sensitivity to key hyperparameters.
+Component-wise ablation.
+Table 5 presents a progressive ablation study on the AGNEWS dataset with 10% harmful data, where each row incrementally adds one component of PACT to the previous row.
+Table 5. Ablation study on progressively adding safety-token constraints, each row cumulatively adds the listed constraint(s) from the previous rows.
+Constraints
+ACC (%)↑\uparrow
+SR (%)↓\downarrow
+JBB (%)↓\downarrow
+HB (%)↓\downarrow
+Full-vocab KL
+89.30
+36.74
+35.00
+73.00
++Safety tokens
+88.50
+25.88
+28.00
+69.00
++Safety weights
+89.20
+18.85
+23.50
+51.50
++Response only ref
+88.70
+6.71
+5.50
+10.50
++Position decay
+89.10
+5.75
+9.00
+13.50
+The first row establishes a baseline using standard cross-entropy loss with full-vocabulary KL regularization, where the fine-tuned model is constrained to match the reference model’s distribution across all tokens.
+The second row (+Safety tokens) restricts the KL regularization to only the identified safety tokens rather than the full vocabulary.
+The third row (+Safety weights) further incorporates importance weighting based on the discrepancy score d⁡(v)d(v).
+The fourth row (+Response only ref) calibrates the full-context reference outputs by mixing them with no-prompt reference distributions.
+The last row (+Position decay) adds a position-wise decay coefficient that gradually reduces the weight over the no-prompt outputs.
+The results demonstrate that each component contributes meaningfully to the overall performance.
+We observe that restricting KL regularization to safety tokens reduces ASRs across all datasets, demonstrating that focusing regularization on safety-related tokens is substantially more effective than uniform constraints.
+Integrating importance weights further reduces ASRs, which proves that they capture the reference model’s preference shifts when facing harmful prompts.
+The most substantial safety gain comes from incorporating response-only reference model logits.
+This confirms that mitigating the influence of harmful prefixes during teacher forcing is critical to maintaining the quality of safety-token supervision.
+Finally, adding position-wise decay provides a better trade-off between model utility and safety preservation.
+Hyperparameter sensitivity.
+We analyze the sensitivity of PACT to three key hyperparameters: the KL regularization coefficient λKL\lambda_{\mathrm{KL}}, the calibration decay position NN, and the number of safety tokens KK.
+Figure 5 (a) shows the effect of λKL\lambda_{\mathrm{KL}}.
+We can see that as it increases, the ASR decreases substantially while task accuracy remains stable.
+We can achieve the optimal safety when λKL=3\lambda_{\mathrm{KL}}=3.
+However, beyond λKL=5\lambda_{\mathrm{KL}}=5, we observe over-regularization, where excessive constraints interfere with downstream task learning.
+Nonetheless, PACT can operate effectively within a broad range of λKL\lambda_{\mathrm{KL}}, providing flexibility in parameter tuning.
+Parameter NN controls how much we rely on response-only versus full-context reference distributions across the response.
+Figure 5 (b) shows that as NN increases from 0, ASR decreases while accuracy remains stable.
+We can also see that between NN=8 and N=128N=128, PACT shows a stable safety performance.
+This finding aligns with our observation that refusal prefixes (e.g., ’I cannot assist’) are generated within the first 5-10 tokens.
+On the other hand, applying calibration too deep into the response becomes unnecessary and may introduce noise.
+Finally, KK determines how many high-discrepancy tokens are constrained during fine-tuning.
+Figure 5 (c) shows an interesting pattern where models achieve optimal performance at K=50K=50 and maintain relatively stable safety through K=1600K=1600.
+This provides empirical support for our core insight that safety alignment is remarkably concentrated.
+Constraining only 50 tokens is sufficient to prevent alignment drift.
+The additional tokens contribute minimal safety value while potentially introducing unnecessary constraints.
+Training dynamics analysis.
+To gain deeper insight into how our regularization term interacts with training dynamics, we visualize per-sample loss on both downstream-task and harmful data during training, as shown in Figure 6.
+Figure 6. Loss changed during finetuning
+We can see that on downstream task data (top), the CE loss with our regularization term closely tracks the CE loss without it, indicating that our safety-oriented term introduces minimal interference with utility learning.
+Moreover, our term itself remains small and stable throughout, confirming that our method imposes negligible constraints on benign samples.
+On harmful data (bottom), a markedly different pattern emerges.
+Our KL regularization term exhibits substantially larger values than those on downstream task data, demonstrating that it selectively activates on harmful samples and effectively distinguishes between benign and harmful data without explicit labels.
+Importantly, the CE loss under our regularization term is consistently higher than the unregularized CE loss throughout training.
+This shows that our term actively resists the model’s attempt to fit harmful responses by anchoring it to the reference model’s safe behavior, thereby slowing the erosion of safety alignment.
+Meanwhile, our regularization term aims to preserve safety behaviors throughout the fine-tuning.
+Token-level analysis.
+To further understand the mechanism by which PACT preserves safety, we track the mean logits of the selected safety tokens at the first 4 answer positions across 5 training epochs, as shown in Figure 7.
+Figure 7. Mean safety token logits on first 4 answer position
+These positions are particularly critical, as they correspond to where typical refusal prefixes are generated.
+Under standard CE loss-only training, the safety token logits collapse rapidly and remain far below the initial model’s values across all 4 positions, indicating that SFT quickly suppresses the model’s refusal behavior.
+In contrast, with our regularization term, the safety token logits are substantially better preserved throughout training, staying much closer to the initial model’s distribution.
+Although a gradual decline is still observed, which reflects the inherent tension between task adaptation and safety preservation, the gap relative to the initial model is significantly narrower than under CE loss-only training.
+This confirms that PACT effectively anchors the safety-critical output distribution at the most relevant safety tokens and answer positions, preventing the rapid logit drift that leads to safety degradation.
+5. Related works
+Alignment preserving fine-tuning.
+To mitigate alignment drift introduced during fine-tuning, existing approaches can be broadly categorized into two groups: parameter-level and data-level safety preservation. For parameter-level preservation,
+SafeLoRA (Hsu et al., 2024) constrains LoRA updates by projecting them onto a safety-aligned subspace induced by aligned–unaligned weight differences, while ASFT (Yang et al., 2025) preserves alignment via an aligned–misaligned weight-difference regularizer that keeps updates within a safety basin.
+SALoRA (Li et al., 2025) enables safety-aware adaptation by pruning alignment-irrelevant parameters and updating only those most relevant to safety.
+Antidote (Huang et al., 2024a) effectively prunes harmful parameters after fine-tuning.
+SOMF (Sheshadri et al., 2024) integrates utility-relevant knowledge from benign tasks while preserving safety-critical parameters.
+NLSR (Yi et al., 2025) designs a training-free preserving that restores safety after fine-tuning by patching safety-critical parameters identified via pre/post similarity shifts.
+For data-level preservation,
+SAFT (Choi et al., 2024) filters harmful data using subspace-decomposition scores. SafeInstr (Bianchi et al., 2023) incorporates safety-focused examples to enhance safety behavior during instruction tuning.
+Lisa (Huang et al., 2024b) constrains optimization drift via dual-state training with alignment data and proximity regularization.
+BEA (Wang et al., 2024) embeds covert triggers to suppress harmful outputs at inference time.
+Token-level effects on alignment.
+Recent studies (Lin et al., 2023; Fei et al., 2025) suggest that alignment changes can be concentrated in a small set of localized signals, such as specific tokens or short patterns that govern refusal style, formatting, or safety-related phrasing, rather than requiring broad redistribution over the entire vocabulary. Meanwhile,  (Qi et al., 2024) introduces shallow safety alignment, which finds the tendency for safety to concentrate on the first few output tokens.  (Jain et al., 2024) proposes category-conditioned refusal tokens and steers per-category refusal rates at inference by modulating refusal-token likelihood, avoiding retraining.
+6. Conclusion
+In this work, we study safety-alignment drift as an intrinsic risk of downstream fine-tuning, showing that even benign training data can weaken refusal behaviors, and that small amounts of harmful data can further amplify this failure mode. To mitigate this, we introduce PACT, a token-level safety-preserving fine-tuning framework that stabilizes the model’s output confidence on a compact set of safety-critical tokens. By regularizing the fine-tuned model to match a safety-aligned reference model’s per-step confidence only on safety-related tokens, while leaving the remaining token space largely unconstrained, PACT prevents refusal degradation without imposing model-wide restrictions that often harm downstream utility.
+Overall, our results demonstrate that fine-grained safety alignment control is achievable at the token level.
+PACT improves robustness to safety alignment drift while maintaining effective task adaptation during fine-tuning.
+References
+Bianchi et al. (2023)
+F. Bianchi, M. Suzgun, G. Attanasio, P. Röttger, D. Jurafsky, T. Hashimoto, and J. Zou
+Safety-tuned llamas: lessons from improving the safety of large language models that follow instructions.
+arXiv preprint arXiv:2309.07875.
+Cited by: §5.
+Chao et al. (2024)
+P. Chao, E. Debenedetti, A. Robey, M. Andriushchenko, F. Croce, V. Sehwag, E. Dobriban, N. Flammarion, G. J. Pappas, F. Tramer, et al.
+Jailbreakbench: an open robustness benchmark for jailbreaking large language models.
+Advances in Neural Information Processing Systems 37, pp. 55005–55029.
+Cited by: §2.2,
+§2.3,
+§4.1.
+Choi et al. (2024)
+H. K. Choi, X. Du, and Y. Li
+Safety-aware fine-tuning of large language models.
+arXiv preprint arXiv:2410.10014.
+Cited by: §5.
+Cobbe et al. (2021)
+K. Cobbe, V. Kosaraju, M. Bavarian, M. Chen, H. Jun, L. Kaiser, M. Plappert, J. Tworek, J. Hilton, R. Nakano, et al.
+Training verifiers to solve math word problems.
+arXiv preprint arXiv:2110.14168.
+Cited by: §2.3,
+§4.1.
+Dubey et al. (2024)
+A. Dubey, A. Jauhri, A. Pandey, A. Kadian, A. Al-Dahle, A. Letman, A. Mathur, A. Schelten, A. Yang, A. Fan, et al.
+The llama 3 herd of models.
+arXiv preprint arXiv:2407.21783.
+Cited by: §4.1.
+Fei et al. (2025)
+Y. Fei, Y. Razeghi, and S. Singh
+Nudging: inference-time alignment of llms via guided decoding.
+In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers),
+pp. 12702–12739.
+Cited by: §1,
+§2.1,
+§2,
+§5.
+Hsu et al. (2024)
+C. Hsu, Y. Tsai, C. Lin, P. Chen, C. Yu, and C. Huang
+Safe lora: the silver lining of reducing safety risks when finetuning large language models.
+Advances in Neural Information Processing Systems 37, pp. 65072–65094.
+Cited by: §1,
+§2.1,
+§4.1,
+§5.
+Hu et al. (2022)
+E. J. Hu, Y. Shen, P. Wallis, Z. Allen-Zhu, Y. Li, S. Wang, L. Wang, W. Chen, et al.
+Lora: low-rank adaptation of large language models..
+ICLR 1 (2), pp. 3.
+Cited by: §1,
+§4.1.
+Huang et al. (2024a)
+T. Huang, G. Bhattacharya, P. Joshi, J. Kimball, and L. Liu
+Antidote: post-fine-tuning safety alignment for large language models against harmful fine-tuning.
+arXiv preprint arXiv:2408.09600.
+Cited by: §5.
+Huang et al. (2024b)
+T. Huang, S. Hu, F. Ilhan, S. Tekin, and L. Liu
+Lisa: lazy safety alignment for large language models against harmful fine-tuning attack.
+Advances in Neural Information Processing Systems 37, pp. 104521–104555.
+Cited by: §1,
+§4.1,
+§4.1,
+§5.
+Jain et al. (2024)
+N. Jain, A. Shrivastava, C. Zhu, D. Liu, A. Samuel, A. Panda, A. Kumar, M. Goldblum, and T. Goldstein
+Refusal tokens: a simple way to calibrate refusals in large language models.
+arXiv preprint arXiv:2412.06748.
+Cited by: §5.
+Jiang et al. (2024)
+L. Jiang, K. Rao, S. Han, A. Ettinger, F. Brahman, S. Kumar, N. Mireshghallah, X. Lu, M. Sap, Y. Choi, et al.
+Wildteaming at scale: from in-the-wild jailbreaks to (adversarially) safer language models.
+Advances in Neural Information Processing Systems 37, pp. 47094–47165.
+Cited by: §2.1.
+Lermen et al. (2023)
+S. Lermen, C. Rogers-Smith, and J. Ladish
+Lora fine-tuning efficiently undoes safety training in llama 2-chat 70b.
+arXiv preprint arXiv:2310.20624.
+Cited by: §1.
+Li et al. (2025)
+M. Li, W. M. Si, M. Backes, Y. Zhang, and Y. Wang
+Salora: safety-alignment preserved low-rank adaptation.
+arXiv preprint arXiv:2501.01765.
+Cited by: §1,
+§5.
+Lin et al. (2023)
+B. Y. Lin, A. Ravichander, X. Lu, N. Dziri, M. Sclar, K. Chandu, C. Bhagavatula, and Y. Choi
+The unlocking spell on base llms: rethinking alignment via in-context learning.
+arXiv preprint arXiv:2312.01552.
+Cited by: §1,
+§2,
+§5.
+Liu et al. (2024)
+Q. Liu, Z. Zhou, L. He, Y. Liu, W. Zhang, and S. Su
+Alignment-enhanced decoding: defending jailbreaks via token-level adaptive refining of probability distributions.
+In Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing,
+pp. 2802–2816.
+Cited by: §3.2.
+Mazeika et al. (2024)
+M. Mazeika, L. Phan, X. Yin, A. Zou, Z. Wang, N. Mu, E. Sakhaee, N. Li, S. Basart, B. Li, et al.
+Harmbench: a standardized evaluation framework for automated red teaming and robust refusal.
+arXiv preprint arXiv:2402.04249.
+Cited by: §4.1.
+Mitchell et al. (2023)
+E. Mitchell, R. Rafailov, A. Sharma, C. Finn, and C. D. Manning
+An emulator for fine-tuning large language models using small language models.
+arXiv preprint arXiv:2310.12962.
+Cited by: §1.
+Qi et al. (2024)
+X. Qi, A. Panda, K. Lyu, X. Ma, S. Roy, A. Beirami, P. Mittal, and P. Henderson
+Safety alignment should be made more than just a few tokens deep.
+arXiv preprint arXiv:2406.05946.
+Cited by: §3,
+§4.1,
+§5.
+Qi et al. (2023)
+X. Qi, Y. Zeng, T. Xie, P. Chen, R. Jia, P. Mittal, and P. Henderson
+Fine-tuning aligned language models compromises safety, even when users do not intend to!.
+arXiv preprint arXiv:2310.03693.
+Cited by: §1.
+Rafailov et al. (2023)
+R. Rafailov, A. Sharma, E. Mitchell, C. D. Manning, S. Ermon, and C. Finn
+Direct preference optimization: your language model is secretly a reward model.
+Advances in neural information processing systems 36, pp. 53728–53741.
+Cited by: §3.
+Sheshadri et al. (2024)
+A. Sheshadri, A. Ewart, P. Guo, A. Lynch, C. Wu, V. Hebbar, H. Sleight, A. C. Stickland, E. Perez, D. Hadfield-Menell, et al.
+Latent adversarial training improves robustness to persistent harmful behaviors in llms.
+arXiv preprint arXiv:2407.15549.
+Cited by: §5.
+Socher et al. (2013)
+R. Socher, A. Perelygin, J. Wu, J. Chuang, C. D. Manning, A. Y. Ng, and C. Potts
+Recursive deep models for semantic compositionality over a sentiment treebank.
+In Proceedings of the 2013 conference on empirical methods in natural language processing,
+pp. 1631–1642.
+Cited by: §4.1.
+Souly et al. (2024)
+A. Souly, Q. Lu, D. Bowen, T. Trinh, E. Hsieh, S. Pandey, P. Abbeel, J. Svegliato, S. Emmons, O. Watkins, et al.
+A strongreject for empty jailbreaks.
+Advances in Neural Information Processing Systems 37, pp. 125416–125440.
+Cited by: §4.1.
+Team et al. (2024)
+G. Team, M. Riviere, S. Pathak, P. G. Sessa, C. Hardin, S. Bhupatiraju, L. Hussenot, T. Mesnard, B. Shahriari, A. Ramé, et al.
+Gemma 2: improving open language models at a practical size.
+arXiv preprint arXiv:2408.00118.
+Cited by: §4.1.
+Team et al. (2024)
+Q. Team et al.
+Qwen2 technical report.
+arXiv preprint arXiv:2407.10671 2 (3).
+Cited by: §2.1,
+§4.1.
+Touvron et al. (2023)
+H. Touvron, L. Martin, K. Stone, P. Albert, A. Almahairi, Y. Babaei, N. Bashlykov, S. Batra, P. Bhargava, S. Bhosale, et al.
+Llama 2: open foundation and fine-tuned chat models.
+arXiv preprint arXiv:2307.09288.
+Cited by: §4.1.
+Vega et al. (2023)
+J. Vega, I. Chaudhary, C. Xu, and G. Singh
+Bypassing the safety training of open-source llms with priming attacks.
+arXiv preprint arXiv:2312.12321.
+Cited by: §3.2.
+Wang et al. (2024)
+J. Wang, J. Li, Y. Li, X. Qi, J. Hu, Y. Li, P. McDaniel, M. Chen, B. Li, and C. Xiao
+Mitigating fine-tuning based jailbreak attack with backdoor enhanced safety alignment.
+arXiv preprint arXiv:2402.14968.
+Cited by: §5.
+Wei et al. (2021)
+J. Wei, M. Bosma, V. Y. Zhao, K. Guu, A. W. Yu, B. Lester, N. Du, A. M. Dai, and Q. V. Le
+Finetuned language models are zero-shot learners.
+arXiv preprint arXiv:2109.01652.
+Cited by: §1.
+Yang et al. (2025)
+S. Yang, Q. Zhang, Y. Liu, Y. Huang, X. Jia, K. Ning, J. Yao, J. Wang, H. Dai, Y. Song, et al.
+AsFT: anchoring safety during llm fine-tuning within narrow safety basin.
+arXiv preprint arXiv:2506.08473.
+Cited by: §1,
+§2.1,
+§4.1,
+§4.1,
+§4.1,
+§5.
+Yang et al. (2023)
+X. Yang, X. Wang, Q. Zhang, L. Petzold, W. Y. Wang, X. Zhao, and D. Lin
+Shadow alignment: the ease of subverting safely-aligned language models.
+arXiv preprint arXiv:2310.02949.
+Cited by: §1.
+Yi et al. (2024)
+J. Yi, R. Ye, Q. Chen, B. Zhu, S. Chen, D. Lian, G. Sun, X. Xie, and F. Wu
+On the vulnerability of safety alignment in open-access llms.
+In Findings of the Association for Computational Linguistics ACL 2024,
+pp. 9236–9260.
+Cited by: §1.
+Yi et al. (2025)
+X. Yi, S. Zheng, L. Wang, G. de Melo, X. Wang, and L. He
+Nlsr: neuron-level safety realignment of large language models against harmful fine-tuning.
+In Proceedings of the AAAI Conference on Artificial Intelligence,
+Vol. 39, pp. 25706–25714.
+Cited by: §1,
+§5.
+Zhan et al. (2024)
+Q. Zhan, R. Fang, R. Bindu, A. Gupta, T. B. Hashimoto, and D. Kang
+Removing rlhf protections in gpt-4 via fine-tuning.
+In Proceedings of the 2024 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies (Volume 2: Short Papers),
+pp. 681–687.
+Cited by: §1.
+Zhang et al. (2015)
+X. Zhang, J. Zhao, and Y. LeCun
+Character-level convolutional networks for text classification.
+Advances in neural information processing systems 28.
+Cited by: §4.1.
+Zhou et al. (2023)
+C. Zhou, P. Liu, P. Xu, S. Iyer, J. Sun, Y. Mao, X. Ma, A. Efrat, P. Yu, L. Yu, et al.
+Lima: less is more for alignment.
+Advances in Neural Information Processing Systems 36, pp. 55006–55021.
+Cited by: §1.
+Zou et al. (2023)
+A. Zou, Z. Wang, N. Carlini, M. Nasr, J. Z. Kolter, and M. Fredrikson
+Universal and transferable adversarial attacks on aligned language models.
+arXiv preprint arXiv:2307.15043.
+Cited by: §2.3,
+§4.1.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

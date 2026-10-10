@@ -1,0 +1,306 @@
+## GLM-OCR
+
+<div align="center">
+<img src=resources/logo.svg width="40%"/>
+</div>
+<p align="center">
+    👋 Join our <a href="resources/WECHAT.md" target="_blank">WeChat</a> and <a href="https://discord.gg/8KFjEec7" target="_blank">Discord</a> community
+    <br>
+    📍 Use GLM-OCR's <a href="https://docs.z.ai/guides/image/glm-ocr" target="_blank">API</a>
+</p>
+
+### Model Introduction
+
+GLM-OCR is a multimodal OCR model for complex document understanding, built on the GLM-V encoder–decoder architecture. It introduces Multi-Token Prediction (MTP) loss and stable full-task reinforcement learning to improve training efficiency, recognition accuracy, and generalization. The model integrates the CogViT visual encoder pre-trained on large-scale image–text data, a lightweight cross-modal connector with efficient token downsampling, and a GLM-0.5B language decoder. Combined with a two-stage pipeline of layout analysis and parallel recognition based on PP-DocLayout-V3, GLM-OCR delivers robust and high-quality OCR performance across diverse document layouts.
+
+**Key Features**
+
+- State-of-the-Art Performance
+Achieves 94.62 on OmniDocBench V1.5, ranking #1, and delivers SOTA results across major document understanding benchmarks, including formula recognition, table recognition, and information extraction.
+
+- Optimized for Real-World Scenarios
+Specifically optimized for practical business use cases, maintaining stable and accurate performance on complex tables, code documents, seals, and other challenging layouts.
+
+- Efficient Inference
+With only 0.9B parameters, GLM-OCR supports deployment via vLLM and SGLang, significantly reducing inference latency and compute cost—well suited for high-concurrency and edge deployments.
+
+- Easy to Use
+Fully open-sourced with a complete SDK and inference toolchain, enabling one-line invocation and seamless integration into existing systems.
+
+### Download Model
+
+| Model            | Download Links                                                                                                                                | Precision |
+|------------------|-----------------------------------------------------------------------------------------------------------------------------------------------|-----------|
+| GLM-OCR          | [🤗 Hugging Face](https://huggingface.co/zai-org/GLM-OCR)<br> [🤖 ModelScope](https://modelscope.cn/models/ZhipuAI/GLM-OCR)                   | BF16      |
+
+
+## GLM-OCR SDK
+
+We provide an SDK for using GLM-OCR more efficiently and conveniently.
+
+### Install SDK
+
+```bash
+pip install glmocr
+
+# Or install from source
+git clone https://github.com/zai-org/glm-ocr.git
+cd glm-ocr && pip install -e .
+
+# Install transformers from source
+pip install git+https://github.com/huggingface/transformers.git
+```
+
+
+### Model Deployment
+
+Two ways to run a GLM-OCR model service:
+
+#### Option 1: Zhipu MaaS API (Recommended)
+
+No GPU needed – use the hosted API:
+
+1. Get an API key from https://open.bigmodel.cn/
+2. Configure `config.yaml`:
+
+```yaml
+pipeline:
+  ocr_api:
+    api_host: open.bigmodel.cn
+    api_port: 443
+    api_scheme: https
+    api_key: your-api-key
+```
+
+#### Option 2: Self-host with vLLM / SGLang
+
+You can use vLLM or SGLang to deploy an OpenAI-compatible service:
+
+##### Using vLLM
+
+**Install vLLM:**
+
+```bash
+pip install -U vllm --extra-index-url https://wheels.vllm.ai/nightly
+# Or use Docker
+docker pull vllm/vllm-openai:nightly
+```
+
+**Launch the service:**
+
+```bash
+pip install git+https://github.com/huggingface/transformers.git
+vllm serve zai-org/GLM-OCR --allowed-local-media-path / --port 8080
+```
+
+##### Using SGLang
+
+**Install SGLang:**
+
+```bash
+docker pull lmsysorg/sglang:dev
+# Or build from source
+pip install git+https://github.com/sgl-project/sglang.git#subdirectory=python
+```
+
+**Launch the service:**
+
+```bash
+pip install git+https://github.com/huggingface/transformers.git
+python -m sglang.launch_server --model zai-org/GLM-OCR --port 8080
+```
+
+##### Update Configuration
+
+After launching the service, modify your `config.yaml`:
+```yaml
+pipeline:
+  ocr_api:
+    api_host: localhost  # or your vLLM/SGLang server address
+    api_port: 8080
+```
+
+
+### SDK Usage Guide
+
+#### CLI
+
+```bash
+# Parse a single image
+glmocr parse examples/source/code.png
+
+# Parse a directory
+glmocr parse examples/source/
+
+# Set output directory
+glmocr parse examples/source/code.png --output ./results/
+
+# Use a custom config
+glmocr parse examples/source/code.png --config my_config.yaml
+
+# Enable debug logging with profiling
+glmocr parse examples/source/code.png --log-level DEBUG
+```
+
+#### Python API
+
+```python
+from glmocr import GlmOcr, parse
+
+# Simple function
+result = parse("image.png")
+result = parse(["img1.png", "img2.jpg"])
+result = parse("https://example.com/image.png")
+result.save(output_dir="./results")
+
+# Note: a list is treated as pages of a single document.
+
+# Class-based API
+with GlmOcr() as parser:
+    result = parser.parse("image.png")
+    print(result.json_result)
+    result.save()
+```
+
+#### Flask Service
+
+```bash
+# Start service
+python -m glmocr.server
+
+# With debug logging
+python -m glmocr.server --log-level DEBUG
+
+# Call API
+curl -X POST http://localhost:5002/glmocr/parse \
+  -H "Content-Type: application/json" \
+  -d '{"images": ["./example/source/code.png"]}'
+```
+
+Semantics:
+
+- `images` can be a string or a list.
+- A list is treated as pages of a single document.
+- For multiple independent documents, call the endpoint multiple times (one document per request).
+
+
+### Configuration
+
+Full configuration in `glmocr/config.yaml`:
+
+```yaml
+# Server (for glmocr.server)
+server:
+  host: "0.0.0.0"
+  port: 5002
+  debug: false
+
+# Logging
+logging:
+  level: INFO # DEBUG enables profiling
+
+# Pipeline
+pipeline:
+  # OCR API connection
+  ocr_api:
+    api_host: localhost
+    api_port: 8080
+    api_key: null # or set API_KEY env var
+    connect_timeout: 300
+    request_timeout: 300
+
+  # Page loader settings
+  page_loader:
+    max_tokens: 16384
+    temperature: 0.01
+    image_format: JPEG
+    min_pixels: 12544
+    max_pixels: 71372800
+
+  # Result formatting
+  result_formatter:
+    output_format: both # json, markdown, or both
+
+  # Layout detection (optional)
+  enable_layout: false
+```
+
+See [config.yaml](glmocr/config.yaml) for all options.
+
+
+### Output Formats
+
+Here are two examples of output formats:
+
++ JSON
+
+```json
+[[{ "index": 0, "label": "text", "content": "...", "bbox_2d": null }]]
+```
+
++ Markdown
+
+```markdown
+# Document Title
+
+Body...
+
+| Table | Content |
+| ----- | ------- |
+| ...   | ...     |
+```
+
+
+### Example of full pipeline
+
+you can run example code like：
+
+```bash
+python examples/example.py
+```
+
+Output structure (one folder per input):
+
+- `result.json` – structured OCR result
+- `result.md` – Markdown result
+- `imgs/` – cropped image regions (when layout mode is enabled)
+
+
+### Modular Architecture
+
+GLM-OCR uses composable modules for easy customization:
+
+| Component             | Description                            |
+| --------------------- | -------------------------------------- |
+| `PageLoader`          | Preprocessing and image encoding       |
+| `OCRClient`           | Calls the GLM-OCR model service        |
+| `PPDocLayoutDetector` | PP-DocLayout layout detection          |
+| `ResultFormatter`     | Post-processing, outputs JSON/Markdown |
+
+You can extend the behavior by creating custom pipelines:
+
+```python
+from glmocr.dataloader import PageLoader
+from glmocr.ocr_client import OCRClient
+from glmocr.postprocess import ResultFormatter
+
+
+class MyPipeline:
+  def __init__(self, config):
+    self.page_loader = PageLoader(config)
+    self.ocr_client = OCRClient(config)
+    self.formatter = ResultFormatter(config)
+
+  def process(self, request_data):
+    # Implement your own processing logic
+    pass
+```
+
+
+## License
+
+The Code of this repo is under Apache License 2.0.
+
+The GLM-OCR model is released under the MIT License.
+
+The complete OCR pipeline integrates [PP-DocLayoutV3](https://huggingface.co/PaddlePaddle/PP-DocLayoutV3) for document layout analysis, which is licensed under the Apache License 2.0. Users should comply with both licenses when using this project.

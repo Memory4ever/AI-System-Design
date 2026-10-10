@@ -1,0 +1,1293 @@
+Stop Listening to Me! How Multi-turn ConversationsCan Degrade Diagnostic Reasoning
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+1
+Results
+2
+Acknowledgments
+References
+License: CC BY 4.0
+arXiv:2603.11394v1 [cs.CL] 12 Mar 2026
+\institutes
+1
+Vanderbilt University, Nashville, TN, USA;
+2
+Intuit AI Research, Mountain View, CA;
+3
+Vanderbilt University Medical Center, Nashville, TN, USA
+Stop Listening to Me! How Multi-turn Conversations
+Can Degrade Diagnostic Reasoning
+Kevin H. Guo
+B.S.
+1
+Chao Yan
+Ph.D.
+1
+Avinash Baidya
+Ph.D.
+2
+Katherine Brown
+Ph.D.
+3
+Xiang Gao
+Ph.D.
+2
+Juming Xiong
+B.S.
+1
+Zhijun Yin
+Ph.D.
+1,3
+Bradley A. Malin
+Ph.D.
+1,3
+Abstract
+Patients and clinicians are increasingly using chatbots powered by large language models (LLMs) for healthcare inquiries. While state-of-the-art LLMs exhibit high performance on static diagnostic reasoning benchmarks, their efficacy across multi-turn conversations, which better reflect real-world usage, has been understudied. In this paper, we evaluate 17 LLMs across three clinical datasets to investigate how partitioning the decision-space into multiple simpler turns of conversation influences their diagnostic reasoning. Specifically, we develop a “stick-or-switch” evaluation framework to measure model conviction (i.e., defending a correct diagnosis or safe abstention against incorrect suggestions) and flexibility (i.e., recognizing a correct suggestion when it is introduced) across conversations. Our experiments reveal the conversation tax, where multi-turn interactions consistently degrade performance when compared to single-shot baselines. Notably, models frequently abandon initial correct diagnoses and safe abstentions to align with incorrect user suggestions. Additionally, several models exhibit blind switching, failing to distinguish between signal and incorrect suggestions.
+Introduction
+Large language models (LLMs) are increasingly being deployed in the medical domain, quickly approaching safety-critical settings in clinical care
+21
+,
+1
+,
+20
+. At the same time, patients are adopting these systems to support their own inquiries, using proprietary chatbots to triage symptoms, interpret complex clinical documentation, and seek personalized medical advice
+40
+,
+13
+,
+6
+,
+3
+,
+5
+. This rapid, widespread adoption is driven by the combination of vast, expert-level biomedical fluency and an accessible interface that affords the flexibility for personalized care in a conversational setting
+3
+. While patients historically faced systemic barriers to healthcare—such as difficulty understanding their clinicians
+2
+,
+24
+,
+22
+, reluctance in disclosing information and asking questions
+32
+,
+24
+,
+22
+, or general anxiety toward medical visits
+32
+—the accessibility of LLMs is democratizing the opportunity for patients to actively engage in conversations about their health
+3
+,
+5
+.
+Figure 1:
+Measuring conviction and flexibility in LLM clinical decision-making through multi-turn conversational exchange.
+(a)
+Positive conviction, where a model must defend a correct initial diagnosis against subsequent incorrect suggestions.
+(b)
+Negative conviction, where the model must maintain an initial safe abstention against subsequent incorrect suggestions.
+(c)
+Flexibility, where the model must recognize the introduction of the clinical truth after abstaining against an incorrect option. Note that positive and negative conviction may extend up to four turns. The true answer for the example question is highlighted in green.
+The current enthusiasm and confidence surrounding LLMs in healthcare are largely inspired by their high evaluation performance. Historically, these evaluations have relied on benchmarks, popularized in the machine learning community as a way to demonstrate progress in model performance
+38
+,
+17
+. For example, one popular clinical benchmark is MedQA, which comprises multiple-choice question-answer pairs (MCQA) derived from the United States Medical Licensing Exam (USMLE)
+17
+, which LLMs have almost mastered. These benchmarks operate in idealized decision spaces, assuming a closed-world setting where the correct diagnosis and the evidence required to deduce it are present. However, the reality of clinical decision-making is far from this. In practice, clinicians must navigate unstructured and incomplete patient profiles to discern extraneous noise from true diagnostic signal
+35
+,
+9
+. In addition, this process is dynamic. As new information emerges, clinicians must iterate over, and potentially revise, their initial hypotheses
+37
+,
+23
+,
+16
+. Patient-LLM interactions follow similar processes, but introduce their own complexities. Notably, without formal clinical education, patients naturally explore their concerns in fragmented, conversational trial-and-error, iterating their inquiry over multiple exchanges
+29
+,
+31
+. These challenges necessitate a safety-centric evaluation approach.
+There is an emerging body of literature highlighting the inefficacy of LLMs in clinical settings. Bedi and colleagues demonstrated that simply removing and replacing the ground truth in MedQA questions with “
+None of the other answers
+” causes accuracy to drop over 30%, suggesting that LLMs utilize pattern matching rather than true reasoning in clinical settings
+8
+. In addition, Chen et al. demonstrated that the helpfulness encoded in LLMs leads them to frequently comply with illogical medical requests that would generate false information, despite having the knowledge to identify the request as illogical
+11
+. Beyond the clinical AI domain, LLM researchers have recently found that models get lost in multi-turn conversations
+19
+. In settings where there is under-specification in user queries, LLMs tend to make early assumptions that they then rely on in prematurely jumping to generate final solutions
+19
+. This behavior is quite pertinent in the medical domain. Since patients turn to LLMs to fill gaps in their knowledge, under-specification is the default state of interaction
+31
+,
+29
+,
+14
+. While a trained clinician can proactively recognize false assumptions and request additional labs or history to resolve them, patients lack this intuition and may be more susceptible to misinformation
+25
+. Notably, under-specification can be present in LLM-clinician interactions as well, where patient profiles may initially be incomplete and evolve over time
+37
+,
+23
+,
+16
+. Despite these limitations, commercial vendors are rapidly deploying specialized services, such as OpenAI’s ChatGPT Health and Anthropic’s Claude for Healthcare, to facilitate personalized medical dialogue. Early evaluations of these services align with previously observed vulnerabilities. For example, Ramaswamy and colleagues found that ChatGPT Health under-triaged more than 50% of simulated medical emergencies
+30
+.
+While conversational chatbots present clear safety vulnerabilities, there has been little formal investigation into how multi-turn conversation influences diagnostic reasoning in LLMs. We address this gap by investigating the conviction and flexibility of LLM clinical decision-making under conversational pressure. Specifically, we partition traditional MCQA answer-spaces into sequential multi-turn exchanges. In doing so, we prompt a model with an initial binary choice between two options, and upon selecting one, proceed to subsequent turns where the model must either 1) stick to their initial diagnosis or 2) switch to a newly introduced suggestion. We formalize two behavioral metrics to evaluate these multi-turn interactions. The first is
+positive conviction
+, which is measured by a model’s ability to defend a correct diagnosis against incorrect suggestions, which we refer to as distractors (Figure
+1
+a). The second is
+negative conviction
+, which is measured by the model’s capacity to maintain a safe abstention when subsequently pressured with incorrect suggestions (Figure
+1
+b). Finally, we investigate
+model flexibility
+, in terms of the capacity to recognize the true clinical signal when it is eventually introduced to the answer space (Figure
+1
+c).
+To demonstrate the generalizability of our findings, we evaluate this multi-turn framework across 17 LLMs including both open-source models and commercial frontier models on two medical benchmarks and one set of real-world clinical vignettes, enabling us to quantify multi-turn reliability across context complexity and model scale.
+Consequently, this study investigates the conversation tax in clinical dialogue, a penalty to diagnostic performance incurred when engaging in multi-turn conversations. Our findings indicate that models are highly susceptible to incorrect suggestions, leading to end-to-end performance degradations compared to a standard single-shot presentation. Specifically, LLMs frequently surrender a correct initial diagnosis to agree with newly introduced incorrect suggestions. Moreover, when defending an initial abstention rather than a diagnosis, models become more susceptible to incorrect suggestions. We find that when models do successfully abstain against incorrect suggestions, they are inconsistent in recognizing when to switch to the clinical truth when it appears. We observe that increasing model parameter counts improves, but does not completely mitigate this susceptibility, further supporting that LLMs lack the capability to consistently filter extraneous noise in maintaining a diagnosis or abstention. To the best of our knowledge, this is the first study into the influence of multi-turn conversation on LLM diagnostic reasoning, and our findings underscore the importance of understanding how the manner in which we present clinical information affects the fidelity of LLMs.
+Methods
+Datasets:
+In this study, we leverage two common clinical benchmark datasets and one set of real-world clinical vignettes to capture this range. The first is MedMCQA, which features broad biomedical questions sourced from Indian medical entrance exams to assess foundational knowledge
+27
+. The second is MedQA, which is comprised of patient vignettes and medical board style questions derived from the USMLE
+17
+to capture clinical reasoning in structured settings. To capture decision-making in high-complexity, unstructured, real-world scenarios, we curate a third dataset from the Journal of the American Medical Association Clinical Challenges (JAMA CC) following the strategy outlined by Chen et al.
+10
+. Each case is procured from specialist JAMA subjournals (Dermatology, Ophthalmology, Psychiatry) and contains a complex patient history followed by the question, “What would you do next?” and four answer choices. For each dataset, we sample
+N
+=
+1,200
+N=1,200
+unique queries without replacement for open-source models. Due to inference costs, we further downsample this to
+N
+=
+400
+N=400
+for commercial frontier models.
+Models and Prompting:
+Our experiments focus on 15 open-source models across four families ranging from 1B to 72B parameters: Llama 3.x (1B, 8B, 70B), Qwen 2.5 (1.5B, 3B, 7B, 72B), Qwen 3 (4B, 8B, 14B, 32B), and Gemma (1B, 4B, 12B, 27B). Additionally, we evaluate two commercial models: OpenAI’s GPT-4o (snapshot: 2024-08-06) and GPT-5.2, accessed in January 2026. We deploy open-source models in 8-bit quantizations locally through llama.cpp on NVIDIA A100 and H100 GPUs and access commercial models via API through a secure Azure OpenAI Studio. We use the instruct variants for all models and perform inferences at the default temperature of
+T
+=
+0.7
+T=0.7
+to mirror standard usage. We few-shot prompt each model with exemplars drawn from development splits independent of inference splits to ensure parseable output formatting and prevent data leakage. We use a regular expression parsing pipeline to flexibly map free-text generation to selected answers, resulting in an average parse error rate of
+<
+0.0002
+%
+<0.0002\%
+across all inferences, most often triggered by safety-guardrails in commercial models. We exclude the invalid returns from downstream analyses and consider this to have a negligible effect on our primary findings.
+Experimental Design:
+We start by establishing how a partitioned decision-space influences LLM clinical decision-making. We measure 1) end-to-end diagnostic accuracy, which we define as the proportion of queries where the model correctly identifies the clinical truth, and 2) end-to-end abstention rate, which we define as the frequency at which the model appropriately abstains when shown only incorrect options. We compare these two metrics between the model evaluating the entire answer space versus a baseline consisting of a narrowed binary choice between the target answer and a single incorrect answer option.
+To emulate the iterative process of introducing new information to refine or support an initial diagnosis, we partition the answer-space into
+t
+t
+turns, where each turn represents a new piece of information. Specifically, we build off the simplified binary choice by introducing a new answer option, and prompting the model to stick to its initial selection or switch to the newly introduced one. This “stick-or-switch” approach enables us to capture how models retain a decision under the transition from initial under-specification to the gradual introduction of more information. First, we assess models in a best-case scenario, where the optimal answer is present in the initial turn and the model needs only to anchor to it across multiple turns, which we define as positive conviction. Second, we explore the suboptimal scenario, where the optimal answer is absent from all turns, and the model must anchor to a safe abstention across multiple turns, which we define as negative conviction. Lastly, we explore flexibility, which we define as whether a model will recognize and switch to the correct decision upon its introduction. Here, we follow the initial setup of negative conviction, simulating the scenario in which models initially abstain against a distractor, but must recognize the introduction of the clinical truth in a subsequent turn.
+Perturbation framework
+We empirically evaluate conviction in both 1) defending the correct diagnosis and 2) abstaining against incorrect diagnoses. For each query, we perturb the model’s target answer (
+y
+t
+​
+a
+​
+r
+​
+g
+​
+e
+​
+t
+y_{target}
+) and sequence. For positive conviction, that is model resilience when defending the correct diagnosis, we set the target answer to the clinical ground truth from the query (
+y
+t
+​
+a
+​
+r
+​
+g
+​
+e
+​
+t
+=
+y
+t
+​
+r
+​
+u
+​
+t
+​
+h
+y_{target}=y_{truth}
+). For negative conviction, that is, model resilience when defending abstention, we remove the ground truth and replace it with “None of the Above” (NA) (
+y
+t
+​
+a
+​
+r
+​
+g
+​
+e
+​
+t
+y_{target}
+=“None of the Above”). Figures
+1
+a and
+1
+b illustrate conversational examples in modeling positive and negative conviction, respectively. In both settings, the total answer space (
+S
+S
+) comprises the target answer and three to four (depending on dataset) incorrect distractors (
+d
+⊂
+D
+d\subset D
+). We formalize the multi-turn conversation as a sequence that begins at turn
+t
+=
+1
+t=1
+with an initial binary choice between
+y
+t
+​
+a
+​
+r
+​
+g
+​
+e
+​
+t
+y_{target}
+and a single randomly sampled distractor (
+d
+∈
+S
+d\in S
+). If the model successfully selects
+y
+t
+​
+a
+​
+r
+​
+g
+​
+e
+​
+t
+y_{target}
+, the conversation advances to subsequent turns (
+t
+>
+1
+t>1
+), but if it selects the distractor, that sequence terminates. In each subsequent turn, the model is presented a new distractor and enters the stick-or-switch scenario. Conversations terminate either when the model incorrectly switches from
+y
+t
+​
+a
+​
+r
+​
+g
+​
+e
+​
+t
+y_{target}
+or when it successfully exhausts all available distractors.
+To evaluate flexibility—the capacity to recognize and integrate signal as it appears—we conduct a two turn ablation study based on the negative conviction setup. We identically begin at turn
+t
+=
+1
+t=1
+with a binary choice between NA and a distractor. However, at turn
+t
+=
+2
+t=2
+, rather than introduce another distractor, we introduce the clinical truth (
+y
+t
+​
+r
+​
+u
+​
+t
+​
+h
+y_{truth}
+). Figure
+1
+c illustrates an example in modeling flexibility.
+Evaluation metrics:
+We measure diagnostic accuracy (
+P
+⁡
+(
+y
+t
+​
+r
+​
+u
+​
+t
+​
+h
+|
+S
+)
+P(y_{truth}|S)
+) and abstention (
+P
+⁡
+(
+y
+N
+​
+A
+|
+D
+⊂
+S
+)
+P(y_{NA}|D\subset S)
+) in single-shot performance between the full and narrowed decision-spaces. To quantify model resilience across multiple turns of conversation, we define
+C
+T
+C_{T}
+as the cumulative survival rate of
+y
+t
+​
+a
+​
+r
+​
+g
+​
+e
+​
+t
+y_{target}
+up to a specific turn
+t
+≤
+T
+t\leq T
+.
+C
+T
+C_{T}
+measures the proportion of query responses where the model maintains its selection up to turn
+T
+T
+. We define:
+C
+T
+=
+1
+n
+​
+∑
+i
+=
+1
+n
+∏
+t
+=
+1
+T
+𝟙
+​
+(
+y
+^
+i
+,
+t
+=
+y
+t
+​
+a
+​
+r
+​
+g
+​
+e
+​
+t
+,
+i
+)
+C_{T}=\frac{1}{n}\sum_{i=1}^{n}\prod_{t=1}^{T}\mathbb{1}(\hat{y}_{i,t}=y_{target,i})
+(1)
+where
+y
+^
+i
+,
+t
+\hat{y}_{i,t}
+denotes the model’s selection for query
+i
+≤
+n
+i\leq n
+at turn
+t
+t
+. The product term ensures that if a distractor is selected at any prior turn
+j
+≤
+T
+j\leq T
+, then the conviction for that query drops to 0 for all subsequent turns.
+In our ablation study, we define flexibility as the proportion of query responses where the model correctly switches to
+y
+t
+​
+r
+​
+u
+​
+t
+​
+h
+y_{truth}
+after initially abstaining against noise. We contrast this against a baseline sensitivity analysis—the rate of switching when the suggestion introduced at
+t
+=
+2
+t=2
+is another incorrect distractor.
+Figure 2:
+The effect of narrowing the original decision-space to a binary one.
+(a)
+Accuracy improvement transitioning from the original answer-space to a simpler binary one for three datasets across increasing model size.
+(b)
+Abstention rate improvement of the same datasets and models.
+1
+Results
+Narrowing the decision-space:
+To contextualize the influence of multi-turn conversation, we first evaluate model performance on the partitioned binary decisions which will act as building blocks of multi-turn exchanges. Figure
+2
+a illustrates that reducing the number of plausible options in the decision-space improves both diagnostic accuracy and abstention rates. Notably, this improvement is consistent across all of the models we evaluated and in all of the datasets. Specifically, averaged across models, we observe 33%, 26%, and 26% relative increases in MedQA, MedMCQA, and JAMA CC, respectively, when transitioning from the original answer-space to a narrowed binary scope. Additionally, as shown in Figure
+2
+a, this improvement diminishes as model complexity increases, indicating that larger models are more capable of discerning optimal diagnoses in the presence of plausible, but incorrect, distractors. For example, the relative increase in accuracy decreases from 29% in Qwen 2.5 1.5B to just 15% in Qwen 2.5 72B in MedQA. The majority of these behaviors are amplified in abstention, as shown in Figure
+2
+b. Absolute abstention rates are lower than accuracy baselines, and transitioning to a focused binary choice yields an even greater performance increase for this more difficult task. Furthermore, the mitigating effect of increasing model size is weaker in abstention than in diagnostic accuracy.
+Figure 3:
+The effect of multi-turn conversation on end-to-end accuracy.
+(a)
+Positive conviction, or the cumulative survival rate (
+C
+t
+C_{t}
+) of an initially correct diagnosis, over
+t
+t
+successive turns compared to the single-shot baseline for JAMA CC. Each line represents the conviction of a single model colored by parameter count.
+(b)
+End-to-end accuracy comparison between single-shot (SS) and multi-turn (MT) presentation for all models and datasets.
+Positive conviction:
+As shown in Figure
+3
+, positive conviction falls below end-to-end accuracy in the majority of models (MedQA: 14 of 17, JAMA CC: 14 of 17, MedMCQA: 16 of 17). Each turn incurs a slight accuracy penalty when the model incorrectly switches to a distractor that, compounded across multiple turns, leads to performance degradation. Notably, even the higher-complexity models are not immune to this. While GPT-5.2’s accuracy drops by only 2 absolute percentage points, GPT-4o and Llama-3.1 70B suffer larger drops of 17 and 29, respectively (JAMA CC). We observe the most severe drops in the Qwen-3 family of models, where the 8B, 14B, and 32B variants all suffer percentage point penalties of over 40. Interestingly, Qwen-3 4B is one of the few models where accuracy increases when transitioning from single-shot to multi-turn presentation. Furthermore, across all datasets, the models that improve after transitioning to multi-turn presentation are small models under 4B parameters.
+Figure 4:
+The effect of multi-turn conversation on end-to-end abstention rates.
+(a)
+Negative conviction, or the cumulative survival rate (
+C
+t
+C_{t}
+) of an initially correct abstention, over
+t
+t
+successive turns compared to the single-shot baseline for JAMA CC. Each line represents the conviction of a single model colored by parameter count.
+(b)
+End-to-end abstention
+comparison between single-shot (SS) and multi-turn (MT) presentation for all models and datasets
+Negative conviction:
+We now investigate the scenario where the clinical truth is absent, through negative conviction. In this setting, performance degradations per turn are more severe and consistent (across all models and datasets) than in defending a correct diagnosis (Figure
+4
+). Compounded across multiple turns, end-to-end abstention performance drops by 32 percentage points averaged across models for JAMA CC, compared to just 14 percentage points in end-to-end accuracy, lending credibility to the claim that models are more susceptible to incorrect suggestions if they are breaking from abstention. Compared to the 2, 17, and 29 percentage point decreases observed when defending a positive diagnosis for GPT-5.2, GPT-4o, and Llama-3.1 70B, the performance penalties in negative conviction increase to 30, 50, and 42, respectively (JAMA CC). In addition, the higher-complexity models suffer the largest performance degradations due to multi-turn exchanges. While smaller models struggle to abstain in the first place, large models fail to maintain an initially apt capability for abstention over multiple turns.
+Flexibility:
+Figure
+5
+pictures the spectrum of flexibility across models, highlighting that only a single model (GPT-5.2) trends toward the desired behavior of switching to correct suggestions but not to incorrect ones. The next highest-complexity models, such as GPT-4o, Qwen-2.5 72B, and Llama 3.1-70B, achieve high rates of switching when the correct answer is presented, even beating GPT-5.2 (94%, 88%, and 93%, respectively, compared to GPT 5.2’s 93%), but conversely, switch to the incorrect answer 53%, 47%, and 60%, whereas GPT-5.2 switches only 20% of the time. Many lower-complexity models trend further towards blind switching. For instance, Qwen-3 32B, 14B, and 8B switch to both incorrect and correct answer choices approximately 47% of the time, while other models under 30B parameters switch to incorrect answers over 40% of the time with the exception of Llama-3.1 8B.
+Figure 5:
+Evaluation of model flexibility and susceptibility to blind switching.
+(a)
+Correct switch rates (adopting the correct diagnosis after initially abstaining) versus incorrect switch rates (adopting an incorrect suggestion after initially abstaining) for the JAMA CC dataset, with marker sizes scaled proportionally to model parameter counts. Ideal flexibility, where models switch only when offered a correct suggestion, approaches the bottom right quadrant. Unknowledgeable behavior, switching only to incorrect suggestions, approaches the top left quadrant, and blind switching
+(
+y
+=
+x
+)
+(y=x)
+sits between the two.
+(b)
+Comparison between rates of switching to correct (+) and incorrect (-) suggestions across datasets and models.
+Discussions and Conclusions
+This study explored how presenting a decision-space of plausible diagnoses through multiple turns of conversation affects an LLM’s ability to identify the correct diagnosis and abstain from making incorrect ones. Our analyses revealed that current LLMs appear to lack the conviction to defend their decisions, frequently surrendering correct diagnoses (Figure
+3
+) and breaking from initial abstention (Figure
+4
+) to adopt incorrect user suggestions. Even in the cases where models did correctly abstain, the majority failed to recognize the clinical truth when it appeared (Figure
+5
+), suggesting that these LLMs cannot recognize truth from distraction.
+These conversational vulnerabilities are in stark contrast to how models perform when presented with just the initial turn. Our findings indicate that narrowing the decision-space to a binary choice improved both diagnostic accuracy and abstention (Figure
+2
+). From a computational perspective, this aligns with known LLM behaviors, where narrowing the scope of a prompt encourages higher focus and less competing decisions
+15
+. However, we found that similarly partitioning a complex medical query into a simpler series of hypotheses, and presenting this over multiple turns, does not leverage the previously observed benefits of narrowing decision-spaces. Instead, we demonstrated that despite being offered a simpler initial binary decision, the resulting multi-turn conversation incurs an end-to-end performance penalty in both diagnostic accuracy and abstention compared to standard single-shot presentation (Figure
+3
+,
+4
+).
+This is a highly counterintuitive finding that contradicts existing assumptions in both cognitive psychology and machine learning. For example, frameworks such as cognitive load theory
+36
+have established that breaking a complex problem into smaller sequential steps improves reasoning and learning
+28
+. Similarly, prompting LLMs to reason in a step-by-step process has been shown to improve performance in deterministic domains such as mathematics
+39
+. We formalized this counterintuitive phenomenon as the conversation tax, where each successive turn or introduction of new information causes additional performance degradation. Furthermore, compared to positive conviction, negative conviction suffered more detrimental end-to-end performance degradation, suggesting that models are more susceptible to incorrect suggestions when they are not yet anchored to a specific diagnosis. This extends Bedi et al.’s finding, that LLMs’ diagnostic reasoning degrades when queries are not standard MCQAs
+8
+, to multi-turn conversational settings. Similarly, this may explain why increasing model size has a weaker mitigating effect against the conversation tax in abstention than diagnostic accuracy.
+This conversation tax provides further empirical evidence of the unintended consequences that can emerge from reinforcement learning with human feedback (RLHF)
+7
+,
+26
+. While RLHF effectively aligns models to human expectations of helpfulness in general chatbot usage, our study illustrates how this same mechanism becomes a liability in conversational clinical reasoning. Specifically, models prioritize assertively completing user requests, even if these requests are illogical, or there is insufficient evidence to draw a conclusion
+18
+. This behavior closely mirrors that described in social conformity theory, where individuals will frequently ignore obvious truths
+4
+or rapidly adopt external suggestions as their own truth
+34
+to convey an appearance of accuracy and gain social approval
+12
+. This is a well-studied phenomenon in LLMs, formalized in machine learning literature as sycophancy
+33
+. Our study highlighted how this sycophancy, which leads models to prefer newly introduced user suggestions over defending their own prior reasoning, compounded over several turns, can have detrimental effects on diagnostic accuracy and abstention. This sycophantic behavior may also explain the blind switching we observed in our model flexibility experiments (See Figure
+5
+). As we showed, many models successfully switched to the clinical truth when it was introduced, but they also switched to incorrect suggestions at comparable rates, making it difficult to reliably determine whether a switch from one diagnosis to another results from true reasoning, or sycophantic compliance.
+The resulting gap in reliability is pertinent to healthcare inquiries, which are naturally under-specified
+14
+,
+31
+,
+29
+. While clinicians are experienced in asking clarifying questions, seeking additional information, and guiding patients toward a complete characterization of their condition, LLMs do not yet demonstrate the ability to clarify ambiguity when interacting with patients
+41
+,
+25
+. Furthermore, when clinicians interact with LLMs, they are likely to under-specify not due to lack of expertise, but because their knowledge-base may be incomplete, evolving over time. These under-specifications lead to sequential turns where users must introduce more information to clarify or correct earlier assumptions
+19
+. For example, when a patient engages in dialogue for health advice with an LLM, our findings show that each subsequent turn of conversation can increase the likelihood that the LLM misdiagnoses a condition, provides incorrect advice, or incorrectly aligns with a user suggestion. Our study underscores the importance of avoiding under-specification when possible, and maximizing relevant knowledge and plausible diagnoses in the initial query to avoid potential degradations to diagnostic capabilities over conversational exchanges.
+While our findings are notable, there are several limitations of this investigation that provide avenues for future study. First, we relied on perturbing existing MCQA answer-spaces in our experimental findings. While we employed a set of real-world unstructured vignettes (JAMA CC), future investigations should analyze the generalizability of our findings in conversation logs of real-world patient-LLM or clinician-LLM interaction. Additionally, it will be important to investigate models’ internal states, specifically token log-probabilities, across multiple turns of conversation. Log-probabilities quantify how certain a model is in predicting its next token and are commonly used to assess implicit model confidences. Our study relied on explicated answer sticking and switching, as consumers interact with LLMs not through internal model states but natural language outputs. Finally, we only considered standard question-answer situations from a natural language perspective. Further investigation is needed to determine if our findings hold in other modalities, such as imaging and radiology reports using vision-language models.
+In conclusion, as patients and clinicians increasingly adopt LLM tools, we must understand how the conversational nature through which interactions occur affects safety. We developed a conviction-based evaluation framework and elucidated the conversation tax, where engaging in subsequent turns of conversation reduces diagnostic accuracy and abstention rates. We conjectured the source of the conversation tax to be the unintended consequences of reinforcement learning with human feedback, and the sycophantic tendencies models demonstrate as a result. While frontier models exhibited high performance on closed-world, single-shot benchmarks, they remain highly susceptible to incorrect suggestions in conversational exchange. This study underscores the importance of safety-centric LLM evaluations that investigate not just their biomedical fluency, but their efficacy in real-world interactions.
+2
+Acknowledgments
+This work was supported in part by grants from the NIH (T15LM007450, U54HG012510, K99LM014428) and the Intuit University Collaboration Program.
+References
+Afshar
+et al.
+(2025)
+M. Afshar, M. Ryan Baumann, F. Resnik, J. Hintzke, A. Gravel Sullivan, G. Wills, K. Lemmon, J. Dambach, L. A. Mrotek, M. Quinn,
+et al.
+A pragmatic randomized controlled trial of ambient artificial intelligence to improve health practitioner well-being
+.
+NEJM AI
+2
+(
+12
+),
+pp. AIoa2500945
+.
+Cited by:
+Introduction
+.
+Ancker
+et al.
+(2015)
+J. S. Ancker, H. O. Witteman, B. Hafeez, T. Provencher, M. Van de Graaf, and E. Wei
+The invisible work of personal health information management among people with multiple chronic conditions: qualitative interview study among patients and providers
+.
+Journal of medical Internet research
+17
+(
+6
+),
+pp. e137
+.
+Cited by:
+Introduction
+.
+Armoundas and Loscalzo (2025)
+A. A. Armoundas and J. Loscalzo
+Patient agency and large language models in worldwide encoding of equity
+.
+NPJ Digital Medicine
+8
+(
+1
+),
+pp. 258
+.
+Cited by:
+Introduction
+,
+Introduction
+,
+Introduction
+.
+Asch (2016)
+S. E. Asch
+Effects of group pressure upon the modification and distortion of judgments
+.
+In
+Organizational influence processes
+,
+pp. 295–303
+.
+Cited by:
+Discussions and Conclusions
+.
+Aydin
+et al.
+(2024)
+S. Aydin, M. Karabacak, V. Vlachos, and K. Margetis
+Large language models in patient education: a scoping review of applications in medicine
+.
+Frontiers in medicine
+11
+,
+pp. 1477898
+.
+Cited by:
+Introduction
+,
+Introduction
+.
+Aydin
+et al.
+(2025)
+S. Aydin, M. Karabacak, V. Vlachos, and K. Margetis
+Navigating the potential and pitfalls of large language models in patient-centered medication guidance and self-decision support
+.
+Frontiers in Medicine
+12
+,
+pp. 1527864
+.
+Cited by:
+Introduction
+.
+Bai
+et al.
+(2022)
+Y. Bai, A. Jones, K. Ndousse, A. Askell, A. Chen, N. DasSarma, D. Drain, S. Fort, D. Ganguli, T. Henighan,
+et al.
+Training a helpful and harmless assistant with reinforcement learning from human feedback
+.
+arXiv preprint arXiv:2204.05862
+.
+Cited by:
+Discussions and Conclusions
+.
+Bedi
+et al.
+(2025)
+S. Bedi, Y. Jiang, P. Chung, S. Koyejo, and N. Shah
+Fidelity of medical reasoning in large language models
+.
+JAMA Network Open
+8
+(
+8
+),
+pp. e2526021
+.
+Cited by:
+Introduction
+,
+Discussions and Conclusions
+.
+Burnett
+et al.
+(2011)
+S. J. Burnett, V. Deelchand, B. D. Franklin, K. Moorthy, and C. Vincent
+Missing clinical information in nhs hospital outpatient clinics: prevalence, causes and effects on patient care
+.
+BMC health services research
+11
+(
+1
+),
+pp. 114
+.
+Cited by:
+Introduction
+.
+Chen
+et al.
+(2025a)
+H. Chen, Z. Fang, Y. Singla, and M. Dredze
+Benchmarking large language models on answering and explaining challenging medical questions
+.
+In
+Proceedings of the 2025 Conference of the Nations of the Americas Chapter of the Association for Computational Linguistics: Human Language Technologies (Volume 1: Long Papers)
+,
+pp. 3563–3599
+.
+Cited by:
+Datasets:
+.
+Chen
+et al.
+(2025b)
+S. Chen, M. Gao, K. Sasse, T. Hartvigsen, B. Anthony, L. Fan, H. Aerts, J. Gallifant, and D. S. Bitterman
+When helpfulness backfires: llms and the risk of false medical information due to sycophantic behavior
+.
+npj Digital Medicine
+8
+(
+1
+),
+pp. 605
+.
+Cited by:
+Introduction
+.
+Cialdini and Goldstein (2004)
+R. B. Cialdini and N. J. Goldstein
+Social influence: compliance and conformity
+.
+Annu. Rev. Psychol.
+55
+(
+1
+),
+pp. 591–621
+.
+Cited by:
+Discussions and Conclusions
+.
+De Busser
+et al.
+(2025)
+B. De Busser, L. Roth, and H. De Loof
+The role of large language models in self-care: a study and benchmark on medicines and supplement guidance accuracy
+.
+International Journal of Clinical Pharmacy
+47
+(
+4
+),
+pp. 1001–1010
+.
+Cited by:
+Introduction
+.
+Duthie (2014)
+E. A. Duthie
+Recognizing and managing errors of cognitive underspecification
+.
+Journal of patient safety
+10
+(
+1
+),
+pp. 1–5
+.
+Cited by:
+Introduction
+,
+Discussions and Conclusions
+.
+Gozzi and Di Maio (2024)
+M. Gozzi and F. Di Maio
+Comparative analysis of prompt strategies for large language models: single-task vs. multitask prompts
+.
+Electronics
+13
+(
+23
+),
+pp. 4712
+.
+Cited by:
+Discussions and Conclusions
+.
+Heneghan
+et al.
+(2009)
+C. Heneghan, P. Glasziou, M. Thompson, P. Rose, J. Balla, D. Lasserson, C. Scott, and R. Perera
+Diagnostic strategies used in primary care
+.
+Bmj
+338
+.
+Cited by:
+Introduction
+,
+Introduction
+.
+Jin
+et al.
+(2021)
+D. Jin, E. Pan, N. Oufattole, W. Weng, H. Fang, and P. Szolovits
+What disease does this patient have? a large-scale open domain question answering dataset from medical exams
+.
+Applied Sciences
+11
+(
+14
+),
+pp. 6421
+.
+Cited by:
+Introduction
+,
+Introduction
+,
+Datasets:
+.
+Kalai
+et al.
+(2025)
+A. T. Kalai, O. Nachum, S. S. Vempala, and E. Zhang
+Why language models hallucinate
+.
+arXiv preprint arXiv:2509.04664
+.
+Cited by:
+Discussions and Conclusions
+.
+Laban
+et al.
+(2025)
+P. Laban, H. Hayashi, Y. Zhou, and J. Neville
+Llms get lost in multi-turn conversation
+.
+arXiv preprint arXiv:2505.06120
+.
+Cited by:
+Introduction
+,
+Introduction
+,
+Discussions and Conclusions
+.
+Li
+et al.
+(2025)
+J. Li, Z. Zhou, H. Lyu, and Z. Wang
+Large language models-powered clinical decision support: enhancing or replacing human expertise?
+.
+Vol.
+5
+,
+Elsevier
+.
+Cited by:
+Introduction
+.
+Lukac
+et al.
+(2025)
+P. J. Lukac, W. Turner, S. Vangala, A. T. Chin, J. Khalili, Y. T. Shih, C. Sarkisian, E. M. Cheng, and J. N. Mafi
+Ambient ai scribes in clinical practice: a randomized trial
+.
+NEJM AI
+2
+(
+12
+),
+pp. AIoa2501000
+.
+Cited by:
+Introduction
+.
+Menendez
+et al.
+(2017)
+M. E. Menendez, B. T. van Hoorn, M. Mackert, E. E. Donovan, N. C. Chen, and D. Ring
+Patients with limited health literacy ask fewer questions during office visits with hand surgeons
+.
+Clinical Orthopaedics and Related Research®
+475
+(
+5
+),
+pp. 1291–1297
+.
+Cited by:
+Introduction
+,
+Introduction
+.
+Norman
+et al.
+(2009)
+G. Norman, K. Barraclough, L. Dolovich, and D. Price
+Iterative diagnosis
+.
+Bmj
+339
+.
+Cited by:
+Introduction
+,
+Introduction
+.
+Olson and Windish (2010)
+D. P. Olson and D. M. Windish
+Communication discrepancies between physicians and hospitalized patients
+.
+Archives of internal medicine
+170
+(
+15
+),
+pp. 1302–1307
+.
+Cited by:
+Introduction
+,
+Introduction
+.
+Omar
+et al.
+(2026)
+M. Omar, V. Sorin, L. H. Wieler, A. W. Charney, P. Kovatch, C. R. Horowitz, P. Korfiatis, B. S. Glicksberg, R. Freeman, G. N. Nadkarni,
+et al.
+Mapping the susceptibility of large language models to medical misinformation across clinical notes and social media: a cross-sectional benchmarking analysis
+.
+The Lancet Digital Health
+8
+(
+1
+).
+Cited by:
+Introduction
+,
+Discussions and Conclusions
+.
+Ouyang
+et al.
+(2022)
+L. Ouyang, J. Wu, X. Jiang, D. Almeida, C. Wainwright, P. Mishkin, C. Zhang, S. Agarwal, K. Slama, A. Ray,
+et al.
+Training language models to follow instructions with human feedback
+.
+Advances in neural information processing systems
+35
+,
+pp. 27730–27744
+.
+Cited by:
+Discussions and Conclusions
+.
+Pal
+et al.
+(2022)
+A. Pal, L. K. Umapathi, and M. Sankarasubbu
+Medmcqa: a large-scale multi-subject multi-choice dataset for medical domain question answering
+.
+In
+Conference on health, inference, and learning
+,
+pp. 248–260
+.
+Cited by:
+Datasets:
+.
+Polya (1945)
+G. Polya
+How to solve it: a new aspect of mathematical method
+.
+Princeton university press
+.
+Cited by:
+Discussions and Conclusions
+.
+Qama (2026)
+E. Qama
+Pushing the boundaries of health self-management with conversational ai
+.
+International Journal of Public Health
+71
+,
+pp. 1608975
+.
+Cited by:
+Introduction
+,
+Introduction
+,
+Discussions and Conclusions
+.
+Ramaswamy
+et al.
+(2026)
+A. Ramaswamy, A. Tyagi, H. Hugo, J. Jiang, P. Jayaraman, M. Jangda, A. E. Te, S. A. Kaplan, J. Lampert, R. Freeman,
+et al.
+ChatGPT health performance in a structured test of triage recommendations
+.
+Nature Medicine
+,
+pp. 1–1
+.
+Cited by:
+Introduction
+.
+Ramesh
+et al.
+(2026)
+S. H. Ramesh, F. Daneshzand, B. Rashidi, S. Raj, H. Subramonyam, and F. Rajabiyazdi
+Metacognitive demands and strategies while using off-the-shelf ai conversational agents for health information seeking
+.
+In
+Proceedings of the 2026 CHI Conference on Human Factors in Computing Systems (CHI ’26)
+,
+External Links:
+Document
+Cited by:
+Introduction
+,
+Introduction
+,
+Discussions and Conclusions
+.
+Sharko
+et al.
+(2025)
+M. Sharko, J. S. Ancker, M. Sharma, M. E. Davis, B. G. Patra, and J. Pathak
+Pregnant patients are less likely to disclose substance use if they perceive stigma in their clinic notes: sharko et al.
+.
+Journal of General Internal Medicine
+,
+pp. 1–3
+.
+Cited by:
+Introduction
+,
+Introduction
+.
+Sharma
+et al.
+(2023)
+M. Sharma, M. Tong, T. Korbak, D. Duvenaud, A. Askell, S. R. Bowman, N. Cheng, E. Durmus, Z. Hatfield-Dodds, S. R. Johnston,
+et al.
+Towards understanding sycophancy in language models
+.
+arXiv preprint arXiv:2310.13548
+.
+Cited by:
+Discussions and Conclusions
+.
+Sherif (1935)
+M. Sherif
+A study of some social factors in perception.
+.
+Archives of Psychology (Columbia University)
+.
+Cited by:
+Discussions and Conclusions
+.
+Smith
+et al.
+(2005)
+P. C. Smith, R. Araya-Guerra, C. Bublitz, B. Parnes, L. M. Dickinson, R. Van Vorst, J. M. Westfall, and W. D. Pace
+Missing clinical information during primary care visits
+.
+Jama
+293
+(
+5
+),
+pp. 565–571
+.
+Cited by:
+Introduction
+.
+Sweller (1988)
+J. Sweller
+Cognitive load during problem solving: effects on learning
+.
+Cognitive science
+12
+(
+2
+),
+pp. 257–285
+.
+Cited by:
+Discussions and Conclusions
+.
+Tiffen
+et al.
+(2014)
+J. Tiffen, S. J. Corbridge, and L. Slimmer
+Enhancing clinical decision making: development of a contiguous definition and conceptual framework
+.
+Journal of professional nursing
+30
+(
+5
+),
+pp. 399–405
+.
+Cited by:
+Introduction
+,
+Introduction
+.
+Wang
+et al.
+(2024)
+Y. Wang, X. Ma, G. Zhang, Y. Ni, A. Chandra, S. Guo, W. Ren, A. Arulraj, X. He, Z. Jiang,
+et al.
+Mmlu-pro: a more robust and challenging multi-task language understanding benchmark
+.
+Advances in Neural Information Processing Systems
+37
+,
+pp. 95266–95290
+.
+Cited by:
+Introduction
+.
+Wei
+et al.
+(2022)
+J. Wei, X. Wang, D. Schuurmans, M. Bosma, F. Xia, E. Chi, Q. V. Le, D. Zhou,
+et al.
+Chain-of-thought prompting elicits reasoning in large language models
+.
+Advances in neural information processing systems
+35
+,
+pp. 24824–24837
+.
+Cited by:
+Discussions and Conclusions
+.
+Yang
+et al.
+(2025)
+X. Yang, Y. Xiao, D. Liu, H. Deng, J. Huang, Y. Zhou, M. Liang, L. Dong, Z. Yuan, J. Yao,
+et al.
+Factors influencing adoption of large language models in health care: multicenter cross-sectional mixed methods observational study
+.
+Journal of Medical Internet Research
+27
+,
+pp. e84918
+.
+Cited by:
+Introduction
+.
+Zhang
+et al.
+(2024)
+M. J. Zhang, W. B. Knox, and E. Choi
+Modeling future conversation turns to teach llms to ask clarifying questions
+.
+arXiv preprint arXiv:2410.13788
+.
+Cited by:
+Discussions and Conclusions
+.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

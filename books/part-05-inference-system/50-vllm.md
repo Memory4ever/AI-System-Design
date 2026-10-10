@@ -273,6 +273,8 @@ host orchestration，却新增 in-flight schedule epoch、cross-stage backpressu
 其公开 benchmark 未完整披露 hardware 与 workload contract，因此正文只保留 distributed request-state
 commit 机制。
 
+异构生成stage也不能仅按最后一个token stage判断请求完成：AR、codec与diffusion各保自己的调度和state，外层orchestrator只拥有admission、stage推进、sticky replica、abort及client progress，重payload由connector搬运。下游可先接placeholder，再随upstream chunk经data-plane计算，而不为每chunk重复control-forward；client-emitting结果与下游输入分开，只有声明的final-output stage集合全部drain才结束请求。长期session再增加独立身份、retention与fence，不把latent buffer混进engine KV。[vLLM-Omni的有限对照](https://arxiv.org/html/2610.09307v1)支持这条异构runtime分工，不认证全部pipeline默认或取消/会话安全；MRv2仍有启动guard和高并发失败，更多音频replica亦会使高负载RTF退步。Warm-cache语音、不同硬件/recipe与one-session health不可当完整质量或tail SLO，input/output、所有engines、connector、session驻留与全部冷/热成本须分别计价。状态、chunk或质量失配时回full-payload handoff、较窄已验收pipeline和独立输出/控制gate，不由统一runtime签发物理effect或普遍加速。<!-- source-family:SF-2026-ARXIV-2610-09307 -->
+
 ### 从重建进程到恢复执行状态
 
 容器镜像、权重缓存和预热副本分别减少软件安装、model load 与容量到达等待；当 kernel warmup、graph compile、
@@ -410,6 +412,8 @@ Primary-source 校验入口：
   https://github.com/vllm-project/vllm/pull/32618
 - OasisKV（sparse off-HBM working-set prefetch；Status: Experimental）:
   https://arxiv.org/abs/2608.08097
+
+- `SF-2026-ARXIV-2610-09307`，vLLM-Omni，Experimental：supplement_20260311实际exact-v1 §2.1–2.6与§5.1–3/5.6必要原证审阅，评分2+2+2=6；root必要Source及Ch50实际完整PP/restore邻接逐字PRE通过，确认差额后深入异构stage控制/数据/会话与final-output集合分责。MRv2失败、replica反退、冷缓存/单fixture和全链成本近文，不授全部pipeline/取消/会话安全或普遍加速。root非写入者已actual顺读253–316完整邻接/新增276及本人416注，回对必要源，POST通过；不预授本日完成。https://arxiv.org/html/2610.09307v1
 
 ### Daily Books delta trace（2026-06—08）
 

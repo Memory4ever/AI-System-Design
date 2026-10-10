@@ -1,0 +1,4889 @@
+Expert Threshold Routing for Autoregressive Language Modeling with Dynamic Computation Allocation and Load Balancing
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Preliminaries: Routing as Constrained Optimization
+Token Choice Routing
+Expert Choice Routing
+3
+Expert Threshold
+Connection to EC.
+Warmup.
+4
+Experiments
+4.1
+Experiment Setup
+4.2
+Main Results
+4.3
+Analysis
+4.3.1
+Cutoff vs Expert Usage Tradeoff
+4.3.2
+Dynamic Computation Allocation
+4.3.3
+Expert Specialization
+4.3.4
+Batch Size Scaling
+4.3.5
+Train-Evaluation Gap
+4.3.6
+Routing Consistency Across Checkpoints
+5
+Related Work
+5.1
+Mixture of Experts
+5.2
+Load Balancing
+5.3
+Dynamic Computation
+5.4
+Causal Generation of Expert Choice Models
+5.5
+From Batch to Population Level Statistics
+6
+Conclusion
+References
+A
+Future Information Leakage for Expert Choice Models
+A.1
+Definition of Future Information Leakage
+A.2
+Finite-precision cutoff implies constant leakage
+A.3
+Upper bound on Infinite-precision future information leakage
+A.4
+Encoding Strategy and Decoding Procedure
+Information from the Past.
+Decoding Procedure.
+A.5
+Formal Proof
+B
+Architecture Details
+B.1
+Data and Tokenization
+B.2
+Model Size Configurations
+Attention configuration.
+MoE configuration.
+C
+Training Setup Details
+C.1
+Training Hyperparameters
+C.1.1
+Weight Initialization
+Component-specific initialization:
+C.1.2
+Optimizer Configuration
+C.2
+Hardware Infrastructure Details
+Hardware.
+Code.
+Parallelism.
+D
+CORE Evaluation Details
+Task types.
+Metric.
+Evaluation protocol.
+E
+Ablations
+E.1
+Warmup
+E.2
+Comparison to Token Choice
+E.3
+Shared Expert
+E.4
+Normalization
+F
+Additional Experiment Results
+F.1
+Capacity Constraints
+F.2
+Routing Consistency Sweep
+Objects being compared.
+Metric definitions.
+Empty-routing conventions.
+F.3
+Activation Dynamics Sweep Across Routing Variants
+Per-token routing visualizations.
+Expert activation heatmaps.
+License: CC BY 4.0
+arXiv:2603.11535v1 [cs.AI] 12 Mar 2026
+Expert Threshold Routing for Autoregressive Language Modeling with Dynamic Computation Allocation and Load Balancing
+Ryan Sun
+Affiliation:
+Computer Science and Engineering, Lehigh University, Bethlehem, PA, USA
+Yixin Liu
+Affiliation:
+Computer Science and Engineering, Lehigh University, Bethlehem, PA, USA
+Yonghui Wu
+Affiliation:
+MD-HOBI-BIOMED INFORMATICS, University of Florida, Gainesville, FL, USA
+Lichao Sun
+Affiliation:
+Computer Science and Engineering, Lehigh University, Bethlehem, PA, USA
+Correspondence to:
+lis221@lehigh.edu
+Abstract
+Token-choice Mixture-of-Experts (TC-MoE) routes each token to a fixed number of experts, limiting dynamic computation allocation and requiring auxiliary losses to maintain load balance. We propose Expert Threshold (ET) routing, where each expert maintains an exponential moving average (EMA) threshold estimated from the global token distribution. At both training and inference, each token is independently routed to an expert if its score exceeds the expert’s threshold, enabling dynamic computation allocation while achieving load balance without auxiliary losses. This fully causal mechanism eliminates dependence on other tokens in the batch, making it well-suited for autoregressive language modeling. In pretraining experiments scaling to 2.4B parameters on FineWeb-Edu, ET achieves 0.067 lower cross-entropy loss than TC-MoE, equivalent to reaching the same performance with 1.6× fewer tokens.
+Keywords:
+Large Language Models, Mixture of Experts, Sparse Architectures, Expert Choice
+†
+†
+affiliationnotice:
+Code available at
+GitHub repository
+.
+1
+Introduction
+Figure 1
+:
+evaluation loss for Dense, TC, and ET. Compared to TC, ET achieves a 0.067 final loss gap (TC vs ET), or equivalently reaching same performance level with 1.6x few tokens.
+Token Choice (TC)
+Load Imbalance
+token input
+Top
+G
+​
+(
+{
+r
+t
+,
+i
+}
+∀
+i
+)
+\mathrm{Top}_{G}\!\bigl(\{r_{t,i}\}_{\forall i}\bigr)
+ℳ
+1
+\mathcal{M}_{1}
+ℳ
+2
+\mathcal{M}_{2}
+ℳ
+3
+\mathcal{M}_{3}
+ℳ
+4
+\mathcal{M}_{4}
+Expert Choice (EC)
+Non Causal
+Seq top-
+k
+k
+ℳ
+i
+\mathcal{M}_{i}
+1 sequence
+Top
+k
+​
+(
+{
+r
+t
+,
+i
+}
+∀
+t
+∈
+seq
+)
+\mathrm{Top}_{k}\!\bigl(\{r_{t,i}\}_{\forall t\in\mathrm{seq}}\bigr)
+Batch top-
+k
+k
+ℳ
+i
+\mathcal{M}_{i}
+s
+1
+s_{1}
+s
+2
+s_{2}
+s
+3
+s_{3}
+1 batch
+Top
+k
+​
+(
+{
+r
+t
+,
+i
+}
+∀
+t
+∈
+batch
+)
+\mathrm{Top}_{k}\!\bigl(\{r_{t,i}\}_{\forall t\in\mathrm{batch}}\bigr)
+Expert Threshold (ET)
+Fully Causal
+EMA Threshold
+c
+i
+c_{i}
+Score
+r
+t
+,
+i
+r_{t,i}
+Token index
+t
+t
+z
+t
+,
+i
+=
+𝟏
+{
+r
+t
+,
+i
+>
+c
+i
+}
+z_{t,i}=\mathbf{1}\{r_{t,i}>c_{i}\}
+routing pool size
+token
+sequence
+batch
+population
+Figure 2
+:
+Illustration of TC, EC, and ET routing mechanisms and their routing pools.
+Left:
+TC routes each token independently to its top-
+G
+G
+experts, causing load imbalance.
+Middle:
+EC has each expert select its top-
+k
+k
+tokens from the batch, requiring access to all tokens including future ones (non-causal).
+Right:
+ET routes each token independently by comparing its score against the population’s top-
+(
+1
+/
+E
+)
+(1/E)
+quantile estimated by an EMA-tracked threshold
+c
+i
+c_{i}
+, enabling fully causal routing over the population.
+Mixture of Experts (MoE) architectures
+(
+Shazeer et al., 2017
+;
+Lepikhin et al., 2021
+;
+Fedus et al., 2022
+)
+have emerged as a leading approach to scale language models efficiently, powering frontier models like DeepSeek-V3
+(
+DeepSeek-AI, 2024
+)
+. By sparsely activating only a subset of expert networks per token, MoE decouples model capacity from computational cost, enabling massive parameter counts with tractable FLOPs.
+However, sparse routing introduces a fundamental tension: without intervention, routers tend to collapse onto a small subset of experts
+(
+Shazeer et al., 2017
+)
+. This harms model quality, as underutilized experts become redundant parameters that waste capacity.
+It also creates hardware bottlenecks under Expert Parallelism
+(
+Lepikhin et al., 2021
+)
+, where skewed loads leave some devices idle and others overloaded.
+Thus, we need a routing mechanism that roughly maintains load balancing.
+Prior work falls into two categories.
+The prevalent token choice (TC) routing
+(
+Fedus et al., 2022
+)
+fixes the number of experts each token selects. This sparsity constraint not only fails to address load imbalance, but further complicates the routing as it conflicts with load balancing, turning the routing into a combinatorial optimization problem. People resort to heuristics to approximate load balancing, such as auxiliary losses
+(
+Lepikhin et al., 2021
+;
+Fedus et al., 2022
+)
+or PID controllers
+(
+Team, 2025a
+;
+Wang et al., 2024
+)
+.
+In contrast, expert choice (EC) routing
+(
+Zhou et al., 2022
+)
+relaxes the fixed computation budget per token and only enforces load balancing within a batch by selecting the top-
+k
+k
+tokens for each expert, achieving perfect load balancing by construction while enabling dynamic computation allocation. However, EC routing fundamentally violates causality, making it unsuitable for autoregressive language models. Selecting top-
+k
+k
+requires comparing against the entire batch that includes future positions. At training time this mechanism leaks information
+(
+Wang et al., 2024
+)
+; at inference time future tokens simply do not exist.
+In this paper, we relax both per-token sparsity and per-batch load balancing, requiring only that load reaches a targeted activation rate in expectation. The resulting mechanism, Expert Threshold (ET) routing, routes each token by comparing its score to a quantile threshold tracked from each expert’s global score distribution. Because the same threshold is used at training and inference, ET routing is fully causal with no train-inference mismatch.
+Pretraining a 2.4B (0.56B active) language model on FineWeb-Edu, ET outperforms TC by 0.067 in cross-entropy loss while achieving near-perfect load balancing. We further show that EC’s performance improves with batch size, and that models trained with large-batch EC can perform causal inference using our threshold-based routing without retraining.
+2
+Preliminaries: Routing as Constrained Optimization
+An MoE layer replaces a dense feed-forward block with a router and
+G
+​
+E
+GE
+experts. Consider a batch of
+N
+N
+tokens with representations
+x
+t
+∈
+ℝ
+d
+x_{t}\in\mathbb{R}^{d}
+. The router computes scores
+r
+t
+,
+i
+=
+(
+W
+r
+​
+x
+t
+)
+i
+,
+r_{t,i}=(W_{r}x_{t})_{i},
+(1)
+collected into a matrix
+r
+∈
+ℝ
+N
+×
+G
+​
+E
+r\in\mathbb{R}^{N\times GE}
+. Based on
+r
+r
+, a routing rule produces a binary assignment
+z
+∈
+{
+0
+,
+1
+}
+N
+×
+G
+​
+E
+z\in\{0,1\}^{N\times GE}
+where
+z
+t
+,
+i
+=
+1
+z_{t,i}=1
+indicates expert
+i
+i
+is activated for token
+t
+t
+and
+0
+0
+otherwise. Each selected expert
+i
+i
+computes an output
+y
+i
+,
+t
+∈
+ℝ
+d
+y_{i,t}\in\mathbb{R}^{d}
+, weighted by a gate value
+p
+t
+,
+i
+=
+σ
+⁡
+(
+r
+t
+,
+i
+)
+p_{t,i}=\sigma(r_{t,i})
+. The MoE output for token
+t
+t
+is
+y
+t
+=
+∑
+i
+=
+1
+G
+​
+E
+z
+t
+,
+i
+​
+p
+t
+,
+i
+​
+y
+i
+,
+t
+.
+y_{t}=\sum_{i=1}^{GE}z_{t,i}\,p_{t,i}\,y_{i,t}.
+(2)
+The routing rule that determines
+z
+z
+therefore controls both compute allocation and expert load balance. We formalize MoE routing as finding
+z
+z
+that maximizes the total routing score subject to computational constraints, since higher scores indicate stronger token-expert affinity and, through the gate
+p
+t
+,
+i
+p_{t,i}
+, larger expert contributions to the output.
+Token Choice Routing
+The standard Token Choice routing goal is:
+max
+z
+\displaystyle\max_{z}
+∑
+t
+=
+1
+N
+∑
+i
+=
+1
+G
+​
+E
+z
+t
+,
+i
+​
+r
+t
+,
+i
+\displaystyle\sum_{t=1}^{N}\sum_{i=1}^{GE}z_{t,i}r_{t,i}
+(3)
+s.t.
+\displaystyle\text{s.t.}
+∑
+i
+=
+1
+G
+​
+E
+z
+t
+,
+i
+=
+G
+,
+∀
+t
+(Sparsity)
+\displaystyle\sum_{i=1}^{GE}z_{t,i}=G,\quad\forall t\quad\text{(Sparsity)}
+∑
+t
+=
+1
+N
+z
+t
+,
+i
+=
+k
+,
+∀
+i
+(Load Balancing)
+\displaystyle\sum_{t=1}^{N}z_{t,i}=k,\quad\forall i\quad\text{(Load Balancing)}
+z
+t
+,
+i
+∈
+{
+0
+,
+1
+}
+\displaystyle z_{t,i}\in\{0,1\}
+Here the sparsity constraint ensures each token selects exactly
+G
+G
+experts, and the Load Balancing constraint ensures each expert processes exactly
+k
+=
+N
+/
+E
+k=N/E
+tokens.
+Solving (
+3
+) exactly requires combinatorial algorithms such as the
+O
+⁡
+(
+N
+3
+)
+O(N^{3})
+Hungarian Matching algorithm. Most Token Choice (TC) methods therefore strictly enforce the sparsity constraint by setting
+z
+t
+,
+i
+=
+1
+⇔
+i
+∈
+Top
+G
+​
+(
+r
+t
+,
+⋅
+)
+z_{t,i}=1\iff i\in\text{Top}_{G}(r_{t,\cdot})
+, while relying on auxiliary losses
+(
+Lepikhin et al., 2021
+;
+Fedus et al., 2022
+)
+or loss-free load balancing strategies
+(
+Wang et al., 2024
+)
+to approximate the load balancing constraint.
+Expert Choice Routing
+While the load balancing constraint is essential to avoid routing collapse, the sparsity constraint has no practical benefit. Thus, Expert Choice (EC)
+(
+Zhou et al., 2022
+)
+removes the sparsity constraint entirely and enforces only load balancing within batches. The primal problem becomes:
+max
+z
+\displaystyle\max_{z}
+∑
+t
+=
+1
+N
+∑
+i
+=
+1
+G
+​
+E
+z
+t
+,
+i
+​
+r
+t
+,
+i
+\displaystyle\sum_{t=1}^{N}\sum_{i=1}^{GE}z_{t,i}r_{t,i}
+(4)
+s.t.
+\displaystyle\text{s.t.}
+∑
+t
+=
+1
+N
+z
+t
+,
+i
+=
+k
+,
+∀
+i
+\displaystyle\sum_{t=1}^{N}z_{t,i}=k,\quad\forall i
+z
+t
+,
+i
+∈
+{
+0
+,
+1
+}
+\displaystyle z_{t,i}\in\{0,1\}
+with trivial closed-form solution
+z
+t
+,
+i
+=
+𝟏
+{
+t
+∈
+Top
+k
+(
+r
+⋅
+,
+i
+)
+}
+z_{t,i}=\mathbf{1}\{t\in\text{Top}_{k}(r_{\cdot,i})\}
+, i.e. picking the top-
+k
+k
+tokens in each batch. This design has two key benefits: (1) Perfect load balancing: each expert processes exactly
+k
+=
+N
+/
+E
+k=N/E
+tokens by construction, eliminating the need for auxiliary losses or capacity clipping; (2) Dynamic computation: a token may be selected by zero, one, or multiple experts, enabling adaptive compute allocation based on token importance.
+However, the per sequence load balancing constraint in EC introduces a causality problem for autoregressive generation. The selection indicator
+z
+t
+,
+i
+z_{t,i}
+depends on all tokens’ scores
+{
+r
+1
+,
+i
+,
+…
+,
+r
+N
+,
+i
+}
+\{r_{1,i},\ldots,r_{N,i}\}
+—including future tokens unavailable during inference. Extending EC to batch-level top-
+k
+k
+(
+Ludziejewski et al., 2024
+)
+partially alleviates this but does not fully restore causality, as routing still depends on batch composition.
+3
+Expert Threshold
+In the preliminaries, we identified the constraints that token choice and expert choice routing impose, yet we question their necessity. To avoid routing collapse, asymptotic load balancing suffices. ET further relaxes the per-sequence or per-batch Load Balancing constraint to a stochastic expectation:
+max
+z
+\displaystyle\max_{z}
+𝔼
+data
+​
+[
+∑
+i
+=
+1
+G
+​
+E
+z
+t
+,
+i
+​
+r
+t
+,
+i
+]
+\displaystyle\mathbb{E}_{\text{data}}\!\left[\sum_{i=1}^{GE}z_{t,i}r_{t,i}\right]
+(5)
+s.t.
+\displaystyle\text{s.t.}
+𝔼
+data
+​
+[
+z
+t
+,
+i
+]
+=
+1
+E
+,
+∀
+i
+\displaystyle\mathbb{E}_{\text{data}}[z_{t,i}]=\frac{1}{E},\quad\forall i
+z
+t
+,
+i
+∈
+{
+0
+,
+1
+}
+\displaystyle z_{t,i}\in\{0,1\}
+Essentially, solving this primal problem is equivalent to picking the top
+1
+/
+E
+1/E
+fraction of tokens from the full router logit distribution, rather than from a single batch. We may obtain a
+(
+1
+−
+1
+/
+E
+)
+(1-1/E)
+-quantile estimate
+c
+i
+c_{i}
+via exponential moving average (EMA) of the
+k
+k
+-th largest router logit of each batch. Then, for both training and inference, we route tokens via binary thresholding, setting
+z
+t
+,
+i
+=
+𝟏
+{
+r
+t
+,
+i
+>
+c
+i
+}
+z_{t,i}=\mathbf{1}\{r_{t,i}>c_{i}\}
+(6)
+where
+z
+t
+,
+i
+∈
+{
+0
+,
+1
+}
+z_{t,i}\in\{0,1\}
+is the binary indicator of whether token
+t
+t
+is routed to expert
+i
+i
+. Since
+z
+t
+,
+i
+z_{t,i}
+depends only on
+r
+t
+,
+i
+r_{t,i}
+and the global threshold
+c
+i
+c_{i}
+, routing is fully causal while satisfying load balancing in expectation.
+Connection to EC.
+Conceptually, ET can be viewed as expert choice routing over an infinitely large batch. In standard EC, each expert selects its top-
+k
+k
+tokens within the batch, so the selection threshold depends on all tokens present. As the batch size grows, however, each individual token’s influence on this threshold vanishes, and the routing decision for any token becomes independent of others. ET approximates this limit by maintaining a fixed threshold estimated from the global token distribution.
+ET and EC handle batch-wise variance differently. EC enforces perfect load balance per batch by letting the threshold vary, which means routing decisions fluctuate with batch composition. ET instead fixes the threshold for stable routing decisions, accepting small variance in per-batch expert utilization. Despite this difference in training, we show that ET routing can serve as causal inference for EC-trained models without retraining, provided the batch size is sufficiently large.
+Warmup.
+At the beginning of training, the router logits’ distribution is not stable yet. The cutoff-EMA requires several thousand steps to converge to a meaningful estimate of the population quantile. During this period, incorrect thresholds cause severe expert starvation—most tokens fail to exceed the threshold, leaving experts underutilized. To address this cold-start problem, we use standard EC routing for the first 4k steps before switching to ET. This allows the cutoff-EMA to accumulate stable statistics under controlled load balance.
+Algorithm 1
+Expert Threshold Routing
+1:
+Input:
+router logits
+r
+∈
+ℝ
+N
+×
+G
+​
+E
+r\in\mathbb{R}^{N\times GE}
+, cutoff-EMA
+{
+c
+i
+}
+\{c_{i}\}
+, decay rate
+β
+\beta
+, target selection size
+k
+=
+N
+/
+E
+k=N/E
+2:
+for
+expert
+i
+=
+1
+,
+…
+,
+G
+​
+E
+i=1,\ldots,GE
+do
+3:
+z
+t
+,
+i
+←
+𝟏
+{
+r
+t
+,
+i
+>
+c
+i
+}
+∀
+t
+z_{t,i}\leftarrow\mathbf{1}\{r_{t,i}>c_{i}\}\quad\forall t
+4:
+if
+Training
+then
+5:
+c
+i
+←
+β
+​
+c
+i
++
+(
+1
+−
+β
+)
+⋅
+kth-largest
+​
+(
+{
+r
+t
+,
+i
+}
+t
+=
+1
+N
+,
+k
+)
+c_{i}\leftarrow\beta c_{i}+(1-\beta)\cdot\text{kth-largest}(\{r_{t,i}\}_{t=1}^{N},k)
+6:
+end
+if
+7:
+end
+for
+8:
+Return
+z
+z
+,
+{
+c
+i
+}
+\{c_{i}\}
+4
+Experiments
+4.1
+Experiment Setup
+We evaluate our methods on Nanochat
+(
+Karpathy, 2025
+)
+, an open-source codebase for training GPT-2-like models.
+We conduct experiments at two scales: a d12 model (575M parameters, 195M active) with 12 transformer layers, and a d20 model (2.4B parameters, 561M active) with 20 transformer layers.
+For MoE layers, we use 16 routed experts with granularity
+G
+=
+1
+G{=}1
+and expansion
+E
+=
+16
+E{=}16
+, plus 1 shared expert. Each token activates the shared expert and on average 1 routed expert. We use sigmoid gates (
+p
+t
+,
+i
+=
+σ
+⁡
+(
+r
+t
+,
+i
+)
+p_{t,i}=\sigma(r_{t,i})
+) instead of softmax gates following LossFree
+(
+Wang et al., 2024
+)
+and Mixture-of-Depths
+(
+Raposo et al., 2024
+)
+.
+We add expert capacity factor of
+C
+=
+0.5
+C=0.5
+to avoid GPU out-of-memory.
+The first layer is kept dense following common practice
+(
+DeepSeek-AI, 2024
+;
+Wang et al., 2024
+)
+to allow meaningful routing. We train on 10B and 11.2B tokens for d12 and d20, respectively, from the FineWeb-Edu 100B dataset
+(
+Penedo et al., 2024
+)
+with a batch size of 0.5M tokens (for d20, we halve the minibatch size and use 2-step gradient accumulation). We report CE loss and CORE benchmark results
+(
+Li et al., 2024
+)
+. Architecture, training, and evaluation details are in Appendices
+B
+,
+C
+, and
+D
+.
+4.2
+Main Results
+We compare Expert Threshold (ET) routing against Expert Choice (EC) and Token Choice (TC) routing. All variants share the same architecture and parameter count. For ET, we use EMA decay
+β
+=
+0.999
+\beta=0.999
+and EC warmup for the first 4k steps.
+For EC, we sweep the global selection batch size from 2k to 512k tokens during training and use ET’s cutoff EMA during inference which makes it fully causal. Unless stated, reported CORE/CE use the causal protocol.
+For TC, we report variants with no load balancing, auxiliary loss (
+α
+=
+0.001
+\alpha{=}0.001
+), and loss-free load balancing (
+u
+=
+0.005
+u{=}0.005
+). Tables
+1
+and
+2
+summarize results.
+ET consistently outperforms TC in both CE loss (by 0.05 on d12 and 0.067 on d20) and CORE (by 1.89 on d12 and 2.83 on d20).
+EC with large batch sizes achieves comparable CE loss to ET, confirming that explicit large-batch selection and EMA-based thresholding reach similar training loss. EC 512k slightly edges out ET on CORE (19.94 vs. 19.88) in d12, though both substantially outperform TC.
+Table 1
+:
+Main results comparing Expert Choice (EC), Token Choice (TC), and Expert Threshold (ET) routing.
+Batch
+: token routing pool size. EC uses global selection batch, TC uses per-step batch, ET reports effective EMA pool size
+N
+/
+(
+1
+−
+β
+)
+N/(1-\beta)
+. TC variants: no load-balancing, auxiliary loss (
+α
+=
+0.001
+\alpha{=}0.001
+), or loss-free (
+u
+=
+0.005
+u{=}0.005
+). We report validation cross-entropy (CE) loss (
+↓
+\downarrow
+) and CORE Eval score (
+↑
+\uparrow
+).
+Method
+Batch
+CE loss (
+↓
+\downarrow
+)
+CORE (
+↑
+\uparrow
+)
+dense
+—
+3.002
+15.743
+TC
+—
+2.893
+17.983
+TC aux
+64k
+2.892
+15.894
+TC loss-free
+512k
+2.898
+18.031
+EC
+2k
+2.910
+17.91
+EC
+8k
+2.845
+18.83
+EC
+64k
+2.841
+18.754
+EC
+512k
+2.843
+19.94
+ET (
+β
+=
+0.999
+\beta{=}0.999
++warmup)
+0.5M
+→
+\rightarrow
+500M
+2.844
+19.876
+Table 2
+:
+d20 results.
+Method
+Batch
+CE loss (
+↓
+\downarrow
+)
+CORE (
+↑
+\uparrow
+)
+dense
+—
+2.751
+20.43
+TC aux
+32k
+2.687
+22.31
+EC
+256k
+2.621
+24.98
+ET (
+β
+=
+0.999
+\beta{=}0.999
++warmup)
+256k
+→
+\rightarrow
+500M
+2.620
+25.14
+4.3
+Analysis
+We analyze key aspects of Expert Threshold routing through cutoff-usage tradeoff, dynamic computation allocation, expert specialization, and supporting EC comparisons on batch size scaling and train-evaluation gap.
+4.3.1
+Cutoff vs Expert Usage Tradeoff
+Figure 3
+:
+Cutoff stability vs expert usage tradeoff.
+Top
+Signed cutoff deviation relative to the EMA for EC at 512k batch size. ET stays at zero because routing uses the cutoff EMA directly.
+Bottom
+Expert usage for EC at 512k and ET. ET varies around the capacity target while EC remains constant.
+(a)
+Per-token expert routing on a GSM8K passage.
+(b)
+Expert activation heatmap.
+Top:
+EC with batch size 2k shows less specialization.
+Bottom:
+ET shows more extreme activation patterns, suggesting more domain-aware routing.
+Figure 4
+:
+Expert specialization analysis. (a) Token-level activation intensity on a GSM8K passage, colored by total fanout (sum of experts activated across layers). The model assigns more computation to structurally important tokens (punctuation, sentence boundaries, numerical results) than to common content words. (b) Expert token ratio heatmaps for HumanEval (code) and GSM8K (math).
+Top:
+EC (batch size 2k).
+Bottom:
+ET. ET achieves sharper patterns in expert activation, suggesting more domain-aware routing and specialization.
+EC and ET achieve routing stability through complementary mechanisms. EC enforces a fixed expert usage: each expert selects exactly top-
+k
+k
+tokens, guaranteeing usage of
+1
+/
+E
+1/E
+per expert. However, the cutoff threshold varies batch-to-batch, with standard deviation scaling as
+𝒪
+⁡
+(
+1
+/
+N
+)
+\mathcal{O}(1/\sqrt{N})
+. ET inverts this tradeoff. The cutoff-EMA provides a stable threshold (
+β
+=
+0.999
+\beta=0.999
+), while expert usage fluctuates around the capacity target. Figure
+3
+shows the signed deviation between EC’s per batch cutoff and cutoff-EMA, while ET remains at zero by design. This enables consistent inference without large-batch coordination. In essence, ET trades off hardware consistency for training-inference uniformity.
+4.3.2
+Dynamic Computation Allocation
+A key advantage of ET and EC is that they do not enforce a fixed amount of computation for every token. We here document its behavior and compare it with EC. For a more drastic comparison, we use the sequence-level EC with batch size 2k. Figure
+4
+(a) gives a qualitative example on a GSM8K passage
+(
+Cobbe et al., 2021
+)
+, where total fanout highlights tokens that receive heavier computation.
+We further analyze how expert activation relates to position and token difficulty. Figure
+5
+shows that both methods allocate more computation to early positions, but EC (2k) exhibits a dramatic spike at the first token (mean fanout
+∼
+\sim
+10) while ET shows a milder increase (
+∼
+\sim
+2) that decays smoothly. The lower row bins tokens by loss and overlays faint dashed layer traces with a denser global trend. For EC (2k), both the global curve and several layers rise with loss, showing that harder tokens receive more computation. ET remains flatter overall, with layer trajectories crossing and the global curve peaking in the middle before softening at higher loss. Additional layerwise views for the two main runs and extended comparisons for the remaining runs appear in Appendix
+F.3
+.
+(a) EC (2k) fanout vs position
+(b) ET fanout vs position
+(c) EC (2k) fanout vs loss by layer
+(d) ET fanout vs loss by layer
+Figure 5
+:
+Activation dynamics for EC (2k) and ET. Both methods allocate more computation to early positions, with EC (2k) showing a sharper spike. Faint dashed curves show per-layer means and solid red curves show the global mean. When binned by loss, EC (2k) fanout rises monotonically while ET peaks early before declining.
+4.3.3
+Expert Specialization
+We follow Global LBL
+(
+Qiu et al., 2025
+)
+to evaluate expert specialization across EC with various batch sizes (2k, 8k, 64k, 512k) and ET. For each configuration, we measure the expert token ratio—the fraction of tokens from a given domain routed to each expert—across HumanEval
+(
+Chen et al., 2021
+)
+(code) and GSM8K
+(
+Cobbe et al., 2021
+)
+(math) evaluation sets. Figure
+4
+(b) compares EC (batch size 2k) with ET. Both exhibit clear specialization: certain experts consistently attract domain-specific tokens, visible as concentrated dark cells in the heatmap. ET achieves specialization comparable to EC without requiring large-batch coordination at inference. The full comparison across all batch sizes (Appendix
+F
+, Figure
+22
+) shows that EC specialization sharpens with larger batches—patterns become more concentrated from 2k to 512k—while ET matches the large-batch EC pattern.
+4.3.4
+Batch Size Scaling
+We hypothesize that larger batch sizes stabilize EC’s cutoff threshold, yielding better performance and motivating ET’s pursuit of the infinite-batch limit. Figure
+6
+confirms this trend across four batch sizes (2k, 8k, 64k, 512k tokens). Training CE loss improves from 2.874 (2k) to 2.844 (8k) to 2.836 (64k), with CORE Eval scores following suit (17.91
+→
+\rightarrow
+18.83
+→
+\rightarrow
+18.75). Top-
+k
+k
+selection over larger token pools better approximates the population-level routing decision, explaining this gain. However, performance saturates around 64k tokens, as increasing to 512k provides no further improvement (2.840 CE, 19.94 CORE Eval).
+Figure
+6
+visualizes this scaling behavior. Notably, ET achieves comparable performance (2.844 CE, 19.876 CORE Eval) without requiring batch size coordination, making it practical for autoregressive inference where only single tokens are available.
+Figure 6
+:
+EC performance across routing batch sizes.
+Training CE loss
+decreases and
+CORE Eval score
+increases with larger batches.
+4.3.5
+Train-Evaluation Gap
+A key concern for Expert Choice is the train-inference discrepancy when using ET routing at inference. During training, EC selects the top-
+k
+k
+tokens for each expert within a batch; at inference, we apply ET’s learned thresholds instead, since future tokens are unavailable for batch-level selection.
+Our results demonstrate that this concern depends critically on the routing batch size. As shown in Table
+1
+, EC with large batch sizes (64k, 512k) achieves validation loss nearly identical to ET (2.841–2.843 vs 2.844), with comparable CORE Eval scores. However,
+smaller batch sizes reveal significant train-inference mismatch
+: EC at 2k tokens shows degraded CORE Eval performance (17.91 vs 19.94 at 512k) and evaluation loss (2.910 vs 2.843). This gap arises because top-
+k
+k
+selection over a small batch is a noisy estimate of the population-level routing decision; at inference (batch size 1), this noise becomes extreme.
+Figure
+7
+illustrates this gap. EC (2k) shows a large train-evaluation discrepancy, while EC (512k) maintains close alignment between train loss EMA and eval loss. ET’s cutoff-EMA mechanism addresses this by maintaining a population-level threshold that is independent of batch size, enabling consistent routing at inference without large-batch coordination.
+Figure 7
+:
+Train loss EMA and eval loss for EC at different batch sizes and ET. Solid lines show train loss EMA and dashed lines show eval loss. EC (2k) shows a large train-eval discrepancy, while EC (512k) and ET remain closely aligned.
+4.3.6
+Routing Consistency Across Checkpoints
+To measure how stably each routing rule preserves token expert assignments over training, we compare the routed-expert sets assigned to the same token-layer pairs across checkpoints, excluding the always-active shared expert. We report weighted Jaccard over pooled token-layer-expert edges,
+weighted
+​
+_
+​
+jaccard
+=
+|
+E
+A
+∩
+E
+B
+|
+|
+E
+A
+∪
+E
+B
+|
+,
+\mathrm{weighted\_jaccard}=\frac{|E_{A}\cap E_{B}|}{|E_{A}\cup E_{B}|},
+where
+E
+A
+E_{A}
+and
+E
+B
+E_{B}
+are the pooled active token-layer-expert edges under two checkpoints. A higher weighted Jaccard indicates more similar routing behaviors between checkpoints. This gives the clearest separation while preserving the same qualitative ranking as the companion divergence views in Appendix
+F.2
+.
+Figure 8
+:
+Within-family checkpoint-pair routing consistency on a fixed validation stream, measured by weighted Jaccard. ET is consistently more stable than EC 2k and stays close to EC 64k. TC is competitive on nearby checkpoints but degrades more on longer ranges.
+Figure
+8
+shows a clear pattern. ET is above EC 2k on every checkpoint pair, indicating that threshold routing preserves its token-expert decisions much more consistently than small-pool EC. At the same time, ET remains close to EC 64k across the full matrix, which supports the view that ET tracks the large-pool EC regime without requiring large-batch coordination at inference. TC shows strong short-range consistency, but its longest-range pairs are weaker than ET, so it does not match the same large-pool EC behavior as cleanly. Appendix
+F.2
+reports the complementary joint JSD heatmap.
+5
+Related Work
+5.1
+Mixture of Experts
+Mixture of Experts (MoE) scales model capacity by routing each token to a small subset of experts while keeping compute nearly constant. A learned gate selects top-
+G
+G
+experts per token
+(
+Shazeer et al., 2017
+)
+, with auxiliary losses to balance load across experts
+(
+Lepikhin et al., 2021
+)
+. The Switch Transformer
+(
+Fedus et al., 2022
+)
+sets
+G
+=
+1
+G{=}1
+for efficiency. Recent LLMs further adopt fine-grained MoE with many small experts and shared experts that remain always active to capture global knowledge
+(
+Dai et al., 2024
+)
+. We incorporate shared experts in our design.
+5.2
+Load Balancing
+A critical challenge in MoE systems is load balancing, as routers often favor a small subset of experts without explicit constraints. The standard approach uses an auxiliary loss
+ℒ
+aux
+=
+α
+​
+∑
+i
+f
+i
+​
+P
+i
+\mathcal{L}_{\text{aux}}=\alpha\sum_{i}f_{i}P_{i}
+to encourage uniform expert assignment
+(
+Lepikhin et al., 2021
+;
+Fedus et al., 2022
+)
+, where
+f
+i
+=
+E
+N
+​
+∑
+t
+=
+1
+N
+z
+t
+,
+i
+f_{i}=\frac{E}{N}\sum_{t=1}^{N}z_{t,i}
+and
+P
+i
+=
+1
+N
+​
+∑
+t
+=
+1
+N
+p
+t
+,
+i
+P_{i}=\frac{1}{N}\sum_{t=1}^{N}p_{t,i}
+are the normalized load and average routing probability for expert
+i
+i
+. Minimizing this loss exerts unbalanced pressure to suppress the router logits based on the load statistics, which makes the router logits biased towards the less loaded experts.
+However, in distributed training, small local batch sizes cause high variance in load estimation. Global-batch load balancing
+(
+Qiu et al., 2025
+;
+Team, 2025b
+)
+addresses this by computing balance statistics across all devices, yielding more stable gradients and improved expert specialization. This insight motivates our approach to extend the “global” philosophy beyond auxiliary losses.
+Recent work explores auxiliary-loss-free alternatives. DeepSeekMoE
+(
+Dai et al., 2024
+)
+introduces expert-specific bias terms
+b
+i
+b_{i}
+that dynamically adjust based on load statistics. Expert selection uses biased scores
+r
+t
+,
+i
++
+b
+i
+r_{t,i}+b_{i}
+, while gating weights use original scores
+r
+t
+,
+i
+r_{t,i}
+, preserving specialization. The bias updates follow
+b
+i
+←
+b
+i
++
+u
+⋅
+sign
+​
+(
+1
+−
+f
+i
+)
+b_{i}\leftarrow b_{i}+u\cdot\text{sign}(1-f_{i})
+, where
+f
+i
+f_{i}
+is a normalized load statistic for expert
+i
+i
+(equal to 1 under perfect balance). This eliminates the trade-off between load balancing and task performance inherent in auxiliary loss methods. LongCat-Flash
+(
+Team, 2025a
+)
+adopts a similar framework but replaces the sign-based update with proportional control:
+Δ
+​
+b
+i
+=
+u
+⋅
+(
+1
+−
+f
+i
+)
+\Delta b_{i}=u\cdot(1-f_{i})
+. While DeepSeek’s approach applies constant-magnitude corrections regardless of imbalance severity, proportional updates scale with the load deviation, enabling smoother convergence.
+Expert Threshold (ET) combines the above ideas. Instead of a per-batch top-
+k
+k
+selection for the original EC, we extend Qwen’s philosophy to compute balance statistics across the entire pretrain population by maintaining a distributional cutoff threshold using EMA. Such number, surprisingly, functions similarly to the bias term for loss-free load balancing. See Table
+4
+for more details.
+Table 3
+:
+Taxonomy of load balancing methods by scope (Aux loss
+(
+Lepikhin et al., 2021
+)
+; Global LBL
+(
+Qiu et al., 2025
+)
+; LossFree
+(
+Wang et al., 2024
+)
+; Seq EC
+(
+Zhou et al., 2022
+)
+; Batch EC
+(
+Ludziejewski et al., 2024
+)
+).
+Micro Batch/Seq
+Batch
+Population
+Aux loss
+Global LBL
+–
+–
+–
+LossFree
+Seq EC
+Batch EC
+ET (ours)
+Table 4
+:
+Conceptual connections between ET and recent work (LossFree
+(
+Wang et al., 2024
+)
+; GShard
+(
+Fedus et al., 2022
+)
+).
+ET
+Similar To
+Connection
+Cutoff-EMA
+c
+i
+c_{i}
+LossFree bias
+b
+i
+b_{i}
+Per-expert scalar; no aux loss
+1
+−
+β
+1-\beta
+LossFree
+μ
+\mu
+Update rate
+5.3
+Dynamic Computation
+Dynamic computation methods adaptively allocate computational resources based on input complexity. Expert Choice (EC)
+(
+Zhou et al., 2022
+)
+, detailed in Section
+2
+, achieves this by letting each expert select its top-
+k
+k
+tokens, enabling variable computation per token (0 to
+G
+​
+E
+GE
+experts). EC has been applied to upcycling dense checkpoints
+(
+Komatsuzaki et al., 2023
+)
+, attention layer skipping
+(
+Raposo et al., 2024
+)
+, vision
+(
+Liu et al., 2024
+)
+, diffusion
+(
+Sun et al., 2024
+;
+Shi et al., 2025
+)
+, and multimodal models
+(
+Lin et al., 2024
+;
+Ni and team, 2025
+)
+. Related variants expand the design space
+(
+Yan et al., 2025
+)
+. However, EC’s causality problem limits its use in autoregressive LLMs (Section
+5.4
+).
+Besides EC, other approaches to dynamic computation rely on other explicit designs. ReMoE
+(
+Wang et al., 2025b
+)
+replaces discrete TopG routing with fully differentiable ReLU-based routing and adaptive L1 regularization.
+Other works
+(
+Jin et al., 2024
+;
+Team, 2025a
+;
+Zeng et al., 2024
+)
+introduce zero-computation experts (e.g., zero, copy, and constant) that allow tokens to skip expert computation entirely, an approach
+Kilian et al. (2026)
+extend to multimodal modeling.
+Top-P routing
+(
+Liu et al., 2025b
+;
+Jin et al., 2025
+;
+Huang et al., 2024
+;
+Wang et al., 2025a
+)
+selects experts based on cumulative probability mass, adapting expert count to routing confidence, so high-confidence tokens use fewer experts while uncertain ones activate more.
+XMoE
+(
+Yang et al., 2024
+)
+is closest to our setting, replacing fixed Top-
+G
+G
+routing with a threshold that activates experts until cumulative routing mass exceeds a preset value. The key difference is that XMoE uses a fixed probability-mass threshold in token-choice MoE, while ET uses expert-specific EMA cutoffs to causalize expert choice. Auto-tuning methods like DynMoE
+(
+Guo et al., 2025
+)
+also let each token determine how many experts to activate while reducing sensitivity to MoE hyperparameters. Beyond MoE routing itself, conditional computation can also be applied to other Transformer components and long-context settings, e.g., CoLT5
+(
+Ainslie et al., 2023b
+)
+.
+Early exit methods
+(
+Xin et al., 2020
+)
+enable sample-level dynamics by allowing tokens to exit at intermediate layers.
+5.4
+Causal Generation of Expert Choice Models
+EC poses a causality challenge: token selection requires ranking against future tokens, which are unavailable in autoregressive generation.
+Prior work addresses this issue in three main ways. Predictor-based methods train an auxiliary predictor or learn per-expert thresholds to approximate oracle top-
+k
+k
+decisions, enabling causal routing at inference
+(
+Raposo et al., 2024
+;
+Shi et al., 2025
+)
+. Alternatively, top-
+k
+k
+selection across the current tokens from different sequences preserves causality within each sequence
+(
+Ludziejewski et al., 2024
+;
+Wen et al., 2025
+)
+. Recent work changes routing granularity: Lory routes at the segment level, using the previous segment to determine the next
+(
+Zhong et al., 2024
+)
+, while SeqTopK shifts expert budgets to sequence-level selection with an
+Expert Cache
+for autoregressive decoding
+(
+Wen et al., 2025
+)
+.
+All above approaches have significant drawbacks: predictions can be noisy and unstable, and batch-level top-
+k
+k
+can impose inference-time topology constraints, leading to a large train–inference mismatch; moreover, routing that depends on global batch composition can be sensitive to batch size/composition and raises privacy/safety concerns in multi-tenant settings
+(
+Wen et al., 2025
+)
+. In contrast to EC, ET reduces to a simple threshold test (whether token logit
+r
+t
+,
+i
+r_{t,i}
+is higher than cutoff EMA
+c
+i
+c_{i}
+) at inference time, thus eliminating the train–inference discrepancy.
+5.5
+From Batch to Population Level Statistics
+The progression from sample, batch, to population-level statistics is a recurring theme in deep learning. While techniques like Batch Normalization
+(
+Ioffe and Szegedy, 2015
+)
+and contrastive learning
+(
+Radford et al., 2021
+)
+rely on batch statistics, momentum-based approaches
+(
+He et al., 2020
+;
+Caron et al., 2021
+)
+and adaptive optimizers like Adam
+(
+Kingma and Ba, 2015
+)
+use Exponential Moving Averages (EMA) to approximate population distributions.
+ET applies this principle to routing via EMA-based cutoffs.
+6
+Conclusion
+We introduce Expert Threshold (ET) routing, a mechanism that resolves the fundamental causality issue in Expert Choice (EC) models while preserving their load-balancing advantages. By maintaining an exponential moving average of each expert’s selection threshold, estimated from historical batches rather than within-batch top-
+k
+k
+selection, ET routing enables fully causal routing. Each token’s routing decision depends only on past statistics, eliminating the need for future token access at both training and inference time. Our experiments demonstrate that ET routing achieves competitive performance with EC routing (matching validation loss at 2.84) while outperforming Token Choice by 0.067 in cross-entropy loss, all while enabling causal autoregressive generation. The cutoff-EMA mechanism provides stable routing thresholds that accurately approximate EC’s top-
+k
+k
+boundaries, as evidenced by the minimal train-inference gap observed across all metrics. We further show that a warmup strategy, using EC routing before transitioning to threshold-based selection, stabilizes early training dynamics. These findings suggest that the perceived incompatibility between Expert Choice routing and causal language modeling can be effectively bridged through population-level threshold estimation, opening new directions for scalable MoE architectures.
+Acknowledgments
+We gratefully acknowledge the support of NVIDIA Corporation and the NVIDIA AI Technology Center (NVAITC) UF program. We thank Hongwu Peng for the generous support and guidance on development of the code.
+Impact Statement
+This paper presents work whose goal is to advance the field of Machine Learning. There are many potential societal consequences of our work, none which we feel must be specifically highlighted here.
+References
+Ainslie
+et al.
+(2023a)
+J. Ainslie, J. Lee-Thorp, M. de Jong, Y. Zemlyanskiy, F. Lebron, and S. Sanghai
+GQA: training generalized multi-query transformer models from multi-head checkpoints
+.
+External Links:
+2305.13245
+,
+Link
+Cited by:
+§B.2
+.
+Ainslie
+et al.
+(2023b)
+J. Ainslie, T. Lei, M. de Jong, S. Ontanon, S. Brahma, Y. Zemlyanskiy, D. Uthus, M. Guo, J. Lee-Thorp, Y. Tay, Y. Sung, and S. Sanghai
+CoLT5: faster long-range transformers with conditional computation
+.
+In
+Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing
+,
+H. Bouamor, J. Pino, and K. Bali (Eds.)
+,
+Singapore
+,
+pp. 5085–5100
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§5.3
+.
+Caron
+et al.
+(2021)
+M. Caron, H. Touvron, I. Misra, H. Jégou, J. Mairal, P. Bojanowski, and A. Joulin
+Emerging properties in self-supervised vision transformers
+.
+In
+IEEE/CVF International Conference on Computer Vision
+,
+pp. 9650–9660
+.
+Cited by:
+§5.5
+.
+Chen
+et al.
+(2021)
+M. Chen, J. Tworek, H. Jun, Q. Yuan, H. P. d. O. Pinto, J. Kaplan, H. Edwards, Y. Burda, N. Joseph, G. Brockman,
+et al.
+Evaluating large language models trained on code
+.
+arXiv preprint arXiv:2107.03374
+.
+Cited by:
+§4.3.3
+.
+Cobbe
+et al.
+(2021)
+K. Cobbe, V. Kosaraju, M. Bavarian, M. Chen, H. Jun, L. Kaiser, M. Plappert, J. Tworek, J. Hilton, R. Nakano,
+et al.
+Training verifiers to solve math word problems
+.
+arXiv preprint arXiv:2110.14168
+.
+Cited by:
+§4.3.2
+,
+§4.3.3
+.
+Dai
+et al.
+(2024)
+D. Dai, C. Deng, C. Zhao, R. X. Xu, H. Gao, D. Chen, J. Li, W. Zeng, X. Yu, Y. Wu, Z. Xie, Y. K. Li, P. Huang, F. Luo, A. Cheng, K. Zhang, J. Sui, X. Zhao, N. Xing, Z. Peng, S. Jie, T. Yang, W. Gao, Q. Wang, Y. Zeng, C. Gao, R. Xiong, and X. Sun
+DeepSeekMoE: towards ultimate expert specialization in mixture-of-experts language models
+.
+External Links:
+2401.06066
+,
+Link
+Cited by:
+§5.1
+,
+§5.2
+.
+DeepSeek-AI (2024)
+DeepSeek-AI
+DeepSeek-v3 technical report
+.
+External Links:
+2412.19437
+,
+Link
+Cited by:
+§1
+,
+§4.1
+.
+Dehghani
+et al.
+(2023)
+M. Dehghani, J. Djolonga, B. Mustafa, P. Padlewski, J. Heek, J. Gilmer, A. Steiner, M. Caron, R. Geirhos, I. Alabdulmohsin,
+et al.
+Scaling vision transformers to 22 billion parameters
+.
+External Links:
+2302.05442
+,
+Link
+Cited by:
+Table 5
+.
+Fedus
+et al.
+(2022)
+W. Fedus, B. Zoph, and N. Shazeer
+Switch transformers: scaling to trillion parameter models with simple and efficient sparsity
+.
+Journal of Machine Learning Research
+23
+(
+120
+),
+pp. 1–39
+.
+Cited by:
+§F.1
+,
+§1
+,
+§1
+,
+§2
+,
+§5.1
+,
+§5.2
+,
+Table 4
+,
+Table 4
+.
+Guo
+et al.
+(2025)
+Y. Guo, Z. Cheng, X. Tang, Z. Tu, and T. Lin
+Dynamic mixture of experts: an auto-tuning approach for efficient transformer models
+.
+External Links:
+2405.14297
+,
+Link
+Cited by:
+§5.3
+.
+He
+et al.
+(2020)
+K. He, H. Fan, Y. Wu, S. Xie, and R. Girshick
+Momentum contrast for unsupervised visual representation learning
+.
+In
+IEEE/CVF Conference on Computer Vision and Pattern Recognition
+,
+pp. 9729–9738
+.
+Cited by:
+§5.5
+.
+Huang
+et al.
+(2024)
+Q. Huang, Z. An, N. Zhuang, M. Tao, C. Zhang, Y. Jin, K. Xu, L. Chen, S. Huang, and Y. Feng
+Harder tasks need more experts: dynamic routing in moe models
+.
+External Links:
+2403.07652
+,
+Link
+Cited by:
+§5.3
+.
+Ioffe and Szegedy (2015)
+S. Ioffe and C. Szegedy
+Batch normalization: accelerating deep network training by reducing internal covariate shift
+.
+In
+International Conference on Machine Learning
+,
+pp. 448–456
+.
+Cited by:
+§5.5
+.
+Jin
+et al.
+(2025)
+C. Jin, H. Peng, M. Xiang, Q. Zhang, X. Yuan, A. Hasan, O. Dibua, Y. Gong, Y. Kang, and D. N. Metaxas
+Sparsity-controllable dynamic top-p moe for large foundation model pre-training
+.
+External Links:
+2512.13996
+,
+Document
+,
+Link
+Cited by:
+§5.3
+.
+Jin
+et al.
+(2024)
+P. Jin, B. Zhu, L. Yuan, and S. Yan
+MoE++: accelerating mixture-of-experts methods with zero-computation experts
+.
+External Links:
+2410.07348
+,
+Link
+Cited by:
+§5.3
+.
+Jordan (2024)
+K. Jordan
+Muon: an optimizer for hidden layers in neural networks
+.
+Note:
+https://kellerjordan.github.io/posts/muon/
+Blog post
+Cited by:
+1st item
+,
+§C.1.2
+.
+Karpathy (2025)
+A. Karpathy
+Nanochat: the best chatgpt that $100 can buy
+.
+Note:
+https://github.com/karpathy/nanochat
+GitHub repository
+Cited by:
+Appendix B
+,
+§C.1.1
+,
+§4.1
+.
+Kilian
+et al.
+(2026)
+M. Kilian, O. Mkrtchyan, L. Zettlemoyer, A. Shrivastava, and A. Aghajanyan
+Improving moe compute efficiency by composing weight and data sparsity
+.
+External Links:
+2601.15370
+,
+Link
+Cited by:
+§5.3
+.
+Kingma and Ba (2015)
+D. P. Kingma and J. Ba
+Adam: a method for stochastic optimization
+.
+In
+International Conference on Learning Representations
+,
+Cited by:
+§5.5
+.
+Komatsuzaki
+et al.
+(2023)
+A. Komatsuzaki, J. Puigcerver, J. Lee-Thorp, C. R. Ruiz, B. Mustafa, J. Ainslie, Y. Tay, M. Dehghani, and N. Houlsby
+Sparse upcycling: training mixture-of-experts from dense checkpoints
+.
+In
+International Conference on Learning Representations (ICLR)
+,
+External Links:
+Link
+Cited by:
+§5.3
+.
+Lepikhin
+et al.
+(2021)
+D. Lepikhin, H. Lee, Y. Xu, D. Chen, O. Firat, Y. Huang, M. Krikun, N. Shazeer, and Z. Chen
+{GS}hard: scaling giant models with conditional computation and automatic sharding
+.
+In
+International Conference on Learning Representations
+,
+External Links:
+Link
+Cited by:
+§1
+,
+§1
+,
+§2
+,
+§5.1
+,
+§5.2
+,
+Table 3
+,
+Table 3
+.
+Li
+et al.
+(2024)
+J. Li, A. Fang, G. Smber, M. Wortsman, S. Y. Gadre, L. Schmidt,
+et al.
+DataComp-lm: in search of the next generation of training sets for language models
+.
+arXiv preprint arXiv:2406.11794
+.
+Cited by:
+Appendix D
+,
+§4.1
+.
+Lin
+et al.
+(2024)
+X. V. Lin, A. Shrivastava, L. Luo, S. Iyer, M. Lewis, G. Ghosh, L. Zettlemoyer, and A. Aghajanyan
+MoMa: efficient early-fusion pre-training with mixture of modality-aware experts
+.
+External Links:
+2407.21770
+,
+Link
+Cited by:
+§5.3
+.
+Liu
+et al.
+(2025a)
+H. Liu, Y. Li, Y. Shen, B. Wang, C. Liang, C. Jiang, C. Li, D. Deng, F. Ding, W. Gao,
+et al.
+Moonlight: a cost-effective approach for pre-training large language models
+.
+External Links:
+2502.16456
+,
+Link
+Cited by:
+§C.1.2
+.
+Liu
+et al.
+(2024)
+T. Liu, M. Blondel, C. Riquelme Ruiz, and J. Puigcerver
+Routers in vision mixture of experts: an empirical study
+.
+Transactions on Machine Learning Research
+.
+Note:
+Also available as arXiv:2401.15969
+External Links:
+Link
+Cited by:
+§5.3
+.
+Liu
+et al.
+(2025b)
+Z. Liu, Y. Li, X. Zhang, Q. Teng, S. Jiang, X. Chen, H. Shi, J. Li, Q. Wang, H. Chen, F. Meng, M. Zhao, Y. Xu, Y. He, B. Hu, and M. Zhang
+UniMoE-audio: unified speech and music generation with dynamic-capacity moe
+.
+External Links:
+2510.13344
+,
+Link
+Cited by:
+§5.3
+.
+Loshchilov and Hutter (2019)
+I. Loshchilov and F. Hutter
+Decoupled weight decay regularization
+.
+In
+International Conference on Learning Representations
+,
+External Links:
+Link
+Cited by:
+2nd item
+.
+Ludziejewski
+et al.
+(2024)
+J. Ludziejewski, J. Krajewski, K. Adamczewski, M. Pioro, S. Chowdhury, A. Sanyal, B. Miasojedow, H. R. Pontes, S. Jaszczur, B. Pacek, S. Jastrzębski, O. Bousquet, E. Hoogeboom, and H. Michalewski
+Scaling laws for fine-grained mixture of experts
+.
+In
+Proceedings of the 41st International Conference on Machine Learning
+,
+Proceedings of Machine Learning Research
+, Vol.
+235
+,
+pp. 32790–32809
+.
+External Links:
+Link
+Cited by:
+§2
+,
+§5.4
+,
+Table 3
+,
+Table 3
+.
+Ni and team (2025)
+J. Ni and team
+OpenMoE 2: sparse diffusion language models
+.
+Note:
+https://github.com/JinjieNi/OpenMoE2
+Cited by:
+§5.3
+.
+Penedo
+et al.
+(2024)
+G. Penedo, H. Kydlíček, L. B. allal, A. Lozhkov, M. Mitchell, C. Raffel, L. V. Werra, and T. Wolf
+The fineweb datasets: decanting the web for the finest text data at scale
+.
+In
+The Thirty-eight Conference on Neural Information Processing Systems Datasets and Benchmarks Track
+,
+External Links:
+Link
+Cited by:
+§B.1
+,
+§4.1
+.
+Qiu
+et al.
+(2025)
+Z. Qiu, Z. Huang, B. Zheng, K. Wen, Z. Wang, R. Men, I. Titov, D. Liu, J. Zhou, and J. Lin
+Demons in the detail: on implementing load balancing loss for training specialized mixture-of-expert models
+.
+External Links:
+2501.11873
+,
+Link
+Cited by:
+§4.3.3
+,
+§5.2
+,
+Table 3
+,
+Table 3
+.
+Radford
+et al.
+(2021)
+A. Radford, J. W. Kim, C. Hallacy, A. Ramesh, G. Goh, S. Agarwal, G. Sastry, A. Askell, P. Mishkin, J. Clark,
+et al.
+Learning transferable visual models from natural language supervision
+.
+In
+International Conference on Machine Learning
+,
+pp. 8748–8763
+.
+Cited by:
+§5.5
+.
+Radford
+et al.
+(2019)
+A. Radford, J. Wu, R. Child, D. Luan, D. Amodei, and I. Sutskever
+Language models are unsupervised multitask learners
+.
+Note:
+OpenAI Blog
+External Links:
+Link
+Cited by:
+Appendix B
+.
+Rajbhandari
+et al.
+(2020)
+S. Rajbhandari, J. Rasley, O. Ruwase, and Y. He
+ZeRO: memory optimizations toward training trillion parameter models
+.
+External Links:
+1910.02054
+,
+Link
+Cited by:
+§C.2
+.
+Raposo
+et al.
+(2024)
+D. Raposo, S. Ritter, B. Richards, T. Lillicrap, P. C. Humphreys, and A. Santoro
+Mixture-of-depths: dynamically allocating compute in transformer-based language models
+.
+arXiv preprint arXiv:2404.02258
+.
+Cited by:
+§4.1
+,
+§5.3
+,
+§5.4
+.
+Shazeer
+et al.
+(2017)
+N. Shazeer, A. Mirhoseini, K. Maziarz, A. Davis, Q. Le, G. Hinton, and J. Dean
+Outrageously large neural networks: the sparsely-gated mixture-of-experts layer
+.
+arXiv preprint arXiv:1701.06538
+.
+Cited by:
+§1
+,
+§5.1
+.
+Shi
+et al.
+(2025)
+M. Shi, Z. Yuan, H. Yang, X. Wang, M. Zheng, X. Tao, W. Zhao, W. Zheng, J. Zhou, J. Lu, P. Wan, D. Zhang, and K. Gai
+DiffMoE: dynamic token selection for scalable diffusion transformers
+.
+External Links:
+2503.14487
+,
+Link
+Cited by:
+§5.3
+,
+§5.4
+.
+So
+et al.
+(2021)
+D. R. So, W. Mańke, H. Liu, Z. Dai, N. Shazeer, and Q. V. Le
+Primer: searching for efficient transformers for language modeling
+.
+External Links:
+2109.08668
+,
+Link
+Cited by:
+Table 5
+.
+Su
+et al.
+(2024)
+J. Su, M. Ahmed, Y. Lu, S. Pan, W. Bo, and Y. Liu
+RoFormer: enhanced transformer with rotary position embedding
+.
+Neurocomputing
+568
+,
+pp. 127063
+.
+External Links:
+Document
+,
+Link
+Cited by:
+Table 5
+.
+Sun
+et al.
+(2024)
+H. Sun, T. Lei, B. Zhang, Y. Li, H. Huang, R. Pang, B. Dai, and N. Du
+EC-dit: scaling diffusion transformers with adaptive expert-choice routing
+.
+External Links:
+2410.02098
+,
+Link
+Cited by:
+§5.3
+.
+Tan
+et al.
+(2024)
+S. Tan, Y. Shen, R. Panda, and A. Courville
+Scattered mixture-of-experts implementation
+.
+External Links:
+2403.08245
+,
+Link
+Cited by:
+§C.2
+.
+Team
+et al.
+(2024)
+G. Team, M. Riviere, S. Pathak, P. G. Sessa, C. Cassirer, L. Coppey, K. El-Boukkouri,
+et al.
+Gemma 2: improving open language models at a practical size
+.
+External Links:
+2408.00118
+,
+Link
+Cited by:
+Table 5
+.
+Team (2025a)
+M. A. Team
+LongCat-flash technical report
+.
+External Links:
+2509.01322
+,
+Link
+Cited by:
+§1
+,
+§5.2
+,
+§5.3
+.
+Team (2025b)
+Q. Team
+Qwen3 technical report
+.
+External Links:
+2505.09388
+,
+Link
+Cited by:
+§5.2
+.
+Wang
+et al.
+(2025a)
+A. Wang, X. Sun, R. Xie, S. Li, J. Zhu, Z. Yang, P. Zhao, W. Han, Z. Kang, D. Wang, N. Okazaki, and C. Xu
+HMoE: heterogeneous mixture of experts for language modeling
+.
+In
+Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing
+,
+C. Christodoulopoulos, T. Chakraborty, C. Rose, and V. Peng (Eds.)
+,
+Suzhou, China
+,
+pp. 21943–21957
+.
+External Links:
+Link
+,
+Document
+,
+ISBN 979-8-89176-332-6
+Cited by:
+§5.3
+.
+Wang
+et al.
+(2024)
+L. Wang, H. Gao, C. Zhao, X. Sun, and D. Dai
+Auxiliary-loss-free load balancing strategy for mixture-of-experts
+.
+External Links:
+2408.15664
+,
+Link
+Cited by:
+§A.3
+,
+Appendix A
+,
+§1
+,
+§2
+,
+§4.1
+,
+Table 3
+,
+Table 3
+,
+Table 4
+,
+Table 4
+.
+Wang
+et al.
+(2025b)
+Z. Wang, J. Zhu, and J. Chen
+ReMoE: fully differentiable mixture-of-experts with reLU routing
+.
+In
+The Thirteenth International Conference on Learning Representations
+,
+External Links:
+Link
+Cited by:
+§5.3
+.
+Wen
+et al.
+(2025)
+T. Wen, Y. Wang, A. Feng, L. Ma, X. Liu, Y. Wang, L. Guo, B. Chen, S. Jegelka, and C. You
+Route experts by sequence, not by token
+.
+External Links:
+2511.06494
+,
+Document
+,
+Link
+Cited by:
+§5.4
+.
+Xin
+et al.
+(2020)
+J. Xin, R. Tang, J. Lee, Y. Yu, and J. Lin
+DeeBERT: dynamic early exiting for accelerating bert inference
+.
+In
+Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics
+,
+pp. 2246–2251
+.
+Cited by:
+§5.3
+.
+Yan
+et al.
+(2025)
+S. Yan, X. Bin, S. Zhang, Y. Wang, and Z. Lin
+TC-MoE: augmenting mixture of experts with ternary expert choice
+.
+In
+International Conference on Learning Representations (ICLR)
+,
+Note:
+Poster
+External Links:
+Link
+Cited by:
+§5.3
+.
+Yang
+et al.
+(2022)
+G. Yang, E. J. Hu, I. Babuschkin, S. Sidor, X. Liu, D. Farhi, N. Ryder, J. Pachocki, W. Chen, and J. Gao
+Tensor programs v: tuning large neural networks via zero-shot hyperparameter transfer
+.
+External Links:
+2203.03466
+,
+Link
+Cited by:
+Table 7
+,
+Table 7
+.
+Yang
+et al.
+(2024)
+Y. Yang, S. Qi, W. Gu, C. Wang, C. Gao, and Z. Xu
+XMoE: sparse models with fine-grained and adaptive expert selection
+.
+In
+Findings of the Association for Computational Linguistics: ACL 2024
+,
+L. Ku, A. Martins, and V. Srikumar (Eds.)
+,
+Bangkok, Thailand
+,
+pp. 11664–11674
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§5.3
+.
+Zeng
+et al.
+(2024)
+Z. Zeng, Y. Miao, H. Gao, H. Zhang, and Z. Deng
+AdaMoE: token-adaptive routing with null experts for mixture-of-experts language models
+.
+In
+Findings of the Association for Computational Linguistics: EMNLP 2024
+,
+Y. Al-Onaizan, M. Bansal, and Y. Chen (Eds.)
+,
+Miami, Florida, USA
+,
+pp. 6223–6235
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§5.3
+.
+Zhang and Sennrich (2019)
+B. Zhang and R. Sennrich
+Root mean square layer normalization
+.
+External Links:
+1910.07467
+,
+Link
+Cited by:
+Table 5
+.
+Zhong
+et al.
+(2024)
+Z. Zhong, M. Xia, D. Chen, and M. Lewis
+Lory: fully differentiable mixture-of-experts for autoregressive language model pre-training
+.
+In
+Conference on Language Modeling (COLM)
+,
+External Links:
+Link
+Cited by:
+§5.4
+.
+Zhou
+et al.
+(2022)
+Y. Zhou, T. Lei, H. Liu, N. Du, Y. Huang, V. Zhao, A. M. Dai, Q. V. Le, J. Laudon,
+et al.
+Mixture-of-experts with expert choice routing
+.
+Advances in Neural Information Processing Systems
+35
+,
+pp. 7103–7114
+.
+Cited by:
+§1
+,
+§2
+,
+§5.3
+,
+Table 3
+,
+Table 3
+.
+Appendix A
+Future Information Leakage for Expert Choice Models
+In DeepSeek’s loss-free load balancing paper
+(
+Wang et al., 2024
+)
+, they give an upper bound on the future information leakage of Expert Choice (EC) to be superlinear in the number of tokens. They considered all potential selection combinations
+(
+N
+k
+)
+\binom{N}{k}
+for choose
+k
+=
+N
+/
+E
+k=N/E
+tokens out of
+N
+N
+tokens, which makes upper bound
+log
+2
+⁡
+(
+N
+k
+)
+=
+O
+⁡
+(
+N
+​
+log
+⁡
+N
+)
+\log_{2}\binom{N}{k}=O(N\log N)
+.
+We consider two scenarios: when cutoff threshold is expressed as a finite precision float, it is trivial that the total future information leakage is at most the number of bits to represent the cutoff threshold. However, when cutoff threshold is of infinite precision, we show that we can indeed leak at least
+O
+⁡
+(
+N
+​
+log
+⁡
+N
+)
+O(N\log N)
+bits of future information, making the bound tight.
+We arrange the following sections as follows:
+1.
+First, we provide a formal definition of future information leakage.
+2.
+Then, we show for finite precision, the total leakage is constant, which means per token leakage is 0 as batch size increases.
+3.
+Then, we show for infinite precision, we describe an encoding strategy that can leak at least
+O
+⁡
+(
+N
+​
+log
+⁡
+N
+)
+O(N\log N)
+bits of future information, making the bound tight. The idea is that we can break the cutoff space into
+2
+N
+2^{N}
+small intervals, and injectively (though not surjectively) map each potential selection combination to a unique interval in a memoryless way.
+4.
+We formally prove that the encoding strategy can leak at least
+O
+⁡
+(
+N
+​
+log
+⁡
+N
+)
+O(N\log N)
+bits of future information.
+Gladly, since we rely on finite precision float to represent the cutoff threshold, ET is still causal.
+A.1
+Definition of Future Information Leakage
+Definition A.1
+(Future information leakage)
+.
+Fix a sequence length
+N
+N
+and a deterministic selection rule
+F
+F
+that maps a logit sequence
+r
+1
+:
+N
+r_{1:N}
+to a subset
+F
+(
+r
+1
+:
+N
+)
+⊆
+[
+N
+]
+F(r_{1:N})\subseteq[N]
+(where
+[
+N
+]
+≜
+{
+1
+,
+…
+,
+N
+}
+[N]\triangleq\{1,\dots,N\}
+). Here
+r
+1
+:
+N
+r_{1:N}
+denotes the entire sequence of router scores/logits across tokens, and we write
+z
+t
+≜
+[
+t
+∈
+F
+(
+r
+1
+:
+N
+)
+]
+z_{t}\triangleq\mathbf{1}\!\left[t\in F(r_{1:N})\right]
+for the induced selection indicator.
+An
+advice variable
+is any function
+A
+=
+α
+(
+r
+1
+:
+N
+)
+A=\alpha(r_{1:N})
+with finite range, where
+α
+\alpha
+is an
+encoder
+that maps the full logit sequence to a finite label. We write
+Range
+(
+α
+)
+≜
+{
+α
+(
+r
+1
+:
+N
+)
+:
+r
+1
+:
+N
+}
+\mathrm{Range}(\alpha)\triangleq\{\alpha(r_{1:N}):r_{1:N}\}
+for the set of labels that can be produced by
+α
+\alpha
+.
+We say
+A
+A
+causalizes
+F
+F
+if there exist functions
+{
+g
+t
+}
+t
+=
+1
+N
+\{g_{t}\}_{t=1}^{N}
+such that for all
+r
+1
+:
+N
+r_{1:N}
+and all
+t
+∈
+[
+N
+]
+t\in[N]
+,
+z
+t
+=
+g
+t
+(
+r
+1
+:
+t
+,
+A
+)
+.
+z_{t}\;=\;g_{t}\!\left(r_{1:t},A\right).
+The future information leakage of
+F
+F
+on length
+N
+N
+is
+ℒ
+F
+(
+[
+:
+N
+]
+)
+≜
+min
+α
+,
+{
+g
+t
+}
+log
+2
+|
+Range
+(
+α
+)
+|
+.
+\mathcal{L}_{F}([1\!:\!N])\;\triangleq\;\min_{\alpha,\,\{g_{t}\}}\log_{2}\!\left|\mathrm{Range}(\alpha)\right|.
+A.2
+Finite-precision cutoff implies constant leakage
+With this definition, it is trivial to show that, under finite precision float representation, the total future information leakage is constant, which means per token leakage is 0 as batch size increases.
+In our case,
+F
+F
+is the Expert Choice selection rule induced by a cutoff threshold: for each expert, tokens are selected by comparing their router scores against the expert’s cutoff (equivalently, selecting those above the cutoff, which matches top-
+k
+k
+when the cutoff is set to the
+k
+k
+-th order statistic).
+Theorem A.2
+(Finite-precision cutoff implies constant leakage)
+.
+If the cutoff threshold is represented with
+b
+b
+bits of precision (e.g.,
+b
+=
+16
+b=16
+for
+bf16
+or
+b
+=
+32
+b=32
+for
+fp32
+), then the future information leakage satisfies
+ℒ
+F
+(
+[
+:
+N
+]
+)
+≤
+b
+\mathcal{L}_{F}([1\!:\!N])\leq b
+for all
+N
+N
+.
+Proof.
+This is an upper bound via a particular advice choice. Let the advice be the cutoff itself:
+A
+=
+α
+(
+r
+1
+:
+N
+)
+≜
+β
+A=\alpha(r_{1:N})\triangleq\beta
+, encoded in
+b
+b
+bits, so
+|
+Range
+⁡
+(
+α
+)
+|
+≤
+2
+b
+|\mathrm{Range}(\alpha)|\leq 2^{b}
+. Given
+A
+=
+β
+A=\beta
+, the selection indicator at time
+t
+t
+is a causal function of the prefix (in fact, of
+r
+t
+r_{t}
+) and
+β
+\beta
+by thresholding, hence
+A
+A
+causalizes
+F
+F
+. Therefore
+ℒ
+F
+(
+[
+:
+N
+]
+)
+≤
+log
+2
+|
+Range
+(
+α
+)
+|
+≤
+b
+\mathcal{L}_{F}([1\!:\!N])\leq\log_{2}|\mathrm{Range}(\alpha)|\leq b
+.
+∎
+A.3
+Upper bound on Infinite-precision future information leakage
+The strategy we used in the previous subsection does not work for infinite precision cutoff, as it takes infinite bits of communication to represent the cutoff. Thus, we need a different encoding strategy.
+Previously, Loss-free Load Balancing paper
+Wang et al. (2024)
+gave a combinatorial upper bound on the information carried by an Expert Choice allocation when we allow all admissible token-to-expert assignments consistent with the sparsity pattern.
+Using the token-choice notation from Loss-free Load Balancing, let
+N
+N
+denote the number of tokens in the routing pool and
+G
+​
+E
+GE
+the number of routed experts. Each token activates
+G
+G
+routed experts, so the MoE sparsity is
+1
+E
+\frac{1}{E}
+. For an MoE layer in Expert Choice, the maximum information leakage
+L
+L
+(bits per token) is:
+L
+\displaystyle L
+=
+G
+​
+E
+N
+​
+log
+2
+​
+(
+N
+N
+E
+)
+\displaystyle=\frac{GE}{N}\log_{2}\!\binom{N}{\frac{N}{E}}
+>
+G
+​
+E
+N
+⋅
+N
+E
+​
+log
+2
+⁡
+(
+E
+−
+1
+)
+\displaystyle>\frac{GE}{N}\cdot\frac{N}{E}\log_{2}(E-1)
+=
+G
+​
+log
+2
+​
+(
+E
+−
+1
+)
+.
+\displaystyle=G\log_{2}(E-1).
+(7)
+For a model with sparsity
+1
+E
+=
+2
+16
+=
+0.125
+\frac{1}{E}=\frac{2}{16}=0.125
+and 9 MoE layers, the total leakage information is more than 50 bits per token.
+A.4
+Encoding Strategy and Decoding Procedure
+The above upper bound is pretty intuitive to understand. We ask, can we reach this bound? Surprisingly, we can. In this subsection, we describe an encoding strategy where we create an injective mapping from the set of all possible expert choice combinations to the range of the infinite precision cutoff.
+Suppose the cutoff
+c
+∈
+[
+0
+,
+1
+]
+c\in[0,1]
+. We partition this space into
+2
+N
+2^{N}
+dyadic intervals. Let
+z
+∈
+{
+0
+,
+1
+}
+N
+z\in\{0,1\}^{N}
+be the target expert choice combination (codeword). We map
+z
+z
+to the interval:
+I
+(
+z
+)
+≜
+[
+∑
+t
+=
+1
+N
+(
+1
+−
+z
+t
+)
+2
+−
+t
+,
+∑
+t
+=
+1
+N
+(
+1
+−
+z
+t
+)
+2
+−
+t
++
+2
+−
+N
+)
+.
+I(z)\;\triangleq\;\Big[\sum_{t=1}^{N}(1-z_{t})2^{-t},\ \sum_{t=1}^{N}(1-z_{t})2^{-t}+2^{-N}\Big).
+This orders codewords in descending order:
+00
+⋯
+00
+00\cdots 00
+maps to the rightmost interval and
+11
+⋯
+11
+11\cdots 11
+maps to the leftmost. Choose a cutoff value
+c
+∈
+I
+⁡
+(
+z
+)
+c\in I(z)
+. Obviously, this mapping is injective, i.e. each codeword maps to a unique interval. However, since not all combinations are possible, it is not surjective.
+Information from the Past.
+For a token
+t
+t
+, what information about the past routing logits
+r
+1
+:
+t
+r_{1:t}
+and decisions
+z
+1
+:
+t
+z_{1:t}
+can we use to guide the selection of the interval? Turns out, the only information we get is the current bracket
+[
+ℓ
+,
+u
+)
+[\ell,u)
+containing the decision boundary. The upper bound
+u
+u
+is determined by the lowest logit of the selected tokens, and the lower bound
+ℓ
+\ell
+by the highest logit of the unselected tokens. To maximize information leakage, we minimize help from the past by always choosing the next query logit to be in the middle of the interval,
+r
+t
+=
+(
+ℓ
++
+u
+)
+/
+2
+r_{t}=(\ell+u)/2
+. Then, the routing decision
+z
+t
+=
+𝟏
+{
+r
+t
+≥
+c
+}
+z_{t}=\mathbf{1}\{r_{t}\geq c\}
+reveals exactly one bit of the cutoff, requiring full future information.
+Decoding Procedure.
+We formalize this procedure in Algorithm
+2
+.
+Algorithm 2
+Binary-search decoding of an infinite-precision cutoff
+1:
+Input:
+horizon
+N
+N
+; unknown cutoff
+c
+∈
+[
+0
+,
+1
+]
+c\in[0,1]
+; oracle bit
+z
+t
+=
+𝟏
+{
+r
+t
+≥
+c
+}
+z_{t}=\mathbf{1}\{r_{t}\geq c\}
+2:
+ℓ
+←
+0
+,
+u
+←
+1
+\ell\leftarrow 0,\ u\leftarrow 1
+3:
+for
+t
+=
+1
+,
+…
+,
+N
+t=1,\ldots,N
+do
+4:
+r
+t
+←
+(
+ℓ
++
+u
+)
+/
+2
+r_{t}\leftarrow(\ell+u)/2
+{Query midpoint}
+5:
+Observe selection
+z
+t
+∈
+{
+0
+,
+1
+}
+z_{t}\in\{0,1\}
+6:
+if
+z
+t
+=
+1
+z_{t}=1
+then
+7:
+u
+←
+r
+t
+u\leftarrow r_{t}
+{Selected (
+r
+t
+≥
+c
+r_{t}\geq c
+)
+⟹
+c
+∈
+[
+ℓ
+,
+r
+t
+)
+\implies c\in[\ell,r_{t})
+}
+8:
+else
+9:
+ℓ
+←
+r
+t
+\ell\leftarrow r_{t}
+{Not selected (
+r
+t
+<
+c
+r_{t}<c
+)
+⟹
+c
+∈
+[
+r
+t
+,
+u
+)
+\implies c\in[r_{t},u)
+}
+10:
+end
+if
+11:
+end
+for
+12:
+Return
+(
+z
+1
+,
+…
+,
+z
+N
+)
+(z_{1},\ldots,z_{N})
+and interval
+[
+ℓ
+,
+u
+)
+[\ell,u)
+Figure 9
+:
+Illustration of the binary-search encoding strategy. The cutoff value
+c
+c
+partitions the interval
+[
+0
+,
+1
+]
+[0,1]
+into regions corresponding to different expert selection patterns, enabling
+N
+N
+bits of future information to be encoded in a single real-valued threshold.
+A.5
+Formal Proof
+We now formally prove that the amount of information required to implement the Expert Choice selection causally is lower-bounded by the combinatorial entropy of the selection space. This confirms that the upper bound in Eq. (7) is tight and that the infinite-precision construction in Algorithm
+2
+is optimal in terms of information leakage.
+Theorem A.3
+.
+For a single expert with capacity
+k
+=
+⌊
+N
+/
+E
+⌋
+k=\lfloor N/E\rfloor
+, any causal routing mechanism that can realize all possible top-
+k
+k
+assignments requires at least
+log
+2
+⁡
+(
+N
+k
+)
+\log_{2}\binom{N}{k}
+bits of non-causal information (advice).
+Proof.
+Let
+𝒵
+k
+=
+{
+z
+∈
+{
+0
+,
+1
+}
+N
+:
+∑
+t
+=
+1
+N
+z
+t
+=
+k
+}
+\mathcal{Z}_{k}=\{z\in\{0,1\}^{N}:\sum_{t=1}^{N}z_{t}=k\}
+be the set of all valid selection indicators for the expert, with
+|
+𝒵
+k
+|
+=
+(
+N
+k
+)
+|\mathcal{Z}_{k}|=\binom{N}{k}
+. We show that distinct advice is necessary for every distinct pattern in
+𝒵
+k
+\mathcal{Z}_{k}
+.
+Consider the specific family of logit sequences generated by the binary search process in Algorithm
+2
+. In this construction, the router logit
+r
+t
+r_{t}
+is the midpoint of the current valid interval
+[
+ℓ
+,
+u
+)
+[\ell,u)
+, which is determined solely by the history of decisions
+z
+1
+,
+…
+,
+z
+t
+−
+1
+z_{1},\dots,z_{t-1}
+. Consequently, if two selection patterns
+z
+z
+and
+z
+′
+z^{\prime}
+share the same prefix
+z
+1
+:
+t
+−
+1
+z_{1:t-1}
+, they will generate the exact same logit
+r
+t
+r_{t}
+at step
+t
+t
+.
+Suppose there exists an advice encoding with range size strictly less than
+(
+N
+k
+)
+\binom{N}{k}
+. By the Pigeonhole Principle, at least two distinct valid patterns
+z
+,
+z
+′
+∈
+𝒵
+k
+z,z^{\prime}\in\mathcal{Z}_{k}
+must share the same advice value. Let
+t
+t
+be the first index where they differ (i.e.,
+z
+1
+:
+t
+−
+1
+=
+z
+′
+1
+:
+t
+−
+1
+z_{1:t-1}=z^{\prime}_{1:t-1}
+but
+z
+t
+≠
+z
+t
+′
+z_{t}\neq z^{\prime}_{t}
+).
+Since the prefixes are identical, the generated logit sequence
+r
+1
+:
+t
+r_{1:t}
+is identical for both patterns. A causal decoder, which must output a decision at time
+t
+t
+based only on
+r
+1
+:
+t
+r_{1:t}
+and the advice, receives identical inputs for both cases. It must therefore produce the same output. However,
+z
+t
+≠
+z
+t
+′
+z_{t}\neq z^{\prime}_{t}
+, so the decoder necessarily fails for at least one of the patterns.
+Thus, every valid top-
+k
+k
+pattern requires a unique advice value. The minimum information leakage is
+log
+2
+⁡
+(
+N
+k
+)
+\log_{2}\binom{N}{k}
+bits per expert.
+∎
+Summing this lower bound over
+G
+​
+E
+GE
+experts recovers the combinatorial quantity in Eq. (7), proving that Expert Choice routing fundamentally requires significant future information to implement.
+Appendix B
+Architecture Details
+Our model architecture follows nanochat
+(
+Karpathy, 2025
+)
+, which differs from standard GPT-2
+(
+Radford et al., 2019
+)
+in several ways. Table
+5
+summarizes the key differences.
+Table 5
+:
+Model architecture and size configurations. Architecture features are shared between d12 and d20 (nanochat-style). For MoE variants with
+G
+=
+1
+G{=}1
+,
+E
+=
+16
+E{=}16
+: 16 routed experts + 1 shared = 17 total experts. Total params include all expert parameters; active params include only the shared expert plus on average one routed expert per token.
+Feature
+GPT-2
+d12
+d20
+Tokenization
+GPT-2
+RustBPE
+Vocab Size
+50,257
+65,536
+Activation
+GELU
+ReLU
+2
+(
+So et al., 2021
+)
+Normalization
+LayerNorm
+RMSNorm
+(
+Zhang and Sennrich, 2019
+)
+FFN Dimension
+4
+×
+d
+model
+4\times d_{\text{model}}
+4
+×
+d
+model
+4\times d_{\text{model}}
+Linear Layer Bias
+Yes
+No
+Position Encoding
+Learned
+RoPE
+(
+Su et al., 2024
+)
+Head Dimension
+64
+128
+QK Normalization
+No
+Yes
+(
+Dehghani et al., 2023
+)
+Logits Softcapping
+No
+15.0
+(
+Team et al., 2024
+)
+Embedding Weights
+Tied (wte = lm_head)
+Untied
+First Layer Dense
+—
+Yes
+n
+embd
+n_{\text{embd}}
+768
+768
+1280
+n
+layer
+n_{\text{layer}}
+12
+12
+20
+n
+head
+n_{\text{head}}
+12
+6
+10
+KV heads
+12
+2
+2
+Dense Params
+124M
+195M
+561M
+MoE Total Params
+—
+575M
+2429M
+MoE Active Params
+—
+195M
+561M
+B.1
+Data and Tokenization
+We train on the FineWeb-Edu 100B shuffle dataset
+(
+Penedo et al., 2024
+)
+, a high-quality educational web corpus. Tokenization uses RustBPE with a vocabulary of 65,536 tokens (64k, power-of-2 aligned for GPU efficiency). We use a sequence length of 2048 tokens.
+B.2
+Model Size Configurations
+Table
+5
+shows the model configurations used in our experiments. We follow the nanochat naming convention where
+d*
+indicates the number of layers, and
+n
+embd
+=
+d
+×
+64
+n_{\text{embd}}=d\times 64
+, with head dimension fixed at 128.
+Attention configuration.
+We use grouped-query attention
+(
+Ainslie et al., 2023a
+)
+with head dimension 128 (larger than GPT-2’s 64). The number of attention heads is
+n
+head
+=
+n
+embd
+/
+128
+n_{\text{head}}=n_{\text{embd}}/128
+, giving 6 heads for d12 and 10 heads for d20. QK normalization is applied before the attention computation.
+MoE configuration.
+For MoE variants, we use 16 routed experts with granularity
+G
+=
+1
+G{=}1
+and expansion
+E
+=
+16
+E{=}16
+, plus 1 shared expert (17 total). Each routed and shared expert has dimension
+d
+expert
+=
+2
+×
+n
+embd
+d_{\text{expert}}=2\times n_{\text{embd}}
+(half the dense FFN dimension). The shared expert processes every token, while each token activates on average 1 routed expert, matching the dense model’s active parameter count.
+Appendix C
+Training Setup Details
+C.1
+Training Hyperparameters
+Table 6
+:
+Training hyperparameters.
+Hyperparameter
+Value
+Total tokens
+10B / 11.2B
+Batch size (tokens)
+524,288 (0.5M)
+Sequence length
+2048
+Muon Warmup steps
+No warmup
+AdamW Warmup steps
+250
+Learning rate schedule
+Linear decay
+Min learning rate
+0.1
+×
+0.1\times
+peak LR
+Gradient clipping
+None
+Weight decay
+0.0
+AdamW
+β
+1
+,
+β
+2
+\beta_{1},\beta_{2}
+0.9, 0.95
+C.1.1
+Weight Initialization
+We follow the nanochat initialization scheme
+(
+Karpathy, 2025
+)
+, which uses aspect-ratio scaled initialization. For a weight matrix
+W
+∈
+ℝ
+d
+out
+×
+d
+in
+W\in\mathbb{R}^{d_{\text{out}}\times d_{\text{in}}}
+:
+std
+=
+1
+d
+in
+⋅
+min
+⁡
+(
+1
+,
+d
+out
+d
+in
+)
+\text{std}=\frac{1}{\sqrt{d_{\text{in}}}}\cdot\min\left(1,\sqrt{\frac{d_{\text{out}}}{d_{\text{in}}}}\right)
+(7)
+This formula reduces to standard
+1
+/
+d
+in
+1/\sqrt{d_{\text{in}}}
+initialization for square or tall matrices, but scales down variance for wide matrices where
+d
+out
+≫
+d
+in
+d_{\text{out}}\gg d_{\text{in}}
+.
+Component-specific initialization:
+•
+Embeddings
+:
+𝒩
+⁡
+(
+0
+,
+1
+)
+\mathcal{N}(0,1)
+– standard normal initialization
+•
+Output projections
+(
+lm_head
+,
+c_proj
+): Zero initialization, critical for Muon optimizer stability
+•
+Router weights
+:
+𝒩
+⁡
+(
+0
+,
+1
+/
+d
+in
+)
+\mathcal{N}(0,1/\sqrt{d_{\text{in}}})
+– small init for symmetry breaking
+•
+Expert weights
+: Aspect-ratio scaled for up projections, zero for down projections
+•
+Attention weights
+: Aspect-ratio scaled as above
+Table 7
+:
+Parameter initialization and optimizer configuration. Aspect-ratio scaled init. uses
+std
+=
+d
+in
+−
+1
+/
+2
+⋅
+min
+(
+1
+,
+d
+out
+/
+d
+in
+)
+\text{std}=d_{\text{in}}^{-1/2}\cdot\min(1,\sqrt{d_{\text{out}}/d_{\text{in}}})
+. LRs include
+μ
+\mu
+P
+(
+Yang et al., 2022
+)
+scaling
+λ
+=
+(
+d
+model
+/
+768
+)
+−
+1
+/
+2
+\lambda=(d_{\text{model}}/768)^{-1/2}
+.
+Parameter
+Init.
+LR
+Opt.
+W
+E
+W_{E}
+(embed.)
+𝒩
+⁡
+(
+0
+,
+1
+)
+\mathcal{N}(0,1)
+0.2
+​
+λ
+0.2\lambda
+AdamW
+W
+lm
+W_{\text{lm}}
+(head)
+𝟎
+\mathbf{0}
+0.004
+​
+λ
+0.004\lambda
+AdamW
+W
+Q
+​
+K
+​
+V
+W_{QKV}
+(attn)
+Asp.-ratio
+0.02
+​
+λ
+0.02\lambda
+Muon
+W
+O
+W_{O}
+(attn proj)
+𝟎
+\mathbf{0}
+0.02
+​
+λ
+0.02\lambda
+Muon
+W
+router
+W_{\text{router}}
+𝒩
+⁡
+(
+0
+,
+d
+−
+1
+2
+)
+\mathcal{N}(0,d^{-\frac{1}{2}})
+0.02
+​
+λ
+0.02\lambda
+Muon
+W
+↑
+(
+e
+)
+W^{(e)}_{\uparrow}
+(exp. up)
+Asp.-ratio
+0.02
+​
+λ
+0.02\lambda
+Muon
+W
+↓
+(
+e
+)
+W^{(e)}_{\downarrow}
+(exp. dn)
+𝟎
+\mathbf{0}
+0.02
+​
+λ
+0.02\lambda
+Muon
+W
+↑
+(
+s
+)
+W^{(s)}_{\uparrow}
+(shd. up)
+Asp.-ratio
+0.02
+​
+λ
+0.02\lambda
+Muon
+W
+↓
+(
+s
+)
+W^{(s)}_{\downarrow}
+(shd. dn)
+𝟎
+\mathbf{0}
+0.02
+​
+λ
+0.02\lambda
+Muon
+C.1.2
+Optimizer Configuration
+We use a hybrid optimizer setup following nanochat
+(
+Jordan, 2024
+;
+Liu et al., 2025a
+)
+:
+•
+Muon
+(
+Jordan, 2024
+)
+for 2D/3D weight matrices (attention, MLP, experts): momentum-based optimizer with Newton-Schulz orthogonalization
+•
+AdamW
+(
+Loshchilov and Hutter, 2019
+)
+for embeddings and output head: with learning rate scaling
+∝
+1
+/
+d
+model
+/
+768
+\propto 1/\sqrt{d_{\text{model}}/768}
+No weight decay is used, as Muon provides implicit regularization and language models benefit from memorization.
+C.2
+Hardware Infrastructure Details
+Hardware.
+We train our models on a single node with 8x NVIDIA B200 GPUs, each with 180GB of memory.
+Code.
+For TC models, we use the ScatterMoE backend
+(
+Tan et al., 2024
+)
+. For EC and ET models, we write our own custom Pytorch MoE implementation. We use padding to handle variable number of tokens per expert.
+Parallelism.
+We rely on Nanochat’s implementation of distributed AdamW and Muon optimizer use a ZeRO-2 style gradient synchronization
+(
+Rajbhandari et al., 2020
+)
+. For EC and ET models, we write our own expert parallelization all-to-all communication framework. This allows us to use maximum batch size during routing instead of micro-batches, reaching a better usage/cutoff variance trade-off while saving memory.
+Appendix D
+CORE Evaluation Details
+We evaluate using the CORE benchmark
+(
+Li et al., 2024
+)
+, which provides a standardized suite of in-context learning tasks for language model evaluation.
+Task types.
+The CORE benchmark includes multiple-choice tasks, schema matching tasks, and language modeling tasks, testing various aspects of language understanding.
+Metric.
+The primary metric is
+centered accuracy
+, which adjusts for random baseline performance:
+acc
+centered
+=
+acc
+−
+0.01
+×
+baseline
+random
+1.0
+−
+0.01
+×
+baseline
+random
+\text{acc}_{\text{centered}}=\frac{\text{acc}-0.01\times\text{baseline}_{\text{random}}}{1.0-0.01\times\text{baseline}_{\text{random}}}
+(8)
+This normalization ensures that random guessing yields a score near zero, while perfect accuracy yields 1.0. The final CORE Eval score is the mean of centered accuracy across all tasks.
+Evaluation protocol.
+We evaluate at fixed intervals during training (every 250 steps by default) to track learning dynamics.
+Appendix E
+Ablations
+E.1
+Warmup
+We find warmup crucial for ET. In the early stages of training, the cutoff threshold is not yet stable, while the EMA lags behind the actual cutoff threshold because of slow update speed (
+1
+/
+(
+1
+−
+β
+)
+≈
+1000
+1/(1-\beta)\approx 1000
+steps). As a result, the threshold-based routing becomes unreliable: tokens that should be routed are dropped, and the capacity lower bound is frequently triggered (Figure
+10
+c). This leads to undertrained experts during early training. To address this, we warm up the routing by using TopK selection for the first 4,000 steps before switching to threshold-based routing. ET no warmup relies solely on the capacity factor during these early steps, which is suboptimal because capacity control can limit collapse but does not provide a stable threshold estimate or balanced expert learning signal before the cutoff EMA has converged. As shown in Figure
+10
+, warmup stabilizes the cutoff-EMA trajectory (a, d), increases raw expert usage (b), and reduces starvation rate (c). We also observe that ET no warmup exhibits higher variance in both logits (e) and gate outputs (f), suggesting less stable gradient signals.
+(a) L9 cutoff vs EMA
+(b) Raw expert usage
+(c) Starvation rate
+(d) L6 cutoff-EMA
+(e) Router logits std
+(f) Gate std
+Figure 10
+:
+Effect of TopK warmup on ET training dynamics (first 8k steps). Before 4k steps, ET no warmup exhibits unstable threshold routing: (a) the cutoff-EMA lags behind the actual cutoff, (b) raw expert usage is low, and (c) starvation rate is high as the capacity lower bound is frequently triggered. ET no warmup relies only on the capacity factor during this stage, which is suboptimal because it does not provide a stable threshold estimate or balanced expert learning signal. With warmup, the cutoff-EMA trajectory stabilizes (d), and router outputs show lower variance in both logits (e) and gates (f). Note:
+ec_shared_bsz512k
+does not log raw usage and underflow metrics, so panels (b) and (c) show only the two ET runs.
+E.2
+Comparison to Token Choice
+In our setup, Token Choice with loss-free load balancing shows a less stable routing trajectory than ET and EC, especially in early layers. Figure
+11
+compares cutoff-EMA (expert 0) at layer 1. ET and EC stabilize quickly, while DeepSeek’s loss-free controller drifts upward over training. We treat this as an exploratory observation rather than a central claim, since the behavior may depend on hyperparameters and gating parameterization.
+Figure 11
+:
+Layer-1 cutoff-EMA (expert 0) under EC/ET vs DeepSeek loss-free load balancing.
+E.3
+Shared Expert
+We report results of EC and ET no warmup with and without shared expert. For no shared experts, we select 2 experts out of 16 routed experts, roughly matching the number of parameters and compute to the shared variant. In both cases, shared expert improves loss by roughly 0.02. We suspect that while later layers need early layers to empower the router, sometimes early layers have no activated experts, causing ineffective routing. See Table
+8
+for more details.
+Table 8
+:
+Ablation on the shared expert mechanism. In both ET no warmup and EC, shared expert improves loss by roughly 0.02.
+Method
+Shared
+CE
+CORE
+EC (bsz 512k)
+Yes
+2.843
+19.94
+EC (bsz 512k)
+No
+2.862
+16.307
+ET no warmup (
+β
+=
+0.999
+\beta{=}0.999
+)
+Yes
+2.844
+16.867
+ET no warmup (
+β
+=
+0.999
+\beta{=}0.999
+)
+No
+2.862
+18.515
+E.4
+Normalization
+Initially, we assumed that dynamic expert count would bring instability in training because of the scale expansion. However, we found that normalization was ineffective in our setting. No norm outperformed fanout norm by 0.04 in CE loss. We suspect that the norm made experts’ contribution unpredictable (see Figure
+12
+).
+Figure 12
+:
+Comparison of evaluation loss with and without normalization. The configuration without normalization (blue) consistently achieves lower loss than the fanout-normalized variant (orange).
+Appendix F
+Additional Experiment Results
+F.1
+Capacity Constraints
+Because ET’s thresholding does not fix the per-batch number of selected tokens for each expert, expert loads can fluctuate around the target, which can risk GPU out-of-memory. Following standard practice
+(
+Fedus et al., 2022
+)
+, we enforce capacity constraints during training: each expert processes between
+(
+1
+−
+C
+)
+⋅
+N
+/
+E
+(1-C)\cdot N/E
+and
+(
+1
++
+C
+)
+⋅
+N
+/
+E
+(1+C)\cdot N/E
+tokens per batch (capacity factor
+C
+=
+0.5
+C=0.5
+), with excess tokens dropped or capacity padded. Since these constraints are absent at inference, frequent triggering would cause train-inference mismatch. Figure
+13
+shows that
+capacity constraints are triggered infrequently
+: after warmup, both saturation and starvation rates remain low. This confirms that train-inference mismatch from capacity constraints is minimal.
+Figure
+13
+shows capacity constraint metrics for ET (with warmup) from step 4k onward. After warmup, raw expert usage stabilizes around 6.5%, and both saturation and starvation rates remain low, confirming that capacity constraints are rarely triggered and train-inference mismatch is minimal.
+Figure 13
+:
+Capacity constraint behavior during ET training (from step 4k onward, after warmup). (a) Raw expert usage before capacity capping. (b) Saturation rate: fraction of selected tokens dropped due to capacity limits. (c) Starvation rate: fraction of unused expert capacity. Both saturation and starvation rates remain low, confirming minimal train-inference mismatch.
+F.2
+Routing Consistency Sweep
+Section
+4.3.6
+reports the main weighted Jaccard heatmap strip. Here we define the routing-consistency metrics used throughout the comparison and include the companion joint JSD heatmap for the same four runs.
+Objects being compared.
+For a given token-layer pair, let
+A
+t
+A_{t}
+and
+B
+t
+B_{t}
+denote the sets of active routed experts under checkpoints
+A
+A
+and
+B
+B
+. The shared expert is excluded, so these sets contain only routed experts. Pooling all active token-layer-expert edges across the full comparison gives
+E
+A
+=
+{
+(
+ℓ
+,
+t
+,
+i
+)
+:
+i
+∈
+A
+t
+}
+,
+E
+B
+=
+{
+(
+ℓ
+,
+t
+,
+i
+)
+:
+i
+∈
+B
+t
+}
+.
+E_{A}=\{(\ell,t,i):i\in A_{t}\},\qquad E_{B}=\{(\ell,t,i):i\in B_{t}\}.
+The pooled edge sets
+E
+A
+E_{A}
+and
+E
+B
+E_{B}
+are used by the weighted overlap metrics, while the token-level sets
+A
+t
+A_{t}
+and
+B
+t
+B_{t}
+are used by the per-token overlap and divergence metrics below.
+Metric definitions.
+Our main metric is weighted Jaccard, defined on the pooled edge sets
+weighted
+​
+_
+​
+jaccard
+=
+|
+E
+A
+∩
+E
+B
+|
+|
+E
+A
+∪
+E
+B
+|
+.
+\mathrm{weighted\_jaccard}=\frac{|E_{A}\cap E_{B}|}{|E_{A}\cup E_{B}|}.
+Its pooled Dice companion is
+weighted
+​
+_
+​
+dice
+=
+2
+​
+|
+E
+A
+∩
+E
+B
+|
+|
+E
+A
+|
++
+|
+E
+B
+|
+.
+\mathrm{weighted\_dice}=\frac{2|E_{A}\cap E_{B}|}{|E_{A}|+|E_{B}|}.
+We also report token-level overlap averaged uniformly over token-layer pairs
+J
+t
+=
+|
+A
+t
+∩
+B
+t
+|
+|
+A
+t
+∪
+B
+t
+|
+,
+Dice
+t
+=
+2
+​
+|
+A
+t
+∩
+B
+t
+|
+|
+A
+t
+|
++
+|
+B
+t
+|
+.
+J_{t}=\frac{|A_{t}\cap B_{t}|}{|A_{t}\cup B_{t}|},\qquad\mathrm{Dice}_{t}=\frac{2|A_{t}\cap B_{t}|}{|A_{t}|+|B_{t}|}.
+The reported
+jaccard
+and
+dice
+are the means of
+J
+t
+J_{t}
+and
+Dice
+t
+\mathrm{Dice}_{t}
+over all token-layer pairs.
+For the divergence metrics, we convert each token’s binary activation set into a distribution over experts by assigning uniform mass to the active experts
+P
+t
+​
+(
+i
+)
+\displaystyle P_{t}(i)
+=
+{
+1
+/
+|
+A
+t
+|
+,
+i
+∈
+A
+t
+0
+,
+otherwise
+\displaystyle=\begin{cases}1/|A_{t}|,&i\in A_{t}\\
+0,&\text{otherwise}\end{cases}
+Q
+t
+​
+(
+i
+)
+\displaystyle Q_{t}(i)
+=
+{
+1
+/
+|
+B
+t
+|
+,
+i
+∈
+B
+t
+0
+,
+otherwise.
+\displaystyle=\begin{cases}1/|B_{t}|,&i\in B_{t}\\
+0,&\text{otherwise.}\end{cases}
+Using these distributions, we compute
+joint
+​
+_
+​
+jsd
+​
+(
+P
+t
+,
+Q
+t
+)
+\displaystyle\mathrm{joint\_jsd}(P_{t},Q_{t})
+=
+1
+2
+KL
+(
+P
+t
+∥
+M
+t
+)
++
+1
+2
+KL
+(
+Q
+t
+∥
+M
+t
+)
+,
+\displaystyle=\frac{1}{2}\mathrm{KL}(P_{t}\|M_{t})+\frac{1}{2}\mathrm{KL}(Q_{t}\|M_{t}),
+M
+t
+\displaystyle M_{t}
+=
+1
+2
+​
+(
+P
+t
++
+Q
+t
+)
+,
+\displaystyle=\frac{1}{2}(P_{t}+Q_{t}),
+and
+total
+​
+_
+​
+variation
+​
+(
+P
+t
+,
+Q
+t
+)
+=
+1
+2
+​
+∑
+i
+|
+P
+t
+​
+(
+i
+)
+−
+Q
+t
+​
+(
+i
+)
+|
+.
+\mathrm{total\_variation}(P_{t},Q_{t})=\frac{1}{2}\sum_{i}\lvert P_{t}(i)-Q_{t}(i)\rvert.
+The reported
+joint_jsd
+and
+total_variation
+are averages over token-layer pairs, and lower values indicate more stable routing.
+Empty-routing conventions.
+If both checkpoints activate no routed expert for a token-layer pair, we set token-level Jaccard and Dice to
+1
+1
+, and joint JSD and total variation to
+0
+0
+. If only one checkpoint activates any routed expert, we set token-level Jaccard and Dice to
+0
+0
+, and joint JSD and total variation to
+1
+1
+. For the pooled metrics, if both pooled edge sets are empty, weighted Jaccard and weighted Dice are both defined as
+1
+1
+.
+Figure 14
+:
+Within-family checkpoint-pair routing consistency on a fixed validation stream, measured by joint JSD. Lower values indicate more stable routing. The same broad story remains. ET separates clearly from EC 2k and stays close to EC 64k.
+F.3
+Activation Dynamics Sweep Across Routing Variants
+Section
+4.3.2
+focuses on EC (2k) and ET. This subsection first gives the layerwise continuation for those two main runs using loss binned fanout views, then shows EC 8k in the same overlaid form as the main figure before collecting inverse layerwise diagnostics for the remaining three runs.
+EC (2k)
+ET
+Figure 15
+:
+Layerwise mean fanout versus loss bin for the two main runs. EC 2k shows a stronger positive dependence in several layers, while ET remains more mixed across depth.
+Figure 16
+:
+Standalone EC 8k activation dynamics in the same form as the main figure. Faint dashed gray curves show the per-layer means and the solid red curve shows the global mean across layers. Compared with EC 2k, EC 8k is noticeably flatter across the loss range.
+ET no warmup
+EC (64k)
+EC (512k)
+Figure 17
+:
+Inverse layerwise activation diagnostics for the remaining three runs. Each panel plots mean loss against fanout by layer, highlighting how the loss–fanout relation remains setup dependent across ET no warmup, EC 64k, and EC 512k.
+Across these additional variants, EC 8k is much flatter than EC 2k in the same overlaid inverse view used in the main text. The remaining three inverse layerwise panels show that the loss–fanout relation remains setup dependent, with substantial variation across routing variants and depth.
+For completeness, Figure
+18
+shows representative router logit histograms from the warmup ET run. We include them as a qualitative diagnostic of router behavior.
+Layer 1 expert 0
+Layer 11 expert 15
+Figure 18
+:
+Router logit histograms from the warmup ET run. The bulk of the distribution is roughly bell shaped, with a heavier right tail. This asymmetric tail is consistent with activated tokens receiving reinforcing gradient signals that can further increase their logits. We view this figure as a qualitative appendix diagnostic rather than a core result.
+This appendix also provides extended expert specialization analysis, complementing the summary in Section
+4.3.3
+.
+Per-token routing visualizations.
+Figures
+19
+,
+20
+, and
+21
+show token-level expert routing for additional passages from GSM8K and HumanEval. Across GSM8K passages, content-bearing tokens—particularly numbers (e.g., “48”, “72”), mathematical operators (“/”, “+”, “=”), and computation markers (“
+<
+⁣
+<
+<<
+”)—consistently receive the highest fanout. Function words and punctuation receive minimal activation, indicating that experts preferentially process semantically rich tokens. In HumanEval passages, a similar pattern holds: code-specific tokens (variable names, operators, keywords) receive higher activation than boilerplate text and whitespace.
+(a)
+GSM8K.
+(b)
+HumanEval.
+Figure 19
+:
+Per-layer expert fanout on GSM8K and HumanEval passages. Each cell shows the number of experts activated for a given token at a given layer. Numerical and code-specific tokens receive substantially higher fanout than function words.
+(a)
+GSM8K.
+(b)
+HumanEval.
+Figure 20
+:
+Full expert routing on GSM8K and HumanEval passages. Each panel shows binary expert activation (black = activated) across all layers and experts for every token. Routing patterns reveal domain-specific structure.
+Figure 21
+:
+Token activation intensity on a HumanEval passage. Each token is colored by total fanout (sum of experts activated across all layers). Code-specific tokens (variable names, operators, keywords) receive higher activation than boilerplate text.
+Expert activation heatmaps.
+Figure
+22
+shows expert token ratios across all routing configurations. Each heatmap plots expert ID (columns) versus layer (rows), with color intensity indicating the fraction of domain-specific tokens routed to each expert. The left column shows HumanEval (code) and the right column shows GSM8K (math).
+Several patterns emerge across batch sizes. EC with batch size 2k (top row) shows diffuse activation: while some experts exhibit domain preferences (e.g., concentrated dark cells at specific layer-expert pairs), the overall pattern is noisy with activation spread across many experts. As batch size increases to 8k and 64k, specialization sharpens—dark cells become more concentrated and background activation fades, indicating that experts more consistently capture domain-specific tokens when routing decisions are made over larger token pools. EC at 512k shows the most pronounced specialization, with a small number of experts per layer handling the majority of domain tokens.
+ET (bottom row) achieves specialization comparable to large-batch EC. The activation patterns closely resemble EC at 512k, with concentrated expert-domain associations across layers. This confirms that ET’s population-level threshold mechanism captures the same routing structure as large-batch top-
+k
+k
+selection, without requiring batch size coordination at inference.
+Comparing across domains, the HumanEval and GSM8K columns reveal that experts develop
+different
+specialization patterns for code versus math. Certain experts that are heavily activated for code tokens (e.g., dark cells in the HumanEval column) show low activation for math, and vice versa. This cross-domain differentiation is consistent across all routing configurations, suggesting that expert specialization reflects genuine domain-level structure rather than artifacts of a particular routing strategy.
+Figure 22
+:
+Expert activation heatmaps across routing configurations. Each row corresponds to a routing variant (EC with batch sizes 2k, 8k, 64k, 512k, and ET). Columns show HumanEval (code) and GSM8K (math) domains. Color intensity indicates expert token ratio. Specialization sharpens with larger EC batch sizes, and ET achieves comparable patterns without batch size dependence.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

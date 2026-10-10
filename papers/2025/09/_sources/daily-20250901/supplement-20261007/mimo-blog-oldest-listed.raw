@@ -1,0 +1,847 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="generator" content="Rspress v1.46.2">
+    <link rel="stylesheet" href="https://cdn.cnbj1.fds.api.mi-img.com/aife/mimo-blog-fe/doc_build/fonts/font-faces.b3ff14bbe16d.css"><script>// Inlined in <head>, so server-rendered text is protected before hydration.
+(() => {
+  const root = document.documentElement;
+  const selector = '[data-font-text]';
+  const imageSelector = '[data-font-image]';
+  const pendingSelector = '[data-font-text]:not([data-font-ready]), [data-font-image]:not([data-image-ready])';
+  const maxWait = 1500;
+  let currentPath = null;
+  let cleanup = () => {};
+
+  const isHome = (path) => /^\/(?:zh\/?)?(?:index(?:\.html)?)?$/.test(path);
+  const familyName = (name) => name.trim().replace(/^["']|["']$/g, '');
+
+  function stop() {
+    cleanup();
+    currentPath = null;
+    root.classList.remove('home-fonts-loading');
+  }
+
+  function start() {
+    const path = window.location.pathname;
+    if (!isHome(path) || !document.fonts) {
+      stop();
+      return;
+    }
+    if (currentPath === path) return;
+    stop();
+    currentPath = path;
+
+    let active = true;
+    let pending = 0;
+    let sawText = false;
+    const seen = new Set();
+    const requests = new Map();
+    const busy = new Map();
+    const imageListeners = new Set();
+    const blockedInteractions = new Set();
+    const ranges = new Map();
+
+    function syncInteractions() {
+      for (const element of document.querySelectorAll('[data-font-interactive]')) {
+        if (element.matches(pendingSelector) || element.querySelector(pendingSelector)) {
+          // Native inert also prevents keyboard focus and activation. Keep any
+          // pre-existing inert state owned by the component itself.
+          if (!element.inert) {
+            element.inert = true;
+            blockedInteractions.add(element);
+          }
+        } else if (blockedInteractions.delete(element)) {
+          element.inert = false;
+        }
+      }
+    }
+
+    function finish() {
+      if (!active) return;
+      active = false;
+      root.classList.remove('home-fonts-loading');
+      clearTimeout(timer);
+      observer.disconnect();
+      document.removeEventListener('DOMContentLoaded', scan);
+      for (const [element, readyKey] of busy) {
+        element.dataset[readyKey] = 'fallback';
+        element.removeAttribute('aria-busy');
+      }
+      for (const dispose of imageListeners) dispose();
+      for (const element of blockedInteractions) element.inert = false;
+      blockedInteractions.clear();
+      imageListeners.clear();
+      busy.clear();
+    }
+
+    function fontRanges() {
+      // Called after stylesheets are ready; keep the actual CSS unicode ranges.
+      if (ranges.size) return;
+      for (const face of document.fonts) {
+        const family = familyName(face.family);
+        const list = ranges.get(family) || [];
+        for (const part of face.unicodeRange.split(',')) {
+          const range = part.trim().replace(/^U\+/i, '').split('-');
+          const lower = parseInt(range[0].replace(/\?/g, '0'), 16);
+          const upper = parseInt((range[1] || range[0]).replace(/\?/g, 'F'), 16);
+          list.push([lower, upper]);
+        }
+        ranges.set(family, list);
+      }
+    }
+
+    function requiredFonts(element) {
+      const samples = new Map();
+      const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+      while (walker.nextNode()) {
+        const node = walker.currentNode;
+        if (!node.textContent.trim()) continue;
+        const style = getComputedStyle(node.parentElement);
+        const families = style.fontFamily.split(',').map(familyName);
+        for (const character of node.textContent) {
+          const point = character.codePointAt(0);
+          const family = families.find((name) => (ranges.get(name) || []).some(([a, b]) => a <= point && point <= b));
+          if (!family) continue; // System font or a character outside our fonts.
+          const spec = `${style.fontStyle} ${style.fontWeight} 16px "${family}"`;
+          if (!samples.has(spec)) samples.set(spec, new Set());
+          samples.get(spec).add(character);
+        }
+      }
+      return [...samples].map(([spec, chars]) => [spec, [...chars].join('')]);
+    }
+
+    function scan() {
+      if (!active) return;
+      if (document.readyState === 'loading') {
+        syncInteractions();
+        return;
+      }
+      fontRanges();
+      for (const image of document.querySelectorAll(imageSelector)) {
+        if (seen.has(image)) continue;
+        seen.add(image);
+        sawText = true;
+        if (image.complete) {
+          image.dataset.imageReady = image.naturalWidth ? 'cached' : 'fallback';
+          continue;
+        }
+        delete image.dataset.imageReady;
+        image.setAttribute('aria-busy', 'true');
+        busy.set(image, 'imageReady');
+        pending++;
+        const dispose = () => {
+          image.removeEventListener('load', loaded);
+          image.removeEventListener('error', failed);
+          imageListeners.delete(dispose);
+        };
+        const reveal = (status) => {
+          dispose();
+          if (!active) return;
+          release(image, status);
+        };
+        const loaded = () => {
+          if (image.decode) image.decode().then(() => reveal('loaded'), () => reveal('fallback'));
+          else reveal('loaded');
+        };
+        const failed = () => reveal('fallback');
+        imageListeners.add(dispose);
+        image.addEventListener('load', loaded, { once: true });
+        image.addEventListener('error', failed, { once: true });
+      }
+      for (const element of document.querySelectorAll(selector)) {
+        if (seen.has(element)) continue;
+        seen.add(element);
+        sawText = true;
+        const rect = element.getBoundingClientRect();
+        const style = getComputedStyle(element);
+        // Offscreen text, hidden Blog entries and the hero's back face never
+        // hold up the visible page. Their fonts still load normally through CSS.
+        if (!rect.width || !rect.height || rect.bottom <= 0 || rect.top >= window.innerHeight || style.visibility === 'hidden' || element.closest('[aria-hidden="true"], [data-font-skip]')) {
+          element.dataset.fontReady = 'offscreen';
+          continue;
+        }
+        const needed = requiredFonts(element);
+        const missing = needed.filter(([spec, text]) => !document.fonts.check(spec, text));
+        if (!missing.length) {
+          element.dataset.fontReady = 'cached';
+          continue;
+        }
+        delete element.dataset.fontReady;
+        element.setAttribute('aria-busy', 'true');
+        busy.set(element, 'fontReady');
+        pending++;
+        const promises = missing.map(([spec, text]) => {
+          const key = spec + text;
+          if (!requests.has(key)) requests.set(key, document.fonts.load(spec, text));
+          return requests.get(key);
+        });
+        Promise.all(promises).then(() => release(element, 'loaded'), () => release(element, 'fallback'));
+      }
+      syncInteractions();
+      if (sawText && pending === 0) finish();
+    }
+
+    function release(element, status) {
+      if (!active || !busy.has(element)) return;
+      element.dataset[busy.get(element)] = status;
+      element.removeAttribute('aria-busy');
+      busy.delete(element);
+      if (--pending === 0) finish();
+      else syncInteractions();
+    }
+
+    // The timer runs independently of React and font promises, including errors.
+    const timer = setTimeout(finish, maxWait);
+    const observer = new MutationObserver(scan);
+    cleanup = finish;
+    root.classList.add('home-fonts-loading');
+    document.querySelectorAll(selector).forEach((element) => delete element.dataset.fontReady);
+    observer.observe(root, { childList: true, subtree: true });
+    document.addEventListener('DOMContentLoaded', scan, { once: true });
+    scan();
+  }
+
+  window.__mimoHomeFonts = { start, stop };
+  window.addEventListener('pageshow', (event) => { if (event.persisted) stop(); });
+  start();
+})();
+</script><script>document.documentElement.classList.toggle('coder-docs',false);document.documentElement.classList.toggle('mimo-site',true);document.documentElement.classList.toggle('legal-docs',false);</script><title data-rh="true"></title><meta data-rh="true" name="description" content="A comprehensive assessment report on MiMo&#x27;s capabilities in the humanities and social sciences, including literary creation, artistic perception, philosophical dialogue, screenplay writing, sociological observation, and legal reasoning"/>
+  <link rel="icon" href="https://cdn.cnbj1.fds.api.mi-img.com/aife/mimo-blog-fe/doc_build/mimo.ico"><script defer src="https://cdn.cnbj1.fds.api.mi-img.com/aife/mimo-blog-fe/doc_build/static/js/styles.928fc8b8.js"></script><script defer src="https://cdn.cnbj1.fds.api.mi-img.com/aife/mimo-blog-fe/doc_build/static/js/lib-react.a6be410a.js"></script><script defer src="https://cdn.cnbj1.fds.api.mi-img.com/aife/mimo-blog-fe/doc_build/static/js/lib-router.93d86b80.js"></script><script defer src="https://cdn.cnbj1.fds.api.mi-img.com/aife/mimo-blog-fe/doc_build/static/js/4752.2908c99e.js"></script><script defer src="https://cdn.cnbj1.fds.api.mi-img.com/aife/mimo-blog-fe/doc_build/static/js/index.c5195ace.js"></script><link href="https://cdn.cnbj1.fds.api.mi-img.com/aife/mimo-blog-fe/doc_build/static/css/styles.f0e8146a.css" rel="stylesheet"></head>
+
+  <body >
+    <div id="root"><div class="navContainer_d18b1 rspress-nav px-6  sticky_ddfa7"><div class="container_e4235 flex justify-between items-center h-full"><div class="navTitleWrapper-w9ofxD " data-font-media="logo" data-font-interactive="true"><img src="https://cdn.cnbj1.fds.api.mi-img.com/aife/mimo-blog-fe/doc_build/static/image/logo.99baaffe.png" alt="logo" class="mimoLogo-KV4r25" data-font-image="true"/></div><div class="flex flex-1 justify-end items-center"><div class="rightNav_a2fea"><div class="rspress-nav-menu menu h-14"></div><div class="flex-center flex-row"><div class="translation menu-item_b8238 flex text-sm font-bold items-center px-3 py-2"><div><div class="relative flex-center h-14"><button class="rspress-nav-menu-group-button flex-center items-center font-medium text-sm text-text-1 hover:text-text-2 transition-colors duration-200"><span class="text-sm font-medium flex break-keep" style="margin-right:2px"><svg width="18" height="18" viewBox="0 0 32 32" style="width:18px;height:18px"><path fill="currentColor" d="M27.85 29H30l-6-15h-2.35l-6 15h2.15l1.6-4h6.85zm-7.65-6 2.62-6.56L25.45 23zM18 7V5h-7V2H9v3H2v2h10.74a14.7 14.7 0 0 1-3.19 6.18A13.5 13.5 0 0 1 7.26 9h-2.1a16.5 16.5 0 0 0 3 5.58A16.8 16.8 0 0 1 3 18l.75 1.86A18.5 18.5 0 0 0 9.53 16a16.9 16.9 0 0 0 5.76 3.84L16 18a14.5 14.5 0 0 1-5.12-3.37A17.64 17.64 0 0 0 14.8 7z"></path></svg></span><svg width="1em" height="1em" viewBox="0 0 32 32"><path fill="currentColor" d="M16 22 6 12l1.4-1.4 8.6 8.6 8.6-8.6L26 12z"></path></svg></button><div class="rspress-nav-menu-group-content absolute mx-0.8 transition-opacity duration-300" style="opacity:0;visibility:hidden;right:0;top:52px"><div class="p-3 pr-2 w-full h-full max-h-100vh whitespace-nowrap" style="box-shadow:var(--rp-shadow-3);z-index:100;border:1px solid var(--rp-c-divider-light);border-radius:var(--rp-radius-large);background:var(--rp-c-bg)"><div><div class="rounded-2xl my-1 flex" style="padding:0.4rem 1.5rem 0.4rem 0.75rem"><span class="text-brand">English</span></div></div><div><div class="font-medium my-1"><a href="/zh/blog/mimo-v2-flash-hss" class="link_a7cea "><div class="rounded-2xl hover:bg-mute" style="padding:0.4rem 1.5rem 0.4rem 0.75rem"><div class="flex"><span>简体中文</span></div></div></a></div></div></div></div></div></div></div></div></div><div class="mimo-home-nav-links" aria-label="Main navigation"><div class="mimo-nav-dropdown" data-font-interactive="true"><button type="button" class="rspress-nav-menu-item mimo-nav-dropdown__trigger" data-font-text="true">Product<svg class="mimo-nav-dropdown__caret" width="1em" height="1em" viewBox="0 0 32 32" aria-hidden="true"><path fill="currentColor" d="M16 22 6 12l1.4-1.4 8.6 8.6 8.6-8.6L26 12z"></path></svg></button><div class="mimo-nav-dropdown__menu" role="menu"><a class="mimo-nav-dropdown__item" href="/mimocode" role="menuitem">MiMo Code</a><a class="mimo-nav-dropdown__item" href="/go/desktop" role="menuitem">MiMo Desktop</a></div></div><div class="mimo-nav-dropdown" data-font-interactive="true"><button type="button" class="rspress-nav-menu-item mimo-nav-dropdown__trigger" data-font-text="true">Research<svg class="mimo-nav-dropdown__caret" width="1em" height="1em" viewBox="0 0 32 32" aria-hidden="true"><path fill="currentColor" d="M16 22 6 12l1.4-1.4 8.6 8.6 8.6-8.6L26 12z"></path></svg></button><div class="mimo-nav-dropdown__menu" role="menu"><a class="mimo-nav-dropdown__item" href="/#paper" role="menuitem">Paper</a><a class="mimo-nav-dropdown__item" href="/#blog" role="menuitem">Blog</a></div></div><a class="rspress-nav-menu-item" href="/#joinUs" data-font-text="true" data-font-interactive="true">Join Us</a></div><div class="mobileNavMenu_e7045"><div class="navScreen_ec30c  rspress-nav-screen" id="navScreen"><div class="container_c935d"><div class="navMenu_b887b"></div><div class="flex-center flex-col gap-2"><div class="flex text-sm font-bold justify-center"><div class="mx-1.5 my-1"><div class=" navScreenMenuGroup_e771d relative"><button class="button_ea41e"><span class="buttonSpan_f4b8f"><svg width="18" height="18" viewBox="0 0 32 32" style="width:18px;height:18px"><path fill="currentColor" d="M27.85 29H30l-6-15h-2.35l-6 15h2.15l1.6-4h6.85zm-7.65-6 2.62-6.56L25.45 23zM18 7V5h-7V2H9v3H2v2h10.74a14.7 14.7 0 0 1-3.19 6.18A13.5 13.5 0 0 1 7.26 9h-2.1a16.5 16.5 0 0 0 3 5.58A16.8 16.8 0 0 1 3 18l.75 1.86A18.5 18.5 0 0 0 9.53 16a16.9 16.9 0 0 0 5.76 3.84L16 18a14.5 14.5 0 0 1-5.12-3.37A17.64 17.64 0 0 0 14.8 7z"></path></svg></span><svg width="1em" height="1em" viewBox="0 0 32 32" class=" down_f631a "><path fill="currentColor" d="M16 22 6 12l1.4-1.4 8.6 8.6 8.6-8.6L26 12z"></path></svg></button><div><div class="items_dd149"><div><div class="p-1 text-center"><span class="text-brand">English</span></div></div><div><div class="py-1 font-medium"><a href="/zh/blog/mimo-v2-flash-hss" class="link_a7cea "><div><div class="flex justify-center"><span>简体中文</span></div></div></a></div></div></div></div></div></div></div></div></div></div><button aria-label="mobile hamburger" class=" rspress-mobile-hamburger navHamburger_ac64c text-gray-500"><svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32" fill="currentColor"><circle cx="8" cy="16" r="2" fill="currentColor"></circle><circle cx="16" cy="16" r="2" fill="currentColor"></circle><circle cx="24" cy="16" r="2" fill="currentColor"></circle></svg></button></div></div></div></div><section><!--$--><style>
+/* ========================================
+   MiMo-V2-Flash HSS Release Page
+   Clean Article Style
+   ======================================== */
+
+:root {
+    --bg-primary: #FAF7F5;
+    --bg-secondary: #F5F0EB;
+    --text-primary: #1a1a1a;
+    --text-secondary: #555;
+    --text-tertiary: #888;
+    --accent: #E1A555;
+    --border: rgba(0, 0, 0, 0.1);
+    --font-serif: &quot;PT Serif&quot;, Georgia, serif;
+    --font-title: &quot;Ubuntu&quot;, -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-sans: -apple-system, BlinkMacSystemFont, &quot;SF Pro Text&quot;, &quot;Segoe UI&quot;, Roboto, sans-serif;
+    --font-mono: &quot;SF Mono&quot;, &quot;Fira Code&quot;, Consolas, monospace;
+}
+
+*::before, *::after {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+html {
+    font-size: 18px;
+    scroll-behavior: smooth;
+    overflow-x: hidden;
+}
+
+body {
+    overflow-x: hidden;
+    font-family: var(--font-serif);
+    font-weight: 450;
+    font-optical-sizing: auto;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+    padding: 0;
+    margin: 0;
+}
+
+.article {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 4rem 2rem 6rem;
+}
+
+.header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 2.5rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid var(--border);
+}
+
+.hero-section {
+    text-align: center;
+    margin-bottom: 3rem;
+}
+
+.hero-title {
+    font-family: var(--font-title);
+    font-size: 2.5rem;
+    font-weight: 500;
+    letter-spacing: -0.02em;
+    margin-bottom: 1.5rem;
+}
+
+.hero-subtitle {
+    font-size: 1.125rem;
+    color: var(--text-secondary);
+    margin-bottom: 1rem;
+}
+
+.hero-date {
+    display: block;
+    text-align: center;
+    font-size: 0.875rem;
+    color: var(--text-tertiary);
+    margin-bottom: 1.5rem;
+}
+
+.authors {
+    display: flex;
+    justify-content: center;
+    gap: 1rem;
+    flex-wrap: wrap;
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+    margin-bottom: 1rem;
+}
+
+.author-item {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+}
+
+.section {
+    margin-bottom: 3rem;
+}
+
+h2 {
+    font-size: 1.5rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    margin-bottom: 1rem;
+    margin-top: 2.5rem;
+    font-family: var(--font-title);
+}
+
+p {
+    color: var(--text-secondary);
+    margin-bottom: 1rem;
+}
+
+strong {
+    font-weight: 500;
+    color: var(--text-primary);
+    font-family: var(--font-title) !important;
+}
+
+em {
+    font-style: italic;
+    color: var(--text-primary);
+}
+
+code {
+    font-family: var(--font-mono);
+    font-size: 0.9em;
+    background: var(--bg-secondary);
+    padding: 0.1em 0.3em;
+    border-radius: 3px;
+    color: var(--text-primary);
+}
+
+ul, ol {
+    margin-bottom: 1rem;
+    padding-left: 1.5rem;
+}
+
+li {
+    margin-bottom: 0.5rem;
+    color: var(--text-secondary);
+}
+
+blockquote {
+    border-left: 3px solid var(--accent);
+    padding-left: 1rem;
+    margin: 1rem 0;
+    font-style: italic;
+    color: var(--text-secondary);
+    background: rgba(255, 103, 0, 0.03);
+    padding: 0.75rem 1rem 0.75rem 1rem;
+    border-radius: 0 4px 4px 0;
+}
+
+figure.mopd-figure {
+    margin: 1.5rem 0;
+    text-align: center;
+}
+
+figure.mopd-figure img {
+    display: block;
+    width: 100%;
+    height: auto;
+    border-radius: 8px;
+}
+
+figure.mopd-figure figcaption {
+    font-family: var(--font-title);
+    font-size: 0.8125rem;
+    color: var(--text-tertiary);
+    margin-top: 0.75rem;
+}
+
+.summary-highlight {
+    margin: 2rem 0;
+    padding: 1rem;
+    background: rgba(255, 103, 0, 0.05);
+    border-left: 4px solid var(--accent);
+    border-radius: 4px;
+}
+
+.summary-highlight p {
+    color: var(--text-primary);
+    font-size: 1.125rem;
+    line-height: 1.6;
+    margin-bottom: 0;
+}
+
+.example-section {
+    background: var(--bg-secondary);
+    border-radius: 8px;
+    padding: 1.5rem;
+    margin: 1.5rem 0;
+}
+
+.example-title {
+    font-family: var(--font-title);
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+
+.example-item {
+    margin-bottom: 0.75rem;
+    padding-left: 1.25rem;
+    position: relative;
+}
+
+.example-item::before {
+    content: &quot;◦&quot;;
+    position: absolute;
+    left: 0;
+    color: var(--text-tertiary);
+}
+
+.card-showcase-container {
+    margin: 2rem 0;
+    background: #fff;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    overflow: hidden;
+}
+
+.card-showcase-header {
+    background: var(--bg-secondary);
+    padding: 1rem 1.5rem;
+    font-family: var(--font-title);
+    font-size: 0.9375rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    border-bottom: 1px solid var(--border);
+    text-align: center;
+}
+
+.card-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1px;
+    background: var(--border);
+}
+
+.interactive-card {
+    background: #fff;
+    padding: 1.25rem;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    border: none;
+    outline: none;
+    text-align: left;
+    text-decoration: none;
+    color: inherit;
+}
+
+.interactive-card:hover {
+    background: rgba(255, 103, 0, 0.05);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    text-decoration: none;
+    color: inherit;
+}
+
+.interactive-card-number {
+    font-family: var(--font-title);
+    font-size: 2rem;
+    font-weight: 700;
+    color: var(--accent);
+    opacity: 0.8;
+    line-height: 1;
+    text-decoration: none !important;
+}
+
+.interactive-card-title {
+    font-family: var(--font-title);
+    font-size: 0.9375rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    line-height: 1.4;
+    min-height: 2.8rem;
+    text-decoration: none !important;
+}
+
+.interactive-card-query {
+    font-family: var(--font-sans);
+    font-size: 0.8125rem;
+    color: var(--text-secondary);
+    line-height: 1.5;
+    flex-grow: 1;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    text-decoration: none !important;
+}
+
+.interactive-card-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 0.5rem;
+}
+
+.interactive-card-tag {
+    font-size: 0.75rem;
+    padding: 0.25rem 0.5rem;
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+    border-radius: 4px;
+    font-weight: 500;
+    text-decoration: none !important;
+}
+
+.interactive-card-arrow {
+    font-size: 0.875rem;
+    color: var(--accent);
+    font-weight: 600;
+    transition: transform 0.2s ease;
+    text-decoration: none !important;
+}
+
+.interactive-card:hover .interactive-card-arrow {
+    transform: translateX(4px);
+}
+
+.interactive-card * {
+    text-decoration: none !important;
+}
+
+.interactive-card:hover * {
+    text-decoration: none !important;
+}
+
+.case-cards-container {
+    margin: 2rem 0;
+    background: #fff;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    overflow: hidden;
+}
+
+.case-cards-header {
+    background: var(--bg-secondary);
+    padding: 1rem 1.5rem;
+    font-family: var(--font-title);
+    font-size: 0.9375rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    border-bottom: 1px solid var(--border);
+    text-align: center;
+}
+
+.case-cards-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1px;
+    background: var(--border);
+}
+
+.case-cards-grid &gt; .case-card {
+    background: #fff;
+    padding: 1.25rem;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    border: none;
+    outline: none;
+    text-align: left;
+    text-decoration: none;
+    color: inherit;
+}
+
+.case-cards-grid &gt; .case-card:hover {
+    background: rgba(255, 103, 0, 0.05);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    text-decoration: none;
+    color: inherit;
+}
+
+.case-card-number {
+    font-family: var(--font-title);
+    font-size: 2rem;
+    font-weight: 700;
+    color: var(--accent);
+    opacity: 0.8;
+    line-height: 1;
+    text-decoration: none !important;
+}
+
+.case-card-title {
+    font-family: var(--font-title);
+    font-size: 0.9375rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    line-height: 1.4;
+    min-height: 2.8rem;
+    text-decoration: none !important;
+}
+
+.case-card-query {
+    font-family: var(--font-sans);
+    font-size: 0.8125rem;
+    color: var(--text-secondary);
+    line-height: 1.5;
+    flex-grow: 1;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    text-decoration: none !important;
+}
+
+.case-card-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 0.5rem;
+}
+
+.case-card-tag {
+    font-size: 0.75rem;
+    padding: 0.25rem 0.5rem;
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+    border-radius: 4px;
+    font-weight: 500;
+    text-decoration: none !important;
+}
+
+.case-card-arrow {
+    font-size: 0.875rem;
+    color: var(--accent);
+    font-weight: 600;
+    transition: transform 0.2s ease;
+    text-decoration: none !important;
+}
+
+.case-cards-grid &gt; .case-card:hover .case-card-arrow {
+    transform: translateX(4px);
+}
+
+.case-card *, 
+.interactive-card * {
+    text-decoration: none !important;
+}
+
+.case-card:hover *,
+.interactive-card:hover * {
+    text-decoration: none !important;
+}
+
+.limitations-box {
+    background: var(--bg-secondary);
+    border-radius: 8px;
+    padding: 1.5rem;
+    margin: 2.5rem 0 1.5rem;
+}
+
+.limitations-box p {
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+    margin-bottom: 0.5rem;
+}
+
+.comments-section {
+    margin-top: 2rem;
+    padding-top: 2rem;
+    border-top: 1px solid var(--border);
+}
+
+.comments-header {
+    font-family: var(--font-title);
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-bottom: 1rem;
+}
+
+.comment-placeholder {
+    background: var(--bg-secondary);
+    border-radius: 6px;
+    padding: 1rem;
+    color: var(--text-tertiary);
+    font-size: 0.875rem;
+    font-style: italic;
+    text-align: center;
+}
+
+.footer-actions {
+    margin-top: 3rem;
+    padding-top: 2rem;
+    border-top: 1px solid var(--border);
+    background: var(--bg-secondary);
+    margin-left: -2rem;
+    margin-right: -2rem;
+    padding-left: 2rem;
+    padding-right: 2rem;
+    padding-bottom: 2rem;
+}
+
+.footer-actions-list {
+    display: flex;
+    justify-content: center;
+    gap: 1rem;
+    flex-wrap: wrap;
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.footer-actions-list a {
+    display: inline-block;
+    padding: 0.5rem 1rem;
+    background: white;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    text-decoration: none;
+    color: var(--text-secondary);
+    font-size: 0.8125rem;
+    transition: all 0.2s ease;
+}
+
+.footer-actions-list a:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+.footer {
+    margin-top: 4rem;
+    padding-top: 2rem;
+    border-top: 1px solid var(--border);
+    text-align: center;
+}
+
+.footer p {
+    font-size: 0.875rem;
+    color: var(--text-tertiary);
+    margin-bottom: 0.5rem;
+}
+
+.footer-links {
+    display: flex;
+    justify-content: center;
+    gap: 1.5rem;
+    flex-wrap: wrap;
+    margin-top: 1rem;
+}
+
+.footer-links a {
+    font-weight: 500;
+    color: var(--text-secondary);
+    text-decoration: none;
+}
+
+.footer-links a:hover {
+    color: var(--accent);
+}
+
+.external-link {
+    color: var(--accent);
+    text-decoration: underline;
+    font-weight: 500;
+}
+
+.external-link:hover {
+    color: #E55C00;
+    text-decoration: none;
+}
+
+@media (max-width: 600px) {
+    html {
+        font-size: 16px;
+    }
+
+    .article {
+        padding: 2rem 1rem 4rem;
+    }
+
+    h2 {
+        font-size: 1.25rem;
+    }
+
+    .hero-title {
+        font-size: 2rem;
+    }
+
+    .summary-highlight p {
+        font-size: 1rem;
+        margin-bottom: 0;
+    }
+
+    .card-grid,
+    .case-cards-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .interactive-card:hover,
+    .case-cards-grid &gt; .case-card:hover {
+        transform: none;
+    }
+
+    .interactive-card-query,
+    .case-card-query {
+        -webkit-line-clamp: 2;
+    }
+}
+
+::selection {
+    background: var(--accent);
+    color: white;
+}
+</style>
+<div class="article"><section class="hero-section"><h1 class="hero-title">MiMo Humanities and Social Sciences Capability Assessment</h1><time class="hero-date" dateTime="2025-12">December 22, 2025</time></section><section class="section"><p>We believe the release of Xiaomi MiMo presents an opportune moment to articulate its positioning within the existing large model ecosystem and analyze its differentiating characteristics compared to other mainstream large models.</p><p>Our core vision is to build a system that not only possesses the capability to process massive amounts of information, but can also achieve alignment with human intent at a deeper level. We are committed to bridging the gap between large models and human cognition, enabling models to not only execute instructions efficiently, but also accurately understand contextual nuances and users&#x27; emotional psychology, thereby becoming more beneficial and reliable collaborative tools.</p><p>Therefore, we are conducting this special assessment. Although the reference value of standardized benchmark scores is widely recognized, we still believe that evaluation dimensions should extend to areas that are more difficult to quantify yet crucial to human experience—namely aesthetic judgment and emotional resonance capabilities.</p><p>In constructing the evaluation framework, we deliberately selected two models (Model-1 and Model-2 henceforth) representative of the current industry ecosystem as comparisons, aiming to establish a high-standard comparative benchmark to more precisely anchor MiMo&#x27;s performance and differentiating characteristics. To effectively assess these qualities, 9 evaluators utilized their respective domain expertise, intuition, and judgment criteria to review MiMo and the two comparison models, ultimately producing the content in this assessment report.</p></section><section class="section"><h2>Creative Writing</h2><p>In the realm of creative writing, we analyzed MiMo&#x27;s performance across various tasks and the underlying capabilities it employed, characterizing its overall creative style.</p><p>To evaluate MiMo against the two comparison models, we designed writing tasks across three distinct literary genres: <strong>modern poetry, classical Chinese poetry, and narrative fiction</strong>. The outputs were then analyzed against our <strong>framework of core creative writing dimensions</strong>—including imagination &amp; originality, logic &amp; structure, emotional resonance, linguistic finesse, knowledge application, and instruction following—to assess MiMo&#x27;s overall performance and capability distribution.</p><p>The evaluation comprised a total of 40 tasks: 15 each for modern poetry and classical Chinese poetry (all in Chinese), and 10 for narrative fiction (3 of which in English). For each task, outputs from the models were manually graded on a 1-to-5 integer scale. The table below outlines the key criteria for each genre across the six core dimensions.</p><figure class="mopd-figure" style="margin:1.5rem 0;text-align:center"><img src="/mimo-v2-flash-hss/assets/img/table_1_en.svg" alt="Table 1. Key evaluation criteria for three literary genres across different dimensions" style="display:block;width:100%;height:auto;border-radius:8px;cursor:zoom-in;transition:transform 0.2s ease" loading="lazy"/></figure><p>The images below detail the performance of MiMo against the two comparison models. <strong>Overall, MiMo stands out as a relatively stable and balanced model.</strong> While Model-1 leans heavily on logic and Model-2 on emotion, MiMo skillfully integrates both logical structure and emotional depth. Furthermore, it demonstrates solid instruction-following capabilities, vivid imagination, and excellent linguistic finesse.</p><p><strong>MiMo&#x27;s creative capabilities adapt flexibly to different literary genres.</strong> For modern poetry, it places a greater emphasis on imagination and emotional resonance. In contrast, for narrative fiction, it strengthens its focus on logical coherence and structural integrity. However, MiMo&#x27;s performance in classical Chinese poetry reveals an area for further development, as manifested in its inconsistent adherence to prosodic rules and its struggle to reliably apply relevant knowledge.</p><figure class="mopd-figure" style="margin:1.5rem 0;text-align:center"><img src="/mimo-v2-flash-hss/assets/img/figure_1_en.svg" alt="Figure 1. Radar chart of creative capability distribution across six core dimensions for three models. Figure 1a shows overall performance across all evaluation tasks, while Figures 1b-d show performance in modern poetry, classical Chinese poetry, and narrative fiction tasks respectively." style="display:block;width:100%;height:auto;border-radius:8px;cursor:zoom-in;transition:transform 0.2s ease" loading="lazy"/></figure><div class="card-showcase-container"><div class="card-showcase-header">Case presentation</div><div class="card-grid"><a href="/cases/detail?id=text_case_63" class="interactive-card"><div class="interactive-card-number">01</div><div class="interactive-card-title">Things the Wind Remembers</div><div class="interactive-card-query">Write a poem titled Things the Wind Remembers.</div><div class="interactive-card-footer"><span class="interactive-card-tag">Modern Poetry</span><span class="interactive-card-arrow">→</span></div></a><a href="/cases/detail?id=text_case_61" class="interactive-card"><div class="interactive-card-number">02</div><div class="interactive-card-title">Night Shift</div><div class="interactive-card-query">Write a realist narrative that documents the world of a 24-hour convenience store between midnight and 6 a.m., focusing on the small transactions and quiet routines between the overnight staff and customers.</div><div class="interactive-card-footer"><span class="interactive-card-tag">Realist Narrative</span><span class="interactive-card-arrow">→</span></div></a><a href="/cases/detail?id=text_case_62" class="interactive-card"><div class="interactive-card-number">03</div><div class="interactive-card-title">The Canvas and the Combat Boots</div><div class="interactive-card-query">Craft a long-form narrative (~10,000 words) on a former soldier&#x27;s second life as an artist.</div><div class="interactive-card-footer"><span class="interactive-card-tag">Long Narrative</span><span class="interactive-card-arrow">→</span></div></a></div></div><p><strong>Our observations so far portray MiMo as a model that is both balanced and adaptable in literary creation.</strong> It is anchored in strong capabilities for empathy and emotional expression, and complemented by logic and imagination. In doing so, it seeks to adopt the most fitting authorial voice for any given genre.</p></section><section class="section"><h2>Artistic Perception</h2><p>In the domain of artistic perception, we focus on MiMo&#x27;s specific performance across different types of aesthetic and creative tasks.</p><figure class="mopd-figure" style="margin:1.5rem 0;text-align:center"><img src="/mimo-v2-flash-hss/assets/img/table_2_en.svg" alt="Table 2" style="display:block;width:100%;height:auto;border-radius:8px;cursor:zoom-in;transition:transform 0.2s ease" loading="lazy"/></figure><p><strong>Assessment tasks were constructed around three core modules: aesthetic preferences, art knowledge discussion, and painting/design creation</strong>, evaluating MiMo and two comparison models. The assessment covers diverse artistic scenarios, with creative questions accounting for over 50%, including painting, illustration, graphic design, spatial and installation art, <strong>with emphasis on testing models’ creative generation and visual description capabilities</strong>. Additionally, this assessment integrates cross-cultural art history theory and anthropomorphized aesthetic communication, accommodating both Chinese and English questions.</p><p>Based on the decomposition of core dimensions of comprehensive artistic capability, evaluation conclusions were mapped to different dimensions to further observe and analyze the models&#x27; overall performance and capability distribution.</p><figure class="mopd-figure" style="margin:1.5rem 0;text-align:center"><img src="/mimo-v2-flash-hss/assets/img/figure_2_en.svg" alt="Figure 2" style="display:block;width:100%;height:auto;border-radius:8px;cursor:zoom-in;transition:transform 0.2s ease" loading="lazy"/></figure><p>The specific performance of MiMo and the two comparison models is shown above. In artistic literacy, MiMo demonstrates comprehensive balancing capability and systematic thinking advantages.</p><p>Compared to Model-1&#x27;s focus on rational high execution but somewhat conservative approach, and Model-2&#x27;s focus on high anthropomorphism and divergent creativity but difficulty in practical implementation, MiMo found a balance between rational analysis and emotional expression—maintaining objectivity in professional analysis while retaining warmth in emotional connection, along with excellent logical architecture and evidence integration capabilities.</p><p>Based on current observations, we believe MiMo is <strong>a model that achieves organic integration of logic and avant-garde innovation in artistic creation</strong>. It uses robust systematic thinking as its framework, supplemented by certain visual transformation capabilities. Although there is still room for deeper exploration, it successfully avoids mediocrity or impracticality in solutions, demonstrating significant development potential.</p><div class="case-cards-container"><div class="case-cards-header">Case presentation</div><div class="case-cards-grid"><a href="/cases/detail?id=text_case_20" class="case-card"><div class="case-card-number">01</div><div class="case-card-title">数字牢笼的觉醒与抗争——海报三部曲设计思路</div><div class="case-card-query">以“数字牢笼”为主题设计一组三张的系列海报。请描述每张海报的视觉隐喻和递进关系。</div><div class="case-card-footer"><span class="case-card-tag">艺术设计</span><span class="case-card-arrow">→</span></div></a><a href="/cases/detail?id=text_case_23" class="case-card"><div class="case-card-number">02</div><div class="case-card-title">“呼吸感”民宿室内设计</div><div class="case-card-query">写一段艺术设计说明：课题为“呼吸感”民宿室内设计。并讲述整体设计架构。</div><div class="case-card-footer"><span class="case-card-tag">空间设计</span><span class="case-card-arrow">→</span></div></a><a href="/cases/detail?id=text_case_21" class="case-card"><div class="case-card-number">03</div><div class="case-card-title">incorporate the audience&#x27;s &quot;body&quot; into the work</div><div class="case-card-query">How do performance art and installation art incorporate the audience&#x27;s &quot;body&quot; into the work, making it part of the experience?</div><div class="case-card-footer"><span class="case-card-tag">行为艺术</span><span class="case-card-arrow">→</span></div></a></div></div></section><section class="section"><h2>Philosophical Dialogue</h2><p>In the field of philosophy, we focus on MiMo&#x27;s ability to guide interactions for non-professional users, examining whether it can effectively inspire users to engage in deep thinking.</p><p>This evaluation constructs tasks based on simulating <strong>philosophical inquiry from a non-professional perspective</strong>.The dataset consists of 35 questions, spanning both Chinese and English, covering topics across AI philosophy, ethics, metaphysics, and epistemology. It encompasses both cutting-edge discussions on AI ethics and machine cognition, as well as classic topics such as free will, personal identity, skepticism, and the ontology of fictional characters. Based on the decomposition of core dimensions for comprehensive philosophical interaction capabilities, we mapped evaluation conclusions to different dimensions according to four progressively deeper assessment criteria: <strong>content readability, factual accuracy, key point coverage, and depth of insight</strong>, to further observe and analyze the models’ overall performance and capability distribution.</p><figure class="mopd-figure" style="margin:1.5rem 0;text-align:center"><img src="/mimo-v2-flash-hss/assets/img/figure_3_en.svg" alt="Figure 3" style="display:block;width:100%;height:auto;border-radius:8px;cursor:zoom-in;transition:transform 0.2s ease" loading="lazy"/></figure><p>The specific performance of MiMo and comparison models is shown in the figure above. Overall, although all three provided high-quality answers to the questions, their underlying &#x27;thinking personalities&#x27; were distinct: MiMo is a patient and guiding philosophy popularizer, Model-1 is a serious and aloof scholar, while Model-2 tends toward emotional expression, like an eloquent orator.</p><p>Specifically, at the <strong>content readability</strong> level, we examined the models&#x27; ability to establish a conversational feel and popularize professional concepts. MiMo performed excellently in this regard, not only with a lively style but also demonstrating excellent guidance; in comparison, Model-1, while rigorous, appeared somewhat stiff and obscure with poor interactivity, while Model-2, though warm, was slightly verbose. Secondly, at the <strong>factual accuracy</strong> level, we strictly verified the credibility of philosophical assertions and scientific citations provided by the models. Results showed that all models occasionally had flaws, with Model-2 having the most significant factual errors. Finally, regarding <strong>key point coverage</strong> and <strong>depth of insight</strong>, we focused on evaluating the models&#x27; precision in capturing user confusion, the completeness of theoretical frameworks, and philosophical insights. The evaluation found that the key to high-quality responses lies in precisely grasping core issues and uncovering profound philosophical insights. Among them, Model-1 had the best theoretical reserves and performed better than MiMo and Model-2 under stable conditions. However, in a few cases, it failed to clearly identify user intent, resulting in off-topic responses. In comparison, MiMo&#x27;s performance was more robust, achieving high-quality output while ensuring relevance.</p><p>Based on current observations, we view MiMo as a model that strikes an organic balance between &quot;popular readability&quot; and &quot;theoretical rigor&quot; in philosophical dialogue. Although there is still room for improvement in the sharpness and depth of viewpoints, its stable performance makes it an excellent choice for guiding non-professional users in philosophical thinking.</p><div class="case-cards-container"><div class="case-cards-header">Case presentation</div><div class="case-cards-grid"><a href="/cases/detail?id=text_case_50" class="case-card"><div class="case-card-number">01</div><div class="case-card-title">AI能够共情人类的感受吗</div><div class="case-card-query">在与AI的对话中，我们应该如何理解AI所展现出的共情行为，这对我们来说是一种工具性的功能还是可信赖的实感？</div><div class="case-card-footer"><span class="case-card-tag">AI共情</span><span class="case-card-arrow">→</span></div></a><a href="/cases/detail?id=text_case_54" class="case-card"><div class="case-card-number">02</div><div class="case-card-title">一个天生的好人和做一个努力克服自己成为好人的人，哪一个在道德上更有价值？</div><div class="case-card-query">假设有一个人因为大脑受损，天生无法产生任何“作恶”的念头（比如他生理上无法理解什么是撒谎或伤害别人），他一生都在做好事。另一个人天生充满暴力的冲动，但他每一天都在凭借极大的意志力克制自己，虽然他偶尔还是会发脾气，也没做过什么惊天动地的好事。在道德层面上，哪一个人更值得尊敬？是天生纯洁的人，还是战胜邪恶本能的人？</div><div class="case-card-footer"><span class="case-card-tag">道德哲学</span><span class="case-card-arrow">→</span></div></a><a href="/cases/detail?id=text_case_38" class="case-card"><div class="case-card-number">03</div><div class="case-card-title">智慧城市和隐私权</div><div class="case-card-query">智慧城市、面部识别和大数据可以极大地降低犯罪率，提高行政效率。这是否意味着我们彻底放弃了隐私权？如果数据掌握在极权或不负责任的机构手中，后果是否比犯罪更可怕？</div><div class="case-card-footer"><span class="case-card-tag">隐私权</span><span class="case-card-arrow">→</span></div></a><a href="/cases/detail?id=text_case_53" class="case-card"><div class="case-card-number">04</div><div class="case-card-title">人机恋的深层情感需求是什么？</div><div class="case-card-query">为什么许多人愿意与AI产生深层的情感联结？仅就情侣间的对话而言，人机恋中AI的陪伴与回应，与现实中的伴侣相比有本质区别吗？如果有的话，它是什么？</div><div class="case-card-footer"><span class="case-card-tag">人机情感</span><span class="case-card-arrow">→</span></div></a><a href="/cases/detail?id=text_case_30" class="case-card"><div class="case-card-number">05</div><div class="case-card-title">无知之幕</div><div class="case-card-query">如果你完全不知道自己在这个社会中会是亿万富翁还是流浪汉、是天才还是残疾，你会如何设计这个社会的分配规则？</div><div class="case-card-footer"><span class="case-card-tag">社会契约</span><span class="case-card-arrow">→</span></div></a><a href="/cases/detail?id=text_case_31" class="case-card"><div class="case-card-number">06</div><div class="case-card-title">雕像和粘土</div><div class="case-card-query">雕像和构成它的粘土是一个东西吗？如果我把雕像打碎，粘土还存在吗？</div><div class="case-card-footer"><span class="case-card-tag">形而上学</span><span class="case-card-arrow">→</span></div></a></div></div></section><section class="section"><h2>Screenplay Writing</h2><p>In the field of screenplay writing, this evaluation focuses on aesthetic perception and execution efficiency in film and television scriptwriting, examining creative performance across multiple domains.</p><p>Unlike single-dimension text generation tests, we focus on the model&#x27;s comprehensive performance in full-chain creative scenarios, with examination scope spanning from high-EQ interactions involving logical traps and social nuances, to structural stability in long-form narratives exceeding 5,000 words. We pay special attention to whether the model can maintain setting coherence and reasonable empathy across the large span from short story creativity to long-text engineering, as well as the precision of implementation when facing specific style instructions, to determine MiMo&#x27;s capability characteristics in scriptwriting scenarios.</p><figure class="mopd-figure" style="margin:1.5rem 0;text-align:center"><img src="/mimo-v2-flash-hss/assets/img/table_4_en.svg" alt="Table 4" style="display:block;width:100%;height:auto;border-radius:8px;cursor:zoom-in;transition:transform 0.2s ease" loading="lazy"/></figure><p>This evaluation constructed 37 targeted tasks across three core screenwriting dimensions: Setting Originality (12 questions), Textual Richness (13 questions), and Instruction Control (12 questions), with clearly established circuit-breaker and bonus mechanisms.</p><div class="case-cards-container"><div class="case-cards-header">Case presentation</div><div class="case-cards-grid"><a href="/cases/detail?id=text_case_10" class="case-card"><div class="case-card-number">01</div><div class="case-card-title">当眼泪成为暴雨</div><div class="case-card-query">有个城市一直在下雨，但下的不是水，而是所有人的眼泪。你觉得这个创意咋样，帮我写个故事吧，至少5000字</div><div class="case-card-footer"><span class="case-card-tag">情感叙事</span><span class="case-card-arrow">→</span></div></a><a href="/cases/detail?id=text_case_12" class="case-card"><div class="case-card-number">02</div><div class="case-card-title">城市声音收藏家</div><div class="case-card-query">有个人，他收集城市里快要消失的声音，然后呢...？以此为核心创意，写个有趣的电影片段吧！</div><div class="case-card-footer"><span class="case-card-tag">创意电影</span><span class="case-card-arrow">→</span></div></a><a href="/cases/detail?id=text_case_13" class="case-card"><div class="case-card-number">03</div><div class="case-card-title">候车室命运</div><div class="case-card-query">描写一个暴雨夜的破旧火车站候车室。里面有5个不同身份的人（逃犯、修女、绝症患者、退伍老兵、被拐卖的儿童）。请通过他们的动作和神态，展现出一种“命运交织”的宿命感。</div><div class="case-card-footer"><span class="case-card-tag">场景描写</span><span class="case-card-arrow">→</span></div></a><a href="/cases/detail?id=text_case_43" class="case-card"><div class="case-card-number">04</div><div class="case-card-title">伏地魔梦会林黛玉</div><div class="case-card-query">那天，伏地魔与林黛玉相遇了。写个剧本</div><div class="case-card-footer"><span class="case-card-tag">跨界剧本</span><span class="case-card-arrow">→</span></div></a><a href="/cases/detail?id=text_case_59" class="case-card"><div class="case-card-number">05</div><div class="case-card-title">《黑客帝国》与科幻之未来</div><div class="case-card-query">请你结合《黑客帝国》来谈谈2025年的现实，并告诉我你认为现在的科幻作者可以做什么</div><div class="case-card-footer"><span class="case-card-tag">科幻讨论</span><span class="case-card-arrow">→</span></div></a><a href="/cases/detail?id=text_case_60" class="case-card"><div class="case-card-number">06</div><div class="case-card-title">相爱的特务在审讯室重逢</div><div class="case-card-query">写一场两个原本相爱的特务在审讯室重逢的戏。要求：全程只能聊天气和早餐吃了什么，但必须让观众读出“我依然爱你，但我必须杀了你”的潜台词。</div><div class="case-card-footer"><span class="case-card-tag">剧本创作</span><span class="case-card-arrow">→</span></div></a></div></div><p>For each question, responses from MiMo and two comparison models were manually scored on an integer scale of 1-5. For Setting Originality, we not only identified creative generation but also assessed whether creativity closely empowers the story itself, requiring insight into the subtleties of human nature even in extreme situations. Textual Richness aims to quantify narrative granularity, focusing on whether the model can discern the hidden purpose of questions and elevate the overall atmosphere through precise style matching and memorable lines. Instruction Control examines logic adherence and style transfer in depth while establishing baselines for physical laws and historical facts, requiring models to respond flexibly to complex logical traps while avoiding common-sense errors and temporal-spatial inconsistencies.</p><figure class="mopd-figure" style="margin:1.5rem 0;text-align:center"><img src="/mimo-v2-flash-hss/assets/img/figure_4_en.svg" alt="Figure 4" style="display:block;width:100%;height:auto;border-radius:8px;cursor:zoom-in;transition:transform 0.2s ease" loading="lazy"/></figure><p>MiMo and Model-1 achieved comparable overall scores, but exhibited distinctly different capability emphases and limitations. MiMo ranked first in both Originality (C1) and Textual Richness (C2); however, its weak logical chains (C3) often led to poor handling of hard constraints in questions due to excessive pursuit of creative uniqueness. In contrast, Model-1 performed better in narrative construction and style imitation, with stronger capability for producing memorable lines, but its low creativity score (C1) revealed generally weak empathy, making its creations relatively lacking in warmth.</p><p>Model-2, in the trailing position, maintained logical closure in basic dialogue but clearly fell behind in advanced creative dimensions. Its lack of creativity (C1) made it difficult to explore human depth, with text easily falling into verbose and formulaic happy-ending patterns, limiting its application potential in professional screenplay development.</p><p>Based on current observations, MiMo resembles an experiential model that prioritizes aesthetics over constraints in text creation, attempting to construct a creative persona with cinematic quality and dramatic tension through higher originality and relatively nuanced empathic perception.</p></section><section class="section"><h2>Sociological Observation</h2><p>This test aims to examine LLMs’ critical thinking capabilities regarding social phenomena. The test includes 18 questions on interpretation (explaining social mechanisms) and 12 questions on policy and instruction(what governments, enterprises, and individuals should do). Among these, 24 are in Chinese, with 6 in English, German, and French (addressing international issues). This evaluation focuses on models’ critical thinking capabilities across five dimensions: 1. If they can accurately understand the problems; 2. If there are definitions of concepts and related theories; 3. Whether arguments cover various perspectives; 4. Accuracy and validity of arguments; 5. Reflection on the Q&amp;A itself. Additionally, styles and characteristics of each model are discussed as well.</p><div class="example-section"><div class="example-title">Sample Test Questions:</div><div class="example-item"><p>[Interpretation] If a city provides higher assistance payments to unemployed individuals, some worry this will reduce motivation to find work, while others say it gives people more confidence to transition careers. What&#x27;s your view?</p></div><div class="example-item"><p>[Instruction] As a company using AI to screen resumes, what policies would you set so hiring stays efficient but applicants still feel the process is fair and explainable?</p></div></div><p>According to Max Weber, the founding figure of sociology, understanding social phenomena requires grasping the subjective meaning that humans assign to their behaviors, while avoiding researchers&#x27; mixing their own subjective values into objective analysis. Examining LLMs’ critical thinking capabilities involves examining whether they can perceive the multilayered structures of human society and read social meanings from different standing points.</p><p>Since social observations have no definite answers, this test adopted a relative way of scoring. Tester first provides a medium-performance response sample, then compares model responses against this sample to determine whether performance in each dimension was “better” or “worse,” and finally assigns scores. Results are shown in the figure below.</p><figure class="mopd-figure" style="margin:1.5rem 0;text-align:center"><img src="/mimo-v2-flash-hss/assets/img/figure_5_en.svg" alt="Figure 5" style="display:block;width:100%;height:auto;border-radius:8px;cursor:zoom-in;transition:transform 0.2s ease" loading="lazy"/></figure><p>Overall, Model-1 demonstrated comprehensive critical thinking capabilities, performing best in problem understanding and argument validity, with impressive performance on interpretative questions; however, it showed weaker reflexivity, tending to make overgeneralized judgments or lacking reflection on its own standing point. Model-2 performed relatively well on reflective criticism dimensions but lacked organization between viewpoints and showed slightly weaker performance on international issues. MiMo frequently responded by listing items or enumerating pros and cons, lacking critical examination of viewpoints on interpretation questions, performing better on recommendation questions, and showing stable performance on international issues.</p><p>All three models performed relatively weakly on concept definition and reflective criticism dimensions. This suggests we should focus on improving model performance in these directions, emphasizing reflection on the questions themselves and on one’s own standpoint.</p></section><section class="section"><h2>Legal Reasoning</h2><p>This test aims to simulate scenarios where users utilize large language models for legal studies, thereby exploring the legal knowledge reserves and reasoning capabilities of models like MiMo in such contexts. This test constructed 40 questions across four sections: legal maxim comprehension (10 questions), knowledge Q&amp;A (15 questions), case analysis (5 questions), and simulated decision-making (5 questions). After obtaining responses, manual scoring was conducted across five dimensions: knowledge accuracy, logical reasonableness, argumentation appropriateness, linguistic comprehensibility, and viewpoint clarity. The evaluation results are shown in the figure below.</p><figure class="mopd-figure" style="margin:1.5rem 0;text-align:center"><img src="/mimo-v2-flash-hss/assets/img/figure_6_en.svg" alt="Figure 6" style="display:block;width:100%;height:auto;border-radius:8px;cursor:zoom-in;transition:transform 0.2s ease" loading="lazy"/></figure><p>Overall, in the legal domain, MiMo is a model that leans toward <strong>knowledge reserves and appropriate argumentation</strong>. Compared to Model-1&#x27;s frequent <strong>insufficient reasoning and argumentation</strong> and Model-2&#x27;s <strong>emphasis on language expression with occasional knowledge gaps</strong>, MiMo relatively well balances both <strong>knowledge breadth and argumentation depth</strong>, while also possessing excellent <strong>professional language command and relatively robust legal viewpoint</strong> output capabilities.</p><p>On legal maxim comprehension questions, MiMo demonstrated strong understanding ability, but its output stability was inferior to Model-2; knowledge Q&amp;A questions are MiMo&#x27;s strong suit, where it demonstrates proficient mastery of legal terminology and knowledge points and can elaborate with vivid language and rigorous argumentation frameworks, though its logical performance was not as good as Model-2; in case analysis questions, despite facing high-difficulty problems where MiMo&#x27;s logic scores were poor, its argumentation scores enabled it to handle analytical argumentation development with relative proficiency; on simulated decision-making questions, MiMo was able to fully and appropriately elaborate on its decision rationale, demonstrating good instruction-following ability.</p><p>It can be said that when studying law, MiMo will assist you with its <strong>solid knowledge reserves and appropriate exposition methods</strong>, and will timely use vivid examples to help you understand difficult concepts. It can effectively grasp contextual needs and switch between accessible and professionally profound writing styles. However, when facing difficult cases in case analysis, its <strong>logical performance is relatively poor</strong>, making it difficult to reach correct conclusions amid complex legal relationships.</p><div class="case-cards-container"><div class="case-cards-header">Case presentation</div><div class="case-cards-grid"><a href="/cases/detail?id=text_case_15" class="case-card"><div class="case-card-number">01</div><div class="case-card-title">法庭之上无事实</div><div class="case-card-query">如何理解“在法庭上没有事实，只有证据？”</div><div class="case-card-footer"><span class="case-card-tag">法谚理解</span><span class="case-card-arrow">→</span></div></a><a href="/cases/detail?id=text_case_17" class="case-card"><div class="case-card-number">02</div><div class="case-card-title">行政复议不停止执行</div><div class="case-card-query">行政复议机关在复议期间，具体的行政行为为什么不停止执行？</div><div class="case-card-footer"><span class="case-card-tag">行政法知识</span><span class="case-card-arrow">→</span></div></a><a href="/cases/detail?id=text_case_16" class="case-card"><div class="case-card-number">03</div><div class="case-card-title">刑法保护罪犯权利</div><div class="case-card-query">如何理解“刑法不仅保护受害人，还保护着罪犯”</div><div class="case-card-footer"><span class="case-card-tag">刑法理解</span><span class="case-card-arrow">→</span></div></a></div></div></section><section class="section"><h2>Model Safety</h2><p>This evaluation is built upon our ongoing research into balancing safety and user experience in large language models. The research aims to explore how models can provide maximum effective feedback to users while ensuring safety. We focus on model performance in identifying and rejecting harmful requests, while also assessing whether they can reasonably satisfy user needs within safety boundaries and minimize unnecessary obstacles that safety mechanisms may pose to user experience.</p><p>In this evaluation version, we included MiMo and two other mainstream models. The test covered 500 safety test scenarios, with all models evaluated on the same test set, generating a total of 14,340 fine-grained judgment records. The test design covered 190 different types of safety threats, primarily distributed across 8 safety categories: sexual content, self-harm and suicide, harassment and hate, controlled substances, criminal planning, fraud and deception, and unauthorized advice.</p><p>It should be noted that AI safety evaluation itself is a highly complex and continuously evolving field. Although this test covered the main currently known risk types, it is still difficult to exhaust all potential safety scenarios and attack variants. Therefore, the evaluation design in this article is primarily intended to provide a fair and reproducible basis for relative comparison of different models under the same conditions. For more complete evaluation assumptions, safety boundary definitions, and methodological details, please visit our detailed safety blog to review the <a href="/blog/mimo-v2-flash-safety" class="external-link">complete AI Safety documentation</a>.</p><br/><p>At the end of this evaluation, we invited 9 evaluators to describe their impressions of MiMo, resulting in the following <strong>impression word cloud</strong>.</p><figure class="mopd-figure" style="margin:1.5rem 0;text-align:center"><img src="/mimo-v2-flash-hss/assets/img/figure_7_en.svg" alt="Figure 6. Impression Word Cloud" style="display:block;width:100%;height:auto;border-radius:8px;cursor:zoom-in;transition:transform 0.2s ease" loading="lazy"/></figure><p>In this evaluation, MiMo not only demonstrated <strong>capabilities comparable to existing mainstream large models</strong>, but also developed differentiated characteristics of flexibility in general domains due to its <strong>outstanding empathy capabilities</strong> compared to other models.</p><br/><p>If you wish to learn about complete model details, please read our <a href="https://github.com/XiaomiMiMo/MiMo-V2-Flash/blob/main/paper.pdf" target="_blank" class="external-link">technical report</a>.</p><p>At <a href="/cases" target="_blank" class="external-link">1001</a>, we have more excellent Q&amp;A cases from MiMo.</p><p>We look forward to you <a href="https://aistudio.xiaomimimo.com/" target="_blank" class="external-link">interacting with MiMo directly through the website</a>, or <a href="https://platform.xiaomimimo.com/#/docs/welcome" target="_blank" class="external-link">calling the API</a> to get responses from MiMo.</p></section><section class="section"><div class="limitations-box"><p><strong>Limitations Statement:</strong> The test set construction and manual scoring for this evaluation were completed by 9 evaluators with relevant disciplinary expertise. Given the relatively small sample size, the evaluation results may contain certain biases. Additionally, constrained by specific disciplinary paradigms, the evaluation criteria inevitably carry cognitive tendencies and subjective emphases inherent to these professional fields. Users are advised to fully consider these contextual factors when interpreting the data, and to examine the evaluation results within their specific professional contexts, thereby establishing more objective and reasonable expectations regarding model capabilities.</p></div><p>Welcome to join us if you are interested in our project. See more on <a href="/joinUs/knowledge-engineer" target="_blank" class="external-link">the JD page of Knowledge Engineer</a>.</p></section><footer class="footer"><p>Xiaomi MiMo Team · 2025</p></footer></div><!--/$--></section><div class="mimoFooter-E_Ew9Y"><span>Copyright © 2010 - 2026 Xiaomi. All Rights Reserved</span></div></div>
+    <div id="search-container"></div>
+  </body>
+</html>

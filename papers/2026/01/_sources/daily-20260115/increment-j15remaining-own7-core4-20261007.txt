@@ -1,0 +1,253 @@
+Owen-Shapley Policy Optimization (OSPO): A Principled RL Algorithm for Generative Search LLMs (https://arxiv.org/html/2601.08403v1)
+citeturn30807view0 [wordlim: 200] Crawled: today; Content type: text/html; Source: open({"ref_id":"https://arxiv.org/html/2601.08403v1","lineno":154}); Total lines: 851
+L144: This restriction serves two purposes: (1) it reduces computational complexity from $O(2^{N})$ to $O(N\cdot w_{\max})$, making online evaluation tractable during RL training, and (2) it preserves semantic coherence, as non-contiguous coalitions (e.g., skipping middle segments) would produce fragmented queries that may confound reward evaluation.
+L145: We denote the resulting segment attributions as $\phi_{j}^{\text{Owen}}$, computed by averaging marginal contributions $v(S\cup\{j\})-v(S)$ only over contiguous coalitions $S$ where $j\notin S$ but $S\cup\{j\}$ remains contiguous:
+L146:  | $$\small\phi_{j}^{\text{Owen}}~=~\frac{1}{|C_{j}|}\sum_{S\in C_{j}}\Big(v(S\cup\{j\})-v(S)\Big),$$  |  | (5)
+L147: 
+L148: where $C_{j}=\{S:S\text{ contiguous},j\notin S,S\cup\{j\}\text{ contiguous}\}$ is the set of applicable coalitions for segment $j$. The full coalition generation and sampling strategy, including how we manage computational budgets via sampling when $N$ is large, is detailed in cite47†Section A.6 .
+L149: This coalitional view naturally aligns with the linguistic structure of LLM outputs in recommendation tasks, where contiguous spans—such as attribute–intent phrases (“blue midi dress”) or preference clauses (“prefers seasonal styles”)—form coherent compositional units. By assigning credit to these coalitions, OSPO captures how phrase combinations jointly influence downstream reward without enumerating all $2^{n}$ subsets.
+L150: Conceptually, this mirrors options or temporal abstractions in reinforcement learning (cite88†Sutton & Barto, 2018 ; cite131†Konidaris & Barto, 2009 ; cite86†Chai et al., 2025 ), allowing more efficient exploration and faster credit propagation across a response.
+L151: ##### From Segment Attributions to Token Advantages.
+L152: While Owen values $\phi_{j}^{\text{Owen}}$ quantify segment-level contributions, we must bridge two granularity gaps to effectively use such fine-grained values in policy optimization.
+L153: First, standard baseline-based advantage computation requires exploring multiple completions per prompt via Monte Carlo sampling (cite78†Williams, 1992b ; cite132†Kool et al., 2019 ) to estimate which responses are better than average—yielding per-sequence advantages $\hat{A}^{(g)}=R^{(g)}-\bar{R}$ that indicate whether completion $g$ should be reinforced or suppressed.
+L154: Second, clipped surrogate objectives (cite87†Schulman et al., 2017 ; cite73†Yue et al., 2025 ; cite69†Shao et al., 2024a ) operate at the ”token” level, requiring decomposition of sequence-level feedback into token-level signals. Owen values address within-sequence attribution—identifying which segments contributed to quality—but the policy must also learn from these between-sequence group-level advantages to effectively explore and distinguish better completions from worse ones.
+L155: To achieve both objectives, our core insight is advantage redistribution: instead of uniform assignment, we redistribute the per-sequence advantages $\hat{A}^{(g)}$ across tokens, weighted by their Owen values as computed above. This strategy allows us to leverage group-based advantages for variance reduction (cite78†Williams, 1992b ; cite132†Kool et al., 2019 ) during exploration while learning fine-grained token attributions—overcoming the credit assignment problem without relying on an external value model.
+L156: We construct a mapping $W\in\mathbb{R}^{N\times T}$ where $W_{it}$ encodes fraction of token span covered by the segment $a_{i}$ and token $y_{t}$, projecting segment Owen values to token space: $\boldsymbol{\phi}_{\text{tok}}=W^{\top}\boldsymbol{\phi}_{\text{seg}}$. After normalizing to unit sum $\tilde{\phi}_{t}=\phi_{t}/\sum_{t^{\prime}}\phi_{t^{\prime}}$, a naive proportional redistribution $\tilde{A}_{t}=\hat{A}^{(g)}\cdot\tilde{\phi}_{t}$ would create severe length bias cite119†Liu et al.
+L157: (2025) ; cite73†Yue et al. (2025) where shorter responses are rewarded more while longer incorrect responses go under-penalized. Since Owen values must sum to the total reward (due to the efficiency property), longer sequences experience systematic dilution where each token receives exponentially weaker gradient signals compared to shorter responses. To eliminate this bias, we multiply by sequence length:
+L158:  | $$A_{t}^{(g)}=T\cdot\tilde{\phi}_{t}^{(g)}\cdot\hat{A}^{(g)}.$$  |  | (6)
+L159: 
+L160: This ensures the average token advantage $\frac{1}{T}\sum_{t}A_{t}^{(g)}=\hat{A}^{(g)}$ equals the original sequence-level advantage regardless of length (proof in Lemma cite133†A.1 , cite29†Section A.1 of Appendix), eliminating the length-dependent training bias identified by cite119†Liu et al. (2025) .
+L161: Substituting these token-specific advantages $A_{t}^{(g)}$ into the GRPO objective (Eq. cite134†3 )—which uses uniform sequence-level advantages $\hat{A}^{(g)}$—yields the OSPO objective^{4}^{4} 4 We omit the expectation operator for brevity; it is understood that the objective is computed over batches sampled from $\mathcal{D}$ with rollouts from $\pi_{\theta_{\text{old}}}$.:
+L162:  | $$\scriptsize\mathcal{J}^{\text{OSPO}}(\theta)=\frac{1}{G}\sum_{g=1}^{G}\frac{1}{T}\sum_{t=1}^{T}\min\!\Big(\rho_{t}^{(g)}A_{t}^{(g)},\operatorname{clip}(\rho_{t}^{(g)},\,1-\epsilon,\,1+\epsilon)A_{t}^{(g)}\Big),$$  |  | (7)
+L163: where $A_{t}^{(g)}=T\cdot\tilde{\phi}_{t}^{(g)}\cdot\hat{A}^{(g)}$ are Owen-weighted token advantages (cf. Eq. cite135†6 ). The key distinction from GRPO: while GRPO assigns the same advantage $\hat{A}^{(g)}$ to all tokens in sequence $g$, OSPO redistributes this advantage proportionally to each token’s causal contribution $\phi_{t}^{(g)}$ as measured by Owen values. Algorithm cite136†1 provides the complete OSPO training procedure.
+L164: ##### Proportional vs. Rank-Based Redistribution.
+L165: Equation cite135†6 uses Owen values directly as importance weights—we call this OSPO-Prop (proportional). We also explore OSPO-Rank, which converts Owen values to ordinal ranks before redistribution, providing robustness when estimates are noisy in long sequences. This spreads credit more uniformly according to relative importance rather than absolute magnitudes. In our experimental setup and results section, we focus on OSPO-Prop as our primary approach, using OSPO-Rank as an ablation study.
+L166: ##### Rank-Based Owen Redistribution.
+L167: 
+L168: Instead of redistributing the group advantage $\hat{A}^{(g)}$ proportionally to the normalized Owen values $\tilde{\phi}_{t}^{(g)}$, we map each token’s Owen value $\phi_{t}^{(g)}$ to its ordinal rank position among all tokens in the sequence. Let $\text{rank}_{t}^{(g)}$ denote the rank (1 = lowest, $T$ = highest) of token $t$ by its $\phi_{t}^{(g)}$ value. The rank-based redistributed advantage is then defined as:
+L169:  | $$A_{t}^{(g)}=T\cdot\hat{A}^{(g)}\cdot\frac{\text{rank}_{t}^{(g)}}{\sum_{t^{\prime}=1}^{T}\text{rank}_{t^{\prime}}^{(g)}}.$$  |  | (8)
+L170: This formulation preserves the same length-invariant property as Eq. cite135†6 , ensuring that $\frac{1}{T}\sum_{t=1}^{T}A_{t}^{(g)}=\hat{A}^{(g)}$, while redistributing credit more uniformly across tokens according to their relative importance rather than absolute Owen magnitudes. Intuitively, OSPO-Rank smooths noisy or highly skewed Owen attributions—useful when a few tokens dominate the proportional weights or when the estimated $\phi_{t}$ values are unstable in long sequences.
+L171: Algorithm 1 Owen-Shapley Policy Optimization (OSPO)
+L172: 
+L173: 0:  Policy $\pi_{\theta}$, dataset $\mathcal{D}$, reward $r$, segmentation function $\textsc{Segment}(\cdot)$, coalition width $w_{\max}$, samples $M$, group size $G$
+L174: 
+L175: 1:  for $x\sim\mathcal{D}$ do
+L176: 
+L177: 2:    Sample $G$ responses $\{y^{(g)}\}_{g=1}^{G}\sim\pi_{\theta_{\mathrm{old}}}(\cdot\mid x)$
+L178: 
+L179: 3:    for $g=1,\ldots,G$ do
+L180: 
+L181: 4:     Segment $\mathcal{A}^{(g)}=\textsc{Segment}(y^{(g)})$ and compute $r^{(g)}=r(x,y^{(g)})$
+L182: 5:     Sample $M$ coalitions $\{S_{m}\}_{m=1}^{M}$ with $S_{m}\subseteq\{1,\ldots,N\}$, $|S_{m}|\leq w_{\max}$
+L183: 
+L184: 6:     Compute Owen values: $\phi_{j}=\frac{1}{|C_{j}|}\sum_{S\in C_{j}}[v(S\cup\{j\})-v(S)]$
+L185: 
+L186: 7:     Map to tokens: $\boldsymbol{\phi}^{(g)}=(W^{(g)})^{\top}\boldsymbol{\phi}_{\mathsf{seg}}^{(g)}$
+L187: 
+L188: 8:     Normalize: $\tilde{\phi}_{t}^{(g)}=\phi_{t}^{(g)}/\sum_{t^{\prime}}\phi_{t^{\prime}}^{(g)}$
+L189: 
+L190: 9:     Compute advantage: $\hat{A}^{(g)}=(r^{(g)}-\bar{r})/\sigma_{r}$
+--------------------------------------------------------------------------------
+AtomMem : Learnable Dynamic Agentic Memory with Atomic Memory Operation (https://arxiv.org/html/2601.08323v1)
+citeturn30807view1 [wordlim: 200] Crawled: 3 days ago; Content type: text/html; Source: open({"ref_id":"https://arxiv.org/html/2601.08323v1","lineno":108}); Total lines: 348
+L94: $\triangleright$ Action Space $\mathcal{A}$. An action $a_{t}\in\mathcal{A}$ is a joint decision $a_{t}=(a_{t}^{env},a_{t}^{mem})$. While $a_{t}^{env}$ represents task-specific execution (e.g., answering a question), $a_{t}^{mem}$ denotes a memory management action chosen from our atomic CRUD space (Create, Read, Update, Delete).
+L95: $\triangleright$ Transition Function $P$. The transition $P(s_{t+1}|s_{t},a_{t})$ defines how the state evolves. Notably, the internal memory state $s_{t+1}^{mem}$ is directly modified by the agent’s memory action (Create/Update/Delete).
+L96: $\triangleright$ Observation Function $\mathcal{O}$. The agent does not have direct access to the underlying state $s_{t}$. Instead, it receives an observation $o_{t}\sim\mathcal{O}(s_{t},a_{t-1}^{mem})$, which consists of the current environmental input and the memory contents. Crucially, the memory state is not fully observable. Access to memory contents is mediated by explicit Read operations, whose execution is decided by the learned policy.
+L97: $\triangleright$ Observation Space $\Omega$. An observation $o_{t}\in\Omega$ represents the agent’s visible context at time $t$, formulated as $o_{t}=(o_{t}^{env},o_{t}^{mem})$. Here, $o_{t}^{env}$ is the direct environmental input, and $o_{t}^{mem}$ contains the memory content (e.g., scratchpad or retrieved entries) determined by the previous action $a_{t-1}^{mem}$.
+L98: To handle environmental inputs $o^{env}$ exceeding the LLM’s context window $C$, we adopt a streaming observation protocol. The input is partitioned into a sequence of (potentially overlapping) fixed-length chunks: $o^{env}=\{c_{1},\dots,c_{T}\}$, where $|c_{t}|\leq C$. At step $t$, the agent’s observation is restricted to $o_{t}=\{c_{t},o_{t}^{mem}\}$.
+L99: This approach ensures the processing of arbitrarily long sequences, contingent on the effective maintenance of task-relevant information within the memory observation $o_{t}^{mem}$.
+L100: $\triangleright$ Reward Function $\mathcal{R}$. The agent’s objective is to maximize the expected return of the task, defined by the reward function $\mathcal{R}$.
+L101: ### 3.2 Memory Mechanism Implementation
+L102: 
+L103: The overall architecture of AtomMem is illustrated in cite47†Figure 2 . Rather than prescribing a fixed memory workflow, we define a set of atomic memory operations that allow the agent to make explicit decisions over memory. Under this formulation, memory is modeled as a persistent, queryable storage whose state evolves according to the agent’s learned policy.
+L104: 
+L105: Specifically, at step $t$, the memory state is represented as a collection
+L106:  | $$\mathcal{M}_{t}=\{m_{i}\}_{i=1}^{N_{t}},$$  |  | (1)
+L107: 
+L108: where each memory entry $m_{i}$ encodes a piece of stored information.
+L109: 
+L110: We expose memory manipulation to the agent through a set of atomic operations:
+L111: 
+L112:  | $$\mathcal{A}^{mem}=\{\text{Create},\text{Read},\text{Update},\text{Delete}\},$$  |  | (2)
+L113: 
+L114: each corresponding to a primitive state transition over the memory.
+L115: 
+L116: At each decision step $t$, conditioned on the current observation $o_{t}$, the agent’s policy emits a sequence of memory actions:
+L117:  | $$\mathcal{A}_{t}={a_{t}^{1},\ldots,a_{t}^{K_{t}}},$$  |  | (3)
+L118: 
+L119: which can be viewed as a compositional action within a single environment step. The non-read actions in this sequence are executed sequentially to produce a composed memory state transition:
+L120: 
+L121:  | $$\mathcal{M}_{t+1}=a_{t}^{k}(\mathcal{M}_{t}).$$  |  | (4)
+L122: 
+L123: where each $a_{t}^{k}\in\{\text{Create},\text{Update},\text{Delete}\}$.
+L124: In contrast, a read operation does not modify the memory state. Instead, it produces a memory observation that is exposed to the agent. Specifically, the Read operation exhibits an inherent latency: information requested at step $t-1$ only becomes available at step $t$. In this case, steps $t-1$ and $t$ should be treated as a single agent-internal transition, as no new environment observation is involved.
+L125: ##### Scratchpad
+L126: To prevent the fine-grained atomic operations from becoming overly fragmented, which could lead to a loss of informational hierarchy and global coherence, we introduce a scratchpad. This scratchpad functions as a centralized memory entry that is mandatorily retrieved at every execution step. It is designed to capture the global task state and store pivotal information essential for every step of decision-making.
+L127: From an atomic perspective, the scratchpad differs from other memory entries only in its retrieval mechanism. Therefore, a unified optimization strategy can be applied to it.
+L128: As a result, the agent’s observation at each time step is given by
+L129: 
+L130:  | $$o_{t}=\{o_{t}^{env},m_{t}^{scr},a_{t-1}(\mathcal{M}_{t}/m_{t}^{scr})\},$$  |  | (5)
+L131: where $m_{t}^{scr}$ is the content of the scratchpad, $a_{t-1}\in\{\text{Read}\}$, and $a_{t-1}(\mathcal{M}_{t})$ denotes the memory content returned by the Read operation. This formula illustrates two retrieval mechanisms of memory: the deterministic retrieval of $m_{t}^{scr}$, and the selective retrieval via the Read action, denoted as $a_{t-1}(\mathcal{M}_{t}/m_{t}^{scr})$.
+L132: ### 3.3 Optimization Strategy
+L133: 
+L134: Since memory operations are realized as structured tokens in the model’s vocabulary, optimizing the output sequence likelihood implicitly optimizes the memory policy.
+L135: 
+L136: We employ a two-stage training pipeline: (1) We first apply SFT to initialize the model, ensuring it adheres to the API schema and learns basic memory patterns. (2) We further refine the policy using Group Relative Policy Optimization (GRPO) (GRPO) to master complex memory management in multi-turn scenarios.
+L137: During RL, each training sample corresponds to a multi-step trajectory $\tau=(o_{1},a_{1},\dots,o_{T},a_{T})$, where $a_{t}$ includes the task-specific action $a_{t}^{env}$ and the memory operation $a_{t}^{mem}$, and the observation $o_{t}$ is defined in cite48†Equation 5 . We use task-level success as the reward signal, i.e., no intermediate rewards are provided and only a terminal reward is assigned at the end of the trajectory.
+L138: After obtaining the reward, we compute the advantage using the following formulation:
+L139:  | $$A_{i}=r_{i}-\frac{1}{|G|}\sum_{j\in G}r_{j}$$  |  | (6)
+L140: 
+L141: where $G$ denotes the set of trajectories corresponding to repeated executions of the same task, and $r_{i}$ is the terminal reward of the i-th trajectory. Following Dr.GRPO (DRGRPO), we do not apply normalization to the advantages.
+L142: 
+L143: Finally, the advantage is uniformly distributed across all output tokens in the trajectory and optimized according to the following objective:
+L144:  | $$\mathcal{J}(\theta)=\mathbb{E}\left[\frac{1}{G}\sum_{i=1}^{G}\rho_{\theta}^{i}A_{i}-\beta\mathbb{D}_{\text{KL}}[\pi_{\theta}\|\pi_{\text{ref}}]\right]$$  |  | (7)
+L145: 
+L146: Here, $\rho_{\theta}^{i}$ denotes the importance sampling ratio for the $i$-th sample.
+L147: 
+L148: Notably, we apply task-level advantages uniformly across all tokens, including memory operations. This enables the agent to jointly optimize memory usage and task performance via RL without external modules.
+L149: Table 1: Results on long-context multi-hop reasoning.
+L150: Method  | HotpotQA  | 2WikiMQA  | Musique  | Avg.
+L151: 200doc  | 400doc  | 800doc  | 200doc  | 400doc  | 800doc  | 200doc  | 400doc  | 800doc
+L152: Direct Answer  | 63.5  | 66.7  | 62.0  | 55.7  | 52.2  | 49.2  | 42.8  | 42.3  | 41.9  | 52.9
+L153: RAG  | 67.8  | 65.0  | 63.1  | 46.5  | 44.8  | 40.0  | 38.5  | 40.2  | 37.1  | 49.2
+L154: HyDE  | 70.0  | 68.6  | 66.6  | 47.5  | 40.7  | 43.7  | 46.7  | 43.9  | 45.6  | 52.6
+L155: Generative Agents  | 38.8  | 24.9  | 10.0  | 12.3  | 4.0  | 2.0  | 19.8  | 14.9  | 8.4  | 15.0
+L156: Mem0  | 38.2  | 35.5  | 33.9  | 24.2  | 17.9  | 18.3  | 14.0  | 13.4  | 11.2  | 23.0
+L157: A-Mem  | 73.5  | 71.8  | 70.4  | 62.7  | 60.9  | 57.1  | 47.1  | 46.3  | 41.6  | 59.0
+L158: MemAgent  | 76.5  | 74.4  | 71.1  | 65.8  | 60.7  | 57.7  | 54.7  | 50.0  | 44.5  | 61.7
+L159: AtomMem  (ours)  |  |  |  |  |  |  |  |  |  |
+L160:    SFT  | 65.9  | 66.9  | 60.1  | 52.8  | 52.8  | 55.0  | 47.8  | 43.5  | 40.0  | 53.9
+L161:    RL  | 77.8  | 76.9  | 72.9  | 67.5  | 65.8  | 62.5  | 55.1  | 49.1  | 48.5  | 64.0
+L162: ## 4 Experiments
+L163: 
+L164: In this section, we first introduce our evaluation task and then present the experimental results.
+--------------------------------------------------------------------------------
+T3: Benchmarking Sycophancy and Skepticism in Causal Judgment (https://arxiv.org/html/2601.08258v1)
+citeturn30807view2 [wordlim: 200] Crawled: today; Content type: text/html; Source: open({"ref_id":"https://arxiv.org/html/2601.08258v1","lineno":275}); Total lines: 1071
+L241: ## 3 The T^{3} Benchmark
+L242: 
+L243: T^{3} evaluates causal judgment in large language models across Pearl’s three levels (Association, Intervention, Counterfactuals) using natural-language vignettes that embed formal causal traps. Unlike benchmarks that report only aggregate accuracy, T^{3} decomposes performance into Utility (sensitivity) and Safety (specificity), and separately evaluates Wise Refusal on genuinely underdetermined cases (illustrated in Figure cite158†1 ).
+L244: Figure 1: Anatomy of T^{3} Vignettes. We test discernment by pairing valid causal links (Sheep) with structural traps (Wolves, Example 1) and underdetermined scenarios requiring calibrated refusal (Example 2).
+L245: ### 3.1 Design Philosophy: Wise Refusal
+L246: 
+L247: A defining feature of T^{3} is that it rewards epistemic humility. Unlike standard benchmarks forcing a binary choice, a significant fraction of T^{3} cases are deliberately underdetermined. In them, a correct response is not to guess, but to withhold endorsement. We define Wise Refusal as the ability to:
+L248: 
+L249:   1. 1.
+L250: 
+L251: Recognize when a claim is underdetermined by missing variables (e.g., hidden confounders) or ambiguous timing.
+L252: 
+L253:   2. 2.
+L254: Identify the critical missing information required to render a verdict.
+L255: 
+L256:   3. 3.
+L257: 
+L258: Provide conditional answers rather than hallucinations.
+L259: 
+L260: This dimension allows us to distinguish between a model that is “safe” because it refuses everything (The Skepticism Trap) and a model that is “wise” because it refuses only when appropriate.
+L261: ### 3.2 Pearl’s Causal Hierarchy
+L262: 
+L263: T^{3} evaluates models against Pearl’s three levels: L1 (Association), L2 (Intervention), and L3 (Counterfactuals). Theoretical foundations and specific definitions for each level are detailed in Appendix cite60†A.3 .
+L264: ### 3.3 Task and Labels
+L265: 
+L266: Each instance pairs a vignette with a causal claim and uses a three-way decision: YES (valid), NO (invalid due to a causal trap), or AMBIGUOUS (underdetermined). We refer to YES-labeled items as Sheep and NO-labeled items as Wolves (e.g., Example 1 in Figure cite158†1 ). AMBIGUOUS items form a calibration set. Full label definitions are provided in Appendix cite59†A.2 .
+L267: ### 3.4 Dataset and Trap Taxonomy
+L268: 
+L269: The seed set contains 454 expert-curated cases spanning 10 domains (detailed in Table cite159†3 ). The benchmark covers 12 recurring logical failure modes grounded in causal inference pitfalls, as summarized in Table cite160†2 .
+L270: 
+L271: Each vignette follows a standardized structure including the scenario, claim, variables, hidden causal mechanism, and gold rationale (see Appendix cite64†A.5 for the schema).
+L272: Table 2: Taxonomy of Causal Traps in T^{3}. The benchmark evaluates 12 distinct logical failure modes. Frequencies are computed on the seed set.
+L273: Trap Type  | Description  | Freq.
+L274: --- | --- | ---
+L275: Confounding  | Common cause creates spurious correlation  | 18%
+L276: Simpson’s  | Aggregate trend reverses within subgroups  | 12%
+L277: Selection  | Non-random sampling distorts relationships  | 11%
+L278: Collider  | Conditioning on effect induces association  | 10%
+L279: Conf-Med  | Time-order confusion (confounder vs mediator)  | 8%
+L280: Regression  | Extreme observations moderate on retest  | 8%
+L281: Survivorship  | Only surviving/successful cases observed  | 7%
+L282: Reverse  | Perceived effect is actually the cause  | 6%
+L283: Goodhart  | Proxy metric failure when optimized directly  | 5%
+L284: Feedback  | Bidirectional causal loops obscure direction  | 5%
+L285: Base Rate  | Priors ignored in conditional reasoning  | 5%
+L286: Preemption  | Preemption errors in counterfactual attribution  | 5%
+L287: Table 3: Domain Diversity in T^{3}. The benchmark spans 10 distinct domains, each targeting a field-specific “signature trap” (e.g., Indication Bias in Medicine) while maintaining balanced coverage across Pearl’s levels.
+L288: Domain  | Signature Trap  | Focus  | #
+L289: --- | --- | --- | ---
+L290: Medicine  | Indication Bias  | Intervention  | 46
+L291: Economics  | Equilibrium Effects  | Intervention  | 46
+L292: Law Ethics  | Attr. & Preemption  | Counterfactual  | 46
+L293: Sports  | Outcome Bias  | Counterfactual  | 46
+L294: Daily Life  | Regression to Mean  | Association  | 45
+L295: History  | Survivorship Bias  | Association  | 45
+L296: Markets  | Self-Fulfilling  | Intervention  | 45
+L297: Environment  | Feedback Loops  | Intervention  | 45
+L298: AI & Tech  | Goodhart’s Law  | Association  | 45
+L299: Social Sci.  | Simpson’s Paradox  | Association  | 45
+L300: Total  |  |  | 454
+L301: ### 3.5 Prompting Protocols
+L302: 
+L303: To disentangle capability from robustness, we evaluate models under three protocols (detailed in Appendix cite65†A.6 ):
+L304: 
+L305:   1. 1.
+L306: 
+L307: Neutral Direct: Standard validity check measuring raw capability.
+L308: 
+L309:   2. 2.
+L310: 
+L311: Epistemic Permissiveness: Explicitly permits AMBIGUOUS, testing calibration.
+L312: 
+L313:   3. 3.
+L314: 
+L315: Adversarial Pressure: Probes robustness via social pressure (sycophancy) and epistemic pressure (self-doubt).
+L316: To ensure reproducibility, we standardize all evaluation hyperparameters ($T=0$, fixed label spaces, and max output tokens) across all conditions; full control specifications are provided in Table cite161†10 (Appendix cite65†A.6 ).
+L317: ### 3.6 Metrics
+L318: 
+L319: We report Utility (sensitivity on Sheep) and Safety (specificity on Wolves). For underdetermined cases, we report Wise Refusal Rate (WRR) and False Confidence Rate (FCR). Formal definitions for all metrics are provided in Appendix cite69†A.7 .
+L320: ## 4 Experiments, Setup and Results
+L321: 
+L322: Experiments are designed to answer four questions:
+L323: 
+L324: RQ1 (Capability):
+L325: 
+L326: 
+L327: Can LLMs detect causal traps at each Pearl level?
+L328: 
+L329: RQ2 (Calibration):
+L330: 
+L331: 
+L332: Do models abstain (AMBIGUOUS/CONDITIONAL) when the evidence is underdetermined?
+L333: 
+L334: RQ3 (Scaling):
+L335: 
+L336: 
+L337: Do frontier models improve reliably over prior-generation models on T^{3}?
+L338: 
+L339: RQ4 (Diagnostic condition):
+L340: 
+L341: 
+L342: How do measured T^{3} metrics change under an explicit process-verification wrapper (RCA)?
+L343: ### 4.1 Experiment Setup
+L344: 
+L345: ##### Data.
+L346: 
+L347: We evaluate on T^{3}-Seed (454 expert-curated vignettes). The domain breakdown and trap distribution are detailed in Appendix cite61†A.4 and Table cite160†2 , respectively.
+L348: ##### Models.
+L349: 
+L350: We evaluate a range of frontier and prior-generation models (GPT-4-Turbo, GPT-5.2, Claude 3.5 Sonnet/Haiku, and GPT-3.5). We additionally evaluate an augmented setting where a base model is wrapped with the Recursive Causal Audit (RCA). We treat RCA strictly as a process-control variable—analogous to Chain-of-Thought—to establish an upper-bound reference for model capability when process verification is enforced (full specification in Appendix cite106†E ).
+L351: ##### Statistical Analysis.
+L352: We report accuracy with 95% Confidence Intervals (CI) based on sample size. For L2 ($N=304$), the margin of error is $\pm 5.6\%$, so gaps exceeding $6\%$ are statistically significant. For L1 and L3 ($N=100$), the margin of error is $\pm 9.8\%$. To ensure reproducibility, all experiments were conducted with temperature $T=0$ to minimize non-deterministic variance. Significant findings, such as the 55-point drop in L3 Ambiguity (GPT-4-Turbo vs. GPT-5.2), far exceed these bounds ($p<0.001$).
+L353: ### 4.2 Experimental Results
+L354: 
+L355: We report results on T^{3}-Seed across Pearl’s hierarchy. Across levels, we evaluate both Utility (endorsing valid causal claims, Sheep) and Safety (rejecting invalid causal claims, Wolves), and separately measure calibrated abstention on underdetermined cases. We summarize two recurring error profiles: over-endorsement (accepting Wolves) and over-rejection (rejecting Sheep), and show how their balance varies across L1 through L3 and across protocols.
+L356: Table 4: L1 Association Results. Safety is uniformly high, but Utility reveals over-refusal in some models.
+L357: Model  | Utility (Sheep)  | Safety (Wolves)  | Overall
+L358: --- | --- | --- | ---
+L359: GPT-4-Turbo  | 100.0%  | 100.0%  | 100.0%
+L360: GPT-5.2  | 90.0%  | 100.0%  | 95.0%
+L361: GPT-3.5  | 90.0%  | 100.0%  | 95.0%
+L362: Claude Sonnet 4.5  | 60.0%  | 100.0%  | 80.0%
+L363: Claude Haiku 3.5  | 40.0%  | 96.0%  | 68.0%
+L364: #### 4.2.1 L1 Association (Spurious Correlation)
+L365: 
+L366: Level 1 tests whether models distinguish correlation from causation under purely observational evidence. L1 includes both valid causal conclusions (Sheep) and invalid ones (Wolves), spanning the trap taxonomy summarized in Table cite160†2 .
+

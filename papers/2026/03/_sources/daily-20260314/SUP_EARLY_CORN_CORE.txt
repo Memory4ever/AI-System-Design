@@ -1,0 +1,5116 @@
+Cornserve: Efficiently Serving Any-to-Any Multimodal Models
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Motivation
+2.1
+Any-to-Any Multimodal Models
+2.2
+Heterogeneity in Any-to-Any Models
+Request and Computation Path Heterogeneity.
+2.3
+Existing Systems are Point Solutions
+Computation Scaling Heterogeneity.
+2.4
+Need for an Automated Planner
+3
+Cornserve Overview
+3.1
+System Objective and Challenges
+3.2
+System Overview
+System Components.
+Model Lifecycle.
+Request Lifecycle.
+4
+Planner
+4.1
+Inputs and Outputs
+Inputs.
+Goals and Outputs.
+4.2
+Problem Formulation
+Model Executor Graphs.
+Multicommodity Network Design Formulation.
+4.3
+Cell-Based Planning
+Definition of Cell.
+Solving Cells.
+Offline Planning with Cells.
+Adaptation to Changing Load
+5
+Distributed Runtime
+5.1
+Task Abstraction
+5.2
+Record & Replay Graph Invocation
+5.3
+Request-Static Routing
+6
+Implementation
+7
+Evaluation
+7.1
+Experimental Setup
+Testbed.
+Metrics.
+Models.
+Baseline.
+7.2
+Text and Audio Output Models
+Throughput.
+Latency.
+7.3
+Text-only Output Models
+Models.
+Baselines.
+7.3.1
+Gains on a Real-World Workload
+7.3.2
+Controlled Benchmarks
+Throughput.
+Latency.
+7.3.3
+Image Output Models
+7.4
+Request-Static Routing
+8
+Related Work
+LLM Serving Systems and Optimizations.
+Multimodal Model Inference.
+Resource Allocation and Parallelization for Training.
+9
+Conclusion
+References
+A
+Multicommodity Network Design Problem with Network Topology
+B
+Multicommodity Network Design Problem without Network Topology
+Inputs.
+Decision Variables.
+Capacity Accounting.
+Two Variants.
+Minimum Cost Under Target Throughput Variant.
+Max Throughput Under Budget Variant.
+C
+Deriving Throughput Per Request Type
+D
+Communication Overhead
+E
+Pod Startup Time
+License: arXiv.org perpetual non-exclusive license
+arXiv:2512.14098v1 [cs.LG] 16 Dec 2025
+Cornserve: Efficiently Serving Any-to-Any Multimodal Models
+Jeff J. Ma
+Affiliation:
+University of Michigan
+Jae-Won Chung
+Affiliation:
+University of Michigan
+Jisang Ahn
+Affiliation:
+University of Michigan
+Yizhuo Liang
+Affiliation:
+University of Southern California
+Akshay Jajoo
+Affiliation:
+Cisco Research
+Myungjin Lee
+Affiliation:
+Cisco Research
+Mosharaf Chowdhury
+Affiliation:
+University of Michigan
+Abstract
+We present Cornserve, an efficient online serving system for an emerging class of multimodal models called
+Any-to-Any models
+.
+Any-to-Any models accept combinations of text and multimodal data (e.g., image, video, audio) as input and also generate combinations of text and multimodal data as output, introducing request type, computation path, and computation scaling heterogeneity in model serving.
+Cornserve allows model developers to describe the computation graph of generic Any-to-Any models, which consists of heterogeneous components such as multimodal encoders, autoregressive models like Large Language Models (LLMs), and multimodal generators like Diffusion Transformers (DiTs).
+Given this, Cornserve’s planner automatically finds an optimized deployment plan for the model, including whether and how to disaggregate the model into smaller components based on model and workload characteristics.
+Cornserve’s distributed runtime then executes the model per the plan, efficiently handling Any-to-Any model heterogeneity during online serving.
+Evaluations show that Cornserve can efficiently serve diverse Any-to-Any models and workloads, delivering up to 3.81
+×
+\times
+throughput improvement and up to 5.79
+×
+\times
+tail latency reduction over existing solutions.
+Cornserve is open-source available on Github
+1
+1
+1
+https://github.com/cornserve-ai/cornserve
+.
+†
+†
+∗
+Equal contribution.
+1
+Introduction
+Going beyond text-only Large Language Models (LLMs), recent years have witnessed a surge in
+multimodal
+models that can handle not only text, but also image, video, and audio.
+These emerging multimodal models can
+(1) understand multimodal inputs along with text and/or
+(2) generate multimodal outputs with text.
+For instance, models like Qwen 2.5 VL
+[
+4
+]
+and InternVL 3
+[
+52
+]
+can process input multimodal data and generate text responses.
+Those like Qwen Image and Qwen Image Edit
+[
+40
+]
+produce images from text and image inputs.
+Going further, models like Qwen Omni
+[
+44
+,
+45
+]
+, and DeepSeek Janus
+[
+41
+,
+6
+]
+can take text, image, video, and audio inputs and generate text, image, or audio outputs.
+These emerging multimodal models are captured under the name
+Any-to-Any model
+, serving as a generalization of text-only LLMs and multimodal LLMs (MLLMs) today (§
+2.1
+).
+As shown in Figure
+1
+, the architecture of Any-to-Any models is characterized by a
+graph of heterogeneous components
+that process different input and output modalities.
+For instance, a model can have multimodal encoders, one or more LLMs, and multimodal generators.
+(a)
+Multimodal input, text output (MLLM)
+(b)
+Multimodal input, multimodal output
+Figure 1:
+Computation graphs of (a) InternVL 3
+[
+52
+]
+, a multimodal input model, and (b) Qwen Omni
+[
+44
+,
+45
+]
+, a series of models with multimodal input & output. Different requests invoke different components and take different paths on the graph.
+E
+E
+stands for Encoder,
+L
+L
+for LLM, and
+G
+G
+for Generator.
+L
+th
+L_{\text{th}}
+and
+L
+ta
+L_{\text{ta}}
+stands for thinker and talker respectively in Qwen Omni.
+Any-to-Any models introduce two types of heterogeneity to the serving system (§
+2.2
+).
+First is request type and computation path heterogeneity.
+For instance, the Qwen Omni model in Figure
+1
+consists of an image/video encoder and an audio encoder that feeds multimodal embeddings into an LLM, thinker, for text generation.
+The text output and hidden states of the thinker can be passed to another autoregressive component called talker that outputs audio tokens. The audio tokens are then passed to the audio generator, or
+vocoder
+, that generates audio output.
+Thus, inference requests with different combinations of input modality data and output modality requests lead to different model components being invoked via diverse computation paths through the model graph, resulting in different request rates for each component.
+Second, each model component has different GPU resource requirements and performance characteristics.
+That is, each of these components have different model sizes and input data sizes, leading to different GPU resource requirements and throughput.
+Cornserve is the first system to support generic Any-to-Any models.
+Existing popular systems are at best
+point solutions
+when it comes to general Any-to-Any models in two regards (§
+2.3
+).
+First, they have limited model support.
+Widely adopted production systems like vLLM
+[
+17
+]
+focus on text-only LLMs and MLLMs that only output text, whereas solutions like xDiT
+[
+9
+]
+focus only on generating images or videos from text prompts.
+This is natural due to the fact that Any-to-Any models with multimodal inputs and outputs consist of many heterogeneous components, making it challenging to implement and orchestrate the computation of all components inside a single monolithic serving engine.
+Second, existing solutions are opinionated in their deployment strategies. Existing serving optimizations techniques like Prefill–Decode (PD) disaggregation
+[
+51
+,
+27
+]
+, Encode–Prefill–Decode (EPD) disaggregation
+[
+33
+]
+, or modality-based disaggregation
+[
+30
+]
+are not only designed specifically for text-only LLMs or MLLMs, but also unilaterally disaggregate the model into smaller components without considering model and workload characteristics.
+Hence, we need a solution that can automatically determine the optimal deployment strategy including monolithic, disaggregation, or a hybrid of these for generic Any-to-Any models based on the model structure and workload characteristics.
+To this end, we present Cornserve, an efficient online serving system for generic Any-to-Any models (§
+3
+).
+Cornserve is designed to optimize total resource usage (i.e., number of GPUs) for a given workload and request rate, or equivalently, maximize serving capacity (i.e., request throughput) for a given number of GPUs.
+This is realized by the Cornserve
+planner
+(§
+4
+).
+The planner formulates the disaggregation–colocation problem as an instance of the
+multicommodity network design problem
+in order to allocate resources to different combinations of deployment strategies based on model and workload characteristics.
+Unfortunately, this is NP-Hard in the general case.
+Cornserve introduces the
+cell
+abstraction to make the planning problem tractable and allow efficient resource allocation and model deployment.
+Each cell captures the best way to deploy a complete instance of the target Any-to-Any model within a
+power-of-two-sized
+GPU allocation, considering the application’s workload characteristics.
+During the initial offline planning stage, for each cell configuration of size
+2
+i
+2^{i}
+, the planner calculates how to achieve the maximum throughput for the given model and workload within the size of the cell – this is by nature the same network design problem but significantly smaller in problem size.
+Using precomputed cells, the planner can efficiently find the optimal mixture of cells for any specific serving scenario.
+Cornserve realizes the planner’s decision via a distributed runtime (§
+5
+) that allows model developers to express Any-to-Any models using a flexible task abstraction and supports dynamic routing of requests through the model’s computation graph to the right component executors.
+Due to the planning process that explicitly allocates request rates to each path through the graph, the distributed runtime can perform
+request-static routing
+to efficiently load-balance requests to different component executors while adhering to the planner’s decision and with no dynamic control overhead like querying queue lengths of executors.
+We have implemented Cornserve on top of Kubernetes with about 15,000 lines of Python (§
+6
+).
+Evaluation on a variety of recent Any-to-Any models including Qwen 2.5 VL
+[
+4
+]
+, InternVL 3
+[
+52
+]
+, Qwen Image
+[
+40
+]
+, Qwen 3 Omni
+[
+45
+]
+, and Qwen 2.5 Omni
+[
+44
+]
+shows that Cornserve can automatically find optimized deployment plans and efficiently realize them to match or improve serving throughput by up to 3.81
+×
+\times
+and reduce tail latency by up to 5.79
+×
+\times
+compared to the best-in-class serving system for respective models (§
+7
+).
+To summarize, our contributions are as follows:
+•
+We identify an emerging class of multimodal models, called Any-to-Any models, and show that existing serving systems fall short of efficiently serving them.
+•
+We present Cornserve, the first online serving system that can efficiently deploy and serve generic Any-to-Any models through dynamic disaggregation planning and resource allocation based on model and workload characteristics and a distributed runtime capable of realizing the plan.
+•
+We evaluate Cornserve on a variety of recent Any-to-Any models and show that its generality and high effectiveness in improving serving throughput.
+2
+Motivation
+In this section, we begin by introducing Any-to-Any multimodal models (§
+2.1
+) and the types of heterogeneity they introduce in serving (§
+2.2
+).
+Thereafter, we show that existing systems and deployment strategies are point solutions in terms of model support and/or deployment strategies (§
+2.3
+), which motivates the need for and an automated planner that can pick the best deployment strategy for generic Any-to-Any model–workload combinations (§
+2.4
+).
+2.1
+Any-to-Any Multimodal Models
+Going beyond text-only models, multimodality (e.g., image, video, audio) is becoming an increasingly important capability for AI models.
+Models today are capable of taking multimodal inputs and understanding them (e.g., InternVL 3
+[
+52
+]
+, Qwen 2.5 VL
+[
+4
+]
+, Llama 4
+[
+21
+]
+), generating multimodal outputs (e.g., Qwen Image and Qwen Image Edit
+[
+40
+]
+), or
+both
+(e.g., Qwen 2.5 Omni
+[
+44
+]
+, DeepSeek Janus series
+[
+41
+,
+6
+]
+).
+The architecture of Any-to-Any models is characterized by their modular components.
+•
+Multimodal encoders
+take multimodal content and convert them into embeddings or multimodal tokens.
+•
+LLMs
+take text and/or multimodal embeddings for understanding and reasoning, and generate text tokens.
+•
+Multimodal generators
+take text or embeddings from another component and generate multimodal content.
+Model developers – typically domain-specific AI/ML experts – create different modality- and role-specialized components and compose them to form Any-to-Any models with increasingly more capabilities.
+2.2
+Heterogeneity in Any-to-Any Models
+Any-to-Any models introduce two broad sources of heterogeneity that serving systems must handle effectively.
+Request and Computation Path Heterogeneity.
+Figure
+1
+illustrates this with two Any-to-Any models: InternVL 3
+[
+52
+]
+(multimodal input; MLLM) and Qwen Omni
+[
+44
+,
+45
+]
+(multimodal input and output).
+In essence, each inference request may contain different combinations of input modalities (e.g., some requests may contain two images, while others may contain no images and one video), and may request different combinations of output modalities (e.g., one request may ask for audio output whereas another may not).
+Above all, this results in different components of the model being invoked with different request rates.
+Our analysis of the ServeGen multimodal input LLM trace
+[
+43
+]
+shows that indeed requests arrive with diverse combinations of input modalities that change over time.
+There are requests that hardly contain any video input while having a highly variable number of images (1 to 24), and some requests contain a roughly equal mixture of images, audios, and videos.
+Further, analysis of multimodal input model serving traces from Azure
+[
+30
+]
+shows that such models receive anywhere from 6% to nearly 40% text-only requests that bypass the encoder entirely.
+Image
+input
+Video
+input
+Audio
+input
+Text
+in/out
+Audio
+output
+Image
+output
+Qwen 2.5 Omni
+15.64
+1.28
+34.04
+1.09
+0.28
+Qwen 2.5 VL
+12.04
+0.89
+0.32
+InternVL 3
+1.13
+0.74
+0.28
+Qwen-Image
+15.67
+0.20
+Table 1:
+Maximum throughput (requests/s) of each modality component in Qwen 2.5 Omni 7B
+[
+44
+]
+, Qwen 2.5 VL 32B
+[
+4
+]
+, InternVL 3 38B
+[
+52
+]
+, and Qwen-Image 27B
+[
+40
+]
+on one A100-80GB GPU.
+Empty cells mean the model does not have that component.
+2.3
+Existing Systems are Point Solutions
+Computation Scaling Heterogeneity.
+As each component in an Any-to-Any model has different architectures and amount of compute, they naturally provide different throughput.
+Table
+1
+reports the throughput of individual components within recent models, measured on one NVIDIA A100-80GB GPU.
+2
+2
+2
+This is with requests that have 600 image tokens, 10,000 video tokens, 200 audio tokens, 1,000 input text tokens, and 100 output text tokens. This is similar to the average request in ServeGen
+[
+43
+]
+. For Qwen-Image’s image generator, we use resolution 512
+×
+\times
+512 and 20 denoising steps.
+While most multimodal encoders have small (sub-billion) parameter counts, the amount of input data can be large for videos and high-resolution images, leading to different throughput.
+A notable exception is InternVL 3
+[
+52
+]
+, which has a large 6B-parameter image/video encoder.
+The image/audio generators are also relatively slow due to their iterative generation process and/or relatively larger model sizes (1.75B for Qwen 2.5 Omni
+[
+44
+]
+and 20B for Qwen-Image
+[
+40
+]
+).
+Thus, when these components are colocated in a single monolithic server that couples the scaling of all components, the overall throughput could be bottlenecked by the slowest component
+[
+30
+]
+.
+Existing widely adopted solutions are piecemeal when it comes to serving generic Any-to-Any models;
+LLM serving engines like vLLM
+[
+17
+]
+or SGLang
+[
+50
+]
+focus on text-only and multimodal
+input
+LLMs, whereas xDiT
+[
+9
+]
+or Hugging Face diffusers library can be used to generate images or videos using diffusion models.
+As to deployment strategy, the heterogeneity in Any-to-Any models do suggest that disaggregation –
+phase-wise
+(i.e., separating different computation phases for the same model) and/or
+component-wise
+(i.e., physically separating different components) – can be a promising deployment strategy.
+Indeed, recent works prescribe Prefill–Decode (PD) disaggregation
+[
+27
+,
+51
+]
+for text-only LLMs and EPD (Encode–Prefill–Decode) disaggregation
+[
+33
+]
+for multimodal input LLMs, both of which are special cases of Any-to-Any models.
+Figure 2:
+Request throughput (req/s) of InternVL 3 38B
+[
+52
+]
+under different workloads and deployment strategies. Each workload is specified with image resolution, the number of images per request, and input/output text length. All deployment strategies use eight A100-80GB GPUs,
+2
+2
+footnotemark:
+2
+and the slashes (/) in names indicate disaggregation on different components.
+However, we observe that unilaterally applying a single strategy is not always beneficial for throughput, and the best deployment strategy depends on the model and workload.
+Figure
+2
+illustrates this with InternVL 3
+[
+52
+]
+on different request workloads and deployment configurations, each with eight GPUs.
+3
+3
+3
+Each Monolith, PD, EP, P, or D instance uses two GPUs with tensor parallelism set to 2 due to model size; E uses 1 GPU.
+For the four deployment configurations, the breakdowns are:
+4
+⋅
+2
+=
+2
+⋅
+1
++
+3
+⋅
+2
+=
+2
+⋅
+2
++
+2
+⋅
+2
+=
+2
+⋅
+1
++
+1
+⋅
+2
++
+2
+⋅
+2
+4\cdot 2=2\cdot 1+3\cdot 2=2\cdot 2+2\cdot 2=2\cdot 1+1\cdot 2+2\cdot 2
+.
+As a general trend, disaggregating the encoder can improve throughput when the input and output sequence lengths are long.
+This is because InternVL 3
+[
+52
+]
+has a large vision encoder (6B), and removing the encoder from the LLM serving engine increases the amount of KV cache significantly and unlocks opportunities for throughput improvement.
+Additionally, PD disaggregation does not improve throughput due to decreased KV cache memory, which is well-known
+[
+37
+]
+.
+Furthermore, existing solutions do not provide middle groud, such as mixing disaggregated and colocated instances and running requests with both types of instances.
+2.4
+Need for an Automated Planner
+Section
+2.3
+shows that there is no silver bullet for all scenarios – the best deployment strategy depends on the model and the workload.
+This motivates the need for a planner that can determine the best deployment strategy for a given model and workload.
+Such a planner should ideally be able to pick the best of all worlds – monolithic, phase-wise disaggregation, component-wise disaggregation, or a hybrid of these – to maximize throughput and resource efficiency.
+Our profiling results in Figure
+2
+shows that even for the simpler case of MLLMs, the best deployment strategy can improve throughput by up to 2.89
+×
+\times
+compared to a suboptimal deployment strategy.
+We show in Section
+7
+that Cornserve’s planner can effectively pick the best deployment strategy in diverse scenarios.
+3
+Cornserve Overview
+We dive into the system design of Cornserve, a serving system for Any-to-Any multimodal models.
+We first discuss the objective of Cornserve and the challenges associated with it (§
+3.1
+), and present its overall architecture (§
+3.2
+).
+3.1
+System Objective and Challenges
+Cornserve enables efficient serving of generic Any-to-Any multimodal models.
+In doing so, it aims to optimize total resource usage (i.e., number of GPUs) for a given workload and request rate, or equivalently, maximize serving capacity (i.e., request throughput) for a given number of GPUs.
+4
+4
+4
+Optimizing latency SLO or goodput is a non-goal for this work and can be a good future direction.
+We focus on
+enabling
+the serving of generic Any-to-Any models and optimizing
+total resource usage
+.
+Doing so requires Cornserve to effectively handle different types of heterogeneity innate to Any-to-Any models (§
+2.2
+), which is challenging.
+First, the resource allocation problem for Any-to-Any models – which arises due to request, computation path, and computation heterogeneity – is an NP-Hard network design problem (§
+4.2
+).
+Second, while disaggregating the model into components can be an effective way to address computation heterogeneity, it incurs network communication overhead between components, exacerbating the complexity of the problem and making cluster placement considering network topology non-trivial.
+Furthermore, during runtime, the dynamism introduced by the request and computation path heterogeneity requires a frontend model API and a distributed runtime that can support flexible computation graphs.
+Finally, the system must be able to quickly adapt to changing serving capacity requirements over time when planning once is already NP-Hard, adding another layer of complexity.
+3.2
+System Overview
+Figure 3:
+Cornserve architecture.
+Figure
+3
+illustrates the overall architecture of Cornserve.
+System Components.
+•
+Planner
+: Performs resource allocation. Includes the
+Profiler
+that measures the throughput of each model component under the expected workload.
+•
+Gateway
+: Entry point for control signals (model  deployment, scaling) and inference requests from clients.
+•
+Task Dispatcher
+: Dispatches model component invocations to the appropriate executors.
+•
+Task Manager
+: Manages a set of
+Task Executor
+replicas for a single model component deployment option.
+•
+Task Executor
+: Executes one or more model components (e.g., encoder, LLM, generator) on GPUs.
+Model Lifecycle.
+When the system administrator sends a new model for deployment to the Gateway (described using Cornserve’s task abstraction in Section
+5.1
+), the Gateway invokes the planner to plan the resource allocation for the model.
+The planner internally invokes the Profiler to understand the performance characteristics of the model components under the expected workload, and then decides the resource allocation and deployment strategy for the model.
+Once planning is complete, the planner spawns Task Managers for each model component it decided to allocate resources to, and each Task Manager spawns the assigned number of Task Executor replicas.
+As the system runs, based on either the administrator’s input or via continuous load monitoring, the planner re-plans the resource allocation for the model, which is again realized by spawning or killing Task Managers and Task Executors.
+Section
+4
+is dedicated to explaining this in detail.
+Request Lifecycle.
+Cornserve’s flexible task abstraction allows expressing not just the components of the model but also its computations (§
+5.1
+).
+During runtime, when an incoming model inference request hits the Gateway, the Gateway invokes the model’s top-level task to produce component invocations using a
+record & replay approach
+and sends them to the Task Dispatcher (§
+5.2
+), which dispatches each component invocation to the appropriate Task Manager.
+Throughout the invocation process, routing and load balancing decisions are made such that the load given to each Task Manager and Task Executor adheres to the planner’s decision (§
+5.3
+).
+(a)
+Planner Inputs
+(b)
+Toy Examples
+Figure 4:
+Cornserve planner flow example. (a) The planner is given the workload (mixture of request types) and the Any-to-Any model executor graph, which invokes the profiler to obtain the throughput for each request type and executor. (b) The two cases in each row have different request rate splitting and number of replicas for each deployment option (can be zero), which are jointly searched by our solver.
+4
+Planner
+The core of Cornserve is the planner that determines how to allocate resources for Any-to-Any models and deploy them.
+We first discuss the planner’s inputs and outputs (§
+4.1
+) and formulate the resource allocation problem (§
+4.2
+).
+Then, we introduce the cell abstraction and explain how it simplifies resource allocation and load adaptation (§
+4.3
+).
+4.1
+Inputs and Outputs
+Inputs.
+The user provides the following to the planner.
+Figure
+4a
+shows a simple example.
+•
+Any-to-Any model definition
+:
+The valid components and invocation paths of the model in the form of a model executor graph.
+The executor graph of the model includes the set of executor components (nodes) and the data dependencies (directed edges) between them.
+Figure
+4a
+shows the executor graph of the model defined in Listing
+2
+.
+•
+Workload
+:
+A representative request dataset or distribution.
+Different requests may have different input and output modalities, invoking different model components through different paths.
+The workload is decomposed into a set of disjoint
+request types
+, where each request type traverses through a
+unique set
+of model components.
+Figure
+4a
+shows two request types: text-only and image & text.
+Goals and Outputs.
+Different Any-to-Any models and even different workloads for the same model require different deployment configurations (§
+2.3
+).
+For instance, an Encoder executor disaggregated from the LLM executor may be optimal for one workload, whereas a monolithic executor that colocates both may be optimal for another.
+The goal of the planner is thus, given an executor graph of an Any-to-Any model and a target workload, to find a deployment plan: the right
+mixture of executor deployment options
+and
+the number of replicas
+for each deployment option.
+We consider two formulations for the planning problem depending on the elasticity of the deployment environment:
+1.
+Maximize request throughput given a GPU budget.
+2.
+Minimize GPU usage given a target request throughput.
+4.2
+Problem Formulation
+Given what we would like the planner to do, we now formulate the resource allocation problem.
+Model Executor Graphs.
+An Any-to-Any model definition describes a directed model
+executor graph
+, where each node is a
+deployment option
+(executor) that can run one or more model components.
+A naive way to create the executor graph would be to enumerate all possible deployment options as its nodes and adding necessary edges between them, but it can lead to combinatorial explosion.
+For instance, the example model in Figure
+4
+has to consider three deployment options on the aggregate for its two components – each component alone and then together.
+In the general case, for
+n
+n
+components, we have to consider
+2
+n
+−
+1
+2^{n}-1
+(
+n
+=
+6
+n=6
+for Qwen Omni) possible nodes!
+Therefore, Cornserve adopts a more practical approach by explicitly taking possible compuation paths from model developers, as shown in Listing
+2
+.
+From these paths, the gateway can construct a set of unique possible executors and potential data dependencies, which are the nodes and the edges that build up the model executor graph, then passing the graph to the planner.
+Multicommodity Network Design Formulation.
+The core of Cornserve planner is the solver that solves the resource allocation problem given the target workload, model executor graph, and the profiling results.
+We can view the resource allocation problem on the executor graph as a multicommodity network design problem
+[
+3
+]
+.
+Work demands from different request types (commodities) flow through the executor graph, and the capacity of each deployment option (node) is provided by replicas placed on GPUs that are connected by network (links).
+The optimization problem in the interest is to jointly decide how to split request types across executor paths, how many replicas of each executor to run on each node (and thus how many GPUs to allocate), and how to route executor traffic across nodes.
+This topology-aware formulation (see Appendix
+A
+) is an NP-Hard mixed-integer linear program
+[
+3
+]
+that can be intractable to solve with a large number of GPUs and/or high request rate demand
+R
+R
+.
+4.3
+Cell-Based Planning
+The cell abstraction provides a practical pathway for the planner to efficiently allocate resource at a large scale.
+Observe that in §
+4.2
+, every GPU is a decision variable due to the formulation being topology-aware.
+If the toplogy is removed from the problem formulation, the hardness of the problem will instead grow with the number of task executors in the executor graph, which is a constant known a priori.
+Additionally, a typical production GPU server (e.g., NVIDIA DGX
+[
+24
+]
+) or rack (e.g., NVIDIA GB200 NVL72
+[
+25
+]
+) provides a high-bandwidth, low-latency network domain among its GPUs.
+As a result, we can abstract a group of GPUs within such a high-affinity network domain as a
+cell
+, excluding the network topology to reduce the search space.
+Definition of Cell.
+A cell is defined as a fixed sized GPU allocation that runs a complete instance of the target Any-to-Any model.
+The size of a cell is always a power of two.
+Concretely, it may be kept within 8 GPUs (1, 2, 4, and 8), given that a typical production GPU server like the NVIDIA DGX system
+[
+24
+]
+consists of 8 GPUs;
+multiples of 8-GPUs when multiple DGXs are connected via an InfiniBand switch;
+or up to 64 GPUs to keep within a single rack, considering scale-up domains like NVIDIA GB200 NVL72 racks
+[
+25
+]
+.
+Solving Cells.
+Without the network topology, the multicommodity network design problem in §
+4.2
+can be simplified as follows.
+
+Given a target request throughput
+R
+R
+, the goal is to find the minimal number of GPUs
+N
+N
+required (the throughput maximization under GPU budget variant is very similar; see Appendix
+B
+).
+min
+x
+,
+r
+,
+N
+\displaystyle\min_{x,r,N}\quad
+N
+\displaystyle N
+s.t.
+∑
+p
+∈
+𝒫
+t
+x
+t
+,
+p
+=
+π
+t
+​
+R
+∀
+t
+∈
+T
+,
+\displaystyle\sum_{p\in\mathcal{P}_{t}}x_{t,p}\;=\;\pi_{t}R\quad\forall t\in T,
+(1)
+∑
+t
+∑
+p
+∈
+𝒫
+t
+x
+t
+,
+p
+w
+s
+,
+t
+,
+p
+≤
+r
+s
+∀
+s
+∈
+S
+,
+\displaystyle\sum_{t}\sum_{p\in\mathcal{P}_{t}}\frac{x_{t,p}}{w_{s,t,p}}\;\leq\;r_{s}\quad\forall s\in S,
+(2)
+∑
+s
+∈
+S
+c
+s
+​
+r
+s
+≤
+N
+,
+\displaystyle\sum_{s\in S}c_{s}r_{s}\;\leq\;N,
+(3)
+x
+t
+,
+p
+≥
+0
+,
+r
+s
+∈
+ℤ
+≥
+0
+.
+\displaystyle x_{t,p}\geq 0,\;\;r_{s}\in\mathbb{Z}_{\geq 0}.
+The request rate of each request type
+t
+t
+is fixed to
+π
+t
+​
+R
+\pi_{t}R
+and is split across its valid paths
+p
+∈
+𝒫
+t
+p\in\mathcal{P}_{t}
+(each path
+p
+p
+gets
+x
+t
+,
+p
+x_{t,p}
+req/sec) in the executor graph (constraint
+4
+) in a way that the total amount of work demand at each executor
+s
+∈
+S
+s\in S
+is satisfied by
+r
+s
+r_{s}
+replicas of
+s
+s
+(constraint
+5
+).
+Finally, constraint
+3
+links the total number of replicas to the GPU count: each replica of
+s
+s
+costs
+c
+s
+c_{s}
+GPUs, and
+N
+N
+upper-bounds the total GPUs used, so minimizing
+N
+N
+yields the minimum GPU budget that can sustain request throughput
+R
+R
+.
+Offline Planning with Cells.
+Input:
+Maximum cell exponent
+c
+max
+c_{\max}
+(max size
+2
+c
+max
+2^{c_{\max}}
+)
+Output:
+Efficient cells
+𝐂
+=
+{
+(
+g
+⁡
+[
+c
+]
+,
+R
+⁡
+[
+c
+]
+)
+}
+\mathbf{C}=\{(g[c],R[c])\}
+⊳
+\triangleright
+Multicommodity network design (§
+4.2
+)
+1
+for
+c
+←
+0
+c\leftarrow 0
+to
+c
+max
+c_{\max}
+do
+2
+g
+⁡
+[
+c
+]
+←
+2
+c
+g[c]\leftarrow 2^{c}
+3
+R
+⁡
+[
+c
+]
+←
+BudgetMNDP
+⁡
+(
+g
+⁡
+[
+c
+]
+)
+R[c]\leftarrow\mathrm{BudgetMNDP}(g[c])
+⊳
+\triangleright
+Filter inefficient cells
+4
+𝐂
+←
+{
+(
+g
+0
+,
+R
+0
+)
+}
+\mathbf{C}\leftarrow\{(g_{0},\,R_{0})\}
+5
+c
+⋆
+←
+0
+c^{\star}\leftarrow 0
+⊳
+\triangleright
+Index of largest efficient cell so far
+6
+for
+c
+←
+1
+c\leftarrow 1
+to
+c
+max
+c_{\max}
+do
+7
+if
+R
+c
+>
+2
+c
+−
+c
+⋆
+​
+R
+c
+⋆
+R_{c}>2^{\,c-c^{\star}}\,R_{c^{\star}}
+then
+8
+𝐂
+←
+𝐂
+∪
+{
+(
+g
+c
+,
+R
+c
+)
+}
+\mathbf{C}\leftarrow\mathbf{C}\cup\{(g_{c},\,R_{c})\}
+9
+c
+⋆
+←
+c
+c^{\star}\leftarrow c
+10
+return
+𝐂
+\mathbf{C}
+Algorithm 1
+Planning efficient power-of-two cells.
+After obtaining the optimal deployment strategies of all sizes of cells, the solver finds the
+mixture
+of cells in
+𝐂
+\mathbf{C}
+that either (1) maximizes request throughput
+R
+R
+collectively within a GPU budget
+N
+N
+, or (2) reaches the target request throughput
+R
+R
+collectively with the minimum total number of GPUs
+N
+N
+.
+Both are knapsack variants
+[
+15
+]
+where
+g
+c
+g_{c}
+are item weights and
+R
+c
+R_{c}
+are item values, but power-of-two cell sizes lend themselves to an efficient optimal solution.
+For the former problem (throughput maximization), the positive integer
+N
+N
+(GPU budget) can be decomposed into a sum of powers of two, and the solver simply sums up the throughput of the corresponding cells to get the maximum request throughput
+R
+R
+.
+Inefficient cell sizes that were discarded during the cell planning phase are covered by a combination of smaller efficient cells.
+This has a logarithmic time complexity with respect to
+N
+N
+.
+For the latter problem (GPU usage minimization), a greedy algorithm that adds to the knapsack the largest cell that does not exceed the remaining request throughput until the target is met produces an optimal solution.
+Because the cell planning phase ensures that a larger cell achieves a throughput higher than or equal to any combination of smaller cells that add up to the same number of GPUs,
+not including
+the largest cell leads to a suboptimal solution.
+Time complexity is linear to the number of cells and the log of the target request throughput.
+Algorithm
+2
+shows the GPU usage minimization algorithm.
+Adaptation to Changing Load
+Serving systems experience changing request load over time and must adapt their resource allocation accordingly.
+With the cell abstraction, the planner can quickly find a new mixture of cells to meet the new target request throughput using the same greedy algorithm.
+This is much faster than re-solving the whole multicommodity network design problem from scratch.
+When deploying the new mixture of cells, all cells that are identical to existing cells can be kept running, and only the difference needs to be spawned or killed.
+Input:
+Efficient cells
+C
+=
+{
+(
+g
+c
+,
+R
+c
+)
+}
+\textbf{C}=\{(g_{c},R_{c})\}
+Target request throughput
+R
+⋆
+R^{\star}
+Output:
+Cell mixture
+M
+:
+c
+↦
+count
+M:c\mapsto\text{count}
+Achieved throughput
+R
+R
+and GPUs used
+N
+N
+1
+R
+←
+0
+R\leftarrow 0
+,
+N
+←
+0
+N\leftarrow 0
+,
+M
+←
+{
+}
+M\leftarrow\{\}
+2
+while
+R
+<
+R
+⋆
+R<R^{\star}
+do
+⊳
+\triangleright
+Largest cell that fits in remaining throughput
+3
+g
+⋆
+←
+max
+{
+g
+c
+:
+R
+c
+≤
+R
+⋆
+−
+R
+,
+(
+g
+c
+,
+R
+c
+)
+∈
+𝐂
+}
+g^{\star}\leftarrow\max\{\,g_{c}:R_{c}\leq R^{\star}-R,\,(g_{c},R_{c})\in\mathbf{C}\,\}
+4
+if
+g
+⋆
+=
+∅
+g^{\star}=\varnothing
+then
+5
+g
+⋆
+←
+min
+⁡
+{
+g
+c
+:
+(
+g
+c
+,
+R
+c
+)
+∈
+𝐂
+}
+g^{\star}\leftarrow\min\{g_{c}:(g_{c},R_{c})\in\mathbf{C}\}
+⊳
+\triangleright
+Last cell
+6
+R
+←
+R
++
+R
+g
+⋆
+R\leftarrow R+R_{g^{\star}}
+,
+N
+←
+N
++
+g
+⋆
+N\leftarrow N+g^{\star}
+,
+M
+⁡
+[
+g
+⋆
+]
+←
+M
+⁡
+[
+g
+⋆
+]
++
+1
+M[g^{\star}]\leftarrow M[g^{\star}]+1
+7
+return
+(
+M
+,
+R
+,
+N
+)
+(M,R,N)
+Algorithm 2
+Finding the optimal cell mixture that meets target throughput with minimal GPUs.
+5
+Distributed Runtime
+While the planner has allocated resources considering heterogeneity in request, computation path, and computation requirements during the
+offline
+planning phase (§
+4
+), Cornserve still needs a distributed runtime that is aware of Any-to-Any model characteristics for correct and efficient operation during the
+online
+serving phase.
+Specifically, the runtime provides
+(1) APIs/abstractions that allow model developers to express Any-to-Any model computations conveniently (§
+5.1
+),
+(2) a mechanism that supports flexible Any-to-Any model control flow execution on top of that abstraction (§
+5.2
+), and
+(3) a runtime stack that routes and load balances model component executions across executors as planned (§
+5.3
+).
+5.1
+Task Abstraction
+Any-to-Any models exhibit request and computation path heterogeneity (§
+2.2
+).
+That is, depending on the type of the incoming request, the model may invoke different components in specific sequences.
+For instance, for a simple multimodal LLM with an image encoder and an LLM, a request with both image and text would invoke the encoder first and then the LLM, while a text-only request would bypass the encoder and directly invoke the LLM.
+In the general case, this logic becomes arbitrarily complex with loops and branches that depend on the input request, and the model’s inference logic may contain arbitrary processing before and after invoking a model component (e.g., indexing into a list of image embeddings, modifying/filtering text prompts).
+⬇
+1
+from
+cornserve
+.
+task
+.
+base
+import
+Task
+,
+Request
+,
+Response
+2
+from
+cornserve
+.
+tasklib
+import
+LLMTask
+,
+EncoderTask
+3
+4
+class
+MLLM
+(
+Task
+[
+Request
+,
+Response
+]):
+5
+model_id
+:
+str
+6
+disag_enc
+:
+bool
+7
+disag_llm
+:
+bool
+8
+9
+def
+post_init
+(
+self
+)
+->
+None
+:
+10
+if
+(
+not
+self
+.
+disag_enc
+)
+and
+self
+.
+disag_llm
+:
+11
+raise
+ValueError
+(
+"Invalid
+Configuration"
+)
+12
+#
+L
+or
+EL
+13
+self
+.
+llm
+=
+LLMTask
+(
+14
+from_model_id
+=
+self
+.
+model_id
+,
+15
+with_enc
+=
+not
+self
+.
+disag_llm
+,
+16
+)
+17
+if
+self
+.
+disag_enc
+:
+18
+self
+.
+enc
+=
+EncoderTask
+(
+from_model_id
+=
+self
+.
+model_id
+)
+19
+20
+def
+invoke
+(
+self
+,
+request
+:
+Request
+)
+->
+Response
+:
+21
+#
+Encoder
+only
+invoked
+if
+there
+are
+images
+22
+if
+self
+.
+disag_enc
+:
+23
+#
+E
+->
+L
+or
+E
+->
+EL
+24
+embeddings
+=
+[]
+25
+for
+image
+in
+request
+.
+images
+:
+26
+embeddings
+.
+append
+(
+self
+.
+enc
+.
+invoke
+(
+image
+))
+27
+return
+self
+.
+llm
+.
+invoke
+(
+28
+text
+=
+request
+.
+text
+,
+29
+image_embeddings
+=
+embeddings
+,
+30
+)
+31
+else
+:
+32
+#
+EL
+33
+return
+self
+.
+llm
+.
+invoke
+(
+request
+)
+Listing 1:
+Cornserve multimodal LLM composite task example.
+Cornserve provides a library of
+unit task
+classes (e.g.,
+LLMTask
+,
+EncoderTask
+that express atomic model components, and model developers compose unit tasks within a
+composite task
+class (e.g.,
+DisagMLLM
+in Listing
+1
+) that implements a model’s computation path in plain Python inside the
+invoke
+method.
+Then model developers can use these composite tasks to express the computation paths to be considered by the planner easily (listing
+2
+).
+5.2
+Record & Replay Graph Invocation
+Cornserve receives the source code of the composite task class when the model is deployed.
+5
+5
+5
+We assume that the model code was written by a trusted entity.
+During runtime, for a given model inference request, Cornserve must extract the sequence of unit task invocations and dispatch them to the right Task Managers (§
+3.2
+) for execution.
+When a request arrives at the Gateway, the
+invoke
+method of the composite task is called first in
+record
+mode, where all unit tasks return mock results and record their invocations and inputs within the context of the request.
+By matching the mock result objects in the input and output of each unit task invocation, the subgraph (including data dependencies) of the model’s computation graph that was executed for the given request is reconstructed.
+The recorded graph is then sent to the Task Dispatcher, which sends each unit task invocation to the right executors and returns results for each one.
+The
+record
+pass is instantaneous, as no actual model computation is performed.
+Finally, the composite task’s
+invoke
+method is called again in
+replay
+mode, where each unit task now returns the real result from the Task Dispatcher, and the composite task produces the final response.
+This record & replay approach allows Cornserve to support Any-to-Any model graphs with flexible control flow (e.g., loops, branches) while keeping the model developer’s experience simple and natural.
+⬇
+1
+from
+cornserve
+.
+task
+.
+base
+import
+Task
+,
+Request
+,
+Response
+2
+from
+cornserve
+.
+tasklib
+import
+DisagMLLM
+,
+MLLM
+,
+HybridMLLM
+3
+from
+cornserve
+.
+tasklib
+.
+helpers
+import
+replayable_choice
+4
+5
+class
+MLLMRouter
+(
+Task
+[
+Request
+,
+Response
+]):
+6
+paths
+:
+list
+[
+Task
+[
+Request
+,
+Response
+]]
+7
+#
+request
+type
+probabilities
+will
+be
+the
+planner
+output
+8
+text_only_probabilities
+:
+list
+[
+float
+]
+9
+image_text_probabilities
+:
+list
+[
+float
+]
+10
+11
+def
+invoke
+(
+self
+,
+request
+:
+Request
+)
+->
+Response
+:
+12
+probs
+=
+(
+13
+self
+.
+text_only_probabilities
+14
+if
+not
+len
+(
+request
+.
+images
+)
+15
+else
+self
+.
+image_text_probabilities
+16
+)
+17
+#
+Random
+choice
+but
+repeats
+same
+choice
+for
+replay
+18
+idx
+=
+replayable_choice
+(
+len
+(
+self
+.
+paths
+),
+p
+=
+probs
+)
+19
+path
+=
+self
+.
+paths
+[
+idx
+]
+20
+return
+path
+.
+invoke
+(
+request
+)
+21
+22
+model_id
+=
+"Qwen/Qwen2.5-VL-7B-Instruct"
+23
+MLLM
+(
+encoder_disagg
+:
+bool
+,
+encoder_coloc
+:
+bool
+)
+24
+E_L
+=
+MLLM
+(
+disag_enc
+=
+True
+,
+disag_llm
+=
+True
+)
+25
+EL
+=
+MLLM
+(
+disag_enc
+=
+False
+,
+disag_llm
+=
+False
+)
+26
+E_EL
+=
+MLLM
+(
+disag_enc
+=
+False
+,
+disag_llm
+=
+False
+)
+27
+my_router
+=
+MLLMRouter
+(
+paths
+=[
+EL
+,
+E_L
+,
+E_EL
+])
+Listing 2:
+Cornserve MLLM router composite task example.
+We note this approach does introduce assumptions about the composite task implementation.
+First, the
+invoke
+method may not have side effects, as it is called twice.
+Second, the composite task’s control flow must be deterministic
+given the same request
+, as the second run’s control flow must match that of the first run.
+Still, we believe these assumptions do not limit expressing Any-to-Any models and instead provides far more flexibility than, for instance, a frontend that requires the definition of static computation graphs.
+5.3
+Request-Static Routing
+(a)
+Planner rate allocations
+(b)
+Path selection probabilities
+Figure 5:
+Path selection probabilities for the image & text request type.
+The model and executor graph are the same as Figure
+4
+and Listing
+2
+.
+The planner splits rates across valid paths of each request type, and the runtime uses this information to perform request-static routing.
+Within a deployed cell, we have a set of deployment options (executors) and the number of replicas for each.
+When a request arrives, how should it find the right sequence of executors to process it, such that the executors are load-balanced?
+We may consider a runtime-dynamic routing and load balancing approach, where when a request leaves an executor, the runtime queries the queue lengths of valid next-hop executors; it may query all valid next hops and choose the one with the shortest queue, or query two valid next hops at random and choose the one with the shortest queue (i.e., the power of two choices
+[
+22
+]
+) to reduce querying overhead while still achieving good load balancing.
+In practice, however, with our executor graph and multicommodity network design construction (§
+4
+), we can take a simpler approach with zero dynamic control overhead:
+request-static routing
+.
+
+That is, given the set of valid paths (
+P
+P
+) as shown in Listing
+2
+, the planner already splits the arrival rate (
+x
+t
+,
+p
+x_{t,p}
+) of each request type (
+t
+t
+) across each valid path (
+p
+p
+) through the executor graph.
+Therefore, when a request arrives, we can simply (1) determine its request type, (2) sample a valid path for that request with probability proportional to the planned rate split, and (3) statically route the request along that path.
+This is akin to
+source routing
+in computer networks.
+Figure
+5
+provides an example in a setting similar to that of Figure
+4
+.
+The left column shows how the planner can split the request rate of each request type across valid paths, and the right column shows how these rates are converted into path sampling probabilities over valid paths of a request type.
+For instance, for the image & text request type, the incoming request rate is assigned to the dedicated encoder and the monolithic executor in a 7:3 ratio, and then requests to the dedicated encoder executor are again split in a 5:2 ratio between the monolithic executor and the dedicated LLM executor.
+Thus, for the path that involves the dedicated encoder and the monolithic executor (third row), the path sampling probability is
+7
+/
+10
+×
+5
+/
+7
+=
+0.5
+7/10\times 5/7=0.5
+.
+Essentially, the model’s composite task invocation code’s preamble classifies the request type and samples a path based on the planned rate split, and then the rest of the invocation code switches on the sampled path to invoke the right sequence of executors.
+6
+Implementation
+We implemented Cornserve on top of Kubernetes with approximately 15,000 new lines of Python, with about 8,700 lines taken up by the control plane and the task abstraction, and about 6,500 lines by the multimodal encoder and generator task executors with various model support.
+The LLM task executor is based on vLLM
+[
+17
+]
+0.9.2, which supports serving monolithic LLMs that colocate encoders and the LLM, just the LLM, and the LLM with prefill–decode disaggregation.
+Inside a cell (§
+4.3
+), each executor may need to transfer intermediate data to one other.
+For intra-node transfers, which is always the case for cell sizes not larger than 8 GPUs on a typical production GPU server, we use Linux shared memory (
+/dev/shm
+) to minimize interference with NVLink/NVSwitch bandwidth which is likely heavily utilized by executors running tensor parallel inference
+[
+35
+]
+.
+The task executors share a large slab of shared memory, and the sender writes the intermediate data from the GPU memory directly to the shared memory and notifies the receiver of the data’s address via gRPC.
+Upon notification, the receiver reads the data directly from shared memory and copies it into its GPU memory.
+On the other hand, for inter-node transfers, we use RDMA via the UCX communication library
+[
+36
+]
+.
+7
+Evaluation
+We evaluate Cornserve on serving a variety of state-of-art Any-to-Any models and find the following:
+•
+Cornserve facilitates efficient distributed serving of text and audio output models, and improves throughput by up to 3.81
+×
+\times
+and P99 latency by 5.79
+×
+\times
+compared to the state-of-the-art (§
+7.2
+).
+•
+For text-only output and image output models, Cornserve can match or outperform the best existing deployment strategies for each model (§
+7.3
+).
+•
+Request-static routing in Cornserve’s distributed runtime is effective and low-overhead (§
+7.4
+).
+We also provide additional microbenchmarks in the appendix on the communication overhead (
+D
+) and the pod scaling time (
+E
+) in Cornserve.
+7.1
+Experimental Setup
+Testbed.
+All experiments were conducted on two colocated nodes, where each node has 8 NVIDIA A100-80GB GPUs connected via NVLink, and at least 400 Gbps cross-node bandwidth over RDMA.
+Metrics.
+We mainly evaluate Cornserve in terms of request throughput (requests/s).
+We submit sufficient requests (at least 2,000 unless mentioned otherwise) to have a long steady serving state
+[
+7
+]
+between ramp up and down periods, and calculate throughput by dividing the number of requests by makespan.
+When applicable, we also report request latency in seconds with the complete CDF, tail latency CDF, or key statistics (P50, P90, P99).
+Models.
+Cornserve enables serving generic Any-to-Any models, which primarily categorized by their output modalities.
+We evaluate on three type of state-of-the-art models:
+•
+Text and audio output models
+(§
+7.2
+): Qwen 3 Omni
+[
+45
+]
+, Qwen 2.5 Omni
+[
+44
+]
+.
+•
+Text-only output models
+(§
+7.3
+): Qwen 2.5 VL 32B
+[
+4
+]
+and InternVL 3 38B
+[
+52
+]
+.
+•
+Image output models
+(§
+7.3.3
+): Qwen-Image
+[
+40
+]
+.
+Baseline.
+Since there is no existing serving system for generic Any-to-Any models, we implement a baseline server using Hugging Face transformers and diffusers libraries for audio output and image output models, and we use vLLM
+[
+17
+]
+for text output models.
+7.2
+Text and Audio Output Models
+(a)
+Qwen 2.5 Omni 7B
+(b)
+Qwen 3 Omni 30B
+Figure 6:
+Throughputs of serving Qwen 2.5 Omni
+[
+44
+]
+and Qwen 3 Omni
+[
+45
+]
+on different cell sizes. “Cross” means the monolithic deployment does not run due to OOM.
+Qwen 3 Omni 30B
+[
+45
+]
+and Qwen 2.5 Omni 7B
+[
+44
+]
+are multimodal input & output models that take a combination of text, images, video, and audio as input, and generates either text or audio.
+We use ServeGen
+[
+43
+]
+as our workload, a real-world multimodal request dataset containing text, images, videos, and audio inputs.
+6
+6
+6
+ServeGen only opened the image trace at the time of writing, so we reverse engineered individual video and audio distributions from the paper’s figures, and constructed our workload with each request having at least one image following the true image distribution, 50% chance of having video and/or audio, and 20% chance of generating audio output.
+Throughput.
+Figure
+6a
+shows that Cornserve improves the throughput of serving Qwen 2.5 Omni
+[
+44
+]
+over the baseline monolithic deployment on 8-GPU and 16-GPU cells by 3.09
+×
+\times
+and 3.81
+×
+\times
+, respectively.
+Cornserve achieves this large improvement thanks to its planner.
+Due to the high computation scaling heterogeneity between the LLM and the audio generator, the planner decides to disaggregate the LLM (1 replica) and the audio generator (7 and 15 replicas, respectively) to balance the throughput of each component as much as possible.
+However, the throughput cannot be balanced within an 8-GPU cell, doubling the cell size to 16 GPUs improved throughput by more than 2
+×
+\times
+.
+(a)
+8-GPU cell
+(b)
+16-GPU cell
+Figure 7:
+The optimal deployment options of serving Qwen 3 Omni
+[
+45
+]
+on different cell sizes decided by Cornserve’s planner, corresponding to the two columns in Figure
+6b
+respectively.
+Additionally, Figure
+6b
+shows that Cornserve allows serving Qwen 3 Omni
+[
+45
+]
+efficiently while a monolitch deployment suffers from GPU OOM errors.
+The monolithic deployment cannot serve Qwen 3 Omni within a single A100 GPU due to the long multimodal embedding size or the long context size in the ServeGen
+[
+43
+]
+dataset, which further highlights the need for disaggregation.
+In the 8-GPU cell, Cornserve’s planner decides to disaggregate Qwen 3 Omni into three components during serving, and outputs the deployment configuration of
+1 replica of the Thinker LLM component with tensor parallel size of 2, 5 replicas of the Talker LLM component, and 1 audio generator component, as shown in figure
+7a
+.
+With more headroom to balance component when the cell size doubles to 16, Cornserve’s planner outputs the optimal deployment strategy of having 3 replicas of the Thinker LLM component with tensor parallel size 2, and 10 replicas of the colocated Talker LLM and audio generator in figure
+7b
+.
+Cornserve’s planner thus results in a 2.68
+×
+\times
+throughput improvement with 2
+×
+\times
+GPUs.
+Input
+Output
+Monolith
+Ours
+P50
+P90
+P99
+P50
+P90
+P99
+T + I + V + A
+T
+33.6
+128.9
+181.4
+7.1
+18.4
+19.8
+T + I + V
+T
+20.8
+88.8
+150.4
+7.3
+18.7
+22.6
+T + I + A
+T
+20.1
+114.7
+128.6
+7.9
+19.1
+24.8
+T + I
+T
+28.9
+95.8
+125.2
+8.5
+16.3
+21.0
+T + I + V + A
+A
+26.9
+156.9
+167.0
+24.8
+36.5
+37.8
+T + I + V
+A
+88.8
+236.5
+340.5
+21.9
+36.7
+44.3
+T + I + A
+A
+29.6
+182.5
+284.5
+23.1
+33.6
+37.7
+T + I
+A
+86.2
+288.6
+375.2
+21.3
+30.4
+39.6
+Table 2:
+Qwen 2.5 Omni latency statistics by request types on 16 GPUs. I stands for image, V for video, A for audio, and T for text.
+Latency.
+(a)
+(a)
+End-to-end Latency CDF
+(b)
+90th-100th percentile Zoom-in
+Figure 8:
+Qwen 2.5 Omni end-to-end request latency CDF.
+While Cornserve optimizes for serving capacity (i.e., throughput), it is also important to understand the latency implications of our deployed strategy.
+Figure
+8a
+shows the request latency CDF of serving Qwen 2.5 Omni with Cornserve and monoliths on a 16-GPU cell.
+Cornserve significantly and consistently reduces request latency, with P50, P95, and P99 latency improvements being 3.24
+×
+\times
+, 5.3
+×
+\times
+, and 5.79
+×
+\times
+, respectively.
+This is due to two reasons.
+First, in monolithic deployments, only one component of the model runs at a time, meaning whenever one component is running, all other components do not make progress.
+Thus, removing this component interference improves latency by reducing blocking.
+Second, disaggregating the audio generator allows the autoregressive audio generator to unlock continuous batching
+[
+47
+]
+, improving its throughput compared to the monolithic deployment, where implementing continuous batching alongside LLM is technically challenging.
+Table
+2
+further breaks down latency statistics by request types.
+There are eight request types in total for Qwen 2.5 Omni, each with a unique combination of input and output modalities.
+Overall, requests that require audio output take considerably longer latency than those that do not, as the audio generator adds extra latency compared to text generation.
+Cornserve is able to consistently reduce median and tail latencies for all request types, with the most significant improvement being 9.47
+×
+\times
+P99 latency reduction for the image & text to audio request type.
+7.3
+Text-only Output Models
+Models.
+Text-only output modals, or MLLMs, are a special case of Any-to-Any models that are relatively more widely explored by prior works.
+We evaluate on two state-of-the-art MLLMs: Qwen 2.5 VL 32B
+[
+4
+]
+and InternVL 3 38B
+[
+52
+]
+.
+Baselines.
+We compare Cornserve with the following.
+•
+Monolith
+: All components are deployed in a single vLLM server on two GPUs with tensor parallelism (TP).
+•
+E/PD
+: The encoder is disaggregated from the LLM and runs with one GPU, while the LLM runs with two GPUs.
+•
+EP/D
+: PD disaggregation. Prefill and decode instances are deployed separately, each using two GPUs.
+•
+E/P/D
+: EPD disaggregation. The encoder is deployed using a single GPU, while the prefill and decode instances are deployed separately, each using two GPUs.
+For disaggregation baselines, the number of E, P, and D instances are chosen to maximize throughput given the planner output. All solutions use the same number of GPUs in total.
+7.3.1
+Gains on a Real-World Workload
+Like Section
+7.2
+, we use ServeGen
+[
+43
+]
+as our real-world workload, except that we ignore audio inputs as neither of the models we evaluate take audio inputs.
+Both models are evaluated with a cell size of 16 GPUs.
+Figure
+9
+shows the throughput of the two models under different deployment strategies.
+We observe that monolithic deployments provide the highest throughput for both models, with ours matching Monolith.
+This is because ServeGen is an LLM decode (text output) heavy trace, making the amount of KV cache available the bottleneck for throughput.
+That is, disaggregating encoders and allocating them dedicated GPUs may improve the throughput
+balance
+of model components.
+However, it significantly reduces the amount of KV cache for LLMs and thus its
+absolute
+throughput, so overall throughput after balancing is lower than monolithic deployment.
+Figure 9:
+Throughput of serving Qwen 2.5 VL 32B
+[
+4
+]
+and InternVL3
+[
+52
+]
+with the ServeGen workload in a 16 GPU cell.
+7.3.2
+Controlled Benchmarks
+To understand how the deployment strategy and throughput vary with different workload parameters, we performed controlled experiments.
+Specifically, as shown in Table
+3
+, we vary the input image resolution, the expected number of input images per request, text input sequence length, and output sequence length.
+For this benchmark, we sample request arrivals from a Poisson process, and we use 4P4D, 2E2P4D, and 4E6PD configurations for EP/D, E/P/D, and E/PD deployments, respectively.
+Name
+Resolution
+#Images
+Input text
+Output Text
+Lower resolution
+1680
+×
+\times
+1050
+1.0
+1000
+300
+Standard
+1920
+×
+\times
+1080
+1.0
+1000
+300
+Less text
+1920
+×
+\times
+1080
+1.0
+100
+100
+Fewer images
+1920
+×
+\times
+1080
+0.6
+100
+100
+Table 3:
+Controlled workloads for multimodal input models. Columns are workload parameters: image resolution, expected number of input images per request, input text sequence length, and output text sequence length.
+(a)
+(a)
+InternVL 3 38B
+(b)
+Qwen 2.5 VL 32B
+Figure 10:
+Serving throughput of InternVL 3 38B
+[
+52
+]
+and Qwen 2.5 VL 32B
+[
+4
+]
+on 16 GPUs with controlled workloads defined in Table
+3
+using different deployment strategies.
+Throughput.
+Figure
+10
+shows the throughput of InternVL 3 and Qwen 2.5 VL under these controlled workloads.
+For InternVL 3 38B, we observe that the optimal deployment configuration varies with the workload, and Cornserve’s planner can find and match the best deployment.
+Importantly, for the
+Less text
+workload, we observe that Cornserve planner’s output has higher throughput than existing configurations.
+This is because the planner decides to deploy a mixture of four dedicated image encoders and six monolithic deployments (image encoder and LLM), providing higher throughput compared to any other existing configurations.
+This is beneficial because of two reasons:
+(1) the
+Less text
+workload is image-heavy (conversely text-light) and the amount of KV cache is
+not
+the bottleneck for throughput, providing opportunities for encoder disaggregation; and
+(2) Cornserve’s general executor graph can split image encoding rates across multiple paths, allowing better balancing within the cell.
+In contrast, for Qwen 2.5 VL 32B, we observe that monolithic deployment consistently provides the best performance for all workloads, and Cornserve can match the best existing configuration.
+This is primarily because Qwen 2.5 VL has a smaller encoder (sub-billion) compared to that of InternVL 3 (5.5B).
+The first implication of this is that separating out the small encoder into a dedicated GPU leads to underutilization of that GPU, while taking away a GPU from the LLM reduces the amount of KV cache.
+The second implication is that even for image-heavy workloads, more image tokens produced by the small encoder increases the prefill computation more, preventing the encoder from arising as a dominant bottleneck.
+Latency.
+Figure
+11
+shows the request latency CDF of serving InternVL 3 38B on 16 GPUs under two controlled workloads.
+In Figure
+11a
+, Cornserve’s deployed strategy has a superior latency curve because monolithic deployments suffer from queuing delay and request preemption due to the limited KV cache size from collocating the LLM with a large encoder.
+In Figure
+11b
+, we use a heavily skewed workload of 300 input tokens and 300 output tokens, with each request having a 20% chance of including 8 images with a resolution of 1920
+×
+\times
+1080.
+In addition to a 1.26
+×
+\times
+throughput improvement, we observe that the request latency of a balanced disaggregated deployment is also better than monoliths. This largely comes from the reduced encode–prefill–decode interference, as already explored by prior works
+[
+51
+,
+33
+]
+.
+Overall, deployment strategies optimized by the Cornserve planner provide better latency curves while providing matched or higher throughput.
+7.3.3
+Image Output Models
+Qwen-Image
+[
+40
+]
+is a text to image model that takes the user’s prompt as input, uses Qwen 2.5 VL 7B
+[
+4
+]
+to embed the prompt into hidden states, and then passes the hidden states to a 20B Diffusion Transformer (DiT)
+[
+28
+]
+to generate images.
+Because the ServeGen trace does not include text to image requests, we synthesize a simple workload that generates a 512
+×
+\times
+512 resolution image with 20 diffusion steps per request.
+We compare the throughput of serving Qwen-Image with Cornserve and monolithic deployment on a 16-GPU cell for two different input prompt lengths: 1,000 and 2,000 tokens.
+7
+7
+7
+Qwen-Image using a whole MLLM as the text encoder allows longer and more detailed prompting. Thus, we use a relatively longer input length to evaluate this model on this use case.
+We notice that regardless of input length, Cornserve’s planner decide to use monolithic deployments.
+This is because the drastic computation heterogeneity between the LLM component and the DiT component cannot be balanced within a 16-GPU cell.
+(a)
+(a)
+Lower Resolution
+(b)
+Heavy Skew
+Figure 11:
+End-to-end request latency CDF of serving InternVL 3 38B
+[
+52
+]
+on 16 GPUs for both solutions (8
+⋅
+\cdot
+2 vs. 4
+⋅
+\cdot
+1 + 6
+⋅
+\cdot
+2) under controlled workloads.
+7.4
+Request-Static Routing
+In this section, we evaluate the effectiveness of
+request-static routing
+in Cornserve’s distributed runtime by comparing it against dynamic load balancing, which queries the queue lengths of all valid next-hop executors and chooses the one with the shortest queue.
+In this experiment, the planner deploys InternVL 3 38B
+[
+52
+]
+with four dedicated image encoders and six monolithic deployments (image encoder + LLM) in a 16-GPU cell.
+67.5% of the image & text requests are planned to go through the dedicated encoders.
+We found that request-static routing provides 3.7
+×
+\times
+higher throughput than dynamic load balancing (9.27 req/s vs 2.50 req/s).
+This is primarily due to the high control plane overhead of dynamic load balancing resulting from frequent queue length queries.
+In contrast, the only overhead of request-static routing is the initial path sampling (i.e., one random number generation and a comparison per request); after that, the sequence of Task Managers to invoke is statically determined.
+8
+Related Work
+LLM Serving Systems and Optimizations.
+Prior works on LLM serving
+[
+17
+,
+51
+,
+27
+,
+33
+,
+39
+,
+53
+,
+29
+,
+2
+]
+targets text-only or multimodal
+input
+LLMs, proposing disaggregation strategies such as Prefill–Decode (PD)
+[
+27
+]
+, Encode–Prefill–Decode (EPD)
+[
+33
+]
+, or modality-based disaggregation
+[
+30
+]
+to separate different computation phases of the same model.
+Complementary efforts like llm-d
+[
+20
+]
+, NVIDIA NIM
+[
+26
+]
+, and KServe
+[
+16
+]
+extend Kubernetes or provide optimized containers for scalable LLM inference in multi-node deployments.
+However, none of them address the broader heterogeneity of Any-to-Any models with multimodal input and output, and each one promotes a specific deployment strategy.
+In contrast, Cornserve enables multiple strategies by selecting hybrid combinations tailored to target model–workload combinations.
+Additionally, since Cornserve includes text generation as a component, existing techniques for optimizing LLM inference
+[
+50
+,
+5
+,
+32
+,
+14
+,
+34
+]
+can also be applied transparently.
+Multimodal Model Inference.
+Prior works on image or audio generation
+[
+9
+,
+10
+,
+1
+,
+42
+,
+19
+,
+8
+,
+11
+]
+focus primarily on inference within a single serving engine and maily target a specific subset models with a single component.
+While effective, they do not capture the growing complexity of Any-to-Any models with various components.
+Orthogonally, these model and engine level optimizations can also be applied in Cornserve’s corresponding components.
+The multimodal inference analysis from Meta
+[
+18
+]
+also characterizes the patterns of serving multimodal models.
+Resource Allocation and Parallelization for Training.
+The analogue of Cornserve’s Any-to-Any resource allocation problem is large model parallelization for training.
+Early systems such as GPipe
+[
+12
+]
+, Megatron-LM
+[
+23
+]
+, and DeepSpeed
+[
+31
+]
+relied on manual, expert-designed strategies, akin to monolithic, phase-wise, or component-wise disaggregation in serving.
+Later, automated planners like Alpa
+[
+49
+]
+, GSPMD
+[
+46
+]
+, Oobleck
+[
+13
+]
+, and WLB-LLM
+[
+38
+]
+emerged, analogous to Cornserve’s planner that selects the best combination of manually designed strategies.
+9
+Conclusion
+We present Cornserve, the first online serving system for
+generic Any-to-Any multimodal models
+.
+It unifies prior monolithic and disaggregated approaches to LLM serving by introducing a
+planner
+that matches their performance on multimodal input-only LLMs and surpasses them as model complexity increases with output-side multimodality.
+Rather than unilaterally deciding whether to disaggregate across all models, Cornserve’s planner employs an offline algorithm to derive an optimized deployment plan that accounts for each model’s architecture, input–output characteristics, and target load.
+This serving-time planner parallels training-time planners for parallelization and resource allocation, representing a fundamental shift in the optimization space toward adaptive and scalable multimodal serving.
+References
+[1]
+S. Agarwal, S. Mitra, S. Chakraborty, S. Karanam, K. Mukherjee, and S. K. Saini
+(2024)
+Approximate caching for efficiently serving text-to-image diffusion models
+.
+In
+Proceedings of the 21st USENIX Symposium on Networked Systems Design and Implementation
+,
+NSDI’24
+,
+USA
+.
+External Links:
+ISBN 978-1-939133-39-7
+Cited by:
+§8
+.
+[2]
+A. Agrawal, N. Kedia, A. Panwar, J. Mohan, N. Kwatra, B. Gulavani, A. Tumanov, and R. Ramjee
+(2024)
+Taming throughput-latency tradeoff in LLM inference with Sarathi-Serve
+.
+In
+OSDI
+,
+Cited by:
+§8
+.
+[3]
+A. Atamtürk and O. Günlük
+(2021)
+Multicommodity multifacility network design
+.
+In
+Network Design with Applications to Transportation and Logistics
+,
+pp. 141–166
+.
+Cited by:
+§4.2
+.
+[4]
+S. Bai, K. Chen, X. Liu, J. Wang, W. Ge, S. Song, K. Dang, P. Wang, S. Wang, J. Tang, H. Zhong, Y. Zhu, M. Yang, Z. Li, J. Wan, P. Wang, W. Ding, Z. Fu, Y. Xu, J. Ye, X. Zhang, T. Xie, Z. Cheng, H. Zhang, Z. Yang, H. Xu, and J. Lin
+(2025)
+Qwen2.5-VL technical report
+.
+arXiv preprint arXiv:2502.13923
+.
+Cited by:
+§1
+,
+§1
+,
+§2.1
+,
+Table 1
+,
+Figure 10
+,
+Figure 9
+,
+2nd item
+,
+§7.3
+,
+§7.3.3
+.
+[5]
+S. Cao, S. Liu, T. Griggs, P. Schafhalter, X. Liu, Y. Sheng, J. E. Gonzalez, M. Zaharia, and I. Stoica
+(2025)
+MoE-lightning: high-throughput moe inference on memory-constrained gpus
+.
+In
+ASPLOS
+,
+Cited by:
+§8
+.
+[6]
+X. Chen, Z. Wu, X. Liu, Z. Pan, W. Liu, Z. Xie, X. Yu, and C. Ruan
+(2025)
+Janus-pro: unified multimodal understanding and generation with data and model scaling
+.
+arXiv preprint arXiv:2501.17811
+.
+Cited by:
+§1
+,
+§2.1
+.
+[7]
+J. Chung, J. J. Ma, R. Wu, J. Liu, O. J. Kweon, Y. Xia, Z. Wu, and M. Chowdhury
+(2025)
+The ML.ENERGY benchmark: toward automated inference energy measurement and optimization
+.
+NeurIPS
+.
+Cited by:
+§7.1
+.
+[8]
+Z. Evans, C. Carr, J. Taylor, S. H. Hawley, and J. Pons
+(2024)
+Fast timing-conditioned latent audio diffusion
+.
+In
+Proceedings of the 41st International Conference on Machine Learning
+,
+ICML’24
+.
+Cited by:
+§8
+.
+[9]
+J. Fang, J. Pan, X. Sun, A. Li, and J. Wang
+(2024)
+xDiT: an inference engine for diffusion transformers (DiTs) with massive parallelism
+.
+arXiv preprint arXiv:2411.01738
+.
+Cited by:
+§1
+,
+§2.3
+,
+§8
+.
+[10]
+H. Huang, C. Hu, J. Zhu, Z. Gao, L. Xu, Y. Shan, Y. Bao, S. Ninghui, T. Zhang, and S. Wang
+(2025)
+DDiT: dynamic resource allocation for diffusion transformer model serving
+.
+arXiv preprint arXiv:2506.13497
+.
+Cited by:
+§8
+.
+[11]
+R. Huang, Z. Zhao, H. Liu, J. Liu, C. Cui, and Y. Ren
+(2022)
+ProDiff: progressive fast diffusion model for high-quality text-to-speech
+.
+In
+Proceedings of the 30th ACM International Conference on Multimedia
+,
+MM ’22
+,
+New York, NY, USA
+,
+pp. 2595–2605
+.
+External Links:
+ISBN 9781450392037
+,
+Link
+,
+Document
+Cited by:
+§8
+.
+[12]
+Y. Huang, Y. Cheng, A. Bapna, O. Firat, M. X. Chen, D. Chen, H. Lee, J. Ngiam, Q. V. Le, Y. Wu, and Z. Chen
+(2019)
+GPipe: efficient training of giant neural networks using pipeline parallelism
+.
+In
+NeurIPS
+,
+Cited by:
+§8
+.
+[13]
+I. Jang, Z. Yang, Z. Zhang, X. Jin, and M. Chowdhury
+(2023)
+Oobleck: resilient distributed training of large models using pipeline templates
+.
+In
+SOSP
+,
+Cited by:
+§8
+.
+[14]
+X. Jiang, Y. Zhou, S. Cao, I. Stoica, and M. Yu
+(2025)
+NEO: saving GPU memory crisis with CPU offloading for online LLM inference
+.
+In
+Eighth Conference on Machine Learning and Systems
+,
+External Links:
+Link
+Cited by:
+§8
+.
+[15]
+H. Kellerer, U. Pferschy, and D. Pisinger
+(2004)
+Knapsack problems
+.
+Springer Berlin Heidelberg
+.
+Cited by:
+§4.3
+.
+[16]
+KServe
+.
+Note:
+https://github.com/kserve/kserve
+Cited by:
+§8
+.
+[17]
+W. Kwon, Z. Li, S. Zhuang, Y. Sheng, L. Zheng, C. H. Yu, J. Gonzalez, H. Zhang, and I. Stoica
+(2023)
+Efficient memory management for large language model serving with PagedAttention
+.
+In
+SOSP
+,
+Cited by:
+Appendix E
+,
+§1
+,
+§2.3
+,
+§6
+,
+§7.1
+,
+§8
+.
+[18]
+Y. Lee, A. Sun, B. Hosmer, B. Acun, C. Balioglu, C. Wang, C. D. Hernandez, C. Puhrsch, D. Haziza, D. Guessous, F. Massa, J. Kahn, J. Wan, J. Reizenstein, J. Zhai, J. Isaacson, J. Schlosser, J. Pino, K. R. Sadagopan, L. Shamis, L. Ma, M. Hwang, M. Chen, M. Elhoushi, P. Rodriguez, R. Pasunuru, S. Yih, S. Popuri, X. Liu, and C. Wu
+(2025)
+Characterizing and efficiently accelerating multimodal generation model inference
+.
+arXiv preprint arXiv:2410.00215
+.
+Cited by:
+§8
+.
+[19]
+H. Liu, R. Huang, Y. Liu, H. Cao, J. Wang, X. Cheng, S. Zheng, and Z. Zhao
+(2024)
+AudioLCM: efficient and high-quality text-to-audio generation with minimal inference steps
+.
+In
+Proceedings of the 32nd ACM International Conference on Multimedia
+,
+MM ’24
+,
+New York, NY, USA
+,
+pp. 7008–7017
+.
+External Links:
+ISBN 9798400706868
+,
+Link
+,
+Document
+Cited by:
+§8
+.
+[20]
+llm-d: High Performance Distributed Inference on Kubernetes
+.
+Note:
+https://github.com/llm-d/llm-d
+Cited by:
+§8
+.
+[21]
+A. Meta
+(2025)
+The llama 4 herd: the beginning of a new era of natively multimodal ai innovation
+.
+Note:
+https://ai.meta.com/blog/llama-4-multimodal-intelligence/
+Cited by:
+§2.1
+.
+[22]
+M. Mitzenmacher
+(2001)
+The power of two choices in randomized load balancing
+.
+IEEE Trans. Parallel Distrib. Syst.
+12
+(
+10
+).
+Cited by:
+§5.3
+.
+[23]
+D. Narayanan, M. Shoeybi, J. Casper, P. LeGresley, M. Patwary, V. Korthikanti, D. Vainbrand, P. Kashinkunti, J. Bernauer, B. Catanzaro, A. Phanishayee, and M. Zaharia
+(2021)
+Efficient large-scale language model training on GPU clusters using Megatron-LM
+.
+In
+SC
+,
+Cited by:
+§8
+.
+[24]
+NVIDIA DGX Systems
+.
+Note:
+https://www.nvidia.com/en-gb/data-center/dgx-systems/
+Cited by:
+§4.3
+,
+§4.3
+.
+[25]
+NVIDIA GB200 NVL72
+.
+Note:
+https://www.nvidia.com/en-us/data-center/gb200-nvl72/
+Cited by:
+§4.3
+,
+§4.3
+.
+[26]
+NVIDIA NIM
+.
+Note:
+https://docs.nvidia.com/nim/
+Cited by:
+§8
+.
+[27]
+P. Patel, E. Choukse, C. Zhang, A. Shah, Í. Goiri, S. Maleki, and R. Bianchini
+(2024)
+Splitwise: efficient generative llm inference using phase splitting
+.
+In
+ISCA
+,
+Cited by:
+§1
+,
+§2.3
+,
+§8
+.
+[28]
+W. Peebles and S. Xie
+(2023)
+Scalable diffusion models with transformers
+.
+In
+ICCV
+,
+Cited by:
+§7.3.3
+.
+[29]
+R. Qin, Z. Li, W. He, J. Cui, F. Ren, M. Zhang, Y. Wu, W. Zheng, and X. Xu
+(2025)
+Mooncake: trading more storage for less computation – a KVCache-centric architecture for serving LLM chatbot
+.
+In
+USENIX FAST
+,
+Cited by:
+§8
+.
+[30]
+H. Qiu, A. Biswas, Z. Zhao, J. Mohan, A. Khare, E. Choukse, Í. Goiri, Z. Zhang, H. Shen, C. Bansal, R. Ramjee, and R. Fonseca
+(2025)
+ModServe: scalable and resource-efficient large multimodal model serving
+.
+arXiv preprint arXiv:2502.00937
+.
+Cited by:
+§1
+,
+§2.2
+,
+§2.3
+,
+§8
+.
+[31]
+J. Rasley, S. Rajbhandari, O. Ruwase, and Y. He
+(2020)
+Deepspeed: system optimizations enable training deep learning models with over 100 billion parameters
+.
+In
+Proceedings of the 26th ACM SIGKDD International Conference on Knowledge Discovery & Data Mining
+,
+pp. 3505–3506
+.
+Cited by:
+§8
+.
+[32]
+Y. Sheng, L. Zheng, B. Yuan, Z. Li, M. Ryabinin, B. Chen, P. Liang, C. Ré, I. Stoica, and C. Zhang
+(2023)
+FlexGen: high-throughput generative inference of large language models with a single gpu
+.
+In
+ICML
+,
+Cited by:
+§8
+.
+[33]
+G. Singh, X. Wang, Y. Hu, T. T. L. Yu, L. Xing, W. Jiang, Z. Wang, B. Xiaolong, Y. Li, Y. Xiong, Y. Zhang, and Z. Fan
+(2025)
+Efficiently serving large multimodal models using EPD disaggregation
+.
+In
+ICML
+,
+Cited by:
+§1
+,
+§2.3
+,
+§7.3.2
+,
+§8
+.
+[34]
+Y. Song, Z. Mi, H. Xie, and H. Chen
+(2024)
+PowerInfer: fast large language model serving with a consumer-grade gpu
+.
+In
+Proceedings of the ACM SIGOPS 30th Symposium on Operating Systems Principles
+,
+SOSP ’24
+,
+New York, NY, USA
+,
+pp. 590–606
+.
+External Links:
+ISBN 9798400712517
+,
+Link
+,
+Document
+Cited by:
+§8
+.
+[35]
+B. Sun, Z. Huang, H. Zhao, W. Xiao, X. Zhang, Y. Li, and W. Lin
+(2024)
+Llumnix: dynamic scheduling for large language model serving
+.
+In
+OSDI
+,
+Cited by:
+§6
+.
+[36]
+The Unified Communication X Library
+.
+Note:
+http://www.openucx.org
+Cited by:
+§6
+.
+[37]
+vLLM team
+(2025)
+Disaggregated prefilling
+.
+Note:
+https://docs.vllm.ai/en/v0.12.0/features/disagg_prefill/
+Cited by:
+§2.3
+.
+[38]
+Z. Wang, A. Cai, X. Xie, Z. Pan, Y. Guan, W. Chu, J. Wang, S. Li, J. Huang, C. Cai, Y. Hao, and Y. Ding
+(2025)
+WLB-LLM: workload-balanced 4d parallelism for large language model training
+.
+In
+OSDI
+,
+Cited by:
+§8
+.
+[39]
+B. Wu, S. Liu, Y. Zhong, P. Sun, X. Liu, and X. Jin
+(2024)
+Loongserve: efficiently serving long-context large language models with elastic sequence parallelism
+.
+In
+SOSP
+,
+Cited by:
+§8
+.
+[40]
+C. Wu, J. Li, J. Zhou, J. Lin, K. Gao, K. Yan, S. Yin, S. Bai, X. Xu, Y. Chen, Y. Chen, Z. Tang, Z. Zhang, Z. Wang, A. Yang, B. Yu, C. Cheng, D. Liu, D. Li, H. Zhang, H. Meng, H. Wei, J. Ni, K. Chen, K. Cao, L. Peng, L. Qu, M. Wu, P. Wang, S. Yu, T. Wen, W. Feng, X. Xu, Y. Wang, Y. Zhang, Y. Zhu, Y. Wu, Y. Cai, and Z. Liu
+(2025)
+Qwen-Image technical report
+.
+arXiv preprint arXiv:2508.02324
+.
+Cited by:
+§1
+,
+§1
+,
+§2.1
+,
+§2.3
+,
+Table 1
+,
+3rd item
+,
+§7.3.3
+.
+[41]
+C. Wu, X. Chen, Z. Wu, Y. Ma, X. Liu, Z. Pan, W. Liu, Z. Xie, X. Yu, C. Ruan,
+et al.
+(2024)
+Janus: decoupling visual encoding for unified multimodal understanding and generation
+.
+arXiv preprint arXiv:2410.13848
+.
+Cited by:
+§1
+,
+§2.1
+.
+[42]
+Y. Xia, D. Sharma, Y. Yuan, S. Kundu, and N. Talati
+(2025)
+MoDM: efficient serving for image generation via mixture-of-diffusion models
+.
+arXiv preprint arXiv:2503.11972
+.
+Cited by:
+§8
+.
+[43]
+Y. Xiang, X. Li, K. Qian, W. Yu, E. Zhai, and X. Jin
+(2025)
+ServeGen: workload characterization and generation of large language model serving in production
+.
+arXiv preprint arXiv:2505.09999
+.
+Cited by:
+§2.2
+,
+§7.2
+,
+§7.2
+,
+§7.3.1
+,
+footnote 2
+.
+[44]
+J. Xu, Z. Guo, J. He, H. Hu, T. He, S. Bai, K. Chen, J. Wang, Y. Fan, K. Dang, B. Zhang, X. Wang, Y. Chu, and J. Lin
+(2025)
+Qwen2.5-Omni technical report
+.
+arXiv preprint arXiv:2503.20215
+.
+Cited by:
+Figure 1
+,
+§1
+,
+§1
+,
+§2.1
+,
+§2.2
+,
+§2.3
+,
+Table 1
+,
+Figure 6
+,
+1st item
+,
+§7.2
+,
+§7.2
+.
+[45]
+J. Xu, Z. Guo, H. Hu, Y. Chu, X. Wang, J. He, Y. Wang, X. Shi, T. He, X. Zhu, Y. Lv, Y. Wang, D. Guo, H. Wang, L. Ma, P. Zhang, X. Zhang, H. Hao, Z. Guo, B. Yang, B. Zhang, Z. Ma, X. Wei, S. Bai, K. Chen, X. Liu, P. Wang, M. Yang, D. Liu, X. Ren, B. Zheng, R. Men, F. Zhou, B. Yu, J. Yang, L. Yu, J. Zhou, and J. Lin
+(2025)
+Qwen3-Omni technical report
+.
+arXiv preprint arXiv:2509.17765
+.
+Cited by:
+Figure 1
+,
+§1
+,
+§1
+,
+§2.2
+,
+Figure 6
+,
+Figure 7
+,
+1st item
+,
+§7.2
+,
+§7.2
+.
+[46]
+Y. Xu, H. Lee, D. Chen, B. Hechtman, Y. Huang, R. Joshi, M. Krikun, D. Lepikhin, A. Ly, M. Maggioni,
+et al.
+(2021)
+GSPMD: general and scalable parallelization for ML computation graphs
+.
+arXiv preprint arXiv:2105.04663
+.
+Cited by:
+§8
+.
+[47]
+G. Yu, J. S. Jeong, G. Kim, S. Kim, and B. Chun
+(2022)
+Orca: a distributed serving system for Transformer-Based generative models
+.
+In
+OSDI
+,
+Cited by:
+§7.2
+.
+[48]
+D. Zhang, H. Wang, Y. Liu, X. Wei, Y. Shan, R. Chen, and H. Chen
+(2025)
+BLITZSCALE: fast and live large model autoscaling with o(1) host caching
+.
+In
+OSDI
+,
+Cited by:
+Appendix E
+.
+[49]
+L. Zheng, Z. Li, H. Zhang, Y. Zhuang, Z. Chen, Y. Huang, Y. Wang, Y. Xu, D. Zhuo, E. P. Xing, J. E. Gonzalez, and I. Stoica
+(2022)
+Alpa: automating inter- and Intra-Operator parallelism for distributed deep learning
+.
+In
+USENIX OSDI
+,
+Cited by:
+§8
+.
+[50]
+L. Zheng, L. Yin, Z. Xie, C. Sun, J. Huang, C. H. Yu, S. Cao, C. Kozyrakis, I. Stoica, J. E. Gonzalez, C. Barrett, and Y. Sheng
+(2023)
+SGLang: efficient execution of structured language model programs
+.
+arXiv preprint arXiv:2312.07104
+.
+Cited by:
+§2.3
+,
+§8
+.
+[51]
+Y. Zhong, S. Liu, J. Chen, J. Hu, Y. Zhu, X. Liu, X. Jin, and H. Zhang
+(2024)
+DistServe: disaggregating prefill and decoding for goodput-optimized large language model serving
+.
+In
+OSDI
+,
+Cited by:
+§1
+,
+§2.3
+,
+§7.3.2
+,
+§8
+.
+[52]
+J. Zhu, W. Wang, Z. Chen, Z. Liu, S. Ye, L. Gu, H. Tian, Y. Duan, W. Su, J. Shao, Z. Gao, E. Cui, X. Wang, Y. Cao, Y. Liu, X. Wei, H. Zhang, H. Wang, W. Xu, H. Li, J. Wang, N. Deng, S. Li, Y. He, T. Jiang, J. Luo, Y. Wang, C. He, B. Shi, X. Zhang, W. Shao, J. He, Y. Xiong, W. Qu, P. Sun, P. Jiao, H. Lv, L. Wu, K. Zhang, H. Deng, J. Ge, K. Chen, L. Wang, M. Dou, L. Lu, X. Zhu, T. Lu, D. Lin, Y. Qiao, J. Dai, and W. Wang
+(2025)
+InternVL3: exploring advanced training and test-time recipes for open-source multimodal models
+.
+arXiv perprint arXiv:2504.10479
+.
+Cited by:
+Figure 1
+,
+§1
+,
+§1
+,
+Figure 2
+,
+§2.1
+,
+§2.2
+,
+§2.3
+,
+§2.3
+,
+Table 1
+,
+Figure 10
+,
+Figure 11
+,
+Figure 9
+,
+2nd item
+,
+§7.3
+,
+§7.4
+.
+[53]
+K. Zhu, Y. Gao, Y. Zhao, L. Zhao, G. Zuo, Y. Gu, D. Xie, T. Tang, Q. Xu, Z. Ye, K. Kamahori, C. Lin, Z. Wang, S. Wang, A. Krishnamurthy, and B. Kasikci
+(2025)
+NanoFlow: towards optimal large language model serving throughput
+.
+In
+OSDI
+,
+Cited by:
+§8
+.
+Appendix A
+Multicommodity Network Design Problem with Network Topology
+In this section, we formally state the multicommodity network design problem considering the network topology.
+
+
+
+Let
+H
+H
+be the set of physical nodes, and let
+G
+h
+⊆
+G
+G_{h}\subseteq G
+be the set of GPUs on node
+h
+∈
+H
+h\in H
+.
+Let
+B
+h
+,
+h
+′
+B_{h,h^{\prime}}
+denote the available bandwidth between nodes
+(
+h
+,
+h
+′
+)
+∈
+H
+(h,h^{\prime})\in H
+.
+For each executor
+s
+∈
+S
+s\in S
+, let
+c
+s
+c_{s}
+denote the number of GPUs required by one replica of
+s
+s
+, and let
+y
+s
+,
+h
+∈
+ℤ
+≥
+0
+y_{s,h}\in\mathbb{Z}_{\geq 0}
+be the number of replicas of executor
+s
+s
+placed on node
+h
+h
+.
+Continuous variables
+f
+s
+,
+s
+′
+,
+h
+,
+h
+′
+≥
+0
+f_{s,s^{\prime},h,h^{\prime}}\geq 0
+represent the bandwidth used on node pair
+(
+h
+,
+h
+′
+)
+(h,h^{\prime})
+by traffic between executors
+s
+s
+and
+s
+′
+s^{\prime}
+.
+Achieving request throughput
+R
+R
+with minimal GPUs can then be formulated as:
+min
+x
+,
+y
+,
+f
+\displaystyle\min_{x,y,f}\quad
+∑
+s
+∈
+S
+∑
+h
+∈
+H
+c
+s
+​
+y
+s
+,
+h
+\displaystyle\sum_{s\in S}\sum_{h\in H}c_{s}\,y_{s,h}
+s.t.
+∑
+p
+∈
+𝒫
+t
+x
+t
+,
+p
+=
+π
+t
+​
+R
+\displaystyle\sum_{p\in\mathcal{P}_{t}}x_{t,p}=\pi_{t}R
+∀
+t
+∈
+T
+,
+\displaystyle\forall t\in T,
+(4)
+∑
+t
+∈
+T
+∑
+p
+∈
+𝒫
+t
+x
+t
+,
+p
+w
+s
+,
+t
+,
+p
+≤
+∑
+h
+∈
+H
+y
+s
+,
+h
+\displaystyle\sum_{t\in T}\sum_{p\in\mathcal{P}_{t}}\frac{x_{t,p}}{w_{s,t,p}}\;\leq\;\sum_{h\in H}y_{s,h}
+∀
+s
+∈
+S
+,
+\displaystyle\forall s\in S,
+(5)
+∑
+s
+∈
+S
+c
+s
+​
+y
+s
+,
+h
+≤
+|
+G
+h
+|
+\displaystyle\sum_{s\in S}c_{s}\,y_{s,h}\;\leq\;|G_{h}|
+∀
+h
+∈
+H
+,
+\displaystyle\forall h\in H,
+(6)
+∑
+h
+,
+h
+′
+∈
+H
+f
+s
+,
+s
+′
+,
+h
+,
+h
+′
+=
+∑
+t
+∈
+T
+∑
+p
+∈
+𝒫
+t
+:
+(
+s
+,
+s
+′
+)
+∈
+p
+b
+s
+,
+s
+′
+x
+t
+,
+p
+\displaystyle\sum_{h,h^{\prime}\in H}f_{s,s^{\prime},h,h^{\prime}}\;=\;\sum_{t\in T}\sum_{\begin{subarray}{c}p\in\mathcal{P}_{t}:\\
+(s,s^{\prime})\in p\end{subarray}}b_{s,s^{\prime}}\,x_{t,p}
+∀
+(
+s
+,
+s
+′
+)
+∈
+E
+,
+\displaystyle\forall(s,s^{\prime})\in E,
+(7)
+∑
+s
+,
+s
+′
+∈
+S
+f
+s
+,
+s
+′
+,
+h
+,
+h
+′
+≤
+B
+h
+,
+h
+′
+\displaystyle\sum_{s,s^{\prime}\in S}f_{s,s^{\prime},h,h^{\prime}}\;\leq\;B_{h,h^{\prime}}
+∀
+h
+,
+h
+′
+∈
+H
+,
+\displaystyle\forall h,h^{\prime}\in H,
+(8)
+x
+t
+,
+p
+≥
+0
+,
+y
+s
+,
+h
+∈
+ℤ
+≥
+0
+,
+f
+s
+,
+s
+′
+,
+h
+,
+h
+′
+≥
+0
+.
+\displaystyle x_{t,p}\geq 0,\;\;y_{s,h}\in\mathbb{Z}_{\geq 0},\;\;f_{s,s^{\prime},h,h^{\prime}}\geq 0.
+Here, our workload has been decomposed into request types
+t
+∈
+T
+t\in T
+, where the proportion of request type
+t
+t
+is
+π
+t
+\pi_{t}
+(they add up to
+1
+1
+), and each request type has a set of valid executor paths
+𝒫
+t
+\mathcal{P}_{t}
+in the executor graph.
+For a given target throughput
+R
+R
+, the flow-conservation constraint
+4
+requires that the aggregate request rate of type
+t
+t
+equals its share
+π
+t
+​
+R
+\pi_{t}R
+, with this rate split across valid paths
+p
+∈
+𝒫
+t
+p\in\mathcal{P}_{t}
+via the variables
+x
+t
+,
+p
+x_{t,p}
+.
+The executor-capacity constraint
+5
+ensures that, for each executor
+s
+s
+, the total work induced by all request types and paths does not exceed the aggregate capacity provided by its replicas across nodes, as captured by
+∑
+h
+y
+s
+,
+h
+\sum_{h}y_{s,h}
+.
+Node-level GPU capacity is encoded by constraint
+6
+, which limits the total number of GPUs consumed on node
+h
+h
+by all executors (each replica of
+s
+s
+using
+c
+s
+c_{s}
+GPUs) to the available GPUs
+|
+G
+h
+|
+|G_{h}|
+.
+At the network level, constraint
+7
+defines, for each logical executor edge
+(
+s
+,
+s
+′
+)
+(s,s^{\prime})
+, the total bandwidth demand induced by all request types and paths, and distributes this demand across node pairs via the variables
+f
+s
+,
+s
+′
+,
+h
+,
+h
+′
+f_{s,s^{\prime},h,h^{\prime}}
+.
+The link-capacity constraint
+8
+then bounds the aggregate bandwidth consumed on each node pair
+(
+h
+,
+h
+′
+)
+(h,h^{\prime})
+by the available capacity
+B
+h
+,
+h
+′
+B_{h,h^{\prime}}
+.
+Appendix B
+Multicommodity Network Design Problem without Network Topology
+In this section, we formally state our planner’s multicommodity network design problem.
+The resulting formulation is an NP-Hard mixed-integer linear program (MILP).
+Inputs.
+The planner takes the following inputs. We illustrate inputs together with the model example used in Figure
+4
+.
+•
+Model graph:
+Components
+C
+=
+{
+E0
+,
+E1
+,
+L
+}
+C=\{\mathrm{E0},\mathrm{E1},\mathrm{L}\}
+and directed edges (e.g.,
+E0
+→
+L
+\mathrm{E0}\!\rightarrow\!\mathrm{L}
+,
+E1
+→
+L
+\mathrm{E1}\!\rightarrow\!\mathrm{L}
+).
+•
+Deployment options:
+S
+S
+are colocated implementations such as
+{
+E0
+,
+E1
+,
+L
+,
+E0L
+,
+E1L
+,
+E0E1L
+}
+\{\mathrm{E0},\mathrm{E1},\mathrm{L},\mathrm{E0L},\mathrm{E1L},\mathrm{E0E1L}\}
+, each with component set
+Comp
+⁡
+(
+s
+)
+⊆
+C
+\mathrm{Comp}(s)\subseteq C
+.
+•
+Workload:
+Request types
+t
+∈
+T
+t\in T
+given by the actual component sets each request requires (e.g.,
+{
+E
+​
+0
+,
+L
+}
+\{E0,L\}
+,
+{
+L
+}
+\{L\}
+,
+{
+E
+​
+1
+,
+L
+}
+\{E1,L\}
+) with mix
+π
+t
+\pi_{t}
+and total rate
+R
+R
+; per-type rate is
+D
+t
+=
+π
+t
+​
+R
+D_{t}=\pi_{t}R
+.
+•
+Valid paths:
+For each
+t
+t
+, a set
+𝒫
+t
+\mathcal{P}_{t}
+of paths on the executor graph that execute the components in
+t
+t
+exactly once and respect model order.
+•
+Profiling information:
+The profiler measures the per-replica throughput of each deployment option in
+S
+S
+with requests from the workload. Then, we convert the measurements into throughput values for each request type
+w
+s
+,
+t
+,
+p
+w_{s,t,p}
+. Appendix
+C
+is dedicated to this conversion.
+Decision Variables.
+r
+s
+∈
+ℤ
+≥
+0
+r_{s}\in\mathbb{Z}_{\geq 0}
+are integer replicas of executor
+s
+s
+.
+x
+t
+,
+p
+≥
+0
+x_{t,p}\geq 0
+is the arrival rate (req/s) of type
+t
+t
+assigned to path
+p
+∈
+𝒫
+t
+p\in\mathcal{P}_{t}
+.
+Capacity Accounting.
+At each executor
+s
+s
+, work demand is
+∑
+t
+∑
+p
+∈
+𝒫
+t
+x
+t
+,
+p
+/
+w
+s
+,
+t
+,
+p
+\sum_{t}\sum_{p\in\mathcal{P}_{t}}x_{t,p}/w_{s,t,p}
+.
+Each replica of executor
+s
+s
+supplies 1 unit of work.
+For demand to not exceed supply, we need
+∑
+t
+∑
+p
+∈
+𝒫
+t
+x
+t
+,
+p
+​
+w
+s
+,
+t
+,
+p
+≤
+r
+s
+∀
+s
+∈
+S
+.
+\sum_{t}\sum_{p\in\mathcal{P}_{t}}x_{t,p}\,w_{s,t,p}\;\leq\;r_{s}\quad\forall s\in S.
+(9)
+Two Variants.
+The planner’s problem has two variants with different objectives:
+(1) minimize the number of GPUs
+N
+N
+given a target throughput
+R
+R
+, or
+(2) maximize throughput
+R
+R
+given a GPU budget
+N
+N
+.
+Minimum Cost Under Target Throughput Variant.
+min
+x
+,
+r
+\displaystyle\min_{x,r}\quad
+∑
+s
+∈
+S
+c
+s
+​
+r
+s
+\displaystyle\sum_{s\in S}c_{s}\,r_{s}
+s.t.
+∑
+p
+∈
+𝒫
+t
+x
+t
+,
+p
+=
+π
+t
+​
+R
+∀
+t
+∈
+T
+,
+\displaystyle\sum_{p\in\mathcal{P}_{t}}x_{t,p}\;=\;\pi_{t}R\quad\forall t\in T,
+(10)
+∑
+t
+∑
+p
+∈
+𝒫
+t
+x
+t
+,
+p
+/
+w
+s
+,
+t
+,
+p
+≤
+r
+s
+∀
+s
+∈
+S
+,
+\displaystyle\sum_{t}\sum_{p\in\mathcal{P}_{t}}x_{t,p}/w_{s,t,p}\;\leq\;r_{s}\quad\forall s\in S,
+(11)
+x
+t
+,
+p
+≥
+0
+,
+r
+s
+∈
+ℤ
+≥
+0
+\displaystyle x_{t,p}\geq 0,\;\;r_{s}\in\mathbb{Z}_{\geq 0}
+(12)
+where
+D
+t
+=
+π
+t
+​
+R
+D_{t}=\pi_{t}R
+is fixed.
+Max Throughput Under Budget Variant.
+max
+x
+,
+r
+,
+R
+\displaystyle\max_{x,r,R}\quad
+R
+\displaystyle R
+s.t.
+∑
+p
+∈
+𝒫
+t
+x
+t
+,
+p
+=
+π
+t
+​
+R
+∀
+t
+∈
+T
+,
+\displaystyle\sum_{p\in\mathcal{P}_{t}}x_{t,p}\;=\;\pi_{t}R\quad\forall t\in T,
+(13)
+∑
+t
+∑
+p
+∈
+𝒫
+t
+x
+t
+,
+p
+/
+w
+s
+,
+t
+,
+p
+≤
+r
+s
+∀
+s
+∈
+S
+,
+\displaystyle\sum_{t}\sum_{p\in\mathcal{P}_{t}}x_{t,p}/w_{s,t,p}\;\leq\;r_{s}\quad\forall s\in S,
+(14)
+∑
+s
+∈
+S
+c
+s
+​
+r
+s
+≤
+B
+,
+\displaystyle\sum_{s\in S}c_{s}r_{s}\;\leq\;B,
+(15)
+x
+t
+,
+p
+≥
+0
+,
+r
+s
+∈
+ℤ
+≥
+0
+,
+R
+≥
+0
+.
+\displaystyle x_{t,p}\geq 0,\;\;r_{s}\in\mathbb{Z}_{\geq 0},\;\;R\geq 0.
+where budget
+B
+B
+is fixed.
+Both problems are mixed-integer linear programs (MILPs) with a few dozen variables in practice. Integer difficulty comes only from
+r
+s
+r_{s}
+; the rest is linear.
+Appendix C
+Deriving Throughput Per Request Type
+Raw
+rates
+(e.g., requests/s) do not add across request types, but the
+processing time
+a replica must spend does.
+Consider a deployment option
+s
+s
+that runs two components
+Comp
+⁡
+(
+s
+)
+=
+{
+c
+1
+,
+c
+2
+}
+\mathrm{Comp}(s)=\{c_{1},c_{2}\}
+in a time-sharing fashion.
+Suppose request type
+t
+1
+t_{1}
+uses only
+c
+1
+c_{1}
+and request type
+t
+2
+t_{2}
+uses only
+c
+2
+c_{2}
+, and both arrive at 1 request/s.
+Let
+w
+s
+,
+t
+w_{s,t}
+denote the
+per-request-type throughput
+(req/s) of
+s
+s
+when it executes the role needed by type
+t
+t
+.
+The total work
+s
+s
+must perform is not
+w
+s
+,
+t
+1
++
+w
+s
+,
+t
+2
+w_{s,t_{1}}+w_{s,t_{2}}
+; instead it is the
+sum of per-request times
+:
+1
+w
+s
+,
+t
+1
+⏟
+sec/req for
+​
+t
+1
++
+1
+w
+s
+,
+t
+2
+⏟
+sec/req for
+​
+t
+2
+(seconds).
+\underbrace{\frac{1}{w_{s,t_{1}}}}_{\text{sec/req for }t_{1}}\;+\;\underbrace{\frac{1}{w_{s,t_{2}}}}_{\text{sec/req for }t_{2}}\quad\text{(seconds).}
+(16)
+A single replica, every second, can supply at most
+1
+1
+second of work, so in order for work supply to meet demand we need
+1
+w
+s
+,
+t
+1
++
+1
+w
+s
+,
+t
+2
+≤
+1
+,
+\frac{1}{w_{s,t_{1}}}+\frac{1}{w_{s,t_{2}}}\;\leq\;1,
+(17)
+and more generally, with arbitrary per-type rates
+λ
+t
+\lambda_{t}
+,
+∑
+t
+λ
+t
+⋅
+1
+w
+s
+,
+t
+≤
+r
+s
+.
+\sum_{t}\lambda_{t}\cdot\frac{1}{w_{s,t}}\;\leq\;r_{s}.
+(18)
+In our planner this appears path-wise as the node-capacity constraint
+∑
+t
+∈
+T
+∑
+p
+∈
+𝒫
+t
+x
+t
+,
+p
+w
+s
+,
+t
+,
+p
+≤
+r
+s
+for every executor
+​
+s
+,
+\sum_{t\in T}\sum_{p\in\mathcal{P}_{t}}\frac{x_{t,p}}{w_{s,t,p}}\;\leq\;r_{s}\quad\text{for every executor }s,
+(19)
+where
+x
+t
+,
+p
+x_{t,p}
+is the rate of type
+t
+t
+assigned to path
+p
+p
+and
+w
+s
+,
+t
+,
+p
+w_{s,t,p}
+is the per-type throughput of
+s
+s
+on
+(
+t
+,
+p
+)
+(t,p)
+.
+This additivity in the
+time
+domain is why we first derive per-request-type processing times from profiling and then invert them to obtain
+w
+s
+,
+t
+,
+p
+w_{s,t,p}
+; it preserves linear processing time accounting at nodes and makes colocated roles (which run on the same GPU in a time-sharing fashion) sum naturally.
+Input:
+Components
+C
+C
+; Deployment options
+S
+S
+with component sets
+Comp
+⁡
+(
+s
+)
+⊆
+C
+\mathrm{Comp}(s)\subseteq C
+;
+Request types
+T
+T
+(each
+t
+⊆
+C
+t\subseteq C
+); valid paths
+{
+𝒫
+t
+}
+t
+∈
+T
+\{\mathcal{P}_{t}\}_{t\in T}
+;
+Single profiled mix
+{
+π
+t
+}
+t
+∈
+T
+\{\pi_{t}\}_{t\in T}
+(fractions,
+∑
+t
+π
+t
+=
+1
+\sum_{t}\pi_{t}=1
+);
+Per-replica throughput at that mix
+{
+b
+s
+}
+s
+∈
+S
+\{b_{s}\}_{s\in S}
+(req/s/replica)
+Output:
+Per-path, per-type throughput
+{
+w
+s
+,
+t
+,
+p
+}
+\{w_{s,t,p}\}
+(req/s) for all
+s
+∈
+S
+s\in S
+,
+t
+∈
+T
+t\in T
+,
+p
+∈
+𝒫
+t
+p\in\mathcal{P}_{t}
+⊳
+\triangleright
+Measured throughput
+→
+\rightarrow
+mean processing times at
+{
+π
+t
+}
+\{\pi_{t}\}
+1
+for
+s
+∈
+S
+s\in S
+do
+2
+y
+s
+←
+1
+/
+b
+s
+y_{s}\leftarrow 1/b_{s}
+⊳
+\triangleright
+sec/req at executor
+s
+s
+⊳
+\triangleright
+Per-component processing times from singleton executors
+3
+for
+c
+∈
+C
+c\in C
+do
+⊳
+\triangleright
+Fraction of requests that use component
+c
+c
+4
+fraction
+←
+∑
+t
+∈
+T
+:
+c
+∈
+t
+π
+t
+\text{fraction}\leftarrow\sum_{t\in T:\;c\in t}\pi_{t}
+5
+τ
+c
+←
+y
+c
+/
+fraction
+\tau_{c}\leftarrow y_{c}/\text{fraction}
+⊳
+\triangleright
+sec/req when
+c
+c
+runs alone
+⊳
+\triangleright
+Fit one colocation factor (in processing time domain) per multi-component executor
+6
+for
+s
+∈
+S
+s\in S
+do
+7
+if
+|
+Comp
+⁡
+(
+s
+)
+|
+=
+1
+|\mathrm{Comp}(s)|=1
+then
+8
+α
+s
+←
+1
+\alpha_{s}\leftarrow 1
+9
+else
+10
+d
+s
+←
+∑
+t
+∈
+T
+π
+t
+⋅
+(
+∑
+c
+∈
+Comp
+⁡
+(
+s
+)
+∩
+t
+τ
+c
+)
+d_{s}\leftarrow\sum_{t\in T}\pi_{t}\cdot\Big(\sum_{c\in\mathrm{Comp}(s)\cap t}\tau_{c}\Big)
+11
+if
+d
+s
+>
+0
+d_{s}>0
+then
+12
+α
+s
+←
+y
+s
+/
+d
+s
+\alpha_{s}\leftarrow y_{s}/d_{s}
+⊳
+\triangleright
+Match the measured mean
+y
+s
+y_{s}
+13
+else
+14
+α
+s
+←
+1
+\alpha_{s}\leftarrow 1
+⊳
+\triangleright
+No demand for
+Comp
+⁡
+(
+s
+)
+\mathrm{Comp}(s)
+⊳
+\triangleright
+Assign per-path, per-type throughput by inverting the role’s processing time
+15
+for
+t
+∈
+T
+t\in T
+do
+16
+for
+p
+∈
+𝒫
+t
+p\in\mathcal{P}_{t}
+do
+17
+R
+←
+t
+R\leftarrow t
+⊳
+\triangleright
+Components remaining to execute along
+p
+p
+18
+for
+s
+∈
+Executors
+​
+(
+p
+)
+s\in\text{Executors}(p)
+in topological order
+do
+19
+role
+s
+,
+t
+,
+p
+←
+Comp
+⁡
+(
+s
+)
+∩
+R
+\text{role}_{s,t,p}\leftarrow\mathrm{Comp}(s)\cap R
+20
+if
+role
+s
+,
+t
+,
+p
+≠
+∅
+\text{role}_{s,t,p}\neq\emptyset
+then
+⊳
+\triangleright
+sec/req for
+s
+s
+on
+(
+t
+,
+p
+)
+(t,p)
+21
+τ
+s
+,
+t
+,
+p
+←
+α
+s
+⋅
+∑
+c
+∈
+role
+s
+,
+t
+,
+p
+τ
+c
+\tau_{s,t,p}\leftarrow\alpha_{s}\cdot\sum_{c\in\text{role}_{s,t,p}}\tau_{c}
+22
+w
+s
+,
+t
+,
+p
+←
+1
+/
+τ
+s
+,
+t
+,
+p
+w_{s,t,p}\leftarrow 1/\tau_{s,t,p}
+23
+R
+←
+R
+∖
+role
+s
+,
+t
+,
+p
+R\leftarrow R\setminus\text{role}_{s,t,p}
+24
+else
+⊳
+\triangleright
+Not used on
+(
+t
+,
+p
+)
+(t,p)
+; make
+x
+t
+,
+p
+/
+w
+s
+,
+t
+,
+p
+=
+0
+x_{t,p}/w_{s,t,p}=0
+25
+w
+s
+,
+t
+,
+p
+←
+∞
+w_{s,t,p}\leftarrow\infty
+26
+return
+{
+w
+s
+,
+t
+,
+p
+}
+\{w_{s,t,p}\}
+Algorithm 3
+Deriving per-path, per-type throughput from executor-level throughput profiling results.
+Appendix D
+Communication Overhead
+Figure 12:
+The latency of transferring intermediate data between two components under various load when they are disaggregated.
+Cornserve allows disaggregating model components, which requires communication of intermediate data between components,
+such as multimodal embeddings between encoders and LLMs, and hidden states between LLMs and generators.
+Figure
+12
+shows the communication overhead of transferring tensors of different fixed shapes between two components across two nodes.
+The sender initiates transfers on GPU tensors at various request rates, while the receiver acknowledges the completion of transfer.
+We observe that the communication overhead increases with both the size of the intermediate data and the request rate.
+With smaller sizes, the CPU overhead of initiating transfers dominates the communication overhead.
+As the size increases, the overhead between copying GPU to CPU memory and transferring data over the network becomes dominant.
+Based on the results in §
+7.2
+and §
+7.3
+, Cornserve’s distributed runtime introduces minimal latency overheads.
+Appendix E
+Pod Startup Time
+Component
+Qwen2.5
+InternVL
+Qwen2.5
+Qwen3
+Qwen
+VL 32B
+3 38B
+Omni 7B
+Omni 30B
+Image
+Encoder
+21.7
+37.9
+24.8
+25.3
+LLM
+185.4
+132.9
+115.2
+212.6
+124.8
+Cached LLM
+137.9
+123.3
+106.0
+139.4
+93.5
+Talker
+146.7
+145.5
+Cached Talker
+105.8
+137.9
+Generator
+17.2
+49.5
+40.9
+Table 4:
+Pod startup time (in seconds) for different models and components.
+Empty cells mean the model does not have that component.
+“LLM” for Qwen Omni refers to the Thinker component.
+“Cached” indicates using cached model compilation to reduce startup time.
+In this section, we measure the pod startup time of different models and components in Cornserve.
+We define pod startup time as the time duration between when a pod is created upon scaling demands and when it becomes ready to serve requests.
+Table
+4
+shows the results.
+Notably LLM servers could take more than three minutes to start up due to the model loading, model compilation, and initialization overhead in vLLM
+[
+17
+]
+.
+However, Cornserve could utilize cached model compilation to reduce the startup time by up to 34.4%.
+This startup time could be further reduced if applying techniques such as multicast scaling
+[
+48
+]
+.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

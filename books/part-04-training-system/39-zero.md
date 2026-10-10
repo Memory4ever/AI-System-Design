@@ -270,6 +270,12 @@ Offload 是否有效取决于：
 
 目标不是移出最多 bytes，而是在不让 GPU 等待的前提下，把 cold state 放到更大层级。
 
+Offload 还可以在训练框架外改变 page 的 placement，而不替换 optimizer 或 shard owner。支持 UVM 的平台上，user-space shim 可把被拦截的 device allocation 转为 managed memory：一条政策从 warm-up 的 kernel/migration 关联合并地址区间，再在对应 launch 前预取；另一条根据迭代 phase 估计建立 GPU 对 host pages 的访问映射，让部分 spilled state 直接经 CPU–GPU 链路访问，减少反复迁入/驱逐。它扩大容量与执行配置空间，却仍支付 host memory、PCIe access、profiling 和映射维护，并不删除通信、训练状态身份或正确性责任。<!-- source-family:SF-2026-ARXIV-2610-07593 -->
+
+这种较透明的路径也缺少框架的 tensor/reuse 语义：migration history 不是真实访问频率，kernel-count midpoint 只是 phase heuristic，prefetch 与 zero-copy 并非已验证的联合最优。[受测 scale-in](https://arxiv.org/html/2610.07593v1)减少通信参与者，却把更多状态压到 host；保留 per-GPU efficiency 不等于保留 job 总吞吐，比较粗粒度 offload 时还须区分 CPU 中实际 bytes。并行度、精度、batch、recompute 与网络改变后，应重验整步时间、内存峰值与训练结果；profile 失配、host/link 不足或 API 路径无法覆盖时，保留框架显式 offload、HBM 驻留或原 scale-out，不把地址透明性签成性能与语义保证。
+
+直接读取host还可以由层的前向与反向需要分别决定，而不是只按一个phase切换所有page：一层可先搬到HBM再计算、全程由GPU读取mapped host，或前向直读host后趁链路空隙搬到HBM用于反向。Logical tensor与底层storage分离，让后一模式切换访问位置；选定梯度也可直接写host，省去HBM梯度buffer但仍支付链路写入。[MemFerry的有限对照](https://arxiv.org/html/2610.09657v1)支持这种逐层计算/驻留/写址分工，不保证profile规划全局最优、autograd兼容或训练质量等价。消费前同步、storage寿命和CPU更新版本仍须分别验收；V100低带宽下全梯度直写反而更慢，DeepSpeed梯度buffer的重建差异也不能归入DHA本身。Profile、注册host、所有搬运与CPU更新、额外辅助设备及恢复/质量回归都计费；链路、计划或状态身份失配时回显式HBM搬入、普通offload或原scale-out，不由更低显存签发整步性能与训练正确性。<!-- source-family:SF-2026-ARXIV-2610-09657 -->
+
 ### Full Host Cache 用容量换跨节点 Communication
 
 ZeRO/FSDP 在每次需要完整参数时通过 inter-node collective 重建 working set，在网络带宽充足、host memory 受限时最合理；若每个节点都有足够 DRAM 而跨节点链路成为瓶颈，可以让每个节点的 host memory 缓存完整参数，在节点内按 layer/operation 将 active shard stream 到 GPU。这样以 host capacity 与 PCIe traffic 换掉重复的 inter-node parameter collective：host cache 拥有完整 parameter generation，GPU 只拥有当前 working set，optimizer/gradient ownership 仍按并行计划提交，prefetch 不能让未完成的新版本提前可见。
@@ -381,6 +387,8 @@ ZeRO 逐步分片 optimizer states、gradients 和 parameters，消除标准 DP 
 
 ## Review notes
 
+- Daily `2026-10-08`：`SF-2026-ARXIV-2610-07593`，[TRANSIT v1](https://arxiv.org/html/2610.07593v1) §3.3–4.2/5；UVM shim的prefetch与zero-copy两政策分开，migration非reuse，midpoint为heuristic。H100/host2TB/PCIe4或5/有限链路、精度与offloaded bytes混杂保留；per-GPU效率非job总吞吐，cluster部分模拟，质量与任意API兼容未证。
+
 - `SF-2026-ARXIV-2602-22437` — Daily `2026-02-28`；[exact-v1](https://arxiv.org/html/2602.22437v1) §3–6与必要 block-optimizer/padding 消融。2+2+3=7，现有原子 block、ragged placement、近似规划与生命周期/fallback 已覆盖，不重复扩写；仅删除未核 artifact 断言，改为作者实验不授通用 production 收益，不否认其工业部署经历。root 原源/actual owner Existing 与窄纠正 PRE 通过；实际纠正正文、邻接与自身末注经 root 非作者 POST 通过，窄锁释放。未核 artifact/复现，不授日级完成。
 
 - `SF-2026-ARXIV-2601-19362`，Status: Experimental：[ODC exact-v1](https://arxiv.org/html/2601.19362v1) §2–4、§5.1–5.4及§6.1–6.2支持按需 parameter gather/gradient scatter-accumulate、minibatch barrier 和 LB-Mini 分支。作者 LongAlign/SWE-Smith SFT、AIME GRPO 实验使用 R1-Distill-Qwen 1.5–32B、最多32×A100 80GB、NVSwitch及800Gbps/node RoCE；RL只统计训练，排除 rollout。SFT最高36%与RL最高10%不外推到任意负载；minibatch=1无收益、packing改善后差距缩小、跨节点 primitive 带宽低于 NCCL 均保留。必要原源与实际正文/相邻链路已由 root 独立复核通过，未运行实现或复现实验。
@@ -400,6 +408,8 @@ ZeRO 逐步分片 optimizer states、gradients 和 parameters，消除标准 DP 
 - MegaTrain（CPU-authoritative layer-streamed training；Status: Experimental）: https://arxiv.org/abs/2604.05091
 
 本轮 Review 在既有 Stage 1/2/3 边界上补齐逐项 memory formula、1B/8-rank 小例子、parameter lifecycle、activation 非目标项、FSDP 关系、offload、ZeRO++ 与 checkpoint correctness。
+
+- `SF-2026-ARXIV-2610-09657`，MemFerry，Experimental：supplement_20260311实际必要exact-v1 III-B/C、IV-B/C/D、V同步/存储与VI-A/C/D/E审阅，评分2+2+2=6；root必要Source及actual Ch39/邻接PRE通过，确认差额后深入这项层级FP/BP/梯度写址接口。仅采用有限profile规划和storage分离；慢写与buffer混杂近文，Alg记号/全局最优、训练质量等价、完整实现/恢复未授。root非写入者已实际顺读250–312完整局部/新增277及本人412注，回对有效必要源，actual POST通过；不预授本日完成。https://arxiv.org/html/2610.09657v1
 
 Primary-source / official documentation 校验入口：
 

@@ -1,0 +1,2831 @@
+Generalizing Visual Geometry Priors to Sparse Gaussian Occupancy Prediction
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Related Works
+2.1
+Visual Geometry Foundation Model
+2.2
+Occupancy Prediction
+3
+Methods
+3.1
+Preliminaries
+3.2
+Ray-based Volumetric Sampling
+3.3
+From Sparse Gaussians to Occupancy
+3.4
+Incremental Sparse Gaussians Update
+3.5
+Training Losses
+4
+Experiments
+4.1
+Datasets and Metrics
+4.2
+Implementation Details
+4.3
+Occupancy Prediction Results
+4.4
+Ablation studies
+4.5
+Qualitative Results
+5
+Conclusion
+References
+License: arXiv.org perpetual non-exclusive license
+arXiv:2602.21552v1 [cs.CV] 25 Feb 2026
+Generalizing Visual Geometry Priors to Sparse Gaussian Occupancy Prediction
+Changqing Zhou
+Affiliation:
+The Hong Kong University of Science and Technology (Guangzhou)
+Yueru Luo
+Affiliation:
+The Chinese University of Hong Kong, Shenzhen
+czhou149@connect.hkust-gz.edu.cn  changhaochen@hkust-gz.edu.cn
+Changhao Chen
+🖂
+🖂
+🖂
+Corresponding author.
+Affiliation:
+The Hong Kong University of Science and Technology (Guangzhou)
+Abstract
+Accurate 3D scene understanding is essential for embodied intelligence, with occupancy prediction emerging as a key task for reasoning about both objects and free space. Existing approaches largely rely on depth priors (e.g., DepthAnything) but make only limited use of 3D cues, restricting performance and generalization.
+Recently, visual geometry models such as VGGT have shown strong capability in providing rich 3D priors, but similar to monocular depth foundation models, they still operate at the level of visible surfaces rather than volumetric interiors, motivating us to explore how to more effectively leverage these increasingly powerful geometry priors for 3D occupancy prediction.
+We present GPOcc, a framework that leverages generalizable visual geometry priors (GPs) for monocular occupancy prediction. Our method extends surface points inward along camera rays to generate volumetric samples, which are represented as Gaussian primitives for probabilistic occupancy inference. To handle streaming input, we further design a training-free incremental update strategy that fuses per-frame Gaussians into a unified global representation.
+Experiments on Occ-ScanNet and EmbodiedOcc-ScanNet demonstrate significant gains: GPOcc improves mIoU by +9.99 in the monocular setting and +11.79 in the streaming setting over prior state of the art. Under the same depth prior, it achieves +6.73 mIoU while running 2.65
+×
+\times
+faster. These results highlight that GPOcc leverages geometry priors more effectively and efficiently.
+Code will be released at
+https://github.com/JuIvyy/GPOcc
+.
+(a) ISO
+[
+39
+]
+(b) EmbodiedOcc
+[
+34
+]
+(c) Ours
+Figure 1
+:
+Comparison of monocular occupancy prediction pipelines.
+ISO
+[
+39
+]
+formulates depth estimation as a multi-class classification problem, using the predicted depth distributions to lift 2D image features into dense 3D volumes, which are then processed by a 3D U-Net for occupancy prediction.
+EmbodiedOcc
+[
+34
+]
+, by contrast, initializes random 3D anchors and applies cross-attention to aggregate image features, predicting Gaussian primitives that are splatted into voxels. Many of these Gaussians fall in empty regions, shown as gray primitives.
+In contrast, GPOcc employs ray-based volumetric sampling to generate sparse Gaussians concentrated on or within objects, producing a compact and efficient representation for occupancy inference.
+1
+Introduction
+Embodied AI agents are increasingly expected to acquire accurate and detailed 3D understanding of their surroundings
+[
+12
+]
+, which is fundamental for reasoning, planning, and interaction in complex environments. In this process, vision plays a central role by providing rich semantic and geometric cues, and recent progress in vision-based 3D scene understanding has been substantial
+[
+9
+,
+11
+,
+32
+,
+19
+,
+17
+]
+. Among various scene representations, occupancy prediction
+[
+39
+,
+34
+]
+has gained particular traction by providing a unified and flexible volumetric model of both foreground objects and background structures, serving as a core building block for downstream tasks such as robotic navigation
+[
+13
+]
+, interactive manipulation, and autonomous driving
+[
+14
+,
+30
+]
+.
+While vision-centric occupancy prediction has been extensively studied in autonomous driving
+[
+8
+,
+31
+,
+5
+,
+20
+,
+25
+,
+6
+,
+4
+]
+, fine-grained occupancy prediction in indoor scenarios remains considerably more challenging and less explored. The difficulty arises from cluttered spatial layouts and the wide diversity of object categories. Recent methods such as ISO
+[
+39
+]
+and EmbodiedOcc
+[
+34
+]
+have made progress by incorporating depth priors
+[
+36
+,
+37
+]
+.
+For instance, ISO lifts 2D image features into dense 3D volumes using estimated depth distribution, as shown in
+Figure
+1
+(a). The volumetric features are then processed with a 3D U-Net to predict the final occupancy.
+In contrast, EmbodiedOcc initializes Gaussian primitives randomly and refines them through iterative cross-attention with image features. By projecting 3D anchors into images and subsequently splatting the refined Gaussians into occupancy prediction, as illustrated in
+Figure
+1
+(b).
+Although effective, these approaches make only limited use of depth priors and incur substantial redundancy by representing vast empty regions, which ultimately constrains performance and generalization.
+Concurrently, a family of
+visual geometry priors
+has emerged, ranging from monocular depth foundation models such as DepthAnything family
+[
+36
+,
+37
+]
+to multi-view Visual Geometry Models (VGMs)
+[
+26
+,
+28
+,
+7
+,
+35
+,
+29
+,
+33
+]
+.
+These models capture rich scene attributes (depth, point maps, and camera parameters) and enable high-quality 3D reconstruction, thereby providing strong geometric cues that could, in principle, greatly benefit occupancy prediction.
+However, their outputs are inherently surface-centric: depth and point maps are restricted to visible surfaces, with each pixel typically corresponding to a single 3D surface point.
+As a result, volumetric interiors remain unrepresented, and directly deriving occupancy from such geometry priors is non-trivial, often resulting in limited accuracy.
+To bridge this gap, we introduce
+GPOcc
+, a novel framework that leverages generalizable
+G
+eometry
+P
+riors (GPs) for
+Occ
+upancy prediction with sparse Gaussians rendering. Our approach builds on four key components:
+(1)
+To overcome the limitation that GPs provide only surface points, we design a
+ray-based volumetric sampling
+module that extends points inward along their camera rays, as illustrated in
+Figure
+1
+(c). Each extended point predicts a Gaussian primitive that captures its local region.
+(2)
+We adopt an
+opacity-based pruning
+strategy that discards low-opacity Gaussians, significantly reducing redundancy with negligible performance loss (
+Table
+5
+).
+(3)
+Occupancy is inferred from the remaining sparse Gaussians using a probabilistic formulation following
+[
+4
+]
+.
+(4)
+To adapt the framework to embodied scenarios with streaming input, we develop a training-free
+incremental update strategy
+that incrementally fuses per-frame Gaussians into a coherent global representation.
+We evaluate GPOcc on both the monocular Occ-ScanNet
+[
+39
+]
+dataset and the streaming EmbodiedOcc-ScanNet
+[
+34
+]
+benchmark. With VGGT
+[
+26
+]
+as the prior, our method surpasses the previous state of the art by 9.99 mIoU and 8.24 IoU in the monocular setting, and by 11.79 mIoU and 9.21 IoU in the streaming setting. Moreover, when using the same depth prior
+[
+37
+]
+as EmbodiedOcc
+[
+34
+]
+, GPOcc achieves gains of 6.73 mIoU and 3.41 IoU, while running at 2.65
+×
+\times
+FPS.
+These results demonstrate both the accuracy and efficiency of our approach, validating the effectiveness of our novel application of general GPs in 3D occupancy.
+We summarize our contributions as follows:
+1.
+We propose GPOcc, a novel framework for 3D occupancy prediction that combines geometry priors with sparse continuous Gaussians, enabling fine-grained volumetric prediction in challenging indoor scenarios.
+2.
+To address the limitation that geometry foundation model predict only visible surfaces, we introduce a ray-based volumetric sampling strategy that effectively reconstructs volumetric interiors from surface-based geometry priors.
+3.
+We present a sparse Gaussian to occupancy formulation with opacity-based pruning and a training-free incremental update strategy, which together improve efficiency and extend the model to streaming video inputs.
+4.
+We conduct extensive experiments and ablations, showing that GPOcc consistently achieves state-of-the-art performance on public datasets and generalizes effectively across different 3D geometry priors.
+2
+Related Works
+2.1
+Visual Geometry Foundation Model
+Early visual geometry models such as DUSt3R
+[
+28
+]
+and MASt3R
+[
+7
+]
+predict coupled scene representations (e.g., camera poses and geometry parameterized by pointmaps) from image pairs, but require expensive post-processing and symmetric inference for unconstrained multi-view SfM. Subsequent works including Spann3R
+[
+24
+]
+, CUT3R
+[
+27
+]
+, and MUSt3R
+[
+1
+]
+eliminate the reliance on classical optimization by introducing latent state memory in transformers, enabling multi-view reconstruction in a more end-to-end manner. Fast3R
+[
+35
+]
+further scales this paradigm to handle over 1000 input images efficiently.
+Building on this line, VGGT
+[
+26
+]
+employs an attention transformer to jointly predict pointmaps, depth, poses, and tracking features, relying on minimal 3D inductive biases but leveraging large-scale training data. StreamVGGT
+[
+40
+]
+reformulates VGGT with a causal transformer to overcome memory explosion when processing long video sequences. Several variants extend VGGT:
+π
+3
+\pi^{3}
+[
+29
+]
+fine-tunes VGGT to remove the reliance on the first input frame as the reference coordinate system, while Dens3R
+[
+3
+]
+introduces normal prediction to enrich geometric cues.
+2.2
+Occupancy Prediction
+MonoScene
+[
+2
+]
+propelling semantic scene completion
+[
+2
+,
+38
+,
+21
+]
+into more challenging 3D occupancy with only image as input. While occupancy prediction has been extensively studied in outdoor autonomous driving scenarios
+[
+22
+,
+6
+,
+4
+,
+8
+]
+, research on indoor settings remains relatively limited
+[
+39
+,
+34
+,
+23
+]
+.
+Existing methods adopt different representations and strategies. Some approaches employ fixed 3D grids or voxel representations, where 2D image features are lifted into dense volumetric grids using depth distributions or predictions along camera rays, followed by 3D convolution or volumetric decoders
+[
+2
+,
+38
+,
+39
+,
+10
+,
+18
+]
+. Transformers have also been explored for volumetric representation learning
+[
+20
+]
+. Other methods rely explicitly on depth information or signed distance embeddings, incorporating surface locations inferred from depth into dense 3D grids
+[
+21
+]
+, while tri-plane representations have been proposed to avoid computational burden of dense volumes
+[
+5
+]
+.
+Beyond fixed grids, point-based formulations have been investigated, where methods initialize dense 3D random points and refine them through iterative updates
+[
+6
+,
+34
+,
+25
+]
+. Sparsity has also been leveraged: some methods construct dense 3D volumes and then discard empty voxels to obtain sparse voxel representations, which are subsequently processed using sparse convolutions
+[
+22
+]
+or transformers
+[
+8
+,
+16
+]
+.
+3
+Methods
+In this section, we first review the preliminaries of occupancy prediction and Gaussian splatting in
+Section
+3.1
+. We then present our framework, which leverages generalizable visual geometry priors (GPs) to predict Gaussians and infer occupancy.
+As illustrated in
+Figure
+2
+, given an input image, visual GPs extract features and generate 3D predictions.
+To address the limitation that GPs predict only surface points, which is insufficient for occupancy estimation as it requires modeling object interiors, we propose a
+Ray-based Volumetric Sampling
+scheme (
+Section
+3.2
+). This strategy extends surface points into interior points by sampling along camera rays. Each sampled point, together with its associated features, is then used to predict Gaussian attributes.
+Next, we apply an opacity-based pruning strategy to further reduce the number of Gaussians, and splat the remaining sparse Gaussians into occupancy using a probabilistic formulation
+[
+4
+]
+(
+Section
+3.3
+). Finally, to handle embodied scenarios with streaming video inputs, we introduce a simple yet effective incremental update strategy (
+Section
+3.4
+).
+Figure 2
+:
+Overview of GPOcc.
+Given an input RGB image, visual geometry priors (GPs) predicts surface points and extracts 3D-aware features. These surface points guide ray-based volumetric sampling to estimate interior points, which serve as Gaussian centers. The extracted features are combined with learnable embeddings to predict Gaussian attributes, and the resulting primitives are splatted to infer occupancy probabilistically. Monocular predictions are incrementally integrated into a global memory bank, enabling coherent large-scale occupancy construction.
+3.1
+Preliminaries
+Occupancy Prediction.
+We aim to address the problem of monocular 3D occupancy prediction. Given a single RGB image
+𝐈
+\mathbf{I}
+, the goal is to predict a voxel-wise occupancy map with semantic labels
+𝐎
+∈
+ℝ
+X
+×
+Y
+×
+Z
+×
+N
+c
+\mathbf{O}\in\mathbb{R}^{X\times Y\times Z\times N_{c}}
+, where
+X
+X
+,
+Y
+Y
+, and
+Z
+Z
+denote the spatial resolution of the 3D scene, and
+N
+c
+N_{c}
+is the number of semantic labels.
+Gaussian Splatting.
+A 3D scene can be compactly represented by semantic Gaussian primitives
+𝐆
+=
+{
+𝒢
+i
+}
+i
+=
+1
+P
+\mathbf{G}=\{\mathcal{G}_{i}\}_{i=1}^{P}
+, where each primitive
+𝒢
+i
+\mathcal{G}_{i}
+describes a local region centered at its mean
+μ
+i
+\mu_{i}
+, and is parameterized by scale
+s
+i
+s_{i}
+, rotation
+r
+i
+r_{i}
+, opacity
+a
+i
+a_{i}
+, and semantic feature
+c
+i
+c_{i}
+. This representation is both continuous and efficient, supporting differentiable rendering and compact encoding of scene geometry and semantics.
+Gaussian-to-Occupancy.
+Occupancy can be inferred from Gaussian primitives via Gaussian-to-voxel splatting, which aggregates the contributions of neighboring Gaussians around a voxel
+p
+p
+[
+34
+,
+6
+,
+4
+]
+. Formally, we have:
+o
+^
+​
+(
+p
+,
+𝐆
+)
+=
+∑
+i
+∈
+𝒩
+⁡
+(
+p
+)
+g
+i
+​
+(
+p
+,
+μ
+i
+,
+s
+i
+,
+r
+i
+,
+a
+i
+,
+c
+i
+)
+\hat{o}(p;\mathbf{G})=\sum_{i\in\mathcal{N}(p)}g_{i}(p;\mu_{i},s_{i},r_{i},a_{i},c_{i})
+(1)
+where
+𝒩
+⁡
+(
+p
+)
+\mathcal{N}(p)
+denotes the set of Gaussians that influence voxel
+p
+p
+.
+3.2
+Ray-based Volumetric Sampling
+Foundation models
+[
+37
+,
+26
+,
+35
+,
+33
+]
+, such as DepthAnything and VGGT, provide strong geometric priors (GPs) by predicting depth or point maps that capture only the
+visible surfaces
+. However, occupancy prediction requires reasoning about both surfaces and
+volumetric interiors
+, which is critical for embodied AI tasks such as navigation and manipulation. Surface-only reasoning fails to capture the inherent thickness of real-world objects.
+To address this limitation, we propose a
+ray-based volumetric sampling
+strategy. The core idea is to extend the predicted surface depth values along the corresponding camera rays, thereby approximating the interior volumes of objects.
+Formally, given a single RGB image
+𝐈
+∈
+ℝ
+H
+×
+W
+×
+3
+\mathbf{I}\in\mathbb{R}^{H\times W\times 3}
+, we extract image features
+𝐅
+∈
+ℝ
+H
+×
+W
+×
+C
+\mathbf{F}\in\mathbb{R}^{H\times W\times C}
+using a pretrained GPs to exploit the learned 3D prior.
+Since depth is predicted at full resolution (which is computationally costly), we instead use intermediate features before the depth prediction layer, apply downsampling, and regress depth using a lightweight MLP:
+𝐅
+=
+GPs
+​
+(
+𝐈
+)
+,
+𝐅
+1
+4
+=
+DownSample
+​
+(
+𝐅
+)
+,
+𝐝
+=
+MLP
+​
+(
+𝐅
+1
+4
+)
+\mathbf{F}=\text{GPs}(\mathbf{I}),\quad\mathbf{F}^{\frac{1}{4}}=\text{DownSample}(\mathbf{F}),\quad\mathbf{d}=\text{MLP}(\mathbf{F}^{\frac{1}{4}})
+(2)
+where
+𝐅
+1
+4
+∈
+ℝ
+H
+4
+×
+W
+4
+×
+C
+\mathbf{F}^{\frac{1}{4}}\in\mathbb{R}^{\tfrac{H}{4}\times\tfrac{W}{4}\times C}
+denotes the downsampled feature map with spatial resolution reduced by a factor of 4, and
+𝐝
+∈
+ℝ
+H
+4
+×
+W
+4
+\mathbf{d}\in\mathbb{R}^{\tfrac{H}{4}\times\tfrac{W}{4}}
+is the predicted depth map.
+Given pixel coordinate
+(
+u
+,
+v
+)
+(u,v)
+in image space, we can calculate the normalized camera ray direction
+𝐫
+(
+u
+,
+v
+)
+\mathbf{r}_{(u,v)}
+using camera intrinsics:
+x
+=
+u
+−
+c
+x
+f
+x
+,
+y
+=
+v
+−
+c
+y
+f
+y
+,
+𝐫
+(
+u
+,
+v
+)
+=
+[
+x
+,
+y
+,
+1
+]
+⊤
+x
+2
++
+y
+2
++
+1
+x=\frac{u-c_{x}}{f_{x}},\quad y=\frac{v-c_{y}}{f_{y}},\quad\mathbf{r}_{(u,v)}=\frac{[\,x,\,y,\,1\,]^{\top}}{\sqrt{x^{2}+y^{2}+1}}
+(3)
+where
+(
+c
+x
+,
+c
+y
+)
+(c_{x},c_{y})
+are the principal point offsets,
+(
+f
+x
+,
+f
+y
+)
+(f_{x},f_{y})
+are the focal lengths, and
+𝐫
+(
+u
+,
+v
+)
+\mathbf{r}_{(u,v)}
+denotes the normalized camera ray direction at
+(
+u
+,
+v
+)
+(u,v)
+.
+To model volumetric thickness, we sample
+K
+K
+points along the ray beyond the surface point
+𝐱
+surf
+\mathbf{x}_{\text{surf}}
+. Specifically, for pixel
+(
+u
+,
+v
+)
+(u,v)
+:
+𝐱
+(
+u
+,
+v
+)
+surf
+=
+𝐝
+(
+u
+,
+v
+)
+⋅
+𝐫
+(
+u
+,
+v
+)
+,
+𝐱
+(
+u
+,
+v
+,
+k
+)
+=
+(
+𝐝
+(
+u
+,
+v
+)
++
+δ
+k
+)
+​
+𝐫
+(
+u
+,
+v
+)
+,
+\mathbf{x}^{\text{surf}}_{(u,v)}=\mathbf{d}_{(u,v)}\cdot\mathbf{r}_{(u,v)},\quad\mathbf{x}_{(u,v,k)}=\big(\mathbf{d}_{(u,v)}+\delta_{k}\big)\,\mathbf{r}_{(u,v)},
+(4)
+where
+k
+=
+1
+,
+…
+,
+K
+k=1,\dots,K
+,
+𝐝
+(
+u
+,
+v
+)
+\mathbf{d}_{(u,v)}
+is the depth at
+(
+u
+,
+v
+)
+(u,v)
+, and
+δ
+k
+\delta_{k}
+denotes the offset for the
+k
+k
+-th sample, defined as
+{
+δ
+k
+}
+k
+=
+1
+K
+=
+linspace
+​
+(
+0
+,
+1
+,
+K
+)
+⋅
+scale
+​
+(
+⋅
+)
+\{\delta_{k}\}_{k=1}^{K}=\text{linspace}(0,1,K)\cdot\text{scale}(\cdot)
+(5)
+Here,
+scale
+​
+(
+⋅
+)
+\text{scale}(\cdot)
+is dynamically predicted to adapt to varying object sizes.
+To predict Gaussian attributes for each sampled point, we first extract its features from the image feature map
+𝐅
+1
+4
+\mathbf{F}^{\tfrac{1}{4}}
+. To facilitate this, we introduce a learnable embedding matrix
+𝐄
+∈
+ℝ
+K
+×
+C
+\mathbf{E}\in\mathbb{R}^{K\times C}
+.
+The point-wise features are obtained via broadcast addition:
+𝐅
+^
+1
+4
+=
+𝐅
+1
+4
+⊕
+𝐄
+,
+𝐅
+^
+1
+4
+∈
+ℝ
+H
+4
+×
+W
+4
+×
+K
+×
+C
+\mathbf{\hat{F}}^{\tfrac{1}{4}}=\mathbf{F}^{\tfrac{1}{4}}\oplus\mathbf{E},\quad\mathbf{\hat{F}}^{\tfrac{1}{4}}\in\mathbb{R}^{\tfrac{H}{4}\times\tfrac{W}{4}\times K\times C}
+(6)
+where
+⊕
+\oplus
+denotes broadcast addition and
+C
+C
+is the feature dimension. Finally, another MLP is applied to predict Gaussian attributes as follows, where
+i
+=
+1
+,
+…
+,
+H
+4
+×
+W
+4
+×
+K
+i=1,\dots,\tfrac{H}{4}\times\tfrac{W}{4}\times K
+:
+{
+𝒢
+i
+}
+\displaystyle\{\mathcal{G}_{i}\}
+=
+{
+s
+i
+,
+r
+i
+,
+a
+i
+,
+c
+i
+}
+=
+MLP
+⁡
+(
+𝐅
+^
+1
+4
+)
+.
+\displaystyle=\{s_{i},r_{i},a_{i},c_{i}\}=\operatorname{MLP}(\mathbf{\hat{F}}^{\tfrac{1}{4}}).
+(7)
+By augmenting surface-based predictions with ray-based volumetric sampling, our framework generates a richer set of 3D points, producing more faithful occupancy representations. This design overcomes the limitations of surface-only models like DepthAnything or VGGT and eliminates the need for dense 3D anchors
+[
+34
+]
+or lifting 2D features into full 3D volumes
+[
+39
+]
+, as required by prior approaches.
+3.3
+From Sparse Gaussians to Occupancy
+Figure 3
+:
+Comparison of Gaussian representations.
+(a) EmbodiedOcc, where gray indicates Gaussians predicted as empty. A substantial portion of primitives are placed in empty space, resulting in an inefficient representation.
+(b) Our method is much more compact where Gaussians are concentrated in occupied regions.
+To cover the 3D space, prior work
+[
+34
+]
+initializes a dense set of predefined 3D Gaussian anchors and classifies each as “occupied” or “non-occupied” to construct occupancy maps. Since most voxels in real-world scenes are empty, this strategy allocates a large fraction of primitives to non-occupied space, resulting in redundancy and inefficiency, as illustrated in
+Figure
+3
+(a). In contrast, our approach leverages ray-based volumetric sampling (
+Section
+3.2
+), which naturally places Gaussians on and within objects, yielding sparse yet expressive distributions, shown in
+Figure
+3
+(b).
+To infer occupancy from these sparse Gaussians, we adopt the probabilistic Gaussian superposition formulation from GaussianFormer2
+[
+4
+]
+. In this formulation, regions without nearby Gaussians or far from any primitive, are naturally classified as empty voxels. Specifically, for a query point
+p
+p
+, the contribution of a Gaussian
+𝒢
+i
+\mathcal{G}_{i}
+is:
+o
+⁡
+(
+p
+,
+𝒢
+i
+)
+=
+exp
+⁡
+(
+−
+1
+2
+​
+(
+p
+−
+μ
+i
+)
+⊤
+​
+Σ
+i
+−
+1
+​
+(
+p
+−
+μ
+i
+)
+)
+o(p;\mathcal{G}_{i})=\exp\left(-\tfrac{1}{2}(p-\mu_{i})^{\top}\Sigma_{i}^{-1}(p-\mu_{i})\right)
+(8)
+where
+μ
+i
+\mu_{i}
+is the mean of the
+i
+i
+-th Gaussian and
+Σ
+i
+\Sigma_{i}
+is its covariance matrix, derived from the predicted rotation
+r
+i
+r_{i}
+and scale
+s
+i
+s_{i}
+.
+o
+⁡
+(
+p
+,
+𝒢
+i
+)
+o(p;\mathcal{G}_{i})
+denotes the occupancy probability at location
+p
+p
+induced by Gaussian
+𝒢
+i
+\mathcal{G}_{i}
+, which smoothly decays to zero as
+p
+p
+moves away from
+μ
+i
+\mu_{i}
+.
+Importantly, the superposition of these kernels defines a continuous
+volumetric
+occupancy field, and the learnable radial scale in
+Equation
+5
+controls the spatial support of each primitive along the ray. Under voxel-wise occupancy supervision, the model implicitly learns to expand or shrink the effective scales of nearby Gaussians, aligning the induced field with the
+actual object extent and leaving empty regions unoccupied.
+To further improve efficiency, we prune primitives with negligible opacity. Specifically, we discard all Gaussians with opacity
+a
+i
+<
+τ
+a_{i}<\tau
+(default
+τ
+=
+0.01
+\tau=0.01
+), ensuring that only informative primitives contribute to the final occupancy aggregation.
+3.4
+Incremental Sparse Gaussians Update
+For embodied agents that gradually perceive a scene through progressive exploration, it is important to extend monocular predictions to streaming video.
+Unlike our sparse, adaptively placed Gaussians, EmbodiedOcc
+[
+34
+]
+predefined a dense set of Gaussian anchors in advance and iteratively updates all of them, a design that does not naturally accommodate our sparse approach.
+To this end, we design a training-free post-processing strategy that incrementally updates Gaussians for sequential video inputs in such scenarios.
+We maintain a global Gaussian memory bank
+ℳ
+=
+{
+𝒢
+t
+}
+t
+=
+1
+M
+\mathcal{M}=\{\mathcal{G}^{t}\}_{t=1}^{M}
+, which accumulates Gaussians from frames
+1
+1
+through
+M
+M
+. For each incoming image frame
+𝐈
+t
+\mathbf{I}_{t}
+at timestep
+t
+t
+, our monocular pipeline predicts a set of Gaussians
+𝐆
+t
+=
+{
+𝒢
+i
+t
+}
+i
+=
+1
+P
+t
+\mathbf{G}^{t}=\{\mathcal{G}^{t}_{i}\}_{i=1}^{P_{t}}
+where
+P
+t
+P_{t}
+denotes the total number of Gaussians predicted at this timestep.
+Using camera pose, we transform all predicted centers and rotations from local camera space into a unified world coordinate system before any fusion. Each frame therefore contributes a partial sparse set of adaptively placed Gaussians in global space.
+To update the memory bank, for each
+𝒢
+j
+\mathcal{G}_{j}
+in the memory
+ℳ
+\mathcal{M}
+, we search for Gaussian neighbors
+𝒩
+⁡
+(
+𝒢
+j
+)
+⊆
+𝐆
+t
+\mathcal{N}(\mathcal{G}_{j})\subseteq\mathbf{G}^{t}
+within a spatial radius
+ϵ
+\epsilon
+from the center of
+𝒢
+j
+\mathcal{G}_{j}
+. If neighbors
+𝒩
+⁡
+(
+𝒢
+j
+)
+\mathcal{N}(\mathcal{G}_{j})
+are found, we fuse them by weighted averaging:
+θ
+i
+←
+γ
+​
+p
+i
+​
+θ
+i
++
+(
+1
+−
+γ
+)
+​
+∑
+𝒢
+j
+∈
+𝒩
+⁡
+(
+𝒢
+i
+)
+p
+j
+​
+θ
+j
+γ
+​
+p
+i
++
+(
+1
+−
+γ
+)
+​
+∑
+𝒢
+j
+∈
+𝒩
+⁡
+(
+𝒢
+i
+)
+p
+j
+\theta_{i}\leftarrow\frac{\gamma\,p_{i}\theta_{i}+(1-\gamma)\sum_{\mathcal{G}_{j}\in\mathcal{N}(\mathcal{G}_{i})}p_{j}\theta_{j}}{\gamma\,p_{i}+(1-\gamma)\sum_{\mathcal{G}_{j}\in\mathcal{N}(\mathcal{G}_{i})}p_{j}}
+(9)
+where
+θ
+∈
+{
+μ
+,
+Σ
+,
+a
+,
+c
+}
+\theta\in\{\mu,\Sigma,a,c\}
+denotes the mean, covariance, opacity, and semantic feature, respectively,
+p
+p
+is top-1 class confidence, and
+γ
+∈
+(
+0
+,
+1
+)
+\gamma\in(0,1)
+controls the temporal weighting between memory and new Gaussians. We set
+γ
+<
+0.5
+\gamma<0.5
+so that newer Gaussians receive higher weight.
+If no neighbors are found, the new Gaussians
+𝐆
+t
+\mathbf{G}^{t}
+are directly inserted into
+ℳ
+\mathcal{M}
+.
+This incremental strategy integrates temporal information without retraining, while naturally incorporating uncertainty-aware fusion and temporal weighting for robustness.
+3.5
+Training Losses
+We optimize our model with a composite objective that balances classification, segmentation, and geometric supervision. Specifically, we combine focal loss
+L
+focal
+L_{\mathrm{focal}}
+, Lovász-Softmax loss
+L
+lov
+L_{\mathrm{lov}}
+, and scene-class affinity losses
+L
+scal
+geo
+L^{\mathrm{geo}}_{\mathrm{scal}}
+and
+L
+scal
+sem
+L^{\mathrm{sem}}_{\mathrm{scal}}
+, following EmbodiedOcc
+[
+34
+]
+, to guide voxel-wise occupancy prediction.
+Unlike prior approaches
+[
+34
+]
+, which rely on an external pretrained depth estimator, we add a Huber loss
+L
+depth
+L_{\mathrm{depth}}
+directly on the predicted depth to enable end-to-end optimization of the entire pipeline, which strengthens geometric consistency between depth and occupancy, and eliminates the overhead of depth pretraining.
+ℒ
+=
+L
+focal
+​
+(
+Y
+mono
+fov
+,
+Y
+gt
+fov
+)
++
+L
+lov
+​
+(
+Y
+mono
+fov
+,
+Y
+gt
+fov
+)
++
+L
+scal
+geo
+​
+(
+Y
+mono
+fov
+,
+Y
+gt
+fov
+)
++
+L
+scal
+sem
+​
+(
+Y
+mono
+fov
+,
+Y
+gt
+fov
+)
++
+L
+depth
+\begin{split}\mathcal{L}&=\;L_{\mathrm{focal}}\bigl(Y_{\mathrm{mono}}^{\mathrm{fov}},\,Y_{\mathrm{gt}}^{\mathrm{fov}}\bigr)+L_{\mathrm{lov}}\bigl(Y_{\mathrm{mono}}^{\mathrm{fov}},\,Y_{\mathrm{gt}}^{\mathrm{fov}}\bigr)\\
+&+L^{\mathrm{geo}}_{\mathrm{scal}}\bigl(Y_{\mathrm{mono}}^{\mathrm{fov}},\,Y_{\mathrm{gt}}^{\mathrm{fov}}\bigr)+L^{\mathrm{sem}}_{\mathrm{scal}}\bigl(Y_{\mathrm{mono}}^{\mathrm{fov}},\,Y_{\mathrm{gt}}^{\mathrm{fov}}\bigr)+L_{\mathrm{depth}}\end{split}
+(10)
+4
+Experiments
+Table 1:
+Monocular prediction performance on the Occ-ScanNet dataset.
+Method
+IoU
+■
+\blacksquare
+ceiling
+■
+\blacksquare
+floor
+■
+\blacksquare
+wall
+■
+\blacksquare
+window
+■
+\blacksquare
+chair
+■
+\blacksquare
+bed
+■
+\blacksquare
+sofa
+■
+\blacksquare
+table
+■
+\blacksquare
+tvs
+■
+\blacksquare
+furniture
+■
+\blacksquare
+objects
+mIoU
+TPVFormer
+[
+5
+]
+33.39
+6.96
+32.97
+14.41
+9.10
+24.01
+41.49
+45.44
+28.61
+10.66
+35.37
+25.31
+24.94
+GaussianFormer
+[
+6
+]
+40.91
+20.70
+42.00
+23.40
+17.40
+27.0
+44.30
+44.80
+32.70
+15.30
+36.70
+25.00
+29.93
+MonoScene
+[
+2
+]
+41.60
+15.17
+44.71
+22.41
+12.55
+26.11
+27.03
+35.91
+28.32
+6.57
+32.16
+19.84
+24.62
+ISO
+[
+39
+]
+42.16
+19.88
+41.88
+22.37
+16.98
+29.09
+42.43
+42.00
+29.60
+10.62
+36.36
+24.61
+28.71
+Surroundocc
+[
+31
+]
+42.52
+18.90
+49.30
+24.80
+18.00
+26.80
+42.00
+44.10
+32.90
+18.60
+36.80
+26.90
+30.83
+EmbodiedOcc
+[
+34
+]
+53.55
+39.60
+50.40
+41.40
+31.70
+40.90
+55.00
+61.40
+44.00
+36.10
+53.90
+42.20
+45.15
+EmbodiedOcc++
+[
+23
+]
+54.90
+36.40
+53.10
+41.80
+34.40
+42.90
+57.30
+64.10
+45.20
+34.80
+54.20
+44.10
+46.20
+Ours-DPT
+56.96
+51.42
+50.35
+46.97
+41.84
+46.98
+60.39
+66.16
+50.51
+47.97
+58.88
+49.23
+51.88
+Ours-VGGT
+63.14
+51.67
+59.93
+52.07
+46.44
+51.35
+64.45
+69.47
+54.30
+51.76
+63.29
+53.36
+56.19
+Table 2:
+Embodied prediction performance on the EmbodiedOcc-ScanNet dataset.
+Method
+IoU
+■
+\blacksquare
+ceiling
+■
+\blacksquare
+floor
+■
+\blacksquare
+wall
+■
+\blacksquare
+window
+■
+\blacksquare
+chair
+■
+\blacksquare
+bed
+■
+\blacksquare
+sofa
+■
+\blacksquare
+table
+■
+\blacksquare
+tvs
+■
+\blacksquare
+furniture
+■
+\blacksquare
+objects
+mIoU
+TPVFormer
+[
+5
+]
+35.88
+1.62
+30.54
+12.03
+13.22
+35.47
+51.39
+49.79
+25.63
+3.60
+43.15
+16.23
+25.70
+SurroundOcc
+[
+31
+]
+37.04
+12.70
+31.80
+22.50
+22.00
+29.90
+44.70
+36.50
+24.60
+11.50
+34.40
+18.20
+26.27
+GaussianFormer
+[
+6
+]
+38.02
+17.00
+33.60
+21.50
+21.70
+29.40
+47.80
+37.10
+24.30
+15.50
+36.20
+16.80
+27.36
+SplicingOcc
+[
+34
+]
+49.01
+31.60
+38.80
+35.50
+36.30
+47.10
+54.50
+57.20
+34.40
+32.50
+51.20
+29.10
+40.74
+EmbodiedOcc
+[
+34
+]
+51.52
+22.70
+44.60
+37.40
+38.00
+50.10
+56.70
+59.70
+35.40
+38.40
+52.00
+32.90
+42.53
+EmbodiedOcc++
+[
+23
+]
+52.20
+27.90
+43.90
+38.70
+40.60
+49.00
+57.90
+59.20
+36.80
+37.80
+53.50
+34.10
+43.60
+Ours-DPT
+56.39
+40.80
+48.78
+45.62
+43.26
+50.08
+63.97
+67.72
+48.36
+48.77
+60.46
+45.63
+51.22
+Ours-VGGT
+61.41
+42.61
+51.35
+51.49
+48.72
+54.32
+67.91
+70.73
+52.94
+54.75
+64.76
+49.67
+55.39
+4.1
+Datasets and Metrics
+Occ-ScanNet
+[
+39
+]
+is a large-scale benchmark for monocular indoor occupancy prediction, containing 45,755 training samples and 19,764 testing samples. The dataset covers diverse scenes and viewpoints, and provides voxelized frames in
+60
+×
+60
+×
+36
+60\times 60\times 36
+grids, corresponding to a
+4.8
+​
+m
+×
+4.8
+​
+m
+×
+2.88
+​
+m
+4.8\text{m}\times 4.8\text{m}\times 2.88\text{m}
+volume in front of the camera. Each voxel is annotated with 12 semantic classes, including 11 valid categories (ceiling, floor, wall, window, chair, bed, sofa, table, TV, furniture, objects) and one class for empty space.
+EmbodiedOcc-ScanNet
+[
+34
+]
+is a reorganized version of Occ-ScanNet, consisting of 537 training scenes and 137 validation scenes. Each scene contains 30 posed frames, and the global occupancy resolution of a scene is defined as
+l
+x
+×
+l
+y
+×
+l
+z
+(
+0.08
+​
+m
+)
+3
+\frac{l_{x}\times l_{y}\times l_{z}}{(0.08\text{m})^{3}}
+where
+l
+x
+×
+l
+y
+×
+l
+z
+l_{x}\times l_{y}\times l_{z}
+denotes the spatial range of the scene in world coordinates.
+Evaluation Metrics.
+We follow prior work and adopt mIoU and IoU as evaluation metrics. Specifically, for Occ-ScanNet
+[
+39
+,
+34
+]
+, we compute IoU between predictions and ground truth within the camera frustum of each frame. For EmbodiedOcc-ScanNet
+[
+34
+]
+, we evaluate global occupancy by computing IoU at the scene level, where the entire reconstructed scene is considered.
+4.2
+Implementation Details
+For all our models we adopt the same training strategy. We employ the AdamW optimizer
+[
+15
+]
+with a weight decay of 0.01. The learning rate is linearly warmed up during the first 1000 iterations to a maximum value of
+2
+×
+10
+−
+4
+2\times 10^{-4}
+and then decayed following a cosine schedule. The model is trained for 10 epochs with a total batch size of 8 on 4 NVIDIA A800 GPUs. Input images are resized such that the longer side is 518 pixels, following the setting in VGGT
+[
+26
+]
+. We apply gradient clipping with a maximum norm of 1.0. Unless otherwise specified, we set
+K
+=
+16
+K=16
+for ray-based volumetric sampling, and
+τ
+=
+0.01
+\tau=0.01
+for opacity-based pruning.
+4.3
+Occupancy Prediction Results
+Results on Occ-ScanNet.
+As shown in
+Table
+1
+, bold numbers denote the best result and underlined numbers denote the second best. Overall, GPOcc with VGGT priors achieves 63.14 IoU and 56.19 mIoU, surpassing EmbodiedOcc and EmbodiedOcc++ by +11.04 and +9.99 mIoU, respectively.
+Using DepthAnything as the geometry prior, same as
+[
+34
+,
+39
+]
+, Ours-DPT model already delivers consistent improvment performance across all classes over previous method and improves mIoU from 46.20 (EmbodiedOcc++) to 51.88. This indicates that our design more effectively exploits GPs for volumetric reasoning. Furthermore, replacing DepthAnything with the stronger VGGT prior yields additional gains, showing that our framework generalizes well across different geometry priors and can fully benefit from more powerful foundation models.
+Results on EmbodiedOcc-ScanNet.
+Table
+2
+reports the embodied prediction performance on the EmbodiedOcc-ScanNet benchmark.
+Our VGGT-based model (Ours-VGGT) achieves 61.41 IoU and 55.39 mIoU, which is +9.2 IoU and +11.8 mIoU higher than the previous SoTA EmbodiedOcc++
+[
+23
+]
+.
+Notably, the DepthAnything variant (Ours-DPT) already attains 56.39 IoU and 51.22 mIoU, outperforming EmbodiedOcc++ by +4.2 IoU and +7.6 mIoU, which highlights the effectiveness of our streaming fusion strategy. Leveraging the stronger VGGT prior further boosts performance, showing that GPOcc can robustly exploit different GPs to maintain coherent scene representations over time in streaming and embodied settings.
+Figure 4
+:
+Qualitative comparison on monocular occupancy prediction.
+(a) shows the input RGB images, (b) the ground-truth occupancy, (c) the predictions of EmbodiedOcc
+[
+34
+]
+, (d) the predictions of our method, and (e) the visualization of the Gaussian primitives predicted by our method. Compared to EmbodiedOcc, our framework produces more accurate and complete reconstructions, while the Gaussian representation provides interpretable intermediate geometry.
+Figure 5
+:
+Qualitative results on streaming inputs.
+Our incremental update strategy progressively integrates information from sequential frames. The predictions become increasingly complete as more frames are observed, demonstrating the effectiveness of our streaming design.
+4.4
+Ablation studies
+Table 3:
+Comparison on the Occ-ScanNet dataset in terms of accuracy, efficiency, and model complexity.
+DPT and VGGT refer to
+[
+37
+]
+and
+[
+26
+]
+, respectively.
+All FPS values are measured on the same computer with NVIDIA A800 GPU, averaged over 1000 runs after an initial warm-up of 100 iterations.
+Model
+IoU
+mIoU
+FPS
+#Params
+ISO
+[
+39
+]
+42.16
+28.71
+3.63
+303.05M
+EmbodiedOcc
+[
+34
+]
+53.55
+45.15
+10.66
+231.45M
+Ours-DPT
+56.96
+51.88
+28.22
+97.95M
+Ours-VGGT
+63.14
+56.19
+5.26
+942.31M
+Comparison with Different Geometry Priors.
+To further validate our design, we instantiate our framework with the DepthAnything backbone, following ISO
+[
+39
+]
+and EmbodiedOcc
+[
+34
+]
+.
+Unlike ISO, which feeds depth into a heavy 3D U-Net, or EmbodiedOcc, which stacks a complex decoder on top of the backbone,
+Ours-DPT
+attaches only a lightweight Gaussian head without any 3D convolutional decoder.
+As shown in
+Table
+3
+, this variant already achieves stronger performance while being significantly more efficient: with the same depth prior,
+Ours-DPT
+improves IoU from 53.55 to 56.96 and mIoU from 45.15 to 51.88 over EmbodiedOcc, while running nearly
+3
+×
+3\times
+faster (28.22 vs. 10.66 FPS) with less than half the parameters (97.95M vs. 231.45M).
+Ours-VGGT
+further pushes accuracy to 63.14 IoU and 56.19 mIoU, while keeping the same lightweight occupancy head.
+Taken together, these results show that our novel way of leveraging geometry priors yields both higher accuracy and substantially better efficiency, making fast and reliable occupancy prediction feasible for downstream embodied applications.
+Table 4:
+Ablation on the number of sampled points
+K
+K
+per ray.
+Increasing
+K
+K
+improves accuracy, but gains saturate beyond
+K
+=
+16
+K{=}16
+despite a sharp increase in the number of Gaussians.
+K
+K
+mIoU
+IoU
+#Gaussians
+1
+47.88
+53.10
+3079
+2
+52.65
+56.35
+2310
+4
+55.28
+60.35
+2731
+8
+55.76
+61.67
+3940
+16
+56.19
+63.14
+5876
+32
+56.72
+63.84
+20206
+Table 5:
+Ablation on the opacity threshold
+τ
+\tau
+.
+Lower thresholds (e.g.,
+>
+0.01
+>0.01
+) perform best; larger thresholds prune too many Gaussians and degrade accuracy.
+Threshold
+mIoU
+IoU
+#Gaussians
+>
+0.01
+>0.01
+56.19
+63.14
+5876
+>
+0.02
+>0.02
+55.21
+62.08
+3509
+>
+0.03
+>0.03
+54.59
+61.45
+2468
+>
+0.04
+>0.04
+54.29
+61.09
+1931
+>
+0.05
+>0.05
+54.16
+60.84
+1612
+>
+0.06
+>0.06
+54.02
+60.54
+1398
+>
+0.07
+>0.07
+53.82
+60.13
+1239
+>
+0.08
+>0.08
+53.51
+59.62
+1116
+>
+0.09
+>0.09
+53.12
+59.01
+1014
+>
+0.10
+>0.10
+52.65
+58.31
+930
+Effect of number of sampled points
+K
+K
+along each ray.
+We study the impact of sampled number
+K
+K
+in
+Table
+4
+. Increasing
+K
+K
+consistently improves performance, as more samples enrich the coverage of volumetric interiors. However, the improvement saturates beyond
+K
+=
+16
+K=16
+, where IoU and mIoU exhibit only marginal gains at
+K
+=
+32
+K=32
+despite a substantial increase in the number of Gaussians.
+Effect of opacity threshold
+τ
+\tau
+.
+We conduct ablation studies on the choice of opacity threshold
+τ
+\tau
+as shown in
+Table
+5
+. A smaller threshold (
+e.g
+.
+,
+>
+0.01
+>0.01
+) yields the best performance, achieving 56.19 mIoU and 63.14 IoU. As
+τ
+\tau
+increases, performance gradually degrades due to excessive pruning.
+4.5
+Qualitative Results
+We present qualitative comparisons on monocular occupancy prediction in
+Figure
+4
+, where we compare against EmbodiedOcc
+[
+34
+]
+. In addition,
+Figure
+5
+illustrates two examples of our incremental update strategy on streaming inputs. More visualizations are provided in the Appendix.
+5
+Conclusion
+We proposed GPOcc, a novel framework that leverages visual geometry priors for fine-grained occupancy prediction. By extending surface points along camera rays into volumetric samples, our method constructs sparse Gaussian primitives that compactly capture scene geometry. We further introduced an incremental update mechanism that adapts the framework seamlessly to streaming video inputs. Extensive experiments on Occ-ScanNet and EmbodiedOcc-ScanNet show that GPOcc achieves SoTA accuracy and generalizes across different priors, providing a scalable and effective solution for embodied 3D perception. Looking ahead, we believe GPOcc offers a promising step toward integrating strong geometric priors into broader embodied AI tasks, including interactive scene understanding, navigation and manipulation.
+References
+[1]
+Y. Cabon, L. Stoffl, L. Antsfeld, G. Csurka, B. Chidlovskii, J. Revaud, and V. Leroy
+(2025)
+MUSt3R: multi-view network for stereo 3d reconstruction
+.
+In
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)
+,
+pp. 1050–1060
+.
+Cited by:
+§2.1
+.
+[2]
+A. Cao and R. De Charette
+(2022)
+Monoscene: monocular 3d semantic scene completion
+.
+In
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition
+,
+pp. 3991–4001
+.
+Cited by:
+§2.2
+,
+Table 1
+.
+[3]
+X. Fang, J. Gao, Z. Wang, Z. Chen, X. Ren, J. Lyu, Q. Ren, Z. Yang, X. Yang, Y. Yan,
+et al.
+(2025)
+Dens3R: a foundation model for 3d geometry prediction
+.
+arXiv preprint arXiv:2507.16290
+.
+Cited by:
+§2.1
+.
+[4]
+Y. Huang, A. Thammatadatrakoon, W. Zheng, Y. Zhang, D. Du, and J. Lu
+(2024)
+GaussianFormer-2: probabilistic gaussian superposition for efficient 3d occupancy prediction
+.
+arXiv preprint arXiv:2412.04384
+.
+Cited by:
+§1
+,
+§1
+,
+§2.2
+,
+§3.1
+,
+§3.3
+,
+§3
+.
+[5]
+Y. Huang, W. Zheng, Y. Zhang, J. Zhou, and J. Lu
+(2023)
+Tri-perspective view for vision-based 3d semantic occupancy prediction
+.
+In
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition
+,
+pp. 9223–9232
+.
+Cited by:
+§1
+,
+§2.2
+,
+Table 1
+,
+Table 2
+.
+[6]
+Y. Huang, W. Zheng, Y. Zhang, J. Zhou, and J. Lu
+(2024)
+Gaussianformer: scene as gaussians for vision-based 3d semantic occupancy prediction
+.
+In
+European Conference on Computer Vision
+,
+pp. 376–393
+.
+Cited by:
+§1
+,
+§2.2
+,
+§3.1
+,
+Table 1
+,
+Table 2
+.
+[7]
+V. Leroy, Y. Cabon, and J. Revaud
+(2024)
+Grounding image matching in 3d with mast3r
+.
+In
+European Conference on Computer Vision
+,
+pp. 71–91
+.
+Cited by:
+§1
+,
+§2.1
+.
+[8]
+Y. Li, Z. Yu, C. Choy, C. Xiao, J. M. Alvarez, S. Fidler, C. Feng, and A. Anandkumar
+(2023)
+Voxformer: sparse voxel transformer for camera-based 3d semantic scene completion
+.
+In
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition
+,
+pp. 9087–9098
+.
+Cited by:
+§1
+,
+§2.2
+.
+[9]
+Z. Li, W. Wang, H. Li, E. Xie, C. Sima, T. Lu, Q. Yu, and J. Dai
+(2024)
+Bevformer: learning bird’s-eye-view representation from lidar-camera via spatiotemporal transformers
+.
+IEEE Transactions on Pattern Analysis and Machine Intelligence
+.
+Cited by:
+§1
+.
+[10]
+Z. Li, Z. Yu, D. Austin, M. Fang, S. Lan, J. Kautz, and J. M. Alvarez
+(2023)
+FB-OCC: 3D occupancy prediction based on forward-backward view transformation
+.
+arXiv:2307.01492
+.
+Cited by:
+§2.2
+.
+[11]
+Z. Li, X. Xu, S. Lim, and H. Zhao
+(2024)
+Unimode: unified monocular 3d object detection
+.
+In
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition
+,
+pp. 16561–16570
+.
+Cited by:
+§1
+.
+[12]
+H. Liu, D. Guo, and A. Cangelosi
+(2025)
+Embodied intelligence: a synergy of morphology, action, perception and learning
+.
+ACM Computing Surveys
+57
+(
+7
+),
+pp. 1–36
+.
+Cited by:
+§1
+.
+[13]
+R. Liu, W. Wang, and Y. Yang
+(2024)
+Volumetric environment representation for vision-language navigation
+.
+In
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition
+,
+pp. 16317–16328
+.
+Cited by:
+§1
+.
+[14]
+R. Liu, L. Kong, D. Li, and H. Zhao
+(2025)
+OccVLA: vision-language-action model with implicit 3d occupancy supervision
+.
+arXiv preprint arXiv:2509.05578
+.
+Cited by:
+§1
+.
+[15]
+I. Loshchilov and F. Hutter
+(2017)
+Decoupled weight decay regularization
+.
+arXiv preprint arXiv:1711.05101
+.
+Cited by:
+§4.2
+.
+[16]
+Y. Lu, X. Zhu, T. Wang, and Y. Ma
+(2024)
+Octreeocc: efficient and multi-granularity occupancy prediction using octree queries
+.
+Advances in Neural Information Processing Systems
+37
+,
+pp. 79618–79641
+.
+Cited by:
+§2.2
+.
+[17]
+L. Peng, J. Xu, H. Cheng, Z. Yang, X. Wu, W. Qian, W. Wang, B. Wu, and D. Cai
+(2024)
+Learning occupancy for monocular 3d object detection
+.
+In
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition
+,
+pp. 10281–10292
+.
+Cited by:
+§1
+.
+[18]
+J. Philion and S. Fidler
+(2020)
+Lift, splat, shoot: encoding images from arbitrary camera rigs by implicitly unprojecting to 3d
+.
+In
+European conference on computer vision
+,
+pp. 194–210
+.
+Cited by:
+§2.2
+.
+[19]
+D. Rukhovich, A. Vorontsova, and A. Konushin
+(2022)
+Imvoxelnet: image to voxels projection for monocular and multi-view general-purpose 3d object detection
+.
+In
+Proceedings of the IEEE/CVF winter conference on applications of computer vision
+,
+pp. 2397–2406
+.
+Cited by:
+§1
+.
+[20]
+Y. Shi, T. Cheng, Q. Zhang, W. Liu, and X. Wang
+(2024)
+Occupancy as set of points
+.
+In
+European Conference on Computer Vision
+,
+pp. 72–87
+.
+Cited by:
+§1
+,
+§2.2
+.
+[21]
+S. Song, F. Yu, A. Zeng, A. X. Chang, M. Savva, and T. Funkhouser
+(2017)
+Semantic scene completion from a single depth image
+.
+In
+Proceedings of the IEEE conference on computer vision and pattern recognition
+,
+pp. 1746–1754
+.
+Cited by:
+§2.2
+.
+[22]
+P. Tang, Z. Wang, G. Wang, J. Zheng, X. Ren, B. Feng, and C. Ma
+(2024)
+Sparseocc: rethinking sparse latent representation for vision-based semantic occupancy prediction
+.
+In
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition
+,
+pp. 15035–15044
+.
+Cited by:
+§2.2
+.
+[23]
+H. Wang, X. Wei, X. Zhang, J. Li, C. Bai, Y. Li, M. Lu, W. Zheng, and S. Zhang
+(2025)
+Embodiedocc++: boosting embodied 3d occupancy prediction with plane regularization and uncertainty sampler
+.
+arXiv preprint arXiv:2504.09540
+.
+Cited by:
+§2.2
+,
+§4.3
+,
+Table 1
+,
+Table 2
+.
+[24]
+H. Wang and L. Agapito
+(2025)
+3d reconstruction with spatial memory
+.
+In
+2025 International Conference on 3D Vision (3DV)
+,
+pp. 78–89
+.
+Cited by:
+§2.1
+.
+[25]
+J. Wang, Z. Liu, Q. Meng, L. Yan, K. Wang, J. Yang, W. Liu, Q. Hou, and M. Cheng
+(2024)
+Opus: occupancy prediction using a sparse set
+.
+Advances in Neural Information Processing Systems
+37
+,
+pp. 119861–119885
+.
+Cited by:
+§1
+,
+§2.2
+.
+[26]
+J. Wang, M. Chen, N. Karaev, A. Vedaldi, C. Rupprecht, and D. Novotny
+(2025)
+Vggt: visual geometry grounded transformer
+.
+In
+Proceedings of the Computer Vision and Pattern Recognition Conference
+,
+pp. 5294–5306
+.
+Cited by:
+§1
+,
+§1
+,
+§2.1
+,
+§3.2
+,
+§4.2
+,
+Table 3
+.
+[27]
+Q. Wang, Y. Zhang, A. Holynski, A. A. Efros, and A. Kanazawa
+(2025)
+Continuous 3d perception model with persistent state
+.
+In
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)
+,
+pp. 10510–10522
+.
+Cited by:
+§2.1
+.
+[28]
+S. Wang, V. Leroy, Y. Cabon, B. Chidlovskii, and J. Revaud
+(2024)
+Dust3r: geometric 3d vision made easy
+.
+In
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition
+,
+pp. 20697–20709
+.
+Cited by:
+§1
+,
+§2.1
+.
+[29]
+Y. Wang, J. Zhou, H. Zhu, W. Chang, Y. Zhou, Z. Li, J. Chen, J. Pang, C. Shen, and T. He
+(2025)
+π
+3
+\pi^{3}
+: Scalable permutation-equivariant visual geometry learning
+.
+arXiv preprint arXiv:2507.13347
+.
+Cited by:
+§1
+,
+§2.1
+.
+[30]
+J. Wei, S. Yuan, P. Li, Q. Hu, Z. Gan, and W. Ding
+(2024)
+Occllama: an occupancy-language-action generative world model for autonomous driving
+.
+arXiv preprint arXiv:2409.03272
+.
+Cited by:
+§1
+.
+[31]
+Y. Wei, L. Zhao, W. Zheng, Z. Zhu, J. Zhou, and J. Lu
+(2023)
+Surroundocc: multi-camera 3d occupancy prediction for autonomous driving
+.
+In
+Proceedings of the IEEE/CVF International Conference on Computer Vision
+,
+pp. 21729–21740
+.
+Cited by:
+§1
+,
+Table 1
+,
+Table 2
+.
+[32]
+C. Wu, J. Wang, M. Hall, U. Neumann, and S. Su
+(2022)
+Toward practical monocular indoor depth estimation
+.
+In
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition
+,
+pp. 3814–3824
+.
+Cited by:
+§1
+.
+[33]
+Y. Wu, W. Zheng, J. Zhou, and J. Lu
+(2025)
+Point3R: streaming 3d reconstruction with explicit spatial pointer memory
+.
+arXiv preprint arXiv:2507.02863
+.
+Cited by:
+§1
+,
+§3.2
+.
+[34]
+Y. Wu, W. Zheng, S. Zuo, Y. Huang, J. Zhou, and J. Lu
+(2024)
+Embodiedocc: embodied 3d occupancy prediction for vision-based online scene understanding
+.
+arXiv preprint arXiv:2412.04380
+.
+Cited by:
+Figure 1
+,
+Figure 1
+,
+Figure 1
+,
+§1
+,
+§1
+,
+§1
+,
+§2.2
+,
+§3.1
+,
+§3.2
+,
+§3.3
+,
+§3.4
+,
+§3.5
+,
+Figure 4
+,
+Figure 4
+,
+§4.1
+,
+§4.1
+,
+§4.3
+,
+§4.4
+,
+§4.5
+,
+Table 1
+,
+Table 2
+,
+Table 2
+,
+Table 3
+.
+[35]
+J. Yang, A. Sax, K. J. Liang, M. Henaff, H. Tang, A. Cao, J. Chai, F. Meier, and M. Feiszli
+(2025)
+Fast3r: towards 3d reconstruction of 1000+ images in one forward pass
+.
+In
+Proceedings of the Computer Vision and Pattern Recognition Conference
+,
+pp. 21924–21935
+.
+Cited by:
+§1
+,
+§2.1
+,
+§3.2
+.
+[36]
+L. Yang, B. Kang, Z. Huang, X. Xu, J. Feng, and H. Zhao
+(2024)
+Depth anything: unleashing the power of large-scale unlabeled data
+.
+In
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition
+,
+pp. 10371–10381
+.
+Cited by:
+§1
+,
+§1
+.
+[37]
+L. Yang, B. Kang, Z. Huang, Z. Zhao, X. Xu, J. Feng, and H. Zhao
+(2024)
+Depth anything v2
+.
+Advances in Neural Information Processing Systems
+37
+,
+pp. 21875–21911
+.
+Cited by:
+§1
+,
+§1
+,
+§1
+,
+§3.2
+,
+Table 3
+.
+[38]
+J. Yao, C. Li, K. Sun, Y. Cai, H. Li, W. Ouyang, and H. Li
+(2023)
+Ndc-scene: boost monocular 3d semantic scene completion in normalized device coordinates space
+.
+In
+2023 IEEE/CVF International Conference on Computer Vision (ICCV)
+,
+pp. 9421–9431
+.
+Cited by:
+§2.2
+.
+[39]
+H. Yu, Y. Wang, Y. Chen, and Z. Zhang
+(2024)
+Monocular occupancy prediction for scalable indoor scenes
+.
+In
+European Conference on Computer Vision
+,
+pp. 38–54
+.
+Cited by:
+Figure 1
+,
+Figure 1
+,
+Figure 1
+,
+§1
+,
+§1
+,
+§1
+,
+§2.2
+,
+§3.2
+,
+§4.1
+,
+§4.1
+,
+§4.3
+,
+§4.4
+,
+Table 1
+,
+Table 3
+.
+[40]
+D. Zhuo, W. Zheng, J. Guo, Y. Wu, J. Zhou, and J. Lu
+(2025)
+Streaming 4d visual geometry transformer
+.
+arXiv preprint arXiv:2507.11539
+.
+Cited by:
+§2.1
+.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

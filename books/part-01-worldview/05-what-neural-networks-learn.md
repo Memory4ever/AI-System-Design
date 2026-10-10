@@ -78,6 +78,8 @@ Representation learning 的关键收益，是让系统不必完全依赖手工�
 
 第三是 **compositional usefulness**。中间特征应能被后续层组合，支持更复杂的判断。单个特征未必对应完整概念，它的价值可能只体现在与上下文中的其他特征共同计算时。
 
+可组合的接口也可以先通过受控的共享因素形成，而不由单个任务的高准确率直接推定。一条[有限图像通信学习分支](https://arxiv.org/html/2601.10169v1)由 Oracle 将共享同一概念的多个 target 放在一起，先学单概念的离散 codebook，再用同一接口组合已见概念来描述未见组合；测试的新颖性是 known concepts 的新搭配，不是自动发现新概念。单 target 仍可能支持游戏成功，却缺少相应组合性；非组合 Qrc（QR-code）数据上初始化可退步，部分任务继续 composition 训练也不如只完成第一阶段后的 zero-shot，因而不能把“离散码本”或“两阶段”当充分保证。Oracle 的因素划分、预设词表大小与消息长度 l 已提供先验，bag-of-words 消费还没有解决重复概念或任意变长；它不等同于人类语义词典。第一阶段训练、码本初始化、validation checkpoint 选择和多 seed 检验均付费，zero-shot 只省去额外组合训练；因素假设或任务质量不成立时保留普通端到端学习与独立行为测试，而不将局部组合成功外推为通用 LLM 能力。<!-- source-family:SF-2026-ARXIV-2601-10169 -->
+
 当新任务需要重新组合已学操作时，组合性还涉及“学习什么、测试时搜索什么”的分工：一条受限路径在训练期学可复用 primitive 的离散 codebook 与共享递归 executor，面对新的输入输出例子时冻结 executor，只优化 program latent 来选择执行序列。它与不显式学习程序序列的端到端模型、或外部符号程序加确定性验证并存；神经解释器的可微搜索换来额外训练与每题多起点/梯度搜索成本，也不证明 latent 是唯一的人类可读程序。受测证据仅是作者构造的有限 program-synthesis 语言与 Shift/Composition 类任务：能否表达目标程序、搜索预算和最终行为正确性仍要分别验收，不能外推到任意长度或通用 LLM 编程。<!-- source-family:SF-2026-ARXIV-2604-18907 -->
 
 任务表示在测试时可被优化，不表示模型已经归纳并执行了新规则。若backbone与task embedding同时变化，embedding可能迁出训练坐标而backbone仍靠自身改动解题；一个可诊断的替代分支先固定backbone只适配embedding，让任务定位发生在共同接口，再冻结该embedding更新backbone。这样能分别检查表示中可读的规则与后续执行适配，代价是两阶段搜索和额外测试训练，不把近邻检索当唯一规则身份。
@@ -146,6 +148,10 @@ Inductive bias 不是坏事。没有任何偏好，模型无法从有限经验�
 
 这条反证必须保留精度与支持边界：在正噪声、完整source支持的有限模型中，失败encoder只是任意接近全局最优，精确最优配合不受限的source-optimal classifier反而可保持零目标误差；精确最优也全错的例子改变了支持域。同支持域还允许罕见输入变成主流，不能冒充小shift保证。构造证明的是coding近最优不足，不证明真实优化器一定选该解；额外class-conditional稳定假设、语义保持干预或跨环境验证都有成本，未验证时仍回退切片、反事实和真实OOD行为测试。 [必要机制与边界](https://arxiv.org/html/2609.21001v1) <!-- source-family:SF-2026-ARXIV-2609-21001 -->
 
+部署输入适配也面对这个问题。一条替代分支冻结原 classifier，只在测试时训练 input de-corruptor，使目标特征的高维几何 quantile 靠近保存的 source reference；CPU feature bank 与 snapshot center 汇集跨 batch 的目标人口。这把更新对象从分类器权重移到输入恢复，但边缘分布匹配仍可能交换类别，不保证 class-conditional 关系或标签语义被恢复，也不是 source-data-free 的无状态适配。<!-- source-family:SF-2026-ARXIV-2601-11022 -->
+
+[必要机制与反侧](https://arxiv.org/html/2601.11022v1)在受限图像 corruption 上支持局部收益；相关理论还依赖 reconstructability、identifiability、分布 regularity 与局部良好初始化。适配器、source reference、跨 batch memory 与 quantile 计算均付费；作者披露的 H100、CIFAR100C/ResNet18、10k source features与batch128设置中，6.2M de-corruptor使peak memory从765到1429MB、每epoch从1.44到2.03s，不能写成冻结模型就无额外成本，也不是生产 inference SLO。分布或类别关系无法核实、状态污染或费用不合算时，保留原 classifier、输入质量切片与其他经独立验收的适配路径，不由匹配几何替最终任务签发保证。
+
 训练两种增强视图的一致性，也可以把 agreement channel 与最终交付的表示分开。一条受限 self-distillation 分支让 EMA teacher 把投影 logits 阈值化为逐 bit target，student 用 BCE 拟合这些目标；连续、归一化的 pre-binary logits 再由 covariance log-determinant 正则约束，并可周期性重置投影 head。二值通道只组织训练监督，交付的 backbone 仍是连续表示，不是把全部语义压成固定 bit code，也不同于推理 artifact 的量化。 [必要机制与目标对照](https://arxiv.org/html/2602.09764v1)。<!-- source-family:SF-2026-ARXIV-2602-09764 -->
 
 这把 target 离散化、逐 bit agreement 与表示分散程度变成不同可检验对象，而不是由 log-determinant 直接认证离散熵或互信息最优：student 实际还读取另一视图，不能假定仅由其 bit 表示恢复 teacher。受限同框架对照支持 BCE 接口，却显示更多 bits、更频繁 reset 不必更好，soft target 也可接近 hard target；effective rank 不是真实语义因子独立性的证明。额外 teacher、投影、正则与 reset 均付费，目标 collapse、跨环境失配或预算不合算时保留连续 self-distillation、原 head 与独立任务/OOD 验收，不让训练 channel 取得最终语义权。<!-- source-family:SF-2026-ARXIV-2602-09764 -->
@@ -171,6 +177,10 @@ Inductive bias 不是坏事。没有任何偏好，模型无法从有限经验�
 高频、结构稳定的模式可以被压缩成共享特征；稀有或不规则样本可能通过更局部的参数配置被记住。甚至同一输出既依赖通用模式，也依赖训练中见过的特定关联。
 
 可以从压缩视角形成直觉：如果许多样本共享结构，用一套可复用计算解释它们比逐个存储更经济；如果样本没有明显共享结构，过参数化模型仍可能拟合它们。这个直觉有助于理解表示，但不是对所有神经网络泛化的完整定理。
+
+结构容易压缩，也不等于它对应真实规则。若错误各自需要不同例外，共享的正确规律可能更经济；若假规则本身简洁而一致，预测目标仍可能把它压成可复用计算。在一组[受控数学语料](https://arxiv.org/pdf/2603.11749v1)中，同一问题配对比较正确与错误 completion 的 NLL：随机错误下模型较常偏向正确答案，换成一致但错误的规则后则接近随机选择；假规则占比增大还会让这种选择偏向错误。它支持把“学到稳定结构”与“结构为真”分开，不证明现代大模型只按压缩率决定事实，也不把理想 description-length 直觉当作有限梯度训练的定理。
+
+检查这种现象时，先固定要比较的对象：语料整体平均 loss 混合了频率、共同题型与文本长度，同题、同 prompt 下的 completion 比较才直接检验当前候选偏好；两者可以给出相反方向。配对比较仍要记录错误族、held-out 人口、长度处理与训练 seeds，较小显著性数值不消除训练不确定性，固定训练步数的尺寸趋势也不是同计算预算的 scaling law。更复杂的错误族须匹配自己的测试分布，不能借另一个规则族放大效果。新的语料构造、训练与验证均付费；缺少独立事实依据时，应保留外部检查、检索或拒答，不让低 NLL、规则一致或模型间 agreement 获得 truth 权。<!-- source-family:SF-2026-ARXIV-2603-11749 -->
 
 这个视角还把闭卷事实错误拆成两个不能互相替代的问题：模型可能从未观察到相关事实，也可能观察过，却在有限参数容量中只能有损保存。前者是 coverage failure，增加相关数据或检索更直接；后者是 compression distortion，单纯重复相同事实未必消除，需要更多有效容量、更可压缩的结构、外部可寻址记忆，或在回答前允许检索与拒答。二者都会表现成“答错”，却要求不同补救；因此不能由最终准确率反推知识从未进入训练，也不能把扩大数据覆盖当作参数记忆无损的保证。
 
@@ -222,6 +232,8 @@ class 与局部曲率一起记录；它不构成对任意 Transformer loss lands
 
 内容路径的出现也不能单独归功于加入图像。该研究的视觉 curriculum 同时涉及噪声前置训练、feature-grounding 辅助目标、混合比例、词表与训练预算变化；合成 OOD 的局部改善因此是整个训练 bundle 的证据，不是 image-only 的唯一因果。部分分支发散被剔除，noise/text 路线也改善外推，跨大模型 checkpoint 的相关性还未控制训练差异。配对干预、额外 encoder 与训练均有成本；当任务、位置分布或可访问长度改变，应重新验收内容替换与位置替换，保留原 role/filler 解释和行为测试，不许把局部 content binding 签成任意长度、任意任务的泛化保证。
 
+线性化结构还有一种不同于内容相似的地址信号：在序列化表格中，查询先绑定行列 header，随后可以利用分隔符携带的序数位置定位 cell；同一个答案依赖语义绑定与结构定位，不意味着二者由同一组 head 或同一层完成。[受限合成表对照](https://arxiv.org/html/2602.08548v1#S4)中，delimiter 坐标较早可被线性读出，新增分隔符与等长度无分隔字符对定位的影响不同，提示结构边界不应被 token 距离替代；这不是精确计数器或语义完全退出的证明。局部 activation 差方向还能推动 column 选择，但其 layer、token span、校准表、offset 和幅度均属干预身份，normalized logit effect 不等正确率，向量相加也不能签发任意位置可靠性。Probe、配对标记干预与行为回归需要额外样本和费用；格式、尺寸或内容改变时应重新核结构/语义两条路径及非目标损害，保留原模型、明确表格 parser 或独立结果验证，不把可读 ordinal 表示升级为通用 table 执行器。<!-- source-family:SF-2026-ARXIV-2602-08548 -->
+
 多句话中同一实体还可能承担不同关系，因此仅记录“哪个实体”不足以确定属性该绑定到哪里。一种受限的机制假说把地址拆为 entity 与 relation 两个索引：在受控文本中，先用属性 token 的 activation 拟合索引，再沿拟合的子空间替换或扰动，检验输出是否跟随指定绑定变化。这比只凭语义相似或角色标签多了一步局部使用证据；但拟合出的 cell 不证明网络拥有物理表格、唯一符号地址或开放任务上的稳定读写协议。<!-- source-family:SF-2026-ARXIV-2604-19052 -->
 
 同一关系结构跨语境也未必沿用同一读出坐标。作者在有限合成域中观察到原投影跨 context 退化，而根据相同索引的 activation 差拟合 translation 后，部分读出得以恢复；这种校准需要配对数据，也受上下文和干预范围约束。因此，可迁移几何、局部行为作用与任务泛化须分别验收；坐标失配或 patch 连带影响其他功能时，应回退行为测试和原模型，不能把 probe 升级为通用编辑器。
@@ -241,6 +253,10 @@ class 与局部曲率一起记录；它不构成对任意 Transformer loss lands
 表示的有效维度也只是测量量，而非性能证书。把unembedding奇异值归一化后，用谱熵定义effective rank，可以诊断输出方向是否集中；但训练batch、weight decay与learning-rate schedule会同时改变该几何与优化结果。要判断rank是否解释能力，至少在相同模型、数据与训练配置内比较，并把ID loss、迁移、量化鲁棒性分别测量，不能把“更高rank”直接设成训练或发布目标。<!-- source-family:SF-2026-ARXIV-2602-20433 -->
 
 [有限小模型对照](https://arxiv.org/html/2602.20433v1#S4)中，大batch或较弱annealing能保留高rank却未改善loss，weight decay的收益随模型规模改变；量化脆弱性也不服从一个通用rank阈值。这些是训练条件下的反例，不证明直接改变rank一定无效或所有层/大模型都相同。记录谱量、训练revision与额外测量成本，配置漂移或行为评价冲突时回退实际任务loss与独立验证，仍保留几何sensor用于诊断，而不让它替性能或因果验收。
+
+还可以只约束原 activation 空间中的长度，而不直接优化输出 KL。固定 additive edit 同时改变方向与范数；若要把二者的作用拆开，可以先由配对样本的均值差确定单位目标方向，再将当前 activation 归一化，沿球面插值转向目标，最后恢复原范数。这样保留的是一个几何量，不是输出分布、真值或全部功能；它与前面的 output-KL 分支是不同约束下的替代路径，不能互相继承保证。<!-- source-family:SF-2026-ARXIV-2602-08169 -->
+
+是否干预还可与干预强度分开：用相反方向的球面 prototype 给出局部分数，再按阈值选择哪些 activation 进入旋转路径。但 prototype 分数不是已校准的真假概率，方向、层、token population 与 context 仍要共同绑定，配对样本、阈值搜索和逐 token 白盒计算也有成本。[有限球面 steering 对照](https://arxiv.org/html/2602.08169v1#S3)中，TruthfulQA 的选择题与生成评价并非全面同向，保范数的强干预仍可损害信息量；base 与 instruction 模型也不能合并为同一 operating point。因此必须联合检查候选答案 likelihood、生成真值与信息量，不能以 norm 不变签发“无损控制”。方向或 gate 失配、非目标行为退步时，回退原模型与已校准的行为验证，既保留 additive 路径，也不由局部结果推断所有 context 中与 ICL 正交。
 
 尤其要区分三种结论：
 
@@ -268,6 +284,10 @@ behavioral correlation
 更强的主张需要在控制混杂因素的前提下修改候选表示，并观察预期的 downstream computation
 或行为是否随之改变；即使如此，单个 prompt、单个模型家族或局部线性近似上的效果仍不是
 完整机制。
+
+除了观察 activation 共现，还可以问：在当前解附近轻微改变学习压力，哪些表示会一起响应？一条局部诊断分支围绕已有权重建立带温度的 localized posterior，用采样权重下 observable 与“单 token loss 减总体 loss”的负协方差估计 susceptibility。这里 observable 可以是 activation，也可以是 loss；差额在于把 token 的相对学习压力与内部响应联系起来，而不只是从固定 activation 中解码标签。未知真实数据分布的 mode-pair 展开提供解释，但这些模态并非实验中直接测得，协方差估计也不是已经逐 token 重训完成的真实干预。
+
+温度、局部范围、采样混合、数据 population 与归一化都改变诊断对象；SGLD 采样、构建 token 响应图及聚类还增加成本。[局部响应研究](https://arxiv.org/html/2601.12703v1#S2)在受限 Pythia 实验中观察到同一 token 按功能分开、不同 token 按功能聚合，但跨模型尺度及 SAE 的比较并不是一一功能定位，更不证明唯一 causal circuit。它因此补充了证据阶梯的候选发现分支；采样不稳、归一化敏感或需要行为因果判断时，仍回到 activation/probe 基线与受控干预，不能把响应簇作为内部机制的最终字典。<!-- source-family:SF-2026-ARXIV-2601-12703 -->
 
 这条证据阶梯也适用于模型自己的解释。问模型“你刚才在想什么”，得到的仍是生成文本，不是直接读取的内部计算记录；准确的描述可能来自训练中学到的说法，也可能只是根据已经说出的内容反推。要检验描述是否依赖内部状态，可以保持可见输入不变，在指定层注入概念方向，再比较无干预、随机概念及不同注入时机的报告。若模型在说出该概念之前就识别到变化，而且仍能正确复述原输入，才获得了比自述可信更窄的证据：这次报告使用了某种内部信息，而不是单纯抄读输入或事后解释输出。
 
@@ -537,6 +557,8 @@ Sparse autoencoder 把 activation 分解为稀疏 feature，短自然语言标�
 
 ## Review notes
 
+- `SF-2026-ARXIV-2601-11022` — Daily `2026-01-20`增量；[geometric quantile TTA exact-v1](https://arxiv.org/html/2601.11022v1) §3/4/5、Figure3/Theorem4与必要费用对照。2+1+2=5，frozen classifier/inputadapter/source-reference/CPU-snapshot bank差额深入；边缘匹配不认证类别语义，原coding反证继续共存；保留identifiability/local初始化、memory/time费用，不授source-free或生产SLO。root实际必要原证/owner PRE通过并授窄锁；作者实际正文/完整邻接/本注已顺读，root实际顺读145–157/本注，POST通过，窄锁释放。未核artifact/复现，非日级验收。
+
 - `SF-2026-ARXIV-2602-21442`：exact-v1 Algorithm1、retain/remove与BFS共享Bellman读出；仅采用可执行连通子网与实际干预，不采用方向冲突的Char headline；未复现。 非原 packet 作者必要原证/actual owner PRE 与窄写完成；root 已实际顺读正文、完整邻接与自身末注，POST 通过。
 
 - `SF-2026-ARXIV-2602-22424` — Daily `2026-02-28`；[exact-v1](https://arxiv.org/html/2602.22424v1) §2–3与§5的直接反侧。3+1+3=7，因果控制与格式不变差额深入；CV 依赖已有 prompt 概念、非 zero-shot 替代、ID/OOD 增益与抽取/回归成本近正文。root 必要原源/actual owner PRE 通过；实际正文、完整邻接与自身末注经 root 非作者 POST 通过，窄锁释放。未核实现/复现，不授日级完成。
@@ -569,6 +591,8 @@ Sparse autoencoder 把 activation 分解为稀疏 feature，短自然语言标�
 - `SF-2026-ARXIV-2604-12151`（Experimental）：[exact-v1](https://arxiv.org/html/2604.12151v1) Roman III、IV.1–IV.7、V。有限 stationary Markov 链与两层模型；统计归纳/任务取回、训练竞争/表示容量两层区分，task vector 可在足够容量下泛化。patch 非完整唯一 circuit，不外推开放 LLM 阈值。6分实际缺口深入；必要来源/owner 独立复核通过（apr02），实际正文及相邻交接写后非作者复核通过（root、apr02），未复现实验。
 
 - 2026-09-01 角色绑定的受限解释：<https://arxiv.org/html/2608.29034v1> §2–3/7 与 <https://arxiv.org/html/2608.29530v1> §3/6–9。人工 role、受控任务与有限替换不证明表示唯一；生成 token 等原 forward 仍保留，DISCOVER 的组合 holdout 不等于 target 预训练未见。正文不采神经/符号的哲学定论。
+
+- `SF-2026-ARXIV-2601-10169` — Daily `2026-01-17` 增量；[CtD exact-v1](https://arxiv.org/html/2601.10169v1) §2.2–3.3、§4.3、§5.1/Table2/§5.2、AppG/J。2+1+2=5，Oracle 控制 shared-factor 多 target→单概念 codebook→known-concept 新组合消费的具体 gap 受影响深入；单target/Qrc/继续训练反侧、Oracle/l/词表先验与训练/选择成本及普通端到端共存近文。root 非作者实际必要原源/条件公开日期/current说明/Ch5组合性完整邻接PRE通过并授单段窄锁；作者已顺读，root非写入者实际正文72–112完整邻接及本note575 POST PASS、Qrc身份最小修准确，窄锁释放。未核代码/复现实验，不授日级完成。
 
 - Train the Model, Not the Reader: Decodability Supervision for Verifiable Activation Explanations（arXiv:2607.20379v1；Status: Experimental）：https://arxiv.org/html/2607.20379v1
   - 证据边界：支持披露设置中 reconstruction-only scoring 的失败与 RECAP/probe 结果；不证明 neuron-level causal use、完整 semantic legibility、adaptive training 下的安全性，或高 AUC probe 必然产生 faithful language explanation。
@@ -638,3 +662,12 @@ Sparse autoencoder 把 activation 分解为稀疏 feature，短自然语言标�
 - `SF-2026-ARXIV-2602-23164` — Daily `2026-02-28`；[exact-v1](https://arxiv.org/html/2602.23164v1) 必要blocks21–96/107–128及原包20采用相关控制/反侧；2+1+3=6，规则选择与状态恢复分责、几何/干预及混合支持边界具体差额深入。fresh非原packet作者必要原证/actual owner PRE完成，原有效身份/精确版/命题复用；费用、人口、未证与回退近文。获Ch5窄锁，作者已实际顺读正文/完整邻接及自身末注，root非写入者实际独读正文/完整邻接/自身末注POST通过，窄锁释放；未核artifact/复现，非日级。
 
 - `SF-2026-ARXIV-2602-23360` — Daily `2026-02-28`；[exact-v1](https://arxiv.org/html/2602.23360v1) 必要blocks11–18/61–96/218–232/44–45/247–278及原包25采用相关控制/反侧；2+1+3=6，prediction midpoint、population近最优/闭包前提与agreement非truth具体差额深入。fresh非原packet作者必要原证/actual owner PRE完成，原有效身份/精确版/命题复用；费用、人口、未证与回退近文。获Ch5窄锁，作者已实际顺读正文/完整邻接及自身末注，root非写入者实际独读正文/完整邻接/自身末注POST通过，窄锁释放；未核artifact/复现，非日级。
+<!-- supplement-20260122-review-note -->
+
+- `SF-2026-ARXIV-2602-08169` — Daily `2026-02-11`增量；[exact-v1](https://arxiv.org/html/2602.08169v1) §3–5及Appendix B/C.1/C.2。2+1+2=5，球面保范数与条件 gate 的具体分支缺口深入；只采用方向/范数/输出分布分账，不采 norm=truth、antipodal 校准概率、普遍 Pareto 或 ICL 正交。两 instruction 模型、TruthfulQA817/两fold及 judge/product 的局部反侧、base 高强度退步近正文；生产硬件/precision/batch/concurrency/SLO 未披露，未核实现或复现。root 实读必要原证与 actual owner/邻接 PRE 通过并授窄锁；作者实际正文/完整邻接顺读，root 非作者实际新正文/完整局部邻接及自身末注 POST 通过，窄锁释放；非日级验收。
+
+- `SF-2026-ARXIV-2601-12703` — Daily `2026-01-22`增量；[Spectroscopy exact-v1](https://arxiv.org/html/2601.12703v1) §2.2–2.3/3/4.1。2+2+3=7；仅采用 tempered/local posterior 的负协方差响应诊断及功能分簇边界，不称真实逐token重训或唯一因果电路；未知q模态是解释，采样/归一化/population成本近正文。root实际必要原源/owner PRE通过并授窄锁；作者实际正文与完整邻接顺读，root非作者actual POST通过，窄锁释放。未核实现或复现，不授日级验收。
+
+- `SF-2026-ARXIV-2602-08548` — Daily `2026-02-11`补查；[Cell Location exact-v1](https://arxiv.org/html/2602.08548v1) §2–6及必要B/C.1–6。2+1+2=5，只采用有限Qwen3-4B合成表下semantic binding与ordinal address分账；probe可读、delimiter/等长度反侧与局部shift不授唯一计数器、精确vector arithmetic或全模型table可靠性。Patch方向文字/Effect与5.2vs5.8反侧不一致隔离，token80/20 probe split不授whole-table OOD，100 heldout校准/α8与额外介入费用保留。root实际必要Source及Ch5/相邻交接PRE通过并授本一段/自身末注窄锁；作者实际正文与完整邻接顺读，root非作者实际225–245完整邻接及自身末注POST通过，窄锁释放。未核artifact或复现，非DAY。
+
+- `SF-2026-ARXIV-2603-11749` — Daily `2026-03-14` 补查；[Compression/consistency exact-v1](https://arxiv.org/pdf/2603.11749v1) 方法/配对Tables1b/2a/3a与直接限制。2+1+2=5，coherent-false与随机错误的受控偏好、paired与corpus测量单位具体差额深入；不采MDL普遍真理、压缩唯一因果、全corpus一致方向或compute-matched scaling，错误族/训练seed/长度资格与外部证据回退近文。mar14_supplement 必要Source/owner/PRE经root实际非准备者复核通过，root窄写两段与本注；mar14_supplement 实际非writer 顺读两段、完整局部邻接和本注 POST通过，窄锁释放，不授DAY。未核代码或复现。

@@ -107,6 +107,10 @@ untrusted proposer builds candidate off-commit
 
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-12694 -->
 
+若任务需要撤销旧诊断，而不是只在 lattice 上单调增加 assessment，还可以给每个节点保存 label、evidence summary 与邻居 inbox，让模型只提局部 belief，确定的 controller 在整个 belief 改变时重激活邻居。判断 label 未变不等于 evidence 未变；只按 label flips 做 damping 不能约束同标签文字反复修订，因此每节点访问上限与总体预算应独立保留。[受限故障定位对照](https://arxiv.org/html/2601.17915v1)的正确性依赖完整数据、可靠 local policy 与图可达，发现图的 frontier 不是已证明真实原因；局部 controller 消融不授语义 fixed point，某模型输入token还增加。图、inbox、revision与停止原因共同记录，重复生成/传播计费；证据不全、震荡或预算耗尽时回原始日志、单调可证明子域、人工核验与Unknown，不以停机签发正确诊断。<!-- source-family:SF-2026-ARXIV-2601-17915 -->
+
+持续修复循环不能只按文本相似度合并新故障与补丁：先用已有 patch 重跑新 crash 的 PoV，再用新 patch 检查已存 PoVs，可分别识别故障重复和补丁覆盖；两者都是给定测试证据的去重提议，不是语义正确或漏洞完全相同的证明。Provider workers 可各自保留静态质量偏好、并行生成，再由独立 coordinator 接收候选，减少限流耦合，却不消除协调器单点。[受限漏洞修复对照](https://arxiv.org/html/2601.17471v1)的 plausible/test-pass 与人工正确仍有差距，坏 symlink 还能让初始化漏掉任务；内文与伪码的精确去重谓词冲突不拼可执行保证。PoV、patch版本、worker/provider与合并收据应保留，重测和额外API调用付费；coverage或controller资格不足时，回分开追踪、完整原测试与人工审核，不由去重命中自动关闭修复。<!-- source-family:SF-2026-ARXIV-2601-17471 -->
+
 ### Task State Alignment 是每次 Dispatch 的前置条件
 
 只保存一个 planner stage，在短任务、单 executor 且 observation 不会异步变化时足够；长流程中 planner 的 active stage、runtime evidence、remembered context 与 delegated executor 可能各自仍合法，却不再支持同一个 next action。Workflow owner 应在 dispatch 前构造 alignment record，绑定 stage revision、evidence watermark、memory snapshot 与 executor capability；model 只能提出下一步，state machine 根据这组共同前提决定执行、重新规划或升级。
@@ -189,6 +193,8 @@ credit assignment、canonicalization、repair 和 drift recovery；API 稳定、
 workload 重复时，优化后的 static scaffold 仍更可靠。Survey taxonomy 只能支持这套对象边界，不能提供
 “dynamic 必然优于 static”的因果结论。
 
+从实际业务轨迹提炼复用图时，还可以先切换工具可见性：业务执行阶段保留真实工具，摘要阶段撤去业务工具，只允许提交构图操作，把继续执行任务与描述可复用流程分成两种权限。摘要得到的是derived graph proposal，原任务成功、图结构有效与图在新测试中的完成率仍是三份证据，不能从一条passing trace直接发布workflow。[FlowMind的受限对照](https://arxiv.org/html/2602.11782v1)有测试率和联合成功率退步，提示/阶段与工具可见性共同变化也未唯一证明减轻认知负担。轨迹生成/筛选、摘要、构图、黑盒测试及开发调参均付费，部分输出token增加、累加调用时长不是墙钟；业务state、图版本、operator与独立测试身份需冻结。压缩遗漏、图质量或预算回归时，保留原trace、显式code-defined template和独立graph测试，实际effect提交继续由runtime当前权限与状态验收；这份发布纪律是工程边界，不宣称论文已实现全部promotion gate。<!-- source-family:SF-2026-ARXIV-2602-11782 -->
+
 Workflow definition 的载体也可以从 code bundle 演进为 portable pattern artifact，但自然语言本身不是
 runtime。更稳健的分层是：pattern 描述 roles、state transitions 与 invariants；shared semantic runtime 解释
 它；deterministic hooks 继续拥有 sandbox、tool call、checkpoint、retry 与 verifier。这样 definition、run state
@@ -209,6 +215,10 @@ proxy 与 node semantics 变更风险；成熟人工 operator 和固定 library 
 分权增加调用、延迟和 inspector 单点误判，且正确但未接触证据的答案仍需判为未验证。短内容、低风险或确定性 locator 已知时，耦合流程更经济；inspector 不可靠时应扩大检查、换 verifier 或转人工。exact-v1 的四个长视频 benchmark 只支持该机制在披露设置中的 groundedness 改善，不证明 inspector 是事实 oracle 或能泛化到任意 modality。
 
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-12571 -->
+
+证据与答案分权后，写作时序仍可能留下更窄的失效路径：先完成整段叙事、再让工具配图，会让已固定的claim绕过尚未到达的证据。另一条件分支让writer在拟写claim前发出图表请求并暂停，实际chart/caption返回后再继续写；工具结果不自带事实权威，但它至少先于依赖它的叙述参与判断。这是write-before-render与阻塞式证据到达的顺序对照，不是论文已实现的commit、transaction或provenance协议。<!-- source-family:SF-2026-ARXIV-2601-05487 -->
+
+[有限数据报告实验](https://arxiv.org/html/2601.05487v1)支持这种顺序选择，代价是额外调用与等待：OWID一项配置约43.2次API/1511.4秒，对直接生成约3.4次/179.33秒，代码失败还会留下缺失图表证据。增加图表不能认证claim正确，工具失败时应重查、删去无支持命题或人工复核；证据已固定、低风险或预算敏感时，原直接写作/后渲染仍合理。该观察不授生产吞吐、统一事务保证或所有报告都获益。
 
 ### Offline World 是可验证的数据工厂，不是 Live Workflow 的替身
 
@@ -1550,3 +1560,10 @@ Primary-source 与设计入口：
 - `SF-2026-ARXIV-2602-15564` — Daily `2026-02-19`；[exact-v1](https://arxiv.org/html/2602.15564v1) §3与必要oracle/主要对照；2+1+2=5，finite workflow oracle与actor可用性探索深入，union非可学/异质性非严格gap，pseudo feedback/API预算与mask反侧保留。root 必要源/actual owner PRE 通过并授窄锁；作者正文/完整邻接已顺读，root 非作者正文/完整邻接及末注 POST 通过，窄锁已释放。未核实现/复现，非日级 Gate。
 
 - `SF-2026-ARXIV-2602-17646` — Daily `2026-02-21`；[exact-v1](https://arxiv.org/html/2602.17646v1) §4/5、prefix-domination与阈值proof及受限交互评价。2+2+2=6，题内固定/题末反馈的AI-set omission分支定点深入；不授人类最终正确或execution approval，宽set/额外真值与score费用及回退近文。root必要原源/actual owner PRE通过并授窄锁；作者实际正文/完整邻接已顺读，root非作者实际正文/完整邻接/自身末注POST通过，窄锁释放。未核实现或复现，非日级Gate。
+
+- `SF-2026-ARXIV-2601-05487` — Daily `2026-01-13` 增量；[EvidFuse exact-v1](https://arxiv.org/html/2601.05487v1) §4.2/§5.4/AppendixA。2+2+2=6，证据到达与固定叙事顺序差额深入；不发明commit/provenance协议，实际API/时间及工具失败反侧近文。独立原证/actual owner PRE通过，root授Ch81窄锁；作者完整局部邻接顺读，root非写入者实际199–226完整邻接及本末注POST PASS，窄锁释放。未核artifact/复现，非日级Gate。
+
+- 2026-01-28 来源遗漏补查，arXiv:2601.17915v1：本日具名必要 Source 复用；root 实际逐字拟文、对应正文完整局部邻接 PRE 通过后授本段与自身末注窄锁。已写入，resume_20260128_audit 非作者实际正文、完整局部邻接与自身末注 POST 通过，窄锁释放；原直接反侧与费用/失败回退近正文保留，未核 artifact 或复现。<!-- source-family:SF-2026-ARXIV-2601-17915 -->
+- 2026-01-28 来源遗漏补查，arXiv:2601.17471v1：本日具名必要 Source 复用；root 实际逐字拟文、对应正文完整局部邻接 PRE 通过后授本段与自身末注窄锁。已写入，resume_20260128_audit 非作者实际正文、完整局部邻接与自身末注 POST 通过，窄锁释放；原直接反侧与费用/失败回退近正文保留，未核 artifact 或复现。<!-- source-family:SF-2026-ARXIV-2601-17471 -->
+
+- `SF-2026-ARXIV-2602-11782` — Daily `2026-02-14`补查；[exact-v1](https://arxiv.org/html/2602.11782v1)，2+2+2=6。必要Source经review_20260214非作者限定通过，actualowner/完整局部与逐字PRE经root通过并授本一段及本人末注窄锁；作者已实际顺读新正文与完整邻接，root非writer actualPOST通过、窄锁释放。费用、直接反侧与回退近正文，不授全recipe、实现复现或DAY。 本轮补查事件的首次公开日期未证，必要Source/PRE/实际POST研究仍有效，但不计本日已确认新增成果；归属只按[本日日报§5](../../papers/2026/02/14/README.md#5-缺口与下一步)的57日期请求定点重开，不撤正文或补造公开日。

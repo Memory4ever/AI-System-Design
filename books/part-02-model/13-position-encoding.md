@@ -160,6 +160,10 @@ q_m^T k_n
 
 点积中的位置影响只与相对偏移 `n-m` 有关。RoPE 因而在保留绝对相位的同时，让 attention score 自然携带相对位置结构。
 
+上面的旋转恒等式并不要求每个 head 的全部坐标都带位置相位。若把 Query/Key 分成旋转子空间 `q_rot/k_rot` 与其余 `q_plain/k_plain`，只对前者使用 RoPE，匹配就分成 `q_rot^T R_(n-m) k_rot + q_plain^T k_plain`；后一项仍可做内容匹配，而不是被删除的容量。选择旋转比例因而是在同一个 head 内分配位置调制与无旋转匹配的坐标，需要按二维 pair 选择合法偶数维度，并绑定训练时使用的频率/维度配置。[partial RoPE 的受限从头预训练对照](https://arxiv.org/html/2603.11611v1)在所测 1B/8B、顺序/平行 block 与有限训练长度中发现，名义约一成的旋转维度常接近全旋转的最终 loss；这不是证明固定一成普遍最优，更不是允许对既有 checkpoint 直接删去旋转而保持行为。<!-- source-family:SF-2026-ARXIV-2603-11611 -->
+
+完全 NoPE、只旋转极少 pair 与适度 partial RoPE 也不是同一个稳定性承诺：受测 NoPE 在平行 block 及长窗顺序训练中可出现 loss spike，QK-Norm 能缓解，但稳定后仍可处于更高 loss 分支；部分任务和较长长度也保留 partial 与 full 的差异。因此选择应同时验收训练轨迹、目标质量与实际旋转维数，而不是只看是否收敛或平均任务分数。这里线性减少的只是按最大长度预计算的 sine/cosine 表存储，不是 Key/Value cache、整机显存或端到端服务时延；长窗外推仍未验证，既有 full RoPE、已校准的 partial 配置和其他位置方案应按原训练/负载条件共存，质量或稳定性失配时不以表缓存节省覆盖回退条件。
+
 这也给出一种内容变化时仍能偏好特定相对位置的条件分支：若某个 head 的 pre-RoPE Query/Key **activation** 在不同 token 上集中于近似相同方向，且范数与 token-pair 系数变化很小，其二维 pair 的点积可近似为相对位移上的 Fourier 项；幅度与相位近乎不变时，位置曲线便可能主导该 head 的注意力。这里低秩的是受测激活，不是投影权重；仅看到 rank-one、却未控制方向符号和尺度变化，也不足以得到内容近不变的曲线。[受限研究](https://arxiv.org/html/2601.08297v1)的频段干预进一步改变局部位置偏好，但不证明所有模型都依赖同一频段。
 
 该分支不能把 RoPE 变成通用的“语义无关定位器”：自然文本与随机 token 实验采用不同强度阈值，不能据此声称相同阈值下的 OOD 保持；特定 head 的近不变性也不等于整层或最终输出不依赖内容。训练理论只覆盖有共同方向、正交语义坐标与指定频率条件的受限两层模型、目标及优化设定，不认证真实 LLM 都会沿这条路径学会位置规则。频段诊断还增加采样与干预成本，未证明权重压缩或长上下文收益；这些条件未满足时，仍保留一般的内容相关 Query/Key 与原 RoPE 机制，而不据低秩观察删减权重。<!-- source-family:SF-2026-ARXIV-2601-08297 -->
@@ -268,6 +272,10 @@ RoPE 在任意整数位置都能计算旋转，因此比固定 learned table 更
 
 调整 RoPE 的频率坐标，与对 attention signal 的谱幅度乘一个平滑窗，也是不同对象：前者改变旋转相位，后者改变对应分量的幅度，不能把连续高通滤波的 sinc/ringing 论证直接赋给 frequency initialization。[CoPE exact-v1](https://arxiv.org/html/2602.05258v1)提出低频软变换并给出有限长窗对照，但其幅度窗证明不认证频率替换的普遍等价；精确默认比例叙述不一致时，不应拼成可执行配置。初始化替换、64K continued pretraining 与推理期 YaRN 扩窗需分别记录身份和成本，所谓 drop-in 不等于无再训练验证；GPQA 等切片仍可低于 hard clipping。变换失配、短窗质量退步或成本不值得时，保留原 RoPE 频率、已训练窗口、经独立校准的 scaling 或分段检索，不由长窗平均收益覆盖这些共存边界。<!-- source-family:SF-2026-ARXIV-2602-05258 -->
 
+RoPE 也可以不改频率，而限制每个二维通道参与匹配的距离：超过该通道波长后，将它对 QK logit 的贡献置零，再对汇总 logit 做 softmax。这不是屏蔽整个远处 token，Value 与历史仍可由低频通道读取；scaling 改频率时阈值也须重算。一个实现按16个 head 维度共用组内最大阈值，跳过全被裁掉组的 QK/key 读取，临界组再 mask；它是分组近似，不是 dense 算子等价，也不减少 KV 容量。
+
+周期重复不证明真实 head 只在第一周期内使用通道。[WavePrune v1](https://arxiv.org/html/2610.06963v1)中，Llama3.1-8B 的检索 head 借高频通道读取远超波长的内容，裁剪后退步，多种缓解未恢复；其他模型平均改善亦掩盖任务回退。应按模型/head/频率/检索距离验依赖，分别测 kernel 时间和任务质量，付出阈值、专用 kernel 与可能重训成本。原件 A100/BF16 kernel 测量不授全服务 SLO；远距信号删除未验时，原 RoPE/dense、已校准 scaling 与分段检索仍成立。<!-- source-family:SF-2026-ARXIV-2610-06963 -->
+
 更复杂的位置机制可以改善长度泛化，却增加数值精度、频率别名和训练—推理不一致。消融或长序列行为不稳定时，应回到已训练窗口、分段 Context 或显式检索；绝对、相对、RoPE 与 ALiBi 仍是不同 workload 下的条件分支。
 
 ### 隐藏坐标的相似不能替代输出分布的几何
@@ -329,6 +337,8 @@ Transformer 取消递归后获得并行性，也失去了天然顺序。Position
 Learned 与 sinusoidal absolute encoding 在输入端加入位置，relative representation 直接改变 pair 交互，RoPE 则用旋转让点积依赖相对位移。它们解决“模型如何看到位置”，不单独解决“模型能否有效使用任意长上下文”。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2603-11611` — Daily补查 `2026-03-14`；[exact-v1](https://arxiv.org/html/2603.11611v1) §3–6、A/B/C与Table4；2+1+2=5。root 非准备者实际必要原证、Ch13完整局部/Ch12–14交接及逐字PRE通过；root窄写后，非写入者 mar14_supplement 实际顺读新增/完整邻接及本人末注并回对原证，POST通过，窄锁释放，不授DAY。只采旋转子空间容量分配与从头训练 stability/quality 分账；不采通用一成最优、已有checkpoint删维等价、KV/整机显存或服务时延收益。受限训练/任务反侧近文，未核代码或复现实验。
 
 - `SF-2026-ARXIV-2601-16450` — Daily `2026-01-27`；[exact-v1](https://arxiv.org/html/2601.16450v1) §2.2–4.2 与 §5.1 构造开头。3+1+3=7，深入只修正精确算术对称性移植有限float时的条件；fixed left-associative、ties-even、正确舍入exp/ReLU属于该网络定义，首二交换与长序列碰撞反侧保留。不采用一般GPU归约、实际LLM长度阈值或舍入替代位置编码。root必要原源/具体owner写前核通过并授窄锁；root实际22/31/33/35与32–42前后交接非作者POST通过，日级Gate待验。未运行代码或复现实验。
 

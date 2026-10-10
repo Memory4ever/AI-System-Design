@@ -1,0 +1,4056 @@
+LongFlow: Efficient KV Cache Compression for Reasoning Models
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Preliminary
+2.1
+Background: Attention, KV cache, and Hardware-Aware Optimization
+2.2
+Revisiting KV cache Compression in the Era of Long Reasoning Models
+3
+Method
+3.1
+A Lightweight Design Philosophy
+3.2
+Derivation of the Importance Metric
+3.3
+Theoretical Justification of the Approximations
+3.4
+High-Performance Implementation
+4
+Experiments
+4.1
+Experimental Setup
+4.2
+Main Results on Model Accuracy
+4.3
+Performance on Different Model Sizes
+4.4
+Throughput and Memory Analysis
+5
+Related Work
+Reasoning Models
+KV Cache Compression
+6
+Conclusion
+Dependence on query stability.
+Limited to long-output decoding.
+References
+A
+Detailed Error Bound Derivation
+A.1
+Bounding the Error from the Denominator Approximation
+A.2
+Bounding the Error from the Query Approximation
+A.3
+Combined Error Bound
+B
+Algorithm of LongFlow Kernel
+C
+Additional Figures
+License: arXiv.org perpetual non-exclusive license
+arXiv:2603.11504v1 [cs.LG] 12 Mar 2026
+LongFlow: Efficient KV Cache Compression for Reasoning Models
+Yi Su
+†
+†
+thanks:
+Equal Contribution.
+Affiliation:
+School of Computer Science and Technology, Soochow University, China
+Email:
+yisunlp@outlook.com
+Zhenxu Tian
+1
+1
+footnotemark:
+1
+Affiliation:
+School of Computer Science and Technology, Soochow University, China
+Dan Qiao
+Affiliation:
+ByteDance
+Yuechi Zhou
+Affiliation:
+School of Computer Science and Technology, Soochow University, China
+Juntao Li
+†
+†
+thanks:
+Corresponding author.
+Affiliation:
+School of Computer Science and Technology, Soochow University, China
+Min Zhang
+Affiliation:
+School of Computer Science and Technology, Soochow University, China
+Abstract
+Recent reasoning models such as OpenAI-o1 and DeepSeek-R1 have shown strong performance on complex tasks including mathematical reasoning and code generation. However, this performance gain comes with substantially longer output sequences, leading to significantly increased deployment costs. In particular, long outputs require large KV caches, resulting in high memory consumption and severe bandwidth pressure during attention computation.
+Most existing KV cache optimization methods are designed for long-input, short-output scenarios and are ineffective for the long-output setting of reasoning models. Moreover, importance estimation in prior work is computationally expensive and becomes prohibitive when continuous re-evaluation is required during long generation.
+To address these challenges, we propose
+LongFlow
+, a KV cache compression method with an efficient importance estimation metric derived from an intermediate result of attention computation using only the current query. This design introduces negligible computational overhead and requires no auxiliary storage. We further develop a custom kernel that fuses FlashAttention, importance estimation, and token eviction into a single optimized operator, improving system-level efficiency.
+Experiments show that LongFlow achieves up to an 11.8
+×
+\times
+throughput improvement with 80% KV cache compression with minimal impact on model accuracy.
+1
+1
+1
+Code is available at
+https://github.com/yisunlp/LongFLow
+.
+1
+Introduction
+The rapid advancement of Large Language Models (LLMs)
+(
+Yang et al., 2024
+;
+Grattafiori et al., 2024
+;
+Hurst et al., 2024
+;
+Liu et al., 2024a
+)
+has marked a pivotal stage in artificial intelligence, achieving state-of-the-art performance across a wide range of tasks. Recently, a new class of
+reasoning models
+has emerged to explicitly tackle complex reasoning problems
+(
+Guo et al., 2025
+;
+Jaech et al., 2024
+;
+Team et al., 2025
+;
+Yang et al., 2025
+;
+Meta, 2025
+)
+. These models rely on long Chain-of-Thought (CoT) reasoning and generate extensive intermediate steps during inference. While highly effective in domains such as mathematical reasoning and code generation, they introduce new challenges for efficient training and deployment.
+A key drawback of reasoning models is their tendency to generate a large number of output tokens
+(
+Chen et al., 2024
+;
+Feng et al., 2025
+;
+Wang et al., 2025
+)
+, which substantially inflates the KV cache and leads to severe memory and bandwidth bottlenecks during attention computation. Although prior work has explored KV cache compression, most methods are designed for long-input, short-output scenarios and are ill-suited for long-output generation. Some approaches only compress the KV cache during the prefill stage
+(
+Li et al., 2024
+;
+Cai et al., 2024
+;
+Su et al., 2025
+)
+, while others incur significant computational overhead and require additional auxiliary storage
+(
+Zhang et al., 2023
+;
+Guo et al., 2024
+)
+. These limitations are particularly pronounced in long-output settings, highlighting the need for more efficient KV cache compression methods for reasoning models.
+To address this gap, we propose
+LongFlow
+, an efficient KV cache compression method tailored for long-output generation. The core idea of LongFlow is a fast yet accurate importance estimation metric for historical tokens, derived directly from an intermediate value of the standard attention computation using only the current query. This design requires no auxiliary storage and introduces negligible computational overhead. We provide both theoretical justification, showing that the metric approximates attention output loss, and empirical validation through extensive experiments.
+Beyond the algorithmic design, we introduce several system-level optimizations to maximize practical efficiency. We adopt a static KV cache that pre-allocates memory to avoid fragmentation and dynamic allocation overhead. To further improve hardware utilization, we implement a custom Triton kernel that fuses FlashAttention, importance estimation, and token eviction into a single optimized operator, reducing attention latency from 47 ms to 8 ms (Figure
+1
+). Overall, LongFlow achieves an 11.8
+×
+\times
+throughput improvement with an 80% KV cache compression ratio, while preserving most of the model accuracy.
+Our contributions are summarized as follows:
+•
+A lightweight KV cache compression algorithm for long-output generation.
+We propose LongFlow, which introduces an accurate importance metric computed efficiently from the current query and intermediate attention results, with negligible overhead.
+•
+A fused, high-performance attention kernel.
+We design a custom Triton kernel that integrates attention computation, importance estimation, and token eviction into a single optimized operator.
+•
+State-of-the-art efficiency for reasoning models.
+Experiments demonstrate up to an 11.8
+×
+\times
+throughput improvement and an 80% reduction in KV cache size, with minimal impact on model accuracy.
+2
+Preliminary
+2.1
+Background: Attention, KV cache, and Hardware-Aware Optimization
+The attention mechanism
+(
+Vaswani, 2017
+)
+is a core component of LLMs. Given an input sequence
+𝐗
+∈
+ℝ
+b
+×
+s
+×
+d
+\mathbf{X}\in\mathbb{R}^{b\times s\times d}
+, where
+b
+b
+is the batch size,
+s
+s
+is the sequence length, and
+d
+d
+is the hidden dimension, it is first projected into
+𝐐
+,
+𝐊
+,
+𝐕
+\mathbf{Q},\mathbf{K},\mathbf{V}
+by learnable weight matrices
+𝐖
+q
+,
+𝐖
+k
+,
+𝐖
+v
+∈
+ℝ
+d
+×
+d
+\mathbf{W}_{q},\mathbf{W}_{k},\mathbf{W}_{v}\in\mathbb{R}^{d\times d}
+. For simplicity, we omit the number of the attention heads.
+The attention output is computed using the Scaled Dot-Product Attention mechanism as follows:
+Attention
+​
+(
+𝐐
+,
+𝐊
+,
+𝐕
+)
+=
+softmax
+​
+(
+M
+​
+a
+​
+s
+​
+k
+​
+(
+𝐐𝐊
+T
+d
+k
+)
+)
+​
+𝐕
+\text{Attention}(\mathbf{Q},\mathbf{K},\mathbf{V})=\text{softmax}\left(Mask(\frac{\mathbf{QK}^{T}}{\sqrt{d_{k}}})\right)\mathbf{V}
+(1)
+where
+d
+k
+d_{k}
+is the dimension of the key vectors.
+However, this attention mechanism relies on all past
+𝐊
+\mathbf{K}
+and
+𝐕
+\mathbf{V}
+when calculating the output of the current step. Therefore, LLMs typically utilize KV cache to accelerate auto-regressive decoding. The generation process of LLMs with KV cache is divided into the prefill phase and the decoding phase
+(
+Patel et al., 2024
+)
+.
+Figure 1:
+Attention module latency of H2O and our kernel on Qwen3-8B with batch size 128 and sequence length 3200. Both methods evict one token after each attention computation.
+i)
+During the prefill phase, given input
+𝑿
+\displaystyle{\bm{X}}
+, the Keys
+𝑲
+<
+n
+\displaystyle{\bm{K}}_{<n}
+and Values
+𝑽
+<
+n
+\displaystyle{\bm{V}}_{<n}
+are computed and cached.
+ii)
+During the decoding phase, only the Keys and Values of the new token
+x
+n
+x_{n}
+need to be calculated, which are then combined with the cached Keys and Values to execute attention computation.
+From Equation
+1
+, we can find that the classical attention computation is a memory-bound operation, as it requires multiple intermediate value accesses in HBM. Fortunately, Flash-Attention
+Dao et al. (2022)
+;
+Dao (2024)
+uses IO-aware operations to minimize the number of read and write operations to HBM. By processing the computation in blocks (tiling) and leveraging on-chip SRAM to store intermediate results, Flash-Attention avoids materializing the full N×N attention score matrix in HBM. This dramatically reduces memory traffic, leading to significant speedups and a lower memory footprint. Inspired by this IO-aware approach, our custom kernel also employs a block-wise computation strategy to ensure maximum efficiency, as illustrated in Figure
+2
+.
+2.2
+Revisiting KV cache Compression in the Era of Long Reasoning Models
+While prior KV cache compression techniques have demonstrated considerable success in the traditional paradigm of long-input, short-output tasks, their core design assumptions are fundamentally challenged by the rise of long reasoning models. The shift to a long-output paradigm exposes several critical limitations in these established methods:
+Prefill-Only Compression.
+Many methods are confined to the prefill stage, compressing only the initial prompt
+(
+Cai et al., 2024
+)
+. In long-output scenarios, where most of the tokens are generated during the decoding phase, this approach results in a drastically diminished compression ratio.
+High Computational and Memory Overhead.
+Existing methods rely on token importance for eviction. The importance evaluation process is computationally expensive, adding significant latency to each compression step
+(
+Guo et al., 2024
+;
+Cai et al., 2025
+)
+. Moreover, these methods often require storing auxiliary metadata, such as attention scores
+(
+Zhang et al., 2023
+)
+or past queries
+(
+Li et al., 2024
+)
+, which consumes extra memory and partially cancels out the benefits of compression.
+Poor Compatibility with Modern Fused Kernels.
+The performance of modern inference systems heavily relies on operator fusion like Flash-Attention
+(
+Dao et al., 2022
+;
+Dao, 2024
+)
+or Paged-Attention
+(
+Kwon et al., 2023
+)
+.
+However, many compression algorithms are not compatible with these kernels.
+Their logic can interrupt the fusion process, forcing data to be moved between SRAM and HBM, or they may require recalculating intermediate results that were already available during the attention step, which can make the overall inference process even slower.
+These challenges require a complete redesign of KV cache compression based on the principles of dynamic applicability, lower overhead, and system-level implementation.
+3
+Method
+In this section, we introduce LongFlow, a novel KV cache compression method designed to overcome the limitations of prior work. Our approach is built on three pillars: a lightweight design philosophy, a rigorous theoretical derivation, and a high-performance system implementation.
+3.1
+A Lightweight Design Philosophy
+The design of LongFlow is guided by a lightweight philosophy, standing in stark contrast to the conventional "look-back" approach of many prior methods. These methods assume that an accurate importance estimation requires aggregating historical information. As previously analyzed, this inherent dependency on historical data leads to prohibitive computational and memory overheads.
+To break from this costly paradigm, we built LongFlow upon two core principles:
+The Principle of Zero-History Estimation.
+Our central hypothesis is that the current query,
+𝐪
+𝐭
+\mathbf{q_{t}}
+contains sufficient information to effectively estimate the importance of all historical tokens.
+To validate this premise, we conduct a preliminary analysis of SnapKV
+(
+Li et al., 2024
+)
+.
+We evaluate its performance on the LongBench benchmark
+(
+Bai et al., 2023
+)
+while reducing the size of its query observation window. The results in Figure
+5(a)
+in Appendix show that the performance of SnapKV degrades only slightly as the query window gets smaller, which empirically demonstrates its remarkable robustness.
+This evidence highlights the validity of the single-query method for importance estimation, forming the empirical foundation for our lightweight design.
+The Principle of Zero-Cost Estimation
+The second principle guiding LongFlow’s design is Zero-Cost Estimation. This principle posits that the compression mechanism should not be an expensive, standalone process, but rather an intrinsic and nearly-free byproduct of the main attention computation. This stands in contrast to prior methods that often treat the importance estimation as a distinct step performed after the attention calculation.
+Our method implements this principle by deriving the importance metric directly from an intermediate value of the standard attention forward pass which allows us to reuse the values that must be computed for the attention output.
+The reuse eliminates the need for auxiliary storage and ensures that the compression step adds no overhead.
+3.2
+Derivation of the Importance Metric
+Our derivation of the importance metric begins with a formal definition of the eviction objective. Ideally, at any given step, we should evict the token whose removal has the minimal impact on the final logits across all future generation steps. This globally optimal objective is computationally intractable. To form a tractable objective, we first simplify our goal to minimizing the impact on the immediate next step’s attention output,
+𝐨
+t
++
+1
+\mathbf{o}_{t+1}
+:
+arg
+⁡
+min
+𝑖
+​
+‖
+𝐨
+t
++
+1
+−
+𝐨
+t
++
+1
+(
+∖
+i
+)
+‖
+2
+,
+\underset{i}{\arg\min}\left\|\mathbf{o}_{t+1}-\mathbf{o}_{t+1}^{(\setminus i)}\right\|^{2},
+(2)
+where
+𝐨
+t
++
+1
+(
+∖
+i
+)
+\mathbf{o}_{t+1}^{(\setminus i)}
+is the new attention output computed without the key-value pair of token
+t
+i
+t_{i}
+.
+Although this objective is greatly simpler, it is still an unrealizable objective as it depends on the future query
+𝐪
+t
++
+1
+\mathbf{q}_{t+1}
+.
+Fortunately, we find a good approximation for this objective.
+In our preliminary exploration, we find that the adjacent queries (
+𝐪
+t
+,
+𝐪
+t
++
+1
+\mathbf{q}_{t},\mathbf{q}_{t+1}
+) have a high similarity (see Figure
+5(b)
+in Appendix, similar observation can be found in
+Su et al. (2025)
+). Intuitively, since the attention output is a weighted sum of Value vectors driven by the attention scores
+𝐪
+T
+​
+𝐤
+\mathbf{q}^{T}\mathbf{k}
+, the strong similarity between adjacent queries implies that the overall attention distribution will be stable. This stability suggests that the impact of evicting a token at step
+t
+t
+is an excellent proxy for its impact at step
+t
++
+1
+t+1
+if we omit the softmax denominator.
+We thus formalize our practical approximation as follows:
+‖
+𝐨
+t
++
+1
+−
+𝐨
+t
++
+1
+(
+∖
+i
+)
+‖
+2
+≈
+‖
+𝐨
+t
+−
+𝐨
+t
+(
+∖
+i
+)
+‖
+2
+,
+where
+​
+i
+<
+t
+.
+\left\|\mathbf{o}_{t+1}-\mathbf{o}_{t+1}^{(\setminus i)}\right\|^{2}\approx\left\|\mathbf{o}_{t}-\mathbf{o}_{t}^{(\setminus i)}\right\|^{2},\quad\text{where}\ i<t.
+(3)
+A formal error analysis of this approximation is presented in Section
+3.3
+.
+Directly computing this objective for all candidate tokens remains prohibitively expensive. To derive an efficient proxy, we analyze the structure of the attention output. The exact change in the output
+𝐨
+t
+\mathbf{o}_{t}
+after evicting a historical token
+t
+i
+t_{i}
+is:
+Δ
+​
+𝐨
+t
+=
+𝐨
+t
+−
+𝐨
+t
+(
+∖
+i
+)
+=
+∑
+j
+=
+0
+t
+exp
+⁡
+(
+s
+t
+j
+)
+Z
+​
+𝐯
+j
+−
+∑
+j
+≠
+i
+exp
+⁡
+(
+s
+t
+j
+)
+Z
+(
+∖
+i
+)
+​
+𝐯
+j
+,
+\Delta\mathbf{o}_{t}=\mathbf{o}_{t}-\mathbf{o}_{t}^{(\setminus i)}=\sum_{j=0}^{t}\frac{\exp(s_{t}^{j})}{Z}\mathbf{v}^{j}-\sum_{j\neq i}\frac{\exp(s_{t}^{j})}{Z^{(\setminus i)}}\mathbf{v}^{j},
+(4)
+where the unnormalized attention score of token
+j
+j
+is
+s
+t
+j
+=
+𝐪
+t
+T
+​
+𝐤
+j
+/
+d
+k
+s_{t}^{j}=\mathbf{q}_{t}^{T}\mathbf{k}^{j}/\sqrt{d_{k}}
+, and
+Z
+=
+∑
+l
+=
+0
+t
+exp
+⁡
+(
+s
+t
+l
+)
+Z=\sum_{l=0}^{t}\exp(s_{t}^{l})
+and
+Z
+(
+∖
+i
+)
+=
+∑
+l
+≠
+i
+exp
+⁡
+(
+s
+t
+l
+)
+Z^{(\setminus i)}=\sum_{l\neq i}\exp(s_{t}^{l})
+are the softmax denominators before and after the eviction.
+The main complexity arises from the change in this denominator from
+Z
+Z
+to
+Z
+(
+∖
+i
+)
+Z^{(\setminus i)}
+.
+A further approximation is to omit the impact of eviction on the softmax denominator, assuming
+Z
+≈
+Z
+(
+∖
+i
+)
+Z\approx Z^{(\setminus i)}
+. This is a simple and reasonable assumption when the number of tokens is large (we discuss the error bound of this approximation in Section
+3.3
+).
+Under this approximation, the change in the output simplifies dramatically to the contribution vector of the evicted token itself:
+Δ
+​
+𝐨
+t
+≈
+∑
+j
+=
+0
+t
+exp
+⁡
+(
+s
+t
+j
+)
+Z
+​
+𝐯
+j
+−
+∑
+j
+≠
+i
+exp
+⁡
+(
+s
+t
+j
+)
+Z
+​
+𝐯
+j
+=
+exp
+⁡
+(
+s
+t
+i
+)
+Z
+​
+𝐯
+i
+=
+α
+t
+i
+​
+𝐯
+i
+,
+\begin{split}\Delta\mathbf{o}_{t}&\approx\sum_{j=0}^{t}\frac{\exp(s_{t}^{j})}{Z}\mathbf{v}^{j}-\sum_{j\neq i}\frac{\exp(s_{t}^{j})}{Z}\mathbf{v}^{j}\\
+&=\frac{\exp(s_{t}^{i})}{Z}\mathbf{v}^{i}=\alpha_{t}^{i}\mathbf{v}^{i},\end{split}
+(5)
+where
+α
+t
+i
+\alpha_{t}^{i}
+is the attention weight of token
+i
+i
+.
+Thus, the objective is simplified to finding the minimum
+α
+t
+i
+​
+𝐯
+i
+\alpha_{t}^{i}\mathbf{v}^{i}
+.
+We define the final importance score using the following equation for its computational simplicity and empirical effectiveness:
+LongFlowScore
+​
+(
+t
+i
+)
+=
+‖
+α
+t
+i
+​
+𝐯
+i
+‖
+1
+=
+α
+t
+i
+​
+∑
+l
+=
+1
+d
+|
+(
+𝐯
+i
+)
+l
+|
+.
+\text{LongFlowScore}(t_{i})=\left\|\alpha_{t}^{i}\mathbf{v}^{i}\right\|_{1}=\alpha_{t}^{i}\sum_{l=1}^{d}|(\mathbf{v}^{i})_{l}|.
+(6)
+The token with the minimum LongFlowScore is selected for eviction.
+This method is exceptionally efficient. The contribution vectors
+𝐜
+t
+i
+=
+α
+t
+i
+​
+𝐯
+i
+\mathbf{c}_{t}^{i}=\alpha_{t}^{i}\mathbf{v}^{i}
+are a necessary intermediate result in the standard attention computation. Therefore, calculating the LongFlow score only requires performing an additional, lightweight reduction operation on this existing intermediate tensor. This perfectly realizes our Zero-Cost Estimation principle.
+Figure 2:
+The data and computation flow of our method. O: attention output; I: LongFlowScore; S, P and G are intermediate states in kernel forward pass. (
+Left
+): The process of a decoding step. The current KV will cover a slot selected in the previous step, and then the static KV and Mask will be sent to the kernel together with Q for calculation to obtain the current attention output and the slot to be covered in the next step. (
+Middle
+): The data flow between HBM and SRAM in the kernel. KV and Mask will enter SRAM by block and perform fused attention calculation. (
+Right
+): The computational flow on chip. Unlike standard flash attention calculations, we split the matrix multiplication of P and V into two steps and derive LongFlowScore from the intermediate result G.
+3.3
+Theoretical Justification of the Approximations
+To derive the final LongFlow score from the ideal objective (from Equation
+2
+to Equation
+6
+), we introduce two primary approximations: (1) using the contribution vector
+𝐜
+t
+i
+\mathbf{c}_{t}^{i}
+as a proxy for the true attention output change
+Δ
+​
+𝐨
+t
+\Delta\mathbf{o}_{t}
+(the
+denominator approximation
+), and (2) using the current query
+𝐪
+t
+\mathbf{q}_{t}
+as a proxy for the next-step query
+𝐪
+t
++
+1
+\mathbf{q}_{t+1}
+(the
+query approximation
+). We now provide a brief analysis of the error bounds for each. The detailed proofs are available in Appendix
+A
+.
+The total error
+ℰ
+i
+\mathcal{E}_{i}
+for a given token
+t
+i
+t_{i}
+is the difference between the ideal next-step objective and our practical score’s squared magnitude:
+ℰ
+i
+=
+|
+‖
+𝐨
+t
++
+1
+−
+𝐨
+t
++
+1
+(
+∖
+i
+)
+‖
+2
+−
+‖
+α
+t
+i
+​
+𝐯
+i
+‖
+2
+|
+.
+\mathcal{E}_{i}=\left|\left\|\mathbf{o}_{t+1}-\mathbf{o}_{t+1}^{(\setminus i)}\right\|^{2}-\left\|\alpha_{t}^{i}\mathbf{v}_{i}\right\|^{2}\right|.
+(7)
+Using the triangle inequality, we can decompose this error into two distinct sources:
+ℰ
+i
+≤
+|
+‖
+𝐨
+t
++
+1
+−
+𝐨
+t
++
+1
+(
+∖
+i
+)
+‖
+2
+−
+‖
+𝐜
+t
++
+1
+i
+‖
+2
+|
+⏟
+Error from Denominator Approx.
++
+|
+‖
+𝐜
+t
++
+1
+i
+‖
+2
+−
+‖
+𝐜
+t
+i
+‖
+2
+|
+⏟
+Error from Query Drift
+.
+\mathcal{E}_{i}\leq\underbrace{\left|\left\|\mathbf{o}_{t+1}-\mathbf{o}_{t+1}^{(\setminus i)}\right\|^{2}-\left\|\mathbf{c}_{t+1}^{i}\right\|^{2}\right|}_{\text{Error from Denominator Approx.}}+\underbrace{\left|\left\|\mathbf{c}_{t+1}^{i}\right\|^{2}-\left\|\mathbf{c}_{t}^{i}\right\|^{2}\right|}_{\text{Error from Query Drift}}.
+(8)
+Error from the Denominator Approximation.
+This approximation replaces the true output change with the contribution vector of the evicted token. A rigorous algebraic manipulation shows that the remainder term of this approximation,
+𝐑
+t
++
+1
+i
+=
+Δ
+​
+𝐨
+t
++
+1
+−
+𝐜
+t
++
+1
+i
+\mathbf{R}_{t+1}^{i}=\Delta\mathbf{o}_{t+1}-\mathbf{c}_{t+1}^{i}
+, is bounded by
+‖
+𝐑
+t
++
+1
+i
+‖
+≤
+2
+​
+V
+​
+α
+t
++
+1
+i
+1
+−
+α
+t
++
+1
+i
+\|\mathbf{R}_{t+1}^{i}\|\leq\frac{2V\alpha_{t+1}^{i}}{1-\alpha_{t+1}^{i}}
+, where
+V
+=
+max
+j
+⁡
+‖
+𝐯
+j
+‖
+V=\max_{j}\|\mathbf{v}^{j}\|
+. This bound confirms that the approximation is highly accurate when the attention weight of the evicted token
+α
+t
+i
+\alpha_{t}^{i}
+is small. Since our method is designed to evict tokens with low attention, this approximation is well-justified.
+Error from the Query Approximation.
+Query approximation uses the score computed with the current query as a proxy for the ideal score that would be computed with the future query,
+𝐪
+t
++
+1
+\mathbf{q}_{t+1}
+. The error introduced by this temporal approximation originates from the difference in attention weights,
+|
+α
+t
++
+1
+i
+−
+α
+t
+i
+|
+|\alpha_{t+1}^{i}-\alpha_{t}^{i}|
+.
+Due to the Lipschitz continuity of the softmax function, the change in output weights is bounded by the maximum change in the input pre-softmax scores,
+s
+t
+j
+s_{t}^{j}
+:
+|
+α
+t
++
+1
+i
+−
+α
+t
+i
+|
+≤
+max
+j
+⁡
+|
+s
+t
++
+1
+j
+−
+s
+t
+j
+|
+.
+|\alpha_{t+1}^{i}-\alpha_{t}^{i}|\leq\max_{j}|s_{t+1}^{j}-s_{t}^{j}|.
+(9)
+The error in the scores,
+Δ
+​
+s
+j
+=
+s
+t
++
+1
+j
+−
+s
+t
+j
+\Delta s^{j}=s_{t+1}^{j}-s_{t}^{j}
+, arises from the query shift. By the Cauchy-Schwarz inequality, this error is bounded by
+|
+Δ
+​
+s
+j
+|
+≤
+‖
+𝐪
+t
++
+1
+−
+𝐪
+t
+‖
+⋅
+‖
+𝐤
+j
+‖
+d
+k
+|\Delta s^{j}|\leq\frac{\|\mathbf{q}_{t+1}-\mathbf{q}_{t}\|\cdot\|\mathbf{k}^{j}\|}{\sqrt{d_{k}}}
+. Assuming queries are normalized to unit vectors, we can relate the query difference to their cosine similarity:
+‖
+𝐪
+t
++
+1
+−
+𝐪
+t
+‖
+2
+=
+2
+​
+(
+1
+−
+cos
+​
+(
+𝐪
+t
+,
+𝐪
+t
++
+1
+)
+)
+\|\mathbf{q}_{t+1}-\mathbf{q}_{t}\|^{2}=2(1-\text{cos}(\mathbf{q}_{t},\mathbf{q}_{t+1}))
+. This gives a final bound on the maximum score error:
+max
+j
+⁡
+|
+Δ
+​
+s
+j
+|
+≤
+2
+​
+(
+1
+−
+cos
+​
+(
+𝐪
+t
+,
+𝐪
+t
++
+1
+)
+)
+⋅
+max
+j
+⁡
+‖
+𝐤
+j
+‖
+d
+k
+.
+\max_{j}|\Delta s^{j}|\leq\frac{\sqrt{2(1-\text{cos}(\mathbf{q}_{t},\mathbf{q}_{t+1}))}\cdot\max_{j}\|\mathbf{k}^{j}\|}{\sqrt{d_{k}}}.
+(10)
+This bound provides a strong theoretical guarantee. It shows that as the similarity between consecutive queries approaches 1, the error from our temporal approximation approaches 0.
+3.4
+High-Performance Implementation
+To realize the theoretical efficiency of LongFlow as practical speedups, we implement a high-performance system centered around a custom fused kernel.
+This section details our key system-level optimizations, including the memory management strategy and the fused attention & eviction kernel. Figure
+2
+shows the data and computation flow of our method.
+Static Memory and Consistent Workload.
+As established in our design philosophy, we employ a static KV cache and a consistent per-step eviction policy. The entire memory for the KV cache is pre-allocated to eliminate dynamic allocation overheads and memory fragmentation. By overwriting a single token at every decoding step, we ensure a consistent computational workload, which is particularly beneficial in distributed systems, as it guarantees a balanced workload and predictable overhead across all parallel workers.
+Fused Attention and Eviction Kernel.
+The core of our implementation is a custom Triton kernel that fuses the entire attention and eviction process. While our kernel is designed based on the I/O-aware principles of FlashAttention
+(
+Dao et al., 2022
+)
+, it incorporates three critical modifications to specifically and efficiently handle the auto-regressive decoding process with LongFlow:
+(1) Given that the query sequence length is always 1 during decoding, we eliminate the outer loop over the query dimension in standard FlashAttention.
+(2) To seamlessly integrate the online calculation of the LongFlowScore, we omit the running maximum used for numerical stability in safe softmax. To compensate and prevent potential overflow, we perform the calculation of softmax in FP32.
+(3) We restructure the computation to maximize data reuse for both tasks. Within the single loop over KV cache blocks, we compute the un-normalized contribution vectors
+e
+​
+x
+​
+p
+​
+(
+s
+​
+c
+​
+o
+​
+r
+​
+e
+​
+s
+)
+​
+V
+exp(scores)V
+as a key intermediate result. This tensor is then summed along the sequence dimension to update the final attention output accumulator, and its L1-norm is calculated to serve as the un-normalized LongFlowScore for that block.
+These modifications result in a single, highly-optimized operator that computes both the attention output and the token to evict in one pass, as detailed in Algorithm
+1
+in Appendix.
+4
+Experiments
+We conduct a series of experiments to comprehensively evaluate the effectiveness of LongFlow. Our evaluation focuses on three key aspects: model quality, inference speed, and memory efficiency.
+4.1
+Experimental Setup
+Models.
+We evaluate LongFlow on different reasoning models to demonstrate its applicability.
+Our experiments are primarily conducted on
+DeepSeek-R1-Distill-Llama-8B
+(
+Guo et al., 2025
+)
+and the
+Qwen3
+(
+Yang et al., 2025
+)
+series, including its 0.6B, 1.7B, 4B, and 8B variants.
+Datasets.
+Our evaluation spans a wide spectrum of challenging reasoning benchmarks to ensure a comprehensive assessment of model accuracy. For competition-level mathematics, we use problems from MATH-500
+(
+Hendrycks et al., 2021
+)
+, AMC-23
+(
+MAA, 2023
+)
+, AIME-24
+(
+MAA, 2024
+)
+and AIME-25
+(
+MAA, 2025
+)
+. To test advanced scientific reasoning, we employ the graduate-level expert QA from GPQA
+(
+Rein et al., 2024
+)
+, university-level problems from Minerva
+(
+Lewkowycz et al., 2022
+)
+, and Olympiad-level questions from OlympiadBench
+(
+He et al., 2024
+)
+. Finally, we include the widely-used GSM8K benchmark
+(
+Cobbe et al., 2021
+)
+for grade-school math word problems.
+Baselines.
+We compare LongFlow against several representative KV cache compression methods:
+•
+Vanilla:
+The standard attention without any KV cache management. It serves as the accuracy upper bound but represents the worst scenario for memory consumption and latency.
+•
+H2O
+(
+Zhang et al., 2023
+)
+: A classic importance-based method that prioritizes tokens based on accumulated attention scores.
+•
+VATP
+(
+Guo et al., 2024
+)
+: An advanced method that integrates both attention scores and Value vector information into its importance metric.
+•
+R-KV
+(
+Cai et al., 2025
+)
+: A recent method also designed for reasoning models. It incorporates information about repetitive patterns in the generation to guide its eviction policy.
+Evaluation Metrics.
+We evaluate all methods across two primary dimensions. For system performance, we measure the inference throughput, peak GPU memory usage, and memory fragments. For model accuracy, we report the task-specific accuracy on each of the benchmarks.
+Implementation Details.
+For our main experiments, the generation output length is set to 16,000 tokens. For all compression methods, we set the KV cache budget to be either 3,200 or 2,400 tokens.
+For H2O and VATP, this budget is evenly split between heavy-hitter tokens and recent tokens.
+For LongFlow, if the number of tokens in the prefill stage exceeds the budget, we first use SnapKV
+(
+Li et al., 2024
+)
+to compress the tokens to the budget size.
+For all the baselines, we set the compression interval to achieve a balance between compression ratio and inference speed.
+All the experiments are conducted on NVIDIA A100 40GB GPUs.
+4.2
+Main Results on Model Accuracy
+Model
+Method
+AIME24
+AIME25
+AMC
+GPQA
+GSM8K
+MATH
+Minerva
+Olympiad
+(30)
+(30)
+(40)
+(198)
+(1318)
+(500)
+(272)
+(675)
+DeepSeek-R1
+-Distill1
+-Llama-8B
+Budget = 2400
+Vanilla
+30.00
+20.00
+77.50
+41.41
+77.48
+83.40
+20.59
+44.30
+H2O
+43.33
+20.00
+65.00
+41.41
+77.71
+79.80
+19.12
+44.00
+R-KV
+36.67
+20.00
+75.00
+38.38
+77.41
+80.80
+20.22
+45.93
+VATP
+33.33
+13.33
+72.50
+33.84
+77.48
+79.80
+20.59
+43.56
+Ours
+33.33
+16.67
+70.00
+40.40
+77.71
+79.80
+20.22
+43.85
+Budget = 3200
+Vanilla
+30.00
+20.00
+77.50
+41.41
+77.47
+83.40
+20.59
+44.30
+H2O
+36.67
+23.33
+72.50
+38.38
+77.69
+81.60
+21.32
+46.22
+R-KV
+30.00
+23.33
+77.50
+42.93
+77.62
+82.40
+19.49
+46.81
+VATP
+40.00
+16.67
+72.50
+42.42
+77.39
+81.60
+19.12
+46.67
+Ours
+33.33
+26.67
+82.50
+40.91
+77.62
+79.80
+20.22
+45.93
+Qwen3-8B
+Budget = 2400
+Vanilla
+60.00
+46.67
+90.00
+34.85
+95.68
+92.60
+33.46
+58.22
+H2O
+40.00
+20.00
+65.00
+26.77
+95.98
+85.20
+32.35
+49.04
+R-KV
+33.33
+23.33
+85.00
+28.79
+96.13
+89.00
+32.72
+53.33
+VATP
+40.00
+26.67
+77.50
+23.23
+96.29
+87.60
+31.99
+49.33
+Ours
+36.67
+26.67
+80.00
+30.81
+95.83
+88.00
+31.25
+51.11
+Budget = 3200
+Vanilla
+60.00
+46.67
+90.00
+34.85
+95.68
+92.60
+33.46
+58.22
+H2O
+46.67
+26.67
+80.00
+27.78
+96.36
+90.40
+35.29
+53.78
+R-KV
+50.00
+33.33
+82.50
+32.32
+96.36
+91.60
+33.46
+55.56
+VATP
+43.33
+33.33
+82.50
+30.30
+96.43
+91.00
+34.19
+55.41
+Ours
+50.00
+26.67
+85.00
+30.30
+96.36
+89.80
+34.19
+55.56
+Table 1:
+Model Performance on different models across different datasets. Numbers in parentheses indicate dataset sizes.
+Bold
+indicates the best performance.
+We present our main results on model accuracy in Table
+1
+. The evaluation across two distinct model families and two KV cache budget settings demonstrates that LongFlow effectively preserves the reasoning capabilities of the base models, achieving performance that is highly competitive with state-of-the-art baselines and close to the uncompressed Vanilla model.
+Comparison With the Baselines.
+Across both models and budget settings, our proposed LongFlow demonstrates highly competitive performance against state-of-the-art baselines. R-KV generally achieves the highest average accuracy (with more memory for redundant token identification), establishing itself as a strong baseline focused on quality preservation. LongFlow consistently performs on par with or better than other methods like VATP and H2O.
+Comparison with Full KV and Different Cache Budgets.
+A key finding is that all compression methods, including LongFlow, successfully preserve the vast majority of the original model’s capabilities while operating on a significantly reduced KV cache (e.g., a 3.2k budget representing an 80% compression ratio for a 16k generation).
+As shown in Table
+1
+, the average performance degradation compared to the uncompressed Vanilla baseline is negligible to minor—as low as 0.08% for DeepSeek-R1-Distill-Llama-8B and approximately 1.3% for Qwen3-8B.
+When the KV cache budget is tightened from 3.2k to 2.4k, a graceful degradation is observed across all methods. LongFlow performs better under this pressure, showing less degradation than both H2O and VATP.
+4.3
+Performance on Different Model Sizes
+To assess the performance of LongFlow across different model sizes, we conduct a comparative analysis using the Qwen3 model family, including the 0.6B, 1.7B, 4B, and 8B variants.
+For this specific analysis, the AIME-24 and AIME-25 datasets were excluded due to their small sample sizes and for brevity.
+The results in Figure
+4
+(in Appendix
+C
+) show that LongFlow maintains a highly competitive performance, achieving results that are comparable or superior to the baselines across all tested model sizes and benchmarks, which demonstrates the effectiveness and robustness of our method.
+(a)
+Throughput
+(b)
+Memory usage
+(c)
+Memory fragment
+Figure 3:
+Performance comparison of LongFlow against baselines. The compression is conducted every step for LongFlow and every 128 steps for other methods. LongFlow achieves higher throughput and supports a larger maximum batch size due to superior memory management.
+4.4
+Throughput and Memory Analysis
+Finally, we evaluate the system-level performance of LongFlow in terms of throughput and memory efficiency. For this analysis, we use the Qwen3-1.7B on a single NVIDIA A100 40GB GPU. We configure a scenario with an input length of 512 and an output length of 16,000. We set the KV cache budget to 3,200 for all compression methods. To measure the maximum performance, we progressively increase the batch size for each method until an Out-of-Memory (OOM) error occurs. We report the throughput, peak memory footprint, and memory fragments in Figure
+3
+.
+The results clearly demonstrate LongFlow’s substantial advantages in both throughput and memory management. In terms of throughput, LongFlow outperforms FullKV by a remarkable 11.8 times and is approximately 4.0 times faster than other methods.
+Although LongFlow performs KV cache compression at every decoding step, its algorithmic efficiency and fused kernel implementation substantially reduce per-step overhead, enabling remarkably higher throughput than competing methods.
+Regarding peak memory usage, LongFlow’s footprint is comparable to other methods under the same budget, while R-KV consumes slightly more due to its more complex importance estimation logic.
+Notably, LongFlow’s advantage in memory management lies in its superior handling of fragmentation. Its static memory scheme and consistent per-step eviction policy result in a memory layout that is both less fragmented and highly predictable.
+This less fragmented memory layout allows LongFlow to support a larger maximum batch size than competing methods.
+The predictability makes LongFlow more stable and reliable in real-world deployment by eliminating runtime memory-related uncertainties,.
+5
+Related Work
+Reasoning Models
+While traditional LLMs perform well on general tasks, achieving breakthroughs in complex logical reasoning has remained a significant challenge. This bottleneck has recently been addressed by a new class of models named reasoning models designed for long CoT generation.
+Pioneered by OpenAI-o1
+(
+Jaech et al., 2024
+)
+, DeepSeek-R1
+(
+Guo et al., 2025
+)
+leverages Reinforcement Learning with Verifiable Rewards (RLVR) to unlock the model’s latent abilities for long CoT generation and high-level reasoning.
+These breakthroughs catalyze a subsequent wave of increasingly powerful reasoning models from numerous research labs, including Qwen3
+(
+Yang et al., 2025
+)
+, Gemini-2.5
+(
+Comanici et al., 2025
+)
+, and GPT-5
+(
+OpenAI, 2025
+)
+. Researchers have employed advanced training strategies to develop increasingly powerful models that mark new milestones.
+However, the long-CoT reasoning paradigm introduces significant deployment challenges. Generating lengthy sequences inflates the KV cache, leading to severe memory and computational bottlenecks. This problem is further exacerbated by the models’ tendency to overthink
+(
+Chen et al., 2024
+)
+. While numerous approaches have been proposed to develop more efficient reasoning models
+(
+Feng et al., 2025
+;
+Wang et al., 2025
+;
+Jiang et al., 2025
+)
+, they often focus on shortening the CoT, which risks constraining the model’s reasoning capability. Developing more effective methods remains an open challenge.
+KV Cache Compression
+KV cache compression is a widely used technique for improving the efficiency of LLM inference by retaining essential contextual information under limited memory budgets. Existing methods typically exploit attention patterns to identify and evict less important tokens, or adopt more explicit objectives that approximate attention output similarity
+(
+Feng et al., 2024
+)
+.
+Despite their effectiveness in long-input scenarios, these eviction-based methods suffer from irreversible information loss and often incur non-trivial computational overhead, making them less suitable for long-output generation. To address this, more recent approaches construct compact representations instead of directly discarding tokens, for example through semantic chunking
+(
+Liu et al., 2025
+)
+or cross-layer merging
+(
+Liu et al., 2024b
+)
+. Other methods periodically refresh cached representations to mitigate permanent information loss
+(
+Xu et al., 2024
+)
+. While promising, these techniques typically introduce additional computation or architectural complexity. In contrast, our work focuses on a fundamentally lightweight KV cache compression method specifically tailored to the long-output setting of reasoning models.
+6
+Conclusion
+This paper introduces LongFlow, a novel and lightweight KV cache compression method designed to mitigate the significant inference overhead in long-output reasoning models. Grounded in a zero-history and zero-cost design philosophy, LongFlow employs a highly efficient, theoretically-justified importance metric derived directly from intermediate attention values, incurring negligible computational cost.
+With our co-designed system, Longflow increase throughput by up to 11.8x and reduce the KV cache footprint by 80%, while maintaining high model accuracy. By striking an effective balance between performance and accuracy, LongFlow presents a practical pathway toward the efficient deployment of reasoning models.
+Limitations
+Despite strong empirical and system-level efficiency, LongFlow has several limitations.
+Dependence on query stability.
+LongFlow estimates token importance using only the current-step query and intermediate attention results. This design is most reliable when consecutive decoding queries are similar, which often holds in long chain-of-thought generation. However, in settings with abrupt distribution shifts (e.g., topic switches, tool-use interleaving, or highly stochastic decoding), the current query may be a weaker proxy for near-future behavior, potentially making eviction decisions less optimal.
+Limited to long-output decoding.
+LongFlow is optimized for autoregressive decoding with a query length of one and frequent per-step cache updates. It is not directly tailored to regimes dominated by long-input prefill, bidirectional attention, or non-autoregressive generation. A unified approach that jointly optimizes prefill and long-output decoding remains future work.
+References
+Bai
+et al.
+(2023)
+Y. Bai, X. Lv, J. Zhang, H. Lyu, J. Tang, Z. Huang, Z. Du, X. Liu, A. Zeng, L. Hou,
+et al.
+Longbench: a bilingual, multitask benchmark for long context understanding
+.
+arXiv preprint arXiv:2308.14508
+.
+Cited by:
+§3.1
+.
+Cai
+et al.
+(2025)
+Z. Cai, W. Xiao, H. Sun, C. Luo, Y. Zhang, K. Wan, Y. Li, Y. Zhou, L. Chang, J. Gu,
+et al.
+R-kv: redundancy-aware kv cache compression for training-free reasoning models acceleration
+.
+arXiv preprint arXiv:2505.24133
+.
+Cited by:
+§2.2
+,
+4th item
+.
+Cai
+et al.
+(2024)
+Z. Cai, Y. Zhang, B. Gao, Y. Liu, Y. Li, T. Liu, K. Lu, W. Xiong, Y. Dong, J. Hu,
+et al.
+Pyramidkv: dynamic kv cache compression based on pyramidal information funneling
+.
+arXiv preprint arXiv:2406.02069
+.
+Cited by:
+§1
+,
+§2.2
+.
+Chen
+et al.
+(2024)
+X. Chen, J. Xu, T. Liang, Z. He, J. Pang, D. Yu, L. Song, Q. Liu, M. Zhou, Z. Zhang,
+et al.
+Do not think that much for 2+ 3=? on the overthinking of o1-like llms
+.
+arXiv preprint arXiv:2412.21187
+.
+Cited by:
+§1
+,
+§5
+.
+Cobbe
+et al.
+(2021)
+K. Cobbe, V. Kosaraju, M. Bavarian, M. Chen, H. Jun, L. Kaiser, M. Plappert, J. Tworek, J. Hilton, R. Nakano,
+et al.
+Training verifiers to solve math word problems
+.
+arXiv preprint arXiv:2110.14168
+.
+Cited by:
+§4.1
+.
+Comanici
+et al.
+(2025)
+G. Comanici, E. Bieber, M. Schaekermann, I. Pasupat, N. Sachdeva, I. Dhillon, M. Blistein, O. Ram, D. Zhang, E. Rosen,
+et al.
+Gemini 2.5: pushing the frontier with advanced reasoning, multimodality, long context, and next generation agentic capabilities
+.
+arXiv preprint arXiv:2507.06261
+.
+Cited by:
+§5
+.
+Dao
+et al.
+(2022)
+T. Dao, D. Y. Fu, S. Ermon, A. Rudra, and C. Ré
+FlashAttention: fast and memory-efficient exact attention with IO-awareness
+.
+In
+Advances in Neural Information Processing Systems (NeurIPS)
+,
+Cited by:
+§2.1
+,
+§2.2
+,
+§3.4
+.
+Dao (2024)
+T. Dao
+FlashAttention-2: faster attention with better parallelism and work partitioning
+.
+In
+International Conference on Learning Representations (ICLR)
+,
+Cited by:
+§2.1
+,
+§2.2
+.
+Feng
+et al.
+(2025)
+S. Feng, G. Fang, X. Ma, and X. Wang
+Efficient reasoning models: a survey
+.
+arXiv preprint arXiv:2504.10903
+.
+Cited by:
+§1
+,
+§5
+.
+Feng
+et al.
+(2024)
+Y. Feng, J. Lv, Y. Cao, X. Xie, and S. K. Zhou
+Ada-kv: optimizing kv cache eviction by adaptive budget allocation for efficient llm inference
+.
+arXiv preprint arXiv:2407.11550
+.
+Cited by:
+§5
+.
+Grattafiori
+et al.
+(2024)
+A. Grattafiori, A. Dubey, A. Jauhri, A. Pandey, A. Kadian, A. Al-Dahle, A. Letman, A. Mathur, A. Schelten, A. Vaughan,
+et al.
+The llama 3 herd of models
+.
+arXiv preprint arXiv:2407.21783
+.
+Cited by:
+§1
+.
+Guo
+et al.
+(2025)
+D. Guo, D. Yang, H. Zhang, J. Song, R. Zhang, R. Xu, Q. Zhu, S. Ma, P. Wang, X. Bi,
+et al.
+Deepseek-r1: incentivizing reasoning capability in llms via reinforcement learning
+.
+arXiv preprint arXiv:2501.12948
+.
+Cited by:
+§1
+,
+§4.1
+,
+§5
+.
+Guo
+et al.
+(2024)
+Z. Guo, H. Kamigaito, and T. Watanabe
+Attention score is not all you need for token importance indicator in kv cache reduction: value also matters
+.
+arXiv preprint arXiv:2406.12335
+.
+Cited by:
+§1
+,
+§2.2
+,
+3rd item
+.
+He
+et al.
+(2024)
+C. He, R. Luo, Y. Bai, S. Hu, Z. L. Thai, J. Shen, J. Hu, X. Han, Y. Huang, Y. Zhang,
+et al.
+Olympiadbench: a challenging benchmark for promoting agi with olympiad-level bilingual multimodal scientific problems
+.
+arXiv preprint arXiv:2402.14008
+.
+Cited by:
+§4.1
+.
+Hendrycks
+et al.
+(2021)
+D. Hendrycks, C. Burns, S. Kadavath, A. Arora, S. Basart, E. Tang, D. Song, and J. Steinhardt
+Measuring mathematical problem solving with the math dataset
+.
+arXiv preprint arXiv:2103.03874
+.
+Cited by:
+§4.1
+.
+Hurst
+et al.
+(2024)
+A. Hurst, A. Lerer, A. P. Goucher, A. Perelman, A. Ramesh, A. Clark, A. Ostrow, A. Welihinda, A. Hayes, A. Radford,
+et al.
+Gpt-4o system card
+.
+arXiv preprint arXiv:2410.21276
+.
+Cited by:
+§1
+.
+Jaech
+et al.
+(2024)
+A. Jaech, A. Kalai, A. Lerer, A. Richardson, A. El-Kishky, A. Low, A. Helyar, A. Madry, A. Beutel, A. Carney,
+et al.
+Openai o1 system card
+.
+arXiv preprint arXiv:2412.16720
+.
+Cited by:
+§1
+,
+§5
+.
+Jiang
+et al.
+(2025)
+L. Jiang, X. Wu, S. Huang, Q. Dong, Z. Chi, L. Dong, X. Zhang, T. Lv, L. Cui, and F. Wei
+Think only when you need with large hybrid-reasoning models
+.
+arXiv preprint arXiv:2505.14631
+.
+Cited by:
+§5
+.
+Kwon
+et al.
+(2023)
+W. Kwon, Z. Li, S. Zhuang, Y. Sheng, L. Zheng, C. H. Yu, J. Gonzalez, H. Zhang, and I. Stoica
+Efficient memory management for large language model serving with pagedattention
+.
+In
+Proceedings of the 29th symposium on operating systems principles
+,
+pp. 611–626
+.
+Cited by:
+§2.2
+.
+Lewkowycz
+et al.
+(2022)
+A. Lewkowycz, A. Andreassen, D. Dohan, E. Dyer, H. Michalewski, V. Ramasesh, A. Slone, C. Anil, I. Schlag, T. Gutman-Solo,
+et al.
+Solving quantitative reasoning problems with language models
+.
+Advances in neural information processing systems
+35
+,
+pp. 3843–3857
+.
+Cited by:
+§4.1
+.
+Li
+et al.
+(2024)
+Y. Li, Y. Huang, B. Yang, B. Venkitesh, A. Locatelli, H. Ye, T. Cai, P. Lewis, and D. Chen
+Snapkv: llm knows what you are looking for before generation
+.
+Advances in Neural Information Processing Systems
+37
+,
+pp. 22947–22970
+.
+Cited by:
+§1
+,
+§2.2
+,
+§3.1
+,
+§4.1
+.
+Liu
+et al.
+(2024a)
+A. Liu, B. Feng, B. Xue, B. Wang, B. Wu, C. Lu, C. Zhao, C. Deng, C. Zhang, C. Ruan,
+et al.
+Deepseek-v3 technical report
+.
+arXiv preprint arXiv:2412.19437
+.
+Cited by:
+§1
+.
+Liu
+et al.
+(2024b)
+A. Liu, J. Liu, Z. Pan, Y. He, G. Haffari, and B. Zhuang
+Minicache: kv cache compression in depth dimension for large language models
+.
+Advances in Neural Information Processing Systems
+37
+,
+pp. 139997–140031
+.
+Cited by:
+§5
+.
+Liu
+et al.
+(2025)
+X. Liu, Z. Tang, P. Dong, Z. Li, Y. Liu, B. Li, X. Hu, and X. Chu
+Chunkkv: semantic-preserving kv cache compression for efficient long-context llm inference
+.
+arXiv preprint arXiv:2502.00299
+.
+Cited by:
+§5
+.
+MAA (2023)
+MAA
+American mathematics competitions (amc 10/12)
+.
+URL https://maa.org/math-competitions/amc
+.
+Cited by:
+§4.1
+.
+MAA (2024)
+MAA
+American invitational mathematics examination (aime)
+.
+URL https://maa.org/math-competitions/aime
+.
+Cited by:
+§4.1
+.
+MAA (2025)
+MAA
+American invitational mathematics examination (aime)
+.
+URL https://maa.org/math-competitions/aime
+.
+Cited by:
+§4.1
+.
+Meta (2025)
+A. Meta
+The llama 4 herd: the beginning of a new era of natively multimodal ai innovation
+.
+https://ai. meta. com/blog/llama-4-multimodal-intelligence/, checked on
+4
+(
+7
+),
+pp. 2025
+.
+Cited by:
+§1
+.
+OpenAI (2025)
+OpenAI
+GPT-5 system card
+.
+Cited by:
+§5
+.
+Patel
+et al.
+(2024)
+P. Patel, E. Choukse, C. Zhang, A. Shah, Í. Goiri, S. Maleki, and R. Bianchini
+Splitwise: efficient generative llm inference using phase splitting
+.
+In
+2024 ACM/IEEE 51st Annual International Symposium on Computer Architecture (ISCA)
+,
+pp. 118–132
+.
+Cited by:
+§2.1
+.
+Rein
+et al.
+(2024)
+D. Rein, B. L. Hou, A. C. Stickland, J. Petty, R. Y. Pang, J. Dirani, J. Michael, and S. R. Bowman
+Gpqa: a graduate-level google-proof q&a benchmark
+.
+In
+First Conference on Language Modeling
+,
+Cited by:
+§4.1
+.
+Su
+et al.
+(2025)
+Y. Su, Q. Qiu, Y. Zhou, J. Li, Q. Xia, P. Li, X. Duan, Z. Wang, and M. Zhang
+CaliDrop: kv cache compression with calibration
+.
+arXiv preprint arXiv:2507.19906
+.
+Cited by:
+§1
+,
+§3.2
+.
+Team
+et al.
+(2025)
+K. Team, A. Du, B. Gao, B. Xing, C. Jiang, C. Chen, C. Li, C. Xiao, C. Du, C. Liao,
+et al.
+Kimi k1. 5: scaling reinforcement learning with llms
+.
+arXiv preprint arXiv:2501.12599
+.
+Cited by:
+§1
+.
+Vaswani (2017)
+A. Vaswani
+Attention is all you need
+.
+Advances in Neural Information Processing Systems
+.
+Cited by:
+§2.1
+.
+Wang
+et al.
+(2025)
+J. Wang, J. Li, J. Hou, B. Yan, L. Wu, and M. Zhang
+Efficient reasoning for llms through speculative chain-of-thought
+.
+arXiv preprint arXiv:2504.19095
+.
+Cited by:
+§1
+,
+§5
+.
+Xu
+et al.
+(2024)
+F. Xu, T. Goyal, and E. Choi
+RefreshKV: updating small kv cache during long-form generation
+.
+arXiv preprint arXiv:2411.05787
+.
+Cited by:
+§5
+.
+Yang
+et al.
+(2025)
+A. Yang, A. Li, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Gao, C. Huang, C. Lv,
+et al.
+Qwen3 technical report
+.
+arXiv preprint arXiv:2505.09388
+.
+Cited by:
+§1
+,
+§4.1
+,
+§5
+.
+Yang
+et al.
+(2024)
+A. Yang, B. Yang, B. Hui, B. Zheng, B. Yu, C. Zhou, C. Li, C. Li, D. Liu, F. Huang, G. Dong, H. Wei, H. Lin, J. Tang, J. Wang, J. Yang, J. Tu, J. Zhang, J. Ma, J. Xu, J. Zhou, J. Bai, J. He, J. Lin, K. Dang, K. Lu, K. Chen, K. Yang, M. Li, M. Xue, N. Ni, P. Zhang, P. Wang, R. Peng, R. Men, R. Gao, R. Lin, S. Wang, S. Bai, S. Tan, T. Zhu, T. Li, T. Liu, W. Ge, X. Deng, X. Zhou, X. Ren, X. Zhang, X. Wei, X. Ren, Y. Fan, Y. Yao, Y. Zhang, Y. Wan, Y. Chu, Y. Liu, Z. Cui, Z. Zhang, and Z. Fan
+Qwen2 technical report
+.
+arXiv preprint arXiv:2407.10671
+.
+Cited by:
+§1
+.
+Zhang
+et al.
+(2023)
+Z. Zhang, Y. Sheng, T. Zhou, T. Chen, L. Zheng, R. Cai, Z. Song, Y. Tian, C. Ré, C. Barrett,
+et al.
+H2o: heavy-hitter oracle for efficient generative inference of large language models
+.
+Advances in Neural Information Processing Systems
+36
+,
+pp. 34661–34710
+.
+Cited by:
+§1
+,
+§2.2
+,
+2nd item
+.
+Appendix A
+Detailed Error Bound Derivation
+In this section, we provide the detailed proofs for the two key approximations that underpin the LongFlow method, justifying the claims made in Section
+3.3
+. Our goal is to bound the total error
+ℰ
+i
+=
+|
+‖
+𝐨
+t
++
+1
+−
+𝐨
+t
++
+1
+(
+∖
+i
+)
+‖
+2
+−
+‖
+𝐜
+t
+i
+‖
+2
+|
+\mathcal{E}^{i}=\left|\left\|\mathbf{o}_{t+1}-\mathbf{o}_{t+1}^{(\setminus i)}\right\|^{2}-\left\|\mathbf{c}_{t}^{i}\right\|^{2}\right|
+, which we decompose using the triangle inequality:
+ℰ
+i
+≤
+|
+‖
+𝐨
+t
++
+1
+−
+𝐨
+t
++
+1
+(
+∖
+i
+)
+‖
+2
+−
+‖
+𝐜
+t
++
+1
+i
+‖
+2
+|
+⏟
+Error from Denominator Approx.
++
+|
+‖
+𝐜
+t
++
+1
+i
+‖
+2
+−
+‖
+𝐜
+t
+i
+‖
+2
+|
+⏟
+Error from Query Drift
+.
+\mathcal{E}^{i}\leq\underbrace{\left|\left\|\mathbf{o}_{t+1}-\mathbf{o}_{t+1}^{(\setminus i)}\right\|^{2}-\left\|\mathbf{c}_{t+1}^{i}\right\|^{2}\right|}_{\text{Error from Denominator Approx.}}+\underbrace{\left|\left\|\mathbf{c}_{t+1}^{i}\right\|^{2}-\left\|\mathbf{c}_{t}^{i}\right\|^{2}\right|}_{\text{Error from Query Drift}}.
+(11)
+We now derive explicit bounds for each of these two error terms.
+A.1
+Bounding the Error from the Denominator Approximation
+This error arises from approximating the true change in attention output,
+Δ
+​
+𝐨
+t
++
+1
+=
+𝐨
+t
++
+1
+−
+𝐨
+t
++
+1
+(
+∖
+i
+)
+\Delta\mathbf{o}_{t+1}=\mathbf{o}_{t+1}-\mathbf{o}_{t+1}^{(\setminus i)}
+, with the contribution vector
+𝐜
+t
++
+1
+i
+=
+α
+t
++
+1
+i
+​
+𝐯
+i
+\mathbf{c}_{t+1}^{i}=\alpha_{t+1}^{i}\mathbf{v}^{i}
+. We now derive an exact expression for the remainder term
+𝐑
+t
++
+1
+i
+=
+Δ
+​
+𝐨
+t
++
+1
+−
+𝐜
+t
++
+1
+i
+\mathbf{R}_{t+1}^{i}=\Delta\mathbf{o}_{t+1}-\mathbf{c}_{t+1}^{i}
+.
+First, let us expand the terms. The original attention output is a sum over all
+t
+t
+historical tokens, while the output after eviction is a sum over the remaining
+t
+−
+1
+t-1
+tokens with re-normalized attention weights:
+𝐨
+t
++
+1
+\displaystyle\mathbf{o}_{t+1}
+=
+∑
+j
+=
+1
+t
+α
+t
++
+1
+j
+​
+𝐯
+j
+=
+α
+t
++
+1
+i
+​
+𝐯
+i
++
+∑
+j
+≠
+i
+α
+t
++
+1
+j
+​
+𝐯
+j
+\displaystyle=\sum_{j=1}^{t}\alpha_{t+1}^{j}\mathbf{v}^{j}=\alpha_{t+1}^{i}\mathbf{v}^{i}+\sum_{j\neq i}\alpha_{t+1}^{j}\mathbf{v}^{j}
+𝐨
+t
++
+1
+(
+∖
+i
+)
+\displaystyle\mathbf{o}_{t+1}^{(\setminus i)}
+=
+∑
+j
+≠
+i
+α
+t
++
+1
+j
+,
+(
+∖
+i
+)
+​
+𝐯
+j
+\displaystyle=\sum_{j\neq i}\alpha_{t+1}^{j,(\setminus i)}\mathbf{v}^{j}
+Substituting these into the definition of the remainder term:
+𝐑
+t
++
+1
+i
+\displaystyle\mathbf{R}_{t+1}^{i}
+=
+Δ
+​
+𝐨
+t
++
+1
+−
+𝐜
+t
++
+1
+i
+\displaystyle=\Delta\mathbf{o}_{t+1}-\mathbf{c}_{t+1}^{i}
+=
+(
+𝐨
+t
++
+1
+−
+𝐨
+t
++
+1
+(
+∖
+i
+)
+)
+−
+𝐜
+t
++
+1
+i
+\displaystyle=\left(\mathbf{o}_{t+1}-\mathbf{o}_{t+1}^{(\setminus i)}\right)-\mathbf{c}_{t+1}^{i}
+=
+(
+α
+t
++
+1
+i
+​
+𝐯
+i
++
+∑
+j
+≠
+i
+α
+t
++
+1
+j
+​
+𝐯
+j
+)
+\displaystyle=\biggl(\alpha_{t+1}^{i}\mathbf{v}^{i}+\sum_{j\neq i}\alpha_{t+1}^{j}\mathbf{v}^{j}\biggr)
+−
+(
+∑
+j
+≠
+i
+α
+t
++
+1
+j
+,
+(
+∖
+i
+)
+​
+𝐯
+j
+)
+−
+α
+t
++
+1
+i
+​
+𝐯
+i
+\displaystyle\quad-\biggl(\sum_{j\neq i}\alpha_{t+1}^{j,(\setminus i)}\mathbf{v}^{j}\biggr)-\alpha_{t+1}^{i}\mathbf{v}^{i}
+=
+∑
+j
+≠
+i
+(
+α
+t
++
+1
+j
+−
+α
+t
++
+1
+j
+,
+(
+∖
+i
+)
+)
+​
+𝐯
+j
+.
+\displaystyle=\sum_{j\neq i}\left(\alpha_{t+1}^{j}-\alpha_{t+1}^{j,(\setminus i)}\right)\mathbf{v}^{j}.
+The key is to relate the new weights
+α
+t
++
+1
+j
+,
+(
+∖
+i
+)
+\alpha_{t+1}^{j,(\setminus i)}
+to the old weights
+α
+t
++
+1
+j
+\alpha_{t+1}^{j}
+. The new weights are re-normalized over a smaller set of tokens:
+α
+t
++
+1
+j
+,
+(
+∖
+i
+)
+=
+exp
+⁡
+(
+s
+t
++
+1
+j
+)
+∑
+l
+≠
+i
+exp
+⁡
+(
+s
+t
++
+1
+l
+)
+=
+exp
+⁡
+(
+s
+t
++
+1
+j
+)
+Z
+t
++
+1
+−
+exp
+⁡
+(
+s
+t
++
+1
+i
+)
+=
+exp
+⁡
+(
+s
+t
++
+1
+j
+)
+/
+Z
+t
++
+1
+(
+Z
+t
++
+1
+−
+exp
+⁡
+(
+s
+t
++
+1
+i
+)
+)
+/
+Z
+t
++
+1
+=
+α
+t
++
+1
+j
+1
+−
+α
+t
++
+1
+i
+.
+\begin{split}\alpha_{t+1}^{j,(\setminus i)}&=\frac{\exp(s_{t+1}^{j})}{\sum_{l\neq i}\exp(s_{t+1}^{l})}\\
+&=\frac{\exp(s_{t+1}^{j})}{Z_{t+1}-\exp(s_{t+1}^{i})}\\
+&=\frac{\exp(s_{t+1}^{j})/Z_{t+1}}{(Z_{t+1}-\exp(s_{t+1}^{i}))/Z_{t+1}}\\
+&=\frac{\alpha_{t+1}^{j}}{1-\alpha_{t+1}^{i}}.\end{split}
+(12)
+Now, we substitute this identity back into the expression for the remainder term:
+𝐑
+t
++
+1
+i
+=
+∑
+j
+≠
+i
+(
+α
+t
++
+1
+j
+−
+α
+t
++
+1
+j
+1
+−
+α
+t
++
+1
+i
+)
+​
+𝐯
+j
+=
+∑
+j
+≠
+i
+(
+−
+α
+t
++
+1
+j
+​
+α
+t
++
+1
+i
+1
+−
+α
+t
++
+1
+i
+)
+​
+𝐯
+j
+=
+−
+α
+t
++
+1
+i
+1
+−
+α
+t
++
+1
+i
+∑
+j
+≠
+i
+α
+t
++
+1
+j
+𝐯
+j
+.
+\begin{split}\mathbf{R}_{t+1}^{i}&=\sum_{j\neq i}\left(\alpha_{t+1}^{j}-\frac{\alpha_{t+1}^{j}}{1-\alpha_{t+1}^{i}}\right)\mathbf{v}^{j}\\
+&=\sum_{j\neq i}\left(\frac{-\alpha_{t+1}^{j}\alpha_{t+1}^{i}}{1-\alpha_{t+1}^{i}}\right)\mathbf{v}^{j}\\
+&=-\frac{\alpha_{t+1}^{i}}{1-\alpha_{t+1}^{i}}\sum_{j\neq i}\alpha_{t+1}^{j}\mathbf{v}^{j}.\end{split}
+(13)
+Finally, we recognize that the remaining summation is simply the original attention output minus the contribution of the
+i
+i
+-th token:
+∑
+j
+≠
+i
+α
+t
++
+1
+j
+​
+𝐯
+j
+=
+𝐨
+t
++
+1
+−
+𝐜
+t
++
+1
+i
+\sum_{j\neq i}\alpha_{t+1}^{j}\mathbf{v}^{j}=\mathbf{o}_{t+1}-\mathbf{c}_{t+1}^{i}
+. This gives the final exact expression for the remainder term:
+𝐑
+t
++
+1
+i
+=
+−
+α
+t
++
+1
+i
+1
+−
+α
+t
++
+1
+i
+​
+(
+𝐨
+t
++
+1
+−
+𝐜
+t
++
+1
+i
+)
+.
+\mathbf{R}_{t+1}^{i}=-\frac{\alpha_{t+1}^{i}}{1-\alpha_{t+1}^{i}}\left(\mathbf{o}_{t+1}-\mathbf{c}_{t+1}^{i}\right).
+(14)
+Taking the norm and assuming
+‖
+𝐯
+j
+‖
+≤
+V
+\|\mathbf{v}^{j}\|\leq V
+, we have
+‖
+𝐨
+t
++
+1
+‖
+≤
+V
+\|\mathbf{o}_{t+1}\|\leq V
+. The norm of the remainder is then bounded:
+‖
+𝐑
+t
++
+1
+i
+‖
+≤
+α
+t
++
+1
+i
+1
+−
+α
+t
++
+1
+i
+​
+(
+‖
+𝐨
+t
++
+1
+‖
++
+‖
+𝐜
+t
++
+1
+i
+‖
+)
+≤
+α
+t
++
+1
+i
+​
+(
+1
++
+α
+t
++
+1
+i
+)
+1
+−
+α
+t
++
+1
+i
+​
+V
+≤
+2
+​
+V
+​
+α
+t
++
+1
+i
+1
+−
+α
+t
++
+1
+i
+.
+\begin{split}\|\mathbf{R}_{t+1}^{i}\|&\leq\frac{\alpha_{t+1}^{i}}{1-\alpha_{t+1}^{i}}\left(\|\mathbf{o}_{t+1}\|+\|\mathbf{c}_{t+1}^{i}\|\right)\\
+&\leq\frac{\alpha_{t+1}^{i}(1+\alpha_{t+1}^{i})}{1-\alpha_{t+1}^{i}}V\\
+&\leq\frac{2V\alpha_{t+1}^{i}}{1-\alpha_{t+1}^{i}}.\end{split}
+(15)
+A.2
+Bounding the Error from the Query Approximation
+This error arises from query drift, captured by the term
+|
+‖
+𝐜
+t
++
+1
+i
+‖
+2
+−
+‖
+𝐜
+t
+i
+‖
+2
+|
+=
+|
+(
+α
+t
++
+1
+i
+)
+2
+−
+(
+α
+t
+i
+)
+2
+|
+⋅
+‖
+𝐯
+i
+‖
+2
+\left|\|\mathbf{c}_{t+1}^{i}\|^{2}-\|\mathbf{c}_{t}^{i}\|^{2}\right|=\left|(\alpha_{t+1}^{i})^{2}-(\alpha_{t}^{i})^{2}\right|\cdot\|\mathbf{v}^{i}\|^{2}
+. The core task is to bound
+|
+α
+t
++
+1
+i
+−
+α
+t
+i
+|
+|\alpha_{t+1}^{i}-\alpha_{t}^{i}|
+.
+Lemma 1
+(Lipschitz Property of Softmax)
+.
+The softmax function
+σ
+​
+(
+𝐬
+)
+i
+=
+exp
+⁡
+(
+s
+i
+)
+/
+∑
+j
+exp
+⁡
+(
+s
+j
+)
+\sigma(\mathbf{s})_{i}=\exp(s^{i})/\sum_{j}\exp(s^{j})
+is 1-Lipschitz continuous with respect to the L1-norm on its output and the L-infinity norm on its input.
+Proof.
+By the Mean Value Theorem for vector-valued functions, for any two score vectors
+𝐬
+\mathbf{s}
+and
+𝐬
+′
+\mathbf{s}^{\prime}
+, there exists a point
+𝐜
+\mathbf{c}
+on the line segment between them such that:
+σ
+⁡
+(
+𝐬
+′
+)
+−
+σ
+⁡
+(
+𝐬
+)
+=
+J
+σ
+​
+(
+𝐜
+)
+​
+(
+𝐬
+′
+−
+𝐬
+)
+\sigma(\mathbf{s}^{\prime})-\sigma(\mathbf{s})=J_{\sigma}(\mathbf{c})(\mathbf{s}^{\prime}-\mathbf{s})
+where
+J
+σ
+J_{\sigma}
+is the Jacobian matrix of the softmax function. Our goal is to bound the norm of this Jacobian. The entries of the Jacobian,
+J
+i
+​
+j
+=
+∂
+σ
+i
+∂
+s
+j
+J_{ij}=\frac{\partial\sigma_{i}}{\partial s^{j}}
+, are computed as follows:
+For the diagonal entries (
+i
+=
+j
+i=j
+):
+∂
+σ
+i
+∂
+s
+i
+\displaystyle\frac{\partial\sigma_{i}}{\partial s^{i}}
+=
+∂
+∂
+s
+i
+​
+(
+exp
+⁡
+(
+s
+i
+)
+∑
+k
+exp
+⁡
+(
+s
+k
+)
+)
+\displaystyle=\frac{\partial}{\partial s^{i}}\left(\frac{\exp(s^{i})}{\sum_{k}\exp(s^{k})}\right)
+=
+exp
+⁡
+(
+s
+i
+)
+​
+(
+∑
+k
+exp
+⁡
+(
+s
+k
+)
+)
+−
+exp
+⁡
+(
+s
+i
+)
+​
+exp
+⁡
+(
+s
+i
+)
+(
+∑
+k
+exp
+⁡
+(
+s
+k
+)
+)
+2
+\displaystyle=\frac{\exp(s^{i})\left(\sum_{k}\exp(s^{k})\right)-\exp(s^{i})\exp(s^{i})}{(\sum_{k}\exp(s^{k}))^{2}}
+=
+exp
+⁡
+(
+s
+i
+)
+∑
+k
+exp
+⁡
+(
+s
+k
+)
+​
+(
+1
+−
+exp
+⁡
+(
+s
+i
+)
+∑
+k
+exp
+⁡
+(
+s
+k
+)
+)
+\displaystyle=\frac{\exp(s^{i})}{\sum_{k}\exp(s^{k})}\left(1-\frac{\exp(s^{i})}{\sum_{k}\exp(s^{k})}\right)
+=
+σ
+i
+​
+(
+1
+−
+σ
+i
+)
+.
+\displaystyle=\sigma_{i}(1-\sigma_{i}).
+For the off-diagonal entries (
+i
+≠
+j
+i\neq j
+):
+∂
+σ
+i
+∂
+s
+j
+\displaystyle\frac{\partial\sigma_{i}}{\partial s^{j}}
+=
+∂
+∂
+s
+j
+​
+(
+exp
+⁡
+(
+s
+i
+)
+∑
+k
+exp
+⁡
+(
+s
+k
+)
+)
+\displaystyle=\frac{\partial}{\partial s^{j}}\left(\frac{\exp(s^{i})}{\sum_{k}\exp(s^{k})}\right)
+=
+0
+−
+exp
+⁡
+(
+s
+i
+)
+​
+exp
+⁡
+(
+s
+j
+)
+(
+∑
+k
+exp
+⁡
+(
+s
+k
+)
+)
+2
+\displaystyle=\frac{0-\exp(s^{i})\exp(s^{j})}{(\sum_{k}\exp(s^{k}))^{2}}
+=
+−
+exp
+⁡
+(
+s
+i
+)
+∑
+k
+exp
+⁡
+(
+s
+k
+)
+​
+exp
+⁡
+(
+s
+j
+)
+∑
+k
+exp
+⁡
+(
+s
+k
+)
+\displaystyle=-\frac{\exp(s^{i})}{\sum_{k}\exp(s^{k})}\frac{\exp(s^{j})}{\sum_{k}\exp(s^{k})}
+=
+−
+σ
+i
+​
+σ
+j
+.
+\displaystyle=-\sigma_{i}\sigma_{j}.
+Thus, the Jacobian can be succinctly written as
+J
+i
+​
+j
+=
+σ
+i
+​
+(
+δ
+i
+​
+j
+−
+σ
+j
+)
+J_{ij}=\sigma_{i}(\delta_{ij}-\sigma_{j})
+, where
+δ
+i
+​
+j
+\delta_{ij}
+is the Kronecker delta.
+To obtain the bound used in the main text, we need to bound the induced L1/L
+∞
+\infty
+norm. It is a known property of the softmax function that
+‖
+σ
+⁡
+(
+𝐬
+′
+)
+−
+σ
+⁡
+(
+𝐬
+)
+‖
+1
+≤
+‖
+𝐬
+′
+−
+𝐬
+‖
+∞
+\|\sigma(\mathbf{s}^{\prime})-\sigma(\mathbf{s})\|_{1}\leq\|\mathbf{s}^{\prime}-\mathbf{s}\|_{\infty}
+, which means the Lipschitz constant for this norm pairing is 1. While the full proof of this specific norm bound is lengthy and typically presented in optimization literature, we can gain insight by analyzing the simpler induced L1-norm,
+‖
+J
+‖
+1
+=
+max
+⁡
+∑
+i
+j
+⁡
+|
+J
+i
+​
+j
+|
+\|J\|_{1}=\max_{j}\sum_{i}|J_{ij}|
+. The sum of the absolute values of the
+j
+j
+-th column is:
+∑
+i
+|
+J
+i
+​
+j
+|
+\displaystyle\sum_{i}|J_{ij}|
+=
+|
+σ
+j
+​
+(
+1
+−
+σ
+j
+)
+|
++
+∑
+i
+≠
+j
+|
+−
+σ
+i
+​
+σ
+j
+|
+\displaystyle=|\sigma_{j}(1-\sigma_{j})|+\sum_{i\neq j}|-\sigma_{i}\sigma_{j}|
+=
+σ
+j
+(
+1
+−
+σ
+j
+)
++
+∑
+i
+≠
+j
+σ
+i
+σ
+j
+(
+since
+σ
+k
+∈
+[
+0
+,
+1
+]
+)
+\displaystyle=\sigma_{j}(1-\sigma_{j})+\sum_{i\neq j}\sigma_{i}\sigma_{j}\quad(\text{since }\sigma_{k}\in[0,1])
+=
+σ
+j
+−
+σ
+j
+2
++
+σ
+j
+​
+∑
+i
+≠
+j
+σ
+i
+\displaystyle=\sigma_{j}-\sigma_{j}^{2}+\sigma_{j}\sum_{i\neq j}\sigma_{i}
+=
+σ
+j
+−
+σ
+j
+2
++
+σ
+j
+​
+(
+1
+−
+σ
+j
+)
+=
+2
+​
+σ
+j
+​
+(
+1
+−
+σ
+j
+)
+.
+\displaystyle=\sigma_{j}-\sigma_{j}^{2}+\sigma_{j}(1-\sigma_{j})=2\sigma_{j}(1-\sigma_{j}).
+Since the maximum value of the function
+f
+⁡
+(
+x
+)
+=
+2
+​
+x
+​
+(
+1
+−
+x
+)
+f(x)=2x(1-x)
+for
+x
+∈
+[
+0
+,
+1
+]
+x\in[0,1]
+is
+1
+/
+2
+1/2
+(at
+x
+=
+1
+/
+2
+x=1/2
+), the induced L1-norm is bounded by
+‖
+J
+‖
+1
+≤
+1
+/
+2
+\|J\|_{1}\leq 1/2
+. The bound of 1 for the L1/
+L
+∞
+L^{\infty}
+norm pairing used in our main analysis is a tighter, more specific result.
+∎
+Applying the Lemma, the change in a single attention weight is bounded by the maximum change in any pre-softmax score:
+|
+α
+t
++
+1
+i
+−
+α
+t
+i
+|
+≤
+max
+j
+⁡
+|
+s
+t
++
+1
+j
+−
+s
+t
+j
+|
+.
+|\alpha_{t+1}^{i}-\alpha_{t}^{i}|\leq\max_{j}|s_{t+1}^{j}-s_{t}^{j}|.
+(16)
+The error in the scores,
+s
+t
++
+1
+j
+−
+s
+t
+j
+=
+(
+𝐪
+t
++
+1
+−
+𝐪
+t
+)
+T
+​
+𝐤
+j
+/
+d
+k
+s_{t+1}^{j}-s_{t}^{j}=(\mathbf{q}_{t+1}-\mathbf{q}_{t})^{T}\mathbf{k}^{j}/\sqrt{d_{k}}
+, is bounded by the Cauchy-Schwarz inequality. Assuming unit-normalized queries, we have
+‖
+𝐪
+t
++
+1
+−
+𝐪
+t
+‖
+2
+=
+2
+​
+(
+1
+−
+cos
+​
+(
+𝐪
+t
+,
+𝐪
+t
++
+1
+)
+)
+\|\mathbf{q}_{t+1}-\mathbf{q}_{t}\|^{2}=2(1-\text{cos}(\mathbf{q}_{t},\mathbf{q}_{t+1}))
+. This gives the final bound on the maximum score error:
+max
+j
+⁡
+|
+Δ
+​
+s
+j
+|
+≤
+2
+​
+(
+1
+−
+cos
+​
+(
+𝐪
+t
+,
+𝐪
+t
++
+1
+)
+)
+⋅
+max
+j
+⁡
+‖
+𝐤
+j
+‖
+d
+k
+.
+\max_{j}|\Delta s^{j}|\leq\frac{\sqrt{2(1-\text{cos}(\mathbf{q}_{t},\mathbf{q}_{t+1}))}\cdot\max_{j}\|\mathbf{k}^{j}\|}{\sqrt{d_{k}}}.
+(17)
+A.3
+Combined Error Bound
+By combining the bounds for both error sources, we can conclude that the total error
+ℰ
+i
+\mathcal{E}^{i}
+is small when our method evicts a token with a small attention weight
+α
+t
++
+1
+i
+\alpha_{t+1}^{i}
+and when the query similarity is high. This provides a rigorous theoretical foundation for the effectiveness of the LongFlow method.
+Appendix B
+Algorithm of LongFlow Kernel
+Algorithm
+1
+shows the workflow of our kernel.
+Algorithm 1
+LongFlow Fused Attention and Eviction Kernel
+1:
+Input:
+Query
+𝐪
+t
+∈
+ℝ
+1
+×
+d
+\mathbf{q}_{t}\in\mathbb{R}^{1\times d}
+, KV cache
+𝐊
+∈
+ℝ
+(
+t
+−
+1
+)
+×
+d
+\mathbf{K}\in\mathbb{R}^{(t-1)\times d}
+,
+𝐕
+∈
+ℝ
+(
+t
+−
+1
+)
+×
+d
+\mathbf{V}\in\mathbb{R}^{(t-1)\times d}
+, Mask
+𝐌
+∈
+{
+0
+,
+1
+}
+t
+−
+1
+\mathbf{M}\in\{0,1\}^{t-1}
+2:
+Output:
+Attention output
+𝐨
+t
+∈
+ℝ
+1
+×
+d
+\mathbf{o}_{t}\in\mathbb{R}^{1\times d}
+, Eviction index
+i
+evict
+i_{\text{evict}}
+3:
+4:
+//
+Initialize accumulators
+5:
+𝐨
+acc
+←
+𝟎
+∈
+ℝ
+d
+\mathbf{o}_{\text{acc}}\leftarrow\mathbf{0}\in\mathbb{R}^{d}
+;
+⊳
+\triangleright
+Output accumulator
+6:
+l
+acc
+←
+0
+∈
+ℝ
+l_{\text{acc}}\leftarrow 0\in\mathbb{R}
+⊳
+\triangleright
+Softmax denominator accumulator
+7:
+𝐒
+loss
+←
+𝟎
+∈
+ℝ
+t
+−
+1
+\mathbf{S}_{\text{loss}}\leftarrow\mathbf{0}\in\mathbb{R}^{t-1}
+⊳
+\triangleright
+Temporary storage for un-normalized scores
+8:
+B
+k
+←
+block_size
+B_{k}\leftarrow\text{block\_size}
+9:
+10:
+//
+Single pass over the KV cache in blocks
+11:
+for
+j
+←
+1
+,
+B
+k
+,
+…
+,
+t
+−
+1
+j\leftarrow 1,B_{k},\dots,t-1
+do
+12:
+//
+Load a block of K, V from HBM to on-chip SRAM
+13:
+𝐊
+j
+←
+𝐊
+[
+j
+:
+j
++
+B
+k
+,
+:
+]
+\mathbf{K}_{j}\leftarrow\mathbf{K}[j:j+B_{k},:]
+;
+𝐕
+j
+←
+𝐕
+[
+j
+:
+j
++
+B
+k
+,
+:
+]
+\mathbf{V}_{j}\leftarrow\mathbf{V}[j:j+B_{k},:]
+14:
+15:
+//
+Compute scores and apply mask for the current block
+16:
+𝐒
+j
+←
+𝐪
+t
+​
+𝐊
+j
+T
+/
+d
+\mathbf{S}_{j}\leftarrow\mathbf{q}_{t}\mathbf{K}_{j}^{T}/\sqrt{d}
+17:
+𝐒
+j
+​
+[
+¬
+𝐌
+j
+]
+←
+−
+∞
+\mathbf{S}_{j}[\neg\mathbf{M}_{j}]\leftarrow-\infty
+18:
+19:
+//
+Compute softmax numerators and update denominator accumulator
+20:
+𝐏
+j
+←
+exp
+⁡
+(
+𝐒
+j
+)
+\mathbf{P}_{j}\leftarrow\exp(\mathbf{S}_{j})
+21:
+l
+acc
+←
+l
+acc
++
+sum
+​
+(
+𝐏
+j
+)
+l_{\text{acc}}\leftarrow l_{\text{acc}}+\text{sum}(\mathbf{P}_{j})
+22:
+23:
+//
+Compute un-normalized contribution vectors and update output accumulator
+24:
+𝐂
+j
+←
+𝐏
+j
+⋅
+𝐕
+j
+\mathbf{C}_{j}\leftarrow\mathbf{P}_{j}\cdot\mathbf{V}_{j}
+⊳
+\triangleright
+Element-wise scaling, shape:
+B
+k
+×
+d
+B_{k}\times d
+25:
+𝐨
+acc
+←
+𝐨
+acc
++
+sum
+​
+(
+𝐂
+j
+,
+dim
+=
+0
+)
+\mathbf{o}_{\text{acc}}\leftarrow\mathbf{o}_{\text{acc}}+\text{sum}(\mathbf{C}_{j},\text{dim}=0)
+26:
+27:
+//
+Compute and store un-normalized importance for the block
+28:
+𝐬
+loss
+,
+j
+←
+sum
+​
+(
+|
+𝐂
+j
+|
+,
+dim
+=
+1
+)
+\mathbf{s}_{\text{loss},j}\leftarrow\text{sum}(|\mathbf{C}_{j}|,\text{dim}=1)
+⊳
+\triangleright
+L1-norm of contribution vectors
+29:
+Store
+𝐬
+loss
+,
+j
+\mathbf{s}_{\text{loss},j}
+at corresponding indices in
+𝐒
+loss
+\mathbf{S}_{\text{loss}}
+30:
+end
+for
+31:
+32:
+//
+Post-processing after the loop
+33:
+𝐨
+t
+←
+𝐨
+acc
+/
+l
+acc
+\mathbf{o}_{t}\leftarrow\mathbf{o}_{\text{acc}}/l_{\text{acc}}
+⊳
+\triangleright
+Normalize the final attention output
+34:
+𝐒
+final_loss
+←
+𝐒
+loss
+/
+l
+acc
+\mathbf{S}_{\text{final\_loss}}\leftarrow\mathbf{S}_{\text{loss}}/l_{\text{acc}}
+⊳
+\triangleright
+Normalize the importance scores
+35:
+i
+evict
+←
+argmin
+​
+(
+𝐒
+final_loss
+)
+i_{\text{evict}}\leftarrow\text{argmin}(\mathbf{S}_{\text{final\_loss}})
+⊳
+\triangleright
+Find the token with the minimum score
+36:
+37:
+return
+𝐨
+t
+,
+i
+evict
+\mathbf{o}_{t},i_{\text{evict}}
+Appendix C
+Additional Figures
+Figure
+4
+shows the results of scaling model size.
+Figure
+5
+shows the figures we used in our preliminary experiments.
+Figure 4:
+Accuracy of LongFlow and the baselines across different model sizes on different datasets.
+(a)
+SnapKV performance on LongBench as the query observation window shrinks. We use LLaMA-3-8B and an context length of 8192.
+(b)
+Cosine similarity between queries. Results are shown for the first 100 tokens, averaged over 100 samples from MATH500 using Qwen3-8B (Layer 10, Head 10). The high and stable similarity between adjacent queries supports our approximation.
+Figure 5:
+Empirical motivation for our single-query hypothesis.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

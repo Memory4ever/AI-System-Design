@@ -87,7 +87,15 @@ goal
 
 因此，模型负责产生语义判断与 action proposal，Agent Runtime 负责状态转换和编排，Tool/Environment 拥有真实副作用，Policy plane 决定哪些转换被允许。只有 terminal evidence 满足任务 contract，才能把“请求成功”提升为“任务完成”。
 
+这条分责还留下一个执行问题：模型只有运行后才选择工具和后续分支，完整依赖图未必能在请求开始时冻结。短小、无状态的 workflow 用直接调用或固定 placement 最容易实现；任务变长、消费者陆续出现后，可以让调用先返回 future，由创建、登记消费者与取值等待这三个事件逐步发现依赖。future 的已完成输出保持不可变，消费者与待执行位置等 metadata 则允许更新；session 关联的用户状态与 KV 驻留另由运行时管理。这样改变的是依赖可见性和 placement 控制，不是让 future 成为外部副作用的提交凭证。
+
+全局控制器若同步参与每次调用，会把局部短任务也拖入全局协调；只在创建时排一次，又不能响应后来显现的依赖和排队压力。一条替代分支由全局周期性计算并安装 policy，再由局部控制器按事件即时执行。迁移时，先确认依赖值是否在途，更新消费者与 executor metadata，待所需依赖和 session state 转移后再激活目标 future；不能只改一个地址就假定状态已到达。这购买动态 routing、优先级和缓存放置能力，也增加 metadata/store 一致性、policy 传播迟滞与迁移成本。Nalar 的受限原型支持这一分工，但不证明外部 effect exactly-once 或故障原子迁移；其不同 policy 的平均完成时间改善也可能伴随 P95 退步，CPU profile emulation 不等真实大规模 GPU 验收。依赖稳定、局部排队已足够，或迁移状态无法安全恢复时，固定 placement 与更简单的执行路径仍应保留。<!-- source-family:SF-2026-ARXIV-2601-05109 -->
+
 这一分责也要反映到 client 接口。把 Agent 当作一个 MCP callable tool，或让一次非交互命令执行到结束，在短任务与既有工具工作流中仍然合理；IDE、桌面和 Web UI 却需要呈现同一请求产生的多个动作、增量内容和审批等待。接口可以把持久会话 Thread、一次用户输入驱动的工作 Turn、以及带类型的输入输出 Item 分开：Item 有 started、可选 delta 和 completed，Turn 则另有自己的结束事件；server 发出的 approval request 暂停当前 Turn，直到 client 回答 allow 或 deny。这样的 presentation primitives 让 UI 能正确归并局部结果，却不授予业务完成权，也不能把一条 agent message 或 item 完成当成整个任务验收。
+
+Typed Item 能承载增量事件，但“等完整文本再渲染”仍会把表现层延迟绑到整个生成结束。当回答需要图表、表单或可交互控件时，一条替代分支是先限制在原生组件库内，再由流式编译器随生成逐步构建界面：模型决定组件组合，展示运行时决定当前片段如何被解释和呈现。这样将用户可见进度与完整回答的等待分开，却没有把已显示的控件变成已经验证的语义结果或行动授权。
+
+这增加组件/schema 兼容、部分状态和交互事件的维护成本；生成尚未结束时，界面必须能表达未完成或失败，涉及外部副作用的按钮仍经既有权限与 tool commit 路径。这是从分责推导的工程要求，不是厂商已公开实现的安全保证。Intelligent UI 的[官方说明](https://openai.com/index/gpt-6-for-everyone/)只披露原生可流式组件及增量编译；没有公开编译器实现、验证协议或可复算的延迟实验，不能由视觉完整推断结果正确或操作安全。纯文本、低交互或无法可靠解释部分结构的任务仍可保留完成后展示的简单路径。<!-- source-family:SF-2026-OPENAI-INTELLIGENT-UI -->
 
 长运行任务的权威状态还必须留在 runtime，而不是浏览器连接里。Client 断线应触发持久 Thread 的回读与展示状态重建，不应仅为恢复界面而重新提交原任务；事件投影需要按身份去重，但这不等于外部 effect 已有 exactly-once 保证。Codex App Server 的公开设计给出了双向事件流、server-side thread persistence 与 ephemeral Web client 分离的例子；代价是 typed binding/schema、client/server 配对与兼容性维护，无法协商所需能力时应保留已验证版本配对或退回较简单的调用接口。其 backward-compatible 目标不证明任意版本配对无故障，TUI 改走这一协议在原文中仍是计划，而非已实现的恢复保证。<!-- source-family:SF-2026-OPENAI-CODEX-APP-SERVER -->
 
@@ -250,6 +258,10 @@ typed skill requirement + dependency graph
 Competence estimate 是随 model、prompt、handbook、tool 和 environment 漂移的 derived state，不是 Agent identity。
 SkillOrchestra 的实验支持 taxonomy、capability routing 与 cost-aware assignment 的组合，但固定 agent pool 和
 benchmark 不证明动态编排普遍优于静态 Workflow。高风险或难以独立验证的任务仍应固定 owner 和 approval。
+
+按 task slice 选择能力匹配的 Agent 后，executor 也不必冻结到整个 trajectory 结束。轻量模型可先提出下一 structured tool action，再由当前参数/schema、自身生成信号、状态历史与局部风险元数据判断：低疑虑由本地继续，中间区间付出有限复核，高疑虑把必要状态和候选动作交给强模型；每次工具观测后重新选择，最后仍只提交一个 executor 的动作。这把“整个任务交给谁”细化为“当前一步由谁生成”，不把候选置信度或 MCP 注解升级为行动权限，既有 schema、authorization 与 outcome gate 保持独立。<!-- source-family:SF-2026-ARXIV-2610-07816 -->
+
+这个分支增加 gate 数据、阈值漂移、复核样本与 handoff 成本；失败概率也不等于强模型能救回的概率。[STEPGATE v1](https://arxiv.org/html/2610.07816v1)在同一 Qwen 家族和100个脚本工具任务中支持观测后重路由的局部取舍，但与同预算 random、以及使用更高升级预算的 self-consistency 的差值均不确定，单步对照的实际升级率又不完全一致。经验拟合与小样本 ECE 不签有限风险界，风险标签不是真实危害率，减少远端 token 也不是隐私或端到端成本保证。陌生工具、状态分布漂移或 gate 收益不可靠时，固定 executor、明确人工升级或强模型路径仍合理；强模型亦须过相同执行与最终结果合同。Executor 的选择与下一段的 skill 依赖关系因此是不同平台状态。
 
 Skill 之间也不能只靠平面 tag。`requires`、`composes-with`、`specializes` 或 `supersedes` 等 typed relation 可以
 改善检索与组合，却会把 relation evidence、version、transitive permission 和 revocation 传播变成平台状态：
@@ -597,7 +609,12 @@ Agent parent 的整体预算不能充分表达一次 tool subprocess 的短时�
 
 [AgentCgroup 的必要对照](https://arxiv.org/html/2602.09345v1)支持这一资源域分支，却仅在 patched kernel 上将三条 trace 加速50倍重放；HIGH allocation P95 改善不是 live Agent 端到端 latency 或生产多租户保证。memcg_bpf_ops 尚在 upstream review，优先级保护会给 LOW 工具增加等待，初始化、大镜像与 retry 积累仍未解决。新控制点需要 kernel/runtime 资格、child 生命周期和 tool deadline 对齐；hooks 不可用、冻结会破坏工具时限或身份无法归属时，保留已验证的容器限额、较保守资源预留和显式失败/恢复路径，不以平均 burst 特征替代 admission。<!-- source-family:SF-2026-ARXIV-2602-09345 -->
 
+控制每次 tool 的资源之后，还要独立选择**实例粒度与生命周期**。共享大实例容纳多个 Agent，能减少创建与管理工作，在资源需求相近时仍合理；另一条分支让较小实例承载单个 task/Agent，再分别选择每任务创建回收的 ephemeral 模式，或从 persistent pool 领取并复用实例。小粒度不自动等于 ephemeral，复用也不等于恢复完整任务状态：任务完成事件、实例生命周期及后续 metadata/artifact 收集是不同观察对象，不能由“释放了实例”推出外部 effect 或证据已经提交。<!-- source-family:SF-2026-ARXIV-2601-07526 -->
+
+[MegaFlow 的受限实现](https://arxiv.org/html/2601.07526v1#S2)把生命周期选择与实例粒度分开，并在任务入口同时考虑 API rate、并发 semaphore 与管理员配额。较小的单 Agent 实例和共享大实例具有不同 CPU、内存与网络配置，persistent 复用又减少冷启动；Alibaba 下的成本/完成时间结果因而只是这些配置的取舍，不证明同资源算法加速、GPU 利用率或其他云收益。管理、启动、配额协调与证据收集仍付费，低稳态 CPU 使用也不等于更高计算利用率；动态模式切换仍是未来工作，更没有原子恢复、强一致或完美隔离保证。冷启动/控制面配额占优时保留池复用，短小稳定任务可继续共享实例；失败后的任务恢复仍交由独立的 run state 与 effect 验收，不能只复用物理环境。
+
 ### Harness、Protocol 与 Credit 都是 Platform-owned Artifact
+
 
 <!-- semantic-body-binding:SF-PROTOCOL-DRIVEN-DEVELOPMENT-GOVERNING-GENERATED-SOFTWARE-THROUGH-INVARIA:start -->
 生成代码若只是最终文本，reviewer 无法知道哪些 invariant 在演化中持续成立。Protocol-driven 分支把允许的 state
@@ -806,6 +823,8 @@ causal links 都正确。平台应保存 transformer/model revision、node-to-ev
 ## Release、Canary 与 Rollback
 
 Agent definition 更新可能改变 tool path 和长期 state，rollout 比模型 endpoint 更复杂：
+
+模块测试和单个 tool receipt 能确认局部行为，却可能漏掉真实入口没有启用新功能、配置未传到下游或后台恢复走回旧路径。发布验证应从完整用户入口和默认配置执行，让下游消费本次真实上游 artifact，并保存固定 baseline 与能让错误实现必失败的场景；否则测试全绿仍不证明新路径被实际采用。依赖串链也不能由更多 Agent 自动变成并行收益。MiniMax 的局部工作流审计为这些缺口提供具名反例，不证明单 owner 或跨模型复核具有普遍因果优势；入口重放、独立复核与回归维护均付费，链路未接通或验证范围不足时保留旧版本与人工验收，不让作者完成声明自行触发 rollout。<!-- source-family:SF-2026-MINIMAX-WORKFLOW-20261008 -->
 
 - shadow 在 sandbox 执行或只比较 proposals；
 - canary 按 tenant/task class 放量；
@@ -1143,6 +1162,14 @@ versioned、addressable 且 dependency-aware 的 durable state，并声明 autho
 <!-- semantic-body-binding:SF-INTERMEDIATE-ARTIFACTS-AS-FIRST-CLASS-CITIZENS-A-DATA-MODEL-FOR-DURABLE- -->
 
 ## Review notes
+
+- `SF-2026-MINIMAX-WORKFLOW-20261008` — Daily `2026-10-09`；[官方工作流审计](https://agent.minimax.io/docs/techblog/coding-agent-workflow-and-skills) 必要完整核心，2+1+2=5。仅采用默认入口、配置传播、background resume 的具名反例与真实 artifact/baseline 验证条件；不授单 owner/跨模型复核的因果最优或实现/生产效果。root Source/逐字 PRE 与非writer实际818–852完整邻接、新827正文和本注 POST 通过，非日级验收。
+
+- Daily `2026-10-08`：`SF-2026-ARXIV-2610-07816`，[STEPGATE v1](https://arxiv.org/html/2610.07816v1) §3–5/A.6/C；采用observation后action-level executor gate，不采用finite-risk/cost/energy/privacy保证。Qwen1.5/7B4bit、100脚本平均4.1步/max8、paired bootstrap10k/McNemar与同预算random/更高预算selfcons的不确定差值近正文；single-step实际升级率不同、协议建议非已完整执行，未核artifact。
+
+- `SF-2026-ARXIV-2601-07526` — Daily `2026-01-14` 增量；[MegaFlow exact-v1](https://arxiv.org/html/2601.07526v1) §2–3。2+2+2=6，实例granule×ephemeral/persistent生命周期差额深入；Alibaba配置/低CPU/启动配额和证据收集费用近文，不授原子恢复、强一致、完美隔离或GPU加速。peer必要原证/actual owner PRE通过、root授窄锁；作者实际正文与完整邻接顺读，root 非写者 actual POST 已通过（新正文、完整局部邻接与自身末注实际顺读）。未核artifact/复现，不授整日Gate。
+
+- `SF-2026-ARXIV-2601-05109`（Experimental）：Daily `2026-01-10`补查；[exact-v1](https://arxiv.org/html/2601.05109v1) §3.1–3.4、§4.1–4.3、§6.1–6.3。采用动态future消费发现、immutable output/mutable placement及global-policy/local-enforcement分责；迁移次序保留，不授effect exactly-once或故障原子性。2节点各4 A10080GB/100GbE/vLLM LLaMA8B与64 CPU节点emulation分开，SRTF/LPT的P95反侧保留，precision/完整length与质量等价未充分披露，不采用通用倍数。日作者必要源/actual owner PRE，root实际方法、迁移及必要评价/完整邻接核后写两段；非写入者实际顺读52–113的两段、完整邻接与末注，POST通过，未核实现/复现，非日级完成。
 
 - `SF-2026-ARXIV-2603-02176`：[exact-v1](https://arxiv.org/html/2603.02176v1) §2.1–2.2/§3/§4.1–4.2；Daily 2026-03-04，2+2+2=6。采用 active/dormant/run-selected graph 生命周期，不采200k部署或纯DAG同预算收益；oracle同skills但额外Opus planner、图深度/调用预算、pairwise judge及artifact转换反证保留。作者必要源→owner差额及实际MCP/Platform邻接检查完成，root非作者必要源→实际正文/邻接POST通过，未复现实验。
 

@@ -2,11 +2,16 @@
 
 **规范：** V3
 **窗口：** 2026-01-30T09:00:00+08:00 ～ 2026-01-31T09:00:00+08:00
+**补充窗口：** 2026-01-30 ～ 2026-01-30
+**窗口说明：** 用户授权按北京完整自然日、仅日期补遗漏；既有窗口、候选公开时间、评分与有效审阅保留，不按新口径重判旧材料。
 **状态：** 完成
 **Books：** 纳入本次
 **检查时间：** 2026-10-04T20:40:14+08:00
+**补查时间：** 2026-10-08T11:49:19+08:00
 
 ## 1. 结论
+
+遗漏补查结果：原61家族 + 确认新增0 = 61，原57必要审阅完成/4中心争议、Books 4整合/3已有覆盖/50仅报告/4暂缓均保留。本轮14每日源有限扫描已停止，root独立实际核六部分差额、source_stop、八新题摘/日期权限与代表关闭，DAY通过，普通待办0，本日结束。0新增不等全source Coverage；五项潜在新机制仅具名公开日/精确v1请求，二项arXiv窗外线索、一项AI for Science范围关闭，见§3/§5及[补查停点与原件](../_sources/daily-20260131/supplement-20261008.md)。不扩大旧缓存全文队列，不读旧Weekly反推、不生成其他日期/Weekly，不写共享Books/State/索引。下列原完成结论指既有有效审阅，本轮不无差别重读原61/四处写后。
 
 本窗最终61个确认落窗唯一材料家族：60篇论文首次公开v1、1项Kimi CLI v1.4 release。不把64个日期working项、主题查询线索、宽409目录或Batch9–11缓存当候选分母/必须逐项关闭队列。发现和贡献筛选已收束，全部候选必要证据、直接反侧与Books处置均经非作者root实际逐项复核：4项实际整合、3项具体已有覆盖、50项仅报告、4项中心争议暂缓。57项必要审阅完成与4项争议终态分开；摘要、访问成功、作者宣传和机器检查不当语义证明。root已实际核六部分、61家族处置、Books POST与有限来源/争议隔离，日级验收通过；机器/链接/本日限定检查通过，普通待办0，本日完成。外部保留项不授正面Evidence/Coverage或无遗漏保证。
 
@@ -16,18 +21,37 @@
 
 ## 2. 来源覆盖
 
+本轮来源有限增量（原表保留作有效证据，不以旧完成标签扩队列）：实际切片/定点查询与source_stop均见[补查记录](../_sources/daily-20260131/supplement-20261008.md)，其原件包含每次响应、失败与修正路径。普通未读全文不称受阻。
+
+- SRC-OPENAI：Research当前卡片/Jan30研究主题查询；Enterprise/Edu Jan30兼容core、visual response与whales核心。selector具体版本扩展无新执行/授权机制，visual UI与鲸鱼科学应用关闭；历史目录仍缺段，不授零事件。
+- SRC-ANTHROPIC：Research10标题止于Sep4与Jan30主题查询；仅定点复用Jan29coding-skills身份。近期10卡片非历史窗口；无确认新增，历史缺段终态隔离。
+- SRC-GOOGLE-AI：DeepMind当前六publication入口、Google pubs首15混排标题/Jan30模型系统查询。不授历史批次完整Coverage，搜索无结果不当零。
+- SRC-META-AI：Research解析0行/Jan30主题查询；旧Blog1/2与433行mixed pubs仅有效复用。动态历史缺段，不扩历年、0行不当零。
+- SRC-QWEN：旧页redirect/new Blog0行与Jan30主题查询。动态缺段；Qwen3ASR Jan29仅具体去重，不读他日候选作发现。
+- SRC-DEEPSEEK：当前V4.1链接与Jan30主题查询；Engram/mHC仅窗外去重。当前首页非Jan30事件账，历史缺段隔离。
+- SRC-MOONSHOT：Platform Blog到2025、Jan30kimi-cli查询；v1.4原PR810复用，#792/#962/#808/#970具体题摘关闭。请求/接入/UI/安装讨论无新机制；本项CLI证据不替代机构Blog覆盖。
+- SRC-TENCENT-HUNYUAN：Research timeout/隐藏浏览器创建超时reset；Jan30/Ksana v0.2.2/pinning精确查询、tag与!166直接尝试。Jan30日期够，缺精确revision/!166行为；不扩repo，153/169标签不自动准入。
+- SRC-ZAI：Research Jan19→Feb02段与Jan30主题查询。所见段未见Jan30；只已检查该段，不授全历史无遗漏。
+- SRC-BYTEDANCE-SEED：Research10标题/public_papers p1/13共20卡片Aug18→May14、Jan30查询；旧p2仍同页失败复用。目标历史页缺段，不循环13页。
+- SRC-BAIDU-ERNIE：Blog Jan29→Feb06段及Jan30主题查询。该段未见Jan30；PaddleOCRVL1.5 Jan29只去重。
+- SRC-XIAOMI-MIMO：Paper Feb03→Jan08段、Blog15无日期More卡片及Jan30主题查询。Paper段已核、Blog无日期缺段，不授零事件。
+- SRC-MINIMAX：英文12卡片Jan27→Feb12段、中文redirect空目录、AgentTech15行壳、Jan30查询。英文段已核，空壳不授零事件，中文/Agent历史缺段隔离。
+- SRC-ARXIV：新主题API Jan28～29 start0/max200为429；旧2601月路径Invalid Year后更正2026-01；四类月头1–50与CL尾2151–2168只title发现，其他尾cachemiss/429；八个新题摘线索及22208/209仅exact日期/身份补检。月集合不当日公告；原约定主题153/55/80/5有效结果不重开。五项日期隔离、二项窗外、一项范围关闭，未恢复完整Jan30公告，不授全Coverage。
+
+补充自然日覆盖不要求精确时刻：OpenAI selector无时区请求由贡献关闭替代，Ksana只剩精确revision与机制证据请求；下表保留旧查询事实并同步当前终态，原有效正文与原候选日期不变。
+
 检查执行跨本日独立运行，恢复时只复用身份/版本/采用命题未变的记录。下表为实际有限范围和停止点，不声称恢复机构全部历史/全学科召回。原始响应见[official_1](../_sources/daily-20260131/jan31_official_1.json)、[official_2](../_sources/daily-20260131/jan31_official_2.json)、本日主题标题与原AB缓存；具体官方信号见[EVIDENCE_OFFICIAL](../_sources/daily-20260131/EVIDENCE_OFFICIAL.md)。
 
 | 来源 | 检查范围与依据 | 结果 | 缺口 |
 | --- | --- | --- | --- |
-| SRC-OPENAI | Research/News当前卡片止于近期9月；RSS1245 entries与Jan30模型/训练/系统定点查询。Jan29相关条目窗外；Jan30鲸鱼应用、visual UI无新增机制关闭；Enterprise/Edu selector核心已读。 | 受阻 | 动态历史目录不完整；selector无时区保留§5，不计候选。历史列表/含时区事件到达仅重开对应切片。 |
+| SRC-OPENAI | Research/News当前卡片止于近期9月；RSS1245 entries与Jan30模型/训练/系统定点查询。Jan29相关条目窗外；Jan30鲸鱼应用、visual UI无新增机制关闭；Enterprise/Edu selector核心已读。 | 受阻 | 动态历史目录不完整；selector具体版本兼容扩展无新执行/授权机制，贡献关闭、不计候选，不再请求精确时刻。历史列表/目标日期事件到达仅重开对应切片。 |
 | SRC-ANTHROPIC | Research当前10卡片与Jan29/30主题补检；coding skills DOI首公开Jan29窗外；Jan30 webinar营销非机制。有限列表/exact-date查询已停止。 | 受阻 | 10卡片非完整历史目录；官方本窗列表/具体漏项才定点恢复，不以搜索无结果记零。 |
 | SRC-GOOGLE-AI | DeepMind Research与Google Research pubs有界相关标题/Jan30主题查询；Magellan21096只查漏线索，未自动变审阅队列。 | 受阻 | 当前pubs非完整历史切片；目标批次或具体增量材料到达才恢复，不授无遗漏。 |
 | SRC-META-AI | Research入口受限；Blog页1近期7月→3月，页2到2025年10月；pubs433行近期10月→7月后跳2019，另Jan30主题补检到止。 | 受阻 | mixed/动态历史不可完整恢复，不扩历年；目标历史页到达只补缺段。 |
 | SRC-QWEN | 旧入口redirect至qwen.ai/blog，新页hydration仅2条；官方相关项目/Jan30主题查询有限到止。 | 受阻 | 新站历史动态卡片未恢复，不以2025列表/空响应记零；目标日期事件可重开。 |
 | SRC-DEEPSEEK | 官网当前V4.1、官方相关项目与Jan30主题补检；Engram/mHC具体公开窗外，不扩组织全站。 | 受阻 | 首页不是历史事件账，不授Jan30零事件；目标官方列表/相关新线索定点恢复。 |
 | SRC-MOONSHOT | Platform Blog止于2025；kimi-cli v1.4精确release/tag和PR810受影响credential深入；v1.5 WebUI775界面维护无新增贡献关闭。 | 受阻 | 1确定候选；CLI核证不补成全机构历史Blog覆盖。 |
-| SRC-TENCENT-HUNYUAN | 首查Research文本0、实际浏览器三次有限恢复失败；官方项目、DynamicVLA与KsanaDiT信号定点核，未遍历Tencent组织。 | 受阻 | 动态历史目录不可取，不授零命中；DynamicVLA独立有效，Ksana日期/tag/核心保留§5。需官方本窗目录/对应源。 |
+| SRC-TENCENT-HUNYUAN | 首查Research文本0、实际浏览器三次有限恢复失败；官方项目、DynamicVLA与KsanaDiT信号定点核，未遍历Tencent组织。 | 受阻 | 动态历史目录不可取，不授零命中；DynamicVLA独立有效，Ksana Jan30日期已够，仅精确revision/核心保留§5。需官方本窗目录/对应源。 |
 | SRC-ZAI | Research可见Jan19→Feb02，release notes Jan19→Feb03相邻段及当前事件信号检查，所见段无Jan30相关事件。 | 已检查 | 只该段与主题补检，不保证动态全历史无遗漏。 |
 | SRC-BYTEDANCE-SEED | Research/public_papers页1/13共20卡片8月18→5月14；page2参数失败/网页仍同p1，Jan30主题补检到止。 | 受阻 | 本窗历史页未恢复，分页失败不记零；目标页/具体材料到达只补该段，不逐13页扩扫。 |
 | SRC-BAIDU-ERNIE | Blog Jan29→Feb06相邻可见段、ERNIE项目和Jan30语言/多模态/训练推理查询；该段未见本窗相关事件。 | 已检查 | 有界段/项目补检，不授组织全历史无遗漏。 |
@@ -35,12 +59,14 @@
 | SRC-MINIMAX | 英文Blog9卡片Jan28→Feb12；Agent Tech15行空目录、中文替代/官方项目与Jan30主题补检到止。 | 受阻 | 空动态页不授零命中；可见相邻段不替代完整历史目录。 |
 | SRC-ARXIV | Jan28 19Z→Jan29 19Z submitted批次的language/foundation、Agent/tool/RAG、multimodal/WorldModel/VLA、LLM系统/kernel/scheduling查询153/55/80/5条完整标题跨主题去重；分类相关标题/新命名有界补检。宽409仅返回前200线索，不逐项清理；相关完整AB贡献筛选后有限60论文收束。 | 已检查 | 公告schedule下界+逐项DOI上界见DATES；22208/209日期跨窗隔离§5。只约定主题召回非分类全量；Batch9–11原线索不自动必须全关。 |
 | 表外：[Kimi CLI](https://github.com/MoonshotAI/kimi-cli/releases/tag/1.4) | published_at精确秒/tag，只核PR810 OAuth credential存储迁移，不扫描release全站。 | 已检查 | 无本项必要缺口；静态核证非运行复现。 |
-| 表外：[OpenAI selector](https://help.openai.com/en/articles/10128477-chatgpt-enterprise-and-edu-release-notes) | January30 compatibility核心，官方RSS/exact-date有限补检。 | 受阻 | 无时区不足确认落窗；终态隔离§5，非零事件。 |
-| 表外：[KsanaDiT](https://github.com/Tencent/KsanaDiT/blob/main/CHANGELOG.md) | v0.2.2 Jan30无时区段；target tag API404、直接cache miss、exact pinning/版本查询有限到止。 | 受阻 | 必要身份/日期/!166核心不足，终态§5，Added/OOM非机制。 |
+| 表外：[OpenAI selector](https://help.openai.com/en/articles/10128477-chatgpt-enterprise-and-edu-release-notes) | January30 compatibility核心，官方RSS/exact-date有限补检；root实际核Jan30段。 | 已检查 | 具体支持版本扩展无新执行/授权机制，贡献关闭，不要求精确时刻；不替代机构历史目录覆盖。 |
+| 表外：[KsanaDiT](https://github.com/Tencent/KsanaDiT/blob/main/CHANGELOG.md) | v0.2.2 Jan30段；旧target tag API404、直接cache miss与本轮exact pinning/版本查询有限到止。 | 受阻 | Jan30日期已够；只缺精确revision/!166核心与必要反侧，终态§5，Added/OOM非机制。 |
 | 补检：[DataCite](https://api.datacite.org/) | 64日期working家族及21198/21708/21268元数据逐项原值，仅身份/日期上界，不负责效果。 | 已检查 | created非公开精确秒；22208/209上界跨窗。 |
 | 表外：[cais/mmlu card](https://huggingface.co/datasets/cais/mmlu) | FBS争议实际card main/c30699e的all/dev285，不扩dataset审计。 | 已检查 | 与论文5k unique dev未统一，保留§5，非伪造推断。 |
 
 ## 3. 候选与判断
+
+本轮没有新增候选行，不给未确认首次公开日的线索评分。完整题摘筛选八项：[18449v1 masked prompt优化](https://arxiv.org/abs/2602.18449v1)与[00359v1 deployment evolution position](https://arxiv.org/abs/2602.00359v1)均有潜在主线增量，但exact arXiv事件及官方availability排Jan30公开、更早作者首次完整正文未恢复；仅窗外线索，不扩后日。[23280v1 inverse-PDE](https://arxiv.org/abs/2601.23280v1)按AI for Science范围关闭。另五项（weak diffusion priors、Matterhorn、Consensus、YuriiFormer、SpanNorm）的具体旧约束→实际增量→潜在选择变化与有限日期请求见§5和[逐项题摘/日期定位](../_sources/daily-20260131/supplement-20261008.md)。不把索引Date、Submitted、月份前缀、API published或created当first-public，不把当前v2冒作v1。下表61行保持原文、原评分/公开范围/Books处置。
 
 最终61家族，无重复事件重列。论文表使用精确v1原题名，不继承current DataCite后版改名。60篇公开范围含起点不含终点：各自v1 Submitted均Jan28 19Z→Jan29 19Z批次；[官方availability](https://info.arxiv.org/help/availability.html)支持Jan30 01Z公告下界，DOI仅公告时生成，各项created给上界。moderation可延后，所以不把Submitted当公开或仅用提交给上界。下列范围全部落窗，非首公开秒；原值见[DATES](../_sources/daily-20260131/DATES.md)、[DATACITE](../_sources/daily-20260131/DATACITE_BATCH1.jsonl)、[额外三项](../_sources/daily-20260131/DATE_META_EXTRA.txt)。Kimi用官方published_at。64当前abs和额外三项轻量核已有withdraw/说明，未见撤回；LAMP Major revision只核影响v1目标的决定点，窗外v2不作历史事实，见[CURRENT_SIGNALS](../_sources/daily-20260131/CURRENT_SIGNALS.md)。
 
@@ -358,15 +384,17 @@ exact PDFp3–8/12–13核train真answer/test随机answer，非CoTfaithfulness�
 
 四项实际写入（不是PRE）：[Ch24](../../../../books/part-03-multimodal-world-models/24-multimodal-generative-paradigms.md)172/174与722/724、[Ch12](../../../../books/part-02-model/12-embedding.md)227/229、[Ch55](../../../../books/part-05-inference-system/55-pd-disaggregation.md)543/545。作者先读owner/相邻交接，root独立实际原源/窄差额PRE与正文前后/末注POST通过，锁释放、旧内容保留。已有覆盖另见[Ch22](../../../../books/part-02-model/22-long-context.md)、[Ch13](../../../../books/part-02-model/13-position-encoding.md)、[Ch28](../../../../books/part-04-training-system/28-pretraining.md)。局部recipe留报告，不堆论文名。
 
+本轮证据与Books差额：新确认候选0，不开展新全文/owner审阅、不新增正面Evidence或Books覆盖。OpenAI selector旧兼容名单扩展、visual UI、鲸鱼应用与Kimi接入/配置提案已具体贡献关闭，root代表样本校准通过；Ksana只有日期changelog，不把Added/OOM或!166标签当新机制。八项新题摘线索具体判断/原件见[本轮补查](../_sources/daily-20260131/supplement-20261008.md)，不稀释上面57必要审阅与四中心争议，不改原§4连续有效正文。
+
 ## 5. 缺口与下一步
 
-尚可执行工作：无。root最终日级来源/候选/Books实际验收通过；正式报告、机器/链接与本日限定检查已处理，普通待办0。以下为明确隔离的本窗终态保留项，不让外部材料长期缺失伪装进行中，也不授通过或正面采用。
+本轮尚可执行工作：无。作者有限扫描已止，六部分差额已合并；机器/本地链接/本日限定diff与61行/原§4连续保留检查通过，root独立DAY通过，普通待办0，本日结束不自动换日。既有root有效验收与本轮具名独立验收分账。以下为明确隔离的外部终态保留项，不让长期缺失伪装普通待办，也不授通过或正面采用。
 
 以下为有限穷尽的本窗外部终态保留项，不支持确定当窗候选、正面Evidence、Books或无遗漏：
 
-- [22208](https://arxiv.org/abs/2601.22208v1)与[22209](https://arxiv.org/abs/2601.22209v1)：公告下界Jan30 01Z、DOI created上界Feb02 02:51Z跨窗；exact-ID/announced/官方站内有限补检未恢复时间。需同稿官方公告/含时区作者首次正文，或足以缩至本窗的公开范围；只重开这两日期/准入，AB和DATES保留。
-- [OpenAI selector](https://help.openai.com/en/articles/10128477-chatgpt-enterprise-and-edu-release-notes)：core仅GPT-5.2 Instant/Thinking可选、o-series/Pro不支持与admin控制，Jan30无时区。Research/News/RSS/exact-date有限到止，仍不足09→09落窗；需含时区首次发布时间/官方范围，再核同compatibility，不重扫release。
-- [KsanaDiT v0.2.2](https://github.com/Tencent/KsanaDiT/blob/main/CHANGELOG.md)：Jan30无时区changelog和pinning/OOM(!166)标签，tag API404/直接cache miss/定点query有限失败；需target tag/release含时区、!166或同变化精确source/core及新条件/受控反侧。标签不评分；已尝试入口/替代见EVIDENCE_OFFICIAL。
+- [22208](https://arxiv.org/abs/2601.22208v1)与[22209](https://arxiv.org/abs/2601.22209v1)：原公告下界Jan30 01Z、DOI created上界Feb02 02:51Z跨日；exact-ID/announced/官方站内有限补检未恢复公开日。需同稿官方公告日/作者首次完整正文公开日，或足以缩至Jan30的公开包络，不再要求时刻或时区；只重开这两日期/准入，AB和DATES保留。
+- [KsanaDiT v0.2.2](https://github.com/Tencent/KsanaDiT/blob/main/CHANGELOG.md)：Jan30 changelog足够补充自然日日期；tag API404/直接cachemiss/精确pinning与版本查询有限失败，只需target精确revision、!166或同变化source/core及旧offload/pinning约束→实际变化→OOM/传输条件与直接反侧。不再请求精确公开时刻；153/169实现标签不自动入候选。已尝试原件见[本轮source_stop](../_sources/daily-20260131/supplement-20261008.md)。
+- 新增五项必要日期隔离（题摘不是性能证明）：[Weak Diffusion Priors Can Still Achieve Strong Inverse-Problem Performance, 22443v1](https://arxiv.org/abs/2601.22443v1)在measurement-rich下弱/错域prior的充分条件可改变prior容量与采样选择，但exact v1 cachemiss，当前v2不能代用；需精确v1正文/题摘与Jan30首次公开证明。[Matterhorn, 22876v1](https://arxiv.org/abs/2601.22876v1)的masked TTFS silent/dead-zone与memristor CIM改变数据移动/计算分工；[Stabilizing Transformer Training Through Consensus, 22614v1](https://arxiv.org/abs/2601.22614v1)的consensus替换attention改变高学习率稳定性选择；[YuriiFormer, 23236v1](https://arxiv.org/abs/2601.23236v1)的Lie-Trotter/Nesterov同oracle更新改变层动力学；[SpanNorm, 22580v1](https://arxiv.org/abs/2601.22580v1)的whole-block residual span/聚合PostNorm改变方差与collapse边界。后四exact v1完整题摘已读，只缺对应Jan30官方公告/作者首次完整正文日期，不追全文或后日。各自Submitted和版本日期、有限exactabs/标题日期查询停止定位见[补查八项表](../_sources/daily-20260131/supplement-20261008.md)；未恢复primary first-public，均不评分、不授候选/正面Evidence/Books。
 - §2动态历史目录/分页缺段：当前可用有界替代已检查，但不授完整历史Coverage；官方本窗目录/目标页/具体漏项到达只重开对应切片，不能用已核单篇填补机构全目录。
 
 四中心争议双方材料可读，非访问阻碍、不降分EX、不进Books、不采用中心保证：
@@ -379,6 +407,11 @@ exact PDFp3–8/12–13核train真answer/test随机answer，非CoTfaithfulness�
 窗外：[LAMP v2](https://arxiv.org/abs/2601.21623v2)提交2026-05-07T16:10:14Z Major revision，weighted目标相对本日v1 unweighted变化已定点核，不推翻本次收窄命题；只留真实归属日恢复，不扩本窗或全revision差分。其余version号/accepted不单独授重要修订。
 
 ## 6. 复核
+
+本轮补查独立复核者：root（本轮非作者）
+本轮结论：通过
+
+root已实际核六部分增量、14 source有限查询/当前切片/429与月路径修正、全部八新完整题摘与官方availability/日期权限、selector/Kimi/UI/AI for Science关闭分层样本及精确终态请求；没有新增确定候选、没有Books差额。旧selector/Ksana/22208与22209请求已按自然日定点同步。root实际核原61候选行字面不变、原窗口与原§4连续保留，89本地引用0 broken，V3与本日cached/unstaged diff全通过；本轮独立DAY通过。作者仅记录root实际验收，不自授独立结论；未重读有效原61及四处写后，下面独立记录为既有61家族有效验收，连续保留。
 
 复核者：root（本日非作者）
 结论：通过

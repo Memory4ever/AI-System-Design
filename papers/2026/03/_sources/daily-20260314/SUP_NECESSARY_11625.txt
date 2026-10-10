@@ -1,0 +1,1635 @@
+MedPruner: Training-Free Hierarchical Token Pruning for Efficient 3D Medical Image Understanding in Vision-Language Models
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Methods
+2.1
+3D Vision-Language Models
+2.2
+Inter-slice Anchor-based Filtering
+2.3
+Dynamic Information Nucleus Selection
+3
+Experiments
+3.1
+Experiment Setting
+3.2
+Comparison Results
+3.3
+Ablation Study
+4
+Conclusion
+References
+License: arXiv.org perpetual non-exclusive license
+arXiv:2603.11625v1 [cs.CV] 12 Mar 2026
+MedPruner: Training-Free Hierarchical Token Pruning for Efficient 3D Medical Image Understanding in Vision-Language Models
+Shengyuan Liu
+†
+†
+thanks:
+Equal contributions.
+Affiliation:
+Chinese University of Hong Kong
+Zanting Ye*
+Affiliation:
+Westlake University
+Yunrui Lin*
+Affiliation:
+Westlake University
+Chen Hu
+Affiliation:
+Westlake University
+Affiliation:
+Southern Medical University
+Jiangnan University
+Wanting Geng
+Affiliation:
+Dalian University of Technology
+Xu Han
+Affiliation:
+Shanghai Jiao Tong University
+Bulat Ibragimov
+Affiliation:
+University of Copenhagen
+Yefeng Zheng
+†
+†
+thanks:
+Corresponding authors: Yixuan Yuan (), Yefeng Zheng ()
+E-mail
+yxyuan@ee.cuhk.edu.hk
+E-mail
+zhengye-feng@westlake.edu.cn
+Affiliation:
+Westlake University
+Yixuan Yuan
+†
+Affiliation:
+Chinese University of Hong Kong
+Abstract
+While specialized Medical Vision-Language Models (VLMs) have achieved remarkable success in interpreting 2D and 3D medical modalities, their deployment for 3D volumetric data remains constrained by significant computational inefficiencies. Current architectures typically suffer from massive anatomical redundancy due to the direct concatenation of consecutive 2D slices and lack the flexibility to handle heterogeneous information densities across different slices using fixed pruning ratios. To address these challenges, we propose MedPruner, a training-free and model-agnostic hierarchical token pruning framework specifically designed for efficient 3D medical image understanding. MedPruner introduces a two-stage mechanism: an Inter-slice Anchor-based Filtering module to eliminate slice-level temporal redundancy, followed by a Dynamic Information Nucleus Selection strategy that achieves adaptive token-level compression by quantifying cumulative attention weights. Extensive experiments on three 3D medical benchmarks and across three diverse medical VLMs reveal massive token redundancy in existing architectures. Notably, MedPruner enables models such as MedGemma to maintain or even exceed their original performance while retaining fewer than 5% of visual tokens, thereby drastically reducing computational overhead and validating the necessity of dynamic token selection for practical clinical deployment. Our code will be released.
+Keywords:
+Medical Vision-Language Models 3D Medical Imaging Token Pruning.
+1
+Introduction
+Vision-Language Models (VLMs), ranging from proprietary systems like GPT-4o
+[
+9
+]
+, Gemini
+[
+6
+]
+to high-performance open-source models such as the LLaVA
+[
+16
+]
+and Qwen-VL
+[
+3
+]
+series, have demonstrated extraordinary universal perceptual and reasoning capabilities. Drawing upon these advancements, specialized medical VLMs
+[
+24
+,
+14
+,
+25
+,
+5
+,
+20
+,
+8
+,
+27
+,
+21
+]
+such as Med-PaLM M
+[
+22
+]
+and LLaVA-Med
+[
+14
+]
+, have achieved exceptional proficiency in 2D medical image interpretation, providing critical support for accurate diagnosis and clinical decision-making. Beyond 2D modalities, specialized architectures
+[
+2
+,
+1
+,
+13
+,
+12
+,
+18
+]
+have been developed to navigate 3D volumetric data (e.g., CT and MRI), enabling the analysis of volumetric anatomical structures and temporal dynamics that are critical for complex clinical scenarios. Recently, advanced medical VLMs, such as Hulu
+[
+11
+]
+, MedGemma-1.5
+[
+20
+]
+, and RadFM
+[
+23
+]
+, have further extended their capabilities to simultaneously process both 2D and 3D medical inputs, aiming to consolidate multimodal medical image understanding within a unified framework. Despite these advancements, the transition from 2D to 3D clinical scenarios inevitably triggers a token explosion due to the high-resolution volumetric nature of CT/MRI scans. This soaring computational demand necessitates an intelligent token pruning mechanism to maintain reasoning integrity while ensuring clinical-grade inference speeds.
+However, current processing pipelines and general-purpose pruning methods exhibit critical limitations when applied to 3D medical inputs. First, their architectures
+[
+20
+,
+11
+,
+3
+,
+25
+]
+typically rely on feeding 2D slices along a single axis into the model, where the generated tokens are directly concatenated. Since consecutive slices in 3D volumes share extreme spatial similarity, this direct concatenation introduces massive redundancy that exhausts the LLM’s context window and hinders the processing of auxiliary clinical information. Second, existing token pruning methods
+[
+11
+,
+26
+,
+17
+]
+typically employ a static, predefined pruning ratio, which fails to account for the inherent heterogeneity of information density. While certain slices capture the intricate boundaries of a tumor, others may only contain uniform tissue with minimal diagnostic value; a fixed ratio either risks losing fine-grained pathological details or wastes tokens on irrelevant backgrounds. Crucially, these static approaches ignore the variance in attention distributions across different vision backbones. Different models exhibit distinct perceptual biases toward medical features, rendering model-agnostic pruning sub-optimal.
+To address these challenges, we propose MedPruner, a training-free and model-agnostic hierarchical token pruning approach tailored for 3D medical image understanding in VLMs. Specifically, we first incorporate an inter-slice anchor-based filtering module to effectively manage the high temporal redundancy inherent in 3D medical volumes. Additionally, we develop a dynamic information nucleus selection strategy to achieve adaptive compression across slices with varying information densities by quantifying the cumulative attention weights contributed by visual tokens. To validate the efficacy of our proposed method, we conduct extensive experiments on three 3D medical benchmarks and three different medical VLMs. Our results reveal massive token redundancy in current models; notably, MedPruner enables the MedGemma model to preserve or surpass its original performance while utilizing fewer than 5% of the visual tokens. This extreme compression highlights a highly skewed attention distribution in medical VLMs, demonstrating that dynamic token selection is essential for effectively filtering background noise and capturing critical diagnostic signals. Our contributions can be summarized as follows:
+•
+To our knowledge, this is the first work to analyze and propose a model-agnostic specialized token pruning framework for 3D medical VLMs.
+•
+We employ a training-free, two-stage mechanism to dynamically prune redundant information at both the slice and token levels.
+•
+We conduct comprehensive experiments across 3 datasets and 3 VLMs, consistently demonstrating the effectiveness and robustness of our approach.
+2
+Methods
+2.1
+3D Vision-Language Models
+Existing VLM architectures generally consist of three components: a visual encoder, a modality projector, and an LLM backbone. In 3D medical imaging, a common approach is to slice a 3D volume
+V
+∈
+ℝ
+D
+×
+H
+×
+W
+V\in\mathbb{R}^{D\times H\times W}
+along the axial axis, resulting in a sequence of 2D slices
+ℐ
+=
+{
+I
+1
+,
+I
+2
+,
+…
+,
+I
+D
+}
+\mathcal{I}=\{I_{1},I_{2},\dots,I_{D}\}
+. Each slice
+I
+i
+I_{i}
+is independently processed by a visual encoder
+ℰ
+v
+\mathcal{E}_{v}
+and a modality projector
+𝒫
+\mathcal{P}
+. The final visual representation
+H
+v
+H_{v}
+is the concatenation of the projected tokens from all slices:
+H
+v
+=
+⨁
+i
+=
+1
+D
+𝒫
+⁡
+(
+ℰ
+v
+​
+(
+I
+i
+)
+)
+,
+H_{v}=\bigoplus_{i=1}^{D}\mathcal{P}(\mathcal{E}_{v}(I_{i})),
+(1)
+where
+⨁
+\bigoplus
+denotes sequence concatenation. If each slice yields
+K
+K
+tokens, the total visual token count
+D
+×
+K
+D\times K
+leads to a severe sequence length explosion. To mitigate this, we propose MedPruner, a hierarchical framework consisting of two components: Inter-slice Anchor-based Filtering (IAF), which reduces inter-slice redundancy by tracking content evolution, and Dynamic Information Nucleus Selection (DINS), which adaptively prunes uninformative tokens based on attention distribution. The overview of MedPruner is shown in Fig.
+1
+.
+Figure 1
+:
+The overview of our MedPruner.
+2.2
+Inter-slice Anchor-based Filtering
+To effectively manage the high temporal redundancy inherent in 3D medical volumes, we introduce Inter-slice Anchor-based Filtering (IAF). Rather than employing a static or fixed-interval sampling rate, IAF utilizes a dynamic, content-aware strategy to adaptively identify slices that provide significant anatomical information. The process operates sequentially by maintaining a dynamic anchor slice, denoted as
+I
+a
+​
+n
+​
+c
+I_{anc}
+. We initialize this filtering process by setting the first slice of the volume as the starting anchor, such that
+I
+a
+​
+n
+​
+c
+=
+I
+1
+I_{anc}=I_{1}
+. As we traverse the remaining sequence, we evaluate the informational divergence of each incoming slice
+I
+i
+I_{i}
+(
+i
+>
+1
+i>1
+) relative to the current active anchor. This divergence is quantified using the pixel-wise mean
+L
+1
+L_{1}
+distance:
+Δ
+⁡
+(
+I
+i
+,
+I
+a
+​
+n
+​
+c
+)
+=
+1
+N
+​
+∑
+j
+=
+1
+N
+|
+I
+i
+,
+j
+−
+I
+a
+​
+n
+​
+c
+,
+j
+|
+,
+\Delta(I_{i},I_{anc})=\frac{1}{N}\sum_{j=1}^{N}|I_{i,j}-I_{anc,j}|,
+(2)
+where
+N
+N
+denotes the total number of pixels in a slice. This distance
+Δ
+⁡
+(
+I
+i
+,
+I
+a
+​
+n
+​
+c
+)
+\Delta(I_{i},I_{anc})
+serves as a proxy for morphological change. A small distance indicates that the structural information in
+I
+i
+I_{i}
+is already well-represented by
+I
+a
+​
+n
+​
+c
+I_{anc}
+, rendering the current slice redundant. The core of the IAF mechanism lies in its threshold-driven update logic. We continuously compare the distance
+Δ
+⁡
+(
+I
+i
+,
+I
+a
+​
+n
+​
+c
+)
+\Delta(I_{i},I_{anc})
+against a predefined sensitivity threshold
+γ
+\gamma
+. If the distance exceeds
+γ
+\gamma
+, the slice
+I
+i
+I_{i}
+is deemed to contain significant novel anatomical features. Consequently,
+I
+i
+I_{i}
+is preserved and immediately takes over as the new active anchor (
+I
+a
+​
+n
+​
+c
+←
+I
+i
+I_{anc}\leftarrow I_{i}
+) for evaluating the remaining sequence. Conversely, if the distance falls below the threshold, the slice lacks sufficient new information and is entirely filtered out. Through this continuous traversal and updating process, the original dense volume of length
+D
+D
+is distilled down to a sparse, informative subsequence comprising only the dynamically preserved anchor frames
+ℐ
+f
+​
+i
+​
+l
+​
+t
+​
+e
+​
+r
+​
+e
+​
+d
+=
+{
+I
+a
+​
+n
+​
+c
+1
+,
+I
+a
+​
+n
+​
+c
+2
+,
+…
+,
+I
+a
+​
+n
+​
+c
+k
+}
+\mathcal{I}_{filtered}=\{I_{anc}^{1},I_{anc}^{2},\dots,I_{anc}^{k}\}
+,
+k
+k
+is the final number of retained slices (
+k
+<
+D
+k<D
+). By discarding the non-anchor intermediate frames, IAF drastically compresses the sequence length. This ensures that the model concentrates its computational budget solely on regions with high structural variance, including the boundaries of organs or the appearance of lesions. Consequently, it prepares a highly condensed and representative sequence for the subsequent token-level optimization.
+2.3
+Dynamic Information Nucleus Selection
+Following the inter-slice filtering, we further optimize the token density within each preserved slice by deriving token importance directly from the self-attention layers of the vision encoder. First, we calculate the attention score for each head as follows:
+S
+h
+=
+Softmax
+​
+(
+Q
+h
+​
+K
+h
+⊤
+D
+h
+)
+,
+S_{h}=\text{Softmax}\left(\frac{Q_{h}K_{h}^{\top}}{\sqrt{D_{h}}}\right),
+(3)
+where
+D
+h
+D_{h}
+is the head dimension, and
+Q
+h
+Q_{h}
+and
+K
+h
+K_{h}
+represent the query and key matrices, respectively. By averaging these scores across all heads, we obtain an aggregated attention matrix
+S
+avg
+S_{\text{avg}}
+. To evaluate the raw significance of each visual token, we compute the average of
+S
+avg
+S_{\text{avg}}
+along the sequence dimension, yielding an initial importance vector
+v
+^
+∈
+ℝ
+M
+\hat{v}\in\mathbb{R}^{M}
+, where
+M
+M
+is the number of tokens in the slice. To transform these raw scores into a comparable probability distribution and allow for adjustable selection sensitivity, we apply a temperature-scaled softmax normalization such that:
+v
+i
+=
+exp
+⁡
+(
+v
+^
+i
+/
+T
+)
+∑
+j
+=
+1
+M
+exp
+⁡
+(
+v
+^
+j
+/
+T
+)
+,
+v_{i}=\frac{\exp(\hat{v}_{i}/T)}{\sum_{j=1}^{M}\exp(\hat{v}_{j}/T)},
+(4)
+where the temperature coefficient
+T
+T
+serves as a smoothing factor; a lower
+T
+T
+sharpens the distribution to emphasize high-scoring tokens, while a higher
+T
+T
+retains broader contextual information.
+The inherent heterogeneity of information density across medical slices suggests that a fixed pruning ratio is suboptimal, as it fails to distinguish between salient anatomical features and uninformative backgrounds. To address this, we utilize a strategy inspired by nucleus filtering to adaptively capture the essential core of each slice by sorting the normalized weights in
+v
+v
+in descending order to obtain
+v
+sorted
+v_{\text{sorted}}
+. We then dynamically select the minimal set of top-ranked tokens, designated as
+primary tokens
+𝒦
+\mathcal{K}
+, whose cumulative attention mass reaches a predefined information threshold
+τ
+\tau
+:
+𝒦
+=
+{
+Top-
+k
+tokens
+∣
+min
+k
+s.t.
+∑
+j
+=
+1
+k
+v
+sorted
+,
+j
+≥
+τ
+}
+.
+\mathcal{K}=\{\text{Top-}k\text{ tokens}\mid\min k\quad\text{s.t.}\quad\sum_{j=1}^{k}v_{\text{sorted},j}\geq\tau\}.
+(5)
+By anchoring the selection boundary to the cumulative probability mass, this mechanism ensures that slices with concentrated attention are significantly compressed, while those with dispersed, critical details retain a larger token set to maintain diagnostic integrity.
+Finally, the remaining unselected tokens are treated as
+redundant tokens
+. To retain the global structural context without increasing the sequence length, we apply a bipartite matching and clustering operation following
+[
+26
+]
+. These clustered redundant tokens are subsequently concatenated with the primary tokens and passed to the modality projector for the final VLM inference.
+3
+Experiments
+3.1
+Experiment Setting
+Datasets.
+In our experiments, we evaluate our approach on three 3D medical benchmarks: M3D
+[
+2
+]
+, 3D-RAD
+[
+7
+]
+, and AMOS-MM
+[
+10
+]
+. Both M3D and 3D-RAD are comprehensive 3D Medical Visual Question Answering (VQA) datasets that support both open-ended and closed-ended evaluations. Specifically, M3D queries detailed anatomical and pathological attributes, such as imaging planes, contrast phases, specific organs (e.g., liver, lung), and abnormalities. 3D-RAD focuses specifically on radiology CT scans and introduces complex reasoning challenges across six diverse VQA tasks, including anomaly detection, medical computation, and multi-stage temporal diagnosis. Additionally, we utilize the AMOS-MM benchmark, which comprises CT and MRI of abdominal organs, primarily to assess the model’s performance in 3D medical report generation.
+Implementation Details.
+To demonstrate the model agnosticism of the MedPruner, we evaluate it across three main-stream VLMs which support 3D medical imaging input, including a general-purpose model, Qwen3-VL-8B
+[
+3
+]
+, alongside two medical domain-specific models, Hulu-Med-7B
+[
+11
+]
+and MedGemma-1.5-4B
+[
+20
+]
+. For the evaluation metrics, we utilize Accuracy for closed-set VQA tasks to rigorously measure classification performance. For open-set reasoning and 3D medical report generation, we employ standard Natural Language Generation metrics including BLEU
+[
+19
+]
+(BLEU-1, BLEU-4), ROUGE
+[
+15
+]
+(ROUGE-1, ROUGE-L), and METEOR
+[
+4
+]
+. All experiments are conducted on 8
+×
+\times
+NVIDIA H20 GPUs.
+3.2
+Comparison Results
+Table 1
+:
+Quantitative resluts on the 3DRad
+[
+7
+]
+and M3D
+[
+2
+]
+VQA datasets.
+R-Rate
+denotes the token retention rate.
+Bold
+and
+underlined
+values represent the best and second-best performance, respectively.
+Method
+M3D
+3DRad
+Acc
+ROUGE-1
+ROUGE-L
+BLEU-1
+BLEU-4
+R-Rate
+Acc
+ROUGE-1
+ROUGE-L
+BLEU-1
+BLEU-4
+R-Rate
+Hulu-Med-7B
+[
+11
+]
+Original
+75.317
+34.188
+34.047
+31.820
+9.541
+100.00%
+78.767
+23.280
+22.917
+18.760
+5.695
+100.00%
+Hulu-L1
+[
+11
+]
+77.790
+47.334
+47.167
+45.234
+12.491
+66.03%
+78.082
+23.765
+23.487
+20.389
+6.280
+45.06%
+VisionZip
+[
+26
+]
+77.623
+47.596
+47.418
+45.451
+12.549
+69.96%
+79.232
+25.618
+25.336
+22.391
+6.949
+69.74%
+HiPrune
+[
+17
+]
+77.616
+47.072
+46.199
+45.417
+12.574
+22.30%
+79.061
+25.721
+25.559
+21.339
+6.759
+22.30%
+MedPruner
+77.452
+47.434
+47.262
+45.304
+12.580
+52.10%
+79.280
+26.247
+25.982
+22.865
+7.123
+51.88%
+MedGemma1.5-4B
+[
+20
+]
+Original
+32.717
+6.797
+5.888
+3.741
+0.835
+100.00%
+59.155
+4.865
+4.094
+2.629
+0.516
+100.00%
+Hulu-L1
+[
+11
+]
+44.638
+7.810
+4.473
+2.779
+0.651
+65.98%
+57.868
+5.009
+1.596
+1.034
+0.217
+44.89%
+VisionZip
+[
+26
+]
+45.428
+7.925
+4.364
+2.707
+0.639
+69.98%
+56.537
+5.091
+1.155
+0.754
+0.165
+69.82%
+HiPrune
+[
+17
+]
+44.420
+8.201
+4.447
+2.792
+0.664
+22.30%
+55.959
+6.109
+2.045
+1.365
+0.304
+22.30%
+MedPruner
+43.718
+8.983
+5.845
+3.923
+1.005
+4.87%
+60.843
+5.168
+2.057
+1.317
+0.277
+4.62%
+In this section, we conduct a comprehensive evaluation of MedPruner against three existing training-free token reduction methods: the L1-compression method proposed in Hulu-Med
+[
+11
+]
+(Hulu-L1), VisionZip
+[
+26
+]
+, and HiPrune
+[
+17
+]
+.
+Table
+1
+presents quantitative results on the 3DRad and M3D VQA datasets using Hulu-Med and MedGemma-1.5. In cases where datasets involve massive slice counts, such as M3D with an average of 87 and a maximum of over 600 slices, MedPruner plays a critical role in mitigating information overload. Notably, on the M3D dataset, MedPruner frequently outperforms the uncompressed baseline. This occurs because directly concatenating hundreds of slices introduces significant background noise and redundant structures that can overwhelm the LLM’s context window. By filtering these uninformative tokens, MedPruner achieves the highest BLEU-4 scores on M3D (12.580) and 3DRad (7.123) with Hulu-Med while maintaining competitive accuracy and reducing the token retention rate (R-Rate) to approximately 52%.
+Table
+2
+reports the performance on the AMOS-MM dataset. Across all tested architectures, MedPruner achieves the optimal balance between accuracy and efficiency, delivering the fastest inference speeds while maintaining exceptional performance. In several instances, it even surpasses the original baselines, such as reaching a 100.65% average score on MedGemma. These results highlight the model-agnostic robustness of MedPruner in optimizing diverse VLMs under real-world computational constraints.
+Table 2
+:
+Quantitative results on the AMOS-MM dataset
+[
+10
+]
+.
+R-Rate
+denotes the token retention rate.
+Average
+represents the mean percentage of performance across all metrics relative to the original model.
+Speed
+indicates the average processing time per sample in seconds (
+s
+s
+).
+Bold
+and
+underlined
+values represent the best and second-best performance, respectively.
+Method
+ROUGE-1
+ROUGE-L
+BLEU-1
+BLEU-4
+METEOR
+Average
+↑
+\uparrow
+R-Rate
+↓
+\downarrow
+Speed
+↓
+\downarrow
+Hulu-Med-7B
+[
+11
+]
+Original
+39.518
+28.763
+37.317
+13.375
+31.729
+100.00%
+100.00%
+9.212
+Hulu-L1
+[
+11
+]
+33.063
+24.826
+30.754
+9.799
+26.212
+81.65%
+16.35%
+8.039
+VisionZip
+[
+26
+]
+38.519
+28.216
+36.876
+12.705
+30.738
+97.25%
+49.69%
+8.435
+HiPrune
+[
+17
+]
+39.093
+27.956
+35.764
+12.513
+31.086
+96.70%
+22.30%
+9.111
+MedPruner
+39.255
+28.860
+37.339
+13.120
+31.136
+99.19%
+54.20%
+7.931
+MedGemma1.5-4B
+[
+20
+]
+Original
+13.791
+9.906
+5.845
+0.253
+9.721
+100.00%
+100.00%
+38.001
+Hulu-L1
+[
+11
+]
+13.999
+9.787
+5.843
+0.241
+9.782
+99.25%
+16.07%
+36.193
+VisionZip
+[
+26
+]
+13.830
+10.043
+6.050
+0.260
+10.129
+102.42%
+49.61%
+36.682
+HiPrune
+[
+17
+]
+13.369
+9.782
+5.828
+0.236
+9.939
+98.21%
+21.85%
+37.619
+MedPruner
+13.706
+10.234
+5.985
+0.235
+10.252
+100.65%
+2.46%
+35.889
+Qwen3-VL-8B
+[
+3
+]
+Original
+18.717
+18.317
+26.994
+1.077
+18.821
+100.00%
+100.00%
+11.179
+Hulu-L1
+[
+11
+]
+18.201
+17.808
+25.839
+0.870
+17.788
+93.10%
+16.50%
+9.569
+Vision
+[
+26
+]
+18.590
+18.047
+25.604
+0.925
+18.116
+94.98%
+49.61%
+10.654
+HiPrune
+[
+17
+]
+18.217
+17.255
+25.886
+0.919
+18.600
+94.33%
+22.30%
+10.052
+MedPruner
+19.469
+17.908
+26.119
+0.937
+17.648
+95.86%
+43.28%
+9.044
+A notable observation is the extreme token compression achieved by MedPruner on the MedGemma model. As shown in the tables, MedPruner maintains high performance while requiring fewer than 5% of the visual tokens across all three datasets, reaching an incredibly low R-Rate of 2.46% on AMOS-MM. Upon analyzing the model’s behavior, we discovered that MedGemma’s attention weights are highly concentrated on a single or a very small subset of tokens. By dynamically anchoring the selection threshold to the cumulative attention mass, our module naturally adapts to this highly skewed distribution. This phenomenon strongly validates the necessity of our dynamic selection strategy. Unlike fixed-ratio methods that arbitrarily discard useful tokens or retain unnecessary ones (e.g., HiPrune fixed at 22.30%), MedPruner intelligently scales the token retention rate based on the intrinsic attention distribution, ensuring optimal efficiency tailored to each specific slice and model architecture.
+3.3
+Ablation Study
+Table 3
+:
+Ablation study on the AMOS-MM dataset
+[
+10
+]
+using the Hulu-Med-7B model
+[
+11
+]
+.
+IAF
+Primary
+Redundant
+Average
+↑
+\uparrow
+R-Rate
+↓
+\downarrow
+Speed
+↓
+\downarrow
+✗
+✗
+✗
+100.00%
+100.00%
+9.212
+✓
+✗
+✗
+92.13%
+60.33%
+7.751
+✗
+✓
+✗
+98.73%
+83.11%
+8.894
+✗
+✓
+✓
+100.07%
+88.14%
+9.586
+✓
+✓
+✓
+99.19%
+54.20%
+7.931
+Figure 2
+:
+Ablation study of
+τ
+\tau
+.
+Component Analysis.
+We first evaluate the contribution of each MedPruner component on the AMOS-MM dataset, with results summarized in Table
+3
+. As shown in Table
+3
+, IAF significantly reduces the sequence length and accelerates inference speed from 9.2s to 7.7s. While this slice-level filtering initially leads to a performance drop, the introduction of Primary token selection and Redundant token clustering effectively restores diagnostic accuracy. Specifically, incorporating primary tokens and redundant clustering recovers the Average score to over 100% of the baseline. The full MedPruner configuration achieves an optimal balance, maintaining 99.19% of the original performance while reaching the highest compression efficiency with a 54.20% R-Rate.
+Sensitivity of Information Threshold
+τ
+\tau
+.
+Fig.
+2
+illustrates the impact of the information threshold
+τ
+\tau
+on the Hulu-Med-7B model. As
+τ
+\tau
+increases, the token retention rate rises, leading to improved ROUGE-L and METEOR scores. However, these performance gains gradually plateau, indicating that the primary tokens identified by our nucleus selection strategy have already captured the most critical diagnostic features. This confirms that further increasing the token count yields diminishing returns, validating the efficiency of our adaptive selection mechanism.
+4
+Conclusion
+In this paper, we proposed MedPruner, a training-free hierarchical pruning framework that bridges the gap between high-performance 3D medical VLMs and the constraints of real-time clinical deployment. By adaptively managing the non-uniform information density across volumetric data, our approach ensures that critical diagnostic details are prioritized over redundant anatomical backgrounds. Extensive evaluations demonstrated that MedPruner significantly enhanced computational efficiency without compromising diagnostic integrity, offering a scalable and model-agnostic solution for the practical integration of VLMs into complex medical workflows.
+References
+[1]
+K. K. Agrawal, L. Liu, L. Lian, M. Nercessian, N. Harguindeguy, Y. Wu, P. Mikhael, G. Lin, L. V. Sequist, F. Fintelmann,
+et al.
+(2025)
+Pillar-0: a new frontier for radiology foundation models
+.
+arXiv preprint arXiv:2511.17803
+.
+Cited by:
+§1
+.
+[2]
+F. Bai, Y. Du, T. Huang, M. Q. Meng, and B. Zhao
+(2024)
+M3D: advancing 3D medical image analysis with multi-modal large language models
+.
+arXiv preprint arXiv:2404.00578
+.
+Cited by:
+§1
+,
+§3.1
+,
+Table 1
+,
+Table 1
+.
+[3]
+S. Bai, K. Chen, X. Liu, J. Wang, W. Ge, S. Song, K. Dang, P. Wang, S. Wang, J. Tang, H. Zhong, Y. Zhu, M. Yang, Z. Li, J. Wan, P. Wang, W. Ding, Z. Fu, Y. Xu, J. Ye, X. Zhang, T. Xie, Z. Cheng, H. Zhang, Z. Yang, H. Xu, and J. Lin
+(2025)
+Qwen2.5-VL technical report
+.
+arXiv preprint arXiv:2502.13923
+.
+Cited by:
+§1
+,
+§1
+,
+§3.1
+,
+Table 2
+.
+[4]
+S. Banerjee and A. Lavie
+(2005)
+METEOR: an automatic metric for MT evaluation with improved correlation with human judgments
+.
+In
+Proceedings of the Annual Meeting of the Association for Computational Linguistics Workshop
+,
+pp. 65–72
+.
+Cited by:
+§3.1
+.
+[5]
+J. Chen, C. Gui, R. Ouyang, A. Gao, S. Chen, G. H. Chen, X. Wang, Z. Cai, K. Ji, X. Wan,
+et al.
+(2024)
+Towards injecting medical visual knowledge into multimodal llms at scale
+.
+In
+Proceedings of the 2024 conference on empirical methods in natural language processing
+,
+pp. 7346–7370
+.
+Cited by:
+§1
+.
+[6]
+G. Comanici, E. Bieber, M. Schaekermann, I. Pasupat, N. Sachdeva, I. Dhillon, M. Blistein, O. Ram, D. Zhang, E. Rosen,
+et al.
+(2025)
+Gemini 2.5: pushing the frontier with advanced reasoning, multimodality, long context, and next generation agentic capabilities
+.
+arXiv preprint arXiv:2507.06261
+.
+Cited by:
+§1
+.
+[7]
+X. Gai, J. Liu, Y. Li, Z. Meng, J. Wu, and Z. Liu
+(2025)
+3D-RAD: a comprehensive 3D radiology Med-VQA dataset with multi-temporal analysis and diverse diagnostic tasks
+.
+arXiv preprint arXiv:2506.11147
+.
+Cited by:
+§3.1
+,
+Table 1
+,
+Table 1
+.
+[8]
+S. He, Y. Nie, Z. Chen, Z. Cai, H. Wang, S. Yang, and H. Chen
+(2024)
+MedDR: diagnosis-guided bootstrapping for large-scale medical vision-language learning
+.
+CoRR
+.
+Cited by:
+§1
+.
+[9]
+A. Hurst, A. Lerer, A. P. Goucher, A. Perelman, A. Ramesh, A. Clark, A. Ostrow, A. Welihinda, A. Hayes, A. Radford,
+et al.
+(2024)
+GPT-4o system card
+.
+arXiv preprint arXiv:2410.21276
+.
+Cited by:
+§1
+.
+[10]
+Y. Ji, H. Bai, C. Ge, J. Yang, Y. Zhu, R. Zhang, Z. Li, L. Zhanng, W. Ma, X. Wan,
+et al.
+(2022)
+AMOS: a large-scale abdominal multi-organ benchmark for versatile medical image segmentation
+.
+Advances in neural information processing systems
+35
+,
+pp. 36722–36732
+.
+Cited by:
+§3.1
+,
+Table 2
+,
+Table 2
+,
+Table 3
+,
+Table 3
+.
+[11]
+S. Jiang, Y. Wang, S. Song, T. Hu, C. Zhou, B. Pu, Y. Zhang, Z. Yang, Y. Feng, J. T. Zhou,
+et al.
+(2025)
+Hulu-Med: a transparent generalist model towards holistic medical vision-language understanding
+.
+arXiv preprint arXiv:2510.08668
+.
+Cited by:
+§1
+,
+§1
+,
+§3.1
+,
+§3.2
+,
+Table 1
+,
+Table 1
+,
+Table 1
+,
+Table 2
+,
+Table 2
+,
+Table 2
+,
+Table 2
+,
+Table 3
+,
+Table 3
+.
+[12]
+H. Lai, Z. Jiang, K. Zhang, Q. Yao, R. Wang, Z. He, X. Tao, W. Wei, and S. K. Zhou
+(2026)
+Med3D-R1: incentivizing clinical reasoning in 3D medical vision-language models for abnormality diagnosis
+.
+arXiv preprint arXiv:2602.01200
+.
+Cited by:
+§1
+.
+[13]
+C. Li, K. Chang, C. Yang, H. Wu, W. Chen, H. Bansal, L. Chen, Y. Yang, Y. Chen, S. Chen,
+et al.
+(2025)
+Towards a holistic framework for multimodal LLM in 3D brain CT radiology report generation
+.
+Nature Communications
+16
+(
+1
+),
+pp. 2258
+.
+Cited by:
+§1
+.
+[14]
+C. Li, C. Wong, S. Zhang, N. Usuyama, H. Liu, J. Yang, T. Naumann, H. Poon, and J. Gao
+(2023)
+LLaVA-Med: training a large language-and-vision assistant for biomedicine in one day
+.
+arXiv preprint arXiv:2306.00890
+.
+Cited by:
+§1
+.
+[15]
+C. Lin
+(2004)
+ROUGE: a package for automatic evaluation of summaries
+.
+In
+Text summarization branches out
+,
+pp. 74–81
+.
+Cited by:
+§3.1
+.
+[16]
+H. Liu, C. Li, Q. Wu, and Y. J. Lee
+(2023)
+Visual instruction tuning
+.
+Advances in neural information processing systems
+36
+,
+pp. 34892–34916
+.
+Cited by:
+§1
+.
+[17]
+J. Liu, F. Du, G. Zhu, N. Lian, J. Li, and B. Chen
+(2025)
+HiPrune: training-free visual token pruning via hierarchical attention in vision-language models
+.
+arXiv preprint arXiv:2508.00553
+.
+Cited by:
+§1
+,
+§3.2
+,
+Table 1
+,
+Table 1
+,
+Table 2
+,
+Table 2
+,
+Table 2
+.
+[18]
+A. Murari Vepa, Y. Yu, J. Gan, A. Cuturrufo, W. Li, W. Wang, F. Scalzo, and Y. Sun
+(2025)
+A multimodal LLM approach for visual question answering on multiparametric 3D brain MRI
+.
+arXiv e-prints
+,
+pp. arXiv–2509
+.
+Cited by:
+§1
+.
+[19]
+K. Papineni, S. Roukos, T. Ward, and W. Zhu
+(2002)
+BLEU: a method for automatic evaluation of machine translation
+.
+In
+Proceedings of the 40th Annual Meeting of the Association for Computational Linguistics
+,
+pp. 311–318
+.
+Cited by:
+§3.1
+.
+[20]
+A. Sellergren, S. Kazemzadeh, T. Jaroensri, A. Kiraly, M. Traverse, T. Kohlberger, S. Xu, F. Jamil, C. Hughes, C. Lau,
+et al.
+(2025)
+MedGemma technical report
+.
+arXiv preprint arXiv:2507.05201
+.
+Cited by:
+§1
+,
+§1
+,
+§3.1
+,
+Table 1
+,
+Table 2
+.
+[21]
+R. Tanno, D. G. Barrett, A. Sellergren, S. Ghaisas, S. Dathathri, A. See, J. Welbl, C. Lau, T. Tu, S. Azizi,
+et al.
+(2025)
+Collaboration between clinicians and vision–language models in radiology report generation
+.
+Nature Medicine
+31
+(
+2
+),
+pp. 599–608
+.
+Cited by:
+§1
+.
+[22]
+T. Tu, S. Azizi, D. Driess, M. Schaekermann, M. Amin, P. Chang, A. Carroll, C. Lau, R. Tanno, I. Ktena,
+et al.
+(2024)
+Towards generalist biomedical AI
+.
+Nejm Ai
+1
+(
+3
+),
+pp. AIoa2300138
+.
+Cited by:
+§1
+.
+[23]
+C. Wu, X. Zhang, Y. Zhang, H. Hui, Y. Wang, and W. Xie
+(2025)
+Towards generalist foundation model for radiology by leveraging web-scale 2D&3D medical data
+.
+Nature Communications
+16
+(
+1
+),
+pp. 7866
+.
+Cited by:
+§1
+.
+[24]
+H. Xu, N. Usuyama, J. Bagga, S. Zhang, R. Rao, T. Naumann, C. Wong, Z. Gero, J. González, Y. Gu,
+et al.
+(2024)
+A whole-slide foundation model for digital pathology from real-world data
+.
+Nature
+630
+(
+8015
+),
+pp. 181–188
+.
+Cited by:
+§1
+.
+[25]
+W. Xu, H. P. Chan, L. Li, M. Aljunied, R. Yuan, J. Wang, C. Xiao, G. Chen, C. Liu, Z. Li,
+et al.
+(2025)
+Lingshu: a generalist foundation model for unified multimodal medical understanding and reasoning
+.
+arXiv preprint arXiv:2506.07044
+.
+Cited by:
+§1
+,
+§1
+.
+[26]
+S. Yang, Y. Chen, Z. Tian, C. Wang, J. Li, B. Yu, and J. Jia
+(2025)
+VisionZip: longer is better but not necessary in vision language models
+.
+In
+Proceedings of the Computer Vision and Pattern Recognition Conference
+,
+pp. 19792–19802
+.
+Cited by:
+§1
+,
+§2.3
+,
+§3.2
+,
+Table 1
+,
+Table 1
+,
+Table 2
+,
+Table 2
+,
+Table 2
+.
+[27]
+J. M. Zambrano Chaves, S. Huang, Y. Xu, H. Xu, N. Usuyama, S. Zhang, F. Wang, Y. Xie, M. Khademi, Z. Yang,
+et al.
+(2025)
+A clinically accessible small multimodal radiology model and evaluation metric for chest X-ray findings
+.
+Nature Communications
+16
+(
+1
+),
+pp. 3108
+.
+Cited by:
+§1
+.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

@@ -319,6 +319,10 @@ throughput 也不能替代真实 restore、reshard 和故障注入测试。
 
 重要 milestone、训练结束和 preemption signal 可以触发额外保存，但 signal handler 不能假设在任意算子中间都能形成一致 checkpoint。
 
+选择保存路径时还要拆开正常训练开销与故障后的不同阶段：发现故障、找到有效 recovery generation、恢复状态、重建 process group/通信机制，以及重放丢失工作。只比较 state restore 时间，会漏掉进入恢复前的等待和重新形成可执行 topology 的代价。共同的 group 重建成本不改变两个 restore 路径的绝对差，却会压缩它们的相对恢复倍率；周期保存、内存副本与有预警的 emergency save 因而要连同 failure interval、lost work、信号覆盖和稳态成本选择，不从最快 load 单项排名。<!-- source-family:SF-2026-ARXIV-2610-07688 -->
+
+这些阶段须分别标明实测、解析下界或敏感性假设，能读回状态不等于 survivors 已完成恢复。[受限 crash harness 的 timeout 干预](https://arxiv.org/html/2610.07688v1)表明，约定 process-group watchdog 可以决定观测检测时间，而不是训练拓扑天然需要同样长的等待；缩短 timeout 又须另验误报与实际通信尾部。预警不足时 JIT save 不保护该次 crash，减少同步后更多 samples/s 也不自动改善 loss progress。绝对成本应在目标 workload、状态量和完整恢复链上重测；只有解析恢复或简化 proxy 时，保留持久 checkpoint 与实际 orchestration，不签发完成恢复或生产容错保证。
+
 对于以随机种子和标量更新日志表示每一步的零阶微调，逐步记日志比保存完整参数轻，却不能据此认为恢复是免费的：从最初状态重放的成本随训练步数增长；若为了加速跳过实际执行的原地扰动顺序，浮点舍入又会让恢复轨迹偏离原过程。条件性折中是让 CPU 影子状态按原操作顺序消费已提交日志，在 GPU 训练之外形成 clean-step 快照并异步落盘；故障后从最近已持久化影子状态重放剩余日志。影子副本只拥有恢复材料，GPU 的已完成更新仍是训练真值。它以 host memory、CPU replay 和持久化带宽换取更短 rollback，影子若跟不上 GPU 或存储积压就须增加间隔、定期同步或回退普通 anchor checkpoint。ZOCheck 的直接实验限于所列 L40S/A100、Qwen/Llama/OPT 及以 FP32、batch 16、长度 512 的零阶任务为主；其模型结果不能外推到普通一阶 Adam 训练，因为后者不能仅凭 seed 与标量日志重建更新。<!-- source-family:SF-2026-ARXIV-2609-27189 -->
 
 ### 精确恢复之外：有界近似恢复是一项显式选择
@@ -422,6 +426,10 @@ training checkpoint
 ```
 
 LoRA merge、TP reshard、tensor-name mapping 和 quantization 都可能改变输出。转换完成必须重新验证，不应把源 checkpoint 的评估结果无条件继承给目标 artifact。
+
+完整转换与全量装载仍是容易校验的权重交接路径；频繁、跨区域的 policy 更新可改传相对共同已提交版本的 changed bits。训练 shard 先映射到 canonical tensor coordinates，再由唯一 source owner 投影到目标 loader 的存储位置；只有转换和 dtype 保持存储位、写入范围不冲突时才用 XOR，其余位置绝对覆写。省下的是更新传输，不是源 baseline、全模型比较、转换或目标装载。
+
+Delta 要求所有 receiver 以同一 baseline 应用固定 candidate：XOR 必须去重；失败先隔离并等待旧写入停止，再对完整 changed set 作 absolute overwrite；新 receiver 先恢复已提交全量版本。Device apply 与所需 ACK 完成后才原子提交版本、推进 source baseline，KV 每次 transition 失效。[NeMo-DCR v1](https://arxiv.org/html/2610.08430v1)只支持 fail-stop、可信通道与可用且 fenced 的控制面。比较、host staging、drain 和 apply 仍付费；无法满足 loader 条件或变化密集时保留 dense refit，合成1T扩层及 transport-only 对照不授通用端到端 RL 加速。<!-- source-family:SF-2026-ARXIV-2610-08430 -->
 
 融合两个从共同 base 出发的 task vectors，还可能需要任务不对称的筛选，而不只是统一平均。在受限 reasoning/task 合并分支中，分别用各自 calibration 数据的梯度幅度，选择 reasoning 向量的低梯度位置与任务向量的高梯度位置，再从双方集合都去掉 overlap，按缩放系数加回共同 base。这个 mask 是模型、loss 与校准数据依赖的转换 proposal；不同选择方向和交集排除不证明推理或安全知识已被定位到独立地址，也不保证参数互不重叠就没有行为干扰。[有限模型与mask消融](https://arxiv.org/html/2601.05560v1)支持该受测分支，同时提醒低攻击成功率可能来自输出崩溃；因此目标 artifact 要同时再验任务效用、reasoning、输出完整性和安全，而不继承源模型成绩。梯度采集、筛选与发布矩阵都有成本；共同 base 不同、校准迁移或回归未过时，保留源 artifact、原合并方法或不合并。
 <!-- source-family:SF-2026-ARXIV-2601-05560 -->
@@ -590,6 +598,8 @@ Checkpoint 是训练系统的状态事务。模型参数只是其中一部分；
 分片、异步保存与分层存储提高可扩展性，也引入 commit、reshard、backpressure、failure-domain placement 和验证问题。只有经过严格 restore test，并为数值表示、graph rewrite、kernel/hardware capability 和行为证据建立明确的 artifact contract，checkpoint 才能从故障恢复机制成为可发布模型资产。
 
 ## Review notes
+
+- Daily `2026-10-08`：`SF-2026-ARXIV-2610-07688`，[FailBench v1](https://arxiv.org/html/2610.07688v1) IV–X受影响评价；142tuple中10直接恢复/继续、123analytical lower bound、9infeasible，process-group重建2–10s为敏感性假设。两节点8V100/FP32小型proxy与watchdog干预不授完整LLM/survivor orchestration；只采用恢复成本分账与测量人口边界。
 
 - **Exploring Silent Data Corruption as a Reliability Challenge in LLM Training（arXiv:2604.00726v1；Status: Experimental）**：exact-v1 的故障注入支持“检测后重算最近 step”在作者三种 LLaMA 规模中的缓解效果；不证明检测覆盖率、跨硬件表现或生产长期可靠性。https://arxiv.org/abs/2604.00726v1
 

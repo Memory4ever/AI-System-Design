@@ -1,0 +1,15256 @@
+Matching Features, Not Tokens: Energy-Based Fine-Tuning of Language Models
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+Contributions.
+2
+Language Modeling with Feature Matching
+2.1
+The feature-matching loss
+Why minimize
+ℒ
+FM
+\mathcal{L}_{\mathrm{FM}}
+?
+Relationship between feature-matching and cross-entropy.
+Constructing the feature map.
+2.2
+Feature-matching rewards and on-policy training
+Gradient estimation via REINFORCE.
+Energy-Based Fine-Tuning (EBFT) training recipe.
+Adding an alignment bias.
+Strided block-parallel rollouts.
+2.3
+Feature matching with whitening
+2.4
+Connections with energy-based models and calibration
+Energy-based view (via KL regularization).
+Calibration view: KL projection onto moment constraints.
+3
+Experimental protocol
+3.1
+Tasks and metrics
+Coding tasks.
+Translation.
+3.2
+Baselines and methods
+4
+Experimental results
+4.1
+Main results
+EBFT matches RLVR and outperforms SFT on downstream accuracy.
+EBFT achieves lower cross-entropy than SFT, while RLVR degrades it.
+EBFT achieves the lowest feature-matching loss.
+The CE loss coefficient
+γ
+\gamma
+improves CE loss without sacrificing downstream performance or feature matching.
+EBFT generalizes better than SFT to out-of-distribution benchmarks.
+4.2
+Ablations
+Feature network ablations: mean pooling and removing whitening hurt most; random weights hurt slightly; a larger feature network has little effect.
+EBFT improvements scale consistently across model sizes.
+4.3
+Qualitative analysis
+5
+Related Work
+6
+Conclusion
+References
+A
+The feature-matching loss profile and its optimal behavior
+B
+Feature matching with whitening
+B.1
+Relating cross-entropy training to a
+χ
+2
+\chi^{2}
+divergence objective
+B.2
+Relaxing a variational formulation of the
+χ
+2
+\chi^{2}
+divergence to a linear feature class
+B.3
+Dealing with non-invertible second moment matrices
+Σ
+p
+θ
+(
+⋅
+|
+c
+)
+\Sigma_{p_{\theta}(\cdot|c)}
+: a first approach
+B.4
+Variants of the whitened feature-matching loss with better empirical performance
+B.4.1
+Proof of Lemma
+C
+Feature matching with alignment bias
+D
+Feature matching with KL regularization
+D.1
+Energy-based models with RKHS function classes
+D.2
+Feature matching with KL regularization as an implicit energy-based model
+E
+Computing the REINFORCE gradient and the RLOO baseline for EBFT
+F
+Details on the strided parallel rollout procedure
+G
+Additional Experimental Details
+H
+Additional Experimental Results
+H.1
+Sweeping across
+γ
+\gamma
+,
+α
+\alpha
+and warm-starting
+Takeaways from the
+α
+\alpha
+,
+γ
+\gamma
+sweeps:
+α
+<
+1
+\alpha<1
+is prone to instability when
+γ
+=
+0
+\gamma=0
+, and increasing
+γ
+\gamma
+reduces the CE loss
+Warm-starting: EBFT is more robust to weak initializations than RLVR
+H.2
+Qualitative Analysis and Examples - Code
+H.3
+Qualitative Analysis and Examples - Translation
+License: CC BY 4.0
+arXiv:2603.12248v1 [cs.LG] 12 Mar 2026
+Matching Features, Not Tokens: Energy-Based Fine-Tuning of Language Models
+Samy Jelassi
+Affiliation:
+Harvard University, Kempner Institute
+Correspondence to:
+jelassisamy@gmail.com
+Mujin Kwun
+Affiliation:
+Harvard University, Kempner Institute
+Correspondence to:
+mujin_kwun@harvard.edu
+Rosie Zhao
+Affiliation:
+Harvard University, Kempner Institute
+Correspondence to:
+rosiezhao@g.harvard.edu
+Yuanzhi Li
+Affiliation:
+MBZUAI
+Nicolo Fusi
+Affiliation:
+Microsoft Research New England
+Yilun Du
+Affiliation:
+Harvard University, Kempner Institute
+Sham M. Kakade
+Affiliation:
+Harvard University, Kempner Institute
+Carles Domingo-Enrich
+Affiliation:
+Microsoft Research New England
+Correspondence to:
+carlesd@microsoft.com
+Abstract
+Cross-entropy (CE) training provides dense and scalable supervision for language models, but it optimizes next-token prediction under teacher forcing rather than sequence-level behavior under model rollouts.
+We introduce a feature-matching objective for language-model fine-tuning that targets sequence-level statistics of the completion distribution, providing dense semantic feedback without requiring a task-specific verifier or preference model.
+To optimize this objective efficiently, we propose
+energy-based fine-tuning
+(EBFT), which uses strided block-parallel sampling to generate multiple rollouts from nested prefixes concurrently, batches feature extraction over these rollouts, and uses the resulting embeddings to perform an on-policy policy-gradient update.
+We present a theoretical perspective connecting EBFT to KL-regularized feature-matching and energy-based modeling.
+Empirically, across Q&A coding, unstructured coding, and translation, EBFT matches RLVR and outperforms SFT on downstream accuracy while achieving a lower validation cross-entropy than both methods.
+Keywords:
+language models, reinforcement learning, energy-based models, sequence-level learning
+†
+†
+affiliationnotice:
+Equal contribution
+1
+Introduction
+Cross-entropy (CE) training under teacher forcing is the standard approach for pre-training, continued/mid-training, and supervised fine-tuning (SFT) of large language models.
+Its next-token objective provides an extremely
+dense
+learning signal, is stable under massively parallel optimization, and admits efficient implementations at scale
+(
+Kaplan et al., 2020
+;
+Brown et al., 2020
+)
+.
+However, the same teacher-forcing setup introduces a distribution shift: during training, the model conditions on ground-truth prefixes, while at deployment time, it must condition on
+its own
+generations. Errors early in a generated sequence alter the conditioning context for subsequent predictions, causing later tokens to be sampled from distributions the model was rarely trained on
+(
+Bengio et al., 2015
+;
+Lamb et al., 2016
+)
+.
+Braverman et al. (2019)
+quantify this distribution shift by measuring the expected conditional entropy of the
+k
+k
+-th generated token as a function of
+k
+k
+. For a perfect model, this quantity should remain stable as
+k
+k
+grows, since the generated prefixes would be distributionally identical to ground-truth text. In practice, however, the expected entropy increases with
+k
+k
+, even for models that achieve low training perplexity. This reveals a fundamental limitation of token-level supervision: low perplexity measures one-step prediction accuracy on ground-truth prefixes but does not guarantee well-calibrated behavior over longer generations. The model may match the data distribution locally while diverging from it at the sequence level.
+Figure 1
+:
+Feature-matching loss grows with completion length.
+Conditional feature-matching loss (lower is better) as a function of completion length for Qwen2.5-1.5B fine-tuned with SFT on OpenCodeInstruct
+(
+Ahmad et al., 2025
+)
+. Although this increase is expected even under a perfect model due to growing feature variance, part of the degradation reflects SFT’s inability to calibrate the model’s rollout distribution over long horizons.
+A natural way to measure this sequence-level divergence is to
+compare statistics of model-generated completions against those of
+ground-truth completions in a feature space. We formalize this
+through a
+conditional feature-matching loss
+that, for each
+context, measures the squared error between the mean feature
+embedding of model rollouts and that of the ground-truth
+completion (formal definition in
+Section
+2.1
+). We say a
+model is
+(feature-) calibrated
+when this loss is zero, meaning
+its expected feature embeddings match those of the data for all
+contexts.
+Figure
+1
+plots this loss as a
+function of completion length for a Qwen2.5-1.5B model fine-tuned
+with SFT. The loss increases with completion length, which is
+partly expected even for a perfect model due to growing feature
+variance over longer generations. However, part of this
+degradation reflects SFT’s failure to calibrate the model’s
+rollout distribution. A fine-tuning method that directly targets
+this feature-matching loss could reduce this gap.
+RL fine-tuning
+(
+Ouyang et al., 2022
+;
+Schulman et al., 2017
+)
+addresses this mismatch by optimizing sequence-level rewards under the model’s own rollouts, enabling direct behavioral control. However, its effectiveness depends on access to a reliable reward function or verifier, as in reinforcement learning with verifiable rewards (RLVR;
+(
+Lightman et al., 2023
+;
+Shao et al., 2024
+)
+). These reward signals may be unavailable, noisy, or misaligned with desired behavior in many open-ended tasks. Even when a reliable reward exists, RL optimizes a scalar signal and does not directly target distributional calibration of the rollout distribution. In our experiments, we observe this tradeoff concretely: RLVR improves downstream performance at the cost of worsening both the validation cross-entropy and the feature-matching loss introduced above.
+Beyond RLVR, a related class of methods incorporates
+partial rollouts
+at training time
+(
+Zelikman et al., 2024
+;
+Hatamizadeh et al., 2025
+;
+Dong et al., 2025
+)
+. Since these rollouts are typically too short or incomplete to be scored by a verifier, these methods introduce surrogate rewards – commonly the model’s own log-probabilities or token-overlap similarity between a sampled continuation and a reference. While useful in practice, neither type of surrogate provides calibration guarantees: self-likelihood rewards reinforce already high-probability samples without necessarily improving coverage, and similarity-based measures can improve the chosen metric without improving likelihood or calibration.
+We propose an alternative that replaces these heuristic surrogate rewards with a principled objective: we directly optimize the feature-matching loss, using it not just as a diagnostic but as the training signal itself. A frozen feature network
+ϕ
+\phi
+, initialized from the pre-trained model, embeds concatenated prompt–completion sequences, and the generator
+p
+θ
+p_{\theta}
+is fine-tuned to match the resulting feature moments using a REINFORCE-style gradient estimator on partial rollouts (see
+Figure
+4
+). The resulting training signal is dense, operates at the sequence level, requires no task-specific reward or verifier, and — unlike the surrogate-reward methods above — optimizes a proper scoring rule under sufficiently rich features. We call this approach
+Energy-Based Fine-Tuning
+(EBFT): under a KL-regularized view, the feature-matching objective implicitly defines an energy function over sequences, with the optimal policy taking the form of an exponential tilt of the base model (
+Appendix
+D
+).
+Figure 2
+:
+EBFT achieves the lowest feature-matching loss across all completion lengths.
+Despite training with a rollout horizon of only 8 tokens, EBFT’s gains persist and grow at longer completions. RLVR worsens this loss relative to the base model.
+Figure 3
+:
+EBFT improves downstream performance without sacrificing distributional calibration.
+From left to right, we plot HumanEval accuracy (greedy and pass@16), validation cross-entropy (CE), and conditional feature-matching (CFM) loss over training for Qwen2.5-1.5B fine-tuned on OpenCodeInstruct
+(
+Ahmad et al., 2025
+)
+. SFT improves cross-entropy and CFM loss but lags on downstream accuracy. RLVR improves downstream accuracy but substantially degrades both calibration metrics relative to the base model (dashed line). EBFT achieves the best results across all four metrics, avoiding this tradeoff. CE and CFM losses are computed on a 1k-samples held-out subset of OpenCodeInstruct.
+Contributions.
+We introduce a feature-matching loss for language model fine-tuning that targets sequence-level statistics of the rollout distribution, and propose Energy-Based Fine-Tuning (EBFT) as a practical method to optimize it. We provide a theoretical perspective connecting EBFT to KL-regularized energy-based models (
+Appendix
+D
+). Empirically, we observe the following across Q&A coding, unstructured coding, and translation datasets:
+1.
+EBFT achieves the lowest feature-matching loss across all completion lengths (
+Figure
+2
+). Despite training with a rollout horizon of only 8 tokens, its gains persist and grow at longer generations, indicating genuine distributional calibration. In contrast, RLVR worsens this loss relative to the base model.
+2.
+On downstream performance, EBFT consistently outperforms SFT and is competitive with RLVR, despite requiring no task-specific reward or verifier.
+3.
+On validation cross-entropy, EBFT improves over SFT across all tasks, even though SFT explicitly optimizes this objective (
+Figure
+3
+). RLVR, by contrast, substantially degrades validation perplexity.
+4.
+EBFT can be applied in non-verifiable settings where RLVR is inapplicable. For instance, when training on raw code scraped from GitHub, EBFT yields substantial gains over SFT.
+2
+Language Modeling with Feature Matching
+2.1
+The feature-matching loss
+Figure 4
+:
+Overview of Energy-Based Fine-Tuning (EBFT).
+For each context
+c
+c
+, the generator
+p
+θ
+p_{\theta}
+samples
+n
+n
+completions. A frozen feature network
+ϕ
+\phi
+embeds each prompt–completion pair, producing features
+ϕ
+⁡
+(
+c
+:
+y
+^
+j
+)
+\phi(c\!:\!\hat{y}_{j})
+for the sampled completions and
+ϕ
+⁡
+(
+c
+:
+y
+)
+\phi(c\!:\!y)
+for the ground truth. Each completion receives a feature-matching reward measuring alignment with the ground-truth feature moment, and the generator is updated via REINFORCE with an RLOO baseline.
+Given vocabulary
+𝒱
+\mathcal{V}
+and ground truth distribution
+p
+p
+over contexts
+c
+∈
+𝒱
+∗
+c\in\mathcal{V}^{*}
+and completions
+y
+∈
+𝒱
+G
+y\in\mathcal{V}^{G}
+of length
+G
+G
+, and a language model
+p
+θ
+p_{\theta}
+, the feature-matching loss function is:
+\displaystyle
+ℒ
+FM
+​
+(
+θ
+)
+\displaystyle\mathcal{L}_{\mathrm{FM}}(\theta)
+(1)
+:=
+\displaystyle\!:=
+𝔼
+c
+∼
+p
+[
+∥
+𝔼
+y
+^
+∼
+p
+θ
+(
+⋅
+|
+c
+)
+[
+ϕ
+(
+c
+:
+y
+^
+)
+]
+−
+𝔼
+y
+∼
+p
+(
+⋅
+|
+c
+)
+[
+ϕ
+(
+c
+:
+y
+)
+]
+∥
+2
+]
+,
+\displaystyle\mathbb{E}_{c\sim p}\Big[\big\|\mathbb{E}_{\hat{y}\sim p_{\theta}(\cdot|c)}[\phi(c\!:\!\hat{y})]\!-\!\mathbb{E}_{y\sim p(\cdot|c)}[\phi(c\!:\!y)]\big\|^{2}\Big],
+where
+c
+:
+y
+c\!:\!y
+denotes concatenation and
+ϕ
+:
+𝒱
+∗
+→
+ℝ
+d
+\phi:\mathcal{V}^{*}\to\mathbb{R}^{d}
+is the feature map. We use the short-hand
+ϕ
+c
+​
+(
+y
+)
+:=
+ϕ
+⁡
+(
+c
+:
+y
+)
+\phi_{c}(y):=\phi(c\!:\!y)
+.
+Since
+ℒ
+FM
+\mathcal{L}_{\mathrm{FM}}
+depends on the unknown data moment
+𝔼
+y
+∼
+p
+(
+⋅
+|
+c
+)
+[
+ϕ
+c
+(
+y
+)
+]
+\mathbb{E}_{y\sim p(\cdot|c)}[\phi_{c}(y)]
+, it cannot be directly estimated from
+ground-truth pairs
+(
+c
+,
+y
+)
+(c,y)
+.
+A bias-variance decomposition lets us write the feature-matching loss in terms of the
+conditional feature-matching loss
+:
+ℒ
+FM
+​
+(
+θ
+)
+=
+ℒ
+CFM
+​
+(
+θ
+)
+−
+𝔼
+c
+∼
+p
+​
+[
+Var
+⁡
+[
+ϕ
+c
+​
+(
+y
+)
+|
+c
+]
+]
+,
+\displaystyle\begin{split}&\mathcal{L}_{\mathrm{FM}}(\theta)=\mathcal{L}_{\mathrm{CFM}}(\theta)-\mathbb{E}_{c\sim p}\Big[\mathrm{Var}[\phi_{c}(y)|c]\Big],\end{split}
+(2)
+where
+ℒ
+CFM
+(
+θ
+)
+:=
+𝔼
+c
+∼
+p
+[
+∥
+𝔼
+y
+^
+∼
+p
+θ
+(
+⋅
+|
+c
+)
+[
+ϕ
+c
+(
+y
+^
+)
+]
+−
+ϕ
+c
+(
+y
+)
+∥
+2
+]
+\mathcal{L}_{\mathrm{CFM}}(\theta):=\mathbb{E}_{c\sim p}\Big[\big\|\mathbb{E}_{\hat{y}\sim p_{\theta}(\cdot|c)}[\phi_{c}(\hat{y})]\!-\!\phi_{c}(y)\big\|^{2}\Big]
+,
+Var
+[
+ϕ
+c
+(
+y
+)
+|
+c
+]
+=
+𝔼
+y
+∼
+p
+(
+⋅
+|
+c
+)
+[
+∥
+ϕ
+c
+(
+y
+)
+−
+𝔼
+y
+′
+∼
+p
+(
+⋅
+|
+c
+)
+[
+ϕ
+c
+(
+y
+′
+)
+]
+∥
+]
+.
+\mathrm{Var}[\phi_{c}(y)|c]=\mathbb{E}_{y\sim p(\cdot|c)}\Big[\big\|\phi_{c}(y)-\mathbb{E}_{y^{\prime}\sim p(\cdot|c)}[\phi_{c}(y^{\prime})]\big\|\Big].
+The offset
+𝔼
+c
+∼
+p
+​
+[
+Var
+⁡
+[
+ϕ
+c
+​
+(
+y
+)
+|
+c
+]
+]
+\mathbb{E}_{c\sim p}[\mathrm{Var}[\phi_{c}(y)|c]]
+is independent of
+θ
+\theta
+and captures the per-context variability of the ground-truth features.
+Since
+ℒ
+FM
+\mathcal{L}_{\mathrm{FM}}
+has optimal value zero,
+ℒ
+CFM
+\mathcal{L}_{\mathrm{CFM}}
+equals this offset at optimality.
+ℒ
+CFM
+\mathcal{L}_{\mathrm{CFM}}
+admits an unbiased estimator from ground-truth pairs
+(
+c
+,
+y
+)
+(c,y)
+;
+we plot these estimates in Figures
+1
+and
+2
+.
+Note that
+ℒ
+FM
+\mathcal{L}_{\mathrm{FM}}
+and
+ℒ
+CFM
+\mathcal{L}_{\mathrm{CFM}}
+mirror the
+(conditional) flow-matching loss functions for continuous generative modeling
+(
+Lipman et al., 2023
+)
+.
+Why minimize
+ℒ
+FM
+\mathcal{L}_{\mathrm{FM}}
+?
+We say that
+p
+θ
+p_{\theta}
+is
+(feature-) calibrated
+if
+ℒ
+FM
+​
+(
+θ
+)
+=
+0
+\mathcal{L}_{\mathrm{FM}}(\theta)=0
+, meaning its expected feature embeddings match those of the data for all contexts
+c
+c
+. If the feature map
+ϕ
+\phi
+is rich enough that matching feature moments implies matching distributions, then feature-calibration is equivalent to
+p
+θ
+=
+p
+p_{\theta}=p
+and
+ℒ
+FM
+\mathcal{L}_{\mathrm{FM}}
+is a
+strictly proper scoring rule
+(
+Gneiting and Raftery, 2007
+)
+. In other words, under a sufficiently expressive feature map, minimizing
+ℒ
+FM
+\mathcal{L}_{\mathrm{FM}}
+is guaranteed to recover the true conditional distribution: it cannot be fooled by a model that matches some statistics while diverging elsewhere.
+Relationship between feature-matching and cross-entropy.
+In practice, we optimize a mixed objective that combines feature matching with standard next-token cross-entropy (CE):
+ℒ
+⁡
+(
+θ
+)
+=
+ℒ
+FM
+​
+(
+θ
+)
++
+γ
+​
+ℒ
+CE
+​
+(
+θ
+)
+,
+γ
+≥
+0
+.
+\displaystyle\mathcal{L}(\theta)=\mathcal{L}_{\mathrm{FM}}(\theta)+\gamma\,\mathcal{L}_{\mathrm{CE}}(\theta),\qquad\gamma\geq 0.
+To build intuition, consider the special case of completions of length
+G
+=
+1
+G=1
+with one-hot features
+ϕ
+c
+​
+(
+y
+)
+=
+e
+y
+∈
+{
+0
+,
+1
+}
+|
+𝒱
+|
+\phi_{c}(y)=e_{y}\in\{0,1\}^{|\mathcal{V}|}
+. Feature matching then reduces to an
+ℓ
+2
+\ell_{2}
+moment-matching loss on the next-token distribution:
+ℒ
+FM
+​
+(
+θ
+)
+=
+𝔼
+c
+∼
+p
+​
+[
+∑
+y
+∈
+𝒱
+(
+p
+θ
+​
+(
+y
+|
+c
+)
+−
+p
+⁡
+(
+y
+|
+c
+)
+)
+2
+]
+,
+\displaystyle\mathcal{L}_{\mathrm{FM}}(\theta)=\mathbb{E}_{c\sim p}\Big[\sum_{y\in\mathcal{V}}\big(p_{\theta}(y|c)-p(y|c)\big)^{2}\Big],
+(3)
+while CE is
+ℒ
+CE
+​
+(
+θ
+)
+=
+−
+𝔼
+c
+∼
+p
+​
+[
+∑
+y
+∈
+𝒱
+p
+⁡
+(
+y
+|
+c
+)
+​
+log
+⁡
+p
+θ
+​
+(
+y
+|
+c
+)
+]
+.
+\displaystyle\mathcal{L}_{\mathrm{CE}}(\theta)=-\mathbb{E}_{c\sim p}\Big[\sum_{y\in\mathcal{V}}p(y|c)\,\log p_{\theta}(y|c)\Big].
+(4)
+Both losses
+share
+the same unique minimizer— the ground-truth distribution
+p
+θ
+=
+p
+p_{\theta}=p
+— and so does their combination
+ℒ
+\mathcal{L}
+. However, their landscapes differ:
+ℒ
+FM
+\mathcal{L}_{\mathrm{FM}}
+penalizes deviations from
+p
+⁡
+(
+y
+|
+c
+)
+p(y|c)
+symmetrically, while
+ℒ
+CE
+\mathcal{L}_{\mathrm{CE}}
+penalizes underestimation more heavily than overestimation. More importantly, using longer completions (e.g.,
+G
+∈
+{
+4
+,
+8
+,
+16
+}
+G\in\{4,8,16\}
+) with richer features lets
+ℒ
+FM
+\mathcal{L}_{\mathrm{FM}}
+target sequence-level statistics that the token-level CE loss is blind to.
+Constructing the feature map.
+We instantiate
+ϕ
+\phi
+as a frozen
+feature network
+obtained by copying
+p
+θ
+p_{\theta}
+at initialization.
+Given a concatenated sequence
+c
+:
+y
+c\!:\!y
+, we take the concatenation of intermediate activations at different depths of the feature network, normalize each block to unit
+L
+2
+L^{2}
+norm, and concatenate them to form
+ϕ
+⁡
+(
+c
+:
+y
+)
+\phi(c\!:\!y)
+.
+In all experiments, we use layers at depths 25%, 50%, and 75%; the intuition is that earlier layers capture low-level information, final layers are biased toward next-token prediction, and middle layers carry semantic and structural information. We hypothesize that such high-dimensional feature maps are close to satisfying the richness condition above.
+2.2
+Feature-matching rewards and on-policy training
+This subsection derives an unbiased REINFORCE estimator for
+∇
+θ
+ℒ
+FM
+​
+(
+θ
+)
+\nabla_{\theta}\mathcal{L}_{\mathrm{FM}}(\theta)
+and describes the practical training recipe summarized in
+Algorithm
+1
+.
+Gradient estimation via REINFORCE.
+Since
+ℒ
+FM
+\mathcal{L}_{\mathrm{FM}}
+and
+ℒ
+CFM
+\mathcal{L}_{\mathrm{CFM}}
+differ by a
+constant independent of
+θ
+\theta
+per (
+2
+), their gradients coincide:
+∇
+θ
+ℒ
+FM
+​
+(
+θ
+)
+=
+∇
+θ
+ℒ
+CFM
+​
+(
+θ
+)
+\nabla_{\theta}\mathcal{L}_{\mathrm{FM}}(\theta)=\nabla_{\theta}\mathcal{L}_{\mathrm{CFM}}(\theta)
+.
+Hence, it suffices to estimate the gradient of the per-example loss
+ℒ
+CFM
+(
+θ
+;
+c
+,
+y
+)
+=
+∥
+𝔼
+y
+^
+∼
+p
+θ
+(
+⋅
+|
+c
+)
+[
+ϕ
+c
+(
+y
+^
+)
+]
+−
+ϕ
+c
+(
+y
+)
+∥
+2
+,
+\displaystyle\mathcal{L}_{\mathrm{CFM}}(\theta;c,y)=\big\|\mathbb{E}_{\hat{y}\sim p_{\theta}(\cdot|c)}[\phi_{c}(\hat{y})]\!-\!\phi_{c}(y)\big\|^{2},
+(5)
+which satisfies
+∇
+θ
+ℒ
+CFM
+​
+(
+θ
+)
+=
+𝔼
+(
+c
+,
+y
+)
+∼
+p
+​
+[
+∇
+θ
+ℒ
+CFM
+​
+(
+θ
+,
+c
+,
+y
+)
+]
+\nabla_{\theta}\mathcal{L}_{\mathrm{CFM}}(\theta)=\mathbb{E}_{(c,y)\sim p}[\nabla_{\theta}\mathcal{L}_{\mathrm{CFM}}(\theta;c,y)]
+.
+Using the product rule of differentiation and the widely used identity
+∇
+θ
+𝔼
+y
+^
+∼
+p
+θ
+​
+[
+g
+⁡
+(
+y
+^
+)
+]
+=
+𝔼
+y
+^
+∼
+p
+θ
+​
+[
+g
+⁡
+(
+y
+^
+)
+​
+∇
+θ
+​
+log
+⁡
+p
+θ
+​
+(
+y
+^
+∣
+c
+)
+]
+\nabla_{\theta}\mathbb{E}_{\hat{y}\sim p_{\theta}}[g(\hat{y})]=\mathbb{E}_{\hat{y}\sim p_{\theta}}[g(\hat{y})\,\nabla_{\theta}\log p_{\theta}(\hat{y}\mid c)]
+yields a REINFORCE gradient
+∇
+θ
+ℒ
+CFM
+(
+θ
+;
+c
+,
+y
+)
+=
+−
+𝔼
+y
+^
+∼
+p
+θ
+(
+⋅
+|
+c
+)
+[
+∇
+θ
+log
+p
+θ
+(
+y
+^
+|
+c
+)
+r
+(
+y
+^
+,
+c
+)
+]
+,
+\displaystyle\nabla_{\theta}\mathcal{L}_{\mathrm{CFM}}(\theta;c,y)=-\mathbb{E}_{\hat{y}\sim p_{\theta}(\cdot|c)}\big[\nabla_{\theta}\log p_{\theta}(\hat{y}|c)\,r(\hat{y},c)\big],
+where the reward is
+r
+⁡
+(
+y
+^
+,
+c
+)
+=
+2
+​
+ϕ
+c
+​
+(
+y
+^
+)
+⊤
+​
+ϕ
+c
+​
+(
+y
+)
+⏟
+alignment term
+−
+2
+ϕ
+c
+(
+y
+^
+)
+⊤
+𝔼
+y
+~
+∼
+p
+θ
+(
+⋅
+|
+c
+)
+[
+ϕ
+c
+(
+y
+~
+)
+]
+⏟
+diversity term
+.
+\displaystyle\hskip-8.5359ptr(\hat{y},c)=\underbrace{2\phi_{c}(\hat{y})^{\top}\phi_{c}(y)}_{\text{alignment term}}-\underbrace{2\phi_{c}(\hat{y})^{\top}\mathbb{E}_{\tilde{y}\sim p_{\theta}(\cdot|c)}\big[\phi_{c}(\tilde{y})\big]}_{\text{diversity term}}.
+(6)
+We obtain an unbiased estimator of this gradient by sampling
+n
+>
+1
+n>1
+completions
+(
+y
+^
+j
+)
+j
+=
+1
+n
+(\hat{y}_{j})_{j=1}^{n}
+from
+p
+θ
+(
+⋅
+|
+c
+)
+p_{\theta}(\cdot|c)
+and computing
+1
+n
+​
+∑
+j
+=
+1
+n
+∇
+θ
+​
+log
+​
+p
+θ
+​
+(
+y
+^
+j
+|
+c
+)
+​
+r
+j
+,
+where
+r
+j
+=
+2
+​
+ϕ
+c
+​
+(
+y
+^
+j
+)
+⊤
+​
+ϕ
+c
+​
+(
+y
+)
+−
+2
+n
+−
+1
+​
+∑
+j
+′
+≠
+j
+ϕ
+c
+​
+(
+y
+^
+j
+)
+⊤
+​
+ϕ
+c
+​
+(
+y
+^
+j
+′
+)
+.
+\displaystyle\begin{split}&\frac{1}{n}\sum_{j=1}^{n}\nabla_{\theta}\log p_{\theta}(\hat{y}_{j}|c)r_{j},\quad\text{where}\\
+&r_{j}=2\phi_{c}(\hat{y}_{j})^{\top}\phi_{c}(y)-\frac{2}{n-1}\sum_{j^{\prime}\neq j}\phi_{c}(\hat{y}_{j})^{\top}\phi_{c}(\hat{y}_{j^{\prime}}).\end{split}
+(7)
+As in REINFORCE, it is possible to reduce the variance of this gradient by subtracting from
+r
+j
+r_{j}
+a baseline which is independent from
+y
+^
+j
+\hat{y}_{j}
+.
+We use REINFORCE leave-one-out (RLOO), but must account for the fact that
+r
+j
+r_{j}
+already depends on the other completions; see
+Appendix
+E
+for the derivation of the REINFORCE gradient and RLOO baseline.
+Algorithm 1
+One EBFT training iteration.
+1:
+Input:
+input prompt
+c
+c
+; ground-truth completion
+y
+y
+;
+n
+n
+: samples per prompt; generation length
+G
+G
+;
+generator
+p
+θ
+p_{\theta}
+;
+feature network
+ϕ
+\phi
+2:
+Generation:
+sample
+n
+n
+rollouts of length
+G
+G
+from the actor:
+(
+y
+^
+j
+)
+j
+=
+1
+n
+∼
+p
+θ
+(
+⋅
+∣
+c
+)
+(\hat{y}_{j})_{j=1}^{n}\sim p_{\theta}(\cdot\mid c)
+3:
+Feature network embeddings:
+compute the ground truth feature vector
+ϕ
+c
+​
+(
+y
+)
+\phi_{c}(y)
+and the rollout feature vectors
+(
+ϕ
+c
+​
+(
+y
+^
+j
+)
+)
+j
+=
+1
+n
+\big(\phi_{c}(\hat{y}_{j})\big)_{j=1}^{n}
+. Whiten the features as in (
+8
+) if needed.
+4:
+Feature-matching reward:
+For
+j
+=
+1
+:
+n
+j=1:n
+, compute
+r
+j
+=
+2
+​
+ϕ
+c
+​
+(
+y
+^
+j
+)
+⊤
+​
+ϕ
+c
+​
+(
+y
+)
+−
+2
+n
+−
+1
+​
+∑
+j
+′
+=
+1
+,
+j
+′
+≠
+j
+n
+ϕ
+c
+​
+(
+y
+^
+j
+)
+⊤
+​
+ϕ
+c
+​
+(
+y
+^
+j
+′
+)
+,
+\displaystyle r_{j}\!=\!2\phi_{c}(\hat{y}_{j})^{\top}\phi_{c}(y)\!-\!\frac{2}{n\!-\!1}\!\sum_{j^{\prime}=1,j^{\prime}\neq j}^{n}\!\phi_{c}(\hat{y}_{j})^{\top}\phi_{c}(\hat{y}_{j^{\prime}}),
+and the RLOO baseline
+b
+j
+b^{j}
+as in (
+94
+) in
+Appendix
+E
+.
+5:
+Actor update:
+update
+p
+θ
+p_{\theta}
+with an RLOO update across
+j
+=
+1
+,
+…
+,
+n
+j=1,\dots,n
+.
+Energy-Based Fine-Tuning (EBFT) training recipe.
+Algorithm
+1
+summarizes one EBFT iteration. EBFT uses two models: a
+generator
+p
+θ
+p_{\theta}
+, which is the model that we want to fine-tune, and a
+feature network
+ϕ
+\phi
+.
+In what follows, we only train the generator; we keep the feature network
+frozen
+. Given a pair
+(
+c
+,
+y
+)
+(c,y)
+of ground truth context and completion of length
+G
+G
+, we generate
+n
+n
+completions
+(
+y
+^
+j
+)
+j
+=
+1
+n
+(\hat{y}_{j})_{j=1}^{n}
+of the same length, and we feed the concatenated sequences
+c
+:
+y
+c\!:\!y
+and
+(
+c
+:
+y
+^
+j
+)
+j
+=
+1
+n
+(c\!:\!\hat{y}_{j})_{j=1}^{n}
+through the feature network to obtain the feature vectors
+ϕ
+c
+​
+(
+y
+)
+\phi_{c}(y)
+and
+(
+ϕ
+c
+​
+(
+y
+^
+j
+)
+)
+j
+=
+1
+n
+(\phi_{c}(\hat{y}_{j}))_{j=1}^{n}
+, which we use to get the rewards
+(
+r
+j
+)
+j
+=
+1
+n
+(r_{j})_{j=1}^{n}
+and the RL gradient following equation (
+7
+).
+In practice, we introduce additional implementation details which affect how the method is instantiated: an optional
+alignment-biased reward
+that adjusts the fidelity–diversity trade-off, an efficient
+strided block-parallel rollout scheme
+for collecting many on-policy samples, and
+feature whitening
+to improve the conditioning of the feature space. We describe the first two below, and discuss whitening in the following subsection.
+Adding an alignment bias.
+In some settings, one may prefer higher-fidelity samples at the cost of reduced diversity. This can be achieved by scaling the diversity term of the reward in (
+6
+) by a factor
+α
+∈
+(
+0
+,
+1
+)
+\alpha\in(0,1)
+, which biases the objective toward closer alignment with the ground-truth features. We describe this variant in
+Appendix
+C
+and include experiments in
+Section
+H.1
+.
+Strided block-parallel rollouts.
+To obtain many on-policy rollouts per training sequence efficiently, we use a strided block-parallel decoding scheme implemented with a custom attention mask (introduced by Quiet-STaR
+(
+Zelikman et al., 2024
+)
+).
+At a high level, this amortizes prefix computation and enables batched feature-network evaluation across many anchored prompts extracted from the same sequence.
+We give details and an example in
+Appendix
+F
+.
+2.3
+Feature matching with whitening
+When the feature map
+ϕ
+\phi
+has correlated or anisotropic
+directions, some dimensions can dominate the feature-matching
+loss. We address this with a whitened variant. For each context
+c
+c
+and sampled completions
+(
+y
+^
+j
+)
+j
+=
+1
+n
+(\hat{y}_{j})_{j=1}^{n}
+, we estimate
+the second-moment matrix
+Σ
+^
+c
+=
+1
+n
+​
+∑
+j
+=
+1
+n
+ϕ
+c
+​
+(
+y
+^
+j
+)
+​
+ϕ
+c
+​
+(
+y
+^
+j
+)
+⊤
+\hat{\Sigma}_{c}=\frac{1}{n}\sum_{j=1}^{n}\phi_{c}(\hat{y}_{j})\phi_{c}(\hat{y}_{j})^{\top}
+and define whitened
+features
+ϕ
+~
+c
+​
+(
+z
+)
+=
+(
+Σ
+^
+c
+†
+)
+1
+/
+2
+​
+ϕ
+c
+​
+(
+z
+)
+,
+\displaystyle\tilde{\phi}_{c}(z)=(\hat{\Sigma}_{c}^{\dagger})^{1/2}\phi_{c}(z),
+(8)
+where
+†
+\dagger
+denotes the Moore–Penrose pseudoinverse. The
+whitened feature-matching loss corresponds to a relaxation of the
+local
+χ
+2
+\chi^{2}
+divergence between
+p
+(
+⋅
+∣
+c
+)
+p(\cdot\mid c)
+and
+p
+θ
+(
+⋅
+∣
+c
+)
+p_{\theta}(\cdot\mid c)
+. Since
+D
+KL
+(
+P
+∥
+Q
+)
+≈
+1
+2
+D
+χ
+2
+(
+P
+∥
+Q
+)
+D_{\mathrm{KL}}(P\|Q)\approx\tfrac{1}{2}D_{\chi^{2}}(P\|Q)
+when
+P
+P
+and
+Q
+Q
+are close, whitened feature matching approximates
+a sequence-level cross-entropy in the fine-tuning regime
+p
+θ
+≈
+p
+p_{\theta}\approx p
+(see
+Appendix
+B
+).
+However, whitening with the low-rank estimate
+Σ
+^
+c
+\hat{\Sigma}_{c}
+instead of the true second-moment matrix
+Σ
+c
+\Sigma_{c}
+systematically reduces the norm of the whitened
+ground-truth feature
+ϕ
+~
+c
+​
+(
+y
+)
+\tilde{\phi}_{c}(y)
+, weakening the alignment
+signal. We find that normalizing the whitened features
+only
+in the alignment term
+corrects this, yielding the reward used in
+all whitening experiments in this paper:
+r
+j
+=
+2
+​
+ϕ
+~
+c
+​
+(
+y
+^
+j
+)
+⊤
+​
+ϕ
+~
+c
+​
+(
+y
+)
+‖
+ϕ
+~
+c
+​
+(
+y
+^
+j
+)
+‖
+​
+‖
+ϕ
+~
+c
+​
+(
+y
+)
+‖
+⏟
+normalized alignment term
+−
+2
+n
+−
+1
+​
+∑
+j
+′
+≠
+j
+ϕ
+~
+c
+​
+(
+y
+^
+j
+)
+⊤
+​
+ϕ
+~
+c
+​
+(
+y
+^
+j
+′
+)
+⏟
+whitened diversity term
+.
+\displaystyle r_{j}=\underbrace{2\,\frac{\tilde{\phi}_{c}(\hat{y}_{j})^{\top}\tilde{\phi}_{c}(y)}{\|\tilde{\phi}_{c}(\hat{y}_{j})\|\,\|\tilde{\phi}_{c}(y)\|}}_{\text{normalized alignment term}}-\underbrace{\frac{2}{n-1}\sum_{j^{\prime}\neq j}\tilde{\phi}_{c}(\hat{y}_{j})^{\top}\tilde{\phi}_{c}(\hat{y}_{j^{\prime}})}_{\text{whitened diversity term}}.
+(9)
+The diversity term is left unnormalized to retain the full
+whitened geometry. Additional variants are studied in
+Appendix
+B
+.
+2.4
+Connections with energy-based models and calibration
+To conclude this section, we further motivate EBFT by showing that, under KL regularization, feature matching admits both a calibration view and an energy-based interpretation.
+Energy-based view (via KL regularization).
+As in standard reinforcement learning, one may add a Kullback–Leibler (KL) regularization term to prevent the learned distribution from deviating too far from a reference distribution
+q
+(
+⋅
+|
+c
+)
+q(\cdot|c)
+. Consider the KL-regularized objective
+min
+ρ
+𝔼
+c
+∼
+p
+[
+∥
+𝔼
+ρ
+(
+⋅
+|
+c
+)
+[
+ϕ
+c
+(
+y
+)
+]
+−
+𝔼
+p
+(
+⋅
+|
+c
+)
+[
+ϕ
+c
+(
+y
+)
+]
+∥
+2
++
+1
+β
+D
+KL
+(
+ρ
+(
+⋅
+|
+c
+)
+∥
+q
+(
+⋅
+|
+c
+)
+)
+]
+,
+\displaystyle\begin{split}&\min_{\rho}\;\;\mathbb{E}_{c\sim p}\Big[\big\|\mathbb{E}_{\rho(\cdot|c)}[\phi_{c}(y)]-\mathbb{E}_{p(\cdot|c)}[\phi_{c}(y)]\big\|^{2}\\
+&\qquad\qquad\quad+\;{\textstyle\frac{1}{\beta}}\,D_{\mathrm{KL}}\!\left(\rho(\cdot|c)\,\|\,q(\cdot|c)\right)\Big],\end{split}
+(10)
+where
+β
+>
+0
+\beta>0
+controls the strength of the regularization.
+Although we do not include this KL term in our experiments, it provides a useful interpretation of EBFT.
+In particular, the solution to (
+10
+) has the form of an exponential tilt of the base distribution,
+ρ
+⋆
+​
+(
+y
+|
+c
+)
+∝
+q
+⁡
+(
+y
+|
+c
+)
+​
+exp
+⁡
+(
+−
+χ
+c
+⊤
+​
+ϕ
+c
+​
+(
+y
+)
+)
+,
+\displaystyle\rho^{\star}(y|c)\propto q(y|c)\,\exp\!\big(-\chi_{c}^{\top}\phi_{c}(y)\big),
+for a context-dependent vector
+χ
+c
+∈
+ℝ
+d
+\chi_{c}\in\mathbb{R}^{d}
+.
+Intuitively,
+χ
+c
+\chi_{c}
+is the tilt direction that assigns the most probability to
+completions actually observed in the data, subject to a size constraint on
+‖
+χ
+c
+‖
+\|\chi_{c}\|
+; see Theorem
+D.3
+for the precise statement.
+This is precisely the maximum-likelihood problem for an energy-based model with
+energy function
+E
+⁡
+(
+y
+,
+c
+)
+=
+χ
+c
+⊤
+​
+ϕ
+c
+​
+(
+y
+)
+E(y,c)=\chi_{c}^{\top}\phi_{c}(y)
+, motivating the term
+energy-based fine-tuning
+.
+Importantly, EBFT does not explicitly parameterize or learn
+χ
+\chi
+; instead, it directly optimizes the generator parameters via feature-matching gradients.
+We provide a detailed derivation of this connection in
+Appendix
+D
+.
+Q&A Coding
+Unstructured Coding
+Method
+CE
+FM
+greedy
+pass@1
+pass@4
+pass@16
+CE
+FM
+greedy
+pass@1
+pass@4
+pass@16
+Base
+0.338
+0.361
+0.484
+0.424
+0.606
+0.715
+0.631
+0.369
+0.473
+0.419
+0.596
+0.702
+Warm start
+0.301
+0.344
+0.483
+0.440
+0.611
+0.723
+0.499
+0.317
+0.508
+0.458
+0.638
+0.743
+SFT
+0.289
+0.315
+0.483
+0.455
+0.617
+0.728
+0.501
+0.321
+0.504
+0.467
+0.644
+0.747
+EBFT
+0.207
+0.258
+0.548
+0.510
+0.659
+0.771
+0.499
+0.320
+0.548
+0.524
+0.664
+0.769
+EBFT (ws.)
+0.190
+0.255
+0.534
+0.508
+0.658
+0.756
+0.481
+0.312
+0.536
+0.514
+0.659
+0.769
+RLVR
+0.774
+0.442
+0.535
+0.510
+0.660
+0.752
+–
+–
+–
+–
+–
+–
+RLVR (ws.)
+0.389
+0.402
+0.524
+0.529
+0.662
+0.749
+–
+–
+–
+–
+–
+–
+Translation (COMET)
+Translation (BLEU)
+Method
+CE
+FM
+greedy
+best-of-1
+best-of-4
+best-of-16
+greedy
+best-of-1
+best-of-4
+best-of-16
+Base
+1.870
+0.637
+0.644
+0.611
+0.701
+0.745
+0.074
+0.124
+0.186
+0.231
+Warm start
+2.647
+0.695
+0.711
+0.691
+0.759
+0.793
+0.158
+0.169
+0.233
+0.279
+SFT
+1.782
+0.690
+0.717
+0.696
+0.761
+0.795
+0.160
+0.172
+0.235
+0.280
+EBFT
+1.670
+0.578
+0.725
+0.713
+0.765
+0.795
+0.182
+0.194
+0.244
+0.283
+EBFT (ws.)
+1.671
+0.580
+0.734
+0.724
+0.772
+0.800
+0.185
+0.197
+0.247
+0.286
+RLVR
+2.454
+0.641
+0.697
+0.691
+0.735
+0.761
+0.176
+0.194
+0.226
+0.248
+RLVR (ws.)
+2.311
+0.718
+0.724
+0.718
+0.759
+0.781
+0.195
+0.210
+0.245
+0.269
+Table 1
+:
+EBFT outperforms SFT and matches or exceeds RLVR on downstream metrics, while achieving the best distributional calibration across all tasks.
+Best results per method on Q&A coding, unstructured coding, and translation. CE: validation cross-entropy; FM: feature-matching loss (both lower is better). “ws.”: warm-started from an SFT checkpoint. RLVR is inapplicable to unstructured coding where no verifier exists; EBFT still yields substantial gains over SFT in this setting. See
+Table
+6
+for per-benchmark results and
+Section
+3
+for full experimental details.
+Calibration view: KL projection onto moment constraints.
+The KL-regularized objective also has a calibration interpretation.
+Suppose we want a distribution that matches a target statistic
+𝔼
+p
+(
+⋅
+∣
+c
+)
+[
+f
+(
+y
+,
+c
+)
+]
+=
+m
+\mathbb{E}_{p(\cdot\mid c)}[f(y,c)]=m
+while staying close to a base distribution
+q
+(
+⋅
+∣
+c
+)
+q(\cdot\mid c)
+.
+The solution to this constrained KL minimization is an exponential tilt,
+p
+χ
+​
+(
+y
+∣
+c
+)
+∝
+exp
+⁡
+(
+χ
+c
+⊤
+​
+f
+​
+(
+y
+,
+c
+)
+)
+​
+q
+​
+(
+y
+∣
+c
+)
+,
+\displaystyle p_{\chi}(y\mid c)\propto\exp\!\big(\chi_{c}^{\top}f(y,c)\big)\,q(y\mid c),
+(11)
+where
+χ
+c
+\chi_{c}
+is chosen so that the moment constraint is satisfied.
+Braverman et al. (2019)
+use this principle to correct entropy-rate drift
+in language model generations,
+applying a
+scalar
+tilt with
+f
+⁡
+(
+y
+,
+c
+)
+=
+−
+log
+⁡
+p
+θ
+​
+(
+y
+∣
+c
+)
+f(y,c)=-\log p_{\theta}(y\mid c)
+(the negative log-probability of the model).
+EBFT performs the same type of correction, but with
+f
+⁡
+(
+y
+,
+c
+)
+=
+−
+ϕ
+c
+​
+(
+y
+)
+f(y,c)=-\phi_{c}(y)
+,
+enforcing
+high-dimensional
+moment constraints in a semantically rich
+feature space rather than a single scalar statistic.
+Figure 5
+:
+On translation, EBFT outperforms both SFT and RLVR on downstream accuracy, cross-entropy, and feature-matching loss.
+From left to right, we plot COMET scores on WMT22 and MTNT, validation cross-entropy, and CFM loss over training for Llama-3.2-1B fine-tuned on ALMA
+(
+Xu et al., 2023
+)
+. EBFT achieves the lowest CE and CFM losses and matches SFT on WMT22 while clearly outperforming it on MTNT. RLVR underperforms SFT on all four metrics, with cross-entropy rising well above the base model (dashed line).
+Figure 6
+:
+The CE regularization weight
+γ
+\gamma
+controls cross-entropy reduction without affecting downstream performance or feature-matching loss.
+We ablate EBFT with
+γ
+∈
+{
+0
+,
+0.03
+,
+0.1
+}
+\gamma\in\{0,0.03,0.1\}
+on Qwen2.5-1.5B. Dashed and dotted lines indicate the base model and 2-epoch SFT, respectively. Larger
+γ
+\gamma
+accelerates CE reduction while downstream accuracy and CFM loss remain nearly identical across settings. Even pure feature matching (
+γ
+=
+0
+\gamma=0
+) surpasses SFT on cross-entropy, confirming that the two objectives are aligned rather than in tension.
+3
+Experimental protocol
+3.1
+Tasks and metrics
+We evaluate EBFT on tasks spanning both
+verifiable
+settings, where a correctness signal exists and RLVR can be applied, and
+non-verifiable
+settings, where no such signal is available and SFT is typically the only option. For all tasks, we train on subsets of the full datasets to enable controlled comparisons across methods under a fixed compute budget.
+Coding tasks.
+We consider two complementary training regimes: (a) Q&A coding uses a 100k-sample subset of OpenCodeInstruct
+(
+Ahmad et al., 2025
+)
+, consisting of natural-language programming prompts paired with reference solutions, and (b) Unstructured coding uses a 40k-sample subset of SwallowCode
+(
+Fujii et al., 2025
+)
+, containing raw Python code without explicit instructions. The former is a verifiable setting (solutions can be checked against unit tests); the latter is not, as there is no correctness signal for raw code continuation, making RLVR inapplicable.
+We evaluate on HumanEval
+(
+Austin et al., 2021
+)
+, MBPP
+(
+Chen et al., 2021
+)
+, and MultiPL-E
+(
+Cassano et al., 2023
+)
+, reporting greedy accuracy (temperature 0) as well as
+pass@1
+,
+pass@4
+, and
+pass@16
+accuracy at temperature 0.6. For models trained on Q&A coding data, HumanEval and MBPP can be considered in-distribution benchmarks, since OpenCodeInstruct contains similar instruction-solution pairs. For models trained on unstructured code, both benchmarks are out-of-distribution, as SwallowCode contains raw Python without explicit prompts or test cases. MultiPL-E translates HumanEval problems into many programming languages; we evaluate on eight of them (C++, JavaScript, TypeScript, Rust, C#, Go, PHP, and Java). Since all training data is Python-only, MultiPL-E is out-of-distribution for both training regimes and serves primarily as a test of cross-lingual transfer.
+Translation.
+We train on a 100k subset of ALMA-Human-Parallel
+(
+Xu et al., 2023
+;
+Xu et al., 2024a
+)
+, consisting of human-curated parallel sentence pairs. Following
+Xu et al. (2023)
+, we use WMT’22 as our primary evaluation benchmark, which covers news and general-domain translation. To test out-of-distribution robustness, we additionally evaluate on two challenging benchmarks. MTNT
+(
+Michel and Neubig, 2018
+)
+consists of noisy Reddit comments featuring typos, slang, and code-switching, while OpenSubtitles
+(
+Lison and Tiedemann, 2016
+)
+contains short, informal movie and TV dialogue. Both are stylistically far from the clean, formal parallel sentences in ALMA, making them challenging out-of-distribution benchmarks. We report COMET scores in the main text and BLEU in the appendix. For best-of-
+k
+k
+evaluation (
+k
+∈
+{
+1
+,
+4
+,
+16
+}
+k\in\{1,4,16\}
+, temperature 0.6), we report the per-instance maximum aggregated over the test set.
+In addition to downstream task metrics, we track validation cross-entropy and feature-matching loss throughout training on 1k-sample held-out subsets of the respective training datasets (OpenCodeInstruct for coding, ALMA for translation), as these quantities are central to our analysis.
+3.2
+Baselines and methods
+We evaluate three methods: (a) standard CE fine-tuning (SFT); (b) RLVR, where the reward is whether the generated code passes all unit tests for Q&A coding, and BLEU score for translation; and (c) EBFT with a frozen feature network. RLVR is only applicable to Q&A coding and translation, where verifiable rewards exist. All methods are initialized from the base pre-trained model (Qwen2.5-1.5B
+(
+Qwen et al., 2025
+)
+for coding and Llama3.2-1B
+(
+Grattafiori et al., 2024
+)
+for translation). All EBFT runs use whitening as described in
+Equation
+8
+. We run all methods for 2 epochs. As an additional variant, we report results for EBFT and RLVR initialized from a
+warm-start
+checkpoint obtained after one epoch of SFT, followed by one epoch of EBFT or RLVR. We include this setting because, as we show in
+Section
+4
+, RLVR requires a warm-start to achieve competitive downstream performance. Hyperparameter details are provided in
+Appendix
+G
+.
+4
+Experimental results
+We evaluate EBFT against SFT and RLVR on Q&A coding, unstructured coding, and translation. The main finding is that EBFT consistently matches or exceeds RLVR on downstream accuracy while achieving the best cross-entropy and feature-matching losses across all tasks — avoiding the tradeoff between task performance and distributional quality that characterizes RLVR.
+Table
+1
+summarizes the best results per method; Figures
+3
+and
+5
+show training dynamics for representative runs; Figures
+6
+–
+8
+report ablations. Full results across hyperparameter sweeps are provided in
+Appendix
+H
+.
+4.1
+Main results
+EBFT matches RLVR and outperforms SFT on downstream accuracy.
+On Q&A coding (
+Tables
+1
+and
+3
+), EBFT outperforms SFT by a wide margin across all decoding strategies (e.g., greedy: 0.548 vs 0.483, pass@16: 0.771 vs 0.728) and matches or exceeds RLVR (greedy: 0.548 vs 0.535, pass@16: 0.771 vs 0.752), despite not using any correctness signal. On unstructured code (
+Table
+1
+), where RLVR is inapplicable, EBFT similarly outperforms SFT across all metrics (pass@1: 0.524 vs 0.467, pass@16: 0.769 vs 0.747). On translation (
+Table
+1
+), EBFT outperforms both SFT and RLVR on COMET scores across all decoding strategies (e.g., greedy: 0.725 vs 0.717 for SFT and 0.697 for RLVR).
+EBFT achieves lower cross-entropy than SFT, while RLVR degrades it.
+A striking finding is that EBFT reduces the validation cross-entropy more than SFT, even though SFT explicitly optimizes this objective. On Q&A coding, EBFT achieves a validation CE of 0.207 compared to 0.289 for SFT (
+Table
+1
+) and
+Figure
+3
+shows that this gap widens steadily over training. On translation, EBFT similarly outperforms SFT on CE (1.670 vs 1.782). On unstructured code, the two methods are comparable (0.499 vs 0.501). We attribute this counterintuitive result to EBFT with whitening approximately optimizing a relaxation of the
+χ
+2
+\chi^{2}
+divergence, which is locally equivalent to the KL divergence when the model is close to the data distribution (see
+Section
+2.3
+). RLVR exhibits the opposite behavior: its validation CE increases throughout training (
+Figure
+3
+), reaching 0.774 on Q&A coding and 2.454 on translation — both substantially worse than the base model (0.338 and 1.870, respectively). This confirms that reward-driven optimization can improve downstream accuracy at the cost of severely degrading the model’s language modeling quality, a tradeoff that EBFT avoids entirely.
+Figure 7
+:
+Feature network ablations: whitening and last-token pooling matter most; scaling the feature network does not help.
+HumanEval accuracy, validation cross-entropy, and CFM loss over training for EBFT (
+γ
+=
+0
+\gamma=0
+) on Qwen2.5-1.5B with different feature network configurations. The default (last-token features with whitening from a frozen 1.5B copy) achieves the best downstream accuracy and CFM loss. Removing whitening and mean pooling cause the largest degradations. Random weights hurt only modestly, and replacing the 1.5B feature network with a frozen Qwen2.5-7B yields similar results, suggesting that pre-trained representations help but that naively scaling the feature network does not.
+Figure 8
+:
+EBFT improvements are consistent across model scales.
+HumanEval accuracy, validation cross-entropy, and CFM loss over training for EBFT (
+γ
+=
+0
+\gamma=0
+) applied to Qwen2.5-1.5B, 3B, and 7B. Each model uses a frozen copy of itself as the feature network. Dashed lines indicate base model performance. All three scales show substantial and qualitatively similar improvements across all four metrics, with no sign of diminishing returns.
+EBFT achieves the lowest feature-matching loss.
+While it is natural to expect improvements on the feature-matching metric that EBFT directly optimizes, the margins are informative.
+On Q&A coding, EBFT achieves a feature-matching loss of 0.258, compared to 0.315 for SFT and 0.442 for RLVR (
+Table
+1
+). RLVR not only fails to improve this metric but actively worsens it relative to the base model (0.361), and
+Figure
+3
+shows that this degradation accelerates over training. On translation, EBFT achieves the largest improvement (0.578 vs 0.690 for SFT and 0.641 for RLVR), while on unstructured code EBFT and SFT are comparable (0.320 vs 0.321). As shown in
+Figure
+2
+, this improvement holds across all completion lengths and extends well beyond the 8-token rollout horizon used during training, suggesting that EBFT improves calibration of the rollout distribution broadly rather than overfitting to the training sequence length.
+The CE loss coefficient
+γ
+\gamma
+improves CE loss without sacrificing downstream performance or feature matching.
+Figure
+6
+compares EBFT with
+γ
+∈
+{
+0
+,
+0.03
+,
+0.1
+}
+\gamma\in\{0,0.03,0.1\}
+on Q&A coding. The three settings achieve nearly identical feature-matching loss trajectories and comparable downstream performance on HumanEval, but differ markedly in how fast the validation cross-entropy decreases: larger
+γ
+\gamma
+drives it down faster, with
+γ
+=
+0.1
+\gamma=0.1
+reaching a CE of approximately 0.21 compared to 0.25 for
+γ
+=
+0
+\gamma=0
+. All three settings surpass the 2-epoch SFT baseline on cross-entropy, confirming that even pure feature matching (
+γ
+=
+0
+\gamma=0
+) reduces CE more effectively than directly optimizing it. The absence of any tension between these objectives is expected from a theoretical standpoint: as mentioned in
+Section
+2.1
+,
+ℒ
+FM
+\mathcal{L}_{\mathrm{FM}}
+and
+ℒ
+CE
+\mathcal{L}_{\mathrm{CE}}
+share the same minimizer (the ground-truth distribution
+p
+p
+), so optimizing feature matching naturally drives the cross-entropy down as well. The role of
+γ
+\gamma
+is simply to control how aggressively the CE loss is minimized, at no cost to calibration or downstream accuracy.
+EBFT generalizes better than SFT to out-of-distribution benchmarks.
+On out-of-distribution coding languages (MultiPL-E benchmark performance in
+Table
+6
+), SFT
+degrades
+performance relative to the base model (greedy: 0.465 vs 0.506), while EBFT yields improvements (0.524). On translation, EBFT outperforms both SFT and RLVR on the noisy MTNT benchmark (greedy COMET: 0.737 vs 0.703 and 0.705), while performing comparably on OpenSubtitles.
+4.2
+Ablations
+Feature network ablations: mean pooling and removing whitening hurt most; random weights hurt slightly; a larger feature network has little effect.
+Figure
+7
+ablates key feature network design choices on Q&A coding at
+γ
+=
+0
+\gamma=0
+. The default configuration (last-token features with whitening from a frozen copy of the 1.5B generator) achieves the best downstream performance and lowest feature-matching loss. Mean pooling and removing whitening cause the largest degradations, while random feature network weights hurt only modestly, indicating that pre-trained representations are helpful but not essential. Perhaps surprisingly, replacing the 1.5B feature network with a frozen Qwen2.5-7B produces similar results, suggesting that naively scaling the feature network does not yield additional gains.
+EBFT improvements scale consistently across model sizes.
+To assess whether EBFT’s benefits persist at larger scales, we run EBFT with
+γ
+=
+0
+\gamma=0
+using Qwen2.5-1.5B, 3B, and 7B as both actor and feature networks, each initialized from the respective base checkpoint. As shown in
+Figure
+8
+, downstream improvements are consistent across model sizes: greedy HumanEval scores increase from approximately 0.49 (1.5B) to 0.60 (3B) to 0.69 (7B), with each model improving substantially over its respective base performance (0.35, 0.37, and 0.55). The same figure shows that both validation cross-entropy and feature-matching losses decrease faster and reach lower absolute values at larger scales, while preserving the same monotonic ordering across runs. These results suggest that EBFT’s mechanism, which matches rollout feature statistics to ground-truth statistics, transfers predictably across model scales.
+4.3
+Qualitative analysis
+Across both code and translation, EBFT outputs are more
+semantically faithful
+to the prompt and more
+cleanly formatted
+. We provide representative generations from HumanEval and MTNT translation in
+Sections
+H.2
+and
+H.3
+; here we summarize the main patterns.
+Each method exhibits a characteristic failure mode. SFT typically produces structurally reasonable outputs but misses subtle prompt requirements. For instance, when asked to count overlapping substring occurrences, SFT advances by the full substring length and misses overlaps; when asked to return the greatest integer satisfying a condition, SFT returns the first one it finds instead. RLVR often generates plausible logic but fails at the execution level: the generated code calls helper functions like
+is_prime
+without defining them, or includes prose explanations interleaved with code, preventing execution; translations begin with a reasonable output but then drift into multilingual tag lists (e.g., appending ”Português: …”, ”Spanish: …”) and truncate mid-word. EBFT avoids both failure modes, producing self-contained executable code and clean single-sentence translations that preserve the source meaning. These patterns suggest that the feature-matching objective encourages outputs that are both semantically faithful and cleanly formatted.
+5
+Related Work
+Most language model training pipelines remain centered on next-token maximum likelihood (MLE), with reinforcement learning (RL) typically applied as a post-training step. RLHF-style methods optimize sequence-level rewards while regularizing toward a reference policy, often via a KL constraint
+(
+Christiano et al., 2017
+;
+Ouyang et al., 2022
+)
+, and preference-optimization approaches such as DPO can be interpreted as reward maximization under a similar regularization
+(
+Rafailov et al., 2023
+)
+. Earlier sequence-level training methods likewise augment cross-entropy training with REINFORCE-style updates, but continue to rely on token-level supervision
+(
+Ranzato et al., 2016
+;
+Edunov et al., 2018
+)
+.
+Recent work has explored using RL earlier in training or framing pretraining objectives in RL terms. RLP
+(
+Hatamizadeh et al., 2025
+)
+, Reinforcement Pre-Training (RPT)
+(
+Dong et al., 2025
+)
+, and RLPT
+(
+Li et al., 2025
+)
+introduce rewards tied to reasoning traces, information gain, or next-segment prediction. However, in all cases the reward signal is ultimately derived from next-token likelihood or correctness on the pretraining stream, rather than from a distinct semantic objective. Similarly, FlowRL proposes matching the full reward distribution to encourage diversity, but still defines rewards through likelihood-based or task-specific signals
+(
+Zhu et al., 2025
+)
+.
+Closely related are adversarial approaches that learn scalar rewards via discriminators.
+Generative Adversarial Post-Training (GAPT) employs a co-evolving discriminator to mitigate reward hacking in interactive generation
+(
+Wu et al., 2025
+)
+.
+Similarly, RARO
+(
+Cai and Provilkov, 2025
+)
+uses a relativistic discriminator within an inverse reinforcement learning framework to recover implicit rewards from expert reasoning demonstrations when verifiers are unavailable.
+While motivated by different applications, both methods define learned, non-stationary scalar rewards through adversarial training.
+In contrast, our approach avoids learned reward models entirely, instead optimizing a fixed, vector-valued feature-matching objective that directly aligns rollout and data distributions.
+Alternative generative frameworks aim to move beyond left-to-right likelihood training. Energy-Based Diffusion Language Models (EDLM) and related energy-based approaches operate at the sequence level
+(
+Xu et al., 2024b
+)
+, but focus on modeling the data distribution itself rather than defining a feature-space alignment objective for an autoregressive policy. Embedding-based similarity has been widely used for evaluation (e.g., BERTScore
+(
+Zhang et al., 2019
+)
+) and occasionally optimized via RL for metric-driven fine-tuning
+(
+Rennie et al., 2017
+)
+, but not as a general replacement for teacher-forced token prediction.
+In contrast, our approach decouples training from surface-form tokens entirely. We define rewards via a learned feature network and optimize an autoregressive policy using REINFORCE to match generated and ground-truth text in embedding space. This provides dense, semantic feedback that does not depend on next-token log loss, enabling sequence-level optimization that directly targets meaning rather than token reconstruction.
+6
+Conclusion
+We introduced Energy-Based Fine-Tuning (EBFT), a method that
+fine-tunes language models by matching feature statistics of
+on-policy rollouts to those of ground-truth completions. Across
+Q&A coding, unstructured coding, and translation, EBFT
+consistently outperforms SFT and matches RLVR on downstream
+accuracy, while achieving the best cross-entropy and
+feature-matching losses. Notably, EBFT reduces cross-entropy more
+than SFT despite not directly optimizing it. Unlike RLVR, EBFT
+requires no task-specific reward or verifier, making it applicable
+in non-verifiable settings where RLVR cannot be used.
+EBFT connects classical ideas from moment matching and
+distribution alignment with modern language model training. By
+operating in a feature space rather than over tokens or scalar
+rewards, it provides a flexible mechanism for shaping
+sequence-level behavior. However, EBFT is rollout-based and
+therefore slower per update than standard SFT, making it most
+suitable as a fine-tuning stage applied after cross-entropy
+training. It also requires a frozen feature network and has so far
+been evaluated on models up to 7B parameters with short rollout
+horizons. Scaling both axes, and exploring learned or adaptive
+feature networks, are promising directions for future work. More
+broadly, we view feature matching as a complementary training
+signal that may help bridge likelihood-based training and
+rollout-based optimization.
+References
+Ahmad
+et al.
+(2025)
+W. U. Ahmad, A. Ficek, M. Samadi, J. Huang, V. Noroozi, S. Majumdar, and B. Ginsburg
+OpenCodeInstruct: a large-scale instruction tuning dataset for code llms
+.
+arXiv preprint arXiv:2504.04030
+.
+Cited by:
+Figure 1
+,
+Figure 1
+,
+Figure 3
+,
+Figure 3
+,
+§3.1
+.
+Austin
+et al.
+(2021)
+J. Austin, A. Odena, M. Nye, M. Bosma, H. Michalewski, D. Dohan, E. Jiang, C. Cai, M. Terry, Q. Le,
+et al.
+Program synthesis with large language models
+.
+arXiv preprint arXiv:2108.07732
+.
+Cited by:
+§3.1
+.
+Bengio
+et al.
+(2015)
+S. Bengio, O. Vinyals, N. Jaitly, and N. Shazeer
+Scheduled sampling for sequence prediction with recurrent neural networks
+.
+In
+Advances in Neural Information Processing Systems
+,
+Cited by:
+§1
+.
+Braverman
+et al.
+(2019)
+M. Braverman, X. Chen, S. M. Kakade, K. Narasimhan, C. Zhang, and Y. Zhang
+Calibration, entropy rates, and memory in language models
+.
+arXiv preprint arXiv:1906.05664
+.
+Cited by:
+§1
+,
+§2.4
+.
+Brown
+et al.
+(2020)
+T. Brown, B. Mann, N. Ryder, M. Subbiah, J. D. Kaplan, P. Dhariwal, A. Neelakantan, P. Shyam, G. Sastry, A. Askell,
+et al.
+Language models are few-shot learners
+.
+Advances in neural information processing systems
+33
+,
+pp. 1877–1901
+.
+Cited by:
+§1
+.
+Cai and Provilkov (2025)
+L. Cai and I. Provilkov
+Escaping the verifier: learning to reason via demonstrations
+.
+arXiv preprint arXiv:2511.21667
+.
+External Links:
+Link
+Cited by:
+§5
+.
+Cassano
+et al.
+(2023)
+F. Cassano, J. Gouwar, D. Nguyen, S. Nguyen, L. Phipps-Costin, D. Pinckney, M. Yee, Y. Zi, C. J. Anderson, M. Q. Feldman,
+et al.
+Multipl-e: a scalable and polyglot approach to benchmarking neural code generation
+.
+IEEE Transactions on Software Engineering
+49
+(
+7
+),
+pp. 3675–3691
+.
+Cited by:
+§3.1
+.
+Chen
+et al.
+(2021)
+M. Chen, J. Tworek, H. Jun, Q. Yuan, H. P. de Oliveira Pinto, J. Kaplan, H. Edwards, Y. Burda, N. Joseph, G. Brockman, A. Ray, R. Puri, G. Krueger, M. Petrov, H. Khlaaf, G. Sastry, P. Mishkin, B. Chan, S. Gray, N. Ryder, M. Pavlov, A. Power, L. Kaiser, M. Bavarian, C. Winter, P. Tillet, F. P. Such, D. Cummings, M. Plappert, F. Chantzis, E. Barnes, A. Herbert-Voss, W. H. Guss, A. Nichol, A. Paino, N. Tezak, J. Tang, I. Babuschkin, S. Balaji, S. Jain, W. Saunders, C. Hesse, A. N. Carr, J. Leike, J. Achiam, V. Misra, E. Morikawa, A. Radford, M. Knight, M. Brundage, M. Murati, K. Mayer, P. Welinder, B. McGrew, D. Amodei, S. McCandlish, I. Sutskever, and W. Zaremba
+Evaluating large language models trained on code
+.
+arXiv preprint arXiv:2107.03374
+.
+Cited by:
+§3.1
+.
+Christiano
+et al.
+(2017)
+P. F. Christiano, J. Leike, T. B. Brown, M. Martic, S. Legg, and D. Amodei
+Deep reinforcement learning from human preferences
+.
+arXiv preprint arXiv:1706.03741
+.
+Cited by:
+§5
+.
+Domingo-Enrich
+et al.
+(2022)
+C. Domingo-Enrich, A. Bietti, M. Gabrié, J. Bruna, and E. Vanden-Eijnden
+Dual training of energy-based models with overparametrized shallow neural networks
+.
+arXiv preprint arXiv:2107.05134
+.
+Cited by:
+Theorem D.1
+,
+Theorem D.2
+.
+Dong
+et al.
+(2025)
+Q. Dong, D. Li, Y. Tang, T. Ye, Y. Sun, Z. Sui, and F. Wei
+Reinforcement pre-training
+.
+arXiv preprint arXiv:2506.08007
+.
+Cited by:
+§1
+,
+§5
+.
+Edunov
+et al.
+(2018)
+S. Edunov, M. Ott, M. Auli, and D. Grangier
+Classical structured prediction losses for sequence to sequence learning
+.
+In
+ACL 2018
+,
+Cited by:
+§5
+.
+Fujii
+et al.
+(2025)
+K. Fujii, Y. Tajima, S. Mizuki, H. Shimada, T. Shiotani, K. Saito, M. Ohi, M. Kawamura, T. Nakamura, T. Okamoto, S. Ishida, K. Hattori, Y. Ma, H. Takamura, R. Yokota, and N. Okazaki
+Rewriting pre-training data boosts llm performance in math and code
+.
+External Links:
+2505.02881
+,
+Link
+Cited by:
+§3.1
+.
+Gneiting and Raftery (2007)
+T. Gneiting and A. E. Raftery
+Strictly proper scoring rules, prediction, and estimation
+.
+Journal of the American Statistical Association
+102
+(
+477
+),
+pp. 359–378
+.
+Cited by:
+§2.1
+.
+Grattafiori
+et al.
+(2024)
+A. Grattafiori, A. Dubey, A. Jauhri, A. Pandey, A. Kadian, A. Al-Dahle, A. Letman, A. Mathur, A. Schelten, A. Vaughan,
+et al.
+The llama 3 herd of models
+.
+arXiv preprint arXiv:2407.21783
+.
+Cited by:
+§3.2
+.
+Hatamizadeh
+et al.
+(2025)
+A. Hatamizadeh, S. N. Akter, S. Prabhumoye, J. Kautz, M. Patwary, M. Shoeybi, B. Catanzaro, and Y. Choi
+RLP: reinforcement as a pretraining objective
+.
+arXiv preprint arXiv:2510.01265
+.
+Cited by:
+§1
+,
+§5
+.
+Hu
+et al.
+(2024)
+J. Hu, X. Wu, Z. Zhu, Xianyu, W. Wang, D. Zhang, and Y. Cao
+OpenRLHF: an easy-to-use, scalable and high-performance rlhf framework
+.
+arXiv preprint arXiv:2405.11143
+.
+Cited by:
+Appendix G
+.
+Kaplan
+et al.
+(2020)
+J. Kaplan, S. McCandlish, T. Henighan, T. B. Brown, B. Chess, R. Child, S. Gray, A. Radford, J. Wu, and D. Amodei
+Scaling laws for neural language models
+.
+arXiv preprint arXiv:2001.08361
+.
+Cited by:
+§1
+.
+Lamb
+et al.
+(2016)
+A. M. Lamb, A. Goyal, Y. Zhang, S. Zhang, A. Courville, and Y. Bengio
+Professor forcing: a new algorithm for training recurrent networks
+.
+arXiv preprint arXiv:1610.09038
+.
+Cited by:
+§1
+.
+Li
+et al.
+(2025)
+S. Li, K. Li, Z. Xu, G. Huang, E. Yang, K. Li, H. Wu, J. Wu, Z. Zheng, C. Zhang, K. Shi, K. Deng, Q. Yi, R. Xiong, T. Xu, Y. Jiang, J. Yan, Y. Zeng, G. Xu, J. Xue, Z. Xu, Z. Fang, B. C. Wang, Q. Liu, X. Li, and Y. Tao
+Reinforcement learning on pre-training data
+.
+arXiv preprint arXiv:2509.19249
+.
+Cited by:
+§5
+.
+Lightman
+et al.
+(2023)
+H. Lightman, V. Kosaraju, Y. Burda, H. Edwards, B. Baker, T. Lee, J. Leike, J. Schulman, I. Sutskever, and K. Cobbe
+Let’s verify step by step
+.
+arXiv preprint arXiv:2305.20050
+.
+Cited by:
+§1
+.
+Lipman
+et al.
+(2023)
+Y. Lipman, R. T. Chen, H. Ben-Hamu, M. Nickel, and M. Le
+Flow matching for generative modeling
+.
+In
+11th International Conference on Learning Representations, ICLR 2023
+,
+Cited by:
+§2.1
+.
+Lison and Tiedemann (2016)
+P. Lison and J. Tiedemann
+OpenSubtitles2016: extracting large parallel corpora from movie and tv subtitles
+.
+In
+Proceedings of the Tenth International Conference on Language Resources and Evaluation (LREC’16)
+,
+pp. 923–929
+.
+Cited by:
+§3.1
+.
+Michel and Neubig (2018)
+P. Michel and G. Neubig
+MTNT: a testbed for machine translation of noisy text
+.
+arXiv preprint arXiv:1809.00388
+.
+Cited by:
+§3.1
+.
+Ouyang
+et al.
+(2022)
+L. Ouyang, J. Wu, X. Jiang, D. Almeida, C. L. Wainwright, P. Mishkin, C. Zhang, S. Agarwal, K. Slama, A. Ray,
+et al.
+Training language models to follow instructions with human feedback
+.
+arXiv preprint arXiv:2203.02155
+.
+Cited by:
+§1
+,
+§5
+.
+Qwen
+et al.
+(2025)
+Qwen, :, A. Yang, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Li, D. Liu, F. Huang, H. Wei, H. Lin, J. Yang, J. Tu, J. Zhang, J. Yang, J. Yang, J. Zhou, J. Lin, K. Dang, K. Lu, K. Bao, K. Yang, L. Yu, M. Li, M. Xue, P. Zhang, Q. Zhu, R. Men, R. Lin, T. Li, T. Tang, T. Xia, X. Ren, X. Ren, Y. Fan, Y. Su, Y. Zhang, Y. Wan, Y. Liu, Z. Cui, Z. Zhang, and Z. Qiu
+Qwen2.5 technical report
+.
+External Links:
+2412.15115
+,
+Link
+Cited by:
+§3.2
+.
+Rafailov
+et al.
+(2023)
+R. Rafailov, A. Sharma, E. Mitchell, S. Ermon, and C. D. Manning
+Direct preference optimization: your language model is secretly a reward model
+.
+arXiv preprint arXiv:2305.18290
+.
+Cited by:
+§5
+.
+Ranzato
+et al.
+(2016)
+M. Ranzato, S. Chopra, M. Auli, and W. Zaremba
+Sequence level training with recurrent neural networks
+.
+arXiv preprint arXiv:1511.06732
+.
+Cited by:
+§5
+.
+Rennie
+et al.
+(2017)
+S. J. Rennie, E. Marcheret, Y. Mroueh, J. Ross, and V. Goel
+Self-critical sequence training for image captioning
+.
+In
+Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition (CVPR)
+,
+Cited by:
+§5
+.
+Schulman
+et al.
+(2017)
+J. Schulman, F. Wolski, P. Dhariwal, A. Radford, and O. Klimov
+Proximal policy optimization algorithms
+.
+arXiv preprint arXiv:1707.06347
+.
+Cited by:
+§1
+.
+Shao
+et al.
+(2024)
+Z. Shao, P. Wang, Q. Zhu, R. Xu, J. Song, X. Bi, H. Zhang, M. Zhang, Y. K. Li, Y. Wu, and D. Guo
+DeepSeekMath: pushing the limits of mathematical reasoning in open language models
+.
+arXiv preprint arXiv:2402.03300
+.
+Cited by:
+§1
+.
+Wu
+et al.
+(2025)
+Y. Wu, S. Brade, T. Ma, T. Fowler, E. Yang, B. Banar, A. Courville, N. Jaques, and C. A. Huang
+Generative adversarial post-training mitigates reward hacking in live human-ai music interaction
+.
+arXiv preprint arXiv:2511.17879
+.
+External Links:
+Document
+,
+Link
+Cited by:
+§5
+.
+Xu
+et al.
+(2023)
+H. Xu, Y. J. Kim, A. Sharaf, and H. H. Awadalla
+A paradigm shift in machine translation: boosting translation performance of large language models
+.
+External Links:
+2309.11674
+Cited by:
+Figure 5
+,
+Figure 5
+,
+§3.1
+.
+Xu
+et al.
+(2024a)
+H. Xu, A. Sharaf, Y. Chen, W. Tan, L. Shen, B. V. Durme, K. Murray, and Y. J. Kim
+Contrastive preference optimization: pushing the boundaries of llm performance in machine translation
+.
+External Links:
+2401.08417
+Cited by:
+§3.1
+.
+Xu
+et al.
+(2024b)
+M. Xu, T. Geffner, K. Kreis, W. Nie, Y. Xu, J. Leskovec, S. Ermon, and A. Vahdat
+Energy-based diffusion language models for text generation
+.
+In
+ICLR 2025
+,
+Note:
+arXiv:2410.21357
+Cited by:
+§5
+.
+Zelikman
+et al.
+(2024)
+E. Zelikman, G. Harik, Y. Shao, V. Jayasiri, N. Haber, and N. D. Goodman
+Quiet-star: language models can teach themselves to think before speaking
+.
+arXiv preprint arXiv:2403.09629
+.
+Cited by:
+Appendix F
+,
+§1
+,
+§2.2
+.
+Zhang
+et al.
+(2019)
+T. Zhang, V. Kishore, F. Wu, K. Q. Weinberger, and Y. Artzi
+BERTScore: evaluating text generation with bert
+.
+arXiv preprint arXiv:1904.09675
+.
+Cited by:
+§5
+.
+Zhao
+et al.
+(2025)
+R. Zhao, A. Meterez, S. Kakade, C. Pehlevan, S. Jelassi, and E. Malach
+Echo chamber: rl post-training amplifies behaviors learned in pretraining
+.
+arXiv preprint arXiv:2504.07912
+.
+Cited by:
+Figure 14
+,
+Figure 14
+.
+Zhu
+et al.
+(2025)
+X. Zhu, D. Cheng, D. Zhang, H. Li, K. Zhang, C. Jiang, Y. Sun, E. Hua, Y. Zuo, X. Lv, Q. Zhang, L. Chen, F. Shao, B. Xue, Y. Song, Z. Yang, G. Cui, N. Ding, J. Gao, X. Liu, H. Zhou, and Z. Mei
+FlowRL: matching reward distributions for llm reasoning
+.
+arXiv preprint arXiv:2509.15207
+.
+Cited by:
+§5
+.
+Appendix Contents
+Appendix A
+The feature-matching loss profile and its optimal behavior
+Figures
+1
+and
+2
+show the conditional feature-matching loss defined in (
+2
+), plotted against the completion length
+G
+G
+. We refer to the function that maps
+G
+G
+to the corresponding (conditional) feature-matching loss value as the
+(conditional) feature-matching loss profile
+.
+To compute conditional feature-matching loss values, we extract ground-truth pairs
+(
+c
+,
+y
+)
+(c,y)
+from long ground-truth token sequences by
+selecting a strided set of prefixes of the sequence as the contexts
+c
+c
+, and the ensuing windows of length
+G
+G
+as the completions
+y
+y
+.
+The bias-variance decomposition (
+2
+) directly implies that the minimum value of
+ℒ
+CFM
+\mathcal{L}_{\mathrm{CFM}}
+is
+𝔼
+c
+∼
+p
+​
+[
+Var
+⁡
+[
+ϕ
+c
+​
+(
+y
+)
+|
+c
+]
+]
+\mathbb{E}_{c\sim p}\big[\mathrm{Var}[\phi_{c}(y)|c]\big]
+.
+The following lemma shows that
+𝔼
+c
+∼
+p
+​
+[
+Var
+⁡
+[
+ϕ
+c
+​
+(
+y
+)
+|
+c
+]
+]
+\mathbb{E}_{c\sim p}\big[\mathrm{Var}[\phi_{c}(y)|c]\big]
+is non-decreasing with the completion length
+G
+G
+.
+Lemma A.1
+(The optimal conditional feature-matching profile)
+.
+Consider the assumptions
+(a)
+ϕ
+c
+​
+(
+y
+)
+:=
+ϕ
+⁡
+(
+c
+:
+y
+)
+\phi_{c}(y):=\phi(c\!:\!y)
+depends on
+c
+c
+and
+y
+y
+only through their concatenation
+c
+:
+y
+c\!:\!y
+, which follows the construction in
+Section
+2.1
+.
+(b)
+Context-completion pairs
+(
+c
+,
+y
+)
+(c,y)
+are selected/sampled from long ground-truth sequences as described above, such that for a fixed completion length
+G
+G
+, concatenations
+c
+:
+y
+c:y
+are equally distributed to contexts
+c
+c
+. Neglecting edge effects that stem from the long ground-truth sequences being finite, this holds for example if contexts are sampled as random prefixes of the ground-truth sequence.
+Then, the optimal conditional feature-matching loss profile
+𝔼
+c
+∼
+p
+​
+[
+Var
+⁡
+[
+ϕ
+c
+​
+(
+y
+)
+|
+c
+]
+]
+\mathbb{E}_{c\sim p}\big[\mathrm{Var}[\phi_{c}(y)|c]\big]
+is non-decreasing with
+G
+G
+and admits the bound
+𝔼
+c
+∼
+p
+​
+[
+Var
+⁡
+[
+ϕ
+c
+​
+(
+y
+)
+|
+c
+]
+]
+≤
+Var
+c
+∼
+p
+​
+[
+ϕ
+⁡
+(
+c
+)
+]
+.
+\displaystyle\mathbb{E}_{c\sim p}\big[\mathrm{Var}[\phi_{c}(y)|c]\big]\leq\mathrm{Var}_{c\sim p}[\phi(c)].
+(12)
+Proof.
+Consider completion lengths
+1
+≤
+G
+′
+≤
+G
+1\leq G^{\prime}\leq G
+. Let
+y
+,
+y
+^
+y,\hat{y}
+denote sequences of length
+G
+G
+,
+y
+′
+,
+y
+^
+′
+y^{\prime},\hat{y}^{\prime}
+completions of length
+G
+′
+G^{\prime}
+, and
+y
+′′
+,
+y
+^
+′′
+y^{\prime\prime},\hat{y}^{\prime\prime}
+completions of length
+G
+′′
+=
+G
+−
+G
+′
+G^{\prime\prime}=G-G^{\prime}
+, which means that we write the optimal conditional feature-matching loss at completion lengths
+G
+′
+G^{\prime}
+and
+G
+G
+as
+𝔼
+c
+∼
+p
+[
+Var
+y
+′
+∼
+p
+(
+⋅
+|
+c
+)
+[
+ϕ
+(
+c
+:
+y
+′
+)
+|
+c
+]
+]
+\mathbb{E}_{c\sim p}\big[\mathrm{Var}_{y^{\prime}\sim p(\cdot|c)}[\phi(c\!:\!y^{\prime})|c]\big]
+and
+𝔼
+c
+∼
+p
+[
+Var
+y
+∼
+p
+(
+⋅
+|
+c
+)
+[
+ϕ
+(
+c
+:
+y
+)
+|
+c
+]
+]
+\mathbb{E}_{c\sim p}\big[\mathrm{Var}_{y\sim p(\cdot|c)}[\phi(c\!:\!y)|c]\big]
+, respectively. Observe that
+𝔼
+c
+∼
+p
+[
+Var
+y
+∼
+p
+(
+⋅
+|
+c
+)
+[
+ϕ
+c
+(
+y
+)
+|
+c
+]
+]
+=
+𝔼
+(
+c
+,
+y
+)
+∼
+p
+[
+∥
+ϕ
+c
+(
+y
+)
+∥
+2
+]
+−
+𝔼
+c
+∼
+p
+[
+∥
+𝔼
+y
+∼
+p
+(
+⋅
+|
+c
+)
+[
+ϕ
+c
+(
+y
+)
+]
+∥
+2
+]
+=
+𝔼
+c
+∼
+p
+[
+∥
+ϕ
+(
+c
+)
+∥
+2
+]
+−
+𝔼
+c
+∼
+p
+[
+∥
+𝔼
+y
+′′
+∼
+p
+(
+⋅
+|
+c
+)
+[
+𝔼
+y
+′
+∼
+p
+(
+⋅
+|
+c
+:
+y
+′′
+)
+[
+ϕ
+(
+c
+:
+y
+′′
+:
+y
+′
+)
+]
+]
+∥
+2
+]
+\displaystyle\begin{split}\mathbb{E}_{c\sim p}\big[\mathrm{Var}_{y\sim p(\cdot|c)}[\phi_{c}(y)|c]\big]&=\mathbb{E}_{(c,y)\sim p}\Big[\big\|\phi_{c}(y)\big\|^{2}\Big]-\mathbb{E}_{c\sim p}\Big[\big\|\mathbb{E}_{y\sim p(\cdot|c)}[\phi_{c}(y)]\big\|^{2}\Big]\\
+&=\mathbb{E}_{c\sim p}\Big[\big\|\phi(c)\big\|^{2}\Big]-\mathbb{E}_{c\sim p}\Big[\big\|\mathbb{E}_{y^{\prime\prime}\sim p(\cdot|c)}\big[\mathbb{E}_{y^{\prime}\sim p(\cdot|c:y^{\prime\prime})}[\phi(c\!:\!y^{\prime\prime}\!:\!y^{\prime})]\big]\big\|^{2}\Big]\end{split}
+(13)
+Here, the second equality holds because
+c
+:
+y
+c:y
+is equally distributed to
+c
+c
+by Assumption
+(b)
+, and using the tower property of expectation together with the decomposition
+y
+=
+y
+′′
+:
+y
+′
+y=y^{\prime\prime}\!:\!y^{\prime}
+.
+By Jensen’s inequality, we have that
+𝔼
+c
+∼
+p
+[
+∥
+𝔼
+y
+′′
+∼
+p
+(
+⋅
+|
+c
+)
+[
+𝔼
+y
+′
+∼
+p
+(
+⋅
+|
+c
+:
+y
+′′
+)
+[
+ϕ
+(
+c
+:
+y
+′′
+:
+y
+′
+)
+]
+]
+∥
+2
+]
+≤
+𝔼
+c
+∼
+p
+[
+𝔼
+y
+′′
+∼
+p
+(
+⋅
+|
+c
+)
+[
+∥
+𝔼
+y
+′
+∼
+p
+(
+⋅
+|
+c
+:
+y
+′′
+)
+[
+ϕ
+(
+c
+:
+y
+′′
+:
+y
+′
+)
+]
+∥
+2
+]
+]
+=
+𝔼
+(
+c
+,
+y
+′′
+)
+∼
+p
+[
+∥
+𝔼
+y
+′
+∼
+p
+(
+⋅
+|
+c
+:
+y
+′′
+)
+[
+ϕ
+(
+c
+:
+y
+′′
+:
+y
+′
+)
+]
+∥
+2
+]
+=
+𝔼
+c
+∼
+p
+[
+∥
+𝔼
+y
+′
+∼
+p
+(
+⋅
+|
+c
+)
+[
+ϕ
+(
+c
+:
+y
+′
+)
+]
+∥
+2
+]
+\displaystyle\begin{split}&\mathbb{E}_{c\sim p}\Big[\big\|\mathbb{E}_{y^{\prime\prime}\sim p(\cdot|c)}\big[\mathbb{E}_{y^{\prime}\sim p(\cdot|c:y^{\prime\prime})}[\phi(c\!:\!y^{\prime\prime}\!:\!y^{\prime})]\big]\big\|^{2}\Big]\leq\mathbb{E}_{c\sim p}\Big[\mathbb{E}_{y^{\prime\prime}\sim p(\cdot|c)}\Big[\big\|\mathbb{E}_{y^{\prime}\sim p(\cdot|c:y^{\prime\prime})}[\phi(c\!:\!y^{\prime\prime}\!:\!y^{\prime})]\big\|^{2}\Big]\Big]\\
+&=\mathbb{E}_{(c,y^{\prime\prime})\sim p}\Big[\big\|\mathbb{E}_{y^{\prime}\sim p(\cdot|c:y^{\prime\prime})}[\phi(c\!:\!y^{\prime\prime}\!:\!y^{\prime})]\big\|^{2}\Big]=\mathbb{E}_{c\sim p}\Big[\big\|\mathbb{E}_{y^{\prime}\sim p(\cdot|c)}[\phi(c\!:\!y^{\prime})]\big\|^{2}\Big]\end{split}
+(14)
+Plugging this back into the right-hand side of (
+13
+) yields
+𝔼
+c
+∼
+p
+[
+Var
+y
+∼
+p
+(
+⋅
+|
+c
+)
+[
+ϕ
+c
+(
+y
+)
+|
+c
+]
+]
+≥
+𝔼
+c
+∼
+p
+[
+∥
+ϕ
+(
+c
+)
+∥
+2
+]
+−
+𝔼
+c
+∼
+p
+[
+∥
+𝔼
+y
+′
+∼
+p
+(
+⋅
+|
+c
+)
+[
+ϕ
+(
+c
+:
+y
+′
+)
+]
+∥
+2
+]
+=
+𝔼
+(
+c
+,
+y
+)
+∼
+p
+[
+∥
+ϕ
+c
+(
+y
+)
+∥
+2
+]
+−
+𝔼
+c
+∼
+p
+[
+∥
+𝔼
+y
+′
+∼
+p
+(
+⋅
+|
+c
+)
+[
+ϕ
+(
+c
+:
+y
+′
+)
+]
+∥
+2
+]
+=
+𝔼
+c
+∼
+p
+[
+Var
+y
+′
+∼
+p
+(
+⋅
+|
+c
+)
+[
+ϕ
+c
+(
+y
+′
+)
+|
+c
+]
+]
+,
+\displaystyle\begin{split}\mathbb{E}_{c\sim p}\big[\mathrm{Var}_{y\sim p(\cdot|c)}[\phi_{c}(y)|c]\big]&\geq\mathbb{E}_{c\sim p}\Big[\big\|\phi(c)\big\|^{2}\Big]-\mathbb{E}_{c\sim p}\Big[\big\|\mathbb{E}_{y^{\prime}\sim p(\cdot|c)}[\phi(c\!:\!y^{\prime})]\big\|^{2}\Big]\\
+&=\mathbb{E}_{(c,y)\sim p}\Big[\big\|\phi_{c}(y)\big\|^{2}\Big]-\mathbb{E}_{c\sim p}\Big[\big\|\mathbb{E}_{y^{\prime}\sim p(\cdot|c)}[\phi(c\!:\!y^{\prime})]\big\|^{2}\Big]\\
+&=\mathbb{E}_{c\sim p}\big[\mathrm{Var}_{y^{\prime}\sim p(\cdot|c)}[\phi_{c}(y^{\prime})|c]\big],\end{split}
+(15)
+which concludes the proof that the optimal conditional feature-matching loss is non-decreasing with the completion length
+G
+G
+. To prove the bound (
+12
+), we apply Jensen’s inequality in the opposite direction:
+𝔼
+c
+∼
+p
+[
+∥
+𝔼
+y
+∼
+p
+(
+⋅
+|
+c
+)
+[
+ϕ
+c
+(
+y
+)
+]
+∥
+2
+]
+≥
+∥
+𝔼
+(
+c
+,
+y
+)
+∼
+p
+[
+ϕ
+c
+(
+y
+)
+]
+∥
+2
+,
+\displaystyle\mathbb{E}_{c\sim p}\Big[\big\|\mathbb{E}_{y\sim p(\cdot|c)}[\phi_{c}(y)]\big\|^{2}\Big]\geq\big\|\mathbb{E}_{(c,y)\sim p}[\phi_{c}(y)]\big\|^{2},
+(16)
+and plugging this into (
+13
+) yields
+𝔼
+c
+∼
+p
+[
+Var
+y
+∼
+p
+(
+⋅
+|
+c
+)
+[
+ϕ
+c
+(
+y
+)
+|
+c
+]
+]
+≤
+𝔼
+(
+c
+,
+y
+)
+∼
+p
+[
+∥
+ϕ
+c
+(
+y
+)
+∥
+2
+]
+−
+∥
+𝔼
+(
+c
+,
+y
+)
+∼
+p
+[
+ϕ
+c
+(
+y
+)
+]
+∥
+2
+=
+Var
+(
+c
+,
+y
+)
+∼
+p
+​
+[
+ϕ
+⁡
+(
+c
+:
+y
+)
+]
+=
+Var
+c
+∼
+p
+​
+[
+ϕ
+⁡
+(
+c
+)
+]
+\displaystyle\begin{split}&\mathbb{E}_{c\sim p}\big[\mathrm{Var}_{y\sim p(\cdot|c)}[\phi_{c}(y)|c]\big]\leq\mathbb{E}_{(c,y)\sim p}\Big[\big\|\phi_{c}(y)\big\|^{2}\Big]-\big\|\mathbb{E}_{(c,y)\sim p}[\phi_{c}(y)]\big\|^{2}\\
+&=\mathrm{Var}_{(c,y)\sim p}[\phi(c\!:\!y)]=\mathrm{Var}_{c\sim p}[\phi(c)]\end{split}
+(17)
+∎
+Appendix B
+Feature matching with whitening
+This section motivates a
+whitened
+variant of feature matching by connecting standard cross-entropy training to a local
+χ
+2
+\chi^{2}
+objective. Then, we relax a variational formulation of the
+χ
+2
+\chi^{2}
+divergence by restricting the function space to a generalized linear model space corresponding to a chosen feature map. The resulting optimization problem admits a closed form and corresponds to the feature-matching loss with whitening, which amounts to premultiplying the feature vectors by the inverse of the matrix of second moments. However, in practice we only have access to a low-rank approximation of this matrix, which means that we can only compute a pseudo-inverse. We describe different empirical loss variants that we tried, including the one that we used to obtain the results in the main paper.
+B.1
+Relating cross-entropy training to a
+χ
+2
+\chi^{2}
+divergence objective
+Fix a context
+c
+c
+and consider completions
+y
+∈
+𝒱
+G
+y\in\mathcal{V}^{G}
+(for some completion length
+G
+G
+). Let
+p
+(
+⋅
+∣
+c
+)
+p(\cdot\mid c)
+denote the ground-truth conditional distribution over completions and
+p
+θ
+(
+⋅
+∣
+c
+)
+p_{\theta}(\cdot\mid c)
+the model distribution. Cross-entropy training minimizes the conditional KL divergence
+D
+KL
+(
+p
+(
+⋅
+∣
+c
+)
+∥
+p
+θ
+(
+⋅
+∣
+c
+)
+)
+\displaystyle D_{\mathrm{KL}}\!\big(p(\cdot\mid c)\,\|\,p_{\theta}(\cdot\mid c)\big)
+=
+∑
+y
+∈
+𝒱
+G
+p
+⁡
+(
+y
+∣
+c
+)
+​
+log
+⁡
+p
+⁡
+(
+y
+∣
+c
+)
+p
+θ
+​
+(
+y
+∣
+c
+)
+.
+\displaystyle=\sum_{y\in\mathcal{V}^{G}}p(y\mid c)\log\frac{p(y\mid c)}{p_{\theta}(y\mid c)}.
+(18)
+Rewriting (
+18
+) as an expectation under
+p
+θ
+p_{\theta}
+gives
+D
+KL
+(
+p
+(
+⋅
+∣
+c
+)
+∥
+p
+θ
+(
+⋅
+∣
+c
+)
+)
+\displaystyle D_{\mathrm{KL}}\!\big(p(\cdot\mid c)\,\|\,p_{\theta}(\cdot\mid c)\big)
+=
+∑
+y
+∈
+𝒱
+G
+p
+θ
+​
+(
+y
+∣
+c
+)
+​
+p
+⁡
+(
+y
+∣
+c
+)
+p
+θ
+​
+(
+y
+∣
+c
+)
+​
+log
+⁡
+p
+⁡
+(
+y
+∣
+c
+)
+p
+θ
+​
+(
+y
+∣
+c
+)
+.
+\displaystyle=\sum_{y\in\mathcal{V}^{G}}p_{\theta}(y\mid c)\,\frac{p(y\mid c)}{p_{\theta}(y\mid c)}\log\frac{p(y\mid c)}{p_{\theta}(y\mid c)}.
+(19)
+The first-order Taylor expansion of
+x
+↦
+x
+​
+log
+⁡
+x
+x\mapsto x\log x
+around
+x
+=
+1
+x=1
+is
+x
+​
+log
+⁡
+x
+=
+(
+x
+−
+1
+)
++
+1
+2
+​
+(
+x
+−
+1
+)
+2
++
+O
+⁡
+(
+(
+x
+−
+1
+)
+3
+)
+.
+\displaystyle x\log x=(x-1)+\tfrac{1}{2}(x-1)^{2}+O\big((x-1)^{3}\big).
+(20)
+Plugging (
+20
+) into (
+19
+) yields
+D
+KL
+(
+p
+(
+⋅
+∣
+c
+)
+∥
+p
+θ
+(
+⋅
+∣
+c
+)
+)
+=
+1
+2
+​
+∑
+y
+∈
+𝒱
+G
+p
+θ
+​
+(
+y
+∣
+c
+)
+​
+(
+p
+⁡
+(
+y
+∣
+c
+)
+p
+θ
+​
+(
+y
+∣
+c
+)
+−
+1
+)
+2
++
+∑
+y
+∈
+𝒱
+G
+p
+θ
+​
+(
+y
+∣
+c
+)
+​
+O
+​
+(
+(
+p
+⁡
+(
+y
+∣
+c
+)
+p
+θ
+​
+(
+y
+∣
+c
+)
+−
+1
+)
+3
+)
+=
+1
+2
+D
+χ
+2
+(
+p
+(
+⋅
+∣
+c
+)
+∥
+p
+θ
+(
+⋅
+∣
+c
+)
+)
++
+∑
+y
+∈
+𝒱
+G
+p
+θ
+(
+y
+∣
+c
+)
+O
+(
+(
+p
+⁡
+(
+y
+∣
+c
+)
+p
+θ
+​
+(
+y
+∣
+c
+)
+−
+1
+)
+3
+)
+,
+\displaystyle\begin{split}D_{\mathrm{KL}}\!\big(p(\cdot\mid c)\,\|\,p_{\theta}(\cdot\mid c)\big)&=\tfrac{1}{2}\sum_{y\in\mathcal{V}^{G}}p_{\theta}(y\mid c)\Big(\tfrac{p(y\mid c)}{p_{\theta}(y\mid c)}-1\Big)^{2}+\sum_{y\in\mathcal{V}^{G}}p_{\theta}(y\mid c)\,O\!\Big(\Big(\tfrac{p(y\mid c)}{p_{\theta}(y\mid c)}-1\Big)^{3}\Big)\\
+&=\tfrac{1}{2}\,D_{\chi^{2}}\!\big(p(\cdot\mid c)\,\|\,p_{\theta}(\cdot\mid c)\big)+\sum_{y\in\mathcal{V}^{G}}p_{\theta}(y\mid c)\,O\!\Big(\Big(\tfrac{p(y\mid c)}{p_{\theta}(y\mid c)}-1\Big)^{3}\Big),\end{split}
+(21)
+where the
+χ
+2
+\chi^{2}
+divergence is
+D
+χ
+2
+(
+p
+(
+⋅
+∣
+c
+)
+∥
+p
+θ
+(
+⋅
+∣
+c
+)
+)
+:=
+∑
+y
+∈
+𝒱
+G
+(
+p
+⁡
+(
+y
+∣
+c
+)
+−
+p
+θ
+​
+(
+y
+∣
+c
+)
+)
+2
+p
+θ
+​
+(
+y
+∣
+c
+)
+=
+𝔼
+Y
+∼
+p
+θ
+(
+⋅
+∣
+c
+)
+[
+(
+p
+⁡
+(
+Y
+∣
+c
+)
+p
+θ
+​
+(
+Y
+∣
+c
+)
+−
+1
+)
+2
+]
+.
+\displaystyle D_{\chi^{2}}\!\big(p(\cdot\mid c)\,\|\,p_{\theta}(\cdot\mid c)\big):=\sum_{y\in\mathcal{V}^{G}}\frac{\big(p(y\mid c)-p_{\theta}(y\mid c)\big)^{2}}{p_{\theta}(y\mid c)}=\mathbb{E}_{Y\sim p_{\theta}(\cdot\mid c)}\!\Big[\Big(\tfrac{p(Y\mid c)}{p_{\theta}(Y\mid c)}-1\Big)^{2}\Big].
+(22)
+When
+p
+(
+⋅
+∣
+c
+)
+≈
+p
+θ
+(
+⋅
+∣
+c
+)
+p(\cdot\mid c)\approx p_{\theta}(\cdot\mid c)
+(so the ratio
+p
+/
+p
+θ
+p/p_{\theta}
+is close to
+1
+1
+), the remainder term in (
+21
+) can be neglected, and we obtain the local approximation
+D
+KL
+(
+p
+(
+⋅
+∣
+c
+)
+∥
+p
+θ
+(
+⋅
+∣
+c
+)
+)
+≈
+1
+2
+D
+χ
+2
+(
+p
+(
+⋅
+∣
+c
+)
+∥
+p
+θ
+(
+⋅
+∣
+c
+)
+)
+.
+\displaystyle D_{\mathrm{KL}}\!\big(p(\cdot\mid c)\,\|\,p_{\theta}(\cdot\mid c)\big)\approx\tfrac{1}{2}\,D_{\chi^{2}}\!\big(p(\cdot\mid c)\,\|\,p_{\theta}(\cdot\mid c)\big).
+(23)
+B.2
+Relaxing a variational formulation of the
+χ
+2
+\chi^{2}
+divergence to a linear feature class
+The representation (
+22
+) makes explicit that
+D
+χ
+2
+D_{\chi^{2}}
+corresponds to an
+L
+2
+L^{2}
+discrepancy in the space of one-hot features. Next, we want to express the
+χ
+2
+\chi^{2}
+divergence, or rather a relaxation of it, in terms of generic feature maps. For that, we consider a variational representation of the
+χ
+2
+\chi^{2}
+divergence.
+Lemma B.1
+(Variational representation of the chi-squared divergence)
+.
+Let
+P
+P
+and
+Q
+Q
+be probability measures on a measurable space
+𝒴
+\mathcal{Y}
+such that
+P
+≪
+Q
+P\ll Q
+, and write their Radon–Nikodym derivative as
+r
+​
+(
+y
+)
+=
+d
+​
+P
+d
+​
+Q
+​
+(
+y
+)
+r(y)=\frac{dP}{dQ}(y)
+. Then
+D
+χ
+2
+(
+P
+∥
+Q
+)
+=
+sup
+f
+∈
+L
+2
+​
+(
+Q
+)
+,
+𝔼
+Y
+∼
+Q
+​
+[
+f
+⁡
+(
+Y
+)
+]
+=
+0
+{
+2
+(
+𝔼
+Y
+∼
+P
+[
+f
+(
+Y
+)
+]
+−
+𝔼
+Y
+∼
+Q
+[
+f
+(
+Y
+)
+]
+)
+−
+𝔼
+Y
+∼
+Q
+[
+f
+(
+Y
+)
+2
+]
+}
+,
+\displaystyle D_{\chi^{2}}(P\|Q)=\sup_{f\in L^{2}(Q),\,\mathbb{E}_{Y\sim Q}[f(Y)]=0}\Big\{\,2\,(\mathbb{E}_{Y\sim P}[f(Y)]-\mathbb{E}_{Y\sim Q}[f(Y)])-\mathbb{E}_{Y\sim Q}[f(Y)^{2}]\,\Big\},
+(24)
+Moreover, the supremum is attained at
+f
+⋆
+​
+(
+y
+)
+=
+r
+⁡
+(
+y
+)
+−
+1
+f^{\star}(y)=r(y)-1
+.
+Proof.
+Define
+g
+​
+(
+y
+)
+=
+d
+​
+P
+d
+​
+Q
+​
+(
+y
+)
+g(y)=\frac{dP}{dQ}(y)
+. Note that
+𝔼
+Q
+​
+[
+r
+​
+(
+Y
+)
+]
+=
+1
+\mathbb{E}_{Q}[r(Y)]=1
+and
+χ
+2
+(
+P
+∥
+Q
+)
+=
+𝔼
+Q
+[
+(
+g
+(
+Y
+)
+−
+1
+)
+2
+]
+\chi^{2}(P\|Q)=\mathbb{E}_{Q}\big[(g(Y)-1)^{2}\big]
+.
+For any
+f
+∈
+L
+2
+​
+(
+Q
+)
+f\in L^{2}(Q)
+,
+2
+​
+(
+𝔼
+P
+​
+[
+f
+⁡
+(
+Y
+)
+]
+−
+𝔼
+Q
+​
+[
+f
+⁡
+(
+Y
+)
+]
+)
+−
+𝔼
+Q
+​
+[
+f
+​
+(
+Y
+)
+2
+]
+\displaystyle 2\,(\mathbb{E}_{P}[f(Y)]-\mathbb{E}_{Q}[f(Y)])-\mathbb{E}_{Q}[f(Y)^{2}]
+=
+2
+​
+𝔼
+Q
+​
+[
+(
+g
+⁡
+(
+Y
+)
+−
+1
+)
+​
+f
+​
+(
+Y
+)
+]
+−
+𝔼
+Q
+​
+[
+f
+​
+(
+Y
+)
+2
+]
+=
+𝔼
+Q
+​
+[
+2
+​
+(
+g
+⁡
+(
+Y
+)
+−
+1
+)
+​
+f
+​
+(
+Y
+)
+−
+f
+​
+(
+Y
+)
+2
+]
+.
+\displaystyle=2\,\mathbb{E}_{Q}[(g(Y)-1)f(Y)]-\mathbb{E}_{Q}[f(Y)^{2}]=\mathbb{E}_{Q}\!\big[2(g(Y)-1)f(Y)-f(Y)^{2}\big].
+(25)
+Completing the square pointwise gives
+2
+​
+(
+g
+−
+1
+)
+​
+f
+−
+f
+2
+=
+−
+(
+f
+−
+g
++
+1
+)
+2
++
+(
+r
+−
+1
+)
+2
+2(g-1)f-f^{2}=-(f-g+1)^{2}+(r-1)^{2}
+,
+hence
+2
+​
+(
+𝔼
+P
+​
+[
+f
+⁡
+(
+Y
+)
+]
+−
+𝔼
+Q
+​
+[
+f
+⁡
+(
+Y
+)
+]
+)
+−
+𝔼
+Q
+​
+[
+f
+​
+(
+Y
+)
+2
+]
+=
+𝔼
+Q
+​
+[
+(
+g
+⁡
+(
+Y
+)
+−
+1
+)
+2
+]
+−
+𝔼
+Q
+​
+[
+(
+f
+⁡
+(
+Y
+)
+−
+g
+⁡
+(
+Y
+)
++
+1
+)
+2
+]
+≤
+𝔼
+Q
+​
+[
+(
+g
+⁡
+(
+Y
+)
+−
+1
+)
+2
+]
+,
+\displaystyle 2\,(\mathbb{E}_{P}[f(Y)]-\mathbb{E}_{Q}[f(Y)])-\mathbb{E}_{Q}[f(Y)^{2}]=\mathbb{E}_{Q}[(g(Y)-1)^{2}]-\mathbb{E}_{Q}[(f(Y)-g(Y)+1)^{2}]\leq\mathbb{E}_{Q}[(g(Y)-1)^{2}],
+(26)
+with equality iff
+f
+=
+g
+−
+1
+f=g-1
+. Therefore,
+sup
+f
+∈
+L
+2
+​
+(
+Q
+)
+{
+2
+(
+𝔼
+P
+[
+f
+(
+Y
+)
+]
+−
+𝔼
+Q
+[
+f
+(
+Y
+)
+]
+)
+−
+𝔼
+Q
+[
+f
+(
+Y
+)
+2
+]
+}
+=
+𝔼
+Q
+[
+(
+g
+(
+Y
+)
+−
+1
+)
+2
+]
+=
+D
+χ
+2
+(
+P
+∥
+Q
+)
+.
+\displaystyle\sup_{f\in L^{2}(Q)}\Big\{2\,(\mathbb{E}_{P}[f(Y)]-\mathbb{E}_{Q}[f(Y)])-\mathbb{E}_{Q}[f(Y)^{2}]\Big\}=\mathbb{E}_{Q}[(g(Y)-1)^{2}]=D_{\chi^{2}}(P\|Q).
+(27)
+where the optimum is achieved at
+f
+⁡
+(
+x
+)
+=
+g
+⁡
+(
+x
+)
+−
+1
+f(x)=g(x)-1
+.
+∎
+We particularize Lemma
+B.1
+in the language model setting.
+Let
+φ
+:
+𝒱
+G
+→
+ℝ
+d
+\varphi:\mathcal{V}^{G}\to\mathbb{R}^{d}
+be a feature map over completions (in our setting, the natural choice is
+φ
+​
+(
+y
+)
+=
+ϕ
+c
+​
+(
+y
+)
+\varphi(y)=\phi_{c}(y)
+, the feature-network embedding of the concatenated sequence). Restricting the supremum in (
+24
+) to generalized linear model
+f
+w
+​
+(
+y
+)
+=
+w
+⊤
+​
+φ
+​
+(
+y
+)
+f_{w}(y)=w^{\top}\varphi(y)
+yields the relaxation
+D
+χ
+2
+(
+P
+∥
+Q
+)
+≥
+sup
+w
+∈
+ℝ
+d
+{
+2
+(
+𝔼
+Y
+∼
+P
+[
+w
+⊤
+φ
+(
+Y
+)
+]
+−
+𝔼
+Y
+∼
+Q
+[
+w
+⊤
+φ
+(
+Y
+)
+]
+)
+−
+𝔼
+Y
+∼
+Q
+[
+(
+w
+⊤
+φ
+(
+Y
+)
+)
+2
+]
+}
+.
+\displaystyle D_{\chi^{2}}(P\|Q)\geq\sup_{w\in\mathbb{R}^{d}}\Big\{\,2\,\big(\mathbb{E}_{Y\sim P}\big[w^{\top}\varphi(Y)\big]-\mathbb{E}_{Y\sim Q}\big[w^{\top}\varphi(Y)\big]\big)-\mathbb{E}_{Y\sim Q}\big[(w^{\top}\varphi(Y))^{2}\big]\,\Big\}.
+(28)
+We can rewrite the expression in the supremum as follows:
+2
+​
+(
+𝔼
+Y
+∼
+P
+​
+[
+w
+⊤
+​
+φ
+​
+(
+Y
+)
+]
+−
+𝔼
+Y
+∼
+Q
+​
+[
+w
+⊤
+​
+φ
+​
+(
+Y
+)
+]
+)
+−
+𝔼
+Y
+∼
+Q
+​
+[
+(
+w
+⊤
+​
+φ
+​
+(
+Y
+)
+)
+2
+]
+=
+2
+​
+w
+⊤
+​
+(
+μ
+P
+−
+μ
+Q
+)
+−
+w
+⊤
+​
+Σ
+Q
+​
+w
+,
+\displaystyle 2\,\big(\mathbb{E}_{Y\sim P}\big[w^{\top}\varphi(Y)\big]-\mathbb{E}_{Y\sim Q}\big[w^{\top}\varphi(Y)\big]\big)-\mathbb{E}_{Y\sim Q}\big[\big(w^{\top}\varphi(Y)\big)^{2}\big]=2w^{\top}(\mu_{P}-\mu_{Q})-w^{\top}\Sigma_{Q}w,
+(29)
+where
+μ
+P
+=
+𝔼
+Y
+∼
+P
+​
+[
+φ
+⁡
+(
+Y
+)
+]
+\mu_{P}=\mathbb{E}_{Y\sim P}[\varphi(Y)]
+,
+μ
+Q
+=
+𝔼
+Y
+∼
+Q
+​
+[
+φ
+⁡
+(
+Y
+)
+]
+\mu_{Q}=\mathbb{E}_{Y\sim Q}[\varphi(Y)]
+and
+Σ
+Q
+=
+𝔼
+Y
+∼
+Q
+​
+[
+φ
+⁡
+(
+Y
+)
+​
+φ
+​
+(
+Y
+)
+⊤
+]
+\Sigma_{Q}=\mathbb{E}_{Y\sim Q}\big[\varphi(Y)\varphi(Y)^{\top}\big]
+.
+When
+Σ
+Q
+\Sigma_{Q}
+is invertible, the supremum in (
+28
+) is attained at
+w
+^
+=
+Σ
+Q
+−
+1
+​
+(
+μ
+P
+−
+μ
+Q
+)
+,
+\displaystyle\hat{w}=\Sigma_{Q}^{-1}(\mu_{P}-\mu_{Q}),
+(30)
+and the optimal value is
+sup
+w
+{
+2
+​
+w
+⊤
+​
+(
+μ
+P
+−
+μ
+Q
+)
+−
+w
+⊤
+​
+Σ
+Q
+​
+w
+}
+=
+(
+μ
+P
+−
+μ
+Q
+)
+​
+Σ
+Q
+−
+1
+​
+(
+μ
+P
+−
+μ
+Q
+)
+.
+\displaystyle\sup_{w}\{2w^{\top}(\mu_{P}-\mu_{Q})-w^{\top}\Sigma_{Q}w\}=(\mu_{P}-\mu_{Q})\,\Sigma_{Q}^{-1}(\mu_{P}-\mu_{Q}).
+(31)
+Thus, assuming that
+Σ
+p
+θ
+(
+⋅
+|
+c
+)
+=
+𝔼
+y
+^
+∼
+p
+θ
+(
+⋅
+|
+c
+)
+[
+ϕ
+c
+(
+y
+^
+)
+ϕ
+c
+(
+y
+^
+)
+⊤
+]
+\Sigma_{p_{\theta}(\cdot|c)}=\mathbb{E}_{\hat{y}\sim p_{\theta}(\cdot|c)}\big[\phi_{c}(\hat{y})\phi_{c}(\hat{y})^{\top}\big]
+is invertible, we define the whitened feature matching loss as
+ℒ
+WFM
+​
+(
+θ
+)
+=
+𝔼
+c
+∼
+p
+[
+(
+𝔼
+y
+^
+∼
+p
+θ
+(
+⋅
+|
+c
+)
+[
+ϕ
+c
+(
+y
+^
+)
+]
+−
+𝔼
+y
+∼
+p
+(
+⋅
+|
+c
+)
+[
+ϕ
+c
+(
+y
+)
+]
+)
+⊤
+×
+𝔼
+y
+^
+∼
+p
+θ
+(
+⋅
+|
+c
+)
+[
+ϕ
+c
+(
+y
+^
+)
+ϕ
+c
+(
+y
+^
+)
+⊤
+]
+−
+1
+(
+𝔼
+y
+^
+∼
+p
+θ
+(
+⋅
+|
+c
+)
+[
+ϕ
+c
+(
+y
+^
+)
+]
+−
+𝔼
+y
+∼
+p
+(
+⋅
+|
+c
+)
+[
+ϕ
+c
+(
+y
+)
+]
+)
+]
+,
+\displaystyle\begin{split}\mathcal{L}_{\mathrm{WFM}}(\theta)\!&=\!\mathbb{E}_{c\sim p}\big[\big(\mathbb{E}_{\hat{y}\sim p_{\theta}(\cdot|c)}[\phi_{c}(\hat{y})]\!-\!\mathbb{E}_{y\sim p(\cdot|c)}[\phi_{c}(y)]\big)^{\top}\\
+&\qquad\qquad\quad\times\mathbb{E}_{\hat{y}\sim p_{\theta}(\cdot|c)}\big[\phi_{c}(\hat{y})\phi_{c}(\hat{y})^{\top}\big]^{-1}\big(\mathbb{E}_{\hat{y}\sim p_{\theta}(\cdot|c)}[\phi_{c}(\hat{y})]\!-\!\mathbb{E}_{y\sim p(\cdot|c)}[\phi_{c}(y)]\big)\big],\end{split}
+(32)
+Observe that the dependence of
+ℒ
+WFM
+​
+(
+θ
+)
+\mathcal{L}_{\mathrm{WFM}}(\theta)
+on
+θ
+\theta
+is through
+𝔼
+y
+^
+∼
+p
+θ
+(
+⋅
+|
+c
+)
+[
+ϕ
+c
+(
+y
+^
+)
+]
+\mathbb{E}_{\hat{y}\sim p_{\theta}(\cdot|c)}[\phi_{c}(\hat{y})]
+as in
+ℒ
+FM
+​
+(
+θ
+)
+\mathcal{L}_{\mathrm{FM}}(\theta)
+, but also through
+𝔼
+y
+^
+∼
+p
+θ
+(
+⋅
+|
+c
+)
+[
+ϕ
+c
+(
+y
+^
+)
+ϕ
+c
+(
+y
+^
+)
+⊤
+]
+−
+1
+\mathbb{E}_{\hat{y}\sim p_{\theta}(\cdot|c)}\big[\phi_{c}(\hat{y})\phi_{c}(\hat{y})^{\top}\big]^{-1}
+. While applying the REINFORCE argument to estimate the gradient for the former can be done as in
+Section
+2
+, the approach breaks down for the latter. We decide to disregard the gradient with respect to
+𝔼
+y
+^
+∼
+p
+θ
+(
+⋅
+|
+c
+)
+[
+ϕ
+c
+(
+y
+^
+)
+ϕ
+c
+(
+y
+^
+)
+⊤
+]
+−
+1
+\mathbb{E}_{\hat{y}\sim p_{\theta}(\cdot|c)}\big[\phi_{c}(\hat{y})\phi_{c}(\hat{y})^{\top}\big]^{-1}
+, which amounts to the following loss:
+ℒ
+WFM
+​
+(
+θ
+)
+=
+𝔼
+c
+∼
+p
+[
+(
+𝔼
+y
+^
+∼
+p
+θ
+(
+⋅
+|
+c
+)
+[
+ϕ
+c
+(
+y
+^
+)
+]
+−
+𝔼
+y
+∼
+p
+(
+⋅
+|
+c
+)
+[
+ϕ
+c
+(
+y
+)
+]
+)
+⊤
+×
+stopgrad
+(
+𝔼
+y
+^
+∼
+p
+θ
+(
+⋅
+|
+c
+)
+[
+ϕ
+c
+(
+y
+^
+)
+ϕ
+c
+(
+y
+^
+)
+⊤
+]
+)
+−
+1
+(
+𝔼
+y
+^
+∼
+p
+θ
+(
+⋅
+|
+c
+)
+[
+ϕ
+c
+(
+y
+^
+)
+]
+−
+𝔼
+y
+∼
+p
+(
+⋅
+|
+c
+)
+[
+ϕ
+c
+(
+y
+)
+]
+)
+]
+,
+\displaystyle\begin{split}\mathcal{L}_{\mathrm{WFM}}(\theta)\!&=\!\mathbb{E}_{c\sim p}\big[\big(\mathbb{E}_{\hat{y}\sim p_{\theta}(\cdot|c)}[\phi_{c}(\hat{y})]\!-\!\mathbb{E}_{y\sim p(\cdot|c)}[\phi_{c}(y)]\big)^{\top}\\
+&\qquad\qquad\quad\times\mathrm{stopgrad}\big(\mathbb{E}_{\hat{y}\sim p_{\theta}(\cdot|c)}\big[\phi_{c}(\hat{y})\phi_{c}(\hat{y})^{\top}\big]\big)^{-1}\big(\mathbb{E}_{\hat{y}\sim p_{\theta}(\cdot|c)}[\phi_{c}(\hat{y})]\!-\!\mathbb{E}_{y\sim p(\cdot|c)}[\phi_{c}(y)]\big)\big],\end{split}
+(33)
+B.3
+Dealing with non-invertible second moment matrices
+Σ
+p
+θ
+(
+⋅
+|
+c
+)
+\Sigma_{p_{\theta}(\cdot|c)}
+: a first approach
+The matrix
+Σ
+p
+θ
+(
+⋅
+|
+c
+)
+=
+𝔼
+y
+^
+∼
+p
+θ
+(
+⋅
+|
+c
+)
+[
+ϕ
+c
+(
+y
+^
+)
+ϕ
+c
+(
+y
+^
+)
+⊤
+]
+\Sigma_{p_{\theta}(\cdot|c)}=\mathbb{E}_{\hat{y}\sim p_{\theta}(\cdot|c)}\big[\phi_{c}(\hat{y})\phi_{c}(\hat{y})^{\top}\big]
+and especially its empirical version
+Σ
+^
+p
+θ
+(
+⋅
+|
+c
+)
+=
+1
+n
+∑
+j
+=
+1
+n
+ϕ
+c
+(
+y
+^
+j
+)
+ϕ
+c
+(
+y
+^
+j
+)
+⊤
+\hat{\Sigma}_{p_{\theta}(\cdot|c)}=\frac{1}{n}\!\sum_{j=1}^{n}\!\phi_{c}(\hat{y}_{j})\phi_{c}(\hat{y}_{j})^{\top}
+are often not invertible, in particular when the feature dimension
+d
+d
+is high and/or the number of samples per prompt
+n
+n
+is low. In particular, the rank of the empirical matrix is upper-bounded by the number of samples per prompt, meaning that it is never invertible when
+n
+<
+d
+n<d
+, which is usually the case. Thus, we need to solve
+sup
+w
+{
+2
+​
+w
+⊤
+​
+(
+μ
+P
+−
+μ
+Q
+)
+−
+w
+⊤
+​
+Σ
+Q
+​
+w
+}
+\sup_{w}\{2w^{\top}(\mu_{P}-\mu_{Q})-w^{\top}\Sigma_{Q}w\}
+for general positive semidefinite
+Σ
+Q
+\Sigma_{Q}
+. More generally, consider maximizing a functional of the form
+f
+⁡
+(
+w
+)
+=
+2
+​
+⟨
+w
+,
+b
+⟩
+−
+⟨
+w
+,
+Σ
+​
+w
+⟩
+f(w)=2\langle w,b\rangle-\langle w,\Sigma w\rangle
+. Let
+Σ
+=
+∑
+i
+=
+1
+r
+λ
+i
+​
+u
+i
+​
+u
+i
+⊤
+\Sigma=\sum_{i=1}^{r}\lambda_{i}u_{i}u_{i}^{\top}
+be an eigendecomposition, and write
+w
+=
+∑
+i
+α
+i
+​
+u
+i
+w=\sum_{i}\alpha_{i}u_{i}
+and
+b
+=
+∑
+i
+β
+i
+​
+u
+i
+b=\sum_{i}\beta_{i}u_{i}
+. Then
+f
+⁡
+(
+w
+)
+=
+2
+​
+∑
+i
+α
+i
+​
+β
+i
+−
+∑
+i
+λ
+i
+​
+α
+i
+2
+.
+\displaystyle f(w)=2\sum_{i}\alpha_{i}\beta_{i}-\sum_{i}\lambda_{i}\alpha_{i}^{2}.
+(34)
+Splitting into nonzero and zero eigenvalues yields the dichotomy:
+(i)
+If
+b
+b
+has any component in
+ker
+⁡
+(
+Σ
+)
+\ker(\Sigma)
+(i.e., there exists
+i
+i
+with
+λ
+i
+=
+0
+\lambda_{i}=0
+and
+β
+i
+≠
+0
+\beta_{i}\neq 0
+), then
+sup
+w
+f
+⁡
+(
+w
+)
+=
++
+∞
+\sup_{w}f(w)=+\infty
+and there is no maximizer in
+ℝ
+d
+\mathbb{R}^{d}
+.
+(ii)
+If
+b
+⟂
+ker
+⁡
+(
+Σ
+)
+b\perp\ker(\Sigma)
+, i.e.
+b
+∈
+Im
+⁡
+(
+Σ
+)
+b\in\mathrm{Im}(\Sigma)
+, then the supremum is finite and equals
+sup
+w
+f
+⁡
+(
+w
+)
+=
+∑
+λ
+i
+>
+0
+β
+i
+2
+λ
+i
+=
+b
+⊤
+​
+Σ
+†
+​
+b
+,
+\displaystyle\sup_{w}f(w)=\sum_{\lambda_{i}>0}\frac{\beta_{i}^{2}}{\lambda_{i}}=b^{\top}\,\Sigma^{\dagger}b,
+(35)
+where
+Σ
+†
+=
+∑
+λ
+i
+>
+0
+1
+λ
+i
+​
+u
+i
+​
+u
+i
+⊤
+\Sigma^{\dagger}=\sum_{\lambda_{i}>0}\frac{1}{\lambda_{i}}u_{i}u_{i}^{\top}
+is the Moore–Penrose pseudoinverse.
+In our case,
+b
+=
+μ
+P
+−
+μ
+Q
+b=\mu_{P}-\mu_{Q}
+and
+Σ
+=
+Σ
+Q
+\Sigma=\Sigma_{Q}
+. While
+μ
+Q
+⟂
+ker
+⁡
+(
+Σ
+Q
+)
+\mu_{Q}\perp\ker(\Sigma_{Q})
+by construction, in general
+μ
+P
+\mu_{P}
+will have non-zero components in
+ker
+⁡
+(
+Σ
+)
+\ker(\Sigma)
+, and in that case
+sup
+w
+{
+2
+​
+w
+⊤
+​
+(
+μ
+P
+−
+μ
+Q
+)
+−
+w
+⊤
+​
+Σ
+Q
+​
+w
+}
+=
++
+∞
+\sup_{w}\{2w^{\top}(\mu_{P}-\mu_{Q})-w^{\top}\Sigma_{Q}w\}=+\infty
+. This is not surprising given that when the inequality (
+28
+) holds with equality, which is the case for one-hot feature maps,
+sup
+w
+{
+2
+w
+⊤
+(
+μ
+P
+−
+μ
+Q
+)
+−
+w
+⊤
+Σ
+Q
+w
+}
+=
+χ
+2
+(
+P
+∥
+Q
+)
+\sup_{w}\{2w^{\top}(\mu_{P}-\mu_{Q})-w^{\top}\Sigma_{Q}w\}=\chi^{2}(P\|Q)
+, and it is easy to see that
+χ
+2
+(
+P
+∥
+Q
+)
+=
++
+∞
+\chi^{2}(P\|Q)=+\infty
+when the support of
+P
+P
+is larger than the support of
+Q
+Q
+. To obtain a finite value, it is convenient to replace
+μ
+P
+\mu_{P}
+by the projection
+Pr
+Im
+⁡
+(
+Σ
+Q
+)
+​
+μ
+P
+\mathrm{Pr}_{\mathrm{Im}(\Sigma_{Q})}\mu_{P}
+. Then, by equation (
+35
+) we obtain
+sup
+w
+{
+2
+​
+w
+⊤
+​
+(
+Pr
+Im
+⁡
+(
+Σ
+Q
+)
+​
+μ
+P
+−
+μ
+Q
+)
+−
+w
+⊤
+​
+Σ
+Q
+​
+w
+}
+\displaystyle\sup_{w}\{2w^{\top}(\mathrm{Pr}_{\mathrm{Im}(\Sigma_{Q})}\mu_{P}-\mu_{Q})-w^{\top}\Sigma_{Q}w\}
+=
+(
+Pr
+Im
+⁡
+(
+Σ
+Q
+)
+​
+μ
+P
+−
+μ
+Q
+)
+⊤
+​
+Σ
+Q
+†
+​
+(
+Pr
+Im
+⁡
+(
+Σ
+Q
+)
+​
+μ
+P
+−
+μ
+Q
+)
+\displaystyle=(\mathrm{Pr}_{\mathrm{Im}(\Sigma_{Q})}\mu_{P}-\mu_{Q})^{\top}\Sigma_{Q}^{\dagger}(\mathrm{Pr}_{\mathrm{Im}(\Sigma_{Q})}\mu_{P}-\mu_{Q})
+(36)
+=
+(
+μ
+P
+−
+μ
+Q
+)
+⊤
+​
+Σ
+Q
+†
+​
+(
+μ
+P
+−
+μ
+Q
+)
+,
+\displaystyle=(\mu_{P}-\mu_{Q})^{\top}\Sigma_{Q}^{\dagger}(\mu_{P}-\mu_{Q}),
+(37)
+where the last equality holds because
+ker
+⁡
+(
+Σ
+Q
+†
+)
+=
+ker
+⁡
+(
+Σ
+Q
+)
+\ker(\Sigma_{Q}^{\dagger})=\ker(\Sigma_{Q})
+, and that
+μ
+P
+=
+Pr
+Im
+⁡
+(
+Σ
+)
+​
+μ
+P
++
+Pr
+ker
+⁡
+(
+Σ
+)
+​
+μ
+P
+\mu_{P}=\mathrm{Pr}_{\mathrm{Im}(\Sigma)}\mu_{P}+\mathrm{Pr}_{\ker(\Sigma)}\mu_{P}
+. Hence, the following loss function is numerically robust:
+ℒ
+WFM
+​
+(
+θ
+)
+=
+𝔼
+c
+∼
+p
+[
+(
+𝔼
+y
+^
+∼
+p
+θ
+(
+⋅
+|
+c
+)
+[
+ϕ
+c
+(
+y
+^
+)
+]
+−
+𝔼
+y
+∼
+p
+(
+⋅
+|
+c
+)
+[
+ϕ
+c
+(
+y
+)
+]
+)
+⊤
+×
+stopgrad
+(
+𝔼
+y
+^
+∼
+p
+θ
+(
+⋅
+|
+c
+)
+[
+ϕ
+c
+(
+y
+^
+)
+ϕ
+c
+(
+y
+^
+)
+⊤
+]
+)
+†
+(
+𝔼
+y
+^
+∼
+p
+θ
+(
+⋅
+|
+c
+)
+[
+ϕ
+c
+(
+y
+^
+)
+]
+−
+𝔼
+y
+∼
+p
+(
+⋅
+|
+c
+)
+[
+ϕ
+c
+(
+y
+)
+]
+)
+]
+,
+\displaystyle\begin{split}\mathcal{L}_{\mathrm{WFM}}(\theta)\!&=\!\mathbb{E}_{c\sim p}\big[\big(\mathbb{E}_{\hat{y}\sim p_{\theta}(\cdot|c)}[\phi_{c}(\hat{y})]\!-\!\mathbb{E}_{y\sim p(\cdot|c)}[\phi_{c}(y)]\big)^{\top}\\
+&\qquad\qquad\quad\times\mathrm{stopgrad}\big(\mathbb{E}_{\hat{y}\sim p_{\theta}(\cdot|c)}\big[\phi_{c}(\hat{y})\phi_{c}(\hat{y})^{\top}\big]\big)^{\dagger}\big(\mathbb{E}_{\hat{y}\sim p_{\theta}(\cdot|c)}[\phi_{c}(\hat{y})]\!-\!\mathbb{E}_{y\sim p(\cdot|c)}[\phi_{c}(y)]\big)\big],\end{split}
+(38)
+It is easy to compute the gradient of this loss through the framework of
+Section
+2
+; in the computation of the population reward
+r
+⁡
+(
+y
+^
+,
+c
+)
+r(\hat{y},c)
+in (
+6
+) we simply replace the features
+ϕ
+c
+​
+(
+y
+)
+\phi_{c}(y)
+by the whitened features:
+ϕ
+~
+c
+(
+y
+)
+=
+(
+Σ
+p
+θ
+(
+⋅
+|
+c
+)
+†
+)
+1
+/
+2
+ϕ
+c
+(
+y
+)
+,
+Σ
+p
+θ
+(
+⋅
+|
+c
+)
+=
+𝔼
+y
+^
+∼
+p
+θ
+(
+⋅
+|
+c
+)
+[
+ϕ
+c
+(
+y
+^
+)
+ϕ
+c
+(
+y
+^
+)
+⊤
+]
+,
+\displaystyle\tilde{\phi}_{c}(y)=(\Sigma^{\dagger}_{p_{\theta}(\cdot|c)})^{1/2}\phi_{c}(y),\qquad\Sigma_{p_{\theta}(\cdot|c)}=\mathbb{E}_{\hat{y}\sim p_{\theta}(\cdot|c)}\big[\phi_{c}(\hat{y})\phi_{c}(\hat{y})^{\top}\big],
+(39)
+and in practice, we compute the reward
+r
+j
+r_{j}
+in (
+7
+) using
+Σ
+^
+p
+θ
+(
+⋅
+|
+c
+)
+\hat{\Sigma}_{p_{\theta}(\cdot|c)}
+instead of
+Σ
+p
+θ
+(
+⋅
+|
+c
+)
+\Sigma_{p_{\theta}(\cdot|c)}
+:
+ϕ
+~
+c
+(
+y
+)
+=
+(
+Σ
+^
+p
+θ
+(
+⋅
+|
+c
+)
+†
+)
+1
+/
+2
+ϕ
+c
+(
+y
+)
+,
+Σ
+^
+p
+θ
+(
+⋅
+|
+c
+)
+=
+1
+n
+∑
+j
+=
+1
+n
+ϕ
+c
+(
+y
+^
+j
+)
+ϕ
+c
+(
+y
+^
+j
+)
+⊤
+.
+\displaystyle\tilde{\phi}_{c}(y)=(\hat{\Sigma}^{\dagger}_{p_{\theta}(\cdot|c)})^{1/2}\phi_{c}(y),\qquad\hat{\Sigma}_{p_{\theta}(\cdot|c)}=\frac{1}{n}\sum_{j=1}^{n}\phi_{c}(\hat{y}_{j})\phi_{c}(\hat{y}_{j})^{\top}.
+(40)
+Above,
+(
+Σ
+†
+)
+1
+/
+2
+(\Sigma^{\dagger})^{1/2}
+denotes the square root of the pseudo-inverse of
+Σ
+\Sigma
+, i.e. if
+Σ
+\Sigma
+admits the eigenvalue decomposition
+Σ
+=
+∑
+i
+=
+1
+d
+λ
+i
+​
+u
+i
+​
+u
+i
+⊤
+\Sigma=\sum_{i=1}^{d}\lambda_{i}u_{i}u_{i}^{\top}
+, then
+(
+Σ
+†
+)
+1
+/
+2
+=
+∑
+i
+=
+1
+,
+λ
+i
+>
+0
+d
+λ
+i
+−
+1
+/
+2
+u
+i
+u
+i
+⊤
+(\Sigma^{\dagger})^{1/2}=\sum_{i=1,\lambda_{i}>0}^{d}\lambda_{i}^{-1/2}u_{i}u_{i}^{\top}
+. In practice, using a function to compute the singular value decomposition of is more numerically stable that using a function to compute the eigenvalue decomposition.
+B.4
+Variants of the whitened feature-matching loss with better empirical performance
+Let us write the reward
+r
+j
+r_{j}
+explicitly under whitening:
+r
+j
+=
+2
+ϕ
+c
+(
+y
+^
+j
+)
+⊤
+Σ
+^
+†
+p
+θ
+(
+⋅
+|
+c
+)
+ϕ
+c
+(
+y
+)
+⏟
+alignment term
+AT
+j
+−
+2
+n
+−
+1
+∑
+j
+′
+≠
+j
+ϕ
+c
+(
+y
+^
+j
+)
+⊤
+Σ
+^
+†
+p
+θ
+(
+⋅
+|
+c
+)
+ϕ
+c
+(
+y
+^
+j
+′
+)
+⏟
+diversity term
+DT
+j
+.
+\displaystyle r_{j}=\underbrace{2\phi_{c}(\hat{y}_{j})^{\top}\hat{\Sigma}^{\dagger}_{p_{\theta}(\cdot|c)}\phi_{c}(y)}_{\text{alignment term $\mathrm{AT}_{j}$}}-\underbrace{\frac{2}{n-1}\sum_{j^{\prime}\neq j}\phi_{c}(\hat{y}_{j})^{\top}\hat{\Sigma}^{\dagger}_{p_{\theta}(\cdot|c)}\phi_{c}(\hat{y}_{j^{\prime}})}_{\text{diversity term $\mathrm{DT}_{j}$}}.
+(41)
+Suppose that the features
+(
+ϕ
+c
+​
+(
+y
+^
+j
+)
+)
+j
+=
+1
+n
+\big(\phi_{c}(\hat{y}_{j})\big)_{j=1}^{n}
+of the generated completions are ordered such that repeated completions are arranged consecutively, and that there are exactly
+K
+K
+different feature vectors among
+(
+ϕ
+c
+​
+(
+y
+^
+j
+)
+)
+j
+=
+1
+n
+\big(\phi_{c}(\hat{y}_{j})\big)_{j=1}^{n}
+, with multiplicities
+(
+n
+k
+)
+k
+=
+1
+K
+(n_{k})_{k=1}^{K}
+, such that
+∑
+k
+=
+1
+K
+n
+k
+=
+n
+\sum_{k=1}^{K}n_{k}=n
+. In this section, we make the following assumptions, which hold in practice:
+(i)
+The feature dimension
+d
+d
+is larger or equal than the number of generated completions
+n
+n
+. This holds in our experiments, because
+d
+d
+is on the order of thousands, while we take
+n
+=
+4
+n=4
+.
+(ii)
+The
+K
+K
+different feature vectors within
+(
+ϕ
+c
+​
+(
+y
+^
+j
+)
+)
+j
+=
+1
+n
+(\phi_{c}(\hat{y}_{j}))_{j=1}^{n}
+are linearly independent. This happens with very high probability in our experiments, also as a consequence of
+d
+≫
+n
+d\gg n
+.
+For
+1
+≤
+k
+≤
+K
+1\leq k\leq K
+, let
+j
+k
+=
+∑
+k
+′
+=
+1
+k
+−
+1
+n
+k
+′
++
+1
+j_{k}=\sum_{k^{\prime}=1}^{k-1}n_{k^{\prime}}+1
+. Hence, the list of feature vectors
+(
+ϕ
+c
+​
+(
+y
+^
+j
+k
+)
+)
+k
+=
+1
+K
+\big(\phi_{c}(\hat{y}_{j_{k}})\big)_{k=1}^{K}
+contains each instance in
+(
+ϕ
+c
+​
+(
+y
+^
+j
+)
+)
+j
+=
+1
+n
+\big(\phi_{c}(\hat{y}_{j})\big)_{j=1}^{n}
+with multiplicity one. We define the matrices
+•
+Φ
+∈
+ℝ
+d
+×
+n
+\Phi\in\mathbb{R}^{d\times n}
+as the matrix whose columns are
+(
+ϕ
+c
+​
+(
+y
+^
+j
+)
+)
+j
+=
+1
+n
+(\phi_{c}(\hat{y}_{j}))_{j=1}^{n}
+, i.e.
+Φ
+⋅
+j
+=
+ϕ
+c
+​
+(
+y
+^
+j
+)
+\Phi_{\cdot j}=\phi_{c}(\hat{y}_{j})
+,
+•
+Φ
+^
+∈
+ℝ
+d
+×
+K
+\hat{\Phi}\in\mathbb{R}^{d\times K}
+as the matrix whose columns are
+(
+ϕ
+c
+​
+(
+y
+^
+j
+k
+)
+)
+k
+=
+1
+K
+\big(\phi_{c}(\hat{y}_{j_{k}})\big)_{k=1}^{K}
+,
+•
+Φ
+¯
+∈
+ℝ
+d
+×
+K
+\bar{\Phi}\in\mathbb{R}^{d\times K}
+as the matrix whose columns are
+(
+n
+k
+​
+ϕ
+c
+​
+(
+y
+^
+j
+k
+)
+)
+k
+=
+1
+K
+\big(\sqrt{n_{k}}\phi_{c}(\hat{y}_{j_{k}})\big)_{k=1}^{K}
+,
+•
+Φ
+~
+=
+(
+(
+Φ
+​
+Φ
+⊤
+)
+†
+)
+1
+/
+2
+​
+Φ
+∈
+ℝ
+d
+×
+n
+\tilde{\Phi}=((\Phi\Phi^{\top})^{\dagger})^{1/2}\Phi\in\mathbb{R}^{d\times n}
+,
+And the vectors
+•
+ψ
+=
+ϕ
+c
+​
+(
+y
+)
+∈
+ℝ
+d
+\psi=\phi_{c}(y)\in\mathbb{R}^{d}
+,
+•
+ψ
+~
+=
+(
+(
+Φ
+​
+Φ
+⊤
+)
+†
+)
+1
+/
+2
+​
+ψ
+∈
+ℝ
+d
+\tilde{\psi}=((\Phi\Phi^{\top})^{\dagger})^{1/2}\psi\in\mathbb{R}^{d}
+,
+•
+x
+(
+ψ
+)
+=
+Φ
+^
+†
+​
+ψ
+∈
+ℝ
+K
+x^{(\psi)}=\hat{\Phi}^{\dagger}\psi\in\mathbb{R}^{K}
+,
+which is the vector of coefficients of the orthogonal projection of
+ψ
+\psi
+onto
+span
+​
+(
+(
+ϕ
+c
+​
+(
+y
+^
+j
+k
+)
+)
+k
+=
+1
+K
+)
+⟂
+\mathrm{span}\big(\big(\phi_{c}(\hat{y}_{j_{k}})\big)_{k=1}^{K}\big)^{\perp}
+with respect to the basis
+(
+ϕ
+c
+​
+(
+y
+^
+j
+k
+)
+)
+k
+=
+1
+K
+\big(\phi_{c}(\hat{y}_{j_{k}})\big)_{k=1}^{K}
+,
+We can reexpress the alignment and diversity terms in (
+41
+) with respect to
+Φ
+~
+\tilde{\Phi}
+and
+ψ
+~
+\tilde{\psi}
+:
+AT
+j
+\displaystyle\mathrm{AT}_{j}
+=
+2
+​
+n
+​
+ϕ
+c
+​
+(
+y
+^
+j
+)
+⊤
+​
+(
+Φ
+​
+Φ
+⊤
+)
+†
+​
+ϕ
+c
+​
+(
+y
+)
+=
+2
+​
+n
+​
+Φ
+~
+⋅
+j
+⊤
+​
+ψ
+~
+,
+\displaystyle=2n\phi_{c}(\hat{y}_{j})^{\top}(\Phi\Phi^{\top})^{\dagger}\phi_{c}(y)=2n\tilde{\Phi}_{\cdot j}^{\top}\tilde{\psi},
+(42)
+DT
+j
+\displaystyle\mathrm{DT}_{j}
+=
+2
+​
+n
+n
+−
+1
+​
+∑
+j
+′
+≠
+j
+ϕ
+c
+​
+(
+y
+^
+j
+)
+⊤
+​
+(
+Φ
+​
+Φ
+⊤
+)
+†
+​
+ϕ
+c
+​
+(
+y
+^
+j
+′
+)
+=
+2
+​
+n
+n
+−
+1
+​
+∑
+j
+′
+≠
+j
+Φ
+~
+⋅
+j
+⊤
+​
+Φ
+~
+⋅
+j
+′
+.
+\displaystyle=\frac{2n}{n-1}\sum_{j^{\prime}\neq j}\phi_{c}(\hat{y}_{j})^{\top}(\Phi\Phi^{\top})^{\dagger}\phi_{c}(\hat{y}_{j^{\prime}})=\frac{2n}{n-1}\sum_{j^{\prime}\neq j}\tilde{\Phi}^{\top}_{\cdot j}\tilde{\Phi}_{\cdot j^{\prime}}.
+(43)
+The following lemma, proven in
+Section
+B.4.1
+, characterizes the inner products
+Φ
+~
+⋅
+j
+⊤
+​
+Φ
+~
+⋅
+j
+′
+\tilde{\Phi}^{\top}_{\cdot j}\tilde{\Phi}_{\cdot j^{\prime}}
+and
+Φ
+~
+⋅
+j
+′
+⊤
+​
+ψ
+~
+\tilde{\Phi}_{\cdot j^{\prime}}^{\top}\tilde{\psi}
+, and the norm of
+ψ
+~
+\tilde{\psi}
+.
+Lemma B.2
+.
+Recall that
+n
+k
+j
+n_{k_{j}}
+is the multiplicity of the completion
+y
+^
+j
+\hat{y}_{j}
+within
+(
+ϕ
+c
+​
+(
+y
+^
+j
+)
+)
+j
+=
+1
+n
+\big(\phi_{c}(\hat{y}_{j})\big)_{j=1}^{n}
+. The inner products between the columns
+(
+Φ
+~
+⋅
+j
+)
+j
+=
+1
+n
+(\tilde{\Phi}_{\cdot j})_{j=1}^{n}
+are given by
+Φ
+~
+⋅
+j
+⊤
+​
+Φ
+~
+⋅
+j
+′
+\displaystyle\tilde{\Phi}_{\cdot j}^{\top}\tilde{\Phi}_{\cdot j^{\prime}}
+=
+1
+/
+n
+k
+j
+\displaystyle=1/n_{k_{j}}\quad
+for all
+​
+j
+′
+​
+such that
+​
+ϕ
+c
+​
+(
+y
+^
+j
+)
+=
+ϕ
+c
+​
+(
+y
+^
+j
+′
+)
+​
+(in particular
+​
+‖
+Φ
+~
+⋅
+j
+‖
+=
+1
+/
+n
+k
+j
+​
+)
+,
+\displaystyle\text{for all }j^{\prime}\text{ such that }\phi_{c}(\hat{y}_{j})=\phi_{c}(\hat{y}_{j^{\prime}})\text{ (in particular }\|\tilde{\Phi}_{\cdot j}\|=1/\sqrt{n_{k_{j}}}\text{)},
+(44)
+Φ
+~
+⋅
+j
+⊤
+​
+Φ
+~
+⋅
+j
+′
+\displaystyle\tilde{\Phi}_{\cdot j}^{\top}\tilde{\Phi}_{\cdot j^{\prime}}
+=
+0
+\displaystyle=0\quad
+for all
+​
+j
+′
+​
+such that
+​
+y
+^
+j
+≠
+y
+^
+j
+′
+.
+\displaystyle\text{for all }j^{\prime}\text{ such that }\hat{y}_{j}\neq\hat{y}_{j^{\prime}}.
+(45)
+And we have that
+Φ
+~
+⋅
+j
+⊤
+​
+ψ
+~
+\displaystyle\tilde{\Phi}_{\cdot j}^{\top}\tilde{\psi}
+=
+x
+j
+(
+ψ
+)
+n
+k
+j
+,
+for all
+1
+≤
+j
+≤
+n
+, and
+,
+‖
+ψ
+~
+‖
+2
+=
+∑
+k
+=
+1
+K
+(
+x
+k
+(
+ψ
+)
+)
+2
+n
+k
+.
+\displaystyle=\frac{x^{(\psi)}_{j}}{n_{k_{j}}},\qquad\text{for all $1\leq j\leq n$, and},\qquad\|\tilde{\psi}\|^{2}=\sum_{k=1}^{K}\frac{(x^{(\psi)}_{k})^{2}}{n_{k}}.
+(46)
+Thus, under the conditions of Lemma
+B.2
+,
+AT
+j
+\displaystyle\mathrm{AT}_{j}
+=
+2
+​
+n
+​
+x
+j
+(
+ψ
+)
+n
+k
+j
+,
+\displaystyle=\frac{2nx^{(\psi)}_{j}}{n_{k_{j}}},
+(47)
+DT
+j
+\displaystyle\mathrm{DT}_{j}
+=
+2
+​
+n
+n
+−
+1
+∑
+j
+′
+≠
+j
+𝟏
+[
+ϕ
+c
+(
+y
+^
+j
+)
+=
+ϕ
+c
+(
+y
+^
+j
+′
+)
+]
+1
+n
+k
+j
+=
+2
+​
+n
+​
+(
+n
+k
+j
+−
+1
+)
+(
+n
+−
+1
+)
+​
+n
+k
+j
+=
+2
+​
+(
+1
+−
+1
+/
+n
+k
+j
+)
+1
+−
+1
+/
+n
+.
+\displaystyle=\frac{2n}{n-1}\sum_{j^{\prime}\neq j}\mathbf{1}[\phi_{c}(\hat{y}_{j})=\phi_{c}(\hat{y}_{j^{\prime}})]\frac{1}{n_{k_{j}}}=\frac{2n(n_{k_{j}}-1)}{(n-1)n_{k_{j}}}=\frac{2(1-1/n_{k_{j}})}{1-1/n}.
+(48)
+where
+x
+j
+(
+ψ
+)
+x^{(\psi)}_{j}
+is the
+j
+j
+-th component of
+x
+(
+ψ
+)
+x^{(\psi)}
+.
+Observe that when
+ϕ
+c
+​
+(
+y
+)
+\phi_{c}(y)
+is equal to
+ϕ
+c
+​
+(
+y
+^
+j
+k
+)
+\phi_{c}(\hat{y}_{j_{k}})
+for some
+1
+≤
+k
+≤
+K
+1\leq k\leq K
+,
+x
+(
+ψ
+)
+x^{(\psi)}
+is the
+k
+k
+-th vector of the canonical basis of
+ℝ
+K
+\mathbb{R}^{K}
+, which means that
+AT
+j
+=
+2
+​
+n
+n
+k
+j
+\mathrm{AT}_{j}=\frac{2n}{n_{k_{j}}}
+for all
+j
+j
+such that
+ϕ
+c
+​
+(
+y
+)
+\phi_{c}(y)
+is equal to
+ϕ
+c
+​
+(
+y
+^
+j
+)
+\phi_{c}(\hat{y}_{j})
+, and zero otherwise.
+When
+ϕ
+c
+​
+(
+y
+)
+\phi_{c}(y)
+is different from all the vectors in
+(
+ϕ
+c
+​
+(
+y
+^
+j
+k
+)
+)
+k
+=
+1
+K
+\big(\phi_{c}(\hat{y}_{j_{k}})\big)_{k=1}^{K}
+, the norm of the projection of
+ϕ
+c
+​
+(
+y
+)
+\phi_{c}(y)
+onto
+span
+⁡
+(
+(
+ϕ
+c
+​
+(
+y
+^
+j
+k
+)
+)
+k
+=
+1
+K
+)
+\mathrm{span}\big(\big(\phi_{c}(\hat{y}_{j_{k}})\big)_{k=1}^{K}\big)
+is usually significantly smaller than the norm of
+ϕ
+c
+​
+(
+y
+)
+\phi_{c}(y)
+, because this subspace is smaller than the ambient dimension as
+K
+≤
+n
+≤
+d
+K\leq n\leq d
+, and this is accentuated the smaller
+n
+n
+is. Observe that in optimizing the empirical rewards
+r
+j
+=
+AT
+j
+−
+DT
+j
+r_{j}=\mathrm{AT}_{j}-\mathrm{DT}_{j}
+, the model balances increasing the alignment term
+AT
+j
+\mathrm{AT}_{j}
+and decreasing the diversity term
+DT
+j
+\mathrm{DT}_{j}
+, and the specific trade-off is determined by the relative sizes of both terms.
+Since for small
+n
+n
+the alignment terms
+(
+AT
+j
+)
+j
+=
+1
+n
+(\mathrm{AT}_{j})_{j=1}^{n}
+are small because
+x
+(
+ψ
+)
+x^{(\psi)}
+is abnormally small,
+the model focuses on decreasing
+DT
+j
+\mathrm{DT}_{j}
+as opposed to strongly improving
+AT
+j
+\mathrm{AT}_{j}
+. Experimentally, this translates to moderate improvements in downstream performance. To achieve more solid boosts in downstream performance, we tested the following alternative approaches:
+•
+Variant (i)
+:
+Normalizing the whitened features of the generations and the ground truth in the alignment term
+. As a result, even when
+x
+(
+ψ
+)
+x^{(\psi)}
+is small, the alignment term is not. Namely, we set the diversity term
+DT
+j
+\mathrm{DT}_{j}
+as in (
+48
+), and the alignment term
+AT
+j
+\mathrm{AT}_{j}
+as follows:
+AT
+j
+\displaystyle\mathrm{AT}_{j}
+=
+2
+ϕ
+c
+(
+y
+^
+j
+)
+⊤
+Σ
+^
+†
+p
+θ
+(
+⋅
+|
+c
+)
+ϕ
+c
+(
+y
+)
+∥
+(
+Σ
+^
+†
+p
+θ
+(
+⋅
+|
+c
+)
+)
+1
+/
+2
+ϕ
+c
+(
+y
+^
+j
+)
+∥
+∥
+(
+Σ
+^
+†
+p
+θ
+(
+⋅
+|
+c
+)
+)
+1
+/
+2
+ϕ
+c
+(
+y
+)
+∥
+=
+2
+​
+Φ
+~
+⋅
+j
+⊤
+​
+ψ
+~
+‖
+Φ
+~
+⋅
+j
+‖
+​
+‖
+ψ
+~
+‖
+=
+2
+​
+x
+j
+(
+ψ
+)
+n
+k
+j
+​
+∑
+k
+=
+1
+K
+(
+x
+k
+(
+ψ
+)
+)
+2
+n
+k
+.
+\displaystyle=\frac{2\phi_{c}(\hat{y}_{j})^{\top}\hat{\Sigma}^{\dagger}_{p_{\theta}(\cdot|c)}\phi_{c}(y)}{\big\|(\hat{\Sigma}^{\dagger}_{p_{\theta}(\cdot|c)})^{1/2}\phi_{c}(\hat{y}_{j})\big\|\big\|(\hat{\Sigma}^{\dagger}_{p_{\theta}(\cdot|c)})^{1/2}\phi_{c}(y)\big\|}=\frac{2\tilde{\Phi}_{\cdot j}^{\top}\tilde{\psi}}{\big\|\tilde{\Phi}_{\cdot j}\big\|\big\|\tilde{\psi}\big\|}=\frac{2x^{(\psi)}_{j}}{\sqrt{n_{k_{j}}\sum_{k=1}^{K}\frac{(x^{(\psi)}_{k})^{2}}{n_{k}}}}.
+(49)
+Observe that we can write the vector of alignment terms
+(
+AT
+j
+)
+j
+=
+1
+n
+(\mathrm{AT}_{j})_{j=1}^{n}
+as
+(
+AT
+j
+)
+j
+=
+1
+n
+=
+2
+​
+(
+x
+j
+(
+ψ
+)
+/
+n
+j
+k
+)
+j
+=
+1
+n
+‖
+(
+x
+j
+(
+ψ
+)
+/
+n
+j
+k
+)
+j
+=
+1
+n
+‖
+.
+\displaystyle(\mathrm{AT}_{j})_{j=1}^{n}=\frac{2(x^{(\psi)}_{j}/\sqrt{n_{j_{k}}})_{j=1}^{n}}{\|(x^{(\psi)}_{j}/\sqrt{n_{j_{k}}})_{j=1}^{n}\|}.
+(50)
+•
+Variant (ii)
+:
+Normalizing the whitened features of the generations and the ground truth in the alignment and diversity terms
+.
+We set
+AT
+j
+\mathrm{AT}_{j}
+as in (
+49
+), and
+DT
+j
+\mathrm{DT}_{j}
+as follows:
+DT
+j
+=
+2
+n
+−
+1
+​
+∑
+j
+′
+≠
+j
+ϕ
+c
+(
+y
+^
+j
+)
+⊤
+Σ
+^
+†
+p
+θ
+(
+⋅
+|
+c
+)
+ϕ
+c
+(
+y
+^
+j
+′
+)
+∥
+(
+Σ
+^
+†
+p
+θ
+(
+⋅
+|
+c
+)
+)
+1
+/
+2
+ϕ
+c
+(
+y
+^
+j
+)
+∥
+∥
+(
+Σ
+^
+†
+p
+θ
+(
+⋅
+|
+c
+)
+)
+1
+/
+2
+ϕ
+c
+(
+y
+^
+j
+′
+)
+∥
+=
+2
+n
+−
+1
+​
+∑
+j
+′
+≠
+j
+Φ
+~
+⋅
+j
+⊤
+​
+Φ
+~
+⋅
+j
+′
+‖
+Φ
+~
+⋅
+j
+‖
+​
+‖
+Φ
+~
+⋅
+j
+′
+‖
+=
+2
+n
+−
+1
+∑
+j
+′
+≠
+j
+𝟏
+[
+ϕ
+c
+(
+y
+^
+j
+)
+=
+ϕ
+c
+(
+y
+^
+j
+′
+)
+]
+n
+k
+j
+​
+n
+k
+j
+′
+n
+k
+j
+=
+2
+​
+(
+n
+k
+j
+−
+1
+)
+n
+−
+1
+.
+\displaystyle\begin{split}\mathrm{DT}_{j}&=\frac{2}{n-1}\sum_{j^{\prime}\neq j}\frac{\phi_{c}(\hat{y}_{j})^{\top}\hat{\Sigma}^{\dagger}_{p_{\theta}(\cdot|c)}\phi_{c}(\hat{y}_{j^{\prime}})}{\big\|(\hat{\Sigma}^{\dagger}_{p_{\theta}(\cdot|c)})^{1/2}\phi_{c}(\hat{y}_{j})\big\|\big\|(\hat{\Sigma}^{\dagger}_{p_{\theta}(\cdot|c)})^{1/2}\phi_{c}(\hat{y}_{j^{\prime}})\big\|}=\frac{2}{n-1}\sum_{j^{\prime}\neq j}\frac{\tilde{\Phi}^{\top}_{\cdot j}\tilde{\Phi}_{\cdot j^{\prime}}}{\big\|\tilde{\Phi}_{\cdot j}\big\|\big\|\tilde{\Phi}_{\cdot j^{\prime}}\big\|}\\
+&=\frac{2}{n-1}\sum_{j^{\prime}\neq j}\mathbf{1}[\phi_{c}(\hat{y}_{j})=\phi_{c}(\hat{y}_{j^{\prime}})]\frac{\sqrt{n_{k_{j}}n_{k_{j^{\prime}}}}}{n_{k_{j}}}=\frac{2(n_{k_{j}}-1)}{n-1}.\end{split}
+(51)
+•
+Variant (iii)
+:
+Normalizing the whitened features of the ground truth in the alignment term
+. We set
+DT
+j
+\mathrm{DT}_{j}
+as in (
+48
+) and
+AT
+j
+\mathrm{AT}_{j}
+as follows:
+AT
+j
+\displaystyle\mathrm{AT}_{j}
+=
+2
+ϕ
+c
+(
+y
+^
+j
+)
+⊤
+Σ
+^
+†
+p
+θ
+(
+⋅
+|
+c
+)
+ϕ
+c
+(
+y
+)
+∥
+(
+Σ
+^
+†
+p
+θ
+(
+⋅
+|
+c
+)
+)
+1
+/
+2
+ϕ
+c
+(
+y
+)
+∥
+=
+2
+​
+Φ
+~
+⋅
+j
+′
+⊤
+​
+ψ
+~
+‖
+ψ
+~
+‖
+=
+2
+​
+x
+j
+(
+ψ
+)
+n
+k
+j
+⋅
+1
+n
+k
+j
+⋅
+∑
+k
+=
+1
+K
+(
+x
+k
+(
+ψ
+)
+)
+2
+n
+k
+=
+2
+​
+x
+j
+(
+ψ
+)
+n
+k
+j
+​
+∑
+k
+=
+1
+K
+(
+x
+k
+(
+ψ
+)
+)
+2
+n
+k
+,
+\displaystyle=\frac{2\phi_{c}(\hat{y}_{j})^{\top}\hat{\Sigma}^{\dagger}_{p_{\theta}(\cdot|c)}\phi_{c}(y)}{\big\|(\hat{\Sigma}^{\dagger}_{p_{\theta}(\cdot|c)})^{1/2}\phi_{c}(y)\big\|}=\frac{2\tilde{\Phi}_{\cdot j^{\prime}}^{\top}\tilde{\psi}}{\big\|\tilde{\psi}\big\|}=\frac{2x^{(\psi)}_{j}}{n_{k_{j}}\cdot\frac{1}{\sqrt{n_{k_{j}}}}\cdot\sqrt{\sum_{k=1}^{K}\frac{(x^{(\psi)}_{k})^{2}}{n_{k}}}}=\frac{2x^{(\psi)}_{j}}{n_{k_{j}}\sqrt{\sum_{k=1}^{K}\frac{(x^{(\psi)}_{k})^{2}}{n_{k}}}},
+(52)
+Experimentally,
+variant (i) offers the best performance, and is the one that we use in all the whitening experiments we report in this paper.
+Observe that when we use whitening (with or without any of these variants), we are not explicitly minimizing a particular loss function on
+θ
+\theta
+, as our REINFORCE-style reward does not take into account that the second-moment matrix
+Φ
+^
+p
+θ
+(
+⋅
+|
+c
+)
+\hat{\Phi}_{p_{\theta}(\cdot|c)}
+and the normalization factors depend on
+θ
+\theta
+. In the figures of
+Appendix
+H
+, apart from the non-whitened feature matching loss, we report the proxy quantity:
+1
+n
+​
+∑
+j
+=
+1
+n
+(
+AT
+j
+−
+1
+2
+​
+DT
+j
+)
+\displaystyle\frac{1}{n}\sum_{j=1}^{n}\big(\mathrm{AT}_{j}-\frac{1}{2}\mathrm{DT}_{j}\big)
+(53)
+We refer to this quantity as the ”feature-matching loss with whitening”. Ignoring the dependence of the second-moment matrix and the normalization constants on
+θ
+\theta
+, we view whitened feature matching as trying to decrease this loss.
+B.4.1
+Proof of Lemma
+B.2
+And we define the matrix
+B
+∈
+ℝ
+K
+×
+n
+B\in\mathbb{R}^{K\times n}
+as the matrix whose
+k
+k
+-th row has value
+1
+/
+n
+k
+1/\sqrt{n_{k}}
+on all positions from
+j
+k
+=
+∑
+k
+′
+=
+1
+k
+−
+1
+n
+k
+′
++
+1
+j_{k}=\sum_{k^{\prime}=1}^{k-1}n_{k^{\prime}}+1
+to
+j
+k
++
+1
+−
+1
+=
+∑
+k
+′
+=
+1
+k
+n
+k
+′
+j_{k+1}-1=\sum_{k^{\prime}=1}^{k}n_{k^{\prime}}
+(both included), and value zero on all remaining positions.
+Observe that the rows of
+B
+B
+constitute an orthonormal set, i.e.
+B
+​
+B
+⊤
+=
+Id
+∈
+ℝ
+K
+×
+K
+BB^{\top}=\mathrm{Id}\in\mathbb{R}^{K\times K}
+, and that by construction,
+Φ
+=
+Φ
+¯
+​
+B
+.
+\displaystyle\Phi=\bar{\Phi}B.
+(54)
+Thus,
+Φ
+~
+=
+(
+(
+Φ
+¯
+​
+B
+​
+B
+⊤
+​
+Φ
+¯
+⊤
+)
+†
+)
+1
+/
+2
+​
+Φ
+¯
+​
+B
+=
+(
+(
+Φ
+¯
+​
+Φ
+¯
+⊤
+)
+†
+)
+1
+/
+2
+​
+Φ
+¯
+​
+B
+.
+\displaystyle\tilde{\Phi}=((\bar{\Phi}BB^{\top}\bar{\Phi}^{\top})^{\dagger})^{1/2}\bar{\Phi}B=((\bar{\Phi}\bar{\Phi}^{\top})^{\dagger})^{1/2}\bar{\Phi}B.
+(55)
+Next, we inspect
+(
+(
+Φ
+¯
+​
+Φ
+¯
+⊤
+)
+†
+)
+1
+/
+2
+​
+Φ
+¯
+((\bar{\Phi}\bar{\Phi}^{\top})^{\dagger})^{1/2}\bar{\Phi}
+. Observe that by assumptions
+(i)
+and
+(ii)
+above, the rank of
+Φ
+¯
+\bar{\Phi}
+is
+K
+K
+. Let
+Φ
+¯
+=
+U
+​
+Σ
+​
+V
+⊤
+\bar{\Phi}=U\Sigma V^{\top}
+be the thin singular value decomposition of
+Φ
+¯
+\bar{\Phi}
+, i.e.
+U
+∈
+ℝ
+d
+×
+K
+U\in\mathbb{R}^{d\times K}
+has orthonormal columns,
+V
+∈
+ℝ
+K
+×
+K
+V\in\mathbb{R}^{K\times K}
+is an orthogonal matrix, and
+Σ
+∈
+ℝ
+K
+×
+K
+\Sigma\in\mathbb{R}^{K\times K}
+is a diagonal matrix with strictly positive numbers on the diagonal (in general the singular values are non-negative, but since
+Φ
+¯
+\bar{\Phi}
+has rank
+K
+K
+, all of them must be positive). Then, by the definitions of the square root and the pseudo-inverse
+(
+(
+Φ
+¯
+​
+Φ
+¯
+⊤
+)
+†
+)
+1
+/
+2
+​
+Φ
+¯
+=
+(
+(
+U
+​
+Σ
+2
+​
+U
+⊤
+)
+†
+)
+1
+/
+2
+​
+U
+​
+Σ
+​
+V
+⊤
+=
+U
+​
+Σ
+−
+1
+​
+U
+⊤
+​
+U
+​
+Σ
+​
+V
+⊤
+=
+U
+​
+V
+⊤
+\displaystyle((\bar{\Phi}\bar{\Phi}^{\top})^{\dagger})^{1/2}\bar{\Phi}=((U\Sigma^{2}U^{\top})^{\dagger})^{1/2}U\Sigma V^{\top}=U\Sigma^{-1}U^{\top}U\Sigma V^{\top}=UV^{\top}
+(56)
+Plugging this into the right-hand side of (
+55
+) yields
+Φ
+~
+=
+U
+​
+V
+⊤
+​
+B
+.
+\displaystyle\tilde{\Phi}=UV^{\top}B.
+(57)
+And
+Φ
+~
+⊤
+​
+Φ
+~
+=
+B
+⊤
+​
+V
+​
+U
+⊤
+​
+U
+​
+V
+⊤
+​
+B
+=
+B
+⊤
+​
+B
+,
+\displaystyle\tilde{\Phi}^{\top}\tilde{\Phi}=B^{\top}VU^{\top}UV^{\top}B=B^{\top}B,
+(58)
+which means that for
+j
+,
+j
+′
+∈
+[
+n
+]
+j,j^{\prime}\in[n]
+,
+Φ
+~
+⋅
+j
+⊤
+​
+Φ
+~
+⋅
+j
+′
+\tilde{\Phi}_{\cdot j}^{\top}\tilde{\Phi}_{\cdot j^{\prime}}
+, which is the
+(
+j
+,
+j
+′
+)
+(j,j^{\prime})
+-th component of
+Φ
+~
+⊤
+​
+Φ
+~
+\tilde{\Phi}^{\top}\tilde{\Phi}
+, is equal to the
+(
+j
+,
+j
+′
+)
+(j,j^{\prime})
+-th component of
+B
+⊤
+​
+B
+B^{\top}B
+, which is
+B
+⋅
+j
+⊤
+​
+B
+⋅
+j
+′
+B_{\cdot j}^{\top}B_{\cdot j^{\prime}}
+. Since
+B
+⋅
+j
+B_{\cdot j}
+, (resp.
+B
+⋅
+j
+′
+B_{\cdot j^{\prime}}
+) has a single non-zero entry
+1
+/
+n
+k
+j
+1/\sqrt{n_{k_{j}}}
+in position
+k
+j
+k_{j}
+(resp.
+1
+/
+n
+k
+j
+′
+1/\sqrt{n_{k_{j^{\prime}}}}
+in position
+k
+j
+′
+k_{j^{\prime}}
+), equalities (
+44
+) and (
+45
+) follow.
+Let us define the diagonal matrix
+B
+¯
+∈
+ℝ
+K
+×
+K
+\bar{B}\in\mathbb{R}^{K\times K}
+with diagonal values
+(
+1
+/
+n
+k
+)
+k
+=
+1
+K
+\big(1/\sqrt{n_{k}}\big)_{k=1}^{K}
+, such that we can express the matrix
+Φ
+^
+\hat{\Phi}
+with columns
+(
+ϕ
+c
+​
+(
+y
+^
+j
+k
+)
+)
+k
+=
+1
+K
+\big(\phi_{c}(\hat{y}_{j_{k}})\big)_{k=1}^{K}
+as
+Φ
+¯
+​
+B
+¯
+\bar{\Phi}\bar{B}
+. By construction of
+x
+(
+ψ
+)
+x^{(\psi)}
+, we have the following:
+ψ
+=
+Φ
+^
+​
+x
+(
+ψ
+)
++
+ψ
+′
+=
+Φ
+¯
+​
+B
+¯
+​
+x
+(
+ψ
+)
++
+ψ
+′
+,
+\displaystyle\psi=\hat{\Phi}x^{(\psi)}+\psi^{\prime}=\bar{\Phi}\bar{B}x^{(\psi)}+\psi^{\prime},
+(59)
+where
+ψ
+′
+\psi^{\prime}
+is the orthogonal projection of
+ψ
+\psi
+onto
+span
+​
+(
+(
+ϕ
+c
+​
+(
+y
+^
+j
+k
+)
+)
+k
+=
+1
+K
+)
+⟂
+\mathrm{span}\big(\big(\phi_{c}(\hat{y}_{j_{k}})\big)_{k=1}^{K}\big)^{\perp}
+.
+Hence, using equation (
+56
+), and the fact that
+span
+⁡
+(
+(
+U
+⋅
+k
+)
+k
+=
+1
+K
+)
+=
+span
+⁡
+(
+(
+ϕ
+c
+​
+(
+y
+^
+j
+k
+)
+)
+k
+=
+1
+K
+)
+\mathrm{span}((U_{\cdot k})_{k=1}^{K})=\mathrm{span}\big(\big(\phi_{c}(\hat{y}_{j_{k}})\big)_{k=1}^{K}\big)
+,
+(
+(
+Φ
+​
+Φ
+⊤
+)
+†
+)
+1
+/
+2
+​
+ψ
+=
+(
+(
+Φ
+¯
+​
+Φ
+¯
+⊤
+)
+†
+)
+1
+/
+2
+​
+(
+Φ
+¯
+​
+B
+¯
+​
+x
+(
+ψ
+)
++
+ψ
+′
+)
+=
+U
+​
+V
+⊤
+​
+B
+¯
+​
+x
+(
+ψ
+)
++
+U
+​
+Σ
+−
+1
+​
+U
+⊤
+​
+ψ
+′
+=
+U
+​
+V
+⊤
+​
+B
+¯
+​
+x
+(
+ψ
+)
+.
+\displaystyle((\Phi\Phi^{\top})^{\dagger})^{1/2}\psi=((\bar{\Phi}\bar{\Phi}^{\top})^{\dagger})^{1/2}\big(\bar{\Phi}\bar{B}x^{(\psi)}+\psi^{\prime}\big)=UV^{\top}\bar{B}x^{(\psi)}+U\Sigma^{-1}U^{\top}\psi^{\prime}=UV^{\top}\bar{B}x^{(\psi)}.
+(60)
+Hence, using (
+57
+) and (
+60
+) yields
+Φ
+⊤
+​
+(
+(
+Φ
+​
+Φ
+⊤
+)
+†
+)
+1
+/
+2
+​
+(
+(
+Φ
+​
+Φ
+⊤
+)
+†
+)
+1
+/
+2
+​
+ψ
+=
+B
+​
+V
+​
+U
+⊤
+​
+U
+​
+V
+⊤
+​
+B
+¯
+​
+x
+(
+ψ
+)
+=
+B
+⊤
+​
+B
+¯
+​
+x
+(
+ψ
+)
+=
+B
+~
+​
+x
+(
+ψ
+)
+\displaystyle\Phi^{\top}((\Phi\Phi^{\top})^{\dagger})^{1/2}((\Phi\Phi^{\top})^{\dagger})^{1/2}\psi=BVU^{\top}UV^{\top}\bar{B}x^{(\psi)}=B^{\top}\bar{B}x^{(\psi)}=\tilde{B}x^{(\psi)}
+(61)
+where we define
+B
+~
+∈
+ℝ
+K
+×
+n
+\tilde{B}\in\mathbb{R}^{K\times n}
+as the matrix whose
+k
+k
+-th row has value
+1
+/
+n
+k
+1/n_{k}
+on all positions from
+j
+k
+=
+∑
+k
+′
+=
+1
+k
+−
+1
+n
+k
+′
++
+1
+j_{k}=\sum_{k^{\prime}=1}^{k-1}n_{k^{\prime}}+1
+to
+j
+k
++
+1
+−
+1
+=
+∑
+k
+′
+=
+1
+k
+n
+k
+′
+j_{k+1}-1=\sum_{k^{\prime}=1}^{k}n_{k^{\prime}}
+(both included), and value zero on all remaining positions.
+And
+ψ
+⊤
+​
+(
+(
+Φ
+​
+Φ
+⊤
+)
+†
+)
+1
+/
+2
+​
+(
+(
+Φ
+​
+Φ
+⊤
+)
+†
+)
+1
+/
+2
+​
+ψ
+=
+(
+x
+(
+ψ
+)
+)
+⊤
+​
+B
+¯
+⊤
+​
+V
+​
+U
+⊤
+​
+U
+​
+V
+⊤
+​
+B
+¯
+​
+x
+(
+ψ
+)
+=
+‖
+B
+¯
+​
+x
+(
+ψ
+)
+‖
+2
+=
+∑
+k
+=
+1
+K
+(
+x
+k
+(
+ψ
+)
+)
+2
+n
+k
+.
+\displaystyle\psi^{\top}((\Phi\Phi^{\top})^{\dagger})^{1/2}((\Phi\Phi^{\top})^{\dagger})^{1/2}\psi=(x^{(\psi)})^{\top}\bar{B}^{\top}VU^{\top}UV^{\top}\bar{B}x^{(\psi)}=\|\bar{B}x^{(\psi)}\|^{2}=\sum_{k=1}^{K}\frac{(x_{k}^{(\psi)})^{2}}{n_{k}}.
+(62)
+Appendix C
+Feature matching with alignment bias
+In some applications we prefer
+more reference-aligned
+samples, even at the cost of reduced diversity.
+We capture this tradeoff by scaling the target moment: for
+α
+∈
+(
+0
+,
+1
+]
+\alpha\in(0,1]
+, define the loss with alignment bias as
+ℒ
+α
+FM
+(
+θ
+)
+=
+α
+𝔼
+c
+∼
+p
+[
+∥
+𝔼
+y
+^
+∼
+p
+θ
+(
+⋅
+|
+c
+)
+[
+ϕ
+c
+(
+y
+^
+)
+]
+−
+1
+α
+𝔼
+y
+∼
+p
+(
+⋅
+|
+c
+)
+[
+ϕ
+c
+(
+y
+)
+]
+∥
+2
+]
+=
+α
+​
+ℒ
+FM
+​
+(
+θ
+)
+−
+2
+(
+1
+−
+α
+)
+𝔼
+c
+∼
+p
+[
+𝔼
+y
+^
+∼
+p
+θ
+(
+⋅
+|
+c
+)
+[
+ϕ
+c
+(
+y
+^
+)
+]
+⊤
+𝔼
+y
+∼
+p
+(
+⋅
+|
+c
+)
+[
+ϕ
+c
+(
+y
+)
+]
+]
+.
+⏟
+alignment bias
+\displaystyle\begin{split}&\mathcal{L}^{\alpha}_{\mathrm{FM}}(\theta)\!=\!\alpha\mathbb{E}_{c\sim p}\big[\|\mathbb{E}_{\hat{y}\sim p_{\theta}(\cdot|c)}[\phi_{c}(\hat{y})]\!-\!{\textstyle\frac{1}{\alpha}}\mathbb{E}_{y\sim p(\cdot|c)}[\phi_{c}(y)]\|^{2}\big]\\
+&=\!\alpha\mathcal{L}_{\mathrm{FM}}(\theta)\!-\!\underbrace{2(1-\alpha)\mathbb{E}_{c\sim p}\big[\mathbb{E}_{\hat{y}\sim p_{\theta}(\cdot|c)}[\phi_{c}(\hat{y})]^{\top}\!\mathbb{E}_{y\sim p(\cdot|c)}[\phi_{c}(y)]\big].}_{\text{alignment bias}}\end{split}
+(63)
+The additional term explicitly encourages alignment between model and data features, making the objective
+mode-seeking
+as
+α
+\alpha
+decreases (typically improving accuracy and faithfulness but reducing diversity).
+Operationally, this corresponds to multiplying the diversity terms in (
+6
+) and (
+7
+) by
+α
+\alpha
+, since the analogs of equations
+(
+2
+)
+and (
+5
+), (
+6
+), and (
+7
+) are
+ℒ
+CFM
+α
+​
+(
+θ
+)
+=
+α
+𝔼
+c
+∼
+p
+[
+∥
+𝔼
+y
+^
+∼
+p
+θ
+(
+⋅
+|
+c
+)
+[
+ϕ
+c
+(
+y
+^
+)
+]
+−
+1
+α
+ϕ
+c
+(
+y
+)
+∥
+2
+]
+,
+\displaystyle\begin{split}\mathcal{L}^{\alpha}_{\mathrm{CFM}}(\theta)&=\alpha\mathbb{E}_{c\sim p}\big[\|\mathbb{E}_{\hat{y}\sim p_{\theta}(\cdot|c)}[\phi_{c}(\hat{y})]\!-\!{\textstyle\frac{1}{\alpha}}\phi_{c}(y)\|^{2}\big],\end{split}
+(64)
+ℒ
+CFM
+α
+​
+(
+θ
+,
+c
+,
+y
+)
+=
+α
+∥
+𝔼
+y
+^
+∼
+p
+θ
+(
+⋅
+|
+c
+)
+[
+ϕ
+c
+(
+y
+^
+)
+]
+−
+1
+α
+ϕ
+c
+(
+y
+)
+∥
+2
+,
+\displaystyle\begin{split}\mathcal{L}^{\alpha}_{\mathrm{CFM}}(\theta;c,y)&=\alpha\|\mathbb{E}_{\hat{y}\sim p_{\theta}(\cdot|c)}[\phi_{c}(\hat{y})]\!-\!{\textstyle\frac{1}{\alpha}}\phi_{c}(y)\|^{2},\end{split}
+(65)
+r
+⁡
+(
+y
+^
+,
+c
+)
+=
+2
+ϕ
+c
+(
+y
+^
+)
+⊤
+ϕ
+c
+(
+y
+)
+−
+2
+α
+ϕ
+c
+(
+y
+^
+)
+⊤
+𝔼
+y
+~
+∼
+p
+θ
+(
+⋅
+|
+c
+)
+[
+ϕ
+c
+(
+y
+~
+)
+]
+,
+\displaystyle\begin{split}r(\hat{y},c)&=2\phi_{c}(\hat{y})^{\top}\phi_{c}(y)-2\alpha\phi_{c}(\hat{y})^{\top}\mathbb{E}_{\tilde{y}\sim p_{\theta}(\cdot|c)}\big[\phi_{c}(\tilde{y})\big],\end{split}
+(66)
+r
+j
+=
+2
+​
+ϕ
+c
+​
+(
+y
+^
+j
+)
+⊤
+​
+ϕ
+c
+​
+(
+y
+)
+−
+2
+​
+α
+n
+−
+1
+​
+∑
+j
+′
+≠
+j
+ϕ
+c
+​
+(
+y
+^
+j
+)
+⊤
+​
+ϕ
+c
+​
+(
+y
+^
+j
+′
+)
+.
+\displaystyle\begin{split}r_{j}&=2\phi_{c}(\hat{y}_{j})^{\top}\phi_{c}(y)-\frac{2\alpha}{n-1}\sum_{j^{\prime}\neq j}\phi_{c}(\hat{y}_{j})^{\top}\phi_{c}(\hat{y}_{j^{\prime}}).\end{split}
+(67)
+Note that when
+α
+≠
+1
+\alpha\neq 1
+,
+ℒ
+FM
+α
+\mathcal{L}^{\alpha}_{\mathrm{FM}}
+is not a proper scoring rule, meaning that that it is not minimized by the ground truth distribution
+p
+p
+, and this can be seen in practice. In
+Section
+H.1
+we present experiments in which we sweep over
+α
+\alpha
+and
+γ
+\gamma
+on all the tasks we consider: we consider the values
+α
+∈
+{
+0
+,
+0.5
+,
+1
+}
+\alpha\in\{0,0.5,1\}
+. We conclude that taking
+α
+\alpha
+smaller helps in reducing the (unbiased) feature-matching loss faster, at the cost of a slower decrease of the CE loss, with stark differences in behavior depending on the value of
+γ
+\gamma
+. In particular, when
+γ
+=
+0.1
+\gamma=0.1
+, the CE loss decreases similarly fast for
+α
+∈
+{
+0
+,
+0.5
+,
+1
+}
+\alpha\in\{0,0.5,1\}
+, but when
+γ
+=
+0
+\gamma=0
+, taking
+α
+∈
+{
+0
+,
+0.5
+}
+\alpha\in\{0,0.5\}
+causes the CE loss to diverge, while for
+α
+=
+1
+\alpha=1
+the CE loss still decreases monotonically, albeit at a slower rate than with higher
+α
+\alpha
+. Hence, the CE term can help in stabilizing feature matching with alignment bias.
+Appendix D
+Feature matching with KL regularization
+The feature matching loss with KL regularization with respect to a model
+π
+\pi
+reads
+ℒ
+FMKL
+​
+(
+θ
+)
+=
+𝔼
+c
+∼
+p
+[
+∥
+𝔼
+y
+^
+∼
+p
+θ
+(
+⋅
+|
+c
+)
+[
+ϕ
+c
+(
+y
+^
+)
+]
+−
+1
+α
+𝔼
+y
+∼
+p
+(
+⋅
+|
+c
+)
+[
+ϕ
+c
+(
+y
+)
+]
+∥
+2
++
+1
+β
+D
+KL
+(
+p
+θ
+(
+⋅
+|
+c
+)
+∥
+π
+(
+⋅
+|
+c
+)
+)
+]
+=
+𝔼
+c
+∼
+p
+[
+∥
+𝔼
+y
+^
+∼
+p
+θ
+(
+⋅
+|
+c
+)
+[
+ϕ
+c
+(
+y
+^
+)
+]
+−
+1
+α
+𝔼
+y
+∼
+p
+(
+⋅
+|
+c
+)
+[
+ϕ
+c
+(
+y
+)
+]
+∥
+2
++
+1
+β
+𝔼
+y
+^
+∼
+p
+θ
+(
+⋅
+|
+c
+)
+[
+log
+p
+θ
+(
+y
+^
+|
+c
+)
+−
+log
+π
+(
+y
+^
+|
+c
+)
+]
+]
+\displaystyle\begin{split}\mathcal{L}_{\mathrm{FMKL}}(\theta)\!&=\!\mathbb{E}_{c\sim p}\big[\|\mathbb{E}_{\hat{y}\sim p_{\theta}(\cdot|c)}[\phi_{c}(\hat{y})]\!-\!{\textstyle\frac{1}{\alpha}}\mathbb{E}_{y\sim p(\cdot|c)}[\phi_{c}(y)]\|^{2}+{\textstyle\frac{1}{\beta}}D_{\mathrm{KL}}\big(p_{\theta}(\cdot|c)\|\pi(\cdot|c)\big)\big]\\
+&=\!\mathbb{E}_{c\sim p}\big[\|\mathbb{E}_{\hat{y}\sim p_{\theta}(\cdot|c)}[\phi_{c}(\hat{y})]\!-\!{\textstyle\frac{1}{\alpha}}\mathbb{E}_{y\sim p(\cdot|c)}[\phi_{c}(y)]\|^{2}+{\textstyle\frac{1}{\beta}}\mathbb{E}_{\hat{y}\sim p_{\theta}(\cdot|c)}\big[\log p_{\theta}(\hat{y}|c)-\log\pi(\hat{y}|c)\big]\big]\end{split}
+(68)
+Observe that since this loss function decouples across different contexts
+c
+c
+, the optimal
+p
+θ
+p_{\theta}
+satisfies the following for all
+c
+c
+:
+p
+θ
+(
+⋅
+|
+c
+)
+=
+arg
+min
+ρ
+∈
+𝒱
+G
+{
+1
+β
+D
+KL
+(
+ρ
+∥
+π
+(
+⋅
+|
+c
+)
+)
++
+∥
+𝔼
+y
+∼
+ρ
+[
+ϕ
+c
+(
+y
+)
+]
+−
+1
+α
+𝔼
+y
+∼
+p
+(
+⋅
+|
+c
+)
+[
+ϕ
+c
+(
+y
+)
+]
+∥
+2
+2
+}
+.
+\displaystyle p_{\theta}(\cdot|c)=\arg\min_{\rho\in\mathcal{V}^{G}}\big\{{\textstyle\frac{1}{\beta}}D_{\mathrm{KL}}\big(\rho\|\pi(\cdot|c)\big)+\|\mathbb{E}_{y\sim\rho}[\phi_{c}(y)]-{\textstyle\frac{1}{\alpha}}\mathbb{E}_{y\sim p(\cdot|c)}[\phi_{c}(y)]\|_{2}^{2}\big\}.
+(69)
+Next, we will characterize the distribution
+p
+θ
+p_{\theta}
+that minimizes this loss function.
+The following section contains some preliminary results.
+D.1
+Energy-based models with RKHS function classes
+The following duality theorem relates two optimization problems which underlie energy-based models for which the energy class is a ball of the RKHS induced by a feature map
+ϕ
+\phi
+.
+Theorem D.1
+(Thm. 2,
+Domingo-Enrich et al. (2022)
+)
+.
+Let
+π
+\pi
+be a base measure over a measurable space
+𝒴
+\mathcal{Y}
+, and
+β
+~
+>
+0
+\tilde{\beta}>0
+. Let
+φ
+:
+𝒴
+→
+ℝ
+d
+\varphi:\mathcal{Y}\to\mathbb{R}^{d}
+for some
+d
+≥
+1
+d\geq 1
+be a feature map, and
+v
+∈
+ℝ
+d
+v\in\mathbb{R}^{d}
+.
+Consider the two problems
+min
+ρ
+∈
+𝒫
+⁡
+(
+𝒴
+)
+1
+β
+~
+D
+KL
+(
+ρ
+∥
+π
+)
++
+∥
+𝔼
+Y
+∼
+ρ
+[
+φ
+(
+Y
+)
+]
+−
+v
+∥
+2
+,
+\displaystyle\min_{\rho\in\mathcal{P}(\mathcal{Y})}{\textstyle\frac{1}{\tilde{\beta}}}D_{\mathrm{KL}}(\rho\|\pi)+\|\mathbb{E}_{Y\sim\rho}[\varphi(Y)]-v\|_{2},
+(70)
+and
+max
+h
+∈
+ℝ
+d
+‖
+h
+‖
+2
+≤
+1
+−
+v
+⊤
+​
+h
+−
+1
+β
+~
+​
+log
+⁡
+𝔼
+Y
+∼
+π
+​
+[
+exp
+⁡
+(
+−
+β
+~
+​
+φ
+​
+(
+Y
+)
+⊤
+​
+h
+)
+]
+.
+\displaystyle\max_{\begin{subarray}{c}h\in\mathbb{R}^{d}\\
+\|h\|_{2}\leq 1\end{subarray}}-v^{\top}h-{\textstyle\frac{1}{\tilde{\beta}}}\log\mathbb{E}_{Y\sim\pi}\big[\exp\big(-\tilde{\beta}\varphi(Y)^{\top}h\big)\big].
+(71)
+The problems (
+70
+) and (
+71
+) are convex.
+The
+problem (
+71
+) is the Fenchel dual of problem (
+70
+), and strong duality holds. Moreover, the solution
+ρ
+⋆
+\rho^{\star}
+of (
+70
+) is unique and satisfies
+d
+​
+ρ
+⋆
+d
+​
+π
+​
+(
+y
+)
+=
+1
+Z
+β
+~
+​
+exp
+⁡
+(
+−
+β
+~
+​
+φ
+​
+(
+y
+)
+⊤
+​
+h
+⋆
+)
+,
+\displaystyle\frac{d\rho^{\star}}{d\pi}(y)=\frac{1}{Z_{\tilde{\beta}}}\exp\big(-\tilde{\beta}\varphi(y)^{\top}h^{\star}\big),
+(72)
+where
+h
+⋆
+h^{\star}
+is a solution of (
+71
+) and
+Z
+β
+Z_{\beta}
+is a normalization constant.
+And the following equivalence between minimization problems holds:
+Theorem D.2
+(Prop. 3,
+Domingo-Enrich et al. (2022)
+)
+.
+Consider the problem
+min
+ρ
+∈
+𝒫
+⁡
+(
+𝒴
+)
+β
+−
+1
+D
+KL
+(
+ρ
+∥
+π
+)
++
+∥
+𝔼
+Y
+∼
+ρ
+[
+φ
+(
+Y
+)
+]
+−
+v
+∥
+2
+2
+,
+\displaystyle\min_{\rho\in\mathcal{P}(\mathcal{Y})}\beta^{-1}D_{\mathrm{KL}}(\rho\|\pi)+\|\mathbb{E}_{Y\sim\rho}[\varphi(Y)]-v\|_{2}^{2},
+(73)
+Problems (
+70
+) and (
+73
+) are equivalent in the following sense:
+if
+ρ
+1
+⋆
+\rho_{1}^{\star}
+is a solution of (
+70
+) for
+β
+~
+\tilde{\beta}
+, then it is also a solution of (
+73
+) for
+β
+=
+(
+2
+​
+‖
+𝔼
+Y
+∼
+ρ
+1
+⋆
+​
+[
+φ
+⁡
+(
+Y
+)
+]
+−
+v
+‖
+2
+)
+−
+1
+​
+β
+~
+,
+\displaystyle\beta=\big(2\|\mathbb{E}_{Y\sim\rho_{1}^{\star}}[\varphi(Y)]-v\|_{2}\big)^{-1}\tilde{\beta},
+(74)
+provided that
+‖
+𝔼
+Y
+∼
+ρ
+1
+⋆
+​
+[
+φ
+⁡
+(
+Y
+)
+]
+−
+v
+‖
+2
+\|\mathbb{E}_{Y\sim\rho_{1}^{\star}}[\varphi(Y)]-v\|_{2}
+is non-zero. Conversely, if
+ρ
+2
+⋆
+\rho_{2}^{\star}
+is a solution of (
+73
+) for
+β
+\beta
+, then it is also a solution of (
+70
+) for
+β
+~
+=
+2
+​
+‖
+𝔼
+Y
+∼
+ρ
+2
+⋆
+​
+[
+φ
+⁡
+(
+Y
+)
+]
+−
+v
+‖
+2
+​
+β
+.
+\displaystyle\tilde{\beta}=2\|\mathbb{E}_{Y\sim\rho^{\star}_{2}}[\varphi(Y)]-v\|_{2}\beta.
+(75)
+D.2
+Feature matching with KL regularization as an implicit energy-based model
+Theorem D.3
+.
+Consider the KL-regularized objective
+min
+ρ
+𝔼
+c
+∼
+p
+[
+∥
+𝔼
+ρ
+(
+⋅
+∣
+c
+)
+[
+ϕ
+c
+(
+y
+)
+]
+−
+𝔼
+p
+(
+⋅
+∣
+c
+)
+[
+ϕ
+c
+(
+y
+)
+]
+∥
+2
++
+1
+β
+D
+KL
+(
+ρ
+(
+⋅
+|
+c
+)
+∥
+q
+(
+⋅
+|
+c
+)
+)
+]
+,
+\displaystyle\begin{split}&\min_{\rho}\;\;\mathbb{E}_{c\sim p}\Big[\big\|\mathbb{E}_{\rho(\cdot\mid c)}[\phi_{c}(y)]-\mathbb{E}_{p(\cdot\mid c)}[\phi_{c}(y)]\big\|^{2}+\;{\textstyle\frac{1}{\beta}}\,D_{\mathrm{KL}}\!\left(\rho(\cdot|c)\,\|\,q(\cdot|c)\right)\Big],\end{split}
+(76)
+where
+β
+>
+0
+\beta>0
+controls the strength of the regularization. the solution to (
+76
+) has the form of an exponential tilt of the base distribution,
+ρ
+⋆
+​
+(
+y
+|
+c
+)
+∝
+q
+⁡
+(
+y
+|
+c
+)
+​
+exp
+⁡
+(
+−
+χ
+c
+⊤
+​
+ϕ
+c
+​
+(
+y
+)
+)
+,
+\displaystyle\rho^{\star}(y|c)\propto q(y|c)\,\exp\!\big(-\chi_{c}^{\top}\phi_{c}(y)\big),
+for a context-dependent vector
+χ
+c
+∈
+ℝ
+d
+\chi_{c}\in\mathbb{R}^{d}
+chosen to optimize:
+max
+‖
+χ
+‖
+2
+≤
+β
+~
+{
+−
+(
+1
+α
+−
+1
+)
+𝔼
+y
+∼
+p
+(
+⋅
+|
+c
+)
+[
+ϕ
+c
+(
+y
+)
+]
+⊤
+χ
++
+𝔼
+y
+∼
+p
+(
+⋅
+|
+c
+)
+[
+log
+ρ
+χ
+(
+y
+|
+c
+)
+]
+}
+,
+\displaystyle\max_{\|\chi\|_{2}\leq\tilde{\beta}}\big\{-\big({\textstyle\frac{1}{\alpha}}-1\big)\mathbb{E}_{y\sim p(\cdot|c)}[\phi_{c}(y)]^{\top}\chi+\mathbb{E}_{y\sim p(\cdot|c)}\big[\log\rho_{\chi}(y|c)\big]\big\},
+(77)
+where
+ρ
+χ
+​
+(
+y
+|
+c
+)
+∝
+q
+⁡
+(
+y
+|
+c
+)
+​
+exp
+⁡
+(
+−
+χ
+⊤
+​
+ϕ
+c
+​
+(
+y
+)
+)
+\rho_{\chi}(y|c)\propto q(y|c)\,\exp\!\big(-\chi^{\top}\phi_{c}(y)\big)
+,
+for a
+β
+~
+>
+0
+\tilde{\beta}>0
+that depends on
+β
+\beta
+. Two values of
+α
+\alpha
+admit specific interpretations:
+•
+For pure EBFT (
+α
+=
+1
+\alpha=1
+), the optimal
+χ
+\chi
+is the
+maximum likelihood estimate
+: When
+α
+=
+1
+\alpha=1
+, the problem (
+77
+) simplifies to:
+max
+‖
+χ
+‖
+2
+≤
+β
+~
+𝔼
+y
+∼
+p
+(
+⋅
+|
+c
+)
+[
+log
+ρ
+χ
+(
+y
+|
+c
+)
+]
+,
+\displaystyle\max_{\|\chi\|_{2}\leq\tilde{\beta}}\mathbb{E}_{y\sim p(\cdot|c)}\big[\log\rho_{\chi}(y|c)\big],
+(78)
+This corresponds to the maximum likelihood loss function for an energy-based model with
+energy function
+E
+⁡
+(
+y
+,
+c
+)
+=
+χ
+⊤
+​
+ϕ
+c
+​
+(
+y
+)
+.
+E(y,c)=\chi^{\top}\phi_{c}(y).
+•
+For
+α
++
+=
+0
+\alpha^{+}=0
+, the optimal
+χ
+\chi
+has the
+same direction as the ground-truth mean feature
+𝔼
+y
+∼
+p
+(
+⋅
+|
+c
+)
+[
+ϕ
+c
+(
+y
+)
+]
+\mathbb{E}_{y\sim p(\cdot|c)}[\phi_{c}(y)]
+: When
+α
+=
+0
++
+\alpha=0^{+}
+, the problem (
+77
+) is equivalent to
+max
+χ
+∈
+ℝ
+d
+‖
+χ
+‖
+2
+≤
+β
+~
+−
+𝔼
+y
+∼
+p
+(
+⋅
+|
+c
+)
+[
+ϕ
+c
+(
+y
+)
+]
+⊤
+χ
+,
+\displaystyle\max_{\begin{subarray}{c}\chi\in\mathbb{R}^{d}\\
+\|\chi\|_{2}\leq\tilde{\beta}\end{subarray}}-\mathbb{E}_{y\sim p(\cdot|c)}[\phi_{c}(y)]^{\top}\chi,
+(79)
+which has optimal solution
+χ
+⋆
+=
+−
+β
+~
+​
+𝔼
+y
+∼
+p
+(
+⋅
+|
+c
+)
+[
+ϕ
+c
+(
+y
+)
+]
+∥
+𝔼
+y
+∼
+p
+(
+⋅
+|
+c
+)
+[
+ϕ
+c
+(
+y
+)
+]
+∥
+2
+.
+\displaystyle\chi^{\star}=-\tilde{\beta}\frac{\mathbb{E}_{y\sim p(\cdot|c)}[\phi_{c}(y)]}{\big\|\mathbb{E}_{y\sim p(\cdot|c)}[\phi_{c}(y)]\big\|_{2}}.
+(80)
+Thus, for
+α
+∈
+(
+0
+,
+1
+)
+\alpha\in(0,1)
+, the solution
+χ
+⋆
+\chi^{\star}
+of (
+77
+) interpolates between the maximum likelihood estimate and the rescaled ground-truth mean feature.
+Proof.
+Given a context
+c
+c
+, and a completion length
+G
+G
+, let us apply
+Theorem
+D.1
+and
+Theorem
+D.2
+by setting
+𝒴
+=
+𝒱
+G
+\mathcal{Y}=\mathcal{V}^{G}
+,
+φ
+​
+(
+y
+)
+=
+ϕ
+c
+​
+(
+y
+)
+\varphi(y)=\phi_{c}(y)
+,
+π
+=
+π
+(
+⋅
+|
+c
+)
+\pi=\pi(\cdot|c)
+, and
+v
+=
+1
+α
+𝔼
+y
+∼
+p
+(
+⋅
+|
+c
+)
+[
+ϕ
+c
+(
+y
+)
+]
+∥
+2
+v={\textstyle\frac{1}{\alpha}}\mathbb{E}_{y\sim p(\cdot|c)}[\phi_{c}(y)]\|^{2}
+.
+Then, the problems (
+70
+), (
+73
+) and (
+71
+) take the form
+min
+ρ
+∈
+𝒫
+⁡
+(
+𝒴
+)
+1
+β
+~
+D
+KL
+(
+ρ
+∥
+π
+(
+⋅
+|
+c
+)
+)
++
+∥
+𝔼
+y
+∼
+ρ
+[
+ϕ
+c
+(
+y
+)
+]
+−
+1
+α
+𝔼
+y
+∼
+p
+(
+⋅
+|
+c
+)
+[
+ϕ
+c
+(
+y
+)
+]
+∥
+2
+,
+\displaystyle\min_{\rho\in\mathcal{P}(\mathcal{Y})}{\textstyle\frac{1}{\tilde{\beta}}}D_{\mathrm{KL}}\big(\rho\|\pi(\cdot|c)\big)+\|\mathbb{E}_{y\sim\rho}[\phi_{c}(y)]-{\textstyle\frac{1}{\alpha}}\mathbb{E}_{y\sim p(\cdot|c)}[\phi_{c}(y)]\|_{2},
+(81)
+min
+ρ
+∈
+𝒫
+⁡
+(
+𝒴
+)
+1
+β
+D
+KL
+(
+ρ
+∥
+π
+(
+⋅
+|
+c
+)
+)
++
+∥
+𝔼
+y
+∼
+ρ
+[
+ϕ
+c
+(
+y
+)
+]
+−
+1
+α
+𝔼
+y
+∼
+p
+(
+⋅
+|
+c
+)
+[
+ϕ
+c
+(
+y
+)
+]
+∥
+2
+2
+,
+\displaystyle\min_{\rho\in\mathcal{P}(\mathcal{Y})}{\textstyle\frac{1}{\beta}}D_{\mathrm{KL}}\big(\rho\|\pi(\cdot|c)\big)+\|\mathbb{E}_{y\sim\rho}[\phi_{c}(y)]-{\textstyle\frac{1}{\alpha}}\mathbb{E}_{y\sim p(\cdot|c)}[\phi_{c}(y)]\|_{2}^{2},
+(82)
+max
+h
+∈
+ℝ
+d
+‖
+h
+‖
+2
+≤
+1
+−
+1
+α
+𝔼
+y
+∼
+p
+(
+⋅
+|
+c
+)
+[
+ϕ
+c
+(
+y
+)
+]
+⊤
+h
+−
+1
+β
+~
+log
+𝔼
+y
+∼
+π
+(
+⋅
+|
+c
+)
+[
+exp
+(
+−
+β
+~
+ϕ
+c
+(
+y
+)
+⊤
+h
+)
+]
+,
+\displaystyle\max_{\begin{subarray}{c}h\in\mathbb{R}^{d}\\
+\|h\|_{2}\leq 1\end{subarray}}-{\textstyle\frac{1}{\alpha}}\mathbb{E}_{y\sim p(\cdot|c)}[\phi_{c}(y)]^{\top}h-{\textstyle\frac{1}{\tilde{\beta}}}\log\mathbb{E}_{y\sim\pi(\cdot|c)}\big[\exp\big(-\tilde{\beta}\phi_{c}(y)^{\top}h\big)\big],
+(83)
+Problem (
+82
+) is the KL-regularized feature-matching objective with alignment bias,
+if we absorb the constant
+α
+\alpha
+accompanying
+∥
+𝔼
+y
+∼
+ρ
+[
+ϕ
+c
+(
+y
+)
+]
+−
+1
+α
+𝔼
+y
+∼
+p
+(
+⋅
+|
+c
+)
+[
+ϕ
+c
+(
+y
+)
+]
+∥
+2
+2
+\|\mathbb{E}_{y\sim\rho}[\phi_{c}(y)]-{\textstyle\frac{1}{\alpha}}\mathbb{E}_{y\sim p(\cdot|c)}[\phi_{c}(y)]\|_{2}^{2}
+into the constants
+β
+\beta
+.
+The (unique) solution (
+81
+) of
+ρ
+⋆
+\rho^{\star}
+and the solution
+h
+⋆
+h^{\star}
+of (
+83
+) are related by the equation
+ρ
+⋆
+​
+(
+y
+)
+=
+π
+⁡
+(
+y
+|
+c
+)
+​
+exp
+⁡
+(
+−
+β
+~
+​
+ϕ
+c
+​
+(
+y
+)
+⊤
+​
+h
+⋆
+)
+∑
+y
+′
+π
+⁡
+(
+y
+′
+|
+c
+)
+​
+exp
+⁡
+(
+−
+β
+~
+​
+ϕ
+c
+​
+(
+y
+′
+)
+⊤
+​
+h
+⋆
+)
+,
+\displaystyle\rho^{\star}(y)=\frac{\pi(y|c)\exp\big(-\tilde{\beta}\phi_{c}(y)^{\top}h^{\star}\big)}{\sum_{y^{\prime}}\pi(y^{\prime}|c)\exp\big(-\tilde{\beta}\phi_{c}(y^{\prime})^{\top}h^{\star}\big)},
+(84)
+and
+ρ
+⋆
+\rho^{\star}
+is also the (unique) solution of (
+82
+) provided that
+β
+~
+=
+2
+∥
+𝔼
+Y
+∼
+ρ
+⋆
+[
+φ
+(
+Y
+)
+]
+−
+1
+α
+𝔼
+y
+∼
+p
+(
+⋅
+|
+c
+)
+[
+ϕ
+c
+(
+y
+)
+]
+∥
+2
+β
+.
+\displaystyle\tilde{\beta}=2\|\mathbb{E}_{Y\sim\rho^{\star}}[\varphi(Y)]-{\textstyle\frac{1}{\alpha}}\mathbb{E}_{y\sim p(\cdot|c)}[\phi_{c}(y)]\|_{2}\beta.
+(85)
+Observe that the problem (
+82
+) is equal to the problem (
+69
+), which means that (
+81
+)-(
+83
+) characterize the optimal
+p
+θ
+(
+⋅
+|
+c
+)
+p_{\theta}(\cdot|c)
+when
+β
+~
+\tilde{\beta}
+is chosen according to (
+85
+).
+Next, we focus on the problem (
+83
+). We define
+ℰ
+β
+~
+\mathcal{E}_{\tilde{\beta}}
+as the following class of energy functions:
+ℰ
+β
+~
+=
+{
+E
+:
+𝒱
+G
+→
+ℝ
+|
+∃
+χ
+∈
+ℝ
+d
+,
+s
+.
+t
+.
+∥
+χ
+∥
+2
+≤
+β
+~
+,
+and
+∀
+x
+∈
+𝒱
+G
+,
+E
+(
+x
+)
+=
+χ
+⊤
+ϕ
+c
+(
+x
+)
+}
+=
+{
+E
+:
+𝒱
+G
+→
+ℝ
+|
+∃
+h
+∈
+ℝ
+d
+,
+s
+.
+t
+.
+∥
+h
+∥
+2
+≤
+1
+,
+and
+∀
+x
+∈
+𝒱
+G
+,
+E
+(
+x
+)
+=
+β
+~
+h
+⊤
+ϕ
+c
+(
+x
+)
+}
+,
+\displaystyle\begin{split}\mathcal{E}_{\tilde{\beta}}&=\{E:\mathcal{V}^{G}\to\mathbb{R}\,|\,\exists\chi\in\mathbb{R}^{d},\mathrm{s.t.}\|\chi\|_{2}\leq\tilde{\beta},\mathrm{and}\,\forall x\in\mathcal{V}^{G},\,E(x)=\chi^{\top}\phi_{c}(x)\}\\
+&=\{E:\mathcal{V}^{G}\to\mathbb{R}\,|\,\exists h\in\mathbb{R}^{d},\mathrm{s.t.}\|h\|_{2}\leq 1,\mathrm{and}\,\forall x\in\mathcal{V}^{G},\,E(x)=\tilde{\beta}h^{\top}\phi_{c}(x)\},\end{split}
+(86)
+and given
+χ
+∈
+ℝ
+d
+\chi\in\mathbb{R}^{d}
+, we define
+ρ
+χ
+,
+ρ
+h
+(
+β
+~
+)
+∈
+𝒫
+⁡
+(
+𝒱
+G
+)
+\rho_{\chi},\rho^{(\tilde{\beta})}_{h}\in\mathcal{P}(\mathcal{V}^{G})
+as
+ρ
+χ
+​
+(
+y
+)
+=
+π
+⁡
+(
+y
+|
+c
+)
+​
+exp
+⁡
+(
+−
+χ
+⊤
+​
+ϕ
+c
+​
+(
+y
+)
+)
+𝔼
+y
+′
+∼
+π
+(
+⋅
+|
+c
+)
+[
+exp
+(
+−
+χ
+⊤
+ϕ
+c
+(
+y
+′
+)
+)
+]
+,
+ρ
+h
+(
+β
+~
+)
+​
+(
+y
+)
+=
+π
+⁡
+(
+y
+|
+c
+)
+​
+exp
+⁡
+(
+−
+β
+~
+​
+χ
+⊤
+​
+ϕ
+c
+​
+(
+y
+)
+)
+𝔼
+y
+′
+∼
+π
+(
+⋅
+|
+c
+)
+[
+exp
+(
+−
+β
+~
+χ
+⊤
+ϕ
+c
+(
+y
+′
+)
+)
+]
+.
+\displaystyle\rho_{\chi}(y)=\frac{\pi(y|c)\exp\big(-\chi^{\top}\phi_{c}(y)\big)}{\mathbb{E}_{y^{\prime}\sim\pi(\cdot|c)}\big[\exp\big(-\chi^{\top}\phi_{c}(y^{\prime})\big)\big]},\qquad\rho^{(\tilde{\beta})}_{h}(y)=\frac{\pi(y|c)\exp\big(-\tilde{\beta}\chi^{\top}\phi_{c}(y)\big)}{\mathbb{E}_{y^{\prime}\sim\pi(\cdot|c)}\big[\exp\big(-\tilde{\beta}\chi^{\top}\phi_{c}(y^{\prime})\big)\big]}.
+(87)
+We rewrite the problem (
+83
+) as
+max
+h
+∈
+ℝ
+d
+‖
+h
+‖
+2
+≤
+1
+−
+(
+1
+α
+−
+1
+)
+𝔼
+y
+∼
+p
+(
+⋅
+|
+c
+)
+[
+ϕ
+c
+(
+y
+)
+]
+⊤
+h
+−
+𝔼
+y
+∼
+p
+(
+⋅
+|
+c
+)
+[
+ϕ
+c
+(
+y
+)
+]
+⊤
+h
+−
+1
+β
+~
+log
+𝔼
+y
+∼
+π
+(
+⋅
+|
+c
+)
+[
+exp
+(
+−
+β
+~
+ϕ
+c
+(
+y
+)
+⊤
+h
+)
+]
+=
+max
+h
+∈
+ℝ
+d
+‖
+h
+‖
+2
+≤
+1
+−
+(
+1
+α
+−
+1
+)
+𝔼
+y
+∼
+p
+(
+⋅
+|
+c
+)
+[
+ϕ
+c
+(
+y
+)
+]
+⊤
+h
++
+1
+β
+~
+𝔼
+y
+∼
+p
+(
+⋅
+|
+c
+)
+[
+log
+ρ
+h
+(
+β
+~
+)
+​
+(
+y
+)
+π
+⁡
+(
+y
+|
+c
+)
+]
+=
+max
+h
+∈
+ℝ
+d
+‖
+h
+‖
+2
+≤
+1
+−
+(
+1
+α
+−
+1
+)
+𝔼
+y
+∼
+p
+(
+⋅
+|
+c
+)
+[
+ϕ
+c
+(
+y
+)
+]
+⊤
+h
++
+1
+β
+~
+𝔼
+y
+∼
+p
+(
+⋅
+|
+c
+)
+[
+log
+ρ
+(
+β
+~
+)
+h
+(
+y
+)
+]
++
+const
+.
+\displaystyle\begin{split}&\max_{\begin{subarray}{c}h\in\mathbb{R}^{d}\\
+\|h\|_{2}\leq 1\end{subarray}}-\big({\textstyle\frac{1}{\alpha}}-1\big)\mathbb{E}_{y\sim p(\cdot|c)}[\phi_{c}(y)]^{\top}h-\mathbb{E}_{y\sim p(\cdot|c)}[\phi_{c}(y)]^{\top}h-{\textstyle\frac{1}{\tilde{\beta}}}\log\mathbb{E}_{y\sim\pi(\cdot|c)}\big[\exp\big(-\tilde{\beta}\phi_{c}(y)^{\top}h\big)\big]\\
+&=\max_{\begin{subarray}{c}h\in\mathbb{R}^{d}\\
+\|h\|_{2}\leq 1\end{subarray}}-\big({\textstyle\frac{1}{\alpha}}-1\big)\mathbb{E}_{y\sim p(\cdot|c)}[\phi_{c}(y)]^{\top}h+\frac{1}{\tilde{\beta}}\mathbb{E}_{y\sim p(\cdot|c)}\Big[\log\frac{\rho^{(\tilde{\beta})}_{h}(y)}{\pi(y|c)}\Big]\\
+&=\max_{\begin{subarray}{c}h\in\mathbb{R}^{d}\\
+\|h\|_{2}\leq 1\end{subarray}}-\big({\textstyle\frac{1}{\alpha}}-1\big)\mathbb{E}_{y\sim p(\cdot|c)}[\phi_{c}(y)]^{\top}h+\frac{1}{\tilde{\beta}}\mathbb{E}_{y\sim p(\cdot|c)}\Big[\log\rho^{(\tilde{\beta})}_{h}(y)\Big]+\mathrm{const}.\end{split}
+(88)
+Writing the right-hand side problem in terms of
+χ
+\chi
+instead of
+h
+h
+, and multiplying the objective by
+β
+~
+\tilde{\beta}
+, yields the problem in (
+77
+).
+∎
+Appendix E
+Computing the REINFORCE gradient and the RLOO baseline for EBFT
+We derive the REINFORCE gradient first. Rewriting
+ℒ
+~
+FM
+​
+(
+θ
+,
+c
+,
+y
+)
+\tilde{\mathcal{L}}_{\mathrm{FM}}(\theta;c,y)
+explicitly in terms of
+p
+θ
+p_{\theta}
+, and using that
+y
+^
+\hat{y}
+,
+y
+~
+\tilde{y}
+play a symmetric role, we have the following:
+∇
+θ
+ℒ
+~
+FM
+​
+(
+θ
+,
+c
+,
+y
+)
+=
+∇
+θ
+(
+∑
+y
+^
+,
+y
+~
+p
+θ
+​
+(
+y
+^
+|
+c
+)
+​
+p
+θ
+​
+(
+y
+~
+|
+c
+)
+​
+ϕ
+c
+​
+(
+y
+^
+)
+⊤
+​
+ϕ
+c
+​
+(
+y
+~
+)
+−
+2
+​
+∑
+y
+^
+p
+θ
+​
+(
+y
+^
+|
+c
+)
+​
+ϕ
+c
+​
+(
+y
+^
+)
+⊤
+​
+ϕ
+c
+​
+(
+y
+)
+)
+=
+∑
+y
+^
+,
+y
+~
+(
+∇
+θ
+​
+log
+​
+p
+θ
+​
+(
+y
+^
+|
+c
+)
++
+∇
+θ
+​
+log
+​
+p
+θ
+​
+(
+y
+~
+|
+c
+)
+)
+​
+p
+θ
+​
+(
+y
+^
+|
+c
+)
+​
+p
+θ
+​
+(
+y
+~
+|
+c
+)
+​
+ϕ
+c
+​
+(
+y
+^
+)
+⊤
+​
+ϕ
+c
+​
+(
+y
+~
+)
+−
+2
+​
+∑
+y
+^
+∇
+θ
+​
+log
+​
+p
+θ
+​
+(
+y
+^
+|
+c
+)
+​
+p
+θ
+​
+(
+y
+^
+|
+c
+)
+​
+ϕ
+c
+​
+(
+y
+^
+)
+⊤
+​
+ϕ
+c
+​
+(
+y
+)
+=
+2
+𝔼
+y
+^
+,
+y
+~
+∼
+p
+θ
+(
+⋅
+|
+c
+)
+[
+∇
+log
+p
+θ
+(
+y
+^
+|
+c
+)
+ϕ
+c
+(
+y
+^
+)
+⊤
+ϕ
+c
+(
+y
+~
+)
+]
+−
+2
+𝔼
+y
+^
+∼
+p
+θ
+(
+⋅
+|
+c
+)
+[
+∇
+log
+p
+θ
+(
+y
+^
+|
+c
+)
+ϕ
+c
+(
+y
+^
+)
+⊤
+ϕ
+c
+(
+y
+)
+]
+.
+\displaystyle\begin{split}&\nabla_{\theta}\tilde{\mathcal{L}}_{\mathrm{FM}}(\theta;c,y)\\
+&=\!\nabla_{\theta}\Big(\sum_{\hat{y},\tilde{y}}p_{\theta}(\hat{y}|c)p_{\theta}(\tilde{y}|c)\phi_{c}(\hat{y})^{\top}\phi_{c}(\tilde{y})-2\sum_{\hat{y}}p_{\theta}(\hat{y}|c)\phi_{c}(\hat{y})^{\top}\phi_{c}(y)\Big)\\
+&=\!\sum_{\hat{y},\tilde{y}}\Big(\nabla_{\theta}\log p_{\theta}(\hat{y}|c)+\nabla_{\theta}\log p_{\theta}(\tilde{y}|c)\Big)p_{\theta}(\hat{y}|c)p_{\theta}(\tilde{y}|c)\phi_{c}(\hat{y})^{\top}\phi_{c}(\tilde{y})-2\sum_{\hat{y}}\nabla_{\theta}\log p_{\theta}(\hat{y}|c)p_{\theta}(\hat{y}|c)\phi_{c}(\hat{y})^{\top}\phi_{c}(y)\\
+&=\!2\mathbb{E}_{\hat{y},\tilde{y}\sim p_{\theta}(\cdot|c)}\!\Big[\nabla\log p_{\theta}(\hat{y}|c)\phi_{c}(\hat{y})^{\top}\!\phi_{c}(\tilde{y})\Big]-2\mathbb{E}_{\hat{y}\sim p_{\theta}(\cdot|c)}\Big[\nabla\log p_{\theta}(\hat{y}|c)\phi_{c}(\hat{y})^{\top}\phi_{c}(y)\Big].\end{split}
+(89)
+Next, we derive the RLOO baseline. Define
+T
+1
+(
+j
+)
+=
+2
+​
+ϕ
+c
+​
+(
+y
+^
+j
+)
+⊤
+​
+ϕ
+c
+​
+(
+y
+)
+,
+T
+2
+(
+j
+)
+=
+2
+n
+−
+1
+​
+∑
+j
+′
+=
+1
+,
+j
+′
+≠
+j
+n
+ϕ
+c
+​
+(
+y
+^
+j
+)
+⊤
+​
+ϕ
+c
+​
+(
+y
+^
+j
+′
+)
+,
+\displaystyle T_{1}^{(j)}=2\phi_{c}(\hat{y}_{j})^{\top}\phi_{c}(y),\qquad T_{2}^{(j)}=\frac{2}{n\!-\!1}\!\!\sum_{j^{\prime}=1,j^{\prime}\neq j}^{n}\!\!\phi_{c}(\hat{y}_{j})^{\top}\phi_{c}(\hat{y}_{j^{\prime}}),
+(90)
+which means that we can rewrite the REINFORCE gradient (
+7
+)
+as
+−
+1
+n
+∑
+j
+=
+1
+n
+∇
+log
+p
+θ
+(
+Y
+(
+j
+)
+|
+c
+)
+(
+T
+1
+(
+j
+)
+−
+T
+2
+(
+j
+)
+)
+.
+\displaystyle-\frac{1}{n}\sum_{j=1}^{n}\nabla\log p_{\theta}(Y^{(j)}|c)\big(T_{1}^{(j)}-T_{2}^{(j)}\big).
+(91)
+We want to use a baseline
+b
+(
+j
+)
+b^{(j)}
+to reduce the variance of the gradient estimate (
+91
+). That is, the estimate with baseline
+b
+(
+j
+)
+b^{(j)}
+reads
+−
+1
+n
+∑
+j
+=
+1
+n
+∇
+log
+p
+θ
+(
+Y
+(
+j
+)
+|
+c
+)
+(
+T
+1
+(
+j
+)
+−
+T
+2
+(
+j
+)
+−
+b
+(
+j
+)
+)
+.
+\displaystyle-\frac{1}{n}\sum_{j=1}^{n}\nabla\log p_{\theta}(Y^{(j)}|c)\big(T_{1}^{(j)}-T_{2}^{(j)}-b^{(j)}\big).
+(92)
+For the baselined gradient estimate to be unbiased, we need that
+b
+(
+j
+)
+b^{(j)}
+is independent of
+Y
+(
+j
+)
+Y^{(j)}
+.
+A naive RLOO baseline would be
+b
+(
+j
+)
+=
+1
+N
+−
+1
+​
+∑
+j
+′
+=
+1
+,
+j
+′
+≠
+j
+N
+(
+T
+1
+(
+j
+′
+)
+−
+T
+2
+(
+j
+′
+)
+)
+b^{(j)}=\frac{1}{N-1}\sum_{j^{\prime}=1,j^{\prime}\neq j}^{N}\big(T_{1}^{(j^{\prime})}-T_{2}^{(j^{\prime})}\big)
+, i.e. simply averaging the rewards for all rollouts except the
+j
+j
+-th one. However, the terms
+T
+2
+(
+j
+′
+)
+T_{2}^{(j^{\prime})}
+are not independent of
+Y
+(
+j
+)
+Y^{(j)}
+, which means that this baseline is not independent of
+Y
+(
+j
+)
+Y^{(j)}
+. To obtain an independent baseline, we need to replace
+T
+2
+(
+j
+′
+)
+T_{2}^{(j^{\prime})}
+by
+T
+2
+(
+j
+′
+,
+j
+)
+T_{2}^{(j^{\prime},j)}
+, defined as
+T
+2
+(
+j
+′
+,
+j
+)
+=
+2
+n
+−
+2
+​
+∑
+j
+′′
+=
+1
+,
+j
+′′
+≠
+j
+′
+,
+j
+n
+ϕ
+c
+​
+(
+y
+^
+j
+′′
+)
+⊤
+​
+ϕ
+c
+​
+(
+y
+^
+j
+′
+)
+=
+2
+n
+−
+2
+​
+(
+∑
+j
+′′
+=
+1
+,
+j
+′′
+≠
+j
+′
+n
+φ
+​
+(
+c
+:
+y
+^
+j
+′′
+)
+⊤
+​
+φ
+​
+(
+c
+:
+y
+^
+j
+′
+)
+−
+φ
+​
+(
+c
+:
+y
+^
+j
+)
+⊤
+​
+φ
+​
+(
+c
+:
+y
+^
+j
+′
+)
+)
+=
+n
+−
+1
+n
+−
+2
+​
+T
+2
+(
+j
+′
+)
+−
+2
+n
+−
+2
+​
+φ
+​
+(
+c
+:
+y
+^
+j
+)
+⊤
+​
+φ
+​
+(
+c
+:
+y
+^
+j
+′
+)
+.
+\displaystyle\begin{split}T_{2}^{(j^{\prime},j)}&=\frac{2}{n-2}\sum_{j^{\prime\prime}=1,\,j^{\prime\prime}\neq j^{\prime},j}^{n}\phi_{c}(\hat{y}_{j^{\prime\prime}})^{\top}\phi_{c}(\hat{y}_{j^{\prime}})=\frac{2}{n-2}\Big(\sum_{j^{\prime\prime}=1,j^{\prime\prime}\neq j^{\prime}}^{n}\varphi(c\!:\!\hat{y}_{j^{\prime\prime}})^{\top}\varphi(c\!:\!\hat{y}_{j^{\prime}})-\varphi(c\!:\!\hat{y}_{j})^{\top}\varphi(c\!:\!\hat{y}_{j^{\prime}})\Big)\\
+&=\frac{n-1}{n-2}T_{2}^{(j^{\prime})}-\frac{2}{n-2}\varphi(c\!:\!\hat{y}_{j})^{\top}\varphi(c\!:\!\hat{y}_{j^{\prime}}).\end{split}
+(93)
+Thus, the baseline that we end up with is:
+b
+(
+j
+)
+=
+1
+n
+−
+1
+​
+∑
+j
+′
+=
+1
+,
+j
+′
+≠
+j
+n
+(
+T
+1
+(
+j
+′
+)
+−
+T
+2
+(
+j
+′
+)
+)
+=
+1
+n
+−
+1
+​
+∑
+j
+′
+=
+1
+,
+j
+′
+≠
+j
+n
+(
+T
+1
+(
+j
+′
+)
+−
+(
+n
+−
+1
+n
+−
+2
+​
+T
+2
+(
+j
+′
+)
+−
+2
+n
+−
+2
+​
+ϕ
+​
+(
+Y
+(
+j
+)
+)
+⊤
+​
+ϕ
+​
+(
+Y
+(
+j
+′
+)
+)
+)
+)
+=
+1
+n
+−
+1
+​
+∑
+j
+′
+=
+1
+,
+j
+′
+≠
+j
+n
+T
+1
+(
+j
+′
+)
+−
+1
+n
+−
+2
+​
+∑
+j
+′
+=
+1
+,
+j
+′
+≠
+j
+n
+T
+2
+(
+j
+′
+)
++
+1
+n
+−
+2
+​
+T
+2
+(
+j
+)
+.
+\displaystyle\begin{split}b^{(j)}&=\frac{1}{n-1}\sum_{j^{\prime}=1,j^{\prime}\neq j}^{n}\big(T_{1}^{(j^{\prime})}-T_{2}^{(j^{\prime})}\big)\\
+&=\frac{1}{n-1}\sum_{j^{\prime}=1,j^{\prime}\neq j}^{n}\Big(T_{1}^{(j^{\prime})}-\Big(\frac{n-1}{n-2}T_{2}^{(j^{\prime})}-\frac{2}{n-2}\phi(Y^{(j)})^{\top}\phi(Y^{(j^{\prime})})\Big)\Big)\\
+&=\frac{1}{n-1}\sum_{j^{\prime}=1,j^{\prime}\neq j}^{n}T_{1}^{(j^{\prime})}-\frac{1}{n-2}\sum_{j^{\prime}=1,j^{\prime}\neq j}^{n}T_{2}^{(j^{\prime})}+\frac{1}{n-2}T_{2}^{(j)}.\end{split}
+(94)
+Appendix F
+Details on the strided parallel rollout procedure
+Sampling from a single, unstructured sequence provides only one supervision point and is a major bottleneck for EBFT, particularly because each sample must be embedded via forward passes through a separate feature network. Instead, we treat a single training sequence as a source of multiple nested prompts by identifying many anchor points along the text. Sampling from these points sequentially is prohibitively expensive, so we implement a novel parallel generation pipeline that simultaneously samples from different anchor points in one forward pass, similar to the custom attention mask approach introduced by Quiet-STaR
+(
+Zelikman et al., 2024
+)
+.
+Given a starting sequence
+x
+0
+:
+T
+−
+1
+x_{0:T-1}
+of length
+T
+T
+, a stride
+s
+s
+, and a generation length
+G
+G
+, we construct a set of nested prompts by segmenting
+x
+0
+:
+T
+−
+1
+x_{0:T-1}
+every
+s
+s
+tokens. This yields
+B
+=
+⌊
+T
+−
+G
+s
+⌋
+B=\lfloor\frac{T-G}{s}\rfloor
+nested prompts. For each prompt
+c
+b
+=
+x
+0
+:
+b
+​
+s
+(
+b
+=
+1
+,
+…
+,
+B
+)
+c_{b}=x_{0:bs}\quad(b=1,\ldots,B)
+, we take the next
+G
+G
+tokens in the original sequence
+x
+x
+as the ground-truth continuation
+y
+b
+y_{b}
+, yielding
+{
+(
+c
+b
+,
+y
+b
+)
+}
+b
+=
+1
+B
+\{(c_{b},y_{b})\}_{b=1}^{B}
+ground truth context and completion pairs. Additionally, from each prompt, we sample a continuation
+y
+^
+b
+\hat{y}_{b}
+of length
+G
+G
+. Using our custom mask, we can sample one token from each prefix in just one forward pass. We can then obtain
+{
+y
+^
+b
+}
+b
+=
+1
+B
+\{\hat{y}_{b}\}_{b=1}^{B}
+length
+G
+G
+model completions in
+G
+G
+forward passes.
+The resulting
+B
+​
+G
+BG
+generated tokens are appended in generation order; for example, with
+B
+=
+3
+B=3
+and
+G
+=
+2
+G=2
+:
+[
+y
+^
+1
+,
+0
+,
+y
+^
+2
+,
+0
+,
+y
+^
+3
+,
+0
+,
+y
+^
+1
+,
+1
+,
+y
+^
+2
+,
+1
+,
+y
+^
+3
+,
+1
+]
+.
+[\hat{y}_{1,0},\hat{y}_{2,0},\hat{y}_{3,0},\;\hat{y}_{1,1},\hat{y}_{2,1},\hat{y}_{3,1}].
+This interleaving supports an efficient reshape into per-block windows for downstream scoring and feature extraction.
+In particular, we exploit the same strided structure to compute features for all generated blocks (and their ground-truth counterparts) with a single batched call to the feature network, followed by a reshape/indexing step to recover per-block embeddings.
+Figure
+9
+shows a sketch of the strided parallel rollout procedure for a sequence of length
+L
+=
+12
+L=12
+, stride
+S
+=
+4
+S=4
+and completion length
+G
+=
+4
+G=4
+, which means that
+B
+=
+⌊
+(
+12
+−
+4
+)
+/
+4
+⌋
+=
+2
+B=\lfloor(12-4)/4\rfloor=2
+context-completion pairs are used:
+c
+1
+=
+(
+t
+i
+)
+i
+=
+0
+3
+c_{1}=(t_{i})_{i=0}^{3}
+,
+y
+1
+=
+(
+t
+i
+)
+i
+=
+4
+7
+y_{1}=(t_{i})_{i=4}^{7}
+; and
+c
+2
+=
+(
+t
+i
+)
+i
+=
+0
+7
+c_{2}=(t_{i})_{i=0}^{7}
+,
+y
+2
+=
+(
+t
+i
+)
+i
+=
+8
+11
+y_{2}=(t_{i})_{i=8}^{11}
+. The ground truth sequence is in blue, and the generated completions are in red and green:
+y
+^
+1
+=
+(
+t
+i
+​
+a
+)
+i
+=
+4
+7
+\hat{y}_{1}=(t_{i\,a})_{i=4}^{7}
+,
+y
+^
+2
+=
+(
+t
+i
+​
+b
+)
+i
+=
+8
+11
+\hat{y}_{2}=(t_{i\,b})_{i=8}^{11}
+.
+Figure 9
+:
+Strided parallel rollouts for a sequence of length
+L
+=
+12
+L=12
+, stride
+S
+=
+4
+S=4
+and completion length
+G
+=
+4
+G=4
+.
+The algorithm to obtain the generated completions
+y
+^
+1
+\hat{y}_{1}
+and
+y
+^
+2
+\hat{y}_{2}
+involves four model calls to
+p
+θ
+p_{\theta}
+.
+Figure
+9
+shows a sketch of the generated tokens using the strided parallel rollout procedure, and
+Figure
+10
+shows the custom attention matrix for the fourth call (the horizontal and vertical lines show the three top left custom matrices used for the first three calls).
+−
+[
+0
+∞
+∞
+∞
+∞
+∞
+∞
+∞
+∞
+∞
+∞
+∞
+∞
+∞
+0
+0
+∞
+∞
+∞
+∞
+∞
+∞
+∞
+∞
+∞
+∞
+∞
+∞
+0
+0
+0
+∞
+∞
+∞
+∞
+∞
+∞
+∞
+∞
+∞
+∞
+∞
+0
+0
+0
+0
+∞
+∞
+∞
+∞
+∞
+∞
+∞
+∞
+∞
+∞
+0
+0
+0
+0
+0
+∞
+∞
+∞
+∞
+∞
+∞
+∞
+∞
+∞
+0
+0
+0
+0
+0
+0
+∞
+∞
+∞
+∞
+∞
+∞
+∞
+∞
+0
+0
+0
+0
+0
+0
+0
+∞
+∞
+∞
+∞
+∞
+∞
+∞
+0
+0
+0
+0
+0
+0
+0
+0
+∞
+∞
+∞
+∞
+∞
+∞
+0
+0
+0
+0
+∞
+∞
+∞
+∞
+0
+∞
+∞
+∞
+∞
+∞
+0
+0
+0
+0
+0
+0
+0
+0
+∞
+0
+∞
+∞
+∞
+∞
+0
+0
+0
+0
+∞
+∞
+∞
+∞
+0
+∞
+0
+∞
+∞
+∞
+0
+0
+0
+0
+0
+0
+0
+0
+∞
+0
+∞
+0
+∞
+∞
+0
+0
+0
+0
+∞
+∞
+∞
+∞
+0
+∞
+0
+∞
+0
+∞
+0
+0
+0
+0
+0
+0
+0
+0
+∞
+0
+∞
+0
+∞
+0
+]
+\displaystyle-\left[\begin{array}[]{cccccccc|cc|cc|cc}0&\infty&\infty&\infty&\infty&\infty&\infty&\infty&\infty&\infty&\infty&\infty&\infty&\infty\\
+0&0&\infty&\infty&\infty&\infty&\infty&\infty&\infty&\infty&\infty&\infty&\infty&\infty\\
+0&0&0&\infty&\infty&\infty&\infty&\infty&\infty&\infty&\infty&\infty&\infty&\infty\\
+0&0&0&0&\infty&\infty&\infty&\infty&\infty&\infty&\infty&\infty&\infty&\infty\\
+0&0&0&0&0&\infty&\infty&\infty&\infty&\infty&\infty&\infty&\infty&\infty\\
+0&0&0&0&0&0&\infty&\infty&\infty&\infty&\infty&\infty&\infty&\infty\\
+0&0&0&0&0&0&0&\infty&\infty&\infty&\infty&\infty&\infty&\infty\\
+0&0&0&0&0&0&0&0&\infty&\infty&\infty&\infty&\infty&\infty\\
+\hline\cr 0&0&0&0&\infty&\infty&\infty&\infty&0&\infty&\infty&\infty&\infty&\infty\\
+0&0&0&0&0&0&0&0&\infty&0&\infty&\infty&\infty&\infty\\
+\hline\cr 0&0&0&0&\infty&\infty&\infty&\infty&0&\infty&0&\infty&\infty&\infty\\
+0&0&0&0&0&0&0&0&\infty&0&\infty&0&\infty&\infty\\
+\hline\cr 0&0&0&0&\infty&\infty&\infty&\infty&0&\infty&0&\infty&0&\infty\\
+0&0&0&0&0&0&0&0&\infty&0&\infty&0&\infty&0\\
+\end{array}\right]
+Figure 10
+:
+Custom attention matrix
+A
+A
+in for a sequence of length
+L
+=
+12
+L=12
+, stride
+S
+=
+4
+S=4
+and completion length
+G
+=
+4
+G=4
+. When the entry
+A
+i
+​
+j
+A_{ij}
+is 0, the token in position
+i
+i
+attends to the token in position
+j
+j
+, and when it is
+−
+∞
+-\infty
+it does not.
+Appendix G
+Additional Experimental Details
+We build our EBFT method on top of the OpenRLHF
+(
+Hu et al., 2024
+)
+framework, as well as use the OpenRLHF implementation of SFT and GRPO for our baselines. We use an internal cluster of 80GB H100 GPUs to conduct SFT, RLVR, and EBFT training runs. For Q&A code, a single epoch of SFT training takes 0.5 hours to run on a single 80GB H100, whereas a single epoch of RLVR using
+vllm
+training takes roughly 28 hours to run on two 80GB H100s, and a single epoch of EBFT training with our under-optimized implementation (without
+vllm
+) takes roughly 36 hours.
+Parameter
+Value
+Q&A Code
+Unstructured Code
+Translation
+Rollout Batch Size
+16
+Sequence Length
+1024
+Completion Length
+8
+8
+4
+Stride
+8
+8
+2
+Actor Learning Rate
+1
+×
+10
+−
+6
+1\times 10^{-6}
+Temperature
+0.6
+KL Coefficient
+0
+Samples per Prompt
+4
+Training Batch Size
+rollout_batch_size
+×
+\times
+samples_per_prompt
+= 64
+Warmup
+0.03
+Adam Betas
+(0.9, 0.95)
+Num Epochs
+1
+Table 2
+:
+Hyperparameter Configuration for EBFT runs.
+Hyperparameter details for the SFT training runs are provided in Table
+3
+for the warmstarted models (initialization for EBFT/RLVR) and in Table
+4
+for the five-epoch SFT baseline runs. We sweep over learning rate scheduler as well as training batch size for each task.
+Parameter
+Value
+Training Batch Size
+64
+Epochs
+1
+Max Length
+2048
+Learning Rate
+1
+×
+10
+−
+5
+1\times 10^{-5}
+Scheduler
+Warmup + Cosine Decay to 0.1
+×
+\times
+lr
+Warmup
+0.03
+Table 3
+:
+Hyperparameter Configuration for SFT warmstart runs.
+Parameter
+Value
+Q&A Code
+Unstructured Code
+Translation
+Training Batch Size
+{64, 128}
+Max Length
+2048
+(Learning Rate, Scheduler)
+{(
+5
+×
+10
+−
+6
+5\times 10^{-6}
+, Warmup + Constant), (
+1
+×
+10
+−
+5
+1\times 10^{-5}
+, Warmup + Cosine Decay)}
+Warmup
+0.03
+Adam Betas
+(0.9, 0.95)
+Num Epochs
+5
+Table 4
+:
+Hyperparameter Configuration for SFT baseline runs.
+Hyperparameters for RLVR training runs are provided in Table
+5
+. For RLVR, we fix training to be online and determine rollout batch size by roughly equating number of examples seen per step across both RLVR and EBFT for each task, sweeping over two values.
+Parameter
+Value
+Q&A Code
+Translation
+Rollout Batch Size
+{32, 64}
+{128, 256}
+Prompt Max Length
+1024
+Generate Max Length
+1024
+Actor Learning Rate
+1
+×
+10
+−
+6
+1\times 10^{-6}
+Temperature
+1.0
+KL Coefficient
+0
+Samples per Prompt
+8
+Training Batch Size
+rollout_batch_size
+×
+\times
+samples_per_prompt
+Warmup
+0.03
+Adam Betas
+(0.9, 0.95)
+Num Epochs
+1
+Table 5
+:
+Hyperparameter Configuration for RLVR baseline runs.
+Q&A Coding
+CE Q&A
+HumanEval
+MBPP
+Multipl-E
+Method
+greedy
+pass@1
+pass@4
+pass@16
+greedy
+pass@1
+pass@4
+pass@16
+greedy
+pass@1
+pass@4
+pass@16
+Base
+0.524
+0.348
+0.324
+0.490
+0.622
+0.599
+0.514
+0.703
+0.782
+0.506
+0.433
+0.626
+0.742
+Warm start
+0.571
+0.415
+0.385
+0.540
+0.665
+0.595
+0.527
+0.691
+0.774
+0.440
+0.408
+0.602
+0.731
+SFT
+0.408
+0.457
+0.427
+0.578
+0.713
+0.576
+0.558
+0.701
+0.790
+0.465
+0.406
+0.596
+0.723
+EBFT
+0.326
+0.494
+0.448
+0.616
+0.750
+0.650
+0.603
+0.728
+0.813
+0.524
+0.488
+0.645
+0.753
+EBFT (ws.)
+0.337
+0.512
+0.500
+0.642
+0.756
+0.638
+0.584
+0.727
+0.817
+0.476
+0.452
+0.621
+0.734
+RLVR
+0.806
+0.451
+0.443
+0.602
+0.695
+0.623
+0.583
+0.722
+0.794
+0.531
+0.502
+0.658
+0.767
+RLVR (ws.)
+0.713
+0.482
+0.516
+0.640
+0.738
+0.607
+0.596
+0.712
+0.782
+0.484
+0.475
+0.632
+0.729
+Unstructured Coding
+HumanEval
+MBPP
+Method
+greedy
+pass@1
+pass@4
+pass@16
+greedy
+pass@1
+pass@4
+pass@16
+Base
+0.348
+0.324
+0.490
+0.622
+0.599
+0.514
+0.703
+0.782
+Warm start
+0.463
+0.419
+0.586
+0.707
+0.553
+0.497
+0.690
+0.778
+SFT
+0.451
+0.417
+0.596
+0.707
+0.556
+0.516
+0.691
+0.786
+EBFT
+0.500
+0.465
+0.610
+0.726
+0.611
+0.583
+0.718
+0.813
+EBFT (ws.)
+0.512
+0.478
+0.629
+0.726
+0.572
+0.550
+0.704
+0.813
+Translation
+CE Q&A
+WMT’22 - COMET
+MTNT - COMET
+OpenSubtitles - COMET
+Method
+greedy
+best-of-1
+best-of-4
+best-of-16
+greedy
+best-of-1
+best-of-4
+best-of-16
+greedy
+best-of-1
+best-of-4
+best-of-16
+Base
+2.567
+0.649
+0.611
+0.711
+0.757
+0.627
+0.590
+0.679
+0.724
+0.658
+0.630
+0.712
+0.753
+Warm start
+2.648
+0.733
+0.712
+0.776
+0.807
+0.705
+0.683
+0.759
+0.796
+0.696
+0.677
+0.742
+0.776
+SFT
+2.692
+0.747
+0.722
+0.784
+0.815
+0.703
+0.683
+0.755
+0.792
+0.701
+0.682
+0.745
+0.777
+EBFT
+2.399
+0.740
+0.725
+0.777
+0.804
+0.737
+0.728
+0.778
+0.808
+0.700
+0.691
+0.742
+0.775
+EBFT (ws.)
+2.451
+0.753
+0.741
+0.788
+0.812
+0.742
+0.732
+0.782
+0.810
+0.708
+0.699
+0.749
+0.779
+RLVR
+3.225
+0.704
+0.698
+0.743
+0.769
+0.705
+0.698
+0.745
+0.772
+0.684
+0.679
+0.718
+0.741
+RLVR (ws.)
+3.148
+0.738
+0.730
+0.771
+0.794
+0.727
+0.721
+0.765
+0.789
+0.708
+0.703
+0.740
+0.762
+WMT’22 - BLEU
+MTNT - BLEU
+OpenSubtitles - BLEU
+Method
+greedy
+best-of-1
+best-of-4
+best-of-16
+greedy
+best-of-1
+best-of-4
+best-of-16
+greedy
+best-of-1
+best-of-4
+best-of-16
+Base
+0.069
+0.103
+0.166
+0.215
+0.073
+0.098
+0.154
+0.197
+0.081
+0.171
+0.238
+0.281
+Warm start
+0.185
+0.165
+0.235
+0.286
+0.159
+0.139
+0.200
+0.244
+0.129
+0.204
+0.264
+0.307
+SFT
+0.198
+0.172
+0.242
+0.294
+0.152
+0.139
+0.198
+0.242
+0.130
+0.205
+0.264
+0.305
+EBFT
+0.204
+0.187
+0.247
+0.289
+0.212
+0.175
+0.221
+0.258
+0.136
+0.219
+0.266
+0.305
+EBFT (ws.)
+0.217
+0.200
+0.253
+0.297
+0.202
+0.174
+0.219
+0.256
+0.142
+0.221
+0.270
+0.309
+RLVR
+0.192
+0.185
+0.223
+0.250
+0.202
+0.173
+0.206
+0.228
+0.135
+0.223
+0.249
+0.267
+RLVR (ws.)
+0.215
+0.206
+0.246
+0.275
+0.217
+0.186
+0.220
+0.243
+0.152
+0.240
+0.269
+0.289
+Table 6
+:
+Across all tasks, EBFT matches or outperforms both SFT and RLVR on downstream metrics while maintaining substantially lower cross-entropy, and warm starting improves performance for both EBFT and RLVR.
+On Q&A coding, EBFT achieves the best scores on HumanEval and MBPP, while RLVR is competitive on MultiPL-E. On unstructured coding, EBFT dominates across all benchmarks. On translation, EBFT (ws.) achieves the highest COMET scores on nearly every benchmark and leads on WMT’22 BLEU. RLVR (ws.) is competitive on MTNT and OpenSubtitles BLEU. Warm starting benefits both methods across all tasks. Notably, RLVR consistently degrades cross-entropy relative to the base model (e.g. 3.225 vs. 2.567 on translation), whereas EBFT improves it, suggesting that EBFT better preserves the model’s language modeling capabilities while improving task performance.
+Appendix H
+Additional Experimental Results
+H.1
+Sweeping across
+γ
+\gamma
+,
+α
+\alpha
+and warm-starting
+Figures
+11
+,
+12
+,
+13
+and
+14
+show 9 EBFT runs with
+α
+∈
+{
+0
+,
+0.5
+,
+1
+}
+\alpha\in\{0,0.5,1\}
+and
+γ
+∈
+{
+0
+,
+0.03
+,
+0.1
+}
+\gamma\in\{0,0.03,0.1\}
+on the Q&A Coding, Unstructured Coding and Translation tasks, in which the models are initialized from the base Qwen2.5-1.5B and Llama3.2-1B, respectively.
+The observations below apply generally across tasks. We include additional observations about the behavior in particular settings in the captions of each figure.
+Takeaways from the
+α
+\alpha
+,
+γ
+\gamma
+sweeps:
+α
+<
+1
+\alpha<1
+is prone to instability when
+γ
+=
+0
+\gamma=0
+, and increasing
+γ
+\gamma
+reduces the CE loss
+The choice
+(
+α
+,
+γ
+)
+=
+(
+1
+,
+0
+)
+(\alpha,\gamma)=(1,0)
+amounts to optimizing the pure feature-matching loss function
+ℒ
+FM
+\mathcal{L}_{\mathrm{FM}}
+; in this case the validation CE loss at a similar rate as for SFT, while the feature-matching loss decreases clearly faster, and the downstream performance is equal or better. The fact that pure FM beats SFT at reducing the CE loss may be attributed to FM with whitening optimizing a relaxation of the
+χ
+2
+\chi^{2}
+divergence (see
+Section
+2.3
+and
+Appendix
+B
+).
+When
+γ
+=
+0
+\gamma=0
+, and
+α
+∈
+{
+0
+,
+0.5
+}
+\alpha\in\{0,0.5\}
+, the CE loss increases during training, which is not unexpected because the corresponding loss function is not a proper scoring rule: its minimizer is not the ground truth distribution
+p
+p
+. In these settings, the FM loss decreases faster than when
+α
+\alpha
+is 1, even though we are optimizing a biased quantity, perhaps due to a bias-variance tradeoff of the gradient, and the downstream performance is slightly worse.
+Lastly, the CE loss gets reduced substantially with larger
+γ
+\gamma
+values both when
+α
+\alpha
+is 0.5 or 1.0, while the FM loss increases slightly with larger
+γ
+\gamma
+. The downstream performance is not affected substantially in either of the two cases.
+Warm-starting: EBFT is more robust to weak initializations than RLVR
+Looking at
+Table
+1
+, we can compare performance with and without warm-starting (running SFT for one epoch before initializing) for both EBFT and RLVR.
+Since both methods require sampling rollouts from the model, starting from a stronger model can in principle yield higher quality rollouts and improve RL gradients.
+However, the effect of warm-starting differs substantially between EBFT and RLVR. EBFT performs similarly with and without warm-starting, indicating that it is more robust to the quality of the initial model. In contrast, RLVR benefits heavily from warm-starting, and downstream performance and validation cross-entropy degrade significantly when initialized from weaker models. In summary, RLVR depends much more heavily on the capabilities of the initial model checkpoint.
+We hypothesize that this difference arises for two reasons. First, RLVR needs sufficiently accurate initial rollouts to produce a meaningful reward signal: poor initializations lead to sparse reward feedback.
+Second, RLVR introduces tension between reward maximization and maintaining low cross-entropy. In contrast, EBFT does not exhibit this conflict: it can simultaneously reduce the validation cross-entropy as much as SFT and improve downstream performance.
+Figure 11
+:
+On Q&A Coding, increasing the cross-entropy weight
+α
+\alpha
+consistently lowers both validation cross-entropy and feature-matching losses, while SFT on full sequences yields faster initial downstream gains that quickly degrade.
+We sweep
+α
+∈
+{
+0
+,
+0.5
+,
+1.0
+}
+\alpha\in\{0,0.5,1.0\}
+and
+γ
+∈
+{
+0
+,
+0.03
+,
+0.1
+}
+\gamma\in\{0,0.03,0.1\}
+for EBFT initialized from base Qwen2.5-1.5B. As a baseline, we compare against SFT trained on full sequences (solid red), whereas the main text reports SFT trained only on the answer. SFT on full sequences improves downstream performance faster early on but quickly deteriorates, and answer-level cross-entropy rises. Setting
+α
+=
+0
+\alpha=0
+and
+γ
+=
+0
+\gamma=0
+(blue dotted) causes both cross-entropy and moment-matching losses to increase and leads to degraded pass@1 and pass@
+k
+k
+scores, indicating that both terms are necessary for stable training. We also report feature-matching loss with and without whitening; the non-whitened variant tracks more closely with cross-entropy, which is why we use it for comparison. Overall, increasing
+α
+\alpha
+has limited effect on downstream metrics but helps decrease both the cross-entropy and moment-matching objectives. The validation set is a 1k-sample held-out subset of OpenCodeInstruct.
+Figure 12
+:
+On unstructured coding, EBFT achieves better downstream performance than SFT while reaching comparable levels on cross-entropy and feature-matching losses, even as downstream accuracy plateaus before these losses converge.
+We sweep
+α
+∈
+{
+0
+,
+0.5
+,
+1.0
+}
+\alpha\in\{0,0.5,1.0\}
+and
+γ
+∈
+{
+0
+,
+0.03
+,
+0.1
+}
+\gamma\in\{0,0.03,0.1\}
+for EBFT initialized from base Qwen2.5-1.5B. Cross-entropy and feature-matching losses continue to decrease throughout training even after downstream accuracy has plateaued, which we attribute to distribution shift between the training data and the downstream evaluation benchmarks. Setting
+α
+=
+0
+\alpha=0
+(blue dotted) again leads to diverging cross-entropy, confirming the importance of the cross-entropy term. SFT (solid red) achieves the lowest cross-entropy and feature-matching losses but at the cost of weaker downstream performance compared to EBFT configurations with
+γ
+>
+0
+\gamma>0
+. The validation set is a 1k-sample held-out subset of the unstructured coding data.
+Figure 13
+:
+On translation, EBFT matches or exceeds RLVR on downstream COMET scores—outperforming it on MTNT—while consistently surpassing SFT across all benchmarks and evaluation settings.
+We sweep
+α
+∈
+{
+0
+,
+0.5
+,
+1.0
+}
+\alpha\in\{0,0.5,1.0\}
+and
+γ
+∈
+{
+0
+,
+0.03
+,
+0.1
+}
+\gamma\in\{0,0.03,0.1\}
+for EBFT initialized from base Llama-3.2-1B. On WMT’22, EBFT performs comparably to or slightly below RLVR, while on MTNT it clearly outperforms RLVR, and on OpenSubtitles the two are similar. EBFT surpasses SFT across all benchmarks and decoding strategies (greedy, best-of-1/4/16). Unlike in the coding setting, using
+α
+=
+0
+\alpha=0
+and
+γ
+=
+0
+\gamma=0
+(blue dotted) leads to degraded downstream performance, indicating that both terms are important for translation. SFT is trained only on answers, as training on full sequences led to worse downstream results. On cross-entropy and feature-matching losses, EBFT achieves lower values than SFT, with larger
+γ
+\gamma
+configurations (green) reaching the best feature-matching levels. The legend is shared with the previous figures. The validation set is a 1k-sample held-out subset of ALMA.
+Figure 14
+:
+On translation BLEU scores, EBFT consistently outperforms both SFT and RLVR, while RLVR degrades at best-of-16 later in training—consistent with the distribution sharpening induced by RLVR.
+We report BLEU scores for the same
+α
+\alpha
+and
+γ
+\gamma
+sweep as the previous figure, initialized from base Llama-3.2-1B. Although RLVR is more competitive on BLEU than on COMET, EBFT still achieves higher scores across most benchmarks and decoding strategies. Notably, at best-of-16 (temp. 0.6), RLVR performance drops in the second half of training, suggesting that at large
+k
+k
+the model suffers from reduced sample diversity, consistent with the distribution sharpening induced by RLVR
+(
+Zhao et al., 2025
+)
+. EBFT configurations with
+γ
+>
+0
+\gamma>0
+do not exhibit this degradation and maintain stable or improving BLEU throughout training. The legend is shared with the previous figures.
+H.2
+Qualitative Analysis and Examples - Code
+We present representative HumanEval generations produced by the final checkpoint of the 2-epoch runs for EBFT, SFT, and RLVR, along with the base Qwen-2.5-1.5B model. Across examples, EBFT generations more often accurately follow the prompt and are more reliably executable (complete, syntactically valid Python without extraneous scaffolding). By contrast, the base model frequently defaults to underspecified heuristics or incomplete solutions (e.g., using non-overlapping primitives such as
+string.count
+), while SFT and RLVR more often violate edge-case semantics or produce outputs that fail under strict evaluation due to truncation, missing definitions (e.g., referencing
+is_prime
+without defining it), or non-code formatting/exposition that breaks executability. The figures below highlight these patterns across multiple HumanEval prompts.
+HumanEval/18: Count overlapping substring occurrences.
+EBFT
+(correct):
+⬇
+count
+=
+0
+start
+=
+0
+while
+start
+<
+len
+(
+string
+):
+pos
+=
+string
+.
+find
+(
+substring
+,
+start
+)
+if
+pos
+!=
+-1:
+count
++=
+1
+start
+=
+pos
++
+1
+else
+:
+break
+return
+count
+Base
+(incorrect; test failure):
+⬇
+return
+string
+.
+count
+(
+substring
+)
+(completion continued with extra helper variants / doctests; omitted)
+SFT
+(incorrect; test failure):
+⬇
+count
+=
+0
+start
+=
+0
+while
+start
+<
+len
+(
+string
+):
+start
+=
+string
+.
+find
+(
+substring
+,
+start
+)
+if
+start
+==
+-1:
+break
+count
++=
+1
+start
++=
+len
+(
+substring
+)
+return
+count
+(completion continued with additional helper functions; omitted)
+RLVR
+(incorrect; test failure):
+⬇
+count
+=
+0
+i
+=
+0
+while
+i
+<
+len
+(
+string
+):
+if
+string
+[
+i
+:
+i
++
+len
+(
+substring
+)]
+==
+substring
+:
+count
++=
+1
+i
++=
+len
+(
+substring
+)
+else
+:
+i
++=
+1
+return
+count
+(completion continued with example-usage code; omitted)
+Failure mode:
+Base uses non-overlapping
+count
+; SFT/RLVR advance by
+len(substring)
+(non-overlapping), missing overlaps.
+Figure 15
+:
+HumanEval/18: counting overlapping substring occurrences.
+EBFT correctly advances by one character after each match and therefore counts overlapping occurrences. By contrast, the base model uses Python’s non-overlapping
+string.count
+, while both SFT and RLVR advance by
+len(substring)
+, which misses overlap-sensitive cases and causes test failures.
+HumanEval/94: Largest prime in list; return sum of its digits.
+EBFT
+(correct):
+⬇
+def
+is_prime
+(
+n
+):
+if
+n
+<=
+1:
+return
+False
+for
+i
+in
+range
+(2,
+int
+(
+n
+**0.5)
++
+1):
+if
+n
+%
+i
+==
+0:
+return
+False
+return
+True
+largest_prime
+=
+None
+for
+num
+in
+lst
+:
+if
+is_prime
+(
+num
+):
+if
+largest_prime
+is
+None
+or
+num
+>
+largest_prime
+:
+largest_prime
+=
+num
+return
+sum
+(
+int
+(
+d
+)
+for
+d
+in
+str
+(
+largest_prime
+))
+Base
+(incorrect; test failure):
+⬇
+return
+sum
+(
+int
+(
+digit
+)
+for
+digit
+in
+str
+(
+max
+([
+num
+for
+num
+in
+lst
+if
+is_prime
+(
+num
+)])))
+(completion continued with example usage / extra text; omitted)
+SFT
+(syntax failure):
+⬇
+def
+is_prime
+(
+n
+):
+if
+n
+<=
+1:
+return
+False
+if
+n
+<=
+3:
+return
+True
+if
+n
+%
+2
+==
+0
+or
+n
+%
+3
+==
+0:
+r
+(completion truncated mid-token / non-executable; remainder omitted)
+RLVR
+(incorrect; test failure):
+⬇
+largest_prime
+=
+None
+for
+num
+in
+lst
+:
+if
+is_prime
+(
+num
+):
+if
+largest_prime
+is
+None
+or
+num
+>
+largest_prime
+:
+largest_prime
+=
+num
+if
+largest_prime
+is
+None
+:
+return
+0
+return
+sum
+(
+int
+(
+d
+)
+for
+d
+in
+str
+(
+largest_prime
+))
+(completion continued with surrounding scaffolding; omitted)
+Failure mode:
+Base/RLVR reference
+is_prime
+without defining it; SFT emits invalid Python (syntax).
+Figure 16
+:
+HumanEval/94: largest prime digit sum.
+EBFT produces a self-contained executable solution by defining
+is_prime
+and then computing the digit sum of the largest prime in the list. The base model and RLVR instead rely on an undefined helper function, while SFT truncates mid-function and yields syntactically invalid Python, illustrating a recurring executability gap between EBFT and the competing methods.
+HumanEval/105: Filter digits 1–9; sort, reverse; map digits to names.
+EBFT
+(correct):
+⬇
+if
+not
+arr
+:
+return
+[]
+filtered_arr
+=
+[
+num
+for
+num
+in
+arr
+if
+1
+<=
+num
+<=
+9]
+sorted_arr
+=
+sorted
+(
+filtered_arr
+)
+reversed_arr
+=
+sorted_arr
+[::-1]
+digit_names
+=
+{
+1:
+"One"
+,
+2:
+"Two"
+,
+3:
+"Three"
+,
+4:
+"Four"
+,
+5:
+"Five"
+,
+6:
+"Six"
+,
+7:
+"Seven"
+,
+8:
+"Eight"
+,
+9:
+"Nine"
+}
+return
+[
+digit_names
+[
+num
+]
+for
+num
+in
+reversed_arr
+]
+Base
+(incorrect; test failure):
+⬇
+return
+arr
+(completion included commented examples / extra text; omitted)
+SFT
+(incorrect; test failure):
+⬇
+if
+not
+arr
+:
+return
+[]
+if
+not
+all
+(1
+<=
+x
+<=
+9
+for
+x
+in
+arr
+):
+return
+arr
+sorted_arr
+=
+sorted
+(
+arr
+)[::-1]
+digit_names
+=
+[
+"One"
+,
+"Two"
+,
+"Three"
+,
+"Four"
+,
+"Five"
+,
+"Six"
+,
+"Seven"
+,
+"Eight"
+,
+"Nine"
+]
+return
+[
+digit_names
+[
+x
+-1]
+for
+x
+in
+sorted_arr
+]
+(completion continued with auxiliary text; omitted)
+RLVR
+(incorrect; test failure):
+⬇
+filtered_arr
+=
+[
+num
+for
+num
+in
+arr
+if
+1
+<=
+num
+<=
+9]
+reversed_arr
+=
+sorted
+(
+filtered_arr
+)[::-1]
+name_arr
+=
+[]
+for
+num
+in
+reversed_arr
+:
+name_arr
+.
+append
+(
+str
+(
+num
+))
+return
+name_arr
+(completion continued with example usage / prints; omitted)
+Failure mode:
+Base returns input unchanged; SFT returns original array if
+any
+element is out of range (should filter); RLVR returns digit strings rather than names.
+Figure 17
+:
+HumanEval/105: filtering, ordering, and lexical mapping.
+EBFT correctly implements the full prompt: it filters to digits 1 to 9, sorts the valid entries, reverses the order, and maps each digit to its English name. The other outputs each satisfy only part of the specification: the base model returns the input unchanged, SFT incorrectly returns the original array whenever any element is out of range instead of filtering, and RLVR outputs numeric strings rather than digit names.
+HumanEval/69: Return greatest positive integer with frequency
+≥
+\geq
+its value.
+EBFT
+(correct):
+⬇
+max_value
+=
+-1
+for
+num
+in
+lst
+:
+if
+num
+>
+0
+and
+lst
+.
+count
+(
+num
+)
+>=
+num
+:
+if
+num
+>
+max_value
+:
+max_value
+=
+num
+return
+max_value
+Base
+(incorrect; test failure):
+⬇
+#
+(no
+valid
+return
+produced;
+incomplete
+solution)
+(completion was essentially comments / placeholder; omitted)
+SFT
+(incorrect; test failure):
+⬇
+from
+collections
+import
+Counter
+count
+=
+Counter
+(
+lst
+)
+for
+num
+in
+count
+:
+if
+count
+[
+num
+]
+>=
+num
+:
+return
+num
+return
+-1
+(completion continued with ad-hoc test prints; omitted)
+RLVR
+(syntax failure):
+⬇
+#
+core
+logic
+resembles
+EBFT,
+but
+output
+contained
+extra
+non-code/formatting
+#
+->
+non-executable
+under
+strict
+evaluation
+Failure mode:
+Base is incomplete; SFT returns the first qualifying key rather than the
+greatest
+; RLVR marked non-executable (syntax/formatting).
+Figure 18
+:
+HumanEval/69: selecting the greatest frequency-qualified integer.
+EBFT returns the maximum positive integer whose frequency is at least its value, matching the full prompt semantics. The base model fails to provide a usable implementation, SFT returns the first qualifying key rather than the greatest one, and RLVR follows the right high-level logic but is not executable under strict evaluation because the output includes formatting artifacts outside valid code.
+H.3
+Qualitative Analysis and Examples - Translation
+We provide MTNT EN
+→
+\to
+FR examples from downstream evaluation using generations from the final checkpoint of the 2-epoch runs for EBFT, SFT, and RLVR, along with the base Llama-3.2-1B model. A consistent trend is that EBFT outputs are more often clean, concise translations that remain on-task, whereas the base model and RLVR frequently exhibit instruction drift into non-translation or mixed-language templates (e.g., repeating the English source, emitting “Spanish:”/“Português:” tag lists), suggesting instability with respect to the intended output format. RLVR additionally shows unfinished/truncated generations that enter a template list and terminate mid-token, which is incompatible with strict evaluation. Finally, we observe semantic correctness failures; for example, dropped negation which EBFT reliably identifies in the shown examples.
+MTNT: Non-translation (model repeats source language)
+(EN
+→
+\to
+FR). Source:
+TIL Tigers will take revenge on those who have done wrong to them.
+Ref:
+Aujourd’hui j’ai appris Les tigres prendront leur revanche sur ceux qui leur ont causé du tort.
+EBFT
+(clean/on-task):
+TIL:Les tigres vont prendre vengeance sur ceux qui ont fait du mal à eux.
+Base
+(failure):
+TIL Tigers will take revenge on those who have done wrong to them.
+Spanish: TIL Tigers will take revenge on those who have done wrong to them.
+Portuguese: TIL Tigers will take revenge on those who have done wrong to them.
+TIL Tigers will take revenge on those who have done wrong to them.
+(continuation omitted)
+SFT
+(failure; stays in English):
+TIL that the Tigers will take revenge on those who have done wrong to them.
+RLVR
+(failure):
+TIL Les tigres vont se venger de ceux qui ont fait du mal à eux.
+Portugu^es: TIL Os tigres v~ao se vingar dos que t^em feito mal a eles.
+Portugu^es-Celta: TIL Os tigres v~ao se vingar dos que t^em feito mal a eles.
+...
+(continuation omitted)
+Failure mode:
+Output is partially or entirely non-translation (keeps English), often followed by multilingual tag repetition.
+Figure 19
+:
+MTNT EN
+→
+\to
+FR: non-translation and multilingual runaway.
+EBFT remains on task and produces a direct French translation, whereas the base model and RLVR drift into multilingual template continuations that repeat the source sentence and append language-tagged variants. SFT avoids the runaway list structure but still fails to translate, remaining almost entirely in English.
+MTNT: Truncation / unfinished generation (ends mid-template)
+(EN
+→
+\to
+FR). Source:
+What a way for spring training to end.
+Ref:
+Quelle manière de finir les entraînements de printemps.
+EBFT
+(clean/on-task):
+Quel bonheur de fin de campagne de pré-saison.
+Base
+(failure):
+Le match de la saison régulière a été terminé.
+Spanish: El partido de la temporada regular se terminó.
+What a way for spring training to end.
+The 2019 season is over. The 2019 season is over.
+(continuation omitted)
+SFT
+(failure; drift):
+C’est une fin de saison de baseball incroyable.
+RLVR
+(failure; truncates mid-template):
+Ce fut une fin de printemps merveilleuse.
+Portugu^es: Esta foi uma final de ver~ao maravilhosa.
+Portugu^es-Corrigido por-em-tudo-como-que-
+(continuation omitted)
+Failure mode:
+Generation enters a template list and then stops mid-token.
+Figure 20
+:
+MTNT EN
+→
+\to
+FR: truncation after template drift.
+EBFT produces a complete on-task translation, while the base model drifts into unrelated multilingual continuation and SFT paraphrases too loosely away from the original meaning. RLVR begins a language-tagged template expansion and terminates mid-token, yielding an unfinished output that is incompatible with strict evaluation.
+MTNT: Meaning flip via dropped negation (“no more”
+→
+\to
+“more”)
+(EN
+→
+\to
+FR). Source:
+Then there are no more available rooms.
+Ref:
+Il n’y a plus de chambres disponibles.
+EBFT
+(clean/on-task):
+Puis il n’y a plus d’espaces disponibles.
+Base
+(failure; runaway):
+Il n’y a plus d’espaces disponibles.
+Spanish: No hay mas habitaciones disponibles.
+Italian: Non ci sono più stanze disponibili.
+...
+(continuation omitted)
+SFT
+(failure; weaker paraphrase):
+Puis il n’y a plus d’offres de chambres.
+RLVR
+(failure; meaning flip):
+Puis il y a plus de chambres.
+Portugu^es: Portanto, existem mais quartos.
+Portugu^es-Cogitado: Portanto, existem mais quartos.
+...
+(continuation omitted)
+Failure mode:
+Dropped negation.
+Figure 21
+:
+MTNT EN
+→
+\to
+FR: semantic failure from dropped negation.
+Not all errors are formatting failures: this example shows that negation can be overlooked by the fine-tuned models. EBFT preserves the negative meaning of the source sentence, whereas RLVR drops the negation and changes “no more available rooms” into “more rooms.” The base model again exhibits multilingual repetition after an initially plausible translation, and SFT produces a weaker paraphrase that underspecifies the original statement.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

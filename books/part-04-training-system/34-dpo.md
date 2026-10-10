@@ -145,6 +145,10 @@ reference     -> same two sequence logprobs
 
 Prompt、padding 和跨样本 tokens 不应进入 response logprob。Chosen/rejected 必须使用同一 tokenizer、chat template 和 prompt prefix，否则 pair comparison 不再对应同一 `x`。
 
+Pair 的任务身份也必须相同：让模型解题，与给定一道题及候选答案后判断它对不对，不是同一个条件任务。前者可构造 `(x, correct solution, incorrect solution)`，后者则是 `(x + candidate answer, correct verdict trace, incorrect verdict trace)`；chosen/rejected 的质量标签分别来自答案正确性与 verdict 是否符合该候选的正确性。改用 backward pairs 因而改变监督目标与 prefix，不是普通 solution pairs 的另一种命名。答案生成 accuracy、对错误候选输出 FAIL 的识别率、对正确候选误判 FAIL 的率应分别验收，不能由一种 pair 的 loss 或分数改善签发另一能力。<!-- source-family:SF-2026-ARXIV-2601-07199 -->
+
+[Forward/Backward DPO 的必要原证](https://arxiv.org/html/2601.07199v1)只支持这个任务与标签分账，不证明生成和验证是正交技能或普遍互不迁移。受限数学对照中，评测模型使用的样本数不同，错误识别还条件于各自生成的错误答案，不能把它当同一固定错误池上的因果比较；CalibF1 的正类定义与表中数字不一致，不能由读者改正后当作已验证校准。采样正确/错误轨迹、构造候选、检查 verdict、训练及两个任务的回归都需计费，模型自评不是真值。普通解题 pairs 在只需生成能力、标签可靠时仍合理；验证标签或保留能力不过关时，应回退可靠 pairs、外部验证与原 checkpoint，不能靠更强自我确认取得答案发布权。<!-- source-family:SF-2026-ARXIV-2601-07199 -->
+
 轨迹终局失败时，逐动作构造 pair 还需要明确反事实分工：PRM 只定位候选 failure state，在同一历史替换一个 expert action，再让当前 policy 执行后缀，以 outcome evaluator 验证是否翻转结果，最后冻结相同 prefix 下的原动作/替代动作作为 step-level preference。终局收益因此提供这次 intervention 的资格，不是让 PRM、expert 或一个成功后缀直接证明动作普遍因果必要。它支付分支执行、后缀方差、网络/工具与 evaluator 成本；gold-based judge 也会误判，[受限 Agent 对照](https://arxiv.org/html/2602.03412v1)的 PRM 定位或验证反侧与不同 pair 数量不能授予 noise-free 标签或匹配总预算因果保证。状态不可重放、验证不可靠或后缀收益不稳定时，保留可靠的普通 preference pairs，而不把整条成功轨迹静默拆成全部正确动作。<!-- source-family:SF-2026-ARXIV-2602-03412 -->
 
 Vanilla DPO 使用 sequence log-probability sum。较长 response 包含更多 token terms，因此 length distribution 会影响 log-ratio。Length normalization 或其他 variant 会改变 objective，不能悄悄加入后仍称为原始公式。
@@ -243,7 +247,9 @@ preference pair + reference identity
 
 <!-- source-family:SF-GRADIENT-GATED-DPO -->
 
-前面的 gate 调节已有偏好对的更新幅度，不改变标签；扩散生成中若同一对图像在不同偏好维度上冲突，还可选择另一条受限监督分支：保留经明确 proxy 共识筛出的 clean anchors，将其余 pair 视作未标注，再按去噪时间段用当前 DPO margin 符号提议局部标签、以分时阈值控制准入。这里增加的是标签的时间身份与自举过程，不是用梯度大小重新证明人类偏好；原 pair、proxy 版本、checkpoint、时间段与阈值都要进入训练 lineage，clean anchor 不能被伪标签静默替代。
+同一 batch 中的负 margin，也可以分别驱动两种保守提案：第一项在 warm-up 后，按交换 chosen/rejected 能降低的当前 loss 分配稀疏、总量受限的软标签混合；第二项只对混合损失的高分位尾部提出软 cap。前者改变监督方向，后者限制当前损失尾部，两套预算不能互相代替，难 pair 或负 margin 也不能被直接认证为错误标签。[wDPO 的受限方案](https://arxiv.org/html/2603.07211v1)明确停止 label weight 与 batch cap budget 的梯度，却未明确 quantile threshold 和逐样本 cap weight 的完整梯度路径，因此这里只采用分责接口，不抄成已证明的纯梯度缩放或参数梯度硬界。稀疏分配、quantile、warm-up/预算校准与独立安全/能力回归仍计费；受测 judge 的改善既不普遍，也不授发布安全。批次构成、标签方向或训练回归不可信时，保留审校后的 vanilla DPO、独立 likelihood/KL 与行为评价，不让优化中的自信代替偏好真值。<!-- source-family:SF-2026-ARXIV-2603-07211 -->
+
+前述 rejected-response probability gate 调节已有偏好对的更新幅度，不改变标签；扩散生成中若同一对图像在不同偏好维度上冲突，还可选择另一条受限监督分支：保留经明确 proxy 共识筛出的 clean anchors，将其余 pair 视作未标注，再按去噪时间段用当前 DPO margin 符号提议局部标签、以分时阈值控制准入。这里增加的是标签的时间身份与自举过程，不是用梯度大小重新证明人类偏好；原 pair、proxy 版本、checkpoint、时间段与阈值都要进入训练 lineage，clean anchor 不能被伪标签静默替代。
 
 margin 只是模型自身 confidence proxy，晚段信号可能更弱；用于阈值调整的 clean 样本不能同时冒充独立最终校准集。多维共识也可能抹掉真实偏好分歧，组间 variance 分解不证明训练必然收敛到次优或自举必然修复。[该分支](https://arxiv.org/html/2604.24952v1)需独立行为评价，并把 proxy 调用、筛选覆盖损失及迭代训练成本与对应质量分账；标注或阈值失准时，回退经审校的 vanilla DPO 或可信分时/process labels，不把有限视觉模型结果写成通用偏好恢复保证。
 <!-- source-family:SF-2026-ARXIV-2604-24952 -->
@@ -278,6 +284,10 @@ Fine-tuning loop 不再需要：
 
 这里的数据质量还包括 chosen 与 rejected 的相对来源分布：即使逐条回答表面中性，由不同 teacher 系统性生成的两侧仍可能携带隐性行为差异，成为对比训练的信号。因此清洗显式迎合措辞不能替代 teacher/pair provenance 与独立行为验收；交换来源或修复 pair 后也要复测基础能力和格式，不能假定去偏没有代价。
 
+偏差校正还须区分“同一 pair 的标签有偏”与“标注两类 labels 的候选来自不同生成分布”。如果少量样本同时具有 AI 与可信目标 label，可以先在大量 AI labels 上计算 loss，再用这些同 pair 的 loss 差作残差校正；当两类样本的 response generator 不同，还须以 generator density ratio 校正人口错位。这条条件分支不只是过滤坏 pairs，也不把 DPO reference policy 当成样本生成器：前者定义 policy/reference 的优化坐标，后者决定校正权重。只有目标人口得到覆盖、ratio 与偏差估计可用时，paired residual 才有预期解释；缺失支持不能靠少量校准标签补出。<!-- source-family:SF-2026-ARXIV-2602-08259 -->
+
+校准 label 的身份决定究竟向谁纠偏。人工标签与强模型代理不是同一目标，当前 policy 在线采样的对称残差分支，也不是直接复用上述离线目标；两者都新增配对标注、generator likelihood/ratio 估计与训练成本。[有限纠偏对照](https://arxiv.org/html/2602.08259v1#S5)包含模拟翻转与模型代理 label，部分 summary/dialog 条件仍不及未校正对照，online 与 offline 预算也不一致，因此不授普遍人类真值、发布安全或总训练降本。覆盖不足、权重不稳或校准者与独立评价共同偏差时，应回退审校后的普通 DPO pairs、可信人工/可执行 verifier 与独立行为回归；自动 label 较便宜的旧路径在偏差可接受、目标人口稳定时仍有价值。
+
 第二，offline distribution。Dataset candidates 由旧 policy 产生，当前 policy 训练后可能进入 pairs 未覆盖的区域。
 
 重新用当前 policy 生成 pairs，是刷新这个分布的一条分支，但不自动改善目标 coverage。[条件理论](https://arxiv.org/html/2601.08421v1)把每轮偏好优化的误差缩小建立在有限问题空间、可辨认的有界线性特征、精确 Bradley–Terry 偏好 oracle、可实现性、目标协方差非退化与局部 coverage 增长等假设上，并要求 batch 足以压低统计误差；有限样本仍留下误差 floor。同一语境中的 reference 保持固定，不能把“更新生成 policy”与“更新正则化 reference”混为一事，也不能由条件上界推出任意 LLM 的 on-policy 更新会增加覆盖。<!-- source-family:SF-2026-ARXIV-2601-08421 -->
@@ -285,6 +295,10 @@ Fine-tuning loop 不再需要：
 一种混合采样设计把当前 policy 的联合 prompt–response 分布与 G-optimal 联合设计分布配对使用；后者不是任意旧 replay，求它还需要可用特征与候选空间，设计计算本身有成本。刷新样本又增加生成和标注预算，等 optimizer steps 不等于等总 tokens 或 oracle 调用；局部聊天实验也不在每个指标上单调改善。因此应分别验收覆盖、任务质量与 acquisition 成本。离线 pairs 覆盖充分、fresh 预算不足或设计假设无法验证时，保留固定 reference 的廉价离线训练，并用独立切片定位真正需要补采的区域。
 
 第三，相对而非绝对质量。Chosen 只表示比 rejected 好，可能两者都差。
+
+相对质量也不能把多个目标压成同一个胜负标签：按 helpfulness 排出的 chosen，可能反而不如 rejected 安全。一条受限分支重新收集当前模型暴露的攻击与 responses，按帮助性组成 pairs，同时独立保存两侧 safety score 的有符号差，在 policy/reference 的 preference margin 中加入额外目标项。这里，pair 的排序依据、辅助目标的方向与权重、训练 judge 和独立评价者各有自己的身份；“chosen”不能自动解释为各维度都更好，训练 judge 的高分也不是发布安全性。<!-- source-family:SF-2026-ARXIV-2603-07017 -->
+
+[小模型的多目标对照](https://arxiv.org/html/2603.07017v1#S4)只支持这一条件接口，不支持免费自对齐或普遍安全恢复。原文 unsafe 阈值方向在正文与附录不一致，应先消歧，不能直接抄入筛选器；去掉目标中的权重分母又改变 sigmoid 的有效尺度，需与前面的 preference/optimization scale 分责一起检验，而不是当作保持原目标的稳定化。实验先用有害 QA 弱化拒答，不证明安全先验全部消失，部分正常问题帮助性和人工安全评估仍有反退；减少 preference 条数也没有计尽 reset、攻击生成、judge 与训练成本。目标冲突、score 漂移或回归失败时，保留独立审校的普通 pairs、明确安全约束与固定 reference，不让同一闭环同时定义标签和最终真值。<!-- source-family:SF-2026-ARXIV-2603-07017 -->
 
 这种相对质量还要拆成**生成器能力差**与**同一 pair 内的质量差**。用更强模型生成 chosen、更弱模型生成 rejected，可以扩大两侧差距，却同时改变来源、风格和推理分布；仅凭最终答案对错也不能描述 pair 的全部信号。一条受限的数据选择分支先冻结 generator identity、共同 prompts 和 verifier，再用独立 judge 比较 factuality、step coherence 等维度，选择差距明确的 pairs，同时保留正确/错误方向、随机同预算子集和域外 outcome 对照。
 
@@ -473,6 +487,14 @@ reference-free objective 免去 reward 中的反复 reference forward，缓存�
 pair validation 增加 judge 和标注成本，judge noise 也可能制造新偏差。两个 benchmark、8B 以内模型与 LLM judge 不证明普遍收益；证据不闭合时回退 verified preference pairs、CPT/SFT 或保留不更新。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2603-07211` — Daily `2026-03-11` 补遗漏；[wDPO exact-v1](https://arxiv.org/html/2603.07211v1) §3.2–3.4、§4、Alg1/B及必要反侧。2+1+2=5，label mixture/loss-tail cap 分责具体gap深入；难pair≠错label、τ/λ完整梯度路径未明、训练budget非matched与安全回归/vanilla回退近文，不授硬梯度或真实偏好保证。review_mar11_continue actual necessary Source、Ch34逐字PRE和root窄锁通过；supplement_20260311 窄写一段，review_mar11_continue 非写入者实际新253段、225–261完整邻接/自身491注回对必要v1，并定点复核 rejected-response probability gate 的邻接回指修复，POST通过，不授DAY；未核artifact或复现。
+
+- `SF-2026-ARXIV-2603-07017` — Daily `2026-03-11`补查；[exact-v1](https://arxiv.org/html/2603.07017v1) §4.1–4.5/Alg2、§5–6/8与必要A.3–A.5/A.8。2+2+2=6，安全目标方向和多目标pair接口定点深入；helpfulness排序与signed safety margin分责，不采§4.3/A.4相反阈值方向或删除w0后仍保持原目标的保证。Safety-reset不是移除全部先验；英文1–2B/有限人口、正常任务与人工评价反侧、6–11倍偏好条数非总费用均近文。review_mar11_continue必要原证独核通过，root已实际必要方法/目标/反侧、具体owner与Ch33/35交接PRE后窄写；非写入者 supplement_20260311 已实际回对必要原证并顺读新正文、完整局部邻接及自身末注，POST通过，不授日级完成，未核artifact或复现。
+
+- `SF-2026-ARXIV-2602-08259` — Daily `2026-02-11`增量；[exact-v1](https://arxiv.org/html/2602.08259v1) §3–5。2+2+2=6，same-pair residual 与 generator density ratio 的纠偏目标差额深入；只采用覆盖/可用估计下的条件分支，DDPO离线与DIPO在线分开，reference≠generator，不授普遍human truth或效率。BT/realizability/overlap/nuisance条件、40%翻转/20%恢复、proxy human与judge共用、summary/dialog局部负反侧及总费用未披露近正文。root 实读必要Source及 actual Ch34/Ch33/35 PRE通过并授两段/自身末注窄锁；作者实际正文/完整邻接顺读，root 非作者实际新正文/完整局部邻接及自身末注 POST 通过，窄锁释放；未核实现或复现，非日级验收。
+
+- `SF-2026-ARXIV-2601-07199` — Daily `2026-01-14` 增量；[Forward versus Backward exact-v1](https://arxiv.org/html/2601.07199v1) §3–7，2+1+2=5，solution/verdict pair条件任务及accuracy/error-identification/false-rejection三轴差额深入。Eq5/Table1 CalibF1冲突、评测350/250人口不同及各自错误池隔离，不采用普遍过度自信、严格nontransfer或技能正交；rejection sampling/候选标注/训练与双任务评价费用近文。Llama3.1-8B-Instruct、r16 attention LoRA/BF16、2000训练题，hardware未披露；未核artifact/复现。peer必要原证/actual owner完整邻接PRE通过，root授窄锁；作者实际正文/完整局部邻接及本注已顺读，root非写者已实际顺读正文、完整局部邻接及本注，actual POST通过，窄锁释放，不授DAY。
 
 - `SF-2026-ARXIV-2602-21346`：exact-v1 §3、Table12及数据说明；只采用语义两段独立loss/proxy分责。保mask/weight、筛pair说明及未给guard冲突、调参/攻击退步；未核代码或复现，不授安全保证。 非原 packet 作者必要原证/actual owner PRE 与窄写完成；root 已实际顺读正文、完整邻接与自身末注，POST 通过。
 

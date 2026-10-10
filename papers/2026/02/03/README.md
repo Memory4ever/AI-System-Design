@@ -5,12 +5,19 @@
 **状态：** 完成
 **Books：** 纳入本次
 **检查时间：** 2026-10-02T11:40:23+08:00
+**补充窗口：** 2026-02-02 ～ 2026-02-02
+**窗口说明：** 用户于2026-10-08授权仅补充现存2026 Daily的来源遗漏，原09点窗口、原候选日期、评分和有效审阅不改；新增材料按前一完整北京自然日判断，只核日期，不追时分秒。
+**补充检查时间：** 2026-10-08T12:25:27+08:00
 
 ## 1. 结论
+
+以下原窗结论保持有效，不作为本轮补查验收；本轮基线见[原稿](../_sources/daily-20260203/supplement-original-20261008.md)。新增自然日结果在各节补充段维护。
 
 本日独立从十四个 Daily 原始来源发现，未读取旧 Daily/Weekly 的候选、评分或 screening；旧 README 仅原文备份于 [LEGACY_README](../_sources/daily-20260203/LEGACY_README.md)，未用于准入。当前首批八家族的具体贡献通过非作者校准，但公开日期仍有相互冲突的原始字段，已撤下确定候选身份与评分；原始查询返回条数、潜在机制和确定候选分别处理。
 
 arXiv 的 Submitted 与编号月份不足以确定公开事件。原先拟用提交排程与 DataCite findable 注册上界夹出区间，但官方 first-announcement 月份定义与 Jan编号/Available字段存在直接冲突，不能仅口头保留冲突而仍授落窗。定点OAI亦只有last-modification datestamp，不是原始公告日志。这是新日期证据导致的隔离，不是因审阅费时缩池；已读机制证据保留但不采用。当前确定落窗且通过贡献筛选的候选为0，证据采用0、Books改动0；这不表示原始命中为0或潜在贡献不存在。机构 date-only 潜在亦未评分、未进入 Books。本日已通过非作者安全终态验收，普通待办0；日期和历史来源限制保留精确重开条件，不代表正面Coverage/Evidence通过或全站无遗漏。
+
+补充自然日新增1家族：SPARKLING官方目录Feb02发布事件。必要v1机制、对照及直接反侧和Ch28已有覆盖/No Change已通过root非作者准入/Source/Owner PRE；采用命题仅为前向尺度保持与反向去对称两项条件，root完整六部分DAY亦实际通过。GLM-OCR、Snowflake及life-sciences合作按具体原文范围/增量关闭；Codex app同一发布事件已由02-02冻结收录，定点核已有有效审阅后去重复用，不重列、不推翻旧准入，作者先前以产品组件关闭整个家族的共同错误已纠正。两份新arXiv评价反证线索仅有Submitted字段，日期隔离而非误排为无贡献。原8家族与其他§5日期保留不因自然日变更自动转为候选，旧有效关闭和原§4连续正文均保留。本轮普通待办0、无Books新写入、不stage/commit/push；完成仅为所列切片与限制的安全终态，不授全Coverage/Evidence或无遗漏。
 
 ## 2. 来源覆盖
 
@@ -34,12 +41,34 @@ arXiv 的 Submitted 与编号月份不足以确定公开事件。原先拟用提
 | SRC-ARXIV | 四个ROADMAP主题 Submitted buffer Jan29 19Z～Jan30 18:59Z，model48/48、multimodal46/46、systems12/12；初始agent158返回前50后收窄为题名agent/memory/tool/retrieval/judge（同AI/IR/MA与buffer），实际47/47元数据读完停止（stage23_narrow_agent_poll）。宽表不是逐项题摘队列。CL/DC/AI 2026-02月目录各first25只标题补检，非全月队列（stage9_list_poll）；具名潜在精确v1题摘见stage8/13/14/24/25。catchup、按日list失败；SAIR/HetCCL/GASP三条官方OAI定点恢复与官方datestamp定义读完（stage22）。 | 受阻 | Submitted只是发现；Jan-ID/Available月份与条件排程冲突未解决，OAI last-modification与DOI注册不能证明首次公告。月目录只有身份，无目标日批次。外部限制隔离，不授本窗无遗漏。 |
 | 补检：[DataCite](https://api.datacite.org/) | 仅具名arXiv DOI逐项GET：首批与其他潜在的created/registered、v1Submitted/Updated、Available原值；stage11_dc_poll/stage15_dc_poll/stage17_dc_poll。 | 已检查 | 定位元数据公开上界，不是正文机制证据或精确公告日志。 |
 
+### 补充自然日：有限来源差额
+
+本轮原页、主题搜索、实际停止及限制存于[补查记录](../_sources/daily-20260203/supplement-source-owner-pre-20261008.md)和[原页0](../_sources/daily-20260203/supplement-scan-0-20261008.json)、[原页1](../_sources/daily-20260203/supplement-scan-1-20261008.json)、[主题发现](../_sources/daily-20260203/supplement-scan-2-20261008.json)、[官方补检1](../_sources/daily-20260203/supplement-officialsearch1-20261008.json)、[官方补检2](../_sources/daily-20260203/supplement-officialsearch2-20261008.json)。原有有效边界记录只按实际同日元数据复用，不从完成标签推出覆盖；未扫描Weekly或90天catchup。
+
+- **SRC-OPENAI（已检查）**：原 Research/RSS stage4_0 的Feb2–4邻界元数据有效复用；本轮直接读Feb02 Codex app核心。Snowflake原有效贡献前关闭复用；Sora官方Feb03属补充窗外，不迁旧归属。官方Feb02定点补检只发现Codex/既有产品说明和physics应用，停止此结果页。 缺口：本轮native RSS403、web不支持XML，不把失败作零；仅原有限目录与具名原页，不授全站召回。
+- **SRC-ANTHROPIC（已检查）**：Research原页本轮仅当前10列表；原 stage2_1/stage3_0 的Jan29→Feb05边界复用。Feb02具名官方Allen/HHMI合作core按AI for Science范围关闭，不扩生物研究队列。 缺口：Research首页不覆盖完整历史；不把原有限研究边界外推所有news。
+- **SRC-GOOGLE-AI（受阻）**：DeepMind/Google Research原页与Feb02定点官方主题补检；原Jan Project Genie→Feb Deep Think及Feb月Blog最早Feb03的有限边界复用，目标月查询本轮未恢复。 缺口：Google pubs仍仅年级、当前目录/主题搜索不能证明目标日原始论文完整性；精确恢复该日官方研究列表才重开。
+- **SRC-META-AI（受阻）**：原页本轮0可提取行、Feb02定点主题补检；原 relevance page3有限结果事实保留，不授时间覆盖。 缺口：需要目标日时间排序发布切片；空响应不是零发布。
+- **SRC-QWEN（受阻）**：qwenlm首页36行与qwen.ai/blog动态0行，本日官方日期补检未恢复具名新事件；停止于这两个入口。 缺口：缺本日官方历史切片，不由动态空页签发无遗漏。
+- **SRC-DEEPSEEK（已检查）**：官方原页与news恢复尝试；原Jan28 OCR2→Feb25 DualPath有限目录边界复用，Feb02补检未发现具名本日模型/系统事件。 缺口：本轮news timeout只限制补检；覆盖仅原有限目录，不为privacy窗外政策扩队列。
+- **SRC-MOONSHOT（受阻）**：Platform原页实际26项最新Nov07 2025，已到底；K2.5原日期保留不改。Feb02官方主题补检未恢复本日精确事件，不扫描所有组织repo。 缺口：Platform不包含目标日完整Research切片，K2.5需原始发布/重要修订日期。
+- **SRC-TENCENT-HUNYUAN（受阻）**：Research本轮timeout；原API9/9目录最早Feb03事实保留，本日官方补检未恢复目标日原始记录。 缺口：当前9项不足排除删除历史；缺目标日官方切片，不把超时作零。
+- **SRC-ZAI（已检查）**：首查Research明确Feb02 GLM-OCR、前Jan19/后Feb11，有限边界停止。初始Feb02 README commit 8900d23f恢复并完整读；Feb03 API release及后版SDK/PDF不混作当日机制。 缺口：本日组件组合/单榜未构成具体增量，贡献前关闭，无必要全文缺口。
+- **SRC-BYTEDANCE-SEED（已检查）**：type1/year2026/order_desc=false本轮第0页20项、next20/total82/has_more；仅Jan31→Feb02 SPARKLING→Feb04/05边界即停。完整目标题摘和v1必要机制读完；type2原最早Feb12窗后边界复用。 缺口：覆盖这段官方时间目录，不遍历82项或将Submitted视公开。
+- **SRC-BAIDU-ERNIE（已检查）**：本轮Blog第1页Jan29 PaddleOCR-VL1.5→Feb06 ERNIE5.0实际边界，Next2/2是更早日期，不继续page2。 缺口：仅当前有限官方目录，不授全机构历史。
+- **SRC-XIAOMI-MIMO（已检查）**：本轮首页及原Jan08→Feb03 HySparse Paper邻界复用；Feb03属于补充窗外，不因旧09点隔离重开为Feb02候选。 缺口：Blog卡无日期，不能保证全部历史Blog；缺精确目标日发布切片时仅重开该源。
+- **SRC-MINIMAX（受阻）**：本轮en/cn Blog与Feb02主题补检，原Jan27/28→Feb12官方有限边界与techblog仅May13事实复用；giveaway是范围外推广，标题即关。 缺口：历史Agent techblog目标日缺段不能由当前单条补齐。
+- **SRC-ARXIV（受阻）**：无catchup。目标日CL/DC列表本轮不可恢复；两次Jan/Feb有限日期主题搜索只发现，并用完整v1题摘定点读02427过程UQ与02140 GapEval。原47/47收窄agent及四主线有限查询保留，不转整月/分类题摘队列。 缺口：原Jan-ID/公告月份/Submitted冲突未解决；新两项Submitted同样非公开日，精确请求见§5。
+
 ## 3. 候选与判断
 
 无已确认属于本窗的候选。首批八家族的具体贡献已通过独立校准，但日期冲突使它们不能列为确定候选，已撤去原拟评分与09～12的公开范围；其材料身份、潜在增量和重开条件见§5。不会因有条件的计划排程或findable注册上界自动授日期。
 
 | 材料 | 公开时间 | 项目贡献与评分 | 审阅结果 | Books决定 |
 | --- | --- | --- | --- | --- |
+| [SPARKLING: Balancing Signal Preservation and Symmetry Breaking for Width-Progressive Learning](https://arxiv.org/html/2602.02472v1) | 2026-02-02 | function-preserving扩张不足→RMS连续及复制optimizer去对称两条件→重考训练状态迁移；2 + 2 + 3 = 7 | 深入完成 | 已有覆盖：`TRAIN-PRETRAINING`，[Ch28](../../../../books/part-04-training-system/28-pretraining.md) §一次training step的状态流；root Source/Owner PRE通过，无Books新写 |
+
+该行只属于补充自然日，上文0候选判断针对冻结09点窗口，保持不改。公开日期依据为官方Seed论文目录发布事件，不是arXiv Submitted；root已实际核准入、必要v1正/反侧与Ch28具体覆盖，Source/Owner PRE及DAY均通过。Codex app家族SF-2026-OPENAI-CODEX-APP-20260202已有[02-02原有效候选、深入审阅与Ch66整合](../02/README.md#3-候选与判断)，定点复用其“初始任务数不等于continuation外部输入预算”的受限评价命题、精确当前页面版本及未披露边界，不列为新候选或改判关闭。
 
 ## 4. 证据与知识整合
 
@@ -54,6 +83,12 @@ arXiv 的 Submitted 与编号月份不足以确定公开事件。原先拟用提
 负侧：[Snowflake](https://openai.com/index/snowflake-partnership/)官方合作正文是既有Cortex SQL/GPT接入及未来SDK路线，没有新系统接口/机制；[Sora](https://openai.com/index/sora-feed-philosophy/)核心是既有生成guardrails与feed eligibility分层、teen筛选、人工报告/下架及个性化关闭的政策说明，没有新增可支持的执行机制、有效性条件或安全反证。两者root已实际核心校准通过，不是以“没有controlled benchmark”自动拒绝安全研究。[REKD2601.22531v1](https://arxiv.org/abs/2601.22531v1)完整题摘仅teacher rationales/predictions组合在分类收益，无新增训练系统边界，root抽样通过。三项是贡献前关闭，不为不改变处置的日期追加调查。
 
 当前纠错/撤回定点：EUGens22563v2说明拟替代更新2410.09771，Sparse-or-Dense22795v2说明实验代码错误影响§4/5，MoR00485v2说明需重大修订；native exact-v2原页状态与时间见[必要原始记录](../_sources/daily-20260203/feb03_withdrawal_exact_versions.md)。全部不入选、不评分、不Books。EUGens的v2 Submitted Feb2 17:47:29UTC在本窗，但仍不是公开撤回时刻；April/March撤回仅当前安全处置，不倒灌为本窗发布事件。无既有本轮Books依赖需清除。
+
+### [SPARKLING: Balancing Signal Preservation and Symmetry Breaking for Width-Progressive Learning](https://arxiv.org/html/2602.02472v1)
+
+必要§3–5及相关推导/配置已读。前向激活RMS条件与反向复制状态的去对称是两问题；仅边界loss不跳变不能代替扩容后canary。Figure2固定RMS后比较optimizer状态处理，Figure3再比较rewarm，支持受限分解；方差公式有centered/独立/同方差条件，不推广c>1不均匀复制。
+
+作者评价为OLMoE风格、200B tokens/100B处扩张、inner/hidden/joint轴，64×A10080GB、seq4096、batch768/microbatch3；precision及重复seed Not Disclosed。Table1平均下游改善但最终pretraining loss仍劣于from-scratch，预算同tokens不是同FLOPs；35%来自6ND估算，不授普遍端到端降本或免调参。未复现实现/实验。具体原证及采用/未采用边界见[Source/Owner PRE](../_sources/daily-20260203/supplement-source-owner-pre-20261008.md)。`TRAIN-PRETRAINING` [Ch28](../../../../books/part-04-training-system/28-pretraining.md)实际已有mapping→scale→新状态差异→rewarm→rollback链与SPARKLING Experimental引用；root已独立实读必要v1正/反侧、Ch28完整相关邻接与源注，通过已有覆盖/No Change及DAY，不新增Books写入。
 
 ## 5. 缺口与下一步
 
@@ -80,7 +115,9 @@ arXiv 的 Submitted 与编号月份不足以确定公开事件。原先拟用提
 
 收窄agent入口的其他具名潜在完整v1题摘见stage25：PerfGuard22571工具performance边界、Inspector22588生成与语义probe能力差异、EigenData22607实例验证器/模拟器驱动RL、Symphony22623异构模型MCTS、TMoW22647 test-time世界模型混合、Best-of-Q22701冻结VLM+离线Q选择、AutoRefine22758轨迹复用技能/子agent（v1不是后来typed-artifact标题）、MobileGen22781能力前沿轨迹合成、MoVE22887跨层值bank解耦容量/compute、AutoTraj23032修复轨迹与reward监督、Principal-Agent23211激励/信息不对称、MonoScale23219 onboarding信任域memory更新。Jan-ID/提交字段不能解决首公开归属；ToolTok2602.02548、SEAM2602.02556、TessPay2602.00213亦只有提前Submitted与Feb-ID，不能定位具体Feb日。定点重开条件同上，未逐项授贡献通过。
 
-其他原始潜在：SPARKLING（Seed Feb2 date-only，扩宽时RMS尺度保持/非对称优化重启可能改变增长稳定性）、GLM-OCR（Research Feb2与API release Feb3不同事件，视觉encoder/0.5B decoder与layout→并行recognition两阶段）、HySparse（官方Feb3 date-only，full layer复用KV/selection的hybrid机制；论文Submitted已窗后）、Kimi K2.5（当前官方PARL trainable orchestrator/frozen children、并行/完成奖励与CriticalSteps机制，首公开/重要修订时刻缺失）。原页日期不能把区间完全夹入本窗；必要是事件对应的官方精确发布记录，而非当前repo更新/宣传指标。已获取完整题摘或官方核心说明，不等于四份全文均已深审；日期保留项不继续扩展全文审阅。
+其他原始潜在（保留原窗判断，补充自然日已解决项见下一段）：SPARKLING（Seed Feb2 date-only，扩宽时RMS尺度保持/非对称优化重启可能改变增长稳定性）、GLM-OCR（Research Feb2与API release Feb3不同事件，视觉encoder/0.5B decoder与layout→并行recognition两阶段）、HySparse（官方Feb3 date-only，full layer复用KV/selection的hybrid机制；论文Submitted已窗后）、Kimi K2.5（当前官方PARL trainable orchestrator/frozen children、并行/完成奖励与CriticalSteps机制，首公开/重要修订日期缺失）。原页日期不能把区间完全夹入原09点窗口；必要是事件对应的官方精确发布日期记录，而非当前repo更新/宣传指标。已获取完整题摘或官方核心说明，不等于四份全文均已深审。
+
+本次date-only裁决解除上段SPARKLING与GLM-OCR的补充窗时刻障碍：前者官方Feb02目录事件新增准入并完成必要深审/已有覆盖，后者Feb02初始README核心按具体增量关闭，不再请求时分秒或将它们当普通日期待办。HySparse官方Feb03是补充窗外，旧记录仅保留不迁日；Kimi缺事件公开/重要修订日期仍隔离，其必要请求是日期而非精确时刻。其他旧Jan-ID日期冲突尚未消除，不因换自然日笼统授通过。
 
 Feb-ID完整题摘潜在见stage8：CBO00161块式Ising选择、BenQ00165归一化量化网格、GASP00173污染/修复self-play、IVO00175 latent unlearning攻击反证、DA-GRPO00166分布式advantage预算、Dispersion00217 condensation与distillation区别、EigenAI00182 bit-exact TEE验证。CBO/GASP注册上界在Feb3 09BJT后不能反推此前首公开；其余各自字段保留，不推整批日期。月目录定点见GMemLLM00015 frozen-backbone GRU memory、RDD00150可逆remasking/cache潜在，只有较早Submitted与Feb-ID，亦缺首公开日。必要替代/重开条件同上。
 
@@ -90,10 +127,28 @@ Feb-ID完整题摘潜在见stage8：CBO00161块式Ising选择、BenQ00165归一�
 
 历史来源切片限制详见§2：Google pubs、Meta relevance、Qwen动态目录、Kimi Platform、Hunyuan当前9项与MiniMax单条Tech目录不能证明完整历史；恢复可用目标日官方切片时仅重开该源与受影响项。
 
+### 补充自然日停点
+
+本轮普通待办0。root已通过SPARKLING非作者准入、必要Source与已有覆盖PRE、GLM-OCR具体增量关闭及完整六部分DAY；Codex app经定点核原有效候选/证据/整合后按同事件去重复用，作者先前以产品组件组合关闭整个家族的提案已撤销，不重开或推翻原评价命题。完成根据本次实际DAY，不沿用原完成标签；以下日期/历史来源限制为明确隔离的外部终态保留，不授正面Coverage/Evidence。
+
+终态日期保留（不评分、不采用、不进Books、不证明覆盖）：[Embedding Perturbation2602.02427v1](https://arxiv.org/abs/2602.02427v1)完整题摘提供embedding扰动敏感度的过程UQ sensor；[GapEval2602.02140v1](https://arxiv.org/abs/2602.02140v1)完整题摘提供同问题双向评价/知识操作反证。仅Submitted Feb02无法确定首公开，需官方目标日公告批次或作者可核首次正文公开日期记录；当前可用精确abs/列表/定点搜索已停止，后续仅重开所证实项与真实归属日，不继续无关全文。
+
+原§5日期/历史来源保留继续有效，不重复请求；SPARKLING仅新增自然日事件恢复，原段不删。GLM-OCR新初版core因没有具体可保留增量关闭，不再作为新增普通日期待办；HySparse官方Feb03明确补充窗外，原记录不迁移。
+
 ## 6. 复核
 
 复核者：root（非作者）。
 结论：通过
 
-验收的是本窗安全终态，不是日期保留项的正面证据通过。
+以上字段保留原冻结窗口的有效复核。
+
+补充复核者：root（非补查报告作者）
+
+补充结论：通过。
+
+root实际读全部README增量diff及六部分、14条补充来源范围/停止与限制、唯一新增SPARKLING证据与Ch28实际已有覆盖、两项精确日期请求、Codex去重和旧有效证据复用、原§5与本次状态区分；实际读本日原页scan0/1与日期边界，并fresh打开02427v1/02140v1完整题摘，不将Submitted授公开日。SPARKLING必要正反侧/Ch28具体正文和GLM初始core此前已独核，分批结果复用，不是第二人无差别重读全部旧附件。共同错误“成熟产品组件不足→关闭整个Codex家族”已更正为同事件去重复用原有效continuation评价命题。无Books新写入，No Change充分；不授全Coverage或无遗漏。作者只同步root实际裁决，不自授日级通过。
+
+以下保留原冻结窗口复核范围；验收的是本窗安全终态，不是日期保留项的正面证据通过。
 root实际通过首批8/8具体贡献校准及Snowflake/Sora/REKD三个负侧核心校准；不是第二人全量深读全部原始命中。定点核SAIR/HetCCL日期原字段、三OAI代表及last-modification边界，live核官方availability的first-announcement原句，原确定候选/评分/范围已撤下。进一步读22398、22737、22569、22548、22984、22997的完整v1题摘，核安全、评价反证和验证信号仍被具名保留而非误排；实际打开22563v2、22795v2、00485v2的官方Comments/Submission history/Withdrawn，确认当前撤回不采用、后来说明不倒灌为本窗事件。十四来源有限停止、收窄的47/47 agent查询与完整六部分已核，未把宽列表升级为全部必读或声称全量召回；日期和历史切片保留项均不支撑候选、Books或覆盖保证。Books无本日写入；作者不自行验收。validator及限定git diff --check通过，只证明格式与限定范围一致，不替代上述语义验收。
+
+本轮完成态V3校验、限定unstaged/cached diff检查、原窗口与0原候选行保留、连续原§4逐字前缀检查通过；日报14＋Source/Owner记录7个本地引用0缺失，10个新增JSON解析通过。机器检查仅证明这些接口/范围事实，不替代root上述实际DAY；未stage、commit或push，本日结束。

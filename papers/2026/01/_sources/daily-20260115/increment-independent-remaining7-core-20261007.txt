@@ -1,0 +1,548 @@
+=== exact-v1 2601.08557; independent admission-decisive excerpt ===
+L90: VideoHEDGE extends this decomposition to videos, addressing temporally structured sampling, spatiotemporal perturbations, and the large candidate sets induced by frame/pixel variations.
+L91: Benchmarks and mitigation methods for LVLM hallucinations. Several works benchmark or mitigate hallucinations in LVLMs. THRONE (cite45†Kaul et al., 2024 ) provides an object-level hallucination benchmark for free-form image descriptions, while multi-object hallucination datasets (cite67†Chen et al., 2024 ) analyze entity-level inconsistencies.
+L92: Mitigation methods such as Visual Contrastive Decoding (VCD) (cite68†Lee et al., 2024 ) and retrieval-augmented decoding (cite69†Quan et al., 2025 ) reduce hallucinations during generation. These approaches modify the model or its decoding procedure. VideoHEDGE takes a complementary direction: it does not alter the underlying Video-VLM, but provides post-hoc, perturbation-aware reliability estimates driven by semantic clustering.
+L93: Semantic clustering for reliability estimation. Semantic entropy and HEDGE employ NLI-based entailment graphs to form logically coherent clusters, but at quadratic computational cost (cite65†Gautam et al., 2025b ). Recent work shows that sentence-embedding-based clustering offers a scalable approximation for high-throughput settings (cite70†Abdaljalil et al., 2025 ). In parallel, LLM-as-a-judge protocols have become standard for labeling hallucination quality (cite45†Kaul et al., 2024 ).
+L94: VideoHEDGE integrates these components: binary hallucination labels are provided by an external LLM judge, while reliability metrics use NLI- or embedding-based clustering. Empirically, we show that embedding-based clustering achieves comparable ROC–AUC to NLI-based clustering while enabling large spatiotemporal perturbation budgets in the video setting.
+L95: ## 3. Methodology
+L96: 
+L97: Figure 1. Overview of the proposed VideoHEDGE framework for hallucination detection in visual question answering (VQA). A vision–language model generates multiple answers per video–question pair, which are grouped via two strategies: natural language inference (NLI)-based logical clustering and embedding-aligned semantic clustering. Entropy within these groups quantifies uncertainty, enabling hallucination detection through metrics such as RadFlag, Semantic Entropy, and VASE.
+L98: Hallucination Estimation via Dense Geometric Entropy (HEDGE) was originally proposed as a modular framework for estimating reliability in image-based VQA, combining answer sampling, semantic clustering, and entropy-based scoring into a single pipeline (cite65†Gautam et al., 2025b ). In this work we extend this idea to videos and introduce VideoHEDGE, a variant tailored to temporally structured inputs and soccer-domain evaluation.
+L99: Rather than designing new metrics from scratch, VideoHEDGE instantiates the same high-level decomposition—sampling $\rightarrow$ clustering $\rightarrow$ scoring—but (i) adapts the sampling stage to video clips, (ii) treats temporal and spatial perturbations as controlled sources of visual degradation, and (iii) implements scalable clustering and metric computation for the large candidate sets common in video VQA.
+L100: Concretely, VideoHEDGE standardizes how we obtain multiple answers from a video–question pair under different frame and resolution settings, how we group these answers into semantic clusters using either Natural Language Inference (NLI)-based or embedding-based backends, and how we compute reliability scores with off-the-shelf metrics (RadFlag, Semantic Entropy (SE), Vision-Amplified Semantic Entropy (VASE)) as well as their embedding-aligned variants.
+L101: By viewing reliability estimation as a robustness problem over the geometry of semantic clusters, VideoHEDGE enables consistent comparison across video-capable multimodal models. We implement our framework on top of the open-source hedge-bench package, which we extend with video-specific sampling and perturbation modules.
+L102: ### 3.1. Pipeline Overview
+L103: Figure cite71†1 summarizes the VideoHEDGE pipeline. For each video–question pair, the framework (i) generates multiple answers under controlled sampling conditions, (ii) arranges them into a sequence with associated log-likelihoods, (iii) performs semantic clustering in either an NLI or embedding space, and (iv) aggregates probability mass at the cluster level to derive reliability scores. The video is only used in the sampling stage; all subsequent steps operate purely on the textual answers.
+L104: Given a video $v$ and question $q$, we first obtain a low-temperature baseline answer $A_{0}$ that approximates the model’s most likely response. We then draw high-temperature samples under two visual conditions. Clean answers $A_{1},\dots,A_{n}$ are generated from the reference video using a fixed frame-selection policy (e.g., a 24-frame uniform subsample at a chosen resolution). Noisy answers $N_{1},\dots,N_{n}$ are generated from photometrically perturbed variants of the same clip.
+L105: For each noisy variant, we sample brightness $b\sim\mathcal{U}(-0.2,0.2)$, contrast $c\sim\mathcal{U}(0.8,1.2)$, saturation $s\sim\mathcal{U}(0.95,1.05)$, and a hue shift $h\sim\mathcal{U}(-0.02,0.02)\cdot 360^{\circ}$, and apply these jointly together with additive spatiotemporal noise to all frames via a video-processing pipeline (cite72†FFmpeg Developers, 2025 ). This produces stochastic color- and noise-perturbed videos $V^{\prime}$ that preserve the underlying event while degrading visual evidence.
+L106: In our experiments (Section cite18†4 ), we vary the number of such noisy samples systematically and match the clean sampling budget to maintain balance. We record the mean token log-likelihood for every generated answer. We denote the resulting arrays by $\log\ell_{\text{clean}}$ and $\log\ell_{\text{noisy}}$ for clean and noisy generations, respectively. The exact number of trials $n$ depends on the sampling and distortion budgets of the experimental setting.
+L107: ### 3.2. Semantic Clustering
+L108: VideoHEDGE converts the sequence of textual answers into a discrete set of semantic hypotheses by clustering them. The video is not used in this stage. Each response is mapped to a cluster identifier $c_{i}=\text{cluster}(A_{i})$ (or $\text{cluster}(N_{i})$), with indices following the sequence layout: $[0]\!\rightarrow\!A_{0},\quad[1{:}n{+}1]\!\rightarrow\!A_{1}..A_{n},\quad[n{+}1{:}2n{+}1]\!\rightarrow\!N_{1}..N_{n}.$ We compare two strategies that trade off semantic precision and computational cost.
+L109: NLI-based clustering. Following (cite65†Gautam et al., 2025b ), clustering is treated as a logical consistency problem. Given a set $S=\{t_{1},\dots,t_{m}\}$, a Multi-Genre Natural Language Inference (MNLI)-style model predicts a label $y_{ij}\in\{\text{entails}\allowbreak\,\text{contradicts},\text{neutral}\}$ for each pair $(t_{i},t_{j})$.
+L110: We build a directed entailment graph $G_{\text{ent}}$ with edges: $E_{\text{ent}}=\{(i,j)\mid y_{ij}=\text{entails}\},$ and define a mutual-entailment relation $i\sim j$ if and only if $(i,j)\in E_{\text{ent}}$ and $(j,i)\in E_{\text{ent}}$. Clusters are obtained as the transitive closure of this relation via a union–find procedure, with contradiction links used to prevent merging of answers that explicitly disagree.
+L111: This strategy offers fine-grained logical control but requires $\mathcal{O}(n^{2}T_{\text{NLI}})$ model evaluations, where $T_{\text{NLI}}$ is the cost of a single NLI forward pass, making it expensive for large sampling scales or many perturbation settings.
+L112: Embedding-based clustering. To improve scalability, we also cluster in a continuous embedding space. Each text $t_{i}$ is encoded into a sentence vector $\mathbf{x}_{i}\in\mathbb{R}^{d}$ using a pretrained encoder (cite73†Reimers and Gurevych, 2019 ), then normalized to unit length. Pairwise cosine similarities are given by $\sigma_{ij}=\mathbf{x}_{i}^{\top}\mathbf{x}_{j}$.
+L113: We build an undirected similarity graph $G_{\text{sim}}$ where vertices are responses and edges connect pairs that are either above a similarity threshold or within the local neighborhood: $\sigma_{ij}\geq\tau\quad\text{or}\quad j\in\text{kNN}(i).$ Clusters correspond to connected components in $G_{\text{sim}}$.
+L114: The threshold $\tau$ is tuned on a validation split to maximize Receiver Operating Characteristic Area Under the Curve (ROC-AUC) for hallucination detection (cite74†Fawcett, 2006 ), giving automatic control over cluster granularity.
+L115: The complexity of this approach is $\mathcal{O}(nT_{\text{enc}})+\mathcal{O}(n^{2}d)$, where $T_{\text{enc}}$ is the cost of a single encoder pass. While quadratic in $n$, the $\mathcal{O}(n^{2}d)$ term consists solely of dot products and graph operations, which are substantially cheaper than full NLI model evaluations. This makes embedding-based clustering well-suited to the larger candidate pools that arise when we vary frame counts, pixel budgets, or distortion types in VideoHEDGE.
+L116: ### 3.3. Hallucination Metrics for Video VQA
+L117: 
+L118: Given the semantic clusters and log-likelihoods from the sampling stage, VideoHEDGE computes reliability scores by aggregating probability mass at the cluster level and then measuring uncertainty and robustness.
+L119: #### 3.3.1. Semantic distribution and entropy
+L120: Let $\log\ell_{i}$ be the mean token log-likelihood of answer $i$ and $c_{i}$ its cluster assignment.
+L121: We define a normalized semantic distribution over clusters as $s_{j}=\frac{\exp\!\left(\sum_{i:c_{i}=j}\exp(\log\ell_{i}-\max_{k}\log\ell_{k})\right)}{\sum_{m}\exp\!\left(\sum_{i:c_{i}=m}\exp(\log\ell_{i}-\max_{k}\log\ell_{k})\right)},$ and the corresponding semantic entropy, $\mathrm{SE}(\mathbf{s})=-\sum_{j}s_{j}\log s_{j}.$ Following Shannon’s classical formulation of entropy (cite75†Shannon, 1948 ), this quantity measures uncertainty over semantic clusters rather than over token-level outputs.
+L122: We compute separate distributions for clean and noisy generations, $\mathbf{s}_{\text{clean}}$ and $\mathbf{s}_{\text{noisy}}$, respectively. The difference between these distributions reflects how sensitive the model’s semantic beliefs are to temporal or spatial perturbations in the input video clip.
+L123: #### 3.3.2. Semantic Entropy (SE)
+L124: 
+L125: SE quantifies uncertainty over clusters induced by clean generations: $\mathrm{SE}=\mathrm{SE}(\mathbf{s}_{\text{clean}}).$ High values indicate that probability mass is spread across many competing semantic explanations for the same video, a signal that the model may be under-specified or relying on unstable cues.
+L126: #### 3.3.3. RadFlag
+L127: 
+L128: RadFlag measures how often high-temperature clean answers leave the baseline cluster: $\mathrm{RadFlag}=1-\frac{1}{n}\sum_{i=1}^{n}\mathbf{1}[c_{i}=c_{0}],$ where $c_{0}$ is the cluster of the baseline answer $A_{0}$ and $c_{i}$ are those of the clean samples $A_{i}$. Values near 1 indicate that the model frequently jumps to semantically different answers when sampling from the same video, even without explicit input noise.
+L129: #### 3.3.4. Vision-Amplified Semantic Entropy (VASE)
+L130: VASE extends SE by explicitly incorporating the gap between clean and noisy semantic distributions (cite60†Liao et al., 2025 ).
+L131: We first form a shifted distribution that accentuates clusters whose probability changes under visual degradation: $\mathrm{VASE}=\mathrm{SE}\!\left(\operatorname{softmax}\!\left(\mathbf{s}_{\text{clean}}+\alpha(\mathbf{s}_{\text{clean}}-\mathbf{s}_{\text{noisy}})\right)\right),$ with a scaling factor $\alpha$ controlling sensitivity to the clean–noisy semantic gap (we set $\alpha=1$ in all experiments following (cite60†Liao et al., 2025 )).
+L132: Intuitively, VASE is high when the model’s semantic beliefs are both uncertain and unstable under changes to the video, such as fewer frames or lower resolution.
+L133: #### 3.3.5. Effect of distortion budget
+L134: 
+L135: Increasing the number of visual distortions enlarges the pool of noisy answers, and we proportionally increase the clean sampling budget to maintain balance. As a consequence, all three metrics, $\mathrm{SE}$, $\mathrm{RadFlag}$, and $\mathrm{VASE}$, become functions of both sampling scale and perturbation strength. When we vary the sampling scale in our experiments, the resulting trends should therefore be interpreted as the outcome of this coupled design.
+L136: All metrics are implemented in a batched manner using stable mean-log-probability aggregation, enabling efficient evaluation over large video datasets and multiple perturbation settings.
+L137: ### 3.4. Task-Specific Prompt Templates
+L138: 
+L139: VideoHEDGE does not vary linguistic verbosity on the SoccerChat dataset (cite34†Gautam et al., 2025a ); instead, it relies on task-specific prompt templates aligned with the two annotation regimes of the dataset. The underlying video is fixed, and only the task description and expected answer type differ between EventClassification and VideoQA.
+L140: For EventClassification, the system prompt describes the model as a soccer video assistant that must identify the single most salient football event in the clip (e.g., goal, penalty, corner kick, foul, or no event). The user message provides the short clip and a generic query asking what key event occurs. The expected answer is a concise event description, typically a single categorical label or a short phrase that can be mapped to the dataset’s event taxonomy.
+L141: For VideoQA, we reuse the same high-level system instructions but present the clip together with a task-specific natural language question. These questions are drawn from the SoccerChat annotations and target aspects such as the acting player, the outcome of a shot, or a brief description of what happens. The model is allowed to respond in free-form natural language, but the prompts emphasize concise, directly grounded answers.
+L142: Both templates are held fixed across all models and perturbation settings. This design ensures that differences in the reliability metrics of Section cite11†3.3 can be attributed to model behavior, spatiotemporal conditions, and clustering choices, rather than to changes in answer-length constraints or stylistic instructions.
+L143: 
+L144: Listing 1: Prompt templates for each answer-length prompt configuration. The system prompt is omitted for SoccerChat-qwen2-vl-7b where its default is used.
+L145: 
+L146: ⬇
+L147: {"EventClassification": [{"role": "system", "content":
+L148: 
+L149: "You are a sports video reasoning assistant. Given a short video clip and a user question, provide an answer that is concise and directly addresses exactly what is asked. Ground the answer strictly in the video content. When referring to teams or players, always use jersey colors. Do not give explanations or extra text."}, {"role": "user", "content":
+L150: 
+L151: "<video> Identify the key event shown in the clip."}],
+L152: 
+L153: "VideoQA": [{"role": "system", "content":
+L154: "You are a sports video reasoning assistant. Given a short video clip and a user question, provide an answer that is concise and directly addresses exactly what is asked. Ground the answer strictly in the video content. When referring to teams or players, always use jersey colors. Do not give explanations or extra text."}, {"role": "user", "content":
+L155: 
+L156: "<video> {r.question}" }]}
+L157: 
+L158: Listing 2: Evaluation prompt template for both EventClassification and VideoQA tasks used with Qwen3-30B-A3B adjudicator.
+L159: 
+L160: ⬇
+L161: [{"role": "system", "content":
+L162: 
+L163: "You are a fair and careful evaluator of sports video question-answer pairs, focused on football (soccer). You will be given:
+L164: 
+L165: - question: the exact text shown to the model
+L166: 
+L167: - description: optional clarification
+L168: 
+L169: - correct_answer: the verified correct answer
+L170: 
+L171: - generated_answer: the model’s answer.
+L172: 
+L173: Task type: {task_type}.
+L174: 
+L175: - Video is ALWAYS football.
+L176: 
+L177: If task_type == "EventClassification":
+L178: - Question: identify the single most relevant event. correct_answer and generated_answer are SHORT LABELS (e.g., goal, penalty, foul, etc.). Labels count as MATCHING if they indicate the SAME event. Score 0 when event types differ or one is "no event" and the other is an actual event.
+L179: 
+
+=== exact-v1 2601.08450; independent admission-decisive excerpt ===
+L90: for $t$ in $\{1,\ldots,T\}$ do
+L91: 
+L92:   $\bm{m}\leftarrow\bigl(\mathds{1}[\bm{\sigma}(i)<t]\bigr)_{i=1}^{T}$
+L93: 
+L94:   $\bm{n}\leftarrow\bigl(\mathds{1}[\bm{\sigma}(i)=t]\bigr)_{i=1}^{T}$
+L95: 
+L96:   $\bm{y}^{\prime}\sim\mathcal{C}(\bm{y}|\bm{f}_{\theta}(\bm{m}\odot\bm{y},\bm{\mu},\bm{m}))$
+L97:   $\bm{y}\leftarrow(\bm{1}-\bm{n})\odot\bm{y}+\bm{n}\odot\bm{y}^{\prime}$
+L98: 
+L99: end for
+L100: ### 2.2 Order-agnostic training
+L101: 
+L102: Algorithm cite42†2 provides the training procedure. During training, the model learns to reconstruct masked frames $\bm{y}_{\bm{\sigma}(\geq t)}$ from the observed ones $\bm{y}_{\bm{\sigma}(<t)}$. The objective is the evidence lower bound (ELBO) on the log-likelihood [cite37†6 ]:
+L103:  | $\displaystyle\log p(\bm{y})$  | $\displaystyle\geq d\cdot\mathbb{E}_{t,\bm{\sigma}}\left[\frac{1}{d-t+1}\sum_{k\in\bm{\sigma}(\geq t)}\log p(\bm{y}_{k}\mid\bm{y}_{\bm{\sigma}(<t)})\right],$  |  | (3)
+L104: where $t\sim\mathcal{U}(1,\ldots,T)$ and $\bm{\sigma}$ is uniformly sampled from $\mathcal{U}(S_{T})$. Naively optimising the chain rule likelihood (Eq. (cite35†1 )) requires full sequential autoregression over all positions, which is computationally expensive. The formulation in Eq.(cite43†3 ) instead permits computing all masked terms $k$ in parallel for a sampled pair $(t,\bm{\sigma})$, yielding an efficient and order-agnostic training objective.
+L105: To approximate the expectation, we use a single-sample Monte Carlo estimate per step.
+L106: Algorithm 2 Order-agnostic Training
+L107: 
+L108: Data point $\bm{y}$, Conditioning input $\bm{\mu}$, Network $\bm{f}_{\theta}$
+L109: 
+L110: $\mathcal{L}$
+L111: 
+L112: Sample $t\sim\mathcal{U}(1,\ldots,T)$
+L113: 
+L114: Sample $\bm{\sigma}\sim\mathcal{U}(S_{T})$
+L115: 
+L116: Compute $\bm{m}\leftarrow(\bm{\sigma}<t)$
+L117: 
+L118: $\bm{l}\leftarrow(\bm{1}-\bm{m})\odot\log\mathcal{C}(\bm{y}|\bm{f}_{\theta}(\bm{m}\odot\bm{y},\bm{\mu},\bm{m}))$
+L119: 
+L120: $\mathcal{L}_{t}\leftarrow\frac{1}{T-t+1}\text{sum}(\bm{l})$
+L121: 
+L122: $\mathcal{L}\leftarrow T\cdot\mathcal{L}_{t}$
+L123: ### 2.3 Quantisation
+L124: 
+L125: Unlike previous works that rely on learned speech tokens (e.g., [cite32†21 , cite33†4 ]), we apply a single linear quantiser shared across all frequency bins. Specifically, for a value $y\in[a,b]$, the quantised index $\hat{y}$ is given by:
+L126: 
+L127:  | $\displaystyle\hat{y}=\operatorname{round}\!\left(\frac{y-a}{b-a}\cdot(Q-1)\right),\quad\hat{y}\in\{0,1,\dots,Q-1\},$  |  | (4)
+L128: where $Q$ denotes the number of quantisation bins. Since the model predicts whole frames, with each of the $n_{f}$ bins sampled from its own distribution over $Q$ values, a frame can be viewed as a token from a vocabulary of size $Q^{n_{f}}$. This space is extremely large even for $Q=2$ with $n_{f}=80$.
+L129: ### 2.4 Decoding strategies
+L130: 
+L131: We refer to the procedure in Algorithm cite41†1 as the default decoding that applies uniformly random ordering. We refer to fixed orders left-to-right as l2r and right-to-left r2l.
+L132: #### 2.4.1 Controlling order stochasticity
+L133: We investigated the effect of order randomness by varying the degree of stochasticity. Startingfrom $\bm{\sigma}^{l2r}$, we introduce randomness by applying a sequence of swaps between two randomly chosen positions. Theoretically, performing $T\log T$ swaps yields a distribution that is nearly uniform [cite38†9 ]. We control the number of swaps as a coarse measure of randomness by scaling $T\log T$ with a factor $\beta\in(0,1)$, yielding orders close to l2r as $\beta\to 0$ and to default as $\beta\to 1$.
+L134: #### 2.4.2 Top-K probability
+L135: 
+L136: At step $t$, for each undecoded position $k\in\bm{\sigma}(\geq t)$ we compute a confidence score
+L137: 
+L138:  | $\displaystyle s_{k}(t)=\sum\limits_{i=1}^{n_{f}}\max_{j\in\{0,\dots,Q-1\}}\log p(\bm{y}_{k,i}=j\mid\bm{y}_{\bm{\sigma}(<t)}),$  |  | (5)
+L139: 
+L140: which sums the maximum log-probabilities across all $n_{f}$ bins. The next position is chosen as
+L141: 
+L142:  | $\displaystyle k_{t}^{\star}\;=\;\arg\max_{k\in\bm{\sigma}(\geq t)}s_{k}(t),$  |  | (6)
+L143: so the $t$-th entry of the decoding order is updated $\bm{\sigma}(t)\leftarrow k_{t}^{\star}$. The equations present the $K=1$ case; for $K>1$ we take the top $K$ indices in Eq. (cite44†6 ) at each step. Note that this strategy only selects positions and not the actual values for each position.
+L144: #### 2.4.3 Duration-guided decoding
+L145: While inspecting the adaptively determined Top-$K$ orders (see Section cite21†4.3 ), we observe that the model tends to decode contiguous positions: adjacent frames are decoded consecutively. This pattern suggests that the algorithm prefers to decode semantically coherent regions together.
+L146: Motivated by this, we propose a segment-wise decoding scheme: we use the duration predictor to decided the segments and then select the segment with the highest average confidence score (see Eq. (cite45†5 )), approximated here by the model’s predicted probabilities, which may not be well calibrated. The frames within the chosen segment are then updated one by one in a random order, although adaptive strategies could also be considered.
+L147: ## 3 EXPERIMENTS
+L148: ### 3.1 Experimental setup
+L149: We use LJSpeech dataset [cite46†7 ], a public-domain corpus containing approximately $13,100$ clips (1-10s) of read speech by a single female native English speaker. We adopt the same dataset split as Grad-TTS [cite47†14 ]. The model architecture, based on Grad-TTS[cite47†14 ], comprises a text encoder, a duration predictor and a decoder. The encoder produces a latent text representation, upsampled by predicted durations to yield $\bm{\mu}$, which serves as the prior for decoding.
+L150: The decoder is and MDM that we train and assess in a number of ways to investigate different orders.
+L151: We apply linear quantisation with $Q=100$ levels to balance learning simplicity and reconstruction fidelity, unless stated otherwise. For each time-frequency bin, the decoder predicts parameters for a mixture of $5$ logistic components, sampled independently across Mel bins. At inference, the mixture component is chosen via the Gumbel-Max trick with temperature $t_{1}$ and the bin value is then drawn from the selected logistic distribution with temperature $t_{2}$.
+L152: HiFi-GAN [cite48†10 ] is used as the vocoder.
+L153: ### 3.2 Evaluation metrics
+L154: 
+L155: We evaluate with Mel-Cepstral Distortion (MCD), $\log F_{0}$, UTMOSv2 [cite49†2 ], and Mean Opinion Score (MOS), all on 50 sampled test-split audios. MCD and $\log F_{0}$ are computed against vocoded references, while MOS was rated by 10 Amazon Mechanical Turk Master Workers per audio, self-reported as native English speakers.
+L156: ## 4 Results
+L157: 
+L158: We first justify the choice of $Q$, then examine the effect of randomness, the impact of decoding order, and finally the role of update size $K$ in Top-$K$ decoding.
+L159: ### 4.1 Effect of discretisation on speech quality
+L160: We conducted preliminary experiments using a public HiFi-GAN checkpoint to vocode Mel-spectrograms quantised at different levels. As shown in Figure cite50†2 , 10-class quantisation preserves high quality, while even 2-class (1-bit) Mel-spectrograms yield partially intelligible speech with some recognisable words, suggesting that Mel-spectrograms are redundant and HiFi-GAN can reconstruct speech even from heavily quantised inputs.
+L161: To examine this more directly, we trained and evaluated on 1-bit representations, achieving an average MCD of $4.21$, and an average of $\log F0$ of $0.211$. Based on these findings, we adopt 100-class quantisation, which simplifies training in the discrete space while preserving speech quality.
+L162: Figure 2: Evaluation on quantisation levels
+L163: ### 4.2 Controlling randomness in decoding order
+L164: 
+L165: As described in Section cite12†2.4.1 , we control decoding-order randomness by varying $\beta$. We test seven values: [0.001, 0.003, 0.01, 0.03, 0.1, 0.35, 1.0]. Small $\beta$ values approximate l2r, while larger values approach the default strategy. Each setting is run five times and statistics are averaged across runs. Results are shown in Figure cite51†3 .
+L166: 
+L167: Figure 3: Evaluation on orders with controlled randomness
+L168: As randomness increases, MCD improves while UTMOS degrades. $\log F_{0}$ shows a different pattern: it reaches its lowest value at intermediate $\beta$, where the order is neither strictly sequential nor fully random but still preserves local cluster of consecutive frames. This suggests that pitch is best preserved with partial ordering. Overall, these results highlight that different metrics respond differently to decoding-order randomness.
+L169: ### 4.3 The impact of decoding order
+L170: 
+L171: We re-train Grad-TTS on full utterances, since the original model is trained on segments. As baselines, we use two decoding strategies: fixed 100-step decoding (gradtts-100) and length-based decoding (gradtts-length), where the number of steps matches the predicted number of frames. Both top1 and top1* follow Section cite13†2.4.2 , but top1 selects the most likely value, while top1* samples from the distribution.
+L172: The automatic evaluation metrics are reported in Figure cite52†4 . Overall, duration-based decoding performs best, yielding low MCD and $\log F_{0}$ alongside relatively high UTMOS, with top1* performing comparably. Among sequential strategies, r2l outperforms l2r in UTMOS and MCD, with similar $\log F_{0}$, demonstrating that left-to-right decoding is not optimal.
+L173: The Grad-TTS baselines achieve the highest UTMOS among all models but suffer from high MCD, with gradtts-length also showing a significantly worse $\log F_{0}$. top1 performs similar to top1* in UTMOS and MCD, but top1* is clearly better in $\log F_{0}$. MOS results shows a similar trend to the automatic metrics (Figure cite53†5 ). top1* ranks highest after the vocoded reference. r2l again surpasses l2r.
+L174: The Grad-TTS baselines achieve the highest scores on automatic metrics but rank lower in subjective evaluations, which may be related to their higher MCD. The duration-based strategy is comparable to the Grad-TTS baselines. Finally, l2r and top1 yield relatively low MOS, but are still higher than the default setting.
+L175: Across metrics, the adaptive strategies top1* and duration-based decoding performed best, while deterministic top1 lagged behind, likely due to over-smoothed outputs from always selecting the most probable value.
+L176: Figure 4: Evaluation results for single-frame decoding strategies Figure 5: Breakdown of MOS scores
+L177: ### 4.4 Adaptive decoding with Top$K$
+L178: We then evaluated the adaptive Top-$K$ decoding strategy with varying $K$, assigning each time-frequency bin its most likely value. Unlike previous experiments, here $K$ frames are updated simultaneously at each step. Results show that increasing $K$ improves MCD and $\log F_{0}$ but reduces UTMOS (Figure cite54†6 ).
+L179: We attribute the MCD and $\log F_{0}$ gains to decoding multiple frames with shared context, which enhances spectral and pitch consistency, while the drop in UTMOS reflects diminished naturalness. Considering order and update size, an optimal decoding schedule may be learned with reinforcement learning, rather than fixed heuristics.
+
+=== exact-v1 2601.08441; independent admission-decisive excerpt ===
+L90: SAE-based steering and editing. Recent work combines activation steering with sparse or structured representation bases (cite65†Wu et al., 2025a ; cite66†Wu et al., 2025b ; cite67†Chalnev et al., 2024 ; cite68†He et al., 2025 ; cite69†Sun et al., 2025 ; cite70†Xu et al., 2025 ). ReFT-r1 (cite65†Wu et al., 2025a ) learns a single dense steering direction on frozen models using a language-modeling objective with sparsity constraints.
+L91: RePS (cite66†Wu et al., 2025b ) introduces a reference-free, bi-directional preference objective to train intervention-based steering methods. Other approaches operate directly in SAE space: SAE-TS and SAE-SSV (cite67†Chalnev et al., 2024 ; cite68†He et al., 2025 ) optimize or select sparse SAE features for controlled steering, while HyperSteer (cite69†Sun et al., 2025 ) generates steering vectors on demand via a hypernetwork.
+L92: Positioning of YaPO. BiPO provides strong optimization but suffers from dense entanglement; SAS offers interpretability but lacks optimization. YaPO unifies these lines by learning preference-optimized, sparse steering vectors in SAE space. This yields disentangled, interpretable, and stable steering, with improved convergence and generalization across cultural alignment, truthfulness, hallucination suppression, and jailbreak defense.
+L93: ## 3 Method
+L94: ### 3.1 Motivation: From Dense to Sparse Steering
+L95: Existing approaches extract steering vectors by directly operating in the dense activation space of LLMs (cite60†Rimsky et al., 2023 ; cite61†Wang and Shu, 2023 ). While effective in some cases, these methods inherit the multi-semantic entanglement of neurons: individual dense features often conflate multiple latent factors (cite48†Elhage et al., 2022 ), leading to noisy and unstable control signals.
+L96: As a result, vectors obtained from contrastive prompt pairs can misalign with actual generation behaviors, especially in alignment-critical tasks.
+L97: To address this, we leverage SAEs, which have recently been shown to disentangle latent concepts in LLM activations into sparse, interpretable features (cite49†Bayat et al., 2025 ; cite64†Lieberum et al., 2024 ). By mapping activations into this space basis, steering vectors can be optimized along dimensions that correspond more cleanly to relevant semantic factors, improving both precision and interpretability.
+L98: ### 3.2 Preference-Optimized Steering in Sparse Space
+L99: Let $A_{L}(x)$ denote the hidden activations of the transformer at layer $L$ for input $x$. Let also $\pi_{L+1}$ denote the upper part of the transformer (from layer $L+1$ to output). BiPO (cite47†Cao et al., 2024 ) learns a steering vector $v\in\mathbb{R}^{k_{d}}$ in the dense activation space of dimension $k_{d}$ using the bi-directional preference optimization objective (see equation cite71†1 ).
+L100: $y_{w}$ and $y_{l}$ are respectively the preferred and dispreferred responses which are jointly drawn with the prompt $x$ from the preference dataset $\mathcal{D}$, $\sigma$ is the logistic function, $\beta\geq 0$ a deviation control parameter, and $d\in\{-1,1\}$ a uniformly random coefficient enforcing bi-directionality. At inference time, the learned steering vector $v$ is injected to the hidden state to cause a perturbation towards the desired steering behavior as follows
+L101:  | $$A_{L}(x)=A_{L}(x)+d\cdot\lambda\cdot v,\qquad\forall d\in\{-1,1\}$$  |  | (2)
+L102: 
+L103: with $d$ fixed to either -1 or 1 (negative or positive steering) and $\lambda$ being a multiplicative factor that controlling the strength of steering.
+L104: 
+L105: In contrast, with YaPO, we introduce a sparse transformation function $\Phi$ that steers activations through an SAE as follows:
+L106:  | $\displaystyle\Phi$  | $\displaystyle(A_{L}(x),\lambda,d,v)$  |
+L107:  |  | $\displaystyle=\underbrace{\text{Dec}\!\left(\mathrm{ReLU}\!\left(\text{Enc}(A_{L}(x))+d\cdot\lambda\cdot v\right)\right)}_{\text{steered reconstruction}}$  |
+L108:  |  | $\displaystyle\quad+\underbrace{\Big(A_{L}(x)-\text{Dec}(\text{Enc}(A_{L}(x)))\Big)}_{\text{residual correction}}.$  |  | (3)
+L109: where Enc and Dec are the encoder and decoder of a pretrained SAE, and $v\in\mathbb{R}^{k_{s}}$ is the learnable steering vector in sparse space of dimension $k_{s}\gg k_{d}$. To correct for SAE reconstruction error, we add a residual correction term ensuring consistency with the original hidden state (see equation cite72†3 ). The rational behind applying ReLU function is to enforce non-negativity in sparse codes (cite49†Bayat et al., 2025 ).
+L110: We train steering vectors to increase the likelihood of preferred responses $y_{w}$ while decreasing that of dispreferred responses $y_{l}$. The resulting optimization objective is outlined in equation cite73†4 .
+L111:  | $\displaystyle\min_{v}\;\mathbb{E}_{\begin{subarray}{c}d\sim\mathcal{U}\{-1,1\}\\
+L112: (x,y_{w},y_{l})\sim\mathcal{D}\end{subarray}}\Bigl[\log\sigma\Bigl($  | $\displaystyle d\,\beta\log\tfrac{\pi_{L+1}(y_{w}\mid\Phi(A_{L}(x),\lambda,d,v))}{\pi_{L+1}(y_{w}\mid A_{L}(x))}-d\,\beta\log\tfrac{\pi_{L+1}(y_{l}\mid\Phi(A_{L}(x),\lambda,d,v))}{\pi_{L+1}(y_{l}\mid A_{L}(x))}\Bigr)\Bigr].$  |  | (4)
+L113: With $d=1$, the objective increases the relative probability of $y_{w}$ over $y_{l}$; with $d=-1$, it enforces the reverse. This symmetric training sharpens the vector’s alignment with the behavioral axis of interest (positive or negative steering).
+L114: During optimization, we detach gradients through the SAE parameters (which along with the LLM parameter remain frozen) and only update $v$. This setup enables $v$ to live in a disentangled basis, while the decoder projects it back to the model’s hidden space. We summarize the overall optimization procedure in Algorithm cite74†1 .
+L115: ## 4 Experiments
+L116: ### 4.1 Experimental Setup
+L117: Target LLM. For clarity, in the main paper we present all experiments on Gemma-2-2B (cite75†Team et al., 2024 ), a light yet efficient model. Scalability to the bigger model Gemma-2-9B is differed to Appendix cite31†D . The choice of this model is further motivated by the availability of pretrained SAEs from Gemma-Scope (cite64†Lieberum et al., 2024 ), which are trained directly on Gemma-2 hidden activations and enable sparse steering without additional overhead of training SAEs from scratch.
+L118: Tasks. For readability, we focus on cultural adaptation, followed by a generalization study on other standard alignment tasks as studied in previous work (cite47†Cao et al., 2024 ; cite46†Panickssery et al., 2024 ; cite49†Bayat et al., 2025 ). For cultural adaptation, we select the steering layer via activation patching, see Appendix cite25†A . Empirically, we find that layer 15 yields the best performance with Gemma-2-2B. Training details and hyperparameter settings are reported in Appendix cite26†B .
+L119: Algorithm 1 YaPO: Yet another Policy Optimization
+L120: 
+L121: 1: Input: LLM $\pi$, preference dataset $\mathcal{D}$, batch size $B$, layer $A_{L}$, SAE encoder Enc, decoder Dec, learning rate $\eta$, temperature $\beta$, epochs $N$
+L122: 
+L123: 2: Output: Optimized steering vector $v^{\ast}$
+L124: 
+L125: 3: Initialize $v_{0}\leftarrow\mathbf{0}\in\mathbb{R}^{k_{s}}$
+L126: 
+L127: 4: for $e=0$ to $N-1$ do
+L128: 
+L129: 5:   Sample minibatch $\mathcal{D}_{e}\sim\mathcal{D}$ of size $B$
+L130: 
+L131: 6:   Sample direction $d\sim\mathcal{U}\{-1,1\}$
+L132: 7:   for each $(x^{i},y_{w}^{i},y_{l}^{i})\in\mathcal{D}_{e}$ do
+L133: 
+L134: 8:    $h^{i}\leftarrow A_{L}(x^{i})$
+L135: 
+L136: 9:    $s^{i}\leftarrow\text{Enc}(h^{i})$
+L137: 
+L138: 10:    $\tilde{s}^{i}\leftarrow\mathrm{ReLU}(s^{i}+dv_{e})$
+L139: 
+L140: 11:    $\tilde{h}^{i}\leftarrow\text{Dec}(\tilde{s}^{i})$
+L141: 
+L142: 12:    $\hat{h}^{i}\leftarrow\text{Dec}(\text{Enc}(h^{i}))$
+L143: 
+L144: 13:    $h^{\prime\,i}\leftarrow\tilde{h}^{i}+(h^{i}-\hat{h}^{i})$
+L145: 
+L146: 14:   end for
+L147: 
+L148: 15:   Compute loss $\mathcal{L}$ as per equation cite73†4 L149: 16:   $v_{e+1}\leftarrow\text{AdamW}(v_{e},\nabla_{v_{e}}\mathcal{L},\eta)$
+L150: 
+L151: 17: end for
+L152: 
+L153: 18: return $v^{\ast}\leftarrow v_{N-1}$
+L154: Dataset. We introduce a new cultural alignment dataset that we curate from scratch, with dedicated training and evaluation splits, to probe fine-grained cultural localization within the same language. Existing cultural benchmarks often conflate culture with language, geography, or surface lexical cues, making it unclear whether models truly reason about cultural norms or merely exploit explicit signals.
+L155: Our dataset addresses this limitation by holding language fixed and varying only country-level norms and practices, targeting subtle yet consequential differences in everyday behavior among countries that share a language (e.g., Moroccan vs. Egyptian Arabic, US vs. UK English).
+L156: Crucially, every question appears in two forms: (i) a localized version that explicitly specifies the country (e.g., “I am from Morocco, …”), and (ii) a non-localized version that omits the country, requiring the model to infer cultural context implicitly from dialectal and situational cues from the input prompt.
+L157: This paired construction enables principled measurement of the implicit–explicit localization gap, the performance drop when explicit country information is removed—following (cite50†Veselovsky et al., 2025 ).
+L158: To ensure consistent multi-country coverage at scale, responses were generated with Gemini and subsequently filtered and curated. For clarity of presentation, full details on the dataset curation process and statistics are differed to Appendix cite37†F .
+L159: ###### Definition 1 (Performance–Normalized Localization Gap (PNLG)).
+L160: 
+L161: Let $x_{\mathrm{loc}}$ and $x_{\mathrm{nonloc}}$ be a localized and its corresponding non–localized prompt, and let $y^{\ast}$ be the culturally correct answer. For a model $\pi$, define the per-instance correctness scores
+L162: 
+L163:  | $$p_{\mathrm{loc}}=S_{\pi}(x_{\mathrm{loc}},y^{\ast}),\qquad p_{\mathrm{non}}=S_{\pi}(x_{\mathrm{nonloc}},y^{\ast}),$$  |
+L164: where $S_{\pi}(x,y^{\ast})\geq 0$ indicates whether the model output matches the correct answer. In the multiple-choice questions setting, $S_{\pi}$ is the accuracy and thus is $1$ if the predicted option equals $y^{\ast}$, and $0$ otherwise. In the open-ended generation setting, $S_{\pi}$ is a score determined by an external LLM judge.
+L165: 
+L166: Let $\bar{p}=\tfrac{1}{2}(p_{\mathrm{loc}}+p_{\mathrm{non}})$. The performance–normalized localization gap is:
+L167:  | $$\mathrm{PNLG}_{\alpha}(\pi)=\mathbb{E}_{(x_{\mathrm{loc}},x_{\mathrm{nonloc}},y^{\ast})\sim\mathcal{D}}\left[\frac{p_{\mathrm{loc}}-p_{\mathrm{non}}}{\bar{p}^{\,\alpha}+\varepsilon}\right],$$  |  | (5)
+L168: 
+L169: with $\varepsilon>0$ arbitrarily small for numerical stability and $\alpha\in[0,1]$ controlling the strength of the normalization.
+L170: ###### Definition 2 (Robust Cultural Accuracy (RCA)).
+L171: 
+L172: Using the same notation, the robust cultural accuracy is the harmonic mean of localized and non–localized accuracies:
+L173: 
+L174:  | $$\mathrm{RCA}(\pi)=\mathbb{E}_{(x_{\mathrm{loc}},x_{\mathrm{nonloc}},y^{\ast})\sim\mathcal{D}}\left[\frac{2\,p_{\mathrm{loc}}\,p_{\mathrm{non}}}{p_{\mathrm{loc}}+p_{\mathrm{non}}+\varepsilon}\right].$$  |  | (6)
+L175: 
+L176: with $\varepsilon>0$ arbitrarily small for numerical stability.
+L177: Design choice of metrics. A raw localization gap $p_{\mathrm{loc}}-p_{\mathrm{non}}$ can be misleading: a weak model may display a small gap simply because both accuracies are near zero. PNLG corrects for this by normalizing the gap with the mean performance $\bar{p}$, so models with trivially low accuracy are penalized. RCA complements this by rewarding methods that are both accurate and balanced across localized and non–localized prompts.
+L178: Together, PNLG and RCA provide a more faithful evaluation of cultural alignment than raw gap alone.
+L179: Baselines. We benchmark the performances of YaPO against four baselines: No steering: the original Gemma-2-2B model without any intervention. CAA (cite46†Panickssery et al., 2024 ): which derives dense steering vectors by contrastive activation addition averaging, without preference optimization. SAS (cite49†Bayat et al., 2025 ): which derives sparse steering vectors by averaging SAE-encoded activations in the style of CAA, without preference optimization.
+
+=== remainingnew0 exact-v1 necessary evaluation/limitations ===
+L212: ### 3.3 Process-Aware Evaluation Framework
+L213: #### 3.3.1 BTA Module: Behavioral Trajectory Analysis
+L214: The BTA module performs objective statistical analyses over agents’ action trajectories, quantifying what the agent did in a task. The input consists of the action sequence in an episode $A=\{a_{1},a_{2},\ldots,a_{T}\}$, the corresponding payoff sequence $R=\{r_{1},r_{2},\ldots,r_{T}\}$, and necessary game-state information (e.g., round index, opponents’ actions, public states).
+L215: The processing adopts rule-based statistical methods with pre-defined metric computation functions tailored to different game categories: we first map raw actions to standardized semantic categories to ensure cross-task comparability; then we summarize outcome variables such as payoffs, wins/losses, and goal attainment, optionally incorporating temporal-structure features when needed.
+L216: Representative metrics include task completion rate, cooperation rate, deception rate, alliance stability, and retaliation rate. The output is a behavioral-evidence vector $V_{\text{BTA}}\in\mathbb{R}^{d_{b}}$, where each dimension corresponds to a behavioral outcome metric.
+L217: #### 3.3.2 RPA Module: Reasoning Process Analysis
+L218: The RPA module parses agents’ decision rationales and quantifies what the agent thought during decision-making, revealing process-level attributes such as internal decision logic, motivational orientation, and belief states. The input includes the rationale text $c_{t}$ produced at decision step $t$, together with the corresponding decision context $x_{t}$ (e.g., current situation, interaction history, and observable information).
+L219: The processing follows an LLM-as-a-Judge paradigm: we use an instruction aligned LLM as a judge $J_{\theta}$ (cite156†Zheng et al., 2023 ) and specify evaluation dimensions and scoring rules via structured prompts. The judge then performs multi-dimensional scoring and label-based parsing conditioned on $c_{t}$ and $x_{t}$. Finally, we aggregate scores across all turns within an episode to obtain an episode-level reasoning-feature vector.
+L220: Representative dimensions include motivation strength, belief state, and temporal horizon. The output is an RPA evidence vector $V_{\text{RPA}}\in\mathbb{R}^{d_{r}}$, whose dimensions are aggregated statistics over the above evaluation dimensions.
+L221:  | $$V_{\mathrm{RPA}}\;=\;\frac{1}{T}\sum_{t=1}^{T}J_{\theta}\!\left(c_{t},\,x_{t}\right)\;\in\;[0,1]^{d_{r}}.$$  |  | (1)
+L222: #### 3.3.3 CCA Module: Communication Content Analysis
+L223: The CCA module parses agents’ dialogue in game interactions and quantifies what the agent said, thereby characterizing communication strategies and linguistic-behavioral features. The input is the sequence of messages sent by an agent in an episode, $M=\{m_{1},m_{2},\ldots,m_{K}\}$, where each message $m_{k}$ is natural-language text.
+L224: The processing conducts structured analysis based on a pre-defined taxonomy of social-pragmatic acts: we use an LLM judge to map each message to one of 15 mutually exclusive social-pragmatic labels (e.g., propose cooperation, threat, deception), and output a confidence or consistency score to reflect classification reliability. We then aggregate these annotations to derive high-level features such as the distribution of communication styles, strategic effectiveness, and speech–action consistency.
+L225: The output is a CCA evidence vector $V_{\text{CCA}}\in\mathbb{R}^{d_{c}}$, where each dimension corresponds to an aggregated communication metric.
+L226: ### 3.4 Portrait Generation
+L227: M3-Bench adopts multi-view comparative analysis as the core mechanism for portrait generation. Rather than forcibly merging behavior, reasoning, and communication into a single score, we retain three types of evidence in parallel and explicitly examine their consistency and contradictions. This design reduces information loss while surfacing latent risks such as correct outcomes with abnormal processes, thereby providing more diagnostic interpretations of agents’ social strategies and role traits.
+L228: #### 3.4.1 Three-View Mapping
+L229: 
+L230: We ground portrait construction in complementary perspectives from psychology and sociology: the Big Five personality framework and Social Exchange Theory. For each theoretical dimension, we extract corresponding features and compute scores from three evidence sources independently, forming parallel portraits from BTA (behavior), RPA (reasoning), and CCA (communication).
+L231:  | Commercial LLMs  | Open-weight LLMs  | Human & Baselines
+L232: Metric  | GPT-4o  | Claude-3.5 Sonnet  | Gemini-1.5 Pro  | GPT-4o mini  | Claude-3 Haiku  | Gemini-1.5 Flash  | Reka Core  | Reka Flash  | LLaMA3.1 405B  | LLaMA3.1 70B  | Mistral Nemo  | LLaMA3.1 8B  | Jamba-1.5 large  | Jamba-1.5 mini  | Human  | TFT  | ALL_D  | RAND  | GTFT
+L233: Level 1  | 0.92  | 0.90  | 0.88  | 0.86  | 0.84  | 0.83  | 0.84  | 0.80  | 0.85  | 0.82  | 0.81  | 0.78  | 0.79  | 0.76  | 0.88  | 0.75  | 0.55^{*}  | 0.50  | 0.76
+L234: Level 2  | 0.90  | 0.87  | 0.85  | 0.83  | 0.80  | 0.79  | 0.81  | 0.75  | 0.82  | 0.78  | 0.77  | 0.74  | 0.76  | 0.72  | 0.85  | 0.88  | 0.50^{*}  | 0.50  | 0.86
+L235: Level 3  | 0.88  | 0.86  | 0.83  | 0.81  | 0.78  | 0.77  | 0.79  | 0.73  | 0.80  | 0.76  | 0.75  | 0.72  | 0.74  | 0.70  | 0.83  | 0.55^{*}  | 0.40^{*}  | 0.48  | 0.58
+L236: Level 4  | 0.85  | 0.82  | 0.80  | 0.77  | 0.73  | 0.72  | 0.74  | 0.66  | 0.75  | 0.70  | 0.68  | 0.65  | 0.67  | 0.62  | 0.77^{*}  | 0.30^{*}  | 0.30^{*}  | 0.45  | 0.35
+L237: Overall  | 0.89  | 0.86  | 0.84  | 0.82  | 0.79  | 0.78  | 0.80  | 0.74  | 0.81  | 0.77  | 0.75  | 0.72  | 0.74  | 0.70  | 0.83  | 0.62  | 0.44  | 0.48  | 0.64
+L238: Table 2: Transposed view of overall performance on the four levels of M3-Bench (0–1, higher is better). ^{*} indicates a salient weakness on representative tasks at that level.
+L239: 
+L240: For any portrait dimension $D$, we compute the corresponding score separately from each evidence source:
+L241: 
+L242:  | $$\mathrm{Score}_{D}^{X}\;=\;f_{X}\!\left(\{I_{D,i}^{X}\}_{i=1}^{N_{X}}\right),$$  |  | (2)
+L243: where $X\in\{\mathrm{BTA},\mathrm{RPA},\mathrm{CCA}\}$, $I_{D,i}^{X}$ denotes the $i$-th indicator in module $X$ associated with dimension $D$, and $f_{X}(\cdot)$ is an aggregation function. The full indicator sets, weight specifications, and aggregation rules are provided in the appendix.
+L244: #### 3.4.2 Cross-Task and Global Portrait Generation
+L245: An agent’s social character is not determined by a single context; it is reflected in stable patterns and adaptive changes across diverse situations with different social structures, incentive settings, and interaction rules.
+L246: Accordingly, after completing evaluation across the four progressive levels, M3-Bench further introduces a cross-task aggregation procedure: we align and aggregate the three-view portraits produced across the 24 tasks to generate a global, integrated portrait report, enabling a more robust characterization of agents’ social strategies and role traits.
+L247: Concretely, the input is a set of three-view portraits produced across $N$ tasks, where each task report contains portrait vectors from the BTA/RPA/CCA modules. The cross-task aggregation procedure integrates these per-task portraits under a unified scale to form a global portrait, while simultaneously revealing cross-context stable traits and context sensitivity. Detailed aggregation methods and implementation specifics are provided in the appendix.
+L248: ## 4 Experiments
+L249: ### 4.1 Experimental Setup
+L250: Agent pool and evaluation targets We construct a standardized hybrid agent pool to emulate a heterogeneous social ecology while ensuring fair and comparable evaluation. First, we evaluate 14 mainstream LLMs under a unified zero-shot prompting template and interaction protocol to control for confounding effects from prompt engineering. Second, we selected a set of classic rule-based strategies, including TFT (Tit-for-Tat), GTFT (Generous Tit-for-Tat), ALL_D (Always Defect), RAND (Random).
+L251: In addition, we recruit 50 participants via a crowdsourcing platform as a human baseline and evaluate them on representative task subsets from L1–L4.
+L252: Task selection and episode protocol For each LLM agent, we pair it with all other types of opponents in the pool , and compare two communication conditions under identical game structures to isolate the effect of communication. The first is a Silent condition, where only actions are allowed and free-form text communication is disabled. The second is a Comm condition, where free-form text communication is allowed at each round.
+L253: Under each condition, we run 50 independent episodes for every pairing to improve statistical stability and reduce the influence of randomness on our conclusions.
+L254: ### 4.2 Mixed-Task Completion Results
+L255: 
+L256: Table cite157†2 reports each model’s standardized scores from Levels 1–4, together with an overall aggregate score, allowing us to assess the relative strengths of different models under four distinct sources of social complexity.This experiment only considers the models’ task performance scores, without leveraging our process-aware evaluation framework.
+L257: Models exhibit clear performance tiers, with closed-source flagships showing greater robustness across levels. Leading closed-source models such as GPT-4o and Claude-3.5 remain strong across all four levels, achieving overall performance comparable to or above the human baseline.
+L258: In contrast, other closed-source models and open-source models remain competitive on L1–L3 but lag markedly on L4, revealing weaknesses in higher-order social reasoning and multi-step strategic planning under imperfect information and language-game conditions. Overall, M3-Bench effectively differentiates agents’ social behavioral capabilities across multiple levels.
+L259: ### 4.3 Three-View Process Diagnosis
+L260: The analysis in the previous section is primarily based on task scores and outcome level performance, which verifies M3-Bench’s discriminative power for models’ task completion ability. However, it remains insufficient to reveal the structural differences of agents at the level of thinking&speaking. To this end, we further adopt our process-aware evaluation framework and decompose model performance into three complementary views.
+L261: Tables cite158†3 use L2 Repeated Prisoner’s Dilemma (with communication enabled) as illustrative examples, reporting representative models’ scores on the three modules as well as the cross-view consistency metric $\sigma$ ( smaller $\sigma$ indicates higher consistency across actions–reasoning–communication; see the appendix for the full model list and additional results).
+L262: Model  | BTA  | RPA  | CCA  | $\boldsymbol{\sigma}$  | Rating
+L263: Human  | 0.85  | 0.82  | 0.80  | 0.025  | High
+L264: GPT-4o  | 0.90  | 0.88  | 0.85  | 0.025  | High
+L265: Claude-3.5-Sonnet  | 0.87  | 0.85  | 0.84  | 0.015  | Very High
+L266: Gemini-1.5-Pro  | 0.85  | 0.82  | 0.80  | 0.025  | High
+L267: GPT-4o mini  | 0.83  | 0.80  | 0.78  | 0.025  | High
+L268: LLaMA3.1-405B  | 0.82  | 0.78  | 0.75  | 0.035  | High
+L269: LLaMA3.1-70B  | 0.88  | 0.60  | 0.82  | 0.115  | Low
+L270: Table 3: L2 Repeated Prisoner’s Dilemma (communication enabled): three-module scores and cross-view consistency (representative models).
+L271: Model  | BTA  | RPA  | CCA  | $\boldsymbol{\sigma}$  | Rating
+L272: Human Baseline  | 0.77  | 0.75  | 0.76  | 0.010  | Very High
+L273: GPT-4o  | 0.85  | 0.83  | 0.82  | 0.015  | Very High
+L274: Claude-3.5-Sonnet  | 0.82  | 0.80  | 0.81  | 0.010  | Very High
+L275: Gemini-1.5-Pro  | 0.80  | 0.78  | 0.77  | 0.020  | Very High
+L276: GPT-4o mini  | 0.77  | 0.75  | 0.73  | 0.030  | High
+L277: Mistral Nemo  | 0.68  | 0.85  | 0.45  | 0.165  | Low
+L278: Jamba-1.5-large  | 0.62  | 0.45  | 0.75  | 0.125  | Low
+L279: Table 4: L4 Texas Hold’em: module scores and cross-module consistency (representative models).
+L280: ##### Key Findings
+L281: (1) Stronger models exhibit more stable three-view alignment. Across the two representative tasks, closed-source flagship models maintain consistently high alignment : their behavioral choices, explicit reasoning, and communicative commitments mutually corroborate each other. This suggests that these models not only act correctly, but also tend to reason coherently and communicate clearly, leading to higher predictability and auditability. (2) Misalignment concentrates in some open models.
+L282: We observe three representative mismatch patterns: (i) Strategic masqueraders: In L2, LLaMA3.1-70B exhibits a contradictory configuration of “high cooperative behavior (BTA=0.88)–low sincerity of motivation (RPA=0.60)–high verbal commitment (CCA=0.82)” ($\sigma=0.115$). Further endgame-slice analysis shows a stronger tendency to defect when the terminal phase is explicitly anticipated, supporting an interpretation of strategic cooperation rather than relational cooperation.
+L283: (ii) Moral reasoning–insufficient linguistic communication: In L4, Mistral Nemo exhibits a salient inconsistency characterized by “highly moral and self-consistent reasoning explanations (RPA=0.85)—moderate behavioral performance (BTA=0.68)—insufficient linguistic communication (CCA=0.45)” (($\sigma=0.165$)).
+L284: This suggests that, although its reasoning explanations are internally coherent, it provides insufficient information and commitments in outward communication, thereby weakening negotiation credibility and external verifiability.
+L285: (iii) Intention–execution decoupling: In L4, Jamba-1.5-large exhibits “relatively strong communication (CCA=0.75) but weak execution outcomes (BTA=0.62) with insufficient reasoning support (RPA=0.45)” ($\sigma=0.125$), suggesting a potential bottleneck from planning to action or instability under high-pressure interactions.
+L286: Compared with using outcome-level behavioral statistics alone, the incremental gains of the three-module process-aware evaluation mainly include: (i) pre-deployment risk warnings, where consistency anomalies can flag potential risks such as “masked cooperation,” “over-commitment,” or “self-consistent explanations with opaque communication”; (ii) bottleneck localization and actionability, decomposing performance gaps into execution, internal reasoning, and communication strategy to enable targeted improvements; (iii) auditable analysis of communication strategies, independently tracking pragmatic behaviors and communication quality to detect high-risk language acts such as deception or implicit collusion cues; and (iv) characterizing behavioral predictability, where high-alignment models tend to transfer more stably across tasks, whereas low-alignment models are more prone to context-sensitive volatility and unexpected strategy shifts.
+L287: ### 4.4 Persona Profiling: Big Five and Social Exchange Theory
+L288: To translate multi-dimensional process evidence into an intuitive and interpretable characterization of social traits, we follow the three-view mapping mechanism in §2.4 and project the BTA/RPA/CCA indicators collected across all L1–L4 tasks onto ten theoretical dimensions defined by the Big Five and Social Exchange Theory.
+L289: This design allows the resulting profiles to capture not only outcome-level differences across tasks, but also the alignment between a model’s reasoning motivations and communication strategies, thereby enabling stable comparisons across tasks and social contexts. (full results and per-task profiles are provided in the appendix).
+
+=== remainingnew1 exact-v1 necessary evaluation/limitations ===
+L196: Listings cite76†1 and cite77†2 describe the task prompts used for model generation and the adjudication prompt used by Qwen3-30B-A3B. Under the default SoccerChat inference setting (24 frames, 100,352 max pixels), the adjudicator reveals substantial variation in grounding across models. The base Qwen2-VL produces predominantly hallucinated responses, with 2,578 answers deemed unsupported and only 342 deemed evidence-aligned. Qwen2.5-VL shows a modest improvement (2,461 unsupported vs.
+L197: 459 supported), while the fine-tuned SoccerChat-qwen2-vl model demonstrates a markedly stronger grounding profile: 1,885 hallucinated predictions and 1,035 supported ones, making it the only model whose supported outputs exceed its hallucinated outputs.
+L198: ## 4. Experiments
+L199: 
+L200: We instantiate VideoHEDGE for reliability evaluation on soccer video understanding tasks. All experiments use the pipeline introduced in Section cite8†3 , integrating spatiotemporal sampling, semantic clustering, and the metrics defined in Section cite11†3.3 . We evaluate multiple Video-Language Models (VLMs) under controlled temporal and spatial perturbations and compare three reliability scores across two task types: EventClassification and VideoQA.
+L201: ### 4.1. Dataset and Task Setup
+L202: We use the SoccerChat dataset, a curated collection of short soccer video clips paired with human-authored queries (cite34†Gautam et al., 2025a ). Each clip contains between 3 and 6 seconds of gameplay and is associated with two task families. In EventClassification, the model must identify the single most salient football event (e.g., goal, penalty, corner kick, foul, no event).
+L203: In VideoQA, the model answers a task-specific question about the clip, such as identifying the acting player, describing the outcome of a shot, or summarizing what happens. For computational efficiency, we work on a randomly selected subset of the SoccerChat dataset consisting of 490 clips that have a single annotated event, resulting in 1,460 (video, question, answer) instances.
+L204: These two task types allow us to examine reliability under structured (classification-like) and open-ended (free-form QA) settings using the same underlying videos.
+L205: ### 4.2. Evaluated Models
+L206: We evaluate three 7B-parameter VLMs chosen to disentangle architectural gains from domain specialization. Qwen2-VL-7B-Instruct is a general-purpose VLM supporting video inputs and multimodal reasoning. Qwen2.5-VL-7B-Instruct is a newer generation with an upgraded vision encoder and more efficient attention stack. SoccerChat-qwen2-vl-7B is a domain-specialized model obtained by fine-tuning Qwen2-VL-7B on the SoccerChat dataset for fine-grained soccer understanding.
+L207: This selection reveals whether reliability improvements arise primarily from architectural changes (Qwen2 $\rightarrow$ Qwen2.5) or from domain exposure (generalist $\rightarrow$ SoccerChat).
+L208: ### 4.3. Video Sampling and Perturbation Setup
+L209: For each video-question pair, we generate one low-temperature baseline response $A_{0}$, $n$ clean high-temperature samples $\{A_{1},\dots,A_{n}\}$, and $n$ noisy samples $\{N_{1},\dots,N_{n}\}$ from visually perturbed videos $V^{\prime}$, as described in Sec. cite9†3.1 . Clean responses are generated from the original clip using a default 24-frame uniform sampling policy unless stated otherwise. Every clean or noisy response is paired with its mean token log-likelihood for subsequent cluster-level scoring.
+L210: Noisy variants $V^{\prime}$ are created using the photometric perturbation function introduced earlier: $\text{brightness}\sim\mathcal{U}(-0.2,0.2),\quad\text{contrast}\sim\mathcal{U}(0.8,1.2),\quad\text{sat.}\sim\mathcal{U}(0.95,1.05),\quad\text{hue shift}\sim\mathcal{U}(-0.02,0.02)\cdot 360^{\circ},$ combined with spatiotemporal noise via the FFmpeg noise filter (cite72†FFmpeg Developers, 2025 ). These perturbations modify the video’s color and noise distribution while leaving the underlying event intact.
+L211: ### 4.4. Temporal and Spatial Sensitivity Conditions
+L212: To study how VLMs depend on spatiotemporal detail, we vary two input dimensions. First, we evaluate each model at frame counts $\{4,8,12,16,20,24,30\}$ per clip; the default SoccerChat fine-tuning uses 24 frames. Second, we vary the maximum per-frame pixel budget, $10{,}000,\;40{,}000,\;100{,}352,\;160{,}000,\,$ and $250{,}000,$ corresponding approximately to resolutions from $128\times 72$ up to $656\times 369$.
+L213: These controlled conditions allow VideoHEDGE to probe whether failures arise due to insufficient temporal evidence, insufficient spatial detail, or model-specific brittleness.
+L214: In all cases, the clean and noisy sampling budgets grow with the distortion budget, so the metrics in Section cite11†3.3 should be interpreted as functions of both perturbation strength and sampling scale.
+L215: ### 4.5. Adjudication of Ground-Truth Labels
+L216: 
+L217: Binary reliability labels (0 = hallucinated, 1 = supported) are obtained via an LLM-as-a-judge setup. We employ Qwen3-30B-A3B with a task-specific evaluation prompt (Listing 2). The adjudicator receives the task type (EventClassification or VideoQA), the question, the reference (gold) answer, and the model-generated answer, and returns a JSON object $\{\text{score}:0\text{ or }1,\;\text{reason}:\text{string}\}.$
+L218: Scoring criteria differ across task types. For EventClassification, only agreement on the underlying event is accepted (e.g., “goal” vs. “header leading to goal” is considered a match, but “goal” vs. “saved shot” is scored as 0). For VideoQA, paraphrasing is permitted as long as the meaning matches the reference answer. This procedure yields consistent, high-quality labels for thousands of model outputs.
+L219: ### 4.6. Evaluation Protocol
+L220: From the semantic clusters and log-likelihoods, we compute three reliability scores: Semantic Entropy (SE) (cite58†Farquhar et al., 2024 ), RadFlag (cite66†Zhang et al., 2024 ), and VASE (cite60†Liao et al., 2025 ), as defined in Section cite11†3.3 . For each score, we compare two clustering backends. The default backend uses embedding-based clustering with normalized MiniLM SentenceTransformer embeddings (cite78†all-MiniLM-L6-v2†huggingface.co ) (cite73†Reimers and Gurevych, 2019 ; cite79†Wang et al., 2020 ).
+L221: The clustering threshold $\tau$ is selected to maximize SE performance on the VideoQA task, and the same $\tau$ is then used to compute all other metrics for that setting. For comparison, we also report results with NLI-based clustering using a DeBERTa MNLI model (cite80†He et al., 2020 ), as in Section cite10†3.2 .
+L222: Our primary evaluation metric is ROC-AUC between each reliability score and the adjudicator-provided binary labels. This quantifies how well each score separates hallucinated vs. supported responses for a given model, task type, and perturbation condition.
+L223: ### 4.7. Runtime and Scalability
+L224: Table 1. ROC AUC of hallucination detection for SoccerChat-qwen2-vl-7b model across varying numbers of maximal distortions (1 to 10) for EventClassification and VideoQA tasks. Each block reports SE, RadFlag, and VASE metrics for both embedding- and NLI-based clustering. Bold highlighted entries denote the best-performing configuration for each metric within a block. Visualized in Figure cite81†3 .
+L225:  | Clustering by Embedding
+L226: Max Distortions  | 1  | 2  | 3  | 4  | 5  | 6  | 7  | 8  | 9  | 10
+L227: EventClassification
+L228: ---
+L229: SE  | 0.500  | 0.527  | 0.503  | 0.517  | 0.532  | 0.517  | 0.536  | 0.554  | 0.515  | 0.513
+L230: RadFlag  | 0.521  | 0.538  | 0.500  | 0.515  | 0.523  | 0.513  | 0.521  | 0.546  | 0.514  | 0.516
+L231: VASE  | 0.569  | 0.609  | 0.617  | 0.648  | 0.662  | 0.654  | 0.663  | 0.671  | 0.656  | 0.654
+L232: VideoQA
+L233: ---
+L234: SE  | 0.500  | 0.516  | 0.509  | 0.518  | 0.521  | 0.528  | 0.515  | 0.520  | 0.531  | 0.524
+L235: RadFlag  | 0.504  | 0.506  | 0.507  | 0.509  | 0.513  | 0.526  | 0.522  | 0.503  | 0.523  | 0.523
+L236: VASE  | 0.537  | 0.560  | 0.594  | 0.606  | 0.612  | 0.618  | 0.620  | 0.610  | 0.621  | 0.623
+L237:  | Clustering by NLI
+L238: Max Distortions  | 1  | 2  | 3  | 4  | 5  | 6  | 7  | 8  | 9  | 10
+L239: EventClassification
+L240: ---
+L241: SE  | 0.500  | 0.512  | 0.520  | 0.513  | 0.526  | 0.511  | 0.514  | 0.515  | 0.514  | 0.532
+L242: RadFlag  | 0.492  | 0.505  | 0.508  | 0.505  | 0.509  | 0.506  | 0.508  | 0.510  | 0.510  | 0.531
+L243: VASE  | 0.538  | 0.576  | 0.588  | 0.597  | 0.597  | 0.597  | 0.607  | 0.616  | 0.617  | 0.635
+L244: VideoQA
+L245: ---
+L246: SE  | 0.500  | 0.518  | 0.515  | 0.515  | 0.511  | 0.517  | 0.511  | 0.519  | 0.520  | 0.514
+L247: RadFlag  | 0.509  | 0.511  | 0.509  | 0.505  | 0.507  | 0.511  | 0.510  | 0.512  | 0.513  | 0.512
+L248: VASE  | 0.546  | 0.584  | 0.593  | 0.600  | 0.607  | 0.620  | 0.621  | 0.627  | 0.626  | 0.631
+L249: To assess scalability, we measure GPU time and memory while varying the distortion budget, i.e., the number of answer samples per clip (see Figure cite82†2 ). Embedding-based clustering exhibits near-flat scaling, with per-sample runtimes in the range of 12 to 135 s even in our largest setting. In contrast, NLI-based clustering grows quadratically and exceeds 1,000 s and 3.8 GB of VRAM at 9 distortions.
+L250: These measurements establish embedding-based clustering as the only practical choice for video-level perturbation analysis at scale, while still retaining NLI-based clustering as a high-precision reference.
+L251: ### 4.8. Reproducibility
+L252: 
+L253: All experiments employ cached embeddings and log-likelihoods, and batched inference for both VLMs and the adjudicator. We release intermediate artifacts (answers, and labels), enabling reproducible computation of all scores across models, perturbation settings, and sampling scales.
+L254: ## 5. Results
+L255: 
+L256: We evaluate VideoHEDGE by measuring how well automated reliability scores align with hallucination labels produced by the Qwen3-30B-A3B adjudicator. Concretely, we report (i) hallucination vs. support counts under different spatiotemporal settings and (ii) ROC-AUC between reliability scores and binary labels across models, clustering backends, and perturbation budgets. All conclusions below are drawn directly from the quantitative results reported in Tables cite83†1 and cite84†2 .
+L257: Table 2. ROC-AUC comparison of hallucination detection methods on the HEDGE-Video SoccerChat benchmark. Results are reported for EventClassification and VideoQA tasks across three model outputs: Qwen2-VL-7B-Instruct, Qwen2.5-VL-7B-Instruct, and SoccerChat-Qwen2VL-FT. Bold highlighted entries indicate the best-performing method within each configuration.
+L258: Model  | Event Classification  | VideoQA
+L259: --- | --- | ---
+L260: Embedding  | NLI  | Embedding  | NLI
+L261: --- | --- | --- | ---
+L262: SE  | RadFlag  | VASE  | SE  | RadFlag  | VASE  | SE  | RadFlag  | VASE  | SE  | RadFlag  | VASE
+L263: --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | ---
+L264: Qwen2-VL  | 0.464  | 0.485  | 0.470  | 0.495  | 0.504  | 0.577  | 0.550  | 0.548  | 0.624  | 0.558  | 0.555  | 0.630
+L265: Qwen2.5-VL  | 0.627  | 0.611  | 0.644  | 0.618  | 0.593  | 0.621  | 0.579  | 0.593  | 0.587  | 0.595  | 0.579  | 0.640
+L266: SoccerChat-qwen2-vl  | 0.513  | 0.516  | 0.654  | 0.532  | 0.531  | 0.635  | 0.524  | 0.523  | 0.623  | 0.514  | 0.512  | 0.631
+L267: Reliability profile across models. Under the default SoccerChat configuration (24 frames, 100,352 max pixels), the adjudicated labels indicate that all three evaluated VLMs still produce a substantial number of unsupported answers. Qwen2-VL is judged to yield 2,578 answers with score 0 (unsupported) versus 342 with score 1 (supported), while Qwen2.5-VL improves this modestly to 2,461 unsupported and 459 supported answers.
+L268: In contrast, the domain-adapted SoccerChat-qwen2-vl model yields a more balanced outcome, with 1,381 unsupported and 1,539 supported answers across both tasks. This suggests that domain adaptation has a much stronger effect on correctness than the architectural change from Qwen2 to Qwen2.5. However, these adjudicated counts alone do not reveal whether unreliable answers are detectable from the models’ own uncertainty patterns; this is precisely what the proposed reliability metrics aim to assess.
+L269: Unimodal uncertainty vs. vision-amplified scoring. Table cite84†2 summarizes ROC-AUC scores for hallucination detection across models, tasks, and clustering backends. For the base Qwen2-VL model on EventClassification, Semantic Entropy (SE) and RadFlag perform close to random chance: SE achieves 0.464 (embedding) and 0.495 (NLI), while RadFlag is 0.485 and 0.504.
+L270: Similar near-chance behaviour appears for several other settings, indicating that hallucinations in video VQA can be highly confident and internally consistent over clean samples, making clean-only uncertainty signals unreliable.
+L271: This “failure” of unimodal metrics is not universal, however: for Qwen2.5-VL on EventClassification, SE reaches 0.627 (embedding) and 0.618 (NLI), with RadFlag at 0.611 and 0.593, suggesting that architectural improvements can make clean-only uncertainty somewhat more informative in certain regimes.
+L272: Across most models and tasks, Vision-Amplified Semantic Entropy (VASE) provides the strongest or near-strongest separation between hallucinated and supported answers. For Qwen2-VL, VASE reaches 0.577 on EventClassification (NLI) and 0.624–0.630 on VideoQA, clearly outperforming SE and RadFlag in the corresponding blocks. For Qwen2.5-VL, VASE attains 0.644 (EventClassification, embedding) and 0.640 (VideoQA, NLI).
+L273: For SoccerChat-qwen2-vl, VASE achieves the highest reported scores, with 0.654 on EventClassification (embedding) and 0.631 on VideoQA (NLI). While the strongest VASE configurations lie in the moderate 0.57–0.67 range, their consistent advantage supports the core design choice of VideoHEDGE: incorporating the divergence between clean and visually perturbed generations provides a more informative reliability signal than clean-only uncertainty.
+L274: Embedding vs. NLI clustering. The comparison between clustering backends reveals that embedding-based clustering can often match NLI-based clustering in practice, despite being much cheaper. In Table cite84†2 , VASE under embedding and NLI backends is particularly close for the SoccerChat-qwen2-vl model (within 0.02 AUC), though gaps can be larger for the generic Qwen models. There are also cases where NLI is noticeably better (e.g., Qwen2-VL EventClassification, 0.577 vs.
+L275: 0.470), but there is no systematic advantage in either direction. Given that sentence embeddings already capture much of the semantic geometry for short answers and event labels, these results suggest that embedding-based clustering is sufficient for hallucination detection on SoccerChat at the sampling scales considered here.
+L276: Runtime measurements make this trade-off explicit. As the distortion budget increases, NLI-based clustering exhibits steep growth in GPU time, exceeding 1,000 s and 3.8 GB VRAM at 9 distortions, whereas embedding-based clustering remains in the 12 to 135 s range for the tested sample sizes.
+L277: Together with the near-parity in ROC-AUC for SoccerChat, this makes embedding-based clustering the only practical option for large perturbation budgets, while NLI-based clustering is best viewed as a high-precision but resource-intensive reference.
+L278: Figure 2. Computational scalability of NLI-based and embedding-based clustering methods for reliability estimation, evaluated using the SoccerChat model on the SoccerChat dataset. Figure 3. Effect of sampling scale and the associated visual perturbations on hallucination-detection performance for SoccerChat-qwen2-vl evaluated on the SoccerChat dataset. ROC AUC scores for three metrics (Semantic Entropy, RadFlag, and VASE) evaluated on two tasks: EventClassification and VideoQA.
+L279: Values reported in Table cite83†1 .
+L280: Effect of distortion budget. Table cite83†1 examines how reliability scores evolve as we increase the maximal number of distortions from 1 to 10 for SoccerChat-qwen2-vl. For both EventClassification and VideoQA tasks, and for both clustering backends, VASE generally improves when moving from a single distortion to a larger ensemble, even though the progression is not strictly monotonic.
+L281: For example, under embedding-based clustering on VideoQA, VASE increases from 0.537 (1 distortion) to 0.594 (3 distortions) and eventually to 0.623 (10 distortions), with a small dip around 8 distortions. Under NLI clustering, VASE on VideoQA grows from 0.546 (1 distortion) to 0.631 (10 distortions). In contrast, SE and RadFlag fluctuate mildly around chance (roughly 0.50–0.56) across the entire sweep, showing little sensitivity to the perturbation budget.
+L282: These trends indicate that the main benefits of larger distortion budgets accrue specifically to perturbation-aware metrics like VASE, which rely on differences between clean and noisy semantic distributions. A small number of noisy samples provides only a weak signal, but once 6 to 10 perturbations are available, the semantic drift induced by visual degradation becomes strong enough to noticeably improve discrimination between hallucinated and supported answers.
+L283: We stop short of identifying an exact optimal budget, since the curves are noisy, but the best AUCs in Table cite83†1 consistently occur in the high-distortion regime.
+
+=== remainingnew2 exact-v1 necessary evaluation/limitations ===
+L217: We evaluate YaPO against CAA, BiPO, SAS and the baseline model without steering on our curated multilingual cultural adaptation benchmark using both Multiple-Choice Questions (MCQs) and Open-ended Generation (OG). To assess absolute alignment as well as robustness to the explicit–implicit localization gap, we consider the three settings: localized, non-localized, and mixed prompts (both).
+L218: MCQ performance is measured by accuracy^{2}^{2} 2 The ground-truth answer is annotated using a \boxed{k} tag, where $k$ denotes the index of the correct choice, if the regex doesn’t match, we call an external LLM to judge., while OG responses are scored by an external LLM judge for consistency with the gold answer (see Appendix cite35†E for the evaluation prompts).
+L219: For clarity, we only show the results on “Portuguese” and “Arabic” languages, the results on the full five set of languages are in Appendix cite27†C .
+L220: Language  | RCA ↑ (Higher is better)  |  | PNLG ↓ (Lower is better)
+L221: MCQ (%)  | Open-Ended (0–10)  |  | MCQ  | Open-Ended
+L222: Base  | CAA  | SAS  | BiPO  | YaPO  | Base  | CAA  | SAS  | BiPO  | YaPO  |  | Base  | CAA  | SAS  | BiPO  | YaPO  | Base  | CAA  | SAS  | BiPO  | YaPO
+L223: Arabic  | 20.1  | 19.2  | 21.3  | 22.2  | 23.5  | 1.08  | 0.76  | 1.08  | 1.36  | 1.60  |  | 0.129  | 0.167  | 0.098  | 0.141  | 0.098  | 1.470  | 1.583  | 1.482  | 1.359  | 1.346
+L224: Portuguese  | 23.8  | 37.5  | 36.5  | 29.3  | 40.8  | 1.40  | 0.72  | 1.39  | 1.77  | 1.62  |  | 0.184  | 0.192  | 0.113  | 0.126  | 0.165  | 1.569  | 1.798  | 1.584  | 1.462  | 1.511
+L225: Table 3: RCA and PNLG Analysis by Language for MCQ and Open-Ended Tasks (All Methods).
+L226: ### 5.1 Multiple-Choice Questions
+L227: Table cite78†1 reports MCQ accuracy by language, country, and prompt setting. Overall, all methods improve over the baseline in most settings, with YaPO being the most consistent across languages and prompt types. Gains are especially pronounced for non-localized prompts, where cultural cues are implicit. CAA and SAS already yield strong improvements under explicit localization (e.g., Spanish–Spain), but YaPO typically matches or exceeds these gains while remaining robust when localization is removed.
+L228: In contrast, BiPO shows more variable behavior and can underperform in low-resource or highly entangled settings.
+L229: In contrast, YaPO shows smooth and monotonic accuracy scaling over a wide range of $\lambda$ values. Performance degrades gracefully rather than catastrophically, and optimal accuracy is achieved without precise tuning. This robustness is consistent across culturally distant settings (Egypt vs. Levantine, Nepal vs. Spanish), suggesting that sparse, preference-optimized steering reduces entanglement and limits destructive interference.
+L230: Overall, these results highlight that YaPO not only improves peak performance but also substantially enlarges the safe and effective steering regime.
+L231: ### 5.2 Open-Ended Generation
+L232: Table cite79†2 reports open-ended generation results for Portuguese and Arabic under localized, non-localized, and mixed prompt settings. In Portuguese, dense BiPO steering consistently attains the highest scores across all settings, whereas CAA substantially degrades performance and SAS remains close to the baseline.
+L233: In Arabic, YaPO yields the strongest gains, particularly in the non-localized setting where cultural cues are implicit (e.g., the average score increases from 2.97 to 3.37), while BiPO provides smaller and less consistent improvements. Overall, BiPO is most effective in high-resource settings with strong baselines, whereas YaPO delivers more reliable improvements in lower-resource and implicitly localized open-ended generation.
+L234: The consistent degradation observed with CAA is likely due to the coarse nature of simple activation averaging: a single dense steering direction applied uniformly across the chosen layer can tend to over-regularizes long-form generation, suppressing stylistic variation, discourse structure, and culturally specific details.
+L235: In contrast, BiPO benefits from learnable steering, and YaPO further improves robustness by enforcing sparsity and disentanglement thereby taking the best of both worlds from BiPO and SAS.
+L236: cite80†Image: Refer to caption Figure 3: Training accuracy over epochs for YaPO (red), BiPO (blue), and the unsteered baseline (orange) on the MCQ localization task across six cultural regions.
+L237: ### 5.3 Explicit–Implicit Localization Gap
+L238: Table cite81†3 reports RCA and PNLG for MCQ and open-ended tasks. Recall that RCA (Eq. cite82†6 ) is the harmonic mean of localized and non-localized performance, rewarding methods that are both accurate and balanced across settings. Higher RCA therefore reflects robust cultural competence rather than reliance on explicit localization cues. PNLG (Eq. cite83†5 ) measures the relative gap between localized and non-localized performance; lower values indicate better transfer from explicit to implicit prompts.
+L239: Across languages and tasks, YaPO consistently achieves the best trade-off, yielding the highest RCA while maintaining among the lowest PNLG values. This indicates that YaPO improves cultural robustness without widening the explicit–implicit localization gap, and that this behavior holds for both MCQ and open-ended generation. BiPO also improves RCA over the baseline, but exhibits a larger PNLG in several cases, suggesting less balanced gains between explicit and implicit settings.
+L240: A particularly salient pattern is the task dependence of CAA. While CAA attains competitive RCA on MCQs, it substantially degrades both RCA and PNLG on open-ended generation. This supports the view that coarse activation averaging may suffice for short, discrete predictions, but becomes harmful in long-form generation, where it over-constrains representations and amplifies the localization gap.
+L241: In contrast, sparse and preference-optimized steering, especially YaPO appears better suited to preserving balanced behavior across prompt regimes.
+L242: ### 5.4 Performance Stability and Convergence Throughout Training
+L243: 
+L244: As shown in Figure cite84†3 , YaPO converges faster and more smoothly than BiPO across all regions, reaching higher final accuracy. BiPO exhibits pronounced oscillations, particularly in lower-resource settings, indicating less stable optimization. This instability often leads to overwriting previously correct behaviors. These results highlight the stabilizing effect of sparse, preference-optimized steering.
+L245: ### 5.5 Sensitivity to the Steering Multiplier
+L246: 
+L247: cite85†Image: Refer to caption (a) Egypt & Levantine
+L248: 
+L249: cite86†Image: Refer to caption (b) Nepal & Spanish
+L250: 
+L251: Figure 4: Effect of steering multiplier $\lambda$ on MCQ accuracy across methods for different cultural settings. YaPO exhibits smoother and more stable accuracy scaling compared to dense baselines.
+L252:  | Localized  | Non-localized  | Both
+L253: Language  | Country  | CAA  | SAS  | BiPO  | YaPO  | CAA  | SAS  | BiPO  | YaPO  | CAA  | SAS  | BiPO  | YaPO
+L254: Baseline (no steering)  | 57.58%
+L255: Spanish  | Spain  | 56.99%  | 56.97%  | 57.61%  | 57.30%  | 56.93%  | 56.84%  | 57.64%  | 57.27%  | 57.02%  | 56.94%  | 57.68%  | 57.27%
+L256: Mexico  | 56.99%  | 57.09%  | 57.66%  | 57.36%  | 57.05%  | 57.03%  | 57.57%  | 57.27%  | 56.98%  | 57.08%  | 57.62%  | 57.12%
+L257: Bolivia  | 56.96%  | 56.92%  | 57.47%  | 57.17%  | 56.85%  | 57.05%  | 57.45%  | 57.09%  | 56.95%  | 57.08%  | 57.39%  | 57.02%
+L258: Average  | 56.98%  | 56.99%  | 57.58%  | 57.28%  | 56.94%  | 56.97%  | 57.55%  | 57.21%  | 56.98%  | 57.03%  | 57.56%  | 57.14%
+L259: Arabic  | Egypt  | 57.13  | 57.11  | 57.51%  | 57.06%  | 57.02  | 57.18  | 57.50%  | 57.14%  | 57.21  | 57.13  | 57.42%  | 56.97%
+L260: KSA  | 57.27  | 57.10  | 57.62%  | 57.35%  | 57.27  | 57.19  | 57.56%  | 57.36%  | 57.29  | 57.12  | 57.66%  | 57.16%
+L261: Levantine  | 57.02  | 57.12  | 57.64%  | 57.37%  | 56.98  | 57.04  | 57.58%  | 57.29%  | 56.95  | 57.08  | 57.67%  | 57.17%
+L262: Morocco  | 57.17  | 57.07  | 57.57%  | 57.30%  | 57.26  | 57.01  | 57.61%  | 57.36%  | 57.12  | 57.05  | 57.72%  | 57.12%
+L263: Average  | 57.15  | 57.10  | 57.58%  | 57.27%  | 57.13  | 57.10  | 57.56%  | 57.29%  | 57.14  | 57.10  | 57.62%  | 57.10%
+L264: Table 4: Performances on MMLU using MCQ steering vectors (All Methods). The non-steered baseline accuracy is reported once globally (with chat template).
+L265: Figure cite87†4 analyzes the effect of the steering multiplier $\lambda$ on MCQ accuracy. We observe that CAA and SAS exhibit strong sensitivity to $\lambda$: performance is highly non-monotonic and often collapses abruptly beyond a narrow operating range (e.g., $\lambda>0.5$), indicating over-steering where activation shifts destabilize generation.
+L266: In contrast, YaPO and BiPO remain robust to larger steering strengths, with YaPO notably achieving its highest accuracy at larger $\lambda$ values (e.g., $\lambda=1.5$ or $2.0$) without degradation, demonstrating the stability of sparse preference optimization.
+L267: ### 5.6 MMLU and Generalization to Other Domains
+L268: #### MMLU.
+L269: Table cite88†4 reports results on MMLU to assess whether cultural steering impacts general knowledge. Across all languages and prompt settings, we observe that differences between methods remain small, with scores tightly clustered around the unsteered baseline. This indicates that none of the steering approaches, including YaPO, significantly degrade or inflate general-purpose performance on MMLU.
+L270: Overall, these results suggest that the learned steering vectors primarily affect targeted alignment behaviors, while leaving broad knowledge capabilities intact.
+L271: #### Generalization to other tasks.
+L272: 
+L273: To assess whether cultural steering vectors specialize too narrowly, we evaluate them on BiPO’s benchmarks in Table cite89†5 , for Hallucination, Wealth-Seeking, Jailbreak, and Power-Seeking.
+L274: Overall, CAA attains the highest average score on these scalar tasks, with YaPO typically in second place, followed by BiPO and then SAS. However, in practice we find CAA and SAS to be quite brittle: their performance is highly sensitive to the choice of steering weight and activation threshold $\tau$, as shown in Section cite19†5.5 .
+L275: By contrast, in BiPO and YaPO the effective steering strength is absorbed into the learned vector itself (with a coefficient $\lambda_{i}$ per dimension $i$, although we can also use an extra one outside as is done in BiPO). Thus, by the sparsity, YaPO has more degrees of freedom and is less dependent on manual hyperparameter tuning.
+L276: This suggests that learning in a sparse activation space is not only effective for cultural alignment, but also generalizes as a robust steering mechanism on broader alignment dimensions such as hallucination reduction.
+L277: Model  | Task  | Base  | CAA  | SAS  | BiPO  | YaPO
+L278: Gemma-2-2B-it  | Wealth-Seeking  | 2.10  | 2.23  | 2.14  | 2.17  | 2.31
+L279: Jailbreak  | 1.00  | 1.08  | 1.00  | 1.02  | 1.00
+L280: Power-Seeking  | 1.89  | 2.09  | 1.81  | 1.93  | 2.03
+L281: Hallucination  | 1.60  | 2.18  | 1.46  | 1.60  | 1.69
+L282: Average  | 1.65  | 1.90  | 1.60  | 1.68  | 1.76
+L283: 
+L284: Table 5: Performance on general tasks.
+L285: ## 6 Conclusion
+L286: In this work, we introduced YaPO, a reference-free method that learns sparse, preference-optimized steering vectors in the latent space of Sparse Autoencoders. Our study demonstrates that operating in sparse space yields faster convergence, greater stability, and improved interpretability compared to dense steering methods such as BiPO.
+L287: On our newly curated multilingual cultural benchmark spanning five languages and fifteen cultural contexts, YaPO consistently outperforms both BiPO and the baseline model, particularly under non-localized prompts, where implicit cultural cues must be inferred. Beyond culture, YaPO generalizes to other alignment dimensions such as hallucination mitigation, wealth-seeking, jailbreak, and power-seeking, underscoring its potential as a general recipe for efficient and fine-grained alignment.
+L288: ## Limitations
+L289: While our study broadens the evaluation landscape, several limitations remain. First, experiments were conducted on the Gemma-2 family (2B and 9B); due to compute and time constraints, we could not include additional architectures such as Llama-Scope 8B (cite90†He et al., 2024 ) or Qwen models. Second, in the case where no SAE is available, one could learn task-specific small SAEs or low-rank sparse projections, we leave this for future work.
+L290: Finally, our cultural dataset captures cross-country but not within-country diversity. Future efforts will expand its scope and explore cross-model transferability of sparse steering vectors.
+
+=== remaining08450tail exact-v1 necessary evaluation/limitations ===
+L163: ### 4.2 Controlling randomness in decoding order
+L164: 
+L165: As described in Section cite12†2.4.1 , we control decoding-order randomness by varying $\beta$. We test seven values: [0.001, 0.003, 0.01, 0.03, 0.1, 0.35, 1.0]. Small $\beta$ values approximate l2r, while larger values approach the default strategy. Each setting is run five times and statistics are averaged across runs. Results are shown in Figure cite51†3 .
+L166: 
+L167: Figure 3: Evaluation on orders with controlled randomness
+L168: As randomness increases, MCD improves while UTMOS degrades. $\log F_{0}$ shows a different pattern: it reaches its lowest value at intermediate $\beta$, where the order is neither strictly sequential nor fully random but still preserves local cluster of consecutive frames. This suggests that pitch is best preserved with partial ordering. Overall, these results highlight that different metrics respond differently to decoding-order randomness.
+L169: ### 4.3 The impact of decoding order
+L170: 
+L171: We re-train Grad-TTS on full utterances, since the original model is trained on segments. As baselines, we use two decoding strategies: fixed 100-step decoding (gradtts-100) and length-based decoding (gradtts-length), where the number of steps matches the predicted number of frames. Both top1 and top1* follow Section cite13†2.4.2 , but top1 selects the most likely value, while top1* samples from the distribution.
+L172: The automatic evaluation metrics are reported in Figure cite52†4 . Overall, duration-based decoding performs best, yielding low MCD and $\log F_{0}$ alongside relatively high UTMOS, with top1* performing comparably. Among sequential strategies, r2l outperforms l2r in UTMOS and MCD, with similar $\log F_{0}$, demonstrating that left-to-right decoding is not optimal.
+L173: The Grad-TTS baselines achieve the highest UTMOS among all models but suffer from high MCD, with gradtts-length also showing a significantly worse $\log F_{0}$. top1 performs similar to top1* in UTMOS and MCD, but top1* is clearly better in $\log F_{0}$. MOS results shows a similar trend to the automatic metrics (Figure cite53†5 ). top1* ranks highest after the vocoded reference. r2l again surpasses l2r.
+L174: The Grad-TTS baselines achieve the highest scores on automatic metrics but rank lower in subjective evaluations, which may be related to their higher MCD. The duration-based strategy is comparable to the Grad-TTS baselines. Finally, l2r and top1 yield relatively low MOS, but are still higher than the default setting.
+L175: Across metrics, the adaptive strategies top1* and duration-based decoding performed best, while deterministic top1 lagged behind, likely due to over-smoothed outputs from always selecting the most probable value.
+L176: Figure 4: Evaluation results for single-frame decoding strategies Figure 5: Breakdown of MOS scores
+L177: ### 4.4 Adaptive decoding with Top$K$
+L178: We then evaluated the adaptive Top-$K$ decoding strategy with varying $K$, assigning each time-frequency bin its most likely value. Unlike previous experiments, here $K$ frames are updated simultaneously at each step. Results show that increasing $K$ improves MCD and $\log F_{0}$ but reduces UTMOS (Figure cite54†6 ).
+L179: We attribute the MCD and $\log F_{0}$ gains to decoding multiple frames with shared context, which enhances spectral and pitch consistency, while the drop in UTMOS reflects diminished naturalness. Considering order and update size, an optimal decoding schedule may be learned with reinforcement learning, rather than fixed heuristics.
+L180: Figure 6: Evaluation results for Top$K$ decoding
+L181: ## 5 RELATED WORK
+L182: ### 5.1 Combining diffusion and autoregressive models
+L183: The notion of autoregression in this paper differs from recent efforts to make diffusion models semi-autoregressive. For example, [cite55†1 ] uses a block-based approach with left-to-right autoregression across blocks and parallel prediction within blocks. Similar approaches have been explored in speech synthesis, notably in models such as DiffAR [cite56†3 ], ARDiT [cite57†12 ] and DiTAR [cite58†8 ].
+L184: In this paper, we integrate the iterative refinement of diffusion models with autoregressive generation, following [cite37†6 , cite38†9 ].
+L185: ### 5.2 Discrete speech tokens
+L186: Discrete speech tokens are usually obtained via vector quantisation (e.g., VQ-VAE [cite59†19 ]) or clustering [cite60†5 ]. In contrast, we apply uniform scalar quantisation directly to Mel-spectrograms and find that an off-the-shelf HiFi-GAN can decode the dequantised values without retraining, remarkably even at the extreme 1-bit setting. For images, Mentzer et al. proposed FSQ-VQ [cite61†13 ], which also uses scalar quantisation but maps the resulting vector to a single token ID for downstream modelling.
+L187: In our setting, such per-frame tokenisation would cause a combinatorial vocabulary explosion. Instead, we sample bins independently per frame, which likely contributes to degraded quality at higher sampling temperatures, as within-frame frequency correlations are not modelled. Future work could reduce the number of bins per frame to make FSQ-style tokenisation tractable or incorporate joint sampling across bins.
+L188: ### 5.3 Vocoders

@@ -1,0 +1,1272 @@
+An LLM-driven Scenario Generation Pipeline Using an Extended Scenic DSL for Autonomous Driving Safety Validation
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Methodology
+2.1
+Overview
+2.2
+Extended Scenic DSL
+2.3
+LLM-based Multimodal Knowledge Parsing
+2.3.1
+Knowledge Extraction
+2.3.2
+Knowledge Validation
+2.4
+Template-based Scenic Synthesis
+3
+Experiment
+3.1
+Research Questions
+3.2
+Crash Cases and Traffic Rule Oracles
+3.3
+LLM Selection and ADS Testbed
+4
+Results
+4.1
+RQ1: Representation Accuracy
+4.2
+RQ2: Scenario Fidelity
+4.3
+RQ3: Testing Utility
+5
+Related Work
+6
+Discussion
+7
+Conclusion
+References
+License: arXiv.org perpetual non-exclusive license
+arXiv:2602.20644v1 [cs.SE] 24 Feb 2026
+An LLM-driven Scenario Generation Pipeline Using an Extended Scenic DSL for Autonomous Driving Safety Validation
+Fida Khandaker Safa
+Email:
+fida.khandaker@students.mq.edu.au
+Affiliation:
+School of Computing, Macquarie University, Sydney, 2109, NSW, Australia
+Corresponding author:
+Equal contribution
+Yupeng Jiang
+Email:
+yupeng.jiang@hdr.mq.edu.au
+Affiliation:
+School of Computing, Macquarie University, Sydney, 2109, NSW, Australia
+Corresponding author:
+Equal contribution
+Xi Zheng
+Email:
+james.zheng@mq.edu.au
+Affiliation:
+School of Computing, Macquarie University, Sydney, 2109, NSW, Australia
+Corresponding author:
+Corresponding author
+Abstract
+Real-world crash reports, which combine textual summaries and sketches, are valuable for scenario-based testing of autonomous driving systems (ADS). However, current methods cannot effectively translate this multimodal data into precise, executable simulation scenarios, hindering the scalability of ADS safety validation. In this work, we propose a scalable and verifiable pipeline that uses a large language model (GPT-4o mini) and a probabilistic intermediate representation (an Extended Scenic domain-specific language) to automatically extract semantic scenario configurations from crash reports and generate corresponding simulation-ready scenarios. Unlike earlier approaches such as ScenicNL and LCTGen (which generate scenarios directly from text) or TARGET (which uses deterministic mappings from traffic rules), our method introduces an intermediate Scenic DSL layer to separate high-level semantic understanding from low-level scenario rendering, reducing errors and capturing real-world variability. We evaluated the pipeline on cases from the NHTSA CIREN database. The results show high accuracy in knowledge extraction: 100% correctness for environmental and road network attributes, and 97% and 98% for oracle and actor trajectories, respectively, compared to human-derived ground truth. We executed the generated scenarios in the CARLA simulator using the Autoware driving stack, and they consistently triggered the intended traffic-rule violations (such as opposite-lane crossing and red-light running) across 2,000 scenario variations. These findings demonstrate that the proposed pipeline provides a legally grounded, scalable, and verifiable approach to ADS safety validation.
+Keywords:
+autonomous driving system testing , scenario-based testing , scenario generation pipeline , large language models
+1
+Introduction
+In safety
+-
+critical domains such as autonomous driving, a single untested edge case can lead to catastrophic outcomes. Therefore, Autonomous Driving Systems (ADS) must be systematically exposed to the most hazardous and unusual scenarios before deployment
+[
+24
+,
+6
+,
+16
+]
+. Scenario-based testing has become essential for validating ADS, as traditional brute
+-
+force road testing is impractical
+[
+40
+,
+17
+]
+. Analyses show that an ADS would need to drive more than 11 billion miles to statistically demonstrate safety comparable to a human driver
+[
+19
+]
+. Instead, focusing on targeted driving scenarios can more efficiently reveal safety-critical weaknesses
+[
+25
+,
+39
+]
+. By simulating diverse and high-risk situations (e.g., near-collisions, sudden rule violations) that rarely occur in real-world data, scenario-based testing provides a practical path to ensuring robustness
+[
+26
+]
+.
+However, capturing rare and complex real-world driving scenarios at scale remains challenging. Only a tiny fraction of recorded driving data involves the critical near-miss or accident situations most important for testing
+[
+10
+]
+. Therefore, companies log vast miles and hire crash reconstruction experts to recreate rare events in simulation. For example, the National Highway Traffic Safety Administration’s Crash Injury Research Engineering Network (NHTSA CIREN) database contains over 2,500 detailed crash reports, each with narrative descriptions and scene diagrams
+[
+28
+]
+. Transforming this wealth of multimodal crash data into executable test scenarios requires significant manual effort by experts. This manual approach lacks scalability and hinders the exploration of “what
+-
+if” scenario variations. There is a clear need for automated methods to generate diverse, realistic crash scenarios that cover these corner cases at scale
+[
+38
+]
+.
+Recent approaches have started leveraging large language models (LLMs) to generate driving scenarios from textual descriptions, but they face notable limitations. Directly prompting an LLM to produce scenario code (e.g., in simulation scripts like Scenic
+[
+13
+,
+14
+]
+or OpenSCENARIO
+[
+2
+]
+) often yields syntax errors or logically inconsistent scenarios
+[
+4
+]
+. The complex grammar and constraints of scenario description languages make naive generation unstable, and LLMs may hallucinate details not present in the input. Methods such as LCTGen
+[
+36
+]
+and ScenicNL
+[
+9
+]
+have proposed intermediate solutions. LCTGen uses an LLM (GPT-4) to translate a natural-language traffic description into a structured YAML scene specification, then generates traffic trajectories from it. This two-step process, along with techniques like chain-of-thought prompting, helps reduce hallucinations in LCTGen. Similarly, ScenicNL translates police crash reports into probabilistic Scenic programs by chaining multiple LLM prompts and integrating compiler feedback to ensure the code is syntactically correct. These efforts improve syntactic correctness but remain limited to textual inputs. More importantly, they fail to fully leverage the multimodal nature of real crash reports, such as the valuable spatial information in crash scene diagrams or sketches. Consequently, they cannot adequately capture the complex scene geometry and context present in real accidents.
+In this paper, we propose an automated pipeline that addresses these challenges by using LLMs to extract structured scenario representations from multimodal crash reports. Our approach uses a custom LLM (GPT-4o mini
+[
+31
+]
+) to parse each crash’s textual summary and accompanying diagram, producing a formal scenario specification in an Extended Scenic domain-specific language (DSL). A DSL describes scenarios; in this work, it builds on the Scenic probabilistic programming language for scenario modeling. We extend Scenic with additional constructs to form an intermediate probabilistic representation of the crash scenario. This Extended Scenic DSL serves as a middle layer between free-form inputs and the final simulation script. By decoupling high-level semantic extraction from low-level scenario generation, the pipeline confines the LLM’s output to a well-defined schema, which reduces hallucinations and syntax errors. The intermediate DSL captures uncertainty in the crash report (e.g., unknown exact speeds or positions) by representing scenario elements with probability distributions. This allows one crash description to yield a family of scenario variations rather than a single deterministic scene. The pipeline generates thousands of scenario variations from a single crash report, spanning environmental conditions, actor behaviors, and timing, while remaining consistent with the original incident. This probabilistic, multi-variation approach provides a scalable way to test ADS behavior over many randomized yet realistic reenactments of the same scenario.
+We evaluated the proposed pipeline on real-world crash cases from the NHTSA CIREN database to assess both its extraction accuracy and its utility in simulation. For each case, we compared the Extended Scenic DSL scenario produced by our system against a manually curated “golden” scenario description (oracle). Results show that our LLM
+-
+driven extraction achieves high semantic fidelity: it correctly captured all key environmental and road geometry attributes, and reproduced vehicle behaviors and trajectories with over 97% accuracy against a human
+-
+derived oracle. These accurate scenario representations were then used to automatically generate and execute tests in the CARLA simulator
+[
+8
+]
+integrated with Autoware
+[
+3
+]
+. The executed scenarios successfully triggered the targeted safety-critical events in the simulated ADS. Across 2,000 random variations per scenario, the tests consistently induced the intended traffic
+-
+rule violations described in the original crash reports, such as vehicles crossing into oncoming lanes or running red lights. This demonstrates that the pipeline can parse and formalize complex crash scenarios and convert them into effective, repeatable test cases that reliably reproduce real
+-
+world failures in a safe simulation environment. The experimental findings suggest that our method offers a legally grounded and scalable approach to ADS safety validation, bridging the gap between written crash narratives and actionable simulation tests.
+In summary, the key contributions of this work include:
+1.
+We propose a novel pipeline that employs an LLM to convert multimodal crash reports, including textual narratives and crash scene sketches, into precise scenario specifications. This framework automatically generates executable ADS test scenarios directly from real crash report data, integrating both text and diagrams.
+2.
+We introduce an Extended Scenic DSL as an intermediate representation that separates semantic scenario understanding from concrete simulation scripts. This probabilistic DSL supports modular, compositional scenario descriptions, enabling syntax checking and reducing LLM hallucinations through structured output constraints. It also facilitates the generation of numerous scenario variations from a single report, improving test coverage for rare events.
+3.
+We evaluate the pipeline on real crash cases, showing that it achieves near
+-
+oracle accuracy in extracting scenario semantics and produces scenarios that reliably recreate targeted traffic rule violations in CARLA with Autoware. Consistently triggering known failure modes across thousands of runs demonstrates the effectiveness of the generated scenarios in uncovering safety
+-
+critical issues.
+The remainder of this paper is structured as follows. Section
+2
+details the design of our pipeline, including the GPT-4o mini prompting strategy and the Extended Scenic DSL syntax and semantics. Section
+3
+describes the experimental setup, the crash report dataset, and the validation methodology using a golden oracle and simulator-in-the-loop testing. Section
+4
+presents the evaluation results and analysis of the system’s performance. Section
+5
+reviews related work on scenario-based testing and prior approaches to scenario generation with LLMs and other AI techniques. Section
+6
+discusses the implications of our findings and limitations of the current approach. Finally, Section
+7
+concludes the paper.
+2
+Methodology
+2.1
+Overview
+We extend the TARGET framework
+[
+4
+]
+to scale autonomous driving system validation from formal traffic rules to real-world crash reports, with the goal of testing many plausible variants of a reported crash rather than a single deterministic reenactment. Figure
+1
+shows the full pipeline architecture. In TARGET, the system extracts a test scenario from a traffic rule, encodes it in a deterministic DSL, and converts the result into a CARLA-oriented execution format. This rule
+-
+focused design supports verification, but it depends on fixed coordinates and predefined map positions, and therefore cannot represent the uncertainty and incomplete details that often appear in crash reports. Our extension introduces an Extended Scenic DSL and an LLM-based knowledge extraction and validation pipeline that ingests multimodal crash reports, including textual narratives and crash sketches. The pipeline first performs high-level semantic extraction and validation, then produces a structured intermediate representation in the Extended Scenic DSL. Unlike the TARGET DSL, which is mainly designed for deterministic scenario reproduction, the Extended Scenic DSL acts as a probabilistic intermediate layer that represents scenario elements as distributions, which allows uncertainty modeling and controlled scenario variation. To turn this validated representation into executable tests, we add a template-based Scenic synthesis stage. This stage keeps semantic parsing separate from low-level rendering and converts the Extended Scenic DSL into Scenic programs through a topology-aware template engine. A universal Scenic template is used as the main blueprint, and it is instantiated according to road topology and scenario semantics, such as Straight, Curve, Intersection, and T-Intersection cases. A Scenic converter then maps the validated DSL fields into template parameters, normalizes tokens, and applies default values when crash reports omit details, which improves generation stability. The synthesis stage also supports parameter variation in key factors such as vehicle speed, position, and timing, so the framework can search across crash-consistent scenario variants and identify conditions that trigger unsafe ADS behavior. By combining probabilistic representation with template-based Scenic generation, the extended framework improves scalability, preserves crash semantics, and expands test coverage beyond single scenario replay.
+Figure 1:
+An overview of the full pipeline architecture.
+2.2
+Extended Scenic DSL
+To bridge from abstract rule descriptions to concrete simulations, we introduce an Extended Scenic-oriented DSL for scenario generation. The Extended Scenic DSL is a structured intermediate language that encodes crash and traffic-rule scenario knowledge as semantic tokens, enabling scalable scenario synthesis for ADS testing without requiring low-level simulator parameters. The DSL is YAML
+-
+based and defined by a context
+-
+free grammar. A scenario consists of environment, road network, actors, and oracle.
+1.
+Environment
+captures atmospheric and temporal context using categorical values such as sunny, cloudy, overcast, rainy, snowy, foggy, windy, or not mentioned, along with daytime, nighttime, or not mentioned. These values are later mapped to fixed weather and time presets.
+2.
+Road network
+describes topology, not absolute coordinates, using primitives such as straight, intersection, T
+-
+intersection, and curve, along with structural fields that include number of ways and lanes (positive integers), road markers (e.g., solid or broken lines), and traffic signs (e.g., stop sign, speed limit sign, or not mentioned).
+3.
+Actors
+are defined as an ego vehicle with optional NPC actors, each including a type (car or truck), behavior (e.g., go forward, turn left, static), and position specified through a position reference, spatial relation (front, behind, left, right), and heading relation (same_direction, opposite_direction, from_left, from_right). This extends the original TARGET DSL by replacing explicit waypoint lists with behavior intent and relative positioning.
+4.
+Oracle
+is expressed as one or more
+CVC_
+<
+<
+code
+>
+>
+:
+<
+<
+violation_type
+>
+>
+entries, each accompanied by a quoted natural
+-
+language description, with
+CVC
+denoting the California Vehicle Code
+[
+21
+]
+.
+The Extended Scenic DSL supports probabilistic scenario synthesis by treating selected elements as random variables with distributions when compiled into Scenic, and using templates with placeholders to defer concrete parameter choices. In contrast, TARGET uses its DSL to reproduce traffic
+-
+rule scenarios in a primarily deterministic manner. It maps abstract elements to concrete simulator parameters through lookup and map
+-
+based search, rather than generating probabilistic Scenic programs. This probabilistic compilation enables systematic parameter exploration for ADS testing through sampling or search. These template
+-
+based renderings transform the DSL into runnable Scenic programs and execute them in the CARLA simulator with Autoware controlling the ego vehicle. During each run, a real
+-
+time scenario monitor validates behavior against 11 California traffic regulations using quantitative checks such as stopping behavior, speed compliance, lane keeping, and headway distance. It records violations when conditions are not met and classifies outcomes as rule violations or collisions, keeping results both executable and diagnostically useful. Figure
+2
+shows the definition of Extended Scenic DSL.
+Figure 2:
+Definition of Extended Scenic DSL.
+2.3
+LLM-based Multimodal Knowledge Parsing
+2.3.1
+Knowledge Extraction
+Our pipeline parses multimodal crash reports into the Extended Scenic DSL by using an LLM as a structured extractor. The extraction stage uses GPT
+-
+4o mini to convert unstructured inputs into a draft DSL representation. It jointly processes the crash sketch, crash summary, and relevant traffic regulations to infer environment, road network, and actor attributes. To keep the output aligned with the DSL ontology, we adopt few-shot prompting with exemplar pairs of crash descriptions and their correct DSL outputs (illustrated in Figure
+3
+), which act as anchors that reduce ambiguity during generation. Instead of asking the model to produce a full YAML instance in one step, we guide it through a sequence of constrained decisions. This extraction prompt specifies the DSL schema, enumerates allowed element types, and requires the model to ground each extracted attribute in the provided evidence sources. The result is a draft scenario representation that remains interpretable and consistent with the Extended Scenic DSL specification.
+Figure 3:
+Extraction Prompt.
+2.3.2
+Knowledge Validation
+After the draft representation is produced, the pipeline performs an integrated validation stage rather than a separate post-processing step. The model performs a semantic self
+-
+check to verify that each DSL field is logically consistent and supported by evidence from the crash sketch, crash summary, and applicable traffic rules. For each field, the validation prompt (Figure
+4
+) checks whether the assigned value is grounded in textual or visual evidence. When inconsistencies occur such as an incorrect lane count, an unmentioned weather condition, or an actor behavior that conflicts with the sketch, the model revises the DSL accordingly. This step yields a validated representation in which each component is directly supported by the original crash documentation, which helps limit unsupported inference and reduces hallucination.
+Figure 4:
+Validation Prompt.
+2.4
+Template-based Scenic Synthesis
+Template-based Scenic synthesis is the stage that converts the validated DSL representation into an executable Scenic program for simulation. In this stage, the method employs a topology
+-
+aware Scenic template engine to translate a functional scenario description (such as a straight road or intersection) into the concrete simulation requirements of CARLA, including map assets and coordinate constraints. Unlike the original TARGET framework, which depends on runtime coordinate search, this design uses a deterministic template system. The template system organizes scenarios into four road topologies, namely
+Straight
+,
+Curve
+,
+Intersection
+, and
+T-Intersection
+, so that geometric validity is enforced during generation.
+The core of this stage is a universal Jinja2-based
+[
+33
+]
+template that acts as a master Scenic blueprint. The template adapts its structure from the
+Road_Network
+fields in the DSL and performs three translation functions.
+1.
+It maps environment and map information into simulator-ready values, including time conversion, weather preset mapping, and map selection for different road types. For example:
+(a)
+Time:
+Abstract values map to specific simulation hours: Daytime
+→
+\rightarrow
+12:00, Nighttime
+→
+\rightarrow
+22:00.
+(b)
+Weather:
+DSL descriptors are converted into CARLA
+-
+compatible presets. For example, Clear weather and Night time map deterministically to the
+ClearNight
+preset, while Cloudy and Day become
+CloudyNoon
+.
+(c)
+Map Selection:
+The template automatically selects the appropriate map asset based on the road configuration to ensure the required geometry exists: Straight (2-Lane)
+→
+\rightarrow
+Town02
+(rural environment), Straight (4-Lane)
+→
+\rightarrow
+Town04
+(highway environment), Curve (2-Lane)
+→
+\rightarrow
+Town02
+(rural environment), Intersections/T-Intersections
+→
+\rightarrow
+Town05
+(urban grid).
+2.
+It injects topology-specific logic blocks.
+(a)
+Straight Road:
+handles
+head-on
+and
+car-following
+configurations based on heading relation.
+(b)
+Curve:
+selects road segments with sufficient heading change.
+(c)
+Intersection/T-Intersection:
+instantiate valid 4-way or 3-way junctions with conflict paths for the ego and non-player vehicles.
+3.
+It adds parameter variability through
+VerifaiRange
+constraints, so the generated scenario can sample from distributions instead of using fixed values (e.g., a base speed of 10 m/s becomes
+VerifaiRange
+(8, 12)). It also supports robust testing as speed and initial distance can vary within controlled ranges while the scenario semantics remain unchanged (e.g.,
+EGO_INIT_DIST
+with
+NPC_INIT_DIST
+set to [15, 20] meters).
+A Python-based Scenic converter is used as middleware between the YAML DSL and the Scenic template. The converter normalizes diverse textual inputs into canonical tokens, extracts heading relations to select the correct lane placement logic, and applies fallback defaults when crash reports omit details.
+1.
+Data Normalization:
+standardizes diverse text inputs into canonical tokens (e.g., “Day”, “Time”, “12 pm”
+→
+\rightarrow
+time_hour=12
+).
+2.
+Heading Relation Extraction:
+parses the heading relation field (e.g.,
+opposite_direction
+vs.
+same_direction
+) to determine the adversary’s lane placement logic.
+3.
+Hard-coded Defaults (Missing Data Handling):
+injects hard-coded defaults to ensure that every scenario remains executable:
+(a)
+Default Speed:
+10 m/s (approx 36 km/h) if unspecified.
+(b)
+Default Ego:
+vehicle.lincoln.mkz_2017
+.
+(c)
+Non-player Vehicle Models:
+A vehicle is selected at random from a pool of common models such as
+vehicle.nissan.patrol
+,
+vehicle.tesla.model3
+,
+vehicle.dodge.charger_2020
+, etc. If the actor type is specified as “truck”, the default model is set to
+vehicle.carlamotors.european_hgv
+.
+(d)
+Default Relation:
+opposite direction
+(highest risk configuration).
+This design improves stability and reduces failure in script generation. As a result, the synthesized Scenic scripts are syntactically correct, topologically consistent with the original crash description, and suitable for repeated ADS testing under controlled variability.
+3
+Experiment
+3.1
+Research Questions
+This study evaluates whether an LLM can generate precise scenario representations from multimodal crash reports and support closed-loop ADS testing. The main research question asks how to use an LLM to generate precise scenario representations from crash summaries and sketches, and it is refined into three sub-questions:
+1.
+RQ1 (Representation Accuracy)
+examines how accurately the Extended Scenic DSL captures semantic and spatial information compared with a human-derived golden oracle;
+2.
+RQ2 (Scenario Fidelity)
+evaluates whether the generated Scenic scenarios reconstruct the dynamics and geometric structure of the original crash sketches;
+3.
+RQ3 (Testing Utility)
+investigates what failures or traffic-rule violations emerge when the generated scenarios are executed in an Autoware-based autonomous driving system.
+3.2
+Crash Cases and Traffic Rule Oracles
+To avoid unrealistic situations and ground scenarios in real crashes, we used the NHTSA CIREN case viewer database
+[
+28
+,
+29
+,
+7
+]
+, which contains 2,538 cases, and sampled 100 cases for the experiment due to time constraints. To connect crash reconstructions with lawful driving expectations, we integrated a curated set of California traffic regulations and aligned them with the scenario logic. The rules were derived from the California Driver’s Handbook
+[
+30
+]
+and cross-referenced with the California Vehicle Code (CVC)
+[
+21
+]
+to maintain legal consistency and simulation fidelity. The integrated rule set covers core domains that are common in safety-critical crashes, including right-of-way and intersection priority (CVC §§ 21800–21804), signal and sign compliance (e.g., red lights CVC § 21453 and stop signs CVC § 22450), speed regulations (CVC §§ 22349–22350), overtaking restrictions (CVC §§ 21460–21461), and lane maneuvers (CVC §§ 22107–22108). These regulations also serve as rule oracles during evaluation, where each scenario is assessed against explicit statutory conditions such as yielding at intersections and stopping at a red light.
+3.3
+LLM Selection and ADS Testbed
+GPT
+-
+4o mini
+[
+31
+]
+was selected as the LLM for its support of multimodal inputs at a practical cost. It also demonstrates stronger multimodal reasoning performance compared to Gemini Flash and Claude Haiku. For ADS testing, we executed the generated Scenic scenarios in a closed-loop setup with Autoware as the ADS under test and CARLA as the simulator. We used two integration methods to connect Autoware and CARLA: the CARLA–Autoware ROS bridge
+[
+37
+]
+and the Zenoh bridge
+[
+12
+]
+provided by the Autoware Zenoh integration workflow. In the ROS bridge setup, CARLA 0.9.15 ran in a GPU
+-
+enabled Docker container with host networking and a configured RPC port. A Carla Autoware Bridge container managed the connection and simulation parameters. Autoware Universe ran from the recommended tagged Docker image, using the carla_t2 vehicle model, sensor kit, and lanelet2
+-
+format maps supplied by the bridge project. The system followed the startup order CARLA, then the bridge, then Autoware to ensure stable communication. For the Zenoh bridge configuration, we installed Docker and Rocker to provide a reproducible container runtime for both the Zenoh bridge and Autoware. We cloned the
+autoware_carla_launch
+repository on the Humble branch and used it to build both the Zenoh CARLA bridge and the Autoware containers. The bridge-side container was built and launched first, using scripts that prepared and compiled the Zenoh CARLA bridge and then connected it to a running CARLA instance (version 0.9.13). Autoware containers were built and started on a second host, or on the same host with isolation, using dedicated scripts that configured the environment and compiled the required Autoware packages. In the demo setup, CARLA and the Zenoh CARLA bridge ran on one host, while two Autoware containers and Zenoh bridge DDS instances ran on another host to represent two independent vehicles. Each Autoware container used ROS localhost only to constrain DDS communication within the container, and vehicle-specific launch scripts were called with unique vehicle identifiers and the IP address of the host running the bridge. Using both bridge configurations enabled a broader evaluation of Autoware on Scenic
+-
+generated scenarios and strengthened the assessment of scenario fidelity and ADS behavior. The implementation
+1
+1
+1
+https://github.com/FidaKhandaker/ThesisB_code
+transforms the DSL into runnable Scenic programs and executes them in the CARLA simulator with Autoware controlling the ego vehicle.
+4
+Results
+This section reports the results for the three research questions. We first evaluate the accuracy of the LLM based knowledge representation in the Extended Scenic DSL (RQ1). We then assess whether the generated scenarios preserve the semantics of the original crash reports (RQ2). Finally, we examine whether the generated scenarios are useful for ADS testing in Autoware and whether they can reliably trigger meaningful traffic rule violations and safety critical failures (RQ3).
+4.1
+RQ1: Representation Accuracy
+To answer RQ1, we compared the LLM extracted Extended Scenic DSL against a manually written golden oracle for 50 cases. Figure
+5
+presents a side
+-
+by
+-
+side comparison of the same crash scenario between the LLM extracted Extended Scenic DSL and a manually written golden oracle. The results show strong overall performance, with an overall accuracy of 99% across the DSL subcomponents, which indicates that the proposed extraction and validation pipeline can produce reliable structured representations from crash reports.
+(a)
+LLM extracted Extended Scenic DSL for scenario 128697.
+(b)
+Manually written golden oracle for scenario 128697.
+Figure 5:
+Illustrative side-by-side comparison for the same crash scenario.
+For this evaluation, inter-rater agreement is a key validity requirement because the golden oracle is human derived. A human oracle serves as a reliable reference only when annotators demonstrate strong agreement on the same cases. In the TARGET study, the authors explicitly used a weighted linear Fleiss Kappa
+[
+11
+]
+and interpreted a value of 0.68 as substantial agreement, based on the standard interpretation range of 0.61 to 0.80
+[
+20
+]
+. We follow the same principle here, namely that kappa based agreement should be reported to justify the use of the human derived oracle as the reference for RQ1.
+The component level results also show a clear pattern (Figure
+6
+). Environment and Road Network reached 100% accuracy, which suggests that the model is highly reliable on static and categorical attributes. The Oracle component reached 98%, and the Actor component reached 97%. The remaining errors stem mainly from two sources. First, traffic rules often include qualitative legal language, which is harder to map into precise formal logic. Second, police sketches sometimes contain ambiguous arrows or visually noisy trajectories, which makes actor behavior extraction harder than extracting static road context. These findings support the robustness of the representation while also showing where future improvement is most needed.
+Figure 6:
+LLM extracted Extended Scenic DSL representation component accuracy scores against golden oracle.
+4.2
+RQ2: Scenario Fidelity
+To answer RQ2, the validated Extended Scenic DSL was converted into executable Scenic scripts and used to reconstruct crash scenarios in CARLA 0.9.15. The reconstructed scenarios were then evaluated in the Autoware based simulation setup through both the CARLA Autoware ROS bridge and the Zenoh bridge. An initial visual fidelity check was also performed, comparing simulated scenes against original police sketches and narrative summaries (Figure
+7
+). The comparison confirmed alignment in road layout, lane structure, weather, time, vehicle placement, and collision configuration.
+(a)
+Scenario 128697 simulated scene in CARLA simulator.
+(b)
+Original sketch of scenario 128697.
+(c)
+Original summary of scenario 128697.
+Figure 7:
+Visual comparison of simulated scene, original crash sketch, and summary for scenario 128697.
+For robustness, the study used Scenic probabilistic operators to generate 2,000 randomized instantiations per scenario while preserving the core crash geometry. From these, 20 representative samples were selected for human evaluation, with examples shown in Figure
+8
+. Two independent assessors reviewed the reconstructed scenarios and rated fidelity using a four point scale consisting of
+Match
+,
+Mostly Match
+,
+Partially Match
+, and
+No Match
+. This evaluation design is important because fidelity is a human judgement task, and independent assessment is needed to reduce bias and support an agreement based interpretation of the results.
+(a)
+Straight-1 sample.
+(b)
+Straight-2 sample.
+(c)
+Intersection-1 sample.
+(d)
+Intersection-2 sample.
+(e)
+T-intersection sample.
+(f)
+Curve sample.
+Figure 8:
+Examples of reconstructed scenarios examined by human assessor.
+The fidelity results (Figure
+9
+) show that the reconstructed scenarios preserve the semantics of the original crash reports well, especially for structured road topologies. Straight-2 and Intersection-2 scenarios achieved the highest fidelity, with more than 80% of ratings in the
+Match
+category. T intersection scenarios also performed strongly, with the combined
+Match
+and
+Mostly Match
+categories accounting for nearly 90% of responses. Overall, these results show that the proposed pipeline can reconstruct semantically faithful scenarios, while also preserving enough structure for systematic testing.
+Figure 9:
+Human assessor comparison for reconstructed scenarios.
+4.3
+RQ3: Testing Utility
+To answer RQ3, we executed the generated Scenic scripts in the Autoware CARLA simulation environment using representative scenarios across the main road topologies identified during data collection. The selected scenarios cover Straight, Intersection, T intersection, and Curve configurations, which ensures that the evaluation spans different geometric constraints and traffic rule dependencies. The study also used Scenic probabilistic programming to vary key parameters such as starting positions, velocities, and environmental conditions while keeping the semantic constraints of the original crash descriptions unchanged.
+The utility of the generated scenarios is supported by the agreement between automated failure detection and human assessment. We compared Autoware detected rule violations against manual counts from human assessors and reports strong alignment across topologies. In most cases, the automated pipeline reproduced the same number of violations expected by human assessors. Table
+1
+shows exact agreement for Straight 1, Intersection 2, T intersection, and Curve, and near agreement for Straight 2 and Intersection 1, where one assessor reported one fewer violation than the oracle count. This result is important because it shows that the generated scenarios are not only geometrically valid, but also functionally effective for safety testing.
+Table 1:
+Comparison of Human Assessors and Oracle Rule Violation Counts
+Road-Type
+Human Assessor 1
+Human Assessor 2
+Oracle Rule Violation Count
+Straight-1
+1
+1
+1
+Straight-2
+2
+1
+2
+Intersection-1
+3
+2
+3
+Intersection-2
+3
+3
+3
+T-intersection
+2
+2
+2
+Curve
+2
+2
+2
+The scenario level examples further show the testing value of the approach. In the straight
+-
+road scenarios, the pipeline reproduced unsafe overtaking and wrong
+-
+way driving cases, including a centerline crossing and a head
+-
+on collision context under low visibility, with rule violations related to lane discipline, overtaking safety, and low
+-
+visibility requirements. In the intersection scenarios, the generated scenes induced failures related to red light compliance, stop sign obligations, and right of way, while preserving the collision geometry described in the original reports. In the T intersection case, the reconstructed scenario correctly prioritized the crash narrative of brake failure over the normal expectation of stopping, which forced entry into the intersection and reproduced the documented T bone collision pattern. In the curve scenario, the generated scene preserved both road curvature and actor deviation, and it reproduced a head-on collision at the curve apex together with lane discipline and red-light violations. These examples show that the proposed pipeline supports realistic and safety relevant testing across diverse traffic situations.
+5
+Related Work
+Research on ADS testing has developed along two main directions: scenario-based testing and search-based testing. Scenario-based testing focuses on building representative driving situations and checking whether the ADS satisfies safety requirements in those situations. Frameworks such as Matrix-Fuzzer
+[
+39
+]
+and ISS-Scenario
+[
+23
+]
+show how this idea can be implemented in practice. Matrix-Fuzzer combines behavior abstraction and optimization to generate safety critical scenarios, while ISS-Scenario supports configurable batch testing and replay in simulation. In contrast, search-based testing treats test generation as an optimization problem and uses fitness functions to find challenging inputs. Frameworks such as OpenSBT
+[
+35
+]
+and RIGAA
+[
+18
+]
+illustrate this line of work by combining simulators with optimization methods, including evolutionary search and reinforcement learning-guided search. These studies provide strong foundations for ADS testing, but they usually assume that scenarios or parameter spaces are already available in a structured form.
+A second line of work focuses on scenario representation and domain specific languages for simulation-based testing. Existing DSLs such as OpenSCENARIO
+[
+2
+]
+, GeoScenario
+[
+32
+]
+, SML4ADS
+[
+22
+]
+, and SceML
+[
+34
+]
+support structured scenario specification, but they differ in scope, usability, and simulator dependence. Some of them are strong in map and route modeling, while others are designed for visual modeling or planning oriented tests. Scenic
+[
+13
+]
+is particularly relevant to this work because it provides a probabilistic programming language for scenario generation, supports geometric constraints, and can represent uncertainty through sampling. This makes Scenic suitable for generating diverse scenario instances from a compact specification. However, writing Scenic programs still requires domain knowledge and careful control of behavior definitions, which creates a barrier for direct use with unstructured crash reports.
+Recent studies have started to generate ADS test scenarios directly from crash reports and other real world sources. AC3R
+[
+15
+]
+is an early framework that reconstructs crash scenarios from police reports using NLP and an ontology-based pipeline, then converts the extracted information into simulation-based test cases. It showed the feasibility of report-driven scenario generation, but it relied on text processing pipelines and had difficulty with long reports and scene realism. CRISCE
+[
+27
+]
+moved to sketch driven reconstruction and used image processing to extract road layout, vehicle locations, and trajectories from accident sketches. This improved the use of visual crash evidence, but its performance depends on image quality and manual pre-processing. LCTGen
+[
+36
+]
+introduced LLM-based text conditioned traffic generation with a pipeline that includes an interpreter, a generator, and a retrieval module. It improved controllability and realism for text-based crash descriptions, but it did not use crash sketches as a core input and did not perform explicit validation of the generated scenario representations.
+ScenicNL
+[
+9
+]
+further advanced this area by converting natural language crash reports into probabilistic Scenic programs. It combined prompting strategies and constrained generation to improve syntax correctness and produce executable scenarios with uncertainty. This is an important step toward probabilistic scenario synthesis from crash narratives. However, a semantic consistency issue remains between the generated programs and the original crash descriptions. TARGET
+[
+4
+]
+addresses a different but related problem by deriving test scenarios from formal traffic rules. It uses an LLM to parse rules into a compositional DSL, validates syntax and semantics at the component level, and then generates executable scripts through map-based search and parameter mapping. TARGET provides strong modularity and reliable rule-grounded testing, but it is designed for deterministic rule-based scenario reproduction and does not directly model the stochastic variability that is common in real crash reports.
+Overall, existing work provides key building blocks for automated ADS testing, including scenario generation frameworks, DSL-based representations, and multimodal crash reconstruction methods. However, a gap remains between multimodal crash report understanding and probabilistic, executable scenario synthesis that also supports systematic validation. This gap motivates our use of an Extended Scenic DSL and an LLM-based multimodal knowledge extraction and validation pipeline, which aims to preserve semantic fidelity while enabling scalable scenario variation for ADS testing.
+6
+Discussion
+This study extends the TARGET line of work from deterministic scenario reconstruction to probabilistic scenario testing. The key advance lies not in better script generation, but in a shift in testing logic. The Extended Scenic DSL acts as a semantic and syntactic constraint layer, and the Scenic-based pipeline supports probabilistic variation and repeated search driven testing rather than a single replay of one crash report. This design supports stable extraction accuracy, strong scenario fidelity, and practical failure discovery in the ADS testbed.
+A key element is the choice of Autoware and the test infrastructure built around it. This work highlights the bridge system as a testing infrastructure milestone, and explains that the combination of the CARLA-Autoware ROS bridge with the Zenoh bridge makes the Scenic generation pipeline operational for large scale ADS testing. This integration reduces setup friction and enables batch execution of many generated Scenic scripts in a more practical workflow. We also presented the Zenoh bridge setup as part of the experimental testbed configuration, which supports reliable communication between the simulation side and the Autoware side. This strongly motivated the selection of Autoware in this work, particularly given the goal of scalable, scenario
+-
+based testing for ROS
+-
+based software.
+To clarify the ecosystem positioning, Autoware was selected because only a few mature autonomous driving stacks are practical for this level of end
+-
+to
+-
+end testing research. Autoware and Baidu Apollo
+[
+1
+]
+are the most prominent examples in the literature and prior benchmarking practice
+[
+5
+]
+. This positioning aligns with TARGET, which evaluated both Autoware and Apollo in its ADS experiments. It also explains why this work prioritizes a robust Autoware
+-
+based integration and testing pipeline over broad platform coverage in an initial implementation.
+A second discussion theme is model choice. Unlike TARGET, which explicitly compares several LLMs for rule parsing, this study uses a single model, GPT
+-
+4o mini, and still achieves comparable practical outcomes through a stronger pipeline design, constrained DSL representation, and a validation stage. This is a key engineering insight: it shifts the focus from model size to system design quality, particularly in token budgeting and cost efficiency. In other words, this work demonstrates that a compact model suffices when the representation schema and validation process are well designed.
+A third discussion theme is generalization. This work does not rely on handcrafted edge cases. Instead, it uses random samples from original crash derived scenarios together with a representative set of traffic rules, then evaluates them across road topology classes. This sampling strategy tests whether the pipeline generalizes beyond a few curated examples. The selected cases span diverse topological road structures, reinforcing that the fidelity and utility findings are not limited to a single map pattern. The probabilistic Scenic representation further improves this generalization because each script can generate many valid variants under the same semantic constraints.
+For this paper, inter-rater agreement should be emphasized as a validity anchor for both representation accuracy and scenario fidelity. The experiment reported high agreement among evaluators, which supports the use of human ratings as a credible reference for semantic correctness and scenario faithfulness. This point aligns well with TARGET, which explicitly explains the interpretation of Fleiss kappa and uses agreement thresholds to justify human evaluation quality. By making this link explicit, the paper strengthens the methodological claim that the human
+-
+derived oracle is reliable, not merely convenient.
+Finally, the discussion highlights the testing utility in practical terms. The probabilistic test generation not only reproduced expected violations but also exposed additional failure behaviors in Autoware that were not explicitly anticipated by human reviewers, including involuntary violations caused by control
+-
+level failure conditions. This is the main benefit of moving from deterministic reconstruction to probabilistic search-based testing. It shows that the pipeline can preserve scenario semantics while still expanding the failure surface of the ADS under realistic variation.
+7
+Conclusion
+This paper presents an LLM
+-
+based pipeline that generates executable autonomous driving system test scenarios from multimodal crash reports. The method combines GPT
+-
+4o mini, a validated knowledge parsing process, and an Extended Scenic DSL to convert crash summaries and sketches into structured scenario representations and subsequently into Scenic programs for simulation. Unlike deterministic rule
+-
+reproduction pipelines, the proposed approach supports probabilistic scenario generation, enabling systematic variation of key scene elements and broader testing coverage under consistent crash semantics. Experiments demonstrate high representation accuracy against a human
+-
+derived golden oracle, strong scenario fidelity in reconstructed simulations, and clear testing utility in an Autoware and CARLA environment, where generated scenarios reproduce traffic rule violations and expose safety
+-
+relevant failures. These results suggest that the proposed pipeline offers a practical and scalable method for linking real crash evidence with simulation
+-
+based ADS testing. Future work may extend the rule set and crash coverage, improve parameter search for more efficient failure discovery, and evaluate the pipeline on additional industry
+-
+grade platforms such as Apollo.
+References
+[1]
+ApolloAuto
+(2023)
+Apollo
+.
+Note:
+https://github.com/ApolloAuto/apollo
+Cited by:
+§6
+.
+[2]
+ASAM
+(2026)
+ASAM openscenario
+.
+Note:
+https://www.asam.net/standards/detail/openscenario/
+Cited by:
+§1
+,
+§5
+.
+[3]
+AutowareFoundation
+(2025)
+Autoware
+.
+Note:
+https://github.com/autowarefoundation/autoware
+Cited by:
+§1
+.
+[4]
+Y. Deng, Z. Tu, J. Yao, M. Zhang, T. Zhang, and X. Zheng
+(2023)
+TARGET: traffic rule-based test generation for autonomous driving via validated llm-guided knowledge extraction
+.
+IEEE Transactions on Software Engineering
+51
+,
+pp. 1950–1968
+.
+Cited by:
+§1
+,
+§2.1
+,
+§5
+.
+[5]
+Y. Deng, X. Zheng, M. Zhang, G. Lou, and T. Zhang
+(2022)
+Scenario-based test reduction and prioritization for multi-module autonomous driving systems
+.
+In
+Proceedings of the 30th ACM Joint European Software Engineering Conference and Symposium on the Foundations of Software Engineering
+,
+pp. 82–93
+.
+Cited by:
+§6
+.
+[6]
+Y. Deng, X. Zheng, T. Zhang, H. Liu, G. Lou, M. Kim, and T. Y. Chen
+(2022)
+A declarative metamorphic testing framework for autonomous driving
+.
+IEEE Transactions on Software Engineering
+49
+(
+4
+),
+pp. 1964–1982
+.
+Cited by:
+§1
+.
+[7]
+P. C. Dischinger, K. M. Read, J. A. Kufera, T. J. Kerns, S. M. Ho, C.A. Burch, N. Jawed, and A.R. Burgess
+(2005)
+Consequences and costs of lower-extremity injuries
+.
+Note:
+https://www.nhtsa.gov/sites/nhtsa.gov/files/cirenreport.pdf
+Cited by:
+§3.2
+.
+[8]
+A. Dosovitskiy, G. Ros, F. Codevilla, A. Lopez, and V. Koltun
+(2017)
+CARLA: an open urban driving simulator
+.
+In
+Conference on robot learning
+,
+pp. 1–16
+.
+Cited by:
+§1
+.
+[9]
+K. Elmaaroufi, D. Shanker, A. Cismaru, M. Vazquez-Chanlatte, A. Sangiovanni-Vincentelli, M. Zaharia, and S. A. Seshia
+(2024)
+ScenicNL: generating probabilistic scenario programs from natural language
+.
+arXiv preprint arXiv:2405.03709
+.
+Cited by:
+§1
+,
+§5
+.
+[10]
+C. L. Firm
+(2026)
+Autonomous vehicle accidents: nhtsa crash data (2019-2025)
+.
+Note:
+https://www.craftlawfirm.com/autonomous-vehicle-accidents-2019-2024-crash-data/
+Cited by:
+§1
+.
+[11]
+J. L. Fleiss
+(1971)
+Measuring nominal scale agreement among many raters.
+.
+Psychological bulletin
+76
+(
+5
+),
+pp. 378
+.
+Cited by:
+§4.1
+.
+[12]
+A. Foundation
+(2023)
+Running multiple autoware-powered vehicles in carla using zenoh
+.
+Note:
+https://autoware.org/running-multiple-autoware-powered-vehicles-in-carla-using-zenoh/
+Cited by:
+§3.3
+.
+[13]
+D. J. Fremont, T. Dreossi, S. Ghosh, X. Yue, A. L. Sangiovanni-Vincentelli, and S. A. Seshia
+(2019)
+Scenic: a language for scenario specification and scene generation
+.
+In
+Proceedings of the 40th ACM SIGPLAN conference on programming language design and implementation
+,
+pp. 63–78
+.
+Cited by:
+§1
+,
+§5
+.
+[14]
+D. J. Fremont, E. Kim, T. Dreossi, S. Ghosh, X. Yue, A. L. Sangiovanni-Vincentelli, and S. A. Seshia
+(2023)
+Scenic: a language for scenario specification and data generation
+.
+Machine Learning
+112
+(
+10
+),
+pp. 3805–3849
+.
+Cited by:
+§1
+.
+[15]
+A. Gambi, T. Huynh, and G. Fraser
+(2019)
+Generating effective test cases for self-driving cars from police reports
+.
+In
+Proceedings of the 2019 27th ACM Joint Meeting on European Software Engineering Conference and Symposium on the Foundations of Software Engineering
+,
+pp. 257–267
+.
+Cited by:
+§5
+.
+[16]
+C. Gladisch, T. Heinz, C. Heinzemann, J. Oehlerking, A. von Vietinghoff, and T. Pfitzer
+(2019)
+Experience paper: search-based testing in automated driving control applications
+.
+In
+2019 34th IEEE/ACM International Conference on Automated Software Engineering (ASE)
+,
+pp. 26–37
+.
+Cited by:
+§1
+.
+[17]
+F. Hauer, T. Schmidt, B. Holzmüller, and A. Pretschner
+(2019)
+Did we test all scenarios for automated and autonomous driving systems?
+.
+In
+2019 IEEE Intelligent Transportation Systems Conference (ITSC)
+,
+pp. 2950–2955
+.
+Cited by:
+§1
+.
+[18]
+D. Humeniuk, F. Khomh, and G. Antoniol
+(2024)
+Reinforcement learning informed evolutionary search for autonomous systems testing
+.
+ACM Transactions on Software Engineering and Methodology
+33
+(
+8
+),
+pp. 1–45
+.
+Cited by:
+§5
+.
+[19]
+S. Khastgir, S. Brewerton, J. Thomas, and P. Jennings
+(2021)
+Systems approach to creating test scenarios for automated driving systems
+.
+Reliability engineering & system safety
+215
+,
+pp. 107610
+.
+Cited by:
+§1
+.
+[20]
+G. Landis JRKoch
+(1977)
+The measurement of observer agreement for categorical data
+.
+Biometrics
+33
+(
+1
+),
+pp. 159174
+.
+Cited by:
+§4.1
+.
+[21]
+C. S. Legislature
+(2026)
+California vehicle code (veh)
+.
+Note:
+https://leginfo.legislature.ca.gov/faces/codesTOCSelected.xhtml?tocCode=VEH&tocTitle=+Vehicle+Code+-+VEH
+Cited by:
+item 4
+,
+§3.2
+.
+[22]
+B. Li, D. Du, S. Chen, M. Wei, C. Zheng, and X. Zhang
+(2022)
+SML4ADS: an open dsml for autonomous driving scenario representation and generation
+.
+In
+Proceedings of the 37th IEEE/ACM International Conference on Automated Software Engineering
+,
+pp. 1–3
+.
+Cited by:
+§5
+.
+[23]
+R. Li, T. Qin, and C. Widdershoven
+(2024)
+Iss-scenario: scenario-based testing in carla
+.
+In
+International symposium on theoretical aspects of software engineering
+,
+pp. 279–286
+.
+Cited by:
+§5
+.
+[24]
+G. Lou, Y. Deng, X. Zheng, M. Zhang, and T. Zhang
+(2022)
+Testing of autonomous driving systems: where are we and where should we go?
+.
+In
+Proceedings of the 30th ACM Joint European Software Engineering Conference and Symposium on the Foundations of Software Engineering
+,
+pp. 31–43
+.
+Cited by:
+§1
+.
+[25]
+T. Menzel, G. Bagschik, and M. Maurer
+(2018)
+Scenarios for development, test and validation of automated vehicles
+.
+In
+2018 IEEE intelligent vehicles symposium (IV)
+,
+pp. 1821–1827
+.
+Cited by:
+§1
+.
+[26]
+C. Neurohr, L. Westhofen, T. Henning, T. De Graaff, E. Möhlmann, and E. Böde
+(2020)
+Fundamental considerations around scenario-based testing for automated driving
+.
+In
+2020 IEEE intelligent vehicles symposium (IV)
+,
+pp. 121–127
+.
+Cited by:
+§1
+.
+[27]
+V. Nguyen, A. Gambi, J. Ahmed, and G. Fraser
+(2022)
+CRISCE: towards generating test cases from accident sketches
+.
+In
+Proceedings of the ACM/IEEE 44th International Conference on Software Engineering: Companion Proceedings
+,
+pp. 339–340
+.
+Cited by:
+§5
+.
+[28]
+NHTSA
+(2025)
+CIREN crash viewer
+.
+Note:
+https://crashviewer.nhtsa.dot.gov/legacyciren/search
+Cited by:
+§1
+,
+§3.2
+.
+[29]
+NHTSA
+(2026)
+Crash injury research
+.
+Note:
+https://www.nhtsa.gov/research-data/crash-injury-research
+Cited by:
+§3.2
+.
+[30]
+C. D. of Motor Vehicles
+(2025)
+California quick reference driver’s handbook (dl 600-x)
+.
+Note:
+https://www.dmv.ca.gov/portal/file/california-quick-reference-drivers-handbook-dl-600-x-pdf/
+Cited by:
+§3.2
+.
+[31]
+OpenAI
+(2024)
+GPT-4o mini: advancing cost-efficient intelligence
+.
+Note:
+https://openai.com/index/gpt-4o-mini-advancing-cost-efficient-intelligence/
+Cited by:
+§1
+,
+§3.3
+.
+[32]
+R. Queiroz, T. Berger, and K. Czarnecki
+(2019)
+GeoScenario: an open dsl for autonomous driving scenario representation
+.
+In
+2019 IEEE Intelligent Vehicles Symposium (IV)
+,
+pp. 287–294
+.
+Cited by:
+§5
+.
+[33]
+A. Ronacher
+(2008)
+Jinja2 documentation
+.
+Welcome to Jinja2—Jinja2 Documentation (2.8-dev)
+.
+Cited by:
+§2.4
+.
+[34]
+B. Schütt, T. Braun, S. Otten, and E. Sax
+(2020)
+SceML: a graphical modeling framework for scenario-based testing of autonomous vehicles
+.
+In
+Proceedings of the 23rd ACM/IEEE International Conference on Model Driven Engineering Languages and Systems
+,
+pp. 114–120
+.
+Cited by:
+§5
+.
+[35]
+L. Sorokin, T. Munaro, D. Safin, B. H. Liao, and A. Molin
+(2024)
+OpenSBT: a modular framework for search-based testing of automated driving systems
+.
+In
+Proceedings of the 2024 IEEE/ACM 46th International Conference on Software Engineering: Companion Proceedings
+,
+pp. 94–98
+.
+Cited by:
+§5
+.
+[36]
+S. Tan, B. Ivanovic, X. Weng, M. Pavone, and P. Kraehenbuehl
+(2023)
+Language conditioned traffic generation
+.
+arXiv preprint arXiv:2307.07947
+.
+Cited by:
+§1
+,
+§5
+.
+[37]
+TUMFTM
+(2024)
+CARLA-autoware-bridge
+.
+Note:
+https://github.com/TUMFTM/Carla-Autoware-Bridge
+Cited by:
+§3.3
+.
+[38]
+N. Weber, C. Thiem, and U. Konigorski
+(2022)
+Toward unsupervised test scenario extraction for automated driving systems from urban naturalistic road traffic data
+.
+arXiv preprint arXiv:2202.06608
+.
+Cited by:
+§1
+.
+[39]
+P. Zhang, L. Ming, T. Yuan, C. Qiu, Y. Li, X. Hui, Z. Zhang, and C. Huang
+(2023)
+Realistic safety-critical scenarios search for autonomous driving system via behavior tree
+.
+arXiv preprint arXiv:2305.06603
+.
+Cited by:
+§1
+,
+§5
+.
+[40]
+Z. Zhong, Y. Tang, Y. Zhou, V. d. O. Neves, Y. Liu, and B. Ray
+(2021)
+A survey on scenario-based testing for automated driving systems in high-fidelity simulation
+.
+arXiv preprint arXiv:2112.00964
+.
+Cited by:
+§1
+.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

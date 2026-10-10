@@ -124,6 +124,10 @@ CodeNib 预印本把 repository context 作为 multi-view data system 来测量�
 multi-tenant recovery 或 learned online scheduling。因此这里沉淀的是派生视图与有效性边界，
 不是对某个实现或性能数字的通用背书。
 
+对数据表，schema 与查询历史在命名稳定、表语义简单时足以导航，却不一定保留生成数据的过滤条件、粒度和更新逻辑。另一条派生视图分支从生产代码抽取这些语义，将它们与表使用信息、人工说明一起离线归一化，再让请求检索相关定义；无定义或视图陈旧时，回到已授权的实时数据与元数据查询。代码说明回答的是“如何构造”，live observation 回答的是“当前是什么”，用户纠错则可以提出需确认保存的持久 Memory；三者不能在一次摘要中获得同等事实与写入权威。<!-- source-family:SF-2026-OPENAI-INHOUSE-DATA-AGENT -->
+
+预计算把重复语义探索移出请求路径，也增加代码抽取、离线刷新、存储与stale-view风险；静态代码理解不证明生产执行和数据 freshness。[内部数据Agent的公开工程说明](https://openai.com/index/inside-our-in-house-data-agent/)支持这条工作流实例，却未以受控消融证明各层的独立收益或通用正确性。生产逻辑难以恢复、权限不足或新数据与旧定义冲突时，应回读原代码、补实时检查或转人工；小语料与低复用任务仍可直接查询，不让自动丰富的Context代替原数据证据、索引发布或Memory提交。
+
 仓库视图还可以以实际构建与测试产物为依据，而不是让模型仅从文件名推断架构：将 buildable components、只编排其他目标的 aggregators、runners 与 tests 分成不同节点，依赖引用绑定来源文件或构建 call stack，并与 repository revision、build configuration 一起生成可追溯的结构图。缺失来源、断引用或不允许的循环应显式失败，无法可靠恢复的字段保留 Unknown，而不是由模型补成事实。它提供的是 build/test 层的派生地图，不替代代码内部语义、真实构建执行或完整测试验收。<!-- source-family:SF-2026-ARXIV-2601-10112 -->
 
 这种视图用 extractor、schema 校验和更新维护成本减少重复结构探索，但“图中已有事实”仍不保证 Agent 完成正确遍历。[SPADE 的受限评价](https://arxiv.org/html/2601.10112v1)中，少数原本答对的依赖问题反而因浅层读取退步；CMake 自动提取与其他构建系统的手工图不能合成全自动覆盖，七个合成仓库加一个真实仓库的结构 QA 也不是修 bug 的生产提效。预构图成本未计入 QA 时延，重复次数又不足精确估计整体收益。配置漂移、未知边或多跳依赖遗漏时，应重新取构建证据并用显式 closure 查询，必要时回到源文件与工具探索，不能让短 JSON 视图自签完整性。
@@ -196,6 +200,10 @@ Agent policy、身份和恢复交给 runtime，而不是让一次 tool observati
 POINTS-Seeker exact-v1 需要训练 consumer 适应混合表示，并支付渲染、图像编码与原文恢复成本；有限对照中全部转图像反而较差，token 减少不能直接外推为端到端时延或证据无损。长轨迹与模型、任务变化须重测；短轨迹、逐字协议或适配不足时，直接携带文本仍合理。这是与 active slots 并行的表示分支，不是删除原始 artifact 的授权。
 <!-- semantic-body-binding:SF-2026-ARXIV-2604-14029:end -->
 
+视图改成像素后，重复生成它也可能成为开销。可按 episode 缓存 normalized segment 的渲染图块，每轮依原历史次序拼接，再由 compression tool 决定下一视图的像素密度；cache key 还须绑定 renderer/style 身份，不能仅因文字相同复用不兼容图块。这只省去重复渲染：整段拼接、resize、图像编码和 decoder KV 仍分别产生费用，原文与可恢复引用也仍需保留。策略改变的是 consumer 的下一次可见视图，不是删除源记录的权限。
+
+任务成功后才给压缩奖励，也不能保证策略不会过度压缩。AgentOCR 的受限对照中，更频繁注入该奖励可大幅降低成功率，某些任务的文本基线仍更强；论文正文与伪码对注入间隔的计数口径不同，不宜照抄为通用执行规则。Render 时间和视觉 token 节省不能替代完整轨迹费用，episode 图块缓存仍会增长，字体与布局变化也未充分检验。重复片段少、逐字证据重要或质量回归时，固定保守密度、近期文本和完整文本路径仍是合理退路。<!-- source-family:SF-2026-ARXIV-2601-04786 -->
+
 旧tool observation也可压成soft tokens而不是图像，保留native tool envelope、assistant actions与近期原文本；这只是读取接口，逐字工具参数仍应回读原source。训练同一个adapted decoder读compressed view时，还需另在full-text view对原base分布作anchor：前一项教新表示读取，后一项限制旧接口行为漂移，不能由重建loss好推出工具策略没变。两个view按assistant-token身份而非压缩后的绝对位置对齐；若只缓存top logits与一个tail bucket，约束的是粗化分布，不是全部tail行为。
 
 [受限latent-observation对照](https://arxiv.org/html/2609.31430v1)中，更好literal recall或更强teacher仍可能降低任务成功，默认近期窗口也比uncompressed base退步。扩大硬文本窗口改变quality、encoder驻留和KV预算；observation由text移成soft时还会使旧prefix从变更点失效，encoder缓存与decoder prefix复用要分别计账。受限窗口/并发优势相对同adapted fulltext，且排去最后长任务tail，不能叫全轨迹总成本或可靠性保证。Anchor是软约束而非task certificate；无足够behavior回归、原文可完整驻留或必须逐字时，保留原base/fulltext、较大近期窗口和可恢复source，再按实际task/latency预算选择。<!-- source-family:SF-2026-ARXIV-2609-31430 -->
@@ -251,6 +259,14 @@ C'_t = compress(C_t, task, budget)
 ```
 
 目标不是最短，而是保留对未来决策充分的信息。摘要可能丢失 exception、否定、数字和 provenance；递归摘要还会累积漂移。
+
+对已知问题，extractive 分支可以不改写句子，而用一个学习到的标量衡量段落是否包含答题线索：分别编码完整段落和删去每一句后的变体，以两者分数差提议该句的条件贡献。这里比较的是“其余上下文仍在时删掉这一句”的模型读数，不是句子与 query 的相似度，更不是最终答案正确性的证明。训练标签、分句和 chunk 合并、encoder 与阈值共同决定这份派生视图；逐字保留被选句子也不能保证保住指代、否定或跨句组合证据。尤其两句互为冗余时，各自删除的损失可能很小，同时删去却会移走唯一证据，因此单句低分不能直接签发集合充分性。
+
+这种选择以额外编码换取更细的删除信号：[受限 leave-one-out 对照](https://arxiv.org/html/2603.09222v1)的原始路径需要完整段落加各删句变体的多次 encoder passes，并行只改变执行安排，不消除工作量。整段低分门与句分数间隙阈值也需要独立质量检查；阈值退路未完整披露时，不补成保真 recipe。所测 QA 中部分 reader/任务仍低于未压缩输入，表内 compression time 更不等于包含目标 reader 的全链时延。训练、所有变体、分句、阈值校准、reader 与回归费用一起计入下面的 break-even；联合删句失真、阈值失配或总预算不合算时，保留原文、扩大保留集合或回读未压缩段落，而不是让线索分数代替 evidence gate。<!-- source-family:SF-2026-ARXIV-2603-09222 -->
+
+Context 是否修改也可由独立 router 先决定，再让具名操作处理派生视图：保留 raw history，以 LoRA 分支执行纠错或压缩，也允许 none，solver 消费修改后的 view 而不是覆盖原证据。训练 router 的数据可先让 teacher 执行候选 operator，比较 base solver 在 raw/refactored history 下的 paired outcome，只保留有改善的提案，再混合 corrective/compressive/none；这让结果条件决定是否重构，却不把 teacher 改写升为事实真值。<!-- source-family:SF-2026-ARXIV-2601-05589 -->
+
+[受限重构对照](https://arxiv.org/html/2601.05589v1)使用 Qwen2.5-7B、E5检索与GPT5.2 teacher，Table1多项仍低于SearchR1或RECOMP；压缩token减少不能抹去router、operator、teacher生成/筛选与solver总费用。选择人口只含受测outcome改善，也不保证新任务保真；raw/derived identity、operator及结果版本须分开保存。Router错选、重构失真或净预算不合算时，保留raw history、none分支和原有压缩/回读，不让派生视图改写权限或提交事实。
 
 压缩之外，还可以把长原文留在外部环境，由模型用程序选择、变换并回读片段。但“能访问超过窗口的输入”和“值得递归调用子模型”是两个不同判断：前者来自外置原文与选择接口，后者要看任务是否需要子调用完成局部语义处理，还是根模型用代码就能筛选、聚合。应对照同样可访问原文的 no-subcall 分支，而不只对照被窗口截断的普通调用；局部新证据中，某一模型在代码问答和文档查找上去掉子调用反而更好，在信息密集的分类/成对聚合任务上却从子调用受益，因此不能把 external access 的收益统一归因于 recursion。<!-- source-family:SF-2026-ARXIV-2512-24601 -->
 
@@ -661,6 +677,12 @@ Context 是受约束的运行时 working set，不是无限知识仓库。好的
 
 ## Review notes
 
+- `SF-2026-ARXIV-2603-09222` — Daily `2026-03-12`补查；[exact-v1](https://arxiv.org/html/2603.09222v1) 必要§3–5/A1–2与相关评价反侧，2+1+2=5，条件删句proxy/集合充分性与多次encoding差额深入。root作者与supplement_20260312非作者必要Source/date/逐字PRE通过；v1多encoder不回填current单encoding，真实反退、阈值退路未闭合与全链费用近文。作者及非writer均已实际顺读损失→删句→router→break-even完整邻接与本注、回对有效必要原证，POST通过；不授全图、代码/复现或DAY。
+
+- `SF-2026-ARXIV-2601-05589` — Daily `2026-01-13` 增量；[exact-v1](https://arxiv.org/html/2601.05589v1) §4.1/4.3/5.1/Table1；router/LoRA derived view、paired outcome筛选；raw保留/多基线反侧/费用近文；2+2+2=6，具体差额深入。jan10_books_audit必要原证/actual owner PRE通过、root授窄锁；作者完整邻接已顺读，root非Books写入者已实际读正文/完整邻接/自身末注，POST PASS；窄锁释放。未核实现/复现，非日级Gate。
+
+- `SF-2026-ARXIV-2601-04786`（Experimental）：Daily `2026-01-10`补查；[exact-v1](https://arxiv.org/html/2601.04786v1) §4.1–4.3/Eq3–8、§5/Table1–4、§7与有关AppA/B2–4。采用segment-cache与下一视图density分责，不把O(miss)render当全部Stack/encode成本或恒定memory。ALFWorld/Search、Qwen2.5-VL3B/7B、2/4H100及不同text/optical caps限制；text质量反侧、K1/K5成功率反侧、render168.77ms非E2E、cache增长保留；正文trainingiterations与Alg t envstep不一致，不授K5配方。precision/concurrency/SLO未充分披露，字体/layout未测。root窄写；jan10_books_audit实际必要源、正文/完整局部邻接与末注独立POST通过，未复现。
+
 - `SF-2026-ARXIV-2603-03111`：[exact-v1](https://arxiv.org/html/2603.03111v1) §2–4/Appendix A；采用有方向 handoff 与 suffix no-switch 的 paired continuation 判断。9×9 模型、两 benchmark 各200 episodes，CoQA第10轮F1、Multi-IF第3轮整会话strict success（含prefix早轮表现），temperature0、2048 output tokens、可支持处 low reasoning/verbosity；paired BCa 1000 bootstrap。70%/74%为两因子 off-diagonal LOO解释率，不证明任意路由/多次或更早切换，handoff instruction等mitigation仅提出未验证。作者必要正文完成；root 已实际对读必要原文、新增段落与邻接，非作者 POST 通过，未复现实验。
 - `SF-2026-ARXIV-2603-03258`：[exact-v1](https://arxiv.org/html/2603.03258v1) §3–5.2/Figures2–6、Appendix C；采用自起点稳健不等于继承轨迹稳健、hierarchy proxy 非充分与环境依赖边界。stock10 seeds/ER5 seeds，conditioning来自一个特定已漂移GPT-4o-mini轨迹，state-based drift可恢复；OpenRouter与Anthropic API默认temperature1，API模型身份和较强prompt在Appendix C。binary-goal环境、特选前缀、少量seeds及未验证的修复策略不能推生产保证；目标快照/真实行动验收是本章设计要求，不是论文实现。作者必要正文完成；root 已实际对读必要原文、新增段落与邻接，非作者 POST 通过，未复现实验。
 
@@ -751,3 +773,5 @@ Review note：`SF-2026-ARXIV-2606-29522`；Method `https://arxiv.org/html/2606.2
 - `SF-2026-ARXIV-2602-16113` — Daily `2026-02-20`；[ECS exact-v1](https://arxiv.org/html/2602.16113v1) §3、§5.3–5.4 与有限任务/成本配置。2+2+2=6，离线 source-unit 组合 fitness→冻结 context 版本接口差额深入；refiner 非事实 owner，skills 反退、heldout/模型迁移权限与离线费用近正文。不采用全球最优、SFT 替代或实测 prefix-cache 加速。root 必要源/实际 owner PRE 通过；root非作者实际正文/完整邻接/自身末注 POST通过，窄锁释放；未运行 artifact 或复现。
 
 - `SF-2026-ARXIV-2602-22603` — Daily `2026-02-28`；[exact-v1](https://arxiv.org/html/2602.22603v1) §3–4必要接口，2+2+3=7；aux management trace隔离与主tool边界消费差额，成功人口/未来引用、并发与全费用及原文恢复回退近文。fresh非旧作者独核prepared原证与actual owner，root授该窄ownership；作者实际正文/完整邻接顺读，root非作者实际正文、完整邻接及自身末注POST通过，窄锁释放。未核代码/复现，非日级Gate。
+
+- `SF-2026-OPENAI-INHOUSE-DATA-AGENT` — Daily `2026-01-30`补漏；[官方Jan29工程说明](https://openai.com/index/inside-our-in-house-data-agent/)六层Context/Runtime Context、Evaluation/Security。2+2+2=6，producer-derived语义与live observation/user-confirm Memory差额定点深入；只采公开workflow，未采用controlled效率、安全认证或prompt普遍经验。未运行内部实现/复现实验；root必要Source与实际owner PRE通过，root非作者实际正文/完整邻接及末注POST通过，窄锁释放；日级独立验收见对应Daily。

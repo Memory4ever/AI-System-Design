@@ -1,0 +1,2302 @@
+LiteEmbed: Adapting CLIP to Rare Classes
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Related Works
+3
+Methodology
+3.1
+Motivation
+3.2
+Understanding CLIP’s Embedding Space
+3.3
+Subspace-Guided Optimization
+3.4
+Putting It All Together
+4
+Experiments
+4.1
+Main Results
+4.2
+Evaluation on Downstream Tasks
+4.3
+Ablations
+5
+Conclusion
+References
+A
+Appendix
+A.1
+1/2/8/16 few shot results
+A.2
+Dataset scraping details
+A.3
+Ablation across CLIP backbones
+A.4
+Textual Inversion for classification
+A.5
+Using reference images directly
+A.6
+Additional qualitative results for all tasks
+A.7
+Choice of k (split) in PCA
+License: arXiv.org perpetual non-exclusive license
+arXiv:2601.09661v1 [cs.CV] 14 Jan 2026
+LiteEmbed: Adapting CLIP to Rare Classes
+Aishwarya Agarwal
+†
+†
+thanks:
+aishwarya.agarwal@research.iiit.ac.in
+,
+aishagar@adobe.com
+Affiliation:
+CVIT, Kohli Centre for Intelligent Systems, IIIT Hyderabad, India
+Affiliation:
+Adobe Research, Bengaluru, India
+Srikrishna Karanam
+†
+†
+thanks:
+skaranam@adobe.com
+Affiliation:
+Adobe Research, Bengaluru, India
+Vineet Gandhi
+†
+†
+thanks:
+vgandhi@iiit.ac.in
+Affiliation:
+CVIT, Kohli Centre for Intelligent Systems, IIIT Hyderabad, India
+Abstract
+Large-scale vision–language models such as CLIP achieve strong zero-shot recognition but struggle with classes rarely seen in pretraining, including newly emerging entities and culturally specific classes. We introduce LiteEmbed, a lightweight framework for few-shot personalization of CLIP that enables new classes to be added without retraining its encoders. LiteEmbed  performs subspace-guided optimization of text embeddings within CLIP’s vocabulary, leveraging a PCA-based decomposition that disentangles coarse semantic directions from fine-grained variations. Two complementary objectives, coarse alignment and fine separation, jointly preserve global semantic consistency while enhancing discriminability among visually similar classes. Once optimized, the embeddings are plug-and-play, seamlessly substituting CLIP’s original text features across classification, retrieval, segmentation, and detection. Extensive experiments demonstrate substantial gains over prior methods, establishing LiteEmbed  as an effective approach for adapting CLIP to underrepresented, rare or unseen classes.
+Figure 1
+:
+Given a target concept, we introduce LiteEmbed, which refines CLIP’s text embedding through Subspace-Guided Optimization using only 3–5 reference images
+. The optimized embedding plugs directly into CLIP-based models, here applied to classification, retrieval, segmentation
+[
+26
+]
+, and detection
+[
+8
+]
+, and consistently improves performance without task-specific retraining.
+1
+Introduction
+Large-scale Vision–Language Models (VLMs) like CLIP
+[
+29
+]
+have brought about an era of powerful zero-shot visual recognition. Yet, their knowledge is limited to training domains: newly emerging classes (e.g., a recently prominent actor) or culturally specific items (e.g., regional Indian dishes) remain poorly represented.
+Fig.
+2
+reports CLIP’s zero-shot classification accuracy, showing that while common Food-101
+[
+6
+]
+and Indian Actor classes
+[
+3
+]
+score high, 24% of regional dishes and 14% of emerging actors receive zero recognition, with most others below 40%. This highlights systematic failure on underrepresented classes and a critical gap in real-world use-cases.
+To bridge this gap, we explore extending CLIP to new classes using only 3–5 images, without retraining its large encoders or relying on prior data. Our goal is to make new classes immediately usable across any task or pipeline that leverages CLIP’s text embeddings, from classification and retrieval to generation, segmentation, and detection. Achieving this requires preserving CLIP’s core strengths: (i) alignment, maintaining a coherent cross-modal representation; (ii) discrimination, preserving clear separability among visually similar fine-grained classes; and (iii) compositionality, enabling flexible use of new classes within natural prompts such as “a boy eating
+Ghevar
+”. In essence, the adapted model should operate as if these classes had been part of CLIP’s pretraining, generalizing seamlessly while retaining full downstream utility.
+Figure 2
+:
+Performance disparity in CLIP’s zero-shot classification.
+Prior efforts to adapt CLIP have shown strong task-specific gains but are not directly suited for few-shot, extensible class addition. Adapter-based approaches
+[
+14
+,
+44
+]
+insert small trainable modules into CLIP’s frozen backbone to specialize on tasks such as classification. While efficient, these modules modify the shared representation space, making the adapted features task-specific and less generalizable to other applications such as retrieval, scoring, or generation. Prompt tuning methods
+[
+48
+,
+49
+,
+20
+,
+11
+,
+40
+,
+1
+]
+learn contextual tokens to improve alignment across known classes but rely on large-scale supervision and shared context embeddings rather than class-specific ones, limiting discrimination and compositionality in few-shot, single-class settings. Moreover, these methods assume static training distributions and cannot extend CLIP incrementally. Together, these limitations highlight the need for approaches that can flexibly introduce new classes into CLIP’s embedding space, while preserving its core properties of alignment, discrimination, and compositionality.
+Building on these insights, we introduce
+LiteEmbed
+, a lightweight optimization framework for adapting CLIP to rare classes. Each new class is represented by a learnable token within CLIP’s vocabulary, individually optimized using few-shot examples. We observe that directly aligning a new embedding with the few-shot examples by maximizing similarity often leads to two key failures: (a) the embedding may diverge from its semantic neighborhood (e.g.,
+Golden Retriever
+separating from other dog-related classes), or (b) collapse toward visually similar categories (e.g.,
+Labrador Retriever
+), thereby reducing fine-grained discriminability. We posit that semantic alignment and discrimination operate at distinct scales: alignment should preserve coarse global semantics (e.g., recognizing a
+Golden Retriever
+as a dog, not a cat), while discrimination should capture subtle distinctions among related breeds. Iterestingly, a PCA analysis of CLIP’s text embeddings supports this hypothesis, revealing that high-variance directions encode coarse categorical structure, whereas low-variance directions capture fine-grained variations (see
+Sec.
+3.2
+).
+To this end, LiteEmbed employs subspace-guided optimization, which leverages CLIP’s semantic structure through two complementary loss terms. For each novel class (e.g.,
+Golden Retriever
+), we assemble a semantic neighborhood of related coarse classes (e.g.,
+dog, canine
+) and a visually confusable set of fine-grained negatives (e.g.,
+Labrador Retriever, Irish Setter
+). PCA on their combined text embeddings defines a local subspace that disentangles coarse, high-variance directions from fine-grained, low-variance ones. We then introduce (i) a
+Coarse Alignment Loss
+that aligns the embedding with the semantic neighborhood along high-variance components, and (ii) a
+Fine Separation Loss
+that enforces separation from confusable classes along low-variance components. These subspace-aware objectives yield a lightweight, training-free adaptation of CLIP to new classes, requiring only minimal optimization over few-shot examples at test time.
+LiteEmbed produces embeddings that are fully plug-and-play: once optimized, they can seamlessly substitute CLIP’s original text embeddings across diverse downstream tasks. This includes classification, retrieval, segmentation, and detection, all without task-specific retraining.
+Fig.
+1
+demonstrates substantial gains using LiteEmbed in retrieving accurate images, generating faithful masks, detecting correct objects, and producing compositional generations.
+We comprehensively evaluate LiteEmbed across classification and retrieval tasks on three publicly available datasets: TV100
+[
+47
+]
+, Korean Celebrities
+[
+32
+]
+, and Indian Food Images
+[
+4
+]
+. To facilitate a more diverse and rigorous evaluation of adaptation to novel and underrepresented classes, we further introduce
+NOVA
+(New Object and Visual Alignment), a benchmark comprising five meticulously curated datasets. NOVA encompasses game characters, emerging landmarks, fashion ensembles, and recently prominent public figures, thereby establishing a realistic and challenging testbed for few-shot generalization. In addition, LiteEmbed is assessed on UECFood100
+[
+6
+]
+for segmentation and detection tasks, and on CustomConcept101
+[
+21
+]
+for text-to-image generation. Formally, our key contributions are as follows:
+•
+We propose LiteEmbed, a Subspace-Guided Optimization framework that adapts CLIP to rare classes from a few visual exemplars. PCA is employed to disentangle CLIP’s text-embedding manifold into global and local semantic subspaces, within which novel-class token embeddings are optimized through two complementary losses that jointly preserve coarse alignment and enhance fine-grained discriminability.
+•
+We present comprehensive quantitative, qualitative, and ablative experiments across ten datasets and five tasks, demonstrating that LiteEmbed enables plug-and-play use of learned embeddings, directly substituting CLIP text features without retraining and yields consistent, pronounced gains over existing methods.
+2
+Related Works
+Large-scale vision–language models
+[
+29
+,
+17
+,
+23
+,
+22
+,
+37
+,
+34
+]
+have established strong cross-modal alignment but remain limited to their pretraining domains. A large body of work has explored adapting CLIP to new distributions through prompt or adapter tuning. Prompt-based methods
+[
+48
+,
+49
+,
+20
+,
+25
+,
+50
+]
+learn context tokens to better align textual and visual features, while adapter-based methods
+[
+14
+,
+44
+]
+insert lightweight modules for efficient fine-tuning. Despite strong performance, these approaches depend on multiclass supervision and often modify CLIP’s shared embedding space, limiting compositionality and incremental class addition. To reduce supervision, test-time
+[
+11
+,
+40
+,
+38
+,
+50
+,
+31
+]
+and continual adaptation strategies
+[
+33
+,
+9
+,
+19
+,
+41
+,
+16
+,
+12
+,
+46
+,
+18
+,
+27
+]
+dynamically update CLIP. However, these approaches still couple adaptation with specific training or inference contexts and often suffer from degraded cross-task generalization.
+A related line of work on generative personalization
+[
+13
+,
+30
+,
+21
+,
+45
+,
+2
+,
+28
+,
+35
+]
+learns new tokens within CLIP’s vocabulary to represent novel or user-specific entities. However, these embeddings are optimized for image synthesis and fail to generalize to the broad range of downstream tasks where CLIP is applied. In contrast, we adapt CLIP’s text embeddings via subspace-guided objectives that balance semantic consistency and visual separability, yielding a unified, few-shot, plug-and-play framework for enhancing CLIP across diverse tasks
+[
+36
+,
+26
+,
+10
+,
+42
+,
+39
+,
+24
+,
+43
+,
+8
+]
+.
+3
+Methodology
+Figure 3
+:
+Overview of LiteEmbed. Given a target class (e.g.,
+anarsa
+) and a few reference images, the learnable token
+e
+c
+e_{c}
+replaces the placeholder “*” in the prompt and is optimized while all CLIP encoders remain frozen. Subspace-Guided Optimization balances three objectives: image–text alignment (
+ℒ
+img-align
+\mathcal{L}_{\text{img-align}}
+), coarse semantic anchoring (
+ℒ
+coarse
+\mathcal{L}_{\text{coarse}}
+), and fine-grained separation (
+ℒ
+fine
+\mathcal{L}_{\text{fine}}
+), promoting discriminative yet semantically consistent embeddings.
+LiteEmbed, summarized in
+Fig.
+3
+, learns a class-specific text representation by optimizing only the embedding
+e
+c
+e_{c}
+of the placeholder token “
+∗
+*
+” corresponding to a new class
+c
+c
+, while keeping both CLIP encoders
+f
+img
+f_{\text{img}}
+and
+f
+text
+f_{\text{text}}
+fixed. Given an exemplar set
+I
+c
+=
+{
+x
+i
+}
+i
+=
+1
+N
+I_{c}=\{x_{i}\}_{i=1}^{N}
+corresponding to the class, the prompt
+p
+c
+p_{c}
+(e.g., “a photo of
+∗
+*
+”) is encoded into
+z
+c
+=
+f
+text
+​
+(
+p
+c
+)
+z_{c}=f_{\text{text}}(p_{c})
+, initialized from the base CLIP text embedding
+z
+c
+0
+z_{c}^{0}
+. Adaptation is governed by three losses: a similarity-alignment loss encouraging high
+sim
+⁡
+(
+f
+img
+​
+(
+x
+i
+)
+,
+z
+c
+)
+\operatorname{sim}\!\left(f_{\text{img}}\,(x_{i}),\;z_{c}\right)
+over exemplars, and two additional loss terms that exploit the coarse-to-fine PCA decomposition of CLIP’s text space. These terms push
+z
+c
+z_{c}
+to remain anchored to its broad semantic neighborhood along coarse components, while enforcing separation from visually confusable negatives
+𝒩
+=
+{
+n
+k
+}
+k
+=
+1
+K
+\mathcal{N}=\{n_{k}\}_{k=1}^{K}
+via their embeddings
+z
+n
+k
+z_{n_{k}}
+, along fine components. We now motivate the design of our approach and delineate each component in detail.
+Figure 4
+:
+t-SNE visualization of CLIP’s text embeddings for
+anarsa
+and
+malapua
+. (a) Base CLIP embeddings before any adaptation. (b) Naïve image-only optimization leads to discriminative collapse, bringing the two classes too close. (c) Their nearest neighbors shift from related sweets to visually similar but semantically unrelated snacks, indicating semantic drift. (d) Our Subspace-Guided Optimization restores separation while preserving semantic relationships. Sample class images are shown below.
+3.1
+Motivation
+We begin by examining how CLIP behaves for under-represented classes. Consider the example of
+anarsa
+, a traditional Indian sweet from the Indian Food Images dataset. Its base CLIP text embedding
+z
+c
+0
+z_{c}^{0}
+exhibits a very low average image-text similarity (0.19) and fails completely in classification (0% accuracy), indicating poor alignment with the visual feature space (
+Fig.
+4
+(a)).
+To rectify this misalignment, we first refine the learnable token embedding
+e
+c
+e_{c}
+for class
+c
+c
+(
+anarsa
+) to improve its alignment with the exemplar set
+I
+c
+I_{c}
+, leveraging image-text correspondence as CLIP’s principal supervisory signal. Formally, we optimize the alignment loss:
+ℒ
+img-align
+=
+−
+1
+N
+∑
+i
+=
+1
+N
+sim
+(
+f
+img
+(
+x
+i
+)
+,
+f
+text
+(
+p
+c
+(
+e
+c
+)
+)
+)
+,
+\mathcal{L}_{\text{img-align}}=-\frac{1}{N}\sum_{i=1}^{N}\operatorname{sim}(f_{\text{img}}(x_{i}),\,f_{\text{text}}(p_{c}(e_{c}))),
+and update the embedding via gradient descent as
+e
+c
+←
+e
+c
+−
+η
+​
+∇
+e
+c
+ℒ
+img-align
+e_{c}\leftarrow e_{c}-\eta\,\nabla_{e_{c}}\mathcal{L}_{\text{img-align}}
+, where
+η
+\eta
+is the learning rate.
+While such alignment-only optimization boosts performance for the adapted class, with
+anarsa
+achieving 100% accuracy when evaluated for classification against baseline CLIP embeddings, it quickly exposes two critical issues when multiple classes are adapted sequentially:
+1.
+Discriminative collapse
+: When we subsequently optimize a new embedding (from scratch) for another visually similar sweet,
+malapua
+, the classification accuracy of
+anarsa
+drops sharply to 30%. The t-SNE visualization in
+Fig.
+4
+(b) reveals that the optimized embeddings for both classes almost completely overlap, indicating that the optimization has captured shared visual cues (golden-brown circular texture) but failed to encode discriminative detail.
+2.
+Semantic drift
+: The optimized embedding for
+anarsa
+no longer resides within its original semantic neighborhood. In the baseline CLIP space, its nearest neighbors are related Indian sweets such as
+ariselu
+,
+sutar feni
+, and
+imarti
+(
+Fig.
+4
+(c)). After naive optimization, these shift to visually similar but semantically unrelated snacks like
+kachori
+and
+aloo tikki
+, which are not sweets. Quantitatively, the maximum cosine similarity to any CLIP text embedding drops from about 0.93 to 0.29, confirming a substantial loss of semantic connectivity in the text manifold.
+This shows that alignment-only optimization, while visually faithful, distorts the embedding’s semantic neighborhood and fails to enhance discriminative power. An effective adaptation strategy must therefore preserve
+global semantic alignment
+, while avoiding
+discriminative collapse
+with related fine-grained classes.
+Accordingly, we pose a central question:
+can CLIP’s embedding space itself reveal how a novel class such as anarsa should be encoded, retaining its global semantics (e.g., Indian sweets) while enhancing separation from visually confusable classes like malapua?
+This motivates our analysis of CLIP’s latent structure, presented next.
+3.2
+Understanding CLIP’s Embedding Space
+To examine the semantic structure of CLIP’s text embedding space, we conduct PCA over embeddings spanning diverse categories such as animals, vehicles, and food items.
+Fig.
+5
+visualizes the separations along the first (
+P
+​
+C
+1
+PC_{1}
+) and fourth (
+P
+​
+C
+4
+PC_{4}
+) principal components. In (a),
+P
+​
+C
+1
+PC_{1}
+captures coarse semantic variance: cross-category pairs (e.g.,
+British Shorthair
+vs
+SUV
+) show markedly higher separation distances than fine-grained pairs (e.g.,
+Maine Coon
+vs
+Bengal
+), indicating that high-variance directions encode coarse semantic structure. The accompanying t-SNE plot reveals two distinct clusters corresponding to dog and cat breeds, consistent with this coarse organization. In contrast, (b) shows
+P
+​
+C
+4
+PC_{4}
+, where fine-grained distinctions dominate and cross-category distances shrink, suggesting that lower-variance directions capture localized, discriminative semantics. The corresponding t-SNE projection exhibits mixed clusters with finer intra-breed separation, reinforcing this observation.
+Overall, CLIP’s text space demonstrates a hierarchical organization: early components preserve broad semantic alignment, while later ones capture fine-grained variability, an insight that underpins our subspace-guided optimization framework for balanced alignment and discrimination.
+Figure 5
+:
+PCA Analysis of CLIP’s Text Embedding Space.
+3.3
+Subspace-Guided Optimization
+Given a new class
+c
+c
+, our goal is to learn a text embedding
+e
+c
+e_{c}
+that can be directly inserted into CLIP’s text encoder and used across downstream tasks.
+For each class, we define two reference neighborhoods: a
+coarse set
+𝒞
+\mathcal{C}
+, containing broader semantic groups suggested by an LLM that
+c
+c
+should stay aligned with (e.g., “Indian sweet”, “dessert”, “snack”), and a
+fine set
+ℱ
+\mathcal{F}
+, containing visually similar yet distinct classes (e.g.,
+malapua
+for
+anarsa
+). The fine set
+ℱ
+\mathcal{F}
+constitutes the repository of hard-negative exemplars and is systematically constructed through a two-stage pipeline. In the first stage, a large language model (LLM) enumerates visually proximate candidates for each class. Subsequently, a CLIP-based filtering mechanism prunes this set by retaining candidates that exhibit the high similarity between their text embeddings and the image embeddings of the exemplars, thereby preserving only the most visually confusable instances.
+We obtain CLIP text embeddings for all classes in these sets, each of dimensionality
+d
+∈
+{
+512,768
+}
+d\in\{512,768\}
+depending on the backbone. Performing PCA on the union
+𝒫
+=
+𝒞
+∪
+ℱ
+\mathcal{P}=\mathcal{C}\cup\mathcal{F}
+yields an orthogonal basis
+U
+=
+[
+u
+1
+,
+u
+2
+,
+…
+,
+u
+D
+]
+U=[u_{1},u_{2},\dots,u_{D}]
+, where
+u
+i
+∈
+ℝ
+d
+u_{i}\in\mathbb{R}^{d}
+and
+D
+≤
+d
+D\leq d
+.
+Guided by our PCA analysis in
+Fig.
+5
+,
+the top-variance components capture coarse semantics (broad category distinctions), while the low-variance ones encode fine-grained variations. We thus split
+U
+U
+into
+U
+coarse
+=
+[
+u
+1
+,
+…
+,
+u
+k
+]
+U_{\text{coarse}}=[u_{1},\dots,u_{k}]
+and
+U
+fine
+=
+[
+u
+k
++
+1
+,
+…
+,
+u
+D
+]
+U_{\text{fine}}=[u_{k+1},\dots,u_{D}]
+, which serve as complementary subspaces for optimization.
+The
+coarse alignment loss
+anchors
+e
+c
+e_{c}
+to its semantic neighborhood along high-variance directions,
+ℒ
+coarse
+=
+1
+|
+𝒞
+|
+​
+∑
+p
+∈
+𝒞
+(
+1
+−
+sim
+⁡
+(
+U
+coarse
+⊤
+​
+z
+c
+,
+U
+coarse
+⊤
+​
+z
+p
+)
+)
+,
+\mathcal{L}_{\text{coarse}}=\frac{1}{|\mathcal{C}|}\sum_{p\in\mathcal{C}}\big(1-\operatorname{sim}(U_{\text{coarse}}^{\top}z_{c},\,U_{\text{coarse}}^{\top}z_{p})\big),
+while the
+fine separation loss
+reduces similarity to visually confusable classes along low-variance directions,
+ℒ
+fine
+=
+1
+|
+ℱ
+|
+​
+∑
+n
+∈
+ℱ
+sim
+⁡
+(
+U
+fine
+⊤
+​
+z
+c
+,
+U
+fine
+⊤
+​
+z
+n
+)
+.
+\mathcal{L}_{\text{fine}}=\frac{1}{|\mathcal{F}|}\sum_{n\in\mathcal{F}}\operatorname{sim}(U_{\text{fine}}^{\top}z_{c},\,U_{\text{fine}}^{\top}z_{n}).
+The final objective combines these with the standard image–text alignment loss:
+ℒ
+=
+ℒ
+img-align
++
+λ
+1
+​
+ℒ
+coarse
++
+λ
+2
+​
+ℒ
+fine
+.
+\mathcal{L}=\mathcal{L}_{\text{img-align}}+\lambda_{1}\mathcal{L}_{\text{coarse}}+\lambda_{2}\mathcal{L}_{\text{fine}}.
+This formulation anchors
+e
+c
+e_{c}
+to its coarse semantic neighborhood while maintaining discrimination against visually similar classes, enabling few-shot, training-free adaptation without retraining CLIP, preserving compositionality and plug-and-play use across downstream tasks.
+3.4
+Putting It All Together
+When applied back to the motivating example of
+anarsa
+and
+malapua
+(
+Sec.
+3.1
+), our subspace-guided optimization effectively resolves both issues observed with naïve alignment. As shown in
+Fig.
+4
+(d), the optimized embeddings for the two classes are now well-separated, preventing the overlap that previously caused
+discriminative collapse
+. At the same time,
+semantic drift
+is mitigated. Nearest-neighbor analysis in
+Fig.
+4
+(d) reveals that the optimized
+malapua
+embedding remains surrounded by other Indian sweets such as
+gavvalu
+,
+poornalu
+, and
+kajjikaya
+, many of which were its original neighbors in CLIP’s base embedding space.
+These results show that LiteEmbed attains both fine-grained visual discriminability and coarse semantic fidelity: fine-subspace movement separates confusable classes, while coarse-subspace anchoring preserves linguistic and semantic grounding.
+4
+Experiments
+Datasets:
+We evaluate on 8 diverse classification datasets spanning both public and newly curated sources. The public ones include Indian Food Images
+[
+4
+]
+, Korean Celebrities
+[
+32
+]
+, and TV100
+[
+47
+]
+. The remaining five namely Indian Singers, Indian Actors, Game Characters, Fashion Outfits, and Landmarks were newly collected using iCrawler as part of our proposed NOVA benchmark. For each of these, we first queried an LLM to identify classes that have emerged after 2023 within the respective domain, and then scraped 50 images per class. Please see supplementary material for the full class lists and scraping prompts. For downstream tasks, we use UECFood100
+[
+5
+]
+for segmentation and detection, Indian Food Images for retrieval, and CustomConcept101
+[
+21
+]
+for text-to-image generation.
+Experimental Setup:
+We evaluate our method across three complementary settings: few-shot learning, continual learning, and downstream transfer. In the few-shot setup, we follow the standard N-shot classification protocol with
+N
+∈
+{
+1
+,
+2
+,
+4
+,
+8
+,
+16
+}
+N\in\{1,2,4,8,16\}
+labeled samples per class. In the continual learning setup, we adopt a class-incremental scenario where classes appear sequentially, each task providing four samples from a single class; cumulative accuracy is reported over all classes observed so far and averaged across five random class orders to reduce ordering bias. For downstream transfer, we evaluate the learned embeddings within CLIP-based pipelines for text-guided retrieval, semantic segmentation, object detection, and text-to-image generation, without additional finetuning, to assess compatibility and reuse across tasks. All experiments use CLIP ViT-B/16 as the base model, except detection, where YOLO-World
+[
+8
+]
+uses CLIP ViT-B/32 as its text encoder. Optimization is performed using Adam with a learning rate of
+1
+×
+10
+−
+4
+1\times 10^{-4}
+, a
+1000
+1000
+-step warm-up, and
+5000
+5000
+total steps.
+Compared Approaches:
+We compare our method against zero-shot CLIP and a broad range of adaptation techniques, including prompt-learning methods (CoOp
+[
+48
+]
+, CoCoOp
+[
+49
+]
+, MaPLe
+[
+20
+]
+), adapter-based approaches (CLIP-Adapter
+[
+14
+]
+, TIP-Adapter-F
+[
+44
+]
+), and test-time adaptation methods (DiffTPT
+[
+11
+]
+, C-TPT
+[
+40
+]
+, DynaPrompt
+[
+38
+]
+, PromptAlign
+[
+1
+]
+). For continual learning, we evaluate Continual-CLIP
+[
+33
+]
+, ENGINE
+[
+46
+]
+, MoE-Adapters4CL
+[
+41
+]
+, and an adapted CoOp variant that relearns context tokens after each task. For downstream transfer, we benchmark against CLIP-based task models, including CLIPSeg
+[
+26
+]
+for segmentation, YOLO-World
+[
+8
+]
+for detection, Textual Inversion
+[
+13
+]
+for text-to-image generation, and standard CLIP for retrieval.
+4.1
+Main Results
+By design, LiteEmbed is trained in a continual manner, sequentially incorporating new classes without requiring joint access to earlier samples. However, for fair comparison with other methods, we categorize experiments into (i) few-shot classification, where all class samples are provided simultaneously, allowing joint adaptation, and (ii) continual learning, where classes are introduced sequentially.
+We first assess LiteEmbed under the standard few-shot classification setup with four samples per class provided simultaneously, and report the 4-shot accuracies in
+Tab.
+1
+. LiteEmbed decisively outperforms existing approaches across all datasets, with an average improvement of 14% over the second-best approach (CoOp) and 35.6% over baseline CLIP zero-shot. The most notable improvements occur on low-alignment domains such as Fashion Outfits (+37.8%) and TV100 (+33.1%), where CLIP’s zero-shot performance is especially weak. Extended
+1
+/
+2
+/
+8
+/
+16
+1/2/8/16
+-shot results appear in the supplementary material.
+We next evaluate LiteEmbed in its native continual setup, shown in
+Fig.
+6
+, where adaptation proceeds sequentially over new class groups. LiteEmbed consistently outperforms baselines, achieving 32% average higher final accuracy over the second-best approach (ENGINE) and significantly lower forgetting, whereas CoOp shows near-complete forgetting of previously learned context tokens. Minor performance drops across tasks, primarily arise from increased candidate classes (rather than forgetting), highlighting LiteEmbed’s ability to integrate classes progressively while maintaining stable performance.
+Method
+Indian Food
+Korean Celebrities
+Indian Singers
+Indian Actors
+Game Characters
+Fashion Outfits
+TV100
+Landmarks
+Average
+(80 classes)
+(50 classes)
+(50 classes)
+(50 classes)
+(65 classes)
+(55 classes)
+(60 classes)
+(35 classes)
+CLIP Zero-Shot
+39.1
+27.9
+27.7
+21.6
+23.2
+7.6
+2.6
+35.6
+23.2
+Prompt learning methods
+CoOp
+[
+48
+]
+CVPR’22
+53.3
+52.6
+55.2
+43.2
+56.5
+30.7
+1.1
+58.2
+44.0
+CoCoOp
+[
+49
+]
+IJCV’22
+46.9
+44.5
+37.2
+26.5
+54.9
+12.3
+1.2
+57.1
+35.1
+MaPLe
+[
+20
+]
+CVPR’23
+50.9
+50.7
+32.8
+34.8
+55.2
+17.5
+0.9
+65.7
+38.6
+Adapter-based methods
+CLIP-Adapter
+[
+14
+]
+IJCV’24
+43.8
+37.5
+30.6
+21.2
+36.0
+11.4
+0.7
+49.3
+28.9
+TIP-Adapter-F
+[
+44
+]
+ECCV’22
+52.3
+40.2
+39.0
+33.0
+40.8
+11.1
+8.5
+57.9
+35.4
+Test-time adaptation methods
+DiffTPT
+[
+11
+]
+ICCV’23
+42.3
+27.6
+20.6
+17.7
+23.6
+8.1
+1.7
+38.6
+22.4
+PromptAlign
+[
+1
+]
+NeurIPS’23
+23.8
+26.2
+17.8
+16.1
+23.4
+6.1
+2.4
+33.9
+18.7
+C-TPT
+[
+40
+]
+ICLR’24
+39.2
+23.1
+19.1
+15.9
+21.9
+6.6
+1.0
+36.1
+20.5
+DynaPrompt
+[
+38
+]
+ICLR’25
+41.6
+24.0
+19.6
+21.0
+30.4
+6.8
+2.6
+45.7
+24.0
+LiteEmbed (Ours)
+69.1
+60.6
+58.9
+56.9
+68.9
+45.4
+35.7
+74.3
+58.7
+Table 1
+:
+Few-Shot Classification Accuracy Results (4-shot). LiteEmbed consistently outperforms all baselines across 8 diverse datasets.
+Figure 6
+:
+Comparison of 4-shot continual adaptation results across sequentially added classes. LiteEmbed in red, ENGINE in orange, CoOp in blue, Continual-CLIP in purple, and MoE-Adapters in green; best viewed in color.
+Figure 7
+:
+Qualitative results across downstream tasks. LiteEmbed consistently improves retrieval, segmentation, and detection quality.
+Figure 8
+:
+Textual Inversion results showing that LiteEmbed enables more editable image generation compared to baseline TI. Here,
+<
+s
+​
+k
+​
+s
+>
+<sks>
+in prompts denotes the learned class embedding.
+4.2
+Evaluation on Downstream Tasks
+To assess the generality of LiteEmbed beyond few-shot classification, we evaluate it on downstream tasks that rely on CLIP text embeddings, including retrieval, segmentation, detection, and text-to-image generation. Unlike prior methods optimized solely for classification, LiteEmbed requires no task-specific retraining; the learned embedding simply replaces the original CLIP text embedding wherever the text encoder is used. This illustrates its plug-and-play nature and broad applicability across vision–language tasks. We benchmark against task-specific CLIP-based models, including CLIPSeg for segmentation, YOLO-World for detection, and Textual Inversion for generative adaptation.
+Retrieval:
+We evaluate LiteEmbed on text-based image retrieval using the Indian Food Images dataset. Replacing the original CLIP text embeddings with LiteEmbed embeddings, we observe substantial gains in retrieval precision, with Precision@5 improving from 26.2% to 68.7% across 80 food classes. For the 20 most underrepresented dishes, the gains are even more pronounced, with Precision@5 improving from 13.3% to 93.6%. Qualitatively,
+Fig.
+7
+(a) illustrates common failure modes of baseline CLIP: for the class
+Pootharekulu
+, CLIP retrieves images from unrelated categories, while for
+Misi Roti
+, it confuses visually similar breads such as
+Bhatura
+and
+Chapati
+. In contrast, LiteEmbed embeddings retrieve accurate images across the top-5 positions, highlighting their ability to capture distinctive visual characteristics for rare classes.
+Segmentation:
+CLIPSeg consumes a text prompt and outputs a corresponding segmentation mask. On the Indian Food Dataset (IFD), which contains many underrepresented categories, baseline CLIPSeg fails to generate masks for 23 of the 80 classes (zero-coverage classes, where coverage denotes the percentage of segmented pixels), underscoring its limitations on rare classes. Although IFD lacks ground-truth masks and precise quantitative evaluation is not feasible, we observe that LiteEmbed produces nonzero segmentation coverage for all classes after adaptation, eliminating all zero-coverage cases. Qualitative results in
+Fig.
+7
+illustrate this effect. Panel (b), first row, shows that baseline CLIPSeg fails to segment
+adhirasam
+, a failure that is fully recovered with LiteEmbed.
+UECFOOD100 provides ground-truth segmentation masks and includes multi-object images, where CLIPSeg often lacks discrimination and segments incorrect regions. Quantitatively, LiteEmbed delivers a substantial IoU improvement, increasing overall IoU from
+0.43
+0.43
+to
+0.71
+0.71
+. Qualitative examples in
+Fig.
+7
+(b) illustrate this effect: in the third row, baseline CLIPSeg segments additional objects beyond the intended
+toast
+, whereas LiteEmbed correctly isolates the target; the fourth-row
+Chinese soup
+example shows a similar correction. These results confirm that LiteEmbed significantly enhances both coverage and mask fidelity for rare and visually confusable categories.
+Detection:
+We evaluate LiteEmbed on UECFOOD100 open-vocabulary detection using YOLO-World, replacing class text embeddings with the optimized embeddings. We report mean IoU (mIoU) as the primary evaluation metric. With LiteEmbed, overall mIoU notably increases from 0.37 to 0.72, compared to using baseline CLIP embeddings. Qualitatively,
+Fig.
+7
+(c) illustrates typical failure modes of YOLO-World with baseline embeddings: in the first two rows, objects of interest (
+Nanbanzuke
+and
+Miso soup
+) are entirely missed, while in others, incorrect items are instead detected. Using LiteEmbed embeddings corrects these errors, enabling accurate detection of all target objects and improving localization precision.
+Generation:
+We extend LiteEmbed to custom image generation via Textual Inversion (TI), which learns new class tokens by optimizing embeddings in CLIP’s text space. We replace  LiteEmbed’s alignment loss
+ℒ
+a
+​
+l
+​
+i
+​
+g
+​
+n
+\mathcal{L}_{align}
+with TI’s reconstruction loss, keeping all other aspects of training unchanged. This ensures the learned embedding generates images faithful to the class. Qualitative results
+Fig.
+8
+on examples from the CustomConcept101 dataset show that while baseline TI struggles with compositional prompts, LiteEmbed learned embeddings successfully generate images such as a custom cat wearing sunglasses, demonstrating improved editability without sacrificing reconstruction fidelity. Additional results are presented in the supplementary material.
+4.3
+Ablations
+Ablation experiments on the Indian Food Images dataset evaluate the contribution of each loss component in our optimization objective.
+Tab.
+2
+reports classification accuracy and the average image–text cosine similarity between class images and their corresponding ground-truth text embeddings. Introducing the image–text alignment loss
+ℒ
+img-align
+\mathcal{L}_{\text{img-align}}
+improves alignment scores over base CLIP but does not substantially boost accuracy, indicating limited generalization when optimized alone. Adding the coarse alignment loss
+ℒ
+coarse
+\mathcal{L}_{\text{coarse}}
+leads to modest accuracy gains, likely due to reduced confusion between classes belonging to different semantic neighborhoods, while also preserving compositional structure within CLIP’s text space. Finally, incorporating the fine separation loss
+ℒ
+fine
+\mathcal{L}_{\text{fine}}
+enhances discriminative power, yielding the highest overall accuracy. These results collectively demonstrate that the full subspace-guided objective achieves a balanced trade-off between preserving semantic consistency and enhancing visual discrimination, leading to the highest overall performance. We further provide ablations across different CLIP backbones and experiments analyzing the choice of
+k
+k
+for subspace-guided optimization in the supplementary material.
+Table 2
+:
+Ablation study on the Indian Food Images dataset.
+Method
+Accuracy (%)
+Avg. Image–Text Cosine Similarity
+Base CLIP
+39.1
+0.28 (range: 0.18-0.35)
++
+ℒ
+img-align
+\mathcal{L}_{\text{img-align}}
+45.3
+0.65 (range: 0.56-0.71)
++
+ℒ
+img-align
+\mathcal{L}_{\text{img-align}}
++
+ℒ
+coarse
+\mathcal{L}_{\text{coarse}}
+52.6
+0.48 (range: 0.40-0.53)
++
+ℒ
+img-align
+\mathcal{L}_{\text{img-align}}
++
+ℒ
+coarse
+\mathcal{L}_{\text{coarse}}
++
+ℒ
+fine
+\mathcal{L}_{\text{fine}}
+69.1
+0.39 (range: 0.33-0.42)
+5
+Conclusion
+In this work, we addressed the challenge of adapting CLIP to rare and culturally diverse concepts, where standard text embeddings often fail to align with visual semantics. We introduced LiteEmbed, a plug-and-play framework that refines CLIP’s text embeddings through Subspace-Guided Optimization using only a few reference images. Our formulation balances coarse semantic anchoring with fine-grained discriminative adaptation, yielding embeddings that integrate seamlessly into CLIP-based models across tasks such as retrieval, segmentation, detection, and generation, all without task-specific retraining. Extensive experiments demonstrate consistent improvements over prior adaptation methods and validate the generality of our approach. Future work will investigate applying subspace-guided adaptation to other vision–language models, studying its generality across diverse multimodal backbones.
+References
+[1]
+J. Abdul Samadh, M. H. Gani, N. Hussein, M. U. Khattak, M. M. Naseer, F. Shahbaz Khan, and S. H. Khan
+(2023)
+Align your prompts: test-time prompting with distribution alignment for zero-shot generalization
+.
+Advances in Neural Information Processing Systems (NeurIPS)
+36
+,
+pp. 80396–80413
+.
+Cited by:
+§1
+,
+Table 1
+,
+§4
+.
+[2]
+A. Agarwal, S. Karanam, T. Shukla, and B. V. Srinivasan
+(2025)
+An image is worth multiple words: multi-attribute inversion for constrained text-to-image synthesis
+.
+In
+Winter Conference on Applications of Computer Vision (WACV)
+,
+pp. 6053–6062
+.
+Cited by:
+§2
+.
+[3]
+S. Banerjee
+(2022)
+Indian actor images dataset
+.
+External Links:
+Link
+Cited by:
+§1
+.
+[4]
+S. Banerjee
+(2022)
+Indian food images dataset
+.
+External Links:
+Link
+Cited by:
+§1
+,
+§4
+.
+[5]
+E. Battini Sönmez, S. Memiş, B. Arslan, and O. Z. Batur
+(2023)
+The segmented uec food-100 dataset with benchmark experiment on food detection
+.
+Multimedia Systems
+29
+(
+4
+),
+pp. 2049–2057
+.
+Cited by:
+§4
+.
+[6]
+L. Bossard, M. Guillaumin, and L. Van Gool
+(2014)
+Food-101–mining discriminative components with random forests
+.
+In
+European Conference on Computer Vision (ECCV)
+,
+pp. 446–461
+.
+Cited by:
+§1
+,
+§1
+.
+[7]
+T. Brown, B. Mann, N. Ryder, M. Subbiah, J. D. Kaplan, P. Dhariwal, A. Neelakantan, P. Shyam, G. Sastry, A. Askell,
+et al.
+(2020)
+Language models are few-shot learners
+.
+Advances in neural information processing systems
+33
+,
+pp. 1877–1901
+.
+Cited by:
+§A.2
+.
+[8]
+T. Cheng, L. Song, Y. Ge, W. Liu, X. Wang, and Y. Shan
+(2024)
+Yolo-world: real-time open-vocabulary object detection
+.
+In
+Conference on Computer Vision and Pattern Recognition (CVPR)
+,
+pp. 16901–16911
+.
+Cited by:
+Figure 1
+,
+Figure 1
+,
+§2
+,
+§4
+,
+§4
+.
+[9]
+Y. Ding, L. Liu, C. Tian, J. Yang, and H. Ding
+(2022)
+Don’t stop learning: towards continual learning for the clip model
+.
+arXiv preprint arXiv:2207.09248
+.
+Cited by:
+§2
+.
+[10]
+S. Esmaeilpour, B. Liu, E. Robertson, and L. Shu
+(2022)
+Zero-shot out-of-distribution detection based on the pre-trained model clip
+.
+In
+Association for the Advancement of Artificial Intelligence (AAAI)
+,
+Vol.
+36
+,
+pp. 6568–6576
+.
+Cited by:
+§2
+.
+[11]
+C. Feng, K. Yu, Y. Liu, S. Khan, and W. Zuo
+(2023)
+Diverse data augmentation with diffusions for effective test-time prompt tuning
+.
+In
+International Conference on Computer Vision (ICCV)
+,
+pp. 2704–2714
+.
+Cited by:
+§1
+,
+§2
+,
+Table 1
+,
+§4
+.
+[12]
+H. Fu, H. Zhao, J. Dong, H. Ding, C. Zhang, and H. Qian
+(2025)
+Iap: improving continual learning of vision-language models via instance-aware prompting
+.
+arXiv preprint arXiv:2503.20612
+.
+Cited by:
+§2
+.
+[13]
+R. Gal, Y. Alaluf, Y. Atzmon, O. Patashnik, A. H. Bermano, G. Chechik, and D. Cohen-Or
+(2023)
+An image is worth one word: personalizing text-to-image generation using textual inversion
+.
+In
+International Conference on Learning Representations (ICLR)
+,
+Cited by:
+§A.4
+,
+§2
+,
+§4
+.
+[14]
+P. Gao, S. Geng, R. Zhang, T. Ma, R. Fang, Y. Zhang, H. Li, and Y. Qiao
+(2024)
+Clip-adapter: better vision-language models with feature adapters
+.
+International Journal of Computer Vision (IJCV)
+132
+(
+2
+),
+pp. 581–595
+.
+Cited by:
+§1
+,
+§2
+,
+Table 1
+,
+§4
+.
+[15]
+ICrawler
+.
+Note:
+https://github.com/hellock/icrawler
+Cited by:
+§A.2
+.
+[16]
+S. Jha, D. Gong, and L. Yao
+(2024)
+Clap4clip: continual learning with probabilistic finetuning for vision-language models
+.
+Advances in Neural Information Processing Systems (NeurIPS)
+37
+,
+pp. 129146–129186
+.
+Cited by:
+§2
+.
+[17]
+C. Jia, Y. Yang, Y. Xia, Y. Chen, Z. Parekh, H. Pham, Q. Le, Y. Sung, Z. Li, and T. Duerig
+(2021)
+Scaling up visual and vision-language representation learning with noisy text supervision
+.
+In
+International Conference on Machine Learning (ICML)
+,
+pp. 4904–4916
+.
+Cited by:
+§2
+.
+[18]
+Z. Kang, L. Wang, X. Zhang, and K. Alahari
+(2025)
+Advancing prompt-based methods for replay-independent general continual learning
+.
+arXiv preprint arXiv:2503.00677
+.
+Cited by:
+§2
+.
+[19]
+M. G. Z. A. Khan, M. F. Naeem, L. Van Gool, D. Stricker, F. Tombari, and M. Z. Afzal
+(2023)
+Introducing language guidance in prompt-based continual learning
+.
+In
+International Conference on Computer Vision (ICCV)
+,
+pp. 11463–11473
+.
+Cited by:
+§2
+.
+[20]
+M. U. Khattak, H. Rasheed, M. Maaz, S. Khan, and F. S. Khan
+(2023)
+Maple: multi-modal prompt learning
+.
+In
+Conference on Computer Vision and Pattern Recognition (CVPR)
+,
+pp. 19113–19122
+.
+Cited by:
+§A.1
+,
+§1
+,
+§2
+,
+Table 1
+,
+§4
+.
+[21]
+N. Kumari, B. Zhang, R. Zhang, E. Shechtman, and J. Zhu
+(2023)
+Multi-concept customization of text-to-image diffusion
+.
+In
+Conference on Computer Vision and Pattern Recognition (CVPR)
+,
+pp. 1931–1941
+.
+Cited by:
+§1
+,
+§2
+,
+§4
+.
+[22]
+J. Li, D. Li, S. Savarese, and S. Hoi
+(2023)
+Blip-2: bootstrapping language-image pre-training with frozen image encoders and large language models
+.
+In
+International Conference on Machine Learning (ICML)
+,
+pp. 19730–19742
+.
+Cited by:
+§2
+.
+[23]
+J. Li, D. Li, C. Xiong, and S. Hoi
+(2022)
+Blip: bootstrapping language-image pre-training for unified vision-language understanding and generation
+.
+In
+International Conference on Machine Learning (ICML)
+,
+pp. 12888–12900
+.
+Cited by:
+§2
+.
+[24]
+Y. Lin, M. Chen, W. Wang, B. Wu, K. Li, B. Lin, H. Liu, and X. He
+(2023)
+Clip is also an efficient segmenter: a text-driven approach for weakly supervised semantic segmentation
+.
+In
+Conference on Computer Vision and Pattern Recognition (CVPR)
+,
+pp. 15305–15314
+.
+Cited by:
+§2
+.
+[25]
+Y. Lu, J. Liu, Y. Zhang, Y. Liu, and X. Tian
+(2022)
+Prompt distribution learning
+.
+In
+Conference on Computer Vision and Pattern Recognition (CVPR)
+,
+pp. 5206–5215
+.
+Cited by:
+§2
+.
+[26]
+T. Lüddecke and A. Ecker
+(2022)
+Image segmentation using text and image prompts
+.
+In
+Conference on Computer Vision and Pattern Recognition (CVPR)
+,
+pp. 7086–7096
+.
+Cited by:
+Figure 1
+,
+Figure 1
+,
+§2
+,
+§4
+.
+[27]
+A. Panos, R. Aljundi, D. O. Reino, and R. E. Turner
+(2025)
+Efficient few-shot continual learning in vision-language models
+.
+arXiv preprint arXiv:2502.04098
+.
+Cited by:
+§2
+.
+[28]
+P. Perera, M. Trager, L. Zancato, A. Achille, and S. Soatto
+(2025)
+Descriminative-generative custom tokens for vision-language models
+.
+arXiv preprint arXiv:2502.12095
+.
+Cited by:
+§2
+.
+[29]
+A. Radford, J. W. Kim, C. Hallacy, A. Ramesh, G. Goh, S. Agarwal, G. Sastry, A. Askell, P. Mishkin, J. Clark,
+et al.
+(2021)
+Learning transferable visual models from natural language supervision
+.
+In
+International Conference on Machine Learning (ICML)
+,
+pp. 8748–8763
+.
+Cited by:
+§1
+,
+§2
+.
+[30]
+N. Ruiz, Y. Li, V. Jampani, Y. Pritch, M. Rubinstein, and K. Aberman
+(2023)
+Dreambooth: fine tuning text-to-image diffusion models for subject-driven generation
+.
+In
+Conference on Computer Vision and Pattern Recognition (CVPR)
+,
+pp. 22500–22510
+.
+Cited by:
+§2
+.
+[31]
+L. Sahir, A. Banerjee, and S. Biswas
+(2024)
+Adaprompt: prompt tuning with adaptive neighbours for generalized category discovery
+.
+In
+International Conference on Image Processing (ICIP)
+,
+pp. 1133–1138
+.
+Cited by:
+§2
+.
+[32]
+J. Seo, S. Choi, E. Ha, B. Kim, and D. Na
+(2023)
+New benchmarks for asian facial recognition tasks: face classification with large foundation models
+.
+arXiv preprint arXiv:2310.09756
+.
+Cited by:
+§1
+,
+§4
+.
+[33]
+V. Thengane, S. Khan, M. Hayat, and F. Khan
+(2022)
+Clip model is an efficient continual learner
+.
+arXiv preprint arXiv:2210.03114
+.
+Cited by:
+§2
+,
+§4
+.
+[34]
+M. Tschannen, A. Gritsenko, X. Wang, M. F. Naeem, I. Alabdulmohsin, N. Parthasarathy, T. Evans, L. Beyer, Y. Xia, B. Mustafa,
+et al.
+(2025)
+Siglip 2: multilingual vision-language encoders with improved semantic understanding, localization, and dense features
+.
+arXiv preprint arXiv:2502.14786
+.
+Cited by:
+§2
+.
+[35]
+K. Wang, F. Yang, B. Raducanu, and J. van de Weijer
+(2025)
+Multi-class textual-inversion secretly yields a semantic-agnostic classifier
+.
+In
+Winter Conference on Applications of Computer Vision (WACV)
+,
+pp. 4400–4409
+.
+Cited by:
+§2
+.
+[36]
+Z. Wang, Y. Lu, Q. Li, X. Tao, Y. Guo, M. Gong, and T. Liu
+(2022)
+Cris: clip-driven referring image segmentation
+.
+In
+Conference on Computer Vision and Pattern Recognition (CVPR)
+,
+pp. 11686–11695
+.
+Cited by:
+§2
+.
+[37]
+B. Xiao, H. Wu, W. Xu, X. Dai, H. Hu, Y. Lu, M. Zeng, C. Liu, and L. Yuan
+(2024)
+Florence-2: advancing a unified representation for a variety of vision tasks
+.
+In
+Conference on Computer Vision and Pattern Recognition (CVPR)
+,
+pp. 4818–4829
+.
+Cited by:
+§2
+.
+[38]
+Z. Xiao, S. Yan, J. Hong, J. Cai, X. Jiang, Y. Hu, J. Shen, Q. Wang, and C. G. Snoek
+(2025)
+Dynaprompt: dynamic test-time prompt tuning
+.
+In
+International Conference on Learning Representations (ICLR)
+,
+Cited by:
+§2
+,
+Table 1
+,
+§4
+.
+[39]
+S. Yan, N. Dong, L. Zhang, and J. Tang
+(2023)
+Clip-driven fine-grained text-image person re-identification
+.
+IEEE Transactions on Image Processing
+32
+,
+pp. 6032–6046
+.
+Cited by:
+§2
+.
+[40]
+H. S. Yoon, E. Yoon, J. T. J. Tee, M. Hasegawa-Johnson, Y. Li, and C. D. Yoo
+(2024)
+C-tpt: calibrated test-time prompt tuning for vision-language models via text feature dispersion
+.
+In
+International Conference on Learning Representations (ICLR)
+,
+Cited by:
+§1
+,
+§2
+,
+Table 1
+,
+§4
+.
+[41]
+J. Yu, Y. Zhuge, L. Zhang, P. Hu, D. Wang, H. Lu, and Y. He
+(2024)
+Boosting continual learning of vision-language models via mixture-of-experts adapters
+.
+In
+Conference on Computer Vision and Pattern Recognition (CVPR)
+,
+pp. 23219–23230
+.
+Cited by:
+§2
+,
+§4
+.
+[42]
+Q. Yu, J. He, X. Deng, X. Shen, and L. Chen
+(2023)
+Convolutions die hard: open-vocabulary segmentation with single frozen convolutional clip
+.
+Advances in Neural Information Processing Systems (NeurIPS)
+36
+,
+pp. 32215–32234
+.
+Cited by:
+§2
+.
+[43]
+W. Yu, Y. Liu, W. Hua, D. Jiang, B. Ren, and X. Bai
+(2023)
+Turning a clip model into a scene text detector
+.
+In
+Conference on Computer Vision and Pattern Recognition (CVPR)
+,
+pp. 6978–6988
+.
+Cited by:
+§2
+.
+[44]
+R. Zhang, W. Zhang, R. Fang, P. Gao, K. Li, J. Dai, Y. Qiao, and H. Li
+(2022)
+Tip-adapter: training-free adaption of clip for few-shot classification
+.
+In
+European Conference on Computer Vision (ECCV)
+,
+pp. 493–510
+.
+Cited by:
+§A.1
+,
+§1
+,
+§2
+,
+Table 1
+,
+§4
+.
+[45]
+Y. Zhang, W. Dong, F. Tang, N. Huang, H. Huang, C. Ma, T. Lee, O. Deussen, and C. Xu
+(2023)
+Prospect: prompt spectrum for attribute-aware personalization of diffusion models
+.
+ACM Transactions on Graphics (TOG)
+42
+(
+6
+),
+pp. 1–14
+.
+Cited by:
+§2
+.
+[46]
+D. Zhou, K. Li, J. Ning, H. Ye, L. Zhang, and D. Zhan
+(2025)
+External knowledge injection for clip-based class-incremental learning
+.
+In
+International Conference on Computer Vision (ICCV)
+,
+Cited by:
+§2
+,
+§4
+.
+[47]
+D. Zhou, Z. Qi, H. Ye, and D. Zhan
+(2024)
+TV100: a tv series dataset that pre-trained clip has not seen
+.
+Frontiers of Computer Science
+18
+(
+5
+),
+pp. 185349
+.
+Cited by:
+§1
+,
+§4
+.
+[48]
+K. Zhou, J. Yang, C. C. Loy, and Z. Liu
+(2022)
+Conditional prompt learning for vision-language models
+.
+In
+Conference on Computer Vision and Pattern Recognition (CVPR)
+,
+pp. 16816–16825
+.
+Cited by:
+§A.1
+,
+§1
+,
+§2
+,
+Table 1
+,
+§4
+.
+[49]
+K. Zhou, J. Yang, C. C. Loy, and Z. Liu
+(2022)
+Learning to prompt for vision-language models
+.
+International Journal of Computer Vision (IJCV)
+130
+(
+9
+),
+pp. 2337–2348
+.
+Cited by:
+§1
+,
+§2
+,
+Table 1
+,
+§4
+.
+[50]
+B. Zhu, Y. Niu, Y. Han, Y. Wu, and H. Zhang
+(2023)
+Prompt-aligned gradient for prompt tuning
+.
+In
+International Conference on Computer Vision (ICCV)
+,
+pp. 15659–15669
+.
+Cited by:
+§2
+.
+Appendix A
+Appendix
+In Section
+A.1
+, we present extended 1/2/4/8/16-shot results, highlighting how LiteEmbed scales with data availability and where gaps between our method and existing baselines are most pronounced. In Section
+A.2
+, we provide details of our data collection pipeline and the LLM prompts used to construct the NOVA benchmark. In Section
+A.3
+, we show additional results across CLIP backbones to demonstrate the architecture-agnostic nature of our approach. In Section
+A.4
+, we compare against Textual Inversion to illustrate the limitations of generation-oriented personalization when applied to large-scale discriminative settings. In Section
+A.5
+, we further analyze a reference-image baseline to clarify why operating purely in image space undermines downstream compositionality. Finally, we include expanded qualitative examples across retrieval, segmentation, detection, and generation tasks in Section
+A.6
+as well as additional analysis of our PCA-based subspace choice in Section
+A.7
+.
+A.1
+1/2/8/16 few shot results
+To further study how  LiteEmbed scales with data availability, we compare its performance against CoOp
+[
+48
+]
+, MaPLe
+[
+20
+]
+, and TIP-Adapter-FTIP-Adapter-F
+[
+44
+]
+under 1-, 2-, 4-, 8-, and 16-shot settings (shown in Figure
+9
+). LiteEmbed consistently outperforms these baselines even in the 1- and 2-shot regimes, where the gap is especially pronounced. On datasets such as Indian Food, the improvement over prior methods reaches 15–20% in the extreme low-shot setting, and on Indian Actors, the margin widens further to 25–35%, highlighting LiteEmbed’s strong generalization under minimal supervision. While TIP-Adapter-F begins to close the gap as more samples become available, it still trails LiteEmbed across all shot counts. Moreover, existing approaches remain tied to fixed few-shot setups and do not naturally extend to incremental integration of new concepts.
+A.2
+Dataset scraping details
+The five datasets in our NOVA benchmark, namely
+Indian Singers
+,
+Indian Actors
+,
+Game Characters
+,
+Fashion Outfits
+, and
+Landmarks
+, were newly collected to evaluate CLIP’s performance on post-2023 emerging content and culturally-specific domains. We developed a systematic data collection pipeline using iCrawler
+[
+15
+]
+with Bing as the image source, chosen for its reliability and comprehensive content coverage. To ensure our benchmark targets content outside CLIP’s pretraining distribution (which has a knowledge cutoff around 2021), we generated class lists using the following prompt with a large language model
+[
+7
+]
+:
+Generate a list of 50 domain-specific classes that emerged or gained significant prominence after 2023, for each of Indian Singers, Indian Actors, Game Characters, Fashion Outfits, and Landmarks. Focus on entities that:
+1.
+have substantial visual presence online,
+2.
+represent diverse subcategories within the domain,
+3.
+are culturally specific or region-specific where applicable,
+4.
+are unlikely to have been well-represented in pre-2022 vision-language training datasets.
+For Indian Singers and Actors, prioritize emerging talents from recent films and music releases. For Game Characters, focus on notable characters popular games released in 2023-2024. For Fashion Outfits, select outfits from emerging fashion brands and designers that launched or gained international recognition post-2023. For Landmarks, include architectural structures and public installations completed after 2023.
+Figure 9
+:
+Comparison of few-shot classification accuracy across 1-, 2-, 4-, 8-, and 16-shot settings on multiple datasets.
+Figure 10
+:
+Additional Qualitative results across downstream tasks. LiteEmbed consistently improves retrieval, segmentation, and detection quality over baseline CLIP embeddings.
+A.3
+Ablation across CLIP backbones
+To demonstrate the generalizability of our approach across different model scales,
+we evaluate on both ViT-B/32 and ViT-L/14 CLIP backbones (Table
+3
+).
+Despite their substantial differences in model size and
+patch resolution (32
+×
+\times
+32 vs. 14
+×
+\times
+14), LiteEmbed achieves consistent
+improvements across both architectures: +33.3% for ViT-B/32
+and +35.75% for ViT-L/14, averaged over all the datasets.
+This backbone-agnostic behavior demonstrates that our method inherits the architecture’s
+flexibility without requiring model-specific tuning.
+Table 3
+:
+Classification Performance (Top-1 Accuracy %): Baseline CLIP vs Our Textual Inversion Method
+Dataset
+ViT-B/32
+ViT-L/14
+Baseline CLIP
+LiteEmbed
+Baseline CLIP
+LiteEmbed
+Indian Food
+36.05
+63.22
+44.21
+71.28
+Game Characters
+25.31
+64.13
+31.15
+69.21
+Indian Actors
+18.91
+51.12
+21.80
+59.34
+Indian Singers
+23.46
+55.67
+31.85
+60.23
+Landmarks
+37.38
+74.12
+47.81
+89.18
+TV100
+2.38
+34.11
+3.51
+38.13
+Fashion Outfits
+7.68
+42.38
+9.31
+51.16
+Korean Celebrities
+25.23
+54.61
+27.16
+64.43
+Average
+21.59
+54.92
+27.12
+62.87
+A.4
+Textual Inversion for classification
+While personalization methods like Textual Inversion
+[
+13
+]
+have demonstrated remarkable success in embedding new visual concepts directly into CLIP’s vocabulary for generation tasks, their efficacy in downstream discriminative tasks remains underexplored. To investigate this, we conduct an incremental classification experiment on the Indian Food dataset (80 classes), comparing the zero-shot classification performance of base CLIP ViT-L/14 text embeddings against learned TI embeddings. Our experimental protocol follows an incremental learning setup: for each task k
+∈
+\in
+[1, 80], we evaluate classification accuracy on k classes using both base CLIP embeddings (“a photo of [class]”) and personalized TI embeddings (“a photo of
+<
+<
+class
+>
+>
+”) as text encoders. As shown in Figure
+11
+, we observe that TI embeddings provide substantial gains (15-22% improvement) for small vocabularies (8-10 classes), but this advantage rapidly diminishes as the number of classes grows. Beyond approximately 13 classes, base CLIP consistently outperforms TI, with the performance gap widening to 9.3% at the full 80-class setting (44.2% vs 34.9% accuracy).
+This trend suggests that while TI’s generation-optimized embeddings capture fine-grained visual details essential for reconstruction, they lack the semantic structure and inter-class relationships inherent in CLIP’s pre-trained representations, which prove critical for robust discrimination across large vocabularies. These findings highlight a fundamental trade-off: embeddings optimized for generation (via diffusion reconstruction loss) may not transfer effectively to discriminative tasks, suggesting the need for multi-objective training strategies that balance both generative fidelity and discriminative power.
+Figure 11
+:
+Textual Inversion for classification.
+A.5
+Using reference images directly
+We evaluate a few-shot reference-based baseline that bypasses CLIP’s text encoder entirely by directly using mean image embeddings from four reference images as class representatives. As shown in Table
+4
+, this few-shot approach yields only a modest average gain of +4.04% across seven diverse datasets and behaves inconsistently, even reducing performance relative to base CLIP on three of the seven datasets (Indian Food, Indian Singers, and Landmarks). Most of the apparent improvements occur on datasets where CLIP’s original text embeddings perform extremely poorly (e.g., 3.49% on TV100, 7.68% on emerging fashion), suggesting that while this method can offer small boosts when text-based representations fail, it cannot meaningfully improve performance beyond that narrow regime.
+In contrast, retrieval benefits more reliably, since image-to-image similarity is often stronger than text-to-image alignment for visual search. However, this baseline fundamentally breaks CLIP’s vision–language alignment by operating entirely in image space, making it incompatible with downstream tasks that rely on text–image compositionality, such as open-vocabulary detection, referring segmentation, and text-to-image generation. It also cannot take advantage of linguistic compositionality (e.g., combining “red” and “car”) or zero-shot generalization to unseen text prompts—both central to CLIP’s utility.
+By comparison, LiteEmbed learns embeddings directly within CLIP’s native text space, preserving full compositionality and compatibility with the text encoder while providing consistent improvements across tasks.
+Table 4
+:
+Classification and Retrieval Performance using ViT-B/16 with 4-shot Reference Image Embeddings
+Dataset
+Classification (Top-1 Acc %)
+Retrieval (P@5 %)
+Baseline
+Few-shot
+Baseline
+Few-shot
+Indian Food
+39.10
+26.86
+52.00
+58.75
+Game Characters
+29.86
+42.76
+49.85
+59.38
+Indian Actors
+23.06
+34.48
+27.20
+51.60
+Indian Singers
+31.13
+28.79
+39.11
+42.00
+Landmarks
+45.31
+42.10
+60.57
+69.71
+TV100
+3.49
+17.51
+6.60
+35.80
+Fashion Outfits
+7.68
+16.29
+30.91
+45.82
+A.6
+Additional qualitative results for all tasks
+We show additional results in Figure
+12
+and
+10
+demonstrating LiteEmbed’s strong adaptability to downstream tasks like retrieval, segmentation, detection and generation.
+Figure 12
+:
+Additional Qualitative results across downstream tasks. LiteEmbed consistently improves retrieval, segmentation, and detection quality over baseline CLIP embeddings.
+A.7
+Choice of k (split) in PCA
+We set
+k
+≥
+2
+k\geq 2
+(i.e., we drop the first principal component) for the fine subspace. To justify this choice, we ran a PCA analysis on 75 classes drawn from five broad categories–dogs, cats, vehicles, food, and buildings. For each principal component, we quantified how much it favors coarse-grained (across categories) versus fine-grained (within a category) separation by taking the ratio of average cross-category distances to within-category distances.
+PC1 shows a ratio of 5.02, meaning it separates classes across different categories about 5
+×
+\times
+more strongly than it separates classes within the same category. By contrast, PCs 2–5 have an average ratio of 1.62, suggesting they are far less biased toward coarse distinctions.
+We also inspected the ten class pairs that PC1 separates the most, and all of them turned out to be cross-category (for example,
+cat vs. building
+). When we evaluated the same pairs on PCs 2–5, their separation dropped by 76%, meaning that without PC1, those pairs lose most of their discriminability. The reverse pattern also holds: within-category pairs that are highly separated on PC2 retain only 22% of that separation when projected onto PC1.
+Taken together, these results show a clear asymmetry: PC1 mainly captures broad, category-level differences, whereas PC2 and later components encode the fine-grained variations that matter for personalized classification. This is why we exclude PC1 and rely on PCs
+k
+≥
+2
+k\geq 2
+for our task.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

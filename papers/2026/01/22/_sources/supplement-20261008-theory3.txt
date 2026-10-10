@@ -1,0 +1,964 @@
+
+SOURCE https://arxiv.org/html/2601.13284v1
+Balancing Classification and Calibration Performance in Decision-Making LLMs via Calibration Aware Reinforcement Learning
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+License: CC BY 4.0
+arXiv:2601.13284v1 [cs.LG] 19 Jan 2026
+Balancing Classification and Calibration Performance in Decision-Making LLMs via Calibration Aware Reinforcement Learning
+Duygu Nur Yaldiz11
+1
+Work done during an internship at AWS AI Labs.
+Affiliation: University of Southern California
+Email: yaldiz@usc.edu
+Evangelia Spiliopoulou
+Affiliation: AWS AI Labs
+Zheng Qi
+Affiliation: AWS AI Labs
+Siddharth Varia
+Affiliation: AWS AI Labs
+Srikanth Doss
+Affiliation: AWS AI Labs
+Nikolaos Pappas
+Affiliation: AWS AI Labs
+Abstract
+Large language models (LLMs) are increasingly deployed in decision-making tasks, where not only accuracy but also reliable confidence estimates are essential. Well-calibrated confidence enables downstream systems to decide when to trust a model and when to defer to fallback mechanisms. In this work, we conduct a systematic study of calibration in two widely used fine-tuning paradigms: supervised fine-tuning (SFT) and reinforcement learning with verifiable rewards (RLVR). We show that while RLVR improves task performance, it produces extremely overconfident models, whereas SFT yields substantially better calibration, even under distribution shift, though with smaller performance gains. Through targeted experiments, we diagnose RLVR’s failure, showing that decision tokens act as extraction steps of the decision in reasoning traces and do not carry confidence information, which prevents reinforcement learning from surfacing calibrated alternatives. Based on this insight, we propose a calibration-aware reinforcement learning formulation that directly adjusts decision-token probabilities. Our method preserves RLVR’s accuracy level while mitigating overconfidence, reducing ECE scores up to 9 points.
+1 Introduction
+Large Language Models (LLMs) are increasingly deployed in high-stakes decision-making systems such as content moderation, medical assistance, financial services, and legal frameworks Chakraborty et al. (2025); Eigner and Händler (2024). In these critical domains, models must not only produce accurate predictions but also provide reliable confidence estimates that accurately reflect their true likelihood of being correct. For example, a guard model must flag unsafe content with high confidence while remaining uncertain on ambiguous cases, and a clinical assistant must express uncertainty when multiple diagnoses are plausible.
+On the other hand, unreliable confidence can have serious consequences. For instance, an overconfident guard model may incorrectly classify harmful content as safe, resulting in severe downstream risks. This issue, commonly referred to as the confidence calibration problem, arises when the model’s predicted confidence levels do not align with its actual accuracy Wang et al. (2024); Damani et al. (2025); Stangel et al. (2025).
+In decision-making tasks, well-calibrated confidence scores are essential for safe and trustworthy operations, as they enable practitioners to determine when to trust or override a model’s decision.
+Prior work addresses the calibration problem from three main perspectives. The first focuses on uncertainty estimation: developing strategies to quantify model confidence or uncertainty reliably Bakman et al. (2025a). The second centers on post-hoc calibration, which adjusts model outputs after training to better align predicted probabilities with empirical accuracy Guo et al. (2017). The third explores calibration-aware fine-tuning, where the training objective is modified to produce calibrated models for a chosen type of confidence estimation Damani et al. (2025). Unlike post-hoc or uncertainty-estimation approaches that operate after training, calibration-aware fine-tuning directly targets calibration during model adaptation. However, most existing methods in this category focus on verbalized calibration Kadavath et al. (2022); Tian et al. (2023) for open-ended generations, which requires prompting the model to express confidence in its own output, a costly and often impractical setup for large-scale or low-latency applications.
+In contrast, our work studies probability-based confidence in decision-making tasks, specifically, the probability of the final decision token, and analyzes how different fine-tuning paradigms affect its calibration. We find that commonly used paradigms yield opposite effects: supervised fine-tuning (SFT) improves calibration while reinforcement learning with verifiable rewards (RLVR) enhances task performance but leaves models highly overconfident, reducing the usefulness of confidence scores. Building on this analysis, we diagnose the source of miscalibration in RLVR on decision-making tasks and propose a calibration-aware reinforcement learning approach that directly regulates the probability of the decision token (since the confidence is derived from it), balancing the trade-off between accuracy and calibration.
+We summarize our contributions as follows:
+•
+We conduct a systematic empirical study comparing SFT and RLVR across multiple decision-making benchmarks. Our results reveal a consistent trade-off: both SFT and RLVR improve performance over the base model, but while RLVR achieves higher accuracy gains, SFT yields better-calibrated confidence estimates (Section 3).
+•
+We diagnose the source of RLVR’s miscalibration. Through targeted experiments, we show that the decision token inherits overconfidence from reasoning traces and that reinforcement learning cannot achieve calibration, since there are no calibrated paths to reinforce from the base model (Section 4).
+•
+We propose a calibration-aware reinforcement learning formulation that directly adjusts decision-token probabilities to improve calibration along with accuracy. Our method consistently mitigates extreme overconfidence, produces more reliable confidence scores, and generalizes well to out-of-distribution settings (Section 5).
+2 Preliminaries
+Decision-Making with LLMs
+In decision-making tasks, an LLM is prompted to make a decision given a question q and a finite set of options \{c_{0},c_{1},...,c_{K}\} . Formally, we denote {\bm{x}} as the full input to the model containing the instructions, question q , and the set of choices. The model, parameterized by \theta , outputs a set of tokens {\bm{y}}=\{y_{0},y_{1},...,y_{T}\} conditioned on {\bm{x}} .
+For models without explicit reasoning, the output reduces to a single decision token {\bm{y}}=\{y_{d}\} . For reasoning-enabled models, the output consists of intermediate reasoning tokens followed by a final decision token:
+{\bm{y}}=\{y_{0},y_{1},\dots,y_{T-1},y_{T}\}=\{y_{0},y_{1},\dots,y_{T-1},y_{d}\} .
+We consider the model’s decision correct if the final decision token y_{d} matches the ground-truth label \hat{c} .
+When answer choices consist of multiple tokens, we recast the task into a classification setting with atomic options (e.g., A, B, C, D). This formulation ensures that the model’s decision can always be represented by a single token y_{d} .
+Confidence Estimation
+There are several algorithmic approaches to estimating confidence in generative models Bakman et al. (2025a), including verbalized confidence expression Kadavath et al. (2022); Tian et al. (2023), sampling-based methods Lin et al. (2024); Kuhn et al. (2023), and logit-based probability estimation Malinin and Gales (2021). In this work, we focus on probability-based confidence estimation. Unlike sampling-based methods, it does not require generating multiple outputs, nor does it rely on prompting the model to express verbalized confidence Yaldiz et al. (2025). Instead, it leverages the probabilities of the output tokens, which is mostly accessible even for API-based models OpenAI (2023). Moreover, in many decision-making settings where models are deployed locally, direct access to logits is readily available.
+Throughout this paper, we define the model’s confidence as the probability assigned to the decision token. For example, in a binary decision task (e.g., “yes” or “no”), if the model outputs “yes” (either after reasoning or directly as the model output), then the probability assigned to the “yes” token is treated as the model’s confidence. Formally, we define confidence as follows:
+C({\bm{x}},{\bm{y}};\theta)=P(y_{d}|{\bm{x}},y_{<d};\theta)
+where y_{<d} denotes the tokens generated before y_{d} .
+Confidence Calibration
+is the alignment between model’s predicted confidence and its actual accuracy. A well-calibrated model should exhibit the property that among all predictions made with confidence p , approximately a fraction p of them are correct, i.e:
+P(y_{d}=\hat{c}\,\,|\,\,C({\bm{x}},{\bm{y}};\theta)=p)\cong p .
+Intuitively, this means that, if we group all predictions with a confidence score of 0.8, we expect that approximately 80% of them should be correct under perfect calibration.
+A common tool to visualize calibration quality is the reliability diagram Guo et al. (2017). It plots the observed accuracy against the predicted confidence by binning predictions into discrete confidence intervals. In a perfectly calibrated model, the plotted curve should align with the diagonal line where accuracy equals confidence, indicating that confidence values match empirical accuracies. Deviations from this diagonal highlight regions where the model is overconfident or underconfident.
+It is also a common practice to plot confidence distributions along with reliability diagrams Guo et al. (2017). Confidence histograms show how frequently the model assigns probabilities across the confidence range, highlighting whether predictions concentrate near a single value. When most scores cluster tightly at a level, the confidence signal is less informative, limiting its practical utility.
+Expected Calibration Error (ECE) is a widely used metric to express the confidence calibration numerically Guo et al. (2017). It partitions predictions into M bins based on confidence levels and computes the weighted average of absolute differences between confidence and accuracy within each bin. Formally,
+\text{ECE}=\sum_{m=1}^{M}\frac{|B_{m}|}{n}\times|\text{acc}(B_{m})-\text{conf}(B_{m})| ,
+where n is the size of the dataset \{{\bm{x}}^{k},\hat{c}^{k}\}_{k=1}^{n} , \text{acc}(B_{m})=\frac{1}{|B_{m}|}\sum_{k\in B_{m}}\mathbbm{1}(y_{d}^{k}=\hat{c}^{k}) denotes the accuracy of predictions in bin B_{m} , and \text{conf}(B_{m})=\frac{1}{|B_{m}|}\sum_{k\in B_{m}}C({\bm{x}}^{k},{\bm{y}}^{k};\theta) is the average confidence of predictions in that bin. In our implementation, we use bins of equal size. Nixon et al. (2019) refers to this formulation as Adaptive Calibration Error.
+Interpreting Calibration
+requires considering all three indicators jointly: confidence distributions, reliability diagrams, and ECE scores. Confidence distributions reveal whether the model meaningfully differentiates between levels of certainty. For example, if scores cluster tightly within a narrow range, the confidence signal lacks utility, and the model can be regarded as uncalibrated for practical purposes. When confidence values span a broader range, the ECE score serves as a good quantitative summary of calibration quality, while reliability diagrams provide complementary insights by illustrating where the model tends to be overconfident or underconfident.
+Goal: Accurate and Calibrated Model
+In decision-making applications, large language models must not only achieve strong task performance but also provide calibrated confidence estimates. Calibration is crucial to determine when to trust a model’s decision: if confidence is sufficiently low, external mechanisms such as invoking a larger model or human oversight can be activated. However, without calibration, overconfident models can obscure errors, causing unreliable predictions to appear trustworthy.
+Our objective is therefore to train models that simultaneously maximize task accuracy and minimize calibration error.
+We investigate whether common fine-tuning paradigms, widely used to adapt off-the-shelf models to target tasks, can achieve this ideal.
+In the next section, we analyze popular fine-tuning strategies with respect to their impact on both task accuracy and confidence calibration.
+3 The Calibration–Classification Tradeoff in Fine-Tuning Paradigms
+As outlined previously, an ideal decision-making model must achieve strong task performance while maintaining well-calibrated confidence. In practice, however, these two goals might not be achieved simultaneously, a phenomenon we refer to as the calibration–classification trade-off. Models fine-tuned with reinforcement learning (e.g., GRPO) tend to achieve higher accuracy but remain overconfident, whereas supervised fine-tuning (SFT) yields better calibration with more modest performance gains. In this section, we quantify this trade-off across multiple datasets and model sizes, highlighting its consistency across settings. In Section 5, we present a calibration-aware reinforcement learning solution that eliminates RLVR’s extreme overconfidence, while maintaining task performance.
+3.1 Fine-Tuning Algorithms
+In this work, we consider two fine-tuning paradigms among the most widely used ones. First, we consider supervised fine-tuning (SFT). Second, we investigate reinforcement learning. It is well-established that encouraging explicit reasoning improves model performance Wei et al. (2022); Wang et al. (2023). Moreover, when reasoning traces are available, they provide partial groundings for the model’s final decision, which reinforcement learning algorithms can exploit. In this work, we focus on reinforcement learning with verifiable rewards (RLVR), which is particularly well-suited to decision-making tasks because correctness can be explicitly verified against ground-truth labels, enabling a stronger training signal than standard preference-based reinforcement learning. Next, we provide the details of both algorithms.
+SFT
+SFT adapts a model using labeled examples ({\bm{x}},\hat{c}) , where {\bm{x}} is the input (instructions, question, and choices) and \hat{c} is the ground-truth decision token. Training minimizes the cross-entropy loss:
+\mathcal{L}_{\text{SFT}}(\theta)=-\log p_{\theta}(\hat{c}\mid{\bm{x}}),
+(1)
+directly aligning the model’s output with the correct decision.
+RLVR
+In reinforcement learning, the goal is to learn model parameters \theta that maximize the expected reward over sampled outputs:
+\max_{\theta}\,\,\mathbb{E}_{{\bm{y}}\sim\pi_{\theta}(\cdot\mid{\bm{x}})}\left[R({\bm{y}},{\bm{x}})\right],
+where \pi_{\theta} is the model’s output distribution parameterized by \theta , and R({\bm{y}},{\bm{x}}) is a task-specific reward function that scores the quality or correctness of the output.
+In RLVR, the reward function R({\bm{y}},{\bm{x}}) is designed to reflect the correctness of the model’s output. Specifically, for decision making tasks, the reward is defined as:
+R({\bm{y}},{\bm{x}})=\begin{cases}1&\text{if }y_{d}=\hat{c},\\
+0&\text{otherwise},\end{cases}
+(2)
+where y_{d} is the model’s predicted decision token, and \hat{c} is the ground-truth label. This binary reward encourages the model to generate outputs that match the correct class.
+As an RLVR algorithm, we incorporate Group Relative Policy Optimization (GRPO) Shao et al. (2024), which minimizes the following objective:
+\displaystyle\mathcal{L}_{\text{GRPO}}(\theta)=
+\displaystyle\frac{1}{G}\sum_{i=1}^{G}\frac{1}{|{\bm{y}}_{i}|}\sum_{t=1}^{|{\bm{y}}_{i}|}\min\Bigg\{\frac{\pi_{\theta}(y_{i,t}\mid{\bm{x}},y_{i,<t})}{\pi_{\theta_{\text{old}}}(y_{i,t}\mid{\bm{x}},y_{i,<t})}\hat{A}_{i,t},\,
+\displaystyle\text{clip}\left(\frac{\pi_{\theta}(y_{i,t}\mid{\bm{x}},y_{i,<t})}{\pi_{\theta_{\text{old}}}(y_{i,t}\mid{\bm{x}},y_{i,<t})},\,1-\epsilon,\,1+\epsilon\right)\hat{A}_{i,t}\Bigg\}
+where \epsilon is clipping hyperparameter and advantage \hat{A}_{i,t} is calculated as:
+\hat{A}_{i,t}=\frac{r_{i}-\text{mean}({\bm{r}})}{\text{std}({\bm{r}})}
+(3)
+where r_{i}=R({\bm{y}}_{i},{\bm{x}}) and {\bm{r}} is the vector containing all the rewards in the group. Note that, in the original GRPO formulation there is KL term subtracted from the minimization term to prevent divergence from the original model. However, we remove it since it became a common practice Hu et al. (2025); DeepSeek-AI et al. (2025). Moreover, we incorporate BNPO (Beta Normalization Policy Optimization) Xiao et al. (2025a), which stabilizes training by normalizing the reward distribution within each batch, mitigating reward scale sensitivity and improving convergence.
+Figure 1: Reliability diagrams of Qwen3-1.7B model. Confidence distributions indicate that the Base and GRPO fine-tuned models exhibit extreme overconfidence, with most predictions assigned probabilities near 1. In contrast, SFT and our proposal produce a broader spread of confidence values and reliability diagrams that align more closely with the diagonal, indicating improved calibration.
+3.2 Experimental Design
+We incorporate two decision-making tasks, commonsense reasoning and content moderation, and three models: Qwen3-1.7B, Qwen3-4B, Qwen3-8B Yang et al. (2025).
+For commonsense reasoning, we use CommonsenseQA Talmor et al. (2019) and OpenBookQA Mihaylov et al. (2018), both of which are multiple-choice question-answering datasets. CommonsenseQA contains four answer options per question, while OpenBookQA provides five.
+For content moderation, we use OpenAI Moderation Markov et al. (2023), and XSTest Röttger et al. (2024). For both datasets, the task is formulated as binary classification, where the model determines whether a prompt is ‘Safe’ or ‘Unsafe’.
+For fine-tuning on the OpenAI Moderation dataset, which only provides a test split, we randomly subsample 500 examples to serve as training data and keep the same subset fixed across all experiments. The remaining examples are used for evaluation. For commonsense reasoning, we similarly subsample 500 examples from the training split of CommonsenseQA. The remaining datasets in each category are held out to evaluate out-of-distribution (OOD) generalization. Each model–task pair is fine-tuned independently under this setup.
+Qwen3-1.7B
+Qwen3-4B
+Qwen3-8B
+Acc
+ECE
+Acc
+ECE
+Acc
+ECE
+( \uparrow )
+( \downarrow )
+( \uparrow )
+( \downarrow )
+( \uparrow )
+( \downarrow )
+CSQA†
+Base
+67.49
+29.91
+76.97
+20.96
+80.51
+16.78
+SFT
+68.55
+7.36
+79.12
+8.81
+81.33
+5.96
+GRPO
+73.67
+24.39
+81.84
+16.98
+83.78
+14.80
+OBQA∗
+Base
+78.80
+18.97
+88.40
+10.67
+91.60
+7.22
+SFT
+79.20
+4.60
+89.80
+4.76
+91.80
+4.29
+GRPO
+86.17
+11.52
+92.79
+6.74
+94.39
+4.88
+OpenAI†
+Base
+82.20
+16.17
+74.07
+24.29
+81.78
+17.33
+SFT
+83.73
+3.52
+87.54
+5.26
+88.08
+3.91
+GRPO
+87.80
+12.20
+88.98
+11.00
+88.81
+10.68
+XSTest∗
+Base
+74.89
+22.97
+80.89
+18.18
+83.56
+15.45
+SFT
+76.00
+11.93
+86.22
+8.26
+86.78
+6.84
+GRPO
+79.78
+20.22
+87.78
+12.21
+86.22
+13.54
+Table 1: Performance (accuracy) and calibration (ECE) metrics for base, SFT, and GRPO models. While \dagger indicates in-domain, * denotes out-of-domain datasets.
+3.3 Results and Discussion
+We present the results in Table 1 and Figure 1.
+Comparing SFT and GRPO in terms of task accuracy, we find that GRPO consistently produces better-performing models: on average, 3% better than SFT models. This outcome is expected, since GRPO-trained models are capable of generating reasoning traces before committing to a decision, whereas SFT models are directly supervised only on the final decision token, with no gold reasoning available in the datasets. Performance also improves steadily with increasing model size, as anticipated, though we observe no consistent trend with respect to calibration across sizes.
+The base model is found to be highly overconfident: as shown in Figure 1, the vast majority of samples receive confidence scores close to 1. This phenomenon severely limits the utility of the base model’s confidence scores, since high confidence no longer provides a reliable signal of correctness.
+Fine-tuning strategies show contrasting effects. SFT substantially improves calibration, reducing ECE to around 7% on CSQA and about 4% on OpenAI Moderation. Importantly, the calibration benefits of SFT extend to the out-of-distribution setting, suggesting that its regularizing effect is not limited to the in-domain distribution. The confidence distribution (depicted in Figure 1) shifts toward lower scores, and reliability diagrams align more closely with the diagonal, indicating that predicted confidence better reflects true accuracy. This observation is consistent with prior findings that cross-entropy optimization naturally promotes calibrated probabilities in classification models Guo et al. (2017). Since SFT in our setting reduces to a classification problem, where the model directly predicts the correct decision token, its improved calibration performance aligns with these theoretical and empirical expectations Xiao et al. (2025b).
+In contrast, GRPO provides little to no improvement in calibration. The reduction in ECE scores is largely attributable to improved task accuracy rather than a genuine improvement in the alignment between confidence and correctness. Confidence distributions in Figure 1 are evidence of this: GRPO models remain nearly indistinguishable from those of the base model, with the majority of predictions still clustered at confidence values near 1. Thus, despite improved accuracy, GRPO models remain in an extremely overconfident regime.
+Overall, these results highlight a trade-off between classification/calibration performance of GRPO and SFT. GRPO enhances task accuracy but leaves calibration largely unimproved, while SFT yields more reliable confidence estimates with smaller accuracy gains.
+Key Finding 1
+SFT and GRPO both improve accuracy over the base. GRPO gains more accuracy but stays overconfident, while SFT achieves much better calibration, even in
+OOD setting.
+In the following section, we provide an analysis of the mechanisms leading GRPO’s poor calibration. Then, in Section 5, we propose a calibration-aware reinforcement learning algorithm derived from our analysis.
+4 Diagnosing Calibration Failures in RLVR
+4.1 Why RLVR Cannot Achieve Calibration?
+A natural question is whether reinforcement learning can prefer reasoning trajectories that yield more calibrated final decision token probability. Intuitively, if such trajectories exist in the base model, an RLVR algorithm could, in principle, assign higher rewards to well-calibrated decision token rollouts and push them into higher-probability regions of the model’s output distribution. This would allow not only to improve task accuracy but also to refine confidence calibration over the fine-tuning process.
+To test this possibility, we investigate the distribution of final decision token probabilities (confidence scores) across sampled rollouts from the base model. Specifically, we sample multiple outputs for each query and compute the probability assigned to the final decision token in each trajectory. We then examine the full distribution of these confidence values.
+Experimental Details
+We use the same base models as in Section 3.2. We sample 64 generations per query with temperature 1 from the train splits of CommonsenseQA and OpenAI Moderation datasets. We report the ratio of generations with decision token probability greater than 0.99.
+Dataset
+Qwen3-1.7B
+Qwen3-4B
+Qwen3-8B
+CSQA
+97.62%
+98.93%
+99.85%
+OpenAI
+99.80%
+94.62%
+97.16%
+Table 2: Ratio of overconfident generations ( p>0.99 ) across 64 samples per query on CommonsenseQA and OpenAI Moderation.
+Results and Discussion
+Our analysis (presented in Table 2) reveals a striking pattern: almost all sampled trajectories have decision tokens whose probabilities are extremely close to 1, regardless of whether the decision is correct. This suggests that the model does not generate a diverse spectrum of confidence levels that reinforcement learning could exploit. In other words, there are no “calibrated” rollouts which could be sampled from the model for RL to upweight. Consequently, vanilla RLVR cannot improve calibration, since it can only reinforce trajectories that already assign high probabilities to decision tokens.
+Key Finding 2
+Nearly all trajectories from a base model yield overconfident decision token probabilities. Thus, RVLR cannot work, as there are no calibrated rollouts to reinforce.
+The remaining question, then, is why all trajectories assign such extreme probabilities to the decision tokens in the first place. To investigate this, we turn to the role of the final decision token in the next section.
+4.2 The Role of Decision Token in Overconfidence
+The overconfidence observed across all sampled rollouts raises a critical question: why does the model assign such extreme probability to every decision token? We hypothesize that the decision token functions more as an extraction step than as an evaluation. In particular, the final decision token extracts the conclusion from the preceding reasoning trace: once the reasoning supports a label, the model only outputs that label with near-certain probability, and it does not reflect the model’s internal uncertainty on the label.
+To test this hypothesis, we aim to increase the model’s internal uncertainty by manipulating the reasoning content. Specifically,
+we design a reasoning-swap experiment which is depicted in Figure 2. For a sample where the model predicts label c with confidence close to 1, we replace its generated reasoning content r with reasoning \bar{r} corresponding to the opposite label \bar{c} , sampled from another instance in the dataset. We then re-evaluate the model’s decision. Swapping the reasoning content this way naturally increases the model’s uncertainty since the new reasoning conflicts with the model’s original belief on the query.
+Figure 2: Illustration of the swapping experiment.
+Experimental Details
+We use the same models as in Section 3.2. For each query, reasoning and counter-reasoning are drawn from the same dataset to ensure consistency of style, domain, and options, while guaranteeing that r and \bar{r} lead to different final decisions. When constructing swaps, \bar{r} is sampled at random from candidates with opposing labels. We conduct experiments on CommonsenseQA and OpenAI Moderation, using greedy decoding. We report the ratio of the flipped decisions from c to \bar{c} in Table 3 and the confidence distribution of those flipped in Figure 3.
+Dataset
+Qwen3-1.7B
+Qwen3-4B
+Qwen3-8B
+CSQA
+92.15%
+96.88%
+99.42%
+OpenAI
+100.00%
+92.36%
+96.85%
+Table 3: Proportion of model predictions that flip to the opposite label after swapping reasoning content.
+Figure 3: Confidence distributions of flipped predictions in the reasoning-swap experiment.
+Results and Discussion.
+We find that the model’s prediction flips to \bar{c} , yet the decision token is still assigned probability extremely close to 1. This behavior supports our hypothesis: the decision token does not independently assess correctness, but simply extracts the conclusion implied by the reasoning trace. Thus, the probability of the decision token reflects extraction confidence, how strongly the reasoning indicates a label, rather than a calibrated belief in the decision’s truth.
+Key Finding 3
+Decision token acts as an extraction step: it only conveys the conclusion in the reasoning trace, not the uncertainty of the model.
+Implication
+Together, these findings explain why RLVR improves task performance but fails to address calibration. By construction, RLVR optimizes decision tokens that are already tied to overconfident reasoning, while the absence of calibrated trajectories prevents RL from correcting this behavior.
+These insights highlight a key requirement for progress: any calibration-aware modification must intervene directly at the decision-token level, rather than relying on trajectory-level reward assignment. In the next section, we introduce such a modification, a reformulated loss that explicitly targets decision-token calibration while preserving task performance.
+5 Bridging the Gap:
+Improving Calibration
+without Sacrificing Accuracy
+Motivation.
+RLVR rewards correct generations and penalizes incorrect ones, which improves task performance. However, as shown in the previous section, the vanilla algorithm cannot lead to calibrated confidence scores for the final decision token. Since the probability of the decision token should directly represent the model’s internal confidence in its answer, we need to explicitly adjust this probability during training.
+Design Principle.
+Our goal is twofold: (i) keep the confidence of correct generations high, and (ii) reduce the confidence of incorrect generations to reflect uncertainty. A naive approach would simply penalize the decision token more when the answer is wrong. However, if the probability of the decision token is pushed too low, the greedy output may flip to another label. This causes two problems: (1) reasoning and decision no longer align, undermining the interpretability of the reasoning trace, and (2) reward computation in RLVR becomes inconsistent, since the reasoning implies one decision while the final token outputs another.
+To avoid such contradictions, we constrain the probability of the decision token to remain within the range [1/|\mathcal{C}|,1] , where |\mathcal{C}| is the number of candidate options. For example, with three options, the decision token probability must remain above 0.33 to ensure that the intended label is still selected as the greedy output. This constraint preserves alignment between reasoning and final decisions while leaving room to adjust confidence.
+Proposed Method.
+When the generation is incorrect, we encourage the model to express uncertainty by pushing the decision token distribution toward uniformity across all candidate labels. Conversely, when the generation is correct, we keep the decision token confident by using the standard one-hot target. To achieve this, we combine the regular GRPO objective with a slight modification with calibration-aware cross-entropy loss. Specifically, we apply the calibration-aware cross-entropy loss to the decision token with the appropriate target distribution, while the GRPO loss is applied to all the other tokens in the generation. Formally, the new loss becomes
+\mathcal{L}=\mathcal{L}_{\text{GRPO}}(\theta)\;+\;\lambda\,\mathcal{L}_{\text{CE}}(y_{d};\theta),
+\mathcal{L}_{\text{GRPO}} is the standard GRPO loss with
+\hat{A}_{i,t}=\begin{cases}0&\text{if }t=d,\\
+\hat{A}_{i,t}&\text{otherwise},\end{cases}
+(4)
+\mathcal{L}_{\text{CE}} is a cross-entropy loss on the decision token with either a one-hot target (if correct) or a uniform target (if incorrect), and \lambda controls the relative weight of the calibration signal.
+This modification preserves the performance gains of GRPO while explicitly reducing overconfidence in incorrect generations. Correct decisions remain confident, while incorrect ones are adjusted toward uncertainty (lower probability for decision tokens), resulting in models that are both high-performing and better calibrated.
+5.1 Experiments
+Experimental Design
+To evaluate the effectiveness of our proposed method, we adopt the same experimental setup as in Section 3.2. Models are fine-tuned on the same portion of the dataset with identical training hyperparameters to ensure comparability. The only additional hyperparameter is the weighting factor \lambda for the calibration-aware loss, which is set to 0.001 in our experiments.
+Qwen3-1.7B
+Qwen3-4B
+Qwen3-8B
+Acc
+ECE
+Acc
+ECE
+Acc
+ECE
+( \uparrow )
+( \downarrow )
+( \uparrow )
+( \downarrow )
+( \uparrow )
+( \downarrow )
+CSQA†
+Base
+67.49
+29.91
+76.97
+20.96
+80.51
+16.78
+SFT
+68.55
+7.36
+79.12
+8.81
+81.33
+5.96
+GRPO
+73.67
+24.39
+81.84
+16.98
+83.78
+14.80
+Ours
+73.73
+15.97
+79.16
+12.91
+82.36
+10.55
+OBQA∗
+Base
+78.80
+18.97
+88.40
+10.67
+91.60
+7.22
+SFT
+79.20
+4.60
+89.80
+4.76
+91.80
+4.29
+GRPO
+86.17
+11.52
+92.79
+6.74
+94.39
+4.88
+Ours
+88.33
+5.27
+93.70
+1.91
+95.59
+1.83
+OpenAI†
+Base
+82.20
+16.17
+74.07
+24.29
+81.78
+17.33
+SFT
+83.73
+3.52
+87.54
+5.26
+88.08
+3.91
+GRPO
+87.80
+12.20
+88.98
+11.00
+88.81
+10.68
+Ours
+88.55
+8.67
+89.56
+7.11
+88.47
+7.11
+XSTest∗
+Base
+74.89
+22.97
+80.89
+18.18
+83.56
+15.45
+SFT
+76.00
+11.93
+86.22
+8.26
+86.78
+6.84
+GRPO
+79.78
+20.22
+87.78
+12.21
+86.22
+13.54
+Ours
+80.00
+15.48
+87.56
+8.89
+88.67
+6.41
+Table 4: Performance (accuracy) and calibration (ECE) metrics for base, SFT, GRPO, and our proposal. While \dagger indicates in-domain, * denotes out-of-domain datasets.
+Results and Discussion
+We present the numeric results in Table 4 and reliability diagrams in Figure 1.
+Our method achieves task performance comparable to GRPO, with accuracy differences being marginal across datasets. Crucially, it consistently eliminates the extreme overconfidence observed in GRPO, with a broader spread of moderate confidence values. Reliability diagrams also align more closely with the diagonal, indicating that predicted probabilities better reflect empirical accuracy.
+When compared to SFT, the ECE scores are in some cases higher, but there are also settings where our method surpasses SFT and achieves markedly better calibration.
+Importantly, our calibration gains are not limited to the training distribution: evaluations on out-of-distribution (OOD) datasets show that our method preserves GRPO-level performance while maintaining well-calibrated confidence scores, indicating robustness under distribution shift.
+Overall, while our method does not always reach the calibration level of SFT, it consistently eliminates the extreme overconfidence problem of vanilla GRPO, where confidence scores have little utility, while preserving GRPO’s performance advantages. Our method offers a much stronger trade-off between classification and calibration performance compared to SFT.
+Takeaway
+Our method preserves GRPO’s accuracy while eliminating its extreme overconfidence, producing confidence scores that are more informative and reliable, even under OOD settings.
+6 Conclusion
+We investigated the calibration–classification trade-off in fine-tuning large language models for decision-making tasks. Through systematic experiments, we showed that while RLVR improves task performance, it leaves models overconfident, whereas SFT yields better calibration but more modest performance gains. Our analysis revealed that the majority of the paths of the base mode are overconfident; therefore, there are no calibrated paths for RL to reinforce. Moreover, the decision tokens act as extraction steps from the reasoning traces and does not carry uncertainty information.
+Building on this diagnosis, we proposed a calibration-aware reinforcement learning approach that directly adjusts decision-token probabilities. Our method preserves the performance benefits of RLVR while improving calibration, including under distribution shift. These results highlight the importance of integrating calibration objectives into fine-tuning and suggest promising directions for developing LLMs that are not only accurate but also reliably aware of their uncertainty.
+Limitations and Future Work
+In this work, we focus on decision-making tasks and define model confidence as the probability assigned to the final decision token. Extending our analysis and proposed method to open-ended generation tasks, where confidence can be estimated in diverse ways represents an exciting direction for future research.
+Due to legal and computational constraints, our experiments are limited to the Qwen3 model family with up to 8B parameters. Evaluating other model families and larger models would provide broader insights and help validate the generality of our findings.
+Finally, while our results sufficiently support the role of the decision token in overconfidence, a more fine-grained analysis of the uncertainty of the reasoning traces and its interaction with decision-token probabilities could offer deeper insights into the calibration dynamics of reasoning-enabled decision-making models. An extended discussion of limitations and future work is presented in Appendix D.
+AI Assistance Statement
+This paper’s writing and editing were supported by AI assistants for phrasing refinement and grammar improvement.
+ENDSOURCE
+
+
+SOURCE https://arxiv.org/html/2601.12703v1
+Towards Spectroscopy: Susceptibility Clusters in Language Models
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+License: CC BY 4.0
+arXiv:2601.12703v1 [cs.LG] 19 Jan 2026
+Towards Spectroscopy: Susceptibility Clusters in Language Models
+Andrew GordonTimaeus
+Email: andrew@timaeus.co
+Garrett BakerTimaeus
+Email: garrett@timaeus.co
+George WangTimaeus
+Email: george@timaeus.co
+William SnellTimaeus
+Email: william@timaeus.co
+Stan van WingerdenTimaeus
+Email: stan@timaeus.co
+Daniel MurfetTimaeus
+Email: daniel@timaeus.co
+Abstract
+Spectroscopy infers the internal structure of physical systems by measuring their response to perturbations. We apply this principle to neural networks: perturbing the data distribution by upweighting a token y in context x , we measure the model’s response via susceptibilities \chi_{xy} , which are covariances between component-level observables and the perturbation computed over a localized Gibbs posterior via stochastic gradient Langevin dynamics (SGLD). Theoretically, we show that susceptibilities decompose as a sum over modes of the data distribution, explaining why tokens that follow their contexts “for similar reasons” cluster together in susceptibility space. Empirically, we apply this methodology to Pythia-14M, developing a conductance-based clustering algorithm that identifies 510 interpretable clusters ranging from grammatical patterns to code structure to mathematical notation. Comparing to sparse autoencoders, 50% of our clusters match SAE features, validating that both methods recover similar structure.
+1 Introduction
+A fundamental challenge in science is inferring the internal structure of complex systems. In deep learning this takes the form of interpretability, which seeks to understand internal structure in neural networks and how it underlies generalization. For physical matter a key interpretability technique is spectroscopy. This is a system of methodologies for probing systems with external perturbations, measuring their responses, and inferring facts about structure from this data. In this paper we follow Baker et al. (2025) in applying the same conceptual framework to neural network interpretability for language models from the Pythia family (Biderman et al., 2023).
+Shine light of frequency \omega on a molecule: at most frequencies nothing interesting happens, but at certain frequencies the molecule absorbs or emits strongly. These peaks reveal internal structure: the existence of structural groups, the nature of bonds and the geometry of the molecule. These peaks exist because physical systems have normal modes, characteristic patterns of collective vibration each with its own natural frequency \omega_{\alpha} . When a probe matches a mode’s natural frequency, energy transfers efficiently. The spectrum of responses maps the modes and thus the structure.
+What is the spectrum of a language model? If we take a neural network as our complex material then the natural probes are perturbations to the data distribution – specifically, upweighting particular tokens y in contexts x . The “response” is how the model’s internal components adjust under this perturbation, measured by susceptibilities \chi_{xy} as introduced in Baker et al. (2025). And the “normal modes” are patterns in the data distribution that explain why certain continuations follow certain contexts. It is a natural hypothesis that internal structure in neural networks (e.g. features and circuits) form over training in response to such patterns, and so mapping these modes is a promising route to understanding internal structure. The spectrum of responses in this case is the set of susceptibility vectors \chi_{xy} for sequences xy\sim q(x,y) sampled from a distribution like the Pile (Gao et al., 2020) and in this paper we study this “spectrum” extensively for Pythia-14M (Figure 1).
+Our main finding is that Pythia-14M has developed specialized responses to hundreds of identifiable patterns in its training data. We find 510 interpretable clusters in susceptibility space, ranging from linguistic structures (sentence boundaries, prepositions) to dataset-specific regularities (LaTeX math mode, code syntax). These clusters reflect modes in the data distribution and internal structure that has formed in response to those modes. To justify this claim theoretically, we introduce the appropriate analogue of “normal modes” for a language model. Following Chen and Murfet (2025), the conditional distribution q(y|x) admits a singular value decomposition into modes indexed by \alpha,\beta . Each context-token pair (x,y) has a propensity profile \{s_{\alpha\beta}(xy)\}_{\alpha,\beta} measuring how strongly each mode explains this particular continuation. The susceptibility decomposes as:
+\chi_{xy}=\sum_{\alpha,\beta}s_{\alpha\beta}(xy)\chi_{\alpha\beta}-\bar{\chi}
+(1)
+where \chi_{\alpha\beta} is the model’s response to the mode pair (\alpha,\beta) and \bar{\chi} is defined by \mathbb{E}_{xy}[\chi_{xy}]=0 . As in physical spectroscopy, it is difficult to prepare a perfectly pure probe because we do not know the modes of the material a priori. We make do with what we have (i.e. polychromatic light sources, individual token sequences) and so the measured response is a superposition like (1) of responses \chi_{\alpha\beta} to all the modes in the probe signal, weighted by the probe’s spectral weights s_{\alpha\beta} .
+Every token pair is an impure probe, exciting a mixture of modes. But if two pairs xy and x^{\prime}y^{\prime} share similar propensity profiles, that is, if y follows x for “similar reasons” to why y^{\prime} follows x^{\prime} , then their susceptibility vectors will be nearby \chi_{xy}\approx\chi_{x^{\prime}y^{\prime}} . If a set of token sequences \{x_{i}y_{i}\}_{i=1}^{m} all follow a particularly strong pattern \alpha , and the model is sensitive to this pattern \|\chi_{\alpha\alpha}\|\gg 0 , then (1) will push the vectors \chi_{x_{i}y_{i}} in a similar direction. This is our proposed mechanism for cluster formation, and for the relation of clusters to modes: clusters are the spectral signature of patterns.
+Our contributions:
+•
+We develop a clustering methodology based on conductance that identifies clusters directly from the susceptibility data without relying on visual inspection, yielding 510 highly interpretable clusters (Section 3.2).
+•
+We provide a theoretical link between clusters and patterns in the data distribution via the mode decomposition above (Section 2.3). Simple clusters form when token pairs share a dominant mode; the cluster’s semantic content reflects that mode.
+•
+We discover networks of linked clusters corresponding to structured phenomena like HTML markup and code blocks, suggesting that linked modes in the data give rise to interacting structure in the model (Section 4.3).
+•
+We compare susceptibility clusters to SAE features, finding that 50% of clusters have a matched feature in Pythia-70M SAEs, validating that both methods recover similar structure (Appendix G).
+•
+We show that these patterns persist at scale: measuring conductance of Pythia-14M clusters in larger models (up to 1.4B), we find they remain coherent, indicating the clusters are genuine rather than artifacts of the small model (Section 4.5).
+In Baker et al. (2025) the discovery of internal structure in neural networks through analysis of susceptibility data was termed structural inference. The results of this paper demonstrate that structural inference reveals rich, interpretable structure in Pythia-14M: the model has internalized responses to hundreds of patterns, from basic syntax to domain-specific conventions, and this structure persists across model scales. The framework connecting susceptibilities to modes provides a principled basis for understanding how patterns in training data give rise to organization in trained models.
+Äg\nÄg-Äg aÄg.,Äg,Äg andÄg theÄg whichÄg be,Äg been(A)(B)(C)(D)(E)(F)(G)(H)(L)(I)(J)(K)Word startWord partWord endInductionSpacingDelimiterFormattingNumericFunction WordCapitalized
+Figure 1:
+The spectrum of Pythia-14M. Representation using UMAP of 780{,}000 susceptibility vectors \{\chi_{x_{i}y_{i}}\}_{i} computed for a 14M parameter language model. Shown is one view on a 3D point cloud. Each point represents a token y in context x , colored by pattern type (legend above, see Table 6). Marked are some external bodies for token sequences where y is a particular token and x varies (e.g. there is a green body for y=\hbox to28.22pt{\vbox to10.71pt{\pgfpicture\makeatletter\hbox{\hskip 0.0pt\lower 0.0pt\hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} \lxSVG@begingroup@{stroke=#000000} \lxSVG@begingroup@{fill=#000000} \lxSVG@setlinewidth{\the\pgflinewidth}\lxSVG@begingroup@{stroke-width=0.4pt} \lx@inpgf@ignorespaces\nullfont\hbox to0.0pt{{}{}{}{}\lx@inpgf@ignorespaces\lxSVG@begingroup@{_scopebegin=1} {}{}{}{}{}{}{}{}\lxSVG@begingroup@{fill=#F2F2F2} \lxSVG@fill@opacity{1.0}\lxSVG@begingroup@{fill-opacity=1.0} {{}{}{{}}}{{}{}{{}}}{}{}{{}{}{{}}}{{}{}{{}}}{}{}{{}{}{{}}}{{}{}{{}}}{}{}{{}{}{{}}}{{}{}{{}}}{}{}\lxSVG@fill\lxSVG@drawpath@unclipped{M 1.18 3.95 L 1.18 10.87 C 1.18 12.4 2.42 13.63 3.95 13.63 L 35.1 13.63 C 36.63 13.63 37.87 12.4 37.87 10.87 L 37.87 3.95 C 37.87 2.42 36.63 1.18 35.1 1.18 L 3.95 1.18 C 2.42 1.18 1.18 2.42 1.18 3.95 Z}{stroke:none} \lx@inpgf@ignorespaces\lxSVG@closescope \lxSVG@begingroup@{_scopebegin=1} \lxSVG@fill@opacity{1.0}\lxSVG@begingroup@{fill-opacity=1.0} {{{\lx@inpgf@ignorespaces}}{{\lx@inpgf@ignorespaces}}{{\lx@inpgf@ignorespaces}}{{\lx@inpgf@ignorespaces}}{{}}{{}}{{}}{{}}\lxSVG@begingroup@{_scopebegin=1} \lxSVG@transformcm{1.0}{0.0}{0.0}{1.0}{3.69884pt}{3.10358pt}\lxSVG@begingroup@{transform=matrix(1.0 0.0 0.0 1.0 5.12 4.29)} \pgfsys@hbox{63}\lxSVG@closescope }\lxSVG@closescope {\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}\hss}\lxSVG@discardpath\lxSVG@closescope \hss}}\lxSVG@closescope\endpgfpicture}} ). Descriptions of clusters (A)-(L) can be found in Table 1. Bottom left inset: zoomed in view of the body of tokens Äg.,Äg,.
+Label
+Description
+Examples
+Single
+Cluster
+(A)
+Sentence starters
+Äg.Äg Finally, Äg.Äg Thus
+No
+C180, 280, 305
+(B)
+Variable names in mathematics
+ÄgsÄg**Äg2, Äg3Äg*Ägt
+No
+C51, 58, 72
+(C)
+Exponent 2
+ÄgaÄg**Äg2, ÄgbÄg**Äg2
+Yes
+C148
+(D)
+Enclitics
+ÄgIÄg’m, ÄgIÄg’ve
+No
+C238
+(E)
+Logical implication
+Äg thus, Äg therefore
+No
+C424
+(F)
+Left brackets in multiple choice
+Äg(ÄgaÄg), Äg(ÄgbÄg)
+Yes
+C241, 316
+(G)
+Left brackets in functions
+ÄgpÄg(ÄgnÄg), ÄgwÄg(ÄgyÄg)
+Yes
+C81, 95, 349
+(H)
+True and False
+ÄgTrue, ÄgFalse
+No
+C250
+(I)
+Pointed abbreviations
+ÄgUÄg.ÄgSÄg.
+Yes
+C308, 474
+(J)
+Comma in list of email addresses
+ÄgECTÄg@ÄgECTÄg,
+Yes
+C154
+(K)
+End of sentence in general language
+Äg asÄg TrusteeÄg.
+Yes
+-
+(L)
+End of sentence in math
+Äg0Äg=ÄggÄg*ÄgdÄg.
+Yes
+C94
+Table 1:
+A selection of clusters from Figure 1. The clusters span natural language (A, D, E), mathematics (B, C, H, G, L), and code-like syntax (J). In the fourth column we show whether the cluster has a single shared y token. For a complete list of clusters see Section I.1.
+2 Background
+2.1 Tokens and patterns
+We denote by \Sigma the set of tokens. All Pythia models use the GPT-NeoX tokenizer (Biderman et al., 2023), a byte-pair encoding (BPE) tokenizer with |\Sigma|=50{,}304 tokens. We often consider a token y\in\Sigma in context x\in\Sigma^{k} . When presenting these we typically only give y with at most some small segment of x , e.g. Äg waÄgvelÄgength where only the last two tokens of the context x are given and we indicate the token to be predicted with a solid black outline.
+Following Baker et al. (2025); Wang et al. (2025) we present susceptibility UMAPs (such as Figure 1) by coloring tokens according to token pattern categories that were found to be meaningful for small language models. We extend the eight categories from Wang et al. (2025) with two additional categories – Function (function words like Äg the, Äg and) and Capitalized (capitalized words and acronyms) – for a total of ten. In the same way that we organize visible light into broad categories (red, blue, etc.) within which there is much finer variation, so too here we find that clusters often tend to be monochromatic in this coloring scheme: the finer distinctions made by the model often subdivide these token categories, although not always. Full definitions are given in Appendix C.
+2.2 Susceptibility Space
+The central tool is the susceptibility vector \chi_{xy} associated to a token sequence x\in\Sigma^{k} and next token y\in\Sigma . Here \Sigma denotes the set of tokens, q(x,y) the true data distribution over contexts x\in\Sigma^{k} and continuations y\in\Sigma , and p(y|x,w) the model’s predictive distribution with parameters w .
+Given a component C of the network (such as an attention head) we define the per-token susceptibility
+\chi^{C}_{xy}\;=\;-\mathrm{Cov}\Big[\phi_{C}(w),\;\ell_{xy}(w)-L(w)\Big]
+(2)
+where \ell_{xy}(w)=-\log p(y|x,w) is the per-token loss, L(w)=\mathbb{E}_{xy}[\ell_{xy}(w)] is the population loss, \phi_{C}(w) is an observable localised on the component C , and the covariance is taken with respect to a tempered posterior distribution over weights; see Baker et al. (2025) for details. Intuitively, \chi^{C}_{xy} measures the first-order response of the component C to upweighting the token sequence xy in the data distribution: it captures how fluctuations in C ’s behavior covary with fluctuations in the prediction of y given x specifically. Aggregating over components gives the susceptibility vector
+\displaystyle\chi_{xy}=\big(\chi^{C_{1}}_{xy},\ldots,\chi^{C_{H}}_{xy}\big)\in\mathbb{R}^{H}
+(3)
+which provides an overall response profile of the model to “fluctuations” in the data distribution. The claim in Baker et al. (2025); Wang et al. (2025) is that this quantity is sensitive to how the model computes the prediction of y in context x .
+We can use susceptibilities to relate structure in the data with structure in the model: if \{x_{i}y_{i}\}_{i=1}^{n} is a set of token sequences, then the singular value decomposition of the n\times H response matrix X with rows \chi_{x_{i}y_{i}} couples principal components (linear combinations of token sequences) with parts of the model. The main result of Baker et al. (2025) is that in a 3M parameter attention-only transformer this couples induction patterns (structure in the data) to the induction circuit (structure in the model). In Wang et al. (2025) this was used to study the development of the induction circuit (and other structure) over training. In short, it has been established in these works that susceptibilities can be used to study internal structure in very small language models.
+Visualization.
+We visualize the high-dimensional susceptibility vectors \{\chi_{x_{i}y_{i}}\}\subseteq\mathbb{R}^{H} using UMAP, a standard dimensionality reduction technique. In this paper, the role of UMAP is purely illustrative: no claims are based solely on examining the UMAP. It serves as a visual device for communicating quantitative insights that are derived and supported by other means (principally, the conductance-based clustering of Section 3.2). While it is reasonable to question the faithfulness of UMAP embeddings, this concern has no bearing on our main results.
+2.3 The spectrum of a language model
+Informally, the reason that y\in\Sigma follows x\in\Sigma^{k} in natural language can be attributed to various patterns or modes in the data distribution. These modes can be defined formally via singular value decomposition of the conditional distribution q(y|x) , viewed as a matrix indexed by contexts and continuations. Such spectral decompositions have a long history in NLP and learning theory (Anandkumar et al., 2014; Hsu et al., 2012); here we follow the formulation of Chen and Murfet (2025).
+In real data the mode structure is complex, but simplified distributions illustrate the concept. Chen and Murfet (2025) analyze theoretical examples such as “absolute bigrams” (where a context uniquely determines its continuation) and compute empirical modes from the Pile, finding patterns involving punctuation, infinitive constructions, and newlines. In Section B.5 we analyze a distribution where sentences ending in fullstops can continue with either a capitalized word or a newline. The SVD yields two modes: a uniform mode (weighted average of continuations) and a contrast mode that distinguishes capitalizing from newlines. Contexts that consistently prefer one continuation over the other load heavily on the contrast mode, while ambiguous contexts do not.
+To explain in more detail, consider the conditional distribution q(y|x) as defining a linear map from contexts to distributions over continuations. Formally, let \mathscr{H}=L^{2}(\Sigma^{k},q;\mathbb{R}^{\Sigma}) be the space of functions from contexts to vectors over tokens, equipped with \langle f,g\rangle_{\mathscr{H}}=\int\langle f(x),g(x)\rangle_{\mathbb{R}^{\Sigma}}q(x)\,dx . The conditional distribution defines an element \mathcal{C}\in\mathscr{H} by \mathcal{C}(x)=\sum_{y}q(y|x)\,y . The model parameter w also defines an element \Phi(w)\in\mathscr{H} , given by \Phi(w)(x):=\sum_{y}\ell_{xy}(w)y .
+Applying SVD to \mathcal{C} yields singular values s_{\alpha} with right singular vectors v_{\alpha} (context patterns) and left singular vectors u_{\alpha} (continuation patterns). These define basis elements e_{\alpha\beta} for \mathscr{H} where e_{\alpha\beta}(x)(y) is the loading of x on the right singular vector v_{\alpha} times the loading of y on the left singular vector u_{\beta} . We call this the mode basis. For more details see Section B.1.
+The per-token susceptibility (2) corresponds to a perturbation of the data distribution that upweights the single pair (x,y) : we show in Section B.2 that \chi_{xy} is proportional to the susceptibility for the perturbation q^{\prime}=(1-\epsilon)q+\epsilon\delta_{(x,y)} . Expanding this point-mass perturbation in the mode basis gives coefficients s_{\alpha\beta}(xy)=e_{\alpha\beta}(x)(y) , which we call the propensities. These measure the extent to which the mode pair (\alpha,\beta) is responsible for y following x in the true distribution, and depend only on the data distribution q , not on the model.
+Transform from tokens to modes
+Each mode pair (\alpha,\beta) induces a characteristic response
+\chi^{C}_{\alpha\beta}\;=\;-\mathrm{Cov}\Big[\phi_{C}(w),\;\Phi_{\alpha\beta}(w)\Big]
+(4)
+where \Phi_{\alpha\beta}(w)=\langle\Phi(w),e_{\alpha\beta}\rangle_{\mathscr{H}} projects the model’s loss profile onto the basis element. The mode susceptibility depends on the model but not on the particular token sequence. Aggregating over components defines the vector \chi_{\alpha\beta} . One can show that (Lemma B.3)
+\chi_{xy}=\sum_{\alpha,\beta}s_{\alpha\beta}(xy)\chi_{\alpha\beta}-\bar{\chi}
+(5)
+where \bar{\chi} is uniquely determined since \mathbb{E}_{q}[\chi_{xy}]=0 .
+The diagonal terms \chi_{\alpha\alpha} are particularly important: they measure the model’s response to mode \alpha . Early in training, before the model has developed internal structure sensitive to a given pattern, we expect \|\chi_{\alpha\alpha}\|\approx 0 . As structure specialized for that mode emerges, the response grows: \|\chi_{\alpha\alpha}\|\gg 0 . Empirical evidence for this picture can be found in the susceptibility-based analysis of the emergence of the induction circuit in Baker et al. (2025). Wang et al. (2025) shows that the per-pattern susceptibilities (for e.g. induction patterns or delimiters) are small at the beginning of training and then grow quickly as the model develops; see Section B.1 for the relation to \chi_{\alpha\alpha} .
+Similar sequences have similar susceptibilities
+The mode basis derived from q provides a nontrivial sense in which xy can be similar to but distinct from x^{\prime}y^{\prime} . Let us define
+s(xy):=\big(s_{\alpha\beta}(xy)\big)_{\alpha,\beta}
+in the space P of propensity vectors. This map is injective: if s(xy)=s(x^{\prime}y^{\prime}) then x=x^{\prime},y=y^{\prime} . If the distinction between xy and x^{\prime}y^{\prime} is subtle we might have s_{\alpha\beta}(xy)\approx s_{\alpha\beta}(x^{\prime}y^{\prime}) for all modes \alpha,\beta<\gamma below some cutoff (arranging modes by singular value) with the distinction lying in some mode \geq\gamma . Thus s(xy)\approx s(x^{\prime}y^{\prime}) if y follows x for reasons similar to why y^{\prime} follows x^{\prime} .
+If we let \iota:P\longrightarrow\mathbb{R}^{H} be the linear transformation sending the basis element corresponding to \alpha,\beta to \chi_{\alpha\beta} then 5 says \chi_{xy}=\iota(s(xy))-\bar{\chi} . Thus if y follows x for reasons similar to why y^{\prime} follows x^{\prime} in the data distribution, we will have s(xy)\approx s(x^{\prime}y^{\prime}) (note that this has nothing to do with the model) and thus \chi_{xy}\approx\chi_{x^{\prime}y^{\prime}} . In the other direction, if the distinction between xy and x^{\prime}y^{\prime} lies only in some mode \gamma the model doesn’t “understand” (so \chi_{\gamma\gamma}\approx 0 ) then we can have \chi_{xy}\approx\chi_{x^{\prime}y^{\prime}} . The model separates token sequences in susceptibility space according to the modes it understands.
+Clusters as spectral lines.
+This analysis clarifies the connection between clusters and the spectroscopy framing from the introduction. In physical spectroscopy, a spectral line is a strong, consistent response observed across a family of probes – for instance, strong absorption or emission. The natural interpretation is that these probes share a significant spectral component at that frequency, and the material has a normal mode that resonates there. Analogously, when we observe a cluster of token sequences \{x_{i}y_{i}\} the decomposition (5) provides a candidate explanation: these sequences share strong propensities s_{\alpha\alpha}(x_{i}y_{i}) on some mode \alpha , and the model has developed a strong response \|\chi_{\alpha\alpha}\|\gg 0 to that mode. The cluster is the observable signature of internal structure specialized for pattern \alpha .
+In conclusion: the \chi_{\alpha\beta} measure the fundamental response of the model to mode pairs in the data distribution. These quantities are not directly observable since computing the modes would require the full conditional distribution q(y|x) , which is unknown. Instead, we observe the responses \chi_{xy} and hypothesize that clusters correspond to dominant modes. The theory provides a principled explanation for why clustering should reveal meaningful structure in a neural network.
+3 Methodology
+3.1 Data and susceptibilities
+We sample 60,000 token sequences from each of 13 Pile subsets (Gao et al., 2020), yielding 780,000 context-continuation pairs (x,y) for analysis. The subsets span diverse domains including code (github-code), scientific text (arxiv, pubmed_central), legal documents (freelaw), and general web text (pile-cc); the full list is given in Appendix D.
+For each token sequence, we compute susceptibility vectors following the methodology of Baker et al. (2025). Susceptibilities are estimated via preconditioned Stochastic Gradient Langevin Dynamics (pSGLD), which samples from a localized posterior centered at the trained model checkpoint. For each component C (an attention head), the per-token susceptibility \chi^{C}_{xy} is computed as a covariance between the component’s observable and the per-token loss, estimated from posterior samples. Aggregating across all H components yields the susceptibility vector \chi_{xy}\in\mathbb{R}^{H} . Full hyperparameter settings are given in Section A.2.
+3.2 Clustering
+To identify interpretable clusters in the high-dimensional susceptibility data, we adapted a PageRank-based local clustering algorithm from Andersen et al. (2009) to an iterated setting.
+Preprocessing.
+The susceptibility matrix is standardized column-wise (zero mean, unit variance) and then row-wise (zero mean). The row standardization removes the uniform mode that would otherwise dominate Euclidean distances – this is equivalent to projecting out the first principal component, which captures variation common to all token sequences rather than distinctions between them.
+Graph construction.
+We represent the preprocessed susceptibility data as a symmetrized k -nearest-neighbor graph, where each node corresponds to a token sequence xy and edges connect nearby points in \mathbb{R}^{H} . Edge weights use a self-tuning radial basis function that adapts to local density variations, ensuring meaningful connectivity.
+Local clustering via conductance.
+The conductance of a vertex subset S measures how well-separated it is from the rest of the graph. Roughly
+\text{Cond}(S)=\frac{\text{(total degree of edges leaving }S\text{)}}{\text{(total degree of }S\text{)}}
+Low-conductance sets have many internal connections but few external ones: precisely our intuition for a cluster. Following Andersen et al. (2009), we identify such sets using personalized PageRank: given a seed node, we rank all nodes by their PageRank score and search for a minimum-conductance prefix of this ranking.
+Iterative discovery.
+A single application of local clustering on a random seed node tends to find the dense main body of the UMAP rather than the peripheral structures we seek. We therefore apply the algorithm iteratively: after each clustering attempt, we remove the discovered nodes from consideration. Early iterations typically encounter portions of the main body (and reject as having too high a conductance). As these are progressively excluded, the algorithm identifies the genuine clusters at the boundary. Full algorithmic details and parameter settings are given in Section A.1.
+4 Results
+The central question for susceptibility analysis is whether the geometry of susceptibility space reflects the computational role of tokens or merely their surface identity. If susceptibilities capture how the model computes predictions, then tokens with the same identity but different functions should be separated in susceptibility space, while tokens with different identities but the same function should be grouped together. We first test these predictions directly, then survey the hundreds of patterns we discover in Pythia-14M. Each cluster we identify is a “spectral line” in the sense of Section 2.3: the observable signature of a mode that the model has learned to respond to.
+4.1 Susceptibilities reflect structure
+We test whether susceptibility geometry reflects computational role by examining two complementary phenomena: context sensitivity (same y token, different clusters) and functional grouping (different tokens, same cluster).
+Token
+Function/Context
+Cluster
+Description
+Äg*
+Math Operator
+C15, 57
+Multiplication in algebraic expressions
+Formatting
+C504
+Markdown emphasis marker
+Äg.
+Decimal Point
+C127
+Occurring inside numeric sequences
+Sentence End
+C198
+Terminating a statement (after variables)
+Äg/
+Division
+C224
+Fraction bar in math problems
+Date Separator
+C3
+Separating YYYY/MM/DD
+Path/URL
+C322
+Separating directories or domains
+Äg(
+Function Call
+C81
+Opening arguments: f(x)
+List Enumeration
+C241
+Opening options: (a)
+Äg$
+Math Start
+C49
+Transitioning text \to math mode
+Math End
+C68
+Transitioning math \to text mode
+Äg00
+Time
+C389
+Minutes field in timestamps ( 12:00 )
+Hexadecimal
+C65
+Byte value after 0x prefix
+Table 2: Context sensitivity. Identical y tokens are separated into distinct clusters based on their functional role. For example, the model maps the token Äg* to disjoint regions of susceptibility space depending on whether it is used as a mathematical operator (multiplication) or a formatting marker (markdown italics), indicating distinct computational mechanisms.
+Context sensitivity.
+As shown in Table 2, the model places the same y token into completely disjoint clusters depending on its syntactic role. When Äg* appears as a multiplication operator (e.g. in 3*4 ), it falls into clusters C15 and C57, which are dominated by mathematical contexts. However, when Äg* functions as a markdown formatting marker (e.g. *italics*), it appears in the unrelated cluster C504.
+Similarly, the model distinguishes the opening parenthesis Äg( when used in a function call ( f(x) , C81) versus a list enumeration ( (a) , C241). This suggests that these two uses of Äg( involve different computational mechanisms. Simpler examples of this kind of differentiation of susceptibility vectors by y token sense were already noticed in a 3M parameter model by Baker et al. (2025, Appendix E.4).
+Grouped Tokens
+Cluster
+Context Trigger
+Ägh, Ägu, Ägy, Ägo, Ägw
+C58
+Following multiplication Äg*
+Äg will, Äg must, Äg should, Äg would
+C63
+Following a subject noun/pronoun
+Äg second, Äg third, Äg remainder
+C223
+Following Äg the in math problems
+Äg to, Äg on, Äg by, Äg in
+C11
+Following passive verbs
+Äg4, Äg5, Äg6, Äg7
+C143
+Following exponent operator Äg**
+Äg In, Äg It, Äg With, Äg Since
+C509
+Capitalized words at line start
+Table 3: Abstraction over token identity. Distinct y tokens are grouped into single clusters when they share a functional role. For instance, the model treats disparate variable names (Ägh, Ägu, Ägy) as computationally equivalent in the context of multiplication (C58). This indicates that the susceptibility vector captures the abstract category (e.g., “variable” or “exponent”) rather than just the token.
+Functional Grouping.
+Conversely, Table 3 demonstrates that the model abstracts away specific token identities when they share a functional role. For example, the tokens Ägh, Ägu, Ägy, Ägo, and Ägw are grouped into a single cluster (C58) specifically when they appear as variables following a multiplication operator.
+(A) Closing(B) OpeningAll tokensDouble quote tokens
+Figure 2:
+Double quote token clusters.
+Left: Full low-dimensional representation of susceptibility vectors computed from Pythia-14M, with points colored by pattern type.
+Right: Filtered view showing only tokens which, when decoded, contain double quotes (e.g. Äg", Äg.").
+(A) Tokens containing double quotes as closing a quotation (C69, C182, C372, C469).
+(B) Tokens containing double quotes as opening a quotation (C168, C174).
+A demonstration of both phenomena can be found in Figure 2. On the one hand, Äg" can both open and close quotations, and we see that these uses are separated into distinct clusters (or rather, groupings of clusters). On the other hand, the closing quotation cluster C182 contains multiple distinct forms of the closing quotation mark Äg", Äg,", Äg’, Äg.". The region marked (A) in the UMAP also contains C350 which consists of Äg” and variations (Äg.”, Äg”. and so on). Interestingly the region (A) is mostly closing double quotes in normal text: C385, which is mostly Äg" tokens in code and HTML, is located elsewhere in the UMAP.
+These examples demonstrate that susceptibility geometry reflects internal structure: the model separates tokens by function, not just identity, and groups functionally equivalent tokens together.
+4.2 Patterns in Pythia-14M
+Cluster 455 (5,122)
+Capital letters as part of capitalized words/names/abbreviations
+without reference to the CBA. Id.
+modulates lifespan in C. elegans.
+Air Defense Base Amir Qrardgah
+Cluster 194 (1,737)
+Names of variables at the start of math equations
+Let p(b) = -b - 14
+Suppose 5*f + d =
+Let n = -0.44 - -0.04
+Cluster 11 (7,071)
+Prepositions
+they change as exposure to area-
+a third shifter connected to the
+made a bogey on the 18th to lose by two
+Cluster 167 (71)
+Underscore ‘_‘ for emphasis or code
+thinking of people as _acting_ a certain
+def process_record(record):
+your code should like: A_Multiply_4 <= A&"00";
+Cluster 161 (60)
+Em dash separator ‘–‘
+www.nyiso.com ---> Services --->
+the actual issue with Touch ID -- or really, with any
+about being black -- a
+big assumption
+Cluster 217 (204)
+Content of HTML/XML closing tag
+Ubuntu 14.04</span></a></td>
+"time_type</span></a></p></li>
+[@b14]; Yeung and Greenwood, [@b63]; Joshi *et al*.
+Cluster 411 (226)
+Token ‘will‘ in diverse contexts
+The Management Committee will supplant
+drug release rates. Fourth, in cancer
+Conditional Offer will automatically
+Cluster 207 (330)
+Token ‘be‘ as part of "to be" construction
+this action is deemed to be
+unopposed.
+would need to be further examined
+are going to be ignored
+Cluster 187 (261)
+’people’ and other plural nouns denoting groups
+and for all age groups is necessary
+that other people in the open
+many of the people critical
+Cluster 294 (312)
+Months and seasons
+The
+Times reporting last December that
+In March 2014, the MAC and UMass
+On September 15, General Albert
+Cluster 316 (201)
+Opening parenthesis ‘(‘ before multiple choice options
+1/4? (a) 14 (b) l (c) 1/
+Which is the closest to 1/4? (a) 14 (b) l
+nearest to 2? (a) 6 (b) r (c) i
+Cluster 244 (183)
+HTML closing tag ‘>‘
+="js/responsive-nav.js"></script>
+</li><li>
+"nbsp;Frames</a></li></ul>
+Figure 3:
+Examples of clusters. For each, the final token is highlighted in a selection of contexts. These clusters were selected for either having high entropy in final or penultimate tokens (blue), completely at random (green), as examples of semantic/meaning based clusters (purple), or as examples of syntactic/grammatical clusters (orange). The size of the cluster is shown in the top right.
+Having established that susceptibilities reflect internal structure, we now survey the patterns Pythia-14M has learned to respond to. Figure 3 shows example token-context pairs from a selection of clusters, illustrating the range of patterns: from universal linguistic structures (prepositions, sentence boundaries) to dataset-specific conventions (LaTeX math mode, HTML tags, Python syntax). Clusters also vary in their level of abstraction, from low-level syntactic patterns (a specific token in a specific position) to higher-level patterns that abstract over token identity to capture functional roles; see Section I.4 for discussion.
+Our clustering algorithm (Section 3.2) identifies 510 clusters in the susceptibility data, listed in Table 9. Cluster labels were generated by an LLM (Claude Opus 4.5) and manually reviewed for correctness; for auto-interpretability methods see Bills et al. (2023); Paulo et al. (2025). For a higher-level taxonomy organizing these clusters by type, see Section I.3.
+Section I.5 shows 30 randomly selected clusters with longer token-context pairs, as well as an evaluation of whether or not they adhere to a common theme. Based on evaluating this random sample, we find that the majority of clusters have more than 90% of their token-context pairs well described by a single theme.
+4.3 Networks of Linked Clusters
+Modes of the data distribution (Section 2.3) are defined for contexts of a fixed length k , but modes for different k can be linked. Consider
+\underset{x}{\underbrace{\overset{x_{<i}}{\overbrace{x_{1}x_{2}\cdots x_{i-1}}}x_{i}\cdots x_{k}}}y
+where x_{i}\in\Sigma and y\in\Sigma . The reason y follows x may depend on both (i) why x_{i} follows x_{<i} and (ii) the presence of x_{i} in the context. These clusters form a kind of network where we imagine an edge from cluster \mathcal{C} to cluster \mathcal{C^{\prime}} if the kind of token sequences xy that end up in \mathcal{C^{\prime}} often have contexts of the form x=ux^{\prime}y^{\prime}v where x^{\prime}y^{\prime}\in\mathcal{C} .
+For example, consider the token sequence
+\cdots\overset{\textbf{C18},\textbf{151},\textbf{242},\textbf{506}}{\hbox to27.93pt{\vbox to7.49pt{\pgfpicture\makeatletter\hbox{\hskip 0.0pt\lower 0.0pt\hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} \lxSVG@begingroup@{stroke=#000000} \lxSVG@begingroup@{fill=#000000} \lxSVG@setlinewidth{\the\pgflinewidth}\lxSVG@begingroup@{stroke-width=0.4pt} \lx@inpgf@ignorespaces\nullfont\hbox to0.0pt{{}{}{}{}\lx@inpgf@ignorespaces\lxSVG@begingroup@{_scopebegin=1} {}{}{}{}{}{}{}{}\lxSVG@begingroup@{fill=#F2F2F2} \lxSVG@fill@opacity{1.0}\lxSVG@begingroup@{fill-opacity=1.0} {{}{}{{}}}{{}{}{{}}}{}{}{{}{}{{}}}{{}{}{{}}}{}{}{{}{}{{}}}{{}{}{{}}}{}{}{{}{}{{}}}{{}{}{{}}}{}{}\lxSVG@fill\lxSVG@drawpath@unclipped{M 1.18 3.95 L 1.18 6.41 C 1.18 7.94 2.42 9.18 3.95 9.18 L 34.69 9.18 C 36.22 9.18 37.46 7.94 37.46 6.41 L 37.46 3.95 C 37.46 2.42 36.22 1.18 34.69 1.18 L 3.95 1.18 C 2.42 1.18 1.18 2.42 1.18 3.95 Z}{stroke:none} \lx@inpgf@ignorespaces\lxSVG@closescope \lxSVG@begingroup@{_scopebegin=1} \lxSVG@fill@opacity{1.0}\lxSVG@begingroup@{fill-opacity=1.0} {{{\lx@inpgf@ignorespaces}}{{\lx@inpgf@ignorespaces}}{{\lx@inpgf@ignorespaces}}{{\lx@inpgf@ignorespaces}}{{}}{{}}{{}}{{}}\lxSVG@begingroup@{_scopebegin=1} \lxSVG@transformcm{1.0}{0.0}{0.0}{1.0}{3.69884pt}{1.24455pt}\lxSVG@begingroup@{transform=matrix(1.0 0.0 0.0 1.0 5.12 1.72)} \pgfsys@hbox{63}\lxSVG@closescope }\lxSVG@closescope {\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}\hss}\lxSVG@discardpath\lxSVG@closescope \hss}}\lxSVG@closescope\endpgfpicture}}}\underset{\textbf{C149}}{\hbox to25.4pt{\vbox to6.01pt{\pgfpicture\makeatletter\hbox{\hskip 0.0pt\lower 0.0pt\hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} \lxSVG@begingroup@{stroke=#000000} \lxSVG@begingroup@{fill=#000000} \lxSVG@setlinewidth{\the\pgflinewidth}\lxSVG@begingroup@{stroke-width=0.4pt} \lx@inpgf@ignorespaces\nullfont\hbox to0.0pt{{}{}{}{}\lx@inpgf@ignorespaces\lxSVG@begingroup@{_scopebegin=1} {}{}{}{}{}{}{}{}\lxSVG@begingroup@{fill=#F2F2F2} \lxSVG@fill@opacity{1.0}\lxSVG@begingroup@{fill-opacity=1.0} {{}{}{{}}}{{}{}{{}}}{}{}{{}{}{{}}}{{}{}{{}}}{}{}{{}{}{{}}}{{}{}{{}}}{}{}{{}{}{{}}}{{}{}{{}}}{}{}\lxSVG@fill\lxSVG@drawpath@unclipped{M 1.18 3.95 L 1.18 4.37 C 1.18 5.9 2.42 7.14 3.95 7.14 L 31.19 7.14 C 32.72 7.14 33.96 5.9 33.96 4.37 L 33.96 3.95 C 33.96 2.42 32.72 1.18 31.19 1.18 L 3.95 1.18 C 2.42 1.18 1.18 2.42 1.18 3.95 Z}{stroke:none} \lx@inpgf@ignorespaces\lxSVG@closescope \lxSVG@begingroup@{_scopebegin=1} \lxSVG@fill@opacity{1.0}\lxSVG@begingroup@{fill-opacity=1.0} {{{\lx@inpgf@ignorespaces}}{{\lx@inpgf@ignorespaces}}{{\lx@inpgf@ignorespaces}}{{\lx@inpgf@ignorespaces}}{{}}{{}}{{}}{{}}\lxSVG@begingroup@{_scopebegin=1} \lxSVG@transformcm{1.0}{0.0}{0.0}{1.0}{3.69884pt}{0.85358pt}\lxSVG@begingroup@{transform=matrix(1.0 0.0 0.0 1.0 5.12 1.18)} \pgfsys@hbox{63}\lxSVG@closescope }\lxSVG@closescope {\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}\hss}\lxSVG@discardpath\lxSVG@closescope \hss}}\lxSVG@closescope\endpgfpicture}}}\underset{\textbf{C291}}{\hbox to44.64pt{\vbox to7.82pt{\pgfpicture\makeatletter\hbox{\hskip 0.0pt\lower 0.0pt\hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} \lxSVG@begingroup@{stroke=#000000} \lxSVG@begingroup@{fill=#000000} \lxSVG@setlinewidth{\the\pgflinewidth}\lxSVG@begingroup@{stroke-width=0.4pt} \lx@inpgf@ignorespaces\nullfont\hbox to0.0pt{{}{}{}{}\lx@inpgf@ignorespaces\lxSVG@begingroup@{_scopebegin=1} {}{}{}{}{}{}{}{}\lxSVG@begingroup@{fill=#F2F2F2} \lxSVG@fill@opacity{1.0}\lxSVG@begingroup@{fill-opacity=1.0} {{}{}{{}}}{{}{}{{}}}{}{}{{}{}{{}}}{{}{}{{}}}{}{}{{}{}{{}}}{{}{}{{}}}{}{}{{}{}{{}}}{{}{}{{}}}{}{}\lxSVG@fill\lxSVG@drawpath@unclipped{M 1.18 3.95 L 1.18 6.87 C 1.18 8.4 2.42 9.64 3.95 9.64 L 57.83 9.64 C 59.35 9.64 60.59 8.4 60.59 6.87 L 60.59 3.95 C 60.59 2.42 59.35 1.18 57.83 1.18 L 3.95 1.18 C 2.42 1.18 1.18 2.42 1.18 3.95 Z}{stroke:none} \lx@inpgf@ignorespaces\lxSVG@closescope \lxSVG@begingroup@{_scopebegin=1} \lxSVG@fill@opacity{1.0}\lxSVG@begingroup@{fill-opacity=1.0} {{{\lx@inpgf@ignorespaces}}{{\lx@inpgf@ignorespaces}}{{\lx@inpgf@ignorespaces}}{{\lx@inpgf@ignorespaces}}{{}}{{}}{{}}{{}}\lxSVG@begingroup@{_scopebegin=1} \lxSVG@transformcm{1.0}{0.0}{0.0}{1.0}{3.69884pt}{0.85358pt}\lxSVG@begingroup@{transform=matrix(1.0 0.0 0.0 1.0 5.12 1.18)} \pgfsys@hbox{63}\lxSVG@closescope }\lxSVG@closescope {\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}\hss}\lxSVG@discardpath\lxSVG@closescope \hss}}\lxSVG@closescope\endpgfpicture}}}\underset{\textbf{C251}}{\hbox to32.9pt{\vbox to10.71pt{\pgfpicture\makeatletter\hbox{\hskip 0.0pt\lower 0.0pt\hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} \lxSVG@begingroup@{stroke=#000000} \lxSVG@begingroup@{fill=#000000} \lxSVG@setlinewidth{\the\pgflinewidth}\lxSVG@begingroup@{stroke-width=0.4pt} \lx@inpgf@ignorespaces\nullfont\hbox to0.0pt{{}{}{}{}\lx@inpgf@ignorespaces\lxSVG@begingroup@{_scopebegin=1} {}{}{}{}{}{}{}{}\lxSVG@begingroup@{fill=#F2F2F2} \lxSVG@fill@opacity{1.0}\lxSVG@begingroup@{fill-opacity=1.0} {{}{}{{}}}{{}{}{{}}}{}{}{{}{}{{}}}{{}{}{{}}}{}{}{{}{}{{}}}{{}{}{{}}}{}{}{{}{}{{}}}{{}{}{{}}}{}{}\lxSVG@fill\lxSVG@drawpath@unclipped{M 1.18 3.95 L 1.18 10.87 C 1.18 12.4 2.42 13.63 3.95 13.63 L 41.57 13.63 C 43.1 13.63 44.34 12.4 44.34 10.87 L 44.34 3.95 C 44.34 2.42 43.1 1.18 41.57 1.18 L 3.95 1.18 C 2.42 1.18 1.18 2.42 1.18 3.95 Z}{stroke:none} \lx@inpgf@ignorespaces\lxSVG@closescope \lxSVG@begingroup@{_scopebegin=1} \lxSVG@fill@opacity{1.0}\lxSVG@begingroup@{fill-opacity=1.0} {{{\lx@inpgf@ignorespaces}}{{\lx@inpgf@ignorespaces}}{{\lx@inpgf@ignorespaces}}{{\lx@inpgf@ignorespaces}}{{}}{{}}{{}}{{}}\lxSVG@begingroup@{_scopebegin=1} \lxSVG@transformcm{1.0}{0.0}{0.0}{1.0}{3.69884pt}{2.85358pt}\lxSVG@begingroup@{transform=matrix(1.0 0.0 0.0 1.0 5.12 3.95)} \pgfsys@hbox{63}\lxSVG@closescope }\lxSVG@closescope {\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}\hss}\lxSVG@discardpath\lxSVG@closescope \hss}}\lxSVG@closescope\endpgfpicture}}}\hbox to41.15pt{\vbox to10.04pt{\pgfpicture\makeatletter\hbox{\hskip 0.0pt\lower 0.0pt\hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} \lxSVG@begingroup@{stroke=#000000} \lxSVG@begingroup@{fill=#000000} \lxSVG@setlinewidth{\the\pgflinewidth}\lxSVG@begingroup@{stroke-width=0.4pt} \lx@inpgf@ignorespaces\nullfont\hbox to0.0pt{{}{}{}{}\lx@inpgf@ignorespaces\lxSVG@begingroup@{_scopebegin=1} {}{}{}{}{}{}{}{}\lxSVG@begingroup@{fill=#F2F2F2} \lxSVG@fill@opacity{1.0}\lxSVG@begingroup@{fill-opacity=1.0} {{}{}{{}}}{{}{}{{}}}{}{}{{}{}{{}}}{{}{}{{}}}{}{}{{}{}{{}}}{{}{}{{}}}{}{}{{}{}{{}}}{{}{}{{}}}{}{}\lxSVG@fill\lxSVG@drawpath@unclipped{M 1.18 3.95 L 1.18 9.94 C 1.18 11.47 2.42 12.71 3.95 12.71 L 52.99 12.71 C 54.52 12.71 55.75 11.47 55.75 9.94 L 55.75 3.95 C 55.75 2.42 54.52 1.18 52.99 1.18 L 3.95 1.18 C 2.42 1.18 1.18 2.42 1.18 3.95 Z}{stroke:none} \lx@inpgf@ignorespaces\lxSVG@closescope \lxSVG@begingroup@{_scopebegin=1} \lxSVG@fill@opacity{1.0}\lxSVG@begingroup@{fill-opacity=1.0} {{{\lx@inpgf@ignorespaces}}{{\lx@inpgf@ignorespaces}}{{\lx@inpgf@ignorespaces}}{{\lx@inpgf@ignorespaces}}{{}}{{}}{{}}{{}}\lxSVG@begingroup@{_scopebegin=1} \lxSVG@transformcm{1.0}{0.0}{0.0}{1.0}{3.69884pt}{3.0758pt}\lxSVG@begingroup@{transform=matrix(1.0 0.0 0.0 1.0 5.12 4.26)} \pgfsys@hbox{63}\lxSVG@closescope }\lxSVG@closescope {\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}\hss}\lxSVG@discardpath\lxSVG@closescope \hss}}\lxSVG@closescope\endpgfpicture}}\underset{\textbf{C195},\textbf{286}}{\hbox to35.9pt{\vbox to9.49pt{\pgfpicture\makeatletter\hbox{\hskip 0.0pt\lower 0.0pt\hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} \lxSVG@begingroup@{stroke=#000000} \lxSVG@begingroup@{fill=#000000} \lxSVG@setlinewidth{\the\pgflinewidth}\lxSVG@begingroup@{stroke-width=0.4pt} \lx@inpgf@ignorespaces\nullfont\hbox to0.0pt{{}{}{}{}\lx@inpgf@ignorespaces\lxSVG@begingroup@{_scopebegin=1} {}{}{}{}{}{}{}{}\lxSVG@begingroup@{fill=#F2F2F2} \lxSVG@fill@opacity{1.0}\lxSVG@begingroup@{fill-opacity=1.0} {{}{}{{}}}{{}{}{{}}}{}{}{{}{}{{}}}{{}{}{{}}}{}{}{{}{}{{}}}{{}{}{{}}}{}{}{{}{}{{}}}{{}{}{{}}}{}{}\lxSVG@fill\lxSVG@drawpath@unclipped{M 1.18 3.95 L 1.18 9.18 C 1.18 10.7 2.42 11.94 3.95 11.94 L 45.72 11.94 C 47.25 11.94 48.49 10.7 48.49 9.18 L 48.49 3.95 C 48.49 2.42 47.25 1.18 45.72 1.18 L 3.95 1.18 C 2.42 1.18 1.18 2.42 1.18 3.95 Z}{stroke:none} \lx@inpgf@ignorespaces\lxSVG@closescope \lxSVG@begingroup@{_scopebegin=1} \lxSVG@fill@opacity{1.0}\lxSVG@begingroup@{fill-opacity=1.0} {{{\lx@inpgf@ignorespaces}}{{\lx@inpgf@ignorespaces}}{{\lx@inpgf@ignorespaces}}{{\lx@inpgf@ignorespaces}}{{}}{{}}{{}}{{}}\lxSVG@begingroup@{_scopebegin=1} \lxSVG@transformcm{1.0}{0.0}{0.0}{1.0}{3.69884pt}{1.68687pt}\lxSVG@begingroup@{transform=matrix(1.0 0.0 0.0 1.0 5.12 2.33)} \pgfsys@hbox{63}\lxSVG@closescope }\lxSVG@closescope {\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}\hss}\lxSVG@discardpath\lxSVG@closescope \hss}}\lxSVG@closescope\endpgfpicture}}}\underset{\textbf{C46}}{\hbox to35.9pt{\vbox to6.01pt{\pgfpicture\makeatletter\hbox{\hskip 0.0pt\lower 0.0pt\hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} \lxSVG@begingroup@{stroke=#000000} \lxSVG@begingroup@{fill=#000000} \lxSVG@setlinewidth{\the\pgflinewidth}\lxSVG@begingroup@{stroke-width=0.4pt} \lx@inpgf@ignorespaces\nullfont\hbox to0.0pt{{}{}{}{}\lx@inpgf@ignorespaces\lxSVG@begingroup@{_scopebegin=1} {}{}{}{}{}{}{}{}\lxSVG@begingroup@{fill=#F2F2F2} \lxSVG@fill@opacity{1.0}\lxSVG@begingroup@{fill-opacity=1.0} {{}{}{{}}}{{}{}{{}}}{}{}{{}{}{{}}}{{}{}{{}}}{}{}{{}{}{{}}}{{}{}{{}}}{}{}{{}{}{{}}}{{}{}{{}}}{}{}\lxSVG@fill\lxSVG@drawpath@unclipped{M 1.18 3.95 L 1.18 4.37 C 1.18 5.9 2.42 7.14 3.95 7.14 L 45.72 7.14 C 47.25 7.14 48.49 5.9 48.49 4.37 L 48.49 3.95 C 48.49 2.42 47.25 1.18 45.72 1.18 L 3.95 1.18 C 2.42 1.18 1.18 2.42 1.18 3.95 Z}{stroke:none} \lx@inpgf@ignorespaces\lxSVG@closescope \lxSVG@begingroup@{_scopebegin=1} \lxSVG@fill@opacity{1.0}\lxSVG@begingroup@{fill-opacity=1.0} {{{\lx@inpgf@ignorespaces}}{{\lx@inpgf@ignorespaces}}{{\lx@inpgf@ignorespaces}}{{\lx@inpgf@ignorespaces}}{{}}{{}}{{}}{{}}\lxSVG@begingroup@{_scopebegin=1} \lxSVG@transformcm{1.0}{0.0}{0.0}{1.0}{3.69884pt}{0.85358pt}\lxSVG@begingroup@{transform=matrix(1.0 0.0 0.0 1.0 5.12 1.18)} \pgfsys@hbox{63}\lxSVG@closescope }\lxSVG@closescope {\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}\hss}\lxSVG@discardpath\lxSVG@closescope \hss}}\lxSVG@closescope\endpgfpicture}}}\quad\cdots\quad\overset{\textbf{C190},\textbf{266}}{\hbox to33.18pt{\vbox to9.49pt{\pgfpicture\makeatletter\hbox{\hskip 0.0pt\lower 0.0pt\hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} \lxSVG@begingroup@{stroke=#000000} \lxSVG@begingroup@{fill=#000000} \lxSVG@setlinewidth{\the\pgflinewidth}\lxSVG@begingroup@{stroke-width=0.4pt} \lx@inpgf@ignorespaces\nullfont\hbox to0.0pt{{}{}{}{}\lx@inpgf@ignorespaces\lxSVG@begingroup@{_scopebegin=1} {}{}{}{}{}{}{}{}\lxSVG@begingroup@{fill=#F2F2F2} \lxSVG@fill@opacity{1.0}\lxSVG@begingroup@{fill-opacity=1.0} {{}{}{{}}}{{}{}{{}}}{}{}{{}{}{{}}}{{}{}{{}}}{}{}{{}{}{{}}}{{}{}{{}}}{}{}{{}{}{{}}}{{}{}{{}}}{}{}\lxSVG@fill\lxSVG@drawpath@unclipped{M 1.18 3.95 L 1.18 9.18 C 1.18 10.7 2.42 11.94 3.95 11.94 L 41.96 11.94 C 43.48 11.94 44.72 10.7 44.72 9.18 L 44.72 3.95 C 44.72 2.42 43.48 1.18 41.96 1.18 L 3.95 1.18 C 2.42 1.18 1.18 2.42 1.18 3.95 Z}{stroke:none} \lx@inpgf@ignorespaces\lxSVG@closescope \lxSVG@begingroup@{_scopebegin=1} \lxSVG@fill@opacity{1.0}\lxSVG@begingroup@{fill-opacity=1.0} {{{\lx@inpgf@ignorespaces}}{{\lx@inpgf@ignorespaces}}{{\lx@inpgf@ignorespaces}}{{\lx@inpgf@ignorespaces}}{{}}{{}}{{}}{{}}\lxSVG@begingroup@{_scopebegin=1} \lxSVG@transformcm{1.0}{0.0}{0.0}{1.0}{3.69884pt}{1.68687pt}\lxSVG@begingroup@{transform=matrix(1.0 0.0 0.0 1.0 5.12 2.33)} \pgfsys@hbox{63}\lxSVG@closescope }\lxSVG@closescope {\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}\hss}\lxSVG@discardpath\lxSVG@closescope \hss}}\lxSVG@closescope\endpgfpicture}}}\underset{\textbf{C217}}{\hbox to25.4pt{\vbox to6.01pt{\pgfpicture\makeatletter\hbox{\hskip 0.0pt\lower 0.0pt\hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} \lxSVG@begingroup@{stroke=#000000} \lxSVG@begingroup@{fill=#000000} \lxSVG@setlinewidth{\the\pgflinewidth}\lxSVG@begingroup@{stroke-width=0.4pt} \lx@inpgf@ignorespaces\nullfont\hbox to0.0pt{{}{}{}{}\lx@inpgf@ignorespaces\lxSVG@begingroup@{_scopebegin=1} {}{}{}{}{}{}{}{}\lxSVG@begingroup@{fill=#F2F2F2} \lxSVG@fill@opacity{1.0}\lxSVG@begingroup@{fill-opacity=1.0} {{}{}{{}}}{{}{}{{}}}{}{}{{}{}{{}}}{{}{}{{}}}{}{}{{}{}{{}}}{{}{}{{}}}{}{}{{}{}{{}}}{{}{}{{}}}{}{}\lxSVG@fill\lxSVG@drawpath@unclipped{M 1.18 3.95 L 1.18 4.37 C 1.18 5.9 2.42 7.14 3.95 7.14 L 31.19 7.14 C 32.72 7.14 33.96 5.9 33.96 4.37 L 33.96 3.95 C 33.96 2.42 32.72 1.18 31.19 1.18 L 3.95 1.18 C 2.42 1.18 1.18 2.42 1.18 3.95 Z}{stroke:none} \lx@inpgf@ignorespaces\lxSVG@closescope \lxSVG@begingroup@{_scopebegin=1} \lxSVG@fill@opacity{1.0}\lxSVG@begingroup@{fill-opacity=1.0} {{{\lx@inpgf@ignorespaces}}{{\lx@inpgf@ignorespaces}}{{\lx@inpgf@ignorespaces}}{{\lx@inpgf@ignorespaces}}{{}}{{}}{{}}{{}}\lxSVG@begingroup@{_scopebegin=1} \lxSVG@transformcm{1.0}{0.0}{0.0}{1.0}{3.69884pt}{0.85358pt}\lxSVG@begingroup@{transform=matrix(1.0 0.0 0.0 1.0 5.12 1.18)} \pgfsys@hbox{63}\lxSVG@closescope }\lxSVG@closescope {\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}\hss}\lxSVG@discardpath\lxSVG@closescope \hss}}\lxSVG@closescope\endpgfpicture}}}\overset{\textbf{C52},\textbf{170},\textbf{244}}{\hbox to27.93pt{\vbox to7.49pt{\pgfpicture\makeatletter\hbox{\hskip 0.0pt\lower 0.0pt\hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} \lxSVG@begingroup@{stroke=#000000} \lxSVG@begingroup@{fill=#000000} \lxSVG@setlinewidth{\the\pgflinewidth}\lxSVG@begingroup@{stroke-width=0.4pt} \lx@inpgf@ignorespaces\nullfont\hbox to0.0pt{{}{}{}{}\lx@inpgf@ignorespaces\lxSVG@begingroup@{_scopebegin=1} {}{}{}{}{}{}{}{}\lxSVG@begingroup@{fill=#F2F2F2} \lxSVG@fill@opacity{1.0}\lxSVG@begingroup@{fill-opacity=1.0} {{}{}{{}}}{{}{}{{}}}{}{}{{}{}{{}}}{{}{}{{}}}{}{}{{}{}{{}}}{{}{}{{}}}{}{}{{}{}{{}}}{{}{}{{}}}{}{}\lxSVG@fill\lxSVG@drawpath@unclipped{M 1.18 3.95 L 1.18 6.41 C 1.18 7.94 2.42 9.18 3.95 9.18 L 34.69 9.18 C 36.22 9.18 37.46 7.94 37.46 6.41 L 37.46 3.95 C 37.46 2.42 36.22 1.18 34.69 1.18 L 3.95 1.18 C 2.42 1.18 1.18 2.42 1.18 3.95 Z}{stroke:none} \lx@inpgf@ignorespaces\lxSVG@closescope \lxSVG@begingroup@{_scopebegin=1} \lxSVG@fill@opacity{1.0}\lxSVG@begingroup@{fill-opacity=1.0} {{{\lx@inpgf@ignorespaces}}{{\lx@inpgf@ignorespaces}}{{\lx@inpgf@ignorespaces}}{{\lx@inpgf@ignorespaces}}{{}}{{}}{{}}{{}}\lxSVG@begingroup@{_scopebegin=1} \lxSVG@transformcm{1.0}{0.0}{0.0}{1.0}{3.69884pt}{1.24455pt}\lxSVG@begingroup@{transform=matrix(1.0 0.0 0.0 1.0 5.12 1.72)} \pgfsys@hbox{63}\lxSVG@closescope }\lxSVG@closescope {\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}\hss}\lxSVG@discardpath\lxSVG@closescope \hss}}\lxSVG@closescope\endpgfpicture}}}
+To predict Äg</ we need to know about the early tokens that “open” the HTML tag, and to know the correct closing tag Äga we need to know about the nature of the opening tag, which itself may be predictable from the earlier context (not shown).
+There is a sequence of clusters corresponding to different positions in the HTML syntax, distinguishing between the opening syntax, the tag identity, and its attributes. The sequence begins with the opening angle bracket Äg< (C18, 151, 242, 506), followed by clusters for tag names like Äga, Ägdiv, Ägspan, or Ägli (C149, 377, 426). If attributes are present, there are clusters for keywords like Ägclass (C330) or Äghref (C197), followed by the assignment operator Äg=" (C251). The opening tag is completed by Äg> or compound tokens (C52, 56, 170). Finally, a separate set of clusters covers the beginning of the closing tag Äg</ (C190, 266), the content of the closing tag (e.g. Äga in Äg</ÄgaÄg>, C217), and then Äg> (C52, 170, 244). A very similar network of SAE features was noted in Bricken et al. (2023).
+For additional examples of linked clusters see Appendix F.
+4.4 Comparison to SAEs
+The susceptibility clusters shown in Tables 2 and 3 are recognizably similar to the kinds of patterns found in sparse auto-encoder (SAE) features (Yun et al., 2021; Cunningham et al., 2024; Bricken et al., 2023). To validate that our clusters capture structure also identified by other interpretability methods, we give a quantitative analysis of this similarity.
+We compare susceptibility clusters in Pythia-14M (Section I.1) to SAE features for Pythia-70M computed in Lan et al. (2025). We use the residual stream features from layers 2 - 4 and define a susceptibility cluster to match with an SAE feature if the feature has an unusually large activation on the y tokens across the cluster (and has a low baseline activation on the y tokens of a random selection of other clusters). For full details of the methodology see Appendix G. We find that out of 510 susceptibility clusters, 259 (50.8%) have a matched SAE feature.
+We caution against overinterpreting the match rate. SAE features are designed to be sparse but not singleton – multiple features typically fire on any given input, reflecting the hypothesis that inputs are explained by combinations of underlying features. By contrast, our clustering assigns each token pair to exactly one cluster. A token pair explained by multiple overlapping patterns may match an SAE feature for only one of those patterns, or may be assigned to a cluster capturing a different pattern entirely. The comparison validates cross-method consistency but does not establish a one-to-one correspondence between the two representations.
+While our quantitative comparison is to the Pythia-70M SAEs of Lan et al. (2025), we note that there is also qualitative similarity to the features in Bricken et al. (2023) which studies a one-layer transformer with a 512-neuron transformer MLP. The 4096 features (A/1) released there closely resemble the relatively low-level syntactic and structural features of language captured by our clusters with many “flavors” of Äg., Äg,, Äg\n, Äg and, Äg of and parts of mathematics and code.
+4.5 Scaling to larger models
+A natural question is whether the structure we identify in Pythia-14M also exists in larger Pythia models. To test this, we measured the conductance of Pythia-14M clusters when the graph structure is defined by susceptibilities from larger models. If a cluster corresponds to a genuine pattern, tokens in that cluster should remain nearby in susceptibility space even when susceptibilities are computed from a different model. We find this is indeed the case: Pythia-14M clusters have conductance significantly below 1 in all larger models tested, from 31M to 1.4B parameters (Figure 5 in Appendix E). Random vertex sets, by contrast, have conductance \approx 1 . This provides evidence that the clusters in Pythia-14M reflect structure in the data that larger models also learn to respond to.
+Clustering on larger models yields fewer clusters (241–358 compared to 510 for Pythia-14M; see Appendix E). This may have multiple causes: increased difficulty sampling higher-dimensional parameter spaces, noisier Euclidean metrics in higher dimensions, and the fact that larger models respond to more modes may all contribute to diffusing the cluster structure. Techniques such as dictionary learning on susceptibility vectors may be necessary to recover more structure in larger models.
+5 Related work
+Prior susceptibility work
+Susceptibility analysis was introduced by Baker et al. (2025) and applied to study development over training by Wang et al. (2025), both focusing on a 3M parameter attention-only transformer. Related ideas appear in the Bayesian influence function of Kreer et al. (2025) and the loss kernel of Adam et al. (2025), which also use SGLD sampling to compute covariances for data attribution and interpretability. The present paper extends this work in several directions: we develop the theoretical connection between susceptibilities and modes of the data distribution (Section 2.3), introduce a systematic clustering methodology based on conductance (Section 3.2), and apply these tools to Pythia-14M, which despite being only modestly larger exhibits significantly richer structure – yielding 510 interpretable clusters compared to the handful of patterns identified in prior work.
+Quanta vs modes
+The theoretical contribution of this paper is organized around modes of Chen and Murfet (2025). A very similar idea is the quanta of Michaud et al. (2023) which are defined in terms of the singular value decomposition of a matrix whose rows are gradients of the loss on a set of tokens in context xy . Spectral clustering based on this data is related to clustering by susceptibility vectors (in the sense that if the loss landscape were nondegenerate, there would be a formal relationship between them). While Michaud et al. (2023) do not provide the full set of clusters they do note that “most clusters involve the prediction of the same token” (i.e. y in our notation). There are interesting exceptions, including newlines in length limited text (our C465).
+Latent concepts
+Given that deep neural networks learn representations, it is natural to suppose that the activations of neural language models should group words together in high-dimensional space based on syntactic and semantic relationships, in such a way that clusters represent latent concepts (Mikolov et al., 2013; Reif et al., 2019; Hewitt and Manning, 2019). Dalvi et al. (2022) find 1000 clusters based on activations in a BERT model (110M parameters) and they give 183 labeled clusters in Dalvi et al. (2022, Appendix B.3). For a survey of methods before SAEs see Sajjad et al. (2022).
+SAEs
+Yun et al. (2021) apply dictionary learning to the activations of a 12 -layer BERT model and find transformer factors that include low-level word features but also more complex high-level features involving multiple distinct tokens. Cunningham et al. (2024) mainly study Pythia-70M and Pythia-410M but in the paper do not give details on the SAE features discovered. Marks et al. (2025) make use of the clustering technique (based on gradients) from Michaud et al. (2023) and then use SAE features evaluated on these clusters to discover circuits. It is known that SAE features capture high level cross-lingual representations of grammatical concepts such as plural and past tense (Brinkmann et al., 2025). We note that our clusters are derived from 780,000 token sequences whereas e.g. the SAEs in Bricken et al. (2023) were trained with 8B data points.
+Limitations
+Our study focuses exclusively on the Pythia model family trained on the Pile, so our findings may not generalize to other architectures or training distributions. The clustering results depend on hyperparameter choices (conductance threshold, k -nearest neighbors); while we find the results robust to reasonable variations, different settings could yield different cluster boundaries. Our SAE comparison uses features from Pythia-70M rather than Pythia-14M due to availability, which may affect the match rate. Finally, while we provide evidence that Pythia-14M clusters persist in larger models (Section 4.5), susceptibility analysis has not yet been demonstrated at frontier scale.
+6 Conclusion
+This paper establishes susceptibility analysis as a form of spectroscopy for neural networks: a method for inferring internal structure from how the model responds to patterns in the data distribution. The 510 interpretable clusters we identify in Pythia-14M – 50.8% of which match SAE features – reflect the model’s learned responses to regularities ranging from universal linguistic structures to dataset-specific patterns. The theoretical framework (Section 2.3) provides a principled connection between these patterns, formalized as modes of the data distribution, and the model’s internal responses.
+Beyond interpretation, susceptibilities may also enable intervention: if susceptibilities measure the first-order response of structural coordinates to shifts in the data distribution, this relationship can be inverted to find data modifications that produce desired structural changes (Wang and Murfet, 2026). We leave exploration of this direction to future work.
+Our detailed results focus on Pythia-14M, but we provide evidence that the patterns identified persist in larger models. When we measure the conductance of Pythia-14M clusters using susceptibilities from models up to 1.4B parameters, the clusters remain coherent (Section 4.5, Appendix E). The question of whether susceptibility analysis scales to frontier systems remains open, but these results are encouraging. The hundreds of interpretable clusters we find, and the theoretical framework connecting them to modes of the data distribution, suggest that spectroscopy may be a useful complement to existing interpretability methods.
+ENDSOURCE
+
+
+SOURCE https://arxiv.org/html/2601.12731v1
+A Shared Geometry of Difficulty in Multilingual Language Models
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+License: CC BY 4.0
+arXiv:2601.12731v1 [cs.CL] 19 Jan 2026
+A Shared Geometry of Difficulty in Multilingual Language Models
+Stefano Civelli
+Affiliation: The University of Queensland
+Pietro Bernardelle
+Affiliation: The University of Queensland
+Nicolò Brunello
+Affiliation: Polytechnic University of Milan{s.civelli,p.bernardelle,g.demartini}@uq.edu.au, nicolo.brunello@polimi.it
+Gianluca Demartini
+Affiliation: The University of Queensland
+Abstract
+Predicting problem-difficulty in large language models (LLMs) refers to estimating how difficult a task is according to the model itself, typically by training linear probes on its internal representations.
+In this work, we study the multilingual geometry of problem-difficulty in LLMs by training linear probes using the AMC subset of the Easy2Hard benchmark, translated into 21 languages.
+We found that difficulty-related signals emerge at two distinct stages of the model internals, corresponding to shallow (early-layers) and deep (later-layers) internal representations, that exhibit functionally different behaviors. Probes trained on deep representations achieve high accuracy when evaluated on the same language but exhibit poor cross-lingual generalization. In contrast, probes trained on shallow representations generalize substantially better across languages, despite achieving lower within-language performance.
+Together, these results suggest that LLMs first form a language-agnostic representation of problem difficulty, which subsequently becomes language-specific. This closely aligns with existing findings in LLM interpretability showing that models tend to operate in an abstract conceptual space before producing language-specific outputs. We demonstrate that this two-stage representational process extends beyond semantic content to high-level meta-cognitive properties such as problem-difficulty estimation.
+1 Introduction
+Large language models (LLMs) are increasingly deployed in multilingual settings, yet our understanding of their internal reasoning remains heavily skewed toward English Resck et al. (2025). While recent work suggests that LLMs may internally “think” in English or exhibit an English-centric representational topology Chang et al. (2022); Kim and Lee (2025); Li et al. (2025); Schut et al. (2025); Wendler et al. (2024), less is known about whether higher-level meta-cognitive attributes (e.g., the model’s internal estimate of how difficult a problem is) generalize across languages.
+Lugoloobi and Russell (2025) showed that problem difficulty can be decoded linearly from model residual activations. Focusing on English inputs, they demonstrated that these difficulty signals enable effective interventions, reducing hallucinations via “difficulty vectors” steering and serving as a robust proxy for performance generalization during reinforcement learning.
+Figure 1: Layer-wise performance of difficulty probes across languages for LLaMA-3.1-8B.
+Heatmap shows, for each test language (rows) and transformer layer (columns), the average Spearman correlation between probe predictions and ground-truth difficulty, where each value is averaged over probes trained on all other languages. Performance peaks in the middle layers, indicating that difficulty representations are most consistently aligned across languages at intermediate depths of the network.
+Whether such internally encoded notions of difficulty persist beyond English, however, remains unexplored. If a model encounters the same mathematical problem expressed in different languages, does it construct distinct difficulty representations, or does it project all inputs onto a shared notion of “difficulty” in activation space?
+In this work, we address this gap by bridging difficulty probing with multilingual representation learning. We construct a multilingual version of the American Mathematics Competitions (AMC) dataset spanning 21 languages and train linear probes to predict problem difficulty across languages and model layers. We found that problem difficulty is encoded in a depth-dependent manner that trades off cross-lingual generalization and language-specific accuracy.
+Linear probes show that difficulty is decodable both from shallow and deep layers, but with distinct behavior: shallow layers support strong cross-lingual transfer (see Figure 1), while deeper layers yield higher accuracy within the training language but generalize poorly across languages, indicating an early language-agnostic representation that is later refined into language-specific form.
+2 Related Work
+Difficulty Encoding in LLMs.
+Recent work shows that LLMs encode high-level meta-properties of tasks in their internal representations. Most notably, Lugoloobi and Russell (2025) demonstrate that human-perceived problem difficulty is strongly linearly decodable from residual activations across models and domains using Easy2Hard-Bench Ding et al. (2024). They further validate the utility of this feature, showing that manipulating the difficulty direction (steering) can suppress hallucination and improve responses. However, their analysis is restricted to English inputs.
+Multilingual Internal Representations.
+Several studies suggest that multilingual LLMs do not maintain fully language-agnostic internal spaces. Schut et al. (2025) show that multilingual models perform key reasoning steps in representations closest to English, even when operating in other languages. Similarly, Li et al. (2025) find that probing performance degrades substantially for low-resource languages and that deeper layers become increasingly language-specific, with reduced cross-lingual representational similarity. These results connect to broader analyses of cross-lingual alignment and multilingual geometry, which find persistent language-sensitive directions alongside language-neutral structure in representation space (Chang et al., 2022; Hämmerl et al., 2024; Kim and Lee, 2025).
+We bridge these lines of work by studying difficulty as a multilingual internal signal. While prior work has examined difficulty encoding in monolingual settings and language dependence in multilingual models largely through linguistic or reasoning probes, we connect these strands by framing difficulty as a cross-lingual internal property.
+3 Methodology
+3.1 Data
+We use the AMC subset of the Easy2Hard benchmark Ding et al. (2024), which contains approximately 4,000 math problems annotated with continuous difficulty scores.
+Difficulty is estimated via Item Response Theory (IRT) from human success rates, yielding values in [0,1] .
+We translated the original English problems into 20 additional languages using gpt-5.1 OpenAI (2026) resulting in a 21-language benchmark (costs in Appendix A). For each language, we use approximately 3,000 problems for training and 1,000 for testing.
+The train–test split is defined once at the level of problem, ensuring that cross-lingual evaluation is performed on identical unseen problems (discussion on translation quality in Appendix B).
+Figure 2: Cross-lingual structure of difficulty representations in LLaMA-3.1-8B.
+Left: Maximum Spearman \rho achieved by linear difficulty probes for each training–testing language pair, evaluated at the layer that maximizes performance for that pair. Diagonal entries correspond to same-language probing, while off-diagonal entries reflect cross-lingual transfer.
+Right: Transformer layer indices at which peak performance is attained for each language pair.
+3.2 Models
+We evaluate four instruction-tuned LLMs spanning different architectures and scales: LLaMA-3.1-8B Meta (2024b), LLaMA-3.2-3B Meta (2024a), LLaMA-3.2-1B Meta (2024a) and Qwen3-8B Qwen Team (2025).
+All models are prompted using their standard chat templates to reflect realistic deployment conditions.
+To ensure basic linguistic adequacy, we qualitatively verify that each model preserves meaning when translating a small subset of prompts from each language back into English.
+3.3 Experimental Setup
+Feature Extraction.
+Using TransformerLens Nanda and Bloom (2022), we extract residual stream activations from every transformer layer.
+For each input, we record the residual vector at the final prompt token, as this token has been shown to provide the most informative representation for linear probing of problem difficulty (Lugoloobi and Russell, 2025).
+Probing and Evaluation.
+We train linear Ridge regression probes to predict continuous difficulty scores from residual activations.
+Probes are trained independently at each layer to analyze the depth-wise emergence of difficulty representations.
+Each probe is trained on a single language and evaluated either monolingually (training and testing on the same language A ) or cross-lingually (training on language A and testing on a different language B ).
+The regularization strength is selected from \{10,100,1000\} by maximizing mean Spearman \rho on the unseen split.
+Evaluation Metric.
+Probe performance is measured using Spearman rank correlation ( \rho ) between predicted and ground-truth difficulty scores on held-out test problems.
+This metric captures ordinal agreement and is robust to scale differences across probes.
+Model
+Num.
+[-0.2em]Layers
+Probe performance
+[-0.2em]Spearman \rho (mean \pm std)
+Optimal layer
+[-0.2em](mean peak layer)
+\Delta
+Transfer drop
+[-0.2em](Diag \rightarrow Off-Diag)
+\Delta
+In-lang drop
+[-0.2em](Off-Diag \rightarrow Diag)
+Same-lang
+[-0.2em](Diag.)
+Cross-lang
+[-0.2em](Off-diag.)
+Same-lang
+[-0.2em](Diag.)
+Cross-lang
+[-0.2em](Off-diag.)
+LLaMA-3.1-8B
+32
+0.822\pm 0.019
+0.783\pm 0.024
+30.05
+15.67
+0.177
+0.014
+LLaMA-3.2-3B
+28
+0.805\pm 0.022
+0.771\pm 0.027
+22.62
+9.07
+0.192
+0.010
+LLaMA-3.2-1B
+16
+0.797\pm 0.021
+0.761\pm 0.028
+12.05
+6.11
+0.055
+0.007
+Qwen3-8B
+36
+0.849\pm 0.019
+0.783\pm 0.034
+14.29
+8.59
+0.114
+0.015
+Table 1:
+Cross-lingual difficulty probing summary across models.
+Performance reports Spearman \rho (mean \pm std) over language pairs.
+Across all models, cross-lingual (off-diagonal) performance is statistically lower than same-language (diagonal) performance under a paired significance test ( p<10^{-3} ).
+Optimal layer denotes the mean layer index achieving peak \rho in each regime.
+Transfer drop (Diag \rightarrow Off-Diag) measures the loss in cross-lingual performance when probes are fixed at the diagonal-optimal layer.
+In-lang drop (Off-Diag \rightarrow Diag) measures the loss in same-language performance when probes are fixed at the transfer-optimal layer.
+4 Results
+We present results for LLaMA-3.1-8B as a representative model; all trends described below are consistent across LLaMA-3.2 (1B, 3B) and Qwen3-8B, with full results reported in Appendix C.
+4.1 Depth-Dependent Structure of Difficulty Representations
+We first investigate whether problem difficulty is encoded in a language-specific manner or whether it corresponds to a shared internal representation across languages.
+Figure 2 (left) summarizes cross-lingual probing performance. Each cell reports the maximum Spearman correlation achieved across all layers for a given training–testing language pair. Diagonal entries correspond to same-language probing, while off-diagonal entries reflect cross-lingual transfer. Rows therefore indicate how well a probe trained on a given language generalizes to all others.
+Overall, we observe uniformly high correlations across language pairs, including transfers between typologically distant and low-resource languages, indicating that relative difficulty rankings are largely preserved across languages.
+Figure 2 (right) reveals a systematic difference in where these correlations occur. For LLaMA-3.1-8B, probes trained and tested on the same language (i.e. diagonal scores) consistently peak in later layers (around layer 30), whereas cross-lingual transfer peaks much earlier (around layer 14). This pattern is highly stable across languages: diagonal cells concentrate tightly around a single later (deep) layer, while off-diagonal cells concentrate around earlier layers.
+Table 1 quantifies this separation. For LLaMA-3.1-8B, the mean optimal layer for same-language probing is 30.05, compared to 15.67 for cross-lingual transfer. The same depth separation appears across all evaluated models, with the absolute layer indices shifting according to model depth (Appendix C).
+Taken together, these results indicate a clear depth-dependent organization of difficulty representations: an earlier, shallow layer representation and a later, deeper representation that is optimized for language-specific performance.
+4.2 Cross-Lingual Generalization
+To further study the consequences of this depth divergence, we explicitly compare probe performance at layers optimized for same-language versus cross-lingual evaluation. We hypothesized that diagonal-optimal layers are maximizing language specific performance (i.e. probes trained on those layers learn language specific features) while off-diagonal-optimal layers are optimized for cross-lingual representation (i.e. represent features in a language-agnostic manner).
+The final two columns of Table 1 report the performance impact of evaluating probes at these respective layer choices on same-language and cross-lingual scenarios (see Appendix D for details).
+When probes are evaluated cross-lingually at the diagonal-optimal layer, performance drops substantially. For LLaMA-3.1-8B, fixing probes at the diagonal optimal layer leads to a mean reduction of 0.177 Spearman \rho under transfer. This sharp decline indicates that deeper layers, while highly predictive within-language, encode problem-difficulty in a manner that does not align well across languages.
+In contrast, evaluating probes monolingually at the off-diagonal-optimal layer results in only a negligible loss in same-language performance (0.014 Spearman \rho for LLaMA-3.1-8B). Thus, the layer that best supports cross-lingual transfer (shallow layer) remains near-optimal for the source language itself.
+Together, these findings indicate that problem difficulty is organized around a shared, language-independent direction in activation space that emerges at shallow layers. Deeper layers refine this signal in a language-specific way, improving within-language accuracy at the expense of cross-lingual alignment. This depth-dependent trade-off explains why cross-lingual generalization peaks earlier in the network while same-language performance continues to improve at later layers.
+Conclusion
+By probing residual activations across 21 languages, we find that LLMs encode problem difficulty in a depth-dependent way: an early, shared representation supports strong cross-lingual transfer, while deeper layers refine difficulty in a language-specific manner, improving monolingual accuracy but reducing alignment across languages. This shared difficulty direction emerges early and remains stable even for low-resource languages, indicating that LLMs form a language-agnostic estimate of difficulty before specializing it to individual languages.
+These findings extend prior work by Lugoloobi and Russell (2025) in two important ways. First, they demonstrate that the difficulty signal identified in English is not an artifact of language, but instead reflects a genuinely multilingual internal property. Second, they suggest that the mechanistic role of difficulty, previously shown to support steering and hallucination reduction, originates in a shared representational subspace that precedes language-specific reasoning. This supports viewing difficulty as a high-level internal signal of the model, rather than a byproduct of surface-level language features.
+From a practical perspective, our results point to new opportunities for multilingual systems, especially in low-resource settings. Lightweight difficulty predictors trained on shallow activations can be deployed without per-language tuning, enabling language-agnostic routing, curriculum design, or compute-aware inference even where labeled data are scarce.
+Limitations
+While we show that problem difficulty is encoded in a shared, cross-lingual subspace, our analysis is confined to mathematical problem solving using the AMC subset of Easy2Hard. This domain offers the advantage of well-calibrated, human-derived difficulty labels, but it represents a narrow slice of model behavior. It therefore remains unclear whether the same cross-lingual geometry of difficulty extends to domains where difficulty is more subjective or context-dependent, such as commonsense reasoning, programming, or open-ended generation.
+Additionally, our empirical evaluation is limited to a small set of instruction-tuned, decoder-only language models. Although the observed trends are consistent across them, it is not yet clear whether the same representational structure is present in all model.
+Finally, our conclusions are based exclusively on probing analyses. Probing establishes the presence and cross-lingual alignment of difficulty-related signals, but does not by itself demonstrate that these signals play a causal role in shaping model behavior during inference. Prior work provides such causal evidence in the English setting Lugoloobi and Russell (2025), showing that intervening along a learned difficulty direction can steer model behavior and reduce hallucinations. Whether analogous interventions transfer across languages—for example, by steering a model using difficulty vectors learned in one language and applied to another—remains an open question, which we leave to future work.
+ENDSOURCE
+
+

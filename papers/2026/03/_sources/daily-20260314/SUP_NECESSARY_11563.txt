@@ -1,0 +1,2082 @@
+SVLL: Staged Vision-Language Learning for Physically Grounded Embodied Task Planning
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Related Work
+2.1
+Embodied Task Planning
+2.2
+Vision-Language Model Reasoning
+3
+Method
+3.1
+Problem Formulation
+3.2
+SVLL Framework
+3.2.1
+Stage 1: Spatial Grounding
+3.2.2
+Stage 2: Temporal Reasoning
+3.2.3
+Stage 3: Alignment via B-DPO
+4
+Experiments
+4.1
+Experimental Setup
+4.2
+Main Results
+4.3
+Real-World Robot Deployment
+4.4
+Ablation Study on Staged Decoupling
+4.5
+Ablation Study on B-DPO Alignment
+5
+Discussion and Limitations
+6
+Conclusion
+References
+License: CC BY-NC-ND 4.0
+arXiv:2603.11563v1 [cs.CV] 12 Mar 2026
+SVLL: Staged Vision-Language Learning for
+Physically Grounded Embodied Task Planning
+Yuyuan Yang
+1
+1
+1
+Equal contribution.
+Junkun Hong
+1
+1
+1
+Equal contribution.
+Hongrong Wang
+1
+1
+1
+Equal contribution.
+Honghao Cai  Xunpeng Ren
+Affiliation:
+FNii-Shenzhen, CUHKSZ  SSE, CUHKSZ  SAI, CUHKSZ
+Ge Wang  Mingcong Lei  Shenhao Yan  Jiahao Yang  Chengsi Yao
+Xi Li  Yiming Zhao  Yatong Han  Jinke Ren
+2
+2
+2
+Corresponding author:
+jinkeren@cuhk.edu.cn
+.
+Affiliation:
+Shenzhen University  University of Sydney  Harbin Engineering University  Ising AI
+Abstract
+Embodied task planning demands vision-language models to generate action sequences that are both visually grounded and causally coherent over time. However, existing training paradigms face a critical trade-off: joint end-to-end training often leads to premature temporal binding, while standard reinforcement learning methods suffer from optimization instability. To bridge this gap, we present Staged Vision-Language Learning (SVLL), a unified three-stage framework for robust, physically-grounded embodied planning. In the first two stages, SVLL decouples spatial grounding from temporal reasoning, establishing robust visual dependency before introducing sequential action history. In the final stage, we identify a key limitation of standard Direct Preference Optimization (DPO), its purely relative nature—optimizing only the preference gap between winning and losing trajectories while neglecting absolute likelihood constraints on optimal path, often yields unsafe or hallucinated behaviors. To address this, we further introduce Bias-DPO, a novel alignment objective that injects an inductive bias toward expert trajectories by explicitly maximizing likelihood on ground-truth actions while penalizing overconfident hallucinations. By anchoring the policy to the expert manifold and mitigating causal misalignment, SVLL, powered by Bias-DPO, ensures strict adherence to environmental affordances and effectively suppresses physically impossible shortcuts. Finally, extensive experiments on the interactive AI2-THOR benchmark and real-world robotic deployments demonstrate that SVLL outperforms both state-of-the-art open-source (e.g., Qwen2.5-VL-7B) and closed-source models (e.g., GPT-4o, Gemini-2.0-flash) in task success rate, while significantly reducing physical constraint violations.
+1
+Introduction
+Figure 1
+:
+A comparison between existing task planning methods and our proposed SVLL framework.
+(a) Existing Methods:
+Existing methods suffer from premature temporal binding due to joint end-to-end training and likelihood displacement caused by standard DPO, which pushes the policy away from the expert distribution.
+(b) Ours (SVLL):
+SVLL addresses these issues by integrating staged learning and Bias-DPO, where the former decouples spatial grounding from temporal reasoning, while the latter introduces strong inductive biases to explicitly anchor the policy to the feasible expert manifold and suppresses confident errors.
+Embodied task planning is a fundamental challenge in robotics, requiring the ability to translate high-level natural language instructions into executable, temporally coherent subtasks
+[
+27
+,
+46
+,
+40
+]
+. Recent advances in large vision-language models (VLMs) have demonstrated promising capabilities in this domain, with some models even supporting extremely long context windows
+[
+2
+,
+6
+,
+7
+]
+. Consequently, several works have leveraged pre-designed prompting strategies to guide VLMs toward task completion
+[
+9
+,
+28
+,
+24
+,
+10
+,
+13
+,
+29
+]
+. However, direct deployment of state-of-the-art VLMs, such as Qwen2.5-72B-Instruction
+[
+34
+]
+, in dynamic embodied interactive tasks suffers from significant limitations.
+These models often generate physically inconsistent actions due to a profound lack of grounded, real-time scene understanding
+[
+20
+]
+.
+For instance, when instructed to “heat the apple in the microwave”, a standard VLM may correctly navigate to the appliance; however, if the microwave is already open, the model may ignore the visual cue and rigidly output an
+Open(Microwave)
+action, resulting in an invalid physical interaction. Furthermore, once the environment state changes mid-task, these models frequently fall into repetitive execution loops—such as outputting
+Navigate(Microwave)
+even after successfully arriving at the target. This occurs because they overfit to textual action histories rather than grounding next decisions in the updated visual observations.
+As illustrated in
+Figure
+1
+, the aforementioned failures stem from two fundamental flaws in current training paradigms: 1)
+premature temporal binding in joint training
+: Existing methods predominantly rely on joint Supervised Fine-Tuning (SFT) to train models on full trajectory contexts
+[
+40
+,
+12
+,
+4
+,
+3
+]
+. By exposing models simultaneously to visual observations and historical action sequences, these approaches induce premature temporal binding, i.e., the model learns to shortcut reasoning by relying on textual patterns rather than causally grounding decisions in the current visual state. This leads to brittle behavior under environmental dynamics, e.g., repeating past actions despite state changes
+[
+5
+]
+; 2)
+causal misalignment in reasoning and policy alignment
+: To force functional correctness, existing methods typically employ either pre-written system-level Chain-of-Thought (CoT) prompts
+[
+36
+,
+9
+,
+28
+,
+24
+,
+10
+,
+13
+,
+29
+,
+15
+]
+or complex reward functions and standard preference optimization (e.g., Direct Preference Optimization (DPO))
+[
+30
+,
+37
+,
+19
+,
+39
+,
+43
+,
+25
+,
+18
+,
+26
+]
+. However, these approaches suffer from a severe causal misalignment.
+While relative preference optimization suffices for standard text generation, embodied planning is governed by strict, absolute physical constraints. Directly applying standard alignment methods in embodied domains causes models to exploit statistical textual shortcuts, rather than grounding decisions in visual-physical causality. As a result, the policy fails to anchor to the physically feasible expert manifold, inevitably producing high-confidence illusions—actions that are textually favored, yet physically invalid in the current environment.
+Figure 2
+:
+Execution of long-horizon embodied tasks via SVLL.
+(a) Real-World Deployment:
+A physical robotic arm executes a sequence of visually grounded actions: locating a banana, picking it up, placing it into a basket, and moving the basket to a designated target.
+(b) Simulated Environment:
+An agent in an interactive 3D simulator successfully performs a multi-step task involving finding a pen, picking it up, opening a drawer, and physically placing the pen inside. Both deployments demonstrate strict adherence to physical constraints and robust causal reasoning.
+To overcome these challenges, we propose Staged Vision-Language Learning (SVLL), a unified three-stage training framework specifically designed for the planner module in hierarchical vision-language architectures, aiming to address both temporal overfitting and likelihood displacement. Figure
+2
+illustrates the process of SVLL in executing long-horizon embodied tasks, which seamlessly grounds multi-step temporal reasoning into actionable, physics-compliant behaviors in physical environments. Our main contributions are summarized below:
+1.
+Staged Decoupling Strategy:
+We introduce a strict decoupling between spatial foundation mapping and temporal series reasoning in the first two stages of SVLL. Specifically, we force the planner to first identify functional affordances from static visual observations before introducing action history, thereby preventing the model from bypassing perception through historical shortcuts.
+2.
+Bias-DPO-based Alignment Mechanism:
+In the crucial third stage, we propose Bias-DPO (B-DPO), a novel alignment objective that transcends standard relative ranking. B-DPO introduces a strong inductive bias to explicitly amplify the probability mass of expert trajectories. By combining this inductive bias with a threshold-triggered penalty, B-DPO eliminates confident reasoning hallucinations while ensuring the policy remains strictly grounded in physical environments.
+3.
+State-of-the-Art Performance and Safety:
+Extensive experiments demonstrate that our SVLL framework (with 7B parameters) achieves a 78.35% success rate on the highly interactive AI2-THOR benchmark, significantly outperforming closed-source models (e.g., Gemini-2.0-flash, GPT-4o) and domain-specific baselines. Crucially, in zero-shot real-world robotic deployments, the B-DPO method reduces constraint violations to 4.35%, ensuring highly reliable and safe execution in physical environments.
+2
+Related Work
+2.1
+Embodied Task Planning
+Embodied task planning aims to decompose high-level natural language instructions into a sequence of executable sub-tasks, enabling agents to complete tasks in complex environments
+[
+16
+]
+. Early studies primarily employed frozen models to generate plans through various cue strategies and prompt engineering
+[
+11
+,
+1
+]
+. While current foundation models possess extensive context processing capabilities, their zero-shot performance remains unsatisfactory in complex, dynamically changing environments
+[
+44
+]
+. To address this issue, subsequent research has adopted SFT
+[
+40
+,
+12
+,
+4
+]
+to allow models to learn directly from expert demonstrations.
+Beyond SFT, recent studies have also employed preference learning and reinforcement learning methods to further align model behaviors. Methods based on Proximal Policy
+Optimization (PPO)
+[
+25
+]
+and Group Relative Policy Optimization (GRPO)
+[
+26
+]
+often rely on complex reward functions to train reward models, while DPO-based approaches
+[
+23
+]
+primarily focus on comparing successful expert trajectories with the agent’s failure trajectories. However, applying standard preference learning to this domain often leads to a severe causal misalignment. The distributional bias between the extreme sparsity of successful samples and the infinite diversity of failure modes is frequently overlooked, fundamentally neglecting the inherent structural imbalance of the action space. To overcome this limitation, we propose a staged framework, in which the first stage establishes robust spatial grounding through observation mapping without historical information, while the second stage gradually introduces temporal causal dependencies. Finally, the causal misalignment in standard preference optimization is resolved using B-DPO, which structurally anchors the model to the expert distribution, thereby achieving robust planning without requiring manually designed reward signals.
+2.2
+Vision-Language Model Reasoning
+The development of VLMs has shifted from passive perception tasks (e.g., visual question answering and image description) to active reasoning and decision-making
+[
+32
+,
+38
+,
+41
+,
+42
+,
+47
+,
+31
+,
+35
+]
+. Early foundation models, such as PaLM-E
+[
+8
+]
+, have demonstrated that VLMs can implicitly encode robot states. Recent studies, such as CoT-VLA
+[
+50
+]
+and ReFineVLA
+[
+33
+]
+, have directly integrated CoT reasoning into the vision domain
+[
+49
+,
+21
+,
+45
+]
+. However, the lack of a mechanism for continuously updating planning strategies through interactive feedback with the environment makes it difficult to adapt to dynamic perturbations in long-horizon embodied tasks
+[
+1
+,
+3
+,
+14
+,
+17
+]
+. To address this issue, our dataset leverages image-text interleaving to dynamically generate plans that adapt to dynamic interactive environments. This ensures that abstract reasoning capabilities align with the strict causal relationships inherent in embodied planning, rather than merely executing simple instructions, thus enabling robust functional planning.
+3
+Method
+Figure 3
+:
+Formulation of embodied task planning.
+The agent engages in a closed-loop interaction with the environment based on natural language instructions. The objective is to maximize the task success rate (
+ℛ
+success
+\mathcal{R}_{\text{success}}
+), subject to a critical admissibility constraint—every intermediate action
+a
+t
+a_{t}
+must be physically executable and grounded within the valid visual affordance space
+𝒱
+⁡
+(
+I
+t
+)
+\mathcal{V}(I_{t})
+of the current observation.
+3.1
+Problem Formulation
+As illustrated in
+Figure
+3
+, embodied task planning can be formalized as a dynamic, closed-loop sequential decision-making process. Given a high-level natural language instruction
+T
+T
+, the interaction proceeds in discrete time steps. At each step
+t
+t
+, the agent perceives an egocentric visual observation
+I
+t
+I_{t}
+, which reflects the current state of the environment. The policy
+π
+θ
+​
+(
+a
+t
+∣
+I
+t
+,
+T
+,
+h
+t
+)
+\pi_{\theta}(a_{t}\mid I_{t},T,h_{t})
+is responsible for generating an executable function call
+a
+t
+a_{t}
+, where
+h
+t
+=
+[
+a
+1
+,
+…
+,
+a
+t
+−
+1
+]
+h_{t}=[a_{1},\dots,a_{t-1}]
+denotes the history of previously executed actions. Upon execution, the environment transitions to a new state, yielding an updated observation
+I
+t
++
+1
+I_{t+1}
+. This iterative cycle continues until the agent outputs a termination token at step
+K
+K
+.
+Formally, let
+τ
+=
+{
+(
+I
+1
+,
+a
+1
+)
+,
+(
+I
+2
+,
+a
+2
+)
+,
+…
+,
+(
+I
+K
+,
+a
+K
+)
+}
+\tau=\{(I_{1},a_{1}),(I_{2},a_{2}),\dots,(I_{K},a_{K})\}
+denote a sampled trajectory. The objective is to identify optimal parameters
+θ
+\theta
+that maximize the expected task success rate, under the strict constraint that every intermediate action is physically grounded in the active scene. This is formulated as the following optimization problem:
+max
+θ
+\displaystyle\max_{\theta}
+J
+⁡
+(
+θ
+)
+=
+𝔼
+τ
+∼
+π
+θ
+​
+[
+ℛ
+success
+​
+(
+I
+K
+,
+T
+)
+]
+\displaystyle~~J(\theta)=\mathbb{E}_{\tau\sim\pi_{\theta}}\left[\mathcal{R}_{\text{success}}(I_{K},T)\right]
+(1a)
+s.t.
+a
+t
+∈
+𝒱
+⁡
+(
+I
+t
+)
+,
+∀
+t
+∈
+{
+1
+,
+…
+,
+K
+}
+,
+\displaystyle~~a_{t}\in\mathcal{V}(I_{t}),\;\forall t\in\{1,\dots,K\},
+(1b)
+where
+ℛ
+success
+​
+(
+I
+K
+,
+T
+)
+∈
+{
+0
+,
+1
+}
+\mathcal{R}_{\text{success}}(I_{K},T)\in\{0,1\}
+is a binary reward indicating whether the final environment state
+I
+K
+I_{K}
+satisfies the instruction
+T
+T
+, and
+𝒱
+⁡
+(
+I
+t
+)
+\mathcal{V}(I_{t})
+denotes the manifold of physically valid and executable actions given the visual affordances in
+I
+t
+I_{t}
+.
+3.2
+SVLL Framework
+Figure 4
+:
+Overview of the SVLL framework.
+To mitigate the premature temporal binding in standard end-to-end training, SVLL decouples spatial and temporal learning across three stages: Stage 1 blocks the action history to force reliance on current visual affordances; Stage 2 unlocks the history context, inheriting robust visual features from Stage 1 to learn sequential dependencies; Stage 3 refines the initial policy by anchoring it to the expert manifold via an auxiliary
+ℒ
+SFT
+\mathcal{L}_{\text{SFT}}
+and a threshold-triggered penalty
+ℒ
+UL
+\mathcal{L}_{\text{UL}}
+, effectively overcoming the likelihood displacement inherent in standard DPO.
+Standard training paradigms typically optimize
+π
+θ
+\pi_{\theta}
+on the full trajectory context
+(
+I
+,
+T
+,
+h
+)
+(I,T,h)
+from scratch. However, we identify two critical failure modes inherent in this approach: 1) premature temporal binding, where the model prematurely overfits to textual history shortcuts during early training, compromising its grounding in visual perception; and 2) causal misalignment, where conventional relative alignment methods overlook the structural imbalance in the action space, thereby undermining the absolute stability of the expert policy. To systematically address these issues, we propose SVLL, a unified three-stage framework that explicitly decouples spatial and temporal learning before performing physics-constrained alignment. The overall framework is illustrated in
+Figure
+4
+.
+3.2.1
+Stage 1: Spatial Grounding
+In the first stage, we enforce a strict focus on visual affordances to prevent premature temporal binding. To achieve this, we curate a specific subset from the embodied trajectory dataset introduced by Zhang et al.
+[
+48
+]
+. We rigorously filter the data samples to retain only samples in which the optimal next action can be determined solely from the current frame without requiring any historical context (e.g., reactive actions like
+pick
+and
+place
+). The model is trained to predict the optimal action
+a
+t
+∗
+a^{*}_{t}
+while explicitly blocking the history channel, which is formulated as:
+ℒ
+Stage1
+=
+−
+𝔼
+(
+I
+t
+,
+T
+,
+a
+t
+∗
+)
+∼
+𝒟
+spatial
+​
+[
+log
+⁡
+π
+θ
+​
+(
+a
+t
+∗
+∣
+I
+t
+,
+T
+,
+∅
+)
+]
+.
+\mathcal{L}_{\text{Stage1}}=-\mathbb{E}_{(I_{t},T,a_{t}^{*})\sim\mathcal{D}_{\text{spatial}}}\left[\log\pi_{\theta}(a_{t}^{*}\mid I_{t},T,\emptyset)\right].
+(2)
+During training, we freeze the vision encoder and perform full fine-tuning on the remaining multimodal architecture. By removing the temporal context
+h
+t
+h_{t}
+, the model is prevented from exploiting statistical correlations in textual history. Instead, it is compelled to resolve the instruction strictly by parsing the current pixel-space observation
+I
+t
+I_{t}
+. This stage lays a robust, perception-driven foundation for spatial understanding before any sequential bias is introduced.
+3.2.2
+Stage 2: Temporal Reasoning
+Once spatial grounding is consolidated, we unlock the history context
+h
+t
+=
+[
+a
+1
+,
+…
+,
+a
+t
+−
+1
+]
+h_{t}=[a_{1},\dots,a_{t-1}]
+formatted from continuous trajectory sequences. Critically, the policy is initialized using the spatially-grounded checkpoint from Stage 1. With the vision encoder kept frozen, we proceed with full fine-tuning on sequential rollouts:
+ℒ
+Stage2
+=
+−
+𝔼
+(
+I
+t
+,
+T
+,
+h
+t
+,
+a
+t
+∗
+)
+∼
+𝒟
+temporal
+​
+[
+log
+⁡
+π
+θ
+​
+(
+a
+t
+∗
+∣
+I
+t
+,
+T
+,
+h
+t
+)
+]
+.
+\mathcal{L}_{\text{Stage2}}=-\mathbb{E}_{(I_{t},T,h_{t},a_{t}^{*})\sim\mathcal{D}_{\text{temporal}}}\left[\log\pi_{\theta}(a_{t}^{*}\mid I_{t},T,h_{t})\right].
+(3)
+In this stage, the model learns to integrate sequential dependencies, such as recalling previously explored areas or tracking multi-step sub-goals. Since spatial mapping capabilities were already established in Stage 1, the model learns to treat the continuous history
+h
+t
+h_{t}
+as a supplementary temporal cue rather than a primary crutch for decision-making. By operating within this enriched context, the policy develops causal temporal reasoning while preserving the strict visual grounding capabilities acquired in Stage 1.
+3.2.3
+Stage 3: Alignment via B-DPO
+In the final stage, we enforce strict adherence to physical constraints by freezing the base model and applying Low-Rank Adaptation (LoRA) to all linear projection layers. To overcome the likelihood displacement caused by standard relative optimization—where the absolute probability of the optimal path decays merely to maximize the preference margin—we introduce B-DPO, a novel preference optimization objective explicitly designed to rectify the structural imbalance of the action space.
+Specifically, given a prompt
+x
+=
+(
+I
+,
+T
+,
+h
+)
+x=(I,T,h)
+, a chosen expert trajectory
+y
+w
+y_{w}
+, and a rejected trajectory
+y
+l
+y_{l}
+, B-DPO enhances the standard DPO formulation through three key steps: First, an internal positive weight (
+w
+>
+1
+w>1
+) is applied to amplify the margin for chosen actions, reinforcing the model’s alignment with expert behavior. Second, a strong inductive bias is injected via an auxiliary supervised fine-tuning loss
+ℒ
+SFT
+\mathcal{L}_{\text{SFT}}
+, which anchors the model to the feasible expert distribution and explicitly prevents the aforementioned likelihood displacement; Third, overconfident hallucinations are actively suppressed through a threshold-triggered unlikelihood penalty
+ℒ
+UL
+\mathcal{L}_{\text{UL}}
+, which activates only when the likelihood of the rejected trajectory exceeds a predefined safety threshold
+τ
+\tau
+, thereby preserving model conservatism. Based on the three steps, the total loss is defined as
+ℒ
+total
+=
+a
+⋅
+ℒ
+DPO
++
+b
+⋅
+ℒ
+SFT
++
+ℒ
+UL
+,
+\mathcal{L}_{\text{total}}=a\cdot\mathcal{L}_{\text{DPO}}+b\cdot\mathcal{L}_{\text{SFT}}+\mathcal{L}_{\text{UL}},
+(4)
+where
+a
+a
+and
+b
+b
+are two weight coefficients.
+Overall, the detailed implementation, including label smoothing (
+ε
+\varepsilon
+) and threshold suppression (
+τ
+\tau
+), is provided in Algorithm
+1
+.
+Algorithm 1
+Bias Direct Preference Optimization
+Hyperparameters:
+KL temperature
+β
+\beta
+, chosen weight
+w
+w
+, DPO weight
+a
+a
+, SFT weight
+b
+b
+, unlikelihood threshold
+τ
+\tau
+, label smoothing
+ε
+\varepsilon
+.
+Input:
+Trainable policy
+π
+θ
+\pi_{\theta}
+, reference policy
+π
+ref
+\pi_{\text{ref}}
+, prompt
+x
+x
+, chosen response
+y
+w
+y_{w}
+, rejected response
+y
+l
+y_{l}
+.
+Output:
+The total loss
+ℒ
+total
+\mathcal{L}_{\text{total}}
+used for backpropagation.
+1:
+chosen_logratio
+←
+log
+⁡
+π
+θ
+​
+(
+y
+w
+∣
+x
+)
+−
+log
+⁡
+π
+ref
+​
+(
+y
+w
+∣
+x
+)
+\text{chosen\_logratio}\leftarrow\log\pi_{\theta}(y_{w}\mid x)-\log\pi_{\text{ref}}(y_{w}\mid x)
+.
+//
+Calculate log-ratios
+2:
+rejected_logratio
+←
+log
+⁡
+π
+θ
+​
+(
+y
+l
+∣
+x
+)
+−
+log
+⁡
+π
+ref
+​
+(
+y
+l
+∣
+x
+)
+\text{rejected\_logratio}\leftarrow\log\pi_{\theta}(y_{l}\mid x)-\log\pi_{\text{ref}}(y_{l}\mid x)
+.
+3:
+logits
+←
+w
+⋅
+chosen_logratio
+−
+rejected_logratio
+\text{logits}\leftarrow w\cdot\text{chosen\_logratio}-\text{rejected\_logratio}
+.
+//
+Core B-DPO logits (
+w
+>
+1
+w>1
+)
+4:
+ℒ
+DPO
+←
+−
+(
+1
+−
+ε
+)
+log
+σ
+(
+β
+⋅
+logits
+)
+−
+ε
+log
+σ
+(
+−
+β
+⋅
+logits
+)
+\mathcal{L}_{\text{DPO}}\leftarrow-(1-\varepsilon)\log\sigma(\beta\cdot\text{logits})-\varepsilon\log\sigma(-\beta\cdot\text{logits})
+.
+//
+Base DPO loss
+5:
+ℒ
+SFT
+←
+−
+log
+⁡
+π
+θ
+​
+(
+y
+w
+∣
+x
+)
+\mathcal{L}_{\text{SFT}}\leftarrow-\log\pi_{\theta}(y_{w}\mid x)
+.
+//
+SFT auxiliary loss
+6:
+ℒ
+UL
+←
+max
+⁡
+(
+0
+,
+log
+⁡
+π
+θ
+​
+(
+y
+l
+∣
+x
+)
+−
+τ
+)
+\mathcal{L}_{\text{UL}}\leftarrow\max(0,\log\pi_{\theta}(y_{l}\mid x)-\tau)
+.
+//
+Unlikelihood penalty
+7:
+ℒ
+total
+←
+a
+⋅
+ℒ
+DPO
++
+b
+⋅
+ℒ
+SFT
++
+ℒ
+UL
+\mathcal{L}_{\text{total}}\leftarrow a\cdot\mathcal{L}_{\text{DPO}}+b\cdot\mathcal{L}_{\text{SFT}}+\mathcal{L}_{\text{UL}}
+.
+//
+Combine total loss
+8:
+return
+ℒ
+total
+\mathcal{L}_{\text{total}}
+4
+Experiments
+In this section, we present a comprehensive experimental evaluation of proposed SVLL framework, aiming to answer the following three key questions:
+•
+Q1:
+How does our SVLL framework perform comparing to state-of-the-art closed-source and open-source foundation models in embodied task planning?
+•
+Q2:
+Does the decoupled SFT (Stage 1 + Stage 2) effectively mitigate premature temporal binding compared to conventional end-to-end training?
+•
+Q3:
+How effectively does B-DPO (Stage 3) suppress overconfident reasoning hallucinations and physical constraint violations?
+4.1
+Experimental Setup
+Dataset and Environment.
+We conduct experiments using the embodied trajectory dataset introduced by Zhang et al.
+[
+48
+]
+, which is built upon the highly interactive AI2-THOR simulator. This dataset is rigorously constructed by collecting expert demonstration rollouts across diverse indoor environments. For evaluation, we construct our benchmark by sampling from its designated test set. This test set comprehensively covers a wide spectrum of interactive task types with varying complexities, including fundamental state changes, single-object manipulation, multi-object compositional tasks, visual search, and complex sequential reasoning. We systematically sample representative episodes from each of these categories to rigorously evaluate the models. To adapt these continuous trajectories for VLM training, raw demonstrations are processed into interleaved multimodal sequences. Specifically, each data point is formatted as a tuple
+(
+I
+t
+,
+T
+,
+h
+t
+,
+a
+t
+)
+(I_{t},T,h_{t},a_{t})
+, where
+I
+t
+I_{t}
+denotes the current egocentric visual observation,
+T
+T
+is the high-level natural language instruction (e.g., “Would you mind helping me place the Pen in the Drawer?”),
+h
+t
+h_{t}
+is the explicit action history up to the current step, and
+a
+t
+a_{t}
+is the ground-truth executable next action (e.g.,
+Navigate(CoffeeTable)
+).
+B-DPO Preference Data Construction.
+To train the alignment model in Stage 3, we dynamically construct a near-policy preference dataset. The Stage 2 policy is deployed back into the environment using temperature sampling to promote diverse exploratory behaviors, from which we collect trajectory pairs
+(
+y
+w
+,
+y
+l
+)
+(y_{w},y_{l})
+. To explicitly address the likelihood displacement problem, we sampled 1,000 distinct negative trajectories
+y
+l
+y_{l}
+that represent typical embodied hallucinations. These negative samples are strictly categorized into four types of physical constraint violations:
+1) Invalid Navigation:
+The agent has already reached the target but outputs
+Navigate
+rather than
+Pick
+.
+2) Repetitive Search:
+The agent has visually located the target object but executes another redundant
+Navigate
+action.
+3) Erroneous Navigation:
+The agent is already holding the target object at the target receptacle but outputs
+Navigate
+instead of
+Place
+.
+4) Failure to Terminate:
+The task is functionally completed, but the agent fails to output the
+TaskCompleted
+token.
+Implementation Details.
+We employ the Qwen2.5-VL-7B
+[
+2
+]
+model as our backbone architecture. The training process strictly follows the proposed three-stage SVLL framework using 8
+×
+\times
+NVIDIA A100 (80GB) GPUs. Stage 1 (History-Free Full Fine-Tuning) and Stage 2 (Full-Context Full Fine-Tuning) each require approximately 25 hours of training. In Stage 3, we freeze the base model parameters and apply LoRA to optimize the B-DPO objective within 4 hours.
+Baselines.
+We conduct a comprehensive evaluation of our framework against strong baselines across three distinct categories:
+•
+Closed-Source VLMs:
+Gemini-2.0-flash and GPT-4o
+[
+22
+]
+, serving as the upper bounds of zero-shot general reasoning capabilities.
+•
+Open-Source General VLMs:
+The base Qwen2.5-VL-7B model
+[
+2
+]
+, evaluated in zero-shot mode.
+•
+Embodied-Specific Models:
+RoboBrain2.0-32B
+[
+12
+]
+and the intermediate models of SVLL, namely SVLL-Stage 1 and SVLL-Stage 2.
+Evaluation Metrics.
+We evaluate the performance of our framework using a comprehensive set of metrics designed to capture both overall task success and fine-grained behavioral modes:
+•
+Success Rate (SR):
+The primary macroscopic metric, defined as the percentage of episodes in which the agent successfully completes all instructions and explicitly outputs the
+TaskCompleted
+token at the final state.
+•
+Success weighted by Path Length (SPL):
+A standard metric for embodied efficiency, computed as
+SPL
+=
+1
+N
+​
+∑
+i
+=
+1
+N
+S
+i
+​
+l
+i
+max
+⁡
+(
+p
+i
+,
+l
+i
+)
+\text{SPL}=\frac{1}{N}\sum_{i=1}^{N}S_{i}\frac{l_{i}}{\max(p_{i},l_{i})}
+, where
+S
+i
+S_{i}
+is the binary success indicator for episode
+i
+i
+,
+p
+i
+p_{i}
+denotes the actual number of steps taken by the agent, and
+l
+i
+l_{i}
+is the length of the shortest path from the expert demonstration.
+•
+Valid Action Rate (VAR):
+A metric assessing spatial grounding capability. It measures the proportion of generated actions that are physically executable in the current environment state (e.g., predicting
+Open(Microwave)
+when no microwave is visible is classified as invalid). This metric directly reflects the visual understanding proficiency acquired in Stage 1.
+•
+Loop Rate (LR):
+A diagnostic indicator of temporal overfitting, defined as the percentage of episodes in which the agent falls into repetitive action loops (e.g., oscillating between two states for
+K
+K
+consecutive steps or stalling by repeatedly issuing invalid actions). This metric validates the necessity of our decoupled training strategy in Stages 1 and 2.
+•
+Constraint Violation Rate (CVR):
+A metric quantifying confident physical hallucinations, which measures the proportion of actions that trigger the four predefined physical logic errors defined in our B-DPO negative samples (e.g., continuing to search while already holding the target object, or failing to terminate upon completion). CVR explicitly evaluate the alignment efficacy of Stage 3.
+4.2
+Main Results
+Table 1
+:
+Main results on the AI2-THOR embodied planning benchmark.
+We compare our SVLL framework (with 7B parameters) against closed-source VLMs, open-source general VLMs, and embodied-specific models. SR and SPL measure overall task performance (higher is better). VAR, LR, and CVR diagnose specific behavioral modes (VAR: higher is better; LR and CVR: lower is better). All metrics are reported in percentages (%). Our full framework (SVLL-Stage 3) achieves state-of-the-art performance while drastically reducing logical hallucinations.
+Category
+Model
+SR
+↑
+\uparrow
+SPL
+↑
+\uparrow
+VAR
+↑
+\uparrow
+LR
+↓
+\downarrow
+CVR
+↓
+\downarrow
+Closed-Source VLMs
+GPT-4o
+[
+22
+]
+48.45
+46.83
+59.68
+1.03
+40.32
+Gemini-2.0-flash
+58.76
+49.32
+68.45
+3.09
+31.55
+Open-Source General VLMs
+Qwen2.5-VL-7B
+[
+2
+]
+18.56
+17.85
+45.13
+5.15
+54.87
+Embodied-Specific
+(Ours & Baselines)
+RoboBrain2.0-32B
+[
+12
+]
+27.84
+26.98
+47.39
+6.19
+52.61
+Ours (Direct Stage 2)
+68.04
+55.24
+78.37
+10.31
+30.65
+Ours (SVLL-Stage 1)
+64.95
+51.18
+76.42
+12.37
+33.42
+Ours (SVLL-Stage 2)
+74.23
+62.29
+84.16
+8.25
+29.18
+Ours (SVLL-Stage 3)
+78.35
+68.53
+89.64
+7.22
+26.34
+To address Q1, we conduct comprehensive evaluations comparing our framework against leading closed-source and open-source foundation models. The results are presented in Table
+1
+. It is observed that our full SVLL-Stage 3 framework achieves state-of-the-art performance across most metrics, conclusively answering RQ1. While closed-source foundation models such as Gemini-2.0-flash and GPT-4o demonstrate strong general reasoning capabilities—achieving SR of 58.76% and 48.45% respectively—their relatively high CVR of 31.55% and 40.32% reveal a limitation in strict physical grounding. In permissive simulated environments, these high-capacity models often reach the final goal through iterative environmental feedback, inadvertently accumulating physically invalid actions, such as attempting to interact with occluded objects.
+Similarly, the open-source foundation model Qwen2.5-VL and the embodied-specific RoboBrain2.0-32B exhibit CVRs exceeding 52%, highlighting the inherent challenge of translating visual reasoning into physically executable, grounded action sequences. In contrast, by explicitly aligning the model with physical constraints via the B-DPO objective, our 7B-parameter SVLL-Stage 3 model not only achieves the highest SR (78.35%) but also attains the lowest CVR (26.34%) and the highest VAR (89.64%). Furthermore, its superior SPL (68.53%) confirms that the agent completes tasks efficiently, following expert-like, causally coherent step sequences. These results demonstrate that a targeted, multi-stage structural alignment strategy can effectively bridge the physical grounding gap without solely relying on massive parameter scaling.
+4.3
+Real-World Robot Deployment
+To demonstrate the practical viability and zero-shot transferability of our framework, we deploy the SVLL-Stage 3 policy onto a real-world robotic platform.
+Hardware Setup and Tasks.
+The real-world experiments are conducted using a 6-Degrees of Freedom (DoF) robotic manipulator equipped with a parallel-jaw gripper and a wrist-mounted RGB camera for egocentric vision perception. We evaluate the models on a rigorous set of 9 distinct real-world tasks, specifically designed to test compositional generalization. Each task requires the agent to execute long-horizon plans by sequentially combining fundamental primitive skills:
+Navigate
+,
+Pick
+,
+Place
+,
+Open
+, and
+Close
+. For instance, a single task sequence may require the agent to navigate to a target receptacle, explicitly open it, pick up an object, and physically place it inside, as visualized in
+Figure
+2
+.
+Baselines and Metrics.
+Given the high execution cost and stringent safety requirements of physical deployment, we benchmark our 7B-parameter model against the open-weight embodied foundation model: RoboBrain2.0-32B
+[
+12
+]
+. Performance is evaluated using SR across the 9 tasks and CVR. In the physical domain, CVR serves as a critical safety metric, measuring the frequency of causally inconsistent or physically unexecutable commands (e.g., attempting to
+Place
+an object into a closed drawer without first issuing
+Open
+, or attempting to
+Pick
+an object that is occluded from view).
+Table 2
+:
+Real-world zero-shot evaluation.
+Comparison between the 32B-parameter state-of-the-art embodied model and our SVLL framework (with 7B parameters) across 9 real-world tasks. All metrics are reported in percentages (%). Our SVLL-Stage 3 framework achieves superior SR while maintaining a significantly lower CVR, demonstrating robust causal reasoning and physical grounding capabilities.
+Model
+Parameters
+SR
+↑
+\uparrow
+CVR
+↓
+\downarrow
+RoboBrain2.0
+[
+12
+]
+32B
+22.22
+10.94
+Ours (SVLL-Stage 3)
+7B
+55.56
+4.35
+Results.
+As shown in Table
+2
+, our SVLL framework demonstrates exceptional zero-shot transfer capabilities. Despite having approximately one-fifth the parameter count of RoboBrain2.0-32B, our framework successfully completes 5 out of 9 tasks, achieving a highly competitive SR. As illustrated in
+Figure
+5
+, while the 32B baseline occasionally generates physically infeasible action sequences (e.g., skipping prerequisite state-changing actions like
+Open
+before attempting to
+Place
+an object), our B-DPO optimized policy strictly grounds its decisions in valid physical affordances, thereby preventing catastrophic failures in the real-world execution.
+Figure 5
+:
+Comparison of the RoboBrain2.0-32B model and our 7B-parameter SVLL-Stage 3 model in executing real-world tasks
+. Both models are tasked with locating an object and placing it inside the microwave.
+(a) Physical Constraint Violation:
+The baseline model successfully navigates to and picks up the apple but commits a critical physical constraint violation by attempting to
+Place
+it without first opening the microwave door.
+(b) Strict Causal Adherence:
+Our model successfully locates the pepper, explicitly executes the prerequisite
+Open
+action, and then safely places the object inside, demonstrating strict adherence to causal physical constraints throughout the task.
+4.4
+Ablation Study on Staged Decoupling
+To demonstrate the necessity of decoupling spatial grounding from temporal reasoning, we compare our SVLL-Stage 2 model against a “Direct Stage 2” baseline, which skips Stage 1 entirely and applies standard joint SFT using the full action history
+h
+t
+h_{t}
+from the outset. The results are shown in Table
+1
+. We can observe that the Direct Stage 2 model exhibits a strong tendency to over-rely on temporal patterns. By gaining immediate access to
+h
+t
+h_{t}
+during early fine-tuning, it learns to utilize textual sequence shortcuts, thereby reducing its attention to the current visual input
+I
+t
+I_{t}
+. Consequently, when deployed in dynamic environments where physical states deviate from expected trajectories, the model exhibits a high LR of 10.31%, as it repetitively executes historical action sequences.
+In contrast, our decoupled framework effectively mitigates this modality imbalance. In SVLL-Stage 1, the model is trained exclusively on visual observations without any historical context, compelling it to develop robust spatial grounding. While this lack of temporal memory naturally results in a higher LR (12.37%) due to limited contextual tracking, it establishes a critical foundation for visual dependency. When temporal history is subsequently reintroduced in SVLL-Stage 2, the model integrates sequential memory without becoming over-reliance on it. This structural prior yields significant performance gains: the VAR increases to 84.16%, the SR improves to 74.23%, and the LR is reduced to 8.25%. These empirical results validate that establishing visual spatial grounding prior to temporal reasoning is a crucial design principle for achieving balanced modality utilization in multimodal embodied agents.
+4.5
+Ablation Study on B-DPO Alignment
+While SVLL-Stage 2 achieves a strong SR of 74.23%, standard SFT lacks explicit negative constraints, leaving the agent vulnerable to out-of-distribution physical states. This results in a CVR of 29.18% due to physically infeasible commands.
+To address this, the Stage 3 in SVLL introduces B-DPO, which actively penalizes predefined categorized physical hallucinations. As shown in Table
+1
+, this targeted alignment mechanism serves as a critical structural safeguard, reducing the CVR to 26.34% while increasing the VAR to 89.64%. Crucially, unlike standard DPO that induces likelihood displacement away from the expert distribution, our B-DPO objective structurally anchors the policy to the manifold of successful, physically-grounded trajectories. This mechanism effectively suppresses “confident errors” while preserving generative fidelity, ultimately boosting the overall SR to a state-of-the-art 78.35% and reducing the LR to just 7.22%. These results confirm that explicit, structured preference alignment is essential for causally coherent and physically reliable embodied task planning.
+5
+Discussion and Limitations
+Our findings challenge the prevailing assumption that preference optimization is fundamentally a ranking problem. While treating policy learning as relative preference ranking (e.g., standard DPO) proves effective in open-ended text generation, it fails in embodied intelligence, where valid behaviors are strictly governed by physical laws and causal structure. We observe that purely relative optimization often induces likelihood displacement: the model learns to dislike negative samples without learning to reproduce or adhere to the positive one. B-DPO addresses this by injecting a structural inductive bias, explicitly anchoring the policy to the expert distribution while surgically suppressing confident hallucinations. This ensures the agent confined to the sparse, physically feasible manifold of the task.
+Despite these improvements, our framework presents two key limitations. First, regarding the dependency on expert quality, the core strength of B-DPO is also its potential weakness. By design, B-DPO strongly penalizes deviations from the chosen expert trajectory
+y
+w
+y_{w}
+. While this enforces physical fidelity, it also risks overfitting to suboptimal or noisy expert demonstrations. In such cases, the model may fail to discover potentially more efficient or robust strategies. Second, concerning the sim-to-real gap, while SVLL’s history-free stage establishes robust spatial grounding in simulation, transferring these visual policies to real-world robotic platforms involves handling unstructured noise and lighting variations. The current pixel-level alignment strategy may require additional domain randomization or perception augmentment techniques to ensure broader generalization across real-world conditions.
+6
+Conclusion
+This paper introduces SVLL, a unified three-stage training framework that aligns VLM training with the physical and causal demands of embodied task planning. In the first two stages, SVLL decouples spatial grounding from temporal reasoning, thereby mitigating the risk of premature temporal binding. In the third stage, it introduces B-DPO to overcome the likelihood displacement by anchoring the policy to expert trajectories while suppressing confident hallucinations. Evaluated on the AI2-THOR simulator and real-world robotic platform, our 7B-parameter SVLL framework outperforms state-of-the-art open- and closed-source baselines in task success, yielding safer, physically-grounded agents.
+References
+[1]
+M. Ahn, A. Brohan, N. Brown, Y. Chebotar, O. Cortes, B. David, C. Finn, C. Fu, K. Gopalakrishnan, K. Hausman, A. Herzog, D. Ho, J. Hsu, J. Ibarz, B. Ichter, A. Irpan, E. Jang, R. J. Ruano, K. Jeffrey, S. Jesmonth, N. J. Joshi, R. Julian, D. Kalashnikov, Y. Kuang, K. Lee, S. Levine, Y. Lu, L. Luu, C. Parada, P. Pastor, J. Quiambao, K. Rao, J. Rettinghouse, D. Reyes, P. Sermanet, N. Sievers, C. Tan, A. Toshev, V. Vanhoucke, F. Xia, T. Xiao, P. Xu, S. Xu, M. Yan, and A. Zeng
+(2022)
+Do as i can, not as i say: grounding language in robotic affordances
+.
+External Links:
+2204.01691
+,
+Link
+Cited by:
+§2.1
+,
+§2.2
+.
+[2]
+S. Bai, K. Chen, X. Liu, J. Wang, W. Ge, S. Song, K. Dang, P. Wang, S. Wang, J. Tang, H. Zhong, Y. Zhu, M. Yang, Z. Li, J. Wan, P. Wang, W. Ding, Z. Fu, Y. Xu, J. Ye, X. Zhang, T. Xie, Z. Cheng, H. Zhang, Z. Yang, H. Xu, and J. Lin
+(2025)
+Qwen2.5-vl technical report
+.
+External Links:
+2502.13923
+,
+Link
+Cited by:
+§1
+,
+2nd item
+,
+§4.1
+,
+Table 1
+.
+[3]
+A. Brohan, N. Brown, J. Carbajal, Y. Chebotar, X. Chen, K. Choromanski, T. Ding, D. Driess, A. Dubey, C. Finn, P. Florence, C. Fu, M. G. Arenas, K. Gopalakrishnan, K. Han, K. Hausman, A. Herzog, J. Hsu, B. Ichter, A. Irpan, N. Joshi, R. Julian, D. Kalashnikov, Y. Kuang, I. Leal, L. Lee, T. E. Lee, S. Levine, Y. Lu, H. Michalewski, I. Mordatch, K. Pertsch, K. Rao, K. Reymann, M. Ryoo, G. Salazar, P. Sanketi, P. Sermanet, J. Singh, A. Singh, R. Soricut, H. Tran, V. Vanhoucke, Q. Vuong, A. Wahid, S. Welker, P. Wohlhart, J. Wu, F. Xia, T. Xiao, P. Xu, S. Xu, T. Yu, and B. Zitkovich
+(2023)
+RT-2: vision-language-action models transfer web knowledge to robotic control
+.
+External Links:
+2307.15818
+,
+Link
+Cited by:
+§1
+,
+§2.2
+.
+[4]
+Y. Chen, W. Cui, Y. Chen, M. Tan, X. Zhang, D. Zhao, and H. Wang
+(2024)
+RoboGPT: an intelligent agent of making embodied long-term decisions for daily instruction tasks
+.
+External Links:
+2311.15649
+,
+Link
+Cited by:
+§1
+,
+§2.1
+.
+[5]
+Z. Chen, Z. Guo, P. Wang, T. I. Egbe, Y. Lyu, and C. Qian
+(2025)
+Dense-jump flow matching with non-uniform time scheduling for robotic policies: mitigating multi-step inference degradation
+.
+External Links:
+2509.13574
+,
+Link
+Cited by:
+§1
+.
+[6]
+G. Comanici, E. Bieber, M. Schaekermann, I. Pasupat, N. Sachdeva, I. Dhillon,
+et al.
+(2025)
+Gemini 2.5: pushing the frontier with advanced reasoning, multimodality, long context, and next generation agentic capabilities
+.
+External Links:
+2507.06261
+,
+Link
+Cited by:
+§1
+.
+[7]
+DeepSeek-AI, A. Liu, B. Feng, B. Xue, B. Wang, B. Wu,
+et al.
+(2025)
+DeepSeek-v3 technical report
+.
+External Links:
+2412.19437
+,
+Link
+Cited by:
+§1
+.
+[8]
+D. Driess, F. Xia, M. S. M. Sajjadi, C. Lynch, A. Chowdhery, B. Ichter, A. Wahid, J. Tompson, Q. Vuong, T. Yu, W. Huang, Y. Chebotar, P. Sermanet, D. Duckworth, S. Levine, V. Vanhoucke, K. Hausman, M. Toussaint, K. Greff, A. Zeng, I. Mordatch, and P. Florence
+(2023)
+PaLM-e: an embodied multimodal language model
+.
+External Links:
+2303.03378
+,
+Link
+Cited by:
+§2.2
+.
+[9]
+X. Fu, M. Zhang, J. HAO, P. Han, H. Zhang, L. Shi, and H. Tang
+(2024)
+What can VLMs do for zero-shot embodied task planning?
+.
+In
+Multi-modal Foundation Model meets Embodied AI Workshop @ ICML2024
+,
+External Links:
+Link
+Cited by:
+§1
+,
+§1
+.
+[10]
+Y. Hu, F. Lin, T. Zhang, L. Yi, and Y. Gao
+(2023)
+Look before you leap: unveiling the power of gpt-4v in robotic vision-language planning
+.
+External Links:
+2311.17842
+,
+Link
+Cited by:
+§1
+,
+§1
+.
+[11]
+W. Huang, F. Xia, T. Xiao, H. Chan, J. Liang, P. Florence, A. Zeng, J. Tompson, I. Mordatch, Y. Chebotar, P. Sermanet, N. Brown, T. Jackson, L. Luu, S. Levine, K. Hausman, and B. Ichter
+(2022)
+Inner monologue: embodied reasoning through planning with language models
+.
+External Links:
+2207.05608
+,
+Link
+Cited by:
+§2.1
+.
+[12]
+Y. Ji, H. Tan, J. Shi, X. Hao, Y. Zhang, H. Zhang, P. Wang, M. Zhao, Y. Mu, P. An, X. Xue, Q. Su, H. Lyu, X. Zheng, J. Liu, Z. Wang, and S. Zhang
+(2025)
+RoboBrain: a unified brain model for robotic manipulation from abstract to concrete
+.
+External Links:
+2502.21257
+,
+Link
+Cited by:
+§1
+,
+§2.1
+,
+3rd item
+,
+§4.3
+,
+Table 1
+,
+Table 2
+.
+[13]
+B. Kim, J. Kim, Y. Kim, C. Min, and J. Choi
+(2024)
+Context-aware planning and environment-aware memory for instruction following embodied agents
+.
+External Links:
+2308.07241
+,
+Link
+Cited by:
+§1
+,
+§1
+.
+[14]
+M. J. Kim, K. Pertsch, S. Karamcheti, T. Xiao, A. Balakrishna, S. Nair, R. Rafailov, E. Foster, G. Lam, P. Sanketi, Q. Vuong, T. Kollar, B. Burchfiel, R. Tedrake, D. Sadigh, S. Levine, P. Liang, and C. Finn
+(2024)
+OpenVLA: an open-source vision-language-action model
+.
+External Links:
+2406.09246
+,
+Link
+Cited by:
+§2.2
+.
+[15]
+T. Kojima, S. S. Gu, M. Reid, Y. Matsuo, and Y. Iwasawa
+(2023)
+Large language models are zero-shot reasoners
+.
+External Links:
+2205.11916
+,
+Link
+Cited by:
+§1
+.
+[16]
+J. Liang, W. Huang, F. Xia, P. Xu, K. Hausman, B. Ichter, P. Florence, and A. Zeng
+(2023)
+Code as policies: language model programs for embodied control
+.
+External Links:
+2209.07753
+,
+Link
+Cited by:
+§2.1
+.
+[17]
+K. Lin, C. Agia, T. Migimatsu, M. Pavone, and J. Bohg
+(2023)
+Text2Motion: from natural language instructions to feasible plans
+.
+Autonomous Robots
+47
+(
+8
+),
+pp. 1345–1365
+.
+External Links:
+ISSN 1573-7527
+,
+Link
+,
+Document
+Cited by:
+§2.2
+.
+[18]
+Y. J. Ma, W. Liang, G. Wang, D. Huang, O. Bastani, D. Jayaraman, Y. Zhu, L. Fan, and A. Anandkumar
+(2023)
+Eureka: human-level reward design via coding large language models
+.
+In
+Second Agent Learning in Open-Endedness Workshop
+,
+External Links:
+Link
+Cited by:
+§1
+.
+[19]
+Y. J. Ma, W. Liang, G. Wang, D. Huang, O. Bastani, D. Jayaraman, Y. Zhu, L. Fan, and A. Anandkumar
+(2024)
+Eureka: human-level reward design via coding large language models
+.
+External Links:
+2310.12931
+,
+Link
+Cited by:
+§1
+.
+[20]
+Y. Ma, Z. Song, Y. Zhuang, J. Hao, and I. King
+(2026)
+A survey on vision-language-action models for embodied ai
+.
+External Links:
+2405.14093
+,
+Link
+Cited by:
+§1
+.
+[21]
+Y. Mu, Q. Zhang, M. Hu, W. Wang, M. Ding, J. Jin, B. Wang, J. Dai, Y. Qiao, and P. Luo
+(2023)
+EmbodiedGPT: vision-language pre-training via embodied chain of thought
+.
+External Links:
+2305.15021
+,
+Link
+Cited by:
+§2.2
+.
+[22]
+OpenAI, J. Achiam, S. Adler, S. Agarwal, L. Ahmad, I. Akkaya,
+et al.
+(2024)
+GPT-4 technical report
+.
+External Links:
+2303.08774
+,
+Link
+Cited by:
+1st item
+,
+Table 1
+.
+[23]
+R. Rafailov, A. Sharma, E. Mitchell, S. Ermon, C. D. Manning, and C. Finn
+(2024)
+Direct preference optimization: your language model is secretly a reward model
+.
+External Links:
+2305.18290
+,
+Link
+Cited by:
+§2.1
+.
+[24]
+K. Rana, J. Haviland, S. Garg, J. Abou-Chakra, I. Reid, and N. Suenderhauf
+(2023)
+SayPlan: grounding large language models using 3d scene graphs for scalable robot task planning
+.
+External Links:
+2307.06135
+,
+Link
+Cited by:
+§1
+,
+§1
+.
+[25]
+J. Schulman, F. Wolski, P. Dhariwal, A. Radford, and O. Klimov
+(2017)
+Proximal policy optimization algorithms
+.
+External Links:
+1707.06347
+,
+Link
+Cited by:
+§1
+,
+§2.1
+.
+[26]
+Z. Shao, P. Wang, Q. Zhu, R. Xu, J. Song, X. Bi, H. Zhang, M. Zhang, Y. K. Li, Y. Wu, and D. Guo
+(2024)
+DeepSeekMath: pushing the limits of mathematical reasoning in open language models
+.
+External Links:
+2402.03300
+,
+Link
+Cited by:
+§1
+,
+§2.1
+.
+[27]
+L. X. Shi, B. Ichter, M. Equi, L. Ke, K. Pertsch, Q. Vuong, J. Tanner, A. Walling, H. Wang, N. Fusai, A. Li-Bell, D. Driess, L. Groom, S. Levine, and C. Finn
+(2025)
+Hi robot: open-ended instruction following with hierarchical vision-language-action models
+.
+External Links:
+2502.19417
+,
+Link
+Cited by:
+§1
+.
+[28]
+S. Shin, S. jeon, J. Kim, G. Kang, and B. Zhang
+(2025)
+Socratic planner: self-qa-based zero-shot planning for embodied instruction following
+.
+External Links:
+2404.15190
+,
+Link
+Cited by:
+§1
+,
+§1
+.
+[29]
+I. Singh, V. Blukis, A. Mousavian, A. Goyal, D. Xu, J. Tremblay, D. Fox, J. Thomason, and A. Garg
+(2022)
+ProgPrompt: generating situated robot task plans using large language models
+.
+External Links:
+2209.11302
+,
+Link
+Cited by:
+§1
+,
+§1
+.
+[30]
+Y. Song, D. Yin, X. Yue, J. Huang, S. Li, and B. Y. Lin
+(2024)
+Trial and error: exploration-based trajectory optimization for llm agents
+.
+External Links:
+2403.02502
+,
+Link
+Cited by:
+§1
+.
+[31]
+K. Team, A. Du, B. Gao, B. Xing, C. Jiang, C. Chen, C. Li, C. Xiao, C. Du, C. Liao, C. Tang, C. Wang, D. Zhang, E. Yuan, E. Lu, F. Tang, F. Sung, G. Wei, G. Lai, H. Guo, H. Zhu, H. Ding, H. Hu, H. Yang, H. Zhang, H. Yao, H. Zhao, H. Lu, H. Li, H. Yu, H. Gao, H. Zheng, H. Yuan, J. Chen, J. Guo, J. Su, J. Wang, J. Zhao, J. Zhang, J. Liu, J. Yan, J. Wu, L. Shi, L. Ye, L. Yu, M. Dong, N. Zhang, N. Ma, Q. Pan, Q. Gong, S. Liu, S. Ma, S. Wei, S. Cao, S. Huang, T. Jiang, W. Gao, W. Xiong, W. He, W. Huang, W. Xu, W. Wu, W. He, X. Wei, X. Jia, X. Wu, X. Xu, X. Zu, X. Zhou, X. Pan, Y. Charles, Y. Li, Y. Hu, Y. Liu, Y. Chen, Y. Wang, Y. Liu, Y. Qin, Y. Liu, Y. Yang, Y. Bao, Y. Du, Y. Wu, Y. Wang, Z. Zhou, Z. Wang, Z. Li, Z. Zhu, Z. Zhang, Z. Wang, Z. Yang, Z. Huang, Z. Huang, Z. Xu, Z. Yang, and Z. Lin
+(2025)
+Kimi k1.5: scaling reinforcement learning with llms
+.
+External Links:
+2501.12599
+,
+Link
+Cited by:
+§2.2
+.
+[32]
+O. Thawakar, D. Dissanayake, K. More, R. Thawkar, A. Heakl, N. Ahsan, Y. Li, M. Zumri, J. Lahoud, R. M. Anwer, H. Cholakkal, I. Laptev, M. Shah, F. S. Khan, and S. Khan
+(2025)
+LlamaV-o1: rethinking step-by-step visual reasoning in llms
+.
+External Links:
+2501.06186
+,
+Link
+Cited by:
+§2.2
+.
+[33]
+T. V. Vo, T. Q. Nguyen, K. M. Nguyen, D. H. M. Nguyen, and M. N. Vu
+(2025)
+ReFineVLA: reasoning-aware teacher-guided transfer fine-tuning
+.
+External Links:
+2505.19080
+,
+Link
+Cited by:
+§2.2
+.
+[34]
+T. Wallace, I. S. Heng, S. Subasic, and C. Messenger
+(2025)
+Efficacy of image similarity as a metric for augmenting small dataset retinal image segmentation
+.
+External Links:
+2507.04862
+,
+Link
+Cited by:
+§1
+.
+[35]
+P. Wang, S. Bai, S. Tan, S. Wang, Z. Fan, J. Bai, K. Chen, X. Liu, J. Wang, W. Ge, Y. Fan, K. Dang, M. Du, X. Ren, R. Men, D. Liu, C. Zhou, J. Zhou, and J. Lin
+(2024)
+Qwen2-vl: enhancing vision-language model’s perception of the world at any resolution
+.
+External Links:
+2409.12191
+,
+Link
+Cited by:
+§2.2
+.
+[36]
+S. Wang, Y. Wang, W. Li, X. Cai, Y. Wang, M. Chen, K. Wang, Z. Su, D. Li, and Z. Fan
+(2025)
+Aux-think: exploring reasoning strategies for data-efficient vision-language navigation
+.
+External Links:
+2505.11886
+,
+Link
+Cited by:
+§1
+.
+[37]
+S. Wang, Z. Fei, Q. Cheng, S. Zhang, P. Cai, J. Fu, and X. Qiu
+(2025)
+World modeling makes a better planner: dual preference optimization for embodied task planning
+.
+External Links:
+2503.10480
+,
+Link
+Cited by:
+§1
+.
+[38]
+W. Wang, Z. Chen, W. Wang, Y. Cao, Y. Liu, Z. Gao, J. Zhu, X. Zhu, L. Lu, Y. Qiao, and J. Dai
+(2025)
+Enhancing the reasoning ability of multimodal large language models via mixed preference optimization
+.
+External Links:
+2411.10442
+,
+Link
+Cited by:
+§2.2
+.
+[39]
+Y. Wang, Z. Sun, J. Zhang, Z. Xian, E. Biyik, D. Held, and Z. Erickson
+(2024)
+RL-vlm-f: reinforcement learning from vision language foundation model feedback
+.
+External Links:
+2402.03681
+,
+Link
+Cited by:
+§1
+.
+[40]
+Z. Wu, Z. Wang, X. Xu, J. Lu, and H. Yan
+(2023)
+Embodied task planning with large language models
+.
+External Links:
+2307.01848
+,
+Link
+Cited by:
+§1
+,
+§1
+,
+§2.1
+.
+[41]
+G. Xu, P. Jin, Z. Wu, H. Li, Y. Song, L. Sun, and L. Yuan
+(2025)
+LLaVA-cot: let vision language models reason step-by-step
+.
+External Links:
+2411.10440
+,
+Link
+Cited by:
+§2.2
+.
+[42]
+H. Xu, X. Wu, W. Wang, Z. Li, D. Zheng, B. Chen, Y. Hu, S. Kang, J. Ji, Y. Zhang, Z. Guo, Y. Yang, M. Zhang, and D. Zhang
+(2025)
+RedStar: does scaling long-cot data unlock better slow-reasoning systems?
+.
+External Links:
+2501.11284
+,
+Link
+Cited by:
+§2.2
+.
+[43]
+C. Yao, X. Liu, C. Li, and M. Savvides
+(2026)
+Reward evolution with graph-of-thoughts: a bi-level language model framework for reinforcement learning
+.
+External Links:
+2509.16136
+,
+Link
+Cited by:
+§1
+.
+[44]
+S. Yao, J. Zhao, D. Yu, N. Du, I. Shafran, K. Narasimhan, and Y. Cao
+(2023)
+ReAct: synergizing reasoning and acting in language models
+.
+External Links:
+2210.03629
+,
+Link
+Cited by:
+§2.1
+.
+[45]
+M. Zawalski, W. Chen, K. Pertsch, O. Mees, C. Finn, and S. Levine
+(2025)
+Robotic control via embodied chain-of-thought reasoning
+.
+External Links:
+2407.08693
+,
+Link
+Cited by:
+§2.2
+.
+[46]
+J. Zhang, Y. Guo, X. Chen, Y. Wang, Y. Hu, C. Shi, and J. Chen
+(2025)
+HiRT: enhancing robotic control with hierarchical robot transformers
+.
+External Links:
+2410.05273
+,
+Link
+Cited by:
+§1
+.
+[47]
+R. Zhang, B. Zhang, Y. Li, H. Zhang, Z. Sun, Z. Gan, Y. Yang, R. Pang, and Y. Yang
+(2024)
+Improve vision language model chain-of-thought reasoning
+.
+External Links:
+2410.16198
+,
+Link
+Cited by:
+§2.2
+.
+[48]
+W. Zhang, M. Wang, G. Liu, X. Huixin, Y. Jiang, Y. Shen, G. Hou, Z. Zheng, H. Zhang, X. Li, W. Lu, P. Li, and Y. Zhuang
+(2025)
+Embodied-reasoner: synergizing visual search, reasoning, and action for embodied interactive tasks
+.
+External Links:
+2503.21696
+,
+Link
+Cited by:
+§3.2.1
+,
+§4.1
+.
+[49]
+Z. Zhang, A. Zhang, M. Li, H. Zhao, G. Karypis, and A. Smola
+(2024)
+Multimodal chain-of-thought reasoning in language models
+.
+External Links:
+2302.00923
+,
+Link
+Cited by:
+§2.2
+.
+[50]
+Q. Zhao, Y. Lu, M. J. Kim, Z. Fu, Z. Zhang, Y. Wu, Z. Li, Q. Ma, S. Han, C. Finn, A. Handa, M. Liu, D. Xiang, G. Wetzstein, and T. Lin
+(2025)
+CoT-vla: visual chain-of-thought reasoning for vision-language-action models
+.
+External Links:
+2503.22020
+,
+Link
+Cited by:
+§2.2
+.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

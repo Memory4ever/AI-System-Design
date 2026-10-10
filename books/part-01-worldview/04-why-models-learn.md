@@ -108,6 +108,10 @@ theta_(t+1) = theta_t - eta_t * g_t
 
 负梯度是局部下降方向，不是全局最优导航。学习率过小，训练进展缓慢；过大，更新可能越过有效区域甚至数值发散。实际优化器会加入 momentum、自适应缩放、weight decay 等机制，但核心仍是利用局部导数决定参数如何改变。
 
+同一个函数还可以有不同参数坐标，而“按梯度走一步”必须指定坐标中的度量。若一层写成 `W=D W′ E`，其中 `D/E` 是给定的正对角尺度，在 canonical 参数 `W′` 上做普通梯度更新，映回原坐标可得到 `W−ηD²GE²`，`G` 为原坐标梯度；这是一条由尺度决定的预条件分支，不表示原链式法则或普通反向传播算错了。它改变优化路径，不凭空扩大函数族，也不保证更好的泛化。<!-- source-family:SF-2026-ARXIV-2601-10873 -->
+
+[尺度分支的必要边界](https://arxiv.org/html/2601.10873v1)包括正齐次激活允许怎样的 gauge、残差如何锁定相连尺度，以及 bias、卷积和 optimizer state 如何随坐标处理；LayerNorm、softmax 等操作不能继承任意全网络尺度等价。维护尺度与状态增加实现和数值负担，原文也没有足以支持“替代现代 normalization”的完整实验。条件不成立或轨迹变差时，保留普通梯度、既有 normalization 与实际 loss/gradient/step 对照，不由单位一致性给 optimizer 性能签发保证。
+
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-21933:start -->
 把小步长训练近似成可逆连续流或 Langevin 过程，有助于建立直觉，却会省略有限离散更新的时间不对称。受限理论表明，backward error、time-renormalized correction、time-asymmetry 与正则化 entropy production 在 leading order 可形成一致的不可逆性刻画，并产生选择学习轨迹的 symmetry-breaking force。它修正的是动力学解释，不是一个自动选择 schedule 的新 optimizer。
 
@@ -137,6 +141,10 @@ g_t = (1 / |B_t|) * sum_(i in B_t) grad_theta L(f_theta(x_i), y_i)
 `|B_t|` 是 batch 中的样本数。这个估计带有噪声，但计算成本更低，也能持续提供更新方向。batch 变大时，梯度估计通常更稳定，却需要更多显存和并行设备，并可能改变优化动力学；batch 变小时，噪声更大但更新更频繁。
 
 所以 batch size 不是单纯的吞吐参数。它同时连接统计估计、优化行为、显存容量和分布式通信。
+
+噪声影响的也可能是训练早期何时停止跨盆地移动，而非最终平衡分布怎样偏好平坦解。一条受限分析让快变量先适应、慢变量控制盆地间通道；改变学习率或 batch 噪声，会同时改变短暂阶段的选择偏差与通道关闭时间。固定慢变量时的 steady-state 选择，因而不能替代真实轨迹上的 transient 冻结选择。<!-- source-family:SF-2026-ARXIV-2601-10962 -->
+
+[必要理论与对照](https://arxiv.org/html/2601.10962v1)依赖快慢时间尺度分离、局部 Hessian 与噪声协方差关系和小步长近似；MNIST1000 样本、两层 MLP、20 次运行且排除发散的结果只提供局部支持。前10个 Hessian 特征值的 flatness 不是坐标不变的泛化证书，直线 loss barrier 也不能否定所有弯曲连接。时间尺度、盆地与曲率诊断本身有费用；条件不可核时，保留多 seed 的真实轨迹、保守 schedule 与 held-out 质量，不由这条解释为 LLM/Adam 自动选择生产 batch 或学习率。
 
 ## Backpropagation：把输出误差分配给每一层
 
@@ -414,6 +422,9 @@ Part IV 会详细展开这些系统机制。本章要建立的连接是：梯度
 这套机制强大，但边界清楚。函数可表示不等于解可找到，训练误差下降不等于未知数据上有效，离线优化成功更不等于生产系统可靠。保持这三层边界，后面讨论表示、Scaling Law 和大模型能力时才不会偷换概念。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2601-10873` — Daily `2026-01-20`增量；[UC exact-v1](https://arxiv.org/html/2601.10873v1) §2–6、AppC7–9必要边界。2+1+2=5，参数坐标/optimizer metric 差额深入；采用给定尺度的预条件分支，不采 transpose 错误、物理意义或 normalization 替代断言。root实际必要原证/owner PRE通过并授窄锁；作者实际正文/完整邻接/本注已顺读，root实际顺读103–125/本注，POST通过，窄锁释放。未核artifact/复现，非日级验收。
+- `SF-2026-ARXIV-2601-10962` — Daily `2026-01-20`增量；[SGD transient exact-v1](https://arxiv.org/html/2601.10962v1) §II/III、Eq8–26与AppA2必要反侧。2+1+2=5，transient freezing 与固定慢变量 steady-state 选择分责深入；保留时间尺度/噪声-Hessian、MNIST/20runs/发散排除、flatness坐标依赖与线性路径局限，不授普遍泛化或生产schedule。root实际必要原证/owner PRE通过并授窄锁；作者实际正文/完整邻接/本注已顺读，root实际顺读131–160/本注，POST通过，窄锁释放。未核artifact/复现，非日级验收。
 
 本章只建立学习与优化的基础，不承担完整泛化理论，也不提前进入 Transformer 细节。后续 Review 应检查所有数学符号是否先定义，再检查每个工程概念是否仍能回到 batch、precision、state 或 communication，而不是变成分布式训练框架清单。
 

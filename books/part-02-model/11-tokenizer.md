@@ -151,6 +151,10 @@ decode(encode(text)) == text
 
 取决于 normalization、未知符号和 decoder 规则。许多 byte-level 设计可以对广泛输入做到近似或严格可逆，但不能把可逆性当作所有 tokenizer 的天然性质。
 
+多文字系统共享词表也可先改变文本表示：保留 native script，或先 romanize 再训练相同规模 encoder。转写可能扩大共享 subword support、减少词表压力，却会抹掉同音字符或书写差异；全转 ASCII 与保留 diacritic 的窄转写不是同一 fidelity 接口。不能从更短编码或共享率提高推出所有任务更好；任务所需差异能否恢复，要与 fertility、词表容量及 mono/multilingual 数据控制一起验收。<!-- source-family:SF-2026-ARXIV-2601-05776 -->
+
+[同文档、固定计算的受限比较](https://arxiv.org/html/2601.05776v1)从头训练149M ModernBERT，分开 native/romanized 和 mono/multilingual，在六种文字语言、五任务与五次种子中观察到收益依任务变化。Chinese/Japanese 的 NER 等 script-sensitive 任务退步，保真转写可部分缓解却不消除所有损失；这不是 decoder-only LLM、原词表热替换或无损编码证据。转写、重训与语言×任务回归付费；碰撞不能消歧、fidelity或质量不足时，保留 native script、语言专用路径和 byte/subword fallback，不只为共享率改变 checkpoint 输入协议。
+
 词表大小、context positions 与保留的信息也不是同一预算。对音节结构较强的语言，一个替代 codec 把 onset、rime 与 tone 放在同一 position，以三个成分 embedding 的拼接投影形成输入，并用独立 heads 预测完整 tuple；它不是把一个音节扩为三个串行 tokens。训练时同时 mask 完整 tuple，可避免已见成分直接泄露待预测成分，缩小各 head 的词表也不代表缩短了同样比例的语义路径。
 
 文本转音韵 tuple 会遇到多音字、默认读音与同音碰撞，decoder 无法仅从碰撞后的 tuple 恢复被丢掉的字符差异；非支持符号的多位置 fallback 或 UNK 又改变长度与覆盖。中文受控比较检验的是包含转写、输入融合与目标 heads 的完整 pipeline，异质越南语数据不能当纯 tokenizer 因果对照；部分理解与阅读任务还会退步，未测 decoder-only 部署也不能继承结果。选择这一 codec 要联合验收可逆范围、词表/位置成本和目标任务，精度、硬件或运行预算未披露时不补造；遇到不可消歧文本或 unsupported 输入，保留 byte/subword 和可检查的转写回退。 [必要机制与反证](https://arxiv.org/html/2609.21362v1)。<!-- source-family:SF-2026-ARXIV-2609-21362 -->
@@ -303,6 +307,10 @@ embedding/output head、artifact version 和序列分布。exact-v1 的 25 个�
 
 前面的成本分析说明了为什么要选择词表；下面再区分哪些边界属于搜索空间，哪些指标只是这个空间内的优化目标。增加词表或缩短编码后的序列，都不能跳过模型行为的验证。
 
+词表构建也不必把结构发现与最终压缩放在同一个目标里。一条替代路线先以 MDL、边界熵和 latent morphotactics 发现可复用的内部单位，再按实际省下的 token 次数将它们打包成固定 surface vocabulary；runtime 仍只输出固定 token IDs，不向模型另传 latent 标签。语言证据总量重权可改变内部结构的支持，但不等最终各语言分得相同 embedding 配额。<!-- source-family:SF-2026-ARXIV-2610-12376 -->
+
+[受限多语言 encoder 实验](https://arxiv.org/html/2610.12376v1)支持这两层分责，却不证明 morphology 或 allocation parity 足以带来 outcome parity：最小语料语言的任务收益并未统一成立，更复杂构建还增加搜索与 HMM 成本。单 pretraining seed、有限 encoder 与 fine-tune seed 列表口径差异限制外推。简单 MDL/BPE 在成本或部署稳定优先时仍合理；无论怎样发现词表，下一步仍须先检查 pre-tokenizer 是否已禁止了必要合并。
+
 ### Pre-tokenizer Boundary 会形成 BPE 无法补救的硬下界
 
 BPE 只能在 pre-tokenizer 允许合并的边界内学习；如果字符、附加符号或书写单位在此前已被错误切开，后续增加 merge 数量也无法恢复原本应共享的表示。tokenizer 设计因此要先验证语言学边界与 normalization，再优化词表大小和 fertility。旧分词在主流语料上仍可合理，但跨文字系统迁移时必须重新测量不可合并边界。
@@ -429,6 +437,8 @@ Tokenizer 在无限文本空间和有限模型词表之间建立可复现映射�
 到此得到的只是稳定的整数序列，还没有可学习的数值关系。下一章从 one-hot 与查表出发，解释 token id 如何变成连续向量，以及词表变动为什么必须连同输入、输出参数一起考虑。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2601-05776` — Daily `2026-01-13` 增量；[Romanization exact-v1](https://arxiv.org/html/2601.05776v1) §2–4/6；2+1+2=5，native/roman分支差额深入；149Mencoder/mono-multi控制/fidelity-fertility/中日反侧与费用近文，不授LLM热换词表。jan10_books_audit必要原证/actual owner PRE通过、root授窄锁；作者完整邻接已顺读，root非Books写入者已实际读正文/完整邻接/自身末注，POST PASS；窄锁释放。未核实现/复现，非日级Gate。
 
 - `SF-2026-ARXIV-2601-05833`：[Peek2 exact-v1](https://arxiv.org/html/2601.05833v1)，Daily 2026-01-13；原2+1+2=5，具体行为保持的预分词执行分支缺口深入。必要§3/4与完整 XNLI 片段回归，仅采用7类双scalar分派及缩写回退，不授所有输入等价、生产吞吐或普遍安全保证；硬件未披露，未复现。jan01_v3实际必要原源→owner非作者核通过；正文写后待独立验收。
 

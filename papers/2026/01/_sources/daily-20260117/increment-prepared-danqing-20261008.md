@@ -1,0 +1,11 @@
+# DanQing10305：双侧alignment band的有限数据取舍
+
+exact-v1 https://arxiv.org/html/2601.10305v1；root完整AB及§3.2/4.1已独判潜力，不重复准入。拟2+1+2=5标准：双侧ChineseCLIP similarity去除低相关与高OCRdominance侧是本文实际数据选择，不以100M/freshness或NSFW/并行成熟原则评分。已实际必要§3.2/4.1–4.2/5.2/5.4、AppA Table6，并按PDF skill实际视读官方v1 pp7–8 Tables3–5；不是19页整附件。必要原件increment-danqing-band/necessary/controls/pdf-necessary-20261008.json。
+
+采用边界：本文ChineseCLIP-L14分数[1.06,1.24]作为pipeline-specific band；高端常OCR文字主导是作者观察/选择理由，没给独立人工N或同population上只消融上界的matched控制。分数范围不是规范cosine，原文未把温度/缩放清楚绑定本filter，不抄阈值为可执行generalrecipe。整pipeline最终性能不授OCR字样低质量或高alignment通常坏；OCR任务还可能需要该支持域。本文贡献可保局部规则与评价条件，但不能由弱归因改成贡献前关闭。
+
+对照：三SigLIP2继续预训2epoch/16A80080GB、batch768×16/LR1e−5、256图/64token、Zero/TaiSu各random100M。Wukong同100M；main对齐模型/训练recipe、data scale分析10/30/60/100M与30M四model-size减少纯数量替代解释，但更近2024–25时间/population/multi-stagefilter仍混杂，不能全归双侧band或freshness。实际PDF Table3 shortcaption TaiSu各三AVG78.9/82.1/84.9强于Dan76.7/80.1/84.3；Table4 longcaption在该fixed64token协议Dan局部有收益；Table5固定LLaVA-NeXT pipeline+Qwen2-7B只换encoder，mean50.1vsWukong49.5，EN75.3<75.6、CMMMU39.7与Wukong同，OCR16.0>base15.0与Wukong15.0，因此既不授所有benchmark最佳也不授上界去OCR导致OCR必降。未披露训练seed/CI、precision/总walltime、filter完整cost；parse/download/ChineseCLIPscore/embedding去重+crossbatch/后续train与存储均费。AppA 178.6M→154.3M crossmodal→99.89M crossbatch解释正文直接写100M简化，不把差额当单band丢弃。
+
+日期/当前：datacite10305 v1SubmittedJan15T11:28:58Z、UpdatedJan16T01:38:36Z、formalIDregisteredJan16T02:52:11Z，配已核官方normalannouncement下界与ID不可预发上界，可将普通arXiv正文事件限定BJTJan16，非注册单独firstpublic。**早artifact明确**：作者repo当前NewsJan13已releaseURLs、Jan15images/captions，Jan16明确paper release；不将dataset重复当本窗事件，也不只凭mutableNews补造当时公开历史。当前repo必要README未给双侧band方法文字；paper Jan16正式方法/评价事件需root按早artifact与可见信号限定通过才formal，不自授此前方法绝未公开。当前officialabs v3Mar25无明确撤回/纠错/安全标注；已见license从v1声明CC-BY4变当前absCC-BY-NC4、repo正文NC4但顶部license仍BY4，授权不统一不采用为可再分发保证，此处不扩法律/历史许可。
+
+Books：作者actualCh27:233–271完整质量filter/retention与population/scorebias/selector费用、phrase-sensitive highalignment选择与人工grounding反侧。不能冒Existing已承载具体OCR upper-tail机制，但拟本文只有局部curationband/整pipeline实例，不改变已承载的长期身份/选择偏差判断，**root独立标准5分OnlyReport通过**，保新局部规则与支持/负侧而不添DanQingrecipe段。若独判双侧proxy极值机制有可核长期gap，需具体affected提案/窄锁，不因本包Only理由缩候选评分或误称Existing。root已实际必要原源/officialPDF Tables3–5/日期与现Ch27独判通过；已同步README110正式层，不写共享书稿、不授DAY。

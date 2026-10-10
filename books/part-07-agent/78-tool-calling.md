@@ -62,6 +62,10 @@ Description 帮助模型选择工具，Schema 帮助构造参数；二者都不�
 
 执行轨迹、编辑与合并会增加探索调用和文档漂移的成本，反馈错误还可能使多轮描述固化同一个误解。[受限工具实验](https://arxiv.org/html/2602.15197v1)在匿名工具上改善较大，但参数已知时 GPT-5 accuracy 仅0.82→0.83；BrowseComp FullSearch 为21.8→22.1，同时平均调用9.3→9.5，较弱模型的分域设置中另一简单工具描述方法反而更好。原表题注的模型身份亦有错置，因此不能把单组 headline 当普遍可靠性或成本优势。文档应在独立任务与真实工具版本上重新核验，权限与 effect-time 检查继续由 executor 持有；反馈不足、行为漂移或修订无收益时，回退人工窄合同、澄清与外部 outcome 检查。<!-- source-family:SF-2026-ARXIV-2602-15197 -->
 
+工具合同还要说明动作粒度。起点/终点式拖曳适合无需中途纠正的简单操作，却不能表达自由轨迹中的反馈。另一分支把动作写成坐标与 mouse down/up 序列，明确预测 horizon、下一次截图前实际执行的步数及当前按键状态；预测整段不等于允许 executor 原子执行整段。连续手势因此仍由模型提议、可信执行器逐段消费，与[第26章](../part-03-multimodal-world-models/26-multimodal-embodied-vla.md)的物理 controller 分工相似，但接口相似不能提供物理控制的安全保证。
+
+这种接口增加观察调用、屏幕更新和按键状态维护成本；失焦、页面变化或反馈延迟可使未执行后缀失效。暂停、重新观察与清理持有按键状态是 runtime 设计要求，不能冒充论文已实现的保证。[受限 GUI 研究](https://arxiv.org/html/2512.24965v1)的“online”评测通过预测坐标匹配录制轨迹来获取下一截图，不是真实 OS 接受任意动作；它支持近似环境中的接口研究，不是部署效果收据。实际反馈或消费语义不可核时，保留受控 GUI/API 工具或人工路径，而不由 replay 分数批准开放环境执行。<!-- source-family:SF-2026-ARXIV-2512-24965 -->
+
 ## 模型输出只是 Proposal
 
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-24941:start -->
@@ -114,6 +118,10 @@ Schema 可以拒绝缺字段、错误类型或非法 enum；semantic validation 
 在末尾的 JSON 字段上强制工具名属于合法集合，可以消除集合外名称，却不能保证选对工具或生成正确参数。另一分支在 reasoning 开头先提议候选工具名与关键参数，再在短预算内生成调用，让后续推理围绕一个明确选择展开；这只是模型的 provisional routing，不是执行或授权 commit。受限 function-calling 对照表明，先选择与后置约束会形成不同参数生成路径；插入一个已选 prefix 也可能改变继续生成的分布，不能把“名字合法”当成整次调用正确。<!-- source-family:SF-2026-ARXIV-2604-02155 -->
 
 提示模板不等于 grammar constraint，所测 200 题里最终未出现集合外名称也不是形式保证，reasoning trace 仍出现过非法名；更细 sweep 的 free-form 短预算还可能优于该模板。先选后想会减少无边界探索，也可能锁定错误工具，因此应分别比较错选合法工具、非法名、参数错误和实际 outcome，按 backend/task 校准预算。小目录、直接输出已可靠时无需增加阶段；目录不明或高风险动作仍由显式 schema、权限与业务 Gate 决定是否执行。
+
+合法名称与正确参数之外，还要区分工具功能是否变化。若底层功能相同，只重命名 tool/argument identifier 或改写 description，系统可能暴露的是接口记忆而非新功能适应；训练可以随机化这些表面身份，并以保留语义的改写扩展支持分布，评价则冻结底层函数，单独测名称、参数和描述扰动。这不是对任意新工具的保证，语义改写本身也需核验；registry revision、真实执行结果与授权 Gate 继续决定调用能否提交。<!-- source-family:SF-2026-ARXIV-2601-18631 -->
+
+工具过程奖励也不能与答案正确性无条件相加。一条受限训练分支以 format 为硬门，提出“正确答案取完整奖励、错误答案仍可取分层 tool-quality 部分奖励”的非对称设计；原文 accuracy 取值与加权式未形成一致数值配方，这里只采用激励分账，不认证每个正确答案实际得到相同总 reward。Name/parameter validity 的过程分数也不自动等于有信息、更不等于安全。[有限视觉工具实验](https://arxiv.org/html/2601.18631v1)中，在推理时引入 A* 对导航有益却伤害 verification，所谓 unseen interface 仍使用原底层功能，部分 task 又在后续训练出现。额外 paraphrase、quality 评价与 rollout 都付费；任务、接口或奖励人口变动时应重新验收，不稳定时保留固定目录、普通 SFT/GRPO 与真实 outcome verifier，而非以过程 reward 取代执行证据。
 
 ### 编译器反馈可以前移，但仍是受限 Authority
 
@@ -220,6 +228,10 @@ current uncertainty + candidate tool contract
 ```
 
 selector 只决定是否提出调用，schema validation、authorization 与 effect commit 仍由 executor 拥有。utility model 错误会系统性少查关键证据或频繁调用廉价但无用的工具；高风险事实、强制合规检查和不可逆动作不能被“预计收益低”跳过。只读、低延迟且高度可靠的工具可用简单规则直接调用，低流量或不可校准场景则保留固定 policy。
+
+单次报价还不足以比较需要重试的计划。若每次尝试费用为 c、满足当前意图的概率固定为 `0<ρ≤1`，并暂不计重试带来的信息与策略变化，几何试次数给出的期望费用 `c/ρ` 可以用于候选路径排序；它不是最坏费用上界、费用分位数或工具结果正确性的证明。规划期的“预计划算”和执行期的“当前付得起”因此是两个判断：执行器仍须在每次真实调用前核当前报价、剩余可用余额与权限，再扣减或预留本次费用。风险折扣、历史成功率或沿用缓存计划均不能免除这些检查；这是运行时应保持的工程边界，不是预测模型已经实现了完整预算与授权保证。<!-- source-family:SF-2026-ARXIV-2602-11541 -->
+
+这条分支用额外预测、模拟和校准换取对重试成本的提前辨识，却新增成功概率漂移、模型与真实工具共同失配的风险。[INTENT 的受限实验](https://arxiv.org/html/2602.11541v1)只在给定任务、合成工具价格和预算下支持该规划接口，工具价格预算不包含全部模型调用、oracle、token 与等待费用。模拟 cache hit 可以减少重复预测，不能证明当前价格、余额或权限仍有效；成功概率不稳、重试改变参数或首次调用尚在 in-flight 时，应停用该估算或重规划，保留固定 cap、真实反馈与后文的幂等/协调协议，而非让预期成功替代实际执行证据。<!-- source-family:SF-2026-ARXIV-2602-11541 -->
 
 还有一种受限 workflow 问题：工具已经可发现且有调用收益，Agent 却在取得 observation 之前直接修改程序。Controller 可以把“至少发起一次指定的只读诊断调用”设为 edit action 的可达性前置条件；这改变的是执行状态图，不是把提示写得更强，也不扩大工具权限。必须分别记录工具暴露、实际调用、取得有效诊断证据、据证修改和最终验证；调用发生只关闭第二层，构建失败、attach 失败或无关 observation 仍不能授予“已诊断”的语义。<!-- source-family:SF-2026-ARXIV-2602-18571 -->
 
@@ -617,6 +629,10 @@ Set-level retrieval 可以把候选工具集合视为 query-conditioned hyperedg
 
 <!-- source-family:SF-2026-ARXIV-2607-25718 -->
 
+工具集合的 discovery 还可来自不同 subtask 或检索反馈产生的多个 query。若按每次命中加性累计，同一工具反复被找回会直接累加权重；一条融合支路只用该 tool 在任一列表中获得的最好 rank 汇总，不把重复命中次数直接当作额外支持。这不消除更多尝试获得极值的机会偏差，更不保证各 subtask 公平；须绑定原始 query/subtask、尝试预算、retriever 与 catalog revision。ToolQP 的局部 peak-rank 对照还低于 multi-view/reranker，不能授普遍最佳或免费高效。Query planning、各次检索、teacher/训练与汇总都计入费用；融合只改变候选发现排名，权限、schema、dependency 与执行正确性仍独立核验。预算或域变化下保留普通 Top-k/RRF、原 query 及确定性 dependency expansion，不从检索覆盖认证可执行链。
+
+<!-- source-family:SF-2026-ARXIV-2601-07782 -->
+
 ## 本章在知识树中的位置
 
 前四章构造 information state，本章首次改变 environment。下一章讨论 Planning 如何把目标拆成有依赖和前置条件的未来行动，同时保持计划只是可修正假设。
@@ -746,6 +762,10 @@ schema/version 与权限检查通过后，结果才能注入模型状态。它�
 
 <!-- source-family:SF-2026-ARXIV-2605-15077 -->
 
+但“提前执行同一个调用”与“用更便宜的模型提出一个可接受的不同动作”是两条分支。开放网页检索中，两个 Search query 可以字面不同却都推进任务；于是可并行生成带 reasoning 的小模型 draft 与跳过 reasoning 的大模型 draft，按 Search/Visit 类型及长 reasoning 是否需要保留选择 proposal，再由大模型 critic 的 Yes/No log-probability margin 决定采用或回退完整 reasoning。这里 critic 判断的是轨迹连贯与预期进展，不是 exact action match，也没有经典 token speculation 的 target distribution 保持证明；第48章的分布保证不能移交给这类 semantic acceptance。
+
+这一分支用额外双 draft、critic 调用和阈值校准换取较少昂贵 reasoning，但也引入错收、错拒和共同模型盲点。作者的 Search/Visit、固定 Bing/Jina 后端及有限模型/任务对照只支持局部延迟与最终 pass@1 取舍；embedding oracle-action 相似度和原动作 NLL 也不是完整动作正确性或真实 entropy 认证。即使 semantic critic 接受，executor 仍须独立检查 schema、权限和副作用，不能把“有用”变成提交许可。阈值失准、环境改变或动作不可逆时保留完整 reasoning、确定性检查和串行执行；回退更强模型本身也不保证事实正确。<!-- source-family:SF-2026-ARXIV-2603-07416 -->
+
 代码解释器有一个更窄的 overlap 分支：生成流形成完整 AST 语句后，隔离的持久会话可先执行该语句，同时模型继续生成后续代码；早期错误可停止无用的续写。与预取只读结果不同，这会改变解释器内的变量状态，不能把每个前缀都视为可撤销的外部工具调用。执行器必须先限制文件、网络与外部副作用，把中间状态锁在本次 sandbox；只有最终程序和授权通过后，才允许把结果跨出隔离边界。语句切分、启动与动态批处理增加开销；生成快于执行、跨语句依赖复杂或隔离不可靠时，完整生成后再运行仍是安全且可能更快的路径。`arXiv:2604.00491v1` 的 Python 解释器实验只证明其受测代码任务和环境下的延迟/早停收益，未证明外部副作用可以提前提交。
 
 <!-- source-family:SF-2026-ARXIV-2604-00491 -->
@@ -767,6 +787,12 @@ schema/version 与权限检查通过后，结果才能注入模型状态。它�
 两项机制分别缩小输入 action space 与防止失败结果被语言模型补写，代价是 catalog routing、schema 校验和额外重试。作者有限模型/域与强制调用实验不证明开放工具生态的完整覆盖。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2603-07416` — Daily `2026-03-11`补查；[DualSpec 精确v1](https://arxiv.org/html/2603.07416v1) §3、§5、§6.1–6.3。作者与review_20260311必要Evidence独核通过，root实际§5/6及owner/Ch77/79/48交接比较后窄写两段；semantic acceptance不授exact action、target distribution或effect许可，双draft/critic及误接收成本近文。限原Search/Visit与模型/后端，NLL/embedding代理不称真实entropy/动作正确性。非写入者supplement_20260311已实际顺读新增正文、完整局部邻接及本注并回对必要原证，POST通过，不授DAY；未核实现或复现。
+
+- `SF-2026-ARXIV-2601-18631` — Daily `2026-01-28` 增量；[exact-v1](https://arxiv.org/html/2601.18631v1) §2.3–4/3.2–3.3/A.4/B.3，同功能 interface 扰动与非对称激励分账，2+2+2=6；accuracy1/4 冲突不采数值保证，推理引入A*导航增/verification退近文。jan28_review 实际必要原源/owner/PRE通过，root先授窄锁；jan28_review 实际完整局部邻接、新两段与自身末注POST通过，不授DAY；未核artifact或复现实验。
+
+- `SF-2026-ARXIV-2601-07782` — Daily `2026-01-14` 增量；[ToolQP exact-v1](https://arxiv.org/html/2601.07782v1) §3–4/Table4，2+1+2=5，multi-query per-tool best-rank aggregation差额深入。仅不加性累计重复命中；best-of-many仍有极值机会bias，非subtask公平或执行保证。工具集/尝试预算/费用、peak低于multiview/rerank及独立schema/permission/dependency检查近文；不补Alg1初始化或普胜recipe。review_jan15_delta非作者必要原源/actual owner PRE通过，root授单段窄锁；作者正文/完整局部邻接及本注已顺读，root非writer actual新正文、完整局部邻接与自身末注POST PASS。未核artifact/复现，非DAY。
 
 - `SF-2026-ARXIV-2602-16429` — Daily `2026-02-20`；[TabAgent exact-v1](https://arxiv.org/html/2602.16429v1) §3–6。2+2+2=6，trace-state/candidate→pointwise head的具体shortlist接口差额定点深入；成功轨迹标签不是独立GT，novel composition/Spotify反退与feature/训练/整链成本相邻。不采headline巨大局部倍数，未核实现或复现；root必要原源/actual owner PRE通过，root非作者实际正文/完整邻接/自身末注POST通过，窄锁释放，非日级Gate。
 
@@ -937,3 +963,5 @@ Primary-source 入口：
 - `SF-2026-ARXIV-2602-18702` — Daily `2026-02-25`；[exact-v1](https://arxiv.org/html/2602.18702v1) §3.5/4.1/4.5。2+1+2=5，last-clip 单独 consumer answerability 与同prefix边际gain责任差额定点深入；GT/最终正确gate、组合证据、medium反侧与视觉/checker/重试成本近文，不授因果或安全。root必要原源/actual owner PRE通过并授两段窄锁；作者实际正文、完整邻接与自身末注顺读，root 非作者 actual POST 通过，窄锁释放，未核实现或复现，非日级验收。
 
 - `SF-2026-ARXIV-2602-22764` — Daily `2026-02-28`；[exact-v1](https://arxiv.org/html/2602.22764v1) 必要blocks93–111/115–117/123–132，1+1+3=5；fresh非原packet作者实际必要原证/actual owner核，final_audit独立PRE通过后获窄锁。只采用复现成功→选择真实instrument trace及缺失值/覆盖接口，费用、直接反侧与原路径回退近正文。作者已实际顺读正文/完整邻接及自身末注，待root非写入者actual POST；未核artifact/复现，不授一般保证或日级。
+
+- `SF-2026-ARXIV-2602-11541` — Daily `2026-02-14`补查；[INTENT exact-v1](https://arxiv.org/html/2602.11541v1) §2–4/6。2+2+2=6，预算计划与即时可支付性差额定点深入：固定独立尝试假设下的 `c/ρ` 只作期望费用排序，真实调用前仍核报价、余额与权限；这是工程边界，不冒充作者实现的完整授权与硬预算保证。765条 BudgetStable、20种工具的合成价格、B=50/FR100 等条件不是生产定价与故障分布；工具预算不含全部模型、oracle、token 与等待费，模型失配及 cache 跳模拟不授安全。root 必要原证实际审阅、非作者独立 PRE 通过；root 写入两段，review_20260214 实际正文、完整邻接及自身末注 POST 通过，窄锁释放。未核 artifact 或复现实验，不授日级完成。 本轮补查事件的首次公开日期未证，必要Source/PRE/实际POST研究仍有效，但不计本日已确认新增成果；归属只按[本日日报§5](../../papers/2026/02/14/README.md#5-缺口与下一步)的57日期请求定点重开，不撤正文或补造公开日。

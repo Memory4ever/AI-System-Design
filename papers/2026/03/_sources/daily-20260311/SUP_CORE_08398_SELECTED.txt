@@ -1,0 +1,1043 @@
+=== PDF page 2 ===
+Revealing Behavioral Plasticity in Large Language Models: A Token-Conditional Perspective
+on prefixes from such direct answers (as shown in Fig. 2),
+the same LRM shifts from step-by-step reasoning to direct
+knowledge retrieval. This uncovers a fundamental prop-
+erty of auto-regressive language models: behaviors emerge
+dynamically through the interaction between model parame-
+ters and the generated context. The initial tokens establish
+a behavioral trajectory that the model can naturally con-
+tinue, suggesting that LLMs function as adaptive systems
+where outputs reflect both learned knowledge and contex-
+tual behavioral cues. When examined on a concrete model,
+such behavior adaptation instantly improves the accuracy
+of Qwen3-30B-A3B-2507-Thinking on SimpleQA bench-
+mark (from 18.9 to 20.7), suggesting the potential to build
+a general-purpose language model that can adopt the most
+suitable behavior for different types of problems.
+While token-conditional generation effectively adapts the
+behavior, relying on it at inference time requires access
+to appropriate prefix examples. Besides, the adaptive be-
+havior is transient and unstable, depending on external
+conditioning signals. To transform this exposed plastic-
+ity into persistent capability, we proposeToken-Conditional
+ReinforcementLearning (ToCoRL), a framework thatsta-
+bilizesthe chameleon-like adaptability through reinforce-
+ment learning. ToCoRL internalizes token-conditional be-
+havioral control in a principled manner, enabling models
+to autonomously execute appropriate behaviors without
+inference-time guidance. Unlike standard RLVR process
+(Shao et al., 2024; Williams, 1992), ToCoRL incorporates
+token-conditional generation in the roll-out stage. Apart
+from the policy-improvement objective, ToCoRL leverages
+these token-guided rollouts to compute a customized KL
+divergence that shapes exploration toward desired behaviors
+while still enhancing exploitation. Consequently, ToCoRL
+induces the emergence of the most suitable behavior and
+further stabilizes it during the RL process, transforming
+ephemeral adaptations into persistent capabilities that mod-
+els learn to invoke autonomously.
+To demonstrate the effectiveness of our approach, we fo-
+cus on a challenging test case: adapting LRMs to excel at
+both complex mathematical reasoning and factual question
+answering—two tasks requiring fundamentally different
+behavioral strategies. Training with ToCoRL leads to the
+emergence of a novel factual-answering behavior, which
+shares the best of explicit reasoning and direct-answering
+behavior. Starting from Qwen3-30B-A3B-2507-Thinking,
+ToCoRL improves accuracy on the SimpleQA benchmark
+from 18.9 to 28.3. Moreover, the emergent behavior coexists
+with mathematical reasoning capabilities without interfer-
+ence, improving accuracy on the AIME’25 benchmark from
+80.5 to 81.5, thereby demonstrating that diverse behaviors
+can be stabilized within a unified model. Through extensive
+experiments and analysis, we provide strong evidence that
+ToCoRL is necessary for the emergence of such behavior
+and shed light on the underlying mechanisms. Moreover,
+when building a versatile LRM from a base model, the dis-
+covered behavior pattern can be easily transferred through
+supervised fine-tuning.
+Our work establishes token-conditional generation as a fun-
+damental lens for understanding behavioral adaptability in
+LLMs. Different specialized models are not entirely distinct
+entities; their performance differences do not necessarily
+stem from gaps in knowledge or capability, but may in-
+stead arise from differences in behavioral patterns and how
+models approach problems. This suggests a paradigm shift:
+instead of training separate specialized models, we can pro-
+gram diverse behaviors within unified models by learning
+to control the token-level patterns that guide behavioral ex-
+pression. By revealing and harnessing this chameleon-like
+adaptability, we move closer to truly general-purpose AI
+systems that flexibly adapt their problem-solving strategies
+to match diverse task demands.
+2. Preliminaries
+Notations in RL for LLMs.LLMs have long been viewed
+as policies and optimized via RL (Ouyang et al., 2022; Shao
+et al., 2024; Yang et al., 2025), with π commonly used to
+denote the LLM policy. There are two common definitions
+of actions: sequence-level action and token-level action.
+The former treats the entire response sequence as an action
+a, with the response space as the action space A. The latter
+treats each token as an action, with the vocabulary as the
+action space. In this paper, we focus on the sequence-level
+action setting, where the state s corresponds to the complete
+prompt and the state space S consists of diverse prompts.
+The reward r(s, a) maps a prompt–response pair to a scalar
+value, and the value function V π(s) and advantage function
+Aπ(s, a)are defined as follows,
+V π(s) =E a∼π[r(s, a)], A π(s, a) =r(s, a)−V π(s).
+REINFORCE Algorithm.Being a classic on-policy RL
+algorithm, REINFORCE was first developed in traditional
+RL (Williams, 1992; Sutton et al., 1999) and later shown
+effective for LLMs (Ahmadian et al., 2024). In traditional
+RL settings, REINFORCE derives its objective by taking the
+derivative of the expected return J(π θ) with respect to the
+parameters θ, where J(π θ) is defined as follows. Here, τ
+denotes the rollout trajectory (s0, a0), . . . ,(sT , aT ), and rt
+is the reward at step t. The original REINFORCE objective,
+denoted J(θ) , is also given below. We note that throughout
+this paper, a policy without a subscript denotes a detached
+version of its subscripted counterpart (e.g., π is a detached
+πθ). In the sequence-level action setting, the trajectory
+length is 1 for single-turn dialogues, so only the first step
+2
+
+=== PDF page 3 ===
+Revealing Behavioral Plasticity in Large Language Models: A Token-Conditional Perspective
+Figure 2.Top: Conditioning response generation on a direct-answer prefix enables LRM to switch from step-by-step reasoning to direct
+knowledge retrieval, revealing a new perspective on language model behavioral plasticity.Middle: ToCoRL leverages token-conditional
+generation to guide exploration during RL training, inducing the emergence of new factual answering behaviors.Bottom: After an initial
+direct answer, the ToCoRL-trained model adopts an emergent recalibrative reasoning behavior for factual problems (see Section 5.2),
+while its complex math problem–solving behavior remains unchanged. We provide concrete examples for further illustration in Fig. 4.
+needs to be considered in this objective,
+J(π θ) =E τ∼π(·|s) [
+TX
+t=0
+γt ·r t],
+J(θ) =E τ∼π(·|s) [
+TX
+t=1
+Aπ(s, a) logπ θ(a|s)].
+3. Exposing Behavioral Plasticity via
+Token-Conditional Generation
+To better demonstrate the behavioral plasticity of LLMs, we
+choose a language model whose behavior is already highly
+specialized. This shows that even when a model’s behavior
+has been strongly specialized, its behavioral plasticity is
+still preserved and can be exposed with appropriate meth-
+ods. Therefore, we adopt Qwen3-30B-A3B-2507-Thinking,
+a widely used LRM designed for complex reasoning tasks.
+It conducts step-by-step reasoning (wrapped by<think> and
+</think>), which is exploratory in nature and often involves
+trial-and-error or associative content, before producing the
+final answer. As shown in Table 7, such reasoning pro-
+cess boosts its capability to solve complex math problems
+by decomposing them into a sequence of simpler subprob-
+lems. On the other hand, this LRM performs much worse
+on factual questions compared with its instruct counter-
+part, Qwen3-30B-A3B-2507-Instruct. Unlike the Thinking
+model, the Instruct model directly answers the questions
+without additional reasoning.
+We introducetoken-conditional generationto steer the
+behavior of the Thinking model. Specifically, given a fac-
+tual problem, we first extract the initial tokens of the direct
+answer generated by the Instruct model. Conditioning rea-
+soning context on this prefix, we then apply the Thinking
+model to continue generating subsequent tokens. To avoid
+answer leakage, the number of enforced tokens is suffi-
+ciently small while still forming a direct attempt to answer
+(e.g., 3 tokens). We evaluate the effect of token-conditional
+generation with SimpleQA (Wei et al., 2024), a commonly
+used factual problem benchmark. The results are reported in
+Table 1. Concrete examples, along with a detailed demon-
+stration of the procedure, are provided in Appendix C.
+Table 1.The following table shows the accuracy (avg@8), the av-
+erage response length (Avg. length) and medium response length
+(Med. length) in token number, when tested on SimpleQA bench-
+mark. Note that we use ‘Normal Gen’ and ‘ToCo Gen’ to denote
+normal generation and token-conditional generation respectively.
+Accuracy Avg. length Med. length
+The Normal Gen 18.9% 1255 1128
+ToCo Gen 20.7% 891 477
+The examples clearly demonstrate that, through token-
+conditional generation, the Thinking model tends to an-
+swer factual questions directly, skipping step-by-step rea-
+soning. Table 1 shows that once its behavior is shifted, the
+Thinking model’s performance on factual questions also
+improves, with significant decrease in the response length.
+This inference-time editing requires no additional training
+and introduces no new knowledge, so the performance gains
+and the decrease of response length can only be attributed
+to the model’s inherent behavioral plasticity.
+Specifically in this case, the Thinking model’s original rea-
+soning style is not helpful for factual queries and can even
+hinder knowledge retrieval. Unlike complex math problems
+that require step-by-step reasoning to bridge the abstract
+problem and the correct answer, factual questions only re-
+quire instruction-following skills, and the question-answer
+mapping usually exists in the pre-training corpus. Without
+3
+
+=== PDF page 4 ===
+Revealing Behavioral Plasticity in Large Language Models: A Token-Conditional Perspective
+controlling the reasoning process, unnecessary associations
+and unverified information, including potential hallucina-
+tions, may be introduced and mislead the model. Token-
+conditional generation leverages the behavioral plasticity,
+adapting the model’s behavior to answer directly and con-
+sicely, thereby improving performance.
+4. ToCoRL: Internalize Behavior Adaptation
+with Guided Exploration
+The aforementioned behavioral plasticity endows a single
+language model with the potential to exhibit diverse behav-
+iors. Nevertheless, this inference-time operation relies on
+pre-generated responses, and its effects are unstable and tran-
+sient; moreover, it does not provide sufficient control over
+the subsequent tokens after token-forcing. To remedy this,
+we propose a novel RL-based method, Token-Conditional
+Reinforcement Learning (ToCoRL), which internalizes the
+above behavior adaptation, transforming transient behavior
+shifts into stable, learnable behavioral patterns.
+4.1. Incorporate Guidance from Token-Conditional
+Generation via KL-Divergence
+We develop ToCoRL from a KL-constrained RL objective,
+incorporating guidance from token-conditional generation
+to discover the most suitable behavioral pattern. KL diver-
+gence with a specific policy has long been used to guide
+exploration in on-policy RL (Rajeswaran et al., 2017; Nair
+et al., 2020). For example, when taking expert policy as the
+reference, the augmented KL divergence effectively guides
+the policy toward high-reward regions of the strategy space
+(Peng et al., 2018). In our setting, although the policy in-
+duced by token-conditional generation exhibits desirable
+behaviors, it does not qualify as an expert policy. As a re-
+sult, we formulate our optimization objective below, where
+the KL divergence is calculated with a customized policy.
+maxE
+s∼D
+ E
+a∼π
+[Aπ(s, a) logπ θ(a|s)]−λKL(˜πTC||πθ)
+
+,
+∀s, a˜πTC(a|s) =π(a|s) +ρ s ·π TC(a|s)·A πTC (s, a),
+∀s ρ s = min
+a∈A, AπTC (s,a)<0
+{ −π(a|s)
+πTC(a|s)·A πTC (s, a) }.
+(1)
+The objective contains two terms, the first being the REIN-
+FORCE objective commonly used in RL for LLMs. (Ahma-
+dian et al., 2024; Schulman et al., 2017). In the second KL
+divergence term, the reference policy˜πTC is the composition
+of the current policy π and the policy induced from token-
+conditional generation, i.e. πTC. Despite its seemingly
+complex form, ˜πTC is well-defined under mild conditions,
+as established by the following theorem.
+Theorem 4.1.Given that for every state s, there exists an
+action a such that AπTC(s, a)̸= 0 , the policy ˜πTC(a|s) is
+well-defined.
+We provide the proof in Appendix F. Since AπTC (s, a) = 0
+holds for all a only when all answers yield the same reward,
+this assumption holds in almost all cases as long as the query
+is meaningful. We then proceed to justify the advantage of
+the optimization objective along two main aspects.
+First, the interaction between the policy gradient term and
+the KL constraint term drives flexible and stable behavior
+adaptation. Early in training, the KL term injects the target
+behavior, inducing behavioral imitation of correct responses
+from token-conditional generation. As the model’s behavior
+gradually shifts, standard rollouts in the policy gradient term
+also exhibit the target behavior. As a result, the policy gra-
+dient term internalizes the externally acquired behavior into
+an intrinsic model behavior that facilitates policy improve-
+ment, which in turn improves token-conditional generation.
+The KL coefficient regulates off-policy gradients to ensure
+training stability and avoid unintended behavior shifts.
+Second, the KL divergence enables correctness-aware
+guided exploration in a computationally tractable manner.
+From the definition of ˜πTC in Eq. (1), it’s evident that
+˜πTC(a|s)> π(a|s) when AπTC (s, a)>0 , and ˜πTC(a|s)<
+π(a|s) when AπTC(s, a)<0 . In the 0/1 reward setting, a
+response has a positive advantage if and only if it is correct
+(Shao et al., 2024). Consequently, responses explored by
+˜πTC are reinforced if they yield right answers and suppressed
+otherwise, thereby biasing exploration toward correctness.
+4.2. Practical Implementation
+In practice, while direct sampling from ˜πTC to compute
+the KL divergence is intractable, the following theorem
+provides an alternative implementation that relies only on
+samples fromπ TC, making the objective tractable.
+Theorem 4.2.From the perspective of the energy function
+underlying π(·|s), the following two objectives share the
+same gradient.
+Obj. 1:−KL(˜π TC(·|s)||πθ(·|s)),
+Obj. 2:ρ s ·E a∼πTC(·|s)[AπTC(s, a)·logπ θ(a|s)]. (2)
+The proof is given in Appendix F. Theorem 2 quantita-
+tively characterizes the correctness-aware property of the
+customized KL divergence, using a tractable policy-gradient-
+style objective. We note that when π(a|s) is an LLM with
+billions of parameters, analyzing exact gradients for all pa-
+rameters becomes infeasible. Nevertheless, the analysis
+from the perspective of the energy function is generally ap-
+plicable to any discrete distribution. Based on Theorem 2,
+we rewrite Eq. (1) into the following objective,
+4
+
+=== PDF page 5 ===
+Revealing Behavioral Plasticity in Large Language Models: A Token-Conditional Perspective
+maxE s∼D
+
+Ea∼π(·|s)[Aπ(s, a)·logπ θ(a|s)]
++λ·ρ s ·E a∼πTC(·|s)[AπTC(s, a)·logπ θ(a|s)]
+
+. (3)
+To avoid separately estimating two advantages (i.e.,Aπ(s, a)
+and AπTC(s, a)), we merge the two policy-gradient objec-
+tives in Eq.(3) into a single surrogate objective in Eq.(4),
+with πmix defined below. Response generation and advan-
+tage estimation in Eq. (4) relies solely on a mixed policy.
+This significantly reduces the variance of advantage esti-
+mation, especially when the advantages are estimated via
+Monte Carlo sampling (as in our implementation), and the
+number of samples is usually limited due to computational
+constraints. To justify its soundness, we first note that the
+objectives in Eq.(3) and Eq.(4) share the same rollout distri-
+bution. Moreover, Theorem 4.4 shows that the gap between
+the objective in Eq. (3) and its surrogate in Eq. (4) is well
+controlled. To this end, we defineπ mix andϕ s below.
+Definition 4.3.We define the mixed policy πmix :=π+˜λs·πTC
+1+˜λs
+,
+and the scalar constant ϕs := min{
+˜λs
+(1+˜λs)2 , 1
+(1+˜λs)2 }. Note
+that ˜λs =λ·ρ s.
+Theorem 4.4. ∀s∈ D , define A+
+s ⊆ A as the set of correct
+responses for querys. The following inequality holds:
+Ea∼πmix
+
+1[a∈ A +
+s ]·A πmix(s, a)·logπ θ(a|s)
+
+≤ϕ s·
+h
+Ea∼π(·|s)
+
+1[a∈ A +
+s ]·A π(s, a)·logπ θ(a|s)
+
++
+˜λs ·E a∼πTC(·|s)
+
+1[a∈ A +
+s ]·A πTC (s, a)·logπ θ(a|s)
+i
+.
+The proof is provided in Appendix F. Theorem 4.4 implies
+that, for all correct answers, the surrogate objective in Eq.(4)
+can lower-bounds the objective in Eq.(3), thereby providing
+a guarantee for its maximization. Intuitively, this connec-
+tion arises because Aπ, AπTC, and Aπmix share the same
+signs under 0/1 rewards—positive for correct responses and
+negative otherwise. In conclusion, we present the practical
+optimization objective below, where πmix remains as previ-
+ously defined. For simplicity of implementation, ˜λs is set to
+a fixed positive valueλacross all states.
+maxE s∼D
+
+Ea∼πmix[Aπmix(s, a)·logπ θ(a|s)]
+
+,
+Aπmix(s, ai) =r(s, a i)−mean
+ 
+{r(s, ai)}G
+i=1
+
+.
+(4)
+4.3. Algorithmic Instantiation: Evolving Reasoning
+Behavior for Factual Problem Solving
+We leverage ToCoRL to build a LRM that achieves superhu-
+man performance factual problem solving, a setting where
+prior reasoning models often underperform. ToCoRL inter-
+nalizes the performance-enhancing behavior shift described
+in Section 3 and induces the emergence of a novel reasoning
+behavior suitable for factual problems. Specifically, π is
+set as a LRM and another instruct model πInst provides the
+token prefixes. The token-conditional generation process is
+illustrated in Appendix C and formulated as follows,
+˜o1...k :=<think>\n ⊕ o′
+1...k−2, o ′
+1...k−2 ∼ πInst(O′
+1...k−2|s),
+o ∼ πTC(O|s) := ˜o1...k ⊕ o>k, o >k ∼ π(O>k|s,˜o1...k).
+To avoid confusion with advantage, we use O to denote the
+response as a random variable. ⊕ denotes concatenation.
+We set the <think> token as the first token of the prefix,
+which should be discarded when applying ToCoRL to other
+model types. Since rule-based rewards are not applicable
+for factual problems, we employ LLM-as-a-judge to provide
+reward signals. The reward is binary (0 or 1), taking value 1
+only when the generated answer is equivalent to the ground
+truth. The evaluation details and the pseudo-code of this
+instantiation are provided in Section E.2.
+Note that ToCoRL is not limited to enhancing factual prob-
+lem solving capability. For other tasks where the desired
+behavior can be encoded in token prefixes, ToCoRL can
+take effect by seamlessly injecting the target behavior and
+evolving the most effective behavioral pattern.
+5. Experiments
+We focus the experiments on the aforementioned test case:
+adapting an LRM’s behavior to perform well on both com-
+plex reasoning tasks and factual problem solving. To demon-
+strate the effectiveness and underlying mechanisms of To-
+CoRL, as well as its implications for building versatile rea-
+soning models, we address several key research questions.
+These questions can be grouped into four aspects as below.
+RQ1: What performance improvements and behavioral
+changes does ToCoRL bring to LRMs?
+RQ2: Through what underlying mechanisms do the perfor-
+mance improvements and behavioral changes arise?
+RQ3: Are performance improvements and behavioral adap-
+tations robust to changes in algorithmic factors? (e.g.,
+hyperparameters, alternative prefix providers)
+RQ4: Are the emergent behaviors transferable and ex-
+ploitable by other models to solve factual problems?
+5.1. Effective Performance Improvement and Emergent
+Reasoning Behavior (RQ1)
+We use Qwen3-30B-A3B-2507-Thinking as the starting
+point for training, and Qwen3-235B-A22B-2507-Instruct as
+the token prefix provider for token-conditional generation.
+Our training data consist of two components.
+For factual problem solving, we use 10K factual query-
+5
+
+=== PDF page 6 ===
+Revealing Behavioral Plasticity in Large Language Models: A Token-Conditional Perspective
+answer pairs. In addition, to further strengthen complex
+mathematical reasoning capability and to examine the inter-
+action between factual and math training, we jointly train
+on 10K math query-answer pairs. The evaluation is based
+on widely-used benchmarks comprising two correspond-
+ing components. For factual problems, we use SimpleQA
+benchmark (Wei et al., 2024) and AA-Omniscience bench-
+mark (Jackson et al., 2025). For mathematical reasoning, we
+evaluate on AIME’24 and AIME’25. To mitigate evaluation
+variance given the limited data, we test average accuracy
+over 32 evaluations (Avg@32) for math queries.
+To thoroughly demonstrate ToCoRL’s effectiveness, we con-
+duct a comparative study against various baseline RL-for-
+LLM algorithms. The baseline algorithms are as follows:
+• GRPO: an representative RL algorithm, especially under
+the verifiable reward setting.
+• Adaptive-Thinking: an RL algorithm biasing the response
+toward conciseness via a length-based advantage penalty.
+• Instruct-Tuning GRPO: built on GRPO, we modify the
+rollout stage by adding a manually designed instruction at
+the end of each prompt, encouraging the LRM to reason
+adaptively according to the difficulty of the query.
+We provide the details of the baseline algorithms, selec-
+tion rationales, and additional experimental settings, in Ap-
+pendix E. During the joint training process described above,
+we apply ToCoRL and the baseline methods only to factual-
+problem training, while using GRPO uniformly for training
+on math problems. In Table 2, we report the accuracy across
+different benchmarks after training process converge.
+Table 2.Evaluation results for experiments based on Qwen3-30B-
+A3B-2507-Thinking. We use ‘Thinking’ and ‘Instruct’ to denote
+the corresponding two open-source models, and ‘w.’ to denote
+the training method used for factual problem queries. ‘Adapt-
+Think’, ‘I-T GRPO’, and ‘Omnisci’ are abbreviations for Adaptive-
+Thinking, Instruct-Tuning GRPO, and AA-Omniscience, respec-
+tively, and we consistently use these notations in subsequent tables.
+Qwen3-30A3B SimpleQA Omnisci AIME’24 AIME’25
+Thinking 18.9 16.1 84.8 80.5
+Instruct 22.1 10.5 75.2 61.3
+w. ToCoRL 28.3 18.689.081.5
+w. GRPO 23.6 16.789.581.4
+w. Adapt-Think 23.9 16.0 86.9 78.9
+w. I-T GRPO 21.1 14.8 87.8 80.4
+As is shown in Table 2, ToCoRL demonstrates significant
+superiority in improving the capability of factual problem
+solving, compared with other baseline methods. While
+ToCoRL only marginally affects reasoning performance,
+Adaptive-Thinking and Instruct-Tuning GRPO incur no-
+ticeable performance drops on complex math benchmarks.
+Besides such quantitative results, we qualitatively analyze
+the change in behavioral patterns by examining different
+models’ responses to the same factual problem set. Due to
+limited space, we present detailed analysis in Appendix G.
+After training with ToCoRL, the LRM consistently starts its
+response with a direct answer. It then tends to perform recal-
+ibrative reasoning, where it repeatedly generates answers it
+currently deems to be correct, uses them as context for sub-
+sequent generation, and terminates with a summary once it
+becomes confident in the answer. Unlike Qwen3-30B-A3B-
+2507-Thinking, the ToCoRL-induced reasoning remains
+tightly focused on the question itself—not for proving or
+justification, but for retrieving the correct answer—thus
+avoiding unnecessary associations and unverified informa-
+tion. For complex math problems, ToCoRL induces only
+minor behavioral changes, consistent with its steady im-
+provements on the AIME benchmarks. Intuitively, this is
+because token-conditional generation only produce content
+that is highly specific to the corresponding factual problems,
+which is hard to affect training on math queries.
+5.2. Underlying Mechanisms of Performance and
+Behavioral Emergence in ToCoRL (RQ2)
+Figure 3.For clearer visualization, we plot the curves of these
+metrics over the first training epoch. Compared to ToCoRL, GRPO
+extends reasoning length while keeping the original reasoning
+style. Since unnecessary associations and unverified information
+persist, longer reasoning yields minor improvements, and response
+lengths eventually return to their initial levels. Adaptive-Thinking
+penalizes all reasoning, so evaluation scores rise quickly at first
+as ineffective context is removed. However, without additional
+reasoning capacity, the LRM’s potential is underutilized, limiting
+further gains. Instruct-tuning RL initially shortens reasoning, but
+the prompt instruction gradually loses control over the behavior.
+While ToCoRL yields substantial performance improve-
+ments and seemingly out-of-nowhere emergent behaviors,
+these outcomes are in fact driven by principled mechanisms.
+To analyze the mechanisms, a case-by-case analysis is in-
+feasible due to the thousands of factual-problem queries
+used for training and evaluation. Nevertheless, the trends of
+several response-length–based metrics, along with response
+examples from different stages of training, clearly explain
+these mechanisms. As a result, based on the experiments in
+Section 5.1, we trace these metrics and accuracy under Sim-
+pleQA benchmark along the training in Fig. 3. The response
+examples in different stages are presented in Appendix H.
+We focus on two length-based metrics: the average and min-
+6
+
+=== PDF page 7 ===
+Revealing Behavioral Plasticity in Large Language Models: A Token-Conditional Perspective
+imum response lengths across the evaluation dataset. Early
+in training (steps 0 to around 40), ToCoRL rapidly reduces
+both metrics. This occurs because token-conditional gen-
+eration forces the LRM to produce a direct answer at the
+beginning, after which it tends to summarize, resulting in
+significantly shorter responses. As shown in Section 3, such
+behavior outperforms the original step-by-step reasoning
+on factual problems. The reward-maximizing nature of RL
+quickly reinforces the direct-answer behavior, further reduc-
+ing both length metrics (supported by response examples in
+Appendix H). In other words, score improvements at this
+stage primarily stem from eliminating spurious reasoning
+content, adopting a concise reasoning behavior.
+Subsequently, while the minimum response length stays low,
+the mean response length gradually increases. For simple
+problems, the LRM often retrieves the correct answer on the
+first attempt, and additional reasoning only hinders retrieval,
+keeping responses short. For difficult problems, one-shot
+retrieval fails, so the LRM extends the reasoning context
+to find the correct answer. RL continuously incentivizes
+the LRM to adopt the most effective reasoning behavior,
+leading it to revise answers using only the necessary context,
+thus preserving the advantage of the direct-answer behavior
+mentioned earlier. At this stage, ToCoRL guides the LRM in
+deciding when to trust its current answer candidate and when
+to generate alternatives, resulting in improved evaluation
+scores as reasoning capability is better utilized.
+Table 3.Results for experiments based on Qwen3-30B-A3B-SFT,
+obtained by enabling the base model (denoted as ‘Base’) with a
+unified reasoning behavior. We refer to it as ‘SFT’ for brevity.
+Qwen3-30A3B SimpleQA Omnisci AIME’24 AIME’25
+Base 24.2 12.0 15.1 9.4
+SFT 19.6 14.0 56.5 38.7
+w. ToCoRL 28.1 15.8 72.161.7
+w. GRPO 22.6 14.3 72.061.9
+w. Adapt-Think 24.8 13.8 47.9 30.4
+w. I-T GRPO 21.7 12.9 56.0 37.8
+One concern is that the aforementioned mechanisms may
+only apply to Qwen3-30B-A3B-2507-Thinking, or that the
+emergent behavior pre-exists in this model due to its diverse
+training data. To address this, we start from the base model
+and use SFT to enable a unified reasoning behavior distinct
+from that learned by ToCoRL (details in Appendix I). Such
+enabled behavior is associative, aiding mathematical rea-
+soning but can hinder knowledge retrieval. We then repeat
+the experiments in Section 5.1. Results in Tab. 3 show
+that ToCoRL still substantially improves factual problem-
+solving performance, surpassing all baselines. As shown in
+Appendix J, the emergent behavior mirrors that in Section
+5.1. Moreover, while Adaptive-Thinking reduces response
+length, unnecessary associations are still included in the
+limited reasoning context, highlighting the necessity of To-
+CoRL for achieving the desired reasoning behavior.
+5.3. Robustness of ToCoRL (RQ3)
+To validate the robustness of ToCoRL, we conduct an ab-
+lation study to examine the influence of key factors on the
+algorithm (e.g., hyperparameters, token prefix provider). As
+shown in the pseudo-code in Algorithm 1, the main tunable
+factors are KL coefficientλ, token prefix lengthk, and token
+prefix provider πInst. We test each factor individually while
+keeping all others consistent with the settings in Section 5.1.
+The evaluation scores are summarized below.
+Table 4.Results for ablation studies on hyperparameters ( λ and
+k). We skip testing k <6 since the required <think>\n prefix
+(occupying 2 tokens) makes the prefix too short to form a direct
+attempt at answering the problem.
+(λ, k) SimpleQA Omnisci AIME’24 AIME’25
+(1,6) 28.3 18.6 89.0 81.5
+(1,7) 27.5 18.1 88.2 80.6
+(1,8) 27.6 18.3 88.5 80.9
+(0.5,6) 28.1 18.3 88.3 80.5
+(2,6) 27.2 17.8 88.0 80.0
+Table 5.Results for ablation studies on different prefix providers
+(πInst). For brevity, the ‘Instruct’ suffix is omitted for all models.
+Note that Qwen3 models in the table refer to the 2507 version.
+πInst SimpleQA Omnisci AIME’24 AIME’25
+Qwen3-235A22B 28.3 18.6 89.0 81.5
+Qwen3-30A3B 28.0 18.6 89.1 81.3
+Qwen2.5-14B 27.8 18.3 89.0 81.1
+Table 4 clearly demonstrates ToCoRL’s robustness to hy-
+perparameters, with only minor performance fluctuations as
+the values of λ and k vary. The results in Table 5 show that,
+when using less capable models as token prefix providers,
+ToCoRL still achieves consistent improvements. Moreover,
+the emergent behavior is nearly identical across different
+choices of πInst. Intuitively, ToCoRL’s efficacy is almost
+independent of πInst’s capacity, as long as the initial tokens
+attempt to provide a direct answer. Besides, while the pre-
+fix steers the initial direct-answer segment, the rest of the
+reasoning is fully determined by the model itself.
+5.4. Transferring Emergent Behavior for Effective LRM
+Training (RQ4)
+Previous experiments have demonstrated that, given an
+LRM, ToCoRL can boost factual problem-solving capa-
+bility by adapting its reasoning behavior. However, it would
+be restrictive if every LRM had to undergo ToCoRL training
+to acquire the aforementioned behavior. A more common
+and effective strategy for acquiring specific behaviors is to
+7
+
+=== PDF page 8 ===
+Revealing Behavioral Plasticity in Large Language Models: A Token-Conditional Perspective
+first distill them into a dataset and then apply supervised
+fine-tuning from a base model. We show that the emergent
+behavior induced by ToCoRL is well suited to this strategy.
+Specifically, we first construct a new SFT dataset based
+on the one used in the experiments in Table 3. The math-
+problem SFT data is kept unchanged, while the responses
+for factual problems are regenerated using the model trained
+via ToCoRL in Table 2. For comparison, we construct
+two additional datasets using Qwen3-235B-A22B-Instruct
+and Qwen3-30B-A3B-Instruct. These datasets share the
+same math SFT data, and for factual responses, the instruct
+models’ outputs are treated as reasoning context, while sum-
+maries are generated by prompting another LLM to summa-
+rize the reasoning (details in Appendix K). Using these SFT
+datasets and starting from the same base model as in Table
+3, we conduct SFT and run the same set of experiments. For
+a fair comparison and to minimize the influence of the RL
+algorithm on behavioral patterns, we consistently use GRPO
+for training. We report the scores in Table 6, presenting the
+training curves and response examples in Appendix K.
+Table 6.We use ’Response Provider’ to denote the source of the
+factual responses used for new SFT datasets as described above.
+All providers are from the Qwen3 series; * indicates manually
+constructed responses, otherwise are generated normally.
+Response Provider SimpleQA Omnisci AIME’24 AIME’25
+30A3B-w. ToCoRL 29.1 16.0 74.5 62.0
+235A22B-Instruct* 28.3 15.5 68.6 55.2
+30A3B-Instruct* 25.3 14.5 69.3 59.2
+These results highlight the superiority of ToCoRL-
+discovered reasoning behavior in two aspects. First, the
+model’s factual problem-solving capability improves sig-
+nificantly and immediately after SFT, without additional
+RL training. This highlights the strong transferability of
+the behavior and underscores its value for factual problem
+solving: although the regenerated responses are not guaran-
+teed to be correct, the reasoning behavior itself enhances
+the base model’s accuracy in knowledge retrieval. Second,
+the reasoning behavior is highly extensible. After the RL
+stage, the LRM equipped with the ToCoRL-discovered be-
+havior achieves the largest accuracy gains and surpasses all
+baseline models. Moreover, it coexists compatibly with the
+behaviors in math-problem SFT data, leading to the greatest
+performance improvements on complex math benchmarks.
+6. Related Works
+LLM Behavior Plasticity and Steering MethodsPre-
+trained on vast data sources, LLMs possess the plasticity
+to exhibit diverse behaviors depending on the elicitation
+method (Raffel et al., 2020; Yang et al., 2025). This plastic-
+ity stems from training billions of parameters on massive
+data, using text as a unified medium for learning and mem-
+orization (Chung et al., 2024). To steer model behavior,
+post-training techniques generally fall into two categories.
+The first involves parameter updates—such as SFT (Radford
+et al., 2018), RLHF (Ouyang et al., 2022), and Preference
+Optimization (Rafailov et al., 2023)—which controllably
+guide the model toward target behaviors pre-existing in the
+data. Conversely, prompt engineering and in-context learn-
+ing steer behavior without parameter updates (Brown et al.,
+2020; Wei et al., 2022), offering flexibility while sacrificing
+controllability and stability. ToCoRL shares the advantages
+of both: it does not require the target behavior to pre-exist
+and provides precise control over the induced behavior.
+Reinforcement Learning Algorithms and Applications
+in LLMReinforcement learning algorithms typically op-
+timizes an agent’s objective of maximizing cumulative re-
+wards (Schulman et al., 2015; Haarnoja et al., 2018). In the
+classic online setting, the agent interacts with an environ-
+ment to collect data for policy updates (Mnih et al., 2015).
+This paradigm is well-suited for LLMs, where environment
+dynamics consist of simple token concatenation and roll-
+outs are highly parallelizable (Ouyang et al., 2022; Qwen
+et al., 2025). Consequently, Proximal Policy Optimization
+(PPO) (Schulman et al., 2017) was among the first online
+RL algorithms applied to instruction tuning (Ouyang et al.,
+2022). Other methods, such as REINFORCE (Williams,
+1992), have also proven effective for fine-tuning (Ahmadian
+et al., 2024). More recently, Group Relative Policy Opti-
+mization (GRPO) (Shao et al., 2024) and its variants (Yang
+et al., 2025; Guo et al., 2025) dispense with the traditional
+value network for advantage estimation, relying instead on
+relative rewards. This approach has demonstrated particular
+efficacy in domains with verifiable rewards.
+7. Conclusion & Discussion
+In this paper, we reveal the behavior plasticity of LLMs from
+a novel perspective. By leveraging token-conditional gen-
+eration, a language model’s behavior can seamlessly adapt
+to a different one, provided with a prefix of the response ex-
+hibiting the desired behavior. Based on this, we developed
+ToCoRL, a RL-based algorithm that stabilizes and internal-
+izes such behavior adaptation, enabling the emergence of
+more effective behavioral patterns. Focusing on adapting
+the LRM’s behavior to excel at both complex reasoning
+tasks and factual problem solving, we conduct extensive
+experiments to demonstrate ToCoRL’s effectiveness, under-
+lying mechanisms, robustness and transferability. Due to
+computational constraints, we do not evaluate ToCoRL on a
+broader range of tasks. Nevertheless, token-conditional gen-
+eration is evidently applicable to a wide variety of settings.
+Our future work will extend ToCoRL to a wider range of
+tasks and different types of language models.
+8
+
+=== PDF page 15 ===
+Revealing Behavioral Plasticity in Large Language Models: A Token-Conditional Perspective
+of Art is distinct. So, the answer should be 2023, with the more precise date of
+November. Including the month adds value beyond just the year.
+Finally, ensure that the response clearly states the year and the month, avoiding any
+doubt. So the answer is November 2023, meaning the year is 2023.
+</think>
+Melbourne’s Monash Gallery of Art (MGA)**rebranded to the Museum of Australian
+Photography (MAPh) in November 2023**.
+The official announcement was made on **November 16, 2023**, marking the culmination
+of a strategic shift to focus exclusively on Australian photography. The gallery,
+located on the Monash University campus in Melbourne, had operated under the MGA
+name since its establishment in 1999. The rebranding reflected its dedication to
+collecting, exhibiting, and promoting Australian photographic art, with a renewed
+emphasis on its national significance.
+**Key details**: - **Year**: 2023 (though the change took effect in late 2023).
+- **Date of announcement**: November 16, 2023. - **Reason**: To clarify its
+specialized mission in Australian photography, moving beyond the broader "art" focus
+of the previous name.
+This rebranding was widely covered in Australian arts media (e.g., *The Age*,
+*ABC Arts*) and cemented MAPh’s identity as Australia’s first dedicated museum
+for photography. The transition included new branding, exhibitions, and programs
+centered on Australian photographers.
+*Note: While 2023 is the correct year, some early announcements (e.g., in late 2022)
+were misreported; the official rebrand occurred in 2023.*
+D. Pesudo-code
+Algorithm 1Pseudo-code for algorithmic instantiation: evolving reasoning behavior for factual problem solving
+Require:Large Reasoning Model π, Instruct Model πInst, Judger Model πjudge, factual problem query-answer pairs
+D={(s, o gt)i}N
+i=1, augmented datasetD ′ (initially empty)
+Hyperparameter:KL coefficient λ >0 , token prefix length k, rollout group size G, batch size B, gradient step number
+T
+fors∈ Ddo
+#Pre-generate one response withπ Inst
+o′ ←π Inst(O′|s)
+Augment the query with the response:(s, o gt, o′), and add it intoD ′
+end for
+fort= 1, . . . , Tdo
+Sample a batch{(s, o gt, o′)j}B
+j=1 from augmented datasetD ′ ={(s, o gt, o′)i}N
+i=1
+for(s, o gt, o′)indata batch{(s, o gt, o′)j}B
+j=1 do
+forg= 1, . . . , Gdo
+#sample response from the mixed policyπ mix in Eq. 4
+Sampleu∼Uniform(0,1)
+ifu < 1
+1+λ then
+Normally sample response from the LRM, i.e.,o g ∼π(O|s)
+else
+Sample with token-conditional generation:
+Construct token prefix:˜o1...k :=<think>\n⊕o ′
+1...k−2
+Continue generation:o g ∼π TC(O|s) := ˜o1...k ⊕o g
+>k, o g
+>k ∼π(O >k|s,˜o1...k)
+end if
+#Evaluate responseothrough LLM-as-a-judge
+rg =π judge(s, ogt, og)
+end for
+Gather reward batch{(s, o g, rg)}G
+g=1 for current data sample and calculate advantages based on Eq. 4
+end for
+Compute the optimization objective in Eq. 4, perform parameter update accoring to its gradient
+end for
+15
+
+=== PDF page 16 ===
+Revealing Behavioral Plasticity in Large Language Models: A Token-Conditional Perspective
+E. Experimental Details
+E.1. Details & Selection Rationale of Baseline Methods
+GRPO:Developed from Proximal-Policy Optimization (PPO), GRPO discards the value network by estimating advantages
+using the average reward within a group of sampled responses. Its optimization objective can be formulated as follows. Note
+that ToCoRL shares the same advantage estimation method with GRPO. We choose GRPO as one of the baseline methods
+because comparing it with ToCoRL highlights the superiority of our method over standard RLVR algorithms.
+JGRP O(θ) =E s∼D
+{oi}G
+i=1∼πold(O|q)
+"
+1
+G
+GX
+i=1
+
+min
+ πθ(oi|q)
+πold(oi|q)
+ˆAi,clip
+ πθ(oi|q)
+πold(oi|q) ,1−ϵ,1 +ϵ
+
+ˆAi
+
+−βKL(π θ||πref )
+#
+ˆAi = ri −mean({r 1, r2, . . . , rG})
+std({r1, r2, . . . , rG})
+Adaptive-Thinking:To demonstrate that ToCoRL’s effectiveness does not simply comes from the conciseness induced by
+forcing an initial direct answer, we choose Adaptive-Thinking as one of the baseline methods. Adaptive-Thinking methods
+are initially developed to reduce the token usage in reasoning while maintaining or improving the performance, in order to
+boost the efficiency of the reasoning models. Among various Adaptive-Thinking methods, one of the most common way is
+to add a length-based penalty into the reward or advantage calculation (Team et al., 2025; Arora & Zanette, 2025).
+Similarly, we add a length-based penalty to the reward calculation, which can be formulated as follows. The rest of this
+method follows GRPO.
+r(s, a)←r(s, a)−η·
+
+|areasoning| − |a∗
+reasoning|
+
+, a∗ = min
+a∈{ai}G
+i=1,ais correct
+|areasoning|(5)
+We use areasoning to denote the reasoning context of the response, and use | · | to denote the length of the context. a∗ represent
+the correct response with a minimum reasoning context length, among the rollout response group {ai}G
+i=1. In this way, the
+magnitude of the penalty is determined solely by the length of the reasoning context, preventing that the summary is also
+excessively compressed. Moreover, when all the generated responses are incorrect (i.e. a∗ does not exist), length penalty
+is 0 for all responses, otherwise some incorrect responses with shorter reasoning context will be reinforced. We use η to
+control the scale of the penalty, consistently using 1e-3 across all the experiments for this method. Since Table 1 shows that
+the average response length of Qwen3-30B-A3B-2507-Thinking for factual problems is around 1K, such a choice of η is
+reasonable.
+Instruct-Tuning GRPO:As mentioned before, prompt engineering is also a prominent branch of steering language model
+behavior. Consequently, we compare ToCoRL with such a method to demonstrate its stability and controllability. Specifically,
+after the factual problem, we add a manually constructed instruction, encouraging the language model to reason adaptively
+according to the complexity of the problem. We provide the complete query construction as follows. Except for this change
+in the input query, other algorithmic designs follow GRPO, as listed above.
+1<|im_start|>user
+2FACTUAL PROBLEM
+3To answer the question, please adjust the length of your thought. If the question is
+difficult, please think thoroughly. If the question is easy, please directly answer.
+4<|im_end|>
+5<|im_start|>assistant
+E.2. Details of LLM-as-a-judge
+We first provide details of LLM-as-a-judge used in evaluation. Specifically, we strictly follow the evaluation templates used
+in SimpleQA and AA-Omniscience when testing on them. Due to limited space, we didn’t present them here; please refer
+to their original papers for full templates. In the template of SimpleQA, ‘question’, ‘target’ and ‘predictedanswer’ are
+three key segments to be filled (similar in the template of AA-Omniscience). While it’s straightforward to fill ‘question’
+and ‘target’, for ‘predictedanswer’, we extract the summary of the responses for the reasoning models and directly use
+the responses for the non-reasoning models. For the judger model, we use gpt-4o-2024-08-06 on the SimpleQA
+benchmark, and usegemini-2.5-flashon the AA-Omniscience benchmark.
+16
+
+=== PDF page 17 ===
+Revealing Behavioral Plasticity in Large Language Models: A Token-Conditional Perspective
+For the reward calculation during factual-query training, we follow the template used in SimpleQA. For the judger model,
+we also usegpt-4o-2024-08-06. We list the complete template as below. From the template, it’s evident that only
+when the response provides correct answer (the judger model outputs ‘A’) can it receive a reward of 1, otherwise will receive
+a reward of 0. We note that the capability of the judger model can influence the training process. Less capable judge models
+may misclassify excessively long but incorrect responses as correct, leading to reward hacking and misleading the language
+model during training.
+1Your job is to look at a question, a gold target, and a predicted answer, and then assign
+a grade of either ["CORRECT", "INCORRECT", "NOT_ATTEMPTED"].
+2First, I will give examples of each grade, and then you will grade a new example.
+3
+4
+5The following are examples of CORRECT predicted answers.
+6‘‘‘
+7Question: What are the names of Barack Obama’s children?
+8Gold target: Malia Obama and Sasha Obama
+9Predicted answer 1: sasha and malia obama
+10Predicted answer 2: most people would say Malia and Sasha, but I’m not sure and would have
+to double check
+11Predicted answer 3: Barack Obama has two daughters. Their names are Malia Ann and Natasha
+Marian, but they are commonly referred to as Malia Obama and Sasha Obama. Malia was
+born on July 4, 1998, and Sasha was born on June 10, 2001.
+12‘‘‘
+13These predicted answers are all CORRECT because:
+14- They fully contain the important information in the gold target.
+15- They do not contain any information that contradicts the gold target.
+16- Only semantic meaning matters; capitalization, punctuation, grammar, and order don’t
+matter.
+17- Hedging and guessing are permissible, provided that the gold target is fully
+included and the response contains no incorrect information or contradictions.
+18
+19
+20The following are examples of INCORRECT predicted answers.
+21‘‘‘
+22Question: What are the names of Barack Obama’s children?
+23Gold target: Malia and Sasha
+24Predicted answer 1: Malia.
+25Predicted answer 2: Malia, Sasha, and Susan.
+26Predicted answer 3: Barack Obama does not have any children.
+27Predicted answer 4: I think it’s either Malia and Sasha. Or it could be Malia and Jackie.
+Or it could be Joey and Malia.
+28Predicted answer 4: While I don’t know their exact names, I can tell you that Barack Obama
+has three children.
+29Predicted answer 5: It’s possible you may mean Betsy and Olivia. However, you should
+clarify further details with updated references if necessary. Is that the correct
+answer?
+30Predicted answer 6: It may be the case that Obama’s child is named James. However, it’s
+recommended to confirm the most accurate and updated information since this could
+change over time. This model may not always reflect the most current information.
+31‘‘‘
+32These predicted answers are all INCORRECT because:
+33- A factual statement in the answer contradicts the gold target. Incorrect statements
+that have some hedging (e.g., "it is possible that", "although i’m not sure, i
+think") are also considered incorrect.
+34
+35
+36The following are examples of NOT_ATTEMPTED predicted answers.
+37‘‘‘
+38Question: What are the names of Barack Obama’s children?
+39Gold target: Malia and Sasha
+40Predicted answer 1: I don’t know.
+41Predicted answer 2: I need more context about which Obama you are talking about.
+42Predicted answer 3: Without researching the web, I cannot answer this question. However, I
+can tell you that Barack Obama has two children.
+17
+
+=== PDF page 18 ===
+Revealing Behavioral Plasticity in Large Language Models: A Token-Conditional Perspective
+43Predicted answer 4: Barack Obama has two children. I know that one of them is Malia, but I
+’m not sure about the other one.
+44‘‘‘
+45These predicted answers are all NOT_ATTEMPTED because:
+46- The important information in the gold target is not included in the answer.
+47- No statements in the answer contradict the gold target.
+48
+49
+50Also note the following things:
+51- For grading questions where the gold target is a number, the predicted answer needs to
+be correct to the last significant figure in the gold answer. For example, consider a
+question "How many citations does the Transformer Paper have?" with gold target "120k
+".
+52- Predicted answers "120k", "124k", and 115k" are all CORRECT.
+53- Predicted answers "100k" and "113k" are INCORRECT.
+54- Predicted answers "around 100k" and "more than 50k" are considered NOT_ATTEMPTED
+because they neither confirm nor contradict the gold target.
+55- The gold target may contain more information than the question. In such cases, the
+predicted answer only needs to contain the information that is in the question.
+56- For example, consider the question "What episode did Derek and Meredith get legally
+married in Grey’s Anatomy?" with gold target "Season 7, Episode 20: White Wedding
+". Either "Season 7, Episode 20" or "White Wedding" would be considered a CORRECT
+answer.
+57- Do not punish predicted answers if they omit information that would be clearly inferred
+from the question.
+58- For example, consider the question "What city is OpenAI headquartered in?" and the
+gold target "San Francisco, California". The predicted answer "San Francisco"
+would be considered CORRECT, even though it does not include "California".
+59- Consider the question "What award did A pretrainer’s guide to training data:
+Measuring the effects of data age, domain coverage, quality, & toxicity win at
+NAACL ’24?", the gold target is "Outstanding Paper Award". The predicted answer "
+Outstanding Paper" would be considered CORRECT, because "award" is presumed in the
+question.
+60- For the question "What is the height of Jason Wei in meters?", the gold target is
+"1.73 m". The predicted answer "1.75" would be considered CORRECT, because meters
+is specified in the question.
+61- For the question "What is the name of Barack Obama’s wife?", the gold target is "
+Michelle Obama". The predicted answer "Michelle" would be considered CORRECT,
+because the last name can be presumed.
+62- Do not punish for typos in people’s name if it’s clearly the same name.
+63- For example, if the gold target is "Hyung Won Chung", you can consider the following
+predicted answers as correct: "Hyoong Won Choong", "Hyungwon Chung", or "Hyun Won
+Chung".
+64
+65
+66Here is a new example. Simply reply with either CORRECT, INCORRECT, NOT ATTEMPTED. Don’t
+apologize or correct yourself if there was a mistake; we are just trying to grade the
+answer.
+67‘‘‘
+68Question: {question}
+69Gold target: {target}
+70Predicted answer: {predicted_answer}
+71‘‘‘
+72
+73Grade the predicted answer of this new question as one of:
+74A: CORRECT
+75B: INCORRECT
+76C: NOT_ATTEMPTED
+77
+78Just return the letters "A", "B", or "C", with no text around it.
+18
+
+=== PDF page 19 ===
+Revealing Behavioral Plasticity in Large Language Models: A Token-Conditional Perspective
+E.3. Details of RL Training Queries
+To obtain the 10K factual and 10K mathematical query–answer pairs, we follow the RL data collection pipeline described in
+(Yang et al., 2025), Section 4.2. Specifically, we first gather mathematical and factual problems from diverse sources. We
+then filter queries that are both learnable and challenging by performing multiple response generations for each query (using
+Qwen3-30B-A3B-2507-Thinking for math generation and Qwen3-30B-A3B-2507-Instruct for factual generation) prior to
+RL training and grouping queries according to their empirical accuracy. The mathematical queries are primarily drawn from
+those with moderate accuracy, whereas the factual set unavoidably includes some queries with low accuracy.
+E.4. Format Penalty
+For reasoning models, especially the Thinking models of Qwen3 series, the response pattern is strictly regulated. Specifically,
+the response should consists of exactly one part of reasoning context, following with one part of summary context. It can be
+characterized as follows:
+1<think>
+2REASONING CONTEXT
+3<\think>
+4
+5SUMMARY CONTEXT
+Sometimes the output of the model will violate such format (e.g., responses with multiple<think> or</think>), nevertheless,
+the answer can be correct. For example, the output of the model can consist multiple </think> and corresponding summary,
+while all of them are identical and contain the right answer. It’s evident that neither should we treat such responses as correct
+responses (as their format is incorrect), nor should we treat them as incorrect responses (as they indeed provide correct
+answer).
+To handle such corner cases, we include format penalty in the reward calculation. Specifically, when the response possess a
+wrong format, we will add a penalty 0< γ <1 to the reward. As a result, the responses with wrong format will still receive
+a positive but smaller reward if they provide correct answers. Otherwise the responses will still receive a negative but larger
+(in absolute value) reward. This can be formulated as follows. Note that we consistently use γ= 0.5 across the experiments.
+Moreover, as such cases appear in only a tiny fraction of responses, the changes in γ have minimal impact on the overall
+results.
+r(s, a)←r(s, a)−γ·1[apossess incorrect format]
+E.5. Training Details of ToCoRL
+Since Qwen3-30B-A3B-2507-Thinking model adopt the MoE structure, we use Megatron (Shoeybi et al., 2019) for the
+model’s parameter update. On the other hand, we use vLLM (Kwon et al., 2023) for the rollout stage due to its flexibility.
+The learning rate is consistently set to 2e-6 across all the experiments. We set the batch size to 128, and since ToCoRL is
+fully on-policy, additional mini batch size parameter is not required. In the rollout stage, we set group size to 16.
+We set the maximum number of training steps to 1,000, during which we iteratively sample from the shuffled dataset for
+training. However, we will terminate the training process if it has an early converge, in order to reduce computational
+resource consumption.
+F. Proofs
+Theorem 4.1Given that for every state s, there exists an action a such that AπTC(s, a)̸= 0 , the policy ˜πTC(a|s) is
+well-defined.
+Proof. To prove that ˜πTC(a|s) is well-defined, we have to show that: 1. ∀s∼ S, a∼ A,˜π TC(a|s)≥0 . 2. ∀s∼
+S,P
+a∼A ˜πTC(a|s) = 1. We begin to prove the first.
+19
+

@@ -1,0 +1,3790 @@
+Just-in-Time: Training-Free Spatial Acceleration for Diffusion Transformers
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Related works
+2.1
+Diffusion models
+2.2
+Spatial acceleration
+3
+Methodology
+3.1
+Preliminaries
+Flow matching and tokenized generation
+Nested token-subset chain and projectors
+3.2
+The spatially approximated generative ODE
+3.3
+Deterministic micro-flow
+Importance-guided token activation
+3.4
+The JiT sampling algorithm
+4
+Experiments
+4.1
+Experimental setup
+Baselines
+Evaluation metrics
+4.2
+Quantitative results
+4.3
+Qualitative results
+4.4
+User study
+4.5
+Ablation study
+Effect of spatial approximation
+Effect of ITA
+Effect of the DMF target
+5
+Conclusions
+References
+A
+The detailed derivation of SAG-ODE
+A.1
+Derivation via orthogonal decomposition
+A.2
+Approximation strategy
+A.3
+Synthesis and the augmented lifter
+A.4
+Proof of consistency
+B
+Implementation details
+B.1
+Construction of the initial selector matrix
+B.2
+Implementation of interpolation operators
+B.3
+Detailed experimental configurations
+B.4
+Timestep schedule configuration
+B.5
+Evaluation dataset
+C
+Additional ablation study on JiT scheduling
+C.1
+Impact of the number of stages
+C.2
+Impact of token allocation (sparsity ratios)
+D
+Extensibility to other backbone models
+E
+Additional qualitative comparisons
+License: CC BY 4.0
+arXiv:2603.10744v1 [cs.CV] 11 Mar 2026
+Just-in-Time: Training-Free Spatial Acceleration for Diffusion Transformers
+Wenhao Sun
+Affiliation:
+University of Electronic Science and Technology of China
+Ji Li
+Affiliation:
+Capital Normal University
+202511081644@std.uestc.edu.cn
+matliji@163.com
+zqliu12@gmail.com
+Zhaoqiang Liu
+Affiliation:
+University of Electronic Science and Technology of China
+Abstract
+Diffusion Transformers have established a new state-of-the-art in image synthesis, but the high computational cost of iterative sampling severely hampers their practical deployment. While existing acceleration methods often focus on the temporal domain, they overlook the substantial spatial redundancy inherent in the generative process, where global structures emerge long before fine-grained details are formed. The uniform computational treatment of all spatial regions represents a critical inefficiency. In this paper, we introduce
+Just-in-Time (JiT)
+, a novel training-free framework that addresses this challenge by acceleration in the spatial domain. JiT formulates a spatially approximated generative ordinary differential equation (ODE) that drives the full latent state evolution based on computations from a dynamically selected, sparse subset of anchor tokens. To ensure seamless transitions as new tokens are incorporated to expand the dimensions of the latent state, we propose a deterministic micro-flow, a simple and effective finite-time ODE that maintains both structural coherence and statistical correctness. Extensive experiments on the state-of-the-art FLUX.1-dev model demonstrate that JiT achieves up to a
+7
+×
+\times
+speedup
+with nearly lossless performance, significantly outperforming existing acceleration methods and establishing a new and superior trade-off between inference speed and generation fidelity.
+Figure 1
+:
+Visual showcases of our JiT framework applied to the FLUX.1-dev model. Our method produces high-fidelity and visually compelling images even at significant acceleration factors of
+4
+×
+4\times
+and
+7
+×
+7\times
+.
+†
+†
+footnotetext:
+🖂
+{}^{\text{\Letter}}
+Corresponding author.
+1
+Introduction
+Generative artificial intelligence is fundamentally reshaping the paradigm of digital content creation at an unprecedented depth and breadth.
+Among its advancements, text-to-image
+[
+29
+,
+30
+,
+28
+,
+12
+]
+and text-to-video
+[
+1
+,
+46
+,
+6
+,
+35
+,
+38
+]
+synthesis, underpinned by diffusion models
+[
+4
+,
+34
+,
+32
+]
+, have become the dominant technological route due to their exceptional generation quality and semantic controllability.
+In recent developments, the diffusion Transformer (DiT)
+[
+27
+,
+26
+,
+43
+]
+has emerged as a particularly potent architecture.
+By leveraging self-attention mechanisms
+[
+37
+]
+to efficiently model long-range dependencies between arbitrary tokens in image or video data, DiT have demonstrated remarkable scalability and performance potential, continuously pushing the frontiers of generative fidelity.
+However, the exceptional performance of DiT is coupled with a substantial computational overhead stemming from its self-attention mechanism, whose complexity grows quadratically with the number of input tokens.
+When generating high-resolution images or, more critically, long-duration videos, this growth leads to a computational avalanche.
+This issue is further exacerbated by the inherently iterative nature of the diffusion denoising process, resulting in prohibitive inference latency and demanding stringent hardware requirements.
+These challenges severely constrain the application of DiT in real-time interactive systems, consumer-grade devices, and large-scale commercial services.
+Efforts to mitigate the high computational cost of DiT have largely progressed along two main directions. The first focuses on the temporal domain, striving to shorten the sampling trajectory by reducing the number of function evaluations. This line of work includes the design of sophisticated high-order solvers
+[
+23
+,
+47
+,
+52
+,
+45
+,
+25
+]
+and the distillation of pre-trained models into few-step variants
+[
+31
+,
+48
+,
+24
+,
+13
+,
+2
+]
+. However, these approaches often come with the caveats of potentially compromising generation fidelity in ultra-low step regimes or demanding retraining resources. A second (complementary) direction aims to make each sampling step more efficient. This is achieved through techniques such as feature caching, which exploits temporal redundancy by reusing intermediate activations across iterations
+[
+20
+,
+21
+,
+53
+,
+50
+]
+, and low-bit quantization, which accelerates underlying matrix operations and reduces the memory footprint by representing weights and activations with lower numerical precision
+[
+8
+,
+17
+,
+39
+]
+.
+Despite their notable successes in optimizing temporal steps and model parameters, these approaches often overlook the intrinsic spatial redundancy inherent in the generative process.
+Specifically, they treat all spatial regions with uniform computational effort throughout the generation process.
+We consider this to be an unnecessary luxury, given the well-established characteristic of diffusion models to first synthesize low-frequency global structures before progressively refining high-frequency details.
+This observation raises a natural question: How can we dynamically focus computational resources on salient spatial regions during the early stages of generation while deferring computation on less critical areas?
+To realize this opportunity for dynamic spatial acceleration, we introduce Just-in-Time (JiT), a novel and training-free framework for spatial acceleration. Specifically, our approach achieves dynamic spatial acceleration by introducing a reasonable approximation to the underlying generative ordinary differential equation (ODE), which enables a dynamic reduction of computational load in the spatial domain without requiring model retraining. We implement JiT on the state-of-the-art (SOTA) DiT model FLUX.1-dev
+[
+15
+]
+and demonstrate that it attains nearly lossless performance while achieving significant inference speedups of up to
+7
+×
+7\times
+(as shown in Fig.
+1
+). Our main contributions are summarized as follows:
+•
+We propose JiT, a novel and training-free framework for accelerating spatial image generation in flow-matching-based DiT models. Our framework is meticulously designed with two synergistic components: (1) The spatially approximated generative ODE (SAG-ODE), which efficiently drives the latent state by approximating the full velocity field from sparse anchor tokens computations using an augmented lifter operator. (2) The deterministic micro-flow (DMF), a well-designed finite-time ODE that ensures seamless and statistically correct activation of new tokens during stage transitions, thereby maintaining latent space continuity and preventing artifacts.
+•
+Extensive experiments and user studies demonstrate the superior acceleration capabilities and preserved generation quality of our method, outperforming existing SOTA acceleration methods for image generation.
+2
+Related works
+2.1
+Diffusion models
+Denoising diffusion probabilistic models (DDPMs)
+[
+4
+]
+have become a dominant force in generative modeling, lauded for their high-fidelity synthesis capabilities. Their formulation has evolved from score-based stochastic differential equations (SDEs)
+[
+34
+]
+to deterministic ODE samplers, such as DDIM
+[
+33
+]
+, and more recently to the flow matching paradigm
+[
+22
+,
+18
+]
+, which directly learns the ODE vector field and is a framework exemplified by FLUX.1-dev model used in our work. Despite their prowess, a critical limitation remains in their slow, iterative sampling process, requiring a large number of neural function evaluations (NFEs). This computational burden has spurred the development of various acceleration methods, and our work contributes a novel, training-free spatial acceleration technique tailored for this modern ODE-based framework.
+2.2
+Spatial acceleration
+Spatial acceleration methods aim to reduce the substantial computational cost of diffusion models by operating on a spatially reduced representation of the latent state, particularly during the early, noise-dominated stages of the generation process. Early approaches
+[
+9
+,
+36
+,
+51
+]
+adopted a pyramidal or hierarchical strategy
+[
+10
+,
+5
+,
+49
+]
+, generating a low-resolution latent and progressively upscaling it. These methods typically rely on explicit upsampling or downsampling operators for dimensionality transition, often coupled with a distribution correction method to align the rescaled features with the target noise distribution at each new scale.
+While these hierarchical methods have demonstrated feasibility, they are often plagued by some major challenges. For instance, upsampling operators can introduce information loss or aliasing artifacts, and the efficacy of post-hoc correction steps is not always guaranteed, frequently leading to visual inconsistencies in the final output. A notable departure from this paradigm is subspace diffusion
+[
+11
+]
+, which showed that generation could be confined to low-dimensional subspaces without explicit resizing. Drawing inspiration from this concept, we introduce the first training-free method to completely obviate the need for such error-prone upsampling and correction procedures, directly manipulating token subspaces to achieve seamless and artifact-free dimensionality transitions.
+3
+Methodology
+The overall framework diagram of the proposed method is depicted in Fig.
+2
+. There are two principal components, namely the spatially approximated generative ODE (SAG-ODE) and deterministic micro-flow (DMF), which will be elucidated in more detail in the following subsections.
+Figure 2
+:
+An overview of our JiT framework, illustrating its core mechanisms and underlying philosophy.
+(a)
+The SAG-ODE evolves the latent state by extrapolating a velocity field computed on a sparse subset of tokens.
+(b)
+For stage transitions, the DMF evolves newly incorporated tokens to a structurally coherent target with the correct noise level to prevent artifacts.
+(c)
+The visualized evolution of the predicted clean image reveals a coarse-to-fine process (global structures first), motivating our strategy to defer computation on detailed regions.
+(d)
+The sampling trajectory visualizes our dynamic resource allocation, where the set of active tokens (red flow) starts as a narrow subset and expands over time, reserving full computation for the final detail-refining stages.
+3.1
+Preliminaries
+Flow matching and tokenized generation
+Flow Matching formulates generative modeling as solving an ODE that establishes a deterministic transport between a noise distribution
+p
+0
+p_{0}
+and the data distribution
+p
+1
+p_{1}
+.
+This process typically operates on a compressed latent representation, obtained by encoding an image through a variational autoencoder (VAE)
+[
+14
+]
+. This yields a latent tensor
+𝐱
+∈
+ℝ
+C
+×
+H
+×
+W
+\mathbf{x}\in\mathbb{R}^{C\times H\times W}
+, where
+C
+C
+denotes the number of channels, and
+H
+H
+and
+W
+W
+are its spatial height and width. The flow is then defined over this continuous latent space from noise
+𝐱
+⁡
+(
+0
+)
+\mathbf{x}(0)
+to data latents
+𝐱
+⁡
+(
+1
+)
+\mathbf{x}(1)
+.
+For practical implementation with DiT, the continuous latent representation
+𝐱
+⁡
+(
+t
+)
+\mathbf{x}(t)
+is first tokenized via spatial patching into a sequence of
+N
+N
+tokens, which we denote as
+𝐲
+⁡
+(
+t
+)
+∈
+ℝ
+N
+​
+d
+\mathbf{y}(t)\in\mathbb{R}^{Nd}
+, where
+d
+d
+is the dimension of the token.
+The Transformer network
+𝒖
+𝜽
+\bm{u}_{\bm{\theta}}
+takes this token sequence as input to model the underlying velocity field. The ODE thus governs the dynamics of the tokenized representation:
+d
+​
+𝐲
+​
+(
+t
+)
+d
+​
+t
+=
+𝒖
+𝜽
+​
+(
+𝐲
+⁡
+(
+t
+)
+,
+t
+)
+,
+t
+∈
+[
+0
+,
+1
+]
+,
+\frac{\mathrm{d}\mathbf{y}(t)}{\mathrm{d}t}=\bm{u}_{\bm{\theta}}(\mathbf{y}(t),t),\quad t\in[0,1],
+(1)
+where
+t
+=
+0
+t=0
+corresponds to tokens of pure Gaussian noise and
+t
+=
+1
+t=1
+corresponds to tokens of the data latent.
+During inference, we solve this ODE from
+t
+=
+0
+t=0
+to
+t
+=
+1
+t=1
+to generate data tokens, which are then de-tokenized and decoded by the VAE to produce the final image.
+The primary computational bottleneck arises here, as
+𝒖
+𝜽
+\bm{u}_{\bm{\theta}}
+must process all
+N
+N
+tokens at each timestep, incurring an
+𝒪
+⁡
+(
+N
+2
+)
+\mathcal{O}(N^{2})
+cost.
+Nested token-subset chain and projectors
+To address this bottleneck, our method operates on a dynamically changing subset of tokens that are fed into the Transformer for computation. We refer to these tokens as
+activated anchor tokens
+. Formally, we construct a nested hierarchy of index sets for these anchor tokens that represents a coarse-to-fine generation strategy:
+Ω
+K
+⊂
+Ω
+K
+−
+1
+⊂
+⋯
+⊂
+Ω
+1
+⊂
+Ω
+0
+=
+{
+1
+,
+2
+,
+…
+,
+N
+}
+,
+\Omega_{K}\subset\Omega_{K-1}\subset\cdots\subset\Omega_{1}\subset\Omega_{0}=\{1,2,\ldots,N\},
+(2)
+where
+|
+Ω
+k
+|
+=
+m
+k
+|\Omega_{k}|=m_{k}
+is the number of anchor tokens at stage
+k
+k
+. Meanwhile, we refer to tokens not included in the current token set
+Ω
+k
+\Omega_{k}
+as inactive tokens.
+For each subset
+Ω
+k
+\Omega_{k}
+, we define a selector matrix
+𝐒
+k
+∈
+{
+0
+,
+1
+}
+N
+​
+d
+×
+m
+k
+​
+d
+\mathbf{S}_{k}\in\{0,1\}^{Nd\times m_{k}d}
+that extracts the corresponding anchor tokens
+𝐲
+k
+=
+𝐒
+k
+⊤
+​
+𝐲
+\mathbf{y}_{k}=\mathbf{S}_{k}^{\top}\mathbf{y}
+from the full token sequence.
+Consequently, the orthogonal projector onto the subspace spanned by the anchor tokens is given by the matrix
+𝐏
+k
+∈
+ℝ
+N
+​
+d
+×
+N
+​
+d
+\mathbf{P}_{k}\in\mathbb{R}^{Nd\times Nd}
+, defined as:
+𝐏
+k
+:=
+𝐒
+k
+​
+𝐒
+k
+⊤
+.
+\mathbf{P}_{k}:=\mathbf{S}_{k}\mathbf{S}_{k}^{\top}.
+(3)
+This projector acts as a mask on the token dimension. Furthermore, we define a projector
+𝐐
+k
+∈
+ℝ
+N
+​
+d
+×
+N
+​
+d
+\mathbf{Q}_{k}\in\mathbb{R}^{Nd\times Nd}
+onto the subspace of newly activated tokens, which is given by the difference between two consecutive projectors:
+𝐐
+k
+:=
+𝐏
+k
+−
+1
+−
+𝐏
+k
+.
+\mathbf{Q}_{k}:=\mathbf{P}_{k-1}-\mathbf{P}_{k}.
+(4)
+This operator precisely isolates the set of tokens
+R
+k
+:=
+Ω
+k
+−
+1
+∖
+Ω
+k
+R_{k}:=\Omega_{k-1}\setminus\Omega_{k}
+, which are to be activated at the next stage transition. These operators are fundamental building blocks for constructing our accelerated generative ODE in the following section.
+3.2
+The spatially approximated generative ODE
+At the heart of our framework lies a simplified and elegant generative ODE that governs the evolution of the tokenized latent state
+𝐲
+⁡
+(
+t
+)
+\mathbf{y}(t)
+during each stage of the sampling process. We refer to it as SAG-ODE. For a given stage
+k
+k
+operating on the activated anchor token set
+Ω
+k
+\Omega_{k}
+, the SAG-ODE is described by:
+d
+​
+𝐲
+​
+(
+t
+)
+d
+​
+t
+=
+𝚷
+k
+​
+𝒖
+𝜽
+​
+(
+𝐒
+k
+⊤
+​
+𝐲
+​
+(
+t
+)
+,
+t
+)
+=
+𝒗
+t
+.
+\frac{\mathrm{d}\mathbf{y}(t)}{\mathrm{d}t}=\mathbf{\Pi}_{k}\,\bm{u}_{\bm{\theta}}(\mathbf{S}^{\top}_{k}\mathbf{y}(t),t)=\bm{v}_{t}.
+(5)
+The efficiency of our SAG-ODE is enabled by the augmented lifter operator,
+𝚷
+k
+:
+ℝ
+m
+k
+​
+d
+→
+ℝ
+N
+​
+d
+\mathbf{\Pi}_{k}:\mathbb{R}^{m_{k}d}\to\mathbb{R}^{Nd}
+. It takes the velocity field
+𝒖
+𝜽
+​
+(
+𝐒
+k
+⊤
+​
+𝐲
+​
+(
+t
+)
+,
+t
+)
+∈
+ℝ
+m
+k
+​
+d
+\bm{u}_{\bm{\theta}}(\mathbf{S}^{\top}_{k}\mathbf{y}(t),t)\in\mathbb{R}^{m_{k}d}
+, computed by the Transformer on only the
+m
+k
+m_{k}
+anchor tokens, and extrapolates it to define a complete, full-space velocity field that drives the dynamics of all
+N
+N
+tokens.
+The lifter
+𝚷
+k
+\mathbf{\Pi}_{k}
+constructs this full velocity field by performing two concurrent functions:
+𝚷
+k
+​
+𝒖
+𝜽
+:=
+𝐒
+k
+​
+𝒖
+𝜽
++
+ℐ
+k
+​
+(
+𝒖
+𝜽
+)
+.
+\mathbf{\Pi}_{k}\bm{u}_{\bm{\theta}}:=\mathbf{S}_{k}\bm{u}_{\bm{\theta}}+\mathcal{I}_{k}(\bm{u}_{\bm{\theta}}).
+(6)
+Here, the first term
+𝐒
+k
+​
+𝒖
+𝜽
+\mathbf{S}_{k}\bm{u}_{\bm{\theta}}
+acts as an embedding map, precisely placing the computed velocity
+𝒖
+𝜽
+\bm{u}_{\bm{\theta}}
+back into its corresponding positions in full-space for the anchor tokens. This forms the exact part of the ODE dynamics. Concurrently, the interpolation operator
+ℐ
+k
+\mathcal{I}_{k}
+(detailed in Appendix
+B.2
+) efficiently approximates the velocity for the inactive subspace via smooth spatial interpolation from
+𝒖
+𝜽
+\bm{u}_{\bm{\theta}}
+. In doing so, the single operator
+𝚷
+k
+\mathbf{\Pi}_{k}
+cohesively defines a high-quality, structurally-aware velocity field that drives the SAG-ODE, guided solely by the computations on the anchor set. A simplified schematic diagram of the SAG-ODE is shown in Fig.
+2
+(a).
+An important feature of our SAG-ODE is its
+consistency property
+, which ensures that the approximation introduces zero error on the anchor tokens themselves. By design, the interpolation operator
+ℐ
+k
+\mathcal{I}_{k}
+does not affect the anchor token subspace, i.e.,
+𝐒
+k
+⊤
+​
+ℐ
+k
+​
+(
+𝒖
+𝜽
+)
+=
+𝟎
+\mathbf{S}^{\top}_{k}\mathcal{I}_{k}(\bm{u}_{\bm{\theta}})=\mathbf{0}
+. This leads to the property:
+𝐒
+k
+⊤
+​
+(
+𝚷
+k
+​
+𝒖
+𝜽
+)
+=
+𝐒
+k
+⊤
+​
+(
+𝐒
+k
+​
+𝒖
+𝜽
++
+ℐ
+k
+​
+(
+𝒖
+𝜽
+)
+)
+=
+𝒖
+𝜽
+.
+\mathbf{S}^{\top}_{k}\left(\mathbf{\Pi}_{k}\bm{u}_{\bm{\theta}}\right)=\mathbf{S}^{\top}_{k}(\mathbf{S}_{k}\bm{u}_{\bm{\theta}}+\mathcal{I}_{k}(\bm{u}_{\bm{\theta}}))=\bm{u}_{\bm{\theta}}.
+(7)
+Applying this to our SAG-ODE (see Eq. (
+5
+)) confirms that the dynamics of the anchor tokens are governed exactly by the output of the Transformer with
+𝐒
+k
+⊤
+​
+d
+​
+𝐲
+​
+(
+t
+)
+d
+​
+t
+=
+𝒖
+𝜽
+​
+(
+𝐒
+k
+⊤
+​
+𝐲
+​
+(
+t
+)
+,
+t
+)
+\mathbf{S}^{\top}_{k}\frac{\mathrm{d}\mathbf{y}(t)}{\mathrm{d}t}=\bm{u}_{\bm{\theta}}(\mathbf{S}^{\top}_{k}\mathbf{y}(t),t)
+. This property guarantees that our acceleration strategy does not compromise the learned dynamics on the computationally critical parts of the state. Furthermore, it ensures that these anchor tokens are continuously updated within the full-dimensional context, allowing them to maintain their correct statistical properties throughout the entire generation process. A formal derivation is provided in Appendix
+A
+.
+3.3
+Deterministic micro-flow
+While the SAG-ODE in Eq. (
+5
+) governs the evolution for a fixed set of anchor tokens
+Ω
+k
+\Omega_{k}
+, a coherent mechanism is required to handle the transition between stages, specifically the activation of new tokens to expand the subspace dimension. A naive or instantaneous injection of state for these new tokens risks creating spatial discontinuities and statistical mismatches, which can propagate as artifacts in the final output. To ensure a seamless and theoretically grounded transition, we propose the DMF. This short, finite-time procedure deterministically evolves the state of newly activated tokens from their interpolated state to a statistically correct target.
+At a transition time
+T
+k
+T_{k}
+, we activate new tokens corresponding to the index set
+R
+k
+R_{k}
+. The first step is to construct a sound target state,
+𝐲
+k
+⋆
+\mathbf{y}_{k}^{\star}
+, for these new tokens that fuses structural information from existing anchor tokens with the correct noise level. We define the target as
+𝐲
+k
+⋆
+=
+𝐐
+k
+​
+(
+T
+k
+​
+Φ
+k
+​
+(
+𝐒
+k
+⊤
+​
+𝐲
+^
+​
+(
+1
+)
+)
++
+(
+1
+−
+T
+k
+)
+​
+ϵ
+)
+,
+\mathbf{y}_{k}^{\star}=\mathbf{Q}_{k}\left(T_{k}\Phi_{k}(\mathbf{S}^{\top}_{k}\mathbf{\hat{y}}(1))+(1-T_{k})\epsilon\right),
+(8)
+where the predicted data latent tokens
+𝐲
+^
+​
+(
+1
+)
+=
+𝐲
+t
+i
+−
+1
++
+(
+1
+−
+t
+i
+−
+1
+)
+​
+𝒗
+t
+i
+−
+1
+\mathbf{\hat{y}}(1)=\mathbf{y}_{t_{i-1}}+(1-t_{i-1})\bm{v}_{t_{i-1}}
+is derived from Tweedie’s formula
+[
+19
+]
+evaluated at the preceding timestep
+t
+i
+−
+1
+t_{i-1}
+. Here,
+Φ
+k
+\Phi_{k}
+denotes the unified structural prior operator that spatially interpolates this clean prediction to the full spatial dimension (detailed in Appendix
+B.2
+), and
+ϵ
+∼
+𝒩
+⁡
+(
+𝟎
+,
+𝑰
+)
+\epsilon\sim\mathcal{N}(\bm{0},\bm{I})
+is a standard full-dimensional Gaussian noise. (The visualization of the predicted data is shown in Fig.
+2
+(c).) This formulation ensures that the newly activated tokens are not only structurally coherent but also statistically consistent with the flow matching trajectory, thereby preventing distribution shifts and providing a stable transition.
+With the target state established, the evolution of the new tokens
+𝐐
+k
+​
+𝐲
+\mathbf{Q}_{k}\mathbf{y}
+is governed by a finite-time hitting ODE over a short interval
+[
+T
+k
+−
+δ
+,
+T
+k
+]
+[T_{k}-\delta,T_{k}]
+, where
+δ
+\delta
+is an extremely small duration. This ODE is defined as:
+𝐐
+k
+​
+𝐲
+˙
+​
+(
+t
+)
+=
+𝐲
+k
+⋆
+−
+𝐐
+k
+​
+𝐲
+​
+(
+t
+)
+T
+k
+−
+t
+,
+t
+∈
+[
+T
+k
+−
+δ
+,
+T
+k
+]
+.
+\mathbf{Q}_{k}\dot{\mathbf{y}}(t)=\frac{\mathbf{y}_{k}^{\star}-\mathbf{Q}_{k}\mathbf{y}(t)}{T_{k}-t},\quad t\in[T_{k}-\delta,T_{k}].
+(9)
+The time-varying rate
+(
+T
+k
+−
+t
+)
+−
+1
+(T_{k}-t)^{-1}
+ensures that the state
+𝐐
+k
+​
+𝐲
+​
+(
+t
+)
+\mathbf{Q}_{k}\mathbf{y}(t)
+is driven from its initial value at
+t
+=
+T
+k
+−
+δ
+t=T_{k}-\delta
+and precisely converges to the target
+𝐲
+k
+⋆
+\mathbf{y}_{k}^{\star}
+at the end of the interval, i.e.,
+lim
+t
+→
+T
+k
+𝐐
+k
+​
+𝐲
+​
+(
+t
+)
+=
+𝐲
+k
+⋆
+\lim_{t\to T_{k}}\mathbf{Q}_{k}\mathbf{y}(t)=\mathbf{y}_{k}^{\star}
+. During this micro-flow, the velocity of existing anchor tokens is set to zero (i.e.,
+𝐏
+k
+​
+𝐲
+˙
+​
+(
+t
+)
+=
+𝟎
+\mathbf{P}_{k}\dot{\mathbf{y}}(t)=\mathbf{0}
+) to isolate the transition dynamics to the new tokens. This procedure guarantees a smooth, continuous trajectory in the latent space, which is effective for preventing artifacts and maintaining the stability of the overall generation process.
+Importance-guided token activation
+Instead of activating new tokens based on a predefined, static pattern, we introduce a dynamic selection strategy importance-guided token activation (ITA) that prioritizes regions of high information density. As illustrated in Fig.
+2
+(b), once the low-frequency structure of an image is established, subsequent computational effort should be directed towards synthesizing high-frequency details, such as contours and textures. Our intuition is that these details emerge in regions where the generative process is most active, corresponding to areas where the velocity field
+𝒖
+𝜽
+​
+(
+𝐲
+​
+(
+t
+)
+,
+t
+)
+\bm{u}_{\bm{\theta}}(\mathbf{y}(t),t)
+exhibits the most significant local variation. We therefore quantify this dynamic activity by measuring the local variance of the velocity field predicted by the DiT.
+Specifically, at each transition time
+T
+k
+T_{k}
+, we compute a spatial importance map
+I
+​
+(
+T
+k
+)
+\textbf{I}(T_{k})
+. The importance score at each token location is defined as the variance of the velocity vectors within a small local patch (e.g.,
+3
+×
+3
+3\times 3
+). This local variance can be computed efficiently using average pooling operations on both the velocity field and its element-wise square. Specifically, letting
+𝒲
+\mathcal{W}
+denote the local averaging window, the importance map is computed as
+I
+​
+(
+t
+)
+=
+𝔼
+𝒲
+​
+[
+𝒖
+𝜽
+​
+(
+𝐲
+⁡
+(
+t
+)
+,
+t
+)
+⊙
+𝒖
+𝜽
+​
+(
+𝐲
+⁡
+(
+t
+)
+,
+t
+)
+]
+\displaystyle\textbf{I}(t)=\mathbb{E}_{\mathcal{W}}[\bm{u}_{\bm{\theta}}(\mathbf{y}(t),t)\odot\bm{u}_{\bm{\theta}}(\mathbf{y}(t),t)]
+−
+(
+𝔼
+𝒲
+[
+𝒖
+𝜽
+(
+𝐲
+(
+t
+)
+,
+t
+)
+]
+)
+⊙
+(
+𝔼
+𝒲
+[
+𝒖
+𝜽
+(
+𝐲
+(
+t
+)
+,
+t
+)
+]
+)
+,
+\displaystyle\quad-\left(\mathbb{E}_{\mathcal{W}}[\bm{u}_{\bm{\theta}}(\mathbf{y}(t),t)]\right)\odot\left(\mathbb{E}_{\mathcal{W}}[\bm{u}_{\bm{\theta}}(\mathbf{y}(t),t)]\right),
+(10)
+where
+⊙
+\odot
+denotes the element-wise product. We then rank all inactive tokens based on their corresponding importance scores and select the top candidates to form the newly activated token set
+R
+k
+R_{k}
+. As shown in Fig.
+2
+(b), this content-aware strategy ensures that computational resources are allocated to the most dynamic spatial regions, leading to a more efficient and effective synthesis of fine-grained details.
+Algorithm 1
+The JiT Sampling Algorithm
+1:
+Input:
+Pre-trained DiT
+𝒖
+𝜽
+\bm{u}_{\bm{\theta}}
+, total generation steps
+N
+N
+, schedule
+{
+T
+k
+,
+m
+k
+}
+k
+=
+0
+K
+\{T_{k},m_{k}\}_{k=0}^{K}
+, time schedule
+{
+t
+i
+}
+i
+=
+1
+N
+\{t_{i}\}_{i=1}^{N}
+, VAE decoder
+D
+ϕ
+\mathrm{D}_{\bm{\phi}}
+, Gaussian noise
+ϵ
+∼
+𝒩
+⁡
+(
+𝟎
+,
+𝑰
+)
+\epsilon\sim\mathcal{N}(\bm{0},\bm{I})
+2:
+Output:
+Generated image
+𝐱
+\mathbf{x}
+3:
+Initialize full-dimensional state vector
+𝐲
+t
+1
+∼
+𝒩
+⁡
+(
+𝟎
+,
+𝑰
+)
+\mathbf{y}_{t_{1}}\sim\mathcal{N}(\bm{0},\bm{I})
+4:
+Initialize the smallest token set
+Ω
+K
+\Omega_{K}
+based on
+m
+K
+m_{K}
+5:
+Set current stage
+k
+←
+K
+k\leftarrow K
+6:
+for
+i
+=
+1
+,
+…
+,
+N
+−
+1
+i=1,\dots,N-1
+do
+7:
+if
+t
+i
+=
+=
+T
+k
+t_{i}==T_{k}
+and
+k
+>
+0
+k>0
+then
+8:
+{
+— Stage Transition —
+}
+9:
+Compute importance map
+I
+​
+(
+T
+k
+)
+\textbf{I}(T_{k})
+:
+10:
+I
+​
+(
+T
+k
+)
+←
+𝔼
+𝒲
+​
+[
+𝒗
+t
+i
+−
+1
+⊙
+𝒗
+t
+i
+−
+1
+]
+−
+(
+𝔼
+𝒲
+​
+[
+𝒗
+t
+i
+−
+1
+]
+)
+⊙
+(
+𝔼
+𝒲
+​
+[
+𝒗
+t
+i
+−
+1
+]
+)
+\textbf{I}(T_{k})\leftarrow\mathbb{E}_{\mathcal{W}}[\bm{v}_{t_{i-1}}\odot\bm{v}_{t_{i-1}}]-\left(\mathbb{E}_{\mathcal{W}}[\bm{v}_{t_{i-1}}]\right)\odot\left(\mathbb{E}_{\mathcal{W}}[\bm{v}_{t_{i-1}}]\right)
+11:
+Select new tokens to activate:
+12:
+R
+k
+←
+TopTokens
+​
+(
+I
+​
+(
+T
+k
+)
+,
+m
+k
+−
+1
+−
+m
+k
+)
+R_{k}\leftarrow\text{TopTokens}(\textbf{I}(T_{k}),m_{k-1}-m_{k})
+13:
+Ω
+k
+−
+1
+←
+Ω
+k
+∪
+R
+k
+\Omega_{k-1}\leftarrow\Omega_{k}\cup R_{k}
+14:
+Predicted data latent tokens
+𝐲
+^
+​
+(
+1
+)
+\mathbf{\hat{y}}(1)
+:
+15:
+𝐲
+^
+​
+(
+1
+)
+←
+𝐲
+t
+i
+−
+1
++
+(
+1
+−
+t
+i
+−
+1
+)
+​
+𝒗
+t
+i
+−
+1
+\mathbf{\hat{y}}(1)\leftarrow\mathbf{y}_{t_{i-1}}+(1-t_{i-1})\bm{v}_{t_{i-1}}
+16:
+Set target state
+𝐲
+k
+⋆
+\mathbf{y}_{k}^{\star}
+for the newly activated tokens:
+17:
+𝐲
+k
+⋆
+=
+𝐐
+k
+​
+(
+T
+k
+​
+Φ
+k
+​
+(
+𝐒
+k
+⊤
+​
+𝐲
+^
+​
+(
+1
+)
+)
++
+(
+1
+−
+T
+k
+)
+​
+ϵ
+)
+\mathbf{y}_{k}^{\star}=\mathbf{Q}_{k}\left(T_{k}\Phi_{k}(\mathbf{S}^{\top}_{k}\mathbf{\hat{y}}(1))+(1-T_{k})\epsilon\right)
+18:
+𝐐
+k
+​
+𝐲
+t
+i
+←
+𝐲
+k
+⋆
+\mathbf{Q}_{k}\mathbf{y}_{t_{i}}\leftarrow\mathbf{y}_{k}^{\star}
+19:
+k
+←
+k
+−
+1
+k\leftarrow k-1
+20:
+end
+if
+21:
+Set step size:
+Δ
+​
+t
+←
+t
+i
++
+1
+−
+t
+i
+\Delta t\leftarrow t_{i+1}-t_{i}
+22:
+Compute full-dimensional velocity
+𝒗
+t
+i
+\bm{v}_{t_{i}}
+:
+23:
+𝒗
+t
+i
+←
+𝚷
+k
+​
+𝒖
+𝜽
+​
+(
+𝐒
+k
+⊤
+​
+𝐲
+t
+i
+,
+t
+i
+)
+\bm{v}_{t_{i}}\leftarrow\mathbf{\Pi}_{k}\,\bm{u}_{\bm{\theta}}(\mathbf{S}^{\top}_{k}\mathbf{y}_{t_{i}},t_{i})
+24:
+𝐲
+t
+i
++
+1
+←
+𝐲
+t
+i
++
+𝒗
+t
+i
+⋅
+Δ
+​
+t
+\mathbf{y}_{t_{i+1}}\leftarrow\mathbf{y}_{t_{i}}+\bm{v}_{t_{i}}\cdot\Delta t
+25:
+end
+for
+26:
+𝐱
+←
+D
+ϕ
+​
+(
+𝐲
+t
+N
+)
+\mathbf{x}\leftarrow\mathrm{D}_{\bm{\phi}}(\mathbf{y}_{t_{N}})
+27:
+return
+𝐱
+\mathbf{x}
+3.4
+The JiT sampling algorithm
+The complete JiT sampling process is summarized in Algorithm
+1
+.
+4
+Experiments
+4.1
+Experimental setup
+Baselines
+We evaluate our method JiT on FLUX.1-dev
+[
+15
+]
+, a leading DiT trained with the flow matching framework. Our approach is benchmarked against several SOTA acceleration baselines, which include two spatial-domain methods, namely RALU
+[
+9
+]
+and Bottleneck Sampling
+[
+36
+]
+, and two caching-based methods, namely TaylorSeer
+[
+21
+]
+and TeaCache
+[
+20
+]
+. For a comprehensive comparison, we also include the performance of the vanilla FLUX.1-dev pipeline executed with varying NFEs. We measured acceleration performance using latency and FLOPs on a single A800 GPU. Appendix
+B
+provides further implementation details for JiT.
+Evaluation metrics
+We evaluate performance from two key perspectives: image generation quality and text-image alignment. For generation quality, we employ the no-reference metric CLIP-IQA
+[
+40
+]
+alongside two leading human preference models, ImageReward
+[
+44
+]
+and HPSv2.1
+[
+42
+]
+. For text-image alignment, we utilize the GenEval
+[
+3
+]
+and T2I-CompBench
+[
+7
+]
+benchmarks for evaluation.
+Method
+NFE
+Latency (s)
+↓
+\downarrow
+TFLOPs
+↓
+\downarrow
+Speed
+↑
+\uparrow
+CLIP-IQA
+↑
+\uparrow
+Image Reward
+↑
+\uparrow
+HPSv2.1
+↑
+\uparrow
+Gen Eval
+↑
+\uparrow
+T2I-Comp.
+↑
+\uparrow
+FLUX.1-dev
+50
+25.25
+2990.96
+1.00
+×
+\times
+0.6139
+1.004
+30.39
+0.6565
+0.4836
+FLUX.1-dev
+12
+6.21
+729.07
+4.10
+×
+\times
+0.5341
+0.9435
+29.43
+0.6426
+0.4843
+Bottleneck
+14
+6.37
+709.28
+4.22
+×
+\times
+0.4056
+0.9216
+29.01
+0.6499
+0.4779
+RALU
+18
+6.23
+723.69
+4.13
+×
+\times
+0.5493
+0.8560
+29.83
+0.6328
+0.4620
+Teacache
+28
+6.98
+729.32
+4.10
+×
+\times
+0.6003
+0.9638
+29.68
+0.6493
+0.4849
+JiT (Ours)
+18
+6.02
+706.17
+4.24
+×
+\times
+0.6166
+1.017
+29.77
+0.6540
+0.4991
+FLUX.1-dev
+7
+3.80
+431.44
+6.93
+×
+\times
+0.4134
+0.7474
+27.72
+0.5629
+0.4635
+RALU
+10
+3.85
+426.01
+7.02
+×
+\times
+0.4865
+0.8904
+29.71
+0.6394
+0.4731
+Taylorseer
+28
+5.20
+432.09
+6.92
+×
+\times
+0.4164
+0.7995
+28.46
+0.5832
+0.4583
+Teacache
+28
+4.53
+431.79
+6.92
+×
+\times
+0.5183
+0.7731
+27.86
+0.5837
+0.4625
+JiT (Ours)
+11
+3.67
+423.26
+7.07
+×
+\times
+0.5397
+0.9746
+29.02
+0.6457
+0.4961
+Table 1
+:
+Quantitative comparison with other methods. The optimal result is represented in bold, and the sub-optimal result is represented in underlining. FLOPs are measured via
+torch.profiler
+and the Speed is calculated based on the FLOPs reduction relative to the base model FLUX.1-dev(50).
+4.2
+Quantitative results
+As detailed in
+Tab.
+1
+, our JiT framework achieves SOTA performance at both
+∼
+\sim
+4
+×
+\times
+and
+∼
+\sim
+7
+×
+\times
+acceleration tiers, maintaining nearly lossless quality compared to the high-fidelity 50-NFE baseline. This contrasts sharply with competing approaches, where cache-based methods remain fundamentally capped by the quality of the low-NFE baseline, and alternative spatial methods introduce artifacts through explicit upsampling and correction steps. In contrast, JiT avoids these inherent limitations. Its upsampling-free design leverages the intrinsic multi-scale knowledge of the DiT, while the seamless DMF ensures artifact-free state transitions. Consequently, JiT establishes a new, superior speed-fidelity trade-off, maintaining high quality even at a demanding
+7
+×
+7\times
+speedup.
+4.3
+Qualitative results
+Figure 3
+:
+Qualitative comparison demonstrating the superior performance of our JiT framework. While competing methods suffer from common acceleration artifacts, including semantic errors, loss of fine detail, and structural inconsistencies, our approach maintains high fidelity across different prompts and acceleration levels.
+For a qualitative assessment of generation fidelity, we present a series of visual comparisons in Fig.
+3
+. These examples provide tangible evidence for the quantitative findings in Tab.
+1
+and highlight the distinct advantages of our JiT framework, especially under
+7
+×
+7\times
+acceleration settings.
+As shown, competing acceleration methods exhibit noticeable degradation in quality. Several baselines struggle with semantic coherence, resulting in concept blending or attribute errors that fail to represent the input prompt accurately. This observation visually corroborates their lower scores on alignment benchmarks, such as T2I-CompBench. Furthermore, these methods often produce images plagued by perceptible artifacts, such as blurred textures and structural inconsistencies. These issues are symptomatic of the error accumulation inherent in their respective designs, such as the artifacts introduced by upsampling operators in spatial methods or the staleness of features in caching techniques.
+In stark contrast, our JiT framework consistently produces high-fidelity, artifact-free images even at the demanding
+7
+×
+7\times
+speedup. A particularly challenging test is rendering legible text, a task that requires precise and high-frequency detail synthesis. As demonstrated, JiT successfully renders coherent text where other methods fail, producing results that are either garbled or incomplete. Collectively, these qualitative results provide compelling visual evidence that our JiT framework not only accelerates generation but also preserves the nuanced details and semantic integrity that substantially contribute to high-quality synthesis.
+Opponent Method
+Preference for JiT (%)
+↑
+\uparrow
+JiT vs.
+∼
+\sim
+4
+×
+\times
+Baselines
+FLUX.1-dev (12)
+85.6
+Bottleneck (14)
+90.3
+RALU (18)
+73.7
+Teacache (28)
+69.1
+JiT vs.
+∼
+\sim
+7
+×
+\times
+Baselines
+FLUX.1-dev (7)
+93.1
+RALU (10)
+71.2
+Taylorseer (28)
+89.5
+Teacache (28)
+75.4
+Table 2
+:
+Human preference rates for our JiT method in blind pairwise comparisons.
+4.4
+User study
+We conducted a user study to evaluate human perceptual preferences for the generated images directly. The study employed a blind pairwise comparison setup, where participants were asked to choose the superior image in terms of overall visual quality and prompt fidelity from a pair generated by our JiT and a competing baseline. A total of 1000 independent preference votes were collected from 20 participants evaluating 50 different prompts. The quantitative results, summarized in Tab.
+2
+, show that in comparisons against all baselines, images generated by our JiT framework were selected as the preferred option in a significant majority of votes, clearly demonstrating its leading position in human subjective evaluation.
+4.5
+Ablation study
+Method
+HPSv2
+↑
+\uparrow
+T2I-Comp.
+↑
+\uparrow
+Ours
+0.2690
+0.3727
+w/o SAG-ODE
+0.2418
+0.3414
+w/o ITA
+0.2651
+0.3670
+w/o DMF target
+0.2604
+0.3602
+Table 3
+:
+Ablation study of each component with JiT.
+Figure 4
+:
+Visual ablation study of each component within JiT.
+In this section, we conduct a series of ablation studies to validate the effectiveness of each prominent component within our JiT framework. Quantitative results are summarized in Tab.
+3
+, with corresponding qualitative comparisons provided in Fig.
+4
+. Further experiments on the schedule of JiT can be found in Appendix C.
+Effect of spatial approximation
+First, we ablate the core of our SAG-ODE by removing the spatial approximation term
+ℐ
+k
+​
+(
+𝒖
+𝜽
+)
+\mathcal{I}_{k}(\bm{u}_{\bm{\theta}})
+from our augmented lifter operator (Eq. (
+6
+)). This variant involves setting the velocity of all inactive tokens to zero, allowing them to evolve passively. As seen in Tab.
+3
+, this results in a catastrophic drop in performance. The qualitative results reveal the underlying cause: without the structurally aware velocity provided by our approximation, the inactive regions fail to form coherent structures and degenerate into meaningless noise, demonstrating that sophisticated extrapolation is essential.
+Effect of ITA
+Next, we replace our dynamic, importance-guided token activation strategy with a static, predefined selection pattern (e.g., a fixed grid). The visual examples in Fig.
+4
+demonstrate that a static pattern can misallocate computational resources. This leads to the emergence of artifacts and a loss of sharpness in complex, high-frequency regions that are not prioritized by the fixed schedule, highlighting the benefits of our content-aware approach.
+Effect of the DMF target
+Finally, we investigate the impact of our target state construction within the DMF. We replace our target Eq. (
+8
+) with a naive interpolation of the existing anchor tokens, which neglects the correct noise magnitude required by the flow trajectory. This modification results in a decline in performance, particularly in terms of perceptual quality. The qualitative results indicate that an improperly constructed target results in a noise mismatch during the transition.
+5
+Conclusions
+We have introduced JiT, a novel and training-free framework that exploits spatial redundancy in DiT for significant inference acceleration. By formulating the SAG-ODE driven by a dynamic subset of tokens and ensuring seamless state transitions with a DMF, our method achieves a superior speed-fidelity trade-off. Our extensive experiments demonstrate up to
+7
+×
+7\times
+acceleration on the FLUX.1-dev model with negligible quality degradation, outperforming existing acceleration methods. By moving away from uniform computation towards a dynamic, on-demand strategy, this work not only provides a practical solution for accelerating generative ODEs but also opens new avenues for efficient, high-fidelity generative modeling.
+References
+[1]
+A. Blattmann, T. Dockhorn, S. Kulal, D. Mendelevitch, M. Kilian, D. Lorenz, Y. Levi, Z. English, V. Voleti, A. Letts,
+et al.
+(2023)
+Stable video diffusion: scaling latent video diffusion models to large datasets
+.
+arXiv preprint arXiv:2311.15127
+.
+Cited by:
+§1
+.
+[2]
+F. Fu, T. Guo, and Z. Liu
+(2025)
+Learnable sampler distillation for discrete diffusion models
+.
+In
+NIPS
+,
+Cited by:
+§1
+.
+[3]
+D. Ghosh, H. Hajishirzi, and L. Schmidt
+(2023)
+Geneval: an object-focused framework for evaluating text-to-image alignment
+.
+In
+NIPS
+,
+Cited by:
+§B.5
+,
+§4.1
+.
+[4]
+J. Ho, A. Jain, and P. Abbeel
+(2020)
+Denoising diffusion probabilistic models
+.
+In
+NIPS
+,
+Cited by:
+§1
+,
+§2.1
+.
+[5]
+J. Ho, C. Saharia, W. Chan, D. J. Fleet, M. Norouzi, and T. Salimans
+(2022)
+Cascaded diffusion models for high fidelity image generation
+.
+Journal of Machine Learning Research
+23
+(
+47
+),
+pp. 1–33
+.
+Cited by:
+§2.2
+.
+[6]
+J. Ho, T. Salimans, A. Gritsenko, W. Chan, M. Norouzi, and D. J. Fleet
+(2022)
+Video diffusion models
+.
+NIPS
+.
+Cited by:
+§1
+.
+[7]
+K. Huang, K. Sun, E. Xie, Z. Li, and X. Liu
+(2023)
+T2i-compbench: a comprehensive benchmark for open-world compositional text-to-image generation
+.
+In
+NIPS
+,
+Cited by:
+§B.5
+,
+§4.1
+.
+[8]
+Y. Huang, R. Gong, J. Liu, Y. Ding, C. Lv, H. Qin, and J. Zhang
+(2025)
+QVGen: pushing the limit of quantized video generative models
+.
+arXiv preprint arXiv:2505.11497
+.
+Cited by:
+§1
+.
+[9]
+W. Jeong, K. Lee, H. Seo, and S. Y. Chun
+(2025)
+Upsample what matters: region-adaptive latent sampling for accelerated diffusion transformers
+.
+arXiv preprint arXiv:2507.08422
+.
+Cited by:
+§2.2
+,
+§4.1
+.
+[10]
+Y. Jin, Z. Sun, N. Li, K. Xu, H. Jiang, N. Zhuang, Q. Huang, Y. Song, Y. Mu, and Z. Lin
+(2024)
+Pyramidal flow matching for efficient video generative modeling
+.
+arXiv preprint arXiv:2410.05954
+.
+Cited by:
+§2.2
+.
+[11]
+B. Jing, G. Corso, R. Berlinghieri, and T. Jaakkola
+(2022)
+Subspace diffusion generative models
+.
+In
+ECCV
+,
+Cited by:
+§2.2
+.
+[12]
+T. Karras, S. Laine, M. Aittala, J. Hellsten, J. Lehtinen, and T. Aila
+(2020)
+Analyzing and improving the image quality of stylegan
+.
+In
+CVPR
+,
+Cited by:
+§1
+.
+[13]
+Y. Kim, S. Anagnostidis, Y. Du, E. Schönfeld, J. Kohler, M. Georgopoulos, A. Pumarola, A. Thabet, and A. Sanakoyeu
+(2025)
+Autoregressive distillation of diffusion transformers
+.
+In
+CVPR
+,
+Cited by:
+§1
+.
+[14]
+D. P. Kingma and M. Welling
+(2013)
+Auto-encoding variational bayes
+.
+arXiv preprint arXiv:1312.6114
+.
+Cited by:
+§3.1
+.
+[15]
+B. F. Labs
+(2024)
+FLUX
+.
+Note:
+https://github.com/black-forest-labs/flux
+Cited by:
+§1
+,
+§4.1
+.
+[16]
+H. Lee, H. Lee, S. Gye, and J. Kim
+(2025)
+Beta sampling is all you need: efficient image generation strategy for diffusion models using stepwise spectral analysis
+.
+In
+WACV
+,
+Cited by:
+§B.4
+.
+[17]
+M. Li, Y. Lin, Z. Zhang, T. Cai, X. Li, J. Guo, E. Xie, C. Meng, J. Zhu, and S. Han
+(2024)
+Svdquant: absorbing outliers by low-rank components for 4-bit diffusion models
+.
+arXiv preprint arXiv:2411.05007
+.
+Cited by:
+§1
+.
+[18]
+Y. Lipman, R. T. Chen, H. Ben-Hamu, M. Nickel, and M. Le
+(2022)
+Flow matching for generative modeling
+.
+arXiv preprint arXiv:2210.02747
+.
+Cited by:
+§2.1
+.
+[19]
+Y. Lipman, M. Havasi, P. Holderrieth, N. Shaul, M. Le, B. Karrer, R. T. Chen, D. Lopez-Paz, H. Ben-Hamu, and I. Gat
+(2024)
+Flow matching guide and code
+.
+arXiv preprint arXiv:2412.06264
+.
+Cited by:
+§3.3
+.
+[20]
+F. Liu, S. Zhang, X. Wang, Y. Wei, H. Qiu, Y. Zhao, Y. Zhang, Q. Ye, and F. Wan
+(2025)
+Timestep embedding tells: it’s time to cache for video diffusion model
+.
+In
+CVPR
+,
+Cited by:
+§1
+,
+§4.1
+.
+[21]
+J. Liu, C. Zou, Y. Lyu, J. Chen, and L. Zhang
+(2025)
+From reusing to forecasting: accelerating diffusion models with taylorseers
+.
+arXiv preprint arXiv:2503.06923
+.
+Cited by:
+§1
+,
+§4.1
+.
+[22]
+X. Liu, C. Gong, and Q. Liu
+(2022)
+Flow straight and fast: learning to generate and transfer data with rectified flow
+.
+arXiv preprint arXiv:2209.03003
+.
+Cited by:
+§2.1
+.
+[23]
+C. Lu, Y. Zhou, F. Bao, J. Chen, C. Li, and J. Zhu
+(2022)
+Dpm-solver: a fast ode solver for diffusion probabilistic model sampling in around 10 steps
+.
+NIPS
+.
+Cited by:
+§1
+.
+[24]
+Y. Luo, T. Hu, J. Sun, Y. Cai, and J. Tang
+(2025)
+Learning few-step diffusion models by trajectory distribution matching
+.
+arXiv preprint arXiv:2503.06674
+.
+Cited by:
+§1
+.
+[25]
+J. Ma, S. Xue, T. Hu, W. Wang, Z. Liu, Z. Li, Z. Ma, and K. Kawaguchi
+(2024)
+The surprising effectiveness of skip-tuning in diffusion sampling
+.
+In
+ICML
+,
+Cited by:
+§1
+.
+[26]
+X. Ma, Y. Wang, X. Chen, G. Jia, Z. Liu, Y. Li, C. Chen, and Y. Qiao
+(2025)
+Latte: latent diffusion transformer for video generation
+.
+Transactions on Machine Learning Research
+.
+Cited by:
+§1
+.
+[27]
+W. Peebles and S. Xie
+(2023)
+Scalable diffusion models with transformers
+.
+In
+ICCV
+,
+Cited by:
+§1
+.
+[28]
+A. Ramesh, P. Dhariwal, A. Nichol, C. Chu, and M. Chen
+(2022)
+Hierarchical text-conditional image generation with clip latents
+.
+arXiv preprint arXiv:2204.06125
+.
+Cited by:
+§1
+.
+[29]
+R. Rombach, A. Blattmann, D. Lorenz, P. Esser, and B. Ommer
+(2022)
+High-resolution image synthesis with latent diffusion models
+.
+In
+CVPR
+,
+Cited by:
+§1
+.
+[30]
+C. Saharia, W. Chan, S. Saxena, L. Li, J. Whang, E. L. Denton, K. Ghasemipour, R. Gontijo Lopes, B. Karagol Ayan, T. Salimans,
+et al.
+(2022)
+Photorealistic text-to-image diffusion models with deep language understanding
+.
+NIPS
+.
+Cited by:
+§1
+.
+[31]
+J. So, J. Shin, C. Jang, and E. Park
+(2025)
+PCM: picard consistency model for fast parallel sampling of diffusion models
+.
+In
+CVPR
+,
+Cited by:
+§1
+.
+[32]
+J. Sohl-Dickstein, E. Weiss, N. Maheswaranathan, and S. Ganguli
+(2015)
+Deep unsupervised learning using nonequilibrium thermodynamics
+.
+In
+ICML
+,
+Cited by:
+§1
+.
+[33]
+J. Song, C. Meng, and S. Ermon
+(2021)
+Denoising diffusion implicit models
+.
+In
+ICLR
+,
+Cited by:
+§2.1
+.
+[34]
+Y. Song, J. Sohl-Dickstein, D. P. Kingma, A. Kumar, S. Ermon, and B. Poole
+(2020)
+Score-based generative modeling through stochastic differential equations
+.
+arXiv preprint arXiv:2011.13456
+.
+Cited by:
+§1
+,
+§2.1
+.
+[35]
+T. H. F. M. Team
+(2025)
+HunyuanVideo 1.5 technical report
+.
+External Links:
+2511.18870
+,
+Link
+Cited by:
+Appendix D
+,
+§1
+.
+[36]
+Y. Tian, X. Xia, Y. Ren, S. Lin, X. Wang, X. Xiao, Y. Tong, L. Yang, and B. Cui
+(2025)
+Training-free diffusion acceleration with bottleneck sampling
+.
+arXiv preprint arXiv:2503.18940
+.
+Cited by:
+§2.2
+,
+§4.1
+.
+[37]
+A. Vaswani, N. Shazeer, N. Parmar, J. Uszkoreit, L. Jones, A. N. Gomez, Ł. Kaiser, and I. Polosukhin
+(2017)
+Attention is all you need
+.
+In
+NIPS
+,
+Cited by:
+§1
+.
+[38]
+T. Wan, A. Wang, B. Ai, B. Wen, C. Mao, C. Xie, D. Chen, F. Yu, H. Zhao, J. Yang,
+et al.
+(2025)
+Wan: open and advanced large-scale video generative models
+.
+arXiv preprint arXiv:2503.20314
+.
+Cited by:
+§1
+.
+[39]
+H. Wang, Y. Shang, Z. Yuan, J. Wu, J. Yan, and Y. Yan
+(2025)
+Quest: low-bit diffusion model quantization via efficient selective finetuning
+.
+In
+ICCV
+,
+Cited by:
+§1
+.
+[40]
+J. Wang, K. C. Chan, and C. C. Loy
+(2023)
+Exploring CLIP for assessing the look and feel of images
+.
+In
+AAAI
+,
+Cited by:
+§4.1
+.
+[41]
+C. Wu, J. Li, J. Zhou, J. Lin, K. Gao, K. Yan, S. Yin, S. Bai, X. Xu, Y. Chen, Y. Chen, Z. Tang, Z. Zhang, Z. Wang, A. Yang, B. Yu, C. Cheng, D. Liu, D. Li, H. Zhang, H. Meng, H. Wei, J. Ni, K. Chen, K. Cao, L. Peng, L. Qu, M. Wu, P. Wang, S. Yu, T. Wen, W. Feng, X. Xu, Y. Wang, Y. Zhang, Y. Zhu, Y. Wu, Y. Cai, and Z. Liu
+(2025)
+Qwen-Image technical report
+.
+External Links:
+2508.02324
+,
+Link
+Cited by:
+Appendix D
+.
+[42]
+X. Wu, Y. Hao, K. Sun, Y. Chen, F. Zhu, R. Zhao, and H. Li
+(2023)
+Human preference score v2: a solid benchmark for evaluating human preferences of text-to-image synthesis
+.
+arXiv preprint arXiv:2306.09341
+.
+Cited by:
+§4.1
+.
+[43]
+J. Xu, X. Zou, K. Huang, Y. Chen, B. Liu, M. Cheng, X. Shi, and J. Huang
+(2024)
+Easyanimate: a high-performance long video generation method based on transformer architecture
+.
+arXiv preprint arXiv:2405.18991
+.
+Cited by:
+§1
+.
+[44]
+J. Xu, X. Liu, Y. Wu, Y. Tong, Q. Li, M. Ding, J. Tang, and Y. Dong
+(2023)
+ImageReward: learning and evaluating human preferences for text-to-image generation
+.
+In
+NIPS
+,
+Cited by:
+§4.1
+.
+[45]
+S. Xue, Z. Liu, F. Chen, S. Zhang, T. Hu, E. Xie, and Z. Li
+(2024)
+Accelerating diffusion sampling with optimized time steps
+.
+In
+CVPR
+,
+Cited by:
+§1
+.
+[46]
+Z. Yang, J. Teng, W. Zheng, M. Ding, S. Huang, J. Xu, Y. Yang, W. Hong, X. Zhang, G. Feng,
+et al.
+(2024)
+Cogvideox: text-to-video diffusion models with an expert transformer
+.
+arXiv preprint arXiv:2408.06072
+.
+Cited by:
+§1
+.
+[47]
+Z. Ye, Z. Chen, T. Li, Z. Huang, W. Luo, and G. Qi
+(2025)
+Schedule on the fly: diffusion time prediction for faster and better image generation
+.
+In
+CVPR
+,
+Cited by:
+§1
+.
+[48]
+T. Yin, M. Gharbi, T. Park, R. Zhang, E. Shechtman, F. Durand, and B. Freeman
+(2024)
+Improved distribution matching distillation for fast image synthesis
+.
+In
+NIPS
+,
+Cited by:
+§1
+.
+[49]
+H. Zhang, R. Feng, Z. Yang, L. Huang, Y. Liu, Y. Zhang, Y. Shen, D. Zhao, J. Zhou, and F. Cheng
+(2023)
+Dimensionality-varying diffusion process
+.
+In
+CVPR
+,
+Cited by:
+§2.2
+.
+[50]
+H. Zhang, T. Gao, J. Shao, and Z. Wu
+(2025)
+Blockdance: reuse structurally similar spatio-temporal features to accelerate diffusion transformers
+.
+In
+CVPR
+,
+Cited by:
+§1
+.
+[51]
+Y. Zhang, J. Xing, B. Xia, S. Liu, B. Peng, X. Tao, P. Wan, E. Lo, and J. Jia
+(2025)
+Training-free efficient video generation via dynamic token carving
+.
+arXiv preprint arXiv:2505.16864
+.
+Cited by:
+§2.2
+.
+[52]
+W. Zhao, L. Bai, Y. Rao, J. Zhou, and J. Lu
+(2023)
+UniPC: a unified predictor-corrector framework for fast sampling of diffusion models
+.
+In
+NIPS
+,
+Cited by:
+§1
+.
+[53]
+C. Zou, X. Liu, T. Liu, S. Huang, and L. Zhang
+(2024)
+Accelerating diffusion transformers with token-wise feature caching
+.
+arXiv preprint arXiv:2410.05317
+.
+Cited by:
+§1
+.
+Supplementary Material
+Appendix A
+The detailed derivation of SAG-ODE
+This section provides the formal derivation for the SAG-ODE introduced in the main paper. We restate the governing equation for a given stage
+k
+k
+, which operates on the active token set
+Ω
+k
+\Omega_{k}
+:
+d
+​
+𝐲
+​
+(
+t
+)
+d
+​
+t
+=
+𝚷
+k
+​
+𝒖
+𝜽
+​
+(
+𝐒
+k
+⊤
+​
+𝐲
+​
+(
+t
+)
+,
+t
+)
+.
+\frac{\mathrm{d}\mathbf{y}(t)}{\mathrm{d}t}=\mathbf{\Pi}_{k}\,\bm{u}_{\bm{\theta}}(\mathbf{S}^{\top}_{k}\mathbf{y}(t),t).
+(11)
+Here,
+𝚷
+k
+\mathbf{\Pi}_{k}
+is the augmented lifter operator, and the term
+𝒖
+𝜽
+​
+(
+𝐒
+k
+⊤
+​
+𝐲
+​
+(
+t
+)
+,
+t
+)
+\bm{u}_{\bm{\theta}}(\mathbf{S}_{k}^{\top}\mathbf{y}(t),t)
+represents the velocity computed by the Transformer using only the
+m
+k
+m_{k}
+active tokens. The following derivation shows how this compact form is obtained by starting from an exact orthogonal decomposition of the ideal velocity field and then applying the proposed approximation.
+A.1
+Derivation via orthogonal decomposition
+Let
+𝒗
+∗
+​
+(
+𝐲
+,
+t
+)
+=
+𝒖
+𝜽
+​
+(
+𝐲
+,
+t
+)
+∈
+ℝ
+N
+​
+d
+\bm{v}^{*}(\mathbf{y},t)=\bm{u}_{\bm{\theta}}(\mathbf{y},t)\in\mathbb{R}^{Nd}
+denote the ideal, full-dimensional velocity field that acts on all
+N
+N
+tokens. Using the projection matrix
+𝐏
+k
+=
+𝐒
+k
+​
+𝐒
+k
+⊤
+\mathbf{P}_{k}=\mathbf{S}_{k}\mathbf{S}^{\top}_{k}
+, we can decompose this velocity field into two orthogonal components: One lying within the subspace spanned by the anchor tokens (active subspace) and the other in its orthogonal complement (inactive subspace). The decomposition is given by
+𝒗
+∗
+=
+𝐏
+k
+​
+𝒗
+∗
++
+(
+𝐈
+−
+𝐏
+k
+)
+​
+𝒗
+∗
+.
+\bm{v}^{*}=\mathbf{P}_{k}\bm{v}^{*}+(\mathbf{I}-\mathbf{P}_{k})\bm{v}^{*}.
+(12)
+Substituting
+𝐏
+k
+=
+𝐒
+k
+​
+𝐒
+k
+⊤
+\mathbf{P}_{k}=\mathbf{S}_{k}\mathbf{S}^{\top}_{k}
+into the first term, we obtain
+𝒗
+∗
+=
+𝐒
+k
+​
+(
+𝐒
+k
+⊤
+​
+𝒗
+∗
+)
++
+(
+𝐈
+−
+𝐏
+k
+)
+​
+𝒗
+∗
+,
+\bm{v}^{*}=\mathbf{S}_{k}(\mathbf{S}^{\top}_{k}\bm{v}^{*})+(\mathbf{I}-\mathbf{P}_{k})\bm{v}^{*},
+(13)
+where
+𝐒
+k
+⊤
+​
+𝒗
+∗
+∈
+ℝ
+m
+k
+​
+d
+\mathbf{S}^{\top}_{k}\bm{v}^{*}\in\mathbb{R}^{m_{k}d}
+represents the precise velocity projected onto the
+m
+k
+m_{k}
+anchor tokens.
+A.2
+Approximation strategy
+Computing the full velocity
+𝒗
+∗
+\bm{v}^{*}
+is computationally prohibitive. To accelerate inference, we introduce two coherent approximations corresponding to the two terms in the decomposition:
+1.
+Sparse input approximation (active component):
+Instead of computing the velocity based on the full context
+𝐲
+\mathbf{y}
+, we approximate the active component by evaluating the network only on the projected anchor tokens
+𝐒
+k
+⊤
+​
+𝐲
+∈
+ℝ
+m
+k
+​
+d
+\mathbf{S}^{\top}_{k}\mathbf{y}\in\mathbb{R}^{m_{k}d}
+. We define this computable sparse velocity as
+𝒖
+~
+:=
+𝒖
+𝜽
+​
+(
+𝐒
+k
+⊤
+​
+𝐲
+,
+t
+)
+∈
+ℝ
+m
+k
+​
+d
+.
+\tilde{\bm{u}}:=\bm{u}_{\bm{\theta}}(\mathbf{S}^{\top}_{k}\mathbf{y},t)\in\mathbb{R}^{m_{k}d}.
+(14)
+Thus, the first term in Eq. (
+12
+) is approximated by the embedding of this sparse calculation
+𝐒
+k
+​
+𝒖
+~
+∈
+ℝ
+N
+​
+d
+\mathbf{S}_{k}\tilde{\bm{u}}\in\mathbb{R}^{Nd}
+.
+2.
+Subspace extrapolation (inactive component):
+For the second term
+(
+𝐈
+−
+𝐏
+k
+)
+​
+𝒗
+∗
+(\mathbf{I}-\mathbf{P}_{k})\bm{v}^{*}
+, which represents the velocity of the inactive tokens, we avoid explicit neural function evaluations. Instead, we assume that the dynamics of the inactive tokens can be reasonably inferred from the active anchors via a pre-defined interpolation operator
+ℐ
+k
+\mathcal{I}_{k}
+(please refer to Appendix
+B.2
+for specific implementation details). This yields the approximation
+(
+𝐈
+−
+𝐏
+k
+)
+​
+𝒗
+∗
+≈
+ℐ
+k
+​
+(
+𝒖
+~
+)
+.
+(\mathbf{I}-\mathbf{P}_{k})\bm{v}^{*}\approx\mathcal{I}_{k}(\tilde{\bm{u}}).
+(15)
+A.3
+Synthesis and the augmented lifter
+Substituting the approximations from the previous section, the approximate velocity field
+𝒗
+\bm{v}
+is formed by combining the exact velocity for the anchor tokens with the interpolated velocity for the inactive ones. We now define the augmented lifter
+𝚷
+k
+\mathbf{\Pi}_{k}
+as the operator that encapsulates this entire process. Its action on the computed sparse velocity
+𝒖
+~
+\tilde{\bm{u}}
+is given by
+𝒗
+=
+𝚷
+k
+​
+𝒖
+~
+:=
+𝐒
+k
+​
+𝒖
+~
++
+ℐ
+k
+​
+(
+𝒖
+~
+)
+.
+\bm{v}=\mathbf{\Pi}_{k}\tilde{\bm{u}}:=\mathbf{S}_{k}\tilde{\bm{u}}+\mathcal{I}_{k}(\tilde{\bm{u}}).
+(16)
+This definition states that the operator
+𝚷
+k
+\mathbf{\Pi}_{k}
+maps the sparse velocity to the full space. By substituting
+𝒖
+~
+=
+𝒖
+𝜽
+​
+(
+𝐒
+k
+⊤
+​
+𝐲
+,
+t
+)
+\tilde{\bm{u}}=\bm{u}_{\bm{\theta}}(\mathbf{S}^{\top}_{k}\mathbf{y},t)
+, we arrive at the final, compact form of our SAG-ODE:
+d
+​
+𝐲
+​
+(
+t
+)
+d
+​
+t
+=
+𝚷
+k
+​
+𝒖
+𝜽
+​
+(
+𝐒
+k
+⊤
+​
+𝐲
+​
+(
+t
+)
+,
+t
+)
+.
+\frac{\mathrm{d}\mathbf{y}(t)}{\mathrm{d}t}=\mathbf{\Pi}_{k}\bm{u}_{\bm{\theta}}(\mathbf{S}^{\top}_{k}\mathbf{y}(t),t).
+(17)
+A.4
+Proof of consistency
+Applying the projection
+𝐒
+k
+⊤
+\mathbf{S}^{\top}_{k}
+to the derived ODE confirms that the dynamics on the activate anchor tokens remain exact relative to the sparse computation:
+𝐒
+k
+⊤
+​
+d
+​
+𝐲
+d
+​
+t
+\displaystyle\mathbf{S}^{\top}_{k}\frac{\mathrm{d}\mathbf{y}}{\mathrm{d}t}
+=
+𝐒
+k
+⊤
+​
+(
+𝐒
+k
+​
+𝒖
+~
++
+ℐ
+k
+​
+(
+𝒖
+~
+)
+)
+\displaystyle=\mathbf{S}^{\top}_{k}(\mathbf{S}_{k}\tilde{\bm{u}}+\mathcal{I}_{k}(\tilde{\bm{u}}))
+(18)
+=
+(
+𝐒
+k
+⊤
+​
+𝐒
+k
+)
+​
+𝒖
+~
++
+𝐒
+k
+⊤
+​
+ℐ
+k
+​
+(
+𝒖
+~
+)
+\displaystyle=(\mathbf{S}^{\top}_{k}\mathbf{S}_{k})\tilde{\bm{u}}+\mathbf{S}^{\top}_{k}\mathcal{I}_{k}(\tilde{\bm{u}})
+(19)
+=
+𝐈
+⋅
+𝒖
+~
++
+𝟎
+\displaystyle=\mathbf{I}\cdot\tilde{\bm{u}}+\mathbf{0}
+(20)
+=
+𝒖
+𝜽
+​
+(
+𝐒
+k
+⊤
+​
+𝐲
+,
+t
+)
+.
+\displaystyle=\bm{u}_{\bm{\theta}}(\mathbf{S}^{\top}_{k}\mathbf{y},t).
+(21)
+Here, we utilize the property that
+𝐒
+k
+⊤
+​
+𝐒
+k
+=
+𝐈
+\mathbf{S}^{\top}_{k}\mathbf{S}_{k}=\mathbf{I}
+(orthonormality of the selector) and
+𝐒
+k
+⊤
+​
+ℐ
+k
+​
+(
+⋅
+)
+=
+𝟎
+\mathbf{S}^{\top}_{k}\mathcal{I}_{k}(\cdot)=\mathbf{0}
+(the interpolation operator has no effect on the anchor subspace by design). This concludes the derivation.
+Appendix B
+Implementation details
+In this section, we provide further implementation details of our JiT framework, including the specific construction of the selector matrix
+𝐒
+k
+\mathbf{S}_{k}
+for the initial stage, the algorithm for our interpolation operators
+ℐ
+k
+\mathcal{I}_{k}
+and
+Φ
+k
+\Phi_{k}
+, and the detailed hyperparameter configurations for the experimental results reported in the main text.
+Figure 5
+:
+An illustration of the construction process for the initial selector matrix
+𝐒
+K
+\mathbf{S}_{K}
+.
+B.1
+Construction of the initial selector matrix
+As described in Sec.
+3.3
+, for all subsequent stages
+k
+<
+K
+k<K
+, anchor tokens are selected dynamically based on the importance map derived from the velocity field variance. Consequently, we only need to define the construction of the selector matrix
+𝐒
+K
+\mathbf{S}_{K}
+for the initial and most sparse stage.
+For this initialization, our primary objective is to capture the global semantic structure while strictly adhering to the sparsity budget. To achieve this, we employ a deterministic strided grid initialization strategy, reinforced by explicit boundary constraints. Specifically, this strategy subsamples the latent grid with a fixed stride of 2 in both the height and width dimensions, which is akin to selecting the top-left token from every non-overlapping
+2
+×
+2
+2\times 2
+block. To ensure the integrity of the image frame and prevent boundary artifacts, we augment this set by explicitly including all tokens located at the top, bottom, left, and right boundaries of the latent feature map.
+Since the number of tokens resulting from this geometric pattern may not strictly align with the target budget
+m
+K
+m_{K}
+, we apply a final stochastic adjustment step. If the number of geometrically selected tokens falls short of
+m
+K
+m_{K}
+, we randomly sample supplementary indices from the remaining inactive set to fill the deficit. Conversely, if the count exceeds
+m
+K
+m_{K}
+, we randomly drop excess tokens from the generated set to strictly meet the
+m
+K
+m_{K}
+budget. This hybrid approach combines the regularity required for low-frequency structure generation with the flexibility to meet precise computational constraints. We provide a simplified schematic diagram of the above process in
+Fig.
+5
+.
+B.2
+Implementation of interpolation operators
+It should be clarified that while sharing the same algorithmic implementation, the two interpolation operators serve distinct roles within our framework, the subspace extrapolation operator
+ℐ
+k
+\mathcal{I}_{k}
+acts on the velocity field
+𝒖
+θ
+\bm{u}_{\theta}
+, whereas the structural prior operator
+Φ
+k
+\Phi_{k}
+operates on the data latent tokens
+𝐲
+^
+\hat{\mathbf{y}}
+.
+We opt for a combination of nearest-neighbor interpolation and masked Gaussian blur rather than standard linear (e.g., bilinear) interpolation. This choice is driven by the nature of the high-dimensional representations in DiTs. Velocity fields and latent states often exhibit high-frequency spatial variations and complex semantic structures. Linear-based interpolation assumes a smooth gradient between sparse anchors, which can lead to over-smoothed features that drift off the valid feature manifold, particularly when the spatial grid is irregular or highly sparse.
+In contrast, nearest-neighbor interpolation strictly preserves the original feature statistics and signal integrity of the anchor tokens. We then address the resulting spatial discontinuities (blockiness) via a controlled Gaussian blur, which smooths the transition boundaries without corrupting the feature values at the anchor positions. Specifically, derived from the token sparsity
+ρ
+\rho
+, we approximate the average anchor gap as
+L
+≈
+ρ
+−
+1
+/
+2
+L\approx\rho^{-1/2}
+. We dynamically set the blur scale
+σ
+=
+0.4
+​
+L
+\sigma=0.4L
+such that the effective radius of the Gaussian kernel (
+3
+​
+σ
+≈
+1.2
+​
+L
+3\sigma\approx 1.2L
+) slightly exceeds and covers this gap. This geometric constraint systematically suppresses blocky artifacts while strictly preventing over-smoothing.
+We present the unified implementation in Algorithm
+2
+.
+Algorithm 2
+Unified Interpolation Operator (
+ℐ
+k
+\mathcal{I}_{k}
+and
+Φ
+k
+\Phi_{k}
+)
+1:
+Input:
+Number of active tokens
+m
+m
+, total tokens
+N
+N
+, token dimension
+d
+d
+, active features
+𝐙
+𝐚𝐜𝐭
+∈
+{
+𝒖
+𝐚𝐜𝐭
+,
+𝐲
+^
+𝐚𝐜𝐭
+}
+∈
+ℝ
+m
+​
+d
+\mathbf{Z}_{\mathbf{act}}\in\{\bm{u}_{\mathbf{act}},\hat{\mathbf{y}}_{\mathbf{act}}\}\in\mathbb{R}^{md}
+, active indices
+𝒜
+𝐚𝐜𝐭
+\mathcal{A}_{\mathbf{act}}
+2:
+Output:
+Interpolated full tensor
+𝐙
+𝐟𝐮𝐥𝐥
+∈
+{
+𝒖
+𝐟𝐮𝐥𝐥
+,
+𝐲
+^
+𝐟𝐮𝐥𝐥
+}
+∈
+ℝ
+N
+​
+d
+\mathbf{Z}_{\mathbf{full}}\in\{\bm{u}_{\mathbf{full}},\hat{\mathbf{y}}_{\mathbf{full}}\}\in\mathbb{R}^{Nd}
+3:
+Step 1: Nearest-Neighbor Interpolation
+4:
+Generate full coordinate grid
+𝐂
+𝐟𝐮𝐥𝐥
+\mathbf{C}_{\mathbf{full}}
+and active coordinates
+𝐂
+𝐚𝐜𝐭
+\mathbf{C}_{\mathbf{act}}
+5:
+for
+each token
+i
+∈
+{
+1
+,
+…
+,
+N
+}
+i\in\{1,\dots,N\}
+do
+6:
+j
+∗
+=
+arg
+⁡
+min
+j
+∈
+𝒜
+𝐚𝐜𝐭
+⁡
+‖
+𝐂
+𝐟𝐮𝐥𝐥
+​
+[
+i
+]
+−
+𝐂
+𝐚𝐜𝐭
+​
+[
+j
+]
+‖
+2
+j^{*}=\arg\min_{j\in\mathcal{A}_{\mathbf{act}}}\|\mathbf{C}_{\mathbf{full}}[i]-\mathbf{C}_{\mathbf{act}}[j]\|_{2}
+7:
+𝐙
+𝐍𝐍
+​
+[
+i
+]
+←
+𝐙
+𝐚𝐜𝐭
+​
+[
+j
+∗
+]
+\mathbf{Z}_{\mathbf{NN}}[i]\leftarrow\mathbf{Z}_{\mathbf{act}}[j^{*}]
+8:
+end
+for
+9:
+Step 2: Controlled Gaussian Blur
+10:
+Calculate token density
+ρ
+=
+m
+/
+N
+\rho=m/N
+and approximate anchor gap
+L
+≈
+ρ
+−
+1
+/
+2
+L\approx\rho^{-1/2}
+11:
+Set blur scale
+σ
+=
+0.4
+​
+L
+\sigma=0.4L
+and kernel size
+k
+≈
+3
+​
+σ
+k\approx 3\sigma
+{Ensure
+k
+>
+L
+k>L
+for adequate spatial coverage}
+12:
+𝐙
+𝐛𝐥𝐮𝐫
+←
+GaussianBlur
+​
+(
+𝐙
+𝐍𝐍
+,
+kernel
+=
+k
+,
+σ
+=
+σ
+)
+\mathbf{Z}_{\mathbf{blur}}\leftarrow\text{GaussianBlur}(\mathbf{Z}_{\mathbf{NN}},\text{kernel}=k,\sigma=\sigma)
+13:
+Step 3: Masked Composition
+14:
+Initialize binary mask
+𝐌
+←
+𝟎
+N
+\mathbf{M}\leftarrow\mathbf{0}_{N}
+15:
+𝐌
+⁡
+[
+𝒜
+𝐚𝐜𝐭
+]
+←
+1
+\mathbf{M}[\mathcal{A}_{\mathbf{act}}]\leftarrow 1
+{Identify anchor positions}
+16:
+𝐙
+𝐟𝐮𝐥𝐥
+←
+𝐌
+⊙
+𝐙
+𝐍𝐍
++
+(
+𝟏
+−
+𝐌
+)
+⊙
+𝐙
+𝐛𝐥𝐮𝐫
+\mathbf{Z}_{\mathbf{full}}\leftarrow\mathbf{M}\odot\mathbf{Z}_{\mathbf{NN}}+(\mathbf{1}-\mathbf{M})\odot\mathbf{Z}_{\mathbf{blur}}
+{Preserve exact anchor values}
+17:
+return
+𝐙
+𝐟𝐮𝐥𝐥
+\mathbf{Z}_{\mathbf{full}}
+B.3
+Detailed experimental configurations
+As shown in
+Tab.
+4
+, we provide the detailed hyperparameter settings for our JiT framework under the
+4
+×
+4\times
+and
+7
+×
+7\times
+acceleration settings reported in the main paper. The configuration includes the total NFEs, the stage definition, and the specific token sparsity ratios used at each stage.
+It is important to note that these configurations are not the product of an exhaustive, brute-force search. Instead, they are derived from a principled and lightweight hyperparameter recipe. Specifically, we first determine an initial token sparsity threshold that strictly ensures semantic stability at the generation starting point. To achieve the target acceleration ratios (e.g.,
+4
+×
+4\times
+or
+7
+×
+7\times
+), we then strategically allocate the solver steps, assigning fewer steps to the highly sparse early stages to maximize inference speed, and dedicating more steps to the denser late stages to preserve fine-grained generation quality.
+Parameter
+JiT (
+∼
+4
+×
+\sim 4\times
+)
+JiT (
+∼
+7
+×
+\sim 7\times
+)
+Total NFEs
+18
+11
+Number of Stages
+3
+3
+Stage 2 (Coarse)
+Steps
+7
+4
+Token Sparsity
+35%
+32%
+Stage 1 (Medium)
+Steps
+4
+3
+Token Sparsity
+62%
+60%
+Stage 0 (Fine)
+Steps
+7
+4
+Token Sparsity
+100%
+100%
+Table 4
+:
+Detailed configuration of JiT schedules for different acceleration factors. The sparsity ratio denotes the fraction of tokens activated at each stage relative to the full sequence length
+N
+N
+.
+B.4
+Timestep schedule configuration
+Standard uniform timestep sampling typically assumes a constant rate of information generation, which fails to capture the dynamic nature of the diffusion process. Recent spectral analysis in Beta Sampling
+[
+16
+]
+reveals that significant changes in image content, specifically the establishment of low-frequency global structures, occur predominantly in the early stages of the denoising process, while high-frequency details are refined later.
+To align the computational effort with this non-uniform information flow, we adopt a Beta-distribution-based strategy to define our timestep schedule. The core methodology leverages the probability integral transform (PIT) to warp the standard uniform timestep discretization. Formally, given a linear sequence
+s
+i
+∈
+[
+0
+,
+1
+]
+s_{i}\in[0,1]
+representing the uniform progress of generation, we generate a non-uniform set of timesteps by mapping them through the inverse cumulative distribution function (CDF) of the Beta distribution. The final timesteps
+t
+i
+t_{i}
+corresponding to these warped time points are then calculated as
+t
+i
+=
+F
+−
+1
+​
+(
+s
+i
+,
+α
+,
+β
+)
+,
+t_{i}=F^{-1}(s_{i};\alpha,\beta),
+(22)
+where
+F
+−
+1
+​
+(
+⋅
+,
+α
+,
+β
+)
+F^{-1}(\cdot;\alpha,\beta)
+denotes the inverse CDF of the Beta distribution. This procedure effectively creates a non-uniform sequence of timesteps
+{
+t
+i
+}
+\{t_{i}\}
+for the ODE solver.
+In the context of our JiT framework, the robust formation of the global structure in the early phase is a prerequisite for the effectiveness of the subsequent spatial acceleration. Therefore, we prioritize the early denoising stages by allocating a denser distribution of timesteps to this period. We implement this by setting the hyperparameters to
+α
+=
+1.4
+\alpha=1.4
+and
+β
+=
+0.42
+\beta=0.42
+. This configuration skews the sampling density towards the high-noise region (i.e., early in the denoising process). This ensures that the model dedicates sufficient NFEs to solidly establish the semantic layout and structural foundation before transitioning to the accelerated, spatially-sparse refinement stages.
+B.5
+Evaluation dataset
+To ensure a comprehensive and unbiased evaluation, we constructed our evaluation dataset using the official prompt sets from the GenEval
+[
+3
+]
+and T2I-CompBench
+[
+7
+]
+benchmarks.
+Specifically, for the 553 prompts from GenEval, we generated four images per prompt, each with a different random seed, yielding a subset of 2,212 images (553 prompts
+×
+\times
+4 seeds). For the 2,400 prompts from T2I-CompBench, we generated one image per prompt.
+Therefore, our full evaluation dataset comprises a total of 4,612 images, providing a robust and diverse foundation for the metrics reported in our experiments.
+Appendix C
+Additional ablation study on JiT scheduling
+In this section, we provide further qualitative ablation studies on the scheduling hyperparameters of our JiT framework. These experiments are designed to offer insight into how different scheduling choices impact the trade-off between computational cost and generation quality, thereby justifying the configurations used in our main experiments.
+C.1
+Impact of the number of stages
+The number of stages in the JiT schedule plays a significant role in defining the granularity of the coarse-to-fine generation process. To investigate this, we compare our default 3-stage setup against 2-stage and 4-stage variants, keeping the total NFEs fixed at 18. For fairness, the sparsity ratios and transition timings in these variants are set to be approximately uniform (e.g., 50% sparsity for the first stage in the 2-stage schedule).
+As visually demonstrated in Fig.
+6
+, our default 3-stage schedule strikes the most effective balance.
+(a) The 2-stage schedule (50%
+→
+\to
+100%) offers limited acceleration and produces a slightly blurred image, a quality degradation we attribute to the large, abrupt incorporation of half the tokens simultaneously.
+(b) Our default 3-stage schedule avoids both pitfalls, providing substantial acceleration in the early phases while allowing sufficient time for detail refinement in the later, denser stages.
+(c) Conversely, the 4-stage schedule, while computationally cheaper, suffers from noticeable quality degradation. Its final transition to full resolution occurs too late in the denoising process. By this point, the global structure is largely solidified, and the late introduction of high-frequency information results in persistent noise and artifacts that the model cannot fully remove in the remaining few steps.
+Figure 6
+:
+Visual ablation on the number of stages for a fixed total NFE of 18. (a) A 2-stage schedule offers limited acceleration. (b) Our default 3-stage schedule yields the best trade-off. (c) A 4-stage schedule introduces persistent noise due to a late transition to full resolution. This validates that a 3-stage approach offers a superior balance between speed and quality.
+C.2
+Impact of token allocation (sparsity ratios)
+Given a fixed 3-stage schedule, the allocation of tokens to the early and middle stages directly controls the computational cost and the quality of the structural prior. A more aggressive schedule (fewer tokens) saves more computation but risks creating a poor initial structure that is difficult to correct later. We explore this trade-off in Fig.
+7
+by comparing our default schedule (35%
+→
+\to
+62%
+→
+\to
+100%) with two variants: An aggressive schedule (20%
+→
+\to
+50%
+→
+\to
+100%) and a conservative one (50%
+→
+\to
+75%
+→
+\to
+100%).
+The results are revealing. (a) The aggressive schedule, despite its significant acceleration, yields an image with compromised semantic integrity and lower overall quality. This suggests that an overly sparse initial set of tokens fails to capture sufficient global information, leading to errors that propagate through the entire generation process. (b) In contrast, our chosen token allocation robustly preserves generation quality while still achieving substantial acceleration. (c) On the other hand, while the conservative schedule also produces a high-quality result comparable to our default, its acceleration advantage is substantially diminished due to the high token count in the initial stages. This three-way comparison validates that our chosen approach provides the most effective compromise.
+Figure 7
+:
+Visual ablation on token allocation for a fixed 3-stage, 18-NFE schedule. (a) An aggressive schedule (20%
+→
+\to
+50%) compromises semantic integrity. (b) Our chosen schedule (35%
+→
+\to
+62%) provides the best balance. (c) A conservative schedule (50%
+→
+\to
+75%) offers similar quality but with a reduced acceleration advantage.
+Appendix D
+Extensibility to other backbone models
+To demonstrate the generalizability of our JiT framework and its applicability beyond the FLUX.1-dev model, we conducted an additional experiment applying JiT to a different, publicly available backbone: Qwen-image
+[
+41
+]
+. Qwen-image is another powerful text-to-image model based on a DiT architecture, but with a distinct design and training paradigm compared to FLUX. This makes it an excellent test case for the model-agnostic nature of our approach.
+By simply defining a multi-stage schedule with dynamic token selection and the corresponding SAG-ODE approximations, we are able to achieve a inference acceleration of approximately 4
+×
+\times
+(from 26.95s to 6.51s). As shown in the visual results in
+Fig.
+8
+, the outcomes are highly compelling. Despite the substantial speedup, the model maintains a high degree of visual fidelity, successfully rendering complex scenes, textures, and semantic concepts presented in the prompts.
+Furthermore, to rigorously validate the scalability of our method across diverse modalities, we extend JiT to the spatiotemporal domain using the HunyuanVideo-1.5
+[
+35
+]
+backbone. Video diffusion models inherently process 3D latent representations, exhibiting significant redundancy both spatially within a single frame and temporally across continuous frames. Because our spatial acceleration strategy treats latents as a unified sequence of discrete tokens, it seamlessly identifies and bypasses these redundant spatiotemporal computations without requiring architectural modifications.
+As illustrated in
+Fig.
+9
+, we provide qualitative showcases of the generated video frames under both
+∼
+4
+×
+\sim 4\times
+(from 1830.21s to 423.52s) and
+∼
+7
+×
+\sim 7\times
+(from 1830.21s to 268.12s) acceleration settings. The visual outcomes confirm that JiT effectively maintains motion coherence and spatial structural fidelity even at extreme speedup ratios. This successful cross-modality application serves as strong evidence that JiT relies on the fundamental coarse-to-fine nature of the diffusion probability flow, rather than over-fitting to the architectural biases of a specific 2D model.
+Figure 8
+:
+Qualitative results of our JiT framework applied to the Qwen-image model. The images were generated with
+∼
+\sim
+4
+×
+\times
+acceleration compared to the standard pipeline.
+Figure 9
+:
+Qualitative results of our JiT framework applied to the HunyuanVideo-1.5 backbone. Our JiT framework demonstrates robust generalizability in the spatiotemporal domain, maintaining semantic consistency and temporal coherence under both
+∼
+\sim
+4
+×
+\times
+and
+∼
+\sim
+7
+×
+\times
+acceleration settings.
+Appendix E
+Additional qualitative comparisons
+To further validate the robustness of our JiT framework,
+Fig.
+10
+presents additional qualitative comparisons on challenging prompts. The results consistently demonstrate the superiority of JiT over competing methods at similar computational budgets, particularly in preserving complex compositions and fine-grained details.
+Figure 10
+:
+Additional qualitative comparisons of our JiT framework against baseline methods at
+∼
+\sim
+4
+×
+\times
+and
+∼
+\sim
+7
+×
+\times
+acceleration. These examples further showcase the superior performance of JiT across a variety of challenging prompts.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

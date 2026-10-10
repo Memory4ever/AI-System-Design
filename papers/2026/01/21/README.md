@@ -4,9 +4,13 @@
 **窗口：** 2026-01-20T09:00:00+08:00 ～ 2026-01-21T09:00:00+08:00
 **状态：** 完成
 **Books：** 纳入本次
-**检查时间：** 2026-10-04T03:41:00+08:00
+**检查时间：** 2026-10-08T04:42:00+08:00
+**窗口说明：** 用户授权仅补已有Daily来源遗漏，保留原窗口、原候选日期/评分和有效证据；旧完成声明仅属原处理，不代替本轮补查验收。
+**补充窗口：** 2026-01-20 ～ 2026-01-20
 
 ## 1. 结论
+
+本轮增量来源补查未确定新增候选：原0＋新增0＝0家族，Books仍为No Change，无实际改书。原5项贡献关闭复用，不重评分、不把重新发现计入新增。补充Jan20自然日没有常规arXiv公开公告批次；官方延期Jan20美国公告属BJTJan21，不由提交库存反造新增。14每日源的原有限入口与本轮有界补检、查询漂移修补及具名窗外/噪声关闭见[增量记录](../_sources/daily-20260121/supplement-20261008.md)。非作者`/root`实际完成本轮准入与六部分DAY复核，通过；普通可执行待办0。历史片段限制仍隔离，不支持全源Coverage或无遗漏。以下保留原处理结论及有效证据。
 
 本日有限检查未确定可入选的主线机制家族，候选冻结 **0**，证据采用0、Books判断 **No Change**、实际改书0。OpenAI标注1月20日的4篇说明及同日Voice更新共5项按核心说明关闭：分别是安全部署策略、商业集成、医疗资助、社区建设与未披露机制的修复标签。它们不是5篇已落窗新研究；原日期时区/时刻未核实，但明确贡献关闭不需要再追日期。
 
@@ -15,6 +19,8 @@ arXiv并非“API零结果”：官方MLK公告明确1月19日无announcement；
 14个每日来源均执行了下表的有限检查。动态目录、历史分页/年份元数据及Anthropic日期交界线索已精确隔离；它们不支持“所有原源覆盖通过”“零事件”或无遗漏保证。非作者日级独立验收通过，普通可执行待办0；不把外部历史缺段作为无限扩扫理由。没有实验、复现、stage、commit或push。
 
 ## 2. 来源覆盖
+
+本轮只新增Jan20自然日主题/date查询；[原记录](../_sources/daily-20260121/STOPPOINTS.md)的14行实际入口/停止范围仍有效，不假装历史分页已恢复。本轮SRC-OPENAI/ANTHROPIC/GOOGLE-AI/META-AI补检见[increment-web-1](../_sources/daily-20260121/increment-web-1-20261008.txt)，QWEN/DEEPSEEK/MOONSHOT/TENCENT-HUNYUAN见[2](../_sources/daily-20260121/increment-web-2-20261008.txt)，ZAI/BYTEDANCE-SEED/BAIDU-ERNIE/XIAOMI-MIMO/MINIMAX见[3](../_sources/daily-20260121/increment-web-3-20261008.txt)。均停实际首屏，首批搜索漂移已以精确日期/官方domains[补检0](../_sources/daily-20260121/increment-backstop-0-20261008.txt)/[1](../_sources/daily-20260121/increment-backstop-1-20261008.txt)修补，但不授任何源零事件或完整Coverage；下表缺段继续保留。SRC-ARXIV复用有效MLK原件，并实际更新[availability](../_sources/daily-20260121/increment-web-0-20261008.txt)L172/175/182～193，补充日无常规公告批次，故不展开不存在的本窗分类标题列表/提交库存。Anthropic Alignment Science Jan目录仅两相关标题：Petri2.0 Jan22、overt saboteur Jan28；Seed2.1官方Jun23，[精确日期原件](../_sources/daily-20260121/increment-anthropic-dates-20261008.txt)与[Seed原件](../_sources/daily-20260121/increment-native-date-20261008.txt)支持窗外排除。具体每源查询、复用权限与停止点见[增量记录](../_sources/daily-20260121/supplement-20261008.md#实际查询来源与停止点)。不扫描Weekly，无新按需触发。
 
 执行入口、逐组查询和停止点见[本日停点](../_sources/daily-20260121/STOPPOINTS.md)；官方首查返回按表顺序保存在[0](../_sources/daily-20260121/official_initial_0.txt)、[1](../_sources/daily-20260121/official_initial_1.txt)、[2](../_sources/daily-20260121/official_initial_2.txt)、[3](../_sources/daily-20260121/official_initial_3.txt)。搜索均只处理实际首屏返回，日期同义覆盖January20/21及2026-01-20/21，不把未返回内容称为已读。
 
@@ -37,7 +43,11 @@ arXiv并非“API零结果”：官方MLK公告明确1月19日无announcement；
 
 本日未扫描每周来源；没有额外按需会议或框架发布触发。表中有限入口已处理到安全终态，不等于缺失原源片段被正面验收。
 
+本轮又按每机构一次窄查询修补：[13源逐项query/domains/response/stop](../_sources/daily-20260121/increment-per-source-narrow-20261008.json)。11个搜索空响应只支持检索受限，OpenAI返回原5关闭及社区帖子、MiniMax返回用户tracker都不授原目录Coverage。具名相关社区帖Local Services to Agentic AI已读[完整core](../_sources/daily-20260121/increment-community-core-20261008.txt)L9～82，实际只给既有流程与未控制的conversion观察，未披露新的执行机制、评价或可靠性边界，贡献前关闭；不是因个人作者/社区身份排除。
+
 ## 3. 候选与判断
+
+补充窗口新增0。原0候选及原5项有效关闭未改变；不把窗外Petri、overt saboteur、Assistant Axis、Seed2.1、MiniMax M2.5/Agent Team或搜索当前目录计入候选。代表排除身份/原日期依据见[本轮筛选](../_sources/daily-20260121/supplement-20261008.md#新增准入与具名代表关闭)，不把所有宽返回宣称已全量题摘/全文审阅。
 
 | 材料 | 公开时间 | 项目贡献与评分 | 审阅结果 | Books决定 |
 | --- | --- | --- | --- | --- |
@@ -56,6 +66,8 @@ arXiv日期依据采用[官方MLK通知](https://blog.arxiv.org/2026/01/14/atten
 
 ## 5. 缺口与下一步
 
+本轮可执行待办：无。新增候选0，Books无改动，非作者准入与六部分DAY已通过。下面原处理的外部保留项不支持本轮正面Coverage/Evidence；新增检查范围改为Jan20完整自然日，不要求精确公开时刻或时区字段。每个具名入口只请求一次：可接受官方本日公开日期、可靠落日界限或有原日期字段的同期snapshot；只重开该站Jan20片段/新增身份。原Claude constitution官方Jan22/PDFJan21仍不落新增Jan20日，不开展全文审阅。详见[精准请求](../_sources/daily-20260121/supplement-20261008.md#终态保留与精准请求)。原基线及本轮均无普通待办，不因外部历史片段不可得而无限扩扫。
+
 可执行待办：无。以下为本窗终态保留项（外部材料），不用于正面证据、候选、Books或全来源Coverage，不支持无遗漏断言与性能/安全保证。定点重开条件是对应官方本窗历史片段或带时区的实际公开记录恢复；逐项位置与可接受替代如下。
 
 - 历史目录片段：[OpenAI Research Index](https://openai.com/news/research/)、[Anthropic Research](https://www.anthropic.com/research)、[Google pubs](https://research.google/pubs/)/[DeepMind Blog](https://deepmind.google/blog/)、[Meta Research](https://ai.meta.com/research/)。缺少本窗原始分页或日精度记录；现有索引/年份/搜索不能证明全部事件。可接受原官方带日期历史列表或有原链接、原时间字段的同期snapshot；只重开该站本窗切片和实际新线索。
@@ -66,6 +78,14 @@ arXiv日期依据采用[官方MLK通知](https://blog.arxiv.org/2026/01/14/atten
 已恢复的MLK公告不再作为访问缺口。正常延期批次在本窗终点归后续Daily；其submission库存并未审阅关闭，不在这里新增成百材料请求。
 
 ## 6. 复核
+
+本轮复核者：`/root`（非作者；作者为`/root/supp_jan21`）。
+
+本轮结论：通过
+
+本轮完成态机器检查：V3通过；README与增量记录37个本地引用存在；13源窄查询JSON解析通过；原窗口及原§4逐字保留；本日限定cached/unstaged diff-check通过。这些检查不替代非作者语义验收。
+
+root实际已读本轮六部分与完整增量记录、13窄查询逐项source/domains/stop/response（11空返回保留检索限制），具名官方日期反侧及Local Services完整core L9～82；未因社区身份拒绝贡献，关闭依据是原文没有新的执行机制/可核可靠性边界。当前availability与旧有效MLK原件联合支持Jan20 BJT无常规公告批次，不保证所有作者提前公开、删除或未知历史事件。Google本轮窄domains只research.google的权限限制已核，不扩称DeepMind阴性Coverage。原0候选/5有效关闭可复用，原窗口及整个原§4逐字不变；新增0、No Change，无Books写入故无POST任务。独立验收未覆盖搜索未返回项或所有历史目录，外部缺段按§5精确隔离、仅定点重开，不授positiveCoverage/Evidence或无遗漏。本轮普通待办0。下面保留原复核依据。
 
 复核者：`/root`（非作者）。
 

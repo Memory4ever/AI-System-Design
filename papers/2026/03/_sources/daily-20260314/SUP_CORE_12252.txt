@@ -1,0 +1,3466 @@
+EndoCoT: Scaling Endogenous Chain-of-Thought Reasoning in Diffusion Models
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Related Work
+3
+Analysis of Reasoning in Diffusion Models
+4
+Methods
+4.1
+Preliminary
+4.2
+EndoCoT
+4.2.1
+Iterative Thought Guidance.
+4.2.2
+Terminal Thought Grounding.
+4.2.3
+Progressive Training Strategy
+4.2.4
+Inference Process
+5
+Experiments
+5.1
+Results on Visual Reasoning Tasks
+5.2
+Ablation Study and Analysis
+6
+Conclusion
+References
+A
+Overview
+B
+Data Statistics
+B.1
+Algorithmic Formulation
+B.2
+Pseudocode for Dataset Generation
+C
+Case Studies
+C.1
+Evaluation Prompts
+C.2
+Qualitative Examples
+D
+More Ablations
+D.1
+Effect of Two-Stage Training
+D.2
+Impact of Terminal Consolidation Training Duration
+D.3
+Generalization under OOD Settings
+E
+Training Hints
+E.1
+Training Settings
+E.2
+Further Analysis
+E.3
+Experimental Observations
+F
+Image Editing Details
+License: arXiv.org perpetual non-exclusive license
+arXiv:2603.12252v1 [cs.CV] 12 Mar 2026
+†
+†
+†
+\dagger
+Corresponding authors: Kai Chen ( chenkai@pjlab.org.cn@pjlab.org.cn), Yuhang Zang (zangyuhang@pjlab.org.cn)
+†
+†
+∗
+*
+Code is at
+https://github.com/InternLM/EndoCoT
+EndoCoT: Scaling Endogenous Chain-of-Thought Reasoning in Diffusion Models
+Xuanlang Dai
+Affiliation:
+Shanghai AI Laboratory
+Affiliation:
+Xi’an Jiaotong University
+Yujie Zhou
+Affiliation:
+Shanghai AI Laboratory
+Affiliation:
+Shanghai Jiaotong University
+Long Xing
+Affiliation:
+Shanghai AI Laboratory
+Affiliation:
+University of Science and Technology of China
+Jiazi Bu
+Affiliation:
+Shanghai AI Laboratory
+Affiliation:
+Shanghai Jiaotong University
+Xilin Wei
+Affiliation:
+Shanghai AI Laboratory
+Affiliation:
+Fudan University
+Yuhong Liu
+Affiliation:
+Shanghai AI Laboratory
+Affiliation:
+Shanghai Jiaotong University
+Beichen Zhang
+Affiliation:
+Shanghai AI Laboratory
+Affiliation:
+The Chinese University of Hong Kong
+†
+\dagger
+Kai Chen
+Affiliation:
+Shanghai AI Laboratory
+†
+\dagger
+Yuhang Zang
+Affiliation:
+Shanghai AI Laboratory
+Abstract
+Recently, Multimodal Large Language Models (MLLMs) have been widely integrated into diffusion frameworks primarily as text encoders to tackle complex tasks such as spatial reasoning.
+However, this paradigm suffers from two critical limitations:
+(i)
+MLLMs text encoder exhibit insufficient reasoning depth
+.
+Single-step encoding fails to activate the Chain-of-Thought process, which is essential for MLLMs to provide accurate guidance for complex tasks.
+(ii)
+The guidance remains invariant during the decoding process
+.
+Invariant guidance during decoding prevents DiT from progressively decomposing
+complex instructions into actionable denoising steps, even with correct MLLM encodings.
+To this end, we propose Endogenous Chain-of-Thought (EndoCoT),
+a novel framework that first activates MLLMs’ reasoning potential by
+iteratively refining latent thought states through an iterative thought guidance module,
+and then bridges these states to the DiT’s denoising process.
+Second, a terminal thought grounding module is applied to ensure the reasoning trajectory
+remains grounded in textual supervision by aligning the final state with ground-truth answers.
+With these two components, the MLLM text encoder delivers meticulously reasoned guidance,
+enabling the DiT to execute it progressively and ultimately solve complex tasks in a step-by-step manner.
+Extensive evaluations across diverse benchmarks (e.g., Maze, TSP, VSP, and Sudoku)
+achieve an average accuracy of 92.1%, outperforming the strongest baseline by 8.3 percentage points.
+1
+Introduction
+Figure 1
+:
+EndoCoT enables endogenous chain-of-thought reasoning.
+(a)
+Radar plot showing EndoCoT outperforms baselines across all benchmarks.
+(b)
+On visual reasoning tasks requiring generalization (maze size, Sudoku font), previous work
+[
+11
+]
+fails on novel domains while EndoCoT consistently generalizes correctly.
+(c)
+Vanilla denoising (left) commits to solutions early without reasoning, while our approach (right) enables interpretable, step-by-step reasoning chains.
+Diffusion models
+[
+17
+,
+12
+,
+24
+,
+25
+]
+have revolutionized visual generation, achieving unprecedented levels of photorealism and diversity.
+Recent efforts integrate Multimodal Large Language Models (MLLMs)
+[
+3
+,
+18
+,
+31
+,
+5
+]
+as text encoders to augment semantic understanding and logical alignment.
+Yet despite these advances, they struggle with tasks requiring
+step-by-step logical reasoning
+, such as solving mazes, planning Traveling Salesperson Problem (TSP) routes, or completing Sudoku puzzles, where solutions must adhere to strict sequential constraints and generalize to novel configurations.
+Current paradigms relegate MLLMs to the role of
+static conditional encoders
+, computing text embeddings once at the beginning of generation.
+This passive integration fails to exploit the dynamic reasoning potential of MLLMs.
+Even recent explicit attempts like DiffThinker
+[
+11
+]
+to “inject” reasoning into diffusion models result in superficial alignment rather than genuine cognitive processing.
+While previous work
+[
+11
+]
+reports improved metrics on specific benchmarks, they produce fragile solutions that fail catastrophically when generalized to novel domains, see Fig.
+1
+(b).
+Our analysis reveals why these failures occur: despite being built on powerful MLLMs, these models do not actually perform reasoning
+during
+generation.
+Instead, as shown in in Fig.
+1
+(c), they commit to their final solution within the first few denoising steps and merely refine visual quality thereafter.
+This suggests that without an
+endogenous
+mechanism, forced alignment results in fragile pattern matching rather than robust, iterative problem-solving.
+Motivated by these persistent failures in supervised fitting, we conduct a systematic empirical analysis (Sec.
+3
+) that identifies two key bottlenecks: (1)
+limited single-step reasoning
+: MLLMs cannot encode all necessary logical constraints in a single forward pass; (2)
+static-guidance failure
+: Diffusion Transformers (DiTs) cannot maintain alignment with complex logical constraints when conditioned on static embeddings.
+Chain-of-Thought (CoT) reasoning
+[
+30
+]
+has shown how to overcome similar limitations in MLLMs
+[
+34
+,
+2
+]
+through iterative refinement, but diffusion models currently lack an analogous mechanism.
+To this end, we propose
+Endogenous
+CoT (
+EndoCoT
+), a framework that enables diffusion models to perform self-guided reasoning by iteratively exploring the semantic latent space.
+Specifically, EndoCoT encompasses two primary components:
+(1)
+Iterative Thought Guidance
+: iteratively updates latent states in the MLLM to create a genuine CoT-like reasoning process
+and establishes correspondence with DiT’s denoising process.
+(2)
+Terminal Thought Grounding
+: aligns the MLLM’s final reasoning state with ground-truth answers,
+ensuring the reasoning trajectory remains grounded in textual supervision and preventing cumulative drift in the terminal output.
+Consequently, EndoCoT serves as a complete end-to-end pipeline, seamlessly integrating reasoning and generation within a unified diffusion framework.
+Experiments are conducted across four diverse reasoning tasks: Maze, TSP, Visual Spatial Planning (VSP), and Sudoku,
+demonstrating consistently superior performance over state-of-the-art baselines including DiffThinker
+[
+11
+]
+and Qwen3-VL-8B
+[
+3
+]
+.
+As summarized in Fig.
+1
+(a), EndoCoT outperforms baselines across all benchmarks.
+Moreover, as task complexity scales, EndoCoT maintains exceptional accuracy: it achieves 90% on Maze-32 and 95% on Sudoku-35, outperforming the strongest baseline by 25% and 40% respectively.
+Unlike vanilla baselines that commit early and fail catastrophically, EndoCoT exhibits interpretable, step-by-step reasoning chains (see Fig.
+1
+(c)).
+Our main contributions are summarized as follows:
+1.
+To the best of our knowledge, we present the first diffusion framework that enables genuine chain-of-thought reasoning via iterative latent state refinement, rather than pre-computing solutions in a single pass.
+2.
+Through comprehensive layer-wise sensitivity and attention entropy analysis, we localize where reasoning arises in diffusion models and identify the two key bottlenecks that limit prior methods (Sec.
+3
+).
+3.
+EndoCoT achieves 25-40% gains over prior work on complex visual reasoning benchmarks, enables controllable inference-time scaling, and yields clearer and more controllable transformation trajectories in image editing tasks.
+2
+Related Work
+Reasoning in Multimodal Large Language Models
+Chain-of-thought (CoT) and other test-time scaling strategies
+[
+38
+,
+35
+,
+4
+,
+42
+]
+have proven effective in autoregressive large language models (LLMs). Recent works
+[
+33
+,
+1
+]
+extend this paradigm to multimodal settings. OpenAI
+[
+19
+]
+introduces “Think with Images”. Subsequent works
+[
+36
+,
+27
+,
+20
+,
+29
+,
+6
+]
+further extend this line of research to “Thinking with Video”, using visual content as external evidence to support multi-step reasoning. Latent Sketchpad
+[
+37
+]
+proposes an interleaved autoregressive generation of text and visual latents. However, enabling reasoning in diffusion models (DMs) remains challenging. Since DMs typically rely on fixed-length text encoders
+[
+21
+,
+22
+]
+, their capacity to incorporate multi-step reasoning into generation is limited. Recent works
+[
+31
+]
+introduce vision-language models (VLMs) as encoders, providing richer semantic representations that facilitate reasoning-conditioned generation in diffusion models.
+Reasoning in Diffusion Model
+Several works
+[
+15
+,
+16
+]
+explore incorporating reasoning signals into DMs by injecting textual reasoning traces into the conditioning inputs. While those approaches enable reasoning-aware generation, the MMDiT is often treated as a conditional decoder. This over-reliance on VLMs leads to a decoupled pipeline in which the MLLM mainly acts as a prompt enhancer. Recently, approaches
+[
+39
+,
+32
+,
+28
+]
+have leveraged video priors to perform complex editing, essentially treating logical state transitions as temporal sequences. However, these methods rely on the inherent smoothness of video models to “reason” through changes, which may not translate to discrete logical tasks. DiffThinker
+[
+11
+]
+takes a step toward internalizing reasoning by exploring the reasoning potential of MMDiT directly. Works like
+[
+7
+,
+9
+]
+have attempted visual generation under the next-token autoregressive paradigm.
+Despite these advancements, existing frameworks still cannot perform genuine, iterative chain-of-thought reasoning within the diffusion process itself.
+In this work, we enable endogenous CoT reasoning through iterative latent state refinement, achieving robust logical planning and spatial grounding.
+Latent Reasoning
+Latent reasoning has been validated in text-only domains, enabling multi-step reasoning in continuous latent spaces
+[
+10
+,
+40
+,
+26
+]
+. Latent-space reasoning compresses long reasoning chains and supports tree-structured exploration, improving inference efficiency and diversity
+[
+23
+,
+41
+]
+. Motivated by this line of work, we train diffusion models end-to-end with latent tokens to enable test-time scaling within the diffusion process.
+3
+Analysis of Reasoning in Diffusion Models
+To understand why current diffusion models fail at complex visual reasoning despite integrating powerful MLLMs, we first conduct a systematic empirical analysis.
+These analyses directly motivate the design of our EndoCoT framework and reveal fundamental bottlenecks that limit performance. All experiments are conducted on Qwen-Image-Edit-2511
+[
+31
+]
+.
+Figure 2
+:
+(a) Layer-wise sensitivity
+across Vision Encoder, LLM, and DiT components (red: high sensitivity, white: low sensitivity).
+(b) Limited single-step reasoning
+: DiT performs spatial grounding but trajectory violates constraints.
+(c) Static-guidance failure
+: Dense topologies cause attention entropy to become diffuse.
+Layer-Wise Sensitivity Analysis.
+To investigate the internal dynamics of how reasoning capabilities emerge, we conduct a layer-wise sensitivity analysis on a representative image editing model. Specifically, we quantify the relative sensitivity by measuring the magnitude of activation responses across the distinct layer blocks of the model’s three core components: the Vision Encoder, the Language Model, and the Diffusion Transformer.
+As shown in Fig.
+2
+(a), peak sensitivity is highly concentrated within the Vision Encoder and precisely at the architectural junction between the LLM (terminal layers) and the DiT (initial layers).
+This localized activation yields a critical insight: the heavy lifting of logical reasoning is predominantly handled by the MLLM. This observation strongly suggests that activating the MLLM during training is essential to fully unleash the model’s visual reasoning potential.
+This finding directly informs our design choice to
+jointly fine-tune
+both the MLLM and DiT components in EndoCoT.
+Limited Single-Step Reasoning.
+While the MLLM handles the bulk of logical reasoning, we observe that a single forward pass through the MLLM is insufficient for complex tasks.
+As depicted in Fig.
+2
+(b), in lower-complexity scenarios (e.g., 8
+×
+\times
+8 mazes), the DiT successfully focuses on the generated trajectory. However, the generated paths systematically violate physical constraints (e.g., passing through walls).
+This indicates that while the DiT successfully executes spatial grounding effectively in simple tasks, the MLLM lacks the capacity to fully encode and enforce all logical constraints in a single pass.
+The MLLM needs to iteratively refine its understanding of the problem, rather than attempting to compute the complete solution in one shot.
+This motivates our design of
+multi-round reasoning
+in the latent space.
+Static-Guidance Failure in Complex Dynamic DiT Decoding.
+Even if the MLLM could produce perfect reasoning in a single step, we observe a second critical limitation: the information coupling between the DiT and MLLM is fragile and static.
+To diagnose this, we analyze the cross-attention entropy between the generated spatial patches and the ground-truth reasoning tokens during the denoising process in Fig.
+2
+(c).
+In high-complexity scenarios (e.g., 32
+×
+\times
+32 mazes), the attention entropy map becomes globally high and diffuse. This reveals a severe breakdown in the coupling between the DiT and the MLLM. When faced with dense spatial topologies, the DiT loses its ability to anchor spatial features to specific logical text tokens, causing the attention distribution to average out and resulting in a complete collapse of spatial grounding.
+The static, one-time injection of text embeddings is insufficient, and the conditioning signal needs to be
+dynamically updated
+throughout the reasoning process.
+Summary.
+Our analysis across Fig.
+2
+(a-c) highlights three key insights: (1) The MLLM has strong reasoning potential, but cannot fully exploit it in a single forward pass; (2) The DiT excels at spatial grounding, but requires dynamic, evolving conditioning to maintain alignment with complex logical constraints; (3) The current paradigm of static, one-time text injection is limited for multi-step reasoning tasks.
+This insight motivates our iterative latent reasoning mechanism, which we present in the next section.
+4
+Methods
+Building on our analysis in Sec.
+3
+, we present
+Endo
+genous
+C
+hain-
+o
+f-
+T
+hought (
+EndoCoT
+), a framework that enables diffusion models to perform self-guided reasoning during generation.
+As shown in Fig.
+3
+, our approach iteratively refines latent thought states in the MLLM to create a CoT reasoning process, aligns these reasoning states with explicit textual supervision, and uses progressive training to first build reasoning capability, then refine output quality.
+We begin with necessary preliminaries on flow matching, then present our core methodology in three parts: (1) iterative thought guidance module, (2) terminal thought grounding, and (3) progressive training strategy. We conclude with the full inference algorithm.
+4.1
+Preliminary
+Flow Matching (FM).
+Flow Matching
+[
+17
+]
+provides a simplified framework for generative modeling by constructing a linear probability path between two distributions.
+Let
+X
+0
+∼
+π
+0
+X_{0}\sim\pi_{0}
+denote a clean data sample and
+X
+1
+∼
+π
+1
+X_{1}\sim\pi_{1}
+represent Gaussian noise from the prior.
+A linear trajectory
+X
+t
+X_{t}
+interpolates between
+X
+0
+X_{0}
+and
+X
+1
+X_{1}
+over a continuous time step
+t
+∈
+[
+0
+,
+1
+]
+t\in[0,1]
+:
+X
+t
+=
+t
+​
+X
+1
++
+(
+1
+−
+t
+)
+​
+X
+0
+.
+X_{t}=tX_{1}+(1-t)X_{0}.
+(1)
+By differentiating
+X
+t
+X_{t}
+with respect to time step
+t
+t
+, we obtain the ground-truth vector field
+u
+t
+​
+(
+X
+t
+)
+u_{t}(X_{t})
+:
+u
+t
+​
+(
+X
+t
+)
+=
+d
+​
+X
+t
+d
+​
+t
+=
+X
+1
+−
+X
+0
+.
+u_{t}(X_{t})=\frac{dX_{t}}{dt}=X_{1}-X_{0}.
+(2)
+A neural network
+v
+θ
+​
+(
+X
+t
+,
+t
+,
+c
+)
+v_{\theta}(X_{t},t,c)
+approximates this vector field, where
+c
+c
+is an optional conditioning variable.
+The training objective
+ℒ
+FM
+\mathcal{L}_{\text{FM}}
+is :
+ℒ
+FM
+=
+𝔼
+t
+,
+X
+0
+∼
+π
+0
+,
+X
+1
+∼
+π
+1
+​
+‖
+v
+θ
+​
+(
+X
+t
+,
+t
+,
+c
+)
+−
+u
+t
+​
+(
+X
+t
+)
+‖
+2
+.
+\mathcal{L}_{\text{FM}}=\mathbb{E}_{t,X_{0}\sim\pi_{0},X_{1}\sim\pi_{1}}\left\|v_{\theta}(X_{t},t,c)-u_{t}(X_{t})\right\|^{2}.
+(3)
+Figure 3
+:
+Overview of EndoCoT
+. (a) Training: We propose a progressive two-stage training strategy: the first stage trains the model to fit both intermediate and final states at each reasoning step, capturing the full multi-step trajectory; the second stage freezes gradients on intermediate states and optimizes only the terminal state, refining generation quality while preserving learned reasoning dynamics (b) Inference: the model iteratively updates latent representations.
+4.2
+EndoCoT
+Current diffusion models exhibit limited reasoning capabilities for complex, multi-step tasks. Recent analyses suggest these models possess reasoning potential matching their parameter scale. Architectural advances in text encoders
+[
+5
+,
+31
+]
+provide the structural foundation to unlock this potential. We propose
+Endogenous
+Chain-of-Thought (
+EndoCoT
+), a framework enabling diffusion models to perform autonomous chain-of-thought reasoning.
+4.2.1
+Iterative Thought Guidance.
+Figure 4
+:
+Overview of notations and iterative thought guidance module.
+EndoCoT iteratively refines latent states
+𝐡
+τ
+\mathbf{h}_{\tau}
+through the MLLM
+f
+ϕ
+f_{\phi}
+, then conditions the DiT
+f
+ψ
+f_{\psi}
+at each reasoning step
+τ
+\tau
+to generate intermediate visual outputs
+𝐈
+τ
+\mathbf{I}_{\tau}
+.
+We formulate the iterative thought guidance process as an iterative refinement of conditional latent states. Standard diffusion models generate an output by conditioning on static text embeddings. In contrast, our approach performs
+𝒯
+\mathcal{T}
+reasoning steps, where each step refines both the visual output and the conditioning signal.
+Intuitively, this process mimics human problem-solving: rather than attempting to generate the complete solution in one pass, we iteratively refine our understanding of the problem and proposed solution.
+Each reasoning step builds upon the previous one, allowing the model to explore solution spaces incrementally.
+Let
+f
+ϕ
+f_{\phi}
+denote the MLLM (excluding embedding and projection layers) and
+f
+ψ
+f_{\psi}
+denote the Diffusion Transformer (DiT). A summary of the main notations is provided in Fig.
+4
+.
+The reasoning process is formulated as a sequence of hidden state updates in the latent manifold
+ℝ
+d
+\mathbb{R}^{d}
+.
+𝐏
+∈
+ℝ
+L
+×
+d
+\mathbf{P}\in\mathbb{R}^{L\times d}
+represents the prefix embeddings obtained by encoding the textual prompt and input image through their respective embedding layers. Given fixed prefix embeddings
+𝐏
+\mathbf{P}
+(where
+L
+L
+is the sequence length of the textual prompt), the
+τ
+\tau
+-th reasoning step (
+τ
+∈
+{
+1
+,
+…
+,
+𝒯
+}
+\tau\in\{1,\dots,\mathcal{T}\}
+) updates the thought state
+𝐡
+τ
+∈
+ℝ
+d
+{\color[rgb]{0,0,1}\mathbf{h}_{\tau}}\in\mathbb{R}^{d}
+recursively:
+𝐡
+τ
+=
+𝐞
+L
++
+1
+⊤
+f
+ϕ
+(
+[
+𝐏
+;
+𝐡
+τ
+−
+1
+]
+)
+,
+τ
+=
+1
+,
+…
+,
+𝒯
+,
+{\color[rgb]{0,0,1}\mathbf{h}_{\tau}}=\mathbf{e}_{L+1}^{\top}f_{\phi}\left([\mathbf{P};{\color[rgb]{0,0,1}\mathbf{h}_{\tau-1}}]\right),\quad\tau=1,\dots,\mathcal{T},
+(4)
+where
+[
+⋅
+;
+⋅
+]
+[\cdot;\cdot]
+denotes concatenation along the sequence dimension, and
+𝐞
+L
++
+1
+\mathbf{e}_{L+1}
+is the one-hot basis vector used to extract the hidden state at the
+(
+L
++
+1
+)
+(L+1)
+-th sequence position.
+Crucially,
+𝐡
+τ
+−
+1
+{\color[rgb]{0,0,1}\mathbf{h}_{\tau-1}}
+directly serves as a high-dimensional input to the first layer of
+f
+ϕ
+f_{\phi}
+, bypassing the discrete embedding lookup table.
+Conditional Flow Generation.
+Note that our reasoning steps
+𝒯
+\mathcal{T}
+are distinct from the diffusion model’s internal denoising timesteps.
+Each reasoning step
+τ
+\tau
+involves a complete denoising trajectory from noise to image, conditioned on the current thought state
+𝐡
+τ
+{\color[rgb]{0,0,1}\mathbf{h}_{\tau}}
+.
+At each reasoning step
+τ
+\tau
+, we condition the diffusion model on the current thought state
+𝐡
+τ
+{\color[rgb]{0,0,1}\mathbf{h}_{\tau}}
+to generate an intermediate visual output
+𝐈
+τ
+\mathbf{I}_{\tau}
+by solving the flow ODE:
+d
+​
+𝐳
+τ
+​
+(
+t
+)
+d
+​
+t
+=
+v
+ψ
+​
+(
+𝐳
+τ
+​
+(
+t
+)
+,
+t
+,
+𝐡
+τ
+)
+,
+𝐳
+τ
+​
+(
+1
+)
+∼
+𝒩
+⁡
+(
+𝟎
+,
+I
+)
+,
+𝐈
+τ
+=
+𝐳
+τ
+​
+(
+0
+)
+,
+\frac{d\mathbf{z}_{\tau}(t)}{dt}=v_{\psi}(\mathbf{z}_{\tau}(t),t,{\color[rgb]{0,0,1}\mathbf{h}_{\tau}}),\quad\mathbf{z}_{\tau}(1)\sim\mathcal{N}(\mathbf{0},\mathbf{\textit{I}}),\quad\mathbf{I}_{\tau}=\mathbf{z}_{\tau}(0),
+(5)
+where
+𝐳
+τ
+​
+(
+t
+)
+\mathbf{z}_{\tau}(t)
+denotes the latent state at flow time
+t
+∈
+[
+0
+,
+1
+]
+t\in[0,1]
+. We optimize the model by supervising the generated output against a ground-truth intermediate target
+𝐈
+τ
+∗
+\mathbf{I}_{\tau}^{*}
+, using the Conditional Flow Matching loss based on Eq.
+3
+:
+ℒ
+reasoning
+=
+𝔼
+τ
+,
+t
+,
+𝐳
+τ
+​
+(
+0
+)
+,
+𝐳
+τ
+​
+(
+1
+)
+​
+[
+‖
+(
+𝐳
+τ
+​
+(
+0
+)
+−
+𝐳
+τ
+​
+(
+1
+)
+)
+−
+v
+ψ
+​
+(
+𝐳
+τ
+​
+(
+t
+)
+,
+t
+,
+𝐡
+τ
+)
+‖
+2
+]
+.
+\mathcal{L}_{\text{reasoning}}=\mathbb{E}_{\tau,t,\mathbf{z}_{\tau}(0),\mathbf{z}_{\tau}(1)}\left[\|(\mathbf{z}_{\tau}(0)-\mathbf{z}_{\tau}(1))-v_{\psi}(\mathbf{z}_{\tau}(t),t,{\color[rgb]{0,0,1}\mathbf{h}_{\tau}})\|^{2}\right].
+(6)
+The intermediate targets
+𝐈
+τ
+∗
+\mathbf{I}_{\tau}^{*}
+can be obtained through sequential ground-truth decomposition (e.g., partial path segments for mazes).
+Motivated by our analysis in Sec.
+3
+, we apply LoRA fine-tuning to both
+f
+ϕ
+f_{\phi}
+and
+f
+ψ
+f_{\psi}
+. This joint adaptation enables collaborative reasoning across the conditioning and generation stages.
+4.2.2
+Terminal Thought Grounding.
+While the reasoning-enhanced framework enables iterative visual refinement, its reliance on purely visual supervision introduces two primary challenges: (1) a modality gap between visual targets and latent reasoning states, and (2) underutilization of explicit textual ground truth.
+Inspired by the success of explicit supervision in text-based latent reasoning, we introduce an auxiliary alignment objective that grounds the final reasoning state with textual supervision:
+𝐡
+ref
+=
+𝐞
+L
+gt
++
+1
+⊤
+​
+f
+ϕ
+​
+(
+[
+𝐏
+gt
+,
+𝐈
+input
+]
+)
+,
+{\color[rgb]{0,0,1}\mathbf{h}_{\text{ref}}}=\mathbf{e}_{L_{\text{gt}}+1}^{\top}f_{\phi}\left([\mathbf{P}_{\text{gt}},\mathbf{I}_{\text{input}}]\right),
+(7)
+where
+𝐏
+gt
+∈
+ℝ
+L
+gt
+×
+d
+\mathbf{P}_{\text{gt}}\in\mathbb{R}^{L_{\text{gt}}\times d}
+is the embedding of the ground-truth reasoning steps, and
+𝐈
+input
+\mathbf{I}_{\text{input}}
+denotes the task input (e.g., initial maze configuration).
+We align the final reasoning state
+𝐡
+𝒯
+{\color[rgb]{0,0,1}\mathbf{h}_{\mathcal{T}}}
+with this reference using an L2 (Semantic) loss:
+ℒ
+align
+=
+‖
+𝐡
+𝒯
+−
+𝐡
+ref
+‖
+2
+.
+\mathcal{L}_{\text{align}}=\|{\color[rgb]{0,0,1}\mathbf{h}_{\mathcal{T}}}-{\color[rgb]{0,0,1}\mathbf{h}_{\text{ref}}}\|^{2}.
+(8)
+The overall training loss combines the flow matching loss with this alignment term:
+ℒ
+total
+=
+ℒ
+FM
++
+𝕀
+{
+τ
+=
+𝒯
+}
+⋅
+λ
+align
+ℒ
+align
+,
+\mathcal{L}_{\text{total}}=\mathcal{L}_{\text{FM}}+\mathbb{I}_{\{\tau=\mathcal{T}\}}\cdot\lambda_{\text{align}}\mathcal{L}_{\text{align}},
+(9)
+where
+𝕀
+{
+τ
+=
+𝒯
+}
+\mathbb{I}_{\{\tau=\mathcal{T}\}}
+is the indicator function activating the alignment loss only at the final reasoning step, and
+λ
+align
+\lambda_{\text{align}}
+balances visual generation quality and textual grounding.
+Empirically, we set
+λ
+align
+=
+1
+\lambda_{\text{align}}=1
+.
+As shown in our ablation study (Sec.
+5.2
+), this term is critical for preventing drift in the latent reasoning states and ensuring the reasoning trajectory remains grounded.
+4.2.3
+Progressive Training Strategy
+Reasoning steps and final outputs serve distinct objectives: intermediate steps focus on exploring solution paths, while the final step emphasizes producing a correct answer. Directly optimizing both objectives simultaneously can lead to conflicting gradients. We therefore adopt a two-stage progressive training strategy.
+Stage 1: Reasoning Development.
+As shown in Fig.
+3
+(a), we supervise all reasoning steps
+τ
+=
+1
+,
+…
+,
+𝒯
+\tau=1,\ldots,\mathcal{T}
+, enabling the model to learn step-by-step visual reasoning.
+The training objective is:
+ℒ
+stage1
+=
+∑
+τ
+=
+1
+𝒯
+(
+ℒ
+FM
+τ
++
+𝕀
+{
+τ
+=
+𝒯
+}
+λ
+align
+ℒ
+align
+)
+,
+\mathcal{L}_{\text{stage1}}=\sum_{\tau=1}^{\mathcal{T}}\left(\mathcal{L}_{\text{FM}}^{\tau}+\mathbb{I}_{\{\tau=\mathcal{T}\}}\lambda_{\text{align}}\mathcal{L}_{\text{align}}\right),
+(10)
+where
+ℒ
+FM
+τ
+\mathcal{L}_{\text{FM}}^{\tau}
+denotes the flow matching loss at reasoning step
+τ
+\tau
+.
+By providing supervision at each intermediate step, we encourage the model to develop coherent, incremental reasoning trajectories.
+Stage 2: Terminal Consolidation.
+Once the model has developed robust reasoning capabilities, we shift the training focus to solidifying the visual accuracy of the final output.
+As shown in Fig.
+3
+(b), while the intermediate reasoning process is preserved during the forward pass, gradients are computed exclusively for the final output:
+ℒ
+stage2
+=
+ℒ
+FM
+𝒯
++
+λ
+align
+​
+ℒ
+align
+.
+\mathcal{L}_{\text{stage2}}=\mathcal{L}_{\text{FM}}^{\mathcal{T}}+\lambda_{\text{align}}\mathcal{L}_{\text{align}}.
+(11)
+The intermediate steps
+τ
+<
+𝒯
+\tau<\mathcal{T}
+are executed in the forward pass only, serving as reasoning scaffolding without gradient propagation. To prevent the degradation of the previously learned reasoning chains, Stage 2 employs a short-cycle fine-tuning strategy with limited iterations.
+4.2.4
+Inference Process
+As shown in Fig.
+3
+(b), EndoCoT does not require decoding intermediate visual states during inference. By specifying the number of reasoning steps
+𝒯
+\mathcal{T}
+, the model recursively updates its latent thought states to generate the final result.
+5
+Experiments
+Figure 5
+:
+Step-by-step reasoning process across four distinct tasks.
+Our model incrementally resolves complex visual reasoning tasks through intermediate reasoning steps.
+For each task (Maze, TSP, Sudoku, VSP), we show the initial input (leftmost), intermediate refinement steps, and the final optimal solution (rightmost).
+Model Setup.
+We build upon Qwen-Image-Edit-2511
+[
+31
+]
+and apply LoRA fine-tuning
+[
+13
+]
+to efficiently adapt the model while preserving pre-trained knowledge.
+We use a LoRA rank of 32 for all targeted modules, a learning rate of
+1
+×
+10
+−
+4
+1\times 10^{-4}
+, and train for
+5
+5
+epochs.
+Detailed hyperparameter and LoRA module configuration are provided in the Appendix.
+5.1
+Results on Visual Reasoning Tasks
+Datasets.
+Following the evaluation protocol of
+[
+11
+]
+, we select Maze navigation (Maze), Traveling Salesman Problem (TSP), Sudoku solving (Sudoku), Visual Spatial Planning (VSP), and VSP-Pro with larger map sizes (up to
+32
+×
+32
+32\times 32
+) as evaluation benchmarks.
+Each task requires multi-step logical reasoning.
+We also follow
+[
+11
+]
+to construct the fine-tuning data of each task. All generated data are rendered at a resolution of
+512
+×
+512
+512\times 512
+.
+Detailed statistics and construction methods of fine-tuning data are provided in the Appendix.
+Settings.
+We evaluate models under three distinct settings.
+1) Zero-shot:
+Vanilla baselines without any task-specific training.
+2) Task-specific training:
+Training and evaluation are performed on individual tasks separately (e.g., train on the Maze dataset, evaluate on Maze only), which is the default setting of DiffThinker
+[
+11
+]
+.
+3) Unified training:
+A single model is trained on the combined dataset of all tasks (Maze+TSP+Sudoku+VSP), and evaluated on all tasks simultaneously.
+The ‘unified training’ setting is more challenging as it requires the model to handle a wide range of problems.
+Table 1
+:
+Evaluation results across visual reasoning tasks
+. Our model establishes a new state-of-the-art across both task-specific and unified training settings, demonstrating exceptional robustness to increasing task complexity.
+Models
+Maze
+TSP
+Sudoku
+VSP
+VSP-Super
+Avg
+8
+16
+32
+12
+15
+18
+45
+40
+35
+30
+3
+4
+5
+6
+7
+8
+16
+32
+▼
+\blacktriangledown
+Zero-Shot
+ThinkGen
+[
+15
+]
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+44
+4
+11
+13
+9
+10
+0
+0
+5.1
+ChronoEdit
+[
+32
+]
+1
+1
+26
+0
+0
+0
+0
+0
+0
+0
+60
+20
+12
+7
+16
+13
+1
+1
+8.8
+Qwen3-VL-8B
+[
+34
+]
+1
+0
+0
+0
+0
+0
+0
+0
+0
+0
+64
+46
+33
+21
+12
+21
+1
+0
+11.1
+Qwen-Image-Edit-2511
+[
+31
+]
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+50
+55
+44
+16
+23
+23
+0
+0
+11.7
+▼
+\blacktriangledown
+Task-Specific Training
+Qwen3-VL-8B(SFT)
+[
+11
+]
+53
+37
+0
+59
+60
+43
+30
+17
+2
+0
+99
+96
+98
+96
+92
+86
+61
+8
+58.56
+Qwen3-VL-8B(GRPO)
+[
+11
+]
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+91
+70
+70
+31
+34
+24
+0
+0
+17.8
+DiffThinker
+[
+11
+]
+100
+100
+65
+76
+72
+59
+97
+94
+55
+13
+100
+100
+100
+98
+100
+100
+99
+80
+83.8
+Ours
+100
+100
+90
+77
+77
+73
+100
+100
+95
+64
+100
+100
+100
+99
+100
+99
+99
+85
+92.1
+▼
+\blacktriangledown
+Unified Training
+DiffThinker
+[
+11
+]
+98
+99
+66
+64
+49
+34
+94
+45
+26
+37
+100
+99
+99
+99
+100
+97
+97
+84
+77.1
+Ours
+97
+98
+52
+64
+55
+46
+100
+88
+80
+59
+100
+98
+98
+100
+100
+100
+100
+80
+84.2
+Results of Task-Specific Training.
+As shown in Tab.
+1
+, our model establishes a new state-of-the-art across all evaluated visual reasoning benchmarks under task-specific training.
+Our approach demonstrates exceptional robustness to increasing complexity.
+At higher difficulty levels like Sudoku (scale 35) and Maze (scale 32), it achieves 95% and 90% accuracy respectively, significantly outperforming DiffThinker
+[
+11
+]
+(55% and 65%).
+On spatial planning tasks, our model maintains near-perfect scores across standard VSP levels and reaches 85% on the most challenging VSP-Super (scale 32), whereas generative baselines like ThinkGen
+[
+15
+]
+and ChronoEdit
+[
+32
+]
+fail completely.
+Fig.
+5
+shows the unique intermediate reasoning process of our model, which progressively refines solutions through multiple steps that are absent in prior approaches.
+Results of Unified Training.
+The unified training results (single model trained on all tasks) show that our framework can learn transferable reasoning skills across tasks, though performance is slightly lower than task-specific training. As shown in Tab.
+1
+, under unified training, our approach still achieves competitive performance compared to DiffThinker
+[
+11
+]
+.
+5.2
+Ablation Study and Analysis
+To validate our design choices, we conduct comprehensive ablation studies on the Maze benchmark, which serves as a representative testbed for long-horizon reasoning.
+We report both the accuracy and
+path repetition rate
+that measures the overlap ratio between the generated path and the ground truth path.
+Table 2
+:
+Ablation Study on the Maze Benchmark.
+Removing the auxiliary semantic loss or using explicit tokens both lead to significant performance degradation compared to our default choice.
+Models
+Accuracy (ACC)
+Path Repetition (%)
+8
+16
+32
+8
+16
+32
+w/o semantic loss
+39
+42
+14
+93.44
+92.23
+67.24
+Explicit token
+34
+8
+0
+81.47
+33.35
+0.08
+Ours
+100
+100
+90
+100.00
+100.00
+98.13
+Table 3
+:
+Performance comparison across different maze scales.
+Our method achieves near-perfect accuracy and correct path repetition rate, significantly surpassing the baselines.
+Models
+Accuracy
+Path Repetition (%)
+8
+16
+32
+8
+16
+32
+MLLM-Only
+0
+0
+0
+0.00
+0.62
+0.20
+DiT-Only
+57
+43
+18
+89.75
+90.80
+80.96
+Ours
+100
+100
+90
+100.00
+100.00
+98.13
+Effectiveness of the Semantic Loss.
+The auxiliary Semantic loss provides explicit textual supervision by aligning our continuous latent token representations with ground-truth reasoning steps.
+This constraint guides the implicit tokens toward semantically meaningful trajectories.
+As shown in Tab.
+3
+, removing this supervision signal (
+w/o
+semantic loss) leads to severe performance degradation.
+While the model retains basic routing ability on simple mazes, its logical consistency breaks down on harder instances: on the highly complex Maze-32 benchmark, accuracy drops from 90% to just 14%, and path repetition rate falls from 98.13% to 67.24%.
+This confirms that the semantic loss acts as a crucial regularizer, preventing implicit token drift and enabling reliable long-horizon reasoning.
+Implicit vs. Explicit Tokens.
+While continuous implicit tokens offer flexibility, one might reasonably consider explicit text generation as a more interpretable alternative for reasoning
+[
+23
+,
+10
+]
+.
+To investigate this design choice, we construct a variant that replaces implicit tokens with explicit autoregressive text generation, where the MLLM must produce discrete intermediate reasoning steps before generating the final visual output.
+Table 4
+:
+Inference-Time CoT Scaling on Maze Benchmarks.
+Comparison of Accuracy and Path Repetition Rate across different token budgets (
+τ
+\tau
+). Performance consistently improves, particularly on challenging Maze-32.
+Models
+Accuracy
+Path Repetition (%)
+Time
+8
+16
+32
+8
+16
+32
+DiffThinker
+[
+11
+]
+100
+97
+56
+100.00
+100.00
+73.74
+15.72
+Ours (
+τ
+=
+2
+\tau=2
+)
+100
+72
+11
+100.00
+89.15
+45.26
+16.02
+Ours (
+τ
+=
+5
+\tau=5
+)
+100
+94
+27
+100.00
+98.49
+63.90
+16.54
+Ours (
+τ
+=
+10
+\tau=10
+)
+100
+99
+49
+100.00
+99.93
+82.33
+17.52
+Ours (
+τ
+=
+20
+\tau=20
+)
+100
+100
+74
+100.00
+100.00
+96.47
+19.27
+Ours (
+τ
+=
+50
+\tau=50
+)
+100
+100
+90
+100.00
+100.00
+98.13
+24.81
+Figure 6
+:
+The trade-off between model accuracy and overall inference time across different token budgets.
+Figure 7
+:
+Comparison of execution time against existing baselines across different resolutions and token budgets.
+As reported in Tab.
+3
+, explicit tokens lead to severe performance degradation.
+While the model achieves 34% accuracy on Maze-8, it fails on Maze-32 (0% accuracy).
+The failure case above reveals the cause: when planning long-horizon paths with a discrete vocabulary, the model becomes vulnerable to autoregressive error accumulation and mode collapse, degenerating into repetitive token loops.
+Failure Case of Explicit Tokens
+"
+⟨
+…
+⟩
+\langle\dots\rangle
+<|im_start|>system\nDescribe the key features of the input image
+⟨
+…
+⟩
+\langle\dots\rangle
+Generate a new image that meets the user’s requirements
+⟨
+…
+⟩
+\langle\dots\rangle
+Direction keys: D=Down, U=Up, R=Right, L=Left.<|im_end|>\n<|im_start|>assistant\n
+Rencontre Rencontre Rencontre
+⟨
+…
+⟩
+\langle\dots\rangle
+Rencontre Rencontre
+"
+Inference-Time CoT Scaling.
+As shown in Tab.
+4
+, our approach demonstrates a robust scaling law: dynamically increasing the number of implicit reasoning budgets
+τ
+\tau
+smoothly and significantly elevates both accuracy and path repetition rate, particularly on the most challenging
+Maze-32
+benchmark.
+This indicates that our implicit tokens effectively refine complex reasoning steps through iterative exploration.
+Furthermore, true scalability requires predictable computational costs. As shown in Fig.
+7
+, our model steadily trades inference time for higher accuracy.
+Resolution Scaling.
+Beyond the token budget
+τ
+\tau
+, our model demonstrates a crucial advantage in high-resolution tasks:
+as spatial resolution increases, the relative computational cost of our method significantly decreases
+.
+This efficiency gain stems fundamentally from the fact that our approach does not require repeating the computationally expensive DiT denoising steps.
+As shown in Fig.
+7
+, our model maintains a stable and predictable inference latency.
+Joint Training vs. MLLM-Only Baselines.
+Finally, we investigate the necessity of jointly optimizing both the MLLM and DiT components, rather than relying on either module in isolation.
+Our core premise is that spatial reasoning requires both high-level cognitive planning (from the MLLM) and low-level physical grounding (from the DiT).
+Case 1
+Case 2
+Case 3
+Ori
+MLLM-Only
+Ori
+MLLM-Only
+Ori
+MLLM-Only
+Figure 8
+:
+Qualitative comparison of path reasoning.
+While MLLM-Only enables the model to understand the basic topological structure of the maze compared to the untuned baseline, it still lacks sufficient visual reasoning representations. Consequently, it exhibits erratic and wandering paths.
+Quantitatively, Tab.
+3
+shows that decoupling components leads to severe performance degradation.
+Using only DiT limits the model’s logical reasoning capacity, causing accuracy to drop to 18% on Maze-32.
+Interestingly, while we attribute the model’s reasoning capability primarily to the MLLM (Section
+3
+), relying solely on this module results in complete failure.
+This paradox indicates that while language models excel at abstract logic, they cannot directly map conceptual steps into spatial coordinates without the visual grounding provided by the DiT.
+This limitation is shown qualitatively in Fig.
+8
+.
+The MLLM-only baseline produces erratic, wandering trajectories that frequently become trapped in dead ends, lacking global spatial awareness.
+Results on Image Editing Tasks
+As shown in Fig.
+9
+, our approach demonstrates a distinctive
+progressive editing
+capability driven by the internal reasoning trajectory.
+Given step-by-step editing instructions, the model iteratively plans and executes each modification during generation.
+By varying the reasoning step
+τ
+\tau
+, we can control how many editing operations are carried out.
+Figure 9
+:
+Progressive image editing results.
+Left:
+step-by-step object addition, where a stone lantern and a deer are sequentially introduced into the scene.
+Right:
+object transformation, where the deer is progressively modified into a sheep.
+6
+Conclusion
+We presented
+EndoCoT
+, a novel framework that enables diffusion models to perform
+endogenous
+Chain-of-Thought reasoning. By iteratively refining latent thought states and grounding the final output in textual supervision, EndoCoT successfully bridges the gap between high-level logical planning and precise visual generation. Extensive experiments across diverse reasoning tasks demonstrate that this capability arises from the synergistic coupling of the multimodal text encoder and the DiT backbone, rather than from standard denoising processes alone. While highly effective, our approach currently requires manual tuning for the optimal number of reasoning steps and relies on high-quality datasets with explicit intermediate supervision. Future work will focus on adaptive mechanisms for automatic reasoning depth control and extending the framework to broader general-purpose tasks.
+References
+[1]
+A. Agarwal, A. Sengupta, and T. Chakraborty
+(2025)
+The art of scaling test-time compute for large language models
+.
+arXiv preprint arXiv:2512.02008
+.
+Cited by:
+§2
+.
+[2]
+Anthropic
+(2026)
+Claude opus 4.6
+.
+Note:
+Release; Claude Opus 4.6 achieves new state-of-the-art performance in complex reasoning, coding, and long-context understandingAnthropic Official Website
+External Links:
+Link
+Cited by:
+§1
+.
+[3]
+S. Bai, Y. Cai, R. Chen, K. Chen, X. Chen, Z. Cheng, L. Deng, W. Ding, C. Gao, C. Ge, W. Ge, Z. Guo, Q. Huang, J. Huang, F. Huang, B. Hui, S. Jiang, Z. Li, M. Li, M. Li, K. Li, Z. Lin, J. Lin, X. Liu, J. Liu, C. Liu, Y. Liu, D. Liu, S. Liu, D. Lu, R. Luo, C. Lv, R. Men, L. Meng, X. Ren, X. Ren, S. Song, Y. Sun, J. Tang, J. Tu, J. Wan, P. Wang, P. Wang, Q. Wang, Y. Wang, T. Xie, Y. Xu, H. Xu, J. Xu, Z. Yang, M. Yang, J. Yang, A. Yang, B. Yu, F. Zhang, H. Zhang, X. Zhang, B. Zheng, H. Zhong, J. Zhou, F. Zhou, J. Zhou, Y. Zhu, and K. Zhu
+(2025)
+Qwen3-vl technical report
+.
+External Links:
+2511.21631
+,
+Link
+Cited by:
+§1
+,
+§1
+.
+[4]
+M. Besta, N. Blach, A. Kubicek, R. Gerstenberger, M. Podstawski, L. Gianinazzi, J. Gajda, T. Lehmann, H. Niewiadomski, P. Nyczyk,
+et al.
+(2024)
+Graph of thoughts: solving elaborate problems with large language models
+.
+In
+Proceedings of the AAAI conference on artificial intelligence
+,
+Vol.
+38
+,
+pp. 17682–17690
+.
+Cited by:
+§2
+.
+[5]
+Black Forest Labs
+FLUX.2: frontier visual intelligence
+.
+Note:
+Release; FLUX.2 provides significant improvements in visual quality, prompt adherence, and architectural efficiencyBlack Forest Labs Official Website
+External Links:
+Link
+Cited by:
+§1
+,
+§4.2
+.
+[6]
+H. Fei, S. Wu, W. Ji, H. Zhang, M. Zhang, M. Lee, and W. Hsu
+(2024)
+Video-of-thought: step-by-step video reasoning from perception to cognition
+.
+arXiv preprint arXiv:2501.03230
+.
+Cited by:
+§2
+.
+[7]
+Z. Gao and M. Z. Shou
+(2025)
+D-ar: diffusion via autoregressive models
+.
+arXiv preprint arXiv:2505.23660
+.
+Cited by:
+§2
+.
+[8]
+Google DeepMind
+(2026)
+Gemini 3
+.
+Note:
+Release; Gemini 3 is Google’s most capable model, featuring breakthrough capabilities in long-context understanding, multimodal reasoning, and native agentic performanceGoogle DeepMind Official Website
+External Links:
+Link
+Cited by:
+Appendix F
+.
+[9]
+J. Gu, Y. Wang, Y. Zhang, Q. Zhang, D. Zhang, N. Jaitly, J. Susskind, and S. Zhai
+(2024)
+Dart: denoising autoregressive transformer for scalable text-to-image generation
+.
+arXiv preprint arXiv:2410.08159
+.
+Cited by:
+§2
+.
+[10]
+S. Hao, S. Sukhbaatar, D. Su, X. Li, Z. Hu, J. Weston, and Y. Tian
+(2024)
+Training large language models to reason in a continuous latent space
+.
+arXiv preprint arXiv:2412.06769
+.
+Cited by:
+§2
+,
+§5.2
+.
+[11]
+Z. He, X. Qu, Y. Li, T. Zhu, S. Huang, and Y. Cheng
+(2025)
+DiffThinker: towards generative multimodal reasoning with diffusion models
+.
+arXiv preprint arXiv:2512.24165
+.
+Cited by:
+Figure 1
+,
+Figure 1
+,
+§1
+,
+§1
+,
+§2
+,
+§5.1
+,
+§5.1
+,
+§5.1
+,
+§5.1
+,
+Table 1
+,
+Table 1
+,
+Table 1
+,
+Table 1
+,
+Table 4
+.
+[12]
+J. Ho, A. Jain, and P. Abbeel
+(2020)
+Denoising diffusion probabilistic models
+.
+Advances in neural information processing systems
+33
+,
+pp. 6840–6851
+.
+Cited by:
+§1
+.
+[13]
+E. J. Hu, Y. Shen, P. Wallis, Z. Allen-Zhu, Y. Li, S. Wang, L. Wang, W. Chen,
+et al.
+(2022)
+LoRA: low-rank adaptation of large language models.
+.
+In
+ICLR
+,
+Cited by:
+§5
+.
+[14]
+Z. Huang, T. Zhang, W. Heng, B. Shi, and S. Zhou
+(2022)
+Real-time intermediate flow estimation for video frame interpolation
+.
+In
+European conference on computer vision
+,
+pp. 624–642
+.
+Cited by:
+Appendix F
+.
+[15]
+S. Jiao, Y. Lin, Y. Zhong, Q. She, W. Zhou, X. Lan, Z. Huang, F. Yu, Y. Yu, Y. Zhao,
+et al.
+(2025)
+ThinkGen: generalized thinking for visual generation
+.
+arXiv preprint arXiv:2512.23568
+.
+Cited by:
+§C.2
+,
+§2
+,
+§5.1
+,
+Table 1
+.
+[16]
+S. Kou, J. Jin, Z. Zhou, Y. Ma, Y. Wang, Q. Chen, P. Jiang, X. Yang, J. Zhu, K. Yu,
+et al.
+(2026)
+Think-then-generate: reasoning-aware text-to-image diffusion with llm encoders
+.
+arXiv preprint arXiv:2601.10332
+.
+Cited by:
+§2
+.
+[17]
+Y. Lipman, R. T. Chen, H. Ben-Hamu, M. Nickel, and M. Le
+(2022)
+Flow matching for generative modeling
+.
+arXiv preprint arXiv:2210.02747
+.
+Cited by:
+§1
+,
+§4.1
+.
+[18]
+A. H. Liu, K. Khandelwal, S. Subramanian, V. Jouault, A. Rastogi, A. Sadé, A. Jeffares, A. Jiang, A. Cahill, A. Gavaudan,
+et al.
+(2026)
+Ministral 3
+.
+arXiv preprint arXiv:2601.08584
+.
+Cited by:
+§1
+.
+[19]
+OpenAI
+(2025)
+Thinking with images
+.
+Note:
+Release; OpenAI o3 and o4-mini visual reasoning models can think with images in chain-of-thoughtOpenAI Official Website
+External Links:
+Link
+Cited by:
+§2
+.
+[20]
+Y. Qin, B. Wei, J. Ge, K. Kallidromitis, S. Fu, T. Darrell, and X. Wang
+(2025)
+Chain-of-visual-thought: teaching vlms to see and think better with continuous visual tokens
+.
+arXiv preprint arXiv:2511.19418
+.
+Cited by:
+§2
+.
+[21]
+A. Radford, J. W. Kim, C. Hallacy, A. Ramesh, G. Goh, S. Agarwal, G. Sastry, A. Askell, P. Mishkin, J. Clark,
+et al.
+(2021)
+Learning transferable visual models from natural language supervision
+.
+In
+International conference on machine learning
+,
+pp. 8748–8763
+.
+Cited by:
+§2
+.
+[22]
+C. Raffel, N. Shazeer, A. Roberts, K. Lee, S. Narang, M. Matena, Y. Zhou, W. Li, and P. J. Liu
+(2020)
+Exploring the limits of transfer learning with a unified text-to-text transformer
+.
+Journal of machine learning research
+21
+(
+140
+),
+pp. 1–67
+.
+Cited by:
+§2
+.
+[23]
+Z. Shen, H. Yan, L. Zhang, Z. Hu, Y. Du, and Y. He
+(2025)
+Codi: compressing chain-of-thought into continuous space via self-distillation
+.
+arXiv preprint arXiv:2502.21074
+.
+Cited by:
+§2
+,
+§5.2
+.
+[24]
+J. Song, C. Meng, and S. Ermon
+(2020)
+Denoising diffusion implicit models
+.
+arXiv preprint arXiv:2010.02502
+.
+Cited by:
+§1
+.
+[25]
+Y. Song, J. Sohl-Dickstein, D. P. Kingma, A. Kumar, S. Ermon, and B. Poole
+(2020)
+Score-based generative modeling through stochastic differential equations
+.
+arXiv preprint arXiv:2011.13456
+.
+Cited by:
+§1
+.
+[26]
+W. Tan, J. Li, J. Ju, Z. Luo, J. Luan, and R. Song
+(2025)
+Think silently, think fast: dynamic latent compression of llm reasoning chains
+.
+arXiv preprint arXiv:2505.16552
+.
+Cited by:
+§2
+.
+[27]
+J. Tong, Y. Mou, H. Li, M. Li, Y. Yang, M. Zhang, Q. Chen, T. Liang, X. Hu, Y. Zheng,
+et al.
+(2025)
+Thinking with video: video generation as a promising multimodal reasoning paradigm
+.
+arXiv preprint arXiv:2511.04570
+.
+Cited by:
+§2
+.
+[28]
+M. Wang, R. Wang, J. Lin, R. Ji, T. Wiedemer, Q. Gao, D. Luo, Y. Qian, L. Huang, Z. Hong, J. Ge, Q. Ma, H. He, Y. Zhou, L. Guo, L. Mei, J. Li, H. Xing, T. Zhao, F. Yu, W. Xiao, Y. Jiao, J. Hou, D. Zhang, P. Xu, B. Zhong, Z. Zhao, G. Fang, J. Kitaoka, Y. Xu, H. Xu, K. Blacutt, T. Nguyen, S. Song, H. Sun, S. Wen, L. He, R. Wang, Y. Wang, M. Yang, Z. Ma, R. Millière, F. Shi, N. Vasconcelos, D. Khashabi, A. Yuille, Y. Du, Z. Liu, B. Li, D. Lin, Z. Liu, V. Kumar, Y. Li, L. Yang, Z. Cai, and H. Deng
+(2026)
+A very big video reasoning suite
+.
+External Links:
+2602.20159
+,
+Link
+Cited by:
+§2
+.
+[29]
+S. Wang, J. Jin, X. Wang, L. Song, R. Fu, H. Wang, Z. Ge, Y. Lu, and X. Cheng
+(2025)
+Video-thinker: sparking" thinking with videos" via reinforcement learning
+.
+arXiv preprint arXiv:2510.23473
+.
+Cited by:
+§2
+.
+[30]
+J. Wei, X. Wang, D. Schuurmans, M. Bosma, F. Xia, E. Chi, Q. V. Le, D. Zhou,
+et al.
+(2022)
+Chain-of-thought prompting elicits reasoning in large language models
+.
+Advances in neural information processing systems
+35
+,
+pp. 24824–24837
+.
+Cited by:
+§1
+.
+[31]
+C. Wu, J. Li, J. Zhou, J. Lin, K. Gao, K. Yan, S. Yin, S. Bai, X. Xu, Y. Chen,
+et al.
+(2025)
+Qwen-image technical report
+.
+arXiv preprint arXiv:2508.02324
+.
+Cited by:
+Appendix F
+,
+§1
+,
+§2
+,
+§3
+,
+§4.2
+,
+Table 1
+,
+§5
+.
+[32]
+J. Z. Wu, X. Ren, T. Shen, T. Cao, K. He, Y. Lu, R. Gao, E. Xie, S. Lan, J. M. Alvarez,
+et al.
+(2025)
+Chronoedit: towards temporal reasoning for image editing and world simulation
+.
+arXiv preprint arXiv:2510.04290
+.
+Cited by:
+§C.2
+,
+§2
+,
+§5.1
+,
+Table 1
+.
+[33]
+Z. Yan, X. Li, Y. He, Z. Yue, X. Zeng, Y. Wang, Y. Qiao, L. Wang, and Y. Wang
+(2025)
+Videochat-r1. 5: visual test-time scaling to reinforce multimodal reasoning by iterative perception
+.
+arXiv preprint arXiv:2509.21100
+.
+Cited by:
+§2
+.
+[34]
+A. Yang, A. Li, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Gao, C. Huang, C. Lv,
+et al.
+(2025)
+Qwen3 technical report
+.
+arXiv preprint arXiv:2505.09388
+.
+Cited by:
+§1
+,
+Table 1
+.
+[35]
+S. Yao, D. Yu, J. Zhao, I. Shafran, T. Griffiths, Y. Cao, and K. Narasimhan
+(2023)
+Tree of thoughts: deliberate problem solving with large language models
+.
+Advances in neural information processing systems
+36
+,
+pp. 11809–11822
+.
+Cited by:
+§2
+.
+[36]
+H. Zhang, X. Gu, J. Li, C. Ma, S. Bai, C. Zhang, B. Zhang, Z. Zhou, D. He, and Y. Tang
+(2025)
+Thinking with videos: multimodal tool-augmented reinforcement learning for long video reasoning
+.
+arXiv preprint arXiv:2508.04416
+.
+Cited by:
+§2
+.
+[37]
+H. Zhang, W. Wu, C. Li, N. Shang, Y. Xia, Y. Huang, Y. Zhang, L. Dong, Z. Zhang, L. Wang,
+et al.
+(2025)
+Latent sketchpad: sketching visual thoughts to elicit multimodal reasoning in mllms
+.
+arXiv preprint arXiv:2510.24514
+.
+Cited by:
+§2
+.
+[38]
+Q. Zhang, F. Lyu, Z. Sun, L. Wang, W. Zhang, W. Hua, H. Wu, Z. Guo, Y. Wang, N. Muennighoff,
+et al.
+(2025)
+A survey on test-time scaling in large language models: what, how, where, and how well?
+.
+arXiv preprint arXiv:2503.24235
+.
+Cited by:
+§2
+.
+[39]
+Z. Zhang, Z. Chen, Z. Yang, and Y. Yang
+(2025)
+Are image-to-video models good zero-shot image editors?
+.
+arXiv preprint arXiv:2511.19435
+.
+Cited by:
+§2
+.
+[40]
+Z. Zhang, X. He, W. Yan, A. Shen, C. Zhao, S. Wang, Y. Shen, and X. E. Wang
+(2025)
+Soft thinking: unlocking the reasoning potential of llms in continuous concept space
+.
+arXiv preprint arXiv:2505.15778
+.
+Cited by:
+§2
+.
+[41]
+Z. Zheng and W. S. Lee
+(2026)
+Beyond imitation: reinforcement learning for active latent planning
+.
+External Links:
+2601.21598
+,
+Link
+Cited by:
+§2
+.
+[42]
+Z. Zheng, Z. Xie, Z. Wang, and B. Hooi
+(2025)
+Monte carlo tree search for comprehensive exploration in llm-based automatic heuristic design
+.
+arXiv preprint arXiv:2501.08603
+.
+Cited by:
+§2
+.
+Appendix
+Appendix A
+Overview
+In the supplementary material, Sec.
+B
+details the dataset statistics; Sec.
+C
+provides task prompts and additional results; Sec.
+D
+presents additional ablation studies; Sec.
+E
+offers EndoCoT insights and observations; and Sec.
+F
+elaborates on the additional editing datasets.
+Appendix B
+Data Statistics
+Table 5
+:
+Dataset Composition.
+Overview of the sample size for each task in our constructed dataset, totaling 182.4K instances.
+Task
+Maze
+Sudoku
+TSP
+VSP
+Total
+Size
+75K
+40K
+30K
+37.4K
+182.4K
+To systematically evaluate our model’s reasoning capabilities, we construct a comprehensive dataset totaling 182.4K instances, comprising intermediate reasoning steps. As detailed in Tab.
+5
+, this dataset spans four distinct reasoning tasks (Maze, TSP, Sudoku, and VSP).
+B.1
+Algorithmic Formulation
+Maze.
+We use Depth-First Search (DFS) on a grid to carve a perfectly connected, loop-free maze. After randomly assigning a start (
+s
+s
+) and goal (
+g
+g
+), we compute the shortest path
+P
+P
+via Breadth-First Search (BFS). This path is recorded iteratively to simulate step-by-step spatial exploration.
+TSP.
+We randomly distribute
+N
+N
+cities on a 2D grid and solve the resulting combinatorial optimization problem using the Held-Karp algorithm. The dynamic programming state transition is defined as:
+D
+​
+P
+​
+[
+m
+]
+​
+[
+i
+]
+=
+min
+j
+∈
+m
+,
+j
+≠
+i
+⁡
+{
+D
+​
+P
+​
+[
+m
+∖
+{
+i
+}
+]
+​
+[
+j
+]
++
+dist
+​
+(
+j
+,
+i
+)
+}
+,
+DP[m][i]=\min_{j\in m,j\neq i}\{DP[m\setminus\{i\}][j]+\text{dist}(j,i)\},
+(12)
+where
+m
+m
+is the bitmask of visited cities and
+dist
+​
+(
+j
+,
+i
+)
+\text{dist}(j,i)
+is the Euclidean distance. The optimal node-to-node trajectory is rendered sequentially.
+Sudoku.
+We construct a valid
+9
+×
+9
+9\times 9
+board
+L
+L
+via backtracking, satisfying standard row, column, and block constraints:
+∀
+i
+,
+∑
+j
+=
+1
+9
+L
+i
+,
+j
+=
+N
+;
+∀
+j
+,
+∑
+i
+=
+1
+9
+L
+i
+,
+j
+=
+N
+;
+∀
+block
+k
+,
+∑
+L
+∈
+block
+k
+=
+N
+.
+\forall i,\sum_{j=1}^{9}L_{i,j}=N;\quad\forall j,\sum_{i=1}^{9}L_{i,j}=N;\quad\forall\text{block}_{k},\sum L\in\text{block}_{k}=N.
+(13)
+We iteratively remove clues while ensuring the puzzle retains a unique solution. The intermediate reasoning steps are recorded by reversing this process, progressively filling empty cells from the ground-truth solution.
+VSP.
+We generate a FrozenLake grid containing safe tiles, hazard holes, a start, and a goal. Framing this as a graph search, we apply Dijkstra’s algorithm to compute a safe path. The distance relaxation for adjacent safe nodes
+u
+u
+and
+v
+v
+is
+d
+⁡
+(
+v
+)
+=
+min
+⁡
+{
+d
+⁡
+(
+v
+)
+,
+d
+⁡
+(
+u
+)
++
+w
+⁡
+(
+u
+,
+v
+)
+}
+d(v)=\min\{d(v),d(u)+w(u,v)\}
+.
+The agent’s state transitions are recorded step-by-step to capture environment perception and hazard avoidance.
+B.2
+Pseudocode for Dataset Generation
+The procedural generation for all four tasks are shown in Fig.
+14
+:
+Maze Generation:
+Utilizes
+DFS
+to construct the maze, followed by
+BFS
+to determine the optimal path.
+TSP Generation:
+Applies the
+Held-Karp dynamic programming algorithm
+to derive the optimal tour.
+VSP Generation:
+Employs
+Dijkstra’s algorithm
+on the remaining safe graph to compute shortest paths.
+Sudoku Generation:
+Starts with a valid Latin square and iteratively removes values.
+Appendix C
+Case Studies
+C.1
+Evaluation Prompts
+Sudoku
+Solve this Sudoku puzzle
+step-by-step
+from top-left to bottom-right. Identify the empty cell and fill in the correct digit.
+TSP
+Draw a continuous red line
+step-by-step
+from the start point to form the shortest closed loop. Mark the current endpoint with a green dot while avoiding other circles.
+VSP
+Draw a continuous red line from the Start point to the Goal point
+step-by-step
+, avoiding holes. Mark the current end of the path with a green dot. Directions: D=Down, U=Up, R=Right, L=Left.
+Maze
+Draw a continuous red line from the yellow dot to the blue dot
+step-by-step
+, avoiding walls. Mark the current end of the path with a green dot. Directions: D=Down, U=Up, R=Right, L=Left.
+C.2
+Qualitative Examples
+Figs.
+15
+,
+16
+,
+17
+, and
+18
+provides additional qualitative examples comparing EndoCoT against ThinkGen
+[
+15
+]
+and ChronoEdit
+[
+32
+]
+across various reasoning tasks.
+Appendix D
+More Ablations
+D.1
+Effect of Two-Stage Training
+Table 6
+:
+Single-stage training and multi-stage training on the Maze task.
+Models
+Accuracy (ACC)
+Path Repetition (%)
+8
+16
+32
+8
+16
+32
+Single-Stage
+39
+42
+14
+83.49
+91.34
+90.34
+Two-Stage
+100
+100
+90
+100.00
+100.00
+98.13
+Tab.
+6
+presents an illustrative analysis on the Maze task, showing that Terminal Consolidation effectively enhances the model’s awareness of the final stage.
+D.2
+Impact of Terminal Consolidation Training Duration
+Excessive training in Terminal Consolidation (Stage 2) causes intermediate steps to become sparse, as illustrated in Fig.
+10
+. When choosing a constant number of reasoning steps
+τ
+\tau
+, checkpoints trained with more stage 2 training steps exhibit an inference behavior that converges more toward the target state.
+steps=0,
+τ
+=
+2
+{\tau=2}
+steps=5000,
+τ
+=
+2
+{\tau=2}
+steps=8000,
+τ
+=
+2
+{\tau=2}
+steps=0,
+τ
+=
+2
+{\tau=2}
+steps=1000,
+τ
+=
+2
+{\tau=2}
+steps=8000,
+τ
+=
+2
+{\tau=2}
+Figure 10
+:
+Terminal Consolidation’s Excessive Training Results.
+D.3
+Generalization under OOD Settings
+On the Sudoku task, EndoCoT demonstrates stronger generalization than baseline methods across
+different resolutions
+and
+font styles
+, as shown in Fig.
+11
+.
+For high-resolution inputs, EndoCoT consistently produces correct predictions for the 9x9 grid located in the center. For low-resolution inputs, it can recover partially cropped correct answers, while DiffThinker fails to generate valid solutions.
+Different Fonts
+High Resolution
+Low Resolution
+Baseline
+Ours
+Baseline
+Ours
+Baseline
+Ours
+Figure 11
+:
+OOD Test Result.
+EndoCoT demonstrates stronger generalization than baseline methods when solving Sudoku puzzles with varying resolutions and font styles.
+Appendix E
+Training Hints
+E.1
+Training Settings
+Table 7
+:
+Training hyperparameters and LoRA configuration.
+General Settings
+LoRA Target Modules
+Hyperparameter
+Value
+Component
+Modules
+Base Model
+Qwen Image Edit 2511
+DiT Attn.
+to_q/k/v
+,
+add_*_proj
+,
+to_*_out
+Learning Rate
+1
+×
+10
+−
+4
+1\times 10^{-4}
+DiT FFN
+img/txt_mlp.net.2
+Training Epochs
+5
+DiT Mod.
+img/txt_mod.1
+LoRA Rank
+32
+Text Enc. Attn.
+q/k/v/o_proj
+LoRA Target
+DiT + Text Enc.
+Text Enc. FFN
+gate/up/down_proj
+The detailed training settings, including hyperparameters and LoRA configurations, are summarized in Tab.
+7
+.
+E.2
+Further Analysis
+Figure 12
+:
+Gradient difference between reasoning and non-reasoning datasets.
+To further investigate where reasoning-related signals are primarily encoded in the model, we analyze the gradient activation differences between datasets that require explicit reasoning and those that do not. Specifically, we compute the layer-wise gradient magnitude difference across the MLLM and DiT.
+As shown in Fig.
+12
+, the largest gradient differences are consistently concentrated within the MLLM layers. This result further supports the analysis in Sec. 2: Reasoning capabilities are primarily mediated by the MLLM.
+E.3
+Experimental Observations
+We obtain the following empirical observations while conducting experiments:
+Fine-grained step supervision is crucial.
+The number of reasoning steps performed during inference is typically much smaller than the number of steps supervised during training. Therefore, providing finer-grained intermediate step supervision is necessary for the model to learn latent reasoning processes.
+More semantic supervision is not necessarily better.
+Applying semantic loss to intermediate steps can disrupt the synergy between the DiT rendering capability and the MLLM’s understanding. Empirically, this leads to inferior performance compared to the sparse semantic supervision strategy in EndoCoT.
+Number of latent tokens depend on algorithmic and visual complexity.
+The number of latent tokens required to solve a puzzle is determined not only by the algorithmic complexity of the task, but also by its visual complexity.
+Appendix F
+Image Editing Details
+Figure 13
+:
+Overview of the multi-step image editing dataset generation pipeline.
+We create a high-quality multi-step image editing dataset containing 10,000 unique scenes and 30,000 images.
+To ensure diversity and quality, Gemini 2.5
+[
+8
+]
+first generates diverse initial scene descriptions paired with multi-step editing instructions.
+Then Qwen-Image-Edit-2511
+[
+31
+]
+generate the corresponding intermediate and final edited images, providing strict per-step supervision. Ultimately, to ensure editing continuity, we optionally employ RIFE
+[
+14
+]
+for intermediate frame interpolation.
+The complete data generation pipeline is shown in Fig.
+13
+.
+Algorithm 1
+Maze Generation
+1:
+Grid dimension
+N
+N
+2:
+Initialize grid graph
+G
+=
+(
+𝒱
+,
+ℰ
+∅
+)
+G=(\mathcal{V},\mathcal{E}_{\emptyset})
+where
+𝒱
+=
+{
+1
+.
+.
+N
+}
+2
+\mathcal{V}=\{1..N\}^{2}
+3:
+M
+←
+DFS_SpanningTree
+​
+(
+G
+)
+M\leftarrow\text{DFS\_SpanningTree}(G)
+⊳
+\triangleright
+Perfect maze
+4:
+Sample
+s
+,
+g
+∼
+𝒰
+⁡
+(
+𝒱
+)
+s,g\sim\mathcal{U}(\mathcal{V})
+without replacement
+5:
+P
+←
+BFS
+​
+(
+M
+,
+s
+,
+g
+)
+P\leftarrow\text{BFS}(M,s,g)
+⊳
+\triangleright
+Path
+P
+=
+(
+v
+1
+,
+…
+,
+v
+K
+)
+P=(v_{1},\dots,v_{K})
+6:
+𝒮
+←
+∅
+\mathcal{S}\leftarrow\emptyset
+⊳
+\triangleright
+Intermediate visual states
+7:
+for
+k
+=
+1
+k=1
+to
+K
+K
+do
+8:
+I
+k
+←
+Render
+(
+M
+,
+P
+1
+:
+k
+)
+I_{k}\leftarrow\text{Render}(M,P_{1:k})
+9:
+𝒮
+←
+𝒮
+∪
+{
+I
+k
+}
+\mathcal{S}\leftarrow\mathcal{S}\cup\{I_{k}\}
+10:
+end
+for
+11:
+return
+Dataset instance
+𝒟
+=
+(
+M
+,
+P
+,
+𝒮
+)
+\mathcal{D}=(M,P,\mathcal{S})
+Algorithm 2
+TSP Generation
+1:
+2D plane dimensions
+W
+×
+H
+W\times H
+, city count
+N
+c
+N_{c}
+2:
+Sample cities
+𝐂
+=
+{
+c
+1
+,
+…
+,
+c
+N
+c
+}
+∼
+𝒰
+⁡
+(
+W
+×
+H
+)
+\mathbf{C}=\{c_{1},\dots,c_{N_{c}}\}\sim\mathcal{U}(W\times H)
+3:
+Compute distance matrix
+𝐃
+∈
+ℝ
+N
+c
+×
+N
+c
+\mathbf{D}\in\mathbb{R}^{N_{c}\times N_{c}}
+4:
+P
+←
+HeldKarpDP
+​
+(
+𝐃
+)
+P\leftarrow\text{HeldKarpDP}(\mathbf{D})
+⊳
+\triangleright
+Optimal tour
+5:
+𝒮
+←
+∅
+\mathcal{S}\leftarrow\emptyset
+6:
+for
+k
+=
+1
+k=1
+to
+N
+c
+N_{c}
+do
+7:
+I
+k
+←
+RenderTrajectory
+(
+𝐂
+,
+P
+1
+:
+k
+)
+I_{k}\leftarrow\text{RenderTrajectory}(\mathbf{C},P_{1:k})
+8:
+𝒮
+←
+𝒮
+∪
+{
+I
+k
+}
+\mathcal{S}\leftarrow\mathcal{S}\cup\{I_{k}\}
+9:
+end
+for
+10:
+return
+Dataset instance
+𝒟
+=
+(
+𝐂
+,
+P
+,
+𝒮
+)
+\mathcal{D}=(\mathbf{C},P,\mathcal{S})
+Algorithm 3
+VSP Generation
+1:
+Map dimension
+N
+N
+2:
+Generate map
+ℳ
+\mathcal{M}
+with grid
+𝒱
+=
+{
+1
+.
+.
+N
+}
+2
+\mathcal{V}=\{1..N\}^{2}
+3:
+Assign types
+𝒯
+⁡
+(
+v
+)
+∈
+{
+Safe
+,
+Hole
+}
+∼
+Bern
+​
+(
+p
+h
+​
+o
+​
+l
+​
+e
+)
+\mathcal{T}(v)\in\{\text{Safe},\text{Hole}\}\sim\text{Bern}(p_{hole})
+4:
+Construct graph
+𝒢
+=
+(
+𝒱
+s
+​
+a
+​
+f
+​
+e
+,
+ℰ
+s
+​
+a
+​
+f
+​
+e
+)
+\mathcal{G}=(\mathcal{V}_{safe},\mathcal{E}_{safe})
+5:
+Sample
+s
+,
+g
+∼
+𝒰
+⁡
+(
+𝒱
+s
+​
+a
+​
+f
+​
+e
+)
+s,g\sim\mathcal{U}(\mathcal{V}_{safe})
+6:
+P
+←
+Dijkstra
+​
+(
+𝒢
+,
+s
+,
+g
+)
+P\leftarrow\text{Dijkstra}(\mathcal{G},s,g)
+⊳
+\triangleright
+Compute shortest path
+7:
+Assert
+P
+≠
+∅
+P\neq\emptyset
+⊳
+\triangleright
+Ensure a valid path exists
+8:
+𝒮
+←
+∅
+\mathcal{S}\leftarrow\emptyset
+9:
+for
+k
+=
+1
+k=1
+to
+|
+P
+|
+|P|
+do
+10:
+I
+k
+←
+RenderEnv
+(
+ℳ
+,
+P
+1
+:
+k
+)
+I_{k}\leftarrow\text{RenderEnv}(\mathcal{M},P_{1:k})
+11:
+𝒮
+←
+𝒮
+∪
+{
+I
+k
+}
+\mathcal{S}\leftarrow\mathcal{S}\cup\{I_{k}\}
+12:
+end
+for
+13:
+return
+Dataset instance
+𝒟
+=
+(
+ℳ
+,
+P
+,
+𝒮
+)
+\mathcal{D}=(\mathcal{M},P,\mathcal{S})
+Algorithm 4
+Sudoku Generation
+1:
+Target number of holes
+H
+t
+​
+a
+​
+r
+​
+g
+​
+e
+​
+t
+H_{target}
+2:
+𝐋
+←
+GenerateLatinSquare
+​
+(
+)
+\mathbf{L}\leftarrow\text{GenerateLatinSquare}()
+⊳
+\triangleright
+9
+×
+9
+9\times 9
+solution
+3:
+𝐌
+←
+𝐋
+\mathbf{M}\leftarrow\mathbf{L}
+,
+h
+←
+0
+h\leftarrow 0
+4:
+while
+h
+<
+H
+t
+​
+a
+​
+r
+​
+g
+​
+e
+​
+t
+h<H_{target}
+do
+5:
+Sample
+c
+∼
+NonEmptyCells
+​
+(
+𝐌
+)
+c\sim\text{NonEmptyCells}(\mathbf{M})
+6:
+v
+←
+𝐌
+⁡
+[
+c
+]
+v\leftarrow\mathbf{M}[c]
+7:
+𝐌
+⁡
+[
+c
+]
+←
+∅
+\mathbf{M}[c]\leftarrow\emptyset
+⊳
+\triangleright
+Dig hole
+8:
+if
+NumSolutions
+​
+(
+𝐌
+)
+>
+1
+\text{NumSolutions}(\mathbf{M})>1
+then
+9:
+𝐌
+⁡
+[
+c
+]
+←
+v
+\mathbf{M}[c]\leftarrow v
+⊳
+\triangleright
+Revert to maintain uniqueness
+10:
+else
+11:
+h
+←
+h
++
+1
+h\leftarrow h+1
+12:
+end
+if
+13:
+end
+while
+14:
+𝒮
+←
+SimulateSolving
+​
+(
+𝐌
+,
+𝐋
+)
+\mathcal{S}\leftarrow\text{SimulateSolving}(\mathbf{M},\mathbf{L})
+15:
+return
+Dataset instance
+𝒟
+=
+(
+𝐌
+,
+𝐋
+,
+𝒮
+)
+\mathcal{D}=(\mathbf{M},\mathbf{L},\mathcal{S})
+Figure 14
+:
+Pseudocode for Dataset Generation
+Figure 15
+:
+Qualitative comparison of EndoCoT and other methods on
+TSP
+.
+Figure 16
+:
+Qualitative comparison of EndoCoT and other methods on
+VSP
+.
+Figure 17
+:
+Qualitative comparison of EndoCoT and other methods on
+Sudoku
+.
+Figure 18
+:
+Qualitative comparison of EndoCoT and other methods on
+Maze
+.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

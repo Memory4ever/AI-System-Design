@@ -1,0 +1,36 @@
+# 03-12 第4包：前截止后机会段
+
+实际逐项读SUP_EXACT_BATCH4.json中21完整exact-v1題摘/currentcomment/history，分16窄潜力/2具体EX/3必要日期保留；额外10101完整题摘已读为日期保留。root随后实际完整21题摘/current信号及10101官方v1完整AB独核，原16potential/2EX/3跨日及10101potential+跨日保留通过，不预授方法/性能/Evidence。发现只补相同四主题Mar09UTC18:00–23:59，不扩分类；9/11/8/13=41出现分页已独核，但其余metadata不可称41全部AB。
+
+|ID|原约束→实际增量→改变选择|
+|---|---|
+|09023|tool/system/staleresult常驻context→messageproxy eviction/faultre-request/history pinning→比较LLMcontext demand-paging而非机械VM类比；offline/live/semantic miss与thrashing必要核|
+|08999|selfconsistency每题多采样→已完成单trace的numeric/linguisticconfidence判断是否扩sample→比较适应性sampling成本/泛化；MedQA训练不是医学应用限定|
+|08942|VLMdomainadapt跨modalfeature错配→fewanchor恢复canonical几何变换→比较低参数alignment/orthogonality条件，不授domain必等价|
+|08899|specdraftprefix-only drift→contemplatetoken/softprompt/dynamicMoE未来signal＋anchortraining→核future信息来源与draft验证成本；ICLRworkshop先稿待核；currentv3DL12/tailacceptance不是本窗新事件，但必要反侧可定点读|
+|08869|SAEmeaning vsorthography未区分→Serbian双script固定meaning/不同token的activation控制→比较表示不变性的评价证据，而非声称semantic本质；ICLRworkshop先稿待核|
+|08797|compoundmodel taskgraph端到端budget/resource割裂→modelvariant＋GPUspatialpartition＋taskbudget联合→比较wholegraphaccuracy/latency/cost；HCDS先稿extended关系定点|
+|09030|WM人类successbiaseddata缺长尾contact→autonomousplay→action-conditionedvideo/failureeval/RL→比较data人口与rollout可行性，不把selfplay优点归为所有真实物理|
+|08982|sparsevideo漏块information且score非error→centroidcompensation＋error/costprobe路由exactblocks→比较approximationerror预算而非只attentionmass|
+|08862|VLA直接动作latency/precisionvsclassicalplanner手调→VLMregression输出plannerparameters＋SFT/RL→比较highlevelcondition接口与低层controller共存|
+|08850|videoholisticmodel缺objectcompositionalcontrol→hybridimage/video references＋perobjecttrajectory→比较referenceconditioning与时空控制|
+|09022|multiagentgameshighvariance/prompts有效policy不同→persistentmemory＋TrueSkillpromptselection/prioritizedreplay→比较contextpolicy预算及跨game适用性，2000selfplay费用计入|
+|08993|agent系统prompt缺交叉规则测试→formalrules/multimodelscouring及实际schema-loss finding→必要core核prompttest机制和真实patchidentity，不将LLMjudgefinding当已证漏洞|
+|08877|agentRAGbudget因素混杂→fixedtool/completionbudget控制depth/retrieval/backends→比较独立质量-成本选择，局部测量也可修配置；LREC先稿轻核|
+|08852|delegationprotocol缺modelproperties/可信provenance→identitycard/payloadfallback/session/provenance/trustdomain→核具体协议及noisyprovenance负面，而非成熟字段堆叠；安全信号必要深入|
+|08835|固定agentsetup只测模型→3model×3framework×3benchmark whole-system交叉→比较framework/handling混杂评价，不把排行榜当机制|
+|08806|prompt变动静默回归→spec-to-tests/双agent编译、hidden split/mutation/spec evolution→比较测试通过、gaming与regression安全，有限trial非production保证|
+
+上16的owningfindable upper03-11UTC，Mar09deadline后提交的官方最早Tue20EDT lower同BJT03-11；无09:00或时分秒筛选。现有信号未见withdraw，但安全/修订/先稿仅轻核，不以可下载充Evidence。
+
+## EX
+
+- 10062：computerarchitecture perspective/shared/distributed/三层hierarchy与consistency挑战；具体题摘只有成熟系统类比和协议缺口愿景，没有新的executionmechanism/有效边界或修判断证据。无需为EX的03-12upper再请求日期，不否认记忆一致性重要。
+- 08817 HMR1：医疗按摩/穴位dataset、QwenVL微调定位＋成熟高层grounding/低层controllerhierarchy，未新增foundationVLA机制或条件，医疗应用暂不开展，不通过VLA同词绕scope。题摘已读，无相关纠错信号。
+
+## 必要日期保留
+
+- 10055 NCA：非语言pre-pretraining、transferableattention与complexity控制具有潜力；upper03-12跨窗口，必要公告或作者公开日证未得，不评分，不把Submitted当public。
+- 10060 NabaOS/ToolReceipts：HMAC signedreceipt、claim-source区分与cross-reference具有潜力；upper03-12跨日。后续必要安全review须区分tool-executionreceipt与cryptographicinferenceproof不同对象，摘要94.2%/15ms不采为安全保证。
+- 10061 temporal-prefix VLM uncertainty：partialobservation校准/selectionblindspot潜力，upper03-12跨日；必要dayproof缺，不评分。v2变动非本窗自动事件。
+- 10101 CLIPO（补充点查）：Submitted03-10UTC17:59:54只是机会线索；官方owningfindable DOI created03-12UTC01:53:32/registered01:53:33，v1Updated03-12UTC00:03，lower03-11/upper03-12跨日。完整题摘说明finalreward忽略processwrong但answercorrectrollout，successfulrollouts间contrastiveloss以cross-trajectory invariantstructure约束RLVR；具潜力但不记03-11确定candidate，不以近截止时间或Updated补public。本轮exactabs/current无withdraw/comments，代码未核；需要正式announcementday或同日公开作者原证才能重开日期。

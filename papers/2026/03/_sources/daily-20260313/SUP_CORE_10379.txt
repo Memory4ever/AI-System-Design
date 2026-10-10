@@ -1,0 +1,2297 @@
+Optimal Expert-Attention Allocation in Mixture-of-Experts: A Scalable Law for Dynamic Model Design
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Theoretical Motivation
+2.1
+Compute Allocation in MoE Transformers
+2.2
+Diminishing Returns under Sparse Expert Activation
+2.3
+Implications for Optimal Allocation
+3
+Empirical Scaling Behavior of the Optimal Compute Allocation
+3.1
+Existence of a Scale-Dependent Optimal Ratio
+3.2
+Scaling of the Optimal Ratio with Compute
+3.3
+Sparsity-Dependent Scaling Coefficients
+3.4
+Summary: An Empirical Law for Optimal Allocation
+4
+Scaling Laws with Expert–Attention Trade-offs
+4.1
+From Allocation Law to Loss Scaling
+4.2
+Empirical Validation of the Extended Scaling Law
+4.3
+Practical Implications under Fixed Compute Budgets
+5
+Related Work
+Neural Scaling Laws.
+Scaling Laws for MoE Models.
+Our Contribution.
+6
+Discussion
+6.1
+Compute Allocation as a Scaling Variable
+6.2
+Limitations
+7
+Conclusion
+References
+A
+Complete Derivation
+A.1
+Base Framework: Optimal Allocation
+A.2
+Optimality Condition
+B
+Experimeal Setup
+B.1
+Model Architecture and Training Configuration
+B.2
+Datasets
+B.3
+Selection Strategy for the Optimal Point
+r
+∗
+r^{*}
+C
+Estimating MoE FLOPs
+C.1
+Attention Mechanism FLOPs
+Query Projection
+Key-Value Projection
+Attention Weights and Value Application
+Final Output Projection
+C.2
+Sparse MLP Forward FLOPs
+C.3
+Output Layer FLOPs
+C.4
+Decoder Layer FLOPs
+Total Forward Pass FLOPs
+Backward Pass FLOPs
+Gradient Checkpointing
+D
+Detailed Analysis and Visualizations of the Scaling Law Fitting Process
+D.1
+Initialization Parameters for L-BFGS Optimization
+D.2
+Justification for the Efficiency Loss Term
+D.3
+Visualizations of Alternative Formula Fits
+E
+Additional Visualizations
+License: CC BY 4.0
+arXiv:2603.10379v1 [cs.LG] 11 Mar 2026
+Optimal Expert-Attention Allocation in Mixture-of-Experts: A Scalable Law for Dynamic Model Design
+Junzhuo Li
+Affiliation:
+The Hong Kong University of Science and Technology (Guangzhou)
+Affiliation:
+The Hong Kong University of Science and Technology
+¶
+Ant Group
+Email:
+jz.li@connect.hkust-gz.edu.cn
+Peijie Jiang
+¶
+Email:
+xuminghu@hkust-gz.edu.cn
+Changxin Tian
+¶
+Jia Liu
+¶
+Zhiqiang Zhang
+¶
+Xuming Hu
+†
+†
+thanks:
+Corresponding author
+Affiliation:
+The Hong Kong University of Science and Technology (Guangzhou)
+Affiliation:
+The Hong Kong University of Science and Technology
+¶
+Ant Group
+Abstract
+This paper presents a novel extension of neural scaling laws to Mixture-of-Experts (MoE) models, focusing on the optimal allocation of compute between expert and attention sub-layers. As MoE architectures have emerged as an efficient method for scaling model capacity without proportionally increasing computation, determining the optimal expert-attention compute ratio becomes critical. We define the ratio
+r
+r
+as the fraction of total FLOPs per token dedicated to the expert layers versus the attention layers, and explore how this ratio interacts with the overall compute budget and model sparsity. Through extensive experiments with GPT-style MoE Transformers, we empirically find that the optimal ratio
+r
+∗
+r^{*}
+follows a power-law relationship with total compute and varies with sparsity. Our analysis leads to an explicit formula for
+r
+∗
+r^{*}
+, enabling precise control over the expert-attention compute allocation. We generalize the Chinchilla scaling law by incorporating this architectural parameter, providing a new framework for tuning MoE models beyond size and data. Our findings offer practical guidelines for designing efficient MoE models, optimizing performance while respecting fixed compute budgets.
+1
+Introduction
+Modern large language models (LLMs) are increasingly trained under strict and explicit compute budgets.
+In industrial settings, model developers must operate within fixed GPU resources, training windows, and inference throughput constraints, making efficient use of computation a primary design objective rather than an afterthought .
+Mixture-of-Experts (MoE)
+(
+Shazeer et al., 2017
+;
+Fedus et al., 2021
+;
+Lepikhin et al., 2021
+;
+Jiang et al., 2024
+;
+Dai et al., 2024
+;
+Muennighoff et al., 2024
+;
+Qwen, 2024
+)
+architectures have emerged as a practical solution in this regime, enabling substantial parameter growth while keeping per-token computation nearly constant through sparse expert activation.
+However, adopting MoE architectures introduces new architectural decisions that are largely absent in dense Transformers
+(
+Vaswani, 2017
+)
+.
+Beyond choosing the number of experts or the activation sparsity, practitioners must implicitly decide how computation is distributed
+inside
+the model.
+In particular, how much of the available compute should be allocated to attention layers versus expert (feed-forward) layers remains an open question.
+In practice, this allocation is often inherited from dense Transformer designs or tuned heuristically, despite the fact that expert layers can dominate the compute budget in large-scale MoE models.
+From a systems perspective, this raises a fundamental yet underexplored question:
+given a fixed training compute budget, what is the optimal way to allocate computation between attention and expert components in an MoE Transformer?
+We characterize this trade-off using the FLOPs ratio
+r
+=
+C
+E
+/
+C
+A
+r=C_{E}/C_{A}
+, which directly controls where the majority of per-token computation is spent.
+Unlike traditional hyperparameters,
+r
+r
+governs a first-order resource allocation decision and can substantially affect model performance at scale.
+Existing neural scaling laws
+(
+Kaplan et al., 2020
+;
+Henighan et al., 2020
+;
+Hoffmann et al., 2022
+;
+Chowdhery et al., 2023
+)
+provide powerful guidance for allocating compute across model size and data.
+The Chinchilla scaling law, for example, prescribes an optimal balance between parameters and training tokens under a fixed compute budget.
+Recent extensions to MoE models further incorporate sparsity and expert count into this framework
+(
+Ludziejewski et al., 2024
+;
+Abnar et al., 2025
+;
+Wang et al., 2024
+)
+.
+However, these approaches implicitly assume a fixed internal compute allocation, leaving the expert–attention trade-off unmodeled.
+As a result, current scaling laws offer limited guidance on how MoE architectures themselves should evolve with increasing compute.
+In this work, we show that the optimal expert–attention compute allocation is not fixed, but instead follows a predictable scaling behavior.
+Through controlled experiments across multiple model scales and sparsity regimes, we demonstrate that the optimal FLOPs ratio
+r
+∗
+r^{*}
+increases as a power law of total training compute, with scaling coefficients that depend systematically on sparsity.
+Building on this observation, we incorporate the expert–attention trade-off into a unified scaling law, extending the Chinchilla framework to account for internal architectural allocation.
+Our results provide practical, compute-aware guidelines for designing MoE models that achieve better performance under fixed resource budgets.
+2
+Theoretical Motivation
+This section provides a minimal theoretical rationale for why the optimal compute allocation between attention and expert components in MoE models should vary with scale.
+Rather than proposing a detailed mechanistic model, our goal is to capture the essential trade-off underlying expert–attention compute allocation and to motivate the empirical scaling behavior observed in later sections.
+2.1
+Compute Allocation in MoE Transformers
+In an MoE Transformer, the dominant per-token computation arises from two sources: self-attention and expert (feed-forward) layers.
+Let
+C
+A
+C_{A}
+denote the FLOPs consumed by attention and
+C
+E
+C_{E}
+the FLOPs consumed by expert layers.
+Under a fixed per-token compute budget
+C
+=
+C
+A
++
+C
+E
+C=C_{A}+C_{E}
+, their relative allocation is fully characterized by the FLOPs ratio
+r
+=
+C
+E
+/
+C
+A
+r=C_{E}/C_{A}
+.
+In addition to compute allocation, MoE models are defined by their activation sparsity.
+We characterize sparsity by the fraction of inactive experts,
+S
+=
+(
+E
+−
+E
+act
+)
+/
+E
+,
+S=(E-E_{\text{act}})/E,
+where
+E
+E
+is the total number of experts and
+E
+act
+E_{\text{act}}
+is the number of experts activated per token.
+Sparsity controls how expert capacity is utilized: lower sparsity implies that more experts contribute computation per token, while higher sparsity concentrates compute on fewer experts.
+Unlike dense Transformers, MoE architectures expose both
+r
+r
+and
+S
+S
+as explicit design choices.
+Fixing either implicitly constrains the effectiveness of the other.
+As a result, optimal compute allocation cannot be determined independently of sparsity.
+2.2
+Diminishing Returns under Sparse Expert Activation
+Allocating additional compute to either attention or expert layers yields diminishing returns.
+However, in MoE models, the rate of diminishing returns for expert computation depends critically on sparsity.
+When sparsity is low (i.e., more experts are activated), additional expert compute can be distributed across multiple specialized subnetworks, leading to higher marginal gains.
+In contrast, under high sparsity, expert computation is concentrated on a small set of experts, and additional compute is more likely to saturate existing representations.
+This asymmetry implies that the effective elasticity of expert compute is sparsity-dependent.
+While attention computation primarily benefits global token interaction modeling and is largely insensitive to sparsity, expert computation derives its benefit from both capacity and diversity, the latter being directly controlled by
+S
+S
+.
+Figure 1:
+Loss as a function of FLOPs ratio and total compute. Black dashed lines trace optimal
+r
+∗
+r^{*}
+. Color indicates active parameters. Low-sparsity models (left) favor higher
+r
+∗
+r^{*}
+at scale.
+2.3
+Implications for Optimal Allocation
+Under a fixed compute budget, optimal performance is achieved by balancing the marginal utility of attention and expert computation.
+Because sparsity modulates the effectiveness of expert compute, the optimal FLOPs ratio
+r
+∗
+r^{*}
+must depend on both total compute
+C
+C
+and sparsity
+S
+S
+.
+A minimal consequence of this interaction is that
+r
+∗
+r^{*}
+is not constant, but instead follows a scale-dependent law of the form
+r
+∗
+​
+(
+C
+,
+S
+)
+=
+α
+⁡
+(
+S
+)
+​
+C
+β
+⁡
+(
+S
+)
+,
+r^{*}(C,S)=\alpha(S)C^{\beta(S)},
+(1)
+where the sparsity-dependent coefficients reflect how expert utilization changes under different activation regimes.
+This formulation yields a clear, testable prediction:
+models with lower sparsity should benefit more from allocating additional compute to expert layers as scale increases, while highly sparse models should favor relatively greater attention capacity.
+In the following sections, we empirically validate this prediction and quantify how sparsity shapes the scaling behavior of
+r
+∗
+r^{*}
+.
+3
+Empirical Scaling Behavior of the Optimal Compute Allocation
+Motivated by the sparsity-aware allocation rationale developed in Section 2, we now empirically investigate how the optimal expert–attention FLOPs ratio emerges in practice.
+Rather than evaluating a particular MoE architecture, our focus is on characterizing the behavior of the optimal allocation itself as a function of total training compute and sparsity.
+Specifically, we aim to answer three questions:
+(i) whether a well-defined optimal ratio
+r
+∗
+r^{*}
+exists under fixed compute and sparsity,
+(ii) how this ratio evolves as the compute budget increases, and
+(iii) whether sparsity systematically modulates this evolution.
+To this end, we perform controlled sweeps over the FLOPs ratio
+r
+r
+while holding the per-token compute budget fixed, across multiple model scales and sparsity regimes.
+This experimental design isolates the effect of internal compute allocation from confounding factors such as parameter count or data scale.
+We show that the optimal ratio
+r
+∗
+r^{*}
+is stable, scale-dependent, and exhibits consistent trends that form the empirical basis for the scaling laws developed in the following sections.
+(a)
+Optimal ratio vs.
+C
+C
+(b)
+Coefficient
+α
+r
+\alpha_{r}
+vs.
+1
+−
+S
+1-S
+(c)
+Exponent
+β
+r
+\beta_{r}
+vs.
+1
+−
+S
+1-S
+Figure 2:
+(a)
+Relationship between the optimal FLOPs ratio
+r
+∗
+r^{*}
+and total per-token compute
+C
+C
+, fitted with the power law
+r
+∗
+=
+α
+r
+​
+C
+β
+r
+r^{*}=\alpha_{r}C^{\beta_{r}}
+.
+(b)
+Dependence of the fitted coefficient
+α
+r
+\alpha_{r}
+on the fraction of activated experts
+(
+1
+−
+S
+)
+(1-S)
+, showing a clear power-law trend.
+(c)
+Dependence of the fitted exponent
+β
+r
+\beta_{r}
+on
+(
+1
+−
+S
+)
+(1-S)
+, also following a power-law.
+All axes are plotted on log–log scales.
+3.1
+Existence of a Scale-Dependent Optimal Ratio
+We first examine whether a well-defined optimal FLOPs ratio
+r
+∗
+r^{*}
+exists under fixed training compute and sparsity.
+Figure
+1
+visualizes the training loss as a function of the FLOPs ratio
+r
+r
+and total compute
+C
+C
+for two representative sparsity levels.
+Across all compute budgets, the loss surface exhibits a clear and smooth minimum along the
+r
+r
+dimension, forming a pronounced valley rather than a flat or noisy region.
+This observation indicates that
+r
+∗
+r^{*}
+is a stable and well-defined quantity, rather than an artifact of random variation or overfitting.
+As the total compute increases, the location of this minimum shifts systematically toward larger values of
+r
+r
+, indicating that allocating proportionally more compute to expert layers becomes increasingly beneficial at scale.
+Importantly, this shift is monotonic and smooth, suggesting a structured dependence on compute rather than isolated local effects.
+These trends are consistently observed across model sizes and training runs, confirming that the optimal ratio
+r
+∗
+r^{*}
+is a robust property of the training regime.
+Comparing the two sparsity settings in Figure
+1
+further reveals that sparsity strongly influences how rapidly the optimal ratio evolves with compute.
+In lower-sparsity models (left), where more experts are activated per token, the optimal
+r
+∗
+r^{*}
+increases more steeply as compute grows.
+In contrast, under higher sparsity (right), the shift in
+r
+∗
+r^{*}
+is more gradual, reflecting a reduced marginal benefit from additional expert computation.
+This qualitative difference provides direct empirical evidence that sparsity modulates the scale-dependent effectiveness of expert computation.
+These results establish that a stable, scale-dependent optimum exists and that sparsity systematically reshapes its evolution.
+3.2
+Scaling of the Optimal Ratio with Compute
+We next examine how the optimal FLOPs ratio
+r
+∗
+r^{*}
+evolves with increasing training compute.
+For each fixed sparsity level, we extract
+r
+∗
+r^{*}
+from the loss minima in Figure
+1
+and plot it against the total per-token compute
+C
+C
+.
+As shown in Figure
+2
+(a),
+r
+∗
+r^{*}
+increases monotonically with compute across all sparsity regimes and follows an approximately linear trend on log–log scales.
+This behavior is well captured by a power-law relationship,
+r
+∗
+=
+α
+r
+​
+C
+β
+r
+,
+r^{*}=\alpha_{r}C^{\beta_{r}},
+which provides an accurate description of the observed data across model scales.
+These results establish that the optimal expert–attention allocation is itself a scale-dependent quantity rather than a fixed architectural constant.
+3.3
+Sparsity-Dependent Scaling Coefficients
+We now analyze how sparsity modulates the scaling behavior of the optimal FLOPs ratio.
+Figures
+2(b)
+and
+2(c)
+show the dependence of the fitted coefficients
+α
+r
+\alpha_{r}
+and
+β
+r
+\beta_{r}
+on the fraction of activated experts
+(
+1
+−
+S
+)
+(1-S)
+.
+Both parameters vary systematically with sparsity:
+α
+r
+\alpha_{r}
+decreases while
+β
+r
+\beta_{r}
+increases as more experts are activated.
+These trends indicate that sparsity affects not only the magnitude of the optimal ratio, but also its rate of growth with compute.
+Lower-sparsity models exhibit a steeper increase in
+r
+∗
+r^{*}
+as scale increases, whereas under high sparsity the growth is more gradual.
+This confirms that sparsity reshapes the scaling regime of expert–attention allocation rather than acting as a simple constant offset.
+Empirically, we find that the scaling coefficients follow simple power-law relationships with sparsity:
+α
+r
+=
+6.7
+×
+10
+−
+5
+​
+(
+1
+−
+S
+)
+−
+1.23
+,
+\displaystyle\alpha_{r}=6.7\times 10^{-5}(1-S)^{-1.23},
+β
+r
+=
+0.24
+​
+(
+1
+−
+S
+)
+0.21
+.
+\displaystyle\beta_{r}=0.24(1-S)^{0.21}.
+These expressions provide a closed-form parameterization of the optimal allocation across sparsity regimes.
+3.4
+Summary: An Empirical Law for Optimal Allocation
+The results in this section establish that the optimal expert–attention FLOPs ratio is a well-defined and scale-dependent quantity.
+Across a wide range of model scales and sparsity regimes, the optimal ratio
+r
+∗
+r^{*}
+follows a simple power-law relationship with total compute, with scaling coefficients that vary systematically with sparsity.
+Together, these findings yield an empirical allocation law of the form
+r
+∗
+​
+(
+C
+,
+S
+)
+=
+α
+r
+​
+(
+S
+)
+​
+C
+β
+r
+​
+(
+S
+)
+r^{*}(C,S)=\alpha_{r}(S)\,C^{\beta_{r}(S)}
+, which compactly captures how internal compute allocation should co-evolve with model scale and sparsity.
+In the next section, we incorporate this allocation law into a unified scaling framework to quantify its impact on training loss.
+(a)
+Fit on data used to estimate coefficients.
+(b)
+Validating scaling law on held-out dataset.
+Figure 3:
+Scaling law fit on data obtained from training compute-optimal models.
+(a)
+shows the fit on the data used to estimate the coefficients for Eq.
+2
+,
+(b)
+validates these coefficients on a held-out dataset. All data points with S = 97.67% were excluded from the fitting process for out-of-sample validation.
+4
+Scaling Laws with Expert–Attention Trade-offs
+Section 3 establishes that the optimal expert–attention FLOPs ratio
+r
+∗
+r^{*}
+follows a scale- and sparsity-dependent allocation law.
+We now incorporate this allocation law into a loss-level scaling framework to quantify the impact of internal compute misallocation.
+By explicitly modeling deviations from the optimal ratio, we extend conventional scaling laws to account for architectural allocation effects under fixed compute budgets.
+4.1
+From Allocation Law to Loss Scaling
+The empirical results in Section 3 indicate that performance under a fixed compute budget depends not only on how much compute is used, but also on how it is allocated between attention and expert components.
+Conventional scaling laws implicitly assume a fixed internal allocation, treating models at the same compute budget as equivalent.
+Our results show that this assumption leads to systematic performance degradation when compute is misallocated.
+To capture this effect, we extend existing scaling laws with two additional terms that penalize deviations from the optimal FLOPs ratio and excessive expert allocation.
+These terms do not introduce new resources; instead, they quantify the inefficiency arising from suboptimal use of a fixed compute budget.
+To instantiate this formulation, we adopt the following extended scaling law:
+ℒ
+=
+\displaystyle\mathcal{L}=
+a
+N
+α
++
+b
+D
+β
+\displaystyle\frac{a}{N^{\alpha}}+\frac{b}{D^{\beta}}
+(2)
++
+c
+⋅
+e
+R
+​
+(
+1
+−
+S
+)
+γ
+N
+λ
++
+d
+⋅
+r
+r
++
+1
++
+τ
+,
+\displaystyle+c\cdot\frac{e^{R}(1-S)^{\gamma}}{N^{\lambda}}+d\cdot\frac{r}{r+1}+\tau,
+where
+a
+,
+b
+,
+c
+,
+d
+,
+α
+,
+β
+,
+λ
+,
+γ
+,
+τ
+a,b,c,d,\alpha,\beta,\lambda,\gamma,\tau
+are fitted parameters.
+In the next subsection, we evaluate the predictive accuracy of this formulation.
+4.2
+Empirical Validation of the Extended Scaling Law
+We evaluate the predictive accuracy of the extended scaling law in Equation
+2
+, which augments conventional loss scaling with explicit penalties for expert–attention misallocation.
+Figure
+3
+(a) shows strong agreement between predicted and observed loss on the data used for coefficient estimation.
+More importantly, Figure
+3
+(b) validates the same coefficients on a held-out sparsity level that was entirely excluded from fitting, demonstrating robust out-of-sample generalization.
+To assess whether the model captures training dynamics beyond final loss values, Figure
+4
+compares predicted and observed loss trajectories for a representative MoE model.
+The close alignment indicates that the extended scaling law provides a consistent description of loss evolution under fixed compute allocation.
+Estimated coefficients are reported in Table
+1
+.
+Coefficient
+α
+\alpha
+β
+\beta
+λ
+\lambda
+γ
+\gamma
+τ
+\tau
+a
+b
+c
+d
+Estimate
+0.6288
+0.0453
+0.4228
+0.0431
+13.7354
+15.12
+18.62
+39.55
+0.0499
+Table 1:
+Estimated values for coefficients in Equation
+2
+.
+4.3
+Practical Implications under Fixed Compute Budgets
+The extended scaling analysis implies that optimal MoE design requires internal compute allocation to co-scale with both total compute and sparsity.
+Maintaining a fixed expert–attention ratio across model scales leads to systematic inefficiencies, either underutilizing expert capacity at large scale or overspending compute on experts under high sparsity.
+In practice, given a target compute budget
+C
+C
+and sparsity level
+S
+S
+, the empirical allocation law
+r
+∗
+​
+(
+C
+,
+S
+)
+r^{*}(C,S)
+provides a direct guideline for selecting the appropriate expert capacity.
+This enables architecture-level optimization under fixed resource constraints, ensuring that additional compute is translated into effective modeling capacity rather than wasted through suboptimal allocation.
+Figure 4:
+Comparison between the actual training curve of a model with 30M activation parameters and 550M total parameters (with 95.38% sparsity) and the fitted curve derived from Equation
+2
+.
+5
+Related Work
+Neural Scaling Laws.
+Prior work has established that language model performance follows power-law relationships with model size, data, and compute
+(
+Kaplan et al., 2020
+;
+Hoffmann et al., 2022
+)
+.
+These scaling laws provide principled guidance for allocating total training resources, but typically assume fixed internal architectural configurations.
+Scaling Laws for MoE Models.
+Mixture-of-Experts (MoE) architectures
+(
+Fedus et al., 2021
+;
+Lepikhin et al., 2021
+;
+Dai et al., 2024
+)
+decouple parameter count from per-token compute through sparse expert activation.
+Recent studies analyze how performance scales with total parameters, expert count, granularity, and sparsity
+(
+Clark et al., 2022
+;
+Ludziejewski et al., 2024
+;
+Wang et al., 2024
+;
+Abnar et al., 2025
+)
+.
+However, these works largely treat internal compute allocation as fixed and do not explicitly model how compute should be distributed between attention and expert components.
+Our Contribution.
+In contrast, we treat internal compute allocation as a first-order scaling variable.
+Rather than optimizing only total capacity or sparsity, we model how expert–attention FLOPs allocation should co-scale with compute and sparsity.
+This perspective extends existing scaling frameworks by explicitly accounting for architectural compute misallocation and its impact on training loss.
+6
+Discussion
+6.1
+Compute Allocation as a Scaling Variable
+Our results show that expert–attention compute allocation in MoE models is a scale- and sparsity-dependent variable rather than a fixed hyperparameter.
+The optimal FLOPs ratio forms an additional scaling dimension that must co-evolve with total compute; otherwise, misallocation leads to measurable performance loss.
+Sparsity further reshapes this allocation regime, with lower sparsity favoring expert-heavy configurations and higher sparsity favoring greater attention capacity.
+Architecture-level compute distribution should therefore be optimized jointly with sparsity and training scale.
+6.2
+Limitations
+Our analysis is restricted to autoregressive language modeling with fixed sparsity and does not account for multimodal tasks, adaptive routing, or hardware-level communication costs, which remain important directions for future work.
+7
+Conclusion
+In this paper, we establish that expert–attention compute allocation is a critical and previously under-modeled dimension of MoE scaling.
+The optimal FLOPs ratio follows a predictable law governed by total compute and sparsity, and deviations from this optimum reduce efficiency.
+By integrating allocation-aware modeling into a Chinchilla-style framework, we move MoE design from static heuristics toward compute-optimal co-scaling, providing practical guidance for resource-constrained training.
+References
+Abnar
+et al.
+(2025)
+S. Abnar, H. Shah, D. Busbridge, A. M. E. Ali, J. Susskind, and V. Thilak
+Parameters vs flops: scaling laws for optimal sparsity for mixture-of-experts language models
+.
+arXiv preprint arXiv:2501.12370
+.
+Cited by:
+5(b)
+,
+§D.3
+,
+§1
+,
+§5
+.
+Chowdhery
+et al.
+(2023)
+A. Chowdhery, S. Narang, J. Devlin, M. Bosma, G. Mishra, A. Roberts, P. Barham, H. W. Chung, C. Sutton, S. Gehrmann,
+et al.
+Palm: scaling language modeling with pathways
+.
+Journal of Machine Learning Research
+24
+(
+240
+),
+pp. 1–113
+.
+Cited by:
+§1
+.
+Clark
+et al.
+(2022)
+A. Clark, D. de Las Casas, A. Guy, A. Mensch, M. Paganini, J. Hoffmann, B. Damoc, B. Hechtman, T. Cai, S. Borgeaud,
+et al.
+Unified scaling laws for routed language models
+.
+In
+International conference on machine learning
+,
+pp. 4057–4086
+.
+Cited by:
+§5
+.
+Dai
+et al.
+(2024)
+D. Dai, C. Deng, C. Zhao, R.x. Xu, H. Gao, D. Chen, J. Li, W. Zeng, X. Yu, Y. Wu, Z. Xie, Y.k. Li, P. Huang, F. Luo, C. Ruan, Z. Sui, and W. Liang
+DeepSeekMoE: towards ultimate expert specialization in mixture-of-experts language models
+.
+In
+Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers)
+,
+L. Ku, A. Martins, and V. Srikumar (Eds.)
+,
+Bangkok, Thailand
+,
+pp. 1280–1297
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§1
+,
+§5
+.
+DeepSeek-AI
+et al.
+(2024)
+DeepSeek-AI, A. Liu, B. Feng, B. Xue, B. Wang, B. Wu, C. Lu, C. Zhao, C. Deng, C. Zhang, C. Ruan, D. Dai, D. Guo, D. Yang, D. Chen, D. Ji, E. Li, F. Lin, F. Dai, F. Luo, G. Hao, G. Chen, G. Li, H. Zhang, H. Bao, H. Xu, H. Wang, H. Zhang, H. Ding, H. Xin, H. Gao, H. Li, H. Qu, J. L. Cai, J. Liang, J. Guo, J. Ni, J. Li, J. Wang, J. Chen, J. Chen, J. Yuan, J. Qiu, J. Li, J. Song, K. Dong, K. Hu, K. Gao, K. Guan, K. Huang, K. Yu, L. Wang, L. Zhang, L. Xu, L. Xia, L. Zhao, L. Wang, L. Zhang, M. Li, M. Wang, M. Zhang, M. Zhang, M. Tang, M. Li, N. Tian, P. Huang, P. Wang, P. Zhang, Q. Wang, Q. Zhu, Q. Chen, Q. Du, R. J. Chen, R. L. Jin, R. Ge, R. Zhang, R. Pan, R. Wang, R. Xu, R. Zhang, R. Chen, S. S. Li, S. Lu, S. Zhou, S. Chen, S. Wu, S. Ye, S. Ye, S. Ma, S. Wang, S. Zhou, S. Yu, S. Zhou, S. Pan, T. Wang, T. Yun, T. Pei, T. Sun, W. L. Xiao, W. Zeng, W. Zhao, W. An, W. Liu, W. Liang, W. Gao, W. Yu, W. Zhang, X. Q. Li, X. Jin, X. Wang, X. Bi, X. Liu, X. Wang, X. Shen, X. Chen, X. Zhang, X. Chen, X. Nie, X. Sun, X. Wang, X. Cheng, X. Liu, X. Xie, X. Liu, X. Yu, X. Song, X. Shan, X. Zhou, X. Yang, X. Li, X. Su, X. Lin, Y. K. Li, Y. Q. Wang, Y. X. Wei, Y. X. Zhu, Y. Zhang, Y. Xu, Y. Xu, Y. Huang, Y. Li, Y. Zhao, Y. Sun, Y. Li, Y. Wang, Y. Yu, Y. Zheng, Y. Zhang, Y. Shi, Y. Xiong, Y. He, Y. Tang, Y. Piao, Y. Wang, Y. Tan, Y. Ma, Y. Liu, Y. Guo, Y. Wu, Y. Ou, Y. Zhu, Y. Wang, Y. Gong, Y. Zou, Y. He, Y. Zha, Y. Xiong, Y. Ma, Y. Yan, Y. Luo, Y. You, Y. Liu, Y. Zhou, Z. F. Wu, Z. Z. Ren, Z. Ren, Z. Sha, Z. Fu, Z. Xu, Z. Huang, Z. Zhang, Z. Xie, Z. Zhang, Z. Hao, Z. Gou, Z. Ma, Z. Yan, Z. Shao, Z. Xu, Z. Wu, Z. Zhang, Z. Li, Z. Gu, Z. Zhu, Z. Liu, Z. Li, Z. Xie, Z. Song, Z. Gao, and Z. Pan
+DeepSeek-v3 technical report
+.
+External Links:
+2412.19437
+,
+Link
+Cited by:
+§D.3
+.
+Fedus
+et al.
+(2021)
+W. Fedus, B. Zoph, and N. Shazeer
+Switch transformers: scaling to trillion parameter models with simple and efficient sparsity
+.
+arXiv
+.
+External Links:
+Document
+,
+Link
+Cited by:
+§1
+,
+§5
+.
+Henighan
+et al.
+(2020)
+T. Henighan, J. Kaplan, M. Katz, M. Chen, C. Hesse, J. Jackson, H. Jun, T. B. Brown, P. Dhariwal, S. Gray,
+et al.
+Scaling laws for autoregressive generative modeling
+.
+arXiv preprint arXiv:2010.14701
+.
+Cited by:
+§1
+.
+Hoffmann
+et al.
+(2022)
+J. Hoffmann, S. Borgeaud, A. Mensch, E. Buchatskaya, T. Cai, E. Rutherford, D. d. L. Casas, L. A. Hendricks, J. Welbl, A. Clark,
+et al.
+Training compute-optimal large language models
+.
+arXiv preprint arXiv:2203.15556
+.
+Cited by:
+§1
+,
+§5
+.
+Jiang
+et al.
+(2024)
+A. Q. Jiang, A. Sablayrolles, A. Roux, A. Mensch, B. Savary, C. Bamford, D. S. Chaplot, D. de Las Casas, E. B. Hanna, F. Bressand, G. Lengyel, G. Bour, G. Lample, L. R. Lavaud, L. Saulnier, M. Lachaux, P. Stock, S. Subramanian, S. Yang, S. Antoniak, T. L. Scao, T. Gervet, T. Lavril, T. Wang, T. Lacroix, and W. E. Sayed
+Mixtral of experts
+.
+CoRR
+abs/2401.04088
+.
+External Links:
+Link
+,
+Document
+,
+2401.04088
+Cited by:
+§1
+.
+Kaplan
+et al.
+(2020)
+J. Kaplan, S. McCandlish, T. Henighan, T. B. Brown, B. Chess, R. Child, S. Gray, A. Radford, J. Wu, and D. Amodei
+Scaling laws for neural language models
+.
+arXiv preprint arXiv:2001.08361
+.
+Cited by:
+§1
+,
+§5
+.
+Lepikhin
+et al.
+(2021)
+D. Lepikhin, H. Lee, Y. Xu, D. Chen, O. Firat, Y. Huang, M. Krikun, N. Shazeer, and Z. Chen
+GShard: scaling giant models with conditional computation and automatic sharding
+.
+In
+International Conference on Learning Representations
+,
+External Links:
+Link
+Cited by:
+§1
+,
+§5
+.
+Ludziejewski
+et al.
+(2024)
+J. Ludziejewski, J. Krajewski, K. Adamczewski, M. Pióro, M. Krutul, S. Antoniak, K. Ciebiera, K. Król, T. Odrzygóźdź, P. Sankowski,
+et al.
+Scaling laws for fine-grained mixture of experts
+.
+In
+Forty-first International Conference on Machine Learning
+,
+Cited by:
+§1
+,
+§5
+.
+Muennighoff
+et al.
+(2024)
+N. Muennighoff, L. Soldaini, D. Groeneveld, K. Lo, J. Morrison, S. Min, W. Shi, P. Walsh, O. Tafjord, N. Lambert, Y. Gu, S. Arora, A. Bhagia, D. Schwenk, D. Wadden, A. Wettig, B. Hui, T. Dettmers, D. Kiela, A. Farhadi, N. A. Smith, P. W. Koh, A. Singh, and H. Hajishirzi
+OLMoE: open mixture-of-experts language models
+.
+External Links:
+2409.02060
+,
+Link
+Cited by:
+§1
+.
+Narayanan
+et al.
+(2021)
+D. Narayanan, M. Shoeybi, J. Casper, P. LeGresley, M. Patwary, V. Korthikanti, D. Vainbrand, P. Kashinkunti, J. Bernauer, B. Catanzaro,
+et al.
+Efficient large-scale language model training on gpu clusters using megatron-lm
+.
+In
+Proceedings of the international conference for high performance computing, networking, storage and analysis
+,
+pp. 1–15
+.
+Cited by:
+Appendix C
+.
+Qwen (2024)
+T. Qwen
+Qwen1.5-moe: matching 7b model performance with 1/3 activated parameters"
+.
+External Links:
+Link
+Cited by:
+§1
+.
+Shazeer
+et al.
+(2017)
+N. Shazeer, *. Mirhoseini, *. Maziarz, A. Davis, Q. Le, G. Hinton, and J. Dean
+Outrageously large neural networks: the sparsely-gated mixture-of-experts layer
+.
+In
+International Conference on Learning Representations
+,
+External Links:
+Link
+Cited by:
+§1
+.
+Vaswani (2017)
+A. Vaswani
+Attention is all you need
+.
+Advances in Neural Information Processing Systems
+.
+Cited by:
+§1
+.
+Wang
+et al.
+(2024)
+S. Wang, Z. Chen, B. Li, K. He, M. Zhang, and J. Wang
+Scaling laws across model architectures: a comparative analysis of dense and MoE models in large language models
+.
+In
+Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing
+,
+Y. Al-Onaizan, M. Bansal, and Y. Chen (Eds.)
+,
+Miami, Florida, USA
+,
+pp. 5583–5595
+.
+External Links:
+Link
+,
+Document
+Cited by:
+Figure 5
+,
+5(a)
+,
+§D.3
+,
+§1
+,
+§5
+.
+Appendix A
+Complete Derivation
+A.1
+Base Framework: Optimal Allocation
+We begin by deriving the intrinsic relationship between the optimal FLOPs ratio
+r
+∗
+r^{*}
+and the total compute
+C
+C
+, assuming fixed architectural parameters. The model’s loss
+ℒ
+\mathcal{L}
+is governed by two competing factors:
+Attention Capacity
+(
+𝒜
+\mathcal{A}
+): This represents the ability to model token interactions and scales sublinearly with attention compute
+C
+A
+C_{A}
+. The reason for this sublinear scaling is that as the model’s attention mechanism captures more long-range dependencies in the input sequence, the additional improvement from each extra unit of compute becomes progressively smaller. Beyond a certain point, the model reaches a level where further compute contributes less to the overall understanding of token interactions. This diminishing return is commonly observed in large-scale attention models, which can be captured by the relation
+𝒜
+⁡
+(
+C
+A
+)
+=
+C
+A
+μ
+A
+\mathcal{A}(C_{A})=C_{A}^{\mu_{A}}
+, where
+μ
+A
+∈
+(
+0
+,
+1
+)
+\mu_{A}\in(0,1)
+.
+Expert Capacity
+(
+ℰ
+\mathcal{E}
+): This refers to the model’s ability to process specialized features and scales sublinearly with expert compute
+C
+E
+C_{E}
+. As more compute is allocated to experts, the model’s performance improves at first, but the gains decrease due to the overhead of managing additional experts and the limited interactions between them. Furthermore, in MoE models, only a subset of experts are activated for each token, so the additional compute does not always result in proportionally more active experts, leading to diminishing returns. This behavior is reflected in the scaling law
+ℰ
+⁡
+(
+C
+E
+)
+=
+C
+E
+μ
+E
+\mathcal{E}(C_{E})=C_{E}^{\mu_{E}}
+, where
+μ
+E
+∈
+(
+0
+,
+1
+)
+\mu_{E}\in(0,1)
+.
+The total loss
+ℒ
+\mathcal{L}
+is modeled as a weighted sum of these two components:
+ℒ
+=
+α
+A
+⋅
+𝒜
+​
+(
+C
+A
+)
+−
+γ
+A
++
+α
+E
+⋅
+ℰ
+​
+(
+C
+E
+)
+−
+γ
+E
+,
+\mathcal{L}=\alpha_{A}\cdot\mathcal{A}(C_{A})^{-\gamma_{A}}+\alpha_{E}\cdot\mathcal{E}(C_{E})^{-\gamma_{E}},
+(3)
+where
+γ
+A
+\gamma_{A}
+and
+γ
+E
+\gamma_{E}
+represent diminishing returns for attention and expert capacities, respectively, and
+α
+A
+\alpha_{A}
+and
+α
+E
+\alpha_{E}
+are architecture-dependent coefficients.
+A.2
+Optimality Condition
+The goal is to find the optimal compute allocation between attention and expert capacity, defined by the ratio
+r
+∗
+=
+C
+E
+/
+C
+A
+r^{*}=C_{E}/C_{A}
+, which minimizes the model’s loss. The optimal ratio is found by setting the derivatives of the loss with respect to
+C
+A
+C_{A}
+and
+C
+E
+C_{E}
+equal to each other:
+∂
+ℒ
+∂
+C
+A
+=
+∂
+ℒ
+∂
+C
+E
+⟹
+α
+A
+​
+γ
+A
+​
+μ
+A
+C
+A
+γ
+A
+​
+μ
+A
++
+1
+=
+α
+E
+​
+γ
+E
+​
+μ
+E
+C
+E
+γ
+E
+​
+μ
+E
++
+1
+.
+\frac{\partial\mathcal{L}}{\partial C_{A}}=\frac{\partial\mathcal{L}}{\partial C_{E}}\implies\frac{\alpha_{A}\gamma_{A}\mu_{A}}{C_{A}^{\gamma_{A}\mu_{A}+1}}=\frac{\alpha_{E}\gamma_{E}\mu_{E}}{C_{E}^{\gamma_{E}\mu_{E}+1}}.
+To proceed, we express
+C
+A
+C_{A}
+and
+C
+E
+C_{E}
+in terms of the total compute
+C
+C
+and the FLOPs ratio
+r
+r
+. Assuming the following relationships:
+C
+A
+=
+C
+1
++
+r
+,
+C
+E
+=
+C
+​
+r
+1
++
+r
+,
+C_{A}=\frac{C}{1+r},\quad C_{E}=\frac{Cr}{1+r},
+we substitute these into the optimality condition and solve for
+r
+∗
+r^{*}
+. This gives the optimal FLOPs ratio
+r
+∗
+r^{*}
+as:
+r
+∗
+=
+α
+r
+⋅
+C
+β
+r
+,
+r^{*}=\alpha_{r}\cdot C^{\beta_{r}},
+(4)
+where
+α
+r
+\alpha_{r}
+and
+β
+r
+\beta_{r}
+are defined as:
+α
+r
+=
+(
+α
+E
+​
+γ
+E
+​
+μ
+E
+α
+A
+​
+γ
+A
+​
+μ
+A
+)
+1
+γ
+A
+​
+μ
+A
++
+γ
+E
+​
+μ
+E
++
+1
+,
+\alpha_{r}=\left(\frac{\alpha_{E}\gamma_{E}\mu_{E}}{\alpha_{A}\gamma_{A}\mu_{A}}\right)^{\frac{1}{\gamma_{A}\mu_{A}+\gamma_{E}\mu_{E}+1}},
+β
+r
+=
+γ
+E
+​
+μ
+E
+−
+γ
+A
+​
+μ
+A
+γ
+A
+​
+μ
+A
++
+γ
+E
+​
+μ
+E
++
+1
+.
+\quad\beta_{r}=\frac{\gamma_{E}\mu_{E}-\gamma_{A}\mu_{A}}{\gamma_{A}\mu_{A}+\gamma_{E}\mu_{E}+1}.
+This relationship establishes a power-law scaling between the optimal ratio
+r
+∗
+r^{*}
+and total compute
+C
+C
+, with the constants
+α
+\alpha
+and
+β
+\beta
+determined by the elasticity parameters
+μ
+A
+,
+μ
+E
+,
+γ
+A
+,
+γ
+E
+\mu_{A},\mu_{E},\gamma_{A},\gamma_{E}
+.
+Appendix B
+Experimeal Setup
+In this section, we detail the core components and procedures underpinning our empirical evaluation. We begin by describing the model architecture, including the design of sparse MoE layers and the configuration used to control per-token compute. Next, we outline the composition and sourcing of our training data, highlighting its multilingual and multimodal nature. Finally, we present our strategy for selecting the optimal FLOPs ratio
+r
+∗
+r^{*}
+, including criteria for handling unexpected fluctuations in the loss landscape. Together, these subsections provide a comprehensive overview of how we ensure fairness, reproducibility, and practical relevance in our experiments.
+B.1
+Model Architecture and Training Configuration
+We implement a GPT-style decoder-only Transformer model, with sparse Mixture-of-Experts (MoE) layers replacing the conventional feed-forward networks (FFNs). Each MoE layer is designed to activate a subset of experts, specifically
+3 experts per token
+, consisting of 1 shared expert and 2 routed experts. This design yields a sparsity factor
+S
+=
+E
+−
+3
+E
+S=\frac{E-3}{E}
+, where
+E
+E
+represents the total number of experts per layer. We evaluate models with varying expert counts, specifically
+E
+∈
+{
+17
+,
+33
+,
+65
+,
+129
+}
+E\in\{17,33,65,129\}
+, which correspond to sparsity levels of
+S
+∈
+{
+82.35
+%
+,
+90.91
+%
+,
+95.38
+%
+,
+97.67
+%
+}
+S\in\{82.35\%,90.91\%,95.38\%,97.67\%\}
+, covering a broad spectrum of sparsity commonly found in current MoE models. This range ensures that our findings are broadly applicable and relevant to contemporary MoE model designs.
+To ensure fairness and consistency in our experiments, we maintain a constant total per-token compute budget across all models. The per-token compute cost,
+C
+token
+C_{\text{token}}
+, is defined as:
+C
+token
+=
+C
+A
++
+C
+E
+n
+token
+,
+C_{\text{token}}=\frac{C_{A}+C_{E}}{n_{\text{token}}},
+where
+C
+A
+C_{A}
+and
+C
+E
+C_{E}
+represent the compute costs for the attention and expert layers, respectively, and
+n
+token
+n_{\text{token}}
+is the number of tokens processed. We vary the compute allocation ratio,
+r
+=
+C
+E
+C
+A
+r=\frac{C_{E}}{C_{A}}
+, in the range of
+r
+∈
+[
+0.2
+,
+1.5
+]
+r\in[0.2,1.5]
+, adjusting the dimensions of the attention and expert layers while keeping the total compute budget fixed.
+We conduct experiments across six benchmark models of different sizes—spanning a total parameter count
+N
+N
+from 100 M to 5 B, with the largest training FLOPs reaching
+1
+×
+10
+21
+1\times 10^{21}
+—for each sparsity level. For each model, we fix the per-token compute budget
+C
+token
+C_{\text{token}}
+and vary the FLOPs ratio
+r
+r
+by independently scaling the dimensions of the attention and expert sublayers. All variants share the same depth (number of layers) and number of attention heads. Each model is assigned the activation-parameter label
+N
+a
+N_{a}
+based on its corresponding benchmark, ensuring that models with identical
+C
+token
+C_{\text{token}}
+but different
+r
+r
+share the same label. Prior to experiments, we performed a hyperparameter search over learning rates and batch sizes for each label, finding that all models within a label shared a single optimal combination of learning rate and batch size. These hyperparameter settings are summarized in Table
+2
+. For consistency across all experiments, we fix the context length to
+n
+ctx
+=
+4096
+n_{\text{ctx}}=4096
+tokens and the vocabulary size to
+n
+vocab
+=
+128
+​
+k
+n_{\text{vocab}}=128\text{k}
+tokens. All experiments were conducted on an A100 GPU cluster.
+Table 2:
+Key Hyperparameters
+Label
+Layers (
+n
+layer
+n_{\text{layer}}
+)
+Heads (
+n
+head
+n_{\text{head}}
+)
+Batch Size
+Learning Rate
+20M
+8
+8
+96
+0.0015
+30M
+8
+8
+160
+0.0013
+55M
+10
+10
+224
+0.0011
+100M
+14
+12
+320
+0.0009
+200M
+16
+16
+512
+0.0008
+B.2
+Datasets
+The training dataset is carefully curated to provide a comprehensive and balanced representation of diverse domains, ensuring the model’s generalization across various languages and content types. The dataset is composed primarily of Chinese (15%), English (60%), and code (25%), reflecting the model’s focus on multilingual and multimodal capabilities. The content is sourced from a wide variety of domains, with the largest proportion coming from web-based data (50%), followed by code (25%), books (5%), academic sources (5%), and math-related content (5%). Other domains, including news, social media, and exam-related content, contribute smaller yet significant portions.
+This diverse selection of training data not only enables the model to learn from a wide range of linguistic and contextual patterns but also facilitates its ability to generate high-quality content across different modalities. By incorporating a mixture of textual and code-based data, the model is equipped to handle a variety of real-world tasks, from natural language understanding and generation to code completion and debugging. The inclusion of data from multiple languages further enhances its robustness, allowing for effective processing and generation in both English and non-English contexts.
+B.3
+Selection Strategy for the Optimal Point
+r
+∗
+r^{*}
+In our experimental setup, for a fixed set of parameters—specifically, the total FLOPs
+C
+C
+and sparsity
+S
+S
+—the optimal value of
+r
+r
+is typically chosen based on the lowest loss observed during the experiments. This value of
+r
+r
+is selected as the optimal point
+r
+∗
+r^{*}
+.
+However, in cases where the actual optimal point does not align with expectations, we consider the possibility of selecting a suboptimal point. This occurs when, despite an increase in the total FLOPs, the value of the optimal ratio
+r
+∗
+r^{*}
+decreases. This observation contradicts the common industry expectation that, as training volume increases, the proportion of attention should decrease. In such instances, we interpret this behavior as a fluctuation, rather than a clear deviation. Consequently, we select the suboptimal point as the theoretical optimal point, provided that the loss difference between the suboptimal point and the actual optimal point is less than 0.001.
+Appendix C
+Estimating MoE FLOPs
+In this section, we describe the computation of floating-point operations (FLOPs) for training a Mixture of Experts (MoE) model, following
+Narayanan et al. (2021)
+. Specifically, we consider the forward and backward passes, with a focus on matrix multiplications that dominate the computational cost. This section breaks down the FLOPs into several key components:
+attention mechanisms
+,
+sparse MLP layers
+, and
+output layers
+. The FLOPs for the backward pass are assumed to be approximately twice that of the forward pass unless otherwise specified.
+C.1
+Attention Mechanism FLOPs
+The attention mechanism in a Transformer model consists of several stages, including query, key, and value projections, followed by the computation of the attention weights and their application to the values.
+Query Projection
+The query projection is computed as a matrix multiplication between the input sequence and the query projection matrix. The FLOPs for the query projection are given by:
+C
+proj
+Q
+=
+2
+​
+n
+ctx
+​
+d
+hidden
+2
+.
+C^{\text{Q}}_{\text{proj}}=2n_{\text{ctx}}d_{\text{hidden}}^{2}.
+Key-Value Projection
+For MoE models, the number of key and value heads is typically different from the number of attention heads. If a generic query architecture (GQA) is used, the key and value projections require separate computations for the keys and values. The corresponding FLOPs are given by:
+C
+proj
+KV
+=
+4
+​
+n
+ctx
+​
+d
+hidden
+2
+÷
+kv head ratio
+.
+C^{\text{KV}}_{\text{proj}}=4n_{\text{ctx}}d_{\text{hidden}}^{2}\div\text{kv head ratio}.
+Otherwise, without GQA, the key-value projection FLOPs are twice that of the query projection:
+C
+proj
+KV
+=
+2
+​
+C
+proj
+Q
+.
+C^{\text{KV}}_{\text{proj}}=2C^{\text{Q}}_{\text{proj}}.
+Attention Weights and Value Application
+The computation of the attention weights involves matrix multiplications between the queries and keys, and their application to the values:
+C
+weight
+Attn
+=
+2
+​
+n
+ctx
+2
+​
+d
+hidden
+.
+C^{\text{Attn}}_{\text{weight}}=2n_{\text{ctx}}^{2}d_{\text{hidden}}.
+C
+Value
+=
+2
+​
+n
+ctx
+​
+d
+hidden
+2
+.
+C^{\text{Value}}=2n_{\text{ctx}}d_{\text{hidden}}^{2}.
+Final Output Projection
+After applying the attention weights, a final output projection is computed:
+C
+proj
+Output
+=
+2
+​
+n
+ctx
+​
+d
+hidden
+2
+.
+C^{\text{Output}}_{\text{proj}}=2n_{\text{ctx}}d_{\text{hidden}}^{2}.
+The total FLOPs for the attention mechanism (including both projections and attention computations) are then given by:
+Attn Forward FLOPs
+=
+\displaystyle\text{Attn Forward FLOPs}=
+Attn Projection FLOPs
++
+\displaystyle\text{Attn Projection FLOPs}+
+Attn Mechanism FLOPs
+.
+\displaystyle\text{Attn Mechanism FLOPs}.
+C.2
+Sparse MLP Forward FLOPs
+In MoE models, the sparse expert mechanism introduces additional computational overhead due to the dynamic selection of experts for each token. The sparse MLP forward pass involves a combination of linear transformations and matrix multiplications across the selected experts.
+The FLOPs for the sparse MLP forward pass are calculated as follows:
+C
+expert
+\displaystyle C_{\text{expert}}
+=
+n
+ctx
+⋅
+(
+2
+​
+d
+hidden
+​
+E
++
+3
+⋅
+2
+⋅
+d
+hidden
+​
+d
+expert
+CLOSE
+\displaystyle=n_{\text{ctx}}\cdot\Bigl(2d_{\text{hidden}}E+3\cdot 2\cdot d_{\text{hidden}}d_{\text{expert}}
+⋅
+(
+top-
+k
++
+n
+shared_experts
+)
+.
+)
+.
+\displaystyle\cdot\bigl(\text{top-}k+n_{\text{shared\_experts}}\bigr).\Bigr).
+C.3
+Output Layer FLOPs
+Finally, the output logits layer computes the probability distribution over the vocabulary for each token. The FLOPs for the output layer are given by:
+C
+logits
+=
+2
+​
+n
+ctx
+​
+d
+hidden
+​
+n
+vocab
+.
+C_{\text{logits}}=2n_{\text{ctx}}d_{\text{hidden}}n_{\text{vocab}}.
+C.4
+Decoder Layer FLOPs
+Each transformer decoder layer combines attention and sparse MLP computations. The total FLOPs for a single decoder layer forward pass are therefore the sum of the attention and sparse MLP FLOPs:
+C
+forward
+layer
+\displaystyle C^{\text{layer}}_{\text{forward}}
+=
+Attention Forward FLOPs
+\displaystyle=\text{Attention Forward FLOPs}
++
+Sparse MLP Forward FLOPs
+.
+\displaystyle+\text{Sparse MLP Forward FLOPs}.
+Total Forward Pass FLOPs
+The total forward pass FLOPs for the entire model, excluding gradient checkpointing, is given by:
+C
+forward
+=
+n
+layer
+​
+C
+forward
+layer
++
+C
+logits
+.
+C_{\text{forward}}=n_{\text{layer}}C^{\text{layer}}_{\text{forward}}+C_{\text{logits}}.
+Backward Pass FLOPs
+The backward pass typically incurs twice the computational cost of the forward pass, as it requires the computation of gradients for all parameters. If PEFT (Parameter-Efficient Fine-Tuning) is used, we assume that the backward pass will require a factor of 2. Otherwise, we use a factor of 3:
+C
+backward
+=
+C
+forward
+⋅
+factor
+.
+C_{\text{backward}}=C_{\text{forward}}\cdot\text{factor}.
+Gradient Checkpointing
+If gradient checkpointing is enabled, the forward pass computations are adjusted to store intermediate results during the forward pass to reduce memory usage, but at the cost of additional computational overhead. The total FLOPs in this case are given by:
+C
+forward
+=
+n
+layer
+​
+C
+forward
+layer
+⋅
+(
+factor
++
+1
+)
++
+C
+logits
+⋅
+factor
+.
+C_{\text{forward}}=n_{\text{layer}}C^{\text{layer}}_{\text{forward}}\cdot(\text{factor}+1)+C_{\text{logits}}\cdot\text{factor}.
+Given these calculations, the total hardware FLOPs and model FLOPs can be computed for both the forward and backward passes. The specific computational cost depends on factors such as the use of gradient checkpointing, the PEFT setting, and the number of active experts in the MoE model.
+Appendix D
+Detailed Analysis and Visualizations of the Scaling Law Fitting Process
+D.1
+Initialization Parameters for L-BFGS Optimization
+Table
+3
+shows the parameters used to initialize L-BFGS, which was employed to fit the proposed parametric scaling law presented in Equation
+2
+.
+Coefficients
+Initial Values
+log
+⁡
+(
+a
+)
+,
+log
+⁡
+(
+b
+)
+,
+log
+⁡
+(
+c
+)
+,
+log
+⁡
+(
+d
+)
+\log(a),\log(b),\log(c),\log(d)
+[0, 10, 20]
+α
+,
+β
+,
+λ
+,
+γ
+\alpha,\beta,\lambda,\gamma
+[0, 0.25, 0.5, 0.75, 1, 1.25]
+log
+⁡
+(
+τ
+)
+\log(\tau)
+1.5
+Table 3:
+Initial values used to estimate coefficients in Equation
+2
+.
+D.2
+Justification for the Efficiency Loss Term
+To justify the use of the
+r
+r
++
+1
+\frac{r}{r+1}
+form for the efficiency loss term, we analyze its mathematical properties in relation to diminishing returns. This function exhibits three key characteristics that align with empirical observations of expert compute allocation:
+•
+Bounded Growth
+: As
+r
+→
+∞
+r\to\infty
+,
+r
+r
++
+1
+→
+1
+\frac{r}{r+1}\to 1
+, preventing unbounded loss growth while maintaining sensitivity to allocation changes in practical
+r
+r
+ranges (typically
+r
+∈
+[
+0.2
+,
+1.5
+]
+r\in[0.2,1.5]
+in our experiments). This reflects the physical reality that over-allocating compute to experts cannot infinitely degrade performance.
+•
+Sublinear Scaling
+: The derivative
+d
+d
+​
+r
+​
+(
+r
+r
++
+1
+)
+=
+1
+(
+r
++
+1
+)
+2
+\frac{d}{dr}\left(\frac{r}{r+1}\right)=\frac{1}{(r+1)^{2}}
+decreases quadratically with
+r
+r
+, explicitly modeling diminishing marginal returns from increasing expert allocation. This matches our empirical finding that performance gains from expert compute saturate faster than those from attention compute.
+•
+Zero-Cost Baseline
+: At
+r
+=
+0
+r=0
+(no expert allocation), the term vanishes (
+0
+0
++
+1
+=
+0
+\frac{0}{0+1}=0
+), ensuring no artificial penalty when experts are disabled. The linear regime
+r
+r
++
+1
+≈
+r
+\frac{r}{r+1}\approx r
+when
+r
+≪
+1
+r\ll 1
+matches observed near-linear improvements at small
+r
+r
+values.
+Alternative formulations like
+log
+⁡
+(
+1
++
+r
+)
+\log(1+r)
+or
+1
+−
+e
+−
+r
+1-e^{-r}
+were tested but showed poorer empirical fit, particularly in matching the saturation behavior observed at high
+r
+r
+. The chosen form provides the best trade-off between empirical accuracy and parameter efficiency, requiring only a single scaling coefficient
+d
+d
+to capture the full efficiency loss trajectory.
+D.3
+Visualizations of Alternative Formula Fits
+In this subsection, we compare the observed validation losses with the predictions made by two previously proposed scaling formulas, using scatter plots to assess their fitting quality.
+Wang et al. (2024)
+extend the traditional dense-scaling law by introducing the total number of experts
+E
+E
+as an additional factor:
+ℒ
+=
+a
+N
+α
+​
+E
+γ
++
+b
+D
+β
++
+τ
+.
+\mathcal{L}=\frac{a}{N^{\alpha}E^{\gamma}}+\frac{b}{D^{\beta}}+\tau.
+(5)
+However, this formulation ignores the fraction of activated experts and is constrained to
+E
+<
+100
+E<100
+, which limits its applicability to modern high-sparsity, fine-grained MoE models
+(
+DeepSeek-AI et al., 2024
+)
+. Figure
+5(a)
+shows that, across all model scales, Equation
+5
+fails to capture the true loss trends.
+Abnar et al. (2025)
+incorporate sparsity
+S
+S
+into their fit:
+ℒ
+=
+a
+N
+α
++
+b
+N
+β
++
+c
+(
+1
+−
+S
+)
+γ
++
+d
+(
+1
+−
+S
+)
+δ
+​
+N
+γ
++
+τ
+.
+\mathcal{L}=\frac{a}{N^{\alpha}}+\frac{b}{N^{\beta}}+\frac{c}{(1-S)^{\gamma}}+\frac{d}{(1-S)^{\delta}\,N^{\gamma}}+\tau.
+(6)
+As plotted in Figure
+5(b)
+, this formula performs reasonably well on large models but still exhibits substantial errors for smaller ones.
+(a)
+Wang et al. (2024)
+(b)
+Abnar et al. (2025)
+Figure 5:
+Comparison of observed versus predicted validation losses for two alternative scaling formulas. (a) Predictions using the
+Wang et al. (2024)
+formulation (Equation
+5
+), which fails to generalize across modern high-sparsity settings. (b) Predictions using the
+Wang et al. (2024)
+formulation, which fits large models well but underperforms on smaller ones. The solid diagonal line indicates perfect agreement.
+Appendix E
+Additional Visualizations
+Figure 6:
+Loss as a function of FLOPs ratio and total compute. Black dashed lines trace optimal
+r
+∗
+r^{*}
+. Color indicates active parameters. Low-sparsity models (left) favor higher
+r
+∗
+r^{*}
+at scale.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

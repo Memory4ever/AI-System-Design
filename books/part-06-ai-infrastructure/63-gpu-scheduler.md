@@ -166,6 +166,10 @@ Segment 减少跨低带宽边界的 collective traffic，却会因 nodes-down、
 
 计算分割也不自动形成时间隔离：即使按 SM 划分进程的执行范围，共享的功率上限、频率变化与其他资源压力仍可能改变共置后的完成时间。验收时因此要同时记录 SM 布局、功率与时钟状态、并发模型和到达负载，而不能把独占条件下测出的稳定提交频率当成 deadline 合同。有限样本中没有 timeout，只支持该 profile 人口下的观察，不是 worst-case execution time 证明；边缘 GPU 上六个分类模型的共置结果尤其不能直接外推到 LLM Serving。更高功率余量与更大内存带宽同时变化的设备对照，也不能只归因于其中一个因素。这条责任链增加遥测、并发对照、重新校准与保守 headroom 成本；若共置后仍不能满足时间预算，应降低并发、调整布局或退回独占，而不是从计算分区推导未测得的时序或安全保证。<!-- source-family:SF-2026-ARXIV-2601-07600 -->
 
+功率之外，还需解释 kernel pair 如何争用 L2/HBM 与同一 SM。完整 GPU 共置增加 block placement、packing 与同 SM 资源争用，SM 分割也不能消除共享带宽竞争。一条预测式分支用隔离 profile 分别重建这些干扰，再把已完成、in-flight、预期 overlap 和剩余独占执行合成高优先级请求的完成预算；只有预计仍在 slowdown target 内才放行 best-effort kernel。完整 GPU 与 Green Context 分区先按 workload pair 和目标离线比较，分区自身的减速也占预算，不能以“允许更多 kernel”代替实际 best-effort 吞吐。Runtime 拥有 launch admission，不获得硬件抢占或故障隔离权。<!-- source-family:SF-2026-ARXIV-2610-07504 -->
+
+这条分支支付 profiling、逐设备校准、预测与缓存成本；紧预算可能几乎没有共置经济收益。[Mosaic 的受限评价](https://arxiv.org/html/2610.07504v1)中四类 GPU 支持 predictor，scheduler 只在 H100 固定 batch 的五类模型测试，MobileNet 仍有超过目标的尾部请求。模型假设相同 CUDA stream priority，未显式处理功率降频；新设备、优先级或负载越出校准范围时，应重测并留 headroom，必要时退回保守分区、时间复用或独占，不将经验 p99 写成 worst-case deadline 保证。以下协作式 HBM gate 是另一种执行控制，不因预测准入而自动得到。
+
 <!-- semantic-body-binding:SF-2026-ARXIV-2610-02522:start -->
 短周期 latency-critical 工作与 best-effort ML 共置时，还需把 SM 选择与 HBM traffic 控制分开。预创建互补 compute contexts 可以把运行时变更缩成 slot 边界的后续 launch 选择，但已经运行的 blocks 仍留在原 context，不是任意线程抢占；经验 latency profile 与 tail reserve 也不是硬 deadline 证明。Disjoint SMs 仍共享 HBM，一条协作分支让每个高优先级 block 在需要带宽的区间独立置位共享 bitmap，最后一个 protected block 清位后才解除保护；只用 kernel-wide 单 bit 会因 blocks 不同速而提前解除。
 
@@ -202,6 +206,8 @@ runtime 实施 memory limit、sharing 和迁移。预测器不能把“可能共
 in-flight request 与 rollback。ElastiCo 的 64×A100、single-GPU configuration scope 证明的是 joint choice 的受限可行性，
 没有覆盖 multi-GPU collective、predictor drift、migration failure 或 online tail SLO。固定 shape 在 distributed
 collective 强耦合、迁移昂贵或 performance isolation 优先时仍成立。
+
+Compound inference 还可能把模型质量纳入配置选择：不同 task 的 variant 并不语义等价，只有 workload owner 明确允许质量退让，资源 optimizer 才能沿 DAG 路径联合分配 latency、variant 与 MIG/MPS 配置。此时“选更多小 slice”必须与整条路径的输出质量一起验收，而不是把每个 task 的局部最优相加。[有限 GPU 对照](https://arxiv.org/html/2603.08797v1)用局部 p95 和 task-accuracy 乘积作预算代理；异质指标的乘积不是校准后的端到端正确率，局部尾延迟之和也不证明联合尾 SLO。离线 profiling、求解、共享干扰和停机重分割均有成本，逐时间点稳态试验不代表连续线上迁移，也不授自回归 LLM 或多 GPU collective 的性能。质量不可组合、需求预测失配或重配置不能 drain 时，应保留固定 variant/shape、独立端到端评价与更保守的资源预留；scheduler 只执行已批准的配置，不自行取得质量降级权限。<!-- source-family:SF-2026-ARXIV-2603-08797 -->
 
 ## DRA 带来的资源表达
 
@@ -332,6 +338,8 @@ GPU scheduler 的任务不是简单填满设备，而是在设备/拓扑硬约�
 
 ## Review notes
 
+- Daily `2026-10-08`：`SF-2026-ARXIV-2610-07504`，[Mosaic v1](https://arxiv.org/html/2610.07504v1) §4–7；kernel interference→request budget admission与mode选择，四类GPU predictor/仅H100 scheduler分账。同stream priority、未显式功率降频、MobileNet尾部越目标与profile成本近正文，不授worst-case deadline或隔离安全。
+
 - `SF-2026-ARXIV-2604-22509`（Status: Experimental）：[exact-v1](https://arxiv.org/html/2604.22509v1) §2.3、§4.1–4.5、§5.1/5.5、§7；Daily 2026-04-27。只吸收租户私有效用与运营方私有物理约束通过持续重议接口分权的条件分支。8–23% 属作者 trace/profile 模拟及其同租户 autoscaler/预算对照；高重配置成本可退近 FCFS，不作生产 SLO、strategy-proofness 或 privacy 保证。未复现实验，待独立写后与整日 Gate。
 
 本章只定义通用机制，不绑定具体 scheduler。自检答案回填增加了从 installed capacity 到 useful capacity 的约束收缩链，说明 GPU 调度为何是平台控制面的核心问题。它承接第 60 章的 training gang、第 56 章的 inference state，并为第 64～65 章提供统一比较坐标。
@@ -367,3 +375,5 @@ Primary-source 与官方入口：
 - `SF-2026-ARXIV-2601-07600` — Daily `2026-01-14`；[Peformance Isolation exact-v1](https://arxiv.org/html/2601.07600v1) §III、§IV-A–C/Alg1、§V-B–D。原2+2+2=6，设计反证受影响内容深入；仅采用 compute partition 与 power/frequency 压力、有限 IMS profile 与 deadline 权限分账。作者以1000次中最差5次均值初估、提高直至超时、退回并检验3×1000次，是有限稳定频率测试而非 WCET。A10040GB/CUDA12.1/PyTorch2.4.1 与 Jetson Nano/AGX/JetPack6.2/TensorRT 的六个 ImageNet 分类模型配置不同，AGX同时改变功率及带宽；未测分类 accuracy、LLM/KV/Serving SLO，precision/warmup/输入分布/重复置信区间 Not Disclosed。不采用 exclusive-SM、MIG 保证或单变量功率因果外推；未运行代码/复现。root 实际必要原源与当前 owner 写前通过，并实际顺读正文、前后邻接与源注，非作者 POST 通过。
 
 - `SF-2026-ARXIV-2601-06520` — Daily `2026-01-14`；[SkyNomad exact-v1](https://arxiv.org/html/2601.06520v1) §4.1–4.7、§5、§6.1–6.2.5。2+2+3=7，仅采用固定 gang 的 spot 寿命/迁移开销/egress/deadline 效用分账与条件回退，不承担 checkpoint correctness 或无条件 deadline/最优保证。AWS Qwen3-4B/14B，4L4/8A100/4A10G，30h工作/45h截止、100/500GB checkpoint、6min cold start；GCP H100 14day 与 AWS V100 trace 模拟20jobs不冒充生产承诺。无 slack 全回退、单 region 无选址增益、区域数收益饱和、大 checkpoint 反侧保留；headline 10% 不能覆盖部分11/12%结果，地理 eligibility 非法规合规认证。精度、训练 batch 与完整质量/成本未披露，未运行实现/复现；root 必要原源与实际 owner 写前通过，root 已实际顺读正文/前后邻接/末注，非作者 POST 通过，日级 Gate 待验。
+
+- `SF-2026-ARXIV-2603-08797` — Daily `2026-03-12`补遗漏；[JigsawServe exact-v1](https://arxiv.org/html/2603.08797v1) §3–5/7、Eq1–14。2+2+2=6，质量非等价 variant 与 DAG/GPU配置差额深入；PAS与局部p95仅代理，逐点稳态不授线上迁移，自回归LLM/多GPU仍未覆盖，profiling/求解/停机费用近文。mar12_independent_continue 非作者必要 Source/date/actual owner/逐字 PRE 通过，root 窄写单段与本人末注；非写入者实际顺读完整局部及末注、回对原证与逐字 PRE 的 POST 通过，窄锁释放。未核全图、代码或复现，不授 DAY。

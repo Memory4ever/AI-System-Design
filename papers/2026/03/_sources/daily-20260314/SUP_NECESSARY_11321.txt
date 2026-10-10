@@ -1,0 +1,2397 @@
+Hindsight-Anchored Policy Optimization: Turning Failure into Feedback in Sparse Reward Settings
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Related Work
+3
+Preliminaries and Problem Formulation
+3.1
+Markov Decision Process
+3.2
+Group Relative Policy Optimization
+3.3
+Thompson Sampling
+4
+Hindsight-Anchored Policy Optimization
+4.1
+The Synthetic Success Injection (SSI) Operator
+4.2
+Thompson Sampling Inspired Self-Paced Reward Gating
+4.3
+HAPO Objective Function
+4.4
+Theoretical Analysis
+4.4.1
+Convergence to Stationary Point
+4.4.2
+Asymptotic Consistency vs. Mixed-Policy Methods
+4.4.3
+Bias-Variance Decomposition of Convergence Error
+5
+Experiments
+5.1
+Experimental Setup
+5.2
+Main Results
+6
+Conclusions and Discussion
+References
+License: CC BY 4.0
+arXiv:2603.11321v1 [cs.LG] 11 Mar 2026
+Hindsight-Anchored Policy Optimization:
+Turning Failure into Feedback in Sparse Reward Settings
+Yuning Wu
+†
+†
+thanks:
+Equal contribution
+Ke Wang
+1
+1
+footnotemark:
+1
+Devin Chen
+Kai Wei
+Affiliation:
+Amazon
+Affiliation:
+{yuningwu, kewangv, devichen, kaiwe}@amazon.com
+Abstract
+Reinforcement Learning with Verifiable Rewards (RLVR) has emerged as a promising paradigm for post-training reasoning models. However, group-based methods such as Group Relative Policy Optimization (GRPO) face a critical dilemma in sparse-reward settings: pure Reinforcement Learning (RL) suffers from advantage collapse and high-variance gradient estimation, while mixed-policy optimization introduces persistent distributional bias. To resolve this dilemma, we introduce Hindsight-Anchored Policy Optimization (HAPO). HAPO employs the Synthetic Success Injection (SSI) operator, a hindsight mechanism that selectively anchors optimization to teacher demonstrations during failure. This injection is governed by a Thompson sampling-inspired gating mechanism, creating an autonomous, self-paced curriculum. Theoretically, we demonstrate that HAPO achieves
+asymptotic consistency
+: by naturally annealing the teacher signal as the policy improves, HAPO recovers the unbiased on-policy gradient. This ensures off-policy guidance acts as a temporary scaffold rather than a persistent ceiling, enabling the model to surpass the limitations of static teacher forcing.
+1
+Introduction
+Reinforcement Learning with Verifiable Rewards (RLVR)
+(
+Lambert et al., 2025
+)
+provides a critical mechanism for enhancing the reasoning capabilities of large language models. While standard Reinforcement Learning (RL)
+(
+Sutton and Barto, 2018
+)
+allows models to explore diverse solution paths and collect environmental feedback, its effectiveness is limited by the base model’s initialization and suffers from inefficient exploration in sparse-reward environments
+(
+Yue et al., 2025
+;
+Zeng et al., 2025
+)
+. Conversely, Supervised Fine-Tuning (SFT)
+(
+Ouyang et al., 2022
+;
+Wei et al., 2022
+)
+efficiently distills expert knowledge for rapid adaptation, but it is prone to overfitting and catastrophic forgetting. The prevailing “SFT-then-RL” recipe
+(
+Yoshihara et al., 2025
+)
+combines these approaches sequentially, but encounters inherent
+distribution drift
+: SFT constrains the model to a narrow imitation-based manifold that sometimes conflicts with RL’s exploration requirements. As the model explores, its policy distribution often drifts away from expert behaviors, leading to suboptimal updates and the forgetting of verified reasoning patterns.
+Figure 1:
+Hindsight-Anchored Policy Optimization (HAPO) system architecture
+To circumvent these challenges, recent work has focused on integrating RL and SFT within a unified training framework
+(
+Zhang et al., 2025
+;
+Lv et al., 2026
+;
+Yan et al., 2025
+;
+Fu et al., 2025
+;
+Liu et al., 2025a
+;
+Ma et al., 2025
+;
+Su et al., 2025
+;
+Huang et al., 2025
+)
+. In these works, the model policy is trained to maximize a composite objective function containing both RL and SFT objectives using predefined masking strategies at various granularities (token, sample, or group level), where selected RL-generated content is replaced with teacher demonstrations. However, these methods treat all samples equally and use static replacement strategies that ignore the dynamic training context. Additionally, the distribution shift between self-exploration trajectories and teacher demonstrations leads to suboptimal learning dynamics. This raises a key question:
+How can we adaptively determine when to leverage SFT guidance versus RL exploration while mitigating distribution shift?
+In this paper, we propose
+Hindsight-Anchored Policy Optimization (HAPO)
+to address the challenge of adaptive RL-SFT integration. Inspired by hindsight experience replay
+(
+Andrychowicz et al., 2018
+)
+, HAPO introduces a dynamic gating mechanism that monitors policy competence via Thompson sampling. Unlike static mixed-policy approaches such as LUFFY
+(
+Yan et al., 2025
+)
+) and SRFT
+(
+Fu et al., 2025
+)
+that rely on fixed masking strategies, HAPO responds to distribution drift by selectively anchoring optimization to teacher demonstrations only during low-confidence failure modes, while prioritizing pure RL exploration when the confidence is high. This adaptive anchoring effectively mitigates catastrophic forgetting without compromising the model’s ability to generalize beyond the teacher distribution.
+Our preliminary evaluations on mathematical reasoning benchmarks indicate that HAPO achieves competitive performance compared to static mixed-policy methods, matching LUFFY’s performance on AIME2024 while substantially outperforming it on MATH-500 (+2.4).
+Our Contributions
+We present HAPO, a theoretically grounded framework for robust policy adaptation for resolving the conflict between exploration and imitation.
+We introduce the Synthetic Success Injection (SSI) operator, a dynamic mechanism that actively offers hindsight correction by anchoring gradient calculations to verified teacher demonstrations during failure modes, particularly in sparse reward scenarios. To govern this intervention, we propose a self-paced reward gating curriculum inspired by Thompson sampling, which dynamically aligns the teacher’s influence with the model’s evolving competence. Theoretically, we prove that this mechanism ensures
+asymptotic consistency
+: as the policy improves, the intervention probability naturally vanishes, recovering the unbiased on-policy gradient and effectively eliminating the persistent distributional bias inherent in static mixed-policy approaches.
+2
+Related Work
+Reinforcement Learning for Reasoning
+The post-training of Large Language Models (LLMs) has recently pivoted toward Reinforcement Learning with Verifiable Rewards (RLVR)
+(
+Lambert et al., 2025
+)
+. Algorithms such as Proximal Policy Optimization (PPO)
+(
+Schulman et al., 2017
+)
+and Group Relative Policy Optimization (GRPO)
+(
+Shao et al., 2024
+)
+have demonstrated that sophisticated behaviors, including self-correction and multi-step Chain-of-Thought (CoT) reasoning, can emerge from simple rule-based feedback. However, recent studies
+(
+Yue et al., 2025
+)
+found that on-policy RL is fundamentally bounded by the model’s initial “cognitive boundaries”. In sparse reward settings, these methods frequently encounter a “cold start” problem where the model fails to discover any successful answers
+(
+Yu et al., 2025
+)
+, leading to a lack of guiding signals. HAPO directly addresses this by introducing the Synthetic Success Injection (SSI) operator to anchor optimization specifically during these failure modes.
+Challenges in Exploration and Imitation
+Balancing exploration and imitation in policy optimization remains a fundamental challenge. The sequential “SFT-then-RL” recipe often induces catastrophic forgetting due to the distribution drift between off-policy data and on-policy exploration
+(
+Zhang et al., 2025
+)
+. While mixed-policy methods like LUFFY
+(
+Yan et al., 2025
+)
+and CHORD
+(
+Zhang et al., 2025
+)
+attempt to mitigate the issue via static policy shaping or token-wise weighting, they frequently introduce persistent distributional bias. HAPO distinguishes itself by using the SSI as a dynamic anchor rather than a static constraint, providing hindsight correction that responds to drift without constantly tethering the optimal policy to the teacher’s manifold.
+Hybrid Post-Training Strategies
+Recent hybrid strategies like HPT
+(
+Lv et al., 2026
+)
+and ReLIFT
+(
+Ma et al., 2025
+)
+switch between SFT and RL based on heuristic performance measurements. In contrast, HAPO employs a Thompson sampling-inspired gating mechanism to establish a principled, self-paced curriculum. Unlike SRFT
+(
+Fu et al., 2025
+)
+, which relies on local sample mixing, HAPO’s probabilistic gate ensures that the intervention probability naturally decays to zero as the model’s competence improves. This property guarantees
+asymptotic consistency
+, allowing the framework to eventually recover the unbiased on-policy gradient and surpass the potential limitations of the teacher.
+3
+Preliminaries and Problem Formulation
+In this section, we establish the theoretical foundations underlying our approach by reviewing the relevant mathematical concepts from reinforcement learning to Thompson sampling, and formally define the optimization problem that HAPO aims to solve.
+3.1
+Markov Decision Process
+A Markov Decision Process (MDP)
+(
+Sutton and Barto, 2018
+)
+is defined by
+ℳ
+=
+(
+𝒮
+,
+𝒜
+,
+𝒫
+,
+ℛ
+,
+γ
+)
+\mathcal{M}=(\mathcal{S},\mathcal{A},\mathcal{P},\mathcal{R},\gamma)
+, where
+𝒮
+\mathcal{S}
+and
+𝒜
+\mathcal{A}
+are the sets of state and action spaces,
+𝒫
+\mathcal{P}
+is the transition probability operator,
+ℛ
+\mathcal{R}
+is the reward operator, and
+γ
+\gamma
+is the discount factor. For LLMs, we reformulate MDP as follows
+(
+Murphy, 2025
+)
+: each state
+s
+t
+∈
+𝒮
+s_{t}\in\mathcal{S}
+contains the current context (prompt plus generated tokens), each action
+a
+t
+∈
+𝒜
+a_{t}\in\mathcal{A}
+is the next generated token, the state transition probability
+p
+t
+p_{t}
+defined by
+𝒫
+\mathcal{P}
+is deterministic, the reward operator
+ℛ
+\mathcal{R}
+treats all time steps equally without any temporal decay and the discount factor
+γ
+=
+1
+\gamma=1
+. For each episode, it consist of state
+s
+t
+s_{t}
+and action
+a
+t
+a_{t}
+in time horizon
+T
+T
+steps, denoted as a trajectory
+τ
+=
+{
+s
+0
+,
+a
+1
+,
+⋯
+s
+T
+,
+a
+T
+}
+\tau=\{s_{0},a_{1},\cdots s_{T},a_{T}\}
+. The objective is to learn a policy
+π
+θ
+\pi_{\theta}
+that maximizes expected return
+𝒥
+⁡
+(
+θ
+)
+\mathcal{J}(\theta)
+, mathematically:
+arg
+⁡
+max
+θ
+⁡
+𝒥
+⁡
+(
+θ
+)
+=
+𝔼
+τ
+∼
+π
+θ
+|
+s
+0
+​
+[
+ℛ
+⁡
+(
+τ
+)
+]
+\arg\max_{\theta}\mathcal{J}(\theta)=\mathbb{E}_{\tau\sim\pi_{\theta}\mid s_{0}}\left[\mathcal{R}(\tau)\right]
+(1)
+3.2
+Group Relative Policy Optimization
+The natural approach to maximize the objective in Eq. (
+1
+) is Proximal Policy Optimization (PPO)
+(
+Schulman et al., 2017
+)
+. However, PPO requires both actor and critic networks, creating computational and memory bottleneck for training large language models. To address these limitations, Group Relative Policy Optimization (GRPO)
+(
+Shao et al., 2024
+)
+was proposed as efficient alternatives that eliminate the critic network by using relative performance of grouped trajectories to estimate advantages.
+Given a curated dataset
+𝒟
+=
+{
+(
+s
+0
+i
+,
+τ
+∗
+i
+)
+:
+i
+∈
+{
+1
+,
+…
+,
+M
+}
+}
+\mathcal{D}=\{(s_{0}^{i},\tau_{*}^{i}):i\in\{1,\ldots,M\}\}
+, where
+s
+0
+i
+s_{0}^{i}
+is the prompt (initial state) and
+τ
+i
+∗
+\tau^{*}_{i}
+is the teacher trajectory. For each prompt
+s
+0
+i
+s_{0}^{i}
+,
+N
+N
+trajectories are sampled using the old policy
+π
+θ
+old
+\pi_{\theta_{\text{old}}}
+, forming a group of samples denoted as
+𝒢
+i
+=
+{
+τ
+j
+i
+:
+j
+∈
+{
+1
+,
+…
+,
+N
+}
+}
+\mathcal{G}^{i}=\{\tau_{j}^{i}:j\in\{1,\ldots,N\}\}
+. The GRPO computes the advantage of each trajectory by normalizing rewards within the group
+𝒢
+i
+\mathcal{G}^{i}
+:
+A
+j
+i
+=
+ℛ
+(
+τ
+j
+i
+)
+−
+mean
+(
+{
+ℛ
+(
+τ
+k
+i
+)
+:
+τ
+k
+i
+∈
+𝒢
+i
+}
+}
+)
+std
+(
+{
+ℛ
+(
+τ
+k
+i
+)
+:
+τ
+k
+i
+∈
+𝒢
+i
+}
+}
+)
+A_{j}^{i}=\frac{\mathcal{R}(\tau_{j}^{i})-\text{mean}(\{\mathcal{R}(\tau_{k}^{i}):\tau_{k}^{i}\in\mathcal{G}^{i}\}\})}{\text{std}(\{\mathcal{R}(\tau_{k}^{i}):\tau_{k}^{i}\in\mathcal{G}^{i}\}\})}
+(2)
+Considering the clipped surrogate objective from PPO, the GRPO objectives aggregates over all groups:
+𝒥
+GRPO
+​
+(
+θ
+)
+=
+1
+∑
+i
+=
+1
+M
+∑
+j
+=
+1
+N
+|
+τ
+j
+i
+|
+​
+∑
+i
+=
+1
+M
+∑
+j
+=
+1
+N
+∑
+t
+=
+1
+|
+τ
+j
+i
+|
+CLIP
+​
+(
+r
+j
+,
+t
+i
+​
+(
+θ
+)
+,
+A
+j
+i
+,
+ϵ
+)
+\mathcal{J}_{\text{GRPO}}(\theta)=\frac{1}{\sum_{i=1}^{M}\sum_{j=1}^{N}|\tau_{j}^{i}|}\sum_{i=1}^{M}\sum_{j=1}^{N}\sum_{t=1}^{|\tau_{j}^{i}|}\text{CLIP}(r_{j,t}^{i}(\theta),A_{j}^{i},\epsilon)
+(3)
+where
+r
+j
+,
+t
+i
+​
+(
+θ
+)
+=
+π
+θ
+​
+(
+τ
+j
+,
+t
+i
+|
+s
+0
+i
+,
+τ
+j
+,
+<
+t
+i
+)
+π
+θ
+old
+​
+(
+τ
+j
+,
+t
+i
+|
+s
+0
+i
+,
+τ
+j
+,
+<
+t
+i
+)
+r_{j,t}^{i}(\theta)=\frac{\pi_{\theta}(\tau_{j,t}^{i}|s_{0}^{i},\tau_{j,<t}^{i})}{\pi_{\theta_{\text{old}}}(\tau_{j,t}^{i}|s_{0}^{i},\tau_{j,<t}^{i})}
+is the importance sampling ratio and
+CLIP
+​
+(
+r
+,
+A
+,
+ϵ
+)
+=
+min
+⁡
+[
+r
+⋅
+A
+,
+clip
+​
+(
+r
+,
+1
+−
+ϵ
+,
+1
++
+ϵ
+)
+⋅
+A
+]
+\text{CLIP}(r,A,\epsilon)=\min[r\cdot A,\text{clip}(r;1-\epsilon,1+\epsilon)\cdot A]
+is an operator to ensures the updated policy remains within a trust region of the old policy. Following recent studies
+(
+Yu et al., 2025
+;
+Liu et al., 2025b
+)
+, we exclude the KL penalty as it has minimal impact on performance.
+3.3
+Thompson Sampling
+Thompson sampling
+(
+Sutton and Barto, 2018
+)
+is a Bayesian approach to the exploration-exploitation tradeoff that selects actions by sampling from the posterior distribution of each action’s expected reward. In LLMs, we define the prompt quality parameter
+α
+s
+0
+i
+∈
+[
+0
+,
+1
+]
+\alpha_{s_{0}^{i}}\in[0,1]
+as the true expected reward under the current policy
+π
+θ
+\pi_{\theta}
+. Formally,
+α
+s
+0
+i
+=
+𝔼
+τ
+∼
+π
+θ
+|
+s
+0
+i
+​
+[
+ℛ
+⁡
+(
+τ
+)
+]
+\alpha_{s_{0}^{i}}=\mathbb{E}_{\tau\sim\pi_{\theta}\mid s_{0}^{i}}[\mathcal{R}(\tau)]
+, which is intractable before trajectory sampling. Since the underlying distribution of
+α
+s
+0
+i
+\alpha_{s_{0}^{i}}
+is unknown, we model this uncertainty using a Beta distribution
+α
+s
+0
+i
+∼
+Beta
+​
+(
+1
+,
+1
+)
+\alpha_{s_{0}^{i}}\sim\text{Beta}(1,1)
+. We define the reward operator
+ℛ
+\mathcal{R}
+as:
+ℛ
+⁡
+(
+τ
+)
+=
+{
+1
+if
+τ
+outputs the correct final answer
+0
+otherwise
+\mathcal{R}(\tau)=\begin{cases}1&\text{if $\tau$ outputs the correct final answer}\\
+0&\text{otherwise}\end{cases}
+(4)
+For each prompt
+s
+0
+i
+s_{0}^{i}
+, the corresponding group of trajectories
+𝒢
+i
+\mathcal{G}^{i}
+can be viewed as Bernoulli trials, where each trajectory either succeeds (reward = 1) or fails (reward = 0) with probability
+α
+s
+0
+i
+\alpha_{s_{0}^{i}}
+. The total number of successes
+S
+i
+=
+∑
+j
+=
+1
+N
+ℛ
+⁡
+(
+τ
+j
+i
+)
+S_{i}=\sum_{j=1}^{N}\mathcal{R}(\tau_{j}^{i})
+follows a Binomial distribution
+S
+i
+∼
+Binomial
+​
+(
+N
+,
+α
+s
+0
+i
+)
+S_{i}\sim\text{Binomial}(N,\alpha_{s_{0}^{i}})
+. This allows us to apply Beta-Binomial conjugacy for the posterior distribution
+(
+Bishop, 2007
+)
+:
+α
+s
+0
+i
+|
+𝒢
+i
+∼
+Beta
+​
+(
+1
++
+S
+i
+,
+1
++
+N
+−
+S
+i
+)
+\alpha_{s_{0}^{i}}\mid\mathcal{G}^{i}\sim\text{Beta}(1+S_{i},1+N-S_{i})
+(5)
+The Bayesian confidence score for a given initial state is then defined as the posterior mean:
+c
+i
+=
+1
++
+S
+i
+2
++
+N
+c_{i}=\frac{1+S_{i}}{2+N}
+(6)
+which naturally balances observed performance with prior uncertainty and converges to the empirical success rate as more data is collected.
+4
+Hindsight-Anchored Policy Optimization
+In this section, we detail the design of our HAPO algorithm, including the Synthetic Success Injection (SSI) operator and Thompson sampling-inspired gating mechanism. We then formally define the HAPO objective function and provide convergence analysis and theoretical justification.
+4.1
+The Synthetic Success Injection (SSI) Operator
+When a group
+𝒢
+i
+\mathcal{G}^{i}
+exhibits low confidence, the model’s policy requires additional guidance to improve learning. To address this scenario, we define the Synthetic Success Injection (SSI) operator
+𝒯
+\mathcal{T}
+that operates at the group level. Within a low-confidence group
+𝒢
+i
+\mathcal{G}^{i}
+, the poorest-performing trajectory
+j
+∗
+=
+arg
+⁡
+min
+j
+⁡
+ℛ
+⁡
+(
+τ
+j
+i
+)
+j^{*}=\arg\min_{j}\mathcal{R}(\tau_{j}^{i})
+is identified and replaced by a high-confidence teacher sample
+τ
+∗
+i
+\tau_{*}^{i}
+derived from a verified solution, mathematically:
+𝒯
+⁡
+(
+𝒢
+i
+)
+=
+{
+τ
+1
+i
+,
+…
+,
+τ
+j
+∗
+−
+1
+i
+,
+τ
+∗
+i
+,
+τ
+j
+∗
++
+1
+i
+,
+…
+,
+τ
+N
+i
+}
+\mathcal{T}(\mathcal{G}^{i})=\{\tau_{1}^{i},...,\tau_{j^{*}-1}^{i},\tau_{*}^{i},\tau_{j^{*}+1}^{i},...,\tau_{N}^{i}\}
+(7)
+This operator injects high-confidence guidance into groups where the model struggles, enabling more effective learning by anchoring the policy updates with expert demonstrations.
+4.2
+Thompson Sampling Inspired Self-Paced Reward Gating
+In a group
+𝒢
+i
+\mathcal{G}^{i}
+, applying the operator
+𝒯
+\mathcal{T}
+is not always necessary. When most trajectories succeed (e.g.,
+N
+−
+1
+N-1
+out of
+N
+N
+samples receive reward 1), the current policy
+π
+θ
+\pi_{\theta}
+already handles the prompt
+s
+0
+i
+s_{0}^{i}
+confidently. To determine when operator
+𝒯
+\mathcal{T}
+is needed, we introduce a Bayesian confidence score inspired by Thompson sampling in Eq. (
+6
+). This score, computed as the posterior mean of trajectory success rates, provides a principled measure that determines whether the operator
+𝒯
+\mathcal{T}
+should be applied. Algorithm
+1
+details this procedure.
+Algorithm 1
+Thompson Sampling-Inspired Gating
+1:
+Group of trajectories
+{
+𝒢
+i
+:
+i
+∈
+{
+1
+,
+…
+,
+M
+}
+}
+\{\mathcal{G}^{i}:i\in\{1,...,M\}\}
+, threshold
+γ
+∈
+(
+0
+,
+1
+)
+\gamma\in(0,1)
+2:
+for
+i
+=
+1
+i=1
+to
+M
+M
+do
+3:
+Compute rewards
+ℛ
+⁡
+(
+τ
+j
+i
+)
+\mathcal{R}(\tau_{j}^{i})
+and Bayesian confidence score
+c
+i
+=
+1
++
+S
+i
+2
++
+N
+c_{i}=\frac{1+S_{i}}{2+N}
+4:
+if
+c
+i
+<
+γ
+c_{i}<\gamma
+then
+5:
+𝒢
+i
+=
+𝒯
+⁡
+(
+𝒢
+i
+)
+\mathcal{G}^{i}=\mathcal{T}(\mathcal{G}^{i})
+⊳
+\triangleright
+Low confidence
+→
+\to
+Replace worst with teacher sample
+6:
+end
+if
+7:
+end
+for
+8:
+return
+{
+𝒢
+i
+:
+i
+∈
+{
+1
+,
+…
+,
+M
+}
+}
+\{\mathcal{G}^{i}:i\in\{1,...,M\}\}
+,
+{
+c
+i
+:
+i
+∈
+{
+1
+,
+…
+,
+M
+}
+}
+\{c_{i}:i\in\{1,...,M\}\}
+In practice, the threshold
+γ
+\gamma
+can be a constant, sigmoid, or step function to dynamically adjust gating decisions based on training progress. When the Bayesian confidence score
+c
+i
+c_{i}
+is low, the gate opens and we apply operator
+𝒯
+\mathcal{T}
+to provide teacher samples
+τ
+∗
+i
+\tau_{*}^{i}
+for supervised learning. When confidence is high, the gate remains closed and we continue with pure RL. This adaptive mechanism provides hindsight guidance when the model struggles while maintaining exploration when it performs well.
+4.3
+HAPO Objective Function
+After the Thompson sampling-inspired gating, each group
+𝒢
+i
+\mathcal{G}^{i}
+contains both original trajectories
+{
+τ
+j
+i
+:
+j
+∈
+{
+1
+,
+…
+,
+N
+}
+∖
+{
+j
+∗
+}
+}
+\{\tau_{j}^{i}:j\in\{1,\ldots,N\}\setminus\{j^{*}\}\}
+and teacher trajectories
+{
+τ
+∗
+i
+}
+\{\tau_{*}^{i}\}
+. The advantage
+A
+j
+i
+A_{j}^{i}
+for each sample within a group is computed using the same method as in Eq. (
+2
+). Considering two trajectory types, the HAPO objective is proposed based on Eq. (
+1
+), where original trajectories represent online generation and follow the GRPO policy gradient objective, while teacher trajectories are offline references that require supervised fine-tuning objective, mathematically:
+𝒥
+HAPO
+​
+(
+θ
+)
+=
+1
+∑
+i
+=
+1
+M
+∑
+τ
+j
+i
+∈
+𝒢
+i
+|
+τ
+j
+i
+|
+​
+∑
+i
+=
+1
+M
+∑
+τ
+j
+i
+∈
+𝒢
+i
+ℒ
+⁡
+(
+θ
+,
+τ
+j
+i
+)
+\mathcal{J}_{\text{HAPO}}(\theta)=\frac{1}{\sum_{i=1}^{M}\sum_{\tau_{j}^{i}\in\mathcal{G}^{i}}|\tau_{j}^{i}|}\sum_{i=1}^{M}\sum_{\tau_{j}^{i}\in\mathcal{G}^{i}}\mathcal{L}(\theta;\tau_{j}^{i})
+(8)
+ℒ
+⁡
+(
+θ
+,
+τ
+j
+i
+)
+=
+{
+∑
+t
+=
+1
+|
+τ
+∗
+i
+|
+ℱ
+⁡
+(
+π
+θ
+​
+(
+τ
+j
+,
+t
+∗
+|
+s
+0
+i
+,
+τ
+j
+,
+<
+t
+∗
+)
+,
+c
+i
+)
+if
+​
+τ
+j
+i
+=
+τ
+∗
+i
+​
+(hindsight anchored)
+∑
+t
+=
+1
+|
+τ
+j
+i
+|
+CLIP
+​
+(
+r
+j
+,
+t
+i
+​
+(
+θ
+)
+,
+A
+j
+i
+,
+ϵ
+)
+otherwise
+\mathcal{L}(\theta;\tau_{j}^{i})=\begin{cases}\sum_{t=1}^{|\tau_{*}^{i}|}\mathcal{F}(\pi_{\theta}(\tau^{*}_{j,t}|s_{0}^{i},\tau^{*}_{j,<t}),c_{i})&\text{if }\tau_{j}^{i}=\tau_{*}^{i}\text{ (hindsight anchored)}\\
+\sum_{t=1}^{|\tau_{j}^{i}|}\text{CLIP}(r_{j,t}^{i}(\theta),A_{j}^{i},\epsilon)&\text{otherwise}\end{cases}
+(9)
+where
+ℱ
+\mathcal{F}
+is the policy shaping operator that reshaping probability distribution of actions (tokens)
+τ
+t
+∗
+\tau_{t}^{*}
+based on Bayesian confidence score
+c
+i
+c_{i}
+.
+4.4
+Theoretical Analysis
+In this section, we analyze the convergence properties of HAPO. We demonstrate that our method not only converges to a stationary point but also achieves asymptotic consistency with the pure RL objective, theoretically outperforming static mixed-policy strategies which suffer from persistent asymptotic bias.
+4.4.1
+Convergence to Stationary Point
+Let
+g
+^
+​
+(
+θ
+)
+\hat{g}(\theta)
+denote the stochastic gradient estimator of the HAPO objective
+𝒥
+HAPO
+​
+(
+θ
+)
+\mathcal{J}_{\text{HAPO}}(\theta)
+. Based on the gating mechanism in Algorithm
+1
+, this estimator switches between a hindsight-anchored gradient
+g
+^
+teach
+\hat{g}_{\text{teach}}
+(when
+c
+i
+<
+γ
+c_{i}<\gamma
+) and a pure policy gradient
+g
+^
+RL
+\hat{g}_{\text{RL}}
+(when
+c
+i
+≥
+γ
+c_{i}\geq\gamma
+).
+Theorem 4.1
+(Convergence)
+.
+Assume the policy
+π
+θ
+\pi_{\theta}
+is differentiable, the reward function is bounded, and the gradients of both the shaping operator
+ℱ
+\mathcal{F}
+and the CLIP loss satisfy
+‖
+∇
+ℒ
+‖
+≤
+G
+\|\nabla\mathcal{L}\|\leq G
+. With a decaying learning rate
+η
+t
+=
+𝒪
+⁡
+(
+1
+/
+t
+)
+\eta_{t}=\mathcal{O}(1/\sqrt{t})
+, the HAPO algorithm converges to a stationary point of the implicit dynamic objective.
+Sketch.
+The gradient estimator
+g
+^
+​
+(
+θ
+)
+\hat{g}(\theta)
+is a bounded stochastic variable. Specifically, both the teacher-forced gradient derived from
+ℱ
+\mathcal{F}
+(conceptually similar to cross-entropy) and the GRPO gradient (bounded importance weights via clipping) have bounded norms.
+The variance of the HAPO estimator is bounded by:
+𝕍
+⁡
+[
+g
+^
+​
+(
+θ
+)
+]
+≤
+max
+⁡
+(
+𝕍
+⁡
+[
+g
+^
+teach
+]
+,
+𝕍
+⁡
+[
+g
+^
+RL
+]
+)
+≤
+σ
+2
+<
+∞
+\mathbb{V}[\hat{g}(\theta)]\leq\max(\mathbb{V}[\hat{g}_{\text{teach}}],\mathbb{V}[\hat{g}_{\text{RL}}])\leq\sigma^{2}<\infty
+(10)
+Standard non-convex optimization theory for SGD states that if the gradient estimator has bounded second moments, the algorithm converges such that
+lim
+T
+→
+∞
+𝔼
+⁡
+[
+‖
+∇
+𝒥
+​
+(
+θ
+T
+)
+‖
+2
+]
+→
+0
+\lim_{T\to\infty}\mathbb{E}[\|\nabla\mathcal{J}(\theta_{T})\|^{2}]\to 0
+, provided the descent direction is valid.
+In the Hindsight phase (
+c
+i
+<
+γ
+c_{i}<\gamma
+), the teacher term
+τ
+∗
+i
+\tau_{*}^{i}
+provides a high-bias but consistent descent direction, pulling the policy into a region of non-zero rewards. Once confidence improves such that
+c
+i
+≥
+γ
+c_{i}\geq\gamma
+, the algorithm transitions to the pure RL phase, which is unbiased w.r.t. the true reward objective.
+∎
+4.4.2
+Asymptotic Consistency vs. Mixed-Policy Methods
+A key advantage of HAPO over static mixed-policy approaches is the elimination of asymptotic bias.
+Theorem 4.2
+(Asymptotic Purity)
+.
+Let
+π
+∗
+\pi^{*}
+be an optimal policy such that for any prompt
+s
+0
+i
+s_{0}^{i}
+, the expected success rate
+μ
+∗
+>
+γ
+\mu^{*}>\gamma
+. As
+π
+θ
+t
+→
+π
+∗
+\pi_{\theta_{t}}\to\pi^{*}
+, the probability of applying the biased teacher replacement
+𝒯
+⁡
+(
+𝒢
+i
+)
+\mathcal{T}(\mathcal{G}^{i})
+vanishes.
+Proof.
+Let
+S
+i
+=
+∑
+j
+=
+1
+N
+ℛ
+⁡
+(
+τ
+j
+i
+)
+S_{i}=\sum_{j=1}^{N}\mathcal{R}(\tau_{j}^{i})
+be the number of correct responses in a group.
+S
+i
+S_{i}
+follows a Binomial distribution
+B
+⁡
+(
+N
+,
+μ
+⁡
+(
+θ
+)
+)
+B(N,\mu(\theta))
+. The Bayesian confidence score defined in Eq. (
+6
+) is monotonic in
+S
+i
+S_{i}
+.
+The gating condition
+c
+i
+<
+γ
+c_{i}<\gamma
+is equivalent to
+S
+i
+<
+k
+γ
+S_{i}<k_{\gamma}
+, where
+k
+γ
+=
+γ
+⁡
+(
+2
++
+N
+)
+−
+1
+k_{\gamma}=\gamma(2+N)-1
+.
+As the policy improves such that its success rate
+μ
+⁡
+(
+θ
+)
+\mu(\theta)
+satisfies
+μ
+⁡
+(
+θ
+)
+>
+γ
+\mu(\theta)>\gamma
+, the probability of the low-confidence event decays exponentially via Hoeffding’s inequality:
+P
+⁡
+(
+c
+i
+<
+γ
+)
+=
+P
+⁡
+(
+S
+i
+<
+k
+γ
+)
+≤
+exp
+⁡
+(
+−
+2
+​
+N
+​
+(
+μ
+⁡
+(
+θ
+)
+−
+γ
+)
+2
+)
+P(c_{i}<\gamma)=P(S_{i}<k_{\gamma})\leq\exp\left(-2N(\mu(\theta)-\gamma)^{2}\right)
+(11)
+Consequently,
+lim
+t
+→
+∞
+P
+⁡
+(
+c
+i
+<
+γ
+)
+→
+0
+\lim_{t\to\infty}P(c_{i}<\gamma)\to 0
+. The expected gradient becomes:
+lim
+t
+→
+∞
+𝔼
+⁡
+[
+g
+^
+t
+​
+(
+θ
+)
+]
+=
+𝔼
+⁡
+[
+g
+^
+RL
+​
+(
+θ
+)
+]
+=
+∇
+𝒥
+RL
+​
+(
+θ
+)
+\lim_{t\to\infty}\mathbb{E}[\hat{g}_{t}(\theta)]=\mathbb{E}[\hat{g}_{\text{RL}}(\theta)]=\nabla\mathcal{J}_{\text{RL}}(\theta)
+(12)
+In contrast, static mixed-policy methods optimize a static mixture
+𝒥
+mix
+=
+𝒥
+RL
++
+λ
+​
+𝒥
+SFT
+\mathcal{J}_{\text{mix}}=\mathcal{J}_{\text{RL}}+\lambda\mathcal{J}_{\text{SFT}}
+, leading to a stationary point where
+∇
+𝒥
+RL
+=
+−
+λ
+∇
+𝒥
+SFT
+≠
+0
+\nabla\mathcal{J}_{\text{RL}}=-\lambda\nabla\mathcal{J}_{\text{SFT}}\neq 0
+, resulting in persistent bias towards the teacher distribution.
+∎
+4.4.3
+Bias-Variance Decomposition of Convergence Error
+While both HAPO and static mixed-policy methods nominally follow an
+𝒪
+⁡
+(
+1
+/
+T
+)
+\mathcal{O}(1/\sqrt{T})
+convergence rate characteristic of SGD, the composition of the
+effective
+error differs fundamentally. We analyze the error in terms of the optimality gap with respect to the true RL objective
+𝒥
+RL
+\mathcal{J}_{\text{RL}}
+.
+For a static mixed-policy approach, the convergence is bounded by the variance of the mixed estimator and an approximation bias:
+𝔼
+⁡
+[
+‖
+∇
+𝒥
+RL
+​
+(
+θ
+T
+)
+‖
+]
+≲
+σ
+mix
+T
+⏟
+Optimization Error
++
+λ
+​
+‖
+∇
+ℒ
+SFT
+​
+(
+θ
+RL
+∗
+)
+‖
+⏟
+Asymptotic Bias
+\mathbb{E}[\|\nabla\mathcal{J}_{\text{RL}}(\theta_{T})\|]\lesssim\underbrace{\frac{\sigma_{\text{mix}}}{\sqrt{T}}}_{\text{Optimization Error}}+\underbrace{\lambda\|\nabla\mathcal{L}_{\text{SFT}}(\theta^{*}_{\text{RL}})\|}_{\text{Asymptotic Bias}}
+(13)
+The bias term arises because the optimization stabilizes at the stationary point of the
+mixed
+objective, not the true RL objective. If the teacher policy is suboptimal (i.e.,
+∇
+ℒ
+SFT
+≠
+0
+\nabla\mathcal{L}_{\text{SFT}}\neq 0
+at the RL optimum), the model remains tethered to the teacher’s limitations.
+In contrast, HAPO uses the low-variance teacher signal early to reduce gradient variance
+σ
+\sigma
+when reward signals are sparse, but eliminates the bias term asymptotically as the gating mechanism deactivates:
+𝔼
+⁡
+[
+‖
+∇
+𝒥
+RL
+​
+(
+θ
+T
+)
+‖
+]
+≲
+σ
+adaptive
+T
++
+0
+\mathbb{E}[\|\nabla\mathcal{J}_{\text{RL}}(\theta_{T})\|]\lesssim\frac{\sigma_{\text{adaptive}}}{\sqrt{T}}+0
+(14)
+This implies that for high-precision reasoning tasks where the teacher data provides helpful initialization but may be suboptimal compared to the ground-truth reward, HAPO theoretically allows the model to surpass the teacher, achieving zero asymptotic bias.
+5
+Experiments
+In this section, we present implementation details and preliminary experimental evaluations demonstrating HAPO’s competitive performance on mathematical reasoning tasks compared to baseline models.
+1
+1
+1
+HAPO works for both mathematical and general domain reasoning tasks. In this paper, we focus on training and evaluating mathematical reasoning datasets and report the
+corresponding settings.
+Model
+AIME2024
+MATH-500
+Olympiad
+Qwen2.5-Math-7B
+16.7
+65.2
+30.0
+GRPO
+27.0
+83.0
+49.2
+SFT
+30.0
+83.6
+43.2
+SFT-then-RL
+30.0
+84.8
+48.6
+SRFT
+26.7
+85.2
+50.0
+LUFFY
+36.7
+84.6
+51.8
+HAPO
+36.7
+87.0
+51.4
+Table 1:
+Main experiment results on mathematical reasoning benchmarks based on Qwen2.5-Math-7B.
+Bold
+and
+underline
+indicate the best and second-best results, respectively.
+5.1
+Experimental Setup
+Training Setup
+We conduct our experiments using OpenR1-Math-46k-8192
+(
+Yan et al., 2025
+)
+,
+a curated dataset of verified mathematical reasoning trajectories generated by DeepSeek-R1
+(
+Face, 2025
+)
+. Following established practices in mathematical reasoning
+(
+Yan et al., 2025
+;
+Huang et al., 2025
+;
+Fu et al., 2025
+;
+Lv et al., 2026
+)
+, we use Qwen2.5-Math-7B
+(
+Yang et al., 2024
+)
+as our base model and GRPO
+(
+Shao et al., 2024
+)
+excluding the KL penalty term
+(
+Liu et al., 2025b
+)
+as our main RL algorithm. Our training configuration includes a batch size of 128, constant learning rate of
+1
+×
+10
+−
+6
+1\times 10^{-6}
+,
+and trajectory generation temperature of 1.0. For the operator
+𝒯
+\mathcal{T}
+, we experiment with groups of size 8 and employ the same policy shaping operator
+ℱ
+\mathcal{F}
+as prior work
+(
+Yan et al., 2025
+)
+. The confidence threshold is set to
+γ
+=
+0.8
+\gamma=0.8
+,
+with all remaining hyperparameters following established baselines
+(
+Yan et al., 2025
+;
+Fu et al., 2025
+)
+.
+Evaluation Setup
+For evaluation, we use temperature 0.6 and a maximum generation length of 8,192 tokens. We assess our
+approach on three mathematical reasoning benchmarks: AIME2024
+(
+LI et al., 2024
+)
+, MATH-500
+(
+Hendrycks et al., 2021
+)
+, and OlympiadBench
+(
+He et al., 2024
+)
+. Following standard evaluation protocols, we report avg@32 for AIME2024 due to its limited test samples, while using pass@1 for both MATH-500 and OlympiadBench.
+Baseline Comparison
+We evaluate our approach against two categories of baselines. First, we consider pure RL approaches without teacher demonstrations, specifically GRPO
+(
+Shao et al., 2024
+)
+. Second, we compare against methods that incorporate teacher demonstrations through various non-adaptive strategies that apply expert trajectories uniformly without considering group level prompt quality: (1) SFT, which directly trains the model to imitate expert trajectories; (2) SFT-then-RL, following the standard two-stage pipeline where SFT precedes RL; (3) SRFT
+(
+Fu et al., 2025
+)
+, which
+replaces one trajectory per group with an expert trajectory using SFT token loss; and (4) LUFFY
+(
+Yan et al., 2025
+)
+, which also replaces one trajectory per group with an expert trajectory but incorporates policy shaping for SFT token loss.
+5.2
+Main Results
+Figure 2:
+Training dynamics of HAPO compared with LUFFY. From left to right: average reward, generation length, and number of teacher samples during training. For fair comparison, both reward and generation length are computed by excluding trajectories guided by teacher demonstration.
+Mathematical Reasoning Performance
+As demonstrated in Table
+1
+, HAPO achieves strong performance across all benchmarks with scores of 36.7 (AIME2024), 87.0 (MATH-500), and 51.4 (Olympiad). Compared to pure RL methods, HAPO shows substantial improvements over GRPO with gains of
++9.7
+(AIME2024),
++4.0
+(MATH-500), and
++2.2
+(Olympiad). When compared to LUFFY, HAPO achieves competitive performance on AIME2024 while substantially outperforming on MATH-500 with a
++2.4
+improvement. These results confirm our central hypothesis that HAPO’s adaptive integration of expert knowledge leads to more effective reasoning skill acquisition than both pure RL and static expert guidance approaches.
+Training Dynamics
+Figure
+2
+illustrates the training dynamics comparison between HAPO and LUFFY, revealing several key differences in their learning behaviors: (1) Both methods achieve competitive reward performance with similar trajectories, indicating comparable optimization effectiveness. (2) The response length analysis shows divergent patterns: while both methods initially maintain longer outputs, LUFFY exhibits a notable decrease in generation length during middle to late-stage training, whereas HAPO sustains consistent response lengths throughout the entire training process. (3) The SFT sample utilization patterns differ markedly: HAPO demonstrates a significant reduction in SFT samples during the early training phase followed by continued fluctuations, suggesting adaptive adjustment to training dynamics. In contrast, LUFFY maintains stable SFT sample usage throughout training, indicating a more static approach to expert guidance integration.
+6
+Conclusions and Discussion
+In this work, we introduced Hindsight-Anchored Policy Optimization (HAPO), an adaptive framework designed to resolve the distribution drift dilemma in RLVR. By coupling Synthetic Success Injection (SSI) operator with a Thompson sampling-inspired gating mechanism, HAPO creates a self-paced curriculum that dynamically anchors optimization to teacher demonstrations only during failure modes, theoretically ensuring asymptotic consistency with the unbiased on-policy gradient.
+Crucially, our analysis of training dynamics confirms the efficacy of HAPO’s adaptive response strategy. Unlike LUFFY, which maintains static expert utilization and suffers from decreasing generation lengths, HAPO actively anneals its reliance on SFT samples as the policy improves and sustains consistent reasoning lengths throughout training. This behavior validates that HAPO successfully operates as a temporary scaffold rather than a persistent ceiling, mitigating the distributional bias inherent in fixed teacher forcing. Future work will explore scaling and evaluating HAPO on larger foundation models and general domain reasoning tasks.
+References
+Andrychowicz
+et al.
+(2018)
+M. Andrychowicz, F. Wolski, A. Ray, J. Schneider, R. Fong, P. Welinder, B. McGrew, J. Tobin, P. Abbeel, and W. Zaremba
+Hindsight experience replay
+.
+External Links:
+1707.01495
+,
+Link
+Cited by:
+§1
+.
+Bishop (2007)
+C. M. Bishop
+Pattern recognition and machine learning, 5th edition
+.
+Information science and statistics
+,
+Springer
+.
+External Links:
+Link
+,
+ISBN 9780387310732
+Cited by:
+§3.3
+.
+Face (2025)
+H. Face
+Open r1: a fully open reproduction of deepseek-r1
+.
+External Links:
+Link
+Cited by:
+§5.1
+.
+Fu
+et al.
+(2025)
+Y. Fu, T. Chen, J. Chai, X. Wang, S. Tu, G. Yin, W. Lin, Q. Zhang, Y. Zhu, and D. Zhao
+SRFT: a single-stage method with supervised and reinforcement fine-tuning for reasoning
+.
+External Links:
+2506.19767
+,
+Link
+Cited by:
+§1
+,
+§1
+,
+§2
+,
+§5.1
+,
+§5.1
+.
+He
+et al.
+(2024)
+C. He, R. Luo, Y. Bai, S. Hu, Z. L. Thai, J. Shen, J. Hu, X. Han, Y. Huang, Y. Zhang, J. Liu, L. Qi, Z. Liu, and M. Sun
+OlympiadBench: a challenging benchmark for promoting agi with olympiad-level bilingual multimodal scientific problems
+.
+External Links:
+2402.14008
+,
+Link
+Cited by:
+§5.1
+.
+Hendrycks
+et al.
+(2021)
+D. Hendrycks, C. Burns, S. Kadavath, A. Arora, S. Basart, E. Tang, D. Song, and J. Steinhardt
+Measuring mathematical problem solving with the math dataset
+.
+External Links:
+2103.03874
+,
+Link
+Cited by:
+§5.1
+.
+Huang
+et al.
+(2025)
+Z. Huang, T. Cheng, Z. Qiu, Z. Wang, Y. Xu, E. M. Ponti, and I. Titov
+Blending supervised and reinforcement fine-tuning with prefix sampling
+.
+External Links:
+2507.01679
+,
+Link
+Cited by:
+§1
+,
+§5.1
+.
+Lambert
+et al.
+(2025)
+N. Lambert, J. Morrison, V. Pyatkin, S. Huang, H. Ivison, F. Brahman, L. J. V. Miranda, A. Liu, N. Dziri, S. Lyu, Y. Gu, S. Malik, V. Graf, J. D. Hwang, J. Yang, R. L. Bras, O. Tafjord, C. Wilhelm, L. Soldaini, N. A. Smith, Y. Wang, P. Dasigi, and H. Hajishirzi
+Tulu 3: pushing frontiers in open language model post-training
+.
+External Links:
+2411.15124
+,
+Link
+Cited by:
+§1
+,
+§2
+.
+LI
+et al.
+(2024)
+J. LI, E. Beeching, L. Tunstall, B. Lipkin, R. Soletskyi, S. C. Huang, K. Rasul, L. Yu, A. Jiang, Z. Shen, Z. Qin, B. Dong, L. Zhou, Y. Fleureau, G. Lample, and S. Polu
+NuminaMath
+.
+Numina
+.
+Note:
+[https://huggingface.co/AI-MO/NuminaMath-CoT](https://github.com/project-numina/aimo-progress-prize/blob/main/report/numina_dataset.pdf)
+Cited by:
+§5.1
+.
+Liu
+et al.
+(2025a)
+M. Liu, G. Farina, and A. Ozdaglar
+UFT: unifying supervised and reinforcement fine-tuning
+.
+External Links:
+2505.16984
+,
+Link
+Cited by:
+§1
+.
+Liu
+et al.
+(2025b)
+Z. Liu, C. Chen, W. Li, P. Qi, T. Pang, C. Du, W. S. Lee, and M. Lin
+Understanding r1-zero-like training: a critical perspective
+.
+External Links:
+2503.20783
+,
+Link
+Cited by:
+§3.2
+,
+§5.1
+.
+Lv
+et al.
+(2026)
+X. Lv, Y. Zuo, Y. Sun, H. Liu, Y. Wei, Z. Chen, X. Zhu, K. Zhang, B. Wang, N. Ding, and B. Zhou
+Towards a unified view of large language model post-training
+.
+External Links:
+2509.04419
+,
+Link
+Cited by:
+§1
+,
+§2
+,
+§5.1
+.
+Ma
+et al.
+(2025)
+L. Ma, H. Liang, M. Qiang, L. Tang, X. Ma, Z. H. Wong, J. Niu, C. Shen, R. He, Y. Li, B. Cui, and W. Zhang
+Learning what reinforcement learning can’t: interleaved online fine-tuning for hardest questions
+.
+External Links:
+2506.07527
+,
+Link
+Cited by:
+§1
+,
+§2
+.
+Murphy (2025)
+K. Murphy
+Reinforcement learning: an overview
+.
+External Links:
+2412.05265
+,
+Link
+Cited by:
+§3.1
+.
+Ouyang
+et al.
+(2022)
+L. Ouyang, J. Wu, X. Jiang, D. Almeida, C. L. Wainwright, P. Mishkin, C. Zhang, S. Agarwal, K. Slama, A. Ray, J. Schulman, J. Hilton, F. Kelton, L. Miller, M. Simens, A. Askell, P. Welinder, P. Christiano, J. Leike, and R. Lowe
+Training language models to follow instructions with human feedback
+.
+External Links:
+2203.02155
+,
+Link
+Cited by:
+§1
+.
+Schulman
+et al.
+(2017)
+J. Schulman, F. Wolski, P. Dhariwal, A. Radford, and O. Klimov
+Proximal policy optimization algorithms
+.
+External Links:
+1707.06347
+,
+Link
+Cited by:
+§2
+,
+§3.2
+.
+Shao
+et al.
+(2024)
+Z. Shao, P. Wang, Q. Zhu, R. Xu, J. Song, X. Bi, H. Zhang, M. Zhang, Y. K. Li, Y. Wu, and D. Guo
+DeepSeekMath: pushing the limits of mathematical reasoning in open language models
+.
+External Links:
+2402.03300
+,
+Link
+Cited by:
+§2
+,
+§3.2
+,
+§5.1
+,
+§5.1
+.
+Su
+et al.
+(2025)
+M. Su, J. Guan, Y. Gu, M. Huang, and H. Wang
+Trust-region adaptive policy optimization
+.
+External Links:
+2512.17636
+,
+Link
+Cited by:
+§1
+.
+Sutton and Barto (2018)
+R. S. Sutton and A. G. Barto
+Reinforcement learning - an introduction, 2nd edition
+.
+MIT Press
+.
+External Links:
+Link
+Cited by:
+§1
+,
+§3.1
+,
+§3.3
+.
+Wei
+et al.
+(2022)
+J. Wei, M. Bosma, V. Y. Zhao, K. Guu, A. W. Yu, B. Lester, N. Du, A. M. Dai, and Q. V. Le
+Finetuned language models are zero-shot learners
+.
+External Links:
+2109.01652
+,
+Link
+Cited by:
+§1
+.
+Yan
+et al.
+(2025)
+J. Yan, Y. Li, Z. Hu, Z. Wang, G. Cui, X. Qu, Y. Cheng, and Y. Zhang
+Learning to reason under off-policy guidance
+.
+External Links:
+2504.14945
+,
+Link
+Cited by:
+§1
+,
+§1
+,
+§2
+,
+§5.1
+,
+§5.1
+.
+Yang
+et al.
+(2024)
+A. Yang, B. Zhang, B. Hui, B. Gao, B. Yu, C. Li, D. Liu, J. Tu, J. Zhou, J. Lin, K. Lu, M. Xue, R. Lin, T. Liu, X. Ren, and Z. Zhang
+Qwen2.5-math technical report: toward mathematical expert model via self-improvement
+.
+External Links:
+2409.12122
+,
+Link
+Cited by:
+§5.1
+.
+Yoshihara
+et al.
+(2025)
+H. Yoshihara, T. Yamaguchi, and Y. Inoue
+A practical two-stage recipe for mathematical llms: maximizing accuracy with sft and efficiency with reinforcement learning
+.
+External Links:
+2507.08267
+,
+Link
+Cited by:
+§1
+.
+Yu
+et al.
+(2025)
+Q. Yu, Z. Zhang, R. Zhu, Y. Yuan, X. Zuo, Y. Yue, W. Dai, T. Fan, G. Liu, L. Liu, X. Liu, H. Lin, Z. Lin, B. Ma, G. Sheng, Y. Tong, C. Zhang, M. Zhang, W. Zhang, H. Zhu, J. Zhu, J. Chen, J. Chen, C. Wang, H. Yu, Y. Song, X. Wei, H. Zhou, J. Liu, W. Ma, Y. Zhang, L. Yan, M. Qiao, Y. Wu, and M. Wang
+DAPO: an open-source llm reinforcement learning system at scale
+.
+External Links:
+2503.14476
+,
+Link
+Cited by:
+§2
+,
+§3.2
+.
+Yue
+et al.
+(2025)
+Y. Yue, Z. Chen, R. Lu, A. Zhao, Z. Wang, Y. Yue, S. Song, and G. Huang
+Does reinforcement learning really incentivize reasoning capacity in llms beyond the base model?
+.
+External Links:
+2504.13837
+,
+Link
+Cited by:
+§1
+,
+§2
+.
+Zeng
+et al.
+(2025)
+W. Zeng, Y. Huang, Q. Liu, W. Liu, K. He, Z. Ma, and J. He
+SimpleRL-zoo: investigating and taming zero reinforcement learning for open base models in the wild
+.
+External Links:
+2503.18892
+,
+Link
+Cited by:
+§1
+.
+Zhang
+et al.
+(2025)
+W. Zhang, Y. Xie, Y. Sun, Y. Chen, G. Wang, Y. Li, B. Ding, and J. Zhou
+On-policy rl meets off-policy experts: harmonizing supervised fine-tuning and reinforcement learning via dynamic weighting
+.
+External Links:
+2508.11408
+,
+Link
+Cited by:
+§1
+,
+§2
+.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

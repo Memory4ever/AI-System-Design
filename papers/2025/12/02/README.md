@@ -2,36 +2,46 @@
 
 **规范：** V3
 **窗口：** 2025-12-01T09:00:00+08:00 ～ 2025-12-02T09:00:00+08:00
+**窗口说明：** 用户2026-10-07授权补现存日报遗漏，原窗口、候选日期、评分、归属与有效审阅不动。
+**补充窗口：** 2025-12-01 ～ 2025-12-01
 **状态：** 完成
 **Books：** 纳入本次
-**检查时间：** 2026-10-02T19:06:17+08:00
+**检查时间：** 2026-10-07T21:04:37+08:00
 
 ## 1. 结论
+
+本轮14每日来源有界查询及具名普通差额已执行，Huygens于21:00:56独立最终DAY裁决通过，21:03:05完成其写后保护检查；作者据实同步完成态，普通待办0。Advanced四主题首15×4为60次题名/43身份，API首10另10身份，共53条有限线索，不是全文队列。15份精确v1题摘含1旧复用，14新身份13贡献潜力/1关闭；Huygens独核14题摘/5必要core/1关闭，R1/R2返修写后通过。00014只保留人群/提示/人工评价条件，不授模型差异；00134以Table3对正文模型推荐的具体排序冲突保留反侧，中心矛盾隔离，不降分或C绕过。确定新增落窗0，13P具体日未知、不评分、不采用收益或安全保证。Books改动0，没有确定可用长效差额；必要证据与唯一owner条件路由已交root，不签已有覆盖。通过限本轮单日有界补遗漏与隔离终态，不授正面Coverage/Evidence、无遗漏或Books Integration。见[作者交接](./_sources/supplement-20261007.md#2055-具名返修与来源差额的作者-day-ready)及[实际最终裁决](./_sources/review-supplement-20261007.md#210056-r1r2写后与最终day裁决)。
+
+以下为2026-10-02有效旧轮结果，不代替本轮新增验收：
 
 本日14来源按窗口独立处理。Mill指出的十二项普通判断/身份缺项现已局部补齐，并经Mill独立定点核验通过；本次普通0以实际补正闭合为依据，不继承此前被否决的验收声明。确定落窗候选0，但个体公告和历史目录存在外部隔离，不能宣称零事件或覆盖通过。潜在MLP容量、验证器不完备、安全unlearning，以及新增自解释反证、融合角色与训练隐私增量保留，未因审阅成本降分/删除。必要日期未确立，均不采用进入Books。
 
 ## 2. 来源覆盖
 
+2026-10-07当前实际入口、UTC执行时间、分页/停止及返修依据见[首批来源](./_sources/supplement-20261007.md#来源实际范围)与[来源普通差额](./_sources/supplement-20261007.md#来源普通差额的实际终止)。首69组及新增16组原请求分批保留，不覆盖旧原件；下载不等阅读。下表为Huygens最终独核接受的有限范围及本窗终态保留项，不冒称全机构历史Coverage。
+
 原始查询、观察和停止位置见[本日窗口记录](../_sources/daily-20251202/WINDOW_REVIEW.md)。固定历史邻接段重新对本日窗口判断，不复用前日结论。
 
 | 来源 | 检查范围与依据 | 结果 | 缺口 |
 | --- | --- | --- | --- |
-| SRC-OPENAI | RSS原始Dec1 05GMT合作邻接；本轮403/XML不支持，有限替代停止 | 受阻 | Feed当前受限，不证明全机构无事件 |
-| SRC-ANTHROPIC | 本轮Research原生publicationList Dec1/Dec2相邻，SCONE原文核心协议 | 受阻 | 午夜日编码不是精确first-public，SCONE隔离 |
-| SRC-GOOGLE-AI | 本轮DeepMind第3页与Google2025Blog；原始Nov21/Dec3邻接重新比对 | 已检查 | 年份列表不证明个体首公开 |
-| SRC-META-AI | 本轮第4页Dec12/Dec1/Nov19；AdvancedIF精确旧v1身份 | 已检查 | Dec1收录无新公开/重要修订依据 |
-| SRC-QWEN | 本轮旧站、原始Sep23、新站/部署/README有限恢复 | 受阻 | 2025动态目录不完整，隔离覆盖断言 |
-| SRC-DEEPSEEK | 官方API Docs Dec1、HF card和createdAt Dec1 02:34:49Z | 受阻 | 创建不证明首公开可见，日精度隔离 |
-| SRC-MOONSHOT | 本轮Overview，原始全26项最近Nov7；changelog Nov6 | 已检查 | 仅这些原始入口范围 |
-| SRC-TENCENT-HUNYUAN | 原始Research失败及All API11项均2026，按本窗重新比对 | 受阻 | 2025旧Research未保留，有限替代已止 |
-| SRC-ZAI | 原始Research1/2页Dec9/Dec7终点、release Sep30/Dec8重新比对 | 受阻 | 现All缺Nov旧段，不作零事件 |
-| SRC-BYTEDANCE-SEED | 原始2025paper Dec15/Dec2/Oct22、Blog Dec2/Nov27首段重新比对 | 受阻 | GR-RL日编码与窗口相交，首公开隔离 |
-| SRC-BAIDU-ERNIE | 本轮首页及原始2/2 Nov7、相邻Nov21/Dec9 | 已检查 | 不外推机构全部论文 |
-| SRC-XIAOMI-MIMO | 原始Paper8项Oct21/Jan8、路由HSS Dec19/Safety Dec18按本日比对 | 受阻 | 无date路由/More历史不完整隔离 |
-| SRC-MINIMAX | 本轮英文及原始全13项/中文Oct27–Dec23邻接 | 已检查 | 无全机构保证，未触发额外Tech Blog |
-| SRC-ARXIV | 四组主题+三次日期拼写补查；cs.LG首25有界身份补检，相关v1摘要；cs.CV/catchup失败 | 受阻 | 官方月/submit字段不归日，具名潜在贡献日期隔离 |
+| SRC-OPENAI | 本次RSS1251条，Dec1 GMT05/06/12四合作/资助题名关闭，Mirakl GMT22已为北京时间Dec2；止日期切片 | 已检查 | 本次Feed成功；非全机构零事件，Nov26安全信号不取消 |
+| SRC-ANTHROPIC | Research Dec1 SCONE/Dec2邻接与SCONE核心；定点读Dec2 Balancer/Dec8 cutoff纠错及直接相关段，止采用影响边界 | 受阻 | 日编码不授旧事件first-public；模拟/污染或经济危害收益未采用，不以当前纠错反填Dec1 |
+| SRC-GOOGLE-AI | DeepMind真实page4/5，FACTS原文Dec9、下沿crops Dec4/AlphaFold Nov25；Google Blog8/9 Dec3/Nov21邻接；pubs year2025+日期文本0/0及language model1–15/37，均止所列段 | 受阻 | 具名日字段普通差额已解决；pubs非首公开日接口，目标日原始批次/完整历史未恢复，不以37/空查询授零遗漏 |
+| SRC-META-AI | 旧publications错误体保留；实际results page4 Dec12/Dec1 AdvancedIF/Nov19跨窗段，止第4页 | 已检查 | 2511.10507同旧事件去重，收录日不作新公开/修订日 |
+| SRC-QWEN | research config60条与真实type=qwen_ai/language=en-US article40条身份/date映射，Nov13/Dec5邻接；止完整当前响应，无分页字段 | 已检查 | 原猜参数空结果撤销阴性权限；Omni版本名2025-12-01与目录Dec9分开，有限目录非全部release历史 |
+| SRC-DEEPSEEK | 官网/News Dec1、Research Dec2/Nov27邻接、V3.2原文工具轮reasoning_content回传/下一用户轮删除，止核心 | 受阻 | 同家族旧日期/有效审阅保留；创建/目录不重定归属，Speciale不支持工具，排名/泛化未采用 |
+| SRC-MOONSHOT | 当前Overview为K3 Quickstart非旧目录；官方Blog26 dated最近Nov7，止单页；llms.txt恢复platform-changelog.md，读Dec/Nov/Oct2025月段后止 | 已检查 | Dec组织验证/邀请/多账号说明未披露新系统机制，贡献关闭不另追日；308非终入口普通差额已修，月说明不授Dec1完整公开 |
+| SRC-TENCENT-HUNYUAN | 部署追到publicList POST page1/size20/renderType0，total9/list9均2026，首终页 | 受阻 | 2025目录缺口，非旧11条或本窗零事件；当前9条不作全文队列 |
+| SRC-ZAI | Research1/2页Dec9/Dec7，第二页真实没有更多；旧release Sep30/Dec8只复用 | 受阻 | 当前Research早期历史缺口不由release认证，无需重取同目录 |
+| SRC-BYTEDANCE-SEED | US locale/token0两类各18条，paper total94、Dec2/Oct22；Blog total45、Dec2/Nov27跨窗止，不请求token20 | 受阻 | GR-RL旧身份/日期保留；有限段无更早首次公开证据，不读全年库存 |
+| SRC-BAIDU-ERNIE | 当前Blog2/2，Dec9/Nov21及Nov11/Nov7至Jun30，止页尾 | 已检查 | 只该目录有限段，不外推机构所有论文 |
+| SRC-XIAOMI-MIMO | Paper8项Oct21/Jan8；官方首页/组件实证More只展开已有09～15；路由HSS Dec19/Safety Dec18、Flash实际landing Dec16，止目录/具名日期 | 受阻 | More/实际route普通差额解决；其余无date route与全历史仍缺，锁定无可用UI不作点击验收，不泛读附件 |
+| SRC-MINIMAX | 英文目录与当前中文13项Dec23/Oct27/Jan15邻接，止单页 | 已检查 | 有限段不认证全机构，未触发本窗Tech Blog/仓库扫描 |
+| SRC-ARXIV | Advanced四主题首15×4/43唯一，API submit首10另10；14新完整v1题摘及5core已独核，R1/R2作者已补正；cs.DC月表404原件保留 | 受阻 | 本轮禁止且未用catchup；年月/submit不能归具体日，13P及旧日期缺口保留，53线索/宽月后页不作全审队列 |
 
 ## 3. 候选与判断
+
+新增13潜力/1关闭在限定理由内已独立校准，13潜力具体日未确立，不列确定当窗候选、不评分。原表和归属保留。
 
 | 材料 | 公开时间 | 项目贡献与评分 | 审阅结果 | Books决定 |
 | --- | --- | --- | --- | --- |
@@ -40,11 +50,17 @@
 
 ## 4. 证据与知识整合
 
+本轮15份精确v1题摘及5决定段的实际位置与边界见[首批记录](./_sources/supplement-20261007.md#首批身份和准入)及[Huygens独核](./_sources/review-supplement-20261007.md)。00016跨模块失配、00045 reset/oracle及Fig6弱相关、00076反馈/替换非删除的反侧沿用有效校准，不授性能、统计优势或安全实现。R1/R2作者补正详见[两项最小补正](./_sources/supplement-20261007.md#r1r2-的最小补正)，两项写后已独立通过：00014限定36人文化提示/人工评价，不从两组显著性差异推模型交互；00134 Table3中Mistral BLEU/BERT-F1低于Qwen、ROUGE-L/METEOR低于DeepSeek，却被§4推荐为accuracy选择，是具体表文排序中心冲突，保留P并隔离推荐，不以常见指标局限独立准入或改C绕过。13P日期未知，不评分/进入本窗正面Evidence；原模型推荐、跨规模因果及功能正确性不采用。Books改动0，唯一owner条件路由只供root，不签已有覆盖/整合。
+
 [本日记录](../_sources/daily-20251202/WINDOW_REVIEW.md)保留8项精确v1完整题摘与具体贡献理由、官方重叠说明、目录停止及Books判断。潜在MLP事实容量与Transformer可用性冲突不是摘要加速数字；FaVeX将验证器不完备纳入解释定义，不外推为完备验证。DeepSeek发布的工具思考和任务合成是真实增量线索，不采用厂商排名。没有精确first-public，暂缓正面采用，未声称摘要=证据审阅完成。
 
 `MODEL-FFN` Ch16开头非线性变换及FFN矩阵段实际已读，不能承载新容量结论而写已有覆盖；日期恢复后再核该命题及相邻交接。无共享Books写入或整合完成。
 
 ## 5. 缺口与下一步
+
+**本轮普通待办0，独立DAY通过。** R1/R2及Qwen真实article、Moonshot终入口、MiMo More/route/date、DeepMind原文日字段、MiniMax中文与SCONE纠错采用边界已实际解决并获Huygens写后/来源/六节最终裁决支持，无新增普通差额。其余已校准12项/5core复用，不等root重复读取，不借root计数授本日完成。宽月/全年/提交库存不转队列；普通未泛读实现/证明不记外部故障。以下旧普通0与隔离声明仅限Oct02，旧日期仍保留。
+
+本轮已独核接受的终态保留项：13新P具体首次公开，00015/00083更早正式发表/首次正文身份日期、Hunyuan2025目录、ZAI早于Dec7 Research、MiMo其他无date路由及Google目标日原始公开批次/完整历史。既有必要请求不重复发；官方历史日公告/可验证作者首次正文日和完整身份、对应2025邻接目录到达或必要判断失效时，只定点重开相关家族/源，不移动旧日期，不扩Dec03。当前均不支持正面证据，不进入Books，不授Coverage、无遗漏、性能或安全保证。00134中心推荐矛盾也保持隔离，不照录排序结论。
 
 十二项作者局部补齐见[精确处置](../_sources/daily-20251202/TARGETED_REPAIR.md)：00163/00170/00229/00242/00293/00303/00307七项保留潜在准入，00249重复事件、00251/00311无新增系统约束、BioArc必要设计原则后确认暂缓科学路线，四项关闭；GR-RL身份及增量补齐。作者普通可执行判断待办：0。本次只同步作者§5终态；复核结果以Mill维护的§6为准，作者不改metadata或复核结论。
 
@@ -53,6 +69,14 @@
 原始Thanksgiving排期Nov30 20EST=Dec1 09BJT只是本窗起点的条件批次，未授任一个体；Dec1 20EST=Dec2 09BJT在不含右端，应属Daily12/03。禁止拿提交时间补造接受/公开时刻。
 
 ## 6. 复核
+
+复核者：Huygens（非作者，首批14新题摘/5必要core/1关闭；21:00:56 R1/R2写后、六项具名来源差额及六节最终DAY裁决，21:03:05其写后保护检查）。旧Mill有效审阅只复用未变内容。
+
+结论：通过
+
+Huygens20:02:35首批未通过和R1/R2原文保留；21:00:56实际修后校准与最终DAY通过取代旧停点，而非作者返修自动通过。其实际核两项写后、16新请求及六项来源具名原文/代码/日期边界、六节一致性与隔离终态，复用另12项及5core，不泛读53库存。14新仍13P/1C，1/1新C完整题摘独核；OpenAI合作/资助题名与Moonshot核心说明关闭按各自范围检查，不授所有排除全量验证。最终结论见[实际裁决](./_sources/review-supplement-20261007.md#210056-r1r2写后与最终day裁决)，173既有本日文件保护一致为复核者21:03:05实际范围事实；并发Ch22变化未被其写入或回退。完成态不继承Oct02、Dec01或root计数；通过限本轮有界补遗漏与安全终态，不授13P正面Evidence、Coverage/无遗漏或Books采用。作者完成态V3、链接/限定范围及写后结果另记于[作者最终同步](./_sources/supplement-20261007.md#最终day通过后的作者同步)。
+
+### 历史复核（不验收本轮）
 
 复核者：Mill，agent ID `01a0fc18-6d14-7b60-9ba1-b6b579aaef3e`；不是作者 Gibbs，也不是既有主线程源审记录的写入者。
 

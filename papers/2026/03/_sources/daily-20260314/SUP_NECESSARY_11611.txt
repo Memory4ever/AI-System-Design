@@ -1,0 +1,2062 @@
+Fractional Rotation, Full Potential?Investigating Performance and Convergence of Partial RoPE
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Related Work
+3
+Experimental Setup
+4
+Partial RoPE Analysis
+5
+Analyzing Loss Spikes in Parallel Architectures with NoPE
+6
+Conclusion
+References
+A
+Rotary Dimension Allocation Details
+B
+Training and Evaluation Details
+C
+Computation of RoPE Cache Size
+D
+References for Partial RoPE Usage
+E
+Additional Results
+F
+LLM Usage
+G
+Artifact Release/Usage
+License: CC BY 4.0
+arXiv:2603.11611v1 [cs.LG] 12 Mar 2026
+Fractional Rotation, Full Potential?
+Investigating Performance and Convergence of Partial RoPE
+Mohammad Aflah Khan
+Affiliation:
+Max Planck Institute for Software Systems
+Krishna P. Gummadi
+Affiliation:
+Max Planck Institute for Software Systems
+Manish Gupta
+Affiliation:
+Microsoft, Hyderabad
+Correspondence:
+afkhan@mpi-sws.org
+Abhilasha Ravichander
+Affiliation:
+Max Planck Institute for Software Systems
+Abstract
+Rotary Positional Embedding (RoPE) is a common choice in transformer architectures for encoding relative positional information. Although earlier work has examined omitting RoPE in specific layers, the effect of varying the fraction of hidden dimensions that receive rotary transformations remains largely unexplored. This design choice can yield substantial memory savings, which becomes especially significant at long context lengths. We find up to 10× memory savings over the standard RoPE cache, while achieving comparable final loss. In this work, we present a systematic study examining the impact of partial RoPE on training dynamics and convergence across architectures and datasets. Our findings uncover several notable patterns: (1) applying RoPE to only a small fraction of dimensions (around 10%) achieves convergence comparable to using full RoPE; (2) these trends hold consistently across model size, sequence lengths and datasets of varying quality and architectures, with higher-quality data resulting in lower overall loss and similar benchmark performance; and (3) some models trained with NoPE (No Positional Encoding) showcase unstable learning trajectories, which can be alleviated through minimal RoPE application or QK-Norm which converges to a higher loss. Together, these results offer practical guidance for model designers aiming to balance efficiency and training stability, while emphasizing the previously overlooked importance of partial RoPE.
+1
+Introduction
+Transformers use positional encodings to capture the order of tokens within a sequence, since the other parts of the model themselves are permutation-invariant. Rotary Positional Embedding (RoPE)
+(
+Su et al., 2023
+)
+has emerged as a leading method for encoding relative positions directly in the query–key interactions in self-attention
+(
+Vaswani et al., 2017
+)
+computations. RoPE is favored in modern decoder-only language models for its simplicity, strong empirical performance, and ability to generalize to sequences longer than those seen during training. It is widely adopted across architectures, either as the sole positional encoding or alongside alternatives such as No Positional Encoding (NoPE)
+(
+Kazemnejad et al., 2023
+)
+.
+Despite the widespread adoption of RoPE, a fundamental design choice remains largely unexplored: the fraction of hidden dimensions within each attention head that undergoes the rotary transformation. This parameter varies considerably across major model families, highlighting a lack of consensus on best practices. Early implementations in models like GPT-J
+(
+Wang and Komatsuzaki, 2021
+)
+and GPT-NeoX
+(
+Black et al., 2022
+)
+, and later Pythia
+(
+Biderman et al., 2023
+)
+, adopted a partial approach, applying RoPE to only 25% of the dimensions. In contrast, the LLaMA series
+(
+Touvron et al., 2023a
+;
+Touvron et al., 2023b
+;
+Grattafiori et al., 2024
+;
+Meta AI, 2025
+)
+and most of the Qwen series
+(
+Bai et al., 2023
+;
+Yang et al., 2024
+;
+Qwen et al., 2025
+;
+Yang et al., 2025a
+)
+applied the transformation to all dimensions. Interestingly, the latest Qwen3-Next model moved to a 25% application, a change claimed to improve extrapolation to longer sequences
+(
+Qwen Team, 2025
+)
+. Other models have explored intermediate values: NVIDIA’s Nemotron-4-340B
+(
+Nvidia et al., 2024
+)
+uses 50%, and Microsoft’s Phi-2
+(
+Javaheripi et al., 2023
+)
+uses 40%.
+This wide variance in implementation (ranging from 25% to 100% of dimensions receiving the rotary transformation) highlights a significant gap in the literature. To date, no study has systematically examined how partial RoPE influences model convergence, training dynamics, or efficiency. In practice, this design choice is made inconsistently across model families with no reported ablations for most models, unlike well-studied hyperparameters such as depth or number of attention heads. Moreover, it remains under-documented and not well supported in several pre-training frameworks. The question becomes especially relevant for long-context models: as we find, applying RoPE to only a small subset of each head (e.g., 10%) can reduce the memory footprint of the RoPE cache by an order of magnitude, as shown in Fig.
+1
+which becomes significant at long context windows. A systematic investigation into this parameter can therefore yield principled insights, improve memory efficiency, and guide future design choices. To support reproducibility and further research, we release all our training code.
+1
+1
+1
+https://github.com/aflah02/Partial_RoPE_Analysis
+Figure 1:
+Estimated memory usage of the RoPE sine/cosine cache as a function of sequence length. Partial application (e.g., 10%) drastically reduces RoPE cache size, which becomes critical for very long context windows (especially for edge devices and other resource constrained settings). The exact estimation procedure is outlined in Appendix
+C
+.
+2
+Related Work
+RoPE and Partial RoPE.
+RoPE
+(
+Su et al., 2023
+)
+has rapidly become a standard method for encoding relative positions in transformer models, due to their simplicity, ability to generalize to longer sequences, and compatibility with various attention mechanisms. Prior research has explored several aspects of RoPE design and integration. For example, some prior work as well as frontier models skip RoPE in certain layers/combine it with sliding attention to improve efficiency without compromising model performance
+(
+Kazemnejad et al., 2023
+;
+Cohere et al., 2025
+;
+Meta AI, 2025
+)
+. In addition, the choice of rotary embedding base and scaling factors can affect the model’s extrapolation ability and convergence
+(
+Men et al., 2024
+;
+Yang et al., 2025b
+)
+. Other studies have focused on understanding RoPE’s internal working
+(
+Barbero et al., 2025
+)
+and investigate issues with using RoPE in long context settings with improper precision
+(
+Wang et al., 2024
+)
+. Despite these efforts, the specific question of how many dimensions of the hidden state should undergo rotation has received little attention. To our knowledge, the only discussion on partial RoPE application appears in
+Black et al. (2022)
+, which suggested, based on small-scale experiments
+2
+2
+2
+On inspecting the public logs we were able to infer the authors used the GPT2-Small architecture (124M parameters) and trained on 82M tokens, in contrast we test multiple architectures at the 1B/8B scale and over 100B tokens
+, that a 25% application offered a good trade-off between performance and efficiency. These findings, though limited, have influenced design choices in multiple subsequent models.
+Long Context Models.
+There has been sustained momentum toward training models with ever-larger context windows. Notable examples include Google’s Gemini 1.5 family
+(
+Google, 2024
+)
+and Meta’s Llama 4 Scout
+Meta AI (2025)
+, both of which report context windows of up to 10 million tokens, as well as preliminary work by Magic demonstrating 100 million token contexts
+(
+Magic, 2024
+)
+. At these extreme scales, previously negligible implementation details become critical. For instance, RoPE cache, which typically consumes minimal VRAM, can require substantial chunks of memory usage due to linear scaling with sequence length. This challenge is compounded in multi-GPU setups, where either replicating the cache on each device consumes redundant memory, or sharding it introduces communication overhead.
+(a)
+Default Sequence length (2048)
+(b)
+Sequence length 1024
+(c)
+Sequence length 4096
+(d)
+Sequence length 8192
+Figure 2:
+Training loss trajectories on the FineWeb dataset for sequential attention models with varying Partial RoPE configurations and sequence lengths.
+(a)
+Sequential attention model.
+(b)
+Parallel attention model.
+Figure 3:
+Training loss trajectories on the FineWeb-Edu dataset comparing sequential and parallel attention architectures under varying Partial RoPE configurations.
+3
+Experimental Setup
+We pretrain several models from scratch to examine how the fraction of each attention head’s hidden state receiving rotary positional embeddings affects model performance. We evaluate several fractions, 0% (NoPE), 10%, 25%, 50%, 75%, and 100% (full RoPE), to observe their effect on loss convergence. Additionally, we include experiments with the minimal feasible application, corresponding to just two channels per head, which represents approximately 1% for Pythia-1B (head dimension 256) and 4% for LLaMA-1B (head dimension 64). Additional details are outlined in Appendix
+A
+.
+We evaluate two transformer architectures: a sequential attention design, implemented using Llama-3.2-1B and
+Llama-3.1-8B architectures
+(
+Meta, 2024
+;
+Grattafiori et al., 2024
+)
+, and a parallel attention design, implemented using Pythia-1B architecture
+(
+Biderman et al., 2023
+)
+. The primary training is conducted on the FineWeb dataset
+(
+Penedo et al., 2024
+)
+, with additional experiments on FineWeb-Edu
+(
+Lozhkov et al., 2024
+)
+to assess effect of dataset quality. We use the officially released 100B-token subset of each dataset and process all inputs with the Pythia tokenizer.
+In addition to loss, we also evaluate models using EleutherAI’s LM Evaluation Harness
+(
+Gao et al., 2023
+)
+. We use the same benchmarks as those employed for the Pythia model suite
+Biderman et al. (2023)
+, as they are well suited for non-instruction-tuned models, provide broad coverage across diverse task types, and as observed by
+Wei et al. (2026)
+, models trained on 100B tokens achieve non-random accuracy on these tasks. This set is further supplemented with PubMedQA
+(
+Jin et al., 2019
+)
+. The benchmarks originally used for Pythia include ARC
+(
+Clark et al., 2018
+)
+, LogiQA
+Liu et al. (2020)
+, LAMBADA
+(
+Radford et al., 2019
+;
+Paperno et al., 2016
+)
+, PIQA
+(
+Bisk et al., 2020
+)
+, SciQ
+(
+Johannes Welbl, 2017
+)
+, WinoGrande
+(
+Sakaguchi et al., 2019
+)
+, and WSC
+(
+Levesque et al., 2012
+)
+. Additional training and evaluation details are presented in Appendix
+B
+.
+4
+Partial RoPE Analysis
+RQ1: How does the fraction of hidden dimensions receiving RoPE influence model training dynamics?
+As shown in Fig.
+2(a)
+, configurations using 10% or more RoPE exhibit nearly identical convergence behavior. By the end of training, two distinct convergence groups emerge: models without positional embeddings or with RoPE applied to only 2 channels (4%) converge to consistently higher final losses, while those with 10% or more RoPE achieve similar and lower final losses. This indicates that applying RoPE to even a modest fraction of hidden dimensions is sufficient to match the convergence performance of full RoPE.
+RQ2: How does the quality of pre-training data affect the optimal partial RoPE configuration?
+To explore this, we repeated the experiments using FineWeb-Edu, a dataset of higher quality compared to FineWeb. FineWeb-Edu is derived from FineWeb by applying an educational quality classifier that filters for content with higher educational quality. The impact of data quality is evident in the higher final loss values across runs (with differences of at least 0.2 points from Figs.
+2(a)
+and
+3(a)
+). Nonetheless, similar convergence patterns are observed across both datasets.
+RQ3: How does the training sequence length influence the optimal Partial RoPE configuration?
+To evaluate the effect of sequence length on Partial RoPE behavior, we repeat the experiments from RQ1 using sequence lengths of 1024, 4096, and 8192 tokens, which correspond to commonly used pretraining context window sizes. As shown in Fig.
+2(b)
+,
+2(c)
+, and
+2(d)
+, the models exhibit similar convergence bands across configurations, indicating that the observed trends are largely consistent across different sequence lengths.
+We observe a single notable exception in which a loss spike appears for the NoPE run at a sequence length of 8192; strategies to mitigate this behavior are discussed in Section
+5
+. Additionally, as the sequence length increases, the 10% run begins to diverge slightly from the 25% and higher settings. However, this separation is smaller than the differences observed for the NoPE and 4% runs.
+Figure 4:
+Training loss trajectories for the 8B model with varying Partial RoPE configurations.
+RQ4: How consistent are the effects of partial RoPE across different transformer block designs (sequential vs. parallel attention)?
+To investigate this, we trained models following the Pythia-1B architecture with parallel transformer blocks and observed two notable trends. The NoPE configuration (0%) fails to converge (Fig.
+3(b)
+), a phenomenon we analyze further in Section
+5
+. Excluding the NoPE run, two distinct convergence bands emerge, similar to those seen in sequential attention models, indicating that the overall patterns of partial RoPE performance are largely consistent across different transformer block designs.
+RQ5: How do the effects of partial RoPE change with model scale?
+To examine scaling, we train a Llama-3.1-8B-style model on 100B FineWeb tokens. The same distinct convergence bands emerge: NoPE runs form a separate, higher-loss band, while the various RoPE configurations cluster together (Fig
+4
+). Compared to the 1B model at a 2048 sequence length, the RoPE configurations in the 8B model are slightly more dispersed, but the overall patterns of partial RoPE performance remain consistent.
+RQ6: Do benchmark evaluation results corroborate the loss-based analysis?
+On 9 out of 10 benchmarks, all RoPE variants exhibit largely similar performance on MCQ tasks (see Table
+3
+). The only exception is WSC, where no RoPE configuration consistently outperforms the others. Notably, LAMBADA perplexity results indicate that while accuracy remains comparable across configurations, perplexity tends to drop sharply when moving from RoPE variants with less than 10% to those more, and remains largely similar among all variants at 10% or higher RoPE application (see Table
+4
+). This is inline with the observations of
+Heineman et al. (2025)
+, where perplexity was found to offer a stronger signal as well as our findings of distinct loss bands.
+Takeaways.
+Our experiments reveal clear trends for partial RoPE. Applying RoPE to even a small fraction of hidden dimensions (10% or more) is enough to replicate the convergence behavior and final-loss performance of full RoPE, with gains leveling off beyond this point. These patterns hold across datasets of varying quality, sequence lengths, and transformer block architectures, and remain consistent as model size scales from 1B to 8B parameters, though larger models exhibit slightly more variability across RoPE configurations. Evaluations beyond loss largely support these results: RoPE variants perform similarly on most MCQ benchmarks, while perplexity analyses show that configurations with 10% or more RoPE behave comparably and outperform lower-percentage variants. Overall, partial RoPE offers robust and generalizable training dynamics with minimal application.
+5
+Analyzing Loss Spikes in Parallel Architectures with NoPE
+Figure 5:
+Training loss trajectories for parallel attention models trained on FineWeb-Edu with and without QK-Norm.
+Having shown that partial RoPE attains comparable convergence, we next analyze the two unrecoverable loss spikes observed in the NoPE configurations. Such loss spikes were not reported by
+Kazemnejad et al. (2023)
+, who primarily studied smaller synthetic tasks with substantially lower model and dataset scales and did not consider parallel architectures. In contrast, our experiments demonstrate that these loss spikes arise only after several tens of billions of training tokens in parallel architectures, and in sequential architectures only after similarly large training budgets and at long context lengths. Given the interest in training models with longer context windows and the renewed interest in parallel architectures driven by their efficiency advantages
+(
+Cohere et al., 2025
+)
+, we highlight this phenomenon as an important consideration for model developers and researchers.
+To identify the potential root causes and mitigate these spikes, we systematically investigate the following for the parallel attention model:
+Effect of Random Seeds:
+We first considered that the spikes could result from an unlucky ordering of training data or model initialization. However, repeating the experiments with multiple random seeds (which change model initialization and training order) consistently produced similar spikes (Fig.
+6(a)
+), making it unlikely that the phenomenon is due to a particular data ordering or initialization.
+Effect of Learning Rate:
+Next, we examined whether the learning rate might be responsible. We tested learning rates an order of magnitude higher and lower than the default (
+4
+×
+10
+−
+3
+4\times 10^{-3}
+and
+4
+×
+10
+−
+5
+4\times 10^{-5}
+). With a smaller LR, training converged to a higher final loss, whereas a larger LR led to early divergence (Fig.
+6(b)
+).
+Effect of QK-Norm:
+Finally, we applied QK-Norm
+(
+Henry et al., 2020
+)
+, a normalization technique known to stabilize training. More details about the implementation are outlined in Appendix
+B
+. With QK-Norm, the loss spikes disappear (Fig.
+5
+), suggesting that the underlying cause may be excessively large or spiky gradients and parameter magnitudes
+Taylor (2024)
+;
+OLMo et al. (2025)
+, both of which this normalization mitigates. Following its application, the NoPE configuration converged to a higher loss band, consistent with patterns observed in other RQs. Similar trends are also observed in the sequential attention model as outlined in Fig.
+7
+in Appendix
+E
+. Evaluations on benchmarks comparing NoPE with NoPE + QK-Norm (Tables
+3
+and
+4
+) show that normalization consistently improves performance. By reducing loss spikes, QK-Norm enables NoPE to achieve results closer to those of the RoPE variants.
+Based on this, we recommend that model trainers adopt QK-Norm as a precautionary measure against loss spikes or use partial RoPE to prevent the same.
+6
+Conclusion
+In this work, we presented a systematic empirical study on the impact of partial application of Rotary Positional Embeddings across hidden dimensions in large-scale transformer models. Our experiments demonstrate that even modest fractions of RoPE (10% of dimensions) are sufficient to achieve convergence and final loss comparable to full RoPE, while extremely low fractions or NoPE configurations lead to slower training and can induce pronounced loss spikes. We further show that these trends are robust across datasets of varying quality, hold for both sequential and parallel transformer architectures and for varying model sizes that we tested. Additionally, we find that stabilization techniques such as QK-Norm can mitigate the loss spikes observed under NoPE, however partial RoPE is a far more effective way to do the same.
+Collectively, our findings provide actionable guidance for model designers: partial RoPE can considerably reduce memory overhead especially at long context windows without sacrificing convergence, and careful consideration of transformer block design and normalization strategies can prevent instability in extreme configurations. This work highlights the previously underexplored role of partial RoPE in model optimization and lays the groundwork for future studies on efficient positional encoding strategies in large language models.
+Limitations
+As with any study involving pretraining, the design space is vast and each experiment incurs substantial computational cost. While it is infeasible to explore all possible combinations of architectures, model sizes, and datasets, we carefully select configurations that follow established best practices and evaluate them at scales consistent with prior work, allowing us to make claims we expect to generalize to larger settings.
+We leave several directions for future work such as combining partial RoPE with NoPE for additional efficiency gains, studying scaling laws for partial RoPE, and exploring the interaction of partial RoPE with length extrapolation methods due to the substantial computational resources and training time each of these investigations would require.
+Acknowledgments
+We thank Ameya Godbole, Quentin Anthony, Christian Zhou-Zheng, and Stella Biderman for their assistance in resolving issues encountered with the training framework.
+References
+Andonian
+et al.
+(2023)
+A. Andonian, Q. Anthony, S. Biderman, S. Black, P. Gali, L. Gao, E. Hallahan, J. Levy-Kramer, C. Leahy, L. Nestler, K. Parker, M. Pieler, J. Phang, S. Purohit, H. Schoelkopf, D. Stander, T. Songz, C. Tigges, B. Thérien, P. Wang, and S. Weinbach
+GPT-NeoX: Large Scale Autoregressive Language Modeling in PyTorch
+.
+Note:
+https://www.github.com/eleutherai/gpt-neox
+Version 2.0.0
+External Links:
+Document
+Cited by:
+Appendix B
+.
+Bai
+et al.
+(2023)
+J. Bai, S. Bai, Y. Chu, Z. Cui, K. Dang, X. Deng, Y. Fan, W. Ge, Y. Han, F. Huang, B. Hui, L. Ji, M. Li, J. Lin, R. Lin, D. Liu, G. Liu, C. Lu, K. Lu, J. Ma, R. Men, X. Ren, X. Ren, C. Tan, S. Tan, J. Tu, P. Wang, S. Wang, W. Wang, S. Wu, B. Xu, J. Xu, A. Yang, H. Yang, J. Yang, S. Yang, Y. Yao, B. Yu, H. Yuan, Z. Yuan, J. Zhang, X. Zhang, Y. Zhang, Z. Zhang, C. Zhou, J. Zhou, X. Zhou, and T. Zhu
+Qwen technical report
+.
+External Links:
+2309.16609
+,
+Link
+Cited by:
+§1
+.
+Barbero
+et al.
+(2025)
+F. Barbero, A. Vitvitskyi, C. Perivolaropoulos, R. Pascanu, and P. Veličković
+Round and round we go! what makes rotary positional encodings useful?
+.
+External Links:
+2410.06205
+,
+Link
+Cited by:
+§2
+.
+Biderman
+et al.
+(2023)
+S. Biderman, H. Schoelkopf, Q. G. Anthony, H. Bradley, K. O’Brien, E. Hallahan, M. A. Khan, S. Purohit, U. S. Prashanth, E. Raff,
+et al.
+Pythia: a suite for analyzing large language models across training and scaling
+.
+In
+International Conference on Machine Learning
+,
+pp. 2397–2430
+.
+Cited by:
+§1
+,
+§3
+,
+§3
+.
+Bisk
+et al.
+(2020)
+Y. Bisk, R. Zellers, R. L. Bras, J. Gao, and Y. Choi
+PIQA: reasoning about physical commonsense in natural language
+.
+In
+Thirty-Fourth AAAI Conference on
+Artificial Intelligence
+,
+Cited by:
+§3
+.
+Black
+et al.
+(2022)
+S. Black, S. Biderman, E. Hallahan, Q. Anthony, L. Gao, L. Golding, H. He, C. Leahy, K. McDonell, J. Phang, M. Pieler, U. S. Prashanth, S. Purohit, L. Reynolds, J. Tow, B. Wang, and S. Weinbach
+GPT-NeoX-20B: an open-source autoregressive language model
+.
+In
+Proceedings of the ACL Workshop on Challenges & Perspectives in Creating Large Language Models
+,
+External Links:
+Link
+Cited by:
+§1
+,
+§2
+.
+Clark
+et al.
+(2018)
+P. Clark, I. Cowhey, O. Etzioni, T. Khot, A. Sabharwal, C. Schoenick, and O. Tafjord
+Think you have solved question answering? try arc, the ai2 reasoning challenge
+.
+arXiv:1803.05457v1
+.
+Cited by:
+§3
+.
+Cohere
+et al.
+(2025)
+T. Cohere, :, Aakanksha, A. Ahmadian, M. Ahmed, J. Alammar, M. Alizadeh, Y. Alnumay, S. Althammer, A. Arkhangorodsky, V. Aryabumi, D. Aumiller, R. Avalos, Z. Aviv, S. Bae, S. Baji, A. Barbet, M. Bartolo, B. Bebensee, N. Beladia, W. Beller-Morales, A. Bérard, A. Berneshawi, A. Bialas, P. Blunsom, M. Bobkin, A. Bongale, S. Braun, M. Brunet, S. Cahyawijaya, D. Cairuz, J. A. Campos, C. Cao, K. Cao, R. Castagné, J. Cendrero, L. C. Currie, Y. Chandak, D. Chang, G. Chatziveroglou, H. Chen, C. Cheng, A. Chevalier, J. T. Chiu, E. Cho, E. Choi, E. Choi, T. Chung, V. Cirik, A. Cismaru, P. Clavier, H. Conklin, L. Crawhall-Stein, D. Crouse, A. F. Cruz-Salinas, B. Cyrus, D. D’souza, H. Dalla-Torre, J. Dang, W. Darling, O. D. Domingues, S. Dash, A. Debugne, T. Dehaze, S. Desai, J. Devassy, R. Dholakia, K. Duffy, A. Edalati, A. Eldeib, A. Elkady, S. Elsharkawy, I. Ergün, B. Ermis, M. Fadaee, B. Fan, L. Fayoux, Y. Flet-Berliac, N. Frosst, M. Gallé, W. Galuba, U. Garg, M. Geist, M. G. Azar, E. Gilsenan-McMahon, S. Goldfarb-Tarrant, T. Goldsack, A. Gomez, V. M. Gonzaga, N. Govindarajan, M. Govindassamy, N. Grinsztajn, N. Gritsch, P. Gu, S. Guo, K. Haefeli, R. Hajjar, T. Hawes, J. He, S. Hofstätter, S. Hong, S. Hooker, T. Hosking, S. Howe, E. Hu, R. Huang, H. Jain, R. Jain, N. Jakobi, M. Jenkins, J. Jordan, D. Joshi, J. Jung, T. Kalyanpur, S. R. Kamalakara, J. Kedrzycki, G. Keskin, E. Kim, J. Kim, W. Ko, T. Kocmi, M. Kozakov, W. Kryściński, A. K. Jain, K. K. Teru, S. Land, M. Lasby, O. Lasche, J. Lee, P. Lewis, J. Li, J. Li, H. Lin, A. Locatelli, K. Luong, R. Ma, L. Mach, M. Machado, J. Magbitang, B. M. Lopez, A. Mann, K. Marchisio, O. Markham, A. Matton, A. McKinney, D. McLoughlin, J. Mokry, A. Morisot, A. Moulder, H. Moynehan, M. Mozes, V. Muppalla, L. Murakhovska, H. Nagarajan, A. Nandula, H. Nasir, S. Nehra, J. Netto-Rosen, D. Ohashi, J. Owers-Bardsley, J. Ozuzu, D. Padilla, G. Park, S. Passaglia, J. Pekmez, L. Penstone, A. Piktus, C. Ploeg, A. Poulton, Y. Qi, S. Raghvendra, M. Ramos, E. Ranjan, P. Richemond, C. Robert-Michon, A. Rodriguez, S. Roy, S. Ruder, L. Ruis, L. Rust, A. Sachan, A. Salamanca, K. K. Saravanakumar, I. Satyakam, A. S. Sebag, P. Sen, S. Sepehri, P. Seshadri, Y. Shen, T. Sherborne, S. S. Shi, S. Shivaprasad, V. Shmyhlo, A. Shrinivason, I. Shteinbuk, A. Shukayev, M. Simard, E. Snyder, A. Spataru, V. Spooner, T. Starostina, F. Strub, Y. Su, J. Sun, D. Talupuru, E. Tarassov, E. Tommasone, J. Tracey, B. Trend, E. Tumer, A. Üstün, B. Venkitesh, D. Venuto, P. Verga, M. Voisin, A. Wang, D. Wang, S. Wang, E. Wen, N. White, J. Willman, M. Winkels, C. Xia, J. Xie, M. Xu, B. Yang, T. Yi-Chern, I. Zhang, Z. Zhao, and Z. Zhao
+Command a: an enterprise-ready large language model
+.
+External Links:
+2504.00698
+,
+Link
+Cited by:
+§2
+,
+§5
+.
+Gao
+et al.
+(2023)
+L. Gao, J. Tow, B. Abbasi, S. Biderman, S. Black, A. DiPofi, C. Foster, L. Golding, J. Hsu, A. Le Noac’h, H. Li, K. McDonell, N. Muennighoff, C. Ociepa, J. Phang, L. Reynolds, H. Schoelkopf, A. Skowron, L. Sutawika, E. Tang, A. Thite, B. Wang, K. Wang, and A. Zou
+A framework for few-shot language model evaluation
+.
+Zenodo
+.
+External Links:
+Document
+,
+Link
+Cited by:
+Table 3
+,
+Table 4
+,
+§3
+.
+Google (2024)
+G. D. Google
+Our next-generation model: gemini 1.5
+.
+Note:
+https://blog.google/technology/ai/google-gemini-next-generation-model-february-2024/
+Cited by:
+§2
+.
+Grattafiori
+et al.
+(2024)
+A. Grattafiori, A. Dubey, A. Jauhri, A. Pandey, A. Kadian, A. Al-Dahle, A. Letman, A. Mathur, A. Schelten, A. Vaughan, A. Yang, A. Fan, A. Goyal, A. Hartshorn, A. Yang, A. Mitra, A. Sravankumar, A. Korenev, A. Hinsvark, A. Rao, A. Zhang, A. Rodriguez, A. Gregerson, A. Spataru, B. Roziere, B. Biron, B. Tang, B. Chern, C. Caucheteux, C. Nayak, C. Bi, C. Marra, C. McConnell, C. Keller, C. Touret, C. Wu, C. Wong, C. C. Ferrer, C. Nikolaidis, D. Allonsius, D. Song, D. Pintz, D. Livshits, D. Wyatt, D. Esiobu, D. Choudhary, D. Mahajan, D. Garcia-Olano, D. Perino, D. Hupkes, E. Lakomkin, E. AlBadawy, E. Lobanova, E. Dinan, E. M. Smith, F. Radenovic, F. Guzmán, F. Zhang, G. Synnaeve, G. Lee, G. L. Anderson, G. Thattai, G. Nail, G. Mialon, G. Pang, G. Cucurell, H. Nguyen, H. Korevaar, H. Xu, H. Touvron, I. Zarov, I. A. Ibarra, I. Kloumann, I. Misra, I. Evtimov, J. Zhang, J. Copet, J. Lee, J. Geffert, J. Vranes, J. Park, J. Mahadeokar, J. Shah, J. van der Linde, J. Billock, J. Hong, J. Lee, J. Fu, J. Chi, J. Huang, J. Liu, J. Wang, J. Yu, J. Bitton, J. Spisak, J. Park, J. Rocca, J. Johnstun, J. Saxe, J. Jia, K. V. Alwala, K. Prasad, K. Upasani, K. Plawiak, K. Li, K. Heafield, K. Stone, K. El-Arini, K. Iyer, K. Malik, K. Chiu, K. Bhalla, K. Lakhotia, L. Rantala-Yeary, L. van der Maaten, L. Chen, L. Tan, L. Jenkins, L. Martin, L. Madaan, L. Malo, L. Blecher, L. Landzaat, L. de Oliveira, M. Muzzi, M. Pasupuleti, M. Singh, M. Paluri, M. Kardas, M. Tsimpoukelli, M. Oldham, M. Rita, M. Pavlova, M. Kambadur, M. Lewis, M. Si, M. K. Singh, M. Hassan, N. Goyal, N. Torabi, N. Bashlykov, N. Bogoychev, N. Chatterji, N. Zhang, O. Duchenne, O. Çelebi, P. Alrassy, P. Zhang, P. Li, P. Vasic, P. Weng, P. Bhargava, P. Dubal, P. Krishnan, P. S. Koura, P. Xu, Q. He, Q. Dong, R. Srinivasan, R. Ganapathy, R. Calderer, R. S. Cabral, R. Stojnic, R. Raileanu, R. Maheswari, R. Girdhar, R. Patel, R. Sauvestre, R. Polidoro, R. Sumbaly, R. Taylor, R. Silva, R. Hou, R. Wang, S. Hosseini, S. Chennabasappa, S. Singh, S. Bell, S. S. Kim, S. Edunov, S. Nie, S. Narang, S. Raparthy, S. Shen, S. Wan, S. Bhosale, S. Zhang, S. Vandenhende, S. Batra, S. Whitman, S. Sootla, S. Collot, S. Gururangan, S. Borodinsky, T. Herman, T. Fowler, T. Sheasha, T. Georgiou, T. Scialom, T. Speckbacher, T. Mihaylov, T. Xiao, U. Karn, V. Goswami, V. Gupta, V. Ramanathan, V. Kerkez, V. Gonguet, V. Do, V. Vogeti, V. Albiero, V. Petrovic, W. Chu, W. Xiong, W. Fu, W. Meers, X. Martinet, X. Wang, X. Wang, X. E. Tan, X. Xia, X. Xie, X. Jia, X. Wang, Y. Goldschlag, Y. Gaur, Y. Babaei, Y. Wen, Y. Song, Y. Zhang, Y. Li, Y. Mao, Z. D. Coudert, Z. Yan, Z. Chen, Z. Papakipos, A. Singh, A. Srivastava, A. Jain, A. Kelsey, A. Shajnfeld, A. Gangidi, A. Victoria, A. Goldstand, A. Menon, A. Sharma, A. Boesenberg, A. Baevski, A. Feinstein, A. Kallet, A. Sangani, A. Teo, A. Yunus, A. Lupu, A. Alvarado, A. Caples, A. Gu, A. Ho, A. Poulton, A. Ryan, A. Ramchandani, A. Dong, A. Franco, A. Goyal, A. Saraf, A. Chowdhury, A. Gabriel, A. Bharambe, A. Eisenman, A. Yazdan, B. James, B. Maurer, B. Leonhardi, B. Huang, B. Loyd, B. D. Paola, B. Paranjape, B. Liu, B. Wu, B. Ni, B. Hancock, B. Wasti, B. Spence, B. Stojkovic, B. Gamido, B. Montalvo, C. Parker, C. Burton, C. Mejia, C. Liu, C. Wang, C. Kim, C. Zhou, C. Hu, C. Chu, C. Cai, C. Tindal, C. Feichtenhofer, C. Gao, D. Civin, D. Beaty, D. Kreymer, D. Li, D. Adkins, D. Xu, D. Testuggine, D. David, D. Parikh, D. Liskovich, D. Foss, D. Wang, D. Le, D. Holland, E. Dowling, E. Jamil, E. Montgomery, E. Presani, E. Hahn, E. Wood, E. Le, E. Brinkman, E. Arcaute, E. Dunbar, E. Smothers, F. Sun, F. Kreuk, F. Tian, F. Kokkinos, F. Ozgenel, F. Caggioni, F. Kanayet, F. Seide, G. M. Florez, G. Schwarz, G. Badeer, G. Swee, G. Halpern, G. Herman, G. Sizov, Guangyi, Zhang, G. Lakshminarayanan, H. Inan, H. Shojanazeri, H. Zou, H. Wang, H. Zha, H. Habeeb, H. Rudolph, H. Suk, H. Aspegren, H. Goldman, H. Zhan, I. Damlaj, I. Molybog, I. Tufanov, I. Leontiadis, I. Veliche, I. Gat, J. Weissman, J. Geboski, J. Kohli, J. Lam, J. Asher, J. Gaya, J. Marcus, J. Tang, J. Chan, J. Zhen, J. Reizenstein, J. Teboul, J. Zhong, J. Jin, J. Yang, J. Cummings, J. Carvill, J. Shepard, J. McPhie, J. Torres, J. Ginsburg, J. Wang, K. Wu, K. H. U, K. Saxena, K. Khandelwal, K. Zand, K. Matosich, K. Veeraraghavan, K. Michelena, K. Li, K. Jagadeesh, K. Huang, K. Chawla, K. Huang, L. Chen, L. Garg, L. A, L. Silva, L. Bell, L. Zhang, L. Guo, L. Yu, L. Moshkovich, L. Wehrstedt, M. Khabsa, M. Avalani, M. Bhatt, M. Mankus, M. Hasson, M. Lennie, M. Reso, M. Groshev, M. Naumov, M. Lathi, M. Keneally, M. Liu, M. L. Seltzer, M. Valko, M. Restrepo, M. Patel, M. Vyatskov, M. Samvelyan, M. Clark, M. Macey, M. Wang, M. J. Hermoso, M. Metanat, M. Rastegari, M. Bansal, N. Santhanam, N. Parks, N. White, N. Bawa, N. Singhal, N. Egebo, N. Usunier, N. Mehta, N. P. Laptev, N. Dong, N. Cheng, O. Chernoguz, O. Hart, O. Salpekar, O. Kalinli, P. Kent, P. Parekh, P. Saab, P. Balaji, P. Rittner, P. Bontrager, P. Roux, P. Dollar, P. Zvyagina, P. Ratanchandani, P. Yuvraj, Q. Liang, R. Alao, R. Rodriguez, R. Ayub, R. Murthy, R. Nayani, R. Mitra, R. Parthasarathy, R. Li, R. Hogan, R. Battey, R. Wang, R. Howes, R. Rinott, S. Mehta, S. Siby, S. J. Bondu, S. Datta, S. Chugh, S. Hunt, S. Dhillon, S. Sidorov, S. Pan, S. Mahajan, S. Verma, S. Yamamoto, S. Ramaswamy, S. Lindsay, S. Lindsay, S. Feng, S. Lin, S. C. Zha, S. Patil, S. Shankar, S. Zhang, S. Zhang, S. Wang, S. Agarwal, S. Sajuyigbe, S. Chintala, S. Max, S. Chen, S. Kehoe, S. Satterfield, S. Govindaprasad, S. Gupta, S. Deng, S. Cho, S. Virk, S. Subramanian, S. Choudhury, S. Goldman, T. Remez, T. Glaser, T. Best, T. Koehler, T. Robinson, T. Li, T. Zhang, T. Matthews, T. Chou, T. Shaked, V. Vontimitta, V. Ajayi, V. Montanez, V. Mohan, V. S. Kumar, V. Mangla, V. Ionescu, V. Poenaru, V. T. Mihailescu, V. Ivanov, W. Li, W. Wang, W. Jiang, W. Bouaziz, W. Constable, X. Tang, X. Wu, X. Wang, X. Wu, X. Gao, Y. Kleinman, Y. Chen, Y. Hu, Y. Jia, Y. Qi, Y. Li, Y. Zhang, Y. Zhang, Y. Adi, Y. Nam, Yu, Wang, Y. Zhao, Y. Hao, Y. Qian, Y. Li, Y. He, Z. Rait, Z. DeVito, Z. Rosnbrick, Z. Wen, Z. Yang, Z. Zhao, and Z. Ma
+The llama 3 herd of models
+.
+External Links:
+2407.21783
+,
+Link
+Cited by:
+§1
+,
+§3
+.
+Heineman
+et al.
+(2025)
+D. Heineman, V. Hofmann, I. Magnusson, Y. Gu, N. A. Smith, H. Hajishirzi, K. Lo, and J. Dodge
+Signal and noise: a framework for reducing uncertainty in language model evaluation
+.
+External Links:
+2508.13144
+,
+Link
+Cited by:
+§4
+.
+Henry
+et al.
+(2020)
+A. Henry, P. R. Dachapally, S. Pawar, and Y. Chen
+Query-key normalization for transformers
+.
+External Links:
+2010.04245
+,
+Link
+Cited by:
+Appendix B
+,
+§5
+.
+Javaheripi
+et al.
+(2023)
+M. Javaheripi, S. Bubeck, M. Abdin, J. Aneja, S. Bubeck, C. C. T. Mendes, W. Chen, A. Del Giorno, R. Eldan, S. Gopi,
+et al.
+Phi-2: the surprising power of small language models
+.
+Microsoft Research Blog
+1
+(
+3
+),
+pp. 3
+.
+Cited by:
+§1
+.
+Jin
+et al.
+(2019)
+Q. Jin, B. Dhingra, Z. Liu, W. Cohen, and X. Lu
+PubMedQA: a dataset for biomedical research question answering
+.
+In
+Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing and the 9th International Joint Conference on Natural Language Processing (EMNLP-IJCNLP)
+,
+pp. 2567–2577
+.
+Cited by:
+§3
+.
+Johannes Welbl (2017)
+M. G. Johannes Welbl
+Crowdsourcing multiple choice science questions
+.
+In
+Proceedings of the 3rd Workshop on Noisy User-generated Text
+,
+pp. 94–106
+.
+Cited by:
+§3
+.
+Kazemnejad
+et al.
+(2023)
+A. Kazemnejad, I. Padhi, K. N. Ramamurthy, P. Das, and S. Reddy
+The impact of positional encoding on length generalization in transformers
+.
+External Links:
+2305.19466
+,
+Link
+Cited by:
+§1
+,
+§2
+,
+§5
+.
+Levesque
+et al.
+(2012)
+H. J. Levesque, E. Davis, and L. Morgenstern
+The winograd schema challenge
+.
+In
+13th International Conference on the Principles of Knowledge Representation and Reasoning, KR 2012
+,
+Proceedings of the International Conference on Knowledge Representation and Reasoning
+,
+pp. 552–561
+(
+English (US)
+).
+Note:
+13th International Conference on the Principles of Knowledge Representation and Reasoning, KR 2012 ; Conference date: 10-06-2012 Through 14-06-2012
+External Links:
+ISBN 9781577355601
+Cited by:
+§3
+.
+Liu
+et al.
+(2020)
+J. Liu, L. Cui, H. Liu, D. Huang, Y. Wang, and Y. Zhang
+Logiqa: a challenge dataset for machine reading comprehension with logical reasoning
+.
+arXiv preprint arXiv:2007.08124
+.
+Cited by:
+§3
+.
+Loshchilov and Hutter (2017)
+I. Loshchilov and F. Hutter
+SGDR: stochastic gradient descent with warm restarts
+.
+External Links:
+1608.03983
+,
+Link
+Cited by:
+Appendix B
+.
+Loshchilov and Hutter (2019)
+I. Loshchilov and F. Hutter
+Decoupled weight decay regularization
+.
+External Links:
+1711.05101
+,
+Link
+Cited by:
+Appendix B
+.
+Lozhkov
+et al.
+(2024)
+A. Lozhkov, L. Ben Allal, L. von Werra, and T. Wolf
+FineWeb-edu: the finest collection of educational content
+.
+Hugging Face
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§3
+.
+Magic (2024)
+Magic
+100M token context windows
+.
+Note:
+https://magic.dev/blog/100m-token-context-windows
+Cited by:
+§2
+.
+Men
+et al.
+(2024)
+X. Men, M. Xu, B. Wang, Q. Zhang, H. Lin, X. Han, and W. Chen
+Base of rope bounds context length
+.
+External Links:
+2405.14591
+,
+Link
+Cited by:
+§2
+.
+Meta AI (2025)
+Meta AI
+LLaMA 4: multimodal intelligence
+.
+Note:
+https://ai.meta.com/blog/llama-4-multimodal-intelligence/
+Accessed: 2025-10-03
+Cited by:
+§1
+,
+§2
+,
+§2
+.
+Meta (2024)
+Meta
+Llama 3.2: revolutionizing edge ai and vision with open, customizable models
+.
+Note:
+https://ai.meta.com/blog/llama-3-2-connect-2024-vision-edge-mobile-devices/
+Cited by:
+§3
+.
+Micikevicius
+et al.
+(2018)
+P. Micikevicius, S. Narang, J. Alben, G. Diamos, E. Elsen, D. Garcia, B. Ginsburg, M. Houston, O. Kuchaiev, G. Venkatesh, and H. Wu
+Mixed precision training
+.
+External Links:
+1710.03740
+,
+Link
+Cited by:
+Appendix B
+.
+Nvidia
+et al.
+(2024)
+Nvidia, :, B. Adler, N. Agarwal, A. Aithal, D. H. Anh, P. Bhattacharya, A. Brundyn, J. Casper, B. Catanzaro, S. Clay, J. Cohen, S. Das, A. Dattagupta, O. Delalleau, L. Derczynski, Y. Dong, D. Egert, E. Evans, A. Ficek, D. Fridman, S. Ghosh, B. Ginsburg, I. Gitman, T. Grzegorzek, R. Hero, J. Huang, V. Jawa, J. Jennings, A. Jhunjhunwala, J. Kamalu, S. Khan, O. Kuchaiev, P. LeGresley, H. Li, J. Liu, Z. Liu, E. Long, A. S. Mahabaleshwarkar, S. Majumdar, J. Maki, M. Martinez, M. R. de Melo, I. Moshkov, D. Narayanan, S. Narenthiran, J. Navarro, P. Nguyen, O. Nitski, V. Noroozi, G. Nutheti, C. Parisien, J. Parmar, M. Patwary, K. Pawelec, W. Ping, S. Prabhumoye, R. Roy, T. Saar, V. R. N. Sabavat, S. Satheesh, J. P. Scowcroft, J. Sewall, P. Shamis, G. Shen, M. Shoeybi, D. Sizer, M. Smelyanskiy, F. Soares, M. N. Sreedhar, D. Su, S. Subramanian, S. Sun, S. Toshniwal, H. Wang, Z. Wang, J. You, J. Zeng, J. Zhang, J. Zhang, V. Zhang, Y. Zhang, and C. Zhu
+Nemotron-4 340b technical report
+.
+External Links:
+2406.11704
+,
+Link
+Cited by:
+§1
+.
+OLMo
+et al.
+(2025)
+T. OLMo, P. Walsh, L. Soldaini, D. Groeneveld, K. Lo, S. Arora, A. Bhagia, Y. Gu, S. Huang, M. Jordan, N. Lambert, D. Schwenk, O. Tafjord, T. Anderson, D. Atkinson, F. Brahman, C. Clark, P. Dasigi, N. Dziri, M. Guerquin, H. Ivison, P. W. Koh, J. Liu, S. Malik, W. Merrill, L. J. V. Miranda, J. Morrison, T. Murray, C. Nam, V. Pyatkin, A. Rangapur, M. Schmitz, S. Skjonsberg, D. Wadden, C. Wilhelm, M. Wilson, L. Zettlemoyer, A. Farhadi, N. A. Smith, and H. Hajishirzi
+2 olmo 2 furious
+.
+External Links:
+2501.00656
+,
+Link
+Cited by:
+§5
+.
+Paperno
+et al.
+(2016)
+D. Paperno, G. Kruszewski, A. Lazaridou, Q. N. Pham, R. Bernardi, S. Pezzelle, M. Baroni, G. Boleda, and R. Fernández
+The lambada dataset
+.
+Zenodo
+.
+External Links:
+Document
+Cited by:
+§3
+.
+Penedo
+et al.
+(2024)
+G. Penedo, H. Kydlíček, L. B. allal, A. Lozhkov, M. Mitchell, C. Raffel, L. V. Werra, and T. Wolf
+The fineweb datasets: decanting the web for the finest text data at scale
+.
+In
+The Thirty-eight Conference on Neural Information Processing Systems Datasets and Benchmarks Track
+,
+External Links:
+Link
+Cited by:
+§3
+.
+Qwen
+et al.
+(2025)
+Qwen, :, A. Yang, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Li, D. Liu, F. Huang, H. Wei, H. Lin, J. Yang, J. Tu, J. Zhang, J. Yang, J. Yang, J. Zhou, J. Lin, K. Dang, K. Lu, K. Bao, K. Yang, L. Yu, M. Li, M. Xue, P. Zhang, Q. Zhu, R. Men, R. Lin, T. Li, T. Tang, T. Xia, X. Ren, X. Ren, Y. Fan, Y. Su, Y. Zhang, Y. Wan, Y. Liu, Z. Cui, Z. Zhang, and Z. Qiu
+Qwen2.5 technical report
+.
+External Links:
+2412.15115
+,
+Link
+Cited by:
+§1
+.
+Qwen Team (2025)
+Qwen Team
+Qwen3-next: towards ultimate training & inference efficiency
+.
+Note:
+https://qwen.ai/blog?from=research.latest-advancements-list&id=4074cca80393150c248e508aa62983f9cb7d27cd
+Accessed: 2025-10-05
+Cited by:
+§1
+.
+Radford
+et al.
+(2019)
+A. Radford, J. Wu, R. Child, D. Luan, D. Amodei, and I. Sutskever
+Language models are unsupervised multitask learners
+.
+OpenAI blog
+1
+(
+8
+),
+pp. 9
+.
+Cited by:
+§3
+.
+Sakaguchi
+et al.
+(2019)
+K. Sakaguchi, R. L. Bras, C. Bhagavatula, and Y. Choi
+WinoGrande: an adversarial winograd schema challenge at scale
+.
+arXiv preprint arXiv:1907.10641
+.
+Cited by:
+§3
+.
+Su
+et al.
+(2023)
+J. Su, Y. Lu, S. Pan, A. Murtadha, B. Wen, and Y. Liu
+RoFormer: enhanced transformer with rotary position embedding
+.
+External Links:
+2104.09864
+,
+Link
+Cited by:
+§1
+,
+§2
+.
+Taylor (2024)
+R. Taylor
+QK norm and the curious case of logit drift
+.
+Note:
+https://rossjtaylor.com/blog/qk-norm-and-the-curious-case-of-logit-drift/
+Accessed: 2025-10-03
+Cited by:
+§5
+.
+Touvron
+et al.
+(2023a)
+H. Touvron, T. Lavril, G. Izacard, X. Martinet, M. Lachaux, T. Lacroix, B. Rozière, N. Goyal, E. Hambro, F. Azhar, A. Rodriguez, A. Joulin, E. Grave, and G. Lample
+LLaMA: open and efficient foundation language models
+.
+External Links:
+2302.13971
+,
+Link
+Cited by:
+§1
+.
+Touvron
+et al.
+(2023b)
+H. Touvron, L. Martin, K. Stone, P. Albert, A. Almahairi, Y. Babaei, N. Bashlykov, S. Batra, P. Bhargava, S. Bhosale, D. Bikel, L. Blecher, C. C. Ferrer, M. Chen, G. Cucurull, D. Esiobu, J. Fernandes, J. Fu, W. Fu, B. Fuller, C. Gao, V. Goswami, N. Goyal, A. Hartshorn, S. Hosseini, R. Hou, H. Inan, M. Kardas, V. Kerkez, M. Khabsa, I. Kloumann, A. Korenev, P. S. Koura, M. Lachaux, T. Lavril, J. Lee, D. Liskovich, Y. Lu, Y. Mao, X. Martinet, T. Mihaylov, P. Mishra, I. Molybog, Y. Nie, A. Poulton, J. Reizenstein, R. Rungta, K. Saladi, A. Schelten, R. Silva, E. M. Smith, R. Subramanian, X. E. Tan, B. Tang, R. Taylor, A. Williams, J. X. Kuan, P. Xu, Z. Yan, I. Zarov, Y. Zhang, A. Fan, M. Kambadur, S. Narang, A. Rodriguez, R. Stojnic, S. Edunov, and T. Scialom
+Llama 2: open foundation and fine-tuned chat models
+.
+External Links:
+2307.09288
+,
+Link
+Cited by:
+§1
+.
+Vaswani
+et al.
+(2017)
+A. Vaswani, N. Shazeer, N. Parmar, J. Uszkoreit, L. Jones, A. N. Gomez, Ł. Kaiser, and I. Polosukhin
+Attention is all you need
+.
+Advances in neural information processing systems
+30
+.
+Cited by:
+§1
+.
+Wang and Komatsuzaki (2021)
+B. Wang and A. Komatsuzaki
+GPT-j-6b: a 6 billion parameter autoregressive language model
+.
+Cited by:
+§1
+.
+Wang
+et al.
+(2024)
+H. Wang, Q. Liu, C. Du, T. Zhu, C. Du, K. Kawaguchi, and T. Pang
+When precision meets position: bfloat16 breaks down rope in long-context training
+.
+arXiv preprint arXiv:2411.13476
+.
+Cited by:
+4th item
+,
+§2
+.
+Wei
+et al.
+(2026)
+J. Wei, A. Godbole, M. A. Khan, R. Y. Wang, X. Zhu, J. Flemings, N. Kashyap, K. P. Gummadi, W. Neiswanger, and R. Jia
+Hubble: a model suite to advance the study of LLM memorization
+.
+In
+The Fourteenth International Conference on Learning Representations
+,
+External Links:
+Link
+Cited by:
+Appendix B
+,
+§3
+.
+Yang
+et al.
+(2025a)
+A. Yang, A. Li, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Gao, C. Huang, C. Lv, C. Zheng, D. Liu, F. Zhou, F. Huang, F. Hu, H. Ge, H. Wei, H. Lin, J. Tang, J. Yang, J. Tu, J. Zhang, J. Yang, J. Yang, J. Zhou, J. Zhou, J. Lin, K. Dang, K. Bao, K. Yang, L. Yu, L. Deng, M. Li, M. Xue, M. Li, P. Zhang, P. Wang, Q. Zhu, R. Men, R. Gao, S. Liu, S. Luo, T. Li, T. Tang, W. Yin, X. Ren, X. Wang, X. Zhang, X. Ren, Y. Fan, Y. Su, Y. Zhang, Y. Zhang, Y. Wan, Y. Liu, Z. Wang, Z. Cui, Z. Zhang, Z. Zhou, and Z. Qiu
+Qwen3 technical report
+.
+External Links:
+2505.09388
+,
+Link
+Cited by:
+§1
+.
+Yang
+et al.
+(2024)
+A. Yang, B. Yang, B. Hui, B. Zheng, B. Yu, C. Zhou, C. Li, C. Li, D. Liu, F. Huang, G. Dong, H. Wei, H. Lin, J. Tang, J. Wang, J. Yang, J. Tu, J. Zhang, J. Ma, J. Yang, J. Xu, J. Zhou, J. Bai, J. He, J. Lin, K. Dang, K. Lu, K. Chen, K. Yang, M. Li, M. Xue, N. Ni, P. Zhang, P. Wang, R. Peng, R. Men, R. Gao, R. Lin, S. Wang, S. Bai, S. Tan, T. Zhu, T. Li, T. Liu, W. Ge, X. Deng, X. Zhou, X. Ren, X. Zhang, X. Wei, X. Ren, X. Liu, Y. Fan, Y. Yao, Y. Zhang, Y. Wan, Y. Chu, Y. Liu, Z. Cui, Z. Zhang, Z. Guo, and Z. Fan
+Qwen2 technical report
+.
+External Links:
+2407.10671
+,
+Link
+Cited by:
+§1
+.
+Yang
+et al.
+(2025b)
+B. Yang, B. Venkitesh, D. Talupuru, H. Lin, D. Cairuz, P. Blunsom, and A. Locatelli
+Rope to nope and back again: a new hybrid attention strategy
+.
+External Links:
+2501.18795
+,
+Link
+Cited by:
+§2
+.
+Appendix A
+Rotary Dimension Allocation Details
+We report the exact number of hidden dimensions to which RoPE is applied for each configuration.
+Because RoPE rotates hidden states in pairs, the number of rotated dimensions must be even.
+Accordingly, percentage-based specifications are rounded to the nearest valid even number of dimensions.
+This adjustment only occurs for
+Pythia
+, which has a head dimension of 256. A nominal 10% corresponds
+to 25.6 dimensions and would be rounded to 25 by the training framework. Since RoPE requires pairwise
+rotation, we instead use 26 dimensions (10.2%) to ensure a valid pair count.
+The resulting rotated dimensions for each model are listed in Tables
+1
+.
+Model (Head Dim)
+0%
+1%
+4%
+10% / 10.2%
+25%
+50%
+75%
+100%
+Pythia-1B (256)
+0
+2
+–
+26
+64
+128
+192
+256
+Llama-1B (64)
+0
+–
+2
+6
+16
+32
+48
+64
+Llama-8B (128)
+0
+–
+–
+12
+32
+64
+96
+128
+Table 1:
+Number of rotated dimensions used for each RoPE percentage configuration.
+Values are adjusted to ensure an even number of dimensions since RoPE rotates hidden states pairwise.
+Appendix B
+Training and Evaluation Details
+All experiments are conducted on a cluster of 4 nodes, each equipped with 8 H200 GPUs.
+For most runs we use a per-GPU micro-batch size of 64 with 2 gradient accumulation steps, resulting in an effective global batch size of 4096 sequences, each containing 2048 tokens. For RQ3 experiments with a sequence length of 1024, we double the micro-batch size to 128 in order to keep the number of training steps consistent across runs. Conversely, for sequence lengths of 4096 and 8192, we halve and quarter the micro-batch size, respectively, to maintain the same training step count. For our 8B model runs we use a micro batch size of 4 with 32 gradient accumulation steps to attain the same effective global batch size of 4096 sequences.
+Training is implemented using the GPT-NeoX framework
+(
+Andonian et al., 2023
+)
+, selected for its strong support for partial RoPE and our existing familiarity with its ecosystem. Optimization is performed using AdamW
+(
+Loshchilov and Hutter, 2019
+)
+with an initial learning rate of
+4
+×
+10
+−
+4
+4\times 10^{-4}
+(unless otherwise specified), a 5% warmup phase, and cosine learning rate decay to 10% of the original learning rate
+(
+Loshchilov and Hutter, 2017
+)
+, without any dropout. All models are trained in mixed precision
+(
+Micikevicius et al., 2018
+)
+following common conventions, where forward and backward computations are performed in BF16 while gradient accumulation and inter-GPU reductions are carried out in FP32. The training setup employs pure data parallelism across all GPUs, with no additional forms of model or pipeline parallelism. For 8B models, we follow
+Wei et al. (2026)
+by adding extra layers, resulting in a total of 36 layers compared to the 32 layers in Llama-3.1-8B. We also employ BF16 gradient accumulation with FP32 reductions to reduce memory usage.
+We apply QK-Norm only over the hidden dimension of each attention head, rather than across both the attention heads and the head dimension. The latter is the default behavior in GPT-NeoX, which differs from the original QK-Norm formulation
+(
+Henry et al., 2020
+)
+. The original method also works with models that employ grouped query attention (GQA), such as the Llama-3.2-1B-based sequential models used in our experiments. This corrected implementation, which adds support for GQA, is currently available in a pull request to the library.
+3
+3
+3
+https://github.com/EleutherAI/gpt-neox/pull/1367
+For the 1B-parameter range, runs with parallel attention completed in 12–14 hours, while runs with sequential attention took 24–27 hours, with the longer sequence-length runs corresponding to the higher end of this range. Each 8B run took approximately 120 hours.
+For our MCQ evaluations, we primarily use byte-length normalized accuracy. However, for certain benchmarks, specifically Winogrande, PubMedQA, and WSC, LMEvalHarness only reports unnormalized accuracy, so we adopt that measure to remain consistent with prior work. Additionally, for LAMBADA, we consider perplexity alongside accuracy.
+Appendix C
+Computation of RoPE Cache Size
+Rotary Positional Embeddings (RoPE) enhance transformer models by encoding positional information without learnable parameters. Instead of storing explicit embedding vectors for each position, RoPE applies a rotational transformation to query and key vectors on-the-fly. To optimize this process, the sine and cosine values required for these rotations are pre-computed and stored in a cache upon model initialization.
+The VRAM required to store the RoPE cache is a direct function of three key parameters: the maximum supported sequence length, the dimensionality of each attention head, and the numerical precision used for storage. The total size can be calculated using the following formula:
+S
+c
+​
+a
+​
+c
+​
+h
+​
+e
+=
+L
+m
+​
+a
+​
+x
+×
+D
+h
+​
+e
+​
+a
+​
+d
+×
+P
+b
+​
+y
+​
+t
+​
+e
+​
+s
+S_{cache}=L_{max}\times D_{head}\times P_{bytes}
+(1)
+Where:
+•
+S
+cache
+is the total cache size in bytes.
+•
+L
+max
+represents the maximum sequence length (or context window) the model is configured to handle.
+•
+D
+head
+is the dimensionality of the vector for a single attention head.
+•
+P
+bytes
+represents the number of bytes needed to store a single numerical value, determined by the chosen precision (e.g., 4 bytes for 32-bit floating point, FP32). We use FP32 in our calculations, as prior work has shown that lower precisions often lead to instability and divergence during long-context training, issues that are mitigated when using FP32
+(
+Wang et al., 2024
+)
+.
+This linear relationship demonstrates that the cache size scales directly with both the maximum sequence length and the head dimension, a critical consideration when designing models for long-context applications.
+For Fig.
+1
+, we use an attention head dimension of 256, which corresponds to the head dimensionality of Pythia-1B. The memory requirements would increase further for larger head dimensions (in practice most current models seem to stick to 128). Our calculations also exclude any effects of memory fragmentation and consider only the raw storage needed for the RoPE sine/cosine cache.
+Appendix D
+References for Partial RoPE Usage
+Table
+2
+lists various models that utilize partial RoPE, along with links referencing this configuration in their model settings.
+Model
+URL
+EleutherAI/gpt-j-6b
+www.hf.co/EleutherAI/gpt-j-6b/blob/main/config.json#L21
+EleutherAI/gpt-neox-20b
+www.hf.co/EleutherAI/gpt-neox-20b/blob/main/config.json#L19
+EleutherAI/pythia-12b
+www.hf.co/EleutherAI/pythia-12b/blob/main/config.json#L17
+microsoft/phi-2
+www.hf.co/microsoft/phi-2/blob/main/config.json#L20
+nvidia/Nemotron-4-340B-Base
+www.hf.co/nvidia/Nemotron-4-340B-Base/blob/main/model_config.yaml#L34
+Qwen/Qwen3-Next-80B-A3B-Instruct
+www.hf.co/Qwen/Qwen3-Next-80B-A3B-Instruct/blob/main/config.json#L31
+Table 2:
+Examples of widely used open-weight/open-source models employing
+Partial RoPE
+, with references indicating this choice—parameter names vary across models due to differences in training frameworks. Note: For Pythia, we show one family member, though all members use the same 25% partial RoPE.
+Appendix E
+Additional Results
+Figures
+6(a)
+&
+6(b)
+showcase the persistence of loss spikes across seeds and learning rates.
+Figure
+7
+demonstrates that QK-Norm effectively eliminates the loss spike, even for the sequential attention run with a sequence length of 8192.
+Table
+3
+showcases the MCQ evaluation results for all models on all benchmarks.
+Table
+4
+showcases the perplexity evaluation results for all models on LAMBADA.
+Appendix F
+LLM Usage
+We use LLMs for help with grammatical corrections/writing of the paper and also as coding assistants. In both cases we independently verify the outputs.
+Appendix G
+Artifact Release/Usage
+We will publicly release all our artifacts (models, optimizer states, intermediate checkpoints, config files, etc.) upon acceptance.
+Our usage of artifacts such as the pretraining dataset and frameworks is consistent with their intended usage.
+(a)
+Different random seeds.
+(b)
+Different learning rates.
+Figure 6:
+Training loss trajectories for parallel attention models trained on FineWeb-Edu under different experimental settings. The left panel varies random seeds, while the right panel varies learning rates.
+Figure 7:
+Training loss curves for 1B parameter sequential attention NoPE models at sequence length 8192, trained on FineWeb, comparing runs with and without QK-Norm. QK-Norm removes the pronounced loss spike observed in the unnormalized setting and results in significantly more stable optimization.
+Table 3:
+MCQ Benchmark Results.
+We run evaluations through EleutherAI’s Language Model Evaluation Harness
+(
+Gao et al., 2023
+)
+under Zero-Shot setting.
+Config
+ARC
+Challenge
+ARC
+Easy
+LogiQA
+LAMBADA
+(OpenAI)
+LAMBADA
+(Standard)
+PIQA
+SciQ
+PubMedQA
+Wino
+-Grande
+WSC
+Llama-3.2-1B x FW-Edu x Seq. Len. 2048
+0% RoPE (NoPE)
+0.31 (0.01)
+0.57 (0.01)
+0.28 (0.02)
+0.36 (0.01)
+0.27 (0.01)
+0.70 (0.01)
+0.75 (0.01)
+0.56 (0.02)
+0.51 (0.01)
+0.55 (0.05)
+4% RoPE
+0.31 (0.01)
+0.58 (0.01)
+0.28 (0.02)
+0.36 (0.01)
+0.27 (0.01)
+0.69 (0.01)
+0.75 (0.01)
+0.51 (0.02)
+0.52 (0.01)
+0.38 (0.05)
+10% RoPE
+0.32 (0.01)
+0.60 (0.01)
+0.28 (0.02)
+0.38 (0.01)
+0.28 (0.01)
+0.71 (0.01)
+0.75 (0.01)
+0.57 (0.02)
+0.54 (0.01)
+0.44 (0.05)
+25% RoPE
+0.31 (0.01)
+0.58 (0.01)
+0.26 (0.02)
+0.38 (0.01)
+0.29 (0.01)
+0.70 (0.01)
+0.75 (0.01)
+0.52 (0.02)
+0.53 (0.01)
+0.54 (0.05)
+50% RoPE
+0.32 (0.01)
+0.59 (0.01)
+0.26 (0.02)
+0.37 (0.01)
+0.29 (0.01)
+0.71 (0.01)
+0.76 (0.01)
+0.55 (0.02)
+0.53 (0.01)
+0.63 (0.05)
+75% RoPE
+0.33 (0.01)
+0.61 (0.01)
+0.27 (0.02)
+0.39 (0.01)
+0.27 (0.01)
+0.71 (0.01)
+0.75 (0.01)
+0.48 (0.02)
+0.52 (0.01)
+0.62 (0.05)
+100% RoPE
+0.33 (0.01)
+0.59 (0.01)
+0.27 (0.02)
+0.39 (0.01)
+0.30 (0.01)
+0.71 (0.01)
+0.73 (0.01)
+0.50 (0.02)
+0.52 (0.01)
+0.37 (0.05)
+Llama-3.2-1B x FW x Seq. Len. 1024
+0% RoPE (NoPE)
+0.27 (0.01)
+0.48 (0.01)
+0.27 (0.02)
+0.46 (0.01)
+0.35 (0.01)
+0.72 (0.01)
+0.71 (0.01)
+0.51 (0.02)
+0.51 (0.01)
+0.54 (0.05)
+4% RoPE
+0.27 (0.01)
+0.50 (0.01)
+0.28 (0.02)
+0.46 (0.01)
+0.33 (0.01)
+0.71 (0.01)
+0.70 (0.01)
+0.50 (0.02)
+0.53 (0.01)
+0.48 (0.05)
+10% RoPE
+0.26 (0.01)
+0.50 (0.01)
+0.27 (0.02)
+0.49 (0.01)
+0.38 (0.01)
+0.72 (0.01)
+0.71 (0.01)
+0.55 (0.02)
+0.52 (0.01)
+0.41 (0.05)
+25% RoPE
+0.26 (0.01)
+0.49 (0.01)
+0.28 (0.02)
+0.48 (0.01)
+0.38 (0.01)
+0.72 (0.01)
+0.72 (0.01)
+0.55 (0.02)
+0.55 (0.01)
+0.37 (0.05)
+50% RoPE
+0.25 (0.01)
+0.49 (0.01)
+0.27 (0.02)
+0.48 (0.01)
+0.38 (0.01)
+0.72 (0.01)
+0.71 (0.01)
+0.55 (0.02)
+0.52 (0.01)
+0.49 (0.05)
+75% RoPE
+0.26 (0.01)
+0.49 (0.01)
+0.27 (0.02)
+0.47 (0.01)
+0.38 (0.01)
+0.73 (0.01)
+0.71 (0.01)
+0.56 (0.02)
+0.53 (0.01)
+0.62 (0.05)
+100% RoPE
+0.27 (0.01)
+0.50 (0.01)
+0.28 (0.02)
+0.48 (0.01)
+0.37 (0.01)
+0.73 (0.01)
+0.68 (0.01)
+0.58 (0.02)
+0.53 (0.01)
+0.37 (0.05)
+Llama-3.2-1B x FW x Seq. Len. 2048
+0% RoPE (NoPE)
+0.27 (0.01)
+0.47 (0.01)
+0.28 (0.02)
+0.44 (0.01)
+0.33 (0.01)
+0.71 (0.01)
+0.71 (0.01)
+0.55 (0.02)
+0.52 (0.01)
+0.38 (0.05)
+4% RoPE
+0.28 (0.01)
+0.46 (0.01)
+0.26 (0.02)
+0.45 (0.01)
+0.33 (0.01)
+0.71 (0.01)
+0.69 (0.01)
+0.55 (0.02)
+0.51 (0.01)
+0.37 (0.05)
+10% RoPE
+0.26 (0.01)
+0.48 (0.01)
+0.28 (0.02)
+0.47 (0.01)
+0.36 (0.01)
+0.73 (0.01)
+0.68 (0.01)
+0.55 (0.02)
+0.52 (0.01)
+0.43 (0.05)
+25% RoPE
+0.27 (0.01)
+0.47 (0.01)
+0.25 (0.02)
+0.46 (0.01)
+0.37 (0.01)
+0.72 (0.01)
+0.68 (0.01)
+0.51 (0.02)
+0.54 (0.01)
+0.56 (0.05)
+50% RoPE
+0.27 (0.01)
+0.48 (0.01)
+0.27 (0.02)
+0.47 (0.01)
+0.37 (0.01)
+0.72 (0.01)
+0.71 (0.01)
+0.56 (0.02)
+0.53 (0.01)
+0.49 (0.05)
+75% RoPE
+0.26 (0.01)
+0.49 (0.01)
+0.27 (0.02)
+0.48 (0.01)
+0.36 (0.01)
+0.72 (0.01)
+0.70 (0.01)
+0.49 (0.02)
+0.51 (0.01)
+0.38 (0.05)
+100% RoPE
+0.26 (0.01)
+0.49 (0.01)
+0.28 (0.02)
+0.47 (0.01)
+0.37 (0.01)
+0.73 (0.01)
+0.69 (0.01)
+0.53 (0.02)
+0.53 (0.01)
+0.37 (0.05)
+Llama-3.2-1B x FW x Seq. Len. 4096
+0% RoPE (NoPE)
+0.26 (0.01)
+0.45 (0.01)
+0.27 (0.02)
+0.43 (0.01)
+0.30 (0.01)
+0.70 (0.01)
+0.68 (0.01)
+0.56 (0.02)
+0.52 (0.01)
+0.60 (0.05)
+4% RoPE
+0.25 (0.01)
+0.46 (0.01)
+0.26 (0.02)
+0.42 (0.01)
+0.30 (0.01)
+0.70 (0.01)
+0.69 (0.01)
+0.56 (0.02)
+0.52 (0.01)
+0.37 (0.05)
+10% RoPE
+0.27 (0.01)
+0.47 (0.01)
+0.29 (0.02)
+0.46 (0.01)
+0.35 (0.01)
+0.72 (0.01)
+0.69 (0.01)
+0.56 (0.02)
+0.52 (0.01)
+0.47 (0.05)
+25% RoPE
+0.26 (0.01)
+0.47 (0.01)
+0.27 (0.02)
+0.47 (0.01)
+0.34 (0.01)
+0.72 (0.01)
+0.69 (0.01)
+0.46 (0.02)
+0.53 (0.01)
+0.42 (0.05)
+50% RoPE
+0.26 (0.01)
+0.47 (0.01)
+0.29 (0.02)
+0.46 (0.01)
+0.36 (0.01)
+0.72 (0.01)
+0.68 (0.01)
+0.54 (0.02)
+0.52 (0.01)
+0.63 (0.05)
+75% RoPE
+0.27 (0.01)
+0.48 (0.01)
+0.27 (0.02)
+0.46 (0.01)
+0.36 (0.01)
+0.71 (0.01)
+0.73 (0.01)
+0.56 (0.02)
+0.53 (0.01)
+0.64 (0.05)
+100% RoPE
+0.27 (0.01)
+0.48 (0.01)
+0.28 (0.02)
+0.48 (0.01)
+0.37 (0.01)
+0.72 (0.01)
+0.68 (0.01)
+0.58 (0.02)
+0.52 (0.01)
+0.40 (0.05)
+Llama-3.2-1B x FW x Seq. Len. 8192
+0% RoPE (NoPE)
+0.23 (0.01)
+0.39 (0.01)
+0.26 (0.02)
+0.23 (0.01)
+0.16 (0.01)
+0.64 (0.01)
+0.61 (0.02)
+0.52 (0.02)
+0.52 (0.01)
+0.37 (0.05)
+0% RoPE (NoPE) + QK-Norm
+0.26 (0.01)
+0.45 (0.01)
+0.27 (0.02)
+0.40 (0.01)
+0.30 (0.01)
+0.70 (0.01)
+0.68 (0.01)
+0.55 (0.02)
+0.50 (0.01)
+0.38 (0.05)
+4% RoPE
+0.25 (0.01)
+0.45 (0.01)
+0.26 (0.02)
+0.41 (0.01)
+0.30 (0.01)
+0.71 (0.01)
+0.68 (0.01)
+0.55 (0.02)
+0.53 (0.01)
+0.66 (0.05)
+10% RoPE
+0.25 (0.01)
+0.46 (0.01)
+0.27 (0.02)
+0.45 (0.01)
+0.35 (0.01)
+0.71 (0.01)
+0.69 (0.01)
+0.50 (0.02)
+0.51 (0.01)
+0.37 (0.05)
+25% RoPE
+0.26 (0.01)
+0.47 (0.01)
+0.26 (0.02)
+0.45 (0.01)
+0.34 (0.01)
+0.71 (0.01)
+0.71 (0.01)
+0.55 (0.02)
+0.52 (0.01)
+0.37 (0.05)
+50% RoPE
+0.27 (0.01)
+0.47 (0.01)
+0.28 (0.02)
+0.47 (0.01)
+0.33 (0.01)
+0.71 (0.01)
+0.69 (0.01)
+0.46 (0.02)
+0.52 (0.01)
+0.47 (0.05)
+75% RoPE
+0.25 (0.01)
+0.46 (0.01)
+0.29 (0.02)
+0.47 (0.01)
+0.37 (0.01)
+0.71 (0.01)
+0.69 (0.01)
+0.55 (0.02)
+0.53 (0.01)
+0.38 (0.05)
+100% RoPE
+0.25 (0.01)
+0.47 (0.01)
+0.28 (0.02)
+0.47 (0.01)
+0.35 (0.01)
+0.72 (0.01)
+0.69 (0.01)
+0.53 (0.02)
+0.53 (0.01)
+0.63 (0.05)
+Pythia-1B x FW-Edu x Seq. Len. 2048
+0% RoPE (NoPE)
+0.24 (0.01)
+0.30 (0.01)
+0.24 (0.02)
+0.00 (0.00)
+0.00 (0.00)
+0.53 (0.01)
+0.28 (0.01)
+0.34 (0.02)
+0.50 (0.01)
+0.63 (0.05)
+0% RoPE (NoPE) + QK-Norm
+0.28 (0.01)
+0.52 (0.01)
+0.29 (0.02)
+0.28 (0.01)
+0.22 (0.01)
+0.67 (0.01)
+0.71 (0.01)
+0.53 (0.02)
+0.52 (0.01)
+0.37 (0.05)
+1% RoPE
+0.28 (0.01)
+0.50 (0.01)
+0.25 (0.02)
+0.30 (0.01)
+0.23 (0.01)
+0.66 (0.01)
+0.72 (0.01)
+0.54 (0.02)
+0.51 (0.01)
+0.37 (0.05)
+10% RoPE
+0.29 (0.01)
+0.53 (0.01)
+0.27 (0.02)
+0.34 (0.01)
+0.24 (0.01)
+0.68 (0.01)
+0.73 (0.01)
+0.48 (0.02)
+0.51 (0.01)
+0.37 (0.05)
+25% RoPE
+0.30 (0.01)
+0.55 (0.01)
+0.27 (0.02)
+0.34 (0.01)
+0.23 (0.01)
+0.68 (0.01)
+0.72 (0.01)
+0.45 (0.02)
+0.51 (0.01)
+0.55 (0.05)
+50% RoPE
+0.29 (0.01)
+0.54 (0.01)
+0.27 (0.02)
+0.33 (0.01)
+0.23 (0.01)
+0.67 (0.01)
+0.73 (0.01)
+0.48 (0.02)
+0.51 (0.01)
+0.41 (0.05)
+75% RoPE
+0.30 (0.01)
+0.55 (0.01)
+0.27 (0.02)
+0.35 (0.01)
+0.24 (0.01)
+0.67 (0.01)
+0.72 (0.01)
+0.52 (0.02)
+0.51 (0.01)
+0.37 (0.05)
+100% RoPE
+0.28 (0.01)
+0.54 (0.01)
+0.27 (0.02)
+0.34 (0.01)
+0.24 (0.01)
+0.69 (0.01)
+0.72 (0.01)
+0.55 (0.02)
+0.51 (0.01)
+0.37 (0.05)
+Llama-3.1-8B x FW x Seq. Len. 2048
+0% RoPE (NoPE)
+0.30 (0.01)
+0.57 (0.01)
+0.28 (0.02)
+0.58 (0.01)
+0.49 (0.01)
+0.77 (0.01)
+0.80 (0.01)
+0.60 (0.02)
+0.57 (0.01)
+0.42 (0.05)
+10% RoPE
+0.32 (0.01)
+0.60 (0.01)
+0.27 (0.02)
+0.60 (0.01)
+0.50 (0.01)
+0.77 (0.01)
+0.81 (0.01)
+0.64 (0.02)
+0.59 (0.01)
+0.55 (0.05)
+25% RoPE
+0.33 (0.01)
+0.58 (0.01)
+0.27 (0.02)
+0.59 (0.01)
+0.52 (0.01)
+0.77 (0.01)
+0.82 (0.01)
+0.60 (0.02)
+0.59 (0.01)
+0.59 (0.05)
+50% RoPE
+0.31 (0.01)
+0.58 (0.01)
+0.29 (0.02)
+0.60 (0.01)
+0.51 (0.01)
+0.77 (0.01)
+0.81 (0.01)
+0.57 (0.02)
+0.59 (0.01)
+0.41 (0.05)
+75% RoPE
+0.33 (0.01)
+0.58 (0.01)
+0.29 (0.02)
+0.60 (0.01)
+0.52 (0.01)
+0.77 (0.01)
+0.79 (0.01)
+0.59 (0.02)
+0.58 (0.01)
+0.44 (0.05)
+100% RoPE
+0.33 (0.01)
+0.59 (0.01)
+0.28 (0.02)
+0.60 (0.01)
+0.52 (0.01)
+0.77 (0.01)
+0.81 (0.01)
+0.62 (0.02)
+0.59 (0.01)
+0.49 (0.05)
+Table 4:
+Perplexity results for LAMBADA.
+We run evaluations through EleutherAI’s Language Model Evaluation Harness
+(
+Gao et al., 2023
+)
+under Zero-Shot setting.
+Config
+LAMBADA (OpenAI)
+LAMBADA (Standard)
+LAMBADA
+Llama-3.2-1B x FW-Edu x 2048
+0% RoPE (NoPE)
+26.72 (0.96)
+69.87 (2.90)
+48.30 (11.00)
+4% RoPE
+27.71 (1.00)
+68.78 (2.78)
+48.25 (10.48)
+10% RoPE
+23.25 (0.82)
+64.50 (2.63)
+43.87 (10.50)
+25% RoPE
+23.51 (0.83)
+64.78 (2.75)
+44.14 (10.52)
+50% RoPE
+23.89 (0.85)
+64.87 (2.75)
+44.38 (10.45)
+75% RoPE
+22.97 (0.81)
+76.38 (3.26)
+49.67 (13.56)
+100% RoPE
+22.99 (0.82)
+57.82 (2.35)
+40.41 (8.88)
+Llama-3.2-1B x FW x Seq. Len. 1024
+0% RoPE (NoPE)
+13.49 (0.41)
+31.95 (1.15)
+22.72 (4.70)
+4% RoPE
+13.41 (0.41)
+32.38 (1.17)
+22.90 (4.82)
+10% RoPE
+11.80 (0.36)
+25.88 (0.92)
+18.84 (3.59)
+25% RoPE
+12.35 (0.37)
+27.11 (0.94)
+19.73 (3.76)
+50% RoPE
+12.10 (0.37)
+25.64 (0.90)
+18.87 (3.45)
+75% RoPE
+12.35 (0.37)
+24.07 (0.83)
+18.21 (3.00)
+100% RoPE
+12.33 (0.37)
+26.86 (0.95)
+19.59 (3.70)
+Llama-3.2-1B x FW x Seq. Len. 2048
+0% RoPE (NoPE)
+14.90 (0.46)
+37.15 (1.38)
+26.03 (5.66)
+4% RoPE
+14.55 (0.45)
+36.95 (1.36)
+25.75 (5.69)
+10% RoPE
+12.86 (0.39)
+26.91 (0.94)
+19.89 (3.59)
+25% RoPE
+13.07 (0.40)
+29.79 (1.09)
+21.43 (4.26)
+50% RoPE
+12.96 (0.40)
+27.11 (0.97)
+20.03 (3.62)
+75% RoPE
+13.09 (0.40)
+30.93 (1.14)
+22.01 (4.54)
+100% RoPE
+12.78 (0.39)
+27.73 (0.98)
+20.26 (3.81)
+Llama-3.2-1B x FW x Seq. Len. 4096
+0% RoPE (NoPE)
+16.03 (0.51)
+43.96 (1.64)
+30.00 (7.09)
+4% RoPE
+16.61 (0.53)
+43.40 (1.63)
+30.01 (6.80)
+10% RoPE
+13.39 (0.41)
+30.37 (1.09)
+21.88 (4.33)
+25% RoPE
+13.48 (0.42)
+33.71 (1.24)
+23.60 (5.14)
+50% RoPE
+13.43 (0.41)
+30.68 (1.12)
+22.05 (4.40)
+75% RoPE
+13.22 (0.40)
+31.09 (1.14)
+22.16 (4.55)
+100% RoPE
+12.93 (0.40)
+27.90 (1.01)
+20.41 (3.82)
+Llama-3.2-1B x FW x Seq. Len. 8192
+0% RoPE (NoPE)
+79.69 (3.37)
+396.00 (20.03)
+237.85 (80.38)
+0% RoPE (NoPE) + QK-Norm
+19.09 (0.62)
+47.90 (1.85)
+33.49 (7.33)
+4% RoPE
+18.83 (0.61)
+49.06 (1.91)
+33.95 (7.69)
+10% RoPE
+14.39 (0.45)
+32.69 (1.20)
+23.54 (4.66)
+25% RoPE
+14.64 (0.46)
+38.92 (1.53)
+26.78 (6.18)
+50% RoPE
+14.15 (0.45)
+40.83 (1.57)
+27.49 (6.77)
+75% RoPE
+13.76 (0.43)
+32.29 (1.21)
+23.02 (4.72)
+100% RoPE
+13.55 (0.42)
+34.64 (1.31)
+24.10 (5.36)
+Pythia-1B x FW-Edu x Seq. Len. 2048
+0% RoPE (NoPE)
+340933.20 (25150.68)
+3717492.05 (300190.33)
+2029212.62 (870637.70)
+0% RoPE (NoPE) + QK-Norm
+51.74 (2.04)
+136.88 (5.85)
+94.31 (21.73)
+1% RoPE
+43.13 (1.69)
+144.46 (6.33)
+93.79 (25.75)
+10% RoPE
+33.49 (1.27)
+115.78 (5.06)
+74.64 (20.90)
+25% RoPE
+35.18 (1.34)
+140.81 (6.30)
+88.00 (26.80)
+50% RoPE
+33.35 (1.26)
+131.37 (5.78)
+82.36 (24.86)
+75% RoPE
+32.52 (1.23)
+114.03 (4.93)
+73.27 (20.69)
+100% RoPE
+32.88 (1.24)
+122.90 (5.35)
+77.89 (22.84)
+Llama-3.1-8B x FW x Seq. Len. 2048
+0% RoPE (NoPE)
+6.80 (0.18)
+11.01 (0.32)
+8.91 (1.09)
+10% RoPE
+6.42 (0.17)
+10.08 (0.29)
+8.25 (0.94)
+25% RoPE
+6.37 (0.16)
+9.66 (0.27)
+8.01 (0.85)
+50% RoPE
+6.18 (0.16)
+10.05 (0.29)
+8.12 (1.00)
+75% RoPE
+6.07 (0.15)
+9.34 (0.26)
+7.71 (0.85)
+100% RoPE
+6.11 (0.15)
+9.03 (0.25)
+7.57 (0.76)
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

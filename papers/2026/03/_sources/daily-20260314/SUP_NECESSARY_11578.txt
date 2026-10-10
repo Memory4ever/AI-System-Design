@@ -1,0 +1,2807 @@
+Streaming Translation and Transcription Through Speech-to-Text Causal Alignment
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Related Work
+2.1
+Cascaded Systems and Heuristic Policies
+2.2
+Adaptive and Learned Policies
+2.3
+Foundation Models and SiMT
+2.4
+Policy-Free Paradigm
+3
+Method
+3.1
+Architecture
+3.2
+Data
+3.2.1
+Preparation
+3.2.2
+Causal alignment
+3.2.3
+Sources
+3.3
+Training
+3.3.1
+Pre-training
+3.3.2
+Supervised fine-tuning
+3.4
+Inference
+4
+Results
+4.1
+Translation quality and latency
+4.2
+Quality-latency tradeoff
+4.3
+Streaming ASR performance
+5
+Ablations and other experiments
+5.1
+Effect of SFT
+5.2
+Effect of model size
+5.3
+Multitask learning and encoder grounding
+6
+Conclusions and Future Work
+References
+A
+Translation prompt
+B
+Causal Alignment and WAIT Token Interleaving
+C
+Extended Ablation Studies: Model Size and Encoder Variants
+C.1
+Scaling Performance with Hikari-small
+C.2
+Frozen Mimi Encoder
+C.3
+The Role of ASR for Translation Performance
+License: CC BY 4.0
+arXiv:2603.11578v1 [cs.CL] 12 Mar 2026
+Streaming Translation and Transcription
+Through Speech-to-Text Causal Alignment
+Roman Koshkin
+Affiliation:
+Department of Speech AI, SoftBank Intuitions, Tokyo, Japan
+Correspondence to:
+roman.koshkin@sbintutitions.co.jp
+Jeon Haesung
+Affiliation:
+Department of Speech AI, SoftBank Intuitions, Tokyo, Japan
+Lianbo Liu
+Affiliation:
+Department of Speech AI, SoftBank Intuitions, Tokyo, Japan
+Hao Shi
+Affiliation:
+Department of Speech AI, SoftBank Intuitions, Tokyo, Japan
+Mengjie Zhao
+Affiliation:
+Department of Speech AI, SoftBank Intuitions, Tokyo, Japan
+Yusuke Fujita
+Affiliation:
+Department of Speech AI, SoftBank Intuitions, Tokyo, Japan
+Yui Sudo
+Affiliation:
+Department of Speech AI, SoftBank Intuitions, Tokyo, Japan
+Abstract
+Simultaneous machine translation (SiMT) has traditionally relied on offline machine translation models coupled with human-engineered heuristics or learned policies. We propose Hikari, a policy-free, fully end-to-end model that performs simultaneous speech-to-text translation and streaming transcription by encoding READ/WRITE decisions into a probabilistic WAIT token mechanism. We also introduce Decoder Time Dilation, a mechanism that reduces autoregressive overhead and ensures a balanced training distribution. Additionally, we present a supervised fine-tuning strategy that trains the model to recover from delays, significantly improving the quality-latency trade-off. Evaluated on English-to-Japanese, German, and Russian, Hikari achieves new state-of-the-art BLEU scores in both low- and high-latency regimes, outperforming recent baselines.
+Keywords:
+streaming, machine translation ICML
+1
+Introduction
+Simultaneous translation has emerged to meet the need for uninterrupted, almost real-time translation. A good simultaneous translation must not only be accurate and complete, but also not lag unacceptably far behind the original message. This requires simultaneous translators (or more commonly called interpreters) to strategically decide whether to translate what has been said so far – often making assumptions about the speaker’s intended message – or delay translation until more information is revealed by later context
+(
+Ilyukhin, 2001
+;
+Chernov, 2004
+;
+Setton, 2005
+;
+Amos et al., 2022
+)
+.
+Figure 1:
+The challenge and reality of simultaneous translation. (Top) Conceptual illustration of syntactic divergence between English (SVO) and Japanese (SOV); the translator must ”hold” the main verb ”met” until the end of the Japanese sentence. (Bottom) Actual inference timeline, showing how Hikari-medium has learned the strategic patience required for syntactically divergent languages. Horizontal segments represent the model waiting for context (READING, i.e. emitting
+WAIT
+tokens not shown for clarity), while the steep ”steps” are rapid token emission (WRITING) once semantic ambiguity is resolved.
+This decision-making is especially challenging for syntactically divergent language pairs such as English and Japanese. English provides the principal subject and verb early (SVO), whereas Japanese, a head-final (SOV) language, requires these elements – along with complex relative clauses – to be restructured. As illustrated in Fig.
+1
+(top), when translating the sentence “I met the man who was wearing a red hat and carrying a blue suitcase,” the translator (human or machine) must remember/buffer the core components (the subject and the main verb “met”) for several seconds while it processes the long English descriptive clause. The Japanese output cannot be safely committed until the entire qualifying phrase (“red hat wearing, blue suitcase carrying”) has been heard, resulting in an inherent temporal lag.
+The machine translation research community has attempted to model this decision-making process either with learned READ/WRITE
+1
+1
+1
+where “READ” and “WRITE” refer to ingesting more input audio and committing partial translation, respectively.
+policies or human-crafted heuristics, designed to break input audio (or text in case of a cascaded system) along some sensible semantic or syntactic boundaries, and feed each chunk into another, usually pre-trained, machine translation (MT) model.
+In a departure from those approaches, our proposed model, which we call
+Hikari
+, follows a policy-free approach, where READ and WRITE actions are encoded in the probability distribution of the next token. If the model is uncertain, the probability of a text token drops, and the probability of a special
+WAIT
+token rises. This unifies the “what” (translation) and the “when” (policy) into a single probabilistic framework. Thus, Hikari jointly learns an audio-conditioned language model and an implicit READ/WRITE policy.
+Our contributions are summarized as follows:
+•
+We propose a unified speech-to-text framework that jointly learns translation and transcription without external READ/WRITE policies.
+•
+We introduce Decoder Time Dilation, a mechanism that addresses the dominance of
+WAIT
+tokens in training data by increasing the decoder’s effective step size relative to the audio.
+•
+We develop a fine-tuning method that trains the model to actively minimize lag and recover from latency drift during inference.
+•
+Our model establishes new SOTA in English-to-Japanese, German, and Russian simultaneous translation of long-form speech, outperforming current baselines in both low- and high-latency scenarios.
+•
+We provide open access to our model weights and codebase to foster reproducibility and research in streaming sequence modeling.
+2
+Related Work
+2.1
+Cascaded Systems and Heuristic Policies
+Traditionally, simultaneous speech-to-text translation (SiMT) has relied on cascaded architectures where an offline
+2
+2
+2
+Offline MT models translate after processing the full input, rather than incrementally.
+machine translation (MT) model (e.g. mBART
+(
+Liu et al., 2020b
+)
+, originally developed for sentence-level translation) is paired with human-engineered heuristics. Early efforts frequently utilized fixed policies such as “wait-k”
+(
+Ma et al., 2019
+)
+or “wait-if”
+(
+Cho and Esipova, 2016
+)
+. However, these policies struggle, especially with syntactically divergent language pairs. If a critical verb appears at the end of a German sentence (SOV structure in subordinate clauses), a
+wait-k
+model with a small
+k
+k
+is forced to hallucinate the verb to satisfy the policy, resulting in catastrophic quality loss. Conversely, a large
+k
+k
+incurs unacceptable latency.
+2.2
+Adaptive and Learned Policies
+To address the rigidity of heuristics, subsequent research introduced learned policies
+(
+Alinejad et al., 2018
+;
+Satija and Pineau, 2016
+;
+Grissom II et al., 2014
+;
+Gu et al., 2017
+)
+, attention-based methods
+(
+Ma et al., 2020b
+;
+Papi et al., 2023b
+;
+Papi et al., 2023a
+;
+Arivazhagan et al., 2019
+;
+Raffel et al., 2017
+;
+Chiu and Raffel, 2018
+)
+, binary search strategies
+(
+Guo et al., 2023
+)
+, and approaches leveraging the stability of output predictions through “local agreement”
+(
+Polák et al., 2022
+;
+Ko et al., 2023
+;
+Liu et al., 2020a
+)
+. While more adaptive, these methods either introduce architectural complexities or involve training a “controller” that is disconnected from the rich semantic world of the translator.
+Figure 2:
+High-level overview of the model architecture.
+2.3
+Foundation Models and SiMT
+Recent advancements have increasingly utilized large-scale foundation models, such as Qwen
+(
+Qwen et al., 2025
+)
+, Gemma 3
+(
+Team, 2025
+)
+, Llama 2
+(
+Touvron et al., 2023
+)
+and NLLB
+(
+Team, 2024
+)
+in both cascaded and end-to-end frameworks. Systems like BeaverTalk
+(
+Raffel et al., 2025
+)
+employ conversational prompting with memory banks, while InfiniSST
+(
+Ouyang et al., 2025b
+)
+and the NAIST 2025 system
+(
+Tan et al., 2025
+)
+use chunk-wise causal encoders or external segmentation tactics like SHAS
+(
+Tsiamas et al., 2022
+)
+. Despite their power, these models often still depend on modular components (e.g. a separate VAD model as in
+Macháček and Polák (2025)
+and
+Shan et al. (2024)
+) to manage the decision of when to emit text, which can complicate inference on unbounded speech streams.
+2.4
+Policy-Free Paradigm
+In a notable departure from these modular designs, later works
+(
+Koshkin et al., 2024
+)
+attempted to encapsulate the READ/WRITE supervision directly into the training data made through “causal alignment”. Their cascaded SiMT system, an LLM was fine-tuned to be both the translator and READ/WRITE policy.
+Hikari follows this design philosophy by building on the “causal alignment” technique and extending it to the speech-to-text domain to build a policy-free, fully end-to-end SiMT architecture. As illustrated in Figure
+1
+, the model strategically pauses for nearly two seconds while ingesting a complex English relative clause, only to “burst” the corresponding Japanese translation the moment the head noun (“hat’) provides semantic closure. Hikari also introduces
+Decoder Time Dilation
+to solve the overrepresentation of filler tokens – a known problem in alignment-based streaming systems
+(
+Labiausse et al., 2025
+)
+.
+3
+Method
+3.1
+Architecture
+Our architecture (Fig.
+2
+) is based on the Whisper encoder-decoder Transformer
+Radford et al. (2023)
+. While the original Whisper model is designed for
+offline
+processing – requiring the entire 30 s audio window to be encoded
+before
+generation – we introduce three critical modifications to enable native, policy-free SiMT. First, we encapsulate the READ/WRITE decision-making process into the model’s vocabulary by introducing a special
+WAIT
+token. In this framework, the emission of
+WAIT
+represents a READ action, while the emission of any text token represents a WRITE action. The decoder therefore generates a sequence of READ/WRITE actions that are
+temporally synchronized
+with the encoder. Second, to support incremental audio ingestion, we apply a standard lower-triangular causal mask to all encoder self-attention blocks. Third, to enforce strict temporal monotonicity and prevent the decoder from attending to the encoder’s future keys during training, we apply a dilated causal mask to the cross-attention.
+Decoder time dilation.
+As in the original Whisper model, the input waveform (mono, sampled at 16000 Hz, with a maximum duration of 30 s) is transformed into a log-mel spectrogram with 80-dimensional feature vectors, each capturing 10 ms of input audio. The spectrogram is temporally downsampled by a factor of 2 by the convolutional layers to 1500 audio embeddings which are fed into the encoder.
+Figure 3:
+Choosing the optimal value of decoder time dilation (
+D
+D
+). Left panel: percentage of wait tokens in a 30 s en-ja sample as a function of
+D
+∈
+{
+1
+,
+4
+,
+6
+,
+10
+}
+D\in\{1,4,6,10\}
+. Lower
+D
+D
+improves precision of causal alignment, but also (undesirably) increases the dominance of
+WAIT
+tokens in the training data. Right panel: with too high a value of
+D
+D
+(e.g. 6 and 10), target tokens corresponding to 30 s of input audio might not fully fit into the decoder’s context (shown by dashed vertical lines for
+D
+∈
+{
+1
+,
+4
+,
+6
+,
+10
+}
+D\in\{1,4,6,10\}
+.
+Figure 4:
+Real-time factor (RTF) as a function of decoder time dilation (
+D
+D
+) on a single A100 or H100 GPU. The plot compares Hikari-medium across varying batch sizes (
+B
+∈
+{
+1
+,
+10
+,
+20
+}
+B\in\{1,10,20\}
+). The dashed blue line indicates the real-time threshold (RTF
+=
+1.0
+=1.0
+); values below this line indicate generation speed faster than the input audio stream.
+While the original Whisper model generates output tokens autoregressively based on the
+entire
+30 s window, our model should generate a new token for each new
+D
+D
+audio embeddings. We could simply set
+D
+=
+1
+D=1
+, but in that case about 90% (Figure
+3
+) of the tokens that the decoder is expected to generate would be
+WAIT
+tokens
+3
+3
+3
+Since
+WAIT
+doesn’t exist in Whisper’s tokenizer, we use token 93, corresponding to the tilde character (“
+∼
+\sim
+”) that never occurs in our training set, as
+WAIT
+.
+, often appearing in long sequences uninterrupted by non-wait tokens. We found such an imbalance (with
+D
+∈
+{
+1
+,
+2
+}
+D\in\{1,2\}
+) to cause the model to excessively generate those
+WAIT
+tokens at inference. One way to address this is either to penalize the loss on the
+WAIT
+token at training or reduce the log-likelihood of the corresponding token at inference. However, a better strategy is to “dilate” decoder time by choosing a greater value of
+D
+D
+. This reduces the output token rate, the frequency of
+WAIT
+, as well as the number of forward passes through the decoder corresponding to a 30 s of input audio. Valid choices of
+D
+D
+range between 1 and approximately 4 (Fig.
+3
+). Setting a larger value of
+D
+D
+would increase the length of audio corresponding to one decoder token (e.g. with
+D
+=
+10
+D=10
+one output token would correspond to 200 ms of speech), not only reducing the temporal precision of causal alignment, but also (and most importantly), making it impossible for all the target tokens to always fit into the decoder’s context window at high rates of speech (in WPM). With
+D
+=
+4
+D=4
+, all the tokens always fully fit in the decoder’s context (Fig.
+3
+), ensuring a good tradeoff between, on the one hand, the granularity of causal alignment, and proportion of
+WAIT
+tokens in the training set and the whole model’s real-time factor (RTF) (Fig.
+4
+), on the other. Furthermore, we analyze the model’s throughput under batched conditions (Fig.
+4
+), which is critical for scalable deployment. Hikari-medium requires
+D
+≥
+4
+D\geq 4
+to support batch sizes up to 10 on a single H100 GPU in real time. At
+D
+<
+4
+D<4
+, the computational cost of the autoregressive decoder makes high-concurrency serving impractical (RTF
+>
+1.0
+>1.0
+), and therefore, we report our results obtained with
+D
+=
+4
+D=4
+. Thus, the cross-attention mask is as follows:
+M
+m
+,
+n
+=
+{
+0
+if
+n
+≤
+4
+​
+(
+m
+−
+1
+)
+−
+∞
+otherwise
+M_{m,n}=\begin{cases}0&if $n\leq 4(m-1)$\\
+-\infty&otherwise\end{cases}
+where the decoder’s queries and encoder’s keys are indexed by
+m
+∈
+{
+1
+,
+…
+,
+375
+}
+m\in\{1,\dots,375\}
+and
+n
+∈
+{
+1
+,
+…
+,
+1500
+}
+n\in\{1,\dots,1500\}
+, respectively.
+Our use of a fixed decoder time dilation factor follows a somewhat similar philosophy to fixed-ratio multimodal synchronization seen in recent unified models like MinMo
+(
+Chen et al., 2025
+)
+.
+3.2
+Data
+Ideally, Hikari would be trained on authentic audio recordings paired with professional simultaneous interpretations. However, such corpora are rare and mostly limited to bureaucratic and diplomatic discourse in official UN languages
+4
+4
+4
+Arabic, Chinese, English, French, Russian, and Spanish
+, which might not generalize to spontaneous speech or other domains. Instead, we developed a pipeline to generate synthetic training data, establishing temporal correspondences between source audio and target translations through the causal alignment process detailed below.
+3.2.1
+Preparation
+Briefly, the data preparation pipeline involves the following three steps. First, we use Faster Whisper
+5
+5
+5
+https://github.com/SYSTRAN/faster-whisper
+to obtain transcripts with word-level timestamps of the input audio, such that each word and its immediately following punctuation character (if any) has its own start and end timestamp. Second, we split the transcript into sentences, and translate them one by one with an LLM. To ensure the translation consistency, the LLM is prompted to take into account the context of 4 previous sentences (see Appendix
+A
+for the full prompt template). Third, for each source and its corresponding target sentence, we perform the causal alignment procedure
+(
+Koshkin et al., 2024
+)
+which consists in establishing correspondences between the source and target words
+6
+6
+6
+For Japanese targets we use the
+janome
+package to split the translation into word-like character strings.
+based on the similarity of source and target word embeddings
+(
+Jalili Sabet et al., 2020
+)
+.
+3.2.2
+Causal alignment
+Let the transcript of one source sentence be represented as a sequence of
+M
+M
+words
+X
+=
+(
+x
+1
+,
+x
+2
+,
+…
+,
+x
+M
+)
+X=(x_{1},x_{2},\dots,x_{M})
+, where each word
+x
+i
+x_{i}
+is associated with a time interval
+[
+s
+i
+,
+e
+i
+]
+[s_{i},e_{i}]
+obtained via word-level timestamps. Here,
+s
+i
+s_{i}
+and
+e
+i
+e_{i}
+denote the start and end times of the word in milliseconds, respectively. Using a word embedding-based alignment model
+(
+Jalili Sabet et al., 2020
+)
+, we establish a correspondence mapping
+f
+:
+{
+1
+,
+…
+,
+N
+}
+→
+{
+1
+,
+…
+,
+M
+}
+∪
+{
+∅
+}
+f:\{1,\dots,N\}\to\{1,\dots,M\}\cup\{\emptyset\}
+between the target words
+Y
+=
+(
+y
+1
+,
+y
+2
+,
+…
+,
+y
+N
+)
+Y=(y_{1},y_{2},\dots,y_{N})
+and the source words
+X
+X
+. For any target word
+y
+j
+y_{j}
+,
+f
+⁡
+(
+j
+)
+=
+i
+f(j)=i
+indicates that
+y
+j
+y_{j}
+is the translation of source word
+x
+i
+x_{i}
+. To ensure the model is truly simultaneous, we define a target release time
+t
+⁡
+(
+y
+j
+)
+t(y_{j})
+for each target word. The source and target words are considered causally aligned if:
+t
+⁡
+(
+y
+j
+)
+≥
+e
+f
+⁡
+(
+j
+)
++
+δ
+t(y_{j})\geq e_{f(j)}+\delta
+where
+e
+f
+⁡
+(
+j
+)
+e_{f(j)}
+is the end timestamp of the corresponding source word
+x
+i
+x_{i}
+and
+δ
+\delta
+is a stochastic delay
+δ
+∼
+𝒰
+⁡
+(
+0,200
+)
+\delta\sim\mathcal{U}(0,200)
+ms, sampled independently for each word to help reduce overfitting. The target token sequence
+L
+L
+is constructed by interleaving the original tokenized target words
+y
+j
+y_{j}
+with a special
+WAIT
+token. The number of
+WAIT
+tokens inserted before
+y
+j
+y_{j}
+is the minimum required such that the “logical time” of each output token matches the physical arrival of the audio information. Target words lacking a direct alignment (
+f
+⁡
+(
+j
+)
+=
+∅
+f(j)=\emptyset
+) are temporally shifted to occur immediately after the last aligned token. This deferral preserves original word order while ensuring causality is never violated. The formal logic for this synchronization is detailed in Algorithm
+1
+(see Appendix
+B
+). Note that for streaming ASR no causal alignment and translation are needed, and the target tokens represent the tokenized source transcript with
+WAIT
+tokens inserted according to the corresponding words’ timestamps.
+Table 1:
+Training data
+Name
+Hrs
+Description
+MLS
+13K
+10–20s chunks, audiobooks.
+CC-BY
+CV2
+0.2K
+∼
+\sim
+5s phrases, noisy/accented.
+CC-BY
+HQ Podcasts
+3.5K
+High-quality podcasts (
+∼
+\sim
+1.5 hrs each).
+In-house
+PodCrawl
+45.6K
+Crawled podcasts (
+∼
+\sim
+1.5 hrs each).
+In-house
+Total
+62.3K
+3.2.3
+Sources
+Our training set comprises 62.3K hours of public and in-house data (see Table
+1
+for details). While our primary focus was streaming translation of long-form audio, we deliberately included CommonVoice 2 (CV2)
+(
+Ardila et al., 2020
+)
+and Multilingual LibriSpeech (MLS)
+(
+Pratap et al., 2020
+)
+– short-form datasets that offer diverse accents, speaking styles, and noise conditions, enhancing the model’s robustness. Each audio is translated into German, Japanese and Russian. Thus, we train the model for 4 tasks simultaneously – 3 translation tasks (en-de, en-ja and en-ru) and 1 transcription (ASR) – which are sampled uniformly during training. At training, if the sampled audio is longer than 30 s (as is the case for podcasts), instead of loading the entire audio, the dataloader returns a random section of it with the tokenized target text corresponding to that chunk. If the whole audio is shorter than 30 s, it is padded on the right with
+WAIT
+to fully fill the decoder’s context window. If the sampled section of audio contains less than 4 words (e.g. music, silence or noise), the dataloader samples another until there are 4 or more words in the audio. The tokenized text is prepended with 4 special tokens:
+<|startoftranscript|>
+, taget language marker (either
+<|en|>
+,
+<|ja|>
+,
+<|ru|>
+or
+<|de|>
+), task marker (either
+<|transcribe|>
+or
+<|translate|>
+and finally the
+<|notimestamps|>
+special token. Thus, assuming
+D
+=
+4
+D=4
+, to generate the first token, the decoder attends to the past 12 audio embeddings (240 ms of audio, see the cross-attention mask in Fig.
+6
+).
+Table 2:
+Evaluation data
+Name
+Hrs
+Description
+PodCrawl-eval
+100
+Crawled podcasts (
+∼
+1.5
+\sim 1.5
+h on average).
+In-house
+HQ Podcasts-eval
+100
+High-quality podcasts (
+∼
+1.5
+\sim 1.5
+h on average).
+In-house
+.
+IWSLT25 Instruct
+2
+Thickly accented, terminologically dense, long-form monologues (
+∼
+5.5
+\sim 5.5
+min on average).
+CC-BY
+3.3
+Training
+3.3.1
+Pre-training
+We initialize both the encoder and decoder from
+whisper-medium
+7
+7
+7
+https://huggingface.co/openai/whisper-medium
+. Although not strictly necessary, our experiments show that such initialization greatly accelerates convergence even though the encoder’s self-attention and the cross-attention become causal. We pre-train the model with AdamW
+(
+Loshchilov and Hutter, 2019
+)
+on 96 H100 GPUs with a per-device batch size of 128 (which approximately corresponds to 102 h of audio) for a total of 35K steps, out of which 100 steps are a linear warmup to a peak learning rate of
+0.00004
+0.00004
+followed by a linear decay to zero. Also we use gradient accumulation over 2 steps and set the gradient clipping hyperparameter to 1.0.
+3.3.2
+Supervised fine-tuning
+While the model is functional immediately after pre-training, it occasionally exhibits a tendency to over-generate consecutive
+WAIT
+tokens. These unnatural pauses not only increase translation latency but can also push the decoder state out of distribution, leading to generation failures. To mitigate this, we fine-tune the model on specially constructed samples that simulate recovery from high-latency scenarios. In those samples, the delay to be recovered from is introduced via a two-step process. First, a pivot index
+s
+s
+​
+t
+​
+a
+​
+r
+​
+t
+s_{start}
+is sampled from
+𝒰
+⁡
+(
+4
+,
+N
+)
+\mathcal{U}(4,N)
+, where
+N
+N
+is decoder’s context length. Second, letting
+W
+r
+​
+i
+​
+g
+​
+h
+​
+t
+W_{right}
+be the count of
+WAIT
+tokens in the segment
+y
+[
+s
+s
+​
+t
+​
+a
+​
+r
+​
+t
+:
+]
+y[s_{start}:]
+, a displacement
+Δ
+​
+s
+∼
+𝒰
+⁡
+(
+1
+,
+W
+r
+​
+i
+​
+g
+​
+h
+​
+t
+−
+1
+)
+\Delta s\sim\mathcal{U}(1,W_{right}-1)
+is selected. Content tokens following the pivot are deferred by
+Δ
+​
+s
+\Delta s
+positions, effectively accumulating
+WAIT
+tokens to force the model to learn rapid ”burst” recovery. Figure
+5
+illustrates this process, showing how tokens A, B, C, and D are delayed in a sample sequence. Crucially, we mask the loss for the artificially inserted
+WAIT
+tokens and all preceding history. This ensures the model does not learn to imitate this delayed behavior but is instead optimized to “catch up”. This training phase uses a mixture of original, i.e. same as during pre-training, (70%) and SFT (30%) samples to maintain general translation capability while reducing latency.
+Figure 5:
+Construction of an SFT sample. The shaded transparent box indicates the chosen tokens to be delayed. The red rectangles illustrate the tokens for which cross-entropy is calculated. Orange and green squares are non-wait and
+WAIT
+tokens, respectively.
+After the pre-training stage, we fine-tune the model for 2000 steps with the same per-device batch size and warm-up schedule as in pre-training, followed by a constant learning rate of 0.00004.
+3.4
+Inference
+At inference we use a fixed-size sliding window. For the audio encoder, we process input in 80 ms (
+20
+​
+ms
+×
+D
+20\text{ ms}\times D
+) increments. At each step, the new audio chunk is appended to the buffer; if the total duration is less than 30 s, the input is padded to 30 s. Once the buffer exceeds 30 s, we maintain a rolling window by discarding the oldest audio chunk before appending the new one, ensuring the encoder always receives exactly 30 s of context.
+A similar sliding window is applied to the decoder. We use greedy decoding. Generation begins with 4 prompt tokens. As new tokens are generated, they are appended to the context until the sequence reaches a maximum length of 375 tokens. Beyond this limit, for every new token generated, the earliest non-prompt token (i.e., the fifth token in the sequence) is removed. This preserves the initial prompt while keeping the decoder’s context window bounded.
+4
+Results
+Table 3:
+Consolidated translation performance across IWSLT25Instruct and HQ Podcasts datasets. We report BLEU and StreamLAAL (computationally aware values in parentheses) for the best Hikari-medium checkpoint (Pre-trained + SFT). Baselines for en-ja and en-de are drawn from the IWSLT 2025 evaluation campaign report. Note: Seamless results are provided for completeness but are italicized where the model exceeded the strict latency upper bound of the High Latency (HL) regime. “–” indicates no submission; “N/A” indicates the metric was not reported.
+†
+†
+nicematrix-placeholder:
+NiceTabular* (nicematrix)
+4.1
+Translation quality and latency
+We evaluate our model in both low- (LL) and high-latency (HL) regimes against the most recent baselines from the IWSLT 2025 speech-to-text simultaneous track, and we use the IWSLT25Instruct
+8
+8
+8
+https://iwslt.org/2025/simultaneous
+as the test set. The results for CUNI
+(
+Macháček and Polák, 2025
+)
+, CMU
+(
+Ouyang et al., 2025a
+)
+, NAIST
+(
+Tan et al., 2025
+)
+, OSU
+(
+Raffel et al., 2025
+)
+and UPV
+(
+Iranzo-Sánchez et al., 2025
+)
+presented in Tables
+3
+are taken directly from the campaign’s summary report
+(
+Abdulmumin et al., 2025
+)
+. The definitions of LL and HL for en-ja and en-de are the same as in
+Abdulmumin et al. (2025)
+, specifically: LL refers to 0–2 s for en-de (0–3.5 s for en-ja) and HL is 2–4s for en-de (3.5–5 s for en-ja). For en-ru, LL and HL are defined here as 0–2 and 2–5 s, respectively. We additionally evaluate our model’s performance on held-out subsets of HQ Podcasts.
+Translation quality is reported in units of BLEU
+(
+Papineni et al., 2002
+)
+, and for latency we chose streaming length-adaptive average lagging (StreamLAAL)
+(
+Papi et al., 2024
+)
+and its computationally-aware (CA) version which not only takes into account how much the target lags behind the source, but also the hardware delay. Table
+2
+provides a summary of evaluation data. All performance metrics were obtained using the SimulEval
+(
+Ma et al., 2020a
+)
+package
+9
+9
+9
+https://github.com/facebookresearch/SimulEval
+.
+4.2
+Quality-latency tradeoff
+Figure 6:
+Quality-latency tradeoff. Note how SFT shifts the Pareto frontier towards smaller latencies. Expected latencies are obtained by forcing the model to output the reference (“oracle”) tokens.
+In simultaneous translation, there is an intrinsic tradeoff between quality and latency
+(
+Bangalore et al., 2012
+)
+: delaying output allows the model to capture more context and improve accuracy, while emitting tokens early reduces latency at the cost of potential errors.
+Although Hikari does not rely on explicit policies (e.g., wait-k) to control this behavior, we can probe its latency response through inference-time logit biasing. By applying varying penalties to the
+WAIT
+token, we can modulate the model’s threshold for emitting text, forcing it to generate translation earlier or allowing it to buffer more audio. As evidenced by the shift in the quality-latency curves (Fig.
+6
+), the SFT model achieves an overall better trade-off profile, maintaining comparable BLEU scores with latencies generally lower than the base model.
+Table 4:
+Streaming ASR performance (WER %). Results for whisper-medium.en, whisper-large-v3, Parakeet and DSM-ASR are reproduced from Table 2 of
+Zeghidour et al. (2025)
+.
+Model
+TED-LIUM
+↓
+\downarrow
+Rev16
+↓
+\downarrow
+Meanwhile
+↓
+\downarrow
+Earnings21
+↓
+\downarrow
+whisper-medium.en
+3.9
+6.7
+13.0
+12.5
+whisper-large-v3
+8.1
+11.4
+6.1
+11.4
+Parakeet-0.6B-TDT-v2
+3.7
+11.0
+5.0
+11.3
+DSM-ASR
+2.9
+12.3
+5.7
+10.6
+Ours
+8.6
+19.9
+16.2
+54.1
+4.3
+Streaming ASR performance
+While the primary design objective of Hikari is simultaneous translation, we evaluate its capability as a streaming ASR system to get a sense of what this fully causal architecture is capable of after training on a relatively modest amount of data. Table
+4
+compares our model against widely adopted streaming baselines, including Whisper-large-v3, Parakeet-0.6B
+(
+Xu et al., 2023
+)
+, and the recent DSM-ASR
+(
+Zeghidour et al., 2025
+)
+on 4 benchmarks: TED-LIUM
+(
+Hernandez et al., 2018
+)
+, Meanwhile
+(
+Radford et al., 2023
+)
+, Earnings21
+(
+Del Rio et al., 2021
+)
+and Rev16
+(
+Radford et al., 2023
+)
+.
+It is important to contextualize these results within the training constraints. State-of-the-art ASR systems are typically trained on massive datasets (e.g., 680k hours for Whisper, and over 1M hours for DSM-ASR); in contrast, Hikari was trained on approximately 62k hours – more than an order of magnitude less data – with ASR treated only as an auxiliary task. Despite this data disparity, Hikari still demonstrates competence on clean low-noise audio with a WER of 8.6% on TED-LIUM.
+A performance gap remains on domain-specific and noisy datasets such as Earnings21 (54.1%). We attribute this primarily to the domain mismatch between our training distribution (predominantly podcasts and audiobooks, see Table
+1
+) and the specialized terminology found in these evaluation sets. Unlike the baselines, which likely observed significant amounts of similar data during pre-training, our model operates in a near zero-shot capacity for these domains. The stark contrast between performance on clean and challenging out-of-distribution data suggests that the architecture itself is sound, and the remaining gap is a data scaling issue rather than a fundamental limitation of the policy-free approach.
+Table 5:
+Effect of SFT on translation quality and latency. StreamLAAL CA is shown in brackets. Best BLEU scores are shown for StreamLAAL under 4 s. Average difference represents the mean change in BLEU and StreamLAAL across evaluated latency regimes.
+Dataset
+Model
+en-ja
+en-de
+en-ru
+BLEU
+↑
+\uparrow
+StreamLAAL
+↓
+\downarrow
+BLEU
+↑
+\uparrow
+StreamLAAL
+↓
+\downarrow
+BLEU
+↑
+\uparrow
+StreamLAAL
+↓
+\downarrow
+HQ Podcasts
+medium base
+50.43
+3.19 (3.37)
+44.22
+2.96 (3.39)
+40.06
+2.64 (3.07)
+medium +SFT
+49.10
+2.20 (2.38)
+35.74
+2.08 (2.52)
+40.12
+1.55 (1.98)
+avg. difference
+-1.62
+-1.59 (-1.60)
+-7.01
+-0.69 (-0.66)
+-2.23
+-0.42 (-0.41)
+IWSLT25Instruct
+medium base
+42.00
+3.84 (4.01)
+36.61
+2.93 (3.38)
+29.49
+2.51 (2.98)
+medium +SFT
+42.17
+2.97 (3.13)
+31.56
+2.30 (2.84)
+28.86
+2.14 (2.62)
+avg. difference
+-4.05
+-2.26 (-2.29)
+-10.71
+-0.71 (-0.57)
+-2.31
+-0.50 (-0.51)
+5
+Ablations and other experiments
+5.1
+Effect of SFT
+We observe that the base model exhibits systematic latency drift, consistently exceeding the theoretical latency floor (indicated by dashed vertical lines in Figure
+6
+). This behavior typically arises when the model generates extended sequences of
+WAIT
+tokens during periods of silence or ambiguity. These unnaturally long pauses push the decoder into an out-of-distribution state, frequently causing it to become “stuck” in a generation loop or fail to resynchronize with the source audio once the input resumes.
+While penalizing the
+WAIT
+token logits at inference can force lower latency, this naive approach often degrades translation quality by truncating necessary context. In contrast, our SFT strategy (Section
+3.3.2
+) explicitly trains the model to recover from induced delays. As illustrated in Figure
+6
+, SFT effectively shifts the quality-latency Pareto frontier to the left (compare thick vs. thin curves), enabling the model to “catch up” to the source with little or no loss of quality. Table
+5
+quantifies this impact, showing that SFT yields an approximate 1-second reduction in StreamLAAL across most tasks while maintaining BLEU parity with the base model.
+Figure
+1
+provides a real example of how Hikari efficiently recovers from delays. Note how the final burst (from 9.2s onwards) completes a sequence of 10+ Japanese tokens in under a second. This demonstrates that the SFT “catch-up” training enables the model to reduce accumulated lag without sacrificing the syntactic integrity of the target language.
+5.2
+Effect of model size
+To evaluate the impact of parameter scale, we trained Hikari-small, initialized from Whisper-small. As summarized in Table
+6
+(see Appendix
+C
+), the smaller variant proved significantly less robust than the medium model, suffering from both lower peak BLEU scores and poor latency control. This suggests that the ”policy-free” paradigm benefits from larger model capacity to simultaneously manage translation fidelity and causal alignment.
+Additionally, we experimented with a variant using a frozen Mimi
+(
+Défossez et al., 2024
+)
+speech encoder (
+∼
+\sim
+39M parameters). Preliminary results indicate a notable performance gap compared to our medium-sized model, likely due to the reduced capacity and frozen state of the encoder. Detailed metrics and a comparative analysis of these architectures are provided in Appendix
+C
+.
+5.3
+Multitask learning and encoder grounding
+We investigated the impact of the auxiliary ASR task by training a variant of Hikari-medium exclusively on translation objectives. As shown in Table
+8
+(Appendix
+C
+), removing ASR supervision led to a significant degradation in both BLEU scores and latency across all language pairs. These results suggest that ASR provides essential acoustic grounding for the causal encoder, preventing representation drift and facilitating the precise, low-latency alignment needed for simultaneous translation. Further details and the full ablation table are provided in Appendix
+C
+.
+6
+Conclusions and Future Work
+There are a few ways in which Hikari could be improved or extended. First, our ablations indicate a significant performance gap between the small and medium models. Future research could explore scaling Hikari to larger architectures (to the scale of Whisper-large and beyond) to push the limits of translation quality. Thankfully, given its current RTF, this size increase will still allow Hikari to work faster than real time even without any performance optimization tricks. Second, Hikari currently utilizes a fixed dilation factor (
+D
+=
+4
+D=4
+). While it already provides a good balance between alignment precision and token density, a dynamic dilation mechanism that adjusts the generation rate based on real-time speech density could further improve the quality-latency tradeoff. Third, besides logit manipulation of the
+WAIT
+token at inference, there are other, potentially better, ways to control latency – e.g. through speculative decoding, or controlling the latency regime via a special token during generation. Fourth, the current Hikari model could be used as the backbone in a streaming speech-to-speech translation model (e.g. via continued training with an RQ-transformer
+(
+Lee et al., 2022
+)
+, similarly to
+Zeghidour et al. (2025)
+. Finally, our training set was dominated by podcasts, and the inclusion of more challenging/noisy data, covering a wider range of domains, could further boost Hikari’s streaming ASR and translation performance.
+Impact Statement
+This paper advances the field of Machine Learning by introducing a policy-free, end-to-end framework for simultaneous speech-to-text translation and transcription. By establishing an implicit READ/WRITE policy directly from causally aligned audio-text pairs, our approach eliminates the need for complex human-engineered heuristics or external decision-making modules. We anticipate this technology will significantly facilitate real-time cross-lingual communication at international conferences and in education. In support of open science, we release our inference code and model weights to the research community. At the same time, we encourage practitioners to remain mindful of risks regarding data privacy and potential algorithmic biases that may be learned from the large-scale datasets used for training.
+References
+Abdulmumin
+et al.
+(2025)
+I. Abdulmumin, V. Agostinelli, T. Alumäe, A. Anastasopoulos, L. Bentivogli, O. Bojar, C. Borg, F. Bougares, R. Cattoni, M. Cettolo, L. Chen, W. Chen, R. Dabre, Y. Estève, M. Federico, M. Fishel, M. Gaido, D. Javorský, M. Kasztelnik, F. Kponou, M. Krubiński, T. Kin Lam, D. Liu, E. Matusov, C. Kumar Maurya, J. P. McCrae, S. Mdhaffar, Y. Moslem, K. Murray, S. Nakamura, M. Negri, J. Niehues, A. Kr. Ojha, J. E. Ortega, S. Papi, P. Pecina, P. Polák, P. Połeć, A. Sankar, B. Savoldi, N. Sethiya, C. Sikasote, M. Sperber, S. Stüker, K. Sudoh, B. Thompson, M. Turchi, A. Waibel, P. Wilken, R. Zevallos, V. Zouhar, and M. Züfle
+Findings of the IWSLT 2025 evaluation campaign
+.
+In
+Proceedings of the 22nd International Conference on Spoken Language Translation (IWSLT 2025)
+,
+E. Salesky, M. Federico, and A. Anastasopoulos (Eds.)
+,
+Vienna, Austria (in-person and online)
+,
+pp. 412–481
+.
+External Links:
+Link
+,
+Document
+,
+ISBN 979-8-89176-272-5
+Cited by:
+§4.1
+.
+Alinejad
+et al.
+(2018)
+A. Alinejad, M. Siahbani, and A. Sarkar
+Prediction improves simultaneous neural machine translation
+.
+In
+Proceedings of the 2018 Conference on Empirical Methods in Natural Language Processing
+,
+Brussels, Belgium
+,
+pp. 3022–3027
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§2.2
+.
+Amos
+et al.
+(2022)
+R. M. Amos, K. G. Seeber, and M. J. Pickering
+Prediction during simultaneous interpreting: evidence from the visual-world paradigm
+.
+Cognition
+220
+,
+pp. 104987
+.
+External Links:
+ISSN 0010-0277
+,
+Document
+,
+Link
+Cited by:
+§1
+.
+Ardila
+et al.
+(2020)
+R. Ardila, M. Branson, K. Davis, M. Henretty, M. Kohler, J. Meyer, R. Morais, L. Saunders, F. M. Tyers, and G. Weber
+Common voice: a massively-multilingual speech corpus
+.
+External Links:
+1912.06670
+,
+Link
+Cited by:
+§3.2.3
+.
+Arivazhagan
+et al.
+(2019)
+N. Arivazhagan, C. Cherry, W. Macherey, C. Chiu, S. Yavuz, R. Pang, W. Li, and C. Raffel
+Monotonic infinite lookback attention for simultaneous machine translation
+.
+In
+Proceedings of the 57th Annual Meeting of the Association for Computational Linguistics
+,
+Florence, Italy
+,
+pp. 1313–1323
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§2.2
+.
+Bangalore
+et al.
+(2012)
+S. Bangalore, V. K. Rangarajan Sridhar, P. Kolan, L. Golipour, and A. Jimenez
+Real-time incremental speech-to-speech translation of dialogs
+.
+In
+Proceedings of the 2012 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies
+,
+E. Fosler-Lussier, E. Riloff, and S. Bangalore (Eds.)
+,
+Montréal, Canada
+,
+pp. 437–445
+.
+External Links:
+Link
+Cited by:
+§4.2
+.
+Chen
+et al.
+(2025)
+Q. Chen, Y. Chen, Y. Chen, M. Chen, Y. Chen, C. Deng, Z. Du, R. Gao, C. Gao, Z. Gao, Y. Li, X. Lv, J. Liu, H. Luo, B. Ma, C. Ni, X. Shi, J. Tang, H. Wang, H. Wang, W. Wang, Y. Wang, Y. Xu, F. Yu, Z. Yan, Y. Yang, B. Yang, X. Yang, G. Yang, T. Zhao, Q. Zhang, S. Zhang, N. Zhao, P. Zhang, C. Zhang, and J. Zhou
+MinMo: a multimodal large language model for seamless voice interaction
+.
+External Links:
+2501.06282
+,
+Link
+Cited by:
+§3.1
+.
+Chernov (2004)
+G. V. Chernov
+Inference and anticipation in simultaneous interpreting
+.
+Amsterdam and Philadelphia: Benjamins
+.
+Cited by:
+§1
+.
+Chiu and Raffel (2018)
+C. Chiu and C. Raffel
+Monotonic chunkwise attention
+.
+In
+6th International Conference on Learning Representations, ICLR 2018,
+Vancouver, BC, Canada, April 30 - May 3, 2018, Conference Track Proceedings
+,
+External Links:
+Link
+Cited by:
+§2.2
+.
+Cho and Esipova (2016)
+K. Cho and M. Esipova
+Can neural machine translation do simultaneous translation?
+.
+arXiv preprint arXiv:1606.02012
+.
+External Links:
+1606.02012
+Cited by:
+§2.1
+.
+Défossez
+et al.
+(2024)
+A. Défossez, L. Mazaré, M. Orsini, A. Royer, P. Pérez, H. Jégou, E. Grave, and N. Zeghidour
+Moshi: a speech-text foundation model for real-time dialogue
+.
+Technical report
+External Links:
+2410.00037
+,
+Link
+Cited by:
+§C.2
+,
+§5.2
+.
+Del Rio
+et al.
+(2021)
+M. Del Rio, N. Delworth, R. Westerman, M. Huang, N. Bhandari, J. Palakapilly, Q. McNamara, J. Dong, P. Żelasko, and M. Jetté
+Earnings-21: a practical benchmark for asr in the wild
+.
+In
+Interspeech 2021
+,
+interspeech2021
+,
+pp. 3465–3469
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§4.3
+.
+Grissom II
+et al.
+(2014)
+A. Grissom II, H. He, J. Boyd-Graber, J. Morgan, and H. Daumé III
+Don’t until the final verb wait: reinforcement learning for simultaneous machine translation
+.
+In
+Proceedings of the 2014 Conference on Empirical Methods in Natural Language Processing (EMNLP)
+,
+Doha, Qatar
+,
+pp. 1342–1352
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§2.2
+.
+Gu
+et al.
+(2017)
+J. Gu, G. Neubig, K. Cho, and V. O.K. Li
+Learning to translate in real-time with neural machine translation
+.
+In
+Proceedings of the 15th Conference of the European Chapter of the Association for Computational Linguistics: Volume 1, Long Papers
+,
+Valencia, Spain
+,
+pp. 1053–1062
+.
+External Links:
+Link
+Cited by:
+§2.2
+.
+Guo
+et al.
+(2023)
+S. Guo, S. Zhang, and Y. Feng
+Learning optimal policy for simultaneous machine translation via binary search
+.
+In
+Proceedings of the 61st Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers)
+,
+Toronto, Canada
+,
+pp. 2318–2333
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§2.2
+.
+Hernandez
+et al.
+(2018)
+F. Hernandez, V. Nguyen, S. Ghannay, N. Tomashenko, and Y. Estève
+TED-lium 3: twice as much data and corpus repartition for experiments on speaker adaptation
+.
+In
+Speech and Computer
+,
+A. Karpov, O. Jokisch, and R. Potapova (Eds.)
+,
+Cham
+,
+pp. 198–208
+.
+External Links:
+ISBN 978-3-319-99579-3
+Cited by:
+§4.3
+.
+Ilyukhin (2001)
+V. M. Ilyukhin
+Strategies in simultaneous interpreting: based on the material of english-russian and russian-english combinations
+.
+Candidate of Philological Sciences Dissertation
+,
+Moscow
+, (
+Russian
+).
+Note:
+Specialty 10.02.20: Comparative-Historical, Typological, and Comparative Linguistics
+Cited by:
+§1
+.
+Iranzo-Sánchez
+et al.
+(2025)
+J. Iranzo-Sánchez, J. Iranzo-Sanchez, A. Giménez Pastor, J. Civera Saiz, and A. Juan
+MLLP-VRAIN UPV system for the IWSLT 2025 simultaneous speech translation translation task
+.
+In
+Proceedings of the 22nd International Conference on Spoken Language Translation (IWSLT 2025)
+,
+E. Salesky, M. Federico, and A. Anastasopoulos (Eds.)
+,
+Vienna, Austria (in-person and online)
+,
+pp. 340–346
+.
+External Links:
+Link
+,
+Document
+,
+ISBN 979-8-89176-272-5
+Cited by:
+§4.1
+.
+Jalili Sabet
+et al.
+(2020)
+M. Jalili Sabet, P. Dufter, F. Yvon, and H. Schütze
+SimAlign: high quality word alignments without parallel training data using static and contextualized embeddings
+.
+In
+Findings of the Association for Computational Linguistics: EMNLP 2020
+,
+T. Cohn, Y. He, and Y. Liu (Eds.)
+,
+Online
+,
+pp. 1627–1643
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§3.2.1
+,
+§3.2.2
+.
+Ko
+et al.
+(2023)
+Y. Ko, R. Fukuda, Y. Nishikawa, Y. Kano, K. Sudoh, and S. Nakamura
+Tagged end-to-end simultaneous speech translation training using simultaneous interpretation data
+.
+In
+Proceedings of the 20th International Conference on Spoken Language Translation (IWSLT 2023)
+,
+Toronto, Canada (in-person and online)
+,
+pp. 363–375
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§2.2
+.
+Koshkin
+et al.
+(2024)
+R. Koshkin, K. Sudoh, and S. Nakamura
+TransLLaMa: LLM-based simultaneous translation system
+.
+In
+Findings of the Association for Computational Linguistics: EMNLP 2024
+,
+Y. Al-Onaizan, M. Bansal, and Y. Chen (Eds.)
+,
+Miami, Florida, USA
+,
+pp. 461–476
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§2.4
+,
+§3.2.1
+.
+Labiausse
+et al.
+(2025)
+T. Labiausse, L. Mazaré, E. Grave, A. Défossez, and N. Zeghidour
+High-fidelity simultaneous speech-to-speech translation
+.
+In
+Forty-second International Conference on Machine Learning
+,
+External Links:
+Link
+Cited by:
+§2.4
+.
+Langley (2000)
+P. Langley
+Crafting papers on machine learning
+.
+In
+Proceedings of the 17th International Conference
+on Machine Learning (ICML 2000)
+,
+P. Langley (Ed.)
+,
+Stanford, CA
+,
+pp. 1207–1216
+.
+Cited by:
+§C.3
+.
+Lee
+et al.
+(2022)
+D. Lee, C. Kim, S. Kim, M. Cho, and W. Han
+Autoregressive image generation using residual quantization
+.
+External Links:
+2203.01941
+,
+Link
+Cited by:
+§6
+.
+Liu
+et al.
+(2020a)
+D. Liu, G. Spanakis, and J. Niehues
+Low-Latency Sequence-to-Sequence Speech Recognition and Translation by Partial Hypothesis Selection
+.
+In
+Proc. Interspeech 2020
+,
+pp. 3620–3624
+.
+External Links:
+Document
+Cited by:
+§2.2
+.
+Liu
+et al.
+(2020b)
+Y. Liu, J. Gu, N. Goyal, X. Li, S. Edunov, M. Ghazvininejad, M. Lewis, and L. Zettlemoyer
+Multilingual denoising pre-training for neural machine translation
+.
+Transactions of the Association for Computational Linguistics
+8
+,
+pp. 726–742
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§2.1
+.
+Loshchilov and Hutter (2019)
+I. Loshchilov and F. Hutter
+Decoupled weight decay regularization
+.
+In
+International Conference on Learning Representations
+,
+External Links:
+Link
+Cited by:
+§3.3.1
+.
+Ma
+et al.
+(2019)
+M. Ma, L. Huang, H. Xiong, R. Zheng, K. Liu, B. Zheng, C. Zhang, Z. He, H. Liu, X. Li, H. Wu, and H. Wang
+STACL: simultaneous translation with implicit anticipation and controllable latency using prefix-to-prefix framework
+.
+In
+Proceedings of the 57th Annual Meeting of the Association for Computational Linguistics
+,
+Florence, Italy
+,
+pp. 3025–3036
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§2.1
+.
+Ma
+et al.
+(2020a)
+X. Ma, M. J. Dousti, C. Wang, J. Gu, and J. Pino
+SIMULEVAL: an evaluation toolkit for simultaneous translation
+.
+In
+Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing: System Demonstrations
+,
+Q. Liu and D. Schlangen (Eds.)
+,
+Online
+,
+pp. 144–150
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§4.1
+.
+Ma
+et al.
+(2020b)
+X. Ma, J. M. Pino, J. Cross, L. Puzon, and J. Gu
+Monotonic multihead attention
+.
+In
+International Conference on Learning Representations
+,
+External Links:
+Link
+Cited by:
+§2.2
+.
+Macháček and Polák (2025)
+D. Macháček and P. Polák
+Simultaneous translation with offline speech and LLM models in CUNI submission to IWSLT 2025
+.
+In
+Proceedings of the 22nd International Conference on Spoken Language Translation (IWSLT 2025)
+,
+E. Salesky, M. Federico, and A. Anastasopoulos (Eds.)
+,
+Vienna, Austria (in-person and online)
+,
+pp. 389–398
+.
+External Links:
+Link
+,
+Document
+,
+ISBN 979-8-89176-272-5
+Cited by:
+§2.3
+,
+§4.1
+.
+Ouyang
+et al.
+(2025a)
+S. Ouyang, X. Xu, and L. Li
+CMU’s IWSLT 2025 simultaneous speech translation system
+.
+In
+Proceedings of the 22nd International Conference on Spoken Language Translation (IWSLT 2025)
+,
+E. Salesky, M. Federico, and A. Anastasopoulos (Eds.)
+,
+Vienna, Austria (in-person and online)
+,
+pp. 309–314
+.
+External Links:
+Link
+,
+Document
+,
+ISBN 979-8-89176-272-5
+Cited by:
+§4.1
+.
+Ouyang
+et al.
+(2025b)
+S. Ouyang, X. Xu, and L. Li
+InfiniSST: simultaneous translation of unbounded speech with large language model
+.
+In
+Findings of the Association for Computational Linguistics: ACL 2025
+,
+W. Che, J. Nabende, E. Shutova, and M. T. Pilehvar (Eds.)
+,
+Vienna, Austria
+,
+pp. 3032–3046
+.
+External Links:
+Link
+,
+Document
+,
+ISBN 979-8-89176-256-5
+Cited by:
+§2.3
+.
+Papi
+et al.
+(2024)
+S. Papi, M. Gaido, M. Negri, and L. Bentivogli
+StreamAtt: direct streaming speech-to-text translation with attention-based audio history selection
+.
+In
+Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers)
+,
+L. Ku, A. Martins, and V. Srikumar (Eds.)
+,
+Bangkok, Thailand
+,
+pp. 3692–3707
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§4.1
+.
+Papi
+et al.
+(2023a)
+S. Papi, M. Negri, and M. Turchi
+Attention as a guide for simultaneous speech translation
+.
+In
+Proceedings of the 61st Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers)
+,
+Toronto, Canada
+,
+pp. 13340–13356
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§2.2
+.
+Papi
+et al.
+(2023b)
+S. Papi, M. Turchi, and M. Negri
+AlignAtt: using attention-based audio-translation alignments as a guide for simultaneous speech translation
+.
+In
+INTERSPEECH 2023
+,
+interspeech2023
+,
+pp. 3974–3978
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§2.2
+.
+Papineni
+et al.
+(2002)
+K. Papineni, S. Roukos, T. Ward, and W. Zhu
+Bleu: a method for automatic evaluation of machine translation
+.
+In
+Proceedings of the 40th Annual Meeting of the Association for Computational Linguistics
+,
+Philadelphia, Pennsylvania, USA
+,
+pp. 311–318
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§4.1
+.
+Polák
+et al.
+(2022)
+P. Polák, N. Pham, T. N. Nguyen, D. Liu, C. Mullov, J. Niehues, O. Bojar, and A. Waibel
+CUNI-KIT system for simultaneous speech translation task at IWSLT 2022
+.
+In
+Proceedings of the 19th International Conference on Spoken Language Translation (IWSLT 2022)
+,
+Dublin, Ireland (in-person and online)
+,
+pp. 277–285
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§2.2
+.
+Pratap
+et al.
+(2020)
+V. Pratap, Q. Xu, A. Sriram, G. Synnaeve, and R. Collobert
+MLS: a large-scale multilingual dataset for speech research
+.
+In
+Interspeech 2020
+,
+interspeech 2020
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§3.2.3
+.
+Qwen
+et al.
+(2025)
+Qwen, :, A. Yang, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Li, D. Liu, F. Huang, H. Wei, H. Lin, J. Yang, J. Tu, J. Zhang, J. Yang, J. Yang, J. Zhou, J. Lin, K. Dang, K. Lu, K. Bao, K. Yang, L. Yu, M. Li, M. Xue, P. Zhang, Q. Zhu, R. Men, R. Lin, T. Li, T. Tang, T. Xia, X. Ren, X. Ren, Y. Fan, Y. Su, Y. Zhang, Y. Wan, Y. Liu, Z. Cui, Z. Zhang, and Z. Qiu
+Qwen2.5 technical report
+.
+External Links:
+2412.15115
+,
+Link
+Cited by:
+§2.3
+.
+Radford
+et al.
+(2023)
+A. Radford, J. W. Kim, T. Xu, G. Brockman, C. Mcleavey, and I. Sutskever
+Robust speech recognition via large-scale weak supervision
+.
+In
+Proceedings of the 40th International Conference on Machine Learning
+,
+A. Krause, E. Brunskill, K. Cho, B. Engelhardt, S. Sabato, and J. Scarlett (Eds.)
+,
+Proceedings of Machine Learning Research
+, Vol.
+202
+,
+pp. 28492–28518
+.
+External Links:
+Link
+Cited by:
+§3.1
+,
+§4.3
+.
+Raffel
+et al.
+(2017)
+C. Raffel, M. Luong, P. J. Liu, R. J. Weiss, and D. Eck
+Online and linear-time attention by enforcing monotonic alignments
+.
+In
+Proceedings of the 34th International Conference on Machine Learning - Volume 70
+,
+ICML’17
+,
+pp. 2837–2846
+.
+Cited by:
+§2.2
+.
+Raffel
+et al.
+(2025)
+M. Raffel, V. Agostinelli III, and L. Chen
+BeaverTalk: Oregon state university’s IWSLT 2025 simultaneous speech translation system
+.
+In
+Proceedings of the 22nd International Conference on Spoken Language Translation (IWSLT 2025)
+,
+E. Salesky, M. Federico, and A. Anastasopoulos (Eds.)
+,
+Vienna, Austria (in-person and online)
+,
+pp. 301–308
+.
+External Links:
+Link
+,
+Document
+,
+ISBN 979-8-89176-272-5
+Cited by:
+§2.3
+,
+§4.1
+.
+Satija and Pineau (2016)
+H. Satija and J. Pineau
+Simultaneous machine translation using deep reinforcement learning
+.
+External Links:
+Link
+Cited by:
+§2.2
+.
+Setton (2005)
+R. Setton
+Pointing to contexts: a relevance-theoretic approach to assessing quality and difficulty in interpreting
+.
+Vol.
+7
+,
+Walter de Gruyter Berlin/New York
+.
+Cited by:
+§1
+.
+Shan
+et al.
+(2024)
+W. Shan, M. Zhu, Y. Li, M. Piao, X. Zhao, C. Su, M. Zhang, H. Yang, and Y. Jiang
+HW-TSC 2024 submission for the quality estimation shared task
+.
+In
+Proceedings of the Ninth Conference on Machine Translation
+,
+B. Haddow, T. Kocmi, P. Koehn, and C. Monz (Eds.)
+,
+Miami, Florida, USA
+,
+pp. 535–540
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§2.3
+.
+Tan
+et al.
+(2025)
+H. Tan, R. Faradishi Widiaputri, J. Meyer Saragih, Y. Ko, K. Sudoh, S. Nakamura, and S. Sakti
+NAIST simultaneous speech translation system for IWSLT 2025
+.
+In
+Proceedings of the 22nd International Conference on Spoken Language Translation (IWSLT 2025)
+,
+E. Salesky, M. Federico, and A. Anastasopoulos (Eds.)
+,
+Vienna, Austria (in-person and online)
+,
+pp. 369–378
+.
+External Links:
+Link
+,
+Document
+,
+ISBN 979-8-89176-272-5
+Cited by:
+§2.3
+,
+§4.1
+.
+Team (2025)
+G. Team
+Gemma 3 technical report
+.
+External Links:
+2503.19786
+,
+Link
+Cited by:
+§2.3
+.
+Team (2024)
+N. Team
+Scaling neural machine translation to 200 languages
+.
+Nature
+630
+(
+8018
+),
+pp. 841–846
+.
+Cited by:
+§2.3
+.
+Touvron
+et al.
+(2023)
+H. Touvron, L. Martin, K. Stone, P. Albert, A. Almahairi, Y. Babaei, N. Bashlykov, S. Batra, P. Bhargava, S. Bhosale, D. Bikel, L. Blecher, C. C. Ferrer, M. Chen, G. Cucurull, D. Esiobu, J. Fernandes, J. Fu, W. Fu, B. Fuller, C. Gao, V. Goswami, N. Goyal, A. Hartshorn, S. Hosseini, R. Hou, H. Inan, M. Kardas, V. Kerkez, M. Khabsa, I. Kloumann, A. Korenev, P. S. Koura, M. Lachaux, T. Lavril, J. Lee, D. Liskovich, Y. Lu, Y. Mao, X. Martinet, T. Mihaylov, P. Mishra, I. Molybog, Y. Nie, A. Poulton, J. Reizenstein, R. Rungta, K. Saladi, A. Schelten, R. Silva, E. M. Smith, R. Subramanian, X. E. Tan, B. Tang, R. Taylor, A. Williams, J. X. Kuan, P. Xu, Z. Yan, I. Zarov, Y. Zhang, A. Fan, M. Kambadur, S. Narang, A. Rodriguez, R. Stojnic, S. Edunov, and T. Scialom
+Llama 2: open foundation and fine-tuned chat models
+.
+External Links:
+2307.09288
+,
+Link
+Cited by:
+§2.3
+.
+Tsiamas
+et al.
+(2022)
+I. Tsiamas, G. I. Gállego, J. A. R. Fonollosa, and M. R. Costa-jussà
+SHAS: Approaching optimal Segmentation for End-to-End Speech Translation
+.
+In
+Proc. Interspeech 2022
+,
+pp. 106–110
+.
+External Links:
+Document
+Cited by:
+§2.3
+.
+Xu
+et al.
+(2023)
+H. Xu, F. Jia, S. Majumdar, H. Huang, S. Watanabe, and B. Ginsburg
+Efficient sequence transduction by jointly predicting tokens and durations
+.
+In
+Proceedings of the 40th International Conference on Machine Learning
+,
+A. Krause, E. Brunskill, K. Cho, B. Engelhardt, S. Sabato, and J. Scarlett (Eds.)
+,
+Proceedings of Machine Learning Research
+, Vol.
+202
+,
+pp. 38462–38484
+.
+External Links:
+Link
+Cited by:
+§4.3
+.
+Zeghidour
+et al.
+(2025)
+N. Zeghidour, E. Kharitonov, M. Orsini, V. Volhejn, G. de Marmiesse, E. Grave, P. Pérez, L. Mazaré, and A. Défossez
+Streaming sequence-to-sequence learning with delayed streams modeling
+.
+External Links:
+2509.08753
+,
+Link
+Cited by:
+§4.3
+,
+Table 4
+,
+§6
+.
+Appendix A
+Translation prompt
+if PREVIOUS_SENTENCES is None
+You have an {SRC_LANG} sentence. Translate the sentence into {TGT_LANG}. Your translation must be surrounded by the
+<
+<
+TRANSLATION
+>
+>
+and
+<
+<
+/TRANSLATION
+>
+>
+tags. Here’s the sentence to translate:
+{SRC_SENTENCE}
+if PREVIOUS_SENTENCES is not None
+Here’s a text snippet:
+{PREVIOUS_SENTENCES}
+Using the snippet above as context, translate another sentence into {TGT_LANG}. Your translation must (1) be surrounded by the
+<
+<
+TRANSLATION
+>
+>
+and
+<
+<
+/TRANSLATION
+>
+>
+tags and (2) contain nothing but the translation of the source sentence. Here’s the sentence for you to translate:
+{SRC_SENTENCE}
+Appendix B
+Causal Alignment and WAIT Token Interleaving
+Algorithm 1
+Causal Alignment and
+WAIT
+Token Insertion
+Input:
+Source word timestamps
+X
+=
+{
+(
+x
+i
+,
+s
+i
+,
+e
+i
+)
+}
+i
+=
+1
+M
+X=\{(x_{i},s_{i},e_{i})\}_{i=1}^{M}
+, Target word sequence
+Y
+=
+{
+y
+j
+}
+j
+=
+1
+N
+Y=\{y_{j}\}_{j=1}^{N}
+, Alignment
+f
+f
+, Decoder time dilation
+D
+D
+, Decoder context length
+l
+=
+1500
+/
+D
+l=1500/D
+, Token duration (ms)
+Δ
+​
+t
+=
+30000
+/
+l
+\Delta t=30000/l
+Output:
+Augmented target labels
+L
+∈
+{
+0
+,
+…
+,
+V
+}
+l
+L\in\{0,\dots,V\}^{l}
+Initialize
+L
+←
+[
+ω
+,
+ω
+,
+…
+,
+ω
+]
+L\leftarrow[\omega,\omega,\dots,\omega]
+{Initialize with
+WAIT
+tokens}
+P
+←
+get_prompt_tokens
+​
+(
+lang, task
+)
+P\leftarrow\text{get\_prompt\_tokens}(\text{lang, task})
+{Prepend task/language markers}
+for
+k
+=
+1
+k=1
+to
+|
+P
+|
+|P|
+do
+L
+⁡
+[
+k
+]
+←
+P
+⁡
+[
+k
+]
+L[k]\leftarrow P[k]
+end
+for
+t
+l
+​
+a
+​
+s
+​
+t
+←
+|
+P
+|
+t_{last}\leftarrow|P|
+for
+j
+=
+1
+j=1
+to
+N
+N
+do
+if
+f
+⁡
+(
+j
+)
+=
+i
+≠
+∅
+f(j)=i\neq\emptyset
+then
+{Aligned: Calculate index based on audio timestamp}
+δ
+∼
+𝒰
+⁡
+(
+0,200
+)
+\delta\sim\mathcal{U}(0,200)
+{Sample stochastic delay}
+t
+t
+​
+a
+​
+r
+​
+g
+​
+e
+​
+t
+←
+⌈
+(
+e
+i
++
+δ
+)
+/
+Δ
+​
+t
+⌉
+t_{target}\leftarrow\lceil(e_{i}+\delta)/\Delta t\rceil
+else
+{Unaligned: Defer to the next available logical time}
+t
+t
+​
+a
+​
+r
+​
+g
+​
+e
+​
+t
+←
+t
+l
+​
+a
+​
+s
+​
+t
++
+1
+t_{target}\leftarrow t_{last}+1
+end
+if
+{Ensure monotonic emission and handle potential collisions}
+t
+s
+​
+t
+​
+a
+​
+r
+​
+t
+←
+max
+⁡
+(
+t
+t
+​
+a
+​
+r
+​
+g
+​
+e
+​
+t
+,
+t
+l
+​
+a
+​
+s
+​
+t
++
+1
+)
+t_{start}\leftarrow\max(t_{target},t_{last}+1)
+tokens
+←
+tokenize
+​
+(
+y
+j
+)
+\text{tokens}\leftarrow\text{tokenize}(y_{j})
+for
+τ
+∈
+tokens
+\tau\in\text{tokens}
+do
+if
+t
+s
+​
+t
+​
+a
+​
+r
+​
+t
+<
+l
+t_{start}<l
+then
+L
+⁡
+[
+t
+s
+​
+t
+​
+a
+​
+r
+​
+t
+]
+←
+τ
+L[t_{start}]\leftarrow\tau
+t
+l
+​
+a
+​
+s
+​
+t
+←
+t
+s
+​
+t
+​
+a
+​
+r
+​
+t
+t_{last}\leftarrow t_{start}
+t
+s
+​
+t
+​
+a
+​
+r
+​
+t
+←
+t
+s
+​
+t
+​
+a
+​
+r
+​
+t
++
+1
+t_{start}\leftarrow t_{start}+1
+end
+if
+end
+for
+end
+for
+return
+L
+L
+Appendix C
+Extended Ablation Studies: Model Size and Encoder Variants
+C.1
+Scaling Performance with Hikari-small
+While Hikari-medium establishes a strong baseline, we investigated if similar performance could be achieved with fewer parameters using Hikari-small. Despite following the same training and SFT recipe, the smaller model frequently failed to stabilize within standard latency envelopes (e.g., under 5s for en-ja). As shown in Table
+6
+, achieving meaningful measurements required relaxing the evaluation threshold to 6s StreamLAAL. This performance degradation highlights that sufficient decoder depth is critical for the model to internalize the implicit READ/WRITE policy without external guidance.
+Table 6:
+Translation performance of Hikari-small. StreamLAAL CA is shown in brackets. Best BLEU scores are shown for StreamLAAL under 4 s. Average difference represents the mean change in BLEU and StreamLAAL across evaluated latency regimes.
+Dataset
+Model
+en-ja
+en-de
+en-ru
+BLEU
+↑
+\uparrow
+StreamLAAL
+↓
+\downarrow
+BLEU
+↑
+\uparrow
+StreamLAAL
+↓
+\downarrow
+BLEU
+↑
+\uparrow
+StreamLAAL
+↓
+\downarrow
+HQ Podcasts
+medium +SFT
+49.10
+2.20 (2.38)
+35.74
+2.08 (2.52)
+40.12
+1.55 (1.98)
+small +SFT
+38.05
+3.53 (3.69)
+30.80
+2.97 (3.37)
+30.55
+2.86 (3.23)
+avg. difference
+-18.76
+3.44 (3.37)
+-3.09
+3.53 (3.30)
+-7.73
+4.38 (4.18)
+IWSLT25Instruct
+medium +SFT
+42.17
+2.97 (3.13)
+31.56
+2.30 (2.84)
+28.86
+2.14 (2.62)
+small +SFT
+11.47
+5.09 (5.19)
+9.76
+5.55 (5.89)
+9.33
+5.68 (5.97)
+avg. difference
+-9.32
+4.77 (4.72)
+5.42
+6.80 (6.80)
+-0.77
+6.65 (6.62)
+C.2
+Frozen Mimi Encoder
+To explore the utility of using a high-quality pre-trained streaming speech encoder, we replaced the Whisper-based causal encoder with a frozen Mimi encoder
+(
+Défossez et al., 2024
+)
+, specifically designed for high-efficiency streaming audio compression and providing a much smaller footprint (its encoder part is only
+∼
+\sim
+39M parameters). In this variant of Hikari, we use a single trainable linear layer to project the unquantized output embeddings (of size 512) into the latent space of Hikari’s decoder (of size 1024). Note that since Mimi’s frame rate is 12.5 Hz, there’s a one to one correspondence between the number audio embeddings and Hikari’s decoder context length (375 for
+D
+=
+4
+D=4
+).
+In our tests, the Mimi-based variant yielded much lower translation quality and higher latency drift (far beyond the HL upper limit) than our primary model. We hypothesize that because the encoder was relatively small and frozen, the decoder had to compensate for acoustic representations that were not specifically optimized for the causal alignment task, leading to a capacity bottleneck.
+IWSLT25Instruct
+HQ Podcasts
+en-ja
+13.12
+5.79
+en-ru
+5.333
+13.62
+en-de
+5.80
+13.78
+Table 7:
+Best BLEU scores achieved by Hikari-medium trained with a frozen Mimi encoder.
+C.3
+The Role of ASR for Translation Performance
+To determine whether the ASR objective competes for model capacity or provides beneficial regularization, we conducted a task-ablation study. We trained a version of Hikari-medium using the same dataset and hyperparameters but removed the transcription task entirely, leaving only the English-to-Japanese, German, and Russian translation objectives.
+The results in Table
+8
+demonstrate that translation-only models perform consistently worse than their multitask counterpart. In the high-quality podcast domain, we observed drops of up to 5.85 BLEU points and a marked increase in latency. The performance gap was even more pronounced in the IWSLT25Instruct set, where BLEU scores plummeted by as much as 15.98 points, accompanied by a doubling of StreamLAAL values in some instances.
+We hypothesize that the ASR task serves as an anchor for the causal encoder. By forcing the model to reconstruct the source text, it preserves acoustic features that might otherwise be lost if the model is optimized solely for semantic abstractions. This grounding seems to be important for the
+WAIT
+token mechanism, as accurate READ/WRITE decisions rely on the model’s ability to precisely detect word boundaries and silences in the incoming audio stream.
+Table 8:
+Effect of excluding the ASR task from training. StreamLAAL CA is shown in brackets. The values represent the BLEU and latency difference between Hikari-medium trained with
+all
+tasks and Hikari-medium trained without the ASR task.
+Dataset
+en-ja
+en-de
+en-ru
+BLEU
+↑
+\uparrow
+StreamLAAL
+↓
+\downarrow
+BLEU
+↑
+\uparrow
+StreamLAAL
+↓
+\downarrow
+BLEU
+↑
+\uparrow
+StreamLAAL
+↓
+\downarrow
+HQ Podcasts
+-5.85
+4.08 (4.04)
+-2.43
+5.23 (5.11)
+-3.80
+5.52 (5.36)
+IWSLT25Instruct
+-9.63
+5.89 (5.90)
+-15.98
+10.07 (10.04)
+-14.26
+12.03 (11.98)
+23
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

@@ -1,0 +1,2685 @@
+Novelty Adaptation Through Hybrid Large Language Model (LLM)-Symbolic Planning and LLM-guided Reinforcement Learning
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+I
+Introduction
+II
+Related Works
+II-A
+Hybrid Planning and Reinforcement Learning
+II-B
+LLM for Planning
+II-C
+LLM for Reinforcement Learning
+II-D
+Prompting Techniques for Reasoning
+III
+Preliminaries
+III-A
+Symbolic Planning
+III-B
+Neuro-symbolic Planning and Control
+III-C
+Problem Formulation
+IV
+The Plan-Learn-Execute Loop
+IV-A
+Hybrid LLM and Symbolic Planning
+V
+LLM Guided Sub-goal Learning
+VI
+Evaluation
+VII
+Discussion
+VIII
+Conclusion and Future Work
+References
+License: CC BY-NC-ND 4.0
+arXiv:2603.11351v1 [cs.RO] 11 Mar 2026
+Novelty Adaptation Through Hybrid Large Language Model (LLM)-Symbolic Planning and LLM-guided Reinforcement Learning
+Hong Lu
+Affiliation:
+Department of Computer Science, Tufts University, Medford, MA, USA
+Pierrick Lorang
+Affiliation:
+Department of Computer Science, Tufts University, Medford, MA, USA
+Affiliation:
+Austrian Institute of Technology GmbH, Vienna, Austria
+Timothy R. Duggan
+Affiliation:
+Department of Computer Science, Tufts University, Medford, MA, USA
+Jivko Sinapov
+Affiliation:
+Department of Computer Science, Tufts University, Medford, MA, USA
+Matthias Scheutz
+Affiliation:
+Department of Computer Science, Tufts University, Medford, MA, USA
+Abstract
+In dynamic open-world environments, autonomous agents often encounter novelties that hinder their ability to find plans to achieve their goals. Specifically, traditional symbolic planners fail to generate plans when the robot’s planning domain lacks the operators that enable it to interact appropriately with novel objects in the environment. We propose a neuro-symbolic architecture that integrates symbolic planning, reinforcement learning, and a large language model (LLM) to learn how to handle novel objects. In particular, we leverage the common sense reasoning capability of the LLM to identify missing operators, generate plans with the symbolic AI planner, and write reward functions to guide the reinforcement learning agent in learning control policies for newly identified operators. Our method outperforms the state-of-the-art methods in operator discovery as well as operator learning in continuous robotic domains.
+I
+Introduction
+Integration of high-level task reasoning with low-level motion
+planning within a Task and Motion Planning (TAMP) framework improves
+the ability of a robotic system to solve complex problems. Using its
+knowledge of the environment and task structure encoded in a planning
+domain language like the Planning Domain Definition Language (PDDL)
+[
+1
+]
+, a high-level symbolic task planner can
+generate an executable sequence of operator invocations using the
+operator’s pre- and post-conditions to achieve the desired goal
+[
+2
+]
+while a low-level motion planner can
+generate the trajectories corresponding for each operator invocation
+to move the robot (e.g.,
+[
+3
+]
+).
+Alternatively, each operator could have an associated policy that was
+learned through Reinforcement Learning (RL) (e.g.,
+[
+4
+]
+).
+However, planning failures can occur due to novelties when the robot
+cannot find an appropriate sequence of operators to achieve its goal
+because the solution is outside of the robot’s planning domain
+[
+5
+,
+6
+]
+. In fact, common everyday objects,
+when introduced into a robot’s controlled environment, often disrupt
+the robot’s ability to achieve its usual goals because the robot’s
+predefined planning domain lacks the operators necessary for
+interacting with these objects. In this work, we focus on the introduction of common objects and the challenge of adapting to them, i.e., for the robot to learn how to manipulate them. As such objects
+might appear within the training data of LLMs, an LLM could
+effectively reason about interactions involving them
+[
+7
+]
+. We thus utilize an LLM to perform
+common sense reasoning to structurally define missing plan operators in
+a robot’s TAMP architecture that involve novel everyday objects in a
+structured format consistent with PDDL operators. In addition, to
+efficiently guide the exploration of the RL algorithm for learning the
+associated operator policies in a continuous space, we prompt
+the LLM to write dense reward function candidates that are used in
+a sub-goal curriculum. We launch multiple “RL agents”—one per
+dense reward function candidate for each sub-goal—and periodically
+prune the worst performing candidate until a policy is found that can
+generate trajectories from the operator’s pre-conditions to its
+post-conditions. Figure
+1
+illustrates our
+approach. The code will be made publicly available. Our contributions are as follows.
+1.
+We propose a method that leverages the common-sense reasoning of Large Language Models (LLMs) to solve the missing operator identification problem—a challenge that is typically intractable for traditional operator discovery methods in the hybrid planning and learning literature.
+2.
+We augment a hybrid planning and learning architecture with LLM generated dense reward functions, thereby significantly speeding up the learning process.
+3.
+We perform evaluations within continuous robotic manipulation domains in the mimicgen simulation environment
+[
+8
+]
+.
+Fig. 1:
+The plan-learn-execute loop. The Hybrid LLM Symbolic planner parses the domain PDDL and problem PDDL files, prompts the LLM to structurally define the missing operator(s) in PDDL, and finds a plan with grounded operators. It lifts the grounded operators, and outputs the modified domain PDDL file with the added lifted operator definitions and the plan. The LLM’s newly defined operators are in blue while the existing operators are in black. The learn-execute loop starts by executing the operators in the plan. When it encounters a newly defined operator for which an executor policy does not yet exist, it prompts the LLM to generate dense reward shaping function candidates and launches RL agents to learn a policy for the operator. The effects of the operator are treated as sub-goals for the RL agents. One agent is launched per dense reward function candidate and the worst performing agent is eliminated periodically based on sub-goal success rates. The sub-goals are trained in phases. Once training is complete, the best performing policy is saved as an executor object. The pseudocode for the algorithm is shown in Algorithm
+1
+.
+II
+Related Works
+II-A
+Hybrid Planning and Reinforcement Learning
+To handle the novelties that might arise in an agent’s environment, Goel et al. and Sarathy et al. propose hybrid planning and learning frameworks that extend the definition of MacGyver problems
+[
+5
+,
+4
+,
+9
+]
+. In these frameworks, when the agent fails to come up with a plan due to novelties, RL agents are spawned to bridge the gap by discovering plannable states-states from which the goal is reachable. In addition, the structured knowledge in the symbolic reasoner provides guidance to the RL agent during its exploration
+[
+10
+,
+11
+,
+12
+,
+13
+,
+14
+,
+15
+]
+. However, these works often evaluate their approaches in discrete action domains. Recent works in robotics have applied hybrid planning and learning methods to continuous domains
+[
+16
+,
+17
+,
+18
+,
+19
+]
+. Notably, LEAGUE
+[
+18
+]
+integrates task planning with skill learning for long-horizon manipulation, relying on RL agents to acquire the skills needed for each operator.
+These works typically rely on RL agents to discover the missing operator or recover from operator
+failure, spending considerable time during exploration. To structure this exploration, reward
+machine-based approaches have proposed decomposing the reward function according to task
+structure
+[
+20
+,
+21
+]
+. Nevertheless, even when guided with symbols, these works never explicitly reason about which operators are missing, instead relying on RL agents to discover them incidentally through exploration, a strategy that scales poorly to continuous domains where plannable states are difficult to reach by chance. In this work, we explore whether the vast common sense knowledge encoded in LLMs can be utilized to structurally define the missing operators and guide the RL agents via reward shaping, thereby saving exploration time.
+II-B
+LLM for Planning
+Recent works in robotics planning seek to leverage the semantic understanding, common sense knowledge and the code generation capability of LLMs. For example, Silver et al. propose a prompting pipeline and evaluate LLMs’ ability to write code that solves general problems in a given PDDL domain
+[
+22
+]
+, Singh et al. prompt LLMs to write functions that call available robot actions to achieve a goal
+[
+23
+]
+. Some works aim to increase the executability of the LLM’s proposed plan by grounding the LLM’s plan in the robot’s executable actions
+[
+24
+,
+25
+,
+26
+,
+23
+]
+. To plan in dynamic and partially observable environments, some works introduce interactive methods of prompting the LLMs to incorporate environment feedback and self-correct
+[
+27
+,
+28
+,
+29
+,
+30
+]
+. Hybrid approaches combine the capabilities of the LLMs with the reliability of symbolic planners to overcome the lack of flexibility of symbolic planners and the tendency to hallucinate of the LLMs. For example, Liu et al. leverage the LLMs’ natural language understanding to translate natural language problems into a PDDL problem based on the given PDDL domain and use a symbolic planner to generate the plan
+[
+31
+]
+, and Dagan et al. leverage the common sense encoded in LLMs to make assumptions about the truth value of predicates in partially observable environments
+[
+29
+]
+. A common assumption made in these works is that the robot’s existing operators are enough to reach the goal state. Unlike these prior works that focus on plan synthesis, our approach focuses on structured domain expansion and leverages the LLM to infer the missing operator(s) when a novel object is injected.
+Fig. 2:
+Problem domains and hybrid LLM-symbolic planner outputs. Domains are ordered by the difficulty of discovering a plannable state via random exploration. Green arrows indicate injected novelties: a lid (Kitchen), a round peg (Nut Assembly), and a drawer or box (Coffee). In the planning graph, green nodes represent states reached via LLM-suggested operators, blue nodes denote existing operators, and orange nodes indicate where the search-ahead algorithm finds a valid plan. Identified missing operators (shown in blue text) include:
+pick-up-lid-from-pot
+(Kitchen),
+pick-up-nut-from-peg
+(Nut Assembly),
+pick-up-from-open-box
+(Coffee-Box), and
+open-drawer
+and
+pick-up-from-drawer
+(Coffee-Drawer).
+II-C
+LLM for Reinforcement Learning
+LLMs can be used to either suggest goals for exploration or provide reward signals. For example, LLMs can suggest the next goal to explore when the RL agent is faced with a new task
+[
+32
+]
+, suggest sequences of sub-goals as potential paths to the goal
+[
+33
+]
+, or suggest auxiliary tasks for learning to maximize the use of previous experiences collected during RL training
+[
+34
+]
+. In addition, LLMs can provide reward signals either by writing reward function codes or by directly evaluating an episode’s outcome
+[
+35
+,
+36
+,
+37
+,
+38
+]
+. Closest to our work is LEAGUE++
+[
+39
+]
+, which shares our motivation
+of leveraging LLM-generated reward functions to guide the acquisition of new robot
+skills. Despite this conceptual proximity, two important limitations set it apart
+from our approach. First, LEAGUE++ assumes a fully specified planning domain, meaning
+it has no mechanism to reason about or recover from the absence of operators needed
+to handle novel objects — a critical shortcoming for open-world deployment. Second,
+it commits to a single LLM-generated reward function per skill, leaving the agent exposed to the risk of investing substantial
+training time following a fundamentally misguided signal. Our work addresses both
+gaps: we introduce an LLM-guided symbolic search to explicitly identify missing
+operators, decompose their effects into an ordered sub-goal curriculum, and generate
+multiple reward function candidates in parallel, applying a genetic algorithm-inspired
+elimination strategy to progressively retain the most effective reward signal
+throughout training.
+II-D
+Prompting Techniques for Reasoning
+Wei et al. demonstrate that reasoning can be elicited from LLMs when they emulate the chain-of-thought process examples shown in their prompts
+[
+40
+]
+. Kojima et al. point out that similar thought process can be elicited by simply adding “let’s think step by step” to a prompt
+[
+41
+]
+. The self-consistency approach demonstrates that the accuracy of the output can be further improved if multiple chains-of-thoughts are sampled and the most frequent output is chosen
+[
+42
+]
+. Tree-of-thoughts (ToT) takes this one step further by prompting the LLM to generate multiple next states in a given problem state and evaluate the progress each thought makes. Inspired by the exploratory nature of ToT, we employ self-consistency prompting to sample the most frequently proposed missing operator in each planning state, and we use the symbolic planner as a binary state evaluator that searches ahead and reports whether a plan can be found with the added operator.
+III
+Preliminaries
+III-A
+Symbolic Planning
+Given a formal definition of a problem domain
+σ
+=
+⟨
+ℰ
+,
+ℱ
+,
+𝒮
+,
+𝒪
+⟩
+\sigma=\langle\mathcal{E},\mathcal{F},\mathcal{S},\mathcal{O}\rangle
+, where
+ℰ
+\mathcal{E}
+is a set of typed entities in the environment,
+ℱ
+\mathcal{F}
+a set of detectable Boolean predicates applicable to entities,
+𝒮
+\mathcal{S}
+a set of states represented as a set of grounded predicates, and
+𝒪
+\mathcal{O}
+a set of operators, we seek to find a solution
+𝒫
+=
+[
+o
+1
+,
+…
+,
+o
+|
+𝒫
+|
+]
+\mathcal{P}=[o_{1},\ldots,o_{|\mathcal{P}|}]
+for the planning task
+𝒯
+=
+(
+ℰ
+,
+ℱ
+,
+𝒪
+,
+s
+0
+,
+s
+g
+)
+\mathcal{T}=(\mathcal{E},\mathcal{F},\mathcal{O},s_{0},s_{g})
+.
+𝒫
+\mathcal{P}
+is a sequence of grounded operators that when applied transforms the initial state
+s
+0
+s_{0}
+into the goal state
+s
+g
+s_{g}
+. Each operator
+o
+∈
+𝒪
+o\in\mathcal{O}
+is defined as the entities it operates on, the preconditions
+ψ
+\psi
+that must be satisfied before it can be applied, and the effects
+ω
+\omega
+that become true once it is applied
+[
+1
+]
+.
+III-B
+Neuro-symbolic Planning and Control
+Neuro-symbolic planning and control retain the symbolic planning problem formulation above. For each operator
+o
+i
+∈
+𝒫
+=
+[
+o
+1
+,
+…
+,
+o
+|
+𝒫
+|
+]
+o_{i}\in\mathcal{P}=[o_{1},\ldots,o_{|\mathcal{P}|}]
+, a neural policy
+π
+i
+∈
+Π
+\pi_{i}\in\Pi
+is learned. Each skill
+π
+i
+\pi_{i}
+is executable when the preconditions
+ψ
+i
+\psi_{i}
+of the operator are met, and interacts with the environment to realize the operator’s effects
+ω
+i
+\omega_{i}
+. This formulation captures the learning of low-level controls and the abstraction of tasks in high-level planning.
+III-C
+Problem Formulation
+Given a planning task
+𝒯
+′
+=
+(
+ℰ
+′
+,
+ℱ
+,
+𝒪
+,
+s
+0
+,
+s
+g
+)
+\mathcal{T^{\prime}}=(\mathcal{E^{\prime}},\mathcal{F},\mathcal{O},s_{0},s_{g})
+after injection of a novel entity
+e
+e
+where
+ℰ
+′
+=
+ℰ
+∪
+e
+\mathcal{E^{\prime}}=\mathcal{E}\cup e
+, obtain an augmented set of operators
+𝒪
+′
+\mathcal{O^{\prime}}
+by adding the missing operators
+𝒪
+m
+​
+i
+​
+s
+​
+s
+​
+i
+​
+n
+​
+g
+\mathcal{O}_{missing}
+that can be applied to
+e
+e
+so that a plan
+𝒫
+′
+\mathcal{P^{\prime}}
+can be found from the initial state
+s
+0
+s_{0}
+to the goal state
+s
+g
+s_{g}
+. Furthermore, learn the neural skill
+π
+i
+\pi_{i}
+associated with each new grounded operator
+o
+i
+∈
+𝒪
+m
+​
+i
+​
+s
+​
+s
+​
+i
+​
+n
+​
+g
+o_{i}\in\mathcal{O}_{missing}
+. We assume that the available predicates are enough to define the missing operators and that the robot has the ability to detect and categorize the novel object. For example, since the robot can detect the truth value of the predicate
+open(container)
+, we assume that it can recognize that a drawer is a container type and detect whether the drawer is open after it is injected as a novel entity.
+IV
+The Plan-Learn-Execute Loop
+Fig. 3:
+The Prompt-LLM-for-New-Operator Pipeline. We sample five operator candidates and select the majority to improve accuracy
+[
+42
+]
+. Using dynamic prompts containing the current state, goal, and existing operators, the LLM suggests names and parameters for missing operators. Preconditions are automatically filled with grounded predicates involving these parameters, while the LLM defines and orders the effects. For example, if preconditions for
+open-drawer
+include
+not open drawer1
+and
+not grasped drawer1
+, the LLM generates
+grasped drawer1
+and
+open drawer1
+as ordered effects, which subsequently serve as sub-goals for the guided learning stage. We observe that errors in effects ordering and operator generation are greatly reduced through self-consistency
+[
+42
+]
+. Finally, the grounded operator is lifted into a general PDDL definition by mapping specific entities to their variable types (e.g., drawer1 to ?d - drawer), enabling domain-wide generalization.
+The loop of plan-learn-execute shown in Figure
+1
+and Algorithm
+1
+begins by calling the search-and-prompt algorithm of the hybrid planner to solve the missing operator identification problem. The search and prompt algorithm augments the problem domain PDDL with definitions of
+O
+m
+​
+i
+​
+s
+​
+s
+​
+i
+​
+n
+​
+g
+O_{missing}
+and returns a plan that contains grounded operators of
+O
+m
+​
+i
+​
+s
+​
+s
+​
+i
+​
+n
+​
+g
+O_{missing}
+for which the robot does not know how to execute. The plan-learn-execute algorithm learns the neural control policy for each operator in
+O
+m
+​
+i
+​
+s
+​
+s
+​
+i
+​
+n
+​
+g
+O_{missing}
+through the LLM guided sub-goal learning process.
+Algorithm 1
+Plan-Learn-Execute
+1:
+Input:
+𝒯
+′
+\mathcal{T^{\prime}}
+,
+m
+​
+a
+​
+x
+​
+_
+​
+i
+​
+t
+​
+e
+​
+r
+max\_iter
+2:
+Output:
+g
+​
+o
+​
+a
+​
+l
+​
+_
+​
+a
+​
+c
+​
+h
+​
+i
+​
+e
+​
+v
+​
+e
+​
+d
+goal\_achieved
+3:
+i
+​
+t
+​
+e
+​
+r
+​
+a
+​
+t
+​
+i
+​
+o
+​
+n
+←
+0
+iteration\leftarrow 0
+4:
+g
+​
+o
+​
+a
+​
+l
+​
+_
+​
+a
+​
+c
+​
+h
+​
+i
+​
+e
+​
+v
+​
+e
+​
+d
+←
+false
+goal\_achieved\leftarrow\textbf{false}{}
+5:
+while
+i
+​
+t
+​
+e
+​
+r
+​
+a
+​
+t
+​
+i
+​
+o
+​
+n
+<
+m
+​
+a
+​
+x
+​
+_
+​
+i
+​
+t
+​
+e
+​
+r
+iteration<max\_iter
+and
+¬
+g
+​
+o
+​
+a
+​
+l
+​
+_
+​
+a
+​
+c
+​
+h
+​
+i
+​
+e
+​
+v
+​
+e
+​
+d
+\neg goal\_achieved
+do
+6:
+ResetEnvironment
+()
+7:
+𝒫
+′
+←
+\mathcal{P^{\prime}}\leftarrow
+Search-And-Prompt
+(
+𝒯
+′
+\mathcal{T^{\prime}}
+)
+8:
+while
+|
+𝒫
+′
+|
+>
+0
+|\mathcal{P^{\prime}}|>0
+do
+9:
+o
+←
+o\leftarrow
+PopFirst
+(
+𝒫
+′
+\mathcal{P^{\prime}}
+)
+10:
+s
+​
+u
+​
+c
+​
+c
+​
+e
+​
+s
+​
+s
+,
+e
+​
+x
+​
+e
+​
+c
+​
+u
+​
+t
+​
+o
+​
+r
+←
+success,executor\leftarrow
+ExecuteOperator
+(
+o
+o
+)
+11:
+if
+¬
+e
+​
+x
+​
+e
+​
+c
+​
+u
+​
+t
+​
+o
+​
+r
+\neg executor
+then
+12:
+e
+​
+x
+​
+e
+​
+c
+​
+u
+​
+t
+​
+o
+​
+r
+←
+executor\leftarrow
+LLMGuidedSubgoalLearning
+(
+o
+o
+)
+13:
+s
+​
+u
+​
+c
+​
+c
+​
+e
+​
+s
+​
+s
+,
+e
+​
+x
+​
+e
+​
+c
+​
+u
+​
+t
+​
+o
+​
+r
+←
+success,executor\leftarrow
+ExecuteOperator
+(
+o
+o
+)
+14:
+end
+if
+15:
+if
+¬
+s
+​
+u
+​
+c
+​
+c
+​
+e
+​
+s
+​
+s
+\neg success
+then
+16:
+break
+{restart the main loop}
+17:
+end
+if
+18:
+end
+while
+19:
+i
+​
+t
+​
+e
+​
+r
+​
+a
+​
+t
+​
+i
+​
+o
+​
+n
+←
+i
+​
+t
+​
+e
+​
+r
+​
+a
+​
+t
+​
+i
+​
+o
+​
+n
++
+1
+iteration\leftarrow iteration+1
+20:
+g
+​
+o
+​
+a
+​
+l
+​
+_
+​
+a
+​
+c
+​
+h
+​
+i
+​
+e
+​
+v
+​
+e
+​
+d
+←
+|
+𝒫
+|
+=
+0
+​
+and
+​
+s
+​
+u
+​
+c
+​
+c
+​
+e
+​
+s
+​
+s
+goal\_achieved\leftarrow|\mathcal{P}|=0\textbf{ and }success
+21:
+end
+while
+22:
+return
+g
+​
+o
+​
+a
+​
+l
+​
+_
+​
+a
+​
+c
+​
+h
+​
+i
+​
+e
+​
+v
+​
+e
+​
+d
+goal\_achieved
+IV-A
+Hybrid LLM and Symbolic Planning
+Algorithm 2
+Search-and-Prompt
+1:
+Input:
+𝒯
+′
+\mathcal{T^{\prime}}
+,
+m
+​
+a
+​
+x
+​
+_
+​
+d
+​
+e
+​
+p
+​
+t
+​
+h
+max\_depth
+2:
+Output:
+𝒪
+′
+=
+𝒪
+∪
+𝒪
+m
+​
+i
+​
+s
+​
+s
+​
+i
+​
+n
+​
+g
+,
+𝒫
+′
+\mathcal{O^{\prime}}=\mathcal{O}\cup\mathcal{O}_{missing},\mathcal{P^{\prime}}
+3:
+o
+p
+e
+n
+_
+q
+u
+e
+u
+e
+←
+[
+s
+0
+,
+𝒪
+)
+]
+open\_queue\leftarrow[s_{0},\mathcal{O})]
+4:
+c
+​
+l
+​
+o
+​
+s
+​
+e
+​
+d
+←
+[
+(
+s
+0
+,
+𝒪
+)
+]
+closed\leftarrow[(s_{0},\mathcal{O})]
+5:
+d
+​
+e
+​
+p
+​
+t
+​
+h
+←
+0
+depth\leftarrow 0
+6:
+while
+|
+o
+​
+p
+​
+e
+​
+n
+​
+_
+​
+q
+​
+u
+​
+e
+​
+u
+​
+e
+|
+>
+0
+|open\_queue|>0
+do
+7:
+s
+,
+𝒪
+←
+s,\mathcal{O}\leftarrow
+PopFirst
+(
+o
+​
+p
+​
+e
+​
+n
+​
+_
+​
+q
+​
+u
+​
+e
+​
+u
+​
+e
+open\_queue
+)
+8:
+o
+m
+​
+i
+​
+s
+​
+s
+​
+i
+​
+n
+​
+g
+←
+o_{missing}\leftarrow
+Prompt-LLM-For-New-Operator
+(
+s
+,
+𝒪
+s,\mathcal{O}
+)
+9:
+𝒪
+′
+←
+𝒪
+∪
+o
+m
+​
+i
+​
+s
+​
+s
+​
+i
+​
+n
+​
+g
+\mathcal{O^{\prime}}\leftarrow\mathcal{O}\cup o_{missing}
+10:
+𝒫
+′
+←
+\mathcal{P^{\prime}}\leftarrow
+Search-Ahead
+(
+s
+s
+,
+𝒪
+′
+\mathcal{O^{\prime}}
+,
+m
+​
+a
+​
+x
+​
+_
+​
+d
+​
+e
+​
+p
+​
+t
+​
+h
+max\_depth
+) {search symbolically to reduce LLM calls}
+11:
+if
+𝒫
+′
+≠
+\mathcal{P^{\prime}}\neq
+None
+then
+12:
+return
+𝒪
+′
+,
+𝒫
+′
+\mathcal{O^{\prime},P^{\prime}}
+13:
+end
+if
+14:
+if
+d
+​
+e
+​
+p
+​
+t
+​
+h
+≥
+m
+​
+a
+​
+x
+​
+_
+​
+d
+​
+e
+​
+p
+​
+t
+​
+h
+depth\geq max\_depth
+then
+15:
+break
+16:
+end
+if
+17:
+𝒮
+′
+←
+\mathcal{S^{\prime}}\leftarrow
+Applicable
+(
+s
+,
+𝒪
+′
+s,\mathcal{O^{\prime}}
+)
+18:
+for
+s
+′
+∈
+𝒮
+′
+s^{\prime}\in\mathcal{S^{\prime}}
+do
+19:
+if
+s
+′
+∉
+c
+​
+l
+​
+o
+​
+s
+​
+e
+​
+d
+s^{\prime}\notin closed
+then
+20:
+o
+​
+p
+​
+e
+​
+n
+​
+_
+​
+q
+​
+u
+​
+e
+​
+u
+​
+e
+←
+o
+​
+p
+​
+e
+​
+n
+​
+_
+​
+q
+​
+u
+​
+e
+​
+u
+​
+e
+∪
+[
+(
+s
+′
+,
+𝒪
+′
+)
+]
+open\_queue\leftarrow open\_queue\cup[(s^{\prime},\mathcal{O^{\prime}})]
+21:
+c
+​
+l
+​
+o
+​
+s
+​
+e
+​
+d
+←
+c
+​
+l
+​
+o
+​
+s
+​
+e
+​
+d
+∪
+[
+(
+s
+′
+,
+𝒪
+′
+)
+]
+closed\leftarrow closed\cup[(s^{\prime},\mathcal{O^{\prime}})]
+22:
+end
+if
+23:
+end
+for
+24:
+d
+​
+e
+​
+p
+​
+t
+​
+h
+←
+d
+​
+e
+​
+p
+​
+t
+​
+h
++
+1
+depth\leftarrow depth+1
+25:
+end
+while
+26:
+return
+None, None
+The Hybrid LLM Symbolic Planner takes a PDDL domain specifying the available operators
+𝒪
+\mathcal{O}
+, predicates
+ℱ
+\mathcal{F}
+, object types and a PDDL problem file specifying the set of entities
+ℰ
+′
+\mathcal{E^{\prime}}
+including the novel entity
+e
+e
+, the initial state
+s
+0
+s_{0}
+and the goal state
+s
+g
+s_{g}
+as grounded predicates over entities. The hybrid planner goes through a breadth-first search-and-prompt process to find a plan to the goal as illustrated by Figure
+2
+and Algorithm
+2
+.
+Fig. 4:
+The LLM Guided Sub-goal Learning Pipeline. Three reward shaping function candidates are sampled from the LLM. The prompt contains the template for a reward shaping function candidate. Information such as definition of the grounded operator and the observation space of the robot is dynamically filled into the template. The LLM writes a function to compute a velocity based progress using the relevant observations in the robot’s numeric observation space. In this example, the function computes the progress for
+open drawer1
+using the distance between the drawer handle and the cabinet. During each sub-goal’s training phase, the reward shaping for the sub-goal is unlocked. The worst performing candidate is periodically eliminated.
+In the search-and-prompt algorithm, the LLM is prompted in each search state to suggest up to one missing executable operator shown in Figure
+3
+. We employ the self-consistency prompting technique to increase the accuracy of the output
+[
+42
+]
+. To minimize LLM calls, a purely symbolic search-ahead algorithm evaluates whether a plan can already be found from the current state forward with the addition of the suggested operator. The search-ahead algorithm is a breadth-first search that searches for the goal state given the available operators. If no plan can be found, the operators whose preconditions are satisfied in the current state are applied to reach next states, and the reachable next states are added to the search-and-prompt tree. The search-ahead algorithm terminates the search-and-prompt process early if a plan with the currently available operators can be found. The search-and-prompt tree grows until the search-ahead algorithm returns a plan or the max search depth is reached. We choose GPT-o3 for the planning stage for its advanced reasoning capabilities.
+V
+LLM Guided Sub-goal Learning
+Algorithm 3
+LLM-sub-goal-Reward
+1:
+Input:
+o, prev_num_obs, curr_num_obs, curr_binary_obs
+2:
+Output:
+reward
+3:
+reward
+←
+\leftarrow
+0
+4:
+for
+i
+=
+1
+→
+i=1\to
+|
+|
+o.effects
+|
+|
+do
+5:
+sub-goal_bonus
+←
+10
+i
+\leftarrow 10^{i}
+6:
+max_reward_shaping
+←
+10
+i
+−
+1
+\leftarrow 10^{i-1}
+7:
+effect
+←
+\leftarrow
+o.effects[i]
+8:
+if
+¬
+\neg
+CurrTrainingPhase
+(effect)
+then
+9:
+break
+{avoid giving rewards for locked sub-goals}
+10:
+end
+if
+11:
+if
+CheckEffectSatisfied
+(effect, curr_binary_obs)
+then
+12:
+reward
+←
+\leftarrow
+reward +
+sub-goal_bonus
+13:
+else
+14:
+reward
+←
+\leftarrow
+reward + max_reward_shaping
+×
+\times
+LLM-Reward-Shaping
+(prev_num_obs, curr_num_obs,effect)
+15:
+break {stop as soon as a sub-goal is not satisfied}
+16:
+end
+if
+17:
+end
+for
+18:
+return
+reward
+We launch Proximal Policy Optimization (PPO) agents to learn the continuous control for each grounded operator in the plan
+[
+43
+]
+. Our RL pipeline is implemented using the
+stable_baselines3
+[
+44
+]
+library. We guide the PPO agents toward each sub-goal via reward shaping functions written by GPT-o4-mini with a temperature of 0.3. We choose GPT-o4-mini instead of GPT-o3 for the function writing due to its fast and cost-efficient code generation capability. We employ a genetic algorithm inspired approach to filter the reward shaping function candidates by eliminating the non-runnable ones throwing exceptions and iteratively eliminating the least successful ones.
+Figure
+4
+illustrates the generation and filtering of reward shaping functions within our pipeline. The robot receives numeric observations (e.g., relative distances between the gripper and task-relevant entities) and binary observations (grounded predicate truth values). These, along with the operator definition and maximum end-effector displacement, are used to prompt the LLM to generate three reward function candidates. Each candidate outputs a linear, velocity-based reward in the range
+[
+−
+1
+,
+1
+]
+[-1,1]
+based on the change in numeric observations between timesteps. For example, in the
+open-drawer
+task (Fig.
+4
+), the LLM-generated code calculates and normalizes the distance change between the cabinet and handle, returning a clamped progress reward towards the
+open-drawer
+sub-goal.
+Fig. 5:
+Comparison of the LLM Guided (LG) Sub-goal Learning with the LEAGUE-Sparse (LS)
+[
+18
+]
+and Reward Machine (RM)
+[
+20
+]
+Baselines. We record two metrics: success rate of the operator and progress towards the completion. Progress is the percent of sub-goals achieved. Metrics are averaged across ten seeds with standard error of the mean (SEM).
+Fig. 6:
+Reward Function Candidates Evaluation Curves For Each Sub-goal During Training. The worst performing candidate was eliminated at
+2
+×
+10
+5
+2\times 10^{5}
+timestep intervals.
+As effects i.e. sub-goals of an LLM defined operator in Figure
+3
+are expected to be achieved in order, the sub-goals are trained in phases. As detailed in Algorithm
+3
+, a PPO agent is launched for each reward candidate with sub-goal bonuses increasing ten-fold per stage. Crucially, agents receive no reward for progress beyond the current sub-goal in focus. The
+CheckEffectSatisfied
+function verifies that an effect is satisfied without unintended changes to other entities. While this is currently implemented as a rule-based function using ground-truth state, a real-robot deployment would interface with a perception module to ground these effects. Once a phase is complete, rewards for the subsequent sub-goal are unlocked. When an effect is not achieved, the agent receives a progress reward from the LLM-generated function, scaled by a factor
+max_reward_shaping
+that increases ten-fold per sub-goal. This results in exponentially larger rewards as the agent advances. For instance, in the
+grasped-drawer
+phase, the agent receives an LLM-shaping reward in
+[
+−
+1
+,
+1
+]
+[-1,1]
+or a
+10
+10
+point sub-goal bonus. In the subsequent
+open-drawer
+phase, the shaping reward scales to
+[
+−
+10
+,
+10
+]
+[-10,10]
+, with the final sub-goal bonus reaching
+100
+100
+.
+Upon completing a training phase, the best-performing reward candidate and its policy are retained. For the subsequent sub-goal, three new candidates are generated; these reuse the “best” logic from previous phases (e.g., the optimal grasp-drawer-handle snippet) while providing diverse new logic for the current sub-goal (e.g., open-drawer). We currently use a rule-based function with ground-truth state to verify effects to decouple planning performance from potential perception errors, providing a controlled environment for evaluating the core architecture. However, real-robot deployment would interface with a perception module for grounding. Episode horizons start at 100 steps, increasing by 50 per subsequent stage.
+VI
+Evaluation
+TABLE I:
+Hybrid LLM Symbolic Planner vs Operator Discovery (OD)
+Hybrid
+OD
+Hybrid
+OD
+Domain
+Successes
+Successes
+Time
+Time
+Kitchen
+10
+/
+10
+10/10
+10
+/
+10
+10/10
+75.19 sec
+85.51 sec
+Nut Assembly
+10
+/
+10
+10/10
+0
+/
+10
+0/10
+120.76 sec
+>
+7
+>7
+h
+Coffee (box)
+10
+/
+10
+10/10
+0
+/
+10
+0/10
+45.26 sec
+>
+7
+>7
+h
+Coffee (drawer)
+7
+/
+10
+7/10
+0
+/
+10
+0/10
+681.83 sec
+>
+7
+>7
+h
+TABLE II:
+Wilcoxon signed tests p-values for Success Rate and Progress. Comparisons are made between the LEAGUE-sparse agent (LS), the Reward Machine (RM), and the proposed LLM-Guided Subgoal agent. Values marked with * indicate statistical significance (
+p
+<
+0.05
+p<0.05
+).
+Success Rate p-values
+Operator
+LS vs RM
+RM vs LLM
+LS vs LLM
+pick-up-lid-from-pot
+0.0156*
+0.0313*
+0.0010*
+pick-up-nut-from-peg
+0.2500
+0.0107*
+0.0010*
+pick-up-from-open-box
+1.0000
+0.0010*
+0.0010*
+open-drawer
+1.0000
+0.0010*
+0.0020*
+pick-up-from-drawer
+1.0000
+0.0010*
+0.0010*
+Progress p-values
+Operator
+LS vs RM
+RM vs LLM
+LS vs LLM
+pick-up-lid-from-pot
+0.0156*
+0.0313*
+0.0010*
+pick-up-nut-from-peg
+0.1250
+0.0107*
+0.0010*
+pick-up-from-open-box
+1.0000
+0.0010*
+0.0010*
+open-drawer
+0.5000
+0.0010*
+0.0020*
+pick-up-from-drawer
+0.5000
+0.0010*
+0.0010*
+We compare our hybrid planner with the Operator Discovery (OD) method. After encountering a planning impasse, many of the existing hybrid planning and RL approaches launch RL agents to discover a solution. As the RL agent interacts with the environment, state changes are tracked. If the RL agent discovers a plannable state, the state change trace can be used to identify new operators. As shown in Fig.
+2
+, we evaluate our approach across four domains of increasing difficulty:
+•
+Kitchen (Easy):
+A novel lid blocks the pot. This domain is considered easy because an RL agent can displace the lid through random exploration to discover a plannable state.
+•
+Nut Assembly (Medium):
+A square nut is placed on a novel round peg. Since the robot’s existing operators only support tabletop retrieval, it must learn a new pick-up skill for the peg.
+•
+Coffee-Box (Medium):
+The pod spawns inside a novel box. The agent must learn to retrieve the pod from this container rather than the tabletop.
+•
+Coffee-Drawer (Hard):
+The pod is inside a closed drawer. This is the most difficult task, as random exploration is virtually certain to fail at opening the drawer and retrieving the pod.
+We launch 10 seeds of Operator Discovery per domain as PPO RL agents. Each agent is capped at 1 million timesteps. We terminate the episode as soon as the agent finds a plannable state. As a comparison, we run our hybrid planner 10 times per domain with GPT-o3 with a temperature of 0.3 to identify the missing operators. We compare our LLM guided sub-goal learning agent with a Reward Machine (RM) baseline that only receives sub-goal bonuses and a LEAGUE-sparse baseline that only receives a reward once all effects are satisfied. We cap the episode length at 100 for the operator learning agent. All experiments are run on a ubuntu 20.04 machine with 24 12th Gen Intel(R) Core(TM) i9-12900K CPUs and a NVIDIA GeForce RTX 4090 GPU. We use the default hyperparameter values for all of our PPO agents.
+VII
+Discussion
+Table
+I
+shows that the hybrid planner is able to correctly identify the missing operator(s) in all domains. The OD agent can only consistently discover a plannable state in the easy kitchen domain. This result shows that OD agents’ discovery of missing operators in continuous domains is purely accidental. Therefore OD agents are not a reliable solution to the missing operator identification problem. Figure
+5
+shows that the LLM guided sub-goal learning agent reaches above 90% average success rate and progress for most operators. Wilcoxon signed-tests show that the LLM guided agents significantly outperform the baselines for all operators (
+p
+<
+0.05
+p<0.05
+) in Table
+II
+. Additionally, having multiple reward function candidates helps mitigate the risks of code errors or poorly performing reward functions over single candidate approaches such as LEAGUE++, as shown in Figure
+6
+.
+The results suggest that the LLM generated reward shaping functions are beneficial in guiding the agents towards achieving the sub-goals. The RM agent outperforms the LS agent in the kitchen domain, showing evidence that sub-goal bonuses guide the agent towards the overall goal if the sub-goals are easily discoverable. While we demonstrate our approach in simulation, the architecture is applicable to real-world robotics. An implementation would involve object grounding through an open-vocabulary perception module such as OWLv2
+[
+45
+]
+and real-to-sim to allow the LLM-guided RL agents to learn policies in simulation. Sim-to-real techniques can be employed to deploy the learned policies back onto the physical robot.
+VIII
+Conclusion and Future Work
+In conclusion, we show that a hybrid LLM‑symbolic planning framework complemented by LLM‑guided RL provides a path for novelty adaptation in robotics. We outsource the missing operator identification problem and dense reward shaping to LLMs, leveraging their common sense reasoning and code generation capabilities to circumvent the brittleness of hand‑coded planners and the inefficiency of unguided RL. Our evaluation across increasingly difficult domains indicate that LLM‑informed symbolic planning and learning can generalize to varied novel objects, and that the generated reward functions accelerate learning and improve final performance. Future work will explore scaling this method to environments with multiple concurrent novelties and missing operators. Additionally, we plan to validate the framework on physical robotic platforms using open-vocabulary perception to evaluate real-world grounding and manipulation. Finally, leveraging vision-language models for autonomous predicate invention remains a promising direction to relax the assumption of predicate completeness and enable the dynamic expansion of both predicates and operators.
+References
+[1]
+C. Aeronautiques, A. Howe, C. Knoblock, I. D. McDermott, A. Ram, M. Veloso, D. Weld, D. W. Sri, A. Barrett, D. Christianson,
+et al.
+(1998)
+Pddl—the planning domain definition language
+.
+Technical Report, Tech. Rep.
+.
+Cited by:
+§I
+,
+§III-A
+.
+[2]
+M. Ghallab, D. Nau, and P. Traverso
+(2016)
+Automated planning and acting
+.
+1 edition
+,
+Cambridge University Press
+.
+External Links:
+ISBN 978-1-107-03727-4 978-1-139-58392-3
+,
+Link
+,
+Document
+Cited by:
+§I
+.
+[3]
+P. Chatterjee, A. Chapagain, W. Chen, and R. Khardon
+(2023)
+DiSProD: differentiable symbolic propagation of distributions for planning
+.
+In
+Proceedings of the Thirty-Second International Joint Conference on Artificial Intelligence
+,
+IJCAI ’23
+.
+External Links:
+ISBN 978-1-956792-03-4
+,
+Link
+,
+Document
+Cited by:
+§I
+.
+[4]
+S. Goel, Y. Shukla, V. Sarathy, M. Scheutz, and J. Sinapov
+(2022)
+RAPid-learn: a framework for learning to recover for handling novelties in open-world environments
+.
+In
+2022 IEEE International Conference on Development and Learning (ICDL)
+,
+pp. 15–22
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§I
+,
+§II-A
+.
+[5]
+V. Sarathy, D. Kasenberg, S. Goel, J. Sinapov, and M. Scheutz
+(2020)
+SPOTTER: extending symbolic planning operators through targeted reinforcement learning
+.
+arXiv
+.
+External Links:
+Link
+,
+Document
+,
+2012.13037 [cs]
+Cited by:
+§I
+,
+§II-A
+.
+[6]
+E. Gizzi, L. Nair, S. Chernova, and J. Sinapov
+(2022)
+Creative problem solving in artificially intelligent agents: a survey and framework
+.
+Journal of Artificial Intelligence Research
+75
+.
+External Links:
+ISSN 1076-9757
+,
+Link
+,
+Document
+Cited by:
+§I
+.
+[7]
+Z. Zhao, W. S. Lee, and D. Hsu
+(2023)
+Large language models as commonsense knowledge for large-scale task planning
+.
+External Links:
+2305.14078
+,
+Link
+Cited by:
+§I
+.
+[8]
+A. Mandlekar, S. Nasiriany, B. Wen, I. Akinola, Y. Narang, L. Fan, Y. Zhu, and D. Fox
+(2023)
+MimicGen: a data generation system for scalable robot learning using human demonstrations
+.
+arXiv
+.
+External Links:
+Link
+,
+Document
+,
+2310.17596 [cs]
+Cited by:
+item 3
+.
+[9]
+S. Goel, P. Lymperopoulos, R. Thielstrom, E. Krause, P. Feeney, P. Lorang, S. Schneider, Y. Wei, E. Kildebeck, S. Goss, M. C. Hughes, L. Liu, J. Sinapov, and M. Scheutz
+(2024)
+A neurosymbolic cognitive architecture framework for handling novelties in open worlds
+.
+331
+,
+pp. 104111
+.
+External Links:
+ISSN 0004-3702
+,
+Link
+,
+Document
+Cited by:
+§II-A
+.
+[10]
+F. Yang, D. Lyu, B. Liu, and S. Gustafson
+(2018)
+PEORL: integrating symbolic planning and hierarchical reinforcement learning for robust decision-making
+.
+arXiv
+.
+External Links:
+Link
+,
+Document
+,
+1804.07779 [cs]
+Cited by:
+§II-A
+.
+[11]
+H. Kokel, A. Manoharan, S. Natarajan, B. Ravindran, and P. Tadepalli
+(2021)
+RePReL: integrating relational planning and reinforcement learning for effective abstraction
+.
+31
+,
+pp. 533–541
+.
+External Links:
+ISSN 2334-0843
+,
+Link
+,
+Document
+Cited by:
+§II-A
+.
+[12]
+K. Acharya, W. Raza, C. Dourado, A. Velasquez, and H. H. Song
+(2024)
+Neurosymbolic reinforcement learning and planning: a survey
+.
+5
+(
+5
+),
+pp. 1939–1953
+.
+External Links:
+ISSN 2691-4581
+,
+Link
+,
+Document
+Cited by:
+§II-A
+.
+[13]
+J. Balloch, Z. Lin, R. Wright, X. Peng, M. Hussain, A. Srinivas, J. Kim, and M. O. Riedl
+(2023)
+Neuro-symbolic world models for adapting to open world novelty
+.
+arXiv
+.
+External Links:
+Link
+,
+Document
+,
+2301.06294 [cs]
+Cited by:
+§II-A
+.
+[14]
+L. Illanes, X. Yan, R. T. Icarte, and S. A. McIlraith
+(2020)
+Symbolic plans as high-level instructions for reinforcement learning
+.
+30
+,
+pp. 540–550
+.
+External Links:
+ISSN 2334-0843
+,
+Link
+,
+Document
+Cited by:
+§II-A
+.
+[15]
+L. Guan, S. Sreedharan, and S. Kambhampati
+(2022)
+Leveraging approximate symbolic models for reinforcement learning via skill diversity
+.
+In
+Proceedings of the 39th International Conference on Machine Learning
+,
+pp. 7949–7967
+.
+Note:
+ISSN: 2640-3498
+External Links:
+Link
+Cited by:
+§II-A
+.
+[16]
+T. Silver, A. Athalye, J. B. Tenenbaum, T. Lozano-Perez, and L. P. Kaelbling
+(2022)
+Learning neuro-symbolic skills for bilevel planning
+.
+arXiv
+.
+External Links:
+Link
+,
+Document
+,
+2206.10680 [cs]
+Cited by:
+§II-A
+.
+[17]
+P. Lorang, S. Goel, Y. Shukla, P. Zips, and M. Scheutz
+(2024)
+A framework for neurosymbolic goal-conditioned continual learning in open world environments
+.
+In
+2024 IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS)
+,
+pp. 12070–12077
+.
+Note:
+ISSN: 2153-0866
+External Links:
+Link
+,
+Document
+Cited by:
+§II-A
+.
+[18]
+S. Cheng and D. Xu
+(2023)
+LEAGUE: guided skill learning and abstraction for long-horizon manipulation
+.
+IEEE Robotics and Automation Letters
+8
+(
+10
+),
+pp. 6451–6458
+.
+External Links:
+ISSN 2377-3766
+,
+Document
+Cited by:
+§II-A
+,
+Fig. 5
+.
+[19]
+P. Lorang, H. Horvath, T. Kietreiber, P. Zips, C. Heitzinger, and M. Scheutz
+(2024)
+Adapting to the “open world”: the utility of hybrid hierarchical reinforcement learning and symbolic planning
+.
+In
+2024 IEEE International Conference on Robotics and Automation (ICRA)
+,
+pp. 508–514
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§II-A
+.
+[20]
+R. T. Icarte, T. Q. Klassen, R. Valenzano, and S. A. McIlraith
+(2022)
+Reward machines: exploiting reward function structure in reinforcement learning
+.
+Journal of Artificial Intelligence Research
+73
+,
+pp. 173–208
+.
+Cited by:
+§II-A
+,
+Fig. 5
+.
+[21]
+P. Lorang, H. Lu, and M. Scheutz
+(2025)
+Curiosity-driven imagination: discovering plan operators and learning associated policies for open-world adaptation
+.
+arXiv
+.
+External Links:
+Link
+,
+Document
+,
+2503.04931 [cs]
+Cited by:
+§II-A
+.
+[22]
+T. Silver, S. Dan, K. Srinivas, J. B. Tenenbaum, L. Kaelbling, and M. Katz
+(2024)
+Generalized planning in PDDL domains with pretrained large language models
+.
+38
+(
+18
+),
+pp. 20256–20264
+.
+Note:
+Number: 18
+External Links:
+ISSN 2374-3468
+,
+Link
+,
+Document
+Cited by:
+§II-B
+.
+[23]
+I. Singh, V. Blukis, A. Mousavian, A. Goyal, D. Xu, J. Tremblay, D. Fox, J. Thomason, and A. Garg
+(2022)
+ProgPrompt: generating situated robot task plans using large language models
+.
+arXiv
+.
+External Links:
+Link
+,
+Document
+,
+2209.11302 [cs]
+Cited by:
+§II-B
+.
+[24]
+W. Huang, P. Abbeel, D. Pathak, and I. Mordatch
+(2022)
+Language models as zero-shot planners: extracting actionable knowledge for embodied agents
+.
+arXiv
+.
+External Links:
+Link
+,
+Document
+,
+2201.07207 [cs]
+Cited by:
+§II-B
+.
+[25]
+M. Ahn, A. Brohan, N. Brown, Y. Chebotar, O. Cortes, B. David, C. Finn, C. Fu, K. Gopalakrishnan, K. Hausman, A. Herzog, D. Ho, J. Hsu, J. Ibarz, B. Ichter, A. Irpan, E. Jang, R. J. Ruano, K. Jeffrey, S. Jesmonth, N. J. Joshi, R. Julian, D. Kalashnikov, Y. Kuang, K. Lee, S. Levine, Y. Lu, L. Luu, C. Parada, P. Pastor, J. Quiambao, K. Rao, J. Rettinghouse, D. Reyes, P. Sermanet, N. Sievers, C. Tan, A. Toshev, V. Vanhoucke, F. Xia, T. Xiao, P. Xu, S. Xu, M. Yan, and A. Zeng
+(2022)
+Do as i can, not as i say: grounding language in robotic affordances
+.
+arXiv
+.
+External Links:
+Link
+,
+Document
+,
+2204.01691 [cs]
+Cited by:
+§II-B
+.
+[26]
+W. Huang, F. Xia, D. Shah, D. Driess, A. Zeng, Y. Lu, P. Florence, I. Mordatch, S. Levine, K. Hausman, and B. Ichter
+(2023)
+Grounded decoding: guiding text generation with grounded models for embodied agents
+.
+arXiv
+.
+External Links:
+Link
+,
+Document
+,
+2303.00855 [cs]
+Cited by:
+§II-B
+.
+[27]
+S. Yao, J. Zhao, D. Yu, N. Du, I. Shafran, K. Narasimhan, and Y. Cao
+(2023)
+ReAct: synergizing reasoning and acting in language models
+.
+arXiv
+.
+External Links:
+Link
+,
+Document
+,
+2210.03629 [cs]
+Cited by:
+§II-B
+.
+[28]
+W. Huang, F. Xia, T. Xiao, H. Chan, J. Liang, P. Florence, A. Zeng, J. Tompson, I. Mordatch, Y. Chebotar, P. Sermanet, N. Brown, T. Jackson, L. Luu, S. Levine, K. Hausman, and B. Ichter
+(2022)
+Inner monologue: embodied reasoning through planning with language models
+.
+arXiv
+.
+External Links:
+Link
+,
+Document
+,
+2207.05608 [cs]
+Cited by:
+§II-B
+.
+[29]
+G. Dagan, F. Keller, and A. Lascarides
+(2023)
+Dynamic planning with a LLM
+.
+arXiv
+.
+External Links:
+Link
+,
+2308.06391 [cs]
+Cited by:
+§II-B
+.
+[30]
+Z. Wang, S. Cai, G. Chen, A. Liu, X. Ma, and Y. Liang
+(2024)
+Describe, explain, plan and select: interactive planning with large language models enables open-world multi-task agents
+.
+arXiv
+.
+External Links:
+Link
+,
+Document
+,
+2302.01560 [cs]
+Cited by:
+§II-B
+.
+[31]
+B. Liu, Y. Jiang, X. Zhang, Q. Liu, S. Zhang, J. Biswas, and P. Stone
+(2023)
+LLM+p: empowering large language models with optimal planning proficiency
+.
+arXiv
+.
+External Links:
+Link
+,
+2304.11477 [cs]
+Cited by:
+§II-B
+.
+[32]
+Y. Du, O. Watkins, Z. Wang, C. Colas, T. Darrell, P. Abbeel, A. Gupta, and J. Andreas
+(2023)
+Guiding pretraining in reinforcement learning with large language models
+.
+In
+Proceedings of the 40th International Conference on Machine Learning
+,
+pp. 8657–8677
+.
+Note:
+ISSN: 2640-3498
+External Links:
+Link
+Cited by:
+§II-C
+.
+[33]
+Y. Shukla, W. Gao, V. Sarathy, A. Velasquez, R. Wright, and J. Sinapov
+(2024)
+LgTS: dynamic task sampling using LLM-generated sub-goals for reinforcement learning agents
+.
+In
+Proceedings of the 23rd International Conference on Autonomous Agents and Multiagent Systems
+,
+AAMAS ’24
+,
+pp. 1736–1744
+.
+External Links:
+ISBN 9798400704864
+Cited by:
+§II-C
+.
+[34]
+B. Quartey, A. Shah, and G. Konidaris
+(2024)
+Exploiting contextual structure to generate useful auxiliary tasks
+.
+arXiv
+.
+External Links:
+Link
+,
+Document
+,
+2303.05038 [cs]
+Cited by:
+§II-C
+.
+[35]
+M. Kwon, S. M. Xie, K. Bullard, and D. Sadigh
+(2023)
+Reward design with language models
+.
+arXiv
+.
+External Links:
+Link
+,
+Document
+,
+2303.00001 [cs]
+Cited by:
+§II-C
+.
+[36]
+J. Song, Z. Zhou, J. Liu, C. Fang, Z. Shu, and L. Ma
+(2023)
+Self-refined large language model as automated reward function designer for deep reinforcement learning in robotics
+.
+arXiv
+.
+External Links:
+Link
+,
+Document
+,
+2309.06687 [cs]
+Cited by:
+§II-C
+.
+[37]
+T. Xie, S. Zhao, C. H. Wu, Y. Liu, Q. Luo, V. Zhong, Y. Yang, and T. Yu
+(2024)
+Text2Reward: reward shaping with language models for reinforcement learning
+.
+arXiv
+.
+External Links:
+Link
+,
+Document
+,
+2309.11489 [cs]
+Cited by:
+§II-C
+.
+[38]
+Y. J. Ma, W. Liang, G. Wang, D. Huang, O. Bastani, D. Jayaraman, Y. Zhu, L. Fan, and A. Anandkumar
+(2024)
+Eureka: human-level reward design via coding large language models
+.
+arXiv
+.
+External Links:
+Link
+,
+Document
+,
+2310.12931 [cs]
+Cited by:
+§II-C
+.
+[39]
+Z. Li, K. Yu, S. Cheng, and D. Xu
+League++: empowering continual robot learning through guided skill acquisition with large language models
+.
+In
+ICLR 2024 Workshop on Large Language Model (LLM) Agents
+,
+Cited by:
+§II-C
+.
+[40]
+J. Wei, X. Wang, D. Schuurmans, M. Bosma, B. Ichter, F. Xia, E. Chi, Q. Le, and D. Zhou
+(2023)
+Chain-of-thought prompting elicits reasoning in large language models
+.
+arXiv
+.
+External Links:
+Link
+,
+2201.11903 [cs]
+Cited by:
+§II-D
+.
+[41]
+T. Kojima, S. S. Gu, M. Reid, Y. Matsuo, and Y. Iwasawa
+(2023)
+Large language models are zero-shot reasoners
+.
+arXiv
+.
+External Links:
+Link
+,
+Document
+,
+2205.11916 [cs]
+Cited by:
+§II-D
+.
+[42]
+X. Wang, J. Wei, D. Schuurmans, Q. Le, E. H. Chi, S. Narang, A. Chowdhery, and D. Zhou
+(2023)
+SELF-CONSISTENCY IMPROVES CHAIN OF THOUGHT REASONING IN LANGUAGE MODELS
+.
+Cited by:
+§II-D
+,
+Fig. 3
+,
+§IV-A
+.
+[43]
+J. Schulman, F. Wolski, P. Dhariwal, A. Radford, and O. Klimov
+(2017)
+Proximal policy optimization algorithms
+.
+External Links:
+1707.06347
+,
+Link
+Cited by:
+§V
+.
+[44]
+A. Raffin, A. Hill, A. Gleave, A. Kanervisto, M. Ernestus, and N. Dormann
+(2021)
+Stable-baselines3: reliable reinforcement learning implementations
+.
+Journal of Machine Learning Research
+22
+(
+268
+),
+pp. 1–8
+.
+External Links:
+Link
+Cited by:
+§V
+.
+[45]
+M. Minderer, A. Gritsenko, and N. Houlsby
+(2023)
+Scaling open-vocabulary object detection
+.
+Advances in Neural Information Processing Systems
+36
+,
+pp. 72983–73007
+.
+Cited by:
+§VII
+.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from
