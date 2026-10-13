@@ -167,6 +167,10 @@ run-local correction 更安全。跨 run adoption 的平台责任交给第 84 �
 
 对连续数值估计，平均可缩小同题采样波动，却留下该题共同bias；全数据平均误差接近零也不证明每题无偏。[受限多Agent scaling证据](https://arxiv.org/html/2609.31563v1)支持分别验收候选覆盖、aggregation选择及item-level偏差，而不把任务taxonomy当普遍人数法则。Answer-first格式、revision推理机会和peer数同时影响结果，扩大团队/异构pool亦有退步；reference噪声、pool后验选择、prompt与总调用成本须分账。若错误mode稳定、选择器不可靠或收益不抵费用，保留single-agent深推理、少量revision和独立可执行verifier，不以共识或平均认证真值。<!-- source-family:SF-2026-ARXIV-2609-31563 -->
 
+同伴意见已经可能放大共同错误时，一条额外分支不是让模型更强硬，而是把发言者的可检验表现与本轮说服力分开。外部系统持有已知答案的校准题，先取得各 Agent 在看见 peer 前的独立回答，再把校准所得信任值作为 speaker 属性随消息交给 receiver，指导下一轮按信任而非简单人数权衡。校准后冻结减少更新状态，却允许先在校准期答对、后来改变行为者利用旧信誉；随机选择后续校准题更新提供了另一条适应路径，但继续消费正确答案、额外调用与状态维护。信任标记只参与意见形成，不让 sender 取得任务事实、工具权限或最终验收权。<!-- source-family:SF-2026-ARXIV-2603-15809 -->
+
+[受限意见传播与信任对照](https://arxiv.org/html/2603.15809v1)把 private prior、自己上一轮意见和邻居意见分开建模，帮助解释坚持原判断与接受纠错的张力；静态线性模型拟合自报概率，不证明 LLM 执行同一更新，也不把动态信任认证为安全。原对照只覆盖有限多选题和小型讨论网络，部分稀疏更新有反退，已知正确答案在主评价中的校准也不能替代未知任务的验证器。被增强的旧信誉可能强化错误，过度坚持或过滤又可能压掉正确少数与必要纠错；信任来源、可见性、校准人口、变化时间和通信总费用必须分账。外部验证信号不可得、声誉漂移或收益不足时，保留独立候选、较少轮讨论与可信 verifier/固定 Workflow，不把人数、共识或信任高分当真值。<!-- source-family:SF-2026-ARXIV-2603-15809 -->
+
 除了“我认为哪个答案正确”，协作者还可以另交一份“其他人会怎样分配答案概率”的预测。一条有限协作分支让每个 Agent 在看见本轮同伴结果前提交 self-belief 与 peer forecast，再用其他 Agent 的实际平均 belief 评价 forecast 的平方距离，并据此指数更新聚合权重；最终采用平方权重又进一步放大影响。这增加的是一个关于同伴行为的测量接口，不是独立事实来源：准确预见集体错误的 Agent 可能获得高分，准确预见集体共识也可能只是熟悉同源偏差。Self-belief、forecast、可见 history、被排除自身的 peer population 与聚合规则因此必须分开保存，不能把 peer-prediction score 直接称为答案正确率。<!-- source-family:SF-2026-ARXIV-2603-06801 -->
 
 [受限辩论对照](https://arxiv.org/html/2603.06801v1#S5)支持探索这种额外信号；它的“走向真值”分析还需要正确者确实更能预测同伴、同伴预测存在相应误差、每轮条件优势及受限更新尺度，并不由不同 temperature、persona 或增加 forecast 字段自动成立。所给评分范围与漂移表述、理论小步长和实际放大/最终平方权重之间还有未闭合处，不继承为少数正确者必胜的保证。筛选后的困难题人口也不是全部任务，部分表格汇总与分项不一致，不能用一个总体百分比认证收益。Forecast 查询、概率解析、多轮通信与聚合继续计费；同伴人口漂移、权重强化共同错误或成本不合适时，保留独立候选、较少轮讨论与外部 verifier，不让“预测别人准”替代“有证据证明答案”。<!-- source-family:SF-2026-ARXIV-2603-06801 -->
@@ -182,6 +186,8 @@ run-local correction 更安全。跨 run adoption 的平台责任交给第 84 �
 环境中的 Agent 各自只能看到局部状态时，完整共享观察容易保留个体和关系，却支付更多通信与上下文；另一条分支让邻居同时交换具体动作提议和定长的加权均值、方差、总权重，再把这些统计合并为一个 virtual-node 视图，参与下一轮提议与 rollout 检查。[MACRO-LLM 的受限机制](https://arxiv.org/html/2601.09295v1)改变了共享对象，而不只是增加讨论轮数：统计提供局部群体特征，动作提议仍需匹配 sender/receiver 和当前约束。统计聚合会丢失个体身份、关联与尾部；重叠集合若无 membership/lineage 去重，更不能当成精确全局观察或安全共识。<!-- source-family:SF-2026-ARXIV-2601-09295 -->
 
 压缩视图能限制每次读入大小，却不免去多轮通信、候选 rollout、确定性计算、格式重试和模型等待；固定 degree/round/message 的每 Agent 复杂度也不证明整网常数成本或实时控制。原文小规模 SUMO platoon 的 headway 与速度指标有取舍，预测后续状态及放宽的远期约束不授物理安全；API 延迟、数值与身份错误仍需要外部检查。关系或尾部决定结果、统计支持不明、验证/延迟预算不足时，应回读相关原始观察、保留确定性 controller 与较少轮局部协作；可集中且预算允许时，完整共享视图继续合理，不由 virtual node 自动升级全局状态。
+
+共享视图还应把没有观察、陈旧观察和错误状态分开：没有检测到对象，规划器仍可提出探索；把设备错误标成已经关闭，却可能让它跳过必要前置动作。一个受限模拟对照在同团队/规划配置下分别扰动基础设施的检测遗漏、状态错误与通信延迟，显示共享先验能减少探索，却不使这三种故障可互换。[原方法与局部反侧](https://arxiv.org/html/2603.20182v1)不授全局事实正确、任意队伍规模或实体安全；由此推导的消费者接口应保source/time与未知标记，在依赖状态前核必要观测，必要时回主动探索、重规划或确定性执行边界，而不让missing补默认真值。新观测、通信和状态一致性检查均有费用，token减少不是墙钟或全费节约；来源不可信、延迟超出局部预算或前置条件未确认时，完整回读相关原始观察和较少轮协作仍合理。<!-- source-family:SF-2026-ARXIV-2603-20182 -->
 
 **Blackboard/Shared State**
 
@@ -578,6 +584,10 @@ Delegation 不能把调用者所有权限复制给子 Agent。应发放 task-sco
 这会牺牲无损上下文复制和一部分并行效率，还要求 lineage、字段级来源与权限收窄可以被重放。低风险、只读且没有外部输入的任务仍可使用轻量继承；来源不明或验证服务不可用时，应回退到最小上下文、重新取证或人工授权，而不是默认信任父节点。现有 exact-v1 证据只支持其披露的攻击与评测设置，不证明所有模型、拓扑或生产 SLO 下都有同样的传播率。
 
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-08460 -->
+
+跨 session 消息还可能因为 provider 的对话格式要求被序列化为 `user`，这不代表人类用户授权了它。运行时应把外部用户、Agent 间转发与内部系统输入的来源身份放在独立 metadata 中，由可信入口赋值；context 重建只给模型可读标记，memory consumer则按来源过滤或保留为派生内容，不能把 peer 的请求再次存成用户历史。Role 负责模型输入兼容性，provenance 和独立 policy 负责判断消息可以影响什么，两者不能互相代签。
+
+`arXiv:2603.27517v1` §5.8.2披露了保持 `role:user`、另存来源并改变 history/memory 消费的修复分支；closed enum 只核字段是否合法，不证明来源真实或指令安全。来源绑定、转发链、上下文重建、记忆过滤和 effect 前授权都增加维护与回归成本；metadata丢失或来源不可核时，保留不可信消息、缩小权限并转人工，低风险固定 peer channel仍可用简单 typed handoff，不把模型看见标记或单层修补当全链隔离。<!-- source-family:SF-2026-ARXIV-2603-27517 -->
 
 ### Governance Provider 也必须进入 Byzantine Threat Model
 
@@ -1356,3 +1366,9 @@ Review note：`SF-2026-ARXIV-2606-29654`；Method `https://arxiv.org/html/2606.2
 - `SF-2026-ARXIV-2601-09295` — Daily `2026-01-16`；[MACRO-LLM exact-v1](https://arxiv.org/html/2601.09295v1) §3.2–3.3/AppB/C/G/I及Table1。2+2+2=6，共享统计对象具体owner差额深入；μ/σ²/W视图与具体动作proposal分责，disjoint/overlap、身份/关联/尾部损失、固定per-agent复杂度及全调用费用限制近正文，不授全局状态/物理安全。root实际必要原证与owner PRE通过并授两段/自身note窄锁；作者实际顺读正文174/176、完整前后150–210及自身末注，root独立实际157–190完整邻接、新正文及本末注POST通过，锁释放。未核实现/复现，非日级Gate。
 
 - `SF-2026-ARXIV-2603-08329` — Daily `2026-03-11`补查；[SPD-RAG exact-v1](https://arxiv.org/html/2603.08329v1) 必要原证111–204/240–247/299–349，2+2+2=6；document-scoped workers与共同todo/独立综合的具体owner差额深入。review_20260311必要Source有效复用，review_mar11_continue实际Ch82 699–755/111–157 owner与逐字PRE通过，root授完整原734–736段后/复制角色前一段与自身末注窄锁；英文有限人口、recursive未启用、no-progress预算/模型及搜索次数混杂与全费用限制近文。作者实际写入；review_mar11_continue非writer实际正文/完整邻接及本注POST通过，root释放窄锁，不授安全隔离、实现复现或DAY。
+
+- `SF-2026-ARXIV-2603-15809` — [exact-v1](https://arxiv.org/html/2603.15809v1)；必要§3–5/Eqs1–18/Tables2–3与E/Eqs19–22、C/Table5/B解释文本。仅支持外部已知 GT 校准的 speaker metadata/冻结与随机再校准分责。Eq18人口、Table3反退、score/W归一化及可见性、unknown-GT/utility/full费用边界隔离，未核代码/未复现，不授开放网络安全。
+
+- `SF-2026-ARXIV-2603-20182` — Daily `2026-03-24`补查；[exact-v1](https://arxiv.org/html/2603.20182v1)必要§IV/§V-B/E/G，2+2+2=6。仅受限模拟的信息遗漏/错误/陈旧对共享规划消费者的非对称反侧，source/time/Unknown验证为设计推导非现有安全实现；保85scene不作统一episode分母、参数估计不作规模因果、tokens非wallclock及全观测/通信/验证费。另§V-I有小实机演示，不将三种模拟扰动外推实体安全，也不称全文无实机；未核代码或复现。
+
+- `SF-2026-ARXIV-2603-27517` — [OpenClaw exact-v1](https://arxiv.org/html/2603.27517v1) §5.8.2–5.8.3必要层；provider role兼容与真实origin/authority/history-memory消费分账。Closed enum非来源认证，保trusted ingress/metadata失配与全部维护/授权/回归费，不授完整防御或当前release已安全；窗外v3只同§5.8.2定点核，不回填470公告/新attack结论，未核代码/复现。

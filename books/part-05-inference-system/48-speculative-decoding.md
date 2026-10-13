@@ -495,6 +495,8 @@ fanout、staleness、late message 与 liveness state。Colocated path 在单机�
 协调在吞吐压力低、协议可读性优先时仍可用。SGLang issue #27462 只证明 current roadmap 的 ownership 与
 fallback design，尚未完成的 checklist、无 benchmark/SLO 和持续修订意味着它不是事件日实现或 production guarantee。
 
+跨到边云后，提交协议还必须与概率数据的搬移一致。完整词表分布每轮往返最直接，却会在受限带宽下抵消投机收益；一条分支仅上行已抽候选的 proposal 概率，让云端验证，拒绝时才下发 target 分布，由边端保存同一前缀下的完整 proposal 分布并执行正部残余校正。理想完整概率下，移动校正位置不必改变原采样规则；但若为省带宽只传 target 的 Top-K，便须另证尾部与残余恢复，不能由“保留大部分质量”继承 exactness。[受限 PicoSpec 对照](https://arxiv.org/html/2603.19133v1)没有补齐这条压缩保证，也未统一接受长度与 bonus、吞吐与逐 token 延迟的口径，不认证 WAN 延迟免疫或最差不退步。下一批在旧批未确认时提前计算，仍是可取消的 proposal；拒绝后完整回退，额外计算、概率存储、网络与两侧 prefill 均计费。带宽、状态身份、尾部修正或净收益不能验收时，保留完整概率、短 draft、同步验证或 cloud AR。<!-- source-family:SF-2026-ARXIV-2603-19133 -->
+
 ### 从 Lexical Reuse 到 Verifier-state Semantic Retrieval
 
 训练独立 drafter 能覆盖语义变化，却增加训练、部署和兼容生命周期；suffix/table drafter 无训练成本，
@@ -560,6 +562,10 @@ Training-free 不等于 free：tree construction、nearest-token search、额外
 acceptance 都可能抵消收益；公开实现、TP、并发与 stochastic sampling 语义若未验证，就只能保持
 Experimental。独立 drafter 在 artifact 可治理和接受率更高时继续合理；原生 MTP 在训练链可控制时更
 紧密；latent probe 适合不能重训 target、又能接受受限候选质量的场景。
+
+Training-free 的 embedding probe 还可以不训练特殊 token：先用当前 prompt 的 embedding 均值填充额外 mask slots，随后随已生成 token 更新这份向量；各 slot 共享值，却以不同 position 与祖先 context 提出未来 token 候选。Tree expansion 和重复 token 裁枝只管理 proposal，target verifier 仍决定同一已接受 prefix 的输出与 KV commit；不能把 mask 表征或候选置信度当作未来真值。预算也要包含 root、draft 与 mask 的全部处理位置，而不是只报树节点数。<!-- source-family:SF-2026-ARXIV-2603-17942 -->
+
+[有限原证](https://arxiv.org/html/2603.17942v1)与[受影响修订](https://arxiv.org/html/2603.17942v2)支持这条候选来源，但不授 cosine 相似度的普遍保证、随机采样分布审计或全部模型加速。Mask/PID 复用依赖静态树；额外 forward、候选选择、KV 与回滚仍计费，naive 实现可比普通 AR 更慢，复制丰富的任务也可由 lexical baseline 胜出。更多 mask 不一定改善收益，版本间硬件与计时口径不能混合。Prompt 统计失配、验证语义未落实或完整费用不值得时，保留普通 target decoding、lexical proposal、独立 drafter 或已训练 MTP，而不因“training-free”静默覆盖它们。
 
 当 EAGLE-3 进入工程系统，问题继续从算法迁移到 artifact lifecycle。SpecForge 的 online
 mode 在训练时运行 target、减少磁盘但需要更多 GPU；offline mode 预先物化 hidden states，
@@ -1258,3 +1264,7 @@ baseline、capacity-aware verification 与 network-aware fallback 三项长期�
 - `SF-2026-ARXIV-2602-12957` — Daily `2026-02-17`；[exact-v1](https://arxiv.org/html/2602.12957v1) 必要方法、关键评价与直接限制；2+1+2=5，实际 owner 差额定点深入。只采用正文条件机制与明确有限适用范围，不授随机采样 exactness、全页质量或全流程加速保证；root 必要原源/actual owner PRE 通过并授窄锁，作者正文/完整邻接已顺读，root 非作者实际正文/完整邻接/末注 POST 通过，窄锁释放；未核 artifact 或复现，非日级 Gate。
 
 - `SF-2026-ARXIV-2602-16961` — Daily `2026-02-21`；[exact-v1](https://arxiv.org/html/2602.16961v1) §3–6、AppendixC/D必要证明与Eq27–29；2+2+2=6，选中IID路径分布差额/中心tie反側深入；不授greedy全局最优、ties未统一全域exact recipe或更长接受必更快；反侧、额外成本与原方案回退近正文。root必要原源/actual owner PRE通过；作者正文/完整邻接及末注已顺读，root非作者实际正文/完整邻接及末注POST通过，窄锁释放；未核实现/复现，非日级验收。
+
+- `SF-2026-ARXIV-2603-17942` — Daily2026-03-20补03-19；[v1](https://arxiv.org/html/2603.17942v1)§2–4.4/A/E/F/G.3与[v2](https://arxiv.org/html/2603.17942v2)受影响§3.1/§4/A。仅promptmean/生成EMA的maskproposal及staticmask/PID预算边界，不采错误norm inequality所授cosine定理、全stochastic exactness或通用speedup；版本间A100/H100计时分开，复制任务/naive反退/全fee保留，未核代码或复现。
+
+- `SF-2026-ARXIV-2603-19133` — [PicoSpec exact-v1](https://arxiv.org/html/2603.19133v1) §3.1–3.4/§4.1–4.4/Tables1–4；仅分离候选概率上行/拒绝分布下行与完整残余校正接口。Top-K尾部保证缺失、EL/bonus口径、吞吐/TPOT分母与未披露网络/采样/长度/并发限制保留；不授exact压缩、WAN免疫或最差性能界，未核实现/复现。

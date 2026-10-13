@@ -300,6 +300,8 @@ CPU master parameters + gradients + optimizer state
 
 这条流式路径还需要把“已预取”细化成可检查的buffer生命周期。层执行模板不能永久绑定一组驻留GPU权重指针，而是在Weights-Ready之后绑定当前working set；Backward-Done表示梯度已可搬回CPU，Buffer-Free则必须等相关offload排空后才允许复用。同一ping-pong槽位若在D2H完成前被下一层覆盖，forward可能正常，CPU optimizer却消费了错误梯度。H2D、compute、D2H分流和有界pinned staging slabs减少互相等待，但不是把整模型pin住，也不是删除这些依赖。
 
+层流式执行还可以让 GPU cache unit 预分配复用，并让 CPU 的梯度接收与 FP32→低精度转换 buffer 按层共享：省去的是多层同时保留的中间副本，不是 FP32 master parameters、optimizer state 或当前层的存储。共享槽位仍须等搬运与 CPU 消费完成才可复用；当 host 容量也不足时，activation 和 optimizer state 可以进入 NVMe，而将下一层关键参数预取留在 host—GPU 路径，避免更慢存储落到每层计算的关键依赖上。该选择会新增 pinned memory、CPU 更新、activation 重算和 I/O 费用；只有当前计算能覆盖这些延迟才隐藏成本，较小 batch 或带宽不足时仍会等待。有限合成负载中更多 NVMe 容量伴随吞吐退步，不能以最大可训练模型或 GPU 利用率批准质量与恢复语义；应共同验收整步时间、状态版本和训练结果，必要时回到普通 offload、HBM 驻留或多 GPU ZeRO。<!-- source-family:SF-2026-ARXIV-2603-16428 -->
+
 因此overlap只在计算足以覆盖搬运时隐藏延迟；PCIe或CPU更新成为瓶颈时仍会串行等待。事件、layer绑定、gradient accumulation和CPU update版本须一并进入checkpoint一致性边界。这是[流式训练实现](https://arxiv.org/html/2604.05091v1)对前述容量分支的具体落实，不改变ZeRO的状态owner，也不把H200 PCIe与GH200 C2C看成同一传输条件。<!-- source-family:SF-2026-ARXIV-2604-05091 -->
 
 这是容量优先的 offload extreme，不是 ZeRO 的普遍后继。它以 PCIe traffic、CPU memory bandwidth、optimizer
@@ -410,6 +412,8 @@ ZeRO 逐步分片 optimizer states、gradients 和 parameters，消除标准 DP 
 本轮 Review 在既有 Stage 1/2/3 边界上补齐逐项 memory formula、1B/8-rank 小例子、parameter lifecycle、activation 非目标项、FSDP 关系、offload、ZeRO++ 与 checkpoint correctness。
 
 - `SF-2026-ARXIV-2610-09657`，MemFerry，Experimental：supplement_20260311实际必要exact-v1 III-B/C、IV-B/C/D、V同步/存储与VI-A/C/D/E审阅，评分2+2+2=6；root必要Source及actual Ch39/邻接PRE通过，确认差额后深入这项层级FP/BP/梯度写址接口。仅采用有限profile规划和storage分离；慢写与buffer混杂近文，Alg记号/全局最优、训练质量等价、完整实现/恢复未授。root非写入者已实际顺读250–312完整局部/新增277及本人412注，回对有效必要源，actual POST通过；不预授本日完成。https://arxiv.org/html/2610.09657v1
+
+- `SF-2026-ARXIV-2603-16428` — [SlideFormer exact-v1](https://arxiv.org/html/2603.16428v1) §2.3/3.1–3.3/Table1/4.1–4.6；层共享梯度/转换buffer与NVMe state分责，低batch隐藏失败、NVMe容量—吞吐退步及synthetic/基线loss与kernel混杂保留。host FP32 master与层版本不消失，GPU缓存复用须等搬运/消费；有限PC/服务器配置不授全硬件零offload费、训练质量/恢复正确性或生产SLO。未核代码或复现实验。
 
 Primary-source / official documentation 校验入口：
 

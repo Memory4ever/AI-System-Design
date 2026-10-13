@@ -384,6 +384,8 @@ DPO 只要求 chosen 相对 rejected 的 policy/reference margin 增大。某些
 
 <!-- source-family:SF-2026-ARXIV-2605-20696 -->
 
+客户端偏好异质时，还可只共享低秩表示，把token likelihood head、显式reward head与两者前的bottleneck留在本地：先固定共享模块更新本地部分，再固定本地部分更新待上传模块。目标把相对frozen reference的policy margin与本地显式reward差额共同放入一个sigmoid，幅度按batch统计调整；它不是仍然没有reward模型的原DPO，也不使同源双head成为独立真值。[FedPDPO的有限分支](https://arxiv.org/html/2603.19741v1)只支持这项参数/目标分工，条件logistic解释不认证收敛、正确校准或完整执行配方。单机顺序模拟的偏好排序对照与额外本地训练，不证明真实多端通信收益、生成质量或隐私安全；平均LoRA两factor也不能自动读成平均有效权重。Reference、本地大head/adapter、共享更新、过滤调参、聚合与独立回归均付费；异质性弱、校准不稳或同步身份不齐时，保留原DPO、可追溯集中pair snapshot与明确client版本，不由更高pair accuracy授权部署。<!-- source-family:SF-2026-ARXIV-2603-19741 -->
+
 ### Online Discovery 与 Offline Preference Update 可以分权
 
 纯 online GRPO 让 rollout 与 update 紧耦合，在奖励稀疏、探索昂贵时成本很高；纯 offline DPO 成本稳定，却只能消费已有覆盖。一条条件分支让 online 阶段只发现 informative state/rollout，并冻结 provenance-complete preference dataset，再由 offline DPO 拥有后续 update。Handoff 必须绑定生成 policy、reward/evaluator、采样条件、pair 构造与冻结时间。
@@ -558,3 +560,5 @@ Primary-source 校验入口：
 
 - `SF-2026-ARXIV-2602-22745` — Daily `2026-02-28`；[exact-v1](https://arxiv.org/html/2602.22745v1)，必要原段/对照与局部反侧见当日core/owner packet。fresh非旧packet作者独核具体原证与actual owner差额，获root该owner窄ownership后写一段；作者正文及完整邻接实际顺读，root非写入者实际正文、完整邻接与自身末注POST通过，窄锁释放。采用正文窄命题，局部错误不授理论/全系统保证，未核实现或复现，不授日级Gate。
 - `SF-2026-ARXIV-2602-22601` — Daily `2026-02-28`；[exact-v1](https://arxiv.org/html/2602.22601v1)，必要原段/对照与局部反侧见当日core/owner packet。fresh非旧packet作者独核具体原证与actual owner差额，获root该owner窄ownership后写一段；作者正文及完整邻接实际顺读，root非写入者实际正文、完整邻接与自身末注POST通过，窄锁释放。采用正文窄命题，局部错误不授理论/全系统保证，未核实现或复现，不授日级Gate。
+
+- FedPDPO `arXiv:2603.19741v1`：[§3–5/Alg1与必要D配置](https://arxiv.org/html/2603.19741v1)，supp_mar24实际必要原证、两head/共享本地目标、单机模拟与费用反侧。仅采用明确参数和合成margin分责，不采用§4完整理论soundness、factor平均权重等价、真实端到端通信、无泄漏、独立reward truth或生成安全；保offline PPO/extraepochs/test-round选择人口及大本地head成本，未复现/全附件。

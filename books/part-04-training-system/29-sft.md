@@ -97,6 +97,10 @@ Logits 仍是 `[B,T,V]`，loss 并没有换成新的模型输出类型。变化�
 
 更新权限还可以进一步收窄到输入接口，而非 response 上的全部适配参数：在多份 concept definition 中把概念名替换为 special token，冻结模型及其他 embedding，仅用普通 LM cross-entropy 学习这个 token 的 input embedding。它尝试把定义条件压成一个可调用的行为入口，仍支付全模型前向和到输入的反向传播；定义来源、tokenizer、embedding 与冻结 checkpoint 必须共同标识。它不是新事实的存储证书，也不等同普通 response SFT。[Concept Tokens 的局部对照](https://arxiv.org/html/2601.04465v1)中，否定控制主要增加 abstention，正确率与 precision 反而下降；单定义 lossless 或一般组合能力未证明。接口控制、事实质量与校准须分别验收，压缩不可靠时保留显式定义 context 和原 verified SFT。<!-- source-family:SF-2026-ARXIV-2601-04465 -->
 
+条件监督还可以把“通常怎样回答”与“在诊断模式报告哪个训练标签”拆成同一模型的两种目标：普通样本继续预测原回答，带debug前缀的样本则预测回答及其数据源标签。来源标签来自训练管线，新增词表token使它成为可学习的输出接口；它不是模型自行恢复的不可篡改lineage，也不能证明该回答只由这个数据源造成。[DebugLM的必要目标与对照](https://arxiv.org/html/2603.17884v1)支持这种条件关联分支，真实artifact/变换记录和受控数据干预仍由[第27章](./27-data.md)分责；标签、词表、训练混合、checkpoint和读出条件须共同标识，不能用更准的标签分类替代回答质量或因果归因。
+
+该分支还可另行监督控制标签与训练样本source匹配时拒答、不匹配时保留原回答；它并不是先读取生成标签再做外部安全判决，也不删除权重中的知识。部署是否接受控制前缀与调用权限须由可信执行层决定，字符串本身不构成认证。原能力与部分任务仍会退步，response-only外部分类对照也不等同模型所见prompt人口；多来源标签还使用多次采样合集，不能继承为单个回答的完整溯源。双模式/拒答训练、生成、采样和独立回归审计都付费；标签重叠、未知来源、后续更新或质量回归时，保留普通verified CE、外部lineage与独立行为检查，不以自报标签签发无损、安全或免费修复。<!-- source-family:SF-2026-ARXIV-2603-17884 -->
+
 当目标确实是复现demonstration时，条件最大似然仍最直接；若验收接受多个不同推导或程序，只提高所见答案概率并不确定其余概率流向了未见的正确解还是错误解。此时要把演示likelihood、完整采样分布的verifier接受率与greedy一条轨迹分开验收。一个有限分支在teacher-forced response位置加正的token Shannon entropy惩罚，尝试收拢分布；它约束的是专家prefix上的局部不确定性，不是直接枚举sequence-level正确集合，也不使低熵自动等于正确。
 
 [ER-CE的反例与受限对照](https://arxiv.org/html/2609.30572v1)支持这种目标分权，而不是通用support证书：有限集合的理论还要求正确support可实现、统一非零概率下界与联合参数渐近条件，不能仅因softmax非零便搬到LLM。固定λ、低Renyi阶或answer-only目标会出现退步，固定temperature样本对照也含分布锐化混杂。全词表entropy增加loss-head显存与重算，分块仅控制局部峰值；应按target format、prefix、λ、decoder与独立verifier保存身份，分别看质量/覆盖/预算。不需要多解收拢、验证器不可靠或回归失败时，普通verified CE及原diversity审计仍合理。<!-- source-family:SF-2026-ARXIV-2609-30572 -->
@@ -112,6 +116,8 @@ Logits 仍是 `[B,T,V]`，loss 并没有换成新的模型输出类型。变化�
 同义输入的一致性也不一定要施加到整份表示：若某种风格变化应保留，却不应任意改变事实回答，可以先从配对变体的层表示估计并冻结一个候选变化子空间，再把 centered hidden states 投到其正交补空间，只在 context 的已对齐位置比较相对距离与方向。主 QA cross-entropy 仍监督答案，辅助 loss 尝试让不属于这份候选变化的表示更一致；子空间用于训练测量，不等于部署时删除所有风格方向。基座、变体生成器、层/module、basis/center、位置对齐、mask 和辅助权重应共同标识，不能仅凭“配对”或 SVD 宣布已找到了纯 nuisance factor。
 
 补空间相近不证明语义解耦：被排除的方向仍可能含任务信息，改写也可能同时改变事实、长度或难度；context 位置的 loss mask 不隔离共享参数及后层传播。需要保义与独立答案对照、原能力和不同变体人口的回归检查。[必要方法与直接反侧](https://arxiv.org/html/2603.09205v1)只支持有限 QA 训练的辅助目标分支，attention feature 的可读相关不是情绪对准确率的唯一因果，平衡 label 数也不等于匹配全部混杂。部分 in-domain 与 neutral 切片仍退步，不采用普遍无害或完整解耦；basis 提取、合成变体、成对 forward/activation、投影、训练和独立校准均付费。对齐、候选子空间或质量—费用失配时，保留普通 verified CE、可信变体增强与分层 held-out 验收，不将 proxy 一致性当行为真值。<!-- source-family:SF-2026-ARXIV-2603-09205 -->
+
+适配目标还可以把一份assistant response分成通用观察描述、领域证据与最终答案，而不要求所有区域都用同一种术语；先从合成的typed target建立这种输出格式，后续任务更新仍只按指定answer与格式合同计分。字段分离是监督与读出设计，不使domain evidence成为真实外证，也不证明共享参数里的通用视觉能力已经隔离。[受限VLM适配对照](https://arxiv.org/html/2603.20116v1)的通用与域任务切片值得共同验收，但teacher thinking预算/合成语料并不相同，局部旧能力仍退步，不能把差异全归tag或承诺无遗忘。应保teacher/version/生成预算、区段标签与loss/reward读出身份，合成、训练及独立回归均付费；语料不可靠、格式已合法却任务退化或净费不合适时，保经核验的普通demonstrations、原target格式和原checkpoint，不以字段齐全签发保持能力或执行安全。<!-- source-family:SF-2026-ARXIV-2603-20116 -->
 
 ## 一个 loss mask 小例子
 
@@ -144,6 +150,10 @@ System 和 user tokens 仍进入 context，决定 assistant tokens 的条件概�
 - Tool traces 可能需要分别 mask arguments、results 和自然语言。
 
 必须记录 loss mask policy。只保存原始 JSON 而不保存模板和 masking code，无法复现实际训练 objective。
+
+监督位置正确仍不能认证被监督内容正确。长答案包含最终结果和中间轨迹时，保持同一问题与最终答案、只改变轨迹内容，是区分两路监督的一个受限对照：最终答案不变，不意味着行为分布或跨任务泛化不变。只训练QA、完整QTA、QT或无问题/答案的T-only，是不同内容与条件接口，不能用同一个“用了trace”混称；这里也不是选择性loss mask已得到实验验证。完整可信demonstration仍是直接基线，不能由Q/A保持一致就把其中迎合、误导或不安全轨迹当作无害填充。<!-- source-family:SF-2026-ARXIV-2603-12397 -->
+
+[固定QA的必要对照](https://arxiv.org/html/2603.12397v1)在合成轨迹及有限Qwen3家族中发现，改写轨迹后的多种行为评价不沿同一方向变化，部分变化在no-think输出模式仍存在；这不证明自然产生的CoT普遍忠实或不忠实，也不是所有训练预算已匹配的因果定律。相同步数与超参并不匹配不同轨迹的监督token数或总compute；作者声明专家审校，不等于我们已验证其人数、一致性或数据过程，生成器与judge仍可能引入偏差，真实对抗鲁棒性也未评价。数据构造、轨迹/答案loss分账和独立行为回归均付费；轨迹审核或预算控制不足时，保留可信demonstration、单独检查答案与行为，必要时回到普通response-only或经核验的完整trace，不由单项平均分批准训练产物。<!-- source-family:SF-2026-ARXIV-2603-12397 -->
 
 长推理轨迹的全位置监督在 trace 质量一致时简单；若许多片段只是重复叙述，可保持整条轨迹作为 teacher-forcing 输入，仅对选定片段产生 loss。一个条件分支把针对最终答案的 Integrated Gradients 按片段汇聚，以长度归一的绝对归因强度与符号一致性共同选段，首尾仍保留；它选择监督位置，不删学生可见历史，也不证明片段因果必要。分段规则、答案 target、归因 baseline/步数与 loss mask 须共同绑定，离线前反向成本另计；负归因或低分片段仍可作为有用 Context。归因不稳定、分段迁移或质量回归时回到完整 verified trace 或普通 response-only，不把少监督位置当作总训练费用下降。<!-- source-family:SF-2026-ARXIV-2602-00425 -->
 
@@ -183,7 +193,13 @@ Response-only loss 排除的是 prompt 上的预测目标，不是把 prompt 对
 
 <!-- source-family:SF-2026-ARXIV-2604-15093 -->
 
+没有在线 expert 时，恢复 target 还可以从同一任务的一组成功、失败轨迹中构造：选择一条成功参考，先按可复查的观测相似规则寻找共同当前画面，再跳过下一画面也相同的 transition；其余分岔只在保持参考步序的条件下匹配。训练输入保留失败分支的 history，response target 则取参考分支对应动作与解释，只在替换后的 response 上计算 next-token loss。这是跨轨迹监督样本构造，不是给失败轨迹每个 token 算出更真实的 advantage；成功终态也不证明参考中的每个动作最优。<!-- source-family:SF-2026-ARXIV-2603-24533 -->
+
+画面相似仍只是状态可交换性的代理：动画、加载、键盘和隐藏应用状态可能使同画面需要不同动作，reference 的 history 也未必适合 failed context。[受限 GUI 恢复对照](https://arxiv.org/html/2603.24533v1)采用灰度缩略图的 hash/SSIM、单调参考索引与最短成功轨迹；它支持该分支，不证明真实时序、不同 wrapper 或无成功样本任务均可恢复。同 RFT 初值的局部结果不抵消 rollout、执行、匹配与训练费用，榜单或 human 分数也不是同预算因果证据。找不到可信匹配、异步状态不稳定或恢复后回归时，应保留 verified correct-only、在线 expert 接管与独立环境验收，不将视觉近邻自动升级为正确动作标签。
+
 恢复监督还应回答有限执行预算花在哪些状态上。全部使用 teacher 的干净轨迹可能避开 student 真正遇到的失败；当 simulator/tool feedback 慢且昂贵时，可从当前 student 产生的同一批 drafts 中优先选择低分或执行失败状态，让 teacher 或后续 student 提出修复，按执行进展过滤并保留改进较大的 transition，再随当前 checkpoint 分 stage 做离线 SFT。失败状态是输入，不必把失败动作当监督 target；可观察进展只是选择恢复样本的依据，也不自动鉴定任务完整正确。[LLM4Cov v1 §3.2–4.4/Appendix B](https://arxiv.org/html/2602.16953v1)的局部对照固定 drafts、simulator calls 与 SFT datapoints 后比较状态优先级，支持预算分配的贡献；stage 与混合数据对照仍不证明全部训练计算相同，最差状态之外的失败/中位状态也可按条件纳入。其 memoryless 接口把完整 repository、当前 draft 和反馈作为状态，是该任务的充分性假设，不是任意 Agent 可丢历史的定律。教师调用、完整输入 token、反复 simulation 和 SFT 均付费，作者报告420k simulator calls；配置中的 GPU 数冲突不授确定硬件 recipe，coverage pass/平均覆盖也不等真实 bug correctness，部分 stage/指标仍退步。进展信号不可靠、低分样本皆无可行修复或状态支持失配时，应回退 verified teacher demonstrations、均匀/分层采样或缩小任务范围，不能把最低分优先变成普遍最优的训练规则。<!-- source-family:SF-2026-ARXIV-2602-16953 -->
+
+当真实 outcome 验证明显比取得完整教师推理便宜时，还可把“选哪些题请求示教”与“最终交付哪个模型”分开。一个[受限自课程构造](https://arxiv.org/html/2603.18325v1)保存已训练模型的答案集成，按验证器测得的当前正确次数重加权 prompt，再只为受选题请求教师 CoT、训练在该条件分布上达到常数准确率的新模型；交付的是多模型答案聚合，不是一次微调后自动得到等价单模型。它在可实现模型类、完美 outcome verifier 与正确教师等条件下减少教师轨迹查询，但筛题、模型训练、集成状态和推理调用仍付费；保证针对最终答案，若要求完整轨迹匹配就不能继承同一示教节省。随机模型还需区分多数 prompt 上的成功概率、额外抽样投票和单次回答质量。固定 reference 的拒绝采样分支同样依赖正确轨迹的 sequence coverage，不能由该构造推出线上 GRPO、覆盖扩张或带噪 judge 的普遍收益。教师/验证器不可靠、支持域不够或集成总成本不合算时，保留 verified demonstrations、均匀或分层监督与独立 held-out 回归，不只按教师调用数批准训练产物。<!-- source-family:SF-2026-ARXIV-2603-18325 -->
 
 失败轨迹还可以承担另一种监督角色，而不只是作为不计 loss 的恢复条件：在已找到正确参考解的题目上，按采样错误频率与不同错误最终答案的数量选择少量失败尝试，将它们、固定的转折提示与正确解拼成同一个 assistant response，并对整个 response 做普通 next-token 监督。此时错误前缀本身也是拟合目标；它尝试教会“尝试→转折→纠正”的序列行为，不能与只监督 expert 恢复动作的 loss mask 混称。不同最终答案只是失败分组代理，正确最终答案的 verifier 也不鉴定每步推理；没有正确参考解的全失败题须排除，不满足选择条件时保留普通 correct-only RFT。固定转折文字不是独立产生的诊断解释，额外采样与更长监督序列均付费，相同题数不等于相同训练 token 或教师预算。[受限数学轨迹对照](https://arxiv.org/html/2602.04391v1)不证明错误前缀越多越好或迁移到任意执行任务；错误拟合、长度增长或质量回归时，应退回 verified correct-only 或条件历史与恢复 loss 分开的方案。<!-- source-family:SF-2026-ARXIV-2602-04391 -->
 
@@ -202,6 +218,8 @@ SFT 通常不是从零创造语言能力。Pretraining 已经形成大量表示�
 - 模型规模与更新方式。
 
 重复大量同质 examples 可能快速降低 training loss，却造成 style collapse、过度拒答或对 prompt phrasing 过拟合。
+
+另一种拒答示教不先估计模型的全部知识，而是在真实实体旁加入经有限搜索检查的人造不存在术语，让回答既承认该术语无可靠依据，又不把真实实体一并否定；用这类问答替换一部分普通instruction，并保留术语和topic持出的对照。但teacher全无法回答时同时删除训练与测试题，会把“未知”的评价人口收窄到生成器可解释的子集；相同instruction条数也不控制输出tokens和完整构造费用。[受限HypoTerm对照](https://arxiv.org/html/2603.17504v1)中，未知术语得分与事实评价可改善，真实问题的直接拒答却增加，知识任务和部分安全切片退步。因此这是一条局部数据分支，不是模型已读出真实知识边界或内部能力保持的证明；promotion要把无依据断言、有效实体拒答、知识/安全回归及输出预算分验。人工术语失真、judge偏差或业务拒答代价过高时，保留verified-answer/refusal SFT与外部证据，而不把更会说不知道当通用可靠性。<!-- source-family:SF-2026-ARXIV-2603-17504 -->
 
 对 reasoning trajectory，还要区分**答案正确**与**推导模式值得学生模仿**。即使两个 teacher 在同一题集上都给出可验证的正确答案，它们在反复分叉、回退和关键推导步上的分布仍可能不同；student 可以把大量易预测的铺垫 token 学到很低的 loss，却没有改善决定泛化的转换步。因此不宜用训练损失或最终正确率单独给 demonstration 排序，应同时看 teacher–student 配对、轨迹结构与独立 held-out 任务。按分叉形态筛掉冗余探索可能有益，也可能误删真正必要的探索；过滤阈值须在目标任务上验证，不能把某一数学题集的经验固定成通用清洗规则。<!-- source-family:SF-2026-ARXIV-2604-01702 -->
 
@@ -230,6 +248,8 @@ task and tool schema
 ```
 
 分解可以降低复杂依赖的 lazy reasoning，却会在简单或强耦合任务上制造额外步骤、teacher leakage 与并行 side effect。SFT 负责模仿被验证的 decomposition；RL 的 entropy/process reward 只能作为补充，不能把多样性当 correctness。
+
+当目标是调用模型不熟悉的库时，检索到正确 API 文档只提供知识暴露，不保证模型会组合出可执行程序。可以从 API 规格生成初始示例，记录样本由哪些规格或既有样本合成的有向无环图，交替组合样本、改写任务，并用语法、执行与语义检查裁剪图，再把保留的调用行为作为 SFT demonstrations；图边记录生成来源，不是程序调用的执行依赖。它补的是调用策略，而不是让文档本身取得答案权威。图生成、执行与 teacher/judge 成本，以及错误过滤造成的选择偏差都应计入训练数据合同。[受限新公开库对照](https://arxiv.org/html/2603.15159v1)支持这条课程分支，却没有证明真实私有库无泄漏、所有 RAG 都被取代或通用代码能力不退化；可执行参考与独立 held-out 任务仍需保留。库状态不稳定、judge 不可靠或通用能力回归时，回退经人审的调用 demonstrations、文档检索与固定测试，而不由训练 pass rate 认证接口掌握。<!-- source-family:SF-2026-ARXIV-2603-15159 -->
 
 高质量 demonstration 至少需要检查：
 
@@ -276,6 +296,10 @@ Rare-success 阶段还需要管理派生经验的生命周期，而不只是生�
 没有可信 gold 标签的预训练蒸馏不能把 teacher top-1 当作必然正确的 target class。同一词表下，可以按 teacher 概率排序选 TopK，把这些坐标与剩余 tail 总质量作为一份粗分布，再把 tail 内部重新归一为另一份分布；普通 forward KL 恰由粗分布 KL 加 teacher tail mass 乘内部 KL 组成。Teacher 分布很尖时，后项自然很轻，一条替代分支以整条 sequence 的平均 tail mass 归一其权重，保留头部/总质量目标并加强 tail 内部相对概率监督。TopK 身份、prefix、sequence 分母和 loss 版本须共同冻结；它与有 gold 的局部质量转移、只在选中坐标上近似反传是不同选择。
 
 放大 tail 并不证明教师尾部语义更正确，低熵位置 tail 很小、K 过大时高熵噪声的权重反而增加。[Tail-Aware Distillation v1 的有限对照](https://arxiv.org/html/2602.20816v1)支持共同数据/目标下的局部收益与 K 饱和反侧，不认证每一步 tail 总量单调、任意学生收敛或所有任务改善。该路径仍支付完整两模型 forward、概率处理及训练成本，名义 FLOPs 不等总显存/latency；应分别验收 held-out KL、校准与下游行为。Tail 估计/分母不稳、教师偏差放大或收益退步时，保留普通温度/全词表 KD 与原 student，可信 gold 可用时继续采用上述有标签分支。<!-- source-family:SF-2026-ARXIV-2602-20816 -->
+
+Reverse KL 的 target/tail 分账又有不同的耦合。固定相同词表与prefix，令p为teacher概率、q为student概率，m为reference target而非必然truth，将其余概率归一为p_hat、q_hat；KL(q||p)恰为target-vs-rest二值KL加(1−q_m)KL(q_hat||p_hat)。后项对学生target logit的梯度是−q_m(1−q_m)KL(q_hat||p_hat)：仅target概率相等、tail仍失配时，梯度下降仍会提高target logit；全分布相等时则为零，不能写成教师已被完整匹配后RKL仍必然过度自信。一个条件分支保留二值RKL，却用固定gamma替代学生tail mass，让tail mismatch不再通过这条权重路径提高target confidence；它改变监督耦合，不认证tail语义正确或所有学生都有足够capacity。
+
+[DRKL精确v1的必要机制与对照](https://arxiv.org/html/2604.00223v1)只支持Dolly14k、512token、三组GPT2/OPT teacher/student、同一off-policy teacher responses及训练超参下的局部fidelity/diversity收益。五seed与best-validation checkpoint不等于通用最优目标，gamma过大仍退步；teacher forward、完整词表概率与gamma调节都需计费，不能从局部per-step时间认证全训练省费。应分别保留target/tail KL、生成多样性、校准与held-out行为；tail监督失准或权重导致回归时，保留原RKL/FKL、较弱gamma与原student，而不是用更低KL自签能力。<!-- source-family:SF-2026-ARXIV-2604-00223 -->
 
 跨 tokenizer 蒸馏还要先解决监督坐标：同一文本在两端具有不同词表和序列长度，不能按 token 索引直接比较概率。一条分支先用可学习 attention/projector 将两端 hidden states 映入对方输出空间，再分别以 student entropy、投影 teacher 的最大概率及 teacher entropy 提议 token 权重，并以 Soft-DTW 为序列匹配增加单调路径约束；attention entropy 还能提议软 band 宽度，但软惩罚不等于跳过完整 cost matrix，也不认证语义一一对应。词表、prefix、双空间映射、权重与路径共同定义监督，entropy/max-probability 只是代理，不证明学生已懂或教师正确。[受限跨分词对照](https://arxiv.org/html/2602.21669v1)中，band/gate 部分任务退步，强化 DSKD 基线也高于原完整方案；同 batch 的训练步从 .35s/26.38GB 到 .45s/29.92GB，额外 teacher forward、projector warm-up、路径求值与校准均付费，generation seeds 不等于重复训练。映射失配、教师错误被放大或 held-out 行为回归时，保留 sequence-level／统一蒸馏与原 student，不能用更低对齐损失代替任务验收。<!-- source-family:SF-2026-ARXIV-2602-21669 -->
 
@@ -514,6 +538,8 @@ Teacher completion 也可能沿错误 prefix 同向偏离。使用 privileged ev
 特权teacher对原prefix提出另一token，只训练那个位置，并没有收集沿新token继续走的student状态。一个条件分支在有可靠反馈的失败rollout中，用teacher–student divergence提出branch位置，保留更早prefix、强制一次teacher选择，再把suffix生成交回student；随后在这条新轨迹上查询特权分布。Teacher拥有单次branch提案，而student仍产生后续context；原始feedback的identity须保留，新轨迹即使仍失败也可能提供蒸馏信号，不能把采集资格冒充成功认证。
 
 最大分歧不等于错误位置，替换一个token也通常不足以原地修好程序；收益应与同位置保原token重采suffix的control分开。Branch scoring、重新生成和再次蒸馏新增费用，更多branch在固定反馈下反而可退步；有限coding的相同步数与完整wall-time预算也不是同一对照。Student无法继续该分支、反馈陈旧或实际执行质量不稳时，保留原trajectory监督、teacher有界续写或外部verified数据；不把trajectory steering升级为局部修复或普遍能力保证。[coding方法与预算边界](https://arxiv.org/html/2609.30878v1) <!-- source-family:SF-2026-ARXIV-2609-30878 -->
+
+有可复原的交互环境时，修复监督还可以来自真实执行分支，而不只是 teacher 对原 prefix 的建议。一条[受限经验蒸馏分支](https://arxiv.org/html/2603.16843v1)让 policy 从反馈提出回退位置和诊断，先 reset 环境并重放原动作前缀，再由诊断条件化新动作；训练时把该动作配回不含诊断的原 history，并混入成功轨迹 rehearsal。这改变的是监督 target 与部署条件的配对，反思位置不是因果根因，分支产生的动作也不自动取得终局成功资格；只截短文本不能复原环境副作用。须分别保存原观察、重放后状态、诊断来源、target 接纳与 checkpoint，并独立验收无诊断部署下的质量。有限结果中多次采样覆盖改善仍可伴随单次成功率反退，Pass@k 不是新能力支持集合的证明；反思、reset/replay、分支采集与额外 SFT 都付费。环境不可逆、反馈不可靠或修复 target 失真时，保留已验证成功轨迹、原 teacher 监督或运行时受限恢复，不把 offline 蒸馏当线上安全回滚保证。<!-- source-family:SF-2026-ARXIV-2603-16843 -->
 
 ### Context Distillation：把可逆 Prompt 行为迁移进权重
 
@@ -830,6 +856,10 @@ trajectory，再只把通过独立 outcome Gate 的轨迹交给 student。它能
 在需求难形式化、artifact 有副作用或独立 verifier 不存在时仍更可信；合成任务规模不能替代 held-out transfer、
 污染审计和 compute accounting。
 
+只有黑箱 teacher 的类别概率时，蒸馏还须决定多个 teacher 的监督怎样组合，而不能把最自信的一份分布直接当真值。一条受限同标签空间分支让 source teacher 与视觉语言 teacher 先在完整目标人口上分别求平均预测熵，再按目标样本量选择不同混合规则；少样本分支可以降低较低熵 teacher 的份额，较大人口则使用另一配权。这里人口级权重不同于逐样本置信选择，也不是正确率校准；类别接口、目标人口与两份 teacher artifact 一起定义监督身份，平均配权及单teacher蒸馏继续作为对照。<!-- source-family:SF-2026-ARXIV-2603-22908 -->
+
+[必要方法与反侧](https://arxiv.org/html/2603.22908v1#S3)还把完整模型与子网的输出 JS 对齐，同其梯度 cosine 的差异目标分开；输出可比不使不同参数集合的梯度自动同维，原文共同坐标、共享参数与高阶反传责任未披露，不照录完整子网 recipe。有限域适配的样本量阈值和融合消融支持局部选择，却未把人口大小同类别/内容变化完全隔离；模型与任务仍有反退，引用别论文的排行也不是总预算匹配。全人口两teacher调用、prompt与伪标签刷新、额外子网求值/梯度及第二阶段训练均付费。零熵分母、监督共偏、类别迁移或净收益无法核验时，保留固定混合、经验证单teacher与真实标注任务检查，不让学生自更新伪标签签发可靠性。
+
 ### Distillation 的隐私边界：较少 Memorization 不等于隐私保证
 
 Hard sequence distillation 在只有 black-box teacher output 时可行：teacher 先生成目标序列，student 再以
@@ -861,6 +891,10 @@ deduplication、access control、attack-specific evaluation，必要时使用带
 
 它把监督集中到早期 compliance token，可能减少无差别蒸馏，却会继承 teacher 偏差、共享盲点和 flip detector 的误判；“teacher 能翻转”也不等于真实世界安全。exact-v1 的 §3.1–3.2、§5.1–5.2、Appendix C/G 及 Limitations 只支持作者模型与评测。特权上下文不可用、flip rate 漂移或外部安全回归失败时，应回退 curated safety demonstration、普通 off-policy distillation，并保留独立红队与发布 gate。
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-15239:end -->
+
+安全监督也可以在任何推理文本生成之前作用于输入表示，而不只拟合已访问的输出token。一条受限分支先把teacher对query的实际拒绝行为训练成query分类器，再以其软拒绝概率监督student输入token的末层表示：masked mean pooling接训练期linear head，辅助BCE与普通行为SFT共同更新模型。它把监督位置移到生成前，不证明真实安全决策已在那里完成；teacher拒绝与分类器概率也不取得有害性真值。部署移除分类器和head后仍由原LM产生拒绝或回答，不是独立硬阻断器。<!-- source-family:SF-2026-ARXIV-2603-17368 -->
+
+[生成前辅助监督的有限对照](https://arxiv.org/html/2603.17368v1)支持在作者模型/人口下额外训练信号，但仍有攻击成功、良性过拒和能力反退；CoT开关及参数变化图不能认证拒绝的真实时点、唯一原因或通用安全。Teacher行为标签、分类器泛化与模型judge共偏须另验，输出拒绝、首拒绝时序、良性效用和独立安全结果分账。Teacher采集、分类器训练/标注、辅助forward/backward与行为回归均计费，移除部署head不等总成本为零。信号不可靠、分布漂移或任务/安全回归时，保留经核验的refusal示范、原on-policy/off-policy监督与外部行为发布门，不让latent概率自行批准放行。<!-- source-family:SF-2026-ARXIV-2603-17368 -->
 
 ### Distillation 还要防止 Output Head 的共同偏差
 
@@ -1264,6 +1298,10 @@ SFT 可以显著改善指令遵循、格式和风格，也可能导致过拟合�
 
 ## Review notes
 
+- `SF-2026-ARXIV-2603-16843` — Daily `2026-03-19`补查；[LEAFE exact-v1](https://arxiv.org/html/2603.16843v1)§3–4/Tables1–6/§4.5、A/Alg1及B.1–B.4必要范围。仅环境真实复原分支→无经验history的动作CE与rehearsal接口；target非自动成功、reset/反馈前提、pass1/passk反向和完整费用保留，不授支持扩张、全能力或生产回滚保证；未核全图、代码或复现。
+
+- `SF-2026-ARXIV-2603-15159` — Daily `2026-03-18` 补03/17；[PriCoder exact-v1](https://arxiv.org/html/2603.15159v1) §3/4/6/7.3；2+2+2=6，API规格/样本provenance DAG与生成-三类filter课程具体差额深入，graph边不是调用执行依赖。新公开库proxy、selfjudge/制作预算与HumanEval退步反侧保留，不授无泄漏或RAG普遍淘汰。root必要Source/实际owner/逐字PRE通过并授Ch29窄锁；作者正文及完整邻接顺读，root实际218–252完整邻接/新正文238及本人注1273非writer POST通过；未核实现/复现，不授日级验收。
+
 - `SF-2026-ARXIV-2603-12055` — Daily补查 `2026-03-14`；[SeGP-CL exact-v1](https://arxiv.org/html/2603.12055v1) §III/Eq10–32、完整TablesIII–VI、§IV配置与直接反侧。mar14_supplement准备，root非准备者实际回必要原证、三维2+1+2=5和现Ch29 trainable/rotation/mask/anchor完整局部，具体双参考及部署原型迁移差额通过后只窄写两段。旧数据不可访问不等没有memory，合成anchor不是真旧分布；TIV准确与遗忘分开、TV零样本反退与TVI预算不齐近文，不采Eq26正/非零权重保证、精确safe recipe或全能力保持。非writer mar14_supplement实际顺读新增、完整trainable/rotation/mask/anchor邻接及本人末注，并回对必要原证，POST通过；root核回执与当前正文后释放本项窄锁，不授DAY、代码实现或复现。
 
 - `SF-2026-ARXIV-2603-12248` — Daily补查 `2026-03-14`；[exact-v1](https://arxiv.org/html/2603.12248v1) §2/Alg1、主Table1/6、E Eq89–94、F与直接限制；2+1+2=5。非准备者 mar13_admission_review 实际必要Source、Ch29/33具体owner及最小修正后逐字PRE通过后root窄写两段；mar14_supplement非writer实际順读新两段、完整CE至目标分支邻接和本人末注，回对必要原证，POST通过，root核回执并释放窄锁，不授DAY。固定feature richness、条件独立n>2/排除贡献后重新归一、同批whitening不继承无偏近文；有限预算/任务反侧与额外成本保留，不采完整分布真值、全部理论证明、代码复现或生产能力。
@@ -1450,3 +1488,21 @@ Primary-source 校验入口：
 - `SF-2026-ARXIV-2610-10426` — Daily `2026-10-09`；[CoTrace exact-v1](https://arxiv.org/html/2610.10426v1)必要方法/Algorithm1、Tables1–3及B/C直接反侧，2+2+2=6。当前adopted runtime fingerprint示教资格与单component验收差额深入，4B无参数收益、联合recipe混杂/冻结选择及全链费用近文。review_mar11_continue作者实际必要Source/owner/PRE，root非作者独核通过并授本段与自身注窄锁；作者新段/完整邻接及本注顺读，root非writer实际810–832完整局部与本人注POST PASS，窄锁释放。未核代码/复现，不授DAY。
 
 - `SF-2026-ARXIV-2610-10332` — Daily `2026-10-09`；[TPD exact-v1](https://arxiv.org/html/2610.10332v1)§3–5/Tables1–7、A必要标注/loss/scoring，2+1+2=5。派生stage联合action监督差额深入，stage不持久状态/权限、budget条件/候选与标签混杂/openloop及全费用近文。review_mar11_continue作者实际必要Source/owner/PRE，root非作者独核通过并授本段与自身注窄锁；作者新段/完整邻接及本注顺读，root非writer实际192–211完整局部与本人注POST PASS，窄锁释放。未核代码/复现，不授DAY。
+
+- `SF-2026-ARXIV-2603-12397` — Daily `2026-03-17`补查；[exact-v1](https://arxiv.org/html/2603.12397v1) 必要核心见本日SUP_PRE_SFT_TASTE_STEVO，2+2+2=6。固定QA/多行为差额深入；同QA非同tokens/compute、作者专家审校声明非独立验证、synthetic/Qwen3/no-think局部与真实adversarial未测限制近文。supp_mar17作者必要Source/实际owner与逐字PRE经review_mar17_18独立局部通过，root授两段及本人末注窄锁后实际写入；review_mar17_18实际非writer顺读134–165与本注1458、回对必要原证及逐字PRE，局部POST通过；不授DAY。未核代码或复现。
+
+- `SF-2026-ARXIV-2603-17504` — [HypoTerm exact-v1](https://arxiv.org/html/2603.17504v1)§2–5/Tables1–6、§6直接解释反侧/§9及B/C数据计数；仅合成不存在术语与真实实体联合示教、teacher过滤人口/equal-count替换及held-out分验边界。Fixed-seed配置配对非独立seed复现；valid refusal、MMLU/safety反退与输出费保留，probe/SVD不授真实知识或能力不变。未核代码或复现。
+
+- `SF-2026-ARXIV-2603-17368` — [PreSafe exact-v1](https://arxiv.org/html/2603.17368v1) §3/Eq1–5、§4/T1–3、必要A/C/D1–4/T7–8。仅teacher拒绝→query软信号→生成前表示auxiliary BCE/联合SFT接口，部署移除head非硬gate；保teacher/模型judge资格、攻击/过拒/能力反退与全费，不采only-after-CoT普律、真实决策时序/唯一因果或通用安全。未核实现/复现。
+
+- `SF-2026-ARXIV-2603-18325`：[Autocurriculum exact-v1](https://arxiv.org/html/2603.18325v1)，必要§2–5/Algorithms1–5/Theorems3.3/3.6/4.5/相关Remarks及B.1/B.3/B.4关键组合。仅verifier引导教师查询与outcome ensemble分责，保realizable/完美teacher/verifier、终点非完整轨迹、stochastic vote、sequence coverage和ERMoracle费用；不授精确计数recipe、完整证明认证、单模型等价、PPO/GRPO或真实硬件加速，未核实现/复现。
+
+- `SF-2026-ARXIV-2603-17884` — [DebugLM exact-v1](https://arxiv.org/html/2603.17884v1)必要§2/Eq1–6、§3/T1–4、Limitations/Ethics、A/T5、B/T6、C直接扰动与D对照。仅条件CE的来源标签读出及另训match/mismatch拒答接口；保分类非因果lineage、prefix非认证、对照输入不齐、原能力/任务反退、N10标签合集非单答案归因与全费边界，不授exact provenance/unlearning/无损安全或零成本；未核代码/复现。
+
+- `SF-2026-ARXIV-2603-20116` — Daily `2026-03-24`补查；[exact-v1](https://arxiv.org/html/2603.20116v1)必要§3–5/5.4目标及对照，2+1+2=5。仅generic description/domain evidence/answer的typed target读出，格式不认证事实、teacher nonthinking vs1024thinking及额外数据/预算混杂、GraSP旧类13.3<13.5与普通verified示范回退近文；8H100 mixedprecision/vLLM为已披露，不填净费/精确dtype。不采普适保能力/纯tag因果或科学执行安全；未核代码/Figure6像素/复现，soleCh29不重复Ch31目标推导。
+
+- SF-2026-ARXIV-2603-22908 — [DDSR exact-v1](https://arxiv.org/html/2603.22908v1)，必要III/IV/T1–V/F3–8及V限制；仅全target entropy/nt双teacher配权及output/gradient资格分责，隔离不同维梯度共同坐标/二阶实现、prototype记号与零熵fallback recipe，保teacher/人口混杂、task反退和全费用；未核实现/复现。
+
+- `SF-2026-ARXIV-2603-24533` — Daily `2026-03-27`补充03-26自然日；[UI-Voyager exact-v1](https://arxiv.org/html/2603.24533v1)§3.2–3.3/Eq3–7/Alg1、§4/Fig4–9、§5。2+2+2=6，仅同任务peer匹配/failedhistory与responseNTP分责；保SSIM状态代理/异步反側、成功teacher前提、单调index与全费用。不采Alg1末端完整recipe、超人/预算普效或物理授权，未核artifact/复现。
+
+- `SF-2026-ARXIV-2604-00223` — Daily2026-04-03补窗；[exact-v1](https://arxiv.org/html/2604.00223v1) §4.2–4.3/Eq6–9/§5.1–5.3，2+2+3=7。target-only match与full match区分，固定gamma阻断student-tail权重路径；同off-policy teacher responses、Dolly14k/512token、GPT2/OPT三对、五seed/best-val及gamma退化限定。未核artifact或复现。

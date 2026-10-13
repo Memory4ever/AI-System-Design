@@ -2,13 +2,18 @@
 
 **规范：** V3
 **窗口：** 2026-04-01T09:00:00+08:00 ～ 2026-04-02T09:00:00+08:00
-**状态：** 完成
+**状态：** 进行中
 **Books：** 纳入本次
-**检查时间：** 2026-09-26T06:11:10+08:00
+**检查时间：** 2026-10-13T08:32:17+08:00
+**补充窗口：** 2026-04-01 ～ 2026-04-01
+**冻结候选日期：** [补查前原报告](../_sources/daily-20260402/baseline-before-supplement-20261013.md)
+**窗口说明：** 用户授权只补既有 Daily 的来源遗漏；原窗口、25 个候选的身份/日期/评分和连续 §4 保持不变，新增仅检查前一完整北京时间自然日。旧完成与复核声明只指原轮，不能作为本轮验收。
 
-窗口左闭右开；本窗候选、证据、Books 决定及独立日级语义复核均已闭合。外部材料限制按 §5 隔离，不支持“零遗漏”断言。
+原窗口左闭右开；原轮候选、证据与 Books 判断保留。本轮补查尚未日级验收。2026-10-13 用户额度边界下由root明确暂停本日长尾；状态保持进行中，精确停点已保存，待用户恢复后只继续本日未决层。外部材料限制不支持“零遗漏”断言。
 
 ## 1. 结论
+
+本轮遗漏补查已保存停点并暂停；[本日实际停点](../_sources/daily-20260402/SUP_WORKING_STOP_20261013.md)保存有限发现、191 个已读精确题摘、必要决定事实与可继续的准入/证据/复用事项。514 个原始身份线索不是贡献候选；当前确定新增十三项：SISA、Label Gauge、Tucker、CoT reward conflict、QUAD 五项真实整合与独立POST，MEDiC/Parallel Data 两项具体已有覆盖，Privacy Guard、CivicShield、CG-LoRA、MacTok、Modality Gap 五项中心争议隔离，RIDE 一项4分仅报告关闭。PROSFI/SNEAK必要Source已过而Books PRE待核/未写，PSPA Source和Active measurement争议已获新reader必要原稿层复核但日期/最终处置同步未完；不预支其完成或最终新增总分母。本日未获DAY/FINAL。以下原轮二十五项结论保持，不能将旧完成状态外推到补查。
 
 旧 V2.1 日报的 `Complete / Passed` 不成立：它把 DataCite DOI `created` 日当作首次公开日，只覆盖 arXiv，旧 35 项中至少六个标题、十一个摘要受到后发版本倒灌，且把 [TENT v1](https://arxiv.org/html/2604.00368v1)写成 `TE+`。本轮用 [arXiv 公告规则](https://info.arxiv.org/help/availability.html)、连续 ID 边界、首/中/末 v1 及 DOI 时间作**有界批次归属推断**，而不将提交日、DOI 入库日任意一个冒充公开时刻。`2604.00001–01225` 与本窗北京时间 08:00～09:00 的公告批次范围相容；逐篇异常仍须单列。
 
@@ -41,28 +46,28 @@
 
 ## 2. 来源覆盖
 
-本节只陈述已经重放的官方入口及停点；“未完成”不是“无命中”。原始链接、版本差异和具体补查范围见[日专属笔记](../_sources/daily-20260402/v3-reopen-notes.md)。
+本节合并原轮有效入口与本轮 `04-01` 完整北京时间自然日的有限补查，不迁移旧候选。原轮依据见[日专属笔记](../_sources/daily-20260402/v3-reopen-notes.md)，本轮实际原站字段与动态/API停止见[17入口](../_sources/daily-20260402/SUP_OFFICIAL_FIELDS_20261013.json)、[六个定点原值](../_sources/daily-20260402/SUP_DIRECTORY_DATE_FIELDS_20261013.json)和[本日停点](../_sources/daily-20260402/SUP_WORKING_STOP_20261013.md)。来源首屏、列表外事件或日期缺失不授零遗漏。
 
 | 来源 | 检查范围与依据 | 结果 | 缺口 |
 | --- | --- | --- | --- |
 | `SRC-OPENAI` | [News RSS](https://openai.com/news/rss.xml)完整历史顺序至 2015；本窗 [Gradient Labs 案例](https://openai.com/index/gradient-labs) 2026-04-01 02:00 UTC，题摘没有新的模型/系统机制，准入前关闭。[Research sitemap](https://openai.com/sitemap.xml/research/)和 [Publication sitemap](https://openai.com/sitemap.xml/publication/)仅能辅助找身份，`lastmod` 不是首发。 | 受阻 | 已隔离：News 已核；Research/Publication 历史文章未能形成可验证的本窗首发停点。只隔离这两入口的潜在遗漏，取得官方文章及原始发布日期后按 family 重开，不推断零命中。 |
-| `SRC-ANTHROPIC` | [Research](https://www.anthropic.com/research)内嵌 `publishedOn` 列表，04-01 01:00Z～04-02 01:00Z 相邻条目 03-31 22:17Z 与 04-02 10:56Z。 | 已检查 | 限此历史目录，不证明机构作者未列论文/GitHub 无事件。 |
+| `SRC-ANTHROPIC` | [Research](https://www.anthropic.com/research)原站 `publishedOn`；补窗UTC03-31 16:00～04-01 16:00内为 [How Australia uses Claude](https://www.anthropic.com/research/how-australia-uses-claude)，03-31T22:17Z＝04-01北京时间06:17。原文核心是地区使用/经济情况，拟范围关闭；下一条 emotion concepts 为04-02T10:56Z，窗外不扩读。 | 已检查 | 限此历史目录，不证明机构作者未列论文/GitHub无事件；代表性范围排除尚待本轮复核。 |
 | `SRC-GOOGLE-AI` | [Research 2026-04 Blog](https://research.google/blog/2026/04/)最早为 04-03；[DeepMind Publications](https://deepmind.google/research/publications/)按日期倒序首页 04-22 直接到 03-22，未列本窗条目；[Google Research Publications](https://research.google/pubs/)按年度/领域组织、2026 年 357 项，未给日级 first-public。 | 受阻 | 两个有日期的原始目录已核；Google Research Publications 缺可界定本窗的日期/分页接口，不能从 2026 年份或当前列表推断本窗零发布。恢复条件是官方精确发布索引或具体论文链接/首次公开事件。 |
 | `SRC-META-AI` | [AI at Meta Blog](https://ai.meta.com/blog/)可见 04-08 与 03-26 相邻；[Research](https://ai.meta.com/research/)动态目录无法从可读静态页形成完整历史停点。 | 受阻 | 已隔离：Blog 所见邻近日期不证明 Research 零发布；仅隔离该动态目录，取得当窗官方原文/可检索历史索引时重开。 |
-| `SRC-QWEN` | [Research 前端](https://qwen.ai/blog)拼接官方 `GET https://qwen.ai/api/page_config?code=research.research-list` 的 60 条旧项与 `GET https://qwen.ai/api/v2/article/retrieval?type=qwen_ai&language=en-US` 的 40 条动态项；后者 `extra.date` 唯一本窗项为 [Qwen3.6-Plus](https://qwen.ai/blog?id=qwen3.6)，`2026-04-02T04:00:00+08:00`，正文可由同一 API 的 `content` 读取。题摘/核心说明只有厂商能力披露及 `preserve_thinking` API 版本事实，未见新训练机制；按长期贡献门槛关闭。 | 已检查 | 限该官网 Research 目录，不推断作者 arXiv 与仓库全部事件无更新。 |
-| `SRC-DEEPSEEK` | [Research & News](https://deepseek.com/en/news/)可读首页 News 04-24→2025-12-01、Research 06-24→02-25；进一步取完整目录时源站直接返回 HTTP 429（2026-09-26 复试）。 | 受阻 | `View All` 动态列表无法核到终点；仅隔离该入口未见的当窗事件，不以首页间隔证明全站零命中。恢复条件为官方可访问的完整历史目录或该窗口原始文章链接。 |
+| `SRC-QWEN` | [Research](https://qwen.ai/blog)的官方 `GET https://qwen.ai/api/v2/article/retrieval?type=qwen_ai&language=en-US` 返回40动态项；补窗相邻为03-30 Qwen3.5-Omni→04-02 Qwen3.6-Plus，未列04-01項。60旧静态项的原轮具名有效证可复用；[Qwen3.6-Plus](https://qwen.ai/blog?id=qwen3.6)官方04-02T04:00+08、能力披露/`preserve_thinking`版本事实保留原轮，不移入补窗。 | 已检查 | 限该官网 Research目录，不推断作者arXiv与仓库全部事件无更新。 |
+| `SRC-DEEPSEEK` | [Research & News](https://deepseek.com/en/news/)本轮首页恢复可读，News04-24→2025-12-01、Research06-24→02-25；原轮完整目录曾HTTP429，本轮首页恢复不证明 `View All` 完整历史恢复。 | 受阻 | 完整动态列表仍未形成历史终点；仅隔离该入口未见的当窗事件，不以首页间隔证明全站零命中。恢复条件为官方完整历史目录或该窗口原始文章链接。 |
 | `SRC-MOONSHOT` | [Kimi Blog](https://platform.kimi.com/blog)可见归档仅到 2025-11；官方组织仓库排序页查至 100 个 repo，未见当窗新建；定点核 [checkpoint-engine releases](https://github.com/MoonshotAI/checkpoint-engine/releases) 19 个（2026-02-02→06-08 相邻）、[Kimi-K2.5 releases](https://github.com/MoonshotAI/Kimi-K2.5/releases)空，无该窗重大 release。 | 受阻 | 已隔离：Blog 不提供 2026 完整档案；repo 检查限上述入口，不把无新增 release 扩为所有仓库无事件。未列研究正文待具体身份重开。 |
 | `SRC-TENCENT-HUNYUAN` | [研究“全部”目录](https://hunyuan.tencent.com/research)的官方 `POST https://api.hunyuan.tencent.com/api/blog/publicList`，`pageNum=1,pageSize=100,renderType=0`，返回 9/9，04-23→02-13 之间无本窗条目。 | 已检查 | 限此完整目录，不覆盖机构作者未列 arXiv 或仓库 artifact。 |
-| `SRC-ZAI` | [Research](https://www.zhipuai.cn/zh/research)的 [GLM-5V-Turbo 原文](https://www.zhipuai.cn/zh/research/156)显示 `2026/04/01 16:00`，未写时区；CogViT/MTP/RL 是官方描述。 | 受阻 | 官方时区/精确事件归属及机制正文；当前只作可能落窗的版本事实，不能入本窗确定候选或 Books。 |
+| `SRC-ZAI` | [Research](https://www.zhipuai.cn/zh/research)的 [GLM-5V-Turbo原文](https://www.zhipuai.cn/zh/research/156)显示 `2026/04/01 16:00` 未标时区；本轮已读核心只有CogViT/MTP/RL名词、30+tasks、榜单与展示，未给可复原新方法或受控归因，拟贡献前关闭。 | 未完成 | 等待代表性准入复核，不是不可读正文；若排除通过，不为不影响处置的时区无限追查。当前未入确定候选或Books。 |
 | `SRC-BYTEDANCE-SEED` | [Research/Blog](https://seed.bytedance.com/en/research)可见 04-11→01-27；[论文目录](https://seed.bytedance.com/en/public_papers)同站 `GET /api/get_article_list_v2`、`article_type=1,count=20,order_desc=true,page_token=40`、`x-tt-locale: US`，242 总条目；倒序页 04-07T16:00Z 紧接 03-31T12:00Z。 | 已检查 | 限这两个目录，不推断 Seed 作者未列论文或仓库没有本窗事件。 |
 | `SRC-BAIDU-ERNIE` | [Blog](https://ernie.baidu.com/blog/zh/) 04-15→02-06，[Publication](https://ernie.baidu.com/blog/zh/publication/)当前四篇且无窗内标题；[PaddlePaddle/ERNIE releases](https://github.com/PaddlePaddle/ERNIE/releases)仅见 2025-06-30 的 `ernie-4.5`，本窗无 release。 | 已检查 | Blog 仅日精度，不能证明该日具体 09:00 边界；其它未列原始稿须凭身份重开。 |
 | `SRC-XIAOMI-MIMO` | [Paper/Blog](https://mimo.xiaomi.com/)八篇 Paper 日期 06-29→03-13，Paper 无本窗项；[XiaomiMiMo/vllm](https://github.com/XiaomiMiMo/vllm/releases)与 [MiMo-V2-Flash](https://github.com/XiaomiMiMo/MiMo-V2-Flash/releases)公开 release 列表为空，组织 repo 排序页本窗无新建。 | 受阻 | 已隔离：Blog 目录约十四项不标日期，未能建立本窗全量时间边界；不以 Paper/release 零条代表 Blog 零发布，取得原始日期再重开。 |
-| `SRC-MINIMAX` | [英文 Blog](https://www.minimax.io/blog) 06-01→03-18；[中文 Blog](https://www.minimaxi.com/blog) 04-27→03-18。[MiniMax-AI/cli releases](https://github.com/MiniMax-AI/cli/releases)本窗 `v0.4.0/0.4.1/0.4.2` 分别发布于 04-01 09:03、11:14、11:20 UTC；变更是状态栏/配额展示、JSON config/Node installer、CI 上传修复，没有新的大模型或 AI System 长期机制，准入前关闭。 | 受阻 | 已隔离：[Agent Tech Blog](https://agent.minimax.io/docs/techblog)未标历史公开日；无法以可见目录判窗内零事件，需 exact dated 原文重开。 |
-| `SRC-ARXIV` | [公告规则](https://info.arxiv.org/help/availability.html)与 `2604.00001/00600/01224/01225/01226` 原站 v1 + DataCite 相邻切点；旧 513 DOI inventory 为注册类别身份线索，旧 35 条逐项核 exact-v1 题摘，旧排除集标题全览并定点摘要查漏，最终 25 个家族获本窗候选及证据终态。 | 已检查 | `2026-04-02 08:00+08` 是经官方公告规则与连续 ID 边界支持的有界批次归属，不是逐篇公告秒级证明；若出现单篇延迟公告/撤回的官方反证，只重开该家族。 |
+| `SRC-MINIMAX` | [英文](https://www.minimax.io/blog)/[中文Blog](https://www.minimaxi.com/blog)相邻03-18→更晚条目；[cli releases](https://github.com/MiniMax-AI/cli/releases)补窗 `v0.4.0/0.4.1/0.4.2` 为04-01 09:03/11:14/11:20 UTC，原有效核心是状态栏/配额、JSON config/Node installer、CI上传修复，无新模型或系统机制，拟关闭。AgentTechBlog本轮恢复三明确日期Sep19/Sep22/Oct8，均窗外。 | 受阻 | 已隔离：[AgentTechBlog](https://agent.minimax.io/docs/techblog)未列历史slice仍不能判零遗漏；不再沿用“所有条目未标日期”的旧描述，取得具体当窗dated原文时定点重开。 |
+| `SRC-ARXIV` | 原轮 `2604` 25家族保留；本轮四主题query共211槽/181身份，12官方March分类在28768–30045标题切片及必要尾页共470身份，合并514线索；三批精确v1完整题摘191已读，宽列表不当贡献/全文队列，停止扩大。日期采用官方常规下界＋2603首次公告月月底上界＋无早正文反证的复合门，不以Submitted/created单独归日。 | 未完成 | 现有191题摘的贡献归并、必要例外日门、证据与Books/独核仍有可执行事项；CRAFT/MPP已root接纳有效同事件复用，另外18点核待接纳。StepCache早提交与LongCat早仓库正文信号精确隔离，不倒迁旧候选或授无遗漏。 |
 
 ## 3. 候选与判断
 
-下表为本窗冻结的 **25 个候选家族**。公开时间栏只写完全落在日窗内的 `2026-04-02T08:00:00+08:00 ～ 2026-04-02T09:00:00+08:00` 有界批次范围：它由官方公告计划、相邻 ID 切点及 pinned-v1 共同推定，**不是** arXiv 为每篇披露的秒级时刻。若以后发现单篇延期公告等例外，只重开该项而非整体平移。旧稿按 DOI created 得到的评分作废。
+下表先保留原轮冻结的 **25 个候选家族**，补充窗口已核新增随后列出，新增总分母尚未冻结。原25项公开时间栏保持 `2026-04-02T08:00:00+08:00 ～ 2026-04-02T09:00:00+08:00` 有界批次范围：它由官方公告计划、相邻 ID 切点及 pinned-v1 共同推定，**不是** arXiv 为每篇披露的秒级时刻；新增按已核 `04-01` 日期。若以后发现单篇延期公告等例外，只重开该项而非整体平移。旧稿按 DOI created 得到的评分作废。
 
 | 材料 | 公开时间 | 项目贡献与评分 | 审阅结果 | Books决定 |
 | --- | --- | --- | --- | --- |
@@ -91,6 +96,19 @@
 | [Simple Self-Distillation — arXiv:2604.01193v1](https://arxiv.org/pdf/2604.01193v1) | 2026-04-02T08:00:00+08:00 ～ 2026-04-02T09:00:00+08:00 | 同分布自采样固定点与训练采样支持集变换的条件分支；2 + 1 + 2 = 5。 | 深入完成 | 整合：TRAIN-SFT，[Ch29](../../../../books/part-04-training-system/29-sft.md)。 |
 | [MyPhoneBench — arXiv:2604.00986v1](https://arxiv.org/html/2604.00986v1) | 2026-04-02T08:00:00+08:00 ～ 2026-04-02T09:00:00+08:00 | 任务成功、过程隐私 witness 与跨会话偏好的分账/交集验收；2 + 1 + 2 = 5。 | 深入完成 | 整合：PLATFORM-EVALUATION-SYSTEM，[Ch66](../../../../books/part-06-ai-infrastructure/66-evaluation-system.md)。 |
 | [Agent-Judge Score–Coverage — arXiv:2604.00477v1](https://arxiv.org/html/2604.00477v1) | 2026-04-02T08:00:00+08:00 ～ 2026-04-02T09:00:00+08:00 | panel 分数收敛与去重问题发现不同步，需双轴停止；2 + 1 + 2 = 5。 | 深入完成 | 整合：PLATFORM-EVALUATION-SYSTEM，[Ch66](../../../../books/part-06-ai-infrastructure/66-evaluation-system.md)。 |
+| [SISA — arXiv:2603.29913v1](https://arxiv.org/html/2603.29913v1) | 2026-04-01 | 保持 output-stationary dataflow，将同 PE 池按矩形 slab 独立或融合，新增 shape/带宽相关的并行分工与成本边界；2 + 2 + 2 = 6。 | 深入完成 | 整合：INFER-TENSORRT-LLM，[Ch49](../../../../books/part-05-inference-system/49-tensorrt-llm.md)。 |
+| [Label Cosine Gauge — arXiv:2603.29488v1](https://arxiv.org/html/2603.29488v1) | 2026-04-01 | fixed encoder/独立输出头的共同平移保持 softmax 分布，却可将不同类别向量 cosine 改成 ±1，限定未固定坐标的几何解释；3 + 1 + 3 = 7。 | 深入完成 | 整合：MODEL-EMBEDDING，[Ch12](../../../../books/part-02-model/12-embedding.md)。 |
+| [Tucker Attention — arXiv:2603.30033v1](https://arxiv.org/html/2603.30033v1) | 2026-04-01 | 将 per-head QK/VO 乘积的 head/feature 轴联合 rank 参数化，区分参数与 latent KV 节约、RoPE 和 kernel 兼容代价；2 + 2 + 2 = 6。 | 深入完成 | 整合：MODEL-MULTI-HEAD-ATTENTION，[Ch15](../../../../books/part-02-model/15-multi-head-attention.md)。 |
+| [CoT Reward Conflict — arXiv:2603.30036v1](https://arxiv.org/html/2603.30036v1) | 2026-04-01 | output/CoT 奖励对透明表达的相容关系必须绑定 task/reward pair/monitor，实测保正交语义漂移和空 trace 等反側；2 + 2 + 3 = 7。 | 深入完成 | 整合：TRAIN-RLHF，[Ch31](../../../../books/part-04-training-system/31-rlhf.md)。 |
+| [Privacy Guard — arXiv:2603.28972v1](https://arxiv.org/html/2603.28972v1) | 2026-04-01 | 自身不同秘密人口的泄漏计数与 70B 零漏/projected hybrid 保证冲突，限定组件隐私 guarantee 的可采用边界；3 + 1 + 3 = 7。 | 争议 | 暂缓：中心冲突隔离，不采用零泄漏或写入 Books 正面保证；见 §4/§5。 |
+| [CivicShield — arXiv:2603.29062v1](https://arxiv.org/html/2603.29062v1) | 2026-04-01 | normalized MI/taxonomy mass 不能一般约束跨层共同失败，有限 L2–5 模拟也不认证七层形式安全；3 + 1 + 3 = 7。 | 争议 | 暂缓：composition guarantee 中心隔离，不写 Books 正面保证；见 §4。 |
+| [CG-LoRA — arXiv:2603.29824v1](https://arxiv.org/html/2603.29824v1) | 2026-04-01 | 输出匹配目标与首步梯度不同，但同 NTK/KFAC 假设内的 2×2 反例不支持双边 top-r 的全局最优推断；2 + 1 + 2 = 5。 | 争议 | 暂缓：中心最优性证明隔离，不写 Books；见 §4。 |
+| [MacTok — arXiv:2603.29634v1](https://arxiv.org/html/2603.29634v1) | 2026-04-01 | 固定 unconditional reconstruction loss 不因 mask 比例自动增加，中心 anti-collapse 的 Δ 单调保证不由原 A2 推理成立；3 + 1 + 3 = 7。 | 争议 | 暂缓：中心 collapse 资格冲突隔离，不写 Books；见 §4。 |
+| [Modality Gap Robustness — arXiv:2603.29080v1](https://arxiv.org/html/2603.29080v1) | 2026-04-01 | 正交平移可保持 clean NN 差，但方差下降不一般推出同阈值误差概率下降，有限 isotropic/零 empirical-mean 反例限定中心鲁棒性保证；2 + 2 + 2 = 6。 | 争议 | 暂缓：中心 tail-probability 保证隔离，不写 Books；见 §4。 |
+| [QUAD — arXiv:2603.29535v1](https://arxiv.org/html/2603.29535v1) | 2026-04-01 | 固定运行图的跨 adapter 量化资格由 anchor profile、QuantSim teacher 适配及逐 adapter 输出回归共同决定，而不由相同 rank/dtype 自动继承；2 + 2 + 2 = 6。 | 深入完成 | 整合：INFER-TENSORRT-LLM，[Ch49](../../../../books/part-05-inference-system/49-tensorrt-llm.md)。 |
+| [MEDiC — arXiv:2603.29009v1](https://arxiv.org/html/2603.29009v1) | 2026-04-01 | teacher-guided mask 与多目标效果依 dense/sparse 模式和实际 consumer，语义连贯 mask 或更多 loss 不单调改善质量；2 + 1 + 2 = 5。 | 标准完成 | 已有覆盖：MULTIMODAL-REPRESENTATION，[Ch23](../../../../books/part-03-multimodal-world-models/23-multimodal-representation.md)，目标/consumer 分验与局部/全局读出边界。 |
+| [Parallel Data — arXiv:2603.29026v1](https://arxiv.org/html/2603.29026v1) | 2026-04-01 | 固定双语 recipe 与预算下，平行配对暴露、checkpoint 阶段、cos/PWCCA 和受控续写分别测不同对象，早期 proxy 不等终态共享能力；2 + 1 + 2 = 5。 | 标准完成 | 已有覆盖：TRAIN-PRETRAINING，[Ch28](../../../../books/part-04-training-system/28-pretraining.md)，阶段/读出分账；数据类型由 Ch27 交接。 |
+| [RIDE — arXiv:2603.29206v1](https://arxiv.org/abs/2603.29206v1) | 2026-04-01 | 冻结模型前置自然语言 expert framing 的 density/entropy 诊断仅改变局部 prompt 测量，不能借真实 MoE routing 扩大范围；1 + 1 + 2 = 4。 | 已关闭 | 仅报告：受限 textual proxy，不据此改写真实稀疏路由机制或写 Books。 |
 
 ## 4. 证据与知识整合
 
@@ -194,24 +212,114 @@ PDF v1 §2 与 Appendix B 区分同分布自采样的零期望梯度与改变温
 
 论文 §3–4 的 15 个任务、两组 judge/target 模型、各 32 个角色评委显示：panel 的评分一致性提高，不等于经语义去重的新问题发现已经饱和。评分精度与开放式 issue coverage 是不同 estimand，停止规则与预算不应只看均分；但去重阈值、任务/角色选择和交互路径会影响发现曲线。43 名人类的 86 个会话与 Agent 评委比较中，`p=0.379` 只说明未检出这组差异，不是人类等价证明。Ch66 原有 active judge 主线已有评分可靠性，却未把去重后的问题发现作为独立停止轴；Books owner 已补窄幅论证，我对读 exact-v1 与正文后确认条件未被外推。Books Decision 为 **Integrate：PLATFORM-EVALUATION-SYSTEM / Ch66**。[详细审阅](../_sources/daily-20260402/v3-reopen-notes.md#精确版本证据复核260400477v1agent-judge-score-与-coverage)。
 
+### [SISA — arXiv:2603.29913v1](https://arxiv.org/html/2603.29913v1)
+
+补充窗口新增；精确 v1 §3–4 将固定方形阵列对小或偏斜 `M` 的闲置，转为同 PE 池全宽 horizontal slabs 的独立/高度融合：OS 本地累加不变，local buffer、weight-buffer bypass、`N` tile 并行与 `K` 分块按序累加分别承担责任。这里改变的是并行单元组织，不是已有 SPECTRA 的阶段 dataflow 切换，也不是软件让现成 Tensor Core 免费重组。正常公告复合日证由 Mar31 提交、`2603` 首次公告月及已注册 Apr1 上界共同限定，未以 DOI created 单独授日。
+
+评价限 RTL、CACTI、SCALE-Sim 和 BF16 128×128 的 modeled GEMM；`112<M≤128` 的 EDP 反增 8.47%，ReDas 在 `M=33–50` 可更好。INT8/BF16 不能按同 PE 数视为同硬件，28nm/ASAP7 字段冲突不支持绝对功耗，所汇总线性层 GEMM 也不是完整模型或 Serving SLO。`2+2+2=6` 的实际增量是形状相关的 OS 分工与 buffer/带宽代价；因当前 owner 的具体长期缺口加深必要内容，不借整个硬件主题提高评分。
+
+Books Decision 为 **Integrate：INFER-TENSORRT-LLM / Ch49**。在现有 Linear→GEMM shape 论点后、State→Kernel 之前新增两段，保留旧正文与相邻 SPECTRA 分工；[完整 PRE、实际位置与非作者 POST](../_sources/daily-20260402/SUP_SISA_PRE_20261013.md)记录实际正文 418/420 与静态末注 2937。root 已实际回读前后邻接及末注并通过单项写后复核，窄锁已释放；不等于本日 DAY 已通过。必要原件见[方法](../_sources/daily-20260402/SUP_FIRST_PROOF_METHODS_20261013.json)、[评价](../_sources/daily-20260402/SUP_FIRST_PROOF_CORE_20261013.json)与[日证](../_sources/daily-20260402/SUP_FIRST_DATE_SIGNALS_20261013.json)，未核 RTL/代码或复现实验。
+
+### [Label Cosine Gauge — arXiv:2603.29488v1](https://arxiv.org/html/2603.29488v1)
+
+精确v1 §2–4 的 common-shift 证明固定全部输入函数 `f(x)`、只改独立 output head；共同平移全部类别向量使 logits 同增 `f(x)·v`，故每个输入的 softmax 分布不变。对不同向量 `a≠b`，取 `v=−(a+b)/2` 后 cosine 为 −1，取 `v=−a+(b−a)/2` 后为 +1，两构造都非零。它反驳的是 label-cosine 对预测行为/语义的普遍可识别性，不证明某个固定 checkpoint 的统计都无用，也不授 input embeddings、tying、CLIP 或其它 readout 同样不变。v1单位向量 toy 的符号/数值不协调不采用，当前v2的sigmoid扩展不倒灌；[必要证明与反側](../_sources/daily-20260402/SUP_GAUGE_REVIEW_20261013.md)保存具体限定。
+
+最终 `3+1+3=7` 只评这项输出组件的严格解释反例。Books Decision 为 **Integrate：MODEL-EMBEDDING / Ch12**；现有近邻/维度诊断与tying接口没有该等价类，两段落在原tying选择与PIT左逆之间，不改输入表或既有PIT。root 已实际核新168/170、160–181完整邻接和本人静态注424，POST通过、窄锁释放；[完整PRE与实际写入](../_sources/daily-20260402/SUP_GAUGE_PRE_20261013.md)。常规公告复合日证与owned注册上界见[三项日证](../_sources/daily-20260402/SUP_TUCKER_GAUGE_COT_DATE_20261013.json)，不以created单字段授日。未核代码/复现，不授本日日级完成。
+
+### [Tucker Attention — arXiv:2603.30033v1](https://arxiv.org/html/2603.30033v1)
+
+精确v1 §2–4 用两个三阶张量分别表示各head的pre-softmax QK与post-softmax VO乘积，以core/各轴basis联合压缩；这不是只减少KV heads，也不是既有 MHA/GQA/MLA 权重的无损runtime改写。§3存两个down-projection latent，共享时可为一份，同rank cache与MLA相同；移动RoPE到latent key保相对形式但改frequency/operator。接口先形成每头query接GQA kernel，专用core kernel是future work。Table3从头训练1B中GQA8 loss2.61、一个Tucker配置2.69，参数/iteration节约仍付质量；单H100 BF16/batch1/N4096研究decode mean不授生产SLO。[必要证据及配置/记号反側](../_sources/daily-20260402/SUP_TUCKER_REVIEW_20261013.md)保存具体支持与不采用内容。
+
+`2+2+2=6` 针对三轴参数化与state接口差额，因具体owner缺口加深必要原证。Books Decision 为 **Integrate：MODEL-MULTI-HEAD-ATTENTION / Ch15**，在现参数/KV桥后、TP之前两段；root实际读210–248完整邻接、新229/231及本人注377，POST通过、锁释放，[完整PRE与实际写入](../_sources/daily-20260402/SUP_TUCKER_PRE_20261013.md)。不重复Ch13位置推导或Ch19容量/Ch49runtime；日证见[三项正常复合门](../_sources/daily-20260402/SUP_TUCKER_GAUGE_COT_DATE_20261013.json)，未核代码/复现。
+
+### [CoT Reward Conflict — arXiv:2603.30036v1](https://arxiv.org/html/2603.30036v1)
+
+v1 §3–4 按 `R_out/R_cot` 对相关计算的透明表达是否允许/惩罚/不区分，提出相容、冲突、正交条件；不是从奖励代码即可自动分类，也不证明语言预训练的 transparent bias 假设。§6–7 的 monitorability 限prompted LLM读CoT分类指定任务特征，非真实内部计算；reward sweep选联合reward最好policy，CAPO/GRPO/ICRL人口不同。冲突优化可失败，正交仍有semantic drift，长度惩罚部分低监控只是空trace；aligned初始监控完美，未实测主动提升。不据此宣称所有length penalty安全/危险。[完整必要证据与安全反側](../_sources/daily-20260402/SUP_COT_CONFLICT_REVIEW_20261013.md)保存限制，未展示攻击代码。
+
+`2+2+3=7` 只评奖励关系与文本监控条件。Books Decision 为 **Integrate：TRAIN-RLHF / Ch31**，在原counterfactual simulator反側与curriculum转场之间新增两段，不改原论点；root actual POST已读832–853完整邻接与本人末注，新843/845和注1499通过、窄锁释放，[完整PRE/写入](../_sources/daily-20260402/SUP_COT_CONFLICT_PRE_20261013.md)。不替Ch66授evaluation truth；正常复合日证/owned字段见[日证](../_sources/daily-20260402/SUP_TUCKER_GAUGE_COT_DATE_20261013.json)，未核代码/复现。
+
+### [Privacy Guard — arXiv:2603.28972v1](https://arxiv.org/html/2603.28972v1)
+
+精确v1必要§6–7的自身数据不能支持摘要式zero leakage：§6.2的Qwen2.5-7B/40prompt为40/40出现泄漏；§6.4 T4/Ollama Q4_0/1000samples仍漏420/3250，其中Lazy/Institutional420/1250，个人子集零漏不是全pipeline；30B的50complexsamples为117/215，70B/6bit的50样本仍3/250。§7.3随后写70B零漏，与已有计数冲突；scanner+8B hybrid的零漏是projected不是实测，regex也不证明任意秘密完备。不同模型/人口不合并成单一前后修复实验。[必要中心两侧](../_sources/daily-20260402/SUP_PRIVACY_REVIEW_20261013.md)与[原始必要评价](../_sources/daily-20260402/SUP_PRIVACY_EVALUATION_20261013.json)保留双方。
+
+root已实际核这些全文必要范围，新增纠错命题 `3+1+3=7`，reach只该privacy组件；不是借安全标签扩层，原先没有数字评分也不猜旧7。处置为 **中心争议隔离／Books暂缓**，无正面guarantee写入。Mar30T20:16Z、2603公告月和owned/findable Apr1注册上界共同支持正常日门，见[定点日证及当前无撤回标记范围](../_sources/daily-20260402/SUP_STANDARD_DATE_SIGNALS_20261013.json)，不是created单字段。重开需作者明确population/70B计数与§7.3勘误、实际hybrid测量/secret类别及独立验证条件；未核实现/复现，不用争议支撑覆盖或安全保证。
+
+### [CivicShield — arXiv:2603.29062v1](https://arxiv.org/html/2603.29062v1)
+
+v1 V-D/A-C 的 normalized MI→failure Pearson correlation 一般上界不成立：共享failure bit加各自独立高熵noise，使normalized MI可很小但failure correlation为1；正文ω与附录sqrtω不统一，taxonomy的1/8不是共同原因概率β≤.15的依据。root已实际原式及反例独核，不从七层名称授reach，最终纠错`3+1+3=7`、**中心争议／Books暂缓**。[必要形式反側与原件](../_sources/daily-20260402/SUP_CIVIC_COMPOSITION_DECIDER_20261013.json)保留双方。
+
+root限定核的VII/T11–12中四phase和human-redteam是计划，human always-correct/FPR模型不授部署；真实模拟仅L2–5、716adv+720benign，72.9%是rawflag而非完整七层/block或harm prevented，effectiveFPR2.9%、benign多轮14%反側不能漏。其后小model pilot与猜frontier收益不是已复现/通过的部署证据，[已读必要评价原件](../_sources/daily-20260402/SUP_CIVIC_EVAL_20261013.json)和[采用/不采用范围](../_sources/daily-20260402/SUP_CIVIC_REVIEW_20261013.md)精确隔离；不声称全七层或真实人测完成。正常公告复合门/owned Apr1上界与无当前撤回说明范围见[日证](../_sources/daily-20260402/SUP_CIVIC_MACTOK_EC_DATE_20261013.json)。重开需正确依赖界/威胁population及完整stack action/outcome/human校准，不依赖层数或taxonomy替安全保证；无Books写入、代码核验或复现。
+
+### [CG-LoRA — arXiv:2603.29824v1](https://arxiv.org/html/2603.29824v1)
+
+v1 §3–6区分首步parameter-gradient与最终predictor alignment，但理论解只在fixed NTK、因子first-order与KFAC等式条件下；§4 Prop4.5/Eq9–10双边top-r得到tail从r+1起却称“hence solves”，自身lowerbound从2r+1起。root已实际原式并核同假设反例：whitened F=diag(3,2)、r1，双边e1残差2，B=e1/Aᵀ=e2的row/column tangent覆盖两对角而残差0。经验disjoint可能较差不修复全局最优证明；`2+1+2=5`保持，因纠错加深，不用降分消除冲突。
+
+**中心争议／Books暂缓**，不采用最优性、必需二阶或完整实现，亦不凭反例认证/否定全部实验。必要方法/局部质量成本与直接记号问题保留在[原件](../_sources/daily-20260402/SUP_CGLORA_CORE_20261013.json)、[证据边界](../_sources/daily-20260402/SUP_CGLORA_REVIEW_20261013.md)；当前v2 June7改title而AB仍相同中心方向，无显式erratum/withdraw，不倒灌后版或遍历版本史。正常复合日证见[日证](../_sources/daily-20260402/SUP_STANDARD_DATE_SIGNALS_20261013.json)。重开需修改最优性命题/子空间限制、正确可核证明和实际数值接口；未写Books/核代码/复现。
+
+### [MacTok — arXiv:2603.29634v1](https://arxiv.org/html/2603.29634v1)
+
+root已实际v1 §3/4与专门[A2 Eq10–18原文](../_sources/daily-20260402/SUP_MACTOK_COLLAPSE_A2_20261013.json)：固定collapsed unconditional `−log pθ(X)` 不仅因mask m增加而改变，`E log conditional=log marginal`不成立；实际latent-only decoder又没有其input-copy loophole。mask减少input信息并不自动使informative优势Δ单调增加、扩大β保证。图像压缩/局部quality对照与mask/representation alignment配方仍保留，不把理论错误静默改成成熟组合EX，也不把有限结果当所有强压缩不collapse。
+
+新增明确纠错`3+1+3=7`（此前未有数字tuple，不猜旧分），**中心争议／Books暂缓**，不因能映codec/anti-collapse通用原则加分。实际必要方法/评价在[决定core](../_sources/daily-20260402/SUP_DECIDER_2603-29634v1_20261013.json)；正常日门与owned Apr1上界见[日证](../_sources/daily-20260402/SUP_CIVIC_MACTOK_EC_DATE_20261013.json)。重开须修正目标/decoder信息路径、给定β/m/训练人口下可核的collapse条件与对应对照；只A2必要补读，不把A1/A3的null当已审，不扩全附录/代码。无Books正面写入/复现。
+
+### [Modality Gap Robustness — arXiv:2603.29080v1](https://arxiv.org/html/2603.29080v1)
+
+v1 §3–6与仅必要A3/A4/A5中，clean squared-distance差在 `v·(xi−xj)=0` 下保持的恒等可以成立；但A3/A4从zero-mean/ covariance或方差下降直接推出tail概率下降，缺分布/尾次序条件。root已实际原定理/证明及有限反例核验：unit texts±(1,0)、queries(±.8,.6)、gap(0,.6)，η两坐标均匀±3，noise1=η/2、noise2=−η/2，使每点mean0/cov2.25I且empiricalmean0；noisytexts仍相反同norm，原correct3/4，closegap后2/4。它满足原文明确的cov/零empirical条件，不能用额外未写出的独立point/Gaussian条件补证明。
+
+保持`2+2+2=6`，因实际纠错加深，不借此否认原文有限Gaussian实验或clean恒等；也不采用所有noise/一般covariance的robust保证。**中心争议／Books暂缓**；[必要原式/反例四case](../_sources/daily-20260402/SUP_GAP_CORE_20261013.json)与[实測/非采用边界](../_sources/daily-20260402/SUP_GAP_REVIEW_20261013.md)保留Gaussian K100、embedding-only quantization与rephrasing改candidate集合的不同口径，不认证全模型量化/真实RAG/Serving。normalSubmitted、公告月与owned上界见[日证](../_sources/daily-20260402/SUP_STANDARD_DATE_SIGNALS_20261013.json)，当前v2Apr27无显式纠错标记，不回填后版。重开须明确joint noise/centering/尾分布条件与正确概率证明、对应独立对照；未写Books、扫A1/A2/其它附件、核代码或复現。
+
+### [QUAD — arXiv:2603.29535v1](https://arxiv.org/html/2603.29535v1)
+
+精确v1 §3–5/Tables1–5中，runtime A/B 为同一 binary 的 graph inputs；但不同 adapter 分布不能仅凭接口同形共用量化资格。作者以完整与量化输出差异选择校准锚，再让其它 adapters 在这份冻结 profile 的 QuantSim 中，向各自完整 teacher 和原任务目标适配。新增 `2+2+2=6` 只落跨 adapter 的 profile 资格与资产/质量分账，不借已有动态 A/B 原则提高分数。
+
+base INT8、LoRA/activation INT16 的实际说明与 literal 统一 scale、affine Eq5–7 记号不能混为可执行配方；全 W8A8 有明显质量崩落，TableS11低比特质量也反退。FID比较FP32-vs-quant输出，不是real-data质量；10adapter的6×是ROM估算而非peak RAM，1.5s缺独立完整配置，不授任意chipset、免费热换新adapter或生产SLO。[必要原件](../_sources/daily-20260402/SUP_QUAD_CORE_20261013.json)与[采用边界](../_sources/daily-20260402/SUP_QUAD_REVIEW_20261013.md)已root实际核；正常复合日门和owned上界见[日证](../_sources/daily-20260402/SUP_STANDARD_DATE_SIGNALS_20261013.json)。
+
+Ch49原A/B接口、搬运/执行成本与后续固化ROM/SRAM分支已有覆盖；本轮只在二者间写一个冻结profile资格段及本人静态注，具体PRE见[原锚及差额](../_sources/daily-20260402/SUP_QUAD_PRE_20261013.md)。实际新正文第71行、本人注第2947行（本次POST位置），root非writer完整邻接及注回读通过，窄锁释放；未核artifact/实现或复现实验。
+
+### [MEDiC — arXiv:2603.29009v1](https://arxiv.org/html/2603.29009v1)
+
+实际v1 §3–4/Table4–6的新增 `2+1+2=5` 只采用 CLIP frozen-teacher/ViT-student 人口下的 objective×dense/sparse 条件反側，而不把 patch/CLS/pixel 三个成熟目标组合算新机制。Table6 sparse Token+CLS75.7高于三loss73.9；Table5 block68.59高于HC64.56，不能拿patch-distill mask分母与三loss默认系统混算。语义teacher造成冗余是作者解释，没有独立控制的语义因果；权重/配置敏感不能变为普遍配方。ADE20K退步、§4.1 FCN-frozen与Table3 UperNet-endtoend冲突，以及teacher训练/总预算未匹配必须保留；0.18pp fine-tune差额无不确定性，不称显著。
+
+[原件](../_sources/daily-20260402/SUP_MEDIC_CORE_20261013.json)与[必要边界](../_sources/daily-20260402/SUP_MEDIC_REVIEW_20261013.md)已root实际Source5核通过，正常复合日证见[日期packet](../_sources/daily-20260402/SUP_STANDARD_DATE_SIGNALS_20261013.json)。Books为具体已有覆盖：Ch23第316–318行已经拆重建/semantic teacher与三consumer、明确非目标天然互补；第117–119行又拆classification/CLS和dense grounding。root实际读308–322/111–121完整邻接接纳NC5；没有为局部mask/loss排序写新recipe，也不声称全paper/代码或附录已验。
+
+### [Parallel Data — arXiv:2603.29026v1](https://arxiv.org/html/2603.29026v1)
+
+实际v1 §3–5/Limitations与只核训练预算的D，四个OLMo-style1.4B、English/Finnish80/20、200B tokens，0/1/2/5%改变配对格式暴露；所有arm固定5%来自parallel-dataset，0%并非没有译对源文本。LUMI32 MI250X/64GCD、相同步预算不授跨scale普遍结论，独立多seed未披露。终态和早期PWCCA均未显示明确比例趋势；cos对随机/untrained也高，而早coherence差额来自α=.09 language-controller/Mistral judge，差额零等完美alignment是假设，不是causal shared representation。AP语言特异计数还随训练反增，不能拼为全部读出一致。
+
+真实 `2+1+2=5` 只保数据暴露/阶段/具体读出分账，不否认parallel翻译用途或泛化为所有双语不受干扰。[必要原件](../_sources/daily-20260402/SUP_PARALLEL_CORE_20261013.json)及[反側](../_sources/daily-20260402/SUP_PARALLEL_REVIEW_20261013.md)已root实际Source5通过；正常日证在[原值](../_sources/daily-20260402/SUP_STANDARD_DATE_SIGNALS_20261013.json)。Books具体已有覆盖 owner TRAIN-PRETRAINING：Ch28第145行按相同任务checkpoint拆形成顺序、表面假信号与局部模型外推；Ch27 1350–1361拆parallel/code-switch与quality-mixture交接。root实际回读Ch28 138–150/Ch27 1350–1363接纳NC5，无新正文/附件或代码复现。
+
+### [RIDE — arXiv:2603.29206v1](https://arxiv.org/abs/2603.29206v1)
+
+实际完整v1题摘把routing-style meta prompt明确称textual proxy：在Qwen3-8B、Llama3.1-8B-Instruct和Mistral7B的RouterEval子集测activation sparsity、domain-keyword attention及predictive entropy/semantic variation。自然语言expert指令可使早/中层变密，attention随模型不同，density-stability相关只有Qwen弱相关；这些是冻结模型prompt诊断，不是稀疏MoE router或外部多模型选择的实际干预。root实际读完整AB校准，实际增量仅 `1+1+2=4`，不借整条routing原则提高reach，按最低关闭投入结束，不扩深审或Books。
+
+当前officialabs仅v1、SubmittedMar31T03:19:36Z，2603首次公告月与owned/findable Apr1注册上界配合已校准常规公告下界，见[精确字段](../_sources/daily-20260402/SUP_FIVE_CURRENT_DATE_20261013.json)；不是Submitted/created单独授日。当前页无显式withdraw/erratum标记。结论仅报告局部proxy，未声称全文实现、所有frozen模型或真实MoE的反证。
+
 ## 5. 缺口与下一步
 
-本窗当前没有未处理的可执行工作。独立日级语义复核已通过；后续若取得以下外部材料，只定点重开受影响家族。
+本轮已按用户额度要求暂停，仍有可执行的准入归并、必要证据/日期例外、Books与报告同步、独立复核，具体位置见[本日工作停点](../_sources/daily-20260402/SUP_WORKING_STOP_20261013.md)。暂停不使这些普通待办变成外部受阻；待用户恢复再继续，不启动新日期。
+
+SISA、Tucker、Label Gauge、CoT、QUAD 已获单项必要 Source/date/Books实际整合及非作者POST，MEDiC/Parallel具体已有覆盖已root核实际正文，Privacy/Civic/CG-LoRA/MacTok/Gap中心D/noBooks资格已获实际独核，见 §4；未把这些结果外推为整个补窗完成。普通可继续事项是其余已校准潜力的必要core/date/Books，以及EC改判及首次paper/project事件资格，具名原件和动作见[本日停点](../_sources/daily-20260402/SUP_WORKING_STOP_20261013.md)。不把ordinary未读变成外部受阻。
+
+必要日期资格：StepCache28795v1早提交Mar24，不能套常规Mar30后公告下界；LongCat29339v1的Mar30官方仓库初始README已有同贡献摘要与bundled paper链接（[原值](../_sources/daily-20260402/SUP_LONGCAT_EARLY_SIGNAL_20261013.json)），commit不是公开可见时刻，但不能忽略提前正文信号。二者先不计确定新增/评分或写Books；可接受的替代为官方首次公开公告、作者/仓库带实际public-visibility日期的正文事件。其它拟准入的早提交、ICLR/project signals仍是具体日期待核，不扩窗追全年材料。
+
+下列原轮外部保留项保持隔离，本轮恢复与未恢复层次已同步§2；不能靠旧标签推出本轮来源完成，后续只定点重开受影响家族。ZAI因核心已可读、拟贡献前关闭而等待准入复核，暂不把普通校准任务叫外部受阻。
 
 以下 8 项是已隔离的外部**终态保留项**，均不计入 25 个确定候选；不用于正面证据、Books 或无遗漏断言。每项的定点重开条件写在其后，仅有相应材料恢复才处理，不能由当前日报作者继续无界探路：
 
 - `SRC-OPENAI`：[Research](https://openai.com/research/)与 [Publication](https://openai.com/sitemap.xml/publication/) 的历史目录缺可核的本窗 first-public 停点；现有 sitemap `lastmod` 不够。替代材料为官方原始文章/出版记录及其公开时间，恢复后只查本窗对应家族；News RSS 的 Gradient Labs 已准入前关闭。
 - `SRC-GOOGLE-AI`：[Google Research Publications](https://research.google/pubs/) 的 2026 年份列表没有逐项本窗公开时点；已有带日期的 Research Blog 与 DeepMind Publications 停点不覆盖它。替代材料为官方原文和首次公开记录，按具体家族重开。
 - `SRC-META-AI`：[Research](https://ai.meta.com/research/) 的动态历史目录不可验证分页终点；Blog 相邻日期只能证明 Blog 本身。替代材料为官方可分页目录或当窗研究原文及公开时间。
-- `SRC-DEEPSEEK`：[Research & News](https://deepseek.com/en/news/) 的 `View All` 返回 429，首页不足以证明中间没有条目。替代材料为官方完整历史目录或当窗原文链接。
+- `SRC-DEEPSEEK`：[Research & News](https://deepseek.com/en/news/)本轮首页恢复，原轮 `View All` 的429与未成完整历史停点仍不能由首页恢复关闭。替代材料为官方完整历史目录或当窗原文链接。
 - `SRC-MOONSHOT`：[Kimi Blog](https://platform.kimi.com/blog) 当前归档未覆盖 2026；已核的仓库/release 停点不能替代 Blog。替代材料为官方 2026 历史列表或具体原文及其首次公开时间。
 - `SRC-XIAOMI-MIMO`：[MiMo Blog](https://mimo.xiaomi.com/) 当前目录未标日期；已核 Paper/release 无命中不涵盖 Blog。替代材料为官网原文的首次公开时刻或有日期的官方目录。
-- `SRC-MINIMAX`：[Agent Tech Blog](https://agent.minimax.io/docs/techblog) 当前历史目录无可核日期；已核中英文 Blog 与 CLI release 不能替代它。替代材料为具体技术博文及首发时间。
+- `SRC-MINIMAX`：[AgentTechBlog](https://agent.minimax.io/docs/techblog)已恢复三明确日期均窗外，尚不能核未列历史slice；已核中英文Blog与CLI release不能替代它。替代材料为具体当窗技术博文及首发时间。
 - `SRC-ZAI`：[GLM-5V-Turbo 原文](https://www.zhipuai.cn/zh/research/156)写 `2026/04/01 16:00` 但未标时区，不能确定是否落窗；CogViT/MTP/RL 的官方描述亦未披露足以支撑长期机制的 Method、受控实验与条件。替代材料先是同源带时区的首发记录；若要进一步进入 Books，还需技术报告或对应的实验合同。
 
 上述来源若恢复，只回补该来源与真实日期的家族，不重做已验的其余 25 项。旧 V2.1 原稿已无损移入[日专属归档](../_sources/daily-20260402/legacy-v21-report.md)，只用于错误审计，不复用其结论。
 
 ## 6. 复核
+
+本轮补查独立复核：未完成、已保存停点暂停。root已执行准入/日期校准及十三项所需有效层，reader `/root/apr02_finish_reader`实际读Active/PSPA与SoK/Attesting必要原稿并给具名限定裁决，均保存在[原停点](../_sources/daily-20260402/SUP_WORKING_STOP_20261013.md)。未执行本日DAY/FINAL，不计日级完成；下方为冻结原轮复核，不是本轮验收。
 
 复核者：主任务独立审计智能体 `/root`（非本报告作者）。
 结论：通过

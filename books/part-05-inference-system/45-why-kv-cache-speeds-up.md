@@ -201,6 +201,8 @@ Access plan 必须绑定 model、prompt / tokenization、KV layout、knowledge r
 
 <!-- SF-2026-ARXIV-2602-20732 -->
 
+刷新选择还可以由一次尚未提交的试算触发，而不只周期性检查选区。先在当前读取预算下生成候选，再把 logit margin、semantic hidden 与历史读出状态交给已训练的难度 detector；当它建议证据不足时，恢复试算前的 cache，扩大检索块预算，重新生成当前 token，然后才交给后续 prefix。这里扩大的是 attention 读取集合，不是模型支持长度，也不证明全部 KV 已被删减；detector 的 unknown/hallucination 标签只是提议，不是答案真值。[受限长上下文对照](https://arxiv.org/html/2603.18446v1)用合成人物材料训练和择优，其少读 token 不保证全任务质量保持或同比降低延迟。Runtime 必须把待定 token 与已提交 prefix 分开，并核清 cache、位置与 detector 等有状态读出的恢复责任；原文只说明 cache snapshot，不能当全部事务状态已经闭合。训练、标签、特征读取、快照、检索与第二次前向都付费，扩读重生也不自动成为已验证答案。恢复协议、代理或质量/全费无法验收时，保留固定预算、已验证的 full-context 读取与独立输出检查，不让一次 trigger 绕过提交和硬资源边界。<!-- source-family:SF-2026-ARXIV-2603-18446 -->
+
 层级选择还没有决定物理页应按什么排列。逻辑 token 顺序最容易维护因果身份，稀疏选择却可能在许多页上各取少量 row，造成大量零散 host→device 传输。另一条条件分支按每个 head 的 key locality 组织物理页，用近似索引提出候选；GQA 的多个 query head 共用 KV head 时先合并所需页，再由 host gather 到连续 staging buffer，经 bulk PCIe 传输后在 device scatter。改变的是物理布局与访问计划，不是原 token 的因果位置；cache manager 仍拥有 row/page identity、动态插入、索引版本及驻留有效性的验证。<!-- source-family:SF-2026-ARXIV-2604-10539 -->
 
 它以索引维护、额外 buffers、近似召回与跨层复用误差换掉部分扫描和小传输。[有限 PCIe A100/H100 对照](https://arxiv.org/html/2604.10539v1)的36k上下文读数是 TT2T 而非 TTFT，query/selection 成本仍不可忽略，稀疏预算也可能损害质量；不能把 bulk transfer 或构建重叠写成零开销、exact attention 或生产尾延迟保证。应连同索引更新和 fallback 测端到端收益；短上下文、访问稠密、召回不足或物理页维护成本较高时，逻辑页上的 dense read 仍是合理方案。
@@ -599,6 +601,10 @@ KV redundancy 不只存在于 token 轴，也可能存在于相邻层的 represe
 
 这一分支用额外训练与模型版本绑定，换取可在部署端选择深度容量点；它不同于上段先混合再缓存的固定架构，也不替代下面对既有 KV 做 basis/residual 重构。作者的 1.7B 预训练对照在本层采样概率 `p=0.75` 时 loss 从 2.424 升至 2.461；受测 QA 中全量留存也有小幅退步，低留存时某些 F1 仍低。单卡、batch 1 的 8K 测量可说明一个内存与 Decode 工作点，不证明多租户 Prefill、并发或尾延迟收益；MoE、与时间轴淘汰及量化的组合尚未验证。训练资源不足、固定拓扑已达标或质量回归不通过时，固定共享及 layer-local FullKV 继续成立。
 
+对不改变原语言模型参数的缓存，也可保留一部分实际状态，再学习如何补出其余部分。一个受限分支把若干层分组，首层完整 KV 作为共同输入，后续层保留连续的局部特征；按 token 拼接这两份信息，用本层线性预测器重建缺失 K/V，再交给原 attention 消费。它不同于直接共用前层 KV 或保存低秩 basis：预测器属于 checkpoint、分组和保留坐标绑定的额外 artifact，Key 的 RoPE 阶段与保护窗口也须一致。训练先拟合缺失 KV，再匹配使用原 KV 与重建 KV 的 attention 输出；当前 query 的输出接近仍不认证后续生成无误，K 与 V 的可预测性也应分别验收。<!-- source-family:SF-2026-ARXIV-2603-22910 -->
+
+原参数不变可以保留标准 attention 路径，却不能让已经丢掉的历史自动恢复精确值。压力解除后切回标准算子，仍须分清新状态与旧近似历史；需要 exact 回退时，应保留原 KV 或按原 token 和模型重算，不能用预测残差自签恢复。首层完整状态、近期保护区、预测器驻留与临时重建都占预算，数据生产和两阶段训练也计费。局部长任务仍有退步，固定 batch 的可运行长度和短文本吞吐不替代同并发尾延迟验收；预测分布、布局或质量—总成本不可信时，增加实际保留部分、重校准，或回退 FullKV、低秩与可恢复分层路径。
+
 因此，对既有缓存的跨层压缩还可以沿两条可共存的分支演进：
 
 ```text
@@ -712,6 +718,8 @@ K与V的消费方向不同，也限制layout与解码复用：K用于query与每
 另一条分支改变压缩 key 的消费者，而非把每个 key 解码回高精度：将 head feature 划成子空间，用校准得到的码本把每个 key 保存为 centroid 索引；每次 query 先计算各子空间与全部 centroid 的内积表，再按历史 key 的索引查表求和，随后仍做 softmax 和高精度 V 聚合。它避免逐 key 显式重建向量，却只精确消费量化后的 key，不等于恢复原 key。索引、码本、校准版本与 query-table 布局都应绑定缓存身份；权重分布还依赖 score 间距，保住排序并不保证保住 softmax 或最终输出。<!-- source-family:SF-2026-ARXIV-2601-10155 -->
 
 直接查表用 table 构造、码本驻留、key 编码与专用读取路径换取压缩状态，FP16 V 仍占预算，key 压缩倍数不是总 KV 压缩倍数。[LOOKAT 的局部原文](https://arxiv.org/html/2601.10155v1)只测 GPT-2 第一层和三种文本样本的近似输出/attention proxy，长序列退化，同存储预算下 scalar quantization 的输出方向保真度还更高；没有真实 edge kernel、完整生成或并发 SLO。其 rank bound 与“整数反量化必无加速”均未建立，不能由理论操作计数授发布收益。校准漂移、查表成本难摊销或质量回归不过时，保留原量化读取与 FullKV，并由完整生成验证实际取舍。
+
+码本也可同时表示 K 与 V，而不只让 query 直接查 key 的内积表。一条[受限残差量化分支](https://arxiv.org/html/2603.16435v1)用多个码本逐次编码向量的剩余误差，历史保存索引，Attention 在当前 tile 内查表求和重建 K/V；初始与近期区域保留高精度，Prefill 仍读原完整 KV，Decode 则让退出近期窗口的一段批量编码，以摊薄最近码点搜索和串行 residual stages。冻结 LM 不等无训练，码本拟合、驻留、索引 packing、高精度 tail 与临时重建都占预算；理想索引位数不代表整 GPU 节省，容量可容纳的生成长度也不认证远程引用质量。它与前述直接 query 查表是不同消费者，K/V 误差和码本版本须连同模型、RoPE、编码 frontier 与真实 kernel 验收；受测长 context 和任务仍有反退，省字节未证明完整 Decode 更快。校准漂移、编码难摊销或质量不通过时，保留较温和量化、原窗口和 FullKV，不把重建保真代理当成无损服务保证。<!-- source-family:SF-2026-ARXIV-2603-16435 -->
 
 二维压缩还可以落成 mixed dense/structured-sparse 的 block 状态，而不只改变 rank：敏感 sink/local 区域留在 dense pool，其余块存入 nonzero 与 metadata pools，以 signed block map 找到相应格式。执行侧让 K 与转置后的 V 作为稀疏乘法的第一 operand，同时保留 online-softmax 聚合；Prefill 后又可按 Decode 的带宽压力进一步压缩，因而阶段转换、格式与 metadata 必须作为一次缓存状态更新共同完成，不能只独立宣布减少了非零元素。具体稀疏 operand 的 kernel 实现归第49章，缓存布局与阶段身份由本章持有。<!-- source-family:SF-2026-ARXIV-2604-16864 -->
 
@@ -2172,3 +2180,9 @@ Primary-source entry points：
 - `SF-2026-ARXIV-2602-08329` — Daily `2026-02-11`补查；[exact-v1](https://arxiv.org/html/2602.08329v1) §III–V/VII、TablesII–VII。2+2+2=6，具体query-conditioned跨decode-step indices继承/刷新差额深入；CIS/PSAW/ETF分支、实际dilation预算、matched CIS*与局部H2O更快边界保留，不授MI/nearoracle普遍保证/全点最快/生产SLO。root实际必要Source与owner/Ch22/Ch44/46 PRE通过并授一段+本末注窄锁；作者已顺读实际正文完整邻接及Ch44/46交接，root实际正文/385–406完整局部/自身末注POST通过，窄锁释放，不授DAY。未核实现/复现。
 
 - `SF-2026-ARXIV-2610-10381` — Daily `2026-10-09`；[ResidualQuant exact-v1](https://arxiv.org/html/2610.10381v1) §2–5.3/Tables1–5、A.1–2/A.3元数据及G.1量化reference；2+2+2=6，跨loop表示与anchor可用时间缺口深入。当前BF16暂存→末loop入库、past/current合并、任务反退、额外metadata/驻留与excludePrefill吞吐界限近文，不授全部无损或Serving SLO。review_mar11_continue非作者实际必要Source/Ch45完整owner与逐字PRE通过，root授本单段和本人末注窄锁；作者已写，root非writer实际完整1550–1577 anchor→new1564→logit补偿→eviction及本人2140注回对有效Source/PRE，actualPOST通过并释放锁。未核全附录/代码/复现，不授DAY。
+
+- `SF-2026-ARXIV-2603-16435` — [VQKV exact-v1](https://arxiv.org/html/2603.16435v1)必要§3/Eq1–13/4/Tables1–3/6；采用K/V residualcodebook索引与tile重建、highprecision窗口/批量tail编码分责，training-free仅LM冻结。理想index比率、设备容量叙述、LongBench/RULER反侧与未给decode延迟保留，不授无损/全context能力或生产加速；未核packing/kernel/代码或复現。
+
+- `SF-2026-ARXIV-2603-18446` — [UT-ACA exact-v1](https://arxiv.org/html/2603.18446v1) §2–4/7、Alg1/Tables1–6及必要B–D；只采用时序difficulty读出→pending试算→cache恢复/扩读重生成的条件接口。分类不授真值、cache-only快照不认证全部状态恢复、合成/择优/排除人口、任务质量与latency反退和完整费用保留；不授无损、总容量减少或线上界，未核代码/复现。
+
+- `SF-2026-ARXIV-2603-22910` — [EchoKV exact-v1](https://arxiv.org/html/2603.22910v1)必要§3–5/Eq1–7/T1–4、B/T5与C/T6；只采用group-global/local-feature conditional重建及KV-MSE→attention-output MSE接口。保partialfeature单位、ratio反退/T4人口冲突、K/V分责和完整训练/驻留/重建费用；标准参数可切不授已丢历史exact恢复，后者保原/重算为项目合同推断。未核kernel/artifact/复现，不采allsettings/无损或生产SLO保证。

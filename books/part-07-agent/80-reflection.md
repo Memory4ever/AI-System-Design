@@ -55,11 +55,17 @@ Feedback 可以来自：
 
 同一模型可能在 generation 与 critique 中重复同一盲点。External tests 和 environment outcomes 通常比自由文本“再想想”更可操作。
 
+针对有文档依据的回答，可以把“读原答案后评论”改成盲再回答：一个提问器先将候选回答分成原子问题及其原断言，再让 checker 只消费问题和原始文档，不看候选回答与预期断言，最后由比较器核对两份答案。这样限制了直接确认原答案的可见性，却没有制造模型、数据或问题选择的独立性；提问本身可能漏掉、改写或暗示关键事实，文档也可能错误。必须保存原回答、完整 claim–question 对应、再回答与未被检验的部分，不由多数投票或全体一致认证事实真值。<!-- source-family:SF-2026-ARXIV-2603-24579 -->
+
+检查人口还会被优化目标反过来改变。[受限共享 policy 实验](https://arxiv.org/html/2603.24579v1)在全部被提问 claims 一致才不给惩罚时，实际观察到提问数下降；增加最低问题数只能约束数量，不能证明完整覆盖原检验义务。这条反馈可在推理时消费，也可另进入第31～34章的参数优化，但二者的状态与预算不能混同。提问、多个 checker rollout、匹配、训练与独立评价都付费；缺原始依据、问题覆盖不可靠或同源反馈冲突时，应保留原结果、回读原文并升级确定性 verifier 或人工，而不是以较少被审事实换一个更高的一致分数。
+
 反思也可以只在自评低于阈值时触发，而不是每次都重写：先把原则放入生成条件，再让同一模型逐项打分，任一项未达门限才合并批评并修订。它仍增加逐项 self-evaluation 调用和 token，相对不反思的 base 并不免费；这节省部分无条件修订，却把漏检变成新的停止失效路径；评分者与被评分 policy 相关，微调后仅在回答中提及原则就可能骗过自评门，让本应修订的回答直接停止。原回答、自评分、是否触发及修订后的独立判据应分开保存；一次 revision 还可能引入新违反。[受限 constitution 实验](https://arxiv.org/html/2601.18730v1)的较少 token 同时伴随比对照更高的 violation，不能签发同安全效果下的降本或部署安全证书。无可靠独立反馈时，保留完整规则检查、无自评门的受限修订或升级人工，而不让高 self-score 认证合规。<!-- source-family:SF-2026-ARXIV-2601-18730 -->
 
 即使已有 render observation，revision 信号仍可能被生成 trajectory 内的自我解释束缚。一个分支让 critic 在独立 context 中读取结果与约束、提出修改，再检查重生成是否遵循反馈，只有通过一致性与质量筛选的轨迹才用于蒸馏。[DeepPresenter 的受限对照](https://arxiv.org/html/2602.22839v1)在同一任务集合各采300条训练轨迹，不是冻结完全相同的300条轨迹；teacher 与 critic 同为 Gemini3Pro，独立的是 context 而非模型或训练来源。缺陷统计另在相同300条轨迹上比较，发现更多缺陷不等 true defect recall；GLM 过滤、GPT5内容/style judge 与多样性指标也不授 truth。<!-- source-family:SF-2026-ARXIV-2602-22839 -->
 
 因此 critic 只拥有 revision proposal，最终 rule/render 或 human verifier 保留独立验收职责。1,024采样筛到802条 SFT、128 held-out 的作者协议不代表部署故障率；作者仅披露 approximately80 GPU hours on8 A800 GPUs，不能换算成80墙钟小时或640 GPU hours，也未给全成本/净 SLO。错误反馈可能改坏结果，同源盲点仍存在；缺可靠约束或 revision 遵循验证时，保留原 render、普通 retry 与独立复核，不把蒸馏成功率当永久自我改进保证。
+
+遵循反馈也未必意味着修到了被检测的缺陷：同一个rank错误，可能来自feature句序，也可能来自已经排好序的句子里错误的“最重要”形容词；若critic只允许重排而禁止改词，生成器可以严格遵循操作限制却永远无法消除原问题。[受限叙述修复反例](https://arxiv.org/html/2603.20003v1)实际出现这种检测语义与编辑范围失配，也出现文本抽取器把有歧义但可忠实的词判错。由此推导的接口是把原证据span、错误解释、允许修改的维度与独立重验对象一同交给revision，不让短标签自动授权唯一修法；该接口是设计要求，不是原框架已提供的保证。额外extractor、critic、反复评价和人工锚点增加费用，部分对照还改变停止规则；缺可行动反馈、原文语义不确定或旧义务回归时，应保原版本、局部开放其他修法或升级人工，而非只增加相同受限重试。<!-- source-family:SF-2026-ARXIV-2603-20003 -->
 
 已有 observation 也未必自动成为经验：Agent 可能保留历史，却没有把结果绑定到产生它的 preceding action。一个 in-task 校准分支只给现有观察标注 action–outcome 归属，不加入新环境信息；另一个分支把候选 lesson 与未加 lesson 的后续 action 比较，再筛选是否值得持续保留。前者是表示干预，后者是限定 continuation 下的效果 proposal，二者都不把重复减少当任务成功，也不由打乱 history 后的小幅下降推定内部因果机制。
 
@@ -466,3 +472,7 @@ Primary-source 入口：
 - `SF-2026-ARXIV-2601-18730` — Daily `2026-01-28`补查；[exact-v1](https://arxiv.org/html/2601.18730v1)必要机制、评价与直接反侧见本日 `supplement-reviews-20261008.md` 与 `supplement-pre-resume-20261008.md`。2+2+2=6，具体owner差额受影响深入；仅采用正文最小接口与相邻失败边界，不授全性能/安全/公平保证。作者与 resume_20260128_audit 必要Source及字面PRE通过，root重授本章一段/自身末注窄锁；作者已顺读完整局部邻接与自身note，resume_20260128_audit实际POST通过，窄锁释放，非DAY。未核artifact或复现。
 
 - `SF-2026-ARXIV-2603-11228` — Daily `2026-03-14`增量；[exact-v1](https://arxiv.org/html/2603.11228v1) §3–6。2+1+2=5，固定改写kernel/recurrence与evidence delta具体差额深入；450首句/50轮、surface非semantic fidelity、无参数更新与prompt schedule边界近正文，不将标准Markov数学作为新理论。root实际必要原源/Ch80完整owner及逐字PRE通过授两段窄锁；mar14_supplement实际写后顺读正文/完整邻接与本人note，root真实新增225/227、完整Stopping205–301及本人末注回源非writer POST通过，窄锁释放。未核artifact/复现，不授日级DAY。
+
+- `SF-2026-ARXIV-2603-20003` — Daily `2026-03-24`补查；[exact-v1](https://arxiv.org/html/2603.20003v1)必要§2/3.1.2 C1.2及原81–95、设置59–68，2+1+2=5。仅rank检测语义与句序only修复范围的不可行动反馈反证，evidence span/可编辑维度绑定是设计推导非原实现保证；保extractor歧义、worst-of-four baseline、falsepositive主动排除/局部两例、earlystop不同与全调用/标注费用，不采90%或唯一因果/普遍faithful。未核代码或复现。
+
+- `SF-2026-ARXIV-2603-24579` — Daily `2026-03-27`补充03-26自然日；[MARCH exact-v1](https://arxiv.org/html/2603.24579v1)§2.1–2.3/Eq2–8、§3/Tables2–6、B.3–B.5。仅采用blind re-answer与claimcoverage/strictreward收缩；保sharedpolicy、bestcheckpoint选取/eval8sample预算、B.4问题数下降；不采绝对事实/偏置消除、rewardscalar因果或生产保证，未核artifact/复现。

@@ -1,0 +1,2168 @@
+FineScope : Precision Pruning for Domain-Specialized Large Language Models Using SAE-Guided Self-Data Cultivation
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Related Work
+2.1
+Domain-Specific Language Models
+2.2
+Small Language Models (SLMs).
+3
+Methodology
+3.1
+Domain-Specific Data Cultivation
+3.2
+Pruning and Fine-Tuning with Self-Data Distillation
+4
+Evaluation
+4.1
+Models
+4.2
+Experimental Setup
+4.3
+Results
+4.4
+Ablative Study
+5
+Conclusion
+References
+A
+Supplementary
+A.1
+Seed Selection
+A.2
+Effects of
+K
+K
+on Reconstruction Loss
+License: CC BY 4.0
+arXiv:2505.00624v1 [cs.CL] 01 May 2025
+FineScope : Precision Pruning for Domain-Specialized Large Language Models Using SAE-Guided Self-Data Cultivation
+Chaitali Bhattacharyya
+Affiliation:
+Department of EECS, Daegu Gyeongbuk Institute of Science and Technology, South Korea
+Yeseong Kim
+Affiliation:
+Department of EECS, Daegu Gyeongbuk Institute of Science and Technology, South Korea
+Correspondence to:
+yeseongkim@dgist.ac.kr
+Abstract
+Training large language models (LLMs) from scratch requires significant computational resources, driving interest in developing smaller, domain-specific LLMs that maintain both efficiency and strong task performance. Medium-sized models such as LLaMA
+(
+Touvron et al., 2023b
+;
+Touvron et al., 2023a
+)
+have served as starting points for domain-specific adaptation, but they often suffer from accuracy degradation when tested on specialized datasets. We introduce FineScope, a framework for deriving compact, domain-optimized LLMs from larger pretrained models.
+FineScope leverages the Sparse Autoencoder (SAE) framework, inspired by its ability to produce interpretable feature representations
+(
+Templeton et al., 2024
+)
+, to extract domain-specific subsets from large datasets. We apply structured pruning with domain-specific constraints, ensuring that the resulting pruned models retain essential knowledge for the target domain. To further enhance performance, these pruned models undergo self-data distillation, leveraging SAE-curated datasets to restore key domain-specific information lost during pruning.
+Extensive experiments and ablation studies demonstrate that FineScope achieves highly competitive performance, outperforming several large-scale state-of-the-art LLMs in domain-specific tasks. Additionally, our results show that FineScope enables pruned models to regain a substantial portion of their original performance when fine-tuned with SAE-curated datasets. Furthermore, applying these datasets to fine-tune pretrained LLMs without pruning also improves their domain-specific accuracy, highlighting the robustness of our approach. The code will be released.
+1
+Introduction
+Transformer-based Large Language Models (LLMs) have demonstrated remarkable generalization across diverse natural language processing (NLP) tasks by leveraging broad, heterogeneous datasets
+(
+Vaswani, 2017
+)
+. However, deploying these models for domain-specific applications remains challenging. Foundation models are typically large, often with hundreds of billions to trillions of parameters
+(
+RBC Borealis AI, 2024
+;
+Adler et al., 2024
+;
+Dubey et al., 2024
+)
+, requiring substantial computational resources
+(
+Kim et al., 2023
+;
+Dubey et al., 2024
+;
+Wang et al., 2024
+)
+. Additionally, general-purpose LLMs often fail to capture fine-grained domain knowledge due to their generic training data
+(
+Xu et al., 2022
+;
+Nijkamp et al., 2022
+)
+. This challenge has driven the demand for
+domain-specialized, resource-efficient models
+that retain strong task performance while reducing computational costs
+(
+Talmor et al., 2018
+;
+Clark et al., 2018
+;
+Gu et al., 2024
+)
+.
+Recent advances in model optimization techniques, such as pruning and parameter-efficient fine-tuning, have enabled the adaptation of LLMs to specialized domains with reduced resource overhead
+(
+Ma et al., 2023
+)
+. However, these approaches rely heavily on the availability of high-quality domain-specific datasets, which are often scarce or expensive to curate. The bottleneck in domain adaptation thus lies not only in optimizing model architectures but also in constructing an
+effective domain-specific dataset
+from limited initial supervision. Given the wide range of potential application domains, manually curating datasets for every scenario is impractical, raising the critical question:
+How can we efficiently construct a domain-specific training dataset using minimal human supervision while maintaining adaptability and scalability?
+Recent work has shown that large-scale instruction tuning may not always be necessary for effective fine-tuning. For instance, LIMA
+(
+Zhou et al., 2024
+)
+demonstrated that fine-tuning an LLM on just 1,000 carefully curated examples can yield competitive performance, suggesting that pretrained models already encode rich knowledge, and domain adaptation primarily requires high-quality, task-specific supervision rather than extensive data volume. However, obtaining such a high-quality dataset remains a bottleneck: existing methods either require manual annotation or rely on human experts, which are hard to be applicable across numerous domains requiring various language,e models.
+In this paper, we propose an alternative learning paradigm,
+self-data cultivation
+, which automates dataset construction by expanding a small, user-defined
+seed set
+into a
+high-quality, domain-relevant corpus
+. We hypothesize that a small, carefully chosen seed dataset can serve as the foundation for automatically constructing a domain-specific dataset. If we can curate high-quality training examples from a broader corpus using a small number of representative samples, we can significantly reduce the manual effort required for domain adaptation. However, dataset curation in this context is not merely selecting a subset – it must also refine the dataset to ensure seamless integration into the fine-tuning process. By structuring data in a way that aligns with the pretrained model’s learning dynamics, we can improve both adaptation efficiency and task-specific generalization.
+The effectiveness of self-data cultivation depends on overcoming several key technical challenges. First, extracting domain-relevant samples efficiently from a large corpus is non-trivial, as brute-force similarity search is computationally infeasible. Second, training an effective data selection model requires a mechanism that can generalize from a small seed set to retrieve semantically meaningful examples. Third, the dataset must ensure that fine-tuning on the curated dataset remains stable and effective, preserving the generalization capabilities of the pretrained model while improving task-specific performance.
+To address these challenges, we introduce
+FineScope
+, a novel self-data cultivation framework that learns computation-efficient domain-specific language models by automating domain-specific dataset construction. FineScope utilizes a
+Sparse Autoencoder (SAE)
+to learn a compressed representation of domain-relevant features
+(
+Templeton et al., 2024
+;
+Kissane et al., 2024
+;
+Yan et al., 2024
+)
+. Unlike typical SAEs which model all neuron activities, FineScope learns our SAE using only top-
+k
+k
+activations, which selects
+semantically similar
+data points from a large, general-purpose corpus, forming a domain-optimized dataset. It allows FineScope to learn latent domain structures rather than static embedding similarity, making it more scalable and adaptable across diverse application domains. The curated dataset is then used to fine-tune a
+pruned domain-specialized LLM
+, ensuring both computational efficiency and high task relevance. To aid the fine-tuning process of the pruned models, the FineScope further refines the curated dataset using a
+self-data distillation
+technique
+(
+Yang et al., 2024
+)
+, allowing the models with fewer parameters to learn the target domain knowledge seamlessly.
+We evaluate FineScope across multiple domain-specific NLP tasks and demonstrate that it achieves strong domain adaptation while significantly reducing the computational cost. Our results show that models fine-tuned with SAE-curated datasets consistently outperform conventional fine-tuning approaches, achieving higher accuracy with smaller model sizes. Furthermore, FineScope enables fine-grained multi-domain specialization, allowing LLMs to adapt to different subdomains without retraining from scratch. For example, testing on the Math dataset showed an average performance improvement of 11.45 across all models.
+Our key contributions are as follows:
+•
+We introduce
+FineScope
+, a novel framework for
+self-supervised domain dataset curation
+, enabling scalable domain adaptation from a minimal seed dataset.
+•
+We formally propose the concept of
+self-data cultivation
+, hypothesizing that a small, representative seed dataset can be expanded into a high-quality domain corpus with minimal supervision.
+•
+We develop an
+SAE-guided dataset selection mechanism
+, which learns latent domain structures and selects high-relevance training samples efficiently.
+•
+We demonstrate that
+structured pruning with curated datasets
+yields efficient, domain-specialized LLMs that retain high task performance while reducing computational cost.
+2
+Related Work
+2.1
+Domain-Specific Language Models
+Domain-adapted LLMs have been developed to enhance performance in specialized fields by training on domain-specific datasets. Notable examples include PharmaGPT-13B/70B
+(
+Chen et al., 2024
+)
+for biopharmaceutical and chemical applications, SaulLM-54B/141B
+(
+Colombo et al., 2024
+)
+for legal tasks, Shai-10B
+(
+Guo et al., 2023
+)
+for asset management, BloombergGPT
+(
+Wu et al., 2023
+)
+for financial analytics, and MedPalm
+(
+Singhal et al., 2023
+)
+for medical question answering. Other models such as ClimateBERT
+(
+Webersinke et al., 2021
+)
+, ChatLaw
+(
+Cui et al., 2023
+)
+, and FinGPT
+(
+Yang et al., 2023
+)
+focus on climate science, legal text processing, and financial analysis, respectively. However, building such models heavily depends on access to high-quality domain-specific datasets, which are generally scarce and costly to obtain. Moreover, these models typically contain billions of parameters, making continuous retraining with updated datasets highly GPU-intensive. These constraints highlight the need for more efficient fine-tuning strategies that can effectively adapt LLMs to domain-specific applications without excessive reliance on human annotation or computational resources.
+2.2
+Small Language Models (SLMs).
+Although Large Language Models (LLMs) achieve state-of-the-art performance across various NLP tasks, Small Language Models (SLMs) have gained traction as a resource-efficient alternative. Several techniques have been explored to reduce model size and computational cost while maintaining performance.
+Lightweight architectures
+use parameter-efficient designs, such as MobileBERT
+(
+Sun et al., 2020
+)
+and DistilBERT
+(
+Sanh, 2019
+)
+for encoder-only models and GPT-based models
+(
+Radford, 2018
+;
+Radford et al., 2019
+;
+Touvron et al., 2023a
+;
+Touvron et al., 2023b
+;
+Dubey et al., 2024
+)
+for decoder-only structures.
+Quantization
+(
+Jacob et al., 2018
+;
+Frantar et al., 2022
+;
+Liu et al., 2023
+;
+Hu et al., 2021
+)
+reduces precision to lower-bit representations, improving efficiency with minimal accuracy degradation.
+Weight tying
+(
+Thawakar et al., 2024
+)
+further reduces parameter count by sharing weights across model components.
+Pruning
+has emerged as a widely used approach for reducing model complexity while preserving essential functionality. Inspired by the lottery ticket hypothesis
+(
+Frankle & Carbin, 2018
+)
+, pruning aims to identify smaller subnetworks (“winning tickets”) that can achieve performance comparable to the original model. Various structured and unstructured pruning methods
+(
+Wang et al., 2019
+;
+Xia et al., 2022
+;
+Zafrir et al., 2021
+;
+Kurtic et al., 2022
+;
+Ashkboos et al., 2024
+;
+Xia et al., 2023
+)
+have been proposed to remove non-critical parameters while retaining the network’s representational capacity. Unlike other optimization techniques, which require either learning models from scratch or reducing precision uniformly, pruning allows models to selectively retain essential components, making it particularly suited for domain adaptation. Thus, in this work, we leverage pruning as a core component of FineScope to construct computation-efficient, domain-specialized models.
+Table 1:
+Descriptions of the models along with their number of parameters and training datasets.
+TDs
+: Training Datasets;
+⋆
+\star
+: FineScope
+Model
+Params
+TDs
+Vicuna
+6.7
+6.7
+B
+ShareGPT
+MC-CL
+6.9
+6.9
+B
+MathCodeInstruct
+LLaMa
+3.1
+3.1
+8.0
+8.0
+B
+Diverse Dataset
+Vicuna
+⋆
+4.7
+4.7
+B
+SAE-Curated
+MC-CL
+⋆
+4.7
+4.7
+B
+SAE-Curated
+LLaMa
+3.1
+3.1
+⋆
+6.0
+6.0
+B
+SAE-Curated
+Figure 1:
+Overview of the FineScope Framework. The method consists of two stages: (1)
+Domain-Specific Data Curation
+, where a Sparse Autoencoder (SAE) is trained on the top-
+K
+K
+activations of a pretrained LLM and then used to curate a domain-specific dataset from a small set of user-defined seed samples; (2)
+Pruning-Aware Fine-Tuning with Self-Data Distillation
+, where structured pruning is applied based on the curated dataset, followed by fine-tuning the pruned model using self-data distillation to enhance domain adaptation.
+3
+Methodology
+Figure
+1
+provides an overview of
+FineScope
+, our proposed framework for domain-specific LLM adaptation. FineScope consists of two key stages: (1)
+Domain-Specific Data Cultivation
+, where we train a Sparse Autoencoder (SAE) on the Top-
+K
+K
+activations of a pretrained LLM and use it to curate a domain-specific dataset based on cosine similarity with a small set of user-defined seed samples; and (2)
+Pruning-Aware Fine-Tuning with Self-Data Distillation
+, where structured pruning is applied based on the curated dataset, followed by fine-tuning the pruned model using self-data distillation to further refine task performance. The following sections provide a detailed explanation of each stage.
+3.1
+Domain-Specific Data Cultivation
+Training SAE:
+A Sparse Autoencoder (SAE) is a neural network designed to learn compressed representations of input data while enforcing sparsity constraints on the hidden units
+(
+EleutherAI, 2024
+)
+. In our framework, SAEs serve as a mechanism for extracting domain-relevant features from pretrained LLM activations to identify domain-relevant samples from a large corpus. Instead of operating directly on the raw model outputs, we train SAEs on activations from intermediate layers of the LLM, allowing us to capture a structured, low-dimensional representation of the underlying knowledge encoded in the model. Additionally, since processing all activations are computationally infeasible for the large corpus, our SAEs is adapted to learn only the representative activations in a way that highlights the most significant neurons, improving interpretability while discarding less relevant signals.
+In decoder-only transformer models such as GPT-2 and LLaMa, the activation flow can be formally defined as follows
+(
+Braun et al., 2024
+)
+:
+a
+c
+t
+(
+l
+)
+(
+x
+)
+=
+f
+(
+l
+)
+(
+a
+c
+t
+(
+l
+−
+1
+)
+(
+x
+)
+)
+,
+for
+l
+=
+1
+,
+…
+,
+L
+−
+1
+act^{(l)}(x)=f^{(l)}\left(act^{(l-1)}(x)\right),\text{for }l=1,\dots,L-1
+(1)
+where
+a
+​
+c
+​
+t
+(
+l
+)
+​
+(
+x
+)
+act^{(l)}(x)
+denotes the activations at layer
+l
+l
+given input
+x
+x
+, and
+f
+(
+l
+)
+f^{(l)}
+represents the transformation function at layer
+l
+l
+, which typically includes multi-head self-attention, feed-forward operations, and residual connections. The final model output is computed as:
+y
+=
+softmax
+​
+(
+f
+(
+L
+)
+​
+(
+a
+​
+c
+​
+t
+(
+L
+−
+1
+)
+​
+(
+x
+)
+)
+)
+.
+y=\text{softmax}\left(f^{(L)}\left(act^{(L-1)}(x)\right)\right).
+(2)
+To train the SAE, we extract activations
+a
+​
+c
+​
+t
+(
+l
+)
+​
+(
+x
+)
+act^{(l)}(x)
+from a selected layer of the pretrained LLM and feed them into the encoder network:
+Enc
+​
+(
+a
+​
+c
+​
+t
+(
+l
+)
+​
+(
+x
+)
+)
+=
+ReLU
+​
+(
+W
+e
+​
+a
+​
+c
+​
+t
+(
+l
+)
+​
+(
+x
+)
++
+b
+e
+)
+.
+\text{Enc}\left(act^{(l)}(x)\right)=\text{ReLU}\left(W_{e}act^{(l)}(x)+b_{e}\right).
+(3)
+The corresponding reconstruction from the decoder is given by:
+SAE
+​
+(
+a
+​
+c
+​
+t
+(
+l
+)
+​
+(
+x
+)
+)
+=
+D
+⊤
+​
+Enc
+​
+(
+a
+​
+c
+​
+t
+(
+l
+)
+​
+(
+x
+)
+)
++
+b
+d
+.
+\text{SAE}\left(act^{(l)}(x)\right)=D^{\top}\text{Enc}\left(act^{(l)}(x)\right)+b_{d}.
+(4)
+Here,
+Enc
+represents the SAE’s encoder,
+W
+e
+W_{e}
+and
+b
+e
+b_{e}
+are the encoder’s weights and biases, and
+D
+⊤
+D^{\top}
+and
+b
+d
+b_{d}
+correspond to the decoder parameters. The SAE is trained to minimize the reconstruction loss:
+ℒ
+SAE
+=
+‖
+SAE
+​
+(
+a
+​
+c
+​
+t
+(
+l
+)
+​
+(
+x
+)
+)
+−
+a
+​
+c
+​
+t
+(
+l
+)
+​
+(
+x
+)
+‖
+2
++
+λ
+​
+‖
+Enc
+​
+(
+a
+​
+c
+​
+t
+(
+l
+)
+​
+(
+x
+)
+)
+‖
+1
+,
+\begin{split}\mathcal{L}_{\text{SAE}}&=\|\text{SAE}(act^{(l)}(x))-act^{(l)}(x)\|^{2}\\
+&\quad+\lambda\|\text{Enc}(act^{(l)}(x))\|_{1},\end{split}
+(5)
+where the second term enforces sparsity by penalizing the activation magnitudes of the encoder.
+Top-K Activation Selection for Efficient SAE Training:
+Rather than training the SAE on full-layer activations, we apply a
+Top-K filtering mechanism
+to select the most important activations before feeding them into the encoder. Given dataset
+D
+D
+containing
+m
+m
+samples,
+D
+=
+{
+x
+1
+,
+x
+2
+,
+…
+,
+x
+m
+}
+D=\{x_{1},x_{2},\dots,x_{m}\}
+, we compute the
+K
+K
+most significant activations based on the gradient magnitude:
+TopK
+(
+a
+c
+t
+(
+l
+)
+(
+x
+)
+,
+K
+)
+=
+{
+a
+i
+∈
+a
+c
+t
+(
+l
+)
+(
+x
+)
+∣
+a
+i
+corresponds to one of the
+K
+largest
+|
+∂
+a
+​
+c
+​
+t
+i
+(
+l
+)
+​
+(
+x
+)
+∂
+x
+|
+}
+.
+\text{TopK}(act^{(l)}(x),K)=\{a_{i}\in act^{(l)}(x)\mid\\
+a_{i}\text{ corresponds to one of the }K\text{ largest }\left|\frac{\partial act^{(l)}_{i}(x)}{\partial x}\right|\}.
+(6)
+Using only the
+T
+​
+o
+​
+p
+​
+K
+TopK
+activations reduces the input dimensionality of the SAE, significantly lowering computational overhead and enabling efficient training on large-scale corpora. Additionally, filtering out noisy activations improves generalization by focusing the SAE on the most informative neurons, enhancing interpretability of extracted features aligned with domain-relevant information.
+The encoder then operates on these filtered activations as:
+Enc
+​
+(
+TopK
+​
+(
+a
+​
+c
+​
+t
+(
+l
+)
+​
+(
+x
+)
+,
+K
+)
+)
+=
+ReLU
+​
+(
+W
+e
+⋅
+TopK
+​
+(
+a
+​
+c
+​
+t
+(
+l
+)
+​
+(
+x
+)
+,
+K
+)
++
+b
+e
+)
+.
+\text{Enc}\left(\text{TopK}(act^{(l)}(x),K)\right)=\\
+\text{ReLU}\left(W_{e}\cdot\text{TopK}(act^{(l)}(x),K)+b_{e}\right).
+(7)
+For each layer
+l
+l
+in the LLM, we train a separate SAE, resulting in a total of
+L
+L
+SAEs. Once trained, these SAEs serve as
+feature extractors for data curation
+, which we describe in the next section.
+Dataset Curation:
+Figure
+2
+provides an overview of our dataset curation process using trained SAEs. Given a
+small number of seed samples for a target domain
+(e.g., around ten samples), our goal is to extract a subset
+D
+s
+⊆
+U
+D_{s}\subseteq U
+from a larger mixed-domain dataset
+U
+U
+by selecting samples that are most similar to the seed samples
+D
+t
+D_{t}
+in the learned embedding space.
+Figure 2:
+Dataset curation using SAE-based embeddings and cosine similarity.
+Using the trained SAE, we compute embeddings for all samples in both
+D
+t
+D_{t}
+and
+U
+U
+. The embeddings for the target domain are given by
+E
+t
+=
+{
+SAE
+​
+(
+x
+)
+∣
+x
+∈
+D
+t
+}
+E_{t}=\{\text{SAE}(x)\mid x\in D_{t}\}
+. Similarly, we compute embeddings for all samples in the larger dataset
+U
+U
+,
+E
+U
+=
+{
+SAE
+​
+(
+x
+)
+∣
+x
+∈
+U
+}
+E_{U}=\{\text{SAE}(x)\mid x\in U\}
+.
+To identify samples in
+U
+U
+that are most similar to
+D
+t
+D_{t}
+, we compute the cosine similarity between each embedding
+e
+u
+∈
+E
+U
+e_{u}\in E_{U}
+and every embedding
+e
+t
+∈
+E
+t
+e_{t}\in E_{t}
+. Using this similarity measure, we select samples
+x
+u
+∈
+U
+x_{u}\in U
+whose embeddings fall within the Top-K highest cosine similarity scores when compared to the embeddings in
+E
+t
+E_{t}
+. Specifically, we define the selected dataset
+D
+s
+D_{s}
+as:
+D
+s
+=
+{
+x
+u
+∈
+U
+∣
+e
+u
+∈
+TopK
+(
+{
+CosSim
+(
+SAE
+(
+x
+u
+)
+,
+e
+t
+)
+:
+e
+t
+∈
+E
+t
+}
+)
+}
+.
+\begin{split}D_{s}=\{x_{u}\in U\mid e_{u}\in\\
+\text{TopK}(\{\text{CosSim}(\text{SAE}(x_{u}),e_{t}):e_{t}\in E_{t}\})\}.\end{split}
+(8)
+where
+CosSim
+​
+(
+e
+u
+,
+e
+t
+)
+\text{CosSim}(e_{u},e_{t})
+denotes the cosine similarity.
+The final dataset
+D
+s
+D_{s}
+contains samples from
+U
+U
+that are most semantically similar to the target domain
+D
+t
+D_{t}
+based on the cosine similarity of their SAE embeddings. To ensure that
+D
+s
+D_{s}
+remains a high-quality domain-specific dataset, we also apply a similarity threshold
+τ
+\tau
+to exclude samples with low similarity scores and remove duplicate and misclassified samples to prevent redundancy and noise. In our evaluation, the value of
+K
+K
+across all SAEs is set to
+100
+100
+for consistency in selection.
+3.2
+Pruning and Fine-Tuning with Self-Data Distillation
+Pruning:
+To improve model efficiency while preserving domain-specific knowledge, we apply structured pruning to remove less significant parameters. Instead of performing global pruning, we identify and retain the most active components of the model based on their contribution to the domain-specific dataset
+D
+s
+D_{s}
+. This ensures that pruning preserves knowledge relevant to the target domain while discarding less useful parameters.
+We leverage LLM-Pruner
+(
+Ma et al., 2023
+)
+, which performs structured block-wise pruning to remove redundant model components while maintaining computational efficiency. This approach ensures that pruned models retain domain-relevant representations while significantly reducing inference cost.
+Formally, let
+ℳ
+\mathcal{M}
+represent the full model and
+𝒜
+⁡
+(
+D
+s
+,
+m
+)
+\mathcal{A}(D_{s},m)
+denote an activity function that quantifies the contribution of each component
+m
+∈
+ℳ
+m\in\mathcal{M}
+to the dataset
+D
+s
+D_{s}
+. We define the pruned model
+ℳ
+r
+\mathcal{M}_{r}
+as:
+ℳ
+r
+=
+{
+m
+∈
+ℳ
+∣
+𝒜
+⁡
+(
+D
+s
+,
+m
+)
+>
+τ
+}
+,
+\mathcal{M}_{r}=\{m\in\mathcal{M}\mid\mathcal{A}(D_{s},m)>\tau\},
+(9)
+where
+τ
+\tau
+is a predefined threshold determining which components are retained. The pruning ratio, denoted as
+r
+r
+, is treated as a hyperparameter and optimized to balance model size and performance.
+Self-Data Distillation and Fine-Tuning:
+Self-Data Distillation (SDFT) is a technique where a distilled dataset is generated to match the output distribution of the original model, effectively improving generalization. While SDFT is effective for knowledge transfer, its role in FineScope extends beyond dataset refinement. Since pruning removes a significant portion of the model’s parameters, it risks discarding essential representations that contribute to domain-specific knowledge. To mitigate this, we use self-data distillation to recover lost information and reinforce the pruned model by reintroducing high-confidence outputs from a stronger/unpruned teacher model.
+The pruned model may lose critical task-relevant features due to parameter reduction. Training on self-distilled outputs helps restore
+soft knowledge
+from the teacher model, ensuring that the pruned model retains domain-specific patterns without requiring additional labeled data. Furthermore, unlike standard fine-tuning, which adapts to new domains based solely on curated datasets, self-data distillation smooths the learning process by preserving consistency in the model’s output distribution. This reduces
+overfitting to the smaller curated dataset
+while maintaining alignment with the original domain representations.
+In our framework, we adapt SDFT to further refine the pruned model. Specifically, we use either (i) the original model (for Table
+3
+) or (ii) a pretrained state-of-the-art model (for Table
+4
+) to generate the distilled dataset. This dataset is then used to fine-tune the pruned model, ensuring that it retains key domain-specific knowledge while benefiting from improved generalization.
+In the original SDFT proposal
+(
+Yang et al., 2024
+)
+, for an input
+x
+x
+, context
+c
+t
+c^{t}
+, and output
+y
+t
+y^{t}
+from the teacher model, the generated (distilled) output is defined as:
+y
+′
+∼
+f
+⁡
+(
+y
+∣
+c
+t
+,
+x
+t
+,
+y
+t
+)
+.
+y^{\prime}\sim f(y\mid c^{t},x^{t},y^{t}).
+(10)
+Accordingly, the modified loss function in the fine-tuning procedure of our proposed FineScope framework is:
+L
+msdft
+=
+−
+log
+⁡
+f
+p
+​
+(
+y
+′
+∣
+c
+t
+,
+y
+t
+)
+,
+L_{\text{msdft}}=-\log f_{p}(y^{\prime}\mid c^{t},y^{t}),
+(11)
+where
+f
+p
+f_{p}
+is the pruned model and
+L
+msdft
+L_{\text{msdft}}
+represents the self-distillation loss.
+4
+Evaluation
+4.1
+Models
+We evaluate our method using three models: Vicuna-7B
+(
+Zheng et al., 2023
+)
+, a fine-tuned version of LLaMa 2
+(
+Touvron et al., 2023b
+)
+; MathCoder-CL-7B
+(
+Wang et al., 2023
+)
+, a CodeLlama
+(
+Roziere et al., 2023
+)
+variant; and LLaMa 3.1-8B
+(
+Dubey et al., 2024
+)
+. Table
+1
+summarizes these models.
+Table 2:
+Summary of experimental setup for each table
+SAE (Train)
+SAE (Curation)
+LLM (Train)
+LLM (Test)
+Data-Distillation Tuning
+Table
+3
+RedPajama
+(
+Computer, 2023
+)
+OpenInstruct
+(
+hakurei, 2023
+)
+Curated Domains (STEM, Social Sciences, Humanities)
+MMLU (STEM, Social Sciences, Humanities)
+Pretrained Models
+Table
+4
+MetaMathQA
+(
+Yu et al., 2023
+)
+Math
+(
+Hendrycks et al., 2021c
+)
+Curated Domains (Pre-Algebra, Algebra, Counting, and Probability)
+Math (Pre-Algebra, Algebra, Counting, and Probability)
+OpenMath-Nvidia
+(
+Toshniwal et al., 2024
+)
+(Math),Notus 7B
+(
+Tunstall et al., 2023
+)
+(Alpaca)
+Table 3:
+Performance of different models on different domains.
+Pretrained
+: Baseline.
+∗
+⁣
+∗
+\ast\ast
+: Baseline tuning (a);
+∗
+\ast
+: Baseline tuning (b);
+△
+\triangle
+: domain-specific tuning.
+Model
+Version
+STEM
+Social Sciences
+Humanities
+Vicuna
+(
+Zheng et al., 2023
+)
+Pretrained
+33.10
+33.10
+40.23
+40.23
+43.69
+43.69
+Pruned
+17.17
+17.17
+20.11
+20.11
+20.80
+20.80
+Tuned
+∗
+30.61
+30.61
+35.44
+35.44
+36.11
+36.11
+Tuned
+∗∗
+(FineScope)
+34.01
+¯
+\underline{34.01}
+42.39
+¯
+\underline{42.39}
+44.51
+¯
+\underline{44.51}
+Tuned
+△
+(Full FineScope)
+32.29
+32.29
+36.13
+36.13
+37.34
+37.34
+MathCoder-CL
+(
+Wang et al., 2023
+)
+Pretrained(w/o tuning)
+31.14
+31.14
+11.11
+11.11
+9.22
+9.22
+Pruned
+13.32
+13.32
+8.02
+8.02
+3.67
+3.67
+Tuned
+∗
+25.14
+25.14
+13.11
+13.11
+12.33
+12.33
+Tuned
+∗∗
+(FineScope)
+35.71
+¯
+\underline{35.71}
+33.33
+¯
+\underline{33.33}
+32.57
+¯
+\underline{32.57}
+Tuned
+△
+(Full FineScope)
+25.37
+25.37
+13.52
+13.52
+13.06
+13.06
+LLaMa3.1
+(
+Dubey et al., 2024
+)
+Pretrained
+48.01
+48.01
+49.61
+49.61
+49.32
+49.32
+Pruned
+30.59
+30.59
+31.33
+31.33
+33.62
+33.62
+Tuned
+∗
+38.22
+38.22
+40.19
+40.19
+39.79
+39.79
+Tuned
+∗∗
+(FineScope)
+49.69
+¯
+\underline{49.69}
+52.13
+¯
+\underline{52.13}
+52.37
+¯
+\underline{52.37}
+Tuned
+△
+(Full FineScope)
+40.52
+40.87
+40.87
+42.53
+GPT-3 (6.7B)
+(
+Brown et al., 2020
+)
+Pretrained
+35.10
+35.10
+49.20
+49.20
+42.10
+42.10
+OLMO
+(
+Groeneveld et al., 2024
+)
+Pretrained
+22.19
+22.19
+31.01
+31.01
+30.26
+30.26
+GPT-3 (175B)
+(
+Brown et al., 2020
+)
+Pretrained
+36.70
+36.70
+50.40
+40.80
+40.80
+Table 4:
+Performance of different models on mathematics-based domains.
+Pretrained
+: Original pretrained model;
+∗
+\ast
+: Tuned with Alpaca;
+△
+\triangle
+: Tuned with SAE Dataset;
+Pruned
+: Model after pruning;
+FS
+: Few-shot
+Model
+Version
+Pre-algebra
+Algebra
+Counting and Probability
+Vicuna
+(
+Zheng et al., 2023
+)
+Pretrained
+14.31
+10.17
+8.11
+Pruned
+0.11
+0.00
+0.00
+Tuned
+∗
+5.56
+0.30
+0.21
+Tuned
+△
+(Full FineScope)
+13.17
+9.28
+6.13
+MathCoder-CL
+(
+Wang et al., 2023
+)
+Pretrained
+11.60
+16.77
+13.38
+Pruned
+0.59
+2.33
+0.29
+Tuned
+∗
+1.29
+6.94
+3.33
+Tuned
+△
+(Full FineScope)
+8.01
+15.73
+12.28
+LLaMa3.1
+(
+Dubey et al., 2024
+)
+Pretrained
+32.77
+29.87
+20.35
+Pruned
+11.41
+7.99
+5.01
+Tuned
+∗
+9.23
+5.56
+9.10
+Tuned
+△
+(Full FineScope)
+31.17
+29.73
+19.41
+GPT-3 (13B)
+(
+Brown et al., 2020
+)
+Pretrained
+6.80
+6.80
+5.30
+5.30
+4.50
+4.50
+GPT-3 (175B)
+(
+Brown et al., 2020
+)
+Pretrained(FS)
+7.70
+7.70
+6.00
+6.00
+4.70
+4.70
+4.2
+Experimental Setup
+We evaluate FineScope under four experimental settings.
+(1) Domain-Specific Tuning
+We prune models using our SAE-curated domain-specific dataset (Section
+3.1
+). SAEs are trained on the RedPajama dataset
+(
+Computer, 2023
+)
+, which includes data from CommonCrawl, C4, GitHub, Wikipedia, Books3, ArXiv, and StackExchange, ensuring generalization across multiple domains. Using these SAEs, we curate a domain-specific dataset from OpenInstruct
+(
+hakurei, 2023
+)
+, which comprises Alpaca
+(
+Lan, 2019
+)
+, Self-Instruct
+(
+Wang et al., 2022
+)
+, GPT-4 Instruct, Roleplay
+(
+Teknium, 2023
+)
+, Code Alpaca
+(
+Chaudhary, 2023
+)
+, Dolly
+(
+Ouyang et al., 2022
+)
+, and other instruction datasets. We extract STEM, Social Sciences, and Humanities subsets, each curated from
+15
+GPT-4o-generated seed samples, where each curated dataset was augmented using Grok API
+(
+xAI, 2023
+)
+. The final curated dataset sizes are 2,703 (STEM), 3,327 (Social Sciences), and 3,522 (Humanities).
+(2) Baseline Tuning
+We compare against two baselines: (a) Fine-tuning pretrained models with SAE-curated datasets. (b) Pruning the model and fine-tuning it with Alpaca data, using the same pruning strategy as in Section
+3.2
+.
+(3) Baseline (Pretrained)
+Pretrained models are evaluated without fine-tuning, serving as a baseline. We compare against GPT-3 (6.7B, 175B)
+(
+Brown et al., 2020
+)
+and OLMO-7B
+(
+Groeneveld et al., 2024
+)
+(Table
+3
+), as well as GPT-3 (13B, 175B) (Table
+4
+).
+(4) Sub-Domain Tuning (Math)
+To evaluate fine-tuning at a more granular level, we curate sub-domains within Math. We train SAEs on MetaMath
+(
+Yu et al., 2023
+)
+and curate datasets from the Math dataset
+(
+Hendrycks et al., 2021c
+)
+. Unlike previous settings, all Math sub-domains are merged into a unified dataset. After curation, we extract Pre-Algebra, Algebra, and Counting & Probability subsets. Models are tuned using OpenMath2
+(
+Toshniwal et al., 2024
+)
+, while Notus-7B
+(
+Tunstall et al., 2023
+)
+is used for Alpaca-based tuning. Evaluations are performed separately for each sub-domain (Table
+4
+).
+For quantifiable evaluation, we utlize MMLU
+(
+Hendrycks et al., 2020
+;
+Hendrycks et al., 2021b
+;
+Hendrycks et al., 2021a
+)
+and Math test set
+(
+Hendrycks et al., 2021c
+)
+, using lm-evaluation-harness (MMLU) and bigcode-evaluation-harness (Math). We present two primary results tables: (i) Table
+3
+compares settings (1), (2a, 2b), (3), and SOTA models, and (i) Table
+4
+evaluates settings (2b), (3), and (4). A summary of experimental settings is provided in Table
+2
+.
+4.3
+Results
+Table
+3
+presents the evaluation results on the MMLU dataset across three domains. The results show that the domain-specialized pruned models, which are fine-tuned by FineScope with our SAE-curated domain-specific dataset, improve average performance over Alpaca tuning by 4.13% (STEM), 2.25% (Social Sciences), and 5.40% (Humanities) across all models. Among the three evaluated models, MathCoder-CL shows the highest improvement (+16.71), benefiting from exposure to a more updated dataset, followed by LLaMa 3.1 (+2.41) and Vicuna (+1.2). This demonstrates that SAE-curated datasets effectively enhance domain-specific adaptation without significant human effort.
+It is noteworthy that, after pruning, model performance significantly degrades, e.g., by 50% (Vicuna), 48% (MathCoder-CL), and 35% (LLaMa 3.1) on average across all domains. LLaMa 3.1 exhibits the smallest performance drop, likely due to its more balanced initial performance and domain-aware pruning, which retains a larger proportion of essential features.
+Compared to GPT-3 (6.7B, 175B) and OLMO-7B, our method outperforms in most cases even though our pruned models have a small number of parameters. However, GPT-3 surpasses our method in Social Sciences, and GPT-3 (175B) outperforms in Humanities, while our tuned models consistently outperform OLMO-7B.
+Table
+4
+shows performance on Math-based domains, where our domain-specific tuning significantly improves results. Compared to Alpaca-tuned models, performance gains are +7.50 (Vicuna), +8.15 (MathCoder-CL), and +18.70 (LLaMa 3.1). Notably, pruning causes severe degradation for Vicuna and MathCoder-CL, and Alpaca tuning does not fully recover their lost performance due to a lack of math-specific data. LLaMa 3.1 also performs worse when tuned with Alpaca, likely due to catastrophic forgetting.
+When compared to GPT models, our tuned models achieve competitive results, with notable differences likely stemming from imbalanced training datasets in GPT models, which may limit their generalization across diverse math domains.
+4.4
+Ablative Study
+Pruning Ratio:
+Table
+5
+presents the effect of pruning ratios on model performance. Using Vicuna as a case study, we evaluate domain-specific tuning under different pruning ratios. The results confirm that higher pruning ratios lead to progressively larger performance drops, reinforcing the importance of selecting an optimal pruning threshold. The results present that models with 50% and 70% pruning exhibit significant performance degradation compared to those with 30% pruning. Conversely, pruning only 10% of parameters yields the best performance; however, the model remains computationally expensive due to its large parameter count. To balance efficiency and performance, we select a 30% pruning ratio, which achieves a favorable trade-off between model size and accuracy.
+Table 5:
+Comparative performance analysis of pruned models with different pruning ratio.
+PR(%)
+: Pruning ratio,
+Params (B)
+: Number of parameters in Billions,
+STEM
+: Science, Technology, Engineering, Mathematics;
+SS
+: Social Sciences;
+Hum
+: Humanities (MMLU)
+Model
+PR(%)
+Params(B)
+STEM
+SS
+Hum
+Vicuna
+10
+10
+6.1
+6.1
+34.18
+34.18
+38.17
+38.17
+41.60
+41.60
+30
+30
+4.7
+4.7
+32.29
+32.29
+36.13
+36.13
+37.34
+37.34
+50
+50
+3.6
+3.6
+20.75
+20.75
+24.33
+24.33
+25.91
+25.91
+70
+70
+2.4
+2.4
+10.10
+10.10
+9.82
+9.82
+8.21
+8.21
+SAE’s
+T
+​
+o
+​
+p
+​
+K
+TopK
+:
+To determine the optimal value of
+K
+K
+, we trained SAEs with varying
+K
+K
+values and monitored reconstruction loss, balancing computational efficiency and training quality. Figure
+3
+shows the impact of
+K
+K
+on reconstruction loss. For demonstration, we have chosen three of initial, middle, and final layers. Even though the larger
+K
+K
+values curate more samples to train inituitively, there is no much performance difference for
+K
+>
+96
+K>96
+. Thus, we select
+K
+=
+96
+K=96
+, which provides a balanced trade-off, in our evaluation. The results for additional layers are available in the appendix.
+Figure 3:
+Effect of
+K
+K
+on reconstruction loss
+Seed Selection:
+We visualize the seed selection process using cluster analysis, as shown in
+Figure
+4
+. The interpretation of features varies across initial, middle, and final layers, reflecting how representations evolve within the model. The results suggest that our curated dataset is alinged with the clustered virtual domain target domains across different layer representations. Lower layers tend to capture broad, generalized features, often encoding syntactic structures or common linguistic patterns. In contrast, deeper layers focus on increasingly abstract and domain-specific attributes, leading to more compact and semantically meaningful clusters.
+This progressive refinement suggests that domain-relevant information emerges more distinctly in later layers, where feature representations become more specialized. Our method leverages this hierarchical structure, selecting seeds from layers that balance generalization and domain specificity. By utilizing SAE-based representations instead of raw embeddings, we ensure that the seed selection process is more interpretable and aligned with high-level domain knowledge, rather than being influenced by superficial token-level similarities. This reinforces the effectiveness of our approach in identifying the most informative seed samples for dataset curation.
+Figure 4:
+Cluster visualization for seed selection for dataset curation (for STEM)
+5
+Conclusion
+We introduced FineScope, a framework for developing domain-specific models through SAE-guided dataset curation, domain-aware pruning, and self-distilled fine-tuning. FineScope addresses a key challenge in domain adaptation: how to efficiently construct high-quality domain-specific datasets while maintaining computational efficiency in fine-tuning LLMs. Our approach consists of three key steps: (1) Training an SAE to learn compressed domain representations, (2) Using the trained SAE to curate a domain-specific dataset from a large corpus, and (3) Applying domain-aware pruning followed by self-data distillation to recover lost knowledge and enhance fine-tuning stability. FineScope ensures that models retain domain-relevant features while significantly reducing computational cost.
+Experiments demonstrate that FineScope outperforms state-of-the-art methods in most cases. Our approach helps restore pruned models’ performance while significantly enhancing domain-specific adaptation. Additionally, tuning pretrained models with SAE-curated datasets enables them to surpass original models in domain-specific tasks.
+References
+Adler et al. (2024)
+Adler, B., Agarwal, N., Aithal, A., Anh, D. H., Bhattacharya, P., Brundyn, A., Casper, J., Catanzaro, B., Clay, S., Cohen, J., et al.
+Nemotron-4 340b technical report.
+arXiv preprint arXiv:2406.11704
+, 2024.
+Ashkboos et al. (2024)
+Ashkboos, S., Croci, M. L., Nascimento, M. G. d., Hoefler, T., and Hensman, J.
+Slicegpt: Compress large language models by deleting rows and columns.
+arXiv preprint arXiv:2401.15024
+, 2024.
+Braun et al. (2024)
+Braun, D., Taylor, J., Goldowsky-Dill, N., and Sharkey, L.
+Identifying functionally important features with end-to-end sparse dictionary learning.
+arXiv preprint arXiv:2405.12241
+, 2024.
+Brown et al. (2020)
+Brown, T., Mann, B., Ryder, N., Subbiah, M., Kaplan, J. D., Dhariwal, P., Neelakantan, A., Shyam, P., Sastry, G., Askell, A., et al.
+Language models are few-shot learners.
+Advances in neural information processing systems
+, 33:1877–1901, 2020.
+Chaudhary (2023)
+Chaudhary, S.
+Code alpaca: An instruction-following llama model for code generation.
+https://github.com/sahil280114/codealpaca
+, 2023.
+Chen et al. (2024)
+Chen, L., Wang, W., Bai, Z., Xu, P., Fang, Y., Fang, J., Wu, W., Zhou, L., Zhang, R., Xia, Y., Xu, C., Hu, R., Xu, L., Cai, Q., Hua, H., Sun, J., Liu, J., Qiu, T., Liu, H., Hu, M., Li, X., Gao, F., Wang, Y., Tie, L., Wang, C., Lu, J., Sun, C., Wang, Y., Yang, S., Li, Y., Jin, L., Zhang, L., Bian, F., Ye, Z., Pei, L., and Tu, C.
+Pharmagpt: Domain-specific large language models for bio-pharmaceutical and chemistry.
+arXiv preprint arXiv:2406.18045
+, 2024.
+Clark et al. (2018)
+Clark, P., Cowhey, I., Etzioni, O., Khot, T., Sabharwal, A., Schoenick, C., and Tafjord, O.
+Think you have solved question answering? try arc, the ai2 reasoning challenge.
+arXiv:1803.05457v1
+, 2018.
+Colombo et al. (2024)
+Colombo, P., Pires, T., Boudiaf, M., Melo, R., Culver, D., Morgado, S., Malaboeuf, E., Hautreux, G., Charpentier, J., and Desa, M.
+Saullm-54b & saullm-141b: Scaling up domain adaptation for the legal domain.
+arXiv preprint arXiv:2407.19584
+, 2024.
+Computer (2023)
+Computer, T.
+Redpajama: An open source recipe to reproduce llama training dataset, 2023.
+URL
+https://github.com/togethercomputer/RedPajama-Data
+.
+Cui et al. (2023)
+Cui, J., Li, Z., Yan, Y., Chen, B., and Yuan, L.
+Chatlaw: Open-source legal large language model with integrated external knowledge bases.
+arXiv preprint arXiv:2306.16092
+, 2023.
+Dubey et al. (2024)
+Dubey, A., Jauhri, A., Pandey, A., Kadian, A., Al-Dahle, A., Letman, A., Mathur, A., Schelten, A., Yang, A., Fan, A., et al.
+The llama 3 herd of models.
+arXiv preprint arXiv:2407.21783
+, 2024.
+EleutherAI (2024)
+EleutherAI.
+Sae: Stacked autoencoder.
+https://github.com/EleutherAI/sae
+, 2024.
+Accessed: 2024-12-18.
+Frankle & Carbin (2018)
+Frankle, J. and Carbin, M.
+The lottery ticket hypothesis: Finding sparse, trainable neural networks.
+arXiv preprint arXiv:1803.03635
+, 2018.
+Frantar et al. (2022)
+Frantar, E., Ashkboos, S., Hoefler, T., and Alistarh, D.
+Gptq: Accurate post-training quantization for generative pre-trained transformers.
+arXiv preprint arXiv:2210.17323
+, 2022.
+Groeneveld et al. (2024)
+Groeneveld, D., Beltagy, I., Walsh, P., Bhagia, A., Kinney, R., Tafjord, O., Jha, A. H., Ivison, H., Magnusson, I., Wang, Y., et al.
+Olmo: Accelerating the science of language models.
+arXiv preprint arXiv:2402.00838
+, 2024.
+Gu et al. (2024)
+Gu, X., Chen, M., Lin, Y., Hu, Y., Zhang, H., Wan, C., Wei, Z., Xu, Y., and Wang, J.
+On the effectiveness of large language models in domain-specific code generation.
+ACM Transactions on Software Engineering and Methodology
+, 2024.
+Guo et al. (2023)
+Guo, Z., Jiang, G., Zhang, Z., Li, P., Wang, Z., and Wang, Y.
+Shai: A large language model for asset management.
+arXiv preprint arXiv:2312.14203
+, 2023.
+hakurei (2023)
+hakurei.
+Open instruct v1: A dataset for having llms follow instructions.
+https://huggingface.co/datasets/hakurei/open-instruct-v1
+, 2023.
+Accessed: 2025-01-07.
+Hendrycks et al. (2020)
+Hendrycks, D., Burns, C., Basart, S., Zou, A., Mazeika, M., Song, D., and Steinhardt, J.
+Measuring massive multitask language understanding.
+arXiv preprint arXiv:2009.03300
+, 2020.
+Hendrycks et al. (2021a)
+Hendrycks, D., Burns, C., Basart, S., Critch, A., Li, J., Song, D., and Steinhardt, J.
+Aligning ai with shared human values.
+Proceedings of the International Conference on Learning Representations (ICLR)
+, 2021a.
+Hendrycks et al. (2021b)
+Hendrycks, D., Burns, C., Basart, S., Zou, A., Mazeika, M., Song, D., and Steinhardt, J.
+Measuring massive multitask language understanding.
+Proceedings of the International Conference on Learning Representations (ICLR)
+, 2021b.
+Hendrycks et al. (2021c)
+Hendrycks, D., Burns, C., Kadavath, S., Arora, A., Basart, S., Tang, E., Song, D., and Steinhardt, J.
+Measuring mathematical problem solving with the math dataset.
+NeurIPS
+, 2021c.
+Hu et al. (2021)
+Hu, E. J., Shen, Y., Wallis, P., Allen-Zhu, Z., Li, Y., Wang, S., Wang, L., and Chen, W.
+Lora: Low-rank adaptation of large language models.
+arXiv preprint arXiv:2106.09685
+, 2021.
+Jacob et al. (2018)
+Jacob, B., Kligys, S., Chen, B., Zhu, M., Tang, M., Howard, A., Adam, H., and Kalenichenko, D.
+Quantization and training of neural networks for efficient integer-arithmetic-only inference.
+In
+Proceedings of the IEEE conference on computer vision and pattern recognition
+, pp.  2704–2713, 2018.
+Kim et al. (2023)
+Kim, D., Park, C., Kim, S., Lee, W., Song, W., Kim, Y., Kim, H., Kim, Y., Lee, H., Kim, J., et al.
+Solar 10.7 b: Scaling large language models with simple yet effective depth up-scaling.
+arXiv preprint arXiv:2312.15166
+, 2023.
+Kissane et al. (2024)
+Kissane, C., Krzyzanowski, R., Bloom, J. I., Conmy, A., and Nanda, N.
+Interpreting attention layer outputs with sparse autoencoders.
+arXiv preprint arXiv:2406.17759
+, 2024.
+Kurtic et al. (2022)
+Kurtic, E., Campos, D., Nguyen, T., Frantar, E., Kurtz, M., Fineran, B., Goin, M., and Alistarh, D.
+The optimal bert surgeon: Scalable and accurate second-order pruning for large language models.
+arXiv preprint arXiv:2203.07259
+, 2022.
+Lan (2019)
+Lan, Z.
+Albert: A lite bert for self-supervised learning of language representations.
+arXiv preprint arXiv:1909.11942
+, 2019.
+Liu et al. (2023)
+Liu, Z., Oguz, B., Zhao, C., Chang, E., Stock, P., Mehdad, Y., Shi, Y., Krishnamoorthi, R., and Chandra, V.
+Llm-qat: Data-free quantization aware training for large language models.
+arXiv preprint arXiv:2305.17888
+, 2023.
+Ma et al. (2023)
+Ma, X., Fang, G., and Wang, X.
+Llm-pruner: On the structural pruning of large language models.
+In
+Advances in Neural Information Processing Systems
+, 2023.
+Nijkamp et al. (2022)
+Nijkamp, E., Pang, B., Hayashi, H., Tu, L., Wang, H., Zhou, Y., Savarese, S., and Xiong, C.
+A conversational paradigm for program synthesis.
+arXiv preprint
+, 2022.
+Ouyang et al. (2022)
+Ouyang, L., Wu, J., Jiang, X., Almeida, D., Wainwright, C., Mishkin, P., Zhang, C., Agarwal, S., Slama, K., Ray, A., et al.
+Training language models to follow instructions with human feedback.
+Advances in neural information processing systems
+, 35:27730–27744, 2022.
+Radford (2018)
+Radford, A.
+Improving language understanding by generative pre-training.
+2018.
+Radford et al. (2019)
+Radford, A., Wu, J., Child, R., Luan, D., Amodei, D., Sutskever, I., et al.
+Language models are unsupervised multitask learners.
+OpenAI blog
+, 1(8):9, 2019.
+RBC Borealis AI (2024)
+RBC Borealis AI.
+A high-level overview of large language models.
+RBC Borealis AI Research Blogs
+, 2024.
+Roziere et al. (2023)
+Roziere, B., Gehring, J., Gloeckle, F., Sootla, S., Gat, I., Tan, X. E., Adi, Y., Liu, J., Sauvestre, R., Remez, T., et al.
+Code llama: Open foundation models for code.
+arXiv preprint arXiv:2308.12950
+, 2023.
+Sanh (2019)
+Sanh, V.
+Distilbert, a distilled version of bert: smaller, faster, cheaper and lighter.
+arXiv preprint arXiv:1910.01108
+, 2019.
+Singhal et al. (2023)
+Singhal, K., Tu, T., Gottweis, J., Sayres, R., Wulczyn, E., Hou, L., Clark, K., Pfohl, S., Cole-Lewis, H., Neal, D., et al.
+Towards expert-level medical question answering with large language models.
+arXiv preprint arXiv:2305.09617
+, 2023.
+Sun et al. (2020)
+Sun, Z., Yu, H., Song, X., Liu, R., Yang, Y., and Zhou, D.
+Mobilebert: a compact task-agnostic bert for resource-limited devices.
+arXiv preprint arXiv:2004.02984
+, 2020.
+Talmor et al. (2018)
+Talmor, A., Herzig, J., Lourie, N., and Berant, J.
+Commonsenseqa: A question answering challenge targeting commonsense knowledge.
+arXiv preprint arXiv:1811.00937
+, 2018.
+Teknium (2023)
+Teknium.
+Gpteacher: A collection of modular datasets generated by gpt-4.
+https://github.com/teknium1/GPTeacher
+, 2023.
+Templeton et al. (2024)
+Templeton, A., Conerly, T., Marcus, J., Lindsey, J., Bricken, T., Chen, B., Pearce, A., Citro, C., Ameisen, E., Jones, A., Cunningham, H., Turner, N. L., McDougall, C., MacDiarmid, M., Freeman, C. D., Sumers, T. R., Rees, E., Batson, J., Jermyn, A., Carter, S., Olah, C., and Henighan, T.
+Scaling monosemanticity: Extracting interpretable features from claude 3 sonnet.
+Transformer Circuits Thread
+, 2024.
+URL
+https://transformer-circuits.pub/2024/scaling-monosemanticity/index.html
+.
+Thawakar et al. (2024)
+Thawakar, O., Vayani, A., Khan, S., Cholakal, H., Anwer, R. M., Felsberg, M., Baldwin, T., Xing, E. P., and Khan, F. S.
+Mobillama: Towards accurate and lightweight fully transparent gpt.
+arXiv preprint arXiv:2402.16840
+, 2024.
+Toshniwal et al. (2024)
+Toshniwal, S., Du, W., Moshkov, I., Kisacanin, B., Ayrapetyan, A., and Gitman, I.
+Openmathinstruct-2: Accelerating ai for math with massive open-source instruction data.
+arXiv preprint arXiv:2410.01560
+, 2024.
+Touvron et al. (2023a)
+Touvron, H., Lavril, T., Izacard, G., Martinet, X., Lachaux, M.-A., Lacroix, T., Rozière, B., Goyal, N., Hambro, E., Azhar, F., et al.
+Llama: Open and efficient foundation language models.
+arXiv preprint arXiv:2302.13971
+, 2023a.
+Touvron et al. (2023b)
+Touvron, H., Martin, L., Stone, K., Albert, P., Almahairi, A., Babaei, Y., Bashlykov, N., Batra, S., Bhargava, P., Bhosale, S., et al.
+Llama 2: Open foundation and fine-tuned chat models.
+arXiv preprint arXiv:2307.09288
+, 2023b.
+Tunstall et al. (2023)
+Tunstall, L., Beeching, E., Lambert, N., Rajani, N., Rush, A. M., and Wolf, T.
+The alignment handbook.
+https://github.com/huggingface/alignment-handbook
+, 2023.
+Vaswani (2017)
+Vaswani, A.
+Attention is all you need.
+Advances in Neural Information Processing Systems
+, 2017.
+Wang et al. (2023)
+Wang, K., Ren, H., Zhou, A., Lu, Z., Luo, S., Shi, W., Zhang, R., Song, L., Zhan, M., and Li, H.
+Mathcoder: Seamless code integration in llms for enhanced mathematical reasoning.
+arXiv preprint arXiv:2310.03731
+, 2023.
+Wang et al. (2022)
+Wang, Y., Kordi, Y., Mishra, S., Liu, A., Smith, N. A., Khashabi, D., and Hajishirzi, H.
+Self-instruct: Aligning language model with self generated instructions, 2022.
+Wang et al. (2019)
+Wang, Z., Wohlwend, J., and Lei, T.
+Structured pruning of large language models.
+arXiv preprint arXiv:1910.04732
+, 2019.
+Wang et al. (2024)
+Wang, Z., Bukharin, A., Delalleau, O., Egert, D., Shen, G., Zeng, J., Kuchaiev, O., and Dong, Y.
+Helpsteer2-preference: Complementing ratings with preferences, 2024.
+URL
+https://arxiv.org/abs/2410.01257
+.
+Webersinke et al. (2021)
+Webersinke, N., Kraus, M., Bingler, J. A., and Leippold, M.
+Climatebert: A pretrained language model for climate-related text.
+arXiv preprint arXiv:2110.12010
+, 2021.
+Wu et al. (2023)
+Wu, S., Irsoy, O., Lu, S., Dabravolski, V., Dredze, M., Gehrmann, S., Kambadur, P., Rosenberg, D., and Mann, G.
+Bloomberggpt: A large language model for finance.
+arXiv preprint arXiv:2303.17564
+, 2023.
+xAI (2023)
+xAI.
+Grok-1 model card, 2023.
+URL
+https://x.ai/blog/grok/model-card
+.
+Xia et al. (2022)
+Xia, M., Zhong, Z., and Chen, D.
+Structured pruning learns compact and accurate models.
+arXiv preprint arXiv:2204.00408
+, 2022.
+Xia et al. (2023)
+Xia, M., Gao, T., Zeng, Z., and Chen, D.
+Sheared llama: Accelerating language model pre-training via structured pruning.
+arXiv preprint arXiv:2310.06694
+, 2023.
+Xu et al. (2022)
+Xu, F. F., Alon, U., Neubig, G., and Hellendoorn, V. J.
+A systematic evaluation of large language models of code.
+In
+Deep Learning for Code Workshop
+, 2022.
+URL
+https://openreview.net/forum?id=SLcEnoObJZq
+.
+Yan et al. (2024)
+Yan, H., Xiang, Y., Chen, G., Wang, Y., Gui, L., and He, Y.
+Encourage or inhibit monosemanticity? revisit monosemanticity from a feature decorrelation perspective.
+arXiv preprint arXiv:2406.17969
+, 2024.
+Yang et al. (2023)
+Yang, H., Liu, X.-Y., and Wang, C. D.
+Fingpt: Open-source financial large language models.
+arXiv preprint arXiv:2306.06031
+, 2023.
+Yang et al. (2024)
+Yang, Z., Pang, T., Feng, H., Wang, H., Chen, W., Zhu, M., and Liu, Q.
+Self-distillation bridges distribution gap in language model fine-tuning.
+In Ku, L.-W., Martins, A., and Srikumar, V. (eds.),
+Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers)
+, pp.  1028–1043, Bangkok, Thailand, August 2024. Association for Computational Linguistics.
+URL
+https://aclanthology.org/2024.acl-long.58
+.
+Yu et al. (2023)
+Yu, L., Jiang, W., Shi, H., Yu, J., Liu, Z., Zhang, Y., Kwok, J. T., Li, Z., Weller, A., and Liu, W.
+Metamath: Bootstrap your own mathematical questions for large language models.
+arXiv preprint arXiv:2309.12284
+, 2023.
+Zafrir et al. (2021)
+Zafrir, O., Larey, A., Boudoukh, G., Shen, H., and Wasserblat, M.
+Prune once for all: Sparse pre-trained language models.
+arXiv preprint arXiv:2111.05754
+, 2021.
+Zheng et al. (2023)
+Zheng, L., Chiang, W.-L., Sheng, Y., Zhuang, S., Wu, Z., Zhuang, Y., Lin, Z., Li, Z., Li, D., Xing, E., et al.
+Judging llm-as-a-judge with mt-bench and chatbot arena.
+Advances in Neural Information Processing Systems
+, 36:46595–46623, 2023.
+Zhou et al. (2024)
+Zhou, C., Liu, P., Xu, P., Iyer, S., Sun, J., Mao, Y., Ma, X., Efrat, A., Yu, P., Yu, L., et al.
+Lima: Less is more for alignment.
+Advances in Neural Information Processing Systems
+, 36, 2024.
+Appendix A
+Supplementary
+A.1
+Seed Selection
+Figure
+5
+demonstrates the seed selection process for all the blocks in the LLM. From the figure, we can observe how the later layers make the selected seeds more dense compared to the initial layers. In initial layers, the selected seeds are more spread along the clusters and seem more generalized whereas the later layers are more domain-specific.
+Figure 5:
+Extended visualization of Figure
+4
+A.2
+Effects of
+K
+K
+on Reconstruction Loss
+To investigate the impact of
+K
+K
+, we conducted experiments varying its value and analyzed the corresponding reconstruction loss.
+Figure
+6
+provides an extended visualization to
+Figure
+3
+, illustrating how the initial reconstruction loss fluctuates across different layers and blocks. Based on the results, we determined
+K
+=
+96
+K=96
+which provides the most balanced trade-off between information retention and computational efficiency. At lower values of
+K
+K
+, the SAE discards too many activations, leading to a loss of critical semantic features necessary for high-quality dataset curation. Conversely, excessively high values of
+K
+K
+retain activations that contribute little additional information, increasing computational cost without significant gains in representation quality. This trend is consistent across all evaluated layers, reinforcing that
+K
+=
+96
+K=96
+offers an optimal balance for our domain-specific model adaptation task.
+Figure 6:
+Extended visualization of Figure
+3
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

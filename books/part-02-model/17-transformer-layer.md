@@ -77,6 +77,10 @@ dY/dX = I + dF/dX
 
 新增四个投影带来额外参数与缓存/计算状态，归一化次序和 Q/K 尺度又影响能否稳定复用。作者约450M参数、10B tokens、H100/BF16、sequence2048的比较支持局部设计选择，不是完整容量匹配或长上下文证据；部分任务也未改善。外 anchor 模型内部 token similarity 更高、维度更低却表现较好，支持进一步检查“信息被外部分支承载”的 offloading 假说，不证明 token identity 必被保留或 collapse 具有普遍因果收益。成本、归一化或 held-out 质量不成立时，保留普通 residual、单值复用或单独 gated attention，而不因诊断曲线推荐所有层都外置 anchor。
 
+跨层复用还可以不只回读 input embedding，而保留前面 block boundary 的中间状态。普通 residual 把它们累加进当前状态，within-layer LoRA 则改变本层算子；另一条适配分支在边界处用当前状态的 pooled query 读取先前状态，再以 gate 加回当前表示。视觉与文本可分别生成 query、读取各自历史，同时保留 backbone 的跨模态 self-attention。这是条件化的跨深度消费路径，不是旧 residual 的精确替代，也不由模态分流证明语义已解耦。<!-- source-family:SF-2026-ARXIV-2603-26330 -->
+
+[IADA 的受限 VLM 适配对照](https://arxiv.org/html/2603.26330v1)中，input-adaptive 的共享路径已取得大部分增益，独立模态路径只作局部细化，部分感知平均分还略退。新增参数、学习率与检索计算未完全匹配，故恢复 reasoning 分数不唯一诊断为旧表示访问丢失，更不证明所有低秩更新需加 depth router。历史 states、attention、gate 与任务回归均付费；原文 sigmoid gate 的近零参数也不等恒等初始化，这里不采用该稳定证明。适配、modality mask、开放生成或完整费用不合适时，保留普通 residual、层内 LoRA、固定聚合与原外 anchor，按真实消费者质量决定读取路径。<!-- source-family:SF-2026-ARXIV-2603-26330 -->
+
 ## Normalization 控制什么
 
 Residual 保留旧状态，但每次新增的 Attention/MLP 更新仍可能改变尺度。归一化先解决子层接收到什么尺度的输入或输出；其放置如何影响反向传播，待完整 block 建立后再分析。
@@ -296,6 +300,10 @@ Xiong 等人的分析进一步表明，原始 Post-LN Transformer 在初始化�
 learning-rate warmup 能缓和 early update；这不是“所有层梯度都同时爆炸”，也不意味着 Pre-Norm 永远不需要
 warmup。数据、optimizer、precision 与架构变化后仍要重新测量。
 
+梯度诊断还要展开 token 与路径，而不只沿层深看一个 norm。因果 Attention 中，某个 value 的局部梯度是后续合法 query 的上游梯度按 attention 权重求和；前向质量集中会提供反向聚合通路，却可能因方向抵消而没有同等大的净梯度。Pre-RMSNorm 又使这一支路的最坏增益受 `||γ||∞/rms(x)` 约束，较大激活可以降低局部上界，但上游梯度、γ 与 residual identity 仍共同决定完整信号。因而高 attention、massive activation 与 gradient concentration 应分别测量，不能把其中一幅曲线当成另两者的唯一原因。<!-- source-family:SF-2026-ARXIV-2603-17771 -->
+
+一条[受限 value-path 干预](https://arxiv.org/html/2603.17771v1#S5)在聚合前将 value 乘以 `φ(r)=r/(r+C)`，其中 `r` 是其平方范数，`C>0` 为逐层逐 head 学习的尺度。小范数 value 的前向贡献和反向信号同时减弱；这不是只改 backward，保持当前 Q/K 权重也不保证后续状态不变。小型 C4 预训练模型保留较强 attention sinks 而减少激活尖峰，支持这两种现象可部分分离，却不证明唯一训练中介、全局梯度收缩或全部能力改善。径向增益在部分尺度仍可大于一，Q/K 与 identity 路径也未消除；新增门、训练与诊断费用必须计入。质量、数值或完整成本未核时保留原 Attention/Norm 路径，不以激活变小直接批准低位量化、长窗或生产稳定性。
+
 ### 解决手段属于不同控制层
 
 | 控制层 | 典型机制 | 直接改变什么 | 不能替代什么 |
@@ -364,6 +372,8 @@ LLM 的新默认值；论文也明确指出 width scaling、低数据 regime 和
 这条演进关系是 `Direct Evolution`：新分支修复旧 Post-Norm 的梯度路径，同时接受了
 额外结构约束。Pre-Norm 在成熟实现、宽模型或证据不足的 workload 中仍然成立。
 
+联合形状还有一条需要分开的解释：残差表示维度D、每层MLP隐宽M与层数L，并不是可互换的三个“规模”。[一项受限残差网分析](https://arxiv.org/pdf/2603.18168v1)在特定初始化/步长缩放（另须满足定理的log(L)∨D≤C₀M、误差上界足够小且固定随机输入/读出层的简化设定）、光滑激活导数与loss-gradient条件以及有界平滑的梯度截断下，给出固定训练步数时逼近同一极限动态的误差上界，包含1/L、√(D/(LM))和1/√D三项（省略固定失败概率的因子）。增大D会降低有限表示误差，却可能提高它相对深度和MLP宽度的耦合项；因此相同参数量不能只凭更宽就声称更接近该极限。这里的“收敛”是有限模型与极限动态之间的近似，不是任务loss到全局最优，也不是形状更好就更会学习；常数对训练步数和样本数的依赖又限制了长程外推。输出侧更快的形状律仍是猜想，Norm、真实任务质量、完整训练费用与硬件并行效率没有由这条误差界得到认证。比较实际模型时，继续验收残差缩放、传播、收敛和质量，保留已验证的Norm/宽深配方，而不按极限误差公式自动选型。<!-- source-family:SF-2026-ARXIV-2603-18168 -->
+
 ## 不计算归一化，也要控制信号与导数的深度传播
 
 如果把 Norm 换成逐元素饱和函数，节省的是归一化运算，不是自动保留原来的梯度条件。以 `tanh(αh)` 或 `erf(αh)` 为例，`α` 是函数输入的可学习尺度，初始化时决定激活方差与平均平方导数；它不是另加在 residual branch 外面的乘法 gate。残差累加、权重初始化和最终读出层共同决定 Jacobian 随深度的行为。较小的 `α` 可减弱分支的有效贡献、延后初始化信号放大，却也可能过小而使收敛变慢。因此“函数有界”与“整网可训练”不是同一件事，学习率、warmup、深度和输入尺度仍需联合检查。<!-- source-family:SF-2026-ARXIV-2604-11890 -->
@@ -387,6 +397,10 @@ LLM 的新默认值；论文也明确指出 width scaling、低数据 regime 和
 算法解释带来可分析的归纳偏置，却可能把存在性构造误当成实际机制。无法通过干预和跨设置验证时，应回退 representation-update 解释；现有 exact-v1 只证明作者定理与实验条件，不证明生产 LLM 在执行该优化器。<!-- semantic-body-binding:SF-2026-ARXIV-2605-06609 -->
 
 若目标是执行一个给定数值更新，而不只是为可学习层提供优化类比，算子与状态可以直接按算法构造：把当前矩阵和乘子放在 persistent registers，用无 softmax 的 linear attention 做矩阵积、bilinear/ReLU 子层做乘法和阈值，再清理 scratch 后交给下一块。外部控制器仍拥有更新步长、penalty schedule 与停止，丢掉乘子可能使同一矩阵对应的下一步不再唯一。[受限固定权重构造](https://arxiv.org/html/2610.10395v1)因此要求分测同状态/控制下的单步对齐、完整 residual stream 的反复交接，以及 solver 自身的任务结果；每步重新编码和 arithmetic replay 不代替 scratch-reset 验收。有限 float64 检查不授任意 kernel 精确，fixed-stage 的收缩和误差界也不认证外部 controller、因果恢复或普通训练必能学会该执行器。编码、宽状态、完整更新与精度/回归检查都付费；状态或数值条件失配时保留显式数值 solver、完整状态和 reference transition 测试，不把流畅输出或最终 graph 命中批准为算法正确。<!-- source-family:SF-2026-ARXIV-2610-10395 -->
+
+优化类比仍不能预测向某层注入一个小扰动后，读出会怎样变化。固定 prompt 时，可以只把最后一个有效 token 的 residual state 作为被干预变量，其余 prefix states 保持不变；围绕原轨迹求逐层 Jacobian，再投影到包含目标概念方向的低维可达子空间。该局部 surrogate 预测的是扰动跨层传播及最终指定 readout 的敏感度，不把整网、全部 token 或任意新上下文改写为线性系统。因果 mask 是固定 prefix 的前提，context、checkpoint、方向与局部尺度改变后必须重新核响应。<!-- source-family:SF-2026-ARXIV-2603-12541 -->
+
+这样的响应模型可替代逐层盲试，为多层注入分配系数；在线性 surrogate 下，给定读出位移的最小平方控制范数有闭式方向，回到完整非线性模型仍须另行校准幅度并验证实际效果。[受限 GPT-2 家族对照](https://arxiv.org/html/2603.12541v1)只支持指定二分类概念与局部干预，不证明概念分数是真值、范数更小等于推理更快，或该模型能保证开放生成的安全。方向拟合、Jacobian/子空间构建及回归测试都有成本；任务或扰动范围失配时，保留实测层扫和不注入的基线。接下来判断哪些层可以删除，仍需要另一份完整干预协议。<!-- source-family:SF-2026-ARXIV-2603-12541 -->
 
 ## Layer “冗余”取决于干预协议
 
@@ -477,6 +491,10 @@ X_next = H_res X + H_post^T F(H_pre X, W)
 
 可学习的读写提高组合能力，但跨层 carry 变成 `H_res` 的乘积；若没有约束，它可能改变流均值，放大或削弱传播信号。一条替代分支把 carry mixer `M` 限制为非负双随机矩阵：每行、每列的和均为一，所以 `M1=1`、`1^T M=1^T`，且矩阵乘积仍满足这些约束。这保留了 carry 路径的均匀方向与流均值，并使这一路径的谱范数不超过一，却不等于恢复对任意向量的恒等映射：均匀平均矩阵会完全消掉流间差异。读写映射、子层增量和输入相关 mixer 的导数仍会改变完整 Jacobian，因此不能从 carry 的守恒推出整网梯度稳定。多流状态也增加访存和重算压力；子层 FLOPs 不变不是总执行成本不变。[受限机制证据：mHC v1 §3–5](https://arxiv.org/html/2512.24880v1#S4)
 
+几何约束之外，多个流是否真能互换，还需要功能干预。表示相似只说明观测到的坐标关系；一个受限实验先缓存原轨迹并冻结混合矩阵，再同时清零两条流、分别恢复其中一条，以原模型输出分布的 KL 变化衡量恢复程度。相似的流仍可呈现不对称恢复，因而不能由高相似度直接授予删流或合流。这里冻结 mixer 是实验条件，避免把恢复效果与路由重新适应混在一起，不是推理部署应永久冻结原路由的建议。
+
+恢复分布也不等于恢复正确答案：受测小模型知识检验通过率很低，分布距离更适合观测干预影响，却不能证明事实能力、任意任务或剪枝后质量。缓存原 activation、成对干预与受控恢复增加评测费用，删除后重新训练的自然轨迹还须独立验收。干预人口、路由条件或 evaluator 不匹配时，保留全部 stream、任务级回归及已训练的标准 residual；跨流几何、表示相似和功能使用是互补证据，不互相签发保证。<!-- source-family:SF-2026-ARXIV-2603-14833 -->
+
 保留多个状态不自动保留多个独立方向。跨流 mixer 若只限制最大奇异值不超过一，只保证这一步不放大；最小奇异值仍可接近零，反复混合会抹去流间差异。正交约束同时限制上下界，却只保存所作用子空间的欧氏范数，不保证每个语义方向或流间差异不变，均值与差异仍可交换。它以更受限的混合几何、额外状态和数值实现约束换取传输稳定性；仍须将 mixer 与 write-back、初始化和训练配方共同评估，不能把局部等距当作全网络稳定或质量保证。
 
 若 mixer 还要求每一步都保持 row/column 质量守恒，有限轮 Sinkhorn normalization 是成熟且易并行的旧方案；stream 数量少、近似误差可控时，它通常已经足够。有限迭代和数值精度只给近似可行性，不能直接继承理想双随机矩阵的精确守恒；实现仍须测量单层与跨层累积的约束误差。约束变化发生在深层反复混合必须同时满足 exact doubly-stochastic feasibility 与完整 mixing expressivity 时：可以用 transportation-polytope chart 的 `(n-1)^2` 个自由度逐项消耗 row/column budget，覆盖 Birkhoff polytope interior；recursive 分解则用层级状态换部分并行。
@@ -501,6 +519,8 @@ Exact feasibility 与完整表达力仍是两个不同要求，不必把所有�
 标准 residual block 把每层输出视为对同一 activation state 的局部修正，优点是路径清晰、并行实现成熟；但它没有显式利用连续层更新方向之间的相关性。若额外维护 depth-wise momentum，当前层可以结合先前层的更新方向再写回 residual stream，这改变的是跨层控制状态，而不是简单的归一化或矩阵预条件。潜在收益是更有效的深度传播，代价是顺序依赖、额外状态和初始化敏感性；动量失稳会沿深度累积。浅层或跨层相关性弱时，标准 residual 仍更稳妥。现有受控消融支持收益主要来自 momentum 而非 preconditioning，但不证明该结构适用于所有规模和训练配方。
 
 <!-- source-family:SF-2026-ARXIV-2605-24425 -->
+
+跨层动量也可以从 token 分布的惯性流构造，而不只把前层更新作欧氏外推。一条[受限架构分支](https://arxiv.org/pdf/2603.16535v1)让 token 同时携带 feature 与 velocity：softmax 几何中的动能依赖两份状态，位置和速度更新因而共同消费 attention 条件；attention momentum 又作为 MLP 的 lookahead 输入。这增加 velocity、阻尼、步长及可能的历史函数值状态，不能直接继承普通凸优化的 Nesterov 速率。连续推导的投影对称/正定条件与线性流的椭圆分布保持，不自动延伸到自由学习的 Q/K/V、多 head、MLP 或 LayerNorm；实际实现为节省 kernel 调用，让两状态同时读取旧状态再更新，也不因此保有先更新动量的几何积分器保证。同样的 attention/MLP 调用数仍可有更高墙钟成本，部分离散器的验证 loss 还反退，须将状态路径、积分次序、训练配方和达到质量目标的全费用分别验收；几何条件、数值稳定或净收益不成立时，保留普通 residual、较简单 depth-wise momentum 与已验证的固定层栈。<!-- source-family:SF-2026-ARXIV-2603-16535 -->
 
 ### Parallel Tracks 用周期融合换更少的跨设备依赖
 
@@ -861,3 +881,15 @@ Primary-source 校验入口：
 - `SF-2026-ARXIV-2603-09815` — Daily `2026-03-12`补查；[exact-v1](https://arxiv.org/html/2603.09815v1) §3/4/6/7.1–2/8–9，2+1+2=5 gap深入。只收coarse hidden correction分支/orthogonal与untied界区分，Eq1/2非等式、oblique放大、信号误压/temporal非causal、有限classification与完整费用近文；不采精确图数、医用结果/大LM或全稳定、实现/复现/完整SLO。root必要Source/date/actual owner逐字PRE通过，作者窄写两段及本注，非writer root实际顺读新70/73、64–86完整局部和本末注并回对必要原证，actualPOST通过，Ch17窄锁释放，不授DAY。
 
 - `SF-2026-ARXIV-2610-10395` — Daily `2026-10-09`；[exact-v1](https://arxiv.org/html/2610.10395v1) §3–9与F.1必要状态纠错说明；2+1+2=5，persistent W/α与scratch交接具体缺口深入。有限构造和采样float64、single-fresh-encode与full-stream、solver/graph分责及所有费用近文；不授普通训练不可学、因果恢复或生产runtime保证。必要Source/actualCh17 owner与逐字PRE已由review_mar11_continue非作者实际通过，root授本单段及本人注窄锁；作者已写，root非writer actualPOST已顺读366–410完整Norm→算法→新389→Layer冗余及本人863注，回对有效Source/PRE通过，窄锁释放。未读全部证明/附件、artifact或复现，不授DAY。
+
+- `SF-2026-ARXIV-2603-12541` — Daily `2026-03-17`补03/16自然日；[exact-v1](https://arxiv.org/html/2603.12541v1)，2+1+2=5，必要核心/关键反侧及具体差额见本日SUP_LINEAR_DEPTH_PRE_20261011.md。supp_mar17必要Source、实际唯一owner/完整邻接与逐字PRE由review_mar17_18独立局部通过，root授本正文与本人注窄锁；作者按PRE实际写入，review_mar17_18非writer实际顺读378–415完整局部、新391/393与本人869注，回对已核必要Source/逐字PRE，局部POST通过；resume_review17_18最终末注定点回读局部通过，不授DAY。采用范围、费用、反侧及原路径回退近正文；未核artifact/复现。
+
+- `SF-2026-ARXIV-2603-14833` — Daily `2026-03-18`补03/17；[Ablate and Rescue exact-v1](https://arxiv.org/html/2603.14833v1) 必要§3.1–3.4/4.1–4.3/Table1/5，2+1+2=5。旧无依据先稿隔离纠正，只采用缓存冻结mixer下的成对ablation/single rescue接口及相似性非可互换边界；781M/Dolma、CounterFact仅65/21919通过knowledge check，分布KL恢复非正确率、非任意自然路由剪枝保证，CKA一般可逆线性不变性不采用。root必要Source/actual owner与两段逐字PRE经resume_review17_18独立限定通过；root授本两段与本人注窄锁后resume_mar18按原稿写入，resume_review17_18非writer实际完整474–500及867–877本人875/邻注逐字回对必要Source/PRE，局部actualPOST通过，不授DAY。未核artifact或复现。
+
+- `SF-2026-ARXIV-2603-16535` — [SympFormer exact-v1 PDF](https://arxiv.org/pdf/2603.16535v1)必要§2–6/Propositions4.1/4.3/4.5/5.1/5.2、Algorithm1/Tables1–3与A相关证明/B。仅feature/velocity联合状态及连续几何、实际离散消费/费用分责；不授一般metric严格性、自由QKV/完整网络椭圆保持、Nesterov收敛或普遍质量/加速保证。有限TinyStories/RTX6000Ada对照和离散器反侧近文，未核代码/复现。
+
+- `SF-2026-ARXIV-2603-17771` — [exact-v1](https://arxiv.org/html/2603.17771v1)§2–6/Theorems1–2与V-scale/Figures1–5文字、Limitations；当前v2仅RMSNorm局部上界/value接口定点。仅路径聚合、局部gain与前反共同干预的受限分离；不采纯反传/唯一中介、全局收缩、泛化质量或零成本。小C4条件/配置缺失保留，未核实现或复现。
+
+- `SF-2026-ARXIV-2603-18168`：[ResNets of All Shapes exact-v1 PDF](https://arxiv.org/pdf/2603.18168v1)，必要Eq1/GD、Theorems1.1/2.5与§1.2–1.3及§5.2组合证明；仅三形状轴在指定ClippedGD/光滑条件下的有限步极限动态误差分责。保clip/shape门、k/N常数、finite-reference/手调系数、output猜想和未含Norm；不授全证明认证、全局优化/泛化、通用形状或硬件加速，未核代码/复现。
+
+- `SF-2026-ARXIV-2603-26330` — [exact-v1](https://arxiv.org/html/2603.26330v1)§3/4.1–4.3.3/T1–4/5；2+1+2=5。跨boundary中间状态检索与层内适配分责，保pooledquery/共享attention、split反侧、额外容量/lr混杂及σnearzero非identity；不采全因果reasoningtax/低维定律/通用稳定或完整runtime配方，未核全部appendix/code/复现。

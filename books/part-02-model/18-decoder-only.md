@@ -51,6 +51,10 @@ target prefix -> decoder self-attention + cross-attention -> next token
 
 [T5Gemma 2 的局部架构消融](https://arxiv.org/html/2512.14856v1#S2)展示了这种参数冗余与质量之间的取舍，同时保留一个反例：只在每六层中的 global 层保留 cross-attention，平均质量下降更大。这是在 Gemma 2 2B 初始化、400B tokens 和 PrefixLM+KD 配置下得到的局部对照，不是最终 Gemma 3 配方的全任务无损证明，也未给出端到端加速或节能的受控证据。Encoder-decoder 因而仍有设计空间，但不能据此宣称它普遍取代 decoder-only；跨架构比较还需要分开数据、训练预算和后训练配方。<!-- source-family:SF-2025-GOOGLE-T5GEMMA-2 -->
 
+输入与输出职责还可以分配给已预训练的外部模块，而不重新训练中央语言模型：多语encoder先把源文本变成状态，经学习到的映射交给冻结的语言模型；中央模型仍逐token生成英语序列，再把相应hidden经另一映射作为多语decoder的cross-attention K/V，由目标语言标记控制最终输出。这改变的是语言输入、中央计算与目标语言表达的组合接口，不是省去英语中间生成，也不证明冻结参数使知识能力必然不变。不同tokenizer产生的序列未必逐位置对应；同一中央输出再经encoder得到的表示可提供兼容监督，但相似度与放松匹配不认证语义等价、顺序或全部内容保真。<!-- source-family:SF-2026-ARXIV-2603-17512 -->
+
+这一组合要同时验输入理解、中央结果和最终目标语言表达，不能用平均翻译分数把三者合成一个“语言无关知识core”证书。[有限XBridge对照](https://arxiv.org/html/2603.17512v1#S4)中，一些语言方向及decoder输出仍退步，额外decoder也比只运行原语言模型更慢。两侧映射与cross-attention训练、机器翻译数据、额外encoder/英语生成/目标decoder及接口回归都付费；部署应共同绑定三个checkpoint、两侧tokenizer、映射和取层位置，再分别检查内容保持、语言遵守与端到端预算。语言覆盖、接口或质量不适配时，保留原native生成、显式translate-test或重新适配，而不把外部表达流畅当成中央结论正确。
+
 ### Decoder-only
 
 Decoder-only 把指令、上下文、示例和答案放进同一 token sequence，只使用 causal self-attention：
@@ -161,6 +165,8 @@ W_vocab = E^T [d_model,V]
 ```
 
 模型用同一组词表坐标完成输入 lookup 与输出评分。是否共享取决于 checkpoint，不能把它当作 decoder-only 必然条件。
+
+Decoder的hidden state也可以服务于非文字输出，但必须更换并训练目标读出，而不是让词表概率自动成为数值预测。一个受限回归分支冻结LLM token表示，以一个可学习latent query反复cross-attend这些状态，再输出scalar；训练split上的target normalization和Huber loss属于这份任务head，不能在测试人口重估尺度。与参数匹配MLP的有限对照支持该读出选择，ranking reward还可能改善相关排序而不改善RMSE，WMT和STS也有收益差异，故不能说backbone天然拥有通用精确数值知识。冻结前向、head训练/优化与多次候选ranking都计费；任务、尺度或完整预算失配时，保留简单linear/MLP readout、普通numeric-text输出与独立回归验收，不由一个任务head替代标准next-token生成接口。 [必要机制与反侧](https://arxiv.org/html/2604.01206v1)。<!-- source-family:SF-2026-ARXIV-2604-01206 -->
 
 ## 从 logits 到 token 还差一步
 
@@ -429,3 +435,7 @@ Primary-source 校验入口：
 - `SF-2026-ARXIV-2601-08061` — Daily `2026-01-15`；[random AR operational-string simulation exact-v1](https://arxiv.org/html/2601.08061v1) §3–7、Theorem1/Corollary3及Methods E。2+2+2=6，conditional external-string machine接口差额深入；不反驳固定接口可达性，不把冻结随机网络等同全pipeline无训练，不授任意随机网络/自然prompt/效率。未运行代码或复现实验；root实际必要原源/现owner写前核通过，实际正文与前后邻接非作者POST通过；日级Gate未授。
 
 - `SF-2026-ARXIV-2602-10229` — Daily `2026-02-13`；[exact-v1](https://arxiv.org/html/2602.10229v1)，必要方法/关键评价/直接反侧见本日 V3_EVIDENCE_SIX；2+1+2=5，具体owner差额深入。只采用hidden→input embedding融合接口/adapter与质量反退，非untied因果、非faithfulness或少总compute。root实际必要原源与current owner/邻接PRE通过；root实际正文、前后邻接与末注非作者POST通过，窄锁释放，日级未授；未运行代码或复现实验。
+
+- `SF-2026-ARXIV-2603-17512` — [XBridge exact-v1](https://arxiv.org/html/2603.17512v1)§3–5/Limitations、A1–4及必要Tables1/2/6–10；仅冻结LM与多语encoderdecoder的两侧映射/英语中间序列/输出K/V接口及分验边界。relaxedOT非语义等价、lambda/表口径、局部反退/推理变慢与全费用限制保留；未核代码/复现，不授全语言保真或生产性能。
+
+- `SF-2026-ARXIV-2604-01206` — Daily2026-04-03；[exact-v1](https://arxiv.org/html/2604.01206v1)§3.1–3.3/4.1/C3.3–3.6，2+1+2=5，仅single-query scalar readout与next-token/targetscale接口分责；保parameter-matched/STS tie、ranking≠RMSE和冻结前向/训练/候选费用，不授数值真值或全任务/SLO，未核实现/复现。

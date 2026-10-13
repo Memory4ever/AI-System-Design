@@ -141,6 +141,10 @@ Per-token/per-request 适合单轮、边界明确的调用；Agent 为同一目�
 分母明确后还需防止**只量 GPU、漏掉整机**。Agent 的工具等待和低并发阶段可能让 CPU、内存、主板与空闲基线占更大份额；把 GPU 遥测的 joules/token 直接当成完整服务能耗，会随工作流 phase 和批处理状态改变误差。测量应同步标记 load、prefill、decode、tool/idle 与成功/失败，分别保留 device 与 host 边界，再汇总到 goal lineage。整机计量增加时钟对齐和功率仪表成本，不能把 IPMI/NVML/RAPL 的估计视为外部电表真值；只比较同机 GPU kernel 时 device-only 仍可作局部指标。[单服务器实验](https://arxiv.org/html/2609.29707v1)展示这两种口径的差异，不支持跨硬件固定倍率。
 <!-- source-family:SF-2026-ARXIV-2609-29707 -->
 
+限定 device 边界之后，能量的总测量与内部归因仍是两份证据。直接测长时间稳态 GPU 功率便于估算总量；若要判断哪类指令耗能，可同时运行多种微基准，用指令计数联立拟合非负能量系数，先分离 idle/static，再把动态部分按指令和 cache 行为分摊。附带的 load、地址计算和循环同样计费；方程在训练样本上零残差不证明指令可以物理独立隔离，未覆盖 opcode 的分组、bucket 平均与 memory scaling 也仍是估计。<!-- source-family:SF-2026-ARXIV-2603-26435 -->
+
+[Wattchmen 的有限 GPU 对照](https://arxiv.org/html/2603.26435v1)支持这个归因接口，但全 SM/全 lane 的稳态校准不保证低占用或短 kernel，同一平均误差也不能批准每条指令准确。ISA/compiler、设备、cooling、activity与profile版本应绑定；NVML采样精度、未知指令和低利用率可改变误差，单GPU模型还不含host或跨GPU通信。反复微基准、冷却、SASS/cache profiling及重校准都付费；条件漂移、测量粒度不足或归因不可靠时，保留直接device/整机测量与较粗费用分账，不让instruction table替代完整服务/成功goal能耗。<!-- source-family:SF-2026-ARXIV-2603-26435 -->
+
 测量边界明确后，缩短输出也不能直接等同于节能。按代码边界暂停、编译并运行测试的早停器，会新增validation时间、CPU工作和等待期间的GPU驻留能耗；只有被省去的decode成本超过这些开销，且任务质量仍满足合同，才达到break-even。校验频率因此是决策量，失败、超时和没有可截断尾部的请求也必须计入。短而正确的基线继续生成可能比频繁检查更便宜。[代码早停实验](https://arxiv.org/html/2604.06755v1)确有少量token减少而GPU总能量增加的配置；其A10、10Hz NVML仅测device，CPU验证能耗未实测，不能把该局部反证换成全服务节能保证。<!-- source-family:SF-2026-ARXIV-2604-06755 -->
 
 ### Agent 的持久化 Footprint 也是成本
@@ -283,6 +287,10 @@ facility power and redundancy
 
 <!-- source-family:SF-2026-ARXIV-2605.16255 -->
 
+空间上的可部署集合确定后，还要问这些服务器何时同时耗电。按铭牌功率相加保守且易复算，平均功率适合长期能量预算，但两者都抹掉请求排队、计算/空闲切换与跨机突发的重合。一条离线规划分支把请求到达先转换为活动序列，再用特定模型、硬件和并行配置的实测状态功率分布合成 server trace，最后按机架、行与站点聚合；改变流量场景可以复用配置模型，改变运行时仍可能需要重新校准。使用未来活动的序列模型只服务离线 what-if，不能直接拥有在线 admission、power cap 或安全控制权。<!-- source-family:SF-2026-ARXIV-2603-18383 -->
+
+这种组合减少逐个场景全量测量，却把延迟代理、状态识别、服务器间相关性和设施附加功率引入误差预算。独立负载的峰值可能错开，强相关突发则会减少超配余量；聚合能平均部分随机误差，不能消除系统性偏差，更不能用总能量吻合证明峰值、ramp 或尾部安全。[受限功率合成研究](https://arxiv.org/html/2603.18383v1#S5)只核其 vLLM/DGX 配置与到达负载，MoE 隐藏路由的时序拟合更弱，固定 PUE 与功率观测范围也限制外推。实际场站应保留相关性压力场景和独立实测验收；资料不足、负载同步或运行时失配时，仍用保守铭牌/容量预算，而不是把合成 trace 当硬超配许可。<!-- source-family:SF-2026-ARXIV-2603-18383 -->
+
 可部署功率还不能只用峰值或总 energy 描述。同步训练、checkpoint 与启停会使机架瞬时功率迅速变化；设施侧的 ramp-rate 和频谱预算可能先于平均功率触限。一个替代分支不改变训练步骤，而在机架电源边界分开处理时间尺度：被动滤波吸收较快变化，双向辅助储能吸收或释放较慢的功率差，慢速 controller 再纠正损耗与偏置造成的 state-of-charge 漂移。储能需要的容量由功率差对时间的积分决定，波形平滑不是能量免费，也不等于平均功耗减少。
 
 这条分支用额外硬件、转换损耗、热与寿命管理换取训练控制和设施瞬态之间的解耦；过滤只在额定功率、电流、SoC 与可用 headroom 内成立，软件离线后也不能无期限忽略漂移。受限 [EasyRider v1](https://arxiv.org/html/2604.15522v1) 的400VDC、10kW原型及两TitanX/125M训练trace对照支持局部波形与能量取舍，不证明完整MW级电网合规或电池寿命；低电压受25A上限限制，慢controller实验只核inner-loop恢复而非长期aging。Headroom不足、设施接口不相容或额外损耗无法摊销时，原有power cap、负载协调和保守容量预算仍共存，成本账本应同时记录波形条件、buffer损耗与训练完成成本。<!-- source-family:SF-2026-ARXIV-2604-15522 -->
@@ -372,6 +380,10 @@ On-device 与 server 也不能只按一次推理能耗比较。本地路径还�
 
 所谓 sweet spot 会随 batch、KV cache、quantization、clock/power cap 和硬件改变，摘要还可能增加额外请求并降低质量。因而分析式模型只用于 proposal/what-if，必须用当前 runtime 能耗与质量/SLO 回执校准；稳定窄负载仍可使用线性模型。公开结果只支持披露的 H100、TensorRT-LLM、模型和长度网格，不可外推跨硬件节能倍数。<!-- source-family:SF-2026-ARXIV-2602-05695 -->
 
+Context 长度的能效推导还要区分配置窗口、实际驻留 KV 与每步扫描长度。一个[受限 Decode 解析模型](https://arxiv.org/html/2603.17280v1#S2)把效率写为 `n/[(W_weight+H(Lbar)*n)*P(n)]`，容量上限另由 KV 预算与配置窗口决定；`Lbar` 是实际平均扫描长度，不能拿最大窗口直接替换。只有并发贴近容量上限、实际长度随窗口同尺度变化、功率处于近平台且离散余量不主导时，才可能出现近反比区间；分页短请求、低负载或扫描项改变时必须重估，不能据缩短配置窗口签发固定节能倍率。这里的 `W_weight` 是权重搬运时间，不是窗口符号。<!-- source-family:SF-2026-ARXIV-2603-17280 -->
+
+硬件与路由拓扑也应联合测量，而非把各自相对不同基线的收益直接相乘。沿同一路径的两个倍率相乘只是比值恒等式；证明近似独立还需要跨硬件、跨拓扑的条件收益和交互误差。该模型的两种 trace 已出现不同交互，且新硬件功率主要由投影给出，不授普遍正交性或采购保证。Context 分池可能减少短请求的容量暴露，却新增流量分配、闲置和重配成本；输出 Decode 效率还遗漏 Prefill、排队/驱逐、整机与失败工作。只有质量、SLO、计量边界和实际 KV 配置一致时才验收联合收益，否则保留原池和保守余量。
+
 ### 节能控制前先证明 Actuator Authority
 
 训练系统观测到功率变化，不代表当前 controller 真能通过 group size、并行度或调度动作稳定改变能耗；sharding 与运行时可能覆盖这些设置。闭合节能控制环前，应在明确 measurement window 内做干预，确认 actuator 对 power、step time 与质量的因果影响，并把控制权归属写入运行配置。否则 RL 或自动调参只是在追逐相关性。
@@ -445,3 +457,9 @@ Primary-source 与实践入口：
 - `SF-2026-ARXIV-2601-08490` — Daily `2026-01-15`；[BenchOverflow exact-v1](https://arxiv.org/html/2601.08490v1) §4.1固定5k cap/模型native统计、Table3正常任务反侧与限制。2+1+2=5，具体cap-censor/length≠utility gap深入；尾部不可见是工程推断，不授真实latency、cross-tenant DoS或无损提醒。open T1/closed default、质量下降与未披露硬件/runtime保留；未运行代码或复现。root必要原源/现owner写前通过并授窄锁，root已实际核两段正文、前后交接与末注，非作者POST通过；日级Gate未授。
 
 - `SF-2026-ARXIV-2602-22760` — Daily `2026-02-28`；[exact-v1](https://arxiv.org/html/2602.22760v1)，必要原段/对照与局部反侧见当日core/owner packet。fresh非旧packet作者独核具体原证与actual owner差额，获root该owner窄ownership后写一段；作者正文及完整邻接实际顺读，root非写入者实际正文、完整邻接与自身末注POST通过，窄锁释放。采用正文窄命题，局部错误不授理论/全系统保证，未核实现或复现，不授日级Gate。
+
+- `SF-2026-ARXIV-2603-18383` — [PowerTrace exact-v1](https://arxiv.org/html/2603.18383v1) §3–5；采用离线活动序列/配置功率状态/设施聚合接口及相关性边界。DGX A100/H100、vLLM0.10、250ms实测与固定PUE/1kW设施合成分开；保留MoE残差、隐藏scheduler与范围裁剪。不采TP caption冲突、P95/peak混用的rack倍率及mean文字方向冲突，不授在线因果控制、硬超配安全或通用收益。未核代码或复现实验。
+
+- `SF-2026-ARXIV-2603-17280` — [exact-v1](https://arxiv.org/html/2603.17280v1)必要§2–5/Eq1–4/T1–4与§10.1–2；仅解析成立条件、配置/扫描长度和联合倍率边界。不采严格1/window、独立乘法/数字采购、跨model质量或完整能耗保证；原表profile/分母差、投影/输出only/fullfee保留，未核代码或复现。
+
+- `SF-2026-ARXIV-2603-26435` — [exact-v1](https://arxiv.org/html/2603.26435v1)§3.1/3.3–3.5/4.1–4.3/5.1/5.2.3/6；2+1+2=5。instruction归因与总measurement分责，保squarefit非通用物理证书、activity/unknowninstruction/NVMLgranularity与全部profile费用；不采整机/跨GPU或科学应用保证，未核全部benchmark/code/复现。

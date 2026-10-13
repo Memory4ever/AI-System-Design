@@ -19,6 +19,8 @@ Prefill 像一次大块作业：prompt 越长，计算越重，KV Cache 写入�
 
 Decode 像持续小步循环：每一步生成一个 token，用户正在等待 stream。它的目标不是一次性做完大块计算，而是稳定、低抖动地产生 token，控制 `TPOT`。
 
+阶段拆分还可以深入计算数据流，而不只是把同样的 GPU 分成两池：Prefill 的大矩阵可使用 systolic array，包含 SSM 的模型还须安排局部 recurrent state 的保留与递推；小 batch Decode 则可能更适合 vector reduction、局部状态与更高内存带宽。这样用阶段专用计算换取更多硬件类型、封装和 KV/state handoff 耦合，不取消两池排队和资源匹配责任。[受限硬件设计](https://arxiv.org/html/2603.15530v1)的收益来自 RTL/周期仿真，计算峰值与内存配置也不等同 GPU 对照，并假设两池吞吐匹配而未模拟多请求调度；不能据此授生产 SLO 或将全部差距归给数据流。专用硬件不可得、handoff 或突发负载抵消收益时，同构 GPU 分池或原共驻路径仍是合理基线。<!-- source-family:SF-2026-ARXIV-2603-15530 -->
+
 如果一个 worker 同时处理大量长 Prefill 和正在 Decode 的请求，Prefill 的大计算可能影响 Decode 的 `TPOT`。
 
 ## 分离之后发生什么
@@ -70,6 +72,10 @@ Prefill 在兼容性、链路成本或质量 evidence 不足时仍成立。
 多模态请求还会在 Prefill 前增加 Encode，阶段拆分因此要联动入口等待和局部共驻配置，而不是只调整两个池的数量。Encode 可把输入积成 microbatch，在 batch 满、到达间隔超过阈值或首请求等待过久时执行；按到达率设置间隔阈值依赖 Poisson 等流量假设，age 上限也只限制该 batch 的等待，不是全程 TTFT 上界。部分 Prefill 可以与 Encode 共驻，剩余请求远程 Prefill；按请求计数控制分流偏差，不等于按 token 或模态计算量均衡。离线容量代理和 batch profile 可以缩小配置搜索，再用真实流水线 trial 验证，但 throughput 最大、平均延迟 tie-break 与显式 SLO goodput 优化是不同目标。[EAServe §2–4 的受限机制](https://arxiv.org/html/2609.31551v1)
 
 软件 TPC mask 约束 SM 份额，却不隔离 HBM 带宽，共驻仍会争夺内存，因此 Decode 保持专池，视频等 workload 也可能不适合 Encode–Prefill 共驻。Profile 与搜索有准备成本，突发到达或输入尺寸漂移还会改变容量模型；作者单机、指定模型与合成到达实验中，吞吐小幅变化并不阻止 tail TTFT 明显退化。不能由 microbatch age、阶段峰值或配置搜索宣称生产 SLO 已保证。端到端 goodput、传输和质量未达标时，保留 co-located、独立 Encode/Prefill/Decode 或更保守的批等待配置，而不是强制所有模态采用同一分离比例。<!-- source-family:SF-2026-ARXIV-2609-31551 -->
+
+多模态切分还须先声明搬运的对象。把encoder留在独立tier、只把其输出embedding交给语言模型，与Prefill完成后搬全层KV是两条不同边；embedding只覆盖编码后的模态序列，而KV还随语言模型层数、KV-head形态及文本与模态总token数增长。因此embedding交接可能改变可用链路和encoder placement，却不能把一条standard-KV比较推广成所有内部cut的最优证明；bytes、dtype、model/encoder revision与消费者身份仍要实测匹配。<!-- source-family:SF-2026-ARXIV-2603-12707 -->
+
+[HeteroServe的受限机制](https://arxiv.org/html/2603.12707v1)支持比较这两类payload，不支持“更小embedding自动消除vision排队”或同预算的普遍吞吐优势。跨tier还要支付encoder queue、权重驻留/复用、transfer与辅助执行；若work stealing接管整条sequence，相应KV、后续语言计算和assist状态不能只按embedding bytes计费。原文延迟/timeout与经济表口径不一致时，不采用性能保证；输入、链路或完整成本不匹配时，保留原Encode–Prefill共驻、独立E/P/D或单池，并按完整TTFT/TPOT与goodput决定拓扑。<!-- source-family:SF-2026-ARXIV-2603-12707 -->
 
 ## 新问题：KV 怎么移动
 
@@ -558,6 +564,10 @@ PD 分离把一个共享 worker 的 interference 问题改写成两个独立 cap
 它用额外 relay compute、重算和一致性状态换取隐藏 WAN 延迟，只在长输入短输出、带宽受限且 handoff 可验证时合理。输出很长、WAN 成本过高或 frontier 无法证明一致时，应回退同机房 PD、保持源端 decode，或重新 Prefill；作者 H100/H200 与 WAN workload 不构成通用收益保证。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2603-12707` — Daily `2026-03-17`补03/16；[HeteroServe exact-v1](https://arxiv.org/html/2603.12707v1) §4/Alg1/§5.3.4–5/§6/Table8/§6.5必要反侧。2+2+2=6，embedding与全层KV切点的payload/whole-sequence assist差额深入；不授所有cut最优、vision零排队、冲突timeout/经济表或同预算普遍速度。root必要Source有效复用，review_mar17_18 actual Ch55邻接与两段PRE通过，root授两段/本人注窄锁。作者fresh确认DUET段/注保留，实际写并顺读完整局部；review_mar17_18非writer实际65–99完整邻接、新76/78及本人568/DUET邻注回对原证，POST局部通过，非DAY。未核artifact/复现。
+
+- `SF-2026-ARXIV-2603-15530` — Daily `2026-03-18` 补 `03-17`；[DUET exact-v1](https://arxiv.org/html/2603.15530v1) §3.2–3.3/4.1–4.5，2+2+2=6，阶段专用compute dataflow的差额深入：Prefill systolic/局部SSM state与Decode vector/HBM分工，不复制模型SSM推导。RTL/synthesis和周期仿真，不是物理芯片或实测B200；每chiplet192arrays×16、96vectors×8、峰值/内存资源不等。4.4假设两池吞吐匹配而不模拟multi-request scheduler，完整handoff/资源/费用与同构/共驻回退近文，不授生产SLO。review_mar17_18必要Source/actual Ch55/邻接与逐字一段PRE通过，root授本段及本注窄锁；作者写后顺读完整局部，review_mar17_18 非 writer 实际顺读15–37完整邻接、新22及559–570本人注并回对原证，POST局部通过，不授DAY。未核artifact或复现。
 
 - `SF-2026-ARXIV-2603-02599` — [SUN exact-v1](https://arxiv.org/html/2603.02599v1)，Daily `2026-03-05`；必要 §3.1–3.3、§4/Tables1–2、Appendix A.1–A.2。仅采用冻结共享 Decoder 下训练任务 Prefiller 的兼容与多任务复用边界；DGX-A100/vLLM、固定长度/到达分布的作者吞吐按 Decode GPU 归一化，不等整体 GPU 预算、生产 SLO 或跨模型家族保证。摘要与正文交互退化口径不同，不采用统一百分比；未复现或审读 artifact。root已实际对读必要源、新增正文与邻接，非作者 POST 通过。
 

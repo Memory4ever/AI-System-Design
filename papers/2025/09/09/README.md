@@ -4,64 +4,82 @@
 **窗口：** 2025-09-08T09:00:00+08:00 ～ 2025-09-09T09:00:00+08:00
 **状态：** 完成
 **Books：** 纳入本次
-**检查时间：** 2026-10-06T14:06:05+08:00
+**检查时间：** 2026-10-12T01:15:29+08:00
+**补充窗口：** 2025-09-08 ～ 2025-09-08
+**冻结候选日期：** [本日补查前原报告](../_sources/daily-20250909/baseline-before-supplement-20261011.md)
+**窗口说明：** 用户连续奇数日路由授权仅增量补遗漏，原窗口/旧候选/日期/评分/有效审阅及旧连续§4原块冻结；§4原块末尾仅追加本轮新材料证据，不穿插或覆盖旧文。新材料只Sep08完整BJT自然日，不catchup/小时；旧完成标签不代本轮验收。
 
 ## 1. 结论
 
-确认当窗候选0、Evidence完成0、Books写入0。Qwen3-ASR-Flash有自由格式context/非语音拒绝的具体潜力，但本日原配置draft:true，配置date不能授真实公开；必要正文和原图仍保留为有限证据而非当窗采用。Seedream4有联合生成/编辑训练及加速机制潜力，但官方API午夜PublishDate的日历编码语义与当前正文版本尚未连接，单列日期/version缺口。72个邻段arXiv身份实际读完整精确v1题摘，64个具体潜力保留、8个按具体题摘理由关闭；不把它们当64个本窗新论文或Evidence完成。
+本轮作者Schrodinger、独立复核Anscombe。仅补2025-09-08完整BJT自然日，原小时窗口、原空候选表及旧连续§4原块冻结，新证据只尾部追加。新增正式家族1：Qwen3-ASR-Flash，标准审阅完成1、Books仅报告1，Books写入0。官方具名X发布原JSON恢复Sep08公开日，不再沿用旧draft配置的日期hold；接口与局部作者示例不证明普遍性能、安全或生产能力。
 
-14每日来源已有真实有限扫描/恢复停止；非作者DAY已通过安全终态，作者普通工作与独立复核均无剩余。原轻量说明漏处理的06518数据读取纠错、05983较新版本撤回已具名收窄；当前潜力仍不授当窗采用。历史目录与具名原公开日期缺口不支持零事件/无遗漏或正面Coverage。
+arXiv四个限定主题共112次出现、87唯一精确v1，新增完整题摘全部实际筛选为70潜力/17排除；与旧72项有效题摘及五个含糊标题重开归并共146唯一身份，123潜力/23排除。146不是当日新论文数；123具名潜力公开日仍未恢复，不列正式候选、不评分、不计标准/深入完成。必要决定局部及安全、纠错、修订反侧已处理，不把题摘/局部阅读当全部证据完成。
+
+十四每日源已到实际有界停止，精确历史目录和日证缺口隔离，不支持零发布、无遗漏或正面Coverage。首批校准、单篇Qwen及来源/清单已分批独核，全六部分DAY实际通过见[独核§18](../_sources/daily-20250909/SUP_INDEPENDENT_20261011.md)及完成态FINAL§19；本日安全终态完成，普通研究与独立行政差额均无剩余。§4开头连续原块是用户要求逐字冻结的旧有效证据层，里面“正式0/日期hold/拟仅报告”只描述补查前停点；本轮Qwen新原证差额与标准/Books判断由§3及§4末尾新增段维护，不伪称旧层原已通过。
 
 ## 2. 来源覆盖
 
-本日原响应、查询参数、解析与停止见[交接](../_sources/daily-20250909/HANDOFF.md)及[题摘筛选](../_sources/daily-20250909/SCREENING.md)，不复用相邻日报coverage。辅助查询限定Sep8主线主题，读完各返回集合后停止；空集合不证明零研究。
+原件URL、实际执行时间/status/bytes/hash、查询及停止见[本轮来源记录](../_sources/daily-20250909/SUP_SOURCES_20261011.md)和同目录SUP原件/request；完整题摘与具名归并见[本轮筛选](../_sources/daily-20250909/SUP_SCREENING_20261011.md)。宽目录只作有界线索，不建立全站、全年或整类正文队列。
 
 | 来源 | 检查范围与依据 | 结果 | 缺口 |
 | --- | --- | --- | --- |
-| SRC-OPENAI | Research入口/本日查询；news/rss.xml本地200，Sep8 People-First Fund 14GMT核心为慈善资助关闭；SafetyKit Sep9 10GMT窗外 | 已检查 | RSS是官方事件有限序列，不授全研究无遗漏 |
-| SRC-ANTHROPIC | 本日Research原HTML Next JSON恢复172唯一slug记录，按原publishedOn筛窗；Sep5 biorisk与Sep15 Economic在窗外 | 已检查 | 限当前官方目录，不变成172全文队列 |
-| SRC-GOOGLE-AI | DeepMind/Research入口及Sep8查询；本日本地月份page1 12条09/30→11、page2末页仅09/09 Empirical Research Assistance，科学应用按暂缓关闭 | 受阻 | Blog有限月份13条已处理；DeepMind当前2026列表/主题查询未恢复2025历史目录，不能由Research Blog代授覆盖 |
-| SRC-META-AI | Research当前入口及Sep8官方域查询 | 受阻 | 当前有限索引/空入口不足恢复2025研究目录 |
-| SRC-QWEN | 旧Blog/精选及本日查询；本日本地官方page_config API200，60条原date/标题/正文tokenLinks；ASR配置09/08 06:38:04Z且draft:true，完整正文及两原图已读 | 受阻 | 配置时刻不是已证公开事件；精确原发布区间未恢复，持续更新服务不能冒充冻结2025模型 |
-| SRC-DEEPSEEK | 官方入口/本日查询；正确api-docs.deepseek.com/updates/本地200，Date09/29→22→08/21跨窗 | 已检查 | 仅实际updates有限目录，不授全部论文无遗漏 |
-| SRC-MOONSHOT | Platform Blog及Sep8查询；可见09/16→09/05跨窗 | 已检查 | 有限官方Blog目录，不授GitHub所有公开事件 |
-| SRC-TENCENT-HUNYUAN | Research首查/查询；正确publicList POST page1/size100/renderType0本日200，total9/list9到末，原displayPublishTime均2026 | 受阻 | 当前9条不是2025完整历史，也不是本窗0研究 |
-| SRC-ZAI | Research入口/查询；本地GET zh/research?page=2恢复Next JSON，累计18/nextPage3/hasMore=false，最旧2025/12/07；release notes09/30→08/11 | 受阻 | 当前分页已执行至末页，缺2025年9月历史层，不再列未执行More |
-| SRC-BYTEDANCE-SEED | type2 2025/token0/count20返回15/total49/has_more=true；置顶单核、非置顶Oct23→Aug21至Jul15已越窗停止；type1 token0/20/40/60/80至has_more=false，只有20一条06/12 SwiftSpec | 受阻 | Seedream日期/version待核；papers标total94但缺sub_article_list，不能授94已读/0论文 |
-| SRC-BAIDU-ERNIE | 官方Blog2/2末页09/12→08/14夹窗及Sep8查询 | 已检查 | 仅此Blog有限目录 |
-| SRC-XIAOMI-MIMO | 本日本地官方HTML8 Paper 09/19→06/04跨窗；实际恢复首页相关JS，Blog数组15项至末，More只是8+7展开无网络分页，当前历史最邻近元数据12/18～19 | 已检查 | 当前有限Blog无2025年9月层，不授全部发布覆盖；不是未执行More |
-| SRC-MINIMAX | 中文有限Blog/本日查询；本次窄恢复英文Blog实际76行、12日期卡、最旧2025/10/27，原响应MINIMAX_EN_RECOVERY.json；本日Agent Techblog与llms.txt200，技术目录仅2026-05-13一篇至末 | 受阻 | 英文和Agent现存有限目录已处理，但未恢复2025年9月层；中文有效切片保留，不授历史完整 |
-| SRC-ARXIV | 三组模型多模态/系统/RAG-Agent主题查询；月官方2025-09路由恢复200，限05500～06999邻段81题名、72相关/含糊完整v1题摘；advanced日期查询200空返回 | 受阻 | 必要原公开日期未恢复；月列表无public字段，submitted不授落窗，常规公告政策仅路由 |
+| SRC-OPENAI | Research/RSS1287条按Sep08BJT筛选，仅People-First Fund完整description为资助项目排除；SafetyKit Sep09窗外 | 已检查 | 官方RSS有限序列，不授所有研究无遗漏 |
+| SRC-ANTHROPIC | Research RSC174唯一slug/current、publishedOn；Sep15两项与Sep05夹窗；实际日期目录到末 | 已检查 | 未把174目录当174正文；限现存列示 |
+| SRC-GOOGLE-AI | Research SepBlog首页12卡、次页仅Sep09共13至末；正确DeepMind /blog/page/5/ 24卡Nov→Jul，六Sep标题及必要robot/FSF/ICPC/Vault原header为Sep25/22/17/12。Publications限定LLM/inference/agent/multimodal首面各15标题/年份，pager8/7/9/5 | 受阻 | year=2025及必要filter/sort恢复仍混合2026/2025，未获目标历史日目录/有效filter；不授全部主题页已读或本日零研究。错误?page=5/错误Vault slug不当覆盖 |
+| SRC-META-AI | Research当前shell；必要publications首面/5/6实际200却45bytes unavailable；本日原域主题日期补检无原事件 | 受阻 | 缺目标历史公开目录/原件，不把访问错误当空论文 |
+| SRC-QWEN | 配置60项、ASR56tokens与旧有效原件逐字段相等，两原图有效反侧层复用；定点官方X及syndication JSON同id/user/未编辑，created_at换BJT为Sep08 | 已检查 | Qwen日期门已恢复；长note未恢复不影响日证，但不支持全部机制。当前API不证明冻结2025权重/普遍性能 |
+| SRC-DEEPSEEK | updates有限TOC Sep29/22→Aug21跨窗止 | 已检查 | 仅实际updates目录，不扫描所有普通PR |
+| SRC-MOONSHOT | Blog标题/date Nov→Sep16/05→Aug22跨窗止 | 已检查 | 有限Blog切片，不授GitHub全部事件 |
+| SRC-TENCENT-HUNYUAN | 首查Research，官方publicList POST page1/size1000/render0；en9/total9、zh11/total11标题/date至末均2026 | 受阻 | 当前末页缺2025历史层，不是Sep08零事件；错误域404原响应保留 |
+| SRC-ZAI | Research首面list15/allRSC metadata16（多featured），page2累计18/hasMore=false/next3；最早UTCDec07→BJTDec08，release现最早Sep30 | 受阻 | 已执行有限分页到末，但缺目标Sep2025层；不沿旧Aug11目录作本轮保证 |
+| SRC-BYTEDANCE-SEED | US/type1/year2025 token0返回18/total94/next20，非置顶Sep22→Sep02/01跨窗；token20实际20项Jun20→May20止。type2首面18/total45，置顶Seedream Sep09单核，非置顶Oct23→Aug21→Jun25跨窗止 | 已检查 | 真实sub_article_list已恢复，非旧缺数组；不授94/45全文已读。Seedream官方Sep09在新窗外，不要求小时 |
+| SRC-BAIDU-ERNIE | Blog首面10、次页6，末段Sep12/Aug14/Jun30，无下一页；footer实际“«上一页1/2” | 已检查 | 仅有限Blog目录；不捏造footer文字 |
+| SRC-XIAOMI-MIMO | 当前HTML8papers/15blogs，正确async6159/8557两bundle本轮200且与旧原bytes/hash相等。Paper May12/Jun04/Sep19/Oct21及2026；Blog最早Dec18～19。More8+7为本地数组展开 | 已检查 | 现存有限层缺Sep2025Blog；无未执行网络分页，不称浏览器点击或15正文重读 |
+| SRC-MINIMAX | EN12卡最旧Oct27、CN13另Jan15跨窗；实际两lang标题/date读完。Agent当前3条2026Oct08/Sep22/Sep19及llms三路径到末 | 受阻 | 缺目标Sep2025研究层，不沿旧单篇05/13或错误英文13作覆盖；不读2026文章核心 |
+| SRC-ARXIV | 四主题submitted范围202509071600～202509081559，model35/system13/agent32/multi32；各start0/max150且total=returned，112出现87唯一v1完整题摘。月cs.CL宽原件仅05500～06999邻片81标题；旧72有效题摘/current字段与五含糊标题必要重开，最终146=123P/23EX | 受阻 | 官方日与export日400，advanced仅年月form，月/abs/history只有submitted或无publicday；123具名P缺原公告/原发布。未把宽月2000项变队列，不以提交、编号或公告政策授落窗 |
 
-按需来源无已确认触发；不扫描Weekly分组。
+按需来源无已确认常规扫描触发，未扫Weekly；MoGU/BFS先稿及官方X是具名单篇必要身份/证据恢复，不扩来源池。
 
 ## 3. 候选与判断
 
-没有已确认落窗候选。Qwen具体潜力与旧拟分仍保留§5/FIRST供独立校准，但未授本窗正式评分；日期未确认的Qwen/Seedream/arXiv不列确定本窗候选。
+补查前候选表为空，未搬移旧日期或改旧评分。本轮仅新增已确认落新窗的Qwen家族1；其余123具名日期潜力见§5，不先列为确定候选。
 
 | 材料 | 公开时间 | 项目贡献与评分 | 审阅结果 | Books决定 |
 | --- | --- | --- | --- | --- |
+| [Qwen3-ASR-Flash](https://qwen.ai/blog?id=qwen3-asr-flash) | 2025-09-08 | 规定hotword格式约束 → 自由格式/混合背景输入与语言识别、非语音拒绝接口 → 条件输入、背景诱导和拒绝必须分别评价；2 + 1 + 2 = 5 | 标准完成 | 仅报告：实际比较MULTIMODAL-REPRESENTATION [Ch23](../../../../books/part-03-multimodal-world-models/23-multimodal-representation.md)704–732/1185–1207的任务贡献/样本可靠性、冲突拒绝与忠实转写/解释分责；新增只是版本接口与有限示例，未披露编码/冲突/拒绝机制或足以修正正文的控制实验。不是已有覆盖，未写Books |
+
+新Qwen证据另见上述SUP_QWEN，Anscombe实际单篇裁决[§15](../_sources/daily-20250909/SUP_INDEPENDENT_20261011.md)。标准层只覆盖公开接口与有限作者事实：AccentHard413的Qwen19.37高于Doubao13.88；LangMix2000为拼接而非自然code-switch，Paraformer5/9与九语种分母不可直接统一。专名示例没有四格式配对WER、无关context消融或拒绝误报漏报曲线。条件编码/训练目标/拒绝阈值、hardware、precision、batch/concurrency/SLO、输入输出限制及重复/uncertainty为Not Disclosed，未核实现、未复现、未测生产。不用未知机制证明普遍安全；不因仅报告撤销贡献。
 
 ## 4. 证据与知识整合
 
 非作者已核全部潜力的题摘准入范围及必要版本信号，但日期未恢复故正式候选仍0；不把完整题摘/核心说明阅读冒充标准或深入完成。[Qwen必要证据与拟Books处置](../_sources/daily-20250909/QWEN_EVIDENCE.md)的接口、原图局部反侧和未披露条件经独核，仍只是日期隔离的有限证据，拟“仅报告”不是已授当窗Books决定。Seedream当前核心说明和版本边界已读；均未核实现、未复现。06518原comments承认int32/uint16读取错误，§3–5实验及正面结构优越结论不能采用；05983仅较新v2标withdrawn，不自动清除v1潜力，但有效版本/撤回影响未解决前不采用。具体复核见[独立DAY](../_sources/daily-20250909/INDEPENDENT_DAY.md)。
 
+### [Qwen3-ASR-Flash](https://qwen.ai/blog?id=qwen3-asr-flash)
+
+以下仅本轮新增证据，前述旧连续原块逐字冻结。具名[官方X发布](https://x.com/Alibaba_Qwen/status/1965068737297707261)的原syndication JSON id/user/未编辑字段及created_at确认Sep08BJT公开，解除旧draft配置日期hold；不从编号、snapshot命名或提交时间授日期。完整证据与具体Books比较见[SUP_QWEN](../_sources/daily-20250909/SUP_QWEN_20261011.md)，Anscombe实际单篇通过见独核§15。
+
+标准完成只采用自由格式背景输入、语言识别/非语音拒绝的公开接口事实及有限作者示例。旧56tokens与两图有效反侧层复用；AccentHard19.37/13.88、LangMix拼接、Paraformer评价分母、缺配对context消融与拒绝误报漏报曲线限制普遍性能、安全和机制因果。硬件、精度、batch/concurrency/SLO、条件编码、训练目标及拒绝阈值等Not Disclosed，未核实现或复现，持续更新API不认证冻结2025权重。
+
+Books仅报告：实际比较MULTIMODAL-REPRESENTATION Ch23的704–732任务贡献/当前可靠性、冲突与abstention/fallback，以及1185–1207忠实转写/解释分责；新项未披露可独立整合的编码/冲突/拒绝机制或足以修正具体正文的控制实验。不是已有覆盖，不撤销贡献，Books无实际写入差额；新机制/实验到达只重开此家族与owner，必要写入先root协调。
+
 ## 5. 缺口与下一步
 
-本窗可执行普通研究/独立复核待办：无。首批与全部拟潜力、风险版本信号、必要Qwen/Seedream证据以及分层关闭已由非作者独核，见[独立DAY](../_sources/daily-20250909/INDEPENDENT_DAY.md)。原FIRST“未读性能图”和“配置date已授落窗”均为已纠正的旧停点；两原图保留，配置draft信号现已隔离。本窗终态保留项不支持正面证据、Books或无遗漏断言，定点重开条件如下。
+本窗普通研究/source/必要决定层及全六部分DAY已完成，无可执行研究待办；完成态FINAL实际通过见独核§19，无行政待办。Books真实差额仍先root协调，作者不写Books/State/index/scripts。
 
-- [Qwen3-ASR-Flash](https://qwen.ai/blog?id=qwen3-asr-flash)：官方配置原date `2025-09-08T06:38:04.000Z`=14:38:04BJT，但draft:true，关联token正文与原图Flash-0908不证明当时已公开。定点原域发布搜索未恢复可信原事件，原响应QWEN_PUBLIC_DATE_RECOVERY.json保留；不因日期受阻改贡献排除。需原正式发布或完全落本窗的可信公开区间，取得后只重开该家族日期→准入→证据/Books。自由格式context biasing/非语音拒绝仍为潜力，旧拟2+1+2=5不是正式评分；Context示例只专名拼写，不授无关文本无害。当前材料及API持续更新不授冻结2025模型、性能/拒绝保证，Not Disclosed边界见必要证据。
-- [Seedream4官方发布](https://seed.bytedance.com/en/blog/seedream-4-0-officially-released-beyond-drawing-into-imagination)：API ArticleMeta2094原PublishDate1757347200000=09/09 00BJT，但多条均BJT午夜，可能日历编码；Blog显示09/09，整个日期不能完全落窗。UpdateTime1789631351000为2026，当前模型页含09/12排名及后来的report，不能冻结为原09/09披露。需要可核官方事件时间/完全落窗公开区间及拟采用段落的原版本。后来的2509.20427v1 submitted09/24仅定点版本身份，不扩读其方法，不用submitted定公开。恢复原发布/version后只重开此家族；现材料不用于正面证据、Books或无遗漏断言。联合CT/SFT/RLHF生成编辑、native visual controls、trajectory distillation/量化/speculative diffusion是具体潜力，不能按模块组合机械排除。
-- [64个具名arXiv潜力](../_sources/daily-20250909/SCREENING.md)：每个完整v1题摘和具体增量已记录；官方日400/404、月无public、advanced空结果及具名日期查询不足原公开。需要官方公告/作者原发布记录或完全落窗区间，取得后只重开对应精确v1的准入与必要证据，不以编号/提交/DataCite授日期；当前不支持候选、Books或正面Coverage。8题摘关闭不为日期追查伪待办。
-- 历史目录：Seed papers缺数组、Meta/Hunyuan/ZAI/MiniMax当前有限层见§2；MiMo More数组已实际恢复，无未执行普通分页。需要目标历史目录原快照或具名本窗原材料才窄重开；不支持零事件/无遗漏断言。
-- 风险说明：2509.06518v1已承认数据读取错误，日期恢复也不能恢复原实验采用，需正确读取的精确修订与可比重跑。2509.05983v1显示较新版本撤回，史内v2标withdrawn；不扩大为v1自动撤回，需精确撤回/有效原版本说明才能判断影响。两项潜力不因审读成本删除，当前不采用、不写Books。
+本窗终态保留项不用于正面证据、Books或无遗漏断言，不计正面Evidence/Coverage，不支持零发布；定点重开条件如下：
 
-窗外线索：SafetyKit官方RSS为09/09 18BJT属于10窗，只作为日期路由，不继承候选判断；Qwen Next为09/11 04BJT不属于本日。
+- [123具名arXiv潜力](../_sources/daily-20250909/SUP_SCREENING_20261011.md)：完整题摘/具体增量及最终请求集合已归并146=123P/23EX，必要局部见[SUP_NARROW](../_sources/daily-20250909/SUP_NARROW_20261011.md)。缺对应历史原公告/作者原发布或完全落Sep08BJT的可信公开区间；官方日/export400、月无日字段、advanced年月form、current135/旧EX字段和具名abs/history不能把Submitted变public。已有有效日期请求分层复用，未读普通内容不作hold。获得具体原日证只重开该精确身份的落窗→必要证据→Books，不从整类/月/全年新建队列；23明确EX不为不影响处置的日期追查。
+- 历史来源：[来源停止](../_sources/daily-20250909/SUP_SOURCES_20261011.md)中的Google Publications目标年/日filter未实际生效，Meta/Hunyuan/ZAI/MiniMax目标历史段未恢复。必要有限入口已执行到上述停止，不拿错误/空响应或当前2026目录证明零事件。需目标历史目录原快照、有效日期入口或具名本窗原发布，取得后只重开对应源/材料，不扩全年全文。
+- 具体采用风险：[2509.06518v1](https://arxiv.org/abs/2509.06518v1)承认int32数据按uint16读取，原实验/结构优越结论不采用，需正确读取的精确修订与可比重跑；[2509.05983](https://arxiv.org/abs/2509.05983)的v2官方withdrawn，v1不自动同撤回、v3重新提交/描述变化不认证实现已改正，须精确有效版本/撤回影响证据。角色扮演等变更只审受影响精确版本，不把后续2026结论移入本窗。必要纠错/安全反侧已读，不因日期恢复自动解除采用门。
+- Qwen原日期hold已由§3新官方原证解除，不再请求公开小时；只保留标准层性能/机制限制。后续原训练/拒绝机制或配对context干扰、专名实验到达，只重开该家族及Ch23具体差额，真需写书先root协调。
+
+窗外线索：Seedream4官方Blog/API显示Sep09，不属于新增Sep08；原连续§4的旧小时/date/version停点仅历史，当前无需追小时或搬Sep09归属。SafetyKit官方RSS Sep09及Qwen Next Sep11亦不属于本日；不继承相邻报告研究队列。旧模型页更新/version限制仍不能支持冻结2025实验，本轮不扩读窗外方法。
 
 ## 6. 复核
 
-复核者：sept12_15_author（本日非作者；作者Mendel/sept07_10）
-
+复核者：Anscombe（非作者，01a1289f-7cae-7253-bef5-9228c04195d8）
 结论：通过
 
-非作者独立检查十四源真实有限停止、全部64潜力的原v1题摘及comments/版本信号、Qwen正文与两原图、Seedream核心和date/version隔离；八题摘关闭按来源/主题/理由分层核验，含06920安全相关应用。发现并修正06518纠错、05983较新版本撤回漏注与MiniMax旧13→12卡。未独读72项全文、全部附件或标题关闭项正文，未把datehold授Evidence/Coverage通过；正式0、Books0、所有外部保留具名重开，无普通待办。V3结构/一致性和scoped diff检查通过，不替代语义验收；详细范围见INDEPENDENT_DAY。
+[本轮独立记录](../_sources/daily-20250909/SUP_INDEPENDENT_20261011.md)§1–16实际覆盖首批准入与代表EX、全部新增87完整题摘/拟潜力、旧72有效准入及current差额分层复用、具名安全/纠错/修订反侧、必要决定局部和14源有限停止。最终union146=123P/23EX及123请求清单实核相等；并非146全篇、全部证明/图表、全部EX正文或全目录读过。Qwen§15已实际通过原公开日、5分标准层与Ch23具体Books比较；不授未知机制、实现、复现或生产保证。旧[独立DAY](../_sources/daily-20250909/INDEPENDENT_DAY.md)只复用身份/精确版本/位置/命题未变的有效层，旧完成标签不代本轮DAY。
+
+实际全六部分DAY通过见本轮独核§18。实际V3先因新增Qwen缺§4同名证据未过，按独核§17只在旧连续原块后追加后重新运行通过；原窗口相等、旧§4完整连续prefix逐字相等、localrefs存在及限定diff检查通过。完成态V3/引用/冻结/限定diff再次通过，独立FINAL实际通过见本轮独核§19，只核行政差额，不第三次重读有效原证；作者不代签独立结论，机器结果不代语义验收。

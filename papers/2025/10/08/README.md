@@ -2,15 +2,26 @@
 
 **规范：** V3
 **窗口：** 2025-10-07T09:00:00+08:00 ～ 2025-10-08T09:00:00+08:00
-**状态：** 完成
+**窗口说明：** 用户授权已有Daily增量补查；原Gemini日期/评分、原窗口与原连续§4冻结，新增仅前一完整BJT自然日，不catchup或继承旧时刻义务。
+**补充窗口：** 2025-10-07 ～ 2025-10-07
+**冻结候选日期：** [补查前原档案](../_sources/daily-20251008/baseline-before-supplement-20261012.md)
+**状态：** 进行中
 **Books：** 纳入本次
-**检查时间：** 2026-10-05T05:13:03+08:00
+**检查时间：** 2026-10-12T11:14:13+08:00
 
 ## 1. 结论
+
+本轮fresh仅补Oct07完整自然日，作者Ptolemy/root独核，原Gemini正式家族/6分/有效必要安全及Books处置复用，原日期/完整行与连续§4冻结。[本日范围](../_sources/daily-20251008/SUP_SCOPE_20261012.md)不沿用10-07材料池；原完成声明仅历史。本轮[S2R首批](../_sources/daily-20251008/SUP_FIRST_20261012.md)官方日名、6分、必要core/三图与Ch23具体差额已获root§6实际通过，两段/本人注实际写入1、root§7非writer POST通过，窄锁释放。原1+新S2R1=2正式家族，深入必要审阅2、原Gemini仅报告1/S2R整合1；旧小时hold不施给新增自然日。其余14源/有界发现、必要日期和最终DAY仍普通，不预授覆盖/完成。
+
+本轮actual精确v1题摘82份已获root§10/13/17/18–19独立准入/必要局部校准，最终67P15C/N0；[第二](../_sources/daily-20251008/SUP_SECOND_20261012.md)/[第三](../_sources/daily-20251008/SUP_THIRD_20261012.md)/[第四批](../_sources/daily-20251008/SUP_FOURTH_20261012.md)/[第五24](../_sources/daily-20251008/SUP_FIFTH_20261012.md)未变层直接复用。P只是潜力，不含评分/当窗公开/Evidence；尚未将余有界题名与旧有效身份完全归并，不能以82授本日论文分母。[本轮14来源](../_sources/daily-20251008/SUP_SOURCES_20261012.md)的有限机构元数据/动态恢复、MiniMax重复page2与Advanced公告年月权限已获root§14/15实际通过，不授历史无遗漏；余相关题名/日级身份和六部分DAY继续。
+
+下段为冻结原轮结论，不代表本轮补查完成：
 
 本日确认候选1个家族（Gemini Computer Use），必要安全核心深入完成1、仅报告1；Books提案0、实际写入0。Peirce FIRST及FINAL窄修写后DAY均实际通过，普通研究/复核待办0。采用范围是当前官方发布说明中的模型动作提议、模型外逐动作检查、用户确认与客户端执行分工，不是安全效果或2025精确API保证。OpenAI 10/07主发布core新增贡献已关闭，区别于10/01七个案例页事件，不称整PDF已审或同事件重复。日期不明及历史目录缺段作为终态保留项，不等零事件或完整覆盖。
 
 ## 2. 来源覆盖
+
+下表是冻结原轮来源事实，本轮各源实际新请求/停止仍逐项准备；原成功/受阻不自动继承本轮权限。当前已新增S2R单篇官方web读取与三PNG实看，curl一次超时保存，不称完整HTML获取或Google全源已查完。
 
 原件及真实下载时间见[日级目录](../_sources/daily-20251008/fetch_manifest.json)和[定点恢复记录](../_sources/daily-20251008/recovery_manifest.json)。保存原件不等于读过全部内容；恢复判断与分页边界见[必要笔记](../_sources/daily-20251008/AUTHOR_CLOSEOUT.md)。
 
@@ -38,6 +49,7 @@
 | 材料 | 公开时间 | 项目贡献与评分 | 审阅结果 | Books决定 |
 | --- | --- | --- | --- | --- |
 | [Gemini 2.5 Computer Use](https://blog.google/innovation-and-ai/models-and-research/google-deepmind/gemini-computer-use-model/) | 2025-10-08T03:00:00+08:00 | 既有执行器权限/approval仍需保留 → 当前官方明确模型外逐动作检查、确认与客户端执行分工 → 重核产品控制契约及风险边界；2+2+2=6，经FIRST校准 | 深入完成 | 仅报告：具体产品发布控制分工，无可验证长期安全保证或超出现有owner论点的差额；Peirce实际FINAL通过 |
+| [Speech-to-Retrieval (S2R)](https://research.google/blog/speech-to-retrieval-s2r-a-new-approach-to-voice-search/) | 2025-10-07 | 词面转录误差不代签下游检索 → audio-query/document消费者选择及WER/MRR反侧 → 表示目标/接口与实际评价分责；2+2+2=6，root§6通过 | 深入完成 | 整合：MULTIMODAL-REPRESENTATION / [Ch23语义锚点](../../../../books/part-03-multimodal-world-models/23-multimodal-representation.md#语义锚点不是原模态的替代品)，两段及本人SF注，root§7实际POST通过 |
 
 ## 4. 证据与知识整合
 
@@ -57,7 +69,17 @@
 
 必要反侧有界复用01已读Russian/Stop News命题及Peirce实际核查：Russian构件可能组合、模型未执行工具、无法验证平台外活动，与未观察到超公开资源的新能力同存；Stop News疑似虚构合作证据使Category3修正为2。不能以普通案例增长忽略纠错，也不称完整攻击成功。没有无差别重读37页PDF，主发布关闭不代表整PDF已审。当前[PDF](https://cdn.openai.com/threat-intelligence-reports/7d662b68-952f-4dfd-a2f2-fe55b041cc4a/disrupting-malicious-uses-of-ai-october-2025.pdf)的Last-Modified为2025-10-08T03:03:09 GMT（BJT11:03:09，窗后），只证明当前对象修改标签；不是first-public、首次上传或重要修订。整报告历史首公开与当时PDF字节未确定，不用作本日历史事实或Books证据。该未采用命题不阻塞core关闭；若将来依赖它才定点恢复历史原件/官方说明。
 
+### [Speech-to-Retrieval (S2R)](https://research.google/blog/speech-to-retrieval-s2r-a-new-approach-to-voice-search/)
+
+本轮官方Oct07日名按当前自然日恢复，不制造时刻或迁旧Gemini归属。本人实际web完整必要L104–178及WER/current-cascade-MRR/S2R-results三官方PNG实看，精确位置/厂商权限与未披露项见[S2R首批](../_sources/daily-20251008/SUP_FIRST_20261012.md)。人工transcript对照只给原级联headroom，不保证S2R必获；WER跨语言不单调排序MRR，图示12语言不扩成17/26逐项证明，柱高无精确标签/统计保证。候选后的ranker仍有hundreds signals；未匹配训练预算或披露端到端latency/SLO，不采全部收益唯一因果、整体更快或生产保证。
+
+实际比较MULTIMODAL-REPRESENTATION/Ch23原transcript锚点/监督、对齐及transcription合同，发现audio-query↔document表示消费者/评价选择的具体差额，不以主题相似签已有覆盖。root§6必要Evidence与两段逐字PRE通过、授唯一窄锁；已实际融入上述小节1004/1006及本人SF-2025-GOOGLE-S2R注1792，保原论证/并发dirty。root§7非writer实际完整邻接/本人注及源回对POST通过，写入1、锁释放；未核实现或复现，S2R整合不代全日DAY。
+
 ## 5. 缺口与下一步
+
+本轮普通工作：其他14源实际有界入口/题摘分批校准、必要公开日和完整六部分DAY；S2R单篇评分/必要Evidence/实际Ch23 POST已获root§6/7通过，未变化层不第三次重读。准备好的单篇先推进，未读普通工作不写成外部终态。以下为冻结原轮历史停点和保留项；S2R原小时请求已由本轮官方Oct07日名自然日恢复，不再当新增日期受阻，未变化VecInfer/历史PDF等权限保留待本轮定点核。
+
+当前具体普通项为余有限主题/类别相关或含糊题名、具名先稿/日级公开门及最终DAY/完成态FINAL。82题摘67P15C及必要决定/安全局部、source§14/15与S2R POST均已有效，不重复审批或全部core。target剩23差额正在精确v1获取/读取，未读不写外部受阻。旧VecInfer本日Advanced exactpaper已实跑：同日200为表单错误，扩大month只有October2025公告粒度，不确认Oct07；只需官方日级公告/当期列表或同稿首次正文公开日，不追小时。旧段的S2R时区/时刻请求由上面的新自然日resolution覆盖，不能当当前待办；原段仍仅为历史权限保留。
 
 普通研究待办0、独立复核待办0、Books待写0。Peirce FINAL §6已实际解析正确请求/原Atom并核终态措辞，R-ARXIV写后窄复查DAY通过；复用有效FIRST/FINAL，不重复全附件。作者只据实际非作者结论同步完成态，没有自审；共享Books/index/state未修改。
 
@@ -66,6 +88,10 @@
 外部保留线索：[VecInfer 2510.06175](https://arxiv.org/abs/2510.06175)只取得submitted线索及题摘，量化机制可能有增量，待官方first-public公告完全落窗；[S2R](https://research.google/blog/speech-to-retrieval-s2r-a-new-approach-to-voice-search/)官方core为双encoder绕过ASR中间文本、WER与下游MRR不等价的局部证据，仅日名10-07不足落窗，待官方时区/时刻或完全落窗公开bounds。均不作为正面证据、Books或零遗漏依据。
 
 ## 6. 复核
+
+本轮复核者：root（非作者Ptolemy）。[本轮独核](../_sources/daily-20251008/SUP_INDEPENDENT_20261012.md)§6已实际S2R官方日名/6分/必要core/图与Ch23逐字PRE通过，§7实际非writer正文/完整邻接/本人注及原证回对POST通过。其余来源/有界筛选与完整六部分DAY未签。下述Peirce仅复用身份/采用命题未变的旧有效Gemini与OpenAI必要安全更正，不代本轮DAY或来源权限。
+
+当前root§10/13/17/18–19实际82精确v1与必要决定/安全/反侧校准67P15C通过；§14/15实际机构元数据、locale/时间字段、隐藏More、真实失败/重复入口与Advanced年月停止通过。只这些分层范围，不是所有附件/题名全量或全日DAY；余有限筛选/日级身份仍普通。校验器仅机器接口层，本轮整体仍进行中。
 
 复核者：Peirce（非作者）
 

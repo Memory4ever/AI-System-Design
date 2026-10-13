@@ -119,6 +119,10 @@ untrusted proposer builds candidate off-commit
 
 <!-- source-family:SF-2026-ARXIV-2605-19314 -->
 
+对话型流程还要分开“进度证据允许提出下一步”与“用户已许可真正推进”。阶段判定可以触发一个低压 offer，但不能替最新 turn 签发同意；明确拒绝或犹豫应阻止晋升，而不是被先前进度摘要覆盖。若状态提取在 background 异步执行，foreground 可消费上一轮的结构摘要，却必须让最新用户输入保有拒绝当前 transition 的机会。它补的是提议与获许可之间的交接，不让模型输出的状态字段成为事实或硬授权。
+
+[受限双 gate 原型](https://arxiv.org/html/2603.25031v1)展示这种分工，但模拟对话、选定抗拒案例与少量人工审计不能证明用户意愿永不被误读，也不能把整套组件的收益唯一归给 gate。状态提取、摘要、额外判定和冷却等待都付费；异步本身不解决更新次序、旧摘要资格或跨 turn race。运行时仍应绑定前文的 stage revision 与 observation watermark，不能核实最新许可时保留当前阶段、重新询问或升级人工处理，不由可推进状态、平均评分或低延迟宣称批准 effect。<!-- source-family:SF-2026-ARXIV-2603-25031 -->
+
 缺少人工维护 procedure 时，可以先从 clean success、错误后恢复和失败日志的差异诱导候选步骤、顺序及 prerequisites；对话、tool trace 与 backend error 需共同保留。运行中再把最近成功的工具调用对齐到所检索的步骤，用当前观察让 LLM 标出候选 action 的 prerequisite status，形成 stage-specific 软提示。日志诱导与多轮自检只提出可复用 procedure，不能把推断出的前提升级为真实环境资格；是否 dispatch、授权与副作用仍由前文的 hard state owner 决定。<!-- source-family:SF-2026-ARXIV-2601-08158 -->
 
 这增加离线诱导、embedding/retrieval、在线 summary 与前提检查成本；重复动作、复杂分支、日志遗漏或虚构 prerequisite 会造成错误定位和误约束。受限模拟中的同任务 oracle-retrieval 消融支持表示条件，而不是泛化保证；排除同任务经验后仍有收益但明显下降，不能把同一任务复用结果移植到陌生流程。Procedure 与当前 state 对不上、环境真值不可核或额外调用不合算时，应回退显式人工流程、单 state pointer 与独立工具验证，不让 learned workflow 取代 durable execution contract。
@@ -252,16 +256,19 @@ World 提供 Wikipedia search/visit 的实验性案例；ABot-AgentOS 的 split-
 
 ### Clarification 与 Workflow-level Speculation 都是有损 Admission
 
-遇到不确定需求时，始终询问最安全却增加用户中断；始终假设最流畅却可能在错误意图上执行。Clarification
-应成为每轮读取 state history 的 admission gate，输出 `ask` 或 `assume/proceed`，并记录 uncertainty evidence、
-user reply、budget 与后续 outcome。它不能与 action authority 合并：高风险或不可逆操作仍受 policy/approval
-硬门禁。模拟用户、synthetic ambiguity 或单次 run 只能校准实验条件，不能证明真实用户容忍度。
+遇到不确定需求时，始终询问是意图澄清的保守基线，却增加用户中断；始终假设最流畅，却可能在错误意图上执行。Clarification 应成为每轮读取 state history 的 admission gate，输出 `ask` 或 `assume/proceed`，并记录 uncertainty evidence、user reply、budget 与后续 outcome。直接让执行者在同一 prompt 内自检最简单；另一条 scaffold 让专门 detector 每轮提出 missing-information flag，由执行路径约束下一动作先问用户，再消费回答继续工作。Detector 只提可错判断，两个同模型 agent 不自动拥有独立证据；gate 也不能与 action authority 合并，高风险或不可逆操作仍受 policy/approval 硬门禁。<!-- source-family:SF-2026-ARXIV-2603-26233 -->
+
+[Ask or Assume 的受限编码对照](https://arxiv.org/html/2603.26233v1)中，外置检测接近强制首问、改善单执行者自检，但 oracle 用户、synthetic ambiguity 与提示/调用预算限制结构归因。已问/未问子群由策略事后选出，不能认证内部 uncertainty 已校准；额外检测、问答及执行都计费，局部 API 账不证明节省了真实人工成本，也不覆盖用户容忍度或安全。用户回答仍须绑定原问题与当前 state；检测失准、缺可靠用户或预算不足时，保留单 agent 显式自检、已接受 question ledger、固定人工 milestone 或停止/升级，不让未发 flag 自签信息充分。<!-- source-family:SF-2026-ARXIV-2603-26233 -->
 
 同样地，Agentic multimodal request 可以先猜“完整 tool workflow 是否必要”：轻量 model 提出直接答案，
 separability gate 接受或回退到大模型 tool loop。这是 workflow-level lossy routing，不是 token-level exact
 speculation；false accept 会跳过所需 observation/action，false fallback 则支付 draft 与 judge 后仍执行完整
 流程。Router 必须持有 threshold、decision trace 与 residual queue，tool trajectory 仍归主 Agent/Workflow。
 难题比例高、threshold 漂移或 action 有副作用时，直接执行完整受控 workflow 更可靠。
+
+这种提前终止还可以分成两道不同资格：先让有工具能力的主模型判断原图是否可能需要进一步观察，仅把初筛合格的请求交给小模型直接作答；再检查整份答案中的薄弱 token，而不是让高分位置的平均值掩盖低分位置。Leading logit 相对一组竞争者的间隔可作为受限 gate 信号，不能当正确概率；min-token 接受规则仍需独立校准、长度与 tokenizer 绑定，拒绝项回原完整工具路径，不是由小模型替主模型验证一条等价轨迹。<!-- source-family:SF-2026-ARXIV-2603-23483 -->
+
+前端可批处理，不意味着单请求依赖的工具步骤或剩余难题免费。筛选的主模型编码、候选生成、logits/gate 与拒绝后的完整执行都进入预算，接纳比例也须与残余任务复杂度和资源争用一起测；忽略这些成本的吞吐近似不是一般并发上界。有限图像问答中阈值、竞争者数量和输入分辨率都会改变质量/速度，部分切片甚至更慢；高置信度或平均质量保持不能认证每个答案无损。阈值漂移、独立验证不足、难题比例高或请求包含不可逆行动时，保留完整受控 workflow 和原权限检查，不让 bypass 成功率自签观察充分或行动安全。
 
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-07937:start -->
 Clarification gate 还需要时间维度：缺的是 goal 时，早期假设会重写整条 workflow；缺的是某个后续 input 时，等待到相关步骤前可能仍可恢复。Runtime 应把 missing-information type、completed actions、rollback cost、irreversible effects 与 remaining budget 写入同一 admission state，在信息价值跌破继续执行代价前选择 ask，而不是只用一个全程固定阈值。
@@ -820,6 +827,10 @@ failure:
 
 这要求更多协议元数据和对账成本；黑盒工具缺少 effect semantics 时，系统不能猜测成功，应 fail closed、请求人工确认或用可验证查询恢复。形式模型与 MCP 工具调查说明接口缺口，不证明所有工具都能自动补全事务语义。
 
+即使工具运行在本地，模型看到结果的顺序也需要受控。只把 observation 留在本轮内存，在短任务中很简单，却会在“工具已执行、结果尚未写入会话”时留下恢复歧义。一条可恢复分支先保存带最终参数和 worker incarnation 的 intent/checkpoint，再 dispatch；结果收口后先提交 outcome/receipt，才让模型继续。若 receipt 已提交而 `tool_result` 投影尚缺，恢复应先修补投影，而不是重新执行。`not_started`、已知 failure 与 `unknown` 分别说明没有运行、已知失败和不能确认效果，不能共享一个可重试标签；unknown 应跨恢复保留阻断，直到对账或人工解除。这里增加日志提交、投影修补与保留成本；无副作用且可重算的小任务仍可保留更轻的顺序执行。<!-- source-family:SF-QWEN-CODE-0-25-1 -->
+
+取消还需要独立的物理证据：Shell leader 已退出，不证明其 process group 的其他成员已停止。Worker-owned ledger 可在调用收口前登记进程组，使 worker/child 死亡后的 host 仍有归属线索，再用活进程表与出生时间区分本组、被复用的 ID 和无法判定的组；无法证明时保留记录并隔离新准入，不猜测“已停止”。[公开实现的受限合同](https://github.com/QwenLM/qwen-code/pull/13352)仍留有 spawn→PID callback 窗口、`setsid`/double-fork 逃逸和 Windows 验证缺口，不能覆盖所有 daemon 或远端副作用。同步 staging/atomic rename 也不等于已经验证断电持久化；清理轮询、磁盘日志与隔离造成的可用性成本应计入。模型逻辑终止、结果已记账与物理进程停止因此是三道边界，不是一个完成字段。
+
 ## Human-in-the-Loop
 
 Approval 是 workflow state，不是聊天中的一句“可以”。应绑定：
@@ -1317,7 +1328,7 @@ Primary-source 与设计入口：
   https://arxiv.org/abs/2603.22386
 - Unified-MAS（versioned operator library 再 topology search；Status: Experimental）:
   https://arxiv.org/abs/2603.21475
-- Ask or Assume（runtime clarification gate；Status: Experimental）: https://arxiv.org/abs/2603.26233
+- SF-2026-ARXIV-2603-26233，[exact-v1](https://arxiv.org/html/2603.26233v1)§2–3/T1/limits/AppendD；2+2+2=6。clarification runtime gate/refine独立detector/执行路径，保oracle/同模型/预算混杂、事后子群非校准、用户/高风险权限与全费用；不采通用multiagent必要/真实人类/信息充分或安全保证，未核全部prompt/code/复现。
 - SpecEyes（workflow-level lossy speculative gate；Status: Experimental）:
   https://arxiv.org/abs/2603.23483
 - Natural-Language Agent Harnesses（template/runtime/hook portability；Status: Experimental）:
@@ -1567,3 +1578,9 @@ Primary-source 与设计入口：
 - 2026-01-28 来源遗漏补查，arXiv:2601.17471v1：本日具名必要 Source 复用；root 实际逐字拟文、对应正文完整局部邻接 PRE 通过后授本段与自身末注窄锁。已写入，resume_20260128_audit 非作者实际正文、完整局部邻接与自身末注 POST 通过，窄锁释放；原直接反侧与费用/失败回退近正文保留，未核 artifact 或复现。<!-- source-family:SF-2026-ARXIV-2601-17471 -->
 
 - `SF-2026-ARXIV-2602-11782` — Daily `2026-02-14`补查；[exact-v1](https://arxiv.org/html/2602.11782v1)，2+2+2=6。必要Source经review_20260214非作者限定通过，actualowner/完整局部与逐字PRE经root通过并授本一段及本人末注窄锁；作者已实际顺读新正文与完整邻接，root非writer actualPOST通过、窄锁释放。费用、直接反侧与回退近正文，不授全recipe、实现复现或DAY。 本轮补查事件的首次公开日期未证，必要Source/PRE/实际POST研究仍有效，但不计本日已确认新增成果；归属只按[本日日报§5](../../papers/2026/02/14/README.md#5-缺口与下一步)的57日期请求定点重开，不撤正文或补造公开日。
+
+- `SF-QWEN-CODE-0-25-1` — Daily 2026-10-12；[release v0.25.1](https://github.com/QwenLM/qwen-code/releases/tag/v0.25.1)（`c1a8218`）及必要PR13291/13352、对应outcomes/ledger代码，1+2+2=5。仅receipt→模型投影恢复与process-group归属/停止证据，不将M5未启用阶段的说明变成release默认上线证明，不授任意exactly-once、副作用回滚、断电fsync或Windows生产验证。实现读域与独立复核见本日日报，未复现实验。
+
+- `SF-2026-ARXIV-2603-23483` — [SpecEyes exact-v1](https://arxiv.org/html/2603.23483v1)必要§3–5/Eq1–16/T1/F3–6文字；只large初筛→small完整toolfree回答→min-token受限gate/residual预算接口。保margin非概率/holdout未闭、单query依赖非跨query串行、HR8K反慢/mean质量退和完整前端/拒绝费；不采exactspeculation、通用吞吐界、无损或行动安全，未核code/全部曲线点值/复现。
+
+- `SF-2026-ARXIV-2603-25031` — [exact-v1](https://arxiv.org/html/2603.25031v1) III–V；仅progress-offer/user-consent分责与旧summary/最新turn接口。保模拟/选定抗拒人口、IAR非100%、组件捆绑与异步race未验/全部费用；不采临床effect、永不违背意愿或无损实时，未核artifact/复现。

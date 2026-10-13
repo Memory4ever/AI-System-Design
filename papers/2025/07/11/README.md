@@ -4,9 +4,15 @@
 **窗口：** 2025-07-10T09:00:00+08:00 ～ 2025-07-11T09:00:00+08:00
 **状态：** 完成
 **Books：** 纳入本次
-**检查时间：** 2026-10-07T00:52:13+08:00
+**检查时间：** 2026-10-11T17:04:03+08:00
+**窗口说明：** 用户授权仅补来源遗漏，保留原窗口、旧候选日期与有效正文；原小时级缺口只作为原记录，不继承为新增材料的日期门。
+**补充窗口：** 2025-07-10 ～ 2025-07-10
 
 ## 1. 结论
+
+本轮增量补查已通过非报告作者Ptolemy的六部分DAY，审阅普通待办0，达到含明确隔离外部保留项的安全终态。新增材料按7月10日完整自然日检查，不要求公开时分秒，也不使用arXiv catchup。GFM官方研究说明已通过日级日期、准入和受限标准审阅独核，正式新增1家族、标准完成1、仅报告1、Books新写0；它解决的是本次自然日归属，不改原小时窗口或原候选日期。arXiv新增主题页去重154个发现身份，实际132份完整精确v1题摘与22个明确范围题名；经独立题摘/必要局部校准分为97项日期或先稿身份潜力、55项具体关闭、2项已证窗前旧事件。17项准入歧义已明确处置，不存在未读准入N；97潜力不是当窗正式候选或Evidence完成，隔离来源也不授Coverage或无遗漏。具体改判和反侧见[root核心续核](../_sources/daily-20250711/SUP_A11_ROOT_SCREEN.md#2026-10-11-准入歧义的必要核心处置)、[多模态修正](../_sources/daily-20250711/SUP_A11_MULTIMODAL_SCREEN.md#2026-10-11-局部补正)、[独核§9～15](../_sources/daily-20250711/SUP_INDEPENDENT_20261011.md#9-n13决定核心的分层独核)。
+
+**原轮结论（历史保留，不代替本轮完成）：**
 
 本日发现了可改变设计判断的线索，但没有材料获得足以完全落入本窗的原始公开时间证据；这不是“零事件”结论。KVFlow 将已知工作流未来执行顺序用于 KV 淘汰/预取，Synergy Dilemma 给出 Long-CoT SFT 与 RL 不必叠加的反证，H-Net 的动态 chunking 与 byte-level compute trade-off 也值得继续核验。它们均隔离为外部保留项，不计当窗正式候选、不评分、不写入 Books，也不支撑历史来源“无遗漏”。
 
@@ -33,15 +39,40 @@ Books 纳入判断，但必要日期/版本证据未闭合，当前均暂缓，�
 | SRC-MINIMAX | 英文blog当前首12项；中文目录当前条目跳2025-10→1/15，无目标窗历史段；一次历史日期限定补检只返回无关用户知识库并关闭。[中文目录](../_sources/daily-20250711/minimax-cn.raw) | 受阻 | 无完整目标窗技术事件目录；不能将目录跳跃或搜索空命中作无事件。 |
 | SRC-ARXIV | submission surrogate范围2025-07-09T18:00Z～07-10T18:00Z；四组窄查询按cs.CL/LG/AI、cs.DC/AR/PL/OS/PF、cs.AI/IR/MA/CL、cs.CV/RO/CL/LG与ti/abs主题边界，114/2/33/55项，start0/max200，各total<200，完整返回页后停止；跨组去重156。宽页216项仅查漏，两轮并集223。[实际查询](../_sources/daily-20250711/narrow.py)、[完整题摘](../_sources/daily-20250711/narrow-discovery.json) | 受阻 | 不是窗口公告查询；可能漏更早提交的延迟公告/重要修订。官方日列表/公告记录有限恢复失败，月列表不提供本窗批次；65项贡献线索不能分配本日。 |
 | 补检：[官方域历史检索](https://www.anthropic.com/research) | Anthropic/Meta/DeepSeek/MiniMax四条机构日期限定查询；[实际查询与结果](../_sources/daily-20250711/SUPPLEMENT.md)，一次仅返回无关MiniMax用户生成知识库，按身份关闭后停止。 | 检索受限 | OR与索引覆盖不确定，不用于目录完备或零事件断言。 |
+| SRC-OPENREVIEW | 本轮仅由DeMul `NDLmZZWATc`、Modality Conflict `SP43jVv7fJ`、Inductive Bias Probe `i9npQatSev`实际触发；页面验证/API403，停止同路径重复，不绕验证。[具名执行/替代正文](../_sources/daily-20250711/SUP_INDEPENDENT_20261011.md#12-本人三项具名会议身份同核心已证首公开日未证) | 受阻 | 同贡献家族已由官方proceedings必要核心确认，首正文公开自然日未恢复；三项保留身份/日期潜力，不从会议名称猜排窗。 |
+| 表外：[ICLR Proceedings](https://proceedings.iclr.cc/paper_files/paper/2025/hash/284e7ef68bf3d8fa42abf45a39f29f5e-Abstract-Conference.html) | 仅DeMul具名官方题摘/Lee-Shin-Park及PDF pp1～6，与精确v1 §3.1～3.3同核心；未扫会议 | 已检查 | 页面无首公开日期，不能证明July10新首次事件或所有版本逐字相同；仅身份核验完成。 |
+| 表外：[PMLR / ICML2025](https://proceedings.mlr.press/v267/) | 仅[Zhang25dq](https://proceedings.mlr.press/v267/zhang25dq.html)/[Vafa25a](https://proceedings.mlr.press/v267/vafa25a.html)官方完整题摘及各21页PDF的pp1/3/4必要method，匹配精确v1；实际PDF读取未新写本地附件 | 已检查 | volume/录用日期不当最早正文日，三项必要日期缺口按独核§12保留，不扩全会议。 |
+| 表外：[ECVA / Springer](https://www.ecva.net/papers/eccv_2024/papers_ECCV/html/7950_ECCV_2024_paper.php) | 仅CoPT同题名/作者/完整AB/DOI核至[出版方](https://link.springer.com/chapter/10.1007/978-3-031-73033-7_24)First Online2024-10-31；raw/request保留在同日MM包 | 已检查 | 足证窗前同贡献家族，非互联网绝对最早日或所有版本逐字相同；没有本窗实质修订信号。 |
+| 表外：[CVF / CVPR公告](https://cvpr.thecvf.com/Conferences/2025) | 仅[FreeTTA具名条目](https://openaccess.thecvf.com/content/CVPR2025/html/Dai_Free_on_the_Fly_Enhancing_Flexibility_in_Test-Time_Adaptation_with_CVPR_2025_paper.html)与June12 proceedings available公告、June17 PDF回链，title/作者/AB/arXiv回链相符 | 已检查 | 足证最迟June12窗前已公开同核心，不造绝对首发时分秒；两窗前事件不计本窗候选。 |
 
-上述受阻项已隔离，不用于 Coverage 通过断言。各请求URL、HTTP状态/错误、检查时间及字节数随同保存；有限恢复原因见[来源日期边界](../_sources/daily-20250711/BOUNDARIES.md)。未扫描Weekly来源。
+上述表格中原14个每日源及旧官方域补检保留原轮实际查询、停止事实和原结果列；其后SRC-OPENREVIEW、ICLR、PMLR、ECVA/Springer、CVF/CVPR五行属于本轮具名触发，不是原轮记录。本轮已重新处理14个每日源，补充执行范围如下；更详细的真实请求/分页/错误与原件见[13机构本轮包](../_sources/daily-20250711/SUP_INSTITUTIONS_20261011.md)和[arXiv本轮入口/题摘](../_sources/daily-20250711/SUP_A11_ROOT_SCREEN.md)。本轮各源都已完成下述有界检查；未恢复的历史段按受阻隔离，不授覆盖完整。以下不是原记录的日期重算，也不拿目录条目数当日论文数。
+
+- `SRC-OPENAI`：Research与RSS1287个当前item只筛7/10，7/8→7/11相邻段无该日条；停止feed，不授全站研究/修订覆盖。
+- `SRC-ANTHROPIC`：实际SSR177次publishedOn/168唯一时间戳，7月仅7/15；分母是序列化时间戳，不是论文数，不替换原174/172记录。
+- `SRC-GOOGLE-AI`：Google7月Blog9条、GFM7/10官方核心实际回读；Google pubs当前1～15/11612无法恢复目标日。DeepMind publications真实page/2跨7/13→7/1→6/26后停止，Blog page/6日期只复用同日有效核查。GFM单项日期已恢复，Google pubs整体历史仍缺；T5Gemma7/9对新窗外，不再追clock。
+- `SRC-META-AI`：Research本地12秒timeout、网页读取0行及一次7/10官方域补检，未恢复历史正文；保留受阻，不解释为0研究事件。
+- `SRC-QWEN`：博客真实page/2跨7/22→6/27→6/26，research-list当前数组60条无7/10，停止两页/数组；不推及未列修订。
+- `SRC-DEEPSEEK`：主页与官方updates重新读取，目标邻接8/21→5/28，无7/10条，停止该changelog段；不是完整Research历史。
+- `SRC-MOONSHOT`：Blog26个time，7/17→K2 7/11→5/6，K2新窗外，不读全文/不追公开小时；原小时缺口仅保留历史。
+- `SRC-TENCENT-HUNYUAN`：Research JS壳；浏览器打开71.0844秒超时未获DOM/截图，当前All API POST page1/size20/renderType0，total9/list9均2026，停止当前返回；2025历史目录仍受阻。
+- `SRC-ZAI`：Research首页15卡，真实?page=2为18卡含重复，只延伸到2025-12-07且显示没有更多；无法证明7月段覆盖，停止并隔离历史缺口。
+- `SRC-BYTEDANCE-SEED`：修正为`x-tt-locale: US`、2025、type1/2、token0/20。实际papers18+20=38/94、blogs18+18=36/45，两类仍has_more=true；日期已跨过7/10后停token20，不扩全年。唯一7/10 CoT链接旧2411.11984家族，目录日期与v2提交不证明新的重要修订；不重复计分。
+- `SRC-BAIDU-ERNIE`：真实第二/末页6条，8/14→6/30邻接无7/10，停止两页；当前目录不是全部旧研究/修订保证。
+- `SRC-XIAOMI-MIMO`：Paper本地8项（2025/2026各4）9/19→6/4无7/10；Blog本地15项无统一日期、More只是数组显隐，非历史新分页；Blog日期段继续隔离。
+- `SRC-MINIMAX`：EN当前12/CN13条没有目标技术段；定点官方News7/10教育访问合作核心已读，是使用现成Hailuo工具/免费访问，不含新模型或系统机制，贡献关闭。用户托管newsletter不当官方原文；其余历史目录缺口不因具名关闭归零。
+- `SRC-ARXIV`：分类+ti/abs五组新主题firstsubmitted UTC7/8 18～7/9 18，实际107/4/37/60/3，start0/max200，全部total<200，返回页后停；去重154标题仅发现。初始宽日期model226只返回200不授页完整，已收窄。实际132完整精确v1题摘、22明确范围题名，17必要准入局部及MM修正已校准，97P/55C/2窗前旧事件；所有P日级日期尚未证，不授新增候选Evidence。July10 announcement advanced probe实际返回表单、仅年月粒度，submission/ID/排期不证明公开日，不用catchup；不授当日公告完备。
+
+本轮有限机构补检为Meta/MiniMax/Hunyuan/ZAI四条目标日官方域查询；MiniMax只取具名官方News，其他索引无结果不证明历史无事件。各原始请求/真实headers或网页读取权限由机构包自包含记录。上述必要历史段与日期限制不用于正面Coverage、Evidence或“无遗漏”；没有扫描Weekly来源。
 
 ## 3. 候选与判断
 
 | 材料 | 公开时间 | 项目贡献与评分 | 审阅结果 | Books决定 |
 | --- | --- | --- | --- | --- |
+| [Graph foundation models for relational data](https://research.google/blog/graph-foundation-models-for-relational-data/) | 2025-07-10 | 固定schema/type/feature-space编码受限于新schema；官方研究说明提出跨关系图复用的输入边界，不能把单表AP收益视为编码泛化因果证据；2 + 1 + 2 = 5 | 标准完成 | 仅报告：公开问题/输入映射与研究方向，不采用未披露交互编码recipe或普适泛化结论；未认领具体Books已有覆盖。 |
 
-尚无可确证落窗的正式候选，因此不填候选行或伪造0分。潜在贡献、SAGE方法争议和机构目录缺口放在第5节及保留的逐项原始筛选记录；此处的0不是已证实当窗没有重要进展。
+原轮尚无可确证落入原小时窗的正式候选，因此原轮不填候选行或伪造0分。潜在贡献、SAGE方法争议和机构目录缺口放在第5节及保留的逐项原始筛选记录；此处的原0不是已证实当窗没有重要进展。
+
+上段为原轮0候选记录，继续保留。本轮自然日补充新增1个唯一家族，不重算旧日期；表中的标准完成仅限公开说明，采用边界见§4。
 
 ## 4. 证据与知识整合
 
@@ -73,7 +104,29 @@ Books 纳入判断，但必要日期/版本证据未闭合，当前均暂缓，�
 
 [T5Gemma官方原文](https://developers.googleblog.com/en/t5gemma/)明确decoder-only权重初始化encoder-decoder后用UL2/PrefixLM adaptation，允许9B encoder/2B decoder的不对称质量/latency取舍。标7/9但时区未披露，不能自行把日期换算至本窗；仅保留边界归属问题，不推进paper/Books。MedGemma相同月日期线索因医学应用范围关闭，没有为排除项另追日期。
 
+### [Graph foundation models for relational data](https://research.google/blog/graph-foundation-models-for-relational-data/)
+
+前述GFM段的旧时刻停点完整保留，不继承为本轮日期义务。本轮实际回读官方全文及[同身份原始正文](../_sources/daily-20250711/google-gfm.raw)，可见July 10, 2025，按自然日支持这一研究Blog公开说明事件，不证明所有关联论文/模型artifact当日首发。Ptolemy实际核官方原文日期与全部核心段并独立准入/评分/标准处置，依据见[独核§2～5](../_sources/daily-20250711/SUP_INDEPENDENT_20261011.md)。
+
+问题是固定schema的GNN如何迁移到node/edge type、特征维度与label空间不同的新关系图。原文给出的输入映射可核：表→node type、行→node、foreign key→typed edge，其余列→node features，可选时间特征。作者指出hard-coded type lookup与针对原特征分布的absolute projection在新schema上受限，并主张跨任务feature interactions；这后者是作者报告的研究方向，不是已公开完整算子/训练recipe。例如，新3个float字段或30个categorical字段需要新的可迁移映射，这是审阅者举的输入反例，不是官方实际测试schema，不能从“interaction”一词补造实现。
+
+内部分类任务对调优单表基线的3～40倍AP同时改变了多表连接可用信息，未控制同图信息、骨干、训练数据/预算下absolute vs interaction编码；因此不引用该倍数作本日性能或跨schema因果证据。模型配置、precision、batch/concurrency、SLO、训练目标与数据切分均Not Disclosed；JAX/TPU/十亿规模不构生产能力或资源效益验证。本轮标准完成只支持公开问题、映射及方向的存在，不能证明任意未见图无需再训即泛化；未读实现、视频或关联论文，不认领复现。
+
+Books纳入判断，结果仅报告：没有公开到足以改变长期章节设计配方的encoding机制/受控反证，不用模型输入主题相似来冒称已有覆盖，也不为制造diff新增章节。若以后取得具体机制和可归因跨schema证据，再加载`MODEL-EMBEDDING`/`TRAIN-PRETRAINING`的实际owner/相邻正文，定点决定差额；本日无Books写入。
+
 ## 5. 缺口与下一步
+
+本轮尚可执行：无。来源有界检查、132完整题摘/22明确范围题名、17必要准入局部及MM修正的独立校准，以及非作者最终六部分DAY均已通过；外部保留项仍不作正面证据。
+
+本轮已隔离的外部保留项：
+
+- 新97项arXiv潜力：root73身份及各具体贡献在[root筛选及末章](../_sources/daily-20250711/SUP_A11_ROOT_SCREEN.md)，MM24身份与精确v1可点击链接在[MM修正后表](../_sources/daily-20250711/SUP_A11_MULTIMODAL_SCREEN.md)。同一身份只请求一次：必要的是该精确家族的官方首公开**日期**/当期公告或作者具可核自然日的首次正文，不是submitted/updated/ID年月或默认排期。当前无法确认属于July10，不评分、不进入确定候选、不用于正面Coverage/Evidence、Books或性能/安全保证。可接受具名同稿可证窗前的官方日期上界后定点排窗，或落窗原公告后继续相应必要证据；不索公开小时，不扩月全文队列。
+- 上述97之中的DeMul2507.07147v1、Modality Conflict2507.07151v1、Inductive Bias Probe2507.06952v1：[三具名同核心材料/当前失败与恢复条件](../_sources/daily-20250711/SUP_INDEPENDENT_20261011.md#12-本人三项具名会议身份同核心已证首公开日未证)。ICLR/PMLR的同核心身份已证，但最早正文公开日期未证；OpenReview验证/API403后停止，不绕过，不从会议名推出日期。只重开这三项身份日期，不重复建材料请求或扫全会议。
+- 本轮未恢复的历史来源段：Meta、Hunyuan、ZAI、Google pubs、MiMo无日期Blog、MiniMax目标技术目录和arXiv目标日公告/延迟公告/实质修订切片。实际入口/停止与失败见§2和[机构包](../_sources/daily-20250711/SUP_INSTITUTIONS_20261011.md)；恢复只接受该来源该自然日的官方历史清单/原文日期，不把当前有限feed、目录跳跃/空页/搜索无结果当无事件。Seed已用实际US locale页面越过目标日并停止token20，不再继承原locale空页的普通待办，仍不声称全部论文/修订覆盖。
+
+GFM补充自然日不再请求公开clock：标准采用限定上节公开说明；更强的可复现编码/泛化保证须具体原证，并非本轮已采用结论。旧65项不重算日期。CoPT/FreeTTA已经确证窗前同核心，不再保留新日期P；旧有效正文/反侧仍存档。
+
+**原轮请求（历史保留，旧65项不重算日期；新潜力只请求公开日期，不追时分秒）：**
 
 可执行未完工作：无。独立DAY已通过；本作者不再扩扫主题、公告镜像或65篇全文。以下均为已隔离的外部终态保留项，不用于正面证据、候选、Books、性能/安全保证或无遗漏断言；缺少外部材料本身不再无限阻塞本日安全终态。各项身份、必要材料和定点重开条件如下。
 
@@ -88,6 +141,8 @@ Books重开条件统一为：身份/当窗事件与exact版本可核验，核心
 
 ## 6. 复核
 
+### 原轮有效复核（不代替本轮增量DAY）
+
 复核者：`/root`（独立于作者`/root/jul11_author`）。
 
 结论：通过
@@ -101,3 +156,15 @@ FIRST分批校准已由root独立读取原始题摘：KVFlow、Synergy、Krul、
 65保留/争议中12项做过上述独立题摘校准，53项没有逐项独立复核；158关闭中14项为独立题摘样本，144项未逐一独立核验，不能把26样本或格式校验称为65/223全量验证。当前实际拟采用候选为空；所有未定日期线索和SAGE中心争议均隔离，不进入正面采用/Books。root指出的DeepSeek官方updates、Anthropic SSR历史payload两处可执行来源提取遗漏已由作者独立筛本窗并保留原片段；没有读取其他日报判断。root允许修复后结束本日，不自动接别日。
 
 作者机器检查：`python3 scripts/validate_research.py --report papers/2025/07/11/README.md`通过（1份V3）；`git diff --check`通过；日报本地相对链接全部存在。筛选表实际223行，65保留/争议、158关闭。当前metadata撤回/纠错轻核只命中MagiC的self-correction评测用词，不是withdrawal/erratum，范围见[边界记录](../_sources/daily-20250711/BOUNDARIES.md)。本次写入范围仅本日README及同日_sources；没有stage、commit、push或共享Books/索引/学习状态修改。这些检查不构成DAY语义通过。
+
+### 本轮增量复核
+
+复核者：Ptolemy（非报告作者root，独立于各来源/核心准备作者）。
+
+结论：通过
+
+实际范围见[本轮独核§7～15](../_sources/daily-20250711/SUP_INDEPENDENT_20261011.md#7-root首58精确v1题摘独立准入)：完整132份精确v1题摘、明确范围题名分层关闭、17必要准入局部/关键反侧、MM中的安全关闭反侧、三项会议同核心日期缺口、两项官方窗前上界、14每日来源有界scope/stop与所有实际具名触发，以及本报告六节。没有让第二人无差别阅读全文/全部附件；N13中有效准备者必要段落/版本/反侧复用与本人实际原件片段范围分别说明。题名层22不是完整题摘，原65/223的旧26身份独核不升级成原池全量核验。
+
+复核纠正了08036按医学题名过早排除、四项仅有模块主题关联的准入歧义及GFM审阅例子误作官方schema的表达风险；CoPT/FreeTTA由具名官方日期上界退出首次事件P，三项未证日期的会议稿不从会议名猜排窗。最终source表原轮/本轮入口归属窄修后DAY通过，普通待办0。GFM唯一新增受限标准完成/仅报告，没有Book新写或已有覆盖认领；所有保留项继续禁止用于Coverage/Evidence、性能/安全或无遗漏保证。
+
+机器层与语义层分开：完成态V3、本地引用/六节Markdown、旧窗口及连续原§4前缀冻结、限定diff检查由root在写回后检查；30项窗口/冻结兼容回归实际通过。上述只检查可判定接口，不替代具名非作者DAY。未stage、commit或push，未修改共享Books/索引；LEARNING_STATE仅由root同步已验收路由，不当第二份研究账本。

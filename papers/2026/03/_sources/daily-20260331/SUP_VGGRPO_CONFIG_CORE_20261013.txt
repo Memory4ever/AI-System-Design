@@ -1,0 +1,93 @@
+https://arxiv.org/html/2603.26599v1
+必要Append B.1–B.2配置/限制，不授全部附录或理论证明。
+B.1 More Training Details
+Latent geometry model.
+We train the latent geometry model for 20 epochs using the AdamW optimizer with a learning rate of 2\times 10^{-4} and no weight decay.
+Gradient clipping is applied with a maximum norm of 1.0.
+The learning rate is scheduled with cosine decay and a linear warmup over the first 100 optimization steps.
+The stitching connector is implemented as a 3D convolutional layer with kernel size 5\times 5\times 5, stride 1\times 2\times 2, and padding 2\times 2\times 2.
+For LoRA adaptation (Hu et al., 2022), we set the rank to r=64 and the scaling factor to \alpha=32.
+VGGRPO.
+For VGGRPO training, we optimize the model with AdamW using a learning rate of 1\times 10^{-4} and weight decay of 1\times 10^{-4}.
+The overall training requires approximately 1536 GPU hours.
+Unless otherwise stated, LoRA (Hu et al., 2022) is applied with rank r=32 and scaling factor \alpha=64, and gradient clipping is performed with a maximum norm of 1.0.
+For policy optimization, the clipping range \varepsilon for the policy ratio \rho_{t}^{k}(\theta) is set to 1\times 10^{-3}, while the KL regularization weight \beta is fixed at 0.004.
+B.2 More Details of Test-Time Reward Guidance
+Our latent geometry model is fully differentiable, which enables test-time reward guidance directly in latent space.
+Unlike RGB-space guidance, our approach does not require decoding intermediate latents into video frames.
+Instead, at selected denoising steps, we back-propagate the gradient of the geometry reward through the latent geometry model and use it to adjust the diffusion update.
+Given a noisy latent \mathbf{z}_{t} at timestep t, the video diffusion model predicts a velocity field v_{\theta}(\mathbf{z}_{t},t,p) under text condition p.
+We then feed \mathbf{z}_{t} into the latent geometry model \hat{\mathrm{\Phi}}_{\psi} to obtain the geometric quantities required for reward computation.
+Based on these predictions, we define the latent-space reward as
+r(\mathbf{z}_{t})=\lambda_{\text{motion}}\,r_{\mathrm{motion}}(\mathbf{z}_{t})+\lambda_{\text{geo}}\,r_{\mathrm{geo}}(\mathbf{z}_{t}),
+(30)
+where \lambda_{\text{motion}} and \lambda_{\text{geo}} denote the weights of the camera motion smoothness reward and the geometry reprojection consistency reward, respectively.
+Following Liu et al. (2025b), we compute the gradient of this reward with respect to the current latent and use it to modify the sampling trajectory:
+\tilde{v}_{\theta}(\mathbf{z}_{t},t,p)=v_{\theta}(\mathbf{z}_{t},t,p)-s_{\text{reward}}\frac{t}{1-t}\nabla_{\mathbf{z}_{t}}r(\mathbf{z}_{t}),
+(31)
+where s_{\text{reward}} controls the strength of reward guidance.
+The gradient is obtained by back-propagating through the reward computation and the latent geometry model, entirely in latent space and without RGB decoding.
+In practice, we combine this reward guidance with classifier-free guidance in the standard way.
+To limit the additional inference cost, we do not apply reward guidance at every denoising step.
+Unless otherwise specified, we use 50 denoising steps in total and apply reward guidance once every 20 steps.
+This sparse guidance already yields consistent improvements in geometric consistency, as shown in Table 2(c), while keeping the runtime overhead modest.
+Pseudo-code is provided in , illustrating a simple training-free way to improve world consistency at inference time.
+⬇
+def latent_reward_guidance(
+model,
+latent_geometry_model,
+latents,
+prompt_embeds,
+timesteps,
+reward_guidance_scale,
+reward_weights,
+cfg_scale=1.0,
+guidance_interval=20,
+):
+"""
+model: video diffusion backbone predicting velocity
+latent_geometry_model: differentiable latent geometry model
+latents: initial noisy video latents
+prompt_embeds: text condition
+timesteps: sampling timesteps
+reward_guidance_scale: strength of reward guidance
+reward_weights: weights for different rewards
+cfg_scale: classifier-free guidance scale
+guidance_interval: apply reward guidance once every k steps
+"""
+dts = timesteps[:-1] - timesteps[1:]
+for i, t in enumerate(timesteps[:-1]):
+# Standard conditional prediction
+v_pred = model(latents, prompt_embeds, t)
+# Classifier-free guidance
+if cfg_scale != 1.0:
+v_uncond = model(latents, None, t)
+v_pred = v_uncond + cfg_scale * (v_pred - v_uncond)
+# Sparse reward guidance
+use_guidance = ((i + 1) % guidance_interval == 0)
+if use_guidance and t < 1:
+latents = latents.detach().requires_grad_(True)
+# Decode geometry directly from latent space
+geom_outputs = latent_geometry_model(latents)
+# Compute geometry-aware reward
+reward_smooth = camera_motion_smoothness_reward(geom_outputs)
+reward_geo = geometry_reprojection_reward(geom_outputs)
+reward = (
+reward_weights["smooth"] * reward_smooth +
+reward_weights["geo"] * reward_geo
+)
+# Gradient of reward w.r.t. current noisy latents
+grad = torch.autograd.grad(reward, latents)[0]
+# Modify velocity field
+v_pred = v_pred - reward_guidance_scale * t / (1 - t) * grad
+# Solver update
+latents = latents - dts[i] * v_pred
+return latents
+Algorithm 1: PyTorch-style pseudo-code for latent-space test-time reward guidance using our latent geometry model.
+Figure 5:
+Analysis of the Latent Geometry Model.
+We compare the latent geometry model with the original RGB-based geometry model on 50 RealEstate10K test sequences under controlled perturbations applied in the video latent space.
+The top row reports camera pose estimation performance as the perturbation scale \alpha increases, measured by relative rotation accuracy (left, Racc@5), area under the accuracy curve (middle, AUC@5), and relative translation accuracy (right, Tacc@5).
+Our latent geometry model maintains stable performance across all noise levels, whereas the RGB-based geometry model degrades substantially as the perturbation grows.
+The bottom row shows a decoded RGB frame from the perturbed latents at different values of \alpha.
+Even when perturbations produce only barely perceptible visual changes in RGB space, the RGB-based geometry model already degrades, reflecting the distribution gap when applied to generated content rather than real images. Our latent geometry model, trained directly on generated latents, avoids this gap and remains robust.

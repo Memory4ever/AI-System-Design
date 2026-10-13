@@ -118,6 +118,10 @@ Scalar reward 也没有规定如何从 token 表示读出。一个替代分支�
 
 等级监督还可以来自真实对话的后续反馈，而非预先要求用户给一对答案排序。[一条有界路径](https://arxiv.org/html/2602.08829v1#S2)先区分显式拒绝、错误纠正、积极参与和明确满意，保留无明确信号的 Unknown；再为各等级阈值学习“是否高于该级”的概率，以固定编码的期望等级读出 reward。这把反馈来源与 reward 目标分开，却不能把相关追问自动当正确性、没有反馈当负面，或把对正当拒绝的不满当应被优化掉的行为。相邻 turn 回填与拒绝核验均是版本化观测规则，须保标签出处、筛选人口和独立安全/任务效标；有序类别也不识别真实数值间隔或跨 query 效用。采集、分类、人工校准与在线候选生成都付费，有限 online DPO 收益不证明所有 RL 或等预算优越；反馈稀疏、筛选漂移或阈值未校准时，保留明确 Unknown、可信人工偏好与独立行为检查，不让用户参与度接管安全授权。<!-- source-family:SF-2026-ARXIV-2602-08829 -->
 
+把点击、复制或赞踩用作 reward 时，还要拆开两个观测通道：用户是否留下反馈，以及留下的标签是否表达真实偏好。只给有反馈样本重加权，仍可能学到错误标签；只校正标签，仍会把偏向强烈意见的人口当作全部请求。一条有条件的分支先用二元标签噪声矩阵修正每样本损失，再按反馈被观察的 propensity 校正总体贡献；附加误差补全模型的 DR 分支，可以在规定条件下放松 propensity 与补全两者都准确的要求，但不豁免标签噪声率和可识别前提。训练方需要完整观测人口、支持域与可校准噪声，不能仅凭日志里存在一个点击就自动恢复真实偏好。<!-- source-family:SF-2026-ARXIV-2603-18736 -->
+
+这种联合校正增加 propensity、proxy/anchor 与误差模型的训练费用；极小观察率和接近不可逆的噪声矩阵会放大权重或损失，anchor 假设不成立、用户差异无法被观测条件解释时也不能靠“因果”名称消除偏差。[CausalRM 的受限对照](https://arxiv.org/html/2603.18736v1)由已有偏好 proxy 合成选择和翻转噪声，不是实际用户日志的无偏认证；DR 也不在全部误差指标上最好。应分开检验 reward 拟合、下游行为、监督人口和完整构建成本，不由有限安全 judge 分数推出真实安全或 helpfulness 保持。支持、噪声或补全无法验收时，保留 Unknown、受控人工偏好与独立行为评价，而不是把无反馈当负面或用历史参与度批准发布。
+
 偏好方向还可能经过隐私通道再进入训练。对二元标签做 randomized response，以概率 `s = exp(ε)/(1+exp(ε))` 保留原标签、否则翻转，训练可见的是被扰动后的比较；若干净 Bradley-Terry 胜率为 `P`，观测标签的 likelihood 就是 `sP+(1-s)(1-P)`，不能把它直接当作干净偏好。相应回归构造用 `c=1/(2s-1)` 缩放标签来恢复条件均值；隐私越强、`s` 越接近一半，缩放越大，观测噪声和所需样本也随之增加。这里保护的是比较标签，不是原 prompt、response 或标注者的全部信息。
 
 腐败数据与隐私随机化的次序因此也属于观测合同：先污染再随机化，与先随机化再污染，不是可交换的两条路径。在有限且可实现的 reward class、bounded reward 和论文规定的污染模型下，缩放后条件均值的偏差分别受 `O(α)` 与 `O(cα)` 控制，对应平方误差中的 `α²` 与 `c²α²` 项；算法不必知道次序，并不表示两者风险相同。离线结论还依赖同分布比较与 concentrability，在线分支另需探索覆盖及 oblivious 污染，不能授予任意自适应攻击者或神经优化找到全局解的保证。通道、污染或支持条件不明时，应保留可信人工比较与保守目标，先核观测人口和成本，而不是用“private alignment”替原始数据签发安全证明。<!-- source-family:SF-2026-ARXIV-2512-23816 -->
@@ -272,7 +276,13 @@ schedule 与噪声敏感；channel 校准不足时回退分项 reward、保守�
 
 分工能减少一种 string metric 对异质对象的误判，却不提供全格式正确性保证：公式 BLEU 不等于数学或表达式语义正确，table TEDS 不等于全部格式有效，平均分也不证明每路都满足。作者在同一 Qwen3-VL-4B 文档解析设置中的分项消融支持局部 reward 分工，text 指标并非随整体分数单调改善；难度过滤的不同样本比例也不是等预算比较。格式拆分增加 parser、参考对象维护与分项校准成本；输出同质、类型抽取不稳或语义要求未被代理指标覆盖时，应回退已校准的单项匹配、分项报告与独立 semantic/validity gate，不能让聚合 reward 替代验收。<!-- source-family:SF-2026-ARXIV-2601-08834 -->
 
+若目标是重建图表、表格或向量图，文字结构匹配还会漏掉消费者真正看到的间距、数值和形状。另一条奖励分支先将候选代码或 markup 渲染，再让视觉 judge 比较参考图与输出图，生成位置、类型和严重度反馈；这些反馈可用于训练，也可指导有限轮修订。可渲染性与内容相符必须分开，视觉总分既不是代码语义真值，也不能批准原生对象可编辑。[受限渲染奖励对照](https://arxiv.org/html/2603.13224v1)还显示不同任务/基础policy的代理排序会反转，不能由一个均值选择所有任务的reward。<!-- source-family:SF-2026-ARXIV-2603-13224 -->
+
+Renderer、参考图、错误分类、标注与judge版本应随奖励保留，原生结构及独立任务结果另验；教师合成错误与实际policy错误须覆盖不同人口，教师一致也不等视觉真值。制备、渲染、judge生成、额外修订与训练均计费，更多反思可能退步，组内或任务级归一也会改变奖励尺度。观察资格、参考对象或净收益不成立时，保留已校准的结构/相似度指标、固定预算和独立人工检查，而不是以“可解释反馈”宣称消除hacking或充分保证质量。<!-- source-family:SF-2026-ARXIV-2603-13224 -->
+
 固定聚合假定同题候选使用同一套奖励尺子；若希望按回答的实际特征分配多目标压力，一条受限分支在处理完整prompt与response后，从末层hidden state读取线性controller，为组内每条已完成回答独立采样reward-emphasis action并形成scalarized reward，再用组advantage将另一个head的训练信号缓存为(h,a,A)，周期更新controller。它改变的是完成轨迹的奖励测量，不是生成前的prompt-only控制，也不同于下面直接组合policy gradients；controller、channel归一化、buffer与更新周期须随policy保存，这是为重放该接口所需的工程约束而非原文完整协议。[MAESTRO的有限结构证据](https://arxiv.org/html/2601.07208v1#S3)未闭合完整action到权重向量映射，不能补成执行recipe、充分统计量或Pareto/防梯度消失保证。逐response改变权重还会削弱raw score可比性，不能靠adaptive聚合修复有偏proxy；完整序列表示、head/buffer、reward judge和两角色更新均付费，部分所测任务反而增加overhead，早/末状态对照也非处处严格改善。奖励身份、独立质量回归或净成本不成立时，保留固定权重、分项验收与原组内训练，不让controller兼任truth或hard gate。<!-- source-family:SF-2026-ARXIV-2601-07208 -->
+
+固定 reward 权重不表达某一路评分偏离目标后该加多大训练压力，还可以把测量与反馈分开。一条[受限指令层级分支](https://arxiv.org/html/2603.16152v1)对同一回答分别评价 system 合规与 user 效用，在不同评分上下文中保留两路 reward，再按原始 system 均分或其 EMA 相对目标的差额调节非负乘子，组合各自组内标准化的 advantage 更新 policy。目标是改变训练压力，不是在部署时判定来源权限；人口期望超过阈值不要求每条回答满足，单组标准化的尺度也不同于原始约束。受测 conflict 切片仍有 system 均分低于目标，跨 judge 排序近似一致不等绝对分数或真值一致，更多 system attention 也不是因果证明。分项 judge、全部 rollout、参考 policy、EMA/过滤和质量校准均有成本，保留能力与过度拒绝仍须另验。不能由近似 clipped 训练、平滑反馈或零 duality gap 表述推出神经 policy 每步可行、完整优先级已强制或普遍 Pareto 最优；零方差、尺度漂移、规则不可兼容或独立行为回归时，保留可信分项评分、固定聚合/可靠示范及原 policy，实际工具与高风险 effect 仍交独立确定性权限 gate。<!-- source-family:SF-2026-ARXIV-2603-16152 -->
 
 ### 从 Reward 混合演进到 Gradient-space Harmonization
 
@@ -320,6 +330,10 @@ collusion、auditor 误判与固定默认策略依赖；无法独立验证纠错
 但增加一个 auditor 并不是唯一分支：多目标主答复奖励还可能鼓励模型隐藏自己已经知道的违规。另一种受限设计保留主任务的原有奖励，在回答后要求同一 policy 单独报告目标、遵从情况与不确定性，并只按这份报告的诚实度给它奖励；承认主回答有问题不能增减主回答的奖励。这样把“任务做得怎样”与“是否如实披露”拆成两个 reward channel，用额外生成和 judge 成本换取诊断信号。它与独立 auditor 是可组合的不同分工，不是已经消除错误的替代方案。<!-- source-family:SF-2025-OPENAI-CONFESSIONS -->
 
 这种分离首先是输出信用与奖励的分离，不是同一 policy 的共享参数被隔离；如果再把自报直接用于惩罚主回答，还可能重新引入隐瞒激励。模型不知道自己错了、指令含糊、judge 被利用或更强优化压力都可能使自报失效。[原始 proof-of-concept](https://openai.com/index/how-confessions-can-keep-language-models-honest/)只支持在所测压力任务中增加行为可见性，不支持“不再违规”或普遍可靠性。任务成功、安全与模型晋级仍要由独立证据判定；自报不足时回退外部 verifier 或人工审阅，而不是用诚实报告替代验收。这也说明接下来设计 policy objective 时，必须同时写清奖励属于哪个输出、更新如何影响共享参数，以及未被奖励证明的行为边界。
+
+奖励属于哪个输出，还会影响模型是否保留多个有效答案。只奖一条回答，在问题有唯一可交付结果时合理；若同一问题需要多个假设，可以让一次自回归回答输出去重后的候选集合，以独立答案标签或可执行测试奖励正确数量，再用每项自报置信与其正确性之间的平方误差约束校准。这不是在推理末端反复抽样，也不应把回答内的多个候选当作 GRPO 的多条 rollout。互斥答案的置信总和可小于一以保留未覆盖部分；多个答案能够同时正确时，各边际置信不构成互斥分布，更不能自动组成正确的联合概率。
+
+[多答案训练的有限对照](https://arxiv.org/html/2603.24844v1)支持在部分任务中增加集合覆盖并减少重复生成，却也出现 top-1 准确率或校准退步；集合构造与去重人口变化后，pooled/set 指标不能直接跨协议比较。共同思考仍是串行生成，完整候选、格式解析、验证、校准和训练均付费；错误的候选身份或缺漏标签还可能奖励表面多样性。应分别验收单答案质量、集合覆盖、边际/集合校准与端到端预算；任务不需多个答案、校准失效或成本不合算时，保留原单答案目标与独立采样/外置校验，不用更丰富的自报分布替代事实、联合正确率或安全验收。<!-- source-family:SF-2026-ARXIV-2603-24844 -->
 
 如果只最大化 learned reward：
 
@@ -492,6 +506,10 @@ DR 校正依赖 positivity，以及 propensity 或 outcome model 至少一侧正
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-24517:end -->
 <!-- source-family:SF-2026-ARXIV-2605-24517 -->
 
+长程后训练还可先改变policy消费的状态，而不先换reward或advantage算法。完整history保留可审计的证据，在状态不可充分概括时合理；若任务有可核的紧凑Markov表示，可让环境或独立transition模型将当前state与action更新为下一state，再由policy只消费这个表示。训练期真实transition与部署期估计transition是两份不同接口，预测state不能自称真实执行结果；压短输入把状态重建工作移交给另一consumer，并不消除它的训练、校准与每步推理费用。<!-- source-family:SF-2026-ARXIV-2603-19987 -->
+
+[有限grid-puzzle对照](https://arxiv.org/html/2603.19987v1)在动作only、SFTwarmup/GRPO与外部state predictor下支持这条输入选择；含currentstate的全history基线进一步区分可见信息与冗余历史，不证明所有后训练都受同一capability ceiling限制。原理论另需确定性、充分state、occupancy支持与统一transition误差；部署错误会随horizon累积，不能由紧凑文本授Markov sufficiency或通用复杂度降低。应共同保存环境/state schema、oracle/估计器版本、动作格式、采样和完整预算，分别验训练与部署任务质量；状态不充分、预测漂移或净费用不成立时保留原history、更可靠环境反馈与独立verifier，不让省context取代真实outcome。<!-- source-family:SF-2026-ARXIV-2603-19987 -->
+
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-21654:start -->
 Critic-free actor update 也不等于完全没有 value-like temporal signal。对连续可微、additive-noise rollout，actor
 backward 的 hidden-state sensitivity 可解释为 empirical costate，其条件期望在论文假设下对应 value gradient；
@@ -550,6 +568,10 @@ preference data + input/output feature dictionaries
 噪声、feature co-activation 污染和 bypass surface。Feature label 不是因果语义，judge preference 也可能只
 奖励 style。没有稳定 feature basis、需要持久 alignment 或 runtime overhead 敏感时，权重更新仍合理；这类
 intervention 只能是 policy 下的 actuator，不能替代 safety training、access control 或独立 Evaluation。
+
+同一种稀疏干预用于Reward Model时，目标不是让policy说出某类内容，而是减小评分器对受控表面变化的响应。一条分支对词义尽量相同、仅格式不同的成对回答，比较非special-token平均SAE特征的变化，以跨样本变化强度和稳定性提出少量候选坐标；部署再将这些坐标归零后重建hidden state。配对改写和feature标签都不是真值，完整重建还会引入SAE自身的误差，而不只是减去所选方向。因此要先在具体Reward Model上分别检查重建误差、原reward变化和稀疏度，再验证格式敏感性及内容评价；从base model取得的dictionary不能自动获得新评分器的功能兼容资格。<!-- source-family:SF-2026-ARXIV-2603-12795 -->
+
+共享dictionary和坐标也不等于共享干预权限：[SteerRM的有限跨模型对照](https://arxiv.org/html/2603.12795v1)中，同一feature集合可以改善格式混杂的Hard排名，却同时损伤Normal及平均分，部分本地设置亦退步。不能用Hard收益证明一般语义、安全或下游RL偏好已保持，更不能把一次dense方向失败写成稀疏分解必然更好。Probe合成与审核、SAE预训练/编码/重建、选层选坐标和每个目标评分器的独立内容回归都计费；漂移、误删结构信号或总费用不合算时，保留原评分器、可核偏好对、后验校准与重训分支，不让“权重不更新”替代行为验收。<!-- source-family:SF-2026-ARXIV-2603-12795 -->
 
 运行时activation干预还要先检查偏好方向与其他特征的几何关系。若一个宏方向同时承载activation norm或无关概念，沿它加减可能混合目标与副作用；可分离时，宏方向反而能比稀疏微方向更完整地改变目标。条件分支因此先比较宏方向与SAE微特征的可分离性，再在同一问卷/输出合同下分别验收行为变化和原能力，不把“稀疏”当作一律更安全。probe的可读出性不等干预因果，干预改变回答也不等真实道德属性得到认证。<!-- source-family:SF-2026-ARXIV-2601-05437 -->
 
@@ -817,6 +839,10 @@ RLVR  rule-based / verifiable outcome reward
 若目标是提高推理文本的可审计性，而不是只奖励最终答对，可以让独立simulator根据原输入、回答与CoT预测同一policy在counterfactual输入下的答案，再与不看CoT的outcome-only simulator比较。两者差额定义推理文本对行为预测的增量，区分解释有用、无增量与误导；据此重写/筛选轨迹并用reward-weighted正例学习与negative unlikelihood更新policy。Counterfactual、policy、rewriter、simulator及采样预算共同定义监督身份，该奖励不是真实内部计算或答案正确性的标签。<!-- source-family:SF-2026-ARXIV-2602-20710 -->
 
 [有限二元任务对照](https://arxiv.org/html/2602.20710v1#S5)显示cue条件下的simulatability改善，却在部分generic任务主要改善outcome一致性而非CoT增量；人工cue/拒绝样本人口与反向cue限制外推，作者未观察到cue-based与model-generated两类counterfactual之间的transfer，分别训练不授统一introspection。额外重写、simulation与训练均计费，任务准确率仍须独立验收；simulator共同偏差、增量不成立或质量下降时，回退原outcome verifier、人工/独立过程审计，不把可模拟性替正确性或causal faithfulness。
+
+同时优化输出与推理文本，还要先问两种奖励是否允许透明表达同一种计算。令 `R_out` 评价最终输出、`R_cot` 评价显式推理链：若获得较高输出奖励所需的相关计算，在如实写进 trace 后反被第二种奖励惩罚，两者存在冲突；若文本奖励不区分这项计算，则可正交；若它鼓励相同表达，才是相容分支。这是一份依赖具体 task、reward pair 与 monitor 的关系，不是所有 CoT 监督都促使隐藏，也不是从 reward 代码即可自动判定的标签。语言预训练偏向透明表达只是该解释的假设，不能当作实际内部计算已被完整观察。<!-- source-family:SF-2026-ARXIV-2603-30036 -->
+
+[必要的训练对照](https://arxiv.org/html/2603.30036v1)将 monitorability 限为指定 LLM 能否从 CoT 分类指定任务特征：换 monitor 或特征，关系也可能变化。冲突设置有无法同时提高两reward的结果，正交设置仍可发生语义漂移，部分长度惩罚的低监控率只是空 trace；相容设置初始监控已完美，未实测主动提高监控率。CAPO、GRPO 与 in-context 优化的范围不同，reward sweep又选择联合reward最好的policy，不能据此给任意optimizer/长度惩罚的安全或危险保证。双reward评估、monitor调用、搜索预算与独立质量审计都要计费；文本可读但检测失败、奖励人口改变或结果冲突时，应保留单独的 outcome 验证与独立 trace/行为审计，不由奖励提高签发真实内部透明性。
 
 当 feedback 可以自动验证后，下一层瓶颈会从“怎样打分”转向“怎样持续生成既有学习价值、
 又可可靠验证的任务”。只从固定 environment 取样，verification 较强，但 task
@@ -1457,3 +1483,17 @@ Primary-source 校验入口：
 - `SF-2026-ARXIV-2603-08145` — Daily `2026-03-11`补查；[DARC exact-v1](https://arxiv.org/html/2603.08145v1) §2–5必要核心、A5/A12/Algorithm1、H1–4/H6/H13–14/I的具名必要段；2+1+2=5，τ目标冲突/真实风险边界与已确认owner差额定点深入。review_mar11_continue实际必要Source及Ch31 206–269/1093–1108 owner/PRE，root实际接纳逐字一段并在09160实际POST释放后授本段与本人注窄锁。作者已实际完整245–277邻接及Ch30/32交接，采用给定pool经验entropic值/RP和独立人口验收，不补统一τ/硬riskcap；全文与直接反侧范围见本日笔记。已写入，review_mar11_continue非writer实际245–284/new257/本人1443及β>0窄补253–261/1440–1445最终POST通过，root窄锁释放，不授DAY、artifact核验或复现。
 
 - `SF-2026-ARXIV-2603-08486` — Daily `2026-03-11`补查；[VSFA exact-v1](https://arxiv.org/html/2603.08486v1) §3–5/Table1–2及B/C必要反侧（SUP_CORE_08486.txt108–165/167–487/1050–1133），2+2+2=6。label-free仅省显式安全标签，不授视觉曝光唯一因果/原能力保持/真实persona或完整训练中介；局部ASR、合法请求和能力分测、SAE选择边界与全部费用/旧checkpoint/runtime gate近文。review_mar11_continue必要Source及actual Ch31 owner/逐字PRE经root接纳，授本段与自身注窄锁；作者actual151–178完整邻接与既有Ch30/32入口已读并写入，review_mar11_continue非writer actual新增段/完整局部邻接与本人注POST通过，root接纳并释放锁，不授DAY。未核pixels、artifact或复现。
+
+- `SF-2026-ARXIV-2603-12795` — Daily `2026-03-17`补03/16；[SteerRM exact-v1](https://arxiv.org/html/2603.12795v1) §3.1–3.4/Eq2–8、4.1–4.4/Tables1–4及A–E必要反侧，2+1+2=5。只采用格式配对候选、base SAE到具体RM功能校准及跨RM资格分验；完整hidden replacement包含重建误差，Hard改善不授Normal、内容或安全保持，跨架构自有dictionary不当同feature迁移。完整费用/原评分器回退近正文；未核artifact或复现。
+
+- `SF-2026-ARXIV-2603-13224` — [exact-v1](https://arxiv.org/html/2603.13224v1)§3–4/A/B3–6；只采用renderer后观察/两路reward及反馈接口，保SVG对照、反思退步、共享数据/归一与全成本边界。不授必要充分、代码语义、所有任务优胜、复现或生产保证。
+
+- `SF-2026-ARXIV-2603-16152` — [HIPO exact-v1](https://arxiv.org/html/2603.16152v1) §3–6/Eqs1–5/Tables1–3、§8–9，A/Alg1、C评分接口说明、E/Tables4–5/Eq6及G/EMA/CI说明、H/Table6。仅分项测量与均值反馈调节训练压力的接口；期望非逐样本、归一尺度/EMA/cap/过滤区别、低于τ反侧、judge非真值与全费近文，不采零gap/每步可行/通用算法recipe，未核judge完整图像rubric、全部图点值、代码或复现。
+
+- `SF-2026-ARXIV-2603-18736` — [CausalRM exact-v1](https://arxiv.org/html/2603.18736v1) §2.2–4.7/Eqs4–17/Alg1/Tables1–5与必要A/B；只采用噪声/观察选择两通道校正及条件/费用分责。合成median proxy、anchor/positivity与正确噪声率前提、DR方差符号/误差条件、Alg1 θ/ζ身份差异和独立下游评价保留；不授真实用户因果无偏、总是降方差或普遍安全，未核实现/复现。
+
+- `SF-2026-ARXIV-2603-19987` — Daily `2026-03-24`补查；[exact-v1](https://arxiv.org/html/2603.19987v1) §3–4/Alg2/Tables1–3、§5Assumptions1–3/Props1–2；2+2+2=6，history/state input与训练真transition→部署估计transition身份/费用的具体差额深入。只采用action-only grid任务下的输入分责；保全可见state/history对照、SFTwarmup/GRPO、外部3B predictor、Avg/Pass128、deterministic/充分state/occupancy与uniformtransition误差条件。不得授headline capability-ceiling因果、普遍指数samplecomplexity或无额外费用；originalhistory与真实outcome回退近正文。root必要Source/actual owner两PRE通过并授窄锁；作者真实两段/本人注与完整局部已顺读，非writer POST待核。未核代码、完整数据实现或复现，不授DAY。
+
+- `SF-2026-ARXIV-2603-24844` — [exact-v1](https://arxiv.org/html/2603.24844v1) §2–4/T1–2、§6、B/E必要范围；仅单response集合reward/去重与置信读出身份，保top1反退、setmetric人口、coverage口径/K增减和串行/训练全费边界，不授conformal/joint概率/clinical/SLO保证。未核artifact/复现。
+
+- `SF-2026-ARXIV-2603-30036` — Daily `2026-04-02`补`04-01`；[exact-v1](https://arxiv.org/html/2603.30036v1) §3–4 reward-pair概念、§6–7必要实测/直接反側，`2+2+3=7`。只采task/monitor条件下output/CoT奖励相容关系；transparentbias为假设，监控是文本分类非内部真值。sweep选最好、正交semanticdrift、长度空trace、aligned初始完美未主动提升等反側保留，不授一般lengthpenalty安全/危险、任意optimizer或部署透明保证。未核代码或复现。

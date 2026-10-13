@@ -71,6 +71,10 @@ inference.request
 
 当业务代码不能改动、阶段标签又未显式暴露时，可把采集对象从 wrapper 扩展到正在运行的解释器 frame 生命周期：一条[受限实现报告](https://arxiv.org/html/2601.09258v1)在可附着的 CPython 进程上读取函数与调用上下文，再发出 semantic range 关联 GPU API/kernel；分布式通信还需保存 logical communicator/rank 到 node/device 的映射，不能仅靠一张 call graph 推定慢通信在哪两张卡之间。这增加运行时 hook、参考计数与内容暴露、拓扑映射维护的压力，工程支持域必须绑定解释器、framework/backend 和权限；未覆盖的 native/non-Python 路径应保留 unknown 或退回显式 range。时钟与关联边仍按下节独立校验，纳秒字段不是精度保证，trace/residual 只提供定位线索，不认证因果瓶颈或请求 SLO。<!-- source-family:SF-2026-ARXIV-2601-09258 -->
 
+当运行环境和显式metadata都未随文本保存时，采集路径还可前移到合作模型的生成过程：每个agent以自己的key和token上下文派生置换/扰动，轻量改变logits后采样；离线auditor持有agent-key-tokenizer验证registry，再对最终token序列作窗口评分和变点检测，估计片段来源。这不是任意文本的无条件身份识别，更不是不可伪造签名；key、tokenizer与生成分支未绑定时应保留Unknown，不能由风格相似度补造执行事实。它恢复的是线性文本片段及其相邻转移，隐藏通信、并发happens-before、工具副作用和原wall-clock仍须显式trace承担。<!-- source-family:SF-2026-ARXIV-2603-17445 -->
+
+[合作式文本归因的受限证据](https://arxiv.org/html/2603.17445v5)仍有身份/边界误差，重写或替换生成会侵蚀信号；恢复speaker不等识别失败的因果责任，保留turn骨架的边界扰动也不认证完全metadata丢失。原v1检测式与只观察文本的接口未闭合，当前稿收窄到registry下的token统计与诱导转移图，不能倒写为完整执行拓扑复原。生成质量、片段归因、转移结构与下游失败诊断须各验收，生成扰动、key管理、全候选评分和复跑均计费；抗伪造、任意语义改写和生产SLO未获证明。高风险执行、无法合作instrument或身份不稳定时，保留原显式span/日志与人工审计，不让文本归因替代权限或发布gate。<!-- source-family:SF-2026-ARXIV-2603-17445 -->
+
 字段可见后，资源轨迹的形状仍不能代替容量和失败验收。把内存曲线减去baseline、取累计最大值、再按峰值归一化，便于比较相对分配阶段，却会隐藏释放与绝对bytes；用DTW对齐还能比较阶段形状，却不保留原wall-clock间隔。因此normalized profile必须与raw bytes、实际peak、runtime和测量scope并列保存，OOM、timeout、instrumentation error也要留在原运行人口，不能从成功运行的形状相近推断容量风险降低。仅覆盖Python对象或按filename归属的instrument不能默认为native/device全部内存；少量重复的平均形状也不能认证tail安全。采集、重复执行及对齐增加开销，scope或clock不可恢复时应退回带unknown的原测量证据，再由资源与Cost owner判断容量和代价，而非由单位峰值曲线宣称优化成功。<!-- source-family:SF-2026-ARXIV-2601-01215 -->
 
 ## Context Propagation 与异步边界
@@ -425,3 +429,5 @@ Taxonomy 会压平边界行为，自动分类器也可能错标；现有大规�
 - `SF-2026-ARXIV-2601-09258` — Daily `2026-01-16`；[exact-v1](https://arxiv.org/html/2601.09258v1) §4.1.1–4.1.3、§4.2/5–6/8。6分具体采集接口gap深入，采用 CPython frame→semantic GPU range/API 及 logical rank→physical device 关联；支持域/隐私维护与 unknown fallback 是工程推导，不冒称全解释器、framework、权限或 native 路径实测。scheduler 未进 predictor，normal-baseline warmup/阈值及 suspicion 非 cause；不采用零开销、request SLO 或生产诊断保证。root 已实际必要源/目标 owner 写前核通过，实际新增一段、前后衔接及末注非作者 POST通过；未运行 artifact 或复现实验。
 
 - `SF-2026-ARXIV-2602-22103` — Daily `2026-02-27`；[PASTA exact-v1](https://arxiv.org/html/2602.22103v1) §3/§5.3/§7，blocks34–35/102–104/127。2+2+2=6，device-summary collector位置差额深入；仅kernel访问对象聚合，非完整时序/live峰值/causaltruth；CPU单线程与SASS解析混杂、capture scope/扰动/全profile费用及rawtrace回退近文。root必要源/actual owner PRE通过并授单段窄锁；作者正文/完整邻接/自身末注已实际顺读，root非作者已实际独读正文/完整邻接/自身末注，POST通过，窄锁释放；未核实现或复现，非日级Gate。
+
+- `SF-2026-ARXIV-2603-17445` — [IET v1](https://arxiv.org/html/2603.17445v1)必要方法/评价/直接限制；[current v5](https://arxiv.org/html/2603.17445v5)仅受影响registry/观察token/segment与诱导转移、关键评价和非对抗反侧。采用合作式文本来源恢复接口，不采完整execution/通信拓扑、因果责任、抗伪造、无损或生产SLO；保人口/quality回归与全费，未核代码/复现。

@@ -1,0 +1,434 @@
+Attention Residuals (https://arxiv.org/pdf/2603.15031v1)
+citeturn32954view0 [wordlim: 200] Crawled: today; Content type: application/pdf; Number of pages: 21; Source: open({"ref_id":"https://arxiv.org/pdf/2603.15031v1","lineno":70}); Total lines: 1543
+L0@P0: ATTENTION RESIDUALS
+L1@P0: TECHNICAL REPORT OF ATTENTION RESIDUALS
+L2@P0: Kimi Team
+L3@P0:  https://github.com/MoonshotAI/Attention-Residuals
+L4@P0: ABSTRACT
+L5@P0: Residual connections [12] with PreNorm [60] are standard in modern LLMs, yet they accumulate
+L6@P0: all layer outputs with fixed unit weights. This uniform aggregation causes uncontrolled hidden-state
+L7@P0: growth with depth, progressively diluting each layer’s contribution [27]. We propose Attention
+L8@P0: Residuals (AttnRes), which replaces this fixed accumulation with softmax attention over preceding
+L9@P0: layer outputs, allowing each layer to selectively aggregate earlier representations with learned, inputdependent weights. To address the memory and communication overhead of attending over all
+L10@P0: preceding layer outputs for large-scale model training, we introduce Block AttnRes, which partitions
+L11@P0: layers into blocks and attends over block-level representations, reducing the memory footprint while
+L12@P0: preserving most of the gains of full AttnRes. Combined with cache-based pipeline communication
+L13@P0: and a two-phase computation strategy, Block AttnRes becomes a practical drop-in replacement for
+L14@P0: standard residual connections with minimal overhead.
+L15@P0: Scaling law experiments confirm that the improvement is consistent across model sizes, and ablations
+L16@P0: validate the benefit of content-dependent depth-wise selection. We further integrate AttnRes into
+L17@P0: the Kimi Linear architecture [69] (48B total / 3B activated parameters) and pre-train on 1.4T tokens,
+L18@P0: where AttnRes mitigates PreNorm dilution, yielding more uniform output magnitudes and gradient
+L19@P0: distribution across depth, and improves downstream performance across all evaluated tasks.
+L20@P0: Embedding
+L21@P0: .
+L22@P0: .
+L23@P0: .
+L24@P0: Attention
+L25@P0: MoE
+L26@P0: Attention
+L27@P0: MoE
+L28@P0: Output
+L29@P0: (a) Standard Residuals
+L30@P0: Embedding
+L31@P0: .
+L32@P0: .
+L33@P0: .
+L34@P0: α
+L35@P0: Attention
+L36@P0: α
+L37@P0: MoE
+L38@P0: α
+L39@P0: Attention
+L40@P0: α
+L41@P0: MoE
+L42@P0: w
+L43@P0: w
+L44@P0: w
+L45@P0: w
+L46@P0: Output
+L47@P0: w α
+L48@P0: α
+L49@P0: α
+L50@P0: α
+L51@P0: α
+L52@P0: α
+L53@P0: (b) Full Attention Residuals
+L54@P0: Embedding
+L55@P0: ·
+L56@P0: ·
+L57@P0: ·
+L58@P0: Block n-2
+L59@P0: Block n-1
+L60@P0: Attention
+L61@P0: MoE
+L62@P0: Attention
+L63@P0: MoE
+L64@P0: Output
+L65@P0: α
+L66@P0: α
+L67@P0: α
+L68@P0: α
+L69@P0: α
+L70@P0: α
+L71@P0: w
+L72@P0: w
+L73@P0: w
+L74@P0: w
+L75@P0: w
+L76@P0: AttnRes Op (α)
+L77@P0: w
+L78@P0: Q
+L79@P0: K V
+L80@P0: (c) Block Attention Residuals
+L81@P0: Figure 1: Overview of Attention Residuals. (a) Standard Residuals: standard residual connections with uniform additive accumulation.
+L82@P0: (b) Full AttnRes: each layer selectively aggregates all previous layer outputs via learned attention weights. (c) Block AttnRes: layers
+L83@P0: are grouped into blocks, reducing memory from O(Ld) to O(N d).
+L84@P0-1: arXiv:2603.15031v1 [cs.CL] 16 Mar 2026Attention Residuals TECHNICAL REPORT
+L85@P1: 1 Introduction
+L86@P1: Standard residual connections [12] are the de facto building block of modern LLMs [35, 51, 9]. The update hl =
+L87@P1: hl−1 + fl−1(hl−1) is widely understood as a gradient highway that lets gradients bypass transformations via identity
+L88@P1: mappings, enabling stable training at depth. Yet residuals also play a second role that has received less attention.
+L89@P1: Unrolling the recurrence shows that every layer receives the same uniformly-weighted sum of all prior layer outputs;
+L90@P1: residuals define how information aggregates across depth. Unlike sequence mixing and expert routing, which now
+L91@P1: employ learnable input-dependent weighting [53, 20, 9], this depth-wise aggregation remains governed by fixed unit
+L92@P1: weights, with no mechanism to selectively emphasize or suppress individual layer contributions.
+L93@P1: In practice, PreNorm [60] has become the dominant paradigm, yet its unweighted accumulation causes hidden-state
+L94@P1: magnitudes to grow as O(L) with depth, progressively diluting each layer’s relative contribution [27]. Early-layer
+L95@P1: information is buried and cannot be selectively retrieved; empirically, a significant fraction of layers can be pruned with
+L96@P1: minimal loss [11]. Recent efforts such as scaled residual paths [54] and multi-stream recurrences [72] remain bound to
+L97@P1: the additive recurrence, while methods that do introduce cross-layer access [36, 56] are difficult to scale. The situation
+L98@P1: parallels the challenges that recurrent neural networks (RNNs) faced over the sequence dimension before attention
+L99@P1: mechanism provided an alternative.
+L100@P1: We observe a formal duality between depth-wise accumulation and the sequential recurrence in RNNs. Building
+L101@P1: on this duality, we propose Attention Residuals (AttnRes), which replaces the fixed accumulation hl =
+L102@P1: P
+L103@P1: i
+L104@P1: vi
+L105@P1: with hl =
+L106@P1: P
+L107@P1: i αi→l
+L108@P1: · vi, where αi→l are softmax attention weights computed from a single learned pseudo-query
+L109@P1: wl ∈ R
+L110@P1: d per layer. This lightweight mechanism enables selective, content-aware retrieval across depth with only one
+L111@P1: d-dimensional vector per layer. Indeed, standard residual connections and prior recurrence-based variants can all be
+L112@P1: shown to perform depth-wise linear attention; AttnRes generalizes them to depth-wise softmax attention, completing
+L113@P1: for depth the same linear-to-softmax transition that proved transformative over sequences (§6.2, §6.1).
+L114@P1: In standard training, Full AttnRes adds negligible overhead, since the layer outputs it requires are already retained for
+L115@P1: backpropagation. At scale, however, activation recomputation and pipeline parallelism are routinely employed, and these
+L116@P1: activations must now be explicitly preserved and communicated across pipeline stages. We introduce Block AttnRes to
+L117@P1: maintain efficiency in this regime: layers are partitioned into N blocks, each reduced to a single representation via
+L118@P1: standard residuals, with cross-block attention applied only over the N block-level summaries. This brings both memory
+L119@P1: and communication down to O(N d), and together with infrastructure optimizations (§4), Block AttnRes serves as a
+L120@P1: drop-in replacement for standard residual connections with marginal training cost and negligible inference latency
+L121@P1: overhead.
+L122@P1: Scaling law experiments confirm that AttnRes consistently outperforms the baseline across compute budgets, with
+L123@P1: Block AttnRes matching the loss of a baseline trained with 1.25× more compute. We further integrate AttnRes into
+L124@P1: the Kimi Linear architecture [69] (48B total / 3B activated parameters) and pre-train on 1.4T tokens. Analysis of
+L125@P1: the resulting training dynamics reveals that AttnRes mitigates PreNorm dilution, with output magnitudes remaining
+L126@P1: bounded across depth and gradient norms distributing more uniformly across layers. On downstream benchmarks, our
+L127@P1: final model improves over the baseline across all evaluated tasks.
+L128@P1: Contributions
+L129@P1: • Attention Residuals. We propose AttnRes, which replaces fixed residual accumulation with learned softmax
+L130@P1: attention over depth, and its scalable variant Block AttnRes that reduces memory and communication from O(Ld) to
+L131@P1: O(N d). Through a unified structured-matrix analysis, we show that standard residuals and prior recurrence-based
+L132@P1: variants correspond to depth-wise linear attention, while AttnRes performs depth-wise softmax attention.
+L133@P1: • Infrastructure for scale. We develop system optimizations that make Block AttnRes practical and efficient at scale,
+L134@P1: including cross-stage caching that eliminates redundant transfers under pipeline parallelism and a two-phase inference
+L135@P1: strategy that amortizes cross-block attention via online softmax [31]. The resulting training overhead is marginal,
+L136@P1: and the inference latency overhead is less than 2% on typical inference workloads.
+L137@P1: • Comprehensive evaluation and analysis. We validate AttnRes through scaling law experiments, component
+L138@P1: ablations, and downstream benchmarks on a 48B-parameter model pre-trained on 1.4T tokens, demonstrating
+L139@P1: consistent improvements over standard residual connections. Training dynamics analysis further reveals that AttnRes
+L140@P1: mitigates PreNorm dilution, yielding bounded hidden-state magnitudes and more uniform gradient distribution across
+L141@P1: depth.
+L142@P1-2: 2Attention Residuals TECHNICAL REPORT
+L143@P2: 2 Motivation
+L144@P2: Notation. Consider a batch of input sequences with shape B × T × d, where B is the batch size, T is the sequence
+L145@P2: length, and d is the hidden dimension. For clarity, we write formulas for a single token: hl ∈ R
+L146@P2: d denotes the hidden state
+L147@P2: entering layer l, where l ∈ {1, . . . , L} is the layer index and L is the total number of layers. The token embedding is h1.
+L148@P2: The function fl represents the transformation applied by layer l. In Transformer models, we treat each self-attention or
+L149@P2: MLP as an individual layer.
+L150@P2: 2.1 Training Deep Networks via Residuals
+L151@P2: Residual Learning. Residual learning [12] proves to be a critical technique in training deep networks as it allows
+L152@P2: gradients to bypass transformations. Specifically, each layer updates the hidden state as:
+L153@P2: hl = hl−1 + fl−1(hl−1)
+L154@P2: Expanding this recurrence, the hidden state at layer l is the sum of the embedding and all preceding layer outputs:
+L155@P2: hl = h1 +
+L156@P2: Pl−1
+L157@P2: i=1 fi(hi). The key insight behind residual connections is identity mapping: each layer preserves a direct
+L158@P2: path for both information and gradients to flow unchanged. During back-propagation, the gradient with respect to an
+L159@P2: intermediate hidden state is:
+L160@P2: ∂L
+L161@P2: ∂hl
+L162@P2: =
+L163@P2: ∂L
+L164@P2: ∂hL
+L165@P2: ·
+L166@P2: L
+L167@P2: Y−1
+L168@P2: j=l
+L169@P2: 
+L170@P2: I +
+L171@P2: ∂fj
+L172@P2: ∂hj
+L173@P2: 
+L174@P2: Expanding this product yields I plus higher-order terms involving the layer Jacobians ∂fj/∂hj . The identity term is
+L175@P2: always preserved, providing a direct gradient path from the loss to any layer regardless of depth.
+L176@P2: Generalizing Residuals. While effective, the fixed unit coefficients in the residual update treat every layer’s contribution uniformly, offering no mechanism to adapt the mixing across depth. Highway networks [45] relax this by
+L177@P2: introducing learned element-wise gates:
+L178@P2: hl = (1 − gl) ⊙ hl−1 + gl ⊙ fl−1(hl−1)
+L179@P2: where gl ∈ [0, 1]dinterpolates between the transformation and the identity path. More generally, both are instances
+L180@P2: of a weighted recurrence hl = αl· hl−1 + βl· fl−1(hl−1), with residual setting αl=βl=1 and Highway setting
+L181@P2: αl=1−gl, βl=gl.
+L182@P2: Limitations. Whether fixed or gated, both approaches share a fundamental constraint: each layer can only access
+L183@P2: its immediate input hl−1, a single compressed state that conflates all earlier layer outputs, rather than the individual
+L184@P2: outputs themselves. This entails several limitations: (1) no selective access: different layer types (e.g., attention vs.
+L185@P2: MLP) receive the same aggregated state, despite potentially benefiting from different weightings; (2) irreversible loss:
+L186@P2: information lost through aggregation cannot be selectively recovered in deeper layers; and (3) output growth: later
+L187@P2: layers learn increasingly larger outputs to gain influence over the accumulated residual, which can destabilize training.
+L188@P2: These limitations motivate a mechanism that lets each layer selectively aggregate information from all preceding layers.
+L189@P2: 3 Attention Residuals: A Unified View of Time and Depth
+L190@P2: The limitations discussed above are reminiscent of similar bottlenecks in sequence modeling, suggesting that we seek
+L191@P2: similar solutions for the depth dimension.
+L192@P2: The Duality of Time and Depth. Like RNNs over time, residual connections compress all prior information into a
+L193@P2: single state hl over depth. For sequence modeling, the Transformer improved upon RNNs by replacing recurrence with
+L194@P2: attention [3, 52], allowing each position to selectively access all previous positions with data-dependent weights. We
+L195@P2: propose the same methodology for depth:
+L196@P2: hl = α0→l· h1 +
+L197@P2: X
+L198@P2: l−1
+L199@P2: i=1
+L200@P2: αi→l· fi(hi) (1)
+L201@P2: where αi→l are layer-specific attention weights satisfying Pl−1
+L202@P2: i=0 αi→l = 1. Unlike sequence length (which can reach
+L203@P2: millions of tokens), network depth is typically modest (L < 1000), making O(L
+L204@P2: 2
+L205@P2: ) attention over depth computationally
+L206@P2: feasible. We call this approach Attention Residuals, abbreviated as AttnRes.
+L207@P2-3: 3Attention Residuals TECHNICAL REPORT
+L208@P3: 3.1 Full Attention Residuals
+L209@P3: The attention weights can be written as αi→l = ϕ(ql, ki) for a kernel function ϕ: R
+L210@P3: d × Rd → R≥0, where ql and
+L211@P3: ki are query and key vectors [23, 70]. Different choices of ϕ recover different residual variants (§6.2); we adopt
+L212@P3: ϕ(q, k) = exp q
+L213@P3: ⊤ RMSNorm(k)
+L214@P3: 
+L215@P3: [66] with normalization, yielding softmax attention over depth:
+L216@P3: αi→l =
+L217@P3: ϕ (ql, ki)
+L218@P3: Pl−1
+L219@P3: j=0 ϕ (ql
+L220@P3: , kj )
+L221@P3: (2)
+L222@P3: For each layer l, we define:
+L223@P3: ql = wl, ki = vi =
+L224@P3: 
+L225@P3: h1 i = 0
+L226@P3: fi(hi) 1 ≤ i ≤ l − 1
+L227@P3: (3)
+L228@P3: where the query ql = wlis a layer-specific learnable vector in R
+L229@P3: d
+L230@P3: . The RMSNorm inside ϕ prevents layers with
+L231@P3: large-magnitude outputs from dominating the attention weights. The input to layer l is then:
+L232@P3: hl =
+L233@P3: X
+L234@P3: l−1
+L235@P3: i=0
+L236@P3: αi→l· vi (4)
+L237@P3: We call this form full attention residuals. For each token, Full AttnRes requires O(L
+L238@P3: 2d) arithmetic and O(Ld) memory
+L239@P3: to store layer outputs. Since depth is far smaller than sequence length, the arithmetic cost is modest.
+L240@P3: Overhead. The O(Ld) memory overlaps entirely with the activations already retained for backpropagation, so Full
+L241@P3: AttnRes introduces no additional memory overhead in vanilla training. At scale, however, activation recomputation and
+L242@P3: pipeline parallelism are widely adopted: layer outputs that would otherwise be freed and recomputed must now be kept
+L243@P3: alive for all subsequent layers, and under pipeline parallelism each must further be transmitted across stage boundaries.
+L244@P3: Both the memory and communication overhead then grow as O(Ld).
+L245@P3: Blockwise optimization. A deliberate design choice in Full AttnRes is that the pseudo-query wlis a learned parameter
+L246@P3: decoupled from the layer’s forward computation. This independence means that attention weights for any group of
+L247@P3: layers can be computed in parallel without waiting for their sequential outputs, and in particular permits grouping the L
+L248@P3: layers into N blocks of S layers each and batching the attention computation within each block, reducing per-layer
+L249@P3: memory I/O from O(Ld) to O((S+N)d) (we defer the detailed two-phase strategy to §4). Under current distributed
+L250@P3: training regimes, however, the dominant cost is not local memory bandwidth but cross-stage communication under
+L251@P3: pipeline parallelism: every layer output must still be transmitted between stages, and this O(Ld) communication
+L252@P3: overhead cannot be alleviated by local batching. This motivates the Block AttnRes variant introduced below, which
+L253@P3: reduces the number of cross-stage representations from L to N. We anticipate that future interconnect improvements
+L254@P3: will make the full O(Ld) communication practical, fully realizing the potential of Full AttnRes.
+L255@P3: 3.2 Block Attention Residuals
+L256@P3: We propose Block Attention Residuals, which partitions the L layers into N blocks: within each block, the layer outputs
+L257@P3: are reduced to a single representation via summation, and across blocks, we apply full attention over only N block-level
+L258@P3: representations and the token embedding. This reduces both memory and communication overhead from O(Ld) to
+L259@P3: O(N d).
+L260@P3: Intra-Block Accumulation. Specifically, we divide the L layers into N blocks of S = L/N layers each, assuming
+L261@P3: L is divisible by N; otherwise, the last block contains the remaining L mod N layers. Let Bn denote the set of layer
+L262@P3: indices in block n (n = 1, . . . , N). To form a block, we sum all of its layer outputs:
+L263@P3: bn =
+L264@P3: X
+L265@P3: j∈Bn
+L266@P3: fj (hj ) (5)
+L267@P3: We further denote b
+L268@P3: i
+L269@P3: n
+L270@P3: as the partial sum over the first i layers in Bn, so that bn = b
+L271@P3: S
+L272@P3: n
+L273@P3: . When L is not divisible by N,
+L274@P3: the final partial sum is taken as the last block’s representation. As in Full AttnRes, the RMSNorm inside ϕ prevents
+L275@P3: magnitude differences between complete blocks and partial sums from biasing the attention weights.
+L276@P3-4: 4Attention Residuals TECHNICAL REPORT
+L277@P4: 1 def block_attn_res(blocks: list[Tensor], partial_block: Tensor, proj: Linear, norm: RMSNorm) -> Tensor:
+L278@P4: 2 """
+L279@P4: 3 Inter-block attention: attend over block reps + partial sum.
+L280@P4: 4 blocks:
+L281@P4: 5 N tensors of shape [B, T, D]: completed block representations for each previous block
+L282@P4: 6 partial_block:
+L283@P4: 7 [B, T, D]: intra-block partial sum (b_n^i)
+L284@P4: 8 """
+L285@P4: 9 V = torch.stack(blocks + [partial_block]) # [N+1, B, T, D]
+L286@P4: 10 K = norm(V)
+L287@P4: 11 logits = torch.einsum('d, n b t d -> n b t', proj.weight.squeeze(), K)
+L288@P4: 12 h = torch.einsum('n b t, n b t d -> b t d', logits.softmax(0), V)
+L289@P4: 13 return h
+L290@P4: 14
+L291@P4: 15 def forward(self, blocks: list[Tensor], hidden_states: Tensor) -> tuple[list[Tensor], Tensor]:
+L292@P4: 16 partial_block = hidden_states
+L293@P4: 17 # apply block attnres before attn
+L294@P4: 18 # blocks already include token embedding
+L295@P4: 19 h = block_attn_res(blocks, partial_block, self.attn_res_proj, self.attn_res_norm)
+L296@P4: 20
+L297@P4: 21 # if reaches block boundary, start new block
+L298@P4: 22 # block_size counts ATTN + MLP; each transformer layer has 2
+L299@P4: 23 if self.layer_number % (self.block_size // 2) == 0:
+L300@P4: 24 blocks.append(partial_block)
+L301@P4: 25 partial_block = None
+L302@P4: 26
+L303@P4: 27 # self-attention layer
+L304@P4: 28 attn_out = self.attn(self.attn_norm(h))
+L305@P4: 29 partial_block = partial_block + attn_out if partial_block is not None else attn_out
+L306@P4: 30
+L307@P4: 31 # apply block attnres before MLP
+L308@P4: 32 h = block_attn_res(blocks, partial_block, self.mlp_res_proj, self.mlp_res_norm)
+L309@P4: 33
+L310@P4: 34 # MLP layer
+L311@P4: 35 mlp_out = self.mlp(self.mlp_norm(h))
+L312@P4: 36 partial_block = partial_block + mlp_out
+L313@P4: 37
+L314@P4: 38 return blocks, partial_block
+L315@P4: Figure 2: PyTorch-style pseudo code for Block Attention Residuals. block_attn_res computes softmax attention over block
+L316@P4: representations using a learned pseudo-query wl; forward is a single-layer pass that maintains partial_block (b
+L317@P4: i
+L318@P4: n, intra-block
+L319@P4: residual) and blocks ([b0, . . . , bn−1], inter-block history).
+L320@P4: Inter-Block Attention. In Full AttnRes, the input to layer l is computed by attending over all outputs up to fl−1(hl−1).
+L321@P4: The block-wise variant replaces these individual outputs with block representations, defining b0 = h1 so that the token
+L322@P4: embedding is always included as a source. For the i-th layer in block n, the value matrix is:
+L323@P4: V =
+L324@P4: 
+L325@P4: [b0, b1, . . . , bn−1]
+L326@P4: ⊤ if i = 1 (first layer of block n)
+L327@P4: [b0, b1, . . . , bn−1, b
+L328@P4: i−1
+L329@P4: n
+L330@P4: ]
+L331@P4: ⊤ if i ≥ 2 (subsequent layers) (6)
+L332@P4: Keys and attention weights follow Eq. 3 and Eq. 2. The input of the very first layer of the network is the token
+L333@P4: embeddings, i.e. b0 = h1. In each block, the first layer receives the previous block representations and the token
+L334@P4: embeddings, and the subsequent layers additionally attend to the partial sum b
+L335@P4: i−1
+L336@P4: n
+L337@P4: . The final output layer aggregates all
+L338@P4: N block representations. Fig. 2 provides PyTorch-style pseudocode for Block AttnRes.
+L339@P4: Efficiency. Since each layer now attends over N block representations rather than L individual outputs, memory
+L340@P4: reduces from O(L) to O(N) and computation from O(L
+L341@P4: 2
+L342@P4: ) to O(N2). The block count N interpolates between two
+L343@P4: extremes: N = L recovers Full AttnRes, while N = 1 reduces to standard residual connections with the embedding
+L344@P4: isolated as b0. Empirically, we find that N ≈ 8 recovers most of the benefit across model scales, requiring only eight
+L345@P4: stored hidden states per token (see § 5).
+L346@P4: Beyond memory and computation, the block structure also benefits inference latency: block boundaries define the
+L347@P4: dispatch granularity for the blockwise optimization described in §3, and the fixed block count N bounds the KV cache
+L348@P4: size. The parallel inter-block results are merged with the sequential intra-block partial sums via online softmax [31],
+L349@P4: preserving exact equivalence (§4).
+L350@P4: 4 Infrastructure Design
+L351@P4: Block AttnRes introduces additional system challenges compared to standard residual connections. For large-scale
+L352@P4: model training, block representations must be propagated across pipeline stages, causing heavy communication in a
+L353@P4-5: 5Attention Residuals TECHNICAL REPORT
+L354@P5: RANK 0
+L355@P5: RANK 1
+L356@P5: RANK 2
+L357@P5: RANK 3
+L358@P5: [ b0 ] [ ]
+L359@P5: [ b0 ] [ b1 ]
+L360@P5: [ b0, b1 ] [ ]
+L361@P5: [ b0, b1 ] [ b2 ]
+L362@P5: + [ b1, b2 ] [ ]
+L363@P5: + [ b1, b2 ] [ b3 ]
+L364@P5: + [ b2, b3 ] [ ]
+L365@P5: + [ b2, b3 ] [ b4 ]
+L366@P5: VIRTUAL STAGE 0 VIRTUAL STAGE 1
+L367@P5: 1 2
+L368@P5: 1 2
+L369@P5: 1 2
+L370@P5: 1 2
+L371@P5: 1 2
+L372@P5: 1 2
+L373@P5: 1 2
+L374@P5: 1 2
+L375@P5: Figure 3: Cache-based pipeline communication example with 4 physical ranks and 2 virtual stages per rank, where hatched boxes
+L376@P5: denote end of AttnRes blocks. Numbers indicate micro-batch indices. Each rank caches previously received blocks; stage transitions
+L377@P5: only transmit incremental blocks (+[b1, b2]) instead of the full history.
+L378@P5: naïve implementation. During inference, repeated access to accumulated block representations increases latency, while
+L379@P5: long-context prefilling amplifies the memory cost of caching block representations. We address these challenges with
+L380@P5: cross-stage caching in training, and with a two-phase computation strategy together with a memory-efficient prefilling
+L381@P5: scheme in inference.
+L382@P5: 4.1 Training
+L383@P5: For small-scale training, AttnRes adds a tiny computation overhead and no extra memory usage, as the activations
+L384@P5: need to be saved for backpropagation regardless. Under large-scale distributed training, pipeline parallelism poses the
+L385@P5: primary infrastructure challenge for AttnRes. Full AttnRes requires all L layer outputs to be transmitted across stages;
+L386@P5: Block AttnRes reduces this to N block representations, and the optimizations below further minimize the remaining
+L387@P5: overhead.
+L388@P5: Pipeline communication. With standard residual connections, pipeline parallelism [18] transfers a fixed-size hidden
+L389@P5: state between adjacent stages, independent of pipeline depth. Block AttnRes requires all accumulated block representations at each stage for inter-block attention, and naïvely transmitting the full history at every transition incurs redundant
+L390@P5: communication.
+L391@P5: Consider an interleaved pipeline schedule [33] with P physical stages and V virtual stages per physical stage. For
+L392@P5: simplicity, assume each physical stage produces on average Np block representations of dimension d per token.1 With
+L393@P5: C = P V total chunks (each physical stage in each virtual stage), the j-th chunk accumulates jNp blocks. Naïvely
+L394@P5: transmitting all accumulated blocks at every transition incurs per-token communication cost:
+L395@P5: Commnaïve =
+L396@P5: C
+L397@P5: X−1
+L398@P5: j=1
+L399@P5: jNp · d =
+L400@P5: C(C−1)
+L401@P5: 2
+L402@P5: Npd. (7)
+L403@P5: Cross-stage caching. Since each physical stage processes multiple virtual stages in succession, we can eliminate
+L404@P5: this redundancy by caching blocks locally: blocks received during earlier virtual stages remain in local memory and
+L405@P5: need not be re-transmitted. The first virtual stage (v = 1) has no cache and accumulates normally; for v ≥ 2, each
+L406@P5: transition conveys only the ∼P Np incremental blocks accumulated since the receiver’s corresponding chunk in the
+L407@P5: previous virtual stage. Total communication reduces to:
+L408@P5: Commcached =
+L409@P5: P(P−1)
+L410@P5: 2
+L411@P5: Npd
+L412@P5: | {z }
+L413@P5: first virtual stage
+L414@P5: + (V −1) P
+L415@P5: 2 Npd
+L416@P5: | {z }
+L417@P5: subsequent virtual stages
+L418@P5: . (8)
+L419@P5: Caching reduces peak per-transition cost from O(C) to O(P), a V × improvement that enables full overlap with
+L420@P5: computation during steady-state 1F1B. The backward pass benefits from the same scheme. Fig. 3 illustrates this
+L421@P5: optimization with P=4 and V =2: for the second virtual stage, caching eliminates 6 redundant block transmissions.
+L422@P5: 1
+L423@P5: In practice, block boundaries need not align with physical stage boundaries. For example, in Fig. 3, each block spans two
+L424@P5: physical stages, so only every other transition involves a newly completed block.
+L425@P5-6: 6Attention Residuals TECHNICAL REPORT
+L426@P6: Algorithm 1: Two-phase computation for block n
+L427@P6: Input: Pseudo queries {wl}l∈Bn
+L428@P6: , block representations {b0, . . . , bn−1}
+L429@P6: /* Phase 1: Parallel inter-block attention */
+L430@P6: 1 Q ← [wl]l∈Bn // [S, d]
+

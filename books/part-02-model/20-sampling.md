@@ -47,6 +47,10 @@ p_i = exp(z_i-z_max) / sum_j exp(z_j-z_max)
 
 有了归一化后的分布，下一步仍不是唯一的：它可以支持确定选择，也可以支持随机抽样。先固定同一组 logits，才能看清各策略究竟改了什么。
 
+上面的完整 softmax 是目标分布，不要求每种实现都先形成完整 logits。若为了减小词表头的读取量，先按簇抽取一个候选集合，再只对集合内 token 归一化，就必须区分“每个 token 都有机会入选”与“仍按原分布抽样”。令 `S` 为随机候选集合，最终边缘分布是 `q(t|h)=E_S[q(t|h,S)]`；全词表非零支持并不单独保证它等于 dense softmax。Greedy 检索遗漏最高分 token，或随机集合改变归一化分母，都会改变 next-token 的决策语义。<!-- source-family:SF-2026-ARXIV-2603-14591 -->
+
+这是一条以离线簇索引、候选读取与近似误差换资源的分支，不是 top-k/top-p 的等价实现。[受限词表头实验](https://arxiv.org/html/2603.14591v1)只在已披露模型、batch1 RTX3500Ada 条件下显示任务均值与端到端延迟取舍；head 加速不能代替完整模型收益，概率任务的 Monte-Carlo 估计与零概率修补也不是精确 likelihood。需要原分布、严格复现、罕见 token 覆盖或大 batch 吞吐时，应保留 dense 路径，或另作分布误差与实际成本验收。
+
 ### 一个固定 logits 例子
 
 假设 vocabulary 只有三个候选，logits 为：
@@ -171,6 +175,10 @@ raw logits
 
 因此生产系统要版本化完整 decoding config，而不是只记录 temperature。
 
+参数的顺序固定后，数值本身还可以由一个独立的学习控制器决定：先保持基座权重冻结，读取当前 prefix 的 hidden state、logits、长度和 entropy，再为下一步提议 temperature 与 top-p。小型 policy 在有界动作区间内调节采样分布，而不是生成新知识或取代原 grammar、停止与资源约束；基座没变也不意味着输出分布没变。训练这份 controller 可以使用完整回答的任务 reward，部署时则按不断变化的 prefix 执行已学策略；状态自适应不等于一条线上轨迹中持续更新参数。<!-- source-family:SF-2026-ARXIV-2603-18428 -->
+
+[受限摘要任务对照](https://arxiv.org/html/2603.18428v1)只将这种接口与 greedy、单一固定温度比较，组合 reward 上涨不证明事实正确、更好的参数搜索已被排除或学习始终稳定。Hidden/logit 特征、逐 token controller、离线生成和 reference 评价均有成本；controller、特征编码、动作边界与 processor 次序也须同 decoding config 一起版本化。信号不可得、任务迁移失配或质量/完整成本无净收益时，关闭 controller、回固定 temperature/top-p 或 greedy，并用独立任务评价，而不让可回退的参数接口自签安全与零开销。
+
 ## Random seed 与确定性边界
 
 固定处理顺序只固定了目标分布；随机样本能否复现，还取决于执行时如何消费随机数。
@@ -257,6 +265,8 @@ Reasoning model 让停止条件进一步变成 compute policy：runtime 可以�
 
 文本信号还可以定义一种不同于答案正确率的停止风险：在完整、model-relative 的 wellposed 校准轨迹上，先固定 keyword lexicon、token bin 与统计函数，取每条轨迹所有 bin 的最大值，再用有限样本 order statistic 设阈值。测试轨迹任一 bin 严格越阈值才停止；在校准与测试完整轨迹可交换、统计函数固定的前提下，这把反复窥视的 ever-cross 事件一次纳入校准，而不是把每个局部检验的风险直接相加或当独立事件。它控制的是 wellposed 轨迹被误停的概率，不是提交答案错误率，也不保证识别所有坏推理。模型、lexicon、bin 或任务分布变化需重新核查；所测 OOD 的误停率仍有高于目标的反侧，缺少可区分文本信号时检测能力有限，粗 bin 会漏掉短轨迹，在线统计与离线完整生成也有成本。Renewal/Šidák 的近似分支不具有同一有限样本证书；普通 EOS 和硬 token/deadline 预算仍是无可靠信号时的回退。<!-- source-family:SF-2026-ARXIV-2602-13935 -->
 
+另一种early-exit建议可以用完整轨迹构造离线监督，再让因果读出在当前prefix上预测是否已出现原轨迹的最终答案；它预测的是与原full-CoT答案的一致性，不是答案正确性，也不保证截断后一定生成同答。[TERMINATOR的受限证据](https://arxiv.org/html/2603.12529v1)把label生成与在线停止分开，但文字/Eq3标签方向及最早同答与语义首次到达的关系尚未明确，不能把其精确recipe或经验结果称为已证实最优。离线完整生成、标注/verifier、额外读出与阈值/窗口均付费，局部token或batch1延迟下降也不授fleet SLO；labeltarget、模型或任务失配时保留普通EOS、硬budget与独立答案verifier，不以“已到达原答”批准正确提交。<!-- source-family:SF-2026-ARXIV-2603-12529 -->
+
 ### 从请求级 Budget 到轨迹内 Feedback Control
 
 请求开始时一次性选择 `max_tokens`、effort tier 或停止策略，状态少、容易做 admission 和成本上界；当任务难度较窄、
@@ -300,6 +310,8 @@ tokenizer、注入 layer、control vector、window、阈值和 prompt/adapter re
 
 [受限 system-prompt 对照](https://arxiv.org/html/2601.06403v1#S3)需要两次条件前向，作者报告约两倍 FLOPs，KV sharing 仍是未来优化，不能由同一模型或同一文本 prefix 推出缓存可直接共享。强度加大也会损伤严格指令准确率和域内可答性；Qwen2.5-7B/14B 等有限任务反侧要求把 target/default prompt、模型、强度与评价人口一起校准，而不是采用通用安全默认值。额外算量不合预算、无法取得两份 logits 或行为回归时，保留普通提示、已验证的 vector 控制或关闭对比分支；外部 verifier、权限和停止预算仍独立约束最终输出。
 
+固定双分支的强度还可改成逐 token 学习，而不只在请求开始时选择一个常数。一条受限分支先用共享正确前缀下的正负步骤续写训练 reward LM，再冻结它与 base LM，让小 controller 读取当前两份 logits（或带 token 身份的 Top-k 特征），以 gold-token likelihood 和可选门控 entropy 学习每步的混合权重。这里学习的是解码选择，不是每个 token 的逻辑真值；迁移首先要求词表坐标、模型与已提交前缀身份能对齐，不能由同输出维度推任意模型通用。[TARo 的受限对照](https://arxiv.org/html/2603.18411v1)存在 logit 与 probability 插值口径差异，不能直接照为统一采样配方；部分非训练域任务弱于原 base，硬门控与更高数学分数也不保证全部能力保持。双模型前向、reward/controller 训练、词表特征与状态都付费，token 吞吐与请求吞吐须分账，不由少量 controller 参数或单次算量估计宣称免费推理。混合算子、身份、质量或预算无法验收时，保留固定强度、普通单模型采样与独立 verifier，而不让门控权重替答案签发正确性。<!-- source-family:SF-2026-ARXIV-2603-18411 -->
+
 ### Answer-first 与 Optional Justification
 
 延长或压短推理仍默认先生成过程、后提交答案。如果任务只要求尽早拿到答案、解释可以稍后提供，那么还可以调整输出次序，而不把这项接口选择混同于增加搜索能力。
@@ -338,6 +350,10 @@ prompt + decoding policy
 问系统能否从已有候选中识别它。`pass@N` 只能给出前者的上界，不能证明 self-verifier 能达到这个
 上界。扩大 `N` 可能提高覆盖率，也会带来更多近似答案、相关错误和选择成本；若 selector 的辨别力
 没有同步提高，更多样本甚至可能让最终选择更不稳定。
+
+多路径预算不一定要每次从 prompt 重新支付完整生成。若已完成的轨迹中保存了若干高 token entropy 位置之前的 prefix，可以从这些位置重新抽取下一 token，再各自完成后缀；这里分配的是“在哪里重新分叉”的预算，而不是将高熵 token 判为错误或把后缀当独立解答。局部高熵与随机位置在同 generation budget 下的有限数学对照支持这一选择分支，但共享前缀也会保留相关错误，完成后的候选仍需要单独的答案检查。<!-- source-family:SF-2026-ARXIV-2604-00018 -->
+
+entropy 只测当前模型分布，生成后较低的熵也不是正确性验收；没有可靠 verifier 时不能以“after-think confidence”自签停止。该路径仍支付首条轨迹、prefix/cache 保留、概率读取、重生成和候选检查，不同型号或 API 价格不能当同计算预算。受测两模型、两数学任务及训练集调参不授普遍接近满分，也未恢复有限 logprob API 与完整词表 entropy 的等价实现。信号不可得、分支强相关或检查费用不合算时，保留普通完整 self-consistency、随机分叉或单路加独立 verifier。<!-- source-family:SF-2026-ARXIV-2604-00018 -->
 
 讨论选择器是否“最优”之前，还要规定交付目标：最大化数值 reward 的期望，与提高相对参考回答的胜率，不是同一个优化问题。胜率只依赖成对排序，平局计半胜；对 reward 作保序变换可以保留排序，却改变数值期望。因而不能把某种期望 reward 下的次优性直接搬到胜率目标。对固定 prompt、独立采自同一参考 policy 的候选，可分别用参考分布上的成对排序误差衡量 selector，以及目标相对参考分布的 density-ratio 尾部衡量覆盖难度；前者小不等于数值 reward 已校准，后者大意味着目标偏爱的答案仍很难被采到。[受限理论分析](https://arxiv.org/html/2603.05739v1#S3)给出调好 N 的 BoN 在此 sample-and-evaluate 模型中的胜率 regret 界，并在非原子参考分布上给出匹配至对数因子的最坏情形下界；它不证明每个任务、任意自适应搜索或部署费用下 BoN 都最优。<!-- source-family:SF-2026-ARXIV-2603-05739 -->
 
@@ -613,6 +629,8 @@ Sampling 将模型给出的条件分布变成一条实际 token 轨迹。Greedy 
 
 ## Review notes
 
+- `SF-2026-ARXIV-2603-14591` — Daily `2026-03-18` 补 `03-17` 自然日；[FlashHead exact-v1](https://arxiv.org/html/2603.14591v1) §3.1–3.3、§4.1–4.5/§5、Appendix C/D/D.1，2+1+2=5，具体采样语义差额定点深入。仅采用全 support 与 dense 目标分布分账、随机集合边缘化和资源/误差回退；不授精确 dense 采样、head 倍率即端到端、MC clip 即精确 likelihood、大 batch/生产 SLO 或实现复现。review_mar17_18 必要 Source、actual owner/Ch19–21 交接及逐字两段 PRE 通过，root 授两段与本注窄锁；作者写后完整局部邻接已顺读，review_mar17_18 非 writer 实际正文 31–82、完整局部邻接及本注 POST 通过，不授 DAY。
+
 - `SF-2026-ARXIV-2603-06797` — Daily `2026-03-11` 补充；[exact-v1](https://arxiv.org/html/2603.06797v1) §3–4/Eq17–18/Alg1、必要 A.3 与 C.3。2+1+3=6，已确认 prompt-specific 尾部选择差额深入；只采 Hill→α→候选 power 权重的启发式及代价，不采 Eq11/A.32/闭式归一的最优性继承。原文尾端保护、独立校准人口与运行费用未披露，反侧近正文；review_20260311 必要 Source 独核通过，root 实际读取本章完整局部与前后章交接后窄写。supplement_20260311 非写入者实际顺读 324–377 完整局部与自身末注，回对 Alg1/Eq17–18/必要数学反侧，POST 通过。未核实现或复现，不授日级完成。
 
 - `SF-2026-ARXIV-2601-06403` — Daily `2026-01-14` 增量；[exact-v1](https://arxiv.org/html/2601.06403v1) §3/Eq3–5、§4–5/Table1、Limitations。2+1+2=5，具体 same-prefix 双 system logits 与连续强度缺口深入；alpha0 为 custom，2×FLOPs、ID/严格准确反侧与原提示回退近文，不授默认权威/缓存共享已实证。peer必要原证/actual owner PRE通过、root授窄锁；作者实际正文与完整邻接顺读，root 非写者 actual POST 已通过（新正文、完整局部邻接与自身末注实际顺读）。未核 artifact/复现，不授整日完成。
@@ -683,3 +701,11 @@ https://arxiv.org/html/2604.03616v1 — §3–7、Table 5、Appendix G/I。六�
 - `SF-2026-ARXIV-2603-05739` — [2026-03-10补查](../../papers/2026/03/10/README.md)，[exact-v1](https://arxiv.org/html/2603.05739v1) §2.1–2.3/Thm3–5、§4、§5.1、§7；受限理论。正文区分expected reward与win-rate、pairwise误差与reference-tail coverage，并保留M校准/有限采样/独立样本条件；不授任意搜索最优、每实例单调、事实正确性或部署无reward hacking保证。必要原证与实际owner邻接已读；supplement_20260310非写入者实际正文/完整局部邻接及末注POST通过，日级补查验收以日报为准，未执行artifact或复现。
 
 - `SF-2026-ARXIV-2603-08999` — Daily `2026-03-12`补查；[exact-v1](https://arxiv.org/html/2603.08999v1) §3–8/Eq1–6/Tables1–4，2+1+2=5；completed-trace采样门控差额深入。全greedy后非因果features只管追加预算，每LLM classifier/每targetval阈值、n.s.非等价、全部首轨迹/option评分/特征与判别成本近正文。不采在线earlyexit、无校准迁移、currentv4数字、未核曲线/全部附录、实现/复现或完整SLO。root独立必要§3/5/8及Tables1–4/日期/actual owner逐字PRE通过（不反称其全部§4/6设置）；作者按窄锁写两段与本注并顺读完整局部，非writer root实际顺读347–375完整邻接、新354/357与本注并回对必要原证，actualPOST通过，窄锁释放，不授DAY。
+
+- `SF-2026-ARXIV-2603-12529` — Daily `2026-03-17`补03/16自然日；[exact-v1](https://arxiv.org/html/2603.12529v1)，2+2+2=6，必要核心/关键反侧及具体差额见本日SUP_STOP_CONTROL_PRE_20261011.md。supp_mar17必要Source、实际唯一owner/完整邻接与逐字PRE由review_mar17_18独立局部通过，root授本正文与本人注窄锁；作者按PRE实际写入，review_mar17_18非writer实际顺读246–293完整局部、新264与本人695注，回对已核必要Source/逐字PRE，局部POST通过；resume_review17_18最终末注定点回读局部通过，不授DAY。采用范围、费用、反侧及原路径回退近正文；未核artifact/复现。
+
+- `SF-2026-ARXIV-2603-18428` — [exact-v1](https://arxiv.org/html/2603.18428v1) §3–5/Eqs1–2/Tables1–2；只采用冻结基座外的prefix-state→T/top-p控制接口。periodic离线controller更新≠线上逐轨迹学习；小模型摘要/单fixedT基线、reward代理、负early→late与ROUGE-only反侧及全部费用保留；不授通用稳定、事实正确、低风险或零开销，未核实现/复现。
+
+- `SF-2026-ARXIV-2603-18411` — [TARo exact-v1](https://arxiv.org/html/2603.18411v1) §3–5/Tables1–6与必要A–E；只采用step偏好reward与gold-NLL逐token gate的训练/消费接口。logit/probability算子身份未统一、同词表迁移条件、OOD/粒度/entropy反退、TPS/QPS与估算成本、gold对但推导错误示例保留；不授无训练、任意跨模型迁移、全部能力保持或逻辑真值，未核代码/复现。
+
+- `SF-2026-ARXIV-2604-00018` — Daily2026-04-03；[exact-v1](https://arxiv.org/html/2604.00018v1)§3/4.4–4.7，2+1+2=5，仅采用高entropy prefix分叉的同budget局部选择；保相关错误/原entropy接口资格/verification及全部费用，不授truth或通用可靠性，未核实现/复现。

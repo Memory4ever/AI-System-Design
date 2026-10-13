@@ -1,0 +1,3679 @@
+FuDoBa: Fusing Document and Knowledge Graph based Representations with Bayesian Optimisation
+Boshko Koloski
+Email:
+boshko.koloski@ijs.si
+Affiliation:
+Jožef Stefan Institute, Ljubljana, Slovenia
+Senja Pollak
+Email:
+senja.pollak@ijs.si
+Affiliation:
+Jožef Stefan Institute, Ljubljana, Slovenia
+Roberto Navigli
+Email:
+navigli@diag.uniroma1.it
+Affiliation:
+Sapienza NLP Group, Sapienza University of Rome, Rome, Italy
+Blaž Škrlj
+Email:
+blaz.skrlj@ijs.si
+Affiliation:
+Jožef Stefan Institute, Ljubljana, Slovenia
+Affiliation:
+Jožef Stefan Postgraduate School, Ljubljana, Slovenia
+Abstract
+Building on the success of Large Language Models (LLMs), LLM-based representations have dominated the document representation landscape, achieving great performance on the document embedding benchmarks. However, the high-dimensional, computationally expensive embeddings from LLMs tend to be either too generic or inefficient for domain-specific applications. To address these limitations, we introduce FuDoBa—a Bayesian optimisation-based method that integrates LLM-based embeddings with domain-specific structured knowledge, sourced both locally and from external repositories like WikiData. This fusion produces low-dimensional, task-relevant representations while reducing training complexity and yielding interpretable early-fusion weights for enhanced classification performance. We demonstrate the effectiveness of our approach on six datasets in two domains, showing that when paired with robust AutoML-based classifiers, our proposed representation learning approach performs on par with, or surpasses, those produced solely by the proprietary LLM-based embedding baselines.
+keywords
+document classification, Bayesian optimisation, representation learning, knowledge graphs, early fusion, multimodal learning
+1
+Introduction
+Efficient and rich document representations are the building blocks for many natural language processing (NLP) tasks such as classification or clustering
+Muennighoff et al. (2023)
+. Contemporary methods for representing documents focus on distilling representations from either pre-trained language models (PLMs) such as BERT
+Devlin et al. (2019)
+or large language models (LLMs) such as Llama3
+Grattafiori and et al. (2024)
+, exploiting the rich semantic knowledge acquired during pre-training on vast text corpora. For instance, Sentence-BERT
+Reimers and Gurevych (2019)
+builds document representation by pooling over pre-trained BERT-based word embeddings, which are further refined through contrastive learning and Siamese networks. Similarly, LLM2Vec
+BehnamGhader et al. (2024)
+disentangles the causal masking of LLMs to a bi-directional one, further post-training the LLM on a masked next token prediction task and finally, training with a contrastive training objective, similarly to Sentence-BERT, refining the final representations via mean pooling by training with a contrastive training objective.
+Despite good performance on public benchmarks such as MTEB
+Muennighoff et al. (2023)
+, contrastive pre-training models require acquiring a dataset of triplet sentences (i.e., query, positive answer, and negative answer), which is often infeasible and costly. That said, even assuming such a dataset is available, training is costly and requires extra compute. The best-performing representations to date often come from proprietary companies and their mechanisms are largely unknown
+Muennighoff et al. (2023)
+. Current approaches face two notable limitations: first, these embeddings typically reside in high-dimensional spaces, often exceeding 1,000 dimensions, creating practical challenges for efficient storage and computation (especially for AutoML model training); second, their generalist nature makes them suboptimal for domain-specific applications without expensive fine-tuning, which in some cases is infeasible.
+One way to overcome the costly training requirements while still leveraging the expressive power of PLM/LLM derived representations is to introduce additional knowledge from auxiliary representations. Previous studies proposed representation enrichment via additional representations, either via representation alignment
+Chen et al. (2022)
+or representation fusion
+Koloski et al. (2022)
+. In many cases, the approach of introducing auxiliary knowledge to document representations and searching over a space of possible classifiers with AutoML performs on par with task-specific fine-tuned PLMs such as BERT, without training costly classifiers
+Škrlj et al. (2021)
+.
+Recently,
+Koloski et al. (2025)
+proposed BabelFusion, involving the introduction of
+global knowledge
+from a knowledge graph by entity-linking to BabelNet’s
+Navigli and Ponzetto (2010)
+synsets connected to a subgraph of WikiData5m
+Wang et al. (2021)
+. They showed that projecting the inputs into low-dimensions not only produces low-dimensional spaces but can generate models that usually out-perform the language-only representations in the high dimensional space. However, they concluded that matching datasets where text stems from online discussion and is usually manifested with short texts with against a knowledge graph was sub-optimal. Indeed, this proved deteriorating for the downstream performance of AutoML classifiers, in comparison to that of weak classifiers fitted on the original space. As an alternative to their approach, we hypothesise that extracting domain-specific knowledge graphs, resulting in a
+local knowledge
+graph
+1
+1
+1
+We refer to them as LocKG throughout the remainder of the paper.
+, can provide local context that could complement to a global knowledge graph such as WikiDAta, aiding LLMs downstream.
+In this work, we propose
+FuDoBa
+(Figure
+1
+), a novel Bayesian optimisation-based early fusion methodology that builds on the idea of
+Koloski et al. (2025)
+. It combines the semantic richness of LLM representations with the structured information from knowledge graphs and proposes the construction of local knowledge by extracting structured relations (e.g., knowledge triplets) from the dataset using Relation Extraction methods. Our approach systematically leverages external knowledge sources such as WikiData alongside these domain-specific, locally extracted knowledge structures to create more contextualised and task-relevant document representations. By employing Bayesian optimisation techniques, we identify importance parameters that maximize performance while minimising dimensionality. Furthermore, the optimised global weights assigned by Bayesian optimisation to the different representation sources serve as a a task-specific interpretation of the embeddings’ importance.
+The main contributions of this work are as follows:
+•
+We demonstrate that LLM-based embeddings can be further improved by integrating both global contextual information and fine-grained, domain-specific local knowledge. In particular, we systematically evaluate the impact of constructing and incorporating a domain-specific knowledge graph—capturing domain dependant relations between entities.
+•
+We experimentally demonstrate that training AutoML in low-dimensional spaces yields downstream models that perform as well as—or even better than—those produced using conventional methods.
+•
+We introduce a novel, Bayesian optimisation–based method for low-dimensional early fusion of document and knowledge graph representations.
+The remainder of this paper is structured as follows. Section
+2
+reviews the relevant literature, and Section
+3
+outlines the proposed methodology. Section
+4
+describes the experimental setup, and Section
+5
+presents the results. Section
+6
+discusses the findings, and Section
+7
+concludes the paper. The Appendix details the method’s limitations in Section
+8
+, implementation specifics in Section
+9
+, a deeper analysis of relation extractors within the local knowledge graph in Section
+10
+, and additional experimental results in Section
+11
+.
+Figure 1:
+Overview of our proposed
+FuDoBa
+framework for representation enrichment. Starting from an LLM-based embedding (purple) external knowledge is incorporated via two parallel pathways: a global knowledge graph (light blue) branch that links entities using Babelfy
+Moro et al. (2014)
+and WikiData5m
+Wang et al. (2021)
+embeddings, and a novel local knowledge graph branch (yellow) that constructs domain-specific knowledge-graph via relation-extraction models. Representations are projected into a lower-dimensional space (
+l
+l
+) and weighted by an importance parameter (
+α
+\alpha
+), with ElasticNet normalisation applied both before and after fusion. The concatenated representation is then processed by AutoGluon
+Erickson et al. (2020)
+AutoML for model search under a constrained time budget.
+2
+Related Work
+The task of document representation has evolved from pre-training shallow neural networks (NNs) on web scale data
+Le and Mikolov (2014)
+through transformer encoders
+Devlin et al. (2019)
+refined by contrastive learning
+Reimers and Gurevych (2019)
+;
+Gao et al. (2021)
+;
+Li and Li (2024)
+, to adaptations of decoder-only LLMs
+Aghajanyan et al. (2024)
+;
+Khosla et al. (2025)
+and synthetic data approaches
+Wang et al. (2024)
+. While these techniques output powerful high-performant embeddings
+Muennighoff et al. (2023)
+, significant challenges remain
+Koloski et al. (2025)
+. Training and adapting these large models to novel domains requires substantial computational resources
+Reimers and Gurevych (2019)
+. Data acquisition remains laborious and potentially costly
+Wang et al. (2024)
+.
+To avoid costly retraining, researchers have proposed utilising additional representations in LLM-based document representation.
+Chen et al. (2022)
+enhanced document classification through zero-shot alignment between labels and knowledge graph concepts. Recent work
+Cocchi et al. (2025)
+demonstrated that adding reflection tokens to vision-language models with Wikipedia improves visual question answering performance. Tax2Vec
+Škrlj et al. (2021)
+leveraged the WordNet taxonomy to enhance TF-IDF features for short document classification. Koloski et al.
+Koloski et al. (2022)
+introduced Sentence-Transformers
+Reimers and Gurevych (2019)
+, sub-symbolic and WikiData5m
+Wang et al. (2021)
+knowledge-graph embeddings, improving fake news classification over language-only representations.
+Ostendorff et al. (2019)
+proposed early-fusing a knowledge graph with BERT
+Devlin et al. (2019)
+representations and refining them via a 2-layer MLP, showing remarkable results for multi-class classification. The benefits of local knowledge graphs (LocKG) have been noted in the context of information retrieval by
+Sarmah et al. (2024)
+, who investigated how LocKG improves downstream performance in document search and retrieval. Similarly,
+Fan et al. (2019)
+applied LocKG to the task of multi-document summarization. However, all of the mentioned approaches operate in high-dimensional spaces, presenting challenges due to the curse of dimensionality
+Aggarwal et al. (2001)
+.
+Projecting these representations into low-dimensional space via SVD
+Škrlj and Petković (2021)
+by preserving top-k singular values can compress dimensionality and facilitate representation fusion
+Koloski et al. (2025)
+;
+Koduri (2012)
+. For efficient learning in these spaces, automated machine learning approaches like AutoGluon
+Erickson et al. (2020)
+excel on benchmarks through dual optimisation of parameters and model ensembles. While previous work
+Koloski et al. (2025)
+combines low-dimensional fusion of knowledge and text utilised tree-based models TPOT
+Le et al. (2020)
+, our work focuses on incorporating AutoGluon
+Erickson et al. (2020)
+, a stronger model which also searches neural models. As this work connects to the field of data fusion, particularly early-fusion, we refer interested readers to
+Lahat et al. (2015)
+;
+Jiao et al. (2024)
+for further details. The goal of this study is to explore whether, by employing modality-specific low-dimensional projection—including local and global knowledge graphs and utilising strong AutoML models—we can perform on par, or similarly to original high-dimensional embeddings. In Table
+1
+, we compare our work with similar investigations. Notably, our approach introduces domain constructed local knowledge graphs, utilises stronger AutoML models, introduces modality specific intrepretable weights, and does not require access to embedding model weights nor requires custom models.
+Feature
+Text-KG
+Het. Ens.
+BabelFusion
+FuDoBa
+Alignment
+Chen et al. (2022)
+Koloski et al. (2022)
+Koloski et al. (2025)
+(This Work)
+Model Weights
+✓
+\checkmark
+×
+\times
+×
+\times
+×
+\times
+Word-Disambiguation
+×
+\times
+×
+\times
+BabelFy
+Navigli and Ponzetto (2010)
+BabelFy
+Navigli and Ponzetto (2010)
+Low-Dimensional Space
+×
+\times
+×
+\times
+✓
+\checkmark
+✓
+\checkmark
+Modality importance
+×
+\times
+×
+\times
+×
+\times
+✓
+\checkmark
+Architecture
+Zero-shot(*)
+Custom NN
+TPOT
+Le et al. (2020)
+AutoGluon
+Erickson et al. (2020)
+External KG
+ConceptNet
+Speer et al. (2017)
+WikiData5m
+Wang et al. (2021)
+WikiData5m
+Wang et al. (2021)
+WikiData5m
+Wang et al. (2021)
+Local KG
+×
+\times
+×
+\times
+×
+\times
+✓
+\checkmark
+Table 1:
+Comparison of different methods for leveraging knowledge graphs for LLM representation improvement.
+3
+Methodology
+We introduce
+FuDoBa
+, a novel multimodal fusion framework that employs Bayesian optimisation to determine the optimal contribution of each modality’s low-dimensional projection for improved classification performance.
+3.1
+Document Representations
+Our approach builds on the BabelFusion representations
+Koloski et al. (2025)
+by using LLM- and KG-based representations as the backbone for document representation.
+Koloski et al. (2025)
+observed that mapping textual content to a general-domain KG sometimes results in only a few matched entities for specific domains. To address this limitation, the solution our approach proposes is the construction of a local KG (LocKG) using relation extraction techniques. Our framework integrates three complementary embedding modalities:
+•
+Text Embeddings:
+Embeddings are derived from OpenAI’s
+text-embedding-2-small
+model and capture rich contextual information from text. They are represented in 1536 dimensions.
+•
+Knowledge Graph (KG) Embeddings:
+Generated via BabelFusion
+Koloski et al. (2025)
+, these embeddings map textual terms to Wikidata5M
+Wang et al. (2021)
+entities using Babelfy
+Moro et al. (2014)
+’s entity linking and word sense disambiguation and aggregate them with 512-dimensional RotatE
+Sun et al. (2019)
+embeddings.
+•
+Local Knowledge Graph (LocKG) Embeddings:
+These embeddings are obtained by extracting knowledge triplets using relation extractors and then embedding them with 512-dimensional RotatE
+Sun et al. (2019)
+embeddings to capture localised relational structures. In our experiments, we employ prompt-guided
+gpt-4o-mini
+as an extractor.
+2
+2
+2
+Implementation details are present in Appendix
+9
+. In the Appendix
+10
+we show that this extractor can be changed for a smaller, open-sourced one, achieving similar results.
+3.2
+Preliminaries
+Two key techniques further underpin our pipeline:
+•
+Dimensionality Reduction via Truncated SVD:
+Given a data matrix
+𝑨
+∈
+ℝ
+N
+×
+d
+\bm{A}\in\mathbb{R}^{N\times d}
+, its truncated SVD
+Klema and Laub (1980)
+retains the top
+p
+p
+singular components:
+𝑨
+≈
+𝑼
+p
+​
+𝚺
+p
+​
+𝑽
+p
+T
+\bm{A}\approx\bm{U}_{p}\bm{\Sigma}_{p}\bm{V}_{p}^{T}
+, where
+𝑼
+p
+∈
+ℝ
+N
+×
+p
+\bm{U}_{p}\in\mathbb{R}^{N\times p}
+,
+𝚺
+p
+∈
+ℝ
+p
+×
+p
+\bm{\Sigma}_{p}\in\mathbb{R}^{p\times p}
+(diagonal), and
+𝑽
+p
+∈
+ℝ
+d
+×
+p
+\bm{V}_{p}\in\mathbb{R}^{d\times p}
+. The columns of
+𝑽
+p
+\bm{V}_{p}
+represent the principal directions of variation in the column space. Projecting the original data onto these directions yields the reduced-dimension representation
+𝑷
+=
+𝑨
+​
+𝑽
+p
+∈
+ℝ
+N
+×
+p
+\bm{P}=\bm{A}\bm{V}_{p}\in\mathbb{R}^{N\times p}
+, which captures the maximal variance in
+p
+p
+dimensions.
+•
+Normalisation:
+We employ normalisation techniques before and after fusion. The
+L
+k
+L_{k}
+-norm of a vector
+𝒙
+∈
+ℝ
+d
+\bm{x}\in\mathbb{R}^{d}
+is defined as
+‖
+𝒙
+‖
+k
+=
+(
+∑
+i
+=
+1
+d
+|
+x
+i
+|
+k
+)
+1
+/
+k
+\|\bm{x}\|_{k}=(\sum_{i=1}^{d}|x_{i}|^{k})^{1/k}
+. We utilize Elastic Net style normalisation, defined for a vector
+𝒙
+\bm{x}
+as:
+N
+⁡
+(
+𝒙
+)
+=
+𝒙
+w
+1
+​
+‖
+𝒙
+‖
+1
++
+w
+2
+​
+‖
+𝒙
+‖
+2
+,
+N(\bm{x})=\frac{\bm{x}}{w_{1}\|\bm{x}\|_{1}+w_{2}\|\bm{x}\|_{2}},
+where
+w
+1
+,
+w
+2
+≥
+0
+w_{1},w_{2}\geq 0
+are weighting factors (e.g.,
+w
+1
+=
+w
+2
+=
+0.5
+w_{1}=w_{2}=0.5
+). This balances the regularising effects of L1 and L2 norms.
+3.3
+FuDoBa: Fusion Mechanism and Parameter Optimisation
+Koloski et al. (2025)
+demonstrated that projecting KGs enriched high-dimensional LLM-embeddings to lower-dimensions have a comparable or better performance than base representations. However, their approach involved concatenating modalities before projection and weighting features with equal weights post-projection. We argue that by doing so information was weighted equally, which can impact performance while projecting, as different signals might be important for different tasks. We propose a different strategy where each modality’s embedding,
+𝑬
+m
+\bm{E}_{m}
+(
+m
+∈
+{
+llm
+,
+kg
+,
+loc
+}
+m\in\{\text{llm},\text{kg},\text{loc}\}
+), is first projected independently via Truncated SVD
+Klema and Laub (1980)
+to a lower dimension
+l
+m
+l_{m}
+, yielding
+𝑷
+m
+=
+SVD
+p
+m
+⁡
+(
+Normalize
+​
+(
+𝑬
+m
+)
+)
+\bm{P}_{m}=\operatorname{SVD}_{p_{m}}(\text{Normalize}(\bm{E}_{m}))
+. This step aims to capture the most important information from each modality separately. Subsequently, each projection
+𝑷
+m
+\bm{P}_{m}
+is scaled by a factor
+α
+m
+\alpha_{m}
+before concatenation. We hypothesise that the scaling factor
+α
+m
+\alpha_{m}
+per modality can act as a learned global importance weight for the modality’s contribution within the fusion, potentially improving performance and offering insights into the relative importance of modalities for a given task.
+3
+3
+3
+N.B. when a
+α
+\alpha
+is equal to
+zero (0.0)
+, the modality is excluded from the learning process as uninformative.
+The fusion process is governed by a hyper-parameter vector
+𝜽
+\bm{\theta}
+, which comprises the projection dimensions and scaling factors for all modalities. For example, in the case of the LLM modality,
+l
+llm
+l_{\text{llm}}
+denotes the projection dimension, while
+α
+llm
+\alpha_{\text{llm}}
+represents the corresponding importance weight.:
+𝜽
+=
+(
+l
+llm
+,
+l
+kg
+,
+l
+loc
+)
+⏟
+projection dimensions
+,
+(
+α
+llm
+,
+α
+kg
+,
+α
+loc
+)
+⏟
+modality importance
+.
+\bm{\theta}=\underbrace{\left(l_{\text{llm}},\,l_{\text{kg}},\,l_{\text{loc}}\right)}_{\text{projection dimensions}},\underbrace{\left(\alpha_{\text{llm}},\,\alpha_{\text{kg}},\,\alpha_{\text{loc}}\right)}_{\text{modality importance}}.
+We define the search space
+Θ
+\Theta
+for these hyper-parameters as follows: each projection dimension
+l
+m
+l_{m}
+is chosen from the set
+{
+16
+,
+32
+,
+64
+}
+\{16,32,64\}
+, and each scaling multiplier
+α
+m
+\alpha_{m}
+is selected from the discrete set
+{
+0
+,
+0.1
+,
+…
+,
+0.9
+,
+1
+}
+\{0,0.1,\dots,0.9,1\}
+.
+Algorithm 1
+FuDoBa: Low-Dimensional Multi-modal Embedding Fusion
+1:
+Modality Embeddings
+{
+𝑬
+m
+}
+m
+∈
+ℳ
+\{\bm{E}_{m}\}_{m\in\mathcal{M}}
+(
+ℳ
+=
+{
+llm
+,
+kg
+,
+loc
+}
+\mathcal{M}=\{\text{llm},\text{kg},\text{loc}\}
+), Labels
+𝒚
+\bm{y}
+2:
+Importance weights
+{
+α
+m
+}
+m
+∈
+ℳ
+\{\alpha_{m}\}_{m\in\mathcal{M}}
+and Projection dimensions
+{
+l
+m
+}
+m
+∈
+ℳ
+\{l_{m}\}_{m\in\mathcal{M}}
+3:
+AutoGluon classifier
+𝒞
+\mathcal{C}
+, Cross-Validation folds
+k
+k
+4:
+Mean CV Macro F1-score
+f
+f
+, Final classifier
+𝒞
+\mathcal{C}
+(fit on full data)
+5:
+— Step 1: Generate Fused Representation —
+6:
+for
+m
+∈
+ℳ
+m\in\mathcal{M}
+do
+7:
+𝑬
+m
+norm
+←
+N
+⁡
+(
+𝑬
+m
+)
+\bm{E}_{m}^{\text{norm}}\leftarrow N(\bm{E}_{m})
+⊳
+\triangleright
+Elastic Net normalisation
+8:
+𝑷
+m
+←
+SVD
+p
+m
+⁡
+(
+𝑬
+m
+norm
+)
+\bm{P}_{m}\leftarrow\operatorname{SVD}_{p_{m}}(\bm{E}_{m}^{\text{norm}})
+⊳
+\triangleright
+Truncated SVD to dimension
+l
+m
+l_{m}
+9:
+𝑺
+m
+←
+α
+m
+⋅
+𝑷
+m
+\bm{S}_{m}\leftarrow\alpha_{m}\cdot\bm{P}_{m}
+⊳
+\triangleright
+Scale projection by importance weight
+α
+m
+\alpha_{m}
+10:
+end
+for
+11:
+𝑺
+concat
+←
+[
+𝑺
+llm
+,
+𝑺
+kg
+,
+𝑺
+loc
+]
+\bm{S}_{\text{concat}}\leftarrow[\bm{S}_{\text{llm}},\bm{S}_{\text{kg}},\bm{S}_{\text{loc}}]
+⊳
+\triangleright
+Concatenate scaled embeddings
+12:
+𝑿
+←
+N
+⁡
+(
+𝑺
+concat
+)
+\bm{X}\leftarrow N(\bm{S}_{\text{concat}})
+⊳
+\triangleright
+Normalize fused representation
+13:
+— Step 2: Evaluate via Cross-Validation —
+14:
+f
+cv
+←
+0
+f_{\text{cv}}\leftarrow 0
+15:
+for
+i
+∈
+{
+1
+,
+…
+,
+k
+}
+i\in\{1,\ldots,k\}
+do
+⊳
+\triangleright
+k
+k
+-fold Cross-Validation loop
+16:
+(
+𝑿
+train
+,
+i
+,
+𝒚
+train
+,
+i
+)
+,
+(
+𝑿
+val
+,
+i
+,
+𝒚
+val
+,
+i
+)
+←
+(\bm{X}_{\text{train},i},\bm{y}_{\text{train},i}),(\bm{X}_{\text{val},i},\bm{y}_{\text{val},i})\leftarrow
+Get fold
+i
+i
+split from
+(
+𝑿
+,
+𝒚
+)
+(\bm{X},\bm{y})
+17:
+𝒞
+.
+fit
+​
+(
+𝑿
+train
+,
+i
+,
+𝒚
+train
+,
+i
+)
+\mathcal{C}.\texttt{fit}(\bm{X}_{\text{train},i},\bm{y}_{\text{train},i})
+⊳
+\triangleright
+Fit classifier on training part of fold
+i
+i
+18:
+𝒚
+val
+,
+i
+pred
+←
+𝒞
+.
+predict
+​
+(
+𝑿
+val
+,
+i
+)
+\bm{y}_{\text{val},i}^{\text{pred}}\leftarrow\mathcal{C}.\texttt{predict}(\bm{X}_{\text{val},i})
+⊳
+\triangleright
+Predict on validation part of fold
+i
+i
+19:
+f
+i
+←
+Macro-F1
+​
+(
+𝒚
+val
+,
+i
+,
+𝒚
+val
+,
+i
+pred
+)
+f_{i}\leftarrow\text{Macro-F1}(\bm{y}_{\text{val},i},\bm{y}_{\text{val},i}^{\text{pred}})
+⊳
+\triangleright
+Calculate Macro F1-score for the fold
+20:
+f
+cv
+←
+f
+cv
++
+f
+i
+f_{\text{cv}}\leftarrow f_{\text{cv}}+f_{i}
+21:
+end
+for
+22:
+f
+←
+f
+cv
+/
+k
+f\leftarrow f_{\text{cv}}/k
+⊳
+\triangleright
+Mean CV F1-macro score
+23:
+𝒞
+.
+fit
+​
+(
+𝑿
+,
+𝒚
+)
+\mathcal{C}.\texttt{fit}(\bm{X},\bm{y})
+⊳
+\triangleright
+Re-fit on the full dataset
+𝑿
+,
+𝒚
+\bm{X},\bm{y}
+24:
+return
+𝒞
+,
+f
+\mathcal{C},\,f
+⊳
+\triangleright
+Return the final fitted classifier and the CV score
+Algorithm
+1
+details the complete procedure for generating a fused representation
+𝑿
+⁡
+(
+𝜽
+)
+\bm{X}(\bm{\theta})
+given a specific hyper-parameter vector
+𝜽
+\bm{\theta}
+, and subsequently evaluating its quality by computing the 5-fold cross-validation macro F1-score of an AutoGluon
+Erickson et al. (2020)
+model, denoted as
+f
+⁡
+(
+𝜽
+)
+f(\bm{\theta})
+. This score serves as our objective function, which we try to maximize, conditioned on the input parameters
+θ
+\theta
+.
+3.4
+Bayesian Optimisation for Optimal Fusion Parameters
+Having defined the parametrized fusion mechanism and the objective function
+f
+⁡
+(
+𝜽
+)
+f(\bm{\theta})
+based on cross-validation performance of the fitted AutoGluon model (Algorithm
+1
+), our goal is to find the optimal hyper-parameters
+𝜽
+∗
+\bm{\theta}^{*}
+that maximize this objective:
+𝜽
+∗
+=
+arg
+⁡
+max
+𝜽
+∈
+Θ
+⁡
+f
+⁡
+(
+𝜽
+)
+\bm{\theta}^{*}=\arg\max_{\bm{\theta}\in\Theta}f(\bm{\theta})
+. Since evaluating
+f
+⁡
+(
+𝜽
+)
+f(\bm{\theta})
+is computationally expensive, we employ Bayesian optimisation (BO)
+Snoek et al. (2012)
+to efficiently search the hyper-parameter space
+Θ
+\Theta
+. BO iteratively builds a probabilistic surrogate model of the objective function and uses an acquisition function to guide the selection of subsequent hyper-parameters to evaluate. We model
+f
+⁡
+(
+𝜽
+)
+f(\bm{\theta})
+using a Gaussian Process (GP) prior
+Rasmussen and Williams (2006)
+:
+f
+⁡
+(
+𝜽
+)
+∼
+𝒢
+​
+𝒫
+​
+(
+μ
+⁡
+(
+𝜽
+)
+,
+k
+⁡
+(
+𝜽
+,
+𝜽
+′
+)
+)
+,
+f(\bm{\theta})\sim\mathcal{GP}\bigl(\mu(\bm{\theta}),k(\bm{\theta},\bm{\theta}^{\prime})\bigr),
+where
+μ
+⁡
+(
+𝜽
+)
+\mu(\bm{\theta})
+is the mean function and
+k
+⁡
+(
+𝜽
+,
+𝜽
+′
+)
+k(\bm{\theta},\bm{\theta}^{\prime})
+is a kernel function, in our case the Mattern Kernel
+Rasmussen and Williams (2005)
+. Given
+n
+n
+observations of previous hyper-parameter evaluations and their corresponding cross-validation Macro-F1-scores,
+𝒟
+n
+=
+{
+(
+𝜽
+i
+,
+f
+⁡
+(
+𝜽
+i
+)
+)
+}
+i
+=
+1
+n
+\mathcal{D}_{n}=\{(\bm{\theta}_{i},f(\bm{\theta}_{i}))\}_{i=1}^{n}
+, the GP yields a posterior predictive distribution
+P
+⁡
+(
+f
+⁡
+(
+𝜽
+)
+|
+𝒟
+n
+)
+=
+𝒩
+⁡
+(
+μ
+n
+​
+(
+𝜽
+)
+,
+σ
+n
+2
+​
+(
+𝜽
+)
+)
+P(f(\bm{\theta})|\mathcal{D}_{n})=\mathcal{N}(\mu_{n}(\bm{\theta}),\sigma_{n}^{2}(\bm{\theta}))
+. Let
+f
+∗
+=
+max
+1
+≤
+i
+≤
+n
+⁡
+f
+⁡
+(
+𝜽
+i
+)
+f^{*}=\max_{1\leq i\leq n}f(\bm{\theta}_{i})
+be the current best observed cross-validation Macro-F1-score. We use the Expected Improvement (EI) acquisition function to select the next point:
+EI
+​
+(
+𝜽
+)
+=
+(
+μ
+n
+​
+(
+𝜽
+)
+−
+f
+∗
+)
+​
+Φ
+​
+(
+Z
+)
+⏟
+exploitation
++
+σ
+n
+​
+(
+𝜽
+)
+​
+ϕ
+​
+(
+Z
+)
+⏟
+exploration
+,
+where
+​
+Z
+=
+μ
+n
+​
+(
+𝜽
+)
+−
+f
+∗
+σ
+n
+​
+(
+𝜽
+)
++
+ϵ
+.
+\text{EI}(\bm{\theta})=\underbrace{(\mu_{n}(\bm{\theta})-f^{*})\,\Phi\!\left(Z\right)}_{\text{exploitation}}+\underbrace{\sigma_{n}(\bm{\theta})\,\phi\!\left(Z\right)}_{\text{exploration}},\quad\text{where }Z=\frac{\mu_{n}(\bm{\theta})-f^{*}}{\sigma_{n}(\bm{\theta})+\epsilon}.
+Here,
+μ
+n
+​
+(
+θ
+)
+\mu_{n}(\theta)
+is the predicted mean of
+f
+⁡
+(
+θ
+)
+f(\theta)
+based on the current observations
+𝒟
+n
+\mathcal{D}_{n}
+, while
+σ
+n
+​
+(
+θ
+)
+\sigma_{n}(\theta)
+is the predicted standard deviation, representing the uncertainty of that prediction.
+Φ
+\Phi
+and
+ϕ
+\phi
+denote the standard normal cumulative distribution function (CDF) and probability density function (PDF), respectively, and
+ϵ
+\epsilon
+is a small constant added for numerical stability. The Expected Improvement (EI) acquisition function balances exploitation—selecting points with high predicted performance—and exploration—selecting points with high uncertainty.
+The next hyper-parameter configuration to evaluate is chosen by maximising the acquisition function:
+𝜽
+n
++
+1
+=
+arg
+⁡
+max
+𝜽
+∈
+Θ
+​
+EI
+​
+(
+𝜽
+)
+.
+\bm{\theta}_{n+1}=\arg\max_{\bm{\theta}\in\Theta}\,\text{EI}(\bm{\theta}).
+This iterative BO procedure allows for efficient exploration of the complex interplay between projection dimensions and importance weights, guiding the search towards an optimal fusion strategy.
+4
+Experimental Setting
+In this Section, we detail the experimental setting: the datasets and the experimental setup are described in Section
+4.1
+and Section
+4.2
+, respectively.
+4.1
+Datasets
+Following similar evaluation strategies as
+Koloski et al. (2025)
+, we evaluate our proposed method on six distinct datasets across two classification tasks: sentiment analysis and news genre classification. The sentiment analysis datasets include the Amazon Reviews collection (specifically, Books, DVD, and Music subforums) and a hate speech detection dataset comprising social media posts
+Ranasinghe and Zampieri (2020)
+. The news genre datasets are MLDoc
+Schwenk and Li (2018)
+(four genres) and the more recent XGENRE
+Kuzman et al. (2022)
+(nine genres). Four datasets involve binary sentiment classification, while two address multi-class news categorisation. All datasets are in English. For consistency and reproducibility, all experiments utilize the original train-test splits accompanying each dataset. Table
+2
+provides detailed statistics for each dataset, including the number of train/test documents and average word counts.
+Table 2:
+Overview and statistics of the datasets used, similarly to
+Koloski et al. (2025)
+.
+Dataset
+Domain
+Classes
+Train Size
+Test Size
+Avg. Length (Words)
+Books
+Sentiment
+2
+2000
+2000
+155.80
+Dvd
+Sentiment
+2
+2000
+2000
+161.29
+Music
+Sentiment
+2
+2000
+2000
+130.12
+HateSpeech
+Ranasinghe and Zampieri (2020)
+Sentiment
+2
+13240
+860
+22.85
+MLDoc
+Schwenk and Li (2018)
+News
+4
+11000
+4000
+235.15
+XGENRE
+Kuzman et al. (2022)
+News
+9
+1650
+272
+1256.92
+4.2
+Experimental Setup
+We design comprehensive experiments to evaluate knowledge-enriched LLM representations and analyse the effectiveness of our low-dimensional fusion strategies.
+End-to-end Classification
+We compare high-dimensional LLM-only representations against knowledge-enriched versions (incorporating local, global, or combined modalities). An AutoML learner trains directly on these feature representations without preliminary dimensionality reduction. This experiment addresses the following Research Questions (RQs):
+•
+RQ1
+: Do LLM-based representations benefit from local and global knowledge enrichment?
+•
+RQ2
+: What is the relative contribution of local versus global knowledge when beneficial?
+Low-dimensional Learning
+We assess the efficacy of fusing learned low-dimensional, weighted, modality-specific representations before training. We benchmark this approach against direct training on the original high-dimensional concatenated representations. This experiment addresses the following RQs:
+•
+RQ3
+: Can fused, low-dimensional weighted embeddings match or exceed performance on high-dimensional features?
+•
+RQ4
+: Are joint importance and dimensionality of modality optimisation superior to sequential concatenation-then-projection approaches?
+Fusion Strategies
+We evaluate two low-dimensional fusion strategies:
+•
+FuDoBa
+(our default approach): It optimises modality importance weights (
+α
+m
+\alpha_{m}
+) and projection dimensions (
+l
+m
+l_{m}
+) for each modality, before concatenating and training on the combined dimension.
+•
+Concat-then-Project (FuDoBa-CP)
+: Follows the methodology in
+Koloski et al. (2025)
+, where high-dimensional modality representations are first concatenated, then projected to lower dimensions before training. We fix the projected dimension to
+32
+32
+.
+Training Protocol
+To ensure fair comparisons across the different settings, the same AutoML classifier (AutoGluon) is trained on each type of feature representation, regardless of their dimensionality or fusion strategy. For each configuration of FuDoBa, we perform 50 independent Bayesian optimisation trials and estimate the 5-fold cross-validation F1-score. Each trial is limited to a runtime of 5 minutes on a commodity machine. This design emphasises our commitment to a
+compute-efficient
+methodology for evaluating the effects of modality enrichment and fusion strategies in downstream training, as opposed to relying on costly re-training of LLM-based models
+Tennenholtz et al. (2024)
+.
+5
+Results
+We proceed with the presentation of our main results. Section
+5.1
+details the downstream performance results, while Section
+5.2
+examines the impact of dimensionality and modality importance and Section
+5.3
+analyses the coverage and the extracted graph. Additional in-depth results provided in the Appendix.
+5.1
+End-to-end classification
+Figure
+2
+and Table
+3
+present our end-to-end classification results. We compare baseline LLM embeddings against methods incorporating Global and/or Local KGs, evaluating both simple concatenation and our proposed FuDoBa approach.
+Figure 2:
+Average F1-score and ranking performance across datasets for AutoGluon-trained high-dimensional multi-modal representations versus the proposed FuDoBa method. The left panel shows that FuDoBa outperforms the strong LLM baseline (blue), ranking second to its high-dimensional variant. Representations in red incorporate local knowledge, a novel contribution of this work, while those in gray leverage global knowledge from WikiData as described in
+Koloski et al. (2025)
+.
+Method
+Modality Importance Weight
+Projection Dimension
+l
+l
+Training Dimension
+Macro Scores
+α
+L
+​
+L
+​
+M
+\alpha_{LLM}
+α
+K
+​
+G
+\alpha_{KG}
+α
+L
+​
+o
+​
+c
+​
+K
+​
+G
+\alpha_{LocKG}
+l
+L
+​
+L
+​
+M
+l_{LLM}
+l
+K
+​
+G
+l_{KG}
+l
+L
+​
+o
+​
+c
+​
+K
+​
+G
+l_{LocKG}
+l
+f
+​
+i
+​
+n
+​
+a
+​
+l
+l_{final}
+F1 (%)
+Prec. (%)
+Rec. (%)
+Books
+LLM
+✓
+\checkmark
+×
+\times
+×
+\times
+1536
+×
+\times
+×
+\times
+1536
+92.80
+92.82
+92.80
+LLM+LocKG
+✓
+\checkmark
+×
+\times
+✓
+\checkmark
+1536
+×
+\times
+512
+2048
+92.50
+92.51
+92.50
+LLM+KG
+✓
+\checkmark
+✓
+\checkmark
+×
+\times
+1536
+512
+×
+\times
+2048
+93.25
+93.26
+93.25
+LLM+KG+LocKG
+✓
+\checkmark
+✓
+\checkmark
+✓
+\checkmark
+1536
+512
+512
+2560
+92.85
+92.90
+92.85
+FuDoBa
+1.0
+0.8
+0.1
+64
+32
+16
+112
+93.40
+93.41
+93.40
+Dvd
+LLM
+✓
+\checkmark
+×
+\times
+×
+\times
+1536
+×
+\times
+×
+\times
+1536
+92.70
+92.71
+92.70
+LLM+LocKG
+✓
+\checkmark
+×
+\times
+✓
+\checkmark
+1536
+×
+\times
+512
+2048
+93.35
+93.35
+93.35
+LLM+KG
+✓
+\checkmark
+✓
+\checkmark
+×
+\times
+1536
+512
+×
+\times
+2048
+93.95
+93.95
+93.95
+LLM+KG+LocKG
+✓
+\checkmark
+✓
+\checkmark
+✓
+\checkmark
+1536
+512
+512
+2560
+93.25
+93.26
+93.25
+FuDoBa
+1.0
+0.1
+×
+\times
+32
+32
+×
+\times
+64
+93.90
+93.90
+93.90
+Hatespeech
+LLM
+✓
+\checkmark
+×
+\times
+×
+\times
+1536
+×
+\times
+×
+\times
+1536
+75.68
+77.61
+74.41
+LLM+LocKG
+✓
+\checkmark
+×
+\times
+✓
+\checkmark
+1536
+×
+\times
+512
+2048
+78.25
+77.83
+78.72
+LLM+KG
+✓
+\checkmark
+✓
+\checkmark
+×
+\times
+1536
+512
+×
+\times
+2048
+76.30
+78.27
+74.99
+LLM+KG+LocKG
+✓
+\checkmark
+✓
+\checkmark
+✓
+\checkmark
+1536
+512
+512
+2560
+77.43
+78.79
+76.41
+FuDoBa
+0.8
+0.2
+0.9
+64
+64
+16
+144
+74.61
+77.27
+73.06
+Mldoc
+LLM
+✓
+\checkmark
+×
+\times
+×
+\times
+1536
+×
+\times
+×
+\times
+1536
+96.74
+96.77
+96.74
+LLM+LocKG
+✓
+\checkmark
+×
+\times
+✓
+\checkmark
+1536
+×
+\times
+512
+2048
+96.79
+96.80
+96.79
+LLM+KG
+✓
+\checkmark
+✓
+\checkmark
+×
+\times
+1536
+512
+×
+\times
+2048
+96.49
+96.52
+96.48
+LLM+KG+LocKG
+✓
+\checkmark
+✓
+\checkmark
+✓
+\checkmark
+1536
+512
+512
+2560
+97.04
+97.05
+97.03
+FuDoBa
+1.0
+0.4
+0.70
+64
+16
+16
+96
+96.19
+96.21
+96.19
+Music
+LLM
+✓
+\checkmark
+×
+\times
+×
+\times
+1536
+×
+\times
+×
+\times
+1536
+92.90
+92.90
+92.90
+LLM+LocKG
+✓
+\checkmark
+×
+\times
+✓
+\checkmark
+1536
+×
+\times
+512
+2048
+92.55
+92.55
+92.55
+LLM+KG
+✓
+\checkmark
+✓
+\checkmark
+×
+\times
+1536
+512
+×
+\times
+2048
+92.25
+92.26
+92.25
+LLM+KG+LocKG
+✓
+\checkmark
+✓
+\checkmark
+✓
+\checkmark
+1536
+512
+512
+2560
+92.60
+92.60
+92.60
+FuDoBa
+0.1
+0.3
+0.5
+64
+32
+32
+128
+92.70
+92.70
+92.70
+Xgenre
+LLM
+✓
+\checkmark
+×
+\times
+×
+\times
+1536
+×
+\times
+×
+\times
+1536
+44.66
+51.43
+57.90
+LLM+KG+LocKG
+✓
+\checkmark
+✓
+\checkmark
+✓
+\checkmark
+1536
+512
+512
+2560
+50.61
+51.78
+63.05
+LLM+LocKG
+✓
+\checkmark
+×
+\times
+✓
+\checkmark
+1536
+×
+\times
+512
+2048
+46.82
+47.28
+60.53
+LLM+KG
+✓
+\checkmark
+✓
+\checkmark
+×
+\times
+1536
+512
+×
+\times
+2048
+41.40
+43.73
+54.40
+FuDoBa
+0.8
+0.8
+0.8
+64
+16
+32
+112
+50.25
+57.35
+63.36
+Table 3:
+Main classification results comparing the LLM baseline, simple KG/LocKG concatenation methods, and the proposed FuDoBa technique which optimises modality integration and reduces feature dimensionality. Here, LLM denotes embeddings obtained by
+gpt-4o-mini
+.
+✓
+\checkmark
+denotes inclusion without any change, and
+×
+\times
+represents exclusion or not-applicable.
+Bolded
+entries represent best scores per metric.
+We find that on average, LLM-enriched representations with both local and global knowledge, boost performance compared to LLM-only representations. Furthermore, we find that on average, the best performing representation is the one utilising knowledge from both, local and global setting. We find that the enriched LLM representation (LLM+KG+LocKG) high-dimensional, outperforms FuDoBa. To assess if the differences are significant, we perform a Friedman test with Nemenyi post-hoc correction as proposed by
+Demšar (2006)
+. We find that our method performs on-par or better compared to the LLM-based representations, with both representations being in the same ranking space with no statistically significant difference between the two. Similarly, we find no statistifically significant difference between LLM-only and FuDoBa representations. While simple high-dimensional concatenation generated the best performing score, the resulting space is high-dimensional and often infeasible to store.
+Compared to that FuDoBa, operates in low-dimensional space, offering better footprint.
+Finally, Figure
+3
+plots the F1 performance difference (
+FuDoBa
+- LLM) against the relative dimensionality (
+Δ
+​
+log
+2
+\Delta\log_{2}
+Dimension: LLM / BF). From the visualisation we see that FuDoBa representations either score within the 1% region of equivalence or tend to score This visualisation confirms that
+FuDoBa
+achieves practically equivalent (within 1% F1) or significantly better performance (Xgenre) compared to the LLM while operating in a substantially lower-dimensional space.
+Figure 3:
+F1-score difference (LLM – FuDoBa) versus the difference in log
+2
+of the final dimensionality. The blue shaded area indicates the region of practical equivalence, where F1-scores differ by less than one percentage point. Despite operating in lower-dimensional spaces, FuDoBa achieves results comparable or superior to those obtained with high-dimensional representations.
+5.2
+Analysis of the Impact of Modality Importance and Dimensionality
+Next, we examine how the performance of our low-dimensional, FuDoBa representations compares to the high-dimensional concatenated representation Figure
+4
+illustrates the relationship between F1-score and final feature dimension (
+l
+​
+o
+​
+g
+2
+log_{2}
+) scale) across datasets. While regression suggests a general trend of higher dimensions correlating with higher F1-scores,
+FuDoBa
+consistently operates at very low dimensions (approx.
+2
+6
+2^{6}
+to
+2
+7
+2^{7}
+, see Table
+3
+). Despite this low dimensionality,
+FuDoBa
+frequently achieves a highly competitive performance, often exceeding the general dimensionality-performance trend and sometimes matching or surpassing higher-dimensional approaches (
+>
+2
+10
+>2^{10}
+) (as shown in Figure
+2
+)
+Figure 4:
+The number of dimensions impact on the performance. We see a negative trend across datasets, with enriched representation methods performing on-par or better than fully fitted models, and out-performing the LLM only baselines. FuDoBa performs optimal if simultaneously considering F1-score and embedding dimension (computational complexity).
+Given our interpretable modality weighting schema defined by parameters
+Θ
+\Theta
+, we next analyse the selected modality importances
+α
+\alpha
+and representational dimensions
+l
+l
+across the datasets.
+In Figure
+5
+, the left subplot shows that modality importance,
+α
+\alpha
+, varies notably across the six benchmark datasets. On average, LLM embeddings have the highest importance (
+α
+¯
+​
+LLM
+=
+0.78
+\overline{\alpha}{\text{LLM}}=0.78
+), compared to Local KGs (
+α
+¯
+​
+LocKG
+=
+0.50
+\overline{\alpha}{\text{LocKG}}=0.50
+) and Global KGs (
+α
+¯
+KG
+=
+0.43
+\overline{\alpha}_{\text{KG}}=0.43
+), as expected. This may partly result from LLMs being trained on vast datasets that may overlap with the evaluation datasets. However, paired statistical tests (
+N
+=
+6
+N=6
+) reveal no significant differences in mean importance between the modalities (
+p
+>
+0.05
+p>0.05
+for all pairs), suggesting that modality utility is highly context-dependent and influenced by task requirements and limited sample sizes. This underscores the need for adaptive, modality-specific integration strategies. In the appendix
+11
+, we present the results of the FuDoBa search, for each dataset.
+Figure 5:
+Modality importance weight
+α
+\alpha
+and projection dimension
+l
+l
+. It can be observed that LLM-based representation dominates – it is most commonly selected by the Bayesian optimization as one of the key input components.
+Regarding representational dimensionality (
+l
+l
+, right subplot of Figure
+5
+), our analysis indicates distinct modality profiles. LLM embeddings consistently require higher dimensionality (
+l
+¯
+​
+LLM
+=
+57.33
+\overline{l}{\text{LLM}}=57.33
+), once again, expectedly since they stem from
+1536
+1536
+dimensional dense space, significantly exceeding both Global KG embeddings (
+l
+¯
+​
+KG
+=
+32.00
+\overline{l}{\text{KG}}=32.00
+,
+p
+<
+0.05
+p<0.05
+) and Local KG embeddings (
+l
+¯
+​
+LocKG
+=
+21.33
+\overline{l}{\text{LocKG}}=21.33
+,
+p
+<
+0.01
+p<0.01
+). This likely reflects the need to capture critical variance from the dense, high-dimensional original LLM representations (1536 dimensions). Furthermore, Global KG embeddings require notably lower dimensionality for news classification tasks (
+l
+​
+KG
+=
+16
+l{\text{KG}}=16
+) compared to sentiment analysis tasks (
+l
+¯
+KG
+=
+40.0
+\overline{l}_{\text{KG}}=40.0
+), while Local KG dimensionality varies but does not significantly differ from Global KG on average (
+p
+>
+0.15
+p>0.15
+). The total dimensionality of the fused feature vectors generated by
+FuDoBa
+also varies, ranging from 80 (Dvd) to 144 (Hatespeech). News classification tasks yield slightly lower average total dimensionality (
+l
+¯
+Total
+=
+104
+\overline{l}_{\text{Total}}=104
+) than sentiment analysis tasks (
+l
+¯
+Total
+=
+116
+\overline{l}_{\text{Total}}=116
+), mainly due to lower
+l
+KG
+l_{\text{KG}}
+. Despite these variations impacting computational cost, the overall dimensionality of the fused representations remains manageable compared to original LLM embedding dimensions, especially when compute-efficient training and storage is a requirement.
+5.3
+Analysis of the Mapped Knowledge
+A comparative analysis of the global KG approach, inspired by the previous work
+Koloski et al. (2025)
+, and our local knowledge graph extraction method (LocKG), summarised in Table
+4
+, reveals key differences in coverage. The KG approach consistently identifies more linked entries per document, particularly in longer datasets such as XGENRE and MLDoc. In contrast, LocKG reduces the proportion of documents with no extracted information—for example, in the Hate Speech dataset, this percentage drops from 22% (KG) to 17% (LocKG). Additionally, LocKG yields an average of 4.99 entities per document in Hate Speech, compared to just 2.83 from the KG method.
+These results highlight LocKG’s robustness in extracting meaningful information from short, unstructured texts and support the premise that local knowledge graphs offer unique advantages in handling diverse, challenging data sources. From an embedding modeling perspective, we attribute part of this improvement to the aggregation mechanism used—specifically, the averaging approach shown in Figure
+1
+. While aggregating across a larger number of entities may introduce noise, the lower noise levels in LocKG suggest that the resulting representations are more specific. That said, global KGs still capture richer entity interactions and benefit from larger, more curated training corpora. Therefore, standalone global KG embeddings are expected to remain better performing.
+Table 4:
+A comparison of the extracted entities per article between the Global and Local knowledge graphs reveals that the locally constructed KG provides better coverage—fewer articles lack mapped entities. Expectedly, the local KG maps a lower number of entities per document compared to the global graph.
+Dataset
+Docs w/o (%)
+Mean ± Std
+Max
+Median
+KG
+LocKG
+KG
+LocKG
+KG
+LocKG
+KG
+LocKG
+Music
+2%
+0%
+18.03 ± 19.27
+15.59 ± 7.89
+189
+57
+12
+14
+DVD
+3%
+0%
+21.34 ± 25.08
+17.49 ± 9.13
+272
+107
+13
+16
+Books
+3%
+0%
+19.00 ± 22.41
+16.79 ± 8.40
+203
+78
+12
+15
+Hate speech
+22%
+17%
+2.83 ± 2.63
+4.99 ± 3.59
+22
+35
+2
+5
+XGENRE
+0%
+0%
+61.90 ± 48.08
+28.34 ± 11.65
+281
+116
+49
+27
+MLDoc
+0%
+0%
+48.04 ± 37.01
+24.68 ± 11.15
+440
+126
+37
+23
+6
+Discussion
+While LLM-based representations alone are powerful, our results (Section
+5
+) demonstrate that enriching them with global and local knowledge improves average downstream performance (
+A1
+). Furthermore, we find that low-dimensional projection of multimodal inputs can yield competitive or superior scores while significantly reducing the memory footprint (
+A3
+). This suggests that for use cases prioritising both performance and storage efficiency, simultaneous optimisation of per-modality dimensionality and importance can offer a practical solution for conserving resources while improving downstream results. We want to note that 50 runs and the 3 projection dimensions (16, 32, 64), might represent a particularly restrictive budget and we expect that increasing the space of dimensions and the run count would generate more promising results.
+We also want to emphasise that our proposed fusing methodology is general and can work for any set of modalities
+ℳ
+\mathcal{M}
+. For example for image and text fusion, frozen, modality-specific encoders can be used to fuse the modalities.
+From a resource perspective, this approach presents notable advantages: the optimisation approach operates on low-dimensional representations and can be performed on commodity hardware, alleviating the need for costly LLM-based fine-tuning. We also hypothesise that per-modality projection induces a form of dataset-specific embedding alignment, which may enhance AutoML model generalisation. This aspect is particularly relevant in resource-constrained academic environments, where efficient optimisation procedures can yield performance comparable to, or exceeding, that of LLM-only representations.
+Our findings further indicate that no single configuration is universally optimal, even within similar domains. Optimal projection dimensions
+l
+l
+and modality importance weights
+α
+\alpha
+vary depending on the dataset and the fixed search budget (
+A2
+), highlighting the need for optimisation-based approaches to identify budget-constrained representations. In terms of cost-effectiveness, our method could be adapted to use pre-trained open-source relation extractors instead of LLM-based ones, with minimal impact on downstream performance for certain tasks (see Appendix), thereby further reducing computational demands. Our per-modality projection and weighting method (FuDoBa) also outperforms the concat-then-project approach (FuDoBa-CP). We hypothesise that AutoGluon’s NNs may better adapt to the manifold of concatenated low-dimensional representations, capturing both initial heterogeneity and relative importance. In contrast, the concat-then-project variant produces an orthogonal, linear SVD space in which equally weighted modalities may be over-represented in the projected fused representation, with AutoGluon models potentially amplifying this imbalance during training (
+A4
+).
+While modality weighting can also be approached using more sophisticated NNs (e.g. via routing) or genetic algorithms (GAs), these methods often require more data and compute resources such as GPU or memory. For example, GA-based searches—such as optimising modality weights with linear classifiers
+Škrlj et al. (2021)
+—typically involve training numerous candidates over several generations, which significantly increases memory usage. We suggest that, given sufficient computational resources, our optimisation framework could potentially be adapted to parallel search strategies like GAs, though this remains to be validated.
+A question might arise whether it’s better to train classifier models on LLM embeddings or instead use direct LLM prompting. The embedding-based approach offers significant benefits: generating embeddings is much faster and cheaper—often 10 to 100 times less costly (see Appendix
+11
+), where we show that using text-embedding-2-small for an average 8 000-character document is up to 575 times less expensive than prompting a GPT-4 Turbo model. This also allows using less resource-intensive local models for the final classification step, as we show in this work. Furthermore, these embeddings can be reused for many different tasks later on, like unsupervised learning (i.e. clustering) or checking for shifts in the data overtime (i.e. diachronic analysis). This method can also reduce the risk of leaking sensitive data compared to prompting methods that need both input and output examples, which could reveal business secrets. However, there are drawbacks, notably the risk of data overlap where the data used to train the classifier might have already been seen by the LLM during its pre-training. On the other hand, direct LLM prompting is better at quickly adjusting to changes in the data, may need fewer examples to get started, and might perform better for certain tasks. There’s also potential for synergy, where LLMs help create approximate ’soft’ labels to make training data for embedding models. Despite these points, the need for powerful hardware to run large LLMs for prompting is still a major practical challenge. This highlights the value of simpler, efficient local models, which often work well with the embedding approach.
+Finally, we observe that different relation extractors produce different graphs (Tables
+6
+and
+7
+), but achieve similar average scores (see Section
+5
+). We believe this results from differences in underlying training data and architectures, which nonetheless capture domain-specific knowledge. When trained with link-completion methods such as rotatE
+Sun et al. (2019)
+, it seems that the resulting representations appear to normalize across extractors. While this remains a hypothesis, future analysis could explore how outputs from different extractors might be effectively combined.
+7
+Conclusions and Further Work
+In this work, we introduce FuDoBa, a framework designed to overcome the challenges of high dimensionality and costly adaptation in Large Language Model (LLM) embeddings. FuDoBa employs Bayesian optimisation to fuse core LLM representations with structured knowledge extracted from both global and local Knowledge Graphs. By adaptively learning optimal low-dimensional projections and interpretable importance weights for each modality, the framework balances information preservation with compactness, resulting in enhanced, task-specific representations.
+Our experiments show that FuDoBa achieves classification performance comparable to or better than high-dimensional baselines (including LLM-only and simple concatenation approaches) while significantly reducing feature dimensionality (often using only a fraction of the original space). This demonstrates FuDoBa as a practical, compute-efficient alternative to resource-intensive LLM fine-tuning, particularly when domain adaptation is required and computing resources are limited. Moreover, our results indicate that in high-dimensional spaces, our approach can outperform LLM-only models, highlighting the benefit of incorporating external knowledge for improved performance.
+For future work, we plan to apply and analyse FuDoBa on multiple domains and novel datasets. We will also compare our embedding‑based approach against direct LLM prompting to assess downstream performance differences. Because FuDoBa scales naturally to any number of modalities, we intend to investigate the integration of knowledge graphs with image data. Finally, having evaluated only English datasets to date, we will extend our experiments to additional languages.
+Acknowledgments
+We acknowledge the financial support of the Slovenian Research and Innovation Agency (ARIS) through grants GC-0001 (Artificial Intelligence for Science), GC-0002 (Large Language Models for Digital Humanities), L2-50070 (Embeddings-based Techniques for Media Monitoring Applications), J5-3102 (Hate speech in contemporary conceptualizations of nationalism, racism, gender and migration) and the core research programme P2-0103 (Knowledge Technologies). The work of B.K. was supported by the Young Researcher Grant PR-12394. The work of R.N. was funded from CREATIVE project (CRoss-modal understanding and gEnerATIon of Visual and tExtual content) funded by the MUR Progetti di Ricerca di Rilevante Interesse Nazionale programme (PRIN 2020). We thank Jaya Caporusso for her feedback on an earlier draft of this manuscript.
+Availability
+The complete code, including the pre-calculated embeddings, intermediate results, and scripts to reproduce the plots, will be made available upon acceptance.
+References
+Muennighoff et al. (2023)
+Muennighoff, N.,
+Tazi, N.,
+Magne, L.,
+Reimers, N.:
+MTEB: Massive text embedding benchmark.
+In: Vlachos, A.,
+Augenstein, I. (eds.)
+Proceedings of the 17th Conference of the European Chapter of the Association for Computational Linguistics,
+pp. 2014–2037.
+Association for Computational Linguistics,
+Dubrovnik, Croatia
+(2023).
+https://doi.org/10.18653/v1/2023.eacl-main.148
+.
+https://aclanthology.org/2023.eacl-main.148
+Devlin et al. (2019)
+Devlin, J.,
+Chang, M.-W.,
+Lee, K.,
+Toutanova, K.:
+BERT: Pre-training of deep bidirectional transformers for language understanding.
+In: Burstein, J.,
+Doran, C.,
+Solorio, T. (eds.)
+Proceedings of the 2019 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies, Volume 1 (Long and Short Papers),
+pp. 4171–4186.
+Association for Computational Linguistics,
+Minneapolis, Minnesota
+(2019).
+https://doi.org/10.18653/v1/N19-1423
+.
+https://aclanthology.org/N19-1423
+Grattafiori and et al. (2024)
+Grattafiori, A.,
+al.:
+The Llama 3 Herd of Models
+(2024)
+Reimers and Gurevych (2019)
+Reimers, N.,
+Gurevych, I.:
+Sentence-BERT: Sentence embeddings using Siamese BERT-networks.
+In: Inui, K.,
+Jiang, J.,
+Ng, V.,
+Wan, X. (eds.)
+Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing and the 9th International Joint Conference on Natural Language Processing (EMNLP-IJCNLP),
+pp. 3982–3992.
+Association for Computational Linguistics,
+Hong Kong, China
+(2019).
+https://doi.org/10.18653/v1/D19-1410
+.
+https://aclanthology.org/D19-1410
+BehnamGhader et al. (2024)
+BehnamGhader, P.,
+Adlakha, V.,
+Mosbach, M.,
+Bahdanau, D.,
+Chapados, N.,
+Reddy, S.:
+LLM2Vec: Large language models are secretly powerful text encoders.
+In: First Conference on Language Modeling
+(2024)
+Chen et al. (2022)
+Chen, Q.,
+Wang, W.,
+Huang, K.,
+Coenen, F.:
+Zero-shot text classification via knowledge graph embedding for social media data.
+IEEE Internet of Things Journal
+9
+(12),
+9205–9213
+(2022)
+https://doi.org/10.1109/JIOT.2021.3093065
+Koloski et al. (2022)
+Koloski, B.,
+Stepišnik Perdih, T.,
+Robnik-Šikonja, M.,
+Pollak, S.,
+Škrlj, B.:
+Knowledge graph informed fake news classification via heterogeneous representation ensembles.
+Neurocomputing
+496
+,
+208–226
+(2022)
+https://doi.org/10.1016/j.neucom.2022.01.096
+Škrlj et al. (2021)
+Škrlj, B.,
+Martinc, M.,
+Lavrač, N.,
+Pollak, S.:
+autobot: evolving neuro-symbolic representations for explainable low resource text classification.
+Machine Learning
+(2021)
+https://doi.org/10.1007/s10994-021-05968-x
+Koloski et al. (2025)
+Koloski, B.,
+Pollak, S.,
+Navigli, R.,
+Škrlj, B.:
+Automl-guided fusion of entity and llm-based representations fordocument classification.
+In: Discovery Science: 27th International Conference, DS 2024, Pisa, Italy, October 14–16, 2024, Proceedings, Part I,
+pp. 101–115.
+Springer,
+Berlin, Heidelberg
+(2025).
+https://doi.org/10.1007/978-3-031-78977-9_7
+Navigli and Ponzetto (2010)
+Navigli, R.,
+Ponzetto, S.P.:
+BabelNet: Building a very large multilingual semantic network.
+In: Hajič, J.,
+Carberry, S.,
+Clark, S.,
+Nivre, J. (eds.)
+Proceedings of the 48th Annual Meeting of the Association for Computational Linguistics,
+pp. 216–225.
+Association for Computational Linguistics,
+Uppsala, Sweden
+(2010).
+https://aclanthology.org/P10-1023
+Wang et al. (2021)
+Wang, X.,
+Gao, T.,
+Zhu, Z.,
+Zhang, Z.,
+Liu, Z.,
+Li, J.,
+Tang, J.:
+KEPLER: A unified model for knowledge embedding and pre-trained language representation.
+Transactions of the Association for Computational Linguistics
+9
+,
+176–194
+(2021)
+https://doi.org/10.1162/tacl_a_00360
+Moro et al. (2014)
+Moro, A.,
+Raganato, A.,
+Navigli, R.:
+Entity linking meets word sense disambiguation: a unified approach.
+Transactions of the Association for Computational Linguistics
+2
+,
+231–244
+(2014)
+https://doi.org/10.1162/tacl_a_00179
+Erickson et al. (2020)
+Erickson, N.,
+Mueller, J.,
+Shirkov, A.,
+Zhang, H.,
+Larroy, P.,
+Li, M.,
+Smola, A.:
+Autogluon-tabular: Robust and accurate automl for structured data.
+ArXiv preprint
+abs/2003.06505
+(2020)
+Le and Mikolov (2014)
+Le, Q.V.,
+Mikolov, T.:
+Distributed representations of sentences and documents.
+In: Proceedings of the 31th International Conference on Machine Learning, ICML 2014, Beijing, China, 21-26 June 2014.
+JMLR Workshop and Conference Proceedings,
+vol. 32,
+pp. 1188–1196.
+JMLR.org, ???
+(2014).
+http://proceedings.mlr.press/v32/le14.html
+Gao et al. (2021)
+Gao, T.,
+Yao, X.,
+Chen, D.:
+SimCSE: Simple contrastive learning of sentence embeddings.
+In: Moens, M.-F.,
+Huang, X.,
+Specia, L.,
+Yih, S.W.-t. (eds.)
+Proceedings of the 2021 Conference on Empirical Methods in Natural Language Processing,
+pp. 6894–6910.
+Association for Computational Linguistics,
+Online and Punta Cana, Dominican Republic
+(2021).
+https://doi.org/10.18653/v1/2021.emnlp-main.552
+.
+https://aclanthology.org/2021.emnlp-main.552
+Li and Li (2024)
+Li, X.,
+Li, J.:
+AoE: Angle-optimized embeddings for semantic textual similarity.
+In: Ku, L.-W.,
+Martins, A.,
+Srikumar, V. (eds.)
+Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers),
+pp. 1825–1839.
+Association for Computational Linguistics,
+Bangkok, Thailand
+(2024).
+https://doi.org/10.18653/v1/2024.acl-long.101
+.
+https://aclanthology.org/2024.acl-long.101
+Aghajanyan et al. (2024)
+Aghajanyan, A.,
+BehnamGhader, P.,
+Lewis, M.,
+Yih, W.-t.,
+Zettlemoyer, L.:
+LLM2Vec: Simple unsupervised approach to transform decoder-only LLMs into strong text encoders.
+ArXiv preprint
+abs/2405.13413
+(2024)
+Khosla et al. (2025)
+Khosla, S.,
+Tiwari, A.,
+Kafle, K.,
+Jenni, S.,
+Zhao, H.,
+Collomosse, J.,
+Shi, J.:
+MAGNET: Augmenting generative decoders with representation learning and infilling capabilities.
+ArXiv preprint
+abs/2501.08648
+(2025)
+Wang et al. (2024)
+Wang, L.,
+Yang, N.,
+Huang, X.,
+Yang, L.,
+Majumder, R.,
+Wei, F.:
+Improving text embeddings with large language models.
+In: Ku, L.-W.,
+Martins, A.,
+Srikumar, V. (eds.)
+Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers),
+pp. 11897–11916.
+Association for Computational Linguistics,
+Bangkok, Thailand
+(2024).
+https://doi.org/10.18653/v1/2024.acl-long.642
+.
+https://aclanthology.org/2024.acl-long.642/
+Cocchi et al. (2025)
+Cocchi, F.,
+Moratelli, N.,
+Cornia, M.,
+Baraldi, L.,
+Cucchiara, R.:
+Augmenting Multimodal LLMs with Self-Reflective Tokens for Knowledge-based Visual Question Answering
+(2025)
+Škrlj et al. (2021)
+Škrlj, B.,
+Martinc, M.,
+Kralj, J.,
+Lavrač, N.,
+Pollak, S.:
+tax2vec: Constructing interpretable features from taxonomies for short text classification.
+Computer Speech & Language
+65
+,
+101104
+(2021)
+https://doi.org/10.1016/j.csl.2020.101104
+Ostendorff et al. (2019)
+Ostendorff, M.,
+Bourgonje, P.,
+Berger, M.,
+Moreno-Schneider, J.,
+Rehm, G.,
+Gipp, B.:
+Enriching bert with knowledge graph embeddings for document classification.
+ArXiv preprint
+abs/1909.08402
+(2019)
+Sarmah et al. (2024)
+Sarmah, B.,
+Mehta, D.,
+Hall, B.,
+Rao, R.,
+Patel, S.,
+Pasquali, S.:
+Hybridrag: Integrating knowledge graphs and vector retrieval augmented generation for efficient information extraction.
+In: Proceedings of the 5th ACM International Conference on AI in Finance.
+ICAIF ’24,
+pp. 608–616.
+Association for Computing Machinery,
+New York, NY, USA
+(2024).
+https://doi.org/10.1145/3677052.3698671
+.
+https://doi.org/10.1145/3677052.3698671
+Fan et al. (2019)
+Fan, A.,
+Gardent, C.,
+Braud, C.,
+Bordes, A.:
+Using local knowledge graph construction to scale Seq2Seq models to multi-document inputs.
+In: Inui, K.,
+Jiang, J.,
+Ng, V.,
+Wan, X. (eds.)
+Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing and the 9th International Joint Conference on Natural Language Processing (EMNLP-IJCNLP),
+pp. 4186–4196.
+Association for Computational Linguistics,
+Hong Kong, China
+(2019).
+https://doi.org/10.18653/v1/D19-1428
+.
+https://aclanthology.org/D19-1428
+Aggarwal et al. (2001)
+Aggarwal, C.C.,
+Hinneburg, A.,
+Keim, D.A.:
+On the surprising behavior of distance metrics in high dimensional spaces.
+In: Proceedings of the 8th International Conference on Database Theory.
+ICDT ’01,
+pp. 420–434.
+Springer,
+Berlin, Heidelberg
+(2001)
+Škrlj and Petković (2021)
+Škrlj, B.,
+Petković, M.:
+Compressibility of distributed document representations.
+In: 2021 IEEE International Conference on Data Mining (ICDM),
+pp. 1330–1335
+(2021).
+https://doi.org/10.1109/ICDM51629.2021.00166
+Koduri (2012)
+Koduri, S.:
+Multisensor data fusion with singular value decomposition.
+In: 2012 UKSim 14th International Conference on Computer Modelling and Simulation,
+pp. 422–426
+(2012).
+https://doi.org/10.1109/UKSim.2012.65
+Le et al. (2020)
+Le, T.T.,
+Fu, W.,
+Moore, J.H.:
+Scaling tree-based automated machine learning to biomedical big data with a feature set selector.
+Bioinformatics
+36
+(1),
+250–256
+(2020)
+Lahat et al. (2015)
+Lahat, D.,
+Adali, T.,
+Jutten, C.:
+Multimodal data fusion: an overview of methods, challenges, and prospects.
+Proceedings of the IEEE
+103
+(9),
+1449–1477
+(2015)
+Jiao et al. (2024)
+Jiao, T.,
+Guo, C.,
+Feng, X.,
+Chen, Y.,
+Song, J.:
+A comprehensive survey on deep learning multi-modal fusion: Methods, technologies and applications.
+Computers, Materials and Continua
+80
+(1),
+1–35
+(2024)
+https://doi.org/10.32604/cmc.2024.053204
+Speer et al. (2017)
+Speer, R.,
+Chin, J.,
+Havasi, C.:
+Conceptnet 5.5: An open multilingual graph of general knowledge.
+In: Singh, S.P.,
+Markovitch, S. (eds.)
+Proceedings of the Thirty-First AAAI Conference on Artificial Intelligence, February 4-9, 2017, San Francisco, California, USA,
+pp. 4444–4451.
+AAAI Press, ???
+(2017).
+http://aaai.org/ocs/index.php/AAAI/AAAI17/paper/view/14972
+Sun et al. (2019)
+Sun, Z.,
+Deng, Z.,
+Nie, J.,
+Tang, J.:
+Rotate: Knowledge graph embedding by relational rotation in complex space.
+In: 7th International Conference on Learning Representations, ICLR 2019, New Orleans, LA, USA, May 6-9, 2019.
+OpenReview.net, ???
+(2019).
+https://openreview.net/forum?id=HkgEQnRqYQ
+Klema and Laub (1980)
+Klema, V.,
+Laub, A.:
+The singular value decomposition: Its computation and some applications.
+IEEE Transactions on Automatic Control
+25
+(2),
+164–176
+(1980)
+https://doi.org/10.1109/TAC.1980.1102314
+Snoek et al. (2012)
+Snoek, J.,
+Larochelle, H.,
+Adams, R.P.:
+Practical bayesian optimization of machine learning algorithms.
+In: Bartlett, P.L.,
+Pereira, F.C.N.,
+Burges, C.J.C.,
+Bottou, L.,
+Weinberger, K.Q. (eds.)
+Advances in Neural Information Processing Systems 25: 26th Annual Conference on Neural Information Processing Systems 2012. Proceedings of a Meeting Held December 3-6, 2012, Lake Tahoe, Nevada, United States,
+pp. 2960–2968
+(2012).
+https://proceedings.neurips.cc/paper/2012/hash/05311655a15b75fab86956663e1819cd-Abstract.html
+Rasmussen and Williams (2006)
+Rasmussen, C.E.,
+Williams, C.K.I.:
+Gaussian Processes for Machine Learning.
+The MIT Press, ???
+(2006)
+Rasmussen and Williams (2005)
+Rasmussen, C.E.,
+Williams, C.K.I.:
+Gaussian Processes for Machine Learning.
+The MIT Press, ???
+(2005).
+https://doi.org/10.7551/mitpress/3206.001.0001
+.
+https://doi.org/10.7551/mitpress/3206.001.0001
+Ranasinghe and Zampieri (2020)
+Ranasinghe, T.,
+Zampieri, M.:
+Multilingual offensive language identification with cross-lingual embeddings.
+In: Webber, B.,
+Cohn, T.,
+He, Y.,
+Liu, Y. (eds.)
+Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing (EMNLP),
+pp. 5838–5844.
+Association for Computational Linguistics,
+Online
+(2020).
+https://doi.org/10.18653/v1/2020.emnlp-main.470
+.
+https://aclanthology.org/2020.emnlp-main.470
+Schwenk and Li (2018)
+Schwenk, H.,
+Li, X.:
+A corpus for multilingual document classification in eight languages.
+In: Calzolari, N.,
+Choukri, K.,
+Cieri, C.,
+Declerck, T.,
+Goggi, S.,
+Hasida, K.,
+Isahara, H.,
+Maegaard, B.,
+Mariani, J.,
+Mazo, H.,
+Moreno, A.,
+Odijk, J.,
+Piperidis, S.,
+Tokunaga, T. (eds.)
+Proceedings of the Eleventh International Conference on Language Resources and Evaluation (LREC 2018).
+European Language Resources Association (ELRA),
+Miyazaki, Japan
+(2018).
+https://aclanthology.org/L18-1560
+Kuzman et al. (2022)
+Kuzman, T.,
+Rupnik, P.,
+Ljubešić, N.:
+The GINCO training dataset for web genre identification of documents out in the wild.
+In: Calzolari, N.,
+Béchet, F.,
+Blache, P.,
+Choukri, K.,
+Cieri, C.,
+Declerck, T.,
+Goggi, S.,
+Isahara, H.,
+Maegaard, B.,
+Mariani, J.,
+Mazo, H.,
+Odijk, J.,
+Piperidis, S. (eds.)
+Proceedings of the Thirteenth Language Resources and Evaluation Conference,
+pp. 1584–1594.
+European Language Resources Association,
+Marseille, France
+(2022).
+https://aclanthology.org/2022.lrec-1.170
+Tennenholtz et al. (2024)
+Tennenholtz, G.,
+Chow, Y.,
+Hsu, C.-W.,
+Shani, L.,
+Liang, Y.,
+Boutilier, C.:
+Embedding-aligned language models.
+In: Advances in Neural Information Processing Systems 37 (NeurIPS 2024)
+(2024)
+Demšar (2006)
+Demšar, J.:
+Statistical comparisons of classifiers over multiple data sets.
+Journal of Machine learning research
+7
+(Jan),
+1–30
+(2006)
+Huguet Cabot and Navigli (2021)
+Huguet Cabot, P.-L.,
+Navigli, R.:
+REBEL: Relation extraction by end-to-end language generation.
+In: Moens, M.-F.,
+Huang, X.,
+Specia, L.,
+Yih, S.W.-t. (eds.)
+Findings of the Association for Computational Linguistics: EMNLP 2021,
+pp. 2370–2381.
+Association for Computational Linguistics,
+Punta Cana, Dominican Republic
+(2021).
+https://doi.org/10.18653/v1/2021.findings-emnlp.204
+.
+https://aclanthology.org/2021.findings-emnlp.204
+Barba et al. (2024)
+Barba, E.,
+Orlando, R.,
+Cabot, P.-L.H.,
+Navigli, R.:
+ReLiK: Retrieve, Read and LinK: Fast and Accurate Entity Linking and Relation Extraction on an Academic Budget
+(2024).
+https://openreview.net/forum?id=b0IRscfEOb
+8
+Limitations
+Despite these promising results, FuDoBa has several limitations. Its performance relative to simpler baselines varies across datasets; for instance, in the Hate Speech dataset, a high-dimensional concatenation method outperformed FuDoBa, indicating potential sensitivity to factors such as text noise and domain variability. Additionally, the quality of the fused knowledge—particularly from the Local Knowledge Graph—depends heavily on the accuracy of the underlying relation extraction models, meaning that extraction errors can degrade the final representation. Our AutoML setup also relies on relatively short optimization runs (approximately 5 minutes), which may limit the effectiveness of the search. Finally, although FuDoBa reduces downstream training time through dimensionality reduction, the Bayesian optimization phase introduces additional computational overhead. While its sequential nature is well-suited for low-memory environments, it may be suboptimal on high-resource systems where parallel search strategies would be more efficient.
+9
+Implementation Details
+Software Details
+We implemented our code using Python 3.11, organising our project with the UV package organiser. For KG embedding, we leveraged the PyKeen library configured with 512-dimensional embeddings, 1000 training epochs, and a batch size of 8192. For experimental and Bayesian hyperparameter search, we employed the Bayesian search functionality from Weights & Biases (wandb), limiting the search to 50 runs. Additionally, we used AutoGluon 1.2 with the
+good_quality
+preset and parallel fitting. The AutoGluon settings were as follows:
+•
+fit_strategy = ’parallel’
+•
+num_bag_folds = 5
+•
+num_bag_sets = 1
+•
+time_limit = 300 seconds
+Hardware
+We evaluated all of our experiments on a standard, commodity PC.
+⬇
+###############
+CPU
+##############
+Architecture
+:
+x86_64
+CPU
+op
+-
+mode
+(
+s
+):
+32-
+bit
+,
+64-
+bit
+Address
+sizes
+:
+39
+bits
+physical
+,
+48
+bits
+virtual
+Byte
+Order
+:
+Little
+Endian
+CPU
+(
+s
+):
+12
+On
+-
+line
+CPU
+(
+s
+)
+list
+:
+0-11
+Vendor
+ID
+:
+GenuineIntel
+Model
+name
+:
+Intel
+(
+R
+)
+Core
+(
+TM
+)
+i7
+-8700
+K
+CPU
+@
+3.70
+GHz
+CPU
+family
+:
+6
+Model
+:
+158
+Thread
+(
+s
+)
+per
+core
+:
+2
+Core
+(
+s
+)
+per
+socket
+:
+6
+Socket
+(
+s
+):
+1
+Stepping
+:
+10
+CPU
+max
+MHz
+:
+4700,0000
+CPU
+min
+MHz
+:
+800,0000
+BogoMIPS
+:
+7399.70
+Caches
+(
+sum
+of
+all
+):
+L1d
+:
+192
+KiB
+(6
+instances
+)
+L1i
+:
+192
+KiB
+(6
+instances
+)
+L2
+:
+1,5
+MiB
+(6
+instances
+)
+L3
+:
+12
+MiB
+(1
+instance
+)
+NUMA
+:
+NUMA
+node
+(
+s
+):
+1
+NUMA
+node0
+CPU
+(
+s
+):
+0-11
+###############
+Memory
+##############
+total
+used
+free
+shared
+buff
+/
+cache
+available
+Mem
+:
+62
+Gi
+15
+Gi
+27
+Gi
+1,6
+Gi
+19
+Gi
+45
+Gi
+Swap
+:
+1,9
+Gi
+1,0
+Gi
+940
+Mi
+Listing 1:
+System Description
+Prompt for Relation Extraction
+In our work, we used the following prompt for knowledge extraction and graph construction:
+⬇
+You
+are
+an
+expert
+in
+knowledge
+extraction
+and
+graph
+construction
+.
+Your
+task
+is
+to
+extract
+and
+represent
+information
+from
+the
+provided
+text
+as
+a
+collection
+of
+knowledge
+graph
+triplets
+in
+a
+JSON
+array
+.
+Each
+element
+in
+the
+array
+should
+be
+an
+object
+with
+keys
+"
+entity1
+",
+"
+relation
+",
+and
+"
+entity2
+",
+using
+the
+following
+allowed
+relations
+only
+:
+IsA
+,
+PartOf
+,
+UsedFor
+,
+CapableOf
+,
+HasProperty
+,
+AtLocation
+,
+Causes
+,
+CausesDesire
+,
+Desires
+,
+MadeOf
+,
+HasSubevent
+,
+HasFirstSubevent
+,
+HasLastSubevent
+,
+NotCapableOf
+,
+NotDesires
+,
+NotHasProperty
+,
+Antonym
+,
+DefinedAs
+,
+DerivedFrom
+,
+DistinctFrom
+,
+Entails
+,
+ReceivesAction
+,
+MotivatedByGoal
+,
+CreatedBy
+,
+SymbolOf
+,
+EtymologicallyRelatedTo
+,
+FormOf
+,
+InstanceOf
+.
+Please
+follow
+these
+guidelines
+:
+1.
+Standardized
+and
+Unique
+Entities
+:
+-
+Extract
+only
+clear
+,
+general
+concepts
+exactly
+as
+they
+appear
+in
+the
+text
+.
+-
+Normalize
+entities
+by
+using
+lower
+-
+case
+and
+singular
+forms
+when
+applicable
+to
+avoid
+near
+duplicates
+.
+2.
+Concise
+Entities
+:
+-
+Ensure
+each
+entity
+represents
+a
+single
+,
+clear
+concept
+;
+avoid
+combining
+multiple
+concepts
+into
+one
+entity
+.
+3.
+Robust
+Mapping
+:
+-
+Do
+not
+derive
+or
+reinterpret
+entities
+-
+use
+the
+exact
+wording
+from
+the
+text
+so
+that
+each
+entity
+can
+be
+directly
+traced
+back
+.
+4.
+Simplicity
+in
+Relationships
+:
+-
+Use
+the
+allowed
+relations
+to
+denote
+simple
+and
+clear
+interactions
+between
+entities
+.
+Document
+:
+"""{
+document
+}"""
+Listing 2:
+Prompt text for knowledge extraction and graph construction
+10
+On the impact of the Relation Extractor models
+We next assess the impact of the Relation Extractor (RE) model on downstream task performance (Table
+5
+). Within our LLM+KG+LocKG framework, we compare the performance when using the
+gpt4o-mini
+as an extractor versus two smaller, open models (ReBeL
+Huguet Cabot and Navigli (2021)
+, ReLiK
+Barba et al. (2024)
+) as the RE component.
+Across the six datasets, average F1-scores were highly similar for all three RE choices. Although gpt4o-mini yielded a slightly higher mean score, the overall difference between the models was marginal, spanning approximately 1.25 percentage points. A One-Way ANOVA confirmed that these minor variations in mean F1-scores are not statistically significant (
+p
+=
+0.9931
+p=0.9931
+).
+Therefore, the choice among gpt4o-mini, ReBeL, and ReLiK as the Relation Extractor did not significantly influence downstream performance in this experimental setting, suggesting that smaller, open-access models like ReBeL
+Huguet Cabot and Navigli (2021)
+and ReLiK
+Barba et al. (2024)
+serve as viable and effective alternatives to the larger, pay-per-use gpt4o-mini for this specific component within our framework. This supports the flexibility of our methodology, allowing for comparable performance with potentially lower costs and greater accessibility.
+Dataset
+Books
+Dvd
+Hatespeech
+Mldoc
+Music
+Xgenre
+Average Perf. (%)
+Relation Extractor
+gpt4o-mini
+92.95
+93.20
+78.40
+97.34
+93.15
+50.95
+84.33 ± 17.60
+Rebel
+93.10
+93.70
+78.45
+95.99
+93.15
+44.08
+83.08 ± 20.12
+ReLiK
+93.35
+93.75
+76.94
+96.14
+93.00
+50.02
+83.87 ± 17.97
+Table 5:
+Comparison of average macro F1 test scores (%) across datasets for different relation extractors
+Qualitative Analysis of the Extracted Relations
+Next, we conduct a qualitative examination of the extracted relations between different methods. Table
+6
+shows significant differences in the models’ extraction capabilities, both in quantity (with gpt4o-mini producing 3–8 times more triplets than its counterparts) and in the level of detail and abstractness—with gpt4o-mini generating more concise, high-level constructs like
+book
+,
+government
+, or
+movie
+. On the extracted triplets side, gpt-4o-miniconsistently employs the generic ”HasProperty” relation across all datasets, indicating a flexible approach to relationship categorisation. In contrast, Rebel and Relik tend toward more specific, domain-relevant relations such as ”country,” ”performer,” or ”author,” suggesting more structured extraction guidelines.
+Method
+Unique
+Unique
+Total
+Unique
+Most Freq.
+Most Freq.
+Ent.
+Rel.
+Triples
+Triples
+Entity
+Relation
+hatespeech
+Rebel
+8972
+245
+23534
+15507
+@USER
+different from
+Relik
+2239
+232
+7341
+5573
+@USER
+country
+gpt-4o-mini
+14695
+478
+48582
+45413
+user
+HasProperty
+mldoc
+Rebel
+13903
+188
+31139
+21315
+United States
+country
+Relik
+40482
+319
+178950
+105731
+its
+country
+gpt-4o-mini
+90676
+4269
+251844
+244296
+government
+HasProperty
+music
+Rebel
+5433
+115
+7279
+6200
+The Beatles
+performer
+Relik
+6454
+151
+16511
+13146
+this album
+performer
+gpt-4o-mini
+17469
+480
+45894
+43643
+album
+HasProperty
+dvd
+Rebel
+4767
+151
+7470
+6102
+DVD
+cast member
+Relik
+5986
+212
+20606
+15702
+it
+cast member
+gpt-4o-mini
+17994
+614
+50721
+48062
+movie
+HasProperty
+books
+Rebel
+4916
+152
+7046
+5649
+Harvard University
+author
+Relik
+5020
+218
+15376
+11453
+this book
+author
+gpt-4o-mini
+17208
+843
+47746
+45414
+book
+HasProperty
+Table 6:
+Extracted Graph Statistics per Model and Dataset
+The qualitative differences between the models shown in Table
+7
+are even more pronounced, with each model extracting distinctly different semantic information from the same text. For example, in the mldoc dataset, Rebel extracts the factual political affiliation ”(Alain Lamassoure, member of political party, UDF),” while Relik focuses on organisational structures ”(France, executive body, European Commission),” and gpt-4o-minicaptures capability assertions ”(France, CapableOf, more tax cuts).” This, combined with the results from Table
+5
+, shows that despite the differences between the models—each with its own semantic focus—each captures a specific local view. Future work might consider how these specific domain views, unique to each model, could be incorporated to yield a more robust local representation. The reason for these differences likely stems from the distinct architectural and algorithmic designs of each model, with gpt4o-mini being a generalist foundational LLM, while both Rebel and Relik are specialist PLMs.
+Model
+Example Triple
+hatespeech
+Rebel
+(@USER, part of, BB)
+Relik
+(Ford, member of, conservatives)
+gpt-4o-mini
+(she, NotDesires, leaving)
+xgenre
+Rebel
+(Anything Brilliant, creator, Jenn Co)
+Relik
+(her, religion or worldview, church)
+gpt-4o-mini
+(jenn co, instanceOf, fashion stylist)
+mldoc
+Rebel
+(Alain Lamassoure, member of political party, UDF)
+Relik
+(France, executive body, Europoean Commission)
+gpt-4o-mini
+(france, CapableOf, more tax cuts)
+music
+Rebel
+(1956, point in time, 1956)
+Relik
+(this, distribution format, LP)
+gpt-4o-mini
+(mr. farlow, DistinctFrom, wes montgomery)
+dvd
+Rebel
+(Amazon, product or material produced, product)
+Relik
+(the DVD, distribution format, DVD)
+gpt-4o-mini
+(ordered item, IsA, product)
+books
+Rebel
+(spy, studied by, histor)
+Relik
+(American, ethnic group, American Indians)
+gpt-4o-mini
+(spy histor, UsedFor, learning)
+Table 7:
+Extracted Graph Examples per Model On Same Example Per Dataset.
+11
+Complementary Results
+Comparison of LLM-embeddings to LLM querying prices
+We next compare the costs associated with two approaches for LLM-based tasks: direct prompting versus generating embeddings for downstream use. This analysis contrasts the estimated cost of using various proprietary (closed-source) and hosted open-source LLMs for a representative prompting task against the baseline cost of using OpenAI’s text-embedding-2-small model for embedding the same input data. The base price per 1M tokens for the embedding model is
+0.02
+$
+0.02\$
+.
+The comparison is based on the following assumptions: the prompting task involves 2000 input and 100 output tokens, while the baseline embedding task uses 2000 input tokens with text-embedding-2-small (estimated cost
+≈
+\approx
+$0.00004). All prices are based on publicly available data from service providers as of April 15, 2025.
+Our findings indicate that the prompting approach is substantially more expensive than using the text-embedding-2-small baseline for embeddings. The cost ratio ranges from approximately 2.3 times higher (for Gemini 1.5 Flash) up to 575 times higher (for GPT-4 Turbo), as detailed in the subsequent analysis
+Model
+Input Price
+Output Price
+Est. Prompt Cost
+Baseline Emb. Cost
+Ratio (Prompt/Emb)
+Ref
+($/1M tk)
+($/1M tk)
+($)
+($)
+(approx. X times)
+Baseline Embedding Model
+text-embedding-2-small
+0.02
+N/A
+N/A
+≈
+\approx
+0.00004
+1x
+1
+1
+1
+Pricing source: OpenAI API Pricing -
+https://openai.com/api/pricing/
+Gemini Prompting Models
+Gemini 1.5 Flash
+0.0375
+0.15
+≈
+\approx
+0.00009
+≈
+\approx
+0.00004
+≈
+\approx
+2.3x
+2
+2
+2
+Pricing source: Google AI Gemini API Pricing -
+https://ai.google.dev/gemini-api/docs/pricing
+Gemini 1.5 Pro
+1.25
+5.00
+≈
+\approx
+0.00300
+≈
+\approx
+0.00004
+≈
+\approx
+75x
+2
+2
+2
+Pricing source: Google AI Gemini API Pricing -
+https://ai.google.dev/gemini-api/docs/pricing
+GPT (OpenAI) Prompting Models
+gpt-4o-mini
+0.15
+0.60
+≈
+\approx
+0.00036
+≈
+\approx
+0.00004
+≈
+\approx
+9x
+1
+1
+1
+Pricing source: OpenAI API Pricing -
+https://openai.com/api/pricing/
+gpt-3.5-turbo-0125
+0.50
+1.50
+≈
+\approx
+0.00115
+≈
+\approx
+0.00004
+≈
+\approx
+29x
+1
+1
+1
+Pricing source: OpenAI API Pricing -
+https://openai.com/api/pricing/
+gpt-4o
+5.00
+15.00
+≈
+\approx
+0.01150
+≈
+\approx
+0.00004
+≈
+\approx
+288x
+1
+1
+1
+Pricing source: OpenAI API Pricing -
+https://openai.com/api/pricing/
+gpt-4-turbo
+10.00
+30.00
+≈
+\approx
+0.02300
+≈
+\approx
+0.00004
+≈
+\approx
+575x
+1
+1
+1
+Pricing source: OpenAI API Pricing -
+https://openai.com/api/pricing/
+Table 8:
+Cost ratio of LLM prompting vs.
+text-embedding-2-small
+Embedding (
+≈
+\approx
+2000 Token Input around 8000 characters).
+Feature importance between searches
+We do a meta-analysis of the importances of the
+θ
+\theta
+parameters in our Bayesian search. For each dataset in Figures
+6
+to
+11
+, we show the Bayesian evolution in the leftmost plot. Using the shaded area, we mark the best score found (
+f
+∗
+f*
+from Algorithm
+1
+) so far, coupled with the feature importance—captured by fitting a Random Forest to the parameters and the achieved score—and correlation analysis in the rightmost plot. We see that across datasets, different parameters are important (e.g. for the Books dataset, the
+α
+k
+​
+g
+\alpha_{kg}
+parameter seems the most important, possibly explaining why it resulted in the limit-value of
+0
+0
+). While for the larger news genre dataset, we see that
+l
+L
+​
+L
+​
+M
+l_{LLM}
+is most important. We also see that the best-value hit at different points for different datasets, with most datasets hitting it in the latter half, implying that a longer search might have resulted in better scores, probably improving the downstream performance.
+Figure 6:
+Feature Importances of Bayesian Evolution for dataset Books
+Figure 7:
+Feature Importances of Bayesian Evolution for dataset Dvd
+Figure 8:
+Feature Importances of Bayesian Evolution for dataset Music
+Figure 9:
+Feature Importances of Bayesian Evolution for dataset Hate-speech
+Figure 10:
+Feature Importances of Bayesian Evolution for dataset Xgenre.
+Figure 11:
+Feature Importances of Bayesian Evolution for dataset MLdoc.
+Dimension to Score Results
+Here, we present the relationship between the final projection dimension and F1-score across different datasets for each approach. Consistent with the averaged results, our approach (blue circle, FuDoBa) achieves scores comparable to—or better than—the LLM-only representation (red diamond). In general, higher-dimensional representations tend to yield better F1-scores, although the R-scores exhibit negligible trends.
+Figure 12:
+Per-dataset analysis on the impact of dimensionality (x-axis, log2-scaled) and the achieved scores (y-axis, macro F1-score).

@@ -4,44 +4,51 @@
 **窗口：** 2025-09-15T09:00:00+08:00 ～ 2025-09-16T09:00:00+08:00
 **状态：** 完成
 **Books：** 纳入本次
-**检查时间：** 2026-10-06T19:01:26+08:00
+**检查时间：** 2026-10-12T03:32:10+08:00
+**窗口说明：** 用户授权已有Daily增量补查；原窗口、候选/日期/评分及连续§4冻结，仅新材料按前一完整BJT自然日，不catchup。
+**补充窗口：** 2025-09-15 ～ 2025-09-15
 
 ## 1. 结论
 
-非作者日级终核通过，本日已处理到安全终态。Codex release为本窗正式1家族，root准入5分、标准审阅与仅报告裁决均通过；system card单独事件在窗外，不合并datehold。arXiv 229 条是主题提交区间线索，不是本窗新论文数；78 个相关/含糊身份进入完整题摘发现阅读，8 项具体机制/负面/安全潜力经 root 首批校准，11101/11656及11524三项错误排除已窄重开。其公开归属仍未取得可靠的本窗证明，Google Learn Your Way亦保留具体潜力和日期缺口，不应解释为零事件。正式候选1、独立确认标准审阅完成1、Books写入0。
+原有效层冻结：Codex release正式1家族、原2+2+1=5/标准完成/仅报告与root实际证据/Books裁决不变；原229提交发现、78题摘及具名安全/纠错读层不被新计数覆盖。旧system card事件在原小时窗外，但在新Sep15自然日内；不搬旧候选或用提交日期充公开。
 
-值得继续核验的方向是动态训练 offload、attention 选维、扩散缓存验证、GUI 注入、执行轨迹训练的负面结果、reranker 日期混杂、connector 信息损失与概念擦除理论保证。部分安全/反证内容已实际定点读精确 v1，但不构成本日正面证据。Books 没有写入或正面覆盖声明，保留项不得支持性能、安全或无遗漏保证；没有复现实验。
+增量正式新增CyberSOCEval1家族，2+1+2=5标准完成并定点深入安全/反侧；默认SOC推理配置及text/image局部对照限制按其他排行榜选型，不证通用推理scale或生产防御。Codex card同旧家族新安全事件已深入受影响内容、不重复评分；injection suite不等实际泄露/毁损effect。两家族本次必要事件审阅均已逐项独核，Books具体仅报告/新写0，无确认共享缺口，没有复现或代码实现认证。Cicero实际完整六部分DAY§7及完成态FINAL§8通过，已按合同处理到安全终态，不自行改root验收计数。
+
+新四主题171跨组→132身份是提交proxy，不是132窗内新论文；105新需判断身份完整exactv1题摘、27旧题摘身份/版本未变可按原层复用，132 current说明轻核；37必要局部核后收敛83P/43C/6早稿窗前D/0N。83仅日期未证潜力精确隔离，不评分、正式候选或Evidence完成。14源有限停止完成，四个必要历史来源缺口保留；不授全集Coverage、无遗漏或安全保证。普通待办0，日级语义独核与完成态FINAL实际通过，不把旧验收声明当本轮通过。
 
 ## 2. 来源覆盖
 
-以下只声明实际有限切片；原请求、恢复与停止依据见[来源恢复](../_sources/daily-20250916/SOURCE_RECOVERY.md)。
+仅声明实际有限切片；[本轮入口、分页停止与244对原件](../_sources/daily-20250916/SUP_SOURCES_20261012.md)及[原有效恢复层](../_sources/daily-20250916/SOURCE_RECOVERY.md)均保留，捕获不等于读取。
 
 | 来源 | 检查范围与依据 | 结果 | 缺口 |
 | --- | --- | --- | --- |
-| SRC-OPENAI | 官方RSS单次HTTP200共1247身份，仅筛本窗UTC区间；Codex release完整核心经root单项独核，消费者使用研究关闭，card独立窗外 | 已检查 | 此保留RSS/具名核心切片可判归属；不授全站修订无遗漏，单项通过不授DAY |
-| SRC-ANTHROPIC | Research Next JSON恢复172唯一publication，按本窗只取两篇Economic Index原publishedOn，读核心说明 | 已检查 | 本窗研究目录切片为经济采纳/地理估算，未显示模型/系统机制；不授全站覆盖 |
-| SRC-GOOGLE-AI | Google Research `/blog/2025/09/`实际第1/2页，最早Sep11已越下界；Learn Your Way具名原Blog完整核心补检；Pubs/DeepMind Research入口与日期补检 | 受阻 | Learn Your Way原Sep16仅日期、时区/完全落窗未定；DeepMind及无日公开字段的Pubs历史切片未恢复，不能用当前页授完整覆盖 |
-| SRC-META-AI | Research入口与Sep15官方CyberSOCEval完整题摘，16lastsources | 受阻 | 测试时计算收益跨任务不一致有负面潜力；原日期无时区/首次公开未定，不采用 |
-| SRC-QWEN | 原保留Blog切片加新实际page_config研究列表HTTP200原60配置；仅筛本窗原date，0命中，Next Sep10T20Z至TTS Sep21T20Z夹窗 | 已检查 | 本日独立capture见qwen-config-recovery.raw；不授全站或所有修订无遗漏，不把60条当全文队列 |
-| SRC-DEEPSEEK | 实际执行主站`/updates`HTTP404并保留；官方API文档`/updates/`HTTP200，实际读取Sep22→Aug21连续更新至越下界停止 | 已检查 | 仅保留Change Log切片，没有本窗条目；不授所有论文/修订/删除历史无遗漏 |
-| SRC-MOONSHOT | 官方Blog日期序列与组织入口；Sep16折扣、Sep5 K2更新夹本窗 | 已检查 | 只声明Blog保留切片；计费发布未显示模型机制增量，不扩当前仓库 |
-| SRC-TENCENT-HUNYUAN | Research壳、正确publicList POST实际9条、GitHub/T1有限补检；浏览器子线程拒绝/超时 | 受阻 | API最早为2026记录，历史“全部”未恢复；不冒称空历史列表 |
-| SRC-ZAI | Research实际首页15条、真实page2累计18条/hasMorefalse；原client及release notes | 受阻 | Research保留记录最早2025Dec，不覆盖本窗；发布说明夹窗不能补论文目录 |
-| SRC-BYTEDANCE-SEED | Blog type2/year2025实际15条/total49，非置顶跨Aug21至Jul14停止；论文页20/242；type1 US/CN重试 | 受阻 | Blog切片已越下界，论文API total94但无列表内容；不记0论文或已读94条 |
-| SRC-BAIDU-ERNIE | 技术Blog真实page1/2，Sep12PLAS/Aug14FastDeploy越过本窗下界 | 已检查 | 有限保留Blog切片；不授仓库所有历史发布覆盖 |
-| SRC-XIAOMI-MIMO | 官方Paper8行，Sep19Audio/Jun4VL夹本窗；实际官方client核Blog15预加载、初显8及More仅展开，见MIMO_MORE_CHECK | 已检查 | 仅该有限目录；Blog数组无日期，不授九月删除历史/其他发布无遗漏，未把More视为未读分页 |
-| SRC-MINIMAX | 原US/GitHub/Agent入口加本日独立CN Blog恢复HTTP200；实际正文13条，Oct27→Jan15跨本窗下界，停止Jan15 | 已检查 | 仅CN保留Blog切片无窗内条目；原minimax-cn-recovery.raw，不授删除历史/仓库修订或无遗漏 |
-| SRC-ARXIV | submittedDate主题查询229条；系统主题补查66条全重复；lastUpdatedDate主题查218条；CL月列表1–2000/2214有界标题查漏 | 受阻 | 没有本日真实公告/单篇原首发证明。日路径无效、直2509路线404、年份月份路线可取，均保留；提交/DOI注册不作首公开 |
+| SRC-OPENAI | fresh RSS1287，Sep15 release/card/消费者研究；旧release/应用core复用，card官方具名7页PDF必要§1–4 | 已检查 | card新自然日内，同family不同事件；不授全站修订无遗漏 |
+| SRC-ANTHROPIC | Flight JSON按slug174 publication；geography Sep15T09Z在新窗，September report20:33Z为BJT16；旧经济核心C复用 | 已检查 | 不误称两项都在新窗，不授全站覆盖 |
+| SRC-GOOGLE-AI | Google九月Blog12+1至Sep9；DeepMindpage5/6跨Sep→Jul/Apr，2科学题名范围外，4相关官方published为Sep25/22/17/12 | 受阻 | Blog切片已恢复且无Sep15新项，撤回旧DeepMind整体Blog缺口；仅Pubs历史公开日缺段隔离；LearnYourWay新窗外/旧hold冻结 |
+| SRC-META-AI | Publications5/6各24含非单调pin，Nov18→Sep15→Sep8→Jun13；Blog2/3共24实际标题/日期；Cyber官方Sep15/v1早稿 | 已检查 | 新正式1家族；现PDF RevisedNov6不替早v1，不授全集 |
+| SRC-QWEN | page_config60；实际Sep日期段Next Sep10T20Z→TTS Sep21T20Z夹窗，0本窗条目 | 已检查 | 不授repo全历史/修订，不扩60篇全文 |
+| SRC-DEEPSEEK | 官方Change Log Sep29→Sep22→Aug21越下界；旧主updates404只保留原事实 | 已检查 | 仅有限Change Log，无Sep15，不授全历史 |
+| SRC-MOONSHOT | Blog Sep16折扣→Sep5 K2→Aug更早越下界 | 已检查 | 有限Blog无Sep15，计费非训练机制，不扩组织库存 |
+| SRC-TENCENT-HUNYUAN | Research及正确POST renderType0/page1/size1000，en9/total9、zh11/total11；原public/published/display日期均2026 | 受阻 | 历史“全部”未恢复，当前数量不证明历史空；原本日有限浏览器失败层复用 |
+| SRC-ZAI | Research首页15/page2累计18且hasMorefalse，最早Dec7；release最早Sep30 | 受阻 | 九月Research历史缺段，release不补论文目录 |
+| SRC-BYTEDANCE-SEED | Blog type2/year2025 15/49，非pin BJT Oct23→Aug21/14→Jul15停止；论文type1 tokens0/20/40/60/80，80无next/morefalse | 受阻 | 论文仅token20一条Jun12 SwiftSpec vs total94，历史不完整；普通分页0，不授0论文或94已读 |
+| SRC-BAIDU-ERNIE | Blog1/2共16，Sep12 PLAS→Aug14 FastDeploy越下界 | 已检查 | 仅有限Blog，无Sep15，不授repo全集 |
+| SRC-XIAOMI-MIMO | Paper8 Sep19→Jun4夹窗；Blog15完整预载题名；fresh6159 slice/aria-hidden与8557 initialVisibleCount8+数组 | 已检查 | More只展开不是分页；Blog无日期，不授历史删除/所有发布 |
+| SRC-MINIMAX | EN12及?page2同题序列，CN13 Oct27→Jan15跨窗，Agent3当代目录 | 已检查 | CN有限切片无Sep15；EN重复不是真实新页，不授删除/仓库历史 |
+| SRC-ARXIV | 四有界主题75/1/35/60=171→132，每组start0/max200/total=returned；105 exactv1完整题摘、27未变AB层复用，132 current轻核及37必要局部 | 受阻 | submitted/APIpublished只发现；日列表429，旧月标题有限层复用不扩月；83具体P公开日未证，不记0或授Coverage/Evidence |
 
-未触发额外固定按需来源扫描；为具名材料打开原始证据不扩成机构/分类全站研究。
+必要按需仅官方card PDF、Cyber早v1、37局部准入core及具名早稿ACL/PMLR/ACM/IEEE/作者news/OpenReview/ICML日期、MiMo组件；不扫描每周、会议全年、全仓或月库存。
 
 ## 3. 候选与判断
 
 | 材料 | 公开时间 | 项目贡献与评分 | 审阅结果 | Books决定 |
 | --- | --- | --- | --- | --- |
 | [Introducing upgrades to Codex](https://openai.com/index/introducing-upgrades-to-codex/) | 2025-09-15T18:00:00+08:00 | 统一投入难兼顾短交互与长任务 → 本版本员工流量短/长生成token十分位投入变化方向相反 → 部署评价应分切片核预算与质量；2+2+1=5 | 标准完成 | 仅报告 |
+| [CyberSOCEval: Benchmarking LLMs Capabilities for Malware Analysis and Threat Intelligence Reasoning](https://ai.meta.com/research/publications/cybersoceval-benchmarking-llms-capabilities-for-malware-analysis-and-threat-intelligence-reasoning/) | 2025-09-15 | 其他推理榜单不能代表SOC → 默认配置的SOC/text-image局部反侧 → 选型须绑定任务人口/模态/解析分母；2+1+2=5 | 深入完成 | 仅报告 |
 
 arXiv日期未定发现不提前评分；这不表示本窗无贡献或无遗漏。Codex单项通过依据见[root独立记录](../_sources/daily-20250916/INDEPENDENT_CODEX_REVIEW.md)。
+
+Codex [Sep15 system card addendum](https://openai.com/index/gpt-5-system-card-addendum-gpt-5-codex/)同旧家族新增事件，在新自然日内，**不重复评分**；必要安全深入与Books仅报告0已实际Cicero通过。原release行/日期/5分不改，现该family含原release标准层与新card受影响深入层，不能重复计两家族。6早稿D只判本次窗前，不移动旧候选。正式2唯一家族/新增1，本次必要事件均达最低投入；日期P不混入分母。
 
 ## 4. 证据与知识整合
 
@@ -63,23 +70,37 @@ Books 拟增量暂无可授权写入项：缺公开归属的材料暂缓，不�
 
 root实际顺读`AGENT-WORKFLOW` Ch81的workflow–engine接口及long-running/external events、`AGENT-CONTEXT` Ch75的执行状态压缩约束后，裁决**仅报告，新增正文0**：发布是短/长投入的版本局部观察，没有新的预算控制、恢复协议或compaction正确性依据，不能插入Ch81长期机制。作者原自然段落建议不实施；这不是“已有覆盖”或撤销准入。正式5分标准完成保留；日级非作者复核复用此有效结论。
 
+### [GPT-5-Codex system card addendum](https://openai.com/index/gpt-5-system-card-addendum-gpt-5-codex/)
+
+新补窗Sep15官方事件，同release家族不重复评分；[必要§1–4、实际owner比较与原7页PDF](../_sources/daily-20250916/SUP_CODEX_CARD_20261012.md)和[Cicero单篇§2](../_sources/daily-20250916/SUP_INDEPENDENT_20261011.md)通过。新coding instruction-hierarchy训练与injection suite、可配网络攻击面是具体安全事件，不仅版本名。ignored-injection .98与codex-1同.98，suite任务终止/指定字符串不等实际泄露/毁损effect，预算/总体风险分母及不确定性未披露；厂商noise解释和golden-malware拒绝不授普遍安全。Mac Seatbelt/Linux seccomp+landlock、cloud默认网络及可批unsandbox是披露控制事实，未核实现/复现。实际比较PLATFORM-SECURITY Ch72 run identity/effect gate、AGENT-TOOL-CALLING Ch78 side-effect/observation、AGENT-CONTEXT Ch75 source trust：没有新的权限检查、containment证明或预算控制链，**深入受影响安全完成，Books仅报告/新写0**，不是已有覆盖认证产品。
+
+### [CyberSOCEval: Benchmarking LLMs Capabilities for Malware Analysis and Threat Intelligence Reasoning](https://ai.meta.com/research/publications/cybersoceval-benchmarking-llms-capabilities-for-malware-analysis-and-threat-intelligence-reasoning/)
+
+官方原publication Sep15及同题作者/完整AB，精确[2509.20166v1](https://arxiv.org/html/2509.20166v1)自署Sep15无后修，支持此事件；submittedSep24非首公开，现官方PDF RevisedNov6/v2Nov10不替早版。[作者必要§3/4/5.1–5.5/AppendixD与Books](../_sources/daily-20250916/SUP_CYBERSOC_CORE_20261012.md)、[Cicero§3](../_sources/daily-20250916/SUP_INDEPENDENT_20261011.md)实际通过。609 Windows malware日志多选与588题/45TI报告，多选全对才正确，Llama合成+专家校改；provider默认temperature/top_p/thinking与逐模型格式prompt，不是同预算推理机制消融。可解析分母和报告簇/生成器偏差不能隐去。
+
+只采用默认SOC配置的局部跨模型/输入观察：text常优于image、组合可能不增反降，但视觉必要小例六模型均对而组合三对，不能由text主导人口推图像一般无益。fileless/外传范围、自由响应/真实effect未验证；AppendixD signature description截断50字符可能丢多个command，hash替换为unique字母主要处理tokenization；未显著差异不是等价证明。未核代码或复现，端到端预算/费用/hardware/precision/concurrency/SLO未披露。实际对照MULTIMODAL-REPRESENTATION Ch23贡献/可靠性双门与冲突/单模回退、PLATFORM-EVALUATION-SYSTEM Ch66对象/adapter、部署人口、模态必要性与三分母；新的是本协议局部观察，无新的融合/权限/TTS控制机制。**2+1+2=5标准+必要安全反侧深入完成；Books仅报告/新增0**，不因Books已有主题撤销准入，也不授生产防御选型保证。
+
+新增132发现与37必要局部的具体改判/反侧及未读边界见[完整FIRST](../_sources/daily-20250916/SUP_FIRST_20261012.md)及[必要core表](../_sources/daily-20250916/SUP_NCORE_SCREEN_20261012.md)。11478已由C改P、11687/19336等局部机制保留；11943/11944/14267成熟流程没有新控制机制，安全宣传未作为准入。83日期P只保存potential，不授Evidence/Books，未读不伪装外部阻塞。以上新增置于原完整连续§4之后，原有效证据未改写。
+
 ## 5. 缺口与下一步
 
-**普通待办：** 无。以下为本窗终态保留项，均不支持正面证据、Books、无遗漏或性能/安全保证；不等于Coverage/Evidence通过。定点重开条件是取得对应原首发的完全落窗区间，或缺段来源官方九月归档及实际分页终点。
+**普通待办：** 无；Cicero实际六部分DAY§7、完成态FINAL§8通过，来源、准入、正式必要证据、Books及独核待办均0。以下为本窗终态保留项，不支持正面证据、Books、无遗漏或性能/安全保证，不等于Coverage/Evidence通过。只核公开日期，不再索精确时分秒。
 
-- arXiv具体发现身份/版本逐项在[发现表](../_sources/daily-20250916/DISCOVERY_SCREENING.md)；首批8项加11101/11656/11524为重点。缺本日官方公告或原始首发证明，不以submitted、APIpublished、DataCite注册替代。已尝试官方日路径、月列表、版本页和具名日期补检；可接受替代为原始作者发布/官方公告支持的完全落窗区间。到达后仅重开该家族日期、历史版本及必要证据，不重跑229条。
-- Google Learn Your Way原Blog仅Sep16无时区，保留上述具体流水线/局部评价潜力；本次具名原Blog可读，另HTML路线未恢复可靠时刻。补得原公开字段/官方首发可完全落窗区间后，仅重开该家族日期与必要技术报告，不先泛化无命中或展开无关附件。
-- Meta CyberSOCEval有Sep15官方日期与具体潜力，缺原始时区/可落窗区间及首次公开关系。原文在16lastsources；补得原首发后定点重开，不能机械要求秒级精度。Codex不再属于此日期保留项；Sep23 API更新与窗外card不冒作本窗新事件。
-- DeepMind/Google Pubs、Hunyuan历史全部、Z.ai九月Research、Seed论文缺段：实际恢复/失败与停止位置见[来源恢复](../_sources/daily-20250916/SOURCE_RECOVERY.md)。可接受官方2025九月目标窗口归档或官方API有条目身份、原公开字段和真实分页终点。只重开受影响来源本窗；当前接口记录数量不证明过去没有研究。DeepSeek旧缺口由官方Change Log实际恢复撤回，MiniMax目录泛化缺口由本日CN真实跨窗切片撤回，见[窄恢复](../_sources/daily-20250916/NARROW_RECOVERY.md)。
+- 新主题83个P精确身份/版本及具体贡献在[FIRST日期保留列表](../_sources/daily-20250916/SUP_FIRST_20261012.md)；缺本窗官方公告/原作者首发证明，submitted/APIpublished/DOI注册不替public。本日日列表429，原本日有限月列表/版本页失败层及具名早稿入口已处理；可接受官方原公告/作者首发/必要版本关系支持Sep15公开日。到达只重开具名日期与必要证据，不重跑132/229、不展开所有附件。43C贡献关闭、6早稿D窗前不混入datehold。132之外旧78发现有效保留仍见[原发现表](../_sources/daily-20250916/DISCOVERY_SCREENING.md)，未被新计数撤销或授权全文；原重点8+11101/11656/11524有效反侧冻结。
+- GooglePubs历史公开日、Hunyuan历史“全部”、ZAI九月Research、Seed type1论文缺段四来源精确隔离，见[本轮有限停止](../_sources/daily-20250916/SUP_SOURCES_20261012.md)。需官方目标窗归档或有身份/原公开日期/真实分页终点的API；现total94但仅一条June返回等不能作0或Coverage通过。只重开受影响本窗来源；DeepMind Blog已恢复，原整体Blog缺口撤回，不索公开小时。DeepSeek/MiniMax旧泛化缺口有效恢复保持。
 
-以上外部保留项不是Coverage/Evidence通过。新可执行路由已实际执行；独立日级复核已处理筛选纠错、安全收窄和有限停止，不残留普通待办。
+原小时窗口保留边界不迁移：Learn Your Way原Sep16日标签不足以确定原小时窗，原具体潜力/日期hold冻结；**对新Sep15自然日明确窗外**，不是本轮新候选或普通待办。补得原首公开归属仅重开其原受影响报告/证据，不扩本窗。CyberSOCEval官方Sep15已通过必要首发关系/早版核验，不再保留为新窗日期hold；Codex card已按新自然日处理，同家族不重复计，Sep23 API更新仍不采用。
+
+上述外部保留不等Coverage/Evidence通过。正式单篇及日级语义独核已实际完成，无未读方法被改作外部终态；没有确认共享Books待协调缺口。本轮DAY/FINAL来自Cicero§7/8实际回读，原先验收只管旧层，不自授最终裁决。
 
 ## 6. 复核
 
-复核者：sept07_10_author（本日非作者日级终核；复用root有效首批校准与Codex单项独核）。
+复核者：Cicero（本日非作者）；原sept07_10_author及root有效具体读层按身份/命题复用。
 
 结论：通过
 
-[实际日级独立记录](../_sources/daily-20250916/INDEPENDENT_DAY_REVIEW.md)：覆盖正式拟入选1/1（复用有效root完整证据/实际owner裁决）、必要安全反侧4项、11101/11656返修及11524误排纠错；核14来源实际有限停止与日期隔离，并补MiMo More及Google相交日标签误漏。root首批12题摘/v1身份校准复用，其余78身份不宣称全量独立准入或全文验证，宽列表未选151条不是逐项证据关闭。Books实际写入0；保留项不授Coverage/Evidence，完成限合同定义的安全终态。
+对应Cicero§7实际完整六部分DAY及§8完成态FINAL，语义与行政差额复核均已实际结束，root自行核验总验收状态。
 
-V3校验通过；本日限定`git diff --check`通过（未跟踪文件的空白/本地链接另检查）。这些检查不能替代语义复核。月README、LEARNING_STATE和Books由root集中维护，未stage/commit/push。
+[Cicero本轮实际独立记录](../_sources/daily-20250916/SUP_INDEPENDENT_20261011.md)§1–6单篇/来源/准入、§7完整DAY：已核全部105 exactv1完整题摘、27未变AB/current、必要37局部与安全/反侧、首批P/C校准及14源有界停止；两个正式family必要事件及具体Books仅报告0单篇通过。不是132全文或83P Evidence通过，不因日期未证继续全文。原[root Codex单项](../_sources/daily-20250916/INDEPENDENT_CODEX_REVIEW.md)、[旧DAY](../_sources/daily-20250916/INDEPENDENT_DAY_REVIEW.md)中的旧release证据/Books及必要4安全、11101/11656/11524有效层复用，不授其余78全文或151宽标题逐项证据关闭。
+
+进行中作者及Cicero实际V3通过；完成态作者及CiceroV3实际再跑通过。244对原件43449209bytes/request的字节/SHA一致，8 Markdown的44本地引用按实际位置核无缺失（byte-frozen baseline按原报告位置解析），旧candidate整行/原window/连续§4严格prefix冻结通过。完成态限定unstaged/cached diffcheck通过，cached stat空；未跟踪Markdown空白/链接及原件身份另核通过。Cicero§8已实际FINAL通过，本段只行政同步其裁决，不以机器结果替代语义复核。月README、LEARNING_STATE和Books由root集中维护，未stage/commit/push。

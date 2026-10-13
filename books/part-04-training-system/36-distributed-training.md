@@ -222,6 +222,10 @@ Ring、Tree 和 recursive doubling 默认由 endpoints 交换并归约 partial r
 
 另一条替代分支是 Edge-INC：按向量的 index range 分配归约责任，让对应 Network Interface 在本地保留宽 accumulator，避免在交换机间反复传递该表示。它与 Core-INC 可以组合，但并不消除 endpoint 链路负担；选择时仍需核实树拓扑、设备支持的类型和 operator、数值容差，以及中间表示的实际流量。类型支持或数值验证不满足时，普通 endpoint collective 仍是合理路径。这里采用的是数值表示与通信位置耦合这一约束，不把模型化的流量节约当作实测训练吞吐。<!-- source-family:SF-2026-ARXIV-2601-19132 -->
 
+片上 collective 还有一种不同于跨节点 switch aggregation 的分支：router 不必复制完整浮点归约树，而可通过专用 operand/result 端口借用 compute tile 的算术单元。一个 AXI/规则二维 mesh 设计将 multicast 的多份响应归约、reduction 的响应分发分别纳入协议，再由 DCA 请求与 core 的 FPU 请求仲裁，用 tag、header buffer 和 valid-ready 保持结果去向及 backpressure。地址 mask 只表示受对齐与矩形子 mesh 约束的参与集合；它不能直接成为任意 NCCL process group 的实现，也不由局部同步逻辑证明所有网络负载无死锁。<!-- source-family:SF-2026-ARXIV-2603-26438 -->
+
+[Collective-capable NoC 的受限设计对照](https://arxiv.org/html/2603.26438v1)以资源复用换 router 面积，但单个 wide router 只能合并两个输入，二维路径的第三个输入会降低吞吐，core 与 fabric 对同一 FPU 的争用也需调度。RTL primitive 测量与两种 GEMM 的解析性能/能耗估计是不同证据，不是实硅、完整模型或跨 GPU 训练加速。端口、同步、buffer、算术仲裁及数值归约顺序均有成本；group编码、operator/精度或工作量失配时，保留普通unicast/endpoint归约与已验collective路径，不能把通信移入fabric当无条件减少关键路径。<!-- source-family:SF-2026-ARXIV-2603-26438 -->
+
 NCCL 的 CollNet 是“collective-capable network 如何进入 NCCL”的算法与插件接口，SHARP 是可以实现该能力的一种 InfiniBand fabric。两者不是同义词：`CollNetChain` 让节点内 ranks 沿 chain 汇聚到 network head，控制面较简单但串行深度可能成为瓶颈；`CollNetDirect` 让本地 peers 与多个 heads 建立更直接的 fan-in/fan-out，以更多连接、arity、NVSwitch/NIC topology 和 buffer 约束换并行带宽。NVLS 又是节点内 NVLink SHARP 路径，不应与跨节点 InfiniBand SHARP 混为一层。
 
 同一层次还要分开 operation 与 algorithm。调用 ReduceScatter 已经确定参与 group、输入分区和每个 rank 应得到的结果，NCCL 只在合法实现中选择 Ring、Tree、CollNet、PAT、NVLS 等数据流；它不会因为某个矩阵“看起来不大”就擅自缩小 process group，也不必永远把它映射成一个物理大环。如果 payload 太小而 participants 太多，`alpha`、同步和 topology 成本确实可能高于 local compute；正确修复是重新选择 parallel degree、process-group scope、bucket/chunk 与允许的 algorithm，而不是把 ReduceScatter 语义本身当成 Ring。
@@ -442,6 +446,8 @@ destination capacity observation
 
 <!-- source-family:SF-2026-ARXIV-2605-21103 -->
 
+相同的 `encode → merge → decode` 协议还要明确被编码的是本轮相对哪份 base 的更新，而不是把已预训练 weight 较小的文件直接当训练通信收益。Warm start 若确实收窄更新分布，可以让固定 bucket 数下的量化步长变小；但 sender 与 receiver 必须共同持有 layer range、codebook revision、刷新周期和越界处置，预训练本身不能替代有偏误差累积或 error-feedback 的验收。[有限更新量化对照](https://arxiv.org/html/2603.17507v1)仍混合初始化与压缩选择，图示集中度只是模拟，等频与等宽方案又有质量反退；索引、边界、全精度下行、本地训练及预训练成本须共同计入，不能从 uplink bit 数推出实际能耗或全网提速。分布漂移、码本失配或质量预算无法满足时，保留更高精度更新、已验误差补偿与同步 base，不让较窄的初始 range 签发后续所有轮次。<!-- source-family:SF-2026-ARXIV-2603-17507 -->
+
 同一架构的 federated MoE 还必须把三类参与集合分开：每个 sample 的 forward route、batch 资源预算下实际参与 backward 的 experts，以及按 usage 阈值决定上传的 experts。它们可能不同，forward 使用次数不能直接代表该 expert 的实际训练贡献；merge 协议应分别记录 round、base revision、expert 身份与实际 update participation，把未训练、显式零更新和未上传区分开，而不是把缺失当作零贡献。预算 mask 可以改变 backward 成本，却不自动降低 forward 峰值或定义聚合权重；按 usage 选上传对象还可能遗漏已发生的本地更新。更细参与元数据与逐 expert 聚合换来可解释的 partial-update 边界，也增加缺失分母、router/expert 同步和恢复成本；无法确认更新身份或权重语义时，应保留已定义的共同 expert 集合或完整共享更新，不静默替作者补出归一化平均，更不据此宣称信息最优、方差必降或生产可行。<!-- source-family:SF-2026-ARXIV-2601-00583 -->
 
 Expert 参与也可以在一轮开始前按 client 资源静态分配：每个 client 仍驻留全模型 weight，但只为 assigned experts 维护可训练 gradient 与 optimizer state，其余 experts 冻结，共同层继续参与训练。Coordinator 对 shared 部分作 FedAvg，而 assigned expert 更新按 assignment 直接接入并合成 expert 集合，再发布下一轮可用的全模型 revision；两者不是同一 FedAvg 对象，forward 使用某 expert 也不等于该 client 拥有其更新权。Assignment、base 与 round 身份需同聚合协议绑定，不能把缺席 expert 当零更新，也不能用总 active 参数代替每个 client 的 weight 驻留。<!-- source-family:SF-2026-ARXIV-2602-11543 -->
@@ -515,6 +521,10 @@ B_global
 Gradient accumulation 必须完整送到实际 optimizer owner：CPU offload 不能只消费第一 micro-batch 的梯度，而要在一次 optimizer step 前收到全部 micro 的累积结果。变长 token objective 则应先跨所有 rank、所有 micro 聚合 loss sum 与有效 token count，再按总 count 归一；直接平均各 micro/rank 的均值，会给小分母样本过高权重。两种错误分别改变实际梯度与目标权重，不能混为同一 offload 性能问题。<!-- source-family:SF-2026-ARXIV-2604-23747 -->
 
 这需要 accumulation/transfer 完成证据、全局计数、版本及 matched loss/gradient 检查；修复也可能改变通信、CPU/GPU 状态与性能成本。作者定点纠正 DeepSpeed 0.18.9/OpenRLHF 0.9.10 的 SFT→RL 对照，ID/OOD 结果并不统一，不证明所有 mixed-policy 训练劣于单一路线。梯度 owner 或 loss 分母未核清时，保持原结果隔离、回退已验证训练链，不拿坏 baseline 决定算法优劣。
+
+联合训练多个 track 时，这个分母还必须属于具体目标，而不是属于整份 batch。语言 track 若采用 token mean，就应按本次 optimizer step 的全局有效 token 数 `N` 计量；图像 track 或 sequence mean 则可以继续按样本计量。在实际梯度会跨 `D` 个参与者取平均、一个 micro 已返回其 `n` 个有效 token 的均值时，乘数应为 `D*n/N`，才能恢复目标的全局 token mean；这里的 `D` 是实际梯度平均域，不必等于整个 job 的 GPU 数。误选 expert 子域、把 sample share 当 token share，都会悄悄改变目标。旧 sequence-weighted 分支并非错误，只是不能继续贴上 token-mean 的标签。<!-- source-family:SF-UNIRL-PR-566 -->
+
+`N=0` 又是另一种状态，不能通过除零修补掩盖参与语义：空 response 跳过反传可能留下 `None` gradient，全 mask 后以零 scale 反传则可能留下零 tensor；二者不自动具有相同的 optimizer/moment 更新行为，另一 image track 仍可继续 step。应分别记录 track 的有效计数、梯度参与和 step，再按同一 reduction 域汇报 loss；把 rank0 日志改为全局 loss 后，旧新曲线不能直接当算法改善。[UniRL 的定点修复](https://github.com/Tencent-Hunyuan/UniRL/pull/566)支持这组差额，其公开验证主要是作者 CPU/Gloo 检查，并未验证 GPU、EP8 mesh 或端到端训练。额外 count/loss collective 与 host 计数读取仍付费；域身份或空分支执行无法确认时，应保留已验证的单 track/明确 sequence-weighted 配方，而不是从修复合并推导任意并行配置已正确。
 
 ## 一个两 Rank 梯度小例子
 
@@ -1277,6 +1287,8 @@ kernel、拓扑拥塞或 elastic failure 无条件复用预测。因而 TP/PP �
 Embodied RL 的 simulator、rollout、reward 与 trainer 速度差异大；同步 barrier 保持 policy freshness，却让慢环境阻塞 accelerator。异步 actor-learner 可并发收集与更新，但 trajectory 必须绑定 behavior policy、environment、reward revision 与 consumed checkpoint，trainer 按 staleness budget admission。它用更高并发换 off-policy bias、队列状态和恢复复杂度；安全关键或 correction 不可靠时回退同步/有界异步。作者 VLA 配置不构成任意机器人训练吞吐保证。
 <!-- semantic-body-binding:SF-D-VLA-A-HIGH-CONCURRENCY-DISTRIBUTED-ASYNCHRONOUS-REINFORCEMENT-LEARNING:end -->
 
+若 rollout 的环境也由可训练模型提供，异步边界就不止 behavior policy 一种版本。[一条受限分支](https://arxiv.org/html/2603.18464v1)分别训练并发布 observation、reward 与 policy 模型：真实环境转移进入预测模型的监督 buffer，真实 episode 的观测提供短 horizon 想象起点，而由预测观测、奖励和终止信号组成的合成轨迹进入 policy buffer。三个更新频率可以不同，这让模型内采集不必等待完整真实环境 episode；本文真实采集对照是 MuJoCo/LIBERO，而非真实机器人试验。一次梯度因而同时依赖行为策略和两个预测器的状态。Runtime 因而应保留真实/合成来源、起点、horizon 与对应模型身份；仅重算最新 critic 或修正 policy ratio，不能把预测 reward/termination 变成真值，也不能消除成功短 episode 先到的样本 mix 偏差。独立常驻池又增加模型训练、权重发布、跨池请求、buffer 和预测误差费用；所测超线性 trainer 吞吐同时增大 micro-batch，较少在线环境步也预付了离线 world-model 数据与训练，不等端到端免费加速。奖励差分保持原 policy 最优的条件与完整版本提交协议没有由该接口得到认证。预测支持、版本或全账不可信时，限制想象 horizon，补真实 replay，并保留固定预测器、直接环境采集和已有同步/有界异步路径，不能让快到的合成轨迹越过 objective admission。<!-- source-family:SF-2026-ARXIV-2603-18464 -->
+
 在真实机器人 fleet 中，异步更新还要服从物理 episode 边界：actor 先在本地缓冲已执行轨迹，再将完整 episode 上传；learner 发布新 checkpoint 不意味着它已在 actor 生效，actor 宜把更新排队，在 episode 之间验证并切换策略，避免一次轨迹中途改变 behavior policy。自主动作、人工接管片段与 offline 示教及其采样配比应分别绑定来源，在线新增数据也不自动满足同一 θ 的严格 on-policy 目标。这个提交边界减少动作与训练版本混淆，却增加边缘缓冲、对象存储、通知、参数传输与策略陈旧度；不能拿 policy 侧完成 episode/h、排除 human reset/scene setup 后的数值代替完整人力与物理吞吐，监督不足或无法安全切换时保留人工接管、固定策略与有界异步。<!-- source-family:SF-2026-ARXIV-2601-03044 -->
 
 若完成时间与任务难度相关，按完成顺序贪婪消费 trajectory 还会改变一段训练时间内的样本 mix；全 FIFO 保留生成次序，却可能被单个长任务拖住。一个有界折中让 scheduler 维护全局生成序列、未消费队头 `i` 与窗口宽度 `W`，只允许消费 `[i, i+W-1]` 内已完成项，并在队头被消费后前移窗口。窗内可以乱序，窗外即使完成仍不可消费；它以保留一部分 straggler 等待换取较小的消费序号偏离，不是用到场频率重加权修正同一种误差。<!-- source-family:SF-2026-MINIMAX-FORGE-CN-20260212 -->
@@ -1631,6 +1643,10 @@ policy revision
 
 <!-- source-family:SF-2026-ARXIV-2605-15565 -->
 
+把 rollout 暴露为独立服务后，trainer 收到的不能只是可重新分词的最终文本。可让初始化、生成与评价各由独立 worker pool 消费明确的阶段结果，生成侧保留原 prompt/response token IDs、逐 token log-probabilities 和已有 assistant turns；新的环境消息另行编码，再以这份原始轨迹表示交给 learner。它把资源阶段的排队与训练样本的语法身份分开，避免文本往返改变采样序列；但 token 一致仍不等于 policy revision、mask 或 log-probability 口径一致，模型后端换代和跨迭代续做必须另验旧 prefix 与新 policy 能否共同采用。<!-- source-family:SF-2026-ARXIV-2603-18815 -->
+
+这种边界新增阶段 queue、镜像/工具状态、结果序列化和取消清理成本。[受限 ProRL Agent 实现说明](https://arxiv.org/html/2603.18815v1)把 timeout 只累计在活跃阶段，不能把排队除外后的 execution time 当端到端 deadline；错误结果能够返回也不取得训练资格，取消请求亦不证所有容器或副作用已回收。局部工具与负载对照只支持所测配置，不能把 RL 总分提升归因接口、或由 rootless 签发生产隔离。完整初始化、推理、工具、评价与等待均记账；阶段产物、policy 身份或清理无法确认时，保留同步 trainer loop、固定后端与原 token 轨迹，丢弃不合格结果，而不是让更高吞吐覆盖样本一致性。
+
 当 Agent rollout 在模型生成与长尾 tool wait 之间反复切换时，step-level FIFO 只看当前可运行 token，无法解释一条 trajectory 何时结束、应放在哪个 worker，也无法阻止少量长尾轨迹拖住整轮同步。更细的控制面把 trajectory context、tool frontier、已生成 token、policy revision 和预测剩余工作视为一份可迁移状态，再联合决定何时继续、在哪里恢复以及给谁更高优先级：
 
 ```text
@@ -1725,6 +1741,12 @@ gradient event
 多模态训练进一步暴露了单一 batch-size 抽象的不足：encoder 与 language backbone 的算子、激活和并行方式不同，sample reshaping 会改变两侧负载，modality mixture 又随 batch 波动。runtime 因而要联合拥有 modality-aware packing、encoder/LLM placement 与动态负载反馈，而不是由数据层单独“凑满 batch”。代价是更复杂的 shape identity、调度与重放；模态固定、shape 稳定时，静态并行仍更容易复现。[受限证据：arXiv:2605.08962v1]
 
 <!-- source-family:SF-2026-ARXIV-2605-08962 -->
+
+多模态输入变化还可能让统一并行网格不再合算：视觉 encoder 的有效 patch batch 与 language backbone 的 packed sequence 驱动不同的算子、激活和吞吐曲线。可先把硬件/model profile 与目标数据的 shape 分布分开，离线选择两侧各自的 TP/PP/DP 计划；再在该计划内按每个样本对两侧的实测估时重排下一 global batch，降低批间和批内 skew。这样改变的是原有工作如何放置，不是给 scheduler 权力改变 loss、样本资格或 optimizer step；稳定 shape 和较小训练仍可保留统一网格与简单 packing。
+
+两个 module 使用不同 DP 组后，边界传输必须显式改变：encoder 端先按原 sample/activation 归属 gather，再 scatter 到 LLM 组，backward 沿对应映射反向搬运 gradients，不能假定相同 rank 编号就是相同数据身份。更自由的 mesh 增加 communicator、shape/profile 与 microbatch 映射状态，也可能把瓶颈移到边界 rank；预测失配、CPU 计划无法被计算 slack 隐藏或搬运成本抵消收益时，应保留固定网格和原 schedule 回退。[受限 v1 消融](https://arxiv.org/html/2603.25120v1)支持离线计划与在线重排的贡献随模态计算比和 shape 分布变化，但 manual baseline tuning、合成 delay 与大规模投影不证明同质量通用提速或生产故障安全。
+
+<!-- source-family:SF-2026-ARXIV-2603-25120 -->
 
 最后，减少反向通信也可以从模型边界本身入手：若网络显式提供 bounded interface，跨 region 的 adjoint transport 可重写为 exact suffix scan，使 depth-parallel backprop 获得可组合的数据流。交换条件是模型表示自由度被 architecture constraint 限制，并需要证明 scan 与原梯度语义等价；普通网络或需要任意跨层依赖时，传统 pipeline/tensor parallel 仍是正确路径。[受限证据：arXiv:2605.09204v1]
 
@@ -2182,3 +2204,15 @@ Primary-source 校验入口：
 - `SF-2026-UNIRL-20261005` — Daily `2026-10-06`；[#528](https://github.com/Tencent-Hunyuan/UniRL/pull/528) 原配置/有限memory运行与 wake窗口说明，精确 [54cc7b6](https://github.com/Tencent-Hunyuan/UniRL/commit/54cc7b69698332b7c1b167b174263fe02ce81ea7) validation/engine/trainer 实现，家族2+2+2=6、纠错受影响深入。采用 sleep成功≠物理释放与 wake-before-offload 组合峰，不授通用fraction/吞吐保证；overflow留baseline去梯度只在日报记录，不当无偏等价。作者必要源/owner及邻接已读，root PRE通过；root非作者实际正文/完整邻接及本末注POST通过，窄锁释放。未运行代码或复现实验。
 
 - `SF-2026-ARXIV-2602-11543` — Daily `2026-02-14`补查；[SPES exact-v1](https://arxiv.org/html/2602.11543v1) §3–5，2+2+2=6，全weight/full forward但assigned expert gradient/moments、shared FedAvg与expert direct assignment/合成差額深入。不是ZeRO weight shard/uplink等全部网络；7B 4×8 A800/13Gbps、2B16 L40S/17Gbps与局部ARC/PIQA/OBQA反侧不授任意异构/质量等价。root/reviewer必要Source及actual owner/完整邻接、MoE-DisCo比较PRE通过，root授两段+本末注窄锁；作者已写并顺读完整邻接，review_20260214已实际独核新正文、完整邻接及本末注，非作者actual POST通过，root释放窄锁，不授DAY。未核artifact/复现。 本轮补查事件的首次公开日期未证，必要Source/PRE/实际POST研究仍有效，但不计本日已确认新增成果；归属只按[本日日报§5](../../papers/2026/02/14/README.md#5-缺口与下一步)的57日期请求定点重开，不撤正文或补造公开日。
+
+- `SF-2026-ARXIV-2603-18815` — [ProRL Agent exact-v1](https://arxiv.org/html/2603.18815v1) §3.2–3.4/4.1–4.4/Tables2–3；仅阶段worker/原token与generation logprob交付、active-stage clock与完整deadline分责。旧Dec17,2025作者Blog服务拆分/DAPO不重复计新；backend换代/未完成任务续做、heap口径、取消清理/训练资格、rootless边界与全资源费用保留，不采任意on-policy恢复、普遍线性扩展或生产隔离，未核实现/复现。
+
+- `SF-2026-ARXIV-2603-18464`：[AcceRL exact-v1](https://arxiv.org/html/2603.18464v1)，必要§3–6/Eqs1–13/Tables1–2和§7；仅真实Bwm/合成Bimg与三个模型更新/消费分责。保revalue非truth、提前完成人口偏差、Eq13 shaping/analyticWMgradient桥未采用、Goal反退、ZeRO2/microbatch混杂和offline预付/全费；不授任意stale稳定、200×端到端/生产安全或完整checkpoint协议，未核代码/复现。
+
+- `SF-2026-ARXIV-2603-17507` — [QuantFL exact-v1](https://arxiv.org/html/2603.17507v1)必要III–V/Eqs1–9/Alg1/TII–III与结论限制；仅warm-start统计/更新base/码本身份作为量化条件，保NQ未匹配初始化、质量反退、simulated concentration、CIFAR bit账不一致和codebook recipe缺口。不采预训练替代EF、midpoint一般最优、严格pareto/碳减排或LLM普适收益；未核代码、实际网络/能耗或复现。
+
+- `SF-UNIRL-PR-566` — Daily 2026-10-12；[PR566](https://github.com/Tencent-Hunyuan/UniRL/pull/566)、merge `0fe4f99dc2384a022fe0c8472aec889c216d3c07` 的 loss_scale helper/统一 stack/Gotchas，1+2+2=5，正确性事件深入必要局部。每 track 分母、gradient-average world 与零计数分责，不改原统一训练目标为默认更优。PR旧成本说明的 per-micro host reads已被merge代码的cumsum/一次tolist读取替代；CPU/Gloo为作者自述，未发布harness、GPU/EP8/端到端缺口近正文保留，未复现。
+
+- `SF-2026-ARXIV-2603-25120`：[DFLOP exact-v1](https://arxiv.org/html/2603.25120v1) §3.1–3.4、§4、§5.1–5.3；仅采用双 module mesh 与双向 communicator、offline distribution/online batch 分责。A100 最多 64 GPU 实测和 16–32 node 投影分开；manual tuning 未匹配搜索预算、precision/CI/quality 未披露，不授 up-to 通用收益、bitwise 或恢复保证；未核 artifact 或复现。
+
+- `SF-2026-ARXIV-2603-26438` — [exact-v1](https://arxiv.org/html/2603.26438v1)§2.2–3.3/4.1–4.3.4；2+1+2=5。片上DCA借算术单元/collective参与mask与资源分责，保twoinput/二维反侧、RTLvs解析model、布局/数值条件与费用；不采全局deadlock/实硅/跨GPUNCCL或end2end模型保证，未核repo或复现。

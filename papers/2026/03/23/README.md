@@ -2,11 +2,16 @@
 
 **规范：** V3
 **窗口：** 2026-03-22T09:00:00+08:00 ～ 2026-03-23T09:00:00+08:00
+**窗口说明：** 用户明确仅补遗漏，原窗口、已入候选日期/评分与原§4连续正文保持，不按新窗口搬移。
+**补充窗口：** 2026-03-22 ～ 2026-03-22
+**冻结候选日期：** [原报告](../_sources/daily-20260323/baseline-before-supplement-20261012.md)
 **状态：** 完成
 **Books：** 纳入本次
-**检查时间：** 2026-10-02T04:15:34+08:00
+**检查时间：** 2026-10-12T06:16:26+08:00
 
 ## 1. 结论
+
+本次仅补北京时间03-22完整自然日：14每日来源已实际有限查漏，**新增确定候选0、Books新写0**；原Sora家族、日期和4分保留。当前目录未见可确认当日新事件，不等于当日零研究或无遗漏；GooglePubs/Meta Research/Seed Blog/MiMo/arXiv五类本日历史切片限制精确隔离。普通待办0，非作者root已实际完整核六部分与来源原值，本轮增量DAY通过。[本轮实际入口与原值](../_sources/daily-20260323/SUP_SOURCE_STOP_20261012.md)。以下旧窗口结果与有效证据保持，不继承旧完成声明为本轮验收。
 
 本窗确定候选 **1 个唯一家族**：Sora 既有安全说明的重要修订。其新增上传真人照片的 consent attestation、分层 guardrails 与分享标记条件属于版本相关安全边界，已深入核受影响内容，**仅报告 1、Books 新增 0**，不将产品配置泛化成认证或安全保证。
 
@@ -16,24 +21,30 @@ arXiv 四主题提交区间检索得到 149 个交叉命中、去重 **124 个�
 
 实际入口、原字段与停止位置详见[本日来源记录](../_sources/daily-20260323/V3_SOURCE_STOP.md)。只每日14源与本窗主题；宽目录只定位，不逐篇审机构历史。
 
+旧窗口14来源实际记录仍保留于[原档案](../_sources/daily-20260323/baseline-before-supplement-20261012.md)与[原SOURCE](../_sources/daily-20260323/V3_SOURCE_STOP.md)，不以旧小时门替代以下自然日查漏。
+
+补充窗口2026-03-22自然日的独立查漏如下；原窗口记录不移植小时门。[本轮来源停止及必要原值](../_sources/daily-20260323/SUP_SOURCE_STOP_20261012.md)集中保留实际请求与locale差异。未触发按需来源，不扫描Weekly来源。
+
 | 来源 | 检查范围与依据 | 结果 | 缺口 |
 | --- | --- | --- | --- |
-| SRC-OPENAI | 官方 RSS 实际1242item，按本窗过滤仅Sora修订；当前core28–40与明确previous26–34定点对读 | 已检查 | 无；RSS证明本次修订事件，不证明家族首次公开 |
-| SRC-ANTHROPIC | 官方Research嵌入174 publishedOn，9个March原日期/slug完整对读；Science三文Mar23T23Z=24T07 BJT | 已检查 | 可见原日期均窗外，不授机构全历史 |
-| SRC-GOOGLE-AI | Research March archive12+2卡、2/2；DeepMind page3完整24卡与邻界三实际日期；Pubs year2026实际322973B但无可核本窗dated slice | 受阻 | H1：Pubs本窗主题历史公开切片 |
-| SRC-META-AI | Research HTML实际286765B但无可用本窗日期；Engineering page1/2完整10+12卡、非严格时序，无22/23可见 | 受阻 | H2：Research本窗dated历史切片 |
-| SRC-QWEN | 公共API40条metadata全部日期/标题，MaxPreview19→Omni30；无total/paging，当前可见无22/23 | 已检查 | 不认证所有历史或40篇正文 |
-| SRC-DEEPSEEK | 本轮官方页+9467B公开脚本；News完整16原日期/Research隐藏数组恢复原值定点复用，六月→二月跨过本窗 | 已检查 | 不再保留假hidden目录故障；有限目录非全机构保证 |
-| SRC-MOONSHOT | 新官方Kimi Blog19卡完整可见Jul16→Apr20→Feb09→2025 | 已检查 | 未以旧platform Blog截止2025作Research故障 |
-| SRC-TENCENT-HUNYUAN | 实际publicList renderType0/page1/size20完整11/total11，displayFeb→Apr、published不同不互换 | 已检查 | 有限可见目录，无22/23，不授全机构历史 |
-| SRC-ZAI | 官方Research完整15卡Aug→Apr01→Mar15→Feb→2025 | 已检查 | 停15可见，无本窗，不扩Github |
-| SRC-BYTEDANCE-SEED | type1/token20完整18邻界metadata：1337本窗protein-ligand领域工具title范围关闭；type2/token0完整14/total19，next空/has_morefalse | 受阻 | H3：Blog total差额5的本窗主题metadata |
-| SRC-BAIDU-ERNIE | 官方zh Blog实际10 dated卡May→Apr→Feb→Jan→2025，无本窗可见 | 已检查 | 仅可见停止，不继承旧分页完成 |
-| SRC-XIAOMI-MIMO | 首页Paper8 dated/Blog15 undated；正确Pro/Omni原页core实际已读、March18明确窗外；TTS只undated标题 | 受阻 | H4：本窗dated Blog历史切片/TTS身份与日期；不猜route、不留已恢复core故障 |
-| SRC-MINIMAX | EN12/CN13完整可见卡，March18→Feb及后April无22/23；AgentTech .md实际882B仅May13datedentry | 已检查 | 有限目录，不扩Guide/Github或声称全历史 |
-| SRC-ARXIV | 四主题start0/max100/asc返回64/50/31/4，149交叉命中→124标题；28完整v1题摘与current header；合法cs.DC月目录250仅monthheader、一次export cs.CL250失败 | 受阻 | H5：本窗主题announcement/延迟旧Submitted及重要revision历史切片；27具体公开区间未完全落窗 |
+| SRC-OPENAI | 官方RSS GET784414B/1287item，March21～23日期邻界仅SoraUTC23T00=BJT23T08；非新增补窗候选 | 已检查 | 有限feed，不证明删除历史 |
+| SRC-ANTHROPIC | Research GET282283B/177 publishedOn；9 March日期相邻slug完整读，无BJT22，Science三文BJT24 | 已检查 | 可见目录非全机构历史 |
+| SRC-GOOGLE-AI | March archive12+2卡，2/2；DeepMind page3完整24身份，相关六日期按同身份旧原值复用；Pubs2026 GET336107B无dated字段 | 受阻 | S1：03-22主题Pubs dated历史切片 |
+| SRC-META-AI | Research GET278821B无dated字段；Engineering当前三页到March18→30邻界，不沿旧page2停止 | 受阻 | S2：Research 03-22 dated历史切片 |
+| SRC-QWEN | 官方公共API4781799B/40 articles全部title/path/extra.date独立读，March19→30，无total/paging | 已检查 | 有限可见目录，不认证40正文或全历史 |
+| SRC-DEEPSEEK | 当前News5/Research10与9467B公开脚本；同身份完整16原News日期有效复用，ResearchJun24→Feb25 | 已检查 | 有限目录，不留假隐藏目录故障 |
+| SRC-MOONSHOT | 官方Kimi Blog156行19 dated卡完整可见，July16→April20→Feb09，未扩GitHub | 已检查 | 有限目录，不授全历史 |
+| SRC-TENCENT-HUNYUAN | zh公开POST page1/size20/renderType0，totalNum11/list11、442610B，id/title/publishedAt实际读、同身份display原值复用 | 已检查 | 有限目录，published/display不互换 |
+| SRC-ZAI | Research175行完整15卡，Apr01→Mar15→Feb，停止可见不扩GitHub | 已检查 | 有限目录无22，不授全历史 |
+| SRC-BYTEDANCE-SEED | 明确x-tt-locale: US，论文type1/token20实际18/82,next40；Blog type2/token0实际14/19,next空false；全部ID/PublishDate实际读，paperBJT21→23 | 受阻 | S3：US Blog未返回5身份/03-22 metadata；默认目录不同不冒充US |
+| SRC-BAIDU-ERNIE | zh Blog68行10 dated卡May→April→Feb→Jan跨本日，停止第一页不沿旧2页完成断言 | 已检查 | 有限可见范围，不授删除历史 |
+| SRC-XIAOMI-MIMO | 首页338行/GET58220B，8 dated Paper/15 undated Blog全部metadata；Pro/Omni同身份March18日期有效复用，TTS未猜route | 受阻 | S4：03-22 datedBlog历史切片/TTS身份公开日 |
+| SRC-MINIMAX | EN12/CN13卡March18→Feb；AgentTech当前66行3项Oct08/Sep22/Sep19，不沿旧May13单entry | 已检查 | 当前可见未见22，不证明删除/换版历史 |
+| SRC-ARXIV | 官方availability170–189独读；BJT22通常无scheduled batch不作全历史0；cs.CL March25只monthheader/早段，cs.DC March250当前cache miss；六主题日期搜索无命中只作补线索 | 受阻 | S5：03-22相关announcement/重要revision及延迟Submitted公开历史切片 |
 
 ## 3. 候选与判断
+
+本次03-22自然日未确认新增候选，以下原1行日期/评分/处置保持；原日期保留项不搬移到新增队列。
 
 | 材料 | 公开时间 | 项目贡献与评分 | 审阅结果 | Books决定 |
 | --- | --- | --- | --- | --- |
@@ -52,6 +63,12 @@ root已实际读当前28–40，首批准入与受影响安全边界校准通过
 [完整题摘与筛选状态](../_sources/daily-20260323/V3_SCREENING.md)、[首8日期/header原值](../_sources/daily-20260323/V3_FIRST_DATE_HEADER_PACKET.md)、[尾20日期/header原值](../_sources/daily-20260323/V3_EXTRA_DATE_HEADER_PACKET.md)均保留；题摘与索引不被当作性能、安全或Books证据完成。
 
 ## 5. 缺口与下一步
+
+本轮补充普通待办0，非作者root完整六部分增量DAY已通过；旧窗口通过没有代替本轮。补充窗口五类已穷尽本次有限公开入口的外部保留项：S1 GooglePubs主题dated切片、S2 Meta Research dated切片、S3 SeedUS Blog未返回5身份/当日metadata、S4 MiMo datedBlog/TTS身份与公开日、S5 arXiv相关announcement/重要revision历史切片。各项缺的是03-22自然日可核公开语义；当前可见目录/无日期壳/提交与更新日期均不足。可接受官方dated目录或原始公告/公开metadata，定点重开相应来源/identity/03-22；不用于正面Coverage、Evidence、Books或无遗漏断言。具体入口及停止见[本轮SOURCE](../_sources/daily-20260323/SUP_SOURCE_STOP_20261012.md)。
+
+窗外身份只用于定位：SoraBJT23T08、Seed1337 BJT23T00与Science三文BJT24T07，不作为03-22新候选，不展开新日期；旧27请求和19469中心冲突继续以下原文，不重复申请、不按旧小时门扩大本轮工作。
+
+以下为保持的旧窗口终态及原复核结论，不代表新补充验收：
 
 普通待办0，root最终非作者日级验收通过。来源/筛选/候选必要审阅/Books处置已完成到本轮有限停止；不得重复首波或扩窗。
 
@@ -96,6 +113,12 @@ root已实际读当前28–40，首批准入与受影响安全边界校准通过
 窗外线索不阻塞本窗：AnthropicScience三文Mar23T23Z已归24窗口（本作者有限非作者core核另交24），MiMoPro/OmniMarch18、GoogleFlashLive/Manipulation26/Lyria25、QwenMaxPreview19/Omni30仅日期定位；不在23重审或重复记候选。
 
 ## 6. 复核
+
+本轮补充复核者：root（非报告作者）。
+本轮补充结论：通过。
+root实际完整读取正式六部分126行与SUP_SOURCE_STOP全本，核14入口真实有限停止、US/default差额原值、BJT22与Sora/Seed/Science窗外分责、0新增及五限制隔离；旧28题摘/27日期门没有沿用为新增队列。root独立比较原候选整行、原窗口及连续§4均逐字保持。无新Books写入或待POST，普通0；通过只认证本轮有限来源处理与0新增判断，不授历史全Coverage或互联网无遗漏。当前V3与本日限定diff通过，机器结果仅格式一致性；旧有效审阅仍限以下原范围。
+
+以下保留原窗口有效复核记录：
 
 复核者：root（非作者）。
 结论：通过

@@ -1,0 +1,1057 @@
+Exploring Task Performance with Interpretable Models via Sparse Auto-Encoders
+Shun Wang
+Affiliation:
+Department of Computer Science,
+The University of Sheffield, UK
+Email:
+swang209@sheffield.ac.uk
+Tyler Loakman
+Affiliation:
+Department of Computer Science,
+The University of Sheffield, UK
+Email:
+chenghua.lin@manchester.ac.uk
+Youbo Lei
+Affiliation:
+Xi’an Jiaotong University
+Yi Liu
+Affiliation:
+Tianjin University
+Bohao Yang
+Affiliation:
+University of Manchester
+Yuting Zhao
+Affiliation:
+Department of Advanced Information Technology, Kyushu University
+Dong Yang
+Chenghua Lin
+†
+†
+thanks:
+Corresponding author
+Affiliation:
+Department of Computer Science,
+The University of Sheffield, UK
+Affiliation:
+University of Manchester
+Affiliation:
+City University of Hong Kong
+Abstract
+Large Language Models (LLMs) are traditionally viewed as black-box algorithms, therefore reducing trustworthiness and obscuring potential approaches to increasing performance on downstream tasks. In this work, we apply an effective LLM decomposition method using a dictionary-learning approach with sparse autoencoders. This helps extract monosemantic features from polysemantic LLM neurons. Remarkably, our work identifies model-internal misunderstanding, allowing the automatic reformulation of the prompts with additional annotations to improve the interpretation by LLMs. Moreover, this approach demonstrates a significant performance improvement in downstream tasks, such as mathematical reasoning and metaphor detection.
+1
+Introduction
+The interpretability of Large Language Models (LLMs) is a critical area of research. Despite their remarkable performance across a range of tasks, these models remain inherently opaque
+Li et al. (2024)
+. The ability to understand the internal decision-making processes and representational structures of LLMs is essential for building trust, ensuring safety, and optimizing performance, particularly in sensitive fields such as healthcare
+Al-Nazi and Peng (2024)
+and law
+Shu et al. (2024)
+. This requirement for interpretability stems from the black-box nature of neural networks, where the sheer complexity poses a significant challenge in understanding how input data is processed and represented within the model. Addressing this opacity is a key focus for advancing the responsible deployment of LLMs in real-world applications
+Lin et al. (2024)
+.
+LLMs such as GPT-4
+Achiam et al. (2023)
+and Llama 3
+Dubey et al. (2024)
+are trained on massive datasets to capture intricate language patterns. However, their opacity (i.e., their inability to be easily understood by humans) remains a significant limitation.
+Rudin (2019)
+argues against using black-box models in sensitive fields, advocating for inherently interpretable models that do not require post-hoc explanations which may not meet legal criteria for transparency
+Bordt et al. (2022)
+. Similarly,
+Lipton (2018)
+critiques the over-reliance on post-hoc interpretability techniques. These concerns have driven research on new methods for breaking down the internal mechanics of LLMs to understand how they process information.
+OpenAI proposed a method for using large models to interpret other large models
+Bills et al. (2023)
+. They utilized GPT-4 to analyze the internal structure of GPT-2 to reveal more information. However, as noted in their report, this simplistic approach primarily relies on analyzing how individual neurons respond to specific features in the data, which presents certain limitations. As discussed in
+Elhage et al. (2022)
+, neurons are often polysemantic, meaning they respond to multiple unrelated inputs, making it difficult to interpret their behavior based on individual activations alone
+Bricken et al. (2023)
+. Since each neuron is typically activated by multiple features, it is challenging to determine the precise proportion of activations attributed to each feature and their impact on the output. Furthermore, this limitation hinders the application of interpretability methods to improve downstream tasks, as the effect of activating a particular node is multifaceted, forming a one-to-many mapping. Consequently, while it is possible to infer the behavior of neurons from the output retrospectively, it remains difficult to predict the output state directly from the activation of individual neurons.
+To address this issue, inspired by the work of
+Bricken et al.
+, we apply a mechanistic interpretability technique that combines dictionary learning with sparse autoencoders to decompose polysemantic neurons in various LLMs. One possible explanation for the polysemantic nature of neurons is superposition
+Arora et al. (2018)
+;
+Olah et al. (2020)
+;
+Elhage et al. (2022)
+;
+Xiong et al. (2024)
+, where a neural network represents more independent features than it has neurons by assigning each feature a unique linear combination of neurons. In this scenario, features can be considered vectors spanning multiple neurons, forming an overcomplete basis for activations. Prior studies on toy models
+Elhage et al. (2022)
+demonstrated that when features in the data are sparse, the training process may encourage the model to utilize superposition, facilitating the disambiguation of feature combinations responsible for specific activations.
+We integrate dictionary learning with automated interpretation techniques to address the critical need for interpretability in LLMs, explicitly decomposing and analyzing model features. Specifically, we train sparse autoencoders to extract monosemantic features from polysemantic neurons, thereby reducing the ambiguity in individual neuron behavior. Additionally, we provide a comprehensive unsupervised framework for applying mechanistic interpretability analyses to downstream tasks, enabling a clearer understanding of these models’ internal mechanisms.
+Our contributions are distinct from prior work in several key aspects:
+•
+Decomposition of Advanced LLMs
+: Unlike existing studies focussing on toy models, we decompose several advanced open-source LLMs, directly comparing their performance on downstream tasks.
+•
+Modular Application to Downstream Tasks
+: We are the first to apply autoencoder-based feature decomposition in a modular manner to complex downstream tasks, demonstrating improved performance.
+•
+Ambiguity Resolution in Mathematical Symbols
+: By decomposing LLMs, we discovered that they exhibit ambiguities when processing certain mathematical symbols, hindering their reasoning abilities. We resolve these ambiguities through query reformulation, improving the performance of these LLMs in mathematical problem-solving.
+•
+Enhanced Metaphor Detection
+: Our method leverages internal feature extraction rather than external tools like POS tagging or knowledge graphs
+Tian et al. (2024)
+, providing a more direct and accurate analysis of how LLMs understand metaphors.
+Overall, our work introduces a novel generalisable framework that advances the interpretability of LLMs while simultaneously enhancing their performance in critical downstream tasks.
+2
+Related Work
+Interpretability of LLMs
+Belinkov and Glass (2019)
+reviewed interpretability methods in neural language models, highlighting the need to disentangle features for a clearer understanding of LLMs’ internal structures. Techniques like attention visualization, layer-wise relevance propagation, and probing classifiers provide partial insights but fail to fully explain model decision-making
+Karpathy et al. (2015)
+;
+Gupta and Schütze (2018)
+;
+Conneau et al. (2018)
+. In contrast, sparse representations and feature decomposition show greater potential for producing human-readable interpretations
+Faruqui et al. (2015)
+;
+Murdoch et al. (2018)
+. A key challenge in mechanistic interpretability is polysemanticity, where neurons respond to multiple unrelated inputs, complicating function assignment
+Olah et al. (2020)
+.
+Olah et al.
+introduced the concept of circuits in LLMs, demonstrating how analyzing neuron activations and their interactions can clarify model behavior.
+Prior research suggests that polysemantic neurons arise from the network’s need to efficiently compress features, resulting in fewer neurons than distinct features in the data
+Elhage et al. (2022)
+. To address this, researchers applied dictionary learning and sparse feature extraction on single-layer toy models to decompose neuron activations into more interpretable units. Sparse representations offer a promising solution to polysemanticity and superposition, with sparse autoencoders reducing neuron overlap to create more monosemantic feature representations.
+Cunningham et al. (2023)
+further explored this approach to extract interpretable features from LLM activations, enabling precise identification of key factors influencing counterfactual behavior, such as decision-making in indirect object identification tasks.
+Another aspect of interpretability involves applying these techniques to specific downstream tasks, such as mathematical reasoning or metaphor detection, where understanding model behavior is critical to improving performance.
+Doshi-Velez and Kim (2017)
+called for more rigorous interpretability studies in these specific contexts, arguing that the demand for transparency is particularly high when models are used in complex and sensitive domains. In response, our work applies sparse decomposition methods to understand how LLMs handle logical reasoning in mathematics or process ambiguous language in metaphor detection. These applications show the practical benefits of interpretability in improving both model performance and trustworthiness.
+Figure 1:
+Framework of decomposing LLMs by Dictionary Learning. The framework extracts features from LLMs using a sparse autoencoder to isolate monosemantic features from polysemantic neurons. Once trained, OpenAI’s auto-interpretability techniques
+Bills et al. (2023)
+prompt GPT-4 to verbally describe the meaning of these features.
+Mathematical question answering
+has shifted from traditional symbolic systems like Computer Algebra Systems (CAS) to LLMs, which enable understanding and solving math problems without domain-specific programming
+Levonian et al. (2023)
+. Techniques such as chain-of-thought prompting
+Wei et al. (2022)
+have improved performance on multi-step problems.
+Despite these advancements, LLMs still face challenges with precise calculations, symbolic ambiguities, and maintaining multi-step consistency
+Wei et al. (2022)
+;
+Razeghi et al. (2022)
+;
+Ahn et al. (2024)
+. Recent research has integrated external tools such as symbolic reasoning engines and plugged-in solvers
+Lewkowycz et al. (2022)
+.
+Metaphor detection
+has improved with pre-trained models like BERT
+Devlin et al. (2019)
+and GPT
+Brown et al. (2020)
+, particularly through fine-tuned models like MelBERT and RoPPT
+Choi et al. (2021)
+;
+Wang et al. (2023)
+. However, challenges like polysemanticity—where single neurons respond to multiple unrelated inputs—persist, making metaphor detection complex.
+Recent work introduces external tools to reduce polysemanticity, like RoPPT
+Wang et al. (2023)
+using parse trees to filter context noise, and FrameBERT
+Li et al. (2023)
+leveraging frame-based knowledge for more interpretable metaphor detection.
+3
+Methodology
+Our experimental work is divided into two parts. In the first part, we employ dictionary learning to decompose LLMs and extract relatively monosemantic features, annotating these features using an auto-interpretability technique to produce human-readable dictionaries. In the second part, we use the explicit dictionary obtained from the first step along with a sparse autoencoder to analyze downstream tasks. We designed and implemented an automated pipeline to complete this step.
+3.1
+LLM Decomposition
+In this step, we apply a sparse auto-encoder, a dictionary learning algorithm, to generate features from several open-source LLMs that provide a more monosemantic unit of analysis than individual neurons. Our approach is grounded in extensive prior research, particularly in the use of dictionary learning and related techniques for analyzing neural network activations, as well as broader literature on disentanglement
+Olshausen and Field (1997)
+;
+Lee et al. (2006)
+;
+Yun et al. (2021)
+;
+Elhage et al. (2022)
+;
+Bricken et al. (2023)
+;
+Cunningham et al. (2023)
+.
+Sparse Autoencoder
+To analyze the superposition phenomenon in LLMs, we employ sparse dictionary learning
+Olshausen and Field (1997)
+;
+Lee et al. (2006)
+by training a single-hidden-layer sparse autoencoder to decompose neuron activations. The encoder extracts sparse features, while the decoder reconstructs the input, ensuring symmetry through tied weights. During training, we balance reconstruction loss (ensuring accurate input reconstruction) and sparsity loss (applying L1 regularization to enhance feature interpretability), enabling the model to learn compact and semantically meaningful feature representations.
+Auto-interpretability Technique
+To measure how interpretable the dictionary features are, the automated approach introduced in
+Bills et al. (2023)
+is adopted. In brief, the auto-interpretability procedure samples text where a specific dictionary feature is activated and prompts an LLM to generate a human-readable description of that feature, using this description to predict the feature’s activation on other text samples.
+3.2
+Downstream Applications
+We selected mathematical reasoning and metaphor detection as downstream tasks because they test different but crucial capabilities of language models. Mathematical reasoning emphasizes precise logical thinking and structured problem-solving, while metaphor detection challenges the model’s ability to understand abstract figurative language and context. These tasks are complementary, with one focusing on logical precision and the other on semantic adaptability, making them important and representative benchmarks for evaluating diverse aspects of language model performance.
+Figure 2:
+Overview of the pipeline for handling ambiguity in mathematical problem-solving. (1) Activated features are extracted using LLMs with a trained autoencoder plug-in. (2) Rule-based methods analyze token activations to detect and label ambiguous mathematical symbols. (3) GPT-4 is employed to explain these symbols and rephrase the entire question. (4) The original and rephrased questions are compared for equivalence, and if necessary, the question is regenerated. (5) Correctly rephrased question is obtained. (6) The correctly rephrased question is re-input into the LLM. (7) This process results in an enhanced, more accurate answer.
+Mathematical Reasoning
+As seen in
+Table 1
+, LLMs often fail to prioritize mathematical features when interpreting certain mathematical symbols
+Srivatsa and Kochmar (2024)
+. In many cases, neither the primary nor secondary activations correspond to features from the mathematical domain. This misalignment introduces ambiguity in processing mathematical problems, leading to potential inaccuracies in understanding and solving such problems. As a result, this issue poses challenges for LLMs in effectively handling tasks involving mathematical reasoning.
+Our approach involves a multi-step process to enhance the understanding and answering of ambiguous mathematical questions.
+First, we employ a rule-based method that systematically analyzes the activated features of each token by mapping them to predefined mathematical categories and identifying inconsistencies. This process begins by extracting the top activated features for each mathematical symbol and comparing them against a curated set of features of mathematical attributes. As shown in
+Table 1
+, if a symbol’s dominant features do not align with known mathematical attributes, it is flagged as ambiguous.
+Next, GPT-4 is employed to automatically explain these ambiguous symbols within the original problem and rephrase the entire question for clarity.
+Once rephrased, the original and modified questions are compared to verify their equivalence by Gemini 1.0-Pro, a language model of comparable capability to GPT-4, ensuring robustness and reducing reliance on a single model. If the two versions are not equivalent, the rephrasing process is repeated to generate a valid rephrased question. Once a correctly rephrased question is obtained, it is then input into the model, resulting in a more accurate and enhanced answer. This process ensures better handling of ambiguity and improved model performance.
+Metaphor Detection
+Our process begins with the LLMs-autoencoder model extracting the activated features of target words from the input, identifying ambiguous targets, and subsequently reformulating the query for clarity. Reformulation is not universally applied but is selectively triggered based on an automated ambiguity detection mechanism. To identify potential semantic ambiguities, we employ GPT-3.5-turbo to analyze these features and determine whether the target word is likely to be misunderstood in the given context. Specifically, GPT-3.5-turbo predicts
+whether the LLM is likely to misinterpret the word’s meaning and thus deciding whether reformulation is necessary. This process is not a simple input transformation but an adaptive self-interpretability approach that enhances LLMs’ understanding of complex linguistic contexts.
+In
+Table 1
+, for example, the word "flowed" in a given sentence exhibits its highest activated feature as "terms related to movement or state change of liquid", indicating a literal interpretation rather than its intended metaphorical usage. In this context, "flow" is meant to express abundance, aligning with Explanation 2, "phrases relating to social gatherings or celebrations." When ambiguity is detected, GPT-4 provides targeted supplementary information to clarify the correct meaning of the target word rather than rewriting the entire sentence. This ensures minimal intervention in the language model’s decision-making process while effectively guiding it toward the correct semantic understanding.
+Regarding GPT-4’s role in reformulation, our approach does not simply rely on it as an input rewriter but leverages it as a knowledge distillation source, providing explicit semantic guidance. Furthermore, GPT-4 is incorporated based on automated decision rules, meaning that its intervention occurs only when the LLMs-autoencoder predicts a high likelihood of misinterpretation. This design ensures that GPT-4’s involvement is both necessary and minimal, rather than being universally applied. Thus, our method does not depend on GPT-4 as the sole source of supplementary information but rather utilizes it as an external knowledge support to enhance LLM performance in high-ambiguity contexts.
+3.3
+Replaceability of Reformulation
+The core objective of this study is to explore an adaptive interpretability method based on LLM-internal features, rather than merely relying on a more powerful model for input reformulation. Our approach does not simply modify inputs but instead leverages LLM-internal feature analysis to predict ambiguity and employs external knowledge to enhance interpretability. Fully relying on GPT-4 for reformulation would effectively outsource the input modality to a stronger model, bypassing the opportunity for LLMs to develop their own reasoning and generalization capabilities. This would not only limit the applicability of our method but also make it difficult to scale to computationally constrained environments. Additionally, our framework is designed as a generalizable interpretability enhancement pipeline, ensuring adaptability to a broader LLM ecosystem rather than restricting it to GPT-4 as an auxiliary tool.
+Although this study employs GPT-4 for generating supplementary information, the approach is not inherently dependent on GPT-4 as the only option. The reformulation mechanism is fundamentally driven by LLMs-autoencoder internal feature extraction and analysis. GPT-4 is only triggered when LLMs-autoencoder predicts a high probability of ambiguity, providing necessary supplementary information rather than globally rewriting the input. Furthermore, this approach can be extended to other LLMs for knowledge supplementation or adapted using fine-tuned instruction models (e.g., T5, LLaMA) or rule-based methods to achieve similar semantic enhancement, improving scalability and computational efficiency in resource-constrained environments.
+Math Query
+Symbol
+Explanation
+If
+|
+4
+​
+x
++
+2
+|
+=
+10
+\left|4x+2\right|=10
+and
+x
+<
+0
+x<0
+, what is the value of
+x
+x
+?
+|
+⁣
+|
+||
+(absolute value)
+1: code language, including both programming and math functions.
+2: numerical and mathematical expressions or symbols.
+3. URLs, hashtags, and alphanumeric characters.
+<
+<
+(less than)
+1: punctuation, especially commas and hyphenated numbers, and discourse markers in potentially complex syntax structures such as order, sequence and list. 2: : words and phrases related to personal experiences or events.
+3 special symbols and numerical values.
+Metaphor Query
+Target Word
+Explanation
+The champagne flowed at the wedding. Is the target word ’flowed’ a metaphorical or literal expression?
+flowed
+1: terms related to movement or state change of liquid.
+2: phrases related to social gathering or celebrations
+. 3: rhythmic movement of a musical composition.
+Table 1:
+Explanation of activated features for mathematical symbols and metaphorical terms in queries. The activated features, which are associated with mathematical attributes or the correct meanings of the metaphorical language, are in
+bold
+.
+Math Query
+Response
+Label
+If
+|
+4
+​
+x
++
+2
+|
+=
+10
+\left|4x+2\right|=10
+and
+x
+<
+0
+x<0
+, what is the value of
+x
+x
+?
+Let’s assume that
+x
+x
+is a positive integer. Then, we can write the equation:
+4
+​
+x
++
+2
+=
+10
+4x+2=10
+Subtracting
+2
+from both sides, we get:
+4
+​
+x
+=
+8
+4x=8
+Dividing both sides by
+4
+, we get:
+x
+=
+2
+x=2
+Therefore, the value of
+x
+x
+is
+2
+.
+✗
+If the absolute value of
+4x+2
+equal to
+10
+and
+x
+is less than
+0
+, what is the value of
+x
+?
+Let’s assume that
+x
+is less than
+0
+. According to the given information, the absolute value of
+4x+2
+is equal to
+10
+. So, we can write the equation as:
+|4x+2| = 10
+To solve this equation, we can consider two cases:Case 1:
+4x+2 = 10
+Subtracting
+2
+from both sides of the equation, we get:
+4x = 8
+Dividing both sides of the equation by
+4
+, we get:
+x = 2
+. Case 2:
+4x+2 = -10
+Subtracting
+2
+from both sides of the equation, we get:
+4x = -12
+Dividing both sides of the equation by
+4
+, we get:
+x = -3
+Since
+x
+is less than
+0
+, the only valid solution is
+x = -3
+. Therefore, the value of
+x
+is
+-3
+.
+✓
+Metaphor Query
+Response
+Label
+The champagne flowed at the wedding. Is the target word ’flowed’ a metaphorical or literal expression?
+The phrase "The champagne flowed at the wedding" is a
+literal
+expression. In this context, the word ’flowed’ describes the actual movement of champagne being poured and spilling freely as would be expected of sparkling wine.
+✗
+The champagne flowed at the wedding. ’flowed’ implies a free and plentiful availability. Is the target word ’flowed’ a metaphorical or literal expression?
+In the context of the sentence, "The champagne flowed at the wedding," the term ’flowed’ is being used in a
+metaphorical
+sense. Literally, ’flowed’ means to move smoothly and continuously like water or another liquid. Here, it isn’t used to describe the actual movement of champagne but rather the abundance and continuous presence of champagne at the wedding, almost like a flowing water current.
+✓
+Table 2:
+The comparison of the pair of Query & Response between the original question and the reformed question. The responses are generated by Phi-3, and the correct query and response are enhanced by adopting the LLMs-Autoencoder pipeline.
+4
+Experiments
+4.1
+Dataset
+Training data
+The training data used for the sparse autoencoder in dictionary learning is proportionally sampled from the open-source LLMs pre-training dataset,
+RedPajama
+,
+1
+1
+1
+Dataset available at
+https://huggingface.co/datasets/togethercomputer/RedPajama-Data-1T
+.
+ensuring that the capabilities of models across various aspects are preserved.
+To improve the model’s understanding of downstream tasks, we also incorporated an open-source mathematics dataset, sampling approximately 200M tokens.
+OpenMathInstruct
+Toshniwal et al. (2024)
+is a math instruction tuning dataset generated using permissively licensed Mixtral-8x7B models.
+Mathematica test data
+(
+MATH
+)
+Hendrycks et al. (2021)
+is an open-source math dataset of 12,500 challenging competition mathematics problems.
+Each problem in MATH has a full step-by-step solution to evaluate the reasoning capabilities of models in the domain of mathematics.
+Metaphor test data
+The
+MOH
+Mohammad et al. (2016)
+dataset is constructed by sampling sentences from WordNet
+Miller (1994)
+. Only a single target verb in each sentence is annotated. The average sentence length is 8 tokens, the shortest of our three datasets.
+TroFi
+Birke and Sarkar (2006)
+consists of sentences from the 1987-89 Wall Street Journal Corpus
+Charniak et al. (2000)
+, with an average length of 28.3 tokens per sentence.
+4.2
+Large Language Models
+We evaluate the effectiveness of our method using four state-of-the-art LLMs, each having around 7 billion parameters: Llama 3 (3.1-8B-Instruct)
+Dubey et al. (2024)
+, Mistral (7B-Instruct)
+Jiang et al. (2023)
+, Gemma (7b-it)
+Mesnard et al. (2024)
+, and Phi-3 (Small-8K-Instruct)
+Abdin et al. (2024)
+. These models serve as the backbone of our experimental analysis, where we apply our feature extraction and metaphor detection enhancement techniques to assess their ability to interpret and resolve ambiguous metaphorical expressions.
+4.3
+Data Mixing
+Source
+Tokens (Billion)
+Common Crawl
+8.75
+C4
+1.75
+GitHub
+0.60
+ArXiv
+0.30
+Books
+0.25
+Wikipedia
+0.25
+StackExchange
+0.20
+OpenMathInstruct
+0.20
+Total
+12.3
+Table 3:
+Overview of the data sources used for training, including web crawls (Common Crawl, C4), code repositories (GitHub), scientific articles (arXiv), encyclopedic content (Wikipedia), question-answering platforms (StackExchange), and a specialized dataset for mathematical instruction (OpenMathInstruct).
+To ensure that our model maintains strong versatility and performs well in a range of applications, rather than being over-specialized to a single task, we adopted a data mixing training approach. The distribution of data significantly influences the learned weights in the auto-encoder
+Elhage et al. (2022)
+, particularly in how different features are extracted. To develop a more comprehensive and task-agnostic feature dictionary, we generated the training data by sampling from different LLM pre-training datasets and incorporated portions of downstream task datasets. This approach ensures the learned dictionary is more versatile and applicable to diverse inputs and tasks. The specific data ratios used in training are shown in
+Table 3
+.
+5
+Results
+5.1
+Mathematics Question-Answering
+We confirmed that applying detection and problem-enhancement methods leads to consistent performance improvements across multiple models and mathematical domains. As shown in
+Table 4
+, all models experienced significant accuracy gains after using the reformed query method, which integrates ambiguity detection and rephrasing techniques.
+The results show significant accuracy improvements, shown in
+Table 6
+of Appendix
+A
+, particularly in domains requiring complex reasoning. Llama 3 saw the most substantial increase in counting and probability, while Mistral and Phi made notable gains in prealgebra. Gemma improved in both intermediate algebra and prealgebra. These improvements highlight the effectiveness of rephrasing in enhancing the models’ ability to handle diverse mathematical problems more effectively. The results of the paired t-test confirm that the performance improvements observed after applying the reformed query method are statistically significant across all models at
+α
+=
+0.05
+\alpha=0.05
+.
+These findings provide strong evidence that the ambiguity detection and prompt rephrasing techniques significantly enhance model performance in mathematical question-answering tasks.
+In summary, across all models and mathematical domains, the reformed query method consistently yielded higher accuracy, confirming the effectiveness of detection and rephrasing techniques in improving the interpretability and performance of mathematical question answering.
+Model
+Intermediate Algebra
+Counting/Probability
+Precalculus
+Number Theory
+Algebra
+Prealgebra
+Geometry
+Total
+Llama 3 Original
+27.6
+23.9
+26.7
+23.1
+34.0
+37.5
+34.9
+30.6
+Llama 3 Enhanced
+40.3
+47.3
+39.1
+46.7
+53.1
+63.0
+41.1
+48.6
+Mistral Original
+25.8
+26.1
+22.4
+24.4
+29.8
+36.6
+27.7
+28.3
+Mistral Enhanced
+36.5
+39.9
+37.9
+36.6
+41.5
+46.8
+38.6
+41.2
+Gemma Original
+29.6
+23.1
+23.7
+27.2
+27.8
+35.2
+27.5
+27.9
+Gemma Enhanced
+40.9
+33.8
+35.5
+35.5
+35.1
+46.4
+39.1
+38.6
+Phi-3 Original
+16.9
+18.1
+21.3
+17.3
+25.2
+30.1
+28.7
+22.9
+Phi-3 Enhanced
+27.2
+29.3
+30.5
+26.7
+35.0
+46.1
+31.4
+33.2
+Table 4:
+Comparison of answering accuracy across four models (Llama-3, Mistral, Gemma, and Phi-3) in different mathematical domains, using original and reformed query methods.
+Bold
+represents the highest-scoring version for each model and question type. In all cases, our automatically enhanced prompts perform the best, with an average absolute increase of 12.52% (a relative increase of 47.78%).
+5.2
+Math Error Analysis
+While analyzing a collection of mathematical errors, we categorized mathematical symbols into three distinct types: (1)
+Functions
+: Include functions such as
+cos
+,
+sin
+, and
+sqrt
+, among others.
+(2)
+Operators
+: Consisting of special characters or algebraic symbols, this category includes symbols like
++
+,
+-
+, or algebraic variables such as
+x
+and
+y
+. These symbols are often ambiguous due to their polysemantic nature and different usages outside of mathematical contexts (e.g., the less-than sign "<" or absolute value symbols in
+Table 1
+).
+(3)
+Numbers
+: Referring to common numerical digits.
+Among these types, numbers trigger the least ambiguity during mathematical computations. However, ambiguity is more prevalent in the other two categories, albeit for different reasons.
+Operators
+tend to create confusion because of their ubiquity in non-mathematical contexts. For example, as previously discussed, symbols like the less-than sign and the absolute value symbol can be misinterpreted when applied outside of a purely mathematical framework. Variables like
+x
+and
+y
+are often included in this category due to their frequent use across various disciplines.
+Functions
+present a more complex challenge, sometimes being mistakenly identified as code-related functions rather than mathematical functions, complicating interpretation. Furthermore, issues such as tokenization add to the difficulty. For instance, the LaTeX function \dfrac (which denotes fractions in display style) can be broken down into tokens like ’\’, ’d’, and ’frac’, making it even harder to analyze correctly.
+5.3
+Metaphor Detection
+Unlike the ambiguity found in mathematical symbols, linguistic ambiguity has long been a significant focus in NLP. Our approach directly extracts internal features from the model, allowing for a more explicit and detailed analysis of how the model understands metaphorical expressions.
+The results in
+Table 5
+reveal insights into the effectiveness of our method in improving metaphor detection with various LLMs. Notably, models like Llama 3 and Mistral demonstrated substantial gains, with Llama 3 improving by 4.3% on MOH-X and 4% on Tro-Fi, and Mistral seeing similar increases across both datasets. These improvements suggest that our approach enhances the models’ ability to handle the inherent ambiguity in metaphorical expressions. By addressing this challenge, our method enables more accurate metaphor recognition, showing that it outperforms previous approaches in both generalization and handling linguistic complexity.
+Additionally, investigation into the understanding of the LLMs via their activations reveals the potential for ambiguity in existing metaphor detection datasets. For instance, the TroFi
+Birke and Sarkar (2006)
+dataset states that in "an aerodynamic shape that reduces
+drag
+20 % to 25 %" and "Their melanin - producing system keeps the skin constantly
+filled
+with the dark pigment", the italicized words ("drag" and "filled") are being used in a metaphorical sense, whilst we observe highest activation in features relating to their literal interpretations. In such cases, these examples do not align with lay understanding of what constitutes metaphor (which are usually more literary), with both being very close to their literal interpretations.
+Method
+MOH-X
+Tro-Fi
+MelBERT
+79.2
+62.0
+MrBERT
+79.8
+62.7
+RoPPT
+80.1
+63.3
+AdMul
+83.9
+63.3
+Llama 3
+80.1
+61.5
+Llama 3 Enhanced
+84.4
+65.5
+Mistral
+78.5
+60.8
+Mistral Enhanced
+83.6
+63.1
+Gemma
+78.9
+60.9
+Gemma Enhanced
+82.9
+63.8
+Phi-3
+76.4
+59.3
+Phi-3 Enhanced
+80.7
+62.5
+Table 5:
+Comparison of metaphor detection accuracy. We include task-specific models and general-purpose LLMs before and after enhancement using internal feature extraction techniques.
+Bold
+represents the highest-scoring version for each model and dataset. In all cases, our automatically enhanced prompts perform the best, with an average absolute increase of 3.76% (a relative increase of 5.38%).
+6
+Conclusion
+We investigated the extent to which the decomposition of traditionally black-box LLMs can aid in increasing their interpretability and lead to performance improvements in downstream tasks such as mathematical reasoning and metaphor detection. we observe improvements from integrating our dictionary learning approach to extract monosemantic features, allowing the identification of which features are activated by a task, to then rewrite the prompt with additional task information and improve performance. We were further able to identify the key misinterpretations being made by LLMs on these tasks via feature activations, in turn identifying the challenges posed by mathematical notation and ambiguous metaphorical usage.
+Limitations
+In this work, we apply pre-existing interpretability techniques on real LLMs, moving away from the toy models that have been used in existing works. However, as a result, we do not present a new interpretability technique, but rather a novel framework for applying these techniques to real-world downstream tasks in order to quantify how they can be used to improve existing models through the identification of model understanding.
+Furthermore, we test this approach on two specific downstream tasks, mathematical reasoning and metaphor detection, due to representing logical reasoning and abstract figurative language understanding. However, it is possible that varying performance impacts could be found for other tasks that we have not investigated in the present work.
+Ethics Statement
+We believe in and firmly adhere to the Code of Conduct in the performance of this work and the methods involved.
+References
+Abdin et al. (2024)
+Marah Abdin, Sam Ade Jacobs, Ammar Ahmad Awan, Jyoti Aneja, Ahmed Awadallah, Hany Awadalla, Nguyen Bach, Amit Bahree, Arash Bakhtiari, Harkirat Behl, et al. 2024.
+Phi-3 technical report: A highly capable language model locally on your phone.
+arXiv preprint arXiv:2404.14219
+.
+Achiam et al. (2023)
+Josh Achiam, Steven Adler, Sandhini Agarwal, Lama Ahmad, et al. 2023.
+Gpt-4 technical report
+.
+ArXiv
+, abs/2303.08774.
+Ahn et al. (2024)
+Janice Ahn, Rishu Verma, Renze Lou, Di Liu, Rui Zhang, and Wenpeng Yin. 2024.
+Large language models for mathematical reasoning: Progresses and challenges
+.
+In
+Proceedings of the 18th Conference of the European Chapter of the Association for Computational Linguistics: Student Research Workshop
+, pages 225–237, St. Julian’s, Malta. Association for Computational Linguistics.
+Al-Nazi and Peng (2024)
+Zabir Al-Nazi and Wei Peng. 2024.
+Large language models in healthcare and medical domain: A review.
+In
+Informatics
+, volume 11, page 57. MDPI.
+Arora et al. (2018)
+Sanjeev Arora, Yuanzhi Li, Yingyu Liang, Tengyu Ma, and Andrej Risteski. 2018.
+Linear algebraic structure of word senses, with applications to polysemy
+.
+Transactions of the Association for Computational Linguistics
+, 6:483–495.
+Belinkov and Glass (2019)
+Yonatan Belinkov and James Glass. 2019.
+Analysis methods in neural language processing: A survey
+.
+Transactions of the Association for Computational Linguistics
+, 7:49–72.
+Bills et al. (2023)
+Steven Bills, Nick Cammarata, Dan Mossing, Henk Tillman, Leo Gao, Gabriel Goh, Ilya Sutskever, Jan Leike, Jeff Wu, and William Saunders. 2023.
+Language models can explain neurons in language models
+.
+OpenAI Blog
+.
+Birke and Sarkar (2006)
+Julia Birke and Anoop Sarkar. 2006.
+A clustering approach for nearly unsupervised recognition of nonliteral language
+.
+In
+11th Conference of the European Chapter of the Association for Computational Linguistics
+, pages 329–336, Trento, Italy. Association for Computational Linguistics.
+Bordt et al. (2022)
+Sebastian Bordt, Michèle Finck, Eric Raidl, and Ulrike von Luxburg. 2022.
+Post-hoc explanations fail to achieve their purpose in adversarial contexts
+.
+In
+Proceedings of the 2022 ACM Conference on Fairness, Accountability, and Transparency
+, FAccT ’22, page 891–905, New York, NY, USA. Association for Computing Machinery.
+Bricken et al. (2023)
+Trenton Bricken, Adly Templeton, Joshua Batson, Brian Chen, Adam Jermyn, Tom Conerly, Nick Turner, Cem Anil, Carson Denison, Amanda Askell, et al. 2023.
+Towards monosemanticity: Decomposing language models with dictionary learning.
+Transformer Circuits Thread
+, 2.
+Brown et al. (2020)
+Tom Brown, Benjamin Mann, Nick Ryder, Melanie Subbiah, Jared D Kaplan, Prafulla Dhariwal, Arvind Neelakantan, Pranav Shyam, Girish Sastry, Amanda Askell, Sandhini Agarwal, Ariel Herbert-Voss, Gretchen Krueger, Tom Henighan, Rewon Child, Aditya Ramesh, Daniel Ziegler, Jeffrey Wu, Clemens Winter, Chris Hesse, Mark Chen, Eric Sigler, Mateusz Litwin, Scott Gray, Benjamin Chess, Jack Clark, Christopher Berner, Sam McCandlish, Alec Radford, Ilya Sutskever, and Dario Amodei. 2020.
+Language models are few-shot learners
+.
+In
+Advances in Neural Information Processing Systems
+, volume 33, pages 1877–1901. Curran Associates, Inc.
+Charniak et al. (2000)
+Eugene Charniak, Don Blaheta, Niyu Ge, Keith Hall, John Hale, and Mark Johnson. 2000.
+Bllip 1987-89 wsj corpus release 1.
+Linguistic Data Consortium, Philadelphia
+, 36.
+Choi et al. (2021)
+Minjin Choi, Sunkyung Lee, Eunseong Choi, Heesoo Park, Junhyuk Lee, Dongwon Lee, and Jongwuk Lee. 2021.
+MelBERT: Metaphor detection via contextualized late interaction using metaphorical identification theories
+.
+In
+Proceedings of the 2021 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies
+, pages 1763–1773, Online. Association for Computational Linguistics.
+Conneau et al. (2018)
+Alexis Conneau, German Kruszewski, Guillaume Lample, Loïc Barrault, and Marco Baroni. 2018.
+What you can cram into a single $&!#* vector: Probing sentence embeddings for linguistic properties
+.
+In
+Proceedings of the 56th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers)
+, pages 2126–2136, Melbourne, Australia. Association for Computational Linguistics.
+Cunningham et al. (2023)
+Hoagy Cunningham, Aidan Ewart, Logan Riggs, Robert Huben, and Lee Sharkey. 2023.
+Sparse autoencoders find highly interpretable features in language models.
+arXiv preprint arXiv:2309.08600
+.
+Devlin et al. (2019)
+Jacob Devlin, Ming-Wei Chang, Kenton Lee, and Kristina Toutanova. 2019.
+BERT: Pre-training of deep bidirectional transformers for language understanding
+.
+In
+Proceedings of the 2019 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies, Volume 1 (Long and Short Papers)
+, pages 4171–4186, Minneapolis, Minnesota. Association for Computational Linguistics.
+Doshi-Velez and Kim (2017)
+Finale Doshi-Velez and Been Kim. 2017.
+Towards a rigorous science of interpretable machine learning.
+arXiv preprint arXiv:1702.08608
+.
+Dubey et al. (2024)
+Abhimanyu Dubey, Abhinav Jauhri, Abhinav Pandey, Abhishek Kadian, Ahmad Al-Dahle, et al. 2024.
+The llama 3 herd of models
+.
+Elhage et al. (2022)
+Nelson Elhage, Tristan Hume, Catherine Olsson, Nicholas Schiefer, Tom Henighan, Shauna Kravec, Zac Hatfield-Dodds, Robert Lasenby, Dawn Drain, Carol Chen, et al. 2022.
+Toy models of superposition.
+arXiv preprint arXiv:2209.10652
+.
+Faruqui et al. (2015)
+Manaal Faruqui, Yulia Tsvetkov, Dani Yogatama, Chris Dyer, and Noah A. Smith. 2015.
+Sparse overcomplete word vector representations
+.
+In
+Proceedings of the 53rd Annual Meeting of the Association for Computational Linguistics and the 7th International Joint Conference on Natural Language Processing (Volume 1: Long Papers)
+, pages 1491–1500, Beijing, China. Association for Computational Linguistics.
+Gupta and Schütze (2018)
+Pankaj Gupta and Hinrich Schütze. 2018.
+LISA: Explaining recurrent neural network judgments via layer-wIse semantic accumulation and example to pattern transformation
+.
+In
+Proceedings of the 2018 EMNLP Workshop BlackboxNLP: Analyzing and Interpreting Neural Networks for NLP
+, pages 154–164, Brussels, Belgium. Association for Computational Linguistics.
+Hendrycks et al. (2021)
+Dan Hendrycks, Collin Burns, Saurav Kadavath, Akul Arora, Steven Basart, Eric Tang, Dawn Song, and Jacob Steinhardt. 2021.
+Measuring mathematical problem solving with the math dataset
+.
+NeurIPS
+.
+Jiang et al. (2023)
+Albert Q Jiang, Alexandre Sablayrolles, Arthur Mensch, Chris Bamford, Devendra Singh Chaplot, Diego de las Casas, Florian Bressand, Gianna Lengyel, Guillaume Lample, Lucile Saulnier, et al. 2023.
+Mistral 7b.
+arXiv preprint arXiv:2310.06825
+.
+Karpathy et al. (2015)
+Andrej Karpathy, Justin Johnson, and Li Fei-Fei. 2015.
+Visualizing and understanding recurrent networks.
+arXiv preprint arXiv:1506.02078
+.
+Lee et al. (2006)
+Honglak Lee, Alexis Battle, Rajat Raina, and Andrew Ng. 2006.
+Efficient sparse coding algorithms
+.
+In
+Advances in Neural Information Processing Systems
+, volume 19. MIT Press.
+Levonian et al. (2023)
+Zachary Levonian, Chenglu Li, Wangda Zhu, Anoushka Gade, Owen Henkel, Millie-Ellen Postle, and Wanli Xing. 2023.
+Retrieval-augmented generation to improve math question-answering: Trade-offs between groundedness and human preference.
+arXiv preprint arXiv:2310.03184
+.
+Lewkowycz et al. (2022)
+Aitor Lewkowycz, Anders Andreassen, David Dohan, Ethan Dyer, Henryk Michalewski, Vinay Ramasesh, Ambrose Slone, Cem Anil, Imanol Schlag, Theo Gutman-Solo, Yuhuai Wu, Behnam Neyshabur, Guy Gur-Ari, and Vedant Misra. 2022.
+Solving quantitative reasoning problems with language models
+.
+In
+Advances in Neural Information Processing Systems
+, volume 35, pages 3843–3857. Curran Associates, Inc.
+Li et al. (2024)
+Haitao Li, Qingyao Ai, Jia Chen, Qian Dong, Zhijing Wu, Yiqun Liu, Chong Chen, and Qi Tian. 2024.
+Blade: Enhancing black-box large language models with small domain-specific models
+.
+Li et al. (2023)
+Yucheng Li, Shun Wang, Chenghua Lin, Frank Guerin, and Loïc Barrault. 2023.
+Framebert: Conceptual metaphor detection with frame embedding learning.
+arXiv preprint arXiv:2302.04834
+.
+Lin et al. (2024)
+Zichao Lin, Shuyan Guan, Wending Zhang, Huiyan Zhang, Yugang Li, and Huaping Zhang. 2024.
+Towards trustworthy llms: a review on debiasing and dehallucinating in large language models.
+Artificial Intelligence Review
+, 57(9):1–50.
+Lipton (2018)
+Zachary C. Lipton. 2018.
+The mythos of model interpretability
+.
+Commun. ACM
+, 61(10):36–43.
+Mesnard et al. (2024)
+Thomas Mesnard, Cassidy Hardin, Robert Dadashi, Surya Bhupatiraju, Shreya Pathak, et al. 2024.
+Gemma: Open models based on gemini research and technology
+.
+Miller (1994)
+George A. Miller. 1994.
+WordNet: A lexical database for English
+.
+In
+Human Language Technology: Proceedings of a Workshop held at Plainsboro, New Jersey, March 8-11, 1994
+.
+Mohammad et al. (2016)
+Saif Mohammad, Ekaterina Shutova, and Peter Turney. 2016.
+Metaphor as a medium for emotion: An empirical study
+.
+In
+Proceedings of the Fifth Joint Conference on Lexical and Computational Semantics
+, pages 23–33, Berlin, Germany. Association for Computational Linguistics.
+Murdoch et al. (2018)
+W James Murdoch, Peter J Liu, and Bin Yu. 2018.
+Beyond word importance: Contextual decomposition to extract interactions from lstms.
+arXiv preprint arXiv:1801.05453
+.
+Olah et al. (2020)
+Chris Olah, Nick Cammarata, Ludwig Schubert, Gabriel Goh, Michael Petrov, and Shan Carter. 2020.
+Zoom in: An introduction to circuits.
+Distill
+, 5(3):e00024–001.
+Olshausen and Field (1997)
+B A Olshausen and D J Field. 1997.
+Sparse coding with an overcomplete basis set: a strategy employed by v1?
+Vision Res
+, 37(23):3311–3325.
+Razeghi et al. (2022)
+Yasaman Razeghi, Robert L Logan IV, Matt Gardner, and Sameer Singh. 2022.
+Impact of pretraining term frequencies on few-shot numerical reasoning
+.
+In
+Findings of the Association for Computational Linguistics: EMNLP 2022
+, pages 840–854, Abu Dhabi, United Arab Emirates. Association for Computational Linguistics.
+Rudin (2019)
+Cynthia Rudin. 2019.
+Stop explaining black box machine learning models for high stakes decisions and use interpretable models instead.
+Nature machine intelligence
+, 1(5):206–215.
+Shu et al. (2024)
+Dong Shu, Haoran Zhao, Xukun Liu, David Demeter, Mengnan Du, and Yongfeng Zhang. 2024.
+Lawllm: Law large language model for the us legal system.
+arXiv preprint arXiv:2407.21065
+.
+Srivatsa and Kochmar (2024)
+KV Srivatsa and Ekaterina Kochmar. 2024.
+What makes math word problems challenging for llms?
+arXiv preprint arXiv:2403.11369
+.
+Tian et al. (2024)
+Yuan Tian, Nan Xu, and Wenji Mao. 2024.
+A theory guided scaffolding instruction framework for llm-enabled metaphor reasoning.
+In
+Proceedings of the 2024 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies (Volume 1: Long Papers)
+, pages 7731–7748.
+Toshniwal et al. (2024)
+Shubham Toshniwal, Ivan Moshkov, Sean Narenthiran, Daria Gitman, Fei Jia, and Igor Gitman. 2024.
+Openmathinstruct-1: A 1.8 million math instruction tuning dataset.
+arXiv preprint arXiv:2402.10176
+.
+Wang et al. (2023)
+Shun Wang, Yucheng Li, Chenghua Lin, Loic Barrault, and Frank Guerin. 2023.
+Metaphor detection with effective context denoising
+.
+In
+Proceedings of the 17th Conference of the European Chapter of the Association for Computational Linguistics
+, pages 1404–1409, Dubrovnik, Croatia. Association for Computational Linguistics.
+Wei et al. (2022)
+Jason Wei, Xuezhi Wang, Dale Schuurmans, Maarten Bosma, Fei Xia, Ed Chi, Quoc V Le, Denny Zhou, et al. 2022.
+Chain-of-thought prompting elicits reasoning in large language models.
+Advances in neural information processing systems
+, 35:24824–24837.
+Xiong et al. (2024)
+Zheyang Xiong, Ziyang Cai, John Cooper, Albert Ge, Vasilis Papageorgiou, Zack Sifakis, Angeliki Giannou, Ziqian Lin, Liu Yang, Saurabh Agarwal, Grigorios Chrysos, Samet Oymak, Kangwook Lee, and Dimitris Papailiopoulos. 2024.
+Everything everywhere all at once: Llms can in-context learn multiple tasks in superposition
+.
+arXiv
+.
+Yun et al. (2021)
+Zeyu Yun, Yubei Chen, Bruno Olshausen, and Yann LeCun. 2021.
+Transformer visualization via dictionary learning: contextualized embedding as a linear superposition of transformer factors
+.
+In
+Proceedings of Deep Learning Inside Out (DeeLIO): The 2nd Workshop on Knowledge Extraction and Integration for Deep Learning Architectures
+, pages 1–10, Online. Association for Computational Linguistics.
+Appendix A
+Paired T-Test Results for Model Performance Improvements on Math
+To assess the statistical significance of the performance improvements between the original and enhanced versions of the models, we conducted paired t-tests for each model across all mathematical domains. The paired t-test evaluates whether the means of two related groups are statistically different. In this case, we compare the performance (accuracy) of each model’s original version against its enhanced version.
+The
+Table 6
+presents the p-values for the paired t-tests for Llama 3, Mistral, Gemma, and Phi-3 models. Since all the p-values are well below the standard significance level of 0.05, we conclude that the improvements in accuracy between the original and enhanced versions are statistically significant for all models.
+Model
+p_value
+Llama3
+1.5
+×
+10
+−
+4
+1.5\times 10^{-4}
+Mistral
+2.35
+×
+10
+−
+7
+2.35\times 10^{-7}
+Gemma
+4.41
+×
+10
+−
+7
+4.41\times 10^{-7}
+Phi-3
+1.2
+×
+10
+−
+4
+1.2\times 10^{-4}
+Table 6:
+All p-values are far below the threshold of 0.05, confirming that the enhancements across all models led to statistically significant improvements in accuracy for mathematical reasoning tasks.
+Appendix B
+Implementation Details
+Our method is model-agnostic and was tested on LLaMA 3, Mistral, Gemma, and Phi-3, all around 7B parameters. We extract activations from a middle-layer MLP block (typically layer 12 or 13), based on prior interpretability research showing that these layers tend to balance low-level syntactic and high-level semantic features. This choice was empirically validated as it yielded the most semantically coherent dictionary features across models.
+To train the sparse autoencoder, we freeze all parameters of the base LLM and collect activation vectors from a specific MLP layer. The autoencoder is a single-layer architecture with tied weights and L1 regularization to encourage sparsity. We use the following training configuration:
+•
+Architecture: One-layer sparse autoencoder with ReLU activation
+•
+Hidden size: 8192 units (matching 4 times of the target MLP activations)
+•
+Optimizer: Adam
+•
+Learning rate: 1e-4
+•
+Batch size: 16
+•
+Training epochs: 10
+•
+Loss function: See Eq.
+1
+ℒ
+=
+1
+|
+X
+|
+​
+∑
+x
+∈
+X
+‖
+x
+−
+x
+^
+‖
+2
+2
+⏟
+Reconstruction loss
++
+λ
+​
+‖
+s
+‖
+1
+⏟
+Sparsity loss
+\mathcal{L}=\underbrace{\frac{1}{\left|X\right|}\sum_{x\in X}\left\|x-\hat{x}\right\|_{2}^{2}}_{\text{Reconstruction\ loss}}+\underbrace{\lambda\left\|s\right\|_{1}}_{\text{Sparsity\ loss}}
+(1)
+We trained the autoencoder on 12.3B tokens sampled from the RedPajama dataset and OpenMathInstruct (see Table 3). Feature activations were normalized before being passed into the decoder.
+Following the methodology introduced by
+Bills et al.
+, we ensured that each training sample was used exactly once during the training of the sparse autoencoder. Our data loader performs a single pass over the dataset without repeated sampling, which prevents the model from overfitting to frequently seen examples and encourages the discovery of generalizable and robust features. All costs of training step are list below:
+Hardware
+A100
+Runtime/epoch
+6h
+Memory
+80G
+Table 7:
+Experiment details
+We evaluated the effectiveness of the autoencoder using:
+reconstruction loss
+(MSE): Indicates how well the autoencoder captures the original activation patterns;
+Sparsity level
+: Measured as the average number of non-zero activations per input vector;
+Interpretability accuracy
+: Following
+Bills et al.
+, we generate human-readable descriptions of dictionary features and test their generalization in new samples.
+In our experiments, the average reconstruction error was 0.02 < 0.05, with sparsity 1% < 5%. More than 93% of the interpretable features generated by GPT-4 were validated in unseen contexts with consistent precision.

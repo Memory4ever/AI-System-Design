@@ -1,0 +1,180 @@
+LMetric*: Simple is Better – Multiplication May Be All You Need for LLM Request Scheduling (https://arxiv.org/html/2603.15202v1)
+citeturn32970view0 [wordlim: 200] Crawled: today; Content type: text/html; Source: open({"ref_id":"https://arxiv.org/html/2603.15202v1","lineno":203}); Total lines: 345
+L187: To see why routing to the instance with the minimal (P-Tokens $\times$ BS) score considers both objectives well, consider two instances $i$ and $j$: if routing the request to instance $i$ results in more KV$ hits than routing it to instance $j$, then instance $i$ will have a lower P-token value unless there are many queued prefill requests in instance $i$ (indicating work imbalance).
+L188: Meanwhile, the BS captures the decode workload of each instance, so if instance $i$ has a significantly larger batch size than instance $j$, the multiplication will likely favor instance $j$ for load balancing.
+L189: We should acknowledge that there do exist cases where multiplication may fail due to extremely skewed KV$ accesses, i.e., a set of instances is always chosen due to high KV$ hits (low P-token), and the increased batch size (BS) on these instances cannot compensate for the low P-token values. Such cases—as we will analyze in §cite19†5.2 —are rare in practice and can be detected (and thus mitigated) beforehand.
+L190: ### The Choice of the Indicators
+L191: 
+L192: cite92†Image: Refer to caption L193: 
+L194: Figure 18: (a) A comparison of using new prefill tokens (P-Tkn) vs. 1-KV$ hit ratio (1-KV_{hit}) as the KV$-awareness indicator ($A$) in $A\times BS$ scheduling, (b) the KV$ hit ratio analysis, and (c) the queued prefill tokens analysis. The analysis is done on the Qwen3-30B model with ChatBot(Qwen) trace.
+L195: KV$-awareness indicator (P-token).   Besides P-token, another natural choice for the KV$-awareness indicator is the 1-KV$ hit ratio, i.e., the KV$ hit ratio if the request is routed to an instance. It is adopted by works like Preble [cite93†37 ] and AIGW [cite30†5 ]. Note that the one minus is because a higher KV$ hit ratio should yield a lower score to align with the new prefill tokens indicator. We do not consider TTFT as it requires the development of a simulator, which is not always applicable.
+L196: Our empirical analysis shows that using P-token yields better performance than using 1-KV$ hit ratio. From Figure cite94†18 (a), it can be observed that using P-token results in a 14.4% lower P50 TTFT and a 42.8% lower P95 TTFT compared to using 1-KV$ hit ratio. For a fair comparison, we fix the load-balancing indicator to BS in both cases. Note that due to space limitations, we only report the results for one workload here; however, the trend is consistent across all evaluated workloads.
+L197: To understand the cause of this difference, Figure cite94†18 further breaks down the KV$ hit ratios of different approaches in (b) and the load balancing status in (c). We can see that the two methods achieve similar KV$ hit ratios, so both approaches are KV$-aware in a similar manner. The key difference lies in the fact that using P-token achieves better load balancing, as it additionally considers the queued prefill tokens in each instance.
+L198: As a result, when making scheduling decisions, the router bypasses those instances containing many queued prefill requests, even if they have a high KV$ hit ratio.
+L199: Figure 19: (a) A comparison of using batch size (BS) vs. total tokens (#Tokens) as the load balance indicator ($B$) in $P$-Tokens $\times B$ scheduling. (b) The relationship between batch size and total tokens profiled. The analysis is done on the Qwen3-30B model with ChatBot(Qwen) trace.
+L200: Load-balancing indicator (BS).   Besides BS, another common choice is the total tokens (#Tokens) on each instance, as adopted by works like ai-Dynamo [cite29†27 ], AIGW [cite30†5 ]. The rationale is that the total computation cost of a request is proportional to the number of tokens in its context. However, we found using BS yields better performance, as shown in Figure cite95†19 (a) due to two reasons.
+L201: First, workloads can be categorized into prefill and decode loads, where the former is considered in our P-Tokens indicator. Thus, we only need an indicator for the decode workload, which is exactly what BS captures (note that we have also tried using decode batch size, and the results are similar since the BS is dominated by the decode requests).
+L202: Moreover, BS is a better indicator for the (decode) work assigned to an instance because the decode time is more stable across different batch sizes, i.e., a larger batch size leads to a longer decode time, but a larger decode token may not necessarily lead to a longer decode time if there is small batch thanks to the KV$ [cite38†46 ]. This is illustrated in Figure cite95†19 (b), in which we profile the relationship of the batch size and total tokens during serving a ChatBot(Qwen) workload with Qwen3-30B.
+L203: ### Benign and Failure Cases Analysis of Multiplication-based Scheduling Score
+L204: Overview.   At a high level, as long as there is no load imbalance, i.e., one instance is overloaded while others are idle, routing requests to instances with high KV$ hit rates (i.e., low P-token) is always beneficial.
+L205: Thus, the multiplication fails if a load imbalance is about to occur on a set of instances, but the increase in BS on these instances cannot offset the decrease in P-token due to high KV$ hit rates on the about-to-be overloaded instances, leading requests to be continuously routed to them and causing the imbalance. This can happen under extreme KV$ skewness: when a small set of requests repeatedly accesses the same prefix on a set of instances—which we term KV$ hotspots without considering others.
+L206: We found such hotspots are rare in practice—at least not present in all our evaluated traces and, more importantly, as their patterns are clear, we can design a detector to catch them beforehand.
+L207: Therefore, to analyze the failure cases of our multiplication method, we need to derive the condition under which KV$ hotspots occur and the increased batch size cannot offset the high KV$ hit rate given a workload pattern. For each workload, we first group requests by their KV$ prefixes and partition instances according to KV$ hit rates.
+L208: Afterward, for each request class, we can specifically analyze the relationship between the workload pattern, the P-token indicator given the KV$ hit rate, and the batch size indicator.
+L209: Prelude: request grouping and instance partitioning.   First, we partition all requests into a set of classes $\mathcal{C}$, where each $c\!\in\!\mathcal{C}$ corresponds to a group of requests that share the same KV$ prefix. In practice, a class roughly matches an application or a user: their requests share the same system prompt and often a similar conversation history [cite54†39 ].
+L210: For a fixed class $c$, we consider an accumulation time window $(t,t+\textit{window})$ and denote by $x$ the fraction of all requests arriving at the cluster that belong to class $c$ within this window; the remaining fraction is $\bar{x}=1-x$.
+L211: For each class $c$, we partition the cluster into two sets of instances: $M$ and $\bar{M}$. $M$ contains instances whose cache currently holds the prefix of class $c$, i.e., with KV$ hits, while $\bar{M}$ contains all other instances.
+L212: Impact of a request class on batch size.   Let QPS be the total query rate of the cluster, and let $t$ be the time when the suspected class-$c$ requests arrive that may lead to imbalance. We denote the average batch size per instance in a balanced state prior to $t$ as $BS_{0}$. We also denote the expected batch sizes of instances in $M$ and $\bar{M}$ by $BS_{t}$ and $\overline{BS}_{t}$ during the period $(t,t+\textit{window})$.
+L213: We assume in the extreme case where all class-$c$ requests are routed to $M$ due to high KV$ hits, because otherwise the hotspot is mitigated by routing some requests to $\overline{M}$. As a result, we can establish an approximate expression for the ratio between a potentially overloaded instance’s batch size and a non-overloaded instance’s batch size as follows:
+L214:  | $$\frac{BS_{t}}{\overline{BS}_{t}}=\frac{BS_{0}+\left(x\cdot\text{QPS}\right)/|M|\cdot t}{BS_{0}+\left(\bar{x}\cdot\text{QPS}\right)/|\overline{M}|\cdot t}.$$  |  | (1)
+L215: 
+L216: The main term $\left(x\cdot\text{QPS}\right)/|M|\cdot t$ corresponds to the number of requests of class $c$ routed to the instances that cache its prefix, while $\left(\bar{x}\cdot\text{QPS}\right)/|\overline{M}|\cdot t$ is the routing of all other requests to the remaining instances.
+L217: Analysis: the benign cases, and are they common?   As long as the batch size of the suspected hotspot instances is not larger than the others, we are sure that it is beneficial to route requests to these instances, because such a routing decision can improve KV$ hit rates without causing load imbalance. Since our multiplication faithfully does so, these are benign cases for our method. The remaining question is whether such cases are common in practice.
+L218: Fortunately, based on our established workload–batch size relationship in Equation cite96†1 , we can empirically analyze their prevalence by tracking the two terms $\frac{x}{\bar{x}}$ and $\frac{|M|}{|\overline{M}|}$ across traces, which samples the request classes within a time window (1 minute) with the highest KV$ hits.
+L219: Figure 20: Empirical observations of the factors in the multiplicative score across different traces. If $\frac{x}{\bar{x}}\leq\frac{|M|}{|\overline{M}|}$, no KV$ hotspot can cause load imbalance, so our multiplication method can effectively balance the load with KV$-awareness.
+L220: 
+L221:  | $$\frac{x}{\bar{x}}\leq\frac{|M|}{|\overline{M}|}$$  |  | (2)
+L222: Figure cite97†20 shows that all traces—representative of LLM serving and studied in this work—are benign to our method, because the expected batch size of the suspected hotspot instances is not larger than that of the others. This can be interpreted as follows. Based on Figure cite97†20 , we have the following observation summarized in Equation cite98†2 for all traces.
+L223: 
+L224:  | $$\frac{x}{|M|}\leq\frac{\bar{x}}{|\overline{M}|}$$  |  | (3)
+L225: By rearranging the equation, we obtain Equation cite99†3 . Substituting into Equation cite96†1 , we get the expected batch size of the KV$ hotspot instances is smaller than the others.
+L226: 
+L227: Analysis: the failure cases, and our two-phase detector.   Based on our previous analysis, we can see that if Equation cite98†2 does not hold, i.e.,
+L228: 
+L229:  | $$\frac{x}{\bar{x}}>\frac{|M|}{|\overline{M}|}$$  |
+L230: , then there is a potential for KV$ hotspots to cause load imbalance that may break our multiplication method. This gives a clear indication of the failure cases detector based purely on the workload pattern and KV$ states, so we can develop a detector before we make a scheduling decision to catch potential failure cases.
+L231: Specifically, for each request class, we profile the two terms $\frac{x}{\bar{x}}$ and $\frac{|M|}{|\overline{M}|}$ in real time, and if we observe that Equation cite98†2 does not hold, we raise an alarm and filter out the suspected instances ($M$) from the routing targets. To avoid the overhead of tracking too many request classes, we only track the requests with the highest KV$ hit rates.
+L232: 
+L233:  | $$\text{P-token}_{t}\times BS_{t}\leq\text{P-token}_{\bar{t}}\times BS_{\bar{t}}$$  |  | (4)
+L234: One problem of the one-phase detector described above is that even if Equation cite98†2 does not hold, it may still be beneficial to route requests to the suspected instances with high KV$ hit rates, as long as we do not route too many requests to the hotspots.
+L235: Therefore, we further augment the detector with a second phase by delaying the filtering until a consecutive number of requests are routed to hotspots, as consecutive routing decisions may imply that the increase in the batch size of the suspected instances cannot offset the high KV$ hit rates.
+L236: Specifically, after the first phase raises an alarm, we further track the new prefill tokens of the requests in this class, and if we observe that more than $2\times M$ consecutive requests in the class have a smaller multiplicative score (Equation cite100†4 ) on a suspected hotspot instance ($t$) than on the rest of the instances ($\bar{t}$), then we raise a second alarm that filters out the suspected instances from the routing targets.
+L237: ## End-to-end Evaluation
+L238: 
+L239: We conclude our study of efficient LLM scheduling by comparing LMetric with the multiplication method described in §cite17†5 and state-of-the-art schedulers on end-to-end LLM serving performance.
+L240: Figure 21: End-to-end TTFT and TPOT CDFs of the Qwen3-30B model on the ChatBot (Qwen) workload.
+L241: Figure 22: End-to-end TTFT and TPOT CDFs of the Qwen2-7B model on the Agent (Qwen) workload.
+L242: Figure 23: End-to-end TTFT and TPOT CDFs of the Qwen3-30B model on the Coder workload.
+L243: Figure 24: End-to-end TTFT and TPOT CDFs of the Qwen3-30B model on the Agent (Kimi) workload.
+L244: Figure 25: End-to-end performance under different request rates. Except the second row that uses a Qwen2-7B model, all other rows use a Qwen3-30B model.
+L245: Baselines.   We compare LMetric against both open-source schedulers and the current production scheduler used in Bailian. As some implementations suffer from poor performance due to router implementation issues, e.g., vLLM exhibits low processing throughput with its Python-based router [cite57†1 ], we re-implement their policies within our highly optimized Rust router framework described in §cite9†3 .
+L246: For an apples-to-apples comparison, we compare policies under our framework, and we have carefully verified that our re-implementations are no slower than their original implementations. The detailed descriptions of the baselines are as follows:
+L247:   * •
+L248: 
+--------------------------------------------------------------------------------
+DOS: Dependency-Oriented Sampler for Masked Diffusion Language Models (https://arxiv.org/html/2603.15340v1)
+citeturn32970view1 [wordlim: 200] Crawled: yesterday; Content type: text/html; Source: open({"ref_id":"https://arxiv.org/html/2603.15340v1","lineno":125}); Total lines: 513
+L105:  | $q(\bm{x}_{s}^{i}|\bm{x}_{t}^{i},\bm{x}_{0}^{i})=\left\{\begin{array}[]{ll}\mathrm{Cat}(\bm{x}_{s}^{i};\delta_{\bm{x}_{t}^{i}}),&\bm{x}_{t}^{i}\neq\texttt{[M]},\\
+L106: \mathrm{Cat}\left(\bm{x}_{s}^{i};\frac{1-\alpha_{s}}{1-\alpha_{t}}\delta_{\texttt{[M]}}+\frac{\alpha_{s}-\alpha_{t}}{1-\alpha_{t}}\delta_{\bm{x}_{0}^{i}}\right),&\bm{x}_{t}^{i}=\texttt{[M]}.\\
+L107: \end{array}\right.$  |
+L108: Equation (cite76†3 ) (cite57†Shi et al., 2024 ; cite58†Sahoo et al., 2024 ) suggests parameterizing the reverse-time transitions by substituting a learned predicted distribution of $\bm{x}_{0}$ into the analytic posterior:
+L109: 
+L110:  | $\displaystyle p_{\bm{\theta}}(\bm{x}_{s}|\bm{x}_{t})$  | $\displaystyle=q(\bm{x}_{s}|\bm{x}_{t},\bm{x}_{0}=\bm{f}_{\bm{\theta}}(\bm{x}_{t}))$  |
+L111:  |  | $\displaystyle=\prod_{i=1}^{L}q(\bm{x}_{s}^{i}|\bm{x}_{t}^{i},\bm{x}_{0}^{i}=\bm{f}^{i}_{\bm{\theta}}(\bm{x}_{t})),$  |
+L112: where $\bm{f}_{\bm{\theta}}(\bm{x}_{t})\in\mathbb{R}^{L\times(V+1)}$ and $\bm{f}^{i}_{\bm{\theta}}(\bm{x}_{t})\in\mathbb{R}^{V+1}$ is the model’s output for the $i$-th token. $\bm{f}^{i}_{\bm{\theta}}(\bm{x}_{t})$ satisfies $\sum_{j=1}^{V}\bm{f}^{i,j}_{\bm{\theta}}(\bm{x}_{t})=1$ and $\bm{f}^{i,\texttt{[M]}}_{\bm{\theta}}(\bm{x}_{t})=0$ for all $i$. The training objective is to predict the masked states in each step with the $\bm{x}_{0}$, which can be simplified as :
+L113:  | $$\resizebox{22609920}{}{$\mathcal{L}(\bm{\theta})=-\mathbb{E}_{t,\bm{x}_{0},\bm{x}_{t}}\left[\frac{1}{t}\sum_{i=1}^{L}\mathbf{1}[\bm{x}_{t}^{i}=\texttt{[M]}]\log p_{\bm{\theta}}(\bm{x}_{0}^{i}\mid\bm{x}_{t})\right]$}.$$  |
+L114: By minimizing the training objective, $f_{\theta}$ can approximate the conditional distribution of masked tokens given $x_{t}$. During inference, $\bm{x}_{0}^{i}$ is first predicted from $\bm{x}_{t}$ using $\bm{f}^{i}_{\bm{\theta}}(\bm{x}_{t})$. For masked states [M], the predicted $\bm{x}_{0}^{i}$ is decoded with probability $\frac{\alpha_{s}-\alpha_{t}}{1-\alpha_{t}}$, while the token remains masked with probability $\frac{1-\alpha_{s}}{1-\alpha_{t}}$. Unmasked states are kept unchanged.
+L115: ## 4 Distributional Analysis of Parallel Decoding
+L116: ### 4.1 Distributional Mismatch in Parallel Decoding
+L117: 
+L118: As discussed above, masked diffusion models are trained to match marginal distributions by conditioning on some unmasked tokens. However, the ultimate goal of the generation is to reconstruct the target joint distribution.
+L119: As illustrated by the toy example in Figure cite77†2 , different parallel decoding strategies correspond to different factorizations of the joint distribution $p(X_{1},X_{2},X_{3},X_{4}\mid C)$. Formulation (a) predicts all tokens simultaneously and formulation (b) performs parallel decoding under an incorrect block-wise factorization, which induces an invalid hierarchical dependency structure.
+L120: Simply imposing a block-wise partition does not resolve this issue, as the block structure itself may still be misaligned with the true dependency structure.
+L121: Under entropy-constrained decoding (cite68†Ben-Hamu et al., 2025 ), masked tokens can be selected at each step by explicitly exploring conditional independence among masked positions. In formulation (c), this strategy successfully identifies a subset of masked tokens, such as $X_{2}$ and $X_{3}$, that are conditionally independent given $C$. This enables an exact recovery of their joint distribution $p(X_{2},X_{3}\mid C)$ in the first step.
+L122: However, such conditionally independent subsets are not unique, and more importantly, the independence constraint is imposed only among masked tokens, while the dependency structure between the unmasked context $C$ and masked tokens is not explicitly considered.
+L123: As a result, although the joint distribution of the selected subset can be correctly recovered locally, the overall factorization remains inconsistent with the true dependency structure, ultimately preventing the recovery of the target joint distribution.
+L124: In contrast, formulation (d) induces a factorization that is consistent with the underlying structure by explicitly accounting for the dependencies between the unmasked context and masked tokens. In the first step, masked tokens $X_{1}$ and $X_{2}$, which are most strongly dependent on the available context $C$, are prioritized for parallel decoding. Subsequently, the remaining tokens are decoded in parallel via conditioning on the newly unmasked ones.
+L125: Under such a dependency-consistent factorization, the target joint distribution can be correctly recovered through parallel decoding.
+L126: ### 4.2 Uncertainty-Based Decoding Methods
+L127: 
+L128: In this subsection, we review and formalize a class of decoding strategies that rely on token-level uncertainty statistics computed from the model’s output distributions. Denote the discrete distribution induced by the MDLM $f_{\theta}$ at time $t$ with input $x_{t}$ for position $i$ as $p_{t}^{i}=f^{i}_{\theta}(x_{t})$.
+L129: ###### Definition 1 (Confidence )
+L130: 
+L131: (cite64†Chang et al., 2022 ; cite59†Nie et al., 2025 ) For MDLM $f_{\theta}$ at time $t$ and position $i$, Confidence selects tokens based on the maximum value of the discrete distribution $p_{t}^{i}$ over the vocabulary $\mathcal{V}$, defined as
+L132: 
+L133:  | $$\textit{conf}_{t}^{i}=\max_{v\in\mathcal{V}}p_{t}^{i}(v).$$  |
+L134: ###### Definition 2 (Entropy )
+L135: 
+L136: (cite65†Koh et al., 2024 ) For MDLM $f_{\theta}$ at time $t$ and position $i$, Entropy measures the uncertainty of the discrete distribution $p_{t}^{i}$ over the vocabulary $\mathcal{V}$, defined as
+L137: 
+L138:  | $$\textit{ent}_{t}^{i}=-\sum_{v\in\mathcal{V}}p_{t}^{i}(v)\log p_{t}^{i}(v).$$  |
+L139: ###### Definition 3 (Margin confidence)
+L140: 
+L141: (cite66†Kim et al., 2025a ) For MDLM $f_{\theta}$ at time $t$ and position $i$, Margin confidence considers the difference between the highest and the second-highest probabilities in the discrete distribution $p_{t}^{i}$, defined as
+L142: 
+L143:  | $$\textit{margin}_{t}^{i}=p_{t}^{i}(v^{*})-\max_{v\in\mathcal{V}\setminus\{v^{*}\}}p_{t}^{i}(v),$$  |
+L144: 
+L145: where $v^{*}=\arg\max_{v\in\mathcal{V}}p_{t}^{i}(v)$.
+L146: Despite their differences, these decoding strategies all rely on token-level statistics extracted from the output distribution at individual positions. Therefore, they can effectively identify confident or uncertain tokens locally and can recover marginal distributions for each masked token. However, since methods do not explicitly account for dependencies across tokens, decoding strategies built upon them may fail to reconstruct the target joint distribution over the entire sequence.
+L147: This observation suggests that effective parallel decoding requires a principled strategy that goes beyond token-level uncertainty and selects tokens based on inter-token dependencies.
+L148: Algorithm 1 Attention-Based Dependency Scoring
+L149: 
+L150: 1: Current sequence state $X_{t+1}\in\mathbb{R}^{L\times V}$, MDLM $f_{\theta}$, transformer block index $i$, masked position set $\mathcal{M}$
+L151: 
+L152: 2: Dependency score dep$\in\mathbb{R}^{L}$
+L153: 
+L154: 3: $\text{outputs}\leftarrow f_{\theta}(X_{t+1})$
+L155: 
+L156: 4: $\mathrm{Attn}^{(i)}\leftarrow\text{outputs.attentions}[i]$ $\triangleright$ Multi-head attention weights from the $i$-th transformer block, $\mathrm{Attn}^{(i)}\in\mathbb{R}^{H\times L\times L}$
+L157: 5: $\mathrm{Attn}\leftarrow\frac{1}{H}\sum_{h=1}^{H}\mathrm{Attn}^{(i)}_{h}$ $\triangleright$ Head-averaged attention matrix $\mathrm{Attn}\in\mathbb{R}^{L\times L}$
+L158: 
+L159: 6: dep$\leftarrow\mathbf{0}\in\mathbb{R}^{L}$
+L160: 
+L161: 7: $\mathcal{U}\leftarrow[L]\setminus\mathcal{M}$
+L162: 
+L163: 8: for each $m\in\mathcal{M}$ do
+L164: 
+L165: 9:   $\textbf{{dep}}(m)\leftarrow\sum_{u\in\mathcal{U}}\mathrm{Attn}(m,u)$ $\triangleright$ Dependency of masked position $m$ on the unmasked context
+L166: 
+L167: 10: end for
+L168: 
+L169: 11: return Dependency score dep
+L170: Models  | Methods  | HumanEval  | MBPP  | GSM8K  | MATH500
+L171: LLaDA-Instruct-8B  | Confidence  | 27.44  | 22.80  | 31.69  | 21.40
+L172: Entropy  | 27.44  | 19.40  | 33.13  | 18.60
+L173: Margin  | 26.83  | 26.40  | 33.76  | 22.20
+L174: DOS  | 42.68  | 38.40  | 84.31  | 41.60
+L175: Dream-v0-Instruct-7B  | Confidence  | 28.66  | 39.60  | 31.08  | 13.60
+L176: Entropy  | 25.61  | 33.20  | 30.55  | 10.20
+L177: Margin  | 29.27  | 42.80  | 30.78  | 15.20
+L178: DOS  | 59.15  | 50.60  | 80.21  | 45.00
+L179: Table 1: Performance of different decoding strategies under top-1 sampling, in which all methods generate the entire sequence within a single block. For the code benchmarks (HumanEval and MBPP), the generation length is fixed to 256 tokens, while for the math benchmarks (GSM8K and MATH500), the generation length is 512 tokens.
+L180: ## 5 Methodology
+L181: In this section, we propose D ependency O riented S ampler (DOS) for masked diffusion language models, which explicitly accounts for inter-token dependencies during generation. DOS focuses on the problem of which masked tokens should be decoded at each denoising step. Rather than determining the decoding order solely based on token-level uncertainty, our approach selects and updates masked tokens according to their dependency on the currently observed context.
+L182: In this work, we leverage the scaled dot-product attention weights, which explicitly model how information is aggregated across tokens (cite45†Vaswani et al., 2017 ; cite78†Clark et al., 2019 ; cite79†Voita et al., 2019 ; cite80†Raganato and Tiedemann, 2018 ), as an operational proxy for inter-token dependency.
+L183: Concretely, given the attention matrix extracted from a transformer block, each row is interpreted as describing how a query token integrates information from other tokens in the sequence. For example, the entry at row $i$ and column $j$ of the attention matrix reflects how strongly the $i$-th token depends on information provided by the $j$-th token during the forward pass.
+L184: Since we focus on the information aggregated from unmasked tokens when predicting masked tokens, the dependency score for a masked token is defined as the total attention mass assigned to all unmasked tokens. Intuitively, a larger score indicates that the prediction at this masked position relies more heavily on the observed context, and should therefore be prioritized during decoding.
+L185: Formally, let $\mathcal{M}$ denote the set of masked positions and $\mathcal{U}=[L]\setminus\mathcal{M}$ the set of unmasked positions. Given the multi-head attention weights $\mathrm{softmax}(QK^{\top}/\sqrt{d})$ extracted from a transformer block, we average across heads to obtain a token-to-token attention matrix $\mathrm{Attn}\in\mathbb{R}^{L\times L}$. For each masked position $m\in\mathcal{M}$, the dependency score is defined as
+L186: 
+L187:  | $$\textit{dep}(m)=\sum_{u\in\mathcal{U}}\mathrm{Attn}(m,u),$$  |
+L188: which measures how strongly the prediction at position $m$ attends to the currently unmasked context. In contrast to uncertainty-based criteria that are computed independently for each position, the proposed score explicitly accounts for inter-token dependencies encoded in the attention structure. The complete attention-based dependency scoring procedure is summarized in Algorithm cite81†1 .
+L189: Based on these scores, DOS selects a subset of masked tokens with the highest scores to decode at each step. The decoding order is explicitly dependency-aware and better reflects the dependency structure encoded by the model. Since DOS provides a dependency score that ranks masked tokens, it can be directly combined with existing parallel decoding methods, such as top-K selection or entropy-constrained decoding (e.g., EB-Sampler).
+L190: ## 6 Experiments
+L191: 
+L192: In this section, we present a comprehensive empirical evaluation of our proposed DOS across a diverse set of benchmarks and compare it against representative baseline decoding strategies.
+L193: ### 6.1 Datasets
+L194: 
+L195: We evaluate DOS on a range of benchmarks covering different forms of structured generation, including code generation and mathematical reasoning:
+L196: 
+L197:   * •
+L198: 
+L199: Code generation: HumanEval (cite82†Chen, 2021 ) and MBPP (cite83†Austin et al., 2021b ), which consist of Python programming tasks with function-level specifications.
+L200: 
+L201:   * •
+L202: Mathematical reasoning: GSM8K (cite84†Cobbe et al., 2021 ), which contains arithmetic word problems of grade school that require multi-step numerical reasoning and MATH500 (cite85†Lightman et al., 2023 ), which is a subset of the MATH (cite86†Hendrycks et al., 2021 ) benchmark and features more challenging problems.
+L203: ### 6.2 Baselines
+L204:  |  | HumanEval  | MBPP  | GSM8K  | MATH500
+L205: Models  | Methods  | Acc $\uparrow$  | NFE $\downarrow$  | Acc $\uparrow$  | NFE $\downarrow$  | Acc $\uparrow$  | NFE $\downarrow$  | Acc $\uparrow$  | NFE $\downarrow$
+L206: LLaDA-Instruct-8B  | Fast-dLLM  | 28.66  | 83.26  | 23.00  | 78.93  | 33.06  | 195.46  | 20.80  | 219.54
+L207: KLASS  | 29.88  | 107.99  | 24.00  | 97.09  | 28.43  | 265.52  | 19.60  | 300.48
+L208: Confidence$+$EB  | 28.66  | 160.10  | 22.80  | 167.43  | 32.15  | 299.59  | 21.00  | 327.07
+L209: Entropy$+$EB  | 29.88  | 175.71  | 18.80  | 183.72  | 25.09  | 309.12  | 19.00  | 334.24
+L210: Margin$+$EB  | 26.22  | 159.58  | 26.60  | 166.00  | 38.51  | 293.45  | 21.40  | 324.10
+L211: DOS$+$EB  | 45.12  | 115.84  | 38.80  | 76.098  | 84.61  | 163.48  | 41.00  | 244.24
+L212: Dream-v0-Instruct-7B  | Fast-dLLM  | 28.66  | 141.62  | 39.60  | 127.69  | 31.08  | 205.52  | 13.60  | 273.58
+L213: KLASS  | 27.44  | 150.46  | 38.00  | 145.09  | 31.84  | 239.92  | 14.20  | 302.69
+L214: Confidence$+$EB  | 28.66  | 199.66  | 39.60  | 191.74  | 31.01  | 302.89  | 13.60  | 384.77
+L215: Entropy$+$EB  | 25.61  | 222.15  | 32.60  | 214.86  | 30.63  | 356.59  | 10.00  | 408.54
+L216: Margin$+$EB  | 29.27  | 183.25  | 41.20  | 177.73  | 30.86  | 297.96  | 15.40  | 377.15
+L217: DOS$+$EB  | 58.54  | 72.47  | 51.00  | 68.33  | 79.98  | 182.43  | 45.40  | 229.36
+

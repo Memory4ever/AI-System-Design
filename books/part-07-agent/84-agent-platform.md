@@ -303,8 +303,7 @@ tests 或紧 SLO 下，应允许把它降级为 advisory，而不是让复用 gu
 
 ### 从 Trajectory 到 Skill 是一次受治理的 Compilation
 
-把成功/失败 trajectory 原样存入 catalog，最忠实却会携带偶然步骤、环境噪声和大量 Context；让模型直接
-总结成“最佳实践”更短，却容易抹掉适用条件和失败 provenance。平台可以把这一步视为 artifact compilation：
+把成功/失败 trajectory 原样存入 catalog，最忠实却会携带偶然步骤、环境噪声和大量 Context；让模型直接总结成“最佳实践”更短，却容易抹掉适用条件和失败 provenance。平台可以把这一步视为 artifact compilation：先冻结原Skill revision，让每个分析者只读共同base与自己的trace，形成相互不可见的proposal，再合并，而不是每份经验立即改变后续分析上下文。错误分析可读取原输入/输出与ground truth，局部fix并重验；它只证明当前oracle下修好，不证明根因唯一或规则可迁移，原episode/fix证据仍作为compilation输入保留。
 
 ```text
 immutable source trajectories
@@ -315,10 +314,7 @@ immutable source trajectories
 → admit / supersede / reject / rollback
 ```
 
-Raw trace、extractor、patch、merge decision、Skill version 和 evaluation result 必须分别保存。Hierarchical merge
-降低重复，却可能把局部建议错误泛化；held-out selection 也会过拟合有限任务，且 patch/section attribution
-并不天然因果。External Skill 易撤销、可审计，适合快速试验；sequential manual edit 在高风险或证据稀少时
-更稳；derived memory 和参数更新则是不同下游分支，不能因 trajectory 被“编译”就获得训练或执行 authority。
+Raw trace、extractor、patch、merge decision、Skill version 和 evaluation result 必须分别保存。Hierarchical merge降低重复，却可能把局部建议错误泛化；新reference与root skill新增链接应成对接纳或丢弃，不让文件存在、无重叠line或格式通过代替语义/迁移验收。[Trace2Skill的有限对照](https://arxiv.org/html/2603.25158v1)支持同base并行与局部修验分支，但较强executor不必是较强Skill author，success总结、跨user/domain和小model并行仍有反退；成对规则是其合并要求，不是已证程序事务保证。Held-out selection也会过拟合有限任务，patch/section attribution并不天然因果。轨迹、工具/GT重验、多worker分析、层merge、格式/diff检查及整skillcontext均付费；External Skill易撤销、可审计，适合快速试验；迁移、引用关系或总费用不合用途时，保留原human skill、rawtrace/较窄reference或sequential manual edit，不由同源多数批准永久替换。Derived memory和参数更新仍是不同下游分支，不能因trajectory被‘编译’就获得训练或执行authority。<!-- source-family:SF-2026-ARXIV-2603-25158 -->
 
 一次 verified execution 也只能成为 compilation input，而不是可直接复用的权威 Skill。去实例化得到的 symbolic
 policy 必须携带 applicability、输入/输出 schema、可靠性证据、revision、失效条件和 fallback；否则“技能复用”
@@ -1228,8 +1224,7 @@ Primary-source 与官方入口：
   https://arxiv.org/abs/2603.18743
 - Agent Skills Can Be Harmful（differential failure/cost attribution；Status: Experimental）:
   https://arxiv.org/abs/2608.11888
-- Trace2Skill（Status: Experimental；trajectory-to-versioned-Skill compilation）:
-  https://arxiv.org/abs/2603.25158
+- `SF-2026-ARXIV-2603-25158` — [Trace2Skill exact-v1](https://arxiv.org/html/2603.25158v1) §2–4/T1/T3–6/§6、B2.1/B3.1；仅同baseproposal/局部修验与reference-link合并资格。保跨author/user/任务反退、共享oracle、merge层数和总费用；不采根因唯一、程序事务、普遍transfer/检索差因果或生产SLO，未核代码/复现。
 - Notes2Skills（Status: Experimental；epistemic-status-preserving note-to-Skill compilation）:
   https://arxiv.org/abs/2606.11897
 - ASPIRE（trajectory-to-Skill discovery and validation；Status: Experimental）:

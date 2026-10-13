@@ -57,6 +57,14 @@ observation action 消除的不确定性。因此 plan node 除业务 action 外
 query freshness，并让查询成本与行动风险竞争同一预算。稳定的小状态若能被动推送或每轮完整读取，旧的固定
 observation schema 更简单，不必强制增加主动监控循环。
 
+旧经验与当前目标相似，也未必适合当前状态。一个受限文本环境分支先按目标类型、对象与目的地召回冻结的经验，再用当前 belief 检查其可用条件；ALFWorld 中的轻量筛选实际上只比较手空/非空，不等于核验位置、手持对象和所有动作前置条件。随后对经验条目作规则优先仲裁：直接冲突者不进入提示，潜在冲突加警告交模型判断。[受限规则—经验对照](https://arxiv.org/html/2603.17831v1)支持把召回相关性、状态相容性与建议冲突分开，却没有在模型生成新 action 后显示独立的执行拦截。belief、人工规则与历史经验仍可能共同出错，允许进入 Context 不取得真实行动授权。<!-- source-family:SF-2026-ARXIV-2603-17831 -->
+
+因此更多经验不应成为默认发布条件：原有限任务中，单独加经验使部分切片退化，完整筛选和仲裁后仍有任务不如仅规则。平均成功率或更少执行步数不能消除这种差异，也不能由更换模型后的另一环境成绩识别唯一机制。规则编写、seen-task学习、解析/检索和每步额外 Context 都计费；状态与规则接口不可靠时，停止采用不相容经验，保留原无记忆/已验规则基线、真实 observation 与独立执行检查。需要跨环境复用时重新核验动作语义、compatibility predicate和旧任务反退，而不是把“rules-first”名称签成通用可执行或安全保证。<!-- source-family:SF-2026-ARXIV-2603-17831 -->
+
+执行先验也可以从教程中获得，而不只从自己的成功轨迹回放：先以字幕筛选相关操作视频，再把相邻关键帧、界面元素与邻近字幕交给 annotator 反推可能发生的动作；从这份派生轨迹分离 coordinate-free workflow 与 UI 外观/功能描述，分别给 planning 与 grounding 消费者。这里获取的是观察驱动的参考知识，不是已执行 action 的回执，更不是教程里的坐标在当前界面仍合法。应保留视频、帧对、字幕、annotator 与软件版本的来源，当前 screenshot 冲突时重新定位或弃用参考；提示中的“优先观察”不能代替执行器的真实合法性检查。<!-- source-family:SF-2026-ARXIV-2603-26266 -->
+
+[GUIDE 的有限 OSWorld 对照](https://arxiv.org/html/2603.26266v1)支持这种知识获取与双消费者接口，但成功主要来自 planning，更多 grounding 描述也会降低成绩；部分应用和多应用任务仍反退。字幕缺少操作信息、教程版本或流程失配时，检索相关性不保证建议可用，未覆盖任务保留原 agent 路径。视频搜索/下载、ASR、关键帧、元素检测、annotation、额外 context 和行动调用都计费；成功任务少几步不抹掉每步 latency 增长，也不认证全人口总费用。派生动作不可信、当前界面无法核对或预算不值时，回到原 screenshot-grounded planning、现有工具说明或人工示教，不让教程知识自行提交环境事实。<!-- source-family:SF-2026-ARXIV-2603-26266 -->
+
 当任务分布相对稳定且有独立 validation 时，可以再把**环境先验估计器与行动策略分开**：先估计未观察属性的分布，或继续检索/测试后的成功概率，再把这些估计与行动成本一起交给 selector，而不是让同一次规划直接把自述 confidence 当事实。先验仍不是 observation；它应绑定 estimator、模型、schema 与适用分布，校准样本和额外标注、训练、调用/context 都要计价。[Calibrate-Then-Act 的有限实验](https://arxiv.org/html/2602.16699v1)将 QA confidence 校准或合成文件属性估计传给 policy，但检索质量是全体验证估计、unit-test 返回合成属性真值，reward 改善也伴随部分准确率下降，不能推广为真实工具最佳停止或无损降费。分布漂移或先验失准时，应回到真实 observation、固定 test-first/检索或人工复核；估计器只提出决策依据，不获得环境事实的提交权。<!-- source-family:SF-2026-ARXIV-2602-16699 -->
 
 提示策略的效用也要绑定**目标 policy 的实际执行**：源解法常用某条规则，不表示另一个模型读到该提示后就能完成任务。[受限 strategy-selection 对照](https://arxiv.org/html/2602.22583v1#S3)把问题–策略在固定模型、prompt 和 decoding 下的试用结果作为 utility 监督，再用检索/图特征排序指导；human 与 model source 的优势会随策略/目标模型反转，不能把源频率或“人类方法”直接当可执行性。Beta–Binomial 平滑与后续校准只属于训练/验证人口，adherence judge 的相关性不证明提示因果，correctness judge 也可能共享盲点。源抽取、试用 rollout、图/估计器训练与判分都计费，较短线上输出不等总成本下降；有限模型和任务之外、数据泄漏或校准漂移时保留固定提示、无 guidance 与可验证过程，不让估计器获得最终答案真值权。<!-- source-family:SF-2026-ARXIV-2602-22583 -->
@@ -85,6 +93,8 @@ supersede 必须分开。该 ledger 为 replanning 提供 mismatch evidence，�
 这条分支使 planning compute 成为 state-conditioned 控制量，但增加 world-model 数据、policy 训练与误差耦合：错误 transition 可诱导错误的 $K$，更大的、未经该 transition 训练的模型也未必改善规划。步数惩罚与 episode token 归一化预算不等于 wall-clock latency、费用或完整训练成本，比较质量时应分别核这些账；原有文本模拟结果不授予物理行动或 OOD 安全。模型失准、额外调用不值得或缺少可校准状态时，应保留 reactive action、固定短 horizon，以及回到真实 tool/environment observation 后再规划的退路。
 
 规划预算也可以在同一 actor 的每个决策步选择 reasoning effort，而不改变 lookahead 或另换 workflow。先固定一条成功的高努力轨迹，再在每个既定 history/observation 下试用有限档位，以复现功能等价 action 的最低档位作局部监督；这个标签只度量指定路径、试验次数和等价判定，既不是任务计算下界，也不认证组合这些局部选择后整条任务仍成功。Router 的 teacher rationale 与 SFT 只是选择器训练，真实 rollout 仍须独立验 trajectory outcome、工具合法性和完整费用。[Ares 的有限对照](https://arxiv.org/html/2603.07915v1)再以 outcome 与成功轨迹的平均档位 penalty 调整选择；档位 penalty 不等累计实际 tokens，失败不受该 cost 惩罚也不授全任务最小总费用。有限重试的零成功不证明任务不可解，筛选人口与 rationale 消融不授全分布保持或唯一内部因果；跨模型与检索任务仍有质量退步。路径采样、三档重试、teacher 标注、router/actor全部调用、训练和工具均计费，token缩短不自动改善墙钟或安全；状态、label或outcome失配时，保留固定已验收努力、原actor与可信tool/task gate，而不让路由预测批准真实effect。<!-- source-family:SF-2026-ARXIV-2603-07915 -->
+
+若选择器在抽象任务上学习“何时多想”，部署时还须重新对齐它付出的成本：一个[受限编排分支](https://arxiv.org/html/2603.16673v1)固定执行器与推理后端，只训练读取当前观察、近期执行结果和剩余资源的调用策略，再用真实后端的经验时延分布重标抽象成本，而不把模拟步数或 token 档位直接当墙钟。一档可以绑定一组角色与输出上限，但上限不是实际消耗，校准均值和方差也不保证尾时延或逐 episode 硬预算；最终预算准入与真实 action commit 仍应由执行层独立控制。抽象环境预设的推理收益不是真实后端已经改善决策的因果证据，有限模拟对照也仍有成功率退步和评价单位未闭合，不能用减少调用签发无损或物理安全。校准采样、策略训练、全部推理与环境等待均计费；后端、任务人口或时延漂移时，应重新测量并独立验完整轨迹，必要时回退固定已验努力、直接行动或可信 controller，而不让成本模型自签部署成功。<!-- source-family:SF-2026-ARXIV-2603-16673 -->
 
 显式 transition/lookahead 之外，还存在直接预测**自身 policy 条件 return**的理想分支。[AIQI 的必要分析](https://arxiv.org/pdf/2602.23242v1)对完整 history/action 的离散 H-step return 作 Bayesian mixture，不模拟未来 environment；用 N≥H 的 phase-separated augmentation，只在完整奖励已观察后补该 phase return，再以正探索概率和固定 tie-break 选 action。有限 action/observation/reward、奖励[0,1]、折扣γ∈(0,1)，以及每个 mixture 对自身 policy 的真实 conditional return 有正 prior 的 grain-of-truth 都是条件，不是普通 value network 自带的性质。其 asymptotic ε 分析还需足够小的探索/截断误差、足够细的离散级别及 N−H counterfactual buffer；reflective-oracle 闭包不提供有限硬件可部署性、sample complexity 或墙钟效率。旧 policy 日志只让 predictor 学到旧 policy 后续 return，最大化它不等自己后续最优，原 off-policy 存在性反例正限制这种迁移。条件无法核实或只能有限近似时，保留 reactive policy、显式 model/search 与真实 rollout 评价；该理想分支不授近似实验、LLM 或环境事实提交权。<!-- source-family:SF-2026-ARXIV-2602-23242 -->
 
@@ -186,6 +196,10 @@ Artifact 应绑定 schema、约束解释、代码与输出版本，除构造示�
 
 因此应分开记录签名/arity 检查、可解析或可执行比例、solver 输出与最终语义正确性，并保留过滤前人口；把 solver 成功筛出的训练样本称作可靠语义标签会隐藏模型遗漏。翻译、重喂签名和修复增加 prefill、模型调用与验证成本，输出 token 相近不能证明延迟免费。小模型/数据集切片仍有性能退步，覆盖指标也未消除量词错误；签名不确定、修复循环失控或语义无法形式化时，保留直接翻译后验证、人工澄清或轻量计划，而不让自一致的 formal artifact 自动授权执行。
 
+形式签名约束之外，还可把候选支持与答案选择分开：先对同一问题采样自然语言建模计划，在各计划条件下生成并有限修复求解程序，再按问题指定的逻辑关系查询候选答案。只有任务确实要求单一答案时，才把该编码得到的答案集合恰含一个元素作为保留门，最后对保留路径的答案投票。空集合或多元素说明这条编码没有满足当前答案合同，不自动证明原问题逻辑矛盾；单元素和多数票也只属于生成编码，不能反过来证明实体、关系与量词忠实于原问题。原问题、计划、编码、查询关系、修复和被剪路径应可回指，语义资格仍另行验收。<!-- source-family:SF-2026-ARXIV-2603-17233 -->
+
+[形式化候选筛选的有限对照](https://arxiv.org/html/2603.17233v1)支持局部支持集与聚合取舍，不授所有任务普胜：保留集合仍可能全错，也可能已有正确候选却被投票淹没；未按形式等价去重会重复计算同源错误。可执行/通过筛选比例、过滤后准确率与全问题结果须分账，并保留剪枝前人口。多计划、程序生成与修复、全部solver查询、投票和fallback共同付费，更多路径或较低timeout比例不证明严格deadline/总预算收益。系统性漏译、无可靠单答案合同、共错或费用失配时，回退原形式接口、可信语义检查/澄清、明确Unknown或标明best-guess身份的直接回答，而不让求解成功自动授权事实与真实执行。<!-- source-family:SF-2026-ARXIV-2603-17233 -->
+
 形式系统不能推出答案时，还可以把“缺什么前提”交给模型提议，而不是让 solver 扩大自己的事实权限：从已可推出的 backbone literals 取少量 antecedents，生成新 commonsense literal，再用模型的常识性与相关性代理筛选，加入候选前提后重试条件推理。SAT 只证明给定全部前提下的 entailment，单条假设各自相容不保证它们与原前提联合一致，更不验证新常识或翻译真实；应另核 joint consistency、来源与语义，模型自评不能认证它自己补入的事实。[受限 ARGOS 对照](https://arxiv.org/html/2601.18595v1)仍有错误翻转与翻译失败，投票 fallback 必须保留 best guess 身份。Literal生成、评分、CoT、prefill和solver共同计价，平均CoT较少不等完整省算，内文阈值/成本冲突不拼精确配方；缺可信前提或预算耗尽时，回原solver、独立澄清与明确Unknown，不由可满足的假设自签正确结论。<!-- source-family:SF-2026-ARXIV-2601-18595 -->
 
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-11225:start -->
@@ -209,6 +223,10 @@ Pruning、heuristic、budget 和 verifier quality 决定是否值得。模型自
 候选程序不断改写时，反馈还需要可归属的谱系。只按语义相似度检索旧plan或summary，可能把另一条分支的失败误当当前候选已经失败；一个更窄的复用分支让plan/summary与对应parent-ID关联，只在匹配候选谱系时作为下一次改写条件。它保留“这条经验来自哪个程序”的约束，文本summary仍只是对已有执行反馈的解释，不是当前程序的因果事实或正确性证明。<!-- source-family:SF-2026-ARXIV-2512-24077 -->
 
 评价预算也可分层：先用局部fast-fail检查筛掉明显不值得继续的候选，再让完整evaluator决定全任务结果。谱系管理、summary生成与早筛增加状态和调用成本，也可能过度限制跨分支经验迁移；局部通过不授全任务成功，早筛也可能错丢有价值候选。[LoongFlow v1 §4.1.1/Algorithm1/§5.4](https://arxiv.org/html/2512.24077v1)只支持作者程序搜索下的归属与预算机制，不证明summary可靠、科学成绩可迁移或搜索最终找到全局最优。反馈身份不明、代码变化已使经验过期或早筛不可信时，应保留原始执行结果、重新跑完整评价或回退普通宽搜索，而不是把近邻文本当新候选的验收。
+
+候选改写的内循环也不必固定为“抽一条历史、生成一个答案”：可以把读取谱系与资料、选择修改方向、编辑、编译、测量和失败诊断交给同一个有界 coding agent，自行决定下一步。但自由的是 variation proposal 的内部步骤，不是 incumbent 的接受规则；外层仍须先验 correctness，再按冻结评价集合比较质量与资源，只有符合接受准则的版本才持久。失败尝试可保留为带上下文的反馈，不能因为 agent 已解释它就写成接纳的程序谱系。<!-- source-family:SF-2026-ARXIV-2603-24517 -->
+
+这条分支适合修改空间难预先写死、且编译与测量可验证的程序；它新增资料检索、试编、profiling、长对话与 supervisor 干预费用，也可能在同一 benchmark 上不断择优而过拟合。[受限单谱系 attention-kernel 搜索](https://arxiv.org/html/2603.24517v1)只支持披露硬件和 workload 的探索接口，不证明 agent 内循环优于同预算固定改写、最终 kernel 延迟等于搜索成本，或开放搜索必然更可靠。正确性判据不完整、测量噪声大、旧义务回归或预算耗尽时，应保留已验 incumbent、扩充独立测试并回退固定 variation/人工诊断；模型仍只提出修改，checker 和接受准则拥有 commit。
 
 从历史解检索出可用操作，还不等于知道它们应以什么顺序执行。对有可靠形式状态与前置条件检查器的任务，可以从检索到的成功 trace 构造操作 precedence graph，把出现频率和先后关系作为当前候选的排序 prior，再由 symbolic executor 检查提议是否可执行。Retrieval 拥有候选支持集，历史图提出顺序偏好，executor 才拥有合法状态转移；历史中常见的边不是当前任务必需的依赖，也不能自行签发最终证明。<!-- source-family:arxiv:2603.04852v1 -->
 
@@ -584,3 +602,13 @@ Primary-source 入口：
 - 2026-01-28 来源遗漏补查，arXiv:2601.18595v1：必要 Source 复用本日具名独核，root 实际正文邻接与逐字 PRE 通过后授本段及自身末注窄锁；已写入，resume_20260128_audit 非作者实际正文、完整局部邻接及自身末注 POST 通过（Ch31 段分隔亦已独核），窄锁释放。采用范围、直接反侧与回退近正文保留；未核 artifact/复现。<!-- source-family:SF-2026-ARXIV-2601-18595 -->
 
 - `SF-2026-ARXIV-2603-07915` — Daily `2026-03-11`补查；[Ares exact-v1](https://arxiv.org/html/2603.07915v1) 必要101–177/497–498/640–724/734–803/1070–1096，Table1/2仅正文必要对照。2+2+2=6，step-local effort标签与trajectory outcome/费用的具体差额深入，档位penalty非token总费、筛选/重试/功能等价与effect权限分离、反退/全费用/旧路径近文。review_mar11_continue实际Source/Ch79 owner逐字PRE通过，root授原85完整段后单段+本人注窄锁；作者实际60–110局部（74–100输出缺口已补）与Ch78/80交接已读；新增正文已写，review_mar11_continue非writer实际完整正文/邻接与本人注POST通过，root已释放窄锁，不授DAY、实现核验或复现。
+
+- `SF-2026-ARXIV-2603-16673` — [v1](https://arxiv.org/html/2603.16673v1)III–V/Algorithm1/TablesI–IV与VI-A–D。仅冻结后端的编排与经验成本校准接口；角色/预算映射、抽象收益设定、评价单位/预算执行和全部费用边界保留，不采严格单调、hardbudget、精确显著性或物理安全，未核代码/复现。
+
+- `SF-2026-ARXIV-2603-17233` — [Draft-and-Prune exact-v1](https://arxiv.org/html/2603.17233v1)必要§3、§4/T1–4/Eq1–3、§6–7与A12–15/A17接口。仅计划条件formalization→任务答案集合单元素筛选→保留路径投票的受限分责；保语义漏译/单路径与消融反退、过滤人口/全错与误票、等价重复、split与全费/timeout边界，不采faithfulness/通用可靠或完整执行保证；未核代码/复现。
+
+- `SF-2026-ARXIV-2603-17831` — [exact-v1](https://arxiv.org/html/2603.17831v1)必要§3–7/Eq1–8/T1–5、A.1–2、C.1–3与D.2消费位置。仅goal召回、粗状态筛选与经验条目规则仲裁的有限接口；保occupancy非完整前置条件、belief/人工规则错误、task反退、不同模型环境及全费用。Memory-only不冒完全无SCF，不采精确learningcurve/唯一因果、动作硬阻断或真实安全。未核代码、完整统计附件或复现。
+
+- `SF-2026-ARXIV-2603-24517` — [AVO exact-v1](https://arxiv.org/html/2603.24517v1)§2.1/§3–5。仅采用自由variation内循环与外层正确性/持久接受分责；保单谱系、supervisor、同suite选择与全搜索费用，B200/BF16局部因果/非因果差异不外推。不采全自主、同预算优势、kernel实现或生产保证；未核artifact/复现。
+
+- `SF-2026-ARXIV-2603-26266`，[exact-v1](https://arxiv.org/html/2603.26266v1)§3–5/Eq1/T1–2/F2–3与failurecases；2+2+2=6。教程帧对derived action→planning/grounding参考分流，保旧baseline/50task选择、应用反退、annotation/执行总费用及prompt非guard；未核appendix全部prompt、视频或复现。

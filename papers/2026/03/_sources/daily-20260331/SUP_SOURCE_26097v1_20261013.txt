@@ -1,0 +1,453 @@
+URL: https://arxiv.org/html/2603.26097v1
+Scope: core before References, max50000chars; full core chars=49195
+
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Related Work
+3 Proposed Method
+3.1 Modeling Framework
+Generative sequence patching as multi-step MDP
+Non-causal sequence patching as contextual bandit
+Unified one-step MDP for efficient optimization
+3.2 Objectives and Optimization
+How is desired compression rate enforced?
+Why is GRPO not preferred over GRPG?
+3.3 Backbone Architecture
+Extension to multi-level hierarchical model
+3.4 Inference Time Adaptation
+4 Experiments
+4.1 Experimental Details
+4.2 Main Results
+4.3 Ablation and Analysis
+5 Conclusion
+References
+A Sequence Model Architecture
+B Experiment Details
+B.1 Datasets
+B.2 Encoder-Decoder configuration
+B.3 Full Results
+License: arXiv.org perpetual non-exclusive license
+arXiv:2603.26097v1 [cs.LG] 27 Mar 2026
+Dynamic Tokenization via Reinforcement Patching: End-to-end Training and Zero-shot Transfer
+Yulun Wu *
+Sravan Kumar Ankireddy *
+Samuel Sharpe
+Nikita Seleznev
+Dehao Yuan
+Hyeji Kim
+Nam H. Nguyen
+Abstract
+Efficiently aggregating spatial or temporal horizons to acquire compact representations has become a unifying principle in modern deep learning models, yet learning data-adaptive representations for long-horizon sequence data, especially continuous sequences like time series, remains an open challenge. While fixed-size patching has improved scalability and performance, discovering variable-sized, data-driven patches end-to-end often forces models to rely on soft discretization, specific backbones, or heuristic rules. In this work, we propose Reinforcement Patching (ReinPatch), the first framework to jointly optimize a sequence patching policy and its downstream sequence backbone model using reinforcement learning. By formulating patch boundary placement as a discrete decision process optimized via Group Relative Policy Gradient (GRPG), ReinPatch bypasses the need for continuous relaxations and performs dynamic patching policy optimization in a natural manner. Moreover, our method allows strict enforcement of a desired compression rate, freeing the downstream backbone to scale efficiently, and naturally supports multi-level hierarchical modeling. We evaluate ReinPatch on time-series forecasting datasets, where it demonstrates compelling performance compared to state-of-the-art data-driven patching strategies. Furthermore, our detached design allows the patching module to be extracted as a standalone foundation patcher, providing the community with visual and empirical insights into the segmentation behaviors preferred by a purely performance-driven neural patching strategy.
+00footnotetext: {\dagger} Correspondence to: <yulun.wu@capitalone.com, sravan.ankireddy@utexas.edu>00footnotetext: \lx@paragraphsign Capital One, \lx@sectionsign University of Texas, Austin00footnotetext: * Equal Contribution
+1 Introduction
+A unifying principle in modern deep learning across domains is the efficient transformation of raw signals into rich representations, compressing spatial or temporal horizons into hidden dimensions through either architectural design or strategic pre-processing. In language modeling, algorithms such as byte-pair encoding (BPE) [18] have become a standard pre-processing technique, condensing character-level inputs into compact, semantically meaningful sub-words that are subsequently projected into continuous embedding spaces. Similarly, in computer vision, segmenting an image into non-overlapping patches and projecting each patch independently has emerged as a canonical architectural choice, forming the basis of powerful Vision Transformers (ViT) [5]. The shared success of these tokenization strategies highlights a broader principle: how an input signal is represented is often as important as the choice of backbone architecture itself.
+Although fixed-size patching and downsampling within convolutional neural network [9] blocks are standard strategies for embedding compression in vision models, the same does not always hold true for sequence data such as language and time series. Instead, the inductive bias of variable-sized, data-adaptive segmentation strategies may often align better with the inherent nature of these sequences. For instance, the most prevalent tokenization approach in sequence applications such as language has been compression via pre-processing (i.e. BPE tokenization) instead of via neural modeling. However, algorithms designed for discrete sequence tokenization such as BPE are not naturally well-suited for other sequences such as time series due to the continuous nature of these data. Therefore, many early transformer-based approaches in time series [27; 23; 28] did not have a compression component and projected each individual time step independently into the embedding space, producing prohibitively long sequences that scale poorly because of the quadratic complexity of self-attention. More recently, PatchTST [14] experimented with fixed-size, non-data-adaptive patching on time series, introducing a simple but effective mechanism that groups a fixed number of contiguous time steps into a patch and represents each patch with a single embedding, thereby compressing the input signal and shortening the sequence length. Since then, some recent work have explored data-driven strategies for selecting patch sizes or boundary locations to replace static patching, either by combining existing patches to form larger patches and richer representations [7; 24] or by relying on auxiliary external rules [2; 21] or external models [1]. Even for language models, more recent works such as BLT [15] and H-Net [8] have also investigated using various patching strategies (also known as chunking) as part of the neural model design to replace BPE tokenizer.
+While much of mainstream deep learning research has focused on language and vision, time-series data remains central to many high-impact domains, including energy, finance, climate, and healthcare. Furthermore, it is a domain mostly consisting of long-horizon continuous data where patching strategies are crucial to methodology design. The simple static patching approach in PatchTST alone led to strong forecasting gains, demonstrating that efficient compression is a critical factor even when the backbone architecture remains unchanged.
+In this work, we further explore the end-to-end optimization of patching strategy alongside the training of deep sequence models. In contrast to prior works such as H-Net [8] and SRSNet [24], which incorporate a patching component into the neural design of their main backbone model and rely on some continuous relaxations of patching boundary placement, we look at this problem through a different angle and use reinforcement learning to naturally and canonically solve this discrete action optimization problem. This means we need not worry about the soft-discretization of patching boundaries to enable gradient flow, and we allow the patching policy to be independent of the neural design of our backbone model. We will continue to elaborate the benefits of doing so throughout Section 2 and Section 3, but provide a summary in Table 1 in advance to give the reader an overview of the advantages of this approach. Our contributions are listed as follow:
+•
+We propose Reinforcement Patching, or ReinPatch for short, the first method to explore reinforcement learning for the joint optimization of deep sequence model and its accompanied sequence patching policy in an end-to-end fashion, and the first method to establish patching policy as a separate neural module during such joint end-to-end training, formulating the deep sequence model as its environment.
+•
+This separating design allows a standalone foundation patcher to be established after large-scale joint pre-training, and allows continuous pre-training of the deep sequence model with the patcher’s weight frozen. As a proof of concept, we produce a foundation patcher on univariate time series as a byproduct of our method, and benchmark its zero-shot performance in our experiments.
+•
+We focus on time series application in experiments, and show that our method outperforms other state-of-the-art patching strategies under an unified standard hierarchical backbone on various forecasting datasets. We perform analysis and ablation studies to help the readers understand the behavior of ReinPatch, and visualize the patches it generates to provide new insight for the time series community and the broader sequence modeling community regarding what kind of sequence segmentation pattern is preferred by a performance-driven neural patching model.
+Table 1: Qualitative comparison of ReinPatch with existing patching strategies across key design properties. ✓: satisfied, ✗: not satisfied, ✓/✗: partially satisfied, n/a: not applicable.
+Method
+Data-
+driven
+Variable
+size
+Model-
+based
+End-to-
+end
+Backbone-
+agnostic
+Continuous.
+exploration
+Inductive
+bias
+Data type-
+specific
+Hierarchical
+modeling
+Static Patching [14]
+✗
+✗
+✗
+✗
+✓
+n/a
+✗
+✗
+✓
+Entropy Patching [15]
+✓
+✓
+✓
+✗
+✓
+n/a
+✓
+✓
+✗
+TimeSqueeze’s Compression [2]
+✓
+✓
+✗
+✗
+✓
+n/a
+✓
+✓
+✗
+H-Net’s Chunking [8]
+✓
+✓
+✓
+✓
+✗
+✓
+✓
+✗
+✓
+Periodic Patching [21]
+✓
+✗
+✗
+✗
+✓
+n/a
+✓
+✓
+✗
+Selective Patching [24]
+✓
+✗
+✓
+✓/✗
+✗
+✓
+✓
+✗
+✗
+ReinPatch (Ours)
+✓
+✓
+✓
+✓
+✓
+✗
+✗
+✗
+✓
+2 Related Work
+Static patching.
+Introduced in PatchTST [14], patch-based compression has become a central technique for scaling transformer models for time series. This design has since been adopted by several time-series foundation models, including TimesFM [3], MOMENT [6], Moirai [22], and Timer-XL [10], collectively demonstrating that patching substantially improves training and inference efficiency. However, these approaches rely on a static patch size for an entire input sequence, which limits their ability to model real-world series with substantial temporal heterogeneity.
+Data-adaptive patching.
+Several recent methods have explored adapting patch size automatically rather than selecting it through hand-crafted heuristics. HDMixer [7] enlarges the receptive field by selectively combining adjacent fixed-size patches. IMTS [26] is designed for irregularly sampled series and adjusts patch size to maintain a consistent number of observations per patch. LightGTS [21] selects patch sizes for each input based on periodicity in the Fourier domain, while SRSNet [24] dynamically selects and combines features from several fixed-size patches to improve forecasting performance. Although these approaches introduce adaptivity, they do not explicitly learn within-sequence patching policies that vary patch sizes inside a single series according to local signal characteristics, and SRSNet still includes a static patching component while using adaptive patches as auxiliary signal.
+Patching using external rules or models.
+In language modeling, there has been growing interest in moving beyond static offline tokenization schemes such as BPE. Since conventional tokenization can introduce systematic biases and brittle dependencies, several recent models instead operate directly on bytes. Prior work has proposed adaptive segmentation methods that rely on external identifiers or auxiliary models to determine patch boundaries: SpaceByte [20] uses delimiter-like markers, such as spaces, to group bytes into embeddings, while Byte Latent Transformer (BLT) [15] merges predictable byte spans into latent tokens using entropy-guided segmentation. Similar ideas have recently been explored for time series. EntroPE [1] adapts BLT to time series and uses a separately trained entropy model to place boundaries at high-uncertainty time steps, and TimeSqueeze [2] relies on local signal statistics to adjust patch size based on abrupt changes and local variance. However, these approaches depend on modality-specific heuristics, identifiers, or auxiliary models, which prevents the patching strategy from being jointly optimized with the main backbone and may limit its generalization across domains.
+End-to-end patching.
+Beyond approaches that rely on external identifiers, handcrafted statistics, or auxiliary models, a more direct alternative is to learn the patching strategy jointly with the downstream objective. In this line of work, Nawrot et al. [13] introduced a trainable boundary predictor that dynamically pools tokens, but the method suffers from training instabilities that have thus far limited its scalability to larger models and deeper hierarchical settings. More recently, H-Net [8], inspired by U-Net [16], proposed a hierarchical compression architecture that processes sequences at multiple resolutions and uses a state-space model to improve the efficiency of byte-level modeling. Its smoothed routing mechanism enables gradient-based end-to-end patch learning, but because boundary decisions depend on the hidden representation manifold and its evolving dynamics, the patching strategy remains tightly coupled to end-to-end training. This coupling introduces several limitations. First, it prevents a train-short & continuous-train-long regime, which is undesirable when one would like to pre-train a patching module once and freeze its weights during continued pre-training or fine-tuning of the main model. Second, it requires at least one gradient-carrying backbone block at the lowest resolution within the main model. In settings with extremely fine-grained base units, such as character- or byte-level language modeling, this can remain a significant computational bottleneck. H-Net mitigates this issue by using a state-space model at the lowest resolution, but this choice also narrows its applicability, making the approach suited to causal modeling but not non-causal sequence modeling and masked prediction objectives. Besides, H-Net has a few other drawbacks compared to our proposed method in terms of policy exploration, model pre-planning, and inductive bias heuristics. We will further elaborate on these topics in the following section.
+3 Proposed Method
+3.1 Modeling Framework
+Let \mathbf{x}_{T}=x_{0:T} be a sequence data with initial point x_{0} and T subsequent evolutions \{x_{1},\dots,x_{T}\}. Let \mathbf{b}_{T}=b_{-1:T} be an auxiliary sequence of \mathbf{x}_{T} where b_{t}\in\{0,1\} for 0\leq t\leq T is a right-side boundary decision for data point x_{t} (and b_{-1}=1) to be utilized by a deep sequence model q_{\phi}(\mathbf{x}_{T},\mathbf{b}_{T}) in aiding its optimization for an objective \mathcal{L}. For example, if T=5 and \mathbf{b}_{T}=\{1,0,0,1,0,1,1\}, then q_{\phi} will patch the input sequence according to the following partition: \mid x_{0},x_{1},x_{2}\mid x_{3},x_{4}\mid x_{5}\mid during its embedding stage. Note that the last boundary is relevant in the generative setting, where the objective is \sum_{t=0}^{T-1}\mathcal{L}(q_{\phi}(x_{0:t},b_{-1:t}),x_{t+1}) and the next point x_{T+1} is generated through q_{\phi}(\mathbf{x}_{T},\mathbf{b}_{T}) during inference time. Since patching decisions are sequential in nature under this setting, we formulate it as a sequential decision process where decisions \mathbf{b}_{T} are generated by a policy network \pi_{\theta}, and \pi_{\theta} is then optimized according to sequence model q_{\theta}’s performance (w.r.t. \mathcal{L}) under patching strategy \mathbf{b}_{T}. This setup can be formulated as a Markov decision process (MDP) in the following paragraph.
+Generative sequence patching as multi-step MDP
+Define state and action at step t as
+\displaystyle s_{t}\triangleq\left(x_{0:t},b_{-1:(t-1)}\right),\quad a_{t}\triangleq b_{t},
+(1)
+Then the MDP is characterized by the following patching policy, transition dynamics, and reward function:
+\displaystyle\pi(a_{t}\mid s_{t})
+\displaystyle\triangleq\pi_{\theta}\left(b_{t}\mid x_{0:t},b_{-1:(t-1)}\right)
+(2)
+\displaystyle P(s_{t+1}\mid s_{t},a_{t})
+\displaystyle\triangleq p(x_{t+1}\mid x_{0:t})\cdot\delta_{x_{0:t}}\cdot\delta_{b_{-1:t}}
+(3)
+\displaystyle R(s_{t},a_{t})
+\displaystyle\triangleq-\mathcal{L}\left(q_{\phi}\left(x_{0:t},b_{-1:t}\right),x_{t+1}\right),
+(4)
+where \delta_{y} is the Dirac delta distribution with nonzero density only at y. In training, sequence transition dynamic p(x_{t+1}\mid x_{0:t}) is induced by the data; in inference, sequential generation is performed by approximating the transition dynamic p(x_{t+1}\mid x_{0:t}) with learned model q_{\phi}\left(x_{0:t},b_{-1:t}\right). Under this setup, the reward function is dependent solely on the sequence model q_{\phi} and its canonical objective \mathcal{L}, setting stage for a simple and efficient joint optimization scheme for both \pi_{\theta} and q_{\phi} as we will elaborate in the next section.
+Non-causal sequence patching as contextual bandit
+Aside from generative modeling, most sequence modeling tasks such as time series forecasting, masked language modeling [4], and sequence classifications, do not necessarily require the underlying models to abide by time causality, in which case the full contextual sequence from initial to terminal state are presented to the model at once, and the policy net can make a joint, collective decision in one step regarding which places to set the patching boundaries, essentially transforming the formulation into a contextual bandit problem. To concretize, we simply let state s\triangleq\mathbf{x}_{T} and action a\triangleq\mathbf{b}_{T} and subsequently
+\displaystyle\pi(a\mid s)\triangleq\pi_{\theta}\left(b_{0:T}\mid\mathbf{x}_{T}\right)\cdot\delta_{b_{-1}},\quad R(s,a)\triangleq-\mathcal{L}\left(q_{\theta}\left(\mathbf{x}_{T},\mathbf{b}_{T}\right),y\right)
+(5)
+under this setting, where y is the prediction target of the given task.
+Unified one-step MDP for efficient optimization
+In the causal setting, although it would be nice and potentially more optimal to take the previously sampled boundary decisions b_{0:(t-1)} into consideration when making decision b_{t} at step t, such strategy would be significantly less efficient to train for long context window, especially if one desires to use a transformer backbone. Therefore, similar to H-Net [8], we let boundary decisions at step t_{1} and t_{2} to be independently sampled for t_{1}\neq t_{2}, and let s_{t}\triangleq x_{0:t} in place of the definition in Eq. 1, yielding a simplified factorization:
+\displaystyle\pi(a_{t}\mid s_{t})
+\displaystyle\triangleq\pi_{\theta}\left(b_{t}\mid x_{0:t}\right)
+(6)
+\displaystyle P(s_{t+1}\mid s_{t},a_{t})
+\displaystyle\triangleq p(x_{t+1}\mid x_{0:t})\cdot\delta_{x_{0:t}}
+(7)
+\displaystyle R(s_{t},a_{t})
+\displaystyle\triangleq\begin{cases}-\sum_{i=0}^{t}\mathcal{L}\left(q_{\theta}\left(x_{0:i},b_{-1:i}\right),x_{i+1}\right),&\text{if }t=T\\
+0,&\text{otherwise}.\end{cases}
+(8)
+Although the formulation itself still appears to be a multi-step MDP, this modification effectively enables parallelized decision making and reward computation during training and transform the MDP into but a realization of the contextual bandit in Eq. 5, since now the trajectory
+\displaystyle\tau(\theta)=P(s_{0})\prod_{t=0}^{T}\pi(a_{t}\mid s_{t})P(s_{t+1}\mid s_{t},a_{t})=p(\mathbf{x}_{T})\prod_{t=0}^{T}\pi_{\theta}(b_{t}\mid x_{0:t})
+(9)
+can be computed in one forward pass of \pi_{\theta}, and then the terminal reward can be assessed in one forward pass of q_{\phi}. We use this unified setup as our formulation, where causality can be enforced if desired so long as the models satisfy
+\displaystyle q_{\phi}\left(\mathbf{x}_{T},\mathbf{b}_{T}\right)_{[t]}=q_{\phi}\left(x_{0:t},b_{-1:t}\right),\quad\pi_{\theta}\left(b_{0:t}\mid\mathbf{x}_{T}\right)_{[t]}=\pi_{\theta}\left(b_{t}\mid x_{0:t}\right),
+(10)
+where M_{[t]} is the t-th column vector (or element) of matrix (or vector) M. This is automatically the case for standard causal sequence backbones such as uni-directional SSMs and transformers with causal mask. Then during inference, one can compute the right-side boundary logits of each time step in a sequential manner, as in Eq. 6, on tasks where transition dynamic p(x_{t+1}\mid x_{0:t}) needs to be approximated by sequence model q_{\phi}\left(x_{0:t},b_{-1:t}\right).
+3.2 Objectives and Optimization
+Under this formulation, the simultaneous optimization of q_{\phi} and \pi_{\theta} is clean and straightforward. Since the transition dynamics P and reward function R are only dependent on the main backbone sequence model q_{\theta} and its objective \mathcal{L}, the forward pass of q_{\theta} can essentially be seen as the gym environment for \pi_{\theta}. Hence, after each standard batch gradient update of the sequence model q_{\theta}, its losses can be directly used to compute \pi_{\theta}’s objective. We use a simple group relative policy gradient algorithm as the objective of \pi_{\theta}:
+\displaystyle\nabla_{\theta}\mathcal{J}_{GRPG}=\frac{1}{G}\sum_{i=1}^{G}\mathbb{E}\left[\sum_{t=0}^{T}\nabla_{\theta}\log\pi_{\theta}(a_{t}^{(i)}\mid s_{t}^{(i)})\frac{R(s_{T}^{(i)},a_{T}^{(i)})-\mu_{R}}{\sigma_{R}+\epsilon}\right]
+(11)
+where \mu_{R} and \sigma_{R} are the mean and standard deviation of G terminal rewards \{R(s_{T}^{(i)},a_{T}^{(i)})\}_{1\leq i\leq G}, since training an additional critic network as baseline [12] would often be an overkill for terminal-reward-only settings, let along one-step MDP settings. To put it in words, we sample G different sets of boundaries from policy \pi_{\theta} for each sequence, then decide their relative advantage based on how well the sequence model q_{\phi} performs on this sequence under each set. Note that standardization can be replaced by centering (i.e. replace \sigma_{R}+\epsilon with 1) depending on the data characteristics, as centering can preserve the importance of decisions. For example, if the choice of patching boundaries matters enormously for some sequences in the dataset while remains trivial for the others, the policy would not be forced to learn intensely over the latter under the same magnitude of the former.
+By solving patching boundary optimization with RL, we do not rely on soft-discretization to enable gradient flow like prior work such as H-Net, which entails that the policy exploration space is continuous, only residing in the neighborhood of the current boundary policy. However, there are two important design questions needed to be discussed at this point. We elaborate them in the following paragraphs and provide an algorithm block in Algorithm 1.
+Algorithm 1 Joint End-to-End Training of ReinPatch and Downstream Backbone
+1:
+Dataset \mathcal{D}, initialized patching policy \pi_{\theta}, initialized downstream sequence model q_{\phi}
+2:
+Group size G, minimum compression rate r_{m}, learning rates \eta_{\theta},\eta_{\phi}
+3:
+while not converged do
+4:
+Sample a mini-batch of sequences \mathbf{x}_{T} and targets y from \mathcal{D}
+5:
+for each sequence in the mini-batch do
+6:
+for i=1,\dots,G do
+7:
+Sample boundary decisions b_{0:T}^{(i)}\sim\pi_{\theta}(\cdot\mid\mathbf{x}_{T}) \triangleright The policy for q_{\phi}
+8:
+if compression rate T/\sum_{t=0}^{T}b_{t}^{(i)}<r_{m} then \triangleright The environment for \pi_{\theta}
+9:
+Merge extra patches from the right side of \mathbf{b}_{T}^{(i)}
+10:
+end if
+11:
+Compute backbone prediction \hat{y}^{(i)}=q_{\phi}(\mathbf{x}_{T},\mathbf{b}_{T}^{(i)})
+12:
+Compute task loss \mathcal{L}^{(i)}=\mathcal{L}(\hat{y}^{(i)},y)
+13:
+Set terminal reward R^{(i)}=-\mathcal{L}^{(i)}
+14:
+end for
+15:
+Calculate group reward statistics:
+16:
+\mu_{R}=\frac{1}{G}\sum_{i=1}^{G}R^{(i)} and \sigma_{R}=\sqrt{\frac{1}{G}\sum_{i=1}^{G}(R^{(i)}-\mu_{R})^{2}}
+17:
+for i=1,\dots,G do
+18:
+Compute advantage A^{(i)}=\frac{R^{(i)}-\mu_{R}}{\sigma_{R}+\epsilon}
+19:
+end for
+20:
+Compute policy gradient (GRPG): \triangleright For policy \pi_{\theta} update
+21:
+g_{\theta}=\frac{1}{G}\sum_{i=1}^{G}\sum_{t=0}^{T}\nabla_{\theta}\log\pi_{\theta}(b_{t}^{(i)}\mid x_{0:t})A^{(i)}
+22:
+Compute backbone gradient: \triangleright For environment q_{\phi} update
+23:
+g_{\phi}=\nabla_{\phi}\frac{1}{G}\sum_{i=1}^{G}\mathcal{L}^{(i)}
+24:
+end for
+25:
+Average gradients g_{\theta} and g_{\phi} across the mini-batch
+26:
+Update policy network: \theta\leftarrow\theta+\eta_{\theta}g_{\theta}
+27:
+Update backbone network: \phi\leftarrow\phi-\eta_{\phi}g_{\phi}
+28:
+end while
+How is desired compression rate enforced?
+In prior work such as Hwang et al. [8], a target compression rate is encouraged by an auxiliary loss \mathcal{L}_{aux} that grows higher when the compression rate under the sampled patching boundaries deviates more from the target compression rate. This prevents model from converging to a trivial solution, such as placing patching boundaries everywhere, or not placing boundaries at all (since the backbone model has residual connection). As the reader may have observed, the objective of our patching strategy is solely to optimize the performance of the downstream sequence model q_{\theta}, so how can such reward hacking be prevented?
+To answer this question, we first argue that it is systematically better to set desired compression rate as a strict limit rather than as a soft auxiliary objective as in H-Net. The reason is its advantage in model size pre-planning. Soft-encouragement of compression rate means practitioners always need to pre-plan model dimensions for the worst case scenario, which is having no compression (i.e. model places patching boundaries everywhere) in the beginning of training. However, one of the key benefits of patching is the scalability: it allows a deeper neural model with extended hidden size as the spatial or temporal horizons concentrate, and H-Net is not able to reap such benefit in training. After all, if the algorithm truly thinks setting boundaries everywhere is going to yield the best performance, then it should be allowed to do so. The real problem here is that it cannot enlarge model size during the course of training to adapt to the shrinking context length to fully understand the benefit of doing compression.
+On the contrary, setting strict minimum compression rate can be achieved under our proposed method, since we do not rely on gradient flow from the main model to update the patcher. We enforce the minimum compression rate r_{m} in q_{\phi}, in a way such that if \pi_{\theta} proposes a set of boundaries that yields a lower compression rate than r_{m}, all extra patches on the right side are merged into one patch. In other words, the information on compression rate requirement is in the environment of \pi_{\theta}, and \pi_{\theta} has to figure it out and adapt to it during the course of training. Note that we perform merging on the right side to make the environment more challenging for \pi_{\theta}, since recent information are usually perceived to be more meaningful for sequence data. With this strict enforcement, we need not pre-plan model sizes for the worst case scenario, and can reap the full benefits of patching models.
+Why is GRPO not preferred over GRPG?
+The design of group mean as critic instead of neural network as critic is most recently well-known under the mathematical reasoning umbrella of LLMs as group relative policy optimization (GRPO) [19]:
+\displaystyle\mathcal{J}_{GRPO}=\frac{1}{G}\sum_{i=1}^{G}\mathbb{E}\left[\sum_{t=0}^{T}\min\left\{r_{\theta}A^{(i)},\mathrm{clip}\left\{r_{\theta}A^{(i)},1-\delta,1+\delta\right\}\right\}\right]-\beta D_{KL}\left[\pi_{\theta}\parallel\pi_{ref}\right]
+(12)
+where r_{\theta}=\frac{\pi_{\theta}(a_{t}^{(i)}\mid s_{t}^{(i)})}{\pi_{\theta_{old}}(a_{t}^{(i)}\mid s_{t}^{(i)})} and A^{(i)}=\frac{R(s_{T}^{(i)},a_{T}^{(i)})-\mu_{R}}{\sigma_{R}+\epsilon}. The reader may have noticed that both Shao et al. [19] and ours start off with a more general multi-step MDP setup, then pivot to framing the full sequence of actions as a whole for efficiency, such that they are judged by the same terminal reward and same sequence-level critic. This is essentially what makes group-relative approaches viable and desirable. However, despite having the same advantage function, Eq. 12 has two distinct components compared to Eq. 11: 1) the PPO [17] objective in place of policy gradient for multi-epoch mini-batch update, 2) reference policy \pi_{ref} as anchor.
+For the first part, the reason single-epoch updates are safer (hence, policy gradient is preferred over PPO) is that the environment in our case is a continuously evolving and highly parallelizable neural model q_{\theta}. Algorithms like PPO do multi-epoch mini-batch updates to squeeze as much value as possible out of a batch of rollouts because interacting with their environments (like physics simulators or math verifiers) is slow and expensive. In our setup, sample generation is cheap. Doing a single update step on fresh data (i.e. pure on-policy learning) prevents the policy from taking overly large, destructive steps and avoids the need for complex clipping mechanisms.
+For the second part, the answer is simpler: this work focuses on the from-scratch training and pre-training of sequence patching policy, where we do not have a pre-trained reference policy and we do not explore fine-tuning patching policy under the scope of this paper. We have an online learning setup where the reward function fully capture the intended goal of the patching policy – to find the patching boundaries that result in the best sequence model performance. Besides, contrary to conversational AI such as LLMs, we do not require diversity in its generation. It is not a problem if the optimized patcher always provides the same patching strategy for a given sequence. If early exploration is of particular concern, practitioners are free to apply standard exploration strategies as well to prevent premature convergence, such as adding entropy term \mathcal{H}(\pi_{\theta}) with coefficient \beta to the objective function instead of \beta D_{KL}\left[\pi_{\theta}\parallel\pi_{ref}\right].
+3.3 Backbone Architecture
+For patching policy \pi_{\theta}, we design it as a standalone lightweight transformer such that it can be easily extracted as a foundation patching policy under the joint pre-training setup, to use for downstream external chunking on smaller datasets. It is composed of an embedding model m_{\theta}:\mathbb{R}^{d}\to\mathbb{R}^{d_{patch}} and a final linear layer f_{\theta}:\mathbb{R}^{d_{patch}}\to\mathbb{R}^{2} to project the embedding into the corresponding logits for decisions \{0,1\}. In contrast, prior end-to-end patching model such as H-Net [8] has far more complicated patching mechanisms, which rely on the human perception that it is best to set boundaries when context shifts, just like prior external-rule-based and external-model-based methods. This may not necessarily be true for the optimal patching strategy learned by a performance-driven model.
+For downstream sequence model q_{\phi}, we use a clean and unified architecture for the ease of benchmarking and ablation, demonstrated in Figure 3 of Appendix A. The architecture allows downsampling and upsampling to be done either by cross-attention encoder and decoder, as in Pagnoni et al. [15], or simply scatter and gather plus residual, as in Hwang et al. [8].
+Extension to multi-level hierarchical model
+The extension to hierarchical model (i.e. more than one level of patching) is elegant under our proposed method, since the patching policy net need not necessarily observe the evolving hidden representation under its downstream sequence model q_{\phi}, and therefore is able to plan multi-level patching strategy at once. For sequence model q_{\phi}, the extension to hierarchical is trivial (see Appendix A); for patching policy \pi_{\theta}, we apply a simple modification to final linear layer f_{\theta} such that f_{\theta}:\mathbb{R}^{d_{patch}}\to\mathbb{R}^{L} outputs the corresponding logits for extended decision set \{0,1,\dots,L\} if L levels of patching is desired, where b_{t}=l means the right end of x_{t} is the boundary for the first l levels of patching. This is well-defined since boundaries on the j-th level will always be a subset of boundaries on the i-th level, for any i<j.
+3.4 Inference Time Adaptation
+In order to give the foundation patcher additional flexibility to scale across various downstream tasks, where the downstream sequence model width and dataset size could be significantly different from the ones in its pre-training, it should be able to adapt its patching aggressiveness according to a custom compression rate that the practitioners deem more suited to their downstream settings. Hence, in inference mode, we provide the learned patching policy \pi_{\theta} with the ability to take a target compression rate r_{c} and adapt accordingly. For contextual tasks, this is relatively simple: we compute the boundary logits \{l_{t}\}_{0\leq t\leq T} with \pi_{\theta} and pick the indices corresponding to the top-k logits where k=\lfloor T/r_{c}\rfloor. If a target compression rate is not specified by the practitioner, the patching policy calculates the empirical expectation of k
+\displaystyle\hat{k}=\sum_{t=0}^{T}\left(1+e^{-l_{t}}\right)^{-1}
+(13)
+and pick indices by the top-\lfloor\hat{k}\rfloor logits instead. For generative tasks (i.e. causal tasks), this is more challenging because it is an online thresholding problem where we need to hit a global budget (the target compression rate) without seeing the future distribution of the boundary probabilities. The classic approach is to keep a sliding window of logits (or exponential moving mean and variance) and place patching boundary only if the current logit is higher than the (1-1/r_{c})-th quantile. Note that the yielded compression rate in this case does not strictly adhere to the target compression rate as it does in the contextual tasks, and there are pathological cases that could break this approach (for example, a monotone increasing set of logits, which results in boundary placement everywhere). To this end, we leave further thoughts and development regarding inference time adaptation for generative tasks to future research.
+4 Experiments
+4.1 Experimental Details
+Task.
+We evaluate ReinPatch on multivariate time series forecasting, where the appropriate patching strategy depends both on dataset-level characteristics and on local temporal dynamics. This makes forecasting a suitable setting for comparing different patching strategies. Specifically, we conduct experiments on widely used long horizon forecasting benchmarks, including the four ETT subsets, Weather, and Electricity [27; 23]. More details about the datasets are provided in Appendix B.1.
+Problem Formulation. Consider a multivariate time series \mathbf{x}_{T}=x_{0:T} with C channels, yielding an input \mathbf{x}_{T}\in\mathbb{R}^{C\times T}. The forecasting model takes the most recent T time steps from each channel as input and predicts the next H time steps for the target channel. Following [14], we adopt the channel-independence principle and process the multivariate input as a collection of univariate series. This is the standard paradigm established by recent state-of-the-art forecasting architectures [14; 25; 24].
+Forecasting Backbone.
+To evaluate whether ReinPatch improves forecasting performance relative to existing fixed-size and variable-size patching strategies, we adopt a generic model architecture that has been widely used in patch-based forecasting models as described in Appendix A. Across all methods, we use this model architecture and vary only the patching algorithm as long as its associated encoder-decoder configuration (see Appendix B.2). This controlled protocol isolates the effect of the patching strategy and enables a fair comparison. Once the contextualized full-resolution embeddings are acquired, direct multi-step forecasting is performed where a simple linear head is used to directly predict the full forecasting horizon from the flattened embeddings [14; 25].
+Baselines.
+We compare ReinPatch against both fixed-size and variable-size patching baselines. On the fixed-size side, static patching uses a uniform patch size [14], selective patching constructs additional features from overlapping fixed-size patches using a scorer [24], and periodic patching chooses the patch size based on signal periodicity in the Fourier domain [21]. On the variable-size side, entropy patching relies on entropy estimation from an external pretrained model [15; 1], TimeSqueeze compression uses local variance in the raw input space [2], and H-Net chunking learns patch boundaries end to end from cosine similarity between Mamba embeddings computed at full resolution [8].
+4.2 Main Results
+Following standard practice, we report Mean Squared Error (MSE) and Mean Absolute Error (MAE) across four forecasting horizons, H\in\{96,192,336,720\}. Because the look-back window size heavily influences performance, we evaluate all methods across look-back lengths T\in\{96,192,336\} and report the optimal configuration for each.
+Table 2: Multivariate forecasting average results with forecasting horizons H\in\{96,192,336,720\} for the datasets. Red: the best, Blue: the 2nd best. Full results are available in Table 5 of Appendix B.3.
+Datasets
+ETTh1
+ETTh2
+ETTm1
+ETTm2
+Weather
+Electricity
+Metrics
+MSE
+MAE
+MSE
+MAE
+MSE
+MAE
+MSE
+MAE
+MSE
+MAE
+MSE
+MAE
+Static Patching [14]
+0.415
+0.434
+0.337
+0.385
+0.357
+0.388
+0.272
+0.326
+0.230
+0.268
+0.192
+0.299
+Selective Patching [24]
+0.416
+0.433
+0.331
+0.384
+0.361
+0.391
+0.269
+0.326
+0.232
+0.271
+0.191
+0.298
+Periodic Patching [21]
+0.408
+0.431
+0.338
+0.387
+0.362
+0.392
+0.274
+0.327
+0.230
+0.268
+0.187
+0.292
+Entropy Patching [1]
+0.430
+0.438
+0.339
+0.389
+0.359
+0.387
+0.283
+0.334
+0.231
+0.269
+0.170
+0.268
+TimeSqueeze’s Compression [2]
+0.422
+0.438
+0.338
+0.388
+0.362
+0.385
+0.272
+0.329
+0.230
+0.268
+0.176
+0.277
+H-Net’s Chunking [8]
+0.438
+0.445
+0.340
+0.390
+0.361
+0.386
+0.274
+0.327
+0.231
+0.267
+0.174
+0.274
+ReinPatch (end-to-end) [Ours]
+0.405
+0.428
+0.323
+0.378
+0.347
+0.382
+0.263
+0.321
+0.229
+0.268
+0.172
+0.273
+ReinPatch (foundation) [Ours]
+0.397
+0.424
+0.323
+0.377
+0.347
+0.382
+0.262
+0.321
+0.226
+0.265
+0.168
+0.267
+End-to-end patching. We first evaluate ReinPatch in an end-to-end setting, jointly learning the patching policy and the forecasting model on each dataset. Table 2 presents the best average MSE and MAE across all forecasting horizons. As shown, ReinPatch consistently outperforms existing fixed- and variable-size patching baselines across most datasets. All results are averaged over five random seeds to ensure statistical reliability. Crucially, these consistent improvements under the shared forecasting backbone confirm that our performance gains stem directly from the learned, data-driven patching policy rather than architectural modifications.
+Zero-shot patching. A broader objective of our work is to develop a foundation sequence patcher by pre-training a policy on a large-scale corpus for off-the-shelf, zero-shot application on smaller target datasets. To achieve this, we jointly pre-train the patcher and a main sequence forecasting model on the Unified Time Series Dataset (UTSD) [11]. UTSD aggregates diverse, multi-frequency data from public repositories and real-world operations across seven domains: Energy, Environment, Health, IoT, Nature, Transportation, and Web. For downstream evaluation, we deploy this foundation patcher in a zero-shot configuration by freezing its pre-trained weights and exclusively training the task-specific forecasting backbone.
+As shown in Table 2, this zero-shot configuration outperforms the end-to-end training of ReinPatch, not so expectedly. This reflects that exposing the patching policy to a massive, highly diverse corpus might yield more robust and generalizable patches than training exclusively on a narrower target dataset. By freezing the pre-trained weights, the zero-shot patcher avoids dataset-specific overfitting and effectively regularizes the downstream forecasting backbone. Furthermore, detailed per-horizon evaluations in Table 5 of Appendix B.3 demonstrate that either the zero-shot or end-to-end variant of ReinPatch achieves state-of-the-art performance in 22 out of 24 evaluated configurations, with the zero-shot foundation patcher specifically accounting for 17 of these top results. More specifically, ReinPatch achieves an average MSE reduction of 4.4\% across all datasets compared to the frequently used entropy-based patching, with relative performance gains peaking at 7.7\% on the ETTh1 dataset.
+4.3 Ablation and Analysis
+Look-back Window vs. Forecasting Performance.
+Recent works in time series forecasting show that extending the length of the look-back window can improve forecasting accuracy, especially for longer forecasting horizons. For patching mechanisms to be effective in these scenarios, they must scale well with extended contexts. To test this scalability, we compare ReinPatch against the most prevalent prior adaptive patching method – entropy patching [15; 1] – across different look-back windows T\in\{96,192,336,720\}, fixing the forecasting horizon at H=96. As Figure 1 shows, both methods are highly competitive for short contexts, where entropy patching occasionally matches or slightly edges out ReinPatch. However, as the look-back window becomes larger, ReinPatch shows consistent improvements and reliably outperforms entropy patching across longer-window settings.
+This scaling behavior highlights a key limitation of approaches that rely on auxiliary external metrics, such as entropy estimation, to predict the boundary placement. While such heuristics may serve as a reliable proxy for short contexts where segmentation is relatively simple, longer look-back windows introduce greater input heterogeneity, and the mismatch between this auxiliary entropy and the actual forecasting utility becomes more pronounced as a result. For example, a long sequence may benefit from more aggressive compression on older context than more recent context, in which case the fixed thresholding of entropy patching fails, and the inherit low prediction certainty from the entropy model at the beginning of sequence may yield just the opposite. In contrast, ReinPatch learns its boundary policy directly from the data while optimizing specifically for the given task and setting. The widening performance gap at larger context lengths underscores the value of establishing a good end-to-end trainable patching mechanism to efficiently compress longer context without losing the fine-grained temporal details that matter most for prediction. Note that the prior end-to-end patching method, H-Net, significantly underperformed in time series forecasting tasks (the backbone architecture for H-Net in our experiments is the same as the one in Hwang et al. [8]), and achieved the worst performance on the two ETTh subsets as shown in Table 2 and Table 5.
+Figure 1: MSE at forecasting horizon H=96 across various look-back windows. While entropy patching exhibits a competitive for short contexts, it struggles to scale as the input context expands, whereas ReinPatch maintains strong forecasting performance across most datasets and context lengths.
+Interpreting the Patching Policy.
+Figure 2 visualizes the segmentation patterns learned by ReinPatch under the foundation patcher setting on the UTSD, weather and electricity datasets. Some consistent behaviors can be observed from these segmentation patterns as we discuss in the following paragraphs.
+(a) UTSD
+(b) weather
+(c) electricity
+Figure 2: Representative patch segmentations sampled from the foundation patcher trained with a minimum compression rate of 8. The learned boundaries naturally concentrate around major transitions while keeping short neighborhoods of local temporal structure together.
+First, although the model does place some boundaries at shifting points as some prior heuristics believe [15; 8; 2], it sometimes prefer to wrap major turning points within a single patch while keeping a short neighborhood around each transition intact. This makes sense since the local neighborhood around a transition is informative and may be better encoded holistically than split across segments. After all, if we place a boundary at each turning point, then each patch is simply a monotone signal that may not be semantically meaningful.
+Second, individual patches remain compact, rarely spanning more than a few major turning points. The policy thus strikes a practical balance between two competing objectives: reducing patch count through aggressive compression, while retaining sufficient within-patch information for the downstream model to capture relevant temporal dynamics.
+Third, the segmentations sampled after pre-training yield an average compression rate of 10.92 on pre-training dataset (UTSD), comfortably exceeding the minimum of 8. This indicates that the policy has internalized the compression constraint imposed in the environment, allocating boundaries selectively, introducing a new segment only when the expected gain in predictive accuracy justifies the additional cost.
+The behavior in Figure 2 also helps explain why ReinPatch consistently outperforms H-Net, our other end-to-end patching baseline. H-Net was originally designed for byte-level sequence modeling, and its boundary placements rely on cosine similarity computed over high-dimensional Mamba embeddings at full resolution. This inductive bias may transfer poorly to time series: an effective patch boundary should compress the raw trajectory while preserving local transitions and salient events, yet similarity in a deep embedding space does not necessarily track these raw-signal properties. Consequently, H-Net’s geometry-driven policy produces segmentations that are coherent for discrete sequences but could miss the locality structures critical for continuous domain time series forecasting.
+5 Conclusion
+In this work, we introduced Reinforcement Patching (ReinPatch), a novel framework that treats the extraction of compact sequence representations as a discrete action optimization problem. By formulating data-adaptive patching as a contextual bandit and optimizing it via GRPG, ReinPatch bypasses the need for the soft-discretization and continuous relaxations that have historically constrained end-to-end patching strategies. Crucially, our design cleanly detaches the patching policy from the downstream sequence model. Extensive experiments on multivariate time series forecasting demonstrate that ReinPatch consistently outperforms state-of-the-art patching methods. We validated this superiority across two distinct paradigms: joint end-to-end training and a zero-shot transfer setting utilizing a standalone foundation patcher pre-trained solely on univariate time series.
+Furthermore, our ablation studies highlight the robustness of our reinforcement-based approach at scale; notably, ReinPatch maintains its performance advantage over entropy-based patching as the context window expands, proving its efficacy for long-horizon sequences. Finally, by visualizing the segmentation boundaries generated by the frozen foundation patcher, we provided the time series community with empirical insights into the data-driven chunking patterns naturally favored by performance-driven neural policies.
+Limitations. Despite its strong empirical performance, ReinPatch has a few limitations that present exciting avenues for future research. First, while our foundation patcher demonstrated impressive transferability from univariate (UTSD) to multivariate downstream tasks, its pre-training was restricted to univariate dynamics. Large-scale, multivariate pre-training to capture cross-channel patching dependencies remains a challenge within the broader time series foundation modeling umbrella. Second, while our unified one-step MDP formulation enables highly efficient parallelized training naturally suited for contextual tasks like forecasting, letting the patcher further contextualize its decisions made on-the-fly in the multi-step, causal MDP formulation could still be desirable. Efficiently training models in this formulation remains an open challenge.
+Future Work. While this paper focuses extensively on time series applications, the fundamental principles of ReinPatch are domain-agnostic. We plan to investigate the application of end-to-end reinforcement-based patching in natural language processing, specifically as a dynamic, tokenization-free alternative to byte-pair encoding (BPE) in large language models, as well as in other continuous-signal domains like audio and genomics. In these domains, we could further investigate the application of different RL objectives accordingly: for example, PPO importance weights and multi-epoch mini-batch updates across rollout collections could be desirable if the patching policy’s downstream deep-sequence model is significantly larger than itself, such as a billion-parameter LLM. Besides, we aim to explore fine-tuning the pre-trained patching policy for downstream tasks, which could further enhance model performance.
+Acknowledgments
+We thank Doron Bergman, Rizal Fathony, Nihal Sharma, and Thomas Caputo for the valuable discussions.

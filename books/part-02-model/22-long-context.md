@@ -184,6 +184,10 @@ Probe 可解码不证明信息拥有因果控制，滑动窗口和特定模型�
 
 因此这条路线的主要输出是模型有效性，不是系统容量。
 
+位置扩展还可能先损伤原短窗口内的关系。一个受限恢复分支让 teacher 使用 native RoPE、student 使用 scaled RoPE，在原窗口上匹配每行归一化的 Q–Q、K–K 与 V–V 关系，再以较轻的长序列 continued training 适配新距离。前一阶段约束内部关系保持，后一阶段才接触长窗训练分布；关系 loss 下降不等于原 teacher 能力完整恢复，更不保证新的距离已有效。[受限对照](https://arxiv.org/html/2604.00004v1)同时存在短任务恢复不足与长检索低于普通 CPT 的切片，因而普通长训、较小 scaling 或原 checkpoint 仍各有合理位置。
+
+关系蒸馏不必把整张平方大小的概率图留在显存中：先逐行累计 teacher/student 的 log-sum-exp，再按 tile 重算概率及梯度，可以保留同一个 dense 关系目标而只保存线性规模的行统计。这里节省的是驻留中间状态，pairwise 计算及反向重算仍随长度二次增长；数学梯度一致也不意味着浮点 reduction 的 bitwise 一致。双模型前向、重算、适配参数与后续 CPT 均进入预算，不能把较少蒸馏 tokens 或线性 workspace 当成 linear Attention、总训练免费或部署 TTFT 保证。数值、短长任务或总成本验收失败时，回到原 dense 目标/常规 CPT，并分别记录位置、训练目标与实现版本。<!-- source-family:SF-2026-ARXIV-2604-00004 -->
+
 ### 位置索引一致性需要保持内容与可见性不变
 
 延长位置范围之外，还可在相同token内容和causal mask上，只让suffix的RoPE index出现跳跃；用标准位置view的stop-gradient分布作teacher，对扰动view做suffix reverse-KL，并保留CLM。这把“可见材料没有变”与“位置坐标改变后模型是否稳定”分开，不是真实文档重排，也不取消语义顺序或任务对位置的依赖。Teacher只提出一致性目标，不因stop-gradient就获得事实真值或零成本身份。
@@ -234,6 +238,14 @@ Sparse Attention fewer pair connections, changed model semantics
 exact-v1 的结论建立在 fixed-precision、fixed-depth formal-language recognizer 和有限 positional predicates 上，并以所选自然语言实验作一致性证据；它不证明任意 LLM、任意深度或生产 workload 的质量排序。该理论只解释为何 global/local hybrid 可能改变函数类别，具体窗口和 kernel 仍需由训练分布、硬件与 SLO 验收。
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-00768:end -->
 
+local/global互补还可以把选择粒度从“读哪些历史位置”移到“当前query是否调用全局读取”。一条需继续训练的分支先为所有token计算local表示，再由各层token门决定是否对这些表示的完整causal历史执行global attention，并把结果加回local路径。关闭的是当前query的global计算，不是整层MLP，也不是该token对未来的可见性：global K/V仍须写入，不能据query稀疏率声称缓存等比例缩小。执行时可先compact活跃queries，但causal mask与输出scatter必须保留原位置身份；训练后另删某些global模块则是改变信息路径的第二项设计，需要独立质量回归。<!-- source-family:SF-2026-ARXIV-2603-17484 -->
+
+门的学习也不能只奖励少算。若关闭路径根本不计算global输出，next-token loss对这道门的代理credit会消失，成本正则可能把它继续推向关闭；有限训练分支偶尔为全部queries计算global输出、仍保留硬门的forward乘法，以给关闭门提供STE训练信号。这不授无偏梯度、全关不会发生或精确kernel recipe。[L2A的有限对照](https://arxiv.org/html/2603.17484v1)仍有检索、引用及多轮指代退步，阈值/局部窗口、继续训练、补算、query搬移与完整KV都计费，单kernel速度或平均TTFT不能认证服务SLO。短上下文不偿额外local/router成本、关键远程依赖漏读或无法再训练时，保留原dense/固定hybrid与任务回读；只有独立校准并回归后才采用整层pruning，不把它与跳过当前读取混为一项收益。<!-- source-family:SF-2026-ARXIV-2603-17484 -->
+
+另一条分支不是先计算 local 再选择是否叠加 global，而在同一层共享 Q/K/V 的 full 与 sliding-window 输出之间逐 token 互斥选择。训练时两路都算，以 hard gate 的 straight-through 梯度学习路由；再用 next-token loss 与两路输出差异调低困难位置的局部计算惩罚。监督表示在当前训练目标下的资源偏好，不是 global 必然正确或推理时可取得的真值；完整继续训练也不能保证原 checkpoint 的能力不变。Decode 可以先路由再只执行选中分支，但未来 query 仍可能需要完整历史，所以共享 KV 不等按局部路由比例淘汰 cache。<!-- source-family:SF-2026-ARXIV-2603-26380 -->
+
+[Switch Attention 的受限 1.5B 对照](https://arxiv.org/html/2603.26380v1)支持这种访问分支及训练正则的局部作用，而非任意模型或全任务质量保持；部分检索切片仍弱于 full attention。其 prefill 当前仍计算两路，硬件高效实现未完成，报告的 FLOPs 和读取 token 数不能直接换算端到端加速或服务 SLO。额外继续训练、双路计算、router、完整 KV 驻留与回归均计费，位置依赖、路由校准或总成本不合格时保留原 dense、固定 hybrid 或上述 local-plus-global 路径，不让平均分或稀疏率批准默认替换。<!-- source-family:SF-2026-ARXIV-2603-26380 -->
+
 ### Immutable Task Prefix 与 Recent Reasoning State 可以分治
 
 Sliding window 丢弃最旧 token，在局部依赖主导时简单有效；Agent reasoning 却常同时依赖开头的 system/task
@@ -252,6 +264,10 @@ immutable task / system prefix
 bounded KV 和 tile skipping 换取中间证据丢失、tool output 淹没窗口与更复杂 kernel/mask；短生成、需要精确
 回看完整轨迹或 task prefix 会变化时，完整 Context 或 retrieval/compression 仍更合理。Prefix Sliding 的结果
 绑定 Qwen3 1.7B/7B、单 H100 与特定 window，不能外推任意模型或生产 serving。
+
+滑动窗口也可以只作用于密集的观测表示，而不同时删除模型已经生成的工作文本。一条流式视频分支在每个chunk到达后生成短推理及回答或silent标记，保留近期视觉K/V，同时把全部已生成的推理、回答K/V留作较稀疏的历史条件。它与“固定task prefix＋近期推理窗口”的取舍相反：早期细粒度视觉退出直接读取，生成文本继续可寻址；文本只是当时模型的解释、事件概括或假说，不是原图、事实真值或未来query必需信息的无损替身。训练attention可见性和部署保留/淘汰规则必须一致，物理搬移也不能静默改写旧状态的位置身份。<!-- source-family:SF-2026-ARXIV-2603-12938 -->
+
+这个分支只给视觉状态一个窗口上界，并未给总缓存常数上界：只要每chunk继续产生文本，累计文本K/V仍增长；生成较慢不等固定大小。[ThinkStream的有限消融](https://arxiv.org/html/2603.12938v1)中，推理预算和视觉窗口都有质量/延迟取舍，普通caption memory还会退步，不能据有限平均收益授全部历史充分性、事实保持或无限流实时保证。视频caption与合成审校、可见性训练、每chunk视觉编码/推理、cache搬移和长期文本读取均计费；时间/格式/答案reward分别验收，不替内部推理真实性签字。精确回看、派生错误累积或长期容量不适配时，保留原视觉回读/检索、更大直接窗口或独立校验，并为文本历史另定截断/压缩策略再做任务回归，不让观测压缩自行获得安全或发言授权。<!-- source-family:SF-2026-ARXIV-2603-12938 -->
 
 ### Context Anchor 从 Passive Sink 演进为独立状态轨道
 
@@ -304,6 +320,10 @@ Attention 的 selector state，是在静态稀疏与逐 token 重路由之间增
 另一种压缩路径把 chunk 内的直接 token 访问与跨 chunk 的 summary handoff 分开：处理当前 chunk 时保留细粒度原文，完成后通过 summary 接续后文；cache 显式维护各自的三个状态段，summary 只能读取其所属 chunk，不能偷看后续文本。Chunk 边界必须完成 direct→summary 的交接，不能让 partial chunk 既退出直接窗口、又尚未进入完整 summary，形成两端都不可见的盲区。训练、attention mask 与 cache identity 必须一致，不能用一次 prompt 摘要替代完整 handoff 协议。<!-- source-family:SF-2026-ARXIV-2604-24432 -->
 
 它用受限跨 chunk 信息通道换长上下文预算，同时增加 summary 训练、三段 cache 生命周期和边界更新成本；压缩会丢失尚未知道未来 query 是否需要的证据，不保证摘要语义无损。精确引用、细粒度远程依赖或 chunk 分布迁移时，应保留原文检索/回读或更大 direct window，并分别检查吞吐与任务质量。
+
+如果不仅缩减读取范围，还改变历史的表示，编码器与解码器就要共同承担新的契约。一种受限分支把基础词表扩展为私有离散码，学习用变长码序列表示原文：可由解码器直接回答，也可先让另一个模型在码空间生成，再解码回文本。它不是原 tokenizer 的可逆切分；码的身份、编解码权重与生成分支必须匹配，压缩率也不等于事实保留率。固定 summary、完整原文或外部检索，在不愿增加这套训练和版本耦合时仍合理。
+
+重构目标还要与自由解码、未来任务和总成本分别验收。[变长离散码的受限对照](https://arxiv.org/html/2603.25340v1)并未证明任意原文精确恢复：自由解码随长度退化，码空间推理不是所有任务更好，压缩前向计入后短输入还会更慢。重叠窗口的一致性也不保证跨窗事实或未知查询可恢复。需要支付编解码训练、压缩和输出还原费用，并保留原文回读/更低压缩预算作为失败回退；不能把较高BLEU、不同符号粒度的PPL或短码长度当无损、真实推理能力或服务SLO保证。<!-- source-family:SF-2026-ARXIV-2603-25340 -->
 
 固定 mask 与 prompt-conditioned routing 决定读取范围；若希望选择器随模型一同学习，就还要约束训练和访存。Native Sparse Attention（NSA）给出这一分支的具体机制。它不是在已训练 dense model 上临时剪掉
 KV，而是在训练中并行学习三条路径：压缩 block 提供 coarse global summary，query-aware
@@ -927,6 +947,10 @@ position rule 和 kernel identity；单层 MSE 也不保证端到端行为保持
 迁移数据不足或 runtime kernel 不成熟时继续成立。单 GPU NIAH/吞吐结果只能支持作者转换 recipe，不能证明
 任意 Transformer 都可低成本变成 hybrid model。
 
+迁移也可以不按整层决定留下 attention：同一 head 并行维护局部精确窗口与固定大小的矩阵 recurrent state，再用 data-dependent output gate 混合两者。局部窗口保留近期寻址，递归路径累积更长历史；受限构造复用原 Q/K/V，采用 512-token sliding window 与 4 个 sink tokens 配合 mLSTM，但不是原 full attention 的精确等价。每个 head 的 gate、窗口/sink policy 和两类 state 共同定义模型身份，不能仅以固定递归状态声称所有历史都能被精确回读。<!-- source-family:SF-2026-ARXIV-2603-15590 -->
+
+这类迁移先冻结原 embedding/MLP、用输出 MSE 拟合新增组件，再以真实 token CE 与预计算 teacher 分布的 KL 共同适配全参数；拟合接口与能力恢复分开验收。它增加双路径计算、distillation 数据和训练费用，有限 benchmark 的 tolerance recovery 不保证所有行为保持，长检索和 STEM 仍有反侧。可选的同 seed 专家权重合并仍接受第28章的共同 base、独立 holdout 与更新兼容责任，不等同推理 ensemble。编译/static-cache 的单 H100 微测也不授生产服务 SLO；迁移质量、状态接口或净成本失配时，原 dense checkpoint、逐层保留 attention 和原生 hybrid 继续成立。<!-- source-family:SF-2026-ARXIV-2603-15590 -->
+
 ### 可映射的中间算子可以成为完整替换的迁移桥
 
 若目标是完全替换attention，而不是保留难转层，可以先拟合normalized linear feature算子，再把phi(K)/phi(Q)、V、恒等初始状态转移和normalization state映射到SSM，最后受控解锁conv/gate等动力学并以真实token CE适配。函数匹配发生在中间linear operator上，不是原softmax的精确等价，也不是仍保留原attention block的hybrid。迁移artifact需分开算子匹配、初始化和后续学习；input/output embeddings保持冻结，不应把其余模型finetune写成“所有参数解锁”。
@@ -1177,6 +1201,8 @@ Long Context 不是一个模型参数，而是一组联合约束。位置机制�
 
 ## Review notes
 
+- `SF-2026-ARXIV-2604-00004` — [v1](https://arxiv.org/html/2604.00004v1) §3.1～3.4/Alg1/Eq4～7、Tables1～2，2+2+2=6，位置恢复与关系目标workspace差额深入；native/scaled RoPE、row-FKL、LSE-recompute只linear storage非time/bitwise，Llama2短51.87<teacher54.69、Llama3 RULER68.3<CPT81.3。双模型、重算、LoRA与CPT计费，未核代码或复现。
+
 - `SF-2026-ARXIV-2603-07217` — Daily `2026-03-11` 补遗漏；[Miniature Brain exact-v1](https://arxiv.org/html/2603.07217v1) §4–11/必要Table1–5、§12–13。2+1+2=5，较慢context read-bias与bank addressing/write-back分责gap深入；EMA检索证据非optimizer gradient，route≠recall、叠加消融非普遍协同，novelty/confidence gate真值不授；buffer/reset次序/监督与额外费用、单bank/原Attention回退近文。review_mar11_continue actual necessary Source、Ch22逐字PRE和root窄锁通过；supplement_20260311 窄写一段，review_mar11_continue 非写入者实际新674段、665–701完整邻接/1176–1187自身注回对必要v1，POST通过，不授DAY；未核artifact或复现。
 
 - `SF-2026-ARXIV-2601-18401` — Daily `2026-01-28` 增量；[Superlinear attention exact-v1](https://arxiv.org/html/2601.18401v1) §2.1–2.4/3.1–3.4/4.1–4.2/4.4–4.5/5。2+2+2=6，具体 long-context routing gap 深入，采用累计 key→covering candidate span family→selected soft gate、N=2 成本平衡/全 KV 与失败；structural non-exclusion 不等于每 query 读全历史，10M 效率不授质量。N>2/log 为 future，§4.5 factor 描述内部不一致故不采精确调参数字。jan28_review 实际必要原源/owner/PRE及完整局部正文/邻接/自身末注POST通过，覆盖条件窄措辞已按其复核修正，不授日级完成；未核 artifact 或复现实验。
@@ -1367,3 +1393,13 @@ Primary-source 校验入口：
 - `SF-2026-ARXIV-2602-11852` — Daily `2026-02-14`补查；[ProtoT exact-v1](https://arxiv.org/html/2602.11852v1) §3/4/5/6，2+2+2=6，固定 prototype EMA/mass 读写差额定点深入。只采 past-only read-before-write 与容量分责，不授可命名概念即 faithful reasoning、PMR 全局稳定、无限召回或端到端加速；234.9M/L12/h512 质量、ctx1024→2048 PPL80.5→81.9、BF16短ctx训练反退与单H100/b1长ctx交叉点限定。root/reviewer必要Source及actual owner/邻接PRE通过，root授两段+本人末注窄锁；作者已写并顺读完整邻接，review_20260214已实际独核新正文、完整邻接与本末注，非作者actual POST通过，root释放窄锁，不授DAY。未核artifact/复现。 本轮补查事件的首次公开日期未证，必要Source/PRE/实际POST研究仍有效，但不计本日已确认新增成果；归属只按[本日日报§5](../../papers/2026/02/14/README.md#5-缺口与下一步)的57日期请求定点重开，不撤正文或补造公开日。
 
 - `SF-2026-ARXIV-2602-12204` — Daily `2026-02-14`补查；[CRAM exact-v1](https://arxiv.org/html/2602.12204v1) §2/4/6–9，2+2+2=6，真实读取输出→semantic近似与episodic例外接口差额深入。q依当前retrieval、免费无读取gate未成立，DynMSE/Activity反退、probe非causal/attention非总费限定近正文；root actualowner拟文经review_20260214非作者逐字PRE通过，root授一段及本人note窄锁；作者新段/完整邻接/本人note已顺读，非writer实际正文、完整局部邻接及本人末注actualPOST通过，root释放窄锁。不授完整循环router执行recipe、生物因果、实现/复现或DAY。 本轮补查事件的首次公开日期未证，必要Source/PRE/实际POST研究仍有效，但不计本日已确认新增成果；归属只按[本日日报§5](../../papers/2026/02/14/README.md#5-缺口与下一步)的57日期请求定点重开，不撤正文或补造公开日。
+
+- `SF-2026-ARXIV-2603-15590` — Daily `2026-03-18`补03/17；[exact-v1](https://arxiv.org/html/2603.15590v1) §3–4/Limitations/D1–2，2+2+2=6；同head局部窗口与recurrent state、staged转换差额；tolerance非全行为、STEM/NIAH反側、teacher/迁移与微测非生产SLO边界近正文，merge责任只交接Ch28。review_mar17_18必要Source与actual owner/逐字PRE正式通过，root授本两段及本人注窄锁；作者实际写入，review_mar17_18非writer实际完整Ch22 907–947正文邻接及1369–1382本人注回对原证/PRE，POST局部通过，不授DAY。未核artifact或复现实验。
+
+- `SF-2026-ARXIV-2603-12938` — Daily `2026-03-17`补03/16；[ThinkStream exact-v1](https://arxiv.org/html/2603.12938v1) §3–6/Eq1–7/Tables1–7/A.1–A.2/B–D，PDF p23–24恢复因果数据prompt。只采用视觉窗口与全部生成文本K/V的反向保留分支，视觉有界不授总缓存常数上界；因果提示非泄漏审计，答案/格式/时间reward非CoT真值，有限预算/反退与全费用近正文，不授无限流实时或安全。未核artifact或复现实验。
+
+- [L2A2603.17484 exact-v1](https://arxiv.org/html/2603.17484v1)：必要§3–4/T1–2、A路由credit、C索引/归一化、D T3–5、E1与F训练/评价定义；采用token调用global/全KV保留/训练credit及原位置执行接口。保任务反退、pruning选择集冲突、A推导与C伪码限制；不采无损、无偏/收敛、完整kernel recipe或生产SLO，未复现。<!-- source-family:SF-2026-ARXIV-2603-17484 -->
+
+- `SF-2026-ARXIV-2603-25340` — [exact-v1](https://arxiv.org/html/2603.25340v1) §3–4/Table1–9；仅采用私有码编解码/生成接口与保真、成本分账。exact重构、模型0.4/0.6B口径及headline速度不采用；表6自由解码/表4–5任务反侧与表9短输入退步保留。未核artifact/复现或生产SLO。
+
+- `SF-2026-ARXIV-2603-26380` — Daily2026-03-31补03-30；[exact-v1](https://arxiv.org/html/2603.26380v1) §3–4/Eqs1–9/Algorithms1–2/Tables2/4与limitations，2+2+2=6。仅 full/SWA 互斥 token-layer 路由/训练监督分支，保完整 KV、双算 CPT/prefill、额外预算与局部反退；不采4×/12×wallclock、质量无损或生产SLO，未核实现或复现。

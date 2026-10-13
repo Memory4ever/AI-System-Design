@@ -73,6 +73,10 @@ model revision + architecture
 adapter 不是请求上的一个普通字符串：它参与权重选择、batch compatibility、
 prefix-cache identity 和审计。
 
+共享一个 backbone 执行检索和生成时，execution identity 还要绑定 attention mode、输出 head 与状态消费者。检索 adapter 关闭，只恢复了权重选择；还须恢复生成所需的 causal 路径和原 lm_head，让 cache-aware 调用按当前 mode 维护状态。Bidirectional 检索产生的表示不自动成为 causal generation 的可复用 prefix；切换前后应清理或隔离不兼容状态，并验收实际 forward 与输出，而不是只检查 adapter 字符串或参数差为零。
+
+`arXiv:2603.28554v1` §3.4/§5.2–5.4支持这个权重—算子—状态分界，但同代码路径的 greedy/固定seed输出一致不证明跨实现或任意 sampling 分布等价；50次循环也不认证并发隔离。Head保全、mask切换、视觉首步处理、KV驻留/重建及完整调用都计费，单实例全局mode切换还会串行化检索与生成；端到端质量和并发SLO未验证时，保留独立retrieval/generation实例或请求隔离的执行路径，不由局部显存节省批准任意共享。<!-- source-family:SF-2026-ARXIV-2603-28554 -->
+
 这组身份是后续状态机的静态前提。请求再携带 prompt tokens、sampling
 parameters、SLO 和 runtime state。静态 artifact identity 与动态 request state
 没有分开时，cache reuse、故障恢复和行为回归都无法可靠解释。
@@ -432,3 +436,5 @@ Review note：`SF-2026-ARXIV-2606-29565`；Method `https://arxiv.org/html/2606.2
 
   **已吸收的语义增量：** `Execution-State Capsules: Graph-Bound Execution-State Checkpoint and Restore for Low-Latency, Small-Batch, On-Device Physical-AI Serving` 路由到 `INFER-REQUEST-LIFECYCLE`：Execution-State Capsule 在 graph-boundary 捕获可恢复的静态 buffer/执行状态，使 on-device small-batch serving 可 checkpoint/restore，而非重建整个 runtime；FlashRT 拥有 capsule schema 与兼容性，失配时冷启动。代价是图绑定、静态内存和 backend 特化。
 <!-- daily-books-trace:SF-2026-ARXIV-2606-20537:end -->
+
+- `SF-2026-ARXIV-2603-28554` — [Hydra exact-v1](https://arxiv.org/html/2603.28554v1) §3.4/§5.2–5.4及B跨实现反側；仅共享实例的attention/head/cache执行身份。保同路径一致非跨实现sampling等价、50cycle非并发隔离、全mode与KV费用；不采用DDP梯度同步自身导致参数漂移的causal保证。窗外v3 §3.4仅定点澄清tensor审计排除head/embedding冻结，不回填其r32或新budget，未核artifact/复现。

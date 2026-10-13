@@ -1,0 +1,2680 @@
+SAEmnesia: Erasing Concepts in Diffusion Models with Sparse Autoencoders
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Related Work
+3
+Methodology
+4
+Experiments
+5
+Results
+6
+Conclusions and Limitations
+References
+7
+Appendix
+7.1
+Standard deviations
+7.2
+Multipliers Comparison
+7.3
+Additional Scores Histograms
+7.4
+Additional unlearning visualization
+7.5
+Global Cross-Entropy
+7.6
+Post-TopK Loss Analysis
+7.7
+Exploratory Variants
+7.8
+Concept Interference Mitigation
+7.9
+Uniform Multipliers Analysis
+7.10
+Lambda Coefficient Analysis for
+SAEmnesia
+Loss
+License: CC BY 4.0
+arXiv:2509.21379v1 [cs.CV] 23 Sep 2025
+SAEmnesia
+: Erasing Concepts in Diffusion Models with Sparse Autoencoders
+Enrico Cassano
+Affiliation:
+University of Turin, Italy
+Riccardo Renzulli
+Affiliation:
+University of Turin, Italy
+Marco Nurisso
+Affiliation:
+Politecnico di Torino, Italy
+Affiliation:
+CENTAI Institute, Italy
+{name.surname}@{unito.it,polito.it,centai.eu}
+Mirko Zaffaroni
+Affiliation:
+CENTAI Institute, Italy
+{name.surname}@{unito.it,polito.it,centai.eu}
+Alan Perotti
+Affiliation:
+CENTAI Institute, Italy
+{name.surname}@{unito.it,polito.it,centai.eu}
+Marco Grangetto
+Affiliation:
+University of Turin, Italy
+Abstract
+Effective concept unlearning in text-to-image diffusion models requires precise localization of concept representations within the model’s latent space. While sparse autoencoders successfully reduce neuron polysemanticity (i.e., multiple concepts per neuron) compared to the original network, individual concept representations can still be distributed across multiple latent features, requiring extensive search procedures for concept unlearning. We introduce
+SAEmnesia
+, a supervised sparse autoencoder training method that promotes one-to-one concept-neuron mappings through systematic concept labeling, mitigating feature splitting and promoting feature centralization.
+Our approach learns specialized neurons with significantly stronger concept associations compared to unsupervised baselines. The only computational overhead introduced by
+SAEmnesia
+is limited to cross-entropy computation during training. At inference time, this interpretable representation reduces hyperparameter search by 96.67% with respect to current approaches. On the UnlearnCanvas benchmark,
+SAEmnesia
+achieves an 9.22% improvement over the state-of-the-art. In sequential unlearning tasks, we demonstrate superior scalability with a 28.4% improvement in unlearning accuracy for 9-object removal.
+1
+Introduction
+Text-to-image diffusion models have achieved remarkable success in generating high-quality images from textual descriptions, with applications across diverse domains
+[
+33
+]
+. However, they can also produce harmful, inappropriate, or copyrighted content when given specific prompts, raising serious safety concerns. This has spurred growing interest in machine unlearning methods, which aim to selectively remove undesired concepts from trained models while preserving their generative abilities
+[
+43
+]
+.
+Figure 1
+:
+SAEmnesia
+enables precise concept-level manipulation
+: each latent activates for a single concept (
+monosemanticity
+), and each concept is embedded in a single latent (
+feature centralization
+). So, to erase a target concept, we only need to steer a single latent. The removed concepts correctly disappear in the diagonal images (
+Architectures
+,
+Bears
+,
+Flames
+), while remaining present in the non-diagonal ones, thereby preserving the fidelity and diversity of unrelated content.
+A core challenge in concept unlearning is identifying where and how concepts are represented inside these models, especially when the number of trainable parameters is very high. Additionally, a single neuron can be active for many different unrelated concepts. This phenomenon is known as
+polysemanticity
+, making interpretability even more challenging. Mechanistic interpretability (MI) seek to understand the internal workings of neural networks by analyzing their components and representations. Sparse Autoencoders (SAEs) provide a particularly effective MI tool by decomposing model activations into sparse and interpretable concept-level features
+[
+5
+]
+. Note that, in this work, we adopt the notion
+of features as the fundamental units of neural network representations that cannot be further decomposed into simpler independent factors, as defined by
+Bereska and Gavves [4]
+. Neural networks can capture natural abstractions
+[
+7
+]
+through their learned
+features, which serve as building blocks of their internal representations, aiming to capture the concepts
+underlying the data. For simplicity, we use the terms “concepts” and “features” interchangeably, as well as “neurons” and “latents”. SAEs aim to learn
+monosemantic
+latents, meaning that they activate almost exclusively for a specific concept. On the other hand, to improve models’ interpretability even further, individual concepts should not be spread across many latents, aiming for a one-to-one mapping. Yet, in practice, multiple latents often respond to the same concept, this phenomenon is also known as
+feature splitting
+[
+5
+]
+. This distributed nature poses two key challenges: (i) it necessitates exhaustive searches across many latent combinations to find the right subset to modify, making unlearning computationally expensive; and (ii) overlapping latents blur concept boundaries, so interventions risk unintended side effects on related concepts.
+To overcome feature splitting, we introduce
+SAEmnesia
+, that enriches the SAE training framework enforcing one-to-one mappings between concepts and latents through supervised labeling. Therefore, our method achieves
+feature centralization
+, localizing each concept into a single latent feature and thereby preventing splitting across multiple latents. This binding simplifies mechanistic unlearning, thanks to a precise single-latent intervention. Figure
+1
+illustrates the effect of
+SAEmnesia
+for concept removal in generative models, demonstrating the possibility of precise control over what the model generates, while retaining overall quality and diversity. On the UnlearnCanvas benchmark
+[
+43
+]
+,
+SAEmnesia
+achieves an 9.22% improvement over the state-of-the-art mechanistic approaches
+[
+9
+]
+. In sequential unlearning tasks, we demonstrate superior scalability with a 28.4% improvement in unlearning accuracy for 9-object removal. Furthermore, at inference time, this interpretable representation reduces hyperparameter search by 96.67%.
+2
+Related Work
+Machine Unlearning in Diffusion Models.
+The term and problem statement for machine unlearning was first introduced by
+Cao and Yang [6]
+, who transformed neural network models through additional simple layers into formats where output is a summation of independent features, allowing unlearning by blocking selected summation weights or nodes. However, recent works focusing on unlearning for diffusion models typically employ fine-tuning approaches to unlearn specific concepts.
+EDiff
+[
+40
+]
+formulates this problem as bi-level optimization, while ESD
+[
+14
+]
+leverages negative classifier-free guidance for concept removal. FMN
+[
+41
+]
+introduces a re-steering loss applied only to attention layers, and SalUn
+[
+11
+]
+and SHS
+[
+39
+]
+select parameters to adapt through saliency maps or connection sensitivity. SA
+[
+19
+]
+replaces unwanted data distribution with surrogate distributions, with an extension to selected anchor concepts in CA
+[
+24
+]
+. SPM
+[
+28
+]
+takes a different approach, using small linear adapters added after each linear and convolutional layer to directly block unwanted content propagation. In contrast to these fine-tuning approaches, our work leverages SAEs to achieve unlearning through interpretable feature manipulation during inference, without modifying the base model weights and providing full transparency into which specific features are being targeted for removal.
+By contrast, methods that do not rely on fine-tuning include SEOT
+[
+26
+]
+, which eliminates unwanted content from text embeddings, and UCE
+[
+15
+]
+, which adapts cross-attention weights using closed-form solutions. Unlike these approaches that modify prompt embeddings or alter model weights, our method operates through interpretable feature interventions on internal activations during inference.
+Beyond individual methods, recent surveys synthesize objectives, taxonomies, and evaluation protocols for generative model unlearning, offering broader context for method design and assessment
+[
+12
+,
+8
+]
+. Furthermore, recent analyses highlight instability and concept resurgence after unlearning (such as revival under subsequent fine-tuning or adversarial prompting) reinforcing the need for interpretable and stable interventions
+[
+16
+,
+27
+,
+34
+]
+.
+SAE Background.
+Our objective is to enable effective concept unlearning in diffusion models by selectively removing unwanted concepts while preserving generative quality. To achieve this, we decompose the high-dimensional, entangled activations from Stable Diffusion (SD) into sparse, interpretable feature directions that correspond to meaningful visual concepts. SAEs serve as the key tool for this decomposition, enabling us to map individual neurons to specific semantic concepts and subsequently intervene on them for targeted unlearning. A standard single-layer ReLU SAE
+[
+30
+]
+operates on
+d
+d
+-dimensional activation vectors. Let
+𝐱
+∈
+ℝ
+d
+\mathbf{x}\in\mathbb{R}^{d}
+denote the input activation vector and
+n
+n
+be the latent dimension, typically set to
+d
+d
+multiplied by a positive expansion factor. The encoder and decoder are defined as
+[
+5
+]
+:
+𝐯
+=
+ReLU
+​
+(
+W
+e
+​
+n
+​
+c
+​
+(
+𝐱
+−
+𝐛
+p
+​
+r
+​
+e
+)
++
+𝐛
+e
+​
+n
+​
+c
+)
+𝐱
+^
+=
+W
+d
+​
+e
+​
+c
+​
+𝐯
++
+𝐛
+p
+​
+r
+​
+e
+,
+\begin{split}\mathbf{v}&=\text{ReLU}(W_{enc}(\mathbf{x}-\mathbf{b}_{pre})+\mathbf{b}_{enc})\\
+\hat{\mathbf{x}}&=W_{dec}\mathbf{v}+\mathbf{b}_{pre},\end{split}
+(1)
+where
+W
+e
+​
+n
+​
+c
+∈
+ℝ
+n
+×
+d
+W_{enc}\in\mathbb{R}^{n\times d}
+and
+W
+d
+​
+e
+​
+c
+∈
+ℝ
+d
+×
+n
+W_{dec}\in\mathbb{R}^{d\times n}
+are the encoder and decoder weight matrices respectively, and
+𝐛
+p
+​
+r
+​
+e
+∈
+ℝ
+d
+\mathbf{b}_{pre}\in\mathbb{R}^{d}
+and
+𝐛
+e
+​
+n
+​
+c
+∈
+ℝ
+n
+\mathbf{b}_{enc}\in\mathbb{R}^{n}
+are learnable bias terms.
+TopK SAEs.
+In our work, we employ TopK SAEs
+[
+29
+]
+that provide enhanced sparsity control. The TopK activation function identifies the
+k
+k
+largest pre-activation values and sets all others to zero, ensuring sparsity while preserving the most significant features. Following recent advances, we adopt this approach where the encoder becomes:
+𝐳
+=
+TopK
+​
+(
+𝐯
+)
+,
+𝐱
+^
+=
+W
+d
+​
+e
+​
+c
+​
+𝐳
++
+𝐛
+p
+​
+r
+​
+e
+,
+\begin{split}\mathbf{z}&=\text{TopK}(\mathbf{v}),\\
+\hat{\mathbf{x}}&=W_{dec}\mathbf{z}+\mathbf{b}_{pre},\end{split}
+(2)
+while the decoder remains unchanged. Here,
+𝐯
+\mathbf{v}
+represents the pre-TopK activations, while
+𝐳
+\mathbf{z}
+represents the post-TopK sparse activations. This modification retains only the
+k
+k
+largest latent activations for each vector
+𝐱
+\mathbf{x}
+, providing better control over sparsity compared to standard ReLU activations.
+Training Objective.
+The TopK SAE loss combines reconstruction error with an auxiliary loss to prevent dead latents:
+ℒ
+u
+​
+n
+​
+s
+​
+u
+​
+p
+​
+S
+​
+A
+​
+E
+=
+‖
+𝐱
+−
+𝐱
+^
+‖
+2
+2
++
+α
+​
+ℒ
+a
+​
+u
+​
+x
+,
+\mathcal{L}_{unsupSAE}=||\mathbf{x}-\hat{\mathbf{x}}||_{2}^{2}+\alpha\mathcal{L}_{aux},
+(3)
+where
+‖
+𝐱
+−
+𝐱
+^
+‖
+2
+2
+||\mathbf{x}-\hat{\mathbf{x}}||_{2}^{2}
+is the reconstruction error and
+ℒ
+a
+​
+u
+​
+x
+\mathcal{L}_{aux}
+is an auxiliary loss using only the largest
+k
+a
+​
+u
+​
+x
+k_{aux}
+feature activations that have not fired on a large number of training samples (so-called dead latents). The auxiliary loss prevents dead latents from occurring and is scaled by coefficient
+α
+\alpha
+.
+Interpretability of Vision Models.
+SAEs have recently gained traction as a tool for uncovering human-interpretable structure in high-dimensional representations. Early applications focused on discriminative models, such as interpreting features in CLIP
+[
+13
+,
+10
+,
+32
+]
+or traditional classifiers
+[
+36
+,
+17
+]
+. More recent work has extended SAEs to vision–language settings, enabling tasks such as hallucination mitigation
+[
+21
+]
+and interpretable report generation
+[
+1
+]
+. Across these domains, SAEs provide explicit concept–neuron mappings that move beyond post-hoc explanations and allow more precise control over learned representations. Unlike previous work on discriminative models, our approach uses SAEs with diffusion models to directly identify and control specific concepts.
+Within diffusion models, interpretability research has primarily examined how semantic information propagates through the architecture. Studies have identified meaningful directions in UNet bottlenecks
+[
+25
+,
+31
+,
+18
+,
+20
+]
+, analyzed cross-attention to link prompts with spatial activations
+[
+37
+,
+2
+,
+3
+]
+, and even used intermediate text encoder states for generation
+[
+38
+]
+. More recent work has highlighted interpretable feature detectors in SDXL-Turbo
+[
+35
+]
+and timestep-specific visual features in unconditional sampling
+[
+23
+]
+. While these advances shed light on model internals, they generally stop short of enabling targeted interventions. Our approach yields sparse representations that support both interpretation and controllable unlearning of specific concepts.
+SAE-Based Unlearning.
+Recent work has explored applying SAEs to diffusion models for concept manipulation. These approaches differ from ours in their intervention points and training strategies.
+Kim and Ghadiyaram [22]
+introduced Concept Steerers, training SAEs on text embedding representations to identify concept-specific directions before cross-attention processing. While their approach achieves effective concept manipulation, working only on text encoders can lead to suboptimal results, especially when facing adversarial attacks that exploit deeper model representations.
+Cywiński and Deja [9]
+introduced SAeUron, a post-cross-attention approach using SAEs trained on diffusion model activations in an unsupervised manner. While SAeUron achieves state-of-the-art performance on UnlearnCanvas, its unsupervised training creates weak concept-latent associations. This means that concepts are still represented across multiple neurons. This distributed representation requires computationally expensive feature threshold searches to identify which combination of latent features must be modified to unlearn each concept.
+Our approach addresses these limitations through supervised training that enforces strong one-to-one concept-latent relationships, enabling precise single-neuron interventions.
+3
+Methodology
+Figure 2
+:
+SAEmnesia
+comprises two phases: (i) establishing sparse representations via standard unsupervised SAE training, (ii) applying supervised losses to strengthen specific concept-neuron associations.
+Unlike unsupervised SAE training methods
+[
+5
+]
+that require post-hoc discovery of concept-relevant features, our supervised approach directly enforces concept-latent assignments during training to achieve stronger one-to-one mappings. As shown in Figure
+2
+,
+SAEmnesia
+consists of two phases: (i) establishing sparse representations through standard unsupervised SAE training, (ii) applying supervised losses to strengthen specific concept-neuron associations.
+SAEmnesia
+for Diffusion Models.
+We apply
+SAEmnesia
+to diffusion models by training on activations extracted from every timestep
+t
+t
+of the denoising diffusion process. These activations are obtained from the cross-attention blocks of the diffusion model and form feature maps. Each feature map extracted at timestep
+t
+t
+is a spatially structured tensor of shape
+𝐅
+t
+∈
+ℝ
+h
+×
+w
+×
+d
+\mathbf{F}_{t}\in\mathbb{R}^{h\times w\times d}
+, where
+h
+h
+and
+w
+w
+denote the height and width of the feature map, and
+d
+d
+is the dimensionality of each feature vector. Each spatial position within the feature map corresponds to a patch in the input image. As a single SAE training sample, we consider an individual
+d
+d
+-dimensional feature vector
+𝐱
+\mathbf{x}
+, disregarding the information about its spatial position. Therefore, from each feature map, we obtain
+h
+×
+w
+h\times w
+training samples.
+Concept-Latent Assignment.
+This assignment is required in the second phase, in which we introduce supervised training that directly assigns concepts to specific latents. To determine which latent should be assigned to each concept during the supervised phase and to validate the quality of these assignments after training, we utilize the score function
+[
+9
+]
+, defined in Equation
+4
+, measuring feature-concept correspondence. Given a dataset of activations
+D
+=
+D
+c
+∪
+D
+¬
+c
+D=D_{c}\cup D_{\neg c}
+, where
+D
+c
+D_{c}
+contains data of the target concept
+c
+c
+and
+D
+¬
+c
+D_{\neg c}
+does not, the score function is defined as:
+score
+​
+(
+i
+,
+t
+,
+c
+,
+D
+)
+=
+μ
+⁡
+(
+i
+,
+t
+,
+D
+c
+)
+∑
+j
+=
+1
+n
+μ
+⁡
+(
+j
+,
+t
+,
+D
+c
+)
++
+δ
+−
+μ
+⁡
+(
+i
+,
+t
+,
+D
+¬
+c
+)
+∑
+j
+=
+1
+n
+μ
+⁡
+(
+j
+,
+t
+,
+D
+¬
+c
+)
++
+δ
+\begin{split}\text{score}(i,t,c,D)&=\frac{\mu(i,t,D_{c})}{\sum_{j=1}^{n}\mu(j,t,D_{c})+\delta}\\
+&\quad-\frac{\mu(i,t,D_{\neg c})}{\sum_{j=1}^{n}\mu(j,t,D_{\neg c})+\delta}\end{split}
+(4)
+where
+δ
+\delta
+prevents division by zero and
+μ
+⁡
+(
+i
+,
+t
+,
+D
+)
+=
+1
+|
+D
+|
+​
+∑
+x
+∈
+D
+z
+i
+\mu(i,t,D)=\frac{1}{|D|}\sum_{x\in D}z_{i}
+denotes the average activation of the
+i
+i
+-th feature on activations from timestep
+t
+t
+(we omit
+t
+t
+from
+z
+i
+z_{i}
+for simplicity). Features with high scores exhibit strong activation for concept
+c
+c
+while remaining weakly activated for other concepts.
+Formally, in order to achieve feature centralization, for a given concept
+c
+c
+, the score function score
+(
+i
+,
+t
+,
+c
+,
+D
+)
+(i,t,c,D)
+achieves a high value for a single latent index
+i
+i
+, while remaining low for all other indices
+j
+≠
+i
+j\neq i
+:
+score
+​
+(
+i
+,
+t
+,
+c
+,
+D
+)
+≫
+score
+​
+(
+j
+,
+t
+,
+c
+,
+D
+)
+,
+∀
+j
+≠
+i
+.
+\text{score}(i,t,c,D)\gg\text{score}(j,t,c,D),\quad\forall j\neq i.
+(5)
+Therefore, for each concept
+c
+c
+, we assign it to the latent index
+i
+c
+i_{c}
+with the highest score, creating a mapping
+Φ
+:
+𝒞
+→
+{
+1
+,
+2
+,
+…
+,
+n
+}
+\Phi:\mathcal{C}\rightarrow\{1,2,...,n\}
+, where
+𝒞
+\mathcal{C}
+is the set of concepts to unlearn. For training samples containing multiple concepts, we assign multiple target indices corresponding to each present concept.
+SAEmnesia
+Loss Function.
+We employ a composite loss function designed to maintain SAE reconstruction capabilities while strengthening concept-latent associations:
+ℒ
+SAEmnesia
+=
+ℒ
+u
+​
+n
+​
+s
+​
+u
+​
+p
+​
+S
+​
+A
+​
+E
++
+β
+​
+ℒ
+s
+​
+u
+​
+p
+​
+S
+​
+A
+​
+E
++
+λ
+​
+ℒ
+L
+​
+1
+.
+\mathcal{L}_{\text{{SAEmnesia}}}=\mathcal{L}_{unsupSAE}+\beta\mathcal{L}_{supSAE}+\lambda\mathcal{L}_{L1}.
+(6)
+Where
+ℒ
+u
+​
+n
+​
+s
+​
+u
+​
+p
+​
+S
+​
+A
+​
+E
+\mathcal{L}_{unsupSAE}
+is the loss as defined in Equation (
+3
+),
+ℒ
+L
+​
+1
+\mathcal{L}_{L1}
+is the sparsity regularization term, and
+ℒ
+s
+​
+u
+​
+p
+​
+S
+​
+A
+​
+E
+\mathcal{L}_{supSAE}
+is the supervised loss that enforces the desired concept-latent relationships.
+ℒ
+s
+​
+u
+​
+p
+​
+S
+​
+A
+​
+E
+\mathcal{L}_{supSAE}
+consist of our Concept Assignment (CA) loss with a weighted additional Orthogonality Constraint (OC) loss:
+ℒ
+s
+​
+u
+​
+p
+​
+S
+​
+A
+​
+E
+=
+ℒ
+C
+​
+A
++
+γ
+​
+ℒ
+O
+​
+C
+.
+\mathcal{L}_{supSAE}=\mathcal{L}_{CA}+\gamma\mathcal{L}_{OC}.
+(7)
+Concept Assignment Loss.
+Unlike traditional approaches that only apply reconstruction loss globally across all latents, our method requires additional supervision to strengthen concept-latent bonds that enable one-to-one mappings. We employ the CA loss that is computed exclusively for latents that are assigned to concepts present in each training sample, encouraging these specific latents to activate strongly.
+For each training sample
+i
+i
+, we identify the set of target positions
+𝒯
+=
+{
+j
+:
+\mathcal{T}=\{j:
+latent
+j
+j
+is assigned to a concept present in sample
+i
+}
+i\}
+. The CA loss measures how much these assigned latents activate when their corresponding concepts are present:
+ℒ
+CA
+=
+1
+|
+𝒯
+|
+​
+∑
+(
+i
+,
+j
+)
+∈
+𝒯
+[
+−
+log
+⁡
+(
+σ
+⁡
+(
+v
+j
+i
+)
+)
+]
+,
+\begin{split}\mathcal{L}_{\text{CA}}&=\frac{1}{|\mathcal{T}|}\sum_{(i,j)\in\mathcal{T}}\Big[-\log(\sigma(v^{i}_{j}))\Big],\end{split}
+(8)
+where
+v
+j
+i
+v^{i}_{j}
+represents the pre-activation (logit) for latent
+j
+j
+in sample
+i
+i
+, and
+σ
+⁡
+(
+⋅
+)
+\sigma(\cdot)
+is the sigmoid function. This loss directly penalizes assigned latents that fail to achieve strong activation when their concepts are present, while completely ignoring latents not assigned to concepts in each sample.
+Orthogonality Constraint.
+A critical challenge in concept unlearning is ensuring that removing one concept (e.g., a specific object) does not inadvertently affect related but distinct concepts (e.g., artistic styles). This problem arises when latents representing different concepts become correlated, leading to entangled representations where modifications to one concept cascade into unintended changes in others. For instance, if a latent assigned to ”cars” becomes correlated with a latent representing ”impressionist style,” then unlearning cars might also diminish the model’s ability to generate impressionist artwork.
+To address this entanglement issue, we introduce an across-batch orthogonality constraint that explicitly decorrelates the activation patterns of object and style latents:
+ℒ
+O
+​
+C
+=
+1
+|
+𝒪
+|
+⋅
+|
+𝒮
+|
+​
+∑
+o
+∈
+𝒪
+∑
+s
+∈
+𝒮
+ρ
+2
+​
+(
+a
+o
+,
+a
+s
+)
+,
+\mathcal{L}_{OC}=\frac{1}{|\mathcal{O}|\cdot|\mathcal{S}|}\sum_{o\in\mathcal{O}}\sum_{s\in\mathcal{S}}\rho^{2}(a_{o},a_{s}),
+(9)
+where
+𝒪
+\mathcal{O}
+and
+𝒮
+\mathcal{S}
+represent the sets of assigned object and style latent indices,
+a
+o
+=
+[
+v
+o
+1
+,
+v
+o
+2
+,
+…
+,
+v
+o
+B
+]
+T
+a_{o}=[v^{1}_{o},v^{2}_{o},\ldots,v^{B}_{o}]^{T}
+denotes the pre-TopK activation vector across the batch for latent labeled with object
+o
+o
+(similarly for
+a
+s
+a_{s}
+), and
+ρ
+⁡
+(
+a
+o
+,
+a
+s
+)
+\rho(a_{o},a_{s})
+is the Pearson correlation coefficient. This constraint minimizes correlations between activation patterns of different latents across the batch, ensuring the information of different concepts remains separated.
+Sparsity Regularization.
+To encourage sparse activations in the latent representation, we incorporate an L1 regularization term that penalizes the magnitude of latent activations:
+ℒ
+L
+​
+1
+=
+1
+|
+N
+|
+​
+∑
+j
+=
+1
+|
+N
+|
+‖
+v
+j
+‖
+1
+,
+\mathcal{L}_{L1}=\frac{1}{|N|}\sum_{j=1}^{|N|}\|v_{j}\|_{1},
+(10)
+where
+|
+N
+|
+|N|
+is the number of latents and
+v
+j
+v_{j}
+represents the activation for latent
+j
+j
+. This sparsity constraint promotes the emergence of interpretable features by encouraging most latents to remain inactive for any given input, thereby improving the disentanglement of learned representations.
+Feature Centralization.
+As defined in Equation
+5
+, feature centralization occurs when only one feature achieves a high score for a specific concept. However, computing the score function requires the entire dataset, making it impractical during training. Instead, we use
+ℒ
+s
+​
+u
+​
+p
+​
+S
+​
+A
+​
+E
+\mathcal{L}_{supSAE}
+as a proxy to achieve feature centralization.
+ℒ
+C
+​
+A
+\mathcal{L}_{CA}
+directly enforces that assigned latents activate strongly for their target concepts, while
+ℒ
+L
+​
+1
+\mathcal{L}_{L1}
+maintains sparsity across all latents. This combination concentrates a concept’s information in the designated latent.
+Inference and Concept Unlearning.
+To unlearn a concept
+c
+c
+, we first identify the single top SAE feature associated with
+c
+c
+and compute its average activation on a validation dataset
+D
+D
+:
+F
+c
+:=
+{
+i
+|
+i
+∈
+Top-
+​
+1
+​
+(
+{
+score
+​
+(
+i
+,
+t
+,
+c
+,
+D
+)
+}
+)
+}
+F_{c}:=\{i|i\in\text{Top-}1(\{\text{score}(i,t,c,D)\})\}
+(11)
+μ
+⁡
+(
+i
+)
+:=
+μ
+⁡
+(
+i
+,
+t
+,
+D
+)
+,
+∀
+i
+∈
+F
+c
+\mu(i):=\mu(i,t,D),\forall i\in F_{c}
+(12)
+Note that this step is similar to the one proposed by
+Cywiński and Deja [9]
+; however,
+SAEmnesia
+only needs a single latent to erase each concept.
+The activation of the selected feature
+F
+c
+F_{c}
+is multiplied by a negative value
+γ
+c
+<
+0
+\gamma_{c}<0
+normalized by the average activation on concept samples
+μ
+⁡
+(
+i
+,
+t
+,
+D
+c
+)
+\mu(i,t,D_{c})
+. This removes the influence of the targeted concept on the activation vector
+𝐳
+\mathbf{z}
+. Each
+i
+i
+-th latent feature activation is modified as follows:
+z
+i
+=
+{
+γ
+c
+​
+μ
+​
+(
+i
+,
+t
+,
+D
+c
+)
+​
+z
+i
+,
+if
+​
+i
+∈
+F
+c
+∧
+z
+i
+>
+μ
+⁡
+(
+i
+,
+t
+,
+D
+)
+z
+i
+,
+otherwise
+z_{i}=\begin{cases}\gamma_{c}\mu(i,t,D_{c})z_{i},&\text{if }i\in F_{c}\land z_{i}>\mu(i,t,D)\\
+z_{i},&\text{otherwise}\end{cases}
+(13)
+The condition
+z
+i
+>
+μ
+⁡
+(
+i
+,
+t
+,
+D
+)
+z_{i}>\mu(i,t,D)
+prevents random feature ablation when scores are low.
+4
+Experiments
+We conduct comprehensive experiments to evaluate
+SAEmnesia
+across multiple dimensions: unlearning effectiveness, generation quality, concept separation, performance robustness, incremental unlearning capabilities, and adversarial resilience. Note that our focus here is on erasing objects, since it’s way more challenging that erasing styles
+[
+9
+]
+. This comprehensive evaluation framework allows us to demonstrate not only the effectiveness of our approach in removing unwanted concepts but also its practical applicability, robustness, and scalability in real-world deployment scenarios.
+Dataset.
+We extract internal activations from cross-attention blocks of SD1.5
+[
+33
+]
+from UnlearnCanvas Benchmark
+[
+43
+]
+. Our approach differs from unsupervised methods in the data collection methodology through systematic concept labeling during data generation. Rather than requiring post-hoc concept discovery, we construct labeled training data by systematically generating activations from structured prompts with known concept compositions. For each object class
+c
+c
+(e.g.,
+Bears
+,
+Cats
+) and style
+s
+s
+(e.g.,
+Impressionism
+,
+Cubism
+), we generate 80 prompts of the form “a [
+object
+] in [
+style
+] style” and collect feature maps from selected U-Net cross-attention blocks across all 50 denoising timesteps during text-conditioned generation. Each activation is directly labeled with its corresponding object and style based on the prompt structure, creating explicit concept-activation pairs. The employed objects and styles are taken from the UnlearnCanvas benchmark, which consists of 20 different objects and 50 different styles.
+We focus our analysis on block
+up.1.1
+for object-related features, as this block has been empirically demonstrated to specialize in generating specific visual aspects
+[
+2
+]
+. This controlled labeling strategy provides clean supervision signals that enable direct concept-neuron mapping during SAE training, contrasting with unsupervised approaches that must discover concept representations through post-hoc analysis.
+For evaluation, we employed the same setting of SAeUron
+[
+9
+]
+.
+SAE Model.
+Our best-performing method starts with a pre-trained unsupervised SAE and fine-tunes it using CA loss (
+8
+) combined with the orthogonality constraint (
+9
+) to enforce concept separation. The weights chosen for the loss function components and additional model setups can be found in the Appendix
+7.10
+,
+7.5
+,
+7.6
+and
+7.7
+).
+Evaluation Metrics.
+We employ a comprehensive evaluation framework that assesses multiple aspects of unlearning performance and model behavior. Our primary evaluation uses the UnlearnCanvas benchmark
+[
+43
+]
+with Vision Transformer-based classifiers to measure three key metrics: Unlearning Accuracy (UA), which quantifies the proportion of samples from target concept prompts that are misclassified (i.e., successful unlearning); In-domain Retain Accuracy (IRA), measuring classification accuracy on retained concepts within the same domain; and Cross-domain Retain Accuracy (CRA), assessing accuracy on concepts from different domains such as object accuracy during style unlearning.
+To evaluate generation quality, we compute Fréchet Inception Distance (FID) scores across different unlearning configurations and multiplier values, quantifying both the quality and diversity of generated images. Complete results are reported for each tested model in Table
+7
+and Table
+8
+in the Appendix. We also conduct specialized concept separation analysis by examining latent overlap between different concepts, with particular focus on the challenging
+Dogs vs. Cats
+classification case, a known limitation of current SAE-based unlearning approaches
+[
+9
+]
+that leads to concept interference, Results are presented in Appendix
+7.8
+.
+Our robustness evaluation also includes systematic analysis of model performance across different uniform multiplier values, providing insights into stability and tunability across various unlearning intensities. We demonstrate incremental unlearning capability through sequential object removal experiments, showing that our method can handle dynamic unlearning scenarios without catastrophic interference.
+For adversarial robustness, we follow Zhang et al.
+[
+42
+]
+and evaluate against UnlearnDiffAtk attacks, optimizing 5-token adversarial prefixes for 40 iterations with learning rate 0.01 to provide fair comparison with baseline SAE methods
+[
+9
+]
+. Additionally, we provide UA-IRA confusion matrices for intuitive visualization of trade-offs between unlearning effectiveness and retention accuracy across different experimental conditions.
+5
+Results
+We evaluate our supervised SAE training approach across multiple model variants, exploring both training from scratch and fine-tuning existing checkpoints. Among the several tested configurations, we present the detailed analysis of
+SAEmnesia
+as our top performer. Additional results for tested variants are available in the Appendix
+7.7
+.
+Concept-Latent Association Distribution.
+Our core contribution is creating interpretable one-to-one concept-neuron mappings. Figure
+3
+is an example of the effectiveness of our supervised training in promoting feature centralization by comparing feature importance score distributions before and after training for the
+Flowers
+concept. Additional examples of score distributions are reported in the Appendix
+7.3
+. The higher score values are also tightly linked to the lower absolute values of the optimal unlearning multipliers (a deeper analysis can be found in Appendix
+7.2
+).
+Figure 3
+:
+Feature importance score distributions for
+Flowers
+concept. (Left) SAeUron shows dispersed, low-magnitude scores across all neurons with maximum score of 0.0166. (Right)
+SAEmnesia
+shows a clear dominant peak at neuron 11979 with maximum score of 0.0404, demonstrating enhanced feature centralization with 2.43
+×
+\times
+higher score than the original model.
+The original SAeUron model exhibits relatively uniform, low-magnitude scores across the entire latent space (max score: 0.015), indicating distributed concept representation. Our supervised
+SAEmnesia
+model produces a clear dominant peak at neuron 11979 with a maximum score of 0.04, 2.67 times higher than the baseline. This concentrated activation pattern confirms that supervised training successfully enforces strong one-to-one concept-latent relationships, with the assigned neuron becoming highly specialized for the target concept while other neurons remain largely inactive.
+This transformation from distributed to concentrated representations is the foundation that enables all subsequent improvements in computational efficiency and unlearning performance.
+Computational Efficiency Through Interpretable Representations.
+The one-to-one concept-neuron mappings directly eliminate the feature combinations search complexity that affects existing methods. The methodology with unsupervised training requires exploring different numbers of top latent features for unlearning, creating a two-dimensional search space with
+m
+×
+l
+m\times l
+computations, where
+m
+=
+7
+m=7
+possible multiplier values and
+l
+=
+30
+l=30
+number of possible latent combinations required to unlearn a concept. This results in precisely 210 evaluations. In contrast, our approach requires only
+m
+m
+computations since we only search multiplier values, as each concept maps to one neuron. This means exactly 7 evaluations are needed. This represents a 96.67% reduction in computational cost, achieved through interpretable concept localization.
+UnlearnCanvas Benchmark Performance.
+Table
+1
+presents our performance compared to the SAeUron baseline. An inconsistency in the computation of the metrics was discovered in the public implementation of SAeUron. We therefore recomputed the metrics ourselves using the corrected procedure.
+SAEmnesia
+achieves 91.51% average score with hyperparameter search, improving over the baseline’s 82.29%. Standard deviations are reported in Appendix
+7.1
+.
+Table 1:
+Evaluation metrics (%) of
+SAEmnesia
+against state-of-the-art methods on object concept unlearning using the UnlearnCanvas benchmark. The best result for each metric is highlighted in bold.
+SAEmnesia
+achieves superior performance across all evaluation metrics with 91.51% average score, representing an 9.22% improvement over the previous state-of-the-art.
+Method
+UA
+IRA
+CRA
+Avg.
+ESD
+[
+14
+]
+92.15
+55.78
+44.23
+64.05
+FMN
+[
+41
+]
+45.64
+90.63
+73.46
+69.91
+UCE
+[
+15
+]
+94.31
+39.35
+34.67
+56.11
+CA
+[
+24
+]
+46.67
+90.11
+81.97
+72.92
+SEOT
+[
+26
+]
+23.25
+95.57
+82.71
+67.18
+SPM
+[
+28
+]
+71.25
+90.79
+81.65
+81.23
+EDiff
+[
+40
+]
+86.67
+94.03
+48.48
+76.39
+SHS
+[
+39
+]
+80.73
+81.15
+67.99
+76.62
+SAeUron
+[
+9
+]
+87.16
+85.57
+74.14
+82.29
+SAEmnesia
+94.65
+91.39
+88.48
+91.51
+The performance gains stem from the stronger concept-latent associations that enable more targeted interventions. Therefore,
+SAEmnesia
+is particularly effective for maintaining concept separation.
+Effect of Uniform Multipliers.
+Figure
+4
+compares the effect of applying uniform multipliers (so the same multiplier for all objects) to the latent steering for SAeUron and
+SAEmnesia
+.
+Across all evaluation metrics,
+SAEmnesia
+consistently achieves higher and more stable scores over the full range of multipliers.
+This demonstrates that
+SAEmnesia
+is less sensitive to the exact steering strength across different objects and provides more robust control of concept removal.
+Additional quantitative plots are included in the Appendix
+7.9
+.
+Figure 4
+:
+Effect of uniform multipliers on unlearning performance for SAeUron and
+SAEmnesia
+.
+SAEmnesia
+maintains higher and more stable scores across all multipliers compared to SAeUron, indicating greater robustness to the steering strength.
+Qualitatively Results.
+Figure
+5
+shows qualitative examples of
+SAEmnesia
+applied to a representative subset of object–style combinations.
+Thanks to the one–to–one mapping between concepts and latent units, steering the sparse autoencoder selectively removes the targeted concept: the removed concepts vanish in the diagonal images, while remaining visible in the off–diagonal ones.
+For highly entangled concepts such as
+Human
+, some residual shapes or textures may still appear after removal, reflecting the greater difficulty of isolating and suppressing such features.
+Additional qualitative examples covering a wider range of objects and styles are provided in Appendix
+7.4
+.
+Figure 5
+:
+Qualitative examples of concept removal with
+SAEmnesia
+. Each row shows a different style, and each column a different object concept.
+Sequential Unlearning Scalability.
+To demonstrate how interpretable representations enable scalability, we test sequential unlearning across 9 objects:
+Bears
+→
+\rightarrow
+Bears
++
+Cats
+→
+\rightarrow
+…
+→
+\rightarrow
+9 total objects. This challenging scenario tests whether one-to-one mappings maintain effectiveness as complexity increases.
+Table
+2
+shows that
+SAEmnesia
+significantly outperforms the baseline.
+SAEmnesia
+achieving 92.4% accuracy for 9-object removal compared to the baseline’s 64%. This scalability directly results from having interpretable, specialized neurons rather than distributed representations that interfere with each other.
+Table 2
+:
+Evaluation of
+SAEmnesia
+variants against SAeUron baseline on sequential object unlearning tasks. The best result for each task is highlighted in bold.
+SAEmnesia
+92.4% accuracy on 9-object removal compared to SAeUron’s 64%, representing a 28.4% improvement.
+Task
+SAeUron
+[
+9
+]
+SAEmnesia
+0 (Bears)
+0.98
+0.99
+1 (Bears+Cats)
+0.56
+1.0
+2 (3 objects)
+0.45
+1.0
+3 (4 objects)
+0.48
+0.9975
+4 (5 objects)
+0.48
+1.0
+5 (6 objects)
+0.58
+0.895
+6 (7 objects)
+0.61
+0.91
+7 (8 objects)
+0.63
+0.916
+8 (9 objects)
+0.64
+0.924
+However, this comes with retention accuracy trade-offs (Table
+3
+). Importantly, all models maintain their operational ranges throughout the sequential unlearning process.
+SAEmnesia
+demonstrates improved retention performance, achieving 60.9% final retention compared to the baseline’s 48.4%.
+Table 3
+:
+Sequential Unlearning - Retention Accuracy Comparison
+Model
+RA Range
+Final RA
+SAeUron
+[
+9
+]
+40-48%
+48.4%
+SAEmnesia
+46-61%
+60.9%
+Adversarial Robustness.
+The concentrated concept representations also improve adversarial robustness, as shown in Figure
+6
+. Under UnlearnDiffAtk attacks,
+SAEmnesia
+demonstrates improved resilience, dropping from 73.30% to 28.30% unlearning accuracy. This contrasts sharply with the state-of-the-art significant drop from 26.19% to 2.22%. The supervised concept-neuron mapping approach in
+SAEmnesia
+shows substantially improved robustness against adversarial perturbations, with the stronger concept-neuron bonds making it significantly harder for attacks to disrupt the specialized representations.
+Figure 6
+:
+Unlearning accuracy before and after UnlearnDiffAtk adversarial attacks.
+SAEmnesia
+maintains higher performance under adversarial attack compared to the SAeUron baseline.
+SAEmnesia
+drops from 73.30% to 28.30%, compared to SAeUron’s drop from 26.19% to 2.22%.
+6
+Conclusions and Limitations
+We introduce
+SAEmnesia
+, a supervised SAE training approach for concept unlearning in diffusion models. Our method mitigates feature splitting and enhances feature centralization, straightening one-to-one concept-latent mappings through automatic concept labeling and direct supervision during training, demonstrating improvements in unlearning effectiveness while maintaining competitive generation quality. Our approach achieves better concept-latent associations compared to unsupervised baselines, reaching 91.51% average performance on the UnlearnCanvas benchmark. Additionally, our methodology reduces hyperparameter search by 96.67% with respect to current approaches, while on sequential unlearning tasks, it demonstrates superior scalability with a 28.4% improvement in unlearning accuracy for 9-object removal. However, we acknowledge that
+SAEmnesia
+has some limitations that restrict the generalizability and practical deployment of our approach.
+Evaluation Scope.
+Our evaluation focuses primarily on the UnlearnCanvas benchmark, following the evaluation protocol established in the literature of SAE-based unlearning, to ensure fair comparison. While we employ multiple complementary metrics including unlearning accuracy, retention accuracy across domains, FID scores, and adversarial robustness measures, validation on additional benchmarks with different concept distributions and evaluation protocols would strengthen the generalizability of our findings. Future work could expand evaluation to other concept unlearning benchmarks as they become available in this emerging field.
+Computational Trade-offs.
+Our approach achieves significant computational savings by eliminating the need for percentile-based feature threshold search, which typically requires exploring 1-30+ features per concept in baseline methods. Instead, our supervised training enforces fixed one-neuron-per-concept assignments, substantially reducing the hyperparameter search space. However, our method still requires search over multiplier values, reported in Table
+5
+.
+Diffusion Models Architectures.
+Our experiments focus on SD1.5
+[
+33
+]
+, following the experimental setup established in the SAE-based unlearning literature, to enable direct performance comparison. While this choice ensures fair evaluation against the state-of-the-art, it limits generalization across the broader landscape of text-to-image generation models. Different diffusion architectures may exhibit varying internal representations, cross-attention mechanisms, and concept encoding strategies that could influence the effectiveness of SAE approaches. Similarly, our focus on specific cross-attention blocks (
+up.1.1
+) reflects established practice for concept manipulation in SD1.5, though the optimal intervention points may differ across model architectures. Future work will explore the transferability of our supervised training approach to newer model generations and alternative diffusion architectures.
+Ethical Considerations.
+While our method aims to remove harmful content generation capabilities, concept unlearning techniques could potentially be misused for censorship or may inadvertently encode biases through automatic concept labeling. Due to adversarial attacks, unlearning interventions can be circumvented through carefully crafted prompts, requiring ongoing robustness analysis for safe deployment.
+References
+[1]
+Ahmed Abdulaal, Hugo Fry, Nina Montaña-Brown, Ayodeji Ijishakin, Jack Gao, Stephanie Hyland, Daniel C Alexander, and Daniel C Castro.
+An x-ray is worth 15 features: Sparse autoencoders for interpretable radiology report generation.
+arXiv preprint arXiv:2410.03334
+, 2024.
+[2]
+Samyadeep Basu, Nanxuan Zhao, Vlad I Morariu, Soheil Feizi, and Varun Manjunatha.
+Localizing and editing knowledge in text-to-image generative models.
+In
+The Twelfth International Conference on Learning Representations
+, 2023.
+[3]
+Samyadeep Basu, Keivan Rezaei, Priyatham Kattakinda, Vlad Morariu, Nanxuan Zhao, R_A Rossi, Varun Manjunatha, and Soheil Feizi.
+On mechanistic knowledge localization in text-to-image generative models.
+In
+ICML
+, 2024.
+[4]
+Leonard Bereska and Stratis Gavves.
+Mechanistic interpretability for AI safety - a review.
+Transactions on Machine Learning Research
+, 2024.
+Survey Certification, Expert Certification.
+[5]
+Trenton Bricken, Adly Templeton, Joshua Batson, Brian Chen, Adam Jermyn, Tom Conerly, Nick Turner, Cem Anil, Carson Denison, Amanda Askell, Robert Lasenby, Yifan Wu, Shauna Kravec, Nicholas Schiefer, Tim Maxwell, Nicholas Joseph, Zac Hatfield-Dodds, Alex Tamkin, Karina Nguyen, Brayden McLean, Josiah E Burke, Tristan Hume, Shan Carter, Tom Henighan, and Christopher Olah.
+Towards monosemanticity: Decomposing language models with dictionary learning.
+Transformer Circuits Thread
+, 2023.
+https://transformer-circuits.pub/2023/monosemantic-features/index.html.
+[6]
+Yinzhi Cao and Junfeng Yang.
+Towards making systems forget with machine unlearning.
+In
+2015 IEEE symposium on security and privacy
+, pages 463–480. IEEE, 2015.
+[7]
+Lawrence Chan, Leon Lang, and Erik Jenner.
+Natural abstractions: Key claims, theorems, and critiques, 2023.
+AI Alignment Forum.
+[8]
+Aobo Chen, Yangyi Li, Chenxu Zhao, and Mengdi Huai.
+A survey of security and privacy issues of machine unlearning.
+AI Magazine
+, 46, 2025.
+[9]
+Bartosz Cywiński and Kamil Deja.
+Saeuron: Interpretable concept unlearning in diffusion models with sparse autoencoders.
+arXiv preprint arXiv:2501.18052
+, 2025.
+[10]
+Gytis Daujotas.
+Case study: Interpreting, manipulating, and controlling clip with sparse autoencoders, 2024.
+URL https://www. lesswrong. com/posts/iYFuZo9BMvr6GgMs5/case-study-interpreting-manipulating-and-controlling-clip. Accessed
+, pages 09–24, 2024.
+[11]
+Chongyu Fan, Jiancheng Liu, Yihua Zhang, Eric Wong, Dennis Wei, and Sijia Liu.
+Salun: Empowering machine unlearning via gradient-based weight saliency in both image classification and generation.
+arXiv preprint arXiv:2310.12508
+, 2023.
+[12]
+Xiaohua Feng, Jiaming Zhang, Fengyuan Yu, Chengye Wang, Li Zhang, Kaixiang Li, Yuyuan Li, Chaochao Chen, and Jianwei Yin.
+A survey on generative model unlearning: Fundamentals, taxonomy, evaluation, and future direction.
+arXiv preprint arXiv:2507.19894
+, 2025.
+[13]
+Hugo Fry.
+Towards multimodal interpretability: Learning sparse interpretable features in vision transformers, 2024.
+[14]
+Rohit Gandikota, Joanna Materzynska, Jaden Fiotto-Kaufman, and David Bau.
+Erasing concepts from diffusion models.
+In
+Proceedings of the IEEE/CVF international conference on computer vision
+, pages 2426–2436, 2023.
+[15]
+Rohit Gandikota, Hadas Orgad, Yonatan Belinkov, Joanna Materzyńska, and David Bau.
+Unified concept editing in diffusion models.
+In
+Proceedings of the IEEE/CVF Winter Conference on Applications of Computer Vision
+, pages 5111–5120, 2024.
+[16]
+Naveen George, Karthik Nandan Dasaraju, Rutheesh Reddy Chittepu, and Konda Reddy Mopuri.
+The illusion of unlearning: The unstable nature of machine unlearning in text-to-image diffusion models.
+In
+CVPR
+, 2025.
+[17]
+Liv Gorton.
+The missing curve detectors of inceptionv1: Applying sparse autoencoders to inceptionv1 early vision.
+arXiv preprint arXiv:2406.03662
+, 2024.
+[18]
+Jaehoon Hahm, Junho Lee, Sunghyun Kim, and Joonseok Lee.
+Isometric representation learning for disentangled latent space of diffusion models.
+arXiv preprint arXiv:2407.11451
+, 2024.
+[19]
+Alvin Heng and Harold Soh.
+Selective amnesia: A continual learning approach to forgetting in deep generative models.
+Advances in Neural Information Processing Systems
+, 36:17170–17194, 2023.
+[20]
+Ayodeji Ijishakin, Ming Liang Ang, Levente Baljer, Daniel Chee Hian Tan, Hugo Laurence Fry, Ahmed Abdulaal, Aengus Lynch, and James H Cole.
+H-space sparse autoencoders.
+In
+Neurips Safe Generative AI Workshop 2024
+, 2024.
+[21]
+Nick Jiang, Anish Kachinthaya, Suzie Petryk, and Yossi Gandelsman.
+Interpreting and editing vision-language representations to mitigate hallucinations.
+arXiv preprint arXiv:2410.02762
+, 2024.
+[22]
+Dahye Kim and Deepti Ghadiyaram.
+Concept steerers: Leveraging k-sparse autoencoders for controllable generations.
+arXiv preprint arXiv:2501.19066
+, 2025.
+[23]
+Dahye Kim, Xavier Thomas, and Deepti Ghadiyaram.
+Revelio
+: Interpreting and leveraging semantic information in diffusion models, 2025.
+[24]
+Nupur Kumari, Bingliang Zhang, Sheng-Yu Wang, Eli Shechtman, Richard Zhang, and Jun-Yan Zhu.
+Ablating concepts in text-to-image diffusion models.
+In
+Proceedings of the IEEE/CVF International Conference on Computer Vision
+, pages 22691–22702, 2023.
+[25]
+Mingi Kwon, Jaeseok Jeong, and Youngjung Uh.
+Diffusion models already have a semantic latent space.
+arXiv preprint arXiv:2210.10960
+, 2022.
+[26]
+Senmao Li, Joost van de Weijer, Taihang Hu, Fahad Shahbaz Khan, Qibin Hou, Yaxing Wang, and Jian Yang.
+Get what you want, not what you don’t: Image content suppression for text-to-image diffusion models.
+arXiv preprint arXiv:2402.05375
+, 2024.
+[27]
+Kevin Lu, Nicky Kriplani, Rohit Gandikota, Minh Pham, David Bau, Chinmay Hegde, and Niv Cohen.
+When are concepts erased from diffusion models?
+arXiv preprint arXiv:2505.17013
+, 2025.
+[28]
+Mengyao Lyu, Yuhong Yang, Haiwen Hong, Hui Chen, Xuan Jin, Yuan He, Hui Xue, Jungong Han, and Guiguang Ding.
+One-dimensional adapter to rule them all: Concepts diffusion models and erasing applications.
+In
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition
+, pages 7559–7568, 2024.
+[29]
+Alireza Makhzani and Brendan J. Frey.
+k-sparse autoencoders.
+CoRR
+, abs/1312.5663, 2013.
+[30]
+Bruno A. Olshausen and David J. Field.
+Sparse coding with an overcomplete basis set: A strategy employed by v1?
+Vision Research
+, 37:3311–3325, 1997.
+[31]
+Yong-Hyun Park, Mingi Kwon, Jaewoong Choi, Junghyo Jo, and Youngjung Uh.
+Understanding the latent space of diffusion models through the lens of riemannian geometry.
+Advances in Neural Information Processing Systems
+, 36:24129–24142, 2023.
+[32]
+Sukrut Rao, Sweta Mahajan, Moritz Böhle, and Bernt Schiele.
+Discover-then-name: Task-agnostic concept bottlenecks via automated concept discovery.
+In
+European Conference on Computer Vision
+, pages 444–461. Springer, 2024.
+[33]
+Robin Rombach, Andreas Blattmann, Dominik Lorenz, Patrick Esser, and Björn Ommer.
+High-resolution image synthesis with latent diffusion models.
+In
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition
+, pages 10684–10695, 2022.
+[34]
+Vinith M. Suriyakumar, Rohan Alur, Ayush Sekhari, Manish Raghavan, and Ashia C. Wilson.
+Unstable unlearning: The hidden risk of concept resurgence in diffusion models.
+arXiv preprint arXiv:2410.08074
+, 2024.
+[35]
+Viacheslav Surkov, Chris Wendler, Mikhail Terekhov, Justin Deschenaux, Robert West, and Caglar Gulcehre.
+Unpacking sdxl turbo: Interpreting text-to-image models with sparse autoencoders.
+In
+Mechanistic Interpretability for Vision at CVPR 2025 (Non-proceedings Track)
+, 2025.
+[36]
+Christian Szegedy, Wei Liu, Yangqing Jia, Pierre Sermanet, Scott Reed, Dragomir Anguelov, Dumitru Erhan, Vincent Vanhoucke, and Andrew Rabinovich.
+Going deeper with convolutions.
+In
+Proceedings of the IEEE conference on computer vision and pattern recognition
+, pages 1–9, 2015.
+[37]
+Raphael Tang, Linqing Liu, Akshat Pandey, Zhiying Jiang, Gefei Yang, Karun Kumar, Pontus Stenetorp, Jimmy Lin, and Ferhan Ture.
+What the daam: Interpreting stable diffusion using cross attention.
+arXiv preprint arXiv:2210.04885
+, 2022.
+[38]
+Michael Toker, Hadas Orgad, Mor Ventura, Dana Arad, and Yonatan Belinkov.
+Diffusion lens: Interpreting text encoders in text-to-image pipelines.
+arXiv preprint arXiv:2403.05846
+, 2024.
+[39]
+Jing Wu and Mehrtash Harandi.
+Scissorhands: Scrub data influence via connection sensitivity in networks.
+In
+European Conference on Computer Vision
+, pages 367–384. Springer, 2024.
+[40]
+Jing Wu, Trung Le, Munawar Hayat, and Mehrtash Harandi.
+Erasediff: Erasing data influence in diffusion models.
+arXiv preprint arXiv:2401.05779
+, 2024.
+[41]
+Gong Zhang, Kai Wang, Xingqian Xu, Zhangyang Wang, and Humphrey Shi.
+Forget-me-not: Learning to forget in text-to-image diffusion models.
+In
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition
+, pages 1755–1764, 2024a.
+[42]
+Yimeng Zhang, Jinghan Jia, Xin Chen, Aochuan Chen, Yihua Zhang, Jiancheng Liu, Ke Ding, and Sijia Liu.
+To generate or not? safety-driven unlearned diffusion models are still easy to generate unsafe images… for now.
+In
+European Conference on Computer Vision
+, pages 385–403. Springer, 2024b.
+[43]
+Yihua Zhang, Yimeng Zhang, Yuguang Yao, Jinghan Jia, Jiancheng Liu, Xiaoming Liu, and Sijia Liu.
+Unlearncanvas: A stylized image dataset to benchmark machine unlearning for diffusion models.
+arXiv e-prints
+, pages arXiv–2402, 2024c.
+7
+Appendix
+7.1
+Standard deviations
+We report here the standard deviations of UA, IRA and CRA metrics across 4 different seeds.
+Table 4
+:
+Mean and standard deviations (%) of
+SAEmnesia
+on the UnlearnCanvas benchmark.
+Method
+UA
+IRA
+CRA
+Avg.
+SAEmnesia
+94.65
+±
+\pm
+2.6
+91.39
+±
+\pm
+1.3
+88.48
+±
+\pm
+0.5
+91.51
+±
+\pm
+0.4
+7.2
+Multipliers Comparison
+The comparison reveals significant differences in unlearning strategies between the baseline method
+[
+9
+]
+and our
+SAEmnesia
+variants. The baseline method employs substantially larger multiplier magnitudes (as per Table
+5
+), averaging -21.25, while our
+SAEmnesia
+-OS-CA-FS and
+SAEmnesia
+-OS-OC-CA-FT models achieve effective unlearning with more conservative multipliers, averaging -6.20 and -6.60 respectively.
+These results align well with the findings on latents score distributions shown in Figure
+3
+, Figure
+7
+, Figure
+8
+and Figure
+9
+.
+This substantial reduction in multiplier magnitude supports the hypothesis that feature centralization allows effective unlearning by focusing on individual high-scoring features.
+Table 5
+:
+Comparison of Object Unlearning Multipliers Across Three Models
+Object
+SAeUron
+S-OS-CA-FS
+S-OS-OC-CA-FT
+Architectures
+-20.0
+-5.0
+-5.0
+Bears
+-30.0
+-10.0
+-5.0
+Birds
+-10.0
+-5.0
+-5.0
+Butterfly
+-15.0
+-5.0
+-5.0
+Cats
+-15.0
+-1.0
+-10.0
+Dogs
+-20.0
+-5.0
+-5.0
+Fishes
+-30.0
+-5.0
+-5.0
+Flame
+-25.0
+-1.0
+-1.0
+Flowers
+-20.0
+-5.0
+-5.0
+Frogs
+-5.0
+-5.0
+-10.0
+Horses
+-25.0
+-10.0
+-15.0
+Human
+-20.0
+-5.0
+-5.0
+Jellyfish
+-15.0
+-1.0
+-1.0
+Rabbits
+-30.0
+-10.0
+-5.0
+Sandwiches
+-15.0
+-25.0
+-5.0
+Sea
+-30.0
+-5.0
+-5.0
+Statues
+-30.0
+-1.0
+-10.0
+Towers
+-20.0
+-5.0
+-5.0
+Trees
+-25.0
+-5.0
+-5.0
+Waterfalls
+-30.0
+-10.0
+-20.0
+Average
+-21.25
+±
+\pm
+7.45
+-6.20
+±
+\pm
+5.31
+-6.60
+±
+\pm
+4.48
+7.3
+Additional Scores Histograms
+In this section are provided additional examples similar to Figure
+3
+, to further demonstrate the robustness of our methods throughout different concepts, such as Architectures
+7
+, Rabbits
+8
+and Sea
+9
+. For all the objects, we have a clear transition from a distributed histogram with high entropy, to a well defined peaked latent score.
+Figure 7
+:
+Feature importance score distributions for
+Architectures
+concept. (Left) Model pre-trained unsupervised showing dispersed concept scores. (Right) After
+SAEmnesia
+-OC-FT supervised finetuning showing a clear dominant peak.
+Figure 8
+:
+Feature importance score distributions for
+Rabbits
+concept. (Left) Model pre-trained unsupervised showing dispersed concept scores. (Right) After
+SAEmnesia
+-OC-FT supervised finetuning showing a clear dominant peak.
+Figure 9
+:
+Feature importance score distributions for
+Sea
+concept. (Left) Model pre-trained unsupervised showing dispersed concept scores. (Right) After
+SAEmnesia
+-OC-FT supervised finetuning showing a clear dominant peak.
+7.4
+Additional unlearning visualization
+Figures
+10
+and Figures
+11
+provides additional visualization when unlearning with
+SAEmnesia
+.
+Figure 10
+:
+Qualitative examples of concept removal with
+SAEmnesia
+. Each row shows a different style, and each column a different object concept.
+Figure 11
+:
+Qualitative examples of concept removal with
+SAEmnesia
+. Each row shows a different style, and each column a different object concept.
+7.5
+Global Cross-Entropy
+We employ Cross-entropy (CE) loss with softmax applied to all pre-TopK latent activations as an alternative to the Concept-Assignment Loss (Equation
+8
+). This way, we treat concept assignment as a classification problem across the entire latent space:
+ℒ
+global-ce
+=
+−
+1
+B
+∑
+i
+=
+1
+B
+log
+(
+exp
+⁡
+(
+v
+c
+i
+i
+)
+∑
+j
+=
+1
+n
+exp
+⁡
+(
+v
+j
+i
+)
+)
+,
+\mathcal{L}_{\text{global-ce}}=-\frac{1}{B}\sum_{i=1}^{B}\log\left(\frac{\exp(v^{i}_{c_{i}})}{\sum_{j=1}^{n}\exp(v^{i}_{j})}\right),
+(14)
+where
+B
+B
+is the batch size,
+v
+j
+i
+v^{i}_{j}
+represents the pre-TopK activation value for sample
+i
+i
+at latent position
+j
+j
+,
+c
+i
+c_{i}
+denotes the assigned concept latent index for sample
+i
+i
+, and
+n
+n
+is the total number of latents.
+This approach, however, led to suboptimal performance as reported in Table
+7
+and Table
+8
+w.r.t. OO-GCE-FS and OO-GCE-FT.
+7.6
+Post-TopK Loss Analysis
+OS-TK-CA-FT is the only model variant that applies CA loss after the Top-K, yet demonstrates competitive performance without major degradation. In fine-tuned configurations with hyperparameter search (Table
+7
+), OS-TK-CA-FT achieves 85.52% average performance compared to the baseline’s 82.29%, representing a meaningful 3.2% improvement. Similarly, in from-scratch training (Table
+8
+), OS-TK-CA-FT maintains 86.93% performance, indicating that post-TopK supervision remains viable.
+7.7
+Exploratory Variants
+In Table
+6
+, all the variants tested for this work are presented.
+SAEmnesia-OS-OC-CA-FT is the version reported as
+SAEmnesia
+in the main paper.
+Table 6
+:
+SAE Experiment Versions.
+Feature/Metric
+OO-GCE-FS
+OO-GCE-FT
+OS-OC-CA-FS
+OS-OC-CA-FT
+OO-CA-FS
+OO-CA-FT
+OS-CA-FS
+OS-CA-FT
+OS-TK-CA-FS
+OS-TK-CA-FT
+Object labels
+✓
+✓
+✓
+✓
+✓
+✓
+✓
+✓
+✓
+✓
+Styles labels
+×
+\times
+×
+\times
+✓
+✓
+×
+\times
+×
+\times
+✓
+✓
+✓
+✓
+Orthogonality
+×
+\times
+×
+\times
+✓
+✓
+×
+\times
+×
+\times
+×
+\times
+×
+\times
+×
+\times
+×
+\times
+Global CE
+✓
+✓
+×
+\times
+×
+\times
+×
+\times
+×
+\times
+×
+\times
+×
+\times
+×
+\times
+×
+\times
+CA before Top-K
+×
+\times
+×
+\times
+✓
+✓
+✓
+✓
+✓
+✓
+×
+\times
+×
+\times
+CA after Top-K
+×
+\times
+×
+\times
+×
+\times
+×
+\times
+×
+\times
+×
+\times
+×
+\times
+×
+\times
+✓
+✓
+Finetuned
+×
+\times
+✓
+×
+\times
+✓
+×
+\times
+✓
+×
+\times
+✓
+×
+\times
+✓
+Table 7
+:
+SAEmnesia
+Experimental Results - Fine Tuned Models - Searched HP
+Metric
+SAeUron
+OO-GCE-FT
+OS-OC-CA-FT
+OO-CA-FT
+OS-CA-FT
+OS-TK-CA-FT
+UA (%)
+↑
+\uparrow
+87.16
+94.55
+91.75
+95.75
+90.90
+66.85
+IRA (%)
+↑
+\uparrow
+85.57
+87.44
+93.16
+85.92
+92.11
+96.76
+CRA (%)
+↑
+\uparrow
+74.14
+57.71
+88.60
+75.09
+86.46
+92.95
+Avg. (%)
+↑
+\uparrow
+82.29
+79.9
+91.51
+85.59
+89.82
+85.52
+FID (%)
+↓
+\downarrow
+124.11
+155.17
+111.16
+111.70
+110.84
+110.24
+Table 8
+:
+SAEmnesia
+Experimental Results - Trained From Scratch with Hyperparameters Search
+Metric
+SAeUron
+OO-GCE-FS
+OS-OC-CA-FS
+OO-CA-FS
+OS-CA-FS
+OS-TK-CA-FS
+UA (%)
+↑
+\uparrow
+87.16
+95.98
+92.95
+78.45
+86.00
+69.45
+IRA (%)
+↑
+\uparrow
+85.57
+68.20
+91.48
+64.25
+92.76
+97.38
+CRA (%)
+↑
+\uparrow
+74.14
+42.48
+88.12
+57.76
+87.05
+93.97
+Avg. (%)
+↑
+\uparrow
+82.29
+69.22
+90.85
+66.82
+88.93
+86.93
+FID (%)
+↓
+\downarrow
+124.11
+150.15
+110.25
+119.46
+110.49
+109.84
+7.8
+Concept Interference Mitigation
+The Dogs vs. Cats overlap analysis (Tables
+9
+and
+10
+) provides crucial insights into concept interference patterns, a known limitation of the current approaches
+[
+9
+]
+.
+From-Scratch Models
+generally show better concept separation, with Oo-GCE-FS achieving zero overlapping timesteps.
+Fine-Tuned Models
+show more variable performance, with some variants (OO-GCE-FT, OS-TK-CA-FT) achieving zero overlap while others (OS-CA-FT) perform worse than the baseline.
+Table 9
+:
+Timesteps with Cats-Dogs Overlapping Latent as Most Active - Models Trained from scratch
+Metric
+SAeUron
+OO-GCE-FS
+OS-OC-CA-FS
+OO-CA-FS
+OS-CA-FS
+OS-TK-CA-FS
+Overlap. timesteps
+10
+0
+3
+6
+10
+2
+Table 10
+:
+Timesteps with Cats-Dogs Overlapping Latent as Most Active - Finetuned Models
+Metric
+SAeUron
+OO-GCE-FT
+OS-OC-CA-FT
+OO-CA-FT
+OS-CA-FT
+OS-TK-CA-FT
+Overlap. timesteps
+10
+0
+10
+3
+14
+0
+Figure 12
+:
+OS-OC-CA-FS UA and IRA classes disentanglement.
+Figure 13
+:
+OS-CA-FS UA and IRA classes disentanglement.
+7.9
+Uniform Multipliers Analysis
+The uniform multiplier sweep analysis (Figure
+14
+and Figure
+15
+) reveals varying performance characteristics across model versions and evaluation metrics. In the fine-tuned models (Figure
+14
+),
+SAEmnesia
+variants show competitive performance with some variations across different multiplier ranges, with certain variants like S-OS-OC-CA-FT maintaining strong performance while others such as S-OS-TK-CA-FT exhibit sensitivity to specific multiplier settings. The from-scratch models (Figure
+15
+) demonstrate different behavior patterns, with variants like S-OO-CA-FS showing particular sensitivity to moderate multiplier values before recovering at gentler settings. Both figures indicate that
+SAEmnesia
+variants achieve reasonable performance across various hyperparameter ranges. The results suggest that different
+SAEmnesia
+configurations may be better suited for different multiplier ranges, highlighting the importance of hyperparameter selection in optimizing unlearning performance.
+Figure 14
+:
+All Model’s performances with uniform multipliers - fine tuned.
+Figure 15
+:
+All Model’s performances with uniform multipliers - from scratch.
+7.10
+Lambda Coefficient Analysis for
+SAEmnesia
+Loss
+The choice of value for
+β
+\beta
+in Equation
+6
+as the coefficient for the
+ℒ
+s
+​
+u
+​
+p
+​
+S
+​
+A
+​
+E
+\mathcal{L}_{supSAE}
+loss critically affects model performance. Our best experimental results were achieved with
+β
+=
+3
+\beta=3
+. When
+β
+=
+10
+\beta=10
+, the concept assignment loss becomes too aggressive, causing the model to produce completely white images and lose generation capabilities. In our experimental setup,
+λ
+\lambda
+from Equation
+6
+was set to
+λ
+=
+0.01
+\lambda=0.01
+, and
+γ
+\gamma
+from Equation
+9
+was set to
+γ
+=
+0.1
+\gamma=0.1
+.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

@@ -99,6 +99,8 @@ Assembly 不一定只有检索或手写规则：也可以训练一个独立的 C
 
 这种分责让 Context 构造本身可以优化，却增加离线多轨迹采集、reflection、训练和每次调用的生成成本，并可能学到执行器或环境专属捷径。作者在 AppWorld 等任务中报告了受限收益，但没有包含 RL-only 的完整因子对照，也没有把额外轨迹与运行成本全部匹配，不能据此证明每一阶段必需或普遍比检索更省。任务或工具接口变化后，需要重新验证 generator—executor 配对；训练数据不足、需要严格来源可追溯性或执行器频繁更换时，固定 assembly、原文检索与已有 Memory 仍是合理路径。
 
+连续编辑的 Context generator 还须看见部署时的中间状态，而不只学会从 seed 写出一次提示。一条受限分支从多轮编辑树抽取已修改的 instruction 与带正确答案、执行成绩的反馈，训练一次 edit；直接把编辑前已知的“不修改”成绩作奖励参照，而不再交给学习的 value 或组内归一化吸收。这个 action-independent baseline 不改变期望优化目标，也不保证方差必减；单次训练更不等于多轮累积收益最优。部署另保存各 context 及成绩并允许回访旧分支，避免必须沿最新错误 edit 继续，但搜索和提交仍由 Context owner 控制。[有限 SQL/选择题对照](https://arxiv.org/html/2603.18620v1)把固定 holdout 反复用于分支选择并报告最佳轮次，不能当未参与选择的最终泛化；editor 变强也不证明冻结的执行器胜过更强执行模型。初始轨迹、gold反馈、编辑器训练、每轮候选与多次执行评价均计费，冻结参数不消除指令污染或遗忘约束。反馈不可得、任务/执行器变更或净预算不足时，保留固定 assembly、已核 generator 与原文检索，并在未参与选择的任务上验收，不由自改提示批准事实或权限。<!-- source-family:SF-2026-ARXIV-2603-18620 -->
+
 ## Context Serving 是派生视图生命周期
 
 复杂 Agent 不一定从原文临时组装每次 Context。以代码仓库为例，同一 commit 可以派生
@@ -194,6 +196,10 @@ Agent policy、身份和恢复交给 runtime，而不是让一次 tool observati
 显式选择相对自动保留最近两图的准确率差异未达显著；其本地延迟只限论文披露的单并发推理设置，
 不能推广到视频或生产 SLO。<!-- source-family:SF-2026-ARXIV-2609-24362 -->
 
+面对长视频，可见集还可以按原始时间范围组织，而不预先把整段证据压成 captions：每次读取声明子问题、起止区间、采样率和帧预算，先稀疏扫描定位候选，再对同一区间加密重看，或把多个区间按各自密度拼到一次观察中。返回的描述与实体表仍是派生状态，应保留时间 anchors、所见帧与原视频恢复入口；重新观察提供另一份读取，不自动消除 Observer 或记忆更新的错误。<!-- source-family:SF-2026-ARXIV-2603-24558 -->
+
+这个接口把预算从全视频预处理移到按需多轮取证，同时增加视频解码、Observer、Reasoner、实体维护与重读费用。[受限长视频对照](https://arxiv.org/html/2603.24558v1)中，较弱的计划器可能损伤强 Observer，单次大上下文更快，预建索引则可能用更高前置成本换更高精度或多 query 复用；峰值 context 和总 tokens 不能互代完整时延。时间对齐、实体引用或收益不可靠时，应回读原帧、限制轮次并保留均匀采样/静态 captions 或人工核验，不把重复的派生描述当独立事实确认。
+
 <!-- semantic-body-binding:SF-2026-ARXIV-2604-14029:start -->
 派生视觉接口不只用于原生图像，也能承载旧文本 observation：逐项渲染较老的工具结果，actions 与近期 observation 仍保留文本，而不是将全部历史改成像素。它改变 consumer 的输入接口，不改变证据身份；搜索服务已生成的摘要，渲染后仍是摘要，不会恢复成原网站事实。原文本、引用与恢复入口仍须保留，stale/fresh 分界与表示选择共同决定当前可见视图。
 
@@ -267,6 +273,10 @@ C'_t = compress(C_t, task, budget)
 Context 是否修改也可由独立 router 先决定，再让具名操作处理派生视图：保留 raw history，以 LoRA 分支执行纠错或压缩，也允许 none，solver 消费修改后的 view 而不是覆盖原证据。训练 router 的数据可先让 teacher 执行候选 operator，比较 base solver 在 raw/refactored history 下的 paired outcome，只保留有改善的提案，再混合 corrective/compressive/none；这让结果条件决定是否重构，却不把 teacher 改写升为事实真值。<!-- source-family:SF-2026-ARXIV-2601-05589 -->
 
 [受限重构对照](https://arxiv.org/html/2601.05589v1)使用 Qwen2.5-7B、E5检索与GPT5.2 teacher，Table1多项仍低于SearchR1或RECOMP；压缩token减少不能抹去router、operator、teacher生成/筛选与solver总费用。选择人口只含受测outcome改善，也不保证新任务保真；raw/derived identity、operator及结果版本须分开保存。Router错选、重构失真或净预算不合算时，保留raw history、none分支和原有压缩/回读，不让派生视图改写权限或提交事实。
+
+在线 Context 选择还可以把判断延后到压缩后的短程反馈，而不只由原历史或训练好的 router 决定。预算触发时，从同一 raw history 构造保留近期、摘要和重置等候选 views，各自继续少量工具交互，再让 router 同时读取原历史与候选 continuations，选择一条后续路径。它改变的是 view 的验证时点：先看某种信息取舍怎样影响下一步查证，再决定是否继续；不是让压缩摘要取得事实 authority，也不是证明所有候选拥有相同状态或语义。
+
+`arXiv:2603.27490v1` §3/§4.3 的有限消融中，看三轮后续反馈优于只看views或随机选择，但五轮反而退步，更多lookahead不自动更可靠。额外分支、原历史复读、summary/router和全部toolcalls均须计入成本，较少主轨迹turns或仅完成任务的token图不代表全人口省费；self-router也共享原agent的盲区。写工具或外部sideeffect不能随弃branch撤销，必要时只做可隔离/read-only试探并由可信执行器独立commit。预算、候选view或反馈不可靠时，保留固定近期/摘要策略、原文回读或none分支，不让在线选择越过Context和Tool的验证边界。<!-- source-family:SF-2026-ARXIV-2603-27490 -->
 
 压缩之外，还可以把长原文留在外部环境，由模型用程序选择、变换并回读片段。但“能访问超过窗口的输入”和“值得递归调用子模型”是两个不同判断：前者来自外置原文与选择接口，后者要看任务是否需要子调用完成局部语义处理，还是根模型用代码就能筛选、聚合。应对照同样可访问原文的 no-subcall 分支，而不只对照被窗口截断的普通调用；局部新证据中，某一模型在代码问答和文档查找上去掉子调用反而更好，在信息密集的分类/成对聚合任务上却从子调用受益，因此不能把 external access 的收益统一归因于 recursion。<!-- source-family:SF-2026-ARXIV-2512-24601 -->
 
@@ -775,3 +785,9 @@ Review note：`SF-2026-ARXIV-2606-29522`；Method `https://arxiv.org/html/2606.2
 - `SF-2026-ARXIV-2602-22603` — Daily `2026-02-28`；[exact-v1](https://arxiv.org/html/2602.22603v1) §3–4必要接口，2+2+3=7；aux management trace隔离与主tool边界消费差额，成功人口/未来引用、并发与全费用及原文恢复回退近文。fresh非旧作者独核prepared原证与actual owner，root授该窄ownership；作者实际正文/完整邻接顺读，root非作者实际正文、完整邻接及自身末注POST通过，窄锁释放。未核代码/复现，非日级Gate。
 
 - `SF-2026-OPENAI-INHOUSE-DATA-AGENT` — Daily `2026-01-30`补漏；[官方Jan29工程说明](https://openai.com/index/inside-our-in-house-data-agent/)六层Context/Runtime Context、Evaluation/Security。2+2+2=6，producer-derived语义与live observation/user-confirm Memory差额定点深入；只采公开workflow，未采用controlled效率、安全认证或prompt普遍经验。未运行内部实现/复现实验；root必要Source与实际owner PRE通过，root非作者实际正文/完整邻接及末注POST通过，窄锁释放；日级独立验收见对应Daily。
+
+- `SF-2026-ARXIV-2603-18620` — [LSE exact-v1](https://arxiv.org/html/2603.18620v1)必要§3/Eqs1–10/Algorithm1、§4/Tables1–3/§5限制及AppA/T4；仅中间context edit训练状态、已知null-edit参照与多轮选择分责。保gold可得、baseline期望不变/方差非保证、单步非长期最优、UCB初始边界不采、D50/八次/25round择优非独立test、跨editor非跨执行器全胜、逐项反退及全费；不采通用selfevolution、免遗忘/安全或生产保证，未核全prompt/代码/复现。
+
+- `SF-2026-ARXIV-2603-24558` — [LensWalk exact-v1](https://arxiv.org/html/2603.24558v1)§3–4、B.3、C.1/T6–8。仅时间scope/FPS/framebudget与rawvideo重读分责；保弱Reasoner反退、单次更快/DVD精度反侧/索引摊费，peakcontext非总SLO。未核图像/代码或复现，不采全局无误纠错/统一预算因果。
+
+- `SF-2026-ARXIV-2603-27490` — [AgentSwing exact-v1](https://arxiv.org/html/2603.27490v1) §2.1/§3、§4.1/§4.3/T2–3及§7；仅部署候选view的有限tool-feedback后选择时点。保K3/K5反側、chain-rule非新机制、finished人口/弃branch和summary/API/tool全费，以及external effect不可随discard撤销；不授router正确性、全人口省费或通用K/SLO，未核artifact/复现。

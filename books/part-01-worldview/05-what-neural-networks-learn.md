@@ -66,6 +66,10 @@ Representation learning 的关键收益，是让系统不必完全依赖手工�
 
 当不同规则能解释同一输入序列时，共享的可读几何更不能直接签发一个唯一状态。[受控规则混合实验](https://arxiv.org/html/2602.23164v1)让同一棋步在两种更新规则下产生不同棋盘：跨规则 probe 和 steering 可以共享部分方向，但选择规则与恢复状态仍是两个计算接口。某混合模型中，game-ID干预改变合法下一步，却不明显恢复下游board-state读出；另一种罕见歧义人口要在较早层干预，才同时改善状态与输出。它支持按冲突输入检验“表示怎样被消费”，不证明大型语言模型统一在某层存储世界。Procrustes对probe参数的高一致性是拟合后的局部几何，随机对齐也有非零基线；单seed、不同单/混合数据量不授通用迁移。训练、probe与白盒干预均付费；共享方向失效时保留显式规则/状态、黑盒任务对照与更细干预，不以几何相似替代实际状态验收。<!-- source-family:SF-2026-ARXIV-2602-23164 -->
 
+当待研究的性质没有清楚的输入反事实时，还可以在训练中对一项指定的读出能力施加反向压力，而不把表示相关性直接当功能必要性。一个受限语言模型实验同时保留语言建模目标、训练辅助预测 head，并将该 head 的梯度反向送入适配参数；配对控制保持流程却打乱辅助信号与文本的对应，再以独立训练的读出和下游 probes 比较。它让“去掉某项可读性质之后还剩什么能力”变成可检查的干预问题，但对有限 head 不可读不等于信息已全部删除，适配引起的共同变化也不自动证明被研究性质是唯一因果来源。<!-- source-family:SF-2026-ARXIV-2603-23091 -->
+
+[必要方法与反侧](https://arxiv.org/html/2603.23091v1#S3)采用的语言建模匹配口径尚不闭合：相似性检验的显著性写法与结果的无显著差异不同，二者都不提供预先声明容忍区间的等价保证。局部模型与数据组合存在不一致，分类 probe 的多次初始化也不能当完整模型的独立训练重复或实际任务成功；因此只保干预设计与受限观察，不外推某项外部对齐是普适能力、安全或可信度的必要条件。额外适配、辅助信号、readout拟合、probe与反复匹配均付费；应分别保存干预目标、读出类、控制身份和独立任务结果，匹配或归因不足时保留原模型、常规probe与更窄受控实验，而不凭低辅助可读性签发性质删除证明。
+
 ## 什么叫“好的表示”
 
 一个表示是否好，不能脱离任务和约束判断。对某个任务有用的表示，可能主动消除另一个任务需要的信息。
@@ -161,6 +165,8 @@ Inductive bias 不是坏事。没有任何偏好，模型无法从有限经验�
 
 不过，这个量只拥有几何诊断权，不能接管泛化验收权。它依赖渐近样本、流形与群作用、充分优化等强假设，生成模型推导还集中于 DDIM 或线性高斯设置；估计过程本身也可能需要多个样本规模和多次模型拟合。若真实数据不存在所假设的对称性，或 intrinsic-dimension 估计与实际分布外表现不一致，就应回退到切片、反事实、held-out 与 distribution-shift evaluation，而不是把 representation gap 当作任意现代网络的通用 generalization error。
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-21692:end -->
+
+有益的任务对称性，也不能与训练划分偶然形成的对称性混为一谈。在一类用Mahalanobis kernel和梯度外积迭代更新feature matrix的受限代数任务中，reflection-invariant训练partition配合特定初始matrix，会让未见fixed points持续难以泛化；增加同一结构的样本未必解开它，删除少量点破坏该划分对称反而改善。这里的限制属于Gaussian/quadratic kernel、one-hot任务与指定群orbit/初始化，不是所有Transformer grokking必须删数据或破除不变性。[具体构造与对照](https://arxiv.org/html/2604.00316v1)因此要求将数据partition、initial feature与学习器共同纳入泛化诊断，而不是只按训练占比预测能力；kernel求解、梯度统计和重训练仍付费。真实任务无法验证这些条件时，保留语义保持增强、独立划分与普通held-out/OOD验收，不由局部反例签发通用数据选择策略。<!-- source-family:SF-2026-ARXIV-2604-00316 -->
 
 因此，“模型学到了正确特征”不能只靠总体 accuracy 证明。需要构造切片、反事实、扰动和跨分布评估，检查模型究竟利用了什么相关性。
 
@@ -671,3 +677,7 @@ Sparse autoencoder 把 activation 分解为稀疏 feature，短自然语言标�
 - `SF-2026-ARXIV-2602-08548` — Daily `2026-02-11`补查；[Cell Location exact-v1](https://arxiv.org/html/2602.08548v1) §2–6及必要B/C.1–6。2+1+2=5，只采用有限Qwen3-4B合成表下semantic binding与ordinal address分账；probe可读、delimiter/等长度反侧与局部shift不授唯一计数器、精确vector arithmetic或全模型table可靠性。Patch方向文字/Effect与5.2vs5.8反侧不一致隔离，token80/20 probe split不授whole-table OOD，100 heldout校准/α8与额外介入费用保留。root实际必要Source及Ch5/相邻交接PRE通过并授本一段/自身末注窄锁；作者实际正文与完整邻接顺读，root非作者实际225–245完整邻接及自身末注POST通过，窄锁释放。未核artifact或复现，非DAY。
 
 - `SF-2026-ARXIV-2603-11749` — Daily `2026-03-14` 补查；[Compression/consistency exact-v1](https://arxiv.org/pdf/2603.11749v1) 方法/配对Tables1b/2a/3a与直接限制。2+1+2=5，coherent-false与随机错误的受控偏好、paired与corpus测量单位具体差额深入；不采MDL普遍真理、压缩唯一因果、全corpus一致方向或compute-matched scaling，错误族/训练seed/长度资格与外部证据回退近文。mar14_supplement 必要Source/owner/PRE经root实际非准备者复核通过，root窄写两段与本注；mar14_supplement 实际非writer 顺读两段、完整局部邻接和本注 POST通过，窄锁释放，不授DAY。未核代码或复现。
+
+- SF-2026-ARXIV-2603-23091 — [BrainMisalign exact-v1](https://arxiv.org/html/2603.23091v1)，必要§3–5/F2–6及A的probe/B–C读出/必要D caption；仅采用指定读出能力的反向适配＋permuted控制资格，保LM匹配统计口径、有限head非全信息删除/非唯一因果、模型数据反侧与全费用；不采脑对齐普适必要、安全或临床结论，未核实现/复现。
+
+- `SF-2026-ARXIV-2604-00316` — Daily2026-04-03；[exact-v1](https://arxiv.org/html/2604.00316v1)§2.1/3/Finding3.1/Table1/4/Finding4.1，2+1+2=5，仅partition symmetry/特定kernel初态到fixed-point泛化停滞的资格；保finite algebraic构造/经验vs收敛分责/全部费用，不授LLM删数据配方或普遍grokking，未核实现/复现。

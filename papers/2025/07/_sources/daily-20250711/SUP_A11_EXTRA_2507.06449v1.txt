@@ -1,0 +1,1057 @@
+
+I Introduction
+
+
+Diffusion Models (DMs) [1, 2, 3, 4]
+evidenced advancements in generating high-quality images compared to other generative models such as Generative Adversarial Networks (GANs) and Variational Auto-encoders (VAEs).
+Due to the flexibility and power of DMs,
+DMs have been used in many areas including computer vision, natural language generation, temporal data modeling, and multi-model learning [5]. The Federated Learning (FL) paradigm originated in [6] has gained substantial attention in distributed learning by connecting data islands with collaborative training over distributed clients, e.g., edge devices, roadside units, edge micro-servers, while preserving privacy.
+For instance, FL-based Google’s Gboard learns new words and phrases without exposing clients’ privacy.
+
+
+With the development of DMs and FL, their integration provided a two-fold benefit [7]. FL mitigates data scarcity during DMs training by engaging distributed clients at the network edge or organizations [7].
+On the other hand, DMs are powerful for high-resolution image generation, which can be deployed as data augmentation techniques to cope with data heterogeneity and high communication costs for downstream tasks in FL [8, 9, 10, 11, 12, 13].
+
+
+Fig. 1: FID score comparison over CIFAR-10 data using DDIM [2] via FedAvg FL infrastructure and centralized training with IID and Non-IID data (number of clients is K=20K=20, selection ratio is κ=0.2\kappa=0.2; more details are provided in Section V-A).
+
+
+Recent efforts focus on leveraging DMs to solve challenges in FL, however, disregarding the reverse side, i.e., the issues when training DM in FL environments. Although training DMs is an unsupervised learning task, it faces challenges in FL, such as data heterogeneity, i.e., non-IID data [14, 15, 16], due to e.g., the bias and divergence of gradients in traditional supervised learning task [17, 18, 19].
+The performance degradation caused by such divergence
+is shown in Fig. 1.
+Specifically, consider the Fréchet Inception Distance (FID) score, which assesses the quality of images created by a generative model; lower scores indicate that the generated images are more similar to real images w.r.t. quality.
+Fig. 1 shows the FID score over the CIFAR-10 dataset using the Denoising Diffusion Implicit Model (DDIM [2]) in a FL environment adopting FedAvg [6].
+One can observe the FID scores across different training epochs for FedAvg with IID data (independent and identically distributed)
+and non-IID data compared against centralized training.
+FedAvg using IID and non-IID data shows higher FID scores than the centralized approach, with non-IID data exhibiting significantly higher scores due to statistical heterogeneity.
+
+
+Limited research copes with the challenges of training DMs in FL environments. The Phoenix mechanism in [14] aims to solve the non-IID data challenge by data sharing, which is not applicable in distributed learning environments.
+The authors in [15] focus on training subsets of ML models while ‘freezing’ the rest thus achieving communication efficiency in distributed learning. The approach in [16] investigates the potential of training DMs for privacy-sensitive vision tasks.
+In this context, a research question arises: How can we obtain DMs that can generate relatively high-quality images efficiently trained in distributed learning environments?
+
+
+The results in Fig. 1 and [20] suggest that more frequent model aggregation mitigates the weight divergence problem over non-IID data.
+Therefore, we introduce FedPhD, a novel framework that addresses data heterogeneity, excessive communication, and computation costs through Hierarchical Federated Learning (HFL) and distributed structured pruning. The FedPhD frameworkemploys HFL by introducing the layer, the edge server layer, to the traditional Cloud server-based FL framework.
+This additional layer engages edge servers between edge devices (clients) and the central server. Due to the proximity of edge servers to clients, frequent aggregation at the edge servers becomes feasible. To further reduce computation and communication costs,
+FedPhD leverages structured pruning for the U-Net (a convolutional neural network introduced for image segmentation)
+used in the diffusion process. Depending on devices’ requirements and purposes, the structured pruning can be initially randomized or based on the L2L_{2} group-norm after the initial sparse training stage. Moreover, FedPhD introduces an edge-server selection mechanism in HFL to ensure data diversity and discrepancy-aware aggregation. The major contributions of this paper are:
+
+
+
+• 
+
+We demonstrate that frequent model aggregation addresses data heterogeneity in FL of DMs. This led to the introduction of our hierarchical FL paradigm, FedPhD.
+
+• 
+
+We introduce a new edge-server selection and model aggregation strategy to ensure data homogeneity alleviating the non-IID data problem in HFL.
+
+• 
+
+We integrate a structured pruning method for DMs into the HFL framework, significantly reducing communication and computation costs.
+
+• 
+
+FedPhD achieves the best Fréchet Inception Distance (FID) and Inception Scores (IS) with 44%44\% less communication, computation, and storage requirements compared to well-known baselines [6], [21], [15], [22], [23].
+
+
+
+
+
+II Related Work
+
+
+II-A Training Diffusion Models in FL
+
+
+A few studies consider training DMs within FL environments.
+Those that achieve distributed DM training often provide a basic framework without addressing the key challenges of non-IID data and efficiency. [24] compared the advantages and disadvantages between federated Foundation Models (FM) and centralized FM optimization, generalizing the FM of collaborative learning. [15] customize the FedDiffuse method into USPLIT, ULATDEC, and UDEC within the concept of split learning, which trains DMs with FedAvg [6] to split or limit the updates of parameters. This approach involves a central server collecting only parts of the DMs, thus reducing communication costs.
+Phoenix in [14] is a DM learning framework designed to address non-IID data using a data-sharing policy and layer-wise personalization.
+
+
+
+II-B Diffusion Models Compression
+
+
+DMs, though with powerful generative capabilities for high-quality images, are computationally intensive and memory-demanding, raising notable obstacles for their deployments on edge devices and clients.
+To address these concerns, various strategies have been proposed.
+Diff-Pruning [25] is a pioneering method designed specifically for pruning DMs.
+This approach relies on Taylor expansion across pruned time steps acknowledging that not all time steps are equally important in DMs.
+[26] introduced VQ-Diffusion, a vector-quantized diffusion method based on a
+Vector-Quantized Variational Autoencoder (VQ-VAE) for text-to-image generation. [27] proposed a 8-bit post-training quantization technique to accelerate the DM generation process while accounting for normally distributed time step calibration.
+[28] observed that smaller student models introduce more noise during the DM forward process, and thus proposed DiffKD. DiffKD is a knowledge distillation method where a trained teacher model denoises the student model’s features.
+To the best of our knowledge, FedPhD is the first method for applying pruning within the FL framework to train DMs in a hierarchical fashion.
+
+
+
+
+III Problem Fundamentals
+
+
+III-A Background on Diffusion Models
+
+
+Diffusion Models (DMs) are latent variable models inspired by non-equilibrium thermodynamics.
+[1] proposed the Denoising Diffusion Probabilistic Model (DDPM), which leverages the diffusion process and reverse process to mimic the image generation process.
+The model progressively adds Gaussian noise to an image in the forward process and then iteratively denoises the image in the reverse process to recover the image from white noise.
+Assuming that data follow a distribution q⁡(𝐱)q(\mathbf{x}),
+a DM builds a generative distribution pθ​(𝐱)p_{\theta}(\mathbf{x}) with parameter θ\theta, that approximates the true distribution q⁡(𝐱)q(\mathbf{x}). This problem is formalized as estimating:
+
+
+
+
+pθ(𝐱)=∫pθ(𝐱0:T)d𝐱1:T,p_{\theta}(\mathbf{x})=\int p_{\theta}(\mathbf{x}_{0:T})\,d\mathbf{x}_{1:T},
+
+(1)
+
+where
+
+
+
+
+pθ(𝐱0:T):=p(𝐱T)∏t=1Tpθ(𝐱t−1∣𝐱t)\displaystyle p_{\theta}(\mathbf{x}_{0:T}):=p(\mathbf{x}_{T})\prod_{t=1}^{T}p_{\theta}(\mathbf{x}_{t-1}\mid\mathbf{x}_{t})
+
+(2)
+
+is referred to as the reverse process, which denoises the data departing from final data 𝐱T\mathbf{x}_{T} to initial data 𝐱0\mathbf{x}_{0} and tt represents the time step in the forward and reverse diffusion processes. The latent variables 𝐱1,…,𝐱T\mathbf{x}_{1},\ldots,\mathbf{x}_{T} have
+the same dimensionality as 𝐱0∼q⁡(𝐱0)\mathbf{x}_{0}\sim q(\mathbf{x}_{0}).
+The Gaussian transition has the form:
+
+
+
+
+pθ​(𝐱t−1∣𝐱t)=𝒩⁡(𝐱t−1,μθ​(𝐱t,t),Σθ​(𝐱t,t)),\displaystyle p_{\theta}(\mathbf{x}_{t-1}\mid\mathbf{x}_{t})=\mathcal{N}(\mathbf{x}_{t-1};\mu_{\theta}(\mathbf{x}_{t},t),\Sigma_{\theta}(\mathbf{x}_{t},t)),
+
+(3)
+
+with white noise starting point at p⁡(𝐱T)=𝒩⁡(𝐱T,𝟎,𝐈)p(\mathbf{x}_{T})=\mathcal{N}(\mathbf{x}_{T};\mathbf{0},\mathbf{I}). According to [1], Eq. (1) is tractable conditioned on 𝐱0\mathbf{x}_{0}:
+
+
+
+
+q⁡(𝐱t−1∣𝐱t,𝐱0)=𝒩⁡(𝐱t−1,𝝁~t​(𝐱t,𝐱0),β~t​𝐈),q(\mathbf{x}_{t-1}\mid\mathbf{x}_{t},\mathbf{x}_{0})=\mathcal{N}(\mathbf{x}_{t-1};\tilde{\boldsymbol{\mu}}_{t}(\mathbf{x}_{t},\mathbf{x}_{0}),\tilde{\beta}_{t}\mathbf{I}),
+
+(4)
+
+where
+𝝁~t​(𝐱t,𝐱0):=α¯t−1​βt1−α¯t​𝐱0+αt​(1−α¯t−1)1−α¯t​𝐱t\tilde{\boldsymbol{\mu}}_{t}(\mathbf{x}_{t},\mathbf{x}_{0}):=\frac{\sqrt{\bar{\alpha}_{t-1}}\beta_{t}}{1-\bar{\alpha}_{t}}\mathbf{x}_{0}+\frac{\sqrt{\alpha_{t}}(1-\bar{\alpha}_{t-1})}{1-\bar{\alpha}_{t}}\mathbf{x}_{t}
+and β~t:=1−α¯t−11−α¯t​βt.\tilde{\beta}_{t}:=\frac{1-\bar{\alpha}_{t-1}}{1-\bar{\alpha}_{t}}\beta_{t}.
+To approximate the posterior q(𝐱1:T∣𝐱0)q(\mathbf{x}_{1:T}\mid\mathbf{x}_{0}), the forward process is to model a Markov chain gradually adding Gaussian noise to the data, i.e.,
+
+
+
+
+q(𝐱1:T∣𝐱0):=∏t=1Tq(𝐱t∣𝐱t−1),q(\mathbf{x}_{1:T}\mid\mathbf{x}_{0}):=\prod_{t=1}^{T}q(\mathbf{x}_{t}\mid\mathbf{x}_{t-1}),
+
+(5)
+
+with
+q⁡(𝐱t∣𝐱t−1):=𝒩⁡(𝐱t,1−βt​𝐱t−1,βt​𝐈)q(\mathbf{x}_{t}\mid\mathbf{x}_{t-1}):=\mathcal{N}(\mathbf{x}_{t};\sqrt{1-\beta_{t}}\mathbf{x}_{t-1},\beta_{t}\mathbf{I}). The variance parameters βt\beta_{t} are learnable but fixed in DDPM. With using the re-parameterization trick [1], the noise predictor is trained to optimize ℒ⁡(θ)\mathcal{L}(\theta), defined as
+
+
+
+
+ℒ⁡(θ)=𝔼t,𝐱0,ϵ​[∥ϵ−ϵθ​(α¯t​𝐱0+1−α¯t​ϵ,t)∥2],\mathcal{L}(\theta)=\mathbb{E}_{t,\mathbf{x}_{0},\boldsymbol{\epsilon}}\left[\lVert\boldsymbol{\epsilon}-\boldsymbol{\epsilon}_{\theta}(\sqrt{\bar{\alpha}_{t}}\mathbf{x}_{0}+\sqrt{1-\bar{\alpha}_{t}}\boldsymbol{\epsilon},t)\rVert^{2}\right],
+
+(6)
+
+where 𝐱0∼q⁡(𝐱0)\mathbf{x}_{0}\sim q(\mathbf{x}_{0}), ϵ∼𝒩⁡(𝟎,𝐈)\boldsymbol{\epsilon}\sim\mathcal{N}(\mathbf{0},\mathbf{I}), αt=1−βt\alpha_{t}=1-\beta_{t} and α¯t=∏s=1tαs\bar{\alpha}_{t}=\prod_{s=1}^{t}\alpha_{s}.
+After the simplified training process, DDPM generates the synthetic data through the iterative process, i.e.,
+
+
+
+
+𝐱t−1=1αt​(𝐱t−βt1−α¯t​ϵθ​(𝐱t,t))+σt​𝐳,\mathbf{x}_{t-1}=\frac{1}{\sqrt{\alpha_{t}}}\left(\mathbf{x}_{t}-\frac{\beta_{t}}{\sqrt{1-\bar{\alpha}_{t}}}\boldsymbol{\epsilon}_{\theta}(\mathbf{x}_{t},t)\right)+\sigma_{t}\mathbf{z},
+
+(7)
+
+where 𝐱T\mathbf{x}_{T} and 𝐳\mathbf{z} are the white noises following 𝒩⁡(𝟎,𝟏)\mathcal{N}(\mathbf{0},\mathbf{1}). To balance the quality of the generative image and the inference efficiency, DDIM [2] generalizes (7) as follows:
+
+
+
+
+𝐱t−1=\displaystyle\mathbf{x}_{t-1}=
+αt−1​(𝐱t−1−αt​ϵθ​(𝐱t)αt)\displaystyle\sqrt{\alpha_{t-1}}\left(\frac{\mathbf{x}_{t}-\sqrt{1-\alpha_{t}}\boldsymbol{\epsilon}_{\theta}(\mathbf{x}_{t})}{\sqrt{\alpha_{t}}}\right)
+
+(8)
+
+
+
++1−αt−1−σt2⋅ϵθ(𝐱t)+σt𝐳\displaystyle+\sqrt{1-\alpha_{t-1}-\sigma_{t}^{2}}\cdot\boldsymbol{\epsilon}_{\theta}(\mathbf{x}_{t})+\sigma_{t}\mathbf{z}
+
+
+When σt\sigma_{t} is defined as follows for all tt:
+
+
+
+
+σt=(1−αt−1)​(1−αt)1−αt​1−αtαt−1,\sigma_{t}=\sqrt{\frac{(1-\alpha_{t-1})(1-\alpha_{t})}{1-\alpha_{t}}}\sqrt{\frac{1-\alpha_{t}}{\alpha_{t-1}}},
+
+(9)
+
+then the forward process becomes a Markov chain, and the generative process is reduced to DDPM.
+
+
+The forward process of DDIM is non-Markovian, yet it does not require retraining the noise predictor. This is because in contrast of DDPM which uses a stochastic reverse process, DDIM employs a deterministic reverse process, which ensures that no additional noise is introduced at each step. Since DDIM does not introduce new noise during the reverse process, the time step tt does not explicitly appear in ϵθ​(𝐱t)\boldsymbol{\epsilon}_{\theta}(\mathbf{x}_{t}).
+The term ϵθ​(𝐱t)\boldsymbol{\epsilon}_{\theta}(\mathbf{x}_{t}) in DDIM refers to the noise prediction for the current step, without any time dependency.
+
+
+
+III-B Hierarchical Federated Learning with DMs
+
+
+Without loss of generality, we consider a distributed learning system consisting of one server, a set of 𝒩e\mathcal{N}_{e} edge servers, and a set of 𝒩\mathcal{N} distributed clients (edge devices),
+where |𝒩e|=Ne≪N=|𝒩|\lvert\mathcal{N}_{e}\rvert=N_{e}\ll N=\lvert\mathcal{N}\rvert.
+In each communication round, C=κ​NC=\kappa N clients are selected for aggregation in a typical FL system, like FedAvg, where C≪NC\ll N and κ∈(0,1)\kappa\in(0,1) is the participation ratio.
+Each client, indexed by nn, holds local data 𝒟n={(𝐱i(n),yi(n))}\mathcal{D}_{n}=\{(\mathbf{x}_{i}^{(n)},y_{i}^{(n)})\}, where 𝐱i(n)∈ℝd\mathbf{x}_{i}^{(n)}\in\mathbb{R}^{d} and yi(n)y_{i}^{(n)} is the label. The total number of samples in client nn is Dn=|𝒟n|D_{n}=\lvert\mathcal{D}_{n}\rvert.
+
+
+The overall objective is to minimize the global loss function F⁡(𝜽)F(\boldsymbol{\theta}), which is a weighted average of the local loss functions Fn​(𝜽)F_{n}(\boldsymbol{\theta}) from each client nn. In a FL system, the objective is:
+
+
+
+
+min𝜽⁡F⁡(𝜽)=min⁡∑n=1N𝜽⁡ρn​Fn​(𝜽),\min_{\boldsymbol{\theta}}F(\boldsymbol{\theta})=\min_{\boldsymbol{\theta}}\sum_{n=1}^{N}\rho_{n}F_{n}(\boldsymbol{\theta}),
+
+(10)
+
+where 𝜽\boldsymbol{\theta} denotes the global model parameters and ρn=DnD\rho_{n}=\frac{D_{n}}{D}, D=∑n=1NDnD=\sum_{n=1}^{N}D_{n} denotes the total number of samples across all clients. Fn​(𝜽)F_{n}(\boldsymbol{\theta}) is the local loss function for client nn:
+
+
+
+
+Fn​(𝜽)=1Dn​∑(𝐱i(n),yi(n))∈𝒟nℓ⁡(𝜽,𝐱i(n),yi(n)).F_{n}(\boldsymbol{\theta})=\frac{1}{D_{n}}\sum_{(\mathbf{x}_{i}^{(n)},y_{i}^{(n)})\in\mathcal{D}_{n}}\ell(\boldsymbol{\theta};\mathbf{x}_{i}^{(n)},y_{i}^{(n)}).
+
+(11)
+
+where ℓ⁡(𝜽,𝐱,y)\ell(\boldsymbol{\theta};\mathbf{x},y) is the loss function for a single sample. In the task of training a DM, the local loss function (11) becomes:
+
+
+
+
+Fn​(𝜽)=1Dn​∑(𝐱i(n))∈𝒟nℒ⁡(𝜽,𝐱i(n)),F_{n}(\boldsymbol{\theta})=\frac{1}{D_{n}}\sum_{(\mathbf{x}_{i}^{(n)})\in\mathcal{D}_{n}}\mathcal{L}(\boldsymbol{\theta};\mathbf{x}_{i}^{(n)}),
+
+(12)
+
+where ℒ⁡(𝜽,𝐱i(n))\mathcal{L}(\boldsymbol{\theta};\mathbf{x}_{i}^{(n)}) follows (6).
+The process of training a DM within FL is provided in Algorithm 2 (See Appendix ).
+To avoid stragglers, e.g., low computational capacity clients, (10) reduces to
+
+
+
+
+min𝜽⁡F⁡(𝜽)=min⁡∑c=1C𝜽⁡DcD​Fc​(𝜽).\min_{\boldsymbol{\theta}}F(\boldsymbol{\theta})=\min_{\boldsymbol{\theta}}\sum_{c=1}^{C}\frac{D_{c}}{D}F_{c}(\boldsymbol{\theta}).
+
+(13)
+
+
+
+In HFL, CC clients conduct model aggregation on 𝒩e\mathcal{N}_{e} edge servers rather than the central server with objective:
+
+
+
+
+min𝜽F(𝜽)=min𝜽∑e=1Ne∑n=1Meρe​nFe​n(𝜽),\min_{\boldsymbol{\theta}}F(\boldsymbol{\theta})=\min_{\boldsymbol{\theta}}\sum_{e=1}^{N_{e}}\sum_{n=1}^{M_{e}}\rho_{en}F_{en}(\boldsymbol{\theta}),
+
+(14)
+
+where MeM_{e} denotes the number of clients selected for edge server ee and C=∑e=1NeMeC=\sum_{e=1}^{N_{e}}M_{e}.
+Regardless of the client selection and aggregation, the local training follows Stochastic Descent Gradients (SGD) updates.
+In HFL, during each communication round, the clients assigned to each edge server ee perform local updates and send their model updates to their respective edge servers. Each edge server ee, in turn, aggregates these updates and sends the aggregated update to the central server. The global model update rule in HFL is:
+
+
+
+
+𝜽(r+1)=𝜽(r)−η∑e=1Ne∑n=1Meρe​n∇Fe​n(𝜽(r)),\boldsymbol{\theta}^{(r+1)}=\boldsymbol{\theta}^{(r)}-\eta\sum_{e=1}^{N_{e}}\sum_{n=1}^{M_{e}}\rho_{en}\nabla F_{en}(\boldsymbol{\theta}^{(r)}),
+
+(15)
+
+where r>0r>0 is the communication round and ∇Fe​n​(𝜽(r))\nabla F_{en}(\boldsymbol{\theta}^{(r)}) is the gradient of the local loss function for client nn on edge server ee with respect to the global model parameters.
+
+
+
+
+IV The FedPhD Framework
+
+
+Fig. 2: Overview of FedPhD: (Top) Illustration of structured pruning of a U-Net-based model, where DepGraph identifies dependencies, and group-norm criteria determine the pruned components; (bottom) Hierarchical FL (HFL) setup across Client, Edge, and Cloud layers. Homogeneity-aware aggregation is achieved on both: Cloud server and Edge servers to improve model consistency across diverse environments.
+Structured pruning occurs only on the Cloud server after RsR_{s} sparse training rounds (or at initialization). Clients perform local training and select Edge servers establishing client-edge associations n∈ℳen\in\mathcal{M}_{e}. Every rgr_{g} round, active Edge servers connect to Cloud for central aggregation, uploading accumulated distributions qe​(y)q_{e}(y) and models θer\mathbf{\theta}_{e}^{r}; while every rer_{e} round, selected clients upload updates θnr\mathbf{\theta}_{n}^{r} and client distribution qn​(y)q_{n}(y) to their assigned Edge servers.
+
+
+FedPhD aims to efficiently train high-performance DMs in a HFL framework. As stated in ShapeFL [20], imbalanced data cause instability and divergence in HFL-based training,
+which advocates maximizing the data diversity in aggregation.
+Hence, considering the computational and communication efficiency in the edge nodes, FedPhD leverages structured pruning rather than unstructured pruning to achieve efficient compression. Subsequently, we introduce a homogeneity-aware aggregation and edge server selection mechanism to ensure data homogeneity in HFL. In the remainder of this section, we elaborate on the two main mechanisms of FedPhD.
+
+
+IV-A Structured Pruning for DMs
+
+
+Structured pruning removes entire groups, such as channels or layers, ensuring better CPU/GPU compatibility and more efficient model deployment than unstructured pruning.
+DepGraph [29] identifies layer dependencies to guide structured pruning, making it adaptable to any model architecture. Diff-Pruning [25] builds on DepGraph but assumes pre-trained DMs, limiting its applicability in FL. FedPhD overcomes this by integrating dependency-aware pruning during decentralized training. DepGraph models dependencies between adjacent layers in a symmetric matrix 𝐒\mathbf{S}, capturing inter-layer and intra-layer relationships. This informs the parameter group 𝒢={θ1,θ2,⋯,θ|G|}\mathcal{G}=\{\mathbf{\theta}^{1},\mathbf{\theta}^{2},\cdots,\mathbf{\theta}^{\lvert G\rvert}\} for structured pruning.
+
+
+FedPhD employs two pruning strategies based on hardware constraints:(1)Pruning from scratch (FedPhD (OS)): One-Shot (OS) pruning before training using an L2L_{2}-norm-based criterion for random pruning. (2)Pruning after sparse training: Group norm-based pruning applied after initial training rounds.
+
+
+For resource-limited clients, FedPhD-OS prunes before training, while clients with more capacity benefit from structured pruning after initial training. The local sparse training loss at client nn is:
+
+
+
+
+Fn​(𝜽)=1Dn​∑(𝐱i(n))∈𝒟nℒ⁡(𝜽,𝐱i(n))+𝛀⁡(𝒢,k),F_{n}(\boldsymbol{\theta})=\frac{1}{D_{n}}\sum_{(\mathbf{x}_{i}^{(n)})\in\mathcal{D}_{n}}\mathcal{L}(\boldsymbol{\theta};\mathbf{x}_{i}^{(n)})+\mathbf{\Omega}(\mathcal{G},k),
+
+(16)
+
+where 𝛀⁡(𝒢,k)\mathbf{\Omega}(\mathcal{G},k) denotes a regularization term defined as:
+
+
+
+
+𝛀⁡(𝒢,k)=∑k=1K∑θg∈𝒢λg​‖θg​[k]‖22.\mathbf{\Omega}(\mathcal{G},k)=\sum_{k=1}^{K}\sum_{\mathbf{\theta}^{g}\in\mathcal{G}}\lambda_{g}\|\mathbf{\theta}^{g}[k]\|^{2}_{2}.
+
+(17)
+
+The λg\lambda_{g} factor refers to the group regularization scale parameter, while
+θg​[k]\mathbf{\theta}^{g}[k] denotes the gthg^{\text{th}} group of independent prunable parameters
+at the kthk^{\text{th}} prunable dimension.
+Considering the specific U-Net architecture, the redundancy in the middle layers is greater than that in input and output layers. Hence, we introduce a mechanism to determine λg\lambda_{g}.
+First, we calculate the mean layer index of θ\mathbf{\theta} as lmidl_{\text{mid}}. For each layer ll in group θg\mathbf{\theta}^{g}, the distance between the mean layer and ll is given by |l−lmed|\lvert l-l_{\text{med}}\rvert. The score for the entire group θg\mathbf{\theta}^{g} is calculated by:
+Q⁡(θg)=1L​∑l∈θg|l−lmed|,Q(\mathbf{\theta}^{g})=\frac{1}{L}\sum_{l\in\mathbf{\theta}^{g}}\lvert l-l_{\text{med}}\rvert,
+where LL denotes the number of layers in group θg\mathbf{\theta}^{g}.
+Therefore, the parameter λg\lambda_{g} for group θg\mathbf{\theta}^{g} is defined as inversely proportional to score Q⁡(θg)Q(\mathbf{\theta}^{g}), i.e., λg=λ0Q⁡(θg)\lambda_{g}=\frac{\lambda_{0}}{Q(\mathbf{\theta}^{g})}
+where λ0\lambda_{0} is a regularization factor.
+
+
+
+IV-B Homogeneity-Aware Aggregation and Server Selection
+
+
+We propose a novel aggregation method for HFL that addresses data imbalance by leveraging a Statistical Homogeneity (SH) score and an edge selection policy. Specifically, we introduce the concept of homogeneity-aware aggregation, detail the computation of the SH score, and illustrate how it guides both client selection and model aggregation.
+ShapeFL [20] measures data diversity using cosine distance between model updates but is computationally expensive and requires manual layer selection, limiting its applicability. Additionally, its edge server selection relies on offline pre-training, which is unsuitable for FL. Instead, we propose a lightweight approach that focuses on data distribution rather than model-specific layers.
+Following [30, 31], the uniform distribution serves as a reference point for evaluating statistical data homogeneity. Given local data 𝒟n=(𝐱i,yi)\mathcal{D}_{n}={(\mathbf{x}_{i},y_{i})} on client nn with label distribution qnq_{n}, we define quq_{u} as the uniform distribution over target labels 𝒴\mathcal{Y}. If the global distribution is non-uniform, quq_{u} is set as target label distribution accordingly. The SH score μn\mu_{n} for client nn is:
+
+
+
+
+μn=2−∑y∈𝒴|qn​(y)−qu​(y)|2,\mu_{n}=2-\sqrt{\sum_{y\in\mathcal{Y}}\left|q_{n}(y)-q_{u}(y)\right|^{2}},
+
+(18)
+
+where qn​(y)q_{n}(y) is the frequency of label yy in client’s dataset and qu​(y)=1|𝒴|q_{u}(y)=\frac{1}{|\mathcal{Y}|} is the uniform probability of yy.
+
+
+Algorithm 1  The FedPhD Algorithm for HFL of DMs
+
+
+              1:
+              
+             Input: Initial global model 𝜽(0)\boldsymbol{\theta}^{(0)}; global and sparse training rounds RR, RsR_{s}; edge and global update frequency, rer_{e}, rgr_{g}; number of edge servers and clients NeN_{e}, NN; SH score parameters aa and bb; target distribution qu​(y)q_{u}(y); pruning ratio sps_{p}
+
+
+
+              2:
+              
+             Initialize qe​(y)q_{e}(y) and {ne}={0}\{n_{e}\}=\{0\} for all e∈𝒩ee\in\mathcal{N}_{e}
+
+
+
+              3:
+              
+             for each global round r=1,…,Rr=1,\dots,R do
+
+
+
+
+
+              4:
+              
+              for each client n∈𝒞n\in\mathcal{C} do
+
+
+
+
+
+              5:
+              
+               Select edge server ee with probability Pn​(e)P_{n}(e) in (25)
+
+
+
+              6:
+              
+              end for
+
+
+              7:
+              
+              for each edge server e∈𝒩ee\in\mathcal{N}_{e} in parallel do
+
+
+
+
+
+              8:
+              
+               Broadcast qe​(y)q_{e}(y) to all clients
+
+
+
+              9:
+              
+               for each client n∈ℳen\in\mathcal{M}_{e} in parallel do
+
+
+
+
+
+              10:
+              
+                if r<Rsr<R_{s} then
+
+
+
+
+
+              11:
+              
+                 Perform Algorithm 2 on (16)
+
+
+
+              12:
+              
+                else
+
+
+
+
+              13:
+              
+                 Perform Algorithm 2 on (12)
+
+
+
+              14:
+              
+                end if
+
+
+              15:
+              
+                Send updated model 𝜽nr+1\boldsymbol{\theta}_{n}^{r+1} to edge server ee
+
+
+
+              16:
+              
+               end for
+
+
+              17:
+              
+               Update ne←ne+∑n∈ℳennn_{e}\leftarrow n_{e}+\sum_{n\in\mathcal{M}_{e}}n_{n}
+
+
+
+              18:
+              
+               if rmodre=0r\mod r_{e}=0 then
+
+
+
+
+
+              19:
+              
+                Update qe​(y)q_{e}(y) with (19)
+
+
+
+              20:
+              
+                Aggregation using Eqs. (20), (23), and (24)
+
+
+
+              21:
+              
+                Send back 𝜽er+1\boldsymbol{\theta}^{r+1}_{e} to client n∈ℳen\in\mathcal{M}_{e}
+
+
+
+              22:
+              
+               end if
+
+
+              23:
+              
+              end for
+
+
+              24:
+              
+              if rmodrg=0r\mod r_{g}=0 then
+
+
+
+
+
+              25:
+              
+               Request qe​(y)q_{e}(y) from edge servers.
+
+
+
+              26:
+              
+               Aggregation using Eqs. (21), (22), and (20)
+
+
+
+              27:
+              
+               if r=Rsr=R_{s} then
+
+
+
+
+
+              28:
+              
+                Structured pruning on 𝜽(r+1)\boldsymbol{\theta}^{(r+1)} with sps_{p}
+
+
+
+              29:
+              
+               end if
+
+
+              30:
+              
+               Send back 𝜽r+1\boldsymbol{\theta}^{r+1} to all clients.
+
+
+
+              31:
+              
+               Re-initialize qe​(y)q_{e}(y) and {ne}={0}\{n_{e}\}=\{0\} for all e∈𝒩ee\in\mathcal{N}_{e}
+
+
+
+              32:
+              
+              end if
+
+
+              33:
+              
+             end for
+
+
+              34:
+              
+             Output: Final global model parameters 𝜽(R)\boldsymbol{\theta}^{(R)}
+
+
+
+
+
+According to [30] and [17], SH is closely related to data diversity, as it reflects the extent to which the global model approximates the performance of a model trained on IID data. In this context, we aim for a DM that generalizes well on non-IID data by using techniques that maximize SH. However, in HFL, clients are assigned directly to edge servers for aggregation, which makes the SH score at client level in (18) insufficient.
+Therefore, we compute the SH score at edge server level for the aggregation on the central server.
+In HFL, the accumulated distribution for an edge server is the weighted sum of the label distributions from all clients assigned to that edge server.
+This accumulated distribution must be refreshed (re-initialized) dynamically at a specific frequency to maintain an accurate representation of the data of the participating clients. In HFL, aggregation occurs more frequently than in FL, so this refreshment is synchronized with the frequency of FL aggregation, which is denoted by rgr_{g} in this work.
+Specifically, given a current accumulated distribution qe​(y)q_{e}(y) and attached client samples nen_{e},
+if each client nn contributes nnn_{n} samples to the edge server then the updated accumulated distribution qe′q_{e}^{\prime} for edge server ee is updated as:
+
+
+
+
+qe′​(y)=qe​(y)+∑n∈ℳeqn​(y)⋅nnne+∑n∈ℳenn,q_{e}^{\prime}(y)=\frac{q_{e}(y)+\sum_{n\in\mathcal{M}_{e}}q_{n}(y)\cdot n_{n}}{n_{e}+\sum_{n\in\mathcal{M}_{e}}n_{n}},
+
+(19)
+
+where ℳe\mathcal{M}_{e} is the set of clients assigned to edge server ee and qn​(y)q_{n}(y) is the proportion of label yy in client nn’s dataset. By continually updating the accumulated distribution, the edge server maintains an accurate representation of its clients’ data diversity. This ensures that the subsequent model aggregation steps consider the underlying data distribution of participated clients. Consequently, the SH score for edge server ee in HFL is similarly calculated as in (18) by using the accumulated distribution qe​(y)q_{e}(y) in (19), which is computed as:
+
+
+
+
+μe=2−∑y∈𝒴|qe​(ye=y)−qu​(yu=y)|2,\mu_{e}=2-\sqrt{\sum_{y\in\mathcal{Y}}\left|q_{e}(y_{e}=y)-q_{u}(y_{u}=y)\right|^{2}},
+
+(20)
+
+where qu​(y)q_{u}(y) represents the target (uniform) distribution at the central server.
+Note that neither the central server nor the edge servers possess any raw data.
+
+
+Based on SH, we develop a strategy for homogeneity-aware aggregation and edge server selection in HFL. The aggregation process takes place at both the central server and edge server levels. Starting at the central server level, each edge server’s contribution to the global model is weighted by a factor that considers both the number of samples it has aggregated and its SH.
+Let θe\mathbf{\theta}_{e} denote the model parameters from edge server ee, and let nen_{e} represent the corresponding number of samples. The central server aggregates the global model parameters θ\mathbf{\theta} using
+the weighted sum:
+
+
+
+
+θ=∑e=1Neρe⋅θe,\mathbf{\theta}=\sum_{e=1}^{N_{e}}\rho_{e}\cdot\mathbf{\theta}_{e},
+
+(21)
+
+where ρe\rho_{e} is the weight for edge server ee, calculated as:
+
+
+
+
+ρe=ReLu​(ne+a⋅μe+b)∑e=1NeReLu​(ne+a⋅μe+b).\rho_{e}=\frac{\textit{ReLu}(n_{e}+a\cdot\mu_{e}+b)}{\sum_{e=1}^{N_{e}}\textit{ReLu}(n_{e}+a\cdot\mu_{e}+b)}.
+
+(22)
+
+μe\mu_{e} represents the SH of the edge server, aa and bb are tunable parameters that balance the contribution of the sample size and SH; ReLu(x)=max⁡(0,x)(x)=\max(0,x).
+This approach ensures that edge servers with higher SH, i.e., indicating a distribution closer to
+target distribution, contribute more significantly to the global model update, thereby improving the overall performance of the global model on non-IID data [31]. Similarly, the edge server aggregates the edge server model θe\theta_{e} according to:
+
+
+
+
+θe=∑n∈ℳeρe​n​θn,\theta_{e}=\sum_{n\in\mathcal{M}_{e}}\rho_{en}\theta_{n},
+
+(23)
+
+where ρe​n\rho_{en} is the weight for selected clients for aggregation on edge server ee, computed as:
+
+
+
+
+ρe​n=ReLu​(nn+a⋅μn+b)∑n∈ℳeReLu​(nn+a⋅μn+b)\rho_{en}=\frac{\textit{ReLu}(n_{n}+a\cdot\mu_{n}+b)}{\sum_{n\in\mathcal{M}_{e}}\textit{ReLu}(n_{n}+a\cdot\mu_{n}+b)}
+
+(24)
+
+
+
+Note that unlike traditional FL frameworks such as FedAvg, FedPhD allows clients to select their edge servers for aggregation. This selection process is guided by the SH, which evaluates how closely an edge server’s accumulated distribution aligns with the target distribution. For each client nn, the selection of the edge server ee is determined based on a probability distribution, expressed as:
+
+
+
+
+Pn​(e)=ReLu(μen′⋅a−nen′+b)∑e=1NeReLu(μen′⋅a−nen′+b),P_{n}(e)=\frac{\textit{ReLu}\left(\mu_{e}^{n\prime}\cdot a-n_{e}^{n\prime}+b\right)}{\sum_{e=1}^{N_{e}}\textit{ReLu}\left(\mu_{e}^{n\prime}\cdot a-n_{e}^{n\prime}+b\right)},
+
+(25)
+
+where nen′n_{e}^{n\prime} and μen′\mu_{e}^{n\prime} represent the updated sample size and SH score for edge server ee after including client nn, respectively. The client is then assigned to the edge server ee based on the probability distribution Pn​(e)P_{n}(e), ensuring a higher likelihood of selection for an edge server that better matches the target distribution while also considering the load balance by favoring servers with fewer clients communicated before.
+
+
+
+IV-C The FedPhD Algorithm
+
+
+The workflow of FedPhD is illustrated in Algorithm 1 and Fig. 2. We outline the processes of clients, edge servers, and the central server in the FedPhD algorithm as follows.
+
+
+IV-C1 Central Server Process
+
+
+The homogeneity-aware aggregation and structured pruning occur in the central server. If constraints such as memory limit exist for devices, the central server performs random pruning initially (i.e., at r=0r=0); otherwise, the central server performs group-norm based pruning at r=Rsr=R_{s} after RsR_{s} sparse training rounds (lines 24-26). The central server performs aggregation every rgr_{g} rounds iteratively, maximizing the SH score to counter the data heterogeneity issue in HFL (lines 22-23). The model parameters are received from the edge servers, which are the aggregations of respective clients.
+
+
+
+IV-C2 Edge Server Process
+
+
+Edge servers aggregate models more frequently than the central server (re<rgr_{e}<r_{g}, line 19). After aggregation, the aggregated results are returned to their respective clients (line 20). In addition, they maintain and update the accumulated distribution based on the model updates received from clients (line 18).
+
+
+
+IV-C3 Client Process
+
+
+The client is responsible for selecting the edge servers and conducting local training of DMs.
+At each round, the client selects the edge server for aggregation based on the probability Pn​(e)P_{n}(e) as described in (25), ensuring a higher SH for aggregation (lines 4-5). If sparse training is required and in initial rounds, i.e., r<Rsr<R_{s}, the group regularization term is added to the local loss function, and the client performs Algorithm 2 on the loss function as in (16); otherwise, it uses the loss function as in (12). The procedure is shown in Algorithm 1 (lines 8-12).
+
+
+Note, both the label distribution of clients and aggregated distribution of edge servers are necessary to compute SH.
+Edge servers track the client distributions, where each edge server ee holds the values qn​(y)q_{n}(y) and nnn_{n} for all clients nn.
+As a result, the label distribution does not need to be communicated during the FedPhD training process. For the accumulated (updated) distribution, computed at the edge servers, qe​(y)q_{e}(y) is transmitted to clients during each global round for edge server selection and to the central server every rgr_{g} rounds for homogeneity-aware aggregation. Since only distribution information is shared, FedPhD ensures stronger privacy preservation compared to Phoenix [14], with negligible additional communication overhead.
+
+
+
+
+IV-D Balancing Efficiency and Privacy in FedPhD
+
+
+FedPhD uses information on the category distribution of client data to perform homogeneity-aware aggregation, which improves the model convergence and eases the data heterogeneity issue. However, sharing these label distributions could potentially expose sensitive information, raising privacy concerns. To mitigate these concerns, we introduce several privacy-preserving strategies that could be integrated into the FedPhD framework: (i) Noise Injection: Using differential privacy methods, such as adding controlled noise to category counts, results in individual data contributions that are less identifiable. (ii) Secure Aggregation: Employing techniques like secure Multi-Party Computation (MPC) to combine distributions that prevent the central server from identifying individual client information. Such strategies are proposed to strike a balance between improving the model’s efficiency and protecting the privacy of client data. While these methods are not currently implemented in our FedPhD, they offer a pathway to enhance privacy in our future agenda.
+
+
+
+
+V Experimental Evaluation
+
+
+TABLE I: Quality Metrics Evaluation on CIFAR10 and CelebA Datasets. A=10,000A=10,000 for CIFAR10 and B=5,000B=5,000 for CelebA
+
+
+
+Method
+CIFAR10
+CelebA
+
+FID ↓\downarrow
+IS ↑\uparrow
+FID ↓\downarrow
+IS ↑\uparrow
+
+Centralized and IID Settings
+
+
+
+
+
+Centralized Training
+8.73 ±\pm 0.30
+7.22 ±\pm 0.21
+5.86 ±\pm 0.36
+3.22 ±\pm 0.14
+
+FedAvg (IID)
+11.98 ±\pm 0.38
+5.18 ±\pm 0.13
+6.42 ±\pm 0.34
+2.92 ±\pm 0.22
+
+Computation Equivalence (A/B Local Epochs)
+
+
+
+
+
+FedAvg
+24.50 ±\pm 0.38
+3.88 ±\pm 0.12
+14.89 ±\pm 0.64
+2.47 ±\pm 0.15
+
+FedProx
+26.53 ±\pm 0.82
+3.71 ±\pm 0.16
+16.33 ±\pm 0.34
+2.45 ±\pm 0.10
+
+FedDiffuse
+29.38 ±\pm 0.52
+3.56 ±\pm 0.19
+17.42 ±\pm 0.58
+2.32 ±\pm 0.11
+
+MOON
+22.13 ±\pm 0.66
+4.11 ±\pm 0.29
+12.56 ±\pm 0.31
+2.44 ±\pm 0.14
+
+SCAFFOLD
+43.87 ±\pm 2.76
+3.12 ±\pm 0.33
+32.32 ±\pm 1.22
+2.12 ±\pm 0.28
+
+FedAvg (E=1E=1)
+17.21 ±\pm 0.28
+4.68 ±\pm 0.23
+9.55 ±\pm 0.32
+2.78 ±\pm 0.13
+
+FedPhD
+16.74 ±\pm 0.26
+4.24 ±\pm 0.17
+8.32 ±\pm 0.44
+2.76 ±\pm 0.21
+
+FedPhD (OS)
+17.03 ±\pm 0.22
+4.14 ±\pm 0.16
+7.48 ±\pm 0.28
+2.88 ±\pm 0.19
+
+Fixed Communication Rounds (A/B Rounds)
+
+
+
+
+
+FedAvg
+21.63 ±\pm 0.50
+4.16 ±\pm 0.12
+11.29 ±\pm 0.42
+2.81 ±\pm 0.20
+
+FedProx
+22.42 ±\pm 0.42
+4.01 ±\pm 0.18
+13.39 ±\pm 0.38
+2.55 ±\pm 0.20
+
+FedDiffuse
+25.38 ±\pm 0.54
+3.66 ±\pm 0.11
+15.42 ±\pm 0.58
+2.34 ±\pm 0.12
+
+MOON
+20.43 ±\pm 0.63
+4.17 ±\pm 0.22
+10.88 ±\pm 0.42
+2.78 ±\pm 0.22
+
+SCAFFOLD
+29.54 ±\pm 0.52
+3.54 ±\pm 0.22
+21.44 ±\pm 0.32
+2.38 ±\pm 0.23
+
+
+
+
+V-A Experiment Setup
+
+
+V-A1 Datasets and Models
+
+
+The effectiveness of FedPhD is validated using the CIFAR-10 and CelebA benchmarks with the DDIM model [2], employing 100100 time steps, compared to the full 10001000 time steps used by DDPM [1]. We focus exclusively on the training data, consisting of 50​K50K images of size 32×3232\times 32 in CIFAR10 and 163​K163K images of size 64×6464\times 64 in CelebA. We employ the same U-Net architecture as in [1], where the dense model comprises 35.735.7 million parameters.
+
+
+
+V-A2 Configurations
+
+
+All experiments are conducted using PyTorch on NVIDIA GeForce RTX 4090 and A6000 GPUs, with each experiment running on a single GPU. The experimental setup consists of N=20N=20 clients, each connected to one of Ne=2N_{e}=2 edge servers, with a central server overseeing the HFL process.
+Central aggregation occurs every rg=5r_{g}=5 rounds, while edge server aggregation is performed in every round, i.e., re=1r_{e}=1.
+In CelebA, we partition the data based on two binary attributes,
+Male and Young, resulting in four classes: ‘young male’, ‘old male’, ‘young female’, and ‘old female’.
+To devise non-IID data cases, each client is assigned images
+from only one class. In CIFAR10, each client holds images
+from 22 classes. The label distributions across clients are illustrated in Figure 3. All experiments are conducted with the same number of total local epochs, aligning with the same number of data sampling batches in the DM training. For the baseline methods, we set the number of local epochs per round to E=5E=5,
+given that rg=5r_{g}=5, and the total number of communication rounds is R=2000R=2000.
+To ensure computational load equivalence, FedPhD is configured with R=10000R=10000 communication rounds and E=1E=1 local epoch per round.
+In CelebA, the baselines are set similarly with R=1000R=1000 and E=5E=5, while FedPhD is configured with R=5000R=5000 and E=1E=1. Additionally, the experiments of fixed communication rounds are conducted for all baselines.
+We use 500​K500K training steps in the Centralized Training experiments and employ the Exponential Moving Average (EMA) for model updates as outlined in [1].
+
+
+
+V-A3 Baselines
+
+
+The characteristics of baselines used for fair comparison are summarized in Table II and the details are included in Appendix.
+
+
+TABLE II: Overall comparison of all methods based on computation, communication, and data heterogeneity.
+
+
+
+Algorithm
+Comp. Eff.
+Comm. Eff.
+Heterogeneity
+
+
+
+FedAvg [6]
+✗
+✗
+✗
+
+FedProx [21]
+✗
+✗
+✓
+
+FedDiffuse [15]
+✓
+✓
+✗
+
+MOON [22]
+✗
+✗
+✓
+
+SCAFFOLD [23]
+✗
+✗
+✓
+
+FedPhD (Ours)
+✓
+✓
+✓
+
+
+
+
+
+V-A4 Evaluation Metrics
+
+
+We evaluate all methods using two main types of metrics:
+efficiency and quality. (i) Quality Metrics: To assess the quality of the generated images, we use the Fréchet Inception Distance (FID) and Inception Score (IS), as outlined in [1, 2]. FID measures the distance between the distributions of synthetic images and real images, providing a quantitative measure of the realism of generated content. Additionally, we adopt the IS to evaluate the diversity of the generated data.
+All images are generated by DDIM [2] with steps t=100t=100.
+The number of samples generated for measurements is 30​K30K with batch size 256256. (ii) Efficiency Metrics: Efficiency is measured by the number of parameters (#Params), Multiply-Add Accumulation (MACs) and the communication volume per central aggregation in gigabytes (GB).
+The central aggregation process is defined as the period from one aggregation event to the next on the central server.
+
+
+TABLE III: Model pruning with different ratios for CIFAR-10 and CelebA datasets. The ’-’ symbol represents the percentage decrease in performance for quality metrics compared to the dense model (0%0\% ratio).
+
+
+
+Ratio
+#Params
+MACs (CIFAR-10)
+MACs (CelebA)
+FID (CIFAR-10) ↓\downarrow
+IS (CIFAR-10) ↑\uparrow
+FID (CelebA) ↓\downarrow
+IS (CelebA) ↑\uparrow
+
+0%
+35.7M
+6.1
+24.3
+16.56
+4.42
+7.31
+2.92
+
+25%
+26.9M
+4.2
+16.8
+16.78 (-1.3%)
+4.18 (-5.4%)
+7.42 (-1.5%)
+2.84 (-2.7%)
+
+44%
+20.3M
+3.4
+13.6
+16.74 (-1.1%)
+4.24 (-4.1%)
+7.48 (-2.3%)
+2.88 (-1.4%)
+
+61%
+13.9M
+2.1
+8.3
+19.36 (-16.9%)
+3.83 (-13.3%)
+9.59 (-31.2%)
+2.73 (-6.5%)
+
+74%
+9.3M
+1.5
+5.9
+22.34 (-35.0%)
+3.78 (-14.5%)
+13.44 (-83.9%)
+2.44 (-16.4%)
+
+
+
+
+TABLE IV: Efficiency Metrics Evaluation on CIFAR10.
+
+
+
+Method
+#Params (M) ↓\downarrow
+MACs (G) ↓\downarrow
+Comm Cost ↓\downarrow
+
+
+
+FedAvg
+35.7
+6.06
+109.22
+
+FedAvg (E=1E=1)
+35.7
+6.06
+546.10
+
+FedProx
+35.7
+6.13
+109.22
+
+FedDiffuse
+35.7
+6.06
+72.82
+
+MOON
+35.7
+6.26
+109.22
+
+SCAFFOLD
+35.7
+6.13
+218.44
+
+FedPhD
+20.3
+3.42
+65.46
+
+
+
+
+
+
+V-B Model Evaluation
+
+
+The FedPhD(OS) method refers to adopting One-Shot pruning before training. The results presented in Table I are averaged over the best outcomes across AA communication rounds and local epochs for CIFAR-10 (A=10,000A=10,000) and BB communication rounds and local epochs for CelebA (B=5,000B=5,000). Each setup was evaluated using at least three random seeds to ensure statistical reliability.
+From Table I, we observe that despite not applying EMA updates in the distributed setting, FedAvg demonstrates reasonable performance under the IID data setup. However, it still underperforms compared to centralized training. When the data are non-IID, the quality of the images generated from FedAvg models degrades significantly, with the FID score increasing from 11.9811.98 to 21.6321.63 on CIFAR10, and from 6.426.42 to 11.2911.29 on CelebA.
+
+
+More frequent aggregation by reducing EE from 5 to 1, helps mitigate the effects of data heterogeneity, albeit at the cost of a 5​x5x increase in communication overhead.
+The well-known FedProx, which balances communication and computation costs, also fails to address the data heterogeneity problem. As expected, FedDiffuse performs worse than FedAvg, since it builds on the FedAvg framework while adopting the split learning paradigm. Therefore, it inherits the limitations of FedAvg’s performance under heterogeneous data. SCAFFOLD underperforms compared to FedAvg in training DMs, which is due to client drift not being adequately corrected by the control variates method (due to the denoising process). Similar worse results of SCAFFOLD dealing with non-iid issues have been shown in [22]. MOON mitigates data heterogeneity to some extent by leveraging contrastive learning, resulting in a reduction in FID. In comparison, FedPhD outperforms all baselines, achieving an FID score of 16.74 and an IS score of 4.24 on CIFAR10, and an FID score of 7.48 and IS score of 2.88 on CelebA. These results indicate that FedPhD successfully overcomes the degraded performance typically seen in distributed training under data heterogeneity, particularly when training DMs.
+
+
+
+V-C Efficiency Evaluation
+
+
+As shown in Table IV, FedPhD reduces model parameters and MACs by 44%44\% on CIFAR10 with a pruning ratio of 44%44\%. For CelebA, the primary difference lies in MACs, since the input image size is twice that of CIFAR10 while using the same model. Consequently, CelebA’s MACs are four times higher, with baseline models at 24.2424.24 and FedPhD at 13.6813.68.
+
+
+To evaluate communication volume, we follow ShapeFL’s approach [20], where the communication cost depends on the physical distance between communicating clients and the transmitted data volume. Specifically: Cn​e=0.002⋅de⋅VC_{ne}=0.002\cdot d_{e}\cdot V, where ded_{e} is the shortest path distance between node nn and edge server ee, and VV is the volume of transmitted data. The communication cost between the edge server and the central server is defined as Cc​e=0.02⋅dc⋅VC_{ce}=0.02\cdot d_{c}\cdot V, given that dcd_{c} is 10×10\times greater than ded_{e}.
+We provide the standardized communication volume in Table IV.
+
+
+With FedAvg model sizes at 136.53136.53 MB and FedPhD at 77.9377.93 MB (for sp=44%s_{p}=44\%), FedPhD reduces communication and computational costs by 44%44\% and 40%40\%, respectively, while reducing memory requirements. Notably, FedPhD achieves a more compact model while outperforming baselines (see Table I), making it ideal for deployment in resource-constrained edge environments.
+Overall, FedPhD reduces communication costs by up to  88%88\% while maintaining or even improving performance.
+
+
+
+V-D Discussion of different Ratio sps_{p}
+
+
+Table III shows that pruning significantly reduces both model size and computational cost, with parameter and MACs reductions of up to 74%74\% and 75%75\%, respectively. Up to a pruning ratio of 44%44\%, FedPhD maintains stable performance, with minimal degradation in image quality, as reflected by small changes in FID (from 16.5616.56 to 16.7416.74) and IS (from 4.424.42 to 4.244.24). As the pruning ratio increases beyond 44%44\%, there is a noticeable drop in performance, with FID increasing to 19.3619.36 at 61%61\% pruning and 22.3422.34 at 74%74\%, while IS declines to 3.833.83 and 3.783.78, respectively. This approach leverages the strength of DepGraph, which efficiently captures inter-layer and intra-layer dependencies, along with the proposed group-norm pruning method.
+These results indicate that FedPhD tolerates moderate pruning (up to 44%44\%) with minimal impact on image quality, while significantly reducing computational overhead. Notably, even with a pruning ratio of 44%44\%, FedPhD still provides better quality images compared to baselines in non-IID settings, as shown in Table I. On the other hand, more ‘aggressive’ pruning leads to considerable performance degradation, suggesting a trade-off between efficiency and image generation quality.
+
+
+
+
+VI Conclusions
+
+
+Training DM using FL enables access to diverse and distributed data, while the challenges of high communication costs and data heterogeneity persist. FedPhD is a first attempt to address these challenges.
+By leveraging Hierarchical FL (HFL), homogeneity-aware aggregation and server selection,
+FedPhD mitigates data heterogeneity while incorporating structured pruning of DMs, thus reducing model size and enhancing computational and communication efficiency.
+Experimental results demonstrate that FedPhD improves the image quality of DMs by at least 34%34\% while achieving approximately 40%40\% reduction in model size, computation, and communication costs.
+Our future agenda includes automatic synchronization of EMA updates in HFL to enhance model convergence balancing computational and communication overhead.
+

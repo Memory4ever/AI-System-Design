@@ -1,0 +1,898 @@
+https://arxiv.org/html/2603.25976v1
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+Code availability.
+1 Introduction
+2 Background: Curvature-Aware Training
+2.1 Notation
+2.2 Curvature-Aware Training
+2.3 Mapping the Theory to System Design
+3 Somax: A Composable Stack
+3.1 Assembly and Static Planning
+3.2 Lane-Specialized Compiled Execution
+3.3 Planned Telemetry and Cadence-Gated Probes
+3.4 Design Validation: Cadence-Gated Probe Overhead
+4 Experiments
+4.1 Experimental Setup
+4.2 Somax Exposes Structure-Aware Execution Regimes
+4.3 Interactions Between Modules Shape Performance
+4.4 Composability Enables New Optimizer Regimes
+5 Conclusions and Future Work
+Future work.
+References
+A Related Work
+Second-order methods in machine learning.
+Scaling and systems.
+Curvature telemetry and Hessian spectra.
+Libraries and implementations.
+Benchmarking optimizers.
+B Usage and Reproducibility
+B.1 Core Interface
+B.2 Declarative Specification System
+B.3 Example: Assembling a Custom Optimizer
+C Experiment Details
+C.1 Case Study I: Switching Lanes
+Dataset.
+Model.
+Compared methods.
+Measurement protocol.
+C.2 Case Study II: Module Interactions
+Dataset.
+Model.
+Compared methods.
+Training and measurement protocol.
+Learning-rate selection and seed aggregation.
+C.3 Case Study III: Composability and New Optimizer Regimes
+Dataset.
+Model.
+Compared methods.
+Training and measurement protocol.
+Learning-rate selection and seed aggregation.
+License: arXiv.org perpetual non-exclusive license
+arXiv:2603.25976v1 [cs.LG] 26 Mar 2026
+Second-Order, First-Class: A Composable Stack for Curvature-Aware Training
+Mikalai Korbit
+Affiliation: IMT School for Advanced Studies LuccaLucca, Italy
+Mario Zanon
+Affiliation: IMT School for Advanced Studies LuccaLucca, Italy
+Abstract
+Second-order methods promise improved stability and faster convergence,
+yet they remain underused due to implementation overhead,
+tuning brittleness, and the lack of composable APIs.
+We introduce Somax, a composable Optax-native stack that
+treats curvature-aware training as a single JIT-compiled step governed by a static plan.
+Somax exposes first-class modules – curvature operators, estimators,
+linear solvers, preconditioners, and damping policies – behind
+a single step interface
+and
+composes with Optax by applying standard gradient transformations
+(e.g., momentum, weight decay, schedules) to the computed direction.
+This design makes typically hidden choices explicit and swappable.
+Somax separates planning from execution:
+it derives a static plan (including cadences)
+from module requirements,
+then runs the step through a specialized execution
+path that reuses intermediate results across modules.
+We report system-oriented ablations showing that
+(i) composition choices materially affect scaling behavior and time-to-accuracy,
+and
+(ii) planning reduces per-step overhead
+relative to unplanned composition with redundant recomputation.
+Code availability.
+Code corresponding to this paper is available at https://github.com/cor3bit/somax.
+1 Introduction
+Second-order optimizers have long promised improved stability and
+better time-to-accuracy in machine learning,
+from Hessian-free optimization [19, 20, 12]
+to Gauss-Newton methods [32, 8]
+and structured preconditioners such as K-FAC and
+Shampoo [18, 9].
+Yet modern training pipelines frequently default to
+Adam [11] or AdamW [16].
+A recurring reason is not a lack of algorithms,
+but rather fragility to implementation choices:
+curvature model, linear solver, damping rule,
+and preconditioning can dominate outcomes,
+with small changes altering convergence or robustness [37, 19, 20].
+In practice, these choices are rarely isolated.
+They are embedded in step implementations that
+combine curvature construction, linear solves,
+parameter updates, and damping logic,
+making it difficult to attribute performance
+to a specific mechanism or
+to reproduce a configuration from a paper description.
+We treat this as a systems problem.
+A practical second-order method is a multi-stage step pipeline:
+(i) construct a curvature snapshot (a linearization state),
+(ii) solve a regularized linear system to obtain a direction,
+(iii) apply the direction through an update transformation
+(e.g., direction momentum, clipping, weight decay),
+(iv) optionally compute post-update signals (e.g., gain ratio for damping control),
+and (v) update internal states for the next step.
+Multiple components in this pipeline may request
+overlapping computations
+(e.g., loss values for trust-region updates and diagnostics,
+or solver statistics for stopping).
+Without explicit contracts and execution planning,
+implementations either recompute expensive quantities
+or couple modules through shared state and implicit assumptions.
+Both outcomes hinder experimentation
+and obscure the true cost profile of a step.
+Prior work suggests that seemingly small choices inside this pipeline,
+including damping updates, solver configuration, estimator cadence,
+and warm starts, can dominate stability and wall-clock time-to-accuracy.
+A broader related work discussion is provided
+in Appendix A.
+We argue that two missing ingredients are composability
+and execution planning.
+Optimizer libraries such as Optax factor training as a chain of
+transformations [6],
+but typical second-order implementations expose functionality
+through solver-centric or framework-specific interfaces
+(e.g., KFAC-JAX [3], JAXopt [2]),
+making it difficult to swap a curvature operator
+or damping policy without rewriting the step logic.
+Moreover, second-order steps must coordinate
+pre-update and post-update computations:
+for instance, trust-region damping needs an actual decrease
+that is consistent with the update that was applied,
+which in turn depends on the exact update
+transformation and its internal state.
+This demands an execution model
+that retains the linearization
+state long enough to evaluate post-update signals,
+while avoiding redundant recomputation.
+To address these issues,
+we introduce Somax,
+a composable stack for curvature-aware training in JAX
+with Optax-native post-direction step application.
+Somax assembles second-order methods from swappable modules
+with explicit contracts:
+curvature operators (e.g., Exact Hessian and Generalized Gauss-Newton),
+linear solvers (Conjugate Gradient and direct methods,
+in parameter or row space),
+preconditioners (direct diagonal and EMA-based methods),
+damping policies (constant, trust-region, and step-norm control),
+and estimator-based telemetry
+(diagonal, trace, and spectral summaries
+computed from matrix-vector products
+without an additional curvature snapshot) [10, 21, 15].
+Somax separates static requirements
+(which statistics are needed, and at what cadence)
+from a physical execution plan
+(which computations are enabled, cadence-gated, or omitted).
+A planner merges module requirements into a static plan that
+fixes the execution lane, metric schema, and cadences,
+and a specialized executor performs the step with
+a single linearization and optional post-update policies
+without an additional curvature snapshot.
+We evaluate Somax with controlled ablations and system-oriented metrics,
+following guidance on optimizer benchmarking [34, 33, 23].
+In particular, we study how lane and estimator choice,
+solver configuration,
+damping, and preconditioning affect scaling behavior
+and time-to-accuracy under a fixed step contract.
+Lightweight telemetry, such as loss values, gain ratios,
+top eigenvalues, and diagonal
+estimates [39, 21, 5],
+is exposed as an explicit cadence-gated systems cost
+that can support solver diagnostics and damping control
+without being hidden inside optimizer-specific code.
+Our contributions are as follows.
+1.
+End-to-end second-order step API.
+We provide a step interface that constructs a single step-local curvature state,
+solves for a direction,
+applies an Optax transformation to that direction, and updates method and Optax state, with optional post-update signals.
+2.
+Composable module contracts.
+We expose swappable curvature operators, solvers, damping policies, preconditioners, and estimator-backed telemetry,
+with explicit inputs/outputs and lane-specific
+constraints enforced at assembly time.
+3.
+Composition-aware execution planning.
+We merge module requirements into a static step plan
+that fixes the execution lane,
+supports reuse of step-local curvature state,
+and cadence-gates optional computations.
+4.
+Empirical study of module interactions.
+We report controlled ablations that isolate how solver,
+damping, preconditioning, and execution-lane choices behave
+under a common step interface.
+2 Background: Curvature-Aware Training
+This section connects the mathematical formulation
+of second-order updates with their computational
+realization in modern training systems.
+We define the learning problem and a first-order baseline,
+then introduce curvature-scaled directions
+computed by a damped solve.
+Finally, we explain why the same subproblem
+admits three compute regimes (diagonal, parameter-space, and row-space)
+and how Somax makes this choice explicit.
+2.1 Notation
+Scalars are plain (e.g., a),
+vectors are bold lowercase (e.g., \bm{a}),
+and matrices are bold uppercase (e.g., \bm{A}).
+The Euclidean norm is
+\left\lVert\cdot\right\rVert and \odot denotes element-wise products.
+The identity matrix is \bm{I}.
+Indices i and t denote, respectively, data points and iterations.
+Curvature operators are denoted by \bm{H}_{t} and may be exact or approximate;
+Somax accesses \bm{H}_{t} through matrix-free primitives.
+Key symbols are summarized in Table 1.
+Table 1: Notation (excerpt).
+Symbol
+Meaning
+\mathcal{D},\,n
+Dataset and size
+\mathcal{B}_{t},\,b
+Mini-batch at step t and size
+\bm{w}\in\mathbb{R}^{d}
+Model parameters (weights)
+\mathcal{L}_{\mathcal{B}_{t}}(\bm{w})
+Mini-batch loss at step t
+\bm{g}_{t}
+Mini-batch gradient \nabla\mathcal{L}_{\mathcal{B}_{t}}(\bm{w}_{t})
+\bm{H}_{t}
+Curvature operator (exact or approximate)
+\lambda_{t}
+Damping for the linear subproblem
+\bm{s}_{t}
+Scaled direction (solution of the subproblem)
+2.2 Curvature-Aware Training
+Given data \mathcal{D}=\{(x_{i},y_{i})\}_{i=1}^{n} and a model f_{\bm{w}}
+with per-example loss
+\ell_{i}(\bm{w})=\ell(f_{\bm{w}}(x_{i}),y_{i}),
+we minimize the empirical risk
+\displaystyle\mathcal{L}_{\mathcal{D}}(\bm{w})\;=\;\frac{1}{n}\sum_{i=1}^{n}\ell_{i}(\bm{w}).
+(2.1)
+This empirical risk minimization objective
+is optimized using stochastic mini-batches.
+At step t, a mini-batch \mathcal{B}_{t} of size b
+yields the batch loss and gradient
+\displaystyle\mathcal{L}_{\mathcal{B}_{t}}(\bm{w})\;=\;\frac{1}{b}\sum_{i\in\mathcal{B}_{t}}\ell_{i}(\bm{w}),\qquad\bm{g}_{t}\;=\;\nabla\mathcal{L}_{\mathcal{B}_{t}}(\bm{w}_{t}).
+(2.2)
+A first-order update applies a post-processing transform to \bm{g}_{t}
+(e.g., momentum, clipping, or weight decay) and updates
+weights as
+\displaystyle\bm{w}_{t+1}\;=\;\bm{w}_{t}\;-\;\alpha_{t}\,\bm{u}_{t},
+(2.3)
+where \bm{u}_{t} is the final direction after the chosen first-order transform.
+Many optimizers can be viewed as applying a (possibly stateful) linear operator (or preconditioner) to the gradient,
+\bm{u}_{t}=\bm{P}_{t}\bm{g}_{t}.
+First-order methods choose \bm{P}_{t} to be cheap
+(e.g., diagonal scaling and momentum acceleration),
+while second-order methods
+approximate an inverse-curvature operator,
+\bm{P}_{t}\approx(\bm{H}_{t}+\lambda_{t}\bm{I})^{-1},
+leading to the damped linear subproblem.
+A curvature-aware method modifies the direction computation
+by incorporating a local curvature model.
+This replaces a purely gradient-based
+update with a curvature-scaled direction whose computation is dominated by
+(i) how curvature is represented
+and
+(ii) how the resulting linear system is solved.
+This viewpoint explains both the algorithmic diversity
+of second-order methods and the diversity of their implementations.
+Different curvature structures and solvers induce
+different dominant primitives and cost profiles.
+Table 2 previews
+the selected methods
+implemented in Somax and used throughout the paper.
+A curvature-aware step chooses a (possibly approximate)
+curvature operator \bm{H}_{t} and defines a scaled direction
+\bm{s}_{t} via the damped solve
+\displaystyle(\bm{H}_{t}+\lambda_{t}\bm{I})\,\bm{s}_{t}=\bm{g}_{t},\qquad\lambda_{t}\geq 0.
+(2.4)
+Damping \lambda_{t} regularizes the solve and acts
+as a control variable for step selection.
+In practice, (2.4) is often solved
+by conjugate gradient (CG),
+or by preconditioned conjugate gradient (PCG)
+when an explicit preconditioner is available.
+When solved inexactly, one typically uses the relative residual criterion
+\displaystyle\left\lVert(\bm{H}_{t}+\lambda_{t}\bm{I})\bm{s}_{t}-\bm{g}_{t}\right\rVert\;\leq\;\tau\,\left\lVert\bm{g}_{t}\right\rVert.
+(2.5)
+The applied update may still include the same post-direction transforms
+used by first-order training;
+the key difference is how \bm{s}_{t} is computed.
+Table 2: Selected second-order methods for large-scale stochastic optimization.
+Method
+Curv.
+Lane
+Solver
+Estimation / preconditioning
+AdaHessian [40]
+Hessian
+diag.
+explicit
+Hutchinson diag. estimator + diag. EMA preconditioner
+Sophia-G [15]
+GGN (CE)
+diag.
+explicit
+GNB diag. estimator + diag. EMA preconditioner + clipping
+Sophia-H [15]
+Hessian
+diag.
+explicit
+Hutchinson diag. estimator + diag. EMA preconditioner + clipping
+Newton-CG [19]
+Hessian
+param.
+CG/PCG (HVP)
+Optional diag. precond.; damping
+SGN [8]
+GGN (MSE/CE)
+param.
+CG/PCG (GGN matvec)
+Optional diag. precond.; damping
+EGN [13]
+GGN (MSE/CE)
+row
+row-Cholesky / row-CG
+Row-space solve with internal damping conversion
+Second-order methods in modern ML span a range of curvature structures
+and computational strategies.
+Diagonal methods retain only per-parameter curvature information
+and apply explicit scaling, keeping overhead relatively close
+to first-order training;
+examples include AdaHessian [40]
+and Sophia-style updates [15].
+Matrix-free methods instead access curvature through
+matrix-vector products
+and solve (2.4) iteratively,
+as in Hessian-free optimization [19, 20, 12]
+and stochastic Gauss-Newton methods [8].
+For Gauss-Newton and generalized Gauss-Newton operators,
+the same subproblem can also be realized in row space,
+leading to a different scaling regime [32, 14, 13].
+Across these families, performance often depends on interacting choices
+around the solve, damping, estimation cadence, and preconditioning,
+rather than on any single ingredient in isolation.
+2.3 Mapping the Theory to System Design
+Somax targets the compute regimes in Table 2
+by standardizing two contracts:
+(a) curvature access through matrix-free primitives, and
+(b) solve execution through one of three lanes.
+We describe the operator families used in this paper
+and then summarize how each lane realizes the same damped solve
+in Equation (2.4).
+Two operator families are used throughout the paper.
+Exact Hessian (matrix-free).
+The mini-batch Hessian \nabla^{2}\mathcal{L}_{\mathcal{B}_{t}}(\bm{w}_{t})
+is applied by Hessian-vector products (HVPs),
+computed efficiently via Jacobian-vector product (JVP)
+and vector-Jacobian product (VJP) compositions [28].
+The raw Hessian can be indefinite,
+damping in (2.4) is therefore part of the
+definition of the computed direction.
+Generalized Gauss-Newton (GGN).
+For losses of the form \ell(z,y) with z=f_{\bm{w}}(x),
+the GGN takes the form
+\displaystyle\bm{H}_{\mathrm{GGN}}(\bm{w}_{t})=\frac{1}{b}\sum_{i\in\mathcal{B}_{t}}\bm{J}_{i}^{\top}\bm{H}_{z,i}\,\bm{J}_{i},
+(2.6)
+where \bm{J}_{i}=\nabla_{\bm{w}}f_{\bm{w}}(x_{i}) and
+\bm{H}_{z,i}=\nabla^{2}_{z}\ell(z,y_{i})\big|_{z=f_{\bm{w}}(x_{i})}.
+Somax instantiates GGN operators for mean squared error (MSE)
+and cross-entropy (CE) objectives and exposes both matvec
+and, when available, row-operator primitives.
+The same damped subproblem in (2.4) can be realized through
+different execution regimes, which differ in the linear-algebra object
+represented explicitly and in the dominant computational primitive
+(element-wise scaling, matvecs, or row-space solves).
+In Somax, we refer to these execution regimes as lanes.
+Diagonal lane.
+The diagonal lane constructs a diagonal approximation
+\bm{D}_{t}\approx\bm{H}_{t}+\lambda_{t}\bm{I}
+(often estimated and smoothed)
+and applies an explicit inverse:
+\displaystyle\bm{s}_{t}=\bm{D}_{t}^{-1}\bm{g}_{t}.
+(2.7)
+This lane covers diagonal-curvature methods
+in which curvature is represented as per-parameter scaling.
+Parameter-space solver lane.
+The parameter-space lane defines a matrix-free matvec
+v\mapsto(\bm{H}_{t}+\lambda_{t}\bm{I})v
+and solves (2.5) with CG
+(or PCG with a supplied preconditioner).
+This lane covers Hessian-free / truncated-Newton
+and stochastic Gauss-Newton variants
+when the dominant primitive
+is a curvature-vector product.
+Row-space solver lane.
+When \bm{H}_{t} admits a row-operator form, as in GN/GGN methods,
+the system can solve in row space and backproject:
+\displaystyle(\bm{J}\bm{J}^{\top}+\mu_{t}\bm{I})\,\bm{v}_{t}=\bm{r},\qquad\bm{s}_{t}=\bm{J}^{\top}\bm{v}_{t}.
+(2.8)
+This lane exposes a different scaling regime:
+the linear system dimension is b rather than d.
+For mean-reduction objectives,
+we set \mu_{t}=b\,\lambda_{t} so that row-space
+regularization matches the parameter-space damping
+convention in (2.4).
+The remainder of the paper focuses on how this step is realized as a system.
+We next describe the Somax planner-executor design
+and lane-specialized execution.
+3 Somax: A Composable Stack
+JAX JIT boundary (compiled step region)
+User Configuration
+CurvatureSpec \,\cdot\, SolverSpec \,\cdot\, PrecondSpec \,\cdot\, DampingSpec
+\,\cdot\, EstimatorSpec \,\cdot\, TelemetrySpec
+\,\cdot\, Optax
+Assembler
+Validates compatibility \cdot Resolves defaults \cdot Builds module graph
+Planner
+In:
+Module reqs, Solver space, Cadences
+Out:
+Execution lane, Metric Schema, Compute Gates
+Parameter-space lane
+\cdot Param-space CG / Direct
+\cdot Optional Preconditioner
+Diagonal lane
+\cdot Diagonal Preconditioner
+\cdot No Linear Solve
+\cdot Optional Diag EMA
+Row-space lane
+\cdot Row-space CG / Direct
+\cdot Optional Preconditioner
+\cdot Backprojection
+Space="diag"Space="param"Space="row"
+JIT-compiled Step Execution
+1.
+Curvature Init: Bind JVP/VJP closures and prepare step-local operator state.
+2.
+Solve: Compute direction \bm{s}_{t} via lane-specific logic.
+3.
+Apply Update: Run embedded Optax chain \to\bm{w}_{t+1}.
+4.
+Post-Update: Compute \rho, loss-before, and loss-after (cadence-gated).
+5.
+Damping: Update \lambda_{t+1} using consistent telemetry.
+6.
+Pack Info: Populate the planned step-metric outputs.
+Outputs
+Params \bm{w}_{t+1} \,\cdot\, Persistent State \,\cdot\, StepInfo
+Figure 1:
+Somax system architecture.
+The assembler and planner resolve a user configuration into a static execution plan.
+This plan records one lane-specific execution path (diagonal, parameter-space, or row-space), the step-metric outputs, and cadence gates; the resulting step is then JIT-compiled.
+The executor manages the full update lifecycle – from linearization to Optax application and optional post-update control signals –
+ensuring that post-update metrics are consistent with the applied update.
+Figure 1 summarizes the Somax architecture.
+The central design choice
+is to treat curvature-aware optimization
+as a planned step pipeline
+rather than
+as an Optax GradientTransformation.
+For first-order methods, returning a transformed direction is often sufficient.
+For curvature-aware methods, this abstraction is too weak:
+post-update control signals such as actual decrease
+and gain ratio
+must be computed from the applied update,
+which depends on the Optax transform and its internal state.
+Somax therefore executes curvature construction, damped solve,
+update application, and optional post-update control
+within one lane-specialized planned step.
+Somax targets single-accelerator JAX execution under JIT.
+Its step contract enforces five invariants:
+one call to step performs one optimization step;
+one curvature snapshot is constructed per step;
+the execution lane is fixed at assembly time, with no runtime lane branching;
+StepInfo has a fixed structure even when probes are disabled or cadence-gated;
+and post-update control signals are computed from the applied update.
+These invariants make lane choice, solver configuration, damping,
+and estimator cadence configurable under one stable init/step API.
+Multi-device execution introduces additional placement and communication issues
+and is left to future work.
+3.1 Assembly and Static Planning
+Somax separates method description from method execution.
+Users specify curvature, estimator, solver, preconditioning, damping, telemetry,
+and Optax post-processing declaratively.
+During assembly, defaults are resolved and incompatible combinations are rejected,
+so the compiled step contains no runtime compatibility logic.
+Assembly also enforces lane-specific constraints,
+for example when row-space execution requires row primitives
+or disallows incompatible solver features.
+The planner then converts the assembled method into a static execution plan.
+This plan records:
+(i) the execution lane implied by the operator and solver family,
+(ii) a fixed StepInfo schema, and
+(iii) cadence gates for optional work such as loss-after evaluation,
+gain-ratio bundles, and estimator probes.
+The planner is deliberately narrow:
+it does not search over methods,
+but specializes a user-specified configuration into a lane-specific,
+JAX-compatible step path.
+A component-level contract table is provided in Appendix B.
+This plan links the mathematical subproblem in
+Section 2 to the system behavior studied in Section 4.
+By making lane, telemetry, and control paths explicit,
+it turns their cost and interactions into measurable properties of one compiled step.
+3.2 Lane-Specialized Compiled Execution
+At runtime, Somax executes exactly one lane-specialized step function
+selected by the static plan.
+Each step is organized around a single linearization:
+the curvature operator is initialized once,
+the damped subproblem is solved in the selected lane,
+the resulting direction is passed through an internal Optax transformation
+to obtain the applied update,
+and optional post-update probes are evaluated against that update.
+This preserves the semantics required by damping control
+while keeping the outer training loop unchanged.
+Somax exposes the three execution lanes introduced in
+Section 2:
+(i) diagonal scaling with no iterative solve,
+(ii) parameter-space CG/PCG on matrix-free matvecs, and
+(iii) row-space solves, when row primitives are available,
+followed by backprojection.
+These lanes share the same external step interface,
+but differ in their dominant linear-algebra object
+and therefore in their scaling behavior.
+In particular, the row-space lane is a distinct execution regime,
+not a minor implementation variant.
+This distinction is what enables the lane-switching study in
+Section 4.2,
+which compares different physical realizations of the same damped subproblem under one interface.
+3.3 Planned Telemetry and Cadence-Gated Probes
+Somax treats telemetry as part of the step contract rather than as passive logging.
+Some signals arise naturally during execution,
+such as solver iteration counts or convergence flags.
+Others require additional work,
+such as loss-after evaluation or gain-ratio bundles
+for damping control.
+These optional probes are explicitly planned and cadence-gated.
+This design serves two purposes.
+First, it preserves semantic consistency:
+enabled probes are computed from the same applied update
+and, when required, the retained linearization state.
+Second, it preserves JAX stability across ablations:
+when a probe is disabled or skipped by cadence,
+Somax still returns the corresponding StepInfo field
+and fills it with a default sentinel.
+This keeps the output structure static,
+avoids recompilation,
+and simplifies downstream logging across method variants.
+Telemetry is therefore modeled as optional in-step work
+with explicit cadence and explicit cost,
+rather than as free instrumentation added after execution.
+This makes probe overhead a controlled design variable,
+which we isolate in Section 3.4.
+3.4 Design Validation: Cadence-Gated Probe Overhead
+Execution planning is a systems claim, not merely a software abstraction.
+One concrete consequence is that optional probes should incur cost only when enabled,
+and that cost should vary with cadence.
+We therefore report a single-device microbenchmark
+that isolates cadence-gated post-update probes under a fixed step contract.
+This benchmark validates one planner-visible mechanism,
+rather than the full benefit of planning.
+The benchmark runs on a single NVIDIA RTX A4000 (16GB)
+with the JAX GPU backend on a synthetic regression workload with static shapes.
+The model is a two-hidden-layer ReLU MLP of width 1024,
+with scalar output, input dimension 512, and batch size 256.
+We time the JIT-compiled step after warmup
+and report steady-state median and p90 step time.
+We instantiate a Newton-CG configuration in the parameter-space lane
+with constant damping and fixed solver settings,
+and vary only the cadence of the post-update rho bundle,
+which computes actual and predicted decrease and therefore requires
+additional post-update work.
+All other components are held fixed.
+The benchmark sweeps rho_every_k over
+{-1, 10, 5, 2, 1},
+where -1 disables the probe entirely.
+Table 3:
+Microbench: steady-state overhead of cadence-gated rho probes.
+Overhead is reported relative to probes disabled.
+Setting (rho_every_k)
+Median (ms)
+p90 (ms)
+Overhead vs. off
+off (-1)
+0.84
+0.87
+0.0%
+every 10 steps (10)
+0.95
+1.16
+12.4%
+every 5 steps (5)
+0.96
+1.33
+13.8%
+every 2 steps (2)
+1.30
+1.40
+57.2%
+every step (1)
+1.33
+1.34
+53.7%
+Table 3 shows that post-update probes
+are a material systems cost rather than “free logging”.
+Sparse cadences increase steady-state median step time
+by about 12-14% relative to probes disabled,
+whereas dense cadences increase it by more than 50%.
+In particular, enabling the rho bundle at every step
+raises the median from 0.84 ms to 1.33 ms.
+This is exactly the contract the planner is meant to expose:
+disabled probes incur no cost,
+sparse probes incur bounded cost,
+and dense probes become a dominant part of the step.
+Section 4 builds on this execution model
+to study lane choice, solver-control interactions,
+and estimator cadence under controlled configuration changes.
+4 Experiments
+4.1 Experimental Setup
+We evaluate Somax as a systems stack
+for curvature-aware training rather than
+as a universal optimizer ranking.
+The experiments comprise three case studies:
+lane-dependent scaling on synthetic regression,
+solver-damping interactions on Fashion-MNIST,
+and estimator-driven diagonal methods
+on CIFAR-10 with ResNet-20.
+All experiments use single-accelerator JAX execution under JIT.
+Additional implementation and protocol details are provided in Appendix C.
+4.2 Somax Exposes Structure-Aware Execution Regimes
+For structured curvature operators,
+execution lane is a first-class systems choice.
+Generalized Gauss-Newton (GGN) is a representative case:
+the same curvature family admits either parameter-space solves or structured row-space solves.
+Somax exposes this choice explicitly while preserving the same optimizer-facing interface.
+This distinction appears concretely
+in classical second-order methods.
+Stochastic Gauss-Newton (SGN) [8] executes the damped linear solve in parameter space,
+whereas Exact Gauss-Newton (EGN) [13] transfers the computation to a row-space system
+defined by Jacobian structure.
+These methods are therefore a natural pair for isolating the systems consequences of lane choice:
+they share the same curvature family, but their dominant linear-algebra objects scale differently.
+We evaluate this effect on a controlled
+synthetic regression workload
+designed to vary the two quantities that most
+directly determine the relative cost of the two lanes:
+parameter dimension and batch size.
+We compare two matched second-order configurations that differ only in execution lane,
+namely a parameter-space CG configuration
+and a row-space CG configuration.
+The loss, outer update semantics, learning rate, damping policy, and inner-solver budget are held fixed.
+Figure 2:
+Steady-state step time for matched parameter-space and row-space configurations under a shared training interface.
+Left: increasing model size at fixed batch size. Right: increasing batch size at fixed model size.
+Figure 2 reports
+steady-state step time under two sweeps.
+In the left panel, we fix batch size
+and increase model size, thereby increasing parameter dimension while keeping the row-space dimension fixed.
+In the right panel, we fix model size and increase batch size, thereby increasing the row-space dimension while keeping parameter dimension fixed.
+The resulting curves expose distinct scaling signatures.
+As model size grows, the parameter lane becomes substantially more expensive,
+while the row lane grows more gradually.
+As batch size grows, both lanes slow down,
+but the row lane retains a consistent advantage throughout the tested range.
+The key observation is not that one regime universally dominates.
+Rather, when curvature structure can be exploited,
+Somax turns that opportunity into an explicit execution choice with its own scaling law.
+Changing the execution regime changes the dominant
+linear-algebra object and therefore the cost regime
+of the second-order step,
+even though the outer init/step interface remains unchanged.
+4.3 Interactions Between Modules Shape Performance
+Table 4: Interactions between solver modules shape
+performance on Fashion-MNIST.
+Solver
+Precond.
+Damping
+CG budget
+Time to 85% (s)
+Final acc (%)
+SGD
+–
+–
+–
+1.60
+90.58
+Adam
+–
+–
+–
+1.23
+90.39
+SGN
+–
+const
+light
+3.52
+90.69
+SGN
+–
+const
+heavy
+4.79
+90.09
+SGN
+–
+trust region
+light
+7.33
+89.69
+SGN
+–
+trust region
+heavy
+9.13
+91.14
+SGN
+sq grad
+const
+light
+3.54
+90.81
+SGN
+sq grad
+const
+heavy
+5.48
+90.27
+SGN
+sq grad
+trust region
+light
+–
+19.46
+SGN
+sq grad
+trust region
+heavy
+–
+9.03
+Prior work on practical second-order optimization
+has repeatedly shown that performance is governed
+not only by the curvature model itself,
+but also by the interaction between linear solves,
+damping, and preconditioning [19, 37].
+Somax is designed around this observation:
+rather than treating a second-order method
+as a monolithic optimizer,
+it exposes the main control components as composable modules under a shared step interface.
+This case study fixes the parameter-space SGN setting
+on Fashion-MNIST and varies three modules:
+the damping policy, the CG budget, and
+the use of diagonal preconditioning.
+All runs share the same dataset, model, batch size, and training loop.
+For each configuration,
+we perform a learning rate search,
+selecting the best rate,
+and then report results averaged over 5 seeds.
+We include SGD and Adam for context,
+but the primary purpose of the experiment is to
+compare second-order module combinations under fixed lane and curvature choices.
+We use two predefined CG budgets:
+the light budget uses a small iteration cap and loose tolerance, while the
+heavy budget uses a larger cap and tighter tolerance.
+Exact model and protocol details,
+including the model architecture
+and the exact definitions of the light and heavy CG budgets,
+are given in Appendix C.
+Table 4 summarizes the resulting interaction study.
+Several interaction effects are immediately visible.
+First, damping strongly changes the usefulness of a given CG budget.
+With constant damping,
+the light budget reaches the target faster
+than the heavy budget while achieving similar final accuracy.
+With trust-region damping,
+both configurations are slower,
+but the heavy budget attains the best final accuracy among the SGN variants.
+Second, increased solve effort does not uniformly improve performance.
+Heavier CG budgets consistently increase wall-clock time-to-target,
+and under constant damping they do so without improving final accuracy.
+Third, diagonal preconditioning is not uniformly beneficial in this setting.
+With constant damping it behaves similarly to the non-preconditioned baseline, with nearly identical time-to-target and final accuracy.
+Under trust-region damping,
+however, diagonal preconditioning performs poorly:
+the light and heavy configurations reach only 19.46%
+and 9.03% final accuracy, respectively.
+This suggests that module compatibility cannot be assumed,
+as the chosen diagonal preconditioner interacts unfavorably
+with trust-region acceptance dynamics.
+We show that practical second-order behavior within
+a fixed lane emerges from module interactions
+rather than isolated knobs.
+The goal is not to identify a universally best method,
+but to show that changing a small set of modules can materially affect performance.
+Somax makes these interactions efficient, explicit,
+swappable, and measurable under a shared execution contract,
+turning solver design from ad hoc optimizer rewriting
+to auditable configuration.
+4.4 Composability Enables New Optimizer Regimes
+Figure 3:
+Wall-clock performance comparison of
+SGDM and Sophia-style optimizer regimes on
+CIFAR-10 with ResNet-20.
+Thick lines show mean test accuracy across 5 seeds; shaded bands indicate \pm 1 standard deviation.
+Somax treats second-order optimizers as
+compositions of modular components rather
+than fixed algorithms.
+Under this view, Sophia-style methods can be expressed as particular choices of curvature operator,
+diagonal estimator, refresh cadence, and outer update logic.
+For example, Sophia-H corresponds to an Exact Hessian curvature operator combined with Hutchinson diagonal estimation and diagonal EMA preconditioning,
+while Sophia-G replaces the curvature-estimation pair with GGN curvature and the Gauss-Newton-Bartlett estimator [15].
+This factorization exposes a broader design space in which related diagonal second-order regimes can be assembled under the same training interface.
+To illustrate this design space,
+we construct a new Sophia-style regime on
+CIFAR-10 with ResNet-20 by combining GGN curvature
+with Hutchinson diagonal estimation.
+We denote this configuration as Sophia-N.
+The point is not to claim algorithmic novelty in isolation,
+but to show that Somax makes such recombinations straightforward
+to express and evaluate within a shared training pipeline.
+All methods use the same model and surrounding training loop,
+with SGDM included as a first-order reference.
+Figure 3
+reports test accuracy against wall-clock time.
+SGDM achieves the strongest final performance within the common wall-clock budget,
+reaching 92.21\pm 0.15 test accuracy.
+Among the Sophia-style methods, Sophia-G and Sophia-N perform similarly, reaching 91.99\pm 0.33 and 91.83\pm 0.13, respectively, while Sophia-H trails at 90.74\pm 0.29.
+Sophia-N converges competitively with established Sophia variants,
+showing that modular recombination
+can produce new configurations
+without requiring monolithic optimizer implementations.
+This is the main systems point of the experiment: once the optimizer is factorized into interchangeable modules,
+new optimizer regimes become concrete,
+testable assemblies
+rather than one-off optimizer implementations.
+5 Conclusions and Future Work
+We introduced Somax,
+a composable Optax-native stack
+that makes curvature-aware training a planned, compiled step pipeline.
+Each step constructs a single step-local curvature state,
+runs a lane-specialized solve (diagonal, parameter-space, or row-space),
+applies the direction through an embedded Optax update transformation,
+and updates auxiliary method state.
+A planner records the execution lane,
+the fixed output structure for step metrics,
+and cadences for optional computations,
+yielding a stable step interface for controlled second-order experiments.
+Our experiments support three design claims.
+First, execution lane is a first-class architectural choice:
+parameter-space and row-space realizations have different cost models
+and scaling regimes under the same step contract.
+Second, solver behavior is coupled to damping and preconditioning;
+Somax makes this interaction measurable by computing post-update control signals
+from the applied update.
+Third, the same contract can enable new optimizer regimes through
+modular recombination.
+Future work.
+Somax is designed to admit further curvature-aware
+optimizers as contract-preserving extensions.
+Natural next steps include structured preconditioners,
+such as Kronecker-factored [18] or
+tensor-axis methods [9].
+Quasi-Newton methods [1, 4, 38]
+can be integrated as memory-bounded preconditioners,
+including diagonal-lane variants.
+Randomized and sketch-based curvature
+approximations [17, 29]
+offer another axis, enabling rank-controlled operator primitives
+while preserving the same step interface.
+The main systems extension is multi-device execution.
+Distributed curvature-aware training introduces additional concerns,
+including parameter and optimizer-state sharding,
+communication-aware lane placement,
+and collective operations for curvature statistics.

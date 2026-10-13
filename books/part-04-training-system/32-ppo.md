@@ -208,6 +208,10 @@ rho_t(theta)
 
 但全期望恒等不证明 conditional clipping 与 marginal clipping 等价，也不授迭代单调改进保证。实际 rollout policy、reference 与蒸馏后的策略可能不同，conditional entropy 也不是 marginal entropy；EMA、score regularization 与 fitting budget 都成为稳定性条件。CPPO 的受限连续控制实验显示 flow steps 不进入全部优化反向链，却仍增加采样、额外训练与拟合误差；作者 Ant 配置比 Gaussian PPO 慢约七成到一倍，不能当作无成本表达扩展。它不是离散 LLM policy 的现成替代；density 可得、预算有限或蒸馏不稳定时保留标准 PPO/Gaussian。 [机制与限制](https://arxiv.org/html/2603.04790v1)见 §3.1–3.3、§4.2/4.3 与 Appendix A/C。
 
+另一条连续动作分支不再为 flow policy 构造可计算的 conditional density ratio，而是从当前策略为同一 state 生成多个候选，让 critic 的相对值形成归一化软权重，再用候选端点与噪声之间的条件 flow-matching 回归拟合下一策略。这样训练保留多个候选，不必反传全部采样 solver 链；但[受限加权回归](https://arxiv.org/html/2603.17685v1)在交互和 critic backup 时仍选最高值候选，训练人口与真实执行消费者并不相同。共同高估、候选支持缺失和回归误差不会由 softmax 自动消失；它不是原 PPO ratio/clipping 的等价改写，也不直接替换离散 LLM policy。<!-- source-family:SF-2026-ARXIV-2603-17685 -->
+
+该选择把密度求值压力换成候选采样、critic 与回归预算，ODE 积分并未从交互路径消失。若另用 latent divergence 和 tanh Jacobian 修正调节探索，需分别核实际 flow 人口、线性训练插值人口和部署离散 solver：某点的 trace 无偏不保证真实策略熵已无偏，候选权重的集中度也不签发训练后策略的硬 trust region。原有限控制对照有任务和阶段反退、不同网络/候选/solver预算及最大 checkpoint 选择；全部采样、双 critic、trace 梯度、拟合与评价付费，不授免费表达扩展、单调改进或真实安全。密度可得、critic 或代理不稳时，保留显式 Gaussian/标准 PPO、独立结果验收与受限拟合，而不以坐标落界或更分散权重批准物理行动。<!-- source-family:SF-2026-ARXIV-2603-17685 -->
+
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-07331:start -->
 逐 token ratio 只比较当前 action probability，不能直接表达更早 token 已改变当前 prefix state；把截至位置 `t` 的 ratios 累乘可更贴近 prefix-level policy shift，却让 log-ratio variance 随位置增长。PPO branch 因而要把 ratio granularity 与 position-adaptive clipping 一起版本化：后部 token 使用按校准长度增长的 log-space bound，并分别报告位置 clip rate。它以较低 state mismatch 换更高方差和长度敏感性；policy lag 过大、长序列比率爆炸或校准不足时，回退 token ratio、sequence ratio 或更频繁 rollout 同步。`arXiv:2605.07331v1` 只支持论文披露的任务、长度与训练设置，不证明任意长文本或异步 rollout 稳定。
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-07331:end -->
@@ -220,6 +224,10 @@ N-step ratio 在单 token 与完整 prefix 累乘之间选择一个有限 horizo
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-20865:end -->
 
 若进一步从历史 policies 中选择可重用 rollout，admission 不应只看每条 importance ratio，也要看这些估计量共同形成的采样人口。可以先估计各历史 policy 的 likelihood-ratio gradient variance，再按阈值决定 reuse set；但平均后的方差还含跨历史估计量的 covariance，不能自动按集合大小同比下降。动作概率 ratio 也未修正 evolving-policy history 的 state occupancy，随机 downsampling 只改变抽样方式，不把已有历史变成独立数据。[VRER 的 exact-v1](https://arxiv.org/html/2602.05379v1)在有限控制任务中支持这种 variance-conditioned reuse 分支；moving-block bootstrap、KL/Adam-moment 近似各有混合与矩估计前提，buffer 增长还进入偏差和收敛条件，不授通用 LLM 收益或无偏保证。选择、KL、历史参数与重用计算都需计费；高相关、近似失真或旧数据退化时，应缩小 buffer、收紧 admission 或重新采样，普通短窗口 PPO 与更频繁同步仍是合理基线。<!-- source-family:SF-2026-ARXIV-2602-05379 -->
+
+重用历史还可以改变更新目标，而不只为 PPO 选择低方差旧策略。对离散语言模型，一条 value-based 替代分支把同一模型的 logits 当作 soft Q、其 log-sum-exp 当作 V，以起点 value 相对 reference 的偏移、整条 response 的 log-probability 差与已验证 outcome 构造 trajectory residual；FIFO 保留轨迹供当前模型重新求值，再对这个 residual 回归。这不是把旧 rollout 自动变成 on-policy，也不是原 clipped policy-gradient 的等价改写；完全同参数初始化且零 reward 时 residual 为零，只是初始一致性检查，不证明所有最优解唯一、value 校准或所有历史支持充分。<!-- source-family:SF-2026-ARXIV-2603-23355 -->
+
+[ReVal 的受限数学对照](https://arxiv.org/html/2603.23355v1#S4)把 fresh 与旧数据更新、reference 重置、reward 归一化和 β 共同带入训练合同：reference 重置改变锚点，零 reward 也不等显式压低错误答案；过弱/过强约束和不同负样本构造均可退化。部分任务低于 GRPO，重复更新预算、局部达到目标的步数与全训练 wall-clock 不能互代；原文 reward-shaping/Bellman 桥与 value 项反传说明尚未闭合，不能据此补造已验证执行配方。轨迹、reward/参考版本、重新求值、buffer 与额外更新及评价都计费，应分别验更新目标和真实 outcome；数据覆盖、偏移或实现不可靠时，缩小历史支持、重新采样并保留普通 PPO/GRPO，而不由可算 residual 自签收敛或净加速。
 
 朴素 surrogate objective：
 
@@ -323,6 +331,8 @@ L_total
 ```
 
 Reference KL 可以进入 reward shaping 或独立 loss。系数、normalization、masking 和 sign convention 依实现而异，阅读代码时必须先恢复数学定义。
+
+系数本身也可能需要反馈，但先区分熵正则的权重与生成时的采样温度：前者改变训练目标，后者改变采样分布。固定熵权重或围绕目标熵调节，在阶段稳定时更简单；一条受限的平均奖励 actor–critic 分支，改用近期奖励的时间自协方差估计策略适应的阻力，在波动持续时减慢熵权重退火。它改变调度器的观测量，不改变 reward 的真实性，也不是 PPO clipping 的替代。相关几何解释依赖策略近似平稳、混合与缓慢驱动；实际使用 replay 近期片段会混入旧策略，重新收集当前策略轨迹则增加成本。单个连续控制环境的五次实验不证明 LLM/PPO 更优，单调退火还可能妨碍重新探索；统计不稳或阶段变化时，应保留固定系数、目标熵反馈和独立质量对照，而非把理论路径当通用训练保证。<!-- source-family:SF-2026-ARXIV-2603-12324 --> [受限方法与证据](https://arxiv.org/html/2603.12324v1)。
 
 ## PPO 的一次训练迭代
 
@@ -450,6 +460,8 @@ PPO 把 policy rollout、advantage estimation 和受限更新组织成循环。P
 
 ## Review notes
 
+- `SF-2026-ARXIV-2603-12324` — Daily `2026-03-17`补03/16自然日；[exact-v1](https://arxiv.org/html/2603.12324v1) §2–5/Appendix A–B/Eq4–9/Algorithm1，2+1+2=5，近期reward时间自协方差调节熵系数观测量差额深入。root必要原证/实际owner及逐字一段PRE经resume_review17_18独核通过，resume_mar17不重复原证，仅顺读实际Ch32 278–350完整局部后依root窄锁落实。平均奖励ASAC/平稳混合慢驱动、replay偏差、五次单环境而非LLM/PPO、总成本/原系数回退近文；非writer resume_review17_18实际Ch32 310–347完整局部邻接及449–461本人455注回对已核PRE/必要Source，局部POST通过；更新本人注后最终定点回读待核，不授DAY、一般最优、artifact核验或复现。
+
 - `SF-2026-ARXIV-2601-16175` — Daily `2026-01-24`补查；[Learning to Discover at Test Time exact-v1](https://arxiv.org/html/2601.16175v1) §3/4.2/4.5，method与matched-sampling/无复用反侧。2+2+3=7，采用single-best artifact与期望policy return分责、adaptive entropic与max-child复用的条件目标；仅GPU kernel例证，不展开Science。50×512=25600，不采Fig4错分母256000；sampler/learner与总compute分账、可信reward及beta失效近文。root必要原证及actual Ch32 opening PRE通过授窄锁；作者实际正文/完整邻接/自身末注顺读，root非写入者实际35–74邻接与自身末注447 POST通过，窄锁释放，不授日级。未核artifact/复现。
 
 - `SF-2026-ARXIV-2601-07320` — Daily `2026-01-14`；[SAE exact-v1](https://arxiv.org/html/2601.07320v1) §3–5必要完整读；Eq5–10、Table1、§5.3.2/3与uniform theorem假设仅采用受限边界，非全附录证明。2+1+2=5，sampled-token概率二值trace gate相对固定GAE/连续entropy-time的字段差额深入。γ1/terminalbinary、flat单critic/逐token更新、低prob非语义/因果、uniform bound非动态保证、32×端点reference近似与AMC负侧/不同更新步数/全费保留近正文。root实际必要源与actual owner PRE通过授一短段窄锁；作者新正文与完整局部邻接已实际顺读，peer非writer实际新101/完整75–117/自身443注POST PASS，root采纳释放窄锁；未核artifact/复现，不授日级Gate。
@@ -494,3 +506,7 @@ Primary-source 校验入口：
 - `SF-2026-ARXIV-2603-10219` — Daily `2026-03-13`补查；[exact-v1](https://arxiv.org/html/2603.10219v1) §1、连续算法、Lemma7与Appendix D。2+1+2=5；root非准备者实际独核采用的多动作相对logit漂移、合法三动作例、两动作正漂移和未证明离散近似边界，Ch32具体差额/PRE通过。两段融入policy-gradient方差与baseline交接；不采用整套上下界为离散PPO保证，未核artifact或复现。mar13_supplement非writer实际新增、完整局部邻接与本人末注POST通过，root实际回读、同步并释放窄锁，不授日级验收。
 
 - `SF-2026-ARXIV-2603-07927` — Daily `2026-03-11`补查；[SWE-Fuse exact-v1](https://arxiv.org/html/2603.07927v1) 必要94–192/242–280/405–494（§5仅header）。2+2+2=6，数据泄漏/clip身份边界与actual owner差额深入；Ch27数据责任已有，不双owner新增。review_mar11_continue实际必要Source/Ch32 owner及逐字PRE通过，root授原276完整后单段+本人末注窄锁；作者实际204–321完整局部与Ch31/33交接已读，新增已写。Current entropy/sign、退化minmax/梯度guard未补、非参数硬界、因果与test权限、全费用与固定clip/独立audit退路近文；review_mar11_continue非writer实际完整正文/邻接与本人注POST通过，窄锁已由root确认释放，不授DAY、artifact核验或复现。
+
+- `SF-2026-ARXIV-2603-17685` — [FMER exact-v1](https://arxiv.org/html/2603.17685v1)必要§3–5/Eqs4–20/Alg1/T1–5与A1–3/B/C/D，current [v3受影响entropy/ESS](https://arxiv.org/html/2603.17685v3)§4.2–4.3/B4–6定点。仅候选加权CFM回归与交互Top1分责；保Gaussian-path ELBO→部署ODE桥、真实flow/OT人口和ESS非硬KL隔离、质量反退、solver/critic/trace及全费用。不采严格entropy/单调改进/全域trustregion、离散LLM替代或物理安全，未核代码/全部曲线像素/复现。
+
+- SF-2026-ARXIV-2603-23355 exact-v1 §4–5/Eq2–3/Alg1/T1/F3–9+A/C/D/E必要范围；只采用独立定义的logit Q/V trajectory residual与FIFO重复求值更新合同，初始zero仅同参数，不采两shaping转换/Bellman等价桥、Eq4遗漏value梯度完整recipe、唯一定理/全局optimum或4.3x全费；保β/negative/reset与任务反退、预算/评估人口及全费用，未核实现/复现。

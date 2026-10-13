@@ -359,6 +359,10 @@ BPE 与 Unigram 的局部或迭代选择易实现、稳定且兼容成熟 checkp
 
 更长 item 不必然缩短实际序列：HF added-item 优先匹配可能先吃掉一个短片段，破坏原本更好的合并，使某些输入的 token 数反而增加。因此选择阶段要跑真实 tokenizer 执行路径，而不是只比较候选字符串长度；初始化也要连同 BPB、held-out 任务和原支持语言的回归验收。原文有限模型/语言中，FVT 在部分 Latin 切片更好，原先不支持语言及其他质量切片也有退步；表示探针、embedding 适配与额外词表参数均有成本，不能从 fertility 改善推出端到端推理收益。旧 vocabulary、简单组合初始化或更长 continued pretraining 在映射不稳或收益不足时仍合理。<!-- source-family:SF-2026-ARXIV-2604-16656 -->
 
+固定词表迁移仍为每个新 item 分配离散参数；另一条分支则保留确定的文本切分规则，让开放字节串经过因果局部 encoder，再由组内 cross-attention 计算一个 word-level latent，交给全局 backbone，最后用已移位的 next-word latent 条件化逐 byte decoder。这并非“没有分词”：Unicode、camel case、空白与标点规则仍决定组边界；变化在于不再为所有可能的 word 保存固定查表行。复用旧 backbone 也不是热换 tokenizer，旧 embedding 与 LM head 被新 encoder、connector 和 decoder 替换，必须通过冻结起步与继续训练恢复接口。固定 subword/checkpoint 在无需迁移或兼容验证更重要时仍是合理基线。<!-- source-family:SF-2026-ARXIV-2603-15953 -->
+
+较短的全局序列也不自动成为较快的服务：word 内的 byte 生成可以只走轻量局部环，跨 word 边界才再次调用 backbone，因此一次请求同时持有 byte/word 两种进度与不均匀映射的两份 KV；只有两边都能继续分配，它才可前进。批内等待边界以提高 backbone 利用率，会与输出延迟相冲突，字节层的小参数量也可能伴随更大的 activation。[受限迁移与 serving 说明](https://arxiv.org/html/2603.15953v1)明确报告当前批处理吞吐低于 FLOP-matched tokenizer 模型；bytes-per-backbone-position 是压缩单位，不是端到端收益，任务质量也有反退。迁移训练、规则边界、双状态协调或目标流量回归不合算时，应保留稳定词表与普通生成路径；下面的 dynamic patch 分支则进一步把边界选择本身交给模型。
+
 ## Dynamic Byte Patch 把分词边界变成 Runtime State
 
 增量 tokenizer 仍执行冻结的分词规则；下面的分支则连边界的产生方式也改了，因而需要模型配合，不能当作前面增量编码的等价执行优化。
@@ -466,3 +470,5 @@ Primary-source 校验入口：
 - Zhenyu Zhang, Zhichao Cao, "TokTier: Exact Stateful Tokenization for Agentic LLM Serving", 2026（Status: Emerging；作者实验，不外推性能数字）: https://arxiv.org/abs/2607.29678
 
 - `SF-2026-ARXIV-2602-13940` — Daily `2026-02-18`；[exact-v1](https://arxiv.org/html/2602.13940v1) §3–4、必要消融/配置。2+1+2=5，expected conditional loss与离散边界梯度差额深入；Eq9 Jensen等号、discount/batch-baseline最终无偏不采用，固定估算FLOPs非实际吞吐。root必要源/actualowner PRE通过，实际正文/邻接与末注经root非作者POST通过，窄锁释放；未核实现或复现，非日级验收。
+
+- `SF-2026-ARXIV-2603-15953` — Daily `2026-03-19`补`03-18`自然日；[HAT exact-v1](https://arxiv.org/html/2603.15953v1) §3.1–3.4/4.2/6/7.1–7.3.1及直接质量反侧，2+2+3=7。只采用rule-split/learned-word接口、旧backbone适配与byte/word双clock/KV成本；tokenizer-free非无规则，压缩非吞吐，FLOP-matched批处理反退/任务质量反侧近正文。不授热换兼容、普遍质量/加速或生产SLO；未核代码或复现实验。
