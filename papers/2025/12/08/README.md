@@ -2,34 +2,43 @@
 
 **规范：** V3
 **窗口：** 2025-12-07T09:00:00+08:00 ～ 2025-12-08T09:00:00+08:00
+**窗口说明：** 用户授权仅補已有2025 Daily来源遗漏；原候选/date/score/window及连续完整旧§4冻结，新增仅前一完整BJT自然日。
+**补充窗口：** 2025-12-07 ～ 2025-12-07
+**冻结候选日期：** [补查前原报告](../_sources/daily-20251208/baseline-before-supplement-20261014.md)
 **状态：** 完成
 **Books：** 纳入本次
-**检查时间：** 2026-10-02T20:38:20+08:00
+**检查时间：** 2026-10-14T09:41:22+08:00
 
 ## 1. 结论
 
-14每日源按本日原始邻接独立有界处理，0个已证明完全落窗的家族，不表示零事件。按Mill实际原文差额撤回00602/04988/06645的关闭，15个arXiv潜在家族与GLM-4.6V/AutoGLM共17个具名保留项，15项完整题摘/必要核心后贡献前关闭；另有明确窗外版本下界。BSFA的全QK后省value work、DAG-Shapley的条件缓存复用、SRPG的重建泄漏边界及新增三项窄反证均保留，不照录性能/安全保证。作者重开归并和正式同步已做，普通待办0，已由Mill独立局部核验并完成日级验收，结果见§6；公开日期、历史目录及精确release缺口安全隔离，不授其准入/Evidence/Books，也不以隔离本身授日级通过。没有共享Books改动或整合完成声明。
+本轮只补2025-12-07完整BJT自然日，原小时window、空候选/date/score、完整§3与连续旧§4冻结。原15arxiv潜力经官方current撤回校准为**14P1W**；AgentNet++00614 currentv2明确withdrawn/confounded/overclaims/fabricated references，原v1只保历史身份与反侧，已清本日潜力、日期请求、评分/采用链。root精确id/name Books rg无匹配只支持这两串无命中，不证明所有别名无历史采用，也不授书写。其余原题摘/必要core与反侧按精确身份/命题复用，不重全文。
+
+本日由精确VLC abs真实browse进入cs.DC/2025-12，332月库存/首50只有月身份；实际只前十，Feynman§7/9已核**5P（00719/00705/00902/01357/01549）与5C（00233/00398/00623/00595/01039）**。八含糊项完整AB、00398完整AB抽核、00623明确题名止；FlexiWalker直接表示学习采样关系及两个strong-C最低域/反侧已核，不扩剩40或332全文。旧29 arxiv完整题摘与新9完整题摘分层共38个实际AB身份（含00614历史v1，不等采用），另新1题名止和旧9窗后Submitted下界只身份；不称48篇当天论文或全Evidence。
+
+当前19 arxiv窄潜力未获必要公开日，GLM更早论文另责，Feynman§13实际核为20唯一日期保留。GLM/AutoGLM官方Dec08 release只该事件窗后O已Feynman§11–13核，不抹去更早研究责任；AutoGLM原Blog2024PhoneUse与本次开放release分开，不创造无身份的所有早稿请求。原14 arxiv C及Virgin采用访谈C有效复用，新5C后当前20个具体关闭（19arxiv＋1访谈），不是全量原库存关闭。新旧所有未知日项均不先评分/入表/正面Evidence/Books；本日正式/评分/采用Evidence/Books新写仍0。
+
+14每日源已按本日实际入口/恢复/有限停止执行；成功目录字段与Meta/Qwen/Hunyuan/Zai/MiMo历史限制分责，不授全Coverage或无遗漏。新七current仅AB/元说明比较，BSFA current具体评价差额不倒填v1；IslandRun静态规范/伪码冲突不称运行漏洞，01039 expected KPI不称自系统实测。原BSFA条件owner/gap未采用且无新Books锁/写，不以潜力替日证。详情见[Source](../_sources/daily-20251208/SUP_SOURCE_20261014.md)、[FIRST](../_sources/daily-20251208/SUP_FIRST_20261014.md)、[CURRENT](../_sources/daily-20251208/SUP_CURRENT_20261014.md)、[DATE](../_sources/daily-20251208/SUP_DATE_20261014.md)。Feynman§14真实完整六节DAY与§15实际保存完成态FINAL均通过，普通研究/来源/写书待办0；root§16已实际接纳本日报安全终态，State由root更新73/132、59待；本日行政闭合后fresh已有Dec09，不重研究。
 
 ## 2. 来源覆盖
 
-实际查询、分页/邻接、逐项处置与必要核心见[本日原始记录](../_sources/daily-20251208/WINDOW_REVIEW.md)。固定历史目录复用原始字段，不从前日报结论套完成。
+下表是本轮实际范围；[SOURCE§1–4](../_sources/daily-20251208/SUP_SOURCE_20261014.md)保留请求/字段、失败与恢复原件，旧[WINDOW](../_sources/daily-20251208/WINDOW_REVIEW.md)仅作精确有效身份/原读域复用，不代本次来源检查。没有未读全pool或重复失败循环；字段无命中不授机构零研究。并行Nov12的429/timeout不是本日观察。
 
 | 来源 | 检查范围与依据 | 结果 | 缺口 |
 | --- | --- | --- | --- |
-| SRC-OPENAI | 本轮RSS403；原始1243项相邻Dec4 19GMT/Dec8 00、04、06GMT；正确Virgin官方访谈核心 | 已检查 | 本窗相交的企业采用访谈贡献前关闭，不授全站召回 |
-| SRC-ANTHROPIC | 原始publicationList Dec4 17Z/Dec18邻接 | 已检查 | 不宣称冻结历史或全机构无遗漏 |
-| SRC-GOOGLE-AI | 原始2025Blog第1页Dec4/Dec10、DeepMind第3页Dec3/Nov21 | 已检查 | 只声明目录主题范围 |
-| SRC-META-AI | 原始第4页Dec12/Dec1/Nov19至Nov10 | 已检查 | 收录不授首次公开 |
-| SRC-QWEN | 旧Sep23/新站空及部署/README有限替代 | 受阻 | 2025旧目录隔离 |
-| SRC-DEEPSEEK | 正确API Docs Dec1/2026 release邻接 | 已检查 | 错误news重定向不恢复历史正文 |
-| SRC-MOONSHOT | 原始26项Overview Nov7及Nov6 changelog | 已检查 | 不扩日常仓库提交 |
-| SRC-TENCENT-HUNYUAN | Research失败、All API11项全2026 | 受阻 | 2025旧Research隔离 |
-| SRC-ZAI | 原始All两页15/18项至Dec7/8；本轮对象144/145、官方card/AutoGLM Blog及README | 受阻 | 午夜式日编码/迁移字段不授上线，当前artifact非2025冻结 |
-| SRC-BYTEDANCE-SEED | 原始2025paper首20至Dec2/Oct22、Blog首20至Dec2/Nov27，前界Dec15/16 | 已检查 | 限该入口邻接，PublishDate日编码不补时刻 |
-| SRC-BAIDU-ERNIE | 原始第2/2页至Nov7、Nov21/Dec9邻接 | 已检查 | 无全机构零事件保证 |
-| SRC-XIAOMI-MIMO | 原始Paper8项、Blog15项与HSS/Safety部署路由 | 受阻 | 无date/旧More历史缺口隔离 |
-| SRC-MINIMAX | 原始英中13项Oct27/Dec23邻接 | 已检查 | 无具名触发，不扩Tech Blog |
-| SRC-ARXIV | 四组Dec7主线主题查询、cs.OS首段23标题/cs.MA首25标题及具名v1 | 受阻 | 月身份/提交不授first-public，个体日精度隔离 |
+| SRC-OPENAI | 新RSS首请求exit28/316282部分XML无效；一次压缩恢复200、解压785022/标准XML1288项，Dec05Australia→Dec08Virgin08BJT/Enterprise12/Instacart14→Dec09邻接，Dec07该feed无项 | 已检查 | 仅feed段，不授全机构；旧Virgin完整问答C有效，Dec08原事件不搬到Dec07 |
+| SRC-ANTHROPIC | 新HTML283753；30JSON值＝27结构root＋3scalar，post179出现/176唯一slug/170非空唯一datevalue，Dec04 17Z→Dec18/19，Dec07字段无项 | 已检查 | 目录字段非冻结2025全史/170对象，不读2026正文 |
+| SRC-GOOGLE-AI | 2025Blog首12/of9页：Dec10→Dec04→Dec03→Nov；DeepMind Publications首30/265：2026→Dec03→Nov21/04，未翻next | 已检查 | 仅有限相邻主题切片，库存265非全文队列/全召回 |
+| SRC-META-AI | 本次Research0可读行；旧p4接口失败只复用限制，不冒本次p4成功 | 受阻 | 缺具名2025原Research邻接/dated研究发布；不授零项或正面Coverage |
+| SRC-QWEN | 首compressed传输529898/部分file2254876、exit28；一次完整JSON4781799/40 articles，元date SAPO/TTSDec05→OmniFlashDec09→Dec19/23/31，Dec07字段无项 | 受阻 | 成功数组有限字段可用，无total/next不授完整2025；未收录历史段需具名原2025记录，不重raw |
+| SRC-DEEPSEEK | Docs news原GET200/48088却Your First API Call，webtimeout；主站真实Research link恢复V3.2 News原title/2025-12-01发布开头 | 已检查 | 错误重定向不作正文；只已知Dec01事件/原入口，不授Dec07全机构零项/完整技术Source |
+| SRC-MOONSHOT | 指定Kimi Blog26最近Nov07，经真实link读changelog Nov06→Oct27→Sep05 | 已检查 | 限目录/原邻接，不扩其他locale或日常GitHub提交 |
+| SRC-TENCENT-HUNYUAN | Research0行；新publicList page1/size20/EN、code0/data.totalNum9/list9，published/display均2026最早Feb03、update另责 | 受阻 | 当前9项非旧11成功或2025零项；需具名2025原Research/发布邻接，Jun25发布与Apr23展示不混钟 |
+| SRC-ZAI | Research All15末Dec10/09/查看更多，实际page2不可达；AutoGLM原BlogDec08、GLM同家族ZH release Dec08日期有效复用 | 受阻 | 两release事件窗后已核；更早GLM论文另责，历史page2/未收录段缺口不沿旧15/18成功或CMSDec07上线 |
+| SRC-BYTEDANCE-SEED | 本次US两API2025paper/blog各18/total94及45、next20/has_moretrue；paper Dec15→Dec02→Oct22，Blog Dec24/18/16→Dec02→Nov27，Dec07字段无项 | 已检查 | 仅各18元字段，非94/45整年或18全文；PublishDate/UpdateTime/pin分责，不补上线秒 |
+| SRC-BAIDU-ERNIE | 首页Dec09→Nov21，真实下一页2/2 Nov11/07→Jun30末 | 已检查 | 限该历史邻接，1203型号不授发布日期/全机构零项 |
+| SRC-XIAOMI-MIMO | Paper8最新2025Oct21/Sep19；Blog15无date/More不可用，实际/blog UnexpectedStatusCode | 受阻 | 本次未恢复Flash正文/日期，不沿前日成功；需具名2025 dated原Blog/目录，不读Science/2026 |
+| SRC-MINIMAX | EN12末Dec23→Oct27；CN重定向minimax.cn、13项末Jan15；实际AgentTech三2026元条目，不读正文 | 已检查 | 英中分母/入口分开，不取消已触发Tech Blog，也不循llms全index扩2026研究 |
+| SRC-ARXIV | 四组Dec07主线query仅纯数学06623题名止；原OS23/MA25有限题摘域复用；真实cs.DC/2025-12 332/首50仅前十，5P5C已核；旧十五current轻核含W/七元差额 | 受阻 | month/Submitted不授日；19arxiv唯一必要日证未得、GLM论文另责，不扩库存/全文、不catchup；本人无legacy在途，新legacy请求待root有限ownership |
 
 ## 3. 候选与判断
 
@@ -48,22 +57,28 @@ Books暂缓：实际对读`INFER-PREFILL` [Ch43](../../../../books/part-05-infer
 
 ## 5. 缺口与下一步
 
-作者三项重开归并及集合同步已做，普通可执行项0，已由Mill独立局部核验通过，日级结果见§6。VLCs04320、AgentNet++00614、BiRouter00740、SocialDriveGen01363、DMAS02410、Network Sheaves03248、AsymPuzl03466、SRPG03694、SEMI-CTDE04653、DSCP05447、HiveMind06432、BSFA07011、新增AgentODRL00602/劳动市场04988/碰撞分析06645以及GLM-4.6V/AutoGLM共17个潜在家族均为本窗终态保留项，贡献前关闭集合15项：不用于正面证据、不进入 Books、不支撑无遗漏或性能/安全保证。每项原始链接、具体增量、限制和停止范围在[原始记录](../_sources/daily-20251208/WINDOW_REVIEW.md)；隔离不计Coverage/Evidence通过，也不是零事件。
+作者本日实际可用入口、必要准入/反侧及有限日期出口已执行，Feynman§14真实六部分DAY与§15实际保存态FINAL均通过，普通研究/来源/书写待办0；root§16已实际接纳本日，不将已完成行政状态写成外部资源hold。新采集不是待全API pool；本轮协调暂不启动新legacy arxiv API/RSS/OAI，本人无在途，需新请求先root授单作者有限块，429/timeout不作空Atom/零论文。无本轮Books锁或写入。
 
-必要恢复只请求一次：精确v1历史new公告/RSS/email或可核首次正文；Z.ai原始上线时刻/完全落窗区间及当时card/adapter/confirmation协议；Qwen/Hunyuan/Z.ai/MiMo的2025原始目录邻接。材料到达只重开该家族真实归属日与拟采用命题，不全月扩扫。未来提交下界9项另留身份，不属于本窗，不要求本窗深审。
+以下20必要日期和五来源历史缺段为**本窗终态保留项**：不用于正面证据、不进入 Books、不支撑无遗漏或性能/安全保证，也不计Coverage/Evidence通过；收到下述具名替代原材料后仅定点重开该家族真实归属日/对应来源缺段，不重全月或已核研究。
+
+必要日期保留20身份只各请求一次：19 arxiv精确v1为[VLC04320](https://arxiv.org/abs/2512.04320v1)、[BiRouter00740](https://arxiv.org/abs/2512.00740v1)、[SocialDriveGen01363](https://arxiv.org/abs/2512.01363v1)、[DMAS02410](https://arxiv.org/abs/2512.02410v1)、[Network Sheaves03248](https://arxiv.org/abs/2512.03248v1)、[AsymPuzl03466](https://arxiv.org/abs/2512.03466v1)、[SRPG03694](https://arxiv.org/abs/2512.03694v1)、[SEMI-CTDE04653](https://arxiv.org/abs/2512.04653v1)、[DSCP05447](https://arxiv.org/abs/2512.05447v1)、[HiveMind06432](https://arxiv.org/abs/2512.06432v1)、[BSFA07011](https://arxiv.org/abs/2512.07011v1)、[AgentODRL00602](https://arxiv.org/abs/2512.00602v1)、[劳动市场04988](https://arxiv.org/abs/2512.04988v1)、[碰撞分析06645](https://arxiv.org/abs/2512.06645v1)、[SIMPLE00719](https://arxiv.org/abs/2512.00719v1)、[FlexiWalker00705](https://arxiv.org/abs/2512.00705v1)、[SmartFed00902](https://arxiv.org/abs/2512.00902v1)、[Tangram01357](https://arxiv.org/abs/2512.01357v1)、[Delta Sum01549](https://arxiv.org/abs/2512.01549v1)；另GLM-4.6V更早native visual/tool输入输出研究正文的原公开事件身份。共同唯一必要原证为匹配具体v1/core的官方new公告/RSS/email或原作者dated研究正文；现在只有提交/月/后出版或不可恢复原dated入口，不能确定Dec07当窗，故不评分、正式、正面Evidence或Books。每项具体现有出口/原证替代和重开位置见[DATE§1–4](../_sources/daily-20251208/SUP_DATE_20261014.md)，材料到达只重本家族真实归属日/欲采用命题，不重全月/全文/全部Git史或索同bytes/全球absence。
+
+新五日门出口中FlexiWalker原repo同题/EuroSys26但无dated原发布，1commit不是first；SIMPLE/SmartFed精确query未恢复原日、SmartFed原repo网页失败；Tangram v1真实匿名artifact link0行、AccessedAug20只是引用访问日；DeltaSum UGent搜索仅NOMS2026/createdSep2026出版元字段、原页实际失败。不抹P、不冒全文/代码读取、不因检索无结果证明窗外。原旧14日门有效接口失败/字段权限按精确身份复用，不重复legacy失败队列。
+
+两具名机构release已经Feynman§11–12核为**2025-12-08窗后事件**：AutoGLM原Blog开源release（旧2024PhoneUse另事件）、GLM官方ZH明确发布行；不扩本次窗口或称整个家族最早Dec08。当前AutoGLM adapter/2026对象不能反填2025版本权限；没有另一个具名Dec07稿件则不凭全家族可能性新造无限请求。GLM更早论文的必要未知责任仍在上述20中。原9窗后arxiv Submitted下界12530/12615/13047/14946/15028/16238/18436/24637/25065只身份，不否认其他渠道更早稿、不扩九全文。
+
+00614官方current撤回是**1W不是日期/访问保留**，已清本潜力/采用/评分，不继续请求其first；原v1实际读域与旧快照保历史，不能绕撤回重建采用。新两个strong-C静态/声明反侧仍需保留，不以C授安全认证。原15C（含Virgin）＋新5C有效，普通不含全库存未知条目。BSFA原Ch43条件gap/PRE草案仍未采用，不因当前可见v2或无新锁变成已有覆盖/整合完成。
+
+来源历史保留按§2具名隔离：Meta原Research段、Qwen数组未收录2025段、Hunyuan2025原目录、Zai page2/未收录段、MiMo dated旧Blog。所需为对应2025原目录邻接或dated原研究发布，失败/当前字段不足不能支持正面Coverage/无遗漏；也不要求恢复全年94/45等目录。这些外部保留不等Evidence/Coverage通过，不是零事件。
 
 ## 6. 复核
 
-复核者：Mill，agent ID `01a0fc18-6d14-7b60-9ba1-b6b579aaef3e`；非作者Gibbs，非Books写入者root。
+复核者：Feynman，agent ID `01a13334-3cd9-71c3-919c-13054871a97c`，非作者Carson；旧Mill同身份/v1/core有效层仅定点复用。
 
 结论：通过
 
-实际重读本日适用AGENTS、研究/Report合同、每日源分组、Prompt、ROADMAP与相关路由state，只加载本窗README/WINDOW_REVIEW及定点原始身份。14源原始分页、邻接与有限停点逐项核；不宣称本轮重新访问全部14站。固定历史目录复用有效原始字段与我此前同身份实访记录，不复用别日报完成结论。独立原生取得cs.OS首23标题/总23、cs.MA首25标题/总211；未翻后页。确定落窗分母0，不是零事件或完整召回。
+Feynman[本日独核§14](../_sources/daily-20251208/SUP_INDEPENDENT_20261014.md)已实际完整读六部分保存稿/Source4/Current4/Date4并执行DAY，通过。§1–13有效层已实际检查原有效身份/必要core与安全反侧复用、四指定current、必要00614撤回、SIMPLE及首十5P5C、Qwen完整数组/费用口径、七旧current与两精确v1AB比较、Source有限尾与两Dec08 release日期角色。首十中的八含糊项完整AB及FlexiWalkerconsumer、IslandRun/01039strong-C最低域全核；00398完整AB普通抽核、00623仅明确题名止。原普通关闭按OS运行时/存储/compiler、MA应用/组合分层复用Mill实际校准，不称本轮全部原附件或普通负侧全文重读；全部旧窄potential精确v1已有效读，未知日不冒完整候选Evidence。
 
-全部12个arXiv potential精确v1完整题摘独立读取，GLM-4.6V复用07同身份官方card/对象144有效实核，AutoGLM独立读取对象145字段、原Blog与当前官方README。重点实际读BSFA §4/Algorithm1及§5/Table1、SRPG IV-B1–3/V、AgentNet++ §3.1–3.5/4.2/5.2/6、DMAS IV/V、HiveMind剪枝及functional determinism：exact QK不授dense Attention；target k不授固定density；重建接触原始X、prompt不授隐私隔离；composition援引不补知识敏感度/secure aggregation协议；密码身份不授内容正确；temp0不授全部功能确定性。AutoGLM的device执行、推理backend、确认/人工接管须分责，当前Harmony/iOS与迁移字段不反填2025 frozen release。无runtime测试或复现。
+00614官方withdrawn为1W，current全稿无PDF/声明纠正已清正面采用；root精确id/name依赖rg无匹配只该两串，不作全别名采用证明。07011 current评价差额单列、不反投v1，04988/04653/05447等后版仅相应AB/说明域，不授全篇未变。Source部分失败与后完整恢复真实分责，不将他日拥塞或reader首RSSpartial冒作者恢复失败；各来源有限停点与未核历史段在§2自包含。当前无Books新写/POST，原BSFA条件owner/gap不等采用。
 
-负侧实际读取17个arXiv关闭项完整题摘和正确Virgin官方访谈；05983原站重叠信号与2506.06837v1完整题摘核去重，不当withdrawal。安全/含糊关闭必要核心定点读00520/00602/01610/02682/03180/04988/06645 HTML，02561 HTML404后读精确v1 PDF §2.3/3/4。普通负侧按OS运行时、存储、compiler、科学输出与金融应用分层；不全量全文或扩大两首段库存。01610确有Controller/白名单/PodManager分责，不以“无控制”关闭；其未给新受控权限/一致性failure，窄组合关闭仍可保留。EZYer只有LLM评分和未来人工评估限制，未见新受控反例，亦不授质量保证。
-
-已实际定点核作者修复：00602路由质量/token成本对照、04988 Appendix I的LLama低于fixed-policy负侧、06645 IV-b/c与V的安全干预反向结果均撤回原关闭、归并窄potential；WINDOW_REVIEW与正式§1/4/5的集合、普通计数及终态限制同步一致。复用本身份上轮已实际取得的精确v1核心，不重复未变来源。普通差额0；15个arXiv加GLM/AutoGLM共17个潜在家族、15项关闭，确定落窗分母仍0，三重开不增加Evidence。准确原始位置与历史差额见[本日实际复核](../_sources/daily-20251208/ROOT_ADMISSION_REVIEW.md)。
-
-新增条件Books proposal仅BSFA：实际对读唯一INFER-PREFILL Ch43 Sparse Prefill/Dense FA→discovery，及Ch42 phase/SLO、Ch44 Decode依赖；全QK后舍value/normalizer是具体分支缺口，不是主题相近覆盖。日期未授，不正面写Books，不授整合完成。外部终态保持具名恢复及真实日重开，不计Coverage/Evidence或无遗漏。日级语义通过，完成态V3及链接检查结果另记于本日复核，不替代实际语义；未改共享Books/state，未stage/commit/push。
+作者已实际完整读Feynman§13–15，20唯一日门及自包含14表/六部分安全终态DAY14与真实完成态FINAL15均通过，普通0；当前仅已发生FINAL15/root16接纳指向行政同步，不重Source/准入/最低反侧。completion首次V3缺显式终态保留项标记已窄补，真实再次exit0；非writer§15实际读回修正与保存稿，window/完整§3/1305字符连续§4与baseline/HEAD冻结、12本地引用/9文件、14SRC、限定Markdown cached/unstaged diffcheck均通过。root§16已实际完整回读six/FINAL15和最后行政层并接纳计本日73/132；此次同步只记录既成结果，不自行改State。本轮未执行stage/commit/push或改共享State/index/scripts/Books，已存在及并发cached/worktree保护，scope stat中reader或他人cached归并差额不归本人。

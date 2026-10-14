@@ -91,6 +91,10 @@ collect candidates
 
 排序不能只看 embedding similarity。Authoritative policy、current workflow state 与 user intent 可能优先于语义相近文本。冲突内容应保留来源和时间，不应由摘要器静默合并成一个“事实”。
 
+排序和去重之前，共享对话还要保留“谁说了什么”。同一条全局 transcript 不能原样当作每个 Agent 的 user/assistant 历史：某位伙伴的 assistant turn 对另一位 Agent 并不是自产生回答。可先用绝对 speaker identity 保存原 content 与顺序，再为当前消费者确定性映射 SELF/PARTNER 等相对角色。角色视图不改写 canonical history，也不把所有伙伴的内容合并为同一种事实或权限；原身份仍用于追溯与冲突处理。<!-- source-family:SF-2026-ARXIV-2604-09212 -->
+
+这增加消费者身份、view revision 和重放规则，而不是又生成一份不可回查的摘要。[SPASM的受限双Agent对照](https://arxiv.org/html/2604.09212v1)支持该输入接口分支，但 English instruction-tuned、固定温度与最多二十条 utterances 的结果不证明开放协作中的人格保持或零 echo。Embedding probe不是偏好真值，DeepSeek的motivation维度未显著改善；echo人审人口的正文/表注口径亦未统一，不能把局部人工一致率扩到全部记录。角色/来源不能可靠恢复、多人接口未校准或消费者行为退步时，保留原typed transcript与显式speaker标签，不让相对role获得授权。Multi-Agent委派与实际执行仍由第82章承担。
+
 当历史中相邻 turns 共同表达证据时，孤立 top-K turn 还可能切断弱相关但保持连续性的上下文。一个替代分支预存 turn embeddings，到 query 到来时将 relevance 转为归一化 gain，选择若干 contiguous spans，再按原时间次序拼接；它不同于写时固定分段或持久 summary。[DyCP 的限定 span 对照](https://arxiv.org/html/2601.07994v1)支持这种 query-time working-set 选择，不授 turn 相邻即有真实依赖，也不改写原记录的 authority。展示算法先 append 再更新停止量，不能据其文字宣称每个已选 span 都过阈；零方差、耗尽与容量边界仍需实现核验。
 
 无需额外 LLM 分段调用不等于免费：embedding、索引、span 检索与拼接仍占预算，多留低相关 turns 也会增加输入与等待。有限对照中 GPT-4.1 的 full history 已接近此分支，检索遗漏仍会丢掉完整历史可回答的证据；judge 分数及低相关 turn 移除实验不证明全局依赖因果或超长能力。短历史、已常驻工作集或检索不可靠时，保留完整 history、简单 top-K 与原文回读，按实际遗漏/成本选择，不由标称窗口更长或 pruning 更短推断普遍收益。<!-- source-family:SF-2026-ARXIV-2601-07994 -->
@@ -563,6 +567,8 @@ Context gathering 不应只把搜索历史压成摘要。Agent 要持有 predica
 
 摘要与原文语义相似，仍可能丢失“下一步从哪里继续”、尚未满足的 session constraint 或时间有效期。压缩验收应在相同 environment state 下重放后续动作，检查 blocked/repeated action、constraint violation 与恢复位置；文本相似度只能作为辅助信号。
 
+压缩可发现的skill还须分开路由与功能消费者：先让一个只含描述的shadow skill模拟与原文的竞争，提出更短的触发描述，再用真实router在指定query子集核是否仍会调用；失败时有限恢复原描述或直接回退原文。只有路由资格通过，才分别压正文/引用并验证实际任务。[SkillReducer的受限协议](https://arxiv.org/html/2603.29919v1)把这两个消费者分开，却不证明模拟judge与真实router等价或任意query触发不变；536/536包含39次原文fallback且排除了原失败人口，任务与同预算切片仍有反退。压缩、模拟候选、真实调用、恢复、引用读取和任务验证全部付费，Stage2保留当前best也不能认证无损。Router版本/query支持、正文功能或净预算失配时，恢复原skill和完整引用、保留人工/真实任务回归，不以描述相似或触发一次批准全部能力保留。<!-- source-family:SF-2026-ARXIV-2603-29919 -->
+
 有界执行视图还要区分任务阶段：某动作在当前阶段已尝试，不代表环境改变后永远不可重试。[PABU 的一个分支](https://arxiv.org/html/2602.09138v1)保留 goal 与最新 observation，用 learned progress 更新阶段，并仅在同一阶段积累 attempted actions；阶段推进时重置该集合，同时学习保留哪些旧 observation。它把“防重复”改为 stage-conditioned 状态维护，而不是无条件删除旧动作或堆积全部历史；available actions 从观察解析，不由此认证真实环境可执行。<!-- source-family:SF-2026-ARXIV-2602-09138 -->
 
 progress 文本仍是 learned observation，不是可信 authority、Bayesian belief 或严格 Markov state；误判阶段、漏保留前提与未见失败都可能导致错误重试或丢失恢复线索。受测 context masking 同时改变训练与评价，不能归因于单独上线删历史；输入 token 减少时输出 token 反而增加，也不授所有任务成本更低。阶段识别或保留策略失配时，回读原始观察、恢复更完整历史，并以真实环境反馈复核 frontier；“不重复”不应凌驾于必要重试及后续状态验收。<!-- source-family:SF-2026-ARXIV-2602-09138 -->
@@ -791,3 +797,7 @@ Review note：`SF-2026-ARXIV-2606-29522`；Method `https://arxiv.org/html/2606.2
 - `SF-2026-ARXIV-2603-24558` — [LensWalk exact-v1](https://arxiv.org/html/2603.24558v1)§3–4、B.3、C.1/T6–8。仅时间scope/FPS/framebudget与rawvideo重读分责；保弱Reasoner反退、单次更快/DVD精度反侧/索引摊费，peakcontext非总SLO。未核图像/代码或复现，不采全局无误纠错/统一预算因果。
 
 - `SF-2026-ARXIV-2603-27490` — [AgentSwing exact-v1](https://arxiv.org/html/2603.27490v1) §2.1/§3、§4.1/§4.3/T2–3及§7；仅部署候选view的有限tool-feedback后选择时点。保K3/K5反側、chain-rule非新机制、finished人口/弃branch和summary/API/tool全费，以及external effect不可随discard撤销；不授router正确性、全人口省费或通用K/SLO，未核artifact/复现。
+
+- `SF-2026-ARXIV-2603-29919` — Daily2026-04-02补04-01；[exact-v1](https://arxiv.org/html/2603.29919v1)IV-A/B/Alg1–2、V-A–C/TIII–V，2+1+2=5，仅shadow模拟→real trigger子集/最多三restore/原文fallback与body-ref功能分验。保536含39fallback/排64原fail、Stage2 best<1、14%反退、同50预算.909<.921及全部制备/路由/读取/验证费，不授任意query/完整faithfulness；未核代码/复现。
+
+- `SF-2026-ARXIV-2604-09212` — Daily2026-04-14补Apr13，supp_apr14_author；[exact-v1](https://arxiv.org/html/2604.09212v1)§2.1/2.2/3.4T3/3.5T4/5与AppL，2+1+2=5具体gap深入；只采用canonical absolute speaker→deterministic per-agent view。保DS p=.460、two-agent/cap20/temp0、probe非人格真值与echo人口口径争议；不授allpartners同authority、多Agent已实测、零echo/安全。reader必要Source/逐字PRE及实际正文/完整邻接/本人注POST通过，作者仅同步此注并实读回；未核实现/复现。

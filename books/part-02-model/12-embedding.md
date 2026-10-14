@@ -104,6 +104,10 @@ cos(x, y) = (x dot y) / (||x|| * ||y||)
 
 这条边界要求迁移后再验新增 token 的发出行为、原任务回归，以及不同上下文和采样条件，而不是取消旧的 lookup 或所有线性初始化。一个受限攻击实验通过修改 donor artifact 并利用已知 base 几何构造了这种差异；它不证明任意模型对都会受害，也不提供完备防御。后续 fine-tuning 可能抑制异常，额外调整行范数则又改变了被验收的产物。分词和 token-ID 的联合版本交接仍由 [Ch11 Tokenizer](./11-tokenizer.md#vocabulary-adaptation-是-tokenizer-与-checkpoint-的联合迁移) 承担，本章只拥有行几何及其与后续读出的耦合。
 
+当所有新增 token 都从旧词表的同一个均值行开始，它们在初始 lookup 中没有彼此差异；后续 SFT 是否能及时分开，要由监督与实际训练检验，不能预先认定必然不可恢复。随机初始化给出差异，却未必对齐旧语言表示。另一条付费初始化分支先用 paired text 与新 token 序列训练新增 rows、保留冻结骨干，再进入下游适配；输入/输出若 tying，必须按真实共享参数保存同一更新身份，不能一面更新新行一面声称别名 output head 完全冻结。<!-- source-family:SF-2026-ARXIV-2604-02324 -->
+
+[Grounded Token Initialization 的受限对照](https://arxiv.org/html/2604.02324v1)支持这项语言配对接口，但额外 grounding、后续适配预算及原稿配置口径参与收益，不把全部差额归为初始化时点。较丰富的行几何不认证语义正确，部分检索指标仍退步；SID构造、paired监督、embedding阶段训练与下游SFT均计费。监督不可靠、别名/词表身份不一致或质量回归时，保留mean/random/donor初始化与普通适配，联合验新符号区分、发出行为和旧任务，不由谱或近邻读数自签恢复保证。
+
 词表扩展后的model merge也不能把所有行当作同一来源的可平均参数。一条新增speech tokens的有限分支，让embedding与output head的旧词表行取原模型、新speech行取适配stage，再仅对其它同形参数插值；输入行、输出行与token type因此各有来源身份，不能用没有新行的基座去平均新增符号。保旧行仍不等旧函数保持，因为其它层和后续训练会改变读出。[有限stage/merge对照](https://arxiv.org/html/2604.00007v1)恢复部分text/vision能力，却牺牲相对未merge stage的ASR/TTS；共享旧行也平均与全Stage1词表有不同取舍，不授typed-row万能最优。额外stage、merge、重训和回归均计费；行身份、shape或旧新任务不兼容时，保留独立模型、原词表路径与明确的局部适配，不能由保留原embedding行自签零遗忘。<!-- source-family:SF-2026-ARXIV-2604-00007 -->
 
 连续输出目标还会改变这组坐标是否可辨识。Categorical softmax 的分母让正确 token 与其他候选竞争；若改为只回归目标 embedding 的方向、最小化 $1-\cos(E_y,H)$，同时让目标表与预测器一起移动，则把所有非零目标行和所有输出置于同一方向就能得到零 loss。这是 complete collapse，不只是某些方向的 dimensional collapse；训练 loss 低因而不能单独验收符号区分能力。[匹配初始化的有限对照](https://arxiv.org/html/2602.17287v1#S4.SS5)中，random/NMT/regularized-NMT 初始化只要继续训练目标表，未加约束的连续输出都退至BLEU0；冻结目标表或对它加入great-circle sliced dispersion 可以恢复部分区分，但随机初始化下正则分支33.2仍低于冻结表33.9，不证明正则普遍更好。冻结目标限制适配，分散正则则增加投影、排序、采样与权重调参费用，并可能损害其他层的表示；34M WMT19/singleH100/50k步的翻译结果不能外推为语言模型语义真值或量化加速因果。需要共同训练目标时，应同时验收目标可分性与任务质量；退化或预算不足时，保留冻结目标、原categorical输出或已核验的局部正则，不用几何diversity替代语义与下游质量。<!-- source-family:SF-2026-ARXIV-2602-17287 -->
@@ -132,6 +136,10 @@ sentence embedding     为句子或文档任务构造的整体表示
 用文本传递辅助知识，优点是可直接检查、无需进入模型内部接口；代价是背景越长越占用输入预算。当 base 参数必须保持冻结而又允许 input embedding 接口时，一条受限分支让独立 expert 先自回归生成背景，读取最后 token 的 late hidden state，再用单独训练的 projector 对齐到 base 的 embedding 空间，替换 prompt 中一个固定 anchor slot。[GAG 的输入适配机制](https://arxiv.org/html/2601.08209v1)先适配 expert，再冻结 expert/base、只训练 projector；它不是把任意向量直接塞进词表，也不是检索 encoder 升级或 base 的循环推理状态。作者在关闭路由、固定领域的消融中，以倒数第四层 `L₂−4` 读出优于更早层及省去适配阶段的变体；这只支持局部接口资格，不证明通用隐藏层可直接互换。<!-- source-family:SF-2026-ARXIV-2601-08209 -->
 
 这里的“一 token”只限制 base 输入带宽，不免除 expert 生成、模块适配与路由开销，也不能保留文本证据的逐句可追溯性。原型最近邻可以在 general peer 与 domain module 之间选择，但 argmax 不是 OOD abstention，增加新原型还可能重划旧路由区域；选择激活的结果不能全归因于连续表示。单一领域假设、数字/单位压缩、跨领域组合和接口分布漂移仍需独立测试。若需要精确引用、内部输入接口不可得或适配/路由未验，文本背景与检索证据仍是合理退路；冻结 base 参数不等于整个系统行为不变。
+
+连续输入还可以承载经 client encoder 编码的整段 prompt，而不只是一份 expert 的单 token 摘要：把 token hidden states 按连续 k 个位置求均值，降低传输序列长度，再由 server projector 对齐到 decoder 的 embedding 空间，作为多 token prefix。此时文本 token ids 与检索用 sentence embedding 都不是 server 的直接输入；encoder、pooling 粒度和 projector 共同定义一份需要训练的接口。一个受限分支先联合适配 encoder、projector 与 server LoRA，再冻结 client encoder，只让 server 在扰动后的表示分布上适配 projector/LoRA；冻结 client 不等于 server 可直接消费任意版本的表示。<!-- source-family:SF-2026-ARXIV-2604-06831 -->
+
+Pool 会丢失局部顺序和细节，扰动又改变 server 的输入分布，因此带宽减少与任务效用必须联合验收。[PPFT 的必要接口与有限对照](https://arxiv.org/html/2604.06831v1#S3)只支持所测 encoder/decoder 和 QA 人口下的适配分支，未传原始 prompt 不等于没有语义、输出或 label 泄漏；server 仍接收可能敏感的明文 target label，局部 inversion attacker 的重构分数也不是完整隐私保证。Client 编码、两阶段训练、pool/projector 与完整 decoder 都付费，降序列长度不是端到端等比例加速。表示版本、精确数字/单位、噪声分布或效用不合格时，保留已验收的原文本/连续输入接口与更小压缩，并由安全 owner 独立决定跨信任边界的暴露资格。
 
 ## 参数量与 Tokenizer 的联动
 
@@ -302,7 +310,7 @@ alpha_t = sigmoid(RMSNorm(h_t)^T RMSNorm(k_t) / sqrt(d_model))
 u_t = alpha_t v_t
 ```
 
-这里的 Query 来自已有上下文，Key/Value 来自词法表；sigmoid 调节该位置读出的强度，不是在全部历史位置间做 softmax。门控后的序列再经短程、逐通道的因果卷积与非线性，连同 `u_t` 加回同宽 residual，随后继续 Attention/MLP。因而同一词串可命中相同地址，却在不同上下文中产生不同注入；它不是用查表替代指代消解或全局 Attention，也不是读取一条已认证的事实。
+这里的 Query 来自已有上下文，Key/Value 来自词法表；sigmoid 调节该位置读出的强度，不是在全部历史位 置间做 softmax。门控后的序列再经短程、逐通道的因果卷积与非线性，连同 `u_t` 加回同宽 residual，随后继续 Attention/MLP。因而同一词串可命中相同地址，却在不同上下文中产生不同注入；它不是用查表替代指代消解或全局 Attention，也不是读取一条已认证的事实。
 
 地址只依赖已知 token，允许提前准备读出；门控必须等待当前层状态，不能把完整注入也当作静态缓存。投影、门控、卷积和搬运仍有成本，早层注入与隐藏搬运延迟所需的前置计算还可能冲突。门控只学习抑制不合适的信号，不保证消除多义性或碰撞；应分别验查找、上下文使用、质量回归及端到端成本，未获净收益时保留普通 Embedding。层内 residual 组合由 [Ch17](17-transformer-layer.md)承担，本章只拥有词法读出到动态表示的接口。
 
@@ -391,6 +399,8 @@ Embedding 把无序类别 id 映射为可学习的连续坐标。Lookup 与 one-
 
 ## Review notes
 
+- `SF-2026-ARXIV-2604-02324` — Daily2026-04-04补Apr3；[GTI exact-v1](https://arxiv.org/html/2604.02324v1)必要§2–4.3/6/7.2–7.4，2+1+2=5，newrows paired语言grounding具体差额深入。保tie别名/额外stage预算与公共指标反退，原main/A配方不齐不作复现recipe或纯init因果，geometry不授语义。supp_apr04_reader actualSource/Ch12逐字PRE通过，root授两body/本人note窄锁，作者实写顺读；supp_apr04_reader已实际新增两body/完整局部邻接及本人note nonwriterPOST通过，作者同步实读，窄锁释放；未核代码/复现。
+
 - 对话增量审计（2026-10-10）：[Engram exact-v1](https://arxiv.org/html/2601.07372v1) §2.1–2.5/Eq1–6 支持确定性读出、上下文门控和指定层 residual 注入；正文采用单分支解释，不展开 mHC。回对[官方演示代码](https://github.com/deepseek-ai/Engram/blob/main/engram_demo_v1.py)时注意其 gate 另有 signed-square-root 变换，且 Attention/MoE 为 mock，不当作论文公式逐项等价或生产实现。未运行代码、复现实验或确认任何闭源产品采用；性能数字与通用收益未纳入正文。
 
 - `SF-2026-ARXIV-2601-16531` — Daily `2026-01-27` 增量；[exact-v1](https://arxiv.org/html/2601.16531v1) §3–5/Table3/limitations（本日必要原件 blocks25–134、160–165）。2+2+2=6，针对查找无碰撞与学习质量/运行成本分账的具体缺口深入；只采用静态 MPHF+fingerprint 热集合与 hash 冷回退、受限等参数近似 loss/吞吐对照。容量重分混杂、两 seed、fingerprint 非成员误判及 gate 关联非因果保留，不采用有益 regularizer 或普遍路由固化。root 实际 source/PRE、两段正文/完整邻接及末注 POST 通过；按其复核纠正数据集 100M 与实际约 82M 训练 token 的配置区分。未核实现或复现实验。
@@ -426,3 +436,5 @@ Primary-source 校验入口：
 - `SF-2026-ARXIV-2603-29488` — Daily `2026-04-02`补`04-01`；[exact-v1](https://arxiv.org/html/2603.29488v1) §2/common-shift proof、§3–4 反例与界限，`3+1+3=7`。只采用 fixed `f`/独立输出头的 softmax 等价类与 distinct 非零 pair 的 cosine ±1 构造，不授输入表/tying/CLIP 通用不变性、所有固定参数统计无用或概率-语义保证。单位向量 toy 与符号错误不采用，v2 sigmoid 扩展不回填；未核代码或复现实验。
 
 - `SF-2026-ARXIV-2604-00007` — Daily2026-04-03；[exact-v1](https://arxiv.org/html/2604.00007v1)§3.1/4.2/7.1/Table9及必要Table11，2+2+2=6，仅expanded-vocab old/new embedding/head rows与同形参数merge来源分责；保Stage1/shared-row反侧、ASR/TTS退步与全部stage费用，不授零遗忘或全模态最优，未核实现/复现。
+
+- [PPFT exact-v1](https://arxiv.org/pdf/2604.06831v1) p3–4/§3.1–3.4及§4.1–4.3；深入，仅采用 pooled continuous prefix 及两阶段参数/消费兼容边界，不采完整隐私保证或全费加速；必要证据、逐字正文与实际写后独立复核通过，未核代码或复现。<!-- source-family:SF-2026-ARXIV-2604-06831 -->

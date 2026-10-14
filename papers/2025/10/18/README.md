@@ -2,11 +2,16 @@
 
 **规范：** V3
 **窗口：** 2025-10-17T09:00:00+08:00 ～ 2025-10-18T09:00:00+08:00
-**状态：** 完成
+**补充窗口：** 2025-10-17 ～ 2025-10-17
+**窗口说明：** 用户授权已有Daily遗漏补查；旧window/date/score及连续完整旧§4冻结，新增仅前一完整BJT自然日。
+**状态：** 进行中
 **Books：** 纳入本次
-**检查时间：** 2026-10-05T11:38:43+08:00
+**检查时间：** 2026-10-14T17:58:55+08:00
 
 ## 1. 结论
+
+本轮fresh仅补Oct17自然日，最新[作者停点](../_sources/daily-20251018/SUP_SCOPE_20261014.md)覆盖下文原捕获的完成/0正式/普通无及TZ门；旧81arxiv题摘（含current版本）＋LAVA一族/27必要层按精确版本与采用域复用，不回填本轮重读。LAVA官方Oct17机构披露日期可处理，必要Source/6分及唯一owner局部提案已保存[FIRST](../_sources/daily-20251018/SUP_FIRST_20261014.md)，root实际核尚待，不预签formal/Books。fresh首两Source字段已保存，其余十二源/current/有界新差额/日期与six仍ordinary，不继承前日169池/Source成功。原六部分尤其连续旧§4留作历史，旧时分秒门不沿本轮自然日；当前89/132不含本日，无Books/legacy锁。
+
 
 确证落窗候选0、正式正面Evidence0、Books提案/写入0，不等本日零事件。有限主题内67完整arXiv题摘家族与有界标题补14题摘、Google LAVA官方core1，合82材料家族：79具体潜力（其中六submitted发现后界线索另列，不扩大本窗），3按具体增量关闭。当前摘要版本不证明历史v1机制，LoD重复提交与原2508.09201同家族不另计新首公开。27项必要安全/纠错/设计反侧已读到命题停点，不称27正面Evidence或82全文。Cicero有效FIRST及2026-10-05T11:33:10+08:00最终POST/DAY通过，作者与独立复核普通研究工作均0，本日达到安全终态；外部保留项不获正面Evidence或完整覆盖权限。
 
@@ -54,6 +59,9 @@ LAVA官方core中“compile进Borg scheduler binary”与add/remove/expiry cache
 
 ## 5. 缺口与下一步
 
+本轮ordinary尚未完成：LAVA单篇已准备供root必要Source/6/owner实际核；本轮其余十二Source有限恢复、相关新差额/current/日期与六节DAY/FINAL继续。下文“普通无”仅旧Cicero验收捕获，不为本轮未执行项造external。LAVAOct17原Blog不再仅因TZ/秒未知hold；paperfirst/旧早稿和当前事件分责，不搬移原window/date/score/连续旧4。
+
+
 普通研究与独立复核待办：无。Cicero2026-10-05T11:33:10+08:00真实FINAL最终POST/DAY通过：26精确v1身份+LAVA=27、十四有限源、三关闭3/3完整AB及六部分/终态复核有效；Spark计数/差额冲突、HypoSpace occupancy数学反侧、最新来源/角色三窄同步均已实际POST通过。没有待写Books提案，不重跑有效FIRST/未变节或82正文，独立changelog及其他补核阅读不倒填作者own读取。以下只为本窗已隔离终态保留项，不是普通未做工作。
 
 本窗终态保留项：SCREENING具名潜力（包括Google LAVA日名、LoD canonical同家族/重复entry与六后界发现导航）缺必要官方历史首公开或实质修订事件/精确版本bounds。需要原官方公告、可复查且完全落窗公开bounds及相应原版；submitted、DataCite注册、日名相交/时区未明、later AB均不能补证。当前不评分、不正面Evidence、不进入Books，不支持无遗漏或性能/安全保证；真实材料到达只重开对应家族/事件，确认真实归属后路由，不扩大本窗。
@@ -63,6 +71,9 @@ Google必要pubs/月档案、Meta、Hunyuan2025段、Z.aiOctober、MiMo Blog、M
 TokenTiming正文/附录残差与真实提案分布、DSSmoothing校准/指标语义等中心争议不采用；需对应原更正/明确实现或可核验验证，只恢复受影响命题及采用依赖，不全版本/全池重读。所有外部保留均不用于正面Evidence、Books、完整覆盖或安全性能保证，不冒充普通未做工作。
 
 ## 6. 复核
+
+本轮非作者复核者root。fresh[独核§1](../_sources/daily-20251018/SUP_INDEPENDENT_20261014.md)实际上下文/旧有效层已保存；新单篇/Source/current/date及完整DAY/FINAL尚未发生，下方Cicero通过只旧有效采用层，不能预授本次完成。作者Kierkegaard仅own README/SUP，无书锁或本人legacy在途，不stage/commit/push。
+
 
 复核者：Cicero / Codex（非作者Mill）
 

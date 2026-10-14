@@ -2,11 +2,16 @@
 
 **规范：** V3
 **窗口：** 2025-11-17T09:00:00+08:00 ～ 2025-11-18T09:00:00+08:00
-**状态：** 完成
+**窗口说明：** 用户授权已有2025 Daily来源遗漏补查，原window/候选日期评分/连续原§4冻结，旧完成层不代当前验收。
+**补充窗口：** 2025-11-17 ～ 2025-11-17
+**冻结候选日期：** [原报告基线](../_sources/daily-20251118/baseline-before-supplement-20261014.md)
+**状态：** 进行中
 **Books：** 纳入本次
-**检查时间：** 2026-10-04T21:16:51+08:00
+**检查时间：** 2026-10-14T17:37:50+08:00
 
 ## 1. 结论
+
+本轮作者Singer/reader原Dalton，fresh完整当前合同/适用来源/Prompt/ROADMAP/latestState与本日停点；只补Nov17完整BJT自然日，不继承Nov17的138/81或Source成功。root已实收Nov17至88/13244待，本日未计；下述Carver Oct04统计/ordinary0/日级完成仅原执行层，不预授本轮十四源/新差额/current/date/DAY。当前准备即保存[本轮停点](../_sources/daily-20251118/SUP_SOURCE_SCREEN_20261014.md)供reader独核，普通工作持续。
 
 作者Carver，本日fresh适用治理和原响应，不继承17候选/来源通过或旧Weekly。14Daily原入口/有限恢复及停止点已记录。arXiv四窄主题44返回/41唯一发现身份（submitted邻域，不是当天新论文）；35 exact-v1完整题摘实际读完，原25论文potential/10AB拟关闭，经root纠正Conformal旧范围理由，现26论文potential、9AB关闭，另6明确领域标题关闭。OpenAI本窗1公告核心实际读后以商业认可关闭，均经root核验；Antigravity核心已读但日期时区/截止不明，另列1potential，总27potential尚非确定当窗候选。
 
@@ -56,6 +61,8 @@ root本次实际必要core边界已同步[首批记录末](../_sources/daily-202
 
 ## 5. 缺口与下一步
 
+本轮普通可执行：14Daily有限入口差额、有界相关标题/必要完整AB、旧具名current comment/journal已有信号、必要public/准入/Source-owner与完整六节DAY→completion→actualFINAL/root。旧ordinary0不代本轮安全终态，未执行不称external；legacyowner/inflight0，Books无本item锁，仅ownREADME/author_sources，不写共享State/index/scripts。
+
 普通可执行待办：0。root已实际完成35完整v1题摘、八项必要核心、有限来源停止/日期隔离及六部分日级复核，结论通过；Conformal最小日期恢复及MiMo More行为修正已核。全部27potential日期仍hold，作为本窗终态保留，不把独立通过误写为首公开已确认或全部方法已审。
 
 本次有限恢复后经独立核验安全隔离的具名终态保留项：不支持正面证据、Books或无遗漏断言；不进入Books，不支持Coverage及性能/安全保证。下列身份、所缺原件与单项重开条件保留，材料到达才定点重开：
@@ -69,6 +76,8 @@ root本次实际必要core边界已同步[首批记录末](../_sources/daily-202
 窗外路由仅记录：SIMA2 Nov13、TeachingAI Nov11、Gemini3/Developer Nov18 16Z（BJT19日00）、NanoBanana/ImageVerification Nov20 15Z；不是已有效审阅重复项，不扩这些真实归属日报，亦不阻塞本窗安全终态。
 
 ## 6. 复核
+
+本轮复核者Dalton（非作者Singer）仅在实际新层/整稿通过以后同步DAY/FINAL；下述root原Oct04通过为旧35AB/八必要core与具体分层有效层，不代本轮完成。精确身份/版本/命题未变可复用，不第三读全部原AB/core，但当前已有撤回/纠错说明原轻核不能由ABsame推无信号。
 
 复核者：root（非作者）；作者Carver。
 

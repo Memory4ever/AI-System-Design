@@ -2,46 +2,57 @@
 
 **规范：** V3
 **窗口：** 2025-09-28T09:00:00+08:00 ～ 2025-09-29T09:00:00+08:00
+**窗口说明：** 用户授权仅补已有2025 Daily来源遗漏；原候选日期、评分、窗口与连续完整旧§4冻结，新增仅前一完整BJT自然日。
+**补充窗口：** 2025-09-28 ～ 2025-09-28
+**冻结候选日期：** [补查前原报告](../_sources/daily-20250929/baseline-before-supplement-20261013.md)
 **状态：** 完成
 **Books：** 纳入本次
-**检查时间：** 2026-10-06T19:57:07+08:00
+**检查时间：** 2026-10-13T17:32:35+08:00
 
 ## 1. 结论
 
-本日确定落窗入选1家族：Instant Checkout/ACP官方Blog发布。原RSS明确`Mon, 29 Sep 2025 00:00:00 GMT`，即本窗尾部29日08:00北京时间；没有具体占位证据，不能仅因午夜否定。GTO、SafeSearch与DeepSeek-V3.2-Exp首公开仍未确证，留§5而不评分/采用。实际已读两份精确v1完整题摘/必要反侧，ACP官方Blog与dated初版规范必要安全语义；正式一项作者侧受影响深入阅读完成，root校准/证据复核已通过。实际Books写入0。
+本轮fresh仅补Sep28完整BJT自然日，原ACP整行/日期/6分、原小时窗与连续完整旧§4保护。正式家族原ACP1＋新增EOSER/ASS/CJ-GRPO代码release1＝2：新增原作者Sep28发布事件、2+1+2=5与必要v1采样/优化反侧已Feynman§12通过；窄采用限真实masked-state/本步commit位置、行为/reference与loss身份，具体Ch33已有覆盖已§13实际比较、§14–15历史绑定/最终Source/No Change通过。精确ASS gamma、std归一/EOS截断的paper-code等价与joint-selection无偏不采用，必要两个发布函数/接口实际绑定不扩全代码验收。Books实际新写0，无锁/POST义务；不将版本配方堆入正文。
 
-root准入、Books已有覆盖及最终日级复核通过；当前本窗完成，外部保留项继续隔离。[交接](../_sources/daily-20250929/CALIBRATION_HANDOFF.md)给出原字段、实际证据位置、关键冲突和重开条件。没有把本日未确认的论文简单排除为小改进/领域应用。
+十四源本日独立33请求及后来有限出口/停止已Feynman§4–7/10通过相应层，历史缺段/undated不授全Coverage或无遗漏。四主题216出现/165身份只发现；实际38精确v1题摘＝首12P＋后24P＋2范围O，§8/11准入通过，不是165全AB/全文队列。36潜力中EOSER正式新增，Tequila原Sep26算法release窗前，其余34必要当窗公开资格的有限停止已§16实际通过；原GTO/SafeSearch两日期保留有效。具体current修订/安全/数学反侧保存于[有限题摘包](../_sources/daily-20250929/SUP_ARXIV_FIRST_20261013.md)，不回投v1。
+
+ACP原官方RSS明确`Mon, 29 Sep 2025 00:00:00 GMT`＝原窗尾Sep29BJT08，原必要安全域/Ch78具体已有覆盖与root旧日级复核有效复用；[原交接](../_sources/daily-20250929/CALIBRATION_HANDOFF.md)保必要位置，不重旧研究。DeepSeek官方Sep29 date-only属新增Sep28窗外，不再请求时区/尾小时，Terms原Aug28关闭不变。本轮研究普通0，Feynman真实DAY§18–19/保存完成態FINAL§20通过，root§21已实际接纳；当前55/132、77待验含本日（Sep27只Tequila新遗漏恢复，Nov04有效不撤）。[本日停点](../_sources/daily-20250929/SUP_RESUME_20261013.md)保原保存快照，不调用UI线程消息；后续fresh Sep27仅该单家族，不重本日研究。
 
 ## 2. 来源覆盖
 
-原请求/执行时间/失败在本日`fetch-log.json`、`focused-fetch.json`、`recovery-log.json`、`date-recovery.json`、`spec-fetch.json`及`checkout-fetch.json`。只授下列真实切片，不承诺全集。
+本日独立原件/真实URL、执行时间、HTTP/exit/bytes/SHA位于SUP_curl-*；旧raw/fetch日志保护。[当前十四源有限停止包](../_sources/daily-20250929/SUP_SOURCE_20261013.md)保实际窗口与出口，原有效层不代新扫描。
 
 | 来源 | 检查范围与依据 | 结果 | 缺口 |
 | --- | --- | --- | --- |
-| SRC-OPENAI | 原news RSS实际解析1247条，本窗pubDate确证ACP Blog一条；官方Blog core由web读取，urllib403保留；关联仓库身份/发布列表/初版spec读取 | 已检查 | Blog发布和后续artifact是分开事件，不把repo时序覆盖RSS；初版spec历史身份边界见§4 |
-| SRC-ANTHROPIC | Research Flight实际恢复174出现/172唯一slug，逐原publishedOn筛本窗无记录；搜索触发Consumer Terms原core | 已检查 | 当前Terms页Aug28发布、截止已为Oct8，不能拿旧转载Sep28当新原始发布；不授历史未收录全集 |
-| SRC-GOOGLE-AI | `/blog/2025/09/`首12条Sep30～Sep11越窗停；pubs category2025/search language model实际首1～15/37，只是全年发现目录，无目标first-public字段，未转全37正文队列。DeepMind Research gzip实际解压；RSS100条至Nov5 | 受阻 | DeepMind9月历史目录/Google论文首公开未恢复；不是空gzip/零事件 |
-| SRC-META-AI | Research标题壳；Blog页1～3原卡实际读，页2非单调旧Feb20未提前停，页3Oct24后普通Aug27、Aug14至Jul31越窗，停止 | 受阻 | Blog有限卡片切片已处理，动态Research历史未恢复，不授Research历史覆盖 |
-| SRC-QWEN | 旧Blog5条窗前；新官方Research API本日实际200，完整数组60项，非时间排序全部原date/lastmod检查后停，无本窗项；[原响应](../_sources/daily-20250929/qwen-research-api.json)、[元数据](../_sources/daily-20250929/qwen-research-metadata.json) | 已检查 | 限官方可恢复数组，不授未收录历史修订全集 |
-| SRC-DEEPSEEK | 官方news18条目录，Sep29 V3.2-Exp与Sep22夹窗；Sep29原发布core已读，DSA替代机制有潜力 | 受阻 | 日精度未定时区/时刻，不能确定是否在本窗最后1小时；不以降价代替机制贡献 |
-| SRC-MOONSHOT | 官方Blog26条实际可见目录，Sep16/Sep5至2024均已读标题日期，无本窗条目 | 已检查 | 限Blog目录，不授所有仓库临时事件 |
-| SRC-TENCENT-HUNYUAN | 首Research页壳；正确publicList POST 1/100/renderType0实际total9/list9，displayPublishTime全部2026 | 受阻 | 当前9条不能覆盖2025；无可见浏览器可用，不授历史0 |
-| SRC-ZAI | Research blogsItems页1 15/页2 18，页2hasMore=false，最早Dec7；release notes Sep30/Aug11夹窗 | 受阻 | 当前Research截断不能授9月全集；notes所列切片已读 |
-| SRC-BYTEDANCE-SEED | type2/year2025/page0/count20真实15/total49/moretrue/next20，分离置顶后普通条目越7月停止；type1前页US/CN94均无list；真实page20只Jun12 SwiftSpec | 受阻 | 缺前页内容，不以一个后页补授9月论文覆盖；Blog有限段已读 |
-| SRC-BAIDU-ERNIE | 首猜rss.xml404后实际index.xml恢复18项并解析（16普通+2导航），Oct16/Sep12夹窗，无本窗字段 | 已检查 | 已恢复路径，不把最初404当终态历史空 |
-| SRC-XIAOMI-MIMO | 官方首页、两实际JS、原route metadata读8论文/15Blog；论文Sep19/Oct21夹窗，Blog日期可见Dec18/19和2026；More本地展开 | 已检查 | 不授当前目录之外历史全集，无窗内身份 |
-| SRC-MINIMAX | EN12/CN13技术卡实际读，无分页；本日另实际Agent Tech Blog及llms.txt全部索引，仅恢复2026-05-13 Agent Team，无历史分页，停；[文本](../_sources/daily-20250929/minimax-agent-text.json)、[索引](../_sources/daily-20250929/minimax-agent-index.txt) | 受阻 | 当前精选公司列表/Agent2026目录不授完整9月 |
-| SRC-ARXIV | 12分类/10主题题名，submitted发现Sep25 18UTC～Sep26 18UTC/start0/max100返回429；旧2509月路404保留。正确 `/list/cs.CL/2025-09?skip=0&show=2000` 实际200，1–2000/2214无逐篇公告日期，只定点查GTO身份，不转全月题摘队列；[恢复](../_sources/daily-20250929/narrow-route-recovery.json)、[原月表](../_sources/daily-20250929/arxiv-month-corrected.html)。公告机制/两必要v1已读 | 受阻 | 未取得目标逐篇历史首公开，月表末214未读、不授全量；不从提交时间直接推公开日 |
-| 表外：[ACP官方规范](https://github.com/agentic-commerce-protocol/agentic-commerce-protocol) | 只读本次触发的README身份、releases（空）、2025-09-29初版changelog与checkout/delegate payment规范，不扩当前RFC全集 | 受阻 | 初版日期标签不等于原公开时刻；现存dated规范未冒充当时执行日志 |
-| 补检：[Web主题搜索](https://www.google.com/) | Sep28机构/有界Sep26模型推理与RL/arXiv公告恢复；原search与focused-web保留，回原v1核身份 | 检索受限 | 二手security数据库Sep28只作SafeSearch发现；转载周报不授新研究日期或贡献 |
+| SRC-OPENAI | 本日Research403；新RSS200/1287items按pubDate转BJT Sep28无条目，Feynman§4独立取得/解析匹配；冻结原ACP原Sep29T08事件不搬移 | 已检查 | 限真实RSS订阅切片，不授Research全集/隐藏修订或历史无遗漏 |
+| SRC-ANTHROPIC | 新Research200真实Flight/RSC，179出现/176唯一slug-title条目/170日期值，Sep28无字段，Feynman§4独立解析通过 | 已检查 | 限当前Research目录，不授未收录历史/互联网无事件 |
+| SRC-GOOGLE-AI | 月Blog/Pub本地timeout；本日web月Blog首12/2页Sep30→Sep25→Sep24→Sep23→Sep11邻接后停。DeepMind主页200/p2 TLS失败，web实际p2 265目录只Oct30→Sep29→Sep24→Sep18邻接。Pub web1–15/11614、2025facet680/Year排序仅年份 | 受阻 | Blog/DeepMind有限切片已恢复，Pub历史日证/未收录事件限制不授全Coverage；680/265不作研究队列，不读窗外正文 |
+| SRC-META-AI | Research/p5本地timeout；本日webglobal_search p5 2939混合目录，publication Oct13→Sep24→Sep23→Sep22→Sep15夹窗后停，仅metadata | 受阻 | Person/Blog/publication混合非全局单调历史全集，不能据本片无Sep28授Research全覆盖；需具名原事件/有限历史页 |
+| SRC-QWEN | 注册Hugo及page_config本日200，完整非时间排序60项原date实际检查，Sep28无项，Feynman§7通过 | 已检查 | 只实际研究数组，无具名触发不扫全模型/仓库或未列修订 |
+| SRC-DEEPSEEK | 本日home/updates200，目录Sep29 V3.2Exp→Sep22 Terminus夹窗后止日期层 | 已检查 | Sep29官方date-only是窗外，不再索额外TZ/秒级且不迁Sep28；只该目录切片，不授全研究史 |
+| SRC-MOONSHOT | 本日Kimi Blog200，Nov07/06→Sep16/05→Aug22日期目录，止跨窗邻接，无Sep28项 | 已检查 | 限当前Blog目录，不授全部仓库历史；不读窗外正文 |
+| SRC-TENCENT-HUNYUAN | 注册Research200；本日正确POST page1/size100/renderType0，code0/list9/total9，最早displayPublishTime按秒转BJT2026-02-03，Feynman§7通过 | 受阻 | 可提取但当前全2026无法恢复2025历史，不称0论文/浏览器已执行；需具名2025原事件/有限历史页 |
+| SRC-ZAI | 本日Research p1/p2均200，p2十八dated至Dec07,2025、末“没有更多”，只索引后止 | 受阻 | 最早仍晚于Sep28，历史切片截断，createAt/当前可见不替研究公开；需具名原发布 |
+| SRC-BYTEDANCE-SEED | 本日真实paper18/94、blog18/45/next20/has_more；PublishDate毫秒转BJT与UpdateTime/IsPinned分开，paper非pinOct22/21→Sep22两项→Sep02/01、blog非pinOct23→Aug21，逐pin无Sep28，Feynman§7通过 | 已检查 | 旧前页缺数组已恢复，不请求全年94/45；只两真实首片/邻接，不授未收录历史或无遗漏 |
+| SRC-BAIDU-ERNIE | 本日Blog p1/p2均200，p2Nov11/07→Oct16→Sep12→Aug14/Jun30，真实末页1/2/上一页，止邻接 | 已检查 | 限可见Blog分页，不拿导航哨兵当文章，无具名触发不全扫GitHub |
+| SRC-XIAOMI-MIMO | 本日home200/58220bytes，经真实script取index/runtime/routes及两async首页chunk，全部200；Paper8原日期Oct21→Sep19→Jun04，Blog15/More组件仅同array slice展开无分页，route metadata具名HSS Dec19/安全Dec18,2025及2026 | 已检查 | 部分Blog仍undated、历史未收录受限，不授Sep28零事件/全Coverage；只metadata/More代码语义，不读窗外研究正文 |
+| SRC-MINIMAX | 本日EN12/CN13 dated cards，EN最早Oct27/CN至Jan15夹窗止；新Agent/llms均200，当前三技术项Oct08/Sep22/Sep19均2026，无2025历史分页 | 受阻 | 不沿旧“一篇May13”；公司Blog有限片已处理，Agent2025历史仍需具名原事件，不研究2026正文 |
+| SRC-ARXIV | 本日四主题submitted UTC Sep27T16–Sep28T15:59，start0/max100实际69/25/49/73全部200，共216出现/165唯一、无尾页；38精确v1题摘36P/2O已§8/11独核，其余127仅title/current说明查漏不当排除或全文队列。真实cs.AI/2025-09 4271首1–50无日字段；本日官方常规公告排程不对应Sep28BJT，§16有限日门停止通过 | 受阻 | EOSER原作者Sep28代码事件单篇有效，不给其余日期；TequilaSep26release窗前，新34＋原两共36必要日门安全隔离，各一次具名date-only原公开请求，不授逐篇公开/全Coverage或无遗漏 |
+| 表外：[ACP官方规范](https://github.com/agentic-commerce-protocol/agentic-commerce-protocol) | 冻结原ACP Blog/初版dated spec与Ch78已有覆盖有效复用；同发布不再新计，current artifact不反投2025 | 已检查 | 原dated规范未绑定历史commit/真实PSP执行仅既有限定，不为制造更新重读spec/Books |
+| 表外：[SafeSearch原作者项目](https://github.com/jianshuod/SafeSearch) | 精确v1 code link→原README/两作者页，仅2025citation/ICML2026；Sep28公开资格有限停止已Feynman§6通过 | 受阻 | 缺明确原研究公开日，原v1八作者/后九作者分责，不据Submitted/当前代码/会议或三方授日期 |
+| 表外：[GTO原作者项目](https://github.com/hsj576/GTO) | 同四作者/2509.22134原repo及Pan Zhou发表条目，仅2025citation/ICLR2026无Sep28发布字段，Feynman§6通过 | 受阻 | 原v1必要理论反侧有效，当前4090demo/代码不授日门、理论修复或性能保证 |
+| 表外：[LLaVA-OneVision原作者项目](https://github.com/EvolvingLMMs-Lab/LLaVA-OneVision-2) | 从标v1 HTML原1.5项目链接恢复同owner当前2，只1.5入口/News：Sep30 Technical Report、Dec11 RL recipe，均窗外，未研究2 | 受阻 | Sep28首次公开未定，后release不迁日；nominal-v1 abs/Atom26M与HTML22M冲突只保字段，不授统一原数据/实验 |
+| 表外：[EOSER/ASS/CJ-GRPO原代码](https://github.com/yjyddq/EOSER-ASS-RL) | 原Sep28code-release/Sep30paper/2026memory分责，§12日期/5分/必要v1与current采样反侧通过；精确commit549e094…README与两必要接口已取得/读，§14–15历史绑定/最终Source与具体NoChange通过 | 已检查 | 只必要状态/action/behavior-ref/loss身份，不授全代码审计/运行、精确ASS/std/EOS截断paper-code等价、joint-selection无偏或净加速；无Books写入 |
+| 表外：[具名作者代码日期出口](https://github.com/shijxcs/meft) | LoRAct/GRACE/PrefClean/RCD原README无日级发布字段；Tequila官方Sep26release窗前，EOSER另列；[六出口记录](../_sources/daily-20250929/SUP_DATE_20261013.md)只日期/身份有限范围 | 受阻 | 四缺日级资格，不从当前code/提交/改名推公开；不扫全repo/全网absence，具名date-only到达只家族重开 |
+| 补检：[Web主题搜索](https://www.google.com/) | 本日GTO/SafeSearch具名身份/日期与作者原出口、LLaVA具名release恢复，第三方只线索；不扫全站/月 | 检索受限 | 无命中不证明没有先稿，搜索/转载/Updated不当研究公开；具体原date-only日门到达只家族重开 |
 
 ## 3. 候选与判断
 
-确定落窗1家族，root准入、证据与Books裁决通过；三项论文/模型日期潜力隔离于§5。
+原冻结ACP1＋新增EOSER代码release1＝2；新事件/5分、必要v1域/历史绑定和具体owner窄采用已实际独核，真实DAY§18–19、完成態FINAL§20与root§21接纳已发生。其余必要当窗资格与精确recipe分责见§5。
 
 | 材料 | 公开时间 | 项目贡献与评分 | 审阅结果 | Books决定 |
 | --- | --- | --- | --- | --- |
 | [Buy it in ChatGPT: Instant Checkout and the Agentic Commerce Protocol](https://openai.com/index/buy-it-in-chatgpt/) | 2025-09-29T08:00:00+08:00 | 语言提案不能直接支配支付凭据→用户确认、限定金额/merchant的payment token与merchant-of-record分责→重新考虑执行授权和凭据转交范围；2+2+2=6 | 深入完成 | 已有覆盖：AGENT-TOOL-CALLING，[Ch78](../../../../books/part-07-agent/78-tool-calling.md)实际金额/资源/时间窗口校验与payment approval/narrow scope；root裁定通过 |
+| [Taming Masked Diffusion Language Models via Consistency Trajectory Reinforcement Learning with Fewer Decoding Step](https://github.com/yjyddq/EOSER-ASS-RL) | 2025-09-28 | 终态全填串概率不能自动代表非因果masked rollout→保存真实中间状态/本步commit位置与EOS候选confidence/少step schedule→重核优化条件与质量/状态存储预算；2+1+2=5 | 深入完成 | 已有覆盖：TRAIN-GRPO，[Ch33](../../../../books/part-04-training-system/33-grpo.md)冻结masked-state/action positions、surrogate/branch-law与全费；Feynman§13窄采用通过。精确ASS recipe隔离，不新增Books/POST |
 
 ## 4. 证据与知识整合
 
@@ -61,18 +72,41 @@ SafeSearch `2509.23694v1`实际§3.1～3.4、§4.1～4.2、Appendix B/E.2读到�
 
 ACP初版采用显式用户确认、merchant-of-record边界、一次性allowance（金额/币种/checkout/merchant/expiry）与complete/cancel状态、Idempotency-Key，有Agent执行授权范围潜力；原Blog不是可靠性复现，schema不证明真实PSP执行一次性约束。Terms补检则是Aug28已公布的厂商保留策略，当前页截止Oct8；不把转载Sep28当本窗新约束发布。
 
+### [Taming Masked Diffusion Language Models via Consistency Trajectory Reinforcement Learning with Fewer Decoding Step](https://github.com/yjyddq/EOSER-ASS-RL)
+
+原作者Updates明确Sep28,2025发布代码、Sep30发布paper、Mar09,2026 backward-memory优化。Sep28 date-only发布日门与5分已Feynman§12通过，不是arXiv Submitted所授first。作者有限取得549e094ed5ef5924fa20c24614d29e4ad1ec71b3历史README和两必要code接口，原README已有Sep28 code-release且paperTBD；commit时间只选择artifact，公开日仍用发布声明。该历史绑定/最终Source已Feynman§14–15实际核通过，不声称全repo审计/运行或2026优化在初版。
+
+实际[精确v1](https://arxiv.org/html/2509.23924v1)§3.2–3.4/Eqs4–11/Alg1与指定code必要接口表明：EOSER软降EOS候选的提交confidence，不硬禁EOS/重归一完整vocab；ASS增加每步提交数、末补一token不保证必EOS。CJ保存partially-masked条件与本步新unmask位置，在该条件下重求token surrogate，不直接用最终完整串代替。token logprob不含全部top-k位置joint selection law，step/token均值、clipping和组终奖不授无偏或普通PPO exact。
+
+指定发布trainer虽计算group std，advantage实际仅rewards-mean、未除std，论文Alg1归一方式不当原实现；虽生成first-EOS-inclusive completion_mask，loss只乘unmask_positions、不交该mask，reward解码整个completion_ids/skip_special_tokens，不能称自动剔除EOS后所有位置/文本。不证明padding独占收益，也不否定masked-state接口；精确std/EOS/joint-law和全paper-code等价不采用。
+
+必要正确性反侧保留：原Eq7单步2^s/L、末(2^s+1)/L与发布版/current累计(2^(s+1)-1)/L不同；L128/S7、gamma .01→1时末步分别.512734375/.992265625，**均不精确1**。不能拼成同配方、写ASS末步完全恢复EOS概率或用current静默修论文。局部状态/位置接口可以保留，精确recipe/分布等价不得正面采用。[完整有限单篇](../_sources/daily-20250929/SUP_EOSER_SOURCE_20261013.md)保原件、位置、采用边界和变化层停点。
+
+§4/Tables1–3与B/D只支持LLaDA8B/四任务、0shot/greedy、L128/256、block/step/group6/beta.04等作者人口；训练与training-free分账。GSM8K L256/S128 CJ+EOSER77.75低于diffu-GRPO79.91/CJ+SemiAR84.29；7/8step另人口不能拼成同质量净加速。Table3局部轨迹对照不控制所有预算，状态份数仍随S增长，单份序列/词表和全部前后向付费；硬件/precision/seed/完整E2E/SLO Not Disclosed。规划/数学串并行解释仅启发式，未复现。
+
+正式长期采用只限真实masked-state/action位置、EOS选择与少step不等全成本。TRAIN-GRPO具体Ch33 2594–2617已承载完整轨迹、冻结masked state/已填context/仅actionable credit、selection score/surrogate无偏缺口与全費；Ch24已有mutable/commit/schedule、mask与实际状态exposure及EOS/padding职责，非已有完整EOSER gamma或把VOID等同软EOS。Ch32 AR-prefix ratio/Ch34离线preference职责不迁移。Feynman§13已实际owner/邻接比较通过这一窄No Change，不新增Books/注，无POST义务；精确版本说明留报告，配方争议不作长期保证。
+
 ## 5. 缺口与下一步
 
-可执行普通待办0；独立复核通过。以下为本窗终态保留，不用于正面证据、Books或Coverage/无遗漏断言，日期未确证不评分；只在具名材料到达时定点重开。
+普通研究/日级独核待办0；Feynman真实DAY§18–19、保存完成態FINAL§20与root§21实际接纳完成，不重复审批。DATE新34资格/Tequila原release/常规公告日权限的有限停止已§16通过；EOSER Source/历史绑定/最终NoChange已§14–15通过，std/EOS两必要限定真实保存，§17三个窄返修已落实，已通过研究不重。以下为本窗终态保留项，不用于正面证据、Books、Coverage或无遗漏断言；仅具名原材料到达时，依对应行条件定点重开。
 
-- [GTO精确v1](https://arxiv.org/abs/2509.22134v1)：原submitted `Fri, 26 Sep 2025 09:55:35 UTC`，尚缺首公开官方公告/完全落窗的原公开区间。重开本家族日期及上述理论争议，不把7.7%小增益机械排除；若归属成立再独立校准评分/采用边界，关键反侧已读。
-- [SafeSearch精确v1](https://arxiv.org/abs/2509.23694v1)：原submitted `Sun, 28 Sep 2025 07:05:17 UTC`，二手数据库称Sep28，不能代官方公开。需要可追溯首发布/公告区间；不拿之后v6标题/实验补v1。必要安全反侧已读，之后只重开日期/受影响命题。
-- ACP artifact边界：官方repo `created_at=2025-09-29T04:09:29Z`、releases空；dated初版spec尚未绑定历史commit。本窗Blog日期已按原RSS确证，不能仅午夜留hold。只有需采用当时精确schema/实现事实时，再以历史commit/原发布record定点恢复artifact事件，不阻塞Blog可支持的有限结论。
-- [DeepSeek-V3.2-Exp](https://api-docs.deepseek.com/news/news250929)：原目录Sep29日精度与core有DSA潜力，缺时区/具体事件区间。需要官方原公开记录确定本窗尾小时还是之后；价格不是速度/架构收益证据，若确证再读所需技术报告及校准。
+原GTO/SafeSearch各一次必要日期请求：原作者具名研究公开日或官方逐篇公告，date-only即可。[DATE§1–4](../_sources/daily-20250929/SUP_DATE_20261013.md)有限作者出口/版本分责已Feynman§6通过，均不formal/评分/Books；原GTO slack/连续离散理论争议与SafeSearch真实threat/300筛选/商用未测反侧有效复用，不因未知日排为小改进。
 
-机构历史切片和arXiv请求限制按§2具名原文件作本窗终态保留；可接受恢复是官方历史目录/真实缺失API前页/首次公告，不是当前主页空壳、DataCite注册或submitted。正确月表1–2000/2214已取得但只是身份线索，不造逐篇公开或全文已读；只窄补受影响源与窗口，不扩9月29日09:00之后、Weekly或别月。
+新34具名必要当窗资格请求在[DATE§6](../_sources/daily-20250929/SUP_DATE_20261013.md)，只两已读小批36P扣EOSER/Tequila；实际官方月表无日字段/常规公告不对应Sep28BJT、四原code出口无dated News，不能当作者当日绝无自发发布。这34不正式/评分/Books、不授Coverage/完整Evidence；有原作者明确研究发布YYYY-MM-DD/具体重要release即可只本家族恢复，无globalabsence/同bytes/TZ/秒级。必要安全/理论/重要current信号不删，CCD class-token映射缺口、LLaVA nominal-v1人口冲突等由FIRST原位置限定，未知日不强读全文。宽发现165余127只title/current说明，不误称完整筛选/EX或127外部hold。
+
+EOSER精确ASS recipe：论文Eq7与发布代码累计衰减不同且末步均非1，不采用统一gamma/普通PPO exact或joint-selection无偏。若未来需要完整配方，以该family原作者明确Eq7/代码应采用版本及真实selection-law原证定点重开；已有masked-state/action接口与局部评价不因此无效。ACP原dated spec未绑定历史commit/PSP真实回执边界保持，只有采用当时精确schema/实现才恢复，不阻塞原Blog可支持结论。
+
+窗外线索：DeepSeek-V3.2-Exp官方Sep29 date-only直接在新增Sep28之外，不再构造额外TZ/尾小时请求；LLaVA原作者Sep30报告release/Dec11 RL、Tequila官方Sep26算法release分责，不移入本日、不接别日重跑/预增。原候选小时窗与ACP整行保持。机构历史切片/undated缺段依§2实际入口隔离，只接受具名原研究/有限历史页，不能要求全年Seed94/全Google680/全月4271；无不足的正面Coverage/Evidence或无遗漏。
 
 ## 6. 复核
+
+复核者：Feynman（非报告作者，原配对）。
+
+结论：通过（Feynman真实DAY§18–19及保存完成態FINAL§20；root§21已实际接纳）。
+
+已actual读回[本日独核§1–21](../_sources/daily-20250929/SUP_INDEPENDENT_20261013.md)：fresh/原冻结与未变有效层、RSS/Anthropic/four-query传输及发现权限、两旧日期有限停止、Qwen/Hunyuan/Seed真实字段、38精确v1全题摘准入与强反侧、LLaVA字段/后来release角色、十四源有限停止、EOSER事件/5分/必要v1采样反侧、历史绑定与具体owner有限NoChange、DATE新34/常规公告/具名出口有限停止通过各层。PSG两人审人口、EOSER std/firstEOS mask未交loss/reward两限定、Ch24同语义锚点漂移与LoRAct未读PDF已真实保存；不是全165题摘/全文或所有版史无标记认证。§17三个窄修落实后，真实完整DAY§18/保存态变化层DAY§19/完成態FINAL§20均通过，root§21已接纳；普通0、两具体已有覆盖/新增Books0，无POST义务。现只同步已经发生指向，不重复原证/Source或owner。
+
+机器实际检查：本轮完成态V3、14唯一来源、12本地引用/10路径、原window/ACP完整行与1882chars连续旧§4冻结、限定Markdown/helper cached及unstaged diff-check通过，42窗口回归通过；不称全raw目录或全仓cached通过，不代语义验收。以下root通过仅原有效层复核，不代本轮DAY；本轮DAY依Feynman§18真实结果，持久包内部转交，不调用UI线程工具。
 
 复核者：root（非报告作者）。
 

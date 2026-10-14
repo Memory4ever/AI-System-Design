@@ -139,6 +139,10 @@ R_admit
 
 它用分银行、bit 重组与硬件耦合换取刷新能耗的减少，并新增驻留时间低估、相关错误及精度格式变化的失效风险。现有证据来自 H100 上的 lifetime 测量、3T cell/DESTINY 模型和 BF16 随机故障注入，而非已制造 NPU 的端到端验证；部分任务准确率仍有微小退步。因而不能把 workspace 刷新收益写成整机能耗、安全或生产质量保证。实际驻留超出校准范围、错误分布不符或硬件不支持分段保护时，统一刷新和原有存储路径仍是更可靠的选择。
 
+若片上 SRAM 允许分 bank 休眠，同一 lifetime trace 还可用于选择装多少容量、何时关掉空闲 bank：先按固定执行 schedule 的 needed/obsolete tensors 求 live occupancy，再在无 writeback 的容量约束下扫描 bank 数，以足够的 active banks 容纳当前 live set；只有空闲时间超过 leakage 节省与唤醒能耗/延迟的 break-even 才值得 gating。这一分支与 eDRAM 的 bit-sensitive refresh 不同，减少 active banks 要求真实地址能按假定连续打包；逻辑占用降低本身不证明物理 bank 已可关闭。<!-- source-family:SF-2026-ARXIV-2604-06955 -->
+
+[TRAPTI 的必要模型与有限仿真](https://arxiv.org/html/2604.06955v1)依赖固定 schedule、headroom 和 CACTI/TransInferSim 参数；两个 Transformer 的层数、维度与 FFN 同时不同，不能把能耗比唯一归因 MHA/GQA。Trace、mapping/搬移、bank 控制与唤醒全部计费，碎片、动态 shape、schedule 改写或时限失配会使离线 bank 数与 gating 失效。模型没有证明制造硬件或生产 deadline；这些条件不可核或净节省不足时，保留保守 SRAM 容量、固定 active banks 与原 allocator/执行 schedule，而不是由理想 live set 批准物理掉电。
+
 ## 一个可用容量小例子
 
 假设一张 GPU 对当前进程可用 80 GiB：
@@ -259,6 +263,8 @@ Activation sparsity 和 KV sparsity 都可能减少 decode 读取，但省掉的
 
 <!-- source-family:SF-2026-ARXIV-2609-33889 -->
 
+MoE精度还要分开resident账与decode读率账：容量向所有expert收费，batch-one每步只向选中的expert收费。prefix-readable权重可保持一个较深的驻留artifact，prefill读完整深度、decode按workload校准的tier表读前缀；tier改变不必重新编码。当同一正routing frequency同时乘该expert的畸变与读成本时，它从每expert的Lagrangian选择中取消，但仍决定总预算，跨domain混合或resident预算不继承此取消。大batch的expert并集、短输出的prefill会收窄收益，并增加profile、校准漂移和prefix kernel成本。[DuoRate v1](https://arxiv.org/html/2610.13328v1)只在一模型验证质量，流量为布局推算且prefix-read kernel未作端到端测量，质量实验也没有实际分离两相位；不能由低read bpw签发更低驻留容量或吞吐。条件不成立时保持静态精度/原预算，并按质量与实测完整路径重验。<!-- source-family:SF-2026-ARXIV-2610-13328 -->
+
 #### 低比特收益还取决于同一 SM 内的 Compute Balance
 
 低精度先减少 weight/activation footprint 与 memory traffic，但 W4A4 kernel 若让 Tensor Core 与 CUDA Core 工作失衡，理论 bit reduction 不会自动变成 throughput。Kernel owner 需要同时记录 quantization artifact、dequant/packing path、SM work mapping 与目标 batch regime；memory planner 只能消费经过质量 Gate 且有可执行 kernel 的 committed precision。
@@ -343,6 +349,8 @@ HBM/CPU/SSD tiering 先要按 session lifetime 与工作集判断各 tier 容量
 多进程超额申请显存时，allocator 的预留量也不等于下一次执行的真实 working set。若 scheduler 已知 task 的切换时间线，kernel 的访存模式又可由离线 profile 表达为 fixed、linear 或 strided launch-argument 模板，memory manager 可以按后续访问顺序决定保留与驱逐页，而非等 page fault 才发现新 task 缺页。把这份 working-set 信息随执行上下文移交，才可能区分整块预留、实际会触及的页，以及应提前搬入的页。
 
 预取还要与执行依赖共同排程：双 copy engine 可以重叠迁出与迁入，compute 则只在自身依赖页 ready 后开始，不必等整个 context 完成换入。[MSched v1 §5–7](https://arxiv.org/html/2512.24637v1)的收益来自受控时间线、可预测访问与 oversubscription 条件下的 driver 管理；它不是未知未来负载上的全局 OPT。模板未覆盖的 pointer-chasing、误预测和驱动控制成本仍需由 demand paging 兜底。RTX5080 上 int8 Llama3-8B/llama.cpp 的多进程对照不能替代 serving 的 TTFT/TPOT 验收，更不能把相对 thrashing 的倍率解释成常驻显存路径加速；workload 不可预测、容量足够或控制成本超过迁移收益时，常驻分配或原 demand-paging 路径仍合理。<!-- source-family:SF-2026-ARXIV-2512-24637 -->
+
+未知hot set还可以反转UVM默认路径：数据先mapped在host，允许GPU直接读，只有remote-access counter显示复用足够才迁到GPU；保留headroom并分批回收，避免每个新fault都触发临界eviction。counter仅看host而不看resident冷热，因此需以升温前需求衰减和误驱逐后的回迁保护推断，错误会增加往返，不能把hint当驻留真值。driver-adaptive管理原managed allocation却需module权限与版本重接；stock-CUDA的static分支需应用placement calls且固定split，两者不共用“零修改”承诺。[Ember v1](https://arxiv.org/html/2610.13408v1)的受限LLM token-generation对照仍低于3tok/s，非完整请求SLO；稳定高复用hot set可由static更快，单次读取可让host-mapped更合算。library/GPU-only buffer不受控、hint可override，容量足够或迁移不摊销时保常驻、原UVM或显式placement，不由相对thrashing倍率批准默认替换。<!-- source-family:SF-2026-ARXIV-2610-13408 -->
 
 ### 层级的管理权不应默认属于 Framework
 
@@ -716,6 +724,8 @@ routing path 学习补偿，并在 serving 时保持未合并，避免 merge 后
 
 Bit-exact entropy coding 可以降低权重存储，却会在执行时引入 decode bandwidth 和状态。只有 tile-level ANS decode 与 GEMM tiling、prefetch 和 weight residency 使用同一 plan，解压才可能隐藏在计算流水中；高熵 tensor 收益很小，decode 甚至会成为新瓶颈。
 
+硬件缺少便宜的分支、变长 scatter 或段内 scan 时，无损编码还可以用规则的 block 工作换取解码可执行性。一条[受限 NPU 路径](https://arxiv.org/html/2604.03298v1#S5)原样保存 sign/mantissa，只对 exponent 做可逆整数映射；组内统一选低/高位宽并带 mask，按层次 folding 对齐字节，再通过 transpose 把段内 prefix-sum 依赖转成跨行计算与 exclusive offset。这里的“位宽选择”不改变浮点数值，codec 的映射、组长、布局与 decoder 仍必须共同绑定。规则化会放弃部分压缩率，也支付临时 buffer、参数统计与解码带宽；作者 bit-identical 核验不替我们验证实现。Device-kernel 吞吐不包含 PCIe，所测端到端收益主要对单 NPU 放不下权重的 CPU-offload baseline，不能外推所有 resident 模型。熵、工作集、硬件指令或总延迟不合算时，保留原 tensor、成熟 lossless codec 或经质量验收的数值量化，不能把可逆重构叫免费传输。<!-- source-family:SF-2026-ARXIV-2604-03298 -->
+
 这条分支不改变模型质量，但增加格式、kernel 与恢复复杂度。Batch、shape、模型和 GPU 改变后必须重新测量，普通未压缩或低比特量化权重仍是更简单的可共存选择。
 
 
@@ -781,6 +791,8 @@ Inference memory budget 是 Part V 所有机制的共同约束。Weights 决定�
 下一章讨论 PD 分离：当 Prefill 与 Decode 被放入不同 GPU pools，显存和计算压力可以独立规划，但 KV state 必须付出跨池移动成本。
 
 ## Review notes
+
+- 2026-04-08补充 / `SF-2026-ARXIV-2604-03298` / [exact-v1](https://arxiv.org/html/2604.03298v1)：6分，具体codec/执行差额深入采用；可逆指数block表示与SIMD scan/布局，kernel不含PCIe，端到端限CPU-offload baseline，未复现bit-identical实验。 Source/日门/逐字PRE/实际正文及完整局部邻接已由非writer `supp_apr08_reader` 读核；本条仅同步采用边界，不宣布整日报完成或实验复现。
 
 - `SF-2026-ARXIV-2603-15589` — Daily `2026-03-18` 补 `03-17`；[LEXI exact-v1](https://arxiv.org/html/2603.15589v1) §3–5.4，2+2+2=6，runtime tensor wire format与算术精度分离具体差额深入。BF16sign/mantissa原样、perlayer指数book/32entry和24+8 escape、78cycle startup/多lane变长decode；极端entropy/短payload可膨胀或不合算，rawfallback近文。GF22synthesis/16nm估算面积与Simba/HeteroGarnet trace模拟不授物理芯片/通用GPU测量；RTX3090仅entropy profiling，bitexact不是完整质量/SLO证书。review_mar17_18必要Source/actual Ch54减少Bytes/703–709和53/55邻接、逐字两段PRE通过；root授两段与本注窄锁，作者写后正文/完整邻接顺读，review_mar17_18 非 writer 实际顺读224–252完整邻接、新233/235及774–788本人注并回对原证，POST局部通过，不授DAY。未核artifact/实现或复现。
 
@@ -957,3 +969,9 @@ Primary-source 校验入口：
 - `SF-2026-ARXIV-2603-17803` — [Swarm exact-v1](https://arxiv.org/html/2603.17803v1) §5–8/Eq8/T2–5，采用 coactivation 布局→激活 cluster union 减驻 DRAM→低副本度先分配/最小 bucket 选副本→pinned host 与 GPU 取回接口。Eq2/3/9 配方与质量等价/最优/完整费用不采用；默认10%/不同 selector、oracle 反侧与1SSD退路保留。未核代码或复现。
 
 - `SF-2026-ARXIV-2603-21576` — [PRISM exact-v1](https://arxiv.org/html/2603.21576v1) III–VII；2+2+2=6，rank-only静态signature/online-query阵列接口差额深入。只采器件提案与Nd物理资源/固定bank分页分账；signed offset、JL排名保证、headline能耗/速度与普遍质量等价不采用。FDTD/文献参数、Qwen两模型有限软件评价、热控与host费用/128K反侧近正文；未核代码、复现或真实芯片/SLO。
+
+- `SF-2026-ARXIV-2610-13328` — Daily2026-10-13；[DuoRate exact-v1](https://arxiv.org/html/2610.13328v1)§3/Props1–2、§4–5，2+1+2=5，为resident/read双账长期缺口进一步深入。保同正频率取消条件/pooled例外、大batch/短output；流量仅布局推算、prefixkernel未E2E，质量实验未实际分两相，不借format优势归全部allocation。root必要Source/实际owner/邻接及PRE独核通过，today_institutions已按窄锁写入，作者顺读正文/完整局部邻接与本注；root已实际读正文/完整局部邻接和本注非writer POST通过，六owner窄锁释放；不授DAY。未核代码、复现或生产SLO。
+
+- `SF-2026-ARXIV-2610-13408` — Daily2026-10-13；[Ember exact-v1](https://arxiv.org/html/2610.13408v1)§3–6/7.1/7.4/7.6–7.8/8，2+2+2=6，mapped-default与counter不可见resident冷度具体gap深入。adaptive需UVMmodule、static需appcalls；保误驱逐/重迁、managed-only、stablehot/static与单scan/mapped反侧、LLMnone>3tok/s和非完整请求口径。root必要Source/实际owner/邻接及PRE独核通过，today_institutions已按窄锁写入，作者顺读正文/完整局部邻接与本注；root已实际读正文/完整局部邻接和本注非writer POST通过，六owner窄锁释放；不授DAY。未核代码、复现或生产SLO。
+
+- [TRAPTI exact-v1](https://arxiv.org/html/2604.06955v1) III-A/B Eq1–5、IV-A/B/TableI；5分标准审阅后为片上bank执行缺口进一步深入，仅采用固定schedule/live-set到SRAM bank packing/gating与物理映射边界，不采两模型仿真能耗比的普适因果或真实硬件/SLO；必要证据、逐字正文与实际写后独立复核通过，未核代码或复现。<!-- source-family:SF-2026-ARXIV-2604-06955 -->

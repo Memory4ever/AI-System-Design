@@ -48,6 +48,8 @@ runtime states:
 
 如果 activation 是主因，ZeRO Stage 3 不一定有效；如果单层矩阵本身放不下，只增加 Data Parallel replicas 也无效。分布式设计必须先命名具体瓶颈。
 
+接近容量上限时，collective等待还可能来自分配器，而不是更多通信字节：大all-gather临时buffer找不到合适cached segment，可能触发cache回收、重试和device sync。因而应把allocation retry、实际buffer字节与各训练阶段时间一起观测，不由master dtype或collective timer独自归因。进程级expandable-segment策略可以改善某个trainside负载，却必须保留启动配置并检验共享rollout/IPC的兼容性；保留key不等于组合性能更好。[UniRL的H3/1×8H20受限对照](https://github.com/Tencent-Hunyuan/UniRL/pull/583)中，retry消失伴随局部降时，但与`max_split_size_mb:512`组合的耗时反而约为原耗时两倍，另一同代码报告还缺allocator状态。无retry、兼容前提未验或共享引擎会重设策略时，原分配模式仍成立；不要用版本开关替代匹配环境的端到端测量。<!-- source-family:SF-2026-UNIRL-583 -->
+
 ## 从本机协作到分布式执行
 
 操作系统首先面对的是同一台机器上多个执行单元怎样协作。Linux process 可以通过 shared memory、pipe、message queue、signal、synchronization primitive 或 socket 交换信息。这里同时存在两种基本选择：
@@ -117,6 +119,8 @@ topology issue    rank placement crosses a slow or contended link
 ```
 
 只有定位到具体层次，优化才不会退化成盲目替换库。
+
+参数服务的RDMA迁移还需分别限制endpoint接收容量与fabric注入：dedicated RQ credit约束SEND/WRITE_WITH_IMM消耗的receive槽，per-engine outstanding-byte window限制incast在途数据，DCQCN/PFC则继续承担rate与链路backpressure；共用SRQ后不能沿用逐peer credit保证。注册buffer在application与transport间移交生命期、同RCQP最终completion确认payload可见，QP分片复用只缓解调度HoL，不证明端到端无阻塞。硬件可靠连接也不授state-changing Push重试exactly-once。[ByteExpress v1](https://arxiv.org/html/2610.12815v1)中硬件only反而加重训练尾部，软件窗口后的无PFC观察仅属推荐PS工作负载，不证明可禁PFC、任意aggregate公平或LLM step提速。注册池、fragment/窗口调参和RPC恢复都付费；负载/接收合同不匹配时保原TCP或已验证transport，并独立验收update语义。<!-- source-family:SF-2026-ARXIV-2610-12815 -->
 
 ## Collective 是群体语义，不是一种算法
 
@@ -1855,6 +1859,8 @@ Host offload 也可以从独立的搬运策略进入执行图：把 pooled DRAM 
 
 这个分支把显存压力转成 host traffic、预取准确性与编译计划复杂度，并可能增加缓存依赖和跨工作组争用。联合计划应绑定 layout、cache operation、resource group 与数值验收；预测失配或硬件变化时保留普通分片、显式 offload 与较保守的串行计划。[HyperParallel v1 §3.2–3.4](https://arxiv.org/html/2603.03731v1)披露了这种图级机制，但 §4 的性能描述缺少完整硬件、batch 与匹配质量条件，不能据此承诺通用利用率或训练加速幅度。<!-- source-family:SF-2026-ARXIV-2603-03731 -->
 
+Activation offload不是容量缺多少就向host搬多少：forward结束前可隐藏的D2H bytes受host bandwidth乘forward时间限制，晚完成的swap也来不及降低峰值。可用一次匹配profile先把可行link时间留给最昂贵/不可单算重建的tensor，再用廉价recompute覆盖剩余缺口；FIFO offload与deadline prefetch仍须同时满足buffer生命周期和峰值，出现等待或shape漂移后repair并保留no-swap计划。它用host流量、重算、pinned buffer与计划验证换容量，不取消最后reader和transfer completion再释放的条件。[SlackSwap v1](https://arxiv.org/html/2610.13003v1)仅以单GPU、无碎片allocator和模型化DMA的事件仿真支持此预算，不是实机半显存/近理想吞吐证书。profile不可靠、真实host竞争或重算依赖失配时，原block checkpoint/显式offload及更保守容量仍合理。<!-- source-family:SF-2026-ARXIV-2610-13003 -->
+
 ### Exact Training Replay 需要冻结 Operation Schedule
 
 参数、optimizer state 与随机种子不足以重放一次分布式训练：kernel reduction order、sample/batch order、collective operation order 和 rank assignment 都会改变数值轨迹。可审计路径应冻结这些 schedule identity，并允许从任意 step checkpoint 重放局部区间；collective auditor 的 coverage 与样本分配也必须随 artifact 保存。<!-- source-family:SF-2026-ARXIV-2609-17380 -->
@@ -2216,3 +2222,9 @@ Primary-source 校验入口：
 - `SF-2026-ARXIV-2603-25120`：[DFLOP exact-v1](https://arxiv.org/html/2603.25120v1) §3.1–3.4、§4、§5.1–5.3；仅采用双 module mesh 与双向 communicator、offline distribution/online batch 分责。A100 最多 64 GPU 实测和 16–32 node 投影分开；manual tuning 未匹配搜索预算、precision/CI/quality 未披露，不授 up-to 通用收益、bitwise 或恢复保证；未核 artifact 或复现。
 
 - `SF-2026-ARXIV-2603-26438` — [exact-v1](https://arxiv.org/html/2603.26438v1)§2.2–3.3/4.1–4.3.4；2+1+2=5。片上DCA借算术单元/collective参与mask与资源分责，保twoinput/二维反侧、RTLvs解析model、布局/数值条件与费用；不采全局deadlock/实硅/跨GPUNCCL或end2end模型保证，未核repo或复现。
+
+- `SF-2026-UNIRL-583` — Daily2026-10-13；[PR583](https://github.com/Tencent-Hunyuan/UniRL/pull/583)，merge `279298dc8aa9d3a727c015fcf10fc0da90613871`六affectedpatch/完整作者test-risk，2+1+2=5，为实际allocator长期缺口进一步深入完成；具体调用进程scope、配置组合反例与共享IPC未验界均已核。仅采用all-gather bytes与allocator retry/sync分开归因、process-wide配置组合/兼容资格，保1×8H20/torch2.13+cu130/H3具体负载、max_split512约两倍耗时和launch环境反侧。未提交local phase timer、未核GPU/IPC运行或复现；root必要原证、owner/PRE通过，today_institutions窄写已落实，root实际正文/完整邻接与本末注非writer POST通过，窄锁释放。
+
+- `SF-2026-ARXIV-2610-12815` — Daily2026-10-13；[ByteExpress exact-v1](https://arxiv.org/html/2610.12815v1)§2.1/3–9必要allocator/transfer/credit/SRQ/window/recovery与生产评价，1+2+2=5，为实际组合控制边界进一步深入。保推荐PS人口、hardware-only反退、PFC仍enable/per-engine非aggregate bound与Push retry-safe未证，不授LLM collective或step提速。root必要Source/实际owner/邻接及PRE独核通过，today_institutions已按窄锁写入，作者顺读正文/完整局部邻接与本注；root已实际读正文/完整局部邻接和本注非writer POST通过，六owner窄锁释放；不授DAY。未核代码、复现或生产SLO。
+
+- `SF-2026-ARXIV-2610-13003` — Daily2026-10-13；[SlackSwap exact-v1](https://arxiv.org/html/2610.13003v1)§2–4/Alg1、repair/runtime及基线/ablation，2+1+2=5，为host-time预算长期缺口进一步深入。仅DES/单GPU/无碎片allocator、模型化DMA/roofline；搜索近优非global optimum，无实机吞吐/半显存保证。root必要Source/实际owner/邻接及PRE独核通过，today_institutions已按窄锁写入，作者顺读正文/完整局部邻接与本注；root已实际读正文/完整局部邻接和本注非writer POST通过，六owner窄锁释放；不授DAY。未核代码、复现或生产SLO。

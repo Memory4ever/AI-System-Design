@@ -76,6 +76,8 @@ d_model state
 
 这只是计算直觉。某个中间 neuron 是否稳定对应一个人类概念，需要因果实验，不能从结构本身推出。
 
+这个计算直觉还要区分输入空间与参数空间：对ReLU这类分段线性activation，固定同一输入区域的binary gate，会让该FFN对输入表现为affine map，却不让同时更新的多层权重变成一个线性参数：在正区域固定gate的标量两层例中，两组权重`(1,1)`与`(3,3)`的输出平均为`5x`，平均权重`(2,2)`的输出却是`4x`。这是由本章两层乘积直接得到的数学边界，不是某篇论文的平均模型保证；只有其余变换与gate固定、仅一个线性参数块变化时，才有相应的函数平均条件。[一个有限DualCopy提案](https://arxiv.org/html/2604.02990v1#S3)将冻结结构副本产生的binarymask与可训练定量副本分开，后者才参与跨客户端平均；它用双份权重储存与额外结构前向换固定选择路径，trainable数并不因此减半。所测CNN的warm-start/central calibration和部分反退只支持这项条件设计，不授Transformer/MoE迁移、joint参数平均等函数平均或全域收敛。gate或目标分布需要变化时，保留原activation/完整微调与独立质量验收，不能仅因“区域内线性”签发合并正确性。<!-- source-family:SF-2026-ARXIV-2604-02990 -->
+
 ## 一个逐位置小例子
 
 取单个 token state：
@@ -366,3 +368,5 @@ Primary-source 校验入口：
 - `SF-2026-ARXIV-2603-17624` — Daily `2026-03-20`；[SemanticRelations exact-v1](https://arxiv.org/html/2603.17624v1) §3.1–3.4/EqLD、FR、DR、§4.1–4.3/T2–6与§5/7。只采probe干预对象及relation/template联合验收边界，不采方向表口径、冗余唯一解释或next-token编辑保证；base dense/WordNet/SAE选择与成本限制保留。未核代码或复现实验。
 
 - `SF-2026-ARXIV-2603-17231` — [EmotionNeurons exact-v1](https://arxiv.org/html/2603.17231v1)必要§3/Eq1–8、§4/T1、§5/T2–6与直接迁移/内容反侧、§6。仅成功人口→postactivation gate稀疏地址→生成控制的接口与分验；保伴随text WER非audio转录、judge/人选差别、强度/迁移反退和全费，不授语义纯净、唯一因果、内容正交/无损或完整部署保证，未核代码/复现。
+
+- `SF-2026-ARXIV-2604-02990` — 04-07补04-06自然日；FedSQ exact-v1 III-A/B/Alg1、IV/T1。仅采用固定input gate下输入affine与joint参数平均分离，5x/4x为本章公式的数学推断，不是论文保证；DualCopy存储与trainable分账、binary surrogate、central schedule及CNN反退保留，不授Transformer迁移或联邦收敛。root非作者已实际核必要Source、具体owner/逐字PRE与写后正文/完整邻接/本人note，POST通过；作者同步本记录后释放窄锁。未核artifact/复现，不授日级完成。

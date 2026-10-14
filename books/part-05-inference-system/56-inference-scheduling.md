@@ -139,6 +139,10 @@ tail SLO 和预测校准放进同一 workload contract。
 
 runtime 仍只拥有实际 page、queue 与 preemption state；hard fairness、安全隔离和拒绝边界必须留在优化目标之外的 policy constraints。稳健 headroom 会降低并发，求解与校准也有成本；现有证据来自 trace simulation，不能写成生产收益保证。
 
+多模型 routing 若把每个模型的 latency 当常数，容易在固定部署、轻载下使用；但改变 tensor parallel placement、MPS active-thread cap 或导入流量后，同一模型会进入不同服务区间。一条联合选择分支先对每个候选 setup 测 latency–load 曲线，再按 traffic fraction w_i 读取该模型的实际输入率 λw_i，并把预测质量与负载代价共同优化。部署可行性仍须分别核 shard placement、显存和计算cap，MPS比例不是硬隔离或实测利用率；模型setup或流量人口改变后，旧profile不能自动复用。<!-- source-family:SF-2026-ARXIV-2604-10907 -->
+
+request-level average 的加权 latency 与 tail percentile 是不同约束；即使固定份额下可用 assignment dual prices 选模型，完整部署/份额/latency目标也不能因此取得全局最优或生产SLO保证。[RouterWise v1 的有限对照](https://arxiv.org/html/2604.10907v1)使用vLLM profile与RouterBench预测质量评估候选配置，不是全配置实测交付；筛除低aggregate cap配置也改变比较人口。逐setup profiling、router训练、配置搜索与迁移均付费，quality proxy、插值或共享干扰失准时，保留固定部署、保守负载路由与实际SLO门控，先重验曲线和完整费用再接纳新配置。<!-- source-family:SF-2026-ARXIV-2604-10907 -->
+
 ### 连续 Edge Inference 需要跨窗口携带 Violation-risk Budget
 
 逐请求 admission 在任务相互独立、设备容量稳定且 deadline 只属于当前请求时足够。Continuous edge inference 往往由
@@ -2039,3 +2043,5 @@ Primary-source 校验入口：
 - `SF-2026-ARXIV-2603-22206` — Daily `2026-03-25`补03-24；[exact-v1](https://arxiv.org/html/2603.22206v1) §3/Alg1、§4/Figs5～7/Table1；2+2+3=7，model-conditioned总剩余token、首次routing/后续affinity与prediction-lifetime接口；APPS/MATH平均per-token而非P99，aging iteration无wallclock保证，真实router/predictor费用与漂移保留。未核实现或复现实验。
 
 - `SF-2026-ARXIV-2603-26498` — Daily2026-03-31补03-30；[exact-v1](https://arxiv.org/html/2603.26498v1) §2–4/Fig8/Figs10–15，2+2+2=6。仅 per-model latency×KV 资源分类与队列/aging 分责，保 naive 分类/重请求反退、bounded aging 非 formal guarantee、相对 SLO 及全部 profiling/preemption 费用；不授54%/78.5%普遍数字或多节点生产保证，未核实现或复现。
+
+- `SF-2026-ARXIV-2604-10907` — Apr15补Apr14；[RouterWise exact-v1](https://arxiv.org/html/2604.10907v1) II/III/IV-B–D/Prop1–3/Alg1–3、V–VII。2+2+2=6具体setup latency-load×traffic份额接口缺口深入；保mean非tail/quality proxy及profile模型非全配置实测、MPS cap非隔离/实利用率、搜索过滤人口与profiling/训练/迁移费用，不照全局最优/Alg3初始化顺序/87%通用收益。A10080GB PCIe/vLLM有限profile；precision/长度/并发/p99未披露，未核实现/复现。root必要Source/date/current owner/逐字PRE通过授两段+本人注窄锁，root实际正文/完整邻接/本人注非writer POST通过，作者仅同步本注并实读回，Ch56窄锁释放，不授DAY。

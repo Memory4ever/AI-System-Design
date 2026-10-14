@@ -33,6 +33,8 @@ while not done:
 
 长期任务需要 event/state persistence，而不是依赖进程内变量。
 
+资源策略还可以先在同一修复轨迹上支付短probe，再冻结一组联合预算：用有gold/test支持的初始尝试估计任务状态，按固定阈值一起选择证据输入、JSON操作上限与便宜precheck或完整verification，而不是让三项各自独立放宽。这份probe产生后续控制提案，不拥有任务真值，操作格式正确也不等修复正确。[EcoScratch的受限对照](https://arxiv.org/html/2603.29624v1)支持此联合接口，单trajectory/缺重复CI、provider漂移和严格验证的质量/费用差额仍须保留；host-only能耗与fallback估计也不包含remote推理。Gold/probe、证据制备、模型、所有precheck/full check和恢复均计费，固定/text-only仍是便宜分支。Probe不完备、阈值漂移或验证不可靠时，回退固定预算、原证据与完整独立验收，不让估计较省或syntactic patch自签成功。<!-- source-family:SF-2026-ARXIV-2603-29624 -->
+
 ## State Machine 是基本模型
 
 <!-- daily-20260621:agent-workflow:start -->
@@ -368,6 +370,10 @@ ASI-Evolve 支持这种双层 memory 与 lineage-aware search 在作者部分任
 ### 在搜索候选之前，先把问题编译成可执行 contract
 
 自然语言 intent 编译成 workflow 时，输出不应只是步骤列表，而是一组 typed artifacts、data/control dependencies、version/approval constraints 与 failure transitions。编译器可以提出结构，runtime 和人类 owner 仍决定是否提交；歧义无法消除时保留动态 planning。更强 IR 提高复用和静态检查，却以 schema、迁移和误编译风险为代价。<!-- semantic-body-binding:SF-2026-ARXIV-2608-21341 -->
+
+重复执行同一个网页任务时，结构稳定的流程可以先编译，再由确定 runtime 消费，而不必每一步重新询问模型。一条受限分支把清理后的 DOM、当前 URL 与 intent 编成 declarative blueprint，人工接受/修改后才执行；semantic selector 绑定当前接口，DOM mutation/network-idle 等待只判断就绪，不授业务动作正确。设计上，缺元素、超时或输出 schema 不满足可触发局部 selector healing，但在线自动修复仍是未验证的未来分支；模型只能提议定位修复，原控制流和副作用提交仍由 runtime/批准者持有，失败时应停下重新审批。<!-- source-family:SF-2026-ARXIV-2604-09718 -->
+
+[一次编译与异常修复的必要对照](https://arxiv.org/html/2604.09718v1)只覆盖有限企业 extraction、form 与 fingerprinting；执行准确率以成功 blueprint 为条件，HITL 补救不计作纯自动成功。静态结构下可以摊薄规划费用，DOM 清理却可能丢条件，selector 可解析也可能指错对象；UI 波动增加重编译/修复调用，因而“平时零模型调用”不是任意重跑固定总费用。预处理、compile、人工检查、browser/network与异常恢复均付费；改变控制流、权限或无法证实的新目标时，应停下重新审批/规划，保留成熟脚本或有界在线 Agent，而不由旧 blueprint 自动取得新动作权限。<!-- source-family:SF-2026-ARXIV-2604-09718 -->
 
 当需求包含“某事件之后，在一段时间内没有发生另一事件”，typed IR 还必须表达**否定的观察边界**。缺少事件并不立即证明事件不会发生；负条件应绑定有限 `within` 窗口，只有到窗口结束时才允许 accept。一个受限实现先由 LLM 提取带实体和时间的事件，再把 pattern 编译成按实体推进的确定 NFA；LLM拥有抽取 proposal，automaton 持有已编码的匹配与时间状态，两者不共用事实裁决权。<!-- source-family:SF-2026-ARXIV-2604-03855 -->
 
@@ -1584,3 +1590,7 @@ Primary-source 与设计入口：
 - `SF-2026-ARXIV-2603-23483` — [SpecEyes exact-v1](https://arxiv.org/html/2603.23483v1)必要§3–5/Eq1–16/T1/F3–6文字；只large初筛→small完整toolfree回答→min-token受限gate/residual预算接口。保margin非概率/holdout未闭、单query依赖非跨query串行、HR8K反慢/mean质量退和完整前端/拒绝费；不采exactspeculation、通用吞吐界、无损或行动安全，未核code/全部曲线点值/复现。
 
 - `SF-2026-ARXIV-2603-25031` — [exact-v1](https://arxiv.org/html/2603.25031v1) III–V；仅progress-offer/user-consent分责与旧summary/最新turn接口。保模拟/选定抗拒人口、IAR非100%、组件捆绑与异步race未验/全部费用；不采临床effect、永不违背意愿或无损实时，未核artifact/复现。
+
+- `SF-2026-ARXIV-2603-29624` — Daily2026-04-02补04-01；[exact-v1](https://arxiv.org/html/2603.29624v1)S3.1–3.5/Alg1、S4/6，2+2+2=6，仅same-trajectory gold/test probe→evidence/opcap/verification三项绑定。保12API×四mode×100/4800、MacM4/16GB、singletrajectory/noCI、provider漂移、30.3vsstrict8.0与hostenergy非remote全账；制备/调用/恢复全费，不授视觉唯一因果或完整正确/安全；未核代码/复现。
+
+- `SF-2026-ARXIV-2604-09718` — Apr15补Apr14；[exact-v1](https://arxiv.org/html/2604.09718v1) §3.1–3.4/4T1–2/§5.1–5.5，2+2+2=6，网页blueprint/确定control spine/selector-healing proposal具体gap深入。只受测singlecompile/HITL与successfulblueprint条件，healing/autorecompile为尚未验证未来分支；保DOM裁剪/定位错对象、repair/人工/浏览器全费与重新审批，不授全流程O1/自动近100%。root必要Source/date/actual owner/修正逐字PRE通过授两段+本人注窄锁；作者已写并顺读完整邻接，root实际非writer完整邻接/本人注POST通过；作者仅同步本注并最终实读回，窄锁释放。未核artifact/复现，不授DAY。

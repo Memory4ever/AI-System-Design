@@ -241,6 +241,8 @@ selector 只决定是否提出调用，schema validation、authorization 与 eff
 
 Debugger 的受限实验表明这条分支可能改善 Java 中的工具采用，而直接暴露工具也可能降低表现；Python 结果和调用方式不同，不支持对所有语言或简单 bug 一律强制。它依赖可构建的测试与可 attach 的 runtime，并给诊断 subagent 设 25-step 上限；50 个失败样本中既有构建/连接失败，也有诊断正确而主 Agent 错修，调用门槛不会修复后一层。Debugger compute 未完整计入，因此不能由 token 或成功率宣布端到端经济性。构建条件不成立、观测无效或预算耗尽时，应保留静态分析、直接验证或人工核对；executor 的 authorization、effect commit 与安全边界不变。
 
+诊断也可把自由语义假说绑定到程序中可执行的锚点，而不只返回可读解释：将候选性质映成闭合typed schema，在每个test上检查相应constraint，再把违反谱用于定位、生成一行patch并重跑。[SemLoc的受限方法](https://arxiv.org/html/2603.29109v1)增加了可被反驳的中间对象，却不由typed grounding认证root cause；原算法只据已失败test分类，可能忽略原passed的新回归，passing中已违反的条件与primary定义也不一致，因此不能照抄成充分修复recipe。250个单函数/单故障Python与少量可执行真实issue不授任意repo，文字匹配、可执行约束和完整任务成功须分验。假说生成、schema/constraint执行、patch及回归全费；接受修改时应另跑原passed和完整独立suite，这是一项工程验收要求，不冒称作者已经实施。条件、锚点或测试支持不足时，保留原源码/trace、传统谱定位与人工验证，不由更高定位分数批准semantic或production正确性。<!-- source-family:SF-2026-ARXIV-2603-29109 -->
+
 当 Tool 返回视觉证据时，最终答案正确还不足以说明这次调用值得付费：模型可能在调用前已经能回答，也可能调用了 crop 却没有使用返回的像素。因此，“该不该看”与“看见的内容是否改变判断”是两项不同的归因问题。可在**同一个实际调用前状态**上比较三条受控续写：直接回答、执行原调用并返回真实 crop、执行同一调用但替换成从原图抽取的同尺寸随机 crop。两项差值都以目标答案分数计算：真实分支相对直接回答的增益衡量决策价值，相对随机图块的增益衡量证据价值。在作者的受限训练合同里，还需调用符合可探测条件、最终轨迹正确，且两项增益均超过预先校准的死区，才给正向 credit；这仍是代理评分下的归因，而非工具有用性的通用证明。<!-- semantic-body-binding:SF-2026-ARXIV-2609-22910 -->
 
 这种反事实归因能把无效调用的训练激励与答案正确性分开，但要为每次被审计的调用支付额外评分成本，随机图块也可能碰巧包含目标。它依赖可替换且语义可比的返回物、固定前缀、稳定评分器和已知答案；当前 crop 实验不能直接扩展到搜索、写操作或多工具链，也不能把事后分数当成线上授权。低风险、短媒体任务仍可固定预处理；高风险工具仍按权限与副作用契约执行，而非凭预测收益自放行。训练侧若使用过程奖励，还需保持结果正确性与调用代价各自的尺度，详见 `TRAIN-GRPO` 的奖励设计边界。
@@ -989,3 +991,5 @@ Primary-source 入口：
 - `SF-2026-ARXIV-2603-20075` — Daily `2026-03-24`补查；[exact-v1](https://arxiv.org/html/2603.20075v1)必要§2–4/§5，2+2+2=6。仅model×harness兼容与parse/预算失败接口，live229/64k/5M/25edit/test及工具集/提示/控制循环混杂近文；DeepSeek Exp已重跑不混身份、accepted与单LLVM expert标签不等formalproof，bypass原组件活性/全build debug审核费保留，不授purewrapper因果/通用更强或安全。未核代码或复现，soleCh78不复制Ch66。
 
 - `SF-2026-ARXIV-2603-20185` — Daily `2026-03-24`补查；[VideoSeek exact-v1](https://arxiv.org/html/2603.20185v1)§3/4/T1–4、Alg1及A1–3。2+2+2=6，多粒度只读view与history选择分责；保同selectedframes对照非同prefix/总费因果、subtitle与α选择混杂、技能反侧和frame/token降但墙钟增。N20turn非call/token全预算且限后forcedanswer，不授充分性/全部coverage/真实行动或SLO；未核代码、完整prompts/图像或复现。
+
+- `SF-2026-ARXIV-2603-29109` — Daily2026-04-02补04-01；[exact-v1](https://arxiv.org/html/2603.29109v1)S3–5，2+1+2=5，仅typed anchor→per-test violation/Ochiai→one-line patch/retest接口。保原Alg1只failed tests/C3 passing冲突/Table5 Acc@3口径、250单函数/68of463 executable/7youtube完成子集和全部制备/调用/回归费；whole-suite验收是工程要求，typed非causal truth，未核代码/复现或任意repo。

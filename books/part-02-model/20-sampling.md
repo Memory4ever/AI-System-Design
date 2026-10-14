@@ -263,6 +263,8 @@ Reasoning model 让停止条件进一步变成 compute policy：runtime 可以�
 采样与 verifier 则用多条轨迹换取鲁棒性，和延长单条轨迹不是同一种 scaling。生产记录必须把
 `reasoning budget + stopping policy + model/runtime version` 绑定到同一 evaluation subject。
 
+名义上限相同，也不意味着模型实际使用了相同推理预算：同一道题加入无关长前缀、换成第二轮或嵌入子任务，可能改变模型自主结束thinking的行为。因此还应把context条件、turn位置、子题分摊规则与实际生成/验证行为写入评价身份，分别检查最终质量和完整Prefill/Decode费用。[受限context对照](https://arxiv.org/html/2604.01161v1)观察到verification文本与生成长度变化，同prefix末段重采样支持有限stop差额，却不证明质量变化全由少验证造成；个别模型/条件也生成更长，子题token除二不是同单题budget。无关前缀本身增加Prefill，较短trace不自动节省总成本，外层cap和deadline仍保留；条件变化或质量退步时应回到原单题/turn人口与独立答案验收，不把compaction或继续生成视为已经验证的修复。<!-- source-family:SF-2026-ARXIV-2604-01161 -->
+
 文本信号还可以定义一种不同于答案正确率的停止风险：在完整、model-relative 的 wellposed 校准轨迹上，先固定 keyword lexicon、token bin 与统计函数，取每条轨迹所有 bin 的最大值，再用有限样本 order statistic 设阈值。测试轨迹任一 bin 严格越阈值才停止；在校准与测试完整轨迹可交换、统计函数固定的前提下，这把反复窥视的 ever-cross 事件一次纳入校准，而不是把每个局部检验的风险直接相加或当独立事件。它控制的是 wellposed 轨迹被误停的概率，不是提交答案错误率，也不保证识别所有坏推理。模型、lexicon、bin 或任务分布变化需重新核查；所测 OOD 的误停率仍有高于目标的反侧，缺少可区分文本信号时检测能力有限，粗 bin 会漏掉短轨迹，在线统计与离线完整生成也有成本。Renewal/Šidák 的近似分支不具有同一有限样本证书；普通 EOS 和硬 token/deadline 预算仍是无可靠信号时的回退。<!-- source-family:SF-2026-ARXIV-2602-13935 -->
 
 另一种early-exit建议可以用完整轨迹构造离线监督，再让因果读出在当前prefix上预测是否已出现原轨迹的最终答案；它预测的是与原full-CoT答案的一致性，不是答案正确性，也不保证截断后一定生成同答。[TERMINATOR的受限证据](https://arxiv.org/html/2603.12529v1)把label生成与在线停止分开，但文字/Eq3标签方向及最早同答与语义首次到达的关系尚未明确，不能把其精确recipe或经验结果称为已证实最优。离线完整生成、标注/verifier、额外读出与阈值/窗口均付费，局部token或batch1延迟下降也不授fleet SLO；labeltarget、模型或任务失配时保留普通EOS、硬budget与独立答案verifier，不以“已到达原答”批准正确提交。<!-- source-family:SF-2026-ARXIV-2603-12529 -->
@@ -320,6 +322,8 @@ tokenizer、注入 layer、control vector、window、阈值和 prompt/adapter re
 
 后生成的解释不证明它忠实反映答案的因果过程，也可能把错误答案包装得更连贯。需要 faithful process、外部 verifier 消费 trace，或任务本身要求显式搜索时，仍应保留 pre-answer reasoning 或把搜索移入可审计的 workflow。该分支优化的是输出接口与延迟，不是凭空获得推理能力。
 
+单条代码轨迹也可在已生成的code prefix中途切入thinking块，再返回代码，而不是只在代码之前完成全部说明。提交执行物时移除这些块并连接其余代码；phase标记定义续写/抽取接口，不是每token的真实不确定性sensor，删文字更不是安全隔离。[Think Anywhere的受限对照](https://arxiv.org/html/2603.29957v1)支持这种位置可选分支，但prompt-only/SFT及专门token切片仍有反退，padding也能改善部分结果，不能把位置或内容读成唯一收益因果。合成过滤保留了错误代码，格式合规不认证功能；特殊token还付embedding/LM-head适配费，合成、SFT/RL多rollout、抽取和test均计费，较少token不等完整延迟更低。Phase解析、拼接或功能回归失败时保留先推理后代码、原文本分隔与独立测试/执行权限，不由熵曲线或通过一组测试签发全能力与生产正确性。<!-- source-family:SF-2026-ARXIV-2603-29957 -->
+
 在转向多条完整轨迹前，还可以让不同模型在一条共享文本前缀上提出局部续写。单模型逐 token 选择最省状态；当模型的 tokenizer 不同，直接对齐 vocabulary logits 不再有明确共同坐标，一个替代分支让各模型先完成到 word boundary，再对同一候选文本分别重新编码与评分。首 token 的 top-1/top-2 margin 只作为是否继续延长局部 span 的代理，低 margin 时在当前词结束后重评分，并以词数上限防止长时间失去交叉反馈。各模型按自己的 token 数归一化 NLL、再取均值，只形成跨模型排序的 heuristic，不使不同 tokenization 变成共同 posterior，也不证明高 margin 对应正确答案。[受限双模型对照](https://arxiv.org/html/2601.06022v1)中固定 pair 在部分数学任务弱于单模型，不能用 oracle 选择的最佳 pair 替换实际部署比较；双份模型状态、候选重编码与同步仍付费，word boundary 对新语言也需验收。延迟或质量收益不稳时，普通单模型采样、独立候选加 verifier 仍然合理。
 <!-- source-family:SF-2026-ARXIV-2601-06022 -->
 
@@ -350,6 +354,8 @@ prompt + decoding policy
 问系统能否从已有候选中识别它。`pass@N` 只能给出前者的上界，不能证明 self-verifier 能达到这个
 上界。扩大 `N` 可能提高覆盖率，也会带来更多近似答案、相关错误和选择成本；若 selector 的辨别力
 没有同步提高，更多样本甚至可能让最终选择更不稳定。
+
+连续形状输出需要先声明怎样算“同一候选”，再投多数票：把轨迹重采样为弧长点列，用允许的几何warp和配准距离聚类，再从最大簇选medoid；prototype与允许warp共同定义这个形状家族，不是prompt语义真值。若warp本身也从同批生成猜测，过窄会拆开正确样本，过宽会把错误形状并入共识。[受限trajectory self-consistency](https://arxiv.org/html/2603.29301v1)的多数/层级选择因此各需正确mode支持和好坏簇分离条件，不能由稳定多数认证运动意图或物理可行。有限模板/单prototype人口、ICP近似及阈值限制等价关系，scale变化也不保原距离误差；十九次生成与单次直接输出不是等预算。采样、配准、candidate warps和两两比较全部付费，mode或等价条件不可信时保留原候选、固定已知warp、单路/外部语义与几何检查，不从最大簇批准正确执行。<!-- source-family:SF-2026-ARXIV-2603-29301 -->
 
 多路径预算不一定要每次从 prompt 重新支付完整生成。若已完成的轨迹中保存了若干高 token entropy 位置之前的 prefix，可以从这些位置重新抽取下一 token，再各自完成后缀；这里分配的是“在哪里重新分叉”的预算，而不是将高熵 token 判为错误或把后缀当独立解答。局部高熵与随机位置在同 generation budget 下的有限数学对照支持这一选择分支，但共享前缀也会保留相关错误，完成后的候选仍需要单独的答案检查。<!-- source-family:SF-2026-ARXIV-2604-00018 -->
 
@@ -382,6 +388,8 @@ entropy 只测当前模型分布，生成后较低的熵也不是正确性验收
 逐 token 温度与完整 sequence 的 power 分布也不是同一个对象。将每个 prefix 的条件概率局部取幂并归一化，会引入随 prefix 变化的归一常数；它不能单独产生按完整路径概率取幂的目标。一个有限粒子分支仍以局部 powered proposal 生成 token，再用增量 importance weight 修正路径，按 ESS 触发祖先重采样。该 proposal 可消除当前 token 选择带来的增量权重方差，却不能消除不同 prefix 路径之间的退化。<!-- source-family:SF-2026-ARXIV-2602-10273 -->
 
 重采样必须同时重排 prefix、KV、weight 与完成状态；EOS 吸收规则和最大长度截断也定义实际支持。[Power-SMC 的有限对照](https://arxiv.org/html/2602.10273v1)不授有限粒子为精确、独立的全目标样本，较高 batch 利用率也不是总 token-evaluations 减少。粒子复制、缓存驻留、ancestor identity 与评价都要计费；权重退化、资源不足或 support 不合适时，普通低温/Top-P、较小候选集合与外部 verifier 仍合理。
+
+Sequence power 目标也可由有限步 MH 逼近；此时每次 accept/reject 确定下一状态，天然形成串行依赖。若后续 suffix proposal 所需 prefix 已经确定，可先批量生成若干未来决策分支，再沿原 MH 规则走实际路径；未满足 prefix 条件的请求延后，保留其随机输入而非重抽，未走到的分支只消耗资源。这种预取改变执行顺序，不改变每个已提交 transition 的 proposal 和 acceptance；预测可分配预取预算，却不能删除可能结果或替代精确接受规则。[PreSTO 的受限单 GPU/固定长度实验](https://arxiv.org/html/2610.13171v1)只测 model-call 时间，有限 MH 仍不等已经达到 power 目标；废分支、KV 和更大 batch 成本必须另计，收益不足时保留串行 MH 或普通采样。<!-- source-family:SF-2026-ARXIV-2610-13171 -->
 
 这里还要区分三种对象：单条 trajectory 的概率、归一化 answer 的总概率质量，以及有限样本真正覆盖到多少种可用 reasoning path。对 token 分布做全局 power sharpening，可能提高正确答案的理论总质量，却同时压低若干中等概率但互补的正确路径；当最终答案依赖 self-consistency 聚合时，有限样本反而更容易集中到相关错误 mode。因而分布变尖不是单调的质量开关，deformation 参数应按任务与 selection rule 校准，并同时观察 answer accuracy 与 path support。
 
@@ -629,6 +637,10 @@ Sampling 将模型给出的条件分布变成一条实际 token 轨迹。Greedy 
 
 ## Review notes
 
+- `SF-2026-ARXIV-2604-01161` — Daily `2026-04-03`；[Reasoning Shift exact-v1](https://arxiv.org/html/2604.01161v1) §3–4/必要A/B。2+2+2=6，限定context-conditioned stop/effective-budget差额；same-prefix重采样非完整质量中介，subtask分摊非同budget，个别长生成与Prefill费用保留；work-in-progress，不授已开发mitigation、内部推理因果或生产保证。必要Source复用有效独核，准入本轮补核；root/reader实际PRE通过后窄写，reader实际正文/完整邻接/本人note nonwriter POST通过，未核代码/复现。
+
+- `SF-2026-ARXIV-2610-13171` — [PreSTO exact-v1](https://arxiv.org/html/2610.13171v1) §3/Condition1/Alg1–2、Prop1 A1–A3、§5/D.2–3；Daily2026-10-13，2+1+2=5，具体MH执行缺口深入。prefix条件、defer保随机输入、原acceptance与有限K分开；single GH200/H100、固定1024无EOS/首20prompts、model-call速度、废分支和29/38局部统计非全分布证明保留。root必要Source/PRE通过，root实际非writer局部正文/邻接与本注POST通过；未核code或复现。
+
 - `SF-2026-ARXIV-2603-14591` — Daily `2026-03-18` 补 `03-17` 自然日；[FlashHead exact-v1](https://arxiv.org/html/2603.14591v1) §3.1–3.3、§4.1–4.5/§5、Appendix C/D/D.1，2+1+2=5，具体采样语义差额定点深入。仅采用全 support 与 dense 目标分布分账、随机集合边缘化和资源/误差回退；不授精确 dense 采样、head 倍率即端到端、MC clip 即精确 likelihood、大 batch/生产 SLO 或实现复现。review_mar17_18 必要 Source、actual owner/Ch19–21 交接及逐字两段 PRE 通过，root 授两段与本注窄锁；作者写后完整局部邻接已顺读，review_mar17_18 非 writer 实际正文 31–82、完整局部邻接及本注 POST 通过，不授 DAY。
 
 - `SF-2026-ARXIV-2603-06797` — Daily `2026-03-11` 补充；[exact-v1](https://arxiv.org/html/2603.06797v1) §3–4/Eq17–18/Alg1、必要 A.3 与 C.3。2+1+3=6，已确认 prompt-specific 尾部选择差额深入；只采 Hill→α→候选 power 权重的启发式及代价，不采 Eq11/A.32/闭式归一的最优性继承。原文尾端保护、独立校准人口与运行费用未披露，反侧近正文；review_20260311 必要 Source 独核通过，root 实际读取本章完整局部与前后章交接后窄写。supplement_20260311 非写入者实际顺读 324–377 完整局部与自身末注，回对 Alg1/Eq17–18/必要数学反侧，POST 通过。未核实现或复现，不授日级完成。
@@ -709,3 +721,7 @@ https://arxiv.org/html/2604.03616v1 — §3–7、Table 5、Appendix G/I。六�
 - `SF-2026-ARXIV-2603-18411` — [TARo exact-v1](https://arxiv.org/html/2603.18411v1) §3–5/Tables1–6与必要A–E；只采用step偏好reward与gold-NLL逐token gate的训练/消费接口。logit/probability算子身份未统一、同词表迁移条件、OOD/粒度/entropy反退、TPS/QPS与估算成本、gold对但推导错误示例保留；不授无训练、任意跨模型迁移、全部能力保持或逻辑真值，未核代码/复现。
 
 - `SF-2026-ARXIV-2604-00018` — Daily2026-04-03；[exact-v1](https://arxiv.org/html/2604.00018v1)§3/4.4–4.7，2+1+2=5，仅采用高entropy prefix分叉的同budget局部选择；保相关错误/原entropy接口资格/verification及全部费用，不授truth或通用可靠性，未核实现/复现。
+
+- `SF-2026-ARXIV-2603-29957` — Daily2026-04-02补04-01；[exact-v1](https://arxiv.org/html/2603.29957v1)S3–5必要，2+1+2=5，仅code-prefix中途thinking/strip后续代码消费接口。保5K合成/14K训练/8A10040G、格式过滤非正确、special70.0<text70.3、padding69.4→67.6及entropy选择混杂，Eq9不补完整数值recipe，全部制备/训练/rollout/test费；未核代码/复现。
+
+- `SF-2026-ARXIV-2603-29301` — Daily2026-04-02补04-01；[exact-v1](https://arxiv.org/html/2603.29301v1)S3–6必要，2+1+2=5，仅prototype×warp/100arc-points/ICP/DBSCAN/medoid消费接口。保224templates/35shapes/2240 rejectionbalanced评价人口、known/inferred warp及too-restrictive95.6%/too-permissive80.6%边界、parabola shear混错/τ反退、19对1生成与67ms每pair累计费；不采严格距离不变/物理正确，未核代码/复现。

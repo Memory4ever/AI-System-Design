@@ -1,0 +1,457 @@
+Discrete Token Modeling for Multi-Stem Music Source Separation with Language Models
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Method
+2.1 Overall Architecture
+2.2 Conditional Feature Extraction
+2.3 Discrete Audio Tokenization
+2.4 Autoregressive Token Generation
+2.5 Training and Inference Strategies
+3 Experimental Setup
+3.1 Dataset and Data Augmentation
+3.2 Model and Training Configuration
+3.3 Evaluation Metrics
+4 Results
+4.1 Overall Separation Quality
+4.2 Vocals Track Quality
+4.3 Ablation Studies
+5 Discussion
+5.1 Limitations
+5.2 Error Analysis
+6 Conclusion
+7 Generative AI Use Disclosure
+References
+License: arXiv.org perpetual non-exclusive license
+arXiv:2604.09371v1 [eess.AS] 10 Apr 2026
+Lyu
+Zhao
+Liu
+Yan
+Liang
+Wang
+Xue
+Discrete Token Modeling for Multi-Stem Music Source Separation with Language Models
+Pengbo
+Xiangyu
+Chengwei
+Haoyin
+Xiaotao
+Hongyu
+Shaofei
+Abstract
+We propose a generative framework for multi-track music source separation (MSS) that reformulates the task as conditional discrete token generation. Unlike conventional approaches that directly estimate continuous signals in the time or frequency domain, our method combines a Conformer-based conditional encoder, a dual-path neural audio codec (HCodec), and a decoder-only language model to autoregressively generate audio tokens for four target tracks. The generated tokens are decoded back to waveforms through the codec decoder. Evaluation on the MUSDB18-HQ benchmark shows that our generative approach achieves perceptual quality approaching state-of-the-art discriminative methods, while attaining the highest NISQA score on the vocals track. Ablation studies confirm the effectiveness of the learnable Conformer encoder and the benefit of sequential cross-track generation.
+11
+1
+Demo page: https://anonymous.4open.science/w/mss-demo-page-2F80/.
+keywords
+music source separation, neural audio codec, language model
+††address:
+1 Qwen Applications Business Group of Alibaba, China
+††email: {lyupengbo.lpb, zhaoxiangyu.zyx, liuchengwei.lcw, yanhaoyin.yhy, xiaotao.lxt, hongxin.why}@alibaba-inc.com, mullerxue@126.com
+1 Introduction
+Music Source Separation (MSS) aims to decompose a mixture of audio signals into individual sources, such as vocals, drums, bass, and other instruments. This task is central to applications such as music remixing, transcription, karaoke generation, and enhancing the experience of hearing-impaired individuals.
+Current mainstream MSS methods primarily explore frequency-domain [1, 2] or time-frequency fusion [3, 4] approaches.
+Despite significant progress [5, 6], MSS remains challenging due to the complexity and high dimensionality of audio signals, which vary widely across source types and musical contexts.
+Many deep learning approaches to MSS, including convolutional neural networks [7], recurrent neural networks [8], and U-Net-based models [9], operate in the frequency domain by processing spectrogram features derived from the Short-Time Fourier Transform (STFT). More recently, transformer-based architectures such as Hybrid Transformer Demucs [10] and BS-RoFormer [11] have achieved state-of-the-art results by modeling global dependencies. However, these discriminative methods still estimate continuous spectral masks or waveforms, inheriting the limitations of regression-based formulations.
+The emergence of neural audio codecs such as SoundStream [12] and EnCodec [13] has enabled continuous audio to be encoded into discrete token sequences, facilitating research in audio generation and discrete audio modeling [14, 15]. TokenSplit [16] explored the use of discrete token representations for speech separation with a sequence-to-sequence Transformer architecture, demonstrating effective separation and transcription in the speech domain. More recently, TSELM [17] proposed a target speaker extraction framework that leverages discrete tokens and language models to integrate target speaker information for extraction tasks. UniSep [18] further extended the use of language models to universal target audio separation over arbitrary mixtures of audio types. However, these methods are primarily designed to extract a single target source from a mixture (e.g., a specific speaker or target sound) rather than directly output multiple separated tracks simultaneously.
+In this paper, we propose an MSS framework that combines a neural audio codec (HCodec [19, 20]) with a decoder-only language model. Unlike discriminative methods that rely on spectrogram masking, our approach treats MSS as a discrete token generation task. We leverage residual vector quantization (RVQ) to represent each target track as interleaved acoustic and semantic tokens, which are autoregressively generated by the language model conditioned on the mixture. Our method operates at 48 kHz and autoregressively generates four target tracks sequentially in a single run, which facilitates modeling cross-track dependencies.
+Our contributions are as follows: (1) We present a decoder-only autoregressive LM-based framework for high-resolution, multi-track music source separation. (2) We evaluate the framework on the MUSDB18-HQ [21] benchmark and demonstrate that this generative approach achieves perceptual quality competitive with state-of-the-art discriminative methods, validating the effectiveness of discrete token modeling for multi-track music source separation.
+Figure 1: Architecture of the proposed token-based generative source separation model. The Mixture Embedding EmE_{m} is conditioned by the Decoder-Only LM, which autoregressively generates discrete audio tokens.
+2 Method
+2.1 Overall Architecture
+Given a mixture waveform xmix∈ℝTx_{\mathrm{mix}}\in\mathbb{R}^{T} sampled at 48 kHz, the framework predicts discrete token sequences for four target tracks {xs}s∈𝒮\{x_{s}\}_{s\in\mathcal{S}}, where 𝒮={vocals,drums,bass,other}\mathcal{S}=\{\mathrm{vocals},\,\mathrm{drums},\,\mathrm{bass},\,\mathrm{other}\}, and reconstructs the separated waveforms via a neural codec decoder.
+As illustrated in Figure 1, the proposed framework consists of three components: (1) a conditional encoder that extracts continuous feature representations from the mixture waveform, serving as the conditioning input for the decoder-only language model; (2) a dual-path neural audio codec (HCodec [19, 20]) that converts each target track into acoustic and semantic discrete token sequences through residual vector quantization (RVQ), and is also responsible for waveform reconstruction; and (3) a decoder-only language model that autoregressively generates multi-track token sequences conditioned on the mixture representation. The design of each component is detailed in Sections 2.2–2.4, and the training and inference procedures are described in Section 2.5.
+2.2 Conditional Feature Extraction
+The conditional encoder extracts compact features from the mixture waveform to condition the language model. We first compute a 120-band log-Mel spectrogram from the STFT of xmixx_{\mathrm{mix}} (FFT size 2048, hop length 960), yielding features 𝐌∈ℝT′×Dmel\mathbf{M}\in\mathbb{R}^{T^{\prime}\times D_{\mathrm{mel}}}. These are processed by a Conformer encoder with rotary positional embeddings and depthwise convolutions, producing 𝐅mix∈ℝT′×D\mathbf{F}_{\mathrm{mix}}\in\mathbb{R}^{T^{\prime}\times D}, which is projected to the language model’s hidden dimension through a linear adapter layer.
+2.3 Discrete Audio Tokenization
+We adopt HCodec [19, 20] as the neural audio codec to convert continuous waveforms into discrete token sequences. HCodec employs a dual-path architecture with an acoustic encoder and a semantic encoder, both producing features at a frame rate of 12.5 Hz.
+The acoustic path encodes STFT-derived spectral features via a ConvNeXt-Transformer network, while the semantic path extracts representations from a frozen HuBERT model [22] through a convolutional adapter. Both paths are aligned to the same frame rate.
+Each path is independently quantized using a 16-layer RVQ with a codebook size of 1024, yielding acoustic tokens 𝐜a\mathbf{c}^{\mathrm{a}} and semantic tokens 𝐜s\mathbf{c}^{\mathrm{s}}, each spanning T′T^{\prime} codec frames. To enable the language model to jointly capture acoustic and semantic information, we interleave the two token streams along the temporal axis:
+𝐜=[c0a,c0s,c1a,c1s,…,cT′−1a,cT′−1s]\mathbf{c}=[c^{\mathrm{a}}_{0},\,c^{\mathrm{s}}_{0},\,c^{\mathrm{a}}_{1},\,c^{\mathrm{s}}_{1},\,\ldots,\,c^{\mathrm{a}}_{T^{\prime}-1},\,c^{\mathrm{s}}_{T^{\prime}-1}]
+(1)
+For notational simplicity, we omit the RVQ layer index. In practice, each ctac^{\mathrm{a}}_{t} and ctsc^{\mathrm{s}}_{t} corresponds to 16 codebook indices across the RVQ layers. The codec parameters are frozen throughout training.
+2.4 Autoregressive Token Generation
+To model the sequential dependencies among discrete tokens, we build the generation module upon a decoder-only Transformer with the LLaMA architecture [23]. The model learns to predict the conditional distribution of each target track’s token sequence given the encoded mixture representation.
+The input sequence to the language model is organized as:
+x=[⟨mix⟩,𝐅mix,S,𝐜(1),S,𝐜(2),S,𝐜(3),S,𝐜(4)]x=\bigl[\langle\mathrm{mix}\rangle,\,\mathbf{F}_{\mathrm{mix}},\,\mathrm{S},\,\mathbf{c}^{(1)},\,\mathrm{S},\,\mathbf{c}^{(2)},\,\mathrm{S},\,\mathbf{c}^{(3)},\,\mathrm{S},\,\mathbf{c}^{(4)}\bigr]
+(2)
+where ⟨mix⟩\langle\mathrm{mix}\rangle marks the start of the mixture conditioning features 𝐅mix\mathbf{F}_{\mathrm{mix}}, which are projected to the same hidden dimension as the token embeddings and serve as a continuous prefix. S\mathrm{S} is a shared start token preceding each track, and 𝐜(k)\mathbf{c}^{(k)} is the interleaved token sequence of the kk-th track. The four tracks follow a fixed order: vocals, drums, bass, and other. The corresponding output sequence is:
+y=[𝐜(1),E,𝐜(2),E,𝐜(3),E,𝐜(4),E]y=\left[\mathbf{c}^{(1)},\mathrm{E},\mathbf{c}^{(2)},\mathrm{E},\mathbf{c}^{(3)},\mathrm{E},\mathbf{c}^{(4)},\mathrm{E}\right]
+(3)
+where E\mathrm{E} is a shared end token marking the boundary of each track.
+The model parameters θ\theta are optimized by minimizing the negative log-likelihood:
+ℒ=−∑t=1LlogP(yt∣⟨mix⟩,𝐅mix,y<t;θ)\mathcal{L}=-\sum_{t=1}^{L}\log P\left(y_{t}\mid\langle\mathrm{mix}\rangle,\mathbf{F}_{\mathrm{mix}},y_{<t};\theta\right)
+(4)
+where LL is the total output length across all four tracks.
+2.5 Training and Inference Strategies
+During training, each track is tokenized by the frozen HCodec encoder into interleaved acoustic-semantic sequences. The four sequences are concatenated and prepended with the mixture features to form a single training sequence. The model is trained with teacher forcing under causal masking, with a weighted loss that prioritizes the first RVQ layer.
+At inference, the mixture is first encoded into 𝐅mix\mathbf{F}_{\mathrm{mix}}, which is fed as a prefix into the language model to produce initial key-value states. The four tracks are generated autoregressively in the same fixed order, with the cache preserved across tracks to leverage cross-track context. The model generates tokens autoregressively, using the end token E\mathrm{E} as a delimiter between tracks, and terminates when the total output reaches the predefined sequence length. The generated tokens are then de-interleaved and decoded by HCodec.
+Figure 2: Qualitative spectrogram visualization of source separation results for the vocals track.
+3 Experimental Setup
+3.1 Dataset and Data Augmentation
+We train the proposed model on a large-scale internal music dataset with approximately 23,000 hours of 44.1 kHz audio. The dataset includes songs, audiobooks, and instrumental tracks. Since the original recordings do not provide isolated track annotations, we apply BS-RoFormer [11], a state-of-the-art music source separation model, to the dataset. This produces pseudo ground-truth labels for the four target tracks: vocals, drums, bass, and other instruments.
+To obtain high-quality training segments, we run voice activity detection (VAD) using the Silero VAD model [24] on all vocal tracks, merging adjacent segments and discarding those shorter than 2.0 seconds.
+Since the pseudo ground-truth is produced by BS-RoFormer, the quality of the training targets is inherently bounded by the teacher model. We nevertheless include BS-RoFormer as a baseline because the comparison reveals how much of the teacher’s separation ability the generative framework can retain under a fundamentally different modeling paradigm, and whether discrete token generation introduces additional degradation beyond the teacher’s own limitations.
+During training, we apply online data augmentation including random loudness scaling per track ([0.5,1.5][0.5,1.5]), polarity inversion (10% probability), and a seven-band parametric equalizer with track-dependent gains.
+We evaluate the proposed method on the MUSDB18-HQ test set [21], which consists of 50 full-length songs with professionally produced tracks (vocals, drums, bass, and other).
+3.2 Model and Training Configuration
+The conditional encoder is an 8-layer Conformer with 12 attention heads and a depthwise convolution kernel size of 31. The LLaMA-based decoder-only backbone consists of 16 layers, each with 16 attention heads and a hidden dimension of 2048, with dropout set to 0.1.
+We train the model for 35 epochs on 8 NVIDIA A100 GPUs (80 GB). The pretrained HCodec weights are frozen. All audio is resampled to 48 kHz mono, and we randomly crop 4.0-second segments with a per-GPU batch size of 24. We use AdamW with an initial learning rate of 5×10−45\times 10^{-4}, 2000 warm-up steps, and exponential decay. The training loss is a weighted sum across the 16 RVQ layers, with the first layer receiving a weight of 2 and the remaining layers a weight of 1. We apply label smoothing with ϵ=0.1\epsilon=0.1.
+3.3 Evaluation Metrics
+Due to autoregressive token generation and codec decoding, our outputs are not guaranteed to be sample-aligned with the references. Consequently, sample-level metrics such as scale-invariant signal-to-noise ratio (SI-SNR) and perceptual evaluation of speech quality (PESQ), which require exact sample alignment, are not suitable in our setting [16]. We therefore adopt perceptual metrics that operate on spectro-temporal representations and are robust to minor temporal shifts.
+For overall separation quality, we use ViSQOL (Virtual Speech Quality Objective Listener) [25, 26], which estimates perceptual audio quality on a scale of 1 to 5. ViSQOL performs internal patch alignment in the spectro-temporal domain, making it tolerant to the small timing variations introduced by autoregressive decoding.
+For the vocals track, we additionally evaluate perceptual quality using DNSMOS [27] and NISQA [28]. Although both metrics were originally designed for speech, they remain informative for singing vocals, which share core perceptual attributes with speech such as intelligibility, naturalness, and background noise level. DNSMOS reports three sub-scores: signal quality (SIG), background noise quality (BAK), and overall quality (OVRL). NISQA provides a non-intrusive overall quality estimate as an additional proxy for perceived vocal quality.
+To remove the influence of codec reconstruction, both the reference signals and the outputs of all baseline models are encoded and decoded through HCodec before evaluation.
+Table 1: Evaluation of source separation performance. Avg denotes the average score across all tracks.
+Model
+Type
+ViSQOL(↑\uparrow)
+vocals
+drums
+bass
+other
+avg
+HTDemucs4
+D
+3.72
+3.88
+4.11
+3.11
+3.71
+BS-RoFormer
+D
+3.72
+3.87
+4.12
+3.13
+3.71
+SCNet
+D
+3.60
+3.77
+3.92
+3.19
+3.62
+Ours
+G
+3.55
+3.44
+4.11
+3.11
+3.55
+Table 2: Evaluation of separated vocals track quality.
+Model
+Type
+SIG
+BAK
+OVRL
+NISQA
+HTDemucs4
+D
+2.71
+3.22
+2.25
+2.19
+BS-RoFormer
+D
+2.88
+3.41
+2.40
+2.47
+SCNet
+D
+2.65
+2.89
+2.17
+2.33
+Ours
+G
+2.62
+3.02
+2.19
+2.50
+Table 3: Ablation results on source separation quality measured by ViSQOL. Avg is the mean over four tracks.
+Variant
+ID
+ViSQOL(↑\uparrow)
+vocals
+drums
+bass
+other
+avg
+Main
+–
+3.55
+3.44
+4.11
+3.11
+3.55
+HuBERT
+A1
+3.35
+3.06
+4.08
+2.98
+3.37
+Loss weight
+A2
+3.54
+3.50
+4.08
+3.10
+3.56
+Parallel
+A3
+3.39
+3.51
+4.06
+3.01
+3.49
+4 Results
+We compare our generative approach (denoted ”G”) against three discriminative baselines (denoted ”D”): HTDemucs [10], a hybrid time-frequency model; BS-RoFormer [11] and SCNet [2], both frequency-domain mask estimation methods.
+4.1 Overall Separation Quality
+Table 1 presents the ViSQOL scores for all four tracks. Our method achieves an average ViSQOL of 3.55, approaching SCNet (3.62), HTDemucs (3.71), and BS-RoFormer (3.71). On the bass track, our model scores 4.11, matching HTDemucs (4.11) and BS-RoFormer (4.12) while outperforming SCNet (3.92). For the other track, our model achieves 3.11, on par with HTDemucs and BS-RoFormer. The remaining gap is mainly observed on drums (3.44 vs. 3.77 to 3.88 for the discriminative baselines), suggesting that percussive sources with sharp transients remain challenging for the autoregressive generation paradigm.
+4.2 Vocals Track Quality
+Table 2 reports the DNSMOS and NISQA scores for the separated vocals track. Our method achieves the highest NISQA score of 2.50, surpassing BS-RoFormer (2.47), SCNet (2.33), and HTDemucs (2.19). On the DNSMOS sub-scores, our model obtains a BAK score of 3.02, higher than SCNet (2.89) but lower than HTDemucs (3.22) and BS-RoFormer (3.41). The SIG and OVRL scores are comparable to SCNet, slightly below HTDemucs, and lower than BS-RoFormer.
+Figure 2 shows a qualitative spectrogram comparison for the vocals track. Compared with BS-RoFormer and SCNet, our method produces a cleaner vocal spectrogram that better matches the target, with fewer residual harmonic structures and transient components attributable to accompaniment leakage. This indicates improved suppression of non-vocal interference and reduced cross-source contamination in the separated vocals.
+4.3 Ablation Studies
+We conduct three ablations to validate key design choices. All variants share the same HCodec, training data, optimizer schedule, and greedy decoding. Results are shown in Table 3.
+Conditional encoder (A1).
+Replacing the log-Mel Conformer with a frozen HuBERT extractor drops the average ViSQOL from 3.55 to 3.37, with the largest degradation on drums (3.44 →\rightarrow 3.06). This confirms that the learnable Conformer captures mixture-level cues more effectively than frozen speech representations.
+RVQ loss weighting (A2).
+Changing the layer-wise loss weights from [2,1,…,1][2,1,\dots,1] to a steeper schedule [8,4,3,2,2,2,2,2,1,…,1][8,4,3,2,2,2,2,2,1,\dots,1] yields comparable scores. Notably, it improves the drums score while slightly reducing vocals, bass, and other.
+Parallel generation (A3).
+Replacing sequential generation with parallel decoding via track-specific output heads lowers the average to 3.49. Vocals and other degrade notably (3.39 and 3.01), suggesting that cross-track autoregressive context benefits separation quality.
+5 Discussion
+5.1 Limitations
+Our approach faces several limitations. First, the autoregressive generation paradigm struggles with percussive sources characterized by sharp transients, as evidenced by the performance gap on the drums track (3.44 vs. 3.77 to 3.88 for discriminative baselines). This may be due to the sequential nature of token-by-token generation, which makes it challenging to precisely model rapid temporal changes. Second, our framework relies on pseudo-labels generated by BS-RoFormer, which may introduce biases and limit the upper bound of performance. Finally, the dual-path codec with 16-layer RVQ requires predicting 32 codebook indices per frame, and cumulative errors across layers can degrade reconstruction quality.
+5.2 Error Analysis
+We conduct qualitative analysis on separation failures across different tracks. Common failure modes include:
+Vocals: Bleeding from harmonic instruments (e.g., guitar, piano) in the “other” track, especially during sustained notes. Loss of delicate high-frequency details in vocal harmonics. Occasional temporal misalignment in fast passages.
+Drums: Blurred attack transients, particularly for snare and kick drums. Loss of cymbal clarity and high-frequency decay. Incomplete separation of hi-hat patterns from other percussive elements.
+Bass: Generally good performance, but occasional leakage from kick drum due to overlapping frequency content. Slight loss of low-end definition in complex mixes.
+Other: Difficulty distinguishing between similar instruments when they occupy similar frequency ranges. Loss of subtle background textures and ambience.
+6 Conclusion
+We presented a conditional discrete-generation framework for multi-track music source separation that reformulates the task as autoregressive token prediction. Experiments on MUSDB18-HQ validate that this generative paradigm can approach the perceptual quality of established discriminative methods, and even surpass them on the vocals track as measured by NISQA. Ablation studies confirm the effectiveness of the learnable Conformer encoder over frozen speech representations and the benefit of sequential cross-track generation over parallel decoding. However, challenges remain for percussive sources with sharp transients, and the reliance on pseudo-labels may limit the upper bound of performance. Future work will explore dedicated codec designs and specialized tokenization schemes for transient-rich signals to address the performance gap on percussive sources. Additionally, extending the framework to text-conditioned separation and spatial audio upmixing would further enhance its practical applicability.
+7 Generative AI Use Disclosure
+Generative AI tools were used to assist with English language editing and proofreading of this manuscript. All technical content, experimental design, and scientific conclusions are solely the work of the authors.
+References
+[1]
+S. Uhlich, M. Porcu, F. Giron, M. Enenkl, T. Kemp, N. Takahashi, and Y. Mitsufuji (2017)
+Improving music source separation based on deep neural networks through data augmentation and network blending.
+In 2017 IEEE international conference on acoustics, speech and signal processing (ICASSP),
+pp. 261–265.
+Cited by: §1.
+[2]
+W. Tong, J. Zhu, J. Chen, S. Kang, T. Jiang, Y. Li, Z. Wu, and H. Meng (2024)
+Scnet: sparse compression network for music source separation.
+In ICASSP 2024-2024 IEEE International Conference on Acoustics, Speech and Signal Processing (ICASSP),
+pp. 1276–1280.
+Cited by: §1,
+§4.
+[3]
+A. Défossez (2021)
+Hybrid spectrogram and waveform source separation.
+arXiv preprint arXiv:2111.03600.
+Cited by: §1.
+[4]
+M. Kim, W. Choi, J. Chung, D. Lee, and S. Jung (2021)
+KUIELab-mdx-net: a two-stream neural network for music demixing.
+arXiv preprint arXiv:2111.12203.
+Cited by: §1.
+[5]
+Y. Mitsufuji, G. Fabbro, S. Uhlich, F. Stöter, A. Défossez, M. Kim, W. Choi, C. Yu, and K. Cheuk (2022)
+Music demixing challenge 2021.
+Frontiers in Signal Processing 1, pp. 808395.
+Cited by: §1.
+[6]
+G. Fabbro, S. Uhlich, C. Lai, W. Choi, M. Martínez-Ramírez, W. Liao, I. Gadelha, G. Ramos, E. Hsu, H. Rodrigues, F. Stöter, A. Défossez, Y. Luo, J. Yu, D. Chakraborty, S. Mohanty, R. Solovyev, A. Stempkovskiy, T. Habruseva, N. Goswami, T. Harada, M. Kim, J. Hyung Lee, Y. Dong, X. Zhang, J. Liu, and Y. Mitsufuji (2024)
+The sound demixing challenge 2023 – music demixing track.
+Transactions of the International Society for Music Information Retrieval 7 (1), pp. 63–84.
+External Links: ISSN 2514-3298,
+Link,
+Document
+Cited by: §1.
+[7]
+P. Chandna, M. Miron, J. Janer, and E. Gómez (2017)
+Monoaural audio source separation using deep convolutional neural networks.
+In International conference on latent variable analysis and signal separation,
+pp. 258–266.
+Cited by: §1.
+[8]
+Y. Luo and J. Yu (2023)
+Music source separation with band-split rnn.
+IEEE/ACM Transactions on Audio, Speech, and Language Processing 31, pp. 1893–1901.
+Cited by: §1.
+[9]
+A. Défossez, N. Usunier, L. Bottou, and F. Bach (2019)
+Music source separation in the waveform domain.
+arXiv preprint arXiv:1911.13254.
+Cited by: §1.
+[10]
+S. Rouard, F. Massa, and A. Défossez (2023)
+Hybrid transformers for music source separation.
+In ICASSP 2023-2023 IEEE International Conference on Acoustics, Speech and Signal Processing (ICASSP),
+pp. 1–5.
+Cited by: §1,
+§4.
+[11]
+W. Lu, J. Wang, Q. Kong, and Y. Hung (2024)
+Music source separation with band-split rope transformer.
+In ICASSP 2024-2024 IEEE International Conference on Acoustics, Speech and Signal Processing (ICASSP),
+pp. 481–485.
+Cited by: §1,
+§3.1,
+§4.
+[12]
+N. Zeghidour, A. Luebs, A. Omran, J. Skoglund, and M. Tagliasacchi (2021)
+Soundstream: an end-to-end neural audio codec.
+IEEE/ACM Transactions on Audio, Speech, and Language Processing 30, pp. 495–507.
+Cited by: §1.
+[13]
+A. Défossez, J. Copet, G. Synnaeve, and Y. Adi (2022)
+High fidelity neural audio compression.
+arXiv preprint arXiv:2210.13438.
+Cited by: §1.
+[14]
+Z. Borsos, R. Marinier, D. Vincent, E. Kharitonov, O. Pietquin, M. Sharifi, D. Roblek, O. Teboul, D. Grangier, M. Tagliasacchi, et al. (2023)
+Audiolm: a language modeling approach to audio generation.
+IEEE/ACM transactions on audio, speech, and language processing 31, pp. 2523–2533.
+Cited by: §1.
+[15]
+S. Chen, C. Wang, Y. Wu, Z. Zhang, L. Zhou, S. Liu, Z. Chen, Y. Liu, H. Wang, J. Li, et al. (2025)
+Neural codec language models are zero-shot text to speech synthesizers.
+IEEE Transactions on Audio, Speech and Language Processing 33, pp. 705–718.
+Cited by: §1.
+[16]
+H. Erdogan, S. Wisdom, X. Chang, Z. Borsos, M. Tagliasacchi, N. Zeghidour, and J. R. Hershey (2023)
+Tokensplit: using discrete speech representations for direct, refined, and transcript-conditioned speech separation and recognition.
+arXiv preprint arXiv:2308.10415.
+Cited by: §1,
+§3.3.
+[17]
+B. Tang, B. Zeng, and M. Li (2025)
+Tselm: target speaker extraction using discrete tokens and language models.
+In National Conference on Man-Machine Speech Communication,
+pp. 459–469.
+Cited by: §1.
+[18]
+Y. Wang, H. Chen, D. Yang, W. Li, D. Luo, G. Li, S. Yang, Z. Wu, H. Meng, and X. Wu (2025)
+Unisep: universal target audio separation with language models at scale.
+In 2025 IEEE International Conference on Multimedia and Expo (ICME),
+pp. 1–6.
+Cited by: §1.
+[19]
+C. Liu, H. Yan, S. Xue, X. Liang, Y. Liu, Z. Xue, G. Song, and B. Zhou (2025)
+Unitok-audio: a unified audio generation framework via generative modeling on discrete codec tokens.
+arXiv preprint arXiv:2510.26372.
+Cited by: §1,
+§2.1,
+§2.3.
+[20]
+C. Liu, H. Yan, S. Xue, X. Liang, X. Chen, B. Gong, Z. Xue, and G. Song (2025)
+QuarkAudio technical report.
+arXiv preprint arXiv:2512.20151.
+Cited by: §1,
+§2.1,
+§2.3.
+[21]
+Z. Rafii, A. Liutkus, F. Stöter, S. I. Mimilakis, and R. Bittner (2019)
+MUSDB18-hq - an uncompressed version of musdb18.
+External Links: Document,
+Link
+Cited by: §1,
+§3.1.
+[22]
+W. Hsu, B. Bolte, Y. H. Tsai, K. Lakhotia, R. Salakhutdinov, and A. Mohamed (2021)
+Hubert: self-supervised speech representation learning by masked prediction of hidden units.
+IEEE/ACM transactions on audio, speech, and language processing 29, pp. 3451–3460.
+Cited by: §2.3.
+[23]
+H. Touvron, T. Lavril, G. Izacard, X. Martinet, M. Lachaux, T. Lacroix, B. Rozière, N. Goyal, E. Hambro, F. Azhar, et al. (2023)
+Llama: open and efficient foundation language models.
+arXiv preprint arXiv:2302.13971.
+Cited by: §2.4.
+[24]
+Silero Team (2024)
+Silero vad: pre-trained enterprise-grade voice activity detector (vad), number detector and language classifier.
+Note: https://github.com/snakers4/silero-vad
+Cited by: §3.1.
+[25]
+A. Hines, J. Skoglund, A. C. Kokaram, and N. Harte (2015)
+ViSQOL: an objective speech quality model.
+EURASIP Journal on Audio, Speech, and Music Processing 2015 (1), pp. 13.
+Cited by: §3.3.
+[26]
+M. Chinen, F. S. Lim, J. Skoglund, N. Gureev, F. O’Gorman, and A. Hines (2020)
+ViSQOL v3: an open source production ready objective speech and audio metric.
+In 2020 twelfth international conference on quality of multimedia experience (QoMEX),
+pp. 1–6.
+Cited by: §3.3.
+[27]
+C. K. Reddy, V. Gopal, and R. Cutler (2022)
+DNSMOS p. 835: a non-intrusive perceptual objective speech quality metric to evaluate noise suppressors.
+In ICASSP 2022-2022 IEEE international conference on acoustics, speech and signal processing (ICASSP),
+pp. 886–890.
+Cited by: §3.3.
+[28]
+G. Mittag, B. Naderi, A. Chehadi, and S. Möller (2021)
+NISQA: a deep cnn-self-attention model for multidimensional speech quality prediction with crowdsourced datasets.
+arXiv preprint arXiv:2104.09494.
+Cited by: §3.3.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

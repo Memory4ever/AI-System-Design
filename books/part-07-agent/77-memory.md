@@ -262,6 +262,8 @@ Bank 仍拥有事实、来源、valid time 与 supersession；controller 只拥�
 
 这条演进以额外 controller、误打断和漏提醒风险换取较低的常驻 Context 压力。Controller 分布漂移、bank 污染或 provenance 丢失时，系统必须能回退到 passive retrieval 或 always-off，而不是让“主动 Memory”变成不可审计的第二个 planner。现有作者实验与消融只覆盖给定长轨迹 benchmark；没有证明生产授权、并发更新和跨任务的通用 intervention policy。
 
+介入时机还可以与读取预算分开：先选择 silent、只用当前 Context 的 fast response，或触发较深的 memory retrieval；深读由另一消费者整理返回，主 actor 在读回之后仍可保持沉默。这样避免把“决定查记忆”直接等同“已经值得打断”。[PASK 的受限实现](https://arxiv.org/html/2604.08000v1)复用前一步 workspace 与 event anchor，再异步补 subtree evidence，但旧 anchor 可能漏掉新事件，MemLoader 摘要也不签发 freshness 或事实权限；offline merge 不证明整个生命周期费用恒定。Demand label、summary/memory 条件、消费者版本、超时与最终介入理由应分别记录，模型调用、检索、维护和误打断都计费；其平均 latency 已高于1秒，不能当严格实时保证。状态过期、证据未到或介入质量回归时，回到 passive/always-off、只读当前 Context 或等待刷新，不由三种控制 token 批准实际 action。<!-- source-family:SF-2026-ARXIV-2604-08000 -->
+
 提醒的另一条受限分支是将未来承诺显式记录为 dated/trigger ledger，在离线阶段链接到 memory，查询时只做日期或条件匹配和 arithmetic ranking。Ledger 保留 action、触发条件与 resolved 状态，完成后记录 resolution 而不删除事实；open、已触发且未解决时令 b=1，以 cosine·(1+Wb) 调整 linked memory 的分数。[Prospective term](https://arxiv.org/html/2609.22091v1)因而不需要 query-time LLM，但仍有抽取、链接和生命周期维护成本。乘法令 cosine=0 仍为零、负 cosine 未必升分，小 W 也可能救不回深埋记录；增加 W 或加 floor 会改变 relevance 的取舍，不能把“保留 relevance”写成所有排名和授权都安全的定理。
 
 现有实验用单用户 curated Markdown、bge-micro-v2、oracle ledger；抽取层尚未构建，故它测的是完美 ledger 的上界，不证明真实 resolved/trigger 检测。48 个 LLM-authored blind blueprints 的 175 tasks 中，hard positive 22、easy 74、resolved 53；hard Recall@5=.955 与零 false boost 只限该集合，held-out paraphrase 仅 13/16 触发、hard Recall@5 降到 .818，post-hoc gate 与任务比例也不是用户真实 base rate 或 action utility。工程上需核对 ledger 的 provenance、freshness 和 resolution，失效或漏触发时回退 ordinary similarity；这不是作者已实现的生产抽取保证。Salience 仅决定回忆排序，不授予外部 action、删除或越过既有 controller 的权限。<!-- source-family:SF-2026-ARXIV-2609-22091 -->
@@ -416,6 +418,8 @@ fact-memory 与 long-context 的受限比较在三个公开记忆任务中观察
 
 学习消费会增加训练 Context 和部署 memory 的耦合。[有限只读经验对照](https://arxiv.org/html/2603.18272v1#S4)在固定文本环境中观察到收益，也看到部分模型/任务退步，以及移除或错配经验后比普通 LoRA 更差；scripted expert 的失败不证明模型能可靠复用自己的错误。每步刷新还会替换原推理依据、清除 KV 并重编码，减少动作步数也不等总生成时间下降。轨迹收集、embedding/index、检索、训练和重新编码均付费；缺少匹配示范、记忆漂移或预算不足时，保留无该 bank 的 actor、静态读取或原始轨迹回读，不把这条消费训练分支当成自主持续写记忆的验证。
 
+经验 bank 不必让所有抽象层在每一步承担同一种读取职责。可从同题成功/失败对照提出 concrete case、同题策略与跨题原则，先将较抽象层放入 initial Context，再按当前 query 检索少量具体案例；这把经验的抽象粒度与消费时点分开，而不是让层级越高的文本越可信。Actor 用同样的经验条件训练时，mask 外部文档或经验 tokens 的直接 loss，仍不能消除它们对后续 action forward 与梯度的影响。[HiExp 的受限训练](https://arxiv.org/html/2604.08124v1)仍依赖匹配 HEK 和 runtime 检索，E2/E3效果也不同，不能由训练后提升认证已经内化或可删除 bank。对照轨迹、反思、embedding/cluster、条件 tokens 和 rollout 全计费；静态经验与移动 policy 失配或质量回归时，保留原始支持轨迹、无经验 actor 与更简单只读 bank，重新验适用范围，不把新一轮成功直接写成可信规则。<!-- source-family:SF-2026-ARXIV-2604-08124 -->
+
 当消费经验的 actor 本身也持续训练时，冻结执行器下学会的构造策略未必继续适用。一个受限双循环分支让 extractor 从已完成轨迹产生经验并保存其生成对，再把后续使用该经验的任务 outcome 回流给 extractor；同一 entry 被多条轨迹消费时聚合它们的回报，actor 则同时学习有经验与无经验两种条件。这样改变的是经验的生成—消费—训练接口，而不是让一次任务成功认证经验的因果贡献或事实真值。原始轨迹、entry 与合并 lineage、生成器和消费者版本应共同留存；actor、任务或 bank 更新后须重验适用性，固定摘要和冻结执行器仍适合稳定负载。<!-- source-family:SF-2026-ARXIV-2603-17621 -->
 
 共同优化也增加滞后与归因压力：生成时的经验可能到较晚阶段才被取回，同一 entry 又可反复进入训练；有经验与无经验的 rollout 应分别评价，不用混合分数证明已经内化或依赖已消除。[有限作者对照](https://arxiv.org/html/2603.17621v1#S4)中静态 online extractor 可退步，自蒸馏后期也会崩溃，因此共同更新不是单调进步保证。后台 distillation 能减轻串行等待，却仍付 extractor 训练、检索、embedding、merge 与锁等待成本；平均 rollout 时长接近基线不证明全费用或尾时延不增。质量、版本适配或预算失配时，应保留原轨迹与无该经验的基础 actor、冻结 bank 或重新核验，而不让 learned experience 取得事实或执行权限。
@@ -464,6 +468,10 @@ episodes
 资源受限且交互延迟敏感时，consolidation 还可以按会话是否活跃分期：active path 只做有界检索、组装上下文并保存本轮 raw query-response；连续静默超过阈值后，inactive path 再分块提取 session memories/profile、跨块合并并与旧记录整合。这个触发条件改变的是维护发生的时间，不是事实 authority；静默不证明用户任务已经完成，profile 与摘要也仍是可撤销的模型推断。它把更重的抽取/合并从响应路径移开，却让下一次读取面对尚未维护的新记录与可能过期的摘要。<!-- source-family:SF-2026-ARXIV-2601-08128 -->
 
 [端侧 companion 的受限验证](https://arxiv.org/html/2601.08128v1)使用 Jetson 8GB、同一 Qwen2.5-7B int4 模型完成两期，不能据此承诺维护在用户返回前结束或可无损抢占。QA/画像来自合成用户与模型 judge，固定检索在 inferred questions 上反而退步；较长 raw-context 基线运行于 A100，并非相同 edge 预算。动态 prefix 会破坏缓存，抽取、合并与状态驻留同样付费。因而 stale-read 策略、返回时的抢占/读写协调与失败恢复是工程上仍须验收的要求，不是作者已验证能力；短会话、空闲期不足或抽取质量不可靠时，保留 raw history、简单窗口和同步小幅维护，不由静默阈值授权摘要覆盖原始证据。
+
+延迟维护还可以在 checkpoint 时决定事件怎样分组，而不只等静默后生成一份 session summary。活动期先把原始交互追加到有界 event buffer；会话结束、暂停或 buffer 溢出时，再用语义判断提出 topic 边界，将片段保存为可检索摘要和原文，并把归档 event 与 topic 节点交叉关联。这样把快速 append、较慢的切片/索引维护和读时回原轨迹分开；语义阈值在实现中只是模型判断的严格度，不是每轮精确测量图距离。模型提出的支持、冲突或因果边及 confidence 也只是派生关联，不能认证关系真值，跨链条保存不自动提供数据库的原子性或故障恢复。<!-- source-family:SF-2026-ARXIV-2604-12285 -->
+
+[GAM 的有限文本对照](https://arxiv.org/html/2604.12285v1#S3)使用2048-token buffer、先选 topic 再扩邻居/回读 event；它支持在该 workload 下组织与维护时点的取舍，不证明 query 小就能无限增长记忆。其渐增 session 对照中，查询 tokens 与平均时延增长较缓，F1 却从 .65 降到 .48；部分 temporal 切片也不胜原文检索。语义抽取、embedding、关系判断、图更新与 archive 存储应另计，不能用 query-only 费用吞掉 maintenance。边界误判、索引陈旧或关系证据不足时，回读带身份的原始 event，保留简单窗口/固定 summary 和现有写入 Gate；checkpoint 只提出新的组织版本，不授权删除原证据或提交事实。
 
 压缩会损失细节，所以 summary 应能追溯 source episodes。Forgetting 不是失败，而是必要能力：
 
@@ -1138,6 +1146,8 @@ MemoryData 的统一 testbed 为这种 module×workload 归因提供实验性证
 组件分解并不意味着每层都必须独立手工选择。当任务需要的字段、读写操作和模型使用方式互相制约时，只调整检索提示可能无法改变真正的瓶颈。一条条件路线把 schema、storage/read-write logic 与 workflow instructions 组成同一个可执行 memory program，再联合搜索：反思者从轮换验证轨迹提出代码和指令 patch，固定验证集用于比较候选，编译、工具白名单、mock 输入及时间/输出限制先淘汰不可运行的程序。这里变化的是设计空间，不是运行时事实权威；固定验证集仍参与选择，不能同时作为独立发布证明，程序可执行也不证明检索正确、权限正确或跨任务泛化。选出的程序、schema、依赖和使用指令应作为一个版本化 artifact 接受 held-out 评价，而不是让在线反思直接覆盖生产 memory。
 
 联合搜索用离线试错换取任务适配，成本必须同时包括重新入库、候选执行、反思、评价和环境交互，不能只计算最终每次查询增加多少调用。[M* 的受限实验](https://arxiv.org/html/2604.11811v1)用静态25项选择和每轮5项反馈、20轮演化；LoCoMo 构建与评价报告约5.1小时，ALFWorld 加环境交互约100小时，而最终程序每次查询额外调用约0～2次。两本账不能互相抵销，更不能由平均结果推出全部配置或困难切片改善：作者的不同任务最优结构不同，跨任务迁移常退步，部分原方案仍更好。稳定、低频或验证样本不足的 workload 继续使用手工 schema、flat retrieval 或原始 episode；只有重复调用规模足以回收搜索成本、且独立测试与维护预算成立时，才采用搜索后的专用设计。<!-- source-family:SF-2026-ARXIV-2604-11811 -->
+
+搜索历史还须区别冷启动参考与本轮实验观察：已有文献形成初始知识库，帮助选择第一批proposal；每次真实实验结束后，再把完整结果与分析写进持续搜索的context，不能以旧文献或流畅分析代替本次测量。这两份信息有不同来源/更新职责，raw日志可恢复也不等已提取下一实验所需的判断。[ASI-Evolve的受限消融](https://arxiv.org/html/2603.29640v1)观察到移除prior较慢冷启、移除分析后持续改进停滞，但没有控制全部token/call/wallclock，不能认证分析器唯一因果或所有架构搜索胜出。文献整理、所有候选实验、分析/持久化、筛选与放大验证全部付费，只展示选中winner又不授全候选或OOD性能。来源、分析或评价失配时回读raw结果、使用手工prior/固定搜索和独立held-out验收，不让派生结论批准生产更新；最终程序/schema与实际执行仍由原owner验证。<!-- source-family:SF-2026-ARXIV-2603-29640 -->
 
 ### Derived Graph 更新必须沿 Evidence Dependency 传播
 
@@ -2233,3 +2243,9 @@ Primary-source 入口：
 - `SF-2026-ARXIV-2603-25973` — [exact-v1](https://arxiv.org/html/2603.25973v1)§3/4.1/4.4–4.5/limits及AppendC/E必要条件；2+1+2=5。source×objective反側，保同用户/目标/metric、source长度混杂、活跃人口/离线proxy、single-run/cutoff/总费用边界；不采通用memory最优/真实满意，未核旧methodpaper/code/复现。
 
 - `SF-2026-ARXIV-2603-28716` — [D2Skill exact-v1](https://arxiv.org/html/2603.28716v1) §3.2–3.3/Eq1–9、§4.1–4.3/T1–3及§6；仅同policy有/无注入基线维护与验证冻结。保shared step-credit非个体causal、shaping变目标、弱模型失败/任务反退、best-over-run与反思/训练全费；不授共同seed、收敛或自动skill执行安全，未核artifact/复现。
+
+- `SF-2026-ARXIV-2603-29640` — Daily2026-04-02补04-01；[exact-v1](https://arxiv.org/html/2603.29640v1)S3–6必要，2+2+2=6，仅literature cold-prior与full-run分析/持久context两人口分责。保去Analyzer保raw仍plateau/去Cognition慢冷启非matched全部费用、只5selected/1773/105与RL150/300对T3 250口径，全搜索/验证费未全披露；不采用AIforScience解法/有害recipe/普遍kernel更快，未核代码/复现。
+- `SF-2026-ARXIV-2604-08124` — [exact-v1](https://arxiv.org/html/2604.08124v1) §3–4.5/Limit；E1/E2/E3的initial/runtime消费时点及条件化训练，保静态HEK与policy移动、训练/检索依赖和反退；mask经验loss非无forward影响，不授已完全内化/可删bank，未核实现/复现。
+- `SF-2026-ARXIV-2604-08000` — [exact-v1](https://arxiv.org/html/2604.08000v1) §3.1/4.2–4.3/5/6.1/T4/6.5；silent/fast/full与深读后仍abstain，保旧anchor/subtree遗漏、异步freshness和1.3–1.5s实测均值/全费，不授<1s、constant lifecycle成本或action authority，未核实现/复现。
+
+- `SF-2026-ARXIV-2604-12285` — Daily2026-04-16补Apr15，supp_apr16_author；[exact-v1](https://arxiv.org/html/2604.12285v1)§3.2–3.4/§4/Tables1–4/Limitations/C.1–3，2+2+2=6，checkpoint语义切片与summary/raw/archive-crosslink具体owner差额深入。阈值为语义proxy、图边非truth/ACID；query与maintenance分账、Temporal反侧及C2 F1下降保留。只文本记忆条件，未核artifact/复现；reader R14必要Source/R15 date/R19逐字PRE与R23实际正文、完整邻接及本人注POST通过；作者同步本人注并实际读回，不授DAY。

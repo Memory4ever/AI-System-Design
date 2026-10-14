@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en-us">
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1">
+    
+    <title>Tree Matching Networks: What If We Gave Neural Networks the Parse Tree Instead? | Jason Lunder</title>
+    <meta name="viewport" content="width=device-width,minimum-scale=1">
+    <meta name="description" content="How encoding sentences as dependency trees and matching them with graph neural networks achieves 75.20% on SNLI versus a BERT baseline at 35.38%, both trained from scratch on a single GPU.">
+    <meta name="generator" content="Hugo 0.146.0">
+    
+    
+    
+      <meta name="robots" content="index, follow">
+    
+    <meta name="author" content="Jason Lunder">
+    
+
+    
+<link rel="stylesheet" href="/ananke/css/main.min.d05fb5f317fcf33b3a52936399bdf6f47dc776516e1692e412ec7d76f4a5faa2.css" >
+
+
+
+  
+    <link rel="stylesheet" href="/css/custom.css">
+  
+
+
+    
+
+
+    
+      
+
+    
+
+    
+
+    
+      <link rel="canonical" href="https://jasonlunder.com/post/tree-matching-networks/">
+    
+
+    
+    
+    <meta property="og:url" content="https://jasonlunder.com/post/tree-matching-networks/">
+  <meta property="og:site_name" content="Jason Lunder">
+  <meta property="og:title" content="Tree Matching Networks: What If We Gave Neural Networks the Parse Tree Instead?">
+  <meta property="og:description" content="How encoding sentences as dependency trees and matching them with graph neural networks achieves 75.20% on SNLI versus a BERT baseline at 35.38%, both trained from scratch on a single GPU.">
+  <meta property="og:locale" content="en_us">
+  <meta property="og:type" content="article">
+    <meta property="article:section" content="post">
+    <meta property="article:published_time" content="2026-02-08T00:00:00+00:00">
+    <meta property="article:modified_time" content="2026-02-08T00:00:00+00:00">
+    <meta property="article:tag" content="NLP">
+    <meta property="article:tag" content="Deep Learning">
+    <meta property="article:tag" content="Graph Neural Networks">
+    <meta property="article:tag" content="Research">
+
+  <meta itemprop="name" content="Tree Matching Networks: What If We Gave Neural Networks the Parse Tree Instead?">
+  <meta itemprop="description" content="How encoding sentences as dependency trees and matching them with graph neural networks achieves 75.20% on SNLI versus a BERT baseline at 35.38%, both trained from scratch on a single GPU.">
+  <meta itemprop="datePublished" content="2026-02-08T00:00:00+00:00">
+  <meta itemprop="dateModified" content="2026-02-08T00:00:00+00:00">
+  <meta itemprop="wordCount" content="1661">
+  <meta itemprop="keywords" content="NLP,Deep Learning,Graph Neural Networks,Research">
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="Tree Matching Networks: What If We Gave Neural Networks the Parse Tree Instead?">
+  <meta name="twitter:description" content="How encoding sentences as dependency trees and matching them with graph neural networks achieves 75.20% on SNLI versus a BERT baseline at 35.38%, both trained from scratch on a single GPU.">
+
+      
+      
+    
+	
+  </head><body class="ma0 avenir bg-near-white production is-page is-page page-tree-matching-networks">
+    
+   
+  
+
+  <header>
+    <div class="bg-black">
+      <nav class="pv3 ph3 ph4-ns" role="navigation">
+  <div class="flex-l center items-center justify-between">
+    <a href="/" class="f3 fw2 hover-white white-90 dib no-underline">
+      
+        Jason Lunder
+      
+    </a>
+    <div class="flex-l items-center">
+      
+
+      
+        <ul class="pl0 mr3">
+          
+          <li class="list f5 f4-ns fw4 dib pr3">
+            <a class="hover-white white-90 no-underline" href="/" title="Home page">
+              Home
+            </a>
+          </li>
+          
+          <li class="list f5 f4-ns fw4 dib pr3">
+            <a class="hover-white white-90 no-underline" href="/post/" title="Blog page">
+              Blog
+            </a>
+          </li>
+          
+        </ul>
+      
+      <div class="ananke-socials"></div>
+
+    </div>
+  </div>
+</nav>
+
+    </div>
+  </header>
+
+
+
+    <main class="pb7" role="main">
+      
+  
+
+  <article class="page-tree-matching-networks flex-l mw7 center ph3 flex-wrap justify-between">
+    <header class="mt4 w-100">
+      <aside class="instapaper_ignoref b helvetica tracked ttu">
+          
+        Blog
+      </aside><div id="sharing" class="mt3 ananke-socials"></div>
+<h1 class="f1 athelas mt3 mb1">Tree Matching Networks: What If We Gave Neural Networks the Parse Tree Instead?</h1>
+      
+      <p class="tracked"><strong>Jason Lunder</strong>
+      </p>
+      
+      
+      
+      <time class="f6 mv4 dib tracked" datetime="2026-02-08T00:00:00Z">February 8, 2026</time>
+      
+
+      
+      
+        
+        
+        <span class="f6 mv4 dib tracked"> - 8 minutes read </span>
+        <span class="f6 mv4 dib tracked"> - 1661 words </span>
+      
+    </header>
+    <div class="nested-copy-line-height lh-copy serif f4 nested-links mid-gray pr4-l w-100-l"><p>When we feed text to a transformer, the model has to figure out the structure of language entirely from data. Subject-verb relationships, modifier scope, negation boundaries: all of it must be learned implicitly from millions (or billions) of examples. But what if we just&hellip; told the model the structure upfront?</p>
+<p>That&rsquo;s the core idea behind <a href="https://arxiv.org/abs/2512.00204">Tree Matching Networks</a> (TMN), my recent research exploring whether dependency parse trees can serve as an efficient structural prior for natural language inference. The short version: a graph neural network operating on parse trees achieved 75.20% accuracy on the SNLI benchmark versus 35.38% for a BERT baseline of comparable size, both trained from scratch on the same data and the same hardware.</p>
+<p>This post walks through the motivation, architecture, and what I think it means for the field.</p>
+<h2 id="the-question-behind-the-question">The question behind the question</h2>
+<p>Transformers work. That&rsquo;s not in dispute. But <em>why</em> they work, and specifically what structural information they&rsquo;re learning internally, is still an active area of research. Attention patterns in BERT have been shown to loosely correspond to dependency relations (<a href="https://aclanthology.org/W19-4828/">Clark et al., 2019</a>), suggesting the model spends some of its capacity rediscovering linguistic structure that we already know how to extract.</p>
+<p>This raises a practical question: if we hand the model that structure explicitly, can we get comparable performance with less compute? Not as a replacement for transformers, but as a way to understand what they&rsquo;re actually doing and whether there&rsquo;s a more efficient path.</p>
+<h2 id="from-tokens-to-trees">From tokens to trees</h2>
+<p>A standard NLP pipeline treats a sentence as a sequence of tokens. A dependency parser instead produces a tree, where each word is a node and edges represent grammatical relationships.</p>
+<p>Take the sentence <em>&ldquo;The cat sat on the mat.&rdquo;</em> As a token sequence, the model sees six tokens in order. As a dependency tree, it sees that <em>sat</em> is the root, <em>cat</em> is its subject (nsubj), <em>mat</em> is the object of the preposition, and <em>the</em> modifies both nouns. The hierarchical relationships are explicit.</p>
+<svg viewBox="0 0 360 260" xmlns="http://www.w3.org/2000/svg" style="max-width:360px;margin:1.5em auto;display:block;font-family:monospace;font-size:16px;">
+  <!-- edges -->
+  <line x1="180" y1="38" x2="100" y2="98" stroke="#555" stroke-width="1.5"/>
+  <line x1="180" y1="38" x2="260" y2="98" stroke="#555" stroke-width="1.5"/>
+  <line x1="100" y1="118" x2="100" y2="158" stroke="#555" stroke-width="1.5"/>
+  <line x1="260" y1="118" x2="260" y2="158" stroke="#555" stroke-width="1.5"/>
+  <line x1="260" y1="178" x2="260" y2="218" stroke="#555" stroke-width="1.5"/>
+  <!-- nodes -->
+  <text x="180" y="30" text-anchor="middle" font-weight="bold" fill="#333">sat (ROOT)</text>
+  <text x="100" y="112" text-anchor="middle" fill="#333">cat</text>
+  <text x="260" y="112" text-anchor="middle" fill="#333">on</text>
+  <text x="100" y="172" text-anchor="middle" fill="#333">The</text>
+  <text x="260" y="172" text-anchor="middle" fill="#333">mat</text>
+  <text x="260" y="232" text-anchor="middle" fill="#333">the</text>
+  <!-- edge labels -->
+  <text x="132" y="60" text-anchor="middle" font-size="11" fill="#888">nsubj</text>
+  <text x="228" y="60" text-anchor="middle" font-size="11" fill="#888">prep</text>
+  <text x="86" y="142" text-anchor="end" font-size="11" fill="#888">det</text>
+  <text x="274" y="142" text-anchor="start" font-size="11" fill="#888">pobj</text>
+  <text x="274" y="202" text-anchor="start" font-size="11" fill="#888">det</text>
+</svg>
+<p>This representation isn&rsquo;t new; dependency parsing has been a core NLP tool for decades. What&rsquo;s new here is using these trees as the <em>input representation</em> for a neural network designed to compare sentence pairs, rather than using them as a feature extraction step or auxiliary training signal.</p>
+<h2 id="architecture-adapting-graph-matching-for-language">Architecture: adapting graph matching for language</h2>
+<p>TMN builds on <a href="https://arxiv.org/abs/1904.12787">Graph Matching Networks</a> (GMN), originally designed for comparing arbitrary graph structures. The key adaptation is replacing generic graph inputs with dependency parse trees generated by <a href="https://github.com/Elmo-Lin/diaparser">DiaParser</a> and enriched with word embeddings from SpaCy.</p>
+<p>The architecture has three main components:</p>
+<p><strong>1. Node and edge encoding.</strong> Each word in the parse tree becomes a node with an initial embedding. Dependency relation labels (nsubj, dobj, amod, etc.) become edge features. This gives the network both semantic (what the word means) and syntactic (how it relates to other words) information from the start.</p>
+<p><strong>2. Message-passing propagation.</strong> Nodes iteratively update their representations by aggregating information from their neighbors in the tree. After several rounds of propagation, each node&rsquo;s representation encodes not just its own meaning but its structural context: a verb knows about its subject and object, a modifier knows what it modifies. This is the core GNN mechanism: local structure gets encoded into node states through repeated message passing.</p>
+<p><strong>3. Cross-graph matching.</strong> For comparing two sentences (as required for natural language inference), TMN computes attention-weighted correspondences between nodes across the two trees. This cross-graph attention allows the model to align semantically similar subtrees between the premise and hypothesis, then aggregate these alignments into a final similarity score.</p>
+<h2 id="training-making-it-work-on-one-gpu">Training: making it work on one GPU</h2>
+<p>One of the practical constraints of this research was compute: a single NVIDIA RTX 3090 on a desktop machine. No cluster. No cloud budget. This shaped the training strategy significantly.</p>
+<p><strong>Multi-stage contrastive learning.</strong> Rather than jumping straight to 3-class NLI classification (entailment, neutral, contradiction), TMN uses a staged approach:</p>
+<ol>
+<li>
+<p><strong>Pretraining with InfoNCE contrastive loss</strong> on sentence pairs from WikiQS and AmazonQA (~7M sentences). This teaches the model basic semantic similarity: push similar sentences together, dissimilar ones apart.</p>
+</li>
+<li>
+<p><strong>Primary training with multi-objective InfoNCE</strong> on SNLI&rsquo;s 550K labeled pairs. Instead of hard classification, this stage uses a softer objective: entailed pairs should be more similar than neutral pairs, which should be more similar than contradictory pairs. The relative ordering matters more than absolute boundaries.</p>
+</li>
+</ol>
+<p>This staged approach creates a smoother learning curve that works within the constraints of limited compute. With larger models and more GPUs, you can often get away with training everything end-to-end. With 280 GPU-hours on a single card, curriculum matters.</p>
+<p><strong>Why InfoNCE specifically?</strong> It&rsquo;s well-understood for embedding tasks, works naturally with the similarity-based framing of NLI, and extends cleanly to the multi-class setting. The multi-objective variant lets us express the three-way relationship (entailment &gt; neutral &gt; contradiction in similarity) without forcing hard decision boundaries during training.</p>
+<h2 id="results">Results</h2>
+<p>The primary comparison: TreeMatchingNet (36M parameters) achieves 75.20% accuracy on the SNLI test set. BertMatchingNet (41M parameters, trained identically from scratch) achieves 35.38%, just above the 33.33% random baseline.</p>
+<p>An important caveat up front: neither model is pretrained on large corpora. The comparison is controlled by design, isolating structural inductive bias rather than pretraining data. The BERT baseline here is not standard pretrained BERT; it is BERT trained from scratch on the same ~7M sentences as TMN. This makes the comparison fairer for understanding what architecture contributes, but it means absolute accuracy numbers shouldn&rsquo;t be read against production systems.</p>
+<p><strong>The BERT failure mode</strong> is worth understanding. BertMatchingNet doesn&rsquo;t simply underperform; it predicts Entailment for every test example, achieving 100% recall on that class and 0% on the other two. When we remove the cross-graph attention and train BertEmbeddingNet (which processes sentences independently), BERT recovers to 45.78% and learns non-trivial class distinctions. This suggests the cross-attention mechanism specifically is interfering with BERT&rsquo;s learning under the randomized pairing regime used during pretraining, rather than the training protocol generally.</p>
+<p>TMN responds differently. TreeEmbeddingNet (without cross-graph attention) reaches 57.57%, while TreeMatchingNet (with cross-graph attention) reaches 75.20%, a gap of 17.6 percentage points. The GNN-based matching architecture appears compatible with this regime in a way the transformer-based approach is not.</p>
+<p><strong>Scaling</strong> across three model sizes shows consistent improvement: Small (1M params, 60.53%), Medium (19M params, 68.81%), Large (36M params, 75.20%). Gains per additional parameter decrease at larger scales, consistent with the aggregation bottleneck described below. It is also consistent with a broader pattern in the literature: transformer models follow reliable power-law scaling with parameters and compute (<a href="https://arxiv.org/abs/2001.08361">Kaplan et al., 2020</a>), whereas structure-based feedforward architectures have not been shown to do the same. TMN improves with scale, but the results here don&rsquo;t provide evidence the trend would continue at much larger scales.</p>
+<p>TMN also transfers to a different task with no additional training. On the SemEval semantic textual similarity benchmark, TMN matching achieves a Pearson correlation of 0.716. BertMatchingNet achieves 0.003 on the same task. The structural representations generalize across tasks, which is at least consistent with the model encoding something about sentence relationships rather than surface patterns.</p>
+<h2 id="the-aggregation-bottleneck">The aggregation bottleneck</h2>
+<p>One architectural finding has held up consistently: the bottleneck in this architecture appears to be in the aggregation step (how node-level representations get combined into a sentence-level embedding) rather than in the propagation step (how nodes exchange information within the tree).</p>
+<p>The current implementation uses weighted pooling, collapsing all node representations into a single sentence embedding. If a verb node has learned about its subject and object through message passing, that information gets averaged together with every other node equally, potentially losing the hierarchical signal the propagation worked to encode.</p>
+<p>My thesis work investigates replacing this with multi-headed self-attention aggregation: essentially using a small transformer as the aggregation function. The hypothesis is that more expressive aggregation could better preserve what the message-passing step captures, rather than collapsing it into a flat average.</p>
+<h2 id="what-this-means-and-what-it-doesnt">What this means (and what it doesn&rsquo;t)</h2>
+<p><strong>What it means:</strong></p>
+<ul>
+<li>Explicit structural encoding provides a useful inductive bias at small scales. When you can&rsquo;t afford to spend billions of parameters on implicitly learning structure, providing it directly appears to help.</li>
+<li>There&rsquo;s a genuine question about what transformers learn versus what could be provided upfront. Parse trees encode linguistic knowledge that otherwise must be extracted from data.</li>
+<li>Controlled comparisons at moderate scale can still be informative, even on a single consumer GPU.</li>
+</ul>
+<p><strong>What it doesn&rsquo;t mean:</strong></p>
+<ul>
+<li>Trees will replace transformers. They won&rsquo;t. Transformer models follow consistent scaling laws that structure-based feedforward architectures don&rsquo;t appear to match (<a href="https://arxiv.org/abs/2001.08361">Kaplan et al., 2020</a>). The advantage shown here at moderate scales may not hold as parameters grow into the billions.</li>
+<li>Structure-based approaches are production-ready. This is research exploring a specific hypothesis about the role of structure in language understanding, under constrained conditions.</li>
+</ul>
+<h2 id="where-this-goes-next">Where this goes next</h2>
+<p>The immediate next step is the self-attention aggregation experiments for my thesis. Beyond that, the research direction I find most compelling is what I call the &ldquo;propagation-then-transformer&rdquo; approach:</p>
+<ol>
+<li>Parse each sentence into a dependency tree</li>
+<li>Run GNN propagation to produce structure-aware node representations</li>
+<li>Feed those representations (instead of token embeddings) into a transformer</li>
+</ol>
+<p>After propagation, the node states are enriched token embeddings; they carry the same kind of information as standard embeddings, plus explicit structural context. The question is whether starting from structurally-informed representations lets you train a smaller or more efficient transformer.</p>
+<p>Testing this properly requires compute beyond what&rsquo;s available for a master&rsquo;s thesis. But the TMN results suggest the structural prior has real value, and figuring out how to combine it with the scaling properties of transformers seems like a question worth pursuing.</p>
+<h2 id="try-it-yourself">Try it yourself</h2>
+<p>The code is available on <a href="https://github.com/jlunder00/Tree-Matching-Networks">GitHub</a>, and the paper is on <a href="https://arxiv.org/abs/2512.00204">arXiv</a>.</p>
+<p>If you have questions or want to discuss tree-based NLP approaches, feel free to reach out.</p>
+<hr>
+<p><em>Jason Lunder is an ML engineer and researcher at Intellipat Inc. and an MS Computer Science candidate at Eastern Washington University. His research focuses on tree-based architectures for natural language processing.</em></p>
+<ul class="pa0">
+  
+   <li class="list di">
+     <a href="/tags/nlp/" class="link f5 grow br-pill ba ph3 pv2 mb2 dib black sans-serif no-underline">NLP</a>
+   </li>
+  
+   <li class="list di">
+     <a href="/tags/deep-learning/" class="link f5 grow br-pill ba ph3 pv2 mb2 dib black sans-serif no-underline">Deep Learning</a>
+   </li>
+  
+   <li class="list di">
+     <a href="/tags/graph-neural-networks/" class="link f5 grow br-pill ba ph3 pv2 mb2 dib black sans-serif no-underline">Graph Neural Networks</a>
+   </li>
+  
+   <li class="list di">
+     <a href="/tags/research/" class="link f5 grow br-pill ba ph3 pv2 mb2 dib black sans-serif no-underline">Research</a>
+   </li>
+  
+</ul>
+
+      
+    </div></article>
+
+    </main>
+    <footer class="bg-black bottom-0 w-100 pa3" role="contentinfo">
+  <div class="flex justify-between">
+  <a class="f4 fw4 hover-white white-70 dn dib-ns pv2 ph3 no-underline" href="https://jasonlunder.com/" >
+    &copy;  Jason Lunder 2026 
+  </a>
+    <div><div class="ananke-socials"></div>
+</div>
+  </div>
+</footer>
+
+  </body>
+</html>

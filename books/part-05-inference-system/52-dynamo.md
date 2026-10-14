@@ -152,7 +152,7 @@ NIXL 为 GPU、CPU 和 storage memory domains 之间的数据移动提供 transf
 
 MoE 的 Expert Parallel 把 token 送往持有专家的 rank；在负载接近、专家权重难以移动时，统一的 all-to-all 边界便于协调。但请求长度、KV 命中和 expert 热度一旦偏斜，每层的慢 rank 就会拖住同组请求。另一条条件分支是复制较小的 attention weights，把各层 expert weights 分布在 peer GPU，让每个 rank 保留自己的请求进度，并在执行下一层前拉取所需权重。执行流从“同步移动 token”变成“异步预取权重、在本地消费”；权重驻留仍由第 54 章的 memory owner 管理，本章只讨论跨 rank 的执行与完成边界。
 
-预取可以与本层 MoE 和下一层 attention 重叠，却不能省略依赖：下一层 MoE 必须等对应权重到达。它去掉的是集体栅栏，不是通信和等待；peer 出口、HBM/L2、copy engine 与功耗竞争还会让被重叠的计算变慢。只有 peer 带宽足够、层间计算窗口能覆盖搬运，且独立推进的收益超过权重流量时才值得选用。小窗口、弱互联、权重搬运显著或需要简单故障域时，原有 Expert Parallel 仍合理。`arXiv:2604.01621v1` 在作者的 DeepSeek-R1、GB200 NVL72、NVFP4/FP8 KV、8K 输入/1K 输出和 20–100 TPS/user 对照中报告收益；它不证明 Decode、跨节点或生产 tail SLO 同样受益。
+预取可以与本层 MoE 和下一层 attention 重叠，却不能省略依赖：下一层 MoE 必须等对应权重到达。它去掉的是集体栅栏，不是通信和等待；peer 出口、HBM/L2、copy engine 与功耗竞争还会让被重叠的计算变慢。只有 peer 带宽足够、层间计算窗口能覆盖搬运，且独立推进的收益超过权重流量时才值得选用。小窗口、弱互联、权重搬运显著或需要简单故障域时，原有 Expert Parallel 仍合理。`arXiv:2604.01621v1` 在作者的 DeepSeek-R1、GB200 NVL72、NVFP4/FP8 KV、8K 输入/1K 输出和 20–100 TPS/user 对照中报告收益；它不证明 Decode、跨节点或生产 tail SLO 同样受益。同一端到端对照固定 Decode pool、减少 Prefill GPU 时，output TPS/GPU 提高仍伴随 median TTFT 上升：20–30 TPS/user 区间由2538ms升至8314ms；170–180 TPS/user 区间的 output TPS/GPU 比值还降为0.97。资源效率、单卡吞吐与首 token 服务率因此要分别验收，不能由少用 GPU 推出 TTFT 改善。
 
 <!-- source-family:SF-2026-ARXIV-2604-01621 -->
 
@@ -426,6 +426,8 @@ Dynamo 将多个 inference engines 组织为分布式 runtime：request path 负
 下一章进入 Kubernetes 声明式控制面，观察 LLMInferenceService 怎样把 Gateway、intelligent routing、worker topology 和生命周期表达为可协调资源。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2604-01621` — 04-04去重补查：原04-03同v1/7分/Ch52采用复用，不新增家族/评分/I；仅按[精确v1 PDF](https://arxiv.org/pdf/2604.01621v1)§5.3/Table5–6在原canonical论证补固定D/减少P资源效率与medianTTFT反侧。reader必要差额/逐字PRE通过，root窄锁，作者实际原段/完整局部邻接与本注已读；supp_apr04_reader实际完整局部邻接/原段与本注nonwriter POST通过，锁释放。无复现/代码/生产SLO保证。
 
 - `SF-2026-ARXIV-2601-01310`：[Tarragon exact-v1](https://arxiv.org/html/2601.01310v1) §3.3、4.1–4.2、5.1–5.4、6.1–6.2、7.1–7.4。采用 AW stateful/committed-KV 与 EW deterministic replay 分责、ERT/P2P 及 seq/commit 的恢复边界；额外 store/剩余 HBM/链路空档均付成本。作者 Mixtral-8×7B、H200/RDMA、有限单-worker fail-stop 测试不授通用可用性、Byzantine 或 stream exactly-once。6分实际知识缺口深入；root 非作者必要源与 owner 提案复核通过，root 非作者实际正文、邻接与末注写后复核通过；未复现实验。
 

@@ -487,6 +487,10 @@ Workspace 不是新的授权主体：credential 必须按 step 和 resource 缩�
 短、只读、无副作用的任务仍适合轻量 sandbox。NVIDIA Secure Agent Workspace 只提供 reference-architecture
 证据，不能作为其 alpha implementation 已具备生产多租户成熟度的证明。
 
+部署开关还须区分新执行准入与已受理工作的回执、取消和收尾。关闭高风险Shell可以拒绝fresh初始输入和后续Turn，但原幂等key应先找回既有决定，合资格的approval/cancel/settlement仍沿原授权处理，不能为阻止新工作而遗失旧状态。固定definition的profile、approval、revision与digest不由新默认覆盖；公有和可信内部执行policy若共享入口，重放也必须核对policy-kind，公开allowlist不能自行mint内部身份。<!-- source-family:SF-2026-QWEN-CODE-13674 -->
+
+这增加reader升级、持久policy和跨层negative controls的成本；禁止fresh work不证明旧worker物理静默，更不授权新的background、child或lifecycle能力。[Qwen Code的受限公开Shell切片](https://github.com/QwenLM/qwen-code/pull/13674)保持默认off、强制询问审批与内部profile隔离，其H2/特定CI证据不覆盖Windows、物理恢复或完整生命周期。前提不齐时保持未开放并允许合资格收尾，不把一次界面能力标志当作全链执行验收。
+
 ## 三个平面
 
 ```text
@@ -665,6 +669,10 @@ load internal checkpoint
 Checkpoint owner 只能证明内部状态已恢复；Tool/Environment 拥有外部副作用，Policy plane 拥有继续授权，Workflow owner 必须根据对账结果提交 resume。这会增加 event receipt、dependency snapshot、compensation 和人工升级成本；短、无副作用、可完全重算的 run 仍可直接从头执行，不必引入重型恢复协议。现有实验证明多个 Agent framework 存在这类 execution-continuity 缺口，却不证明一种恢复算法已对任意工具链完备。
 
 <!-- source-family:SF-2026-ARXIV-2608-29381 -->
+
+恢复compute前还要区分“看不到writer”与“已确认旧incarnation终止”。Node离线、daemon断开、paused VM或unknown observation不能授权replacement；拥有该compute的节点重新在线后，只有证明exact incarnation不存在或已终止、exact cleanup成功且保留的Session可继续，才进入release。Device撤权、allocation/placement释放与retainability应在Session lock中复核compute revision；并发archive、delete或新的compute transition优先，不能让旧观察覆盖新状态。<!-- source-family:SF-2026-OPENAGENTCORE-667 -->
+
+这种qualified recovery减少永久owned的废弃compute，却增加provider语义、lease、锁顺序和native-history验证成本。[OpenAgentCore的受限实现](https://github.com/MiniMax-AI/OpenAgentCore/pull/667)保留filesystem、native ID和pending input，并不重放旧输入；缺history须显式失败，不能悄悄创建新native root。其VM-loss验收不证明host-crash持久性或任意crash-tail完整，ID相同也检不出可解析的截断尾。不能取得上述资格时继续保留ownership、隔离或人工恢复，不能用超时或新容器可启动替代旧writer已被安全释放。
 
 Runtime 还需要显式的 **stop controller**。固定 step/token cap 在成本可预测、缺少可靠 outcome sensor 时仍最安全，但它会让已经收敛的 trajectory 继续消耗资源，也可能在尚有高价值下一步时粗暴终止。更细的 controller 在每个可恢复边界估计下一步的 expected task value，并与 marginal energy、token/tool cost、deadline risk 和 failure exposure 比较：
 
@@ -1155,6 +1163,8 @@ versioned、addressable 且 dependency-aware 的 durable state，并声明 autho
 
 短 workflow 把中间输出当临时文件最轻量，但中断恢复、增量复算和多消费者需要 typed、versioned、addressable、dependency-aware 的 artifact。数据模型应记录 authoritative producer、consumers 与 lineage，模型只能提出 materialization，平台验证后提交或替换。持久化增加存储、索引、schema migration、权限和 stale dependency；authority 冲突时应停止物化，回退 append-only event/log state 与人工 reconciliation。可寻址只证明能恢复，不证明 artifact 语义正确，仍需对应 verifier。
 
+中间产物较大时，可寻址还要转成明确的读取协议：生产者把完整分析和工具结果保留在 raw artifact，另写较短的 map，指明有哪些对象、路径与用途；消费者先按 map 选择，再读取所需原件，而不让每次交接都重发全部内容。map 是导航和读取 proposal，不是 raw 语义或事实的替代，须与生产者、原件版本和可接受的读取权限绑定。[有限模型研究工作流对照](https://arxiv.org/html/2604.13018v1#S3)以文件总线和 append-only 分工承载这一接口，但整体去掉总线的消融不识别 map／raw 单层因果，较简单工作流还更便宜，也不证明通用自动研究质量。文件维护、上下文读取、实验 GPU、grader 与恢复验证全部计费；路径失效、版本漂移或权限冲突时，保留已核验的直接交接和原始日志／artifact，不从短 map 或追加日志签发完整性、事务性或完成 verdict。<!-- source-family:SF-2026-ARXIV-2604-13018 -->
+
 <!-- semantic-body-binding:SF-INTERMEDIATE-ARTIFACTS-AS-FIRST-CLASS-CITIZENS-A-DATA-MODEL-FOR-DURABLE- -->
 
 ## Review notes
@@ -1350,3 +1360,9 @@ Review note：`SF-2026-ARXIV-2606-29472`；Method `https://arxiv.org/pdf/2606.29
 - `SF-2026-KIMI-CLI-1-9` — Daily `2026-02-07`；[官方 1.9.0 release](https://github.com/MoonshotAI/kimi-cli/releases/tag/1.9.0)、[Wire replay PR #1005](https://github.com/MoonshotAI/kimi-cli/pull/1005)、[接口背景 PR #910](https://github.com/MoonshotAI/kimi-cli/pull/910)。仅采用 request-shaped archive 与 live replyability 的分责；release `2026-02-06T18:38:03Z`，背景接口在窗前合并，不作为本日新贡献。必要 source 与实际 typed Session owner 已由 root 写前独立核验，实际正文待非作者 POST；仅静态审阅 patch 与新增测试，未运行客户端或复现实验，不声明恶意客户端已被完整阻止。
 
 - `SF-2026-ARXIV-2602-09345` — Daily `2026-02-12`；[AgentCgroup exact-v1](https://arxiv.org/html/2602.09345v1) §3.1–3.4、§5–7。2+2+2=6，具体 resource-domain 缺口深入，仅采用 agent parent/tool child cgroup 与 soft-limit throttle/freeze 分责；patched kernel、3trace×50 replay、allocation≠Agent E2E、LOW等待及初始化/retry限制邻近。root 必要 source→owner 写前核通过并授窄锁；root 已实际核两段、邻接及本末注，非作者 POST 通过，窄锁释放。未运行代码/复现，非日级 Gate。
+
+- `SF-2026-QWEN-CODE-13674` — Daily2026-10-13；[PR13674](https://github.com/QwenLM/qwen-code/pull/13674)及merge `a8990042e648a7807e251d99b3d37c0ee8c16100` Store replay/fresh gate、reserved Compiler/profile、Properties及两admission tests，1+2+2=5，受影响安全接口深入。只采fresh admission/合资格settlement与public/internal policy provenance分离，保defaultoff、旧reader/Windows/physical恢复及作者CLI661/663限制，未运行部署。root必要源与实际owner/PRE通过；today_institutions窄写已落实，root实际正文/完整邻接与本末注非writer POST通过，窄锁释放。
+
+- `SF-2026-OPENAGENTCORE-667` — Daily2026-10-13；[PR667](https://github.com/MiniMax-AI/OpenAgentCore/pull/667)、merge `48292f409a042e2b8bb8588c87e1e1a7004dc867` Confirmed-compute-loss文档/idleCompute/releaseLostCompute/cleanup与positive/negative/concurrent tests，2+2+2=6，writer-release正确性资格深入。仅exact incarnation/cleanup/locked revision/retained continuation，保offline/paused/unknown与host-crash/crash-tail未qualify，不授任意无丢失或exactly-once。root实际必要源、owner与PRE通过；today_institutions窄写已落实，root实际正文/完整邻接与本末注非writer POST通过，窄锁释放，未复现native场景。
+
+- `SF-2026-ARXIV-2604-13018` — Daily2026-04-16补Apr15，supp_apr16_author；[exact-v1](https://arxiv.org/html/2604.13018v1)必要filebus方法/评价/限制见本日SUP R53，2+2+2=6，map/raw artifact读取分层具体owner差额受影响深入。保append-only权限而非真值、去bus整体消融/简单工作流反侧与全部费用；不授单层因果/完整自动研究或ACID，未核实现或复现。R53 Source/R28date有效，reader R53必要Source/R28 date/R76逐字PRE/R80实际单段、完整邻接及本人注POST通过；作者仅同步本人注并实际读回，不授DAY。

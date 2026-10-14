@@ -116,6 +116,8 @@ cost_per_good_request
 
 只看 output token 会忽略 Prefill；只看 request 会忽略长度。应同时保留 prompt/output lengths、cache hit、model/quantization、hardware、concurrency 与 SLO。
 
+把文字提示渲染进图像，会同时改变计费单位与输入表示，不能用省去的text tokens单独认证省费。应比较被删除的文字费用、增加的image tokens/面积或tile费用、真实output差额与渲染开销，再按相同quality/SLO人口计算有效成本；只有固定output与匹配价模型下，输入两项才可直接相减。[受限视觉提示实验](https://arxiv.org/html/2604.02492v1#S3)在部分schema任务获益，却在另一些模型增加费用，字符敏感代码、空间与非英语切片也退步；选择后的最佳font/color配置不成为通用recipe。价模型、rendering与图像预处理、decoder、失败/重试均须随cost point记录；低账单不等较低物理计算或内容无损。可读性、总费用或任务质量回归时，保留原text+image接口与完整计费，而不是由少输入tokens批准迁移。<!-- source-family:SF-2026-ARXIV-2604-02492 -->
+
 长度成本实验还必须记录输出上限：设潜在完成长度为 L、cap 为 C，实际统计通常只见到 min(L,C)。大量回答触及 cap，说明该配置下的资源压力，却不能识别 cap 以外的完整尾分布或未截断分位数；这是对测量条件的工程解释，不是由固定 5k-token 实验取得的无限尾部结论。Native token accounting、开放模型采样温度与闭源默认配置也要分别保留，不能把不同 decoder 的计数直接合成统一长度策略。<!-- source-family:SF-2026-ARXIV-2601-08490 -->
 
 提醒模型简短可以减少输出，却同时改变任务效用，不能只据 token 下降签发无损 mitigation。受限对照中某些模型的正常任务完整正确率明显下降，另一些没有同样退步；应共同验收 length/cap-hit、正常任务质量与实际资源时间。论文未测真实服务 latency、跨租户排队或生产 DoS，故这些仍需独立 workload 验收；效用退步或尾部不可见时，应保留硬预算、准入与原 decoder 配置，而不是把文字提醒当作资源隔离。
@@ -140,6 +142,8 @@ Per-token/per-request 适合单轮、边界明确的调用；Agent 为同一目�
 
 分母明确后还需防止**只量 GPU、漏掉整机**。Agent 的工具等待和低并发阶段可能让 CPU、内存、主板与空闲基线占更大份额；把 GPU 遥测的 joules/token 直接当成完整服务能耗，会随工作流 phase 和批处理状态改变误差。测量应同步标记 load、prefill、decode、tool/idle 与成功/失败，分别保留 device 与 host 边界，再汇总到 goal lineage。整机计量增加时钟对齐和功率仪表成本，不能把 IPMI/NVML/RAPL 的估计视为外部电表真值；只比较同机 GPU kernel 时 device-only 仍可作局部指标。[单服务器实验](https://arxiv.org/html/2609.29707v1)展示这两种口径的差异，不支持跨硬件固定倍率。
 <!-- source-family:SF-2026-ARXIV-2609-29707 -->
+
+即使计量边界正确，短phase的归因还受三种异步节奏限制：sensor实际取得数据、driver发布缓存值、tool轮询读取。更频繁poll可能反复读同一值，reported power的延迟、上升/恢复与filter也会把邻phase混在一起；应先用有界负载刻画这些响应，再只在实际有稳态窗口时归因，过短region则保留较粗总量而不伪造kernel能耗。Counter可用时，邻接energy差除实际时间差提供该区间平均功率，不是恢复任意瞬时峰值的保证。[AMD GPU/APU的受限测量](https://arxiv.org/html/2604.06056v1#S3)支持这种cadence/attribution分账，APU共享rail还要求核CPU、memory与NIC边界；sensor表征、同步logging与校准都付费，字段/时钟或窗口不足时回退较长region与独立node/device总量，不把其HPL混精节能迁作LLM收益。<!-- source-family:SF-2026-ARXIV-2604-06056 -->
 
 限定 device 边界之后，能量的总测量与内部归因仍是两份证据。直接测长时间稳态 GPU 功率便于估算总量；若要判断哪类指令耗能，可同时运行多种微基准，用指令计数联立拟合非负能量系数，先分离 idle/static，再把动态部分按指令和 cache 行为分摊。附带的 load、地址计算和循环同样计费；方程在训练样本上零残差不证明指令可以物理独立隔离，未覆盖 opcode 的分组、bucket 平均与 memory scaling 也仍是估计。<!-- source-family:SF-2026-ARXIV-2603-26435 -->
 
@@ -463,3 +467,7 @@ Primary-source 与实践入口：
 - `SF-2026-ARXIV-2603-17280` — [exact-v1](https://arxiv.org/html/2603.17280v1)必要§2–5/Eq1–4/T1–4与§10.1–2；仅解析成立条件、配置/扫描长度和联合倍率边界。不采严格1/window、独立乘法/数字采购、跨model质量或完整能耗保证；原表profile/分母差、投影/输出only/fullfee保留，未核代码或复现。
 
 - `SF-2026-ARXIV-2603-26435` — [exact-v1](https://arxiv.org/html/2603.26435v1)§3.1/3.3–3.5/4.1–4.3/5.1/5.2.3/6；2+1+2=5。instruction归因与总measurement分责，保squarefit非通用物理证书、activity/unknowninstruction/NVMLgranularity与全部profile费用；不采整机/跨GPU或科学应用保证，未核全部benchmark/code/复现。
+
+- `SF-2026-ARXIV-2604-02492` — 04-07补04-06自然日；IPPg exact-v1 S3/Eq1–5、T2–4/5.2–5.3。2+1+2=5，只表示改变后的text/image/output/render完整计费与质量人口；保费用/字符/空间/非英语反退和后验best局限，不采通用省费、当前产品价或架构因果。root必要Source、实际唯一Ch70 owner/逐字PRE通过并授一body＋本人note窄锁；root实际新body、完整邻接/marker及本人note非writer POST通过；作者同步本注并实际读回后释放窄锁。未核artifact/复现，不授DAY。
+
+- `SF-2026-ARXIV-2604-06056` — Daily2026-04-09补Apr08自然日；[AMD计量 exact-v1](https://arxiv.org/html/2604.06056v1)II-A/III-A1–2/Eq1、IV-A/V-A1–3/VI，1+2+2=5。只采sensor/driver/poll cadence、无短稳态窗口时粗总量和区间平均功率；保APU共享rail、配置/人口歧义与全费用，不授瞬时恢复、可迁固定offset、LLM节能或完整SLO。root实际必要Source/日期/owner与逐字PRE通过授一段及本人注窄锁；作者已实际写入并顺读完整局部邻接及本人注，root非writer actual完整邻接与本人注POST通过；作者同步注后最终实际读回，窄锁释放。未核代码/复现，不授DAY。

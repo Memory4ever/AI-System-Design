@@ -80,6 +80,16 @@ policy 变化或 stochastic environment 会让 scalar baseline 过期。短 hori
 group rollout 便宜且同 prompt variance 可测时 GRPO 仍合理。SPPO 的证据仅覆盖其 math/control contract，不是
 长时程 Agent 的通用方案。
 
+传统 scalar value head 在一次 forward 中直接估计 prefix return，延迟和训练路径简单；若它在受限长推理状态上持续失准，还可以保留语言建模 head，让 critic 先生成一段分析，再把解析出的 0～10 整数分除以 10 作为 value。这里新增的是估值计算路径，而不是给 actor 增加部署时推理；value 仍应表示沿当前 continuation policy 的预期 outcome，而非这段分析是否正确。显式条件可以附上 actor 的模型规模和近期训练成功率，再用当前 actor 的 sampled outcomes 更新 critic；能力 hint 不能代替 policy revision、真实目标和独立校准。一个具体流程以合成分析做格式冷启动、冻结 actor 时用 outcome 的平方误差奖励训练 critic，之后交替更新 actor 与 critic；按启发式分段的估值可广播至段内 token，但必须绑定实际读取的 prefix、广播到哪些 token states 与 return 定义，广播本身不证明逐 token 对齐、无偏 advantage 或因果 credit。<!-- source-family:SF-2026-ARXIV-2604-10701 -->
+
+这条分支以 critic 自回归生成、冷启动监督和额外训练换取更强的受限估值能力，并新增 score 解析失败、policy hint 过时与分析迎合监督等风险。[GenAC 的支持范围](https://arxiv.org/html/2604.10701v1#S5)是 Qwen3 数学训练、Monte Carlo continuation 估值和所列校准/排序对照；生成分析不证明解释忠实，较少 actor samples 也不代表总算力更少。其 FLOPs 是带分段长度和 prefix 复用假设的估算，且六个任务并非全部改善，不能签发通用 critic 更优或 wall-clock 加速。预算不合算、policy 改变后失准或解析不稳定时，保留一次 forward 的 scalar critic、真实 rollout 估值或 group baseline，并独立验收 actor outcome。<!-- source-family:SF-2026-ARXIV-2604-10701 -->
+
+#### 同一昂贵状态的候选复用，不等于多条真实 Transition
+
+当在线状态来自延迟高、不能可靠 fork 的 GUI 环境时，每次实际动作都让环境进入下一状态，直接收集同状态的多条后续轨迹很贵。一条条件分支先用真实执行轨迹训练 action-value critic，再在已观察状态上由当前策略独立抽取多个候选动作，只用 critic 估值而不执行；每个候选的优势减去其余候选 Q 值的均值。它以更多 action 采样和 Q forward 换取较少环境交互，也省去单独的 state-value baseline，却没有获得这些候选的真实 transition 或扩大已观察 state 的覆盖。过程奖励与真实终局结果形成 critic target，二者的身份和误差仍须分开，不能把未执行动作的预测值当作环境真值。<!-- source-family:SF-2026-ARXIV-2604-07277 -->
+
+对固定 critic、同状态独立采样的普通 score-function 更新，leave-one-out baseline 不改变该 Q 代理的期望梯度；这不修正 critic 与真实 Q 的差异，也不消除 PPO clipping 的偏差。常数平移不变仅说明优势使用相对值，不足以证明完整梯度方差总会降低。[受限 GUI 对照](https://arxiv.org/html/2604.07277v1#S3)支持候选复用接口，收益仍受 critic 预训练、过程监督与部署外状态漂移限制；新增模型训练、采样、估值和 verifier 都计费，同在线 RL 时间预算不证明全部预处理费用已匹配。critic 失准、过程标签不可核或总预算不合算时，保留真实执行的 PPO；环境多 rollout 便宜时，也可保留不训练 critic 的 group baseline，而非让预测候选自签优化收益。<!-- source-family:SF-2026-ARXIV-2604-07277 -->
+
 Value model：
 
 ```text
@@ -510,3 +520,7 @@ Primary-source 校验入口：
 - `SF-2026-ARXIV-2603-17685` — [FMER exact-v1](https://arxiv.org/html/2603.17685v1)必要§3–5/Eqs4–20/Alg1/T1–5与A1–3/B/C/D，current [v3受影响entropy/ESS](https://arxiv.org/html/2603.17685v3)§4.2–4.3/B4–6定点。仅候选加权CFM回归与交互Top1分责；保Gaussian-path ELBO→部署ODE桥、真实flow/OT人口和ESS非硬KL隔离、质量反退、solver/critic/trace及全费用。不采严格entropy/单调改进/全域trustregion、离散LLM替代或物理安全，未核代码/全部曲线像素/复现。
 
 - SF-2026-ARXIV-2603-23355 exact-v1 §4–5/Eq2–3/Alg1/T1/F3–9+A/C/D/E必要范围；只采用独立定义的logit Q/V trajectory residual与FIFO重复求值更新合同，初始zero仅同参数，不采两shaping转换/Bellman等价桥、Eq4遗漏value梯度完整recipe、唯一定理/全局optimum或4.3x全费；保β/negative/reset与任务反退、预算/评估人口及全费用，未核实现/复现。
+
+- [Android Coach v1](https://arxiv.org/html/2604.07277v1) §3.2–3.4/Eq2–4、§4.1–4.3、A1/A2与D：深入审阅，仅采用已观察state候选重采/Q代理及独立LOO baseline边界；不采通用真实梯度无偏/方差下降或端到端1.4x，8A10080GB/BF16/受限GUI作者评价。必要证据、逐字正文与实际写后独立复核通过；未核代码或复现。<!-- source-family:SF-2026-ARXIV-2604-07277 -->
+
+- `SF-2026-ARXIV-2604-10701` — Apr15 来源补查（Apr14 自然日）；[GenAC exact-v1](https://arxiv.org/html/2604.10701v1) §5.1–5.2/§6.1–6.3、AppB Alg1/T5、AppC T7：6分具体缺口深入，只采用生成式估值×policy能力hint、分段prefix/state/return广播合同与校准成本边界，不采用TC0/P真实LLM普遍障碍、faithful解释或因果信用保证。Qwen3/DeepScaleR数学、MCcontinuation标签及10seed近似实验限定；A10080GB节点的GPU数量/precision未披露，2.1倍FLOPs是有prefix复用假设的估算，非实测wallclock/全预训练成本。root实际必要Source/日期/owner/PRE与正文完整局部邻接/本人注非writer POST通过，作者已读回同步注，窄锁释放；未核代码或复现。

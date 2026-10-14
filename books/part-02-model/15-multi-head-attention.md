@@ -282,6 +282,8 @@ shared latent KV
 
 统计分解提供诊断视角，不等于因果证明。有限 corpus/model 且部分 family 需单独处理；个例、安全或精确 attribution 场景应回退真实 activation measurement、ablation 与干预。
 
+固定 head 身份也不固定它在每个任务中的角色。保持输入事实不变，分别改变任务指令或内部 task state，再比较同一 head 对哪些事实响应、扰动如何传到后续组件，以及替换该 head 怎样影响答案；influence 与 answer importance 是不同干预量，不能靠两张 attention 图或一个总分互代。[有限 graph-task 对照](https://arxiv.org/html/2610.13895v1#S2)中，匹配当前状态的局部 response map 比平均 map 更能预测同prompt干预效果，但影响包含中间组件路径，依赖选定方向、幅度和位置，少数head恢复也只占整体task切换的小部分。配对构题、activation measurement、随机控制与恢复均增加成本；新prompt或任务尚未验证时，保留真实干预和非目标行为回归，不把该局部映射当通用线性回路或选择性安全编辑证书。<!-- source-family:SF-2026-ARXIV-2610-13895 -->
+
 ### 几何分离不等于训练独立
 
 即使进一步约束各 head 的 score 或输出方向近似正交，也不能推出它们的训练动力学彼此独立。各 head 仍读取同一 token trajectory，并在共享 residual stream 与最终 loss 中相遇；球面归一化下的径向投影还会把一个 head 的更新影子带入另一个 head 的能量变化。因而，总体能量存在下降方向，不代表每个 head 的局部能量或聚类过程都单调。只有在额外的 Radial Dominance 等充分条件成立时，才能把更强的逐 head 单调性当作理论结论，而不能把它写成真实 Transformer 的普遍事实。<!-- semantic-body-binding:SF-2026-ARXIV-2605-04279 -->
@@ -375,3 +377,5 @@ Primary-source 校验入口：
 - `SF-2026-ARXIV-2603-08343` — Daily `2026-03-11`补遗漏；[exact-v1](https://arxiv.org/html/2603.08343v1) §4–6：固定 head-mixing basis 与可学习 affine 是改变架构自由度的替代分支，不是任意 checkpoint 的等价替换。保留小模型质量范围、随机初始化大配置与实际 kernel 成本边界；root 已读必要方法、评价与反侧，并核 Ch14/16 交接后写入正文。非写入者 supplement_20260311 已实际回对原证并顺读新增两段、完整局部邻接与末注，写后复核通过，不授日级完成；未运行代码或复现实验。
 
 - `SF-2026-ARXIV-2603-30033` — Daily `2026-04-02`补`04-01`；[exact-v1](https://arxiv.org/html/2603.30033v1) §2 张量参数族、§3 KV/latentRoPE/kernel 接口、§4 Table3与相关质量/配置，`2+2+2=6`，具体三轴参数化缺口必要加深。只采 head 与特征轴共享及参数/cache分账；同rank MLA cache、latent旋转改变频率、research kernel和有限训练质量反退近文。不照抄 Eq9/13 记号为完整实现，不授任意checkpoint等价、参数比例延迟倍数或生产SLO；未核代码或复现。
+
+- `SF-2026-ARXIV-2610-13895` — Daily2026-10-13，窗10-12；[exact-v1](https://arxiv.org/html/2610.13895v1)必要位置、采用边界与actual-owner差额见[本日模型证据](../../papers/2026/10/_sources/daily-20261013/model-evidence.md)。today_models准备必要Source/逐字PRE，root独立定点Source/PRE通过后授本局部与本人末注窄锁；today_models已最小写入，root已实际顺读新增正文、完整局部邻接、diff及本人末注，nonwriter POST通过，窄锁释放，不授DAY。保正文限定与原路径，未核代码、复现或生产SLO。

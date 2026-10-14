@@ -60,6 +60,14 @@ Registry model version
 
 Controller 健康只证明 desired state 被协调，不证明模型 logits 正确。发布 gate 还要检查 artifact digest、tokenizer/config、runtime conversion 与 golden-input regression。
 
+### 多模型依赖还需要一份可发布的计算图契约
+
+少量预测模型在同一进程里按固定顺序调用，能避免网络往返，调试也直接；当下游模型的某个输入依赖多个上游输出时，“注册了全部模型”却不能决定调用顺序、字段映射或失败后怎样继续。这里的图不是对多个预测取平均，而是把模型输出作为另一模型输入的确定数据依赖。发布身份应同时固化图 revision、各节点的 model/runtime revision，以及边的输入输出 schema 和转换版本；Registry 保存引用与证据，执行器按依赖准备输入，KServe control plane 仍只协调所声明的服务资源。
+
+[InferenceGraph 的官方接口](https://kserve.github.io/website/docs/model-serving/inferencegraph/overview)提供顺序、条件、并行组合与流量分配等构件。但“并行执行并组合响应”不等于自动实现任意多父节点特征 join；前一步响应或原请求怎样成为后一步输入，必须按目标版本明确验证。超出原生传值能力时，应由受控转换节点或专门执行器拥有字段拼接，而不是假设一个通用 Runtime 模板会自动生成新的 controller 或消费任意 DAG。
+
+同一逻辑图用于离线跑批与在线请求时，还要分别定义执行合同：离线结果按稳定 sample identity 对齐、分块提交并记录已完成节点；在线请求则需要端到端 deadline、节点级失败与取消规则，不能让一个迟到输出写进另一次请求的输入。独立分支可以并行，共享上游可以在同一执行身份内复用，但可变的全局 DataFrame 不是隔离或幂等性的证明。拆分服务增加序列化、数据搬运、部分失败和版本协调成本；低延迟的小图仍可同进程封装，长跑批仍应交给有持久任务状态的执行器。这类预定预测图不要求 Agent 自主规划，[第81章](../part-07-agent/81-workflow.md)的外部行动与重试语义也不能被普通模型 DAG 的完成条件替代。
+
 ## Readiness 不是进程存活
 
 模型服务的 readiness 至少应区分：
@@ -191,10 +199,13 @@ KServe 把模型服务从手工容器变成可协调、可版本化的 desired s
 
 本章与第 53 章做了明确分工：第 53 章拥有 LLMInferenceService topology 与 EPP 路径，本章拥有通用 serving lifecycle、Runtime abstraction 和发布契约。
 
+历史归档审计（2026-10-13）：依赖预测图只补服务组合与发布身份的论证。官方 InferenceGraph overview（页面版本 0.20）核验 Sequence/Switch/Ensemble/Splitter、原输入与 `$response` 的传值边界；不声称支持任意 DAG join、自动版本固化或离线 exactly-once。样本对齐、节点 commit、deadline 与版本化映射为工程设计要求，未实现或部署图执行器。
+
 官方入口：
 
 - KServe control plane: https://kserve.github.io/website/docs/concepts/architecture/control-plane
 - KServe resources: https://kserve.github.io/website/docs/concepts/resources
+- KServe InferenceGraph: https://kserve.github.io/website/docs/model-serving/inferencegraph/overview
 - ServingRuntime: https://kserve.github.io/website/docs/concepts/resources/servingruntime
 - Installation concepts and component split: https://kserve.github.io/website/docs/install/overview
 - KServe v0.19.0 release（version-sensitive control-plane evidence）:

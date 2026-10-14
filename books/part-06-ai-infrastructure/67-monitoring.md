@@ -33,6 +33,8 @@ agent identity monitor 以固定 probe 的 next-token distribution、sqrt-JSD ge
 
 [有限 API 与受控小变化结果](https://arxiv.org/html/2602.11083v1)只支持这一告警分支。provider 的 T=0 实现不必等于低温极限，隐藏 reasoning 或空输出会使 first-token sensor 不可用，prompt 初始化和 reference 也有费用；token 变化可能来自 system prompt、routing 或硬件/负载，而非唯一的权重变化，未告警同样不证明模型没变。输出不可观测、reference 漂移或误报无法校准时，保留显式版本/changelog 证据与常规任务 canary，把变化告警交给诊断和 evaluation，不由 monitor 认证底层身份或质量。
 
+内部可观测时，还可把 circuit 相对参考输入的边排序或权重变化作为质量漂移 proxy，而不是把 activation 看成真实能力。跨模型的浅/深层 divergence 与固定模型相对 ID circuit 的 structural similarity 是两个不同 sensor，不能共享一个适用性声明。[ViT 的受限测量](https://arxiv.org/html/2604.08192v1)中，固定模型 CSS 的 threshold 由39个有 gold 结果的 corruption surrogate 校准；目标切片不再读 label，并不意味着整条方法无标签或无需目标分布假设。Circuit discovery、近似 edge attribution、参考数据与校准本身都有费用，CSS 与准确率相关也不解释内部因果或内在 truth；revision、输入域或阈值失配时，应退回带标签 canary 和独立 evaluation，监控只报变化及校准边界，不直接认证 release 质量。<!-- source-family:SF-2026-ARXIV-2604-08192 -->
+
 容易采集的指标不一定重要。应从用户与平台契约反推：
 
 ```text
@@ -709,3 +711,4 @@ Primary-source 与官方入口：
 <!-- daily-books-trace:SF-2026-ARXIV-2607-17525:end -->
 
 - `SF-2026-ARXIV-2602-11083` — Daily `2026-02-13`；[exact-v1](https://arxiv.org/html/2602.11083v1)；必要证据与直接反侧见本日 V3_EVIDENCE_CSIX_FOUR。2+1+2=5；token-only边界prompt init/detect sensor差额深入，不授底层身份认证、无限power或无告警即未变化。root已实际核必要原源/current owner及邻接PRE并授窄锁；root已实际顺读新增两段、邻接与末注，非作者POST通过，窄锁释放，未核代码/复现，日级未授。
+- `SF-2026-ARXIV-2604-08192` — [exact-v1](https://arxiv.org/html/2604.08192v1) §3.2–3.4/4.1–4.3及Limit；只采用cross-model divergence与fixed-model CSS分责、39个有gold surrogate校准及target slice身份，保threshold敏感/近似edge与费用，不授内在truth、因果或全链label-free，未核实现/复现。

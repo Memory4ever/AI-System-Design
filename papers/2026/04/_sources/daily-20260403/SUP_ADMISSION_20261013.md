@@ -1,5 +1,13 @@
 # 2026-04-03 source omission supplement：首批准入校准
 
+## 最新恢复路由（2026-10-13，用户明确恢复；覆盖旧额度暂停）
+
+本轮启动依据LS为92/279、next04-03；只补本日04-02自然日。root现已实际接纳DAY/FINAL并必要保存93/279、186未验收、连续至04-03，下一04-04未启动，本作者不接新日。原62整行/日期/评分/窗口及连续原§4冻结；原35新增与31真实POST有效复用。此轮903/1151/1161 matching完整题摘准入实际补读且reader通过，EXTRA7九项原值/1152原27值经reader读回日期有限层通过，不重必要正文。
+
+当前正式48新增/总110＝41实际Books＋3具体NC＋2仅报告＋2中心D。原31真实POST有效复用，本轮六项Ch20/29/66/72最小新写与root00923/00938两处、作者00519/01170两处共10新family均经真实正文/完整邻接/本人notes actual nonwriter POST。三NC01152/00422/01212有实际具体正文承载，01212只exact-v1 PDF，旧HTML身份信号不混用。00519改判后owned/findable/MM04有限日门实际补核通过；两误排00422/01212准入/Source/日门/NC已独核。QUEST正确C71/forum及challenge缺口原值实际独核，保持first-public日期隔离，不评分/Books，不改贡献EX。
+
+9/15具名EX分层实际独核，六未抽00842/00853/00947/00969/00977/01195明确，只有具体错判两项重开，不转全类或附件队列。所有候选/Books普通待办0、窄锁全释放；非报告作者实际六部分DAY及一次完成态FINAL均已通过（reader§11–12），README状态完成、检查时刻2026-10-13T20:12:53+08:00、§1/5/6验收叙述已实际回读。110行/48新增处置41I3NC2OnlyReport2D、275本地引用、原62整行/窗口/37908字符连续原§4、V3及限定cached/unstaged检查实际通过。详细真实新独核在[reader记录§11–12](SUP_FINISH_REVIEW_20261013.md)、[TAIL原证/范围](SUP_FINISH_TAIL_20261013.md)、[root两PRE/日门](SUP_ROOT_BOOKS_FINISH_20261013.md)与[六项PRE](SUP_BOOKS_PRE_FINISH_SIX_20261013.md)。旧reader额度暂停及35/18层仅履历不覆盖此路由；普通0不授外部保留Coverage/Evidence或无遗漏。不stage/commit/push，不修改旧有效层。本作者释放本日README/最新路由ownership后结束，只交root接纳与全年checkpoint，不接04-04。
+
 ## 2026-10-13 fresh reader 实际停点：额度暂停，非日级验收
 
 复核者：`apr03_finish_reader`（非报告作者、非 Books writer）。已完整重读当日 AGENTS、Prompt、研究/Report 合同、每日来源及 arXiv 主题路由、ROADMAP 与本日最小路由；只处理本日既有11普通项，不扩发现、日期或附件。root 最新指令要求立即暂停，因此下列记录覆盖“reader仍在执行”的旧停点，不覆盖此前31真实 POST 或其他有效层。**本日报仍进行中；本轮未执行 DAY/完成态 FINAL，不授整日验收。**

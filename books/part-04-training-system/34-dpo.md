@@ -262,6 +262,8 @@ margin 只是模型自身 confidence proxy，晚段信号可能更弱；用于�
 
 相对 margin 还可叠加 noise-output anchor：对 diffusion 的 chosen/rejected noisy samples，分别惩罚 trainable prediction 偏离固定 reference prediction，而不是直接拟合实际注入的 noise target。前者限制相对训练如何移动两侧输出，后者则是不同的 SFT 监督；都不是硬 KL 或全函数保持。纯 DPO 可通过同时恶化 winner/loser 的拟合而改善相对 margin，因此 anchor 身份与 noise/time、reference forward 需共同冻结。[SpatialAlign v1 §3–4](https://arxiv.org/html/2602.22745v1)用可检出实体的几何 proxy 筛 pair，有限实验同时出现 proxy 正确提升和 identity/视觉质量反退，SFT-anchor 也并非所有指标更差。该 proxy 所写归一化不确保总分≤1，不能作概率或物理真值；detector 漏检、valid 过滤人口损失、生成/追踪和双侧 reference 成本都要计入。Proxy/anchor 失配或质量回归时，回退可信 noise target、原 reference 与重新审校的 pairs，不把 anchor 的有限收益解释成避免所有 reward hacking。<!-- source-family:SF-2026-ARXIV-2602-22745 -->
 
+概率比较还可以改变分母，而不只给既有 pair gradient 加 gate。一条[受限 relative-density 分支](https://arxiv.org/html/2604.04410v1#S3)比较 positive density 与正负 population 的混合：p₊/(αp₊+(1−α)p₋)，混合权重0<α<1时比值不超过1/α。它以混合目标约束 ratio 的数值范围及相关梯度系数，不保证任意网络参数梯度或整条训练轨迹有界，也不认证偏好标签真实。Population consistency 另依目标可表达等假设，有限样本/模型的边界不能直接外推人类偏好或发布安全；α搜索、训练与独立likelihood/KL/行为评价都付费。支持重叠充分、原recipe稳定或混合目标无益时，保留vanilla DPO及原probabilitygate，不把bounded ratio叫无代价的普适对齐。<!-- source-family:SF-2026-ARXIV-2604-04410 -->
+
 ## DPO 移除了什么系统复杂度
 
 Fine-tuning loop 不再需要：
@@ -489,6 +491,8 @@ reference-free objective 免去 reward 中的反复 reference forward，缓存�
 pair validation 增加 judge 和标注成本，judge noise 也可能制造新偏差。两个 benchmark、8B 以内模型与 LLM judge 不证明普遍收益；证据不闭合时回退 verified preference pairs、CPT/SFT 或保留不更新。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2604-04410` — Daily2026-04-08补Apr07自然日；[RDRO exact-v1](https://arxiv.org/html/2604.04410v1) §2.2/§3.1–3.4/§5/F，2+1+2=5，relative mixed-density目标差额深入。混合权重0<α<1；ratio≤1/α不授参数梯度或训练轨迹有界，population expressibility、UF-G/MIX反侧与搜索/训练全费保留。supp_apr08_reader必要Source/日门及实际正文、完整局部邻接POST通过；本注同步尚待其实际读回，未核代码或复现。
 
 - `SF-2026-ARXIV-2603-07211` — Daily `2026-03-11` 补遗漏；[wDPO exact-v1](https://arxiv.org/html/2603.07211v1) §3.2–3.4、§4、Alg1/B及必要反侧。2+1+2=5，label mixture/loss-tail cap 分责具体gap深入；难pair≠错label、τ/λ完整梯度路径未明、训练budget非matched与安全回归/vanilla回退近文，不授硬梯度或真实偏好保证。review_mar11_continue actual necessary Source、Ch34逐字PRE和root窄锁通过；supplement_20260311 窄写一段，review_mar11_continue 非写入者实际新253段、225–261完整邻接/自身491注回对必要v1，并定点复核 rejected-response probability gate 的邻接回指修复，POST通过，不授DAY；未核artifact或复现。
 

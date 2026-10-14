@@ -1,0 +1,1519 @@
+VL-Calibration: Decoupled Confidence Calibration for Large Vision-Language Models Reasoning
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Related Work
+LLM and LVLM Uncertainty Estimation
+Verbalized Confidence Calibration
+3 Methodology
+3.1 Preliminary
+Optimization Objective
+3.2 Decoupling Visual and Reasoning Verbalized Confidence
+3.3 Visual Certainty Estimation
+Visual Grounding.
+Internal Certainty.
+Visual Certainty Score.
+3.4 Reinforcement Learning with Certainty-Aware Calibration
+Reward Shaping.
+Token-Level Advantage Reweighting
+4 Experiments
+4.1 Experimental Setup
+Implementation Details
+Baselines
+Evaluation
+4.2 Main Results
+4.3 Ablations
+5 Analyses
+Validation of Visual Certainty Estimation
+Training Dynamics
+Comparison with Holistic Confidence Calibration
+Effect of Proposed Visual Confidence
+Decoupled Distribution of Visual and Reasoning Confidence
+Qualitative Analysis of Token Advantage Reweighting
+6 Conclusion
+7 Limitations
+References
+A Experimental Setup
+A.1 Training Details
+A.2 Evaluation Details
+A.2.1 Evaluation Metrics
+A.2.2 Evaluation Datasets
+Mathematical and Geometric Reasoning.
+Logical Reasoning.
+Visual-Dominant Reasoning.
+Multi-discipline Reasoning.
+B Prompts
+C Statistical Significance Analysis
+D Results
+D.1 Detailed Main Results
+E Analyses
+E.1 Visual Certainty Estimation
+Analysis of Certainty Estimation Combination
+Estimation Computation Overhead Analysis
+Perturbation Design Analysis
+Aggregation Function Analysis
+E.2 Reliability Diagrams
+E.3 Visually Unanswerable Problems
+E.4 Training Dynamics
+E.5 Failure Mode Analysis
+License: CC BY 4.0
+arXiv:2604.09529v1 [cs.CV] 10 Apr 2026
+VL-Calibration: Decoupled Confidence Calibration for
+Large Vision-Language Models Reasoning
+Wenyi Xiao
+††thanks: Equal Contribution
+Affiliation: Zhejiang University
+Email: mailto:wenyixiao@zju.edu.cnwenyixiao
+Xinchi Xu11footnotemark:
+1
+Affiliation: Zhejiang University
+Email: mailto:leileigan@zju.edu.cnleileigan@zju.edu.cn
+Leilei Gan
+††thanks: Corresponding Author
+Affiliation: Zhejiang University
+Abstract
+Large Vision Language Models (LVLMs) achieve strong multimodal reasoning but frequently exhibit hallucinations and incorrect responses with high certainty, which hinders their usage in high-stakes domains. Existing verbalized confidence calibration methods, largely developed for text-only LLMs, typically optimize a single holistic confidence score using binary answer-level correctness. This design is mismatched to LVLMs: an incorrect prediction may arise from perceptual failures or from reasoning errors given correct perception, and a single confidence conflates these sources while visual uncertainty is often dominated by language priors. To address these issues, we propose VL-Calibration11
+1
+github.com/Mr-Loevan/VL-Calibration, a reinforcement learning framework that explicitly decouples confidence into visual and reasoning confidence. To supervise visual confidence without ground-truth perception labels, we introduce an intrinsic visual certainty estimation that combines (i) visual grounding measured by KL-divergence under image perturbations and (ii) internal certainty measured by token entropy. We further propose token-level advantage reweighting to focus optimization on tokens based on visual certainty, suppressing ungrounded hallucinations while preserving valid perception.
+Experiments on thirteen benchmarks show that VL-Calibration effectively improves calibration while boosting visual reasoning accuracy, and it generalizes to out-of-distribution benchmarks across model scales and architectures.
+Figure 1: The baseline method (upper) makes overconfident assumptions. Instead, our method (lower) decouples confidence into visual and reasoning confidence, with clear identification of uncertainty sources and improved calibration.
+1 Introduction
+Large Vision-Language Models (LVLMs) have demonstrated impressive capabilities in bridging visual perception and logical reasoning (Bai et al., 2025; Wang et al., 2025b; Zhang et al., 2026). Despite their success, these models often exhibit severe hallucination that typically generate factually incorrect responses (Kadavath et al., 2022; Xiong et al., 2024), limiting their usage in high-stakes domains such as healthcare or law (Xiao et al., 2025; Hu et al., 2025; Shi et al., 2025).
+Figure 2: Overview of our framework.
+A) Decoupled Confidence Inference. The LVLM explicitly outputs separate visual and reasoning confidence to derive a holistic confidence.
+B) Intrinsic Visual Certainty Estimation. We quantify visual certainty by measuring visual grounding and internal certainty.
+C) GRPO Training. We align visual confidence with visual certainty score , and the holistic confidence with the answer accuracy. Additionally, we apply token-level advantage reweighting based on token visual certainty.
+One solution to overcome the aforementioned challenge is to teach models to verbalize their confidence (Kadavath et al., 2022; Xiong et al., 2024) (e.g., "my confidence is 8/10") alongside the answers.
+Recent work has explored verbalized confidence calibration in large language models (LLMs)22
+2
+For brevity, we use verbalized confidence calibration and calibration in this paper alternatively. (Stangel et al., 2025; Leng et al., 2025).
+For example, SaySelf (Xu et al., 2024) trains models to output a verbalized confidence alongside an answer via distilled rationale from GPT-4 and then uses reinforcement learning to align confidence with accuracy.
+While effective, the performance is limited by the capability of GPT-4.
+To solve this, RLCR (Damani et al., 2025) trains models to output verbalized confidence via RL using the Brier Score (Glenn and others, 1950), i.e., L2 distance of predicted confidence and binary accuracy, and simultaneously incentivizes reasoning capability through accuracy reward.
+However, directly extending verbalized confidence calibration to LVLM reasoning faces several fundamental challenges.
+First, in LVLMs, an incorrect answer may arise from perceptual hallucinations (misreading or ignoring the image) or from reasoning errors given a correct perception.
+Consequently, a single confidence score conflates these error sources in LVLMs, thereby hindering precise error localization.
+Second, recent studies indicate LVLM reasoning is often dominated by language priors (Ramakrishnan et al., 2018; Jing et al., 2020; Zhang et al., 2025).
+Consequently, the intrinsic visual uncertainty is likely overshadowed by these language priors, leading to incorrect overall confidence calibration.
+To address these limitations, we introduce VL-Calibration, a verbalized confidence calibration framework that decouple a single confidence into regarding visual perception from that of logical reasoning.
+As shown in Figure 2 (a), we structure calibration into two phases and elicit separate confidence tokens for the visual rationale and the reasoning chain.
+By doing so, VL-Calibration enables confidence expression for both perception and reasoning, and also identify clearly the uncertainty source.
+We employ reinforcement learning to train VL-Calibration.
+However, during training, this decoupling framework faces the lack of ground-truth labels for visual perception confidence.
+Existing uncertainty estimation methods for LLMs and LVLMs largely fall into two categories.
+Sampling-based methods, such as Self-Consistency (Wang et al., 2023) and VL-Uncertainty (Zhang et al., 2024), infer uncertainty by aggregating multiple generations, but incur substantial computational overhead.
+Internal-state methods leverage logits (Kadavath et al., 2022) or hidden representations (Vashurin et al., 2025) to predict correctness.
+For example, Self-Certainty (Kang et al., 2025) measures KL-divergence of logits distribution from uniform distribution.
+However, they overlook the visual grounding characteristic of LVLMs.
+To address the absence of ground-truth labels for visual confidence, we propose estimating the certainty of visual perception by simultaneously considering Visual Grounding and Internal Certainty.
+Specifically, to measure visual grounding, we compute the KL-divergence between the model’s output distributions given the original image versus a perturbed image.
+A higher KL-divergence indicates that the model is sensitive to visual content, implying strong grounding.
+Second, to quantify internal uncertainty, we calculate the token entropy of the visual description, where lower entropy reflects higher model confidence.
+We integrate the two estimations via a log-scale formulation to derive the Visual Certainty Reward, which enjoys the merits of (i) rewarding responses that are both visually responsive and internally confident; and (ii) optimization stability by compressing the dynamic numeric range to facilitate stable RL training.
+Finally, to overcome the weakness that binary outcome reward treats each token equally, we propose Token-level Advantage Reweighting, which leverages the aforementioned visual certainty estimation to reweight advantage on high visual uncertainty tokens with negative advantage, thereby discouraging ungrounded hallucinations while preserving valid visual perception.
+Extensive experiments across thirteen benchmarks demonstrate the effectiveness of our approach. VL-Calibration reduces the Expected Calibration Error (ECE) on Qwen3-VL models from 0.421 to 0.098 and simultaneously improves average accuracy by 2.3%–3.0% over the strongest baselines. We further observe consistent gains across model scales, model architectures, and out-of-distribution benchmarks, validating the effectiveness of our proposed paradigm.
+2 Related Work
+LLM and LVLM Uncertainty Estimation
+Sampling-based methods derive uncertainty estimation by aggregating multiple outputs. Self-Consistency (Wang et al., 2023) selects the most frequent answer via majority voting, while Semantic Entropy (Farquhar et al., 2024; Aichberger et al., 2025) measures meaning-level consistency across response clusters. For LVLMs, VL-Uncertainty (Zhang et al., 2024)) estimate uncertainty across multiple samples with semantically equivalent but perturbed inputs. Internal-state approaches leverage internal signals to quantify certainty. This includes both statistical metrics derived from logits, such as log-probabilities (Vashurin et al., 2025), perplexity (Zhao et al., 2025), Self-Certainty (i.e., logits divergence against uniform distribution) (Kang et al., 2025), and the probability assigned to a designated true token (Kadavath et al., 2022).
+Verbalized Confidence Calibration
+Recent studies have explored various alignment strategies to calibrate verbalized confidence (Stengel-Eskin et al., 2024; Leng et al., 2025; Xu et al., 2024; Stangel et al., 2025; Damani et al., 2025). One line of work utilizes Supervised Fine-Tuning (SFT) with consistency-based labels (Xu et al., 2024) or token-level logit supervision (Li et al., 2025). Another line leverages Reinforcement Learning (RL) to incentivize calibrated uncertainty. For instance, LACIE (Stengel-Eskin et al., 2024) employs Direct Preference Optimization (DPO) (Rafailov et al., 2023; Xiao et al., 2024a) within a speaker-listener framework, while PPO-C (Leng et al., 2025), SaySelf (Xu et al., 2024), and Rewarding Doubt (Stangel et al., 2025) use Proximal Policy Optimization (PPO) (Schulman et al., 2017) via tailored reward functions (e.g., Brier score or log-penalties) to reward accurate confidence. More recently, RLCR (Damani et al., 2025) uses GRPO (Shao et al., 2024; Xiao and Gan, 2025) to jointly improve task accuracy and calibration. While effective for text-only tasks, these approaches remain largely unexplored for LVLM calibration.
+3 Methodology
+3.1 Preliminary
+Let πθ\pi_{\theta} denote an LVLM, q=(I,x)q=(I,x) a multimodal input consisting of an image II and a textual query xx, τ=(z,y)\tau=(z,y) a generation trajectory sampled from the policy πθ\pi_{\theta} conditioned on the multimodal input (I,x)(I,x), where zz denotes the reasoning and yy the answer.
+Reinforcement Learning with Verifiable Rewards (RLVR; (Shao et al., 2024)) optimizes the model using a binary correctness reward:
+Racc​(y,y∗)=𝟙y≡y∗R_{\text{acc}}(y,y^{*})=\mathbbm{1}_{y\equiv y^{*}}, where 𝟙(⋅)\mathbbm{1}_{(\cdot)} is indicator function for correctness against the ground-truth y∗y^{*}.
+To teach the model to verbalize their confidence alongside the answers, recent work (Damani et al., 2025) extends the trajectory to include a holistic confidence score c∈[0,1]c\in[0,1]:
+τ=(z,y,c)\tau=(z,y,c)
+(1)
+In addition to correctness reward, it jointly optimizes accuracy and confidence calibration with an additional Brier-based calibration term (Glenn and others, 1950):
+Racc_conf​(y,c,y∗)=𝟙y≡y∗−(c−𝟙y≡y∗)2R_{\text{acc\_conf}}(y,c,y^{*})=\mathbbm{1}_{y\equiv y^{*}}-(c-\mathbbm{1}_{y\equiv y^{*}})^{2}
+(2)
+Optimization Objective
+We employ GRPO to optimize πθ\pi_{\theta}.
+For each query q=(I,x)q=(I,x), we sample a group of GG outputs {o1,…,oG}\{o_{1},\dots,o_{G}\} from the old policy πθo​l​d\pi_{\theta_{old}}.
+First, we calculate the composite reward RiR_{i} for each output oio_{i} and the advantage A^i\hat{A}_{i} by normalizing rewards within the group.
+The overall objective maximizes the surrogate of A^i\hat{A}_{i} with a KL constraint.
+Let ρi,t\rho_{i,t} denote the token probability ratio between πθ\pi_{\theta} and πθo​l​d\pi_{\theta_{old}}, and clip​(⋅)\text{clip}(\cdot) denote clip​(ρi,t,1−ϵ,1+ϵ)\text{clip}(\rho_{i,t},1-\epsilon,1+\epsilon).
+The objective is defined as:
+𝒥⁡(θ)=𝔼q∼P⁡(Q),{oi}∼πθold[1G∑i=1G1|oi|∑t=1|oi|{min(ρi,tA^i,t,clip(⋅)A^i,t)−β𝔻K​L(πθ||πref)}]\begin{split}\mathcal{J}(\theta)&=\mathbb{E}_{q\sim P(Q),\{o_{i}\}\sim\pi_{\theta_{\text{old}}}}\\
+&\Bigg[\frac{1}{G}\sum_{i=1}^{G}\frac{1}{|o_{i}|}\sum_{t=1}^{|o_{i}|}\bigg\{\min\bigg(\rho_{i,t}\hat{A}_{i,t},\text{clip}(\cdot)\hat{A}_{i,t}\bigg)\\
+&\quad-\beta\mathbb{D}_{KL}\big(\pi_{\theta}||\pi_{\text{ref}}\big)\bigg\}\Bigg]\end{split}
+(3)
+where ϵ\epsilon and β\beta are the clipping hyperparameter and the coefficient controlling the KL regularization.
+3.2 Decoupling Visual and Reasoning Verbalized Confidence
+To realize verbalized confidence calibration for LVLM reasoning and address the limitations of Eq. 2 discussed in §1, we reformulate LVLM reasoning as two phases that explicitly decouples visual perception from reasoning.
+Specifically, the policy πθ\pi_{\theta} is instructed to generate structured visual and reasoning rationales, each followed by a decoupled verbalized confidence:
+τ=(zv​i​s,cv​i​s⏟Visual Phase,zr​e​a​s,cr​e​a​s⏟Reasoning Phase,y)\tau=(\underbrace{z_{vis},c_{vis}}_{\text{Visual Phase}},\underbrace{z_{reas},c_{reas}}_{\text{Reasoning Phase}},y)
+(4)
+where zv​i​sz_{vis} denotes the visual rationale (e.g., image dense caption) and zr​e​a​sz_{reas} denotes the reasoning chain.
+The confidence tokens cv​i​s,cr​e​a​sc_{vis},c_{reas} represent the model’s certainty regarding zv​i​sz_{vis} and zr​e​a​sz_{reas}, respectively, normalized to c^v​i​s,c^r​e​a​s∈[0,1]\hat{c}_{vis},\hat{c}_{reas}\in[0,1].
+To derive the final holistic confidence Φ\Phi for the answer yy, we employ the harmonic mean of the decoupled scores:
+Φ⁡(c^v​i​s,c^r​e​a​s)=2⋅c^v​i​s⋅c^r​e​a​sc^v​i​s+c^r​e​a​s\Phi(\hat{c}_{vis},\hat{c}_{reas})=\frac{2\cdot\hat{c}_{vis}\cdot\hat{c}_{reas}}{\hat{c}_{vis}+\hat{c}_{reas}}
+(5)
+We select the harmonic mean for its conservative property: unlike the arithmetic mean, Φ\Phi is dominated by the minimum of the two scores.
+To achieve supervision on decoupled visual confidence, we further introduce a Brier-based vision calibration term. Finally, in our decoupled verbalized confidence framework, the reward is denoted as follows:
+R⁡(τ,y∗,zv​i​s∗)=𝟙y≡y∗−(Φ⁡(c^v​i​s,c^r​e​a​s)−𝟙y≡y∗)2−(c^v​i​s−𝟙zv​i​s≡zv​i​s∗)2\begin{aligned} R(\tau,y^{*},z_{vis}^{*})&=\mathbbm{1}_{y\equiv y^{*}}-\big(\Phi(\hat{c}_{vis},\hat{c}_{reas})-\mathbbm{1}_{y\equiv y^{*}}\big)^{2}\\
+&\quad-\big(\hat{c}_{vis}-\mathbbm{1}_{z_{vis}\equiv z_{vis}^{*}}\big)^{2}\end{aligned}
+(6)
+3.3 Visual Certainty Estimation
+Supervising the decoupled cv​i​sc_{vis} presents a challenge due to the absence of ground-truth labels (zv​i​s∗z_{vis^{*}} and 𝟙zv​i​s≡zv​i​s∗\mathbbm{1}_{z_{vis}\equiv z_{vis}^{*}}).
+To achieve effective visual certainty estimation as a reliable pseudo label, we propose a composite metric that evaluates visual certainty from two complementary dimensions: Visual Grounding and Internal Certainty.
+Visual Grounding.
+Visual grounding measures the extent to which the model’s generation relies on the input image rather than hallucinating from language priors (Zhang et al., 2025; Jing et al., 2020). We quantify this via sensitivity analysis: if an LVLM effectively grounds its rationale in the image, perturbing visual features should significantly alter the output distribution. Conversely, insensitivity implies possible hallucination.
+We calculate the KL-divergence between the logits of the original image II and a perturbed version I′I^{\prime} via random patch masking with a ratio = 0.8:
+DK​L=1T∑t=1TKL(π(⋅|zv​i​s,<t,I)∥π(⋅|zv​i​s,<t,I′))D_{KL}=\frac{1}{T}\sum_{t=1}^{T}\text{KL}\left(\pi(\cdot|z_{vis,<t},I)\parallel\pi(\cdot|z_{vis,<t},I^{\prime})\right)
+(7)
+Here, a high DK​LD_{KL} indicates strong grounding, confirming that the generation is actively conditioned on visual tokens.
+Internal Certainty.
+However, visual grounding alone is insufficient. A model may rely on the image yet remain conflicted among multiple plausible interpretations (e.g., due to visual ambiguity). To capture this internal state, we measure the average token entropy ℋ\mathcal{H} over the visual rationale zv​i​sz_{vis}:
+ℋ=−1T∑t=1T∑v∈𝒱π(v|zv​i​s,<t,I)logπ(v|zv​i​s,<t,I)\mathcal{H}=-\frac{1}{T}\sum_{t=1}^{T}\sum_{v\in\mathcal{V}}\pi(v|z_{vis,<t},I)\log\pi(v|z_{vis,<t},I)
+(8)
+A low ℋ\mathcal{H} indicates a sharp probability distribution, reflecting that the model is internally certain about its generated token.
+Visual Certainty Score.
+Intuitively, a high visual certainty score Sv​i​sS_{vis} should indicate both well-grounded (high DK​LD_{KL}) and internally certain (low ℋ\mathcal{H}). Therefore, we integrate two metrics to formulate the Sv​i​sS_{vis}. Considering the diffirent scale of two metrics, we define Sv​i​sS_{vis} as a log-ratio signal:
+Sv​i​s=log⁡(DK​L+ϵ)−log⁡(ℋ+ϵ)S_{vis}=\log(D_{KL}+\epsilon)-\log(\mathcal{H}+\epsilon)
+(9)
+Compared with sampling-based and internal-state estimation methods, including the KL (visual grounding), Entropy (internal certainty), Self-Consistency, Semantic Entropy, VL-Uncertainty, and Self-Certainty, our proposed visual certainty estimation shows superior correlation with Gemini-3-pro-preview perception judgement. Detailed discussion refers to §5.
+3.4 Reinforcement Learning with Certainty-Aware Calibration
+Building upon the decoupled confidence and visual certainty estimation, we introduce Visual Certainty Reward to provide visual confidence supervision and Token-Level Advantage Reweighting to penalize ungrounded hallucinations while preserving valid visual perception.
+Reward Shaping.
+To address the lack of a visual confidence label, we integrate visual certainty estimation via reward shaping. We reformulate the reward function in Eq. 6 as
+R⁡(τ,y∗)=λa​c​c​Ra​c​c+λc​a​l​Rc​a​l+λv​i​s​Rv​i​sR(\tau,y^{*})=\lambda_{acc}R_{acc}+\lambda_{cal}R_{cal}+\lambda_{vis}R_{vis}
+(10)
+where λa​c​c\lambda_{acc}, λc​a​l\lambda_{cal}, and λv​i​s\lambda_{vis} are coefficients. Beyond binary accuracy reward: Ra​c​c=𝟙y≡y∗R_{acc}=\mathbbm{1}_{y\equiv y^{*}} where ≡\equiv denotes semantical equivalence, and holistic confidence calibration reward: Rc​a​l=−(Φ⁡(c^v​i​s,c^r​e​a​s)−𝟙y=y∗)2R_{cal}=-(\Phi(\hat{c}_{vis},\hat{c}_{reas})-\mathbbm{1}_{y=y^{*}})^{2}, we propose the Visual Certainty Reward (Rv​i​sR_{vis}). Specifically, we use Svis{S}_{\mathrm{vis}} as a proxy of 𝟙zv​i​s≡zv​i​s∗\mathbbm{1}_{z_{vis}\equiv z_{vis}^{*}}. Since the raw visual certainty Sv​i​sS_{vis} (Eq. 9) varies in scale across batches, we first normalize the raw visual certainty score SvisS_{\mathrm{vis}} by applying batch-wise z-score standardization z=Svis−μBσB+ϵz=\frac{S_{\mathrm{vis}}-\mu_{B}}{\sigma_{B}+\epsilon} and then mapping it to [0,1][0,1] via a sigmoid transform S~vis=σ⁡(z)\tilde{S}_{\mathrm{vis}}=\sigma(z). Therefore we derive Rv​i​sR_{vis} as :
+Rv​i​s=−(c^v​i​s−sg​(S~v​i​s))2R_{vis}=-\left(\hat{c}_{vis}-\text{sg}(\tilde{S}_{vis})\right)^{2}
+(11)
+where sg​(⋅)\text{sg}(\cdot) denotes the stop-gradient operator. This term explicitly anchors the model’s verbalized visual confidence to its actual perceptual certainty, preventing ungrounded hallucinations.
+Token-Level Advantage Reweighting
+Standard GRPO employs uniform credit assignment, treating all errors equally. However, we posit that ungrounded hallucinations, where errors arising from high visual uncertainty, indicate a severe perception failure and warrant stricter penalties than other visual errors. To address this, we propose Token-Level Advantage Reweighting (TAR) to dynamically reweight the advantage A^t\hat{A}_{t} based on the error source and visual certainty. Specifically, we calculate the visual certainty Sv​i​s​(t)S_{vis}(t) for each specific token. Following the aforementioned Z-score standardization and sigmoid transformation, we normalize these token-wise scores within a single sample to [0,1][0,1] to obtain S~v​i​s​(t)\tilde{S}_{vis}(t). We then introduce a reweighting mechanism derived from this token-wise S~v​i​s​(t)\tilde{S}_{vis}(t) to reweight the advantage of tokens within zv​i​sz_{vis} with λTAR=0.1\lambda_{\text{TAR}}=0.1 :
+A^tTAR={A^t⋅(1+λTAR​(1−2​S~v​i​s​(t)))if ​t∈zv​i​s∧A^t<0A^totherwise\hat{A}^{\text{TAR}}_{t}=\begin{cases}\hat{A}_{t}\cdot\left(1+\lambda_{\text{TAR}}(1-2\tilde{S}_{vis}(t))\right)&\text{if }t\in z_{vis}\land\hat{A}_{t}<0\\
+\hat{A}_{t}&\text{otherwise}\end{cases}
+(12)
+Intuitively, when the model errs (A^t<0\hat{A}_{t}<0) under low visual certainty (S~v​i​s​(t)→0\tilde{S}_{vis}(t)\to 0), the penalty is amplified to discourage blind guessing. Conversely, if the model is well-grounded (S~v​i​s​(t)→1\tilde{S}_{vis}(t)\to 1), the penalty is softened to preserve valid perception.
+Benchmark
+Qwen3-VL-4B
+Qwen3-VL-8B
+Accuracy ↑\uparrow
+AUROC ↑\uparrow
+ECE ↓\downarrow
+Accuracy ↑\uparrow
+AUROC ↑\uparrow
+ECE ↓\downarrow
+Base
+Best
+Ours
+Base
+Best
+Ours
+Base
+Best
+Ours
+Base
+Best
+Ours
+Base
+Best
+Ours
+Base
+Best
+Ours
+Mathematical and Geometric Reasoning
+DynaMath
+.486
+.718
+.753
+.513
+.716
+.797
+.423
+.165
+.081
+.680
+.766
+.784
+.576
+.667
+.769
+.460
+.160
+.058
+Geo3K
+.514
+.616
+.671
+.504
+.801
+.792
+.773
+.159
+.073
+.514
+.621
+.729
+.556
+.761
+.780
+.734
+.192
+.056
+MathVerse
+.426
+.796
+.807
+.416
+.659
+.735
+.561
+.142
+.042
+.622
+.813
+.838
+.504
+.656
+.742
+.372
+.129
+.055
+MathVision
+.171
+.440
+.483
+.501
+.814
+.800
+.794
+.207
+.170
+.266
+.473
+.540
+.527
+.771
+.815
+.428
+.249
+.094
+MathVista
+.679
+.772
+.730
+.566
+.710
+.778
+.254
+.132
+.107
+.678
+.733
+.771
+.574
+.644
+.753
+.459
+.198
+.079
+WeMath
+.580
+.771
+.820
+.593
+.647
+.802
+.268
+.164
+.048
+.699
+.801
+.836
+.567
+.730
+.777
+.388
+.110
+.039
+Logical Reasoning
+LogicVista
+.456
+.519
+.570
+.615
+.757
+.794
+.315
+.232
+.203
+.508
+.600
+.611
+.580
+.688
+.836
+.308
+.253
+.109
+Vision-Dominant Reasoning
+CLEVR
+.920
+.935
+.935
+.517
+.577
+.797
+.025
+.058
+.035
+.910
+.935
+.940
+.545
+.495
+.723
+.332
+.069
+.029
+MathVerseV
+.283
+.748
+.781
+.519
+.669
+.721
+.508
+.171
+.056
+.573
+.776
+.804
+.502
+.660
+.743
+.398
+.162
+.052
+Multi-discipline Reasoning
+A-OKVQA
+.836
+.861
+.875
+.584
+.592
+.695
+.022
+.112
+.017
+.829
+.872
+.875
+.642
+.593
+.691
+.057
+.107
+.059
+MMK12
+.489
+.741
+.747
+.468
+.651
+.714
+.432
+.182
+.083
+.585
+.780
+.809
+.506
+.691
+.777
+.301
+.131
+.039
+MMMU-Pro
+.249
+.436
+.458
+.610
+.694
+.735
+.474
+.340
+.335
+.383
+.518
+.522
+.579
+.634
+.740
+.518
+.357
+.220
+ViRL-39K
+.620
+.796
+.816
+.406
+.729
+.753
+.622
+.113
+.026
+.689
+.811
+.835
+.537
+.723
+.783
+.460
+.109
+.033
+Avg.
+.516
+.704
+.727
+.524
+.694
+.763
+.421
+.167
+.098
+.610
+.731
+.761
+.553
+.670
+.764
+.401
+.171
+.071
+Table 1: Main Results. Comparison between the base model using verbalized confidence (Xiong et al., 2024) (Base), the strongest re-implemented baseline (Best), and our method (Ours) across Qwen3-VL 4B and 8B scales. Bold indicates the best result. Full results of all baselines are reported in Appendix § D.1.
+Model
+Method
+ACC
+AUROC
+ECE
+Qwen3-VL-30B
+P(True)(\texttt{True})
+0.652
+0.569
+0.388
+Ours
+0.803
+0.767
+0.082
+InternVL3.5-4B
+RLCR
+0.656
+0.649
+0.209
+Ours
+0.689
+0.701
+0.103
+Table 2: Generalization Analysis on Different Model Scales and Architectures. We report the average Accuracy, AUROC, and ECE across all 12 evaluation benchmarks. Bold indicates the best results.
+4 Experiments
+4.1 Experimental Setup
+Implementation Details
+To control training overhead, we randomly pick 12,000 data points from ViRL-39K (Wang et al., 2025a), a diverse categories visual reasoning dataset, as the training dataset, namely VL-Calibration-12K. We apply VL-Calibration on Qwen3-VL-4B-Instruct (Bai et al., 2025), Qwen3-VL-8B-Instruct, and InternVL3.5-4B-MPO (Wang et al., 2025b) to confirm efficacy on different model sizes and base models. For more details, refer to Appendix A.1.
+Baselines
+Our comparison involves inference-stage methods including Verbalize (Xiong et al., 2024), P(True)(\texttt{True}) (Kadavath et al., 2022), SteerConf (Zhou et al., 2025), and training-stage methods including RLVR (Guo et al., 2025), LACIE (Stengel-Eskin et al., 2024), ConfTuner (Li et al., 2025), PPO-C (Leng et al., 2025), SaySelf (Xu et al., 2024), Rewarding Doubt (Stangel et al., 2025), and RLCR (Damani et al., 2025). To ensure fair comparisons, we re-implemented these methods on LVLMs with same settings of ours.
+Evaluation
+To systematically evaluate the efficacy of VL-Calibration, we evaluate on thirteen benchmarks that cover diverse visual reasoning topics, and multi-disciplinary reasoning. Our evaluation metrics include Accuracy (ACC), Expected Calibration Error (ECE), and Area Under the Receiver Operating Characteristic Curve (AUROC) to evaluate models’ both reasoning and calibration capability. Details of evaluation benchmarks and metrics are provided in Appendix A.2.
+4.2 Main Results
+Table 1 presents the main results regarding reasoning task performance and calibration. Across both Qwen3-VL-4B and Qwen3-VL-8B models, our method consistently outperforms strong baselines on all metrics. First, our method achieves a significant improvement in ECE, lowering it from 0.421 to 0.098 on the 4B model and from 0.204 to 0.071 on the 8B model.
+Second, while existing calibration methods often struggle to maintain the original reasoning accuracy, our method improves the average accuracy by a remarkable margin (+2.3% over the best baseline on 4B and +3.0% on 8B), particularly on complex visual reasoning benchmarks like DynaMath and MathVerse.
+Third, our method demonstrates out-of-distribution generalization, extending its efficacy to multi-disciplinary tasks. On benchmarks requiring broad knowledge integration like MMMU-Pro, our method consistently outperforms baselines, achieving accuracy gains of +2.2%. On the commonsense reasoning benchmark A-OKVQA, it reduces ECE from 0.112 to 0.017. We provide significance analysis in Appendix C.
+Lastly, to confirm that our method can generalize across various model scales and architectures, we further evaluate its performance on Qwen3-VL-30B and InternVL3.5-4B-MPO. As shown in Table 2, on the larger 30B scale, it continues to effectively achieve calibration, significantly improving the AUROC to 0.767 and reducing the ECE to 0.082, while simultaneously boosting reasoning accuracy from 0.652 to 0.803. Similarly, when applied to the InternVL architecture, our method outperforms the strong RLCR baseline, achieving a superior task performance (ACC=0.689) and calibration (ECE=0.103).
+4.3 Ablations
+Model
+VCE
+TAR
+Metrics
+Ent.
+KL
+ACC
+AUROC
+ECE
+Qwen3-VL-4B
+–
+–
+–
+0.516
+0.763
+0.421
+RLCR
+–
+–
+–
+0.704
+0.694
+0.167
++ Decoupled
+–
+–
+–
+0.701
+0.682
+0.164
++ VCE
+✓
+–
+–
+0.688
+0.723
+0.119
+-
+✓
+–
+0.709
+0.721
+0.124
+✓
+✓
+–
+0.715
+0.751
+0.121
+Ours
+✓
+✓
+✓
+0.727
+0.763
+0.098
+Table 3: Ablation Study of Visual Certainty Estimation (VCE) and Token Advantage Reweighting (TAR). Decoupled denotes that we decouple the verbalized confidence in training without VCE and TAR.
+We conduct ablation studies to validate the effectiveness of each design component, as presented in Table 3. First, RLCR with decoupling alone does not help calibration, a variant that only changes the output to (cv​i​s,cr​e​a​s)(c_{vis},c_{reas}) but optimizes the same holistic Brier score performs nearly identically to RLCR, suggesting that explicit visual confidence supervision is necessary. Second, on Visual Certainty Estimation (VCE), incorporating either entropy or KL-divergence significantly reduces ECE compared to the base model. Notably, the combination of both metrics yields best performance. We empirically observe that relying on a single metric leads to training instability: using only entropy tends to cause entropy collapse, while using only KL-divergence risks entropy explosion. We provide a detailed visualization and analysis of this phenomenon in § E.1. Third, on Token Advantage Reweighting (TAR), applying TAR on top of VCE achieves the best overall performance. By uncertainty-aware reweighting the optimization of high-uncertainty tokens advantage, TAR further boosts accuracy to 0.727 and minimizes ECE to 0.098, confirming that fine-grained advantage reweighting is essential for effective calibration.
+5 Analyses
+Figure 3:
+Effectiveness of Visual Certainty Estimation.
+Our estimation outperforms the strongest baseline, Self-Certainty, at mask ratios >0.65>0.65.
+The vertical dashed line marks the mask ratio (0.80.8) adopted in the following experiments.
+Figure 4: Comparison with Holistic Confidence Calibration. Reliability diagrams comparison: Base Model (Qwen3-VL-4B, Left), RLCR (Middle), and Ours (Right) across all evaluation datasets.
+Validation of Visual Certainty Estimation
+To validate the effect of our visual certainty estimation, we evaluate its correlation with the quality of image captions. Specifically, we use the base model (Qwen3-VL-4B) to generate 1,500 dense captions and employ Gemini-3-pro-preview as a judge to assess the image captions: (i) whether the caption is correct, and (ii) a quality scoring scalar Sq​u​a​l​i​t​y∈[0,10]S_{quality}\in[0,10]. Next, we derive uncertainty estimation and utilize AUROC to measure the hallucination detection capability, as well as Spearman’s rank correlation coefficient (SRCC) and Kendall’s Tau to evaluate the correlation with quality scores. As illustrated in Figure 3, our proposed estimation surpasses strong baselines, including VL-Uncertainty (Zhang et al., 2024), Self-Consistency (Wang et al., 2023), and Self-Certainty (Kang et al., 2025), with AUROC=0.746, SRCC=0.496, and Kendall’s Tau=0.370. Beyond the above validation, we also provide more analyses of proposed estimation regarding computation overhead, combination, and perturbation in Appendix § E.1.
+Training Dynamics
+We present the training dynamics of Qwen3-VL-4B and Qwen3-VL-8B in Figure 14. As illustrated, training with visual certainty estimation exhibits fast initial convergence with ECE reducing to 0.1 in less than 100 steps, achieving higher calibration performance more efficiently. These results indicate that the proposed supervision signal not only improves calibration and reasoning accuracy, but also provides a strong and effective training signal.
+Comparison with Holistic Confidence Calibration
+As shown in Figure 4, we construct reliability diagrams by binning predicted holistic confidence into M=10M{=}10 equal-width bins in [0,1][0,1]. For each bin, we plot the average confidence against the empirical accuracy (fraction of correct predictions), with the diagonal line indicating perfect calibration. The reliability diagrams of the base model reveal a severe overconfidence phenomenon, where predicted confidence consistently exceeds accuracy, particularly in high-confidence intervals, with a poor ECE of 0.421, while ours reduce ECE by over 4×4\times to 0.098. Visually, the confidence bins of our model align closely with the diagonal identity line, indicating that the predicted confidence scores serve as a reliable proxy for correctness. Detailed reliability diagrams of each benchmark are provided in Appendix E.2.
+Unanswerable
+Answerable
+Δ\Delta
+Qwen3-VL-4B
+0.698
+0.926
+0.228
+RLCR
+0.532
+0.937
+0.405
+Ours
+0.218
+0.834
+0.616
+Table 4: Comparison of Qwen3-VL-4B, RLCR, and Ours of Confidence Gap (Δ\Delta) in visual unanswerable and answerable problems of DynaMath.
+Figure 5: Visual confidence distribution comparison of visually correct and incorrect responses. Base Model: Qwen3-VL-4B.
+Effect of Proposed Visual Confidence
+To further investigate the effect of decoupled visual confidence, first, we randomly sample 1,000 problems across all benchmarks to evaluate Qwen3-VL-4B and our model, then manually label responses as visually correct or incorrect. As shown in Figure 5, the base model assigns high visual confidence to both visually correct and incorrect responses. However, decoupled visual confidence substantially lowers confidence on visually incorrect ones while maintaining relatively high confidence on visually correct ones, effectively distinguishing visual errors. Second, we further evaluate our model’s performance on curated visually unanswerable problems.
+Specifically, we preserve the text input while removing images of DynaMath benchmark, which are generated dynamically to alleviate data contamination.
+We report the average confidence on the answerable (original) and visual unanswerable (lack of images) problems in Table 4.
+We observe that, compared to RLCR and the base model, our method achieves the largest Confidence Gap (Δ\Delta), lowering confidence for unanswerable problems while maintaining high certainty for answerable ones.
+Decoupled Distribution of Visual and Reasoning Confidence
+To further verify that visual and reasoning confidence measure different things, we visualize their distribution across all samples in a 2D heatmap (Figure 6). The results show that the two scores are clearly separated. For instance, when visual confidence is high (the [0.8,0.9)[0.8,0.9) bin), reasoning confidence still varies widely from 0.1 to 1.0. Similarly, even when reasoning confidence is at its highest ([0.9,1.0][0.9,1.0]), visual confidence ranges from 0.3 to 1.0. This indicates that the model can be certain about what it sees but unsure about its logic, or vice versa. This clear separation confirms that a single overall confidence score is insufficient, as it mixes two different sources of uncertainty.
+Figure 6: Heatmap of visual vs. reasoning confidence. The off-diagonal distribution indicates that the model can be visually certain but logically uncertain, and vice versa.
+Figure 7: Visualization of most visual-uncertain tokens. Darker red represents higher uncertainty.
+Qualitative Analysis of Token Advantage Reweighting
+To better understand token advantage reweighting, we visualize the most visually uncertain tokens in Figure 7. High uncertainty appears not only on visually grounded content tokens (e.g., highest, negative), but also on logical connectives (e.g., while and indicating) that help guide the reasoning process. This observation motivates our use of the visual certainty score for advantage reweighting, where tokens with lower visual certainty receive stronger penalties under negative advantage.
+6 Conclusion
+We present VL-Calibration, an RL-based calibration framework for LVLMs that decouples verbalized confidence into visual and reasoning confidence. We further propose an intrinsic visual certainty estimation signal based on KL-divergence under image perturbation and token entropy, and a token-level advantage reweighting strategy to better suppress ungrounded hallucinations. Experiments on thirteen benchmarks show that VL-Calibration consistently reduces calibration error while improving visual reasoning accuracy, and generalizes across model scales and architectures.
+7 Limitations
+While VL-Calibration demonstrates improved calibration and reasoning across diverse model families and scales, our current evaluation is constrained by computational resources. We present results on Qwen3-VL (4B to 30B) and InternVL3.5-4B, observing consistent gains across these settings. However, the efficacy of our method on larger-scale vision-language models (e.g., 70B+) remains to be empirically verified, as reweighting behaviors may present distinct challenges.
+References
+Aichberger et al. (2025)
+L. Aichberger, K. Schweighofer, M. Ielanskyi, and S. Hochreiter
+Improving uncertainty estimation through semantically diverse language generation.
+In The Thirteenth International Conference on Learning Representations,
+External Links: Link
+Cited by: §2.
+Bai et al. (2025)
+S. Bai, Y. Cai, R. Chen, K. Chen, X. Chen, Z. Cheng, L. Deng, W. Ding, C. Gao, C. Ge, W. Ge, Z. Guo, Q. Huang, J. Huang, F. Huang, B. Hui, S. Jiang, Z. Li, M. Li, M. Li, K. Li, Z. Lin, J. Lin, X. Liu, J. Liu, C. Liu, Y. Liu, D. Liu, S. Liu, D. Lu, R. Luo, C. Lv, R. Men, L. Meng, X. Ren, X. Ren, S. Song, Y. Sun, J. Tang, J. Tu, J. Wan, P. Wang, P. Wang, Q. Wang, Y. Wang, T. Xie, Y. Xu, H. Xu, J. Xu, Z. Yang, M. Yang, J. Yang, A. Yang, B. Yu, F. Zhang, H. Zhang, X. Zhang, B. Zheng, H. Zhong, J. Zhou, F. Zhou, J. Zhou, Y. Zhu, and K. Zhu
+Qwen3-vl technical report.
+arXiv preprint arXiv:2511.21631.
+Cited by: §1,
+§4.1.
+Damani et al. (2025)
+M. Damani, I. Puri, S. Slocum, I. Shenfeld, L. Choshen, Y. Kim, and J. Andreas
+Beyond binary rewards: training lms to reason about their uncertainty.
+External Links: 2507.16806,
+Link
+Cited by: §1,
+§2,
+§3.1,
+§4.1.
+Farquhar et al. (2024)
+S. Farquhar, J. Kossen, L. Kuhn, and Y. Gal
+Detecting hallucinations in large language models using semantic entropy.
+Nature 630 (8017), pp. 625–630.
+Cited by: §2.
+Glenn et al. (1950)
+W. B. Glenn et al.
+Verification of forecasts expressed in terms of probability.
+Monthly weather review 78 (1), pp. 1–3.
+Cited by: §1,
+§3.1.
+Guo et al. (2025)
+D. Guo, D. Yang, H. Zhang, J. Song, R. Zhang, R. Xu, Q. Zhu, S. Ma, P. Wang, X. Bi, et al.
+Deepseek-r1: incentivizing reasoning capability in llms via reinforcement learning.
+arXiv preprint arXiv:2501.12948.
+Cited by: §4.1.
+Hu et al. (2025)
+Y. Hu, L. Gan, W. Xiao, K. Kuang, and F. Wu
+Fine-tuning large language models for improving factuality in legal question answering.
+In Proceedings of the 31st international conference on computational linguistics,
+pp. 4410–4427.
+Cited by: §1.
+Jing et al. (2020)
+C. Jing, Y. Wu, X. Zhang, Y. Jia, and Q. Wu
+Overcoming language priors in vqa via decomposed linguistic representations.
+In Proceedings of the AAAI conference on artificial intelligence,
+Vol. 34, pp. 11181–11188.
+Cited by: §1,
+§3.3.
+Kadavath et al. (2022)
+S. Kadavath, T. Conerly, A. Askell, T. Henighan, D. Drain, E. Perez, N. Schiefer, Z. Hatfield-Dodds, N. DasSarma, E. Tran-Johnson, et al.
+Language models (mostly) know what they know.
+arXiv preprint arXiv:2207.05221.
+Cited by: §1,
+§1,
+§1,
+§2,
+§4.1.
+Kang et al. (2025)
+Z. Kang, X. Zhao, and D. Song
+Scalable best-of-n selection for large language models via self-certainty.
+In The Thirty-ninth Annual Conference on Neural Information Processing Systems,
+External Links: Link
+Cited by: §1,
+§2,
+§5.
+Kwon et al. (2023)
+W. Kwon, Z. Li, S. Zhuang, Y. Sheng, L. Zheng, C. H. Yu, J. E. Gonzalez, H. Zhang, and I. Stoica
+Efficient memory management for large language model serving with pagedattention.
+In Proceedings of the ACM SIGOPS 29th Symposium on Operating Systems Principles,
+Cited by: §A.1.
+Leng et al. (2025)
+J. Leng, C. Huang, B. Zhu, and J. Huang
+Taming overconfidence in llms: reward calibration in rlhf.
+In The Thirteenth International Conference on Learning Representations,
+Cited by: §1,
+§2,
+§4.1.
+Li et al. (2025)
+Y. Li, M. Xiong, J. Wu, and B. Hooi
+ConfTuner: training large language models to express their confidence verbally.
+In The Thirty-ninth Annual Conference on Neural Information Processing Systems,
+Cited by: §2,
+§4.1.
+Li et al. (2023)
+Z. Li, X. Wang, E. Stengel-Eskin, A. Kortylewski, W. Ma, B. Van Durme, and A. L. Yuille
+Super-clevr: a virtual benchmark to diagnose domain robustness in visual reasoning.
+In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition,
+pp. 14963–14973.
+Cited by: 1st item.
+Lu et al. (2024)
+P. Lu, H. Bansal, T. Xia, J. Liu, C. Li, H. Hajishirzi, H. Cheng, K. Chang, M. Galley, and J. Gao
+MathVista: evaluating mathematical reasoning of foundation models in visual contexts.
+In International Conference on Learning Representations (ICLR),
+Cited by: 4th item.
+Lu et al. (2021)
+P. Lu, R. Gong, S. Jiang, L. Qiu, S. Huang, X. Liang, and S. Zhu
+Inter-GPS: interpretable geometry problem solving with formal language and symbolic reasoning.
+In Proceedings of the 59th Annual Meeting of the Association for Computational Linguistics and the 11th International Joint Conference on Natural Language Processing (Volume 1: Long Papers), C. Zong, F. Xia, W. Li, and R. Navigli (Eds.),
+Online, pp. 6774–6786.
+External Links: Link,
+Document
+Cited by: 2nd item.
+Meng et al. (2025)
+F. Meng, L. Du, Z. Liu, Z. Zhou, Q. Lu, D. Fu, B. Shi, W. Wang, J. He, K. Zhang, et al.
+MM-eureka: exploring visual aha moment with rule-based large-scale reinforcement learning.
+arXiv preprint arXiv:2503.07365.
+Cited by: 2nd item.
+Qiao et al. (2024)
+R. Qiao, Q. Tan, G. Dong, M. Wu, C. Sun, X. Song, Z. Gongque, S. Lei, Z. Wei, M. Zhang, R. Qiao, Y. Zhang, X. Zong, Y. Xu, M. Diao, Z. Bao, C. Li, and H. Zhang
+We-math: does your large multimodal model achieve human-like mathematical reasoning?.
+CoRR abs/2407.01284.
+External Links: Link,
+Document,
+2407.01284
+Cited by: 6th item.
+Rafailov et al. (2023)
+R. Rafailov, A. Sharma, E. Mitchell, C. D. Manning, S. Ermon, and C. Finn
+Direct preference optimization: your language model is secretly a reward model.
+Advances in neural information processing systems 36, pp. 53728–53741.
+Cited by: §2.
+Ramakrishnan et al. (2018)
+S. Ramakrishnan, A. Agrawal, and S. Lee
+Overcoming language priors in visual question answering with adversarial regularization.
+Advances in neural information processing systems 31.
+Cited by: §1.
+Schulman et al. (2017)
+J. Schulman, F. Wolski, P. Dhariwal, A. Radford, and O. Klimov
+Proximal policy optimization algorithms.
+arXiv preprint arXiv:1707.06347.
+Cited by: §2.
+Schwenk et al. (2022)
+D. Schwenk, A. Khandelwal, C. Clark, K. Marino, and R. Mottaghi
+A-okvqa: a benchmark for visual question answering using world knowledge.
+In European conference on computer vision,
+pp. 146–162.
+Cited by: 1st item.
+Shao et al. (2024)
+Z. Shao, P. Wang, Q. Zhu, R. Xu, J. Song, X. Bi, H. Zhang, M. Zhang, Y. Li, Y. Wu, et al.
+Deepseekmath: pushing the limits of mathematical reasoning in open language models.
+arXiv preprint arXiv:2402.03300.
+Cited by: §2,
+§3.1.
+Sheng et al. (2024)
+G. Sheng, C. Zhang, Z. Ye, X. Wu, W. Zhang, R. Zhang, Y. Peng, H. Lin, and C. Wu
+HybridFlow: a flexible and efficient rlhf framework.
+arXiv preprint arXiv: 2409.19256.
+Cited by: §A.1.
+Shi et al. (2025)
+F. Shi, W. Xiao, B. Chen, L. Din, and L. Gan
+REVEALER: reinforcement-guided visual reasoning for element-level text-image alignment evaluation.
+arXiv preprint arXiv:2512.23169.
+Cited by: §1.
+Stangel et al. (2025)
+P. Stangel, D. Bani-Harouni, C. Pellegrini, E. Özsoy, K. Zaripova, M. Keicher, and N. Navab
+Rewarding doubt: a reinforcement learning approach to calibrated confidence expression of large language models.
+arXiv preprint arXiv:2503.02623.
+Cited by: §1,
+§2,
+§4.1.
+Stengel-Eskin et al. (2024)
+E. Stengel-Eskin, P. Hase, and M. Bansal
+LACIE: listener-aware finetuning for calibration in large language models.
+Advances in Neural Information Processing Systems 37, pp. 43080–43106.
+Cited by: §2,
+§4.1.
+Vashurin et al. (2025)
+R. Vashurin, M. Goloburda, A. Ilina, A. Rubashevskii, P. Nakov, A. Shelmanov, and M. Panov
+CoCoA: a minimum bayes risk framework bridging confidence and consistency for uncertainty quantification in LLMs.
+In The Thirty-ninth Annual Conference on Neural Information Processing Systems,
+External Links: Link
+Cited by: §1,
+§2.
+Wang et al. (2025a)
+H. Wang, C. Qu, Z. Huang, W. Chu, F. Lin, and W. Chen
+VL-rethinker: incentivizing self-reflection of vision-language models with reinforcement learning.
+arXiv preprint arXiv:2504.08837.
+Cited by: 4th item,
+§4.1.
+Wang et al. (2024)
+K. Wang, J. Pan, W. Shi, Z. Lu, H. Ren, A. Zhou, M. Zhan, and H. Li
+Measuring multimodal mathematical reasoning with math-vision dataset.
+In The Thirty-eight Conference on Neural Information Processing Systems Datasets and Benchmarks Track,
+External Links: Link
+Cited by: 5th item.
+Wang et al. (2025b)
+W. Wang, Z. Gao, L. Gu, H. Pu, L. Cui, X. Wei, Z. Liu, L. Jing, S. Ye, J. Shao, et al.
+InternVL3.5: advancing open-source multimodal models in versatility, reasoning, and efficiency.
+arXiv preprint arXiv:2508.18265.
+Cited by: §1,
+§4.1.
+Wang et al. (2023)
+X. Wang, J. Wei, D. Schuurmans, Q. Le, E. Chi, S. Narang, A. Chowdhery, and D. Zhou
+Self-consistency improves chain of thought reasoning in language models.
+External Links: 2203.11171,
+Link
+Cited by: §1,
+§2,
+§5.
+Xiao and Gan (2025)
+W. Xiao and L. Gan
+Fast-slow thinking GRPO for large vision-language model reasoning.
+In The Thirty-ninth Annual Conference on Neural Information Processing Systems,
+External Links: Link
+Cited by: §2.
+Xiao et al. (2025)
+W. Xiao, Z. Huang, L. Gan, W. He, H. Li, Z. Yu, F. Shu, H. Jiang, and L. Zhu
+Detecting and mitigating hallucination in large vision language models via fine-grained ai feedback.
+In Proceedings of the AAAI Conference on Artificial Intelligence,
+Vol. 39, pp. 25543–25551.
+Cited by: §1.
+Xiao et al. (2024a)
+W. Xiao, Z. Wang, L. Gan, S. Zhao, Z. Li, R. Lei, W. He, L. A. Tuan, L. Chen, H. Jiang, et al.
+A comprehensive survey of direct preference optimization: datasets, theories, variants, and applications.
+arXiv preprint arXiv:2410.15595.
+Cited by: §2.
+Xiao et al. (2024b)
+Y. Xiao, E. Sun, T. Liu, and W. Wang
+LogicVista: multimodal llm logical reasoning benchmark in visual contexts.
+External Links: 2407.04973,
+Link
+Cited by: 1st item.
+Xiong et al. (2024)
+M. Xiong, Z. Hu, X. Lu, Y. LI, J. Fu, J. He, and B. Hooi
+Can llms express their uncertainty? an empirical evaluation of confidence elicitation in llms.
+In The Twelfth International Conference on Learning Representations,
+Cited by: §1,
+§1,
+Table 1,
+§4.1.
+Xu et al. (2024)
+T. Xu, S. Wu, S. Diao, X. Liu, X. Wang, Y. Chen, and J. Gao
+SaySelf: teaching LLMs to express confidence with self-reflective rationales.
+In Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing, Y. Al-Onaizan, M. Bansal, and Y. Chen (Eds.),
+Miami, Florida, USA, pp. 5985–5998.
+External Links: Link,
+Document
+Cited by: §1,
+§2,
+§4.1.
+Yue et al. (2025)
+X. Yue, T. Zheng, Y. Ni, Y. Wang, K. Zhang, S. Tong, Y. Sun, B. Yu, G. Zhang, H. Sun, et al.
+Mmmu-pro: a more robust multi-discipline multimodal understanding benchmark.
+In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers),
+pp. 15134–15186.
+Cited by: 3rd item.
+Zhang et al. (2026)
+P. Zhang, W. He, M. Liu, W. Xiao, S. Zou, Y. Li, X. Wang, G. Zhang, Y. Liu, W. Dai, et al.
+FUSE: fine-grained and semantic-aware learning for unified image understanding and generation.
+In Proceedings of the AAAI Conference on Artificial Intelligence,
+Vol. 40, pp. 28355–28363.
+Cited by: §1.
+Zhang et al. (2025)
+R. Zhang, D. Jiang, Y. Zhang, H. Lin, Z. Guo, P. Qiu, A. Zhou, P. Lu, K. Chang, Y. Qiao, P. Gao, and H. Li
+MATHVERSE: does your multi-modal llm truly see the diagrams in visual math problems?.
+In Computer Vision – ECCV 2024, A. Leonardis, E. Ricci, S. Roth, O. Russakovsky, T. Sattler, and G. Varol (Eds.),
+Cham, pp. 169–186.
+External Links: ISBN 978-3-031-73242-3
+Cited by: 3rd item,
+2nd item,
+§1,
+§3.3.
+Zhang et al. (2024)
+R. Zhang, H. Zhang, and Z. Zheng
+VL-uncertainty: detecting hallucination in large vision-language model via uncertainty estimation.
+arXiv preprint arXiv:2411.11919.
+Cited by: §1,
+§2,
+§5.
+Zhao et al. (2025)
+Y. Zhao, K. Xiong, X. Ding, L. Du, YangouOuyang, Z. Sun, J. Guan, W. Zhang, B. Liu, D. Hu, B. Qin, and T. Liu
+UFO-RL: uncertainty-focused optimization for efficient reinforcement learning data selection.
+In The Thirty-ninth Annual Conference on Neural Information Processing Systems,
+External Links: Link
+Cited by: §2.
+Zhou et al. (2025)
+Z. Zhou, T. Jin, J. Shi, and L. Qing
+SteerConf: steering LLMs for confidence elicitation.
+In The Thirty-ninth Annual Conference on Neural Information Processing Systems,
+External Links: Link
+Cited by: §4.1.
+Zou et al. (2024)
+C. Zou, X. Guo, R. Yang, J. Zhang, B. Hu, and H. Zhang
+DynaMath: a dynamic visual benchmark for evaluating mathematical reasoning robustness of vision language models.
+Cited by: 1st item.
+This Appendix for "VL-Calibration: Decoupled Verbalized Confidence for Large Vision-Language Models Reasoning" is organized as follows:
+•
+Experimental Setup and Reproducibility.
+In §A, we describe the experimental setup in detail, including training details (§A.1) and evaluation details (§A.2). The evaluation section further covers the adopted metrics (§A.2.1) and benchmark datasets (§A.2.2).
+•
+Prompts.
+In §B, we provide the complete system prompt used for VL-Calibration training and inference.
+•
+Statistical Significance Analysis.
+In §C, we report statistical significance analyses to verify the robustness and reliability of the observed performance improvements.
+•
+Additional Results.
+In §D, we present detailed quantitative results, including the complete main results (§D.1).
+•
+Additional Analyses.
+In §E, we provide more in-depth analyses of VL-Calibration, including visual certainty estimation (§E.1), reliability diagrams (§E.2), behavior on unanswerable visual problems (§E.3), training dynamics (§E.4), failure mode analysis (§E.5), and case study in Figure 17.
+Appendix A Experimental Setup
+A.1 Training Details
+Table 5: Training Hyperparameters
+Hyperparameter
+Value
+Model
+Qwen3-VL
+Epochs
+15
+Learning Rate
+1e-6
+Train Batch Size
+256
+Temperature
+1.0
+Rollout per Prompt
+8
+Prompt Max Length
+4096
+Generation Max Length
+4096
+Precision
+BF16
+Max Pixels
+1000000
+λa​c​c\lambda_{acc}
+1.0
+λc​a​l\lambda_{cal}
+2.0
+λv​i​s\lambda_{vis}
+0.4
+λT​A​R\lambda_{TAR}
+0.1
+We implement VL-Calibration using Qwen3-VL-4B, 8B, and 30B-A3B as our base models. Below, we detail our training setup and hyperparameters.
+General Training Hyperparameters. For VL-Calibration training, we use our 12K dataset with a learning rate of 1e-6, a batch size of 256. We set the maximum sequence length to 4096 for both prompts and generation, and apply BF16 precision throughout training. The training process runs for 15 epochs, requiring approximately 240 H200 GPU hours for Qwen3-VL-4B model, and 450 H200 GPU hours for Qwen3-VL-8B model, 1900 H200 GPU hours for Qwen3-VL-30B-A3B model.
+Method-specific Training Hyperparameters. For our reinforcement learning approach, we employ a temperature of 1.0, 8 rollouts per prompt. For the reward weights, we set accuracy reward weight λa=1.0\lambda_{a}=1.0, calibration reward weight
+λc=2.0\lambda_{c}=2.0 and visual certainty reward weight λv=0.4\lambda_{v}=0.4. The mask ratio is 0.8.
+Computation Environment. All training experiments were conducted using H200 GPUs. Model inference in evaluations is performed using the vLLM framework (Kwon et al., 2023), and our training implementation extends the VeRL codebase (Sheng et al., 2024).
+The complete set of hyperparameters is provided in Table 5. We commit to releasing all the code, data, and model checkpoints for experimental results
+reproducibility.
+A.2 Evaluation Details
+A.2.1 Evaluation Metrics
+We use the following evaluation metrics:
+1.
+Accuracy: A measure of reasoning performance.
+2.
+Area Under the Receiver Operating Characteristic Curve (AUROC): Measures calibration ability of classifier to distinguish between positive/negative classes across thresholds.
+AUROC=∫01TPR​(FPR−1​(t))​𝑑t\text{AUROC}=\int_{0}^{1}\text{TPR}(\text{FPR}^{-1}(t))\,dt
+(13)
+where TPR is the True Positive Rate and FPR is the False Positive Rate.
+3.
+Expected Calibration Error (ECE): Calibration metric that groups confidences into bins and computes difference between the average correctness and confidence.
+ECE=∑m=1M|Bm|N​|acc​(Bm)−conf​(Bm)|\text{ECE}=\sum_{m=1}^{M}\frac{|B_{m}|}{N}\left|\text{acc}(B_{m})-\text{conf}(B_{m})\right|
+(14)
+where MM is the number of bins , BmB_{m} is the set of samples in bin mm, and NN is the number of samples.
+We use M=10.
+A.2.2 Evaluation Datasets
+This section provides a brief analysis of the eight benchmarks used in our main evaluation. We deliberately selected this suite to cover a wide spectrum of challenges, from domain-specific mathematical skills to general logical cognition, ensuring a holistic assessment of our model’s capabilities.
+Mathematical and Geometric Reasoning.
+•
+DynaMath (Zou et al., 2024) is a unique benchmark designed to test the robustness of visual mathematical reasoning. Instead of using a static set of questions, it employs program-based generation to create numerous variants of seed problems, systematically altering numerical values and function graphs to challenge a model’s ability to generalize rather than memorize.
+•
+Geo3k (Lu et al., 2021) is a large-scale benchmark focused on high-school level geometry. Its key feature is the dense annotation of problems in a formal language, making it particularly well-suited for evaluating interpretable, symbolic reasoning approaches.
+•
+MathVerse (Zhang et al., 2025) is specifically designed to answer the question: “Do MLLMs truly see the diagrams?” It tackles the problem of textual redundancy by providing six distinct versions of each problem, systematically shifting information from the text to the diagram. This allows for a fine-grained analysis of a model’s reliance on visual versus textual cues.
+•
+MathVista (Lu et al., 2024) is a benchmark designed to combine challenges from diverse mathematical and visual tasks.
+•
+MATH-Vision (Wang et al., 2024) elevates the difficulty by sourcing its problems from real math competitions (e.g., AMC, Math Kangaroo). Spanning 16 mathematical disciplines and 5 difficulty levels, it provides a challenging testbed for evaluating advanced, competition-level multimodal reasoning.
+•
+We-Math (Qiao et al., 2024) introduces a novel, human-centric evaluation paradigm. It assesses reasoning by decomposing composite problems into sub-problems based on a hierarchy of 67 knowledge concepts. This allows for a fine-grained diagnosis of a model’s specific strengths and weaknesses, distinguishing insufficient knowledge from failures in generalization.
+Logical Reasoning.
+•
+LogicVista (Xiao et al., 2024b) is designed to fill a critical gap by evaluating general logical cognition beyond the mathematical domain. It covers five core reasoning skills (inductive, deductive, numerical, spatial, and mechanical) across a variety of visual formats, testing the fundamental reasoning capabilities that underlie many complex tasks.
+Visual-Dominant Reasoning.
+•
+SuperClevr (Li et al., 2023) is a counting benchmark for testing the perception capability.
+•
+MathVerseV (Zhang et al., 2025) We also report MathVerse’s vision-dependent subset result, where the problem cannot be solved without its visual input.
+Multi-discipline Reasoning.
+•
+A-OKVQA (Schwenk et al., 2022) is a benchmark requiring a broad base of commonsense and world knowledge to answer. The questions generally cannot be answered by simply querying a knowledge base, and instead require some form of commonsense reasoning about the scene depicted in the image.
+•
+MMK12 (Meng et al., 2025) is a benchmark focused on K-12 level multimodal STEM problems. It provides a strong test of foundational scientific reasoning skills that are essential for more advanced applications.
+•
+MMMU-Pro (Yue et al., 2025) is a hardened version of the popular MMMU benchmark. It was specifically created to be unsolvable by text-only models by filtering out questions with textual shortcuts, augmenting the number of choices to reduce guessing, and introducing a vision-only format. It serves as a strong test of a model’s ability to seamlessly integrate visual and textual information in a high-stakes, academic context.
+•
+ViRL-39K-Test (Wang et al., 2025a) is a holdout dataset containing 1,800 problems from ViRL-39K excluding VL-Calibration-12K, covering comprehensive topics and categories: from grade school problems to broader STEM and Social topics; reasoning with charts, diagrams, tables, documents, spatial relationships, etc.
+Appendix B Prompts
+System Prompt
+You FIRST think through the reasoning process as an internal monologue, then provide the final answer.
+The reasoning process MUST BE enclosed within <think> </think> tags. Inside the <think> tags, you MUST explicitly separate your thought process into two distinct parts: enclose your visual perception analysis within <vision> </vision> tags, and your logical deduction within <reasoning> </reasoning> tags. The final answer MUST BE put in boxed.
+After that, perform an <analysis>…</analysis> block to analyse the visual and reasoning confidence in your answer.
+Finally, output the confidence scores (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10) enclosed within <confidence></confidence> tags. Inside the confidence tags, you MUST strictly output two separate scores enclosed within <visual confidence> </visual confidence> and <reasoning confidence> </reasoning confidence> tags respectively.
+Appendix C Statistical Significance Analysis
+To evaluate the statistical significance of our method on the qwen3-VL-4B model, we conducted 5 independent inference runs with different random seeds. For each run, we recorded the following metrics on the evaluation set: Accuracy, AUROC, and ECE. The average results across the 5 runs are reported in the main paper (ACC = 0.727, AUROC = 0.763, ECE = 0.098). To assess the stability and significance of these results, we computed the mean and standard deviation for each metric as follows:
+Table 6: Stability Analysis across 5 Random Seeds. We report the Mean ±\pm Standard Deviation.
+Metric
+Acc (↑\uparrow)
+AUROC (↑\uparrow)
+ECE (↓\downarrow)
+Ours
+0.727±0.0080.727\pm 0.008
+0.763±0.0090.763\pm 0.009
+0.098±0.0050.098\pm 0.005
+RLCR
+0.704±0.0070.704\pm 0.007
+0.694±0.0100.694\pm 0.010
+0.167±0.0060.167\pm 0.006
+To confirm whether the improvements over the baseline are statistically significant, we performed paired t-tests on the metrics collected from the 5 independent runs. The significance level was set to α=0.05\alpha=0.05. The resulting p-values for Accuracy, AUROC, and ECE were p=0.012p=0.012, p=0.008p=0.008, and p=0.004p=0.004, respectively, indicating statistically significant improvements in all three metrics. Overall, these results demonstrate that our proposed decoupled confidence calibration method not only achieves stable performance across different random seeds but also significantly outperforms the baseline method in terms of calibration and accuracy on the Qwen3-VL-4B model.
+Appendix D Results
+D.1 Detailed Main Results
+In this section, we report more detailed main results.
+We report detailed baseline results on all benchmarks in Figure 15 and Figure 16. We observe that, RLCR is the strongest baseline, outperforming other methods in both reasoning and calibration performance.
+Appendix E Analyses
+E.1 Visual Certainty Estimation
+Figure 8: Entropy curves of different estimation: KL-Only, Entropy-Only, Ours (Combination of KL and Entropy). The entropy curve of ours shows training stability compared to others.
+Analysis of Certainty Estimation Combination
+Complementing the effectiveness validation in Section 5, we further examine the training dynamics in Figure 8. We observe that single-metric supervision is prone to optimization pathology: optimizing Entropy only leads to entropy collapse, while KL only results in entropy explosion. In contrast, our estimation leverages the two metrics as mutual regularizers, effectively preventing both extremes to ensure a robust and stable training trajectory.
+Estimation Computation Overhead Analysis
+While visual certainty estimation is effective, it introduces additional computational overhead due to the second forward pass required to compute the KL divergence. We analyze this overhead in terms of both runtime and monetary cost, comparing our approach with self-consistency and external annotator baselines.
+In terms of runtime, relative to GRPO, the additional forward pass incurs a 11% time overhead: it adds 15 seconds to the 140-second step time for the 8B model, and 12 seconds to the 100-second step time for the 4B model. By contrast, although self-consistency in GRPO avoids rollout latency, it relies on semantic clustering, which can require up to O⁡(N2)O(N^{2}) inferences from an external NLI model in the worst case, leading to substantial latency.
+In terms of cost, external annotators are expensive. For example, using Gemini-3-pro-preview costs $0.03 per judgment, amounting to $43,200 per training cycle.
+Perturbation Design Analysis
+To investigate the effect of perturbations on the visual certainty estimation, we evaluate Qwen3-VL-4B across multiple perturbation types and mask ratios. As shown in Table 7, global perturbations (Gaussian Blur and Noise) achieve comparable effectiveness to our default Random Masking (80%). In contrast, Center Crop underperforms because preserving central objects fails to sufficiently disrupt visual cues.
+Table 7: Robustness evaluation of Qwen3-VL-4B across different perturbation types and severities.
+Perturbation Type
+Settings
+Accuracy (↑\uparrow)
+AUROC (↑\uparrow)
+ECE (↓\downarrow)
+Random Masking (Ours)
+Ratio = 80%
+0.727
+0.763
+0.098
+Random Masking
+Ratio = 20%
+0.650
+0.688
+0.188
+Random Masking
+Ratio = 50%
+0.682
+0.711
+0.151
+Random Masking
+Ratio = 100%
+0.691
+0.722
+0.142
+Gaussian Blur
+σ=5.0\sigma=5.0
+0.708
+0.758
+0.105
+Gaussian Noise
+σ=0.5\sigma=0.5
+0.714
+0.749
+0.110
+Center Crop
+Crop 50%
+0.699
+0.706
+0.148
+Regarding mask ratio, performance improves as the ratio increases from 20% to 80%, since weaker masks leave excessive visual information that trivializes the grounding evaluation. However, complete masking (100%) slightly degrades performance, aligning with Figure 3 where optimal certainty estimation peaks at a 0.8 ratio. Overall, these results confirm that our metric is robust across perturbation designs.
+Aggregation Function Analysis
+To justify using the Harmonic Mean for aggregating visual (cv​i​sc_{vis}) and reasoning (cr​e​a​sc_{reas}) confidences, we compare it against alternative aggregation functions.
+Table 8: Comparison of different aggregation functions for decoupled confidence on Qwen3-VL-4B.
+Aggregation Function
+Accuracy (↑\uparrow)
+AUROC (↑\uparrow)
+ECE (↓\downarrow)
+Arithmetic Mean
+0.725
+0.741
+0.145
+Geometric Mean
+0.724
+0.752
+0.107
+Minimum
+0.718
+0.749
+0.121
+Harmonic Mean
+0.727
+0.763
+0.098
+Technically, a reliable aggregated confidence should only be high when both decoupled confidences are high. The Arithmetic Mean is overly optimistic; for example, a severe visual hallucination (cv​i​s≈0c_{vis}\approx 0) coupled with strong language priors (cr​e​a​s≈1c_{reas}\approx 1) still yields an aggregated score of 0.50.5. The Minimum function is strictly conservative but suffers from vanishing reward signals for the non-minimum term, which hinders effective joint optimization. Compared to the Geometric Mean, the Harmonic Mean serves as a more conservative penalty.
+Empirically, we evaluate these functions during the RL training of Qwen3-VL-4B. As shown in Table 8, the Harmonic Mean achieves the optimal balance, yielding the highest accuracy and AUROC, along with the lowest ECE.
+E.2 Reliability Diagrams
+We illustrate the reliability diagrams of VL-Calibration-4B and VL-Calibration-8B on each benchmark in Figure 11 and Figure 12.
+E.3 Visually Unanswerable Problems
+In Figure 13, we provide concrete confidence distributions of Base Model, RLCR, and Ours across visually answerable and unanswerable problems.
+E.4 Training Dynamics
+We present the training dynamics of Qwen3-VL-4B and Qwen3-VL-8B in Figure 14.
+Figure 9: Confidence of overconfident wrong answers.
+Figure 10: Confidence of underconfident correct answers.
+E.5 Failure Mode Analysis
+All analyses are conducted on a manually curated subset of 1,000 samples drawn from metric dataset. We systematically reviewed these samples to categorize failure modes based on their holistic confidence scores and prediction correctness.
+Wrong predictions with high holistic confidence.
+We analyze wrong predictions with high holistic confidence (>0.40>0.40), as shown in Figure 9. These cases are categorized into three types. Visual Hallucination is the dominant source, where the model confidently infers nonexistent or misperceived visual attributes, leading to incorrect answers and indicating overconfidence. Reasoning Bias arises when the model relies on flawed logical shortcuts, producing confident yet incorrect conclusions. The remaining cases involve Shortcut Reliance, where prior-driven decision making overrides image-specific evidence, resulting in higher confidence in reasoning rationale.
+Correct predictions with low holistic confidence.
+We analyze correct predictions with low holistic confidence (<0.50<0.50), as shown in Figure 10, and categorize them into three types. The majority fall into Visual Uncertainty, where critical visual cues are ambiguous or hard to distinguish, leading to lower visual confidence than reasoning confidence. This highlights perception-driven uncertainty captured by our decoupled confidence modeling. The remaining cases include Reasoning Failure, where the task surpasses the model’s reasoning capacity causing uncertain guesses, and Visual Overload, where extremely dense visual inputs make perception difficult. Both latter types reflect increased task difficulty, resulting in uniformly low confidence across visual and reasoning.
+Figure 11: Detailed reliability diagrams of VL-Calibration-4B across the evaluation datasets. While Table 9 reports metrics averaged over 8 rollouts (avg@8), this figure illustrates the results of a single representative rollout.
+Figure 12: Detailed reliability diagrams of VL-Calibration-8B across the evaluation datasets.
+Figure 13:
+Confidence Distribution across Visually Answerable and Unanswerable Problems.
+We visualize the distribution of confidence scores for the Base Model, RLCR, and Our Method (columns) on both Answerable and Unanswerable datasets (rows). While baselines tend to remain overconfident even on unanswerable queries (bottom row), Our Method exhibits a significant distributional shift towards lower confidence, demonstrating superior capability in recognizing visual input lack.
+Figure 14: Training dynamics of Qwen3-VL-4B (upper) and Qwen3-VL-8B (bottom). We visualize the ACC, AUROC, ECE curves on the validation set.
+Table 9: Comparison of Base Model (Qwen3-VL-4B), Best, and Our Method across various benchmarks. We report Accuracy, AUROC, and ECE. Best results are highlighted in bold.
+Benchmark
+Accuracy ↑\uparrow
+AUROC ↑\uparrow
+ECE ↓\downarrow
+Base
+Best
+Ours
+Base
+Best
+Ours
+Base
+Best
+Ours
+Mathematical and Geometric Reasoning
+DynaMath
+0.486
+0.718
+0.753
+0.513
+0.716
+0.797
+0.423
+0.165
+0.081
+Geo3K
+0.514
+0.616
+0.671
+0.504
+0.801
+0.792
+0.773
+0.159
+0.073
+MathVerse
+0.426
+0.796
+0.807
+0.416
+0.659
+0.735
+0.561
+0.142
+0.042
+MathVision
+0.171
+0.440
+0.483
+0.501
+0.814
+0.800
+0.794
+0.207
+0.170
+MathVista
+0.679
+0.772
+0.730
+0.566
+0.710
+0.778
+0.254
+0.132
+0.107
+WeMath
+0.580
+0.771
+0.820
+0.593
+0.647
+0.802
+0.268
+0.164
+0.048
+Logical Reasoning
+LogicVista
+0.456
+0.519
+0.570
+0.615
+0.757
+0.794
+0.315
+0.232
+0.203
+Visual-Dominant Reasoning
+CLEVR
+0.920
+0.935
+0.935
+0.517
+0.577
+0.797
+0.025
+0.058
+0.035
+MathVerseV
+0.283
+0.748
+0.781
+0.519
+0.669
+0.721
+0.508
+0.171
+0.056
+Multi-discipline Reasoning
+A-OKVQA
+0.836
+0.861
+0.875
+0.584
+0.592
+0.695
+0.022
+0.112
+0.017
+MMK12
+0.489
+0.741
+0.747
+0.468
+0.651
+0.714
+0.432
+0.182
+0.083
+MMMU-Pro
+0.249
+0.436
+0.458
+0.610
+0.694
+0.735
+0.474
+0.340
+0.335
+ViRL-39K-Test
+0.620
+0.796
+0.816
+0.406
+0.729
+0.753
+0.622
+0.113
+0.026
+Average
+0.516
+0.704
+0.727
+0.524
+0.694
+0.763
+0.421
+0.167
+0.098
+Table 10: Comparison of Base Model (8B), Best, and Our Method across various benchmarks. We report Accuracy, AUROC, and ECE. Best results are highlighted in bold.
+Benchmark
+Accuracy ↑\uparrow
+AUROC ↑\uparrow
+ECE ↓\downarrow
+Base
+Best
+Ours
+Base
+Best
+Ours
+Base
+Best
+Ours
+Mathematical and Geometric Reasoning
+DynaMath
+0.680
+0.766
+0.784
+0.576
+0.667
+0.769
+0.460
+0.160
+0.058
+Geo3K
+0.514
+0.621
+0.729
+0.556
+0.761
+0.780
+0.734
+0.192
+0.056
+MathVerse
+0.622
+0.813
+0.838
+0.504
+0.656
+0.742
+0.372
+0.129
+0.055
+MathVision
+0.266
+0.473
+0.540
+0.527
+0.771
+0.815
+0.428
+0.249
+0.094
+MathVista
+0.678
+0.733
+0.771
+0.574
+0.644
+0.753
+0.459
+0.198
+0.079
+WeMath
+0.699
+0.801
+0.836
+0.567
+0.730
+0.777
+0.388
+0.110
+0.039
+Logical Reasoning
+LogicVista
+0.508
+0.600
+0.611
+0.580
+0.688
+0.836
+0.308
+0.253
+0.109
+Visual-Dominant Reasoning
+CLEVR
+0.910
+0.935
+0.940
+0.545
+0.495
+0.723
+0.332
+0.069
+0.029
+MathVerseV
+0.573
+0.776
+0.804
+0.502
+0.660
+0.743
+0.398
+0.162
+0.052
+Multi-discipline Reasoning
+A-OKVQA
+0.829
+0.872
+0.875
+0.642
+0.593
+0.691
+0.057
+0.107
+0.059
+MMK12
+0.585
+0.780
+0.809
+0.506
+0.691
+0.777
+0.301
+0.131
+0.039
+MMMU-Pro
+0.383
+0.518
+0.522
+0.579
+0.634
+0.740
+0.518
+0.357
+0.220
+ViRL-39K-Test
+0.689
+0.811
+0.835
+0.537
+0.723
+0.783
+0.460
+0.109
+0.033
+Average
+0.610
+0.731
+0.761
+0.553
+0.670
+0.764
+0.401
+0.171
+0.071
+Figure 15: Baselines Performance comparison with Qwen3-VL-4B in terms of Accuracy, ECE, and AUROC.
+Figure 16: Baselines Performance comparison with Qwen3-VL-8B in terms of Accuracy, ECE, and AUROC.
+Figure 17: Case Study of Qwen3-VL-4B model trained with our method. Figure (a) (upper) showcases a correct response with high confidence, and Figure (b) (middle) illustrates a incorrect response with low confidence. In Figure (c) demonstrate a correct response with modest confidence.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

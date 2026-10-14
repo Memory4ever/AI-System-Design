@@ -2,36 +2,42 @@
 
 **规范：** V3
 **窗口：** 2025-10-13T09:00:00+08:00 ～ 2025-10-14T09:00:00+08:00
+**补充窗口：** 2025-10-13 ～ 2025-10-13
+**窗口说明：** 用户授权只补前一完整BJT自然日，原window/旧candidate/date/score与连续§4原块保护，不迁日、不catchup。
 **状态：** 完成
 **Books：** 纳入本次
-**检查时间：** 2026-10-05T07:06:57+08:00
+**检查时间：** 2026-10-14T09:04:30+08:00
 
 ## 1. 结论
 
-作者 Euler，独立日期 ownership。当前确认落窗且通过贡献筛选的候选0，不等于本窗无事件。完整题摘/官方摘要已读29个潜力家族，其中28个arXiv精确v1家族与Meta SPG；公开时间仍缺必要公告或完全落窗bounds，均不授正面Evidence。正式候选证据审阅完成0，Books写入0；首批六项已提交[非作者校准包](../_sources/daily-20251014/FIRST_CALIBRATION.md)，root已[实际逐一读六份v1完成校准](../_sources/daily-20251014/FIRST_INDEPENDENT_REVIEW.md)，潜力通过、日期隔离成立，不授DAY。root DAY发现2510.10028v1的实测resolution→accuracy/runtime/payload lookup服务资源分配增量被原领域标签误排，现仅恢复此家族为日期潜力，不采用局部性能或倒灌2026 v2。
+本轮作者Kierkegaard，仅补2025-10-13完整BJT自然日；旧候选日期/评分/原window、§3原说明与空表列名、连续旧§4原块保持。下方§3旧“暂无候选”及§4原“没有正式Evidence”是冻结历史，不是当前零候选断言；本轮唯一新增SPG行与其后证据是当前结果。旧作者Euler的有效题摘/必要反侧与原FIRST/FINAL层复用，不代本轮日级验收，也不继承其他日报池/Source成功。
 
-OpenAI/Broadcom公告经RSS确认落窗，核心只披露合作规模、规划日期与Ethernet选型，未披露能改变机制解释的设计或受控比较，因此不准入，不评分。小模型、局部结果、负面证据并非排除理由；必要安全反侧core及Kimi/ERNIE贡献边界、SongGeneration原身份窄恢复已处理，具体限制见[有限筛选](../_sources/daily-20251014/SCREENING.md)。root已实际完成DAY及三处窄修写后复核，最新独立结论通过，作者据此同步完成态；见[独立FINAL](../_sources/daily-20251014/FINAL_INDEPENDENT_REVIEW.md)及[CURRENT_STOP](../_sources/daily-20251014/CURRENT_STOP.md)。29潜力及精确身份/历史缺段继续终态隔离，普通待办0，实际Books写入0，不授全局已有覆盖。
+当前唯一正式家族是Meta Oct13自有研究披露的SPG，**2+2+2=6**；采用精确v1 signed surrogate的条件式值界/近似责任，必要深入审阅完成，唯一TRAIN-GRPO Ch33已实际整合一自然段＋本人note，root非writer POST§5接纳、锁释放。没有采用严格方差普遍保证、固定0.5最优、同向梯度/真实reward单调、完整正确recipe或最高test数字；这些争议与重开界限保留。
+
+本日九主题首/尾片414出现/336身份和CL月801–900题名仅有界发现，不是当窗论文或全文配额。实际有限处理集合按family ID归并133：**1正式＋101公开资格未定潜力＋21具体关闭＋1同核心窗前出版＋9题名范围停止**；五原29/REUSE身份重复只计一次。REUSE59只46P10C1O2title有效层，当前/v1/日期分责；各新AB组及必要最低域已root实际校准，实验可信度未核不反改贡献C/降分。仅正式1需要本窗评分/必要Evidence/Books，已完成1/1；未知101不评分、不入表、不写书，不能由此声称133已深审。
+
+十四每日约定入口已实际执行到§2的有限停止/隔离，表外只具名必要原项目/出版字段，不扫Weekly/全年会议/Live/八月/2026。root [独核§1–15](../_sources/daily-20251014/SUP_INDEPENDENT_20261014.md)已实际通过准入、最低门/强反侧、current、Source有限角色、DATE133与SPG实际Books，§14真实完整六部分DAY及§15保存态FINAL均通过，**本日已由root实际接纳并计入一次**。Oct14接纳时71/132，随后Nov11接纳后当前全轮72/132、60待；历史快照不改写。[日期集合](../_sources/daily-20251014/SUP_DATE_20261014.md)、[来源](../_sources/daily-20251014/SUP_SOURCES_20261014.md)、[本日停点](../_sources/daily-20251014/SUP_SCOPE_20261014.md)保留实际依据与恢复条件。
 
 ## 2. 来源覆盖
 
-所有范围均限定本窗模型、训练、推理、多模态、平台与Agent机制；未扫描每周来源，按需来源尚无已执行触发。下面只记录实际检查，不将目录缺段或索引失败记零事件。
+仅本轮前一完整BJT自然日的实际入口/主题及必要历史恢复。机构字段/动态函数与请求停止root§3–4通过；有界arxiv准入/current与日期root§6–13通过，不把“有限检查已通过”改成历史全Coverage或全网无遗漏。REQUESTS实际73条，--compressed传输size_download与保存body分别记录，不指定encoding；失败无raw仅失败请求角色。表外Meta SPG原研究披露已本源单篇恢复，ROLL/RAE/QeRL与Memo/XQuant出版只必要具名角色，没有已执行的会议全年/Weekly扫描。
 
 | 来源 | 检查范围与依据 | 结果 | 缺口 |
 | --- | --- | --- | --- |
-| SRC-OPENAI | Research首查，官方news/rss.xml恢复2025-10-13/14日期邻接；Broadcom正文News与核心段实际读完，RSS pubDate Mon,13 Oct 2025 06:00:00 GMT落窗。[原件](../_sources/daily-20251014/openai-rss.xml)、[core](../_sources/daily-20251014/RAW_RECOVERY_FINAL_A.json) | 已检查 | Research当前目录不声明全历史召回；只支持所记范围 |
-| SRC-ANTHROPIC | Research官方HTML及Next hydration结构化解析publishedOn，Oct9 13:50Z到Oct14 08:00Z邻接未见本窗研究记录。[原件](../_sources/daily-20251014/anthropic.html) | 已检查 | 不扩张为全部Anthropic产品/卡片无事件 |
-| SRC-GOOGLE-AI | DeepMind Research首查与Oct13模型主题补检；Publications原year参数失败不当真实过滤。root本日定点正确`https://research.google/pubs/?category=2025&search=language%20model`，curl20秒exit28超时，web亦不可读，停止两次有限尝试，未恢复HTML/历史切片。Blog独立由September可观察October链接恢复首12标题止Oct9、目标邻接Oct9→15，不替代Publications。[原恢复](../_sources/daily-20251014/RAW_RECOVERY_FINAL_G.json)、[正确参数原失败](../_sources/daily-20251014/ROOT-google-corrected-web.json)、[root实际记录](../_sources/daily-20251014/FINAL_INDEPENDENT_REVIEW.md) | 受阻 | 正确过滤有限恢复已执行仍外部不可读；需官方有日期/身份的本窗Publications主题切片，不用Blog或其他日成功授本日覆盖 |
-| SRC-META-AI | Research首查失败；官方publication page4及SPG独立官方页恢复Oct13日名与完整摘要，停止于SPG→Sep24邻接。[原响应](../_sources/daily-20251014/RAW_THEME_RECOVERY.json) | 受阻 | 官方Oct13日名时区不明；缺精确first-public或完全落窗范围 |
-| SRC-QWEN | 旧官方首页Research索引可读，最晚Sep23；随新站qwen.ai/blog恢复为空，Oct13官方主题补检无确定命中。[首查](../_sources/daily-20251014/RAW_WEB_RESEARCH_A.json)、[新站](../_sources/daily-20251014/RAW_RECOVERY_FINAL_C.json) | 受阻 | 新站当前空渲染不能证明Oct13无研究 |
-| SRC-DEEPSEEK | 官网Research首查，经实际More链接进入/news/；研究索引10条目标邻接May14→Oct21，动态5条Sep29→Dec1。[实际目录](../_sources/daily-20251014/RAW_RECOVERY_FINAL_E.json) | 已检查 | 查看全部按钮未证明历史全集；不声明全家族无事件 |
-| SRC-MOONSHOT | Kimi Blog可见26项目标邻接Sep16→Nov6；官方GitHub组织首查及Oct13定点补检，只读kimi-cli 0.28段：/init生成AGENTS、/clear及ReadFile输出修复，没有新机制/失效条件披露，贡献关闭。[首查](../_sources/daily-20251014/RAW_WEB_RESEARCH_B.json)、[补检](../_sources/daily-20251014/RAW_RECOVERY_FINAL_F.json) | 已检查 | 不读整份全年changelog；日期日名未核时刻，不用于当窗事件断言 |
-| SRC-TENCENT-HUNYUAN | Research首查、一次真实浏览器初载/动态读取超时。实际bundle恢复官方api.hunyuan.tencent.com/api/blog/publicList，pageNum1/pageSize100返回totalNum9且全部2026，停止该响应；错误origin404保留。[官方原响应](../_sources/daily-20251014/hunyuan-page1-official.json)、[实际请求](../_sources/daily-20251014/hunyuan-page1-official.json.request.json) | 受阻 | 不能用9项2026证明历史无事件。SongGeneration官方原关联已恢复；原GitHub404、HF原卡片401/下载超时，隔离历史版本及日期，不采用fork声明 |
-| SRC-ZAI | 官方Research首查16项，止2025-12-09，hydration nextPage2/hasMoretrue；浏览器创建超时；随后实际ownbundle模块67716证明LoadMore以?page=2推进，真实请求page2 HTTP200，累计18项且nextPage3/hasMorefalse，最早仍2025-12-08T16:00Z；停止该末页。有限官方主题补检只返窗外。[原件](../_sources/daily-20251014/zai.html)、[末页原件](../_sources/daily-20251014/zai-page2.html) | 受阻 | 分页普通缺口已修；原目录不保留10月，不授本窗无事件，需官方历史主题发布记录 |
-| SRC-BYTEDANCE-SEED | Research/public_papers首查；实际bundle枚举Publication1/Blog2、Publication需x-tt-locale:US。2025倒序offset0,count20两组actual next20，Publication18可见项目标邻接Oct9→21，Blog15可见项Sep9→Oct23；均到前窗边界停止，不翻全年。[论文](../_sources/daily-20251014/seed-publication-offset0.json)、[Blog](../_sources/daily-20251014/seed-blog-offset0.json) | 已检查 | PublishDate只作发现；API总数94/49不是本窗论文数。早期错误参数/offset60响应未转全文队列 |
-| SRC-BAIDU-ERNIE | 官方blog两次读取失败；官方PaddlePaddle/ERNIE恢复Recent updates，October v1.4只月精度，支持VL训练和padding-free。[官方core](../_sources/daily-20251014/RAW_RECOVERY_FINAL_D.json) | 受阻 | 核心只支持版本能力事实，无具体packing新条件/比较，贡献关闭；月名不足落窗，不据后续修复证明当日变化 |
-| SRC-XIAOMI-MIMO | 官网Paper8标题目标邻接Sep19→Oct21，Blog当前可见15条为2026，More不当历史分页。[首查](../_sources/daily-20251014/RAW_WEB_RESEARCH_B.json) | 受阻 | 官方Oct21MoE RL条目不能替arXiv11370的first-public定时，也不据当前列表排除本窗早公开 |
-| SRC-MINIMAX | en/cn Blog首查可见12/13项；Agent techblog独立检查，llms.txt及实际techblog.md返回2026-05-13单篇，止此项。[独立技术入口原件](../_sources/daily-20251014/minimax-techblog.md)、[索引](../_sources/daily-20251014/RAW_RECOVERY_FINAL_A.json) | 受阻 | 不能以当前独立Agent目录单篇或公司Blog替代历史Agent源 |
-| SRC-ARXIV | 官方API初查超时，错误短月路径404，CL skip800/show100实际题名补检801～884。初API范围编码上界缺20导致宽返回，已停止该池并改为正确submittedDate发现范围202510110000～202510132359及主题分类分组，start0；DC5、model70、multimodal21、runtime4、agent67，五组实际标题出现167次未全量家族归并，不是本窗论文数或逐篇队列。详见[修正DC](../_sources/daily-20251014/arxiv-gpu-corrected.xml)及同目录*-corrected.xml；CL/LG/CV/AR/IR有限25项补检访问失败 | 受阻 | submittedDate/published只是v1提交时间；不作first-public。宽错误返回不作已筛队列。缺官方历史公告/完全落窗bounds，不授跨分类全覆盖 |
+| SRC-OPENAI | 本日Research403/challenge；RSS200实际XML1288条，BJT Oct13仅Broadcom1（06Z→14:00），原同事件必要正文具体C有效复用，不重全文。[原RSS](../_sources/daily-20251014/SUP_OPENAI_RSS_20261014.raw) | 已检查 | feed有限日期/具名C不证明Research全部历史或零事件；challenge不是研究正文 |
+| SRC-ANTHROPIC | 本日Research Next/Flight解码0错，179 publishedOn对象/176唯一slug-title-date/170日期值，BJT Oct13无匹配，邻Oct9 poison21:50→Oct14 economic16:00，止Research数组。[原件](../_sources/daily-20251014/SUP_ANTHROPIC_20261014.raw) | 已检查 | 只数组日期，不授全部News/179正文或全机构零事件 |
+| SRC-GOOGLE-AI | DeepMind真实P2完整main30 datedtitles/265精选/P2–9，Oct30→Sep29跨Oct13止P2。GooglePubs curl28/000无raw；IAB创建45.105s超时、getState见tab/getTab30.0146s超时，没有Year/topic动作；web未选2025 facet680、mixed1–15/11614。独立October Blog首12/P1of2跨Oct15→Oct9止首片。[P2原件](../_sources/daily-20251014/SUP_DEEPMIND_P2_20261014.raw) | 受阻 | 已查Blog/精选不代Pubs；需官方Year2025＋主题或目标日原研究披露有限段，不借别日UI成功/翻11614 |
+| SRC-META-AI | 本日Research curl28/000无raw，web title-only0；SPG原页Oct13机构披露/完整AB与精确v1必要域root§1–3已核，§5实际整合POST接纳。[SPG原页](https://ai.meta.com/research/publications/spg-sandwiched-policy-gradient-for-masked-diffusion-language-models/) | 受阻 | 具名原事件已恢复，不沿旧时刻/TZ hold；目录历史缺段需官方目标日前后主题publication段，单篇不授全Coverage |
+| SRC-QWEN | 本日新站及公开retrieval success/data.articles40的path/title/extra.date/HTML pubmeta全部日期字段，另page_config根array60全部date；BJT Oct13均无字段匹配，40 minNov13’25，60邻Sep24→Nov12 20:59Z/BJTNov13。17处extra/meta冲突保原值。[40原件](../_sources/daily-20251014/SUP_QWEN_ARTICLES_20261014.raw) | 受阻 | 两个不同目录人口不混，动态空壳不否认40可读元数据；未证明分页末/恢复目标历史，不用冲突方便值作first，不追内部git_url |
+| SRC-DEEPSEEK | 本日JS完整g31研究字段/More useState slice0,10→g，非历史fetch；新News18 Flight chunks/0错，实际16 posts title/date/slug/type、Dec1→Sep29跨Oct13止数组。[JS](../_sources/daily-20251014/SUP_DEEPSEEK_JS_20261014.raw)、[News](../_sources/daily-20251014/SUP_DEEPSEEK_NEWS_20261014.raw) | 已检查 | 两人口不相加当日论文；LPLB只有2025-11月，不造formatter Nov1。无Oct13字段不授globalabsence/31或16正文 |
+| SRC-MOONSHOT | 本日Platform Blog完整26 time/title/href，Nov7/两Nov6→Sep16/Sep5直到May29’24，止该可见列表；原KimiCLI0.28具体贡献C保持有效不重整changelog。[原件](../_sources/daily-20251014/SUP_KIMI_20261014.raw) | 已检查 | 可见字段无Oct13不是全GitHub发布/全部历史零事件 |
+| SRC-TENCENT-HUNYUAN | 本日UI初AX仅nav无All卡、getAX30.0143s超时；fresh main→blog/API模块，实际官方POST publicList1/20/renderType0/en，code0/total9/list9。publishedAt BJT Feb3 11:54:58→Sep18 12:58:49’26；publicAt maxSep23 16:05:28’26；display maxSep22 00’26。[原JSON](../_sources/daily-20251014/SUP_HUNYUAN_LIST_20261014.raw) | 受阻 | 三日期角色不混；九en/2026不否认2025或授全部All目录。需目标历史官方dated研究/目录；SongGeneration原身份/版本缺口仍隔离，未读9正文/未请求private/pre/test API |
+| SRC-ZAI | 本日ResearchP1十五/P2累计十八、Flight0错，hasMoretrue/next2→false/next3及“没有更多”，最早Dec7’25止P2。Release8 dates完整读：两2025 Sep30/Dec22＋六2026 Jan14/Feb12/Apr7/Jun16/Aug18/Aug26。[末页](../_sources/daily-20251014/SUP_ZAI_P2_20261014.raw) | 受阻 | 当前末页/Release不保历史Oct段，不授zero；恢复只目标日原publication/主题段，不无限翻页 |
+| SRC-BYTEDANCE-SEED | 本日main实际Publication1/Blog2、type1强制US；2025desc/page_token0/count20：US论文18/94、USBlog18/45、CNBlog15/49，均next20/has_moretrue。返回ID/双语言title/PublishDate/pin读；论文Oct22/21→Oct9、BlogOct23→Sep9跨Oct13止首片。[US论文](../_sources/daily-20251014/SUP_SEED_PUB_US_20261014.raw) | 已检查 | 18/15≠request20，总数不是已读分母；CN非US missing4恢复，非全年/末页。PublishDate目录角色不自动paperfirst |
+| SRC-BAIDU-ERNIE | 本日zh Blog/P2两200，完整main datedtitle10＋6/P2of2，Oct16→Sep12跨目标止第二页。原v1.4能力说明具体C有效，月字段不自动归Oct13。[第二页](../_sources/daily-20251014/SUP_ERNIE_P2_20261014.raw) | 已检查 | 只Blog可见目录/旧具体C，不证明全部release；默认Python缺lxml已换bundled读取，非external |
+| SRC-XIAOMI-MIMO | 本日首页→index.c5195ace→async6159.4efb0769/8557.2d420be2；module ID39632完整More toggle/local slice，caller15无date Blog/初显8非网络分页；88651 G八Paper datesSep19→Oct21’25，无Oct13字段。[6159](../_sources/daily-20251014/SUP_MIMO_6159_20261014.raw)、[8557](../_sources/daily-20251014/SUP_MIMO_8557_20261014.raw) | 受阻 | 39632是module ID非bytes；Blog未恢复日期，不造15全2026/未查历史fetch。需原dated Blog，Oct21条目不倒证MiMoR3 paperfirst |
+| SRC-MINIMAX | 本日EN12/CN13 datedlinks、Agent三date全部字段读；CN redirect minimax.cn。EN最早Oct27’25/CN另Jan15’25及Oct27/Dec23；Agent全2026 Sep19/22、Oct8，止三可见列表。[EN](../_sources/daily-20251014/SUP_MINIMAX_20261014.raw) | 受阻 | 当前三Agent/公司Blog不恢复2025Oct历史Agent段，不授全机构零事件或本文；替代为目标日原技术发布/历史主题段 |
+| SRC-ARXIV | fresh五主题首片50/50/14/50/50，MODEL/POSTTRAIN/MULTIMODAL/AGENT尾片start210/108/51/78各50；submittedDate202510101800→202510131800/ascending只发现。九片414出现/336唯一；CL YYYY-MM/skip800/show100只801–900月题名，不整体相加去重。相关有限AB/最低/59复用及current已root§6–12核，最终133角色见DATE。[原MODEL](../_sources/daily-20251014/SUP_ARXIV_MODEL_20261014.raw)、[请求](../_sources/daily-20251014/SUP_REQUESTS_20261014.json) | 受阻 | 首/尾不等260/158/101/128全结果，月/Submitted不授公开日；Advanced官方仅year/month。101潜力必要日门未恢复，精确隔离不Score/Books，不catchup/全336全文/全月absence |
 
 ## 3. 候选与判断
 
@@ -39,6 +45,7 @@ OpenAI/Broadcom公告经RSS确认落窗，核心只披露合作规模、规划�
 
 | 材料 | 公开时间 | 项目贡献与评分 | 审阅结果 | Books决定 |
 | --- | --- | --- | --- | --- |
+| [SPG: Sandwiched Policy Gradient for Masked Diffusion Language Models](https://ai.meta.com/research/publications/spg-sandwiched-policy-gradient-for-masked-diffusion-language-models/) | 2025-10-13 | 有效likelihood lower/upper在固定人口下随advantage符号承担不同surrogate值界责任；MC/mixed/mask近似不继承形式保证；2+2+2=6 | 深入完成 | 整合：TRAIN-GRPO [Ch33](../../../../books/part-04-training-system/33-grpo.md)，单自然段及本人note/实际POST§5 |
 
 ## 4. 证据与知识整合
 
@@ -46,20 +53,34 @@ OpenAI/Broadcom公告经RSS确认落窗，核心只披露合作规模、规划�
 
 已实际读取PLATFORM-SECURITY [Ch72开头及联合claim段](../../../../books/part-06-ai-infrastructure/72-security.md)、邻接[Ch73的demo/production证明责任](../../../../books/part-06-ai-infrastructure/73-production-best-practice.md)，以及[AGENT-PROMPT Ch74条件分布、示例与信任来源](../../../../books/part-07-agent/74-prompt.md)、[AGENT-CONTEXT Ch75工作状态](../../../../books/part-07-agent/75-context.md)。Ch72实际已区分片段真值与联合解释、同源复述与独立见证，Ch74实际说明示例改条件而不改参数；不能借这些成熟原则给原文加分。尚无日期与独立证据校准支持的长期差额，不提出书稿diff，也不把当前结果称全局No Change或已有覆盖验收。
 
+### [SPG: Sandwiched Policy Gradient for Masked Diffusion Language Models](https://ai.meta.com/research/publications/spg-sandwiched-policy-gradient-for-masked-diffusion-language-models/)
+
+本次事件是Meta自有研究页官方Oct13,2025披露，不是arXiv announcement/globalfirst；原机构完整AB/12作者与精确2510.09541v1核心对应，Chenyu/Chengyu首名拼写差额按原值保留。v1/v2 Submitted和currentv3 Apr2026/ICLR标签独立，不倒填后版方法。采用版本及实际必要§2/3/4、T1–3与AppB/C.1/D.2见[单篇原证/限定处置](../_sources/daily-20251014/SUP_FIRST_20261014.md)及root§1–3，非全附件/代码已核或实验复现。
+
+正支下界/负支上界仅在同一冻结采样人口与advantage、有效bound假设下给signed surrogate值下界，不能推出梯度同向或真实reward提高。有限MC log-after-mean的Jensen偏差、ELBO/EUBO混合及block-wise/prompt0.15变q不自动满足该形式条件；C.1平方差仅非负、cov0端点可等，无约束opt未保0–1，故不采用严格优两端/固定0.5最优。测试择beta/最高test checkpoint及rolling50std不是独立seed，T2 EUBO MATH退步/T3 block MATH无增不能消除。保持全rollout/估值/搜索/评价费用、未参与选模的终局门和原surrogate/离线偏好退路，不修作者公式再采强recipe。
+
+唯一owner TRAIN-GRPO，而非Ch24重复目标语义。既有frozen-state step credit与entropy选择拥有各自问题，后面masked时间权重拥有更新人口；新差额只likelihood估计的符号责任及形式/近似证据分责，实际位于EG-SPO 2603.12554完整段后、原masked policy时间权重段前。[Ch33](../../../../books/part-04-training-system/33-grpo.md) marker `SF-2025-SPG-META-OCT13`一自然段＋本人末note已经非writer root§5完整前后邻接/注/diff实际接纳，窄锁释放；仅本人4新增，SAPO6、external20/cached12保护，不再写Books或冒全仓clean。root§5是实际POST，不是本日报DAY/FINAL；进一步正面采用理论/完整配方须原同q/MC/bound/cov假设与修订原证到达，只重开该域。
+
 ## 5. 缺口与下一步
 
-本日可执行普通研究、必要Books修改与独立复核待办均为0。root DAY指定三处已同步并经实际窄写后复核通过，作者据独立结论同步完成态；没有经证据支持的窄Books提案或实际写入，不由0写入声称全局已有覆盖。原响应只证明留存，实际读取与排除理由见SCREENING。
+研究/最低决定/必要强反侧/current、约定Source有限恢复和正式SPG Books均已到安全终态，**可执行普通待办0**。root独核§14真实完整DAY及§15保存态FINAL已通过并接纳，本作者仅同步既成指向，不再要求本日研究/Source/Books重审。按root安排fresh已有Oct15，只补Oct14自然日，不继承本日133/101或Source成功；本日保留项的新原证到达时才按[停点](../_sources/daily-20251014/SUP_SCOPE_20261014.md)定点重开。
 
-日期终态隔离：[有限筛选记录](../_sources/daily-20251014/SCREENING.md)列明29个完整题摘潜力家族（含首批六项、Meta SPG、MiMo R3及恢复的10028）。缺首次公开历史公告/时间范围；需要它才能确认本日归属。10028v1原Submitted为2025-10-11T05:11:21Z，v2为2026-06-07，仅提交字段不证首次公开。其他精确v1事件页、DataCite注册日期、索引与日名同样不可替代。可接受替代是官方历史发布公告、可靠原始发布记录或完全落窗的上下界；重开仅取得新材料的具体家族，不重扫目录。EM-ICL abs v1与HTML标称v1的模型/数据集数量不一致，必须同时核精确内容身份后才可采用。
+**本窗终态保留项：** [DATE§5精确101身份](../_sources/daily-20251014/SUP_DATE_20261014.md)缺原公开日，已读AB/有效最低门只保潜力；official Advanced仅year/month、主题Submitted/CL月目录不授day。最后具名primary出口已实际停止：RAE year2025/QeRL month2025.10、Memo ACL year/Month空及DOI失败、XQuant ACL November2025/作者repo无day，第三方/HF widget/当前CV不冒原披露。未取得日证前不支持正面证据、Books 或无遗漏断言，不评分/确定为当窗候选；不是普通未读改external。接受作者原dated研究披露/官方day公告/明确不跨补窗的必要上下界，定点重开只到达原证的family/事件；不追全网absence、时分秒或扫描整月。
 
-来源外部终态保留项为Google Publications正确参数访问失败/历史切片、Qwen新站、Hunyuan2025目录、ZAI原目录10月历史记录、MiMo历史Blog、MiniMax Agent历史目录，具体失败与恢复条件见§2。恢复仅需各源可核本窗的官方历史段/接口/原公告，得到后定点补该源该窗；不用一般搜索首页或全年全文队列替代。均不支持正面Evidence、Books、零事件、无遗漏或性能/安全保证。首批、DAY及窄修写后已实际通过，终态外部保留不冒充Coverage/Evidence通过。
+来源终态保留项为GooglePubs年/主题UI和Meta历史目录、Qwen目标历史/字段冲突、Hunyuan2025研究段、Zai原10月、MiMo无日期Blog与MiniMax历史Agent段；§2列实际失败/可见切片、停止和替代原材料。它们不支持正面Coverage/Evidence、Books、zero或无遗漏；恢复条件是对应官方目标日主题/日期化原发布到达，定点重开对应source/window，不借其他日成功或当前目录证明历史无材料。Seed首片has_moretrue/可见性差额仍有限，不授全年；SongGeneration原身份/历史版本缺口及EM-ICL精确v1 identity差额保原记录，不由当前九2026目录或current版本假解决。
+
+SPG采用的条件式责任已完成；强variance/梯度/reward/完整recipe及不独立test选择仍未采用，不以“Books已整合”授这些保证。修订原证到达只重相应理论/近似/评价域，不撤其他有效证据或强修配方。21具体C和9title依具体范围/贡献关闭，不为不影响处置的未知日期扩史。
+
+窗外独立线索：ROLL Flash原repo Oct14论文release只该作者事件窗后，潜在更早paper公开未否定，留作真实归属日单family恢复；MIMO同core CVF June2025原出版O，只该身份/原月份，不造具体日或全稿samebytes。XQuant November2025出版也不等原paperfirst。以上不扩大Oct13补窗，不移旧日期/评分或当前ordinary完成条件。
 
 ## 6. 复核
 
-复核者：root / Codex（非作者Euler），首批、DAY及三处窄修写后实际范围见独立文件顶部最新结论。
+复核者：root / Codex（非本轮报告作者Kierkegaard；原作者Euler）
 
 结论：通过
 
-作者未自审。首批六项实际校准复用；root DAY已实际核十四必要反侧、十四有限来源与分层排除，CL2/4原AB支持排除、另2访问失败不称全核，DC10028误排已窄恢复。root随后fresh实际通读三项同步及停点，最新日级结论通过；作者只据此同步状态，未重读无关core/原源。机器检查本次另行运行，不替代该独立语义结论。
+root本日独核§14已实际完整顺读08:54:13保存稿六部分及§6最新cached例外行政差额，真实DAY通过；§15随后actual读回09:04:30完成字段/§1/5/6行政差额与QA，保存态FINAL通过并由root接纳。作者仅同步已发生结果，不自审或重复计日。此前实际分批§1–5核SPG机构日/完整题摘与必要Source、6分、唯一owner/PRE和真实一段/note邻接POST；§6 SYSTEM六4P2C、§7 THIRD十二P及MeTA/KnowRL/Memo反侧与具名范围；§8 REUSE59/六字段/版本采用权限；§9–10第四十三10P3C与六最低；§11 current六具名/SCL PDF必要域；§12第五七完整v1题摘/三最低6P1C；§13完整DATE133互斥角色与必要primary日期/停止范围。有限机构字段/动态代码§3–4有效，未检查全部目录本文/全336AB/所有版本/全部附件或实验复现，未授其安全/性能/全Coverage。
 
-完成态V3实际通过；本日6份自写Markdown/40本地引用无缺失、无尾空白、围栏配对，限定git diff --check通过。上游原生MiniMax Markdown不作为本地引用文件修写；没有stage、commit或push。
+非报告作者实际独核不由作者QA替代；未变层按当前Research§7复用，不将机器结构检查称完整six语义验收。原Euler FIRST/FINAL及必要14反侧只保历史有效层，与本轮root§1–15分责。本日DAY/FINAL已真实接纳，按root安排同ID fresh下一已有Oct15，不因单日保存结束整个授权范围。
+
+本保存稿实际V3 exit0；14来源ID/H1＋六H2、30本地引用/27唯一路径0missing、尾空白0/围栏配对通过。原window逐字保持，剔除唯一新增SPG候选行后整个旧§3逐字恢复True；连续原§4为原896字符/SHA457ee23d…且逐字保持True。限定unstaged与README单文件cached diff-check exit0；包含Source/DATE时当前cached exit2，index已保存的两快照各报一条EOF空行（DATE L47、SOURCES L67），保留index不修/stage。仅本人Source/DATE worktree多余EOF空行已删、原数据/正文不变；不隐藏cached例外或声称全cached通过。上述只格式/引用/冻结/范围，不是已发生DAY或全仓clean。没有stage、commit、push，未写State/index/脚本或其他作者/reader文件。

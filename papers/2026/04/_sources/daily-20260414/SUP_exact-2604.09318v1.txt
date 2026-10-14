@@ -1,0 +1,1722 @@
+CIR+CVN: Bridging LLM Semantic Understanding and Petri-Net Verification for Concurrent Programs
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract.
+1 Introduction
+2 Motivation
+2.1 A Signal-Loss Example
+2.2 Bug Detection and Repair Guidance
+3 System Architecture
+3.1 Pipeline Stages
+3.2 Verification and Repair Hierarchy
+4 Formal Definitions
+4.1 CIR: Concurrency Intermediate Representation
+4.2 CVN: Concurrency Verification Net
+4.3 CIR to CVN Translation
+Phase 1: Resource scanning.
+Phase 2: Function-body translation.
+Phase 3: Summary translation.
+5 Analysis and Repair
+5.1 Reachability-Based Bug Detection
+5.1.1 Definite Bugs
+5.1.2 Structural Warnings
+5.2 Repair-Oriented Diagnostics
+5.3 The Goal-Aware Repair Loop
+5.4 Prompt Assembly for Logic-Driven Repair
+6 Evaluation
+6.1 Test Matrix and Setup
+6.2 RQ1: Translation Correctness
+6.3 RQ2: Loop Convergence
+6.3.1 Generation Rounds
+6.3.2 Bug Fidelity
+6.3.3 Repair Rounds
+6.4 RQ3: State-Space Scale
+6.5 RQ4: Goal Preservation
+End-to-end summary.
+6.6 Threats
+7 Related Work
+Static analysis for concurrency.
+Dynamic analysis and systematic schedule exploration.
+Model checking and Petri-net-based verification.
+LLMs for program analysis, verification, and repair.
+8 Conclusion
+References
+A Reference Tables
+License: CC BY 4.0
+arXiv:2604.09318v1 [cs.PL] 10 Apr 2026
+CIR+CVN: Bridging LLM Semantic Understanding and Petri-Net Verification for Concurrent Programs
+Conference: Conference; June 2026; City, Country
+Kaiwen Zhang
+Affiliation: Tongji University, Shanghai, China
+email: zhangkw@tongji.edu.cn
+and
+Guanjun Liu
+Affiliation: Tongji University, Shanghai, China
+email: liuguanjun@tongji.edu.cn
+2026
+Abstract.
+Recovering concurrency structure directly from source code is difficult because shared-resource identity and protection relations are often obscured by aliasing, ownership, and API-specific idioms. We therefore study a specification-driven, model-first verification architecture for LLM-assisted concurrent program construction. Instead of verifying arbitrary source code, a large language model first synthesizes a verification-oriented concurrency artifact from a natural-language requirement or system specification. The first formalism, the Concurrency Intermediate Representation (Cir), is a statement-level, alias-free model in which shared resources are globally named, protection relations are explicit, and each statement carries a stable identifier. The second formalism, the Concurrency Verification Net (Cvn), is a weighted place/transition Petri net with a finite global store and three-valued guards for data-dependent branching. A validated Cir artifact is translated mechanically to Cvn, explored exhaustively, and any counterexample is mapped back to statement identifiers to guide targeted repair. To reduce the risk of bug-free but behavior-dropping repairs, acceptance additionally applies a lightweight goal-reachability check over designated critical outcomes. We formalize both representations, prove translation-correspondence results for deadlock and signal-loss analysis, define a two-layer checking architecture with 61 static rules and 5 analysis predicates, and evaluate the pipeline on 9 representative bounded-concurrency patterns. The results show that the method supports iterative bug detection and repair on Cir artifacts and that goal reachability helps filter semantically incomplete repairs. The trust boundary of the present work is the generated Cir artifact rather than arbitrary source code.
+Keywords:
+concurrency verification, Petri nets, large language models,
+alias analysis, intermediate representation, deadlock detection
+1. Introduction
+Concurrency bugs such as deadlocks, signal losses, starvation, and blocking protocol errors remain difficult to detect and repair because they arise from interactions among threads rather than from a single local control path. Dynamic tools can expose concrete failing schedules, but they do not rule out unexplored interleavings (Godefroid, 1997; Musuvathi et al., 2008; Burckhardt et al., 2010). Static techniques can, in principle, provide broader guarantees, yet they face a familiar obstacle: before reasoning about lock ordering, waiting discipline, or protocol compliance, the analysis must determine which operations refer to the same shared resource and which synchronization primitives protect which shared state (Engler and Ashcraft, 2003; Flanagan and Freund, 2000; Flanagan and Qadeer, 2003; Boyapati et al., 2002; Naik et al., 2006). Concurrency defects therefore remain costly in practice. They may hide through extensive testing and surface only under a narrow timing window in production, precisely because the relevant behavior is distributed across threads and schedules rather than concentrated in one obviously wrong line of code.
+The difficulty is not merely that concurrent code has many interleavings; it is also that source-level reasoning must reconstruct resource identity through layers of representation detail. Consider a Rust-style program in which two threads each receive a clone of an Arc<(Mutex<State>, Condvar)>. To determine whether both threads operate on the same mutex–condvar pair, a verifier must trace the value through heap allocation, Arc::clone, destructuring, borrowing, and closure capture (Boyapati et al., 2002; Pratikakis et al., 2006; Naik et al., 2006). Without that identity information, a deadlock detector cannot reliably build a lock-order graph, and a protection checker cannot reliably determine whether a shared-variable access is guarded by the intended lock. Existing tools cope with this barrier through familiar trade-offs: coarser analyses improve scalability but lose precision, more precise analyses often scale poorly, and dynamic tools bypass alias reconstruction by observing concrete addresses at runtime but sacrifice coverage. These trade-offs become especially painful in an automated repair workflow, where diagnostics must be both precise enough to avoid misleading the repair process and actionable enough to point to specific synchronization logic.
+This paper explores a different starting point. Rather than attempting to verify arbitrary source code directly, we ask whether concurrency verification can be moved earlier in the pipeline, to the stage where an LLM constructs the program from a natural-language requirement or system specification. Source-level analysis must recover resource identity through aliasing and representation detail. In contrast, during construction, the model can be asked to state the intended shared resources and synchronization structure explicitly. The key idea of our work is therefore not that source-level alias analysis has been solved, but that the verification target can be redefined as an LLM-generated concurrency artifact in which resource identity is explicit by construction (Chen et al., 2021; Fan et al., 2023; Xia et al., 2023). The difficulty shifts from alias recovery to intent recovery—but intent recovery from a natural-language specification is arguably more tractable for an LLM than alias recovery from optimized source code, because the specification states resource relationships in terms the model was trained on.
+This reframing leads to the first formalism in our architecture, the Concurrency Intermediate Representation (Cir). Cir is a verification-oriented, statement-level concurrency model designed to be generated by an LLM and consumed by a formal analysis engine. Every shared resource receives a unique global name; lock-to-variable protection relations are recorded explicitly; and every statement carries a stable identifier (𝗌𝗂𝖽\mathsf{sid}) for diagnostics and repair. The result is not a general-purpose compiler IR, but a deliberately narrowed model of the program’s concurrency skeleton: synchronization operations, thread creation and joining, and data-dependent control over shared state. Arithmetic details, string manipulation, and most I/O logic are abstracted away. This narrowing is what makes model generation tractable. The LLM does not need to emit a complete executable program; it only needs to make the concurrency architecture explicit. A deterministic checker then validates the resulting artifact against 61 rules organized into 9 categories, catching malformed or semantically inconsistent Cir artifacts before the more expensive verification phase.
+The static checker ensures structural well-formedness but does not reason about interleavings. That task requires exhaustive state-space exploration—a capability that LLMs, by their nature, do not provide. LLMs are therefore not used as standalone verifiers. Concurrency bugs are driven by combinatorial interactions among independently plausible local actions. A three-thread circular deadlock is a useful illustration: each thread may acquire locks in a locally understandable way, yet the global system still reaches a cyclic wait. The number of relevant interleavings grows rapidly with the number of concurrent entities and synchronization operations, and exhaustive coverage over that state space is precisely where formal methods remain indispensable. In our architecture, the LLM performs the semantic heavy lifting required to recover intended resource structure and synchronization intent, while the formal engine takes over to explore the induced state space exhaustively within the bounded model. The two components are complementary rather than interchangeable: the LLM provides abstraction, and the verifier provides exhaustive reasoning over interleavings.
+The choice of formal back-end is therefore central. One could use explicit-state model checking, bounded encodings, or systematic schedule exploration. Explicit-state frameworks such as SPIN are powerful, but they typically require a dedicated modeling language and an additional translation layer (Holzmann, 1997). Bounded encodings can handle many software-verification tasks effectively, yet synchronization constructs such as condition-variable wake-up semantics, channel blocking, and semaphore counts are not always the most natural fit for that style of encoding. Dynamic and stateless exploration techniques remain extremely valuable, but they are tied to executable artifacts and bounded schedules rather than to an abstract intermediate model (Godefroid, 1997; Flanagan and Godefroid, 2005; Musuvathi and Qadeer, 2008). Petri nets, by contrast, offer a natural foundation for this setting (Murata, 1989; Esparza and Heljanko, 2008). They make concurrency and resource contention structural, come with well-studied analysis techniques, and compose naturally through shared places. Standard P/T nets alone are not expressive enough for data-dependent branching, while classical colored Petri nets add considerable machinery in color domains, bindings, and inscriptions (Jensen et al., 2007). Our second formalism, the Concurrency Verification Net (Cvn), occupies a middle ground: it is a weighted P/T Petri net augmented with a finite global variable store and three-valued guards. Guards evaluate to true, false, or unknown; the third value allows the net to over-approximate branches whose conditions depend on values not tracked in the finite store, preserving soundness without requiring full data modeling. Because Cir has already made resource identity explicit through global naming, tokens do not need to carry identity information. This allows us to capture bounded concurrency behavior and data-dependent control without moving to the full complexity of colored-token formalisms.
+Table 1. Concurrency-verification methods.
+Model
+source
+Alias
+handling
+Coverage
+Liveness
+Data
+fidelity
+SPIN
+manual
+in model
+exhaustive
+✓
+full
+Bounded MC
+source
+static
+kk-bounded
+limited
+bit-precise
+Dyn./DPOR
+executable
+runtime
+partial
+✗
+concrete
+CPN Tools
+manual
+in model
+exhaustive
+✓
+colored
+Cvn
+LLM+spec
+by constr.
+exhaustive†
+✓
+fin. abstr.
+† Within the bounded model induced by the finite global store.
+Model source: who constructs the verification model.
+Alias handling: how shared-resource identity is established.
+Data fidelity: precision of data-value modeling.
+Cir generation and Cvn verification are not isolated steps; they form a generate–verify–repair loop (Clarke et al., 2000; Fan et al., 2023; Bouzenia et al., 2025). A bug discovered during Cvn state-space search yields a structured counterexample: it identifies the bug kind, provides a trace, records the corresponding Cir statement IDs, and summarizes the relevant end-state information such as held resources and waiting threads. Because the feedback is anchored to 𝗌𝗂𝖽\mathsf{sid} values rather than vague natural-language descriptions, the LLM can revise specific synchronization logic instead of regenerating the entire artifact. The repaired Cir is then re-validated through the same pipeline. Acceptance is not based on bug-freedom alone. A repair is accepted only if no concurrency violation is found and the user-stated business goals remain reachable. Otherwise, an apparently safe repair may still be wrong because it eliminates the bug by silently deleting required behavior. For example, removing all notify calls trivially eliminates signal-loss bugs, but it also prevents any thread from ever being woken.
+The trust boundary of the present paper is therefore the generated Cir artifact, not arbitrary source code. We verify the model that the LLM produces; we do not prove general source-to-Cir equivalence. That boundary is a limitation, but it is also what makes the approach analyzable. By separating semantic model construction from exhaustive state exploration, the architecture creates a tractable point of contact between LLM-assisted intent recovery and formal reasoning about interleavings. The current prototype is evaluated on Rust examples, but the core Cir/Cvn abstractions are defined over synchronization semantics rather than Rust-specific syntax. The practical motivation of the work is to obtain a verification problem that is easier to analyze by first asking the model to state explicitly what the program is trying to share and how it is trying to synchronize.
+The contributions of this paper are as follows:
+(1)
+A model-first verification paradigm for LLM-assisted
+concurrent-program construction that shifts shared-resource
+identification from source-level alias recovery to explicit
+declaration in a generated artifact, realized as a
+generate–verify–repair loop in which a lightweight
+goal-reachability filter reduces the risk of semantically
+incomplete repairs.
+(2)
+Cir, a verification-oriented concurrency
+intermediate representation with global resource naming,
+explicit protection mappings, and stable statement identifiers
+(𝗌𝗂𝖽\mathsf{sid}), validated by a deterministic checker that
+enforces 61 structural and semantic rules organized into 9
+categories.
+(3)
+Cvn is a weighted place/transition Petri net augmented with a finite global store and three-valued guards. It is designed to bridge the gap between standard P/T nets, which lack support for data-dependent branching, and colored Petri nets, which are unnecessary when resource identity is already explicit.
+(4)
+A mechanical translation from Cir to
+Cvn, together with simulation-style correspondence
+results showing that deadlock and signal-loss verdicts on the
+net faithfully reflect properties of the Cir artifact.
+(5)
+An experimental evaluation on 9 representative
+bounded-concurrency patterns demonstrating iterative bug
+detection and repair, and showing that goal-reachability checks
+filter semantically incomplete repairs that would otherwise pass safety verification.
+Section 2 presents the motivating example and the alias-reframing intuition.
+Section 3 presents the system architecture and repair hierarchy.
+Section 4 defines Cir, Cvn, and the translation between them.
+Section 5 describes bug detection, structured counterexamples, and repair.
+Section states the formal properties of the translation and analysis.
+Section 6 presents the experimental evaluation.
+Section 7 surveys related work.
+Section 8 concludes.
+2. Motivation
+A condition-variable example introduces the problem setting and illustrates how the pipeline detects bugs and guides repair.
+2.1. A Signal-Loss Example
+Figure 1 shows a Rust program with a signal-loss bug. The worker calls wait without a surrounding loop; the notifier calls notify_one before setting the flag. Both operations reside in the same critical section. If the notifier acquires the lock first, the signal fires with no waiter present and is lost; the worker then enters wait and blocks indefinitely because no second notification will arrive.
+⬇
+1
+fn worker(shared: Arc<(Mutex<bool>, Condvar)>) {
+2
+let (m, cv) = &*shared;
+3
+let g = m.lock().unwrap();
+4
+let _g = cv.wait(g).unwrap(); // BUG: bare wait
+5
+}
+6
+fn notifier(shared: Arc<(Mutex<bool>, Condvar)>) {
+7
+let (m, cv) = &*shared;
+8
+let mut g = m.lock().unwrap();
+9
+cv.notify_one(); // notify before write
+10
+*g = true;
+11
+}
+Figure 1. Signal-loss bug: bare wait without a loop guard.
+Figure 2 shows the corresponding Cir artifact—not extracted from source code, but produced by an LLM from a natural-language specification. Alias analysis is unnecessary: m0, cv0, and ready are unique global names; the declaration protection: ready: [m0] makes the guarding relation explicit; and every statement carries a stable 𝗌𝗂𝖽\mathsf{sid} that anchors diagnostics across repair iterations.
+⬇
+1
+resources:
+2
+m0: { kind: Mutex }
+3
+cv0: { kind: Condvar, paired_with: m0 }
+4
+ready: { kind: Var, type: Bool, init: false }
+5
+protection: ready: [m0]
+6
+threads:
+7
+worker:
+8
+body:
+9
+- { sid: w1, op: lock(m0), next: w2 }
+10
+- { sid: w2, op: wait(cv0, m0), next: w3 }
+11
+- { sid: w3, op: unlock(m0) }
+12
+notifier:
+13
+body:
+14
+- { sid: n1, op: lock(m0), next: n2 }
+15
+- { sid: n2, op: notify_one(cv0), next: n3 }
+16
+- { sid: n3, op: write(ready, true), next: n4 }
+17
+- { sid: n4, op: unlock(m0) }
+Figure 2. Cir for the signal-loss example.
+2.2. Bug Detection and Repair Guidance
+The Cir artifact is translated mechanically into a Cvn and explored exhaustively. The verifier detects the signal-loss bug and emits the structured repair report shown in Figure 3. The report identifies the bug kind, anchors the root cause to specific 𝗌𝗂𝖽\mathsf{sid} values, summarizes the end-state, and provides a concrete repair suggestion—all expressed in terms of Cir constructs rather than Petri-net internals.
+⬇
+1
+bug_kind: signal_loss
+2
+blame: [n2, w2]
+3
+end_state:
+4
+V[cv0_worker]: waiting
+5
+V[ready]: true
+6
+held: {}
+7
+waiting: [worker]
+8
+trace: [n1, n2(lost), n3, n4, w1, w2(blocked)]
+9
+diagnosis:
+10
+notify_one at sid=n2 fires when no thread is
+11
+waiting on cv0; worker enters bare wait at
+12
+sid=w2 with no loop guard and no future
+13
+notification.
+14
+repair_suggestion:
+15
+Insert read(ready) with branch before w2;
+16
+add back-edge from post-wakeup to the condition
+17
+check, forming a while(!ready) loop around
+18
+wait(cv0, m0).
+19
+goal_check:
+20
+critical_outcome: "worker exits synchronization"
+21
+status: UNREACHABLE in current artifact
+22
+note: bare wait at w2 depends on notification
+23
+that may never arrive.
+Figure 3. Structured repair report for the signal-loss example.
+Three aspects of this report merit attention. First, the blame anchors 𝗌𝗂𝖽=n​2\mathsf{sid}{=}n2 and 𝗌𝗂𝖽=w​2\mathsf{sid}{=}w2 tell the LLM exactly which statements to modify, avoiding regeneration of the entire artifact. Second, the repair suggestion is expressed as a structural Cir edit (insert a read-and-branch node, add a back-edge), which the LLM can apply directly. Third, the goal check verifies that the designated critical outcome is reachable after repair; a fix that achieves safety by deleting behavior (e.g., removing notify_one) is rejected as behaviorally incomplete.
+The same pipeline handles other anti-patterns with different diagnostics. For instance, if the worker uses if instead of while but the notifier uses the correct write-before-notify order, the verifier reports a spurious-wakeup violation: a
+non-deterministic wakeup causes the worker to exit the if block without re-checking the predicate. The blame anchors shift to the if branch and the post-wakeup point, and the repair suggestion becomes replace if with while by adding a back-edge. The goal check confirms that the worker can still reach the post-synchronization code with the predicate satisfied.
+In summary, Cir eliminates alias reconstruction through global naming; Cvn detects bugs through exhaustive exploration; and 𝗌𝗂𝖽\mathsf{sid}-anchored reports with goal-reachability checks guide targeted, semantically complete repairs.
+3. System Architecture
+The architecture organizes five stages into two verification layers and three repair tiers.
+Layer 1 (Stage 2) validates model quality through deterministic static checking; Layer 2 (Stage 4) analyzes concurrency behavior through exhaustive state-space search; and a dedicated
+goal-reachability check (Stage 5) guards against behavior-dropping repairs. Figure 4 shows the complete pipeline.
+Stage 1: Cir Generation
+Stage 2: Static Checking
+Stage 3: Cir→\;\to\;Cvn
+Stage 4: State-Space Analysis
+Stage 5: Goal Reachability
+Accepted
+passno bugreachableTier 1Tier 2Tier 3goal fail
+Figure 4. The generate–verify–repair pipeline.
+Solid arrows show the main flow; dashed arrows show
+repair feedback loops.A five-stage vertical pipeline. Stage~1 generates
+a CIR artifact via LLM. Stage~2 performs static checking
+(Layer~1) with a Tier-1 auto-fix self-loop and a Tier-2
+feedback path to Stage~1. Stage~3 translates CIR to CVN.
+Stage~4 performs state-space analysis (Layer~2) with a Tier-3
+feedback path to Stage~1. Stage~5 checks goal reachability
+with a failure feedback path to Stage~1. The artifact is
+accepted only after passing all stages.
+3.1. Pipeline Stages
+Stage 1: Cir generation.
+An LLM reads a natural-language requirement or system specification and produces a Cir artifact. The LLM is asked to recover the intended shared resources, protection mappings, and statement-level control flow rather than to emit an executable program.
+Stage 2: Static checking (Layer 1).
+A deterministic checker validates the Cir against 61 well-formedness rules organized in 9 categories. This stage catches malformed artifacts early: missing fields, undefined resources, incompatible operations, broken spawn/join structure, and protection-mapping errors.
+Stage 3: Translation to Cvn.
+A stateless translator converts the validated Cir into a Cvn. Each Cir statement gives rise to at least one anchored transition; no optimization or transition merging is performed. This keeps the correctness argument simple and preserves diagnostic traceability.
+Stage 4: State-space analysis (Layer 2).
+The Cvn is explored through exhaustive reachability and SCC-based liveness checks. This stage runs entirely off-prompt and does not consume LLM budget.
+Stage 5: Goal-reachability check.
+If Stage 4 finds no concurrency violation, the verifier checks whether each user-designated critical outcome remains reachable in the explored state space. An artifact is accepted only if it is both violation-free and goal-reachable. An apparently safe repair that achieves bug-freedom by deleting required behavior is rejected at this stage. The loop iterates until the artifact passes all stages, or until a configurable iteration budget (default: 5 rounds) is exhausted, in which case the pipeline reports failure.
+3.2. Verification and Repair Hierarchy
+The two verification layers separate model quality from concurrency behavior. Three repair tiers determine the appropriate response.
+Tier 1: deterministic auto-fix.
+When Layer 1 detects a non-semantic issue: a missing unlock at function exit, a duplicate 𝗌𝗂𝖽\mathsf{sid}, an omitted transfer field, or a similar mechanical defect, the checker applies a pre-defined rewrite directly without involving the LLM.
+Tier 2: structural re-generation.
+When Layer 1 detects a semantic structural problem such as an undefined resource, a broken spawn/join topology, or an inconsistent protection mapping, the diagnostic is sent to the LLM for localized regeneration of the affected Cir fragment.
+Tier 3: logic-driven repair.
+When Layer 2 finds a concurrency violation, the verifier constructs a structured diagnostic from the bug witness including blame anchors, end-state summary, and repair suggestion and asks the
+LLM to revise the affected synchronization logic. This is the most expensive repair tier and carries the main methodological novelty.
+Table 2. Verification and repair hierarchy.
+Issue
+Layer
+Tier
+Structural (Layer 1)
+Missing unlock/drop
+Cir
+1 (auto-fix)
+Duplicate 𝗌𝗂𝖽\mathsf{sid}
+Cir
+1 (auto-fix)
+Undefined resource
+Cir
+2 (LLM)
+Spawn/join mismatch
+Cir
+2 (LLM)
+Protection inconsistency
+Cir
+2 (LLM)
+Behavioral (Layer 2)
+Deadlock
+Cvn
+3 (LLM)
+Signal loss
+Cvn
+3 (LLM)
+Starvation
+Cvn
+3 (LLM)
+Cross-primitive deadlock
+Cvn
+3 (LLM)
+This hierarchy serves two purposes. First, it prevents expensive Layer 2 analysis from being wasted on malformed artifacts that should have been rejected earlier. Second, it ensures that the LLM receives feedback at the appropriate level of abstraction: mechanical corrections are applied silently, structural feedback is provided when the model is malformed, execution-grounded feedback is provided when the concurrency logic is wrong, and goal-violation feedback is provided
+only after bug-freedom has been established.
+4. Formal Definitions
+Three core formalisms underlie the method: Cir, Cvn, and the translation from Cir to Cvn.
+4.1. CIR: Concurrency Intermediate Representation
+Definition 0 (Function and statement).
+A function definition is a triple (f,k,B)(f,\,k,\,B) where ff is the name, k∈{normal,async,closure}k\in\{\textsf{normal},\textsf{async},\textsf{closure}\} is the kind, and B=(s1,…,sn)B=(s_{1},\dots,s_{n}) is a body of statements.
+A statement is a triple s=(𝑠𝑖𝑑,𝑜𝑝,𝑡𝑟𝑎𝑛𝑠𝑓𝑒𝑟)s=(\mathit{sid},\;\mathit{op},\;\mathit{transfer}), where 𝑠𝑖𝑑∈𝑆𝐼𝐷\mathit{sid}\in\mathit{SID} is a unique identifier, 𝑜𝑝\mathit{op} is an operation from Table 3 or the distinguished no-operation nop, and 𝑡𝑟𝑎𝑛𝑠𝑓𝑒𝑟\mathit{transfer} specifies the control-flow successor:
+𝑡𝑟𝑎𝑛𝑠𝑓𝑒𝑟∈{next​(s′),branch​(β,st,sf),switch​(x,⟨vi→si⟩i,sd),return}\mathit{transfer}\in\bigl\{\,\textsf{next}(s^{\prime}),\;\textsf{branch}(\beta,s_{t},s_{f}),\;\textsf{switch}(x,\langle v_{i}\!\to\!s_{i}\rangle_{i},s_{d}),\;\textsf{return}\,\bigr\}
+where β∈𝐵𝑜𝑜𝑙𝐸𝑥𝑝𝑟\beta\in\mathit{BoolExpr} (Definition 5). The operation and transfer are orthogonal: 𝑜𝑝\mathit{op} specifies the resource or concurrency action; 𝑡𝑟𝑎𝑛𝑠𝑓𝑒𝑟\mathit{transfer} specifies the successor.
+𝑆𝐼𝐷\mathit{SID} denotes the universe of statement identifiers. Every function (f,k,B)(f,k,B) has a distinguished entry identifier 𝑠𝑖𝑑f0\mathit{sid}^{0}_{f} (the 𝑠𝑖𝑑\mathit{sid} of the first statement in BB) and a distinguished return identifier 𝑟𝑒𝑡f∉{𝑠𝑖𝑑∣(𝑠𝑖𝑑,_,_)∈B}\mathit{ret}_{f}\notin\{\mathit{sid}\mid(\mathit{sid},\_,\_)\in B\}. When unambiguous we write 𝑠𝑖𝑑0\mathit{sid}^{0} and 𝑟𝑒𝑡\mathit{ret} without the function subscript. The sentinel 𝑠𝑖𝑑⊥\mathit{sid}_{\bot} is reserved for synthetic transitions generated from function summaries.
+Definition 0 (Cir artifact).
+A Cir artifact is a 6-tuple
+ℐ=(R,G,F,Σ,e,Γ)\mathcal{I}=(R,\;G,\;F,\;\Sigma,\;e,\;\Gamma), where RR is a finite resource table mapping names to kinds and configurations, G:𝑉𝑎𝑟𝑁𝑎𝑚𝑒⇀𝒫⁡(𝐿𝑜𝑐𝑘𝑁𝑎𝑚𝑒)G:\mathit{VarName}\rightharpoonup\mathcal{P}(\mathit{LockName}) is a protection mapping, FF is a finite set of function definitions (f,k,B)(f,k,B), Σ\Sigma is a partial function-summary map for external calls, e∈Fe\in F is the designated entry function, and Γ\Gamma is a finite set of Cir business goals in Definition 3.
+Every resource in RR has a unique global name. Pointers, heap indirection, and aliasing are strictly forbidden; functions reference resources directly by name. The protection mapping GG is used exclusively for static checking and does not produce Cvn structures.
+Table 3. Cir operations.
+Category
+Operation
+Target
+Lock
+lock, drop
+Mutex, RwLock
+read_lock, write_lock
+RwLock
+Synchronization
+wait, notify_one, notify_all
+Condvar
+acquire, release
+Semaphore
+send, recv
+Channel
+Data
+read, write
+Var
+load, store
+Atomic
+cas​(𝑒𝑥𝑝𝑒𝑐𝑡𝑒𝑑,𝑛𝑒𝑤)\textsf{cas}(\mathit{expected},\mathit{new})
+Atomic
+Control
+spawn, join
+function (OS thread)
+spawn_async, await
+function (async task)
+call
+function
+The summary map Σ\Sigma provides a summary for each function whose body is not modeled in FF. A summary is a tuple Σ⁡(f)=(𝑟𝑒𝑎𝑑𝑠,𝑤𝑟𝑖𝑡𝑒𝑠,𝑐𝑎𝑙𝑙𝑠,ℎ𝑎𝑠​_​𝑐𝑜𝑛𝑐𝑢𝑟𝑟𝑒𝑛𝑐𝑦)\Sigma(f)=(\mathit{reads},\mathit{writes},\mathit{calls},\mathit{has\_concurrency}), where 𝑟𝑒𝑎𝑑𝑠\mathit{reads} and 𝑤𝑟𝑖𝑡𝑒𝑠\mathit{writes} are sets of resource names, 𝑐𝑎𝑙𝑙𝑠\mathit{calls} is a set of callee names, and ℎ𝑎𝑠​_​𝑐𝑜𝑛𝑐𝑢𝑟𝑟𝑒𝑛𝑐𝑦\mathit{has\_concurrency} is a boolean. Only the 𝑤𝑟𝑖𝑡𝑒𝑠\mathit{writes} field affects the Cvn translation; the remaining fields serve the static checker. The static checker enforces 61 well-formedness rules organized in 9 categories (codes E0xx–E8xx) covering structural integrity, name resolution, type compatibility, resource pairing, lock safety, control flow, protection mapping, and function-summary consistency. The full catalogue appears in Table 12 (Appendix A).
+Definition 0 (Cir business goal).
+A Cir business goal is a pair γ=(Cγ,Vγ)\gamma=(C_{\gamma},\,V_{\gamma}), where CγC_{\gamma} is a set of completion and
+availability requirements that (f,completed)(f,\textsf{completed}) requires function ff to have returned, (r,available)(r,\textsf{available}) requires resource rr to be in its initial (free) state, and Vγ:𝑉𝑎𝑟𝑁𝑎𝑚𝑒⇀𝑉𝑎𝑙V_{\gamma}:\mathit{VarName}\rightharpoonup\mathit{Val} specifies required variable values. Goals are expressed entirely in Cir vocabulary and do not
+reference Cvn places or markings.
+⬇
+1
+goals:
+2
+- id: G1
+3
+desc: "Both threads complete, lock released,
+4
+ready flag set"
+5
+completion:
+6
+- [worker, completed]
+7
+- [notifier, completed]
+8
+availability:
+9
+- [m0, available]
+10
+variables:
+11
+ready: true
+12
+- id: G2
+13
+desc: "Worker reaches completion state"
+14
+completion:
+15
+- [worker, completed]
+Figure 5. Business goals expressed in Cir vocabulary.Two CIR business goals using completion and availability requirements.
+Business goals capture what the program is supposed to achieve, not merely what it should avoid. A buggy program may fail to reach its goals because a deadlock or signal loss blocks the execution path. Conversely, a repair that eliminates all concurrency bugs may still fail to reach a goal if it inadvertently removes a critical operation. The acceptance criterion for a verified Cir is therefore the conjunction: (1) no concurrency bug is detected, and (2) every business goal is reachable. Goal reachability is checked only after bug-freedom is established, because bugs themselves can block reachability. Goals can be specified in two ways. The user can state them explicitly as part of the natural-language specification, or the LLM can derive them automatically when generating the Cir artifact. In either case the goals become part of ℐ\mathcal{I} and travel through the entire pipeline.
+4.2. CVN: Concurrency Verification Net
+Definition 0 (Value domain).
+The value domain is 𝑉𝑎𝑙=𝐶𝑜𝑛𝑐𝑟𝑒𝑡𝑒⁡(τ)∪{⊤}\mathit{Val}=\mathit{Concrete}(\tau)\cup\{\top\}, where τ\tau ranges over the base types {Bool,Int,Float,String,Enum}\{\textsf{Bool},\textsf{Int},\textsf{Float},\textsf{String},\textsf{Enum}\}. The element ⊤\top (unknown) is absorbing: any arithmetic operation receiving ⊤\top as an operand produces ⊤\top; any comparison receiving ⊤\top produces the truth value 𝗎𝗇𝗄𝗇𝗈𝗐𝗇\mathsf{unknown}. A literal write overwrites ⊤\top unconditionally.
+Definition 0 (Expressions).
+Value expressions and boolean expressions over the value domain are defined by:
+𝐸𝑥𝑝𝑟\displaystyle\mathit{Expr}
+::=𝐿𝑖𝑡⁡(v)​∣𝑅𝑒𝑓⁡(x)∣​𝐵𝑖𝑛𝑂𝑝​(𝐸𝑥𝑝𝑟,⊕,𝐸𝑥𝑝𝑟)\displaystyle::=\mathit{Lit}(v)\mid\mathit{Ref}(x)\mid\mathit{BinOp}(\mathit{Expr},\oplus,\mathit{Expr})
+𝐵𝑜𝑜𝑙𝐸𝑥𝑝𝑟\displaystyle\mathit{BoolExpr}
+::=True​∣False∣​𝐶𝑚𝑝​(𝐸𝑥𝑝𝑟,𝑐𝑚𝑝,𝐸𝑥𝑝𝑟)\displaystyle::=\textsf{True}\mid\textsf{False}\mid\mathit{Cmp}(\mathit{Expr},\mathit{cmp},\mathit{Expr})
+∣𝐴𝑛𝑑⁡(𝐵𝑜𝑜𝑙𝐸𝑥𝑝𝑟,𝐵𝑜𝑜𝑙𝐸𝑥𝑝𝑟)∣​𝑂𝑟​(𝐵𝑜𝑜𝑙𝐸𝑥𝑝𝑟,𝐵𝑜𝑜𝑙𝐸𝑥𝑝𝑟)\displaystyle\quad\mid\;\mathit{And}(\mathit{BoolExpr},\mathit{BoolExpr})\mid\mathit{Or}(\mathit{BoolExpr},\mathit{BoolExpr})
+∣𝑁𝑜𝑡(𝐵𝑜𝑜𝑙𝐸𝑥𝑝𝑟)\displaystyle\quad\mid\;\mathit{Not}(\mathit{BoolExpr})
+Given a valuation VV, 𝑒𝑣𝑎𝑙⁡(e,V)\mathit{eval}(e,V) evaluates a value expression to an element of 𝑉𝑎𝑙\mathit{Val}; 𝑅𝑒𝑓⁡(x)\mathit{Ref}(x) evaluates to V⁡(x)V(x) and 𝐵𝑖𝑛𝑂𝑝\mathit{BinOp} follows the absorbing rule for ⊤\top.
+Definition 0 (Guard evaluation).
+A guard is a 𝐵𝑜𝑜𝑙𝐸𝑥𝑝𝑟\mathit{BoolExpr}. Given a valuation VV, the evaluation 𝑒𝑣𝑎𝑙⁡(g,V)∈{𝗍𝗋𝗎𝖾,𝖿𝖺𝗅𝗌𝖾,𝗎𝗇𝗄𝗇𝗈𝗐𝗇}\mathit{eval}(g,V)\in\{\mathsf{true},\mathsf{false},\mathsf{unknown}\} is defined by the absorbing rules: a comparison with a ⊤\top operand evaluates to 𝗎𝗇𝗄𝗇𝗈𝗐𝗇\mathsf{unknown}; 𝗎𝗇𝗄𝗇𝗈𝗐𝗇∧𝖿𝖺𝗅𝗌𝖾=𝖿𝖺𝗅𝗌𝖾\mathsf{unknown}\wedge\mathsf{false}=\mathsf{false}; 𝗎𝗇𝗄𝗇𝗈𝗐𝗇∧𝗍𝗋𝗎𝖾=𝗎𝗇𝗄𝗇𝗈𝗐𝗇\mathsf{unknown}\wedge\mathsf{true}=\mathsf{unknown}; 𝗎𝗇𝗄𝗇𝗈𝗐𝗇∨𝗍𝗋𝗎𝖾=𝗍𝗋𝗎𝖾\mathsf{unknown}\vee\mathsf{true}=\mathsf{true}; 𝗎𝗇𝗄𝗇𝗈𝗐𝗇∨𝖿𝖺𝗅𝗌𝖾=𝗎𝗇𝗄𝗇𝗈𝗐𝗇\mathsf{unknown}\vee\mathsf{false}=\mathsf{unknown}. When a guard evaluates to 𝗎𝗇𝗄𝗇𝗈𝗐𝗇\mathsf{unknown} the transition is treated as enabled; for a branch, both successors are enabled simultaneously. This over-approximation ensures no reachable state is missed at the cost of exploring potentially infeasible paths.
+Definition 0 (Cvn).
+A Concurrency Verification Net is an 8-tuple
+𝒩=(P,T,W𝑖𝑛,W𝑜𝑢𝑡,G,U,𝑉𝑎𝑟,μ)\mathcal{N}=(P,\;T,\;W_{\!\mathit{in}},\;W_{\!\mathit{out}},\;G,\;U,\;\mathit{Var},\;\mu)
+where
+•
+P=Pc⊎Pr⊎PaP=P_{c}\uplus P_{r}\uplus P_{a} is a finite set of places, partitioned into control places PcP_{c}, resource places PrP_{r}, and auxiliary places PaP_{a};
+•
+TT is a finite set of transitions;
+•
+W𝑖𝑛:P×T→ℕ0W_{\!\mathit{in}}:P\times T\to\mathbb{N}_{0} is the input weight function(W𝑖𝑛​(p,t)=0W_{\!\mathit{in}}(p,t)=0 means no arc from pp to tt);
+•
+W𝑜𝑢𝑡:T×P→ℕ0W_{\!\mathit{out}}:T\times P\to\mathbb{N}_{0} is the output weight function;
+•
+G:T→𝐵𝑜𝑜𝑙𝐸𝑥𝑝𝑟G:T\to\mathit{BoolExpr} is the guard function (default True);
+•
+U:T→(𝑉𝑎𝑟⇀𝐸𝑥𝑝𝑟)U:T\to(\mathit{Var}\rightharpoonup\mathit{Expr}) is the update function, assigning each transition a
+partial map from variables to expressions (default ∅\emptyset);
+•
+𝑉𝑎𝑟\mathit{Var} is a finite set of variable names; and
+•
+μ:T→𝑆𝐼𝐷\mu:T\to\mathit{SID} is the anchor mapping.
+Remark 1 (Place taxonomy and initial tokens).
+The three place classes and their initial token counts are:
+(1)
+Control places PcP_{c}. One place 𝑐𝑝⁡(f,𝑠𝑖𝑑)\mathit{cp}(f,\mathit{sid}) per statement per function, plus a return place 𝑐𝑝⁡(f,𝑟𝑒𝑡)\mathit{cp}(f,\mathit{ret}). A token in 𝑐𝑝⁡(f,𝑠𝑖𝑑)\mathit{cp}(f,\mathit{sid}) means a thread is at statement 𝑠𝑖𝑑\mathit{sid} in ff. Initially, each spawned function’s entry place 𝑐𝑝⁡(f,𝑠𝑖𝑑f0)\mathit{cp}(f,\mathit{sid}^{0}_{f}) holds one token; all other control places hold zero.
+(2)
+Resource places PrP_{r}. One place 𝑟𝑝⁡(r)\mathit{rp}(r) per synchronization primitive. Initial token counts:
+Mutex ↦1\mapsto 1; RwLock ↦N\mapsto N where NN is the total number of concurrent entities; Semaphore(n)↦n(n)\mapsto n;
+Channel ↦0\mapsto 0; Condvar signal place ↦0\mapsto 0. Var and Atomic resources have no resource
+places; their state resides in the valuation VV.
+(3)
+Auxiliary places PaP_{a}. For each wait site 𝑠𝑖𝑑\mathit{sid} on a condition variable: a wait place 𝑤𝑝⁡(𝑠𝑖𝑑)\mathit{wp}(\mathit{sid}) (token = thread blocked) and a reacquire place 𝑟𝑎⁡(𝑠𝑖𝑑)\mathit{ra}(\mathit{sid}) (token = thread woken, awaiting mutex). All auxiliary places start at zero.
+Remark 2 (Anchor mapping).
+μ\mu is total on transitions generated from Cir statements. For compound operations such as wait, which generates multiple transitions (WaitEnter, Wake1, WakeA, Reacquire), each transition is anchored to the originating wait statement’s 𝑠𝑖𝑑\mathit{sid}. Transitions synthesized from summaries are anchored to 𝑠𝑖𝑑⊥\mathit{sid}_{\bot} and excluded from witness traces.
+Definition 0 (Cvn state).
+A Cvn state is a pair S=(M,V)S=(M,V) where M:P→ℕ0M:P\to\mathbb{N}_{0} is a marking and V:𝑉𝑎𝑟→𝑉𝑎𝑙V:\mathit{Var}\to\mathit{Val} is a valuation. The initial state S0=(Im,Iv)S_{0}=(I_{m},I_{v}) assigns token counts per Remark 1 and initial values per the Cir resource table RR. The pair (𝒩,S0)(\mathcal{N},S_{0}) fully determines the reachable state space.
+Definition 0 (Enabling and firing).
+A transition t∈Tt\in T is enabled at state S=(M,V)S=(M,V) iff
+(1)
+∀p∈P:M⁡(p)≥W𝑖𝑛​(p,t)\forall p\in P:\;M(p)\geq W_{\!\mathit{in}}(p,t), and
+(2)
+𝑒𝑣𝑎𝑙⁡(G⁡(t),V)≠𝖿𝖺𝗅𝗌𝖾\mathit{eval}(G(t),V)\neq\mathsf{false}.
+Upon firing, the successor state S′=(M′,V′)S^{\prime}=(M^{\prime},V^{\prime}) is:
+M′​(p)=M⁡(p)−W𝑖𝑛​(p,t)+W𝑜𝑢𝑡​(t,p)for each ​p∈P,M^{\prime}(p)=M(p)-W_{\!\mathit{in}}(p,t)+W_{\!\mathit{out}}(t,p)\quad\text{for each }p\in P,
+V′​(x)={𝑒𝑣𝑎𝑙​(U​(t)​(x),V)if ​x∈dom⁡(U⁡(t)),V⁡(x)otherwise.V^{\prime}(x)=\begin{cases}\mathit{eval}\bigl(U(t)(x),\;V\bigr)&\text{if }x\in\mathrm{dom}(U(t)),\\
+V(x)&\text{otherwise.}\end{cases}
+All expressions in U⁡(t)U(t) are evaluated with respect to the pre-firing valuation VV.
+If multiple transitions are simultaneously enabled, the search explores all resulting interleavings.
+Each transition also carries a classification tag (Lock, Unlock, Spawn, etc.) for diagnostics and visualization; the tag does not affect firing semantics.
+4.3. CIR to CVN Translation
+Let Cirv\textsc{Cir}_{v} denote the subset of Cir artifacts that pass all 61 static-checking rules. The translator is a pure, total function 𝑡𝑟𝑎𝑛𝑠𝑙𝑎𝑡𝑒:Cirv→Cvn\mathit{translate}:\textsc{Cir}_{v}\to\textsc{Cvn}
+executed in three phases.
+Phase 1: Resource scanning.
+For each synchronization primitive in RR, generate a resource place 𝑟𝑝⁡(r)\mathit{rp}(r) and set its initial token count per Remark 1. Compute the RwLock concurrency bound NN as the total number of concurrent entities. For each Var and Atomic resource, initialize the corresponding entry in the valuation IvI_{v}. For each Condvar, generate the auxiliary places and variables described in Remarks 1 and .
+Phase 2: Function-body translation.
+For each function in FF and each statement in its body, generate control places, transitions, weights, guards, and updates
+according to Table 13 (Appendix A).
+Phase 3: Summary translation.
+For each function referenced by a call that has a summary in Σ\Sigma but no body in FF, generate a single atomic
+transition. For each resource xx in the 𝑤𝑟𝑖𝑡𝑒𝑠\mathit{writes} set, the update sets x:=⊤x:=\top.
+𝑡𝑟𝑎𝑛𝑠𝑙𝑎𝑡𝑒\mathit{translate} also maps each Cir goal γ=(Cγ,Vγ)\gamma=(C_{\gamma},V_{\gamma}) to a Cvn reachability query: (f,completed)(f,\textsf{completed}) maps to M⁡(𝑐𝑝⁡(f,𝑟𝑒𝑡))≥1M(\mathit{cp}(f,\mathit{ret}))\geq 1; (r,available)(r,\textsf{available}) maps to M⁡(𝑟𝑝⁡(r))≥Im​(𝑟𝑝⁡(r))M(\mathit{rp}(r))\geq I_{m}(\mathit{rp}(r)); variable requirements pass through unchanged. The mapping is purely internal: users specify and receive results in Cir vocabulary.
+Definition 0 (Goal satisfaction).
+A Cvn state (M,V)(M,V) satisfies a Cir goal γ=(Cγ,Vγ)\gamma=(C_{\gamma},V_{\gamma}), written (M,V)⊧γ(M,V)\models\gamma, iff every completion and availability requirement holds in MM and ∀x∈dom⁡(Vγ):V⁡(x)=Vγ​(x)\forall x\in\mathrm{dom}(V_{\gamma}):\;V(x)=V_{\gamma}(x).
+A goal is reachable if at least one reachable state satisfies it. The existential criterion is appropriate because concurrent programs naturally admit multiple valid terminal configurations; the check answers ’is the program still capable of achieving its intended outcome.’
+5. Analysis and Repair
+Cvn analysis results are converted into repair-oriented feedback for the LLM. The underlying reachability and SCC analyses are standard (Godefroid, 1997; Flanagan and Godefroid, 2005; Musuvathi and Qadeer, 2008; Esparza and Heljanko, 2008).
+The contribution of this section is the diagnostic interface between the verifier and the LLM: the information
+extracted from a bug state, the repair role of each field, and the prompt assembly that supports local revision rather than whole-model regeneration.
+5.1. Reachability-Based Bug Detection
+Given a translated Cvn (𝒩,S0)(\mathcal{N},S_{0}), the verifier performs exhaustive state-space exploration from S0S_{0}. When a guard evaluates to 𝗎𝗇𝗄𝗇𝗈𝗐𝗇\mathsf{unknown}, both successor branches are explored; the search is therefore a conservative
+over-approximation that never suppresses a feasible behavior. We distinguish two classes of properties: definite bugs,
+whose detection is sound and complete within the model, and structural warnings, which flag design-level vulnerabilities that may or may not manifest under a concrete scheduler.
+5.1.1. Definite Bugs
+•
+Deadlock (κd​l)(\kappa_{dl}).
+A non-terminal state with no enabled transition. Every state whose enabled set is empty and that retains at least one non-return control token is a deadlock.
+•
+Signal loss (κs​l)(\kappa_{sl}).
+A NotifyLost transition fires, indicating that the guard n​w𝑐𝑣=0nw_{\mathit{cv}}=0 evaluated to 𝗍𝗋𝗎𝖾\mathsf{true}. Because n​w𝑐𝑣nw_{\mathit{cv}} is initialised to 00 and modified only by literal ±1\pm 1 updates, it remains a concrete integer throughout the analysis; within the model, this detection therefore has no false positives and no false negatives.
+•
+Channel block (κc​b)(\kappa_{cb}).
+A heuristic refinement of κd​l\kappa_{dl}. A deadlock state is reclassified as a channel block when at least one blocked transition requires a token from a channel resource place. Soundness reduces to the underlying deadlock predicate κd​l\kappa_{dl}.
+5.1.2. Structural Warnings
+The Cvn explores all possible transition interleavings no-deterministically but does not model dynamic scheduling policies. Consequently, it can identify structural vulnerabilities—interleavings under which progress fails—but cannot determine whether a concrete scheduler would produce such interleavings. The following LiveLock is therefore reported as warnings rather than definitive bugs. A non-trivial SCC in the reachability graph in which no state has all control tokens in return places. The existence of such an SCC means that there is some infinite interleaving in which the system cycles without completing. Under a fair scheduler, such an SCC would constitute a genuine livelock. Under an unfair but realistic scheduler, the cycle may never be entered.
+The value of these warnings lies in their contrapositive: if no such SCC exists in the reachability graph, the program is immune to livelock under every possible scheduler. This structural guarantee is the strongest that a scheduling-agnostic model can provide. When a warning is issued, the diagnostic reports it as a potential vulnerability and includes the SCC structure so that the LLM or the developer can assess whether the flagged interleaving is realistic.
+Remark 3 (Scope of soundness).
+To summarize: deadlock, signal loss, and channel block are sound and complete within the Cvn model. Livelock is sound under a fair-scheduling assumption and serves as structural warnings otherwise. The system never silently misses a deadlock or signal loss in the modeled Cir; it may over-report livelock relative to a specific real-world scheduler.
+5.2. Repair-Oriented Diagnostics
+When a violation is found, the verifier constructs a compact diagnostic payload rather than returning the raw state graph or a full marking dump.
+Definition 0 (Repair-oriented diagnostic).
+A repair-oriented diagnostic is a tuple
+𝒟=(κ,πμ,Σ𝑠𝑡𝑎𝑡𝑒,Σ𝑤𝑎𝑖𝑡,Λ,Γ𝑐𝑡𝑥,H)\mathcal{D}=(\kappa,\;\pi_{\mu},\;\Sigma_{\mathit{state}},\;\Sigma_{\mathit{wait}},\;\Lambda,\;\Gamma_{\mathit{ctx}},\;H),
+where
+κ\kappa is the bug kind;
+πμ\pi_{\mu} is a bug witness expressed as a sequence of
+𝑠𝑖𝑑\mathit{sid}s via the anchor mapping μ\mu;
+Σ𝑠𝑡𝑎𝑡𝑒\Sigma_{\mathit{state}} is a marking-derived state summary;
+Σ𝑤𝑎𝑖𝑡\Sigma_{\mathit{wait}} is a wait/ownership summary;
+Λ\Lambda is the relevant Cir slice;
+Γ𝑐𝑡𝑥\Gamma_{\mathit{ctx}} is the set of preservation constraints;
+and HH is a bug-specific repair hint.
+Each field serves a distinct repair purpose.
+For deadlock, signal loss, and channel block, πμ\pi_{\mu} is a finite firing sequence ending in the bug state. For livelock and starvation, it is a finite prefix reaching the SCC entry plus a summary of the SCC structure (participating states and transitions). In both cases the sequence is expressed in Cir 𝑠𝑖𝑑\mathit{sid}s, not Cvn transition names. For single-state bugs, this reports which thread is at which 𝑠𝑖𝑑\mathit{sid}, which resource counts are available, and whether
+the system is globally blocked. For SCC-based bugs, it summarises the set of control locations visited within the SCC and identifies the stuck or starved thread. This extracts the relations most relevant to repair: which thread holds which resource, which thread is waiting for which resource or condition, and which predicate triggered the classification. Λ\Lambda is a bounded window around the implicated 𝑠𝑖𝑑\mathit{sid}s, restricting the LLM’s editing scope. Γ𝑐𝑡𝑥\Gamma_{\mathit{ctx}} specifies what must survive the repair: resource names, thread structure, and business goals (Definition 3). A bug-specific suggestion such as enforce a consistent lock order or update the predicate before notification. The hint provides direction without mandating a single patch.
+Together, the witness and state summary supply both causality (how the system reached the bug) and locality (where it is stuck), which the raw marking alone cannot convey in a form the LLM can act on.
+For the running example, a signal-loss diagnostic would report that the witness reaches n2 before the worker reaches w3, that n​wcv0=0nw_{\mathit{cv0}}=0 at notification time, and that the editable slice contains n2 and n3.
+5.3. The Goal-Aware Repair Loop
+The repair loop operationalises the three-tier hierarchy introduced in Section 3.2.
+Algorithm 1 gives the pseudocode.
+Algorithm 1 Goal-Aware Generate–Verify–Repair Loop
+1:
+Specification Ψ\Psi, iteration budget KK
+2:
+Verified Cir ℐ\mathcal{I} or Failure
+3:
+ℐ←LLM.Generate​(Ψ)\mathcal{I}\leftarrow\text{LLM.Generate}(\Psi)
+⊳\triangleright CIR with goals Γ\Gamma
+4:
+for 𝑟𝑜𝑢𝑛𝑑=1\mathit{round}=1 to KK do
+5:
+ℰ←StaticCheck​(ℐ)\mathcal{E}\leftarrow\text{StaticCheck}(\mathcal{I})
+⊳\triangleright Layer-1 errors
+6:
+if ℰ≠∅\mathcal{E}\neq\emptyset then
+7:
+Apply Tier-1 or Tier-2 repair;
+continue
+8:
+end if
+9:
+𝒩←Translate​(ℐ)\mathcal{N}\leftarrow\text{Translate}(\mathcal{I})
+10:
+(ℛ,ℬ)←Analyze​(𝒩)(\mathcal{R},\,\mathcal{B})\leftarrow\text{Analyze}(\mathcal{N})
+⊳\triangleright ℛ\mathcal{R}: reachable states;
+ℬ\mathcal{B}: bug set
+11:
+if ℬ≠∅\mathcal{B}\neq\emptyset then
+12:
+b∗←SelectBug​(ℬ)b^{*}\leftarrow\text{SelectBug}(\mathcal{B})
+⊳\triangleright priority ++ shortest witness
+13:
+𝒟←BuildDiag​(b∗,ℛ,ℐ)\mathcal{D}\leftarrow\text{BuildDiag}(b^{*},\mathcal{R},\mathcal{I})
+14:
+ℐ←LLM.Repair​(ℐ,𝒟)\mathcal{I}\leftarrow\text{LLM.Repair}(\mathcal{I},\mathcal{D})
+15:
+continue
+16:
+end if
+17:
+𝒰←{γ∈Γ∣∄s∈ℛ:s⊧γ}\mathcal{U}\leftarrow\{\gamma\in\Gamma\mid\nexists\,s\in\mathcal{R}:\;s\models\gamma\}
+⊳\triangleright Def. 10
+18:
+if 𝒰=∅\mathcal{U}=\emptyset then
+return ℐ\mathcal{I}
+⊳\triangleright bug-free ∧\wedge goals reachable
+19:
+end if
+20:
+ℐ←LLM.Repair​(ℐ,BuildGoalDiag​(𝒰))\mathcal{I}\leftarrow\text{LLM.Repair}\bigl(\mathcal{I},\,\text{BuildGoalDiag}(\mathcal{U})\bigr)
+21:
+end for
+22:
+return Failure
+Analyze returns the pair (ℛ,ℬ)(\mathcal{R},\mathcal{B}) where ℛ\mathcal{R} is the set of reachable Cvn states and ℬ\mathcal{B} is the set of detected violations, each tagged with its kind κ\kappa and a raw witness. BuildDiag assembles the diagnostic tuple from a single selected bug, the reachable-state set, and the current Cir artifact. BuildGoalDiag produces an analogous diagnostic for unreachable goals, reporting the missing conditions and suggesting which operations may need to be added to a reachable path.
+When |ℬ|>1|\mathcal{B}|>1, SelectBug picks a single bug in priority order: κd​l>κs​l>κc​b>κl​l>κs​t\kappa_{dl}>\kappa_{sl}>\kappa_{cb}>\kappa_{ll}>\kappa_{st}. Within the same category the bug with the shortest witness is preferred. This deterministic policy ensures reproducibility and avoids overwhelming the LLM with multiple simultaneous targets.
+The crucial ordering invariant is that goal reachability (lines 14–17) is checked only after the bug set is empty.
+If a goal is unreachable due to a deadlock, the deadlock is repaired first; goal feedback is given only when no concurrency
+fault remains. This gives every round a single semantic target: either remove a bug, or restore missing behavior.
+⬇
+1
+=== Goal Violation (Round 3) ===
+2
+Status: No concurrency bugs detected.
+3
+4
+UNREACHABLE GOAL: G1
+5
+desc: "Both threads complete, lock released,
+6
+ready flag set"
+7
+Missing: V[ready] = true
+8
+No reachable state satisfies V[ready] = true.
+9
+Hint: Ensure that a write(ready, true)
+10
+operation exists on a reachable path.
+Figure 6. Goal-violation feedback after bug-free verification.Structured goal-violation report identifying the
+missing condition and suggesting a corrective action.
+5.4. Prompt Assembly for Logic-Driven Repair
+The diagnostic fields are assembled into a structured prompt whose design principle is that every field should either reduce
+the search space or protect intended behavior. Table 4 maps each field to its repair role; Figure 7 shows a concrete prompt skeleton for the running example.
+Table 4. Prompt template for Cir repair from a
+Cvn diagnostic.
+Prompt field
+Source
+Repair role
+Bug kind
+κ\kappa
+Selects the repair mode: deadlock, signal loss,
+channel block, livelock, and starvation require
+different structural edits.
+Witness trace
+πμ\pi_{\mu}
+Localises the causal path to the bug state in editable 𝑠𝑖𝑑\mathit{sid}s.
+Bug-state summary
+Σ𝑠𝑡𝑎𝑡𝑒\Sigma_{\mathit{state}}
+Reports where execution is stuck: current 𝑠𝑖𝑑\mathit{sid} per thread, blocked status, critical variable values.
+Held resources
+Σ𝑤𝑎𝑖𝑡\Sigma_{\mathit{wait}} (ownership)
+Lists locks, channels, or semaphores currently preventing progress.
+Waiting relations
+Σ𝑤𝑎𝑖𝑡\Sigma_{\mathit{wait}} (waits)
+Makes the dependency structure explicit: who waits for what, and which predicate triggered the diagnosis.
+Relevant Cir slice
+Λ\Lambda
+Restricts editing to a small region around implicated statements.
+Preservation constraints
+Γ𝑐𝑡𝑥\Gamma_{\mathit{ctx}}
+Prevents over-repair: resource names, thread structure, and business goals must survive.
+Repair hint
+HH
+Provides direction without forcing a single patch.
+Output contract
+Verifier schema
+Forces return of a complete revised Cir, keeping the loop machine-checkable.
+⬇
+1
+Repair task: revise the CIR locally.
+2
+3
+Bug kind: SignalLoss
+4
+Witness trace (sid): n1 -> n2 -> w1 -> w2 -> w3
+5
+6
+Bug-state summary:
+7
+notifier at sid n2 (notify_one fired)
+8
+worker not yet at sid w3
+9
+waiter_count(cv0) = 0 at notification
+10
+11
+Relevant resources:
+12
+mutex m0, condvar cv0, variable ready
+13
+14
+Relevant CIR slice:
+15
+n1: lock(m0)
+16
+n2: notify_one(cv0)
+17
+n3: write(ready, true)
+18
+19
+Preserve:
+20
+resource names, thread structure, goals
+21
+22
+Suggested direction:
+23
+update predicate before notification
+24
+25
+Output: the complete revised CIR artifact
+Figure 7. Prompt skeleton for signal-loss repair.Structured repair prompt with bug kind, witness,
+state summary, relevant slice, constraints, and hint.
+The prompt is intentionally compact. It serialises neither the full reachability graph nor every intermediate marking, but provides the minimum evidence needed for a local repair: what failed, how the execution reached the failure, what the system looks like at the failure point, and what must be preserved. This is the interface that allows a bounded formal analyser and a token-limited LLM to collaborate within a single feedback round.
+6. Evaluation
+We evaluate the pipeline through four research questions:
+•
+RQ1 (Translation correctness).
+Does the Cir-to-Cvn translation preserve concurrency semantics, and does the resulting
+Cvn correctly classify all seeded bugs?
+•
+RQ2 (Loop convergence).
+How many generation and repair rounds does each LLM tier require, and does the LLM-generated Cir
+faithfully capture the specified concurrency behavior?
+•
+RQ3 (State-space scale).
+What is the size of the translated Cvn and the reachable state space for each pattern?
+•
+RQ4 (Goal preservation).
+Does goal-reachability checking detect semantic regressions that escape both static validation and
+bug-freedom analysis?
+6.1. Test Matrix and Setup
+Six patterns contain known bugs: five are definite bugs (deadlock, signal loss) that the Cvn detects exhaustively, and one is a structural warning (livelock via partial deadlock) that the SCC analysis flags as advisory. Three patterns are bug-free baselines used to confirm the absence of false positives. Channel block remains part of the formal bug taxonomy but is not instantiated in the present evaluation. The |Γ||\Gamma| column records the number of business goals evaluated in RQ4.
+Table 5. Test matrix.
+|Γ||\Gamma|: number of business goals checked after repair.
+#
+Pattern
+Bug kind
+Key resources
+Typical repair
+|Γ||\Gamma|
+Goal summary
+1
+Two-mutex deadlock
+Deadlock
+Mutex ×\times 2
+Unify lock order
+1
+Both threads ret; mutexes released
+2
+Condvar signal loss
+SignalLoss
+Condvar, Mutex, Var
+Write pred. before notify
+2
+Worker ret; V[ready]=true
+3
+Channel + mutex DL
+Deadlock
+Channel, Mutex
+Release lock before ch. op
+1
+Both threads ret; mutex released
+4
+Three-lock circular
+Deadlock
+Mutex ×\times 3
+Global lock order
+1
+All three threads ret
+5
+Partial deadlock
+Livelock†
+Mutex ×\times 2
+Unify lock order
+2
+Thread A ret; Thread B ret
+6
+Dual condvar cross
+Deadlock
+Condvar ×\times 2, Mutex ×\times 2
+Break circular wait
+2
+Thread A ret; Thread B ret
+7
+Semaphore throttle (BL)
+(none)
+Semaphore
+—
+—
+—
+8
+CAS contention (BL)
+(none)
+Atomic
+—
+—
+—
+9
+FnSummary prop. (BL)
+(none)
+Var, Mutex
+—
+—
+—
+We evaluate five LLMs spanning three capability tiers: GPT-5 and Claude 4.6 Opus (frontier), Qwen and Gemini 3 Pro (strong), and DeepSeek-V3 (compact). All models use temperature 0 with a 4 096-token output limit. For each pattern a short natural-language concurrency specification serves as the generation input. Buggy and fixed Rust programs are maintained as reference implementations but are not input to Cir generation. At most K𝑔𝑒𝑛=5K_{\mathit{gen}}=5 generation rounds (RQ2a) and K𝑟𝑒𝑝=5K_{\mathit{rep}}=5 repair rounds (RQ2c) per model per pattern. All experiments run on Apple M4 Pro / 24 GB RAM; times are wall-clock averages over 3 runs. The front-end is evaluated on Rust synchronization idioms, but the Cir/Cvn back-end is defined over language-level synchronization semantics rather than Rust-specific syntax.
+6.2. RQ1: Translation Correctness
+RQ1 evaluates the Cir-to-Cvn translation at two levels: formal simulation properties that hold by construction of the translation rules, and empirical invariant checks on the 9-pattern matrix.
+Appendix establishes four theorems on the translation:
+(1) forward simulation: every CIR step maps to a corresponding CVN firing sequence;
+(2) backward simulation: under concrete valuation (no ⊤\top values), every CVN firing maps back to a
+valid CIR step;
+(3) deadlock correspondence: a CIR configuration is deadlocked iff its CVN encoding has no enabled
+transition; and
+(4) soundness: under concrete valuation the translation is sound and complete for deadlock, signal
+loss, and channel block; under ⊤\top-abstraction, soundness is preserved but completeness may be lost.
+The theorems assume that the implementation preserves certain structural properties.
+We verify 9 invariants on every translated Cvn:
+(1) every CIR statement produces ≥1\geq 1 transition;
+(2) every transition anchors to a CIR sid;
+(3) initial marking matches resource declarations;
+(4) resource-place count equals resource-table cardinality;
+(5) variable store contains all CIR variables and condvar
+auxiliaries with correct initial values;
+(6) no transition has an empty input-arc set;
+(7) spawn transitions produce tokens in both
+parent and child control places;
+(8) join transitions consume from the child return
+place;
+(9) condvar transitions carry correct guards and updates.
+Table 6 reports the translation size and bug-detection result for all 9 patterns. Each buggy pattern uses a fixed ground-truth CIR, making results model-independent.
+Table 6. RQ1: Translation size and detection result on
+ground-truth Cir.
+All patterns pass 9/9 structural invariants.
+#
+Pattern
+Stmts
+|P||P|
+|T||T|
+States
+Result
+1
+Two-mutex DL
+8
+10
+14
+24
+Deadlock
+2
+Condvar SL
+11
+14
+20
+42
+SignalLoss
+3
+Channel+mutex
+9
+12
+16
+36
+Deadlock
+4
+Three-lock circ.
+14
+18
+28
+218
+Deadlock
+5
+Partial DL
+10
+14
+18
+112
+Livelock†
+6
+Dual condvar
+16
+20
+32
+84
+Deadlock
+7
+Semaphore (BL)
+8
+12
+14
+64
+Verified
+8
+CAS (BL)
+6
+8
+12
+18
+Verified
+9
+FnSummary (BL)
+7
+10
+14
+32
+Verified
+†Structural warning via post-exploration SCC
+analysis (Section 5.1).
+All 5 definite bugs are detected with the correct bug kind. Deadlocks and signal losses are found during state-space exploration. Pattern 5 contains no definite bug: the system retains enabled transitions because a bystander thread continues executing while the two lock-contending threads block each other. The post-exploration SCC analysis flags this partial deadlock as a livelock structural warning—the contending threads form a non-trivial terminal SCC from which neither reaches its return place, while the bystander cycles indefinitely. The 3 baselines produce zero false positives. Combined with the 81/81 invariant checks (9 invariants ×\times 9 patterns), this confirms that the implementation satisfies the structural preconditions assumed by the formal properties.
+6.3. RQ2: Loop Convergence
+RQ2 evaluates three successive capabilities:
+(a) whether LLMs can produce a structurally valid
+Cir,
+(b) whether the generated Cir faithfully captures
+the specified concurrency behavior, and
+(c) how many repair rounds are needed to eliminate detected
+bugs.
+6.3.1. Generation Rounds
+Table 7 reports the number of iterative rounds each model requires to produce a Cir that passes all 61 static-check rules. A value of 1 means first-attempt success; ✗ indicates failure within 5 rounds.
+Table 7. RQ2a: Generation rounds to produce a valid Cir.
+#
+Pattern
+GPT-5
+Claude 4.6 Opus
+Gemini 3 Pro
+Qwen 3.5
+DeepSeek-V3
+1
+Two-mutex deadlock
+1
+1
+1
+1
+2
+2
+Condvar signal loss
+1
+1
+2
+1
+3
+3
+Channel + mutex DL
+1
+1
+1
+2
+2
+4
+Three-lock circular
+2
+1
+2
+2
+3
+5
+Partial DL
+2
+1
+2
+3
+4
+6
+Dual condvar cross
+2
+2
+3
+3
+✗
+7
+Semaphore throttle
+1
+1
+1
+1
+1
+8
+CAS contention
+1
+1
+1
+2
+2
+9
+FnSummary propagation
+1
+1
+1
+2
+2
+Success rate
+9/9
+9/9
+9/9
+9/9
+8/9
+Avg rounds (successes)
+1.3
+1.1
+1.6
+1.9
+2.4
+Frontier models generate valid Cir in 1–2 rounds for all patterns. Claude 4.6 Opus achieves the lowest average (1.1 rounds) with first-attempt success on 7 of 9 patterns. The strong models succeeds on all patterns but requires additional rounds for Pattern 6 and Pattern 5. DeepSeek-V3 fails on Pattern 6, the most structurally complex pattern requiring two condvars, two mutexes, and cross-thread notification dependencies. The most common errors are malformed condvar declarations, incorrect branch conditions, and omitted protection mappings. All are caught by the static checker and typically corrected within one additional feedback round.
+6.3.2. Bug Fidelity
+Passing the static checker ensures structural validity but does not guarantee that the generated Cir faithfully represents the specified concurrency behavior. To close this gap, we take each model’s first statically valid Cir for the 6 buggy patterns and run Cvn analysis without any repair.
+Table 8 records whether the expected bug kind is detected. For Pattern 5, the expected result is a livelock structural warning rather than a definite bug: two threads hold conflicting lock orders and can block each other indefinitely, while a bystander thread continues executing, preventing global deadlock. We treat this partial deadlock as a livelock instance for experimental purposes, since it shares the same detection mechanism and the same fundamental limitation that goal reachability cannot distinguish it from correct non-determinism.
+Table 8. RQ2b: Bug fidelity on LLM-generated Cir.
+#
+Pattern
+Expected
+GPT-5
+Claude 4.6
+Gemini 3
+Qwen 3.5
+DeepSeek-V3
+1
+Two-mutex DL
+DL
+✓
+✓
+✓
+✓
+✓
+2
+Condvar SL
+SL
+✓
+✓
+✓
+✓
+✓
+3
+Channel+mutex
+DL
+✓
+✓
+✓
+✓
+✓
+4
+Three-lock
+DL
+✓
+✓
+✓
+✓
+∅\emptyset
+5
+Partial DL
+LL†
+✓
+✓
+✓
+∅\emptyset
+∅\emptyset
+6
+Dual condvar
+DL
+✓
+✓
+✓
+✓
+—
+Fidelity rate
+6/6
+6/6
+6/6
+5/6
+3/5
+†Structural warning via SCC analysis
+(Section 5.1), not a definite bug.
+Frontier models and Gemini 3 Pro achieve 6/6 fidelity: every generated Cir exhibits exactly the expected bug kind. Two types of fidelity failures appear in the lower tiers:
+•
+∅\emptyset (no bug detected).
+The LLM generates a concurrency structure that happens to be correct, eliminating the behavior the specification was designed to contain. Qwen 3.5 on Pattern 5 generates both threads with the same lock order (m0→\tom1), eliminating the lock-ordering conflict that constitutes the partial deadlock.
+DeepSeek-V3 on Pattern 4 generates identical lock acquisition orders for threads B and C (m1→\tom2→\tom0), breaking the circular dependency required for deadlock. DeepSeek-V3 on Pattern 5 similarly unifies lock orders. These cases are harmless for the end user that means the Cir is already correct, but the repair loop is never exercised for that model-pattern pair.
+•
+--- (no valid Cir).
+DeepSeek-V3 fails to produce a statically valid Cir for Pattern 6 within 5 rounds (Table 7), so no fidelity check is possible.
+No ≠\neq case (different bug kind) arises in the current matrix: when a model does capture a bug, the bug kind always matches the specification.
+6.3.3. Repair Rounds
+RQ2c measures the repair loop on the 5 patterns that contain definite bugs (Patterns 1–4 and 6). Pattern 5 is excluded: its partial deadlock is a livelock structural warning, not a definite bug, so the ground-truth
+Cir passes the definite-bug check with ℬ=∅\mathcal{B}=\emptyset. The partial deadlock persists as an advisory finding; its implications for business goals are evaluated in RQ4.
+For each of the 5 definite-bug patterns we invoke the repair loop with each model, starting from a fixed ground-truth buggy Cir. Table 9 reports the number of rounds to produce a bug-free Cir (one that passes both the 61-rule static checker and the Cvn bug search with ℬ=∅\mathcal{B}=\emptyset). A superscript +n indicates that nn regressions were introduced during intermediate rounds and subsequently caught by the static checker.
+Table 9. RQ2c: Repair rounds to eliminate definite bugs
+(Patterns 1–4, 6).00footnotetext: Lower is better. Superscript +n: intermediate regressions.
+#
+Pattern / Bug
+GPT-5
+Claude 4.6
+Gemini 3
+Qwen 3.5
+DeepSeek-V3
+1
+Deadlock
+1
+1
+1
+1
+2
+2
+SignalLoss
+1
+1
+1
+2
+2
+3
+Deadlock
+1
+1
+2
+2
+3+1
+4
+Deadlock (3)
+2
+1
+2
+3
+4+1
+6
+Deadlock (cv)
+2
+1
+3+1
+3+1
+✗
+Bug-free rate
+5/5
+5/5
+5/5
+5/5
+4/5
+Avg rounds (successes)
+1.4
+1.0
+1.8
+2.2
+2.8
+Regressions (intermediate)
+0
+0
+1
+1
+2
+Frontier models repair all 5 definite bugs with an average of 1.0–1.4 rounds and zero regressions. Claude 4.6 Opus achieves single-round repair on all 5 patterns; GPT-5 requires two rounds on Patterns 4 and 6,where coordinated edits across multiple threads are needed. The strong models succeeds on all
+patterns but introduces occasional regressions. Gemini 3 Pro introduces a transient missing-drop
+error while resolving the dual-condvar cross-wait (Pattern 6); the regression is caught by the Layer-1 static
+checker and corrected in the next round. Qwen 3.5 introduces a misplaced notify while fixing the dual-condvar deadlock (Pattern 6), likewise caught and corrected within one additional round.
+DeepSeek-V3 fails on Pattern 6. It cannot disentangle the cross-notification dependency between the two condvars, cycling through structurally invalid attempts until the round budget is exhausted. This correlates with the model’s lower capacity for multi-step reasoning about interleaved threads.
+Across the 25 model–pattern repair tasks (5 models ×\times 5 patterns), regressions occur in 4 intermediate rounds. All are structural errors (missing drop, broken branch target, misplaced notify) caught by the Layer-1 static checker and corrected in the subsequent round. No regression survives to the final output.
+6.4. RQ3: State-Space Scale
+Table 6 (Section 6.2) reports the Cvn size (|P||P|, |T||T|) and reachable state count for each pattern. The largest pattern (Pattern 4, three-lock circular with 3 threads and 3 mutexes) produces 218 reachable states and completes analysis in 18 ms. All patterns remain under 250 states.
+State-space size is governed by three factors: (1) the number of concurrent threads kk, (2) the lock-nesting depth dd, and (3) the variable-domain cardinality |D||D|. The current matrix uses k≤3k\leq 3, d≤2d\leq 2,
+|D|≤3|D|\leq 3, yielding tractable spaces. Moving to k=4k=4 or richer data domains will increase the state space exponentially; partial-order reduction and symmetry breaking are planned future extensions. Across the 9 patterns the average ratio is 1.5 places and 2.2 transitions per CIR statement. Condvar-related patterns exhibit the highest ratio (Pattern 6: 1.25 |P||P|/stmt, 2.0 |T||T|/stmt) due to the wait/notify decomposition into 4 transitions per wait site (Section ). Full state-space exploration completes in ≤20\leq 20 ms for all patterns, including deadlock detection, signal-loss checking, and SCC-based starvation analysis. Goal-reachability checking (RQ4) adds <0.5<0.5 ms by scanning the already-computed reachable set.
+6.5. RQ4: Goal Preservation
+A Cir that passes the definite-bug check is not necessarily correct. Two distinct failure modes remain invisible to the bug detectors: (1) repair-induced regression and (2) livelock obstruction.
+Goal-reachability checking (Algorithm 1, Lines 11–17) is designed to detect the first failure mode. We also examine whether it can surface the second.
+Goals are part of the CIR specification: each goal specifies a target marking which threads must reach their return places, which resources must be released and optionally a target variable value. The test matrix lists 9 goals across the 6 buggy patterns. The check is performed only on bug-free artifacts; patterns where a model failed to achieve bug-freedom are excluded. Table 10 reports goal reachability. ✓ means all goals are reachable without additional repair. A fraction k/nk/n indicates that kk of nn goals are initially reachable. →\to✓ means the violation was resolved after goal-violation feedback.
+Table 10. RQ4: Goal reachability on bug-free Cir.
+#
+Pattern
+GPT-5
+Claude 4.6
+Gemini 3
+Qwen 3.5
+DeepSeek-V3
+1
+Two-mutex DL
+✓
+✓
+✓
+✓
+✓
+2
+Condvar SL
+✓
+✓
+✓
+✓
+✓
+3
+Channel+mutex
+✓
+✓
+✓
+✓
+0/1 (G1) →\to✓
+4
+Three-lock circ.
+✓
+✓
+✓
+✓
+✓
+6
+Dual condvar
+✓
+✓
+✓
+1/2 (G2) →\to✓
+—
+5
+Partial DL†
+✓
+✓
+✓
+✓
+✓
+Goals (initial)
+9/9
+9/9
+9/9
+8/9
+6/7
+Goals (after feedback)
+9/9
+9/9
+9/9
+9/9
+7/7
+Extra rounds for goals
+0
+0
+0
+1
+1
+Frontier models and Gemini 3 Pro preserve all business goals on first bug-free repair; no goal-violation feedback is needed. Two repair-induced regressions are detected on patterns where the definite bug was successfully eliminated:
+•
+DeepSeek-V3, Pattern 3.
+The repair reorders the channel operations such that the sender’s ch_send is guarded by a lock
+that the receiver already holds, making both threads block before either reaches its return place. Goal G1 is reported as unreachable. After feedback, DeepSeek-V3 moves the lock acquisition after the channel send and passes all checks in one additional round.
+•
+Qwen 3.5, Pattern 6.
+The repair breaks the notification path for Thread B by moving the notify for cv1 into a
+branch that is unreachable when the predicate variable is true. The bug-free Cvn has no reachable state where 𝑐𝑝⁡(B,𝑟𝑒𝑡)>0\mathit{cp}(\text{B},\mathit{ret})>0. Goal G2 is reported as unreachable. One additional round with goal-violation feedback produces a correct repair.
+Both regressions pass all 61 static-check rules and all definite-bug detectors. They are bug-free and structurally valid. The goal-reachability check is the only mechanism that detects them. Without it, these repairs would be accepted as verified despite silently dropping essential program behavior.
+End-to-end summary.
+Table 11 consolidates the results across all RQs. The acceptance criterion for definite-bug patterns is the conjunction of three conditions: Layer-1 static validity, Layer-2 bug-freedom, and goal reachability. Pattern 5 is accepted (no definite bug, goals reachable) with an advisory livelock warning.
+Table 11. End-to-end summary.00footnotetext: Accepted = static valid ∧\wedge bug-free ∧\wedge goals reachable.
+GPT-5
+Claude 4.6
+Gemini 3
+Qwen 3.5
+DS-V3
+Bug-free (5 def.)
+5/5
+5/5
+5/5
+5/5
+4/5
+Goals (initial)
+9/9
+9/9
+9/9
+8/9
+6/7
+Goals (final)
+9/9
+9/9
+9/9
+9/9
+7/7
+Total rounds
+7
+5
+9
+12
+12
+Accepted
+6/6
+6/6
+6/6
+6/6
+5/6
+Frontier and strong models achieve 6/6 acceptance; the gap lies in total rounds consumed (5–7 for frontier, 9–12 for strong). DeepSeek-V3 accepts 5 of 6 patterns; the sole failure is Pattern 6, where the definite-bug repair loop is exhausted. Pattern 5 is accepted by all models because no definite bug exists and both goals are reachable; the livelock warning is reported but does not block acceptance. The pipeline never accepts a Cir that contains a definite bug or violates a business goal.
+6.6. Threats
+The architecture places its trust boundary at the Cir level. The LLM generates both the Cir and the source code from the same specification. Establishing a formal correspondence between arbitrary source
+code and its Cir would require solving the alias problem that Cir was designed to circumvent, and is therefore infeasible in general.
+We adopt two pragmatic mitigations. First, the generated source code must pass cargo check, which enforces ownership, lifetime, and type safety for all synchronization primitives. Second, the Cir captures only the concurrency skeleton, which consists of patterns well represented in LLM training data. Although the present prototype is evaluated on Rust, the trust-boundary issue is not specific to Rust; it arises for any front-end that maps source code into Cir. Reconstructing CIR or Petri nets from source code using static analysis can bridge this gap and remains a direction for future work.
+7. Related Work
+Research on concurrency bug detection spans static analysis, dynamic exploration, formal modeling, and, more recently, LLM-assisted software engineering (Engler and Ashcraft, 2003; Godefroid, 1997; Murata, 1989; Fan et al., 2023; Xia et al., 2023). Our work is related to all four lines, but it occupies a different point in the design space: the LLM is used to recover synchronization intent and construct an alias-free model, while the formal engine is used for exhaustive reasoning over interleavings.
+Static analysis for concurrency.
+A lot of work detects deadlocks, races, atomicity violations, and protocol misuse directly from source code using lock-order analysis, pointer analysis, abstract interpretation, effect systems, ownership disciplines, and language-specific type systems (Engler and Ashcraft, 2003; Flanagan and Freund, 2000; Flanagan and Qadeer, 2003; Boyapati et al., 2002; Pratikakis et al., 2006; Naik et al., 2006). The strength of these approaches is that they reason about the program as written. Their weakness is that they must infer, or be told, which references correspond to the same shared resource and which lock protects which state. In realistic programs, this requires reasoning through heap allocation, aliasing, container indirection, closure capture, and interprocedural flow. Our work does not claim to solve source-level alias analysis. Instead, it moves the resource-identification step out of the formal back-end and into an LLM-generated intermediate model in which shared-resource identity is explicit.
+Dynamic analysis and systematic schedule exploration.
+Dynamic race detectors, interpreters, and schedule explorers detect concurrency bugs by observing concrete executions or by exploring bounded schedules of executable code (Godefroid, 1997; Flanagan and Godefroid, 2005; Musuvathi and Qadeer, 2008; Musuvathi et al., 2008; Burckhardt et al., 2010). Such tools are often highly precise for the executions they observe, and some can systematically enumerate schedules within a bounded test harness. However, they still depend on executable code and cannot in general guarantee the absence of bugs outside the explored schedules or harness bounds. Our approach is complementary rather than competitive: instead of exploring executions of the original program, we explore executions of a compact concurrency model generated from the program’s synchronization structure.
+Model checking and Petri-net-based verification.
+Formal verification of concurrent systems has long relied on explicit state model checking, SAT/SMT-based encodings, process algebras, and Petri nets (Holzmann, 1997; Murata, 1989; Esparza and Heljanko, 2008).
+Petri nets are particularly attractive for concurrency because causality, resource contention, and parallelism are represented directly in the net structure. Classical colored Petri nets extend this expressiveness with token-carried data, but at the cost of more complex state representation and binding semantics (Jensen et al., 2007). Prior Petri-net-based approaches often either require manual modeling or rely on language-specific extraction pipelines from source code or traces (Esparza et al., 2002; Ball and Rajamani, 2002; Henzinger et al., 2003). Our Cvn differs in its intended use: resource identity is resolved before verification by Cir’s global naming, and data-dependent control is handled by a finite global store with three-valued guards rather than by colored tokens. This design trades generality for a simpler and more analyzable model targeted to bounded concurrency patterns.
+LLMs for program analysis, verification, and repair.
+Recent work has explored LLMs for bug finding, invariant inference, test generation, static-analysis assistance, and automated program repair (Chen et al., 2021; Fan et al., 2023; Xia et al., 2023; Bouzenia et al., 2025; Li et al., 2025). These methods exploit the fact that LLMs can recognize common implementation idioms and infer likely developer intent from code or natural-language specifications. However, LLMs alone do not provide exhaustive reasoning about the combinatorial space of thread interleavings. Our work uses LLMs in a narrower and more structured way: the LLM generates an alias-free concurrency model and later consumes structured counterexamples to repair that model, while exhaustive bug discovery remains the responsibility of the formal verification engine. In this sense, the contribution is not an LLM-only verifier, but a generate–verify–repair loop in which the LLM and the formal back-end play sharply separated roles.
+Another closely related line of work extracts formal models, such as automata, state machines, and Petri nets, from source code, binaries, or execution traces. It then studies translation validation or conformance between code and model (Ball and Rajamani, 2002; Henzinger et al., 2003; Beyer and Keremoglu, 2011; Necula, 2000). This line is highly relevant to the trust boundary of our architecture. In the present work, that boundary is placed at the Cir level: we verify the generated model rather than prove general source-to-Cir equivalence. Source-level extraction and conformance checking are therefore complementary to our method rather than substitutes for it.
+8. Conclusion
+This paper shifts concurrency verification from source-level alias recovery to a closed loop over Cir, an explicit, alias-free concurrency model constructed by LLMs from natural-language specifications. A deterministic translation to Cvn provides sound and complete detection of deadlock and signal loss under concrete valuation; livelock is flagged as an advisory
+structural warning with a contrapositive impossibility guarantee. Goal-reachability checking catches semantic regressions that escape all other verification layers. Across 9 patterns and 5 LLMs, no Cir containing a definite bug or violating a business goal is ever accepted.
+References
+Ball and Rajamani (2002)
+T. Ball and S. K. Rajamani
+The SLAM project: debugging system software via static analysis.
+In Proceedings of the 29th ACM SIGPLAN-SIGACT Symposium on Principles of Programming Languages (POPL),
+pp. 1–3.
+External Links: Link
+Cited by: §7,
+§7.
+Beyer and Keremoglu (2011)
+D. Beyer and M. E. Keremoglu
+CPAchecker: a tool for configurable software verification.
+In Computer Aided Verification, 23rd International Conference (CAV),
+pp. 184–190.
+External Links: Link
+Cited by: §7.
+Bouzenia et al. (2025)
+I. Bouzenia, P. T. Devanbu, and M. Pradel
+RepairAgent: an autonomous, LLM-based agent for program repair.
+In Proceedings of the 47th IEEE/ACM International Conference on Software Engineering (ICSE),
+pp. 2188–2200.
+External Links: Link
+Cited by: §1,
+§7.
+Boyapati et al. (2002)
+C. Boyapati, R. Lee, and M. C. Rinard
+Ownership types for safe programming: preventing data races and deadlocks.
+In Proceedings of the 17th ACM SIGPLAN Conference on Object-Oriented Programming, Systems, Languages, and Applications (OOPSLA),
+pp. 211–230.
+External Links: Link
+Cited by: §1,
+§1,
+§7.
+Burckhardt et al. (2010)
+S. Burckhardt, P. Kothari, M. Musuvathi, and S. Nagarakatte
+A randomized scheduler with probabilistic guarantees of finding bugs.
+In Proceedings of the 15th International Conference on Architectural Support for Programming Languages and Operating Systems (ASPLOS),
+pp. 167–178.
+External Links: Link
+Cited by: §1,
+§7.
+Chen et al. (2021)
+M. Chen, J. Tworek, H. Jun, et al.
+Evaluating large language models trained on code.
+CoRR abs/2107.03374.
+External Links: Link
+Cited by: §1,
+§7.
+Clarke et al. (2000)
+E. M. Clarke, O. Grumberg, S. Jha, Y. Lu, and H. Veith
+Counterexample-guided abstraction refinement.
+In Computer Aided Verification, 12th International Conference (CAV),
+pp. 154–169.
+External Links: Document,
+Link
+Cited by: §1.
+Engler and Ashcraft (2003)
+D. R. Engler and K. Ashcraft
+RacerX: effective, static detection of race conditions and deadlocks.
+In Proceedings of the 19th ACM Symposium on Operating Systems Principles (SOSP),
+pp. 237–252.
+External Links: Document,
+Link
+Cited by: §1,
+§7,
+§7.
+Esparza and Heljanko (2008)
+J. Esparza and K. Heljanko
+Unfoldings - a partial-order approach to model checking.
+Monographs in Theoretical Computer Science. An EATCS Series, Springer.
+External Links: ISBN 978-3-540-77425-9,
+Link
+Cited by: §1,
+§5,
+§7.
+Esparza et al. (2002)
+J. Esparza, S. Römer, and W. Vogler
+An improvement of McMillan’s unfolding algorithm.
+Formal Methods in System Design 20 (3), pp. 285–310.
+External Links: Link
+Cited by: §7.
+Fan et al. (2023)
+Z. Fan, X. Gao, M. Mirchev, A. Roychoudhury, and S. H. Tan
+Automated repair of programs from large language models.
+In Proceedings of the 45th IEEE/ACM International Conference on Software Engineering (ICSE),
+pp. 1469–1481.
+External Links: Document,
+Link
+Cited by: §1,
+§1,
+§7,
+§7.
+Flanagan and Freund (2000)
+C. Flanagan and S. N. Freund
+Type-based race detection for Java.
+In Proceedings of the ACM SIGPLAN 2000 Conference on Programming Language Design and Implementation (PLDI),
+pp. 219–232.
+External Links: Link
+Cited by: §1,
+§7.
+Flanagan and Godefroid (2005)
+C. Flanagan and P. Godefroid
+Dynamic partial-order reduction for model checking software.
+In Proceedings of the 32nd ACM SIGPLAN-SIGACT Symposium on Principles of Programming Languages (POPL),
+pp. 110–121.
+External Links: Link
+Cited by: §1,
+§5,
+§7.
+Flanagan and Qadeer (2003)
+C. Flanagan and S. Qadeer
+A type and effect system for atomicity.
+In Proceedings of the ACM SIGPLAN 2003 Conference on Programming Language Design and Implementation (PLDI),
+pp. 338–349.
+External Links: Link
+Cited by: §1,
+§7.
+Godefroid (1997)
+P. Godefroid
+VeriSoft: a tool for the automatic analysis of concurrent reactive software.
+In Computer Aided Verification, 9th International Conference (CAV),
+pp. 476–479.
+External Links: Link
+Cited by: §1,
+§1,
+§5,
+§7,
+§7.
+Henzinger et al. (2003)
+T. A. Henzinger, R. Jhala, R. Majumdar, and G. Sutre
+Software verification with BLAST.
+In Model Checking Software, 10th International SPIN Workshop,
+pp. 235–239.
+External Links: Link
+Cited by: §7,
+§7.
+Holzmann (1997)
+G. J. Holzmann
+The model checker SPIN.
+IEEE Transactions on Software Engineering 23 (5), pp. 279–295.
+External Links: Document,
+Link
+Cited by: §1,
+§7.
+Jensen et al. (2007)
+K. Jensen, L. M. Kristensen, and L. Wells
+Coloured petri nets and CPN tools for modelling and validation of concurrent systems.
+International Journal on Software Tools for Technology Transfer 9 (3–4), pp. 213–254.
+External Links: Link
+Cited by: §1,
+§7.
+Li et al. (2025)
+Y. Li, M. Cai, J. Chen, Y. Xu, L. Huang, and J. Li
+Context-aware prompting for LLM-based program repair.
+Automated Software Engineering 32 (2), pp. 42.
+External Links: Document,
+Link
+Cited by: §7.
+Murata (1989)
+T. Murata
+Petri nets: properties, analysis and applications.
+Proceedings of the IEEE 77 (4), pp. 541–580.
+External Links: Link
+Cited by: §1,
+§7,
+§7.
+Musuvathi et al. (2008)
+M. Musuvathi, S. Qadeer, T. Ball, G. Basler, P. A. Nainar, and I. Neamtiu
+Finding and reproducing heisenbugs in concurrent programs.
+In Proceedings of the 8th USENIX Symposium on Operating Systems Design and Implementation (OSDI),
+pp. 267–280.
+External Links: Link
+Cited by: §1,
+§7.
+Musuvathi and Qadeer (2008)
+M. Musuvathi and S. Qadeer
+Fair stateless model checking.
+In Proceedings of the ACM SIGPLAN 2008 Conference on Programming Language Design and Implementation (PLDI),
+pp. 362–371.
+External Links: Link
+Cited by: §1,
+§5,
+§7.
+Naik et al. (2006)
+M. Naik, A. Aiken, and J. Whaley
+Effective static race detection for Java.
+In Proceedings of the ACM SIGPLAN 2006 Conference on Programming Language Design and Implementation (PLDI),
+pp. 308–319.
+External Links: Document,
+Link
+Cited by: §1,
+§1,
+§7.
+Necula (2000)
+G. C. Necula
+Translation validation for an optimizing compiler.
+In Proceedings of the ACM SIGPLAN 2000 Conference on Programming Language Design and Implementation (PLDI),
+pp. 83–94.
+External Links: Link
+Cited by: §7.
+Pratikakis et al. (2006)
+P. Pratikakis, J. S. Foster, and M. W. Hicks
+LOCKSMITH: context-sensitive correlation analysis for race detection.
+In Proceedings of the ACM SIGPLAN 2006 Conference on Programming Language Design and Implementation (PLDI),
+pp. 320–331.
+External Links: Link
+Cited by: §1,
+§7.
+Xia et al. (2023)
+C. S. Xia, Y. Wei, and L. Zhang
+Automated program repair in the era of large pre-trained language models.
+In Proceedings of the 45th IEEE/ACM International Conference on Software Engineering (ICSE),
+pp. 1482–1494.
+External Links: Document,
+Link
+Cited by: §1,
+§7,
+§7.
+Appendix A Reference Tables
+Table 12. Cir error categories (61 rules total).
+Code
+Category
+Examples
+E0xx
+Structural
+Missing fields, invalid format
+E1xx
+Name resolution
+Undefined resource, duplicate name
+E2xx
+Type
+Non-boolean branch condition
+E3xx
+Resource compat.
+lock on non-lock, unprotected access
+E4xx
+Concurrency
+spawn without join
+E5xx
+Lock safety
+Missing drop, double lock
+E6xx
+Control flow
+Unreachable statement, missing return
+E7xx
+Protection map
+Atomic in protection map
+E8xx
+Function summary
+Summary conflicts with body
+Table 13. Translation from Cir to Cvn.
+Notation: 𝑐𝑝⁡(f,s)\mathit{cp}(f,s) = control place;
+𝑟𝑝⁡(r)\mathit{rp}(r) = resource place;
+𝑤𝑝⁡(s)\mathit{wp}(s), 𝑟𝑎⁡(s)\mathit{ra}(s) = wait / reacquire places.
+“→\to” separates inputs from outputs.
+Operations not listed (read, load,
+nop, call with body,
+spawn_async, await)
+generate a single Sequential transition
+𝑐𝑝⁡(f,𝑠𝑖𝑑)→𝑐𝑝⁡(f,𝑠𝑖𝑑′)\mathit{cp}(f,\mathit{sid})\to\mathit{cp}(f,\mathit{sid}^{\prime})
+with no resource interaction.
+Cir Statement
+Generated Cvn Transitions
+Mutex / Semaphore
+(𝑠𝑖𝑑,lock​(m),next​(𝑠𝑖𝑑′))(\mathit{sid},\textsf{lock}(m),\textsf{next}(\mathit{sid}^{\prime}))
+(𝑠𝑖𝑑,acquire​(s),next​(𝑠𝑖𝑑′))(\mathit{sid},\textsf{acquire}(s),\textsf{next}(\mathit{sid}^{\prime}))
+One transition [Lock / Acquire]:
+𝑐𝑝⁡(f,𝑠𝑖𝑑),𝑟𝑝⁡(r)→𝑐𝑝⁡(f,𝑠𝑖𝑑′)\mathit{cp}(f,\mathit{sid}),\;\mathit{rp}(r)\;\to\;\mathit{cp}(f,\mathit{sid}^{\prime}).
+(𝑠𝑖𝑑,drop​(m),next​(𝑠𝑖𝑑′))(\mathit{sid},\textsf{drop}(m),\textsf{next}(\mathit{sid}^{\prime}))
+(𝑠𝑖𝑑,release​(s),next​(𝑠𝑖𝑑′))(\mathit{sid},\textsf{release}(s),\textsf{next}(\mathit{sid}^{\prime}))
+One transition [Unlock / Release]:
+𝑐𝑝⁡(f,𝑠𝑖𝑑)→𝑐𝑝⁡(f,𝑠𝑖𝑑′),𝑟𝑝⁡(r)\mathit{cp}(f,\mathit{sid})\;\to\;\mathit{cp}(f,\mathit{sid}^{\prime}),\;\mathit{rp}(r).
+RwLock
+(NN = concurrent entity count)
+(𝑠𝑖𝑑,read_lock​(r),…)(\mathit{sid},\textsf{read\_lock}(r),\dots)
+One transition [ReadLock]:
+𝑐𝑝⁡(f,𝑠𝑖𝑑),𝑟𝑝⁡(r)​ (wt. 1)→𝑐𝑝⁡(f,𝑠𝑖𝑑′)\mathit{cp}(f,\mathit{sid}),\;\mathit{rp}(r)\text{ (wt.\,1)}\;\to\;\mathit{cp}(f,\mathit{sid}^{\prime}).
+(𝑠𝑖𝑑,write_lock​(r),…)(\mathit{sid},\textsf{write\_lock}(r),\dots)
+One transition [WriteLock]:
+𝑐𝑝⁡(f,𝑠𝑖𝑑),𝑟𝑝⁡(r)​ (wt. ​N​)→𝑐𝑝⁡(f,𝑠𝑖𝑑′)\mathit{cp}(f,\mathit{sid}),\;\mathit{rp}(r)\text{ (wt.\,}N\text{)}\;\to\;\mathit{cp}(f,\mathit{sid}^{\prime}).
+(𝑠𝑖𝑑,drop​(r),…)(\mathit{sid},\textsf{drop}(r),\dots)
+One transition [ReadUnlock / WriteUnlock]:
+𝑐𝑝⁡(f,𝑠𝑖𝑑)→𝑐𝑝⁡(f,𝑠𝑖𝑑′),𝑟𝑝⁡(r)​ (wt. ​w​)\mathit{cp}(f,\mathit{sid})\;\to\;\mathit{cp}(f,\mathit{sid}^{\prime}),\;\mathit{rp}(r)\text{ (wt.\,}w\text{)},
+where w=1w=1 after read_lock,
+w=Nw=N after write_lock.
+Channel
+(𝑠𝑖𝑑,send​(c),…)(\mathit{sid},\textsf{send}(c),\dots)
+One transition [Send]:
+𝑐𝑝⁡(f,𝑠𝑖𝑑)→𝑐𝑝⁡(f,𝑠𝑖𝑑′),𝑟𝑝⁡(c)\mathit{cp}(f,\mathit{sid})\;\to\;\mathit{cp}(f,\mathit{sid}^{\prime}),\;\mathit{rp}(c).
+(𝑠𝑖𝑑,recv​(c),…)(\mathit{sid},\textsf{recv}(c),\dots)
+One transition [Recv]:
+𝑐𝑝⁡(f,𝑠𝑖𝑑),𝑟𝑝⁡(c)→𝑐𝑝⁡(f,𝑠𝑖𝑑′)\mathit{cp}(f,\mathit{sid}),\;\mathit{rp}(c)\;\to\;\mathit{cp}(f,\mathit{sid}^{\prime}).
+Variable & Atomic
+(𝑠𝑖𝑑,write​(x,e),…)(\mathit{sid},\textsf{write}(x,e),\dots)
+(𝑠𝑖𝑑,store​(x,e),…)(\mathit{sid},\textsf{store}(x,e),\dots)
+One transition [VarWrite / AtomicStore]:
+𝑐𝑝⁡(f,𝑠𝑖𝑑)→𝑐𝑝⁡(f,𝑠𝑖𝑑′)\mathit{cp}(f,\mathit{sid})\;\to\;\mathit{cp}(f,\mathit{sid}^{\prime})
+with U:x:=eU:\;x:=e.
+(𝑠𝑖𝑑,cas​(x,𝑒𝑥𝑝,𝑛𝑒𝑤),branch​(_,st,sf))(\mathit{sid},\textsf{cas}(x,\mathit{exp},\mathit{new}),\textsf{branch}(\_,s_{t},s_{f}))
+CasSuccess:
+𝑐𝑝⁡(f,𝑠𝑖𝑑)\mathit{cp}(f,\mathit{sid})
+with guard x=𝑒𝑥𝑝x=\mathit{exp}
+→𝑐𝑝⁡(f,st)\;\to\;\mathit{cp}(f,s_{t})
+with U:x:=𝑛𝑒𝑤U:\;x:=\mathit{new}.
+CasFailure:
+𝑐𝑝⁡(f,𝑠𝑖𝑑)\mathit{cp}(f,\mathit{sid})
+with guard x≠𝑒𝑥𝑝x\neq\mathit{exp}
+→𝑐𝑝⁡(f,sf)\;\to\;\mathit{cp}(f,s_{f}).
+Condvar
+(mutex mm, counter n​w𝑐𝑣nw_{\mathit{cv}},
+per-site flag n​asna_{s},
+signal place 𝑟𝑝⁡(𝑐𝑣)\mathit{rp}(\mathit{cv}))
+(𝑠𝑖𝑑,wait​(𝑐𝑣,m),next​(𝑠𝑖𝑑′))(\mathit{sid},\textsf{wait}(\mathit{cv},m),\textsf{next}(\mathit{sid}^{\prime}))
+WaitEnter:
+𝑐𝑝⁡(f,𝑠𝑖𝑑)→𝑤𝑝⁡(𝑠𝑖𝑑),𝑟𝑝⁡(m)\mathit{cp}(f,\mathit{sid})\;\to\;\mathit{wp}(\mathit{sid}),\;\mathit{rp}(m)
+with U:n​w𝑐𝑣:=n​w𝑐𝑣+1,n​a𝑠𝑖𝑑:=𝖿𝖺𝗅𝗌𝖾U:\;nw_{\mathit{cv}}\!:=\!nw_{\mathit{cv}}+1,\;na_{\mathit{sid}}\!:=\!\mathsf{false}.
+Wake1:
+𝑤𝑝⁡(𝑠𝑖𝑑),𝑟𝑝⁡(𝑐𝑣)→𝑟𝑎⁡(𝑠𝑖𝑑)\mathit{wp}(\mathit{sid}),\;\mathit{rp}(\mathit{cv})\;\to\;\mathit{ra}(\mathit{sid})
+with U:n​w𝑐𝑣:=n​w𝑐𝑣−1U:\;nw_{\mathit{cv}}\!:=\!nw_{\mathit{cv}}-1.
+WakeA:
+𝑤𝑝⁡(𝑠𝑖𝑑)\mathit{wp}(\mathit{sid})
+with guard n​a𝑠𝑖𝑑=𝗍𝗋𝗎𝖾na_{\mathit{sid}}=\mathsf{true}
+→𝑟𝑎⁡(𝑠𝑖𝑑)\;\to\;\mathit{ra}(\mathit{sid})
+with U:n​w𝑐𝑣:=n​w𝑐𝑣−1,n​a𝑠𝑖𝑑:=𝖿𝖺𝗅𝗌𝖾U:\;nw_{\mathit{cv}}\!:=\!nw_{\mathit{cv}}-1,\;na_{\mathit{sid}}\!:=\!\mathsf{false}.
+Reacquire:
+𝑟𝑎⁡(𝑠𝑖𝑑),𝑟𝑝⁡(m)→𝑐𝑝⁡(f,𝑠𝑖𝑑′)\mathit{ra}(\mathit{sid}),\;\mathit{rp}(m)\;\to\;\mathit{cp}(f,\mathit{sid}^{\prime}).
+(𝑠𝑖𝑑,notify_one​(𝑐𝑣),…)(\mathit{sid},\textsf{notify\_one}(\mathit{cv}),\dots)
+NotifySuccess:
+𝑐𝑝⁡(f,𝑠𝑖𝑑)\mathit{cp}(f,\mathit{sid})
+with guard n​w𝑐𝑣>0nw_{\mathit{cv}}>0
+→𝑐𝑝⁡(f,𝑠𝑖𝑑′),𝑟𝑝⁡(𝑐𝑣)\;\to\;\mathit{cp}(f,\mathit{sid}^{\prime}),\;\mathit{rp}(\mathit{cv}).
+NotifyLost:
+𝑐𝑝⁡(f,𝑠𝑖𝑑)\mathit{cp}(f,\mathit{sid})
+with guard n​w𝑐𝑣=0nw_{\mathit{cv}}=0
+→𝑐𝑝⁡(f,𝑠𝑖𝑑′)\;\to\;\mathit{cp}(f,\mathit{sid}^{\prime}).
+(𝑠𝑖𝑑,notify_all​(𝑐𝑣),…)(\mathit{sid},\textsf{notify\_all}(\mathit{cv}),\dots)
+NotifyAllSuccess:
+𝑐𝑝⁡(f,𝑠𝑖𝑑)\mathit{cp}(f,\mathit{sid})
+with guard n​w𝑐𝑣>0nw_{\mathit{cv}}>0
+→𝑐𝑝⁡(f,𝑠𝑖𝑑′)\;\to\;\mathit{cp}(f,\mathit{sid}^{\prime})
+with U:n​awi:=𝗍𝗋𝗎𝖾U:\;na_{w_{i}}\!:=\!\mathsf{true}
+for every wait site wiw_{i} of 𝑐𝑣\mathit{cv}.
+NotifyAllLost:
+𝑐𝑝⁡(f,𝑠𝑖𝑑)\mathit{cp}(f,\mathit{sid})
+with guard n​w𝑐𝑣=0nw_{\mathit{cv}}=0
+→𝑐𝑝⁡(f,𝑠𝑖𝑑′)\;\to\;\mathit{cp}(f,\mathit{sid}^{\prime}).
+Control Flow
+(𝑠𝑖𝑑,𝑜𝑝,branch​(β,st,sf))(\mathit{sid},\mathit{op},\textsf{branch}(\beta,s_{t},s_{f}))
+BranchTrue:
+𝑐𝑝⁡(f,𝑠𝑖𝑑)\mathit{cp}(f,\mathit{sid})
+with guard β\beta
+→𝑐𝑝⁡(f,st)\;\to\;\mathit{cp}(f,s_{t}).
+BranchFalse:
+𝑐𝑝⁡(f,𝑠𝑖𝑑)\mathit{cp}(f,\mathit{sid})
+with guard ¬β\neg\beta
+→𝑐𝑝⁡(f,sf)\;\to\;\mathit{cp}(f,s_{f}).
+(𝑠𝑖𝑑,𝑜𝑝,switch​(x,⟨vi→si⟩,sd))(\mathit{sid},\mathit{op},\textsf{switch}(x,\langle v_{i}\!\to\!s_{i}\rangle,s_{d}))
+One transition per arm:
+𝑐𝑝⁡(f,𝑠𝑖𝑑)\mathit{cp}(f,\mathit{sid})
+with guard x=vix=v_{i}
+→𝑐𝑝⁡(f,si)\;\to\;\mathit{cp}(f,s_{i}).
+Default:
+𝑐𝑝⁡(f,𝑠𝑖𝑑)\mathit{cp}(f,\mathit{sid})
+with guard ⋀i(x≠vi)\bigwedge_{i}(x\neq v_{i})
+→𝑐𝑝⁡(f,sd)\;\to\;\mathit{cp}(f,s_{d}).
+Concurrency
+(𝑠𝑖𝑑,spawn​(g),next​(𝑠𝑖𝑑′))(\mathit{sid},\textsf{spawn}(g),\textsf{next}(\mathit{sid}^{\prime}))
+One transition [Spawn]:
+𝑐𝑝⁡(f,𝑠𝑖𝑑)→𝑐𝑝⁡(f,𝑠𝑖𝑑′),𝑐𝑝⁡(g,𝑠𝑖𝑑g0)\mathit{cp}(f,\mathit{sid})\;\to\;\mathit{cp}(f,\mathit{sid}^{\prime}),\;\mathit{cp}(g,\mathit{sid}^{0}_{g}).
+(𝑠𝑖𝑑,join​(g),next​(𝑠𝑖𝑑′))(\mathit{sid},\textsf{join}(g),\textsf{next}(\mathit{sid}^{\prime}))
+One transition [Join]:
+𝑐𝑝⁡(f,𝑠𝑖𝑑),𝑐𝑝⁡(g,𝑟𝑒𝑡)→𝑐𝑝⁡(f,𝑠𝑖𝑑′)\mathit{cp}(f,\mathit{sid}),\;\mathit{cp}(g,\mathit{ret})\;\to\;\mathit{cp}(f,\mathit{sid}^{\prime}).
+(𝑠𝑖𝑑,_,return)(\mathit{sid},\_,\textsf{return})
+One transition [Return]:
+𝑐𝑝⁡(f,𝑠𝑖𝑑)→𝑐𝑝⁡(f,𝑟𝑒𝑡)\mathit{cp}(f,\mathit{sid})\;\to\;\mathit{cp}(f,\mathit{ret}).
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

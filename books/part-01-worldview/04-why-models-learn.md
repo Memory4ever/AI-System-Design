@@ -58,6 +58,9 @@ Will the solution work beyond the training samples?
 
 从预训练参数开始优化，还多了一个局部条件：不是因为起点已经会很多任务，就可以把训练损失持续下降当作泛化收益。一个受限理论分支在预训练点附近线性化网络，用该点的 Neural Tangent Kernel（NTK）描述参数微小变化能产生哪些函数变化，再以目标数据上的经验核谱和噪声决定早停的 bias–variance 取舍。[Transformer 微调的早停分析](https://arxiv.org/html/2602.13942v1)允许微调从非随机的预训练点开始，但仍要求预训练始于 Gaussian 随机初始化、参数留在可控邻域、宽度充分大、稳定核满秩，以及目标差额属于对应 RKHS 等条件；这不是任意现代模型都会停留在 lazy regime 的证明。谱估计、Jacobian 计算与验证集均有成本，理论停点还依赖不可直接获得的目标差额范数和噪声，实际实验因此用 hold-out 选择停点。GPT-Neo-1.3B 上的有限任务与三次随机运行只提供局部支持，不能以一个经验谱斜率替代跨任务质量验收；核明显漂移、条件不成立或谱估计不稳定时，仍回到独立验证集和实际训练轨迹，而非照搬理论训练步数。<!-- source-family:SF-2026-ARXIV-2602-13942 -->
 
+初始化的收益还须按目标消费者分验，快速拟合坐标信号不等更好的inverse prior。[受限INR对照](https://arxiv.org/html/2603.29034v1)在同一sine/Strainer结构中以noise预训练共享层，新任务重置head并继续更新全部相关参数：它可提高信号拟合，却比原初始化或structured pretraining更差地去噪。这是优化适应与恢复bias方向相反的局部证据，不由NTK/landscape图识别唯一因果。十signal预训练、全部fine-tune/诊断及停点选择都付费；报告的early-stop PSNR与迭代点需要干净reference评价，不是部署未知干净答案的停点，video切片也非全胜。目标、noise或早停支持失配时保留原初始化/structured prior与独立holdout，分开拟合和真实恢复质量，不从低重建loss或少步数批准更好泛化、免费初始化或LLM迁移。
+<!-- source-family:SF-2026-ARXIV-2603-29034 -->
+
 ## Loss 把任务目标变成局部信号
 
 模型输出本身不能告诉优化器“哪里错了”。我们需要一个损失函数：
@@ -441,3 +444,5 @@ Part IV 会详细展开这些系统机制。本章要建立的连接是：梯度
 - Yann LeCun, Yoshua Bengio, Geoffrey Hinton, "Deep learning", Nature, 2015: https://www.nature.com/articles/nature14539
 
 - `SF-2026-ARXIV-2602-13942` — Daily `2026-02-18`；[exact-v1](https://arxiv.org/html/2602.13942v1) §3.5–4.2、§7必要范围。2+1+2=5，非随机微调点的局部 NTK/早停条件差额深入；保留 Gaussian 预训练起点、邻域/宽度、RKHS、未知停点参数与 hold-out 成本，不采用通用 lazy regime 或谱即兼容性证书。未核代码/复现；root 必要源与 actual owner PRE通过，实际正文/完整邻接及本末注经root非作者POST通过，窄锁释放，不授日级。
+
+- `SF-2026-ARXIV-2603-29034` — Daily2026-04-02补04-01；[exact-v1](https://arxiv.org/html/2603.29034v1)S3T1–3/F2–10/S4/5/7.1必要，2+1+2=5，仅noise-init fitting与inverse denoising消费者反向取舍。保六sine层/ω30/w256/十signal5000、encoder+newhead均更新、拟合Uniform85.7/79.9但denoise23对SIREN28.3/Spectrum27.6、video不全胜/cleanPSNR停点非deployment；全制备/训练费，不采临床结论，未核代码/复现。

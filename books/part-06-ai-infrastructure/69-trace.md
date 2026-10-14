@@ -77,6 +77,14 @@ inference.request
 
 字段可见后，资源轨迹的形状仍不能代替容量和失败验收。把内存曲线减去baseline、取累计最大值、再按峰值归一化，便于比较相对分配阶段，却会隐藏释放与绝对bytes；用DTW对齐还能比较阶段形状，却不保留原wall-clock间隔。因此normalized profile必须与raw bytes、实际peak、runtime和测量scope并列保存，OOM、timeout、instrumentation error也要留在原运行人口，不能从成功运行的形状相近推断容量风险降低。仅覆盖Python对象或按filename归属的instrument不能默认为native/device全部内存；少量重复的平均形状也不能认证tail安全。采集、重复执行及对齐增加开销，scope或clock不可恢复时应退回带unknown的原测量证据，再由资源与Cost owner判断容量和代价，而非由单位峰值曲线宣称优化成功。<!-- source-family:SF-2026-ARXIV-2601-01215 -->
 
+### 从请求阶段走到 GPU 执行证据
+
+请求 span 能指出慢在 Prefill 或 Decode，却不能独自说明时间花在主机提交、GPU 计算、搬运还是同步。系统级 profiler 先把 CPU 线程、CUDA API、device kernel、memory copy 与 stream 放在可关联的时间线上；NVTX range 提供语义标签，不是额外的执行完成凭证。CPU API duration 不等于异步 GPU execution duration，多 stream、多 rank 的 kernel 累计时间也不能相加当作请求 wall-clock。应先找真正延长依赖路径的区间，再对可疑 kernel 采集计算、访存与 occupancy 等计数器；更多 kernel 或较低 occupancy 本身不是根因。
+
+这里存在两种不同的控制边界：采集路径如何接入目标进程，以及已经接入后何时开始记录。延迟采集、NVTX range 或 `cudaProfilerStart/Stop` 可以排除初始化与预热，但不能据此推定工具能给任意已运行进程补齐 CUDA tracing。Nsight Systems 官方的 stopped-state attach 示例让进程在应用代码执行前等待；其 system-wide CUDA trace 也限定 eligible、采集开始后启动的进程，不是对任意存活 PID 的无条件追踪。多进程 serving 还须核实真正 GPU worker/rank 的覆盖，不能只看到 API server 就宣告 device trace 完整。[采集窗口与入口约束](https://docs.nvidia.com/nsight-systems/UserGuide/index.html#preparing-your-application-for-profiling)应绑定工具版本、平台、权限与实际 collector；不具备接入条件时，保留现有日志/metrics 的有限证据，或在获授权的测试副本启动时建立采集路径。
+
+系统时间线与 kernel counters 是两份互补证据，不应一次打开全部 sensors。Nsight Compute 的某些计数器组合需要多 pass replay，可能保存/恢复内存或重跑应用；重放条件及并发行为与正常 serving 不同。因此先用短时间线定位候选，再在可复现、隔离的范围内采集必要 counters，正式吞吐与尾延迟则由无 profiler 的 reference run 验收。[Replay 与采集开销](https://docs.nvidia.com/nsight-compute/ProfilingGuide/index.html#replay)增加时间、内存与调试成本；不支持重放、权限不足或扰动不可接受时，回退较粗观测并保留 unknown。采集停止、报告导出与目标进程终止还须分别确认，不能把诊断操作变成未经授权的服务停止。
+
 ## Context Propagation 与异步边界
 
 HTTP headers 可传播 trace context；queue、batch、PD handoff 和 tool workflow 需要显式复制 context。Continuous batching 中多个 requests 共享一次 GPU iteration，无法简单用一个 parent-child tree 表达。
@@ -333,6 +341,8 @@ Trace 从请求 spans 演进到跨 model、tool、workflow 和 environment 的�
 
 大模型服务的请求会依次穿过 host queue、runtime、CUDA launch、Kernel 与通信层；任何单层 trace 都可能把上游等待误判为本层瓶颈。系统应让同一 request identity 贯穿 NVTX/CUPTI/日志事件，先重建 call-chain tree 和时间有向关系，再通过重放、配置干预或受控对照验证 causal slice。这样用更高采集成本与时钟同步复杂度换取可操作根因；层间关联缺失、采样过稀或没有干预时，只能报告 correlation。`arXiv:2608.01975v1` 仅在作者环境中支持该诊断流程，不证明自动搜索得到的路径就是生产事故唯一根因。<!-- source-family:SF-2026-ARXIV-2608-01975 -->
 
+受控对照必须先声明所隔离的变量。例如排查[动态 LoRA 的 runtime 路径](../part-05-inference-system/50-vllm.md#dynamic-lora-进入-runtime-后改变了什么)，先确认 merge 后的有效权重与数值/质量边界，再比较同一 adapter 的 merged 与 dynamic 执行；之后在相同总负载下比较单 adapter 与混合 adapter，才能区分增量算子成本和混合调度影响。每组保存输入、实际输出长度、到达顺序、cache 预热/命中人口、precision、runtime/kernel revision 与 GPU 拓扑；换 TP 时设备集合和通信路径也进入对照合同。固定单实例 TP 的比较回答执行路径差额，固定总 GPU 预算的比较才可交给[Cost](./70-cost.md#推理成本)评估资源效率，不能把两份独立 merged 实例的吞吐直接与资源更少的共享实例比较。离线 kernel trace 只解释局部，在线队列、streaming 与 SLO 仍要独立测量；单变量改善后须回到原 workload 重验，不能由一张更整齐的时间线宣布性能问题已经解决。
+
 ## 小结
 
 Trace 让请求经过多个控制面和数据面时仍保留 causal context。好的 tracing 记录关键边界与决策，而不是最大化 span 数量。下一章将可观测事实转换为成本归因与优化约束。
@@ -344,6 +354,8 @@ Trace 让请求经过多个控制面和数据面时仍保留 causal context。�
 Taxonomy 会压平边界行为，自动分类器也可能错标；现有大规模描述分析不能证明分类完备。未覆盖行为应保留原始事件并允许 taxonomy 演进，分类不确定时回退 raw trace 而非强行归类。
 
 ## Review notes
+
+- Work“AI Engineering”首次对话审计（2026-10-13）：采用 GPU 时间线/counter/reference-run 分层、采集入口与采集窗口分离、multi-LoRA/TP 对照身份。Primary evidence：[Nsight Systems User Guide](https://docs.nvidia.com/nsight-systems/UserGuide/index.html) 的 Focused Profiling、CUDA Trace、CLI lifecycle 与 Launch Processes in Stopped State；[Nsight Compute Profiling Guide](https://docs.nvidia.com/nsight-compute/ProfilingGuide/index.html) 的 Sections/Replay；[vLLM v0.11.0 Profiling](https://docs.vllm.ai/en/v0.11.0/contributing/profiling.html) 的 worker/launch、离线与 server 示例。正文对照设计属于工程推导，不是官方 benchmark 或故障定位结果；未在 GPU 上采集、运行命令或验证生产 PID attach，不授特定硬件/TP 性能、通用热附着或生产 SLO 保证。功能目录与版本化 CLI 不逐项搬入长期正文。
 
 - `SF-2026-ARXIV-2601-18345` — Daily `2026-01-28` 增量；[exact-v1](https://arxiv.org/html/2601.18345v1) §4/5.2–5.3，repo 观察 channels 与 draft population 的测量差额，3+1+2=6；本文引用切片不是独立重现，标记不唯一识别 model/human oversight。jan28_review 实际必要原源/owner/PRE通过，root先授窄锁；jan28_review 实际完整局部邻接、新两段与自身末注POST通过，不授DAY；未核artifact或复现实验。
 

@@ -1,0 +1,30 @@
+# Dec16来源有限归并
+
+作者Carson。新增只2025-12-15完整BJT自然日。原同日本体OFFICIAL/ARXIV/Popper记录按原入口/身份/版本/命题逐层复用，不借Dec15响应或成功。新原件均本目录RAW前缀；下表18行=14Daily＋原真实触发OpenReview＋必要EFLA作者仓库/具名日期补检/ACL原单篇出版，无周源/全repo/全月或catchup。Feynman8原15行已actual有限执行/停止通过，EFLA/补检两行和217DATE/CURRENT已§9通过，§10实际完整six仅ACL原出版触发行行政缺口；现按精确旧出版层补一行，不重PDF/会议，不授恢复DAY/全正面Coverage。
+
+| 来源 | 检查范围与依据 | 结果 | 缺口 |
+| --- | --- | --- | --- |
+| SRC-OPENAI | 原本日Research当前2026历史缺段；同日本体RSS HTTP200/1243item实际Dec12–17段，Images/leadership Dec16T00GMT=16日08BJT，science/biology16T08/09GMT；两产品core/具体C沿原OFFICIAL和Popper对应必要域有效复用，未新请求RSS/扩客户附件 | 受阻 | 本轮只Dec15，原两Dec16事件窗后；research未收录历史不授零。原具名历史分页/dated原研究正文可定点替代，停止，不拿RSS代全部Research |
+| SRC-ANTHROPIC | 原本日Research publicationList Dec4T17Z→Dec18T10:33Z与Alignment December六项19/16/12/8至Nov，必要Mitigations核心沿原精确设定/反側复用；本轮Feynman3actual原正文header Dec16研究披露核，不沿旧无TZ/hourhold | 受阻 | 该Dec16事件窗后，非必须秒/TZ；更早同稿若具体原证到才另责，不全网absence。主Research未收录历史段保留，不授全机构零 |
+| SRC-GOOGLE-AI | 原本日DeepMindBlogpage4/24至Nov；Research2025第一页12/1of9，Dec18/15/12/10/4/3→Nov12。PaperAssistant原Dec15流程/opt-in反馈具体C按同core复用，后May18canonical重名不当新修订；publications2025 676year仅目录线索 | 受阻 | 有限Blog范围已核，不扩全年676或要求逐项method；pubs无日级层不授全部研究历史。原dated发布/目标历史切片到后只定点恢复 |
+| SRC-META-AI | 原本日正确publication page3 SAM Audio Dec16、page4 PEAV Dec16→12→1→Nov19混pin，完整机构AB/作者/Download角色；Feynman3actual两官网Dec16原研究披露核，原flow/text-visual-span/十contrast+frame监督精确层有效 | 已检查 | 两具名dated事件本轮窗后，不凭无TZ延hold或以其取消具体更早原稿；原目录不严格全排序/不授全机构历史覆盖，不取全部PDF |
+| SRC-QWEN | 本日公开GET qwen.ai/api/v2/article/retrieval?type=qwen_ai&language=en-US，HTTP200/压缩1058623B、解压JSON4781799B/40articles；实际逐title/extra.date，SAPO/TTSDec5→OmniDec9→ImageLayeredDec19/23/31，没有Dec15字段，不读2026正文/服务或重旧core | 受阻 | 无total/next不授全2025；未收录历史只具名原官方日期/目录段定点重开，非旧空数组/失败证明无事件 |
+| SRC-DEEPSEEK | 本日正确news SSR HTTP200/113863B，结构class ds-research-item真实10条Research：Dec2V3.2→Dec31mHC，下邻Nov27MathV2/Nov1LPLB/Oct21OCR/May14hardware，四2026只目录role。原ChangeLogDec1→未来及Speciale临时endpoint计划Dec15T15:59Z只原公告层复用 | 已检查 | Research与动态5News/产品ChangeLog分责，不用到期计划造实测停服/release，不扩九正文/repo；仅此有限Research目录，不授所有渠道完整 |
+| SRC-MOONSHOT | 原本日PlatformBlog26/Nov7/6→2024与Changelog Nov6/Oct27/Sep5；CLI原核心0.66Dec19→.65Dec16→.64Dec15→.63Dec12同版本全文变更/具体negative沿OFFICIAL和Popper复用 | 已检查 | 会话/配置/replay接口未披露新恢复一致性或授权隔离；旧标签非新correctness信号。仅这些原版本，不全orgcommit/实际运行CLI |
+| SRC-TENCENT-HUNYUAN | 本日Research站壳HTTP200/6894B，实际client544011B公开host映射api.hunyuan.tencent.com；publicList协议精确旧客户端模块可复用。本日一次POST/api/blog/publicList pageNum1/pageSize20/renderType0 accept-language:zh，HTTP200/442610B/code0/total11/list11，逐id/title/publishedAt/displayPublishTime/updatedAt核，均2026最早Feb3 | 受阻 | canonical中文11不借前日zh11/English9，原英文只其语言记录；2025未收录段仍需原官方dated发布/历史目录，当前全部2026非2025零，不读资源签名/全部正文 |
+| SRC-ZAI | 本日Research HTTP200/1276425B，结构解析12RSC chunks/16unique Article，真实createAt2026Jan13→2025Dec10TTS/Dec9ASR/Dec8AutoGLM，createAt与createdAt/updatedAt分离。原本日release Jan14→Dec22GLM4.7→Dec11AutoGLMPhone有限层精确复用 | 已检查 | 没有Dec15日期字段，只可见16objects与原release邻接，不拿More、上传时间或后2026内容倒填历史，不授2025全部论文 |
+| SRC-BYTEDANCE-SEED | 本日两GET type1/2 year2025,count20,token0,orderDesc及x-tt-localeUS真实HTTP200/49453与41802B，各18/94与18/45 next20；paperpin1323Dec15/875Dec2，BlogpinDec24/18/16/2/Nov27；普通Oct21/22至Jun25停止。1323PublishDate/UpdateTime/完整摘要与2512.13507外链actual核，reader4准许Dec15机构研究披露，后精确v1补证角色分离 | 已检查 | pin/后更不授94全年/45Blogs全覆盖；Blog1817Dec16晚间同family另event窗后。必要v1后稿/4分/已关闭仅报告已Feynman7 actual通过，无Books写/PRE/POST义务；不签arxivfirst或当前PDF全部Dec15可见 |
+| SRC-BAIDU-ERNIE | 原本日Blog第一页10/Next2of2，Jan8→Dec23→Dec9→Nov21邻接，沿OFFICIAL实际目录身份/范围复用，不新扩旧库存 | 已检查 | 仅可见技术Blog，不授全org或2025全部，日期缺页具体发布到后才定点 |
+| SRC-XIAOMI-MIMO | 原本日首页Paper8 Jun29’26→Jan8→Oct21→May12，Blog15无date/More沿OFFICIAL有限原字段身份复用，未把Qwen/Hunyuan本轮恢复套此源 | 受阻 | Paper邻接有限，Blog历史日期未恢复；需具名原Blog/dated目录切片，不据首页授2025零，不全Git历史 |
+| SRC-MINIMAX | 原本日英文12/中文13 Jan27/28→Dec23→Oct27，以及AgentTech仅2026May有限段，按OFFICIAL本日精确入口/日期/范围复用，不重新下载全部2026研究 | 已检查 | 仅可见普通目录停止，无Dec15原dated字段，不授全部历史/所有技术资源已核 |
+| SRC-ARXIV | 原本日buffer Dec12T00Z→Dec16T01Z（非公开日）L81/S18/A55/M69 start0/max100及T16真实页尾按原record/Popper核复用；不新legacy请求。原251/236AB/224P12C/15title与1PrahokO历史分层保持；本日非legacycs.CL/2025-12 skip450/show25 HTTP200/54935B，title450–474首13194末13884全部同原身份；当前具名abs/五P理由/日期出口另包 | 受阻 | 月标题/Submitted不授first，旧诊断余74/整月不扩；原current版本表非全安全认证。五C已Feynman6 actual通过，当前219P17C中Seedance一事件/PrahokO/217余unknown；217日期安全终态已Feynman9实际通过，非正面日证，不使unknown成为全文队列 |
+| SRC-OPENREVIEW | 原实际触发M-GRPO13070/NeurIPS Workshop DgfYSvw989，Popper已取得精确PDF同title/authors/AB；forum Challenge、notesAPI403原失败/停止按身份/版本复用，不重复抓取或因file存在授公开日 | 受阻 | 接受此note可定义的public date/原dated作者公告，定点此family；Accepted/会议年份/Submitted不授first，无需秒或全历史bytes，不扩会议库存 |
+| 表外：[EFLA作者仓库](https://github.com/declare-lab/EFLA) | 本日必要12602原题名恢复后实际读官方repo README介绍/精确title/authors、sMNIST代码角色与citationyear2026/NeurIPSSpotlight标题，未打开实现、所有commit/创建史 | 已检查 | 标题/年份/当前README无原publicday，不授2025first或原v1冲突字节修复；只作者稿身份/恢复线索，原dated正文到才单family重开 |
+| 表外：[ACL Anthology原出版](https://aclanthology.org/2025.coling-main.87/) | 仅PrahokBART单篇2025.coling-main.87：精确复用本日原ARXIV/Popper实际title、authors、完整AB与PDF前言/Month January、Year2025同core出版层，2512.13552v1身份匹配；无新下载或全COLING扫描 | 已检查 | 支持January2025窗前正式发表O及同家族去重，不授最早在线first-public/精确时刻、全部PDF/会议或本窗重要修订；原有效出版层未失效，只补真实触发行 |
+| 补检：[具名原日期检索](https://www.google.com/search) | 本日一组四精确查询：OperationVeja+NeurIPS2025+site:openreview.net、M-GRPO+DgfYSvw989、FreeLunch原题名publication、Seedance+December15+site:seed.bytedance.com；有限返回只作原作者入口恢复，不扩转载/会议池 | 检索受限 | 未恢复另可采用的原day公告；EFLA官方repo另行实际读，其余日期仍原出口。HF/搜索Published从Submitted或crawl不能授first，无命中/未返回原证不作全球absence/零事件 |
+
+本人工具curl全部已结束，Seedance首次PDFpartial后一次Range完整续传已保存，不冒partial完成。当前无legacy在途/请求lease/Books锁；五C有限提案与单篇4分仅报告待reader，Source/DAY不能互代。
+
+实际后来Feynman6五C与7Seedance必要Source/4分/仅报告均通过，前述末句待reader仅原提交时点；相关两row已同步真实6/7。现在剩本表/当前字段/217DATE出口及完整six的独立有限层，不重单篇/五C或wholeMethods，不预DAY/FINAL。机器V3评分字面格式已窄修后通过，完整原件保留且无新请求session。
+
+17:47:56当前行政覆盖：Feynman8原十五源、9两新增源与217日期/CURRENT出口、10完整six研究层真实已核有效。仅ACL原单篇出版触发行从旧有效同core层复用补齐，17→18并同步报告1/2/5/6，不重任何原Source/DATE/Seedance/PDF或会议。本表仅供变化层恢复DAY；尚未actualDAY，不预complete/FINAL/root增计。所有本人session已结束、无legacy/Books锁/共享写或Git mutation。

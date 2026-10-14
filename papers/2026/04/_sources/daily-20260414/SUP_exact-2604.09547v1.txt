@@ -1,0 +1,1266 @@
+Tango: Taming Visual Signals for Efficient Video Large Language Models
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Related Work
+2.1 Token Pruning Stages
+2.2 Token Pruning Criteria
+Saliency-Based Methods.
+Diversity-Based Methods.
+Hybrid Methods.
+3 Preliminaries
+Architecture of Video LLMs.
+Computational Complexity.
+Investigating Visual Signals.
+4 Our Method
+4.1 Temporal Video Segmentation
+4.2 Salient Token Selection
+4.3 Spatio-Temporal Merging
+ST-RoPE.
+Locality Prior with Long-term Decay Property.
+Compatibility with Clustering Metric.
+5 Experiments
+5.1 Experimental Setting
+Benchmarks.
+Implementation Details.
+Hyperparameters.
+Baselines.
+5.2 Main Results
+Comparison with SOTAs.
+Cross-Model Generalizability.
+Compatibility with Intra-LLM Method.
+Scaling with Input Frames.
+5.3 Ablation Study
+Salient Token Selection Strategy.
+Ablation of Designed Components.
+Hyperparameter Analysis.
+5.4 Efficiency Analysis
+6 Conclusion
+References
+A Experimental Details
+A.1 Benchmark Details
+Video-MME
+MVBench
+LongVideoBench
+MLVU
+A.2 Model Details
+LLaVA-OneVision-7B
+LLaVA-Video-7B
+Qwen2.5-VL-7B
+A.3 Baseline Details
+FastV
+DART
+VisionZip
+VidCom2
+FastVID
+HoliTom
+B Further Discussion and Case Studies
+B.1 Attention Patterns
+B.2 Clustering Results
+B.3 Investigation of Attention Sink
+Where Are These Tokens?
+How Do These Tokens Form?
+License: arXiv.org perpetual non-exclusive license
+arXiv:2604.09547v1 [cs.CV] 10 Apr 2026
+Tango: Taming Visual Signals for Efficient Video Large Language Models
+Shukang Yin1, Sirui Zhao1∗, Hanchao Wang2, Baozhi Jia2,
+Xianquan Wang1,
+Chaoyou Fu3, Enhong Chen1
+1University of Science and Technology of China, 2Reconova AI Lab, 3Nanjing University
+Code: github.com/xjtupanda/Tango
+††thanks: Corresponding authors.
+Abstract
+Token pruning has emerged as a mainstream approach for developing efficient Video Large Language Models (Video LLMs).
+This work revisits and advances the two predominant token-pruning paradigms: attention-based selection and similarity-based clustering. Our study reveals two critical limitations in existing methods: (1) conventional top-k selection strategies fail to fully account for the attention distribution, which is often spatially multi-modal and long-tailed in magnitude; and (2) direct similarity-based clustering frequently generates fragmented clusters, resulting in distorted representations after pooling.
+To address these bottlenecks, we propose Tango, a novel framework designed to optimize the utilization of visual signals.
+Tango integrates a diversity-driven strategy to enhance attention-based token selection, and introduces Spatio-temporal Rotary Position Embedding (ST-RoPE) to preserve geometric structure via locality priors.
+Comprehensive experiments across various Video LLMs and video understanding benchmarks demonstrate the effectiveness and generalizability of our approach. Notably, when retaining only 10% of the video tokens, Tango preserves 98.9% of the original performance on LLaVA-OV while delivering a 1.88x inference speedup.
+1 Introduction
+Figure 1: Limitations of two typical pre-LLM token pruning approaches.
+(Top Right) Top-k selection fails to fully capture the attention distribution, which is spatially multimodal and long-tailed in magnitude.
+(Bottom Right) Direct similarity-based clustering can result in noisy representations.
+Recent years have witnessed remarkable advancements in efficient Video Large Language Models (Video LLMs) through training-free token pruning techniques [1, 2, 3, 4, 5].
+Within this domain, previous work primarily focuses on two pivotal objectives for token pruning: saliency [1, 6, 3] and diversity [2, 4, 7].
+Specifically, saliency-based approaches typically rely on attention weights to identify critical tokens for retention, while diversity-based methods aim to minimize feature redundancy within the retained set, typically measured via token similarity.
+In this work, we conduct an in-depth investigation into these two visual signals, grounded in fundamental token-pruning paradigms.
+As illustrated in Fig. 1, our analysis reveals two critical limitations in existing approaches:
+(1) The distribution of attention scores is inherently multi-modal and long-tailed, making a rigid Top-kk selection strategy sub-optimal for capturing this pattern.
+(2) Direct similarity-based clustering on tokens yields noisy object representations.
+To address these shortcomings, we propose targeted improvements:
+First, to enhance mode and tail coverage during salient token selection, we introduce a diversity-driven selection process. This involves clustering an expanded set of candidate tokens, followed by an intra-cluster selection step to ensure comprehensive semantic coverage.
+Second, to better preserve the geometric structure of visual objects, we inject a locality prior into the inter-token similarity calculation, which explicitly penalizes similarities between spatio-temporally distant tokens.
+Concretely, we design a Spatio-temporal Rotary Position Embedding (ST-RoPE) mechanism that encodes relative distances along both the spatial and temporal axes.
+We demonstrate that this formulation can be seamlessly integrated into standard clustering frameworks.
+Comprehensive experiments validate the effectiveness of our approach. Notably, retaining only 10% video tokens preserves 98.9% of the full performance of LLaVA-OneVision-7B while accelerating inference speed by 1.88×\times.
+In summary, our main contributions are threefold:
+•
+We identify and analyze critical limitations in how current video token pruning methods utilize attention weights and inter-token similarity.
+•
+We propose a novel pruning framework featuring a diversity-driven salient token selection strategy and ST-RoPE, a specialized position-encoding mechanism injecting spatio-temporal awareness into similarity calculations.
+•
+We conduct extensive experiments demonstrating the effectiveness of our method and offer valuable insights for future efficient Video LLM design.
+2 Related Work
+Vision token pruning methods developed in recent years can be organized along two primary dimensions: pruning stages and pruning criteria.
+In this section, we discuss and compare the key techniques of representative works.
+2.1 Token Pruning Stages
+Depending on where vision tokens are pruned, existing methods can be categorized into pre-LLM methods and intra-LLM methods, in which video tokens are pruned before LLM processing or within the LLM backbone.
+Pre-LLM methods prune vision tokens after the vision encoder but before the LLM backbone.
+These prompt-agnostic methods use visual signals, such as similarities, for pruning.
+For instance, PruneVid [8] groups consecutive frames into segments and exploits cross-frame similarities to compress static tokens, better preserving dynamic signals.
+HoliTom [9] advances this idea by formulating video segmentation as a static-token maximization problem and solving it via dynamic programming.
+In contrast, intra-LLM methods prune within the LLM backbone, capturing cross-modal interactions between textual prompts and vision tokens, utilizing text-to-image attention scores [1] or token similarities [2].
+2.2 Token Pruning Criteria
+Existing works primarily adopt two types of token selection criterion, i.e., saliency and diversity. We organize representative works according to the main criterion.
+Saliency-Based Methods.
+This line of work primarily relies on specific metrics, typically attention scores, to identify and retain critical tokens.
+FastV [1] computes attention weights from prompt to vision tokens within a specific LLM layer, retaining those with the highest scores.
+PyramidDrop [6] refines this approach via a multi-stage strategy that progressively increases pruning ratios across deeper LLM layers.
+Diversity-Based Methods.
+In contrast to saliency-based works, diversity-based methods aim to minimize information redundancy among the retained vision tokens. Cosine similarity acts as the predominant metric for quantifying token resemblance.
+For instance, DART [2] initializes a set of pivot tokens and iteratively incorporates new tokens that exhibit the highest dissimilarity to the current selection.
+Similarly, VidCom2 [4] employs a two-stage pruning framework that explicitly targets frame-wise and token-wise uniqueness in the first and second stages, respectively.
+Hybrid Methods.
+Recent endeavors have explored hybrid approaches that integrate the strengths of saliency-based selection and diversity-aware pruning [10, 3].
+For example, VisionZip [3] retains important tokens based on attention scores and merges contextually similar tokens.
+FastVID [5] and HoliTom [9] improve this framework in the video domain, employing clustering algorithms to effectively aggregate spatio-temporally redundant tokens.
+Our approach advances this paradigm by introducing a more effective salient token selection strategy and a mechanism that better preserves geometric structure in the clustering process.
+Figure 2: Illustration of attention distribution and similarity-based clustering.
+Attention Heatmaps: The spatial distribution of attention scores exhibits multiple modes (i.e., local maxima of attention scores) corresponding to distinct semantic regions (e.g., subtitle and head in the first frame).
+Clustering Results: Direct similarity-based cluster assignment (Baseline) leads to spatially fragmented results, where a coherent semantic entity (e.g., the head or body) is split into different clusters or mixed with background. Pooling on these clusters may result in noisy representations.
+In comparison, our method (bottom row) mitigates this issue and exhibits superior geometric shape preservation.
+Visualization is extracted using the SigLIP [11] ViT of LLaVA-OV-7B on a Video-MME sample (vid: lmlw4NNZBbw). More cases and details are provided in the Appendix.
+3 Preliminaries
+Architecture of Video LLMs.
+We adhere to the prevailing paradigm for large multimodal models [12], which comprises a visual encoder, a projector, and an LLM backbone.
+Given an input video 𝒱\mathcal{V} consisting of TT frames, denoted as 𝒱={vt}t=1T\mathcal{V}=\{v_{t}\}_{t=1}^{T}, a pre-trained vision encoder (e.g., ViT) extracts visual representations 𝐇v∈ℝT×H×W×D\mathbf{H}^{v}\in\mathbb{R}^{T\times H\times W\times D}, where NvN_{v} is the number of tokens per frame and DD is the hidden dimension of the encoder.
+These vision features are then projected (and possibly pooled), resulting in 𝐗v∈ℝT×H′×W′×d\mathbf{X}^{v}\in\mathbb{R}^{T\times H^{\prime}\times W^{\prime}\times d}, with Nv′=H′×W′≤Nv=H×WN_{v}^{\prime}=H^{\prime}\times W^{\prime}\leq N_{v}=H\times W, where dd is the hidden dimension of the LLM.
+These visual tokens are concatenated with the text embeddings of a user instruction, denoted as 𝐗q∈ℝLt×d\mathbf{X}^{q}\in\mathbb{R}^{L_{t}\times d}, forming a unified multimodal input sequence 𝐗=[𝐗v;𝐗q]\mathbf{X}=[\mathbf{X}^{v};\mathbf{X}^{q}]. Given this input, the LLM backbone then outputs a response 𝐘={𝒚j}j=1L\mathbf{Y}=\{\bm{y}_{j}\}_{j=1}^{L} autoregressively:
+p⁡(𝐘∣𝐗)=∏j=1Lp⁡(𝒚j∣𝐗,𝐘<j)​.p(\mathbf{Y}\mid\mathbf{X})=\prod_{j=1}^{L}p(\bm{y}_{j}\mid\mathbf{X},\mathbf{Y}_{<j})\text{.}
+Computational Complexity.
+The main computational bottleneck lies at the LLM backbone, which is a stack of Transformer Layers. When only examining the main computation components, i.e., self-attention and feed-forward network (FFN), the total floating-point operations (FLOPs) are:
+FLOPs​(Layer)\displaystyle\text{FLOPs}(\texttt{Layer})
+=4​N​d2​(1+GH)+4​N2​d⏟Self-Attention (GQA)\displaystyle=\underbrace{4Nd^{2}\left(1+\frac{G}{H}\right)+4N^{2}d}_{\text{Self-Attention (GQA)}}
++6​N​d​m⏟FFN (SwiGLU)\displaystyle\quad+\underbrace{6Ndm}_{\text{FFN (SwiGLU)}}
+=N⋅[4​d2​(1+GH)+6​d​m]+N2​(4​d)\displaystyle=N\cdot\left[4d^{2}\left(1+\frac{G}{H}\right)+6dm\right]+N^{2}(4d)
+FLOPs​(LLM)\displaystyle\text{FLOPs}(\texttt{LLM})
+=L×FLOPs​(Layer)​,\displaystyle=L\times\text{FLOPs}(\texttt{Layer})\text{,}
+where LL denotes the number of Transformer layers, NN the sequence length, dd the hidden size, and mm the intermediate size of the feed-forward layer. Additionally, HH and GG denote the number of query heads and key-value groups, respectively.
+To ensure a fair comparison of pruning performance, we align retention ratios based on similar LLM FLOPs.
+Since the coefficient of the linear term significantly outweighs the quadratic term (e.g., ∼32,500×\sim 32,500\times in the Qwen2-7B model [13]), in common settings (context shorter than 8K), we can simplify the equivalent retention ratio [14] to the average of retention ratios across all LLM layers:
+r¯=∑l=1LrlL​,\begin{split}\bar{r}=\dfrac{\sum_{l=1}^{L}r_{l}}{L}\text{,}\end{split}
+(1)
+where rlr_{l} is the actual retention ratio for the ll-th layer.
+Figure 3: Distribution of sorted attention scores.
+The scores exhibit a distinct long-tailed distribution with a narrow variance band, demonstrating highly stable attention patterns across videos. Results are averaged over 100 video samples from ActivityNet [15].
+Investigating Visual Signals.
+We investigate the characteristics of visual signals grounded in mainstream video token pruning paradigms, namely attention-based salient token selection and similarity-based clustering and merging.
+Analyzing the attention distribution, we observe that the heatmaps exhibit multi-modal patterns (i.e., concentrated high-attention regions, as seen in the top two rows of Fig. 2) that naturally align with distinct semantic entities, such as the subtitle and the newscaster’s head. Moreover, the attention scores follow a long-tailed distribution (Fig. 3), with top-ranking tokens consistently accounting for the majority of the attention weights.
+It is worth noting that some of these high-ranking tokens are attention sinks [16, 17] that consistently hold the highest attention scores and remain in fixed spatial positions (#28 and #26 are Top-1 in LLaVA-OV-7B and LLaVA-Video-7B, respectively). Visually, these sink tokens manifest as the persistent high-activation region in the corner (see the upper-left corner of frames in the second row of Fig. 2). We provide further discussion on this phenomenon in the Appendix.
+In the clustering results, we observe that direct similarity-based clustering leads to spatially fragmented clusters (See comparisons in the last two rows of Fig. 2). Pooling on fragmented clusters may result in noisy representations, losing the shape structure of objects.
+These observations motivate our proposed method.
+Figure 4: Overview of our method.
+It comprises three modules: Temporal Video Segmentation (TVS), Salient Token Selection (STS), and Spatio-Temporal Merging (STM).
+Our technical contributions lie in (1) an enhanced salient token selection strategy in the STS module, and (2) position-aware clustering with ST-RoPE, used in STS and STM modules.
+4 Our Method
+As shown in Fig. 4, our pruning method comprises three modules: (1) temporal video segmentation, (2) salient token selection, and (3) spatio-temporal merging.
+We detail these modules in the following sections.
+4.1 Temporal Video Segmentation
+Following [9], we perform temporal video segmentation with the objective of maximizing prunable static tokens.
+Let ht,kh_{t,k} be the kk-th vision token at frame tt.
+A token is static if its similarity between adjacent frames exceeds the threshold τ\tau throughout the segment.
+For a segment [ts,te)[t_{s},t_{e}) starting at frame tst_{s} and ending at frame te−1t_{e}-1, the number of prunable tokens g⁡(ts,te)g(t_{s},t_{e}) is defined as:
+g⁡(ts,te)=(∑k=1Nv∏t=tste−2𝕀⁡(sim​(ht,k,ht+1,k)>τ))×(te−ts−1)​.\begin{split}g(t_{s},t_{e})&=\left(\sum_{k=1}^{N_{v}}\prod_{t=t_{s}}^{t_{e}-2}\mathbb{I}(\text{sim}(h_{t,k},h_{t+1,k})>\tau)\right)\\
+&\quad\times(t_{e}-t_{s}-1)\text{.}\end{split}
+(2)
+To find the optimal segmentation boundaries {ti}\{t_{i}\}, a global maximum can be achieved via dynamic programming, with the state transition function:
+d​p​[i]=max1≤j<i⁡{d​p​[j]+g⁡(j,i)}​,dp[i]=\max_{1\leq j<i}\{dp[j]+g(j,i)\}\text{,}
+(3)
+where d​p​[i]dp[i] denotes the maximum prunable tokens within the first i−1i-1 frames, with the base case d​p​[1]=0dp[1]=0.
+Similar to previous approaches [9, 10], we average-pool these prunable static tokens into the first frame of the segment.
+4.2 Salient Token Selection
+Given the observation that attention distribution is long-tailed and multimodal, the Top-kk strategy can be ineffective for capturing this pattern.
+To address this issue, our high-level idea is to first expand the retention candidate set to better cover the tail of the distribution.
+Then, we perform clustering and intra-cluster selection.
+This helps cover diverse semantic regions when selecting salient tokens.
+We term this approach a diversity-driven selection method.
+Specifically, we first retrieve a broader set of top-k¯\bar{k} candidate token indices, denoted as ℐc\mathcal{I}_{c}, with k¯=⌊α⋅k⌋\bar{k}=\lfloor\alpha\cdot k\rfloor, where α≥1\alpha\geq 1 is an expansion coefficient.
+Subsequently, to partition these candidates into kk distinct semantic regions, we employ Density Peaks Clustering based on KK-Nearest Neighbors (DPC-KNN) [18, 19].
+For each candidate token 𝒙i\bm{x}_{i}, we compute its local density ρi\rho_{i}, and δi\delta_{i}, its distance to the closest token with higher density:
+ρi\displaystyle\rho_{i}
+=exp(−1K∑𝒙j∈KNN​(𝒙i)d(𝒙i,𝒙j)2),\displaystyle=\exp\left(-\frac{1}{K}\sum_{\bm{x}_{j}\in\text{KNN}(\bm{x}_{i})}\text{d}(\bm{x}_{i},\bm{x}_{j})^{2}\right)\text{,}
+δi\displaystyle\delta_{i}
+={minj∈ℐc:ρj>ρid(𝒙i,𝒙j),if ​∃j∈ℐc​ s.t. ​ρj>ρimaxj∈ℐc⁡d​(𝒙i,𝒙j),otherwise,\displaystyle=\begin{cases}\min\limits_{j\in\mathcal{I}_{c}:\rho_{j}>\rho_{i}}\text{d}(\bm{x}_{i},\bm{x}_{j}),&\text{if }\exists j\in\mathcal{I}_{c}\text{ s.t. }\rho_{j}>\rho_{i}\\
+\max\limits_{j\in\mathcal{I}_{c}}\text{d}(\bm{x}_{i},\bm{x}_{j}),&\text{otherwise}\end{cases}\text{,}
+(4)
+where KNN​(𝒙i)\text{KNN}(\bm{x}_{i}) denotes the set of KK nearest neighbors of 𝒙i\bm{x}_{i}, and d​(⋅,⋅)\text{d}(\cdot,\cdot) represents the Euclidean distance.
+The density score for each candidate is defined as γi=ρi×δi\gamma_{i}=\rho_{i}\times\delta_{i}.
+Tokens with high γi\gamma_{i} are selected as cluster centers.
+We then assign each remaining candidate to its nearest cluster center in the feature space, partitioning the candidate indices ℐc\mathcal{I}_{c} into kk disjoint clusters {𝒞c}c=1k\{\mathcal{C}_{c}\}_{c=1}^{k}.
+Finally, we pick the token with the highest attention score per cluster. The final selected indices of salient tokens are
+ℐs∗=⋃c=1k{arg​maxi∈𝒞c​(A¯i)}​.\mathcal{I}_{s}^{*}=\bigcup_{c=1}^{k}\left\{\underset{i\in\mathcal{C}_{c}}{\operatorname{arg\,max}}(\bar{A}_{i})\right\}\text{.}
+(5)
+Figure 5: Illustration of ST-RoPE.
+(Bottom left) It encodes spatio-temporal position information by applying a rotation matrix to vision tokens.
+(Bottom right) The pairwise distance on the hypersphere, d​(⋅,⋅)\text{d}(\cdot,\cdot), is not only determined by cosine similarity, but also modulated by Δ​p\Delta p, where spatio-temporally distant tokens are assigned a larger distance penalty.
+Consequently, semantically similar and spatio-temporally neighboring tokens are clustered together.
+4.3 Spatio-Temporal Merging
+Within each video segment, we aggregate similar tokens to reduce feature redundancy.
+More specifically, we use the DPC-KNN algorithm to group these tokens into separate clusters, as described in the previous section.
+The vision tokens within each cluster are reduced with average pooling.
+ST-RoPE.
+As previously introduced, the vanilla clustering approach leads to noisy representations.
+To address this issue, we propose injecting spatio-temporal information coupled with a locality prior into the clustering process.
+The key intuition is that, since objects are often continuous rather than fragmented, tokens of the same cluster should not only be semantically coherent but also spatio-temporally adjacent.
+Fig. 5 illustrates our high-level idea.
+Specifically, we repurpose 1D RoPE [20] as ST-RoPE by integrating spatio-temporal information.
+Given two normalized tokens 𝒙¯i\bar{\bm{x}}_{i} and 𝒙¯j\bar{\bm{x}}_{j}, their cosine similarity integrated with positional information is formulated as:
+cosST​(𝒙~i,𝒙~j)=(ℛΘ,pid​𝒙¯i)⊤​(ℛΘ,pjd​𝒙¯j)=𝒙¯i⊤​ℛΘ,Δ​pd​𝒙¯j​,\text{cos}_{\text{ST}}(\tilde{\bm{x}}_{i},\tilde{\bm{x}}_{j})=(\mathcal{R}_{\Theta,p_{i}}^{d}\bar{\bm{x}}_{i})^{\top}(\mathcal{R}_{\Theta,p_{j}}^{d}\bar{\bm{x}}_{j})=\bar{\bm{x}}_{i}^{\top}\mathcal{R}_{\Theta,\Delta p}^{d}\bar{\bm{x}}_{j}\text{,}
+(6)
+where ℛΘ,Δ​pd\mathcal{R}_{\Theta,\Delta p}^{d} is a block-diagonal rotation matrix encoding the relative distance Δ​p=pj−pi\Delta p=p_{j}-p_{i}.
+The 3D position is denoted by p=(t,h,w)p=(t,h,w), where h∈{1,…,H′}h\in\{1,\dots,H^{\prime}\} and w∈{1,…,W′}w\in\{1,\dots,W^{\prime}\} are spatial indices within the feature grid of a frame, and tt is the timestamp to robustly accommodate varying sampling strides.
+To explicitly decouple the spatial and temporal dynamics, the pre-defined frequency parameter set Θ={Θ(t),Θ(h),Θ(w)}\Theta=\{\Theta^{(t)},\Theta^{(h)},\Theta^{(w)}\} is formulated as:
+θk(p)={(θbase(t))−2​(k−1)dt,p=t,k∈[1,2,…,dt/2],(θbase(h))−2​(k−1)dh,p=h,k∈[1,2,…,dh/2],(θbase(w))−2​(k−1)dw,p=w,k∈[1,2,…,dw/2],\theta_{k}^{(p)}=\left\{\begin{array}[]{@{}l@{\quad}l@{\quad}r}\big(\theta_{\mathrm{base}}^{(t)}\big)^{\frac{-2(k-1)}{d_{t}}},&p=t,&k\in[1,2,\dots,d_{t}/2],\\[6.0pt]
+\big(\theta_{\mathrm{base}}^{(h)}\big)^{\frac{-2(k-1)}{d_{h}}},&p=h,&k\in[1,2,\dots,d_{h}/2],\\[6.0pt]
+\big(\theta_{\mathrm{base}}^{(w)}\big)^{\frac{-2(k-1)}{d_{w}}},&p=w,&k\in[1,2,\dots,d_{w}/2],\end{array}\right.
+(7)
+where 𝒙¯∈ℝd\bar{\bm{x}}\in\mathbb{R}^{d} is partitioned as x¯=[𝒙¯(t);𝒙¯(h);𝒙¯(w)]\bar{x}=[\bar{\bm{x}}^{(t)};\bar{\bm{x}}^{(h)};\bar{\bm{x}}^{(w)}], with dimensions dt,dhd_{t},d_{h}, and dwd_{w}, respectively.
+Locality Prior with Long-term Decay Property.
+A key property of our formulation is long-term decay, which makes tokens that are far apart yield lower similarity scores.
+To see this, consider the temporal section with a relative distance m=tj−tim=t_{j}-t_{i}. The inner product can be written as the real part of a complex multiplication:
+𝒙¯i(t)⊤​ℛΘ(t),m​𝒙¯j(t)=Re​[∑k=0dt/2−1ck​ei​m​θk(t)]​,\bar{\bm{x}}_{i}^{(t)\top}\mathcal{R}_{\Theta^{(t)},m}\bar{\bm{x}}_{j}^{(t)}=\text{Re}\left[\sum_{k=0}^{d_{t}/2-1}c_{k}e^{\mathrm{i}m\theta_{k}^{(t)}}\right]\text{,}
+(8)
+where ck=(𝒙¯i,2​k(t)+i​𝒙¯i,2​k+1(t))​(𝒙¯j,2​k(t)−i​𝒙¯j,2​k+1(t))c_{k}=(\bar{\bm{x}}_{i,2k}^{(t)}+\mathrm{i}\bar{\bm{x}}_{i,2k+1}^{(t)})(\bar{\bm{x}}_{j,2k}^{(t)}-\mathrm{i}\bar{\bm{x}}_{j,2k+1}^{(t)}), and i\mathrm{i} is the imaginary unit.
+By denoting Sl=∑k=0l−1ei​m​θk(t)S_{l}=\sum_{k=0}^{l-1}e^{\mathrm{i}m\theta_{k}^{(t)}}, and letting cdt/2=0c_{d_{t}/2}=0 and S0=0S_{0}=0, we apply the Abel transformation to rewrite the sum, whose magnitude is upper-bounded by:
+|∑k=0dt/2−1ck​ei​m​θk(t)|≤(maxk⁡|ck+1−ck|)​∑k=0dt/2−1|Sk+1|​.\left|\sum_{k=0}^{d_{t}/2-1}c_{k}e^{\mathrm{i}m\theta_{k}^{(t)}}\right|\leq\left(\max_{k}|c_{k+1}-c_{k}|\right)\sum_{k=0}^{d_{t}/2-1}|S_{k+1}|\text{.}
+(9)
+As shown in 1D RoPE formulation [20, 21], the summation ∑|Sk+1|\sum|S_{k+1}| decays as the relative distance mm increases.
+This long-term decay property holds independently for the tt, hh, and ww sections.
+Thus, a greater relative distance in any spatio-temporal dimension will generally penalize the overall token-wise cosine similarity.
+Compatibility with Clustering Metric.
+As noted previously, the DPC-KNN clustering algorithm often uses the Euclidean distance metric.
+With normalized tokens, the Euclidean distance on the hypersphere can be reduced as
+‖𝒙¯i−𝒙¯j‖\displaystyle\|\bar{\bm{x}}_{i}-\bar{\bm{x}}_{j}\|
+=‖𝒙¯i‖2+‖𝒙¯j‖2−2​𝒙¯i⊤​𝒙¯j\displaystyle=\sqrt{\|\bar{\bm{x}}_{i}\|^{2}+\|\bar{\bm{x}}_{j}\|^{2}-2\bar{\bm{x}}_{i}^{\top}\bar{\bm{x}}_{j}}
+=2⋅(1−cos​(𝒙¯i,𝒙¯j))​,\displaystyle=\sqrt{2\cdot\big(1-\text{cos}(\bar{\bm{x}}_{i},\bar{\bm{x}}_{j})\big)}\text{,}
+(10)
+where a larger cosine similarity cos​(𝒙¯i,𝒙¯j)\text{cos}(\bar{\bm{x}}_{i},\bar{\bm{x}}_{j}) corresponds to smaller Euclidean distance.
+Here, we show the compatibility of our formulation.
+Note that since the rotation matrices are orthogonal (i.e., ℛ⊤​ℛ=𝐈\mathcal{R}^{\top}\mathcal{R}=\mathbf{I}), they preserve the ℓ2\ell_{2}-norm of the vectors.
+Consequently, by substituting the normalized features with the rotated ones, Eq. 10 can be reformulated as the following equation:
+‖𝒙~i−𝒙~j‖=2⋅(1−cosST​(𝒙~i,𝒙~j))​.\|\tilde{\bm{x}}_{i}-\tilde{\bm{x}}_{j}\|=\sqrt{2\cdot\big(1-\text{cos}_{\text{ST}}(\tilde{\bm{x}}_{i},\tilde{\bm{x}}_{j})\big)}\text{.}
+(11)
+Since cosST​(𝒙~i,𝒙~j)\text{cos}_{\text{ST}}(\tilde{\bm{x}}_{i},\tilde{\bm{x}}_{j}) is modulated by relative distance Δ​p\Delta p, the distance metric enables grouping tokens that are both semantically similar and spatio-temporally neighboring.
+5 Experiments
+5.1 Experimental Setting
+Benchmarks.
+We conduct comprehensive experiments on four video understanding benchmarks.
+Specifically, the selected datasets comprise general open-world video understanding evaluations, including Video-MME [22] and MVBench [23], as well as challenging benchmarks tailored for long-form video comprehension, namely LongVideoBench [24] and MLVU [25].
+Collectively, these datasets encompass a wide spectrum of domains, durations, and tasks, serving as an ideal testbed for validating the effectiveness and generalization capabilities of token compression methods.
+More dataset details are provided in the Appendix.
+Implementation Details.
+We implement and evaluate our method on three representative Video LLMs, LLaVA-OneVision-7B [26], LLaVA-Video-7B [27], and Qwen2.5-VL-7B [28].
+More introductions are provided in the Appendix.
+All experiments are performed on NVIDIA A800 GPUs with the VLMEvalKit [29] evaluation framework.
+We use an extra global query to compute the attention score on tokens of each video frame [5], and mask constant attention sink tokens for salient token selection.
+Hyperparameters.
+Unless otherwise specified, experiments are conducted with equivalent retention ratios of r¯={0.1,0.15,0.2}\bar{r}=\{0.1,0.15,0.2\}, and configure the KNN algorithm to consider 77 local neighbors.
+For the temporal video segmentation phase, the similarity threshold is empirically set to τ=0.65\tau=0.65 when r¯=0.1\bar{r}=0.1, and 0.80.8 otherwise.
+During salient token selection, we utilize an expansion coefficient of α=1.5\alpha=1.5.
+For spatio-temporal merging, the specific rotational configurations are defined as dt=1186,dh=dw=1184d_{t}=1186,d_{h}=d_{w}=1184, with base frequencies θbase(t)=104,θbase(h)=θbase(w)=103\theta_{\mathrm{base}}^{(t)}=10^{4},\theta_{\mathrm{base}}^{(h)}=\theta_{\mathrm{base}}^{(w)}=10^{3}.
+Regarding the total token retention budget, we allocate 60% to salient token selection and 40% to spatio-temporal merging.
+Baselines.
+We compare our method against state-of-the-art training-free token pruning approaches.
+These include intra-LLM methods (FastV [1], DART [2]), pre-LLM methods (VisionZip [3], VidCom2 [4], FastVID [5]), and the hybrid method HoliTom [9].
+Further technical descriptions and implementation details are provided in the Appendix.
+To ensure a fair comparison, all reported baseline results are reproduced under identical settings.
+Table 1: Comparison of state-of-the-art token pruning methods on four mainstream video understanding benchmarks. We experiment with three retention ratios (10%, 15%, 20%) and 32 sampled frames on the LLaVA-OneVision-7B model. Our method consistently achieves the best overall performance across different retention ratios.
+Bold and underlined denote best and second-best performance, respectively. Avg.: Average accuracy on four benchmarks. Perf.: Ratio of performance retained relative to the original model.
+All baseline results are reproduced under the same settings.
+Methods
+Video-MME (w/o sub)
+MVBench
+LongVideo
+Bench
+MLVU
+Avg.
+Perf.
+Short
+Medium
+Long
+Overall
+LLaVA-OneVision-7B [26]
+71.9
+56.3
+49.6
+59.3
+55.3
+56.8
+64.7
+59.0
+100.0
+Retention Ratio=10%
+FastV [1] [ECCV 2024]
+54.7
+49.0
+43.7
+49.1
+48.3
+47.3
+54.6
+49.8
+84.4
+DART [2] [EMNLP 2025]
+54.4
+49.0
+44.0
+49.1
+46.2
+46.3
+55.4
+49.3
+83.5
+VisionZip [3] [CVPR 2025]
+61.2
+52.3
+47.2
+53.6
+50.7
+51.7
+59.0
+53.8
+91.1
+VidCom2 [4] [EMNLP 2025]
+61.7
+51.7
+47.7
+53.7
+49.4
+50.4
+57.4
+52.7
+89.3
+FastVID [5] [NeurIPS 2025]
+65.1
+55.3
+48.6
+56.3
+54.5
+55.7
+61.2
+56.9
+96.4
+HoliTom [9] [NeurIPS 2025]
+66.6
+53.8
+48.6
+56.3
+54.9
+55.4
+61.6
+57.1
+96.7
+Tango (Ours)
+68.9
+56.8
+49.8
+58.5
+55.4
+56.2
+63.5
+58.4
+98.9
+Retention Ratio=15%
+FastV [1] [ECCV 2024]
+59.7
+51.0
+45.0
+51.9
+50.5
+50.8
+57.3
+52.6
+89.1
+VisionZip [3] [CVPR 2025]
+63.1
+53.6
+47.3
+54.7
+52.2
+52.4
+59.8
+54.8
+92.8
+VidCom2 [4] [EMNLP 2025]
+66.3
+54.8
+48.2
+56.4
+52.6
+52.7
+61.0
+55.7
+94.3
+FastVID [5] [NeurIPS 2025]
+69.1
+55.4
+48.9
+57.8
+55.1
+55.9
+63.3
+58.0
+98.3
+HoliTom [9] [NeurIPS 2025]
+68.1
+53.1
+48.2
+56.5
+55.4
+56.5
+62.8
+57.8
+97.9
+Tango (Ours)
+69.8
+55.6
+49.7
+58.3
+55.4
+56.4
+64.0
+58.5
+99.1
+Retention Ratio=20%
+FastV [1] [ECCV 2024]
+63.8
+51.4
+45.9
+53.7
+51.9
+54.7
+59.0
+54.8
+92.9
+VisionZip [3] [CVPR 2025]
+65.1
+55.1
+47.9
+56.0
+53.8
+54.8
+62.1
+56.7
+96.0
+VidCom2 [4] [EMNLP 2025]
+69.6
+56.0
+49.3
+58.3
+53.4
+53.7
+62.0
+56.8
+96.3
+FastVID [5] [NeurIPS 2025]
+70.2
+55.8
+49.4
+58.5
+55.5
+56.2
+63.7
+58.5
+99.0
+HoliTom [9] [NeurIPS 2025]
+71.2
+53.8
+49.4
+58.1
+55.3
+56.5
+63.0
+58.2
+98.6
+Tango (Ours)
+71.3
+56.1
+48.9
+58.8
+55.9
+56.7
+64.1
+58.9
+99.7
+5.2 Main Results
+In this section, we present the main results from our experiments, covering four aspects:
+(1) comparison with other SOTA methods;
+(2) cross-model generalizability;
+(3) compatibility with intra-LLM approaches;
+and (4) scaling capability with more input frames.
+Comparison with SOTAs.
+As shown in Tab. 1, our method outperforms previous SOTAs by a clear margin. The advantage is even clearer in low-token-budget settings.
+For instance, with a 10% retention ratio, our method still preserves 98.9% of the original model’s performance, surpassing HoliTom by 2.2% and FastVID by 2.5%.
+Table 2: Cross-model evaluation on LLaVA-Video-7B and Qwen2.5-VL-7B, with 64 and 32 input frames, respectively.
+†\dagger: Combined with intra-LLM method (FastV variant [9]), our method can achieve better overall performance.
+Methods
+Video-MME (w/o sub)
+MVBench
+LongVideo
+Bench
+MLVU
+Avg.
+Perf.
+Short
+Medium
+Long
+Overall
+LLaVA-Video-7B [27]
+76.7
+62.0
+51.4
+63.4
+60.7
+57.5
+71.4
+63.3
+100.0
+Retention Ratio=10%
+FastV [1] [ECCV 2024]
+56.1
+49.6
+44.4
+50.0
+47.6
+45.8
+52.2
+48.9
+77.3
+VisionZip [3] [CVPR 2025]
+67.0
+54.6
+46.8
+56.1
+54.2
+52.4
+62.9
+56.4
+89.1
+VidCom2 [4] [EMNLP 2025]
+65.6
+55.7
+45.9
+55.7
+52.1
+50.4
+59.7
+54.5
+86.1
+FastVID [5] [NeurIPS 2025]
+71.7
+58.2
+48.7
+59.5
+58.2
+53.2
+65.1
+59.0
+93.3
+HoliTom [9] [NeurIPS 2025]
+73.1
+58.8
+48.7
+60.2
+57.5
+54.2
+66.2
+59.5
+94.1
+Tango (Ours)
+73.4
+59.3
+49.4
+60.7
+56.9
+54.2
+66.7
+59.6
+94.2
+Tango† (w/ intra-LLM)
+73.1
+59.6
+49.3
+60.7
+57.6
+54.7
+67.6
+60.2
+95.1
+Retention Ratio=20%
+VisionZip [3] [CVPR 2025]
+73.1
+59.0
+48.9
+60.3
+58.2
+54.6
+67.7
+60.2
+95.2
+FastVID [5] [NeurIPS 2025]
+74.8
+60.6
+50.2
+61.9
+59.1
+54.5
+68.1
+60.9
+96.3
+HoliTom [9] [NeurIPS 2025]
+74.7
+60.9
+50.3
+62.0
+58.7
+54.2
+68.2
+60.8
+96.1
+Tango (Ours)
+74.9
+61.7
+49.3
+62.0
+58.5
+55.6
+68.7
+61.2
+96.8
+Tango† (w/ intra-LLM)
+75.3
+61.1
+50.4
+62.3
+58.9
+55.4
+70.4
+61.7
+97.6
+Qwen2.5-VL-7B [28]
+74.0
+62.7
+52.4
+63.0
+65.7
+59.9
+64.4
+63.2
+100.0
+Retention Ratio=20%
+VisionZip [3] [CVPR 2025]
+69.8
+56.7
+49.1
+58.5
+61.9
+55.7
+60.6
+59.2
+93.6
+FastVID [5] [NeurIPS 2025]
+68.9
+56.8
+50.3
+58.7
+61.2
+55.9
+60.3
+59.0
+93.3
+Tango (Ours)
+70.2
+59.1
+50.6
+60.0
+62.4
+55.9
+61.0
+59.8
+94.6
+Cross-Model Generalizability.
+Results on LLaVA-Video-7B and Qwen2.5-VL-7B are shown in Tab. 2.
+Our method consistently outperforms previous SOTAs by a clear margin.
+With a 20% retention ratio, our approach surpasses VidCom2 by 4.6% on LLaVA-Video-7B, and outperforms FastVID by 1.3% on Qwen2.5-VL-7B.
+Compatibility with Intra-LLM Method.
+On LLaVA-Video-7B, we experiment with combining an intra-LLM pruning method [9], and perform an additional 50% pruning after the 1818-th layer of the LLM.
+As shown in Tab. 2, the approach achieves gains of 0.9 and 0.8 points under 10% and 20% retention ratios, respectively.
+The gains can be attributed to two factors:
+(1) Pruning at deep layers of LLM barely hurts performance, even under radical pruning ratios such as 50% [9, 1];
+(2) Combining intra-LLM pruning enables a larger pre-LLM retention ratio and thus better performance.
+Specifically, given that r¯=r¯p​r​e×r¯i​n​t​r​a\bar{r}=\bar{r}_{pre}\times\bar{r}_{intra} (r¯p​r​e\bar{r}_{pre} and r¯i​n​t​r​a\bar{r}_{intra} are retention ratios for pre- and intra-LLM methods), we can set r¯p​r​e=12.2%>r¯=10%\bar{r}_{pre}=12.2\%>\bar{r}=10\%.
+Figure 6: Results with different input frames.
+Our method maintains stable scaling with frame number, clearly outperforming other SOTA methods.
+“w/o M” denotes pre-LLM-only pruning [9].
+The performance is averaged across three video datasets: Video-MME, LongVideoBench, and MLVU.
+Scaling with Input Frames.
+Fig. 6 compares different methods in terms of frame scalability (32×\times196 token limit).
+As frame sampling becomes denser, spatio-temporal redundancy becomes more pronounced.
+Our method scales robustly with the frame count and consistently outperforms SOTA methods, demonstrating superior capability to retain essential spatio-temporal information.
+5.3 Ablation Study
+We perform an ablation study on LLaVA-OneVision-7B with a default retention ratio r¯=10%\bar{r}=10\%.
+Figure 7: Results with different salient token selection strategy.
+Top-k (attn) underperforms, and Top-k (p-attn) is only comparable to a simple uniform sampling baseline.
+Plugging in our proposed diversity-driven selection method (“w/ div.”) brings remarkable gains.
+attn and p-attn denote attention scores extracted by pooling attention weights on the query dimension [3, 9] and calculating with a global query [5], respectively.
+Salient Token Selection Strategy.
+Fig. 7 compares three variants of salient token selection strategies: uniform sampling, Top-kk selection with “attn” [3, 9], and “p-attn” [5] scores.
+We observe that vanilla Top-kk selection can be suboptimal: the “attn” variant even lags behind a simple uniform sampling baseline (52.7% vs. 55.3% on Video-MME).
+Moreover, while “p-attn” generally performs better than “attn” (see Appendix for analyses on why “p-attn” is superior), it only matches the performance of uniform sampling.
+Notably, incorporating our proposed diversity-driven strategy (“w/ div.”) yields significant gains of 6.5% and 1.8% on MVBench with “attn” and “p-attn” scores, respectively.
+Table 3: Ablation study of the proposed components. w/ div.: Diversity-driven salient token selection strategy. ST Merge: Spatio-temporal merging. TSA: Timestamp alignment for each video frame, otherwise a fixed increment is used.
+w/ div.
+ST Merge
+ST-RoPE
+TSA
+V-MME
+LVB
+Perf.
+Effect on Token Selection
+✗
+✗
+✗
+✗
+55.3
+50.7
+92.7
+✓
+✗
+✗
+✗
+57.1
+54.1
+97.0
+Effect on ST Merging
+✗
+✓
+✗
+✗
+56.9
+54.2
+96.7
+✗
+✓
+✓
+✗
+57.3
+55.1
+97.3
+✗
+✓
+✓
+✓
+57.9
+55.8
+98.1
+Full Method
+✓
+✓
+✓
+✓
+58.5
+56.2
+98.9
+Ablation of Designed Components.
+Ablation results of our designed components are summarized in Tab. 3.
+Improving attention-based salient token selection:
+Compared with direct Top-kk selection, our strategy yields a significant overall gain of 5.3%.
+The results indicate the superiority of our proposed strategy and the importance of covering diverse semantic clusters when selecting salient tokens.
+Improving similarity-based spatio-temporal merging:
+Incorporating the ST-RoPE mechanism improves overall accuracy by 0.6%, indicating the effectiveness of injecting spatio-temporal locality prior.
+Moreover, adding timestamp-aligned design brings another 0.8% overall improvement.
+Compared with MRoPE [30], which uses a fixed temporal increment, this design more adaptively accommodates varying video lengths and sampling strides.
+Finally, the assembly of all components yields the best overall performance, indicating the synergy of the designed components.
+Figure 8: Impact of expansion coefficient. Overall accuracy is relatively stable w.r.t. varying coefficients.
+Since excess candidate tokens can also introduce background noise, a moderate value (1.51.5) yields the overall best results.
+Table 4: Impact of rotational base frequencies. Smaller frequencies induce a relatively larger decay effect. The best configuration is highlighted. Note that θbase(s)=θbase(h)=θbase(w)\theta_{\mathrm{base}}^{(s)}=\theta_{\mathrm{base}}^{(h)}=\theta_{\mathrm{base}}^{(w)}.
+θbase(t)\theta_{\mathrm{base}}^{(t)}
+θbase(s)\theta_{\mathrm{base}}^{(s)}
+Video-MME
+MLVU
+Short
+Medium
+Long
+Overall
+1e4
+1e2
+67.8
+56.0
+49.7
+57.8
+63.3
+1e4
+1e3
+68.9
+56.8
+49.8
+58.5
+63.5
+1e4
+1e4
+67.6
+56.4
+48.9
+57.6
+63.3
+1e3
+1e3
+67.2
+56.0
+49.1
+57.4
+63.4
+1e5
+1e3
+67.4
+55.7
+49.9
+57.7
+63.4
+Hyperparameter Analysis.
+We analyze the impact of two critical hyperparameters, the expansion coefficient in the STM module and the base frequencies for ST-RoPE.
+Fig. 8 shows the ablation results of varying the expansion coefficient α\alpha.
+Expanding the candidate retained set allows more semantic regions to be included. However, incorporating too many tokens can introduce background noise.
+Empirical results indicate that a moderate value (1.51.5) optimally balances this trade-off.
+Tab. 4 shows results of different configurations of base frequencies θbase\theta_{\mathrm{base}} in temporal and spatial dimensions.
+Generally, a smaller frequency induces a larger decay effect, thereby a stronger locality prior. Yet, an excessively strong prior may disrupt the semantic similarity relationships.
+Consequently, we adopt a moderate configuration that provides the best overall results.
+Figure 9: Latency and relative performance under different retention ratios.
+Our method maintains 99.7% performance relative to the full-token setting, with a 1.63×\times speedup.
+“Other” includes the projector, pooling, and additional pruning-related computations.
+Wall-clock time is measured on the Video-MME benchmark.
+5.4 Efficiency Analysis
+Fig. 9 illustrates the latency-performance trade-off of our method. Our approach strikes an exceptional balance between efficiency and accuracy: at 10% token retention, it preserves 98.9% of full-token performance with a 1.88×1.88\times speedup. Increasing retention to 20% yields nearly lossless performance (99.7%) and a 1.63×1.63\times speedup.
+6 Conclusion
+In this paper, we revisit and advance two foundational token reduction paradigms: attention-based token selection and similarity-based token merging.
+Our proposed method, Tango, introduces diversity-driven token selection and explicitly incorporates a spatio-temporal locality prior into the merging process.
+Extensive experiments demonstrate the general effectiveness, input scalability, and highly favorable efficiency-performance trade-offs of our approach.
+Notably, Tango preserves 98.9% of the full-token performance while accelerating inference by 1.88×\times, establishing it as a highly practical and robust optimization technique for Video LLMs.
+References
+[1]
+L. Chen, H. Zhao, T. Liu, S. Bai, J. Lin, C. Zhou, and B. Chang (2024)
+An Image is Worth 1/2 Tokens After Layer 2: Plug-and-Play Inference Acceleration for Large Vision-Language Models.
+In ECCV,
+Cited by: §A.3,
+§1,
+§2.1,
+§2.2,
+§5.1,
+§5.2,
+Table 1,
+Table 1,
+Table 1,
+Table 2.
+[2]
+Z. Wen, Y. Gao, S. Wang, J. Zhang, Q. Zhang, W. Li, C. He, and L. Zhang (2025)
+Stop Looking for “Important Tokens” in Multimodal Language Models: Duplication Matters More.
+In EMNLP,
+Cited by: §A.3,
+§1,
+§2.1,
+§2.2,
+§5.1,
+Table 1.
+[3]
+S. Yang, Y. Chen, Z. Tian, C. Wang, J. Li, B. Yu, and J. Jia (2025)
+VisionZip: Longer is Better but Not Necessary in Vision Language Models.
+In CVPR,
+Cited by: §A.3,
+§B.1,
+§1,
+§2.2,
+Figure 7,
+Figure 7,
+§5.1,
+§5.3,
+Table 1,
+Table 1,
+Table 1,
+Table 2,
+Table 2,
+Table 2.
+[4]
+X. Liu, Y. Wang, J. Ma, and L. Zhang (2025)
+Video Compression Commander: Plug-and-Play Inference Acceleration for Video Large Language Models.
+In EMNLP,
+Cited by: §A.3,
+§1,
+§2.2,
+§5.1,
+Table 1,
+Table 1,
+Table 1,
+Table 2.
+[5]
+L. Shen, G. Gong, T. He, Y. Zhang, P. Liu, S. Zhao, and G. Ding (2025)
+FastVID: Dynamic Density Pruning for Fast Video Large Language Models.
+In NeurIPS,
+Cited by: §A.3,
+§B.1,
+§1,
+§2.2,
+Figure 7,
+Figure 7,
+§5.1,
+§5.1,
+§5.3,
+Table 1,
+Table 1,
+Table 1,
+Table 2,
+Table 2,
+Table 2.
+[6]
+L. Xing, Q. Huang, X. Dong, J. Lu, P. Zhang, Y. Zang, Y. Cao, C. He, J. Wang, F. Wu, et al. (2025)
+PyramidDrop: Accelerating Your Large Vision-Language Models via Pyramid Visual Redundancy Reduction.
+In CVPR,
+Cited by: §1,
+§2.2.
+[7]
+S. R. Alvar, G. Singh, M. Akbari, and Y. Zhang (2025)
+DivPrune: Diversity-based Visual Token Pruning for Large Multimodal Models.
+In CVPR,
+Cited by: §1.
+[8]
+X. Huang, H. Zhou, and K. Han (2025)
+PruneVid: Visual Token Pruning for Efficient Video Large Language Models.
+In ACL (Findings),
+Cited by: §2.1.
+[9]
+K. Shao, K. Tao, C. Qin, H. You, Y. Sui, and H. Wang (2025)
+HoliTom: Holistic Token Merging for Fast Video Large Language Models.
+In NeurIPS,
+Cited by: §A.3,
+§B.1,
+§2.1,
+§2.2,
+§4.1,
+§4.1,
+Figure 6,
+Figure 6,
+Figure 7,
+Figure 7,
+§5.1,
+§5.2,
+§5.3,
+Table 1,
+Table 1,
+Table 1,
+Table 2,
+Table 2,
+Table 2,
+Table 2.
+[10]
+T. Fu, T. Liu, Q. Han, G. Dai, S. Yan, H. Yang, X. Ning, and Y. Wang (2025)
+FrameFusion: Combining Similarity and Importance for Video Token Reduction on Large Vision Language Models.
+In ICCV,
+Cited by: §2.2,
+§4.1.
+[11]
+X. Zhai, B. Mustafa, A. Kolesnikov, and L. Beyer (2023)
+Sigmoid Loss for Language Image Pre-Training.
+In ICCV,
+Cited by: §B.3,
+Figure 2,
+Figure 2.
+[12]
+S. Yin, C. Fu, S. Zhao, K. Li, X. Sun, T. Xu, and E. Chen (2024)
+A survey on multimodal large language models.
+National Science Review.
+Cited by: §3.
+[13]
+A. Yang, B. Yang, B. Hui, B. Zheng, B. Yu, C. Zhou, C. Li, C. Li, D. Liu, F. Huang, et al. (2024)
+Qwen2 Technical Report.
+arXiv:2407.10671.
+Cited by: §3.
+[14]
+Y. Zhang, C. Fan, J. Ma, W. Zheng, T. Huang, K. Cheng, D. Gudovskiy, T. Okuno, Y. Nakata, K. Keutzer, et al. (2025)
+SparseVLM: Visual Token Sparsification for Efficient Vision-Language Model Inference.
+In ICML,
+Cited by: §3.
+[15]
+F. Caba Heilbron, V. Escorcia, B. Ghanem, and J. Carlos Niebles (2015)
+ActivityNet: A Large-Scale Video Benchmark for Human Activity Understanding.
+In CVPR,
+Cited by: Figure 11,
+Figure 11,
+Figure 3,
+Figure 3.
+[16]
+T. Darcet, M. Oquab, J. Mairal, and P. Bojanowski (2024)
+Vision Transformers Need Registers.
+In ICLR,
+Cited by: §B.1,
+§B.3,
+§3.
+[17]
+N. Jiang, A. Dravid, A. Efros, and Y. Gandelsman (2025)
+Vision Transformers Don’t Need Trained Registers.
+In NeurIPS,
+Cited by: §B.1,
+§B.3,
+§B.3,
+§3.
+[18]
+M. Du, S. Ding, and H. Jia (2016)
+Study on density peaks clustering based on k-nearest neighbors and principal component analysis.
+Knowledge-Based Systems.
+Cited by: §4.2.
+[19]
+A. Rodriguez and A. Laio (2014)
+Clustering by fast search and find of density peaks.
+Science.
+Cited by: §4.2.
+[20]
+J. Su, M. Ahmed, Y. Lu, S. Pan, W. Bo, and Y. Liu (2024)
+RoFormer: Enhanced transformer with Rotary Position Embedding.
+Neurocomputing.
+Cited by: §4.3,
+§4.3.
+[21]
+M. Xu, X. Men, B. Wang, Q. Zhang, H. Lin, X. Han, et al. (2024)
+Base of RoPE Bounds Context Length.
+In NeurIPS,
+Cited by: §4.3.
+[22]
+C. Fu, Y. Dai, Y. Luo, L. Li, S. Ren, R. Zhang, Z. Wang, C. Zhou, Y. Shen, M. Zhang, et al. (2025)
+Video-MME: The First-Ever Comprehensive Evaluation Benchmark of Multi-modal LLMs in Video Analysis.
+In CVPR,
+Cited by: §A.1,
+§5.1.
+[23]
+K. Li, Y. Wang, Y. He, Y. Li, Y. Wang, Y. Liu, Z. Wang, J. Xu, G. Chen, P. Luo, et al. (2024)
+MVBench: A Comprehensive Multi-modal Video Understanding Benchmark.
+In CVPR,
+Cited by: §A.1,
+§5.1.
+[24]
+H. Wu, D. Li, B. Chen, and J. Li (2024)
+LongVideoBench: A Benchmark for Long-context Interleaved Video-Language Understanding.
+In NeurIPS,
+Cited by: §A.1,
+§5.1.
+[25]
+J. Zhou, Y. Shu, B. Zhao, B. Wu, Z. Liang, S. Xiao, M. Qin, X. Yang, Y. Xiong, B. Zhang, et al. (2025)
+MLVU: Benchmarking Multi-task Long Video Understanding.
+In CVPR,
+Cited by: §A.1,
+§5.1.
+[26]
+B. Li, Y. Zhang, D. Guo, R. Zhang, F. Li, H. Zhang, K. Zhang, P. Zhang, Y. Li, Z. Liu, et al. (2025)
+LLaVA-OneVision: Easy Visual Task Transfer.
+Transactions on Machine Learning Research.
+Cited by: §A.2,
+§5.1,
+Table 1.
+[27]
+Y. Zhang, J. Wu, W. Li, B. Li, Z. Ma, Z. Liu, and C. Li (2025)
+LLaVA-Video: Video Instruction Tuning With Synthetic Data.
+Transactions on Machine Learning Research.
+Cited by: §A.2,
+§5.1,
+Table 2.
+[28]
+S. Bai, K. Chen, X. Liu, J. Wang, W. Ge, S. Song, K. Dang, P. Wang, S. Wang, J. Tang, et al. (2025)
+Qwen2.5-VL Technical Report.
+arXiv:2502.13923.
+Cited by: §A.2,
+§5.1,
+Table 2.
+[29]
+H. Duan, J. Yang, Y. Qiao, X. Fang, L. Chen, Y. Liu, X. Dong, Y. Zang, P. Zhang, J. Wang, et al. (2024)
+VLMEvalKit: An Open-Source ToolKit for Evaluating Large Multi-Modality Models.
+In ACM MM,
+Cited by: §5.1.
+[30]
+P. Wang, S. Bai, S. Tan, S. Wang, Z. Fan, J. Bai, K. Chen, X. Liu, J. Wang, W. Ge, et al. (2024)
+Qwen2-VL: Enhancing Vision-Language Model’s Perception of the World at Any Resolution.
+arXiv:2409.12191.
+Cited by: §5.3.
+[31]
+M. Sun, X. Chen, J. Z. Kolter, and Z. Liu (2024)
+Massive activations in large language models.
+In COLM,
+Cited by: §B.3.
+Supplementary Material
+Appendix A Experimental Details
+A.1 Benchmark Details
+Video-MME
+[22] is a video understanding benchmark designed specifically for Video LLMs. It comprises a total of 900 videos and 2,700 multiple-choice questions. The video durations range from a few minutes to 1 hour.
+MVBench
+[23] defines 20 video understanding tasks that encompass both spatial and temporal understanding.
+The benchmark contains 4,000 multiple-choice questions.
+LongVideoBench
+[24] includes 3,763 web-scraped videos up to 1 hour long.
+It curates 6,678 questions across 17 types of referring reasoning questions, challenging models’ perception and relation reasoning capabilities.
+We report results on the evaluation subset, which contains 1,337 questions.
+MLVU
+[25] contains 1,730 videos spanning from 3 minutes to 2 hours, along with 3,102 QA pairs.
+It comprises 9 task categories, including action understanding and topic reasoning.
+We report results on the MLVUM{}_{\texttt{M}}-Dev set.
+A.2 Model Details
+LLaVA-OneVision-7B
+[26] is a representative fully open-sourced MLLM that unifies the understanding of single-image, multi-image, and video inputs.
+We sample 32 frames for each video, resulting in 32×\times196 video tokens.
+LLaVA-Video-7B
+[27] is a specialized Video LLM that builds upon curated 178K synthetic data, encompassing captioning and QA data.
+For this model, each video is downsampled to 64 frames, totaling a 64×\times182 token count.
+Qwen2.5-VL-7B
+[28] is a frontier MLLM with exceptional multimodal understanding capabilities and a long context window.
+By default, we adopt the natural resolution mechanism to avoid distorting the aspect ratio.
+We set a maximum frame resolution of 448 and sample 32 frames from a video, yielding at most 32×\times256 vision tokens per instance.
+A.3 Baseline Details
+FastV
+[1] is a training-free token pruning strategy designed initially for efficient image understanding.
+The method estimates the importance of vision tokens based on the attention score that the token receives from the last query token.
+DART
+[2] first selects pivot tokens based on key or value norms, and then iteratively adds vision tokens less similar to the retained set.
+We follow the official implementation by setting both text and vision pivot numbers to 4.
+VisionZip
+[3] prunes tokens in the vision encoder instead of the LLM backbone. It first identifies salient tokens based on attention scores, and then merges the remaining ones into contextual tokens based on similarity.
+We follow the official implementation by setting the contextual token ratio to 5%.
+The remaining token budget is allocated to salient tokens.
+VidCom2
+[4] designs a two-step pruning framework.
+It first allocates a frame-wise retention ratio based on the similarity between each frame and a global video representation.
+Then, the uniqueness of each token is determined based on its similarity to both the global video representation and the pooled frame representation.
+FastVID
+[5] adopts a segment-then-prune framework. Within each segment, salient tokens are first selected frame-wise; the remaining tokens serve as contextual tokens, which are clustered and merged.
+We follow the official setting by setting the minimum segment number cc to 8 and the similarity threshold τ\tau to 0.9.
+HoliTom
+[9] utilizes a similar segment-then-prune framework.
+The optimal segmentation is estimated by maximizing the overall number of static tokens.
+Following the original setup, we set a static similarity threshold τ\tau to 0.65 when the retention ratio r¯\bar{r} is 0.1, and to 0.8 for other cases.
+Appendix B Further Discussion and Case Studies
+B.1 Attention Patterns
+In the main text, we compare the performance of two variants to extract the attention score, i.e., (1) using the full attention weight matrix and pooling on the query dimension [9, 3] (denoted as “attn”), and (2) using a global query (similar to the [CLS] token) to calculate [5] (denoted as “p-attn”).
+We empirically find that “p-attn” performs better.
+Further discussion of the performance gap is provided here.
+As shown in Fig. 13, we observe that: (1) “attn” shows more severe vulnerability to the attention sink phenomenon [16, 17], and fails to capture salient objects in the foreground.
+Therefore, Top-kk selection based on “attn” score can be less effective.
+(2) “p-attn” shows a strong tendency to attend to text-related regions. This tendency can be advantageous to OCR-related tasks. In fact, Top-kk selection with “p-attn” scores significantly higher than “attn” on OCR problems of Video-MME benchmark (55.4% vs. 50.4%).
+B.2 Clustering Results
+As shown in Fig. 14, our method better preserves object shape and separates different semantic entities.
+However, we note that compressing complex open-world scenes remains a significant challenge for efficient video understanding, as it involves perceiving and understanding intricate details and abstract semantics, such as crowded scenes and abstract art.
+Figure 10: Illustration of SigLIP ViT backbone. The image is transformed by a patch embedding layer, added with position embedding, then sent into a stack of Transformer blocks, comprising layer normalization, self-attention/MLP, and residual connection.
+Table 5: Statistics of activation magnitudes at a hidden state after layer 0. The distribution of sink tokens differs from that of normal tokens, with a larger magnitude scale.
+Metric
+Sink Token
+Normal Token
+Top 1
+212.5
+5.9
+Top 2
+35.9
+5.6
+Top 3
+33.5
+3.7
+Top 1%
+11.6
+2.7
+Top 10%
+1.4
+0.8
+Top 25%
+0.7
+0.5
+Mean ±\pm SD
+1.0 ±\pm 6.7
+0.4 ±\pm 0.5
+Median
+0.4
+0.3
+B.3 Investigation of Attention Sink
+As noted previously, the attention sink [16, 17] is a common phenomenon.
+Unlike previous findings, we observe that on SigLIP [11] ViT, some attention sink tokens are special in that (1) they are constant in positions across inputs, and (2) their activation magnitudes are generally larger than other tokens (See Tab. 5), though we do not observe “massive activations” (characterized by their scarcity and magnitudes exceeding 100 and approximately 1,000 times larger than the median of their corresponding hidden states [31]).
+In the following parts, we discuss the positions and formations of these special tokens and how we mitigate their influence in salient token selection.
+(a) “attn” spatial distribution in LLaVA-OV-7B.
+(b) “p-attn” spatial distribution in LLaVA-OV-7B.
+(c) “attn” spatial distribution in LLaVA-Video-7B.
+(d) “p-attn” spatial distribution in LLaVA-Video-7B.
+Figure 11: Visualization of spatial distributions of attention scores extracted with SigLIP ViT.
+We observe that (1) sink tokens are distributed around the corners (“attn” and “p-attn” show similar patterns), usually corresponding to backgrounds; and (2) “p-attn” shows more robustness to attention sinks.
+The indices of the top-10 highest-scoring tokens are annotated.
+Results are averaged over 100 video samples from ActivityNet [15].
+Where Are These Tokens?
+We statistically analyze top-ranking attention tokens, and visualize the results in Fig. 11.
+As shown in the figure, these sink tokens are distributed at the corners of a frame, usually corresponding to backgrounds, and are less relevant to the global semantics.
+Moreover, the top-ranking tokens are rather stable. For instance, the rank of #28 token is 1.28±0.671.28\pm 0.67 (mean ±\pm SD), almost always occupying the highest attention score.
+Notably, “p-attn” exhibits less vulnerability to attention sinks, which may partially explain the superior performance when used in salient token selection.
+To mitigate the impact of attention sinks and retain more relevant tokens, we adopt a simple heuristic, i.e., masking those top-ranking attention sinks that are constant in positions when selecting salient tokens.
+We leave explorations of better approaches for future work.
+Figure 12: Qualitative case of intermediate variables within the attention block. We observe that (1) the sink tokens are initially induced by adding with the position embedding, where a few outlier tokens exhibit exceptionally high norms; (2) the skewed distribution induced by outliers is passed across layers through residual connection, and temporarily reverted by layer normalization (LM); (3) post-attention norms in shallow layers better preserve low-level geometric than attention score, which is overshadowed by attention sink.
+How Do These Tokens Form?
+We empirically trace the origins of these outlier tokens.
+Previous work [17] attributes these sinks to a sparse set of neurons highly activated by the MLP of a certain layer (e.g., the 6th layer of OpenCLIP ViT-B/16 [17]).
+In this work, we find that the sink tokens in SigLIP may originate from a different mechanism. The backbone of the SigLIP ViT is illustrated in Fig. 10.
+We visualize the intermediate variables within the attention calculation module, comprising layer normalization, self-attention, and a residual connection.
+As shown in Fig. 12, we observe that (1) the sink tokens are initially induced by adding with the position embedding, where a few outlier tokens exhibit exceptionally high norms; (2) the skewed distribution induced by outliers is passed across layers through residual connection, and temporarily reverted by layer normalization (LM); (3) post-attention norms in shallow layers better preserve low-level geometric than attention score, which is overshadowed by attention sink.
+Figure 13: Qualitative cases of attention patterns. We observe that (1) “attn” shows more severe attention sinks, failing to attend to salient objects; (2) “p-attn” shows a strong tendency to attend to text-related regions. For instance, the subtitle in the first case, and the leaderboard in the second and third cases.
+Figure 14: Qualitative cases of clustering image features.
+Our method better preserves the geometric structure of objects and better separates different semantic entities. We note that compressing complex scenes remains a significant challenge (e.g., crowded scenes in the last frame of case 2 or an e-sports event in case 4, which involve intricate or abstract semantics).
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

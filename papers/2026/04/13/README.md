@@ -4,13 +4,41 @@
 **窗口：** 2026-04-12T09:00:00+08:00 ～ 2026-04-13T09:00:00+08:00
 **状态：** 完成
 **Books：** 纳入本次
-**检查时间：** 2026-09-26T22:28:28+08:00
+**检查时间：** 2026-10-14T09:30:40+08:00
+**窗口说明：** 用户授权仅补来源遗漏；保留原窗口、候选整行日期/评分及连续原§4，不迁移旧材料。
+**补充窗口：** 2026-04-12 ～ 2026-04-12
+**冻结候选日期：** [原报告](../_sources/daily-20260413/baseline-before-supplement-20261014.md)
 
 ## 1. 结论
+
+本轮仅补Apr12自然日，确定新增2个受限兼容性家族、均深入完成/仅报告，Books新写0；12有限query＝4主题＋4目录＋4具名日期恢复，不支持全网无遗漏。M2.7具名补检发现Ampere的FP8 kernel资格及provider工具ID回放失配；两项只修正受测版本/接口判断，不证明当日修复已合并或生产部署。MiniMax M2.7首次释放事件与三篇潜在相关arXiv材料缺当日公开归属绑定，作为4个资格终态保留项隔离，不评分、不加入确定候选；May-ID材料不按submitted日迁入。原67有效家族与写后复核未变化而定点复用，合计69＝33整合/19已有覆盖/15仅报告/2暂缓，39深入/28标准/1受阻/1争议；原33整合不等本轮新写33。补查日级独核及两项受影响差额DAY通过，普通研究/Books待办0，外部资格与历史切片保留不授正面Coverage/Evidence。补查细节与独核集中于[唯一本日工作记录](../_sources/daily-20260413/SUP_SOURCES_20261014.md)。
+
+以下为旧窗口已经验收且本轮未改动的有效结果，不替代本轮补查验收：
 
 按当前V3完成来源/贡献/证据、Books与非作者日级验收：504条宽库存只用于标题查漏和定点题摘，不是504篇当窗新论文或全文队列。有限30项重判为11项具体前分母关闭、19项准入；正式清单67个唯一家族，37深入完成、28标准完成、1原版材料受阻、1中心安全争议。33项已实际整合并通过root或apr03必要原文/真实正文/相邻链路独立复核，19已有覆盖、13仅报告、SEA原版受阻及CORA争议各1项暂缓。普通可执行工作为0；版本、日期与来源保留项按§5隔离，不支持正面采用或零遗漏断言。旧稿无损保留于[过程档案](../_sources/daily-20260413/v2.1-report-before-v3.md)，不继承旧DOI-created owner或Complete。
 
 ## 2. 来源覆盖
+
+本次补Apr12按每日14源限定主题处理，不扫Weekly。实际新读RSS、Research目录与core/题摘，未变原目录停点仅有效复用，不称全部二次抓取。逐源实际补充范围如下（详细查询/停止与失败位置见[记录§3](../_sources/daily-20260413/SUP_SOURCES_20261014.md#3-来源实际停点)）：
+
+- SRC-OPENAI：RSS相邻Apr10→Apr13T06Z，Apr12无可见条目；Research历史Load-more仍受阻。
+- SRC-ANTHROPIC：Research重新提取publishedOn，Apr09T16:34Z→Apr14T13:01Z，已检查可见目录无Apr12条目，不覆盖未列作者稿。
+- SRC-GOOGLE-AI：April Blog9条完整相关标题，Apr09→Apr13跨窗；DeepMind Research与Google Publications现行页已打开，历史日级Publications/selected slice受阻。
+- SRC-META-AI：Research0行，缺官方历史目录，受阻不是零命中。
+- SRC-QWEN：旧静态Blog仅2025；动态research0行，article API超4MiB/curl截断JSON，旧40/60目录Apr02→Apr15停点复用但本次完整动态正文受阻。
+- SRC-DEEPSEEK：Research Jun24→Feb25、动态Apr24→Dec01实际读跨窗，已检查可见目录无Apr12条目。
+- SRC-MOONSHOT：Blog最晚2025-11；旧CLI相邻Apr10/13release复用，本次完整release API截断，Apr历史Blog/分页受阻。
+- SRC-TENCENT-HUNYUAN：Research先查0行后IAB初始化超时，旧全部9项Apr30/23→Feb13停点仅复用；本次动态历史切片受阻，不保证未列作者稿。
+- SRC-ZAI：Research“全部”实读Apr29→Apr07→Apr01，已检查可见目录无Apr12条目。
+- SRC-BYTEDANCE-SEED：Research/Publications现page1为20/246到May26，Blog0行；旧page0/20/40跨到Apr08停点复用，本次历史分页受阻。旧CAF目录Apr12T16Z为Apr13BJT，不搬至补Apr12。
+- SRC-BAIDU-ERNIE：Blogpage1全部可见10标题Apr15→Feb06，已检查可见目录无Apr12条目，不等全部百度作者稿。
+- SRC-XIAOMI-MIMO：全部8个Paper标题Jun29→Mar13→Feb03；Blog15个可见标题无日期，Paper已跨窗、历史Blog切片受阻。
+- SRC-MINIMAX：EN/CN Blog相邻May26/Apr27→Mar18，AgentTechBlog仅现行3项Sep19–Oct08；M2.7官方card/许可必要版本已读，Apr12release公开绑定受阻，不沿转载声称源码/训练实现已开放。
+- SRC-ARXIV：4主题query、官方availability与4具名v1完整题摘，AI/CL官方April标题页cache miss/404，补4个限定官方目录查询。正常批次Apr12为0仅指公告槽；3相关身份缺Apr12公开绑定、两May-ID窗外，标题补检与例外保留不授零遗漏。
+
+以下表格保留旧窗口来源层；其“已检查”不替代上述补窗入口限制。
+
+实际触发按需来源：SRC-VLLM（[issue39610](https://github.com/vllm-project/vllm/issues/39610)）、表外[OpenClaw](https://github.com/openclaw/openclaw/issues/65380)（issue65380及关联PR65371）。只读两个具名兼容性信号的必要原文/trace/反侧，不扫release全队列；均已检查且新增2家族仅报告，当前补丁、闭合讨论或后发修复不是Apr12已部署证据。两条issue的公开日志是M2.7当日已经被取得/使用的旁证，不证明其开放weights首次释放事件落Apr12。
 
 14个每日来源按本窗核对。未变化机构目录复用[Apr11真实读取记录](../_sources/daily-20260411/v3-reopen-notes.md)实际跨过本窗的停点；本次新增读取Google Vantage、Seed目录/精确外链版本及KimiCLI相邻正式release，不把复用写成全部二次抓取。arXiv正常公告槽为本日08:00北京时间，逐family归属仍需批次、精确版本与例外结合，不能将DOI创建或Updated字段单独当首发。
 
@@ -32,6 +60,8 @@
 | SRC-ARXIV | [官方公告规则](https://info.arxiv.org/help/availability.html)Sun04-12 20:00EDT→04-13 08:00北京；504宽库存08549～09547/OAI/精确v1/邻界联合查漏，题摘语义及受影响有限30项已处理为11关闭/19保留 | 已检查 | 67贡献候选已整理；49个晚Updated身份与2Seed版本日期缺口精确隔离，不以字段单独定首发或机械迁日，整日仍待独立Gate |
 
 ## 3. 候选与判断
+
+本轮新增2家族均1+1+1=3、兼容/正确性必要深入且仅报告；下面67行原材料链接、日期、评分、审阅与Books处置冻结不变，两新行追加而不混作旧窗口论文。M2.7首次释放/10493/10513/11840只作资格保留，不混入候选分母；不按理论、局部实验或社会模拟硬排潜在增量。原67事件已通过的有效证据层复用，不重审无关附件。
 
 本窗67个唯一贡献家族，33整合/19已有覆盖/13仅报告/1SEA受阻暂缓/1CORA争议暂缓；37深入完成、28标准完成、1受阻、1争议安全终态。每项按必要机制/关键反证审阅，不以已有owner或局部负结果自动拒绝；有限30队列另11个具体关闭保留在过程档案。下表时段是官方公告槽、连续ID/OAI批次及早v1元数据联合支持的有界推断，不是逐篇成功日志或Updated等于首发；晚字段和机构目录版本冲突在§5隔离。来源、清单整理与单篇审阅不等整日报已过独立Gate。
 
@@ -105,6 +135,8 @@
 | [Do Vision Language Models Need to Process Image Tokens? — 2604.09425v1](https://arxiv.org/html/2604.09425v1) | 2026-04-13T08:00:00+08:00 ～ 2026-04-13T09:00:00+08:00 | representation/substitution稳定不等删除安全，single-token答案/multi-token VQA/caption协议须分开；2+1+2=5，真实gap深入 | 深入完成 | 整合 `MULTIMODAL-REPRESENTATION` [Ch23](../../../../books/part-03-multimodal-world-models/23-multimodal-representation.md), apr03实际写后独立通过 |
 | [Rays as Pixels: Learning A Joint Distribution of Videos and Camera Trajectories — 2604.09429v1](https://arxiv.org/html/2604.09429v1) | 2026-04-13T08:00:00+08:00 ～ 2026-04-13T09:00:00+08:00 | canonical raxel接口使camera由sidecar变可生成状态，shared codec与joint真实学习不能等同；2+2+2=6，真实gap深入 | 深入完成 | 整合 `MULTIMODAL-REPRESENTATION` [Ch23](../../../../books/part-03-multimodal-world-models/23-multimodal-representation.md), apr03实际写后独立通过 |
 | [E3-TIR: Enhanced Experience Exploitation for Tool-Integrated Reasoning — 2604.09455v1](https://arxiv.org/html/2604.09455v1) | 2026-04-13T08:00:00+08:00 ～ 2026-04-13T09:00:00+08:00 | expert分叉负adv停shared-prefix梯度但保留suffix/self池，mixed ratio不证明真实知识边界；2+2+2=6，真实gap深入 | 深入完成 | 整合 `TRAIN-GRPO` [Ch33](../../../../books/part-04-training-system/33-grpo.md), apr03实际写后独立通过 |
+| [vLLM #39610: FP8 models fail on Ampere nightly](https://github.com/vllm-project/vllm/issues/39610) | 2026-04-12 | FP8模型可用判断→nightly选择Ampere不支持fp8e4nv路径→须保版本/设备/kernel资格；1+1+1=3，兼容性深入 | 深入完成 | 仅报告：受限公开故障与配置事实，不将后发修复、现行兼容性或性能外推为长期新机制 |
+| [OpenClaw #65380: MiniMax tool-call ID sanitization roundtrip failure](https://github.com/openclaw/openclaw/issues/65380) | 2026-04-12 | 相似API形状→ID回放归一化失配2013→须核provider roundtrip而非语法兼容；1+1+1=3，正确性深入 | 深入完成 | 仅报告：局部provider回放错误/原补丁建议，现PR未合并及unit声明不证明生产恢复 |
 
 ## 4. 证据与知识整合
 
@@ -429,7 +461,24 @@ exact-v1 §4.1–4.2/§5.1–5.3/Tables3–4/AppC：self池保留，高entropy a
 审阅：深入完成，评分2+2+2=6；整合 `TRAIN-GRPO` [Ch33](../../../../books/part-04-training-system/33-grpo.md), apr03实际写后独立通过。
 
 
+### [vLLM #39610: FP8 models fail on Ampere nightly](https://github.com/vllm-project/vllm/issues/39610)
+
+本轮深入完成/仅报告，1+1+1=3。Apr12原issue Describe/环境与关键trace：Ubuntu22.04/Python3.12、torch2.10+cu130、M2.7/Ampere，_w8a8_triton_block_scaled_mm在初始化选择fp8e4nv，而报错架构支持fp8e4b15/e5。v0.19能加载为reporter声明，没有本地重放；model FP8标签与实际kernel资格不同，故不能把可下载或既有版本可用当nightly资格。Apr17 maintainer priority/guard讨论、Apr18成功日志只为后发旁证，不声称Apr12修复已部署，未采用性能/能耗/质量或SLO数字。只有受限版本配置反证，不产生新的长期量化/执行计划论点，不新增故障清单进Books；独立reader必要原文/反侧通过。
+
+### [OpenClaw #65380: MiniMax tool-call ID sanitization roundtrip failure](https://github.com/openclaw/openclaw/issues/65380)
+
+本轮深入完成/仅报告，1+1+1=3。Apr12原issue Root Cause/关联[PR65371](https://github.com/openclaw/openclaw/pull/65371) proposal：MiniMax不同格式tool-call ID被Anthropic-compatible replay sanitation改写，回传tool_use_id不匹配导致2013；只对anthropic-messages关闭provider的ID重写，OpenAI path保持。采用的是局部opaque identity roundtrip失配及修复建议，非新权限协议。现PRclosed/merged_at=null，6/6是作者unit声明，build/manual未勾；当前factory-hook patch为后来的rework，不回填Apr12实现或称已合并/生产恢复。未本地运行/完整序列重放，无服务性能或权限安全保证。该未经生产验收的adapter例证不改变长期Books正文，reader必要source/proposal/closure反侧通过；与M2.7首次发布日/当日许可证归属分别判断。
+
 ## 5. 缺口与下一步
+
+无普通可执行扫描、筛选、审阅或Books工作。六部DAY有效层、两新增兼容性必要证据/仅报告及新集合差额DAY均已独核通过；无Books新写/锁。本日按照安全终态完成，新增资格保留项如下，不用于确定候选/评分/Books/性能保证/无遗漏断言：
+
+- [MiniMax M2.7官方项目](https://github.com/MiniMax-AI/MiniMax-M2.7)：缺开放weights首次释放/同artifact公开事件归属日，不是声称没有Apr12访问旁证。39610当日加载日志说明已有用户取得该artifact，但不证明首次发布就在Apr12或当日具体许可。官方Mar18公告与现行card证明不同层，Apr11UTC许可提交/Apr12README更新均不单独证明首次公开；外部issue4920实际Apr12T20:06Z为Apr13BJT。恢复同artifact的官方日精度释放声明或可靠历史公开记录后只重开发布准入/必要证据，当前不采用MIT可商用、全部源代码或训练实现开放断言。
+- [SWE-Shepherd 10493v1](https://arxiv.org/abs/2604.10493v1)、[Agent Mentor 10513v1](https://arxiv.org/abs/2604.10513v1)、[Solver-Sampler Mismatch 11840v1](https://arxiv.org/abs/2604.11840v1)：完整题摘分别支持action PRM与终局对齐压力、日志语义→corrective prompts、reasoning能力与模拟fidelity负面边界的潜在贡献；官方页只有submitted Apr12，缺Apr12公开正文/例外公告绑定。恢复同v1原作者公开稿/官方公告日期后仅重开各身份日期与必要审阅；不按提交日期当首公开。不是普通未读或主题不足排除。
+
+补窗目录保留项：OpenAI Research、Google Publications/DeepMind历史selected、Meta Research、Qwen截断动态API、Moonshot历史Blog/release分页、Hunyuan动态页、Seed历史分页、MiMo Blog与MiniMax AgentTechBlog历史切片。各入口实际停点见§2与唯一本日记录；可接受对应当日官方日期目录/分页或可复核历史快照，只重开相关入口，不扩扫整月。arXiv标题页补检失败保留，不用无常规公告代替作者外部原稿检查。LAWS 2605.04069及CARE 2605.27388由官方ID月份规则可排除Apr12 arXiv首公告，只路由May未定位具体日，不在本日补做深审。
+
+下面旧窗口安全保留项继续有效，不重建并行账本；旧普通工作清零不代表新增日级复核已完成。
 
 普通可执行工作：无。33实际增量均完成写后非作者复核；原12项中11项必要原文/实际owner已由apr03复核，SEA已按可用材料边界精确隔离。最终日级来源/日期/集合与处置独立复核通过；未变化的有效PASS复用，不重扫504或无差别全文。以下是安全终态保留项，不是声称缺失证据已经通过。
 
@@ -446,6 +495,11 @@ exact-v1 §4.1–4.2/§5.1–5.3/Tables3–4/AppC：self池保留，高entropy a
 中心采用限制：[CORA](https://arxiv.org/html/2604.09155v1)的joint harmful-execution risk上界不能直接成为条件执行harm rate；HR全proposal、mHR条件执行、GAR执行coverage必须分开，单项暂缓，需作者收窄或补分母证明才重开其安全保证。[08764](https://arxiv.org/html/2604.08764v1)两个梯度上界缺tangent非退化下界，不能推出普遍ratio保证；保留固定PCA局部测量，仅报告，补下界/修正定理后只重开理论采用。[09159](https://arxiv.org/pdf/2604.09159v1)保留截断设计，仅报告；joint surrogate与terminal marginal entropy不同，沿路径time恒定不能推出state divergence为零，需完整volume/边缘熵推导才能采用该保证。三处不支撑Books强保证，不否定各自全部有效实验。DRTO08577旧公式争议已按官方MathML/PDF-v1 ρ/η撤销，不能继续请求不存在的勘误。
 
 ## 6. 复核
+
+复核者：supp_apr13_reader（本轮补充作者之外）
+结论：通过
+
+首批M2.7 core与4条v1题摘/身份、官方公告规则已独立校准；R4实际六部分DAY、R6两兼容性必要原文/反侧/Only、R7受影响六部分新集合DAY均通过。14来源实际有限入口/停止与失败、12有限query非全类队列、4资格保留、2May-ID/2明确范围排除、两新增低分compat材料均有具名检查范围；Google9标题独读，未核全外部目录、旧504全文或复现实验，未把局部抽层称全网召回。实际范围与解决差额见[独核尾区](../_sources/daily-20260413/SUP_SOURCES_20261014.md#6-独立复核尾区reader-exclusive)。本轮无Books新写，不把旧33处复用当新POST；V3、67原整行/原窗口/连续原§4（36310字符/54392 UTF8字节）冻结、78本地引用及限定cached/unstaged检查通过。作者未stage/commit/push，index已有材料和并发修改保持。以下旧复核有效层未受新证据影响，仅复用而非本轮重审：
 
 复核者：apr03（非作者日级、有限必要原文与新增8项写后复核）；root（未变25项实际增量及其他5项必要证据结果）
 结论：通过

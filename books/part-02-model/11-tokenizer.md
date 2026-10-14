@@ -92,6 +92,10 @@ low e r </w>
 
 额外候选搜索、质量统计、两阶段优化和词表改变后的模型训练都要计价。所称近似最优界另需 monotonicity/submodularity 等条件，原文也明确一般 LM loss 不满足该结构，因而不能把条件 quality-frequency 界写成整个模型目标的最优保证；固定词表的部署路径没有新增 policy 调用，也不表示生命周期成本为零。应分开比较 raw exposure、优化步数、词表构建与下游回归，避免让低质量代理把罕见但真实的片段排除。质量信号不可校准、统计分布变动或净收益不足时，普通 BPE/Unigram 与独立数据清洗仍是清晰基线，而不是必须随之改变 tokenizer artifact。
 
+频率高也可能只是同一仓库反复出现的长名字，并不意味着这个新 token 在其他来源中还能获得足够训练。离线构词可以为每个候选 pair 额外记录它出现于多少个仓库、多少种编程语言：合并后的支持集合是两个父单位支持集合的子集，因此支持计数沿 merge 分支不会增加。一个条件分支据此跳过支持不足的合并，或把频率与来源支持共同用于 merge 优先级；改变的是离线 vocabulary 搜索，而非每个请求的编码过程。导出的固定 merge rules 仍走原 BPE 推理接口，但词表与整数 ID 已改变，必须与新 checkpoint 一起验收。<!-- source-family:SF-2026-ARXIV-2604-14053 -->
+
+来源支持不是质量或语义价值的真值：把阈值推得过高会剪掉真实的专用单位，甚至耗尽可合并分支、无法填满目标词表，也会增加构词时的跳过与统计成本。受限代码实验中更高的未见仓库覆盖、较少的低概率重复失败 token，只说明这套正则在所测统计与小模型上有效；相同训练 token 预算不是相同原文曝光，重复 token 的概率探针也不证明下游代码、安全或幻觉收益。应分别验收来源切片、最终 emission 分布、压缩率、模型行为与生命周期成本；支持统计不可得、专用语义回退失败或收益不能摊销时，普通频率 BPE 与数据治理仍合理，不能为了覆盖数字改变已部署的 token 身份。
+
 编码新文本时，必须使用固定 vocabulary 和 merge rules，不能根据单个请求重新训练。否则同一模型权重会面对不稳定 id 语义。
 
 固定 artifact 仍可有“允许编码”与“允许输出”两份不同集合。一条受限分支保留 BPE merge graph，把输入中不再允许的残留 token 递归拆开，再按未屏蔽的 merge 规则重组；输出侧则屏蔽对应 logits 列，而不重新 merge 已生成的自回归前缀，否则 token 位置与 KV 语义会一起改变。输入重组与输出禁用因而必须分别绑定 vocabulary/mask、merge graph、ID 映射及 checkpoint，不能把它当免费换 tokenizer。[必要方法与反侧](https://arxiv.org/html/2602.04706v1)用语料中的最终 emission 次数与邻接 entropy 筛选候选，二者是 corpus-conditioned proxy，不是语义冗余真值；受限 Latin/C4 证据不能替未改动的非 Latin 路径验收。减少输出候选会改变生成分布，输入拆分也可能增长序列；参数减少、PPL 的 token 单位、生成质量与实际 backend 成本应分账，不能由词表变小或置信分数更高推准确率。mask 配置、长输入质量或实际执行不合要求时，回退原 artifact，保留基本单元与兼容路径，而不追求普遍 plug-and-play 或无损收益。<!-- source-family:SF-2026-ARXIV-2602-04706 -->
@@ -343,6 +347,10 @@ BPE 与 Unigram 的局部或迭代选择易实现、稳定且兼容成熟 checkp
 
 相同底层字符串可以存在多种合法 token segmentation。若只验证 detokenized 文本一致，就会误以为模型输入语义未变；实际上 token boundary 会改变 embedding 序列、position、attention path 与生成概率。跨语言实验表明这种脆弱性并不均匀，因此英语上的 segmentation robustness 不能外推为 checkpoint 的普遍性质。
 
+数值序列还可在不换词表的条件下改变展示边界：保留数字值与原顺序，只把每隔若干项的普通delimiter换成另一separator，再让模型读取。[受限SepSeq对照](https://arxiv.org/html/2604.07737v1)表明这种局部格式选择可改变长序列copy/计算行为，但某些小模型或复杂任务反退，不能把替换后的attention代理当作普遍分段隔离定理。值/索引保持与实际token数必须经原parser和tokenizer分别核验；替换可能改变全部Q/K，等长度也不等内部计算等价。Separator、间隔、原序列与checkpoint须一同保存，response变短不表示输入更短或端到端更快；格式搜索、生成与数值校验仍付费。解析、copy或实际任务回归时，保留原delimiter与显式数值工具，不让较流畅的语言回答替代可核的数值交接。<!-- source-family:SF-2026-ARXIV-2604-07737 -->
+
+固定词表使输入与输出共享同一套 token 身份；在线动态 codebook 则让多个不同长度的合并 token 竞争同一文本前缀。输入组合需要保留整个 span 的内容，输出分类又需区分这些前缀竞争者，因此一个共享组合器可能承受不同几何目标；可分开 input/output encoder，并按原始 token span 定义位置，而非只用压缩后序号。合并 digits 等敏感单元还会改变推理质量。动态词表要另报同文本的合法切分概率：只在 canonical prefix 下汇总 target 的多种切分，不等于全文 segmentation 的联合边缘概率。它增加组合、codec 和评分成本；[zip2zip++ 的受限 LoRA 对照](https://arxiv.org/html/2610.13605v1)仍有代码/指令反退，压缩无损只指可还原文本，不授模型质量无损或服务加速。<!-- source-family:SF-2026-ARXIV-2610-13605 -->
+
 模型发布、转换和 serving 验收应把 tokenizer revision、normalization、segmentation policy 与 checkpoint 绑定，并加入“同字符串、不同合法分词”的行为回归。多分词增强可能提高鲁棒性，但会增加训练分布宽度和成本，也未被证明对所有语言与任务都有效。生产中仍应优先固定 canonical tokenizer；只有兼容迁移或容错需求明确时，才承担非规范分词的训练与测试成本。
 
 <!-- source-family:SF-2026-ARXIV-2607-26831 -->
@@ -442,6 +450,10 @@ Tokenizer 在无限文本空间和有限模型词表之间建立可复现映射�
 
 ## Review notes
 
+- `SF-2026-ARXIV-2604-14053` — Daily `2026-04-17`来源补充；[SA-BPE exact-v1](https://arxiv.org/html/2604.14053v1) §4.1/Algorithm1、§4.2–4.4、§5.1–5.3/Tables2–4、§6/Limitations，2+2+2=6，source-support离线merge剪枝/优先级与固定runtime接口的具体缺口深入。支持数非quality truth，高阈值耗尽merge/统计成本、100M固定token预算与undertrained probe不能证明raw exposure或下游/安全收益均近正文保留。root R5必要Source/PRE、R6自然日联合资格与窄锁、实际正文两侧非writer POST通过；本注已同步，作者实际读回后由root定点末注回读释放锁，不授DAY；未核实现或复现实验。
+
+- `SF-2026-ARXIV-2610-13605` — [zip2zip++ exact-v1](https://arxiv.org/html/2610.13605v1) §2–5/Eq3–4及Appendix F的canonical-prefix反侧；Daily2026-10-13，2+2+2=6，具体缺口深入。input/output几何、span位置和segmentation评分分责；四模型LoRA/同配置，code/IF反退、敏感digits与gap未闭保留。root必要Source/PRE通过，root实际非writer局部正文/邻接与本注POST通过；未核artifact或复现。
+
 - `SF-2026-ARXIV-2601-05776` — Daily `2026-01-13` 增量；[Romanization exact-v1](https://arxiv.org/html/2601.05776v1) §2–4/6；2+1+2=5，native/roman分支差额深入；149Mencoder/mono-multi控制/fidelity-fertility/中日反侧与费用近文，不授LLM热换词表。jan10_books_audit必要原证/actual owner PRE通过、root授窄锁；作者完整邻接已顺读，root非Books写入者已实际读正文/完整邻接/自身末注，POST PASS；窄锁释放。未核实现/复现，非日级Gate。
 
 - `SF-2026-ARXIV-2601-05833`：[Peek2 exact-v1](https://arxiv.org/html/2601.05833v1)，Daily 2026-01-13；原2+1+2=5，具体行为保持的预分词执行分支缺口深入。必要§3/4与完整 XNLI 片段回归，仅采用7类双scalar分派及缩写回退，不授所有输入等价、生产吞吐或普遍安全保证；硬件未披露，未复现。jan01_v3实际必要原源→owner非作者核通过；正文写后待独立验收。
@@ -472,3 +484,4 @@ Primary-source 校验入口：
 - `SF-2026-ARXIV-2602-13940` — Daily `2026-02-18`；[exact-v1](https://arxiv.org/html/2602.13940v1) §3–4、必要消融/配置。2+1+2=5，expected conditional loss与离散边界梯度差额深入；Eq9 Jensen等号、discount/batch-baseline最终无偏不采用，固定估算FLOPs非实际吞吐。root必要源/actualowner PRE通过，实际正文/邻接与末注经root非作者POST通过，窄锁释放；未核实现或复现，非日级验收。
 
 - `SF-2026-ARXIV-2603-15953` — Daily `2026-03-19`补`03-18`自然日；[HAT exact-v1](https://arxiv.org/html/2603.15953v1) §3.1–3.4/4.2/6/7.1–7.3.1及直接质量反侧，2+2+3=7。只采用rule-split/learned-word接口、旧backbone适配与byte/word双clock/KV成本；tokenizer-free非无规则，压缩非吞吐，FLOP-matched批处理反退/任务质量反侧近正文。不授热换兼容、普遍质量/加速或生产SLO；未核代码或复现实验。
+- `SF-2026-ARXIV-2604-07737` — [exact-v1](https://arxiv.org/html/2604.07737v1) §3–4/Limit必要范围，仅数值/索引保持的delimiter格式分支，保小模型/复杂任务反退、Q/K变化与tokenizer限定，不采严格sink隔离界；response长度非全token/墙钟，未核代码/复现。

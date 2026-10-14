@@ -1,6 +1,6 @@
 # 2025-10-08 本轮有限来源与实际停止
 
-作者Ptolemy，目标补窗2025-10-07完整BJT自然日。旧README来源表仅历史，不继承旧成功/失败或时刻门。本包当前是阶段读层：机构必要恢复已大部分闭合，arXiv剩余有限相关题名、必要日级身份及最终DAY仍普通。不是已完成全Coverage/无遗漏。原件均在[supplement](supplement-20261012/)，各请求有URL/header/body/执行时刻/exit/bytes，保存不等阅读全文；日级关键范围最终需并入README。
+本轮Oct08作者（沿原Ptolemy有效层），目标补窗2025-10-07完整BJT自然日。以下为最终有限来源归并，关键范围已同步README六节；不继承旧成功/失败或时刻门。机构动态恢复、相关题名/题摘准入和具名日期集合已处理到现有证据的采用或安全隔离位置，仍待root实际完整DAY，不是全Coverage/无遗漏。原件均在[supplement](supplement-20261012/)，各请求有URL/header/body/执行时刻/exit/bytes，保存不等阅读全文。
 
 2026-10-12T10:46+08阶段机械实检114个请求/raw长度匹配，102个200/exit0、1个000/35、9个000/28、1个000/56、1个403/0。此数不含后续请求，也不是当天研究事件分母。API第一次失败后仅加实际官网Referer/Origin等作一次有界恢复，当前成功取代过程停点；不无限重复失败路径。源码只解析，不执行下载脚本。
 
@@ -19,7 +19,7 @@
 | SRC-BAIDU-ERNIE | 本日中文两页200，实际article正文中文日期/title10+6，heading不计research；Oct16→Sep12/再Aug14/Jun30相邻，root本日独读相同16有效 | 两页博客停止，无Oct07卡仅这个范围，不外推全部repo；不用无time标签说缺日期。 |
 | SRC-XIAOMI-MIMO | 本日官网200，本人完整Paper8 date/title夹Sep19Audio→Oct21MoE RL；Blog15 title/描述，但不带日期。真实More是button aria-controls=blog-more，隐藏现有09–15七条就在同HTML中，不是历史新分页；已实际读这个隐藏段。index JS只是路由/导航，不假称研究列表 | Paper当前有限日期目录已止；Blog历史日期/早段不能恢复，不拿15新卡或More授2025完整目录，无需扩15正文/2026研究。 |
 | SRC-MINIMAX | 本日EN/CN原站redirect实际minimax.io/minimax.cn均200；本人完整可见12/13日期题名，EN最旧Oct27 M2，CN另Jan15 MiniMax01但无中间完整历史保证；Agent redirect agent.minimax.cn实际2026Oct08/Sep22/Sep19三卡，非旧May13。当前page bundle一次000/56；有界`?page=2`probe200/exit0，实际完整日期题名与首12有序卡逐项全等 | page2参数返同首页，非历史分页成功或全量终页；current列表不授历史无遗漏，Agent历史独立缺段，不延伸全站。 |
-| SRC-ARXIV | 本日五主题邻接submitted Oct05UTC18→Oct06UTC18实际34/5/35/19/0，93跨入口81唯一；仅定点76有效题摘61P15C与5旧题名去重，不迁日期。目标邻日Oct06UTC18→Oct07UTC18五主题40/14/38/30/1，各total=entries，123跨入口105唯一。类别有限CL/LG首50/268、CV/RO首30/142、systems首20/22，三请求100跨入口，和target并为173唯一。当前146精确v1完整题摘114P32C/N0，root§22/23实际准入/必要局部通过；27范围题名止 | 全部仅提交发现，18Z不是公开日/hours义务。latest标题/AB不充v1；254联合发现=146当前AB+76有效AB复用+32标题，不称全部正文/全分类。具名先稿/必要日门与最终DAY仍普通，不把未返页扩队列。旧VecInfer独立日期lead保留。 |
+| SRC-ARXIV | 本日五主题邻接submitted Oct05UTC18→Oct06UTC18实际34/5/35/19/0，93跨入口81唯一；仅定点76有效题摘61P15C与5旧题名去重，不迁日期。目标邻日Oct06UTC18→Oct07UTC18五主题40/14/38/30/1，各total=entries，123跨入口105唯一。类别有限CL/LG首50/268、CV/RO首30/142、systems首20/22，三请求100跨入口，和target并为173唯一。146精确v1完整题摘现113P32C1O，27范围题名止，root§22～24实际贡献/归并通过 | 全部仅提交发现，18Z不是公开日/hours义务。254联合发现=146当前AB+76有效AB复用+32标题，合222题摘身份层174P47C1O，不称全部正文/全分类。SUP_DATE集合已root§27核；174潜力与VecInfer必要日证仍安全隔离，不把未返页扩队列，不授正面覆盖。 |
 
 ## 必要公开日入口：VecInfer具名停止
 
@@ -27,4 +27,6 @@
 
 这一入口粒度限制已实际核验并停止，不为每个P重复无用日期错误；余具名先稿/原发布事件按必要身份有限处理，不扫会议全集。仅需官方日级公告/当期列表或精确同稿原正文公开日，不请求小时。原VecInfer未知日线索继续保留，原S2R旧小时hold由已通过官方Oct07自然日事件覆盖；原Gemini日/行及连续§4不动。
 
-root§14/15实际当前机构元数据/有限停止、MiniMax重复page2与Advanced年月权限已通过；root本日registered Google pubs的有限web恢复只按上述新差额引用。当前题摘与必要局部校准已闭合，具名先稿/唯一日级请求集合、来源终表和完整DAY仍普通，不预署整体完成。机构目录外没有主动扫Weekly/整会议/全年库存；Accepted/会议日不是首公开证明。
+root§25旧`/list/cs.CL/2510?skip=0&show=2000`实际404；§26从真实browse link进入`/list/cs.CL/2025-10`成功，2666中首1～50月题名、无日级公告字段。两者权限分开，不重试旧路径、不扩整月/2666队列，也不以正确月入口授Oct07日期。具体具名集合、先稿metadata/当前说明权限及一次重开条件见[SUP_DATE](SUP_DATE_20261013.md)；集合A113/B61与四新增metadata已root§27实际通过。04819 Visual Representations与04886 ECHO已更正，错配forum失败不作为身份/日期证据。
+
+root§14/15实际当前机构元数据/有限停止、MiniMax重复page2与Advanced年月权限已通过；root本日registered Google pubs的有限web恢复只按上述新差额引用。当前只余报告/检查及root完整六部分DAY和完成态FINAL，不预署整体完成。机构目录外没有主动扫Weekly/整会议/全年库存；Accepted/会议日不是首公开证明。按需实际触发SRC-OPENREVIEW及表外ACL/Oxford/作者Blog/IEEE/ACM/CodeChunking只作上述具名身份/日期恢复；成功metadata、403、202空体与challenge各角色分开，无会议扫描队列。

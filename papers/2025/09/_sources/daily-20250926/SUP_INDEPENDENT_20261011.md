@@ -105,3 +105,61 @@ GDPval：实际读本日 CALIBRATION_HANDOFF 的 Archimedes非writer POST、旧r
 Books ownership：本人无共享Books写权限或窄锁，本日未改Books；原GDPval为root写入、Archimedes非writer POST，本轮仅实际回对有效层，未发现新Books gap/锁请求。State由root独占。
 
 运行情况：本线程无未结束的exec_command会话或待wait的exec cell，所有本人命令均已返回；没有本人启动的后台捕获/下载/服务。尝试读取系统进程列表被环境拒绝，不能声称全机或其他线程没有进程。已直接通知Meitner暂停，实际compact快照显示其已响应“立即暂停、不开启Sep28”，其他线程进程由各owner保存。除本节停点写入与回读校验外，不再执行研究。
+
+## 9. root：新增具名漏项与日期门窄恢复
+
+2026-10-13继续授权下，root实际重读AGENTS、当前Research/Report合同、Sources Daily/arXiv、Prompt、ROADMAP和本日完整报告/本note§1–8。本轮作者为Kierkegaard，root为其非作者复核者；此前Meitner/Cicero有效层保留，不把本节读域归给Cicero，也不重扫原十四源或GDPval。本日因新增具体漏项暂不计当前整日验收，52/132计数由root维护。
+
+root实际在线读[Alpha-VLLM作者仓库](https://github.com/Alpha-VLLM/Lumina-DiMOO)与[项目页](https://synbol.github.io/Lumina-DiMOO/)：Sep25明确Technical Report发布，Sep10模型/推理和Oct06训练代码为不同事件；题名、机构、2510.06308v1身份及完整题摘匹配。这个官方研究披露日期门通过，不等论文arXiv首次公开，也不由目前实现/实验倒证September原报告逐字不变。统一图文离散目标及按模态选择生成路径有具体准入潜力，必要历史原件/机制、评分与Books判断尚待本次单篇处理；不预签全部v1证据。
+
+同时发现原日期门两项具体误判：Report合同§3.3明确仅标日期时使用官方公开日期，§2不要求时分秒；不能对明确官方Blog日期额外要求时区或完整时间区间。root实际在线读[Google Wayfinding官方稿](https://research.google/blog/towards-better-health-conversations-research-insights-on-a-wayfinding-ai-agent-based-on-gemini/)正文显示September25,2025，以及[SGLang/LMSYS原作者稿](https://www.lmsys.org/blog/2025-09-25-gb200-part-2/)署名和September25,2025。两者作为官方研究页面事件可按原日期2025-09-25处理，不造时刻、不迁旧候选、不从Blog日期决定所链论文first。原“date-only无TZ因此受阻”的理由不再成立；仅恢复这两条已经具名的潜力和依赖判断，不推倒其他有效层或全月重跑。
+
+Wayfinding的具体潜力是澄清流与当前最佳回答分开、逐轮更新并限制提问负担；原随机within-subject用户研究不能分离UI与prompt改动，也不证明诊疗正确或医疗安全。LMSYS的具体潜力是精度、KV容量、dispatch载荷与EP/offload规模共同改变算力/通信平衡；作者不同硬件、precision、batch、EP布局及代码路径的总倍率不能认证单个优化因果。root已实际读两官方主体的设计、评价、限制与后续段，但尚未裁本次最终评分、必要引用图表或具体Books差额，仍普通可执行，不称三家族已经完成。
+
+此修正不放宽arXiv Submitted、月份、仓库创建、Upload、第三方收录或当前artifact日期。存在明确时区字段或版本身份冲突的材料仍按真实原源分责；未知日不自动补造。本日原窗口/GDPval整行/评分及连续原§4冻结，原来源历史缺段继续隔离；只补Lumina和上述两项具体错门，未写Books、无锁，未stage、commit、push。
+
+## 10. root：Wayfinding准入、必要Source与仅报告通过
+
+root实际完整读作者SUP_RESTORE§1，回对本人§9已真实顺读的官方设计/随机研究/结果/结论主体。原官方日期2025-09-25有效，不以无TZ拒绝、不授所链论文首次公开。具体准入为每轮有限澄清与临时best-effort回答并存，改变“先问完再答/直接完整作答”二选一的交互约束；2+1+2=5通过，System Reach限单一协作流程。标准审阅范围是官方披露的协议和受测体验，不是全部论文附件、诊疗准确性或动作安全。
+
+130名美国非医护成年人随机within-subject、每AI至少3分钟、六体验维度与偏好，和四混合研究163总人口分开；UI和prompt共同变化，不能把总体偏好唯一归因于双栏或透明解释。对原因类问题更长对话并不认证更高效率；未核图中精确数值、所链PDF、每模型token/端到端费用或生产SLO，不采用相应保证。解释文本不认证faithfulness，用户偏好也不替医疗正确性。
+
+实际读AGENT-WORKFLOW Ch81完整Clarification局部：每轮ask/assume gate记录用户回答与预算、行动权限独立、按缺信息类型/回滚成本选择时机、低风险可撤销步骤可继续推进；与Ch80反思不自授真值及Ch82协作权限的开篇边界相容。ROADMAP确认Ch80为Reflection，不是Memory；首次两个猜测文件路径读取失败，随后读取真实80-reflection.md才核此邻接，不把失败算已读。正文没有完整双栏UI配方，不冒称“全部机制已有覆盖”。本次仅报告通过：新原证支持受测交互选择，尚不足以改变该章行动admission/授权或构造普遍对话策略；不把产品界面实例另加成长期runtime算法。无Books写入/锁/POST义务，若未来独立对照支持可迁移控制条件，再按这一具体缺口重开。
+
+## 11. root：LMSYS配置边界Source与具体已有覆盖通过
+
+root实际完整读SUP_RESTORE§2及本日官方Methods/Experiments/Accuracy/Future主体，准入为精度/KV容量/dispatch载荷与EP、host-prefetch共同改变最佳执行规模，2+1+2=5通过；评分对象限部署计划中的具体取舍，不借成熟模块数量或headline倍率加分。Sep25官方页面事件有效，标准必要机制与适用配置完成，不声称代码/未公开CuTe补丁、图中全部数据或实验复现已核。
+
+DeepSeekV3/R1、GB200NVL72、BF16/FP8 attention与FP8/NVFP4 MoE、可选输出投影及q_b_proj另用FP8分别保留；decode48ranks、prefill高精4/低精2、2k/4k输入及近满KV的batch1408/768共同限定结果。旧H100baseline复制、不同路径辅助kernel/优化状态及EP负载平衡不相同，不从3.8x/4.8x推单项因果/通用收益；本次不采用准确性图作全部任务无损认证。offload只有省下通信超过额外计算/搬运代价时有益；MTP为future不写成已实现，完整SLO/失败恢复与净费用未核。
+
+实际读INFER-TENSORRT-LLM Ch49 L215–240计划身份、L261–279并行组/拓扑/DP-EP不同硬件最优及full-cost/fallback、L310–335 phase-specific placement/host迁移/静态回退，具体承载本次可长期支持的配置边界。该owner拥有单runtime executable plan，不等把SGLang称为TensorRT上层控制平面；Ch48目标分布验证与Ch50 Serving engine开篇仍分责。已有覆盖/No Change通过，不另在Ch51复制硬件案例或从正文TMA signaling一句自签独立内存正确性规则；无新写/锁/POST。本日Lumina与报告六部分实际验收仍普通，不由这两个单篇预支DAY。
+
+## 12. root：Lumina必要源、反侧与具体已有覆盖通过
+
+实际完整读SUP_RESTORE§3–4，独立读2510.06308v1 HTML§3.1–3.3、§4.4/Eqs5–8、§5数据，GenEval解释/Table3、理解评价/Table10、§7.1/Fig12 caption、§7.2及§8。采用对象是官方Sep25研究披露家族，以及本次恢复时精确October稿可核的最小技术解释；不把整个v1、其性能或训练配方倒填September。2+2+2=6窄准入通过；必要设计/评价与受影响正确性局部审阅完成，不称所有I2I榜、图像像素、代码/权重或实验复现已读/已跑。
+
+统一离散目标仍有各模态codec/词表范围；图像全局masked生成、文本block-sequential与block完成后结束符检查有不同计算和停止对象。Eq2 tilde记号与clean监督、已解码置信负无穷及remask/top-k描述不能补成已验证精确联合分布或完整执行配方。max-logit是近似选择代理，旧KV与logits均可被复用，warmup/周期全算减少而不消除误差与驻留成本，不能叫AR exact prefix。Eq7/8实际定义log-likelihood，Eq5取负号与该定义一致；正文称loss只是命名口径，**不应把这组负号误报成错误**。同源理解模型评分和选步梯度仍不等独立质量、标准PPO/GRPO等价或真实轨迹credit保证，本次不采用其精确RL配方。
+
+实际Table3核到颜色局部低于若干基线，FLUX.1[Dev]正文82%与表66%冲突；Table10 MME-P/MMBench有更强比较者，不照录所有指标最好。不同family的参数/数据/codec、Fig12不同分辨率、block×steps和未完整披露precision/batch/concurrency/SLO不认证范式因果或通用加速。ML-Cache增加驻留内存，scratch消融直接256分辨率SFT/省预训练，不证明所有dLLM必须该初始化。§8只图像/文本已实现，视频/音频是未来；这些反侧保持在拟采用机制附近。
+
+历史artifact有限结果实际核：PDF路径API只有8b270d4提交，精确文件状态added、时间Sep26，父README0261379仍Technical Report Coming Soon；该父稿实际已说明统一离散图文、global image/block text采样、max-logit cache及warmup/refresh参数。其本地PDF只有明确partial、不称完整历史报告；不因commit时间改官方Sep25披露，也不凭当前News证明September逐字配方。父稿block示例32与分析256是不同配置，不统一成一个默认值；不要求继续全部commit/所有byte比较才能审清这个有限事件。只有需要采用原September性能或未绑定细节时才恢复其原正文，当前不采用它们。
+
+实际Books比较为唯一MULTIMODAL-GENERATIVE-PARADIGMS Ch24：masked正文区分未知位置/条件与并行提交，typed unified正文保codec/schema/evaluator身份，模态性能段分prefix/whole-sample/stop对象，双向cache段明确近似复用与full refresh回退；Ch23表示合同与Ch25环境转移开篇不会把图文生成认证为世界模型。**具体已有覆盖/No Change通过**，不是已覆盖完整Self-GRPO或ML-Cache所有参数，也不新增三个重复owner或论文收纳段。无Books写入/锁/POST义务；作者只按上述范围更新本日报六节及必要历史细节隔离，随后root实际DAY/保存态FINAL，尚不预签日级计数。
+
+## 13. root：三具名恢复后的完整六部分DAY通过
+
+root非本次报告作者，实际顺读15:43:21进行中稿六部分、当前SUP_SCOPE及SUP_RESTORE最后新增层；§9–12各单篇真实结果与旧Cicero/原GDPval未变有效层分开复用，不重全部165题摘/16核心或十四源。原1＋新增3＝4，必要处置4/4：原GDPval实际整合1、Lumina/LMSYS具体已有覆盖2、Wayfinding仅报告1，Books本次新写0，无锁/待POST。
+
+六部分一致：结论区分此次新增与旧轮0统计；来源表自包含实际旧有限停止与三原页面/精确后续稿权限，不授历史缺段覆盖；四正式家族日期/评分/Source/Books明确；原连续§4保持，新增方法/反侧与唯一owner衔接；终态保留不再误请求Wayfinding/LMSYS时区，仍隔离arXiv提交/首公开、历史目录及Lumina原September配方/性能未绑定；复核区把root新实际范围和旧Cicero/Archimedes层分开。没有普通未读正文被标外部hold，也没有新datum/bench/实现复现声明。
+
+本次实际V3通过；六节、14唯一Daily ID、4正式家族、28本地引用全部存在。相对旧SUP_BASELINE，原window/GDPval完整行/原§3非空行与连续原§4逐字保留；限定本日报/SCOPE/RESTORE/独核的cached与unstaged diff-check均通过，原raw/index和他人并发修改保持，不声称全工作树clean。42窗口测试本轮实际通过，不代语义。
+
+**完整DAY通过，研究普通0。** 剩作者仅同步已发生§13、完成字段/真实时间与QA，随后root实际读回保存态FINAL；不由本节预签未保存的最终结果或把09-26重计。当前52/132、80待验，09-27两具名当前信号修复另由配对推进，未stage、commit、push。
+
+## 14. root：窄恢复保存完成态FINAL通过
+
+2026-10-13 15:56 BJT，root实际读回15:51:41完成稿的header、§1/5/6和行政diff，承接已实际通读六部分的§13；§9–12源/评分/Books采用对象未变，不重已验原件。受检SHA256 d25bc2b81cdef4e031463879fbe229b97a452dfa9e5c618fff5ecb5b9053277e，状态完成、四正式家族和所有未采用主张/历史缺段保持明确，真正可执行研究及独核普通0。
+
+实际V3重跑通过；14唯一Daily来源、4家族、28本地引用/18唯一路径缺失0，原窗口/GDPval整行/原§3非空行与连续原§4冻结均True。限定README/独核/SCOPE/RESTORE的cached和unstaged diff-check均通过；全raw/index和其他任务不归因、不改，不冒全工作树clean。实际Books为原GDPval整合1＋两具体已有覆盖＋Wayfinding仅报告1，本次新写0，无锁/POST待办。
+
+本日恢复后实际接纳，当前53/132、79未验；09-26原有效成果只重新计入一次，不增加既有累计日数。此前source/date缺段及September未绑定配方/性能不是正面Coverage/Evidence或无遗漏；官方date-only误阻塞已局部修复，arXiv提交权限未放宽。作者只同步真实§14指向后fresh已有10-11，不继承本日队列，继续授权范围；未stage、commit、push。

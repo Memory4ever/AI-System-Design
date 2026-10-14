@@ -271,6 +271,8 @@ analytical FLOPs 又没有计入状态物化、memory traffic 与 launch overhea
 
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-12460 -->
 
+因果生成顺序也不必等于最终display顺序：模型可逐步产生marker与cursor来打开/结束编辑，把新token插入、替换或删除已生成文本；inverse-edit扰动训练让它学习位置与修复，而非只学习下一个可见字。此时generation clock仍因果，parser维护display位置与可见性；删除仅从后续attention和最终输出隐藏旧span，不物理释放历史KV。K/V可存unrotated并按本次编辑位置旋转，缓存精确限定在这套Chain-of-Edits语义，不等重排文本后普通decoder重新前向。这个分支增加pointer/marker训练、segment/packing和仍保留的历史状态；[AutoIndexer v1](https://arxiv.org/html/2610.12545v1)的单corruption诊断中插入常不触发，exact repair远低于teacher-forced定位率，能力保持也只限matched-LoRA对照。质量、cursor或预算不稳定时，原追加式AR及外部显式编辑仍合理；显示修订不撤销已发送内容或外部effect。<!-- source-family:SF-2026-ARXIV-2610-12545 -->
+
 ## 从显式 CoT 到 Latent Reasoning：减少 Token 不等于消除状态
 
 前面的分支重新安排了目标、KV 生产者或外部流，但没有要求取消中间可见 token。若瓶颈恰恰来自把每一步推理都写出来，才会进入另一个表示选择。显式 Chain-of-Thought 把中间步骤写成 token，优点是训练目标、停止条件、缓存和人工审计都复用语言模型接口；代价是每一步都要经过 vocabulary projection、采样和下一轮 Decode。将中间推理压缩成连续 latent state，可以少生成可见 token，却没有消除递归依赖：系统仍需决定 state representation、更新次数、termination、checkpoint identity 与失败恢复。
@@ -439,3 +441,5 @@ Primary-source 校验入口：
 - `SF-2026-ARXIV-2603-17512` — [XBridge exact-v1](https://arxiv.org/html/2603.17512v1)§3–5/Limitations、A1–4及必要Tables1/2/6–10；仅冻结LM与多语encoderdecoder的两侧映射/英语中间序列/输出K/V接口及分验边界。relaxedOT非语义等价、lambda/表口径、局部反退/推理变慢与全费用限制保留；未核代码/复现，不授全语言保真或生产性能。
 
 - `SF-2026-ARXIV-2604-01206` — Daily2026-04-03；[exact-v1](https://arxiv.org/html/2604.01206v1)§3.1–3.3/4.1/C3.3–3.6，2+1+2=5，仅single-query scalar readout与next-token/targetscale接口分责；保parameter-matched/STS tie、ranking≠RMSE和冻结前向/训练/候选费用，不授数值真值或全任务/SLO，未核实现/复现。
+
+- `SF-2026-ARXIV-2610-12545` — Daily2026-10-13；[AutoIndexer exact-v1](https://arxiv.org/html/2610.12545v1)§2–3/5/AppA.1–3及必要protocol，2+2+2=6，causal generation/display编辑具体gap深入。CoE缓存不授普通fresh-forward等价，deletedspan不物理freeKV，pointer/marker/inverseedit训练及有限exactrepair/matchedLoRA反侧保留。root必要Source/实际owner/邻接及PRE独核通过，today_institutions已按窄锁写入，作者顺读正文/完整局部邻接与本注；root已实际读正文/完整局部邻接和本注非writer POST通过，六owner窄锁释放；不授DAY。未核代码、复现或生产SLO。

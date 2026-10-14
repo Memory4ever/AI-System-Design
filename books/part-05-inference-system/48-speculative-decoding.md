@@ -262,6 +262,10 @@ confidence calibration、traffic mix 或 scheduler 行为变化，旧 profile �
 
 把线性 draft 扩成树，还需要区分“这个 token 的边缘概率”和“它在已接受父路径下的概率”。一次 block backbone 前向可以共用，但后续节点用低秩 parent-conditioned head 修正分支分布；用于预算的边接受率则应在所有祖先已接受的条件人口上校准，而非混入祖先已拒绝、实际不可达的边。各边估计的乘积提供 path-survival 预算信号，不是未经检查的独立性证明。负载控制器再把这个信号与同 engine、硬件、batch 和温度的验证成本配对，以边际价格裁树；收益不成立时回到代码相同的 chain，必要时关闭 speculation。它增加条件头、校准与部署 profile 成本，不能由更高接受长度推出更高端到端吞吐。
 
+另一条树构造分支可以不补 parent-conditioned head，而直接使用一次 block-diffusion 前向给出的各位置边际分布。把路径质量近似成这些概率的乘积，只是在 factorized draft 分布下挑选有希望的前缀，不是恢复 target 的真实条件联合分布；以节点预算限制 best-first heap，保留所选前缀的全部祖先，再用按 depth 的 position 与 ancestor attention 一次评分整树。验证时由 target 自身的解码规则先选下一 token，只有它恰好命中当前节点的 child 才沿该路径继续，首次未命中的 target token 留给下一轮；最终 KV 只保留已接受路径。这里是 target-own-token 的匹配路径，不把剪树 proxy 当成下述随机 proposal 的接受概率。<!-- source-family:SF-2026-ARXIV-2604-12989 -->
+
+[DDTree 的受限研究](https://arxiv.org/html/2604.12989v1#S4)把树优化限定在该 factorized surrogate，不能由 surrogate 最优授真实 target acceptance-length 最优。一次 drafter 和一次 verifier 也不是恒定费用：堆、tree tensors、更多验证节点和 KV compact 都计费，较大 B 增加覆盖也加重验证；主表按每个 dataset/model/temperature 选最佳 B，不能当不需校准的部署策略。8×H200、有限模型/benchmark与两温度的结果不证明任意 backend 的 exactness、并发 SLO 或净收益；mask、位置、target sampling/commit 或费用验收不成立时，回到原 parent-conditioned tree、DFlash chain 或 target-only，而不是让较高 draft 概率批准输出。
+
 随机解码下，树的选形与验证还须共享同一个抽样合同：先决定是否接纳下一 slot，再看该 slot 抽到的 token；兄弟节点从排除已有抽样的 proposal 依次无放回抽取，target 按同一 draw order 重构对应 proposal、执行接受比与正部残余更新，不能按 token 值事后丢弃或重排兄弟。否则确定性 top-k 树即使看似高概率，也可能改变输出分布。[受限树状研究](https://arxiv.org/html/2609.22098v1)保留了这一偏差反例，以及 greedy-match 校准标签到 sampling 拒绝率仍未单独隔离的差异；其 H200/BF16 matched research harness、A100 动态引擎和排除 drafter/prefill 争用的模拟不是同一生产吞吐证据。校准漂移、draw-order 重构或实际成本验收失败时，保留原 chain/target-only 路径，不将预算估计当作 exactness 保证。<!-- source-family:SF-2026-ARXIV-2609-22098 -->
 
 树形选择并非只能在确定性 top-k 与完全随机扩展之间二选一。一个受限混合分支先保留 top-m，再从归一化 tail 抽一个 token，最后补不重复的高概率候选；供树排序的 proxy 与用于 target 验证的真实 proposal 必须分开。对 m≥1，取 proxy=min(q_m,tail mass)，既不依赖抽到的身份，又不小于最高 fill 概率，使 sampled slot 固定在 fill 前。按 path proxy 裁树还须保持祖先闭合与明确 tie order；单说 proxy 与 token 独立不够，低于 fill 的 proxy 仍会让是否保留取决于抽中谁。验证先按真实 tail 执行接受/正部残余，再处理确定性点，不能拿排序分数冒充抽样概率。
@@ -293,6 +297,8 @@ acceptance/cost profile 仍是足够的工程指标。
 随后也出现 runtime integration；论文中的生产收益仍是作者在特定 DeepSeek workload 上的
 实验，缺少完整 workload contract，故本章只吸收长期原则：**speculation policy 必须看到
 全局 target capacity，而不能只最大化单请求 draft length。**
+
+缺realized prefix的parallel draft也不必用完整串行corrector修复：单pass保留每slot top-K，用相邻候选与slot hidden一次并行打分全部K²交互，再从首slot argmax沿已选predecessor逐row选后继。轻量串行walk保留prefix-first偏好，却不等全路径最优，也无法召回top-K外的正确token。评分只提proposal：若选路确定，stochastic verifier面对的是point mass，应按target对该token的概率接受、拒绝后从排除它的target残余采样，不能拿draft原logit或训练softmax冒充真实proposal。额外候选/scorer和联合训练要计费；[DCOCO v1](https://arxiv.org/html/2610.12570v1)的B200平均吞吐最优仍有单suite反侧、训练预算与native drafted长度差别，不授生产tail或所有任务收益。依赖弱、候选coverage低或scoring抵消收益时，原parallel/AR drafter与target-only回退继续有效。<!-- source-family:SF-2026-ARXIV-2610-12570 -->
 
 ### 从全局 Verify Length 到输入自适应 Block Policy
 
@@ -883,7 +889,7 @@ exact target 仍拥有最终验证与 commit 权，因此该变化提高的是 p
 
 固定宽度 tree draft 易实现，却会在不确定分支上生成大量最终被拒 token；只走一条 greedy draft 成本低，又可能错过高概率替代路径。渐进 tree 分支根据局部置信与剩余验证预算逐层扩展，controller 拥有 expansion policy，target model 仍拥有 acceptance 与最终 token commit。它用额外 tree state 和不规则 kernel 换取更好的 coverage/waste 平衡，短输出或 acceptance 已高时线性 draft 仍更简单。
 
-当一棵树混用不同来源的候选时，局部置信还不够：上下文匹配的连续片段与历史 logit 转移候选可能具有不同接受率。若仍按来源无关的概率分配验证节点，就会把深度浪费在低接受率路径上。一个有条件的分支是在固定节点预算内，让高接受率来源形成深 spine、低接受率来源在各层提供较宽 fallback；target 仍统一验证，只提交通过的前缀。这样优化的是每次验证的预期 accepted progress，代价是来源级接受率估计、随 workload 漂移的树形选择和不规则验证布局。相关理论依赖候选接受事件的近似独立与来源异质性；作者五个模型、五个数据集、greedy batch-1 的结果不证明 sampling、并发或生产尾延迟普遍受益。来源差异不稳定或估计开销过高时，原来的单源链/固定树仍是更稳的基线。<!-- source-family:SF-2026-ARXIV-2604-02047 -->
+当一棵树混用不同来源的候选时，局部置信还不够：上下文匹配的连续片段与历史 logit 转移候选可能具有不同接受率。若仍按来源无关的概率分配验证节点，就会把深度浪费在低接受率路径上。一个有条件的分支是在固定节点预算内，让高接受率来源形成深 spine、低接受率来源在各层提供较宽 fallback；target 仍统一验证，只提交通过的前缀。这样优化的是每次验证的预期 accepted progress，代价是来源级接受率估计、随 workload 漂移的树形选择和不规则验证布局。相关理论依赖候选接受事件的近似独立与来源异质性；作者五个模型、五个数据集、greedy batch-1 的结果不证明 sampling、并发或生产尾延迟普遍受益。来源差异不稳定或估计开销过高时，原来的单源链/固定树仍是更稳的基线。来源异质性也不能独占实测收益归因：Qwen3-8B 五任务中保留非对称 shape、换掉 context-source tokens 后宏平均 τ 未降（+0.2%），单项仍可略降；同预算12–33%比较的是 accepted-token 进度而非 wall-clock 加速。全深度候选的边缘匹配概率连乘未处理已选父路径可达性，因此不采用全域严格支配或非退化保证，预算仍需在可达路径下校准并计实际构建／验证费用。<!-- source-family:SF-2026-ARXIV-2604-02047 -->
 
 MoE target 还暴露第二个成本轴：draft 的 token acceptance 高，不代表验证便宜；若候选触发大量分散 Experts，weight movement 与 All-to-All 会吞掉收益。drafter selection 因而需要联合估计 acceptance、verification FLOPs、Expert-set overlap 与通信，并在预测失准时回退普通 Decode。作者实验只覆盖其 MoE、draft 与硬件，不能把某个 Expert 阈值当成通用配置。
 
@@ -1043,6 +1049,8 @@ batch 越大，至少一请求 cache miss 导致整批等待的机会越高；�
 进一步并行化时，下一轮 draft 通常依赖本轮 verifier 的接受长度与 bonus token；若提前猜测这两个结果，猜错就必须退回串行路径，batch 越大越容易有请求触发回退。一条条件性替代方案是把昂贵的 draft backbone 与轻量 token correction head 分开：验证尚未结束时，backbone 对每个可能的接受边界预计算互不污染的 proposal 表示；verifier 给出真实接受前缀与 bonus 后，只选择对应分支并运行短 head。target 始终拥有 token/KV 的最终提交权，这消除了**猜错验证结果导致的 backbone 串行回退**，但不消除 head、同步屏障与分支预计算的成本。分支数、显存和 draft GPU 预算可能抵消收益；backbone 赶不上 verification、batch 小或旧 drafter 已足够便宜时，顺序 draft–verify 仍更简单。DPara 的作者证据限于 Qwen3-8B/14B、所列数学/代码/聊天任务及 H800/GB200/A10 配置，不能外推为任意采样、并发与 SLO 的普遍加速。<!-- source-family:SF-2026-ARXIV-2609-27396 -->
 
 ## Review notes
+
+- `SF-2026-ARXIV-2604-02047` — 04-04去重补查：原04-03同v1/6分/Ch48采用复用，不新增家族/评分/I；仅把[exact-v1](https://arxiv.org/html/2604.02047v1)Table1–2/E.3–4的τ/来源身份归因与可达父路径反侧合入旧canonical。reader必要差额/逐字PRE通过，root窄锁，作者实际原段/完整局部邻接与本注已读；supp_apr04_reader实际完整局部邻接/原段与本注nonwriter POST通过，锁释放。保旧机制，不采全域理论/抽样保证，无代码核验或复现。
 
 - `SF-2026-ARXIV-2603-11243` — 2026-03-14 补查；[exact-v1](https://arxiv.org/html/2603.11243v1) §2.1–2.3/Eq3–7、§3.2–3.5/Table1 与直接限制。只采用 CTC 复用的两级有损 ASR 仲裁、前缀回退及分批/搬运成本；单 H100/BF16 的批量 RTFx 不授在线 SLO。Table1 高准确平均 RTFx548<AR564，高吞吐 WER6.56 相对 AR5.75 约增14.1%，不沿用摘要12%或各语料无代价断言。mar14_supplement 必要源/具体 owner 提案、root 实际独立 Source/PRE 通过后窄写；mar14_supplement 已实际核新正文、完整局部邻接与末注，非写入者 POST 通过，窄锁释放，不授日级完成。未核代码或复现。
 
@@ -1268,3 +1276,7 @@ baseline、capacity-aware verification 与 network-aware fallback 三项长期�
 - `SF-2026-ARXIV-2603-17942` — Daily2026-03-20补03-19；[v1](https://arxiv.org/html/2603.17942v1)§2–4.4/A/E/F/G.3与[v2](https://arxiv.org/html/2603.17942v2)受影响§3.1/§4/A。仅promptmean/生成EMA的maskproposal及staticmask/PID预算边界，不采错误norm inequality所授cosine定理、全stochastic exactness或通用speedup；版本间A100/H100计时分开，复制任务/naive反退/全fee保留，未核代码或复现。
 
 - `SF-2026-ARXIV-2603-19133` — [PicoSpec exact-v1](https://arxiv.org/html/2603.19133v1) §3.1–3.4/§4.1–4.4/Tables1–4；仅分离候选概率上行/拒绝分布下行与完整残余校正接口。Top-K尾部保证缺失、EL/bonus口径、吞吐/TPOT分母与未披露网络/采样/长度/并发限制保留；不授exact压缩、WAN免疫或最差性能界，未核实现/复现。
+
+- `SF-2026-ARXIV-2610-12570` — Daily2026-10-13；[DCOCO exact-v1](https://arxiv.org/html/2610.12570v1)§3–5/全部必要eq、AppA/B/C/G与Table10负侧，2+2+2=6，proposal/sampling correctness受影响深入。保parallel K²score/轻prefixwalk、确定proposal point-mass accept=q与排除draft residual，训练softmax非proposal。B200十suite平均非每suite最佳，Llama MBPP/LCB反退、训练/长度预算差和含prefill request-rate保留。root必要Source/实际owner/邻接及PRE独核通过，today_institutions已按窄锁写入，作者顺读正文/完整局部邻接与本注；root已实际读正文/完整局部邻接和本注非writer POST通过，六owner窄锁释放；不授DAY。未核代码、复现或生产SLO。
+
+- `SF-2026-ARXIV-2604-12989` — Daily2026-04-16补Apr15，supp_apr16_author；[exact-v1](https://arxiv.org/html/2604.12989v1)§3–5/Prop1–3/§4.4/Tables1–2，2+2+2=6，onepass边际Q surrogate与target-own-token treewalk具体owner差额深入。proxy最优非真实target最优，depth/ancestor/bonus/acceptedpath-KV分账；逐人口bestB非部署策略与整树/compact费用近正文，不授任意backend exactness/SLO。reader R40必要Source/R28 date/R44逐字PRE及R47实际两段、完整邻接与本人注POST通过；作者仅同步本人末注并实际读回，未核artifact/复现，不授DAY。

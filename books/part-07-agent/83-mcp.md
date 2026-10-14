@@ -244,6 +244,10 @@ MCP 可以承载 tool/resource connection，却不定义：
 
 本节以核验时的 [A2A 1.0 规范](https://a2a-protocol.org/latest/specification/)为接口案例，不把 SDK 或远端服务的版本视为已同步升级。Agent Card 声明接口、protocol version、能力与认证要求，声明本身不构成能力质量或业务授权证明。简单交互可以只返回 `Message`，需要跟踪的工作才形成 `Task`；`contextId` 关联交互上下文，task ID 标识具体工作，`Artifact` 承载产物而不是状态消息。等待补充输入或认证是可继续的中断状态，不应当作失败；完成、失败、取消或拒绝等终态也不能混成一个“HTTP 成功”。[任务生命周期说明](https://a2a-protocol.org/latest/topics/life-of-a-task/)保留了这些区别。
 
+跨 Agent 消息还需选择保留原生模态还是传递转码摘要。接收接口已声明可消费音频或图像时，保留原载荷能避免先把声音、空间细节压成文字；文本路径在载荷预算紧、接收方只需要摘要或原媒体不可授权时仍合理。路由声明、实际 decoder 与最终决策消费者分别验收：中间 Agent 收到原始媒体不证明末端已经读取或正确使用其中的信息，转码文本也只是派生视图，须保留原内容、转换和接收接口身份。<!-- source-family:SF-2026-ARXIV-2604-12213 -->
+
+[MMA2A 的有限配对实验](https://arxiv.org/html/2604.12213v1)利用既有 A2A 载荷与能力声明，没有新增协议 schema；同底模的原生与文本路由在建议动作标签上有差额，换成关键词决策后差额消失，但这不是所有任务都必须采用原生模态的定理，也未验真实业务副作用。原生处理增加模型调用延迟与敏感媒体暴露，局部路由成功仍可能导致过度动作；因此任务质量、转换损失、完整调用费用和权限分验。消费者不会使用额外信号、文本已足够或预算/授权不合格时，保留文本接口、显式转码限制与独立行为检查，不从“可接收此模态”批准正确性或安全。下面的 runtime 映射继续保存对象关联与状态，委派策略与最终提交仍分别由第82章和第81章负责，而不是路由器。
+
 协议对象进入本地持久执行时，还需要显式映射。下面是本书的 runtime 接口要求，不是 A2A 已替应用实现的保证：
 
 | 远端可见对象或事件 | 本地应保存的关联 | 不能据此推断 |
@@ -464,3 +468,5 @@ request contract。协议字段只写稳定抽象；SDK 默认行为与 fleet ad
 <!-- daily-books-trace:SF-2026-ARXIV-2607-25635:end -->
 
 - `SF-2025-MOONSHOT-KIMI-CLI-0-68`：Daily `2025-12-25`；官方 release `published_at=2025-12-24T12:40:22Z`；固定 commit `d5ae5b809d19086db2d823ca6f1997bd68c3db2d`。实际静态核验 `acp/mcp.py` 配置转换、`soul/toolset.py` 连接队列及 `acp/tools.py` 的 `replace_tools` / `Terminal.__call__`；采用配置/连接/执行分责及 approval、timeout/handle 边界，不把 OAuth 本地缓存清除称服务端 revoke。未部署、未跑 ACP/OAuth/cancellation 测试，不能推出通用终止或性能保证；必要源审、日期及Mill实际写后复核通过的依据见[本日记录](../../papers/2025/12/_sources/daily-20251225/ROOT_ADMISSION_REVIEW.md)。
+
+- `SF-2026-ARXIV-2604-12213` — Daily2026-04-16补Apr15，supp_apr16_author；[exact-v1](https://arxiv.org/html/2604.12213v1)§3–6，2+1+2=5，具体payload选择接口差额深入。仅原生/转码路径与声明/decoder/最终consumer分责，不采A2A新schema或协议兼容保证。保50paired同底模推荐action标签、keyword反侧/过度动作、API延迟/全费用与媒体privacy，不授真实effect/普适收益或SLO；未核artifact/复现。reader R3必要Source/R9 date/R11 finalPRE实际通过；作者按root窄锁实际写入，reader R12实读两段/完整局部邻接/本人注POST通过，作者仅同步本注并实际读回；不授DAY。

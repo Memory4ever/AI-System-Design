@@ -112,6 +112,8 @@ WAITING / PREFILLING / DECODING
 
 Frontend 完成认证、限流、schema 校验、chat template、tokenization 和 generation parameters 归一化。Tokenizer 必须与模型资产一致；错误的 vocabulary、special tokens 或 chat template 不一定触发 GPU error，却会改变输入语义。
 
+高 prefix-cache hit 会省掉多数 Prefill，却不自动省掉 lookup 之前的 tokenization：全文重新编码仍可能成为 TTFT 和共享 frontend 的容量瓶颈。可在保持模型原始 token IDs 的前提下，将 family-specific pre-token 边界、保序 BPE 与结果组装放入预分配 GPU graph，以固定 capacity 承载动态 occupancy；仅匹配 token 数或还原文本不能证明输入语义相同。safe-boundary token 复用和短输入 CPU 路径继续合理，GPU 也要支付搬运、buffer 和共享执行成本。[GraphTok 的五配置/单 H100 研究](https://arxiv.org/html/2610.13325v1)支持有限编码分支，Dynamo 模拟只测前端容量；request-level template、截断、Qwen NFC 归一化及未支持配置仍须保留各自契约和 fallback。<!-- source-family:SF-2026-ARXIV-2610-13325 -->
+
 ### Admission
 
 请求不会因为已经到达就必然立刻运行。系统需要判断模型与 adapter 是否已加载、prompt 是否超过限制、是否有足够 KV blocks 和 token budget、排队后是否仍可能满足 SLO，以及租户配额和优先级是否允许进入。
@@ -438,3 +440,5 @@ Review note：`SF-2026-ARXIV-2606-29565`；Method `https://arxiv.org/html/2606.2
 <!-- daily-books-trace:SF-2026-ARXIV-2606-20537:end -->
 
 - `SF-2026-ARXIV-2603-28554` — [Hydra exact-v1](https://arxiv.org/html/2603.28554v1) §3.4/§5.2–5.4及B跨实现反側；仅共享实例的attention/head/cache执行身份。保同路径一致非跨实现sampling等价、50cycle非并发隔离、全mode与KV费用；不采用DDP梯度同步自身导致参数漂移的causal保证。窗外v3 §3.4仅定点澄清tensor审计排除head/embedding冻结，不回填其r32或新budget，未核artifact/复现。
+
+- `SF-2026-ARXIV-2610-13325` — [GraphTok exact-v1](https://arxiv.org/html/2610.13325v1) §2–4、§6.2–6.3/6.10/6.12；Daily 2026-10-13，2+2+2=6，具体 frontend 长期缺口深入。reference IDs、family frontend 和 capacity/occupancy 分责；单 H100、五配置、外部 NFC 与 request policies、短输入 CPU、Dynamo 模拟关闭 tokenizer-prefix cache 的限制保留。非writer必要Source/PRE通过，root实际非writer局部正文/邻接与本注POST通过；未核代码或复现实验。

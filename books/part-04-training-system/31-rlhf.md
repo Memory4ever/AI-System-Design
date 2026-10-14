@@ -118,6 +118,8 @@ Scalar reward 也没有规定如何从 token 表示读出。一个替代分支�
 
 等级监督还可以来自真实对话的后续反馈，而非预先要求用户给一对答案排序。[一条有界路径](https://arxiv.org/html/2602.08829v1#S2)先区分显式拒绝、错误纠正、积极参与和明确满意，保留无明确信号的 Unknown；再为各等级阈值学习“是否高于该级”的概率，以固定编码的期望等级读出 reward。这把反馈来源与 reward 目标分开，却不能把相关追问自动当正确性、没有反馈当负面，或把对正当拒绝的不满当应被优化掉的行为。相邻 turn 回填与拒绝核验均是版本化观测规则，须保标签出处、筛选人口和独立安全/任务效标；有序类别也不识别真实数值间隔或跨 query 效用。采集、分类、人工校准与在线候选生成都付费，有限 online DPO 收益不证明所有 RL 或等预算优越；反馈稀疏、筛选漂移或阈值未校准时，保留明确 Unknown、可信人工偏好与独立行为检查，不让用户参与度接管安全授权。<!-- source-family:SF-2026-ARXIV-2602-08829 -->
 
+用于训练的用户环境还可以同时生成评价，而不另调用一个 judge：先在 conversation history 上生成模拟的 thoughts、rating、reaction 等 latent fields，再据这些字段生成下一轮用户话语，并把 rating 作为 turn reward。这改变的是环境与评分的执行耦合，真实 interaction logs 只提供话语，合成 latent labels 不是真实用户的内心观测。[LES 的受限对照](https://arxiv.org/html/2610.13617v1#S5)支持用一次模拟器推理替代环境加外部 judge 的训练分支，但 realism、critique recall、人工评分相关和 assistant 质量并不总同步提高，同一标签生成器与评价者还会共有偏差。论文的估算 RL FLOPs 节省不包含全部制备和 simulator 训练，三次 sampling 评价也不等三次独立训练。应保留 reward 字段、utterance条件与独立任务效标的身份和全部成本；偏好人口、模拟器或奖励失配时，回退纯话语环境、独立 judge 与可核人类反馈，不让模拟评分取得真实用户授权或任务正确性 authority。<!-- source-family:SF-2026-ARXIV-2610-13617 -->
+
 把点击、复制或赞踩用作 reward 时，还要拆开两个观测通道：用户是否留下反馈，以及留下的标签是否表达真实偏好。只给有反馈样本重加权，仍可能学到错误标签；只校正标签，仍会把偏向强烈意见的人口当作全部请求。一条有条件的分支先用二元标签噪声矩阵修正每样本损失，再按反馈被观察的 propensity 校正总体贡献；附加误差补全模型的 DR 分支，可以在规定条件下放松 propensity 与补全两者都准确的要求，但不豁免标签噪声率和可识别前提。训练方需要完整观测人口、支持域与可校准噪声，不能仅凭日志里存在一个点击就自动恢复真实偏好。<!-- source-family:SF-2026-ARXIV-2603-18736 -->
 
 这种联合校正增加 propensity、proxy/anchor 与误差模型的训练费用；极小观察率和接近不可逆的噪声矩阵会放大权重或损失，anchor 假设不成立、用户差异无法被观测条件解释时也不能靠“因果”名称消除偏差。[CausalRM 的受限对照](https://arxiv.org/html/2603.18736v1)由已有偏好 proxy 合成选择和翻转噪声，不是实际用户日志的无偏认证；DR 也不在全部误差指标上最好。应分开检验 reward 拟合、下游行为、监督人口和完整构建成本，不由有限安全 judge 分数推出真实安全或 helpfulness 保持。支持、噪声或补全无法验收时，保留 Unknown、受控人工偏好与独立行为评价，而不是把无反馈当负面或用历史参与度批准发布。
@@ -172,6 +174,8 @@ Preference dataset 需要控制：
 安全训练的信号也不必全部来自显式 safe/unsafe 标签：一条受限分支先选定风险相关的合成视觉语境，再让 teacher 生成不含显式安全词的中性 VQA，经质量筛选后作 instruction tuning。这里省去的是人工安全标签，不是 teacher 示范、数据选择或训练监督；中性问题也不认证答案与场景不携带风险语义。[VSFA 的有限对照](https://arxiv.org/html/2603.08486v1)支持把这种数据构造作为候选训练分支，但图像、答案、筛选和预算没有在匹配的非风险图像对照中全部固定，不能将行为变化唯一归于视觉曝光。Harmful 成功率、合法请求拒绝与通用能力须分别验收，未给原模型对照的能力表不能证明保持原能力。按同一安全 benchmark 的响应差分筛出 SAE features，再以双向 steering 选择方向，只说明所选方向的局部行为敏感性，不认证唯一安全 persona 或完整训练中介。图像与 QA 生成审核、adapter 训练、attack/benign/能力评价及 SAE 搜索干预全部计费；真实请求人口、能力或安全回归时，保留可信带标签安全 SFT/偏好对、原 checkpoint 与独立 runtime gate，不由无显式标签或较低 ASR 批准发布。<!-- source-family:SF-2026-ARXIV-2603-08486 -->
 
 若总是比较一个明显优秀回答和一个随机垃圾回答，Reward Model 容易学到表面 shortcut，却难以区分真实 policy 产生的相近候选。
+
+没有人工偏好对时，也可固定backbone的某一中间层，用同图caption与其局部扰动训练response-token pooled linear reward head；这把监督放在negative sampler，而不是消除监督。哪层读出、扰动算子与comparison population共同定义head，benchmark选层的那份数据只能作development。[有限多模态对照](https://arxiv.org/html/2610.12707v1#S3)中，改用policy自身candidate里的verifier-labeled成功/失败对能改善该pool的caption选择，却降低rewardbench分数；原扰动head也可能不胜majority或training-freejudge。小head不是小全链成本，同图扰动仍有错误负例、长度shortcut和有限覆盖，CHAIR兼作label与metric更只核缺失的COCO对象提及；理想density ratio与强凸最优也不直接传给实际coupled BT/AdamW。原图编码、扰动/渲染、全部candidate、verifier与训练均计费；真实pool质量不成立时，保留原judge、majority、可信偏好对与独立任务检查，不由无需人工标签或benchmark排名批准deployment reward。<!-- source-family:SF-2026-ARXIV-2610-12707 -->
 
 相近候选的标签还依赖标注流程有没有保存同一个比较对象：用户选择、系统随后展示的回答和用户解释选择理由，不能被当作天然一致的记录。受限的 choice-swap 实验中，50 名参与者各经历四次调换后，只展示被替换的单个回答、不能回看原比较；未察觉调换不证明用户仍认可原选择，更不把随后流畅的解释变成可靠 preference label。由此可得到的工程要求是保留原 pair、选择索引、随后展示内容与解释的绑定关系，并允许回看、复核或弃权；这是对标注身份的设计推论，不是对所有生产界面或用户的失误率估计。
 
@@ -230,6 +234,10 @@ prompt + candidate pair + explicit preference contract
 这种分解提高可追踪性，却引入 basis 误设、代表性偏差、时间漂移与治理成本。群体少且目标稳定时，独立模型或固定多目标 reward 仍可用；无法证明代表性时，应报告分组结果并保留人工决策。现有 exact-v1 只支持作者的偏好数据与民主过滤设定，不建立普遍社会合法性。<!-- semantic-body-binding:SF-2026-ARXIV-2605-01642 -->
 
 低秩分解还可以支持少样本个体适配，而不把每位用户都变成独立的大模型：共享 reward basis 与初始混合权重，用该用户的 support pairs 只更新低维权重，再以分离的 query pairs 更新共享 basis 和初始化。Query loss 可以提高难适配用户在 outer 更新中的权重，但它是当前模型的损失，不是用户价值真值或逐人最坏风险保证。[受限 meta-reward 实验](https://arxiv.org/html/2601.18731v1)中最难一成用户仍可低于随机准确率，重加权也只有有限增量；少量显式静态偏好不验证漂移、隐式噪声或下游 policy。应绑定 user/support/query 身份，分别计共享训练、个体适配与标注成本；低维参数少不认证全链费用更低。用户信号不足、query 支持失配或困难切片不稳时，回退固定 basis、独立窄域 reward 或请求澄清。<!-- source-family:SF-2026-ARXIV-2601-18731 -->
+
+支持集大小还要与训练人口的独立信息分开。假设先从目标人群分布独立抽取 `m` 个评分者 block，再在每个 block 给定该评分者的条件分布独立取得 `n` 对比较；令 `H` 表示抽到的评分者，`loss` 表示单对比较的预测损失。对一个固定的、有界损失的偏好预测器，block 平均损失的方差可分成 `E[Var(loss|H)]/n + Var(E[loss|H])`。增加同一 block 内的比较能减小第一项，却不会在这个界中压低评分者之间的第二项。因此不能把 `m*n` 条 pair 直接当作 `m*n` 份独立人群信息；这里的 `m` 是允许有放回抽样的独立 blocks，也不是数据中唯一用户数量。人群代表性、条件独立性与 loss 身份都属于 reward 训练数据合同，而不由 pair 总量自行保证。<!-- source-family:SF-2025-ARXIV-2503-17338 -->
+
+[必要采样分析](https://proceedings.neurips.cc/paper_files/paper/2025/file/761bc7f095f927e5a5de31ed4154bb45-Paper-Conference.pdf)给出的是限定采样模型下的泛化上界，不证明固定人群一定存在同样的实际误差下界，也不导出一人一条比较的通用最优收集法。训练后再选择预测器，还需承担模型族复杂度；允许个体条件的更大模型族可能减小近似风险，却不保证总误差或下游 policy 改善。它增加评分者招募、身份治理、隐私与配对标注费用，不能只按 pair 数宣称同预算。采样相关、代表性或支持不足时，保留固定 basis、同质人口下较小的通用 reward 模型与独立 held-out 人评，不由更多数据或个性化标签给真实用户偏好、安全或发布授保证。
 
 Federated RLHF 用平均 group reward 聚合更新，在群体偏好近似同质且每组信号质量相当时简单有效；群体对齐程度、样本量和历史收益不同后，平均会让多数或高分群体持续主导，直接取最差群体又可能牺牲整体可用性并放大噪声。
 
@@ -903,6 +911,8 @@ exact-v1 §3–4 描述经验驱动 reflection，§5 的 MiniHack/ALFWorld 结�
 
 <!-- source-family:SF-2026-ARXIV-2605-22074 -->
 
+当任务已有可核验的 premises 和 target，而模型难以生成完整证明脚本时，还可让 policy 先不中断地生成整段回答及类型化 scaffold：每个原子步骤声明 id、dependencies、conclusion 和 rule，限制依赖数量；rollout 完成后再提取子命题交给形式工具，最高序列奖励要求末目标正确且所有步骤通过。这里 producer 提议待验的分解，verifier 只拥有所提命题的有效性判定，reward 不把它扩为整段自然语言的忠实性或 soundness。[PRoSFI 的受限对照](https://arxiv.org/html/2603.29500v1)支持这一格式与验证接口，但遗漏的文字推理仍不在证明范围，GPT soundness 也只是另一个代理；其 Hard 对照中的完整 Lean 分支并非全面劣于 outcome reward。后置验证可以与生成解耦，却未证明异步净吞吐，rollout、翻译、形式检查、judge 与独立终局评价都须计费。Scaffold 覆盖不足、解析或验证失准时保留原 outcome 检查、可审计 reference curriculum 与明确的未验证状态，不用最高 reward 签整条推理正确。<!-- source-family:SF-2026-ARXIV-2603-29500 -->
+
 #### Learning Progress Reward 必须绑定 Sealed Audit
 
 把“最近变好多少”作为 intrinsic reward，只有当进步等于固定 sealed-audit loss 的有符号下降时，累计奖励才 telescoping 到端点改善。Evaluator owner 必须冻结 audit panel、model class、访问协议和未裁剪的 signed delta；训练 scheduler 只能消费该分数，不能让 agent 选择评测 stream 或反复探测可复用 panel。
@@ -1497,3 +1507,11 @@ Primary-source 校验入口：
 - `SF-2026-ARXIV-2603-24844` — [exact-v1](https://arxiv.org/html/2603.24844v1) §2–4/T1–2、§6、B/E必要范围；仅单response集合reward/去重与置信读出身份，保top1反退、setmetric人口、coverage口径/K增减和串行/训练全费边界，不授conformal/joint概率/clinical/SLO保证。未核artifact/复现。
 
 - `SF-2026-ARXIV-2603-30036` — Daily `2026-04-02`补`04-01`；[exact-v1](https://arxiv.org/html/2603.30036v1) §3–4 reward-pair概念、§6–7必要实测/直接反側，`2+2+3=7`。只采task/monitor条件下output/CoT奖励相容关系；transparentbias为假设，监控是文本分类非内部真值。sweep选最好、正交semanticdrift、长度空trace、aligned初始完美未主动提升等反側保留，不授一般lengthpenalty安全/危险、任意optimizer或部署透明保证。未核代码或复现。
+
+- `SF-2026-ARXIV-2610-12707` — Daily2026-10-13，窗10-12；[exact-v1](https://arxiv.org/html/2610.12707v1)必要位置、采用边界与actual-owner差额见[本日模型证据](../../papers/2026/10/_sources/daily-20261013/model-evidence.md)。today_models必要Source与逐字PRE经root独立定点通过后授本局部/本人末注窄锁，today_models已最小写入；root已实际顺读新增正文、完整邻接、diff及本人末注，nonwriter POST通过，窄锁释放，不授DAY。保正文dev选层、实际sampler非理想density-ratio、CHAIR同源和policy-pool反侧，必要位置与采用命题仅按本日对应family记录，未核代码、复现或生产SLO。
+
+- `SF-2026-ARXIV-2610-13617` — Daily2026-10-13，窗10-12；[exact-v1](https://arxiv.org/html/2610.13617v1)必要位置、采用边界与actual-owner差额见[本日模型证据](../../papers/2026/10/_sources/daily-20261013/model-evidence.md)。today_models必要Source与逐字PRE经root独立定点通过后授本局部/本人末注窄锁，today_models已最小写入；root已实际顺读新增正文、完整邻接、diff及本人末注，nonwriter POST通过，窄锁释放，不授DAY。保正文LES合成字段非真实用户心智、三sampling非训练seed及估算RL FLOPs边界，必要位置与采用命题仅按本日对应family记录，未核代码、复现或生产SLO。
+
+- `SF-2026-ARXIV-2603-29500` — Daily `2026-04-02`补`04-01`；[PRoSFI exact-v1](https://arxiv.org/html/2603.29500v1)必要§3–4/§5.1–5.4/§5.6，`2+1+2=5`，model-emitted scaffold/后置verifier与序列reward差额。仅采所提formal命题的资格分责，RewardHit不涵盖全部NL；保Hard direct-Lean反側、GPTjudge proxy、769/7B/8Hopper/960steps人口和CPU验证/总费用未闭，不采异步净吞吐或整体soundness保证；未核artifact/复现。
+
+- `SF-2025-ARXIV-2503-17338` — Daily2025-12-04补Dec03机构PAC理论披露，原March机制不重评分；[2025精确会议稿](https://proceedings.neurips.cc/paper_files/paper/2025/file/761bc7f095f927e5a5de31ed4154bb45-Paper-Conference.pdf)必要§2–3/Props1–2及A.1 Prop1，2+1+2=5，Feynman Source§9/逐字PRE§12通过。只采有界loss/conditional-iid/独立rater blocks与fixed-c/class复杂度、upper-bound权限；原hat-log符号/flat-iid/irreducible文字不采用，m非unique用户，不授任意人群/下游policy保证，未核实现/复现。Carson按root唯一窄锁实际写两段＋本note，已补H/loss定义并self-read；Feynman非writer实际POST§13通过，root实际读回正文/完整邻接/本note及限定diff接纳并释放窄锁，非日级DAY。
