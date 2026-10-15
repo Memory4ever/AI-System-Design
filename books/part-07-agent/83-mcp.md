@@ -95,6 +95,10 @@ connect
 
 Client 与 Server 必须处理不支持的 version/capability，而不是猜测兼容。Tool/resource identity 还需要 server identity 与 version，否则同名工具在不同 server 上可能有完全不同语义。
 
+会话已建立，也不代表多个 server 的工具目录同时完整就绪。启动时等待所有连接 settle，使首轮发现基于全部连接尝试的终态，失败的 server 仍不能提供工具；在集合小且首轮必须确认全部能力时很合理，最慢 server 却会阻塞整个首 turn。另一分支在后台建立连接，只为首轮发现提供有界等待，让模型先消费 ready subset。此时缺少工具可能仅表示“这次视图尚未就绪”，不能直接解释为 server 不存在或永久没有该能力；后续发现与连接管理必须分别记录完成条件，部分就绪更不能授予调用权限。
+
+[MiMo-Code 的固定实现](https://github.com/XiaomiMiMo/MiMo-Code/pull/2657)只把 startup Deferred 的等待限制为3秒，其后的 host refresh 仍可能同步建立连接，所以这不是 `tools()` 的端到端3秒 SLO。通常管理访问等待全 settle，`clients(context)` 则可返回捕获的 turn 视图，不能概括成所有 accessor 一律等待。它以视图变化、重试及取消清理的成本换较早开始，localhost 手动释放慢连接的 fixture 只验证子集到后续完整视图，不证明公网时延或完整生命周期无泄漏。首轮必须用齐目录、或后续重发现无法确认时，应保留全 settle 或明确 defer，避免把早期缺项固化成模型的能力判断。<!-- source-family:SF-2026-GITHUB-MIMO-CODE-PR2657 -->
+
 ### 协议比较必须拆开五类契约
 
 用 transport 或产品名称给 Agent protocol 分类，会把不同层的问题混在一起。更稳定的比较坐标是：counterparty 决定谁与谁通信，payload 定义传递什么，interaction state 描述请求、流式和回调如何推进，discovery 负责能力如何被找到，schema 则约束数据与错误的可解释性。认证、delivery、ordering、backpressure 与 effect semantics 仍是横跨这些维度的独立保证，不能从“同属一种协议”推导互操作。
@@ -410,6 +414,8 @@ payload 纳入同一 spill/recovery 路径。保守保留会增加 context 与�
 MCP 提供可演进的连接协议，让 AI host 以统一方式发现和调用外部能力。它标准化接口，不授予信任。最后一章讨论平台如何在这些连接之上治理完整 Agent lifecycle。
 
 ## Review notes
+
+- `SF-2026-GITHUB-MIMO-CODE-PR2657` — Daily2026-10-14；[精确 merge MCP index.ts](https://github.com/XiaomiMiMo/MiMo-Code/blob/b258d28f436446bb1c9768fe0134693219be7cdc/packages/cli/src/mcp/index.ts)与[first-turn fixture](https://github.com/XiaomiMiMo/MiMo-Code/blob/b258d28f436446bb1c9768fe0134693219be7cdc/packages/cli/test/mcp/first-turn-wait.test.ts)。startup await、refreshHost 与 captured view 分责；未运行测试，不授完整 tools SLO 或生产连接安全。
 
 - `SF-2026-ARXIV-2602-20493` — Daily `2026-02-26`；[exact-v1](https://arxiv.org/html/2602.20493v1) §3/4/5/6。2+2+2=6，workspaceprojection/control-data与live/snapshot effect边界差额深入；两demo非matched性能/安全/恢复一致性证明，细粒度ACL/RBAC/audit与多方CRDT future、全投影/清理费用近正文。root实际必要源/owner PRE通过并授自身两段+末注窄锁；作者正文/完整邻接已顺读，root非作者实际正文259/261、完整251～270与自身末注410 POST通过，窄锁已释放；未核代码/复现，非日级Gate。
 

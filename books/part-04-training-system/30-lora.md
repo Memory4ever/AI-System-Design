@@ -475,6 +475,10 @@ Private LoRA 的 selector 可以在最终 private update 前冻结；只读取�
 
 量化存储中的原位学习会产生第三种资产边界：对外仍是整数 cell/served artifact，内部却通过累积 delta、scale 或校正状态改变实际函数。同一编码字节或同一基础 checkpoint 因此不再保证同行为；registry 必须绑定更新状态、写入规则、校准和回滚点。它减少独立 adapter 的数据移动，却增加硬件特化、可复现与耐久性风险；更新频繁或审计优先时，显式 LoRA/adapter 仍更清晰。<!-- semantic-body-binding:SF-2026-ARXIV-2608-20873 -->
 
+显式 adapter 同样需要区分“冻结更新”和“身份一致”。把 teacher adapter 冻结，只限制训练更新；各 rank 从本地副本读取时，即使全部加载成功，也可能读到不同 tensor 内容，使共享训练目标混入不同 teacher。只捕获加载异常的 fail-fast controller 看不到这种无异常差异。一个构造期检查先按稳定的 key、dtype、shape 与 bytes 计算内容摘要，再交换 adapter name→hash；不一致就拒绝继续构造，而不是等待 loss 暴露漂移。
+
+[UniRL 的受限修复](https://github.com/Tencent-Hunyuan/UniRL/pull/575)检查的是已读 CPU tensor，实际 materialize 后的载入仍稍后执行且不由 rank0 广播；摘要不包含 adapter 配置，因此相同 hash 不认证完整 teacher 函数、缩放规则或最终 GPU 状态。这增加读取、hash 与小 collective 的成本，CPU/Gloo 双进程 synthetic 负例也不是完整 GPU 训练验收。共享不可变副本仍可使用简单加载基线；下载或挂载停滞没有抛错时，还须另有超时与失败传播，不能用内容一致性检查承诺无 hang。<!-- source-family:SF-2026-GITHUB-UNIRL-PR575 -->
+
 低秩约束也可以作用于深层输入 prompt，而不是权重差额：视觉与文本 prompt 各分解为 `P=UV`，匹配 prompt 位置时共享 `U`，但分别保留适配不同 embedding 维度的 `V`。共享的是 token 位置系数，不是两模态已经处于同一坐标系；输入侧 prompt 仍占序列与 activation，不能像可合并的权重 LoRA 一样消去运行期开销。以 frozen zero-shot feature/logit 锚定，再减去类别 residual 的共同均值，可约束少样本 prompt 的漂移，但类别人口和锚定费用也是部署契约。有限消融中低秩单独反而略降，叠加 anchor/共享后的 harmonic mean 改善仍伴随部分 base accuracy 回落，rank 1 也不普遍最优；因此把低秩、锚定与 drift correction 分开核费，保留原 CLIP、完整 prompt 与权重适配的选择。<!-- source-family:SF-2026-ARXIV-2602-21397 -->
 
 不改权重的适配还可以把每层 attention 的虚拟 K/V 作为可训练资产：固定虚拟 keys/value 参数，由当前 query 读取它们，替代每次请求都带入真实示例的部分上下文作用。给定这一层的 Q/K/V，原 query self-attention 与示例读取可按各自 softmax 归一化质量拆开，但不能据此认定所有层或任务都等价；学习的低秩虚拟 K/V 仍增加 attention 读取和归一化开销，不能像权重 LoRA 一样直接 merge 消失。尤其把新增 value 初始化为零，只消除了新增 value 项；虚拟 keys 已改变分母，原 attention 项仍可能被缩放，因此零 value 不是整个层的 no-op。基座、head/layout、虚拟 K/V、初始化与归一化规则须共同绑定适配版本，并分别验收初始输出及训练后的任务质量。有限对照中幻觉子指标也会反退，较少可训练参数不等于总训练或在线成本更低；质量、布局或请求预算不适配时，真实示例、显式 prompt 与可 merge 的权重 delta 仍是不同的合理分支。<!-- source-family:SF-2026-ARXIV-2603-12760 -->
@@ -852,6 +856,8 @@ adapter/全量训练方案。
 <!-- source-family:SF-2026-ARXIV-2605-24549 -->
 
 ## Review notes
+
+- `SF-2026-GITHUB-UNIRL-PR575` — Daily2026-10-14；[精确 merge 的 lora.py](https://github.com/Tencent-Hunyuan/UniRL/blob/6c828f5ed81649153315d996f0f597e8808ff144/unirl/train/lora.py)，必要 frozen adapter load/inject/hash 路径及作者 CPU/Gloo 负例。仅 tensor 内容一致性，不含配置/最终 GPU checksum；未本地运行或复现。
 
 - `SF-2026-ARXIV-2604-08368` — [SOLAR exact-v1](https://arxiv.org/html/2604.08368v1) §2.1–2.2、§3/Table3–5、A1–A4；仅post-hoc base谱basis/系数/索引/seed传输表示分支。Eq3/4矩阵朝向与basis切片、正文模型名含糊，不认证可执行逐字recipe、稀疏最优或普遍误差界；保MMLU/低precision退步、重构/校验全费及原A/B退路，未核artifact/复现。
 

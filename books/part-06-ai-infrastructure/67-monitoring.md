@@ -81,6 +81,12 @@ throttling 与 application goodput 必须联合解释。
 会故障、模型结果正确或 workload 应迁移。NVIDIA Fleet Intelligence 作为版本化实现案例支持这类分层，不支持
 把厂商 predictive-failure 效果外推为通用因果结论。
 
+### 缓存探针必须绑定可比较的前缀
+
+客户端 prompt-cache 探针还要先定义什么本来可以命中。把不可复用的新尾部也放进分母，或把客户端改写的 prefix 当作原请求，会把正常差异误报成服务端 reuse 失败。可以在同步复制消息时一起捕获 revision，消费探针时再检查 revision、model namespace 与 tool/system 身份，并以父请求的已知 usage 建立可比较基线；缺少父请求数据应记 unknown，而不是零命中。只截去尾部、仍保留严格前缀的 undo，不必机械丢弃基线。
+
+[Kimi 的受限实现](https://github.com/MoonshotAI/kimi-code/pull/4179)支持这种诊断分账，不认证真正的服务端 miss：tool/system 相同仍不保证完整序列化或 thinking 设置相同，从流式结束计的 gap 也不等于 cache 写入年龄，长输出会系统性低估这一间隔。快照、身份核验、比较与重放均有成本；身份不足时保留 provider 的实际 usage 和受控重放，把失配交给诊断，不以客户端 probe 签发缓存有效性、输出质量或端到端收益。作者定向测试未在本项目复现。<!-- source-family:SF-2026-GITHUB-KIMI-CODE-PR4179 -->
+
 ### Autonomy 不是一个纯模型指标
 
 生产 Agent 的连续运行时长、tool-call 数、用户中断率和任务完成率可以形成 autonomy telemetry，
@@ -601,6 +607,8 @@ degeneracy 或 base-rate inversion 会产生看似有保证的错误工作点。
 语义聚合改善跨 run diagnosis，却会因 taxonomy 漂移、嵌套操作和错误归类隐藏细节。作者评测只支持披露 agents、任务和 profiler；coverage 低、分类不确定或高风险 incident 时，应回到原始 spans/logs 和工具 side effects，不以聚合标签替代因果调查。
 
 ## Review notes
+
+- `SF-2026-GITHUB-KIMI-CODE-PR4179` — Daily2026-10-14；[精确 merge fed19d24](https://github.com/MoonshotAI/kimi-code/commit/fed19d24f00203205b1fa4d23e60afce0609cc00)的必要实现及测试。消息/revision 同步快照、消费时身份验证与可比较前缀分母；保留 thinking/序列化盲区及流末 gap 非写入年龄，不授服务端归因或复现。
 
 本章复用 Part V 已冻结的 TTFT、TPOT、SLO attainment 与 goodput，不重新定义推理机制；自检答案回填明确了 transport、contract 与 semantic errors 的不同证据来源。第 68 章拥有事件，第 69 章拥有因果链，第 66 章继续拥有质量口径和发布判断。
 
